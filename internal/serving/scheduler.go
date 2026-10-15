@@ -96,7 +96,6 @@ type SchedulerOption struct {
 }
 type SchedulerRequest struct {
 	ID                    string         `json:"id"`
-	InputPath             int            `json:"inputPath"`
 	QueueOrder            int            `json:"queueOrder"`
 	RemainingLifetime     *time.Duration `json:"remainingLifetimeNanos,omitempty"`
 	Definition            *Definition    `json:"definition"`
@@ -115,7 +114,6 @@ type SchedulerRequest struct {
 }
 type SchedulerArrival struct {
 	ID          string        `json:"id"`
-	InputPath   int           `json:"inputPath"`
 	Lifetime    time.Duration `json:"lifetimeNanos"`
 	At          time.Time     `json:"at"`
 	Definition  *Definition   `json:"definition,omitempty"`
@@ -171,21 +169,21 @@ type Action struct {
 	Reason     string        `json:"reason,omitempty"`
 }
 type SchedulerSnapshot struct {
-	At               time.Time                           `json:"at"`
-	Workloads        []*Definition                       `json:"workloads"`
-	Nodes            []SchedulerNode                     `json:"nodes"`
-	Instances        []SchedulerInstance                 `json:"instances"`
-	Routing          map[string]map[string]int32         `json:"routing"`
-	RoutingCredits   map[string]map[int]map[string]int64 `json:"routingCredits"`
-	Outstanding      []SchedulerRequest                  `json:"outstanding"`
-	Arrivals         []SchedulerArrival                  `json:"arrivals"`
-	Options          []SchedulerOption                   `json:"options"`
-	Baselines        []NodeBaseline                      `json:"baselines"`
-	Costs            []OperationCost                     `json:"costs"`
-	Actions          []Action                            `json:"actions"`
-	Reasons          []string                            `json:"reasons"`
-	References       []string                            `json:"references"`
-	InProgressTarget *SchedulerCandidate                 `json:"inProgressTarget,omitempty"`
+	At               time.Time                   `json:"at"`
+	Workloads        []*Definition               `json:"workloads"`
+	Nodes            []SchedulerNode             `json:"nodes"`
+	Instances        []SchedulerInstance         `json:"instances"`
+	Routing          map[string]map[string]int32 `json:"routing"`
+	RoutingCredits   map[string]map[string]int64 `json:"routingCredits"` // Workload UID, instance ID
+	Outstanding      []SchedulerRequest          `json:"outstanding"`
+	Arrivals         []SchedulerArrival          `json:"arrivals"`
+	Options          []SchedulerOption           `json:"options"`
+	Baselines        []NodeBaseline              `json:"baselines"`
+	Costs            []OperationCost             `json:"costs"`
+	Actions          []Action                    `json:"actions"`
+	Reasons          []string                    `json:"reasons"`
+	References       []string                    `json:"references"`
+	InProgressTarget *SchedulerCandidate         `json:"inProgressTarget,omitempty"`
 }
 type SchedulerEstimate struct {
 	UID                  string         `json:"uid"`

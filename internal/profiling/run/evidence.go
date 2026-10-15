@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,7 +15,7 @@ import (
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha7"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha8"
 
 	RKNNLiteCoreMask      = "NPU_CORE_0"
 	RKNNLiteInputLayout   = "NHWC"
@@ -46,12 +45,11 @@ type RuntimeResult struct {
 	MeasurementStartedAt      string                     `json:"measurementStartedAt"`
 	MeasurementEndedAt        string                     `json:"measurementEndedAt"`
 	MeasurementElapsedSeconds float64                    `json:"measurementElapsedSecondsMonotonic"`
-	OutputValidation          OutputValidation           `json:"outputValidation"`
 	CPUContract               RuntimeCPU                 `json:"cpuContract"`
 	DerivedContract           DerivedContract            `json:"derivedExecutionContract"`
 	RepetitionResults         []Repetition               `json:"repetitionResults"`
 	CompletionIndex           int                        `json:"completionIndex"`
-	Inputs                    []modelcompat.InputTensor  `json:"inputs"`
+	Inputs                    []string                   `json:"inputs"`
 	// MemoryBytes is the kernel cgroup high-water mark (v2 memory.peak or v1
 	// memory.max_usage_in_bytes) since runtime container creation, including
 	// server, backend, worker, and page cache.
@@ -69,11 +67,6 @@ type RuntimeResult struct {
 	EnergyPerRequest         json.RawMessage    `json:"energyPerRequest"`
 }
 
-type OutputValidation struct {
-	Method       string  `json:"method"`
-	Passed       bool    `json:"passed"`
-	OutputShapes [][]int `json:"outputShapes"`
-}
 type RuntimeCPU struct {
 	OSCPUCount         int            `json:"osCPUCount"`
 	CgroupCPUMax       string         `json:"cgroupCPUMax"`
@@ -159,12 +152,19 @@ type Repetition struct {
 
 // NativeServiceSample is one actual batch execution, aligned by slice index with
 // the repetition's client latency sample. Spans overlap and must not be summed.
+// RecordIDs and Units are per request of the batch; units are analysis
+// observations, not the batching unit.
 type NativeServiceSample struct {
-	BatchID                   uint64  `json:"batchID"`
-	BatchSize                 int     `json:"batchSize"`
-	RunnerServiceMilliseconds float64 `json:"runnerServiceMs"`
-	BackendCallMilliseconds   float64 `json:"backendCallMs"`
-	NativeRequestMilliseconds float64 `json:"nativeRequestMs"`
+	BatchID                   uint64   `json:"batchID"`
+	BatchSize                 int      `json:"batchSize"`
+	RecordIDs                 []string `json:"recordIDs"`
+	Units                     []int    `json:"units"`
+	RunnerServiceMilliseconds float64  `json:"runnerServiceMs"`
+	PreprocessMilliseconds    float64  `json:"preprocessMs"`
+	BackendCallMilliseconds   float64  `json:"backendCallMs"`
+	PostprocessMilliseconds   float64  `json:"postprocessMs"`
+	FirstTokenMilliseconds    float64  `json:"firstTokenMs,omitempty"`
+	NativeRequestMilliseconds float64  `json:"nativeRequestMs"`
 }
 
 // MeasurementWindow returns the runtime's wall-clock steady-measurement
@@ -210,8 +210,8 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	if result.BatchSize != config.Measurement.Batch || result.WarmupIterations != config.Measurement.WarmupIterations {
 		return errors.New("measurement protocol mismatch")
 	}
-	if err := validateRuntimeInputs(config, result.Inputs); err != nil {
-		return err
+	if !slices.Equal(result.Inputs, config.State.Preprocessor.Inputs) {
+		return errors.New("runtime input field evidence does not match the frozen preprocessor inputs")
 	}
 	minimumElapsed := float64(config.Measurement.DurationSeconds) - 0.5
 	if result.MeasurementMode != "duration" || result.InferenceCount < 1 ||
@@ -224,15 +224,6 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	if result.TargetDurationSeconds == nil ||
 		*result.TargetDurationSeconds != float64(config.Measurement.DurationSeconds) {
 		return errors.New("runtime target duration does not match the measurement contract")
-	}
-	if !result.OutputValidation.Passed || result.OutputValidation.Method != config.Measurement.OutputValidation ||
-		len(result.OutputValidation.OutputShapes) == 0 {
-		return errors.New("output validation evidence mismatch")
-	}
-	for _, shape := range result.OutputValidation.OutputShapes {
-		if len(shape) == 0 || shape[0] != config.Measurement.Batch {
-			return errors.New("output shape batch mismatch")
-		}
 	}
 	if err := validateRuntimePathEvidence(config, result); err != nil {
 		return err
@@ -266,17 +257,6 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	}
 	if latencyCount != result.InferenceCount {
 		return errors.New("raw latency count does not match inference count")
-	}
-	return nil
-}
-
-func validateRuntimeInputs(config RunConfig, inputs []modelcompat.InputTensor) error {
-	if err := modelcompat.ValidateInputTensors(inputs); err != nil {
-		return fmt.Errorf("runtime input evidence: %w", err)
-	}
-	if config.Delivery.ArtifactCapability == nil ||
-		!reflect.DeepEqual(config.Delivery.ArtifactCapability.Tensors, inputs) {
-		return errors.New("runtime input evidence does not match the frozen artifact inputs")
 	}
 	return nil
 }
@@ -379,13 +359,9 @@ func validateFirstfloorRuntimeEvidence(config RunConfig, evidence *FirstfloorRun
 
 func validateFirstfloorPath(config RunConfig, evidence *FirstfloorRuntimeEvidence, rknn *RKNNRuntimeEvidence,
 	provider string, providers []string, cpu RuntimeCPU, runtimeVersion string) error {
-	modelPath := "/model/model.onnx"
-	if config.State.Backend == FirstfloorRKNNLiteBackend {
-		modelPath = "/model/model.rknn"
-	}
 	if evidence == nil || evidence.Runtime.Synthetic || evidence.Runtime.Runtime != config.State.Backend ||
 		evidence.Runtime.RuntimeVersion == "" || evidence.Runtime.RuntimeVersion != runtimeVersion ||
-		evidence.Runtime.ModelPath != modelPath ||
+		!slices.Equal(evidence.Runtime.ModelFiles, config.State.ModelFiles()) ||
 		len(evidence.Runtime.CPUAffinity) != cpu.AffinityCPUCount || !slices.Equal(evidence.Runtime.CPUAffinity, cpu.AffinityCPUs) ||
 		evidence.Runtime.CgroupCPUMax != cpu.CgroupCPUMax || evidence.Runtime.CPUSet != cpu.CPUSetEffective ||
 		len(evidence.Runtime.InitializedBatches) == 0 {
@@ -413,20 +389,9 @@ func validateFirstfloorPath(config RunConfig, evidence *FirstfloorRuntimeEvidenc
 }
 
 func validateFirstfloorInputsAndBatches(config RunConfig, evidence *FirstfloorRuntimeEvidence) error {
-	tensors := config.Delivery.ArtifactCapability.Tensors
-	if len(evidence.Runtime.Inputs) != len(tensors) {
-		return errors.New("firstfloor actual input contract mismatch")
-	}
-	for i, tensor := range tensors {
-		input := evidence.Runtime.Inputs[i]
-		if input.Name != tensor.Name || input.Datatype != tensor.Datatype || len(input.Shape) != len(tensor.SampleShape) {
-			return errors.New("firstfloor actual input contract mismatch")
-		}
-		for j, dimension := range tensor.SampleShape {
-			if input.Shape[j] != int(dimension) {
-				return errors.New("firstfloor actual input shape mismatch")
-			}
-		}
+	if !slices.Equal(evidence.Runtime.Inputs, config.State.Preprocessor.Inputs) ||
+		!slices.Equal(evidence.Runtime.Outputs, config.State.Preprocessor.Outputs) {
+		return errors.New("firstfloor actual raw field contract mismatch")
 	}
 	seen := make(map[int]bool, len(evidence.Runtime.InitializedBatches))
 	for _, batch := range evidence.Runtime.InitializedBatches {
@@ -486,6 +451,9 @@ func validateNativeSamples(config RunConfig, repetitions []Repetition) error {
 				return errors.New("firstfloor native batch ID is duplicated")
 			}
 			seen[sample.BatchID] = struct{}{}
+			if err := validateNativeSampleRequests(config, sample); err != nil {
+				return err
+			}
 			for _, span := range []float64{sample.RunnerServiceMilliseconds, sample.BackendCallMilliseconds, sample.NativeRequestMilliseconds} {
 				if span <= 0 || math.IsNaN(span) || math.IsInf(span, 0) {
 					return errors.New("firstfloor native span is invalid")
@@ -497,6 +465,30 @@ func validateNativeSamples(config RunConfig, repetitions []Repetition) error {
 				return errors.New("firstfloor nested monotonic span order is invalid")
 			}
 		}
+	}
+	return nil
+}
+
+// validateNativeSampleRequests checks the per-request record IDs and unit
+// counts and the preprocessing stage spans of one batch execution.
+func validateNativeSampleRequests(config RunConfig, sample NativeServiceSample) error {
+	if len(sample.RecordIDs) != sample.BatchSize || len(sample.Units) != sample.BatchSize {
+		return errors.New("firstfloor native record IDs and units must cover the batch")
+	}
+	for index, recordID := range sample.RecordIDs {
+		if recordID == "" || sample.Units[index] < 1 {
+			return errors.New("firstfloor native record ID or unit count is invalid")
+		}
+	}
+	for _, span := range []float64{sample.PreprocessMilliseconds, sample.PostprocessMilliseconds} {
+		if span < 0 || math.IsNaN(span) || math.IsInf(span, 0) {
+			return errors.New("firstfloor native preprocessing span is invalid")
+		}
+	}
+	generative := config.State.Preprocessor.MaxNewTokens > 0
+	firstToken := sample.FirstTokenMilliseconds
+	if generative != (firstToken > 0) || math.IsNaN(firstToken) || math.IsInf(firstToken, 0) {
+		return errors.New("firstfloor native first-token span must be present exactly for generative preprocessing")
 	}
 	return nil
 }

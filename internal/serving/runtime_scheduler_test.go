@@ -7,7 +7,6 @@ import (
 	"time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
@@ -61,11 +60,6 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]
 	p := snapshot.Instances[0].Profile
-	tensors := []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{1}}}
-	d.Model.Paths[0].Path = p.Condition.Artifact.Path
-	d.Model.Paths[0].Tensors = tensors
-	p.Condition.LogicalModel = d.Model.Name
-	p.Condition.Tensor.Tensors = tensors
 	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +91,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 		t.Fatal(err)
 	}
 	r.EnableSchedulerRouting()
-	input := &InferenceInput{Inputs: []TensorInput{{Name: "input", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]")}}}
+	input := &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}}
 	firstReceipt, err := r.Receive(d.Name, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -207,8 +201,6 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]
 	p := snapshot.Instances[0].Profile
-	d.Model.Paths[0].Path = p.Condition.Artifact.Path
-	p.Condition.LogicalModel = d.Model.Name
 	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
@@ -244,9 +236,6 @@ func TestControlledRoutingKeepsNewWorkloadQueuedAfterInstanceRediscovery(t *test
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]
 	p := snapshot.Instances[0].Profile
-	tensors := []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{1}}}
-	d.Model.Paths[0].Path, d.Model.Paths[0].Tensors = p.Condition.Artifact.Path, tensors
-	p.Condition.LogicalModel, p.Condition.Tensor.Tensors = d.Model.Name, tensors
 	j, err := NewJournal(JournalConfig{
 		Directory: t.TempDir(), Store: "evidence", Window: time.Hour,
 		Writer: &observationArchive{directory: t.TempDir()},
@@ -289,9 +278,7 @@ func TestControlledRoutingKeepsNewWorkloadQueuedAfterInstanceRediscovery(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := &InferenceInput{
-		Inputs: []TensorInput{{Name: "input", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]")}},
-	}
+	input := &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}}
 	call, err := r.Accept(receipt, input)
 	if err != nil {
 		t.Fatal(err)
@@ -388,7 +375,7 @@ func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T)
 
 func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapshot, candidate SchedulerCandidate, firstCounts [2]int, creditState string) {
 	t.Helper()
-	replay := schedulerReplayState{snap: snapshot, c: candidate, routingApplied: true, routeCredits: map[schedulerRouteKey][]int64{}}
+	replay := schedulerReplayState{snap: snapshot, c: candidate, routingApplied: true, routeCredits: map[string][]int64{}}
 	replay.initializeInstances()
 	replay.weights = make([]int32, len(replay.instances))
 	replay.available = make([]bool, len(replay.instances))
@@ -398,7 +385,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	}
 	for range 8 {
 		for _, d := range snapshot.Workloads {
-			replay.requests = append(replay.requests, &schedulerReplayRequest{source: SchedulerRequest{Definition: d, InputPath: 0}})
+			replay.requests = append(replay.requests, &schedulerReplayRequest{source: SchedulerRequest{Definition: d}})
 		}
 	}
 
@@ -438,7 +425,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	if err = r.InstallInstances(instances); err != nil {
 		t.Fatal(err)
 	}
-	input := &InferenceInput{Inputs: []TensorInput{{Name: "x", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]")}}}
+	input := &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if creditState != "" {
@@ -504,21 +491,17 @@ func schedulerPrimeReplayCredits(t *testing.T, ctx context.Context, r *Runtime, 
 		schedulerActualRoute(t, ctx, r, d, input)
 	}
 	_, physicalCredits := r.SchedulerRouting()
-	replay.snap.RoutingCredits = map[string]map[int]map[string]int64{}
-	for uid, paths := range physicalCredits {
-		replay.snap.RoutingCredits[uid] = map[int]map[string]int64{}
-		for path, values := range paths {
-			replay.snap.RoutingCredits[uid][path] = map[string]int64{}
-			key := schedulerRouteKey{uid, path}
+	replay.snap.RoutingCredits = map[string]map[string]int64{}
+	for uid, values := range physicalCredits {
+		replay.snap.RoutingCredits[uid] = map[string]int64{}
+		if creditState == "initialized" {
+			replay.routeCredits[uid] = make([]int64, len(replay.instances))
+		}
+		for j, i := range replay.instances {
+			credit := values["physical-"+i.config.ID]
+			replay.snap.RoutingCredits[uid][i.config.ID] = credit
 			if creditState == "initialized" {
-				replay.routeCredits[key] = make([]int64, len(replay.instances))
-			}
-			for j, i := range replay.instances {
-				credit := values["physical-"+i.config.ID]
-				replay.snap.RoutingCredits[uid][path][i.config.ID] = credit
-				if creditState == "initialized" {
-					replay.routeCredits[key][j] = credit
-				}
+				replay.routeCredits[uid][j] = credit
 			}
 		}
 	}

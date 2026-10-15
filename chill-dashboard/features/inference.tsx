@@ -2,39 +2,38 @@
 
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useChillMutation, useChillQuery, useSession, type RelayResponse } from "@/lib/client"
 import { QueryGate, SourceJSON, StatusBadge, statusLabel } from "@/components/read-region"
 import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { inferenceBody, resourceHref, tensorCount, type SupportedInput, type WorkloadView } from "@/lib/domain"
+import { rawInferenceBody, rawOutputs, resourceHref, type WorkloadView } from "@/lib/domain"
 import { WorkloadState } from "@/features/management"
 
-type Stage = "pick" | "fill" | "confirm" | "result"
+type Stage = "fill" | "confirm" | "result"
 type RequestEvents = { requests: { requestID: string; workloadUID?: string; kind: string; elapsedNanos: number; outcome?: string; error?: string; at: string; receivedAt: string }[]; nextCursor?: string; incompleteWindows?: string[] }
+const encoder = new TextEncoder(), decoder = new TextDecoder()
 
-// Choose an input → fill and confirm → see the result. Nothing is ever resent automatically.
+// Fill the applied preprocessor's raw fields → confirm → see the result. Nothing is ever resent automatically.
 function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadView; wrongUID: boolean }) {
   const { config } = useSession()
   const mutation = useChillMutation()
-  const [stage, setStage] = useState<Stage>("pick")
-  const [selected, setSelected] = useState("")
-  const [data, setData] = useState<string[]>([])
+  const [stage, setStage] = useState<Stage>("fill")
+  const [values, setValues] = useState<Record<string, Uint8Array>>({})
   const [timeout, setTimeout] = useState(`${config.inferTimeoutMs}ms`)
   const [validation, setValidation] = useState("")
   const [result, setResult] = useState<RelayResponse | null>(null)
-  const [sentBody, setSentBody] = useState<string | null>(null)
   const [submittedAt, setSubmittedAt] = useState<string | null>(null)
   const [observationTo, setObservationTo] = useState<string | null>(null)
   const service = resourceHref("workloads", name, view.desired.metadata.uid)
   const back: [string, string] = [service, name]
-  // Keep the selected contract's draft when the view refreshes. Never auto-fill or replay.
-  const contract: SupportedInput | undefined = view.supportedInputs.find(input => `${input.executionPath}/${input.artifact}` === selected)
-  let preview = ""
-  let previewError = ""
-  try { if (contract) preview = inferenceBody(contract.tensors, data) } catch (error) { previewError = (error as Error).message }
-  const bf16 = contract?.tensors.some(t => t.datatype === "BF16")
+  // The raw contract is the applied preprocessor's; the draft is kept by field name when the view refreshes.
+  const preprocessor = view.appliedDefinition?.preprocessor
+  const fields = useMemo(() => preprocessor?.input ?? [], [preprocessor])
+  const [preview, previewError] = useMemo(() => {
+    try { return [rawInferenceBody(fields, values), ""] } catch (error) { return ["", (error as Error).message] }
+  }, [fields, values])
   const received = result ?? mutation.error
   const requestID = received?.requestID
   const workloadUID = received?.workloadUID ?? view.desired.metadata.uid
@@ -46,25 +45,16 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
   const observation = useChillQuery<RequestEvents>(`v1/observations/workloads/${encodeURIComponent(workloadUID)}?${observationParams}`, { enabled: !!requestID && !!submittedAt && !!observationTo && !mutation.isPending })
   const completion = observation.data?.requests.find(event => event.requestID === requestID && event.workloadUID === workloadUID && event.kind === "response_finished")
 
-  function sample() {
-    if (!contract) return
-    try {
-      const counts = contract.tensors.map(tensorCount)
-      // A sample is optional assistance, never allocate an unbounded declared tensor.
-      if (counts.reduce((sum, count) => sum + count, 0) * 8 > config.maxRequestBytes) throw new Error("예시는 요청 크기 한도 안에서만 만들 수 있어요. 값을 직접 적어 주세요.")
-      setData(contract.tensors.map((tensor, index) => JSON.stringify(Array(counts[index]).fill(tensor.datatype === "BOOL" ? false : tensor.datatype === "BYTES" ? "" : 0))))
-      setValidation("")
-    } catch (error) { setValidation((error as Error).message) }
-  }
+  const sent = { path: `POST /api/v1/workloads/${name}/infer`, timeout, inputs: fields.map(field => ({ name: field.name, datatype: "BYTES", bytes: values[field.name]?.length ?? 0 })) }
   async function send() {
     setValidation("")
     try {
-      if (!contract) throw new Error("측정이 끝난 입력을 골라 주세요.")
+      if (!preprocessor) throw new Error("적용된 전처리기가 아직 없어요.")
       if (!view.admission || wrongUID) throw new Error("지금 이 서비스가 요청을 받을 수 없어요. 준비 상태를 확인해 주세요.")
       if (!timeout.trim()) throw new Error("응답을 기다릴 시간과 단위를 적어 주세요.")
-      const body = inferenceBody(contract.tensors, data)
-      if (new TextEncoder().encode(body).byteLength > config.maxRequestBytes) throw new Error(`요청이 허용 크기(${config.maxRequestBytes}바이트)를 넘었어요.`)
-      setResult(null); setSentBody(body); setSubmittedAt(new Date().toISOString()); setObservationTo(null); setStage("result")
+      const body = rawInferenceBody(fields, values)
+      if (encoder.encode(body).byteLength > config.maxRequestBytes) throw new Error(`요청이 허용 크기(${config.maxRequestBytes}바이트)를 넘었어요.`)
+      setResult(null); setSubmittedAt(new Date().toISOString()); setObservationTo(null); setStage("result")
       try {
         setResult(await mutation.mutateAsync({ path: `v1/workloads/${encodeURIComponent(name)}/infer`, method: "POST", body, timeout }))
       } finally { setObservationTo(new Date(Date.now() + 1000).toISOString()) }
@@ -73,21 +63,22 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
       if (!(error && typeof error === "object" && "unknownOutcome" in error)) setValidation((error as Error).message)
     }
   }
-  const problem = (validation || (stage === "fill" && previewError && data.some(Boolean))) && <p role="alert" className="text-sm">{validation || (bf16 ? "이 입력의 값 종류는 웹에서 보낼 수 없어요." : previewError)}</p>
-  const lost = selected && !contract && <p role="alert">고른 입력이 최신 목록에서 없어졌어요. 적은 내용은 그대로 있어요. 다른 입력을 골라야 보낼 수 있어요.</p>
+  const problem = (validation || (stage === "fill" && previewError && Object.keys(values).length > 0)) && <p role="alert" className="text-sm">{validation || previewError}</p>
 
   if (stage === "result") {
     const unknown = mutation.error?.unknownOutcome
     return <Screen back={back} status={<StatusBadge tone={mutation.isPending ? "info" : mutation.error ? unknown ? "warn" : "fail" : "ok"}>{mutation.isPending ? "기다리는 중" : unknown ? "결과 미확인" : mutation.error ? "실패" : "완료"}</StatusBadge>}
       title={mutation.isPending ? "결과를 기다리고 있어요" : unknown ? "실행 결과를 확인하지 못했어요" : mutation.error ? "실행을 끝내지 못했어요" : received ? "추론이 끝났어요" : "아직 응답을 받지 못했어요"}
       lede={unknown ? "요청이 처리됐을 수도 있어요. 요청 기록과 서비스 상태를 먼저 확인해 주세요. 자동으로 다시 실행하지 않아요." : mutation.error ? "자세한 오류를 확인해 주세요. 적은 입력은 그대로 있어요." : undefined}
-      action={!mutation.isPending && <Button variant="outline" onClick={() => { mutation.reset(); setResult(null); setSentBody(null); setStage("fill") }}>입력 고쳐서 다시 보내기</Button>}>
+      action={!mutation.isPending && <Button variant="outline" onClick={() => { mutation.reset(); setResult(null); setStage("fill") }}>입력 고쳐서 다시 보내기</Button>}>
       <Facts items={[
         ["화면에서 기다린 시간", received?.browserRTT == null ? "확인되지 않음" : `${received.browserRTT.toFixed(2)}밀리초`],
         ["서비스 내부 처리 시간", completion ? `${(completion.elapsedNanos / 1000000).toFixed(2)}밀리초 · ${statusLabel(completion.outcome)}` : "완료 기록을 아직 못 찾았어요"],
       ]} />
+      {!mutation.error && received && <Facts label="결과" items={rawOutputs(preprocessor?.output ?? [], received.data).map(output => [output.name,
+        // eslint-disable-next-line @next/next/no-img-element -- a response data URL; next/image optimizes nothing here.
+        output.value === undefined ? "응답에 없어요" : output.format === "JPEG" ? <img alt={`${output.name} 결과 이미지`} className="max-w-full rounded border" src={`data:image/jpeg;base64,${output.value}`} /> : <span className="whitespace-pre-wrap">{output.value}</span>])} />}
       <Rows>
-        {!mutation.error && received && <RowDialog label="결과 데이터 보기" title="추론 결과"><pre aria-label="추론 결과" className="source-json">{received.body}</pre></RowDialog>}
         {requestID && submittedAt && observationTo && <Row href={`/observations?${observationLinkParams}`} label="이 요청의 처리 기록 확인" />}
         <RowDialog label="응답과 시간 측정 자세히" title="실제 응답과 시간 측정">
           <p>화면 대기 시간은 브라우저 왕복이에요. 웹 중계 왕복은 {received?.relayTiming ? `${received.relayTiming}밀리초` : "제공되지 않았어요"}. 이 시간에는 서비스 대기와 실행이 들어 있어서 중계 자체 비용이나 서비스 내부 처리 시간으로 쓰지 않아요.</p>
@@ -100,52 +91,47 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
             <SourceJSON inline title="이 요청의 원본 이벤트" value={observation.data?.requests.filter(event => event.requestID === requestID)} />
           </QueryGate>}
           <h3>실제 응답 본문</h3><pre className="source-json">{received?.body ?? "응답 미수신"}</pre>
-          <h3>실제 보낸 본문 · 큰 정수 원문 유지</h3><pre className="source-json">{sentBody}</pre>
+          <SourceJSON inline title="실제 보낸 요청" value={sent} />
         </RowDialog>
       </Rows>
     </Screen>
   }
 
-  if (stage === "confirm" && contract) return <Screen back={back} status={<span className="text-sm text-muted-foreground">3 / 3</span>} title="이대로 보낼까요?" lede="입력 한 건을 보내요. 모델과 응답 목표는 서비스 설정을 따르고, 실행할 장비는 운영 판단이 정해요."
-    action={<div className="flex gap-3"><Button type="button" variant="outline" className="flex-1" disabled={mutation.isPending} onClick={() => { setValidation(""); setStage("fill") }}>이전</Button><Button className="flex-[2]" disabled={mutation.isPending || !view.admission || wrongUID || !!bf16 || !!previewError} onClick={() => void send()}>추론 보내기</Button></div>}>
-    <Facts items={[["서비스", name], ["입력", contract.artifact], ["값 개수", `${contract.tensors.reduce((sum, t) => sum + tensorCount(t), 0)}개`], ["응답 대기 시간", timeout], ["요청 크기", `${new TextEncoder().encode(preview).byteLength}바이트`]]} />
-    <Rows><RowDialog label="보낼 데이터 확인" title="실제 요청 데이터"><pre className="source-json">{preview}</pre><SourceJSON inline title="전송 설정" value={{ path: `POST /api/v1/workloads/${name}/infer`, timeout }} /></RowDialog></Rows>
+  const ready = view.admission && !wrongUID && !!fields.length && view.supportedInputs.length > 0
+  if (!ready) return <Screen back={back} title="추론을 시작하려면 준비가 필요해요"
+    lede={view.supportedInputs.length ? "지금은 새 요청을 받을 수 없어요. 준비 상태를 확인해 주세요." : "이 모델의 실행 조건에 맞는 측정 결과가 아직 없어요. 측정이 끝나고 서비스가 준비되면 입력을 보낼 수 있어요."}
+    action={<Button asChild><Link href={view.supportedInputs.length ? service : "/measurements"}>{view.supportedInputs.length ? "서비스 상태 보기" : "측정 결과 찾기"}</Link></Button>}>
+    <Empty title={view.supportedInputs.length ? "서비스가 아직 요청을 받지 않아요" : "보낼 수 있는 입력이 없어요"} />
+    <Rows><RowDialog label="모델과 준비 상태" title={`${name} 모델과 준비 상태`}><WorkloadState view={view} /></RowDialog></Rows>
+  </Screen>
+
+  if (stage === "confirm") return <Screen back={back} status={<span className="text-sm text-muted-foreground">2 / 2</span>} title="이대로 보낼까요?" lede="입력 한 건을 보내요. 모델, 전처리기, 응답 목표는 서비스 설정을 따르고, 실행할 장비는 운영 판단이 정해요."
+    action={<div className="flex gap-3"><Button type="button" variant="outline" className="flex-1" disabled={mutation.isPending} onClick={() => { setValidation(""); setStage("fill") }}>이전</Button><Button className="flex-[2]" disabled={mutation.isPending || !view.admission || wrongUID || !!previewError} onClick={() => void send()}>추론 보내기</Button></div>}>
+    <Facts items={[["서비스", name], ["전처리기", preprocessor!.name], ...fields.map((field): [string, string] => [field.name, `${field.format} · ${values[field.name]?.length ?? 0}바이트`]), ["응답 대기 시간", timeout], ["요청 크기", `${encoder.encode(preview).byteLength}바이트`]]} />
+    <Rows><RowDialog label="보낼 데이터 확인" title="실제 요청 데이터"><SourceJSON inline title="전송 설정" value={sent} /></RowDialog></Rows>
     {!view.admission && <p role="alert">지금은 이 서비스가 새 요청을 받을 수 없어요.</p>}
     {problem}
   </Screen>
 
-  if (stage !== "pick" && contract) return <Screen back={back} status={<span className="text-sm text-muted-foreground">2 / 3</span>} title="보낼 값을 채워 주세요" lede="아래 크기는 한 번의 입력 크기예요. 여러 요청을 묶는 축은 보내지 않아요."
-    action={<div className="flex gap-3"><Button type="button" variant="outline" className="flex-1" onClick={() => { setValidation(""); setStage("pick") }}>이전</Button><Button className="flex-[2]" disabled={!!bf16} onClick={() => {
-      try { inferenceBody(contract.tensors, data); setValidation(""); setStage("confirm") } catch (error) { setValidation((error as Error).message) }
-    }}>다음</Button></div>}>
+  return <Screen back={back} status={<span className="text-sm text-muted-foreground">1 / 2</span>} title="보낼 값을 채워 주세요" lede={`${preprocessor!.name} 전처리기가 받는 원본 입력 한 건이에요. 여러 요청을 묶는 일은 서비스가 해요.`}
+    action={<Button className="w-full" onClick={() => {
+      try { rawInferenceBody(fields, values); setValidation(""); setStage("confirm") } catch (error) { setValidation((error as Error).message) }
+    }}>다음</Button>}>
     <div className="grid gap-5">
-      {contract.tensors.map((tensor, index) => <label key={`${selected}/${tensor.name}`} className="grid gap-2 text-sm">
-        <span className="font-semibold">{tensor.name} · {tensor.datatype === "BOOL" ? "참·거짓" : tensor.datatype === "BYTES" ? "문자열" : /INT/.test(tensor.datatype) ? "정수" : "소수"} {tensorCount(tensor)}개 (크기 {tensor.sampleShape.join(" × ")})</span>
-        <textarea aria-label={`${tensor.name} 입력값`} required rows={5} className="w-full rounded border bg-background p-3 font-mono" value={data[index] ?? ""} onChange={event => setData(previous => previous.map((value, i) => i === index ? event.target.value : value))} />
-        <span className="text-muted-foreground">{tensor.datatype === "BYTES" ? '문자열을 목록으로 적어 주세요. 예: ["text", "value"]' : tensor.datatype === "BOOL" ? "참·거짓 값을 목록으로 적어 주세요. 예: [true, false]" : tensor.datatype === "BF16" ? "이 값 종류는 지금 웹에서 보낼 수 없어요. 다른 입력을 골라 주세요." : "숫자를 한 줄 목록으로 적어 주세요. 예: [0, 1, 2]. 큰 64비트 정수도 적은 그대로 보내요."}</span>
+      {fields.map(field => <label key={field.name} className="grid gap-2 text-sm">
+        <span className="font-semibold">{field.name} · {field.format === "JPEG" ? "JPEG 이미지" : "UTF-8 글"} (최대 {field.maxBytes}바이트)</span>
+        {field.format === "JPEG"
+          ? <Input type="file" accept="image/jpeg" aria-label={`${field.name} 파일`} onChange={async event => { const file = event.currentTarget.files?.[0]; if (!file) return; const bytes = new Uint8Array(await file.arrayBuffer()); setValues(previous => ({ ...previous, [field.name]: bytes })) }} />
+          : <textarea aria-label={`${field.name} 입력값`} required rows={3} className="w-full rounded border bg-background p-3" value={values[field.name] ? decoder.decode(values[field.name]) : ""} onChange={event => { const bytes = encoder.encode(event.target.value); setValues(previous => ({ ...previous, [field.name]: bytes })) }} />}
+        {field.format === "JPEG" && values[field.name] && <span className="text-muted-foreground">{values[field.name].length}바이트 파일을 골랐어요</span>}
       </label>)}
-      <Button type="button" variant="outline" className="self-start" disabled={bf16} onClick={sample}>입력 예시 채우기</Button>
     </div>
     <Rows>
       <RowDialog label="응답 대기 시간" value={timeout} title="응답 대기 시간"><label className="grid gap-2 text-sm">응답 대기 제한 시간<Input aria-label="응답 대기 제한 시간" required value={timeout} onChange={event => setTimeout(event.target.value)} /></label><p className="text-sm text-muted-foreground">예: 100ms, 1.5s. 0보다 크고 최대 {config.inferTimeoutMs}밀리초까지 기다릴 수 있어요. 서비스의 응답 목표({view.desired.spec.slo.percentile}% · {view.desired.spec.slo.targetLatency})와는 별개예요. 요청 크기 한도는 {config.maxRequestBytes}바이트예요.</p></RowDialog>
-      <RowDialog label="고른 입력 자세히" title={`${contract.artifact} 입력과 측정 근거`}><SourceJSON inline title="지원 입력과 측정 원본" value={contract} /><Link href={resourceHref("workloads", name, view.desired.metadata.uid, "evidence")}>측정 근거 보기</Link></RowDialog>
+      <RowDialog label="입력 계약과 측정 근거" title={`${name} 입력 계약과 측정 근거`}><SourceJSON inline title="적용된 전처리기와 측정된 실행 경로" value={{ preprocessor, supportedInputs: view.supportedInputs }} /><Link href={resourceHref("workloads", name, view.desired.metadata.uid, "evidence")}>측정 근거 보기</Link></RowDialog>
+      <RowDialog label="모델과 준비 상태" title={`${name} 모델과 준비 상태`}><WorkloadState view={view} /></RowDialog>
     </Rows>
     {problem}
-  </Screen>
-
-  const ready = view.admission && !wrongUID && view.supportedInputs.length > 0
-  return <Screen back={back} status={<span className="text-sm text-muted-foreground">1 / 3</span>} title={ready ? "어떤 입력으로 보낼까요?" : "추론을 시작하려면 준비가 필요해요"}
-    lede={ready ? "측정이 끝난 입력만 고를 수 있어요." : view.supportedInputs.length ? "지금은 새 요청을 받을 수 없어요. 준비 상태를 확인해 주세요." : "이 모델의 실행 조건에 맞는 측정 결과가 아직 없어요. 측정이 끝나고 서비스가 준비되면 입력을 고를 수 있어요."}
-    action={!ready && <Button asChild><Link href={view.supportedInputs.length ? service : "/measurements"}>{view.supportedInputs.length ? "서비스 상태 보기" : "측정 결과 찾기"}</Link></Button>}>
-    {lost}
-    {ready ? <Rows>{view.supportedInputs.map((input, index) => {
-      const key = `${input.executionPath}/${input.artifact}`
-      return <Row key={index} label={input.artifact} hint={`${input.tensors.map(t => t.name).join(", ")} · ${input.executionPath}`} value={key === selected ? "선택됨" : undefined} onClick={() => {
-        if (key !== selected) { setSelected(key); setData(input.tensors.map(() => "")) }
-        setValidation(""); setStage("fill")
-      }} />
-    })}</Rows> : <Empty title={view.supportedInputs.length ? "서비스가 아직 요청을 받지 않아요" : "고를 수 있는 입력이 없어요"} />}
-    <Rows><RowDialog label="모델과 준비 상태" title={`${name} 모델과 준비 상태`}><WorkloadState view={view} /></RowDialog></Rows>
   </Screen>
 }
 

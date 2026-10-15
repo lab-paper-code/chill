@@ -99,7 +99,7 @@ func writeTestRunConfig(t *testing.T, directory, endpoint string) {
 		t.Fatal(err)
 	}
 	runConfig.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	runConfig.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	runConfig.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	runConfig.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	runConfig.Workload = profilingrun.CurrentWorkloadContract()
 	runConfig.Metrics.Endpoint = endpoint

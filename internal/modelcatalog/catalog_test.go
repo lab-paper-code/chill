@@ -9,8 +9,7 @@ import (
 func TestFirstfloorExecutionRequiresSelectedNativeCondition(t *testing.T) {
 	model := &edgev1alpha1.ModelSpec{Spec: edgev1alpha1.ModelSpecSpec{
 		Artifacts: []edgev1alpha1.ModelArtifact{{Name: "model", Format: "onnx",
-			Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "amd64", Path: "/artifact/model.onnx"},
-			Input:  &edgev1alpha1.ModelArtifactInputContract{Tensors: []edgev1alpha1.ModelInputTensor{{Name: "x", Datatype: "FP32", SampleShape: []int32{2}}}},
+			Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "amd64", Files: []string{"/artifact/model.onnx"}},
 		}},
 		ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{Name: "native", Artifact: "model",
 			Runtime: edgev1alpha1.ModelRuntimeRequirement{Family: "firstfloor", Backend: "ort-cpu"},
@@ -46,10 +45,15 @@ func TestFirstfloorExecutionRequiresSelectedNativeCondition(t *testing.T) {
 	}
 	model.Spec.ExecutionPaths[0].Runtime.Settings.Firstfloor.DeadlinePolicy = "keep"
 	model.Spec.Artifacts[0].Format = "rknn"
+	model.Spec.Artifacts[0].Input = &edgev1alpha1.ModelArtifactInputContract{Tensors: []edgev1alpha1.ModelInputTensor{{Name: "x", Datatype: "FP32", SampleShape: []int32{2}}}}
 	if err := Validate(model); err == nil {
 		t.Fatal("firstfloor ORT CPU path accepted a non-ONNX artifact")
 	}
 	model.Spec.Artifacts[0].Format = "onnx"
+	if err := Validate(model); err == nil {
+		t.Fatal("ONNX artifact accepted an input declaration")
+	}
+	model.Spec.Artifacts[0].Input = nil
 	model.Spec.ExecutionPaths[0].Runtime.Family = "onnxruntime"
 	if err := Validate(model); err == nil {
 		t.Fatal("non-firstfloor runtime family accepted")
@@ -73,10 +77,12 @@ func TestFirstfloorCatalogBackendArtifactRelation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			artifact := edgev1alpha1.ModelArtifact{
 				Name: "model", Format: test.format,
-				Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "arm64", Path: "/artifact/model"},
-				Input: &edgev1alpha1.ModelArtifactInputContract{Tensors: []edgev1alpha1.ModelInputTensor{
+				Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "arm64", Files: []string{"/artifact/model"}},
+			}
+			if test.format == "rknn" {
+				artifact.Input = &edgev1alpha1.ModelArtifactInputContract{Tensors: []edgev1alpha1.ModelInputTensor{
 					{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
-				}},
+				}}
 			}
 			if test.rknn {
 				artifact.Derivation = &edgev1alpha1.ModelArtifactDerivation{
@@ -93,6 +99,31 @@ func TestFirstfloorCatalogBackendArtifactRelation(t *testing.T) {
 						Family: "firstfloor", Backend: test.backend,
 						Settings: &edgev1alpha1.ModelRuntimeSettings{Firstfloor: &edgev1alpha1.FirstfloorRuntimeSettings{MaxBatchSize: 4, MaxQueueSize: 32}},
 					},
+				}},
+			}}
+			if err := Validate(model); (err != nil) != test.wantError {
+				t.Fatalf("Validate() = %v, want error %t", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestArtifactSourceFiles(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		files     []string
+		wantError bool
+	}{
+		{"several files", []string{"/artifact/vision.onnx", "/artifact/decoder.onnx"}, false},
+		{"no files", nil, true},
+		{"relative", []string{"artifact/model.onnx"}, true},
+		{"unclean", []string{"/artifact/../model.onnx"}, true},
+		{"duplicate basename", []string{"/a/model.onnx", "/b/model.onnx"}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := &edgev1alpha1.ModelSpec{Spec: edgev1alpha1.ModelSpecSpec{
+				Artifacts: []edgev1alpha1.ModelArtifact{{Name: "model", Format: "onnx",
+					Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "amd64", Files: test.files},
 				}},
 			}}
 			if err := Validate(model); (err != nil) != test.wantError {

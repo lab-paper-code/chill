@@ -12,8 +12,6 @@ import (
 )
 
 const (
-	defaultModelPath                 = "/model/model.onnx"
-	defaultRKNNLiteModelPath         = "/model/model.rknn"
 	defaultWorkspacePath             = "/workspace"
 	defaultObserverReadyPath         = "/coordination/observer-ready"
 	defaultWorkloadObserverReadyPath = "/coordination/workload-observer-ready"
@@ -32,7 +30,6 @@ type options struct {
 	runConfig                string
 	podUID                   string
 	scheduledNodeName        string
-	modelPath                string
 	workspacePath            string
 	observerReadyPaths       []string
 	workloadWindowStartPath  string
@@ -63,7 +60,6 @@ type options struct {
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
-	o.modelPath = defaultModelPath
 	o.workspacePath = defaultWorkspacePath
 	o.observerReadyPaths = []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath}
 	o.workloadWindowStartPath = defaultWorkloadWindowStartPath
@@ -118,7 +114,7 @@ func (o options) validate() error {
 		return errors.New("session token must not have surrounding whitespace")
 	}
 	for name, value := range map[string]string{
-		"model": o.modelPath, "workspace": o.workspacePath,
+		"workspace":             o.workspacePath,
 		"workload-window-start": o.workloadWindowStartPath,
 		"measurement-start":     o.measurementStartPath, "measurement-end": o.measurementEndPath,
 		"workload-window-ready": o.workloadWindowReadyPath,

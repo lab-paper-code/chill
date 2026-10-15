@@ -215,7 +215,7 @@ func TestSchedulerReplayOverheadUpdatePreservesCapturedSender(t *testing.T) {
 	_, snap := schedulerFixture()
 	d := snap.Workloads[0]
 	snap.Outstanding = []SchedulerRequest{{ID: "pending", Definition: d, ReceivedAt: snap.At.Add(-20 * time.Millisecond), Elapsed: 20 * time.Millisecond, Phase: phasePending}}
-	state := schedulerReplayState{snap: snap, c: SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, routingApplied: true, routeCredits: map[schedulerRouteKey][]int64{}, weights: make([]int32, 1), available: make([]bool, 1), out: schedulerReplayResult{definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
+	state := schedulerReplayState{snap: snap, c: SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, routingApplied: true, routeCredits: map[string][]int64{}, weights: make([]int32, 1), available: make([]bool, 1), out: schedulerReplayResult{definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	state.initializeInstances()
 	state.initializeOutstanding()
 	state.routeRequests()

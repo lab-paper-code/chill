@@ -469,6 +469,8 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 			outcome = "timeout"
 		case "RequestCanceled":
 			outcome = "canceled"
+		case "PreprocessFailed":
+			outcome = "preprocess_failed"
 		}
 		completeError(err, outcome)
 		return
@@ -588,6 +590,8 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusGatewayTimeout
 	case "RequestCanceled", "SLODeadlineDrop":
 		status = http.StatusRequestTimeout
+	case "PreprocessFailed":
+		status = http.StatusUnprocessableEntity
 	case "BackendError", "BackendUnavailable", "BackendResponseInvalid", "BackendResponseTooLarge", "BackendContextMismatch":
 		status = http.StatusBadGateway
 	}

@@ -351,7 +351,7 @@ func testRunConfig(t *testing.T) profilingrun.RunConfig {
 		t.Fatal(err)
 	}
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
 	if err := config.Validate(); err != nil {
@@ -380,8 +380,7 @@ func testIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 	config.Measurement.WarmupIterations = 0
 	config.Measurement.SettlingDurationSeconds = 30
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-	config.Measurement.InputGenerator = profilingrun.NoInputGenerator
-	config.Measurement.OutputValidation = profilingrun.NoOutputValidation
+	config.Measurement.Dataset = nil
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +404,7 @@ func idleRuntimeResult(config profilingrun.RunConfig, podUID string) profilingru
 		Backend:                      config.State.Backend,
 		Provider:                     testCPUProvider,
 		AvailableProviders:           []string{testCPUProvider},
-		Inputs:                       modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+		Inputs:                       config.State.Preprocessor.Inputs,
 		ModelLoadCompletedAt:         modelLoaded.Format(time.RFC3339Nano),
 		SettlingStartedAt:            settlingStarted.Format(time.RFC3339Nano),
 		SettlingCompletedAt:          settlingCompleted.Format(time.RFC3339Nano),
@@ -441,15 +440,6 @@ func testRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
 func testFirstfloorEvidence(
 	config profilingrun.RunConfig, runtimeVersion string, executions uint64,
 ) *profilingrun.FirstfloorRuntimeEvidence {
-	tensors := config.Delivery.ArtifactCapability.Tensors
-	inputs := make([]firstfloor.InputSpec, len(tensors))
-	for i, tensor := range tensors {
-		shape := make([]int, len(tensor.SampleShape))
-		for j, dimension := range tensor.SampleShape {
-			shape[j] = int(dimension)
-		}
-		inputs[i] = firstfloor.InputSpec{Name: tensor.Name, Datatype: tensor.Datatype, Shape: shape}
-	}
 	counts := map[string]uint64{}
 	if executions > 0 {
 		counts[strconv.Itoa(config.Measurement.Batch)] = executions
@@ -461,8 +451,8 @@ func testFirstfloorEvidence(
 		ExecutionCount: executions, InferenceCount: executions * uint64(config.Measurement.Batch),
 		BatchExecutionCounts: counts,
 		Runtime: firstfloor.RuntimeMetadata{
-			Runtime: config.State.Backend, RuntimeVersion: runtimeVersion, ModelPath: "/model/model.onnx",
-			Inputs: inputs, Providers: []string{testCPUProvider}, AvailableProviders: []string{testCPUProvider},
+			Runtime: config.State.Backend, RuntimeVersion: runtimeVersion, ModelFiles: config.State.ModelFiles(),
+			Inputs: config.State.Preprocessor.Inputs, Outputs: config.State.Preprocessor.Outputs, Providers: []string{testCPUProvider}, AvailableProviders: []string{testCPUProvider},
 			Device: "cpu", CPUAffinity: cpu.AffinityCPUs, IntraOpThreads: cpu.ORTIntraOpThreads,
 			InterOpThreads: cpu.ORTInterOpThreads, InitializedBatches: []int{config.Measurement.Batch},
 			CgroupCPUMax: cpu.CgroupCPUMax, CPUSet: cpu.CPUSetEffective,
@@ -480,17 +470,13 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 		Runtime:      config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 		Backend: config.State.Backend, Provider: testCPUProvider,
 		AvailableProviders: []string{testCPUProvider}, BatchSize: config.Measurement.Batch,
-		Inputs:            modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+		Inputs:            config.State.Preprocessor.Inputs,
 		WarmupIterations:  config.Measurement.WarmupIterations,
 		WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
 		InferenceCount:    2, MeasurementMode: "duration",
 		MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 		MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
-		OutputValidation: profilingrun.OutputValidation{
-			Method: config.Measurement.OutputValidation, Passed: true,
-			OutputShapes: [][]int{{config.Measurement.Batch, 1000}},
-		},
 		CPUContract: testRuntimeCPU(config),
 		DerivedContract: profilingrun.DerivedContract{
 			Backend: config.State.Backend, Provider: testCPUProvider,
@@ -503,10 +489,12 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 			MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			LatencyMilliseconds: []float64{1, 2},
 			NativeSamples: []profilingrun.NativeServiceSample{
-				{BatchID: 1, BatchSize: config.Measurement.Batch, RunnerServiceMilliseconds: 0.7,
-					BackendCallMilliseconds: 0.4, NativeRequestMilliseconds: 0.9},
-				{BatchID: 2, BatchSize: config.Measurement.Batch, RunnerServiceMilliseconds: 0.7,
-					BackendCallMilliseconds: 0.4, NativeRequestMilliseconds: 0.9},
+				{BatchID: 1, BatchSize: config.Measurement.Batch, RecordIDs: []string{"r"}, Units: []int{1},
+					RunnerServiceMilliseconds: 0.7,
+					BackendCallMilliseconds:   0.4, NativeRequestMilliseconds: 0.9},
+				{BatchID: 2, BatchSize: config.Measurement.Batch, RecordIDs: []string{"r"}, Units: []int{1},
+					RunnerServiceMilliseconds: 0.7,
+					BackendCallMilliseconds:   0.4, NativeRequestMilliseconds: 0.9},
 			},
 		}},
 	}

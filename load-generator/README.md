@@ -7,9 +7,10 @@ The CLI currently prints help; it does not generate traffic.
 
 Use `WorkloadHTTPClient` against the trusted HTTPS origin of the gateway.
 The Workload must already be registered through the management API. Its ID,
-not a model name, selects the registered model and SLO. Requests contain only
-named tensors for one sample; `shape` must match the Workload's supported sample
-shape without a batch axis. Routing and batching remain server-side.
+not a model name, selects the registered model, preprocessor and SLO. A request
+is one raw sample: a mapping from every input field name of the Workload's
+preprocessor to that field's bytes (a JPEG file or UTF-8 text). The client sends
+each field as `BYTES` with base64 data. Routing and batching remain server-side.
 
 ```python
 import os
@@ -24,10 +25,11 @@ client = WorkloadHTTPClient(
     ca_file=os.environ.get("CHILL_CA_FILE"),
 )
 try:
-    # Replace these tensors with the registered Workload's input contract.
-    result = client.infer("image-service", [
-        {"name": "image", "datatype": "FP32", "shape": [3], "data": [1, 2, 3]},
-    ])
+    # Replace these fields with the registered Workload's preprocessor input contract.
+    result = client.infer("vqa-service", {
+        "image": Path("cat.jpg").read_bytes(),
+        "question": "What is in the picture?".encode("utf-8"),
+    })
     print(result.status_code, result.request_id, result.workload_uid)
 finally:
     client.close()
@@ -37,7 +39,7 @@ finally:
 standard system trust store. Certificate and hostname verification are always
 enabled. The endpoint must be an HTTPS origin without credentials, a path
 prefix, query or fragment. The bearer token must not include the `Bearer `
-prefix or header whitespace. Keep tokens and tensor payloads out of logs.
+prefix or header whitespace. Keep tokens and sample payloads out of logs.
 
 `InferenceResponse` retains the raw HTTP status and body, including gateway
 rejections such as `401`, `403`, `429`, `503` and `504`. Its optional

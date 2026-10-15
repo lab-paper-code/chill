@@ -9,14 +9,14 @@ spec:
       modelSpec: mobilenet-v2-050
       deviceClass: example-device-class
       executionPath: firstfloor-ort-cpu
+      preprocessor: mobilenet-imagenet
       powerMode: fixed
     targetNode: example-node
     cpuRequest: 100m
   activeProtocol:
     warmupIterations: 20
     durationSeconds: 30
-    inputGenerator: numpy-default-rng-seed-0-inputs-v1
-    outputValidation: nonempty-shape-batch-v1
+    dataset: vqav2-val-subset
     metricObservation:
       intervalMilliseconds: 1000
       timeoutMilliseconds: 500

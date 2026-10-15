@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -548,10 +547,13 @@ func (o *schedulerOwner) measuredPreparation(ctx context.Context, p serving.Prof
 			MaxBatch: p.Batches[len(p.Batches)-1].Batch, EnvelopeSource: unknown,
 		},
 		Config: native.Config{
-			Model: "chill_model", Inputs: runtime.Inputs,
+			Model:        "chill_model",
+			Inputs:       slices.Clone(p.Condition.Preprocessor.Inputs),
+			Outputs:      slices.Clone(p.Condition.Preprocessor.Outputs),
+			MaxNewTokens: p.Condition.Preprocessor.MaxNewTokens,
 			RunnerCommand: []string{
 				"python3", "/opt/chill/runtime/firstfloor/runner.py", "--runtime", p.Condition.Backend,
-				"--model", path.Join("/model", "model"+path.Ext(p.Condition.Artifact.Path)),
+				"--model-dir", "/model", "--preprocessor", "/preprocessor",
 				"--intra-op-threads", strconv.Itoa(runtime.IntraOpThreads),
 				"--warmup-iterations", strconv.Itoa(runtime.WarmupIterations),
 			},

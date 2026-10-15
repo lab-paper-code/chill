@@ -25,15 +25,6 @@ func fixtureRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
 func fixtureFirstfloorEvidence(
 	config profilingrun.RunConfig, runtimeVersion string, executions uint64,
 ) *profilingrun.FirstfloorRuntimeEvidence {
-	tensors := config.Delivery.ArtifactCapability.Tensors
-	inputs := make([]firstfloor.InputSpec, len(tensors))
-	for i, tensor := range tensors {
-		shape := make([]int, len(tensor.SampleShape))
-		for j, dimension := range tensor.SampleShape {
-			shape[j] = int(dimension)
-		}
-		inputs[i] = firstfloor.InputSpec{Name: tensor.Name, Datatype: tensor.Datatype, Shape: shape}
-	}
 	counts := map[string]uint64{}
 	if executions > 0 {
 		counts[strconv.Itoa(config.Measurement.Batch)] = executions
@@ -45,8 +36,8 @@ func fixtureFirstfloorEvidence(
 		ExecutionCount: executions, InferenceCount: executions * uint64(config.Measurement.Batch),
 		BatchExecutionCounts: counts,
 		Runtime: firstfloor.RuntimeMetadata{
-			Runtime: config.State.Backend, RuntimeVersion: runtimeVersion, ModelPath: "/model/model.onnx",
-			Inputs: inputs, Providers: []string{fixtureCPUProvider}, AvailableProviders: []string{fixtureCPUProvider},
+			Runtime: config.State.Backend, RuntimeVersion: runtimeVersion, ModelFiles: config.State.ModelFiles(),
+			Inputs: config.State.Preprocessor.Inputs, Outputs: config.State.Preprocessor.Outputs, Providers: []string{fixtureCPUProvider}, AvailableProviders: []string{fixtureCPUProvider},
 			Device: "cpu", CPUAffinity: cpu.AffinityCPUs, IntraOpThreads: cpu.ORTIntraOpThreads,
 			InterOpThreads: cpu.ORTInterOpThreads, InitializedBatches: []int{config.Measurement.Batch},
 			CgroupCPUMax: cpu.CgroupCPUMax, CPUSet: cpu.CPUSetEffective,
@@ -63,13 +54,18 @@ func applyFirstfloorRuntime(config profilingrun.RunConfig, result *profilingrun.
 	result.CPUContract.CgroupCPUStatDelta = stat
 	result.MemoryBytes, result.MemorySource = fixtureMemoryBytes, fixtureMemorySource
 	executions := 0
+	recordIDs, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
+	for k := range recordIDs {
+		recordIDs[k], units[k] = "record-"+strconv.Itoa(k), 1
+	}
 	for i := range result.RepetitionResults {
 		repetition := &result.RepetitionResults[i]
 		repetition.NativeSamples = make([]profilingrun.NativeServiceSample, len(repetition.LatencyMilliseconds))
 		for j := range repetition.NativeSamples {
 			executions++
 			repetition.NativeSamples[j] = profilingrun.NativeServiceSample{
-				BatchID: uint64(executions), BatchSize: config.Measurement.Batch, RunnerServiceMilliseconds: 0.7,
+				BatchID: uint64(executions), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
+				RunnerServiceMilliseconds: 0.7, PreprocessMilliseconds: 0.1, PostprocessMilliseconds: 0.1,
 				BackendCallMilliseconds: 0.4, NativeRequestMilliseconds: 0.9,
 			}
 		}

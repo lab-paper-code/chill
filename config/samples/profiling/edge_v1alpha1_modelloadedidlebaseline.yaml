@@ -9,6 +9,7 @@ spec:
       modelSpec: mobilenet-v2-050
       deviceClass: example-device-class
       executionPath: firstfloor-ort-cpu
+      preprocessor: mobilenet-imagenet
       powerMode: fixed
     targetNode: example-node
     cpuRequest: 100m

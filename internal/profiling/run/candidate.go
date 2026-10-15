@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha12"
+	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha13"
 	candidateReportScope         = "StaticCompatibility"
 )
 
@@ -75,17 +75,18 @@ type CandidateReportDeviceClassFacts struct {
 }
 
 type CandidateReportArtifactSupply struct {
-	Image        string `json:"image,omitempty"`
-	Architecture string `json:"architecture,omitempty"`
-	Path         string `json:"path,omitempty"`
+	Image        string   `json:"image,omitempty"`
+	Architecture string   `json:"architecture,omitempty"`
+	Files        []string `json:"files,omitempty"`
 }
 
-// CandidateArtifactCapability freezes inputs for canonical and derived artifacts.
-// Conversion provenance remains in ModelSpec content.
+// CandidateArtifactCapability freezes derivation facts and, for RKNN artifacts
+// only, the declared input tensors. Preprocessor artifacts define every other
+// format's inputs. Conversion provenance remains in ModelSpec content.
 type CandidateArtifactCapability struct {
 	TargetPlatform     string                    `json:"targetPlatform,omitempty"`
 	DeclaredBatchSizes []int32                   `json:"declaredBatchSizes,omitempty"`
-	Tensors            []modelcompat.InputTensor `json:"tensors"`
+	Tensors            []modelcompat.InputTensor `json:"tensors,omitempty"`
 }
 
 // CandidateReportRuntimePackage is one image-owned package fact from the
@@ -153,6 +154,7 @@ type VerifiedCandidateReport struct {
 
 func (r VerifiedCandidateReport) Record() CandidateReport {
 	result := r.report
+	result.ArtifactSupply.Files = slices.Clone(r.report.ArtifactSupply.Files)
 	result.DeviceClassFacts.NodeSelector = cloneStringMap(r.report.DeviceClassFacts.NodeSelector)
 	result.DeviceClassFacts.PowerModes = append([]string(nil), r.report.DeviceClassFacts.PowerModes...)
 	result.Reasons = append([]CandidateReportReason(nil), r.report.Reasons...)
@@ -229,10 +231,12 @@ func (r CandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
 
 func validateArtifactCapability(capability *CandidateArtifactCapability) error {
 	if capability == nil {
-		return errors.New("artifact input tensors are required")
+		return errors.New("artifact capability is required")
 	}
-	if err := modelcompat.ValidateInputTensors(capability.Tensors); err != nil {
-		return err
+	if len(capability.Tensors) != 0 {
+		if err := modelcompat.ValidateInputTensors(capability.Tensors); err != nil {
+			return err
+		}
 	}
 	if capability.TargetPlatform == "" && len(capability.DeclaredBatchSizes) == 0 {
 		return nil
@@ -330,7 +334,7 @@ func validateInternalCandidateReport(report CandidateReport) error {
 		"DeviceClass architecture":            report.DeviceClassFacts.Architecture,
 		"artifact supply image":               report.ArtifactSupply.Image,
 		"artifact supply architecture":        report.ArtifactSupply.Architecture,
-		"artifact supply path":                report.ArtifactSupply.Path,
+		"artifact supply files":               strings.Join(report.ArtifactSupply.Files, ","),
 		"metric-observer image":               report.MetricObserverImage,
 		"verdict":                             report.Verdict,
 	}
@@ -530,7 +534,6 @@ func VerifyCandidateReportRecord(report CandidateReport, config RunConfig) (Veri
 	checks = append(checks,
 		struct{ name, want, got string }{"power mode", config.State.PowerMode, report.Selection.PowerMode},
 		struct{ name, want, got string }{"artifact image", config.Images.Artifact, report.ArtifactSupply.Image},
-		struct{ name, want, got string }{"artifact supply path", config.State.ArtifactPath, report.ArtifactSupply.Path},
 		struct{ name, want, got string }{"DeviceClass architecture", config.TargetNode.Architecture, report.DeviceClassFacts.Architecture},
 		struct{ name, want, got string }{"artifact architecture", config.TargetNode.Architecture, report.ArtifactSupply.Architecture},
 		struct{ name, want, got string }{"metric-observer image", config.Images.MetricObserver, report.MetricObserverImage},
@@ -542,6 +545,9 @@ func VerifyCandidateReportRecord(report CandidateReport, config RunConfig) (Veri
 	}
 	if !reflect.DeepEqual(config.Candidate.Inputs, report.Inputs) {
 		return VerifiedCandidateReport{}, errors.New("candidate source objects do not match RunConfig")
+	}
+	if !slices.Equal(config.State.ArtifactFiles, report.ArtifactSupply.Files) {
+		return VerifiedCandidateReport{}, errors.New("candidate artifact supply files mismatch")
 	}
 	if !reflect.DeepEqual(modelcompat.CloneFirstfloorRuntimeSettings(config.State.Firstfloor),
 		modelcompat.CloneFirstfloorRuntimeSettings(report.Firstfloor)) {

@@ -64,15 +64,19 @@ func Validate(model *edgev1alpha1.ModelSpec) error {
 		if err := validateSource(artifact.Source); err != nil {
 			return fmt.Errorf("artifact %q source: %w", artifact.Name, err)
 		}
-		var tensors []modelcompat.InputTensor
-		if artifact.Input != nil {
-			tensors = make([]modelcompat.InputTensor, len(artifact.Input.Tensors))
+		if artifact.Format == artifactFormatRKNN {
+			if artifact.Input == nil {
+				return fmt.Errorf("RKNN artifact %q requires an input tensor contract", artifact.Name)
+			}
+			tensors := make([]modelcompat.InputTensor, len(artifact.Input.Tensors))
 			for index, tensor := range artifact.Input.Tensors {
 				tensors[index] = modelcompat.InputTensor(tensor)
 			}
-		}
-		if err := modelcompat.ValidateInputTensors(tensors); err != nil {
-			return fmt.Errorf("artifact %q input tensor contract: %w", artifact.Name, err)
+			if err := modelcompat.ValidateInputTensors(tensors); err != nil {
+				return fmt.Errorf("artifact %q input tensor contract: %w", artifact.Name, err)
+			}
+		} else if artifact.Input != nil {
+			return fmt.Errorf("artifact %q declares input; preprocessor artifacts define %s inputs", artifact.Name, artifact.Format)
 		}
 		if artifact.Derivation != nil {
 			if artifact.Derivation.SourceArtifact == artifact.Name {
@@ -116,15 +120,7 @@ func validateExecutionRuntime(runtime edgev1alpha1.ModelRuntimeRequirement, arti
 		len(artifact.Input.Tensors[0].SampleShape) != 3 || artifact.Derivation.TargetPlatform != "rk3588") {
 		return errors.New("RKNNLite requires one FP32 rank-3 NHWC sample input for rk3588")
 	}
-	if err := modelcompat.ValidateFirstfloorRuntimeSettings(FirstfloorSettings(runtime)); err != nil {
-		return err
-	}
-	for _, tensor := range artifact.Input.Tensors {
-		if tensor.Datatype == "BYTES" || tensor.Datatype == "BF16" {
-			return errors.New("firstfloor requires supported numeric or bool tensor datatypes")
-		}
-	}
-	return nil
+	return modelcompat.ValidateFirstfloorRuntimeSettings(FirstfloorSettings(runtime))
 }
 
 // SelectModelPath selects a path only after validating the complete declaration.
@@ -147,14 +143,25 @@ func SelectModelPath(model *edgev1alpha1.ModelSpec, pathName string) (edgev1alph
 
 func validateSource(source edgev1alpha1.ModelArtifactSource) error {
 	for _, field := range []struct{ name, value string }{
-		{"image", source.Image}, {"architecture", source.Architecture}, {"path", source.Path},
+		{"image", source.Image}, {"architecture", source.Architecture},
 	} {
 		if strings.TrimSpace(field.value) == "" || strings.TrimSpace(field.value) != field.value {
 			return fmt.Errorf("%s is required without surrounding whitespace", field.name)
 		}
 	}
-	if !artifactPath.MatchString(source.Path) || path.Clean(source.Path) != source.Path {
-		return errors.New("path must be a clean absolute container path")
+	if len(source.Files) == 0 {
+		return errors.New("files requires at least one model file")
+	}
+	basenames := make(map[string]struct{}, len(source.Files))
+	for _, file := range source.Files {
+		if !artifactPath.MatchString(file) || path.Clean(file) != file {
+			return fmt.Errorf("file %q must be a clean absolute container path", file)
+		}
+		base := path.Base(file)
+		if _, duplicate := basenames[base]; duplicate {
+			return fmt.Errorf("files contain duplicate basename %q", base)
+		}
+		basenames[base] = struct{}{}
 	}
 	return nil
 }

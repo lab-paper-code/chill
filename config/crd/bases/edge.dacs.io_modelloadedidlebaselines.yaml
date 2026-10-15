@@ -184,11 +184,19 @@ spec:
                         maxLength: 128
                         minLength: 1
                         type: string
+                      preprocessor:
+                        description: |-
+                          Preprocessor names the cluster-scoped Preprocessor whose artifact for the
+                          selected model artifact runs beside the model.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
                     required:
                     - deviceClass
                     - executionPath
                     - modelSpec
                     - powerMode
+                    - preprocessor
                     type: object
                   cpuRequest:
                     anyOf:

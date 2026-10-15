@@ -57,20 +57,26 @@ func validatePreparedForRun(run *edgev1alpha1.ProfilingRun, prepared profiler.Pr
 }
 
 func preparationFromRunConfig(config profilingrun.RunConfig) profiler.PreparationRequest {
+	measurement := config.Measurement
+	measurement.Dataset = nil
 	request := profiler.PreparationRequest{
 		Candidate: profiler.CandidateSelection{
 			ModelSpec: config.State.Model, DeviceClass: config.State.DeviceClass,
 			ExecutionPath: config.Candidate.ExecutionPath, PowerMode: config.State.PowerMode,
+			Preprocessor: config.State.Preprocessor.Name,
 		},
 		TargetNode:  config.TargetNode.Name,
 		CPURequest:  config.CPU.Request,
 		CPUAffinity: slices.Clone(config.CPU.AffinityCPUs),
-		Measurement: config.Measurement,
+		Measurement: measurement,
 		Metrics: profiler.MetricObservationPolicy{
 			IntervalMilliseconds: config.Metrics.IntervalMilliseconds,
 			TimeoutMilliseconds:  config.Metrics.TimeoutMilliseconds,
 			DurationSeconds:      config.Metrics.DurationSeconds,
 		},
+	}
+	if config.Measurement.Dataset != nil {
+		request.Candidate.Dataset = config.Measurement.Dataset.Name
 	}
 	if config.CPU.Policy == profilingrun.ConfiguredCPUQuotaPolicy {
 		request.CPUQuota = config.CPU.Limit

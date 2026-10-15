@@ -135,7 +135,7 @@ func validOptions(t *testing.T) options {
 	}
 	return options{
 		runConfig: string(config), podUID: "pod-uid", scheduledNodeName: "lattepanda",
-		modelPath: defaultModelPath, workspacePath: defaultWorkspacePath,
+		workspacePath:           defaultWorkspacePath,
 		observerReadyPaths:      []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath},
 		workloadWindowStartPath: defaultWorkloadWindowStartPath, measurementStartPath: defaultMeasurementStartPath,
 		workloadWindowReadyPath: defaultWorkloadWindowReadyPath, measurementEndPath: defaultMeasurementEndPath,
@@ -163,7 +163,7 @@ func validCPUConfig(t *testing.T) profilingrun.RunConfig {
 		t.Fatal(err)
 	}
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
 	if err := config.Validate(); err != nil {

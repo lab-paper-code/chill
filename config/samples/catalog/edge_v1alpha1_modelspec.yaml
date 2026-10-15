@@ -10,18 +10,15 @@ spec:
     source:
       image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
       architecture: arm64
-      path: /artifact/mobilenet-v2-050.onnx
-    input:
-      tensors:
-      - name: input
-        datatype: FP32
-        sampleShape: [3, 224, 224]
+      files:
+      - /artifact/mobilenet-v2-050.onnx
   - name: mobilenet-v2-050-rk3588
     format: rknn
     source:
       image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:c9eb4abc86b376f43c419cd01782bc3709fd14d8452a4953ea8f396fd3b702a5"
       architecture: arm64
-      path: /artifact/mobilenet-v2-050-rk3588.rknn
+      files:
+      - /artifact/mobilenet-v2-050-rk3588.rknn
     input:
       tensors:
       - name: input

@@ -8,12 +8,9 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const testArtifactPath = "/artifact/model.onnx"
-
 func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	config := testRunConfig(t)
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&config)
 
 	plan, err := deriveConfiguredExecutionPlan(t, config)
@@ -43,7 +40,6 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 func TestDeriveExecutionPlanRejectsUnpromotedRuntimePath(t *testing.T) {
 	config := testRunConfig(t)
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&config)
 	config.Candidate.ExecutionPath = "tensorrt"
 	if _, err := deriveConfiguredExecutionPlan(t, config); err == nil {
@@ -79,13 +75,11 @@ func TestDeriveExecutionPlanAcceptsExplicitRKNNLitePath(t *testing.T) {
 func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
 	config := testRunConfig(t)
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&config)
 	config.Measurement.WarmupIterations = 0
 	config.Measurement.SettlingDurationSeconds = 60
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-	config.Measurement.InputGenerator = profilingrun.NoInputGenerator
-	config.Measurement.OutputValidation = profilingrun.NoOutputValidation
+	config.Measurement.Dataset = nil
 
 	plan, err := deriveConfiguredExecutionPlan(t, config)
 	if err != nil {
@@ -103,7 +97,6 @@ func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
 func TestDeriveExecutionPlanRejectsMetricScheduleOutsideBoundedEnvelope(t *testing.T) {
 	config := testRunConfig(t)
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&config)
 	config.Metrics.DurationSeconds = 60_000
 	config.Metrics.IntervalMilliseconds = 1000

@@ -313,13 +313,8 @@ func schedulerValidateSnapshot(settings SchedulerSettings, snapshot SchedulerSna
 		reasons = schedulerValidateRequest(r, ids, reasons)
 	}
 	for _, a := range snapshot.Arrivals {
-		if a.Compute || a.Accepted {
-			if a.Definition != nil && (a.InputPath < 0 || a.InputPath >= len(a.Definition.Model.Paths)) {
-				reasons = appendUnique(reasons, "UnknownInputRoute:"+a.ID)
-			}
-			if a.Lifetime < 0 {
-				reasons = appendUnique(reasons, "InvalidArrivalLifetime:"+a.ID)
-			}
+		if (a.Compute || a.Accepted) && a.Lifetime < 0 {
+			reasons = appendUnique(reasons, "InvalidArrivalLifetime:"+a.ID)
 		}
 	}
 	definitions := append([]*Definition(nil), snapshot.Workloads...)
@@ -357,9 +352,6 @@ func schedulerValidateRequest(r SchedulerRequest, ids map[string]bool, reasons [
 	}
 	if r.Phase == phaseRunning && r.BatchID == "" {
 		reasons = appendUnique(reasons, "UnknownRunningBatch:"+r.ID)
-	}
-	if r.InputPath < 0 || r.InputPath >= len(r.Definition.Model.Paths) {
-		reasons = appendUnique(reasons, "UnknownInputRoute:"+r.ID)
 	}
 	if r.RemainingLifetime != nil && *r.RemainingLifetime < 0 {
 		reasons = appendUnique(reasons, "InvalidRequestLifetime:"+r.ID)
@@ -546,11 +538,6 @@ func schedulerPolicy(i SchedulerInstance) firstfloor.Policy {
 	return p
 }
 
-type schedulerRouteKey struct {
-	uid  string
-	path int
-}
-
 type schedulerReplayState struct {
 	settings       SchedulerSettings
 	snap           SchedulerSnapshot
@@ -565,7 +552,7 @@ type schedulerReplayState struct {
 	actions        []*schedulerReplayAction
 	actionByID     map[string]*schedulerReplayAction
 	requests       []*schedulerReplayRequest
-	routeCredits   map[schedulerRouteKey][]int64
+	routeCredits   map[string][]int64 // Workload UID
 	routingApplied bool
 	weights        []int32
 	available      []bool
@@ -580,7 +567,7 @@ func schedulerReplay(settings SchedulerSettings, snap SchedulerSnapshot, c Sched
 	if !s.initializeArrivals() || !s.initializeRunning() {
 		return s.out
 	}
-	s.routeCredits = map[schedulerRouteKey][]int64{}
+	s.routeCredits = map[string][]int64{}
 	s.routingApplied = c.Keep && snap.InProgressTarget == nil
 	s.weights = make([]int32, len(s.instances))
 	s.available = make([]bool, len(s.instances))
@@ -790,7 +777,7 @@ func (s *schedulerReplayState) initializeArrivals() bool {
 				s.out.reasons = append(s.out.reasons, "ReplayRequestBoundExceeded")
 				return false
 			}
-			r := SchedulerRequest{ID: fmt.Sprintf("replay-%g-%d", cycle, j), Definition: a.Definition, InputPath: a.InputPath, ReceivedAt: s.snap.At.Add(time.Duration(at)), Phase: phasePending}
+			r := SchedulerRequest{ID: fmt.Sprintf("replay-%g-%d", cycle, j), Definition: a.Definition, ReceivedAt: s.snap.At.Add(time.Duration(at)), Phase: phasePending}
 			x := &schedulerReplayRequest{source: r, arrival: at, native: math.Inf(1), expires: math.Inf(1)}
 			if a.Lifetime > 0 {
 				x.expires = at + float64(a.Lifetime)
@@ -804,7 +791,7 @@ func (s *schedulerReplayState) initializeArrivals() bool {
 
 func (s *schedulerReplayState) targetHandles(r *schedulerReplayRequest) bool {
 	for _, i := range s.goal.Instances {
-		if schedulerHas(i.WorkloadUIDs, r.source.Definition.UID) && schedulerRequestMatches(r.source.Definition, r.source.InputPath, i.Profile) {
+		if schedulerHas(i.WorkloadUIDs, r.source.Definition.UID) && schedulerProfileMatches(r.source.Definition, i.Profile) {
 			return true
 		}
 	}
@@ -816,7 +803,7 @@ func (s *schedulerReplayState) retainedIngress(i *schedulerReplayInstance) bool 
 		return false
 	}
 	for _, r := range s.requests {
-		if r.observed && !r.expired && !r.dispatched && !r.completed && schedulerHas(i.config.WorkloadUIDs, r.source.Definition.UID) && schedulerRequestMatches(r.source.Definition, r.source.InputPath, i.config.Profile) && !s.hasRoutedAlternative(r, i) {
+		if r.observed && !r.expired && !r.dispatched && !r.completed && schedulerHas(i.config.WorkloadUIDs, r.source.Definition.UID) && schedulerProfileMatches(r.source.Definition, i.config.Profile) && !s.hasRoutedAlternative(r, i) {
 			return true
 		}
 	}
@@ -829,7 +816,7 @@ func (s *schedulerReplayState) hasRoutedAlternative(r *schedulerReplayRequest, r
 		routing = s.goal.Routing
 	}
 	for _, other := range s.instances {
-		if other == retiring || !other.loaded || !other.ready || other.stopped || !schedulerHas(other.config.WorkloadUIDs, r.source.Definition.UID) || !schedulerRequestMatches(r.source.Definition, r.source.InputPath, other.config.Profile) {
+		if other == retiring || !other.loaded || !other.ready || other.stopped || !schedulerHas(other.config.WorkloadUIDs, r.source.Definition.UID) || !schedulerProfileMatches(r.source.Definition, other.config.Profile) {
 			continue
 		}
 		weight := other.config.Weight
@@ -1000,9 +987,9 @@ func (s *schedulerReplayState) dependenciesReady(a *schedulerReplayAction) bool 
 }
 
 func (s *schedulerReplayState) applyRoute() bool {
-	for key, credits := range s.routeCredits {
+	for uid, credits := range s.routeCredits {
 		for j, i := range s.instances {
-			credits[j] = s.retainedRouteCredit(key.uid, i.config, credits[j])
+			credits[j] = s.retainedRouteCredit(uid, i.config, credits[j])
 		}
 	}
 	for _, i := range s.instances {
@@ -1287,17 +1274,17 @@ func (s *schedulerReplayState) routeRequests() {
 		if r.completed || r.expired || r.dispatched || r.arrival > s.now {
 			continue
 		}
-		key := schedulerRouteKey{r.source.Definition.UID, r.source.InputPath}
-		credits := s.routeCredits[key]
+		uid := r.source.Definition.UID
+		credits := s.routeCredits[uid]
 		if len(credits) != len(s.instances) {
 			credits = make([]int64, len(s.instances))
 			for j, i := range s.instances {
-				credits[j] = s.snap.RoutingCredits[key.uid][key.path][i.config.ID]
+				credits[j] = s.snap.RoutingCredits[uid][i.config.ID]
 				if s.routingApplied {
-					credits[j] = s.retainedRouteCredit(key.uid, i.config, credits[j])
+					credits[j] = s.retainedRouteCredit(uid, i.config, credits[j])
 				}
 			}
-			s.routeCredits[key] = credits
+			s.routeCredits[uid] = credits
 		}
 		for j, i := range s.instances {
 			s.weights[j] = i.config.Weight
@@ -1311,7 +1298,7 @@ func (s *schedulerReplayState) routeRequests() {
 			if r.observed && !s.targetHandles(r) {
 				s.weights[j] = i.config.Weight
 			}
-			s.available[j] = i.loaded && i.ready && !i.stopped && i.outstanding < i.config.Capacity && schedulerHas(i.config.WorkloadUIDs, r.source.Definition.UID) && schedulerRequestMatches(r.source.Definition, r.source.InputPath, i.config.Profile)
+			s.available[j] = i.loaded && i.ready && !i.stopped && i.outstanding < i.config.Capacity && schedulerHas(i.config.WorkloadUIDs, uid) && schedulerProfileMatches(r.source.Definition, i.config.Profile)
 		}
 		selected := SmoothWeightedRoute(s.weights, credits, s.available)
 		if selected < 0 {
@@ -1677,7 +1664,7 @@ func schedulerIdleAtMode(i SchedulerInstance, mode string, options []SchedulerOp
 			continue
 		}
 		q := j.Profile.Condition
-		if q.PowerMode == mode && p.RuntimeFamily == q.RuntimeFamily && p.Backend == q.Backend && p.RuntimeImage == q.RuntimeImage && reflect.DeepEqual(p.Artifact, q.Artifact) && reflect.DeepEqual(p.Tensor, q.Tensor) && reflect.DeepEqual(p.CPU, q.CPU) && reflect.DeepEqual(p.Firstfloor, q.Firstfloor) && reflect.DeepEqual(p.RuntimeAccess, q.RuntimeAccess) && reflect.DeepEqual(p.PlannedBatchSizes, q.PlannedBatchSizes) {
+		if q.PowerMode == mode && p.RuntimeFamily == q.RuntimeFamily && p.Backend == q.Backend && p.RuntimeImage == q.RuntimeImage && reflect.DeepEqual(p.Artifact, q.Artifact) && reflect.DeepEqual(p.Preprocessor, q.Preprocessor) && reflect.DeepEqual(p.ActiveProtocol.Dataset, q.ActiveProtocol.Dataset) && reflect.DeepEqual(p.CPU, q.CPU) && reflect.DeepEqual(p.Firstfloor, q.Firstfloor) && reflect.DeepEqual(p.RuntimeAccess, q.RuntimeAccess) && reflect.DeepEqual(p.PlannedBatchSizes, q.PlannedBatchSizes) {
 			return j, true
 		}
 	}

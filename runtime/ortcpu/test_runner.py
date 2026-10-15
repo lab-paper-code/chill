@@ -9,96 +9,25 @@ from unittest import mock
 
 import runner
 
-REQUEST_SCHEMA = "chill.dacs.io/firstfloor-runtime-request.v1alpha1"
+REQUEST_SCHEMA = "chill.dacs.io/firstfloor-runtime-request.v1alpha2"
 
 
 def validate(request: dict[str, object]) -> None:
     runner.validate_request(request, REQUEST_SCHEMA, "ort-cpu")
 
 
-class FakeArray:
-    shape = (1, 1000)
-    size = 1000
-
-
-
-class FakeSample:
-    nbytes = 1 * 3 * 224 * 224 * 4
-
-    def __init__(self) -> None:
-        self.flat = FakeFlat(self.nbytes // 4)
-
-    def reshape(self, dimension: int) -> "FakeFlat":
-        if dimension != -1:
-            raise AssertionError(f"unexpected reshape dimension {dimension}")
-        return self.flat
-
-
-class FakeFlat:
-    def __init__(self, length: int) -> None:
-        self.length = length
-
-    def __len__(self) -> int:
-        return self.length
-
-    def __setitem__(self, key: slice, values: "FakeChunk") -> None:
-        if key.start is None or key.stop is None or key.step is not None:
-            raise AssertionError(f"unexpected input slice {key}")
-        if values.length != key.stop - key.start:
-            raise AssertionError(
-                "generated chunk length does not match its destination"
-            )
-
-
-class FakeChunk:
-    def __init__(self, length: int) -> None:
-        self.length = length
-
-
-class FakeGenerator:
-    def __init__(self) -> None:
-        self.calls: list[int] = []
-
-    def standard_normal(self, length: int) -> FakeChunk:
-        self.calls.append(length)
-        return FakeChunk(length)
-
-
-class FakeNumpy:
-    float32 = object()
-    last_generator: FakeGenerator | None = None
-
-    @staticmethod
-    def empty(shape: list[int], *, dtype: object) -> FakeSample:
-        if shape != [1, 3, 224, 224] or dtype is not FakeNumpy.float32:
-            raise AssertionError(
-                f"unexpected input allocation shape={shape} dtype={dtype}"
-            )
-        return FakeSample()
-
-    class random:
-        @staticmethod
-        def default_rng(seed: int) -> FakeGenerator:
-            if seed != 0:
-                raise AssertionError(f"unexpected seed {seed}")
-            generator = FakeGenerator()
-            FakeNumpy.last_generator = generator
-            return generator
-
-
 class FakeSession:
     def __init__(self) -> None:
-        self.calls = 0
+        self.calls: list[str] = []
 
     def get_providers(self) -> list[str]:
         return ["CPUExecutionProvider"]
 
-    def run(self, _outputs: object, feeds: dict[str, FakeSample]) -> list[FakeArray]:
-        if set(feeds) != {"input"}:
-            raise AssertionError(f"unexpected feeds {feeds}")
-        self.calls += 1
-        return [FakeArray()]
+    def prepare_next(self) -> None:
+        self.calls.append("prepare")
 
+    def run(self) -> None:
+        self.calls.append("run")
 
 
 def valid_request(model_path: Path) -> dict[str, object]:
@@ -106,7 +35,9 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "schemaVersion": REQUEST_SCHEMA,
         "podUID": "pod-uid",
         "scheduledNodeName": "lattepanda",
-        "modelPath": str(model_path),
+        "modelDirectory": "/model",
+        "preprocessorPath": "/preprocessor",
+        "datasetPath": "/dataset",
         "observerReadyPaths": [
             str(model_path.parent / "observer-ready"),
             str(model_path.parent / "workload-observer-ready"),
@@ -126,16 +57,23 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "deviceClass": "lattepanda-3-delta-8g",
                 "model": "mobilenet-v2-050",
                 "artifact": "canonical-onnx",
-                "artifactPath": "/artifact/mobilenet-v2-050.onnx",
+                "artifactFiles": ["/artifact/mobilenet-v2-050.onnx"],
                 "runtimeFamily": "firstfloor",
                 "backend": "ort-cpu",
                 "powerMode": "fixed",
                 "firstfloor": {"maxBatchSize": 1, "maxQueueSize": 1},
+                "preprocessor": {
+                    "name": "mobilenet-imagenet",
+                    "uid": "pre-uid",
+                    "image": "registry/preprocessors:1",
+                    "architecture": "amd64",
+                    "path": "/artifact/mobilenet-nchw",
+                    "inputs": ["image"],
+                    "outputs": ["label"],
+                },
             },
             "images": {},
-            "delivery": {"artifactCapability": {"tensors": [
-                {"name": "input", "datatype": "FP32", "sampleShape": [3, 224, 224]}
-            ]}},
+            "delivery": {"artifactCapability": {}},
             "targetNode": {
                 "name": "lattepanda",
                 "uid": "node-uid",
@@ -157,8 +95,12 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "warmupIterations": 2,
                 "durationSeconds": 1,
                 "workloadMode": runner.SUPPORTED_WORKLOAD,
-                "inputGenerator": runner.SUPPORTED_INPUT_GENERATOR,
-                "outputValidation": runner.SUPPORTED_OUTPUT_VALIDATION,
+                "dataset": {
+                    "name": "vqav2",
+                    "uid": "dataset-uid",
+                    "image": "registry/datasets:1",
+                    "path": "/artifact/vqav2",
+                },
             },
             "metrics": {},
             "workload": {},
@@ -168,56 +110,39 @@ def valid_request(model_path: Path) -> dict[str, object]:
 
 def valid_idle_request(model_path: Path) -> dict[str, object]:
     request = valid_request(model_path)
+    del request["datasetPath"]
     request["runConfig"]["measurement"] = {
         "batch": 1,
         "warmupIterations": 0,
         "settlingDurationSeconds": 60,
         "durationSeconds": 30,
         "workloadMode": runner.IDLE_WORKLOAD,
-        "inputGenerator": runner.NO_INPUT_GENERATOR,
-        "outputValidation": runner.NO_OUTPUT_VALIDATION,
     }
     return request
 
 
 class RunnerTest(unittest.TestCase):
-    def test_generate_inputs_uses_declared_dtypes(self) -> None:
-        import numpy
-
-        tensors = [
-            {"name": "tokens", "datatype": "INT64", "sampleShape": [4]},
-            {"name": "weights", "datatype": "FP32", "sampleShape": [4]},
-            {"name": "mask", "datatype": "BOOL", "sampleShape": [4]},
-        ]
-        feeds = runner.generate_inputs(numpy, tensors, 2, 1 << 20)
-        self.assertEqual(set(feeds), {"tokens", "weights", "mask"})
-        self.assertEqual(feeds["tokens"].dtype, numpy.dtype("int64"))
-        self.assertEqual(feeds["weights"].dtype, numpy.dtype("float32"))
-        self.assertEqual(feeds["mask"].dtype, numpy.dtype("bool"))
-        self.assertTrue(all(value.shape == (2, 4) for value in feeds.values()))
-
-    def test_capability_requires_named_typed_tensors(self) -> None:
-        for tensors, message in [
-            ([], "non-empty"),
-            ([{"name": "input", "datatype": "float32", "sampleShape": [4]}], "datatype"),
-            ([{"name": "input", "datatype": "FP32", "sampleShape": [0]}], "sampleShape"),
-            ([{"name": "input", "datatype": "FP32", "sampleShape": [4]}] * 2, "unique"),
+    def test_raw_sample_contract_fields_are_required_by_mode(self) -> None:
+        validate(valid_idle_request(Path("/model")))
+        for mutate, message in [
+            (lambda r: r.pop("datasetPath"), "missing=\\['datasetPath'\\]"),
+            (lambda r: r.update(modelPath="/model/model.onnx"), "unknown=\\['modelPath'\\]"),
+            (lambda r: r["runConfig"]["measurement"].pop("dataset"), "missing=\\['dataset'\\]"),
+            (lambda r: r["runConfig"]["measurement"].update(inputGenerator="none"), "inputGenerator"),
+            (lambda r: r["runConfig"]["state"].update(artifactFiles=[]), "artifactFiles"),
+            (lambda r: r["runConfig"]["state"].update(artifactFiles=["/a/m.onnx", "/b/m.onnx"]), "basenames"),
+            (lambda r: r["runConfig"]["state"]["preprocessor"].update(inputs=["image", "image"]), "unique"),
+            (lambda r: r["runConfig"]["state"]["preprocessor"].update(maxNewTokens=0), "maxNewTokens"),
         ]:
-            with self.subTest(tensors=tensors):
-                request = valid_request(Path("/model.onnx"))
-                request["runConfig"]["delivery"]["artifactCapability"]["tensors"] = tensors
+            with self.subTest(message=message):
+                request = valid_request(Path("/model"))
+                mutate(request)
                 with self.assertRaisesRegex(runner.ContractError, message):
                     validate(request)
-
-    def test_multi_input_budget_is_admitted_before_any_allocation(self) -> None:
-        numpy = mock.Mock()
-        tensors = [
-            {"name": name, "datatype": "FP32", "sampleShape": [4]}
-            for name in ("first", "second")
-        ]
-        with self.assertRaisesRegex(runner.ContractError, "size budget"):
-            runner.generate_inputs(numpy, tensors, 1, 16)
-        numpy.empty.assert_not_called()
+        idle = valid_idle_request(Path("/model"))
+        idle["datasetPath"] = "/dataset"
+        with self.assertRaisesRegex(runner.ContractError, "unknown=\\['datasetPath'\\]"):
+            validate(idle)
 
     def test_decode_request_rejects_duplicate_field(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "duplicate JSON field"):
@@ -361,8 +286,6 @@ class RunnerTest(unittest.TestCase):
                 validate(idle)
 
     def test_producer_budgets_fail_before_growth(self) -> None:
-        with self.assertRaisesRegex(runner.ContractError, "input tensors"):
-            runner.admitted_input_bytes([8, 3, 224, 224], "FP32", 1024)
         with self.assertRaisesRegex(runner.ContractError, "latency sample budget"):
             runner.measurement_complete(0.5, 1, 10, 10)
         self.assertTrue(runner.measurement_complete(1.0, 1, 10, 10))
@@ -454,9 +377,6 @@ class RunnerTest(unittest.TestCase):
 
     def test_execute_loaded_produces_bound_runtime_result(self) -> None:
         request = valid_request(Path("/model/model.onnx"))
-        feeds = runner.generate_inputs(
-            FakeNumpy, request["runConfig"]["delivery"]["artifactCapability"]["tensors"], 1, 1 << 20
-        )
         session = FakeSession()
         before = mock.Mock()
         with ExitStack() as stack:
@@ -478,11 +398,14 @@ class RunnerTest(unittest.TestCase):
                 )
             )
             stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 1.1, 1.1]))
-            stack.enter_context(mock.patch.object(runner.time, "perf_counter_ns", side_effect=[0, 5_000_000]))
+            ticks = iter([0, 5_000_000])
+            stack.enter_context(mock.patch.object(
+                runner.time, "perf_counter_ns", side_effect=lambda: session.calls.append("timer") or next(ticks)
+            ))
             stack.enter_context(mock.patch.object(runner.time, "process_time", side_effect=[2.0, 2.8]))
             result = runner.execute_loaded(
                 request, session, "test-ort", ["CPUExecutionProvider"], "x86_64",
-                "400000 100000", [0, 1, 2, 3], "0-3", feeds, before, "CPUExecutionProvider",
+                "400000 100000", [0, 1, 2, 3], "0-3", before, "CPUExecutionProvider",
             )
 
         before.assert_called_once_with()
@@ -499,9 +422,10 @@ class RunnerTest(unittest.TestCase):
             [mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]]
             + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
         )
-        self.assertEqual(session.calls, 1)
+        self.assertEqual(session.calls, ["prepare", "timer", "run", "timer"])
         self.assertEqual(result["schemaVersion"], runner.RESULT_SCHEMA)
-        self.assertEqual(result["inputs"], request["runConfig"]["delivery"]["artifactCapability"]["tensors"])
+        self.assertEqual(result["inputs"], ["image"])
+        self.assertNotIn("outputValidation", result)
         self.assertEqual(result["status"], "Succeeded")
         self.assertEqual(result["experimentId"], "pod-uid")
         self.assertEqual(result["nodeName"], request["scheduledNodeName"])
@@ -510,12 +434,6 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(result["latencyMs"]["mean"], 5.0)
         self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 20})
         self.assertEqual(result["derivedExecutionContract"]["nodeSnapshot"]["uid"], "node-uid")
-        self.assertEqual(result["outputValidation"]["outputShapes"], [[1, 1000]])
-        generator = FakeNumpy.last_generator
-        if generator is None:
-            self.fail("input generator was not created")
-        self.assertEqual(sum(generator.calls), 1 * 3 * 224 * 224)
-        self.assertLessEqual(max(generator.calls), runner.INPUT_GENERATION_CHUNK_ELEMENTS)
 
     def test_execute_idle_issues_no_inference(self) -> None:
         request = valid_idle_request(Path("/model/model.onnx"))
@@ -551,9 +469,9 @@ class RunnerTest(unittest.TestCase):
                 "400000 100000", [0, 1, 2, 3], "0-3", "2026-07-16T00:00:00.000000Z", "CPUExecutionProvider",
             )
 
-        self.assertEqual(session.calls, 0)
+        self.assertEqual(session.calls, [])
         self.assertEqual(result["schemaVersion"], runner.IDLE_RESULT_SCHEMA)
-        self.assertEqual(result["inputs"], request["runConfig"]["delivery"]["artifactCapability"]["tensors"])
+        self.assertEqual(result["inputs"], ["image"])
         self.assertEqual(result["inferenceCountAfterModelLoad"], 0)
         self.assertTrue(result["modelResidentAtEnd"])
         self.assertEqual(result["settlingStartedAt"], "2026-07-16T00:00:01.000000Z")

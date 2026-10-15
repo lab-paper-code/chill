@@ -115,16 +115,8 @@ func buildRuntimeAdapter(
 	runConfig profilingrun.VerifiedRunConfig,
 	stdout, stderr io.Writer,
 ) (worker.Runtime, error) {
-	runConfigRecord, err := runConfig.Record()
-	if err != nil {
-		return nil, err
-	}
-	modelPath := opts.modelPath
-	if runConfigRecord.State.Backend == profilingrun.FirstfloorRKNNLiteBackend {
-		modelPath = defaultRKNNLiteModelPath
-	}
 	runtimeAdapter, err := worker.NewFirstfloorRuntime(worker.CPURuntimeConfig{
-		Command: opts.firstfloorRuntimeCommand, ModelPath: modelPath,
+		Command:            opts.firstfloorRuntimeCommand,
 		ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
 		MeasurementStartPath:    opts.measurementStartPath,
 		WorkloadWindowReadyPath: opts.workloadWindowReadyPath,

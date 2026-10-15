@@ -15,22 +15,70 @@ import (
 	"time"
 )
 
+// wireTensor describes one BYTES field: shape [n] and the byte length of its n
+// framed elements in the payload.
 type wireTensor struct {
-	InputSpec
-	Bytes int `json:"bytes"`
+	Name     string `json:"name"`
+	Datatype string `json:"datatype"`
+	Shape    []int  `json:"shape"`
+	Bytes    int    `json:"bytes"`
+}
+
+// itemResult is one request's preprocess report: a unit count or a failure reason.
+type itemResult struct {
+	Units int    `json:"units,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 type frame struct {
-	Type       string           `json:"type"`
-	BatchID    uint64           `json:"batch_id,omitempty"`
-	BatchSizes []int            `json:"batch_sizes,omitempty"`
-	Inputs     []InputSpec      `json:"inputs,omitempty"`
-	Tensors    []wireTensor     `json:"tensors,omitempty"`
-	DataBytes  int              `json:"data_bytes"`
-	Error      string           `json:"error,omitempty"`
-	Metadata   *RuntimeMetadata `json:"metadata,omitempty"`
-	BackendMS  float64          `json:"backend_ms,omitempty"`
-	ServiceMS  float64          `json:"service_ms,omitempty"`
+	Type          string           `json:"type"`
+	BatchID       uint64           `json:"batch_id,omitempty"`
+	BatchSizes    []int            `json:"batch_sizes,omitempty"`
+	Inputs        []string         `json:"inputs,omitempty"`
+	Outputs       []string         `json:"outputs,omitempty"`
+	MaxNewTokens  int              `json:"max_new_tokens"`
+	Tensors       []wireTensor     `json:"tensors,omitempty"`
+	Items         []itemResult     `json:"items,omitempty"`
+	DataBytes     int              `json:"data_bytes"`
+	Error         string           `json:"error,omitempty"`
+	Metadata      *RuntimeMetadata `json:"metadata,omitempty"`
+	ServiceMS     float64          `json:"service_ms,omitempty"`
+	PreprocessMS  float64          `json:"preprocess_ms,omitempty"`
+	BackendMS     float64          `json:"backend_ms,omitempty"`
+	PostprocessMS float64          `json:"postprocess_ms,omitempty"`
+	FirstTokenMS  float64          `json:"first_token_ms,omitempty"`
 }
+
+// batchError ends one batch whose module result broke the contract; the runner keeps serving.
+type batchError struct{ reason string }
+
+func (e *batchError) Error() string { return e.reason }
+
+// preprocessError ends one request whose sample the preprocessor module rejected.
+type preprocessError struct{ reason string }
+
+func (e *preprocessError) Error() string { return e.reason }
+
+// unframe splits n elements, each framed as uint32 little-endian length plus bytes.
+func unframe(b []byte, n int) ([][]byte, error) {
+	out := make([][]byte, 0, n)
+	for len(b) > 0 && len(out) < n {
+		if len(b) < 4 {
+			return nil, errors.New("truncated BYTES element length")
+		}
+		size := binary.LittleEndian.Uint32(b)
+		b = b[4:]
+		if uint64(size) > uint64(len(b)) {
+			return nil, errors.New("truncated BYTES element")
+		}
+		out = append(out, b[:size:size])
+		b = b[size:]
+	}
+	if len(out) != n || len(b) != 0 {
+		return nil, errors.New("BYTES element count differs from shape")
+	}
+	return out, nil
+}
+
 type Runner struct {
 	command    *exec.Cmd
 	input      io.WriteCloser
@@ -41,6 +89,7 @@ type Runner struct {
 	timeout    time.Duration
 	batchSizes []int
 	metadata   RuntimeMetadata
+	generative bool
 	closeOnce  sync.Once
 }
 
@@ -67,7 +116,7 @@ func StartRunner(ctx context.Context, cfg *Config) (*Runner, error) {
 		cancel()
 		return nil, err
 	}
-	r := &Runner{command: command, input: input, output: output, cancel: cancel, exited: make(chan struct{}), timeout: time.Duration(cfg.RunnerTimeoutMS) * time.Millisecond, batchSizes: cfg.BatchSizes}
+	r := &Runner{command: command, input: input, output: output, cancel: cancel, exited: make(chan struct{}), timeout: time.Duration(cfg.RunnerTimeoutMS) * time.Millisecond, batchSizes: cfg.BatchSizes, generative: cfg.MaxNewTokens > 0}
 	go func() { r.waitErr = command.Wait(); close(r.exited) }()
 	if err = childOutput.Close(); err != nil {
 		r.Close()
@@ -79,7 +128,7 @@ func StartRunner(ctx context.Context, cfg *Config) (*Runner, error) {
 	}
 	ready := make(chan reply, 1)
 	go func() {
-		e := writeFrame(input, frame{Type: "init", Inputs: cfg.Inputs, BatchSizes: cfg.BatchSizes}, nil)
+		e := writeFrame(input, frame{Type: "init", Inputs: cfg.Inputs, Outputs: cfg.Outputs, BatchSizes: cfg.BatchSizes, MaxNewTokens: cfg.MaxNewTokens}, nil)
 		var h frame
 		if e == nil {
 			var b []byte
@@ -99,7 +148,7 @@ func StartRunner(ctx context.Context, cfg *Config) (*Runner, error) {
 	case v := <-ready:
 		if v.err == nil {
 			m := v.header.Metadata
-			if !reflect.DeepEqual(m.Inputs, cfg.Inputs) || !reflect.DeepEqual(m.InitializedBatches, cfg.BatchSizes) || m.Runtime == "" || m.WarmupIterations < 0 || len(m.Outputs) == 0 {
+			if !reflect.DeepEqual(m.Inputs, cfg.Inputs) || !reflect.DeepEqual(m.Outputs, cfg.Outputs) || !reflect.DeepEqual(m.InitializedBatches, cfg.BatchSizes) || m.Runtime == "" || m.WarmupIterations < 0 {
 				v.err = errors.New("initialized runner metadata differs from execution contract")
 			}
 			if v.err == nil {
@@ -127,10 +176,13 @@ func (r *Runner) Close() {
 	})
 }
 
+// runnerOutput is one completed execution: per-request items, output fields
+// holding one element per successful request, and batch stage spans.
 type runnerOutput struct {
-	tensors              []wireTensor
-	data                 []byte
-	serviceMS, backendMS float64
+	items                                []itemResult
+	outputs                              []Field
+	serviceMS, backendMS                 float64
+	preprocessMS, postprocessMS, firstMS float64
 }
 
 // Only the actor's active batch calls infer. Caller cancellation never reaches
@@ -153,7 +205,8 @@ func (r *Runner) infer(ctx context.Context, id uint64, tensors []wireTensor, dat
 	defer timer.Stop()
 	select {
 	case v := <-done:
-		if v.e != nil {
+		var be *batchError
+		if v.e != nil && !errors.As(v.e, &be) {
 			r.Close()
 		}
 		return v.o, v.e
@@ -173,26 +226,60 @@ func (r *Runner) exchange(id uint64, tensors []wireTensor, data [][]byte) (runne
 	if e != nil {
 		return runnerOutput{}, e
 	}
-	if h.Type == "error" {
+	switch h.Type {
+	case "error":
 		return runnerOutput{}, fmt.Errorf("runner: %s", h.Error)
-	}
-	if h.Type != "output" || h.BatchID != id || len(h.Tensors) != len(r.metadata.Outputs) || !durationOK(h.ServiceMS) || h.ServiceMS <= 0 || !durationOK(h.BackendMS) || h.BackendMS > h.ServiceMS {
+	case "batch_error":
+		if h.BatchID != id || len(b) != 0 || h.Error == "" || len(h.Error) > MaxErrorBytes {
+			return runnerOutput{}, errors.New("invalid runner batch error")
+		}
+		return runnerOutput{}, &batchError{h.Error}
+	case "output":
+	default:
 		return runnerOutput{}, errors.New("invalid runner completion")
 	}
+	successes, e := r.validateOutput(h, id, tensors[0].Shape[0])
+	if e != nil {
+		return runnerOutput{}, e
+	}
+	o := runnerOutput{items: h.Items, outputs: make([]Field, len(h.Tensors)), serviceMS: h.ServiceMS, backendMS: h.BackendMS, preprocessMS: h.PreprocessMS, postprocessMS: h.PostprocessMS, firstMS: h.FirstTokenMS}
 	offset := 0
 	for i, t := range h.Tensors {
-		expected := r.metadata.Outputs[i]
-		n, e := tensorElements(t.Shape)
-		w := datatypeBytes(t.Datatype)
-		if t.Name != expected.Name || t.Datatype != expected.Datatype || len(t.Shape) == 0 || !reflect.DeepEqual(t.Shape[1:], expected.Shape) || t.Shape[0] != tensors[0].Shape[0] || e != nil || w == 0 || n > MaxFrameBytes/w || t.Bytes != n*w || t.Bytes > len(b)-offset {
+		if t.Name != r.metadata.Outputs[i] || t.Datatype != "BYTES" || len(t.Shape) != 1 || t.Shape[0] != successes || t.Bytes < 0 || t.Bytes > len(b)-offset {
 			return runnerOutput{}, errors.New("invalid named output contract")
 		}
+		elements, e := unframe(b[offset:offset+t.Bytes], successes)
+		if e != nil {
+			return runnerOutput{}, e
+		}
+		o.outputs[i] = Field{Name: t.Name, Data: elements}
 		offset += t.Bytes
 	}
 	if offset != len(b) {
 		return runnerOutput{}, errors.New("output payload contains unbound bytes")
 	}
-	return runnerOutput{h.Tensors, b, h.ServiceMS, h.BackendMS}, nil
+	return o, nil
+}
+
+// validateOutput checks an output frame header and returns its success count.
+func (r *Runner) validateOutput(h frame, id uint64, items int) (int, error) {
+	stages := h.PreprocessMS + h.BackendMS + h.PostprocessMS
+	if h.BatchID != id || len(h.Items) != items || len(h.Tensors) != len(r.metadata.Outputs) || !durationOK(h.ServiceMS) || h.ServiceMS <= 0 || !durationOK(h.PreprocessMS) || !durationOK(h.BackendMS) || !durationOK(h.PostprocessMS) || !durationOK(h.FirstTokenMS) || stages > h.ServiceMS || h.FirstTokenMS > h.BackendMS {
+		return 0, errors.New("invalid runner completion")
+	}
+	successes := 0
+	for _, item := range h.Items {
+		if (item.Units >= 1) == (item.Error != "") || item.Units < 0 || len(item.Error) > MaxErrorBytes {
+			return 0, errors.New("runner item must carry a unit count or a failure reason")
+		}
+		if item.Units > 0 {
+			successes++
+		}
+	}
+	if h.FirstTokenMS != 0 && !(r.generative && successes > 0) {
+		return 0, errors.New("first-token span belongs only to generative batches with successes")
+	}
+	return successes, nil
 }
 func writeFrame(writer io.Writer, header frame, data [][]byte) error {
 	total := 0

@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	stateIdentitySchemaVersion               = "chill.dacs.io/execution-state-identity.v1alpha5"
+	stateIdentitySchemaVersion               = "chill.dacs.io/execution-state-identity.v1alpha6"
 	environmentIdentitySchemaVersion         = "chill.dacs.io/external-environment-identity.v1alpha1"
-	measurementProtocolIdentitySchemaVersion = "chill.dacs.io/measurement-protocol-identity.v1alpha1"
+	measurementProtocolIdentitySchemaVersion = "chill.dacs.io/measurement-protocol-identity.v1alpha2"
 )
 
 // RunIdentities separates baseline-compatible execution state from the

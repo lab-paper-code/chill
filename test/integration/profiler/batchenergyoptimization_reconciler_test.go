@@ -8,7 +8,6 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	batchcontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
@@ -340,13 +339,13 @@ func createBatchEnergyOptimization(
 			State: edgev1alpha1.MeasurementStateSpec{
 				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
 					ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
-					ExecutionPath: "ort-cpu", PowerMode: "fixed",
+					ExecutionPath: "ort-cpu", PowerMode: "fixed", Preprocessor: "mobilenet-imagenet",
 				},
 				TargetNode: "lattepanda", CPURequest: resource.MustParse("100m"),
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				WarmupIterations: 20, DurationSeconds: 30,
-				InputGenerator: "numpy-default-rng-seed-0-inputs-v1", OutputValidation: "nonempty-shape-batch-v1",
+				Dataset: "vqav2-val-subset",
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 900, DurationSeconds: 31,
 				},
@@ -573,7 +572,7 @@ func integrationCurvePlan(t *testing.T) profilederivation.CurvePlan {
 	}
 	protocol := func(mode string) profilederivation.CurveProtocolContract {
 		return profilederivation.CurveProtocolContract{
-			WorkloadMode: mode, InputGenerator: "seeded", OutputValidation: "shape",
+			WorkloadMode:    mode,
 			DurationSeconds: 30, MetricIntervalMilliseconds: 1000,
 			MetricTimeoutMilliseconds: 900, MetricDurationSeconds: 31,
 			MetricObserverImage: image("metric", "a"), WorkloadObserverImage: image("workload", "b"),
@@ -582,9 +581,8 @@ func integrationCurvePlan(t *testing.T) profilederivation.CurvePlan {
 	}
 	active := protocol("saturated-serial-fixed-batch")
 	active.WarmupIterations = 20
+	active.Dataset = &profilederivation.CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
 	idle := protocol("idle-model-loaded")
-	idle.InputGenerator = "none"
-	idle.OutputValidation = "none"
 	idle.SettlingDurationSeconds = 5
 	plan, err := profilederivation.NewCurvePlan(profilederivation.CurvePlanSpec{
 		Name: "integration-curve", LogicalModel: "mobilenet-v2-050",
@@ -599,13 +597,14 @@ func integrationCurvePlan(t *testing.T) profilederivation.CurvePlan {
 		},
 		ActiveProtocol: active, IdleProtocol: idle,
 		Artifact: profilederivation.CurveArtifactContract{
-			ExecutionPath: "ort-cpu", Name: "mobilenet", Path: "/models/mobilenet.onnx",
+			ExecutionPath: "ort-cpu", Name: "mobilenet", Files: []string{"/models/mobilenet.onnx"},
 			Image: image("artifact", "d"),
 		},
-		PlannedBatchSizes: []int{1, 2},
-		Tensor: profilederivation.CurveTensorContract{
-			Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}},
+		Preprocessor: profilederivation.CurvePreprocessorContract{
+			Name: "mobilenet-imagenet", Image: image("preprocessor", "e"), Architecture: "amd64",
+			Path: "/artifact/mobilenet-nchw", Inputs: []string{"image"}, Outputs: []string{"label"},
 		},
+		PlannedBatchSizes: []int{1, 2},
 	})
 	if err != nil {
 		t.Fatal(err)

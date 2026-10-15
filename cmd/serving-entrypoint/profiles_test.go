@@ -37,12 +37,18 @@ func measuredAdoptionProfile() serving.Profile {
 		ID: "measurements/complete/uid", NodeName: "node",
 		Condition: derivation.CurvePlanSpec{
 			NodeUID: "node-uid", Backend: "ort-cuda", RuntimeImage: "registry/cuda@sha256:measured",
-			Artifact:   derivation.CurveArtifactContract{Path: "/artifact/model.onnx"},
+			Artifact: derivation.CurveArtifactContract{Files: []string{"/artifact/model.onnx"}},
+			Preprocessor: derivation.CurvePreprocessorContract{
+				Name: "pre", Inputs: []string{"image"}, Outputs: []string{"label"}, MaxNewTokens: 16,
+			},
+			ActiveProtocol: derivation.CurveProtocolContract{
+				Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"},
+			},
 			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 8},
 		},
 		RuntimeMetadata: &native.RuntimeMetadata{
-			Runtime: "ort-cuda", ModelPath: "/model/model.onnx",
-			Inputs:  []native.InputSpec{{Name: "input", Datatype: "FP32", Shape: []int{1}}},
+			Runtime: "ort-cuda", ModelFiles: []string{"/model/model.onnx"},
+			Inputs: []string{"image"}, Outputs: []string{"label"},
 			GPUUUID: "GPU-measured", CPUAffinity: []int{3}, IntraOpThreads: 1, InterOpThreads: 1,
 			WarmupIterations: 5, InitializedBatches: []int{1, 2, 4},
 		},
@@ -102,8 +108,13 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	}
 	if !reflect.DeepEqual(spec.Instance.Allocation.CPUs, []int{3}) ||
 		spec.Instance.Allocation.GPUUUID != "GPU-measured" ||
-		!strings.Contains(strings.Join(spec.Config.RunnerCommand, " "), "--runtime ort-cuda") {
+		!strings.Contains(strings.Join(spec.Config.RunnerCommand, " "),
+			"--runtime ort-cuda --model-dir /model --preprocessor /preprocessor") {
 		t.Fatal("measured GPU/runtime allocation changed")
+	}
+	if !reflect.DeepEqual(spec.Config.Inputs, []string{"image"}) ||
+		!reflect.DeepEqual(spec.Config.Outputs, []string{"label"}) || spec.Config.MaxNewTokens != 16 {
+		t.Fatalf("native raw contract differs from the frozen preprocessor: %+v", spec.Config)
 	}
 	bundle := profile.NativeBundle()
 	if !reflect.DeepEqual(bundle.Batches[0].ServiceSamplesMS, []float64{1, 2}) ||
@@ -229,8 +240,12 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		Name: "workload", UID: "workload-uid", Generation: 1,
 		SLO:     serving.SLO{Percentile: 99, TargetLatency: time.Second},
 		Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"},
+		Preprocessor: serving.Preprocessor{
+			Name: "pre", Input: []serving.RawField{{Name: "image"}}, Output: []serving.RawField{{Name: "label"}},
+			MaxNewTokens: 16,
+		},
 		Model: serving.Model{Name: "model", UID: "model-uid", Generation: 1, Paths: []serving.ModelPath{{
-			Path: profile.Condition.Artifact.Path, Backend: profile.Condition.Backend,
+			Files: profile.Condition.Artifact.Files, Backend: profile.Condition.Backend,
 			Firstfloor: profile.Condition.Firstfloor,
 		}}},
 	}

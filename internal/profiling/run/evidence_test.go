@@ -3,22 +3,15 @@ package profilingrun
 import (
 	"testing"
 	"time"
-
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
-func TestValidateRuntimeRejectsMaterialAndOutputDrift(t *testing.T) {
+func TestValidateRuntimeRejectsMaterialDrift(t *testing.T) {
 	config := firstfloorRunConfig()
 	valid := firstfloorResult(config)
 	if err := ValidateRuntime(config, "pod-uid", valid); err != nil {
 		t.Fatal(err)
 	}
 	invalid := valid
-	invalid.OutputValidation.Passed = false
-	if err := ValidateRuntime(config, "pod-uid", invalid); err == nil {
-		t.Fatal("expected output drift rejection")
-	}
-	invalid = valid
 	invalid.NodeName = "other-node"
 	if err := ValidateRuntime(config, "pod-uid", invalid); err == nil {
 		t.Fatal("expected Node drift rejection")
@@ -44,23 +37,14 @@ func TestValidateRuntimeRejectsMaterialAndOutputDrift(t *testing.T) {
 	}
 }
 
-func TestRuntimeEvidenceRejectsNamedInputDrift(t *testing.T) {
-	for _, field := range []string{"name", testDatatypeField, testShapeField, "missing"} {
-		t.Run(field, func(t *testing.T) {
+func TestRuntimeEvidenceRejectsRawInputFieldDrift(t *testing.T) {
+	for name, inputs := range map[string][]string{"renamed": {"other"}, "missing": nil, "extra": {"image", "question"}} {
+		t.Run(name, func(t *testing.T) {
 			config := firstfloorRunConfig()
 			result := firstfloorResult(config)
-			switch field {
-			case "name":
-				result.Inputs[0].Name = testDifferentIdentity
-			case testDatatypeField:
-				result.Inputs[0].Datatype = testINT64Datatype
-			case testShapeField:
-				result.Inputs[0].SampleShape[0]++
-			case "missing":
-				result.Inputs = nil
-			}
+			result.Inputs = inputs
 			if err := ValidateRuntime(config, "pod-uid", result); err == nil {
-				t.Fatal("runtime input evidence drift was accepted")
+				t.Fatal("runtime input field evidence drift was accepted")
 			}
 		})
 	}
@@ -110,14 +94,11 @@ func validRuntimeResult(config RunConfig) RuntimeResult {
 		Runtime:      config.State.RuntimeFamily,
 		Architecture: "x86_64", RuntimeVersion: "1", Backend: config.State.Backend, Provider: config.State.Backend,
 		AvailableProviders: []string{config.State.Backend},
-		Inputs:             modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+		Inputs:             config.State.Preprocessor.Inputs,
 		BatchSize:          1, WarmupIterations: 20, WarmupCompletedAt: "2026-01-01T00:00:00Z",
 		InferenceCount: 1, MeasurementMode: "duration",
 		MeasurementStartedAt: "2026-01-01T00:00:01Z", MeasurementEndedAt: "2026-01-01T00:00:31Z",
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
-		OutputValidation: OutputValidation{
-			Method: config.Measurement.OutputValidation, Passed: true, OutputShapes: [][]int{{1, 1000}},
-		},
 		CPUContract: RuntimeCPU{
 			CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4, ORTInterOpThreads: 1,
 			AffinityCPUCount: 4, CPUSetEffective: "0-3",
@@ -176,7 +157,7 @@ func TestValidateRuntimeRequiresCompleteRKNNLiteEvidence(t *testing.T) {
 	result.DerivedContract.Provider = ""
 	result.RKNN = validRKNNRuntimeEvidence(config.Measurement.Batch)
 	native := &result.Firstfloor.Runtime
-	native.Runtime, native.RuntimeVersion, native.ModelPath = FirstfloorRKNNLiteBackend, "2.3.2", "/model/model.rknn"
+	native.Runtime, native.RuntimeVersion, native.ModelFiles = FirstfloorRKNNLiteBackend, "2.3.2", config.State.ModelFiles()
 	native.Providers, native.AvailableProviders, native.Device = nil, nil, "npu"
 	native.IntraOpThreads, native.InterOpThreads = 0, 0
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
@@ -213,8 +194,7 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 	active := firstfloorResult(config)
 	config.Measurement = MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
-		OutputValidation: NoOutputValidation,
+		WorkloadMode: IdleModelLoadedWorkloadMode,
 	}
 	native := *active.Firstfloor
 	native.ExecutionCount, native.InferenceCount = 0, 0
@@ -225,7 +205,7 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 		Architecture: "x86_64",
 		Runtime:      config.State.RuntimeFamily, RuntimeVersion: active.RuntimeVersion, Backend: config.State.Backend,
 		Provider: active.Provider, AvailableProviders: active.AvailableProviders,
-		Inputs:               modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+		Inputs:               config.State.Preprocessor.Inputs,
 		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
 		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
 		MeasurementEndedAt: "2026-01-01T00:01:31Z", MeasurementElapsedSeconds: 30,

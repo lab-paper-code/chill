@@ -29,7 +29,7 @@ func TestNativeCompletionRequiresContainedMonotonicSpans(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: definition.Identity(), Phase: "finished", At: time.Now().UTC(), BatchID: 7, BatchSize: 1, ProfileID: "profile", QueueMS: 2, ServiceMS: 4, BackendMS: tc.backend, NativeElapsedMS: tc.elapsed, ExecutionComplete: true}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if err := json.NewEncoder(w).Encode(native.Response{ModelName: "model", ID: "request", ExecutionComplete: true, Outputs: []native.Tensor{{Name: "output", Datatype: "BOOL", Shape: []int{1, 1}, Data: json.RawMessage(`[true]`)}}, Progress: p}); err != nil {
+				if err := json.NewEncoder(w).Encode(native.Response{ModelName: "model", ID: "request", ExecutionComplete: true, Outputs: []native.Field{{Name: "answer", Data: [][]byte{[]byte("yes")}}}, Progress: p}); err != nil {
 					t.Error(err)
 				}
 			}))
@@ -123,6 +123,48 @@ func TestDeadlineDropRequiresCorrelatedNoExecutionProof(t *testing.T) {
 				}
 			} else if err == nil || result.Finished {
 				t.Fatalf("another registration cannot release execution: %+v / %v", result, err)
+			}
+		})
+	}
+}
+
+func TestModuleFailuresBecomeFinishedRequestOutcomes(t *testing.T) {
+	definition := &serving.Definition{UID: "uid", Generation: 1, Model: serving.Model{UID: "model", Generation: 1}}
+	for _, tc := range []struct {
+		status        int
+		outcome, code string
+	}{
+		{http.StatusUnprocessableEntity, native.OutcomePreprocessFailed, "PreprocessFailed"},
+		{http.StatusInternalServerError, native.OutcomeBatchError, "BackendError"},
+		{http.StatusUnprocessableEntity, native.OutcomeBatchError, ""},
+	} {
+		t.Run(tc.outcome+"/"+http.StatusText(tc.status), func(t *testing.T) {
+			p := &native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: definition.Identity(), Phase: "finished", At: time.Now().UTC(),
+				ProfileID: "profile", Outcome: tc.outcome, BatchID: 3, BatchSize: 2, QueueMS: 1, ServiceMS: 6, PreprocessMS: 2, BackendMS: 3, PostprocessMS: 1, NativeElapsedMS: 8, ExecutionComplete: true}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request native.Request
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Inputs) != 1 || request.Inputs[0].Name != "text" || len(request.Inputs[0].Data) != 1 || string(request.Inputs[0].Data[0]) != "hello" {
+					t.Errorf("raw sample was not forwarded as one native field element: %+v %v", request, err)
+				}
+				w.WriteHeader(tc.status)
+				if err := json.NewEncoder(w).Encode(native.ErrorResponse{Error: "module rejected sample", ExecutionComplete: true, Progress: p}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(),
+				Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
+				serving.Dispatch{RequestID: "request", Definition: definition, Input: &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "text", Datatype: "BYTES", Data: []byte("hello")}}}})
+			var domain *serving.Error
+			if tc.code == "" {
+				if errors.As(err, &domain) || result.Finished {
+					t.Fatalf("outcome inconsistent with status must not release execution: %+v / %v", result, err)
+				}
+				return
+			}
+			if !errors.As(err, &domain) || domain.Code != tc.code || domain.Message != "module rejected sample" || !result.Finished ||
+				result.Progress == nil || result.Progress.Outcome != tc.outcome || result.Progress.PreprocessMS != 2 || result.Progress.PostprocessMS != 1 {
+				t.Fatalf("module failure must finish with its reason and stage times: %+v / %v", result, err)
 			}
 		})
 	}

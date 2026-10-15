@@ -16,34 +16,15 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha16"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha7"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha17"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha8"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha2"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
-SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-inputs-v1"
-SUPPORTED_OUTPUT_VALIDATION = "nonempty-shape-batch-v1"
 IDLE_WORKLOAD = "idle-model-loaded"
-NO_INPUT_GENERATOR = "none"
-NO_OUTPUT_VALIDATION = "none"
-IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha5"
+IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha6"
 MAX_REQUEST_BYTES = 1 << 20
-INPUT_GENERATION_CHUNK_ELEMENTS = 8192
 SIGNAL_POLL_SECONDS = 0.01
 CGROUP_ROOT = Path("/sys/fs/cgroup")
-INPUT_DATATYPES = {
-    "BOOL": ("tensor(bool)", "bool_", 1),
-    "UINT8": ("tensor(uint8)", "uint8", 1),
-    "UINT16": ("tensor(uint16)", "uint16", 2),
-    "UINT32": ("tensor(uint32)", "uint32", 4),
-    "UINT64": ("tensor(uint64)", "uint64", 8),
-    "INT8": ("tensor(int8)", "int8", 1),
-    "INT16": ("tensor(int16)", "int16", 2),
-    "INT32": ("tensor(int32)", "int32", 4),
-    "INT64": ("tensor(int64)", "int64", 8),
-    "FP16": ("tensor(float16)", "float16", 2),
-    "FP32": ("tensor(float)", "float32", 4),
-    "FP64": ("tensor(double)", "float64", 8),
-}
 
 
 class ContractError(Exception):
@@ -199,11 +180,40 @@ def validate_actuation(run_config: dict[str, Any], state: dict[str, Any]) -> Non
     raise ContractError("unsupported run_config actuation kind")
 
 
+def require_names(value: Any, name: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ContractError(f"{name} must be a non-empty array")
+    names = [require_string(item, f"{name} item") for item in value]
+    if len(set(names)) != len(names):
+        raise ContractError(f"{name} must be unique")
+    return names
+
+
+def validate_preprocessor(value: Any) -> None:
+    preprocessor = require_object(value, "run_config.state.preprocessor")
+    require_fields(
+        preprocessor,
+        {"name", "uid", "image", "architecture", "path", "inputs", "outputs"}
+        | ({"maxNewTokens"} if "maxNewTokens" in preprocessor else set()),
+        "run_config.state.preprocessor",
+    )
+    for field in ("name", "uid", "image", "architecture"):
+        require_string(preprocessor[field], f"run_config.state.preprocessor.{field}")
+    require_absolute_file_path(preprocessor["path"], "run_config.state.preprocessor.path")
+    if "maxNewTokens" in preprocessor:
+        require_integer(preprocessor["maxNewTokens"], "run_config.state.preprocessor.maxNewTokens", 1)
+    require_names(preprocessor["inputs"], "run_config.state.preprocessor.inputs")
+    require_names(preprocessor["outputs"], "run_config.state.preprocessor.outputs")
+
+
 def validate_request(
     request: dict[str, Any],
     request_schema: str,
     backend: str,
 ) -> None:
+    run_config = require_object(request.get("runConfig"), "runConfig")
+    measurement = require_object(run_config.get("measurement"), "run_config.measurement")
+    active = measurement.get("workloadMode") != IDLE_WORKLOAD
     require_fields(
         request,
         {
@@ -211,7 +221,8 @@ def validate_request(
             "runConfig",
             "podUID",
             "scheduledNodeName",
-            "modelPath",
+            "modelDirectory",
+            "preprocessorPath",
             "observerReadyPaths",
             "workloadWindowStartPath",
             "measurementStartPath",
@@ -221,7 +232,7 @@ def validate_request(
             "maxLatencySamples",
             "maxInputBytes",
             "maxResultBytes",
-        },
+        } | ({"datasetPath"} if active else set()),
         "runtime request",
     )
     if request["schemaVersion"] != request_schema:
@@ -230,7 +241,10 @@ def validate_request(
     scheduled_node_name = require_string(
         request["scheduledNodeName"], "scheduledNodeName"
     )
-    require_absolute_file_path(request["modelPath"], "modelPath")
+    require_absolute_file_path(request["modelDirectory"], "modelDirectory")
+    require_absolute_file_path(request["preprocessorPath"], "preprocessorPath")
+    if active:
+        require_absolute_file_path(request["datasetPath"], "datasetPath")
     ready_paths = request["observerReadyPaths"]
     if not isinstance(ready_paths, list) or not ready_paths:
         raise ContractError("observerReadyPaths must be a non-empty array")
@@ -257,7 +271,6 @@ def validate_request(
     require_integer(request["maxInputBytes"], "maxInputBytes", 1)
     require_integer(request["maxResultBytes"], "maxResultBytes", 1)
 
-    run_config = require_object(request["runConfig"], "runConfig")
     run_config_fields = {
         "schemaVersion",
         "candidate",
@@ -284,11 +297,12 @@ def validate_request(
             "deviceClass",
             "model",
             "artifact",
-            "artifactPath",
+            "artifactFiles",
             "runtimeFamily",
             "backend",
             "powerMode",
             "firstfloor",
+            "preprocessor",
         } | ({"hostContract"} if backend == "rknnlite" else set()),
         "run_config.state",
     )
@@ -298,6 +312,13 @@ def validate_request(
     ):
         raise ContractError("unsupported runtime family or backend")
     require_string(state["model"], "run_config.state.model")
+    files = state["artifactFiles"]
+    if not isinstance(files, list) or not files:
+        raise ContractError("run_config.state.artifactFiles must be a non-empty array")
+    basenames = {require_absolute_file_path(item, "run_config.state.artifactFiles item").name for item in files}
+    if len(basenames) != len(files):
+        raise ContractError("run_config.state.artifactFiles basenames must be unique")
+    validate_preprocessor(state["preprocessor"])
     validate_actuation(run_config, state)
 
     target = require_object(run_config["targetNode"], "run_config.targetNode")
@@ -353,23 +374,17 @@ def validate_request(
     else:
         raise ContractError("unsupported CPU policy")
 
-    measurement = require_object(run_config["measurement"], "run_config.measurement")
     common_measurement_fields = {
         "batch",
         "warmupIterations",
         "durationSeconds",
         "workloadMode",
-        "inputGenerator",
-        "outputValidation",
     }
-    if measurement.get("workloadMode") == IDLE_WORKLOAD:
-        require_fields(
-            measurement,
-            common_measurement_fields | {"settlingDurationSeconds"},
-            "run_config.measurement",
-        )
-    else:
-        require_fields(measurement, common_measurement_fields, "run_config.measurement")
+    require_fields(
+        measurement,
+        common_measurement_fields | ({"dataset"} if active else {"settlingDurationSeconds"}),
+        "run_config.measurement",
+    )
     require_integer(measurement["batch"], "run_config.measurement.batch", 1)
     require_integer(
         measurement["warmupIterations"], "run_config.measurement.warmupIterations"
@@ -377,7 +392,7 @@ def validate_request(
     require_integer(
         measurement["durationSeconds"], "run_config.measurement.durationSeconds", 1
     )
-    if measurement["workloadMode"] == IDLE_WORKLOAD:
+    if not active:
         if (
             measurement["warmupIterations"] != 0
             or require_integer(
@@ -386,16 +401,16 @@ def validate_request(
                 1,
             )
             < 1
-            or measurement["inputGenerator"] != NO_INPUT_GENERATOR
-            or measurement["outputValidation"] != NO_OUTPUT_VALIDATION
         ):
             raise ContractError("unsupported model-loaded idle contract")
-    elif (
-        measurement["workloadMode"] != SUPPORTED_WORKLOAD
-        or measurement["inputGenerator"] != SUPPORTED_INPUT_GENERATOR
-        or measurement["outputValidation"] != SUPPORTED_OUTPUT_VALIDATION
-    ):
+    elif measurement["workloadMode"] != SUPPORTED_WORKLOAD:
         raise ContractError("unsupported measurement implementation contract")
+    else:
+        dataset = require_object(measurement["dataset"], "run_config.measurement.dataset")
+        require_fields(dataset, {"name", "uid", "image", "path"}, "run_config.measurement.dataset")
+        for field in ("name", "uid", "image"):
+            require_string(dataset[field], f"run_config.measurement.dataset.{field}")
+        require_absolute_file_path(dataset["path"], "run_config.measurement.dataset.path")
     validate_candidate(run_config["delivery"])
 
 
@@ -419,10 +434,9 @@ def validate_candidate(value: Any) -> None:
     capability = require_object(
         candidate["artifactCapability"], "candidate.artifactCapability"
     )
-    optional_fields = {"targetPlatform", "declaredBatchSizes"} & set(capability)
-    require_fields(
-        capability, {"tensors"} | optional_fields, "candidate.artifactCapability"
-    )
+    # Tensors are declared for RKNN artifacts only; the RKNN validator checks them.
+    optional_fields = {"targetPlatform", "declaredBatchSizes", "tensors"} & set(capability)
+    require_fields(capability, optional_fields, "candidate.artifactCapability")
     if "targetPlatform" in capability:
         require_string(capability["targetPlatform"], "candidate targetPlatform")
     if "declaredBatchSizes" in capability:
@@ -433,35 +447,6 @@ def validate_candidate(value: Any) -> None:
             require_integer(batch, "candidate declaredBatchSizes item", 1)
         if batches != sorted(set(batches)):
             raise ContractError("candidate declaredBatchSizes must be strictly increasing")
-    tensors = capability["tensors"]
-    if not isinstance(tensors, list) or not tensors:
-        raise ContractError("candidate tensors must be a non-empty array")
-    names: set[str] = set()
-    for item in tensors:
-        tensor = require_object(item, "candidate tensor")
-        require_fields(tensor, {"name", "datatype", "sampleShape"}, "candidate tensor")
-        name = require_string(tensor["name"], "candidate tensor name")
-        if name in names:
-            raise ContractError("candidate tensor names must be unique")
-        names.add(name)
-        if require_string(tensor["datatype"], f"tensor {name} datatype") not in INPUT_DATATYPES:
-            raise ContractError(f"unsupported input datatype for tensor {name}")
-        shape = tensor["sampleShape"]
-        if not isinstance(shape, list) or not shape:
-            raise ContractError(f"tensor {name} sampleShape must be a non-empty array")
-        for dimension in shape:
-            require_integer(dimension, f"tensor {name} sampleShape item", 1)
-            if dimension > 2147483647:
-                raise ContractError(f"tensor {name} sampleShape item exceeds int32")
-
-
-def validate_model_file(path: Path) -> None:
-    try:
-        info = path.lstat()
-    except OSError as error:
-        raise ContractError(f"inspect model artifact: {error}") from error
-    if not stat.S_ISREG(info.st_mode):
-        raise ContractError("model artifact is not a regular file")
 
 
 def read_required_text(path: Path, name: str) -> str:
@@ -736,62 +721,6 @@ def percentile(samples: list[float], fraction: float) -> float:
     return ordered[lower] * (upper - position) + ordered[upper] * (position - lower)
 
 
-def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
-    if not outputs:
-        raise ContractError("inference produced no outputs")
-    shapes: list[list[int]] = []
-    for output in outputs:
-        shape = list(output.shape)
-        if output.size < 1 or not shape or shape[0] != batch:
-            raise ContractError(
-                "inference output shape does not preserve the configured batch"
-            )
-        shapes.append(shape)
-    return shapes
-
-
-def admitted_input_bytes(shape: list[int], datatype: str, max_bytes: int) -> int:
-    input_bytes = math.prod(shape) * INPUT_DATATYPES[datatype][2]
-    if input_bytes > max_bytes:
-        raise ContractError("input tensors exceed the Job execution contract size budget")
-    return input_bytes
-
-
-def generate_input(
-    numpy: Any, shape: list[int], datatype: str, max_bytes: int
-) -> Any:
-    input_bytes = admitted_input_bytes(shape, datatype, max_bytes)
-    sample = numpy.empty(shape, dtype=getattr(numpy, INPUT_DATATYPES[datatype][1]))
-    if getattr(sample, "nbytes", None) != input_bytes:
-        raise ContractError("generated input tensor does not match its admitted byte size")
-    flat = sample.reshape(-1)
-    generator = numpy.random.default_rng(0)
-    for start in range(0, len(flat), INPUT_GENERATION_CHUNK_ELEMENTS):
-        stop = min(start + INPUT_GENERATION_CHUNK_ELEMENTS, len(flat))
-        if datatype.startswith("FP"):
-            flat[start:stop] = generator.standard_normal(stop - start)
-        else:
-            flat[start:stop] = generator.integers(0, 2, size=stop - start)
-    return sample
-
-
-def generate_inputs(
-    numpy: Any, tensors: list[dict[str, Any]], batch: int, max_bytes: int
-) -> dict[str, Any]:
-    sizes = [
-        admitted_input_bytes([batch, *t["sampleShape"]], t["datatype"], max_bytes)
-        for t in tensors
-    ]
-    if sum(sizes) > max_bytes:
-        raise ContractError("input tensors exceed the Job execution contract size budget")
-    return {
-        t["name"]: generate_input(
-            numpy, [batch, *t["sampleShape"]], t["datatype"], max_bytes
-        )
-        for t in tensors
-    }
-
-
 def measurement_complete(
     elapsed: float, duration: int, sample_count: int, max_samples: int
 ) -> bool:
@@ -930,7 +859,7 @@ def execute_idle(
         "backend": state["backend"],
         "provider": providers_at_end[0] if providers_at_end else "",
         "availableProviders": available_providers,
-        "inputs": run_config["delivery"]["artifactCapability"]["tensors"],
+        "inputs": state["preprocessor"]["inputs"],
         "modelLoadCompletedAt": model_load_completed_at,
         "settlingStartedAt": settling_started_at,
         "settlingCompletedAt": settling_completed_at,
@@ -968,7 +897,6 @@ def execute_loaded(
     cpu_max: str,
     affinity: list[int],
     cpuset: str,
-    feeds: dict[str, Any],
     before_measurement: Any,
     result_provider: str,
     memory_sampler: MemorySampler | None = None,
@@ -976,13 +904,11 @@ def execute_loaded(
     """Measure a loaded session whose startup and warm-up completed before the window."""
     run_config = request["runConfig"]
     state, measurement, cpu = run_config["state"], run_config["measurement"], run_config["cpu"]
-    tensors = run_config["delivery"]["artifactCapability"]["tensors"]
 
     for ready_path in request["observerReadyPaths"]:
         wait_for_signal(
             Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0
         )
-    output_shapes: list[list[int]] | None = None
     warmup_completed_at = now()
 
     publish_immutable(Path(request["workloadWindowStartPath"]), b"signal\n")
@@ -1002,11 +928,10 @@ def execute_loaded(
     samples: list[float] = []
     try:
         while True:
+            session.prepare_next()
             inference_started = time.perf_counter_ns()
-            outputs = session.run(None, feeds)
+            session.run()
             samples.append((time.perf_counter_ns() - inference_started) / 1_000_000.0)
-            if output_shapes is None:
-                output_shapes = validate_outputs(outputs, measurement["batch"])
             if measurement_complete(
                 time.monotonic() - monotonic_started,
                 measurement["durationSeconds"],
@@ -1023,8 +948,6 @@ def execute_loaded(
     publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
     process_cpu_seconds = time.process_time() - process_before
     stat_after = cpu_stat()
-    if output_shapes is None:
-        raise ContractError("output validation evidence is missing")
 
     mean_latency = sum(samples) / len(samples)
     result = {
@@ -1047,11 +970,6 @@ def execute_loaded(
         "measurementStartedAt": measurement_started_at,
         "measurementEndedAt": measurement_ended_at,
         "measurementElapsedSecondsMonotonic": round(measurement_elapsed, 6),
-        "outputValidation": {
-            "method": SUPPORTED_OUTPUT_VALIDATION,
-            "passed": True,
-            "outputShapes": output_shapes,
-        },
         "cpuContract": runtime_cpu_evidence(
             cpu,
             cpu_max,
@@ -1071,7 +989,7 @@ def execute_loaded(
             }
         ],
         "completionIndex": 0,
-        "inputs": tensors,
+        "inputs": state["preprocessor"]["inputs"],
         "measurementIterations": 0,
         "targetDurationSecondsPerRepetition": float(measurement["durationSeconds"]),
         "latencyMs": {

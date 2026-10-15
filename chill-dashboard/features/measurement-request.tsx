@@ -9,20 +9,18 @@ import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { pathLabel } from "@/features/read-pages"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import type { ExecutionPath, ModelList, ModelResource } from "@/lib/domain"
+import type { ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
 import type { InventoryClass, InventoryNode, InventoryView, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec } from "@/lib/read-types"
 
 const back: [string, string] = ["/measurements", "측정"]
-const steps = ["model", "device", "run", "size", "advanced", "name", "review"] as const
+const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
 type Step = typeof steps[number]
 const batchChoices = [1, 2, 4, 8, 16]
 const cpuChoices = ["1", "2", "4"]
 const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
-// The ProfilingRun CRD accepts only these values for active (non-idle) measurement, so they are not a user choice.
-const activeInput = { inputGenerator: "numpy-default-rng-seed-0-inputs-v1", outputValidation: "nonempty-shape-batch-v1" }
 
-type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number; affinity: string; inputGenerator: string; outputValidation: string }
-type NumberKey = Exclude<keyof Advanced, "affinity" | "inputGenerator" | "outputValidation">
+type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number; affinity: string }
+type NumberKey = Exclude<keyof Advanced, "affinity">
 const advancedFields: [key: NumberKey, label: string, min: number][] = [
   ["warmup", "측정 전 예열 횟수", 0],
   ["activeDuration", "측정 시간 · 초", 1],
@@ -37,11 +35,12 @@ const advancedFields: [key: NumberKey, label: string, min: number][] = [
   ["retryLimit", "실패하면 다시 시도할 횟수", 0],
 ]
 type Protocol = { values: Advanced; from: string | null }
-type Draft = { model: string; deviceClass: string; node: string; path: string; powerMode: string; batchSizes: number[]; trials: number | null; cpu: string | null; protocol: Protocol | null; name: string | null }
-type Context = { models: ModelResource[]; classes: InventoryClass[]; plans: MeasurementPlan[] }
+// model, preprocessor and dataset come from the chosen Workload's spec refs (or a copied plan); the API takes catalog names.
+type Draft = { workload: string; model: string; preprocessor: string; dataset: string; deviceClass: string; node: string; path: string; powerMode: string; batchSizes: number[]; trials: number | null; cpu: string | null; protocol: Protocol | null; name: string | null }
+type Context = { models: ModelResource[]; workloads: WorkloadView[]; classes: InventoryClass[]; plans: MeasurementPlan[] }
 
-const emptyDraft: Draft = { model: "", deviceClass: "", node: "", path: "", powerMode: "", batchSizes: [], trials: null, cpu: null, protocol: null, name: null }
-const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN, affinity: "", ...activeInput }
+const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", batchSizes: [], trials: null, cpu: null, protocol: null, name: null }
+const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN, affinity: "" }
 function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
   const active = spec.activeProtocol, idle = spec.idleProtocol
   return {
@@ -50,7 +49,6 @@ function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
     settling: idle.settlingDurationSeconds ?? NaN, idleDuration: idle.durationSeconds ?? NaN, idleWindow: idle.metricObservation?.durationSeconds ?? NaN,
     idleInterval: idle.metricObservation?.intervalMilliseconds ?? NaN, idleTimeout: idle.metricObservation?.timeoutMilliseconds ?? NaN,
     retryLimit: spec.retryLimit, affinity: spec.cpuAffinity?.join(", ") ?? "",
-    inputGenerator: active.inputGenerator ?? activeInput.inputGenerator, outputValidation: active.outputValidation ?? activeInput.outputValidation,
   }
 }
 function parseAffinity(text: string): number[] | null {
@@ -114,7 +112,7 @@ function view(d: Draft, { models, classes, plans }: Context) {
   const affinity = parseAffinity(protocol.values.affinity) ?? []
   function problem(step: Step): string {
     switch (step) {
-      case "model": return model ? "" : "잴 모델을 골라 주세요."
+      case "workload": return model && d.preprocessor && d.dataset ? "" : "잴 서비스를 골라 주세요."
       case "device":
         if (!cls || !node) return "잴 장비를 골라 주세요."
         if (nodeReason(node)) return `${node.name}는 ${nodeReason(node)}. 다른 장비를 골라 주세요.`
@@ -141,8 +139,8 @@ function manifest(d: Draft, context: Context, namespace: string) {
   const v = view(d, context)
   const p = v.protocol.values
   const spec: MeasurementPlanSpec = {
-    state: { candidate: { modelSpec: d.model, deviceClass: d.deviceClass, executionPath: d.path, powerMode: v.powerMode }, targetNode: d.node, cpuRequest: v.cpu },
-    activeProtocol: { warmupIterations: p.warmup, durationSeconds: p.activeDuration, inputGenerator: p.inputGenerator, outputValidation: p.outputValidation, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
+    state: { candidate: { modelSpec: d.model, preprocessor: d.preprocessor, deviceClass: d.deviceClass, executionPath: d.path, powerMode: v.powerMode }, targetNode: d.node, cpuRequest: v.cpu },
+    activeProtocol: { warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
     idleProtocol: { settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
     cpuQuota: v.cpu,
     ...(v.affinity.length ? { cpuAffinity: v.affinity } : {}),
@@ -159,7 +157,7 @@ function begin(from: string | null, context: Context) {
   const source = from ? context.plans.find(p => p.metadata.name === from) : undefined
   if (!source) return { draft: emptyDraft, index: 0, error: from ? "복사할 측정을 찾지 못해서 처음부터 골라요." : "", copied: false }
   const s = source.spec
-  const draft: Draft = { model: s.state.candidate.modelSpec, deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, cpu: s.cpuQuota ?? s.state.cpuRequest ?? null, protocol: { values: copyAdvanced(s), from: source.metadata.name }, name: null }
+  const draft: Draft = { workload: "", model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, cpu: s.cpuQuota ?? s.state.cpuRequest ?? null, protocol: { values: copyAdvanced(s), from: source.metadata.name }, name: null }
   const v = view(draft, context)
   const open = steps.findIndex(step => step !== "name" && step !== "review" && v.problem(step))
   return { draft, index: open < 0 ? steps.indexOf("name") : open, error: open < 0 ? "" : v.problem(steps[open]), copied: true }
@@ -194,11 +192,12 @@ export function MeasurementRequestPage() {
   const from = useSearchParams().get("from")
   const plans = useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(config.namespace)}/batch-energy-optimizations`)
   const models = useChillQuery<ModelList>("v1/models")
+  const workloads = useChillQuery<WorkloadView[]>("v1/workloads")
   const inventory = useChillQuery<InventoryView>(`v1/inventory?limit=${config.maxPageSize}`)
-  if (!plans.data || !models.data || !inventory.data) return <Screen back={back} title="측정 요청" lede="고를 수 있는 모델과 장비를 확인하고 있어요.">
-    <QueryGate query={plans}><QueryGate query={models}><QueryGate query={inventory}>{null}</QueryGate></QueryGate></QueryGate>
+  if (!plans.data || !models.data || !workloads.data || !inventory.data) return <Screen back={back} title="측정 요청" lede="고를 수 있는 서비스와 장비를 확인하고 있어요.">
+    <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}>{null}</QueryGate></QueryGate></QueryGate></QueryGate>
   </Screen>
-  const context: Context = { models: models.data.items, classes: inventory.data.classes, plans: plans.data.items ?? [] }
+  const context: Context = { models: models.data.items, workloads: workloads.data, classes: inventory.data.classes, plans: plans.data.items ?? [] }
   return <Funnel key={from ?? ""} namespace={config.namespace} from={from} context={context} more={inventory.data.classPage?.nextOffset !== undefined} refetchPlans={plans.refetch} checking={plans.isFetching} />
 }
 
@@ -268,12 +267,12 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
   const unchecked = (!!dry.error && !rejected) || (dry.isSuccess && !passed)
   const sizes = v.declared ?? d.batchSizes
   const titles: Record<Step, string> = {
-    model: "어떤 모델을 잴까요?", device: "어느 장비에서 잴까요?", run: "어떻게 실행할까요?", size: "한 번에 몇 건씩, 몇 번씩 잴까요?",
+    workload: "어떤 서비스의 조건으로 잴까요?", device: "어느 장비에서 잴까요?", run: "어떻게 실행할까요?", size: "한 번에 몇 건씩, 몇 번씩 잴까요?",
     advanced: v.protocol.from ? "이전 측정과 같은 방식으로 재요" : "어떤 방식으로 잴까요?", name: "이름을 정해 주세요",
     review: denied ? "측정을 요청할 권한이 없어요" : send.error ? "측정을 요청하지 못했어요" : dry.isPending ? "요청할 수 있는지 확인하고 있어요" : rejected ? "이대로는 요청할 수 없어요" : unchecked ? "요청할 수 있는지 확인하지 못했어요" : "이대로 측정을 요청할까요?",
   }
   const ledes: Record<Step, string> = {
-    model: "등록된 모델 중에서 골라요.",
+    workload: "서비스가 쓰는 모델, 전처리기, 데이터셋으로 재요.",
     device: more ? "장비 종류가 많아 앞쪽 일부만 보여요. 준비된 노드만 고를 수 있어요." : "준비된 노드만 고를 수 있어요.",
     run: "이 장비에서 돌릴 수 있는 방식만 고를 수 있어요.",
     size: "크기마다 정한 횟수만큼 재서 전력을 가장 적게 쓰는 크기를 찾아요.",
@@ -289,9 +288,19 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
 
   return <Screen back={back} status={<span className="flex items-center gap-2 text-sm text-muted-foreground">{index + 1} / {steps.length}{badge}</span>} title={titles[step]} lede={ledes[step]}
     action={<div className="flex gap-3">{index > 0 && <Button variant="outline" className="flex-1" disabled={send.isPending} onClick={() => go(index - 1)}>이전</Button>}{primary}</div>}>
-    {step === "model" && (context.models.length
-      ? <Pick label="모델" name="model" value={d.model} set={model => update({ model })} options={context.models.map(m => ({ value: m.metadata.name, label: m.metadata.name, hint: `실행 방식 ${m.spec.executionPaths.length}개`, disabled: m.spec.executionPaths.length ? "" : "실행 방식이 없어서 잴 수 없어요" }))} />
-      : <Empty title="잴 수 있는 모델이 없어요"><Button asChild variant="outline"><Link href="/models/new">모델 추가</Link></Button></Empty>)}
+    {step === "workload" && (context.workloads.length
+      ? <>
+        <Pick label="서비스" name="workload" value={d.workload} set={workload => {
+          const spec = context.workloads.find(w => w.desired.metadata.name === workload)!.desired.spec
+          update({ workload, model: spec.modelRef.name, preprocessor: spec.preprocessorRef.name, dataset: spec.datasetRef?.name ?? "" })
+        }} options={context.workloads.map(({ desired: w }) => {
+          const model = context.models.find(m => m.metadata.name === w.spec.modelRef.name)
+          return { value: w.metadata.name, label: w.metadata.name, hint: `${w.spec.modelRef.name} · ${w.spec.preprocessorRef.name} · ${w.spec.datasetRef?.name ?? "데이터셋 없음"}`,
+            disabled: !model ? "모델을 찾지 못했어요" : !model.spec.executionPaths.length ? "실행 방식이 없어서 잴 수 없어요" : w.spec.datasetRef ? "" : "데이터셋이 없어서 잴 수 없어요" }
+        })} />
+        {d.model && <Facts items={[["모델", d.model], ["전처리기", d.preprocessor || "없음"], ["데이터셋", d.dataset || "없음"]]} />}
+      </>
+      : <Empty title="잴 수 있는 서비스가 없어요"><Button asChild variant="outline"><Link href="/workloads/new">서비스 추가</Link></Button></Empty>)}
     {step === "device" && (context.classes.some(c => c.nodes.length)
       ? context.classes.filter(c => c.nodes.length).map(c => {
         const fits = !v.model || v.model.spec.executionPaths.some(p => !pathReason(v.model!, p, c))
@@ -327,6 +336,8 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
     {step === "review" && <>
       <Facts items={[
         ["모델", d.model],
+        ["전처리기", d.preprocessor],
+        ["데이터셋", d.dataset],
         ["장비", `${d.node} · ${d.deviceClass}`],
         ["실행 방식", `${pathLabel(d.path)} · 전력 모드 ${v.powerMode}`],
         ["크기별 반복", `한 번에 ${sizes.join(", ")}건씩 · 크기마다 ${v.trials}번`],

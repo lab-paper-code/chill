@@ -28,17 +28,17 @@ Do not give manager credentials direct ModelSpec or Workload write access.
 ```text
 ModelSpec
 ├── artifacts[]       immutable model files
-│   ├── source        OCI image, architecture, and path
-│   ├── input.tensors  name, uppercase datatype, and sampleShape without the batch axis
+│   ├── source        OCI image, architecture, and model files
+│   ├── input.tensors  RKNN only: name, uppercase datatype, and sampleShape without the batch axis
 │   └── derivation    conversion facts for a derived artifact
 └── executionPaths[]  artifact-to-runtime bindings
 ```
 
-Use immutable image digests and declare every input's exact name, uppercase
-datatype and sample shape. Multiple named numeric/bool tensors are
-supported; layout is not a separate registration field. A canonical artifact
-needs no `derivation`; a converted artifact records its source, target platform,
-supported batches, and converter. Shape-only compatibility readers are absent.
+Use immutable image digests and list every model file the runtime loads.
+An RKNN artifact declares its input's exact name, uppercase datatype and sample
+shape; a Preprocessor artifact defines the raw inputs of every other format. A
+canonical artifact needs no `derivation`; a converted artifact records its
+source, target platform, supported batches, and converter.
 
 ## Profiling requests
 

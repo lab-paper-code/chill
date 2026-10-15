@@ -205,7 +205,16 @@ func cloneEnergyTrials(trials []EnergyTrial) []EnergyTrial {
 	cloned := append([]EnergyTrial(nil), trials...)
 	for index := range cloned {
 		cloned[index].ClientLatencyMilliseconds = append([]float64(nil), trials[index].ClientLatencyMilliseconds...)
-		cloned[index].NativeSamples = append([]NativeServiceSample(nil), trials[index].NativeSamples...)
+		cloned[index].NativeSamples = cloneNativeSamples(trials[index].NativeSamples)
+	}
+	return cloned
+}
+
+func cloneNativeSamples(samples []NativeServiceSample) []NativeServiceSample {
+	cloned := append([]NativeServiceSample(nil), samples...)
+	for index := range cloned {
+		cloned[index].RecordIDs = append([]string(nil), samples[index].RecordIDs...)
+		cloned[index].Units = append([]int(nil), samples[index].Units...)
 	}
 	return cloned
 }

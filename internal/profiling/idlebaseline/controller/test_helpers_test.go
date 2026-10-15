@@ -21,6 +21,7 @@ func testBaselineParent() *edgev1alpha1.ModelLoadedIdleBaseline {
 			State: edgev1alpha1.MeasurementStateSpec{
 				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
 					ModelSpec: "model-a", DeviceClass: "class-a", ExecutionPath: "runtime-a", PowerMode: "mode-a",
+					Preprocessor: "preprocessor-a",
 				},
 				TargetNode: "node-a", CPURequest: resource.MustParse("100m"),
 			},

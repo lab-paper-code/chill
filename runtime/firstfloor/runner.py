@@ -1,4 +1,4 @@
-"""Persistent numeric/bool runner adopted from firstfloor; stdout is framed IPC only."""
+"""Persistent firstfloor runner executing preprocess, infer and postprocess per batch; stdout is framed IPC only."""
 
 import argparse
 import importlib.util
@@ -13,8 +13,11 @@ import time
 MAX_HEADER_BYTES = 64 << 10
 MAX_FRAME_BYTES = 64 << 20
 MAX_ERROR_BYTES = 1024
-DTYPES = {"BOOL": "?", "UINT8": "u1", "INT8": "i1", "UINT16": "<u2", "INT16": "<i2", "UINT32": "<u4", "INT32": "<i4", "UINT64": "<u8", "INT64": "<i8", "FP16": "<f2", "FP32": "<f4", "FP64": "<f8"}
-ORT_TYPES = {"tensor(bool)": "BOOL", "tensor(uint8)": "UINT8", "tensor(int8)": "INT8", "tensor(uint16)": "UINT16", "tensor(int16)": "INT16", "tensor(uint32)": "UINT32", "tensor(int32)": "INT32", "tensor(uint64)": "UINT64", "tensor(int64)": "INT64", "tensor(float16)": "FP16", "tensor(float)": "FP32", "tensor(double)": "FP64"}
+MODULE_NAMES = ("WARMUP_SAMPLE", "preprocess", "infer", "postprocess")
+
+
+class BatchError(Exception):
+    """The preprocessor module broke its result contract for one batch; the runner keeps serving."""
 
 
 def read_exact(stream, count, allow_eof=False):
@@ -55,17 +58,35 @@ def write_frame(stream, header, data=b""):
     stream.flush()
 
 
-def tensor_elements(shape):
-    if not isinstance(shape, list):
-        raise ValueError("tensor shape must be a list")
-    count = 1
-    for dimension in shape:
-        if type(dimension) is not int or dimension <= 0:
-            raise ValueError("positive tensor dimensions required")
-        count *= dimension
-        if count > MAX_FRAME_BYTES:
-            raise ValueError("tensor exceeds frame limit")
-    return count
+def bounded(text):
+    return text.encode("utf-8")[:MAX_ERROR_BYTES].decode("utf-8", "ignore") or "unspecified failure"
+
+
+def frame_elements(values):
+    return b"".join(struct.pack("<I", len(v)) + v for v in values)
+
+
+def unframe(data, start, end, count):
+    """Split count BYTES elements, each a uint32 little-endian length plus bytes, from data[start:end]."""
+    elements = []
+    while start < end and len(elements) < count:
+        if start + 4 > end:
+            raise ValueError("truncated BYTES element length")
+        size = struct.unpack_from("<I", data, start)[0]
+        start += 4
+        if start + size > end:
+            raise ValueError("truncated BYTES element")
+        elements.append(data[start:start + size])
+        start += size
+    if len(elements) != count or start != end:
+        raise ValueError("BYTES element count differs from shape")
+    return elements
+
+
+def field_names(value, label):
+    if not isinstance(value, list) or not value or len(set(value)) != len(value) or any(not isinstance(n, str) or not n for n in value):
+        raise ValueError(f"unique nonempty {label} field names required")
+    return value
 
 
 def read_init(source):
@@ -75,17 +96,13 @@ def read_init(source):
     h, data = message
     if h.get("type") != "init" or data:
         raise ValueError("invalid init frame")
-    inputs, batches = h.get("inputs"), h.get("batch_sizes")
-    if not isinstance(inputs, list) or not inputs or not isinstance(batches, list) or not batches:
-        raise ValueError("named inputs and nonempty initialized batch sizes required")
-    names = set()
-    for spec in inputs:
-        if not isinstance(spec.get("name"), str) or not spec["name"] or spec["name"] in names or spec.get("datatype") not in DTYPES:
-            raise ValueError("invalid named input")
-        tensor_elements(spec.get("shape"))
-        names.add(spec["name"])
-    if len(set(batches)) != len(batches) or any(type(k) is not int or k < 1 for k in batches):
+    field_names(h.get("inputs"), "input")
+    field_names(h.get("outputs"), "output")
+    batches, tokens = h.get("batch_sizes"), h.get("max_new_tokens")
+    if not isinstance(batches, list) or not batches or len(set(batches)) != len(batches) or any(type(k) is not int or k < 1 for k in batches):
         raise ValueError("invalid initialized batch sizes")
+    if type(tokens) is not int or tokens < 0:
+        raise ValueError("nonnegative max_new_tokens required")
     return h
 
 
@@ -97,42 +114,160 @@ def import_runtime_contract(family):
     return module
 
 
-def rknn_outputs(helper, candidate, model_path):
-    # Reuse maintained ABI structures from CHILL's RKNN evidence owner.
-    ct = helper.ctypes
-    library_path = next(x["containerPath"] for x in candidate["hostContract"]["libraries"] if x["name"] == "librknnrt")
-    library = ct.CDLL(library_path)
-    library.rknn_init.argtypes = [ct.POINTER(ct.c_uint64), ct.c_void_p, ct.c_uint32, ct.c_uint32, ct.c_void_p]
-    library.rknn_init.restype = ct.c_int
-    library.rknn_query.argtypes = [ct.c_uint64, ct.c_int, ct.c_void_p, ct.c_uint32]
-    library.rknn_query.restype = ct.c_int
-    library.rknn_destroy.argtypes = [ct.c_uint64]
-    library.rknn_destroy.restype = ct.c_int
-    context = ct.c_uint64()
-    if library.rknn_init(ct.byref(context), ct.c_char_p(os.fsencode(model_path)), 0, 0, None) != 0:
-        raise ValueError("RKNN output metadata initialization failed")
+def load_preprocessor(directory, inputs):
+    spec = importlib.util.spec_from_file_location("chill_preprocessor", Path(directory) / "preprocessor.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    missing = [name for name in MODULE_NAMES if not hasattr(module, name)]
+    if missing:
+        raise ValueError("preprocessor module lacks " + ", ".join(missing))
+    sample = module.WARMUP_SAMPLE
+    if not isinstance(sample, dict) or set(sample) != set(inputs) or any(not isinstance(v, bytes) for v in sample.values()):
+        raise ValueError("WARMUP_SAMPLE must hold bytes for exactly the raw input fields")
+    return module
+
+
+def model_files(directory):
+    files = sorted(p for p in Path(directory).iterdir() if p.is_file())
+    if not files:
+        raise ValueError("model directory holds no model files")
+    if len({p.stem for p in files}) != len(files):
+        raise ValueError("model file names must differ without extension")
+    return files
+
+
+def execute(module, sessions, samples, outputs, max_new_tokens, delay_s):
+    """Run one execution unit; any module contract violation raises BatchError."""
     try:
-        counts = helper.RKNNInputOutputNum()
-        if library.rknn_query(context, 0, ct.byref(counts), ct.sizeof(counts)) != 0 or counts.n_output < 1:
-            raise ValueError("RKNN output count query failed")
-        outputs = []
-        for index in range(counts.n_output):
-            attr = helper.RKNNTensorAttr(index=index)
-            if library.rknn_query(context, 2, ct.byref(attr), ct.sizeof(attr)) != 0:
-                raise ValueError("RKNN output metadata query failed")
-            shape = list(attr.dims[:attr.n_dims])
-            if not shape or type(shape[0]) is not int or shape[0] < 1:
-                raise ValueError("RKNN output must have an actual positive batch axis")
-            # RKNNLite returns dequantized FP32 outputs; warmup verifies that SDK contract.
-            outputs.append({"name": attr.name.decode("utf-8"), "datatype": "FP32", "shape": shape[1:]})
-        return outputs
-    finally:
-        if library.rknn_destroy(context) != 0:
-            raise ValueError("RKNN metadata destruction failed")
+        start = time.perf_counter_ns()
+        model_inputs, reports = module.preprocess(samples)
+        timings = {"preprocess_ms": (time.perf_counter_ns() - start) / 1e6, "backend_ms": 0.0, "postprocess_ms": 0.0}
+        if not isinstance(reports, list) or len(reports) != len(samples):
+            raise BatchError("preprocess report count differs from batch size")
+        items = []
+        for report in reports:
+            if type(report) is int and report >= 1:
+                items.append({"units": report})
+            elif isinstance(report, str) and report:
+                items.append({"error": bounded(report)})
+            else:
+                raise BatchError("preprocess report must be a unit count of at least one or a failure reason")
+        successes = sum("units" in item for item in items)
+        columns = {name: [] for name in outputs}
+        if not successes:
+            return items, columns, timings
+        tokens = []
+
+        def first_token():
+            tokens.append(time.perf_counter_ns())
+
+        backend_start = time.perf_counter_ns()
+        if delay_s:
+            time.sleep(delay_s)
+        values = module.infer(sessions, model_inputs, max_new_tokens, first_token)
+        backend_end = time.perf_counter_ns()
+        if max_new_tokens > 0:
+            if len(tokens) != 1:
+                raise BatchError(f"generative infer called first_token {len(tokens)} times; exactly once required")
+            timings["first_token_ms"] = (tokens[0] - backend_start) / 1e6
+        results = module.postprocess(values)
+        timings["backend_ms"] = (backend_end - backend_start) / 1e6
+        timings["postprocess_ms"] = (time.perf_counter_ns() - backend_end) / 1e6
+        if not isinstance(results, list) or len(results) != successes:
+            raise BatchError("postprocess result count differs from successful requests")
+        for result in results:
+            if not isinstance(result, dict) or set(result) != set(outputs) or any(not isinstance(v, bytes) for v in result.values()):
+                raise BatchError("postprocess result must map exactly the raw output fields to bytes")
+            for name in outputs:
+                columns[name].append(result[name])
+        return items, columns, timings
+    except BatchError:
+        raise
+    except Exception as error:
+        raise BatchError(f"preprocessor module raised {type(error).__name__}: {error}") from error
+
+
+def ort_sessions(options, files, metadata):
+    import onnxruntime as ort
+
+    provider = "CUDAExecutionProvider" if options.runtime == "ort-cuda" else "CPUExecutionProvider"
+    available = ort.get_available_providers()
+    if provider not in available:
+        raise ValueError(f"required {provider} unavailable")
+    settings = ort.SessionOptions()
+    settings.intra_op_num_threads = options.intra_op_threads
+    settings.inter_op_num_threads = 1
+    providers = [provider]
+    if options.runtime == "ort-cuda":
+        if not options.gpu_uuid or os.environ.get("CUDA_VISIBLE_DEVICES") != options.gpu_uuid:
+            raise ValueError("CUDA_VISIBLE_DEVICES must pin the explicit physical GPU UUID")
+        from cuda.bindings import driver as cu
+
+        if cu.cuInit(0)[0] != cu.CUresult.CUDA_SUCCESS:
+            raise ValueError("CUDA driver initialization failed")
+        status, count = cu.cuDeviceGetCount()
+        if status != cu.CUresult.CUDA_SUCCESS or count != 1:
+            raise ValueError("explicit GPU allocation must expose exactly one CUDA device")
+        status, device = cu.cuDeviceGet(0)
+        if status != cu.CUresult.CUDA_SUCCESS:
+            raise ValueError("selected CUDA device could not be obtained")
+        status, actual = cu.cuDeviceGetUuid(device)
+        if status != cu.CUresult.CUDA_SUCCESS or "GPU-" + str(uuid.UUID(bytes=bytes(actual.bytes))) != options.gpu_uuid:
+            raise ValueError("selected physical GPU UUID could not be verified")
+        settings.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
+        providers = [(provider, {"device_id": 0})]
+        metadata.update(gpuUUID=options.gpu_uuid, device="cuda")
+    else:
+        metadata["device"] = "cpu"
+    sessions, selected_providers = {}, None
+    for path in files:
+        session = ort.InferenceSession(str(path), sess_options=settings, providers=providers)
+        session.disable_fallback()
+        selected = session.get_providers()
+        # ORT may register its default CPU EP even when CPU assignment is disabled.
+        cuda_without_fallback = (options.runtime == "ort-cuda" and
+                                 selected == [provider, "CPUExecutionProvider"] and
+                                 session.get_session_options().get_session_config_entry("session.disable_cpu_ep_fallback") == "1")
+        if selected != [provider] and not cuda_without_fallback or selected_providers not in (None, selected):
+            raise ValueError(f"unexpected providers/fallback {selected} for {path.name}")
+        selected_providers = selected
+        sessions[path.stem] = session
+    metadata.update(runtimeVersion=ort.__version__, providers=selected_providers, availableProviders=available)
+    return sessions
+
+
+def rknn_session(options, files, batches, metadata):
+    from rknnlite.api import RKNNLite
+
+    if len(files) != 1 or files[0].suffix != ".rknn":
+        raise ValueError("RKNNLite requires exactly one .rknn model file")
+    if not options.delivery_json:
+        raise ValueError("RKNN requires actual delivered host/artifact contract")
+    model = files[0]
+    helper = import_runtime_contract("rknnlite")
+    candidate = json.loads(Path(options.delivery_json).read_text())
+    helper.validate_candidate(candidate)
+    tensors = candidate["artifactCapability"]["tensors"]
+    if len(tensors) != 1 or tensors[0]["datatype"] != "FP32":
+        raise ValueError("RKNN delivery must declare one FP32 NHWC tensor")
+    evidence = helper.observe_host_contract(candidate, batches[0])
+    for batch in batches:
+        helper.validate_runtime_inputs(model, candidate, batch)
+    rknn = RKNNLite()
+    if rknn.load_rknn(str(model)) != 0:
+        rknn.release()
+        raise ValueError("RKNN model load failed")
+    evidence["loadSucceeded"] = True
+    if rknn.init_runtime(core_mask=RKNNLite.NPU_CORE_0) != 0:
+        rknn.release()
+        raise ValueError("RKNN native initialization failed")
+    evidence["initSucceeded"] = True
+    metadata.update(runtimeVersion=evidence["package"]["version"], device="npu", rknn=evidence, intraOpThreads=0, interOpThreads=0)
+    return {model.stem: rknn}
 
 
 def run(options, source, destination):
-    rknn = None
+    sessions = {}
     batch_id = 0
     try:
         contract = read_init(source)
@@ -149,146 +284,26 @@ def run(options, source, destination):
             cpu_max, affinity, cpuset = "", sorted(os.sched_getaffinity(0)), ""
         else:
             cpu_max, affinity, cpuset = import_runtime_contract("ortcpu").read_cpu_environment()
-        inputs = contract["inputs"]
-        batches = contract["batch_sizes"]
+        inputs, outputs = contract["inputs"], contract["outputs"]
+        batches, max_new_tokens = contract["batch_sizes"], contract["max_new_tokens"]
+        module = load_preprocessor(options.preprocessor, inputs)
+        files = [] if options.runtime == "echo" else model_files(options.model_dir)
         metadata = {"runtime": options.runtime, "runtimeVersion": "synthetic", "numpyVersion": np.__version__,
-                    "modelPath": options.model or "", "inputs": inputs, "outputs": [], "providers": [],
-                    "device": "synthetic", "cpuAffinity": affinity,
+                    "modelFiles": [os.path.abspath(p) for p in files], "inputs": inputs, "outputs": outputs,
+                    "providers": [], "device": "synthetic", "cpuAffinity": affinity,
                     "intraOpThreads": options.intra_op_threads, "interOpThreads": 1,
                     "initializedBatches": batches, "warmupIterations": options.warmup_iterations,
-                    "synthetic": options.runtime == "echo", "cgroupCPUMax": cpu_max,
-                    "cpuSet": cpuset}
-        if options.runtime == "echo":
-            outputs = [dict(s) for s in inputs]
-
-            def infer(samples):
-                time.sleep(options.delay_ms / 1000)
-                return samples
-        else:
-            if not options.model or not Path(options.model).is_file():
-                raise ValueError("native model must be a regular local file")
-            if options.runtime in ("ort-cpu", "ort-cuda"):
-                import onnxruntime as ort
-
-                provider = "CUDAExecutionProvider" if options.runtime == "ort-cuda" else "CPUExecutionProvider"
-                available = ort.get_available_providers()
-                if provider not in available:
-                    raise ValueError(f"required {provider} unavailable")
-                settings = ort.SessionOptions()
-                settings.intra_op_num_threads = options.intra_op_threads
-                settings.inter_op_num_threads = 1
-                providers = [provider]
-                if options.runtime == "ort-cuda":
-                    if not options.gpu_uuid or os.environ.get("CUDA_VISIBLE_DEVICES") != options.gpu_uuid:
-                        raise ValueError("CUDA_VISIBLE_DEVICES must pin the explicit physical GPU UUID")
-                    from cuda.bindings import driver as cu
-
-                    if cu.cuInit(0)[0] != cu.CUresult.CUDA_SUCCESS:
-                        raise ValueError("CUDA driver initialization failed")
-                    status, count = cu.cuDeviceGetCount()
-                    if status != cu.CUresult.CUDA_SUCCESS or count != 1:
-                        raise ValueError("explicit GPU allocation must expose exactly one CUDA device")
-                    status, device = cu.cuDeviceGet(0)
-                    if status != cu.CUresult.CUDA_SUCCESS:
-                        raise ValueError("selected CUDA device could not be obtained")
-                    status, actual = cu.cuDeviceGetUuid(device)
-                    if status != cu.CUresult.CUDA_SUCCESS or "GPU-" + str(uuid.UUID(bytes=bytes(actual.bytes))) != options.gpu_uuid:
-                        raise ValueError("selected physical GPU UUID could not be verified")
-                    settings.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
-                    providers = [(provider, {"device_id": 0})]
-                    metadata["gpuUUID"] = options.gpu_uuid
-                    metadata["device"] = "cuda"
-                else:
-                    metadata["device"] = "cpu"
-                session = ort.InferenceSession(options.model, sess_options=settings, providers=providers)
-                session.disable_fallback()
-                selected = session.get_providers()
-                # ORT may register its default CPU EP even when CPU assignment is disabled.
-                cuda_without_fallback = (options.runtime == "ort-cuda" and
-                                         selected == [provider, "CPUExecutionProvider"] and
-                                         session.get_session_options().get_session_config_entry("session.disable_cpu_ep_fallback") == "1")
-                if selected != [provider] and not cuda_without_fallback:
-                    raise ValueError(f"unexpected providers/fallback {selected}")
-                actual_inputs = session.get_inputs()
-                if len(actual_inputs) != len(inputs):
-                    raise ValueError("model input count differs from contract")
-                by_name = {s["name"]: s for s in inputs}
-                for model_input in actual_inputs:
-                    expected = by_name.get(model_input.name)
-                    if expected is None or ORT_TYPES.get(model_input.type) != expected["datatype"]:
-                        raise ValueError("model input name or datatype differs")
-                    for batch in batches:
-                        shape = [batch, *expected["shape"]]
-                        if len(shape) != len(model_input.shape) or any(isinstance(d, int) and d != v for d, v in zip(model_input.shape, shape)):
-                            raise ValueError("model does not support initialized input batch/shape")
-                outputs = []
-                for output in session.get_outputs():
-                    datatype = ORT_TYPES.get(output.type)
-                    if datatype is None or not output.shape:
-                        raise ValueError("unsupported nonnumeric or unbatched output")
-                    shape = output.shape[1:]
-                    if options.warmup_iterations == 0 and any(type(d) is not int or d <= 0 for d in shape):
-                        raise ValueError("zero-inference idle requires static output sample shapes")
-                    outputs.append({"name": output.name, "datatype": datatype, "shape": shape})
-
-                def infer(samples):
-                    return session.run(None, {s["name"]: sample for s, sample in zip(inputs, samples)})
-
-                metadata.update(runtimeVersion=ort.__version__, providers=selected, availableProviders=available)
-            else:
-                from rknnlite.api import RKNNLite
-
-                if len(inputs) != 1 or inputs[0]["datatype"] != "FP32" or len(inputs[0]["shape"]) != 3:
-                    raise ValueError("RKNN supports only one FP32 NHWC input in this actor")
-                if not options.delivery_json:
-                    raise ValueError("RKNN requires actual delivered host/artifact contract")
-                helper = import_runtime_contract("rknnlite")
-                candidate = json.loads(Path(options.delivery_json).read_text())
-                helper.validate_candidate(candidate)
-                capability = candidate["artifactCapability"]
-                if len(capability["tensors"]) != 1:
-                    raise ValueError("RKNN delivery must declare one actual NHWC tensor")
-                tensor = capability["tensors"][0]
-                if tensor["name"] != inputs[0]["name"] or tensor["datatype"] != "FP32" or tensor["sampleShape"] != inputs[0]["shape"]:
-                    raise ValueError("RKNN delivery tensor differs from initialized input")
-                evidence = helper.observe_host_contract(candidate, batches[0])
-                for batch in batches:
-                    helper.validate_runtime_inputs(Path(options.model), candidate, batch)
-                outputs = rknn_outputs(helper, candidate, options.model)
-                rknn = RKNNLite()
-                if rknn.load_rknn(options.model) != 0:
-                    raise ValueError("RKNN model load failed")
-                evidence["loadSucceeded"] = True
-                if rknn.init_runtime(core_mask=RKNNLite.NPU_CORE_0) != 0:
-                    raise ValueError("RKNN native initialization failed")
-                evidence["initSucceeded"] = True
-                metadata.update(runtimeVersion=evidence["package"]["version"], device="npu", rknn=evidence, intraOpThreads=0, interOpThreads=0)
-
-                def infer(samples):
-                    return rknn.inference(inputs=samples, data_format=["nhwc"])
-
-        def validate_outputs(values, batch, establish=False):
-            if not isinstance(values, (tuple, list)) or len(values) != len(outputs):
-                raise ValueError("SDK output count differs from named model outputs")
-            for spec, value in zip(outputs, values):
-                if not isinstance(value, np.ndarray) or value.dtype != np.dtype(DTYPES[spec["datatype"]]) or value.ndim < 1 or value.shape[0] != batch:
-                    raise ValueError("SDK output datatype/batch differs from model contract")
-                tensor_elements(list(value.shape))
-                if value.dtype.kind == "f" and not np.isfinite(value).all():
-                    raise ValueError("nonfinite SDK output")
-                if establish and any(type(d) is not int for d in spec["shape"]):
-                    spec["shape"] = list(value.shape[1:])
-                if list(value.shape[1:]) != spec["shape"]:
-                    raise ValueError("SDK output sample shape changed")
-            return values
-
+                    "synthetic": options.runtime == "echo", "cgroupCPUMax": cpu_max, "cpuSet": cpuset}
+        if options.runtime in ("ort-cpu", "ort-cuda"):
+            sessions = ort_sessions(options, files, metadata)
+        elif options.runtime == "rknnlite":
+            sessions = rknn_session(options, files, batches, metadata)
+        delay_s = options.delay_ms / 1000
         for batch in batches:
-            samples = [np.zeros([batch, *s["shape"]], dtype=DTYPES[s["datatype"]]) for s in inputs]
-            if sum(sample.nbytes for sample in samples) > MAX_FRAME_BYTES:
-                raise ValueError("initialized input batch exceeds IPC cap")
             for _ in range(options.warmup_iterations):
-                validate_outputs(infer(samples), batch, establish=True)
-        metadata["outputs"] = outputs
+                items, _, _ = execute(module, sessions, [dict(module.WARMUP_SAMPLE) for _ in range(batch)], outputs, max_new_tokens, delay_s)
+                if any("error" in item for item in items):
+                    raise ValueError("WARMUP_SAMPLE failed preprocessing")
         write_frame(destination, {"type": "ready", "metadata": metadata})
         while True:
             message = read_frame(source)
@@ -300,42 +315,35 @@ def run(options, source, destination):
             tensors = header.get("tensors")
             if header.get("type") != "infer" or type(batch_id) is not int or batch_id <= 0 or not isinstance(tensors, list) or len(tensors) != len(inputs):
                 raise ValueError("invalid inference frame")
-            samples, offset, batch = [], 0, None
-            for spec, wire in zip(inputs, tensors):
-                shape = wire.get("shape")
-                if not isinstance(shape, list) or not shape or shape[0] not in batches or shape[1:] != spec["shape"] or wire.get("name") != spec["name"] or wire.get("datatype") != spec["datatype"]:
+            columns, offset, batch = [], 0, None
+            for name, wire in zip(inputs, tensors):
+                shape = wire.get("shape") if isinstance(wire, dict) else None
+                if shape is None or wire.get("name") != name or wire.get("datatype") != "BYTES" or not isinstance(shape, list) or len(shape) != 1 or shape[0] not in batches:
                     raise ValueError("inference tensor outside initialized contract")
                 if batch is not None and batch != shape[0]:
-                    raise ValueError("multi-input batch axes disagree")
-                batch = shape[0]
-                count = tensor_elements(shape) * np.dtype(DTYPES[spec["datatype"]]).itemsize
-                if wire.get("bytes") != count or offset + count > len(data):
-                    raise ValueError("tensor shape and payload bytes disagree")
-                sample = np.frombuffer(data, dtype=DTYPES[spec["datatype"]], count=tensor_elements(shape), offset=offset).reshape(shape)
-                if sample.dtype.kind == "f" and not np.isfinite(sample).all():
-                    raise ValueError("nonfinite input")
-                samples.append(sample)
-                offset += count
+                    raise ValueError("input batch axes disagree")
+                batch, size = shape[0], wire.get("bytes")
+                if type(size) is not int or size < 0 or offset + size > len(data):
+                    raise ValueError("tensor bytes exceed payload")
+                columns.append(unframe(data, offset, offset + size, batch))
+                offset += size
             if offset != len(data):
                 raise ValueError("unbound input payload bytes")
-            backend_start = time.perf_counter_ns()
-            values = infer(samples)
-            backend_ms = (time.perf_counter_ns() - backend_start) / 1e6
-            validate_outputs(values, batch)
-            descriptors, chunks = [], []
-            total = 0
-            for spec, value in zip(outputs, values):
-                chunk = value.astype(DTYPES[spec["datatype"]], copy=False).tobytes(order="C")
-                total += len(chunk)
-                if total > MAX_FRAME_BYTES:
-                    raise ValueError("combined outputs exceed IPC cap")
-                chunks.append(chunk)
-                descriptors.append(dict(spec, shape=list(value.shape), bytes=len(chunk)))
-            payload = b"".join(chunks)
-            service_ms = (time.perf_counter_ns() - service_start) / 1e6
-            write_frame(destination, {"type": "output", "batch_id": batch_id, "tensors": descriptors, "backend_ms": backend_ms, "service_ms": service_ms}, payload)
+            samples = [{name: column[i] for name, column in zip(inputs, columns)} for i in range(batch)]
+            try:
+                items, results, timings = execute(module, sessions, samples, outputs, max_new_tokens, delay_s)
+                chunks = [frame_elements(results[name]) for name in outputs]
+                if sum(len(chunk) for chunk in chunks) > MAX_FRAME_BYTES:
+                    raise BatchError("postprocess outputs exceed IPC frame cap")
+            except BatchError as error:
+                write_frame(destination, {"type": "batch_error", "batch_id": batch_id, "error": bounded(str(error))})
+                continue
+            successes = len(results[outputs[0]])
+            descriptors = [{"name": name, "datatype": "BYTES", "shape": [successes], "bytes": len(chunk)} for name, chunk in zip(outputs, chunks)]
+            timings["service_ms"] = (time.perf_counter_ns() - service_start) / 1e6
+            write_frame(destination, dict(timings, type="output", batch_id=batch_id, items=items, tensors=descriptors), b"".join(chunks))
     except Exception as error:
-        header = {"type": "error", "error": str(error).encode("utf-8")[:MAX_ERROR_BYTES].decode("utf-8", "ignore")}
+        header = {"type": "error", "error": bounded(str(error))}
         if type(batch_id) is int and batch_id > 0:
             header["batch_id"] = batch_id
         try:
@@ -344,27 +352,29 @@ def run(options, source, destination):
             pass
         raise
     finally:
-        if rknn is not None:
-            rknn.release()
+        if options.runtime == "rknnlite":
+            for session in sessions.values():
+                session.release()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--echo", action="store_const", dest="runtime", const="echo", help="Explicit synthetic development execution; never a native fallback.")
+    mode.add_argument("--echo", action="store_const", dest="runtime", const="echo", help="Explicit synthetic development execution without a model; never a native fallback.")
     mode.add_argument("--runtime", choices=("ort-cpu", "ort-cuda", "rknnlite"))
-    parser.add_argument("--model")
+    parser.add_argument("--model-dir", help="Directory whose regular files are all loaded as model sessions.")
+    parser.add_argument("--preprocessor", required=True, help="Directory holding preprocessor.py.")
     parser.add_argument("--gpu-uuid")
     parser.add_argument("--delivery-json")
     parser.add_argument("--intra-op-threads", type=int, default=1)
     parser.add_argument("--cpu-affinity", help="Exact comma-separated CPU IDs within the allocated cpuset.")
     parser.add_argument("--warmup-iterations", type=int, default=20)
-    parser.add_argument("--delay-ms", type=float, default=0)
+    parser.add_argument("--delay-ms", type=float, default=0, help="Synthetic sleep inside the echo infer stage.")
     options = parser.parse_args()
     if options.delay_ms < 0 or options.intra_op_threads < (0 if options.runtime == "rknnlite" else 1) or options.warmup_iterations < 0:
         parser.error("nonnegative delay/warmup and positive ORT threads required")
-    if options.runtime != "echo" and (not options.model or options.delay_ms):
-        parser.error("native execution requires model and rejects synthetic delay")
+    if (options.runtime == "echo") == bool(options.model_dir) or options.runtime != "echo" and options.delay_ms:
+        parser.error("native execution requires --model-dir and rejects synthetic delay; echo takes no model")
     # Preserve a private IPC descriptor before redirecting native SDK stdout.
     with os.fdopen(os.dup(sys.stdout.fileno()), "wb") as destination:
         os.dup2(sys.stderr.fileno(), sys.stdout.fileno())

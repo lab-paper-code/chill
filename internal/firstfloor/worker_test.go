@@ -106,12 +106,12 @@ func TestConsumedSenderOverheadPreservesFeasibleDeadlineAndLifetime(t *testing.T
 		t.Fatalf("feasible deadline must execute: %+v", c)
 	}
 	for _, sender := range []float64{400, 500} {
-		wire := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: sender, LifetimeMS: 507, SLO: SLO{Percentile: 95, TargetMS: 507}}, Inputs: typedInputs(1)}
+		wire := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: sender, LifetimeMS: 507, SLO: SLO{Percentile: 95, TargetMS: 507}}, Inputs: rawInputs("sample")}
 		body, err := json.Marshal(wire)
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg := &Config{Mode: modeServing, Inputs: []InputSpec{{"large", "UINT64", []int{1}}, {"mask", "BOOL", []int{1}}, {"half", "FP16", []int{1}}}, Policy: p}
+		cfg := &Config{Mode: modeServing, Inputs: []string{"input"}, Outputs: []string{"output"}, Policy: p}
 		r := &request{received: time.Now()}
 		w := httptest.NewRecorder()
 		if !prepareInference(w, context.Background(), json.NewDecoder(bytes.NewReader(body)), cfg, r) {
@@ -123,14 +123,17 @@ func TestConsumedSenderOverheadPreservesFeasibleDeadlineAndLifetime(t *testing.T
 		}
 	}
 }
-func startTestActor(t *testing.T, mode string, delay string, deadlinePolicy ...string) (*Scheduler, *Config) {
+func withDeadline(policy string) func(*Config) {
+	return func(c *Config) { c.Policy.DeadlinePolicy = policy }
+}
+func startTestActor(t *testing.T, mode string, delay string, adjust func(*Config)) (*Scheduler, *Config) {
 	t.Helper()
-	cfg := &Config{Model: "synthetic", Mode: mode, Inputs: []InputSpec{{"large", "UINT64", []int{1}}, {"mask", "BOOL", []int{1}}, {"half", "FP16", []int{1}}}, RunnerCommand: []string{"python3", "../../runtime/firstfloor/runner.py", "--echo", "--delay-ms", delay, "--warmup-iterations", "1"}, RunnerTimeoutMS: 3000, MaxQueueRequests: 8, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20, MaxBatchSize: 2, BatchSizes: []int{1, 2}, Policy: testPolicy()}
-	if len(deadlinePolicy) > 0 {
-		cfg.Policy.DeadlinePolicy = deadlinePolicy[0]
-	}
+	cfg := &Config{Model: "synthetic", Mode: mode, Inputs: []string{"input"}, Outputs: []string{"output"}, RunnerCommand: []string{"python3", "../../runtime/firstfloor/runner.py", "--echo", "--preprocessor", "../../runtime/firstfloor/testdata/echo", "--delay-ms", delay, "--warmup-iterations", "1"}, RunnerTimeoutMS: 3000, MaxQueueRequests: 8, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20, MaxBatchSize: 2, BatchSizes: []int{1, 2}, Policy: testPolicy()}
 	if mode == "profiling" {
 		cfg.BatchSizes = []int{2}
+	}
+	if adjust != nil {
+		adjust(cfg)
 	}
 	if e := ValidateConfig(cfg); e != nil {
 		t.Fatal(e)
@@ -152,24 +155,37 @@ func startTestActor(t *testing.T, mode string, delay string, deadlinePolicy ...s
 	})
 	return s, cfg
 }
-func typedInputs(size int) []Tensor {
-	large := json.RawMessage(`[18446744073709551615]`)
-	mask := json.RawMessage(`[true]`)
-	half := json.RawMessage(`[1.5]`)
-	if size == 2 {
-		large = json.RawMessage(`[18446744073709551615,9007199254740993]`)
-		mask = json.RawMessage(`[true,false]`)
-		half = json.RawMessage(`[1.5,-2]`)
+
+// The echo fixture copies field "input" to field "output"; its units are one plus the count of '+'.
+func rawInputs(values ...string) []Field {
+	return []Field{{Name: "input", Data: elements(values)}}
+}
+func echoOutputs(values ...string) []Field {
+	return []Field{{Name: "output", Data: elements(values)}}
+}
+func elements(values []string) [][]byte {
+	data := make([][]byte, len(values))
+	for i, v := range values {
+		data[i] = []byte(v)
 	}
-	return []Tensor{{"large", "UINT64", []int{size, 1}, large}, {"mask", "BOOL", []int{size, 1}, mask}, {"half", "FP16", []int{size, 1}, half}}
+	return data
 }
 func actorRequest(t *testing.T, cfg *Config, id, uid string, target float64) *request {
 	t.Helper()
-	d, n, e := prepareInputs(cfg.Inputs, typedInputs(1), 1)
+	d, n, e := prepareInputs(cfg.Inputs, rawInputs("sample"), 1)
 	if e != nil {
 		t.Fatal(e)
 	}
 	return &request{received: time.Now(), context: RequestContext{RequestID: id, WorkloadUID: uid, Definition: uid + "/1", ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: target}}, data: d, bytes: n}
+}
+func postJSON(h http.Handler, path string, v any) *httptest.ResponseRecorder {
+	body, e := json.Marshal(v)
+	if e != nil {
+		panic(e)
+	}
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)))
+	return recorder
 }
 func awaitActorState(t *testing.T, s *Scheduler, want func(State) bool) State {
 	t.Helper()
@@ -190,7 +206,7 @@ func awaitActorState(t *testing.T, s *Scheduler, want func(State) bool) State {
 	return State{}
 }
 func TestLocalActorCancellationSnapshotsAndTypedOutputs(t *testing.T) {
-	s, cfg := startTestActor(t, "serving", "250")
+	s, cfg := startTestActor(t, "serving", "250", nil)
 	activeCtx, cancelActive := context.WithCancel(context.Background())
 	activeReply := make(chan result, 1)
 	r := actorRequest(t, cfg, "active", "a", 1)
@@ -225,8 +241,8 @@ func TestLocalActorCancellationSnapshotsAndTypedOutputs(t *testing.T) {
 	awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 0 && state.CompletedRequests == 2 })
 	fresh := actorRequest(t, cfg, "late", "a", 1)
 	reply = s.submit(context.Background(), fresh)
-	if reply.err != nil || !reply.response.ExecutionComplete || reply.response.Progress.BatchSize != 1 || reply.response.Progress.ServiceMS < 100 || reply.response.Progress.BackendMS < 100 || !reflect.DeepEqual(reply.response.Outputs, typedInputs(1)) {
-		t.Fatalf("late SLO still returns every exact typed result: %+v", reply)
+	if p := reply.response.Progress; reply.err != nil || !reply.response.ExecutionComplete || p.BatchSize != 1 || p.ServiceMS < 100 || p.BackendMS < 100 || p.Units != 1 || p.PreprocessMS+p.BackendMS+p.PostprocessMS > p.ServiceMS || p.FirstTokenMS != 0 || !reflect.DeepEqual(reply.response.Outputs, echoOutputs("sample")) {
+		t.Fatalf("late SLO still returns every exact raw result: %+v", reply)
 	}
 	state = awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 3 })
 	if state.Executions != 2 || state.AcceptedRequests != 3 {
@@ -234,56 +250,105 @@ func TestLocalActorCancellationSnapshotsAndTypedOutputs(t *testing.T) {
 	}
 }
 func TestFixedProfileUsesSameSerialActor(t *testing.T) {
-	s, cfg := startTestActor(t, "profiling", "4", DeadlineDrop)
-	d, n, e := prepareInputs(cfg.Inputs, typedInputs(2), 2)
+	s, cfg := startTestActor(t, "profiling", "4", withDeadline(DeadlineDrop))
+	d, n, e := prepareInputs(cfg.Inputs, rawInputs("a", "b+c"), 2)
 	if e != nil {
 		t.Fatal(e)
 	}
-	r := &request{received: time.Now(), context: RequestContext{RequestID: "profile", WorkloadUID: "profiling", Definition: "fixed"}, data: d, bytes: n, profile: &ProfileRequest{BatchSize: 2, Executions: 3}}
+	r := &request{received: time.Now(), context: RequestContext{RequestID: "profile", WorkloadUID: "profiling", Definition: "fixed"}, data: d, bytes: n, profile: &ProfileRequest{BatchSize: 2}}
 	reply := s.submit(context.Background(), r)
 	p := reply.profile
-	if reply.err != nil || !p.ExecutionComplete || p.Executions != 3 || p.Items != 6 || p.BatchSize != 2 || len(p.BatchIDs) != 3 || len(p.ServiceSamplesMS) != 3 || len(p.BackendSamplesMS) != 3 || len(p.NativeSamplesMS) != 3 || !reflect.DeepEqual(p.Outputs, typedInputs(2)) {
-		t.Fatalf("fixed K must return actual aligned executions/items/outputs: %+v", reply)
+	if reply.err != nil || !p.ExecutionComplete || p.BatchSize != 2 || len(p.BatchIDs) != 1 || len(p.ServiceSamplesMS) != 1 || len(p.BackendSamplesMS) != 1 || len(p.NativeSamplesMS) != 1 || len(p.PreprocessSamplesMS) != 1 || len(p.PostprocessSamplesMS) != 1 || p.FirstTokenSamplesMS != nil || !reflect.DeepEqual(p.Units, []int{1, 2}) {
+		t.Fatalf("one profile call must return one aligned execution with per-request units: %+v", reply)
 	}
-	for i, id := range p.BatchIDs {
-		if i > 0 && id <= p.BatchIDs[i-1] || p.ServiceSamplesMS[i] < p.BackendSamplesMS[i] || p.NativeSamplesMS[i] < p.ServiceSamplesMS[i] {
-			t.Fatalf("physical execution samples must be aligned and nested: %+v", p)
+	if p.PreprocessSamplesMS[0]+p.BackendSamplesMS[0]+p.PostprocessSamplesMS[0] > p.ServiceSamplesMS[0] || p.NativeSamplesMS[0] < p.ServiceSamplesMS[0] {
+		t.Fatalf("physical execution samples must be nested: %+v", p)
+	}
+	h := NewHandler(s)
+	for _, test := range []struct {
+		values []string
+		status int
+	}{{[]string{"a", "fail:bad jpeg"}, http.StatusUnprocessableEntity}, {[]string{"raise", "a"}, http.StatusInternalServerError}, {[]string{"a", "b"}, http.StatusOK}} {
+		reply := postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs(test.values...)})
+		if reply.Code != test.status {
+			t.Fatalf("profile %v: status %d %s", test.values, reply.Code, reply.Body.String())
 		}
 	}
-	state := awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 1 })
-	if state.Executions != 3 {
-		t.Fatalf("native idle counters must expose all profile executions: %+v", state)
+	state := awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 4 })
+	if state.Executions != 4 {
+		t.Fatalf("native idle counters must expose every profile execution: %+v", state)
 	}
-	for _, bad := range []Tensor{{"n", "UINT64", []int{1}, json.RawMessage(`[18446744073709551616]`)}, {"n", "BOOL", []int{1}, json.RawMessage(`[null]`)}, {"n", "FP16", []int{1}, json.RawMessage(`[1000000]`)}} {
-		if _, e := encodeTensor(bad); e == nil {
-			t.Fatalf("invalid typed numeric boundary accepted: %+v", bad)
+}
+func TestGenerativeProfileReportsFirstToken(t *testing.T) {
+	s, cfg := startTestActor(t, "profiling", "0", func(c *Config) { c.MaxNewTokens = 4 })
+	d, n, e := prepareInputs(cfg.Inputs, rawInputs("a", "b"), 2)
+	if e != nil {
+		t.Fatal(e)
+	}
+	reply := s.submit(context.Background(), &request{received: time.Now(), context: RequestContext{RequestID: "profile", WorkloadUID: "profiling", Definition: "fixed"}, data: d, bytes: n, profile: &ProfileRequest{BatchSize: 2}})
+	if p := reply.profile; reply.err != nil || len(p.FirstTokenSamplesMS) != 1 || p.FirstTokenSamplesMS[0] > p.BackendSamplesMS[0] {
+		t.Fatalf("generative profile must report its first-token span: %+v", reply)
+	}
+	h := NewHandler(s)
+	if reply := postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs("a", "two-first-tokens")}); reply.Code != http.StatusInternalServerError {
+		t.Fatalf("second first-token callback must end the batch: %d %s", reply.Code, reply.Body.String())
+	}
+}
+func TestItemFailureAndBatchErrorHTTP(t *testing.T) {
+	s, _ := startTestActor(t, "serving", "0", nil)
+	h := NewHandler(s)
+	send := func(id, value string) *httptest.ResponseRecorder {
+		return postJSON(h, "/v2/models/synthetic/infer", Request{ID: id, Context: RequestContext{RequestID: id, WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 1000}}, Inputs: rawInputs(value)})
+	}
+	for _, test := range []struct {
+		value, outcome, reason string
+		status                 int
+	}{{"fail:bad jpeg", OutcomePreprocessFailed, "bad jpeg", http.StatusUnprocessableEntity}, {"raise", OutcomeBatchError, "", http.StatusInternalServerError}} {
+		reply := send(test.outcome, test.value)
+		var failure ErrorResponse
+		if reply.Code != test.status || json.Unmarshal(reply.Body.Bytes(), &failure) != nil || !failure.ExecutionComplete || failure.Progress == nil || failure.Progress.Outcome != test.outcome || failure.Progress.Phase != phaseFinished || failure.Progress.BatchID == 0 || test.reason != "" && failure.Error != test.reason {
+			t.Fatalf("%s: %d %s", test.value, reply.Code, reply.Body.String())
 		}
+	}
+	reply := send("ok", "tile+tile")
+	var response Response
+	if reply.Code != http.StatusOK || json.Unmarshal(reply.Body.Bytes(), &response) != nil || response.Progress.Units != 2 || response.Progress.Outcome != outcomeCompleted || !reflect.DeepEqual(response.Outputs, echoOutputs("tile+tile")) {
+		t.Fatalf("runner must keep serving after a batch error: %d %s", reply.Code, reply.Body.String())
+	}
+	state := awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 3 })
+	if state.Executions != 3 || len(state.Requests) != 0 {
+		t.Fatalf("item and batch failures are physical executions: %+v", state)
 	}
 }
 func TestWorkerHTTPBoundaries(t *testing.T) {
-	s, _ := startTestActor(t, "serving", "4")
+	s, _ := startTestActor(t, "serving", "4", nil)
 	h := NewHandler(s)
 	invoke := func(path string, body []byte) *httptest.ResponseRecorder {
 		recorder := httptest.NewRecorder()
 		h.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)))
 		return recorder
 	}
-	for _, body := range [][]byte{[]byte(`{"id":"bad","inputs":[]}`), []byte(`{"unexpected":true}`), []byte(`null`)} {
+	fieldless := Request{ID: "fields", Context: RequestContext{RequestID: "fields", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 100}}, Inputs: []Field{{Name: "other", Data: [][]byte{[]byte("x")}}}}
+	wrongField, e := json.Marshal(fieldless)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, body := range [][]byte{[]byte(`{"id":"bad","inputs":[]}`), []byte(`{"unexpected":true}`), []byte(`null`), wrongField} {
 		reply := invoke("/v2/models/synthetic/infer", body)
 		var failure ErrorResponse
 		if reply.Code != http.StatusBadRequest || json.Unmarshal(reply.Body.Bytes(), &failure) != nil || !failure.ExecutionComplete {
 			t.Fatalf("pre-submission rejection must prove no execution: %d %s", reply.Code, reply.Body.String())
 		}
 	}
-	request := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "wire-uid", Definition: "wire-uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: 1000, SLO: SLO{Percentile: 99, TargetMS: 1}}, Inputs: typedInputs(1)}
+	request := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "wire-uid", Definition: "wire-uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: 1000, SLO: SLO{Percentile: 99, TargetMS: 1}}, Inputs: rawInputs("sample")}
 	body, e := json.Marshal(request)
 	if e != nil {
 		t.Fatal(e)
 	}
 	reply := invoke("/v2/models/synthetic/infer", body)
 	var response Response
-	if reply.Code != http.StatusOK || json.Unmarshal(reply.Body.Bytes(), &response) != nil || !response.ExecutionComplete || response.ID != "wire" || !reflect.DeepEqual(response.Outputs, typedInputs(1)) {
-		t.Fatalf("remote UTC must not replace elapsed or turn SLO into lifetime; exact typed wire response required: %d %s", reply.Code, reply.Body.String())
+	if reply.Code != http.StatusOK || json.Unmarshal(reply.Body.Bytes(), &response) != nil || !response.ExecutionComplete || response.ID != "wire" || !reflect.DeepEqual(response.Outputs, echoOutputs("sample")) {
+		t.Fatalf("remote UTC must not replace elapsed or turn SLO into lifetime; exact raw wire response required: %d %s", reply.Code, reply.Body.String())
 	}
 	request.ID = "expired"
 	request.Context.RequestID = request.ID
@@ -306,7 +371,7 @@ func TestWorkerHTTPBoundaries(t *testing.T) {
 func TestWorkerBodyFailureStatus(t *testing.T) {
 	for _, mode := range []string{modeServing, modeProfiling} {
 		t.Run(mode, func(t *testing.T) {
-			s, cfg := startTestActor(t, mode, "0")
+			s, cfg := startTestActor(t, mode, "0", nil)
 			h := NewHandler(s)
 			path := "/v2/models/synthetic/infer"
 			if mode == modeProfiling {
@@ -351,7 +416,7 @@ func TestWorkerBodyFailureStatus(t *testing.T) {
 }
 
 func TestNativeLifetimeWitnessKeepsAcceptedDeadlineAcrossPolicyChange(t *testing.T) {
-	s, cfg := startTestActor(t, "serving", "250")
+	s, cfg := startTestActor(t, "serving", "250", nil)
 	r := actorRequest(t, cfg, "lifetime", "uid", 100)
 	deadline := time.Now().Add(2 * time.Second)
 	r.lifetime = deadline
@@ -451,7 +516,7 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 func TestDeadlineActorModesAndActiveNonpreemption(t *testing.T) {
 	for _, mode := range []string{DeadlineKeep, DeadlineDrop, DeadlineDefer} {
 		t.Run(mode, func(t *testing.T) {
-			s, cfg := startTestActor(t, modeServing, "250", mode)
+			s, cfg := startTestActor(t, modeServing, "250", withDeadline(mode))
 			active := actorRequest(t, cfg, "active", "a", 1000)
 			activeReply := make(chan result, 1)
 			go func() { activeReply <- s.submit(context.Background(), active) }()
@@ -485,7 +550,7 @@ func TestDeadlineActorModesAndActiveNonpreemption(t *testing.T) {
 			}
 			if mode != DeadlineDrop {
 				reply := <-queuedReply
-				if reply.err != nil || !reply.complete || reply.response.Progress.Outcome != outcomeCompleted || !reflect.DeepEqual(reply.response.Outputs, typedInputs(1)) {
+				if reply.err != nil || !reply.complete || reply.response.Progress.Outcome != outcomeCompleted || !reflect.DeepEqual(reply.response.Outputs, echoOutputs("sample")) {
 					t.Fatalf("keep/defer overdue work must eventually return exact success: %+v", reply)
 				}
 			}
@@ -535,7 +600,7 @@ func TestDeferredQueueSharesBoundsCancellationAndState(t *testing.T) {
 }
 
 func TestDeadlinePolicyValidationIncludesProfiling(t *testing.T) {
-	cfg := &Config{Model: "profile", Mode: modeProfiling, Inputs: []InputSpec{{"x", "FP32", []int{1}}}, RunnerCommand: []string{"runner"}, RunnerTimeoutMS: 1000, MaxQueueRequests: 2, MaxQueueBytes: 32, MaxRequestBytes: 32, MaxBatchSize: 2, BatchSizes: []int{2}}
+	cfg := &Config{Model: "profile", Mode: modeProfiling, Inputs: []string{"x"}, Outputs: []string{"y"}, RunnerCommand: []string{"runner"}, RunnerTimeoutMS: 1000, MaxQueueRequests: 2, MaxQueueBytes: 32, MaxRequestBytes: 32, MaxBatchSize: 2, BatchSizes: []int{2}}
 	if err := ValidateConfig(cfg); err != nil || cfg.Policy.DeadlinePolicy != DeadlineKeep {
 		t.Fatalf("omitted mode must normalize to keep even in profiling: %v %+v", err, cfg)
 	}
@@ -543,11 +608,16 @@ func TestDeadlinePolicyValidationIncludesProfiling(t *testing.T) {
 	if err := ValidateConfig(cfg); err == nil {
 		t.Fatal("profiling accepted an invalid deadline policy")
 	}
+	cfg.Policy.DeadlinePolicy = DeadlineKeep
+	cfg.Inputs = []string{"x", "x"}
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("duplicate raw input field accepted")
+	}
 }
 
 func TestWorkerDeadlineDropHTTP(t *testing.T) {
-	s, _ := startTestActor(t, modeServing, "0", DeadlineDrop)
-	request := Request{ID: "expired-slo", Context: RequestContext{RequestID: "expired-slo", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: 100, SLO: SLO{Percentile: 95, TargetMS: 1}}, Inputs: typedInputs(1)}
+	s, _ := startTestActor(t, modeServing, "0", withDeadline(DeadlineDrop))
+	request := Request{ID: "expired-slo", Context: RequestContext{RequestID: "expired-slo", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: 100, SLO: SLO{Percentile: 95, TargetMS: 1}}, Inputs: rawInputs("sample")}
 	body, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)

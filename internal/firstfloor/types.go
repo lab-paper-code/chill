@@ -27,7 +27,11 @@ const (
 	DeadlineDefer       = "defer"
 	OutcomeDeadlineDrop = "deadline_drop"
 	ReasonDeadlineDefer = "deadline_defer"
-	outcomeCompleted    = "completed"
+	// OutcomePreprocessFailed ends one request whose sample the module rejected (HTTP 422).
+	OutcomePreprocessFailed = "preprocess_failed"
+	// OutcomeBatchError ends every request of a batch whose module result broke the contract.
+	OutcomeBatchError = "batch_error"
+	outcomeCompleted  = "completed"
 )
 
 func EffectiveDeadlinePolicy(value string) string {
@@ -37,19 +41,11 @@ func EffectiveDeadlinePolicy(value string) string {
 	return value
 }
 
-type InputSpec struct {
-	Name     string `json:"name"`
-	Datatype string `json:"datatype"`
-	Shape    []int  `json:"shape"`
-}
-
-// Shape omits the batch axis in configuration and includes it on the wire.
-// RawMessage preserves UINT64 precision; validation converts directly to binary.
-type Tensor struct {
-	Name     string          `json:"name"`
-	Datatype string          `json:"datatype"`
-	Shape    []int           `json:"shape"`
-	Data     json.RawMessage `json:"data"`
+// Field carries one raw field: one element per request for inference and n
+// elements for a profile execution. Content checks belong to the gateway.
+type Field struct {
+	Name string   `json:"name"`
+	Data [][]byte `json:"data"`
 }
 type SLO struct {
 	Percentile float64 `json:"percentile"`
@@ -67,12 +63,12 @@ type RequestContext struct {
 type Request struct {
 	ID      string         `json:"id"`
 	Context RequestContext `json:"context"`
-	Inputs  []Tensor       `json:"inputs"`
+	Inputs  []Field        `json:"inputs"`
 }
 type Response struct {
 	ModelName         string   `json:"model_name"`
 	ID                string   `json:"id"`
-	Outputs           []Tensor `json:"outputs"`
+	Outputs           []Field  `json:"outputs"`
 	Progress          Progress `json:"progress"`
 	ExecutionComplete bool     `json:"executionComplete"`
 }
@@ -101,18 +97,20 @@ type Policy struct {
 	Batches              []BatchProfile `json:"-"`                        // Immutable bundle, loaded once. Policy file never repeats samples.
 }
 type Config struct {
-	Model            string      `json:"model"`
-	Inputs           []InputSpec `json:"inputs"`
-	RunnerCommand    []string    `json:"runnerCommand"`
-	RunnerTimeoutMS  int         `json:"runnerTimeoutMS"`
-	MaxQueueRequests int         `json:"maxQueueRequests"`
-	MaxQueueBytes    int         `json:"maxQueueBytes"`
-	MaxRequestBytes  int         `json:"maxRequestBytes"`
-	Mode             string      `json:"mode"` // serving or profiling
-	BatchSizes       []int       `json:"batchSizes"`
-	MaxBatchSize     int         `json:"maxBatchSize"`
-	ProfilePath      string      `json:"profilePath,omitempty"`
-	Policy           Policy      `json:"policy"`
+	Model            string   `json:"model"`
+	Inputs           []string `json:"inputs"`  // raw input field names
+	Outputs          []string `json:"outputs"` // raw output field names
+	MaxNewTokens     int      `json:"maxNewTokens,omitempty"`
+	RunnerCommand    []string `json:"runnerCommand"`
+	RunnerTimeoutMS  int      `json:"runnerTimeoutMS"`
+	MaxQueueRequests int      `json:"maxQueueRequests"`
+	MaxQueueBytes    int      `json:"maxQueueBytes"`
+	MaxRequestBytes  int      `json:"maxRequestBytes"`
+	Mode             string   `json:"mode"` // serving or profiling
+	BatchSizes       []int    `json:"batchSizes"`
+	MaxBatchSize     int      `json:"maxBatchSize"`
+	ProfilePath      string   `json:"profilePath,omitempty"`
+	Policy           Policy   `json:"policy"`
 }
 type Progress struct {
 	RequestID         string    `json:"requestID"`
@@ -127,6 +125,10 @@ type Progress struct {
 	QueueMS           float64   `json:"queueMS"`
 	ServiceMS         float64   `json:"serviceMS"`
 	BackendMS         float64   `json:"backendMS"`
+	PreprocessMS      float64   `json:"preprocessMS"`
+	PostprocessMS     float64   `json:"postprocessMS"`
+	FirstTokenMS      float64   `json:"firstTokenMS,omitempty"` // generative paths only
+	Units             int       `json:"units,omitempty"`        // successful requests only
 	NativeElapsedMS   float64   `json:"nativeElapsedMS"`
 	ExecutionComplete bool      `json:"executionComplete"`
 	Outcome           string    `json:"outcome,omitempty"`
@@ -135,9 +137,9 @@ type RuntimeMetadata struct {
 	Runtime            string          `json:"runtime"`
 	RuntimeVersion     string          `json:"runtimeVersion"`
 	NumpyVersion       string          `json:"numpyVersion"`
-	ModelPath          string          `json:"modelPath"`
-	Inputs             []InputSpec     `json:"inputs"`
-	Outputs            []InputSpec     `json:"outputs"`
+	ModelFiles         []string        `json:"modelFiles"`
+	Inputs             []string        `json:"inputs"`
+	Outputs            []string        `json:"outputs"`
 	Providers          []string        `json:"providers"`
 	Device             string          `json:"device"`
 	GPUUUID            string          `json:"gpuUUID,omitempty"`
@@ -203,20 +205,22 @@ type BatchChoice struct {
 	WaitMS      float64
 	Reason      string
 }
+
+// ProfileRequest is exactly one execution of BatchSize samples.
 type ProfileRequest struct {
-	BatchSize  int      `json:"batchSize"`
-	Executions int      `json:"executions"`
-	Inputs     []Tensor `json:"inputs"`
+	BatchSize int     `json:"batchSize"`
+	Inputs    []Field `json:"inputs"`
 }
 type ProfileResponse struct {
-	BatchSize         int       `json:"batchSize"`
-	Executions        int       `json:"executions"`
-	Items             int       `json:"items"`
-	BatchIDs          []uint64  `json:"batchIDs"`
-	NativeSamplesMS   []float64 `json:"nativeSamplesMS"`
-	ServiceSamplesMS  []float64 `json:"serviceSamplesMS"`
-	BackendSamplesMS  []float64 `json:"backendSamplesMS"`
-	NativeElapsedMS   float64   `json:"nativeElapsedMS"`
-	Outputs           []Tensor  `json:"outputs"`
-	ExecutionComplete bool      `json:"executionComplete"`
+	BatchSize            int       `json:"batchSize"`
+	BatchIDs             []uint64  `json:"batchIDs"`
+	NativeSamplesMS      []float64 `json:"nativeSamplesMS"`
+	ServiceSamplesMS     []float64 `json:"serviceSamplesMS"`
+	BackendSamplesMS     []float64 `json:"backendSamplesMS"`
+	PreprocessSamplesMS  []float64 `json:"preprocessSamplesMS"`
+	PostprocessSamplesMS []float64 `json:"postprocessSamplesMS"`
+	FirstTokenSamplesMS  []float64 `json:"firstTokenSamplesMS,omitempty"` // generative paths only
+	Units                []int     `json:"units"`                         // per request of the execution
+	NativeElapsedMS      float64   `json:"nativeElapsedMS"`
+	ExecutionComplete    bool      `json:"executionComplete"`
 }

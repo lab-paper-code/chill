@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path"
 	"reflect"
 	"slices"
 	"time"
@@ -251,7 +250,7 @@ func (o *Operations) validatePowerNativeProfiles(node *transitioncost.NativeNode
 		}
 		actual := instance.State.Metadata.Runtime
 		expected := *profile.RuntimeMetadata
-		expected.ModelPath = path.Join("/model", "model"+path.Ext(profile.Condition.Artifact.Path))
+		expected.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
 		if !reflect.DeepEqual(actual, expected) {
 			return errors.New("power actual native runtime/provider/allocation differs from verified profile")
 		}

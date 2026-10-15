@@ -14,7 +14,6 @@ import (
 
 type CPURuntimeConfig struct {
 	Command                 []string
-	ModelPath               string
 	ObserverReadyPaths      []string
 	WorkloadWindowStartPath string
 	MeasurementStartPath    string
@@ -38,12 +37,22 @@ type CPURuntime struct {
 
 var _ Runtime = (*CPURuntime)(nil)
 
+// Model files, the preprocessor directory, and the dataset profiling records
+// are mounted at these fixed Job paths.
+const (
+	modelDirectory   = "/model"
+	preprocessorPath = "/preprocessor"
+	datasetPath      = "/dataset"
+)
+
 type cpuRuntimeRequest struct {
 	SchemaVersion                    string                 `json:"schemaVersion"`
 	RunConfig                        profilingrun.RunConfig `json:"runConfig"`
 	PodUID                           string                 `json:"podUID"`
 	ScheduledNodeName                string                 `json:"scheduledNodeName"`
-	ModelPath                        string                 `json:"modelPath"`
+	ModelDirectory                   string                 `json:"modelDirectory"`
+	PreprocessorPath                 string                 `json:"preprocessorPath"`
+	DatasetPath                      string                 `json:"datasetPath,omitempty"`
 	ObserverReadyPaths               []string               `json:"observerReadyPaths"`
 	WorkloadWindowStartPath          string                 `json:"workloadWindowStartPath"`
 	MeasurementStartPath             string                 `json:"measurementStartPath"`
@@ -65,7 +74,6 @@ func newCPURuntime(config CPURuntimeConfig, runtimeName, family, backend, reques
 		}
 	}
 	for name, value := range map[string]string{
-		"model":                 config.ModelPath,
 		"workload-window-start": config.WorkloadWindowStartPath,
 		"measurement-start":     config.MeasurementStartPath, "result": config.ResultPath,
 		"workload-window-ready": config.WorkloadWindowReadyPath,
@@ -159,7 +167,8 @@ func (r *CPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error
 	request := cpuRuntimeRequest{
 		SchemaVersion: r.requestSchema, RunConfig: runConfig,
 		PodUID: runtimeRequest.PodUID, ScheduledNodeName: runtimeRequest.ScheduledNodeName,
-		ModelPath: r.config.ModelPath, ObserverReadyPaths: r.config.ObserverReadyPaths,
+		ModelDirectory: modelDirectory, PreprocessorPath: preprocessorPath,
+		ObserverReadyPaths:               r.config.ObserverReadyPaths,
 		WorkloadWindowStartPath:          r.config.WorkloadWindowStartPath,
 		MeasurementStartPath:             r.config.MeasurementStartPath,
 		WorkloadWindowReadyPath:          r.config.WorkloadWindowReadyPath,
@@ -168,6 +177,9 @@ func (r *CPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error
 		MaxLatencySamples:                r.config.MaxLatencySamples,
 		MaxInputBytes:                    r.config.MaxInputBytes,
 		MaxResultBytes:                   r.config.MaxResultBytes,
+	}
+	if runConfig.Measurement.Dataset != nil {
+		request.DatasetPath = datasetPath
 	}
 	payload, err := json.Marshal(request)
 	if err != nil {

@@ -23,7 +23,7 @@ const emptyField = (): RawField => ({ name: "", format: "JPEG", maxBytes: 104857
 const emptyTarget = (): PreprocessorArtifact => ({ target: { model: "", artifact: "" }, source: { image: "", architecture: "", path: "" } })
 const subsets = (path: string) => [`${path.replace(/\/+$/, "")}/profiling`, `${path.replace(/\/+$/, "")}/evaluation`]
 const emptyTensor = (): TensorContract => ({ name: "", datatype: "FP32", sampleShape: [1] })
-const emptyArtifact = (): ModelArtifact => ({ name: "", format: "", source: { image: "", architecture: "", path: "" }, input: { tensors: [emptyTensor()] } })
+const emptyArtifact = (): ModelArtifact => ({ name: "", format: "", source: { image: "", architecture: "", files: [""] } })
 const emptyPath = (): ExecutionPath => ({ name: "", artifact: "", runtime: { family: "", backend: "" } })
 type Referenced = Exclude<Kind, "workloads">
 // Services that use a catalog object by name, by applied definition, or as an in-flight change target.
@@ -117,13 +117,14 @@ function ModelFields({ spec, set, step, models }: { spec: ModelSpec; set: (spec:
         const copied = models[mi]?.spec.artifacts[ai]
         if (copied) { setArtifactIndex(spec.artifacts.length); set({ ...spec, artifacts: [...spec.artifacts, structuredClone(copied)] }) }
       }}><option value="">가져올 파일 고르기</option>{models.flatMap((m, mi) => m.spec.artifacts.map((a, ai) => <option key={`${mi}/${ai}`} value={`${mi}/${ai}`}>{m.metadata.name} · {a.name}</option>))}</select></Field>}
-      {row && <div key={index} className="grid gap-4"><Text label="파일 이름" value={row.name} set={name => artifact({ name })} /><Choice label="파일 형식" value={row.format} set={format => artifact({ format })} options={["onnx", "rknn"]} /><Text label="모델 파일 보관 주소" value={row.source.image} set={image => artifact({ source: { ...row.source, image } })} /><p className="text-sm text-muted-foreground">변하지 않는 정확한 버전의 주소를 적어 주세요. 예: registry.example/model@sha256:…</p><Choice label="대상 장비 종류" value={row.source.architecture} set={architecture => artifact({ source: { ...row.source, architecture } })} options={["amd64", "arm64"]} /><Text label="보관 이미지 안의 파일 위치" value={row.source.path} set={path => artifact({ source: { ...row.source, path } })} /><p className="text-sm text-muted-foreground">예: /model/model.onnx</p>
+      {row && <div key={index} className="grid gap-4"><Text label="파일 이름" value={row.name} set={name => artifact({ name })} /><Choice label="파일 형식" value={row.format} set={format => artifact(format === "rknn" ? { format } : { format, input: undefined })} options={["onnx", "rknn"]} /><Text label="모델 파일 보관 주소" value={row.source.image} set={image => artifact({ source: { ...row.source, image } })} /><p className="text-sm text-muted-foreground">변하지 않는 정확한 버전의 주소를 적어 주세요. 예: registry.example/model@sha256:…</p><Choice label="대상 장비 종류" value={row.source.architecture} set={architecture => artifact({ source: { ...row.source, architecture } })} options={["amd64", "arm64"]} /><Text label="보관 이미지 안의 모델 파일 위치 · 여러 개면 쉼표로 구분" value={row.source.files.join(", ")} set={text => artifact({ source: { ...row.source, files: text.split(",").map(file => file.trim()) } })} /><p className="text-sm text-muted-foreground">예: /artifact/vision_encoder.onnx, /artifact/decoder_model_merged.onnx. 모든 파일을 함께 불러와요.</p>
         <label className="flex gap-2 text-sm"><input type="checkbox" checked={!!row.derivation} onChange={event => artifact({ derivation: event.target.checked ? { sourceArtifact: "", targetPlatform: "", declaredBatchSizes: [1], conversion: { tool: "", version: "" } } : undefined })} />다른 파일에서 변환했어요</label>
         {row.derivation && <><Field label="변환 전 파일"><select required aria-label="변환 전 파일" className={select} value={row.derivation.sourceArtifact} onChange={event => artifact({ derivation: { ...row.derivation!, sourceArtifact: event.target.value } })}><option value="">원본 파일 선택</option>{spec.artifacts.filter((_, i) => i !== index).map((a, i) => <option key={i} value={a.name}>{a.name || "이름 없는 파일"}</option>)}</select></Field><Text label="변환 대상 장비" value={row.derivation.targetPlatform} set={targetPlatform => artifact({ derivation: { ...row.derivation!, targetPlatform } })} /><IntegerList label="지원 묶음 크기 · 개수, 쉼표로 구분" value={row.derivation.declaredBatchSizes} set={declaredBatchSizes => artifact({ derivation: { ...row.derivation!, declaredBatchSizes } })} /><Text label="변환 도구" value={row.derivation.conversion.tool} set={tool => artifact({ derivation: { ...row.derivation!, conversion: { ...row.derivation!.conversion, tool } } })} /><Text label="변환 도구 버전" value={row.derivation.conversion.version} set={version => artifact({ derivation: { ...row.derivation!, conversion: { ...row.derivation!.conversion, version } } })} /></>}
         <Button type="button" variant="outline" onClick={() => set({ ...spec, artifacts: spec.artifacts.filter((_, i) => i !== index) })}>이 파일 빼기</Button></div>}
       <Button type="button" variant="outline" onClick={() => { setArtifactIndex(spec.artifacts.length); set({ ...spec, artifacts: [...spec.artifacts, emptyArtifact()] }) }}>새 모델 파일 추가</Button>
     </>}
-    {step === "inputs" && row && <>
+    {step === "inputs" && row && row.format !== "rknn" && <p className="text-sm text-muted-foreground">{row.format || "이"} 파일의 입력은 이 파일을 대상으로 하는 전처리기가 정해요. RKNN 파일만 입력을 적어요.</p>}
+    {step === "inputs" && row && row.format === "rknn" && <>
       <p className="text-sm text-muted-foreground">한 번의 입력 크기만 적고, 여러 요청을 묶는 축은 빼 주세요. 크기 예: 3, 224, 224 (채널, 높이, 너비).</p>
       {(row.input?.tensors ?? []).map((tensor, ti) => {
         const tensorSet = (change: Partial<TensorContract>) => artifact({ input: { tensors: row.input!.tensors.map((t, i) => i === ti ? { ...t, ...change } : t) } })
@@ -173,7 +174,7 @@ function DefinitionSummary({ spec }: { spec: Spec }) {
     ...spec.fields.map((f): [string, string] => [`필드 ${f.name}`, `${f.format} · 최대 ${f.maxBytes}바이트`]),
   ]} />
   return "modelRef" in spec ? <Facts items={brief(spec)} /> : <Facts items={[
-    ...spec.artifacts.map((a, i): [string, string] => [`파일 ${a.name || i + 1}`, `${a.format} · 입력 ${a.input?.tensors.map(t => `${t.name} (${t.sampleShape.join(" × ")})`).join(", ") || "없음"}`]),
+    ...spec.artifacts.map((a, i): [string, string] => [`파일 ${a.name || i + 1}`, `${a.format} · ${a.source.files.join(", ")}${a.input ? ` · 입력 ${a.input.tensors.map(t => `${t.name} (${t.sampleShape.join(" × ")})`).join(", ")}` : ""}`]),
     ...spec.executionPaths.map((p, i): [string, string] => [`실행 방식 ${p.name || i + 1}`, `${p.artifact} · ${p.runtime.family} / ${p.runtime.backend}`]),
   ]} />
 }
@@ -377,6 +378,7 @@ export function ModelPage({ name }: { name: string }) {
 
 export function ModelSectionPage({ name, section }: { name: string; section: "files" | "services" }) {
   const r = useResource("models", name)
+  const preprocessors = useChillQuery<{ items: PreprocessorResource[] }>("v1/preprocessors", { enabled: section === "files" })
   const model = r.detail.data && !("desired" in r.detail.data) && !r.denied ? r.detail.data as ModelResource : undefined
   if ((r.wrongUID || r.identityChanged) && r.current) return <Mismatch kind="models" name={name} uid={r.current.metadata.uid} />
   const back: [string, string] = [href("models", name, model?.metadata.uid ?? r.expectedUID ?? ""), name]
@@ -389,13 +391,17 @@ export function ModelSectionPage({ name, section }: { name: string; section: "fi
   const spec = model?.spec
   return <Screen back={back} title={spec ? `파일 ${spec.artifacts.length}개, 실행 방식 ${spec.executionPaths.length}개가 있어요` : "파일과 실행 방식"} lede="실행 방식마다 측정 결과가 있어야 서비스에서 쓸 수 있어요.">
     <QueryGate query={r.detail}>{spec && <>
-      <Rows label="모델 파일">{spec.artifacts.map((a, i) => <RowDialog key={i} label={a.name || `파일 ${i + 1}`} hint={`${a.format} 파일 · ${a.source.architecture}`} value={`입력 ${a.input?.tensors.length ?? 0}개`} title={`${a.name || `파일 ${i + 1}`} 파일`}>
+      <Rows label="모델 파일">{spec.artifacts.map((a, i) => {
+        const targeting = preprocessors.data?.items.filter(p => p.spec.artifacts.some(t => t.target.model === name && t.target.artifact === a.name))
+        return <RowDialog key={i} label={a.name || `파일 ${i + 1}`} hint={`${a.format} 파일 · ${a.source.architecture}`} value={`모델 파일 ${a.source.files.length}개`} title={`${a.name || `파일 ${i + 1}`} 파일`}>
         <Facts items={[
-          ["형식", a.format], ["보관 주소", a.source.image], ["대상 장비", a.source.architecture], ["파일 위치", a.source.path],
-          ...(a.input?.tensors ?? []).map((t): [string, string] => [`입력 ${t.name}`, `${t.datatype} · 크기 ${t.sampleShape.join(" × ")}`]),
+          ["형식", a.format], ["보관 주소", a.source.image], ["대상 장비", a.source.architecture],
+          ...a.source.files.map((file, fi): [string, string] => [`모델 파일 ${fi + 1}`, file]),
+          ...(a.input?.tensors ?? []).map((t): [string, string] => [`RKNN 입력 ${t.name}`, `${t.datatype} · 크기 ${t.sampleShape.join(" × ")}`]),
+          ["전처리기", targeting === undefined ? preprocessors.error ? "확인 불가" : "확인 중" : targeting.map(p => p.metadata.name).join(", ") || "이 파일을 대상으로 하는 전처리기가 없어요"],
           ["변환", a.derivation ? `${a.derivation.sourceArtifact}에서 ${a.derivation.conversion.tool} ${a.derivation.conversion.version}로 변환 · ${a.derivation.targetPlatform} · 묶음 ${a.derivation.declaredBatchSizes.join(", ")}` : "원본 파일"],
         ]} />
-      </RowDialog>)}</Rows>
+      </RowDialog>})}</Rows>
       <Rows label="실행 방식">{spec.executionPaths.map((p, i) => {
         const ff = p.runtime.settings?.firstfloor
         return <RowDialog key={i} label={p.name || `실행 방식 ${i + 1}`} hint={`${p.artifact} 파일 사용`} title={`${p.name || `실행 방식 ${i + 1}`} 실행 방식`}>
@@ -470,15 +476,15 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
     if (kind === "workloads") return workloadSpec(model, preprocessorRef, datasetRef, percentile, latency)
     if (kind === "preprocessors") { if (!pre.input.fields.length || !pre.output.fields.length || !pre.artifacts.length) throw new Error("입력 필드, 출력 필드, 대상 모델 파일을 하나 이상 설정해 주세요."); return pre }
     if (kind === "datasets") { if (!dataset.fields.length) throw new Error("기록 필드를 하나 이상 설정해 주세요."); return dataset }
-    if (!spec.artifacts.length || !spec.executionPaths.length || spec.artifacts.some(a => !a.input?.tensors.length)) throw new Error("모델 파일, 각 파일의 입력, 실행 방식을 하나 이상 설정해 주세요.")
+    if (!spec.artifacts.length || !spec.executionPaths.length || spec.artifacts.some(a => a.format === "rknn" && !a.input?.tensors.length)) throw new Error("모델 파일, RKNN 파일의 입력, 실행 방식을 하나 이상 설정해 주세요.")
     return spec
   }
   function next(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setValidation("")
     try {
       if (step === "review") { if (!locked) void r.submit(original ? "PUT" : "POST", original ? { spec: draft() } : { name, spec: draft() }); return }
-      if (step === "artifacts" && (!spec.artifacts.length || spec.artifacts.some(a => !a.name.trim() || !a.format.trim() || !a.source.image.trim() || !a.source.architecture.trim() || !a.source.path.trim()))) throw new Error("파일마다 이름, 형식, 보관 주소, 대상 장비와 파일 위치를 적어 주세요. 위에서 설정할 파일을 바꿀 수 있어요.")
-      if (step === "inputs" && spec.artifacts.some(a => !a.input?.tensors.length || a.input.tensors.some(t => !t.name.trim()))) throw new Error("모든 모델 파일에 입력 이름과 크기를 설정해 주세요. 위에서 설정할 파일을 바꿀 수 있어요.")
+      if (step === "artifacts" && (!spec.artifacts.length || spec.artifacts.some(a => !a.name.trim() || !a.format.trim() || !a.source.image.trim() || !a.source.architecture.trim() || !a.source.files.length || a.source.files.some(file => !file)))) throw new Error("파일마다 이름, 형식, 보관 주소, 대상 장비와 모델 파일 위치를 적어 주세요. 위에서 설정할 파일을 바꿀 수 있어요.")
+      if (step === "inputs" && spec.artifacts.some(a => a.format === "rknn" && (!a.input?.tensors.length || a.input.tensors.some(t => !t.name.trim())))) throw new Error("RKNN 모델 파일에 입력 이름과 크기를 설정해 주세요. 위에서 설정할 파일을 바꿀 수 있어요.")
       if (step === "paths" && (!spec.executionPaths.length || spec.executionPaths.some(p => !p.name.trim() || !p.artifact || !p.runtime.family.trim() || !p.runtime.backend.trim()))) throw new Error("실행 방식마다 이름, 파일, 실행 소프트웨어와 처리 방식을 설정해 주세요.")
       if (steps[index + 1] === "review") draft()
       setIndex(index + 1)
@@ -517,7 +523,7 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
     references: "전처리기는 원본 입력을 모델 입력으로 바꿔요. 고른 모델의 파일을 대상으로 하는 전처리기가 있어야 그 파일로 실행해요. 데이터셋은 측정이 표본을 뽑는 기록이에요.",
     slo: "예: 99.5%라면 1,000건 중 995건이 정한 시간 안에 응답하도록 목표를 정해요. 요청을 기다리는 제한 시간과는 달라요. 바꾼 목표는 새로 받는 요청부터 적용돼요.",
     artifacts: "새 파일은 담당자가 알려 준 보관 주소와 파일 위치가 필요해요. 외부 저장소의 파일 목록은 여기서 조회할 수 없어요.",
-    inputs: "모델 파일이 요구하는 입력 이름과 크기를 옮겨 적어 주세요.",
+    inputs: "RKNN 모델 파일이 요구하는 입력 이름과 크기를 옮겨 적어 주세요. ONNX 파일의 입력은 전처리기가 정해요.",
     paths: "모델을 실행할 소프트웨어를 정해요. 정하는 것만으로 장비가 준비되지는 않고, 측정과 준비 확인이 필요해요.",
     fields: "필드 이름과 형식은 요청과 데이터셋에서 그대로 써요. 최대 크기는 바이트 단위예요. 최대 생성 토큰은 글을 만드는 모델에만 정해요.",
     targets: "대상 모델 파일마다 그 파일에 맞는 전처리 파일을 하나씩 정해요. 전처리기가 대상으로 삼은 모델 파일은 모델에서 뺄 수 없어요.",

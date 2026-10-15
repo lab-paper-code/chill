@@ -5,11 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 type RuntimeConfig struct {
@@ -31,7 +30,7 @@ type Call struct {
 	receipt                                      Receipt
 	definition                                   *Definition
 	identity                                     string
-	input                                        validatedInput
+	input                                        *InferenceInput
 	reply                                        chan callResult
 	assignment                                   *Assignment
 	instance                                     *runtimeInstance
@@ -53,6 +52,9 @@ type routeEntry struct {
 	instance *runtimeInstance
 	path     *ModelPath
 }
+
+// inputRoute distributes a Workload's samples; the raw contract is common to
+// every execution path, so one route spans all of them.
 type inputRoute struct {
 	evidence  bool
 	entries   []routeEntry
@@ -66,7 +68,7 @@ type runtimeWorkload struct {
 	stopped    bool
 	detached   bool
 	reason     string
-	routes     []inputRoute
+	route      inputRoute
 	queue      []*Call
 	calls      map[string]*Call
 }
@@ -121,9 +123,6 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		if fact.event.LifetimeNanos > 0 {
 			c.receipt.Deadline = c.receipt.ReceivedAt.Add(time.Duration(fact.event.LifetimeNanos))
 		}
-		if fact.event.InputPath != nil {
-			c.input.path = *fact.event.InputPath
-		}
 		instance := r.instances[c.assignment.Instance]
 		if instance == nil {
 			instance = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{ID: c.assignment.Instance, Node: c.assignment.Node, Pool: c.assignment.Pool, Profile: c.assignment.Profile, Reason: "RestartUnconfirmed"}}, bindings: map[string]bool{}}
@@ -174,7 +173,6 @@ func (r *Runtime) eventAt(c *Call, kind, outcome, code string, now time.Time) er
 	e.ExecutionComplete = c.backendDone
 	if c.definition != nil {
 		e.SLO = &c.definition.SLO
-		e.InputPath = &c.input.path
 	}
 	if err := r.config.Journal.RequestEvent(e); err != nil {
 		r.observationError = err
@@ -214,15 +212,15 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	}
 	d := w.definition
 	r.mu.Unlock()
-	validated, err := validateInput(input, d.Model.Paths)
-	if err != nil {
+	if err := validateInput(input, d.Preprocessor.Input); err != nil {
 		return nil, err
 	}
 	lifetime := int64(0)
 	if !receipt.Deadline.IsZero() {
 		lifetime = receipt.Deadline.Sub(receipt.ReceivedAt).Nanoseconds()
 	}
-	if err := r.config.Journal.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: time.Now().UTC(), ReceivedAt: receipt.ReceivedAt, SLO: &d.SLO, InputPath: &validated.path, LifetimeNanos: lifetime}); err != nil {
+	validatedAt := time.Now()
+	if err := r.config.Journal.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: validatedAt.UTC(), ReceivedAt: receipt.ReceivedAt, ElapsedNanos: validatedAt.Sub(receipt.ReceivedAt).Nanoseconds(), SLO: &d.SLO, LifetimeNanos: lifetime}); err != nil {
 		return nil, failure("ObservationUnavailable", "cannot persist validated compute demand")
 	}
 	r.mu.Lock()
@@ -246,13 +244,13 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	if w.definition.Dataset == nil {
 		return nil, failure("MissingDataset", "workload names no dataset for its measurement")
 	}
-	if !w.routes[validated.path].evidence {
+	if !w.route.evidence {
 		return nil, failure("MissingEvidence", "no matching execution evidence for this input")
 	}
 	if len(w.queue) >= r.config.QueueLimit {
 		return nil, failure("QueueFull", "workload ingress queue limit reached")
 	}
-	c := &Call{runtime: r, receipt: receipt, definition: w.definition, identity: w.identity, input: validated, reply: make(chan callResult, 1)}
+	c := &Call{runtime: r, receipt: receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
 	if err := r.event(c, phaseAccepted, "", ""); err != nil {
 		return nil, failure("ObservationUnavailable", "cannot persist request acceptance")
 	}
@@ -347,7 +345,7 @@ func (r *Runtime) dispatchLocked() {
 				c.reply <- callResult{err: failure("RequestTimeout", "request lifetime expired in ingress queue")}
 				continue
 			}
-			entry := r.chooseLocked(w.routes[c.input.path])
+			entry := r.chooseLocked(w.route)
 			if entry == nil {
 				break
 			}
@@ -369,7 +367,7 @@ func (r *Runtime) dispatchLocked() {
 			c.phase = phaseAssigned
 			i.outstanding++
 			c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
-			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline}
+			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline}
 			go r.execute(c, i.Execute, dispatch)
 		}
 	}
@@ -386,8 +384,11 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		}
 		errors.As(err, &domain)
 		outcome, code = "error", domain.Code
-		if domain.Code == "SLODeadlineDrop" {
+		switch domain.Code {
+		case "SLODeadlineDrop":
 			outcome = "timeout"
+		case "PreprocessFailed":
+			outcome = "preprocess_failed"
 		}
 	}
 	r.mu.Lock()
@@ -430,7 +431,7 @@ func (r *Runtime) releaseLocked(c *Call) {
 		c.instance.outstanding--
 		c.instance = nil
 	}
-	c.input.input = nil
+	c.input = nil
 	if !c.responseRecorded {
 		return
 	}
@@ -460,7 +461,6 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) erro
 		if !c.receipt.Deadline.IsZero() {
 			e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
 		}
-		e.InputPath = &c.input.path
 		if !c.backendDone {
 			c.progress = &progress
 			if progress.Phase == phaseRunning || ((progress.Phase == phaseQueued || progress.Phase == phaseDeferred) && c.phase != phaseRunning) {
@@ -640,7 +640,7 @@ func (r *Runtime) Detach(uid string) error {
 	for _, i := range r.instances {
 		delete(i.bindings, uid)
 	}
-	w.routes = nil
+	w.route = inputRoute{}
 	w.detached = true
 	r.signal()
 	return nil
@@ -740,45 +740,19 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 	return nil
 }
 
-func sameInputs(a, b []modelcompat.InputTensor) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, x := range a {
-		found := false
-		for _, y := range b {
-			if x.Name != y.Name || x.Datatype != y.Datatype || len(x.SampleShape) != len(y.SampleShape) {
-				continue
-			}
-			equal := true
-			for n := range x.SampleShape {
-				if x.SampleShape[n] != y.SampleShape[n] {
-					equal = false
-					break
-				}
-			}
-			if equal {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
 func profilePath(d *Definition, p *Profile) *ModelPath {
 	if p == nil {
 		return nil
 	}
 	c := p.Condition
-	if c.LogicalModel != d.Model.Name {
+	pre := d.Preprocessor
+	if c.LogicalModel != d.Model.Name || c.Preprocessor.Name != pre.Name || !slices.Equal(c.Preprocessor.Inputs, rawFieldNames(pre.Input)) || !slices.Equal(c.Preprocessor.Outputs, rawFieldNames(pre.Output)) || c.Preprocessor.MaxNewTokens != int(pre.MaxNewTokens) ||
+		d.Dataset == nil || c.ActiveProtocol.Dataset == nil || d.Dataset.UID != c.ActiveProtocol.Dataset.UID {
 		return nil
 	}
 	for n := range d.Model.Paths {
 		path := &d.Model.Paths[n]
-		if path.Name == c.Artifact.ExecutionPath && path.Artifact == c.Artifact.Name && path.Path == c.Artifact.Path && path.Image == c.Artifact.Image && path.RuntimeFamily == c.RuntimeFamily && path.Backend == c.Backend && sameInputs(path.Tensors, c.Tensor.Tensors) {
+		if path.Name == c.Artifact.ExecutionPath && path.Artifact == c.Artifact.Name && slices.Equal(path.Files, c.Artifact.Files) && path.Image == c.Artifact.Image && path.RuntimeFamily == c.RuntimeFamily && path.Backend == c.Backend && path.Preprocessor == (PreprocessorArtifact{Image: c.Preprocessor.Image, Architecture: c.Preprocessor.Architecture, Path: c.Preprocessor.Path}) {
 			if (path.Firstfloor == nil) != (c.Firstfloor == nil) {
 				continue
 			}
@@ -818,42 +792,37 @@ func (r *Runtime) pruneInstanceBindingsLocked() {
 
 func (r *Runtime) rebuildWorkloadRoutesLocked() {
 	for uid, w := range r.workloads {
+		previous := w.route
+		w.route = inputRoute{}
 		if w.detached {
-			w.routes = nil
 			continue
 		}
-		previous := w.routes
-		w.routes = make([]inputRoute, len(w.definition.Model.Paths))
-		for n, path := range w.definition.Model.Paths {
-			route := &w.routes[n]
-			for p := range r.profiles {
-				if profilePath(w.definition, &r.profiles[p]) != nil && sameInputs(path.Tensors, r.profiles[p].Condition.Tensor.Tensors) {
-					route.evidence = true
+		route := &w.route
+		for p := range r.profiles {
+			if profilePath(w.definition, &r.profiles[p]) != nil {
+				route.evidence = true
+				break
+			}
+		}
+		for _, i := range r.instances {
+			actual := profilePath(w.definition, i.Profile)
+			weight := r.routeWeightLocked(uid, i)
+			if !i.State.Ready || i.State.Stopped || weight == 0 || actual == nil || (i.OwnerWorkloadUID != "" && i.OwnerWorkloadUID != uid) {
+				continue
+			}
+			i.bindings[uid] = true
+			route.entries = append(route.entries, routeEntry{instance: i, path: actual})
+		}
+		sort.Slice(route.entries, func(a, b int) bool { return route.entries[a].instance.State.ID < route.entries[b].instance.State.ID })
+		route.weights = make([]int32, len(route.entries))
+		route.current = make([]int64, len(route.entries))
+		route.available = make([]bool, len(route.entries))
+		for index, entry := range route.entries {
+			route.weights[index] = r.routeWeightLocked(uid, entry.instance)
+			for oldIndex, old := range previous.entries {
+				if old.instance.State.ID == entry.instance.State.ID && previous.weights[oldIndex] == route.weights[index] {
+					route.current[index] = previous.current[oldIndex]
 					break
-				}
-			}
-			for _, i := range r.instances {
-				actual := profilePath(w.definition, i.Profile)
-				weight := r.routeWeightLocked(uid, i)
-				if !i.State.Ready || i.State.Stopped || weight == 0 || actual == nil || (i.OwnerWorkloadUID != "" && i.OwnerWorkloadUID != uid) || !sameInputs(path.Tensors, actual.Tensors) {
-					continue
-				}
-				i.bindings[uid] = true
-				route.entries = append(route.entries, routeEntry{instance: i, path: actual})
-			}
-			sort.Slice(route.entries, func(a, b int) bool { return route.entries[a].instance.State.ID < route.entries[b].instance.State.ID })
-			route.weights = make([]int32, len(route.entries))
-			route.current = make([]int64, len(route.entries))
-			route.available = make([]bool, len(route.entries))
-			for index, entry := range route.entries {
-				route.weights[index] = r.routeWeightLocked(uid, entry.instance)
-				if n < len(previous) {
-					for oldIndex, old := range previous[n].entries {
-						if old.instance.State.ID == entry.instance.State.ID && oldIndex < len(previous[n].weights) && previous[n].weights[oldIndex] == route.weights[index] {
-							route.current[index] = previous[n].current[oldIndex]
-							break
-						}
-					}
 				}
 			}
 		}
@@ -873,11 +842,7 @@ func (r *Runtime) State(name string) (WorkloadState, error) {
 			state.Assigned++
 		}
 	}
-	evidence, ready := false, false
-	for _, route := range w.routes {
-		evidence = evidence || route.evidence
-		ready = ready || len(route.entries) > 0
-	}
+	evidence, ready := w.route.evidence, len(w.route.entries) > 0
 	state.Admission = !w.stopped && w.definition.Dataset != nil && evidence && r.observationError == nil
 	if !w.stopped {
 		switch {

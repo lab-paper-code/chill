@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha16"
+	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha17"
 
 	AllocatableCPUQuotaPolicy = "AllocatableCPUQuota"
 	ConfiguredCPUQuotaPolicy  = "ConfiguredCPUQuota"
@@ -19,8 +19,6 @@ const (
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
-	NoInputGenerator                      = "none"
-	NoOutputValidation                    = "none"
 	RKNNLiteExecutionPath                 = "rknnlite"
 	FirstfloorRuntimeFamily               = "firstfloor"
 	FirstfloorORTCPUBackend               = "ort-cpu"
@@ -94,12 +92,36 @@ type ExecutionState struct {
 	DeviceClass   string                          `json:"deviceClass"`
 	Model         string                          `json:"model"`
 	Artifact      string                          `json:"artifact"`
-	ArtifactPath  string                          `json:"artifactPath,omitempty"`
+	ArtifactFiles []string                        `json:"artifactFiles"`
 	RuntimeFamily string                          `json:"runtimeFamily"`
 	Backend       string                          `json:"backend"`
 	Firstfloor    *modelcompat.FirstfloorSettings `json:"firstfloor,omitempty"`
 	PowerMode     string                          `json:"powerMode"`
 	HostContract  *CandidateReportHostContract    `json:"hostContract,omitempty"`
+	Preprocessor  PreprocessorState               `json:"preprocessor"`
+}
+
+// PreprocessorState freezes the preprocessing module delivered beside the
+// model files and its raw field contract. MaxNewTokens is 0 for
+// non-generative preprocessing.
+type PreprocessorState struct {
+	Name         string   `json:"name"`
+	UID          string   `json:"uid"`
+	Image        string   `json:"image"`
+	Architecture string   `json:"architecture"`
+	Path         string   `json:"path"`
+	MaxNewTokens int      `json:"maxNewTokens,omitempty"`
+	Inputs       []string `json:"inputs"`
+	Outputs      []string `json:"outputs"`
+}
+
+// DatasetContract freezes the dataset whose profiling records an active
+// measurement samples.
+type DatasetContract struct {
+	Name  string `json:"name"`
+	UID   string `json:"uid"`
+	Image string `json:"image"`
+	Path  string `json:"path"`
 }
 
 type Images struct {
@@ -162,8 +184,8 @@ type MeasurementContract struct {
 	Duration                time.Duration `json:"-"`
 	DurationSeconds         int           `json:"durationSeconds"`
 	WorkloadMode            string        `json:"workloadMode"`
-	InputGenerator          string        `json:"inputGenerator"`
-	OutputValidation        string        `json:"outputValidation"`
+	// Dataset is present for active measurement only.
+	Dataset *DatasetContract `json:"dataset,omitempty"`
 }
 
 type MetricContract struct {

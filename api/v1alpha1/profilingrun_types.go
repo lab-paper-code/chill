@@ -66,9 +66,15 @@ type ProfilingRunCandidateSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	PowerMode string `json:"powerMode"`
+
+	// Preprocessor names the cluster-scoped Preprocessor whose artifact for the
+	// selected model artifact runs beside the model.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Preprocessor string `json:"preprocessor"`
 }
 
-// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && self.inputGenerator == 'none' && self.outputValidation == 'none' : !has(self.settlingDurationSeconds) && self.inputGenerator == 'numpy-default-rng-seed-0-inputs-v1' && self.outputValidation == 'nonempty-shape-batch-v1'",message="measurement fields must match the selected workloadMode"
+// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && !has(self.dataset) : !has(self.settlingDurationSeconds) && has(self.dataset)",message="measurement fields must match the selected workloadMode"
 // +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).compareTo(quantity('0')) > 0",message="cpuQuota must be positive"
 // +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).isInteger()",message="cpuQuota must be a whole number of CPU cores"
 type ProfilingRunMeasurementSpec struct {
@@ -103,13 +109,12 @@ type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:Enum=saturated-serial-fixed-batch;idle-model-loaded
 	WorkloadMode string `json:"workloadMode"`
 
+	// Dataset names the cluster-scoped Dataset whose profiling records active
+	// measurement samples. Idle measurement has none.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	InputGenerator string `json:"inputGenerator"`
-
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	OutputValidation string `json:"outputValidation"`
+	// +kubebuilder:validation:MaxLength=253
+	Dataset string `json:"dataset,omitempty"`
 }
 
 // ProfilingRunMetricObservationSpec contains policy only, never an endpoint.

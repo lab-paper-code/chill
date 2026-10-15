@@ -1,9 +1,12 @@
 package kube
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"os"
@@ -125,8 +128,7 @@ func newManagerHarness(t *testing.T) (*Manager, serving.JournalConfig) {
 
 func managerModelSpec() api.ModelSpecSpec {
 	return api.ModelSpecSpec{
-		Artifacts: []api.ModelArtifact{{Name: "onnx", Format: "onnx", Source: api.ModelArtifactSource{Image: "model@sha256:immutable", Architecture: "amd64", Path: "/model.onnx"},
-			Input: &api.ModelArtifactInputContract{Tensors: []api.ModelInputTensor{{Name: "x", Datatype: "FP32", SampleShape: []int32{1}}}}}},
+		Artifacts: []api.ModelArtifact{{Name: "onnx", Format: "onnx", Source: api.ModelArtifactSource{Image: "model@sha256:immutable", Architecture: "amd64", Files: []string{"/model.onnx"}}}},
 		ExecutionPaths: []api.ModelExecutionPath{{Name: "native", Artifact: "onnx", Runtime: api.ModelRuntimeRequirement{Family: "firstfloor", Backend: "ort-cpu",
 			Settings: &api.ModelRuntimeSettings{Firstfloor: &api.FirstfloorRuntimeSettings{MaxBatchSize: 4, MaxQueueSize: 8}}}}},
 	}
@@ -174,9 +176,29 @@ func managerWorkloadSpec() api.WorkloadSpec {
 
 func managerProfile(d *serving.Definition) serving.Profile {
 	path := d.Model.Paths[0]
-	return serving.Profile{ID: "measured", Condition: derivation.CurvePlanSpec{LogicalModel: d.Model.Name, RuntimeFamily: path.RuntimeFamily, Backend: path.Backend, Firstfloor: path.Firstfloor,
-		Artifact: derivation.CurveArtifactContract{ExecutionPath: path.Name, Name: path.Artifact, Path: path.Path, Image: path.Image},
-		Tensor:   derivation.CurveTensorContract{Tensors: path.Tensors}}}
+	profile := serving.Profile{ID: "measured", Condition: derivation.CurvePlanSpec{LogicalModel: d.Model.Name, RuntimeFamily: path.RuntimeFamily, Backend: path.Backend, Firstfloor: path.Firstfloor,
+		Artifact:     derivation.CurveArtifactContract{ExecutionPath: path.Name, Name: path.Artifact, Files: path.Files, Image: path.Image},
+		Preprocessor: derivation.CurvePreprocessorContract{Name: d.Preprocessor.Name, Image: path.Preprocessor.Image, Architecture: path.Preprocessor.Architecture, Path: path.Preprocessor.Path, MaxNewTokens: int(d.Preprocessor.MaxNewTokens)}}}
+	for _, field := range d.Preprocessor.Input {
+		profile.Condition.Preprocessor.Inputs = append(profile.Condition.Preprocessor.Inputs, field.Name)
+	}
+	for _, field := range d.Preprocessor.Output {
+		profile.Condition.Preprocessor.Outputs = append(profile.Condition.Preprocessor.Outputs, field.Name)
+	}
+	if d.Dataset != nil {
+		profile.Condition.ActiveProtocol.Dataset = &derivation.CurveDatasetContract{Name: d.Dataset.Name, UID: d.Dataset.UID}
+	}
+	return profile
+}
+
+// managerSample is a raw sample satisfying managerPreprocessorSpec.
+func managerSample(t *testing.T) *serving.InferenceInput {
+	t.Helper()
+	var picture bytes.Buffer
+	if err := jpeg.Encode(&picture, image.NewGray(image.Rect(0, 0, 1, 1)), nil); err != nil {
+		t.Fatal(err)
+	}
+	return &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "image", Datatype: "BYTES", Data: picture.Bytes()}}}
 }
 
 func startManagerCalls(t *testing.T, m *Manager, profile serving.Profile, names ...string) ([]serving.Receipt, []*serving.Call, chan struct{}, map[string]serving.Dispatch) {
@@ -193,7 +215,7 @@ func startManagerCalls(t *testing.T, m *Manager, profile serving.Profile, names 
 		}}}); err != nil {
 		t.Fatal(err)
 	}
-	input := &serving.InferenceInput{Inputs: []serving.TensorInput{{Name: "x", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]")}}}
+	input := managerSample(t)
 	receipts := []serving.Receipt{}
 	calls := []*serving.Call{}
 	for _, name := range names {
@@ -413,7 +435,7 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	old := view.Applied
 	changed := model.Spec
 	changed.Artifacts = append([]api.ModelArtifact(nil), model.Spec.Artifacts...)
-	changed.Artifacts[0].Source.Path = "/changed.onnx"
+	changed.Artifacts[0].Source.Files = []string{"/changed.onnx"}
 	originalCtx := WithPrincipal(context.Background(), Principal{username: "original-editor", uid: "original-uid"})
 	model, _, err = m.UpdateModel(originalCtx, "model", model.ResourceVersion, changed)
 	if err != nil {
@@ -538,7 +560,7 @@ func TestManagerCatalogReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := &serving.InferenceInput{Inputs: []serving.TensorInput{{Name: "x", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]")}}}
+	input := managerSample(t)
 	if _, err := m.runtime.Accept(receipt, input); managerCode(err) != missingDataset {
 		t.Fatalf("request without dataset = %v", err)
 	}

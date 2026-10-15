@@ -65,9 +65,15 @@ func executionOwnerFixture() (executionManifest, executionConfiguration, executi
 	now := time.Unix(100, 0)
 	routing := map[string]map[string]int{"relaxed": {"source": 1}, "tight": {"source": 2}}
 	actual := map[string]map[string]int32{"relaxed": {"source": 1}, "tight": {"source": 2}}
-	profile := &serving.Profile{ID: "profile", Condition: derivation.CurvePlanSpec{LogicalModel: "model"}}
+	profile := &serving.Profile{ID: "profile", Condition: derivation.CurvePlanSpec{
+		LogicalModel: "model",
+		ActiveProtocol: derivation.CurveProtocolContract{
+			Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"},
+		},
+	}}
 	first := &serving.Definition{
 		Name: "relaxed", UID: "relaxed", Model: serving.Model{Name: "model", Paths: []serving.ModelPath{{}}},
+		Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"},
 	}
 	second := *first
 	second.Name, second.UID = "tight", "tight"
@@ -333,7 +339,7 @@ func TestExecuteBundleUsesCatalogDeclarationAndValidatesNativePolicy(t *testing.
 			Instance: serving.SchedulerInstance{Profile: profile},
 			Config: native.Config{
 				Model: "chill_model", RunnerCommand: []string{"python3", "/opt/chill/runtime/firstfloor/runner.py"},
-				Inputs:          []native.InputSpec{{Name: "x", Datatype: "FP32", Shape: []int{1}}},
+				Inputs: []string{"x"}, Outputs: []string{"y"},
 				RunnerTimeoutMS: 1000, MaxQueueRequests: 4, MaxQueueBytes: 1024, MaxRequestBytes: 1024,
 				BatchSizes: []int{1, 2}, MaxBatchSize: 2,
 				Policy: native.Policy{DecisionID: "manual", MaxBatchSize: cap, EnvelopeSource: "bootstrap-not-observed"},

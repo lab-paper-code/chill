@@ -73,8 +73,11 @@ func ReadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 func ValidateConfig(c *Config) error {
-	if c.Model == "" || len(c.Model) > 256 || len(c.RunnerCommand) == 0 || c.RunnerCommand[0] == "" || len(c.Inputs) == 0 {
-		return errors.New("model, inputs and runner command required")
+	if c.Model == "" || len(c.Model) > 256 || len(c.RunnerCommand) == 0 || c.RunnerCommand[0] == "" {
+		return errors.New("model and runner command required")
+	}
+	if !uniqueNames(c.Inputs) || !uniqueNames(c.Outputs) || c.MaxNewTokens < 0 {
+		return errors.New("nonempty unique bounded input and output field names and nonnegative maxNewTokens required")
 	}
 	if c.Mode != modeServing && c.Mode != modeProfiling {
 		return errors.New("mode must be serving or profiling")
@@ -88,11 +91,7 @@ func ValidateConfig(c *Config) error {
 	if c.RunnerTimeoutMS <= 0 || !durationOK(float64(c.RunnerTimeoutMS)) || c.MaxQueueRequests < 1 || c.MaxQueueRequests > 1<<20 || c.MaxQueueBytes < 1 || c.MaxQueueBytes > MaxFrameBytes || c.MaxRequestBytes < 1 || c.MaxRequestBytes > MaxFrameBytes {
 		return errors.New("invalid time or body/queue capacity")
 	}
-	total, err := validateInputs(c.Inputs)
-	if err != nil {
-		return err
-	}
-	if err = validateInitializedBatches(c, total); err != nil {
+	if err := validateInitializedBatches(c); err != nil {
 		return err
 	}
 	if c.Mode == modeServing {
@@ -100,31 +99,24 @@ func ValidateConfig(c *Config) error {
 	}
 	return nil
 }
-func validateInputs(inputs []InputSpec) (int, error) {
-	total := 0
-	names := map[string]bool{}
-	for _, s := range inputs {
-		if s.Name == "" || len(s.Name) > 256 || names[s.Name] {
-			return 0, errors.New("unique bounded input names required")
+func uniqueNames(names []string) bool {
+	seen := make(map[string]bool, len(names))
+	for _, n := range names {
+		if n == "" || len(n) > 256 || seen[n] {
+			return false
 		}
-		names[s.Name] = true
-		n, e := tensorElements(s.Shape)
-		w := datatypeBytes(s.Datatype)
-		if e != nil || w == 0 || n > MaxFrameBytes/w || n*w > MaxFrameBytes-total {
-			return 0, errors.New("invalid input shape/datatype or combined size")
-		}
-		total += n * w
+		seen[n] = true
 	}
-	return total, nil
+	return len(names) > 0
 }
-func validateInitializedBatches(c *Config, total int) error {
+func validateInitializedBatches(c *Config) error {
 	sort.Ints(c.BatchSizes)
 	if len(c.BatchSizes) == 0 || c.Mode == modeServing && c.BatchSizes[0] != 1 || c.MaxBatchSize < 1 || c.MaxBatchSize > c.MaxQueueRequests {
 		return errors.New("nonempty initialized batches and bounded maxBatchSize required; serving needs batch-1")
 	}
 	prev := 0
 	for _, k := range c.BatchSizes {
-		if k <= prev || k > c.MaxBatchSize || k > MaxFrameBytes/total || k > c.MaxQueueBytes/total {
+		if k <= prev || k > c.MaxBatchSize {
 			return errors.New("batch exceeds initialized capacity")
 		}
 		prev = k

@@ -40,8 +40,7 @@ func TestProjectRequestPreservesIdleSettlingContract(t *testing.T) {
 	run.Spec.Measurement.WarmupIterations = 0
 	run.Spec.Measurement.SettlingDurationSeconds = &settling
 	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-	run.Spec.Measurement.InputGenerator = profilingrun.NoInputGenerator
-	run.Spec.Measurement.OutputValidation = profilingrun.NoOutputValidation
+	run.Spec.Measurement.Dataset = ""
 
 	request, err := ProjectRequest(run.Spec)
 	if err != nil {
@@ -282,14 +281,14 @@ func testRun() *edgev1alpha1.ProfilingRun {
 					DeviceClass:   "lattepanda-3-delta-8g",
 					ExecutionPath: "ort-cpu",
 					PowerMode:     "fixed",
+					Preprocessor:  "mobilenet-imagenet",
 				},
 				TargetNode: "lattepanda",
 				CPURequest: resource.MustParse("100m"),
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
-				WorkloadMode: "saturated-serial-fixed-batch", InputGenerator: "numpy-default-rng-seed-0-inputs-v1",
-				OutputValidation: "nonempty-shape-batch-v1",
+				WorkloadMode: "saturated-serial-fixed-batch", Dataset: "vqav2-val-subset",
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,

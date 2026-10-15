@@ -33,8 +33,10 @@ type ModelArtifact struct {
 	// representation to a measurement worker.
 	Source ModelArtifactSource `json:"source"`
 
-	// Input declares this artifact's input tensor contract without its batch axis.
-	Input *ModelArtifactInputContract `json:"input"`
+	// Input declares the RKNN input tensor contract without its batch axis.
+	// Preprocessor artifacts define the inputs of every other format.
+	// +optional
+	Input *ModelArtifactInputContract `json:"input,omitempty"`
 
 	// Derivation binds a derived executable to its source artifact and conversion settings.
 	// It is absent for canonical source artifacts.
@@ -42,7 +44,7 @@ type ModelArtifact struct {
 	Derivation *ModelArtifactDerivation `json:"derivation,omitempty"`
 }
 
-// ModelArtifactSource identifies one exact artifact carrier and its in-container path.
+// ModelArtifactSource identifies one exact artifact carrier and its model files.
 type ModelArtifactSource struct {
 	// Image is an immutable OCI image reference containing the artifact.
 	// +kubebuilder:validation:MinLength=1
@@ -52,9 +54,11 @@ type ModelArtifactSource struct {
 	// +kubebuilder:validation:MinLength=1
 	Architecture string `json:"architecture"`
 
-	// Path is the clean absolute path of the artifact in the carrier image.
-	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9._/-]+$`
-	Path string `json:"path"`
+	// Files are the clean absolute paths of every model file in the carrier
+	// image. Basenames are unique; the runtime loads all files together.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:Pattern=`^/[A-Za-z0-9._/-]+$`
+	Files []string `json:"files"`
 }
 
 // ModelArtifactDerivation identifies how one derived artifact was produced.

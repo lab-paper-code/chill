@@ -60,14 +60,17 @@ spec:
             properties:
               activeProtocol:
                 properties:
+                  dataset:
+                    description: |-
+                      Dataset names the cluster-scoped Dataset whose profiling records every
+                      active child Run samples.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
                   durationSeconds:
                     format: int32
                     minimum: 1
                     type: integer
-                  inputGenerator:
-                    maxLength: 128
-                    minLength: 1
-                    type: string
                   metricObservation:
                     description: ProfilingRunMetricObservationSpec contains policy
                       only, never an endpoint.
@@ -92,19 +95,14 @@ spec:
                     x-kubernetes-validations:
                     - message: timeoutMilliseconds must be less than intervalMilliseconds
                       rule: self.timeoutMilliseconds < self.intervalMilliseconds
-                  outputValidation:
-                    maxLength: 128
-                    minLength: 1
-                    type: string
                   warmupIterations:
                     format: int32
                     minimum: 0
                     type: integer
                 required:
+                - dataset
                 - durationSeconds
-                - inputGenerator
                 - metricObservation
-                - outputValidation
                 - warmupIterations
                 type: object
                 x-kubernetes-validations:
@@ -224,11 +222,19 @@ spec:
                         maxLength: 128
                         minLength: 1
                         type: string
+                      preprocessor:
+                        description: |-
+                          Preprocessor names the cluster-scoped Preprocessor whose artifact for the
+                          selected model artifact runs beside the model.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
                     required:
                     - deviceClass
                     - executionPath
                     - modelSpec
                     - powerMode
+                    - preprocessor
                     type: object
                   cpuRequest:
                     anyOf:

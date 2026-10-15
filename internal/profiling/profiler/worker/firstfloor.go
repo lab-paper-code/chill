@@ -6,7 +6,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-const firstfloorRequestSchemaVersion = "chill.dacs.io/firstfloor-runtime-request.v1alpha1"
+const firstfloorRequestSchemaVersion = "chill.dacs.io/firstfloor-runtime-request.v1alpha2"
 
 // NewFirstfloorRuntime binds the actual backend to the verified frozen run.
 func NewFirstfloorRuntime(config CPURuntimeConfig, frozen profilingrun.VerifiedRunConfig) (*CPURuntime, error) {

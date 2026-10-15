@@ -9,13 +9,7 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-const (
-	cpuORTModelDestination = "/model/model.onnx"
-	rknnModelDestination   = "/model/model.rknn"
-)
-
 type runtimeJobProjection struct {
-	ArtifactDestination string
 	SupplementalGroups  []int64
 	SecurityContext     *corev1.SecurityContext
 	VolumeMounts        []corev1.VolumeMount
@@ -31,8 +25,7 @@ func projectRuntimeJob(
 	}
 	if config.State.Backend == profilingrun.FirstfloorORTCPUBackend {
 		return runtimeJobProjection{
-			ArtifactDestination: cpuORTModelDestination,
-			SecurityContext:     restrictedContainerSecurityContext(),
+			SecurityContext: restrictedContainerSecurityContext(),
 		}, nil
 	}
 	cuda := config.State.Backend == profilingrun.FirstfloorORTCUDABackend
@@ -41,9 +34,8 @@ func projectRuntimeJob(
 		return runtimeJobProjection{}, errors.New("verified accelerator delivery contract is incomplete")
 	}
 	projection := runtimeJobProjection{
-		ArtifactDestination: cpuORTModelDestination,
-		SupplementalGroups:  append([]int64(nil), delivery.RuntimeAccess.SupplementalGroups...),
-		SecurityContext:     runtimeAccessSecurityContext(*delivery.RuntimeAccess),
+		SupplementalGroups: append([]int64(nil), delivery.RuntimeAccess.SupplementalGroups...),
+		SecurityContext:    runtimeAccessSecurityContext(*delivery.RuntimeAccess),
 	}
 	if cuda {
 		if delivery.RuntimeAccess.GPUUUID == "" || len(delivery.RuntimeAccess.Resources) != 1 ||
@@ -58,7 +50,6 @@ func projectRuntimeJob(
 		if delivery.HostContract == nil || delivery.HostContract.Platform == nil {
 			return runtimeJobProjection{}, errors.New("verified RKNNLite delivery contract is incomplete")
 		}
-		projection.ArtifactDestination = rknnModelDestination
 		projection.AcceleratorResource = corev1.ResourceName(delivery.HostContract.Allocation.ResourceName)
 	}
 	seenHostPaths := make(map[string]struct{})

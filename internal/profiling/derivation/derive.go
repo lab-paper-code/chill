@@ -148,7 +148,7 @@ func IncrementalWorkTrial(trial Trial, baseline IdleBaseline) (EnergyTrial, erro
 		IncrementalWorkJoulesPerItem:  incrementalWorkWallJoules / completedItems,
 		LatencyP99Milliseconds:        percentile(trial.LatencyMilliseconds, 0.99),
 		ClientLatencyMilliseconds:     append([]float64(nil), trial.LatencyMilliseconds...),
-		NativeSamples:                 append([]NativeServiceSample(nil), trial.NativeSamples...),
+		NativeSamples:                 cloneNativeSamples(trial.NativeSamples),
 	}, nil
 }
 

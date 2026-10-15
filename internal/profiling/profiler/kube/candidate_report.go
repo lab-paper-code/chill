@@ -71,7 +71,7 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 		},
 		ArtifactSupply: profilingrun.CandidateReportArtifactSupply{
 			Image: input.Artifact.Source.Image, Architecture: input.Artifact.Source.Architecture,
-			Path: input.Artifact.Source.Path,
+			Files: slices.Clone(input.Artifact.Source.Files),
 		},
 		ArtifactCapability:  reportArtifactCapability(input.Artifact),
 		RuntimePackages:     reportRuntimePackages(input.Declaration.Runtime.Packages),

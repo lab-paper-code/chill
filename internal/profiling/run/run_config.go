@@ -38,26 +38,24 @@ func (i RunConfig) Validate() error {
 		return fmt.Errorf("candidate verdict must be Compatible, got %q", i.Candidate.Verdict)
 	}
 	for name, value := range map[string]string{
-		"candidate.executionPath":      i.Candidate.ExecutionPath,
-		"state.deviceClass":            i.State.DeviceClass,
-		"state.model":                  i.State.Model,
-		"state.artifact":               i.State.Artifact,
-		"state.runtimeFamily":          i.State.RuntimeFamily,
-		"state.backend":                i.State.Backend,
-		"state.powerMode":              i.State.PowerMode,
-		"targetNode.name":              i.TargetNode.Name,
-		"targetNode.uid":               i.TargetNode.UID,
-		"targetNode.resourceVersion":   i.TargetNode.ResourceVersion,
-		"targetNode.architecture":      i.TargetNode.Architecture,
-		"targetNode.allocatableCPU":    i.TargetNode.AllocatableCPU,
-		"cpu.policy":                   i.CPU.Policy,
-		"cpu.policyVersion":            i.CPU.PolicyVersion,
-		"measurement.workloadMode":     i.Measurement.WorkloadMode,
-		"measurement.inputGenerator":   i.Measurement.InputGenerator,
-		"measurement.outputValidation": i.Measurement.OutputValidation,
-		"metrics.sourceKind":           i.Metrics.SourceKind,
-		"metrics.nodeName":             i.Metrics.NodeName,
-		"metrics.endpoint":             i.Metrics.Endpoint,
+		"candidate.executionPath":    i.Candidate.ExecutionPath,
+		"state.deviceClass":          i.State.DeviceClass,
+		"state.model":                i.State.Model,
+		"state.artifact":             i.State.Artifact,
+		"state.runtimeFamily":        i.State.RuntimeFamily,
+		"state.backend":              i.State.Backend,
+		"state.powerMode":            i.State.PowerMode,
+		"targetNode.name":            i.TargetNode.Name,
+		"targetNode.uid":             i.TargetNode.UID,
+		"targetNode.resourceVersion": i.TargetNode.ResourceVersion,
+		"targetNode.architecture":    i.TargetNode.Architecture,
+		"targetNode.allocatableCPU":  i.TargetNode.AllocatableCPU,
+		"cpu.policy":                 i.CPU.Policy,
+		"cpu.policyVersion":          i.CPU.PolicyVersion,
+		"measurement.workloadMode":   i.Measurement.WorkloadMode,
+		"metrics.sourceKind":         i.Metrics.SourceKind,
+		"metrics.nodeName":           i.Metrics.NodeName,
+		"metrics.endpoint":           i.Metrics.Endpoint,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is required", name)
@@ -164,13 +162,8 @@ func (i RunConfig) validateFirstfloorDelivery() error {
 		if i.Measurement.Batch > int(i.State.Firstfloor.MaxBatchSize) {
 			return errors.New("measurement batch exceeds the selected firstfloor maxBatchSize")
 		}
-		if delivery.ArtifactCapability == nil || len(delivery.ArtifactCapability.Tensors) == 0 {
-			return errors.New("firstfloor runtime requires frozen artifact inputs")
-		}
-		for _, tensor := range delivery.ArtifactCapability.Tensors {
-			if tensor.Datatype == "BYTES" || tensor.Datatype == "BF16" {
-				return errors.New("firstfloor requires supported numeric or bool tensor datatypes")
-			}
+		if (delivery.ArtifactCapability != nil && len(delivery.ArtifactCapability.Tensors) != 0) != isRKNNExecution(i) {
+			return errors.New("firstfloor artifact input tensors are frozen for RKNN artifacts only")
 		}
 		if i.State.Backend == FirstfloorORTCUDABackend {
 			if delivery.RuntimeAccess == nil || delivery.RuntimeAccess.GPUUUID == "" ||
@@ -236,8 +229,11 @@ func (i RunConfig) validateSchema() error {
 	if i.SchemaVersion != RunConfigSchemaVersion {
 		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
 	}
-	if !validArtifactPath(i.State.ArtifactPath) {
-		return errors.New("state.artifactPath must be a clean absolute container path")
+	if err := validateArtifactFiles(i.State.ArtifactFiles); err != nil {
+		return err
+	}
+	if err := validatePreprocessorState(i.State.Preprocessor); err != nil {
+		return err
 	}
 	if i.Workload.SchemaVersion != WorkloadContractSchemaVersion {
 		return errors.New("RunConfig requires the current workload observation contract")
@@ -250,8 +246,7 @@ func (i RunConfig) validateMeasurementMode() error {
 		if (!isRKNNExecution(i) && i.Measurement.Batch != 1) ||
 			i.Measurement.WarmupIterations != 0 ||
 			i.Measurement.SettlingDurationSeconds < 1 ||
-			i.Measurement.InputGenerator != NoInputGenerator ||
-			i.Measurement.OutputValidation != NoOutputValidation {
+			i.Measurement.Dataset != nil {
 			return errors.New("model-loaded idle measurement protocol is invalid")
 		}
 		return nil
@@ -259,7 +254,63 @@ func (i RunConfig) validateMeasurementMode() error {
 	if i.Measurement.SettlingDurationSeconds != 0 {
 		return errors.New("active measurement cannot contain settlingDurationSeconds")
 	}
+	dataset := i.Measurement.Dataset
+	if dataset == nil || !cleanValue(dataset.Name) || !cleanValue(dataset.UID) || !cleanValue(dataset.Image) ||
+		!validArtifactPath(dataset.Path) {
+		return errors.New("active measurement requires a frozen dataset name, UID, image, and clean path")
+	}
 	return nil
+}
+
+// validateArtifactFiles requires clean absolute model files whose basenames,
+// the delivered /model/<basename> names, are unique.
+func validateArtifactFiles(files []string) error {
+	if len(files) == 0 {
+		return errors.New("state.artifactFiles is required")
+	}
+	seen := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		if !validArtifactPath(file) {
+			return errors.New("state.artifactFiles must be clean absolute container paths")
+		}
+		if _, duplicate := seen[path.Base(file)]; duplicate {
+			return errors.New("state.artifactFiles basenames must be unique")
+		}
+		seen[path.Base(file)] = struct{}{}
+	}
+	return nil
+}
+
+func validatePreprocessorState(p PreprocessorState) error {
+	if !cleanValue(p.Name) || !cleanValue(p.UID) || !cleanValue(p.Image) || !cleanValue(p.Architecture) ||
+		!validArtifactPath(p.Path) || p.MaxNewTokens < 0 {
+		return errors.New("state.preprocessor requires name, UID, image, architecture, and a clean path")
+	}
+	for _, fields := range [][]string{p.Inputs, p.Outputs} {
+		if len(fields) == 0 {
+			return errors.New("state.preprocessor input and output field names are required")
+		}
+		for index, name := range fields {
+			if !cleanValue(name) || slices.Contains(fields[:index], name) {
+				return errors.New("state.preprocessor field names must be unique and nonempty")
+			}
+		}
+	}
+	return nil
+}
+
+func cleanValue(value string) bool {
+	return value != "" && strings.TrimSpace(value) == value
+}
+
+// ModelFiles returns the sorted /model/<basename> paths the runtime loads.
+func (s ExecutionState) ModelFiles() []string {
+	files := make([]string, len(s.ArtifactFiles))
+	for index, file := range s.ArtifactFiles {
+		files[index] = path.Join("/model", path.Base(file))
+	}
+	slices.Sort(files)
+	return files
 }
 
 // IsSupportedFirstfloorRunConfig reports whether the measurement worker can

@@ -25,15 +25,6 @@ func fixtureRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
 func fixtureFirstfloorEvidence(
 	config profilingrun.RunConfig, runtimeVersion string, executions uint64,
 ) *profilingrun.FirstfloorRuntimeEvidence {
-	tensors := config.Delivery.ArtifactCapability.Tensors
-	inputs := make([]firstfloor.InputSpec, len(tensors))
-	for i, tensor := range tensors {
-		shape := make([]int, len(tensor.SampleShape))
-		for j, dimension := range tensor.SampleShape {
-			shape[j] = int(dimension)
-		}
-		inputs[i] = firstfloor.InputSpec{Name: tensor.Name, Datatype: tensor.Datatype, Shape: shape}
-	}
 	counts := map[string]uint64{}
 	if executions > 0 {
 		counts[strconv.Itoa(config.Measurement.Batch)] = executions
@@ -45,8 +36,8 @@ func fixtureFirstfloorEvidence(
 		ExecutionCount: executions, InferenceCount: executions * uint64(config.Measurement.Batch),
 		BatchExecutionCounts: counts,
 		Runtime: firstfloor.RuntimeMetadata{
-			Runtime: config.State.Backend, RuntimeVersion: runtimeVersion, ModelPath: "/model/model.onnx",
-			Inputs: inputs, Providers: []string{fixtureCPUProvider}, AvailableProviders: []string{fixtureCPUProvider},
+			Runtime: config.State.Backend, RuntimeVersion: runtimeVersion, ModelFiles: config.State.ModelFiles(),
+			Inputs: config.State.Preprocessor.Inputs, Outputs: config.State.Preprocessor.Outputs, Providers: []string{fixtureCPUProvider}, AvailableProviders: []string{fixtureCPUProvider},
 			Device: "cpu", CPUAffinity: cpu.AffinityCPUs, IntraOpThreads: cpu.ORTIntraOpThreads,
 			InterOpThreads: cpu.ORTInterOpThreads, InitializedBatches: []int{config.Measurement.Batch},
 			CgroupCPUMax: cpu.CgroupCPUMax, CPUSet: cpu.CPUSetEffective,

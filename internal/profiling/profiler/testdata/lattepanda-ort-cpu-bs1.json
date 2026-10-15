@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha16",
+  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha17",
   "candidate": {
     "inputs": {
       "modelSpec": {
@@ -28,16 +28,23 @@
     "deviceClass": "lattepanda-3-delta-8g",
     "model": "mobilenet-v2-050",
     "artifact": "canonical-onnx",
-    "artifactPath": "/artifact/mobilenet-v2-050.onnx",
+    "artifactFiles": ["/artifact/mobilenet-v2-050.onnx"],
     "runtimeFamily": "firstfloor",
     "backend": "ort-cpu",
     "firstfloor": {"maxBatchSize": 4, "maxQueueSize": 32},
-    "powerMode": "fixed"
+    "powerMode": "fixed",
+    "preprocessor": {
+      "name": "mobilenet-imagenet",
+      "uid": "preprocessor-uid",
+      "image": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "architecture": "amd64",
+      "path": "/artifact/mobilenet-nchw",
+      "inputs": ["image"],
+      "outputs": ["label"]
+    }
   },
   "delivery": {
-    "artifactCapability": {
-      "tensors": [{"name": "input", "datatype": "FP32", "sampleShape": [3, 224, 224]}]
-    }
+    "artifactCapability": {}
   },
   "images": {
     "runtime": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -66,8 +73,12 @@
     "warmupIterations": 20,
     "durationSeconds": 30,
     "workloadMode": "saturated-serial-fixed-batch",
-    "inputGenerator": "numpy-default-rng-seed-0-inputs-v1",
-    "outputValidation": "nonempty-shape-batch-v1"
+    "dataset": {
+      "name": "vqav2-val-subset",
+      "uid": "dataset-uid",
+      "image": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "path": "/artifact/vqav2-val-subset"
+    }
   },
   "metrics": {
     "sourceKind": "edge-metrics",

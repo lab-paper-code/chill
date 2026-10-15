@@ -6,12 +6,10 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 const (
-	IdleRuntimeResultSchemaVersion = "chill.dacs.io/model-loaded-idle-runtime.v1alpha5"
+	IdleRuntimeResultSchemaVersion = "chill.dacs.io/model-loaded-idle-runtime.v1alpha6"
 )
 
 // IdleRuntimeResult contains runtime-owned facts for one model-loaded idle
@@ -30,7 +28,7 @@ type IdleRuntimeResult struct {
 	AvailableProviders           []string                   `json:"availableProviders,omitempty"`
 	RKNN                         *RKNNRuntimeEvidence       `json:"rknn,omitempty"`
 	Firstfloor                   *FirstfloorRuntimeEvidence `json:"firstfloor,omitempty"`
-	Inputs                       []modelcompat.InputTensor  `json:"inputs"`
+	Inputs                       []string                   `json:"inputs"`
 	MemoryBytes                  uint64                     `json:"memoryBytes,omitempty"`
 	MemorySource                 string                     `json:"memorySource,omitempty"`
 	MemorySamples                []MemorySample             `json:"memorySamples,omitempty"`
@@ -91,8 +89,8 @@ func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntim
 	if strings.TrimSpace(result.RuntimeVersion) == "" {
 		return errors.New("idle runtime identity is incomplete")
 	}
-	if err := validateRuntimeInputs(config, result.Inputs); err != nil {
-		return err
+	if !slices.Equal(result.Inputs, config.State.Preprocessor.Inputs) {
+		return errors.New("idle runtime input field evidence does not match the frozen preprocessor inputs")
 	}
 	loaded, loadErr := time.Parse(time.RFC3339Nano, result.ModelLoadCompletedAt)
 	settlingStarted, settleStartErr := time.Parse(time.RFC3339Nano, result.SettlingStartedAt)

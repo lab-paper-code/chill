@@ -23,12 +23,15 @@ import (
 
 const (
 	testArtifactPath        = "/artifact/mobilenet-v2-050.onnx"
+	testMissingName         = "other"
 	testArchitecture        = "amd64"
 	testARM64Architecture   = "arm64"
 	testSelectablePowerMode = "15W"
 	testRuntimeImage        = "registry.example/chill/runtime@sha256:1aa023ab6fb43fd8f8a978036878849b7a5a0a2f0621e510b534fc767ea5774b"
 	testArtifactImage       = "registry.example/chill/artifact@sha256:8cf7dea5f1b9cb00fcb1511c0f63c187e3d1cceaa44038e1c705d61f0714b2aa"
 	testMetricObserverImage = "registry.example/chill/metric-observer@sha256:522325aaeb2ce2e2fea91372ebd8d931c1507c73687e4d20d70add6714c5077c"
+	testPreprocessorImage   = "registry.example/chill/preprocessor@sha256:" + "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12"
+	testDatasetImage        = "registry.example/chill/dataset@sha256:" + "cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34"
 )
 
 func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T) {
@@ -48,7 +51,6 @@ func TestKubernetesCandidateResolverRejectsMalformedArtifactInputs(t *testing.T)
 		name   string
 		mutate func(*edgev1alpha1.ModelArtifact)
 	}{
-		{"missing contract", func(a *edgev1alpha1.ModelArtifact) { a.Input = nil }},
 		{"empty tensors", func(a *edgev1alpha1.ModelArtifact) { a.Input.Tensors = nil }},
 		{"empty name", func(a *edgev1alpha1.ModelArtifact) { a.Input.Tensors[0].Name = "" }},
 		{"duplicate name", func(a *edgev1alpha1.ModelArtifact) { a.Input.Tensors = append(a.Input.Tensors, a.Input.Tensors[0]) }},
@@ -58,11 +60,11 @@ func TestKubernetesCandidateResolverRejectsMalformedArtifactInputs(t *testing.T)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			objects := validCandidateObjects()
+			objects := validRKNNCandidateObjects()
 			model := objects[0].(*edgev1alpha1.ModelSpec)
-			test.mutate(&model.Spec.Artifacts[0])
-			_, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), validCandidateSelection())
-			if err == nil || !strings.Contains(err.Error(), `artifact "canonical-onnx" input tensor contract`) {
+			test.mutate(&model.Spec.Artifacts[1])
+			_, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), validRKNNCandidateSelection())
+			if err == nil || !strings.Contains(err.Error(), `artifact "mobilenet-v2-050-rk3588-bs1" input tensor contract`) {
 				t.Fatalf("malformed artifact inputs were not visible to the consumer: %v", err)
 			}
 		})
@@ -82,21 +84,79 @@ func TestKubernetesCandidateResolverValidatesUnselectedArtifactInputs(t *testing
 }
 
 func TestReportArtifactCapabilityPreservesDetachedNamedInputs(t *testing.T) {
-	for _, objects := range [][]client.Object{validCandidateObjects(), validRKNNCandidateObjects()} {
-		model := objects[0].(*edgev1alpha1.ModelSpec)
-		for _, artifact := range model.Spec.Artifacts {
-			capability := reportArtifactCapability(artifact)
-			if capability == nil || capability.Tensors[0].Name != "input" || capability.Tensors[0].Datatype != "FP32" {
-				t.Fatalf("artifact %q lost its input contract: %#v", artifact.Name, capability)
+	model := validRKNNCandidateObjects()[0].(*edgev1alpha1.ModelSpec)
+	if capability := reportArtifactCapability(model.Spec.Artifacts[0]); capability == nil ||
+		len(capability.Tensors) != 0 || capability.TargetPlatform != "" || len(capability.DeclaredBatchSizes) != 0 {
+		t.Fatalf("ONNX artifact capability acquired tensors or derivation facts: %#v", capability)
+	}
+	artifact := model.Spec.Artifacts[1]
+	capability := reportArtifactCapability(artifact)
+	if capability == nil || capability.Tensors[0].Name != "input" || capability.Tensors[0].Datatype != "FP32" {
+		t.Fatalf("artifact %q lost its input contract: %#v", artifact.Name, capability)
+	}
+	capability.Tensors[0].SampleShape[0] = 99
+	if artifact.Input.Tensors[0].SampleShape[0] == 99 {
+		t.Fatal("projected tensor contract aliases the catalog")
+	}
+}
+
+func TestKubernetesCandidateResolverFreezesPreprocessorAndDataset(t *testing.T) {
+	resolved, err := newCandidateResolver(t, validCandidateObjects()...).ResolveCandidate(
+		context.Background(), validCandidateSelection(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := profilingrun.PreprocessorState{
+		Name: "mobilenet-imagenet", UID: "preprocessor-uid", Image: testPreprocessorImage,
+		Architecture: testArchitecture, Path: "/artifact/mobilenet-nchw",
+		Inputs: []string{"image"}, Outputs: []string{"label"},
+	}
+	if !reflect.DeepEqual(resolved.State.Preprocessor, want) {
+		t.Fatalf("frozen preprocessor = %#v, want %#v", resolved.State.Preprocessor, want)
+	}
+	if resolved.Dataset == nil || *resolved.Dataset != (profilingrun.DatasetContract{
+		Name: "vqav2-val-subset", UID: "dataset-uid", Image: testDatasetImage, Path: "/artifact/vqav2-val-subset",
+	}) {
+		t.Fatalf("frozen dataset = %#v", resolved.Dataset)
+	}
+	idle := validCandidateSelection()
+	idle.Dataset = ""
+	resolved, err = newCandidateResolver(t, validCandidateObjects()...).ResolveCandidate(context.Background(), idle)
+	if err != nil || resolved.Dataset != nil {
+		t.Fatalf("idle selection resolved dataset %#v: %v", resolved.Dataset, err)
+	}
+}
+
+func TestKubernetesCandidateResolverRejectsUnusablePreprocessing(t *testing.T) {
+	for name, test := range map[string]struct {
+		mutate func([]client.Object)
+		match  string
+	}{
+		"no preprocessor artifact for the model artifact": {func(objects []client.Object) {
+			objects[3].(*edgev1alpha1.Preprocessor).Spec.Artifacts[0].Target.Artifact = "other-artifact"
+		}, `has no artifact for ModelSpec "mobilenet-v2-050" artifact "canonical-onnx"`},
+		"dataset record field missing": {func(objects []client.Object) {
+			objects[4].(*edgev1alpha1.Dataset).Spec.Fields[0].Name = "picture"
+		}, "input fields image"},
+		"dataset record bound exceeds input bound": {func(objects []client.Object) {
+			objects[4].(*edgev1alpha1.Dataset).Spec.Fields[0].MaxBytes = 1 << 30
+		}, "input fields image"},
+		"missing Preprocessor": {func(objects []client.Object) {
+			objects[3].(*edgev1alpha1.Preprocessor).Name = testMissingName
+		}, `get Preprocessor "mobilenet-imagenet"`},
+		"missing Dataset": {func(objects []client.Object) {
+			objects[4].(*edgev1alpha1.Dataset).Name = testMissingName
+		}, `get Dataset "vqav2-val-subset"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			objects := validCandidateObjects()
+			test.mutate(objects)
+			_, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), validCandidateSelection())
+			if err == nil || !strings.Contains(err.Error(), test.match) {
+				t.Fatalf("expected error containing %q, got %v", test.match, err)
 			}
-			capability.Tensors[0].SampleShape[0] = 99
-			if artifact.Input.Tensors[0].SampleShape[0] == 99 {
-				t.Fatal("projected tensor contract aliases the catalog")
-			}
-			if artifact.Derivation == nil && (capability.TargetPlatform != "" || len(capability.DeclaredBatchSizes) != 0) {
-				t.Fatalf("canonical contract acquired derivation facts: %#v", capability)
-			}
-		}
+		})
 	}
 }
 
@@ -104,6 +164,7 @@ func TestKubernetesCandidateResolverReusesRuntimeDeclarationAcrossModels(t *test
 	objects := validCandidateObjects()
 	model := objects[0].(*edgev1alpha1.ModelSpec)
 	model.Name = "another-onnx-model"
+	objects[3].(*edgev1alpha1.Preprocessor).Spec.Artifacts[0].Target.Model = model.Name
 	selection := validCandidateSelection()
 	selection.ModelSpec = model.Name
 
@@ -140,10 +201,7 @@ func TestKubernetesCandidateResolverRejectsAmbiguousRuntimeDeclarations(t *testi
 func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.T) {
 	objects := validRKNNCandidateObjects()
 	resolver := newCandidateResolver(t, objects...)
-	selection := profiler.CandidateSelection{
-		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
-		ExecutionPath: "rknnlite", PowerMode: profilingrun.FixedPowerMode,
-	}
+	selection := validRKNNCandidateSelection()
 
 	resolved, err := resolver.ResolveCandidate(context.Background(), selection)
 	if err != nil {
@@ -180,10 +238,7 @@ func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutInputContract(t *t
 	model := objects[0].(*edgev1alpha1.ModelSpec)
 	model.Spec.Artifacts[1].Input = nil
 	resolver := newCandidateResolver(t, objects...)
-	_, err := resolver.ResolveCandidate(context.Background(), profiler.CandidateSelection{
-		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
-		ExecutionPath: profilingrun.RKNNLiteExecutionPath, PowerMode: profilingrun.FixedPowerMode,
-	})
+	_, err := resolver.ResolveCandidate(context.Background(), validRKNNCandidateSelection())
 	if err == nil || !strings.Contains(err.Error(), "input tensor contract") {
 		t.Fatalf("RKNN artifact without input tensor contract was accepted: %v", err)
 	}
@@ -266,9 +321,9 @@ func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, 
 	t.Helper()
 	if resolved.Verdict != "Compatible" || resolved.State.PowerMode != profilingrun.FixedPowerMode ||
 		resolved.State.HostContract != nil ||
-		resolved.State.ArtifactPath != testArtifactPath ||
+		!slices.Equal(resolved.State.ArtifactFiles, []string{testArtifactPath}) ||
 		resolved.RuntimeImage != testRuntimeImage || resolved.ArtifactImage != testArtifactImage ||
-		resolved.ArtifactArchitecture != testArchitecture || resolved.ArtifactPath != testArtifactPath ||
+		resolved.ArtifactArchitecture != testArchitecture ||
 		resolved.MetricObserverImage != testMetricObserverImage ||
 		resolved.DeviceArchitecture != testArchitecture ||
 		resolved.DeviceNodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass {
@@ -312,7 +367,7 @@ func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, se
 		report.DeviceClassFacts.Architecture != testArchitecture ||
 		report.DeviceClassFacts.NodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass ||
 		report.ArtifactSupply.Image != testArtifactImage ||
-		report.ArtifactSupply.Path != testArtifactPath {
+		!slices.Equal(report.ArtifactSupply.Files, []string{testArtifactPath}) {
 		t.Fatalf("candidate report lost source identity: %#v", report)
 	}
 }
@@ -386,11 +441,11 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			match: "artifact supply architecture does not match DeviceClass",
 		},
 		{
-			name: "unsafe artifact path",
+			name: "unsafe artifact file",
 			mutate: func(objects []client.Object) {
-				objects[0].(*edgev1alpha1.ModelSpec).Spec.Artifacts[0].Source.Path = "/artifact/../hidden"
+				objects[0].(*edgev1alpha1.ModelSpec).Spec.Artifacts[0].Source.Files = []string{"/artifact/../hidden"}
 			},
-			match: "source: path must be a clean absolute container path",
+			match: "must be a clean absolute container path",
 		},
 		{
 			name: "previous execution facts schema",
@@ -563,6 +618,15 @@ func validCandidateSelection() profiler.CandidateSelection {
 	return profiler.CandidateSelection{
 		ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
 		ExecutionPath: "ort-cpu", PowerMode: profilingrun.FixedPowerMode,
+		Preprocessor: "mobilenet-imagenet", Dataset: "vqav2-val-subset",
+	}
+}
+
+func validRKNNCandidateSelection() profiler.CandidateSelection {
+	return profiler.CandidateSelection{
+		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
+		ExecutionPath: profilingrun.RKNNLiteExecutionPath, PowerMode: profilingrun.FixedPowerMode,
+		Preprocessor: "mobilenet-imagenet",
 	}
 }
 
@@ -575,10 +639,7 @@ func validCandidateObjects() []client.Object {
 			Artifacts: []edgev1alpha1.ModelArtifact{{
 				Name: "canonical-onnx", Format: "onnx",
 				Source: edgev1alpha1.ModelArtifactSource{
-					Image: testArtifactImage, Architecture: testArchitecture, Path: testArtifactPath,
-				},
-				Input: &edgev1alpha1.ModelArtifactInputContract{
-					Tensors: []edgev1alpha1.ModelInputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}},
+					Image: testArtifactImage, Architecture: testArchitecture, Files: []string{testArtifactPath},
 				},
 			}},
 			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
@@ -608,7 +669,36 @@ func validCandidateObjects() []client.Object {
 		},
 		Data: map[string]string{"execution-facts.yaml": validExecutionFacts()},
 	}
-	return []client.Object{model, deviceClass, configMap}
+	imageField := edgev1alpha1.RawField{Name: "image", Format: "JPEG", MaxBytes: 1 << 20}
+	preprocessor := &edgev1alpha1.Preprocessor{
+		ObjectMeta: metav1.ObjectMeta{Name: "mobilenet-imagenet", UID: types.UID("preprocessor-uid")},
+		Spec: edgev1alpha1.PreprocessorSpec{
+			Input:  edgev1alpha1.RawInputContract{Fields: []edgev1alpha1.RawField{imageField}},
+			Output: edgev1alpha1.RawOutputContract{Fields: []edgev1alpha1.RawOutputField{{Name: "label", Format: "UTF8"}}},
+			Artifacts: []edgev1alpha1.PreprocessorArtifact{
+				{
+					Target: edgev1alpha1.PreprocessorTarget{Model: model.Name, Artifact: "canonical-onnx"},
+					Source: edgev1alpha1.PreprocessorArtifactSource{
+						Image: testPreprocessorImage, Architecture: testArchitecture, Path: "/artifact/mobilenet-nchw",
+					},
+				},
+				{
+					Target: edgev1alpha1.PreprocessorTarget{Model: model.Name, Artifact: "mobilenet-v2-050-rk3588-bs1"},
+					Source: edgev1alpha1.PreprocessorArtifactSource{
+						Image: testPreprocessorImage, Architecture: testARM64Architecture, Path: "/artifact/mobilenet-nhwc",
+					},
+				},
+			},
+		},
+	}
+	dataset := &edgev1alpha1.Dataset{
+		ObjectMeta: metav1.ObjectMeta{Name: "vqav2-val-subset", UID: types.UID("dataset-uid")},
+		Spec: edgev1alpha1.DatasetSpec{
+			Source: edgev1alpha1.DatasetSource{Image: testDatasetImage, Path: "/artifact/vqav2-val-subset"},
+			Fields: []edgev1alpha1.RawField{imageField, {Name: "question", Format: "UTF8", MaxBytes: 512}},
+		},
+	}
+	return []client.Object{model, deviceClass, configMap, preprocessor, dataset}
 }
 
 func validRKNNCandidateObjects() []client.Object {
@@ -618,7 +708,7 @@ func validRKNNCandidateObjects() []client.Object {
 		Name: "mobilenet-v2-050-rk3588-bs1", Format: "rknn",
 		Source: edgev1alpha1.ModelArtifactSource{
 			Image: testArtifactImage, Architecture: testARM64Architecture,
-			Path: "/artifact/mobilenet-v2-050-rk3588-bs1.rknn",
+			Files: []string{"/artifact/mobilenet-v2-050-rk3588-bs1.rknn"},
 		},
 		Input: &edgev1alpha1.ModelArtifactInputContract{
 			Tensors: []edgev1alpha1.ModelInputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}},

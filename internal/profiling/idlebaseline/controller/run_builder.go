@@ -9,9 +9,7 @@ import (
 )
 
 const (
-	idleWorkloadMode     = "idle-model-loaded"
-	idleInputGenerator   = "none"
-	idleOutputValidation = "none"
+	idleWorkloadMode = "idle-model-loaded"
 
 	labelIdleBaselineUID = "edge.dacs.io/model-loaded-idle-baseline-uid"
 	labelAttempt         = "edge.dacs.io/attempt"
@@ -51,8 +49,6 @@ func buildRun(parent *edgev1alpha1.ModelLoadedIdleBaseline, attempt int32) (*edg
 				SettlingDurationSeconds: &settling,
 				DurationSeconds:         parent.Spec.Protocol.DurationSeconds,
 				WorkloadMode:            idleWorkloadMode,
-				InputGenerator:          idleInputGenerator,
-				OutputValidation:        idleOutputValidation,
 			},
 			MetricObservation: parent.Spec.Protocol.MetricObservation,
 		},

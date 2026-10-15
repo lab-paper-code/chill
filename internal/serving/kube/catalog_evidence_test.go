@@ -9,6 +9,8 @@ import (
 	"maps"
 	"math"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -152,8 +154,8 @@ func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.Namesp
 	active.CPU.AffinityCPUs = []int{0, 1}
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode, InputGenerator: "none", OutputValidation: "none"}
-	spec, err := profilerprojection.ProjectCurvePlanSpec("catalog-plan", active, idle, *active.Delivery.ArtifactCapability, profilederivation.CurveConversionContract{}, []int{1})
+		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
+	spec, err := profilerprojection.ProjectCurvePlanSpec("catalog-plan", active, idle, profilederivation.CurveConversionContract{}, []int{1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,11 +183,10 @@ func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.Namesp
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "catalog-campaign", UID: "campaign-uid", Generation: 1},
 		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{
 			State: edgev1alpha1.MeasurementStateSpec{
-				Candidate:  edgev1alpha1.ProfilingRunCandidateSpec{ModelSpec: active.Candidate.Inputs.ModelSpec.Name, DeviceClass: active.State.DeviceClass, ExecutionPath: active.Candidate.ExecutionPath, PowerMode: active.State.PowerMode},
+				Candidate:  edgev1alpha1.ProfilingRunCandidateSpec{ModelSpec: active.Candidate.Inputs.ModelSpec.Name, Preprocessor: active.State.Preprocessor.Name, DeviceClass: active.State.DeviceClass, ExecutionPath: active.Candidate.ExecutionPath, PowerMode: active.State.PowerMode},
 				TargetNode: active.TargetNode.Name, CPURequest: resource.MustParse(active.CPU.Request),
 			},
-			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{WarmupIterations: int32(active.Measurement.WarmupIterations), DurationSeconds: 30,
-				InputGenerator: active.Measurement.InputGenerator, OutputValidation: active.Measurement.OutputValidation,
+			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{WarmupIterations: int32(active.Measurement.WarmupIterations), DurationSeconds: 30, Dataset: active.Measurement.Dataset.Name,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31}},
 			IdleProtocol: edgev1alpha1.IdleProtocolSpec{SettlingDurationSeconds: 60, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31}},
@@ -219,7 +220,10 @@ func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.Namesp
 		executionRef := put(name+"-execution", profilerevidence.ExecutionEvidenceSchemaVersion, execution)
 		settling := int32(config.Measurement.SettlingDurationSeconds)
 		measurement := edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 1, WarmupIterations: int32(config.Measurement.WarmupIterations), DurationSeconds: 30,
-			WorkloadMode: config.Measurement.WorkloadMode, InputGenerator: config.Measurement.InputGenerator, OutputValidation: config.Measurement.OutputValidation}
+			WorkloadMode: config.Measurement.WorkloadMode}
+		if config.Measurement.Dataset != nil {
+			measurement.Dataset = config.Measurement.Dataset.Name
+		}
 		if len(config.CPU.AffinityCPUs) != 0 {
 			measurement.CPUAffinity = append([]int32(nil), campaign.Spec.CPUAffinity...)
 		}
@@ -309,22 +313,19 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 	raw := profilerevidence.RawMeasurement{SchemaVersion: profilerevidence.RawMeasurementSchemaVersion, RunConfig: config, PodUID: podUID, Metrics: metrics, Workload: workload,
 		Runtime: profilingrun.RuntimeResult{SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded", ExperimentID: podUID,
 			NodeName: config.TargetNode.Name, Model: config.State.Model, Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
-			Backend: config.State.Backend, Provider: provider, AvailableProviders: []string{provider}, Inputs: config.Delivery.ArtifactCapability.Tensors,
+			Backend: config.State.Backend, Provider: provider, AvailableProviders: []string{provider}, Inputs: config.State.Preprocessor.Inputs,
 			BatchSize: 1, WarmupIterations: config.Measurement.WarmupIterations, WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano), InferenceCount: 2,
 			MeasurementMode: "duration", MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: end.Format(time.RFC3339Nano), MeasurementElapsedSeconds: 30,
-			TargetDurationSeconds: &targetDuration, MemoryBytes: memory, OutputValidation: profilingrun.OutputValidation{Method: config.Measurement.OutputValidation, Passed: true, OutputShapes: [][]int{{1, 1000}}},
+			TargetDurationSeconds: &targetDuration, MemoryBytes: memory,
 			CPUContract: cpu, DerivedContract: derived, RepetitionResults: []profilingrun.Repetition{{Repetition: 1, MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: end.Format(time.RFC3339Nano), LatencyMilliseconds: []float64{1, 2}}}}}
-	inputs := make([]firstfloor.InputSpec, len(config.Delivery.ArtifactCapability.Tensors))
-	for i, tensor := range config.Delivery.ArtifactCapability.Tensors {
-		shape := make([]int, len(tensor.SampleShape))
-		for j, d := range tensor.SampleShape {
-			shape[j] = int(d)
-		}
-		inputs[i] = firstfloor.InputSpec{Name: tensor.Name, Datatype: tensor.Datatype, Shape: shape}
+	modelFiles := make([]string, len(config.State.ArtifactFiles))
+	for i, file := range config.State.ArtifactFiles {
+		modelFiles[i] = "/model/" + filepath.Base(file)
 	}
+	slices.Sort(modelFiles)
 	native := profilingrun.FirstfloorRuntimeEvidence{Mode: "profiling", DeadlinePolicy: firstfloor.DeadlineKeep,
 		ModelInstanceCount: 1, MaxBatchSize: 1, MaxQueueSize: 32,
-		Runtime: firstfloor.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.16.0", ModelPath: "/model/model.onnx", Inputs: inputs,
+		Runtime: firstfloor.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.16.0", ModelFiles: modelFiles, Inputs: config.State.Preprocessor.Inputs, Outputs: config.State.Preprocessor.Outputs,
 			Providers: []string{provider}, AvailableProviders: []string{provider}, Device: "cpu", CPUAffinity: []int{0, 1}, IntraOpThreads: 2, InterOpThreads: 1, InitializedBatches: []int{1},
 			CgroupCPUMax: "200000 100000", CPUSet: "0-3"}}
 	activeNative := native
@@ -333,13 +334,13 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 	raw.Runtime.Firstfloor = &activeNative
 	raw.Runtime.MemorySource = "cgroup-v2-memory.peak:runtime-container-lifetime"
 	raw.Runtime.RepetitionResults[0].NativeSamples = []profilingrun.NativeServiceSample{
-		{BatchID: 1, BatchSize: 1, RunnerServiceMilliseconds: 0.5, BackendCallMilliseconds: 0.25, NativeRequestMilliseconds: 0.75},
-		{BatchID: 2, BatchSize: 1, RunnerServiceMilliseconds: 1.5, BackendCallMilliseconds: 1, NativeRequestMilliseconds: 1.75},
+		{BatchID: 1, BatchSize: 1, RecordIDs: []string{"r1"}, Units: []int{1}, RunnerServiceMilliseconds: 0.5, BackendCallMilliseconds: 0.25, NativeRequestMilliseconds: 0.75},
+		{BatchID: 2, BatchSize: 1, RecordIDs: []string{"r2"}, Units: []int{1}, RunnerServiceMilliseconds: 1.5, BackendCallMilliseconds: 1, NativeRequestMilliseconds: 1.75},
 	}
 	idle := profilerevidence.IdleRawMeasurement{SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion, RunConfig: config, PodUID: podUID, Metrics: metrics, Workload: workload,
 		Runtime: profilingrun.IdleRuntimeResult{SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded", PodUID: podUID, NodeName: config.TargetNode.Name,
 			Model: config.State.Model, Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0", Backend: config.State.Backend, Provider: provider,
-			AvailableProviders: []string{provider}, Inputs: config.Delivery.ArtifactCapability.Tensors, ModelLoadCompletedAt: start.Add(-61 * time.Second).Format(time.RFC3339Nano),
+			AvailableProviders: []string{provider}, Inputs: config.State.Preprocessor.Inputs, ModelLoadCompletedAt: start.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt: start.Add(-60 * time.Second).Format(time.RFC3339Nano), SettlingCompletedAt: start.Format(time.RFC3339Nano), MeasurementStartedAt: start.Format(time.RFC3339Nano),
 			MeasurementEndedAt: end.Format(time.RFC3339Nano), MeasurementElapsedSeconds: 30, ModelResidentAtEnd: true, CPUContract: cpu, DerivedContract: derived}}
 	native.BatchExecutionCounts = map[string]uint64{}
@@ -366,16 +367,16 @@ func TestCatalogRetainsAdmittedFactsWithCallerOwnedViews(t *testing.T) {
 		t.Fatalf("initial admission failed: %+v %v", view, err)
 	}
 	profile := &view.Profiles[0]
-	inputDimension := profile.RuntimeMetadata.Inputs[0].Shape[0]
-	tensorDimension := profile.Condition.Tensor.Tensors[0].SampleShape[0]
+	inputs := slices.Clone(profile.RuntimeMetadata.Inputs)
+	preprocessor := profile.Condition.Preprocessor.Inputs[0]
 	profile.Evidence[0].Key = callerMutation
 	profile.Batches[0].DurationNanos[0] = 999
 	profile.Condition.Firstfloor.MaxBatchSize = 999
 	profile.Condition.CPU.AffinityCPUs[0] = 999
 	profile.Condition.PlannedBatchSizes[0] = 999
-	profile.Condition.Tensor.Tensors[0].SampleShape[0] = 999
+	profile.Condition.Preprocessor.Inputs[0] = callerMutation
 	profile.RuntimeMetadata.CPUAffinity[0] = 999
-	profile.RuntimeMetadata.Inputs[0].Shape[0] = 999
+	profile.RuntimeMetadata.Inputs[0] = callerMutation
 	profile.MetricSource.MetricLabels[callerMutation] = "yes"
 	// Previously admitted immutable facts remain usable during backing-object
 	// unavailability; current native Campaign metadata must still be read.
@@ -389,8 +390,8 @@ func TestCatalogRetainsAdmittedFactsWithCallerOwnedViews(t *testing.T) {
 		assertCatalogRawProfile(t, *profile)
 		if profile.Evidence[0] != plan || profile.Condition.Firstfloor.MaxBatchSize != 1 ||
 			profile.Condition.PlannedBatchSizes[0] != 1 ||
-			profile.Condition.Tensor.Tensors[0].SampleShape[0] != tensorDimension ||
-			profile.RuntimeMetadata.Inputs[0].Shape[0] != inputDimension ||
+			profile.Condition.Preprocessor.Inputs[0] != preprocessor ||
+			!slices.Equal(profile.RuntimeMetadata.Inputs, inputs) ||
 			profile.MetricSource.MetricLabels[callerMutation] != "" {
 			t.Fatalf("caller mutation reached retained admission: %+v", profile)
 		}

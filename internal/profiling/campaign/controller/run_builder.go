@@ -14,10 +14,8 @@ import (
 )
 
 const (
-	activeWorkloadMode   = "saturated-serial-fixed-batch"
-	idleWorkloadMode     = "idle-model-loaded"
-	idleInputGenerator   = "none"
-	idleOutputValidation = "none"
+	activeWorkloadMode = "saturated-serial-fixed-batch"
+	idleWorkloadMode   = "idle-model-loaded"
 
 	labelBatchEnergyOptimization = "edge.dacs.io/batch-energy-optimization"
 	labelWorkloadMode            = "edge.dacs.io/workload-mode"
@@ -67,8 +65,7 @@ func BuildRun(
 			WarmupIterations: protocol.WarmupIterations,
 			DurationSeconds:  protocol.DurationSeconds,
 			WorkloadMode:     activeWorkloadMode,
-			InputGenerator:   protocol.InputGenerator,
-			OutputValidation: protocol.OutputValidation,
+			Dataset:          protocol.Dataset,
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	case batchenergyoptimization.WorkloadModeIdle:
@@ -80,8 +77,6 @@ func BuildRun(
 			SettlingDurationSeconds: &settling,
 			DurationSeconds:         protocol.DurationSeconds,
 			WorkloadMode:            idleWorkloadMode,
-			InputGenerator:          idleInputGenerator,
-			OutputValidation:        idleOutputValidation,
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	}

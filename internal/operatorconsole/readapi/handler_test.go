@@ -14,7 +14,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
@@ -431,6 +430,8 @@ func resolvingPreflightSnapshot(t *testing.T) operatorconsole.BatchEnergyOptimiz
 
 func preflightPlan(t *testing.T) profilederivation.CurvePlan {
 	t.Helper()
+	active := preflightProtocol("saturated")
+	active.Dataset = &profilederivation.CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
 	plan, err := profilederivation.NewCurvePlan(profilederivation.CurvePlanSpec{
 		Name: "mobilenet-curve", LogicalModel: "mobilenet-v2", DeviceClass: "orangepi-5-plus",
 		NodeUID: "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
@@ -442,18 +443,17 @@ func preflightPlan(t *testing.T) profilederivation.CurvePlan {
 			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
 			PowerMetric: "power_watts",
 		},
-		ActiveProtocol: preflightProtocol("saturated"),
+		ActiveProtocol: active,
 		IdleProtocol:   preflightProtocol("idle-model-loaded"),
 		Artifact: profilederivation.CurveArtifactContract{
-			ExecutionPath: "rknnlite", Name: "artifact", Path: "/artifact/model.rknn",
+			ExecutionPath: "rknnlite", Name: "artifact", Files: []string{"/artifact/model.rknn"},
 			Image: "registry.example/chill/artifact:v1",
 		},
-		PlannedBatchSizes: []int{1, 2, 4},
-		Tensor: profilederivation.CurveTensorContract{
-			Tensors: []modelcompat.InputTensor{
-				{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
-			},
+		Preprocessor: profilederivation.CurvePreprocessorContract{
+			Name: "mobilenet-imagenet", Image: "registry.example/chill/preprocessor:v1", Architecture: "arm64",
+			Path: "/artifact/mobilenet-nhwc", Inputs: []string{"image"}, Outputs: []string{"label"},
 		},
+		PlannedBatchSizes: []int{1, 2, 4},
 	})
 	if err != nil {
 		t.Fatalf("build preflight plan: %v", err)
@@ -463,7 +463,7 @@ func preflightPlan(t *testing.T) profilederivation.CurvePlan {
 
 func preflightProtocol(mode string) profilederivation.CurveProtocolContract {
 	return profilederivation.CurveProtocolContract{
-		WorkloadMode: mode, InputGenerator: "seeded", OutputValidation: "shape",
+		WorkloadMode:    mode,
 		DurationSeconds: 30, MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900,
 		MetricDurationSeconds: 31, MetricObserverImage: "registry.example/chill/metric-observer:v1",
 		WorkloadObserverImage: "registry.example/chill/workload-observer:v1",

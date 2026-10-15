@@ -279,8 +279,8 @@ func snapshot(w *api.Workload, refs catalogRefs) (*serving.Definition, error) {
 			code, ok := modelcatalog.PreprocessorArtifact(p, model.Name, artifact.Name)
 			if ok {
 				d.Model.Paths = append(d.Model.Paths, serving.ModelPath{Name: path.Name, Artifact: artifact.Name, Format: artifact.Format,
-					Image: artifact.Source.Image, Architecture: artifact.Source.Architecture, Path: artifact.Source.Path,
-					RuntimeFamily: path.Runtime.Family, Backend: path.Runtime.Backend, Tensors: modelcatalog.InputTensors(artifact.Input), Firstfloor: modelcatalog.FirstfloorSettings(path.Runtime),
+					Image: artifact.Source.Image, Architecture: artifact.Source.Architecture, Files: slices.Clone(artifact.Source.Files),
+					RuntimeFamily: path.Runtime.Family, Backend: path.Runtime.Backend, Firstfloor: modelcatalog.FirstfloorSettings(path.Runtime),
 					Preprocessor: serving.PreprocessorArtifact{Image: code.Source.Image, Architecture: code.Source.Architecture, Path: code.Source.Path}})
 			}
 			break

@@ -55,10 +55,9 @@ type ModelPath struct {
 	Format        string                          `json:"format"`
 	Image         string                          `json:"image"`
 	Architecture  string                          `json:"architecture"`
-	Path          string                          `json:"path"`
+	Files         []string                        `json:"files"`
 	RuntimeFamily string                          `json:"runtimeFamily"`
 	Backend       string                          `json:"backend"`
-	Tensors       []modelcompat.InputTensor       `json:"tensors"`
 	Firstfloor    *modelcompat.FirstfloorSettings `json:"firstfloor,omitempty"`
 	// Preprocessor is the preprocessing code carrier for this path's artifact.
 	Preprocessor PreprocessorArtifact `json:"preprocessor"`
@@ -243,7 +242,6 @@ type RequestEvent struct {
 	NativeProgress    *BackendProgress `json:"nativeProgress,omitempty"`
 	ClientSpanNanos   int64            `json:"clientSpanNanos,omitempty"`
 	ExecutionComplete bool             `json:"executionComplete"`
-	InputPath         *int             `json:"inputPath,omitempty"`
 	LifetimeNanos     int64            `json:"lifetimeNanos,omitempty"`
 	SLO               *SLO             `json:"slo,omitempty"`
 	Outcome           string           `json:"outcome,omitempty"`
@@ -312,6 +310,10 @@ type BackendProgress struct {
 	QueueMS           float64   `json:"queueMS"`
 	ServiceMS         float64   `json:"serviceMS"`
 	BackendMS         float64   `json:"backendMS"`
+	PreprocessMS      float64   `json:"preprocessMS"`
+	PostprocessMS     float64   `json:"postprocessMS"`
+	FirstTokenMS      float64   `json:"firstTokenMS,omitempty"`
+	Units             int       `json:"units,omitempty"`
 	NativeElapsedMS   float64   `json:"nativeElapsedMS"`
 	ExecutionComplete bool      `json:"executionComplete"`
 }

@@ -29,7 +29,7 @@ func TestBuildRunFillsTheIdleUnionFields(t *testing.T) {
 	}
 	measurement := run.Spec.Measurement
 	if measurement.WorkloadMode != "idle-model-loaded" || measurement.WarmupIterations != 0 ||
-		measurement.InputGenerator != "none" || measurement.OutputValidation != "none" ||
+		measurement.Dataset != "" ||
 		measurement.SettlingDurationSeconds == nil {
 		t.Fatalf("idle Run does not satisfy the ProfilingRun union rule: %+v", measurement)
 	}
@@ -111,14 +111,13 @@ func testParent() *edgev1alpha1.BatchEnergyOptimization {
 			State: edgev1alpha1.MeasurementStateSpec{
 				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
 					ModelSpec: "mobilenet-v2-050", DeviceClass: "jetson-agx-orin-64g",
-					ExecutionPath: "ort-cpu", PowerMode: "MODE_50W",
+					ExecutionPath: "ort-cpu", PowerMode: "MODE_50W", Preprocessor: "mobilenet-imagenet",
 				},
 				TargetNode: "jetsono", CPURequest: resource.MustParse("100m"),
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				WarmupIterations: 20, DurationSeconds: 75,
-				InputGenerator:   "numpy-default-rng-seed-0-inputs-v1",
-				OutputValidation: "nonempty-shape-batch-v1",
+				Dataset: "vqav2-val-subset",
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 2500, TimeoutMilliseconds: 2400, DurationSeconds: 78,
 				},

@@ -5,17 +5,18 @@ convert, or inspect a local model file.
 
 ## Before registration
 
-1. Select the executable artifact and record every input tensor's exact name,
-   uppercase datatype, and sample shape. Omit the batch axis; CHILL supplies the
-   batch for each measurement.
+1. Select the executable artifact files. For an RKNN artifact, record every
+   input tensor's exact name, uppercase datatype, and sample shape. Omit the
+   batch axis; CHILL supplies the batch for each measurement. A Preprocessor
+   artifact defines the raw inputs of every other format.
 2. For a converted artifact, retain its source artifact, target platform,
    supported batch sizes, converter, and converter version. The repository's
    `make rknn-convert-artifact` target writes both the RKNN file and a conversion
    record containing these values.
 3. Put the artifact in an OCI carrier image, push it, and retain an immutable
    `repository@sha256:...` reference. The carrier must match the declared
-   Kubernetes architecture and provide `sh` and `cp`; the artifact must exist
-   at the absolute path recorded in `source.path`.
+   Kubernetes architecture and provide `sh` and `cp`; every model file must
+   exist at an absolute path listed in `source.files`.
 4. Select a runtime family and backend already declared by the installed CHILL
    Profiler for an automatically discovered `DeviceClass`. Do not invent a
    runtime name in `ModelSpec`.
@@ -69,21 +70,18 @@ docker run --rm --platform linux/arm64 --entrypoint sh \
 | `artifacts[].format` | Actual artifact representation, such as `onnx` or `rknn` |
 | `source.image` | Pushed immutable OCI reference |
 | `source.architecture` | Carrier platform and target `DeviceClass` architecture |
-| `source.path` | Exact absolute path inside the carrier |
-| `input.tensors[].name` | Exact artifact input name, preserving input order |
-| `input.tensors[].datatype` | Explicit uppercase datatype, such as `FP32` |
-| `input.tensors[].sampleShape` | Artifact input dimensions without the batch axis |
+| `source.files` | Exact absolute paths inside the carrier; basenames are unique |
+| `input.tensors[].name` | RKNN only: exact artifact input name, preserving input order |
+| `input.tensors[].datatype` | RKNN only: explicit uppercase datatype, such as `FP32` |
+| `input.tensors[].sampleShape` | RKNN only: artifact input dimensions without the batch axis |
 | `derivation` | Conversion record; omit for the canonical artifact |
 | `executionPaths[].runtime` | Installed `profiling.executionDeclarations` entry |
 
-The [canonical source evidence](../../../docs/design/profiling/plans/08-declared-batch-size-artifacts.md#measured-evidence)
-records this sample's ONNX input name as `input`, element type as `float32`
-(`FP32`), and batch-free dimensions as `[3, 224, 224]`. The
-[RKNN converter](../../../build/model-artifacts/rknn/export_rknn.py) loads that
-source graph without renaming inputs and builds without quantization. The RKNN
-sample declares `input` / `FP32` with batch-free dimensions `[224, 224, 3]`.
-Layout is not a registration field. Runtime loading must agree with the
-complete declared tensor contract; it does not infer missing names or types.
+The [RKNN converter](../../../build/model-artifacts/rknn/export_rknn.py) loads the
+canonical ONNX graph without renaming inputs and builds without quantization.
+The RKNN sample declares `input` / `FP32` with batch-free dimensions
+`[224, 224, 3]`, which RKNN delivery and the runner check before loading.
+The `mobilenet-imagenet` Preprocessor defines the raw inputs of both paths.
 Use [the ModelSpec sample](edge_v1alpha1_modelspec.yaml) as the final manifest.
 
 ## Validate and register

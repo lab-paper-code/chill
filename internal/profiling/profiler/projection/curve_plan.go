@@ -18,7 +18,6 @@ import (
 func ProjectCurvePlanSpec(
 	name string,
 	active, idle profilingrun.RunConfig,
-	capability profilingrun.CandidateArtifactCapability,
 	conversion profilederivation.CurveConversionContract,
 	plannedBatchSizes []int,
 ) (profilederivation.CurvePlanSpec, error) {
@@ -50,16 +49,11 @@ func ProjectCurvePlanSpec(
 		Artifact: profilederivation.CurveArtifactContract{
 			ExecutionPath: active.Candidate.ExecutionPath,
 			Name:          active.State.Artifact,
-			Path:          active.State.ArtifactPath,
+			Files:         slices.Clone(active.State.ArtifactFiles),
 			Image:         active.Images.Artifact,
 		},
+		Preprocessor:      projectCurvePreprocessor(active.State.Preprocessor),
 		PlannedBatchSizes: append([]int(nil), plannedBatchSizes...),
-		Tensor: profilederivation.CurveTensorContract{
-			Tensors: modelcompat.CloneInputTensors(capability.Tensors),
-		},
-	}
-	if err := modelcompat.ValidateInputTensors(spec.Tensor.Tensors); err != nil {
-		return profilederivation.CurvePlanSpec{}, fmt.Errorf("curve plan tensor contract: %w", err)
 	}
 	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, spec, spec.ActiveProtocol); err != nil {
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active curve RunConfig disagrees: %w", err)
@@ -191,7 +185,7 @@ func validateCurvePlanRunConfig(
 	if config.Candidate.ExecutionPath != spec.Artifact.ExecutionPath ||
 		config.State.DeviceClass != spec.DeviceClass || config.State.Model != spec.LogicalModel ||
 		config.State.Artifact != spec.Artifact.Name ||
-		config.State.ArtifactPath != spec.Artifact.Path || config.State.RuntimeFamily != spec.RuntimeFamily ||
+		!slices.Equal(config.State.ArtifactFiles, spec.Artifact.Files) || config.State.RuntimeFamily != spec.RuntimeFamily ||
 		config.State.Backend != spec.Backend || config.State.PowerMode != spec.PowerMode ||
 		config.Images.Runtime != spec.RuntimeImage ||
 		config.Images.Artifact != spec.Artifact.Image || config.TargetNode.UID != spec.NodeUID ||
@@ -204,9 +198,8 @@ func validateCurvePlanRunConfig(
 	if !reflect.DeepEqual(projectCurveRuntimeAccess(config.Delivery.RuntimeAccess), spec.RuntimeAccess) {
 		return errors.New("RunConfig contradicts curve-plan accelerator delivery")
 	}
-	if config.Delivery.ArtifactCapability == nil ||
-		!reflect.DeepEqual(config.Delivery.ArtifactCapability.Tensors, spec.Tensor.Tensors) {
-		return errors.New("RunConfig contradicts curve-plan input tensor facts")
+	if !reflect.DeepEqual(projectCurvePreprocessor(config.State.Preprocessor), spec.Preprocessor) {
+		return errors.New("RunConfig contradicts curve-plan preprocessor facts")
 	}
 	cpu := config.CPU
 	if cpu.Policy != spec.CPU.Policy || cpu.PolicyVersion != spec.CPU.PolicyVersion ||
@@ -220,7 +213,7 @@ func validateCurvePlanRunConfig(
 	if err != nil {
 		return err
 	}
-	if projectedProtocol != protocol {
+	if !reflect.DeepEqual(projectedProtocol, protocol) {
 		return errors.New("RunConfig contradicts curve-plan measurement-protocol facts")
 	}
 	return nil
@@ -232,6 +225,13 @@ func sameFirstfloorSettings(actual, expected *modelcompat.FirstfloorSettings) bo
 	return actual.MaxBatchSize == expected.MaxBatchSize && actual.MaxQueueSize == expected.MaxQueueSize &&
 		modelcompat.EffectiveDeadlinePolicy(actual.DeadlinePolicy) ==
 			modelcompat.EffectiveDeadlinePolicy(expected.DeadlinePolicy)
+}
+
+func projectCurvePreprocessor(state profilingrun.PreprocessorState) profilederivation.CurvePreprocessorContract {
+	return profilederivation.CurvePreprocessorContract{
+		Name: state.Name, Image: state.Image, Architecture: state.Architecture, Path: state.Path,
+		MaxNewTokens: state.MaxNewTokens, Inputs: slices.Clone(state.Inputs), Outputs: slices.Clone(state.Outputs),
+	}
 }
 
 func projectCurveRuntimeAccess(access *profilingrun.CandidateReportRuntimeAccess) *profilederivation.CurveRuntimeAccessContract {
@@ -264,10 +264,15 @@ func projectCurveProtocol(config profilingrun.RunConfig) (profilederivation.Curv
 	if err := config.Workload.Validate(); err != nil {
 		return profilederivation.CurveProtocolContract{}, fmt.Errorf("validate recorded workload contract: %w", err)
 	}
+	var dataset *profilederivation.CurveDatasetContract
+	if config.Measurement.Dataset != nil {
+		dataset = &profilederivation.CurveDatasetContract{
+			Name: config.Measurement.Dataset.Name, UID: config.Measurement.Dataset.UID,
+		}
+	}
 	return profilederivation.CurveProtocolContract{
 		WorkloadMode:               config.Measurement.WorkloadMode,
-		InputGenerator:             config.Measurement.InputGenerator,
-		OutputValidation:           config.Measurement.OutputValidation,
+		Dataset:                    dataset,
 		WarmupIterations:           config.Measurement.WarmupIterations,
 		SettlingDurationSeconds:    config.Measurement.SettlingDurationSeconds,
 		DurationSeconds:            config.Measurement.DurationSeconds,

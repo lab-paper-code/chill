@@ -28,12 +28,19 @@ type Trial struct {
 	WorkloadWindowKnown      bool                  `json:"workloadWindowKnown"`
 }
 
+// NativeServiceSample copies one runtime batch execution unchanged. RecordIDs
+// and Units are per request; units are analysis observations only.
 type NativeServiceSample struct {
-	BatchID                   uint64  `json:"batchID"`
-	BatchSize                 int     `json:"batchSize"`
-	RunnerServiceMilliseconds float64 `json:"runnerServiceMs"`
-	BackendCallMilliseconds   float64 `json:"backendCallMs"`
-	NativeRequestMilliseconds float64 `json:"nativeRequestMs"`
+	BatchID                   uint64   `json:"batchID"`
+	BatchSize                 int      `json:"batchSize"`
+	RecordIDs                 []string `json:"recordIDs"`
+	Units                     []int    `json:"units"`
+	RunnerServiceMilliseconds float64  `json:"runnerServiceMs"`
+	PreprocessMilliseconds    float64  `json:"preprocessMs"`
+	BackendCallMilliseconds   float64  `json:"backendCallMs"`
+	PostprocessMilliseconds   float64  `json:"postprocessMs"`
+	FirstTokenMilliseconds    float64  `json:"firstTokenMs,omitempty"`
+	NativeRequestMilliseconds float64  `json:"nativeRequestMs"`
 }
 
 type EnergyTrial struct {

@@ -2,157 +2,76 @@ package serving
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
-	"io"
-	"math"
-	"slices"
-	"strconv"
-
-	"github.com/lab-paper-code/chill/internal/modelcompat"
+	"fmt"
+	"image"
+	_ "image/jpeg" // registers the JPEG header decoder for image.DecodeConfig
+	"unicode/utf8"
 )
 
-// InferenceInput is one sample. The batch axis is added only by the backend
-// adapter; external callers cannot override the registered model or SLO.
+// InferenceInput is one raw sample. The batch axis is added only by the
+// backend adapter; external callers cannot override the registered model or SLO.
 type InferenceInput struct {
-	Inputs []TensorInput `json:"inputs"`
+	Inputs []RawInput `json:"inputs"`
 }
 
-type TensorInput struct {
-	Name     string          `json:"name"`
-	Datatype string          `json:"datatype"`
-	Shape    []int32         `json:"shape"`
-	Data     json.RawMessage `json:"data"`
+// RawInput is one raw sample field. encoding/json decodes Data from base64.
+type RawInput struct {
+	Name     string `json:"name"`
+	Datatype string `json:"datatype"`
+	Data     []byte `json:"data"`
 }
 
-type validatedInput struct {
-	input *InferenceInput
-	path  int
-}
-
-func validateInput(input *InferenceInput, paths []ModelPath) (validatedInput, error) {
-	if input == nil || len(input.Inputs) == 0 {
-		return validatedInput{}, failure("InvalidInput", "inputs are required")
+// validateInput checks a sample once against the applied raw input contract,
+// which every execution path of the Workload shares. Pixel decoding belongs to
+// the runner's preprocessing.
+func validateInput(input *InferenceInput, contract []RawField) error {
+	if input == nil || len(input.Inputs) != len(contract) {
+		return inputFailure("inputs", "inputs must be exactly the fields %v", rawFieldNames(contract))
 	}
-	var contract []modelcompat.InputTensor
-	pathIndex := 0
-	for i := range paths {
-		if inputMatches(input, paths[i].Tensors) {
-			contract = paths[i].Tensors
-			pathIndex = i
-			break
-		}
-	}
-	if contract == nil {
-		return validatedInput{}, failure("InvalidInput", "input names, datatypes and sample shapes do not match a declared model input contract")
-	}
-	for _, tensor := range input.Inputs {
-		count := 1
-		for _, dimension := range tensor.Shape {
-			if int64(dimension) > int64(math.MaxInt/count) {
-				return validatedInput{}, failure("InvalidInput", "input tensor %q is too large", tensor.Name)
-			}
-			count *= int(dimension)
-		}
-		if err := validateTensorData(tensor, count); err != nil {
-			return validatedInput{}, err
-		}
-	}
-	return validatedInput{input: input, path: pathIndex}, nil
-}
-
-func inputMatches(input *InferenceInput, contract []modelcompat.InputTensor) bool {
-	if len(input.Inputs) != len(contract) {
-		return false
-	}
-	// ponytail: tensor lists are small; an index only earns its place if measured
-	// request parsing shows this scan, rather than inference, is the bottleneck.
-	for _, expected := range contract {
-		matches := 0
-		for _, actual := range input.Inputs {
-			if actual.Name == expected.Name {
-				if actual.Datatype != expected.Datatype || !slices.Equal(actual.Shape, expected.SampleShape) {
-					return false
-				}
-				matches++
+	for i, field := range input.Inputs {
+		var expected *RawField
+		for n := range contract {
+			if contract[n].Name == field.Name {
+				expected = &contract[n]
 			}
 		}
-		if matches != 1 {
-			return false
+		if expected == nil {
+			return inputFailure("inputs", "inputs must be exactly the fields %v", rawFieldNames(contract))
 		}
-	}
-	return true
-}
-
-func validateTensorData(input TensorInput, expected int) error {
-	decoder := json.NewDecoder(bytes.NewReader(input.Data))
-	decoder.UseNumber()
-	start, err := decoder.Token()
-	if err != nil || start != json.Delim('[') {
-		return failure("InvalidInput", "input tensor %q data must be a flat JSON array", input.Name)
-	}
-	count := 0
-	for decoder.More() {
-		value, err := decoder.Token()
-		if err != nil {
-			return failure("InvalidInput", "input tensor %q contains invalid JSON data", input.Name)
+		for _, other := range input.Inputs[:i] {
+			if other.Name == field.Name {
+				return inputFailure("inputs", "input field %q appears more than once", field.Name)
+			}
 		}
-		if !validDatum(input.Datatype, value) {
-			return failure("InvalidInput", "input tensor %q data is outside the supported %s value range", input.Name, input.Datatype)
+		at := fmt.Sprintf("inputs[%d].data", i)
+		if field.Datatype != "BYTES" {
+			return inputFailure(fmt.Sprintf("inputs[%d].datatype", i), "input field %q datatype must be BYTES", field.Name)
 		}
-		count++
-		if count > expected {
-			return failure("InvalidInput", "input tensor %q data count does not match its sample shape", input.Name)
+		if len(field.Data) == 0 || int64(len(field.Data)) > int64(expected.MaxBytes) {
+			return inputFailure(at, "input field %q must hold 1 to %d bytes", field.Name, expected.MaxBytes)
 		}
-	}
-	end, err := decoder.Token()
-	if err != nil || end != json.Delim(']') || count != expected {
-		return failure("InvalidInput", "input tensor %q data count does not match its sample shape", input.Name)
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return failure("InvalidInput", "input tensor %q data contains a trailing JSON value", input.Name)
+		switch expected.Format {
+		case "JPEG":
+			if _, format, err := image.DecodeConfig(bytes.NewReader(field.Data)); !bytes.HasPrefix(field.Data, []byte{0xFF, 0xD8, 0xFF}) || err != nil || format != "jpeg" {
+				return inputFailure(at, "input field %q is not a JPEG image", field.Name)
+			}
+		case "UTF8":
+			if !utf8.Valid(field.Data) {
+				return inputFailure(at, "input field %q is not valid UTF-8", field.Name)
+			}
+		}
 	}
 	return nil
 }
 
-func validDatum(datatype string, value any) bool {
-	if datatype == "BOOL" {
-		_, ok := value.(bool)
-		return ok
+func inputFailure(field, format string, args ...any) error {
+	return &Error{Code: "InvalidInput", Message: fmt.Sprintf(format, args...), Field: field}
+}
+
+func rawFieldNames(fields []RawField) []string {
+	names := make([]string, len(fields))
+	for i, field := range fields {
+		names[i] = field.Name
 	}
-	if datatype == "BYTES" {
-		_, ok := value.(string)
-		return ok
-	}
-	number, ok := value.(json.Number)
-	if !ok {
-		return false
-	}
-	var bits int
-	switch datatype {
-	case "INT8", "UINT8":
-		bits = 8
-	case "INT16", "UINT16":
-		bits = 16
-	case "INT32", "UINT32":
-		bits = 32
-	case "INT64", "UINT64":
-		bits = 64
-	case "FP16", "FP32", "FP64":
-		bits = 64
-		if datatype == "FP32" {
-			bits = 32
-		}
-		parsed, err := strconv.ParseFloat(string(number), bits)
-		return err == nil && !math.IsNaN(parsed) && !math.IsInf(parsed, 0) && (datatype != "FP16" || math.Abs(parsed) <= 65504)
-	default:
-		// The numeric/bool JSON contract covers the initialized runner's types.
-		return false
-	}
-	if datatype[0] == 'U' {
-		_, err := strconv.ParseUint(string(number), 10, bits)
-		return err == nil
-	}
-	_, err := strconv.ParseInt(string(number), 10, bits)
-	return err == nil
+	return names
 }

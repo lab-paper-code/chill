@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 func decodeTestRunConfig(payload []byte) (RunConfig, error) {
@@ -157,8 +155,7 @@ func TestCurrentRunConfigValidatesModelLoadedIdleProtocol(t *testing.T) {
 	idle := validRunConfig()
 	idle.Measurement = MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
-		OutputValidation: NoOutputValidation,
+		WorkloadMode: IdleModelLoadedWorkloadMode,
 	}
 	if err := idle.Validate(); err != nil {
 		t.Fatal(err)
@@ -167,8 +164,7 @@ func TestCurrentRunConfigValidatesModelLoadedIdleProtocol(t *testing.T) {
 		func(i *RunConfig) { i.Measurement.Batch = 2 },
 		func(i *RunConfig) { i.Measurement.WarmupIterations = 1 },
 		func(i *RunConfig) { i.Measurement.SettlingDurationSeconds = 0 },
-		func(i *RunConfig) { i.Measurement.InputGenerator = "seeded" },
-		func(i *RunConfig) { i.Measurement.OutputValidation = testShapeField },
+		func(i *RunConfig) { i.Measurement.Dataset = validRunConfig().Measurement.Dataset },
 	} {
 		candidate := idle
 		mutate(&candidate)
@@ -182,8 +178,7 @@ func TestCurrentRKNNLiteRunConfigAllowsArtifactBatchForIdle(t *testing.T) {
 	idle := firstfloorFrozenConfig(FirstfloorRKNNLiteBackend)
 	idle.Measurement = MeasurementContract{
 		Batch: 2, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
-		OutputValidation: NoOutputValidation,
+		WorkloadMode: IdleModelLoadedWorkloadMode,
 	}
 	if err := idle.Validate(); err != nil {
 		t.Fatalf("fixed-batch RKNNLite idle protocol was rejected: %v", err)
@@ -201,13 +196,23 @@ func rknnDeliveryForTest(batch int32, host *CandidateReportHostContract) Candida
 	}
 }
 
-func TestCurrentRunConfigRequiresCleanArtifactPath(t *testing.T) {
-	for _, artifactPath := range []string{"", "/", "artifact/model.onnx", "/artifact/../model.onnx"} {
+func TestCurrentRunConfigRequiresCleanUniqueArtifactFiles(t *testing.T) {
+	for _, files := range [][]string{
+		nil, {"/"}, {"artifact/model.onnx"}, {"/artifact/../model.onnx"}, {"/a/model.onnx", "/b/model.onnx"},
+	} {
 		config := validRunConfig()
-		config.State.ArtifactPath = artifactPath
+		config.State.ArtifactFiles = files
 		if err := config.Validate(); err == nil {
-			t.Fatalf("expected artifact path %q rejection", artifactPath)
+			t.Fatalf("expected artifact files %q rejection", files)
 		}
+	}
+}
+
+func TestCurrentRunConfigRequiresDatasetExactlyForActiveMeasurement(t *testing.T) {
+	config := validRunConfig()
+	config.Measurement.Dataset = nil
+	if err := config.Validate(); err == nil {
+		t.Fatal("active measurement without a dataset was accepted")
 	}
 }
 
@@ -323,46 +328,45 @@ func TestVerifiedRunConfigOwnsMetricLabels(t *testing.T) {
 	}
 }
 
-func TestFrozenRunConfigOwnsNamedInputContract(t *testing.T) {
-	config := validRunConfig()
+func TestFrozenRunConfigOwnsArtifactAndPreprocessorContract(t *testing.T) {
+	config := firstfloorFrozenConfig(FirstfloorRKNNLiteBackend)
 	verified, err := ValidateRunConfig(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.Delivery.ArtifactCapability.Tensors[0].Name = "mutated-source"
 	config.Delivery.ArtifactCapability.Tensors[0].SampleShape[0] = 999
+	config.State.ArtifactFiles[0] = testMutatedPath
+	config.State.Preprocessor.Inputs[0] = testMutatedValue
+	config.Measurement.Dataset.Name = testMutatedValue
 	record, err := verified.Record()
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := record.Delivery.ArtifactCapability.Tensors[0]
-	if input.Name != "input" || input.Datatype != "FP32" || input.SampleShape[0] != 3 {
-		t.Fatalf("frozen input contract was mutated: %+v", input)
+	if record.Delivery.ArtifactCapability.Tensors[0].SampleShape[0] != 224 ||
+		record.State.ArtifactFiles[0] != "/artifact/mobilenet-v2-050.onnx" ||
+		record.State.Preprocessor.Inputs[0] != "image" || record.Measurement.Dataset.Name != "vqav2-val-subset" {
+		t.Fatalf("frozen RunConfig was mutated through caller state: %+v", record)
 	}
-	record.Delivery.ArtifactCapability.Tensors[0].Datatype = testINT64Datatype
-	record.Delivery.ArtifactCapability.Tensors[0].SampleShape[0] = 999
+	record.State.Preprocessor.Outputs[0] = testMutatedValue
 	second, err := verified.Record()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Delivery.ArtifactCapability.Tensors[0].Datatype != "FP32" ||
-		second.Delivery.ArtifactCapability.Tensors[0].SampleShape[0] != 3 {
-		t.Fatal("returned input contract mutated the frozen record")
+	if second.State.Preprocessor.Outputs[0] != "label" {
+		t.Fatal("returned RunConfig mutated the frozen record")
 	}
 }
 
 func TestRunConfigRejectsInvalidInputDeclarations(t *testing.T) {
-	for _, name := range []string{"missing", "blank-name", "duplicate-name", testDatatypeField, "empty-shape", "nonpositive-shape"} {
+	for _, name := range []string{"missing", "blank-name", testDatatypeField, "empty-shape", "nonpositive-shape"} {
 		t.Run(name, func(t *testing.T) {
-			config := validRunConfig()
+			config := firstfloorFrozenConfig(FirstfloorRKNNLiteBackend)
 			capability := config.Delivery.ArtifactCapability
 			switch name {
 			case "missing":
 				capability.Tensors = nil
 			case "blank-name":
 				capability.Tensors[0].Name = " "
-			case "duplicate-name":
-				capability.Tensors = append(capability.Tensors, capability.Tensors[0])
 			case testDatatypeField:
 				capability.Tensors[0].Datatype = "float32"
 			case "empty-shape":
@@ -374,6 +378,14 @@ func TestRunConfigRejectsInvalidInputDeclarations(t *testing.T) {
 				t.Fatalf("invalid input contract accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestFirstfloorRunConfigFreezesInputTensorsForRKNNOnly(t *testing.T) {
+	config := firstfloorFrozenConfig(FirstfloorORTCPUBackend)
+	config.Delivery.ArtifactCapability.Tensors = rknnArtifactCapabilityForTest().Tensors
+	if err := config.Validate(); err == nil {
+		t.Fatal("ONNX firstfloor RunConfig accepted artifact input tensors")
 	}
 }
 
@@ -402,17 +414,19 @@ func validRunConfig() RunConfig {
 			DeviceClass:   "lattepanda-3-delta-8g",
 			Model:         "mobilenet-v2-050",
 			Artifact:      "canonical-onnx",
-			ArtifactPath:  "/artifact/mobilenet-v2-050.onnx",
+			ArtifactFiles: []string{"/artifact/mobilenet-v2-050.onnx"},
 			RuntimeFamily: "onnxruntime",
 			Backend:       cpuExecutionProvider,
 			PowerMode:     "fixed",
+			Preprocessor: PreprocessorState{
+				Name: "mobilenet-imagenet", UID: "preprocessor-uid", Image: image, Architecture: "amd64",
+				Path: "/artifact/mobilenet-nchw", Inputs: []string{"image"}, Outputs: []string{"label"},
+			},
 		},
 		Images: Images{
 			Runtime: image, Artifact: image, MetricObserver: image, WorkloadObserver: image,
 		},
-		Delivery: CandidateRuntimeDelivery{ArtifactCapability: &CandidateArtifactCapability{
-			Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}},
-		}},
+		Delivery: CandidateRuntimeDelivery{ArtifactCapability: &CandidateArtifactCapability{}},
 		TargetNode: NodeSnapshot{
 			Name:            "lattepanda",
 			UID:             "uid",
@@ -433,8 +447,9 @@ func validRunConfig() RunConfig {
 			WarmupIterations: 20,
 			DurationSeconds:  30,
 			WorkloadMode:     "saturated-serial-fixed-batch",
-			InputGenerator:   "numpy-default-rng-seed-0-inputs-v1",
-			OutputValidation: "nonempty-shape-batch-v1",
+			Dataset: &DatasetContract{
+				Name: "vqav2-val-subset", UID: "dataset-uid", Image: image, Path: "/artifact/vqav2-val-subset",
+			},
 		},
 		Metrics: MetricContract{
 			SourceKind:           "edge-metrics",

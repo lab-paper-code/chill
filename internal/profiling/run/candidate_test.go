@@ -13,6 +13,8 @@ const (
 	testActuatedNVPMode   = "MODE_15W_6CORE"
 	testARM64Architecture = "arm64"
 	testDifferentIdentity = "other"
+	testMutatedValue      = "mutated"
+	testMutatedPath       = "/mutated"
 	testINT64Datatype     = "INT64"
 	testDatatypeField     = "datatype"
 	testShapeField        = "shape"
@@ -63,11 +65,9 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 			Architecture: "amd64", NodeSelector: map[string]string{"class": "lattepanda"}, PowerModes: []string{"fixed"},
 		},
 		ArtifactSupply: CandidateReportArtifactSupply{
-			Image: "artifact@sha256:digest", Architecture: "amd64", Path: "/artifact/model.onnx",
+			Image: "artifact@sha256:digest", Architecture: "amd64", Files: []string{"/artifact/model.onnx"},
 		},
-		ArtifactCapability: &CandidateArtifactCapability{
-			Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}},
-		},
+		ArtifactCapability:  &CandidateArtifactCapability{},
 		MetricObserverImage: "observer@sha256:digest",
 		Verdict:             "Compatible", Reasons: []CandidateReportReason{},
 	}
@@ -80,7 +80,7 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 	}
 
 	missing := report
-	missing.ArtifactSupply.Path = ""
+	missing.ArtifactSupply.Files = nil
 	payload, err = json.Marshal(missing)
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
 		},
 		ArtifactSupply: CandidateReportArtifactSupply{
 			Image: config.Images.Artifact, Architecture: config.TargetNode.Architecture,
-			Path: config.State.ArtifactPath,
+			Files: config.State.ArtifactFiles,
 		},
 		ArtifactCapability:  config.Delivery.ArtifactCapability,
 		MetricObserverImage: config.Images.MetricObserver,
@@ -243,8 +243,8 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 		},
 		State: ExecutionState{
 			DeviceClass: report.Inputs.DeviceClass.Name, Model: report.Inputs.ModelSpec.Name,
-			Artifact:     report.Selection.Artifact,
-			ArtifactPath: report.ArtifactSupply.Path, PowerMode: report.Selection.PowerMode,
+			Artifact:      report.Selection.Artifact,
+			ArtifactFiles: report.ArtifactSupply.Files, PowerMode: report.Selection.PowerMode,
 			RuntimeFamily: FirstfloorRuntimeFamily, Backend: FirstfloorRKNNLiteBackend,
 			HostContract: cloneCandidateHostContract(report.HostContract),
 		},
@@ -261,14 +261,14 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstDelivery := verified.RuntimeDelivery()
-	firstDelivery.HostContract.Devices[0].Path = "/mutated"
+	firstDelivery.HostContract.Devices[0].Path = testMutatedPath
 	firstDelivery.RuntimeAccess.SupplementalGroups[0] = 999
-	firstDelivery.ArtifactCapability.Tensors[0].Name = "mutated"
+	firstDelivery.ArtifactCapability.Tensors[0].Name = testMutatedValue
 	firstDelivery.ArtifactCapability.Tensors[0].SampleShape[0] = 999
 	secondDelivery := verified.RuntimeDelivery()
-	if secondDelivery.HostContract.Devices[0].Path == "/mutated" ||
+	if secondDelivery.HostContract.Devices[0].Path == testMutatedPath ||
 		secondDelivery.RuntimeAccess.SupplementalGroups[0] == 999 ||
-		secondDelivery.ArtifactCapability.Tensors[0].Name == "mutated" ||
+		secondDelivery.ArtifactCapability.Tensors[0].Name == testMutatedValue ||
 		secondDelivery.ArtifactCapability.Tensors[0].SampleShape[0] == 999 {
 		t.Fatal("verified candidate report exposed mutable internal delivery state")
 	}
@@ -345,8 +345,8 @@ func verifyRKNNCandidateAtBatch(
 		},
 		State: ExecutionState{
 			DeviceClass: report.Inputs.DeviceClass.Name, Model: report.Inputs.ModelSpec.Name,
-			Artifact:     report.Selection.Artifact,
-			ArtifactPath: report.ArtifactSupply.Path, PowerMode: report.Selection.PowerMode,
+			Artifact:      report.Selection.Artifact,
+			ArtifactFiles: report.ArtifactSupply.Files, PowerMode: report.Selection.PowerMode,
 			RuntimeFamily: FirstfloorRuntimeFamily, Backend: FirstfloorRKNNLiteBackend,
 			HostContract: cloneCandidateHostContract(report.HostContract),
 		},
@@ -409,7 +409,7 @@ func completeCandidateReportForTest() CandidateReport {
 			Architecture: testARM64Architecture, NodeSelector: map[string]string{"class": "orangepi"}, PowerModes: []string{"fixed"},
 		},
 		ArtifactSupply: CandidateReportArtifactSupply{
-			Image: "artifact@sha256:digest", Architecture: testARM64Architecture, Path: "/artifact/model.rknn",
+			Image: "artifact@sha256:digest", Architecture: testARM64Architecture, Files: []string{"/artifact/model.rknn"},
 		},
 		ArtifactCapability:  rknnArtifactCapabilityForTest(),
 		MetricObserverImage: "observer@sha256:digest",
@@ -463,7 +463,7 @@ func TestCandidateReportRejectsUnsupportedSchemaAndCatalogNameDrift(t *testing.T
 	}
 }
 
-func TestCandidateReportRejectsFrozenInputDrift(t *testing.T) {
+func TestCandidateReportRejectsFrozenArtifactFilesDrift(t *testing.T) {
 	payload, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
@@ -476,24 +476,13 @@ func TestCandidateReportRejectsFrozenInputDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"name", testDatatypeField, testShapeField} {
-		t.Run(field, func(t *testing.T) {
-			report, err := DecodeCandidateReport(payload)
-			if err != nil {
-				t.Fatal(err)
-			}
-			switch field {
-			case "name":
-				report.ArtifactCapability.Tensors[0].Name = testDifferentIdentity
-			case testDatatypeField:
-				report.ArtifactCapability.Tensors[0].Datatype = testINT64Datatype
-			case testShapeField:
-				report.ArtifactCapability.Tensors[0].SampleShape[0]++
-			}
-			if _, err := VerifyCandidateReportRecord(report, config); err == nil ||
-				!strings.Contains(err.Error(), "input contract") {
-				t.Fatalf("candidate input drift accepted: %v", err)
-			}
-		})
+	report, err := DecodeCandidateReport(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.ArtifactSupply.Files = append(report.ArtifactSupply.Files, "/artifact/other.onnx")
+	if _, err := VerifyCandidateReportRecord(report, config); err == nil ||
+		!strings.Contains(err.Error(), "artifact supply files") {
+		t.Fatalf("candidate artifact files drift accepted: %v", err)
 	}
 }

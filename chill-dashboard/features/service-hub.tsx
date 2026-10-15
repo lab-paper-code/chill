@@ -88,14 +88,18 @@ const sections:Record<ServiceSectionId,(view:WorkloadView,s:Signals)=>Part> = {
     }
   },
   evidence(view) {
-    const inputs = view.supportedInputs
+    const inputs = view.supportedInputs, preprocessor = view.appliedDefinition?.preprocessor
     const missing = view.appliedDefinition?.model.paths.filter(path => !inputs.some(input => input.executionPath === path.name)) ?? []
     return {
       title: inputs.length ? `측정이 끝난 입력이 ${inputs.length}개 있어요` : "측정 결과가 필요해요",
       lede: "측정이 끝난 실행 방식만 추론에 쓸 수 있어요. 파일이나 실행 방식을 등록하는 것만으로는 시작할 수 없어요.",
       body: inputs.length || missing.length ? <Rows>
         {inputs.map((input, index) => <RowDialog key={index} label={input.executionPath} hint={input.artifact} value="측정 완료" title={`${input.executionPath} 입력과 측정 근거`}>
-          <Facts items={[...input.tensors.map(t => [t.name, `${t.datatype} · 크기 ${t.sampleShape.join(" × ")}`] as [string,string]), ["연결된 측정", `${input.profiles.length}개`]]} />
+          <Facts items={[
+            ...(preprocessor?.input ?? []).map((f): [string, string] => [`입력 ${f.name}`, `BYTES · ${f.format} · 최대 ${f.maxBytes}바이트`]),
+            ...(preprocessor?.output ?? []).map((f): [string, string] => [`출력 ${f.name}`, `BYTES · ${f.format}`]),
+            ["전처리기", preprocessor?.name ?? "아직 없어요"], ["연결된 측정", `${input.profiles.length}개`],
+          ]} />
           <SourceJSON inline title="입력과 측정 근거" value={input} />
         </RowDialog>)}
         {missing.map(path => <Row key={path.name} href="/measurements" label={path.name} hint={path.artifact} value="측정 필요" />)}

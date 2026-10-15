@@ -103,8 +103,9 @@ spec:
                       minLength: 1
                       type: string
                     input:
-                      description: Input declares this artifact's input tensor contract
-                        without its batch axis.
+                      description: |-
+                        Input declares the RKNN input tensor contract without its batch axis.
+                        Preprocessor artifacts define the inputs of every other format.
                       properties:
                         tensors:
                           items:
@@ -171,24 +172,27 @@ spec:
                             supported by the carrier.
                           minLength: 1
                           type: string
+                        files:
+                          description: |-
+                            Files are the clean absolute paths of every model file in the carrier
+                            image. Basenames are unique; the runtime loads all files together.
+                          items:
+                            pattern: ^/[A-Za-z0-9._/-]+$
+                            type: string
+                          minItems: 1
+                          type: array
                         image:
                           description: Image is an immutable OCI image reference containing
                             the artifact.
                           minLength: 1
                           type: string
-                        path:
-                          description: Path is the clean absolute path of the artifact
-                            in the carrier image.
-                          pattern: ^/[A-Za-z0-9._/-]+$
-                          type: string
                       required:
                       - architecture
+                      - files
                       - image
-                      - path
                       type: object
                   required:
                   - format
-                  - input
                   - name
                   - source
                   type: object

@@ -5,8 +5,9 @@ export type TensorContract = { name: string; datatype: Datatype; sampleShape: nu
 export type FirstfloorSettings = { maxBatchSize: number; maxQueueSize: number; deadlinePolicy?: "drop" | "keep" | "defer" }
 export type ModelArtifact = {
   name: string; format: string
-  source: { image: string; architecture: string; path: string }
-  input: { tensors: TensorContract[] } | null
+  source: { image: string; architecture: string; files: string[] }
+  // Declared for RKNN artifacts only; preprocessor artifacts define every other format's model input.
+  input?: { tensors: TensorContract[] }
   derivation?: { sourceArtifact: string; targetPlatform: string; declaredBatchSizes: number[]; conversion: { tool: string; version: string } }
 }
 export type ExecutionPath = { name: string; artifact: string; runtime: { family: string; backend: string; settings?: { firstfloor?: FirstfloorSettings } } }
@@ -29,15 +30,16 @@ export type WorkloadStatus = { appliedDefinition?: { workloadGeneration: number;
 export type WorkloadResource = { metadata: Metadata; spec: WorkloadSpec; status?: WorkloadStatus; apiVersion?: string; kind?: string }
 export type AppliedDefinition = {
   name: string; uid: string; generation: number
-  model: AppliedRef & { paths: { name: string; artifact: string; format: string; image: string; architecture: string; path: string; runtimeFamily: string; backend: string; tensors: TensorContract[]; firstfloor?: FirstfloorSettings; preprocessor: PreprocessorArtifact["source"] }[] }
+  model: AppliedRef & { paths: { name: string; artifact: string; format: string; image: string; architecture: string; files: string[]; runtimeFamily: string; backend: string; firstfloor?: FirstfloorSettings; preprocessor: PreprocessorArtifact["source"] }[] }
   preprocessor: AppliedRef & { input: RawField[]; output: Omit<RawField, "maxBytes">[]; maxNewTokens?: number }
   dataset?: Omit<AppliedRef, "generation">
   slo: { percentile: number; targetLatencyNanos: number }
 }
 export type ObjectIdentity = { store: string; key: string; size: number }
-export type SupportedInput = { executionPath: string; artifact: string; tensors: TensorContract[]; profiles: { id: string; reference: ObjectIdentity; evidence: ObjectIdentity[]; condition: unknown }[] }
+export type SupportedInput = { executionPath: string; artifact: string; profiles: { id: string; reference: ObjectIdentity; evidence: ObjectIdentity[]; condition: unknown }[] }
 export type WorkloadView = { desired: WorkloadResource; appliedDefinition?: AppliedDefinition; supportedInputs: SupportedInput[]; admission: boolean; readiness: string; reason: string; pending: number; assigned: number; operation?: Operation; observedAt: string }
-export type TensorInput = { name: string; datatype: Datatype; shape: number[]; data: unknown[] }
+// Native Response JSON verbatim from POST /api/v1/workloads/{name}/infer.
+type InferenceOutput = { outputs: { name: string; data: string[] }[] }
 
 export const resourceHref = (kind: string, name: string, uid: string, action = "") => `/${kind}/${encodeURIComponent(name)}${action ? `/${action}` : ""}?uid=${encodeURIComponent(uid)}`
 export const sloTarget = (spec: WorkloadSpec) => `${spec.slo.percentile}%의 요청을 ${spec.slo.targetLatency} 안에 처리`
@@ -58,39 +60,27 @@ export function positiveIntegers(text: string): number[] {
   if (!parts.length || parts.some(p => !/^\d+$/.test(p) || Number(p) < 1 || Number(p) > 2147483647)) throw new Error("1부터 2147483647까지 정수 목록이 필요합니다.")
   return parts.map(Number)
 }
-export function tensorCount(tensor: TensorContract): number {
-  const count = tensor.sampleShape.reduce((total, size) => total * size, 1)
-  if (!Number.isSafeInteger(count) || count < 1) throw new Error(`${tensor.name}: 입력 크기가 브라우저의 안전한 정수 범위를 초과합니다.`)
-  return count
+function base64(bytes: Uint8Array): string {
+  let text = ""
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(text)
 }
-// Return the original flat JSON to preserve 64-bit integers exactly on the wire.
-export function tensorData(tensor: TensorContract, text: string): string {
-  const parsed: unknown = JSON.parse(text)
-  if (!Array.isArray(parsed) || parsed.length !== tensorCount(tensor)) throw new Error(`${tensor.name}: 평면 배열의 값 수가 sampleShape와 일치해야 합니다.`)
-  if (tensor.datatype === "BF16") throw new Error("BF16은 CHILL HTTP JSON에서 지원하지 않습니다. 바이너리 codec이 필요합니다.")
-  if (tensor.datatype === "BOOL" || tensor.datatype === "BYTES") {
-    const type = tensor.datatype === "BOOL" ? "boolean" : "string"
-    if (parsed.some(value => typeof value !== type)) throw new Error(`${tensor.name}: ${type} 값만 허용합니다.`)
-  } else {
-    const values = text.trim().slice(1, -1).split(",").map(value => value.trim())
-    const integer = /^(U?INT)(8|16|32|64)$/.exec(tensor.datatype)
-    if (parsed.some(value => typeof value !== "number")) throw new Error(`${tensor.name}: 숫자 JSON 값만 허용합니다.`)
-    for (const value of values) {
-      if (integer) {
-        if (!/^-?(0|[1-9]\d*)$/.test(value)) throw new Error(`${tensor.name}: 정수 JSON 값이 필요합니다.`)
-        const bits = BigInt(integer[2]), unsigned = integer[1] === "UINT", n = BigInt(value)
-        const min = unsigned ? BigInt(0) : -(BigInt(1) << (bits - BigInt(1)))
-        const max = (BigInt(1) << (unsigned ? bits : bits - BigInt(1))) - BigInt(1)
-        if (n < min || n > max || (unsigned && value.startsWith("-"))) throw new Error(`${tensor.name}: ${tensor.datatype} 범위를 초과합니다.`)
-      } else {
-        const n = Number(value)
-        if (!Number.isFinite(n) || (tensor.datatype === "FP16" && Math.abs(n) > 65504) || (tensor.datatype === "FP32" && !Number.isFinite(Math.fround(n)))) throw new Error(`${tensor.name}: 유한한 ${tensor.datatype} 숫자가 필요합니다.`)
-      }
-    }
-  }
-  return text.trim()
+// One raw sample for the applied preprocessor input contract; the gateway checks JPEG and UTF-8 content.
+export function rawInferenceBody(fields: RawField[], values: Record<string, Uint8Array | undefined>): string {
+  if (!fields.length) throw new Error("적용된 전처리기의 입력 계약이 없어요.")
+  return JSON.stringify({ inputs: fields.map(field => {
+    const data = values[field.name]
+    if (!data?.length) throw new Error(`${field.name}: 값을 넣어 주세요.`)
+    if (data.length > field.maxBytes) throw new Error(`${field.name}: 최대 ${field.maxBytes}바이트까지 보낼 수 있어요.`)
+    return { name: field.name, datatype: "BYTES", data: base64(data) }
+  }) })
 }
-export function inferenceBody(tensors: TensorContract[], data: string[]): string {
-  if (tensors.length !== data.length || !tensors.length) throw new Error("지원 입력 계약을 선택하세요.")
-  return `{"inputs":[${tensors.map((tensor, index) => `{"name":${JSON.stringify(tensor.name)},"datatype":${JSON.stringify(tensor.datatype)},"shape":${JSON.stringify(tensor.sampleShape)},"data":${tensorData(tensor, data[index])}}`).join(",")}]}`
+// Each declared output field's first element: UTF8 decoded to text, JPEG kept as base64 for a data URL.
+export function rawOutputs(fields: Omit<RawField, "maxBytes">[], response: unknown): { name: string; format: RawField["format"]; value?: string }[] {
+  const outputs = (response as Partial<InferenceOutput> | null)?.outputs ?? []
+  return fields.map(field => {
+    const data = outputs.find(output => output.name === field.name)?.data?.[0]
+    if (data === undefined || field.format === "JPEG") return { name: field.name, format: field.format, value: data }
+    return { name: field.name, format: field.format, value: new TextDecoder().decode(Uint8Array.from(atob(data), c => c.charCodeAt(0))) }
+  })
 }

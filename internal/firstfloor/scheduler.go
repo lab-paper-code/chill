@@ -223,14 +223,13 @@ func (s *Scheduler) run(ctx context.Context) {
 			s.appliedAt = time.Now().UTC()
 			close(change.applied)
 		case done := <-s.completed:
-			if done.err != nil {
+			var failedBatch *batchError
+			var failedItem *preprocessError
+			if done.err != nil && !errors.As(done.err, &failedBatch) && !errors.As(done.err, &failedItem) {
 				a.fail(fmt.Errorf("%w: %v", ErrUnavailable, done.err))
 				return
 			}
-			if err := a.finishBatch(done); err != nil {
-				a.fail(err)
-				return
-			}
+			a.finishBatch(done)
 		case <-s.runner.exited:
 			a.fail(ErrUnavailable)
 			return
@@ -263,6 +262,9 @@ func (a *schedulerActor) progress(r *request, phase string, now time.Time, o run
 		p.QueueMS = milliseconds(a.started.Sub(r.received))
 		p.ServiceMS = o.serviceMS
 		p.BackendMS = o.backendMS
+		p.PreprocessMS = o.preprocessMS
+		p.PostprocessMS = o.postprocessMS
+		p.FirstTokenMS = o.firstMS
 	} else {
 		p.QueueMS = p.NativeElapsedMS
 		p.ProfileID = a.cfg.Policy.ProfileID
@@ -459,36 +461,27 @@ func (s *Scheduler) executeBatch(ctx context.Context, batch []*request, id uint6
 	o, e := s.runner.infer(ctx, id, tensors, data)
 	s.completed <- result{output: o, err: e, complete: true}
 }
+
+// executeProfile runs exactly one execution of the profile request's samples.
 func (s *Scheduler) executeProfile(ctx context.Context, batch []*request, id uint64, snapshot *Config) result {
-	r := batch[0]
-	pr := r.profile
-	reply := ProfileResponse{BatchSize: pr.BatchSize}
-	begin := time.Now()
+	pr := batch[0].profile
 	tensors, data := packBatch(snapshot.Inputs, batch, pr.BatchSize)
-	for range pr.Executions {
-		span := time.Now()
-		o, e := s.runner.infer(ctx, id, tensors, data)
-		if e != nil {
-			return result{err: e}
-		}
-		reply.Outputs, e = fullOutputs(o)
-		if e != nil {
-			return result{err: e}
-		}
-		reply.BatchIDs = append(reply.BatchIDs, id)
-		reply.NativeSamplesMS = append(reply.NativeSamplesMS, milliseconds(time.Since(span)))
-		reply.ServiceSamplesMS = append(reply.ServiceSamplesMS, o.serviceMS)
-		reply.BackendSamplesMS = append(reply.BackendSamplesMS, o.backendMS)
-		reply.Executions++
-		reply.Items += pr.BatchSize
-		id++
-		if r.ctx.Err() != nil {
-			break
-		}
+	span := time.Now()
+	o, e := s.runner.infer(ctx, id, tensors, data)
+	if e != nil {
+		return result{err: e, complete: true}
 	}
-	reply.NativeElapsedMS = milliseconds(time.Since(begin))
-	reply.ExecutionComplete = true
-	return result{profile: reply, complete: true}
+	reply := ProfileResponse{BatchSize: pr.BatchSize, BatchIDs: []uint64{id}, NativeSamplesMS: []float64{milliseconds(time.Since(span))}, ServiceSamplesMS: []float64{o.serviceMS}, BackendSamplesMS: []float64{o.backendMS}, PreprocessSamplesMS: []float64{o.preprocessMS}, PostprocessSamplesMS: []float64{o.postprocessMS}, Units: make([]int, len(o.items)), ExecutionComplete: true}
+	if snapshot.MaxNewTokens > 0 {
+		reply.FirstTokenSamplesMS = []float64{o.firstMS}
+	}
+	for i, item := range o.items {
+		if item.Error != "" {
+			return result{output: o, err: &preprocessError{item.Error}, complete: true}
+		}
+		reply.Units[i] = item.Units
+	}
+	return result{profile: reply, output: o, complete: true}
 }
 func (a *schedulerActor) admit(r *request) {
 	if r.ctx.Err() != nil {
@@ -541,55 +534,75 @@ func (a *schedulerActor) observeArrival(r *request) {
 	}
 	a.rates[r.context.WorkloadUID] = rr
 }
-func (a *schedulerActor) finishBatch(done result) error {
+
+// finishBatch ends every active request: batch errors end all of them, item
+// failures end only their own request, successes receive one element per output field.
+func (a *schedulerActor) finishBatch(done result) {
 	now := time.Now()
 	a.completed += uint64(len(a.active))
+	a.executions++
+	var failedBatch *batchError
+	var failedItem *preprocessError
 	if a.active[0].profile != nil {
-		a.executions += uint64(done.profile.Executions)
 		r := a.active[0]
-		done.profile.NativeElapsedMS = milliseconds(now.Sub(r.received))
-		a.batchID += uint64(done.profile.Executions - 1)
+		if done.err == nil {
+			done.profile.NativeElapsedMS = milliseconds(now.Sub(r.received))
+		}
 		r.result <- done
-		span := runnerOutput{}
-		for _, v := range done.profile.ServiceSamplesMS {
-			span.serviceMS += v
+		p := a.progress(r, phaseFinished, now, done.output, true)
+		switch {
+		case errors.As(done.err, &failedBatch):
+			p.Outcome = OutcomeBatchError
+		case errors.As(done.err, &failedItem):
+			p.Outcome = OutcomePreprocessFailed
 		}
-		for _, v := range done.profile.BackendSamplesMS {
-			span.backendMS += v
-		}
-		emitProgress(a.progress(r, phaseFinished, now, span, true))
+		emitProgress(p)
 	} else {
-		a.executions++
-		outputs, e := splitOutputs(done.output, len(a.active))
-		if e != nil {
-			return e
-		}
-		now = time.Now()
+		failed := errors.As(done.err, &failedBatch)
+		success := 0
 		for i, r := range a.active {
 			p := a.progress(r, phaseFinished, now, done.output, true)
-			p.Outcome = outcomeCompleted
-			e := requestError(r, now)
-			if e != nil {
-				p.Outcome = e.Error()
+			response := Response{ModelName: a.cfg.Model, ID: r.context.RequestID, ExecutionComplete: true}
+			var e error
+			switch {
+			case failed:
+				p.Outcome = OutcomeBatchError
+				e = failedBatch
+			case done.output.items[i].Error != "":
+				p.Outcome = OutcomePreprocessFailed
+				e = &preprocessError{done.output.items[i].Error}
+			default:
+				p.Units = done.output.items[i].Units
+				response.Outputs = make([]Field, len(done.output.outputs))
+				for k, f := range done.output.outputs {
+					response.Outputs[k] = Field{Name: f.Name, Data: f.Data[success : success+1]}
+				}
+				success++
+				p.Outcome = outcomeCompleted
+				if e = requestError(r, now); e != nil {
+					p.Outcome = e.Error()
+				}
 			}
 			emitProgress(p)
-			r.result <- result{response: Response{ModelName: a.cfg.Model, ID: r.context.RequestID, Outputs: outputs[i], Progress: p, ExecutionComplete: true}, err: e, complete: true}
+			response.Progress = p
+			r.result <- result{response: response, err: e, complete: true}
 		}
 	}
 	clear(a.active)
 	a.active = nil
 	a.started = time.Time{}
-	return nil
 }
-func packBatch(specs []InputSpec, requests []*request, size int) ([]wireTensor, [][]byte) {
-	tensors := make([]wireTensor, len(specs))
+
+// packBatch concatenates the framed elements of every request per field.
+func packBatch(names []string, requests []*request, size int) ([]wireTensor, [][]byte) {
+	tensors := make([]wireTensor, len(names))
 	var chunks [][]byte
 	if len(requests) == 1 {
 		chunks = requests[0].data
 	} else {
-		chunks = make([][]byte, 0, len(specs)*len(requests))
+		chunks = make([][]byte, 0, len(names)*len(requests))
 	}
-	for i, s := range specs {
+	for i, name := range names {
 		count := 0
 		for _, r := range requests {
 			count += len(r.data[i])
@@ -597,44 +610,11 @@ func packBatch(specs []InputSpec, requests []*request, size int) ([]wireTensor, 
 				chunks = append(chunks, r.data[i])
 			}
 		}
-		shape := make([]int, len(s.Shape)+1)
-		shape[0] = size
-		copy(shape[1:], s.Shape)
-		tensors[i] = wireTensor{InputSpec: InputSpec{s.Name, s.Datatype, shape}, Bytes: count}
+		tensors[i] = wireTensor{Name: name, Datatype: "BYTES", Shape: []int{size}, Bytes: count}
 	}
 	return tensors, chunks
-}
-func splitOutputs(o runnerOutput, size int) ([][]Tensor, error) {
-	out := make([][]Tensor, size)
-	offset := 0
-	for _, t := range o.tensors {
-		per := t.Bytes / size
-		for i := range size {
-			shape := append([]int{1}, t.Shape[1:]...)
-			v, e := decodeTensor(InputSpec{t.Name, t.Datatype, shape}, o.data[offset+i*per:offset+(i+1)*per])
-			if e != nil {
-				return nil, e
-			}
-			out[i] = append(out[i], v)
-		}
-		offset += t.Bytes
-	}
-	return out, nil
 }
 func initialized(sizes []int, k int) bool {
 	i := sort.SearchInts(sizes, k)
 	return i < len(sizes) && sizes[i] == k
-}
-func fullOutputs(o runnerOutput) ([]Tensor, error) {
-	out := make([]Tensor, 0, len(o.tensors))
-	offset := 0
-	for _, t := range o.tensors {
-		v, e := decodeTensor(t.InputSpec, o.data[offset:offset+t.Bytes])
-		if e != nil {
-			return nil, e
-		}
-		out = append(out, v)
-		offset += t.Bytes
-	}
-	return out, nil
 }

@@ -76,17 +76,13 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 		t.Fatalf("Job ownership or execution identity missing: %#v", job.ObjectMeta)
 	}
 	pod := job.Spec.Template.Spec
-	if pod.NodeSelector[corev1.LabelHostname] != prepared.RunConfig.TargetNode.Name ||
-		len(pod.InitContainers) != 1 || len(pod.Containers) != 3 || len(pod.Volumes) != 4 {
-		t.Fatalf("unexpected measurement topology: %#v", pod)
-	}
-	artifact := pod.InitContainers[0]
-	if artifact.Image != prepared.RunConfig.Images.Artifact ||
-		len(artifact.Args) != 4 || artifact.Args[2] != prepared.RunConfig.State.ArtifactPath ||
-		artifact.Args[3] != cpuORTModelDestination {
-		t.Fatalf("artifact supply was not resolved into the Job: %#v", artifact)
-	}
+	assertDeliveryTopology(t, pod, prepared.RunConfig)
 	runtimeContainer := findContainer(t, pod.Containers, "runtime")
+	for _, path := range []string{"/model", "/preprocessor", "/dataset"} {
+		if mount := findMountPath(t, runtimeContainer.VolumeMounts, path); !mount.ReadOnly {
+			t.Fatalf("runtime %s mount is writable", path)
+		}
+	}
 	if _, err := argumentValue(runtimeContainer.Args, runConfigArgumentPrefix); err != nil {
 		t.Fatal(err)
 	}
@@ -113,6 +109,31 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	assertWorkloadObserverCredentialIsolation(t, pod, runtimeContainer, observer, workloads)
 }
 
+func assertDeliveryTopology(t *testing.T, pod corev1.PodSpec, config profilingrun.RunConfig) {
+	t.Helper()
+	if pod.NodeSelector[corev1.LabelHostname] != config.TargetNode.Name ||
+		len(pod.InitContainers) != 3 || len(pod.Containers) != 3 || len(pod.Volumes) != 6 {
+		t.Fatalf("unexpected measurement topology: %#v", pod)
+	}
+	for index, want := range []struct {
+		name, image, mount string
+		args               []string
+	}{
+		{"artifact", config.Images.Artifact, "/chill-artifact",
+			append([]string{`cp "$@" /chill-artifact/`, "artifact-copy"}, config.State.ArtifactFiles...)},
+		{"preprocessor", config.State.Preprocessor.Image, "/chill-preprocessor",
+			[]string{`cp -R "$1"/. /chill-preprocessor/`, "--", config.State.Preprocessor.Path}},
+		{"dataset", config.Measurement.Dataset.Image, "/chill-dataset",
+			[]string{`cp -R "$1"/profiling/. /chill-dataset/`, "--", config.Measurement.Dataset.Path}},
+	} {
+		got := pod.InitContainers[index]
+		if got.Name != want.name || got.Image != want.image || !reflect.DeepEqual(got.Command, []string{"sh", "-ec"}) ||
+			!reflect.DeepEqual(got.Args, want.args) || len(got.VolumeMounts) != 1 || got.VolumeMounts[0].MountPath != want.mount {
+			t.Fatalf("%s delivery was not resolved into the Job: %#v", want.name, got)
+		}
+	}
+}
+
 func TestBuildExecutionJobProjectsExactRKNNLiteHostAccess(t *testing.T) {
 	run := testRun()
 	prepared := currentRKNNPreparedRun(t, "")
@@ -133,12 +154,12 @@ func TestBuildExecutionJobProjectsExactRKNNLiteHostAccess(t *testing.T) {
 	if !reflect.DeepEqual(pod.SecurityContext.SupplementalGroups, []int64{44, 110}) {
 		t.Fatalf("RKNNLite supplemental groups drifted: %#v", pod.SecurityContext)
 	}
-	if len(pod.Volumes) != 11 {
-		t.Fatalf("RKNNLite host volumes = %d, want 11: %#v", len(pod.Volumes), pod.Volumes)
+	if len(pod.Volumes) != 13 || len(pod.InitContainers) != 3 {
+		t.Fatalf("RKNNLite host volumes = %d, want 13: %#v", len(pod.Volumes), pod.Volumes)
 	}
 	artifact := pod.InitContainers[0]
-	if len(artifact.Args) != 4 || artifact.Args[3] != rknnModelDestination {
-		t.Fatalf("RKNNLite artifact destination drifted: %#v", artifact.Args)
+	if len(artifact.Args) != 3 || artifact.Args[2] != prepared.RunConfig.State.ArtifactFiles[0] {
+		t.Fatalf("RKNNLite artifact delivery drifted: %#v", artifact.Args)
 	}
 	runtimeContainer := findContainer(t, pod.Containers, "runtime")
 	if runtimeContainer.SecurityContext == nil || runtimeContainer.SecurityContext.Privileged == nil ||
@@ -235,14 +256,12 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	run.Spec.Measurement.WarmupIterations = 0
 	run.Spec.Measurement.SettlingDurationSeconds = &settling
 	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-	run.Spec.Measurement.InputGenerator = profilingrun.NoInputGenerator
-	run.Spec.Measurement.OutputValidation = profilingrun.NoOutputValidation
+	run.Spec.Measurement.Dataset = ""
 	prepared := currentPreparedRun(t)
 	prepared.RunConfig.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, WarmupIterations: 0, SettlingDurationSeconds: 60,
 		DurationSeconds: 30,
 		WorkloadMode:    profilingrun.IdleModelLoadedWorkloadMode,
-		InputGenerator:  profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
 	}
 	resolved := resolvedRunForPrepared(t, prepared)
 	job, err := buildExecutionJob(
@@ -262,6 +281,9 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	if recordedPolicy.Policy.Name != resolved.ExecutionPolicy.Policy.Name || job.Spec.ActiveDeadlineSeconds == nil ||
 		*job.Spec.ActiveDeadlineSeconds != 271 {
 		t.Fatalf("idle Job policy drifted: %#v", job)
+	}
+	if pod := job.Spec.Template.Spec; len(pod.InitContainers) != 2 || pod.InitContainers[1].Name != "preprocessor" {
+		t.Fatalf("idle Job must deliver the model and preprocessor only: %#v", pod.InitContainers)
 	}
 	runtimeContainer := findContainer(t, job.Spec.Template.Spec.Containers, "runtime")
 	assertArgument(t, runtimeContainer.Args, "--attempt-timeout=4m1s")
@@ -477,7 +499,7 @@ func currentPreparedRun(t *testing.T) profiler.PreparedRun {
 	t.Helper()
 	prepared := testPreparedRun(t)
 	prepared.RunConfig.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	prepared.RunConfig.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	prepared.RunConfig.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	prepared.RunConfig.Images.WorkloadObserver = testWorkloadObserverImage
 	prepared.RunConfig.Workload = profilingrun.CurrentWorkloadContract()
 	return prepared
@@ -490,12 +512,13 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 	config.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
 	config.State.DeviceClass = "orangepi-5-plus-16g"
 	config.State.Artifact = "mobilenet-v2-050-rk3588-bs1"
-	config.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs1.rknn"
+	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050-rk3588-bs1.rknn"}
 	config.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
 	config.State.Backend = profilingrun.FirstfloorRKNNLiteBackend
 	config.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
 	config.TargetNode.Name = "orangepi5plus"
 	config.TargetNode.Architecture = testARM64Architecture
+	config.State.Preprocessor.Architecture = testARM64Architecture
 	config.TargetNode.AllocatableCPU = "8"
 	config.CPU.Limit = "8"
 	config.CPU.ORTIntraOpThreads = 0

@@ -14,7 +14,7 @@ import { localDateTime, utcDateTime } from "@/lib/date-time"
 import { when, actorName } from "@/features/scheduler-history"
 
 type UIDChoice={desired:{metadata:{name:string;uid:string}}}
-const outcomeLabels:Record<string,string>={completed:"완료",error:"오류",rejected:"접수 거부",timeout:"시간 초과",canceled:"취소",incomplete:"미완료",delivery_failed:"전달 실패"}
+const outcomeLabels:Record<string,string>={completed:"완료",error:"오류",rejected:"접수 거부",timeout:"시간 초과",canceled:"취소",incomplete:"미완료",delivery_failed:"전달 실패",preprocess_failed:"전처리 실패"}
 const outcomes=Object.keys(outcomeLabels)
 const presets:[key:string,label:string,hours:number][]=[["15m","최근 15분",.25],["1h","최근 1시간",1],["24h","최근 24시간",24]]
 function span(from:string,to:string) {
@@ -147,11 +147,11 @@ function ConditionsForm({changes,path,definitions,poll,setPoll,done}:{changes:bo
 function RequestDetails({row}:{row:RequestEvent}) {
   const assignment=row.assignment,native=row.nativeProgress
   return <div className="space-y-4 [&_dd]:break-all">
-    <Facts items={[["요청",row.requestID],["서비스",`${row.workloadName} / ${row.workloadUID??"UID 미제공"}`],["적용 설정",row.definition??"미제공"],["단계와 시각",`${statusLabel(row.kind)} / ${row.at}`],["수신 시각",row.receivedAt],["입력 경로",row.inputPath??"미제공"],["요청 유효 시간",ms(row.lifetimeNanos)],["클라이언트 관측 시간",ms(row.clientSpanNanos)],["실행 완료 관측",row.executionComplete?"완료 확인":"완료 확인 대기"],["응답 목표",row.slo?`${row.slo.percentile}% 기준 / ${ms(row.slo.targetLatencyNanos)}`:"미제공"]]}/>
+    <Facts items={[["요청",row.requestID],["서비스",`${row.workloadName} / ${row.workloadUID??"UID 미제공"}`],["적용 설정",row.definition??"미제공"],["단계와 시각",`${statusLabel(row.kind)} / ${row.at}`],["수신 시각",row.receivedAt],[row.kind==="validated"?"입력 검사 경과":"수신 후 경과",ms(row.elapsedNanos)],["요청 유효 시간",ms(row.lifetimeNanos)],["클라이언트 관측 시간",ms(row.clientSpanNanos)],["실행 완료 관측",row.executionComplete?"완료 확인":"완료 확인 대기"],["응답 목표",row.slo?`${row.slo.percentile}% 기준 / ${ms(row.slo.targetLatencyNanos)}`:"미제공"]]}/>
     <h3 className="font-semibold">CHILL 배정</h3>
     {assignment?<Facts items={[["실행 그룹과 노드",`${assignment.pool} / ${assignment.node.name} / ${assignment.node.uid}`],["인스턴스와 배정 시각",`${assignment.instance} / ${assignment.dispatchedAt}`],["실행 경로와 모델 자료",`${assignment.executionPath} / ${assignment.artifact}`],["프로파일과 신뢰 수준",`${assignment.profile} / ${assignment.profileConfidenceLevel}`]]}/>:<p>이 단계에는 배정 관측이 없어요.</p>}
     <h3 className="font-semibold">Native 실행 진행</h3>
-    {native?<Facts items={[["실행 인스턴스",row.nativeInstance??"미제공"],["단계와 시각",`${statusLabel(native.phase)} / ${native.at}`],["실행 대상",`${native.requestID} / ${native.workloadUID} / ${native.definition}`],["배치 ID와 크기",`${native.batchID===undefined?"미제공":String(native.batchID)} / ${native.batchSize??"미제공"}`],["프로파일과 판단 ID",`${native.profileID??"미제공"} / ${native.decisionID??"미제공"}`],["큐 대기 / 서비스 실행 / Backend / Native 경과",`${native.queueMS} / ${native.serviceMS} / ${native.backendMS} / ${native.nativeElapsedMS} ms`],["실행 완료 관측",native.executionComplete?"완료 확인":"완료 확인 대기"],["처리 결과",native.outcome?outcomeLabels[native.outcome]??native.outcome:"미제공"],...(native.error?[["실행 오류",native.error] as [string,string]]:[])]}/>:<p>실행 인스턴스 {row.nativeInstance??"미제공"} · 이 단계에는 Native 실행 관측이 없어요.</p>}
+    {native?<Facts items={[["실행 인스턴스",row.nativeInstance??"미제공"],["단계와 시각",`${statusLabel(native.phase)} / ${native.at}`],["실행 대상",`${native.requestID} / ${native.workloadUID} / ${native.definition}`],["배치 ID와 크기",`${native.batchID===undefined?"미제공":String(native.batchID)} / ${native.batchSize??"미제공"}`],["프로파일과 판단 ID",`${native.profileID??"미제공"} / ${native.decisionID??"미제공"}`],["큐 대기 / 서비스 실행 / Native 경과",`${native.queueMS} / ${native.serviceMS} / ${native.nativeElapsedMS} ms`],["배치 단계 · 전처리 / 추론 / 후처리",`${native.preprocessMS} / ${native.backendMS} / ${native.postprocessMS} ms`],["첫 토큰",native.firstTokenMS===undefined?"생성형 아님":`${native.firstTokenMS} ms`],["이 요청의 단위 수",native.units??"미제공"],["실행 완료 관측",native.executionComplete?"완료 확인":"완료 확인 대기"],["처리 결과",native.outcome?outcomeLabels[native.outcome]??native.outcome:"미제공"],...(native.error?[["실행 오류",native.error] as [string,string]]:[])]}/>:<p>실행 인스턴스 {row.nativeInstance??"미제공"} · 이 단계에는 Native 실행 관측이 없어요.</p>}
     {row.error&&<p role="alert">{row.error}</p>}
     <SourceJSON inline value={row}/>
   </div>

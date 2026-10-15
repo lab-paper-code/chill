@@ -88,7 +88,6 @@ type LoadWindow struct {
 type windowLoadFact struct {
 	received                 time.Time
 	uid, definition, outcome string
-	inputPath                int
 	lifetime                 time.Duration
 	accepted, compute        bool
 }
@@ -99,9 +98,6 @@ func (fact *windowLoadFact) add(event *RequestEvent) {
 	}
 	if event.Definition != "" {
 		fact.definition = event.Definition
-	}
-	if event.InputPath != nil {
-		fact.inputPath = *event.InputPath
 	}
 	if event.LifetimeNanos > 0 {
 		fact.lifetime = time.Duration(event.LifetimeNanos)
@@ -187,7 +183,7 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 	}
 	for id, fact := range facts {
 		if observationInInterval(fact.received, from, to) {
-			arrival := SchedulerArrival{ID: id, At: fact.received, WorkloadUID: fact.uid, Definition: definitions[fact.definition], InputPath: fact.inputPath, Lifetime: fact.lifetime, Accepted: fact.accepted, Compute: fact.compute, Outcome: fact.outcome}
+			arrival := SchedulerArrival{ID: id, At: fact.received, WorkloadUID: fact.uid, Definition: definitions[fact.definition], Lifetime: fact.lifetime, Accepted: fact.accepted, Compute: fact.compute, Outcome: fact.outcome}
 			result.Arrivals = append(result.Arrivals, arrival)
 		}
 	}

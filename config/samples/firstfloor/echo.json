@@ -1,10 +1,9 @@
 {
   "model": "explicit-synthetic-echo",
   "mode": "serving",
-  "inputs": [
-    {"name": "input", "datatype": "FP32", "shape": [4]}
-  ],
-  "runnerCommand": ["python3", "runtime/firstfloor/runner.py", "--echo", "--delay-ms", "10", "--warmup-iterations", "1"],
+  "inputs": ["input"],
+  "outputs": ["output"],
+  "runnerCommand": ["python3", "runtime/firstfloor/runner.py", "--echo", "--preprocessor", "runtime/firstfloor/testdata/echo", "--delay-ms", "10", "--warmup-iterations", "1"],
   "runnerTimeoutMS": 5000,
   "maxQueueRequests": 32,
   "maxQueueBytes": 1048576,

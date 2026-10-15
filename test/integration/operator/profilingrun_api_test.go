@@ -14,10 +14,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
-const (
-	noProtocol = "none"
-)
-
 var _ = Describe("ProfilingRun API", func() {
 	It("accepts one minimum immutable CPU ORT Run request", func() {
 		ctx := context.Background()
@@ -69,6 +65,16 @@ var _ = Describe("ProfilingRun API", func() {
 		Entry("empty ModelSpec", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Candidate.ModelSpec = ""
 		}),
+		Entry("empty preprocessor", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Candidate.Preprocessor = ""
+		}),
+		Entry("active mode without dataset", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.Dataset = ""
+		}),
+		Entry("idle mode with dataset", func(run *edgev1alpha1.ProfilingRun) {
+			configureIdleProfilingRun(run)
+			run.Spec.Measurement.Dataset = "vqav2-val-subset"
+		}),
 		Entry("empty power mode", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Candidate.PowerMode = ""
 		}),
@@ -96,8 +102,7 @@ var _ = Describe("ProfilingRun API", func() {
 		Entry("idle mode without settling duration", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Measurement.WarmupIterations = 0
 			run.Spec.Measurement.WorkloadMode = "idle-model-loaded"
-			run.Spec.Measurement.InputGenerator = noProtocol
-			run.Spec.Measurement.OutputValidation = noProtocol
+			run.Spec.Measurement.Dataset = ""
 		}),
 	)
 
@@ -152,6 +157,7 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 					ModelSpec:     "mobilenet-v2-050",
 					DeviceClass:   "lattepanda-3-delta-8g",
 					ExecutionPath: "ort-cpu",
+					Preprocessor:  "mobilenet-imagenet",
 					PowerMode:     "fixed",
 				},
 				TargetNode: "lattepanda",
@@ -159,9 +165,8 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
-				WorkloadMode:     "saturated-serial-fixed-batch",
-				InputGenerator:   "numpy-default-rng-seed-0-inputs-v1",
-				OutputValidation: "nonempty-shape-batch-v1",
+				WorkloadMode: "saturated-serial-fixed-batch",
+				Dataset:      "vqav2-val-subset",
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
@@ -175,6 +180,5 @@ func configureIdleProfilingRun(run *edgev1alpha1.ProfilingRun) {
 	run.Spec.Measurement.WarmupIterations = 0
 	run.Spec.Measurement.SettlingDurationSeconds = &settling
 	run.Spec.Measurement.WorkloadMode = "idle-model-loaded"
-	run.Spec.Measurement.InputGenerator = noProtocol
-	run.Spec.Measurement.OutputValidation = noProtocol
+	run.Spec.Measurement.Dataset = ""
 }

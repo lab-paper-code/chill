@@ -86,13 +86,13 @@ func TestFirstfloorRuntimeDecodesIdleResultByRunConfigMode(t *testing.T) {
 
 func TestFirstfloorRequestMatchesPythonContract(t *testing.T) {
 	multiInput := testRunConfig(t)
-	multiInput.Delivery.ArtifactCapability.Tensors = []modelcompat.InputTensor{
-		{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}},
-		{Name: "mask", Datatype: "INT64", SampleShape: []int32{224, 224}},
-	}
+	multiInput.State.Preprocessor.Inputs = []string{"image", "question"}
+	multiInput.State.Preprocessor.Outputs = []string{"answer"}
+	multiInput.State.Preprocessor.MaxNewTokens = 16
 	rknn := testRunConfig(t)
 	rknn.State.Backend = profilingrun.FirstfloorRKNNLiteBackend
-	rknn.State.Artifact, rknn.State.ArtifactPath = "model-rk3588-bs1", "/artifact/model.rknn"
+	rknn.State.Artifact, rknn.State.ArtifactFiles = "model-rk3588-bs1", []string{"/artifact/model.rknn"}
+	rknn.State.Preprocessor.Architecture = "arm64"
 	rknn.TargetNode.Architecture = "arm64"
 	rknn.CPU.ORTIntraOpThreads, rknn.CPU.ORTInterOpThreads = 0, 0
 	rknn.Delivery = profilingrun.CandidateRuntimeDelivery{
@@ -120,7 +120,7 @@ func TestFirstfloorRequestMatchesPythonContract(t *testing.T) {
 	}{
 		{name: "active", config: testRunConfig(t)},
 		{name: "idle", config: testIdleRunConfig(t)},
-		{name: "multiple typed inputs", config: multiInput},
+		{name: "multiple raw fields", config: multiInput},
 		{name: "RKNN omits ORT threads", config: rknn},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -201,7 +201,7 @@ func TestFirstfloorRuntimeRejectsUnsupportedPathBeforeExecution(t *testing.T) {
 func TestFirstfloorRuntimeRequiresJobTimingBinding(t *testing.T) {
 	directory := t.TempDir()
 	_, err := NewFirstfloorRuntime(CPURuntimeConfig{
-		Command: []string{"firstfloor"}, ModelPath: filepath.Join(directory, "model.onnx"),
+		Command:                 []string{"firstfloor"},
 		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
 		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
 		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
@@ -219,7 +219,7 @@ func TestFirstfloorRuntimeRequiresJobTimingBinding(t *testing.T) {
 func TestFirstfloorRuntimeRequiresJobResourceBudgets(t *testing.T) {
 	directory := t.TempDir()
 	_, err := NewFirstfloorRuntime(CPURuntimeConfig{
-		Command: []string{"firstfloor"}, ModelPath: filepath.Join(directory, "model.onnx"),
+		Command:                 []string{"firstfloor"},
 		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
 		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
 		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
@@ -377,7 +377,9 @@ func TestFirstfloorHelperProcess(t *testing.T) {
 	if err := decoder.Decode(&request); err != nil {
 		os.Exit(10)
 	}
-	if request.SchemaVersion != firstfloorRequestSchemaVersion || request.ModelPath == "" ||
+	if request.SchemaVersion != firstfloorRequestSchemaVersion || request.ModelDirectory != modelDirectory ||
+		request.PreprocessorPath != preprocessorPath ||
+		(request.DatasetPath == datasetPath) != (request.RunConfig.Measurement.Dataset != nil) ||
 		len(request.ObserverReadyPaths) == 0 || request.MeasurementStartPath == "" || request.MeasurementEndPath == "" ||
 		request.ObserverReadyTimeoutMilliseconds < 1 || request.MaxLatencySamples < 1 ||
 		request.MaxInputBytes < 1 || request.MaxResultBytes < 1 {
@@ -419,7 +421,6 @@ func newTestFirstfloorRuntime(t *testing.T, resultPath string) *CPURuntime {
 	directory := filepath.Dir(resultPath)
 	runtime, err := NewFirstfloorRuntime(CPURuntimeConfig{
 		Command:                 []string{os.Args[0], "-test.run=TestFirstfloorHelperProcess", "--"},
-		ModelPath:               filepath.Join(directory, "model.onnx"),
 		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
 		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
 		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -140,9 +139,8 @@ func batchEnergyOptimizationPreflightQueryPlan(t *testing.T) profilederivation.C
 	t.Helper()
 	active := batchEnergyOptimizationPreflightQueryProtocol("saturated")
 	active.WarmupIterations = 20
+	active.Dataset = &profilederivation.CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
 	idle := batchEnergyOptimizationPreflightQueryProtocol("idle-model-loaded")
-	idle.InputGenerator = "none"
-	idle.OutputValidation = "none"
 	idle.SettlingDurationSeconds = 5
 	plan, err := profilederivation.NewCurvePlan(profilederivation.CurvePlanSpec{
 		Name: "mobilenet-rknn-curve", LogicalModel: "mobilenet-v2-050",
@@ -163,14 +161,13 @@ func batchEnergyOptimizationPreflightQueryPlan(t *testing.T) profilederivation.C
 		},
 		Artifact: profilederivation.CurveArtifactContract{
 			ExecutionPath: "rknnlite", Name: "artifact",
-			Path: "/artifact/model.rknn", Image: "registry.example/chill/artifact:v1",
+			Files: []string{"/artifact/model.rknn"}, Image: "registry.example/chill/artifact:v1",
+		},
+		Preprocessor: profilederivation.CurvePreprocessorContract{
+			Name: "mobilenet-imagenet", Image: "registry.example/chill/preprocessor:v1", Architecture: "arm64",
+			Path: "/artifact/mobilenet-nhwc", Inputs: []string{"image"}, Outputs: []string{"label"},
 		},
 		PlannedBatchSizes: []int{1, 2, 4},
-		Tensor: profilederivation.CurveTensorContract{
-			Tensors: []modelcompat.InputTensor{
-				{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
-			},
-		},
 	})
 	if err != nil {
 		t.Fatalf("build curve plan: %v", err)
@@ -180,7 +177,7 @@ func batchEnergyOptimizationPreflightQueryPlan(t *testing.T) profilederivation.C
 
 func batchEnergyOptimizationPreflightQueryProtocol(mode string) profilederivation.CurveProtocolContract {
 	return profilederivation.CurveProtocolContract{
-		WorkloadMode: mode, InputGenerator: "seeded", OutputValidation: "shape",
+		WorkloadMode:               mode,
 		DurationSeconds:            30,
 		MetricIntervalMilliseconds: 1000,
 		MetricTimeoutMilliseconds:  900,

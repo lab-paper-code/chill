@@ -18,7 +18,7 @@ func TestBuildRunCreatesOnlyOneModelLoadedIdleExecution(t *testing.T) {
 		measurement.WarmupIterations != 0 || measurement.SettlingDurationSeconds == nil ||
 		*measurement.SettlingDurationSeconds != parent.Spec.Protocol.SettlingDurationSeconds ||
 		measurement.CPUQuota == nil || measurement.CPUQuota.Cmp(parent.Spec.CPUQuota) != 0 ||
-		measurement.InputGenerator != idleInputGenerator || measurement.OutputValidation != idleOutputValidation ||
+		measurement.Dataset != "" ||
 		len(run.OwnerReferences) != 1 || run.OwnerReferences[0].Kind != "ModelLoadedIdleBaseline" ||
 		run.OwnerReferences[0].UID != parent.UID {
 		t.Fatalf("idle child Run drifted: %#v", run)

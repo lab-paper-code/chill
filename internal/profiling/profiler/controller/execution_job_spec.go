@@ -21,16 +21,24 @@ import (
 
 const (
 	modelVolumeName                 = "model"
+	preprocessorVolumeName          = "preprocessor"
+	datasetVolumeName               = "dataset"
 	coordinationVolumeName          = "coordination"
 	workspaceVolumeName             = "workspace"
 	workloadObserverTokenVolumeName = "workload-observer-kube-api"
 
 	modelMountPath                 = "/model"
+	preprocessorMountPath          = "/preprocessor"
+	datasetMountPath               = "/dataset"
 	coordinationMountPath          = "/coordination"
 	workspaceMountPath             = "/workspace"
 	workloadObserverTokenMountPath = "/var/run/secrets/chill-workload-observer"
 	workloadObserverTokenPath      = workloadObserverTokenMountPath + "/token"
 	workloadObserverCAPath         = workloadObserverTokenMountPath + "/ca.crt"
+
+	artifactCopyMountPath     = "/chill-artifact"
+	preprocessorCopyMountPath = "/chill-preprocessor"
+	datasetCopyMountPath      = "/chill-dataset"
 )
 
 func buildExecutionJob(
@@ -121,15 +129,13 @@ func buildExecutionJob(
 						Key: "node-role.kubernetes.io/edge", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule,
 					}},
 					SecurityContext: runtimePodSecurityContext(runtimeProjection.SupplementalGroups),
-					InitContainers: []corev1.Container{
-						artifactContainer(prepared.RunConfig, runtimeProjection.ArtifactDestination),
-					},
+					InitContainers:  deliveryContainers(prepared.RunConfig),
 					Containers: []corev1.Container{
 						runtimeContainer(prepared, runConfig, binding, rawKey, plan, runtimeProjection),
 						metricObserverContainer(prepared, runConfig, plan),
 						workloadObserverContainer(prepared, runConfig, selectorLabelKeys, options, plan),
 					},
-					Volumes: append(executionVolumes(plan), runtimeProjection.Volumes...),
+					Volumes: append(executionVolumes(prepared.RunConfig, plan), runtimeProjection.Volumes...),
 				},
 			},
 		},
@@ -140,16 +146,30 @@ func buildExecutionJob(
 	return job, nil
 }
 
-func artifactContainer(config profilingrun.RunConfig, destination string) corev1.Container {
+// deliveryContainers copies every model file to /model/<basename>, the
+// preprocessor directory to /preprocessor, and, for active measurement only,
+// the dataset profiling records to /dataset/<recordID>/<field>.
+func deliveryContainers(config profilingrun.RunConfig) []corev1.Container {
+	containers := []corev1.Container{
+		copyContainer("artifact", config.Images.Artifact, modelVolumeName, artifactCopyMountPath,
+			append([]string{`cp "$@" ` + artifactCopyMountPath + `/`, "artifact-copy"}, config.State.ArtifactFiles...)),
+		copyContainer("preprocessor", config.State.Preprocessor.Image, preprocessorVolumeName, preprocessorCopyMountPath,
+			[]string{`cp -R "$1"/. ` + preprocessorCopyMountPath + `/`, "--", config.State.Preprocessor.Path}),
+	}
+	if dataset := config.Measurement.Dataset; dataset != nil {
+		containers = append(containers, copyContainer("dataset", dataset.Image, datasetVolumeName, datasetCopyMountPath,
+			[]string{`cp -R "$1"/profiling/. ` + datasetCopyMountPath + `/`, "--", dataset.Path}))
+	}
+	return containers
+}
+
+func copyContainer(name, image, volume, mountPath string, args []string) corev1.Container {
 	return corev1.Container{
-		Name: "artifact", Image: config.Images.Artifact, ImagePullPolicy: corev1.PullIfNotPresent,
-		Command: []string{"sh", "-ec"},
-		Args: []string{
-			`cp "$1" "$2"`,
-			"artifact-copy", config.State.ArtifactPath, destination,
-		},
+		Name: name, Image: image, ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"sh", "-ec"},
+		Args:            args,
 		SecurityContext: restrictedContainerSecurityContext(),
-		VolumeMounts:    []corev1.VolumeMount{{Name: modelVolumeName, MountPath: modelMountPath}},
+		VolumeMounts:    []corev1.VolumeMount{{Name: volume, MountPath: mountPath}},
 	}
 }
 
@@ -178,8 +198,12 @@ func runtimeContainer(
 	}
 	volumeMounts := []corev1.VolumeMount{
 		{Name: modelVolumeName, MountPath: modelMountPath, ReadOnly: true},
+		{Name: preprocessorVolumeName, MountPath: preprocessorMountPath, ReadOnly: true},
 		{Name: coordinationVolumeName, MountPath: coordinationMountPath},
 		{Name: workspaceVolumeName, MountPath: workspaceMountPath},
+	}
+	if config.Measurement.Dataset != nil {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: datasetVolumeName, MountPath: datasetMountPath, ReadOnly: true})
 	}
 	volumeMounts = append(volumeMounts, projection.VolumeMounts...)
 	return corev1.Container{
@@ -290,9 +314,11 @@ func workloadObserverContainer(
 	}
 }
 
-func executionVolumes(plan profiler.ExecutionPlan) []corev1.Volume {
-	return []corev1.Volume{
-		{Name: modelVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+func executionVolumes(config profilingrun.RunConfig, plan profiler.ExecutionPlan) []corev1.Volume {
+	emptyDir := corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
+	volumes := []corev1.Volume{
+		{Name: modelVolumeName, VolumeSource: emptyDir},
+		{Name: preprocessorVolumeName, VolumeSource: emptyDir},
 		{Name: coordinationVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			SizeLimit: resource.NewQuantity(plan.CoordinationBytes, resource.BinarySI),
 		}}},
@@ -311,6 +337,10 @@ func executionVolumes(plan profiler.ExecutionPlan) []corev1.Volume {
 			},
 		}}},
 	}
+	if config.Measurement.Dataset != nil {
+		volumes = append(volumes, corev1.Volume{Name: datasetVolumeName, VolumeSource: emptyDir})
+	}
+	return volumes
 }
 
 func restrictedPodSecurityContext() *corev1.PodSecurityContext {
