@@ -143,6 +143,99 @@
 - 같은 실제 브라우저의 power query는 200이지만 scheduler history query는 504로
   실패했고 timeout 표시를 확인했다. 날짜 수정과 FULL/history 성공을 혼동하지 않는다.
 
+### 이전 진입 요약에서 옮긴 고유 이력 — 2026-10-14
+
+- 첫 실제 추론은 완료됐지만 owner 종단 지연 `1.298374879s`는 frozen SLO `1s`를
+  초과했다. **첫 표본 SLO 위반**이며 통과가 아니다. ingress validation/accepted
+  elapsed `915.432437ms`, 실행 엔진 elapsed `130.358594ms`, 외부 client 왕복
+  `1.3555289909709245s`는 서로 다른 범위다. 근거:
+  `/tmp/chill-native-campaign-first-inference-owner-observations.json`.
+- 대형 journal의 전체 scan/shared lock은 알려진 연구 규모 한계다. 원본을 보존한
+  별도 제어 시간창과 기본 1분 archive window는 그 한계의 bounded workaround이며,
+  범용 성능 해결이나 일반적인 S3 네트워크 원인 확정이 아니다.
+- **모델과 실행 엔진 이름의 혼동 정정은 pending**이다. firstfloor는 실행 엔진이지
+  모델 정체성이 아니다. 원래 `mobilenet-v2-050`(UID `b8bc6efa..`)은 다른
+  dashboard-validation Workload 2개가 참조하고, 이번에 등록한
+  `mobilenet-v2-050-firstfloor`(UID `545ef2c0-b931-4c96-b978-b4cef1195210`)는
+  `image-classification-tight-slo` / `image-classification-relaxed-slo`가 참조한다.
+  과거 이름·measuredUID·측정 근거를 이미 이관한 것처럼 바꾸지 않는다.
+- 모델·준비 Pod 명칭 정리는 pending이며 과거 evidence는 원래 UID로 보존한다.
+- owner CPU 예산 수정은 실제 snapshot smoke에서 5개 노드 Ready를 확인했다.
+- orangepi memory peak 부재와 Orin Nano actuator readiness 문제도 성공으로 대체하지 않는다.
+
+Orin 경로 준비와 저장 실패·복구의 당시 기록:
+
+사용자 검토를 통과해 실행을 재개했다. **genesis1/2/3 측정·제어는 후순위로 보류한다.**
+진행 중이던 genesis2 자기 캠페인은 8 trial 상태를 보존한 뒤 종료했으며 완료로 세지 않는다.
+Orin Nano의 최초 GPU 컨테이너 생성은 Toolkit 1.20 CSV/CDI가 플러그인의 `tegra` ID를
+거부하여 실패했다. 사용자가 제한된 수정에 동의한 뒤, NVIDIA가 지원하는 index 방식으로
+**Orin의 플러그인만** `nvidia-device-plugin-orin-nano`에 분리했다. 공유
+`nvidia-device-plugin-jetson`은 Orin을 제외하고 `OnDelete`로 두어 다른 3노드 Pod의
+자동 롤링을 막았다. **공유 플러그인의 향후 자동 롤링도 꺼진 상태**이며 다음 운영 변경 때
+이 사실을 반영해야 한다. 호스트 패키지·containerd·전력은 변경하지 않았다.
+실제 GPU request 1의 컨테이너 생성과 CUDA Driver API 초기화가 성공했고,
+`NVIDIA_VISIBLE_DEVICES=0`, GPU UUID `GPU-31ec0c91-d383-5ca3-8772-28981cf737aa`,
+Driver API `12060`을 확인했다. 다른 3노드 플러그인과 기존 Orin baseline Pod의
+UID·container ID 보존은 `/tmp/chill-edge-orin-plugin-cutover-proof.json`에 기록했다.
+자기 테스트 Pod는 삭제했다. GPU 식별/할당만으로 프로파일 완료를 세지 않는다.
+Xavier NX도 실제 UUID/명시적 선택은 확인했으나 CPython3.8용 호환 GPU 컨테이너가
+`ImagePullBackOff`여서 추론하지 못했다. 불필요하게 이 경로를 확장하지 않는다.
+Orin의 같은 모델은 ONNX GPU 1.23/NumPy1.26.4에서 CUDA 노드만 실행하고 CPU fallback을
+차단한 실제 추론을 통과했다. 공유 runner의 SMI 조회는 실제 실패(exit6)했고, CUDA Driver
+API로 교체한 `1c59650`은 비-root UID65532에서 초기화와 배치1/2 binary 추론을 통과했다.
+잘못 지정한 다른 노드의 UUID는 오류로 거부했다. 증거:
+`/tmp/chill-edge-orin-sdk-actual-binary-inference.json`,
+`/tmp/chill-edge-orin-sdk-wrong-physical-gpu-rejection.json`.
+Ponytail 리뷰와 focused Go/Python7개 테스트, `make lint && make test`는 통과했다.
+Orin에 설치된 CUDA12.6/cuDNN9.20의 실제 runtime library를 이미지에 고정했다.
+최종 image `4b316e0b..`는 수동 host mount/pip 없이 UID65532에서 같은 SDK 초기화와
+배치1/2 실제 추론을 통과했다. 증거는
+`/tmp/chill-edge-orin-vendor-complete-image-actual-sdk-inference.json`이다.
+범용 ARM64 CUDA image `3dcc21dd..`의 실제 CUBLAS 실패는 보존하고 채택하지 않았다.
+host 호환 계층 없이 기존 실행 선언·정책 API로 등록했다. 최초 캠페인 UID `1fe633d1..`은
+Orin에 없는 `fixed` 전력모드로 계획 해석에 실패해 측정을 시작하지 못했다. 자기 객체를
+기록 후 교체한 `mobilenet-v2-050-orin-nano-cuda-q1`(UID
+`94446d2b-e24d-4c38-a4c1-63654a70485f`)은 현재 25W read-back과 60초 settling을
+확인했지만, loaded-idle 두 시도가 `memory.peak` 부재와 workload-observer의 API
+접속 timeout으로 실패했다. 실제 전력모드 변경·성공 프로파일·채택은 없었다. 근거:
+`/tmp/chill-edge-orin-current-mode-campaign-child-failure.json`.
+계획 해석 실패는 이제 실제 resolver 오류와 `Failed/CurvePlanResolutionFailed`로
+공개되며 오류 반환을 유지해 재시도할 수 있다. 로컬 API 서버의 실패→복구 회귀는
+통과했고, 실제 캠페인 `orin-gpu-plan-resolution-check`는 같은 오류 상태와 자식 0개를
+확인했다(`/tmp/chill-campaign-visible-plan-failure-live-proof.json`). Dashboard result
+API는 결과 참조가 없다는 이유로 404를 반환했으나, 현재는 실제 캠페인 상태와 조건을
+200으로 제공하고 아직 없는 storedResult/result는 null로 구분한다. 실제 Dashboard에서
+인증 후 `Failed`, 완료 0건, 실제 power-mode 해석 오류, 완료 결과 없음을 확인했다.
+API 증거: `/tmp/chill-campaign-visible-plan-failure-dashboard-api-proof.json`;
+화면: `/tmp/omp-sshots-15a6197993ee87ba.webp`. console image `73bace12..`,
+Dashboard image `4e0c0d7b..`를 실제 rollout했다. 이는 실패 공개 경로의 검증이며
+GPU 측정 성공이나 FULL 제어 검증이 아니다. focused `go test ./internal/operatorconsole/...`,
+Dashboard `pnpm typecheck && pnpm lint`, 두 image build는 통과했다.
+profiler ConfigMap의 image를 `7771c693..`으로 바꿔 실제 rollout했다. Deployment만
+바꾼 첫 시도는 operator가 선언대로 되돌렸으며, Helm values에는 아직 반영되지 않았다.
+첫 `make lint`는 통과했지만 `make test`는 timeout 응답 테스트가 기대한 504 대신
+408/RequestCanceled를 받은 것으로 실패했다(`artifact://898`). 비어 있거나 이미 소비한
+request body의 transport read deadline이 작업 timeout과 경합하는 원인을 수정했다.
+실제 TCP GET/POST 회귀와 통합 후 `make lint && make test`는 통과했다(`artifact://950`).
+Claude 에이전트의 고정 계획 수정·독립 리뷰·owner/Node UID 보완을 통합했다.
+실제 profiler `4663d8d4..`로 rollout 후, 설정 변경 때문에 Failed가 됐던 기존 GPU
+캠페인 두 개는 각각 기존 9 trial·stored result를 유지하며 Complete로 복구됐다.
+새 Genesis 프로파일링이 아니라 저장된 근거의 상태 복구다. 근거:
+`/tmp/chill-stored-plan-controller-before-fix.json`,
+`/tmp/chill-stored-plan-controller-after-fix.json`.
+Orin image `99f5ddfa..`는 실제 GPU 할당·UUID·설치 package 조회와 cgroup memory.current
+관측을 통과했다. 실제 4개의 시각별 sample과 관측 최대값을 보존했고 테스트 Pod는 삭제했다.
+근거: `/tmp/chill-orin-window-memory-actual-image-inspection.json`.
+이는 kernel high-water가 아닌 측정 창의 sampled maximum이며 짧은 spike를 놓칠 수 있다.
+캠페인 UID `22cbf028..`은 GPU loaded-idle 10초·전력 12/12·workload 연속 관측에
+성공한 뒤 S3 commit에서 실패했다. 실제 probe는 Store DNS 해석 실패, 기존 Service
+ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했다
+(`/tmp/chill-orin-evidence-actual-route-probe.json`). 에이전트의 공통 binding 수정은
+새 노출·fallback 없이 기존 Service API의 할당 IP를 사용한다. profiler/console에는
+자기 namespace의 그 Service 하나에 get만 허용했고 실제 can-i를 확인했다.
+현재 profiler `1b190380..`, console `905240dd..`를 rollout하고 동일 25W 조건의 자기
+캠페인 UID `9946bf74-4bf1-4c6e-b5f6-ab8f975633f4`를 새로 실행했다.
+
 ### Orin GPU 근거 채택과 journal 공간 소진 해소 — 2026-10-14
 
 - CPU1/2 캠페인은 각각 정식 9 trial을 완료했다. 실제 결과·순위:
@@ -167,3 +260,175 @@
   profileID·batch1/2 duration samples·실측 energy를 확인했다:
   `/tmp/chill-orin-gpu-owner-materialized-bundles.json`. 최신 owner의 근거 채택 증거다.
   실제 prepare/remove·Serving envelope·FULL Dashboard 연결은 다음 작업이며 아직 미완료다.
+
+### 원자 비용 연결·불변 정의 재적용과 최신 SDK 준비 — 2026-10-15
+
+- Orin membership join과 CPU1/2 prepare/remove의 실측 Accepted receipt 5개를
+  실제 owner에 연결했다. 채택 비용은 총 31개이며 Orin ready·CPU inventory·GPU UUID를
+  확인했다: `/tmp/chill-orin-gpu-cost-bound-owner-api.json`.
+  첫 CPU2 prepare는 meter boundary 공백으로 Insufficient였다. 판정을 완화하지 않고
+  실제 제거 후 새 실행을 측정했다. 전력모드 방향 전환의 증거는 아니다.
+- 새 journal directory에 없던 이번 세션의 두 Workload 불변 정의는 이전 완료 window
+  3개의 원시 파일을 그대로 복사하여 확보했다. 기존 Model의 UID/generation을 확인한
+  뒤 현재 resourceVersion의 If-Match를 사용해 기존 Workload PUT API로 명시적 재적용했다.
+  두 Workload는 실제 `Ready / admission=true`다. 다른 세션의 두 Workload는 변경하지 않았다.
+  `/tmp/chill-definition-transplant/after-explicit-reopen-workloads.json`.
+  임시 scan/copy Pod·ConfigMap은 제거했고 원본 window는 보존했다.
+- 기존 incidental/mock-echo 검증만 제거한 뒤 `make lint && make test`가 통과했다
+  (`artifact://1101`). Dashboard typecheck/lint도 통과했다. 새로운 종단 완료 overhead
+  계약은 아직 실제 배포·Serving smoke 전이며 gate 성공을 FULL 검증으로 보지 않는다.
+- 최신 CPU·Orin SDK와 owner 이미지는 빌드 완료했다. 새 SDK는 기존 프로파일의
+  runtime image를 덮어쓰지 않고 같은 조건을 새 캠페인으로 측정한 뒤 연결한다.
+  Genesis 신규 측정·외부 워크로드·power allowlist는 변경하지 않는다.
+
+### 최신 완료 관측 계약·모델 책임 분리 — 2026-10-15
+
+- 리뷰에서 반환 중 요청의 교환 잔여 지연 중복 계산과 현재 인스턴스/UID에 묶인
+  측정 재사용의 순환 의존을 확인하고 에이전트가 수정했다. 실제 관측한 교환 잔여와
+  이미 경과한 응답 시간만 차감하며, 같은 실행 조건의 불변 정의에 근거를 재사용한다.
+  ponytail 리뷰 후 중복 UID map·하류 재검증을 삭제했다. 전체 gate는
+  `artifact://1210`, 최종 삭제 후 focused serving/firstfloor tests도 통과했다.
+- `mobilenet-v2-050-image-classifier` 하나에 기존 CPU/CUDA·amd64/arm64 실행 경로를
+  등록했다(동일 UID, generation2). 모델명에 실행기를 섞지 않고 기존 artifact·입력을
+  그대로 사용했다. `/tmp/chill-completion-model-assembly/model-api-applied.json`.
+- 이번 세션의 두 기존 Workload는 정상 관리 API로 수용 중지·삭제를 완료했고,
+  해당 Rpi SDK 컨테이너는 실제 exit0·종료 시각을 확인했다. 다른 Workload는 보존했다.
+  Pod 객체의 source-termination finalizer는 남아 있으며 강제로 제거하지 않았다.
+- 새 CPU 경로의 execution policy 누락으로 두 새 캠페인이 Failed였다. 원시 상태·
+  owned Run 원인을 보존하고 기존 정책의 제한값을 그대로 재사용하는 명시적 selector를
+  추가한 뒤 실패한 이번 세션 객체만 교체했다. retry/timeout/판정 기준을 완화하지 않았다.
+- 최신 strict cost loader로 원본 참조를 직접 읽었다. 호환 reader 없이 unloaded idle
+  5개·image-independent membership 10개가 통과했고, 이미지 종속 구계약 29개는
+  unknown-field 오류로 거부됐다. `/tmp/chill-completion-cpu-cost-assembly/retained-independent-sources.jsonl`.
+  이는 Genesis 신규 profiling/control이 아니다. 임시 Go helper는 실행 후 삭제했다.
+- Orin read-only 조회는 mode25W/id1이지만 실제 CPU/GPU cap·mask와 설정값이
+  달랐다. 모드명만으로 물리적 적용 완료를 주장하지 않고 새 GPU 측정은 보류했다.
+  `/tmp/chill-completion-profile-assembly/orin-current-power-verbose.json`.
+- Dashboard 현재·보관 상세에 완료 관측 여부와 반환 잔여 미확보/실제0을 구분했다.
+  typecheck/lint·이미지 빌드·pony 리뷰 후 최신 이미지를 배포했다. 실제 상세 시각 검증은 아직이다.
+- 기존 power-only 원자 동작 API로 Orin의 현재 상태 unloaded wall idle을 측정했다.
+  실제 Accepted·complete, 평균 5.6468W와 13539-byte receipt를 보존했다:
+  `/tmp/chill-completion-cpu-cost-assembly/orin-current-unloaded-idle-result.json`.
+  전력 쓰기·GPU 프로파일링이 아니며 25W 설정의 실제 cap 일치 증거로 사용하지 않는다.
+  측정 입력은 기존 power-series 계약으로 만들었고 API 확장은 남기지 않았다.
+
+### 최신 CPU 프로파일 연결·실제 준비 차단점 — 2026-10-15
+
+- `d8d444c`에서 각 원시 trial을 불변 실행 조건에 직접 검증하도록 고쳤다.
+  외부 Pod의 출입 기록은 보존하되 환경 digest 일치로 과학적 수용을 결정하지 않는다.
+  기존 두 캠페인의 성공한 Run을 재측정하지 않고 같은 UID로 최종 Complete를 확인했다.
+- 최신 CPU SDK의 LattePanda·Rpi, CPU1/2 캠페인 4개가 총 36 trial로 완료됐다.
+  실제 owner bundle 4개와 unloaded idle 6개·membership 10개를 owner API에서 확인했다.
+  전체 제어 스위치는 OFF이며, 완료 overhead 미측정은 0ms 관측으로 간주하지 않는다.
+- 정상 원자 prepare 두 건은 5분 후 partial/Failed였다. Pod Running/Ready만으로 완료를
+  주장하지 않는다. 실제 SDK loopback metadata는 200이며 owner는 아직 두 인스턴스를
+  `actual native/profile snapshot unavailable`로 제외한다. Service 경로와 내부 모델
+  프로토콜 식별자 바인딩을 두 에이전트가 분리 조사 중이다. timeout·검증은 완화하지 않는다.
+- 최신 `make lint && make test` 통과: `artifact://1340`.
+  FULL 제어·실제 추론 종단·최종 Dashboard 연결 검증은 아직 완료하지 않았다.
+
+### 최신 owner 참조·Serving bootstrap·resize 결과 — 2026-10-15
+
+- 최신 owner `a97d9764..`의 실제 scheduler GET은 HTTP 200이며 28개 실측 참조를 채택했다:
+  idle baseline 10개(미적재 6·적재 4), 비용 18개(membership 10·prepare 4·remove 4),
+  거부 이유 없음. 전체 제어 9개는 OFF:
+  `/tmp/chill-completion-cpu-cost-assembly/owner-real-cpu-costs-proof.json`.
+- 최신 CPU SDK의 producer가 내부 프로토콜 식별자 `chill_model`을 business ModelSpec으로
+  잘못 사용해 실제 profile 404를 냈다. producer root fix가 business ModelSpec을 분리해
+  이를 해결했다. 호환 alias는 추가하지 않았다.
+- 두 fresh normal CPU1 Serving bootstrap prepare는 실제 Accepted/complete·Ready이고
+  두 instance가 live다. 이는 prepare 완료일 뿐이며 Serving completion/SLO 증거는 아니다.
+- Ponytail-reviewed resize fix `33a17b1`은 3개 source file에 한정됐다. fresh cold
+  CPU2→CPU1 resize 두 건 모두 실제 Accepted/complete, retained `DrainNative`와 zero
+  SDK counters를 확인했다. focused Go·live proof 및 parent가 수행한 전체 gate는 통과했다.
+- Genesis 신규 프로파일링·제어는 보류다. Orin mode25W/id1 read-back과 물리 cap 불일치,
+  baseline-fleet/fastdds 외부 작업 때문에 power hold는 유지한다. 최신 SDK로 기존 GPU raw
+  evidence를 채택하지 않았다.
+- 다음은 전체 제어 OFF에서 실제 Serving completion 관측을 확보하는 일이다. 같은 부하의
+  OFF/SLO·whole-POOL 판단, 8개 개별 제어, FULL 시나리오와 최종 Dashboard e2e는 미완료다.
+
+### 실제 OOM과 owner 용량 보정 — 2026-10-15
+
+- 128Mi 제한에서 owner가 실제 두 번 OOMKilled됐다. 92개 관측·18개 서로 다른 Kubelet
+  시각의 최대 사용량은 127.609Mi였고, GC live heap은 관측 최대 55Mi에서 부하 후 5Mi로
+  감소했다. 이 범위에서 단조 증가하는 retained heap은 확인하지 못했다.
+- 기존 Helm owner memory limit만 256Mi로 조정했다. CPU500m·memory request64Mi는
+  유지했다. 명시적 enabled-owner render는 41개 중 29개 유효·12개 skip·오류0이었다.
+- 동일한 60초 부하 30건이 실제 HTTP200·완료됐고 이후 idle을 포함한 100초·84개 관측에서
+  restart0을 확인했다. 최대 RSS98.816Mi·working set167.582Mi·사용량255.574Mi였다.
+  사용량에는 cache가 포함되므로 heap 여유나 무기한 무누수를 주장하지 않는다.
+- 근거: `/tmp/chill-owner-memory-full-window-20261015/envelope-proof.json`,
+  `/tmp/chill-owner-memory-256Mi-smoke-20261015/envelope-proof.json`,
+  `/tmp/chill-owner-256Mi-unchanged-load-20261015/`. 최신 SDK 재측정·Serving 검증은 별도다.
+
+### 최신 SDK·개별 근거와 정직한 OFF 판정 — 2026-10-15
+
+- SDK `1496c4dd..`의 LattePanda/Rpi CPU1/2 네 캠페인을 새 UID로 순차 재측정해
+  36 trial Complete를 확인했다. 실제 bundle 크기는 3276/3302/2781/2959 bytes다.
+  `/tmp/chill-completion-cpu-cost-assembly/final-sdk-campaign-proof.json`.
+- 준비·적재 유휴·제거 12개를 다시 측정했다. Latte CPU2 제거의 실제 resourceVersion
+  충돌은 실패 raw를 보존하고, UID-fenced finalizer delta로 고친 뒤 정상 terminal cleanup,
+  새로운 cold prepare와 제거를 수행해 Accepted/complete·drain counter를 확인했다.
+  실패 receipt를 비용으로 쓰지 않았다. 독립 16개와 새 12개가 28개 참조다.
+- 210개 Pod/6.89MB 반복 조회는 steady nonterminal 선택으로 0.34MB가 됐다.
+  최초·watch 복구는 전체 조회하고 기존 executor는 exact UID/container GET을 유지했다.
+  실제 동일 부하에서 기존 20초 post-load freshness 조건을 통과했다.
+- `/tmp/chill-bounded-discovery-ready-off-baseline-20261015/`의 선택 구간은
+  `23:45:03.020325097Z–23:46:03.020325097Z`다. 요청 30건이 HTTP200·완료됐고,
+  해당 반개구간의 tight 표본 14건 p95는 2.359148466s로 1s 목표를 초과했다.
+  알고리즘도 Overload/SLOCapacityExceeded로 판정했다. SLO 성공이나 절감으로 세지 않는다.
+- 같은 구간 전체 10개 노드 전력은 complete·14168.1667566J, 활성 POOL은
+  863.0517206J였다. 다른 작업 소비도 포함한 wall energy이며 CHILL 증분 소비가 아니다.
+- 이전 실제 구간은 고친 API에서 9개 노드가 수치로 복구됐지만 Genesis1의 진짜 timeout과
+  2.004520749s 공백은 계속 null이다. 새로운 완전 구간과 실패 구간을 구분해 보존했다.
+- 현재 개별 제어의 선행조건은 원시 불변 참조로 선택하는 완료 지연 calibration과 명시적
+  정적 초기 routing이다. 재현된 60초 유입 창을 늘리거나 측정 여부 boolean을 신뢰해
+  우회하지 않는다. FULL·8개 실제 제어·최종 Dashboard 연결은 아직 미완료다.
+
+## 진입 문서에서 이관한 상태 기록 — 2026-10-15
+
+- resources-only 실험은 30건을 완료했으나 자원 변경은 발생하지 않았다. CPU 할당이
+  겹치는 전환의 실행 순서를 수정 중이며 마지막 설정 변경에서 자동 제어를 모두 OFF로 했다.
+  최신 SDK `1496c4dd..`의 네 조건·36 trial과 이미지 종속 prepare/loaded-idle/remove
+  12개를 완료했다. 독립 근거 16개와 합친 28개를 실제 owner가 채택했다
+  (10 baselines·18 costs). 이전 raw와 실패 receipt는 보존했다.
+- LattePanda·Rpi만 병렬 측정했으며 같은 노드의 CPU1/2 실험은 순차 실행했다.
+- `mobilenet-v2-050-image-classifier` UID `556e9ee8-bb87-40e9-a481-ce1ce44b309b`,
+  generation2·artifact·CPU/CUDA 경로는 바꾸지 않았다. CPU execution facts의 SDK만
+  교체했다. 과거 GPU raw evidence를 최신 SDK 근거로 채택하지 않는다.
+- SDK 조회 404는 producer가 내부 식별자 `chill_model`을 business ModelSpec 이름으로
+  덮어쓴 원인이었다. 두 책임을 분리해 고쳤으며 호환 alias는 추가하지 않았다.
+- `33a17b1`은 resize의 기존 제거 경로에서 실제 drain counter 증거를 보존한다(3파일).
+  fresh cold CPU2→CPU1 두 건 모두 Accepted/complete이며 제거된 actor의 counter가
+  변하지 않았음을 확인했다. 삭제만으로 추론 부재를 가정하지 않는다.
+- 종단 완료 시간 계산 `f10e818`, 전체 POOL 전력 `dd55fd7`, UID-bound finalizer
+  `6c83539`, 반복 Pod 조회 축소 `3e391fc`를 각각 리뷰·실제 실행 후 커밋했다.
+- 최신 SDK의 동일 입력 60초 OFF 부하 30건이 완료됐다. 같은 구간의 10개 노드 전력은
+  complete·14168.167J이고, 1초 SLO의 실제 p95 2.359s는 정직하게 Overload로 판정했다.
+- 실제 두 번 OOMKilled된 128Mi owner는 기존 설정만 256Mi로 보정했다(`c0f5009`).
+  동일한 60초 부하 30건·100초 관측에서 restart0을 확인했다. 무기한 무누수 주장은 아니다.
+- 완료 지연은 기존 raw 9개·고정 receipt 구간을 명시 선택해 네 조건 모두 실제 owner에서
+  관측 근거로 채택됐다. 60초 유입 창은 그대로다. full 출처 518 bytes를 SDK에 직접 보내
+  정책이 거절된 원인은 bounded witness로 고쳤고, Rpi 실제 준비 상태도 복구했다.
+- 수동 독점 분배는 configRV `352752363`의 complete read-back과 실제 요청으로 확인했다.
+  추가 60초 OFF 30건도 완료했고, 같은 구간 전체 전력은 complete·15748.940J다.
+  이 구간 tight 14표본 p95는 3.483s로 1s SLO를 초과했다.
+- 노드별 미확인이 다른 CPU 후보까지 막던 범위 오류는 `a20e2ec`로 격리했다. 회귀와
+  실제 Serving을 확인했지만, 배포 시 Genesis3 미확인 조건은 외부 상태 변화로 사라져 있었다.
+- placement-only는 실제 적용을 확인했다. 30건 모두 완료됐고, Latte 8건→Rpi 22건으로 이동했다.
+  Latte의 stop/drain/remove와 실제 Pod 소멸을 확인했으며, 현재 Rpi CPU1 하나가 두 Workload를 처리한다.
+- `46f62f8`은 journal 읽기를 writer mutex 밖으로 옮겼고, `10178af`/`2226d25`는
+  공유 관계 보존·물리 대상 재사용·실제 전환 후 정리를 고쳤다. 실제 Dashboard에서도 Rpi 연결을 확인했다.
+- **다음 단일 작업:** 겹치는 CPU 할당의 합법적인 자원 전환을 수정·검증하고,
+  기존 API로 실제 자원 변경·완료·잔여 요청 처리를 확인한다. 판단을 유도하려고
+  SLO나 비교 기간을 조정하는 대신 실행 계약을 먼저 검증한다.
+  최소 폐루프의 실행·관측 근거 확보 후 위 판단 알고리즘 단계로 진행한다.
+  전체 전력 API의 15초 timeout과 20초 fresh-snapshot 수집 실패는 미해소이며 실험 전체 성공으로 세지 않는다.
+- Genesis 신규 프로파일링·제어는 보류한다. Orin mode25W/id1 read-back과 실제 물리 cap이
+  불일치해 전력 작업은 보류 중이며 baseline-fleet/fastdds 등 외부 Workload를 보존한다.
+- 이전 SDK 실행은 정상 정리했고 최신 SDK CPU1 및 같은 모델의 두 Workload를 사용한다.
+  static/automatic 적용을 구분하며 무관한 dashboard-validation-a/b는 보존했다.
+- `/pools`의 null collection crash는 `be475ba`로 별도 수정·배포했다. 실제 인증 브라우저에서
+  목록·빈 그룹 상세/관계 팝업·미준비 실행기 행을 검증했다. FULL Dashboard 검증은 아니다.
+- 개별 제어는 placement 실적용을 확인했다. 나머지 7개 제어, FULL 5개 시나리오와 최종 Dashboard 종단 검증은 미완료다.
+
