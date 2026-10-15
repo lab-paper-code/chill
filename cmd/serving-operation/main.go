@@ -472,9 +472,11 @@ func validateExecutionOwner(
 		return errors.New("current complete staticRouting revision lacks a successful owner acknowledgement")
 	}
 	snapshot := owner.State.Snapshot
-	if !snapshot.At.After(acknowledged.EndedAt) || snapshot.At.Before(checkedAt.Add(-owner.Settings.ControlInterval)) ||
-		snapshot.At.After(checkedAt) {
-		return errors.New("owner snapshot must be fresh and later than current staticRouting completion")
+	if !snapshot.At.After(acknowledged.EndedAt) || snapshot.At.After(checkedAt) {
+		return errors.New("owner snapshot must be later than current staticRouting completion and not in the future")
+	}
+	if m.Operation.Kind == operationRemove && snapshot.At.Before(checkedAt.Add(-owner.Settings.ControlInterval)) {
+		return errors.New("remove requires a fresh owner snapshot for accepted execution/transport/response ownership")
 	}
 	// Use the existing complete-map validation, including current Workload UIDs.
 	target, err := serving.StaticRoutingTarget(snapshot, config.StaticRouting, "manual-execution-preflight")

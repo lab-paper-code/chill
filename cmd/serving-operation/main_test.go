@@ -137,6 +137,27 @@ func TestExecuteRequiresOwnerAcknowledgementAndFullResponseDrain(t *testing.T) {
 	}
 }
 
+func TestExecuteOwnerSnapshotAgeFollowsOperationDependency(t *testing.T) {
+	for _, kind := range []string{operationPrepare, operationMembership, operationRemove} {
+		t.Run(kind, func(t *testing.T) {
+			m, config, owner, now := executionOwnerFixture()
+			m.Operation = servingkube.Operation{
+				Kind: kind, Node: serving.NodeReference{Name: "empty", UID: "empty-uid"},
+			}
+			if kind == operationRemove {
+				m.Operation.Instance = "replica"
+			}
+			acknowledged := owner.State.Results[0]
+			acknowledged.EndedAt = now.Add(-3 * time.Second)
+			owner.State.Snapshot.At = now.Add(-2 * time.Second)
+			err := validateExecutionOwner(m, config, owner, &acknowledged, now)
+			if (err == nil) != (kind != operationRemove) {
+				t.Fatalf("unexpected aged post-ack snapshot dependency verdict: %v", err)
+			}
+		})
+	}
+}
+
 func TestExecuteNodeProtectsServingMembershipAndExactSource(t *testing.T) {
 	const daemonCase = "daemon"
 	const exactRemoveCase = "exact remove"

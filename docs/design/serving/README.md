@@ -373,8 +373,10 @@ planner의 calibration 선택과 기존 인스턴스에 실제 적용된 native 
 
 실행 전에 desired/current controls OFF, 진행 중 owner action 없음, 같은 native
 ConfigMap resourceVersion의 전체 `staticRouting` 성공 acknowledgement와 실제
-route readback 일치를 요구한다. owner snapshot은 해당 완료보다 늦고 최근 control
-interval 이내여야 한다. remove는 그 전체 경로에서 이미 제외된 정확한 configured
+route readback 일치를 요구한다. 모든 동작의 owner snapshot은 해당 완료보다 늦고
+현재 시각보다 미래가 아니어야 한다. remove만 owner accepted-work 증거가 필요하므로
+최근 control interval 이내의 snapshot을 요구한다. prepare/membership은 현재 revision과
+fresh Node/Pod 및 각 동작의 물리 검증에 의존한다. remove는 전체 경로에서 이미 제외된 정확한 configured
 source만 허용하며 owner `snapshot.outstanding`에서 execution·transport·response
 소유권이 모두 사라진 뒤 기존 native drain/termination/removal을 호출한다.
 ack은 일시적인 `state.results`가 아니라 기존 `/api/v1/observations/scheduler`의
