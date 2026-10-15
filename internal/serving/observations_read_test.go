@@ -1,9 +1,12 @@
 package serving
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,5 +152,108 @@ func TestObservationReadPrefixReportsActualTruncation(t *testing.T) {
 	err = snapshot.scan("requests", func(observationRecord) {})
 	if !errors.Is(err, io.ErrUnexpectedEOF) || !snapshot.windows[0].Incomplete || j.Health().Healthy {
 		t.Fatalf("actual truncated prefix did not retain incomplete/error health: %v %+v", err, j.Health())
+	}
+}
+
+func TestObservationReadReusesLargeLineBufferAndPreservesSelectedPayloads(t *testing.T) {
+	j, err := NewJournal(JournalConfig{
+		Directory: t.TempDir(), Store: "evidence", Window: time.Hour,
+		Writer: &observationArchive{directory: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = j.Close(context.Background()) })
+	at := time.Now().UTC()
+	payload := json.RawMessage(`{"retained":"` + strings.Repeat("x", 512<<10) + `"}`)
+	event := SchedulerObservation{
+		At:     at,
+		Action: &SchedulerActionObservation{ID: "large-source", Expected: payload},
+	}
+	if err = j.SchedulerRecord(event); err != nil {
+		t.Fatal(err)
+	}
+	one, err := j.snapshot("scheduler")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const records = 9
+	for index := 1; index < records; index++ {
+		event.At = at.Add(time.Duration(index) * time.Nanosecond)
+		if err = j.SchedulerRecord(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	many, err := j.snapshot("scheduler")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocations := func(snapshot *observationSnapshot, expected int) float64 {
+		t.Helper()
+		count := 0
+		var scanErr error
+		allocated := testing.AllocsPerRun(1, func() {
+			count = 0
+			scanErr = snapshot.scanRaw("scheduler", func(_ string, raw []byte) (bool, error) {
+				count++
+				if len(raw) <= 512<<10 {
+					t.Fatal("large raw record was truncated")
+				}
+				return false, nil
+			})
+		})
+		if scanErr != nil || count != expected {
+			t.Fatalf("captured prefix changed: count=%d expected=%d error=%v", count, expected, scanErr)
+		}
+		return allocated
+	}
+	singleAllocations := allocations(one, 1)
+	multipleAllocations := allocations(many, records)
+	if multipleAllocations > singleAllocations {
+		t.Fatalf("line allocations grew with record count: one=%g many=%g", singleAllocations, multipleAllocations)
+	}
+	page, next, err := j.SchedulerObservationPage(at.Add(-time.Nanosecond), at.Add(time.Second), records, 0)
+	if err != nil || len(page) != records || next != -1 {
+		t.Fatalf("large selected page lost records: count=%d next=%d error=%v", len(page), next, err)
+	}
+	for index, record := range page {
+		if !record.At.Equal(at.Add(time.Duration(index)*time.Nanosecond)) ||
+			record.Action == nil || record.Action.ID != event.Action.ID || !bytes.Equal(record.Action.Expected, payload) {
+			t.Fatalf("reused line buffer changed retained selected record %d", index)
+		}
+	}
+}
+
+func TestObservationReadDoesNotAcceptUnterminatedFinalRecord(t *testing.T) {
+	j, err := NewJournal(JournalConfig{
+		Directory: t.TempDir(), Store: "evidence", Window: time.Hour,
+		Writer: &observationArchive{directory: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = j.Close(context.Background()) })
+	at := time.Now().UTC()
+	if err = j.SchedulerRecord(SchedulerObservation{At: at}); err != nil {
+		t.Fatal(err)
+	}
+	unterminated, err := json.Marshal(observationRecord{
+		SchemaVersion: observationSchema, Window: j.windows[0].ID,
+		Scheduler: &SchedulerObservation{At: at.Add(time.Nanosecond)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = j.files["scheduler"].Write(unterminated); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := j.snapshot("scheduler")
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	err = snapshot.scan("scheduler", func(observationRecord) { count++ })
+	if err != nil || count != 1 || !snapshot.windows[0].Incomplete || j.Health().Healthy {
+		t.Fatalf("unterminated JSON was accepted or its incomplete health lost: count=%d error=%v health=%+v", count, err, j.Health())
 	}
 }

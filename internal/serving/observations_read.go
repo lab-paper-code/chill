@@ -2,6 +2,7 @@ package serving
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -75,6 +76,7 @@ func (s *observationSnapshot) scan(stream string, visit func(observationRecord))
 
 // scanRaw preserves retained append order. A visitor may stop after witnessing
 // the next page; event times need not fall in their append window's wall times.
+// Visitor bytes are borrowed for that call; retained results must own their data.
 func (s *observationSnapshot) scanRaw(stream string, visit func(string, []byte) (bool, error)) error {
 	for _, prefix := range s.streams[stream] {
 		stop, err := s.scanPrefix(prefix, visit)
@@ -98,14 +100,23 @@ func (s *observationSnapshot) scanPrefix(prefix observationStreamPrefix, visit f
 	}
 	defer func() { result = errors.Join(result, file.Close()) }()
 	bounded := &io.LimitedReader{R: file, N: prefix.bytes}
-	reader := bufio.NewReader(bounded)
+	scanner := bufio.NewScanner(bounded)
+	// Reuse the largest line buffer instead of cloning every ReadBytes fragment.
+	// Retain the existing addressable record-size limit and raw newline framing.
+	scanner.Buffer(make([]byte, 4096), int(^uint(0)>>1))
+	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		if end := bytes.IndexByte(data, '\n'); end >= 0 {
+			return end + 1, data[:end+1], nil
+		}
+		if atEOF && len(data) > 0 {
+			return len(data), data, nil
+		}
+		return 0, nil, nil
+	})
 	window := &s.windows[prefix.window]
 	first := true
-	for {
-		line, readErr := reader.ReadBytes('\n')
-		if readErr != nil && readErr != io.EOF {
-			return false, readErr
-		}
+	for scanner.Scan() {
+		line := scanner.Bytes()
 		if len(line) > 0 {
 			if line[len(line)-1] != '\n' {
 				s.incomplete(prefix.window)
@@ -125,13 +136,14 @@ func (s *observationSnapshot) scanPrefix(prefix observationStreamPrefix, visit f
 				}
 			}
 		}
-		if readErr == io.EOF {
-			if bounded.N != 0 {
-				return false, io.ErrUnexpectedEOF
-			}
-			return false, nil
-		}
 	}
+	if err := scanner.Err(); err != nil {
+		return false, err
+	}
+	if bounded.N != 0 {
+		return false, io.ErrUnexpectedEOF
+	}
+	return false, nil
 }
 
 func (s *observationSnapshot) incomplete(index int) {
