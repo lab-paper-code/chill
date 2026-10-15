@@ -1,11 +1,13 @@
 package serving
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +170,119 @@ func assertMissingOperatingPower(t *testing.T, got OperatingPowerWindow, scenari
 	}
 	if scenario.incompleteHistory && len(got.IncompleteWindows) != 1 {
 		t.Fatalf("incomplete window identity lost: %+v", got)
+	}
+}
+
+func TestOperatingPowerProjectsLargeUnrelatedPayload(t *testing.T) {
+	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := j.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	from := time.Now().UTC().Add(time.Second)
+	to := from.Add(10 * time.Second)
+	meters := seedOperatingPower(t, j, from, operatingPowerScenario{})
+	want, err := j.OperatingPower(from, to, meters, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMeasuredOperatingPower(t, want, operatingPowerScenario{})
+
+	path := filepath.Join(j.config.Directory, j.windows[j.active].ID, "scheduler.jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(data, []byte{'\n'})
+	large := json.RawMessage(`{"nested":[` + strings.TrimSuffix(strings.Repeat(`{"distribution":[1,2,3,4]},`, 16384), ",") + `]}`)
+	var selected json.RawMessage
+	for index := 1; index < len(lines)-1; index++ {
+		var record map[string]json.RawMessage
+		if err := json.Unmarshal(lines[index], &record); err != nil {
+			t.Fatal(err)
+		}
+		var scheduler map[string]json.RawMessage
+		if err := json.Unmarshal(record["scheduler"], &scheduler); err != nil {
+			t.Fatal(err)
+		}
+		// These are valid JSON but not their unrelated scheduler field types.
+		// A full SchedulerObservation decode would reject them.
+		scheduler["decision"] = json.RawMessage(`{"candidates":` + string(large) + `}`)
+		if raw, found := scheduler["snapshot"]; found {
+			var snapshot map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &snapshot); err != nil {
+				t.Fatal(err)
+			}
+			var instances []map[string]json.RawMessage
+			if err := json.Unmarshal(snapshot["instances"], &instances); err != nil {
+				t.Fatal(err)
+			}
+			for _, instance := range instances {
+				instance["profile"] = json.RawMessage(`[` + string(large) + `]`)
+			}
+			snapshot["instances"], err = json.Marshal(instances)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scheduler["snapshot"], err = json.Marshal(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		record["scheduler"], err = json.Marshal(scheduler)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines[index], err = json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selected = lines[index]
+	}
+	if err := os.WriteFile(path, bytes.Join(lines, []byte{'\n'}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := j.OperatingPower(from, to, meters, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unrelated payload changed power, samples or active membership:\n got: %+v\nwant: %+v", got, want)
+	}
+	for _, field := range []string{"power", "powerCoverage", "snapshot"} {
+		t.Run("invalid-selected-"+field, func(t *testing.T) {
+			var record map[string]json.RawMessage
+			if err := json.Unmarshal(selected, &record); err != nil {
+				t.Fatal(err)
+			}
+			var scheduler map[string]json.RawMessage
+			if err := json.Unmarshal(record["scheduler"], &scheduler); err != nil {
+				t.Fatal(err)
+			}
+			switch field {
+			case "power":
+				scheduler[field] = json.RawMessage(`{"samples":[{"watts":"not-a-measurement"}]}`)
+			case "powerCoverage":
+				scheduler[field] = json.RawMessage(`{"MaximumGap":"not-a-duration"}`)
+			case "snapshot":
+				scheduler[field] = json.RawMessage(`{"instances":[{"ready":"not-a-bool"}]}`)
+			}
+			record["scheduler"], err = json.Marshal(scheduler)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := operatingPowerRecord(j.windows[j.active].ID, raw); err == nil {
+				t.Fatalf("invalid selected %s accepted", field)
+			}
+		})
 	}
 }
 

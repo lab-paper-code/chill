@@ -2,8 +2,13 @@ package serving
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 )
 
 func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
@@ -208,9 +213,10 @@ func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	from := time.Now().UTC().Add(-time.Second)
+	// Event time is deliberately older than every append window's metadata.
+	from := time.Now().UTC().Add(-2 * time.Hour)
 	to := from.Add(time.Second)
-	for _, event := range []SchedulerObservation{
+	for i, event := range []SchedulerObservation{
 		{At: from.Add(-time.Nanosecond), Action: &SchedulerActionObservation{ID: "outside"}},
 		{At: from.Add(time.Millisecond), Action: &SchedulerActionObservation{ID: "first"}},
 		{At: from, Action: &SchedulerActionObservation{ID: laterActionID}},
@@ -218,6 +224,14 @@ func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
 	} {
 		if err = j.SchedulerRecord(event); err != nil {
 			t.Fatal(err)
+		}
+		if i == 1 {
+			if err := j.finish(); err != nil {
+				t.Fatal(err)
+			}
+			if err := j.start(time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	first, next, err := j.SchedulerObservationPage(from, to, 1, 0)
@@ -228,7 +242,137 @@ func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
 	if err != nil || len(second) != 1 || second[0].Action.ID != laterActionID || next != -1 {
 		t.Fatalf("raw cursor reordered/backfilled events: %+v %d %v", second, next, err)
 	}
+	end, next, err := j.SchedulerObservationPage(from, to, 1, 2)
+	if err != nil || len(end) != 0 || next != -1 {
+		t.Fatalf("cursor at selected count must return an empty terminal page: %+v %d %v", end, next, err)
+	}
 	if _, _, err = j.SchedulerObservationPage(from, to, 1, 3); err == nil {
 		t.Fatal("out-of-range cursor accepted")
+	}
+}
+
+func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
+	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = j.Close(context.Background()) }()
+	from := time.Now().UTC().Add(-time.Hour)
+	to := from.Add(time.Minute)
+	appendSentinel := func(at time.Time) {
+		t.Helper()
+		// Valid JSON, but full SchedulerObservation decoding must reject action.id.
+		record := map[string]any{
+			"schemaVersion": observationSchema,
+			"window":        j.windows[j.active].ID,
+			"scheduler": map[string]any{
+				"at":     at,
+				"action": map[string]any{"id": 42},
+			},
+		}
+		if err := json.NewEncoder(j.files["scheduler"]).Encode(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendSentinel(from.Add(-time.Nanosecond))
+	appendSentinel(from)
+	settings, snapshot := schedulerFixture()
+	node := snapshot.Nodes[0].Node
+	completed := from.Add(time.Second)
+	joules := 12.5
+	selected := SchedulerObservation{
+		At:       from.Add(time.Millisecond),
+		Decision: &SchedulerDecision{At: from, Status: "retained", Keep: SchedulerCandidate{Status: "keep"}},
+		Snapshot: &snapshot,
+		Settings: &SchedulerSettingsChange{ActorUsername: "operator", ActorUID: "actor", Before: settings, After: settings, ValidatedAt: from, AppliedAt: &completed, Affected: []NodeReference{node}, Error: "retained settings detail"},
+		Action: &SchedulerActionObservation{
+			ID: "selected", Kind: "resize", Node: node, Instance: "instance", Phase: "finished",
+			StartedAt: from, CompletedAt: &completed,
+			Expected: json.RawMessage(`{"resources":{"cpus":[1,2],"memory":512}}`),
+			Actual:   json.RawMessage(`{"resources":{"cpus":[1],"memory":256}}`),
+			Error:    "retained action detail", Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "action", Size: 123}},
+		},
+		Power: &metricobserver.Result{
+			StartedAt: from, EndedAt: completed,
+			Samples:  []metricobserver.Sample{{ObservedAt: from, Watts: 12.5, RequestLatencySeconds: 0.1}},
+			Failures: []metricobserver.Failure{{ObservedAt: completed, Message: "retained failure"}},
+			Summary:  metricobserver.Summary{Attempts: 2, SuccessfulSamples: 1, Failures: 1},
+		},
+		Node: &node, Meter: "meter", PowerScope: "node",
+		PowerSampling: &metricobserver.Request{Interval: time.Second, Duration: time.Minute, RequestTimeout: time.Second, MaxEvents: 100},
+		PowerCoverage: &powerwindow.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: 0.9, MaximumGap: 2 * time.Second},
+		PowerJoules:   &joules, PowerError: "retained power detail",
+	}
+	if err := j.SchedulerRecord(selected); err != nil {
+		t.Fatal(err)
+	}
+	appendSentinel(from.Add(2 * time.Millisecond))
+	// A bounded page must stop after its lookahead, not scan the remaining file.
+	if _, err := j.files["scheduler"].WriteString("{not-json}\n"); err != nil {
+		t.Fatal(err)
+	}
+	page, next, err := j.SchedulerObservationPage(from, to, 1, 1)
+	if err != nil || len(page) != 1 || next != 2 {
+		t.Fatalf("unselected payload was fully decoded or scan was not bounded: %+v %d %v", page, next, err)
+	}
+	want, err := json.Marshal(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(page[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("selected raw details lost:\n got %s\nwant %s", got, want)
+	}
+	for _, offset := range []int{0, next} {
+		if _, _, err := j.SchedulerObservationPage(from, to, 1, offset); err == nil {
+			t.Fatalf("selected type-invalid payload accepted at offset %d", offset)
+		}
+	}
+	if _, _, err := j.SchedulerObservationPage(from, to, 1, 3); err == nil {
+		t.Fatal("syntax error after skipped payloads was ignored")
+	}
+}
+
+func TestSchedulerRawPageRejectsInvalidUnselectedEnvelopes(t *testing.T) {
+	for _, corruption := range []string{"schema", "window", "syntax"} {
+		t.Run(corruption, func(t *testing.T) {
+			j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = j.Close(context.Background()) }()
+			from := time.Now().UTC().Add(-time.Hour)
+			record := map[string]any{
+				"schemaVersion": observationSchema,
+				"window":        j.windows[j.active].ID,
+				"scheduler":     map[string]any{"at": from.Add(-time.Nanosecond)},
+			}
+			switch corruption {
+			case "schema":
+				record["schemaVersion"] = "not-the-observation-schema"
+			case "window":
+				record["window"] = "not-the-containing-window"
+			}
+			if corruption == "syntax" {
+				_, err = j.files["scheduler"].WriteString("{not-json}\n")
+			} else {
+				err = json.NewEncoder(j.files["scheduler"]).Encode(record)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := j.SchedulerRecord(SchedulerObservation{At: from}); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := j.SchedulerObservationPage(from, from.Add(time.Minute), 1, 0); err == nil {
+				t.Fatal("unselected invalid record was ignored")
+			}
+			if j.Health().Healthy {
+				t.Fatal("read error was not published to journal health")
+			}
+		})
 	}
 }

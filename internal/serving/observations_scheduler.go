@@ -117,27 +117,28 @@ func (fact *windowLoadFact) add(event *RequestEvent) {
 
 // LoadWindow uses event-time [from,to), independently of archive rotation and
 // result cohort filters. Completed counts completion events, not received cohort.
-// ponytail: scan retained JSONL; add a window index if campaign history becomes
-// a measured bottleneck. Request fact allocation is limited to this receipt window.
+// ponytail: scan retained byte prefixes without an index; decode outside the
+// writer lock. Request fact allocation is limited to this receipt window.
 func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
 	result := LoadWindow{From: from, To: to, Duration: to.Sub(from), Population: "all ingress receipt events; computable demand separately marked after authorization and input validation; event-time [from,to); one request = one input"}
 	if from.IsZero() || !from.Before(to) {
 		return result, failure("InvalidQuery", "positive explicit load window is required")
 	}
+	snapshot, err := j.snapshot("definitions", "requests")
+	if err != nil {
+		return result, err
+	}
 	definitions := map[string]*Definition{}
-	if err := j.scan("definitions", func(record observationRecord) {
+	if err := snapshot.scan("definitions", func(record observationRecord) {
 		if record.Definition != nil {
 			definitions[record.Definition.Identity] = record.Definition.Definition
 		}
 	}); err != nil {
-		j.lastError = err
 		return result, err
 	}
 	loads := map[string]*WorkloadLoad{}
 	facts := map[string]*windowLoadFact{}
-	if err := j.scan("requests", func(record observationRecord) {
+	if err := snapshot.scan("requests", func(record observationRecord) {
 		event := record.Request
 		if event == nil {
 			return
@@ -181,7 +182,6 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 			}
 		}
 	}); err != nil {
-		j.lastError = err
 		return result, err
 	}
 	for id, fact := range facts {
@@ -205,7 +205,7 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 		}
 		return result.Arrivals[a].At.Before(result.Arrivals[b].At)
 	})
-	for _, window := range j.windows {
+	for _, window := range snapshot.windows {
 		if window.Incomplete && window.overlaps(from, to) {
 			result.IncompleteWindows = append(result.IncompleteWindows, window.ID)
 		}
@@ -278,22 +278,23 @@ func overheadProjection(facts map[string]*overheadFact, definitions map[string]*
 }
 
 func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverhead, error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
 	if from.IsZero() || !from.Before(to) {
 		return nil, failure("InvalidQuery", "positive explicit overhead window is required")
 	}
+	snapshot, err := j.snapshot("definitions", "requests")
+	if err != nil {
+		return nil, err
+	}
 	definitions := map[string]*Definition{}
-	if err := j.scan("definitions", func(record observationRecord) {
+	if err := snapshot.scan("definitions", func(record observationRecord) {
 		if record.Definition != nil {
 			definitions[record.Definition.Identity] = record.Definition.Definition
 		}
 	}); err != nil {
-		j.lastError = err
 		return nil, err
 	}
 	facts := map[string]*overheadFact{}
-	if err := j.scan("requests", func(record observationRecord) {
+	if err := snapshot.scan("requests", func(record observationRecord) {
 		event := record.Request
 		if event == nil || event.Outcome != outcomeCompleted || !observationInInterval(event.ReceivedAt, from, to) {
 			return
@@ -305,11 +306,10 @@ func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverh
 		}
 		fact.add(event)
 	}); err != nil {
-		j.lastError = err
 		return nil, err
 	}
 	// The scan marks a newly detected torn tail; judge windows only afterwards.
-	for _, window := range j.windows {
+	for _, window := range snapshot.windows {
 		if window.Incomplete && window.overlaps(from, to) {
 			return nil, failure("IncompleteObservation", "overhead window overlaps incomplete observation window %s", window.ID)
 		}
@@ -358,35 +358,56 @@ func (j *Journal) SchedulerArrivals(from, to time.Time) ([]SchedulerArrival, err
 	return window.Arrivals, err
 }
 
-// SchedulerObservationPage uses retained append order and bounds decoded output.
+// SchedulerObservationPage uses retained append order, decoding full payloads
+// only for page entries and stopping at the next matching event.
 // Cursor offsets apply to the selected event window, independently of archives.
 func (j *Journal) SchedulerObservationPage(from, to time.Time, limit, offset int) ([]SchedulerObservation, int, error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
 	if from.IsZero() || !from.Before(to) || limit <= 0 || offset < 0 {
 		return nil, -1, failure("InvalidQuery", "positive window, bounded limit and nonnegative cursor are required")
 	}
+	snapshot, err := j.snapshot("scheduler")
+	if err != nil {
+		return nil, -1, err
+	}
 	records := make([]SchedulerObservation, 0, limit)
-	matched := 0
-	err := j.scan("scheduler", func(record observationRecord) {
-		if record.Scheduler == nil || !observationInInterval(record.Scheduler.At, from, to) {
-			return
+	matched, next := 0, -1
+	err = snapshot.scanRaw("scheduler", func(window string, raw []byte) (bool, error) {
+		var envelope struct {
+			SchemaVersion string `json:"schemaVersion"`
+			Window        string `json:"window"`
+			Scheduler     *struct {
+				At time.Time `json:"at"`
+			} `json:"scheduler"`
 		}
-		if matched >= offset && len(records) < limit {
-			records = append(records, *record.Scheduler)
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return false, err
+		}
+		if envelope.SchemaVersion != observationSchema || envelope.Window != window {
+			return false, errObservationRecordIdentity
+		}
+		if envelope.Scheduler == nil || !observationInInterval(envelope.Scheduler.At, from, to) {
+			return false, nil
 		}
 		matched++
+		if matched <= offset {
+			return false, nil
+		}
+		if len(records) == limit {
+			next = offset + len(records)
+			return true, nil
+		}
+		var record observationRecord
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return false, err
+		}
+		records = append(records, *record.Scheduler)
+		return false, nil
 	})
 	if err != nil {
-		j.lastError = err
 		return nil, -1, err
 	}
 	if offset > matched {
 		return nil, -1, failure("InvalidQuery", "cursor exceeds selected observation count")
-	}
-	next := -1
-	if matched-offset > len(records) {
-		next = offset + len(records)
 	}
 	return records, next, nil
 }

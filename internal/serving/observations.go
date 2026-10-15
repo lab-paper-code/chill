@@ -1,12 +1,10 @@
 package serving
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -120,8 +118,13 @@ func NewJournal(config JournalConfig) (*Journal, error) {
 		}
 		j.windows = append(j.windows, window)
 	}
-	for _, stream := range []string{"definitions", "requests", "management", "scheduler"} {
-		if err := j.scan(stream, func(observationRecord) {}); err != nil {
+	streams := []string{"definitions", "requests", "management", "scheduler"}
+	read, err := j.snapshot(streams...)
+	if err != nil {
+		return nil, err
+	}
+	for _, stream := range streams {
+		if err := read.scan(stream, func(observationRecord) {}); err != nil {
 			return nil, err
 		}
 	}
@@ -432,55 +435,6 @@ func observationInInterval(at, from, to time.Time) bool {
 	return !at.IsZero() && (from.IsZero() || !at.Before(from)) && (to.IsZero() || at.Before(to))
 }
 
-func (j *Journal) scan(stream string, visit func(observationRecord)) error {
-	for i := range j.windows {
-		w := &j.windows[i]
-		file, err := os.Open(filepath.Join(j.config.Directory, w.ID, stream+".jsonl"))
-		if err != nil {
-			return err
-		}
-		reader := bufio.NewReader(file)
-		first := true
-		for {
-			line, readErr := reader.ReadBytes('\n')
-			if readErr != nil && readErr != io.EOF {
-				return errors.Join(readErr, file.Close())
-			}
-			if len(line) > 0 {
-				if line[len(line)-1] != '\n' {
-					w.Incomplete = true
-					j.lastError = errors.New("incomplete observation JSONL record")
-				} else if first {
-					var header ObservationWindow
-					if err := json.Unmarshal(line, &header); err != nil {
-						return errors.Join(err, file.Close())
-					}
-					if header.SchemaVersion != observationSchema || header.ID != w.ID {
-						return errors.Join(errors.New("invalid observation stream header"), file.Close())
-					}
-					first = false
-				} else {
-					var record observationRecord
-					if err := json.Unmarshal(line, &record); err != nil {
-						return errors.Join(err, file.Close())
-					}
-					if record.SchemaVersion != observationSchema || record.Window != w.ID {
-						return errors.Join(errors.New("invalid observation record identity"), file.Close())
-					}
-					visit(record)
-				}
-			}
-			if readErr == io.EOF {
-				break
-			}
-		}
-		if err := file.Close(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 type requestFacts struct {
 	events     []RequestEvent
 	received   time.Time
@@ -520,11 +474,11 @@ func (f *requestFacts) addEvent(e *RequestEvent) {
 	}
 }
 
-func (j *Journal) collectObservationFacts(
+func (read *observationSnapshot) collectObservationFacts(
 	result *ObservationResult,
 ) (map[string]*Definition, map[string]*requestFacts, error) {
 	definitions := make(map[string]*Definition)
-	if err := j.scan("definitions", func(r observationRecord) {
+	if err := read.scan("definitions", func(r observationRecord) {
 		d := r.Definition
 		if d != nil && d.Definition != nil && d.Definition.UID == result.UID &&
 			observationIncludes(result.DefinitionFilter, d.Identity) {
@@ -534,7 +488,7 @@ func (j *Journal) collectObservationFacts(
 		return nil, nil, err
 	}
 	requests := make(map[string]*requestFacts)
-	if err := j.scan("requests", func(r observationRecord) {
+	if err := read.scan("requests", func(r observationRecord) {
 		e := r.Request
 		if e == nil || e.WorkloadUID != result.UID {
 			return
@@ -551,8 +505,8 @@ func (j *Journal) collectObservationFacts(
 	return definitions, requests, nil
 }
 
-func (j *Journal) collectManagementFacts(result *ObservationResult) error {
-	if err := j.scan("management", func(r observationRecord) {
+func (read *observationSnapshot) collectManagementFacts(result *ObservationResult) error {
+	if err := read.scan("management", func(r observationRecord) {
 		e := r.Management
 		if e == nil || e.WorkloadUID != result.UID || !observationInInterval(e.At, result.From, result.To) {
 			return
@@ -571,7 +525,7 @@ func (j *Journal) collectManagementFacts(result *ObservationResult) error {
 	sort.SliceStable(result.Management, func(a, b int) bool {
 		return result.Management[a].At.Before(result.Management[b].At)
 	})
-	for _, w := range j.windows {
+	for _, w := range read.windows {
 		if w.Incomplete {
 			result.IncompleteWindows = append(result.IncompleteWindows, w.ID)
 		}
@@ -642,8 +596,6 @@ func (result *ObservationResult) aggregate(
 }
 
 func (j *Journal) Query(uid string, from, to time.Time, definitions, outcomes []string, limit int, cursor string) (ObservationResult, error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
 	if len(definitions) == 0 {
 		definitions = j.config.Definitions
 	}
@@ -667,9 +619,12 @@ func (j *Journal) Query(uid string, from, to time.Time, definitions, outcomes []
 		}
 		offset = n
 	}
-	definitionsByID, requests, err := j.collectObservationFacts(&result)
+	read, err := j.snapshot("definitions", "requests", "management")
 	if err != nil {
-		j.lastError = err
+		return result, err
+	}
+	definitionsByID, requests, err := read.collectObservationFacts(&result)
+	if err != nil {
 		return result, err
 	}
 	selectedEvents := result.aggregate(definitionsByID, requests)
@@ -688,8 +643,7 @@ func (j *Journal) Query(uid string, from, to time.Time, definitions, outcomes []
 		result.NextCursor = strconv.Itoa(end)
 	}
 	result.Requests = selectedEvents[offset:end]
-	if err := j.collectManagementFacts(&result); err != nil {
-		j.lastError = err
+	if err := read.collectManagementFacts(&result); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -704,10 +658,12 @@ type unfinishedBackend struct {
 // Startup reads existing facts only. It does not replay inference or resume an
 // interrupted management operation.
 func (j *Journal) runtimeFacts() (map[string]*Definition, []unfinishedBackend, error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
+	read, err := j.snapshot("definitions", "requests")
+	if err != nil {
+		return nil, nil, err
+	}
 	definitions := map[string]*Definition{}
-	if err := j.scan("definitions", func(record observationRecord) {
+	if err := read.scan("definitions", func(record observationRecord) {
 		if d := record.Definition; d != nil {
 			definitions[d.Identity] = d.Definition
 		}
@@ -717,7 +673,7 @@ func (j *Journal) runtimeFacts() (map[string]*Definition, []unfinishedBackend, e
 	assigned := map[string]*unfinishedBackend{}
 	responded := map[string]bool{}
 	ended := map[string]bool{}
-	if err := j.scan("requests", func(record observationRecord) {
+	if err := read.scan("requests", func(record observationRecord) {
 		e := record.Request
 		if e == nil {
 			return

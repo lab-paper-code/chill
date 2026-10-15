@@ -393,6 +393,16 @@ inventory·적용 affinity를 raw에 연결하며 quota와 mask의 의미를 각
 | `GET /api/v1/observations/scheduler` | 고정 `from/to`, bounded `limit`, append-order `cursor/nextCursor`의 원시 기록 |
 | `GET /api/v1/observations/power` | 같은 고정 `from/to`의 raw 표본을 Node당 한 번 적분한 전체·활성 POOL J/평균 W; 누락은 null과 사유 |
 
+Journal 조회는 기존 writer mutex 아래에서 필요한 stream 경로·byte 길이와 window
+상태를 한 번 함께 캡처하고, 파일 읽기·JSON decode·집계는 잠금을 푼 뒤 수행한다.
+완료된 append 뒤의 길이를 고정하므로 새 append·rotation을 현재 조회에 섞거나
+진행 중 record를 잘린 tail로 오인하지 않는다. 실제 read 오류·잘린 원본은 health와
+incomplete 상태에 그대로 남는다. scheduler history는 사건 시각 envelope로 먼저
+선택하여 요청 page만 전체 decode하고 다음 일치 record 하나로 continuation을 확인한다.
+window 시각은 append 시각이지 사건 시각의 범위가 아니므로 backfill·역순 사건을
+버리는 window 필터는 쓰지 않는다. power 조회도 결정·profile 분포 대신 기존 집계에
+필요한 실제 표본·meter·coverage·membership만 읽으며 경계와 전체 POOL 범위를 유지한다.
+
 전력 collector의 짧은 기록 구간별 적분 verdict는 원시 기록에 그대로 보존하되,
 조회 구간의 coverage 판정으로 재사용하지 않는다. 조회 경계 밖의 실제 표본은 기록된
 boundary 거리 안에서만 보조하며, 합친 표본의 원래 gap·값·meter identity·보관 완전성과
