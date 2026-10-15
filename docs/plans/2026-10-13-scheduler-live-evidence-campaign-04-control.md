@@ -710,12 +710,66 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   kernelRows는 1→2, finiteStates는 2→4다. 단순 설정 smoke가 아닌 history 소비 증거지만,
   중간 `Pending:NoFullyEvaluableCandidateWithinReportedBounds`도 보존한다.
   queue-reset projection을 실제 queue 이력·고전 WFA 보장으로 해석하지 않는다.
-- 현재 모든 controls는 OFF이고 Rpi가 서빙한다. 다음은 GPU CLI 리뷰·gate·real CUDA와
-  Jetson 실제 제어다. 단일 허용 power mode 정책과 Xavier 외부 Workload 안전 제한 때문에
-  power 왕복 완료를 주장하지 않는다. FULL·최종 실제 Dashboard e2e는 미완료이며 별도 Main의
-  Dashboard 완료 통지는 받지 못했다.
+- 이 비교 직후 모든 controls는 OFF이고 Rpi가 서빙했다. 당시 GPU·Jetson 실제 제어와
+  Dashboard Main 완료 통지는 남아 있었다. 이후 Jetson 왕복·Main 전달·알고리즘 UI 부분 e2e의
+  갱신은 아래 기록을 따른다. CPU 비교 자체는 FULL·최종 Dashboard e2e 완료 증거가 아니다.
 - 근거 루트 `/tmp/chill-completion-cpu-cost-assembly/`:
   `final-comparison-summary.json`, `final-comparison-common-settling-analysis.json`,
   `final-comparison-common-settling-power.json`, `final-comparison-projected-policy-summary.json`,
   `final-comparison-projected-full-completion-history.json`.
   위 freshness 실패와 기존 raw·한계는 남기되 현재 다음 작업으로 재사용하지 않는다.
+
+## 최신 CUDA 근거·승인된 Jetson 왕복·Dashboard 부분 e2e — 2026-10-15
+
+- 구 CUDA prepare는 `completionOverheadMS` 미지원으로 실제 실패했고 생성 자원은 정리했다.
+  이후 CUDA ABI12·ORT1.26·현재 Go SDK의 runnable child image
+  `sha256:52d81b5028d22e2c9c7f1ef4c3bd1ab2d4b41bb5d6421d69938b5c02d1100136`으로
+  새 BEO `97a02e77-e075-47ca-9ed5-e0327413007d`의 실제 6 trial을 측정했다.
+  현재 profiler 의미 gate와 scoped Service GET RBAC를 맞춘 뒤 **같은 6 Run**을 Complete로 봉인했다.
+  재실행·구 raw 덮어쓰기가 아니며 새 profile은 configRV `353471711`에서 Persisted·Loaded다.
+- 구 profiler는 세 번째 idle의 실제 foreign baseline-fleet 종료로 달라진 EnvironmentIdentity를
+  equality gate로 거절했다. 현재 경계는 [측정 명세](../spec/00_measurement.md)의 47–50·102–104행대로
+  공존·간섭 관측을 보존한다. 실제 차이를 삭제하거나 격리·동일 배경·인과 에너지 증거로 바꾸지 않는다.
+  batch1만 측정했고 fresh completion calibration·방향별 비용·자동 GPU 적격성은 입증하지 않았다.
+- owner는 CPU1/512Mi에서 `16:14:52Z` OOMKilled 후 connection refused를 냈다. 원인은 **미입증**이다.
+  `16:22Z` 자연 복구·ready를 확인했고 당시 60초 incomplete observation window는 일시적이었다.
+  영구 calibration 장애로 해석하지 않는다. owner `6ad78…`·CPU1/512Mi·store8Gi,
+  ModelSpec·CPU business route는 유지했다.
+- CLI 기본 `limit=10000` 페이지의 실제 64MiB 초과를 확인해 `7ca66ddd`에서 명시적 limit50과
+  기존 cursor를 사용하도록 고쳤다. 부모 gate는 `artifact://3334` 통과다. reader는 이미 bounded였으며
+  새 reader/recovery framework를 추가한 것이 아니다. GPU native prepare는 bounded CLI의 fresh
+  완료 증거 전까지 보류했고, profile 채택을 prepare·owner routing·실제 추론 완료로 세지 않는다.
+- CUDA 근거:
+  `/tmp/chill-control-execution-authority-20261015/gpu-actual-control/current-cuda-sdk-build-ort126/result.json`,
+  `current-cuda-measurement/result.json` 및 같은 디렉터리의 원시 Run·실패 로그·profile read-back.
+
+- 사용자 승인 범위에서 Jetson 3대의 서로 다른 target→restore **6동작 모두 Ready**를 확인했다.
+  `912e948`의 native OnDelete 설정 지원은 부모 gate `artifact://3180` 후 실제 배포에 사용했고,
+  원래 config/policy/safety·RollingUpdate(maxUnavailable1/maxSurge0)를 복원했다. 임시 config는 삭제했다.
+  AGX actuator UID `9119e4d1-37d1-4ba0-beae-a86304783043`·args는 그대로다.
+
+|노드|실제 target → restore|선택 노드 wall J (target / restore)|
+|---|---|---:|
+|Orin Nano|15W → 25W|978.2288465042501 / 968.4982465201132|
+|Xavier NX|MODE_20W_6CORE → MODE_15W_6CORE|577.227660411873 / 604.440551876338|
+|Nano|5W → MAXN|113.84855875779998 / 133.6415211550057|
+
+- Orin은 실제 두 번 reboot했고 시스템 container restart도 raw에 남겼다. Nano CPU2/3은
+  offline 후 복원됐다. mode ID/name·일부 CPU online/cap read-back은 확인했지만 Orin CPU cap은
+  두 모드 모두 1728000kHz였으며 모든 설정 hardware limit의 일치를 주장하지 않는다.
+  선택 노드 계측은 이유 누락 없이 확보했지만 Xavier/Nano target의 전체 POOL은 genesis2·AGX
+  meter timeout으로 incomplete다(restore는 complete). 60초 settling·외부/시스템 작업을 포함한
+  node-wall J이며 고립된 전환 증분 에너지·절감·자동 후보 채택 증거가 아니다.
+  비특권 query permission 진단도 보존했고 별도 privileged before/final query는 성공했다.
+- 근거: `/tmp/chill-completion-cpu-cost-assembly/approved-jetson-power/completed-summary.json`,
+  `parent-final-native-check.json`. 마지막 native 확인은 세 노드·actuator Ready, 원래 RollingUpdate와 AGX UID 유지다.
+
+- Dashboard Main `103506d` 전달을 받았다. 실제 브라우저에서 projected→fixed PUT200 후 다음 판단의
+  알고리즘을 API와 대조했고 projected 복원 PUT200 후 다음 UI 문구·API도 일치했다.
+  실제 기록 DETAIL의 fixed→projected 전후 값을 확인했다. 모든 9개 controls는 OFF,
+  전체 settings는 의미상 원복(`settingsRestoredDifferences=[]`)됐다.
+  근거: `/tmp/chill-completion-cpu-cost-assembly/dashboard-algorithm-e2e-proof.json` 및 연결 screenshot.
+- 별도 OFF 동시 요청 16건은 모두 완료했지만 p90/p95 3325/3421ms로 SLO를 초과했다.
+  앞선 190건 trace 성공과 구분하고 자동 과부하 대응·통계적 개선으로 세지 않는다.
+  다음 의존성은 fresh GPU prepare·owner routing/요청 완료, 남은 FULL 통합과 최종 Dashboard e2e다.
+  알고리즘 선택 UI 부분 통과·개별 Jetson 수동 왕복으로 FULL Dashboard 완료를 선언하지 않는다.

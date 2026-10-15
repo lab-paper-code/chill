@@ -53,7 +53,7 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** 구 CUDA 실행기의 설정 계약 불일치를 최신 SDK로 정리하고 새 근거로 실제 GPU 서빙을 검증한다.
+**현재 우선:** 최신 SDK·새 GPU 근거의 bounded CLI prepare와 owner 실제 routing·요청을 검증한 뒤 FULL·최종 Dashboard e2e로 진행한다.
 CPU OFF/`fixed-horizon`/`projected-work-history` 동일 150초 trace는 arm별 190건 전부 완료·SLO 통과다.
 자동 Latte → Rpi prepare·route·stop·drain·remove와 이전 Pod 소멸, 비중첩 두 구간의
 min-plus history 전진을 확인했다. 세부 수치·실패·경계는 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 둔다.
@@ -63,14 +63,14 @@ min-plus history 전진을 확인했다. 세부 수치·실패·경계는 [제�
    이어져 세 arm 모두 무부하 tail을 포함한 210초 공통 구간을 **사후 선언**했다.
    10개 meter의 전체 wall energy는 완전하지만 에너지 절감·통계적·인과적 주장은 하지 않는다.
    queue-reset projection은 실제 queue 이력이나 고전 WFA 보장이 아니다.
-2. **GPU·Jetson:** GPU CLI는 리뷰·gate·커밋 완료. 실제 준비는 기존 CUDA 이미지의
-   `completionOverheadMS` 미지원으로 실패해 생성 자원을 정리했다. 과거 측정은 수정하지 않는다.
-   사용자가 Jetson 3대의 추가 모드·외부 작업 영향·필요시 재부팅을 승인했다. 기존 API와 임시 운영 설정으로 왕복 검증 후 복원하며 AGX는 변경·재시작하지 않는다.
-   별도 제어 OFF 16건 동시 요청은 모두 완료했으나 p90/p95 3325/3421ms로 SLO 초과했다.
-   이는 앞선 trace 성공과 구분하며 자동 과부하 대응 통과로 세지 않는다.
-3. **FULL·Dashboard:** 남은 제어의 실제 완료와 통합 시나리오를 검증한 뒤 실제 Dashboard
-   e2e를 수행한다. Dashboard 수정·배포는 별도 Main 세션에 인계했으나 완료 통지는 받지 못했다.
-   CPU 부분집합 성공은 FULL·Dashboard 완료가 아니다.
+2. **GPU·Jetson:** CUDA ABI12·ORT1.26 최신 SDK의 실제 GPU 6 trial을 새 profile로 채택했다.
+   현재 profiler의 의미 계약으로 같은 원시 Run을 봉인했으며 재측정·과거 raw 수정은 없다.
+   bounded CLI 수정은 gate를 통과했지만 새 GPU prepare·owner routing 완료는 아직 확인 전이다.
+   승인된 Jetson 3대의 서로 다른 target→restore 6동작은 Ready다. 설정·RollingUpdate를 복원하고
+   AGX UID를 보존했다. 물리 cap·전체 POOL 계측 한계와 자동 후보 채택은 별개다.
+3. **FULL·Dashboard:** Main `103506d` 전달을 받았고 실제 UI 알고리즘 변경→다음 판단→복원과
+   변경 이력을 API와 대조했다(9개 제어 OFF·설정 의미상 복원). 이는 부분 e2e 통과이며,
+   남은 제어 통합·FULL 시나리오·최종 실제 Dashboard e2e는 미완료다.
 
 ### 단계 경계의 운영 API·UX 고도화
 
@@ -107,10 +107,11 @@ min-plus history 전진을 확인했다. 세부 수치·실패·경계는 [제�
   GPU profile 채택은 실제 CUDA 준비·자동 선택 증거가 아니며 batch2 자동 선택도 미입증이다.
 - 이전 통신 장애·OOM·freshness 정지·SLO 초과·전력 누락은 원시 기록과 함께 남긴다.
   최신 비교의 완전한 전력 구간으로 과거 실패를 덮지 않으며 연구적 개선을 주장하지 않는다.
-- GPU CLI 리뷰·gate·real CUDA, Jetson 실제 제어와 남은 FULL 시나리오가 다음 의존성이다.
-  단일 허용 power mode·Xavier 외부 Workload 안전 제한을 우회하지 않는다.
-- `/pools` 오류 수정·브라우저 확인과 census owner 조회 개선은 완료했지만 최종 FULL Dashboard
-  e2e는 미완료다. 별도 Main의 Dashboard 완료 통지는 아직 받지 못했다.
+- GPU 새 profile은 Persisted·Loaded다. CPU route·ModelSpec은 유지했다. 다음은 fresh bounded
+  GPU prepare·owner route·실제 요청 증거이며, profile 채택만으로 자동 GPU 적격성을 주장하지 않는다.
+- Jetson 3대 실제 power 왕복과 복원은 완료했다. cap read-back·불완전 전체 전력 구간을 숨기지 않는다.
+- Dashboard Main 전달과 알고리즘 선택 부분 e2e는 확인했다. CPU 부분집합·개별 power·UI 설정
+  성공을 FULL·최종 Dashboard e2e 완료로 확대하지 않는다.
 
 ## 진행 기록 찾아보기
 
