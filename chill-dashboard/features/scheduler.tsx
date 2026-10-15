@@ -120,7 +120,7 @@ export function SchedulerPage() {
   const reasons=(now?.decision.reasons??[]).map(reason=>reasonLabels[reason]??statusLabel(reason))
   return <Screen status={now&&<StatusBadge tone={judgmentTones[now.status]??"idle"}>{judgmentLabels[now.status]??statusLabel(now.status)}</StatusBadge>}
     title={!now?"운영 판단":now.target?"다른 구성이 더 좋아요":headlines[now.status]??"판단을 확인해야 해요"}
-    lede={!view||!now?"관측한 부하로 지금 구성과 다른 구성을 비교해요.":now.first?`구성 관측 ${observed(view.state.snapshot.at)?localTime(view.state.snapshot.at):"대기 중"} · 첫 판단 전이에요`:`${localTime(now.decision.at)} · ${algorithmLabel(now.decision.settings.algorithm)}로 판단 · 자동 적용 ${view.settings.controls.enabled?"켜짐":"꺼짐"}`}
+    lede={!view||!now?"관측한 부하로 지금 구성과 다른 구성을 비교해요.":now.first?`구성 관측 ${observed(view.state.snapshot.at)?localTime(view.state.snapshot.at):"대기 중"} · 첫 판단 전이에요`:`${localTime(now.decision.at)} · ${algorithmLabel(now.decision.settings.algorithm)} 방식으로 판단 · 자동 적용 ${view.settings.controls.enabled?"켜짐":"꺼짐"}`}
     action={<Button asChild><Link href="/scheduler/candidates">후보 비교하기</Link></Button>}>
     <QueryGate query={query}>{view&&now&&<>
       {!now.first&&<EnergyCompare view={view}/>}
