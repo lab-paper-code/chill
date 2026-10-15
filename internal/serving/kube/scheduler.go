@@ -601,7 +601,8 @@ func (c *SchedulerController) captureNodePower(ctx context.Context, s *serving.S
 		}
 	}
 	if sn.PowerMode == "" {
-		actual, e := c.operations.Capture(ctx, sn.Node)
+		actual := OperationState{Node: sn.Node}
+		e := c.operations.captureFixedPower(ctx, &actual, n, acts.Items)
 		if e != nil || actual.PowerMode == "" {
 			s.Reasons = append(s.Reasons, n.Name+": current power state unavailable")
 		} else {

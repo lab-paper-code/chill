@@ -133,6 +133,8 @@ Node `ObservedAt`는 실제 `Nodes.List` 요청 직전의 local 시각(보수적
 Observer가 native probe 응답에서 기록한 local receipt 시각은 그대로 보존한다.
 어느 source도 historical cutoff나 최종 `at`로 재표시하지 않으며, live HTTP 자체가 느리면
 그 시간은 source age에 남아 기존 freshness gate에서 Pending이 된다.
+고정 전력모드 fallback은 이미 읽은 Node·NodeActuation과 기존 fixed-mode resolver를 재사용한다.
+모드 문자열 하나를 얻기 위해 노드마다 전체 operation snapshot·Pod 목록을 다시 읽지 않는다.
 
 SLO 위반은 모델의 `deadlinePolicy`(drop/keep/defer, 기본 keep)에 따른다. drop은
 expired queued 요청을 active 실행 중에도 제거하고 idle 시 infeasible head를 408로
