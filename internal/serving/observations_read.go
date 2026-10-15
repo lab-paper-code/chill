@@ -78,8 +78,9 @@ func (s *observationSnapshot) scan(stream string, visit func(observationRecord))
 // the next page; event times need not fall in their append window's wall times.
 // Visitor bytes are borrowed for that call; retained results must own their data.
 func (s *observationSnapshot) scanRaw(stream string, visit func(string, []byte) (bool, error)) error {
+	var buffer []byte
 	for _, prefix := range s.streams[stream] {
-		stop, err := s.scanPrefix(prefix, visit)
+		stop, err := s.scanPrefix(prefix, &buffer, visit)
 		if err != nil {
 			s.journal.mu.Lock()
 			s.journal.lastError = err
@@ -93,7 +94,7 @@ func (s *observationSnapshot) scanRaw(stream string, visit func(string, []byte) 
 	return nil
 }
 
-func (s *observationSnapshot) scanPrefix(prefix observationStreamPrefix, visit func(string, []byte) (bool, error)) (stop bool, result error) {
+func (s *observationSnapshot) scanPrefix(prefix observationStreamPrefix, buffer *[]byte, visit func(string, []byte) (bool, error)) (stop bool, result error) {
 	file, err := os.Open(prefix.path)
 	if err != nil {
 		return false, err
@@ -101,10 +102,13 @@ func (s *observationSnapshot) scanPrefix(prefix observationStreamPrefix, visit f
 	defer func() { result = errors.Join(result, file.Close()) }()
 	bounded := &io.LimitedReader{R: file, N: prefix.bytes}
 	scanner := bufio.NewScanner(bounded)
-	// Reuse the largest line buffer instead of cloning every ReadBytes fragment.
+	// Keep the largest borrowed backing buffer across all files in this scan.
 	// Retain the existing addressable record-size limit and raw newline framing.
-	scanner.Buffer(make([]byte, 4096), int(^uint(0)>>1))
+	scanner.Buffer(*buffer, int(^uint(0)>>1))
 	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		if cap(data) > cap(*buffer) {
+			*buffer = data[:0]
+		}
 		if end := bytes.IndexByte(data, '\n'); end >= 0 {
 			return end + 1, data[:end+1], nil
 		}

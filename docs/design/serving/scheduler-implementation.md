@@ -440,8 +440,9 @@ window 시각은 append 시각이지 사건 시각의 범위가 아니므로 bac
 숫자·문자열·구분자도 표준 JSON 구문 검사로 거절한다. power·coverage의 작은 실제
 측정 block과 선택된 history 원문은 계속 표준 decoder로 읽어 float·정수·duration·
 시각 의미를 보존한다. 큰 decision·profile payload와 원본 기록은 변경하지 않는다.
-각 stream prefix의 JSONL line은 Scanner buffer를 재사용하고 newline 경계를 유지한다.
-같은 크기의 후속 record마다 fragment와 전체 line을 새로 할당·복사하지 않는다.
+각 stream 조회는 window가 바뀌어도 성장한 Scanner buffer 하나를 재사용하고 newline
+경계를 유지한다. 같은 크기의 후속 record마다 fragment·전체 line·window별 큰 buffer를
+새로 할당·복사하지 않는다.
 
 전력 collector의 짧은 기록 구간별 적분 verdict는 원시 기록에 그대로 보존하되,
 조회 구간의 coverage 판정으로 재사용하지 않는다. 조회 경계 밖의 실제 표본은 기록된

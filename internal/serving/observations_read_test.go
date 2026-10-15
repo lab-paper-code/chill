@@ -257,3 +257,72 @@ func TestObservationReadDoesNotAcceptUnterminatedFinalRecord(t *testing.T) {
 		t.Fatalf("unterminated JSON was accepted or its incomplete health lost: count=%d error=%v health=%+v", count, err, j.Health())
 	}
 }
+
+func TestObservationReadReusesGrownBufferAcrossWindows(t *testing.T) {
+	j, err := NewJournal(JournalConfig{
+		Directory: t.TempDir(), Store: "evidence", Window: time.Hour,
+		Writer: &observationArchive{directory: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = j.Close(context.Background()) })
+	payload := json.RawMessage(`{"retained":"` + strings.Repeat("x", 512<<10) + `"}`)
+	const windows = 5
+	headerPrefixes := make([]observationStreamPrefix, 0, windows)
+	for index := range windows {
+		if index > 0 {
+			j.mu.Lock()
+			err = j.finish()
+			if err == nil {
+				err = j.start(time.Now().UTC())
+			}
+			j.mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		header, snapshotErr := j.snapshot("scheduler")
+		if snapshotErr != nil {
+			t.Fatal(snapshotErr)
+		}
+		prefixes := header.streams["scheduler"]
+		headerPrefixes = append(headerPrefixes, prefixes[len(prefixes)-1])
+		if err = j.SchedulerRecord(SchedulerObservation{
+			At: time.Now().UTC(), Action: &SchedulerActionObservation{ID: "large-source", Expected: payload},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := j.snapshot("scheduler")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocations := func(prefixes []observationStreamPrefix, expected int) float64 {
+		t.Helper()
+		view := *snapshot
+		view.streams = map[string][]observationStreamPrefix{"scheduler": prefixes}
+		count := 0
+		var scanErr error
+		allocated := testing.AllocsPerRun(1, func() {
+			count = 0
+			scanErr = view.scanRaw("scheduler", func(_ string, raw []byte) (bool, error) {
+				count++
+				if len(raw) <= 512<<10 {
+					t.Fatal("large window record was truncated")
+				}
+				return false, nil
+			})
+		})
+		if scanErr != nil || count != expected {
+			t.Fatalf("cross-window scan changed: count=%d expected=%d error=%v", count, expected, scanErr)
+		}
+		return allocated
+	}
+	prefixes := snapshot.streams["scheduler"]
+	singleGrowth := allocations(prefixes[:1], 1) - allocations(headerPrefixes[:1], 0)
+	multipleGrowth := allocations(prefixes, windows) - allocations(headerPrefixes, 0)
+	if multipleGrowth > singleGrowth {
+		t.Fatalf("large buffer growth repeated per window: one=%g many=%g", singleGrowth, multipleGrowth)
+	}
+}
