@@ -29,6 +29,7 @@ import (
 )
 
 const invalidEvidenceCode = "InvalidEvidence"
+const measurementPhaseFailed = "Failed"
 
 // Catalog is a refresh-only storage boundary. Its returned view is retained by
 // the coordinator; inference never reads campaigns or downloads evidence.
@@ -171,7 +172,15 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 		return serving.Profile{}, nil, fmt.Errorf("get campaign %s: %w", source, err)
 	}
 	if campaign.DeletionTimestamp != nil || campaign.Status.Phase != "Complete" || campaign.Status.ObservedGeneration != campaign.Generation {
-		return serving.Profile{}, nil, errors.New("selected campaign has no current completed result")
+		code := "MeasurementPending"
+		if campaign.DeletionTimestamp != nil || campaign.Status.Phase == measurementPhaseFailed {
+			code = "MeasurementRejected"
+		}
+		reason := fmt.Sprintf("measurement phase %q, outcome %q, observed generation %d/%d", campaign.Status.Phase, campaign.Status.Outcome, campaign.Status.ObservedGeneration, campaign.Generation)
+		for _, condition := range campaign.Status.Conditions {
+			reason += "; " + condition.Reason + ": " + condition.Message
+		}
+		return serving.Profile{}, []CatalogIssue{{Source: source, Code: code, Reason: reason}}, nil
 	}
 	if campaign.Status.Result == nil {
 		return serving.Profile{}, nil, errors.New("completed campaign has no terminal result reference")

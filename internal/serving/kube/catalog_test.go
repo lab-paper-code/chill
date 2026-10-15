@@ -152,6 +152,41 @@ func TestCatalogBoundsAndStrictlyDecodesTerminalObjects(t *testing.T) {
 	}
 }
 
+func TestCatalogReportsActualIncompleteAndFailedMeasurementWithoutEvidenceReads(t *testing.T) {
+	for _, phase := range []string{"Measuring", measurementPhaseFailed} {
+		t.Run(phase, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			campaign := &edgev1alpha1.BatchEnergyOptimization{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "campaign", Generation: 1},
+				Status: edgev1alpha1.BatchEnergyOptimizationStatus{
+					Phase: phase, ObservedGeneration: 1,
+					Conditions: []metav1.Condition{{Type: "Ready", Reason: "ActualReason", Message: "actual failure detail"}},
+				},
+			}
+			objects := &catalogTestObjects{}
+			catalog, err := NewCatalog(&Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(campaign).Build()}, objects, 1024, 0.95)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view, err := catalog.Refresh(context.Background(), []types.NamespacedName{{Namespace: campaign.Namespace, Name: campaign.Name}})
+			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || objects.opens != 0 {
+				t.Fatalf("terminal gate: %+v %v", view, err)
+			}
+			want := "MeasurementPending"
+			if phase == measurementPhaseFailed {
+				want = "MeasurementRejected"
+			}
+			issue := view.Insufficiencies[0]
+			if issue.Code != want || !strings.Contains(issue.Reason, "ActualReason: actual failure detail") {
+				t.Fatalf("lost actual measurement state: %+v", issue)
+			}
+		})
+	}
+}
+
 func TestCatalogBindsEvidenceToRecordedRun(t *testing.T) {
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "active", UID: "run-uid"},

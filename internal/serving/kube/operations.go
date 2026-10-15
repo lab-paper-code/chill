@@ -360,6 +360,9 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		{Name: "artifact", Image: p.Condition.Artifact.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$1" "$2"`, "artifact-copy", p.Condition.Artifact.Path, path.Join("/chill-artifact", "model"+path.Ext(p.Condition.Artifact.Path))}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
 		{Name: "profile", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Resources: initResources, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
 	}, Containers: []core.Container{{Name: "firstfloor", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-worker"}, Args: []string{"--config=/config/config.json", "--bind-address=:8080", "--node-name=" + node.Name}, Ports: []core.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: core.ResourceRequirements{Requests: requests, Limits: limits}, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "profile", MountPath: "/profile", ReadOnly: true}, {Name: "config", MountPath: "/config", ReadOnly: true}}, ReadinessProbe: &core.Probe{ProbeHandler: core.ProbeHandler{HTTPGet: &core.HTTPGetAction{Path: "/v2/health/ready", Port: port8080()}}, PeriodSeconds: 1}}}, Volumes: []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}}}}
+	if spec.Instance.Allocation.GPUUUID != "" {
+		pod.Spec.Containers[0].Env = []core.EnvVar{{Name: "CUDA_VISIBLE_DEVICES", Value: spec.Instance.Allocation.GPUUUID}}
+	}
 	if err = o.store.client.Create(ctx, pod); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
 	}
@@ -834,7 +837,12 @@ func nodeClassMatches(node *core.Node, class *edge.DeviceClass) bool {
 	return true
 }
 func samePreparedContainer(actual, desired core.Container) bool {
-	return actual.Name == desired.Name && actual.Image == desired.Image && slices.Equal(actual.Command, desired.Command) && slices.Equal(actual.Args, desired.Args) && maps.EqualFunc(actual.Resources.Requests, desired.Resources.Requests, resource.Quantity.Equal) && maps.EqualFunc(actual.Resources.Limits, desired.Resources.Limits, resource.Quantity.Equal) && reflect.DeepEqual(actual.VolumeMounts, desired.VolumeMounts)
+	return actual.Name == desired.Name && actual.Image == desired.Image &&
+		slices.Equal(actual.Command, desired.Command) && slices.Equal(actual.Args, desired.Args) &&
+		reflect.DeepEqual(actual.Env, desired.Env) &&
+		maps.EqualFunc(actual.Resources.Requests, desired.Resources.Requests, resource.Quantity.Equal) &&
+		maps.EqualFunc(actual.Resources.Limits, desired.Resources.Limits, resource.Quantity.Equal) &&
+		reflect.DeepEqual(actual.VolumeMounts, desired.VolumeMounts)
 }
 func (o *Operations) validateOperationBinding(ctx context.Context, operation Operation) error {
 	if operation.Kind == operationRoute {

@@ -29,6 +29,8 @@ type HandlerConfig struct {
 	Scheduler                                                  *servingkube.SchedulerController
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
+	ProfileSelections                                          func(context.Context) (ProfileSelectionsView, error)
+	SelectProfile                                              func(context.Context, ProfileSelectionRequest, servingkube.Principal) (ProfileSelectionResult, error)
 	OperatingPower                                             func(time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
 }
 type Handler struct {
@@ -83,6 +85,8 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("GET /api/v1/scheduler/state", h.scheduler)
 	h.mux.HandleFunc("PUT /api/v1/scheduler/settings", h.scheduler)
 	h.mux.HandleFunc("PUT /api/v1/scheduler", h.scheduler)
+	h.mux.HandleFunc("GET /api/v1/scheduler/profiles", h.schedulerProfiles)
+	h.mux.HandleFunc("POST /api/v1/scheduler/profiles", h.schedulerProfiles)
 	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/scheduler", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/power", h.operatingPower)
@@ -93,9 +97,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 	controller := http.NewResponseController(w)
-	if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		sendError(w, err)
-		return
+	// A read deadline on an empty body cancels net/http's background read and
+	// races the operation deadline, misclassifying our timeout as caller cancellation.
+	if r.Body != nil && r.Body != http.NoBody {
+		if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			sendError(w, err)
+			return
+		}
 	}
 	// Keep a separate bounded delivery phase after the operation times out.
 	writeDeadline := deadline.Add(h.config.RequestTimeout)
@@ -127,6 +135,10 @@ func (h *Handler) decode(w http.ResponseWriter, r *http.Request, value any) erro
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return &serving.Error{Code: "InvalidBody", Message: "one JSON object is required", Field: "body"}
+	}
+	// Once the body is consumed, only the operation context bounds processing.
+	if err := http.NewResponseController(w).SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
 	}
 	return nil
 }

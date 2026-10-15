@@ -1,6 +1,7 @@
 {{- if .Values.servingEntrypoint.enabled }}
 {{- $name := include "chill.servingEntrypointName" . -}}
 {{- $servingNamespace := default .Release.Namespace .Values.servingEntrypoint.namespace -}}
+{{- $profileNamespaces := default (list $servingNamespace) .Values.servingEntrypoint.profileNamespaces -}}
 {{- $actuationNamespace := default .Release.Namespace .Values.servingEntrypoint.actuationNamespace -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -139,15 +140,8 @@ subjects:
   - kind: ServiceAccount
     name: {{ $name }}
     namespace: {{ .Release.Namespace }}
-{{- $campaigns := dict }}
-{{- range .Values.servingEntrypoint.profileCampaigns }}
-{{- $parts := splitList "/" . }}
-{{- $namespace := index $parts 0 }}
-{{- $names := default (list) (get $campaigns $namespace) }}
-{{- $_ := set $campaigns $namespace (append $names (index $parts 1)) }}
-{{- end }}
 {{- $profileRole := printf "%s-profiles" $name }}
-{{- range $namespace := keys $campaigns | sortAlpha }}
+{{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -158,14 +152,7 @@ metadata:
     {{- include "chill.labels" $ | nindent 4 }}
 rules:
   - apiGroups: [edge.dacs.io]
-    resources: [batchenergyoptimizations]
-    resourceNames:
-      {{- range get $campaigns $namespace | uniq | sortAlpha }}
-      - {{ . | quote }}
-      {{- end }}
-    verbs: [get]
-  - apiGroups: [edge.dacs.io]
-    resources: [profilingruns]
+    resources: [batchenergyoptimizations, profilingruns]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -195,11 +182,11 @@ metadata:
 rules:
   - nonResourceURLs: ["/chill/api/v1/models", "/chill/api/v1/models/*", "/chill/api/v1/workloads", "/chill/api/v1/workloads/*"]
     verbs: [get, post, put, delete]
-  - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/*"]
+  - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power"]
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory", "/chill/api/v1/namespaces/*"]
     verbs: [get]
-  - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state"]
+  - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/profiles"]
     verbs: [get]
   - nonResourceURLs:
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/preflight" .Release.Namespace | quote }}
@@ -214,6 +201,10 @@ metadata:
 rules:
   - nonResourceURLs: ["/chill/api/v1/scheduler/settings"]
     verbs: [put]
+{{- if .Values.servingEntrypoint.scheduler.configMap }}
+  - nonResourceURLs: ["/chill/api/v1/scheduler/profiles"]
+    verbs: [post]
+{{- end }}
 {{- if .Values.servingEntrypoint.scheduler.configMap }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

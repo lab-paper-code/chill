@@ -20,6 +20,24 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+func TestPreparedPodRequiresMeasuredGPUEnvironment(t *testing.T) {
+	desired := &core.Pod{Spec: core.PodSpec{Containers: []core.Container{{
+		Name: "firstfloor", Env: []core.EnvVar{{Name: "CUDA_VISIBLE_DEVICES", Value: "GPU-measured"}},
+	}}}}
+	if !samePreparedPod(desired.DeepCopy(), desired) {
+		t.Fatal("matching measured GPU environment was rejected")
+	}
+	for _, env := range [][]core.EnvVar{
+		nil, {{Name: "CUDA_VISIBLE_DEVICES", Value: "GPU-other"}},
+	} {
+		actual := desired.DeepCopy()
+		actual.Spec.Containers[0].Env = env
+		if samePreparedPod(actual, desired) {
+			t.Fatal("preparation reused without the measured GPU environment")
+		}
+	}
+}
+
 func TestIndependentMembershipMutationsDoNotShareOneNodeLock(t *testing.T) {
 	observer := newTestObserver(t)
 	nodes := map[string]*core.Node{"a": {ObjectMeta: meta.ObjectMeta{Name: "a", UID: "a-uid", Labels: map[string]string{ServingPoolLabel: "old"}}}, "b": {ObjectMeta: meta.ObjectMeta{Name: "b", UID: "b-uid", Labels: map[string]string{ServingPoolLabel: "old"}}}}

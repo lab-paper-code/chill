@@ -1,4 +1,5 @@
 {
+  "profileCampaigns": [],
   "settings": {
     "observationWindowNanos": 60000000000,
     "controlIntervalNanos": 10000000000,

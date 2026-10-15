@@ -49,11 +49,6 @@
 {{- if empty .Values.servingEntrypoint.observationStorage.size -}}
 {{- fail "servingEntrypoint.observationStorage.size must not be empty when servingEntrypoint.enabled=true" -}}
 {{- end -}}
-{{- range $selection := .Values.servingEntrypoint.profileCampaigns -}}
-{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $selection) -}}
-{{- fail "servingEntrypoint.profileCampaigns entries must be namespace/name" -}}
-{{- end -}}
-{{- end -}}
 {{- end -}}
 {{- if .Values.dashboard.enabled -}}
 {{- if or (lt (int .Values.dashboard.replicaCount) 1) (empty .Values.dashboard.image.repository) -}}

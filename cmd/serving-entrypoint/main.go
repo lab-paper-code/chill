@@ -27,7 +27,7 @@ func main() {
 		log.Info("starting the Workload owner",
 			"bindAddress", opts.bindAddress,
 			"servingNamespace", opts.servingNamespace,
-			"profileCampaigns", opts.campaigns,
+			"profileNamespaces", opts.profileNamespaces,
 			"schedulerConfigMap", opts.schedulerConfigMap)
 	}
 	if err := run(ctrl.SetupSignalHandler(), opts); err != nil {

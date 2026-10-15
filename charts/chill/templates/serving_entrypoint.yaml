@@ -2,6 +2,7 @@
 {{- $name := include "chill.servingEntrypointName" . -}}
 {{- $labels := include "chill.labels" . -}}
 {{- $servingNamespace := default .Release.Namespace .Values.servingEntrypoint.namespace -}}
+{{- $profileNamespaces := default (list $servingNamespace) .Values.servingEntrypoint.profileNamespaces -}}
 {{- $actuationNamespace := default .Release.Namespace .Values.servingEntrypoint.actuationNamespace -}}
 {{- $storeName := default (printf "%s-evidence-store" (include "chill.systemName" .)) .Values.evidenceStore.connection.name -}}
 {{- $storeEndpoint := default (printf "http://%s-evidence-store.%s.svc.cluster.local:9000" (include "chill.systemName" .) .Release.Namespace) .Values.evidenceStore.connection.endpoint -}}
@@ -89,6 +90,7 @@ spec:
             - {{ printf "--store-endpoint=%s" $storeEndpoint | quote }}
             - {{ printf "--store-bucket=%s" .Values.evidenceStore.connection.bucket | quote }}
             - {{ printf "--store-region=%s" .Values.evidenceStore.connection.region | quote }}
+            - {{ printf "--store-credentials-secret=%s" $credentialsSecret | quote }}
             - {{ printf "--queue-limit=%s" (.Values.servingEntrypoint.queueLimit | toJson) | quote }}
             - {{ printf "--request-timeout=%s" .Values.servingEntrypoint.requestTimeout | quote }}
             - {{ printf "--drain-timeout=%s" .Values.servingEntrypoint.drainTimeout | quote }}
@@ -105,8 +107,8 @@ spec:
             - {{ printf "--observation-outcome=%s" . | quote }}
             {{- end }}
             - {{ printf "--max-query-events=%s" (.Values.servingEntrypoint.maxQueryEvents | toJson) | quote }}
-            {{- range .Values.servingEntrypoint.profileCampaigns }}
-            - {{ printf "--profile-campaign=%s" . | quote }}
+            {{- range $profileNamespaces }}
+            - {{ printf "--profile-namespace=%s" . | quote }}
             {{- end }}
             {{- with .Values.servingEntrypoint.kubeAPI.apiServer }}
             - {{ printf "--kube-api-server=%s" . | quote }}

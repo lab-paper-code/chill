@@ -179,21 +179,23 @@ make helm-install
 make helm-uninstall
 ```
 
-Enable the owner only with an existing TLS Secret and persistent observation
-storage; the chart does not create native serving capacity:
+Enable the owner only with an existing TLS Secret, persistent observation storage,
+and an existing scheduler ConfigMap for profile adoption; the chart does not create native serving capacity:
 
 ```sh
 helm upgrade --install chill charts/chill \
   --namespace chill-system --create-namespace \
   --set servingEntrypoint.enabled=true \
   --set servingEntrypoint.tls.secretName=chill-serving-tls \
-  --set 'servingEntrypoint.profileCampaigns[0]=chill-system/native-cpu-campaign'
+  --set servingEntrypoint.scheduler.configMap=serving-scheduler
 ```
 
-The selected campaign must be completed and provide the complete frozen native
-batch domain `1..maxBatchSize`; an empty selection admits no profiles.
-The owner is fixed to one replica with `Recreate`, exposes HTTPS on port `8080`,
-and keeps a private RWO journal plus immutable Evidence Store windows.
+The scheduler ConfigMap's `profileCampaigns` array is the only profile selection
+authority; adopt completed measurements through the owner API rather than Helm
+values. `servingEntrypoint.profileNamespaces` grants read-only access to
+measurements in those namespaces; an empty list defaults to the serving
+namespace. The owner is fixed to one replica with `Recreate`, exposes HTTPS on
+port `8080`, and keeps a private RWO journal plus immutable Evidence Store windows.
 
 `make helm-uninstall` separates responsibilities: it first deletes the root
 `ChillSystem` and waits for CHILL finalizers through the Kubernetes API, then

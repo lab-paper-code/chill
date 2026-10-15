@@ -343,8 +343,8 @@ servingEntrypoint:
     # Read grants for actual retained PowerModeTransitionCost objects and their
     # immutable preparation ConfigMaps; entries are {namespace: ..., name: ...}.
     powerCostSources: []
-  # Explicit namespace/name selections; empty means no profiles are admitted.
-  profileCampaigns: []
+  # Namespaces allowed for read-only measurement lookups; empty uses the serving namespace.
+  profileNamespaces: []
   tls:
     # Required only when enabled; existing kubernetes.io/tls Secret in release namespace.
     secretName: ""

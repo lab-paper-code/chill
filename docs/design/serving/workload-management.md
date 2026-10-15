@@ -551,18 +551,21 @@ owner 설정은 [options.go](../../../cmd/serving-entrypoint/options.go)와
 helm upgrade --install chill charts/chill --namespace chill-system --create-namespace \
   --set servingEntrypoint.enabled=true \
   --set servingEntrypoint.tls.secretName=chill-serving-tls \
-  --set 'servingEntrypoint.profileCampaigns[0]=chill-system/native-cpu-campaign'
+  --set servingEntrypoint.scheduler.configMap=serving-scheduler
 ```
 
-TLS Secret은 release namespace에 미리 존재해야 한다. CA 검증을 끄지 않고 certificate의
-SAN과 맞는 HTTPS 주소를 사용한다. native serving Pod와 qualifying campaign은 별도로 준비한다.
-owner chart는 capacity나 campaign을 자동 생성하지 않는다.
+TLS Secret은 release namespace에 미리 존재해야 한다. Serving namespace에도 scheduler ConfigMap을
+먼저 만들어야 한다. CA 검증을 끄지 않고 certificate의
+SAN과 맞는 HTTPS 주소를 사용한다. 프로파일 선택은 외부 scheduler ConfigMap의
+`profileCampaigns` 배열(`{namespace,name}` 항목)이 소유하며, Helm 값은 선택하지 않는다.
+`profileNamespaces`는 측정 작업 조회를 허용할 namespace의 read-only 범위이고, 빈 목록은
+serving namespace를 사용한다. owner chart는 capacity나 측정 작업을 자동 생성하지 않는다.
 
 | Helm 값 | 실제 flag 또는 배포 계약 |
 |---|---|
 | `enabled`, `tls.secretName`, `port:8080` | HTTPS owner 활성화, `/etc/chill/tls/tls.crt`와 `tls.key`, `--bind-address` |
 | `namespace`, `actuationNamespace` | `--serving-namespace`, `--actuation-namespace`; 빈 값은 release namespace |
-| `profileCampaigns:[]` | 반복 `--profile-campaign=namespace/name`; 빈 목록은 근거 없음 |
+| `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 목록은 serving namespace로 해석하며 BEO/ProfilingRun `get`만 부여 |
 | `profileConfidenceLevel:0.95` | `--profile-confidence-level`; measured idle baseline confidence |
 | `queueLimit:1024`, `requestTimeout:30s`, `drainTimeout:2m` | 각각 `--queue-limit`, `--request-timeout`, `--drain-timeout`; SLO timeout 아님 |
 | `sourceInterval:1s`, `profileInterval:1m`, `observationWindow:1m` | 현재 상태, profile refresh와 immutable window 주기 |
@@ -580,7 +583,8 @@ owner chart는 capacity나 campaign을 자동 생성하지 않는다.
 
 배포는 `replicas:1`, `strategy:Recreate`, 전용 SA와 ClusterIP HTTPS Service다.
 S3 연결은 기존 `evidenceStore.connection`과 credentials Secret을 사용하며
-binary는 `--store-name/endpoint/bucket/region`, `--observation-directory`, `--tls-cert/key`를 받는다.
+binary는 `--store-name`, `--store-endpoint`, `--store-bucket`, `--store-region`,
+`--store-credentials-secret`, `--observation-directory`, `--tls-cert/key`를 받는다.
 RWO PVC를 강제 해제하거나 Pod를 강제 삭제하여 owner/drain 전제를 우회하지 않는다.
 
 owner의 read-only root filesystem은 유지하며 `/tmp`에는 128Mi bounded

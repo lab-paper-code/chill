@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -17,12 +16,13 @@ type options struct {
 	bindAddress, servingNamespace, actuationNamespace, tlsCert, tlsKey, observationDirectory string
 	storeName, storeEndpoint, storeBucket, storeRegion                                       string
 	consoleURL, dashboardURL                                                                 string
+	storeCredentialsSecret                                                                   string
 	kube                                                                                     kubeconfig.Options
 	queueLimit, maxQueryEvents                                                               int
 	maxRequestBytes, maxEvidenceBytes                                                        int64
 	profileConfidenceLevel                                                                   float64
 	requestTimeout, drainTimeout, sourceInterval, profileInterval, observationWindow         time.Duration
-	campaigns                                                                                []types.NamespacedName
+	profileNamespaces                                                                        []string
 	definitions, outcomes                                                                    []string
 	materializeProfile                                                                       bool
 	profileObjectKey, profileOutput                                                          string
@@ -45,6 +45,8 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.StringVar(&o.storeEndpoint, "store-endpoint", "", "S3-compatible Evidence Store endpoint.")
 	f.StringVar(&o.storeBucket, "store-bucket", "", "Evidence Store bucket.")
 	f.StringVar(&o.storeRegion, "store-region", "", "Evidence Store region.")
+	f.StringVar(&o.storeCredentialsSecret, "store-credentials-secret", "",
+		"Evidence Store credentials Secret used by generated serving preparations.")
 	f.BoolVar(&o.materializeProfile, "materialize-profile", false,
 		"Materialize one bounded immutable profile and exit without Kubernetes or TLS.")
 	f.StringVar(&o.profileObjectKey, "profile-object-key", "", "Immutable profile object key.")
@@ -67,14 +69,14 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.DurationVar(&o.profileInterval, "profile-interval", time.Minute, "Selected profiling evidence refresh interval.")
 	f.DurationVar(&o.observationWindow, "observation-window", time.Minute, "Raw observation publication window.")
 	f.Float64Var(&o.profileConfidenceLevel, "profile-confidence-level", 0.95, "Measured idle-baseline confidence.")
-	f.Func("profile-campaign", "Selected namespace/name terminal campaign; repeatable.", func(value string) error {
-		namespace, name, ok := strings.Cut(value, "/")
-		if !ok || len(validation.IsDNS1123Label(namespace)) != 0 || len(validation.IsDNS1123Subdomain(name)) != 0 {
-			return fmt.Errorf("invalid campaign %q: expected namespace/name", value)
-		}
-		o.campaigns = append(o.campaigns, types.NamespacedName{Namespace: namespace, Name: name})
-		return nil
-	})
+	f.Func("profile-namespace", "Allowed measurement namespace; repeatable; empty uses serving namespace.",
+		func(value string) error {
+			if len(validation.IsDNS1123Label(value)) != 0 {
+				return fmt.Errorf("invalid profile namespace %q", value)
+			}
+			o.profileNamespaces = append(o.profileNamespaces, value)
+			return nil
+		})
 	f.Func("observation-definition", "Default aggregate definition filter; repeatable; empty selects all.",
 		func(value string) error {
 			o.definitions = append(o.definitions, value)
@@ -104,6 +106,14 @@ func (o options) validate() error {
 	}
 	if o.actuationNamespace != "" && len(validation.IsDNS1123Label(o.actuationNamespace)) != 0 {
 		return errors.New("invalid actuation namespace")
+	}
+	for _, namespace := range o.profileNamespaces {
+		if len(validation.IsDNS1123Label(namespace)) != 0 {
+			return errors.New("invalid profile namespace")
+		}
+	}
+	if o.storeCredentialsSecret != "" && len(validation.IsDNS1123Subdomain(o.storeCredentialsSecret)) != 0 {
+		return errors.New("invalid Evidence Store credentials Secret name")
 	}
 	for _, path := range []string{o.tlsCert, o.tlsKey, o.observationDirectory} {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {

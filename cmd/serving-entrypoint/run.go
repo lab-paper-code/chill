@@ -14,7 +14,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -80,20 +79,18 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, observer.Close()) }()
-	catalog, err := servingkube.NewCatalog(store, objects, opts.maxEvidenceBytes, opts.profileConfidenceLevel)
-	if err != nil {
-		return err
-	}
 	manager, err := servingkube.NewManager(store, execution, journal, observer,
 		servingkube.ManagerConfig{DrainTimeout: opts.drainTimeout})
 	if err != nil {
 		return err
 	}
-	initializeCtx, cancelInitialize := context.WithTimeout(ctx, opts.requestTimeout)
-	err = refreshProfiles(initializeCtx, catalog, observer, opts.campaigns)
-	if err == nil {
-		err = observer.Refresh(initializeCtx)
+	scheduler, err := newSchedulerOwner(ctx, store, kube, execution, observer, objects, journal, opts)
+	if err != nil {
+		return fmt.Errorf("initialize scheduler owner: %w", err)
 	}
+	defer scheduler.Close()
+	initializeCtx, cancelInitialize := context.WithTimeout(ctx, opts.requestTimeout)
+	err = observer.Refresh(initializeCtx)
 	if err == nil {
 		err = manager.Initialize(initializeCtx)
 	}
@@ -101,11 +98,6 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("initialize Workload owner: %w", err)
 	}
-	scheduler, err := newSchedulerOwner(ctx, store, kube, execution, observer, objects, journal, opts)
-	if err != nil {
-		return fmt.Errorf("initialize scheduler owner: %w", err)
-	}
-	defer scheduler.Close()
 	handlerConfig := entrypoint.HandlerConfig{
 		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout,
 		MaxQueryEvents: opts.maxQueryEvents, ObservationWindow: opts.observationWindow,
@@ -117,6 +109,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 		handlerConfig.SchedulerNamespace = opts.servingNamespace
 		handlerConfig.SchedulerLock = &scheduler.lock
 		handlerConfig.OperatingPower = scheduler.operatingPower
+		handlerConfig.ProfileSelections = scheduler.profileSelections
+		handlerConfig.SelectProfile = scheduler.selectProfile
 	}
 	authorizer := &servingkube.Authorizer{Client: kube}
 	handler, err := entrypoint.NewHandler(manager, execution, authorizer, journal, observer, handlerConfig)
@@ -127,11 +121,11 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	return serve(ctx, opts, owner, execution, observer, catalog, manager, journal, scheduler)
+	return serve(ctx, opts, owner, execution, observer, manager, journal, scheduler)
 }
 
 func serve(ctx context.Context, opts options, owner http.Handler, execution *serving.Runtime,
-	observer *servingkube.Observer, catalog *servingkube.Catalog, manager *servingkube.Manager,
+	observer *servingkube.Observer, manager *servingkube.Manager,
 	journal *serving.Journal, scheduler *schedulerOwner,
 ) error {
 	server := &http.Server{
@@ -167,8 +161,10 @@ loop:
 			cancel()
 		case <-profileTicker.C:
 			callCtx, cancel := context.WithTimeout(ctx, opts.requestTimeout)
-			if err := refreshProfiles(callCtx, catalog, observer, opts.campaigns); err != nil {
-				ctrl.Log.Error(err, "refresh selected profiling evidence")
+			if scheduler != nil {
+				if err := scheduler.refresh(callCtx); err != nil {
+					ctrl.Log.Error(err, "refresh selected profiling evidence")
+				}
 			}
 			cancel()
 		case <-archiveTicker.C:
@@ -198,19 +194,4 @@ func shutdown(ctx context.Context, server *http.Server, execution *serving.Runti
 		shutdownError = errors.Join(shutdownError, server.Close())
 	}
 	return errors.Join(shutdownError, <-drainErrors)
-}
-
-func refreshProfiles(ctx context.Context, catalog *servingkube.Catalog,
-	observer *servingkube.Observer, campaigns []types.NamespacedName,
-) error {
-	view, err := catalog.Refresh(ctx, campaigns)
-	if err != nil {
-		return err
-	}
-	observer.SetProfiles(view.Profiles)
-	for _, issue := range view.Insufficiencies {
-		ctrl.Log.Info("selected profile is insufficient",
-			"campaign", issue.Source.String(), "code", issue.Code, "reason", issue.Reason)
-	}
-	return nil
 }

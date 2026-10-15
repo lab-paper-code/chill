@@ -18,11 +18,11 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
-	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/entrypoint"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +36,7 @@ type powerObservationConfig struct {
 }
 
 type schedulerConfiguration struct {
+	ProfileCampaigns []entrypoint.ProfileCampaign           `json:"profileCampaigns"`
 	Settings         serving.SchedulerSettings              `json:"settings"`
 	CPUInventory     map[string][]int                       `json:"cpuInventory"`
 	GPUInventory     map[string][]string                    `json:"gpuInventory"`
@@ -60,7 +61,9 @@ type schedulerOwner struct {
 	objects                   *stores3.Store
 	journal                   *serving.Journal
 	opts                      options
+	catalog                   *servingkube.Catalog
 	resourceVersion, profiles string
+	profileLoadError          string
 	staticAppliedRV           string
 	configuration             atomic.Pointer[schedulerConfiguration]
 	ctx                       context.Context
@@ -89,6 +92,11 @@ func newSchedulerOwner(ctx context.Context, store *servingkube.Store, kube kuber
 	owner := &schedulerOwner{
 		operations: operations, store: store, kube: kube, execution: execution, observer: observer,
 		objects: objects, journal: journal, opts: opts, ctx: ownerCtx, cancel: cancel,
+	}
+	owner.catalog, err = servingkube.NewCatalog(store, objects, opts.maxEvidenceBytes, opts.profileConfidenceLevel)
+	if err != nil {
+		cancel()
+		return nil, err
 	}
 	initializeCtx, cancelInitialize := context.WithTimeout(ctx, opts.requestTimeout)
 	defer cancelInitialize()
@@ -256,14 +264,28 @@ func (o *schedulerOwner) loadCompletionCalibrations(
 	return calibrations, failures
 }
 
-func (o *schedulerOwner) refresh(ctx context.Context) error {
+func (o *schedulerOwner) refresh(ctx context.Context) (err error) {
 	o.lock.Lock()
 	defer o.lock.Unlock()
 	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.servingNamespace).Get(ctx, o.opts.schedulerConfigMap, meta.GetOptions{})
+	defer func() {
+		o.profileLoadError = ""
+		if err != nil {
+			o.profileLoadError = err.Error()
+		}
+	}()
 	if err != nil {
 		return err
 	}
-	profiles := o.observer.Profiles()
+	config, err := decodeSchedulerConfiguration(cm.Data[o.opts.schedulerConfigKey], o.opts.maxRequestBytes)
+	if err != nil {
+		return err
+	}
+	view, err := o.readSelectedProfiles(ctx, config.ProfileCampaigns)
+	if err != nil {
+		return err
+	}
+	profiles := view.Profiles
 	ids := make([]string, len(profiles))
 	for i, p := range profiles {
 		ids[i] = p.ID
@@ -273,10 +295,6 @@ func (o *schedulerOwner) refresh(ctx context.Context) error {
 	if o.controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.profiles {
 		o.applyStaticRouting(ctx)
 		return nil
-	}
-	config, err := decodeSchedulerConfiguration(cm.Data[o.opts.schedulerConfigKey], o.opts.maxRequestBytes)
-	if err != nil {
-		return err
 	}
 	costs, baselines, err := servingkube.LoadOperationMeasurements(ctx, o.objects,
 		config.CostReferences, o.opts.maxEvidenceBytes)
@@ -305,17 +323,7 @@ func (o *schedulerOwner) refresh(ctx context.Context) error {
 		if err = preparation.Store.Validate(); err != nil {
 			return err
 		}
-		bundle := native.ProfileBundle{ProfileID: profile.ID, Batches: make([]native.BatchProfile, len(profile.Batches))}
-		for i, batch := range profile.Batches {
-			samples := make([]float64, len(batch.DurationNanos))
-			for j, value := range batch.DurationNanos {
-				samples[j] = value / float64(time.Millisecond)
-			}
-			slices.Sort(samples)
-			bundle.Batches[i] = native.BatchProfile{
-				Size: batch.Batch, ServiceSamplesMS: samples, EnergyPerItemJ: batch.EnergyPerInputJoules,
-			}
-		}
+		bundle := measuredProfileBundle(profile)
 		raw, err := json.Marshal(bundle)
 		if err != nil {
 			return err
@@ -355,6 +363,7 @@ func (o *schedulerOwner) refresh(ctx context.Context) error {
 		return err
 	}
 	// Publish the complete configuration only after the controller accepted it.
+	o.observer.SetProfiles(profiles)
 	o.configuration.Store(&config)
 	o.resourceVersion = cm.ResourceVersion
 	o.profiles = signature
