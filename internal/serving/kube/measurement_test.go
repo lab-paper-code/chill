@@ -3,7 +3,6 @@ package kube
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -90,13 +89,5 @@ func TestIsolationFailureCannotPersistAcceptedScientificCost(t *testing.T) {
 	}
 	if stored.Verdict != "Insufficient" || stored.WallJoules != nil || stored.MeanWatts != nil || stored.Isolation == nil || stored.Isolation.Error == "" || len(stored.Isolation.Workloads) != 1 {
 		t.Fatal("failed final isolation remained accepted", stored)
-	}
-}
-
-func TestMeasurementRejectsManualPodExclusions(t *testing.T) {
-	request := MeasurementRequest{Operation: Operation{ExcludedPodNamespaces: []string{"baseline-fleet"}}}
-	err := validateMeasurementRequest(request, nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "exclusions") {
-		t.Fatalf("manual admission exclusions changed measurement isolation: %v", err)
 	}
 }

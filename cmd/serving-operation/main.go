@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -42,14 +41,12 @@ import (
 )
 
 const (
-	operationPrepare          = "prepare"
-	operationRemove           = "remove"
-	operationMembership       = "membership"
-	operationComplete         = "complete"
-	operationFailed           = "failed"
-	manualStaticRouting       = "manual-static-routing"
-	excludedBaselineNamespace = "baseline-fleet"
-	excludedFastDDSNamespace  = "fastdds-test"
+	operationPrepare    = "prepare"
+	operationRemove     = "remove"
+	operationMembership = "membership"
+	operationComplete   = "complete"
+	operationFailed     = "failed"
+	manualStaticRouting = "manual-static-routing"
 )
 
 type commandManifest struct {
@@ -570,64 +567,29 @@ func validateExecutionNode(
 	if err != nil {
 		return err
 	}
-	admission, err := executionAdmissionPods(m.Operation, pods)
-	if err != nil {
-		return err
-	}
 	if m.Operation.Kind == operationRemove {
 		return validateExecutionRemoval(pods.Items, m, spec)
 	}
 	if m.Operation.Kind == operationPrepare {
 		for _, nodeInventory := range inventory {
 			if nodeInventory.Node == spec.Instance.Node && nodeInventory.Pool == spec.Instance.Pool {
-				return servingkube.ValidatePreparationCapacity(node, admission, nodeInventory, spec.Instance)
+				return servingkube.ValidatePreparationCapacity(node, pods, nodeInventory, spec.Instance)
 			}
 		}
 		return errors.New("preparation Node inventory is absent from the acknowledged fresh owner snapshot")
 	}
-	for _, pod := range admission.Items {
+	for _, pod := range pods.Items {
 		if pod.Spec.NodeName != node.Name {
 			continue
 		}
 		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 			continue
 		}
-		controller := metav1.GetControllerOf(&pod)
-		daemon := controller != nil && controller.APIVersion == "apps/v1" && controller.Kind == "DaemonSet"
-		if !daemon || pod.Labels["app.kubernetes.io/component"] == "serving-instance" {
-			return fmt.Errorf("membership has a non-excluded active Pod: %s/%s", pod.Namespace, pod.Name)
+		if pod.Labels["app.kubernetes.io/component"] == "serving-instance" {
+			return fmt.Errorf("membership target has an active serving Pod: %s/%s", pod.Namespace, pod.Name)
 		}
 	}
 	return nil
-}
-
-// Operator namespace exclusions apply only on the operation's verified Node.
-// They affect only this admission view, never observers, drain or power facts.
-func executionAdmissionPods(operation servingkube.Operation, actual *corev1.PodList) (*corev1.PodList, error) {
-	if len(operation.ExcludedPodNamespaces) == 0 {
-		return actual, nil
-	}
-	switch operation.Node.Name {
-	case "genesis2", "jetsonx", "jetson-nano", "orin-nano", "lattepanda", "rasp5", "orangepi":
-	default:
-		return nil, errors.New("Pod exclusions are outside the operator-approved seven-Node scope")
-	}
-	for _, namespace := range operation.ExcludedPodNamespaces {
-		if namespace != excludedBaselineNamespace && namespace != excludedFastDDSNamespace {
-			return nil, errors.New("Pod exclusions must name only the two operator-approved namespaces")
-		}
-	}
-	admission := &corev1.PodList{Items: make([]corev1.Pod, 0, len(actual.Items))}
-	for _, pod := range actual.Items {
-		if pod.Spec.NodeName != operation.Node.Name || !slices.Contains(operation.ExcludedPodNamespaces, pod.Namespace) {
-			admission.Items = append(admission.Items, pod)
-			continue
-		}
-		if pod.Labels["app.kubernetes.io/component"] == "serving-instance" {
-			return nil, errors.New("an actual serving instance cannot be excluded from admission")
-		}
-	}
-	return admission, nil
 }
 
 func validateExecutionRemoval(pods []corev1.Pod, m executionManifest, spec servingkube.PrepareSpec) error {
@@ -780,7 +742,7 @@ func (m executionManifest) validate() error {
 		op.Prepare != nil || op.Target != nil || op.Actuation != nil || op.StaticRouting != nil || op.SourceConfigRV != "" ||
 		(op.Kind == operationRemove) != (op.Instance != "") || (op.Kind != operationMembership && op.Pool != "") {
 		return errors.New("bounded execute manifest requires exact scope and only configured " +
-			"prepare, exact remove or membership with no non-excluded active workload")
+			"prepare, exact remove or serving-pool membership")
 	}
 	return nil
 }

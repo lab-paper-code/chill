@@ -137,7 +137,7 @@ func TestExecuteRequiresOwnerAcknowledgementAndFullResponseDrain(t *testing.T) {
 	}
 }
 
-func TestExecuteNodeRejectsForeignPodsAndFencesExactSource(t *testing.T) {
+func TestExecuteNodeProtectsServingMembershipAndExactSource(t *testing.T) {
 	const daemonCase = "daemon"
 	const exactRemoveCase = "exact remove"
 	const servingDaemonCase = "serving daemon"
@@ -199,7 +199,8 @@ func TestExecuteNodeRejectsForeignPodsAndFencesExactSource(t *testing.T) {
 				}
 			}
 			err := validateExecutionNode(context.Background(), kube, m, spec, nil)
-			allowed := name == "empty join" || name == "empty rollback" || name == daemonCase || name == exactRemoveCase
+			allowed := name == "empty join" || name == "empty rollback" || name == "foreign namespace" ||
+				name == daemonCase || name == exactRemoveCase
 			if (err == nil) != allowed {
 				t.Fatalf("unexpected physical safety verdict: %v", err)
 			}
@@ -330,18 +331,16 @@ func TestExecuteBundleUsesCatalogDeclarationAndValidatesNativePolicy(t *testing.
 	}
 }
 
-func TestExecutePrepareBudgetAndOperatorNamespaceExclusions(t *testing.T) {
-	const excludedPrepare = "approved exclusions prepare"
-	const excludedMembership = "approved exclusions membership"
-	const recreatedApproved = "recreated approved workload"
+func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
+	const foreignMembership = "membership with foreign Pods"
+	const servingMembership = "membership with serving Pod"
 	for _, name := range []string{
-		"fits", "stale aggregate", "stale readiness", "membership busy", "missing inventory", "missing reservation",
-		"overlap", "CPU overbudget", "memory overbudget", "foreign GPU", "serving Pod", "Node unready",
-		excludedPrepare, excludedMembership, recreatedApproved, "unapproved namespace",
-		"excluded serving", "actual memory pressure", "excluded Node outside scope",
+		"fits", "stale aggregate", "stale readiness", foreignMembership, servingMembership,
+		"missing inventory", "missing reservation", "overlap", "CPU overbudget", "memory overbudget",
+		"foreign GPU", "serving Pod", "Node unready", "actual memory pressure",
 	} {
 		t.Run(name, func(t *testing.T) {
-			ref := serving.NodeReference{Name: "lattepanda", UID: "node-uid"}
+			ref := serving.NodeReference{Name: "worker", UID: "node-uid"}
 			node := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{Name: ref.Name, UID: "node-uid",
 					Labels: map[string]string{servingkube.ServingPoolLabel: "live"}},
@@ -389,8 +388,11 @@ func TestExecutePrepareBudgetAndOperatorNamespaceExclusions(t *testing.T) {
 				inventory[0].NonServing = []serving.SchedulerAllocation{{CPUCount: 100, MemoryBytes: 1 << 40}}
 			case "stale readiness":
 				inventory[0].Ready = false
-			case "membership busy":
+			case foreignMembership:
 				m.Operation.Kind = operationMembership
+			case servingMembership:
+				m.Operation.Kind = operationMembership
+				foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 			case "missing inventory":
 				inventory = nil
 			case "missing reservation":
@@ -407,41 +409,15 @@ func TestExecutePrepareBudgetAndOperatorNamespaceExclusions(t *testing.T) {
 				foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 			case "Node unready":
 				node.Status.Conditions[0].Status = corev1.ConditionFalse
-			case excludedPrepare, excludedMembership, recreatedApproved, "unapproved namespace",
-				"excluded serving", "actual memory pressure", "excluded Node outside scope":
-				foreign.Namespace, foreign.UID = excludedBaselineNamespace, "baseline-uid"
-				other.Namespace, other.UID = excludedFastDDSNamespace, "fastdds-uid"
-				m.Operation.ExcludedPodNamespaces = []string{excludedBaselineNamespace, excludedFastDDSNamespace}
-				// Recompute the old owner verdict using retained fresh Pods only.
-				foreign.Spec.Containers[0].Resources.Requests["nvidia.com/gpu"] = resource.MustParse("1")
-				inventory[0].Ready = false
-				switch name {
-				case excludedMembership:
-					m.Operation.Kind = operationMembership
-				case recreatedApproved:
-					foreign.Name, foreign.UID = "recreated", "recreated-uid"
-				case "unapproved namespace":
-					foreign.Namespace = "another"
-					m.Operation.ExcludedPodNamespaces = append(m.Operation.ExcludedPodNamespaces, foreign.Namespace)
-				case "excluded serving":
-					foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
-				case "actual memory pressure":
-					node.Status.Conditions = append(node.Status.Conditions, corev1.NodeCondition{
-						Type: corev1.NodeMemoryPressure, Status: corev1.ConditionTrue,
-					})
-				case "excluded Node outside scope":
-					m.Operation.Node.Name = "genesis1"
-					node.Name = m.Operation.Node.Name
-					spec.Instance.Node = m.Operation.Node
-					inventory[0].Node = m.Operation.Node
-					foreign.Spec.NodeName, other.Spec.NodeName = node.Name, node.Name
-					system.Spec.NodeName = node.Name
-				}
+			case "actual memory pressure":
+				node.Status.Conditions = append(node.Status.Conditions, corev1.NodeCondition{
+					Type: corev1.NodeMemoryPressure, Status: corev1.ConditionTrue,
+				})
 			}
 			kube := fake.NewSimpleClientset(node, foreign, other, system)
 			err := validateExecutionNode(context.Background(), kube, m, spec, inventory)
 			allowed := name == "fits" || name == "stale aggregate" || name == "stale readiness" ||
-				name == excludedPrepare || name == excludedMembership || name == recreatedApproved
+				name == foreignMembership
 			if (err == nil) != allowed {
 				t.Fatalf("unexpected fresh preparation/membership admission: %v", err)
 			}

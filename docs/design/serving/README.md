@@ -356,13 +356,8 @@ podUID/containerID instance 또는 membership의 pool), `profileID`, `namespace`
 `journalDirectory`, 별도 HTTPS 신뢰·caller 인증의 `ownerURL`/`ownerCAFile`/
 `ownerTokenFile`, `schedulerConfigMap`/`schedulerConfigKey`/`sourceConfigRV`,
 `expectedPool`, 명시 history 시작 시각 `routingHistoryFrom`이다. store는 별도 입력 없이
-owner-loaded preparation의 binding에서 가져온다. 선택 `operation.excludedPodNamespaces`는
-`["baseline-fleet","fastdds-test"]`의 승인 namespace 중 operation별 제외할 목록이다.
-사용자가 승인한 7개 Node에서만 현재 해당 class Pod를 admission/interference blocker에서
-제외하며 기본 namespace ignore는 없다. Node UID는 계속 실제 검증하고 재생성된 Pod도 같은
-class 정책을 따른다. 다른 namespace/Node와 실제 serving-instance 제외는 거절한다.
-policy는 결과 operation에 보존하며 `before.pods`/`actual.pods`, observer와 raw power/latency는
-현재 외부 Pod의 실제 identity와 소비를 계속 포함한다.
+owner-loaded preparation의 binding에서 가져온다. `before.pods`/`actual.pods`,
+observer와 raw power/latency는 현재 모든 외부 Pod의 실제 identity와 소비를 포함한다.
 Kubernetes credential은 Kubernetes 작업에만 사용하며 owner로 자동 전달하지 않는다.
 owner는 명시한 CA 파일과 caller token을 모두 요구하며 ambient trust로 대체하지 않는다.
 verified HTTPS origin 하나만 허용하고 redirect를 따르지 않는다.
@@ -388,14 +383,13 @@ ack은 일시적인 `state.results`가 아니라 기존 `/api/v1/observations/sc
 그 뒤 새 owner snapshot을 읽는다. 보관 기간을 늘리거나 시작 이후 전체 history를 조회하지 않는다.
 `/pools`의 waiting/running/assignedUnknown 0이나 native queue empty만으로 이를
 대체하지 않는다. prepare/membership target은 owner instance가 없어야 한다.
-prepare는 fresh Node/비제외 active Pod 요청·init/sidecar/overhead를 기존 capture 경로로
+prepare는 fresh Node/모든 active Pod 요청·init/sidecar/overhead를 기존 capture 경로로
 다시 합산하고 owner의 inventory/reserved와 공통 `ValidateNodeBudget`으로 admission한다.
-기존 serving Pod, 비제외 미확인 GPU 소유권, CPU overlap/예약 부족, memory 초과와
-실제 Node MemoryPressure는 거절한다. 오래된 owner aggregate의 Ready는 재사용하지 않는다.
-이는 설정 reservation/operator exclusion 기반 admission이지 실제 CPU 격리·외부 Pod의
-성능 불변·SLO·에너지 절감 보장이 아니다. membership도 비제외 active non-DaemonSet
-Pod가 없어야 하고 실제 serving-instance DaemonSet은 거절한다. 제외 Pod는 그대로 두며
-physical absence로 보고하지 않는다. `--measurement-config`에서는 이 exclusion을 허용하지 않는다.
+기존 serving Pod, 미확인 GPU 소유권, CPU overlap/예약 부족, memory 초과와 실제 Node
+MemoryPressure는 거절한다. 오래된 owner aggregate의 Ready는 재사용하지 않는다.
+이는 설정 reservation 기반 admission이지 실제 CPU 격리·외부 Pod의 성능 불변·SLO·에너지
+절감 보장이 아니다. membership은 CHILL serving/accepted-work 소유권과 drain을 확인하는
+serving-pool label 변경이며, 다른 외부 Pod의 존재 자체를 금지하거나 그 Pod를 변경하지 않는다.
 membership은 detached와 해당 configured preparation POOL 사이의 실제 변경만 허용하고
 기존 sole writer `MoveNodePool`의 UID/resourceVersion patch/readback을 사용한다.
 원복도 새 현재 revision·expectedPool witness로 같은 경계를 호출한다. CLI는 완전한

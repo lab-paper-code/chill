@@ -74,9 +74,6 @@ type Operation struct {
 	Target         *serving.SchedulerCandidate `json:"target,omitempty"`
 	SourceConfigRV string                      `json:"sourceConfigRV,omitempty"`
 	StaticRouting  map[string]map[string]int   `json:"staticRouting,omitempty"`
-	// ExcludedPodNamespaces is explicit manual admission policy, never physical
-	// absence. Capture retains these Pods in the uncensored before/actual census.
-	ExcludedPodNamespaces []string `json:"excludedPodNamespaces,omitempty"`
 }
 type OperationState struct {
 	At        time.Time                   `json:"at"`
