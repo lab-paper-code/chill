@@ -53,18 +53,21 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** owner 측정 운영 네 흐름의 API/CLI·실클러스터 검증을 마쳤다.
-추가 프로파일 전수 측정 없이 아래 제어 실행에서 최소 폐루프에 필요한 동작부터 검증한다.
-Dashboard 수정·배포는 별도 Main 세션에 검증된 연결 계약·시나리오로 인계하며 이 작업의 완료로 세지 않는다.
+**현재 우선:** Rpi CPU2를 유지한 Latte CPU1 replica 추가·UID별 분배·원복·제거와
+빈 serving target의 membership 왕복을 실제 완료했다. 이 CPU 부분집합으로 **판단 알고리즘
+설계·구현 GO**다. 자동 활성화·FULL 통과가 아니며, 실행 전 실제 입력 freshness·부하 중
+SLO feasibility·fresh observed energy gate는 별도로 충족해야 한다.
+Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 완료로 세지 않는다.
 
-1. **제어 실행 검증:** 기존 API로 실제 제어의 시작 조건·완료·실패·시간/에너지
-   비용·진행 피드백을 확인한다. 수동 실행과 자동 선택의 실적은 구분한다.
-2. **판단 알고리즘:** 검증된 노드·동작으로 최소 폐루프 구성이 가능하면 착수한다.
-   외부 조율 중인 power/GPU 완료를 기다리지 않으며 미검증 동작은 선택 대상에서 제외한다.
+1. **판단 알고리즘 — 현재 GO:** 검증된 Latte/Rpi CPU 노드·동작으로 설계·구현한다.
+   전 노드나 외부 조율 중인 power/GPU 완료를 기다리지 않으며 미검증 동작은 후보에서 제외한다.
    조사 문헌과 현재 구현을 대조해 워크로드/SLO·부하/큐·evidence·가용 자원·실제 전환 상태
-   입력에서 유지/목표 구성·제어 동작·실행 시점을 정하는 판정식과 계속/취소/재선택 규칙을
-   확정·구현한다. WFA의 준비 지연·SLO·방향별/상태별 비용 가정 차이를 명시하며
-   채택·이론적 보장을 선결하지 않는다. 고정 H는 비교 기준이다.
+   입력에서 유지/목표 구성·제어 동작·실행 시점과 계속/취소/재선택 규칙을 확정한다.
+   pairwise virtual transition 비용·service energy 비중첩 등 WFA interface의 차이는 다음
+   선택에서 해소한다. WFA 채택·이론적 보장을 선결하지 않으며 고정 H는 비교 기준이다.
+2. **자동 실행 gate:** 실제 입력 freshness ≤5초, 부하 중 SLO feasibility와 fresh observed
+   energy를 확인한다. 무부하 KeepFeasible이나 일부 노드의 전력 누락을 통과로 대체하지 않는다.
+   알고리즘 작업은 진행하되 이 gate 전까지 자동 제어는 OFF다.
 3. **폐루프 검증:** 짧은 부하·지속 부하·반복 변동에서 판단 → 실제 실행 → 피드백과
    SLO·전환 포함 전체 POOL 에너지를 확인한다. 평가기·배처 검증은 판단 정책 설계를 대신하지 않는다.
 4. **FULL·Dashboard:** 남은 개별 제어를 검증·통합하고 완료 기준의 실제 시나리오를 수행한다.
@@ -104,15 +107,23 @@ Dashboard 수정·배포는 별도 Main 세션에 검증된 연결 계약·시�
 - placement는 실제 요청 30건과 Latte → Rpi 이동·이전 Pod 제거·Dashboard 연결을 확인했다.
 - resources 제어 실행은 기존 API·원자 동작의 remove → prepare로 Rpi CPU1 → CPU2를 실제 적용했고,
   같은 모델·SLO로 복원한 두 Workload의 요청 4건이 완료됐다. 자동 선택·무중단 resize 성공은 아니다.
-- `d8a1d30`의 합법적 전환 DAG는 실제 후보 조회로 확인했다. 최신 부하에서 변경은 요청 수명 제약으로
-  탈락했고 유지가 선택됐다. 자동 제어는 모두 OFF이며 현재 Rpi CPU2 하나가 서빙한다.
+- replicas/routing/sharing/membership 수동 검증을 완료했다. 원래 Rpi CPU2와 두 Workload UID·모델·SLO를
+  유지한 채 Latte replica로 relaxed만 분배했고, 전체 경로 원복·정확한 replica 제거·membership
+  detach/join 후 두 UID가 같은 원래 Rpi CPU2 instance를 공유하며 요청 4건을 완료했다.
+  세부 근거는 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 있다.
+- firstfloor의 실제 in-flight SLO/원래 receivedAt/lifetime 문맥과 현재 적용 calibration policy를
+  확인했다. batch2 실행·자동 선택·SLO 개선·에너지 절감은 입증하지 않았다. 자동 제어는 모두 OFF다.
+- 다음은 검증된 CPU 부분집합의 알고리즘 설계·구현이다. 현재 KeepFeasible은 최근 60초 도착 0건이며,
+  whole power는 Jetsonx source timeout으로 incomplete다. 실제 입력·부하·에너지의 자동 실행 gate는 남아 있다.
 - genesis2 GPU 배치 1/2의 기존 9회 결과를 새 `profiles adopt`로 채택했고 기존 4개와 모두 로드됐다.
   미허용 GPU 거절·설정 무변경, 명시적 허용 후 채택, 반복 채택 무변경과 측정 dry-run 미생성을 확인했다.
   실제 GPU 인스턴스 준비·자동 선택·SLO/에너지 개선의 증거는 아니다.
-- 짧은 과거 이력 조회는 개선됐지만 기본 1시간 Dashboard 조회는 504가 남아 있다.
-  owner lock 제거(`524ee5e3`) 후에도 전력 조회는 15초 timeout이며 성능 해결로 세지 않는다.
+- scheduler census 배포(`63521317b5bb`) 후 같은 과거 60초 전력 조회는 28.997초→0.307초,
+  이전 기본 1시간 이력 축은 owner 직접 조회 200·0.181초·50건/nextCursor로 개선됐다.
+  전력은 실제 gap 사유·10개 노드 각 79표본·`complete=false`·전체/활성 합계 null을 유지한다.
+  BFF·브라우저 재검증은 별도 Main 완료를 기다리며, 원시 전력 품질·FULL 성공으로 세지 않는다.
 - 기존 AGX Orin 차단은 FULL 범위 밖이다. 대상 Jetson의 전력 안전 조건은 별도 확인한다.
-  나머지 개별 제어·판단 알고리즘·FULL 종단 검증은 미완료다.
+  power와 자동 판단·FULL 종단은 미완료이나 알고리즘 착수의 전 노드 대기 조건은 아니다.
 - `/pools` 오류는 수정·배포·실제 브라우저 검증을 마쳤다. 이것은 FULL Dashboard 완료가 아니다.
 
 ## 진행 기록 찾아보기

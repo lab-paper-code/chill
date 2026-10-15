@@ -502,3 +502,61 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
 - 증거 루트: `/tmp/chill-completion-cpu-cost-assembly/`.
   `owner-extension-{live-list,submit-smoke,profile-removal-smoke,delete-smoke,delete-readback,final-serving}.json`,
   `owner-delete-owned-evidence-before.json`. Dashboard 소스·배포는 별도 Main 세션에 인계한다.
+
+## 실제 사건 시각 census와 동일 축 조회 지연 — 2026-10-15
+
+- `63521317b5bb`의 window별 in-memory scheduler census를 owner 이미지 `382f3eb2…`로 배포했다.
+  실제 사건·표본·membership 시각과 counted prefix로 읽을 window만 줄이고, prefix 불일치·
+  nil-policy·baseline 동률은 보수적으로 읽는다. 별도 저장 index·판정 완화는 없다.
+- 기존 60초 축 `01:07:01.47873812Z..01:08:01.47873812Z`의 전력 조회는
+  HTTP200·28.997초에서 HTTP200·0.306722초로 줄었다. 이전 계측은 477 window·57,713 record·
+  453,098,612 bytes scan 28.941초, projection 21.316초였다. 임시 계측은 제거했다.
+- 같은 10개 노드의 각 79표본·`sourceTimestampAbsent=true`·`maximum sample gap exceeds policy`,
+  `complete=false`·전체/활성 POOL J/평균 W null·`incompleteWindows=[]`를 유지했다.
+  응답 지연 개선이지 전력 품질 복구·완전한 에너지 계측의 증거는 아니다.
+- 이전 BFF 504·10.010초의 1시간 축 `03:37:35.732Z..04:37:35.732Z`, `limit=50`은
+  owner 직접 조회에서 HTTP200·0.180565초·50건·`nextCursor=50`이었다.
+  BFF·실제 브라우저 성공은 아직 재검증하지 않았고 별도 Dashboard Main 완료를 기다린다.
+- scoped/race 및 독립 snapshot의 lint/test/arch-check·gopls-check는 부모가 통과를 확인했다.
+  기존 무관한 operatorconsole 테스트 포맷은 임시 snapshot에만 적용하고 커밋하지 않았다.
+  owner Ready와 기존 자원·서빙 구성을 유지했으며 controls OFF·FULL 미완료 경계는 같다.
+- 근거: `/tmp/chill-completion-cpu-cost-assembly/{power-census-live-after.json,history-census-live-after.json,power-phase-measured.log}`,
+  독립 gate `artifact://2480`.
+
+## 공존 replica·실제 분배·원복·membership과 알고리즘 GO — 2026-10-15
+
+- 원래 Rpi CPU2 UID `86336df7-573b-4728-9d70-6bbe9d5128c7`를 유지한 채 configured
+  Latte CPU1 replica를 준비했다. CLI 09:52:38–55Z, 원자 결과 09:52:47.575–55.422Z/complete다.
+  새 Pod UID는 `62e09e6f-df08-4509-bc1c-83600ade4094`, container는 `61572e81…`이며 두 replica가 공존했다.
+- 전체 map의 CM RV `353175227`에서 relaxed UID `0718c1f3-ca2d-4912-a446-20a603354609`만
+  Latte CPU1로 바꾸고 tight `9ec18029-00e2-4987-a323-b5af36b46e10`는 Rpi CPU2에 유지했다.
+  실제 요청 총 4건(각 profile 2건)이 HTTP200·executionComplete였고 native batch는 모두 1이었다.
+- CM RV `353176000`으로 두 UID의 전체 원래 경로를 복구했다. complete ack 이후 exact target
+  outstanding 0과 닫힌 ingress를 근거로 정확한 Latte source를 drain/remove했다.
+  CLI 10:04:35–57Z, 원자 결과 10:04:54.579–56.900Z/complete 및 native Pod 부재를 확인했다.
+- 빈 Latte serving target의 detach와 `measurement-native-a` join이 모두 complete였다.
+  공존 fastdds Pod UID `8aa8ad07…`는 그대로 Ready였고 외부 Pod를 중지·삭제·이동하지 않았다.
+  최종 두 UID가 같은 원래 Rpi CPU2 instance를 다시 공유하며 요청 4건을 HTTP200·executionComplete로 마쳤다.
+- firstfloor 실제 in-flight 문맥에서 tight UID, SLO p95/1000ms, 원래 receivedAt
+  `10:08:01.247242079Z`, senderElapsed `186.298436ms`, lifetime `5000ms`,
+  native running/batch1과 `manual-static-routing:353176000`을 관측했다.
+  실제 적용 policy는 completionOverhead `1702.92632ms`, maxBatch2/wait0/deadline keep다.
+  이전 2 trial의 명시 provenance를 가진 관측 maximum이며 이전 bootstrap0 상태나 미래 보장이 아니다.
+- namespace/7-node 예외 기능은 제거했다(`c797…`, `5310…`). 닫힌 ingress의 monotone-zero
+  소유권 경계 최종 CLI는 `e2733606`이며, owner는 계측 없는 `ffdea…` 기반 `0ecc95…` 이미지다.
+  부모 전체 gate `artifact://2659`, census race `artifact://2631` PASS다. 수동 실행 실적이며
+  batch2 실행·자동 선택·SLO 개선·에너지 절감·FULL 성공으로 세지 않는다.
+- **알고리즘 설계·구현 GO:** 검증된 Latte/Rpi CPU 부분집합으로 진행하며 전 하드웨어를 기다리지 않는다.
+  `minimum-loop-decision-gate.json`의 controls OFF/KeepFeasible·expectedJ 약 15177.35는
+  최근 60초 도착 표본 0건의 판정이지 부하 중 SLO 증거가 아니다. 현재 whole-power GET은
+  HTTP200이나 Jetsonx sourceReadTimeout으로 complete=false다. 합계를 만들거나 노드를 빼지 않는다.
+  이전 08:03의 10노드 complete=true도 passive 관측이었다. 실제 입력 freshness ≤5초·
+  loaded SLO feasibility·fresh observed energy는 자동 실행 전 남은 gate다.
+  pairwise virtual transition 비용·service energy 비중첩의 WFA interface 차이는 다음 알고리즘 선택의
+  검토 대상이며 WFA 채택을 주장하지 않는다.
+- 증거 루트 `/tmp/chill-completion-cpu-cost-assembly/`:
+  `replica-prepare-operation-specific.json`, `replicas-two-live.json`,
+  `routing-two-replicas-inference.json`, `routing-restore-original-readback.json`,
+  `replica-remove-closed-ingress.json`, `replica-removed-native-readback.json`,
+  `membership-{detach,join}-result.json`, `control-execution-final-readback.json`,
+  `firstfloor-{policy-control-readback,request-context-live}.json`, `minimum-loop-decision-gate.json`.
