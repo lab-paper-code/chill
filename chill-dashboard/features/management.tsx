@@ -35,6 +35,42 @@ const connected = (list: WorkloadView[] | undefined, kind: Referenced, name: str
   return desired === name || (!!uid && [...uids, w.operation?.targetCatalogUID, w.desired.status?.operation?.targetCatalogUID].includes(uid))
 })
 const select = "rounded border bg-background p-2"
+// 4194304 → "4 MiB"; exact byte counts stay in the editor inputs and the 원본 dialogs.
+function size(bytes: number) {
+  const units = ["B", "KiB", "MiB", "GiB"]
+  let value = bytes, unit = 0
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++ }
+  return `${Number(value.toFixed(1))} ${units[unit]}`
+}
+// Particle by the last syllable's final consonant; Latin names are read by their last letter (l, m, n end in one).
+function josa(word: string, [after, plain]: [string, string]) {
+  const c = word.charCodeAt(word.length - 1) - 0xac00
+  return word + ((c >= 0 && c < 11172 ? c % 28 !== 0 : /[lmn013678]$/i.test(word)) ? after : plain)
+}
+const nouns: Record<string, string> = { image: "이미지", question: "질문", answer: "답", label: "분류 결과" }
+type Named = { name: string; format: RawField["format"] }
+const noun = (f: Named) => f.format === "JPEG" ? "이미지" : nouns[f.name] ?? f.name
+const and = (words: string[]) => words.map((w, i) => i < words.length - 1 ? josa(w, ["과", "와"]) : w).join(" ")
+const nounList = (fields: Named[]) => and([...new Set(fields.map(noun))])
+const formatLabel = (f: Named) => f.format === "JPEG" ? "JPEG 이미지" : "글"
+// The plain conclusion of a catalog contract: what it takes and returns, or which records it holds.
+const conclusion = (spec: PreprocessorSpec | DatasetSpec) => "input" in spec
+  ? `${josa(nounList(spec.input.fields), ["을", "를"])} 받아 ${josa(nounList(spec.output.fields), ["을", "를"])} 돌려줘요`
+  : `${nounList(spec.fields)} 기록을 담고 있어요`
+// Preview of serving/kube snapshot(): a model path runs only when the preprocessor targets its existing artifact.
+function preprocessorGap(p: PreprocessorSpec, model: ModelResource | undefined) {
+  if (!model) return ""
+  const targets = p.artifacts.filter(a => a.target.model === model.metadata.name && model.spec.artifacts.some(m => m.name === a.target.artifact)).map(a => a.target.artifact)
+  if (!targets.length) return "이 모델 파일을 위한 전처리 파일이 없어요"
+  return model.spec.executionPaths.some(path => targets.includes(path.artifact)) ? "" : "이 전처리 파일로 실행할 방식이 모델에 없어요"
+}
+// Preview of modelcatalog.Compatible: every preprocessor input needs a record field with the same name and format and a bound no larger.
+function datasetGap(d: DatasetSpec, p: PreprocessorSpec | undefined) {
+  return (p?.input.fields ?? []).map(f => {
+    const record = d.fields.find(x => x.name === f.name)
+    return !record ? `${f.name} 필드가 없어요` : record.format !== f.format ? `${f.name} 형식이 달라요` : record.maxBytes > f.maxBytes ? `${f.name} 크기가 ${size(f.maxBytes)}보다 클 수 있어요` : ""
+  }).filter(Boolean).join(" · ")
+}
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="grid gap-2 text-sm">{label}{children}</label>
@@ -51,9 +87,9 @@ function Choice({ label, value, set, options }: { label: string; value: string; 
   }}><option value="">선택하세요</option>{options.map(option => <option key={option}>{option}</option>)}<option value="__custom">다른 값 직접 입력</option></select></Field>{isCustom && <Text label={`${label} 직접 입력`} value={value} set={set} />}</div>
 }
 // Pick one of the existing items instead of typing it.
-function Choices({ label, value, set, options }: { label: string; value: string; set: (value: string) => void; options: { value: string; label: ReactNode; hint?: ReactNode }[] }) {
-  return <fieldset className="rows-group"><legend className="rows-label">{label}</legend><ul className="rows">{options.map(option => <li key={option.value}><label className="row cursor-pointer">
-    <input type="radio" required name={label} value={option.value} checked={value === option.value} onChange={() => set(option.value)} />
+function Choices({ label, value, set, options }: { label: string; value: string; set: (value: string) => void; options: { value: string; label: ReactNode; hint?: ReactNode; disabled?: boolean }[] }) {
+  return <fieldset className="rows-group"><legend className="rows-label">{label}</legend><ul className="rows">{options.map(option => <li key={option.value}><label className={option.disabled ? "row cursor-not-allowed opacity-60" : "row cursor-pointer"}>
+    <input type="radio" required name={label} value={option.value} checked={value === option.value} disabled={option.disabled} onChange={() => set(option.value)} />
     <span className="row-main"><span className="row-text">{option.label}</span>{option.hint && <span className="row-hint">{option.hint}</span>}</span>
   </label></li>)}</ul></fieldset>
 }
@@ -72,14 +108,14 @@ function IntegerList({ label, value, set }: { label: string; value: number[]; se
     try { set(positiveIntegers(event.target.value)); event.target.setCustomValidity("") } catch (error) { event.target.setCustomValidity((error as Error).message) }
   }} /></Field>
 }
-function Integer({ label, value, set }: { label: string; value: number; set: (value: number) => void }) {
-  return <Field label={label}><Input aria-label={label} type="number" required min={1} max={2147483647} step={1} value={Number.isNaN(value) ? "" : value} onChange={event => set(event.target.valueAsNumber)} /></Field>
+function Integer({ label, value, set, note }: { label: string; value: number; set: (value: number) => void; note?: ReactNode }) {
+  return <Field label={label}><Input aria-label={label} type="number" required min={1} max={2147483647} step={1} value={Number.isNaN(value) ? "" : value} onChange={event => set(event.target.valueAsNumber)} />{note && <span className="text-xs text-muted-foreground">{note}</span>}</Field>
 }
 // Raw record fields: input/output of a preprocessor and the records of a dataset. Output fields carry no maxBytes.
 function RawFields<T extends { name: string; format: RawField["format"]; maxBytes?: number }>({ label, fields, set, blank }: { label: string; fields: T[]; set: (fields: T[]) => void; blank: () => T }) {
   const change = (index: number, value: Partial<T>) => set(fields.map((f, i) => i === index ? { ...f, ...value } : f))
   return <fieldset className="grid gap-4 rounded-lg border p-4"><legend>{label}</legend>{fields.map((f, i) => <div key={i} className="grid items-end gap-3 sm:grid-cols-4">
-    <Text label={`${label} ${i + 1} 이름`} value={f.name} set={name => change(i, { name } as Partial<T>)} /><Field label={`${label} ${i + 1} 형식`}><select required aria-label={`${label} ${i + 1} 형식`} className={select} value={f.format} onChange={event => change(i, { format: event.target.value } as Partial<T>)}>{fieldFormats.map(format => <option key={format}>{format}</option>)}</select></Field>{f.maxBytes !== undefined && <Integer label={`${label} ${i + 1} 최대 크기 · 바이트`} value={f.maxBytes} set={maxBytes => change(i, { maxBytes } as Partial<T>)} />}<Button type="button" variant="outline" onClick={() => set(fields.filter((_, j) => j !== i))}>이 필드 빼기</Button>
+    <Text label={`${label} ${i + 1} 이름`} value={f.name} set={name => change(i, { name } as Partial<T>)} /><Field label={`${label} ${i + 1} 형식`}><select required aria-label={`${label} ${i + 1} 형식`} className={select} value={f.format} onChange={event => change(i, { format: event.target.value } as Partial<T>)}>{fieldFormats.map(format => <option key={format}>{format}</option>)}</select></Field>{f.maxBytes !== undefined && <Integer label={`${label} ${i + 1} 최대 크기 · 바이트`} value={f.maxBytes} set={maxBytes => change(i, { maxBytes } as Partial<T>)} note={f.maxBytes >= 1 ? `= ${size(f.maxBytes)}` : undefined} />}<Button type="button" variant="outline" onClick={() => set(fields.filter((_, j) => j !== i))}>이 필드 빼기</Button>
   </div>)}<Button type="button" variant="outline" onClick={() => set([...fields, blank()])}>{label} 추가</Button></fieldset>
 }
 function DurationField({ value, set }: { value: string; set: (value: string) => void }) {
@@ -156,7 +192,7 @@ export function WorkloadState({ view }: { view: WorkloadView }) {
     <SourceJSON inline title="전체 상태와 관측 시각" value={view} /><SourceExport value={view} filename={`workload-${name}.json`} />
   </>
 }
-const fieldList = (fields: { name: string; format: string }[]) => fields.map(f => `${f.name} (${f.format})`).join(", ") || "없음"
+const fieldList = (fields: { name: string; format: string; maxBytes?: number }[]) => fields.map(f => `${f.name} (${f.format}${f.maxBytes ? ` · 최대 ${size(f.maxBytes)}` : ""})`).join(", ") || "없음"
 function brief(spec: Spec): [string, string][] {
   if ("input" in spec) return [["입력", fieldList(spec.input.fields)], ["출력", fieldList(spec.output.fields)], ["대상 모델 파일", spec.artifacts.map(a => `${a.target.model} · ${a.target.artifact}`).join(", ") || "없음"]]
   if ("source" in spec) return [["데이터 위치", `${spec.source.image} · ${spec.source.path}`], ["기록 필드", fieldList(spec.fields)]]
@@ -164,14 +200,14 @@ function brief(spec: Spec): [string, string][] {
 }
 function DefinitionSummary({ spec }: { spec: Spec }) {
   if ("input" in spec) return <Facts items={[
-    ...spec.input.fields.map((f): [string, string] => [`입력 ${f.name}`, `${f.format} · 최대 ${f.maxBytes}바이트`]),
+    ...spec.input.fields.map((f): [string, string] => [`입력 ${f.name}`, `${f.format} · 최대 ${size(f.maxBytes)}`]),
     ...spec.output.fields.map((f): [string, string] => [`출력 ${f.name}`, f.format]),
     ["최대 생성 토큰", spec.maxNewTokens ? `${spec.maxNewTokens}개` : "정하지 않음"],
     ...spec.artifacts.map((a): [string, string] => [`대상 ${a.target.model} · ${a.target.artifact}`, `${a.source.image} · ${a.source.architecture} · ${a.source.path}`]),
   ]} />
   if ("source" in spec) return <Facts items={[
     ["보관 주소", spec.source.image], ["데이터 위치", spec.source.path], ["측정용 묶음", subsets(spec.source.path)[0]], ["평가용 묶음", subsets(spec.source.path)[1]],
-    ...spec.fields.map((f): [string, string] => [`필드 ${f.name}`, `${f.format} · 최대 ${f.maxBytes}바이트`]),
+    ...spec.fields.map((f): [string, string] => [`필드 ${f.name}`, `${f.format} · 최대 ${size(f.maxBytes)}`]),
   ]} />
   return "modelRef" in spec ? <Facts items={brief(spec)} /> : <Facts items={[
     ...spec.artifacts.map((a, i): [string, string] => [`파일 ${a.name || i + 1}`, `${a.format} · ${a.source.files.join(", ")}${a.input ? ` · 입력 ${a.input.tensors.map(t => `${t.name} (${t.sampleShape.join(" × ")})`).join(", ")}` : ""}`]),
@@ -191,6 +227,42 @@ function Impact({ kind, affected }: { kind: Referenced; affected: WorkloadView[]
     {affected === undefined ? <p>관련 서비스 정보를 불러오지 못해 영향 범위를 확인할 수 없어요.</p> : affected.length ? <Rows label={`연결된 서비스 ${affected.length}개`}>{affected.map(serviceRow)}</Rows> : <p>연결된 서비스가 없어요.</p>}
     <p className="text-sm text-muted-foreground">{impactNotes[kind]}</p>
   </>
+}
+// Who still uses a registration: services, and for models the Preprocessors targeting it. An unknown uid stays "".
+type Users = { workloads: { name: string; uid: string }[]; preprocessors: { name: string; uid: string }[] }
+const usersOf = (affected: WorkloadView[] | undefined, preprocessors: PreprocessorResource[] = []): Users => ({
+  workloads: (affected ?? []).map(w => ({ name: w.desired.metadata.name, uid: w.desired.metadata.uid })),
+  preprocessors: preprocessors.map(p => ({ name: p.metadata.name, uid: p.metadata.uid })),
+})
+function who(users: Users) {
+  const groups: [Users["workloads"], string][] = [[users.workloads, "서비스"], [users.preprocessors, "전처리기"]]
+  return and(groups.filter(([list]) => list.length).map(([list, label]) => list.length === 1 ? `${list[0].name} ${label}` : `${list.length}개 ${label}`))
+}
+const unblock = (kind: Kind, users: Users) => [
+  users.workloads.length ? `서비스 설정에서 다른 ${josa(kindLabel(kind), ["을", "를"])} 고르거나 서비스를 지운 뒤 다시 시도해 주세요.` : "",
+  users.preprocessors.length ? "전처리기의 대상에서 이 모델을 뺀 뒤 다시 시도해 주세요." : "",
+].filter(Boolean).join(" ")
+function UserRows({ users }: { users: Users }) {
+  return <>
+    {users.workloads.length > 0 && <Rows label="쓰는 서비스">{users.workloads.map(w => <Row key={w.name} href={href("workloads", w.name, w.uid)} label={w.name} hint="서비스 보기" />)}</Rows>}
+    {users.workloads.length > 0 && <Rows label="서비스 설정 바꾸기">{users.workloads.map(w => <Row key={w.name} href={href("workloads", w.name, w.uid, "edit")} label={`${w.name} 설정 수정`} />)}</Rows>}
+    {users.preprocessors.length > 0 && <Rows label="대상으로 삼은 전처리기">{users.preprocessors.map(p => <Row key={p.name} href={href("preprocessors", p.name, p.uid)} label={p.name} hint="전처리기 보기" />)}</Rows>}
+  </>
+}
+// Known users block deletion without a request; the owner still answers 409 when this view is stale.
+function DeleteRow({ kind, r, users, open }: { kind: Kind; r: ResourceState; users: Users; open: () => void }) {
+  if (!users.workloads.length && !users.preprocessors.length) return <Row label="삭제" hint="되돌릴 수 없어요" onClick={() => { if (!r.blocked && !r.conflict) open() }} />
+  return <RowDialog label="삭제" hint="쓰는 곳이 있어서 지금은 지울 수 없어요" title={`${josa(who(users), ["이", "가"])} 쓰고 있어서 지울 수 없어요`} description={unblock(kind, users)}><UserRows users={users} /></RowDialog>
+}
+// 409 reference refusals from serving/kube manager.go carry Go %v name lists: "Workloads [a b] and Preprocessors [c]".
+function refusal(failure: { code?: string; message?: string } | null, workloads: WorkloadView[] | undefined): Users | undefined {
+  const code = failure?.code ?? ""
+  const expected = code === "ModelReferenced" ? 2 : ["PreprocessorReferenced", "DatasetReferenced", "ModelArtifactReferenced"].includes(code) ? 1 : 0
+  const lists = (failure?.message?.match(/\[[^\]]*\]/g) ?? []).map(list => list.slice(1, -1).split(" ").filter(Boolean))
+  if (!expected || lists.length !== expected || !lists.flat().length) return undefined
+  const [names, targeting]: string[][] = code === "ModelArtifactReferenced" ? [[], lists[0]] : [lists[0], lists[1] ?? []]
+  const uid = (name: string) => workloads?.find(w => w.desired.metadata.name === name)?.desired.metadata.uid ?? ""
+  return { workloads: names.map(name => ({ name, uid: uid(name) })), preprocessors: targeting.map(name => ({ name, uid: "" })) }
 }
 
 // One registration: owner read, If-Match version, conflict, unknown outcome and deletion tracking.
@@ -258,6 +330,16 @@ function Problem({ r, kind }: { r: ResourceState; kind: Kind }) {
   const error = r.mutation.error
   if (!error) return null
   const failure = error.data as { code?: string; field?: string; message?: string } | null
+  const users = error.status === 409 ? refusal(failure, r.workloads.data) : undefined
+  if (users) {
+    const artifacts = failure?.code === "ModelArtifactReferenced"
+    return <div role="alert" className="notice">
+      <p className="font-medium">{artifacts ? `${josa(who(users), ["이", "가"])} 대상으로 삼은 모델 파일은 뺄 수 없어요` : `${josa(who(users), ["이", "가"])} 이 ${josa(kindLabel(kind), ["을", "를"])} 쓰고 있어서 지울 수 없어요`}</p>
+      <p>{artifacts ? "작성한 내용은 그대로 있어요. 그 파일을 남겨 두거나, 전처리기의 대상에서 먼저 빼 주세요." : unblock(kind, users)}</p>
+      <UserRows users={users} />
+      <SourceJSON title="거절 이유 자세히" value={{ status: error.status, error: failure, body: error.body }} />
+    </div>
+  }
   return <div role="alert" className="notice">
     <p className="font-medium">{error.unknownOutcome ? "저장 결과를 확인하지 못했어요" : "변경을 저장하지 못했어요"}</p>
     <p>작성한 내용은 그대로 있어요. {failure?.field?.includes("slo") ? "응답 목표를 확인해 주세요." : failure?.field?.includes("preprocessorRef") ? "선택한 전처리기를 확인해 주세요." : failure?.field?.includes("datasetRef") ? "선택한 데이터셋이 있고 전처리기 입력 필드를 담는지 확인해 주세요." : failure?.field?.includes("target") ? "대상 모델과 모델 파일을 확인해 주세요." : failure?.field?.includes("model") ? "선택한 모델을 확인해 주세요." : failure?.field?.includes("source") ? "보관 주소와 위치를 확인해 주세요." : failure?.field?.includes("artifact") ? "모델 파일과 입력 정보를 확인해 주세요." : failure?.field?.includes("execution") ? "실행 방식을 확인해 주세요." : /input|output|fields/.test(failure?.field ?? "") ? "입력과 출력 필드를 확인해 주세요. 연결된 서비스의 전처리기와 데이터셋 필드가 맞아야 해요." : "자세한 이유를 확인하고 다시 시도해 주세요."} 결과가 불확실하면 현재 상태를 먼저 확인해 주세요. 자동으로 다시 보내지 않아요.</p>
@@ -266,11 +348,9 @@ function Problem({ r, kind }: { r: ResourceState; kind: Kind }) {
 }
 function DeleteConfirm({ kind, name, r, close }: { kind: Kind; name: string; r: ResourceState; close: () => void }) {
   if (!r.source) return null
-  return <Confirm title={`${name} 등록을 삭제할까요?`} busy={r.mutation.isPending} disabled={r.blocked || r.conflict} cancel={close} accept={() => { close(); void r.submit("DELETE") }}>
-    <p>삭제한 등록은 되돌릴 수 없어요. 진행 중인 요청을 마무리한 뒤 삭제해요. 삭제하면 이 등록으로 새 요청을 받을 수 없고, 같은 이름으로 다시 등록해도 이전 요청 기록과는 별개예요.</p>
-    <DefinitionSummary spec={r.source.spec} />
+  return <Confirm title={`${name} ${josa(kindLabel(kind), ["을", "를"])} 지울까요?`} busy={r.mutation.isPending} disabled={r.blocked || r.conflict} cancel={close} accept={() => { close(); void r.submit("DELETE") }}>
+    <p>{kind === "workloads" ? "진행 중인 요청을 마무리한 뒤 지워요. 지우면 새 요청을 받을 수 없고, 같은 이름으로 다시 등록해도 이전 요청 기록과는 별개예요." : `${name} 등록을 지워요.`} 되돌릴 수 없어요.</p>
     {kind !== "workloads" && <Impact kind={kind} affected={r.affected} />}
-    <SourceJSON inline title="삭제 대상 원본" value={r.source} />
   </Confirm>
 }
 function Deleted({ kind, name, uid, r }: { kind: Kind; name: string; uid: string; r: ResourceState }) {
@@ -355,6 +435,7 @@ export function ModelPage({ name }: { name: string }) {
   const r = useResource("models", name)
   const model = r.detail.data && !("desired" in r.detail.data) && !r.denied ? r.detail.data as ModelResource : undefined
   const [deleting, setDeleting] = useState(false)
+  const preprocessors = useChillQuery<{ items: PreprocessorResource[] }>("v1/preprocessors")
   if (r.deletedUID) return <Deleted kind="models" name={name} uid={r.deletedUID} r={r} />
   if ((r.wrongUID || r.identityChanged) && r.current) return <Mismatch kind="models" name={name} uid={r.current.metadata.uid} />
   const uid = model?.metadata.uid ?? ""
@@ -368,7 +449,7 @@ export function ModelPage({ name }: { name: string }) {
       </Rows>
       <Rows label="관리">
         <Row href={href("models", name, uid, "edit")} label="설정 수정" hint="파일과 실행 방식 바꾸기" />
-        <Row label="삭제" hint={count ? "쓰는 서비스가 있으면 삭제할 수 없어요" : "되돌릴 수 없어요"} onClick={() => { if (!r.blocked && !r.conflict) setDeleting(true) }} />
+        <DeleteRow kind="models" r={r} users={usersOf(r.affected, preprocessors.data?.items.filter(p => p.spec.artifacts.some(a => a.target.model === name)))} open={() => setDeleting(true)} />
         <RowDialog label="원본 자료 보기" title="모델 전체 원본"><SourceJSON inline value={model} /><SourceExport value={model} filename={`model-${name}.json`} /></RowDialog>
       </Rows>
       {deleting && <DeleteConfirm kind="models" name={name} r={r} close={() => setDeleting(false)} />}
@@ -419,7 +500,7 @@ export function CatalogListPage({ kind }: { kind: "preprocessors" | "datasets" }
   const label = kindLabel(kind)
   return <Screen back={["/settings", "설정"]} title={!items ? label : items.length ? `${label} ${items.length}개가 등록돼 있어요` : kind === "datasets" ? "아직 등록한 데이터셋이 없어요" : "아직 등록한 전처리기가 없어요"} lede={kind === "datasets" ? "측정과 평가에 쓰는 입력 묶음이에요." : "원본 입력을 모델 파일의 입력으로 바꾸는 파일이에요."} action={<Button asChild><Link href={`/${kind}/new`}>{label} 추가</Link></Button>}>
     <QueryGate query={list}>{items?.length ? <>
-      <Rows>{items.map(item => <Row key={item.metadata.uid} href={href(kind, item.metadata.name, item.metadata.uid)} label={item.metadata.name} hint={brief(item.spec).slice(0, 2).map(([, value]) => value).join(" · ")} />)}</Rows>
+      <Rows>{items.map(item => <Row key={item.metadata.uid} href={href(kind, item.metadata.name, item.metadata.uid)} label={item.metadata.name} hint={conclusion(item.spec)} />)}</Rows>
       <Rows><RowDialog label="목록 원본 보기" title={`${label} 목록 원본`}><SourceJSON inline value={list.data} /></RowDialog></Rows>
     </> : <Empty title={kind === "datasets" ? "첫 데이터셋을 추가해 보세요" : "첫 전처리기를 추가해 보세요"} />}</QueryGate>
   </Screen>
@@ -433,14 +514,22 @@ export function CatalogPage({ kind, name }: { kind: "preprocessors" | "datasets"
   if ((r.wrongUID || r.identityChanged) && r.current) return <Mismatch kind={kind} name={name} uid={r.current.metadata.uid} />
   const uid = item?.metadata.uid ?? ""
   const count = r.affected?.length
-  return <Screen back={[`/${kind}`, kindLabel(kind)]} title={name} lede={kind === "datasets" ? "측정용 기록은 profiling, 평가용 기록은 evaluation 폴더에 있어요." : "대상 모델 파일마다 맞는 전처리 파일을 써요."}>
-    <QueryGate query={r.detail}>{item && <>
+  const spec = item?.spec
+  return <Screen back={[`/${kind}`, kindLabel(kind)]} title={spec ? conclusion(spec) : name} lede={`${name} · ${count === undefined ? r.workloads.error ? "쓰는 서비스를 확인하지 못했어요" : "쓰는 서비스를 확인하고 있어요" : count ? `서비스 ${count}개가 써요` : "아직 쓰는 서비스가 없어요"}`}>
+    <QueryGate query={r.detail}>{item && spec && <>
       <Problem r={r} kind={kind} />
-      <DefinitionSummary spec={item.spec} />
-      <QueryGate query={r.workloads}><Impact kind={kind} affected={r.affected} /></QueryGate>
+      <Facts items={"input" in spec ? [
+        ...spec.input.fields.map((f): [string, string] => [`받는 ${noun(f)}`, `${formatLabel(f)} · 최대 ${size(f.maxBytes)}`]),
+        ...spec.output.fields.map((f): [string, string] => [`돌려주는 ${noun(f)}`, formatLabel(f)]),
+        ...(spec.maxNewTokens ? [["최대 생성 토큰", `${spec.maxNewTokens}개`] as [string, string]] : []),
+      ] : spec.fields.map((f): [string, string] => [`${noun(f)} 기록`, `${formatLabel(f)} · 최대 ${size(f.maxBytes)}`])} />
+      {"input" in spec
+        ? <Rows label="맞춘 모델 파일">{spec.artifacts.map((a, i) => <RowDialog key={i} label={`${a.target.model} · ${a.target.artifact} · ${a.source.architecture}`} title={`${a.target.artifact} 파일용 전처리 파일`}><Facts items={[["대상 모델", a.target.model], ["대상 모델 파일", a.target.artifact], ["대상 장비", a.source.architecture], ["전처리 파일 보관 주소", a.source.image], ["보관 이미지 안의 파일 위치", a.source.path]]} /></RowDialog>)}</Rows>
+        : <Rows><RowDialog label="데이터 보관 위치" value={spec.source.path} title="데이터 보관 위치"><Facts items={[["보관 주소", spec.source.image], ["데이터 위치", spec.source.path], ["측정용 묶음", subsets(spec.source.path)[0]], ["평가용 묶음", subsets(spec.source.path)[1]]]} /></RowDialog></Rows>}
+      {!!r.affected?.length && <Rows label="쓰는 서비스">{r.affected.map(serviceRow)}</Rows>}
       <Rows label="관리">
         <Row href={href(kind, name, uid, "edit")} label="설정 수정" hint={kind === "datasets" ? "데이터 위치와 기록 필드 바꾸기" : "필드와 대상 모델 파일 바꾸기"} />
-        <Row label="삭제" hint={count ? "쓰는 서비스가 있으면 삭제할 수 없어요" : "되돌릴 수 없어요"} onClick={() => { if (!r.blocked && !r.conflict) setDeleting(true) }} />
+        <DeleteRow kind={kind} r={r} users={usersOf(r.affected)} open={() => setDeleting(true)} />
         <RowDialog label="원본 자료 보기" title={`${kindLabel(kind)} 전체 원본`}><SourceJSON inline value={item} /><SourceExport value={item} filename={`${kind.slice(0, -1)}-${name}.json`} /></RowDialog>
       </Rows>
       {deleting && <DeleteConfirm kind={kind} name={name} r={r} close={() => setDeleting(false)} />}
@@ -448,8 +537,8 @@ export function CatalogPage({ kind, name }: { kind: "preprocessors" | "datasets"
   </Screen>
 }
 
-type Step = "name" | "model" | "references" | "slo" | ModelStep | "fields" | "targets" | "dataset" | "review"
-const kindSteps = { models: ["artifacts", "inputs", "paths"], workloads: ["model", "references", "slo"], preprocessors: ["fields", "targets"], datasets: ["dataset"] } as const
+type Step = "name" | "model" | "preprocessor" | "datasetRef" | "slo" | ModelStep | "fields" | "targets" | "dataset" | "review"
+const kindSteps = { models: ["artifacts", "inputs", "paths"], workloads: ["model", "preprocessor", "datasetRef", "slo"], preprocessors: ["fields", "targets"], datasets: ["dataset"] } as const
 function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: ReturnType<typeof useChillQuery<ModelList>> }) {
   const original = r.source
   const available = models.data?.items ?? []
@@ -467,6 +556,13 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
   const [reuse, setReuse] = useState("")
   const [index, setIndex] = useState(0)
   const [validation, setValidation] = useState("")
+  const selected = available.find(m => m.metadata.name === model)
+  const savedPreprocessor = original && "preprocessorRef" in original.spec ? original.spec.preprocessorRef.name : ""
+  const chosenPreprocessor = preprocessors.data?.items.find(p => p.metadata.name === preprocessorRef)
+  const chosenDataset = datasets.data?.items.find(d => d.metadata.name === datasetRef)
+  // The saved preprocessor stays selectable: the owner accepts it, the service just has no runnable path.
+  const preprocessorProblem = chosenPreprocessor && preprocessorRef !== savedPreprocessor ? preprocessorGap(chosenPreprocessor.spec, selected) : ""
+  const datasetProblem = chosenDataset ? datasetGap(chosenDataset.spec, chosenPreprocessor?.spec) : ""
   const steps: Step[] = [...(original ? [] : ["name" as const]), ...kindSteps[kind], "review"]
   const step = steps[index]
   const busy = r.mutation.isPending
@@ -486,6 +582,8 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
       if (step === "artifacts" && (!spec.artifacts.length || spec.artifacts.some(a => !a.name.trim() || !a.format.trim() || !a.source.image.trim() || !a.source.architecture.trim() || !a.source.files.length || a.source.files.some(file => !file)))) throw new Error("파일마다 이름, 형식, 보관 주소, 대상 장비와 모델 파일 위치를 적어 주세요. 위에서 설정할 파일을 바꿀 수 있어요.")
       if (step === "inputs" && spec.artifacts.some(a => a.format === "rknn" && (!a.input?.tensors.length || a.input.tensors.some(t => !t.name.trim())))) throw new Error("RKNN 모델 파일에 입력 이름과 크기를 설정해 주세요. 위에서 설정할 파일을 바꿀 수 있어요.")
       if (step === "paths" && (!spec.executionPaths.length || spec.executionPaths.some(p => !p.name.trim() || !p.artifact || !p.runtime.family.trim() || !p.runtime.backend.trim()))) throw new Error("실행 방식마다 이름, 파일, 실행 소프트웨어와 처리 방식을 설정해 주세요.")
+      if (step === "preprocessor" && preprocessorProblem) throw new Error(`${preprocessorRef}: ${preprocessorProblem}. 다른 전처리기를 골라 주세요.`)
+      if (step === "datasetRef" && datasetProblem) throw new Error(`${datasetRef}: ${datasetProblem}. 다른 데이터셋을 고르거나 데이터셋 없이 진행해 주세요.`)
       if (steps[index + 1] === "review") draft()
       setIndex(index + 1)
     } catch (error) { setValidation((error as Error).message) }
@@ -513,24 +611,24 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
   let reviewed: Spec | undefined
   try { if (step === "review") reviewed = draft() } catch { reviewed = undefined }
   const titles: Record<Step, string> = {
-    name: `${kindLabel(kind)} 이름을 정해 주세요`, model: "어떤 모델을 쓸까요?", references: "어떤 전처리기와 데이터셋을 쓸까요?", slo: "응답 목표를 정해 주세요",
+    name: `${kindLabel(kind)} 이름을 정해 주세요`, model: "어떤 모델을 쓸까요?", preprocessor: "어떤 전처리기를 쓸까요?", datasetRef: "어떤 데이터셋으로 측정할까요?", slo: "응답 목표를 정해 주세요",
     artifacts: "모델 파일을 알려 주세요", inputs: "모델 입력을 알려 주세요", paths: "어떻게 실행할까요?",
     fields: "어떤 입력을 받아 무엇을 내보낼까요?", targets: "어느 모델 파일에 맞출까요?", dataset: "데이터 위치와 기록 필드를 알려 주세요",
     review: original ? "이렇게 바꿀까요?" : "이렇게 등록할까요?",
   }
   const ledes: Record<Step, string> = {
     name: "등록한 이름은 나중에 바꿀 수 없어요.", model: "등록된 모델 중에서 골라 주세요.",
-    references: "전처리기는 원본 입력을 모델 입력으로 바꿔요. 고른 모델의 파일을 대상으로 하는 전처리기가 있어야 그 파일로 실행해요. 데이터셋은 측정이 표본을 뽑는 기록이에요.",
+    preprocessor: "전처리기는 원본 입력을 모델 입력으로 바꿔요. 고른 모델의 파일에 맞춘 전처리기만 고를 수 있어요.",
+    datasetRef: "측정은 데이터셋에서 표본을 뽑아요. 전처리기 입력을 같은 이름과 형식으로 모두 담고, 크기가 입력 상한 이하인 데이터셋만 고를 수 있어요. 최종 확인은 저장할 때 해요.",
     slo: "예: 99.5%라면 1,000건 중 995건이 정한 시간 안에 응답하도록 목표를 정해요. 요청을 기다리는 제한 시간과는 달라요. 바꾼 목표는 새로 받는 요청부터 적용돼요.",
     artifacts: "새 파일은 담당자가 알려 준 보관 주소와 파일 위치가 필요해요. 외부 저장소의 파일 목록은 여기서 조회할 수 없어요.",
     inputs: "RKNN 모델 파일이 요구하는 입력 이름과 크기를 옮겨 적어 주세요. ONNX 파일의 입력은 전처리기가 정해요.",
     paths: "모델을 실행할 소프트웨어를 정해요. 정하는 것만으로 장비가 준비되지는 않고, 측정과 준비 확인이 필요해요.",
-    fields: "필드 이름과 형식은 요청과 데이터셋에서 그대로 써요. 최대 크기는 바이트 단위예요. 최대 생성 토큰은 글을 만드는 모델에만 정해요.",
+    fields: "필드 이름과 형식은 요청과 데이터셋에서 그대로 써요. 최대 크기는 바이트로 적어요 (1 MiB = 1048576). 최대 생성 토큰은 글을 만드는 모델에만 정해요.",
     targets: "대상 모델 파일마다 그 파일에 맞는 전처리 파일을 하나씩 정해요. 전처리기가 대상으로 삼은 모델 파일은 모델에서 뺄 수 없어요.",
     dataset: "데이터 위치 아래 profiling 폴더는 측정용, evaluation 폴더는 평가용이에요. 각 폴더는 기록 ID/필드 이름 파일로 이뤄져요.",
     review: !original ? "저장한 뒤 측정 결과와 서비스 준비 상태를 확인해 주세요." : kind === "workloads" ? "모델이나 전처리기를 바꾸면 새 요청을 잠시 멈추고 기존 요청을 마무리한 뒤 새 설정을 적용해요. 응답 목표만 바꾸면 새 요청부터, 데이터셋만 바꾸면 이후 측정부터 멈추지 않고 적용돼요." : kind === "models" || kind === "preprocessors" ? `${impactNotes[kind]} 적용 진행은 연결된 서비스에서 확인해 주세요.` : impactNotes[kind],
   }
-  const selected = available.find(m => m.metadata.name === model)
   return <Screen back={back} status={<span className="text-sm text-muted-foreground">{original ? `${original.metadata.name} 수정` : `${kindLabel(kind)} 추가`} · {index + 1} / {steps.length}</span>} title={titles[step]} lede={ledes[step]}
     action={<div className="flex gap-3">{index > 0 && <Button type="button" variant="outline" className="flex-1" disabled={busy} onClick={() => { setIndex(index - 1); setValidation("") }}>이전</Button>}<Button type="submit" form="resource-editor" className="flex-[2]" disabled={locked}>{step !== "review" ? "다음" : busy ? "저장하고 있어요" : original ? "변경 저장하기" : `${kindLabel(kind)} 등록하기`}</Button></div>}>
     <form id="resource-editor" aria-describedby={validation ? "editor-validation" : undefined} onSubmit={next}><fieldset disabled={locked} className="grid gap-5">
@@ -542,14 +640,29 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
         {available.length || model ? <Choices label="사용할 모델" value={model} set={setModel} options={[...(model && !selected ? [{ value: model, label: model, hint: "지금 목록에서 확인되지 않아요" }] : []), ...available.map(m => ({ value: m.metadata.name, label: m.metadata.name, hint: `파일 ${m.spec.artifacts.length}개 · 실행 방식 ${m.spec.executionPaths.length}개` }))]} /> : <Empty title="고를 수 있는 모델이 없어요"><Button asChild variant="outline"><Link href="/models/new">모델 추가</Link></Button></Empty>}
         {selected && <Rows><RowDialog label="선택한 모델 살펴보기" value={selected.metadata.name} title={selected.metadata.name}><DefinitionSummary spec={selected.spec} /><Impact kind="models" affected={r.workloads.error ? undefined : connected(r.workloads.data, "models", selected.metadata.name, selected.metadata.uid)} /><Link href={href("models", selected.metadata.name, selected.metadata.uid)}>모델 상세 열기</Link></RowDialog></Rows>}
       </QueryGate>}
-      {step === "references" && <QueryGate query={preprocessors}><QueryGate query={datasets}>
-        {preprocessors.data?.items.length || preprocessorRef ? <Choices label="사용할 전처리기" value={preprocessorRef} set={setPreprocessorRef} options={[
-          ...(preprocessorRef && !preprocessors.data?.items.some(p => p.metadata.name === preprocessorRef) ? [{ value: preprocessorRef, label: preprocessorRef, hint: "지금 목록에서 확인되지 않아요" }] : []),
-          ...(preprocessors.data?.items ?? []).map(p => ({ value: p.metadata.name, label: p.metadata.name, hint: `입력 ${fieldList(p.spec.input.fields)} · 이 모델의 파일 ${p.spec.artifacts.filter(a => a.target.model === model).length}개 대상` })),
+      {step === "preprocessor" && <QueryGate query={preprocessors}>
+        {preprocessors.data?.items.length || preprocessorRef ? <Choices label="사용할 전처리기" value={preprocessorRef} set={name => {
+          setPreprocessorRef(name)
+          // A new service starts with the first compatible dataset; registering without one leaves it unable to accept requests.
+          if (!original && !datasetRef) { const spec = preprocessors.data?.items.find(p => p.metadata.name === name)?.spec; const ok = datasets.data?.items.find(d => !datasetGap(d.spec, spec)); if (ok) setDatasetRef(ok.metadata.name) }
+        }} options={[
+          ...(preprocessorRef && !chosenPreprocessor ? [{ value: preprocessorRef, label: preprocessorRef, hint: "지금 목록에서 확인되지 않아요" }] : []),
+          ...(preprocessors.data?.items ?? []).map(p => {
+            const gap = preprocessorGap(p.spec, selected)
+            return { value: p.metadata.name, label: p.metadata.name, hint: gap || conclusion(p.spec), disabled: !!gap && p.metadata.name !== savedPreprocessor }
+          }),
         ]} /> : <Empty title="고를 수 있는 전처리기가 없어요"><Button asChild variant="outline"><Link href="/preprocessors/new">전처리기 추가</Link></Button></Empty>}
-        <Field label="측정에 쓸 데이터셋 · 선택"><select aria-label="측정에 쓸 데이터셋 · 선택" className={select} value={datasetRef} onChange={event => setDatasetRef(event.target.value)}><option value="">아직 정하지 않음</option>{datasetRef && !datasets.data?.items.some(d => d.metadata.name === datasetRef) && <option value={datasetRef}>{datasetRef} (목록에서 확인되지 않아요)</option>}{(datasets.data?.items ?? []).map(d => <option key={d.metadata.uid} value={d.metadata.name}>{d.metadata.name} · {fieldList(d.spec.fields)}</option>)}</select></Field>
-        <p className="text-sm text-muted-foreground">데이터셋을 정하지 않아도 등록할 수 있지만, 정할 때까지 준비 대기(데이터셋 없음)로 요청을 받지 않아요. 데이터셋 기록 필드는 전처리기 입력 필드를 같은 이름과 형식으로 모두 담고, 최대 크기가 입력 상한 이하여야 해요. 맞는지는 저장할 때 확인해요.</p>
-      </QueryGate></QueryGate>}
+      </QueryGate>}
+      {step === "datasetRef" && <QueryGate query={datasets}>
+        <Choices label="측정에 쓸 데이터셋" value={datasetRef} set={setDatasetRef} options={[
+          { value: "", label: original ? "데이터셋 정하지 않기" : "데이터셋 없이 등록", hint: "정할 때까지 측정할 수 없어서 요청을 받지 않아요 (데이터셋 없음)" },
+          ...(datasetRef && !chosenDataset ? [{ value: datasetRef, label: datasetRef, hint: "지금 목록에서 확인되지 않아요" }] : []),
+          ...(datasets.data?.items ?? []).map(d => {
+            const gap = datasetGap(d.spec, chosenPreprocessor?.spec)
+            return { value: d.metadata.name, label: d.metadata.name, hint: gap || conclusion(d.spec), disabled: !!gap }
+          }),
+        ]} />
+      </QueryGate>}
       {step === "slo" && <><Field label="목표 비율 · %"><Input aria-label="목표 비율 · %" type="number" step="any" min="0" max="100" required value={percentile} onChange={event => setPercentile(event.target.value)} /></Field><p className="text-sm text-muted-foreground">0보다 크고 100 이하여야 해요.</p><DurationField value={latency} set={setLatency} /></>}
       {step === "fields" && <><RawFields label="입력 필드" fields={pre.input.fields} set={fields => setPre({ ...pre, input: { fields } })} blank={emptyField} /><RawFields label="출력 필드" fields={pre.output.fields} set={fields => setPre({ ...pre, output: { fields } })} blank={() => ({ name: "", format: "UTF8" as const })} /><Field label="최대 생성 토큰 · 선택"><Input aria-label="최대 생성 토큰 · 선택" type="number" min={1} max={2147483647} step={1} value={pre.maxNewTokens ?? ""} onChange={event => setPre({ ...pre, maxNewTokens: Number.isNaN(event.target.valueAsNumber) ? undefined : event.target.valueAsNumber })} /></Field></>}
       {step === "targets" && <QueryGate query={models}>{pre.artifacts.map((a, i) => {

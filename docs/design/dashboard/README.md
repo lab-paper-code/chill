@@ -306,8 +306,9 @@ desired 및 applied version은 해당 생산자의 계약을 사용하고 전환
 | `/workloads/[name]` | 서비스 상태의 결론과 다음 할 일 하나. 정의와 적용, 측정 근거, 배치, 최근 운영, 변경 기록은 행으로 각 화면에 연결한다. |
 | `/workloads/[name]/{definition,evidence,placement,operation,changes}` | 서비스의 한 측면. 배치는 `v1/pools`와 운영 판단의 요청 분배, 운영과 변경은 표시한 최근 구간의 owner 관측에서 읽는다. |
 | `/models/[name]`, `/models/[name]/{files,services}` | 모델 요약, 파일과 실행 방식, 연결된 서비스와 삭제 영향. |
+| `/preprocessors`, `/datasets`, `/{preprocessors,datasets}/[name]`, `/…/new`, `/…/[name]/edit` | 전처리기와 데이터셋 목록, 하나의 계약(받는 입력과 돌려주는 출력, 레코드 필드)을 결론 문장으로 보여주는 상세, 단계형 등록·수정. 쓰는 서비스가 있으면 삭제를 막고 서비스로 이동하게 하며, owner의 409 `PreprocessorReferenced`·`DatasetReferenced`·`ModelReferenced`·`ModelArtifactReferenced`는 메시지의 이름 목록으로 서비스·전처리기 행을 보여준다. 서비스 편집은 owner 규칙(대상 모델 파일과 실행 방식, 필드 이름·형식·크기 상한)으로 고를 수 없는 전처리기와 데이터셋을 이유와 함께 비활성화하고, 새 서비스는 첫 호환 데이터셋을 미리 고른다. 최종 검증은 owner가 한다. |
 | `/workloads/new`, `/models/new`, `/…/[name]/edit` | 단계형 등록·수정과 전후 검토. 버전 사전 조건, 충돌 시 최신 값 채택, 결과 미확인 처리를 유지한다. |
-| `/workloads/[name]/infer` | 입력 선택 → 확인 → 결과. 실행 batch는 보내지 않는다. |
+| `/workloads/[name]/infer` | 적용된 원시 입력 계약대로 JPEG는 미리보기가 있는 사진 선택(형식·크기 사전 확인), UTF8은 바이트 수를 보여주는 글 입력으로 한 건을 보낸다. 응답 목표가 화면 최대 대기 시간(`CHILL_INFER_TIMEOUT_MS`)보다 길면 미리 알린다. 글 출력이 하나면 그 값이 결과 제목이고, 대기·전처리·추론(생성)·후처리 단계 시간, 첫 토큰과 처리 단위를 보여준다. 실행 batch는 보내지 않는다. |
 | `/scheduler` | 지금 판단. 현재 구성과 선택 후보의 예상 에너지와 이유. 예상 J와 SLO를 실측으로 표시하지 않는다. |
 | `/scheduler/candidates`, `/scheduler/estimates` | 후보 목록과 서비스별 응답 목표 예상. 상세는 고른 시점의 응답을 유지하는 Dialog다. |
 | `/scheduler/profiles` | 운영 판단이 쓰는 측정 프로파일 목록. 채택(`POST /api/v1/scheduler/profiles`)과 해제(`DELETE /api/v1/scheduler/profiles/{ns}/{name}`, `If-Match: configVersion`)는 측정 화면에서 확인 창을 거친다. HTTP 200이어도 `Persisted`가 아니면 채택이 아니고, `Removed`이면서 `loaded=false`일 때만 해제 완료다. `Pending`·`ProfileUnloadFailed`는 반영 대기, 409 `ProfileInUse`·`ProfileControlsEnabled`는 거절로 표시한다. `loaded`는 판단 반영일 뿐 GPU 서빙·실제 서빙·자동 제어 완료가 아니다. |
