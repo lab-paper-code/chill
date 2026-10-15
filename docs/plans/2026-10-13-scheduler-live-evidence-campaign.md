@@ -53,10 +53,10 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** Rpi CPU2를 유지한 Latte CPU1 replica 추가·UID별 분배·원복·제거와
-빈 serving target의 membership 왕복을 실제 완료했다. 이 CPU 부분집합으로 **판단 알고리즘
-설계·구현 GO**다. 자동 활성화·FULL 통과가 아니며, 실행 전 실제 입력 freshness·부하 중
-SLO feasibility·fresh observed energy gate는 별도로 충족해야 한다.
+**현재 우선:** evidence-store Service 통신을 복구해 owner HTTPS readiness를 회복한다.
+실제 CPU 제어와 판단 알고리즘 구현은 완료했지만 폐루프 비교·FULL 통과는 미완료다.
+자동제어는 모두 OFF이며 실제 입력 freshness·부하 중 SLO feasibility·fresh observed energy가
+충족되기 전 자동 실행을 시작하지 않는다.
 Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 완료로 세지 않는다.
 
 1. **판단 알고리즘 — 구현·배포 완료, 폐루프 비교 미완료:** 검증된 Latte/Rpi CPU 노드·동작으로 구현했다.
@@ -70,6 +70,7 @@ Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 
    통과했다. 지속 부하 중 freshness·SLO feasibility와 fresh observed energy는 계속 검증해야 한다.
    무부하 KeepFeasible·부분 전력 누락을 통과로 대체하지 않으며, gate 전까지 자동 제어는 OFF다.
    입력 검증 최적화 후 실제 24건은 모두 완료했지만 tight p95 1.869초로 1초 SLO는 미충족이다.
+   CPU 1코어 비교는 23/24 완료·1 timeout으로 개선을 인정하지 않았고 원래 500m로 복구했다.
 3. **폐루프 검증:** 짧은 부하·지속 부하·반복 변동에서 판단 → 실제 실행 → 피드백과
    SLO·전환 포함 전체 POOL 에너지를 확인한다. 평가기·배처 검증은 판단 정책 설계를 대신하지 않는다.
 4. **FULL·Dashboard:** 남은 개별 제어를 검증·통합하고 완료 기준의 실제 시나리오를 수행한다.

@@ -601,3 +601,12 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   확인했다(CM RV `353274534`). 이는 구현·설정 smoke이며 history 선택·자동 전환·에너지 비교 통과가 아니다.
 - 근거: `/tmp/chill-completion-cpu-cost-assembly/input-validation-live-after-{plan,results,observations,spans}.json`,
   `clean-policy-owner-ready.json`, `projected-policy-controls-off-{config,smoke}.json`.
+
+- 후속 CPU 제한 비교는 진단 이미지·SLO·메모리·요청 조건을 유지하고 owner CPU limit만
+  500m→1로 바꿨다. 24건 중 23건 완료·1건 explicit lifetime 504여서 개선으로 판정하지 않았다.
+  원래 500m와 계측 없는 `e37fdde8…` 이미지로 복구했지만, 재기동 시 scheduler 초기화가
+  timeout됐고 S3 PUT은 Service `10.97.177.19:9000`의 connection reset을 기록했다.
+  직접 Pod `192.168.109.171:9000`는 같은 Host header에서도 S3 403을 약 1ms에 반환했으나
+  Service 경유는 reset/timeout이었다. 저장 데이터 삭제나 Pod IP 고정 우회 없이 통신 경로를 조사한다.
+  근거: `owner-quota-one-{plan,results}.json`, `owner-restore-previous.log`,
+  `evidence-store-{health-during-owner-startup,host-header-comparison}.json`.
