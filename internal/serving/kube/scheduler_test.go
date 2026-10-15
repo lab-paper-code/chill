@@ -18,6 +18,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -579,5 +580,48 @@ func TestNonServingGPUOwnershipQuarantinesOnlyItsNode(t *testing.T) {
 	if len(state.NonServing) != 1 || state.NonServing[0].CPUCount != 1 ||
 		state.NonServing[0].MemoryBytes != 1024 || !state.NonServing[0].CPUReserved {
 		t.Fatalf("quarantine discarded actual non-serving resource budget: %+v", state.NonServing)
+	}
+}
+
+func TestBindProfileMeterUsesWallQuantityIdentity(t *testing.T) {
+	node := serving.NodeReference{Name: "gpu-node", UID: "gpu-node-uid"}
+	source := metricobserver.SourceIdentity{
+		Kind: "edge-metrics", NodeName: node.Name, Endpoint: "http://power/metrics",
+		Metric: "wall_watts", MetricLabels: map[string]string{"hostname": node.Name},
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*MeterDeclaration)
+		binds  bool
+	}{
+		{name: "same wall series without thermal metadata", binds: true},
+		{name: "different power endpoint", mutate: func(m *MeterDeclaration) { m.Source.Endpoint = "http://other/metrics" }},
+		{name: "different power labels", mutate: func(m *MeterDeclaration) { m.Source.MetricLabels = map[string]string{"hostname": "another-host"} }},
+		{name: "different power metric", mutate: func(m *MeterDeclaration) { m.Source.Metric = "device_watts" }},
+		{name: "different source kind", mutate: func(m *MeterDeclaration) { m.Source.Kind = "another-power-source" }},
+		{name: "different source node", mutate: func(m *MeterDeclaration) { m.Source.NodeName = "another-node" }},
+		{name: "different physical node", mutate: func(m *MeterDeclaration) { m.Node.UID = "unrelated-node-uid" }},
+		{name: "different scope", mutate: func(m *MeterDeclaration) { m.Scope = "device" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			profileSource := source
+			profileSource.ThermalEndpoint = "http://thermal/metrics"
+			profileSource.ThermalMetrics = &metricobserver.ThermalMetricIdentity{Active: "thermal_active"}
+			instance := serving.SchedulerInstance{
+				Node: node, Profile: &serving.Profile{MetricSource: profileSource},
+			}
+			meter := MeterDeclaration{ID: "wall-meter", Node: node, Scope: measurementWallScope, Source: source}
+			if test.mutate != nil {
+				test.mutate(&meter)
+			}
+			bindProfileMeter(&instance, []MeterDeclaration{meter})
+			if got := instance.IdleMeter == meter.ID && instance.IdleScope == measurementWallScope; got != test.binds {
+				t.Fatalf("wall quantity binding = %v, want %v: %+v", got, test.binds, instance)
+			}
+			if instance.Profile.MetricSource.ThermalEndpoint != "http://thermal/metrics" ||
+				instance.Profile.MetricSource.ThermalMetrics.Active != "thermal_active" {
+				t.Fatal("meter binding changed thermal observation identity")
+			}
+		})
 	}
 }

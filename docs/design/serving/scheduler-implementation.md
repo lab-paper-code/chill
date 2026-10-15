@@ -324,6 +324,11 @@ GPU 소유권의 미관측은 해당 Node의 `ready=false`와 사유로 남기�
 
 ### 5.3 전환·에너지·선택
 
+프로파일 유휴 전력과 물리 meter는 같은 Node와 node-exclusive-wall 범위,
+power source kind·NodeName·endpoint·metric·label selector로 연결한다.
+동반 thermal endpoint/metric은 별도 관측 identity로 보존하며 같은 벽전력량의
+연결 조건으로 사용하지 않는다. 다른 power series나 Node·범위는 계속 거절한다.
+
 모든 affected UID의 최종 상태와 전환 중 ready capacity를 같은 시간축으로 replay한다.
 node mode 변경·제거는 해당 노드의 모든 instance와 UID에 영향을 준다. 새 allocation을
 동시에 수용할 수 있으면 prepare→route 뒤 기존 source를 stop/drain/remove한다.

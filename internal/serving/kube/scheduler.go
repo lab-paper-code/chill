@@ -921,7 +921,8 @@ func bindProfileMeter(instance *serving.SchedulerInstance, meters []MeterDeclara
 		return
 	}
 	for _, meter := range meters {
-		if meter.Node == instance.Node && meter.Scope == measurementWallScope && reflect.DeepEqual(meter.Source, instance.Profile.MetricSource) {
+		if meter.Node == instance.Node && meter.Scope == measurementWallScope &&
+			meter.Source.NodeName == instance.Profile.MetricSource.NodeName && sameWallSeries(meter.Source, instance.Profile.MetricSource) {
 			instance.IdleMeter = meter.ID
 			instance.IdleScope = meter.Scope
 			return
