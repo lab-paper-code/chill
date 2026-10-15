@@ -471,6 +471,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			m := state.Native.Metadata
 			allocation := serving.SchedulerAllocation{CPUs: slices.Clone(m.Runtime.CPUAffinity), GPUUUID: m.Runtime.GPUUUID, Threads: m.Runtime.IntraOpThreads, MemoryBytes: uint64(p.Spec.Containers[0].Resources.Limits.Memory().Value())}
 			instance := serving.SchedulerInstance{ID: state.ID, Node: state.Node, Pool: state.Pool, Profile: profile, Allocation: allocation, Ready: state.Ready && state.Native.Ready, Capacity: m.MaxQueueRequests, Weight: 1, MaxBatch: m.MaxBatchSize, ObservedAt: state.ObservedAt, MaxWait: time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond)), CompletionOverhead: time.Duration(m.Policy.CompletionOverheadMS * float64(time.Millisecond)), EnvelopeSource: m.Policy.EnvelopeSource}
+			instance.TargetID, instance.OwnerWorkloadUID = state.TargetID, state.OwnerWorkloadUID
 			instance.Stopped = state.Stopped
 			if m.Policy.MaxBatchSize > 0 {
 				instance.MaxBatch = m.Policy.MaxBatchSize
@@ -527,89 +528,122 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.goal = &target
-	for _, action := range target.Actions {
-		if action.Status == nativeOperationCancel {
-			if r := c.runs[action.ID]; r != nil && r.action.Cancelable && r.cancel != nil {
-				r.cancel()
-				r.action.Status = nativeOperationCancel
+	// Decide eligible old-source stops before starting policy refreshes that can
+	// supersede the existing acknowledged handoff proof in this same tick.
+	for phase := range 2 {
+		for _, action := range target.Actions {
+			if (action.Kind == operationStop) != (phase == 0) {
+				continue
 			}
-			continue
-		}
-		if action.Status == nativeOperationComplete || action.Status == nativeOperationFailed {
-			continue
-		}
-		existing := false
-		for _, r := range c.runs {
-			if actionEquivalent(r.action, action) && r.action.Status == nativeOperationRunning {
-				existing = true
-				break
+			if action.Status == nativeOperationCancel {
+				if r := c.runs[action.ID]; r != nil && r.action.Cancelable && r.cancel != nil {
+					r.cancel()
+					r.action.Status = nativeOperationCancel
+				}
+				continue
 			}
-		}
-		if existing {
-			continue
-		}
-		ready := true
-		for _, dep := range action.DependsOn {
-			r := c.runs[dep]
-			if r == nil || r.action.Status != nativeOperationComplete {
-				ready = false
-				break
+			if action.Status == nativeOperationComplete || action.Status == nativeOperationFailed {
+				continue
 			}
-		}
-		if !ready {
-			continue
-		}
-		// Independent Nodes run concurrently; one mutation per Node stays serialized.
-		for _, r := range c.runs {
-			if action.Node.UID != "" && r.action.Node == action.Node && r.action.Status == nativeOperationRunning {
-				ready = false
-			}
-		}
-		if !ready {
-			continue
-		}
-		operation := scheduledOperation(action, &target, config)
-		runCtx, cancel := context.WithCancel(c.ctx)
-		action.Status = nativeOperationRunning
-		action.Cancelable = action.Kind == operationPrepare
-		run := &actionRun{action: action, cancel: cancel, started: time.Now()}
-		c.runs[action.ID] = run
-		c.wg.Add(1)
-		go func(operation Operation, run *actionRun) {
-			defer c.wg.Done()
-			result := OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: "starting"}
-			var err error
-			if config.OnAction != nil {
-				err = config.OnAction(result)
-			}
-			if err == nil {
-				result, err = c.operations.Execute(runCtx, operation)
-			} else {
-				result.Status = nativeOperationFailed
-				result.Error = "persist action start before physical effect: " + err.Error()
-				result.EndedAt = time.Now().UTC()
-			}
-			if config.OnAction != nil {
-				if recordErr := config.OnAction(result); recordErr != nil {
-					err = errors.Join(err, fmt.Errorf("record physical operation outcome: %w", recordErr))
-					result.Error = err.Error()
-					if result.Status == nativeOperationComplete {
-						result.Status = nativeOperationPartial
-					}
+			existing := false
+			for _, r := range c.runs {
+				if actionEquivalent(r.action, action) && r.action.Status == nativeOperationRunning {
+					existing = true
+					break
 				}
 			}
-			c.mu.Lock()
-			run.result = &result
-			run.action.Status = nativeOperationComplete
-			if err != nil {
-				run.action.Status = result.Status
-				run.action.Reason = err.Error()
+			if existing {
+				continue
 			}
-			run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
-			c.state.Results = append(c.state.Results, result)
-			c.mu.Unlock()
-		}(operation, run)
+			ready := c.dependenciesReady(action, target)
+			if !ready {
+				continue
+			}
+			// Independent Nodes run concurrently; one mutation per Node stays serialized.
+			for _, r := range c.runs {
+				if action.Node.UID != "" && r.action.Node == action.Node && r.action.Status == nativeOperationRunning {
+					ready = false
+				}
+			}
+			if !ready {
+				continue
+			}
+			operation := scheduledOperation(action, &target, config)
+			runCtx, cancel := context.WithCancel(c.ctx)
+			action.Status = nativeOperationRunning
+			action.Cancelable = action.Kind == operationPrepare
+			run := &actionRun{action: action, cancel: cancel, started: time.Now()}
+			c.runs[action.ID] = run
+			c.wg.Add(1)
+			go func(operation Operation, run *actionRun) {
+				defer c.wg.Done()
+				result := OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: "starting"}
+				var err error
+				if config.OnAction != nil {
+					err = config.OnAction(result)
+				}
+				if err == nil {
+					result, err = c.operations.Execute(runCtx, operation)
+				} else {
+					result.Status = nativeOperationFailed
+					result.Error = "persist action start before physical effect: " + err.Error()
+					result.EndedAt = time.Now().UTC()
+				}
+				if config.OnAction != nil {
+					if recordErr := config.OnAction(result); recordErr != nil {
+						err = errors.Join(err, fmt.Errorf("record physical operation outcome: %w", recordErr))
+						result.Error = err.Error()
+						if result.Status == nativeOperationComplete {
+							result.Status = nativeOperationPartial
+						}
+					}
+				}
+				c.mu.Lock()
+				run.result = &result
+				run.action.Status = nativeOperationComplete
+				if err != nil {
+					run.action.Status = result.Status
+					run.action.Reason = err.Error()
+				}
+				run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
+				c.state.Results = append(c.state.Results, result)
+				c.mu.Unlock()
+			}(operation, run)
+		}
 	}
+}
+
+func (c *SchedulerController) dependenciesReady(action serving.Action, target serving.SchedulerCandidate) bool {
+	for _, dep := range action.DependsOn {
+		if run := c.runs[dep]; run != nil && run.action.Status == nativeOperationComplete {
+			continue
+		}
+		route := slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
+			return a.ID == dep && a.Kind == operationRoute
+		})
+		if action.Kind != operationStop || !route || !c.completedHandoffPresent(target) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCandidate) bool {
+	var physical []serving.InstanceState
+	for _, pool := range c.runtime.Pools() {
+		physical = append(physical, pool.Instances...)
+	}
+	if !c.routingTargetPresent(&target, c.state.Snapshot, physical, false) {
+		return false
+	}
+	for _, run := range c.runs {
+		if run.action.Kind == operationRoute && run.action.Status == nativeOperationComplete &&
+			run.result != nil && run.result.Status == nativeOperationComplete &&
+			c.routingTargetPresent(run.result.Operation.Target, c.state.Snapshot, physical, true) {
+			return true
+		}
+	}
+	return false
 }
 func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig) Operation {
 	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Pool: action.To, Target: target}
@@ -731,33 +765,85 @@ func (c *SchedulerController) actionEffectPresent(snapshot serving.SchedulerSnap
 			}
 		}
 	case operationRoute:
-		return c.routingEffectPresent(run.result.Operation.Target, physical)
+		return c.routingTargetPresent(run.result.Operation.Target, snapshot, physical, true)
 	}
 	return false
 }
-func (c *SchedulerController) routingEffectPresent(target *serving.SchedulerCandidate, physical []serving.InstanceState) bool {
+func (c *SchedulerController) routingTargetPresent(target *serving.SchedulerCandidate, snapshot serving.SchedulerSnapshot, physical []serving.InstanceState, requirePolicy bool) bool {
 	if target == nil {
 		return false
 	}
 	actual, _ := c.runtime.SchedulerRouting()
+	if len(actual) != len(target.Routing) {
+		return false
+	}
 	for uid, weights := range target.Routing {
 		if len(actual[uid]) != len(weights) {
 			return false
 		}
 		for id, weight := range weights {
-			resolved := id
-			for _, i := range physical {
-				if i.TargetID == id {
-					resolved = i.ID
-					break
-				}
+			state := schedulerPhysicalState(id, physical)
+			if state == nil {
+				return false
 			}
+			resolved := state.ID
 			if actual[uid][resolved] != weight {
 				return false
 			}
 		}
 	}
+	for _, wanted := range target.Instances {
+		if !schedulerTargetReady(wanted, snapshot, physical, requirePolicy) {
+			return false
+		}
+	}
 	return true
+}
+
+func schedulerPhysicalState(id string, physical []serving.InstanceState) *serving.InstanceState {
+	var state *serving.InstanceState
+	for index := range physical {
+		if physical[index].ID == id || physical[index].TargetID == id {
+			if state != nil {
+				return nil
+			}
+			state = &physical[index]
+		}
+	}
+	return state
+}
+
+func schedulerTargetReady(wanted serving.SchedulerInstance, snapshot serving.SchedulerSnapshot, physical []serving.InstanceState, requirePolicy bool) bool {
+	if wanted.Profile == nil || !wanted.CompletionObserved || !wanted.CompletionMeasurement.Valid() ||
+		wanted.CompletionOverhead != wanted.CompletionMeasurement.Completion || !wanted.CompletionMeasurement.Matches(wanted) {
+		return false
+	}
+	state := schedulerPhysicalState(wanted.ID, physical)
+	if state == nil || !state.Ready || state.Stopped || state.Native == nil || !state.Native.Ready {
+		return false
+	}
+	captured := slices.ContainsFunc(snapshot.Instances, func(actual serving.SchedulerInstance) bool {
+		return actual.ID == state.ID && actual.Ready && !actual.Stopped && actual.Node == wanted.Node &&
+			actual.Pool == wanted.Pool && serving.SchedulerInstanceState(actual) == serving.SchedulerInstanceState(wanted)
+	})
+	if !captured || state.Native.Metadata.ProfileID != wanted.Profile.ID || state.Native.Metadata.MaxQueueRequests != wanted.Capacity {
+		return false
+	}
+	return !requirePolicy || schedulerPolicyAcknowledged(wanted, state.Native.Metadata)
+}
+
+func schedulerPolicyAcknowledged(wanted serving.SchedulerInstance, actual native.Metadata) bool {
+	if wanted.Profile.Condition.Firstfloor == nil {
+		return false
+	}
+	maxBatch := actual.Policy.MaxBatchSize
+	if maxBatch == 0 {
+		maxBatch = actual.MaxBatchSize
+	}
+	return actual.Policy.ProfileID == wanted.Profile.ID && maxBatch == wanted.MaxBatch &&
+		actual.Policy.MaxBatchWaitMS == float64(wanted.MaxWait)/float64(time.Millisecond) &&
+		actual.Policy.CompletionOverheadMS == float64(wanted.CompletionOverhead)/float64(time.Millisecond) &&
+		native.EffectiveDeadlinePolicy(actual.Policy.DeadlinePolicy) == native.EffectiveDeadlinePolicy(wanted.Profile.Condition.Firstfloor.DeadlinePolicy)
 }
 func podBudget(pod *core.Pod) (int64, int64, bool) {
 	var cpu, memory, sideCPU, sideMemory, initCPU, initMemory int64

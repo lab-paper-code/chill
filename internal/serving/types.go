@@ -131,17 +131,18 @@ type Assignment struct {
 }
 
 type InstanceState struct {
-	ID        string              `json:"id"`
-	TargetID  string              `json:"targetID,omitempty"`
-	Node      NodeReference       `json:"node"`
-	Pool      string              `json:"pool"`
-	Profile   string              `json:"profile"`
-	Ready     bool                `json:"ready"`
-	Stopped   bool                `json:"stopped"`
-	Reason    string              `json:"reason,omitempty"`
-	Workloads []WorkloadReference `json:"workloads"`
-	Waiting   map[string]int      `json:"waiting"`
-	Running   map[string]int      `json:"running"`
+	ID               string              `json:"id"`
+	TargetID         string              `json:"targetID,omitempty"`
+	OwnerWorkloadUID string              `json:"ownerWorkloadUID,omitempty"`
+	Node             NodeReference       `json:"node"`
+	Pool             string              `json:"pool"`
+	Profile          string              `json:"profile"`
+	Ready            bool                `json:"ready"`
+	Stopped          bool                `json:"stopped"`
+	Reason           string              `json:"reason,omitempty"`
+	Workloads        []WorkloadReference `json:"workloads"`
+	Waiting          map[string]int      `json:"waiting"`
+	Running          map[string]int      `json:"running"`
 	// AssignedUnknown has been dispatched but lacks a native phase observation.
 	// It is not reported as actual backend waiting or running.
 	AssignedUnknown map[string]int    `json:"assignedUnknown"`

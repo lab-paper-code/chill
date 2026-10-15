@@ -60,6 +60,8 @@ type SchedulerNode struct {
 }
 type SchedulerInstance struct {
 	ID                 string              `json:"id"`
+	TargetID           string              `json:"targetID,omitempty"`
+	OwnerWorkloadUID   string              `json:"ownerWorkloadUID,omitempty"`
 	Node               NodeReference       `json:"node"`
 	Pool               string              `json:"pool"`
 	Profile            *Profile            `json:"profile"`

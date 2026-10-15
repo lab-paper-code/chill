@@ -25,7 +25,7 @@ func EnumerateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) 
 		}
 	}
 	sort.Slice(workloads, func(i, j int) bool { return workloads[i].UID < workloads[j].UID })
-	e := schedulerEnumeration{settings: settings, snapshot: snapshot, search: search, workloads: workloads, options: schedulerMeasuredOptions(settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep): true}, result: result}
+	e := schedulerEnumeration{settings: settings, snapshot: snapshot, search: search, workloads: workloads, options: schedulerMeasuredOptions(settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep, true): true}, result: result}
 	if !settings.Controls.Sharing {
 		e.groups = schedulerExistingWorkloadGroups(workloads, snapshot.Instances)
 	}
@@ -300,9 +300,10 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 	for j := range c.Instances {
 		source, anchored := e.sources[c.Instances[j].ID]
 		for _, old := range e.snapshot.Instances {
-			if _, preserved := used[old.ID]; !preserved && (!anchored || e.snapshot.Instances[source].ID == old.ID) && old.Node == c.Instances[j].Node && old.Pool == c.Instances[j].Pool && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
+			if _, preserved := used[old.ID]; !preserved && e.canReuseSlot(old, source, anchored, c.Instances[j].WorkloadUIDs) && old.Node == c.Instances[j].Node && old.Pool == c.Instances[j].Pool && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
 				c.Instances[j].ID = old.ID
 				c.Instances[j].Ready = old.Ready
+				c.Instances[j].TargetID, c.Instances[j].OwnerWorkloadUID = old.TargetID, old.OwnerWorkloadUID
 				if old.CompletionObserved && old.CompletionMeasurement.Valid() && !slices.ContainsFunc(c.Instances[j].WorkloadUIDs, func(uid string) bool { return !schedulerHas(old.WorkloadUIDs, uid) }) {
 					c.Instances[j].CompletionOverhead, c.Instances[j].EnvelopeSource, c.Instances[j].CompletionObserved = old.CompletionOverhead, old.EnvelopeSource, true
 					c.Instances[j].CompletionMeasurement = old.CompletionMeasurement
@@ -314,7 +315,7 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 	}
 	c.Routing = e.routing(c.Instances, chosen, used)
 	add := func(c SchedulerCandidate) {
-		key := schedulerConfigKey(c)
+		key := schedulerConfigKey(c, true)
 		if e.seen[key] {
 			return
 		}
@@ -341,6 +342,18 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 			}
 		}
 	}
+}
+
+func (e *schedulerEnumeration) canReuseSlot(old SchedulerInstance, source int, anchored bool, uids []string) bool {
+	if old.OwnerWorkloadUID != "" && (len(uids) != 1 || uids[0] != old.OwnerWorkloadUID) {
+		return false
+	}
+	if !anchored || old.ID == e.snapshot.Instances[source].ID {
+		return true
+	}
+	// The routing origin is not a physical fence: an already prepared, unbound
+	// matching executor is the replacement, not another replica to prepare.
+	return old.Ready && !old.Stopped && len(old.WorkloadUIDs) == 0 && (old.TargetID != "" || old.OwnerWorkloadUID != "")
 }
 
 func (e *schedulerEnumeration) routing(instances, chosen []SchedulerInstance, used map[string][]string) map[string]map[string]int32 {
@@ -438,7 +451,7 @@ func schedulerOptionCondition(o SchedulerOption) string {
 	p := i.Profile
 	return fmt.Sprint(i.Node, i.Pool, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Tensor, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait, i.CompletionOverhead, i.EnvelopeSource, i.CompletionObserved)
 }
-func schedulerConfigKey(c SchedulerCandidate) string {
+func schedulerConfigKey(c SchedulerCandidate, includeObservation bool) string {
 	parts := []string{}
 	for _, i := range c.Instances {
 		uids := append([]string(nil), i.WorkloadUIDs...)
@@ -451,7 +464,15 @@ func schedulerConfigKey(c SchedulerCandidate) string {
 			}
 			weights = append(weights, weight)
 		}
-		parts = append(parts, fmt.Sprint(i.Node.UID, i.Pool, schedulerState(i), uids, weights, i.MaxBatch, i.MaxWait, i.CompletionOverhead, i.EnvelopeSource, i.CompletionObserved))
+		deadlinePolicy := ""
+		if i.Profile != nil && i.Profile.Condition.Firstfloor != nil {
+			deadlinePolicy = i.Profile.Condition.Firstfloor.DeadlinePolicy
+		}
+		part := fmt.Sprint(i.ID, i.Node.UID, i.Pool, schedulerState(i), uids, weights, i.Capacity, i.MaxBatch, i.MaxWait, i.CompletionOverhead, deadlinePolicy, i.CompletionObserved)
+		if includeObservation {
+			part += i.EnvelopeSource
+		}
+		parts = append(parts, part)
 	}
 	sort.Strings(parts)
 	for _, n := range c.Nodes {
@@ -524,10 +545,11 @@ func schedulerRequestMatches(d *Definition, path int, p *Profile) bool {
 	return d != nil && p != nil && path >= 0 && path < len(d.Model.Paths) && sameInputs(d.Model.Paths[path].Tensors, p.Condition.Tensor.Tensors) && schedulerProfileMatches(d, p)
 }
 func schedulerPlan(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
-	p := schedulerPlanState{snap: snap, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
+	p := schedulerPlanState{snap: snap, target: &c, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
 	p.changeNodes(c)
 	p.prepareTargets(c)
-	route := p.add(schedulerActionRoute, NodeReference{}, "", "", c.ID, p.prepares)
+	// Candidate ordinals and rolling witness text are not operation identity.
+	route := p.add(schedulerActionRoute, NodeReference{}, "", "", schedulerConfigKey(c, false), p.prepares)
 	p.retireOld(c, route)
 	p.continueActions()
 	return p.actions
@@ -535,6 +557,7 @@ func schedulerPlan(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
 
 type schedulerPlanState struct {
 	snap     SchedulerSnapshot
+	target   *SchedulerCandidate
 	actions  []Action
 	nodeTail map[string]string
 	prepares []string
@@ -555,7 +578,10 @@ func (p *schedulerPlanState) add(kind string, node NodeReference, id, from, to s
 		}
 	}
 	for _, old := range p.snap.Actions {
-		if old.Kind == kind && old.Node == node && old.Instance == id && old.From == from && old.To == to && (old.Status == schedulerActionPlanned || old.Status == phaseRunning) {
+		if old.Kind == kind && old.Node == node && old.Instance == id && old.From == from && old.To == to && (old.Status == schedulerActionPlanned || old.Status == phaseRunning || old.Status == schedulerActionComplete) {
+			if old.Status == schedulerActionComplete && !p.completedEffectPresent(old) {
+				continue
+			}
 			a.ID = old.ID
 			a.Status = old.Status
 			a.Elapsed = old.Elapsed
@@ -572,6 +598,89 @@ func (p *schedulerPlanState) add(kind string, node NodeReference, id, from, to s
 	}
 	p.actions = append(p.actions, a)
 	return a.ID
+}
+
+func (p *schedulerPlanState) completedEffectPresent(action Action) bool {
+	switch action.Kind {
+	case schedulerActionPrepare:
+		return slices.ContainsFunc(p.snap.Instances, func(instance SchedulerInstance) bool {
+			return instance.ID == action.Instance && instance.Node == action.Node &&
+				instance.Ready && !instance.Stopped && schedulerState(instance) == action.To
+		})
+	case schedulerActionRoute:
+		return p.routeEffectPresent()
+	case schedulerActionStop, schedulerActionDrain:
+		if schedulerInstanceRouted(p.snap.Routing, action.Instance) {
+			return false
+		}
+		for _, instance := range p.snap.Instances {
+			if instance.ID == action.Instance && (instance.Node != action.Node || !instance.Stopped) {
+				return false
+			}
+		}
+		return action.Kind == schedulerActionStop ||
+			!slices.ContainsFunc(p.snap.Outstanding, func(request SchedulerRequest) bool { return request.Instance == action.Instance })
+	case schedulerActionRemove:
+		return !slices.ContainsFunc(p.snap.Instances, func(instance SchedulerInstance) bool { return instance.ID == action.Instance }) &&
+			!slices.ContainsFunc(p.snap.Outstanding, func(request SchedulerRequest) bool { return request.Instance == action.Instance }) &&
+			!schedulerInstanceRouted(p.snap.Routing, action.Instance)
+	case schedulerActionPower, schedulerActionMembership:
+		for _, node := range p.snap.Nodes {
+			if node.Node == action.Node {
+				if action.Kind == schedulerActionPower {
+					return node.PowerMode == action.To
+				}
+				return node.Pool == action.To
+			}
+		}
+	}
+	return false
+}
+
+func (p *schedulerPlanState) routeEffectPresent() bool {
+	if p.target == nil || !maps.EqualFunc(p.snap.Routing, p.target.Routing, func(actual, wanted map[string]int32) bool {
+		return maps.Equal(actual, wanted)
+	}) {
+		return false
+	}
+	for _, wanted := range p.target.Instances {
+		if !slices.ContainsFunc(p.snap.Instances, func(actual SchedulerInstance) bool {
+			return schedulerSnapshotTargetMatches(actual, wanted)
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+func schedulerSnapshotTargetMatches(actual, wanted SchedulerInstance) bool {
+	if actual.Profile == nil || wanted.Profile == nil || !actual.Ready || actual.Stopped ||
+		actual.ID != wanted.ID || actual.Node != wanted.Node || actual.Pool != wanted.Pool ||
+		schedulerState(actual) != schedulerState(wanted) {
+		return false
+	}
+	if actual.OwnerWorkloadUID != "" && (len(wanted.WorkloadUIDs) != 1 || wanted.WorkloadUIDs[0] != actual.OwnerWorkloadUID) {
+		return false
+	}
+	return actual.Capacity == wanted.Capacity && actual.MaxBatch == wanted.MaxBatch &&
+		actual.MaxWait == wanted.MaxWait && actual.CompletionOverhead == wanted.CompletionOverhead &&
+		reflect.DeepEqual(actual.Profile.Condition.Firstfloor, wanted.Profile.Condition.Firstfloor) &&
+		schedulerCompletionMatches(actual) && schedulerCompletionMatches(wanted)
+}
+
+func schedulerCompletionMatches(instance SchedulerInstance) bool {
+	return instance.CompletionObserved && instance.CompletionMeasurement != nil &&
+		instance.CompletionOverhead == instance.CompletionMeasurement.Completion &&
+		instance.CompletionMeasurement.Matches(instance)
+}
+
+func schedulerInstanceRouted(routing map[string]map[string]int32, id string) bool {
+	for _, weights := range routing {
+		if weights[id] > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {

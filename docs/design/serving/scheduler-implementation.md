@@ -284,6 +284,26 @@ node mode 변경·제거는 해당 노드의 모든 instance와 UID에 영향을
 완료 전에는 기존 ready capacity를 유지하고, 실제 routing 적용 뒤 기존 것을 drain한다.
 독립 Node의 안전한 동작은 병렬로, 같은 Node의 비용 구간은 의존 순서대로 반영한다.
 
+기존 logical cohort의 routing origin은 weight 보존 근거이며 새 physical slot을
+강제하는 fence가 아니다. 같은 measured profile·allocation·Node의 Ready/unbound
+executor가 있으면 검증된 scheduler slot의 ownerless executor 또는 정확히 같은
+Workload owner UID에 한해 그 physical ID를 재사용하고 중복 prepare를 추가하지
+않는다. 빈 routing bindings로 ownerlessness를 추정하지 않고 Runtime의 기존 owner
+fence와 관측된 slot identity를 snapshot에 보존한다. Route 동작은 candidate 순번이나
+rolling witness 문자열 대신 physical/logical target ID·UID별 weight와 소비되는
+completion bound/capacity/batch/wait/deadline 조건으로 식별한다.
+complete 표시만으로 동작을 재사용하지 않는다. 현재 snapshot에서 prepare의 Ready
+identity/state, route의 실제 분배·대상 조건, stop의 실제 중지·분배 차단, drain의
+실제 중지·분배 차단과 outstanding 부재, remove의 실제 부재·drain, power/membership의 실제 Node 상태를
+확인하며 효과가 사라졌으면 새로운 실행 가능한 동작을 생성한다. 검증된 run으로 다음
+stop→drain→remove 의존성을 진행하며, 실제 target·소비 수치 변경은 다시 적용한다.
+새 policy 수치 적용 중에도 이미 traffic이 옮겨진 이전 source의 정리는 굶기지 않는다.
+단 gateway routing map 일치만으로 handoff를 인정하지 않는다. 기존 complete route의
+Ready·profile·allocation·native policy ACK와 새 target의 typed completion proof 및
+actual routing이 모두 일치할 때만 기존 handoff로 stop 의존성을 충족한다. 처음
+handoff와 대상 변경은 원래 route 완료를 기다리고 accepted-context stop/drain/removal
+검사는 그대로 유지한다.
+
 동일 comparison horizon에서 모든 POOL Node의 baseline을 한 번 적분한다.
 active/inactive/temporary Node를 포함한다. 원자 동작 구간의 wall joules는 그 구간의
 baseline 소비를 **대체**하고, 실제 serving execution의 incremental energy만 더한다.

@@ -907,6 +907,7 @@ func (r *Runtime) Pools() []PoolState {
 	}
 	for _, i := range r.instances {
 		state := i.State
+		state.OwnerWorkloadUID = i.OwnerWorkloadUID
 		state.Workloads = nil
 		state.Waiting = map[string]int{}
 		state.Running = map[string]int{}
