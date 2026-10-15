@@ -43,7 +43,7 @@ export function statusLabel(value?: string): string {
     deferred: "목표 시간을 넘겨 뒤로 미뤄짐",
     request_received: "요청 도착", response_finished: "응답 완료",
     AppliedSnapshotUnavailable: "적용 결과 확인 대기",
-    Running: "실행 중", Pending: "대기 중", Succeeded: "완료", Planned: "계획됨",
+    Running: "실행 중", Pending: "대기 중", Succeeded: "완료", Complete: "완료", Planned: "계획됨",
   }
   // Internal codes (CamelCase or "Code: detail") never reach the main screen; the raw value stays in 자세히.
   return !value ? "정보 없음" : labels[value] ?? (/^[A-Z][A-Za-z]+(:|$)/.test(value) ? "확인이 필요해요" : value)
