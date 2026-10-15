@@ -68,6 +68,9 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if !run.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
+	if terminalPreJobFailureCurrent(run) {
+		return ctrl.Result{}, nil
+	}
 
 	var resolved ResolvedRun
 	var job *batchv1.Job
@@ -360,4 +363,22 @@ func (r *RunReconciler) patchStatus(
 	}
 	run.Status = desired.Status
 	return nil
+}
+
+func terminalPreJobFailureCurrent(run *edgev1alpha1.ProfilingRun) bool {
+	if run.Generation < 1 || run.Status.Job != nil {
+		return false
+	}
+	for _, condition := range run.Status.Conditions {
+		if condition.Type != edgev1alpha1.ProfilingRunConditionExecutionComplete ||
+			condition.Status != metav1.ConditionFalse || condition.ObservedGeneration != run.Generation {
+			continue
+		}
+		switch condition.Reason {
+		case profiler.ResolutionReasonInvalidRunSpec, profiler.ResolutionReasonExecutionPolicyInvalid,
+			profiler.ResolutionReasonActuationPolicyInvalid, requiredStateNotConfirmedReason:
+			return true
+		}
+	}
+	return false
 }

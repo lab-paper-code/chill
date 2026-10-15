@@ -63,7 +63,7 @@ func (j *ExecutionJobs) Ensure(
 	run *edgev1alpha1.ProfilingRun,
 	resolved ResolvedRun,
 ) (*batchv1.Job, bool, error) {
-	jobName, err := executionJobName(run)
+	jobName, err := ExecutionJobName(run)
 	if err != nil {
 		return nil, false, err
 	}
@@ -136,7 +136,8 @@ func executionJobEvidenceStoreBinding(job *batchv1.Job) (EvidenceStoreBinding, e
 	return storekube.BindingFromJob(job, runtimeContainerName)
 }
 
-func executionJobName(run *edgev1alpha1.ProfilingRun) (string, error) {
+// ExecutionJobName is the native producer identity shared with evidence cleanup.
+func ExecutionJobName(run *edgev1alpha1.ProfilingRun) (string, error) {
 	if run == nil || run.UID == "" {
 		return "", errors.New("ProfilingRun UID is required")
 	}

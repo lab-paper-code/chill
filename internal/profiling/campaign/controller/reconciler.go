@@ -25,6 +25,8 @@ const (
 	batchEnergyOptimizationPhaseComplete  = "Complete"
 	batchEnergyOptimizationPhaseFailed    = "Failed"
 	batchEnergyOptimizationConditionDone  = "MeasurementComplete"
+	terminalReasonRetryLimitExhausted     = "RetryLimitExhausted"
+	terminalReasonTransitionFailed        = "TransitionFailed"
 )
 
 // ReconcileCurvePlanSource resolves and records the immutable plan used by one
@@ -91,6 +93,11 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !parent.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+	// A terminal current-generation campaign is immutable. Replaying its
+	// derivation after explicit evidence cleanup must not recreate stored data.
+	if terminalCampaignStatusCurrent(parent) {
 		return ctrl.Result{}, nil
 	}
 
@@ -381,4 +388,24 @@ func batchEnergyOptimizationStatusesEqual(
 		right.Conditions[index].LastTransitionTime = metav1.Time{}
 	}
 	return reflect.DeepEqual(left, right)
+}
+
+func terminalCampaignStatusCurrent(parent *edgev1alpha1.BatchEnergyOptimization) bool {
+	if parent.Generation < 1 || parent.Status.ObservedGeneration != parent.Generation {
+		return false
+	}
+	for _, condition := range parent.Status.Conditions {
+		if condition.Type != batchEnergyOptimizationConditionDone || condition.ObservedGeneration != parent.Generation {
+			continue
+		}
+		if parent.Status.Phase == batchEnergyOptimizationPhaseComplete {
+			return parent.Status.Result != nil && condition.Status == metav1.ConditionTrue && condition.Reason == "ResultWritten"
+		}
+		if parent.Status.Phase == batchEnergyOptimizationPhaseFailed && condition.Status == metav1.ConditionFalse && condition.Reason == parent.Status.Outcome {
+			// CurvePlanResolutionFailed is deliberately not terminal: its
+			// resolver error still owns the existing retry/recovery behavior.
+			return condition.Reason == terminalReasonTransitionFailed || condition.Reason == terminalReasonRetryLimitExhausted
+		}
+	}
+	return false
 }

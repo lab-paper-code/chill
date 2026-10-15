@@ -489,6 +489,15 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 		evidence == nil || evidence.Status != metav1.ConditionTrue || evidence.Reason != "EvidenceVerified" {
 		t.Fatalf("finalized conditions = %#v", actual.Status.Conditions)
 	}
+	// Explicit evidence cleanup does not clear the native terminal reference.
+	// A replay must not ask the finalizer to reconstruct the removed objects.
+	finalizer.err = errors.New("stored evidence intentionally removed")
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 {
+		t.Fatalf("terminal Run replay regenerated evidence: finalizer calls=%d", finalizer.calls)
+	}
 }
 
 func recordedJob(
@@ -583,11 +592,12 @@ func TestRunReconcilerPublishesTerminalResolutionFailureWithoutRequeue(t *testin
 		err: profiler.InvalidExecutionPolicy("execution policy %q is not configured", "typo-v9"),
 	}
 	jobs := &recordingExecutionJobs{}
+	finalizer := &recordingRunEvidenceFinalizer{}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		resolver,
 		jobs,
-		&recordingRunEvidenceFinalizer{},
+		finalizer,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -610,6 +620,13 @@ func TestRunReconcilerPublishesTerminalResolutionFailureWithoutRequeue(t *testin
 		condition.Reason != profiler.ResolutionReasonExecutionPolicyInvalid ||
 		!strings.Contains(condition.Message, `execution policy "typo-v9" is not configured`) {
 		t.Fatalf("terminal freeze status = %#v", actual.Status)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.calls != 1 || jobs.calls != 0 || finalizer.calls != 0 {
+		t.Fatalf("terminal pre-Job replay: resolves=%d creates=%d finalizes=%d",
+			resolver.calls, jobs.calls, finalizer.calls)
 	}
 }
 

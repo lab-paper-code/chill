@@ -10,6 +10,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -47,6 +48,11 @@ func main() {
 		HealthProbeBindAddress: opts.probeAddr,
 		LeaderElection:         opts.enableLeaderElection,
 		LeaderElectionID:       opts.leaderElectionID,
+		// Terminal status fences irreversible evidence writers; their reads must
+		// not replay a preterminal informer snapshot after explicit cleanup.
+		Client: client.Options{Cache: &client.CacheOptions{DisableFor: []client.Object{
+			&edgev1alpha1.BatchEnergyOptimization{}, &edgev1alpha1.ProfilingRun{},
+		}}},
 		Cache: cache.Options{DefaultNamespaces: map[string]cache.Config{
 			opts.watchNamespace: {},
 		}},

@@ -30,7 +30,7 @@ func findRunJob(
 	reader client.Reader,
 	run *edgev1alpha1.ProfilingRun,
 ) (*batchv1.Job, error) {
-	name, err := executionJobName(run)
+	name, err := ExecutionJobName(run)
 	if err != nil {
 		return nil, err
 	}

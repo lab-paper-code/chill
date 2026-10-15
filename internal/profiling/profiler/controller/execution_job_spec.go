@@ -73,7 +73,7 @@ func buildExecutionJob(
 	if err != nil {
 		return nil, fmt.Errorf("encode selected execution policy: %w", err)
 	}
-	jobName, err := executionJobName(run)
+	jobName, err := ExecutionJobName(run)
 	if err != nil {
 		return nil, err
 	}
