@@ -125,6 +125,10 @@ separately.
 
 ## Profiling runtime input contracts
 
+The cutover to dataset-sampled raw inputs, preprocessor artifacts, and
+firstfloor-only measurement is designed in
+[heterogeneous workloads](../serving/heterogeneous-workloads.md#5-프로파일링).
+
 Every frozen RunConfig carries `delivery.artifactCapability.tensors`, including
 canonical ONNX artifacts with no target platform or artifact-declared batch set.
 Each tensor declares `name`, uppercase `datatype`, and batch-free

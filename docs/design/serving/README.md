@@ -21,6 +21,8 @@ firstfloor actor·persistent ORT CPU/CUDA·RKNNLite runner와 동일 실행 경�
   원본 명세·현재 구현의 요구사항별 판정과 사용자 선택에 따른 firstfloor 실행 경계.
 - [스케줄러 구현 설계](scheduler-implementation.md):
   확정 SRS를 firstfloor 실행·동일 경로 측정·SLO/에너지 후보·실제 전환에 연결하는 설계.
+- [이기종 워크로드 구현 설계](heterogeneous-workloads.md):
+  원시 표본, 전처리기와 데이터셋 catalog, 여러 모델 파일 산출물, 데이터셋 표본 측정과 commit 단위.
 
 ## 설계 기준
 
