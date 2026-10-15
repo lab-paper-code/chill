@@ -862,3 +862,27 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
 - 실제 client-go/Authorizer의 로컬128건·8/s smoke는 기본111완료/17인증불가·평균2.185초,
   50/100은128완료/0인증불가·평균1.277ms였으며 denied SAR는 계속 Forbidden이었다(`artifact://3651`).
   로컬 재현은 cluster/APF 처리량·FULL 재검증 성공의 증거가 아니다. 실패 원본은 보존한다.
+
+## 후속 실패 보존·새 작업 단위와 준비 정책 정합성 — 2026-10-15
+
+- API50/100 실제 인증 smoke128건은 모두200이었다. 후속 고부하는 owner512Mi OOMKilled와
+  불완전 JSONL로 실패했다(`full-load-reversal-api-budget/bounded-report.json`).
+  원본을 잘라내거나 성공으로 재해석하지 않았고 전체 power 합계도 미완성으로 남겼다.
+- 남은 Rpi8건·Latte6건은 각각 해당 실제 컨테이너의 종료 확인 뒤 기존 observer가
+  `error/InstanceStopped`로 종결했다. 원래 timeout/불완전 응답은 보존했다.
+  근거는 `retained-native-ownership/{physical-stop-closure,second-physical-stop-closure}/result.json`이다.
+- `95451116`은 관측 복원 전에 경로를 비우던 시작 순서를 고쳤다. CPU2/1Gi·Go soft768MiB,
+  API50/100·동일PVC에서 새 journal 작업 단위를 열었다. 원래 Workload UID·Model·SLO를 유지했다.
+  9ON 재시작 후 실제 경로 재구성과 추론은 확인했지만 이전 route weight의 영속 복원은 아니다.
+  근거는 `startup-954-clean-workunit-cutover/result.json`이다.
+- 새 실행의 Latte 준비는 실제 native policy와 Pod bootstrap 기대 ACK가 달라 PARTIAL이었다.
+  `b200966e`는 재사용 ConfigMap의 현재 정책 ID를 사용하며 준비된 동일 Pod의 오래된 annotation을
+  낙관적 잠금으로 정합화한다. ConfigMap의 측정 정책을 bootstrap 값으로 덮지 않는다.
+  독립 native readback·observer readiness는 계속 필요하다. focused 회귀와
+  `make lint test arch-check gopls-check`가 통과했고 correctness·ponytail review를 반영했다.
+- b200 owner와 동일 source CLI를 배포했다. 이미 활성화된 Pod의 정상 Prepare는 거절됐으므로
+  실제 CM/native 정책 일치·Pod UID/RV·이전 annotation을 확인한 기존 Kubernetes patch만 사용했다.
+  같은 Latte UID/container·restart0·처리0에서 owner/native Ready가 됐으며 CM UID/RV·497.248462ms
+  측정 정책은 그대로다. 과거 PARTIAL 결과는 바꾸지 않았다.
+  `prepare-policy-b200-cutover/result.json`에서 9OFF·Rpi ACK353693522·outstanding0을 확인했다.
+  이 시점에는 새 부하/T0/GPU 준비를 시작하지 않았다. 이후 실행은 별도 실제 결과로 기록한다.

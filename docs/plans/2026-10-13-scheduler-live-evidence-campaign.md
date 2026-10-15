@@ -53,7 +53,7 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** 고부하 실행의 인증·요청 timeout과 OFF 적용 지연 원인을 확인·수정한 뒤 반전 검증을 재개한다. Main compact 연결은 별도 대기다.
+**현재 우선:** 준비 정책 ACK 수정의 실제 수렴을 확인했으며, 세 실행기 준비·초기 경로 확인 뒤 새 FULL 부하 검증을 진행한다. Main compact 연결은 별도 대기다.
 
 1. **FULL 통합 실적:** 새 CUDA profile·실제 owner 요청·GPU prepare/remove 비용을 연결했다.
    동일 초기 3실행기·동일 190건 부하의 OFF/FULL 비교에서 모두 완료·두 SLO를 통과했고,
@@ -96,15 +96,15 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 현재 상태·다음 작업
 
-- 부하 변동 실행은 실패했다. outcome 집계는 완료134·거절286·timeout496이며 native 용량 초과로 단정하지 않는다.
-  오류 코드 집계는 AuthorizationUnavailable285·RequestTimeout497로 1건 차이가 있어 별도로 보존한다.
-  실제 route는 완료됐지만 관측 timeout으로 즉시 반전 조건을 놓쳤다. 제어9OFF·Rpi 실제 route를 재시작 없이 복원했다.
-- owner 조회 수정 `9365f9ae`를 실제 배포했고 limit CPU2/512Mi·evidence PVC 8Gi를 유지한다.
-  앞선 비교의 CPU 변경과 meter 수정을 분리한 실험은 아니므로 SLO 실패의 단일 원인을 CPU로 지목하지 않는다.
-- placement/resources/replicas/routing/sharing/membership 개별 실적, firstfloor 배칭 책임,
-  Jetson 전력 6동작과 복원, CUDA 실제 완료·전환 비용은 제어 기록에 둔다.
-- FULL 통합 성공을 에너지 절감·자동 전력모드 선택·최종 Dashboard 종단 완료로 확대하지 않는다.
-  Dashboard Main 소유 파일은 수정하지 않고 필요한 연결 계약만 전달한다.
+- owner `b200966e`, CPU2/1Gi·Go soft768MiB·API50/100으로 새 실행 준비를 진행한다.
+  같은8Gi PVC의 새 관측 경로를 사용하고 기존 Workload UID·Model·SLO를 유지했다.
+  9ON 재시작의 재구성 분포와 실제 추론은 확인했지만, 이전 route weight의 영속 복원은 아니다.
+- 이전 Rpi8건·Latte6건은 실제 컨테이너 종료 후 기존 observer가 `error/InstanceStopped`로 종결했다.
+  원래 timeout/불완전 응답과 torn journal은 보존했다. 새 API는 새 작업 단위만 조회하며 과거18:22 기록은 raw에 남는다.
+- Latte PARTIAL의 정책 ACK 불일치를 수정·배포했고 같은 실제 인스턴스에서 owner/native Ready를 확인했다.
+  측정 정책과 원래 PARTIAL 결과는 보존했다. 같은 source CLI로 남은 준비 후 새 부하 검증을 진행한다.
+- 개별 제어·Jetson6전력 동작·CUDA 실측·이전 FULL 통합 실적은 제어 기록에 둔다.
+  이를 에너지 절감·자동 전력모드 선택·최종 Dashboard 종단 완료로 확대하지 않는다.
 
 ## 진행 기록 찾아보기
 
