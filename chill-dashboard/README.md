@@ -122,6 +122,10 @@ scope. Identity changes clear selections; first login retains bookmarked records
 
 Each page has one task: list, detail, create, edit, inference, or one read view. Workloads are displayed as 서비스, POOLs as 실행 그룹. Existing native model/service records are selected by name; dependencies, impact confirmation, advanced input and exact source identities open in accessible dialogs. First-time artifact registration still requires its real source because no artifact catalog producer exists. Login is a dedicated screen; connected identity changes and logout are in 접속 관리.
 
+POOL list and detail views accept the current API's null collections as empty
+node, workload or instance lists. An idle POOL or an executor awaiting policy
+acknowledgement must not crash the page; its actual readiness remains visible.
+
 Model authoring and applied workload definitions use `firstfloor` settings with positive int32 `maxBatchSize` and per-workload-UID `maxQueueSize` bounds. Native backends are `ort-cpu` / `ort-cuda` for ONNX and `rknnlite` for RKNN. The API validates artifact/backend compatibility, requires these settings for the `firstfloor` family and rejects them for other families; the editor preserves custom native declarations and existing numeric/bool multi-tensor input behavior.
 
 History, load and custom observation dates use the device's local time zone.

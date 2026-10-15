@@ -37,9 +37,9 @@ export function ResourcesPage() {
 export function PoolsPage() {
   const query=useChillQuery<PoolsView>("v1/pools")
   return <div className="page"><h1>실행 그룹</h1><ReadRegion title="현재 실행 그룹" query={query}>{query.data&&<><DataTable<PoolState> data={query.data.items??[]} columns={[
-    {key:"name",label:"그룹",value:row=><Link href={`/pools/${encodeURIComponent(row.id)}`}>{row.currentNodes.map(node=>node.name).join(", ")||"노드 없는 그룹"} 자세히</Link>},
-    {key:"nodes",label:"노드",value:row=>row.currentNodes.map(node=>node.name).join(", ")||"없음"},
-    {key:"workloads",label:"서비스",value:row=><ul>{row.servingWorkloads.map(workload=><li key={workload.uid}><Link href={`/workloads/${encodeURIComponent(workload.name)}?uid=${encodeURIComponent(workload.uid)}`}>{workload.name}</Link></li>)}</ul>},
+    {key:"name",label:"그룹",value:row=><Link href={`/pools/${encodeURIComponent(row.id)}`}>{(row.currentNodes??[]).map(node=>node.name).join(", ")||"노드 없는 그룹"} 자세히</Link>},
+    {key:"nodes",label:"노드",value:row=>(row.currentNodes??[]).map(node=>node.name).join(", ")||"없음"},
+    {key:"workloads",label:"서비스",value:row=><ul>{(row.servingWorkloads??[]).map(workload=><li key={workload.uid}><Link href={`/workloads/${encodeURIComponent(workload.name)}?uid=${encodeURIComponent(workload.uid)}`}>{workload.name}</Link></li>)}</ul>},
     {key:"at",label:"관측 시각",value:row=>row.observedAt},
     {key:"detail",label:"상세",value:row=><SourceJSON value={row}/>},
   ]}/><SourceJSON title="조회 상세" value={query.data}/></>}</ReadRegion><Link href="/scheduler?view=snapshot">운영 판단의 실제 자원 구성</Link></div>
@@ -51,9 +51,9 @@ export function PoolPage({id}:{id:string}) {
   return <div className="page"><h1>실행 그룹 상세</h1><label className="switch"><input type="checkbox" checked={poll} onChange={event=>setPoll(event.target.checked)}/>자동 새로고침</label><ReadRegion title="현재 구성" query={query}>{query.data&&<><DataTable data={query.data.instances??[]} columns={[
     {key:"node",label:"노드",value:row=>row.node.name},
     {key:"ready",label:"상태",value:row=><StatusBadge tone={row.ready?"ok":"warn"}>{row.ready?"준비됨":"준비되지 않음"}</StatusBadge>},
-    {key:"workloads",label:"서비스",value:row=>row.workloads.map(workload=>workload.name).join(", ")||"없음"},
+    {key:"workloads",label:"서비스",value:row=>(row.workloads??[]).map(workload=>workload.name).join(", ")||"없음"},
     {key:"detail",label:"상세",value:row=><SourceJSON value={row}/>},
-  ]}/><DetailsDialog label="노드와 서비스 보기" title="그룹에 연결된 대상"><h2>노드</h2><ul>{query.data.currentNodes.map(row=><li key={row.uid}>{row.name}</li>)}</ul><h2>서비스</h2><ul>{query.data.servingWorkloads.map(row=><li key={row.uid}><Link href={`/workloads/${encodeURIComponent(row.name)}?uid=${encodeURIComponent(row.uid)}`}>{row.name}</Link></li>)}</ul><p>현재 그룹 관측 {query.data.observedAt}</p><Link href={`/scheduler?view=snapshot&pool=${encodeURIComponent(id)}`}>자원 할당과 전력모드의 실제 구성</Link><details><summary>원본</summary><pre className="source-json">{stringifySchedulerJSON(safeSource(query.data),2)}</pre></details></DetailsDialog><SourceExport value={query.data} filename={`chill-pool-${id}.json`}/></>}</ReadRegion><Link href="/pools">그룹 목록</Link></div>
+  ]}/><DetailsDialog label="노드와 서비스 보기" title="그룹에 연결된 대상"><h2>노드</h2><ul>{(query.data.currentNodes??[]).map(row=><li key={row.uid}>{row.name}</li>)}</ul><h2>서비스</h2><ul>{(query.data.servingWorkloads??[]).map(row=><li key={row.uid}><Link href={`/workloads/${encodeURIComponent(row.name)}?uid=${encodeURIComponent(row.uid)}`}>{row.name}</Link></li>)}</ul><p>현재 그룹 관측 {query.data.observedAt}</p><Link href={`/scheduler?view=snapshot&pool=${encodeURIComponent(id)}`}>자원 할당과 전력모드의 실제 구성</Link><details><summary>원본</summary><pre className="source-json">{stringifySchedulerJSON(safeSource(query.data),2)}</pre></details></DetailsDialog><SourceExport value={query.data} filename={`chill-pool-${id}.json`}/></>}</ReadRegion><Link href="/pools">그룹 목록</Link></div>
 }
 
 const runFilters=[ ["","전체"],["ExecutionComplete=True","실행 완료"],["ExecutionComplete=False","실행 미완료"],["ExecutionComplete=Unknown","실행 확인 중"],["EvidenceVerified=True","근거 검증 완료"],["EvidenceVerified=False","근거 미검증"],["EvidenceVerified=Unknown","근거 확인 중"] ]
