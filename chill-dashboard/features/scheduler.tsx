@@ -129,6 +129,7 @@ export function SchedulerPage() {
       <Row href="/scheduler/estimates" label="서비스별 응답 목표 예상" value={now?.estimates.length?`초과 ${now.exceeding} / ${now.estimates.length}`:undefined}/>
       <Row href="/scheduler/load" label="실제 부하" hint="구간마다 받은 요청과 처리"/>
       <Row href="/transitions" label="변경 진행" value={view?`${view.state.actions?.length??0}건`:undefined}/>
+      <Row href="/scheduler/profiles" label="측정 프로파일" hint="운영 판단이 쓰는 측정 결과"/>
       <Row href="/resources" label="장비"/>
       <Row href="/pools" label="실행 그룹"/>
     </Rows>

@@ -56,3 +56,7 @@ export type SchedulerObservationPage = {from:string;to:string;events:SchedulerOb
 export type OperatingPowerNode = {node:NodeRef;meter:string;scope:"node-exclusive-wall";joules:number|null;meanWatts:number|null;samples:number;sourceTimestampAbsent:boolean;reasons:string[]}
 export type OperatingPower = {from:string;to:string;scope:"whole-pool-wall";nodes:OperatingPowerNode[];wholePoolJoules:number|null;wholePoolMeanWatts:number|null;activePoolJoules:number|null;activePoolMeanWatts:number|null;complete:boolean;reasons:string[];incompleteWindows:string[]}
 export type LoadWindow = {from:string;to:string;durationNanos:WireInteger;population:string;workloads:{uid:string;received:number;accepted:number;assigned:number;completed:number;receivedInputsPerSecond:number;acceptedInputsPerSecond:number;assignedInputsPerSecond:number;completionEventsPerSecond:number;instanceAssignments:Record<string,number>|null}[]|null;arrivals:SchedulerArrival[]|null;incompleteWindows:string[]|null}
+// internal/serving/entrypoint/profiles.go: 200 with Pending/Rejected is not an adoption.
+export type ProfileCampaign = {namespace:string;name:string}
+export type ProfileSelection = {campaign:ProfileCampaign;status:string;profileID?:string;code?:string;reason?:string;configVersion?:string;persisted:boolean;loaded:boolean}
+export type ProfileSelectionsView = {configVersion:string;selections:ProfileSelection[]|null;state:SchedulerControllerState}

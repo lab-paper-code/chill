@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
 import type { CampaignResult, RunsView, ProfilingRun, Passport } from "@/lib/read-types"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge, statusLabel } from "@/components/read-region"
+import { ProfileAdoption } from "@/features/scheduler-profiles"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -249,6 +250,7 @@ export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:s
           <SourceExport value={{conditions:{kind,namespace,name,expectedUID},source:data}} filename={`chill-result-${name}.json`}/>
           <SourceJSON inline value={data}/>
         </RowDialog></Rows>
+        {!other&&<ProfileAdoption namespace={namespace} name={name} ready={data.result!==null}/>}
       </>}</QueryGate>
     </Screen>
   }

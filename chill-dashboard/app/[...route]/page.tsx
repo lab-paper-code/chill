@@ -11,6 +11,7 @@ import { SchedulerHistoryPage } from "@/features/scheduler-history"
 import { SchedulerTransitionsPage } from "@/features/scheduler-transitions"
 import { SchedulerPowerPage, SchedulerComparePage } from "@/features/scheduler-evidence"
 import { RecordsPage, SettingsPage } from "@/features/hubs"
+import { SchedulerProfilesPage } from "@/features/scheduler-profiles"
 
 const serviceSections = ["definition", "evidence", "placement", "operation", "changes"] as const
 const modelSections = ["files", "services"] as const
@@ -47,6 +48,7 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if (head === "scheduler" && route.length === 2 && name === "candidates") page = <SchedulerCandidatesPage />
   else if (head === "scheduler" && route.length === 2 && name === "estimates") page = <SchedulerEstimatesPage />
   else if (head === "scheduler" && route.length === 2 && name === "load") page = <SchedulerLoadPage />
+  else if (head === "scheduler" && route.length === 2 && name === "profiles") page = <SchedulerProfilesPage />
   else if (head === "scheduler" && route.length === 2 && name === "history") page = <SchedulerHistoryPage />
   else if (head === "scheduler" && route.length === 2 && name === "power") page = <SchedulerPowerPage />
   else if (head === "scheduler" && route.length === 2 && name === "compare") page = <SchedulerComparePage />
