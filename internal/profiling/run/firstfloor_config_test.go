@@ -24,6 +24,7 @@ func firstfloorFrozenConfig(backend string) RunConfig {
 		host := rknnHostContractForTest()
 		config.State.HostContract = &host
 		config.Delivery = rknnDeliveryForTest(2, &host)
+		config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050-rk3588-bs2.rknn"}
 		config.Measurement.Batch = 2
 		config.CPU.ORTIntraOpThreads = 0
 		config.CPU.ORTInterOpThreads = 0

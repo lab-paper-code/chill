@@ -199,6 +199,7 @@ func rknnDeliveryForTest(batch int32, host *CandidateReportHostContract) Candida
 func TestCurrentRunConfigRequiresCleanUniqueArtifactFiles(t *testing.T) {
 	for _, files := range [][]string{
 		nil, {"/"}, {"artifact/model.onnx"}, {"/artifact/../model.onnx"}, {"/a/model.onnx", "/b/model.onnx"},
+		{"/artifact/model.onnx", "/artifact/model.onnx_data"},
 	} {
 		config := validRunConfig()
 		config.State.ArtifactFiles = files
@@ -343,7 +344,7 @@ func TestFrozenRunConfigOwnsArtifactAndPreprocessorContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	if record.Delivery.ArtifactCapability.Tensors[0].SampleShape[0] != 224 ||
-		record.State.ArtifactFiles[0] != "/artifact/mobilenet-v2-050.onnx" ||
+		record.State.ArtifactFiles[0] != "/artifact/mobilenet-v2-050-rk3588-bs2.rknn" ||
 		record.State.Preprocessor.Inputs[0] != "image" || record.Measurement.Dataset.Name != "vqav2-val-subset" {
 		t.Fatalf("frozen RunConfig was mutated through caller state: %+v", record)
 	}

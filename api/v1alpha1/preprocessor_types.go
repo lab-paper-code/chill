@@ -32,7 +32,10 @@ type RawInputContract struct {
 
 // RawField declares one size-bounded raw field.
 type RawField struct {
+	// Name is one path element: dataset records store the field as <recordID>/<name>.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^([^/\\.][^/\\]*|\.[^/\\.][^/\\]*|\.\.[^/\\]+)$`
 	Name string `json:"name"`
 
 	// Format is the field content format.
@@ -54,7 +57,10 @@ type RawOutputContract struct {
 
 // RawOutputField declares one raw response field.
 type RawOutputField struct {
+	// Name is one path element: dataset records store the field as <recordID>/<name>.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^([^/\\.][^/\\]*|\.[^/\\.][^/\\]*|\.\.[^/\\]+)$`
 	Name string `json:"name"`
 
 	// Format is the field content format.

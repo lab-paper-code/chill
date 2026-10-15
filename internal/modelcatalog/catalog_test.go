@@ -77,7 +77,7 @@ func TestFirstfloorCatalogBackendArtifactRelation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			artifact := edgev1alpha1.ModelArtifact{
 				Name: "model", Format: test.format,
-				Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "arm64", Files: []string{"/artifact/model"}},
+				Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "arm64", Files: []string{"/artifact/model." + test.format}},
 			}
 			if test.format == "rknn" {
 				artifact.Input = &edgev1alpha1.ModelArtifactInputContract{Tensors: []edgev1alpha1.ModelInputTensor{
@@ -119,11 +119,39 @@ func TestArtifactSourceFiles(t *testing.T) {
 		{"relative", []string{"artifact/model.onnx"}, true},
 		{"unclean", []string{"/artifact/../model.onnx"}, true},
 		{"duplicate basename", []string{"/a/model.onnx", "/b/model.onnx"}, true},
+		{"shared session stem", []string{"/artifact/model.onnx", "/artifact/model.onnx_data"}, true},
+		{"dotted stems differ", []string{"/artifact/model.tar.gz", "/artifact/model.tar"}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			model := &edgev1alpha1.ModelSpec{Spec: edgev1alpha1.ModelSpecSpec{
 				Artifacts: []edgev1alpha1.ModelArtifact{{Name: "model", Format: "onnx",
 					Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "amd64", Files: test.files},
+				}},
+			}}
+			if err := Validate(model); (err != nil) != test.wantError {
+				t.Fatalf("Validate() = %v, want error %t", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestRKNNArtifactIsOneRKNNFile(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		files     []string
+		wantError bool
+	}{
+		{"one rknn file", []string{"/artifact/model.rknn"}, false},
+		{"other extension", []string{"/artifact/model.onnx"}, true},
+		{"two files", []string{"/artifact/model.rknn", "/artifact/extra.rknn"}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := &edgev1alpha1.ModelSpec{Spec: edgev1alpha1.ModelSpecSpec{
+				Artifacts: []edgev1alpha1.ModelArtifact{{Name: "model", Format: "rknn",
+					Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "arm64", Files: test.files},
+					Input: &edgev1alpha1.ModelArtifactInputContract{Tensors: []edgev1alpha1.ModelInputTensor{
+						{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
+					}},
 				}},
 			}}
 			if err := Validate(model); (err != nil) != test.wantError {

@@ -61,7 +61,7 @@ func Validate(model *edgev1alpha1.ModelSpec) error {
 		artifacts[artifact.Name] = artifact
 	}
 	for _, artifact := range model.Spec.Artifacts {
-		if err := validateSource(artifact.Source); err != nil {
+		if err := validateSource(artifact.Source, artifact.Format == artifactFormatRKNN); err != nil {
 			return fmt.Errorf("artifact %q source: %w", artifact.Name, err)
 		}
 		if artifact.Format == artifactFormatRKNN {
@@ -141,7 +141,7 @@ func SelectModelPath(model *edgev1alpha1.ModelSpec, pathName string) (edgev1alph
 	return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf("execution path %q is not declared by ModelSpec %q", pathName, model.Name)
 }
 
-func validateSource(source edgev1alpha1.ModelArtifactSource) error {
+func validateSource(source edgev1alpha1.ModelArtifactSource, rknn bool) error {
 	for _, field := range []struct{ name, value string }{
 		{"image", source.Image}, {"architecture", source.Architecture},
 	} {
@@ -152,16 +152,10 @@ func validateSource(source edgev1alpha1.ModelArtifactSource) error {
 	if len(source.Files) == 0 {
 		return errors.New("files requires at least one model file")
 	}
-	basenames := make(map[string]struct{}, len(source.Files))
 	for _, file := range source.Files {
 		if !artifactPath.MatchString(file) || path.Clean(file) != file {
 			return fmt.Errorf("file %q must be a clean absolute container path", file)
 		}
-		base := path.Base(file)
-		if _, duplicate := basenames[base]; duplicate {
-			return fmt.Errorf("files contain duplicate basename %q", base)
-		}
-		basenames[base] = struct{}{}
 	}
-	return nil
+	return modelcompat.ValidateModelFileNames(source.Files, rknn)
 }

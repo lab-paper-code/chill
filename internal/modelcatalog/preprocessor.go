@@ -109,9 +109,11 @@ func validateRawFields(fields []edgev1alpha1.RawField) error {
 	return nil
 }
 
+// validateRawField requires a name that is one safe path element: dataset
+// records store each field as the file <recordID>/<name>.
 func validateRawField(name, format string, seen map[string]struct{}) error {
-	if name == "" {
-		return errors.New("field name is required")
+	if name == "" || len(name) > 256 || strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
+		return fmt.Errorf("field name %q must be 1 to 256 bytes without / or \\ and not . or ..", name)
 	}
 	if _, duplicate := seen[name]; duplicate {
 		return fmt.Errorf("duplicate field %q", name)

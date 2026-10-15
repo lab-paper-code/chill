@@ -46,3 +46,27 @@ func TestCompatibleReportsUnsatisfiedInputFields(t *testing.T) {
 		t.Fatalf("subset contract reported mismatches %v", got)
 	}
 }
+
+func TestRawFieldNamesAreOnePathElement(t *testing.T) {
+	for _, name := range []string{"...", ".", "..", "a/b", `a\b`, string(make([]byte, 257))} {
+		valid := name == "..."
+		d := &edgev1alpha1.Dataset{Spec: edgev1alpha1.DatasetSpec{
+			Source: edgev1alpha1.DatasetSource{Image: "carrier", Path: "/artifact/data"},
+			Fields: []edgev1alpha1.RawField{{Name: name, Format: "UTF8", MaxBytes: 16}},
+		}}
+		if err := ValidateDataset(d); (err == nil) != valid {
+			t.Errorf("ValidateDataset(field %q) = %v, want valid %t", name, err, valid)
+		}
+		p := &edgev1alpha1.Preprocessor{Spec: edgev1alpha1.PreprocessorSpec{
+			Input:  edgev1alpha1.RawInputContract{Fields: []edgev1alpha1.RawField{{Name: "image", Format: "JPEG", MaxBytes: 16}}},
+			Output: edgev1alpha1.RawOutputContract{Fields: []edgev1alpha1.RawOutputField{{Name: name, Format: "UTF8"}}},
+			Artifacts: []edgev1alpha1.PreprocessorArtifact{{
+				Target: edgev1alpha1.PreprocessorTarget{Model: "m", Artifact: "a"},
+				Source: edgev1alpha1.PreprocessorArtifactSource{Image: "carrier", Architecture: "arm64", Path: "/artifact/p"},
+			}},
+		}}
+		if err := ValidatePreprocessor(p); (err == nil) != valid {
+			t.Errorf("ValidatePreprocessor(output field %q) = %v, want valid %t", name, err, valid)
+		}
+	}
+}

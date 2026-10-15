@@ -59,7 +59,11 @@ spec:
                       minimum: 1
                       type: integer
                     name:
+                      description: 'Name is one path element: dataset records store
+                        the field as <recordID>/<name>.'
+                      maxLength: 256
                       minLength: 1
+                      pattern: ^([^/\\.][^/\\]*|\.[^/\\.][^/\\]*|\.\.[^/\\]+)$
                       type: string
                   required:
                   - format

@@ -229,7 +229,7 @@ func (i RunConfig) validateSchema() error {
 	if i.SchemaVersion != RunConfigSchemaVersion {
 		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
 	}
-	if err := validateArtifactFiles(i.State.ArtifactFiles); err != nil {
+	if err := validateArtifactFiles(i.State.ArtifactFiles, isRKNNExecution(i)); err != nil {
 		return err
 	}
 	if err := validatePreprocessorState(i.State.Preprocessor); err != nil {
@@ -262,21 +262,19 @@ func (i RunConfig) validateMeasurementMode() error {
 	return nil
 }
 
-// validateArtifactFiles requires clean absolute model files whose basenames,
-// the delivered /model/<basename> names, are unique.
-func validateArtifactFiles(files []string) error {
+// validateArtifactFiles requires clean absolute model files whose names the
+// runner can load, by the same rule the catalog applies.
+func validateArtifactFiles(files []string, rknn bool) error {
 	if len(files) == 0 {
 		return errors.New("state.artifactFiles is required")
 	}
-	seen := make(map[string]struct{}, len(files))
 	for _, file := range files {
 		if !validArtifactPath(file) {
 			return errors.New("state.artifactFiles must be clean absolute container paths")
 		}
-		if _, duplicate := seen[path.Base(file)]; duplicate {
-			return errors.New("state.artifactFiles basenames must be unique")
-		}
-		seen[path.Base(file)] = struct{}{}
+	}
+	if err := modelcompat.ValidateModelFileNames(files, rknn); err != nil {
+		return fmt.Errorf("state.artifactFiles: %w", err)
 	}
 	return nil
 }
