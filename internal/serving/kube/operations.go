@@ -336,7 +336,8 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 	if string(node.UID) != spec.Instance.Node.UID || node.Labels[ServingPoolLabel] != spec.Instance.Pool {
 		return errors.New("actual Node/pool differs from preparation")
 	}
-	if err := o.ensurePreparationConfig(ctx, spec); err != nil {
+	decisionID, err := o.ensurePreparationConfig(ctx, spec)
+	if err != nil {
 		return err
 	}
 	cpuRequest, err := resource.ParseQuantity(p.Condition.CPU.Request)
@@ -356,7 +357,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		requests["nvidia.com/gpu"] = resource.MustParse("1")
 		limits["nvidia.com/gpu"] = resource.MustParse("1")
 	}
-	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}, Annotations: map[string]string{ServingProfileAnnotation: p.ID, ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), ServingPolicyAnnotation: spec.Config.Policy.DecisionID, ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{sourceFinalizer}}, Spec: core.PodSpec{NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), InitContainers: []core.Container{
+	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}, Annotations: map[string]string{ServingProfileAnnotation: p.ID, ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), ServingPolicyAnnotation: decisionID, ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{sourceFinalizer}}, Spec: core.PodSpec{NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), InitContainers: []core.Container{
 		{Name: "artifact", Image: p.Condition.Artifact.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$1" "$2"`, "artifact-copy", p.Condition.Artifact.Path, path.Join("/chill-artifact", "model"+path.Ext(p.Condition.Artifact.Path))}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
 		{Name: "profile", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Resources: initResources, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
 	}, Containers: []core.Container{{Name: "firstfloor", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-worker"}, Args: []string{"--config=/config/config.json", "--bind-address=:8080", "--node-name=" + node.Name}, Ports: []core.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: core.ResourceRequirements{Requests: requests, Limits: limits}, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "profile", MountPath: "/profile", ReadOnly: true}, {Name: "config", MountPath: "/config", ReadOnly: true}}, ReadinessProbe: &core.Probe{ProbeHandler: core.ProbeHandler{HTTPGet: &core.HTTPGetAction{Path: "/v2/health/ready", Port: port8080()}}, PeriodSeconds: 1}}}, Volumes: []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}}}}
@@ -378,6 +379,13 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 	}
 	if err = o.ensureInstanceService(ctx, pod); err != nil {
 		return err
+	}
+	if pod.Annotations[ServingPolicyAnnotation] != decisionID {
+		previous := pod.DeepCopy()
+		pod.Annotations[ServingPolicyAnnotation] = decisionID
+		if err = o.store.client.Patch(ctx, pod, client.MergeFromWithOptions(previous, client.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
 	}
 	return o.wait(ctx, func() (bool, error) {
 		if err := o.observer.Refresh(ctx); err != nil {
@@ -403,35 +411,37 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		return false, nil
 	})
 }
-func (o *Operations) ensurePreparationConfig(ctx context.Context, spec PrepareSpec) error {
+func (o *Operations) ensurePreparationConfig(ctx context.Context, spec PrepareSpec) (string, error) {
 	raw, err := json.Marshal(spec.Config)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(raw) > 64<<10 {
-		return errors.New("native mutable config exceeds small policy bound")
+		return "", errors.New("native mutable config exceeds small policy bound")
 	}
 	cm := &core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: o.config.Namespace, Name: spec.Name}, Data: map[string]string{"config.json": string(raw)}}
 	if err = o.store.client.Create(ctx, cm); err != nil && !apierrors.IsAlreadyExists(err) {
-		return err
+		return "", err
 	}
 	if apierrors.IsAlreadyExists(err) {
 		existing := &core.ConfigMap{}
 		if err = o.store.client.Get(ctx, types.NamespacedName{Namespace: cm.Namespace, Name: cm.Name}, existing); err != nil {
-			return err
+			return "", err
 		}
 		var previous native.Config
 		if err = json.Unmarshal([]byte(existing.Data["config.json"]), &previous); err != nil {
-			return err
+			return "", err
 		}
+		decisionID := previous.Policy.DecisionID
 		desired := spec.Config
 		previous.Policy = native.Policy{DeadlinePolicy: native.EffectiveDeadlinePolicy(previous.Policy.DeadlinePolicy)}
 		desired.Policy = native.Policy{DeadlinePolicy: native.EffectiveDeadlinePolicy(desired.Policy.DeadlinePolicy)}
 		if !reflect.DeepEqual(previous, desired) {
-			return errors.New("existing immutable preparation execution config differs")
+			return "", errors.New("existing immutable preparation execution config differs")
 		}
+		return decisionID, nil
 	}
-	return nil
+	return spec.Config.Policy.DecisionID, nil
 }
 func validatePreparation(spec PrepareSpec) error {
 	p := spec.Instance.Profile

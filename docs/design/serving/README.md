@@ -312,6 +312,9 @@ Pod는 `RestartPolicyNever`여야 한다. 같은 Pod UID 뒤에서 container가 
 native model/state와 immutable profile/runtime evidence의 준비 검증은 그대로 유지한다.
 Pod Ready나 Service 생성만으로 추론 준비를 완료하지 않는다.
 
+prepare는 저장된 현재 정책을 유지하며 오래된 Pod 정책 annotation을 고친다.
+annotation 수정 자체를 native acknowledgment로 간주하지 않는다.
+
 제거는 native drain과 실제 container 종료 증거를 확인한 뒤 자기 Pod 소유의 Service를
 resourceVersion/UID precondition으로 삭제하고 Pod finalizer 및 config를 해제한다.
 이때는 namespace·이름·Pod owner identity만 확인한다. 자기 Service의 selector나 proxy
