@@ -51,7 +51,22 @@ func (r *Runtime) routeWeightLocked(uid string, instance *runtimeInstance) int32
 func (r *Runtime) ApplySchedulerTarget(candidate SchedulerCandidate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.applySchedulerTargetLocked(candidate, false)
+}
+
+// ValidateSchedulerTarget checks the same current UID, ownership and readiness
+// fence without changing policy or routing.
+func (r *Runtime) ValidateSchedulerTarget(candidate SchedulerCandidate) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.applySchedulerTargetLocked(candidate, true)
+}
+
+func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, validateOnly bool) error {
 	targets := make(map[string]map[string]int32, len(r.workloads))
+	if err := r.validateSchedulerRoutingLocked(candidate); err != nil {
+		return err
+	}
 	for _, wanted := range candidate.Instances {
 		routeNeeded := false
 		for _, uid := range wanted.WorkloadUIDs {
@@ -63,15 +78,9 @@ func (r *Runtime) ApplySchedulerTarget(candidate SchedulerCandidate) error {
 		if !routeNeeded {
 			continue
 		}
-		var actual *runtimeInstance
-		for _, instance := range r.instances {
-			if instance.State.ID != wanted.ID && instance.State.TargetID != wanted.ID {
-				continue
-			}
-			if actual != nil {
-				return failure("InvalidDistribution", "target slot has multiple physical instances")
-			}
-			actual = instance
+		actual, err := r.schedulerSlotLocked(wanted.ID)
+		if err != nil {
+			return err
 		}
 		if actual == nil || !actual.State.Ready || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node || actual.State.Pool != wanted.Pool {
 			return failure("TargetNotReady", "target %q lacks matching actual readiness", wanted.ID)
@@ -94,6 +103,9 @@ func (r *Runtime) ApplySchedulerTarget(candidate SchedulerCandidate) error {
 			targets[uid][actual.State.ID] = weight
 		}
 	}
+	if validateOnly {
+		return nil
+	}
 	// Accepted calls keep their original execution contract through route changes.
 	// Retain an old route only while the new distribution cannot execute them.
 	r.retainAcceptedRoutesLocked(targets)
@@ -110,6 +122,51 @@ func (r *Runtime) ApplySchedulerTarget(candidate SchedulerCandidate) error {
 	r.dispatchLocked()
 	r.signal()
 	return nil
+}
+
+// Validate logical route declarations before resolving their physical runners.
+func (r *Runtime) validateSchedulerRoutingLocked(candidate SchedulerCandidate) error {
+	for uid, workload := range r.workloads {
+		if _, present := candidate.Routing[uid]; !workload.detached && !present {
+			return failure("InvalidDistribution", "target lacks distribution for workload %q", uid)
+		}
+	}
+	for uid, distribution := range candidate.Routing {
+		workload := r.workloads[uid]
+		if workload == nil || workload.detached {
+			return failure("DefinitionChanged", "target has stale workload %q", uid)
+		}
+		for id, weight := range distribution {
+			if weight < 0 {
+				return failure("InvalidDistribution", "negative target weight")
+			}
+			found := false
+			for _, wanted := range candidate.Instances {
+				if wanted.ID == id && schedulerHas(wanted.WorkloadUIDs, uid) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return failure("InvalidDistribution", "target %q is not declared for workload %q", id, uid)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) schedulerSlotLocked(id string) (*runtimeInstance, error) {
+	var actual *runtimeInstance
+	for _, instance := range r.instances {
+		if instance.State.ID != id && instance.State.TargetID != id {
+			continue
+		}
+		if actual != nil {
+			return nil, failure("InvalidDistribution", "target slot has multiple physical instances")
+		}
+		actual = instance
+	}
+	return actual, nil
 }
 
 func (r *Runtime) retainAcceptedRoutesLocked(targets map[string]map[string]int32) {

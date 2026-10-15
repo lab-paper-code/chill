@@ -956,6 +956,11 @@ func (s *schedulerReplayState) dependenciesReady(a *schedulerReplayAction) bool 
 }
 
 func (s *schedulerReplayState) applyRoute() bool {
+	for key, credits := range s.routeCredits {
+		for j, i := range s.instances {
+			credits[j] = s.retainedRouteCredit(key.uid, i.config, credits[j])
+		}
+	}
 	for _, i := range s.instances {
 		for _, v := range s.goal.Instances {
 			if v.ID == i.config.ID {
@@ -1200,6 +1205,22 @@ func (s *schedulerReplayState) adjustOperationBaseline(a *schedulerReplayAction,
 	return true
 }
 
+// Runtime retains a route entry's credit only when its physical ID and weight
+// are unchanged. Apply the same rule to existing and lazily seeded replay state.
+func (s *schedulerReplayState) retainedRouteCredit(uid string, i SchedulerInstance, credit int64) int64 {
+	before, after := i.Weight, i.Weight
+	if route, ok := s.snap.Routing[uid]; ok {
+		before = route[i.ID]
+	}
+	if route, ok := s.goal.Routing[uid]; ok {
+		after = route[i.ID]
+	}
+	if before != after {
+		return 0
+	}
+	return credit
+}
+
 func (s *schedulerReplayState) routeRequests() {
 	for _, r := range s.requests {
 		if r.completed || r.expired || r.dispatched || r.arrival > s.now {
@@ -1211,6 +1232,9 @@ func (s *schedulerReplayState) routeRequests() {
 			credits = make([]int64, len(s.instances))
 			for j, i := range s.instances {
 				credits[j] = s.snap.RoutingCredits[key.uid][key.path][i.config.ID]
+				if s.routingApplied {
+					credits[j] = s.retainedRouteCredit(key.uid, i.config, credits[j])
+				}
 			}
 			s.routeCredits[key] = credits
 		}

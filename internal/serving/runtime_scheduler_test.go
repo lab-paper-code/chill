@@ -119,7 +119,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = r.ApplySchedulerTarget(SchedulerCandidate{}); err != nil {
+	if err = r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}}}); err != nil {
 		t.Fatal(err)
 	}
 	if stopped, err := r.StopSchedulerInstance("i1"); err != nil || stopped {
@@ -237,5 +237,220 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 	r.DisableSchedulerRouting()
 	if state, err := r.State(d.Name); err != nil || state.Reason != "Ready" || !state.Admission {
 		t.Fatalf("off mode stranded new static capacity: %+v %v", state, err)
+	}
+}
+
+func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	second := *snapshot.Workloads[0]
+	second.Name, second.UID = "second", "w2"
+	snapshot.Workloads = append(snapshot.Workloads, &second)
+	first := snapshot.Instances[0]
+	first.WorkloadUIDs = []string{snapshot.Workloads[0].UID, second.UID}
+	first.Weight = 3
+	last := schedulerTestCPU(first)
+	last.ID, last.Weight = "i2", 1
+	snapshot.Instances = []SchedulerInstance{first, last}
+	snapshot.Routing = map[string]map[string]int32{"w1": {"i2": 1}, "w2": {"i1": 3, "i2": 1}}
+	settings.Controls.Enabled = false
+	keep, _ := EnumerateScheduler(settings, snapshot)
+	t.Run("keep", func(t *testing.T) {
+		assertSchedulerCandidateDistribution(t, snapshot, keep[0], [2]int{0, 6}, "")
+	})
+	for _, routing := range []bool{false, true} {
+		settings.Controls.Routing = routing
+		e := schedulerEnumeration{settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+		e.emit(snapshot.Instances)
+		expected := [][2]int{{0, 6}}
+		name := "routing-disabled"
+		if routing {
+			name = "routing-enabled"
+			expected = [][2]int{{6, 6}, {8, 6}, {0, 6}, {6, 8}, {6, 0}}
+		}
+		if len(e.result) != len(expected) {
+			t.Fatalf("missing distribution alternatives: got %d, want %d", len(e.result), len(expected))
+		}
+		for n, candidate := range e.result {
+			t.Run(name+"/"+candidate.ID, func(t *testing.T) {
+				assertSchedulerCandidateDistribution(t, snapshot, candidate, expected[n], "")
+			})
+		}
+	}
+	prepared := append([]SchedulerInstance(nil), snapshot.Instances...)
+	for n := range prepared {
+		profile := *prepared[n].Profile
+		profile.ID += "-prepared"
+		prepared[n].Profile = &profile
+		prepared[n].ID += "-slot"
+	}
+	settings.Controls.Routing = false
+	e := schedulerEnumeration{settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+	e.emit(prepared)
+	t.Run("prepared-physical-identities", func(t *testing.T) {
+		assertSchedulerCandidateDistribution(t, snapshot, e.result[0], [2]int{6, 6}, "")
+	})
+	sharedSnapshot := snapshot
+	sharedSnapshot.Instances = []SchedulerInstance{first, last}
+	sharedSnapshot.Instances[0].WorkloadUIDs = []string{"w1"}
+	sharedSnapshot.Instances[1].WorkloadUIDs = []string{"w2"}
+	sharedSnapshot.Routing = map[string]map[string]int32{"w1": {"i1": 3}, "w2": {"i2": 1}}
+	shared := schedulerEnumeration{settings: settings, snapshot: sharedSnapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+	shared.emit([]SchedulerInstance{first})
+	t.Run("new-shared-workload-routing-disabled", func(t *testing.T) {
+		assertSchedulerCandidateDistribution(t, sharedSnapshot, shared.result[0], [2]int{8, 8}, "")
+	})
+	creditSnapshot := snapshot
+	creditSnapshot.Routing = map[string]map[string]int32{"w1": {"i2": 1}, "w2": {"i1": 1, "i2": 3}}
+	for _, routing := range []bool{false, true} {
+		settings.Controls.Routing = routing
+		credits := schedulerEnumeration{settings: settings, snapshot: creditSnapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+		credits.emit(snapshot.Instances)
+		expected, name := [2]int{0, 2}, "retained"
+		if routing {
+			expected, name = [2]int{6, 6}, "reset"
+		}
+		for _, state := range []string{"lazy", "initialized"} {
+			t.Run("nonzero-credit/"+name+"/"+state, func(t *testing.T) {
+				assertSchedulerCandidateDistribution(t, creditSnapshot, credits.result[0], expected, state)
+			})
+		}
+	}
+}
+
+func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapshot, candidate SchedulerCandidate, firstCounts [2]int, creditState string) {
+	t.Helper()
+	replay := schedulerReplayState{snap: snapshot, c: candidate, routingApplied: true, routeCredits: map[schedulerRouteKey][]int64{}}
+	replay.initializeInstances()
+	replay.weights = make([]int32, len(replay.instances))
+	replay.available = make([]bool, len(replay.instances))
+	for _, wanted := range candidate.Instances {
+		replay.byID[wanted.ID].loaded = true
+		replay.byID[wanted.ID].ready = true
+	}
+	for range 8 {
+		for _, d := range snapshot.Workloads {
+			replay.requests = append(replay.requests, &schedulerReplayRequest{source: SchedulerRequest{Definition: d, InputPath: 0}})
+		}
+	}
+
+	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := j.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 32, Journal: j})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.cancel()
+	profiles := make([]Profile, 0, len(candidate.Instances))
+	instances := make([]ReadyInstance, 0, len(candidate.Instances))
+	for _, wanted := range candidate.Instances {
+		profiles = append(profiles, *wanted.Profile)
+		instances = append(instances, ReadyInstance{
+			State:   InstanceState{ID: "physical-" + wanted.ID, TargetID: wanted.ID, Node: wanted.Node, Pool: wanted.Pool, Profile: wanted.Profile.ID, Ready: true},
+			Profile: wanted.Profile, Weight: wanted.Weight, Capacity: wanted.Capacity,
+			Execute: func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
+				return BackendResult{Body: []byte(dispatch.Assignment.Instance), Finished: true}, nil
+			},
+		})
+	}
+	r.SetProfiles(profiles)
+	for _, d := range snapshot.Workloads {
+		if err = r.Publish(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.EnableSchedulerRouting()
+	if err = r.InstallInstances(instances); err != nil {
+		t.Fatal(err)
+	}
+	input := &InferenceInput{Inputs: []TensorInput{{Name: "x", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]")}}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if creditState != "" {
+		schedulerPrimeReplayCredits(t, ctx, r, input, &replay, creditState)
+	}
+	if !replay.applyRoute() {
+		t.Fatalf("candidate cannot be replayed: %v", replay.out.reasons)
+	}
+	replay.routeRequests()
+	if err = r.ApplySchedulerTarget(candidate); err != nil {
+		t.Fatal(err)
+	}
+	incomplete := candidate
+	incomplete.Routing = map[string]map[string]int32{snapshot.Workloads[0].UID: candidate.Routing[snapshot.Workloads[0].UID]}
+	var domain *Error
+	if err = r.ApplySchedulerTarget(incomplete); !errors.As(err, &domain) || domain.Code != "InvalidDistribution" {
+		t.Fatalf("incomplete distribution accepted: %v", err)
+	}
+	counts := [2]int{}
+	for n, predicted := range replay.requests {
+		d := predicted.source.Definition
+		actual := schedulerActualRoute(t, ctx, r, d, input)
+		if !predicted.dispatched || actual != "physical-"+predicted.source.Instance {
+			t.Fatalf("request %d (%s): replay chose %q, actual chose %q", n, d.UID, predicted.source.Instance, actual)
+		}
+		if actual == instances[0].State.ID {
+			counts[n%2]++
+		}
+	}
+	if counts != firstCounts {
+		t.Fatalf("actual multi-workload distribution %v, want %v", counts, firstCounts)
+	}
+}
+
+func schedulerActualRoute(t *testing.T, ctx context.Context, r *Runtime, d *Definition, input *InferenceInput) string {
+	t.Helper()
+	receipt, err := r.Receive(d.Name, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := r.Accept(receipt, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := call.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Response(receipt, outcomeCompleted, ""); err != nil {
+		t.Fatal(err)
+	}
+	return string(result.Body)
+}
+
+func schedulerPrimeReplayCredits(t *testing.T, ctx context.Context, r *Runtime, input *InferenceInput, replay *schedulerReplayState, creditState string) {
+	t.Helper()
+	previous := replay.c
+	previous.Routing = replay.snap.Routing
+	if err := r.ApplySchedulerTarget(previous); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range replay.snap.Workloads {
+		schedulerActualRoute(t, ctx, r, d, input)
+	}
+	_, physicalCredits := r.SchedulerRouting()
+	replay.snap.RoutingCredits = map[string]map[int]map[string]int64{}
+	for uid, paths := range physicalCredits {
+		replay.snap.RoutingCredits[uid] = map[int]map[string]int64{}
+		for path, values := range paths {
+			replay.snap.RoutingCredits[uid][path] = map[string]int64{}
+			key := schedulerRouteKey{uid, path}
+			if creditState == "initialized" {
+				replay.routeCredits[key] = make([]int64, len(replay.instances))
+			}
+			for j, i := range replay.instances {
+				credit := values["physical-"+i.config.ID]
+				replay.snap.RoutingCredits[uid][path][i.config.ID] = credit
+				if creditState == "initialized" {
+					replay.routeCredits[key][j] = credit
+				}
+			}
+		}
 	}
 }

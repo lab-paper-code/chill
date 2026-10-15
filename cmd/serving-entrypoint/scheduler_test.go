@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -49,5 +50,32 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 	}
 	if _, err = decodeSchedulerConfiguration(`{"settings":`+string(rawSettings)+`}`, 1); err == nil {
 		t.Fatal("over-limit configuration accepted")
+	}
+}
+
+func TestStaticRoutingAcknowledgementDoesNotReapplyOrRunWithControlsOn(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		enabled       bool
+		declared      bool
+		appliedRV     string
+		wantAppliedRV string
+	}{
+		{name: "completed revision is not reapplied", declared: true, appliedRV: "42", wantAppliedRV: "42"},
+		{name: "unapplied declaration stays unapplied while ON", declared: true, enabled: true},
+		{name: "declaration removal clears acknowledgement", appliedRV: "41"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			owner := &schedulerOwner{resourceVersion: "42", staticAppliedRV: test.appliedRV}
+			owner.configuration.Settings.Controls.Enabled = test.enabled
+			if test.declared {
+				owner.configuration.StaticRouting = map[string]map[string]int{"current": {"physical": 1}}
+			}
+			// No controller is installed: these cases must not attempt application.
+			owner.applyStaticRouting(context.Background())
+			if owner.staticAppliedRV != test.wantAppliedRV {
+				t.Fatalf("static application acknowledgement = %q, want %q", owner.staticAppliedRV, test.wantAppliedRV)
+			}
+		})
 	}
 }

@@ -33,6 +33,7 @@ type SchedulerControllerConfig struct {
 	Baselines              []serving.NodeBaseline
 	Meters                 []MeterDeclaration
 	PowerRequests          map[string]*edge.NodeActuation
+	StaticRouting          bool
 	CompletionCalibrations map[string]map[string]serving.ObservedOverhead
 	CalibrationErrors      map[string]string
 	OnDecision             func(serving.SchedulerDecision) error
@@ -107,9 +108,13 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	defer c.tickMu.Unlock()
 	c.mu.Lock()
 	before := c.config.Settings.Controls.Enabled
+	previousStatic := c.config.StaticRouting
 	c.config = config
 	c.mu.Unlock()
 	c.setRoutingControl(before, config.Settings.Controls.Enabled)
+	if previousStatic && !config.StaticRouting && !config.Settings.Controls.Enabled && !before {
+		c.runtime.DisableSchedulerRouting()
+	}
 	return nil
 }
 func (c *SchedulerController) setRoutingControl(before, after bool) {
@@ -126,7 +131,12 @@ func (c *SchedulerController) setRoutingControl(before, after bool) {
 			}
 		}
 		c.mu.Unlock()
-		c.runtime.DisableSchedulerRouting()
+		c.mu.Lock()
+		static := c.config.StaticRouting
+		c.mu.Unlock()
+		if !static {
+			c.runtime.DisableSchedulerRouting()
+		}
 	}
 }
 func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
@@ -584,7 +594,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 					err = errors.Join(err, fmt.Errorf("record physical operation outcome: %w", recordErr))
 					result.Error = err.Error()
 					if result.Status == nativeOperationComplete {
-						result.Status = "partial"
+						result.Status = nativeOperationPartial
 					}
 				}
 			}

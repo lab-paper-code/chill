@@ -45,6 +45,7 @@ type schedulerConfiguration struct {
 	Meters           []servingkube.MeterDeclaration         `json:"meters"`
 	PowerRequests    map[string]*edge.NodeActuation         `json:"powerRequests"`
 	PowerObservation *powerObservationConfig                `json:"powerObservation,omitempty"`
+	StaticRouting    map[string]map[string]int              `json:"staticRouting,omitempty"`
 }
 
 type schedulerOwner struct {
@@ -59,6 +60,7 @@ type schedulerOwner struct {
 	journal                   *serving.Journal
 	opts                      options
 	resourceVersion, profiles string
+	staticAppliedRV           string
 	configuration             schedulerConfiguration
 	ctx                       context.Context
 	cancel                    context.CancelFunc
@@ -201,6 +203,58 @@ func metricSource(identity metricobserver.SourceIdentity) (metricobserver.Source
 	return edgemetrics.NewPowerSeries(identity, &http.Client{})
 }
 
+func (o *schedulerOwner) loadCompletionCalibrations(
+	ctx context.Context, preparations map[string]servingkube.PrepareSpec,
+) (
+	map[string]map[string]serving.ObservedOverhead, map[string]string,
+) {
+	calibrations := make(map[string]map[string]serving.ObservedOverhead)
+	failures := make(map[string]string)
+	// Reuse shared raw cohorts only within this refresh; no persistent cache.
+	type calibrationLoad struct {
+		selection *serving.CompletionCalibration
+		facts     map[string]serving.ObservedOverhead
+		err       error
+	}
+	loads := make([]calibrationLoad, 0, len(preparations))
+	for profile, preparation := range preparations {
+		selection := preparation.CompletionCalibration
+		if selection == nil {
+			continue
+		}
+		var loaded *calibrationLoad
+		for index := range loads {
+			prior := &loads[index]
+			if prior.selection.From.Equal(selection.From) && prior.selection.To.Equal(selection.To) &&
+				slices.Equal(prior.selection.Windows, selection.Windows) {
+				loaded = prior
+				break
+			}
+		}
+		if loaded == nil {
+			facts, err := serving.LoadCompletionCalibration(ctx, o.objects, *selection, o.opts.maxEvidenceBytes)
+			loads = append(loads, calibrationLoad{selection: selection, facts: facts, err: err})
+			loaded = &loads[len(loads)-1]
+		}
+		if loaded.err != nil {
+			failures[profile] = loaded.err.Error()
+			continue
+		}
+		matching := make(map[string]serving.ObservedOverhead)
+		for id, fact := range loaded.facts {
+			if fact.Matches(preparation.Instance) {
+				matching[id] = fact
+			}
+		}
+		if len(matching) == 0 {
+			failures[profile] = "completion calibration lacks matching measured execution conditions"
+		} else {
+			calibrations[profile] = matching
+		}
+	}
+	return calibrations, failures
+}
+
 func (o *schedulerOwner) refresh(ctx context.Context) error {
 	o.lock.Lock()
 	defer o.lock.Unlock()
@@ -216,6 +270,7 @@ func (o *schedulerOwner) refresh(ctx context.Context) error {
 	slices.Sort(ids)
 	signature := strings.Join(ids, "\x00")
 	if o.controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.profiles {
+		o.applyStaticRouting(ctx)
 		return nil
 	}
 	config, err := decodeSchedulerConfiguration(cm.Data[o.opts.schedulerConfigKey], o.opts.maxRequestBytes)
@@ -280,11 +335,14 @@ func (o *schedulerOwner) refresh(ctx context.Context) error {
 		preparation.Config.Policy.Batches = nil
 		preparations[profile.ID] = preparation
 	}
+	calibrations, calibrationErrors := o.loadCompletionCalibrations(ctx, preparations)
 	controllerConfig := servingkube.SchedulerControllerConfig{
 		Settings: config.Settings, CPUInventory: config.CPUInventory, GPUInventory: config.GPUInventory,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs, Baselines: baselines,
 		Meters: config.Meters, PowerRequests: config.PowerRequests,
-		OnDecision: o.recordDecision, OnAction: o.recordAction,
+		CompletionCalibrations: calibrations, CalibrationErrors: calibrationErrors,
+		StaticRouting: config.StaticRouting != nil,
+		OnDecision:    o.recordDecision, OnAction: o.recordAction,
 	}
 	if o.controller == nil {
 		o.controller, err = servingkube.NewSchedulerController(o.store, o.kube, o.execution,
@@ -299,7 +357,25 @@ func (o *schedulerOwner) refresh(ctx context.Context) error {
 	o.resourceVersion = cm.ResourceVersion
 	o.profiles = signature
 	o.restartPower(config)
+	o.applyStaticRouting(ctx)
 	return nil
+}
+
+// An acknowledged configuration can await actual physical readiness. The normal
+// refresh cadence applies its manual baseline once, never while controls are ON.
+func (o *schedulerOwner) applyStaticRouting(ctx context.Context) {
+	if o.configuration.StaticRouting == nil {
+		o.staticAppliedRV = ""
+		return
+	}
+	if o.configuration.Settings.Controls.Enabled || o.staticAppliedRV == o.resourceVersion {
+		return
+	}
+	if err := o.controller.ApplyStaticRouting(ctx, o.configuration.StaticRouting, o.resourceVersion); err != nil {
+		ctrl.Log.Error(err, "manual staticRouting remains unapplied", "sourceConfigRV", o.resourceVersion)
+		return
+	}
+	o.staticAppliedRV = o.resourceVersion
 }
 
 func (o *schedulerOwner) operatingPower(from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {

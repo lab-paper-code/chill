@@ -37,6 +37,7 @@ const (
 	operationPower           = "power"
 	operationIdle            = "idle"
 	nativeOperationFailed    = "failed"
+	nativeOperationPartial   = "partial"
 	nativeServingMode        = "serving"
 	operationStop            = "stop"
 	operationDrain           = "drain"
@@ -63,25 +64,28 @@ type PrepareSpec struct {
 	CompletionCalibration *serving.CompletionCalibration `json:"completionCalibration,omitempty"`
 }
 type Operation struct {
-	ID        string                      `json:"id"`
-	Kind      string                      `json:"kind"`
-	Node      serving.NodeReference       `json:"node"`
-	Instance  string                      `json:"instance,omitempty"`
-	Pool      string                      `json:"pool,omitempty"`
-	Prepare   *PrepareSpec                `json:"prepare,omitempty"`
-	Actuation *edge.NodeActuation         `json:"actuation,omitempty"`
-	Target    *serving.SchedulerCandidate `json:"target,omitempty"`
+	ID             string                      `json:"id"`
+	Kind           string                      `json:"kind"`
+	Node           serving.NodeReference       `json:"node"`
+	Instance       string                      `json:"instance,omitempty"`
+	Pool           string                      `json:"pool,omitempty"`
+	Prepare        *PrepareSpec                `json:"prepare,omitempty"`
+	Actuation      *edge.NodeActuation         `json:"actuation,omitempty"`
+	Target         *serving.SchedulerCandidate `json:"target,omitempty"`
+	SourceConfigRV string                      `json:"sourceConfigRV,omitempty"`
+	StaticRouting  map[string]map[string]int   `json:"staticRouting,omitempty"`
 }
 type OperationState struct {
-	At        time.Time               `json:"at"`
-	Node      serving.NodeReference   `json:"node"`
-	Pool      string                  `json:"pool"`
-	PowerMode string                  `json:"powerMode"`
-	Instances []serving.InstanceState `json:"instances"`
-	Native    map[string]native.State `json:"native"`
-	Pods      []string                `json:"pods"`
-	States    []string                `json:"states"`
-	Reasons   []string                `json:"reasons,omitempty"`
+	At        time.Time                   `json:"at"`
+	Node      serving.NodeReference       `json:"node"`
+	Pool      string                      `json:"pool"`
+	PowerMode string                      `json:"powerMode"`
+	Instances []serving.InstanceState     `json:"instances"`
+	Native    map[string]native.State     `json:"native"`
+	Pods      []string                    `json:"pods"`
+	States    []string                    `json:"states"`
+	Reasons   []string                    `json:"reasons,omitempty"`
+	Routing   map[string]map[string]int32 `json:"routing,omitempty"`
 }
 type OperationResult struct {
 	Operation   Operation               `json:"operation"`
@@ -299,7 +303,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 	} else {
 		result.Status = nativeOperationFailed
 		if !reflect.DeepEqual(before.Pods, actual.Pods) || before.Pool != actual.Pool || before.PowerMode != actual.PowerMode || len(result.Progress) > 0 {
-			result.Status = "partial"
+			result.Status = nativeOperationPartial
 		}
 		result.Error = err.Error()
 	}
@@ -719,6 +723,7 @@ func (o *Operations) waitPowerState(ctx context.Context, node serving.NodeRefere
 	return nil
 }
 func port8080() intstr.IntOrString { return intstr.FromInt32(8080) }
+
 func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCandidate) error {
 	for _, instance := range target.Instances {
 		if instance.Profile == nil || instance.Profile.Condition.Firstfloor == nil {

@@ -238,6 +238,16 @@ comparison horizon에 반복한다. arrival 재사용 가정·raw service sample
 weighted routing은 actual Runtime과 replay가 같은 deterministic
 smooth weighted rule을 사용하며, 한 UID에 여러 ready 대상과 집중 대상 모두를
 비교한다. 현재 outstanding·진행 중 batch와 공유 instance의 다른 UID도 포함한다.
+모든 후보는 active UID별 완전한 분배 map을 갖는다. keep은 실제 분배를 보존하며,
+새 준비 slot과 새로 공유된 UID는 인스턴스 weight로 분배를 구성한다. routing
+제어가 꺼진 경우 기존 physical instance가 이미 제공하던 UID의 실제 weight를
+보존한다. 집중 후보는 한 UID의 분배만
+교체하고 다른 UID의 분배를 유지한다. 적용 시 active UID의 분배 누락은 오류이며
+암묵적 weight fallback으로 보완하지 않는다. 준비 slot은 실제 Ready physical ID로
+해결하고 replay와 같은 smooth weighted rule로 요청을 분배한다.
+UID/input-path별 smooth-weighted credit은 같은 physical ID의 weight가 그대로인
+경우에만 유지한다. weight 변경·새 route entry는 0에서 시작하며 replay도 이미
+진행한 credit과 snapshot에서 처음 읽는 credit에 같은 reset 조건을 적용한다.
 
 각 반복은 실제 batch selector의 결정을 실행하면서 empirical service sample과
 같은 trial의 transition readiness/wall cost를 적용한다. 이미 running인 batch의
@@ -326,10 +336,18 @@ HTTPS owner는 `--serving-scheduler-configmap=<name>`과
 | `cpuInventory`, `gpuInventory`, `reserved` | Node별 실제 CPU IDs·물리 GPU UUIDs와 비서빙 전용 예약. quota는 별도 수량 예산 |
 | `preparations` | catalog profile ID별 `PrepareSpec`. 검증된 profile과 immutable service 분포 bundle은 owner가 연결 |
 | `preparations[profileID].completionCalibration` | 선택 OPTIONAL: 고정 `from/to`, `windows[].metadata/definitions/requests`의 기존 `ObjectIdentity`; raw 계약·파일은 재작성하지 않음 |
+| `staticRouting` | OPTIONAL 전체 현재 Workload UID → physical instance ID → nonnegative int32 weight; UID마다 positive weight 하나 이상. controls OFF의 명시 config revision만 기존 typed ApplyTarget 경로로 적용·physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. stale UID/target은 오류; 선언을 유지하는 OFF refresh는 baseline을 보존하며 이후 CHILL은 실제 routing에서 시작 |
 | `costReferences`, `powerCostSources` | 실제 원자 동작 raw object와 Complete directed power-mode 측정의 출처 |
 | `meters` | 정확한 Node UID·exclusive wall scope·metric series에 연결한 meter 선언 |
 | `powerRequests` | Node UID/power mode별 기존 sole actuator의 NodeActuation 요청 |
 | `powerObservation` | 기존 sampler의 `Interval/Duration/RequestTimeout/MaxEvents`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap` |
+
+`staticRouting`의 configuration 수신과 실제 적용은 별개다. 물리 source readiness가
+아직 없거나 UID/target 검증이 실패하면 owner listener를 막지 않고 기존 refresh
+cadence에서 controls OFF인 동안만 미적용 revision을 다시 평가한다. 실패는 선언
+원본·`sourceConfigRV`·실제 routing·오류를 가진 manual action으로 journal과 scheduler
+state에 남으며 적용 성공으로 표시하지 않는다. 전체 physical read-back이 일치한
+revision은 다시 적용하지 않고, controls ON에서는 미적용 선언도 재시도하지 않는다.
 
 Calibration selector의 정확한 preparation payload 형태는 다음과 같다. 값은 실제
 측정과 발행 object identity에서 채우며 Serving lifecycle은 selector를 자동 작성하지 않는다.

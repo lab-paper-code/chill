@@ -2,6 +2,7 @@ package serving
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sort"
@@ -9,7 +10,8 @@ import (
 
 func EnumerateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) ([]SchedulerCandidate, SchedulerSearch) {
 	search := schedulerSearchPopulation(settings, snapshot)
-	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: append([]SchedulerNode(nil), snapshot.Nodes...), Instances: append([]SchedulerInstance(nil), snapshot.Instances...), Routing: snapshot.Routing}
+	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: append([]SchedulerNode(nil), snapshot.Nodes...), Instances: append([]SchedulerInstance(nil), snapshot.Instances...), Routing: schedulerInstanceRouting(snapshot.Workloads, snapshot.Instances)}
+	maps.Copy(keep.Routing, snapshot.Routing)
 	result := []SchedulerCandidate{keep}
 	if settings.Validate() != nil || !settings.Controls.Enabled {
 		search.Examined = 1
@@ -27,6 +29,23 @@ func EnumerateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) 
 	e.visit(0, nil)
 	e.search.Examined = len(e.result)
 	return e.result, e.search
+}
+
+func schedulerInstanceRouting(workloads []*Definition, instances []SchedulerInstance) map[string]map[string]int32 {
+	routing := make(map[string]map[string]int32, len(workloads))
+	for _, d := range workloads {
+		if d == nil {
+			continue
+		}
+		weights := map[string]int32{}
+		for _, i := range instances {
+			if schedulerHas(i.WorkloadUIDs, d.UID) && i.Weight > 0 {
+				weights[i.ID] = i.Weight
+			}
+		}
+		routing[d.UID] = weights
+	}
+	return routing
 }
 
 func schedulerSearchPopulation(settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerSearch {
@@ -182,18 +201,38 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 	}
 	c := SchedulerCandidate{Nodes: nodes, Instances: append([]SchedulerInstance(nil), chosen...)}
 	// Preserve physical identity only when the complete measured allocation matches.
-	used := map[string]bool{}
+	used := map[string][]string{}
 	for j := range c.Instances {
 		for _, old := range e.snapshot.Instances {
-			if !used[old.ID] && old.Node == c.Instances[j].Node && old.Pool == c.Instances[j].Pool && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
+			if _, preserved := used[old.ID]; !preserved && old.Node == c.Instances[j].Node && old.Pool == c.Instances[j].Pool && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
 				c.Instances[j].ID = old.ID
 				c.Instances[j].Ready = old.Ready
 				if old.CompletionObserved && old.CompletionMeasurement.Valid() && !slices.ContainsFunc(c.Instances[j].WorkloadUIDs, func(uid string) bool { return !schedulerHas(old.WorkloadUIDs, uid) }) {
 					c.Instances[j].CompletionOverhead, c.Instances[j].EnvelopeSource, c.Instances[j].CompletionObserved = old.CompletionOverhead, old.EnvelopeSource, true
 					c.Instances[j].CompletionMeasurement = old.CompletionMeasurement
 				}
-				used[old.ID] = true
+				used[old.ID] = old.WorkloadUIDs
 				break
+			}
+		}
+	}
+	c.Routing = schedulerInstanceRouting(e.workloads, c.Instances)
+	if !e.settings.Controls.Routing {
+		for _, i := range c.Instances {
+			oldUIDs, preserved := used[i.ID]
+			if !preserved {
+				continue
+			}
+			for _, uid := range i.WorkloadUIDs {
+				if !schedulerHas(oldUIDs, uid) {
+					continue
+				}
+				if route, ok := e.snapshot.Routing[uid]; ok {
+					delete(c.Routing[uid], i.ID)
+					if route[i.ID] > 0 {
+						c.Routing[uid][i.ID] = route[i.ID]
+					}
+				}
 			}
 		}
 	}
@@ -219,7 +258,8 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 					continue
 				}
 				r := c
-				r.Routing = map[string]map[string]int32{d.UID: {i.ID: 1}}
+				r.Routing = maps.Clone(c.Routing)
+				r.Routing[d.UID] = map[string]int32{i.ID: 1}
 				add(r)
 			}
 		}

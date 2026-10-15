@@ -417,6 +417,9 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 }
 
 func (r *Runtime) releaseLocked(c *Call) {
+	if c.backendDone {
+		r.pruneInstanceBindingsLocked()
+	}
 	if !c.backendDone || !c.transportDone {
 		return
 	}
@@ -803,7 +806,7 @@ func (r *Runtime) pruneInstanceBindingsLocked() {
 					}
 				}
 			}
-			if !live && (!i.State.Ready || w == nil || w.detached || profilePath(w.definition, i.Profile) == nil) {
+			if !live && (!i.State.Ready || w == nil || w.detached || profilePath(w.definition, i.Profile) == nil || (r.routingControlled && r.routeTargets[uid][i.State.ID] == 0)) {
 				delete(i.bindings, uid)
 			}
 		}
