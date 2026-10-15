@@ -194,6 +194,9 @@ CUDA에는 `--gpu-uuid <frozen-physical-GPU-UUID>`, RKNN에는
 `CUDA_VISIBLE_DEVICES`는 frozen whole-GPU UUID 한 장으로 고정한다. whole-GPU
 allocation·UUID, RKNN package/host/driver/device 선언, CPU quota/affinity/thread와
 모든 initialized batch의 실제 metadata가 일치하지 않으면 결과를 거부한다.
+Serving의 초기화 batch domain과 native 최대 용량은 검증된 runtime metadata에
+맞춘다. 초기화가 `[1,2]`이고 측정 곡선이 `[1]`인 경우에도 초기화 조건은
+그대로 유지하며, dispatch와 policy cap은 측정한 `[1]` 안에서만 선택한다.
 kernel cgroup lifetime peak는 worker와 runner를 포함한 runtime container 범위다.
 
 latest successful profile은 같은 frozen node/model/artifact/runtime/input/resources/

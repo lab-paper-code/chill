@@ -136,12 +136,11 @@ func validateProfileInputs(spec Spec, actual native.Metadata) error {
 		}
 		expected[i] = native.InputSpec{Name: t.Name, Datatype: t.Datatype, Shape: shape}
 	}
-	batches := make([]int, len(spec.Profile.Batches))
-	for i, b := range spec.Profile.Batches {
-		batches[i] = b.Batch
+	if spec.Profile.RuntimeMetadata == nil {
+		return errors.New("verified native initialization evidence unavailable")
 	}
-	slices.Sort(batches)
-	if !reflect.DeepEqual(actual.Runtime.Inputs, expected) || !slices.Equal(actual.Runtime.InitializedBatches, batches) || len(batches) == 0 || actual.MaxBatchSize != batches[len(batches)-1] || actual.Runtime.WarmupIterations != condition.ActiveProtocol.WarmupIterations {
+	batches := spec.Profile.RuntimeMetadata.InitializedBatches
+	if !reflect.DeepEqual(actual.Runtime.Inputs, expected) || !slices.Equal(actual.Runtime.InitializedBatches, batches) || len(batches) == 0 || len(spec.Profile.Batches) == 0 || actual.MaxBatchSize != slices.Max(batches) || actual.Runtime.WarmupIterations != condition.ActiveProtocol.WarmupIterations {
 		return errors.New("actual native tensors/batches/warmup differ from measured condition")
 	}
 	return nil

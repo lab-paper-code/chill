@@ -12,6 +12,7 @@ import (
 	"time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -137,5 +138,38 @@ func TestMismatchedNativeCompletionRemainsUnknown(t *testing.T) {
 	result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(), Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, serving.Dispatch{RequestID: "request", Definition: &serving.Definition{UID: "uid"}, Input: &serving.InferenceInput{}})
 	if err == nil || result.Finished || !strings.Contains(err.Error(), "completion proof") {
 		t.Fatal("mismatched response freed physical ownership", result, err)
+	}
+}
+
+func TestNativeInitializationMatchesRecordedRuntimeNotMeasuredCurve(t *testing.T) {
+	profile := &serving.Profile{
+		Batches:         []serving.BatchProfile{{Batch: 1}},
+		RuntimeMetadata: &native.RuntimeMetadata{InitializedBatches: []int{1, 2}},
+	}
+	profile.Condition.Tensor.Tensors = []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}}
+	profile.Condition.ActiveProtocol.WarmupIterations = 2
+	for _, tc := range []struct {
+		name    string
+		batches []int
+		valid   bool
+	}{
+		{"recorded initialization exceeds measured curve", []int{1, 2}, true},
+		{"unrecorded initialized batch", []int{1, 3}, false},
+		{"initialization reduced to measured curve", []int{1}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := native.Metadata{
+				Runtime: native.RuntimeMetadata{
+					Inputs:             []native.InputSpec{{Name: "input", Datatype: "FP32", Shape: []int{3, 224, 224}}},
+					InitializedBatches: tc.batches,
+					WarmupIterations:   2,
+				},
+				MaxBatchSize: 2,
+				Policy:       native.Policy{MaxBatchSize: 1},
+			}
+			if err := validateProfileInputs(Spec{Profile: profile}, actual); (err == nil) != tc.valid {
+				t.Fatalf("recorded initialization and measured policy domain conflated: %v", err)
+			}
+		})
 	}
 }
