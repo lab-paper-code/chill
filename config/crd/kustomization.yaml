@@ -2,6 +2,8 @@ resources:
 - bases/edge.dacs.io_chillsystems.yaml
 - bases/edge.dacs.io_deviceclasses.yaml
 - bases/edge.dacs.io_modelspecs.yaml
+- bases/edge.dacs.io_preprocessors.yaml
+- bases/edge.dacs.io_datasets.yaml
 - bases/edge.dacs.io_deviceprofiles.yaml
 - bases/edge.dacs.io_clusterenergymodels.yaml
 - bases/edge.dacs.io_profilingruns.yaml
