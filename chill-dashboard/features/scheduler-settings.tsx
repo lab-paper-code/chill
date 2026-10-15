@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError } from "@/lib/client"
-import type { SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
+import type { SchedulerAlgorithm, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
 import { millisecondsToNanos, nanosToMilliseconds, wireInteger, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
@@ -12,7 +12,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
-type NumericKey = Exclude<keyof SchedulerSettings,"controls">
+type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"algorithm">
+// internal/serving/scheduler_policy.go: the owner rejects any other value.
+export const algorithms:Record<SchedulerAlgorithm,{label:string;help:string}> = {
+  "fixed-horizon":{label:"고정 기간 비교",help:"후보마다 정한 기간 동안의 에너지를 비교해요."},
+  "projected-work-history":{label:"작업 이력 예측",help:"최근 작업 이력으로 앞으로의 부하를 예측해 비교해요."},
+}
+export const algorithmLabel = (value:string) => algorithms[value as SchedulerAlgorithm]?.label ?? "확인이 필요해요"
 type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"advanced";unit?:string}
 const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
@@ -44,6 +50,7 @@ function plain(field:Field,value:WireInteger):string {
 }
 function changedRows(before:SchedulerSettings,after:SchedulerSettings) {
   return [
+    ...(before.algorithm!==after.algorithm?[["판단 방식",`${algorithmLabel(before.algorithm)} → ${algorithmLabel(after.algorithm)}`] as [string,string]]:[]),
     ...fields.filter(field=>String(before[field.key])!==String(after[field.key])).map(field=>[field.label,`${plain(field,before[field.key])} → ${plain(field,after[field.key])}`] as [string,string]),
     ...controls.filter(control=>before.controls[control.key]!==after.controls[control.key]).map(control=>[control.label,`${onOff(before.controls[control.key])} → ${onOff(after.controls[control.key])}`] as [string,string]),
   ]
@@ -53,7 +60,7 @@ export function SettingChanges({before,after,stored=false}:{before:SchedulerSett
   return rows.length?<Facts items={rows}/>:<p>{stored?"기록의 전후 설정이 같아요.":"바꾼 값과 현재 설정이 같아요."}</p>
 }
 export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
-  return <Facts items={[...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
+  return <Facts items={[["판단 방식",algorithmLabel(settings.algorithm)],...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
 }
 
 // One row, one value: the dialog edits only this value and adds it to the draft.
@@ -65,6 +72,16 @@ function EditRow({label,help,value,changed,initial,unit,range,save,disabled}:{la
         ?<label className="switch"><input type="checkbox" role="switch" checked={next} onChange={event=>setNext(event.target.checked)}/>{onOff(next)}</label>
         :<div className="grid gap-2"><label htmlFor={id}>{unit?`값 (${unit})`:"값"}</label><Input id={id} autoFocus required inputMode={unit==="ms"?"decimal":"text"} value={next} onChange={event=>{setNext(event.target.value);setError("")}} aria-invalid={!!error} aria-describedby={`${id}-help`}/><span id={`${id}-help`} className="text-sm text-muted-foreground">{range}{unit==="bytes"&&/^\d+$/.test(next)?` · ${mib(next)}`:""}</span></div>}
       {error&&<p role="alert">{error}</p>}
+      <Button type="submit" disabled={disabled}>바꾸기</Button>
+    </form>
+  </RowDialog>
+}
+
+function AlgorithmRow({value,changed,save,disabled}:{value:SchedulerAlgorithm;changed:boolean;save:(value:SchedulerAlgorithm)=>void;disabled:boolean}) {
+  const [open,setOpen]=React.useState(false),[next,setNext]=React.useState(value)
+  return <RowDialog label="운영 판단 알고리즘" hint={changed?"바꾼 값이에요":undefined} value={algorithmLabel(value)} title="운영 판단 알고리즘" description="바꾸면 다음 판단부터 이 방식으로 후보를 비교해요. 자동 적용이 꺼져 있으면 실제 구성은 바뀌지 않아요." open={open} onOpenChange={state=>{setOpen(state);setNext(value)}}>
+    <form className="grid gap-4" onSubmit={event=>{event.preventDefault();save(next);setOpen(false)}}>
+      <ul className="rows">{(Object.keys(algorithms) as SchedulerAlgorithm[]).map(key=><li key={key}><label className="row"><input type="radio" name="algorithm" checked={next===key} onChange={()=>setNext(key)}/><span className="row-main"><span className="row-text">{algorithms[key].label}</span><span className="row-hint">{algorithms[key].help}</span></span></label></li>)}</ul>
       <Button type="submit" disabled={disabled}>바꾸기</Button>
     </form>
   </RowDialog>
@@ -162,6 +179,7 @@ export function SchedulerSettingsPage() {
     lede={!precise?"이 브라우저는 큰 정수를 정확히 다루지 못해 설정을 바꿀 수 없어요. 최신 브라우저에서 열어 주세요.":settings.data?(settings.data.controls.enabled?"판단 결과를 자동으로 적용하고 있어요.":"판단만 하고 자동으로 적용하지는 않아요."):undefined}
     action={count>0&&<Button ref={reviewLauncher} onClick={()=>void inspect()} disabled={blocked}>{reviewing?"현재 값을 확인하고 있어요":`변경 ${count}건 검토`}</Button>}>
     <QueryGate query={settings}>{shown&&<>
+      <Rows label="판단 방식"><AlgorithmRow value={shown.algorithm} changed={!!count&&baseline!.algorithm!==shown.algorithm} save={algorithm=>edit(base=>({...base,algorithm}))} disabled={blocked}/></Rows>
       <Rows label="판단 주기와 범위">{group("cycle")}</Rows>
       <Rows label="자원 한도">{group("limit")}</Rows>
       <Rows label="자동 조정 항목">{controls.map(control=><EditRow key={control.key} label={control.label} help={control.key==="enabled"?"켜면 판단 결과를 실제로 적용해요. 끄면 판단만 해요.":`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]}
