@@ -113,10 +113,25 @@ curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
 
 POST returns `201`. PUT accepts `{"spec": ...}` and DELETE has no body; both
 require the queried ModelSpec `metadata.resourceVersion` in `If-Match`.
-Referenced ModelSpecs cannot be deleted (`409`); changing a shared model drains
-all referring Workloads before publishing the new immutable definitions.
+ModelSpecs referenced by a Workload or targeted by a Preprocessor cannot be
+deleted (`409`), and a change that removes an artifact targeted by a
+Preprocessor returns `409 ModelArtifactReferenced`. Changing a shared model
+drains all referring Workloads before publishing the new immutable definitions.
 Bearer auth uses TokenReview and path/verb SubjectAccessReview. Managers need
 HTTP non-resource permissions, not direct managed-resource write permissions.
+
+Preprocessors and Datasets use the same request shape and `If-Match` rule at
+`$OWNER/api/v1/preprocessors` and `$OWNER/api/v1/datasets`. Register the target
+ModelSpec first: every Preprocessor artifact must name a registered ModelSpec
+artifact that is not being deleted.
+
+```sh
+yq -o=json '.' preprocessor.yaml |
+  jq '{name: .metadata.name, spec: .spec}' |
+  curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' --data-binary @- \
+    "$OWNER/api/v1/preprocessors"
+```
 
 Structural validation does not prove image access, runtime support or hardware
 compatibility. Those facts and measured evidence are resolved by profiling and

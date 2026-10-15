@@ -17,7 +17,7 @@ rules:
     resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts]
     verbs: [list]
   - apiGroups: [edge.dacs.io]
-    resources: [modelspecs]
+    resources: [modelspecs, preprocessors, datasets]
     verbs: [get, list, create, update, delete]
   - apiGroups: [edge.dacs.io]
     resources: [workloads]
@@ -194,7 +194,7 @@ metadata:
   labels:
     {{- include "chill.labels" . | nindent 4 }}
 rules:
-  - nonResourceURLs: ["/chill/api/v1/models", "/chill/api/v1/models/*", "/chill/api/v1/workloads", "/chill/api/v1/workloads/*"]
+  - nonResourceURLs: ["/chill/api/v1/models", "/chill/api/v1/models/*", "/chill/api/v1/preprocessors", "/chill/api/v1/preprocessors/*", "/chill/api/v1/datasets", "/chill/api/v1/datasets/*", "/chill/api/v1/workloads", "/chill/api/v1/workloads/*"]
     verbs: [get, post, put, delete]
   - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power"]
     verbs: [get]

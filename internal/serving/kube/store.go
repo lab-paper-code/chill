@@ -167,6 +167,74 @@ func (s *Store) DeleteModel(ctx context.Context, obj *edgev1alpha1.ModelSpec) er
 	return s.delete(ctx, obj)
 }
 
+func (s *Store) GetPreprocessor(ctx context.Context, name string) (*edgev1alpha1.Preprocessor, error) {
+	obj := &edgev1alpha1.Preprocessor{}
+	if err := s.client.Get(ctx, client.ObjectKey{Name: name}, obj); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+func (s *Store) ListPreprocessors(ctx context.Context) (*edgev1alpha1.PreprocessorList, error) {
+	list := &edgev1alpha1.PreprocessorList{}
+	if err := s.client.List(ctx, list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func (s *Store) CreatePreprocessor(ctx context.Context, obj *edgev1alpha1.Preprocessor) error {
+	if obj.Namespace != "" {
+		return errors.New("preprocessor must be cluster scoped")
+	}
+	return s.client.Create(ctx, obj)
+}
+
+func (s *Store) UpdatePreprocessor(ctx context.Context, obj *edgev1alpha1.Preprocessor) error {
+	if err := requireVersion(obj); err != nil {
+		return err
+	}
+	return s.client.Update(ctx, obj)
+}
+
+func (s *Store) DeletePreprocessor(ctx context.Context, obj *edgev1alpha1.Preprocessor) error {
+	return s.delete(ctx, obj)
+}
+
+func (s *Store) GetDataset(ctx context.Context, name string) (*edgev1alpha1.Dataset, error) {
+	obj := &edgev1alpha1.Dataset{}
+	if err := s.client.Get(ctx, client.ObjectKey{Name: name}, obj); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+func (s *Store) ListDatasets(ctx context.Context) (*edgev1alpha1.DatasetList, error) {
+	list := &edgev1alpha1.DatasetList{}
+	if err := s.client.List(ctx, list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func (s *Store) CreateDataset(ctx context.Context, obj *edgev1alpha1.Dataset) error {
+	if obj.Namespace != "" {
+		return errors.New("dataset must be cluster scoped")
+	}
+	return s.client.Create(ctx, obj)
+}
+
+func (s *Store) UpdateDataset(ctx context.Context, obj *edgev1alpha1.Dataset) error {
+	if err := requireVersion(obj); err != nil {
+		return err
+	}
+	return s.client.Update(ctx, obj)
+}
+
+func (s *Store) DeleteDataset(ctx context.Context, obj *edgev1alpha1.Dataset) error {
+	return s.delete(ctx, obj)
+}
+
 func requireVersion(obj client.Object) error {
 	if obj.GetNamespace() != "" {
 		return errors.New("management resources must be cluster scoped")

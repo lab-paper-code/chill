@@ -453,3 +453,50 @@ func assertJournalActor(t *testing.T, journal *serving.Journal, uid, kind, usern
 		}
 	}
 }
+
+func TestManagerPreprocessorTargetsProtectModelArtifacts(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newManagerHarness(t)
+	model, err := m.CreateModel(ctx, "model", managerModelSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := func(err error) string {
+		var domain *serving.Error
+		if errors.As(err, &domain) {
+			return domain.Code
+		}
+		return fmt.Sprint(err)
+	}
+	spec := api.PreprocessorSpec{
+		Input:     api.RawInputContract{Fields: []api.RawField{{Name: "image", Format: "JPEG", MaxBytes: 1024}}},
+		Output:    api.RawOutputContract{Fields: []api.RawOutputField{{Name: "label", Format: "UTF8"}}},
+		Artifacts: []api.PreprocessorArtifact{{Target: api.PreprocessorTarget{Model: "model", Artifact: "missing"}, Source: api.PreprocessorArtifactSource{Image: "pre@sha256:immutable", Architecture: "amd64", Path: "/artifact/pre"}}},
+	}
+	if _, err := m.CreatePreprocessor(ctx, "pre", spec); code(err) != "InvalidModelReference" {
+		t.Fatalf("unregistered target artifact = %v", err)
+	}
+	spec.Artifacts[0].Target.Artifact = "onnx"
+	if _, err := m.CreatePreprocessor(ctx, "pre", spec); err != nil {
+		t.Fatal(err)
+	}
+	renamed := managerModelSpec()
+	renamed.Artifacts[0].Name = "renamed"
+	renamed.ExecutionPaths[0].Artifact = renamed.Artifacts[0].Name
+	if _, _, err := m.UpdateModel(ctx, "model", model.ResourceVersion, renamed); code(err) != "ModelArtifactReferenced" {
+		t.Fatalf("removed targeted artifact = %v", err)
+	}
+	if err := m.DeleteModel(ctx, "model", model.ResourceVersion); code(err) != "ModelReferenced" {
+		t.Fatalf("deleted targeted model = %v", err)
+	}
+	pre, err := m.GetPreprocessor(ctx, "pre")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeletePreprocessor(ctx, "pre", pre.ResourceVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteModel(ctx, "model", model.ResourceVersion); err != nil {
+		t.Fatalf("untargeted model deletion = %v", err)
+	}
+}

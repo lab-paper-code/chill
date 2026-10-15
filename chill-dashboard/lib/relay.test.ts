@@ -20,6 +20,11 @@ test("fixed-owner relay enforces path, origin, body and credential boundaries", 
 
   assert.equal(relayPlan("POST", "v1/namespaces/research/batch-energy-optimizations/preflight".split("/"), "", config).kind, "query")
   assert.equal(relayPlan("PUT", ["v1", "models", "preflight"], "", config).kind, "mutation")
+  for (const kind of ["preprocessors", "datasets"]) {
+    assert.equal(relayPlan("POST", ["v1", kind], "", config).kind, "mutation")
+    assert.equal(relayPlan("DELETE", ["v1", kind, "demo"], "", config).kind, "mutation")
+    assert.throws(() => relayPlan("PATCH", ["v1", kind, "demo"], "", config), /Dashboard/)
+  }
   for (const [method, path, query] of [
     ["GET", "v1/https://evil.example", ""], ["GET", "v1/models/..", ""], ["GET", "v1/models/a%2fb", ""],
     ["PATCH", "v1/models/demo", ""], ["POST", "v1/systems", ""], ["GET", "v1/models", "?url=https://evil.example"],

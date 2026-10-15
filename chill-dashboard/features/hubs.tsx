@@ -27,6 +27,8 @@ export function SettingsPage() {
   return <Screen title="설정" lede="서비스가 쓰는 모델과 운영 방식을 정해요.">
     <Rows>
       <Row href="/models" label="모델" hint="모델 파일과 실행 방식 등록" />
+      <Row href="/preprocessors" label="전처리기" hint="원본 입력을 모델 입력으로 바꾸는 파일 등록" />
+      <Row href="/datasets" label="데이터셋" hint="측정과 평가에 쓰는 입력 묶음 등록" />
       <Row href="/configuration" label="운영 설정" hint="판단 주기, 자동 적용, 자원 한도" />
     </Rows>
   </Screen>
