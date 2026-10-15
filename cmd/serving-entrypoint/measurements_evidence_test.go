@@ -305,6 +305,7 @@ func TestMeasurementSharedReferenceAndForeignOwnershipBlockBeforeAnyS3Delete(t *
 			}
 			if mode == "current cost" || mode == "accepted old cost" {
 				settings := serving.SchedulerSettings{
+					Algorithm:         serving.SchedulerAlgorithmFixedHorizon,
 					ObservationWindow: 1, ControlInterval: 1, Horizon: 1, MaxObservationAge: 1,
 					Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 1,
 				}

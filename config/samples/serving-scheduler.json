@@ -1,6 +1,7 @@
 {
   "profileCampaigns": [],
   "settings": {
+    "algorithm": "fixed-horizon",
     "observationWindowNanos": 60000000000,
     "controlIntervalNanos": 10000000000,
     "horizonNanos": 60000000000,

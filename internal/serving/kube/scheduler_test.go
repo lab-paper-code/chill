@@ -248,7 +248,7 @@ func TestCaptureNodePodsAggregatesNonServingBudget(t *testing.T) {
 				t.Fatal("non-serving requests were not aggregated exactly", allocation)
 			}
 			snapshot.Nodes = []serving.SchedulerNode{sn}
-			settings := serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 2}
+			settings := serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 2}
 			// Isolate the captured non-serving budget in the actual consumer.
 			snapshot.Instances = nil
 			decision := serving.EvaluateScheduler(settings, snapshot)

@@ -42,6 +42,13 @@ Serving core는 leaf를 사용하고 Kubernetes/API 호출은 kube owner에 둔�
 붙인다. metadata에는 request ID, UID, 불변 definition identity, 원래 receipt,
 개별 percentile/target, 전달 시점 경과 시간, 명시적 수명과 profile 근거를 보낸다.
 
+입력 경계는 선언된 이름·datatype·sample shape와 정확한 element 수를 검사한다.
+numeric JSON은 trim 전에 stdlib `json.Valid`로 전체 문법·trailing 값을 확인하고,
+flat array의 scalar를 `bytes.Cut`으로 순회해 기존 `strconv` 범위·finite 검사를 적용한다.
+정수는 float64로 바꾸지 않아 INT64/UINT64 정밀도를 유지하며 FP16의 65504 한계와
+FP32 overflow도 거절한다. nested/string/null/bool을 숫자로 받지 않고 기존 BOOL/BYTES
+검사 경로는 유지한다. Go 1.22 지원 stdlib만 사용하며 validation 생략이나 새 parser 의존성은 없다.
+
 firstfloor는 model/input/runtime 조건이 고정된 한 runner를 유지한다. 같은 UID의
 호환 입력을 배치하며 Workload별 SLO와 결과는 개별 request에 남긴다. ORT CPU,
 실제 CUDA provider, RKNNLite는 실제 SDK capability를 검사한다. CUDA는 확인된
@@ -358,12 +365,46 @@ baseline 소비를 **대체**하고, 실제 serving execution의 incremental ene
 전환 eta를 사용할 때에는 원래 target baseline subtraction 의미를 맞춘다.
 서로 독립된 meter의 Node만 합산한다. 시간 단위의 readiness와 joules를 구별한다.
 
-모든 active UID의 SLO가 feasible한 후보들에서 예상 total energy가 가장 작은 것을
-선택한다. 전체 후보가 infeasible한 과부하는 worst normalized SLO 초과를 먼저
-줄이고 동률에서 energy를 비교한다. 근거가 부족한 판단은 Pending/reason으로 남긴다.
+`settings.algorithm`은 필수이며 `fixed-horizon`과 `projected-work-history`만 허용한다.
+전자는 기존 비교 기준으로, 실제 SLO-feasible 후보 중 prospective total energy를 최소화한다.
+후자는 같은 실제 SLO/resource/evidence/progress 평가를 통과한 후보의 energy 선택만 바꾼다.
+모든 후보가 infeasible한 과부하는 기존 worst normalized SLO 초과→energy 순서를 유지한다.
+근거가 부족한 판단은 Pending/reason으로 남긴다.
 표본 0의 percentile은 값 없음이다. keep/target/rejected 후보·예상치·설정·근거를
 원시 decision record에 남긴다. 실제 요청 완료와 whole-POOL 전력 기록을 같은
 관측 구간·UID·decision에 연결하여 분석자가 예측과 실측 차이를 계산한다.
+
+`projected-work-history`는 첫 실제 logical 구성의 work를 0으로 시작한다. 이후 첫 control
+tick에서 완성된 observation window가 있으면 cursor 이후 `[Through, ObservationEnd)`를
+한 번 소비한다. 지연된 tick도 전체 차이를 읽으며 rolling-H를 다시 누적하지 않는다.
+추가 journal 읽기는 최종 `SchedulerInputs(time.Now)` 이전에 끝낸다. interval과 선택 receipt/
+definition dependency의 불완전 근거는 cursor를 진행시키지 않는다. 관련 없는 오래된 incomplete
+metadata는 제외하되 실제 겹침·필수 dependency·불명 prefix를 무시하지 않는다.
+선택 receipt의 validated/accepted 근거나 terminal outcome이 아직 없으면 history만 Pending으로
+유지하고 cursor를 멈춘다. 이후 durable classification은 최초 receipt 구간에 합쳐 한 번 소비한다.
+
+같은 replay/planner로 `K_k(q,s)`를 계산한다: hypothetical settled `q`에서 measured directed
+DAG를 거쳐 `s`로 가는 동안과 이후 Serving의 전체 POOL energy를 같은 interval에 한 번 집계한다.
+diagonal에는 전환이 없다. 완료하지 못한 전환·누락 primitive는 해당 edge가 unevaluable이다.
+`W_k(s)=min_q(W_{k-1}(q)+K_k(q,s))`이고 공통 최솟값만 빼서 normalize한다.
+실제 feasible 후보에서는 `W(s)+actual prospective joules`를 최소화하며 동률은 Keep,
+낮은 prospective energy, logical key 순이다. history가 Pending이면 feasible Keep를 유지하고,
+실제 SLO 대응이 필요하면 기존 선택을 `ActualSLOSafetyResponse`로 구분한다.
+
+매 projection은 counterfactual queue를 비우므로 실제 queue 경로의 offline optimum이나
+고전 WFA 경쟁비가 아니다. actual outstanding/진행 중 action/frozen route target은 기존 실행
+평가와 DAG에서만 유지한다. raw whole-wall operation 비용을 full service 비용에 다시 더하지 않는다.
+logical key는 물리 Pod/container·template 이름 대신 measured 조건과 replica별 전체 UID routing
+vector의 multiset이다. 기존 finite history는 bounded search에서 빠졌다는 이유로 버리지 않는다.
+retained universe가 `MaxCandidates`를 넘으면 명시적으로 Pending이며 임의 reset을 하지 않는다.
+process 재시작 또는 settings 변경은 이유가 기록된 새 비교로 시작한다.
+
+algorithm은 `decision.settings.algorithm`에서 제공하며 fixed-horizon에는 `policy`를 만들지 않는다.
+projected decision/journal의 `policy`는 startedAt/startReason, currentKey,
+`candidates`와 같은 순서의 candidateKeys, history.through/values, intervalFrom/To,
+kernels의 energy/completion/references/reasons,
+pendingReason, selection과 projection assumption을 제공한다. 이것은 live automatic 실행이나
+FULL 통과 증거가 아니다. 제어 활성화는 별도이며 기본 sample은 fixed-horizon/controls OFF다.
 
 ## 6. 실제 적용과 관리 연동
 

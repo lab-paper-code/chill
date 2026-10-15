@@ -12,6 +12,7 @@ import (
 // SchedulerSettings separates the observed population from the control cadence
 // and the interval over which every candidate's complete pool cost is compared.
 type SchedulerSettings struct {
+	Algorithm          string            `json:"algorithm"`
 	ObservationWindow  time.Duration     `json:"observationWindowNanos"`
 	ControlInterval    time.Duration     `json:"controlIntervalNanos"`
 	Horizon            time.Duration     `json:"horizonNanos"`
@@ -235,18 +236,22 @@ type SchedulerLoad struct {
 	InputsPerSecond float64 `json:"inputsPerSecond"`
 }
 type SchedulerDecision struct {
-	At         time.Time            `json:"at"`
-	Status     string               `json:"status"`
-	Keep       SchedulerCandidate   `json:"keep"`
-	Target     *SchedulerCandidate  `json:"target"`
-	Candidates []SchedulerCandidate `json:"candidates"`
-	Reasons    []string             `json:"reasons"`
-	Settings   SchedulerSettings    `json:"settings"`
-	Search     SchedulerSearch      `json:"search"`
-	References []string             `json:"references"`
+	At         time.Time                `json:"at"`
+	Status     string                   `json:"status"`
+	Keep       SchedulerCandidate       `json:"keep"`
+	Target     *SchedulerCandidate      `json:"target"`
+	Candidates []SchedulerCandidate     `json:"candidates"`
+	Reasons    []string                 `json:"reasons"`
+	Settings   SchedulerSettings        `json:"settings"`
+	Search     SchedulerSearch          `json:"search"`
+	References []string                 `json:"references"`
+	Policy     *SchedulerPolicyDecision `json:"policy,omitempty"`
 }
 
 func (s SchedulerSettings) Validate() error {
+	if s.Algorithm != SchedulerAlgorithmFixedHorizon && s.Algorithm != SchedulerAlgorithmProjectedWorkHistory {
+		return fmt.Errorf("scheduler algorithm must be %q or %q", SchedulerAlgorithmFixedHorizon, SchedulerAlgorithmProjectedWorkHistory)
+	}
 	if s.ObservationWindow <= 0 || s.ControlInterval <= 0 || s.Horizon <= 0 || s.MaxObservationAge <= 0 {
 		return fmt.Errorf("scheduler time intervals must be positive")
 	}

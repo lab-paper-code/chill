@@ -39,6 +39,11 @@ func ProjectSchedulerTransition(settings SchedulerSettings, observed SchedulerSn
 		}
 		return out
 	}
+	return projectSchedulerTransition(settings, observed, source, target, sourceKey == targetKey)
+}
+
+func projectSchedulerTransition(settings SchedulerSettings, observed SchedulerSnapshot, source, target SchedulerCandidate, diagonal bool) SchedulerTransitionProjection {
+	out := SchedulerTransitionProjection{Status: schedulerStatusPending}
 	// Validate the observed inventory, receipts and frozen definitions, not the
 	// actual transient queue or hypothetical native readiness timestamps.
 	snap := observed
@@ -57,7 +62,7 @@ func ProjectSchedulerTransition(settings SchedulerSettings, observed SchedulerSn
 		return out
 	}
 	snap.Nodes, snap.Instances, snap.Routing = source.Nodes, source.Instances, source.Routing
-	if sourceKey == targetKey {
+	if diagonal {
 		target = source
 		target.Keep = true
 	} else {

@@ -123,25 +123,7 @@ func EvaluateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) S
 	decision.Candidates = candidates
 	decision.Keep = candidates[0]
 	if best >= 0 {
-		target := candidates[best]
-		if target.Keep && settings.Controls.Enabled && snapshot.InProgressTarget != nil {
-			goal := snapshot.InProgressTarget
-			target.ID, target.Nodes, target.Instances, target.Routing = goal.ID, goal.Nodes, goal.Instances, goal.Routing
-		}
-		decision.Target = &target
-		decision.Status = target.Status
-		if target.Keep {
-			decision.Status = "Keep"
-		}
-		if target.Status == schedulerStatusOverload {
-			decision.Status = schedulerStatusOverload
-			decision.Reasons = append(decision.Reasons, "EvaluatedCandidatesExceedSLOWithinReportedSearchBounds")
-			for _, c := range candidates {
-				if c.ExpectedJoules == nil {
-					decision.Reasons = appendUnique(decision.Reasons, "UnevaluableCandidatesRemainPending")
-				}
-			}
-		}
+		FinalizeSchedulerTarget(snapshot, &decision, best)
 	}
 	if best < 0 {
 		status := candidates[0].Status
@@ -169,6 +151,30 @@ func EvaluateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) S
 		decision.Reasons = append(decision.Reasons, "StaticControlOff: identical observations retained; keep only")
 	}
 	return decision
+}
+
+// FinalizeSchedulerTarget uses the same physical continuation semantics for the
+// baseline and history-selected energy choice. The index is an evaluated candidate.
+func FinalizeSchedulerTarget(snapshot SchedulerSnapshot, decision *SchedulerDecision, index int) {
+	target := decision.Candidates[index]
+	if target.Keep && decision.Settings.Controls.Enabled && snapshot.InProgressTarget != nil {
+		goal := schedulerCurrentTarget(snapshot, *snapshot.InProgressTarget)
+		target.ID, target.Nodes, target.Instances, target.Routing = goal.ID, goal.Nodes, goal.Instances, goal.Routing
+	}
+	decision.Target = &target
+	decision.Status = target.Status
+	if target.Keep {
+		decision.Status = "Keep"
+	}
+	if target.Status == schedulerStatusOverload {
+		decision.Status = schedulerStatusOverload
+		decision.Reasons = appendUnique(decision.Reasons, "EvaluatedCandidatesExceedSLOWithinReportedSearchBounds")
+		for _, candidate := range decision.Candidates {
+			if candidate.ExpectedJoules == nil {
+				decision.Reasons = appendUnique(decision.Reasons, "UnevaluableCandidatesRemainPending")
+			}
+		}
+	}
 }
 func schedulerEvaluateCandidate(settings SchedulerSettings, snapshot SchedulerSnapshot, c *SchedulerCandidate) {
 	all := map[string][]float64{}

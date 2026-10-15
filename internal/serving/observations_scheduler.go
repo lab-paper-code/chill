@@ -120,6 +120,16 @@ func (fact *windowLoadFact) add(event *RequestEvent) {
 // LoadWindow uses event-time [from,to), independently of archive rotation and
 // result cohort filters. Completed counts completion events, not received cohort.
 func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
+	return j.loadWindow(from, to, false)
+}
+
+// SchedulerHistoryWindow requires complete evidence for one consumed receipt
+// interval and its selected request/definition dependencies, not unrelated history.
+func (j *Journal) SchedulerHistoryWindow(from, to time.Time) (LoadWindow, error) {
+	return j.loadWindow(from, to, true)
+}
+
+func (j *Journal) loadWindow(from, to time.Time, history bool) (LoadWindow, error) {
 	result := LoadWindow{From: from, To: to, Duration: to.Sub(from), Population: "all ingress receipt events; computable demand separately marked after authorization and input validation; event-time [from,to); one request = one input"}
 	if from.IsZero() || !from.Before(to) {
 		return result, failure("InvalidQuery", "positive explicit load window is required")
@@ -130,9 +140,18 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 	}
 	snapshot.selectLoadWindow(from, to)
 	definitions := map[string]*Definition{}
+	var definitionWindows map[string]string
+	var requiredWindows map[string]bool
+	if history {
+		definitionWindows = map[string]string{}
+		requiredWindows = map[string]bool{}
+	}
 	if err := snapshot.scan(observationDefinitionStream, func(record observationRecord) {
 		if record.Definition != nil {
 			definitions[record.Definition.Identity] = record.Definition.Definition
+			if history {
+				definitionWindows[record.Definition.Identity] = record.Window
+			}
 		}
 	}); err != nil {
 		return result, err
@@ -158,6 +177,9 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 		}
 		if fact != nil {
 			fact.add(event)
+			if history {
+				requiredWindows[record.Window] = true
+			}
 		}
 		if !observationInInterval(at, from, to) {
 			return
@@ -186,10 +208,7 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 		return result, err
 	}
 	for id, fact := range facts {
-		if observationInInterval(fact.received, from, to) {
-			arrival := SchedulerArrival{ID: id, At: fact.received, WorkloadUID: fact.uid, Definition: definitions[fact.definition], InputPath: fact.inputPath, Lifetime: fact.lifetime, Accepted: fact.accepted, Compute: fact.compute, Outcome: fact.outcome}
-			result.Arrivals = append(result.Arrivals, arrival)
-		}
+		result.Arrivals = append(result.Arrivals, SchedulerArrival{ID: id, At: fact.received, WorkloadUID: fact.uid, Definition: definitions[fact.definition], InputPath: fact.inputPath, Lifetime: fact.lifetime, Accepted: fact.accepted, Compute: fact.compute, Outcome: fact.outcome})
 	}
 	seconds := result.Duration.Seconds()
 	for _, load := range loads {
@@ -206,12 +225,61 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 		}
 		return result.Arrivals[a].At.Before(result.Arrivals[b].At)
 	})
-	for _, window := range snapshot.windows {
-		if window.Incomplete && window.overlaps(from, to) {
-			result.IncompleteWindows = append(result.IncompleteWindows, window.ID)
-		}
+	result.IncompleteWindows, err = snapshot.loadWindowCompleteness(from, to, history, facts, definitions, definitionWindows, requiredWindows)
+	if err != nil {
+		return result, err
 	}
 	return result, nil
+}
+
+// loadWindowCompleteness only reads the selected facts and captured dependency
+// metadata; arrival construction stays in the ordinary load reduction.
+func (s *observationSnapshot) loadWindowCompleteness(from, to time.Time, history bool, facts map[string]*windowLoadFact, definitions map[string]*Definition, definitionWindows map[string]string, requiredWindows map[string]bool) ([]string, error) {
+	var overlapping []string
+	var incomplete map[string]bool
+	if history {
+		incomplete = map[string]bool{}
+	}
+	for _, window := range s.windows {
+		if !window.Incomplete {
+			continue
+		}
+		if window.overlaps(from, to) {
+			overlapping = append(overlapping, window.ID)
+		}
+		if history {
+			incomplete[window.ID] = true
+		}
+	}
+	if !history {
+		return overlapping, nil
+	}
+	if len(overlapping) > 0 {
+		return overlapping, failure("IncompleteObservation", "history interval overlaps incomplete observation window %s", overlapping[0])
+	}
+	for _, prefix := range s.streams[observationRequestStream] {
+		window := s.windows[prefix.window]
+		if incomplete[window.ID] && !prefix.requestCensus.trusted {
+			return overlapping, failure("IncompleteObservation", "history interval has an unknown incomplete request prefix in %s", window.ID)
+		}
+	}
+	for window := range requiredWindows {
+		if incomplete[window] {
+			return overlapping, failure("IncompleteObservation", "history receipt facts depend on incomplete observation window %s", window)
+		}
+	}
+	for id, fact := range facts {
+		if !fact.compute && !fact.accepted && fact.outcome == "" {
+			return overlapping, failure("IncompleteObservation", "history receipt %s has no durable demand classification or terminal outcome", id)
+		}
+		if (fact.compute || fact.accepted) && definitions[fact.definition] == nil {
+			return overlapping, failure("IncompleteObservation", "history receipt %s has no immutable definition", id)
+		}
+		if window := definitionWindows[fact.definition]; incomplete[window] {
+			return overlapping, failure("IncompleteObservation", "history receipt %s depends on incomplete definition window %s", id, window)
+		}
+	}
+	return overlapping, nil
 }
 
 // ObservedOverhead is the joint completion overhead the Serving entry point

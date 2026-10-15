@@ -24,6 +24,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	schedulerPolicyFeasible    = "Feasible"
+	schedulerPolicyProjected   = "ProjectedWorkHistory"
+	schedulerPolicySLOResponse = "ActualSLOSafetyResponse"
+)
+
 type SchedulerControllerConfig struct {
 	Settings               serving.SchedulerSettings
 	CPUInventory           map[string][]int
@@ -52,22 +58,30 @@ type actionRun struct {
 	cancel  context.CancelFunc
 	started time.Time
 }
+type schedulerWorkState struct {
+	startedAt      time.Time
+	startReason    string
+	history        serving.SchedulerWorkHistory
+	configurations map[string]serving.SchedulerCandidate
+}
 type SchedulerController struct {
-	mu         sync.Mutex
-	tickMu     sync.Mutex
-	store      *Store
-	kube       kubernetes.Interface
-	runtime    *serving.Runtime
-	observer   *Observer
-	operations *Operations
-	journal    *serving.Journal
-	config     SchedulerControllerConfig
-	state      SchedulerControllerState
-	runs       map[string]*actionRun
-	goal       *serving.SchedulerCandidate
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
+	mu              sync.Mutex
+	tickMu          sync.Mutex
+	store           *Store
+	kube            kubernetes.Interface
+	runtime         *serving.Runtime
+	observer        *Observer
+	operations      *Operations
+	journal         *serving.Journal
+	config          SchedulerControllerConfig
+	state           SchedulerControllerState
+	runs            map[string]*actionRun
+	goal            *serving.SchedulerCandidate
+	work            *schedulerWorkState
+	workStartReason string
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
 }
 
 func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *Operations, journal *serving.Journal, config SchedulerControllerConfig) (*SchedulerController, error) {
@@ -97,6 +111,10 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	c.mu.Lock()
 	before := c.config.Settings.Controls.Enabled
 	previousStatic := c.config.StaticRouting
+	if c.config.Settings != config.Settings {
+		c.work = nil
+		c.workStartReason = "SettingsChanged"
+	}
 	c.config = config
 	c.mu.Unlock()
 	c.setRoutingControl(before, config.Settings.Controls.Enabled)
@@ -222,12 +240,14 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	config := c.config
 	goal := c.goal
 	c.mu.Unlock()
+	interval, intervalErr := c.workInterval(now, config.Settings)
 	snapshot, err := c.capture(ctx, now, config)
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
 	snapshot = c.reconcileSnapshot(snapshot, goal, snapshot.At, config.Settings.ObservationWindow)
 	decision := serving.EvaluateScheduler(config.Settings, snapshot)
+	work, decision := c.applyWorkPolicy(snapshot, decision, interval, intervalErr)
 	c.mu.Lock()
 	c.state.Snapshot = snapshot
 	c.state.Decision = decision
@@ -237,10 +257,117 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 			return decision, fmt.Errorf("persist decision before physical action: %w", err)
 		}
 	}
+	c.work = work
 	if config.Settings.Controls.Enabled && decision.Target != nil {
 		c.launch(*decision.Target, config)
 	}
 	return decision, nil
+}
+
+func (c *SchedulerController) workInterval(end time.Time, settings serving.SchedulerSettings) (*serving.LoadWindow, error) {
+	if settings.Algorithm != serving.SchedulerAlgorithmProjectedWorkHistory || c.work == nil || end.Sub(c.work.history.Through) < settings.ObservationWindow {
+		return nil, nil
+	}
+	interval, err := c.journal.SchedulerHistoryWindow(c.work.history.Through, end)
+	if err != nil {
+		return nil, err
+	}
+	return &interval, nil
+}
+
+func (c *SchedulerController) applyWorkPolicy(snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision, interval *serving.LoadWindow, intervalErr error) (*schedulerWorkState, serving.SchedulerDecision) {
+	if decision.Settings.Algorithm != serving.SchedulerAlgorithmProjectedWorkHistory {
+		return c.work, decision
+	}
+	policy := &serving.SchedulerPolicyDecision{}
+	decision.Policy = policy
+	policy.Assumption = "non-overlapping receipt intervals; each counterfactual starts with settled hypothetical capacity and empty queues; directed whole-pool kernels replace operation baseline once; projected work is not physical queue history or a classical WFA guarantee"
+	currentKey, err := serving.SchedulerLogicalConfigKey(snapshot, decision.Keep)
+	policy.CurrentKey = currentKey
+	if err != nil {
+		policy.PendingReason = err.Error()
+		return c.work, pendingWorkSelection(snapshot, decision)
+	}
+	if !decision.Settings.Controls.Enabled {
+		policy.Selection = "ControlsOff"
+		return c.work, decision
+	}
+	work := c.work
+	if work == nil {
+		reason := c.workStartReason
+		if reason == "" {
+			reason = "ProcessStart"
+		}
+		work = &schedulerWorkState{startedAt: snapshot.ObservationEnd, startReason: reason, history: serving.SchedulerWorkHistory{Through: snapshot.ObservationEnd, Values: map[string]float64{currentKey: 0}}, configurations: map[string]serving.SchedulerCandidate{currentKey: decision.Keep}}
+	}
+	next := *work
+	next.configurations = make(map[string]serving.SchedulerCandidate, len(work.configurations))
+	for key, configuration := range work.configurations {
+		next.configurations[key] = configuration
+	}
+	policy.StartedAt, policy.StartReason, policy.History = work.startedAt, work.startReason, work.history
+	policy.CandidateKeys = make([]string, len(decision.Candidates))
+	for index, candidate := range decision.Candidates {
+		if candidate.ExpectedJoules == nil {
+			continue
+		}
+		key, keyErr := currentKey, error(nil)
+		if index != 0 {
+			key, keyErr = serving.SchedulerLogicalConfigKey(snapshot, candidate)
+		}
+		if keyErr != nil {
+			continue
+		}
+		policy.CandidateKeys[index] = key
+		if _, exists := next.configurations[key]; !exists && len(next.configurations) >= decision.Settings.MaxCandidates {
+			policy.PendingReason = "RetainedLogicalConfigurationsExceedMaxCandidates"
+			return work, pendingWorkSelection(snapshot, decision)
+		}
+		candidate.Actions, candidate.Keep = nil, false
+		next.configurations[key] = candidate
+	}
+	if intervalErr != nil {
+		policy.PendingReason = intervalErr.Error()
+		return &next, pendingWorkSelection(snapshot, decision)
+	}
+	if interval != nil {
+		policy.IntervalFrom, policy.IntervalTo = interval.From, interval.To
+		projected := snapshot
+		projected.Arrivals = interval.Arrivals
+		settings := decision.Settings
+		settings.ObservationWindow, settings.Horizon = interval.Duration, interval.Duration
+		policy.Kernels = serving.ProjectSchedulerWorkKernels(settings, projected, next.configurations, work.history.Values)
+		advanced, advanceErr := serving.AdvanceSchedulerWorkHistory(work.history, interval.From, interval.To, policy.Kernels)
+		if advanceErr != nil {
+			policy.PendingReason = advanceErr.Error()
+			return &next, pendingWorkSelection(snapshot, decision)
+		}
+		next.history = advanced
+		policy.History = advanced
+	}
+	selected, pending := serving.SelectSchedulerWorkCandidate(next.history, decision.Candidates, policy.CandidateKeys)
+	if pending != "" {
+		policy.PendingReason = pending
+		return &next, pendingWorkSelection(snapshot, decision)
+	}
+	serving.FinalizeSchedulerTarget(snapshot, &decision, selected)
+	policy.Selection = schedulerPolicyProjected
+	if decision.Target.Status != schedulerPolicyFeasible {
+		policy.Selection = schedulerPolicySLOResponse
+	}
+	return &next, decision
+}
+
+func pendingWorkSelection(snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision) serving.SchedulerDecision {
+	decision.Policy.Selection = "Pending"
+	decision.Reasons = append(decision.Reasons, "ProjectedWorkHistoryPending:"+decision.Policy.PendingReason)
+	if decision.Keep.Status == schedulerPolicyFeasible {
+		serving.FinalizeSchedulerTarget(snapshot, &decision, 0)
+		decision.Policy.Selection = "KeepWhileHistoryPending"
+	} else if decision.Target != nil {
+		decision.Policy.Selection = schedulerPolicySLOResponse
+	}
+	return decision
 }
 func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, observationWindow time.Duration) serving.SchedulerSnapshot {
 	c.mu.Lock()

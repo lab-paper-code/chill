@@ -76,7 +76,9 @@ func executionOwnerFixture() (executionManifest, executionConfiguration, executi
 	}
 	config := executionConfiguration{StaticRouting: routing}
 	owner := executionOwnerView{
-		Settings: serving.SchedulerSettings{ControlInterval: time.Second},
+		Settings: serving.SchedulerSettings{
+			Algorithm: serving.SchedulerAlgorithmFixedHorizon, ControlInterval: time.Second,
+		},
 		State: servingkube.SchedulerControllerState{
 			Snapshot: serving.SchedulerSnapshot{
 				At: now.Add(-time.Millisecond), Workloads: []*serving.Definition{first, &second},

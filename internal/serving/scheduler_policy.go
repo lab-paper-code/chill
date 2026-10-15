@@ -6,6 +6,53 @@ import (
 	"time"
 )
 
+const (
+	SchedulerAlgorithmFixedHorizon         = "fixed-horizon"
+	SchedulerAlgorithmProjectedWorkHistory = "projected-work-history"
+)
+
+// SchedulerPolicyDecision records the projection model and the actual selection
+// separately. A process restart or changed settings starts an explicit comparison.
+type SchedulerPolicyDecision struct {
+	StartedAt     time.Time                                           `json:"startedAt"`
+	StartReason   string                                              `json:"startReason"`
+	CurrentKey    string                                              `json:"currentKey"`
+	CandidateKeys []string                                            `json:"candidateKeys,omitempty"`
+	History       SchedulerWorkHistory                                `json:"history"`
+	IntervalFrom  time.Time                                           `json:"intervalFrom"`
+	IntervalTo    time.Time                                           `json:"intervalTo"`
+	Kernels       map[string]map[string]SchedulerTransitionProjection `json:"kernels,omitempty"`
+	PendingReason string                                              `json:"pendingReason,omitempty"`
+	Selection     string                                              `json:"selection"`
+	Assumption    string                                              `json:"assumption"`
+}
+
+// ProjectSchedulerWorkKernels reuses already identified bounded configurations;
+// each ordered edge (including each diagonal) is evaluated exactly once.
+func ProjectSchedulerWorkKernels(settings SchedulerSettings, observed SchedulerSnapshot, configurations map[string]SchedulerCandidate, sources map[string]float64) map[string]map[string]SchedulerTransitionProjection {
+	kernels := make(map[string]map[string]SchedulerTransitionProjection, len(sources))
+	invalid := settings.Validate()
+	if invalid == nil && settings.ObservationWindow != settings.Horizon {
+		invalid = fmt.Errorf("projection requires one completed receipt interval")
+	}
+	for source := range sources {
+		current, exists := configurations[source]
+		kernels[source] = make(map[string]SchedulerTransitionProjection, len(configurations))
+		for destination, target := range configurations {
+			if invalid != nil {
+				kernels[source][destination] = SchedulerTransitionProjection{Status: schedulerStatusPending, Reasons: []string{invalid.Error()}}
+				continue
+			}
+			if !exists {
+				kernels[source][destination] = SchedulerTransitionProjection{Status: schedulerStatusPending, Reasons: []string{"MissingHistoryConfiguration"}}
+				continue
+			}
+			kernels[source][destination] = projectSchedulerTransition(settings, observed, current, target, source == destination)
+		}
+	}
+	return kernels
+}
+
 // SchedulerWorkHistory stores relative projected work through one receipt cutoff.
 // Initialize the actual logical key to zero at the declared start. An absent key
 // is unevaluable (infinite work), never a free newly discovered configuration.
@@ -54,7 +101,10 @@ func AdvanceSchedulerWorkHistory(previous SchedulerWorkHistory, from, to time.Ti
 // projected work plus actual prospective energy. History never buys an SLO
 // violation. Without feasible candidates, retain the existing overload ordering.
 // The returned string is a pending reason when no candidate can be selected.
-func SelectSchedulerWorkCandidate(history SchedulerWorkHistory, snapshot SchedulerSnapshot, candidates []SchedulerCandidate) (int, string) {
+func SelectSchedulerWorkCandidate(history SchedulerWorkHistory, candidates []SchedulerCandidate, keys []string) (int, string) {
+	if len(keys) != len(candidates) {
+		return -1, "Pending:CandidateLogicalKeysUnavailable"
+	}
 	best, fallback := -1, -1
 	feasible := false
 	bestScore, bestEnergy, bestKey := 0.0, 0.0, ""
@@ -70,8 +120,8 @@ func SelectSchedulerWorkCandidate(history SchedulerWorkHistory, snapshot Schedul
 			continue
 		}
 		feasible = true
-		key, err := SchedulerLogicalConfigKey(snapshot, candidate)
-		if err != nil {
+		key := keys[index]
+		if key == "" {
 			continue
 		}
 		work, exists := history.Values[key]

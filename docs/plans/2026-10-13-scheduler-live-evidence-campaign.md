@@ -63,11 +63,12 @@ Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 
    전 노드나 외부 조율 중인 power/GPU 완료를 기다리지 않으며 미검증 동작은 후보에서 제외한다.
    조사 문헌과 현재 구현을 대조해 워크로드/SLO·부하/큐·evidence·가용 자원·실제 전환 상태
    입력에서 유지/목표 구성·제어 동작·실행 시점과 계속/취소/재선택 규칙을 확정한다.
-   pairwise virtual transition 비용·service energy 비중첩 등 WFA interface의 차이는 다음
-   선택에서 해소한다. WFA 채택·이론적 보장을 선결하지 않으며 고정 H는 비교 기준이다.
-2. **자동 실행 gate:** 실제 입력 freshness ≤5초, 부하 중 SLO feasibility와 fresh observed
-   energy를 확인한다. 무부하 KeepFeasible이나 일부 노드의 전력 누락을 통과로 대체하지 않는다.
-   알고리즘 작업은 진행하되 이 gate 전까지 자동 제어는 OFF다.
+   비중첩 receipt interval의 실제 방향별 measured DAG kernel과 min-plus history를
+   `projected-work-history`로 연결한다. 고정 H는 `fixed-horizon` 비교 기준으로 유지하며,
+   queue-reset projection은 실제 queue 이력/고전 WFA 보장이 아니다. 구현과 live 비교 통과를 구분한다.
+2. **자동 실행 gate:** decision origin에서 실제 source freshness ≤5초는 live 한 iteration을
+   통과했다. 지속 부하 중 freshness·SLO feasibility와 fresh observed energy는 계속 검증해야 한다.
+   무부하 KeepFeasible·부분 전력 누락을 통과로 대체하지 않으며, gate 전까지 자동 제어는 OFF다.
 3. **폐루프 검증:** 짧은 부하·지속 부하·반복 변동에서 판단 → 실제 실행 → 피드백과
    SLO·전환 포함 전체 POOL 에너지를 확인한다. 평가기·배처 검증은 판단 정책 설계를 대신하지 않는다.
 4. **FULL·Dashboard:** 남은 개별 제어를 검증·통합하고 완료 기준의 실제 시나리오를 수행한다.
@@ -113,8 +114,10 @@ Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 
   세부 근거는 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 있다.
 - firstfloor의 실제 in-flight SLO/원래 receivedAt/lifetime 문맥과 현재 적용 calibration policy를
   확인했다. batch2 실행·자동 선택·SLO 개선·에너지 절감은 입증하지 않았다. 자동 제어는 모두 OFF다.
-- 다음은 검증된 CPU 부분집합의 알고리즘 설계·구현이다. 현재 KeepFeasible은 최근 60초 도착 0건이며,
-  whole power는 Jetsonx source timeout으로 incomplete다. 실제 입력·부하·에너지의 자동 실행 gate는 남아 있다.
+- 다음은 검증된 CPU 부분집합의 알고리즘 설계·구현이다. 이전 minimum-loop gate의 최근 60초
+  도착 0건 KeepFeasible은 부하 증거가 아니다. 시간 계약 수정 후 live 한 iteration의 source
+  freshness는 통과했고 기존 두 UID/Rpi CPU2 요청 4건도 완료됐다. 지속 부하 freshness·SLO·
+  fresh energy gate는 남아 있으며, 마지막 whole-power 검증의 Jetsonx timeout은 숨기지 않는다.
 - genesis2 GPU 배치 1/2의 기존 9회 결과를 새 `profiles adopt`로 채택했고 기존 4개와 모두 로드됐다.
   미허용 GPU 거절·설정 무변경, 명시적 허용 후 채택, 반복 채택 무변경과 측정 dry-run 미생성을 확인했다.
   실제 GPU 인스턴스 준비·자동 선택·SLO/에너지 개선의 증거는 아니다.

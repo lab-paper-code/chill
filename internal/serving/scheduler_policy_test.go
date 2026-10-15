@@ -124,11 +124,11 @@ func TestSchedulerWorkSelectionSLOFirstAndPendingHistory(t *testing.T) {
 		schedulerMustLogicalKey(t, snapshot, cheap):    0,
 		schedulerMustLogicalKey(t, snapshot, feasible): 100,
 	}}
-	if index, reason := SelectSchedulerWorkCandidate(history, snapshot, []SchedulerCandidate{cheap, feasible}); index != 1 || reason != "" {
+	if index, reason := schedulerSelectWorkForTest(history, snapshot, []SchedulerCandidate{cheap, feasible}); index != 1 || reason != "" {
 		t.Fatalf("history bought an SLO violation: %d %s", index, reason)
 	}
 	delete(history.Values, schedulerMustLogicalKey(t, snapshot, feasible))
-	if index, reason := SelectSchedulerWorkCandidate(history, snapshot, []SchedulerCandidate{cheap, feasible}); index != -1 || !strings.HasPrefix(reason, "Pending:") {
+	if index, reason := schedulerSelectWorkForTest(history, snapshot, []SchedulerCandidate{cheap, feasible}); index != -1 || !strings.HasPrefix(reason, "Pending:") {
 		t.Fatalf("missing feasible history became zero or overload fallback: %d %s", index, reason)
 	}
 }
@@ -139,15 +139,15 @@ func TestSchedulerWorkSelectionUsesWorkAndDeterministicTies(t *testing.T) {
 	b := schedulerPolicyCandidate("b", 3, schedulerStatusFeasible)
 	keyA, keyB := schedulerMustLogicalKey(t, snapshot, a), schedulerMustLogicalKey(t, snapshot, b)
 	history := SchedulerWorkHistory{Values: map[string]float64{keyA: 0, keyB: 6}}
-	if index, _ := SelectSchedulerWorkCandidate(history, snapshot, []SchedulerCandidate{b, a}); index != 1 {
+	if index, _ := schedulerSelectWorkForTest(history, snapshot, []SchedulerCandidate{b, a}); index != 1 {
 		t.Fatal("ranked only prospective energy instead of W+A")
 	}
 	history.Values[keyB] = 5 // Equal score, lower actual energy wins.
-	if index, _ := SelectSchedulerWorkCandidate(history, snapshot, []SchedulerCandidate{a, b}); index != 1 {
+	if index, _ := schedulerSelectWorkForTest(history, snapshot, []SchedulerCandidate{a, b}); index != 1 {
 		t.Fatal("equal-score tie ignored lower actual energy")
 	}
 	a.Keep = true
-	if index, _ := SelectSchedulerWorkCandidate(history, snapshot, []SchedulerCandidate{b, a}); index != 1 {
+	if index, _ := schedulerSelectWorkForTest(history, snapshot, []SchedulerCandidate{b, a}); index != 1 {
 		t.Fatal("equal-score tie did not prefer continuation")
 	}
 	a.Keep = false
@@ -158,7 +158,7 @@ func TestSchedulerWorkSelectionUsesWorkAndDeterministicTies(t *testing.T) {
 		want = keyB
 	}
 	for _, candidates := range [][]SchedulerCandidate{{a, b}, {b, a}} {
-		index, reason := SelectSchedulerWorkCandidate(history, snapshot, candidates)
+		index, reason := schedulerSelectWorkForTest(history, snapshot, candidates)
 		if index < 0 || reason != "" || schedulerMustLogicalKey(t, snapshot, candidates[index]) != want {
 			t.Fatalf("equal-energy tie is not stable by logical key: %d %s", index, reason)
 		}
@@ -174,14 +174,14 @@ func TestSchedulerWorkSelectionPreservesOverloadLifetimeUnknownOrdering(t *testi
 	pending := schedulerPolicyCandidate("pending", 0, schedulerStatusPending)
 	pending.ExpectedJoules = nil
 	candidates := []SchedulerCandidate{pending, lifetime, b, a}
-	if index, reason := SelectSchedulerWorkCandidate(SchedulerWorkHistory{}, SchedulerSnapshot{}, candidates); index != 3 || reason != "" {
+	if index, reason := schedulerSelectWorkForTest(SchedulerWorkHistory{}, SchedulerSnapshot{}, candidates); index != 3 || reason != "" {
 		t.Fatalf("overload/lifetime/unknown ordering changed: %d %s", index, reason)
 	}
 	b.WorstExceedance = a.WorstExceedance
-	if index, _ := SelectSchedulerWorkCandidate(SchedulerWorkHistory{}, SchedulerSnapshot{}, []SchedulerCandidate{a, b}); index != 1 {
+	if index, _ := schedulerSelectWorkForTest(SchedulerWorkHistory{}, SchedulerSnapshot{}, []SchedulerCandidate{a, b}); index != 1 {
 		t.Fatal("overload energy tie-break changed")
 	}
-	if index, reason := SelectSchedulerWorkCandidate(SchedulerWorkHistory{}, SchedulerSnapshot{}, []SchedulerCandidate{pending, lifetime}); index != -1 || reason == "" {
+	if index, reason := schedulerSelectWorkForTest(SchedulerWorkHistory{}, SchedulerSnapshot{}, []SchedulerCandidate{pending, lifetime}); index != -1 || reason == "" {
 		t.Fatalf("unknown or lifetime-infeasible candidate selected: %d %s", index, reason)
 	}
 }
@@ -207,7 +207,32 @@ func TestSchedulerWorkHistorySurvivesPhysicalReplacement(t *testing.T) {
 	if err != nil || next.Values[replacementKey] != 7 {
 		t.Fatalf("replacement reset historical relative work: %+v, %v", next, err)
 	}
-	if index, reason := SelectSchedulerWorkCandidate(next, snapshot, []SchedulerCandidate{candidate}); index != 0 || reason != "" {
+	if index, reason := schedulerSelectWorkForTest(next, snapshot, []SchedulerCandidate{candidate}); index != 0 || reason != "" {
 		t.Fatalf("physical replacement lost eligible logical history: %d %s", index, reason)
+	}
+}
+
+func schedulerSelectWorkForTest(history SchedulerWorkHistory, snapshot SchedulerSnapshot, candidates []SchedulerCandidate) (int, string) {
+	keys := make([]string, len(candidates))
+	for index, candidate := range candidates {
+		key, err := SchedulerLogicalConfigKey(snapshot, candidate)
+		if err == nil {
+			keys[index] = key
+		}
+	}
+	return SelectSchedulerWorkCandidate(history, candidates, keys)
+}
+
+func TestSchedulerAlgorithmSettingIsExplicit(t *testing.T) {
+	settings, _ := schedulerFixture()
+	for _, algorithm := range []string{"", "unknown-policy", SchedulerAlgorithmFixedHorizon, SchedulerAlgorithmProjectedWorkHistory} {
+		settings.Algorithm = algorithm
+		valid := algorithm == SchedulerAlgorithmFixedHorizon || algorithm == SchedulerAlgorithmProjectedWorkHistory
+		if err := settings.Validate(); (err == nil) != valid {
+			t.Fatalf("algorithm %q validation=%v", algorithm, err)
+		}
+	}
+	if _, reason := SelectSchedulerWorkCandidate(SchedulerWorkHistory{}, []SchedulerCandidate{{}}, nil); reason == "" {
+		t.Fatal("misaligned key input was silently accepted")
 	}
 }

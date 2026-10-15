@@ -25,7 +25,7 @@ func TestStaticRoutingNeverAppliesAsAutonomousAction(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			controller := &SchedulerController{config: SchedulerControllerConfig{
-				Settings: serving.SchedulerSettings{Controls: serving.SchedulerControls{Enabled: test.enabled}},
+				Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, Controls: serving.SchedulerControls{Enabled: test.enabled}},
 			}}
 			if err := controller.ApplyStaticRouting(context.Background(), nil, test.revision); err == nil {
 				t.Fatal("manual routing reached capture/apply without OFF controls and source revision")
@@ -125,7 +125,7 @@ func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
 				store: manager.store, kube: manager.observer.kube, runtime: manager.runtime,
 				observer: manager.observer, journal: manager.journal,
 				config: SchedulerControllerConfig{
-					Settings: serving.SchedulerSettings{ObservationWindow: time.Minute},
+					Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Minute},
 					OnAction: func(result OperationResult) error {
 						recorded = append(recorded, result)
 						return nil

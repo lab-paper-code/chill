@@ -560,3 +560,29 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   `replica-remove-closed-ingress.json`, `replica-removed-native-readback.json`,
   `membership-{detach,join}-result.json`, `control-execution-final-readback.json`,
   `firstfloor-{policy-control-readback,request-context-live}.json`, `minimum-loop-decision-gate.json`.
+
+- `714d101` 시간 계약 수정을 owner `7e69d7f…`로 배포해 63초에 Ready를 확인했다.
+  실제 snapshot `At=11:05:43.502208255Z`, `ObservationEnd=11:05:40.117877936Z`는 capture lag
+  약 3.385초를 드러내며 Rpi 원래 `ObservedAt=11:05:40.156511315Z`는 덮어쓰지 않았다.
+  decision-origin source age는 Rpi 약 3.346초·Node 약 3.385초로 5초 이내였다. HTTP에서
+  보인 retained snapshot age 9.398초는 이 자동 source-age gate와 다른 값이다.
+  같은 두 UID/Rpi q2의 실제 요청 4건이 다시 HTTP200·executionComplete였다. live 한 iteration
+  통과이지 지속 부하 freshness·SLO 개선·AUTO ON/FULL 통과가 아니다. lint·변경 패키지는 통과했고
+  전체 gate의 별도 transition timing 실패는 `ffd77e1` focused PASS 후 후속 소스 통합과 함께 남은 gate를 재실행한다.
+  근거: `/tmp/chill-completion-cpu-cost-assembly/{decision-clock-live-smoke.json,decision-clock-serving-smoke.json}`.
+
+- 고정 24건·2초 간격·controls OFF·owner CPU500m의 임시 계측 cohort가 모두 완료됐다.
+  원인은 numeric validation이었다: p95 numeric `1289.768645ms`/Accept `1290.354712ms`,
+  decode `266.481506ms`, Receive `0.043697ms`, Authorize `2.256781ms`이고 두 auth RPC는 모두 5ms 미만이었다.
+  계측은 `/tmp/chill-admission-phase-source`에만 두었으며 production에는 logging을 넣지 않았다.
+  `input.go`의 numeric 경계만 전체 JSON 문법 검사+`bytes.Cut`+동일 scalar 범위 검사로 바꿨다.
+  Go1.23.4에서 같은 FP32 `[3,224,224]`의 full `validateInput` benchmark
+  (`BenchmarkValidateInputImageFP32`, `-benchtime=3x -count=3`) 중앙값은
+  `164.192045→16.269690ms/op`(약 10.09배), `20474304→626B/op`, `1204230→1alloc/op`이었다.
+  이는 host microbenchmark이며 배포 후 live SLO 개선은 아직 검증하지 않았다.
+  앞선 선언 cohort 24건의 relaxed p90 `2024.804838ms > 1500ms`, tight p95
+  `1585.373869ms > 1000ms` 위반과 immutable completion maximum `2111.623881ms`는
+  필터·재해석·채택 없이 그대로 보존한다. CPU/QPS/auth/SLO 변경이나 AUTO ON/FULL 통과의 증거가 아니다.
+  근거: `/tmp/chill-completion-cpu-cost-assembly/admission-diagnostic-{plan,results}.json`,
+  `admission-diagnostic-phases.log`, `completion-calibration-declared-{observations,spans,selector,loaded}.json`;
+  benchmark·경계 회귀는 `internal/serving/input_test.go`에 있다.

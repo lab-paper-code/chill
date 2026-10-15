@@ -96,6 +96,15 @@ enabling any controls. Mirror configured power measurement namespace/name pairs
 in `servingEntrypoint.scheduler.powerCostSources` for named read permissions.
 No Profiler experiment is started by this configuration.
 
+`settings.algorithm` is required: `fixed-horizon` retains the named comparison
+baseline; `projected-work-history` enables the directed interval-kernel history
+choice, not the physical controls. Update the ConfigMap/settings payload before
+deploying this contract; omitted/other values are rejected. Keep controls OFF
+until the independent actual-input/SLO/energy gates pass. The algorithm is exposed
+in decision settings; projected decisions additionally expose `policy` cursor,
+finite work, kernel sources, pending reasons and actual safety-response versus
+projected-policy selection. Baseline decisions have no projected diagnostics.
+
 Keep profile selection in the scheduler ConfigMap JSON's `profileCampaigns` array
 as `{namespace,name}` entries; this is the only selection authority, not a Helm
 campaign list. The owner API's `POST /api/v1/scheduler/profiles` adds selections.
