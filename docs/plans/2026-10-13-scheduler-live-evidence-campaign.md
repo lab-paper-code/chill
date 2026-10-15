@@ -65,7 +65,7 @@ min-plus history 전진을 확인했다. 세부 수치·실패·경계는 [제�
    queue-reset projection은 실제 queue 이력이나 고전 WFA 보장이 아니다.
 2. **GPU·Jetson:** GPU CLI는 리뷰·gate·커밋 완료. 실제 준비는 기존 CUDA 이미지의
    `completionOverheadMS` 미지원으로 실패해 생성 자원을 정리했다. 과거 측정은 수정하지 않는다.
-   Jetson 3대의 현재 물리 모드는 확인했지만 단일 허용 모드·외부 Pod 안전 차단으로 전력 왕복은 미검증이다.
+   사용자가 Jetson 3대의 추가 모드·외부 작업 영향·필요시 재부팅을 승인했다. 기존 API와 임시 운영 설정으로 왕복 검증 후 복원하며 AGX는 변경·재시작하지 않는다.
    별도 제어 OFF 16건 동시 요청은 모두 완료했으나 p90/p95 3325/3421ms로 SLO 초과했다.
    이는 앞선 trace 성공과 구분하며 자동 과부하 대응 통과로 세지 않는다.
 3. **FULL·Dashboard:** 남은 제어의 실제 완료와 통합 시나리오를 검증한 뒤 실제 Dashboard
