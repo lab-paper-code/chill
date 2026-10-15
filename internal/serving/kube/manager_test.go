@@ -53,6 +53,10 @@ func (c *managerAPI) Update(ctx context.Context, obj client.Object, opts ...clie
 		changed = !reflect.DeepEqual(current.Spec, previous.(*api.Workload).Spec)
 	case *api.ModelSpec:
 		changed = !reflect.DeepEqual(current.Spec, previous.(*api.ModelSpec).Spec)
+	case *api.Preprocessor:
+		changed = !reflect.DeepEqual(current.Spec, previous.(*api.Preprocessor).Spec)
+	case *api.Dataset:
+		changed = !reflect.DeepEqual(current.Spec, previous.(*api.Dataset).Spec)
 	}
 	obj.SetGeneration(previous.GetGeneration())
 	if changed {
@@ -128,9 +132,41 @@ func managerModelSpec() api.ModelSpecSpec {
 	}
 }
 
+func managerPreprocessorSpec() api.PreprocessorSpec {
+	return api.PreprocessorSpec{
+		Input:     api.RawInputContract{Fields: []api.RawField{{Name: "image", Format: "JPEG", MaxBytes: 1024}}},
+		Output:    api.RawOutputContract{Fields: []api.RawOutputField{{Name: "label", Format: "UTF8"}}},
+		Artifacts: []api.PreprocessorArtifact{{Target: api.PreprocessorTarget{Model: "model", Artifact: "onnx"}, Source: api.PreprocessorArtifactSource{Image: "pre@sha256:immutable", Architecture: "amd64", Path: "/artifact/pre"}}},
+	}
+}
+
+func managerDatasetSpec() api.DatasetSpec {
+	return api.DatasetSpec{Source: api.DatasetSource{Image: "data@sha256:immutable", Path: "/artifact/data"},
+		Fields: []api.RawField{{Name: "image", Format: "JPEG", MaxBytes: 512}, {Name: "question", Format: "UTF8", MaxBytes: 64}}}
+}
+
+// createManagerCatalog registers the model, preprocessor and dataset managerWorkloadSpec names.
+func createManagerCatalog(t *testing.T, m *Manager) *api.ModelSpec {
+	t.Helper()
+	ctx := context.Background()
+	model, err := m.CreateModel(ctx, "model", managerModelSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreatePreprocessor(ctx, "pre", managerPreprocessorSpec()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateDataset(ctx, "data", managerDatasetSpec()); err != nil {
+		t.Fatal(err)
+	}
+	return model
+}
+
 func managerWorkloadSpec() api.WorkloadSpec {
 	var spec api.WorkloadSpec
 	spec.ModelRef.Name = "model"
+	spec.PreprocessorRef.Name = "pre"
+	spec.DatasetRef = &api.CatalogReference{Name: "data"}
 	spec.SLO.Percentile = 99
 	spec.SLO.TargetLatency.Duration = time.Second
 	return spec
@@ -201,10 +237,7 @@ func completeManagerResponses(t *testing.T, m *Manager, receipts []serving.Recei
 func TestManagerRegistrationIdentity(t *testing.T) {
 	ctx := WithPrincipal(context.Background(), Principal{username: "registrar", uid: "registrar-uid"})
 	m, _ := newManagerHarness(t)
-	model, err := m.CreateModel(ctx, "model", managerModelSpec())
-	if err != nil {
-		t.Fatal(err)
-	}
+	model := createManagerCatalog(t, m)
 	first, err := m.CreateWorkload(ctx, "first", managerWorkloadSpec())
 	if err != nil {
 		t.Fatal(err)
@@ -268,9 +301,7 @@ func TestManagerRegistrationIdentity(t *testing.T) {
 func TestManagerSLOUpdatePreservesAcceptedSnapshot(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newManagerHarness(t)
-	if _, err := m.CreateModel(ctx, "model", managerModelSpec()); err != nil {
-		t.Fatal(err)
-	}
+	createManagerCatalog(t, m)
 	first, err := m.CreateWorkload(ctx, "first", managerWorkloadSpec())
 	if err != nil {
 		t.Fatal(err)
@@ -296,10 +327,7 @@ func TestManagerSLOUpdatePreservesAcceptedSnapshot(t *testing.T) {
 func TestManagerSharedModelBarrier(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newManagerHarness(t)
-	model, err := m.CreateModel(ctx, "model", managerModelSpec())
-	if err != nil {
-		t.Fatal(err)
-	}
+	model := createManagerCatalog(t, m)
 	first, err := m.CreateWorkload(ctx, "first", managerWorkloadSpec())
 	if err != nil {
 		t.Fatal(err)
@@ -318,7 +346,7 @@ func TestManagerSharedModelBarrier(t *testing.T) {
 	}
 	for _, name := range []string{"first", "second"} {
 		view, err := m.GetWorkload(ctx, name)
-		if err != nil || view.Admission || view.Applied.Model.Generation == model.Generation || view.Operation.TargetModelUID != model.UID {
+		if err != nil || view.Admission || view.Applied.Model.Generation == model.Generation || view.Operation.TargetCatalogUID != model.UID {
 			t.Fatalf("old shared barrier %s = %+v, %v", name, view, err)
 		}
 		if _, _, err := m.UpdateWorkload(ctx, name, view.Desired.ResourceVersion, view.Desired.Spec); err == nil {
@@ -377,10 +405,7 @@ func TestManagerSharedModelBarrier(t *testing.T) {
 func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	ctx := context.Background()
 	m, config := newManagerHarness(t)
-	model, err := m.CreateModel(ctx, "model", managerModelSpec())
-	if err != nil {
-		t.Fatal(err)
-	}
+	model := createManagerCatalog(t, m)
 	view, err := m.CreateWorkload(ctx, "service", managerWorkloadSpec())
 	if err != nil {
 		t.Fatal(err)
@@ -461,32 +486,21 @@ func TestManagerPreprocessorTargetsProtectModelArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := func(err error) string {
-		var domain *serving.Error
-		if errors.As(err, &domain) {
-			return domain.Code
-		}
-		return fmt.Sprint(err)
-	}
-	spec := api.PreprocessorSpec{
-		Input:     api.RawInputContract{Fields: []api.RawField{{Name: "image", Format: "JPEG", MaxBytes: 1024}}},
-		Output:    api.RawOutputContract{Fields: []api.RawOutputField{{Name: "label", Format: "UTF8"}}},
-		Artifacts: []api.PreprocessorArtifact{{Target: api.PreprocessorTarget{Model: "model", Artifact: "missing"}, Source: api.PreprocessorArtifactSource{Image: "pre@sha256:immutable", Architecture: "amd64", Path: "/artifact/pre"}}},
-	}
-	if _, err := m.CreatePreprocessor(ctx, "pre", spec); code(err) != "InvalidModelReference" {
+	spec := managerPreprocessorSpec()
+	spec.Artifacts[0].Target.Artifact = "missing"
+	if _, err := m.CreatePreprocessor(ctx, "pre", spec); managerCode(err) != "InvalidModelReference" {
 		t.Fatalf("unregistered target artifact = %v", err)
 	}
-	spec.Artifacts[0].Target.Artifact = "onnx"
-	if _, err := m.CreatePreprocessor(ctx, "pre", spec); err != nil {
+	if _, err := m.CreatePreprocessor(ctx, "pre", managerPreprocessorSpec()); err != nil {
 		t.Fatal(err)
 	}
 	renamed := managerModelSpec()
 	renamed.Artifacts[0].Name = "renamed"
 	renamed.ExecutionPaths[0].Artifact = renamed.Artifacts[0].Name
-	if _, _, err := m.UpdateModel(ctx, "model", model.ResourceVersion, renamed); code(err) != "ModelArtifactReferenced" {
+	if _, _, err := m.UpdateModel(ctx, "model", model.ResourceVersion, renamed); managerCode(err) != "ModelArtifactReferenced" {
 		t.Fatalf("removed targeted artifact = %v", err)
 	}
-	if err := m.DeleteModel(ctx, "model", model.ResourceVersion); code(err) != "ModelReferenced" {
+	if err := m.DeleteModel(ctx, "model", model.ResourceVersion); managerCode(err) != "ModelReferenced" {
 		t.Fatalf("deleted targeted model = %v", err)
 	}
 	pre, err := m.GetPreprocessor(ctx, "pre")
@@ -498,5 +512,116 @@ func TestManagerPreprocessorTargetsProtectModelArtifacts(t *testing.T) {
 	}
 	if err := m.DeleteModel(ctx, "model", model.ResourceVersion); err != nil {
 		t.Fatalf("untargeted model deletion = %v", err)
+	}
+}
+
+func managerCode(err error) string {
+	var domain *serving.Error
+	if errors.As(err, &domain) {
+		return domain.Code
+	}
+	return fmt.Sprint(err)
+}
+
+func TestManagerCatalogReferences(t *testing.T) {
+	const missingDataset, incompatible = "MissingDataset", "IncompatibleDataset"
+	ctx := context.Background()
+	m, _ := newManagerHarness(t)
+	createManagerCatalog(t, m)
+	spec := managerWorkloadSpec()
+	spec.DatasetRef = nil
+	view, err := m.CreateWorkload(ctx, "service", spec)
+	if err != nil || view.Admission || view.Readiness != "Waiting" || view.Reason != missingDataset {
+		t.Fatalf("registration without dataset = %+v, %v", view, err)
+	}
+	receipt, err := m.runtime.Receive("service", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := &serving.InferenceInput{Inputs: []serving.TensorInput{{Name: "x", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]")}}}
+	if _, err := m.runtime.Accept(receipt, input); managerCode(err) != missingDataset {
+		t.Fatalf("request without dataset = %v", err)
+	}
+	narrow := managerDatasetSpec()
+	narrow.Fields[0].MaxBytes = 4096
+	if _, err := m.CreateDataset(ctx, "narrow", narrow); err != nil {
+		t.Fatal(err)
+	}
+	spec.DatasetRef = &api.CatalogReference{Name: "narrow"}
+	if _, _, err := m.UpdateWorkload(ctx, "service", view.Desired.ResourceVersion, spec); managerCode(err) != incompatible {
+		t.Fatalf("incompatible dataset reference = %v", err)
+	}
+	spec.DatasetRef = &api.CatalogReference{Name: "data"}
+	view, accepted, err := m.UpdateWorkload(ctx, "service", view.Desired.ResourceVersion, spec)
+	if err != nil || accepted || view.Reason == missingDataset || view.Applied.Dataset == nil || view.Applied.Dataset.Name != "data" {
+		t.Fatalf("dataset reference without drain = %+v, %v, %v", view, accepted, err)
+	}
+	dataset, err := m.GetDataset(ctx, "data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateDataset(ctx, "data", dataset.ResourceVersion, narrow); managerCode(err) != incompatible {
+		t.Fatalf("dataset update breaking a referenced pair = %v", err)
+	}
+	if err := m.DeleteDataset(ctx, "data", dataset.ResourceVersion); managerCode(err) != "DatasetReferenced" {
+		t.Fatalf("referenced dataset deletion = %v", err)
+	}
+	pre, err := m.GetPreprocessor(ctx, "pre")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeletePreprocessor(ctx, "pre", pre.ResourceVersion); managerCode(err) != "PreprocessorReferenced" {
+		t.Fatalf("referenced preprocessor deletion = %v", err)
+	}
+	wider := managerPreprocessorSpec()
+	wider.Input.Fields[0].MaxBytes = 256
+	if _, _, err := m.UpdatePreprocessor(ctx, "pre", pre.ResourceVersion, wider); managerCode(err) != incompatible {
+		t.Fatalf("preprocessor update breaking a referenced pair = %v", err)
+	}
+}
+
+func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newManagerHarness(t)
+	createManagerCatalog(t, m)
+	first, err := m.CreateWorkload(ctx, "first", managerWorkloadSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts, calls, finish, dispatched := startManagerCalls(t, m, managerProfile(first.Applied), "first")
+	pre, err := m.GetPreprocessor(ctx, "pre")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := managerPreprocessorSpec()
+	changed.Artifacts[0].Source.Path = "/artifact/changed"
+	pre, accepted, err := m.UpdatePreprocessor(ctx, "pre", pre.ResourceVersion, changed)
+	if err != nil || !accepted {
+		t.Fatalf("referenced preprocessor update = %v, %v", accepted, err)
+	}
+	view, err := m.GetWorkload(ctx, "first")
+	if err != nil || view.Admission || view.Operation.Kind != operationPreprocessorUpdate || view.Operation.TargetCatalogUID != pre.UID {
+		t.Fatalf("preprocessor barrier = %+v, %v", view, err)
+	}
+	if _, err := m.CreateWorkload(ctx, "during-barrier", managerWorkloadSpec()); managerCode(err) != "OperationConflict" {
+		t.Fatalf("registration joined an active preprocessor barrier: %v", err)
+	}
+	if err := m.Advance(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if state, _ := m.runtime.State("first"); state.Applied.Preprocessor.Generation == pre.Generation {
+		t.Fatal("published before accepted requests drained")
+	}
+	finish <- struct{}{}
+	completeManagerResponses(t, m, receipts, calls)
+	if err := m.Advance(ctx); err != nil {
+		t.Fatal(err)
+	}
+	view, err = m.GetWorkload(ctx, "first")
+	if err != nil || view.Operation.Phase != operationCompleted || view.Applied.Preprocessor.Generation != pre.Generation || view.Applied.Model.Paths[0].Preprocessor.Path != "/artifact/changed" {
+		t.Fatalf("new preprocessor definition = %+v, %v", view, err)
+	}
+	if dispatched["first"].Definition.Preprocessor.Generation == pre.Generation {
+		t.Fatal("accepted request lost its preprocessor definition")
 	}
 }

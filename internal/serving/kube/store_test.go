@@ -22,8 +22,9 @@ func TestStoreFinalizerAndDeletionConfirmation(t *testing.T) {
 	obj := &edgev1alpha1.Workload{
 		ObjectMeta: metav1.ObjectMeta{Name: "detector-fast", UID: types.UID("registration-1")},
 		Spec: edgev1alpha1.WorkloadSpec{
-			ModelRef: edgev1alpha1.WorkloadModelReference{Name: "detector"},
-			SLO:      edgev1alpha1.WorkloadSLO{Percentile: 99, TargetLatency: metav1.Duration{Duration: time.Second}},
+			ModelRef:        edgev1alpha1.CatalogReference{Name: "detector"},
+			PreprocessorRef: edgev1alpha1.CatalogReference{Name: "imagenet"},
+			SLO:             edgev1alpha1.WorkloadSLO{Percentile: 99, TargetLatency: metav1.Duration{Duration: time.Second}},
 		},
 	}
 	if err := store.CreateWorkload(ctx, obj); err != nil {

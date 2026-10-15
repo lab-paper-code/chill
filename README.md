@@ -94,12 +94,13 @@ direct Kubernetes writes to managed ModelSpecs or Workloads.
 # OWNER is the HTTPS endpoint covered by OWNER_CA and its TLS certificate.
 curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' "$OWNER/api/v1/workloads" \
-  --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
+  --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"preprocessorRef":{"name":"detector-preprocessor"},"datasetRef":{"name":"detector-records"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
 curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
   "$OWNER/api/v1/workloads/detector-fast"
 ```
 
-Registration can return `201` with admission closed (`MissingEvidence`).
+Registration can return `201` with admission closed (`MissingDataset` without a
+`datasetRef`, otherwise `MissingEvidence` until measured).
 Use the queried `desired.metadata.resourceVersion` as `If-Match` for PUT or
 DELETE; stale versions return `409`. Model registration, inference, updates,
 observation filters, and exact deployment settings are in the

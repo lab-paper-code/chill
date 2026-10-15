@@ -17,7 +17,7 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const observationSchema = "chill.dacs.io/serving-observations.v1alpha2"
+const observationSchema = "chill.dacs.io/serving-observations.v1alpha3"
 const observationSchedulerStream = "scheduler"
 const observationRequestStream = "requests"
 const observationDefinitionStream = "definitions"

@@ -109,9 +109,7 @@ func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
 		t.Run(map[bool]string{false: "physical source unavailable", true: "snapshot capture failure"}[captureFailure], func(t *testing.T) {
 			ctx := context.Background()
 			manager, _ := newManagerHarness(t)
-			if _, err := manager.CreateModel(ctx, "model", managerModelSpec()); err != nil {
-				t.Fatal(err)
-			}
+			createManagerCatalog(t, manager)
 			if _, err := manager.CreateWorkload(ctx, "workload", managerWorkloadSpec()); err != nil {
 				t.Fatal(err)
 			}

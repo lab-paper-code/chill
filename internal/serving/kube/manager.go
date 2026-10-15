@@ -19,13 +19,15 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
-	operationModelUpdate = "ModelUpdate"
-	operationDelete      = "Delete"
-	operationCompleted   = "Completed"
-	operationFailed      = "Failed"
+	operationModelUpdate        = "ModelUpdate"
+	operationPreprocessorUpdate = "PreprocessorUpdate"
+	operationDelete             = "Delete"
+	operationCompleted          = "Completed"
+	operationFailed             = "Failed"
 )
 
 type ManagerConfig struct{ DrainTimeout time.Duration }
@@ -96,11 +98,16 @@ func appliedStatus(d *serving.Definition) *api.WorkloadAppliedDefinition {
 	if d == nil {
 		return nil
 	}
-	return &api.WorkloadAppliedDefinition{
+	status := &api.WorkloadAppliedDefinition{
 		WorkloadGeneration: d.Generation,
-		ModelRef:           api.WorkloadAppliedModelReference{Name: d.Model.Name, UID: types.UID(d.Model.UID), Generation: d.Model.Generation},
+		ModelRef:           api.WorkloadAppliedCatalogReference{Name: d.Model.Name, UID: types.UID(d.Model.UID), Generation: d.Model.Generation},
+		PreprocessorRef:    api.WorkloadAppliedCatalogReference{Name: d.Preprocessor.Name, UID: types.UID(d.Preprocessor.UID), Generation: d.Preprocessor.Generation},
 		SLO:                api.WorkloadSLO{Percentile: d.SLO.Percentile, TargetLatency: metav1.Duration{Duration: d.SLO.TargetLatency}},
 	}
+	if d.Dataset != nil {
+		status.DatasetRef = &api.WorkloadAppliedDatasetReference{Name: d.Dataset.Name, UID: types.UID(d.Dataset.UID)}
+	}
+	return status
 }
 
 func (m *Manager) persist(ctx context.Context, w *api.Workload, status api.WorkloadStatus) error {
@@ -231,41 +238,112 @@ func validateModel(model *api.ModelSpec) error {
 	return nil
 }
 
-func snapshot(w *api.Workload, model *api.ModelSpec) (*serving.Definition, error) {
+// catalogRefs holds the catalog objects one Workload spec names.
+type catalogRefs struct {
+	model        *api.ModelSpec
+	preprocessor *api.Preprocessor
+	dataset      *api.Dataset
+}
+
+// snapshot keeps only the execution paths whose artifact the preprocessor
+// provides code for (WM-08).
+func snapshot(w *api.Workload, refs catalogRefs) (*serving.Definition, error) {
+	model, p := refs.model, refs.preprocessor
 	if err := validateModel(model); err != nil {
 		return nil, err
 	}
-	if w.UID == "" || model.UID == "" {
+	if w.UID == "" || model.UID == "" || p.UID == "" {
 		return nil, managementError("IdentityUnavailable", "native registration UID is unavailable", "metadata.uid")
 	}
 	d := &serving.Definition{Name: w.Name, UID: string(w.UID), Generation: w.Generation,
-		Model: serving.Model{Name: model.Name, UID: string(model.UID), Generation: model.Generation},
-		SLO:   serving.SLO{Percentile: w.Spec.SLO.Percentile, TargetLatency: w.Spec.SLO.TargetLatency.Duration}}
+		Model:        serving.Model{Name: model.Name, UID: string(model.UID), Generation: model.Generation},
+		Preprocessor: serving.Preprocessor{Name: p.Name, UID: string(p.UID), Generation: p.Generation},
+		SLO:          serving.SLO{Percentile: w.Spec.SLO.Percentile, TargetLatency: w.Spec.SLO.TargetLatency.Duration}}
+	for _, field := range p.Spec.Input.Fields {
+		d.Preprocessor.Input = append(d.Preprocessor.Input, serving.RawField{Name: field.Name, Format: field.Format, MaxBytes: field.MaxBytes})
+	}
+	for _, field := range p.Spec.Output.Fields {
+		d.Preprocessor.Output = append(d.Preprocessor.Output, serving.RawField{Name: field.Name, Format: field.Format})
+	}
+	if p.Spec.MaxNewTokens != nil {
+		d.Preprocessor.MaxNewTokens = *p.Spec.MaxNewTokens
+	}
+	if refs.dataset != nil {
+		d.Dataset = &serving.DatasetReference{Name: refs.dataset.Name, UID: string(refs.dataset.UID)}
+	}
 	for _, path := range model.Spec.ExecutionPaths {
 		for _, artifact := range model.Spec.Artifacts {
 			if artifact.Name != path.Artifact {
 				continue
 			}
-			d.Model.Paths = append(d.Model.Paths, serving.ModelPath{Name: path.Name, Artifact: artifact.Name, Format: artifact.Format,
-				Image: artifact.Source.Image, Architecture: artifact.Source.Architecture, Path: artifact.Source.Path,
-				RuntimeFamily: path.Runtime.Family, Backend: path.Runtime.Backend, Tensors: modelcatalog.InputTensors(artifact.Input), Firstfloor: modelcatalog.FirstfloorSettings(path.Runtime)})
+			code, ok := modelcatalog.PreprocessorArtifact(p, model.Name, artifact.Name)
+			if ok {
+				d.Model.Paths = append(d.Model.Paths, serving.ModelPath{Name: path.Name, Artifact: artifact.Name, Format: artifact.Format,
+					Image: artifact.Source.Image, Architecture: artifact.Source.Architecture, Path: artifact.Source.Path,
+					RuntimeFamily: path.Runtime.Family, Backend: path.Runtime.Backend, Tensors: modelcatalog.InputTensors(artifact.Input), Firstfloor: modelcatalog.FirstfloorSettings(path.Runtime),
+					Preprocessor: serving.PreprocessorArtifact{Image: code.Source.Image, Architecture: code.Source.Architecture, Path: code.Source.Path}})
+			}
 			break
 		}
 	}
 	return d, nil
 }
 
-func (m *Manager) modelBusy(workloads *api.WorkloadList, uid types.UID) bool {
+// catalogBusy reports an active shared update targeting the catalog object.
+func (m *Manager) catalogBusy(workloads *api.WorkloadList, uid types.UID) bool {
 	for i := range workloads.Items {
 		op := m.status(&workloads.Items[i]).Operation
-		if active(op) && op.Kind == operationModelUpdate && op.TargetModelUID == uid {
+		if active(op) && op.TargetCatalogUID == uid {
 			return true
 		}
 	}
 	return false
 }
 
-func (m *Manager) validatedModel(ctx context.Context, name string, spec api.WorkloadSpec) (*api.ModelSpec, error) {
+// checkReference refuses a missing or deleting catalog reference.
+func checkReference(obj client.Object, err error, kind, field string) error {
+	if apierrors.IsNotFound(err) {
+		return managementError("Invalid"+kind+"Reference", "referenced "+kind+" does not exist", field)
+	}
+	if err != nil {
+		return err
+	}
+	if !obj.GetDeletionTimestamp().IsZero() {
+		return managementError(kind+"Deleting", "referenced "+kind+" is being deleted", field)
+	}
+	return nil
+}
+
+// loadReferences reads the catalog objects a Workload spec names and checks
+// them and the dataset and preprocessor compatibility (WM-06, DP-07).
+func (m *Manager) loadReferences(ctx context.Context, spec api.WorkloadSpec) (catalogRefs, error) {
+	var refs catalogRefs
+	var err error
+	refs.model, err = m.store.GetModel(ctx, spec.ModelRef.Name)
+	if err := checkReference(refs.model, err, "Model", "spec.modelRef.name"); err != nil {
+		return refs, err
+	}
+	if err := validateModel(refs.model); err != nil {
+		return refs, err
+	}
+	refs.preprocessor, err = m.store.GetPreprocessor(ctx, spec.PreprocessorRef.Name)
+	if err := checkReference(refs.preprocessor, err, "Preprocessor", "spec.preprocessorRef.name"); err != nil {
+		return refs, err
+	}
+	if spec.DatasetRef == nil {
+		return refs, nil
+	}
+	refs.dataset, err = m.store.GetDataset(ctx, spec.DatasetRef.Name)
+	if err := checkReference(refs.dataset, err, "Dataset", "spec.datasetRef.name"); err != nil {
+		return refs, err
+	}
+	if mismatched := modelcatalog.Compatible(refs.dataset, refs.preprocessor); len(mismatched) != 0 {
+		return refs, managementError("IncompatibleDataset", fmt.Sprintf("dataset records do not satisfy preprocessor input fields %v", mismatched), "spec.datasetRef.name")
+	}
+	return refs, nil
+}
+
+func (m *Manager) validatedReferences(ctx context.Context, name string, spec api.WorkloadSpec) (catalogRefs, error) {
 	if err := api.ValidateWorkload(name, spec); err != nil {
 		fieldName := "spec"
 		if aggregate, ok := err.(utilerrors.Aggregate); ok {
@@ -276,29 +354,23 @@ func (m *Manager) validatedModel(ctx context.Context, name string, spec api.Work
 				}
 			}
 		}
-		return nil, managementError("InvalidWorkload", err.Error(), fieldName)
+		return catalogRefs{}, managementError("InvalidWorkload", err.Error(), fieldName)
 	}
-	model, err := m.store.GetModel(ctx, spec.ModelRef.Name)
-	if apierrors.IsNotFound(err) {
-		return nil, managementError("InvalidModelReference", "referenced ModelSpec does not exist", "spec.modelRef.name")
-	}
+	refs, err := m.loadReferences(ctx, spec)
 	if err != nil {
-		return nil, err
-	}
-	if !model.DeletionTimestamp.IsZero() {
-		return nil, managementError("ModelDeleting", "referenced ModelSpec is being deleted", "spec.modelRef.name")
-	}
-	if err := validateModel(model); err != nil {
-		return nil, err
+		return refs, err
 	}
 	workloads, err := m.store.ListWorkloads(ctx)
 	if err != nil {
-		return nil, err
+		return refs, err
 	}
-	if m.modelBusy(workloads, model.UID) {
-		return nil, managementError("OperationConflict", "referenced ModelSpec has an active shared update", "spec.modelRef.name")
+	if m.catalogBusy(workloads, refs.model.UID) {
+		return refs, managementError("OperationConflict", "referenced ModelSpec has an active shared update", "spec.modelRef.name")
 	}
-	return model, nil
+	if m.catalogBusy(workloads, refs.preprocessor.UID) {
+		return refs, managementError("OperationConflict", "referenced Preprocessor has an active shared update", "spec.preprocessorRef.name")
+	}
+	return refs, nil
 }
 
 // Initialize restores only recorded applied snapshots. Interrupted operations
@@ -313,17 +385,19 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	interruptedModels := map[string]bool{}
+	interruptedModels, interruptedPreprocessors := map[string]bool{}, map[string]bool{}
 	for i := range list.Items {
 		w := &list.Items[i]
 		if op := w.Status.Operation; active(op) && op.Kind == operationModelUpdate {
 			interruptedModels[w.Spec.ModelRef.Name] = true
+		} else if active(op) && op.Kind == operationPreprocessorUpdate {
+			interruptedPreprocessors[w.Spec.PreprocessorRef.Name] = true
 		}
 	}
 	var errs []error
 	for i := range list.Items {
 		w := &list.Items[i]
-		if err := m.restoreWorkload(ctx, w, interruptedModels[w.Spec.ModelRef.Name]); err != nil {
+		if err := m.restoreWorkload(ctx, w, interruptedModels[w.Spec.ModelRef.Name] || interruptedPreprocessors[w.Spec.PreprocessorRef.Name]); err != nil {
 			err = m.fail(ctx, w, err)
 			if _, unwritten := m.failed[w.UID]; unwritten || !m.journal.Health().Healthy {
 				errs = append(errs, err)
@@ -336,7 +410,9 @@ func (m *Manager) Initialize(ctx context.Context) error {
 
 func (m *Manager) restoreDefinition(ctx context.Context, w *api.Workload, status api.WorkloadStatus, interrupted bool) (*serving.Definition, error) {
 	if a := status.AppliedDefinition; a != nil {
-		identity := fmt.Sprintf("%s/%d/%s/%d", w.UID, a.WorkloadGeneration, a.ModelRef.UID, a.ModelRef.Generation)
+		identity := (&serving.Definition{UID: string(w.UID), Generation: a.WorkloadGeneration,
+			Model:        serving.Model{UID: string(a.ModelRef.UID), Generation: a.ModelRef.Generation},
+			Preprocessor: serving.Preprocessor{UID: string(a.PreprocessorRef.UID), Generation: a.PreprocessorRef.Generation}}).Identity()
 		d := m.runtime.RetainedDefinition(identity)
 		if d == nil {
 			return nil, managementError("AppliedSnapshotUnavailable", "recorded applied snapshot is unavailable", "status.appliedDefinition")
@@ -349,21 +425,21 @@ func (m *Manager) restoreDefinition(ctx context.Context, w *api.Workload, status
 	if interrupted || status.Operation != nil && status.Operation.Phase == operationFailed {
 		return nil, managementError("EntrypointRestarted", "interrupted operation requires an explicit new management request", "operation")
 	}
-	model, err := m.validatedModel(ctx, w.Name, w.Spec)
+	refs, err := m.validatedReferences(ctx, w.Name, w.Spec)
 	if err != nil {
 		return nil, err
 	}
-	return snapshot(w, model)
+	return snapshot(w, refs)
 }
 
-func (m *Manager) restoreWorkload(ctx context.Context, w *api.Workload, modelInterrupted bool) error {
+func (m *Manager) restoreWorkload(ctx context.Context, w *api.Workload, sharedInterrupted bool) error {
 	if w.DeletionTimestamp.IsZero() {
 		if err := m.store.EnsureWorkloadFinalizer(ctx, w); err != nil {
 			return err
 		}
 	}
 	status := m.status(w)
-	interrupted := active(status.Operation) || modelInterrupted || !w.DeletionTimestamp.IsZero()
+	interrupted := active(status.Operation) || sharedInterrupted || !w.DeletionTimestamp.IsZero()
 	d, err := m.restoreDefinition(ctx, w, status, interrupted)
 	if err != nil {
 		return err
@@ -377,8 +453,12 @@ func (m *Manager) restoreWorkload(ctx context.Context, w *api.Workload, modelInt
 	if status.Operation != nil && status.Operation.Phase == operationFailed {
 		_ = m.runtime.StopAdmission(string(w.UID), status.Operation.Reason)
 	} else {
-		model, modelErr := m.store.GetModel(ctx, w.Spec.ModelRef.Name)
-		if modelErr != nil || !model.DeletionTimestamp.IsZero() || d.Generation != w.Generation || d.Model.UID != string(model.UID) || d.Model.Generation != model.Generation || d.SLO.Percentile != w.Spec.SLO.Percentile || d.SLO.TargetLatency != w.Spec.SLO.TargetLatency.Duration {
+		refs, err := m.loadReferences(ctx, w.Spec)
+		var want *serving.Definition
+		if err == nil {
+			want, err = snapshot(w, refs)
+		}
+		if err != nil || want.Identity() != d.Identity() || want.SLO != d.SLO || !reflect.DeepEqual(want.Dataset, d.Dataset) {
 			return managementError("AppliedStateUnconfirmed", "desired and recorded applied definitions differ", "status.appliedDefinition")
 		}
 		if err := m.persist(ctx, w, status); err != nil {
@@ -404,7 +484,7 @@ func (m *Manager) CreateWorkload(ctx context.Context, name string, spec api.Work
 			return WorkloadView{}, managementError("RegistrationConflict", "previous registration deletion is not yet confirmed", "metadata.name")
 		}
 	}
-	model, err := m.validatedModel(ctx, name, spec)
+	refs, err := m.validatedReferences(ctx, name, spec)
 	if err != nil {
 		return WorkloadView{}, err
 	}
@@ -412,7 +492,7 @@ func (m *Manager) CreateWorkload(ctx context.Context, name string, spec api.Work
 	if err := m.store.CreateWorkload(ctx, w); err != nil {
 		return WorkloadView{}, err
 	}
-	d, err := snapshot(w, model)
+	d, err := snapshot(w, refs)
 	if err == nil {
 		err = m.record(ctx, w, "Accepted", nil, d, nil, time.Now().UTC(), nil)
 	}
@@ -460,7 +540,7 @@ func (m *Manager) UpdateWorkload(ctx context.Context, name, resourceVersion stri
 	if err := m.checkOperation(w); err != nil {
 		return m.view(w), false, err
 	}
-	model, err := m.validatedModel(ctx, name, spec)
+	refs, err := m.validatedReferences(ctx, name, spec)
 	if err != nil {
 		return m.view(w), false, err
 	}
@@ -473,7 +553,7 @@ func (m *Manager) UpdateWorkload(ctx context.Context, name, resourceVersion stri
 	status := w.Status
 	actor := PrincipalFromContext(ctx)
 	status.Operation = &api.WorkloadOperation{Kind: "Update", Phase: "Draining", TargetGeneration: w.Generation, AcceptedAt: metav1.Now(), ActorUsername: actor.username, ActorUID: actor.uid}
-	d, err := snapshot(w, model)
+	d, err := snapshot(w, refs)
 	if err != nil {
 		err = m.failAccepted(ctx, w, status, err)
 		return m.view(w), false, err
@@ -490,7 +570,8 @@ func (m *Manager) UpdateWorkload(ctx context.Context, name, resourceVersion stri
 		err = m.fail(ctx, w, err)
 		return m.view(w), false, err
 	}
-	if before != nil && before.Model.UID == d.Model.UID && before.Model.Generation == d.Model.Generation {
+	// SLO and dataset changes keep the accepted execution and apply without drain (WM-16).
+	if before != nil && before.SameExecution(d) {
 		if err := m.apply(ctx, w, d); err != nil {
 			err = m.fail(ctx, w, err)
 			return m.view(w), false, err
@@ -654,14 +735,11 @@ func (m *Manager) advanceWorkload(ctx context.Context, w *api.Workload) error {
 		op = m.status(w).Operation
 	}
 	if op.Phase == "Applying" {
-		model, err := m.store.GetModel(ctx, w.Spec.ModelRef.Name)
+		refs, err := m.loadReferences(ctx, w.Spec)
 		if err != nil {
 			return err
 		}
-		if !model.DeletionTimestamp.IsZero() {
-			return managementError("ModelDeleting", "target ModelSpec is being deleted", "spec.modelRef.name")
-		}
-		d, err := snapshot(w, model)
+		d, err := snapshot(w, refs)
 		if err != nil {
 			return err
 		}
@@ -684,15 +762,19 @@ func (m *Manager) confirmDeletion(ctx context.Context, w *api.Workload) error {
 	return m.record(ctx, w, operationCompleted, before, nil, nil, time.Now().UTC(), nil)
 }
 
+func sharedUpdate(op *api.WorkloadOperation) bool {
+	return op.Kind == operationModelUpdate || op.Kind == operationPreprocessorUpdate
+}
+
 func sameGroup(op, target *api.WorkloadOperation) bool {
-	return op != nil && op.Kind == operationModelUpdate && op.TargetModelUID == target.TargetModelUID && op.TargetModelGeneration == target.TargetModelGeneration
+	return op != nil && op.Kind == target.Kind && op.TargetCatalogUID == target.TargetCatalogUID && op.TargetCatalogGeneration == target.TargetCatalogGeneration
 }
 
 func (m *Manager) advanceGroup(ctx context.Context, group []*api.Workload) error {
 	for _, w := range group {
 		op := m.status(w).Operation
 		if op.Phase == operationFailed {
-			return managementError("SharedModelUpdateFailed", "another member of the shared ModelSpec barrier failed", "operation")
+			return managementError("SharedUpdateFailed", "another member of the shared update barrier failed", "operation")
 		}
 		done, err := m.drain(w)
 		if err != nil || !done {
@@ -732,22 +814,28 @@ func (m *Manager) advanceGroup(ctx context.Context, group []*api.Workload) error
 	// No member publishes until every old ingress/native request, attachment and
 	// dedicated executor has crossed the shared barrier.
 	target := m.status(group[0]).Operation
-	model, err := m.store.GetModel(ctx, group[0].Spec.ModelRef.Name)
-	if err != nil {
-		return err
-	}
-	if model.UID != target.TargetModelUID || model.Generation != target.TargetModelGeneration || !model.DeletionTimestamp.IsZero() {
-		return managementError("ModelIdentityConflict", "shared update target identity changed", "operation")
-	}
-	for _, w := range group {
-		if err := m.phase(ctx, w, "Applying"); err != nil {
-			return err
-		}
-		d, err := snapshot(w, model)
+	definitions := make([]*serving.Definition, len(group))
+	for i, w := range group {
+		refs, err := m.loadReferences(ctx, w.Spec)
 		if err != nil {
 			return err
 		}
-		if err := m.install(ctx, w, d); err != nil {
+		uid, generation := refs.model.UID, refs.model.Generation
+		if target.Kind == operationPreprocessorUpdate {
+			uid, generation = refs.preprocessor.UID, refs.preprocessor.Generation
+		}
+		if uid != target.TargetCatalogUID || generation != target.TargetCatalogGeneration {
+			return managementError("CatalogIdentityConflict", "shared update target identity changed", "operation")
+		}
+		if definitions[i], err = snapshot(w, refs); err != nil {
+			return err
+		}
+	}
+	for i, w := range group {
+		if err := m.phase(ctx, w, "Applying"); err != nil {
+			return err
+		}
+		if err := m.install(ctx, w, definitions[i]); err != nil {
 			return err
 		}
 	}
@@ -805,7 +893,7 @@ func (m *Manager) Advance(ctx context.Context) error {
 			}
 			continue
 		}
-		if status.Operation.Kind == operationModelUpdate {
+		if sharedUpdate(status.Operation) {
 			group := []*api.Workload{}
 			for j := range list.Items {
 				member := &list.Items[j]
@@ -852,11 +940,54 @@ func (m *Manager) CreateModel(ctx context.Context, name string, spec api.ModelSp
 	return model, nil
 }
 
-func references(w *api.Workload, status api.WorkloadStatus, model *api.ModelSpec, applied *serving.Definition) bool {
-	return w.Spec.ModelRef.Name == model.Name ||
-		(status.AppliedDefinition != nil && status.AppliedDefinition.ModelRef.UID == model.UID) ||
-		(applied != nil && applied.Model.UID == string(model.UID)) ||
-		(status.Operation != nil && status.Operation.TargetModelUID == model.UID)
+// holds reports whether a Workload holds a catalog object through its desired
+// spec, applied definition or operation target.
+type holds func(w *api.Workload, status api.WorkloadStatus, applied *serving.Definition) bool
+
+func holdsModel(model *api.ModelSpec) holds {
+	return func(w *api.Workload, status api.WorkloadStatus, applied *serving.Definition) bool {
+		return w.Spec.ModelRef.Name == model.Name ||
+			(status.AppliedDefinition != nil && status.AppliedDefinition.ModelRef.UID == model.UID) ||
+			(applied != nil && applied.Model.UID == string(model.UID)) ||
+			(status.Operation != nil && status.Operation.TargetCatalogUID == model.UID)
+	}
+}
+
+func holdsPreprocessor(p *api.Preprocessor) holds {
+	return func(w *api.Workload, status api.WorkloadStatus, applied *serving.Definition) bool {
+		return w.Spec.PreprocessorRef.Name == p.Name ||
+			(status.AppliedDefinition != nil && status.AppliedDefinition.PreprocessorRef.UID == p.UID) ||
+			(applied != nil && applied.Preprocessor.UID == string(p.UID)) ||
+			(status.Operation != nil && status.Operation.TargetCatalogUID == p.UID)
+	}
+}
+
+func holdsDataset(d *api.Dataset) holds {
+	return func(w *api.Workload, status api.WorkloadStatus, applied *serving.Definition) bool {
+		return (w.Spec.DatasetRef != nil && w.Spec.DatasetRef.Name == d.Name) ||
+			(status.AppliedDefinition != nil && status.AppliedDefinition.DatasetRef != nil && status.AppliedDefinition.DatasetRef.UID == d.UID) ||
+			(applied != nil && applied.Dataset != nil && applied.Dataset.UID == string(d.UID))
+	}
+}
+
+func (m *Manager) referencing(list *api.WorkloadList, test holds) []*api.Workload {
+	found := []*api.Workload{}
+	for i := range list.Items {
+		w := &list.Items[i]
+		if test(w, m.status(w), m.applied(w)) {
+			found = append(found, w)
+		}
+	}
+	return found
+}
+
+func workloadNames(workloads []*api.Workload) []string {
+	names := make([]string, len(workloads))
+	for i, w := range workloads {
+		names[i] = w.Name
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (m *Manager) referenceWorkloads(ctx context.Context) (*api.WorkloadList, error) {
@@ -900,40 +1031,12 @@ func (m *Manager) UpdateModel(ctx context.Context, name, resourceVersion string,
 	if err := m.keepTargetedArtifacts(ctx, proposed); err != nil {
 		return model, false, err
 	}
-	list, err := m.referenceWorkloads(ctx)
+	group, err := m.sharedGroup(ctx, model.UID, holdsModel(model), func(s api.WorkloadSpec) bool { return s.ModelRef.Name == model.Name })
 	if err != nil {
 		return model, false, err
 	}
-	if m.modelBusy(list, model.UID) {
-		return model, false, managementError("OperationConflict", "ModelSpec has an active shared update", "operation")
-	}
-	group := []*api.Workload{}
-	for i := range list.Items {
-		w := &list.Items[i]
-		if !references(w, m.status(w), model, m.applied(w)) {
-			continue
-		}
-		if err := m.checkOperation(w); err != nil {
-			return model, false, err
-		}
-		if !w.DeletionTimestamp.IsZero() {
-			return model, false, managementError("OperationConflict", "referencing Workload is being deleted", "operation")
-		}
-		// Failed replacement away from this model retains its old applied reference;
-		// a shared edit must not silently replace that different desired target.
-		if w.Spec.ModelRef.Name != model.Name {
-			return model, false, managementError("OperationConflict", "Workload retains this model while targeting another model", "operation")
-		}
-		group = append(group, w)
-	}
 	if reflect.DeepEqual(model.Spec, spec) {
-		needsApply := false
-		for _, w := range group {
-			d := m.applied(w)
-			op := m.status(w).Operation
-			needsApply = needsApply || d == nil || d.Model.Generation != model.Generation || (op != nil && op.Phase == operationFailed)
-		}
-		if !needsApply {
+		if m.settled(group, func(d *serving.Definition) bool { return d.Model.Generation == model.Generation }) {
 			return model, false, nil
 		}
 	} else {
@@ -942,14 +1045,61 @@ func (m *Manager) UpdateModel(ctx context.Context, name, resourceVersion string,
 		}
 		model = proposed
 	}
+	if err := m.startSharedUpdate(ctx, operationModelUpdate, model.UID, model.Generation, group); err != nil {
+		return model, false, err
+	}
+	return model, len(group) != 0, nil
+}
+
+// sharedGroup returns the Workloads one shared catalog update drains together.
+// desired reports whether a Workload spec still names the updated object.
+func (m *Manager) sharedGroup(ctx context.Context, uid types.UID, test holds, desired func(api.WorkloadSpec) bool) ([]*api.Workload, error) {
+	list, err := m.referenceWorkloads(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if m.catalogBusy(list, uid) {
+		return nil, managementError("OperationConflict", "catalog object has an active shared update", "operation")
+	}
+	group := m.referencing(list, test)
+	for _, w := range group {
+		if err := m.checkOperation(w); err != nil {
+			return nil, err
+		}
+		if !w.DeletionTimestamp.IsZero() {
+			return nil, managementError("OperationConflict", "referencing Workload is being deleted", "operation")
+		}
+		// Failed replacement away from this object retains its old applied reference;
+		// a shared edit must not silently replace that different desired target.
+		if !desired(w.Spec) {
+			return nil, managementError("OperationConflict", "Workload retains this catalog object while targeting another", "operation")
+		}
+	}
+	return group, nil
+}
+
+// settled reports whether every member already applies the current object.
+func (m *Manager) settled(group []*api.Workload, current func(*serving.Definition) bool) bool {
+	for _, w := range group {
+		d, op := m.applied(w), m.status(w).Operation
+		if d == nil || !current(d) || (op != nil && op.Phase == operationFailed) {
+			return false
+		}
+	}
+	return true
+}
+
+// startSharedUpdate closes admission for the whole group and records each
+// member's accepted target. Advance drains and applies the group together (WM-16).
+func (m *Manager) startSharedUpdate(ctx context.Context, kind string, uid types.UID, generation int64, group []*api.Workload) error {
 	acceptedAt := metav1.Now()
 	actor := PrincipalFromContext(ctx)
 	statuses := make([]api.WorkloadStatus, len(group))
 	for i, w := range group {
 		delete(m.failed, w.UID)
 		statuses[i] = *w.Status.DeepCopy()
-		statuses[i].Operation = &api.WorkloadOperation{Kind: operationModelUpdate, Phase: "Draining", TargetGeneration: w.Generation,
-			TargetModelUID: model.UID, TargetModelGeneration: model.Generation, AcceptedAt: acceptedAt, ActorUsername: actor.username, ActorUID: actor.uid}
+		statuses[i].Operation = &api.WorkloadOperation{Kind: kind, Phase: "Draining", TargetGeneration: w.Generation,
+			TargetCatalogUID: uid, TargetCatalogGeneration: generation, AcceptedAt: acceptedAt, ActorUsername: actor.username, ActorUID: actor.uid}
 	}
 	fail := func(cause error) error {
 		for i, w := range group {
@@ -959,22 +1109,26 @@ func (m *Manager) UpdateModel(ctx context.Context, name, resourceVersion string,
 	}
 	for _, w := range group {
 		if err := m.stop(w, "Changing"); err != nil {
-			return model, false, fail(err)
+			return fail(err)
 		}
 	}
 	for i, w := range group {
 		if err := m.persist(ctx, w, statuses[i]); err != nil {
-			return model, false, fail(err)
+			return fail(err)
 		}
-		d, err := snapshot(w, model)
+		refs, err := m.loadReferences(ctx, w.Spec)
 		if err != nil {
-			return model, false, fail(err)
+			return fail(err)
+		}
+		d, err := snapshot(w, refs)
+		if err != nil {
+			return fail(err)
 		}
 		if err := m.record(ctx, w, "Accepted", m.applied(w), d, nil, acceptedAt.Time, nil); err != nil {
-			return model, false, fail(err)
+			return fail(err)
 		}
 	}
-	return model, len(group) != 0, nil
+	return nil
 }
 
 func (m *Manager) DeleteModel(ctx context.Context, name, resourceVersion string) error {
@@ -994,19 +1148,12 @@ func (m *Manager) DeleteModel(ctx context.Context, name, resourceVersion string)
 	if err != nil {
 		return err
 	}
-	refs := []string{}
-	for i := range list.Items {
-		w := &list.Items[i]
-		if references(w, m.status(w), model, m.applied(w)) {
-			refs = append(refs, w.Name)
-		}
-	}
+	refs := workloadNames(m.referencing(list, holdsModel(model)))
 	preprocessors, err := m.preprocessorsTargeting(ctx, model.Name, nil)
 	if err != nil {
 		return err
 	}
 	if len(refs) != 0 || len(preprocessors) != 0 {
-		sort.Strings(refs)
 		return managementError("ModelReferenced", fmt.Sprintf("ModelSpec is referenced by Workloads %v and Preprocessors %v", refs, preprocessors), "metadata.name")
 	}
 	return m.store.DeleteModel(ctx, model)
@@ -1105,28 +1252,56 @@ func (m *Manager) CreatePreprocessor(ctx context.Context, name string, spec api.
 	return p, nil
 }
 
-func (m *Manager) UpdatePreprocessor(ctx context.Context, name, resourceVersion string, spec api.PreprocessorSpec) (*api.Preprocessor, error) {
+// UpdatePreprocessor starts a PreprocessorUpdate barrier for referencing
+// Workloads once every dataset they name stays compatible (DP-10).
+func (m *Manager) UpdatePreprocessor(ctx context.Context, name, resourceVersion string, spec api.PreprocessorSpec) (*api.Preprocessor, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.requireReady(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	p, err := m.store.GetPreprocessor(ctx, name)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := checkVersion(p.ResourceVersion, resourceVersion); err != nil {
-		return p, err
+		return p, false, err
 	}
 	proposed := p.DeepCopy()
 	proposed.Spec = spec
 	if err := m.validatePreprocessor(ctx, proposed); err != nil {
-		return p, err
+		return p, false, err
 	}
-	if err := m.store.UpdatePreprocessor(ctx, proposed); err != nil {
-		return p, err
+	group, err := m.sharedGroup(ctx, p.UID, holdsPreprocessor(p), func(s api.WorkloadSpec) bool { return s.PreprocessorRef.Name == p.Name })
+	if err != nil {
+		return p, false, err
 	}
-	return proposed, nil
+	for _, w := range group {
+		if w.Spec.DatasetRef == nil {
+			continue
+		}
+		d, err := m.store.GetDataset(ctx, w.Spec.DatasetRef.Name)
+		if err != nil {
+			return p, false, err
+		}
+		if mismatched := modelcatalog.Compatible(d, proposed); len(mismatched) != 0 {
+			return p, false, managementError("IncompatibleDataset", fmt.Sprintf("Workload %s dataset %s does not satisfy input fields %v", w.Name, d.Name, mismatched), "spec.input.fields")
+		}
+	}
+	if reflect.DeepEqual(p.Spec, spec) {
+		if m.settled(group, func(d *serving.Definition) bool { return d.Preprocessor.Generation == p.Generation }) {
+			return p, false, nil
+		}
+	} else {
+		if err := m.store.UpdatePreprocessor(ctx, proposed); err != nil {
+			return p, false, err
+		}
+		p = proposed
+	}
+	if err := m.startSharedUpdate(ctx, operationPreprocessorUpdate, p.UID, p.Generation, group); err != nil {
+		return p, false, err
+	}
+	return p, len(group) != 0, nil
 }
 
 func (m *Manager) DeletePreprocessor(ctx context.Context, name, resourceVersion string) error {
@@ -1141,6 +1316,13 @@ func (m *Manager) DeletePreprocessor(ctx context.Context, name, resourceVersion 
 	}
 	if err := checkVersion(p.ResourceVersion, resourceVersion); err != nil {
 		return err
+	}
+	list, err := m.referenceWorkloads(ctx)
+	if err != nil {
+		return err
+	}
+	if refs := workloadNames(m.referencing(list, holdsPreprocessor(p))); len(refs) != 0 {
+		return managementError("PreprocessorReferenced", fmt.Sprintf("Preprocessor is referenced by Workloads %v", refs), "metadata.name")
 	}
 	return m.store.DeletePreprocessor(ctx, p)
 }
@@ -1191,6 +1373,25 @@ func (m *Manager) UpdateDataset(ctx context.Context, name, resourceVersion strin
 	if err := validateDataset(proposed); err != nil {
 		return d, err
 	}
+	// DP-10: the Serving applied definition keeps the dataset identity; later
+	// measurements freeze the new declaration, which must still serve every
+	// preprocessor named together with it.
+	list, err := m.store.ListWorkloads(ctx)
+	if err != nil {
+		return d, err
+	}
+	for _, w := range list.Items {
+		if w.Spec.DatasetRef == nil || w.Spec.DatasetRef.Name != d.Name {
+			continue
+		}
+		p, err := m.store.GetPreprocessor(ctx, w.Spec.PreprocessorRef.Name)
+		if err != nil {
+			return d, err
+		}
+		if mismatched := modelcatalog.Compatible(proposed, p); len(mismatched) != 0 {
+			return d, managementError("IncompatibleDataset", fmt.Sprintf("Workload %s preprocessor %s input fields %v are not satisfied", w.Name, p.Name, mismatched), "spec.fields")
+		}
+	}
 	if err := m.store.UpdateDataset(ctx, proposed); err != nil {
 		return d, err
 	}
@@ -1209,6 +1410,13 @@ func (m *Manager) DeleteDataset(ctx context.Context, name, resourceVersion strin
 	}
 	if err := checkVersion(d.ResourceVersion, resourceVersion); err != nil {
 		return err
+	}
+	list, err := m.referenceWorkloads(ctx)
+	if err != nil {
+		return err
+	}
+	if refs := workloadNames(m.referencing(list, holdsDataset(d))); len(refs) != 0 {
+		return managementError("DatasetReferenced", fmt.Sprintf("Dataset is referenced by Workloads %v", refs), "metadata.name")
 	}
 	return m.store.DeleteDataset(ctx, d)
 }

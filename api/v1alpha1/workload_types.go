@@ -9,13 +9,20 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
-// WorkloadSpec declares only the desired logical model and request SLO.
+// WorkloadSpec declares the desired logical model, its preprocessing, the
+// measurement dataset and the request SLO.
 type WorkloadSpec struct {
-	ModelRef WorkloadModelReference `json:"modelRef"`
-	SLO      WorkloadSLO            `json:"slo"`
+	ModelRef        CatalogReference `json:"modelRef"`
+	PreprocessorRef CatalogReference `json:"preprocessorRef"`
+	// DatasetRef names the records active measurement samples from. Without it
+	// the Workload stays registered and waits with MissingDataset.
+	// +optional
+	DatasetRef *CatalogReference `json:"datasetRef,omitempty"`
+	SLO        WorkloadSLO       `json:"slo"`
 }
 
-type WorkloadModelReference struct {
+// CatalogReference names one cluster-scoped catalog object.
+type CatalogReference struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
@@ -32,16 +39,24 @@ type WorkloadSLO struct {
 	TargetLatency metav1.Duration `json:"targetLatency"`
 }
 
-type WorkloadAppliedModelReference struct {
+type WorkloadAppliedCatalogReference struct {
 	Name       string    `json:"name"`
 	UID        types.UID `json:"uid"`
 	Generation int64     `json:"generation"`
 }
 
+type WorkloadAppliedDatasetReference struct {
+	Name string    `json:"name"`
+	UID  types.UID `json:"uid"`
+}
+
 type WorkloadAppliedDefinition struct {
-	WorkloadGeneration int64                         `json:"workloadGeneration"`
-	ModelRef           WorkloadAppliedModelReference `json:"modelRef"`
-	SLO                WorkloadSLO                   `json:"slo"`
+	WorkloadGeneration int64                           `json:"workloadGeneration"`
+	ModelRef           WorkloadAppliedCatalogReference `json:"modelRef"`
+	PreprocessorRef    WorkloadAppliedCatalogReference `json:"preprocessorRef"`
+	// +optional
+	DatasetRef *WorkloadAppliedDatasetReference `json:"datasetRef,omitempty"`
+	SLO        WorkloadSLO                      `json:"slo"`
 }
 
 type WorkloadAdmission struct {
@@ -52,17 +67,18 @@ type WorkloadAdmission struct {
 
 // WorkloadOperation describes one accepted management change, not a queue.
 type WorkloadOperation struct {
-	// +kubebuilder:validation:Enum=Update;Delete;ModelUpdate
+	// +kubebuilder:validation:Enum=Update;Delete;ModelUpdate;PreprocessorUpdate
 	Kind string `json:"kind"`
 	// +kubebuilder:validation:Enum=Stopping;Draining;Detaching;Applying;Cleaning;Completed;Failed
 	Phase            string `json:"phase"`
 	TargetGeneration int64  `json:"targetGeneration"`
-	// Target model identity is present only for a shared ModelSpec update.
+	// Target catalog identity is present only for a shared ModelUpdate or
+	// PreprocessorUpdate; Kind names the target kind.
 	// +optional
-	TargetModelUID types.UID `json:"targetModelUID,omitempty"`
+	TargetCatalogUID types.UID `json:"targetCatalogUID,omitempty"`
 	// +optional
-	TargetModelGeneration int64       `json:"targetModelGeneration,omitempty"`
-	AcceptedAt            metav1.Time `json:"acceptedAt"`
+	TargetCatalogGeneration int64       `json:"targetCatalogGeneration,omitempty"`
+	AcceptedAt              metav1.Time `json:"acceptedAt"`
 	// ActorUsername and ActorUID are the TokenReview-verified original caller.
 	// +optional
 	ActorUsername string `json:"actorUsername,omitempty"`
@@ -112,7 +128,7 @@ func init() {
 }
 
 // ValidateWorkload validates the HTTP write boundary before Kubernetes storage.
-// Model existence, references and operation serialization belong to the owner.
+// Reference existence, compatibility and operation serialization belong to the owner.
 func ValidateWorkload(name string, spec WorkloadSpec) error {
 	var errs field.ErrorList
 	for _, message := range validation.IsDNS1123Subdomain(name) {
@@ -120,6 +136,14 @@ func ValidateWorkload(name string, spec WorkloadSpec) error {
 	}
 	for _, message := range validation.IsDNS1123Subdomain(spec.ModelRef.Name) {
 		errs = append(errs, field.Invalid(field.NewPath("spec", "modelRef", "name"), spec.ModelRef.Name, message))
+	}
+	for _, message := range validation.IsDNS1123Subdomain(spec.PreprocessorRef.Name) {
+		errs = append(errs, field.Invalid(field.NewPath("spec", "preprocessorRef", "name"), spec.PreprocessorRef.Name, message))
+	}
+	if spec.DatasetRef != nil {
+		for _, message := range validation.IsDNS1123Subdomain(spec.DatasetRef.Name) {
+			errs = append(errs, field.Invalid(field.NewPath("spec", "datasetRef", "name"), spec.DatasetRef.Name, message))
+		}
 	}
 	if math.IsNaN(spec.SLO.Percentile) || math.IsInf(spec.SLO.Percentile, 0) || spec.SLO.Percentile <= 0 || spec.SLO.Percentile > 100 {
 		errs = append(errs, field.Invalid(field.NewPath("spec", "slo", "percentile"), spec.SLO.Percentile, "must be finite and in (0,100]"))

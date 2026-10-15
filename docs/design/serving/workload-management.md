@@ -67,6 +67,10 @@ metadata:
 spec:
   modelRef:
     name: detector
+  preprocessorRef:
+    name: detector-preprocessor
+  datasetRef:
+    name: detector-records
   slo:
     percentile: 99.5
     targetLatency: 100ms
@@ -74,7 +78,9 @@ spec:
 
 - `metadata.name`은 외부 서비스 식별자다. Kubernetes 객체 이름의 형식과 길이 제한을 API에 명시한다.
 - `metadata.uid`는 등록 건 식별자다. 삭제 후 같은 이름으로 생성한 객체는 별도 등록 건이다.
-- `spec.modelRef`는 기존 ModelSpec을 참조한다. POOL, 노드, 인스턴스와 profile 참조를 Workload spec에 넣지 않는다.
+- `spec.modelRef`는 기존 ModelSpec을, `spec.preprocessorRef`는 기존 Preprocessor를 참조한다. 선택 항목인
+  `spec.datasetRef`는 활성 측정이 표본을 뽑는 Dataset을 참조한다. POOL, 노드, 인스턴스와 profile 참조를
+  Workload spec에 넣지 않는다.
 - `percentile`은 `0 < p ≤ 100`이며 유한해야 한다. `targetLatency`는 명시적 단위를 가진 양수 duration이다.
   Go `time.Duration`이 표현하지 못하는 값은 오류로 반환하고, 잘라내거나 근사하지 않는다.
 - 이름 변경은 지원하지 않는다. 다른 식별자가 필요하면 별도 등록 건으로 생성한다.
@@ -198,14 +204,14 @@ Workload GET의 `desired.metadata.resourceVersion`과 Model GET의 `metadata.res
 ```sh
 curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' "$OWNER/api/v1/workloads" \
-  --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
+  --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"preprocessorRef":{"name":"detector-preprocessor"},"datasetRef":{"name":"detector-records"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
 curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
   "$OWNER/api/v1/workloads/detector-fast"
 # RV는 방금 조회한 desired.metadata.resourceVersion이다.
 curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
   -H "If-Match: $RV" -H 'Content-Type: application/json' -X PUT \
   "$OWNER/api/v1/workloads/detector-fast" \
-  --data '{"spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"200ms"}}}'
+  --data '{"spec":{"modelRef":{"name":"detector"},"preprocessorRef":{"name":"detector-preprocessor"},"datasetRef":{"name":"detector-records"},"slo":{"percentile":99.5,"targetLatency":"200ms"}}}'
 ```
 
 조회는 `desired`, `appliedDefinition`, `supportedInputs`, `admission`, `readiness`,

@@ -21,11 +21,19 @@ export type PreprocessorSpec = { input: { fields: RawField[] }; output: { fields
 export type DatasetSpec = { source: { image: string; path: string }; fields: RawField[] }
 export type PreprocessorResource = { apiVersion?: string; kind?: string; metadata: Metadata; spec: PreprocessorSpec }
 export type DatasetResource = { apiVersion?: string; kind?: string; metadata: Metadata; spec: DatasetSpec }
-export type WorkloadSpec = { modelRef: { name: string }; slo: { percentile: number; targetLatency: string } }
-export type Operation = { kind: string; phase: string; targetGeneration: number; targetModelUID?: string; targetModelGeneration?: number; acceptedAt: string; appliedAt?: string; completedAt?: string; reason?: string; error?: string; actorUsername?: string; actorUID?: string }
-export type WorkloadStatus = { appliedDefinition?: { workloadGeneration: number; modelRef: { name: string; uid: string; generation: number }; slo: WorkloadSpec["slo"] }; admission: { allowed: boolean; reason?: string; observedAt: string }; operation?: Operation }
+type CatalogRef = { name: string }
+type AppliedRef = { name: string; uid: string; generation: number }
+export type WorkloadSpec = { modelRef: CatalogRef; preprocessorRef: CatalogRef; datasetRef?: CatalogRef; slo: { percentile: number; targetLatency: string } }
+export type Operation = { kind: string; phase: string; targetGeneration: number; targetCatalogUID?: string; targetCatalogGeneration?: number; acceptedAt: string; appliedAt?: string; completedAt?: string; reason?: string; error?: string; actorUsername?: string; actorUID?: string }
+export type WorkloadStatus = { appliedDefinition?: { workloadGeneration: number; modelRef: AppliedRef; preprocessorRef: AppliedRef; datasetRef?: Omit<AppliedRef, "generation">; slo: WorkloadSpec["slo"] }; admission: { allowed: boolean; reason?: string; observedAt: string }; operation?: Operation }
 export type WorkloadResource = { metadata: Metadata; spec: WorkloadSpec; status?: WorkloadStatus; apiVersion?: string; kind?: string }
-export type AppliedDefinition = { name: string; uid: string; generation: number; model: { name: string; uid: string; generation: number; paths: { name: string; artifact: string; format: string; image: string; architecture: string; path: string; runtimeFamily: string; backend: string; tensors: TensorContract[]; firstfloor?: FirstfloorSettings }[] }; slo: { percentile: number; targetLatencyNanos: number } }
+export type AppliedDefinition = {
+  name: string; uid: string; generation: number
+  model: AppliedRef & { paths: { name: string; artifact: string; format: string; image: string; architecture: string; path: string; runtimeFamily: string; backend: string; tensors: TensorContract[]; firstfloor?: FirstfloorSettings; preprocessor: PreprocessorArtifact["source"] }[] }
+  preprocessor: AppliedRef & { input: RawField[]; output: Omit<RawField, "maxBytes">[]; maxNewTokens?: number }
+  dataset?: Omit<AppliedRef, "generation">
+  slo: { percentile: number; targetLatencyNanos: number }
+}
 export type ObjectIdentity = { store: string; key: string; size: number }
 export type SupportedInput = { executionPath: string; artifact: string; tensors: TensorContract[]; profiles: { id: string; reference: ObjectIdentity; evidence: ObjectIdentity[]; condition: unknown }[] }
 export type WorkloadView = { desired: WorkloadResource; appliedDefinition?: AppliedDefinition; supportedInputs: SupportedInput[]; admission: boolean; readiness: string; reason: string; pending: number; assigned: number; operation?: Operation; observedAt: string }
@@ -33,15 +41,17 @@ export type TensorInput = { name: string; datatype: Datatype; shape: number[]; d
 
 export const resourceHref = (kind: string, name: string, uid: string, action = "") => `/${kind}/${encodeURIComponent(name)}${action ? `/${action}` : ""}?uid=${encodeURIComponent(uid)}`
 export const sloTarget = (spec: WorkloadSpec) => `${spec.slo.percentile}%의 요청을 ${spec.slo.targetLatency} 안에 처리`
-// Matches serving.Definition.Identity(): uid/generation/modelUID/modelGeneration.
-export const definitionIdentity = (applied: AppliedDefinition) => `${applied.uid}/${applied.generation}/${applied.model.uid}/${applied.model.generation}`
+// Matches serving.Definition.Identity(): uid/generation/modelUID/modelGeneration/preprocessorUID/preprocessorGeneration.
+export const definitionIdentity = (applied: AppliedDefinition) => `${applied.uid}/${applied.generation}/${applied.model.uid}/${applied.model.generation}/${applied.preprocessor.uid}/${applied.preprocessor.generation}`
 
-export function workloadSpec(model: string, percentile: string, latency: string): WorkloadSpec {
+// An empty dataset leaves datasetRef out; the service registers and waits with MissingDataset.
+export function workloadSpec(model: string, preprocessor: string, dataset: string, percentile: string, latency: string): WorkloadSpec {
   const p = Number(percentile)
   if (!percentile.trim() || !Number.isFinite(p) || p <= 0 || p > 100) throw new Error("SLO 백분위는 0 < p ≤ 100 이어야 합니다.")
   if (!model) throw new Error("모델 참조가 필요합니다.")
+  if (!preprocessor) throw new Error("전처리기 참조가 필요합니다.")
   if (!latency.trim()) throw new Error("SLO 목표 지연과 단위가 필요합니다. Go API가 양수와 범위를 검증합니다.")
-  return { modelRef: { name: model }, slo: { percentile: p, targetLatency: latency } }
+  return { modelRef: { name: model }, preprocessorRef: { name: preprocessor }, ...(dataset ? { datasetRef: { name: dataset } } : {}), slo: { percentile: p, targetLatency: latency } }
 }
 export function positiveIntegers(text: string): number[] {
   const parts = text.split(/[\s,]+/).filter(Boolean)

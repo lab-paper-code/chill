@@ -3,8 +3,10 @@ import test from "node:test"
 import { inferenceBody, positiveIntegers, tensorData, workloadSpec, type Datatype, type TensorContract } from "./domain.ts"
 
 test("forms preserve arbitrary SLO and lossless single-sample typed tensor input", () => {
-  assert.deepEqual(workloadSpec("shared-model", "99.5", "+1h2m3.000000001s"), { modelRef: { name: "shared-model" }, slo: { percentile: 99.5, targetLatency: "+1h2m3.000000001s" } })
-  for (const value of ["", "0", "100.1", "NaN", "Infinity"]) assert.throws(() => workloadSpec("shared-model", value, "100ms"))
+  assert.deepEqual(workloadSpec("shared-model", "imagenet", "", "99.5", "+1h2m3.000000001s"), { modelRef: { name: "shared-model" }, preprocessorRef: { name: "imagenet" }, slo: { percentile: 99.5, targetLatency: "+1h2m3.000000001s" } })
+  assert.deepEqual(workloadSpec("shared-model", "imagenet", "vqa", "99", "1s").datasetRef, { name: "vqa" })
+  assert.throws(() => workloadSpec("shared-model", "", "vqa", "99", "1s"))
+  for (const value of ["", "0", "100.1", "NaN", "Infinity"]) assert.throws(() => workloadSpec("shared-model", "imagenet", "", value, "100ms"))
   assert.deepEqual(positiveIntegers("1, 224 224"), [1, 224, 224])
   for (const value of ["", "0", "-1", "1.2", "2147483648"]) assert.throws(() => positiveIntegers(value))
   const tensor = (datatype: Datatype, count = 1): TensorContract => ({ name: "input", datatype, sampleShape: [count] })

@@ -60,6 +60,14 @@ type ModelPath struct {
 	Backend       string                          `json:"backend"`
 	Tensors       []modelcompat.InputTensor       `json:"tensors"`
 	Firstfloor    *modelcompat.FirstfloorSettings `json:"firstfloor,omitempty"`
+	// Preprocessor is the preprocessing code carrier for this path's artifact.
+	Preprocessor PreprocessorArtifact `json:"preprocessor"`
+}
+
+type PreprocessorArtifact struct {
+	Image        string `json:"image"`
+	Architecture string `json:"architecture"`
+	Path         string `json:"path"`
 }
 
 type Model struct {
@@ -69,18 +77,52 @@ type Model struct {
 	Paths      []ModelPath `json:"paths"`
 }
 
+// RawField is one field of a raw sample or raw response. MaxBytes bounds input fields only.
+type RawField struct {
+	Name     string `json:"name"`
+	Format   string `json:"format"`
+	MaxBytes int32  `json:"maxBytes,omitempty"`
+}
+
+// Preprocessor is the applied raw contract. MaxNewTokens is 0 for non-generative preprocessing.
+type Preprocessor struct {
+	Name         string     `json:"name"`
+	UID          string     `json:"uid"`
+	Generation   int64      `json:"generation"`
+	Input        []RawField `json:"input"`
+	Output       []RawField `json:"output"`
+	MaxNewTokens int32      `json:"maxNewTokens,omitempty"`
+}
+
+type DatasetReference struct {
+	Name string `json:"name"`
+	UID  string `json:"uid"`
+}
+
 // Definition is immutable after the management boundary publishes it. Requests
 // share it instead of copying the model declaration for every queue hop.
 type Definition struct {
-	Name       string `json:"name"`
-	UID        string `json:"uid"`
-	Generation int64  `json:"generation"`
-	Model      Model  `json:"model"`
-	SLO        SLO    `json:"slo"`
+	Name         string       `json:"name"`
+	UID          string       `json:"uid"`
+	Generation   int64        `json:"generation"`
+	Model        Model        `json:"model"`
+	Preprocessor Preprocessor `json:"preprocessor"`
+	// Dataset is absent until the Workload names one; admission waits with MissingDataset.
+	Dataset *DatasetReference `json:"dataset,omitempty"`
+	SLO     SLO               `json:"slo"`
 }
 
+// Identity names the accepted model and preprocessing definition. SLO and
+// dataset changes advance the Workload generation.
 func (d *Definition) Identity() string {
-	return fmt.Sprintf("%s/%d/%s/%d", d.UID, d.Generation, d.Model.UID, d.Model.Generation)
+	return fmt.Sprintf("%s/%d/%s/%d/%s/%d", d.UID, d.Generation, d.Model.UID, d.Model.Generation, d.Preprocessor.UID, d.Preprocessor.Generation)
+}
+
+// SameExecution reports whether both definitions run the same model and
+// preprocessing, so replacing one with the other needs no drain.
+func (d *Definition) SameExecution(o *Definition) bool {
+	return d.Model.UID == o.Model.UID && d.Model.Generation == o.Model.Generation &&
+		d.Preprocessor.UID == o.Preprocessor.UID && d.Preprocessor.Generation == o.Preprocessor.Generation
 }
 
 type BatchProfile struct {

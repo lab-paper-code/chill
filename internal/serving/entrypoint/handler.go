@@ -311,7 +311,10 @@ func (h *Handler) preprocessors(ctx context.Context, w http.ResponseWriter, r *h
 		if err != nil {
 			return nil, 0, err
 		}
-		value, err := h.manager.UpdatePreprocessor(ctx, id, version, body.Spec)
+		value, accepted, err := h.manager.UpdatePreprocessor(ctx, id, version, body.Spec)
+		if accepted {
+			return value, http.StatusAccepted, err
+		}
 		return value, http.StatusOK, err
 	case http.MethodDelete:
 		version, err := precondition(r)
@@ -575,9 +578,9 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusForbidden
 	case "NotFound", "WorkloadNotFound", "PoolNotFound":
 		status = http.StatusNotFound
-	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
+	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
 		status = http.StatusBadRequest
-	case "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "ModelDeleting", "ResourceVersionConflict", "OperationConflict", "RegistrationConflict", "ModelIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse", "ProfileInUse":
+	case "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse", "ProfileInUse":
 		status = http.StatusConflict
 	case "QueueFull":
 		status = http.StatusTooManyRequests

@@ -1,5 +1,5 @@
 # Submit this definition through the serving management API, not kubectl apply.
-# The management owner validates model references and serializes changes.
+# The management owner validates catalog references and serializes changes.
 apiVersion: edge.dacs.io/v1alpha1
 kind: Workload
 metadata:
@@ -7,6 +7,10 @@ metadata:
 spec:
   modelRef:
     name: detector
+  preprocessorRef:
+    name: detector-preprocessor
+  datasetRef:
+    name: detector-records
   slo:
     percentile: 99
     targetLatency: 100ms

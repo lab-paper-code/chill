@@ -22,8 +22,9 @@ var _ = Describe("Workload API", func() {
 		workload := &edgev1alpha1.Workload{
 			ObjectMeta: metav1.ObjectMeta{Name: uniqueModelSpecName("workload")},
 			Spec: edgev1alpha1.WorkloadSpec{
-				ModelRef: edgev1alpha1.WorkloadModelReference{Name: "model"},
-				SLO:      edgev1alpha1.WorkloadSLO{Percentile: 99.5, TargetLatency: metav1.Duration{Duration: 50 * time.Millisecond}},
+				ModelRef:        edgev1alpha1.CatalogReference{Name: "model"},
+				PreprocessorRef: edgev1alpha1.CatalogReference{Name: "preprocessor"},
+				SLO:             edgev1alpha1.WorkloadSLO{Percentile: 99.5, TargetLatency: metav1.Duration{Duration: 50 * time.Millisecond}},
 			},
 		}
 		Expect(store.CreateWorkload(ctx, workload)).To(Succeed())
@@ -36,7 +37,8 @@ var _ = Describe("Workload API", func() {
 		status := edgev1alpha1.WorkloadStatus{
 			AppliedDefinition: &edgev1alpha1.WorkloadAppliedDefinition{
 				WorkloadGeneration: workload.Generation,
-				ModelRef:           edgev1alpha1.WorkloadAppliedModelReference{Name: "model", UID: "model-uid", Generation: 1},
+				ModelRef:           edgev1alpha1.WorkloadAppliedCatalogReference{Name: "model", UID: "model-uid", Generation: 1},
+				PreprocessorRef:    edgev1alpha1.WorkloadAppliedCatalogReference{Name: "preprocessor", UID: "preprocessor-uid", Generation: 1},
 				SLO:                workload.Spec.SLO,
 			},
 			Admission: edgev1alpha1.WorkloadAdmission{Allowed: false, Reason: "MissingEvidence", ObservedAt: metav1.Now()},

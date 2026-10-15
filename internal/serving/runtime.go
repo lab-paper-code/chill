@@ -240,8 +240,11 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	if r.observationError != nil {
 		return nil, failure("ObservationUnavailable", "request journal is unavailable")
 	}
-	if w.definition.Model.UID != d.Model.UID || w.definition.Model.Generation != d.Model.Generation {
-		return nil, failure("DefinitionChanged", "model changed before acceptance")
+	if !w.definition.SameExecution(d) {
+		return nil, failure("DefinitionChanged", "model or preprocessing changed before acceptance")
+	}
+	if w.definition.Dataset == nil {
+		return nil, failure("MissingDataset", "workload names no dataset for its measurement")
 	}
 	if !w.routes[validated.path].evidence {
 		return nil, failure("MissingEvidence", "no matching execution evidence for this input")
@@ -554,8 +557,8 @@ func (r *Runtime) publish(d *Definition, stopped bool, reason string) error {
 	if other := r.names[d.Name]; other != "" && other != d.UID {
 		return failure("RegistrationConflict", "old registration is still attached")
 	}
-	if w != nil && (w.definition.Model.UID != d.Model.UID || w.definition.Model.Generation != d.Model.Generation) && !r.drainedLocked(w) {
-		return failure("DrainIncomplete", "old model requests remain")
+	if w != nil && !w.definition.SameExecution(d) && !r.drainedLocked(w) {
+		return failure("DrainIncomplete", "old model or preprocessing requests remain")
 	}
 	if err := r.config.Journal.DefinitionRecord(d); err != nil {
 		return err
@@ -875,11 +878,13 @@ func (r *Runtime) State(name string) (WorkloadState, error) {
 		evidence = evidence || route.evidence
 		ready = ready || len(route.entries) > 0
 	}
-	state.Admission = !w.stopped && evidence && r.observationError == nil
+	state.Admission = !w.stopped && w.definition.Dataset != nil && evidence && r.observationError == nil
 	if !w.stopped {
 		switch {
 		case r.observationError != nil:
 			state.Reason = "ObservationUnavailable"
+		case w.definition.Dataset == nil:
+			state.Reason = "MissingDataset"
 		case !evidence:
 			state.Reason = "MissingEvidence"
 		case !ready:

@@ -37,10 +37,36 @@ spec:
           metadata:
             type: object
           spec:
-            description: WorkloadSpec declares only the desired logical model and
-              request SLO.
+            description: |-
+              WorkloadSpec declares the desired logical model, its preprocessing, the
+              measurement dataset and the request SLO.
             properties:
+              datasetRef:
+                description: |-
+                  DatasetRef names the records active measurement samples from. Without it
+                  the Workload stays registered and waits with MissingDataset.
+                properties:
+                  name:
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - name
+                type: object
               modelRef:
+                description: CatalogReference names one cluster-scoped catalog object.
+                properties:
+                  name:
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - name
+                type: object
+              preprocessorRef:
+                description: CatalogReference names one cluster-scoped catalog object.
                 properties:
                   name:
                     maxLength: 253
@@ -70,6 +96,7 @@ spec:
                 type: object
             required:
             - modelRef
+            - preprocessorRef
             - slo
             type: object
           status:
@@ -89,7 +116,39 @@ spec:
                 type: object
               appliedDefinition:
                 properties:
+                  datasetRef:
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        description: |-
+                          UID is a type that holds unique ID values, including UUIDs.  Because we
+                          don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                          intent and helps make sure that UIDs and names do not get conflated.
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
                   modelRef:
+                    properties:
+                      generation:
+                        format: int64
+                        type: integer
+                      name:
+                        type: string
+                      uid:
+                        description: |-
+                          UID is a type that holds unique ID values, including UUIDs.  Because we
+                          don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                          intent and helps make sure that UIDs and names do not get conflated.
+                        type: string
+                    required:
+                    - generation
+                    - name
+                    - uid
+                    type: object
+                  preprocessorRef:
                     properties:
                       generation:
                         format: int64
@@ -130,6 +189,7 @@ spec:
                     type: integer
                 required:
                 - modelRef
+                - preprocessorRef
                 - slo
                 - workloadGeneration
                 type: object
@@ -159,6 +219,7 @@ spec:
                     - Update
                     - Delete
                     - ModelUpdate
+                    - PreprocessorUpdate
                     type: string
                   phase:
                     enum:
@@ -172,16 +233,17 @@ spec:
                     type: string
                   reason:
                     type: string
+                  targetCatalogGeneration:
+                    format: int64
+                    type: integer
+                  targetCatalogUID:
+                    description: |-
+                      Target catalog identity is present only for a shared ModelUpdate or
+                      PreprocessorUpdate; Kind names the target kind.
+                    type: string
                   targetGeneration:
                     format: int64
                     type: integer
-                  targetModelGeneration:
-                    format: int64
-                    type: integer
-                  targetModelUID:
-                    description: Target model identity is present only for a shared
-                      ModelSpec update.
-                    type: string
                 required:
                 - acceptedAt
                 - kind

@@ -57,9 +57,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	t.Helper()
 	ctx := context.Background()
 	manager, _ := newManagerHarness(t)
-	if _, err := manager.CreateModel(ctx, "model", managerModelSpec()); err != nil {
-		t.Fatal(err)
-	}
+	createManagerCatalog(t, manager)
 	if _, err := manager.CreateWorkload(ctx, "workload", managerWorkloadSpec()); err != nil {
 		t.Fatal(err)
 	}

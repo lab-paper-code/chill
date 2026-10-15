@@ -63,14 +63,19 @@ const sections:Record<ServiceSectionId,(view:WorkloadView,s:Signals)=>Part> = {
       body: <>
         <Facts items={[
           ["설정한 모델", desired.spec.modelRef.name],
+          ["설정한 전처리기", desired.spec.preprocessorRef.name],
+          ["설정한 데이터셋", desired.spec.datasetRef?.name ?? "없어요. 측정할 데이터셋을 정해야 요청을 받아요"],
           ["설정한 응답 목표", sloTarget(desired.spec)],
           ["적용된 모델", applied?.model.name ?? "아직 없어요"],
+          ["적용된 전처리기", applied?.preprocessor.name ?? "아직 없어요"],
           ["적용된 응답 목표", applied ? `${applied.slo.percentile}%의 요청을 ${applied.slo.targetLatencyNanos / 1000000}밀리초 안에 처리` : "아직 없어요"],
           ["설정 변경", op ? `${statusLabel(op.kind)} · ${statusLabel(op.phase)}` : "진행 중인 변경 없음"],
           ["처리 중인 요청", `배정 대기 ${view.pending}건 · 배정됨 ${view.assigned}건`],
         ]} />
         <Rows>
           <Row href={applied ? resourceHref("models", applied.model.name, applied.model.uid) : `/models/${encodeURIComponent(desired.spec.modelRef.name)}`} label="모델 보기" />
+          <Row href={applied ? resourceHref("preprocessors", applied.preprocessor.name, applied.preprocessor.uid) : `/preprocessors/${encodeURIComponent(desired.spec.preprocessorRef.name)}`} label="전처리기 보기" />
+          {desired.spec.datasetRef && <Row href={applied?.dataset ? resourceHref("datasets", applied.dataset.name, applied.dataset.uid) : `/datasets/${encodeURIComponent(desired.spec.datasetRef.name)}`} label="데이터셋 보기" />}
           {op && <RowDialog label="변경 작업 기록" value={statusLabel(op.phase)} title="변경 작업 기록">
             <Facts items={[["작업", statusLabel(op.kind)], ["접수", localTime(op.acceptedAt)], ["끝남", op.completedAt ? localTime(op.completedAt) : "아직이에요"], ["요청한 사람", actor(op.actorUsername)]]} />
             {op.error && <p role="alert">{op.error}</p>}

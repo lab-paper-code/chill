@@ -227,7 +227,8 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	observer.SetProfiles([]serving.Profile{profile})
 	definition := &serving.Definition{
 		Name: "workload", UID: "workload-uid", Generation: 1,
-		SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second},
+		SLO:     serving.SLO{Percentile: 99, TargetLatency: time.Second},
+		Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"},
 		Model: serving.Model{Name: "model", UID: "model-uid", Generation: 1, Paths: []serving.ModelPath{{
 			Path: profile.Condition.Artifact.Path, Backend: profile.Condition.Backend,
 			Firstfloor: profile.Condition.Firstfloor,

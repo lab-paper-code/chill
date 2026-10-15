@@ -11,9 +11,9 @@ import { Braces, CircleCheck, CircleDashed, CircleX, Download, Info, RefreshCw, 
 export type Tone = "ok" | "warn" | "fail" | "info" | "idle"
 const tones: Record<string, Tone> = {
   Ready: "ok", Applied: "ok", Completed: "ok", True: "ok", completed: "ok", response_finished: "ok",
-  Waiting: "warn", Degraded: "warn", MissingEvidence: "warn", MissingRuntime: "warn", NativeNotReady: "warn", Draining: "warn", False: "warn", deferred: "warn", timeout: "warn", incomplete: "warn",
+  Waiting: "warn", Degraded: "warn", MissingEvidence: "warn", MissingDataset: "warn", MissingRuntime: "warn", NativeNotReady: "warn", Draining: "warn", False: "warn", deferred: "warn", timeout: "warn", incomplete: "warn",
   Failed: "fail", error: "fail", rejected: "fail", delivery_failed: "fail",
-  Accepted: "info", Applying: "info", Deleting: "info", Registration: "info", Update: "info", Delete: "info", pending: "info", assigned: "info", queued: "info", running: "info", returning: "info", request_received: "info",
+  Accepted: "info", Applying: "info", Deleting: "info", Registration: "info", Update: "info", Delete: "info", ModelUpdate: "info", PreprocessorUpdate: "info", pending: "info", assigned: "info", queued: "info", running: "info", returning: "info", request_received: "info",
 }
 const toneIcons = {ok: CircleCheck, warn: TriangleAlert, fail: CircleX, info: Info, idle: CircleDashed}
 export const toneOf = (value?: string): Tone => value ? tones[value] ?? "idle" : "idle"
@@ -33,8 +33,8 @@ const errorLabels: Record<number, string> = {
 export function statusLabel(value?: string): string {
   const labels: Record<string, string> = {
     Ready: "사용 가능", Waiting: "준비 중", Deleting: "삭제 중", Degraded: "확인 필요",
-    MissingEvidence: "측정 결과가 필요해요", MissingRuntime: "실행 환경이 필요해요",
-    NativeNotReady: "실행 준비 중", Registration: "등록", Update: "수정", Delete: "삭제",
+    MissingEvidence: "측정 결과가 필요해요", MissingDataset: "데이터셋이 필요해요", MissingRuntime: "실행 환경이 필요해요",
+    NativeNotReady: "실행 준비 중", Registration: "등록", Update: "수정", Delete: "삭제", ModelUpdate: "모델 변경", PreprocessorUpdate: "전처리기 변경",
     Accepted: "접수됨", Applying: "적용 중", Applied: "적용됨", Draining: "기존 요청 마무리 중",
     Completed: "완료", Failed: "실패", True: "정상", False: "확인 필요", Unknown: "확인 중",
     completed: "완료", error: "오류", rejected: "거절", timeout: "시간 초과",
