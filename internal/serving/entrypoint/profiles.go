@@ -45,9 +45,24 @@ func (h *Handler) schedulerProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
+		compact, err := schedulerCompactQuery(r)
+		if err != nil {
+			sendError(w, err)
+			return
+		}
 		view, err := h.config.ProfileSelections(r.Context())
 		if err != nil {
 			sendError(w, err)
+			return
+		}
+		if compact {
+			evidence := newSchedulerReadEvidence()
+			state := evidence.state(&view.State)
+			sendJSON(w, http.StatusOK, struct {
+				*ProfileSelectionsView
+				State schedulerReadState `json:"state"`
+				schedulerReadEvidence
+			}{&view, state, evidence})
 			return
 		}
 		sendJSON(w, http.StatusOK, view)

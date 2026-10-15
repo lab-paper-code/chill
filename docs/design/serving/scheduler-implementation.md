@@ -523,7 +523,7 @@ inventory·적용 affinity를 raw에 연결하며 quota와 mask의 의미를 각
 | `GET /api/v1/observations/scheduler` | 고정 `from/to`, bounded `limit`, append-order `cursor/nextCursor`의 원시 기록 |
 | `GET /api/v1/observations/power` | 같은 고정 `from/to`의 raw 표본을 Node당 한 번 적분한 전체·활성 POOL J/평균 W; 누락은 null과 사유 |
 
-현재 `/scheduler`, `/scheduler/state`와 scheduler history는 선택적으로
+현재 `/scheduler`, `/scheduler/state`, `/scheduler/profiles`와 scheduler history는 선택적으로
 `view=compact`를 받는다. 생략하면 기존 full raw 응답이며 저장 journal·archive와
 page/cursor 선택은 바꾸지 않는다. 다른 `view` 값은 `InvalidQuery`로 거절한다.
 compact 응답은 같은 envelope에 `profiles`와
@@ -537,6 +537,9 @@ gate가 아니다. 소비자는 이 두 필드만 dictionary로 해석한 뒤 �
 사용한다. SLO·정책·설정·후보 순서·물리/선택 인스턴스 신원·사유·출처와 action
 acknowledgement 원본은 바꾸지 않는다. 응답 한 page의 얕은 DTO만 만들며 별도
 history scan, raw evidence 복사, decoded cache 또는 fallback reader는 없다.
+`GET /scheduler/profiles`도 같은 state projection을 사용하며 configVersion과
+selections의 persisted/loaded 의미는 그대로다. POST 선택·DELETE 제거 응답은
+projection하지 않는다.
 
 power 조회는 controller가 수락한 owner configuration 하나를 atomic하게 읽어 meter
 구성을 고정한다. 긴 refresh·control Tick의 owner mutex를 기다리지 않으며, 새 설정은
