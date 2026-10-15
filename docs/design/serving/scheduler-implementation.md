@@ -402,6 +402,10 @@ incomplete 상태에 그대로 남는다. scheduler history는 사건 시각 env
 window 시각은 append 시각이지 사건 시각의 범위가 아니므로 backfill·역순 사건을
 버리는 window 필터는 쓰지 않는다. power 조회도 결정·profile 분포 대신 기존 집계에
 필요한 실제 표본·meter·coverage·membership만 읽으며 경계와 전체 POOL 범위를 유지한다.
+두 작은 projection은 기존 jsoniter 의존성으로 읽되, 건너뛴 subtree의 잘못된
+숫자·문자열·구분자도 표준 JSON 구문 검사로 거절한다. power·coverage의 작은 실제
+측정 block과 선택된 history 원문은 계속 표준 decoder로 읽어 float·정수·duration·
+시각 의미를 보존한다. 큰 decision·profile payload와 원본 기록은 변경하지 않는다.
 
 전력 collector의 짧은 기록 구간별 적분 verdict는 원시 기록에 그대로 보존하되,
 조회 구간의 coverage 판정으로 재사용하지 않는다. 조회 경계 밖의 실제 표본은 기록된

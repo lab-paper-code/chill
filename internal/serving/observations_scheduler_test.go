@@ -3,6 +3,7 @@ package serving
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -372,6 +373,55 @@ func TestSchedulerRawPageRejectsInvalidUnselectedEnvelopes(t *testing.T) {
 			}
 			if j.Health().Healthy {
 				t.Fatal("read error was not published to journal health")
+			}
+		})
+	}
+}
+
+func TestSchedulerRawPagePreservesReorderedEscapedEnvelope(t *testing.T) {
+	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = j.Close(context.Background()) }()
+	at := time.Date(2026, 10, 15, 10, 7, 1, 478738123, time.FixedZone("record-zone", 9*60*60))
+	raw := fmt.Sprintf(
+		`{"scheduler":{"unknown":{"number":9007199254740993,"text":"schemaVersion/window/at"},"snapshot":{"at":%q,"instances":[]},"action":{"id":"reordered-source"},"at":%q},"w\u0069ndow":%q,"SCHEMAVERSION":%q}`+"\n",
+		at.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano), j.windows[0].ID, observationSchema,
+	)
+	if _, err = j.files["scheduler"].WriteString(raw); err != nil {
+		t.Fatal(err)
+	}
+	page, next, err := j.SchedulerObservationPage(at.Add(-time.Nanosecond), at.Add(time.Nanosecond), 1, 0)
+	if err != nil || len(page) != 1 || next != -1 {
+		t.Fatalf("reordered envelope rejected: %+v %d %v", page, next, err)
+	}
+	if !page[0].At.Equal(at) || page[0].Snapshot == nil || !page[0].Snapshot.At.Equal(at) || page[0].Action.ID != "reordered-source" {
+		t.Fatalf("iterator changed event time or consumed payload: %+v", page[0])
+	}
+}
+
+func TestSchedulerRawPageRejectsMalformedIgnoredSubtrees(t *testing.T) {
+	for _, invalid := range []string{`-01`, `1e`, `["value",]`, `"bad\q"`} {
+		t.Run(invalid, func(t *testing.T) {
+			j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = j.Close(context.Background()) }()
+			from := time.Now().UTC()
+			raw := fmt.Sprintf(
+				`{"schemaVersion":%q,"window":%q,"scheduler":{"at":%q,"snapshot":{"options":%s}}}`+"\n",
+				observationSchema, j.windows[0].ID, from.Add(-time.Second).Format(time.RFC3339Nano), invalid,
+			)
+			if _, err = j.files["scheduler"].WriteString(raw); err != nil {
+				t.Fatal(err)
+			}
+			if err = j.SchedulerRecord(SchedulerObservation{At: from}); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err = j.SchedulerObservationPage(from, from.Add(time.Second), 1, 0); err == nil || j.Health().Healthy {
+				t.Fatalf("malformed skipped JSON did not preserve error/health boundary: %v", err)
 			}
 		})
 	}

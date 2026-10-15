@@ -7,6 +7,8 @@ import (
 	"sort"
 	"time"
 
+	jsoniter "github.com/json-iterator/go"
+
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
@@ -379,22 +381,22 @@ func (j *Journal) SchedulerObservationPage(from, to time.Time, limit, offset int
 				At time.Time `json:"at"`
 			} `json:"scheduler"`
 		}
-		if err := json.Unmarshal(raw, &envelope); err != nil {
+		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(raw, &envelope); err != nil {
 			return false, err
 		}
 		if envelope.SchemaVersion != observationSchema || envelope.Window != window {
 			return false, errObservationRecordIdentity
 		}
 		if envelope.Scheduler == nil || !observationInInterval(envelope.Scheduler.At, from, to) {
-			return false, nil
+			return false, observationJSONSyntaxError(raw)
 		}
 		matched++
 		if matched <= offset {
-			return false, nil
+			return false, observationJSONSyntaxError(raw)
 		}
 		if len(records) == limit {
 			next = offset + len(records)
-			return true, nil
+			return true, observationJSONSyntaxError(raw)
 		}
 		var record observationRecord
 		if err := json.Unmarshal(raw, &record); err != nil {

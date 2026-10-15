@@ -11,6 +11,16 @@ import (
 
 var errObservationRecordIdentity = errors.New("invalid observation record identity")
 
+// jsoniter's skipped-number fast path is not a complete syntax validator.
+// Keep the standard syntax boundary without materializing ignored payloads.
+func observationJSONSyntaxError(raw []byte) error {
+	if json.Valid(raw) {
+		return nil
+	}
+	var invalid json.RawMessage
+	return json.Unmarshal(raw, &invalid)
+}
+
 // observationSnapshot pins complete append prefixes, not decoded history. All
 // streams in one query share a single capture boundary; readers never hold the
 // writer mutex while reading bytes, decoding records or reducing observations.

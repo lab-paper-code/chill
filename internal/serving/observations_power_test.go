@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -519,5 +520,47 @@ func appendClosedPowerSeries(
 			power.Failures = []metricobserver.Failure{{ObservedAt: start.Add(700 * time.Millisecond), Reason: metricobserver.FailureReasonSourceRead, Message: "actual meter read failed"}}
 		}
 		appendPower(power)
+	}
+}
+
+func TestOperatingPowerProjectionPreservesNumericTimeAndCombinedFields(t *testing.T) {
+	raw := []byte(fmt.Sprintf(`{
+		"scheduler": {
+			"snapshot":{"instances":[{"workloadUIDs":["w"],"stopped":false,"ready":true,"node":{"uid":"n","name":"node"},"profile":{"ignored":[9007199254740993]}}],"at":"2026-10-15T10:07:01.478738123+09:00"},
+			"powerCoverage":{"MaximumBoundaryDistance":9007199254740993,"MaximumGap":9007199254740995,"MinimumCoverage":0.12345678901234567},
+			"power":{"startedAt":"2026-10-15T01:07:01.478738123Z","endedAt":"2026-10-15T01:07:02.478738123Z","samples":[{"observedAt":"2026-10-15T01:07:01.478738123Z","watts":0.12345678901234567}],"summary":{"attempts":3}},
+			"node":{"name":"node","uid":"n"},"meter":"meter","powerScope":"node-exclusive-wall"
+		},
+		"w\u0069ndow":"numeric-window","SCHEMAVERSION":%q
+	}`, observationSchema))
+	got, err := operatingPowerRecord("numeric-window", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want observationRecord
+	if err = json.Unmarshal(raw, &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Scheduler.Power, want.Scheduler.Power) ||
+		!reflect.DeepEqual(got.Scheduler.PowerCoverage, want.Scheduler.PowerCoverage) {
+		t.Fatalf("projection changed consumed numeric/time fields: got=%+v want=%+v", got.Scheduler, want.Scheduler)
+	}
+	member := got.Scheduler.Snapshot
+	if member == nil || !member.At.Equal(want.Scheduler.Snapshot.At) ||
+		len(member.Instances) != 1 || !member.Instances[0].Ready || member.Instances[0].Stopped ||
+		member.Instances[0].Node != *got.Scheduler.Node || !reflect.DeepEqual(member.Instances[0].WorkloadUIDs, []string{"w"}) {
+		t.Fatalf("combined snapshot/power lost membership: %+v", member)
+	}
+}
+
+func TestOperatingPowerProjectionRejectsMalformedIgnoredSubtrees(t *testing.T) {
+	for _, invalid := range []string{`-01`, `1e`, `["value",]`, `"bad\q"`} {
+		raw := fmt.Sprintf(
+			`{"schemaVersion":%q,"window":"syntax-window","scheduler":{"decision":{"ignored":%s}}}`,
+			observationSchema, invalid,
+		)
+		if _, err := operatingPowerRecord("syntax-window", []byte(raw)); err == nil {
+			t.Fatalf("malformed skipped power JSON accepted: %s", invalid)
+		}
 	}
 }

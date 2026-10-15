@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	jsoniter "github.com/json-iterator/go"
+
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 )
@@ -66,11 +68,11 @@ func operatingPowerRecord(window string, raw []byte) (observationRecord, error) 
 		SchemaVersion string `json:"schemaVersion"`
 		Window        string `json:"window"`
 		Scheduler     *struct {
-			Power         *metricobserver.Result `json:"power"`
-			Node          *NodeReference         `json:"node"`
-			Meter         string                 `json:"meter"`
-			PowerScope    string                 `json:"powerScope"`
-			PowerCoverage *powerwindow.Policy    `json:"powerCoverage"`
+			Power         json.RawMessage `json:"power"`
+			Node          *NodeReference  `json:"node"`
+			Meter         string          `json:"meter"`
+			PowerScope    string          `json:"powerScope"`
+			PowerCoverage json.RawMessage `json:"powerCoverage"`
 			Snapshot      *struct {
 				At        time.Time `json:"at"`
 				Instances []struct {
@@ -82,7 +84,10 @@ func operatingPowerRecord(window string, raw []byte) (observationRecord, error) 
 			} `json:"snapshot"`
 		} `json:"scheduler"`
 	}
-	if err := json.Unmarshal(raw, &projection); err != nil {
+	if err := observationJSONSyntaxError(raw); err != nil {
+		return observationRecord{}, err
+	}
+	if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(raw, &projection); err != nil {
 		return observationRecord{}, err
 	}
 	if projection.SchemaVersion != observationSchema || projection.Window != window {
@@ -90,9 +95,22 @@ func operatingPowerRecord(window string, raw []byte) (observationRecord, error) 
 	}
 	record := observationRecord{SchemaVersion: projection.SchemaVersion, Window: projection.Window}
 	if event := projection.Scheduler; event != nil {
+		// Preserve standard numeric decoding for the consumed measurement blocks.
+		var power *metricobserver.Result
+		if len(event.Power) > 0 {
+			if err := json.Unmarshal(event.Power, &power); err != nil {
+				return observationRecord{}, err
+			}
+		}
+		var coverage *powerwindow.Policy
+		if len(event.PowerCoverage) > 0 {
+			if err := json.Unmarshal(event.PowerCoverage, &coverage); err != nil {
+				return observationRecord{}, err
+			}
+		}
 		record.Scheduler = &SchedulerObservation{
-			Power: event.Power, Node: event.Node, Meter: event.Meter,
-			PowerScope: event.PowerScope, PowerCoverage: event.PowerCoverage,
+			Power: power, Node: event.Node, Meter: event.Meter,
+			PowerScope: event.PowerScope, PowerCoverage: coverage,
 		}
 		if snapshot := event.Snapshot; snapshot != nil {
 			membership := &SchedulerSnapshot{At: snapshot.At, Instances: make([]SchedulerInstance, len(snapshot.Instances))}
