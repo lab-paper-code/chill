@@ -617,3 +617,29 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   줄 수 있어 공유 agent 재시작·설정 변경은 하지 않았다.
   근거: `evidence-service-edgemesh-finding.json`, `genesis1-service-nat-rules.txt`,
   `edgemesh-genesis{1-service-failure,3-peer-state}.log`.
+
+## 공유 통신 복구와 최신 CPU 쌍 Serving 근거 — 2026-10-15
+
+- 사용자 승인 후 genesis1 EdgeMesh agent 하나만 재시작했다(`frkds`→`vxnm5`).
+  Service VIP는 S3 403을 약 2.8ms에 반환했고 cluster DNS도 정상 응답했다.
+  공유 설정·genesis3 agent·외부 Pod는 변경하지 않았다. owner의 기존 crash backoff를 해제하기 위해
+  owner Pod만 재생성한 뒤 HTTPS ready와 실제 요청 복구를 확인했다.
+- 정상 통신에서 owner CPU limit만 500m→1로 바꾼 깨끗한 이미지로 다시 측정했다.
+  메모리 256Mi·CPU request 10m·모델·입력·SLO·자동제어 OFF를 유지했다. 이 1코어 설정을 유지한다.
+
+|실행기·코호트|완료|relaxed p90 (목표 1500ms)|tight p95 (목표 1000ms)|
+|---|---:|---:|---:|
+|Rpi CPU2 · 12:44:55.189–45:47.189Z|24/24|559.836440ms|315.618723ms|
+|Latte CPU1 · 12:51:43.357–52:35.357Z|24/24|334.883330ms|356.757858ms|
+
+- 기존 API·원자 동작으로 Latte를 준비하고 전체 두 UID를 분배해 측정한 뒤, 원래 Rpi로 복귀하고
+  exact Latte source를 제거했다. prepare 12:49:49.816–56.622Z, remove 12:54:38.316–42.429Z가
+  complete였고 native Latte Pod 부재를 확인했다. 원래 Rpi physical ID는 유지했다.
+- 비교 후보만 기존 Rpi CPU2/Latte CPU1로 제한했다. 다른 프로파일·근거는 삭제하지 않았다.
+  두 코호트 전부를 채택해 owner option에서 Rpi completion maximum 386.677458ms,
+  Latte 497.248462ms와 각각 requests=24를 확인했다(CM RV `353315832`).
+  관측 maximum이며 미래 보장이 아니다. 아직 자동 정책 선택·전환·에너지 비교 통과는 아니다.
+- 근거 루트 `/tmp/chill-completion-cpu-cost-assembly/`의 `edgemesh-authorized-repair-result.json`,
+  `owner-recovered-after-edgemesh.json`, `healthy-network-owner-cpu-one-{plan,results,observations}.json`,
+  `latte-fresh-serving-{plan,results,observations}.json`, `latte-fresh-calibration-{prepare,remove}-output.json`,
+  `fresh-cpu-pair-adoption-readback.json`, `healthy-cpu-pair-calibrations-config.json`.

@@ -53,10 +53,10 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** 공유 EdgeMesh peer 경로 장애를 복구해 evidence-store 통신과 owner HTTPS readiness를 회복한다.
+**현재 우선:** 검증된 Rpi CPU2↔Latte CPU1의 최신 Serving 보정값을 채택하고 실제 폐루프 비교를 진행한다.
+공유 통신·owner HTTPS는 복구됐고 owner CPU limit 1코어에서 두 실행기 각각 24건이 모두 완료됐다.
 실제 CPU 제어와 판단 알고리즘 구현은 완료했지만 폐루프 비교·FULL 통과는 미완료다.
-자동제어는 모두 OFF이며 실제 입력 freshness·부하 중 SLO feasibility·fresh observed energy가
-충족되기 전 자동 실행을 시작하지 않는다.
+자동제어는 아직 모두 OFF이며 지속 부하 입력 freshness·SLO·전체 POOL 전력을 함께 확인한다.
 Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 완료로 세지 않는다.
 
 1. **판단 알고리즘 — 구현·배포 완료, 폐루프 비교 미완료:** 검증된 Latte/Rpi CPU 노드·동작으로 구현했다.
@@ -69,8 +69,8 @@ Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 
 2. **자동 실행 gate:** decision origin에서 실제 source freshness ≤5초는 live 한 iteration을
    통과했다. 지속 부하 중 freshness·SLO feasibility와 fresh observed energy는 계속 검증해야 한다.
    무부하 KeepFeasible·부분 전력 누락을 통과로 대체하지 않으며, gate 전까지 자동 제어는 OFF다.
-   입력 검증 최적화 후 실제 24건은 모두 완료했지만 tight p95 1.869초로 1초 SLO는 미충족이다.
-   CPU 1코어 비교는 23/24 완료·1 timeout으로 개선을 인정하지 않았고 원래 500m로 복구했다.
+   복구 후 owner CPU 1코어에서 Rpi p90/p95는 560/316ms, Latte는 335/357ms로 각각
+   원래 1500/1000ms SLO를 충족했다. 이전 실패·장애와 구분하며 미래 지연 보장으로 해석하지 않는다.
 3. **폐루프 검증:** 짧은 부하·지속 부하·반복 변동에서 판단 → 실제 실행 → 피드백과
    SLO·전환 포함 전체 POOL 에너지를 확인한다. 평가기·배처 검증은 판단 정책 설계를 대신하지 않는다.
 4. **FULL·Dashboard:** 남은 개별 제어를 검증·통합하고 완료 기준의 실제 시나리오를 수행한다.
