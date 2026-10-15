@@ -385,8 +385,10 @@ execution·transport·response 소유권이 모두 사라졌음을 확인한다.
 fresh Node/Pod 및 각 동작의 물리 검증에 의존한다. automatic freshness/SLO 정책은 변경하지 않는다.
 ack은 일시적인 `state.results`가 아니라 기존 `/api/v1/observations/scheduler`의
 `action.actual`에서 exact source revision의 최신 manual result를 찾는다. 명시
-`routingHistoryFrom`부터 고정 query 종료 시각까지 기존 cursor/limit으로 조회하고,
-그 뒤 새 owner snapshot을 읽는다. 보관 기간을 늘리거나 시작 이후 전체 history를 조회하지 않는다.
+`routingHistoryFrom`부터 고정 query 종료 시각까지 명시 `limit=50`과 기존 cursor로
+모든 page를 조회하고 최신 matching ack를 고른 뒤 새 owner snapshot을 읽는다.
+owner의 큰 기본 page 한도에 기대지 않으며, page 응답은 기존 64MiB read bound를 유지한다.
+보관 기간을 늘리거나 시작 이후 전체 history를 조회하지 않는다.
 `/pools`의 waiting/running/assignedUnknown 0이나 native queue empty만으로 이를
 대체하지 않는다. prepare/membership target은 owner instance가 없어야 한다.
 prepare는 fresh Node/모든 active Pod 요청·init/sidecar/overhead를 기존 capture 경로로

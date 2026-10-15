@@ -825,8 +825,9 @@ func readExecutionAcknowledgement(
 		return nil, errors.New("routingHistoryFrom must select an explicit positive owner history interval")
 	}
 	query := url.Values{
-		"from": {m.RoutingHistoryFrom.UTC().Format(time.RFC3339Nano)},
-		"to":   {to.UTC().Format(time.RFC3339Nano)},
+		"from":  {m.RoutingHistoryFrom.UTC().Format(time.RFC3339Nano)},
+		"to":    {to.UTC().Format(time.RFC3339Nano)},
+		"limit": {"50"},
 	}
 	var latest *servingkube.OperationResult
 	for {
