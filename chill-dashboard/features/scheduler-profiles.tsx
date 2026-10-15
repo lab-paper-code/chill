@@ -83,7 +83,7 @@ export function SchedulerProfilesPage() {
 
 // Shown on a measurement plan result: its current adoption, the explicit adopt action and unadoption.
 // The primary action is rendered only when the result can be adopted; the caller owns it otherwise.
-export function ProfileAdoption({namespace, name, ready}:{namespace:string;name:string;ready:boolean}) {
+export function ProfileAdoption({namespace, name, ready, children}:{namespace:string;name:string;ready:boolean;children?:React.ReactNode}) {
   const query = useProfileSelections(), client = useQueryClient(), adoptMutation = useChillMutation(), removeMutation = useChillMutation()
   const [dialog, setDialog] = React.useState<"adopt"|"remove"|null>(null), [result, setResult] = React.useState<ProfileSelection|null>(null), [unknown, setUnknown] = React.useState<"adopt"|"remove"|null>(null)
   const current = query.data?.selections?.find(selection => same(selection, namespace, name))
@@ -114,7 +114,7 @@ export function ProfileAdoption({namespace, name, ready}:{namespace:string;name:
   const removeReason = removeError?.data && typeof removeError.data === "object" && "reason" in removeError.data ? String(removeError.data.reason) : undefined
   return <>
     <Rows label="운영 판단 채택">
-      {shown ? <RowDialog label={selectionOutcome(shown).badge} hint={selectionOutcome(shown).sentence} title="채택 상태" value={<StatusBadge tone={selectionOutcome(shown).tone}>{adopted ? "채택됨" : "미채택"}</StatusBadge>}>
+      {shown ? <RowDialog label={selectionOutcome(shown).badge} hint={selectionOutcome(shown).sentence} title="채택 상태" value={<StatusBadge tone={selectionOutcome(shown).tone}>{shown.persisted ? "채택됨" : shown.loaded ? "해제 대기" : "미채택"}</StatusBadge>}>
         <SelectionFacts selection={shown}/>
       </RowDialog> : <Row href="/scheduler/profiles" label="아직 채택하지 않았어요" hint={query.isPending ? "채택 상태를 확인하고 있어요" : "채택한 측정 프로파일 목록 보기"}/>}
       {adopted && <Row onClick={() => setDialog("remove")} label="채택 해제" hint="운영 판단이 이 프로파일을 더 이상 쓰지 않게 해요"/>}
@@ -129,6 +129,7 @@ export function ProfileAdoption({namespace, name, ready}:{namespace:string;name:
       : "채택 해제 요청을 처리하지 못했어요."}</p>{removeReason && <p className="text-sm">{removeReason}</p>}
       {removeError.status === 409 && !removeCode?.startsWith("Profile") && <Button variant="outline" onClick={() => { removeMutation.reset(); void query.refetch() }}>최신 상태 확인하기</Button>}
       <SourceJSON value={removeError.data ?? removeError.body} title="문제 자세히 보기"/></div>}
+    {children}
     {ready && <div className="screen-action"><Button disabled={adoptMutation.isPending || removeMutation.isPending || query.isPending} onClick={() => setDialog("adopt")}>{adopted ? "다시 채택하기" : "운영 판단에 채택하기"}</Button></div>}
     <Dialog open={dialog === "adopt"} onOpenChange={open => setDialog(open ? "adopt" : null)}><DialogContent>
       <DialogHeader><DialogTitle>{adopted ? "이 측정 결과를 다시 채택할까요?" : "이 측정 결과를 채택할까요?"}</DialogTitle><DialogDescription>운영 판단이 이 결과를 프로파일로 써서 구성을 비교해요.</DialogDescription></DialogHeader>

@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react"
 import { useChillMutation, useChillQuery, useSession, type ApiError } from "@/lib/client"
 import { QueryGate, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
+import { pathLabel } from "@/features/read-pages"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { ExecutionPath, ModelList, ModelResource } from "@/lib/domain"
@@ -89,6 +90,11 @@ function failure(error: ApiError) {
 }
 
 // Everything the steps read: current selections resolved against real data, plus the copied protocol.
+// Newest earlier plan for the same model, device class and execution path.
+function sameCondition(plans: MeasurementPlan[], model: string, deviceClass: string, path: string) {
+  return [...plans].sort((a, b) => b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))
+    .find(p => p.spec.state.candidate.modelSpec === model && p.spec.state.candidate.deviceClass === deviceClass && p.spec.state.candidate.executionPath === path)
+}
 function view(d: Draft, { models, classes, plans }: Context) {
   const model = models.find(m => m.metadata.name === d.model)
   const cls = classes.find(c => c.name === d.deviceClass)
@@ -96,7 +102,7 @@ function view(d: Draft, { models, classes, plans }: Context) {
   const path = model?.spec.executionPaths.find(p => p.name === d.path)
   const artifact = path && model?.spec.artifacts.find(a => a.name === path.artifact)
   const newest = [...plans].sort((a, b) => b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))
-  const template = newest.find(p => p.spec.state.candidate.modelSpec === d.model && p.spec.state.candidate.deviceClass === d.deviceClass && p.spec.state.candidate.executionPath === d.path) ?? newest[0]
+  const template = sameCondition(plans, d.model, d.deviceClass, d.path) ?? newest[0]
   const protocol: Protocol = d.protocol ?? { values: template ? copyAdvanced(template.spec) : blankAdvanced, from: template?.metadata.name ?? null }
   const trials = d.trials ?? template?.spec.trialsPerBatch ?? 3
   const cpu = d.cpu ?? template?.spec.cpuQuota ?? "1"
@@ -294,7 +300,7 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
       })
       : <Empty title="고를 수 있는 장비가 없어요"><Button asChild variant="outline"><Link href="/resources">장비 보기</Link></Button></Empty>)}
     {step === "run" && <>
-      <Pick label="실행 방식" name="path" value={d.path} set={path => update({ path })} options={(v.model?.spec.executionPaths ?? []).map(p => ({ value: p.name, label: p.name, hint: `${p.runtime.family} · ${p.runtime.backend}`, disabled: v.cls ? pathReason(v.model!, p, v.cls) : "" }))} />
+      <Pick label="실행 방식" name="path" value={d.path} set={path => update({ path, batchSizes: d.batchSizes.length ? d.batchSizes : sameCondition(context.plans, d.model, d.deviceClass, path)?.spec.batchSizes ?? [] })} options={(v.model?.spec.executionPaths ?? []).map(p => ({ value: p.name, label: pathLabel(p.name), hint: `${p.name} · ${p.runtime.family} · ${p.runtime.backend}`, disabled: v.cls ? pathReason(v.model!, p, v.cls) : "" }))} />
       {v.cls && v.cls.powerModes.length > 1 && <Pick label="전력 모드" name="power" value={d.powerMode} set={powerMode => update({ powerMode })} options={v.cls.powerModes.map(m => ({ value: m.name, label: m.name }))} />}
     </>}
     {step === "size" && <div className="grid gap-6">

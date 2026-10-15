@@ -17,7 +17,7 @@ import { ProfileAdoption, useProfileSelections } from "@/features/scheduler-prof
 const plansPath = (namespace:string) => `v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
 export const planHref = (namespace:string, name:string, uid?:string) => `/measurements/batch-energy-optimizations/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${uid ? `?uid=${encodeURIComponent(uid)}` : ""}`
 const day = (at:string) => new Date(at).toLocaleString("ko-KR", {month:"long", day:"numeric", hour:"2-digit", minute:"2-digit"})
-const num = (value:number, digits = 2) => value.toLocaleString("ko-KR", {maximumFractionDigits:digits})
+const num = (value:number, digits = 2) => value.toLocaleString("ko-KR", {minimumFractionDigits:digits, maximumFractionDigits:digits})
 // Upper bound only: an adaptive search may stop before every batch size is measured.
 const plannedTrials = (spec:MeasurementPlanSpec) => spec.batchSizes?.length ? (spec.batchSizes.length + 1) * spec.trialsPerBatch : undefined
 const failureLabels:Record<string,string> = {
@@ -102,6 +102,8 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
     : detail?.bestBatch !== undefined ? `한 번에 ${detail.bestBatch}건씩 보낼 때 에너지가 가장 적어요` : "측정이 끝났어요"
   const badge = !campaign ? undefined : other ? <StatusBadge tone="fail">다른 측정</StatusBadge>
     : phase === "Measuring" ? <StatusBadge tone="info">측정 중</StatusBadge> : phase === "Failed" ? <StatusBadge tone="fail">실패</StatusBadge> : <StatusBadge tone="ok">완료</StatusBadge>
+  const manage = campaign && <Rows label="관리"><DeleteMeasurement namespace={namespace} name={name} uid={campaign.uid} version={campaign.resourceVersion} trials={campaign.completedTrials ?? 0}
+    blocked={phase === "Measuring" ? "진행 중인 측정은 지울 수 없어요. 끝난 뒤에 지워 주세요." : adopted ? "운영 판단이 쓰고 있는 측정이에요. 먼저 채택을 해제해 주세요." : undefined} onDeleted={setDeleted}/></Rows>
   const scale = Math.max(...(detail?.incrementalWorkByBatch ?? []).map(item => item.incrementalWorkJoulesPerItem), 0)
   return <Screen back={back} status={badge} title={title}
     lede={spec && !other ? `${spec.state.candidate.modelSpec} · ${condition(spec)}` : name}
@@ -128,9 +130,7 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
         {phase !== "Complete" && <Row href={`/measurements/runs?q=${encodeURIComponent(name)}`} label="지금까지의 회차" hint="이 측정 이름으로 찾은 회차"/>}
         <RowDialog label="원본 자료" title="측정 원본 자료"><SourceExport value={{namespace, name, expectedUID, source:data}} filename={`chill-measurement-${name}.json`}/><SourceJSON inline value={data}/></RowDialog>
       </Rows>
-      {phase === "Complete" && <ProfileAdoption namespace={namespace} name={name} ready={data?.result !== null}/>}
-      <Rows label="관리"><DeleteMeasurement namespace={namespace} name={name} uid={campaign.uid} version={campaign.resourceVersion} trials={campaign.completedTrials ?? 0}
-        blocked={phase === "Measuring" ? "진행 중인 측정은 지울 수 없어요. 끝난 뒤에 지워 주세요." : adopted ? "운영 판단이 쓰고 있는 측정이에요. 먼저 채택을 해제해 주세요." : undefined} onDeleted={setDeleted}/></Rows>
+      {phase === "Complete" ? <ProfileAdoption namespace={namespace} name={name} ready={data?.result !== null}>{manage}</ProfileAdoption> : manage}
     </>}</QueryGate>
   </Screen>
 }
