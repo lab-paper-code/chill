@@ -2,7 +2,8 @@
 
 import * as React from "react"
 import { useChillQuery, useSession } from "@/lib/client"
-import type { SchedulerView } from "@/lib/read-types"
+import { planHref } from "@/features/measurement-plans"
+import type { MeasurementPlanList, SchedulerView } from "@/lib/read-types"
 import { resourceHref, type WorkloadView } from "@/lib/domain"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, StatusBadge, statusLabel, toneOf, type Tone } from "@/components/read-region"
@@ -49,7 +50,9 @@ export function OverviewPage() {
   const {token, config} = useSession()
   const scheduler = useChillQuery<SchedulerView>("v1/scheduler",{decoder:parseSchedulerJSON,poll})
   const workloads = useChillQuery<WorkloadView[]>("v1/workloads",{poll})
-  const items = attention(workloads.data, scheduler.data)
+  const plans = useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(config.namespace)}/batch-energy-optimizations`,{poll})
+  const measuring = (plans.data?.items ?? []).filter(plan => plan.status?.phase === "Measuring")
+  const items = [...attention(workloads.data, scheduler.data), ...measuring.map((plan):Attention => ({key:`measure/${plan.metadata.uid}`,tone:"info",badge:"측정 중",title:`${plan.spec.state.targetNode}에서 측정하고 있어요`,hint:`${plan.spec.state.candidate.modelSpec} · ${plan.status?.completedTrials ?? 0}번 쟀어요`,href:planHref(plan.metadata.namespace, plan.metadata.name, plan.metadata.uid)}))]
   const failed = ([[workloads,"서비스"],[scheduler,"운영 판단"]] as const).filter(([query]) => query.error)
   const loading = workloads.isPending || scheduler.isPending
   const title = !token ? "먼저 접속해 주세요" : items.length ? `확인할 일이 ${items.length}개 있어요` : loading ? "확인하고 있어요" : failed.length ? "일부 정보를 확인하지 못했어요" : "지금 확인할 일이 없어요"

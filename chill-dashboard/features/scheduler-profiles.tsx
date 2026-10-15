@@ -14,10 +14,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 
 const profilesPath = "v1/scheduler/profiles"
 
-// HTTP 200 alone is not adoption: only Persisted counts, and loaded is a separate later step.
+// HTTP 200 alone is not adoption or removal: Persisted counts as adopted, Removed with loaded=false as fully removed.
 export function selectionOutcome(selection:ProfileSelection):{tone:Tone;badge:string;sentence:string} {
   if (selection.status === "Rejected") return {tone:"fail", badge:"채택 안 됨", sentence:"이 측정 결과는 채택되지 않았어요."}
-  if (selection.status === "Pending") return {tone:"warn", badge:"적용 대기", sentence:"채택 요청이 아직 끝나지 않았어요."}
+  if (selection.code === "ProfileUnloadFailed" || selection.code === "ProfileUnloadPending" || (selection.status === "Removed" && selection.loaded))
+    return {tone:"warn", badge:"해제 반영 대기", sentence:"채택 해제는 저장됐지만 운영 판단이 아직 이 프로파일을 불러온 상태예요."}
+  if (selection.status === "Pending") return {tone:"warn", badge:"적용 대기", sentence:"요청이 저장됐지만 운영 판단에 아직 반영되지 않았어요."}
+  if (selection.status === "Removed") return {tone:"ok", badge:"채택 해제됨", sentence:"운영 판단이 더 이상 이 프로파일을 쓰지 않아요."}
+  if (selection.status === "Unselected") return {tone:"idle", badge:"채택 안 됨", sentence:"채택되지 않은 측정이에요."}
   if (selection.status === "Persisted" && selection.loaded) return {tone:"ok", badge:"운영 판단에 반영됨", sentence:"운영 판단이 이 프로파일을 불러왔어요."}
   if (selection.status === "Persisted") return {tone:"warn", badge:"저장됨 · 반영 대기", sentence:"설정에는 저장됐지만 운영 판단이 아직 불러오지 않았어요."}
   return {tone:"idle", badge:"확인 필요", sentence:"채택 상태를 확인할 수 없어요."}
@@ -77,40 +81,66 @@ export function SchedulerProfilesPage() {
   </Screen>
 }
 
-// Shown on a measurement plan result: its current adoption and the explicit adopt action.
+// Shown on a measurement plan result: its current adoption, the explicit adopt action and unadoption.
+// The primary action is rendered only when the result can be adopted; the caller owns it otherwise.
 export function ProfileAdoption({namespace, name, ready}:{namespace:string;name:string;ready:boolean}) {
-  const query = useProfileSelections(), client = useQueryClient(), mutation = useChillMutation()
-  const [confirm, setConfirm] = React.useState(false), [result, setResult] = React.useState<ProfileSelection|null>(null), [unknown, setUnknown] = React.useState(false)
+  const query = useProfileSelections(), client = useQueryClient(), adoptMutation = useChillMutation(), removeMutation = useChillMutation()
+  const [dialog, setDialog] = React.useState<"adopt"|"remove"|null>(null), [result, setResult] = React.useState<ProfileSelection|null>(null), [unknown, setUnknown] = React.useState<"adopt"|"remove"|null>(null)
   const current = query.data?.selections?.find(selection => same(selection, namespace, name))
   const shown = result ?? current
+  const adopted = !!shown && (shown.persisted || shown.loaded)
+  const refresh = () => client.invalidateQueries({predicate:q => typeof q.queryKey[1] === "string" && q.queryKey[1].startsWith("v1/scheduler")})
   async function adopt() {
-    setResult(null); setUnknown(false)
+    setResult(null); setUnknown(null); removeMutation.reset()
     try {
-      const response = await mutation.mutateAsync({path:profilesPath, method:"POST", body:{campaign:{namespace, name}}})
+      const response = await adoptMutation.mutateAsync({path:profilesPath, method:"POST", body:{campaign:{namespace, name}}})
       setResult(parseSchedulerJSON(response.body) as ProfileSelection)
     } catch (error) {
-      if (error instanceof ApiError && (error.unknownOutcome || error.status === 0)) setUnknown(true)
-    } finally {
-      setConfirm(false)
-      await client.invalidateQueries({predicate:q => typeof q.queryKey[1] === "string" && q.queryKey[1].startsWith("v1/scheduler")})
-    }
+      if (error instanceof ApiError && (error.unknownOutcome || error.status === 0)) setUnknown("adopt")
+    } finally { setDialog(null); await refresh() }
   }
-  const error = mutation.error && !unknown ? mutation.error : null
+  async function remove() {
+    setResult(null); setUnknown(null); adoptMutation.reset()
+    try {
+      const response = await removeMutation.mutateAsync({path:`${profilesPath}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, method:"DELETE", version:query.data?.configVersion})
+      setResult(parseSchedulerJSON(response.body) as ProfileSelection)
+    } catch (error) {
+      if (error instanceof ApiError && (error.unknownOutcome || error.status === 0)) setUnknown("remove")
+    } finally { setDialog(null); await refresh() }
+  }
+  const adoptError = adoptMutation.error && unknown !== "adopt" ? adoptMutation.error : null
+  const removeError = removeMutation.error && unknown !== "remove" ? removeMutation.error : null
+  const removeCode = removeError?.data && typeof removeError.data === "object" && "code" in removeError.data ? String(removeError.data.code) : undefined
+  const removeReason = removeError?.data && typeof removeError.data === "object" && "reason" in removeError.data ? String(removeError.data.reason) : undefined
   return <>
     <Rows label="운영 판단 채택">
-      {shown ? <RowDialog label={selectionOutcome(shown).badge} hint={selectionOutcome(shown).sentence} title="채택 상태" value={<StatusBadge tone={selectionOutcome(shown).tone}>{shown.persisted ? "채택됨" : "미채택"}</StatusBadge>}>
+      {shown ? <RowDialog label={selectionOutcome(shown).badge} hint={selectionOutcome(shown).sentence} title="채택 상태" value={<StatusBadge tone={selectionOutcome(shown).tone}>{adopted ? "채택됨" : "미채택"}</StatusBadge>}>
         <SelectionFacts selection={shown}/>
       </RowDialog> : <Row href="/scheduler/profiles" label="아직 채택하지 않았어요" hint={query.isPending ? "채택 상태를 확인하고 있어요" : "채택한 측정 프로파일 목록 보기"}/>}
+      {adopted && <Row onClick={() => setDialog("remove")} label="채택 해제" hint="운영 판단이 이 프로파일을 더 이상 쓰지 않게 해요"/>}
       {shown && <Row href="/scheduler/profiles" label="채택한 측정 프로파일 전체"/>}
     </Rows>
-    {unknown && <div role="alert" className="notice"><p>채택 결과를 확인하지 못했어요. 다시 보내기 전에 현재 상태를 확인해 주세요.</p><Button variant="outline" onClick={() => { setUnknown(false); void query.refetch() }}>현재 채택 상태 확인하기</Button></div>}
-    {error && <div role="alert" className="notice"><p>{error.status === 403 ? "채택하려면 운영 설정 변경 권한이 필요해요." : "채택 요청을 처리하지 못했어요."}</p><SourceJSON value={error.data ?? error.body} title="문제 자세히 보기"/></div>}
-    <div className="screen-action"><Button disabled={!ready || mutation.isPending || query.isPending} onClick={() => setConfirm(true)}>{shown?.persisted ? "다시 채택하기" : "운영 판단에 채택하기"}</Button></div>
-    <Dialog open={confirm} onOpenChange={setConfirm}><DialogContent>
-      <DialogHeader><DialogTitle>{shown?.persisted ? "이 측정 결과를 다시 채택할까요?" : "이 측정 결과를 채택할까요?"}</DialogTitle><DialogDescription>운영 판단이 이 결과를 프로파일로 써서 구성을 비교해요.</DialogDescription></DialogHeader>
-      <Facts items={[["측정 계획", name], ["범위", namespace]]}/>
+    {unknown && <div role="alert" className="notice"><p>{unknown === "adopt" ? "채택" : "채택 해제"} 결과를 확인하지 못했어요. 다시 보내기 전에 현재 상태를 확인해 주세요.</p><Button variant="outline" onClick={() => { setUnknown(null); void query.refetch() }}>현재 채택 상태 확인하기</Button></div>}
+    {adoptError && <div role="alert" className="notice"><p>{adoptError.status === 403 ? "채택하려면 운영 설정 변경 권한이 필요해요." : "채택 요청을 처리하지 못했어요."}</p><SourceJSON value={adoptError.data ?? adoptError.body} title="문제 자세히 보기"/></div>}
+    {removeError && <div role="alert" className="notice"><p>{removeError.status === 403 ? "채택을 해제하려면 운영 설정 변경 권한이 필요해요."
+      : removeCode === "ProfileInUse" ? "지금 실행 중인 서비스나 진행 중인 변경이 이 프로파일을 쓰고 있어서 해제할 수 없어요."
+      : removeCode === "ProfileControlsEnabled" ? "자동 제어가 켜져 있어서 해제할 수 없어요. 운영 설정에서 자동 제어를 끈 뒤 다시 시도해 주세요."
+      : removeError.status === 409 ? "그 사이 채택 목록이 바뀌었어요. 최신 상태를 확인한 뒤 다시 시도해 주세요."
+      : "채택 해제 요청을 처리하지 못했어요."}</p>{removeReason && <p className="text-sm">{removeReason}</p>}
+      {removeError.status === 409 && !removeCode?.startsWith("Profile") && <Button variant="outline" onClick={() => { removeMutation.reset(); void query.refetch() }}>최신 상태 확인하기</Button>}
+      <SourceJSON value={removeError.data ?? removeError.body} title="문제 자세히 보기"/></div>}
+    {ready && <div className="screen-action"><Button disabled={adoptMutation.isPending || removeMutation.isPending || query.isPending} onClick={() => setDialog("adopt")}>{adopted ? "다시 채택하기" : "운영 판단에 채택하기"}</Button></div>}
+    <Dialog open={dialog === "adopt"} onOpenChange={open => setDialog(open ? "adopt" : null)}><DialogContent>
+      <DialogHeader><DialogTitle>{adopted ? "이 측정 결과를 다시 채택할까요?" : "이 측정 결과를 채택할까요?"}</DialogTitle><DialogDescription>운영 판단이 이 결과를 프로파일로 써서 구성을 비교해요.</DialogDescription></DialogHeader>
+      <Facts items={[["측정", name], ["범위", namespace]]}/>
       <p className="text-sm text-muted-foreground">채택은 운영 설정에 저장돼요. 자동 적용이 꺼져 있으면 실제 구성은 바뀌지 않고, GPU 서빙이나 자동 제어가 시작되지도 않아요.</p>
-      <Button disabled={mutation.isPending} onClick={() => void adopt()}>{mutation.isPending ? "채택하는 중" : "채택하기"}</Button>
+      <Button disabled={adoptMutation.isPending} onClick={() => void adopt()}>{adoptMutation.isPending ? "채택하는 중" : "채택하기"}</Button>
+    </DialogContent></Dialog>
+    <Dialog open={dialog === "remove"} onOpenChange={open => setDialog(open ? "remove" : null)}><DialogContent>
+      <DialogHeader><DialogTitle>채택을 해제할까요?</DialogTitle><DialogDescription>운영 판단이 이 프로파일을 더 이상 쓰지 않아요.</DialogDescription></DialogHeader>
+      <Facts items={[["측정", name], ["범위", namespace]]}/>
+      <p className="text-sm text-muted-foreground">측정 결과와 근거 파일은 지워지지 않아요. 실행 중인 서비스나 진행 중인 변경이 이 프로파일을 쓰고 있거나 자동 제어가 켜져 있으면 해제되지 않아요.</p>
+      <Button variant="destructive" disabled={removeMutation.isPending || !query.data} onClick={() => void remove()}>{removeMutation.isPending ? "해제하는 중" : "채택 해제하기"}</Button>
     </DialogContent></Dialog>
   </>
 }

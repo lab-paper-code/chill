@@ -60,3 +60,9 @@ export type LoadWindow = {from:string;to:string;durationNanos:WireInteger;popula
 export type ProfileCampaign = {namespace:string;name:string}
 export type ProfileSelection = {campaign:ProfileCampaign;status:string;profileID?:string;code?:string;reason?:string;configVersion?:string;persisted:boolean;loaded:boolean}
 export type ProfileSelectionsView = {configVersion:string;selections:ProfileSelection[]|null;state:SchedulerControllerState}
+// BatchEnergyOptimization as served by GET/POST/DELETE /api/v1/namespaces/{ns}/batch-energy-optimizations.
+export type MeasurementProtocol = {warmupIterations?:number;durationSeconds?:number;settlingDurationSeconds?:number;inputGenerator?:string;outputValidation?:string;metricObservation?:{intervalMilliseconds:number;timeoutMilliseconds:number;durationSeconds:number}}
+export type MeasurementPlanSpec = {state:{candidate:{modelSpec:string;deviceClass:string;executionPath:string;powerMode:string};targetNode:string;cpuRequest?:string};activeProtocol:MeasurementProtocol;idleProtocol:MeasurementProtocol;cpuQuota?:string;cpuAffinity?:number[];trialsPerBatch:number;batchSizes?:number[];retryLimit:number}
+export type MeasurementPlan = {apiVersion?:string;kind?:string;metadata:{name:string;namespace:string;uid:string;resourceVersion:string;creationTimestamp:string;labels?:Record<string,string>};spec:MeasurementPlanSpec;status?:{phase?:"Measuring"|"Complete"|"Failed"|string;completedTrials?:number;outcome?:string;conditions?:Condition[];result?:unknown}}
+export type MeasurementPlanList = {items:MeasurementPlan[]|null}
+export type MeasurementMutation = {request:"Accepted"|"NOT_SUBMITTED"|"DeletionRequested"|string;task:MeasurementPlan|null;evidenceDeleted?:boolean;deletedEvidence?:{store:string;key:string}[]}

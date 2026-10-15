@@ -88,6 +88,19 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
   assert.deepEqual(plan("POST", "v1/scheduler/profiles"), { path: "/api/v1/scheduler/profiles", kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: true })
   for (const method of ["PUT", "DELETE", "PATCH"]) assert.throws(() => plan(method, "v1/scheduler/profiles"), /DashboardMethodNotAllowed/)
   assert.throws(() => plan("GET", "v1/scheduler/profiles", "?limit=1"), /DashboardQueryInvalid/)
+  const tasks = "v1/namespaces/chill-system/batch-energy-optimizations"
+  assert.deepEqual(plan("GET", tasks), { path: `/api/${tasks}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
+  assert.deepEqual(plan("POST", tasks), { path: `/api/${tasks}`, kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: true })
+  assert.deepEqual(plan("POST", tasks, "?dryRun=All"), { path: `/api/${tasks}?dryRun=All`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: true })
+  for (const search of ["?dryRun=Server", "?dryRun=All&dryRun=All", "?limit=1"]) assert.throws(() => plan("POST", tasks, search), /DashboardQueryInvalid/)
+  assert.throws(() => plan("GET", tasks, "?dryRun=All"), /DashboardQueryInvalid/)
+  assert.deepEqual(plan("DELETE", `${tasks}/old-run`, "?uid=u-1"), { path: `/api/${tasks}/old-run?uid=u-1`, kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: false })
+  for (const search of ["", "?uid=", "?uid=a&uid=b", "?uid=u-1&force=true"]) assert.throws(() => plan("DELETE", `${tasks}/old-run`, search), /DashboardQueryInvalid/)
+  assert.throws(() => plan("GET", `${tasks}/old-run`), /DashboardMethodNotAllowed/)
+  assert.throws(() => plan("DELETE", `${tasks}/preflight`, "?uid=u-1"), /DashboardMethodNotAllowed/)
+  assert.deepEqual(plan("DELETE", "v1/scheduler/profiles/chill-system/old-run"), { path: "/api/v1/scheduler/profiles/chill-system/old-run", kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: false })
+  assert.throws(() => plan("GET", "v1/scheduler/profiles/chill-system/old-run"), /DashboardMethodNotAllowed/)
+  assert.throws(() => plan("DELETE", "v1/scheduler/profiles/chill-system"), /DashboardRouteNotAllowed/)
   for (const path of ["v1/scheduler/other", "v1/scheduler/settings/extra", "v1/scheduler/profiles/extra", "v1/observations/load/extra", "v1/observations/power/extra", "v1/observations/scheduler/extra"]) {
     assert.throws(() => plan("GET", path), /DashboardRouteNotAllowed/)
   }

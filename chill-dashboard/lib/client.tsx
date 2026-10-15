@@ -111,7 +111,7 @@ async function relay(path:string,token:string,signal:AbortSignal,method="GET",bo
     response = await fetch(`/api/chill/${path}`,{method,signal,cache:"no-store",credentials:"omit",headers:{Authorization:`Bearer ${token}`,...(body === undefined ? {} : {"Content-Type":"application/json"}),...(version ? {"If-Match":version} : {}),...(timeout ? {"X-Chill-Request-Timeout":timeout} : {})},body:body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body)})
     text = await response.text()
   } catch {
-    throw new ApiError(response?.status ?? 0,"응답 본문 미수신 · 원본 상태를 조회한 뒤 명시적으로 재제출하세요",null,method !== "GET" && !path.endsWith("/preflight"),response?.headers.get("X-Chill-Request-ID") ?? null,response?.headers.get("X-Chill-Workload-UID") ?? null,response?.headers.get("X-Chill-Relay-Timing") ?? null,performance.now()-started)
+    throw new ApiError(response?.status ?? 0,"응답 본문 미수신 · 원본 상태를 조회한 뒤 명시적으로 재제출하세요",null,method !== "GET" && !path.endsWith("/preflight") && !path.endsWith("?dryRun=All"),response?.headers.get("X-Chill-Request-ID") ?? null,response?.headers.get("X-Chill-Workload-UID") ?? null,response?.headers.get("X-Chill-Relay-Timing") ?? null,performance.now()-started)
   }
   const browserRTT = performance.now()-started
   let data:unknown = text

@@ -42,7 +42,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (!segments.length || segments.some(part => part.length > 253 || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(part))) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   const route = segments.join("/")
   let methods: string[] = []
-  let query: "none" | "page" | "runs" | "observations" | "load" | "schedulerHistory" = "none"
+  let query: "none" | "page" | "runs" | "observations" | "load" | "schedulerHistory" | "dryRun" | "uid" = "none"
   let kind: RelayPlan["kind"] = "query"
   if (/^v1\/(models|workloads)$/.test(route)) methods = ["GET", "POST"]
   else if (/^v1\/(models|workloads)\/[^/]+$/.test(route)) methods = ["GET", "PUT", "DELETE"]
@@ -60,12 +60,17 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs$/.test(route)) { methods = ["GET"]; query = "runs" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs\/[^/]+\/evidence-passport$/.test(route) || /^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/[^/]+\/result$/.test(route)) methods = ["GET"]
   else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) methods = ["POST"] // Read-only producer; query lifetime and no unknown mutation outcome.
+  else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations$/.test(route)) { methods = ["GET", "POST"]; if (method === "POST") query = "dryRun" }
+  else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/[^/]+$/.test(route)) { methods = ["DELETE"]; query = "uid" }
+  else if (/^v1\/scheduler\/profiles\/[^/]+\/[^/]+$/.test(route)) methods = ["DELETE"]
   if (!methods.length) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   if (!methods.includes(method)) throw new RelayFailure("DashboardMethodNotAllowed", 405)
-  if (kind !== "infer" && method !== "GET" && !/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) kind = "mutation"
   if (Buffer.byteLength(search) > 4096 || /%(?![0-9a-fA-F]{2})/.test(search)) throw new RelayFailure("DashboardQueryInvalid", 400)
   const params = new URLSearchParams(search)
-  const allowed = query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : []
+  // A server dry-run creates nothing, so it keeps the query lifetime like preflight instead of an unknown mutation outcome.
+  const dryRun = query === "dryRun" && params.has("dryRun")
+  if (kind !== "infer" && method !== "GET" && !dryRun && !/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) kind = "mutation"
+  const allowed = query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []
   for (const key of new Set(params.keys())) {
     const values = params.getAll(key)
     if (!allowed.includes(key) || (values.length > 1 && key !== "definition" && key !== "outcome") || values.length > 32 || values.some(value => /[\x00-\x1f\x7f\ufffd]/.test(value))) throw new RelayFailure("DashboardQueryInvalid", 400)
@@ -75,10 +80,13 @@ export function relayPlan(method: string, segments: string[], search: string, co
         if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > max || (key === "limit" && Number(value) < 1)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "condition") {
         if (Buffer.byteLength(value) > 128 || !/^[^=]+=(True|False|Unknown)$/.test(value)) throw new RelayFailure("DashboardQueryInvalid", 400)
+      } else if (key === "dryRun") {
+        if (value !== "All") throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (Buffer.byteLength(value) > (key === "outcome" ? 64 : 256) || (key !== "q" && !value)) throw new RelayFailure("DashboardQueryInvalid", 400)
     }
   }
-  if (query !== "none" && query !== "load" && !params.has("limit")) params.set("limit", String(config.pageSize))
+  if (query === "uid" && !params.get("uid")) throw new RelayFailure("DashboardQueryInvalid", 400)
+  if (query !== "none" && query !== "load" && query !== "dryRun" && query !== "uid" && !params.has("limit")) params.set("limit", String(config.pageSize))
   if (query === "observations" || query === "load" || query === "schedulerHistory") {
     const from = params.get("from"), to = params.get("to")
     if (!from || !to) throw new RelayFailure("DashboardQueryInvalid", 400)

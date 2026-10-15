@@ -3,16 +3,17 @@
 // Adapted from the pinned dashboard-01 block; only CHILL routes, no demo account.
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BrainCircuit, Gauge, History, Layers, SlidersHorizontal } from "lucide-react"
+import { BrainCircuit, FlaskConical, Gauge, History, Layers, SlidersHorizontal } from "lucide-react"
 import { Sidebar, SidebarContent, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { BrandMark } from "@/components/brand"
 
-// Five sections; every screen belongs to exactly one, by path prefix.
+// Six sections; every screen belongs to exactly one, by path prefix.
 export const navigation = [
   {title:"홈",url:"/",icon:Gauge,prefixes:[] as string[]},
   {title:"서비스",url:"/workloads",icon:Layers,prefixes:["/workloads"]},
   {title:"운영",url:"/scheduler",icon:BrainCircuit,prefixes:["/scheduler","/transitions","/resources","/pools"]},
-  {title:"기록",url:"/records",icon:History,prefixes:["/records","/observations","/changes","/scheduler/history","/scheduler/power","/scheduler/compare","/measurements","/experiments"]},
+  {title:"측정",url:"/measurements",icon:FlaskConical,prefixes:["/measurements"]},
+  {title:"기록",url:"/records",icon:History,prefixes:["/records","/observations","/changes","/scheduler/history","/scheduler/power","/scheduler/compare","/experiments"]},
   {title:"설정",url:"/settings",icon:SlidersHorizontal,prefixes:["/settings","/models","/configuration"]},
 ]
 const under = (prefix:string, pathname:string) => pathname === prefix || pathname.startsWith(`${prefix}/`)

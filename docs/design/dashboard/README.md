@@ -310,7 +310,7 @@ desired 및 applied version은 해당 생산자의 계약을 사용하고 전환
 | `/workloads/[name]/infer` | 입력 선택 → 확인 → 결과. 실행 batch는 보내지 않는다. |
 | `/scheduler` | 지금 판단. 현재 구성과 선택 후보의 예상 에너지와 이유. 예상 J와 SLO를 실측으로 표시하지 않는다. |
 | `/scheduler/candidates`, `/scheduler/estimates` | 후보 목록과 서비스별 응답 목표 예상. 상세는 고른 시점의 응답을 유지하는 Dialog다. |
-| `/scheduler/profiles` | 운영 판단이 쓰는 측정 프로파일 목록. 채택은 측정 계획 결과 화면에서 확인 후 명시적으로 `POST /api/v1/scheduler/profiles`로 한다. HTTP 200이어도 `Persisted`가 아니면 채택이 아니며, `loaded`는 판단 반영일 뿐 GPU 서빙·실제 서빙·자동 제어 완료가 아니다. |
+| `/scheduler/profiles` | 운영 판단이 쓰는 측정 프로파일 목록. 채택(`POST /api/v1/scheduler/profiles`)과 해제(`DELETE /api/v1/scheduler/profiles/{ns}/{name}`, `If-Match: configVersion`)는 측정 화면에서 확인 창을 거친다. HTTP 200이어도 `Persisted`가 아니면 채택이 아니고, `Removed`이면서 `loaded=false`일 때만 해제 완료다. `Pending`·`ProfileUnloadFailed`는 반영 대기, 409 `ProfileInUse`·`ProfileControlsEnabled`는 거절로 표시한다. `loaded`는 판단 반영일 뿐 GPU 서빙·실제 서빙·자동 제어 완료가 아니다. |
 | `/scheduler/load` | 명시한 구간의 사건 시각 부하. 조건은 Dialog에서 고르고 원래 nano 구간을 URL에 보존한다. |
 | `/transitions`, `/transitions/[id]` | 현재 변경 동작 목록과 동작 하나의 상세. 노드·시작 identity로 읽고 계획·before/actual·실패·부분 적용을 표시한다. 취소/재시도는 관측 정보다. |
 | `/resources`, `/pools`, `/pools/[id]` | 장비 목록, 실행 그룹 목록, 그룹 하나. 장비 사양은 실행 적합성·가용 용량 보장이 아니다. |
@@ -319,14 +319,17 @@ desired 및 applied version은 해당 생산자의 계약을 사용하고 전환
 | `/scheduler/history`, `/changes?scope=scheduler`, `/transitions?view=history` | 판단·운영 설정·변경 동작 기록 목록. local 종류 필터, 원래 nano 구간과 append offset을 보존하고 A/B 선택은 비교 화면으로 이어진다. |
 | `/scheduler/power` | 노드·계측 범위별 전력 기록. 전체 POOL 합계를 만들지 않는다. |
 | `/scheduler/compare` | 두 판단의 조건 일치 여부와 비교. 실험 실행이나 인과 귀속이 아니다. |
-| `/measurements`, `/measurements/check`, `/measurements/[kind]/[namespace]/[name]` | 측정 목록, 기존 계획의 읽기 전용 조건 확인, 측정 하나의 결과와 근거. |
+| `/measurements` | 측정(BatchEnergyOptimization) 목록. `GET /api/v1/namespaces/{ns}/batch-energy-optimizations`를 진행 중·끝내지 못한·끝난 순으로 나누고, 진행 중이 있으면 자동 갱신한다. 목록에는 결과 요약이 없으므로 결론은 상세에서만 보인다. |
+| `/measurements/new` | 단계형 측정 요청. 모델·장비·실행 방식은 `v1/models`와 `v1/inventory`에서 고르고, 측정 방식은 같은 조건의 직전 측정에서 가져온다. 검토 단계에서 `?dryRun=All`이 통과해야 제출하며, 202 접수 뒤 측정 화면으로 간다. 이름 충돌과 결과 미확인은 자동 재제출하지 않는다. |
+| `/measurements/batch-energy-optimizations/[namespace]/[name]` | 측정 하나. 진행 중이면 회차 수, 실패면 원인과 같은 조건 재요청, 완료면 결과 `detail`의 가장 효율적인 크기와 크기별 증분 에너지, 채택과 채택 해제. 영구 삭제는 진행 중이거나 채택 중이면 막고, `?uid=`와 `If-Match: resourceVersion`으로 요청한다. |
+| `/measurements/runs`, `/measurements/group`, `/measurements/check`, `/measurements/profiling-runs/[namespace]/[name]` | 개별 측정 회차 목록과 상세, 계획 파일의 읽기 전용 조건 확인. |
 | `/configuration` | 운영 설정. 행마다 값 하나를 Dialog에서 고치고, 모은 변경을 검토해 전체 SchedulerSettings를 한 번에 적용한다. 최신 값 재조회, 권한 오류와 결과 불명확 시 재조회를 유지한다. |
 | `/experiments` | 실험 API 준비 상태와 판단 비교 링크. |
 
 목록 및 상세의 참조는 kind, namespace, 이름과 UID 또는 원본 evidence identity를 보존한다.
 Workload 관측과 과거 변경은 등록 UID를 사용한다. 상세 URL에 기대 UID를 보존해
 같은 이름의 재등록을 별도 대상으로 표시한다. UID, 내부 코드, nano 값과 원본 JSON은 본문에
-쓰지 않고 `원본 자료 보기` Dialog에만 둔다. 메뉴는 홈, 서비스, 운영, 기록, 설정 다섯 개다.
+쓰지 않고 `원본 자료 보기` Dialog에만 둔다. 메뉴는 홈, 서비스, 운영, 측정, 기록, 설정 여섯 개다.
 로그아웃 상태는 접속 폼만, 접속 뒤 신원 변경과 로그아웃은 `접속 관리` 모달만 사용한다.
 
 화면의 색은 의미를 가진다. 서리색 바탕 위에 동작과 초점은 냉각수 파랑, 에너지와 주의는

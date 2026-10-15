@@ -3,7 +3,7 @@ import { notFound } from "next/navigation"
 import { ServicesPage, ServicePage, ServiceSectionPage, ResourceEditor, ModelsPage, ModelPage, ModelSectionPage } from "@/features/management"
 import { InferencePage } from "@/features/inference"
 import { ObservationsPage } from "@/features/observations"
-import { MeasurementsPage, MeasurementGroupPage, MeasurementCheckPage, MeasurementDetail, ExperimentsPage } from "@/features/read-pages"
+import { MeasurementRunsPage, MeasurementGroupPage, MeasurementCheckPage, MeasurementDetail, ExperimentsPage } from "@/features/read-pages"
 import { ResourcesPage, PoolsPage, PoolPage } from "@/features/resources"
 import { SchedulerPage, SchedulerCandidatesPage, SchedulerEstimatesPage, SchedulerLoadPage } from "@/features/scheduler"
 import { SchedulerSettingsPage } from "@/features/scheduler-settings"
@@ -12,6 +12,8 @@ import { SchedulerTransitionsPage } from "@/features/scheduler-transitions"
 import { SchedulerPowerPage, SchedulerComparePage } from "@/features/scheduler-evidence"
 import { RecordsPage, SettingsPage } from "@/features/hubs"
 import { SchedulerProfilesPage } from "@/features/scheduler-profiles"
+import { MeasurementPlansPage, MeasurementPlanPage } from "@/features/measurement-plans"
+import { MeasurementRequestPage } from "@/features/measurement-request"
 
 const serviceSections = ["definition", "evidence", "placement", "operation", "changes"] as const
 const modelSections = ["files", "services"] as const
@@ -38,9 +40,12 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if (head === "resources" && route.length === 1) page = <ResourcesPage />
   else if (head === "pools" && route.length === 1) page = <PoolsPage />
   else if (head === "pools" && route.length === 2) page = <PoolPage id={name} />
-  else if (head === "measurements" && route.length === 1) page = <MeasurementsPage />
+  else if (head === "measurements" && route.length === 1) page = <MeasurementPlansPage />
+  else if (head === "measurements" && route.length === 2 && name === "runs") page = <MeasurementRunsPage />
+  else if (head === "measurements" && route.length === 2 && name === "new") page = <MeasurementRequestPage />
   else if (head === "measurements" && route.length === 2 && name === "check") page = <MeasurementCheckPage />
   else if (head === "measurements" && route.length === 2 && name === "group") page = <MeasurementGroupPage />
+  else if (head === "measurements" && route.length === 4 && route[1] === "batch-energy-optimizations") page = <MeasurementPlanPage key={`${route[2]}/${route[3]}`} namespace={route[2]} name={route[3]} />
   else if (head === "measurements" && route.length === 4) page = <MeasurementDetail kind={route[1]} namespace={route[2]} name={route[3]} />
   else if (head === "observations" && route.length === 1) page = <ObservationsPage />
   else if (head === "changes" && route.length === 1) page = search.scope === "scheduler" ? <SchedulerHistoryPage settingsOnly /> : <ObservationsPage changes />

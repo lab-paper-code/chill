@@ -4,9 +4,8 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
-import type { CampaignResult, RunsView, ProfilingRun, Passport } from "@/lib/read-types"
-import { QueryGate, SourceJSON, SourceExport, StatusBadge, statusLabel } from "@/components/read-region"
-import { ProfileAdoption } from "@/features/scheduler-profiles"
+import type { RunsView, ProfilingRun, Passport } from "@/lib/read-types"
+import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,7 +18,7 @@ function runCandidate(row:ProfilingRun,key:string) {
 type RunListSpec = {targetNode?:string;measurement?:{batch?:number;cpuQuota?:string;workloadMode?:string}}
 const listSpec=(row:ProfilingRun)=>row.spec as RunListSpec
 // Execution path names are declarations such as cuda-amd64 or firstfloor-ort-cpu-arm64; unknown names stay as written.
-function pathLabel(path:string) {
+export function pathLabel(path:string) {
   const unit=/cuda|tensorrt/.test(path)?"GPU (CUDA)":/rknn/.test(path)?"NPU (RKNN)":/cpu/.test(path)?"CPU":path
   return /firstfloor/.test(path)&&unit!==path?`${unit} · firstfloor`:unit
 }
@@ -45,20 +44,20 @@ function useRunList() {
   return {namespace,allowed,query:useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${allowed}`)}
 }
 
-export function MeasurementsPage() {
+export function MeasurementRunsPage() {
   const params=useSearchParams(),router=useRouter(),[filterOpen,setFilterOpen]=React.useState(false)
   const {namespace,allowed,query}=useRunList()
   const data=query.data,page=data?.page,runs=data?.runs??[],condition=params.get("condition")??""
   function go(offset:number) {
-    const next=new URLSearchParams(params.toString());next.set("offset",String(offset));router.replace(`/measurements?${next}`)
+    const next=new URLSearchParams(params.toString());next.set("offset",String(offset));router.replace(`/measurements/runs?${next}`)
   }
   const groups=new Map<string,ProfilingRun[]>()
   for(const row of runs){const key=JSON.stringify(groupKey(row));groups.set(key,[...(groups.get(key)??[]),row])}
   const models=[...new Set(runs.map(row=>runCandidate(row,"modelSpec")))].sort()
   const total=page?.total??runs.length,failed=runs.filter(row=>runProblem(row)==="failed").length
   const shared=new URLSearchParams(allowed);shared.delete("limit");shared.set("namespace",namespace)
-  return <Screen back={["/records","기록"]} status={failed?<StatusBadge tone="fail">실패 {failed}건</StatusBadge>:undefined}
-    title={!data?"측정 결과":total?`측정 ${total.toLocaleString("ko-KR")}건이 있어요`:"조건에 맞는 측정이 없어요"}
+  return <Screen back={["/measurements","측정"]} status={failed?<StatusBadge tone="fail">실패 {failed}건</StatusBadge>:undefined}
+    title={!data?"개별 측정 회차":total?`개별 측정 회차 ${total.toLocaleString("ko-KR")}건이 있어요`:"조건에 맞는 측정이 없어요"}
     lede={data&&runs.length?`모델 ${models.length}개를 장비와 실행 방식 ${groups.size}가지로 쟀어요.`:"모델을 장비에서 실행해 잰 결과와 근거예요."}>
     <QueryGate query={query}>{data&&<>
       {models.map(model=><Rows key={model} label={model}>{[...groups].filter(([key])=>JSON.parse(key)[0]===model).sort(([a],[b])=>a.localeCompare(b)).map(([key,rows])=>{
@@ -96,7 +95,7 @@ export function MeasurementGroupPage() {
       hint={`${same.indexOf(row)+1}회차 · ${new Date(row.creationTimestamp).toLocaleString("ko-KR",{month:"long",day:"numeric",hour:"2-digit",minute:"2-digit"})}`}
       value={(()=>{const problem=runProblem(row);return problem?problemBadge[problem]:null})()}/>
   })}</Rows>
-  return <Screen back={[`/measurements?${back}`,"측정 결과"]} status={problemSummary(rows)??undefined}
+  return <Screen back={[`/measurements/runs?${back}`,"개별 측정 회차"]} status={problemSummary(rows)??undefined}
     title={query.data?rows.length?`${node}에서 ${pathLabel(path)}로 ${rows.length}번 쟀어요`:"이 조건의 측정을 찾지 못했어요":"측정 결과"} lede={model}>
     <QueryGate query={query}>
       {section("부하를 걸고 잰 측정",rows.filter(row=>!idle(row)))}
@@ -114,7 +113,7 @@ function RunFilterForm({done}:{done:()=>void}) {
   return <form className="grid gap-5" onSubmit={event=>{
     event.preventDefault()
     const next=new URLSearchParams(params.toString());next.set("q",q);next.delete("limit");next.set("offset","0");if(condition)next.set("condition",condition);else next.delete("condition")
-    router.replace(`/measurements?${next}`);done()
+    router.replace(`/measurements/runs?${next}`);done()
   }}>
     <label className="grid gap-1.5">이름<Input value={q} onChange={event=>setQ(event.target.value)} maxLength={256}/></label>
     <fieldset className="grid gap-2"><legend className="mb-1">상태</legend>{choices.map(([value,label])=><label key={value} className="flex items-center gap-2"><input type="radio" name="condition" checked={condition===value} onChange={()=>setCondition(value)}/>{label}</label>)}</fieldset>
@@ -222,8 +221,7 @@ function PassportSummary({data}:{data:Passport}) {
 export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:string;name:string}) {
   const expectedUID=useSearchParams().get("uid")
   const passport=useChillQuery<Passport>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`,{enabled:kind==="profiling-runs"})
-  const campaign=useChillQuery<CampaignResult>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations/${encodeURIComponent(name)}/result`,{enabled:kind==="batch-energy-optimizations"})
-  const back:[string,string]=[`/measurements?namespace=${encodeURIComponent(namespace)}`,"측정 결과"]
+  const back:[string,string]=[`/measurements/runs?namespace=${encodeURIComponent(namespace)}`,"개별 측정 회차"]
   if(kind==="profiling-runs"){
     const data=passport.data,other=!!data&&!!expectedUID&&data.run.uid!==expectedUID
     return <Screen back={back} status={other?<StatusBadge tone="fail">다른 측정</StatusBadge>:data?<StatusBadge tone={verified(data)?"ok":"warn"}>{verified(data)?"검증된 측정":"검증 확인 필요"}</StatusBadge>:undefined}
@@ -235,23 +233,6 @@ export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:s
           <SourceJSON inline title="실행 조건·검증·지연·전력 원본" value={data}/>
         </RowDialog></Rows>}
       </QueryGate>
-    </Screen>
-  }
-  if(kind==="batch-energy-optimizations"){
-    const data=campaign.data,other=!!data&&!!expectedUID&&data.campaign.uid!==expectedUID,failing=data?.campaign.conditions?.filter(condition=>condition.status==="False").length??0
-    return <Screen back={back} status={other?<StatusBadge tone="fail">다른 계획</StatusBadge>:undefined}
-      title={!data?`${name} 측정 계획 결과`:other?"같은 이름으로 다시 등록된 다른 계획이에요":data.result===null?"아직 완료된 결과가 없어요":"측정 계획 결과가 나왔어요"}
-      lede={other?"이전 자료로 사용할 수 없어요.":data?.result===null?`${name} · 상태와 원인을 확인해 보세요.`:name}>
-      <QueryGate query={campaign}>{data&&<>
-        <Facts items={[["상태",data.campaign.phase?statusLabel(data.campaign.phase):"확인 안 됨"],["완료 측정",`${data.campaign.completedTrials}건`],["확인이 필요한 조건",`${failing}개`]]}/>
-        <Rows><RowDialog label="결과와 근거" hint="상태 원인과 결과 원본" title="계획 결과와 근거">
-          {data.campaign.conditions?.map(condition=><p key={condition.type} role={condition.status==="False"?"alert":undefined}><strong>{condition.reason}</strong>: {condition.message}</p>)}
-          {data.result===null&&<p>완료 결과가 아직 없어요. 위 상태와 원인을 확인하세요.</p>}
-          <SourceExport value={{conditions:{kind,namespace,name,expectedUID},source:data}} filename={`chill-result-${name}.json`}/>
-          <SourceJSON inline value={data}/>
-        </RowDialog></Rows>
-        {!other&&<ProfileAdoption namespace={namespace} name={name} ready={data.result!==null}/>}
-      </>}</QueryGate>
     </Screen>
   }
   return <Screen back={back} status={<StatusBadge tone="idle">연결 준비 중</StatusBadge>} title="이 자료는 아직 볼 수 없어요" lede="이 자료 종류는 연결을 준비하고 있어요."/>
