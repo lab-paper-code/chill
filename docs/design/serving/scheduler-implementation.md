@@ -523,6 +523,21 @@ inventory·적용 affinity를 raw에 연결하며 quota와 mask의 의미를 각
 | `GET /api/v1/observations/scheduler` | 고정 `from/to`, bounded `limit`, append-order `cursor/nextCursor`의 원시 기록 |
 | `GET /api/v1/observations/power` | 같은 고정 `from/to`의 raw 표본을 Node당 한 번 적분한 전체·활성 POOL J/평균 W; 누락은 null과 사유 |
 
+현재 `/scheduler`, `/scheduler/state`와 scheduler history는 선택적으로
+`view=compact`를 받는다. 생략하면 기존 full raw 응답이며 저장 journal·archive와
+page/cursor 선택은 바꾸지 않는다. 다른 `view` 값은 `InvalidQuery`로 거절한다.
+compact 응답은 같은 envelope에 `profiles`와
+`completionMeasurements` dictionary를 추가하고, snapshot의 instances/options/
+inProgressTarget 및 decision의 keep/target/candidates 안 인스턴스의 `profile`과
+`completionMeasurement`만 `{"$ref":"응답 내 key"}`로 치환한다. nil은 그대로다.
+dictionary에는 원본의 전체 측정 객체를 보존한다. profile ID와 completion의
+profile/Node UID/측정 구간이 key의 기준이며 같은 식별자의 다른 보존 값은 별도
+suffix key로 남긴다. 같은 값의 반복만 공유하며 equality는 admission/validation
+gate가 아니다. 소비자는 이 두 필드만 dictionary로 해석한 뒤 기존 화면 계약을
+사용한다. SLO·정책·설정·후보 순서·물리/선택 인스턴스 신원·사유·출처와 action
+acknowledgement 원본은 바꾸지 않는다. 응답 한 page의 얕은 DTO만 만들며 별도
+history scan, raw evidence 복사, decoded cache 또는 fallback reader는 없다.
+
 power 조회는 controller가 수락한 owner configuration 하나를 atomic하게 읽어 meter
 구성을 고정한다. 긴 refresh·control Tick의 owner mutex를 기다리지 않으며, 새 설정은
 controller 적용 성공 뒤에만 게시한다. 거절된 refresh는 이전 설정을 그대로 유지한다.

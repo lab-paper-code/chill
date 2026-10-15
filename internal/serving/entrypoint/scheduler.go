@@ -25,6 +25,29 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
+		compact, err := schedulerCompactQuery(r)
+		if err != nil {
+			sendError(w, err)
+			return
+		}
+		if compact && !strings.HasSuffix(r.URL.Path, "/settings") {
+			state := h.config.Scheduler.State()
+			evidence := newSchedulerReadEvidence()
+			projected := evidence.state(&state)
+			if strings.HasSuffix(r.URL.Path, "/state") {
+				sendJSON(w, http.StatusOK, struct {
+					schedulerReadState
+					schedulerReadEvidence
+				}{projected, evidence})
+			} else {
+				sendJSON(w, http.StatusOK, struct {
+					Settings serving.SchedulerSettings `json:"settings"`
+					State    schedulerReadState        `json:"state"`
+					schedulerReadEvidence
+				}{h.config.Scheduler.Settings(), projected, evidence})
+			}
+			return
+		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/settings"):
 			sendJSON(w, http.StatusOK, h.config.Scheduler.Settings())
@@ -131,13 +154,17 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		sendError(w, err)
 		return
 	}
+	compact, err := schedulerCompactQuery(r)
+	if err != nil {
+		sendError(w, err)
+		return
+	}
 	query := r.URL.Query()
 	to := time.Now().UTC()
 	window := h.config.ObservationWindow
 	if h.config.Scheduler != nil {
 		window = h.config.Scheduler.Settings().ObservationWindow
 	}
-	var err error
 	if text := query.Get("to"); text != "" {
 		to, err = time.Parse(time.RFC3339Nano, text)
 	}
@@ -183,6 +210,18 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 	next := ""
 	if nextOffset >= 0 {
 		next = strconv.Itoa(nextOffset)
+	}
+	if compact {
+		evidence := newSchedulerReadEvidence()
+		events := evidence.observations(records)
+		sendJSON(w, http.StatusOK, struct {
+			From       time.Time                  `json:"from"`
+			To         time.Time                  `json:"to"`
+			Events     []schedulerReadObservation `json:"events"`
+			NextCursor string                     `json:"nextCursor,omitempty"`
+			schedulerReadEvidence
+		}{from, to, events, next, evidence})
+		return
 	}
 	sendJSON(w, http.StatusOK, struct {
 		From       time.Time                      `json:"from"`

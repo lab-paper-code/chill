@@ -315,3 +315,79 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 		t.Fatalf("intent/application ledger=%+v error=%v", records, err)
 	}
 }
+
+func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *testing.T) {
+	at := time.Date(2026, 10, 15, 18, 22, 30, 0, time.UTC)
+	profile := &serving.Profile{ID: "profile", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "profile", Size: 123},
+		Batches: []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{12, 34}, EnergyPerInputJoules: 0.5}}}
+	equalProfile := *profile
+	differentProfile := *profile
+	differentProfile.Batches = []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{56}}}
+	measurement := &serving.ObservedOverhead{Profile: profile.ID, Node: serving.NodeReference{UID: "node-uid"},
+		Completion: time.Millisecond, From: at.Add(-time.Minute), To: at,
+		Definitions: map[string]*serving.Definition{"workload": {UID: "workload", Generation: 7}},
+		References:  []evidencestore.ObjectIdentity{{Store: "raw", Key: "completion", Size: 456}}}
+	equalMeasurement := *measurement
+	differentMeasurement := *measurement
+	differentMeasurement.Completion = 2 * time.Millisecond
+	instances := []serving.SchedulerInstance{
+		{ID: "physical", TargetID: "selected-slot", Node: measurement.Node, Profile: profile, CompletionMeasurement: measurement},
+		{ID: "equal", Profile: &equalProfile, CompletionMeasurement: &equalMeasurement},
+		{ID: "different", Profile: &differentProfile, CompletionMeasurement: &differentMeasurement},
+		{ID: "missing"},
+	}
+	candidate := serving.SchedulerCandidate{ID: "selected", Instances: instances}
+	decision := serving.SchedulerDecision{Keep: candidate, Target: &candidate, Candidates: []serving.SchedulerCandidate{candidate}}
+	snapshot := serving.SchedulerSnapshot{Instances: instances, Options: []serving.SchedulerOption{{Instance: instances[0]}}, InProgressTarget: &candidate}
+	event := serving.SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}
+	evidence := newSchedulerReadEvidence()
+	projected := evidence.observations([]serving.SchedulerObservation{event})
+	got := projected[0].Decision.Candidates[0].Instances
+	if len(evidence.Profiles) != 2 || len(evidence.CompletionMeasurements) != 2 ||
+		got[0].Profile.Ref != got[1].Profile.Ref || got[0].Profile.Ref == got[2].Profile.Ref ||
+		got[0].CompletionMeasurement.Ref != got[1].CompletionMeasurement.Ref ||
+		got[0].CompletionMeasurement.Ref == got[2].CompletionMeasurement.Ref {
+		t.Fatal("equal evidence was not shared, or differing same-identity evidence was discarded")
+	}
+	for i := range instances {
+		if instances[i].Profile == nil {
+			if got[i].Profile != nil || got[i].CompletionMeasurement != nil {
+				t.Fatal("missing evidence became fabricated evidence")
+			}
+			continue
+		}
+		if !reflect.DeepEqual(evidence.Profiles[got[i].Profile.Ref], instances[i].Profile) ||
+			!reflect.DeepEqual(evidence.CompletionMeasurements[got[i].CompletionMeasurement.Ref], instances[i].CompletionMeasurement) {
+			t.Fatal("reference changed a measured quantity or immutable evidence identity")
+		}
+	}
+	if projected[0].Snapshot.Options[0].Instance.Profile.Ref != got[0].Profile.Ref ||
+		projected[0].Snapshot.InProgressTarget.Instances[0].Profile.Ref != got[0].Profile.Ref {
+		t.Fatal("snapshot evidence did not use the same response dictionaries")
+	}
+	raw, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Profile map[string]json.RawMessage `json:"profile"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if profileFields := wire.Profile; len(profileFields) != 1 || profileFields["$ref"] == nil {
+		t.Fatal("compact wire response still includes the repeated inline profile")
+	}
+	if profile.Batches[0].DurationNanos[0] != 12 || instances[0].Profile != profile ||
+		instances[0].CompletionMeasurement != measurement || measurement.Completion != time.Millisecond {
+		t.Fatal("read projection mutated the raw source")
+	}
+}
+
+func TestSchedulerCompactQueryRejectsAmbiguousViews(t *testing.T) {
+	for _, query := range []string{"view=compact&view=unsupported", "view=&view=compact", "view=compact&view=compact"} {
+		if _, err := schedulerCompactQuery(httptest.NewRequest(http.MethodGet, "/api/v1/scheduler?"+query, nil)); err == nil {
+			t.Fatalf("ambiguous view silently selected a representation: %s", query)
+		}
+	}
+}
