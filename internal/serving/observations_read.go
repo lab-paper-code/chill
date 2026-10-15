@@ -85,6 +85,9 @@ type requestWindowCensus struct {
 	prefixBytes                    int64
 	trusted                        bool
 	eventAt, receiptAt, receivedAt observationTimeBounds
+	definitionPrefixBytes          int64
+	definitionsTrusted             bool
+	hasDefinitions                 bool
 }
 
 func (c *requestWindowCensus) add(event *RequestEvent) {
@@ -136,6 +139,12 @@ func (j *Journal) snapshot(streams ...string) (*observationSnapshot, error) {
 				return nil, err
 			}
 			prefix := observationStreamPrefix{window: index, path: name, bytes: info.Size()}
+			if stream == observationDefinitionStream {
+				census := j.requestCensus[window.ID]
+				if census.definitionsTrusted && prefix.bytes == census.definitionPrefixBytes && !census.hasDefinitions {
+					continue
+				}
+			}
 			if stream == observationSchedulerStream {
 				prefix.census = j.schedulerCensus[window.ID]
 				prefix.census.trusted = prefix.census.trusted && prefix.bytes == prefix.census.prefixBytes

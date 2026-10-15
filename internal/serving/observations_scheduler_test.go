@@ -589,3 +589,53 @@ func TestRequestCensusKeepsUnknownPrefixesAndIncompleteMetadata(t *testing.T) {
 		t.Fatal("unknown corrupt prefix became an empty overhead success")
 	}
 }
+
+func TestDefinitionCensusLoadsAppendsToPreviouslyEmptyPrefixes(t *testing.T) {
+	for _, counted := range []bool{true, false} {
+		t.Run(fmt.Sprintf("counted=%t", counted), func(t *testing.T) {
+			j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = j.Close(context.Background()) })
+			from := time.Now().UTC().Add(-24 * time.Hour)
+			to := from.Add(time.Minute)
+			d := &Definition{UID: "retained", Generation: 1}
+			if err := j.RequestEvent(RequestEvent{RequestID: "waiting", Kind: phaseReceived, At: from, Definition: d.Identity()}); err != nil {
+				t.Fatal(err)
+			}
+			arrivals, err := j.SchedulerArrivals(from, to)
+			if err != nil || len(arrivals) != 1 || arrivals[0].Definition != nil {
+				t.Fatalf("missing definition must stay unknown: %+v %v", arrivals, err)
+			}
+			if counted {
+				err = j.DefinitionRecord(d)
+			} else {
+				// A changed prefix must invalidate the known-empty summary.
+				err = json.NewEncoder(j.files[observationDefinitionStream]).Encode(observationRecord{
+					SchemaVersion: observationSchema, Window: j.windows[j.active].ID,
+					Definition: &DefinitionObservation{Identity: d.Identity(), Definition: d},
+				})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			check := func() {
+				t.Helper()
+				arrivals, err := j.SchedulerArrivals(from, to)
+				if err != nil || len(arrivals) != 1 || arrivals[0].Definition == nil || arrivals[0].Definition.Identity() != d.Identity() {
+					t.Fatalf("new or uncounted definition remained pruned: %+v %v", arrivals, err)
+				}
+			}
+			check()
+			if err := j.Close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			j, err = NewJournal(j.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check()
+		})
+	}
+}

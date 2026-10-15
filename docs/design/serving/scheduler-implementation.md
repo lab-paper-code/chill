@@ -458,7 +458,7 @@ Journal 조회는 기존 writer mutex 아래에서 필요한 stream 경로·byte
 완료된 append 뒤의 길이를 고정하므로 새 append·rotation을 현재 조회에 섞거나
 진행 중 record를 잘린 tail로 오인하지 않는다. 실제 read 오류·잘린 원본은 health와
 incomplete 상태에 그대로 남는다. 기존 시작 시 전체 stream 검증·decode pass와 성공한
-scheduler/request append에서 window당 작은 in-memory census를 채우고, 동일 잠금 아래 값과
+scheduler/request/definition append에서 window당 작은 in-memory census를 채우고, 동일 잠금 아래 값과
 검증된 prefix byte 수를 캡처한다. 별도 저장 index나 decoded history cache는 없다.
 실제 파일 길이가 census prefix와 다르거나 census를 신뢰할 수 없으면 해당 prefix
 전체를 보수적으로 읽는다. window metadata 전체는 gap·완전성 판정용으로 유지한다.
@@ -478,6 +478,10 @@ capture의 arrivals/load는 receipt 사건의 실제 `ReceivedAt`(없으면 `At`
 완료 overhead는 모든 request의 실제 `ReceivedAt` 범위를 사용하며 실행 조건 검증과
 누락 제외는 기존 reducer에 둔다. 두 조회 모두 전체 definitions와 window metadata를
 보존하고, 오래된 append window·역순 시각·알 수 없는 prefix를 빈 성공으로 바꾸지 않는다.
+definition은 기존 validation/counting pass에서 기록 유무만 보존하며, prefix byte 수가
+일치하고 신뢰되는 빈 stream만 열지 않는다. 사건 시각과 무관하게 모든 nonempty 과거
+definition prefix는 유지한다. 정의 추가·알 수 없는/길이가 바뀐 prefix는 다시 읽으며,
+Runtime의 retained-definition registry를 복제하거나 별도 정의 cache를 만들지 않는다.
 두 작은 projection은 기존 jsoniter 의존성으로 읽되, 건너뛴 subtree의 잘못된
 숫자·문자열·구분자도 표준 JSON 구문 검사로 거절한다. power·coverage의 작은 실제
 측정 block과 선택된 history 원문은 계속 표준 decoder로 읽어 float·정수·duration·

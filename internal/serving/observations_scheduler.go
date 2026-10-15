@@ -124,13 +124,13 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 	if from.IsZero() || !from.Before(to) {
 		return result, failure("InvalidQuery", "positive explicit load window is required")
 	}
-	snapshot, err := j.snapshot("definitions", observationRequestStream)
+	snapshot, err := j.snapshot(observationDefinitionStream, observationRequestStream)
 	if err != nil {
 		return result, err
 	}
 	snapshot.selectLoadWindow(from, to)
 	definitions := map[string]*Definition{}
-	if err := snapshot.scan("definitions", func(record observationRecord) {
+	if err := snapshot.scan(observationDefinitionStream, func(record observationRecord) {
 		if record.Definition != nil {
 			definitions[record.Definition.Identity] = record.Definition.Definition
 		}
@@ -282,7 +282,7 @@ func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverh
 	if from.IsZero() || !from.Before(to) {
 		return nil, failure("InvalidQuery", "positive explicit overhead window is required")
 	}
-	snapshot, err := j.snapshot("definitions", observationRequestStream)
+	snapshot, err := j.snapshot(observationDefinitionStream, observationRequestStream)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +294,7 @@ func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverh
 	}
 	snapshot.streams[observationRequestStream] = prefixes
 	definitions := map[string]*Definition{}
-	if err := snapshot.scan("definitions", func(record observationRecord) {
+	if err := snapshot.scan(observationDefinitionStream, func(record observationRecord) {
 		if record.Definition != nil {
 			definitions[record.Definition.Identity] = record.Definition.Definition
 		}
