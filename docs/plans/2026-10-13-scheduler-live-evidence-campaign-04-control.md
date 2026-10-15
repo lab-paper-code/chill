@@ -836,3 +836,29 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
 - 이번 세션 도구 기록 1159 Eval·745 Bash와 `/tmp` 흐름 회고에서 남은 핵심은 위 반복 응답이었다.
   측정 CRUD·채택·bounded CLI·native OnDelete 지원을 다시 만들 필요는 없었다.
   일반 명령 wrapper를 추가하지 않고 실제 실패가 확인된 조회 계약만 고쳤다.
+
+## 고부하 실행 실패와 Kubernetes client 예산 — 2026-10-15
+
+- `full-load-reversal/summary.json`의 실제 구간은 19:01:43.679027–19:06:23.679122Z다.
+  916건 outcome은 완료134·거절286·timeout496, 별도 오류 코드는
+  AuthorizationUnavailable285·RequestTimeout497이다. 1건 차이를 합치거나 재분류하지 않는다.
+  high 720건의 client 결과는 HTTP200 74·HTTP504 307·연결 reset/broken pipe 339다.
+  baseline SLO는 통과했지만 high p95/p90은 약5.01초로 실패했고 burst·recovery도 timeout이다.
+- 실제 자동 route는 19:02:51.146628182Z에 완료됐다. 관측기 46회 timeout으로 trigger를 놓쳐
+  drop이 82.532494초 늦었다. 원시 `NoTransition`은 보존하되 의미는 **UNOBSERVED**다.
+  즉시 반전 시나리오 통과가 아니며 판단22건 중 Overload는 없었다(Keep3·Pending18·Feasible1).
+  3실행기 ready·capacity24와 최대 outstanding18만으로 native 용량 초과를 주장하지 않는다.
+- 10노드 각각394표본의 정확한280.000095초 wall energy는64617.894352491J다.
+  비교 arm·인과 절감 주장은 없다. OFF API의 실제 timeout과 사후 관리 복원을 분리했고,
+  재시작 없이 19:09:24.267Z의 ACK RV353603758·9OFF·Rpi 실제 route·미완료 동작0을 확인했다.
+- owner 로그의 TokenReview client-side throttle 4.79–5.00초와 client-go 기본5QPS/burst10을 확인했다.
+  기본 REST API group별5QPS보다 높은8requests/s를 보냈으며 APF·CPU 포화의 증거는 아니다.
+  약109초 판단 공백의 전체 원인은 여전히 미입증이다. lock·인증 cache·오류 suppression을 추가하지 않았다.
+- `ce47d416`는 owner의 `--kube-api-qps=50`, `--kube-api-burst=100`과 기존 Helm `kubeAPI` 값을
+  두 client 생성 전에 적용한다. typed clientset은 한 limiter를 공유하며 별도 Store 예산은 독립이다.
+  stdlib numeric flag·Go 시작 경계 검증만 사용하고 중복 Helm 범위 gate·임의 int32 상한은 제거했다.
+  focused cmd, `make lint test arch-check gopls-check helm-lint helm-template` 및 별도 owner-enabled
+  default/Profiler 렌더가 통과했다(`artifact://3659`). 기존 권한 거절과 materialize 독립 경계는 유지한다.
+- 실제 client-go/Authorizer의 로컬128건·8/s smoke는 기본111완료/17인증불가·평균2.185초,
+  50/100은128완료/0인증불가·평균1.277ms였으며 denied SAR는 계속 Forbidden이었다(`artifact://3651`).
+  로컬 재현은 cluster/APF 처리량·FULL 재검증 성공의 증거가 아니다. 실패 원본은 보존한다.

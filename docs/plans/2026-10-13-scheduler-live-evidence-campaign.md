@@ -53,7 +53,7 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** Main의 compact 조회 연결을 기다리며 실제 부하 증가·전환 직후 급감과 실패·복구 근거를 보완한다.
+**현재 우선:** 고부하 실행의 인증·요청 timeout과 OFF 적용 지연 원인을 확인·수정한 뒤 반전 검증을 재개한다. Main compact 연결은 별도 대기다.
 
 1. **FULL 통합 실적:** 새 CUDA profile·실제 owner 요청·GPU prepare/remove 비용을 연결했다.
    동일 초기 3실행기·동일 190건 부하의 OFF/FULL 비교에서 모두 완료·두 SLO를 통과했고,
@@ -61,7 +61,7 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
    전체 10 meter의 사전 선언 240초 wall energy는 FULL이 6.23% 높았다. 절감 성공은 아니다.
    후보 탐색 제한과 일시 Pending/Overload, 앞선 실패도 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 보존한다.
 2. **Dashboard 연결 대기:** 알고리즘 변경·다음 판단·전후 이력·복원과 실제 UI 추론 완료를 확인했다.
-   FULL 이력 크기 차단은 원시 근거를 보존하는 compact 4경로로 해소했다. 실 API 11페이지·523건의
+   원시 근거를 보존하는 owner compact 4경로를 배포했다. 실 API 11페이지·523건의
    최대 5.33MB를 확인했다. Main에 공통 복원·조회 연결 프롬프트를 전달했고 완료 통지를 기다린다.
 3. **남은 종단:** 부하 반전·실패·부분 적용·격리·복구의 실제 근거 누락만 보완하고,
    Dashboard에서 판단→실제 완료→서빙·SLO·전력을 대조한다. 이후 놓친 운영 흐름만 회고한다.
@@ -96,7 +96,9 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 현재 상태·다음 작업
 
-- 부하 변동 검증을 진행 중이다. 실험 중 ON/종료 후 OFF와 실제 route는 해당 원시 기록을 따른다.
+- 부하 변동 실행은 실패했다. outcome 집계는 완료134·거절286·timeout496이며 native 용량 초과로 단정하지 않는다.
+  오류 코드 집계는 AuthorizationUnavailable285·RequestTimeout497로 1건 차이가 있어 별도로 보존한다.
+  실제 route는 완료됐지만 관측 timeout으로 즉시 반전 조건을 놓쳤다. 제어9OFF·Rpi 실제 route를 재시작 없이 복원했다.
 - owner 조회 수정 `9365f9ae`를 실제 배포했고 limit CPU2/512Mi·evidence PVC 8Gi를 유지한다.
   앞선 비교의 CPU 변경과 meter 수정을 분리한 실험은 아니므로 SLO 실패의 단일 원인을 CPU로 지목하지 않는다.
 - placement/resources/replicas/routing/sharing/membership 개별 실적, firstfloor 배칭 책임,
