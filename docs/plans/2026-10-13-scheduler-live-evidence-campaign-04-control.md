@@ -610,3 +610,10 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   Service 경유는 reset/timeout이었다. 저장 데이터 삭제나 Pod IP 고정 우회 없이 통신 경로를 조사한다.
   근거: `owner-quota-one-{plan,results}.json`, `owner-restore-previous.log`,
   `evidence-store-{health-during-owner-startup,host-header-comparison}.json`.
+- 실제 genesis1 NAT는 이 Service를 EdgeMesh `169.254.96.16:45881`로 전달했고 해당 listener도
+  존재했다. genesis1/3 양쪽 EdgeMesh 로그는 상대 peer 주소가 없는 `routing: not found`를
+  기록했으며 CoreDNS 교차 노드 전달도 같은 오류였다. 공유 EdgeMesh peer 경로까지 장애를
+  좁혔지만 peer discovery가 깨진 원인·복구 방법은 미확정이다. 다른 사용자의 통신에 영향을
+  줄 수 있어 공유 agent 재시작·설정 변경은 하지 않았다.
+  근거: `evidence-service-edgemesh-finding.json`, `genesis1-service-nat-rules.txt`,
+  `edgemesh-genesis{1-service-failure,3-peer-state}.log`.

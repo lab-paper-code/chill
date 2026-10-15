@@ -53,7 +53,7 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** evidence-store Service 통신을 복구해 owner HTTPS readiness를 회복한다.
+**현재 우선:** 공유 EdgeMesh peer 경로 장애를 복구해 evidence-store 통신과 owner HTTPS readiness를 회복한다.
 실제 CPU 제어와 판단 알고리즘 구현은 완료했지만 폐루프 비교·FULL 통과는 미완료다.
 자동제어는 모두 OFF이며 실제 입력 freshness·부하 중 SLO feasibility·fresh observed energy가
 충족되기 전 자동 실행을 시작하지 않는다.
