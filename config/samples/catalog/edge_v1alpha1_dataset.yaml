@@ -1,0 +1,13 @@
+# Use metadata.name and spec as serving management API input, not kubectl apply.
+# Replace PUSHED_DIGEST with the multi-arch index digest of the pushed carrier (README.md).
+apiVersion: edge.dacs.io/v1alpha1
+kind: Dataset
+metadata:
+  name: vqav2-val-subset
+spec:
+  source:
+    image: "155.230.35.213:5000/chill/chill-vqav2-val-subset@sha256:PUSHED_DIGEST"
+    path: /artifact/vqav2-val-subset
+  fields:
+  - {name: image, format: JPEG, maxBytes: 1048576}
+  - {name: question, format: UTF8, maxBytes: 512}

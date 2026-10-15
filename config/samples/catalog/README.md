@@ -37,15 +37,14 @@ make rknn-convert-artifact \
 ```
 
 The [carrier Dockerfile](../../../build/docker/derived-model-artifact.Dockerfile)
-expects one build-context file named `artifact`:
+copies the build context's `artifact/` directory to `/artifact/`:
 
 ```sh
-mkdir -p /tmp/chill-model-carrier
-cp /path/to/model.onnx /tmp/chill-model-carrier/artifact
+mkdir -p /tmp/chill-model-carrier/artifact
+cp /path/to/model.onnx /tmp/chill-model-carrier/artifact/model.onnx
 docker buildx build \
   --platform linux/arm64 \
   --build-arg BASE_IMAGE=REGISTRY/RUNNABLE-BASE@sha256:DIGEST \
-  --build-arg ARTIFACT_NAME=model.onnx \
   --file build/docker/derived-model-artifact.Dockerfile \
   --tag REGISTRY/MODEL-ARTIFACT:BUILD-ID \
   --push /tmp/chill-model-carrier
@@ -121,10 +120,13 @@ HTTP non-resource permissions, not direct managed-resource write permissions.
 Preprocessors and Datasets use the same request shape and `If-Match` rule at
 `$OWNER/api/v1/preprocessors` and `$OWNER/api/v1/datasets`. Register the target
 ModelSpec first: every Preprocessor artifact must name a registered ModelSpec
-artifact that is not being deleted.
+artifact that is not being deleted. The samples are
+[mobilenet-imagenet](edge_v1alpha1_preprocessor_mobilenet-imagenet.yaml),
+[smolvlm2-vqa](edge_v1alpha1_preprocessor_smolvlm2-vqa.yaml) and the
+[vqav2-val-subset Dataset](edge_v1alpha1_dataset.yaml).
 
 ```sh
-yq -o=json '.' preprocessor.yaml |
+yq -o=json '.' config/samples/catalog/edge_v1alpha1_preprocessor_smolvlm2-vqa.yaml |
   jq '{name: .metadata.name, spec: .spec}' |
   curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
     -H 'Content-Type: application/json' --data-binary @- \
@@ -137,3 +139,51 @@ native admission. The sample declares matching firstfloor ORT CPU/RKNN paths,
 and profiling measures through the same firstfloor paths. Native serving
 consumes a completed firstfloor campaign with every initialized measured batch
 size.
+
+## Preprocessor, SmolVLM model and dataset carriers
+
+Every carrier uses the carrier Dockerfile above. Stage the build context, build,
+push, and replace `PUSHED_DIGEST` in the sample with the pushed digest. A
+preprocessor directory holds the `preprocessor.py` module that the firstfloor
+runner imports; its libraries come from the firstfloor runtime image. The
+staging scripts need `huggingface_hub`; the dataset builder also needs `pyarrow`.
+
+```sh
+# mobilenet-imagenet: one carrier holds the NCHW (ONNX) and NHWC (RKNN) directories.
+mkdir -p /tmp/chill-mobilenet-pre/artifact
+cp -r build/model-artifacts/preprocessors/mobilenet-nchw \
+  build/model-artifacts/preprocessors/mobilenet-nhwc /tmp/chill-mobilenet-pre/artifact/
+# SmolVLM2: fp32 ONNX files and processor files of one pinned Hugging Face revision.
+python3 build/model-artifacts/smolvlm2/stage.py model /tmp/chill-smolvlm2-model/artifact
+python3 build/model-artifacts/smolvlm2/stage.py preprocessor \
+  /tmp/chill-smolvlm2-pre/artifact/smolvlm2-vqa
+# VQAv2: disjoint profiling and evaluation records split by question_id.
+python3 build/model-artifacts/vqav2/build_subset.py \
+  --output /tmp/chill-vqav2/artifact/vqav2-val-subset
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --build-arg BASE_IMAGE=REGISTRY/RUNNABLE-MULTIARCH-BASE@sha256:INDEX-DIGEST \
+  --file build/docker/derived-model-artifact.Dockerfile \
+  --tag REGISTRY/chill-vqav2-val-subset:BUILD-ID \
+  --push /tmp/chill-vqav2
+```
+
+Build the other contexts like the model carrier above for `linux/arm64`. The
+dataset carrier is multi-arch, so its sample uses the image index digest.
+
+The SmolVLM2 model carrier is one artifact, `onnx-fp32` of the
+[`smolvlm2-500m-video-instruct` ModelSpec](edge_v1alpha1_modelspec_smolvlm2.yaml),
+with three files: `/artifact/vision_encoder.onnx`, `/artifact/embed_tokens.onnx`
+and `/artifact/decoder_model_merged.onnx`. The runner keys their sessions
+`vision_encoder`, `embed_tokens` and `decoder_model_merged`; the module records
+their pinned input and output names. The mobilenet ModelSpec keeps its existing
+carriers, whose single files sit at the same `/artifact/<file>` paths.
+
+After the ModelSpecs, Preprocessors and Dataset, register the two Workloads in
+[`../manual/edge_v1alpha1_workload_mobilenet.yaml`](../manual/edge_v1alpha1_workload_mobilenet.yaml)
+and [`../manual/edge_v1alpha1_workload_smolvlm2.yaml`](../manual/edge_v1alpha1_workload_smolvlm2.yaml)
+at `$OWNER/api/v1/workloads`; both use the `vqav2-val-subset` Dataset.
+
+`make test-artifact-tools` runs the module and dataset builder tests. The
+SmolVLM module tests skip unless `python3` has the runtime image's preprocessor
+libraries; put a virtual environment with them first on `PATH` to run them.

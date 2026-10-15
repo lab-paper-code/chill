@@ -184,7 +184,9 @@ operand. Commands, artifacts, metadata, and limitations are in
 It ships `/opt/chill/bin/serving-worker`, `/opt/chill/bin/serving-entrypoint` (including
 `--materialize-profile` mode), `/measurement-worker`, the persistent firstfloor
 runner and its sibling ORT/RKNNLite helpers. CPU defaults install NumPy 2.2.6
-and ONNX Runtime 1.27.0. `make build` includes serving-worker and
+and ONNX Runtime 1.27.0; every build installs the preprocessor module libraries
+Pillow 12.3.0, transformers 4.50.0, num2words 0.5.14 and Jinja2 3.1.6, so a
+vendor base needs Python 3.10 or newer. `make build` includes serving-worker and
 serving-operation; `make test-runtime` selects the firstfloor runtime suite.
 No published image digest or hardware qualification is implied.
 

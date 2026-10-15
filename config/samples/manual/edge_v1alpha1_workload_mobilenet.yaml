@@ -1,0 +1,16 @@
+# Submit this definition through the serving management API, not kubectl apply.
+# The management owner validates catalog references and serializes changes.
+apiVersion: edge.dacs.io/v1alpha1
+kind: Workload
+metadata:
+  name: mobilenet-imagenet
+spec:
+  modelRef:
+    name: mobilenet-v2-050
+  preprocessorRef:
+    name: mobilenet-imagenet
+  datasetRef:
+    name: vqav2-val-subset
+  slo:
+    percentile: 99
+    targetLatency: 100ms

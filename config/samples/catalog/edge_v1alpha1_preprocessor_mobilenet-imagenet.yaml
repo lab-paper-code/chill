@@ -1,0 +1,24 @@
+# Use metadata.name and spec as serving management API input, not kubectl apply.
+# Replace PUSHED_DIGEST with the digest of the pushed carrier (README.md).
+apiVersion: edge.dacs.io/v1alpha1
+kind: Preprocessor
+metadata:
+  name: mobilenet-imagenet
+spec:
+  input:
+    fields:
+    - {name: image, format: JPEG, maxBytes: 4194304}
+  output:
+    fields:
+    - {name: label, format: UTF8}
+  artifacts:
+  - target: {model: mobilenet-v2-050, artifact: canonical-onnx}
+    source:
+      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:PUSHED_DIGEST"
+      architecture: arm64
+      path: /artifact/mobilenet-nchw
+  - target: {model: mobilenet-v2-050, artifact: mobilenet-v2-050-rk3588}
+    source:
+      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:PUSHED_DIGEST"
+      architecture: arm64
+      path: /artifact/mobilenet-nhwc

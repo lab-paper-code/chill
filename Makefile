@@ -113,8 +113,10 @@ test-runtime: ## Run production runtime contract tests.
 	python3 -m unittest discover -s runtime/firstfloor -p 'test_*.py'
 
 .PHONY: test-artifact-tools
-test-artifact-tools: ## Run model-artifact build-tool tests.
+test-artifact-tools: ## Run model-artifact build-tool and preprocessor module tests.
 	python3 -m unittest discover -s build/model-artifacts/rknn -p 'test_*.py'
+	python3 -m unittest discover -s build/model-artifacts/preprocessors -p 'test_*.py'
+	python3 -m unittest discover -s build/model-artifacts/vqav2 -p 'test_*.py'
 
 .PHONY: test-loadgen
 test-loadgen: ## Run load-generator tests.

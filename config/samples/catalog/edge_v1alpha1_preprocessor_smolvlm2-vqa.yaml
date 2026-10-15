@@ -1,0 +1,21 @@
+# Use metadata.name and spec as serving management API input, not kubectl apply.
+# Replace PUSHED_DIGEST with the digest of the pushed carrier (README.md).
+apiVersion: edge.dacs.io/v1alpha1
+kind: Preprocessor
+metadata:
+  name: smolvlm2-vqa
+spec:
+  input:
+    fields:
+    - {name: image, format: JPEG, maxBytes: 4194304}
+    - {name: question, format: UTF8, maxBytes: 1024}
+  output:
+    fields:
+    - {name: answer, format: UTF8}
+  maxNewTokens: 16
+  artifacts:
+  - target: {model: smolvlm2-500m-video-instruct, artifact: onnx-fp32}
+    source:
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-vqa-preprocessor@sha256:PUSHED_DIGEST"
+      architecture: arm64
+      path: /artifact/smolvlm2-vqa

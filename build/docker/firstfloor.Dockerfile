@@ -21,7 +21,10 @@ ARG ONNXRUNTIME_VERSION=1.27.0
 ARG ORT_PACKAGE=onnxruntime
 ARG PIP_EXTRA_INDEX_URL
 ARG CUDA_DRIVER_PACKAGES
-RUN python3 -m pip install --no-cache-dir numpy==${NUMPY_VERSION} ${ORT_PACKAGE}==${ONNXRUNTIME_VERSION} ${CUDA_DRIVER_PACKAGES}
+# Preprocessor module libraries. transformers 4.50.0 is the first release with
+# SmolVLM; its processor module imports without torch (4.57.6 requires torch).
+RUN python3 -m pip install --no-cache-dir numpy==${NUMPY_VERSION} ${ORT_PACKAGE}==${ONNXRUNTIME_VERSION} ${CUDA_DRIVER_PACKAGES} \
+    pillow==12.3.0 transformers==4.50.0 num2words==0.5.14 jinja2==3.1.6
 COPY --from=builder /out/serving-worker /opt/chill/bin/serving-worker
 COPY --from=builder /out/serving-entrypoint /opt/chill/bin/serving-entrypoint
 COPY --from=builder /out/measurement-worker /measurement-worker

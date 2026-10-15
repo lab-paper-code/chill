@@ -3,7 +3,7 @@
 ```text
 config/samples
 ├── catalog/    normal model registration
-├── manual/     optional manual DeviceClass registration
+├── manual/     optional manual DeviceClass registration and Workload samples
 └── profiling/  experiment requests; apply one at a time
 ```
 
