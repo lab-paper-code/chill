@@ -35,6 +35,7 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", CPU: derivation.CurveCPUContract{Policy: "quota-affinity", PolicyVersion: "v1", Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1, AffinityCPUs: []int{0}}, PlannedBatchSizes: []int{1}, Tensor: derivation.CurveTensorContract{Tensors: inputs}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Path: "/model", Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(10 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelPath: "/model", Inputs: []firstfloor.InputSpec{{Name: "x", Datatype: "FP32", Shape: []int{-1, 1}}}, Outputs: []firstfloor.InputSpec{{Name: "y", Datatype: "FP32", Shape: []int{-1, 1}}}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
 	i := SchedulerInstance{ID: "i1", Node: node.Node, Pool: node.Pool, Profile: p, WorkloadUIDs: []string{d.UID}, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Capacity: 100, Weight: 1, MaxBatch: 1, EnvelopeSource: "measured transport", CompletionObserved: true, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
+	i = schedulerMeasuredInstance(i, d, 0)
 	b := NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: schedulerNodeWallScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
 	b.Reference.Size = 1
 	p.Evidence[0].Size = 1
@@ -63,6 +64,20 @@ func schedulerRequireReason(t *testing.T, reasons []string, prefix string) {
 func schedulerReplayForTest(s SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate) schedulerReplayResult {
 	return schedulerReplay(s, snap, c, rand.New(rand.NewPCG(uint64(s.Seed), 0)))
 }
+
+// schedulerMeasuredInstance supplies a new completed native trial for an
+// explicitly measured fixture condition; it never rebinds an old typed proof.
+func schedulerMeasuredInstance(i SchedulerInstance, d *Definition, completion time.Duration) SchedulerInstance {
+	at := i.ObservedAt
+	exchange := time.Millisecond + completion
+	fact := &overheadFact{}
+	fact.add(&RequestEvent{Kind: eventBackendExchangeFinished, WorkloadUID: d.UID, Definition: d.Identity(), Assignment: &Assignment{Instance: i.ID, Node: i.Node, Profile: i.Profile.ID, Artifact: i.Profile.Condition.Artifact.Name, ExecutionPath: i.Profile.Condition.Artifact.ExecutionPath}, NativeProgress: &BackendProgress{ProfileID: i.Profile.ID, Phase: phaseFinished, ExecutionComplete: true, NativeElapsedMS: 1}, ClientSpanNanos: int64(time.Millisecond), ElapsedNanos: int64(exchange)})
+	fact.add(&RequestEvent{Kind: eventResponseFinished, ElapsedNanos: int64(exchange)})
+	measurement := overheadProjection(map[string]*overheadFact{"fixture-trial": fact}, map[string]*Definition{d.Identity(): d}, at.Add(-time.Second), at, nil)[i.ID]
+	i.CompletionMeasurement = &measurement
+	i.CompletionOverhead, i.EnvelopeSource, i.CompletionObserved = measurement.Completion, measurement.Source, measurement.Valid()
+	return i
+}
 func schedulerTestCPU(i SchedulerInstance) SchedulerInstance {
 	p := *i.Profile
 	p.ID += "-other-cpu"
@@ -74,6 +89,9 @@ func schedulerTestCPU(i SchedulerInstance) SchedulerInstance {
 	}
 	i.Profile = &p
 	i.Allocation.CPUs = []int{1}
+	for _, d := range i.CompletionMeasurement.Definitions {
+		return schedulerMeasuredInstance(i, d, i.CompletionOverhead)
+	}
 	return i
 }
 
@@ -220,6 +238,7 @@ func TestSchedulerSLOFeasibleBeforeEnergyIncludingTransition(t *testing.T) {
 	target.Node = node.Node
 	target.Profile = &p
 	target.IdleMeter = schedulerTestSecondMeter
+	target = schedulerMeasuredInstance(target, d, 0)
 	snap.Options = []SchedulerOption{{Instance: target, CompatibleUIDs: []string{d.UID}}}
 	b := snap.Baselines[0]
 	b.Node = node.Node
@@ -304,7 +323,7 @@ func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
 	}
 	schedulerRequireReason(t, pending.Keep.Reasons, "NativeOwnershipPending")
 	s.Controls.Enabled = false
-	snap.Instances[0].CompletionOverhead = 5 * time.Millisecond
+	snap.Instances[0] = schedulerMeasuredInstance(snap.Instances[0], snap.Workloads[0], 5*time.Millisecond)
 	call := &Call{
 		receipt:            Receipt{ID: "returning", UID: snap.Workloads[0].UID, ReceivedAt: snap.At.Add(-10 * time.Millisecond)},
 		definition:         snap.Workloads[0],
@@ -394,6 +413,7 @@ func TestSchedulerFrozenOldDefinitionPendingSurvivesModelCutover(t *testing.T) {
 	p.ID = "new-profile"
 	p.Condition.Artifact.Name = schedulerTestNewModel
 	target.Profile = &p
+	target = schedulerMeasuredInstance(target, &updated, 0)
 	before := 10.0
 	snap.Costs = []OperationCost{{ID: schedulerActionPrepare, Node: target.Node, Kind: schedulerActionPrepare, From: "unloaded", To: SchedulerInstanceState(target), PowerMode: "fixed", BeforeBaselineWatts: &before, Trials: []OperationTrial{{Duration: 5 * time.Millisecond, Joules: 0.2}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: schedulerActionPrepare, Size: 1}}, {ID: schedulerActionRemove, Node: target.Node, Kind: schedulerActionRemove, From: SchedulerInstanceState(snap.Instances[0]), To: "unloaded", PowerMode: "fixed", BeforeBaselineWatts: &before, Trials: []OperationTrial{{Duration: time.Millisecond, Joules: 0.1}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: schedulerActionRemove, Size: 1}}}
 	c := SchedulerCandidate{ID: "model-cutover", Nodes: snap.Nodes, Instances: []SchedulerInstance{target}}
@@ -415,6 +435,7 @@ func TestSchedulerLoadedPowerWitnessAndNewBundleReadiness(t *testing.T) {
 	p.Condition.PowerMode = schedulerTestEcoMode
 	p.IdleBaselineWatts = 8
 	target.Profile = &p
+	target = schedulerMeasuredInstance(target, snap.Workloads[0], 0)
 	snap.Options = []SchedulerOption{{Instance: target, CompatibleUIDs: old.WorkloadUIDs}}
 	unloaded := snap.Baselines[0]
 	unloaded.ID = "eco-idle"
@@ -475,6 +496,7 @@ func TestSchedulerRoutingKeepsInputPathsSeparate(t *testing.T) {
 	wide.Profile.Condition.Tensor.Tensors = path.Tensors
 	wide.Profile.Batches = append([]BatchProfile(nil), wide.Profile.Batches...)
 	wide.Profile.Batches[0].DurationNanos = []float64{float64(30 * time.Millisecond)}
+	wide = schedulerMeasuredInstance(wide, d, 0)
 	snap.Instances = append(snap.Instances, wide)
 	snap.RoutingCredits = map[string]map[int]map[string]int64{d.UID: {0: {"i1": 100, schedulerTestWideInput: -100}, 1: {"i1": 100, schedulerTestWideInput: -100}}}
 	snap.Outstanding = []SchedulerRequest{{ID: "narrow", QueueOrder: 0, Definition: d, InputPath: 0, ReceivedAt: snap.At, Phase: "pending"}, {ID: schedulerTestWideInput, QueueOrder: 1, Definition: d, InputPath: 1, ReceivedAt: snap.At, Phase: "pending"}}
@@ -684,6 +706,13 @@ func TestSchedulerUnobservedCompletionOverheadIsNotSLOQualified(t *testing.T) {
 		t.Fatalf("bootstrap completion overhead must not qualify SLO evaluation: %+v", decision)
 	}
 	schedulerRequireReason(t, decision.Keep.Reasons, "CompletionOverheadUnobserved:i1")
+	// A scalar flag without a boundary-validated typed fact is still unobserved.
+	measurement := snap.Instances[0].CompletionMeasurement
+	snap.Instances[0].CompletionMeasurement = nil
+	snap.Instances[0].CompletionObserved = true
+	decision = EvaluateScheduler(s, snap)
+	schedulerRequireReason(t, decision.Keep.Reasons, "CompletionOverheadUnobserved:i1")
+	snap.Instances[0].CompletionMeasurement = measurement
 	snap.Instances[0].CompletionObserved = true
 	decision = EvaluateScheduler(s, snap)
 	for _, r := range decision.Keep.Reasons {
@@ -693,5 +722,48 @@ func TestSchedulerUnobservedCompletionOverheadIsNotSLOQualified(t *testing.T) {
 	}
 	if decision.Keep.ExpectedJoules == nil {
 		t.Fatalf("observed instance must be evaluable: %+v", decision.Keep.Reasons)
+	}
+}
+
+func TestSchedulerCompletionProofMustRemainBoundToConsumedQuantityAndCondition(t *testing.T) {
+	for _, condition := range []string{"quantity", "node", "profile", "runtime", "CPU", "threads", "GPU", "artifact", "input"} {
+		t.Run(condition, func(t *testing.T) {
+			settings, snapshot := schedulerFixture()
+			settings.Controls.Enabled = false
+			snapshot.Options = nil
+			instance := &snapshot.Instances[0]
+			profile := *instance.Profile
+			instance.Profile = &profile
+			switch condition {
+			case "quantity":
+				instance.CompletionOverhead += time.Nanosecond
+			case "node":
+				instance.Node.UID = "replacement-node"
+			case "profile":
+				profile.ID = "replacement-profile"
+			case "runtime":
+				profile.Condition.Backend = "unmeasured-runtime"
+			case "CPU":
+				instance.Allocation.CPUs = []int{1}
+			case "threads":
+				instance.Allocation.Threads = 2
+			case "GPU":
+				instance.Allocation.GPUUUID = "unmeasured-GPU"
+			case "artifact":
+				profile.Condition.Artifact.Name = "unmeasured-artifact"
+			case "input":
+				profile.Condition.Tensor.Tensors = []modelcompat.InputTensor{{Name: "x", Datatype: "FP32", SampleShape: []int32{2}}}
+			}
+			if !instance.CompletionObserved || !instance.CompletionMeasurement.Valid() {
+				t.Fatal("mutation regression must retain the original proof and scalar flag")
+			}
+			decision := EvaluateScheduler(settings, snapshot)
+			if condition != "node" {
+				schedulerRequireReason(t, decision.Keep.Reasons, "CompletionOverheadUnobserved:i1")
+			}
+			if decision.Keep.Status != schedulerStatusPending || decision.Keep.ExpectedJoules != nil || decision.Target != nil {
+				t.Fatalf("mutated consumed measurement condition must remain Pending: %+v", decision.Keep)
+			}
+		})
 	}
 }

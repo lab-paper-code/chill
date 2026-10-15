@@ -337,4 +337,16 @@ func TestObservedOverheadReusesRemovedExecutorForCompatibleSLO(t *testing.T) {
 			}
 		})
 	}
+	// Selected immutable facts and current live facts use the same conservative
+	// matcher/reducer output; removing the selector cannot retain the old flag.
+	calibration := overheads[physical.State.ID]
+	calibration.Completion = 30 * time.Millisecond
+	observeOverhead(&target, map[string]serving.ObservedOverhead{"calibration/old-executor": calibration, physical.State.ID: overheads[physical.State.ID]})
+	if !target.CompletionMeasurement.Valid() || target.CompletionOverhead != 30*time.Millisecond {
+		t.Fatalf("live and selected calibration must combine by maximum: %+v", target)
+	}
+	observeOverhead(&target, nil)
+	if target.CompletionObserved || target.CompletionMeasurement != nil {
+		t.Fatalf("removed calibration retained usable facts: %+v", target)
+	}
 }

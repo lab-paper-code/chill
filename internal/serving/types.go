@@ -14,19 +14,20 @@ import (
 )
 
 const (
-	phaseAssigned         = "assigned"
-	phaseRunning          = "running"
-	phaseFinished         = "finished"
-	phaseReceived         = "received"
-	phaseAccepted         = "accepted"
-	phaseQueued           = "queued"
-	phaseDeferred         = "deferred"
-	phasePending          = "pending"
-	phaseReturning        = "returning"
-	eventResponseFinished = "response_finished"
-	outcomeCompleted      = "completed"
-	outcomeIncomplete     = "incomplete"
-	reasonShuttingDown    = "ShuttingDown"
+	phaseAssigned                = "assigned"
+	phaseRunning                 = "running"
+	phaseFinished                = "finished"
+	phaseReceived                = "received"
+	phaseAccepted                = "accepted"
+	phaseQueued                  = "queued"
+	phaseDeferred                = "deferred"
+	phasePending                 = "pending"
+	phaseReturning               = "returning"
+	eventResponseFinished        = "response_finished"
+	eventBackendExchangeFinished = "backend_exchange_finished"
+	outcomeCompleted             = "completed"
+	outcomeIncomplete            = "incomplete"
+	reasonShuttingDown           = "ShuttingDown"
 )
 
 // Error carries a consumer-visible failure without depending on its transport.

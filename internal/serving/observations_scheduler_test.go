@@ -73,6 +73,7 @@ func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
 }
 
 func TestObservedOverheadJoinsReceiptResidualAndResponseByInstance(t *testing.T) {
+	settings, snapshot := schedulerFixture()
 	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
@@ -88,13 +89,14 @@ func TestObservedOverheadJoinsReceiptResidualAndResponseByInstance(t *testing.T)
 	// exchangeAt starts at receipt; client starts only at the native HTTP call.
 	record := func(id, instance, workload string, receivedAt time.Time, outcome string, client, native, exchangeAt, responseAt time.Duration) {
 		t.Helper()
-		d := &Definition{UID: workload, Generation: 1, Model: Model{UID: "model", Generation: 1, Paths: []ModelPath{{Name: "native", Artifact: "artifact"}}}}
-		if err := j.DefinitionRecord(d); err != nil {
+		d := *snapshot.Workloads[0]
+		d.UID = workload
+		if err := j.DefinitionRecord(&d); err != nil {
 			t.Fatal(err)
 		}
 		progress := &BackendProgress{Phase: "finished", ProfileID: "profile", ExecutionComplete: true, NativeElapsedMS: float64(native) / float64(ms)}
 		for _, e := range []RequestEvent{
-			{RequestID: id, Kind: "backend_exchange_finished", Outcome: outcome, At: receivedAt, ReceivedAt: receivedAt, WorkloadUID: workload, Definition: d.Identity(), ElapsedNanos: int64(exchangeAt), ClientSpanNanos: int64(client), Assignment: &Assignment{Instance: instance, Node: NodeReference{Name: "node", UID: "node-uid"}, Profile: "profile", Artifact: "artifact", ExecutionPath: "native"}, NativeProgress: progress},
+			{RequestID: id, Kind: eventBackendExchangeFinished, Outcome: outcome, At: receivedAt, ReceivedAt: receivedAt, WorkloadUID: workload, Definition: d.Identity(), ElapsedNanos: int64(exchangeAt), ClientSpanNanos: int64(client), Assignment: &Assignment{Instance: instance, Node: snapshot.Instances[0].Node, Profile: snapshot.Instances[0].Profile.ID, Artifact: snapshot.Instances[0].Profile.Condition.Artifact.Name, ExecutionPath: snapshot.Instances[0].Profile.Condition.Artifact.ExecutionPath}, NativeProgress: progress},
 			{RequestID: id, Kind: "response_finished", Outcome: outcome, At: receivedAt, ReceivedAt: receivedAt, ElapsedNanos: int64(responseAt)},
 		} {
 			if err := j.RequestEvent(e); err != nil {
@@ -116,7 +118,7 @@ func TestObservedOverheadJoinsReceiptResidualAndResponseByInstance(t *testing.T)
 		t.Fatalf("unmeasured instance must stay absent, not zero: %+v", got)
 	}
 	// a: (20-6)+(23-20)=17ms, b: (30-5)+(31-30)=26ms.
-	if o := got["i1"]; o.Completion != 26*ms || o.Requests != 2 || len(o.Definitions) != 2 || o.Node.UID != "node-uid" || o.Profile != "profile" || o.Artifact != "artifact" || o.ExecutionPath != "native" || o.Source == "" {
+	if o := got["i1"]; o.Completion != 26*ms || o.Requests != 2 || len(o.Definitions) != 2 || o.Node != snapshot.Instances[0].Node || o.Profile != snapshot.Instances[0].Profile.ID || o.Artifact != snapshot.Instances[0].Profile.Condition.Artifact.Name || o.ExecutionPath != snapshot.Instances[0].Profile.Condition.Artifact.ExecutionPath || o.Source == "" {
 		t.Fatalf("overhead must be the observed maximum of completed in-window requests for the instance: %+v", o)
 	}
 	adjacent, err := j.ObservedOverhead(to, to.Add(time.Second))
@@ -134,10 +136,11 @@ func TestObservedOverheadJoinsReceiptResidualAndResponseByInstance(t *testing.T)
 	if err != nil || delayed["i1"].Completion != 1207*ms {
 		t.Fatalf("receipt-to-dispatch delay was omitted: %+v %v", delayed, err)
 	}
-	settings, snapshot := schedulerFixture()
 	settings.Controls.Enabled = false
 	snapshot.Workloads[0].SLO.TargetLatency = time.Second
-	snapshot.Instances[0].CompletionOverhead = delayed["i1"].Completion
+	measurement := delayed["i1"]
+	snapshot.Instances[0].CompletionOverhead = measurement.Completion
+	snapshot.Instances[0].CompletionMeasurement = &measurement
 	snapshot.Arrivals = []SchedulerArrival{{At: snapshot.At.Add(-settings.ObservationWindow), Definition: snapshot.Workloads[0], Compute: true, Accepted: true}}
 	decision := EvaluateScheduler(settings, snapshot)
 	estimate := schedulerRequireEstimate(t, decision.Keep, snapshot.Workloads[0].UID)
@@ -164,7 +167,7 @@ func TestObservedOverheadRequiresFrozenExecutionIdentity(t *testing.T) {
 	for _, name := range []string{"definition missing", "node missing", "profile mismatch", "input path mismatch", "conflicting executor"} {
 		a := Assignment{Instance: name, Node: NodeReference{Name: "node", UID: "node-uid"}, Profile: "profile", Artifact: "artifact", ExecutionPath: "native"}
 		p := BackendProgress{Phase: "finished", ProfileID: a.Profile, ExecutionComplete: true, NativeElapsedMS: 1}
-		e := RequestEvent{RequestID: name, WorkloadUID: d.UID, Definition: d.Identity(), Kind: "backend_exchange_finished", Outcome: "completed", At: at, ReceivedAt: at, Assignment: &a, NativeProgress: &p, ClientSpanNanos: int64(2 * time.Millisecond), ElapsedNanos: int64(3 * time.Millisecond)}
+		e := RequestEvent{RequestID: name, WorkloadUID: d.UID, Definition: d.Identity(), Kind: eventBackendExchangeFinished, Outcome: "completed", At: at, ReceivedAt: at, Assignment: &a, NativeProgress: &p, ClientSpanNanos: int64(2 * time.Millisecond), ElapsedNanos: int64(3 * time.Millisecond)}
 		switch name {
 		case "definition missing":
 			e.Definition = "not-retained"

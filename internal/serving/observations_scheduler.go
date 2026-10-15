@@ -223,21 +223,58 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 // not a future bound. The frozen assignment and definitions identify the measured
 // execution condition independently of the physical instance's continued presence.
 type ObservedOverhead struct {
-	Completion    time.Duration
-	Node          NodeReference
-	Profile       string
-	Artifact      string
-	ExecutionPath string
-	Definitions   map[string]*Definition
-	Requests      int
-	Source        string
+	Completion    time.Duration                  `json:"completionNanos"`
+	Node          NodeReference                  `json:"node"`
+	Profile       string                         `json:"profile"`
+	Artifact      string                         `json:"artifact"`
+	ExecutionPath string                         `json:"executionPath"`
+	Definitions   map[string]*Definition         `json:"definitions"`
+	Requests      int                            `json:"requests"`
+	TrialIDs      []string                       `json:"trialIDs"`
+	Source        string                         `json:"source"`
+	References    []evidencestore.ObjectIdentity `json:"references,omitempty"`
+	From          time.Time                      `json:"from"`
+	To            time.Time                      `json:"to"`
+	validated     bool
 }
+
+// Valid reports boundary construction, never a caller-supplied scalar flag.
+func (o *ObservedOverhead) Valid() bool { return o != nil && o.validated }
 
 type overheadFact struct {
 	assignment                   *Assignment
 	workload, definition         string
 	exchange, response, residual int64
 	haveExchange, haveResponse   bool
+}
+
+func (fact *overheadFact) add(event *RequestEvent) {
+	switch event.Kind {
+	case eventBackendExchangeFinished:
+		p, a := event.NativeProgress, event.Assignment
+		if a == nil || p == nil || p.ProfileID != a.Profile || p.Phase != phaseFinished || !p.ExecutionComplete || event.ClientSpanNanos <= 0 || event.ClientSpanNanos > event.ElapsedNanos || !schedulerFinite(p.NativeElapsedMS) || p.NativeElapsedMS < 0 || p.NativeElapsedMS*float64(time.Millisecond) > float64(event.ClientSpanNanos) {
+			return
+		}
+		fact.assignment = a
+		fact.workload, fact.definition = event.WorkloadUID, event.Definition
+		fact.exchange = event.ElapsedNanos
+		fact.residual = event.ElapsedNanos - int64(p.NativeElapsedMS*float64(time.Millisecond))
+		fact.haveExchange = true
+	case eventResponseFinished:
+		fact.response = event.ElapsedNanos
+		fact.haveResponse = true
+	}
+}
+
+func overheadProjection(facts map[string]*overheadFact, definitions map[string]*Definition, from, to time.Time, references []evidencestore.ObjectIdentity) map[string]ObservedOverhead {
+	result := completedOverheads(facts, definitions)
+	source := fmt.Sprintf("serving-observed window=%s/%s completion overhead=max(receipt to exchange finish - native elapsed + response delivery - exchange finish) applied once at completion; observed maximum, not a future guarantee; one-way delivery not observed", from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano))
+	for id, o := range result {
+		o.Source = fmt.Sprintf("%s requests=%d", source, o.Requests)
+		o.From, o.To, o.References, o.validated = from, to, references, true
+		result[id] = o
+	}
+	return result
 }
 
 func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverhead, error) {
@@ -266,22 +303,7 @@ func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverh
 			fact = &overheadFact{}
 			facts[event.RequestID] = fact
 		}
-		switch event.Kind {
-		case "backend_exchange_finished":
-			p := event.NativeProgress
-			a := event.Assignment
-			if a == nil || p == nil || p.ProfileID != a.Profile || p.Phase != phaseFinished || !p.ExecutionComplete || event.ClientSpanNanos <= 0 || event.ClientSpanNanos > event.ElapsedNanos || !schedulerFinite(p.NativeElapsedMS) || p.NativeElapsedMS < 0 || p.NativeElapsedMS*float64(time.Millisecond) > float64(event.ClientSpanNanos) {
-				return
-			}
-			fact.assignment = a
-			fact.workload, fact.definition = event.WorkloadUID, event.Definition
-			fact.exchange = event.ElapsedNanos
-			fact.residual = event.ElapsedNanos - int64(p.NativeElapsedMS*float64(time.Millisecond))
-			fact.haveExchange = true
-		case eventResponseFinished:
-			fact.response = event.ElapsedNanos
-			fact.haveResponse = true
-		}
+		fact.add(event)
 	}); err != nil {
 		j.lastError = err
 		return nil, err
@@ -292,13 +314,7 @@ func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverh
 			return nil, failure("IncompleteObservation", "overhead window overlaps incomplete observation window %s", window.ID)
 		}
 	}
-	result := completedOverheads(facts, definitions)
-	source := fmt.Sprintf("serving-observed window=%s/%s completion overhead=max(receipt to exchange finish - native elapsed + response delivery - exchange finish) applied once at completion; one-way delivery not observed", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
-	for id, o := range result {
-		o.Source = fmt.Sprintf("%s requests=%d", source, o.Requests)
-		result[id] = o
-	}
-	return result, nil
+	return overheadProjection(facts, definitions, from, to, nil), nil
 }
 
 // completedOverheads joins completed spans with their frozen model/input identity
@@ -306,7 +322,7 @@ func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverh
 func completedOverheads(facts map[string]*overheadFact, definitions map[string]*Definition) map[string]ObservedOverhead {
 	result := map[string]ObservedOverhead{}
 	invalid := map[string]bool{}
-	for _, fact := range facts {
+	for requestID, fact := range facts {
 		returned := fact.response - fact.exchange
 		a, d := fact.assignment, definitions[fact.definition]
 		if !fact.haveExchange || !fact.haveResponse || a == nil || a.Instance == "" || a.Node.Name == "" || a.Node.UID == "" || a.Profile == "" || a.Artifact == "" || a.ExecutionPath == "" || fact.workload == "" || d == nil || d.UID != fact.workload || fact.residual < 0 || returned < 0 || invalid[a.Instance] {
@@ -327,7 +343,12 @@ func completedOverheads(facts map[string]*overheadFact, definitions map[string]*
 		o.Completion = max(o.Completion, time.Duration(fact.residual+returned))
 		o.Definitions[fact.definition] = d
 		o.Requests++
+		o.TrialIDs = append(o.TrialIDs, requestID)
 		result[a.Instance] = o
+	}
+	for id, o := range result {
+		slices.Sort(o.TrialIDs)
+		result[id] = o
 	}
 	return result
 }

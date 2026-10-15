@@ -18,7 +18,7 @@ func TestReplayCompletionSubtractsOnlyActualConsumedSender(t *testing.T) {
 			snap.Arrivals = nil
 			d := snap.Workloads[0]
 			d.SLO.TargetLatency = 607 * time.Millisecond
-			snap.Instances[0].CompletionOverhead = 407 * time.Millisecond
+			snap.Instances[0] = schedulerMeasuredInstance(snap.Instances[0], d, 407*time.Millisecond)
 			snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
 			snap.Instances[0].Profile.Batches[0].DurationNanos = []float64{float64(100 * time.Millisecond)}
 			r := SchedulerRequest{ID: "consumed", Definition: d, ReceivedAt: snap.At.Add(-time.Duration(senderMS) * time.Millisecond), Elapsed: time.Duration(senderMS) * time.Millisecond, Phase: phase, Instance: "i1", BatchID: "actual", NativeSenderElapsedMS: &senderMS}
@@ -164,7 +164,7 @@ func TestSchedulerReplayKeepOverdueUsesMinimumServiceCost(t *testing.T) {
 func TestSchedulerReplayObservedDropReturningNeverBecomesSuccess(t *testing.T) {
 	s, snap := schedulerFixture()
 	d := snap.Workloads[0]
-	snap.Instances[0].CompletionOverhead = 5 * time.Millisecond
+	snap.Instances[0] = schedulerMeasuredInstance(snap.Instances[0], d, 5*time.Millisecond)
 	life := time.Millisecond
 	residual := time.Duration(0)
 	snap.Outstanding = []SchedulerRequest{{ID: "drop-returning", Definition: d, ReceivedAt: snap.At, Phase: phaseReturning, Instance: "i1", NativeOutcome: "deadline_drop", RemainingLifetime: &life, ExchangeResidual: &residual}}
@@ -223,7 +223,7 @@ func TestSchedulerReplayOverheadUpdatePreservesCapturedSender(t *testing.T) {
 	instance := state.instances[0]
 	before := state.nativeRequestState(instance, state.requests[0])
 	target := snap.Instances[0]
-	target.CompletionOverhead = 50 * time.Millisecond
+	target = schedulerMeasuredInstance(target, d, 50*time.Millisecond)
 	state.goal.Instances = []SchedulerInstance{target}
 	if !state.applyRoute() {
 		t.Fatalf("permitted envelope update failed: %+v", state.out)

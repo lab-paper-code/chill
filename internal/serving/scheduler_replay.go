@@ -257,6 +257,11 @@ func schedulerIneligibleStatus(reasons []string) string {
 		}
 	}
 	for _, r := range reasons {
+		if strings.HasPrefix(r, "CompletionOverheadUnobserved:") {
+			return schedulerStatusPending
+		}
+	}
+	for _, r := range reasons {
 		if strings.HasPrefix(r, "TemporaryReadinessResourceInfeasible") || strings.HasPrefix(r, "NoReadyCapacityOrTransitionPrerequisite") {
 			return "InfeasibleTransition"
 		}
@@ -413,7 +418,7 @@ func schedulerValidateInstance(settings SchedulerSettings, n SchedulerNode, i Sc
 	if i.EnvelopeSource == "" || i.CompletionOverhead < 0 || i.Capacity < 1 || i.Weight < 0 || i.MaxWait < 0 {
 		reasons = appendUnique(reasons, "MissingQueueOrTransportEvidence:"+i.ID)
 	}
-	if !i.CompletionObserved {
+	if !i.CompletionObserved || i.CompletionMeasurement == nil || i.CompletionOverhead != i.CompletionMeasurement.Completion || !i.CompletionMeasurement.Matches(i) {
 		reasons = appendUnique(reasons, "CompletionOverheadUnobserved:"+i.ID)
 	}
 	if len(i.Profile.Batches) == 0 || i.Profile.ID == "" || len(i.Profile.Evidence) == 0 {
@@ -512,7 +517,10 @@ func schedulerValidateNodeBudget(n SchedulerNode, allocations []SchedulerAllocat
 }
 
 func schedulerPolicy(i SchedulerInstance) firstfloor.Policy {
-	p := firstfloor.Policy{ProfileID: i.Profile.ID, MaxBatchSize: i.MaxBatch, CompletionOverheadMS: float64(i.CompletionOverhead) / 1e6, EnvelopeSource: i.EnvelopeSource, MaxBatchWaitMS: float64(i.MaxWait) / 1e6}
+	p := firstfloor.Policy{
+		ProfileID: i.Profile.ID, MaxBatchSize: i.MaxBatch, CompletionOverheadMS: float64(i.CompletionOverhead) / 1e6,
+		EnvelopeSource: i.CompletionPolicySource(), MaxBatchWaitMS: float64(i.MaxWait) / 1e6,
+	}
 	if i.Profile.Condition.Firstfloor != nil {
 		p.DeadlinePolicy = i.Profile.Condition.Firstfloor.DeadlinePolicy
 	}
@@ -967,7 +975,7 @@ func (s *schedulerReplayState) applyRoute() bool {
 				i.policy.MaxBatchSize = v.MaxBatch
 				i.policy.MaxBatchWaitMS = float64(v.MaxWait) / 1e6
 				i.policy.CompletionOverheadMS = float64(v.CompletionOverhead) / 1e6
-				i.policy.EnvelopeSource = v.EnvelopeSource
+				i.policy.EnvelopeSource = v.CompletionPolicySource()
 				i.stopped = false
 			}
 		}

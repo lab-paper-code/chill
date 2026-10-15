@@ -67,6 +67,30 @@ name/datatype/shape/byte count와 outputs를 담아 여러 numeric/bool tensor�
 최근 관측은 같은 노드·프로파일·모델/입력 실행 조건의 호환 정의에 재사용하며,
 측정 인스턴스의 제거나 SLO가 다른 Workload UID만으로 근거를 버리지 않는다.
 해당 조건의 관측이 없으면 후보 평가는 Pending이고 실제 Serving 측정이 선행해야 한다.
+선택한 preparation의 `completionCalibration`은 실제 측정 후 닫혀 발행된 Journal
+raw window의 고정 `from/to`와 metadata/definitions/requests object identity를 명시한다.
+owner가 기존 evidence bound로 immutable bytes를 한 번 읽어 complete window, frozen
+definition/assignment와 성공한 native exchange/response span을 검증하고 같은 reducer로
+관측 최댓값을 만든다. 이 측정 사실의 수명은 최근 arrival 60s 구간과 별개이며 arrival
+구간을 늘리지 않는다. 현재 live 관측과 선택한 calibration 중 호환 조건의 더 큰 값을
+사용한다. selector를 제거하면 다음 config refresh에서 calibration은 사라진다.
+`completionMeasurement`는 고정 구간·성공 request 수·raw `references`·`source`를 보존하고
+instance/option/candidate에 연결한다. 설정의 `completionObserved=true`만으로는 근거가
+되지 않으며 누락·미완료·다른 profile/Node/runtime/CPU/GPU 조건은 Pending이다.
+consumer는 raw 구조를 다시 검증하지 않고 typed fact의 관측값과 사용 scalar가 같으며
+Node/profile/model/input/runtime/CPU/GPU 실행 조건이 여전히 matching인지 연결한다.
+proof를 가진 instance라도 이 값이나 조건만 변경하면 Pending으로 돌아간다.
+unbound 완료 근거는 자원/전환 불가 사유도 함께 보존하되 후보 상태를 Pending으로 둔다.
+이미 관측한 action 실패의 ExecutionError 우선순위는 유지한다.
+native policy의 `envelopeSource`는 기존 256-byte 제한 안에서 관측량·고정 구간·trial 수와
+Serving `completionMeasurement` 출처 연결만 전달한다. preparation, route 적용과 replay가
+같은 연결 표현을 쓰며 snapshot/journal의 전체 `Source`와 raw references를 자르거나
+바꾸지 않는다. 긴 provenance 때문에 SDK가 policy를 거절하는 문제를 상한 확대로 숨기지 않는다.
+request window마다 definition을 다시 쓰지 않으므로 과거 definition window도 같은
+selector의 `windows`에 포함할 수 있다. 모든 선택 stream의 frozen identity를 합친 뒤
+`receivedAt ∈ [from,to)`의 성공 trial만 줄이며 `trialIDs`로 원래 request를 찾는다.
+같은 raw cohort를 여러 preparation이 선택하면 owner는 그 refresh 안에서 한 번만 읽고
+조건별 typed fact를 연결한다. persistent cache나 현재 arrival 구간 변경은 없다.
 도착 시각 예측은 owner 분배 시점이라는 가정으로 명시하며 측정값으로 포장하지 않는다.
 인증·업로드·decode·accept·dispatch를 포함한 모든 non-native receipt→response 시간을 포함한다.
 queued/running의 예상 완료 및 worker의 SLO slack/수명 예약에는
@@ -301,10 +325,37 @@ HTTPS owner는 `--serving-scheduler-configmap=<name>`과
 | `settings` | nanosecond duration의 observation/control/horizon, search/replay/resource bounds·seed·제어 활성 상태 |
 | `cpuInventory`, `gpuInventory`, `reserved` | Node별 실제 CPU IDs·물리 GPU UUIDs와 비서빙 전용 예약. quota는 별도 수량 예산 |
 | `preparations` | catalog profile ID별 `PrepareSpec`. 검증된 profile과 immutable service 분포 bundle은 owner가 연결 |
+| `preparations[profileID].completionCalibration` | 선택 OPTIONAL: 고정 `from/to`, `windows[].metadata/definitions/requests`의 기존 `ObjectIdentity`; raw 계약·파일은 재작성하지 않음 |
 | `costReferences`, `powerCostSources` | 실제 원자 동작 raw object와 Complete directed power-mode 측정의 출처 |
 | `meters` | 정확한 Node UID·exclusive wall scope·metric series에 연결한 meter 선언 |
 | `powerRequests` | Node UID/power mode별 기존 sole actuator의 NodeActuation 요청 |
 | `powerObservation` | 기존 sampler의 `Interval/Duration/RequestTimeout/MaxEvents`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap` |
+
+Calibration selector의 정확한 preparation payload 형태는 다음과 같다. 값은 실제
+측정과 발행 object identity에서 채우며 Serving lifecycle은 selector를 자동 작성하지 않는다.
+campaign은 성공한 실제 측정과 closed/published window 확인 후 selector 단계를 출력한다.
+
+```json
+{
+  "completionCalibration": {
+    "from": "<fixed receipt cohort start RFC3339Nano>",
+    "to": "<fixed receipt cohort end RFC3339Nano>",
+    "windows": [{
+      "metadata": {"store": "<store>", "key": "serving/<windowID>/metadata.json", "size": 123},
+      "definitions": {"store": "<store>", "key": "serving/<windowID>/definitions.jsonl", "size": 456},
+      "requests": {"store": "<store>", "key": "serving/<windowID>/requests.jsonl", "size": 789}
+    }]
+  }
+}
+```
+
+`size` 예시는 실제값이 아니다. 기존 `Journal.Health().windows[].objects`는 Go 내부
+조회이며 HTTP `GET /readyz`는 `{ready}`만 노출한다. 발행한 object list는 기존 owner
+PVC의 `<observationDirectory>/<windowID>/metadata.json`에 보존된다. immutable S3
+metadata는 object list를 붙이기 **전**에 업로드되므로 `published=false`/objects 없음이
+정상이다. 따라서 동일 window의 세 raw role을 위 selector로 명시한다. owner의 기존
+configured evidence store `Reader.Open(ctx, ObjectIdentity)`가 `serving/<windowID>/...`
+bytes를 읽는다. 새 publisher/reader API, digest, schema version 또는 TTL은 추가하지 않는다.
 
 CPU 측정의 `cpuAffinity`와 campaign의 `cpuQuota`는 선택한 physical mask와 threads를
 같은 firstfloor runner에서 실측하는 입력이다. frozen `affinityCPUs`와 실제 허용

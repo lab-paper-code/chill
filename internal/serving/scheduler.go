@@ -77,11 +77,12 @@ type SchedulerInstance struct {
 	// observation for the same measured execution condition and compatible
 	// definitions. A configured bootstrap value keeps the instance servable but
 	// is not SLO evidence, whatever its value.
-	CompletionObserved bool                       `json:"completionObserved"`
-	ObservedAt         time.Time                  `json:"observedAt"`
-	ArrivalAges        map[string][]time.Duration `json:"arrivalAgesNanos"`
-	IdleMeter          string                     `json:"idleMeter"`
-	IdleScope          string                     `json:"idleScope"`
+	CompletionObserved    bool                       `json:"completionObserved"`
+	CompletionMeasurement *ObservedOverhead          `json:"completionMeasurement,omitempty"`
+	ObservedAt            time.Time                  `json:"observedAt"`
+	ArrivalAges           map[string][]time.Duration `json:"arrivalAgesNanos"`
+	IdleMeter             string                     `json:"idleMeter"`
+	IdleScope             string                     `json:"idleScope"`
 }
 
 // Options are evidence-bound placements supplied by the catalog, not invented

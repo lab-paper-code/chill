@@ -13,7 +13,7 @@ import (
 func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	settings.Controls.Enabled = false
-	snapshot.Instances[0].CompletionOverhead = 100 * time.Millisecond
+	snapshot.Instances[0] = schedulerMeasuredInstance(snapshot.Instances[0], snapshot.Workloads[0], 100*time.Millisecond)
 	d := snapshot.Workloads[0]
 	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {

@@ -188,8 +188,9 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 			if !used[old.ID] && old.Node == c.Instances[j].Node && old.Pool == c.Instances[j].Pool && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
 				c.Instances[j].ID = old.ID
 				c.Instances[j].Ready = old.Ready
-				if old.CompletionObserved && !slices.ContainsFunc(c.Instances[j].WorkloadUIDs, func(uid string) bool { return !schedulerHas(old.WorkloadUIDs, uid) }) {
+				if old.CompletionObserved && old.CompletionMeasurement.Valid() && !slices.ContainsFunc(c.Instances[j].WorkloadUIDs, func(uid string) bool { return !schedulerHas(old.WorkloadUIDs, uid) }) {
 					c.Instances[j].CompletionOverhead, c.Instances[j].EnvelopeSource, c.Instances[j].CompletionObserved = old.CompletionOverhead, old.EnvelopeSource, true
+					c.Instances[j].CompletionMeasurement = old.CompletionMeasurement
 				}
 				used[old.ID] = true
 				break

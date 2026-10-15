@@ -54,12 +54,13 @@ const (
 
 // PrepareSpec freezes one measured execution and immutable profile delivery.
 type PrepareSpec struct {
-	Name        string                       `json:"name"`
-	Instance    serving.SchedulerInstance    `json:"instance"`
-	Bundle      evidencestore.ObjectIdentity `json:"bundle"`
-	Store       storekube.Binding            `json:"store"`
-	Config      native.Config                `json:"config"`
-	MemoryBytes uint64                       `json:"memoryBytes"`
+	Name                  string                         `json:"name"`
+	Instance              serving.SchedulerInstance      `json:"instance"`
+	Bundle                evidencestore.ObjectIdentity   `json:"bundle"`
+	Store                 storekube.Binding              `json:"store"`
+	Config                native.Config                  `json:"config"`
+	MemoryBytes           uint64                         `json:"memoryBytes"`
+	CompletionCalibration *serving.CompletionCalibration `json:"completionCalibration,omitempty"`
 }
 type Operation struct {
 	ID        string                      `json:"id"`
@@ -726,7 +727,8 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		policy := native.Policy{DecisionID: target.ID, ProfileID: instance.Profile.ID,
 			DeadlinePolicy: native.EffectiveDeadlinePolicy(instance.Profile.Condition.Firstfloor.DeadlinePolicy),
 			MaxBatchSize:   instance.MaxBatch, MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond),
-			CompletionOverheadMS: float64(instance.CompletionOverhead) / float64(time.Millisecond), EnvelopeSource: instance.EnvelopeSource}
+			CompletionOverheadMS: float64(instance.CompletionOverhead) / float64(time.Millisecond),
+			EnvelopeSource:       instance.CompletionPolicySource()}
 		if err := o.ApplyPolicy(ctx, instance.ID, policy); err != nil {
 			return err
 		}

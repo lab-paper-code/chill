@@ -405,7 +405,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 			err = failure("ObservationUnavailable", "cannot persist native completion")
 		}
 	}
-	if eventErr := r.eventAt(c, "backend_exchange_finished", outcome, code, finishedAt); eventErr != nil {
+	if eventErr := r.eventAt(c, eventBackendExchangeFinished, outcome, code, finishedAt); eventErr != nil {
 		err = failure("ObservationUnavailable", "cannot persist backend exchange outcome")
 	}
 	if c.reply != nil {

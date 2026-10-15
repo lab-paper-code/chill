@@ -24,17 +24,19 @@ import (
 )
 
 type SchedulerControllerConfig struct {
-	Settings      serving.SchedulerSettings
-	CPUInventory  map[string][]int
-	GPUInventory  map[string][]string
-	Reserved      map[string]serving.SchedulerAllocation
-	Preparations  map[string]PrepareSpec
-	Costs         []serving.OperationCost
-	Baselines     []serving.NodeBaseline
-	Meters        []MeterDeclaration
-	PowerRequests map[string]*edge.NodeActuation
-	OnDecision    func(serving.SchedulerDecision) error
-	OnAction      func(OperationResult) error
+	Settings               serving.SchedulerSettings
+	CPUInventory           map[string][]int
+	GPUInventory           map[string][]string
+	Reserved               map[string]serving.SchedulerAllocation
+	Preparations           map[string]PrepareSpec
+	Costs                  []serving.OperationCost
+	Baselines              []serving.NodeBaseline
+	Meters                 []MeterDeclaration
+	PowerRequests          map[string]*edge.NodeActuation
+	CompletionCalibrations map[string]map[string]serving.ObservedOverhead
+	CalibrationErrors      map[string]string
+	OnDecision             func(serving.SchedulerDecision) error
+	OnAction               func(OperationResult) error
 }
 type SchedulerControllerState struct {
 	Snapshot serving.SchedulerSnapshot `json:"snapshot"`
@@ -363,13 +365,30 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			s.Options = append(s.Options, serving.SchedulerOption{Instance: instance, CompatibleUIDs: compatible})
 		}
 	}
-	overheads, err := c.journal.ObservedOverhead(now.Add(-config.Settings.ObservationWindow), now)
-	if err != nil {
+	if err = c.captureCompletionOverhead(&s, physical, config); err != nil {
 		return s, err
+	}
+	return s, nil
+}
+
+func (c *SchedulerController) captureCompletionOverhead(
+	s *serving.SchedulerSnapshot, physical map[string]serving.InstanceState, config SchedulerControllerConfig,
+) error {
+	overheads, err := c.journal.ObservedOverhead(s.At.Add(-config.Settings.ObservationWindow), s.At)
+	if err != nil {
+		return err
+	}
+	for profile, facts := range config.CompletionCalibrations {
+		for id, fact := range facts {
+			overheads["calibration/"+profile+"/"+id] = fact
+		}
 	}
 	for index := range s.Instances {
 		instance := &s.Instances[index]
 		observeOverhead(instance, overheads)
+		if instance.Profile != nil && !instance.CompletionObserved && config.CalibrationErrors[instance.Profile.ID] != "" {
+			instance.EnvelopeSource = "completion calibration Pending: " + config.CalibrationErrors[instance.Profile.ID]
+		}
 		state := physical[instance.ID]
 		instance.ArrivalAges = map[string][]time.Duration{}
 		if state.Native != nil {
@@ -383,9 +402,13 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	}
 	for index := range s.Options {
 		observeOverhead(&s.Options[index].Instance, overheads)
+		if instance := &s.Options[index].Instance; instance.Profile != nil &&
+			!instance.CompletionObserved && config.CalibrationErrors[instance.Profile.ID] != "" {
+			instance.EnvelopeSource = "completion calibration Pending: " + config.CalibrationErrors[instance.Profile.ID]
+		}
 		bindProfileMeter(&s.Options[index].Instance, config.Meters)
 	}
-	return s, nil
+	return nil
 }
 func (c *SchedulerController) captureNodePower(ctx context.Context, s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n *core.Node, acts *edge.NodeActuationList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
 	var latest *edge.NodeActuation
@@ -592,7 +615,8 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 				template.Config.Policy = native.Policy{ProfileID: i.Profile.ID, DecisionID: target.ID,
 					DeadlinePolicy: native.EffectiveDeadlinePolicy(i.Profile.Condition.Firstfloor.DeadlinePolicy),
 					MaxBatchSize:   i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / float64(time.Millisecond),
-					CompletionOverheadMS: float64(i.CompletionOverhead) / float64(time.Millisecond), EnvelopeSource: i.EnvelopeSource}
+					CompletionOverheadMS: float64(i.CompletionOverhead) / float64(time.Millisecond),
+					EnvelopeSource:       i.CompletionPolicySource()}
 				operation.Prepare = &template
 				break
 			}
@@ -610,26 +634,10 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 // execution conditions. No matching measurement leaves the bootstrap unobserved.
 func observeOverhead(instance *serving.SchedulerInstance, overheads map[string]serving.ObservedOverhead) {
 	instance.CompletionObserved = false
-	if instance.Profile == nil || instance.Profile.RuntimeMetadata == nil {
-		return
-	}
-	runtime := instance.Profile.RuntimeMetadata
-	if !slices.Equal(instance.Allocation.CPUs, runtime.CPUAffinity) || instance.Allocation.Threads != runtime.IntraOpThreads || instance.Allocation.GPUUUID != runtime.GPUUUID {
-		return
-	}
+	instance.CompletionMeasurement = nil
 	observedID := ""
 	for id, o := range overheads {
-		if o.Requests <= 0 || o.Completion < 0 || o.Source == "" || o.Node != instance.Node || o.Profile != instance.Profile.ID || o.Artifact != instance.Profile.Condition.Artifact.Name || o.ExecutionPath != instance.Profile.Condition.Artifact.ExecutionPath {
-			continue
-		}
-		compatible := len(o.Definitions) > 0
-		for _, d := range o.Definitions {
-			if d == nil || !serving.MatchesProfile(d, instance.Profile) {
-				compatible = false
-				break
-			}
-		}
-		if !compatible {
+		if !o.Matches(*instance) {
 			continue
 		}
 		if instance.CompletionObserved && (o.Completion < instance.CompletionOverhead || o.Completion == instance.CompletionOverhead && id >= observedID) {
@@ -640,6 +648,7 @@ func observeOverhead(instance *serving.SchedulerInstance, overheads map[string]s
 			source = "inherited from " + id + ": " + source
 		}
 		instance.CompletionOverhead, instance.EnvelopeSource, instance.CompletionObserved = o.Completion, source, true
+		instance.CompletionMeasurement = &o
 		observedID = id
 	}
 }
