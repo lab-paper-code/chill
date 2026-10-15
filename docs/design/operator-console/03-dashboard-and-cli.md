@@ -42,3 +42,54 @@ CLI는 반복 작업과 자동화에 적합해야 한다. 두 표면은 같은 �
 
 각 결과는 값의 출처와 관측 시각을 식별할 수 있어야 한다. 노드 유지보수 제외처럼
 용량과 전환 가능성을 바꾸는 동작도 정책 변경과 같은 dry-run 경로를 거친다.
+
+## Measurement task CLI
+
+The existing `BatchEnergyOptimization` manifest remains the request contract:
+
+```sh
+kubectl chill measurements submit -f measurement.yaml -n chill-system
+kubectl chill measurements submit -f measurement.yaml -n chill-system --dry-run=server -o json
+kubectl chill measurements list -n chill-system
+kubectl chill measurements show TASK_NAME -n chill-system -o json
+kubectl chill profiles list -n chill-system -o json
+kubectl chill profiles adopt TASK_NAME -n chill-system -o json
+```
+
+Submit resolves the existing Console preflight before issuing one native Kubernetes
+create. A rejected or unavailable preflight does not create anything. Normal submit
+returns the accepted identity immediately; it does not wait for trials or retry the
+request. `--dry-run=server` still runs preflight, then asks Kubernetes to validate the
+create without persistence and reports `NOT_SUBMITTED`. It starts no measurement.
+List reads native measurement resources; show uses the existing result projection,
+including pending and failed tasks. `-o json` retains complete conditions, reasons,
+result details and evidence references; table output summarizes progress.
+
+Profile adoption is a separate, explicit scheduler-owner request. A pending or
+rejected selection prints the owner's actual reason and exits nonzero. A persisted
+selection is not a claim of physical readiness: `loaded`, the owner state, profile ID
+and config version remain separately observable through `profiles list -o json`.
+Owner commands use direct, verified HTTPS and caller bearer authentication:
+
+```sh
+kubectl chill profiles list -n chill-system \
+  --serving-url https://OWNER_HOST:8080 --serving-ca-file owner-ca.pem \
+  --token-file caller-token -o json
+```
+
+`--serving-url` defaults to `https://SERVICE.NAMESPACE.svc:8080`, with
+`--serving-service chill-serving-entrypoint`. Use a reachable HTTPS origin whose
+certificate matches its hostname (including for a local tunnel). The owner CA is
+independent of the API-server CA; without `--serving-ca-file`, system roots apply.
+`--token-file` overrides kubeconfig bearer credentials. API-server client certificates
+alone do not authenticate to the owner and produce a credential-required error.
+The CLI does not forward API-server client certificates, impersonation or auth plugins,
+does not disable TLS verification and does not follow redirects with credentials.
+An owner HTTP 401 is a command failure, not an empty successful list.
+
+Console reads/preflight continue using the existing Kubernetes Service proxy and
+default to `--console-service chill-console`. All commands honor `--kubeconfig`,
+`--context`, `-n` and `-o table|json`. With no namespace override, submit uses the
+manifest namespace then the kubeconfig namespace; other commands use the kubeconfig
+namespace.
+

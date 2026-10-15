@@ -33,6 +33,8 @@ type dependencies struct {
 	newRunsQuery      func(profilingRunsOptions) (profilingRunsQuery, error)
 	newRunShowQuery   func(profilingRunShowOptions) (evidencePassportQuery, error)
 	newPreflightQuery func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error)
+	newMeasurements   func(operationOptions) (measurementOperations, error)
+	newProfiles       func(operationOptions) (profileOperations, error)
 }
 
 func productionDependencies() dependencies {
@@ -42,6 +44,8 @@ func productionDependencies() dependencies {
 		newRunsQuery:      newProfilingRunsQuery,
 		newRunShowQuery:   newEvidencePassportQuery,
 		newPreflightQuery: newBatchEnergyOptimizationPreflightQuery,
+		newMeasurements:   newMeasurementOperations,
+		newProfiles:       newProfileOperations,
 	}
 }
 
@@ -61,6 +65,10 @@ func execute(ctx context.Context, args []string, stdout, stderr io.Writer, deps 
 		return executeProfilingRuns(ctx, args[1:], stdout, stderr, deps)
 	case "preflight":
 		return executePreflight(ctx, args[1:], stdout, stderr, deps)
+	case "measurements":
+		return executeMeasurements(ctx, args[1:], stdout, stderr, deps)
+	case "profiles":
+		return executeProfiles(ctx, args[1:], stdout, stderr, deps)
 	default:
 		return fmt.Errorf("%w: unknown command %q", errUsage, args[0])
 	}
@@ -197,6 +205,14 @@ func writeUsage(writer io.Writer) error {
 	}
 	if _, err := fmt.Fprintln(writer,
 		"  kubectl chill runs show NAME [-n NAMESPACE] [--console-service NAME] [-o table|json]"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer,
+		"  kubectl chill measurements submit -f FILE [--dry-run=server] [-n NAMESPACE] [-o table|json]\n"+
+			"  kubectl chill measurements list [-n NAMESPACE|-A] [-o table|json]\n"+
+			"  kubectl chill measurements show NAME [-n NAMESPACE] [--console-service NAME] [-o table|json]\n"+
+			"  kubectl chill profiles list [-n NAMESPACE] [--serving-service NAME] [-o table|json]\n"+
+			"  kubectl chill profiles adopt NAME [-n NAMESPACE] [--serving-service NAME] [-o table|json]"); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintln(writer,
