@@ -197,7 +197,7 @@ def ort_sessions(options, files, metadata):
     settings = ort.SessionOptions()
     settings.intra_op_num_threads = options.intra_op_threads
     settings.inter_op_num_threads = 1
-    providers = [provider]
+    providers, expected = [provider], [provider]
     if options.runtime == "ort-cuda":
         if not options.gpu_uuid or os.environ.get("CUDA_VISIBLE_DEVICES") != options.gpu_uuid:
             raise ValueError("CUDA_VISIBLE_DEVICES must pin the explicit physical GPU UUID")
@@ -214,25 +214,20 @@ def ort_sessions(options, files, metadata):
         status, actual = cu.cuDeviceGetUuid(device)
         if status != cu.CUresult.CUDA_SUCCESS or "GPU-" + str(uuid.UUID(bytes=bytes(actual.bytes))) != options.gpu_uuid:
             raise ValueError("selected physical GPU UUID could not be verified")
-        settings.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
-        providers = [(provider, {"device_id": 0})]
+        # ORT always places shape subgraphs on the CPU EP; the measured profile records the actual provider chain.
+        providers, expected = [(provider, {"device_id": 0})], [provider, "CPUExecutionProvider"]
         metadata.update(gpuUUID=options.gpu_uuid, device="cuda")
     else:
         metadata["device"] = "cpu"
-    sessions, selected_providers = {}, None
+    sessions = {}
     for path in files:
         session = ort.InferenceSession(str(path), sess_options=settings, providers=providers)
         session.disable_fallback()
         selected = session.get_providers()
-        # ORT may register its default CPU EP even when CPU assignment is disabled.
-        cuda_without_fallback = (options.runtime == "ort-cuda" and
-                                 selected == [provider, "CPUExecutionProvider"] and
-                                 session.get_session_options().get_session_config_entry("session.disable_cpu_ep_fallback") == "1")
-        if selected != [provider] and not cuda_without_fallback or selected_providers not in (None, selected):
+        if selected != expected:
             raise ValueError(f"unexpected providers/fallback {selected} for {path.name}")
-        selected_providers = selected
         sessions[path.stem] = session
-    metadata.update(runtimeVersion=ort.__version__, providers=selected_providers, availableProviders=available)
+    metadata.update(runtimeVersion=ort.__version__, providers=expected, availableProviders=available)
     return sessions
 
 

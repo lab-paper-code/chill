@@ -1,9 +1,13 @@
 import importlib.util
 from io import BytesIO
+import os
 from pathlib import Path
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest import mock
+import uuid
 
 HERE = Path(__file__).resolve().parent
 FIXTURE = HERE / "testdata" / "echo"
@@ -95,6 +99,52 @@ class RunnerContractTest(unittest.TestCase):
         self.assertIsNotNone(error)
         self.assertEqual([h["type"] for h, _ in frames], ["error"])
         self.assertIn("infer", frames[0][0]["error"])
+
+    def test_ort_provider_chains(self):
+        gpu = uuid.UUID(int=1)
+        cuda, cpu = "CUDAExecutionProvider", "CPUExecutionProvider"
+        state = {}
+
+        class Options:
+            def __init__(self):
+                self.entries = state["entries"] = {}
+
+            def add_session_config_entry(self, key, value):
+                self.entries[key] = value
+
+        class Session:
+            def __init__(self, path, sess_options, providers):
+                pass
+
+            def disable_fallback(self):
+                pass
+
+            def get_providers(self):
+                return state["chain"]
+
+        driver = SimpleNamespace(CUresult=SimpleNamespace(CUDA_SUCCESS=0), cuInit=lambda flags: (0,),
+                                 cuDeviceGetCount=lambda: (0, 1), cuDeviceGet=lambda index: (0, 0),
+                                 cuDeviceGetUuid=lambda device: (0, SimpleNamespace(bytes=gpu.bytes)))
+        ort = SimpleNamespace(__version__="test", get_available_providers=lambda: [cuda, cpu],
+                              SessionOptions=Options, InferenceSession=Session)
+        modules = {"onnxruntime": ort, "cuda": SimpleNamespace(), "cuda.bindings": SimpleNamespace(driver=driver)}
+        uuid_text = f"GPU-{gpu}"
+
+        def sessions(runtime, chain):
+            state["chain"] = chain
+            options = SimpleNamespace(runtime=runtime, gpu_uuid=uuid_text, intra_op_threads=1)
+            metadata = {}
+            runner.ort_sessions(options, [Path("model.onnx")], metadata)
+            return metadata
+
+        with mock.patch.dict(sys.modules, modules), mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": uuid_text}):
+            # CUDA sessions keep ORT's CPU-preferred shape nodes; no CPU-fallback ban is configured.
+            self.assertEqual(sessions("ort-cuda", [cuda, cpu])["providers"], [cuda, cpu])
+            self.assertNotIn("session.disable_cpu_ep_fallback", state["entries"])
+            self.assertEqual(sessions("ort-cpu", [cpu])["providers"], [cpu])
+            for runtime, chain in (("ort-cuda", [cuda]), ("ort-cuda", [cpu]), ("ort-cpu", [cuda, cpu])):
+                with self.subTest(runtime=runtime, chain=chain), self.assertRaises(ValueError):
+                    sessions(runtime, chain)
 
 
 if __name__ == "__main__":

@@ -318,7 +318,9 @@ def postprocess(outputs: object) -> list[dict[str, bytes]]: ...
   모델 입력은 성공 요청만 순서대로 담는다(`DP-04`, `DP-05`).
 - `sessions`의 key는 모델 파일 basename에서 확장자를 뺀 이름이다. ORT는 `InferenceSession`,
   RKNNLite는 초기화된 `RKNNLite`다. provider 고정, CUDA UUID 확인, thread와 affinity 검사는
-  현재 runner 코드(`runner.py:139-265`)를 파일별 session 생성에 그대로 적용한다.
+  현재 runner 코드(`runner.py:139-265`)를 파일별 session 생성에 그대로 적용한다. `ort-cuda` session의
+  provider 목록은 정확히 `[CUDAExecutionProvider, CPUExecutionProvider]`다. ORT는 shape 부분 그래프를 항상
+  CPU EP에 두며, 측정 profile은 실제 provider 목록을 기록한다.
 - 성공 요청이 있으면 runner는 `infer`와 `postprocess`를 순서대로 호출하고 각 단계를
   `perf_counter_ns`로 잰다. `infer` 구간이 `backend_ms`다.
 - runner는 `first_token`이 호출된 시각으로 `first_token_ms`를 기록한다. 생성형 경로(`max_new_tokens > 0`)에
