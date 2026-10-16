@@ -70,12 +70,21 @@ worktree에는 main 작업 디렉토리의 사본을 두고 편집한다. 병합
 - 1단계 spec, 2단계 SRS, 3단계 구현 설계와 ADR 0021을 독립 검수 후 커밋했다.
 - worktree의 `docs/spec/00_measurement.md`에 측정 조건, 표본 추출, 원시 trial 보존을 반영했다.
   이 파일은 추적되지 않으므로 병합 시 main 사본에 수동으로 옮긴다.
-- 4단계 구현은 [구현 설계](../design/serving/heterogeneous-workloads.md) 9장의 단위 1-8로 이 브랜치에
-  들어왔다. 검증 기록과 미검증 범위는 구현 설계 9.1절에 있다.
+- 4단계 구현은 [구현 설계](../design/serving/heterogeneous-workloads.md) 9장의 단위 1-8과 7.1절의
+  DeviceClass별 후보로 이 브랜치에 들어왔다. 검증 기록과 미검증 범위는 구현 설계 9.1절에 있다.
 - 병합 시 절차:
   1. worktree의 `docs/spec/00_measurement.md`를 main 사본에 옮긴다.
   2. 구현 설계 8장의 정리 대상(ModelSpec, Workload, 측정 객체, Evidence Store 객체, serving journal)을 삭제한다.
-  3. ModelSpec, Preprocessor, Dataset, Workload를 다시 등록한다.
-  4. 모델, 전처리, 데이터셋 carrier와 firstfloor runtime image를 빌드하고 push한다.
-  5. 다시 측정하고 scheduler 설정의 campaign과 profile을 다시 선택한다.
-  6. live cluster, Jetson과 RKNN 장비, 실제 Node의 profiling Job, 혼합 부하 평가를 검증한다.
+  3. 모델, 전처리, 데이터셋 carrier와 firstfloor runtime image 변형(CPU, `cuda`, `l4t-r35`, `l4t-r36`, `rknn`),
+     metric observer와 workload observer image를 빌드하고 push한다.
+  4. sample과 `charts/chill/values-profiler.yaml`의 `PUSHED_DIGEST`를 push한 digest로 바꾼다.
+  5. cluster에서 `hack/runtime-declarations.py`를 실행하고 출력의 선언을 `values-profiler.yaml`의
+     `executionDeclarations`에 붙인 뒤 Profiler를 배포한다.
+  6. ModelSpec, Preprocessor, Dataset, Workload를 다시 등록한다.
+  7. 다시 측정하고 scheduler 설정의 campaign과 profile을 다시 선택한다.
+  8. live cluster, Jetson과 RKNN 장비, 실제 Node의 profiling Job, 혼합 부하 평가를 검증한다.
+- CHILL 밖의 환경 조건(해당 DeviceClass 측정 전에 해결):
+  - `orin-nano`의 thermal exporter가 `device_thermal_*` series를 내지 않는다.
+  - `orin-nano`의 NVIDIA device plugin이 healthy device 0개를 보고한다.
+  - `edge-server-rtx-2080-ti-64g`의 CUDA 선언은 GPU UUID를 읽은 `genesis2`에만 묶이므로 이 DeviceClass의
+    CUDA 측정은 `genesis2`에서만 이루어진다.
