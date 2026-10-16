@@ -218,6 +218,44 @@ profiling:
       deviceClass: jetson-xavier-nx-8g
       executionPath: firstfloor-ort-cuda-arm64
       workloadMode: idle-model-loaded
+    # PLC's LSTM graph has its own arm64 CUDA path: on jetson-xavier-nx-8g (sm_72,
+    # JetPack 5.1.2) ORT 1.16 and 1.18 CUDA scores differ from CPU and change with
+    # the batch size, so that class has no policy for it.
+    - name: cuda-ort-rnn-nano-active-v1
+      deviceClass: jetson-nano-4g
+      executionPath: firstfloor-ort-cuda-rnn-arm64
+      workloadMode: saturated-serial-fixed-batch
+    - name: cuda-ort-rnn-nano-idle-v1
+      deviceClass: jetson-nano-4g
+      executionPath: firstfloor-ort-cuda-rnn-arm64
+      workloadMode: idle-model-loaded
+    - name: cuda-ort-rnn-agx-orin-active-v1
+      deviceClass: jetson-agx-orin-64g
+      executionPath: firstfloor-ort-cuda-rnn-arm64
+      workloadMode: saturated-serial-fixed-batch
+    - name: cuda-ort-rnn-agx-orin-idle-v1
+      deviceClass: jetson-agx-orin-64g
+      executionPath: firstfloor-ort-cuda-rnn-arm64
+      workloadMode: idle-model-loaded
+    - name: cuda-ort-rnn-orin-nano-active-v1
+      deviceClass: jetson-orin-nano-8g
+      executionPath: firstfloor-ort-cuda-rnn-arm64
+      workloadMode: saturated-serial-fixed-batch
+    - name: cuda-ort-rnn-orin-nano-idle-v1
+      deviceClass: jetson-orin-nano-8g
+      executionPath: firstfloor-ort-cuda-rnn-arm64
+      workloadMode: idle-model-loaded
+    # SmolVLM fp32 has its own arm64 CUDA path: CUDA allocations on Jetson share
+    # the board memory outside the container limit, and the 8 GB boards
+    # (jetson-xavier-nx-8g, jetson-orin-nano-8g) run out while loading it.
+    - name: cuda-ort-vlm-agx-orin-active-v1
+      deviceClass: jetson-agx-orin-64g
+      executionPath: firstfloor-ort-cuda-vlm-arm64
+      workloadMode: saturated-serial-fixed-batch
+    - name: cuda-ort-vlm-agx-orin-idle-v1
+      deviceClass: jetson-agx-orin-64g
+      executionPath: firstfloor-ort-cuda-vlm-arm64
+      workloadMode: idle-model-loaded
     - name: cuda-ort-edge-server-active-v1
       deviceClass: edge-server-rtx-2080-ti-64g
       executionPath: firstfloor-ort-cuda-amd64

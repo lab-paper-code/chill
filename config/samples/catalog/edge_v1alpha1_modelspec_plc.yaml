@@ -31,7 +31,7 @@ spec:
           maxBatchSize: 32
           maxQueueSize: 64
           deadlinePolicy: keep
-  - name: firstfloor-ort-cuda-arm64
+  - name: firstfloor-ort-cuda-rnn-arm64
     artifact: onnx-fp32-arm64
     runtime:
       family: firstfloor

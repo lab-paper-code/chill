@@ -153,10 +153,14 @@ native admission. The samples declare firstfloor ORT CPU and ORT CUDA paths for
 each architecture (`firstfloor-ort-cpu-arm64`, `firstfloor-ort-cpu-amd64`,
 `firstfloor-ort-cuda-arm64`, `firstfloor-ort-cuda-amd64`), mobilenet adds
 `firstfloor-rknnlite`, and SmolVLM adds the int8 CPU paths
-`firstfloor-ort-cpu-int8-arm64` and `firstfloor-ort-cpu-int8-amd64`. A path binds
-one artifact of one architecture; profiling measures through the same firstfloor
-paths. Native serving consumes a completed firstfloor campaign with every
-initialized measured batch size.
+`firstfloor-ort-cpu-int8-arm64` and `firstfloor-ort-cpu-int8-amd64`. PLC names
+its arm64 CUDA path `firstfloor-ort-cuda-rnn-arm64` and SmolVLM names its fp32
+arm64 CUDA path `firstfloor-ort-cuda-vlm-arm64`; the chart's
+`profiling.executionPolicies` list only the DeviceClasses on which those paths
+produce correct results (design 7.1). A path binds one artifact of one
+architecture; profiling measures through the same firstfloor paths. Native
+serving consumes a completed firstfloor campaign with every initialized
+measured batch size.
 
 ## Preprocessor, SmolVLM model and dataset carriers
 

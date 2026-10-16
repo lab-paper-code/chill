@@ -230,7 +230,12 @@ Version evidence, checked against the official indexes:
   stage also installs a checksum-pinned
   [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
   CPython 3.11. A host on another r35 revision uses the matching
-  `l4t-jetpack` tag.
+  `l4t-jetpack` tag. On `jetson-xavier-nx-8g` (sm_72) this image returns
+  correct mobilenet labels, while its PLC LSTM CUDA scores differ from CPU
+  under ORT 1.16.0 and 1.18.0 alike, and loading SmolVLM fp32 on CUDA exhausts
+  the 8 GB unified memory; the sample PLC and SmolVLM arm64 CUDA paths
+  therefore have no execution policy for that class (heterogeneous workload
+  design 7.1).
 - `jetson-nano-4g` runs L4T r32.6.1 (JetPack 4.6, kernel 4.9.253-tegra), whose
   last CUDA is 10.2 with cuDNN 8.2. The Jetson Zoo JetPack 4 table ends at
   `onnxruntime-gpu` 1.11.0, whose cp38 wheel links CUDA 10.2, cuDNN 8 and
