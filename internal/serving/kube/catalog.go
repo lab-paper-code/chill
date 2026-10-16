@@ -336,6 +336,7 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 	metricSource := idleRaw.Metrics.Source
 	batches := make(map[int]*catalogBatch)
 	var runtimeMetadata *profilingrun.FirstfloorRuntimeEvidence
+	var delivery profilingrun.CandidateRuntimeDelivery
 	for _, verified := range active {
 		if _, err := profilerprojection.ProjectVerifiedCurveState(plan, verified, idle[0]); err != nil {
 			return serving.Profile{}, nil, err
@@ -349,7 +350,7 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 		}
 		if raw.Runtime.Firstfloor != nil {
 			if runtimeMetadata == nil {
-				runtimeMetadata = raw.Runtime.Firstfloor
+				runtimeMetadata, delivery = raw.Runtime.Firstfloor, raw.RunConfig.Delivery
 			} else if !reflect.DeepEqual(runtimeMetadata.Runtime, raw.Runtime.Firstfloor.Runtime) {
 				return serving.Profile{}, nil, errors.New("firstfloor trials have different actual initialized runner conditions")
 			}
@@ -400,6 +401,9 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 	}
 	if runtimeMetadata != nil {
 		profile.RuntimeMetadata = &runtimeMetadata.Runtime
+		if profile.RuntimeDelivery, err = json.Marshal(delivery); err != nil {
+			return serving.Profile{}, nil, err
+		}
 	}
 	var issues []CatalogIssue
 	for _, batchSize := range condition.PlannedBatchSizes {
@@ -454,6 +458,7 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 		metadata.RKNN = slices.Clone(metadata.RKNN)
 		profile.RuntimeMetadata = &metadata
 	}
+	profile.RuntimeDelivery = slices.Clone(profile.RuntimeDelivery)
 	profile.MetricSource.MetricLabels = maps.Clone(profile.MetricSource.MetricLabels)
 	if profile.MetricSource.ThermalMetrics != nil {
 		thermal := *profile.MetricSource.ThermalMetrics

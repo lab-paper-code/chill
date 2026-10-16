@@ -480,25 +480,44 @@ func (o *schedulerOwner) checkProfileInventory(config schedulerConfiguration, p 
 	}
 	return nil
 }
+
+// reproducibleRuntimeAccess rejects measured delivery the generated Pod cannot
+// reproduce. RKNNLite access comes from the frozen delivery at preparation.
+func reproducibleRuntimeAccess(p serving.Profile) error {
+	if p.Condition.Backend == "rknnlite" {
+		if len(p.RuntimeDelivery) == 0 {
+			return fmt.Errorf("measured RKNNLite delivery unavailable")
+		}
+		return nil
+	}
+	access := p.Condition.RuntimeAccess
+	if access == nil {
+		return nil
+	}
+	if access.Privileged || len(access.SupplementalGroups) != 0 {
+		return fmt.Errorf(
+			"serving preparation cannot reproduce measured runtimeAccess privileged=%t supplementalGroups=%v",
+			access.Privileged, access.SupplementalGroups,
+		)
+	}
+	for resource, quantity := range access.Resources {
+		if resource != "nvidia.com/gpu" || quantity != "1" || p.RuntimeMetadata.GPUUUID == "" {
+			return fmt.Errorf("serving preparation cannot reproduce measured runtimeAccess resource %s=%s",
+				resource, quantity)
+		}
+	}
+	return nil
+}
 func (o *schedulerOwner) measuredPreparation(ctx context.Context, p serving.Profile) (servingkube.PrepareSpec, error) {
 	var spec servingkube.PrepareSpec
 	if p.RuntimeMetadata == nil || p.Condition.Firstfloor == nil {
 		return spec, fmt.Errorf("verified native runtime/settings unavailable")
 	}
 	runtime := p.RuntimeMetadata
-	if access := p.Condition.RuntimeAccess; access != nil {
-		if access.Privileged || len(access.SupplementalGroups) != 0 {
-			return spec, fmt.Errorf(
-				"serving preparation cannot reproduce measured runtimeAccess privileged=%t supplementalGroups=%v",
-				access.Privileged, access.SupplementalGroups,
-			)
-		}
-		for resource, quantity := range access.Resources {
-			if resource != "nvidia.com/gpu" || quantity != "1" || runtime.GPUUUID == "" {
-				return spec, fmt.Errorf("serving preparation cannot reproduce measured runtimeAccess resource %s=%s",
-					resource, quantity)
-			}
-		}
+	// RKNNLite runs no ONNX Runtime threads.
+	rknn := p.Condition.Backend == "rknnlite"
+	if err := reproducibleRuntimeAccess(p); err != nil {
+		return spec, err
 	}
 	node, err := o.kube.CoreV1().Nodes().Get(ctx, p.NodeName, meta.GetOptions{})
 	if err != nil {
@@ -515,8 +534,8 @@ func (o *schedulerOwner) measuredPreparation(ctx context.Context, p serving.Prof
 		}
 		memory = max(memory, batch.MemoryBytes)
 	}
-	if memory == 0 || memory > uint64(1<<63-1) || len(runtime.CPUAffinity) == 0 ||
-		runtime.IntraOpThreads < 1 || len(runtime.CPUAffinity) < runtime.IntraOpThreads {
+	if memory == 0 || memory > uint64(1<<63-1) || len(runtime.CPUAffinity) == 0 || runtime.IntraOpThreads < 0 ||
+		(runtime.IntraOpThreads == 0) != rknn || len(runtime.CPUAffinity) < runtime.IntraOpThreads {
 		return spec, fmt.Errorf("bounded measured memory and physical CPU/thread allocation required")
 	}
 	binding := storekube.Binding{
@@ -530,7 +549,7 @@ func (o *schedulerOwner) measuredPreparation(ctx context.Context, p serving.Prof
 	name := "measured-" + hex.EncodeToString(hash[:12])
 	unknown := "completion-evidence-unavailable"
 	settings := p.Condition.Firstfloor
-	if p.Condition.Backend != "ort-cpu" && p.Condition.Backend != "ort-cuda" {
+	if p.Condition.Backend != "ort-cpu" && p.Condition.Backend != "ort-cuda" && !rknn {
 		return spec, fmt.Errorf(
 			"preparation override required for measured backend %s host delivery contract", p.Condition.Backend,
 		)
@@ -570,6 +589,9 @@ func (o *schedulerOwner) measuredPreparation(ctx context.Context, p serving.Prof
 	}
 	if runtime.GPUUUID != "" {
 		spec.Config.RunnerCommand = append(spec.Config.RunnerCommand, "--gpu-uuid", runtime.GPUUUID)
+	}
+	if rknn {
+		spec.Config.RunnerCommand = append(spec.Config.RunnerCommand, "--delivery-json", "/config/delivery.json")
 	}
 	// Validate against the same measured bundle the owner publishes, then retain
 	// only the immutable startup reference in the persisted preparation.

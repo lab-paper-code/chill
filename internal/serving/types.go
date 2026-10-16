@@ -2,6 +2,7 @@ package serving
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"time"
@@ -147,6 +148,10 @@ type Profile struct {
 	MeasuredAt        time.Time                     `json:"measuredAt"`
 	RuntimeMetadata   *firstfloor.RuntimeMetadata   `json:"runtimeMetadata,omitempty"`
 	MetricSource      metricobserver.SourceIdentity `json:"metricSource"`
+	// RuntimeDelivery is the JSON delivery of the measured RunConfig, read from
+	// the same verified raw evidence. Preparation projects RKNNLite host access
+	// and the runner's delivery file from it; views and journals omit it.
+	RuntimeDelivery json.RawMessage `json:"-"`
 }
 
 // NativeBundle projects this catalog-verified profile for immutable startup

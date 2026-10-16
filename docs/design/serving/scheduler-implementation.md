@@ -163,6 +163,12 @@ CUDA에는 `--gpu-uuid <frozen-physical-GPU-UUID>`, RKNN에는
 allocation·UUID, RKNN package/host/driver/device 선언, CPU quota/affinity/thread와
 모든 initialized batch의 실제 metadata가 일치하지 않으면 결과를 거부한다.
 kernel cgroup lifetime peak는 worker와 runner를 포함한 runtime container 범위다.
+Serving preparation은 measured profile의 raw evidence에 담긴 RunConfig delivery를 그대로 사용한다.
+RKNNLite Pod는 그 delivery를 preparation ConfigMap의 `delivery.json`으로 받아 runner에
+`--delivery-json /config/delivery.json`을 전달한다. profiling Job과 같은 projection
+(`profilingrun.ProjectRuntimeDelivery`)으로 host library, driver, platform, device hostPath와
+privileged, supplemental group, allocation resource를 받는다. RKNNLite는 ONNX Runtime thread를 쓰지
+않으므로 thread 수 0으로 측정되고 같은 값으로 배치된다.
 
 latest successful profile은 같은 frozen node/model/artifact/runtime/input/resources/
 power/protocol 조건별로 선택한다. 명시적 source 선택 범위 안의 최신 성공을

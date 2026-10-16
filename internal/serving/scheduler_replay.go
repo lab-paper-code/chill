@@ -403,7 +403,9 @@ func schedulerValidateInstance(settings SchedulerSettings, n SchedulerNode, i Sc
 	if i.Profile.Condition.NodeUID != n.Node.UID || i.Profile.Condition.PowerMode != n.PowerMode {
 		reasons = appendUnique(reasons, "ProfileConditionMismatch:"+i.ID)
 	}
-	if len(i.Allocation.CPUs) == 0 || i.Allocation.Threads != len(i.Allocation.CPUs) {
+	// RKNNLite is measured with no ONNX Runtime threads on its CPU set.
+	noThreads := i.Allocation.Threads == 0 && i.Profile.Condition.Backend == "rknnlite"
+	if len(i.Allocation.CPUs) == 0 || i.Allocation.Threads != len(i.Allocation.CPUs) && !noThreads {
 		reasons = appendUnique(reasons, "CPUThreadAllocationMismatch:"+i.ID)
 	}
 	if len(i.Profile.Condition.CPU.AffinityCPUs) > 0 {
