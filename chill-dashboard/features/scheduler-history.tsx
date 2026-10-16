@@ -9,7 +9,7 @@ import type { SchedulerObservation, SchedulerObservationPage } from "@/lib/read-
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { localDateTime, utcDateTime } from "@/lib/date-time"
-import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses } from "@/features/scheduler"
+import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
 import { SettingChanges, algorithmLabel } from "@/features/scheduler-settings"
 import { QueryGate, SourceJSON, SourceExport, statusLabel } from "@/components/read-region"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
@@ -89,7 +89,7 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
       <p className="text-sm text-muted-foreground">설정 저장과 실제 물리 전환은 따로 일어나요.</p>
     </>}
     {event.action&&<>
-      <Facts items={[["동작",actionKinds[event.action.kind]??event.action.kind],["노드",event.action.node.name],["단계",actionStatuses[event.action.phase]??event.action.phase],["시작",event.action.startedAt],["완료",event.action.completedAt??"제공 없음"]]}/>
+      <Facts items={[["동작",actionKinds[event.action.kind]??event.action.kind],["노드",actionNodeName(event.action.node)],["단계",actionStatuses[event.action.phase]??event.action.phase],["시작",event.action.startedAt],["완료",event.action.completedAt??"제공 없음"]]}/>
       <Link href={`/transitions/${encodeURIComponent(event.action.id)}?${schedulerRecordParams(row.ref)}`}>이 변경 동작 자세히 보기</Link>
     </>}
     {(event.power||event.powerError||event.powerJoules!==undefined)&&<Link href={`/scheduler/power?${schedulerRecordParams(row.ref)}`}>이 전력 측정 자세히 보기</Link>}
@@ -134,7 +134,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
       {rows.length?<Rows label="기록">{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
         return <Row key={row.ref.offset} label={ev.decision?judgmentLabels[ev.decision.status]??statusLabel(ev.decision.status):ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}
-          hint={`${when(ev.at)}${ev.decision?` · ${algorithmLabel(ev.decision.settings.algorithm)}`:ev.settings?` · ${actorName(ev.settings.actorUsername)}`:ev.action?` · ${ev.action.node.name}`:ev.node?` · ${ev.node.name}`:""}`}
+          hint={`${when(ev.at)}${ev.decision?` · ${algorithmLabel(ev.decision.settings.algorithm)}`:ev.settings?` · ${actorName(ev.settings.actorUsername)}`:ev.action?` · ${actionNodeName(ev.action.node)}`:ev.node?` · ${ev.node.name}`:""}`}
           value={mark||(ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"적용됨":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):undefined)}
           onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}/>
       })}</Rows>:<Empty title={settingsOnly?"이 기간에는 운영 설정 변경이 없어요":"보여줄 기록이 없어요"}>{history.query.data?.nextCursor&&<p>다음 기록에 더 있을 수 있어요.</p>}</Empty>}

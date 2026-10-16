@@ -16,7 +16,9 @@ import { Button } from "@/components/ui/button"
 
 export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"목표 충족",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
 export const judgmentTones:Record<string,Tone>={Keep:"ok",Feasible:"ok",Pending:"idle",Overload:"warn",InfeasibleLifetime:"warn",InfeasibleResources:"warn",InfeasibleTransition:"warn",ExecutionError:"fail"}
-export const actionKinds:Record<string,string>={prepare:"실행 준비",route:"요청 분배 변경",stop:"요청 접수 중지",drain:"기존 요청 마무리",remove:"인스턴스 제거",power:"전력모드 변경",membership:"실행 그룹 소속 변경",resize:"인스턴스 교체"}
+export const actionKinds:Record<string,string>={prepare:"실행 준비",route:"요청 분배 변경",stop:"요청 접수 중지",drain:"기존 요청 마무리",remove:"인스턴스 제거",power:"전력모드 변경",membership:"실행 그룹 소속 변경",resize:"인스턴스 교체","manual-static-routing":"설정한 요청 분배 적용"}
+// internal/serving/kube/static_routing.go: a configuration-sourced route has no single node (empty NodeRef).
+export const actionNodeName=(node:{name:string;uid:string})=>node.uid?node.name||"이름 미제공":"전체 노드"
 export const actionStatuses:Record<string,string>={planned:"계획됨",starting:"시작 기록",running:"실행 중",complete:"완료",failed:"실패",cancel:"취소",partial:"일부 변경 관측"}
 export const actionTones:Record<string,Tone>={complete:"ok",failed:"fail",partial:"warn",running:"info",starting:"info"}
 const observed=(at?:string)=>!!at&&!at.startsWith("0001-")
