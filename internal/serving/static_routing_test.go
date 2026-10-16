@@ -15,12 +15,12 @@ func TestStaticExclusiveBaselineThenSharedTargetDrainsPhysicalBinding(t *testing
 	other := snapshot.Instances[0]
 	other.ID = "i2"
 	snapshot.Instances = append(snapshot.Instances, other)
-	journal, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = journal.Close(context.Background()) }()
-	runtime, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, Journal: journal})
+	defer func() { _ = observationLog.Close(context.Background()) }()
+	runtime, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}

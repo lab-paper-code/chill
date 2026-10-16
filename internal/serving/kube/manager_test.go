@@ -85,7 +85,7 @@ func (a managerArchive) PutImmutable(_ context.Context, identity evidencestore.O
 	return evidencestore.Receipt{SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: identity, Outcome: outcome}, nil
 }
 
-func newManagerHarness(t *testing.T) (*Manager, serving.JournalConfig) {
+func newManagerHarness(t *testing.T) (*Manager, serving.ObservationLogConfig) {
 	t.Helper()
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
@@ -95,12 +95,12 @@ func newManagerHarness(t *testing.T) (*Manager, serving.JournalConfig) {
 		}
 	}
 	store := &Store{client: &managerAPI{Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&api.Workload{}, &corev1.Pod{}).Build()}}
-	config := serving.JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: managerArchive{t.TempDir()}}
-	journal, err := serving.NewJournal(config)
+	config := serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: managerArchive{t.TempDir()}}
+	observationLog, err := serving.NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 8, Journal: journal})
+	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 8, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,14 +108,14 @@ func newManagerHarness(t *testing.T) (*Manager, serving.JournalConfig) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := NewManager(store, rt, journal, observer, ManagerConfig{DrainTimeout: time.Hour})
+	manager, err := NewManager(store, rt, observationLog, observer, ManagerConfig{DrainTimeout: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = observer.Close(); _ = journal.Close(ctx) })
+	t.Cleanup(func() { _ = observer.Close(); _ = observationLog.Close(ctx) })
 	return manager, config
 }
 
@@ -250,7 +250,7 @@ func TestManagerRegistrationIdentity(t *testing.T) {
 	if _, _, err := m.UpdateWorkload(ctx, "first", "stale", first.Desired.Spec); err == nil {
 		t.Fatal("accepted stale precondition")
 	}
-	observed, err := m.journal.Query(string(oldUID), time.Time{}, time.Time{}, nil, nil, 0, "")
+	observed, err := m.observationLog.Query(string(oldUID), time.Time{}, time.Time{}, nil, nil, 0, "")
 	if err != nil || len(observed.Definitions) == 0 || len(observed.Management) == 0 {
 		t.Fatal("deletion lost immutable request/management interpretation")
 	}
@@ -370,7 +370,7 @@ func TestManagerSharedModelBarrier(t *testing.T) {
 		if view.Operation.ActorUsername != "model-editor" || view.Operation.ActorUID != "model-editor-uid" {
 			t.Fatalf("durable shared update actor lost: %+v", view.Operation)
 		}
-		assertJournalActor(t, m.journal, string(view.Desired.UID), operationModelUpdate, "model-editor", "model-editor-uid")
+		assertObservationLogActor(t, m.observationLog, string(view.Desired.UID), operationModelUpdate, "model-editor", "model-editor-uid")
 	}
 }
 
@@ -394,14 +394,14 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.journal.Close(ctx); err != nil {
+	if err := m.observationLog.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	journal, err := serving.NewJournal(config)
+	observationLog, err := serving.NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 8, Journal: journal})
+	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 8, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,11 +409,11 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewManager(m.store, rt, journal, observer, ManagerConfig{DrainTimeout: time.Hour})
+	restarted, err := NewManager(m.store, rt, observationLog, observer, ManagerConfig{DrainTimeout: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = observer.Close(); _ = journal.Close(ctx) })
+	t.Cleanup(func() { _ = observer.Close(); _ = observationLog.Close(ctx) })
 	if err := restarted.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +427,7 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	if view.Operation.ActorUsername != "original-editor" || view.Operation.ActorUID != "original-uid" {
 		t.Fatalf("restart lost accepted actor: %+v", view.Operation)
 	}
-	assertJournalActor(t, journal, string(view.Desired.UID), operationModelUpdate, "original-editor", "original-uid")
+	assertObservationLogActor(t, observationLog, string(view.Desired.UID), operationModelUpdate, "original-editor", "original-uid")
 	_, accepted, err := restarted.UpdateWorkload(ctx, "service", view.Desired.ResourceVersion, view.Desired.Spec)
 	if err != nil || !accepted {
 		t.Fatalf("explicit new PUT = %v %v", accepted, err)
@@ -441,9 +441,9 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	}
 }
 
-func assertJournalActor(t *testing.T, journal *serving.Journal, uid, kind, username, actorUID string) {
+func assertObservationLogActor(t *testing.T, observationLog *serving.ObservationLog, uid, kind, username, actorUID string) {
 	t.Helper()
-	observed, err := journal.Query(uid, time.Time{}, time.Time{}, nil, nil, 0, "")
+	observed, err := observationLog.Query(uid, time.Time{}, time.Time{}, nil, nil, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

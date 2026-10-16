@@ -16,7 +16,7 @@ treating every directory under `internal/` as an equal entry point.
 | Device facts | [`deviceclass/`](deviceclass/) and [`modelcompat/`](modelcompat/) | Stable hardware facts and pure static model/input/native-setting compatibility |
 | Observation | [`metricobserver/`](metricobserver/) and [`workloadobserver/`](workloadobserver/) | Bounded metric and workload evidence collection |
 | Model registration | [`modelcatalog/`](modelcatalog/) | Shared API-to-model projection and registration validation |
-| Serving | [`serving/`](serving/) | Immutable applied definitions, admission, bounded queues, instance routing, physical drain and private observation journals |
+| Serving | [`serving/`](serving/) | Immutable applied definitions, admission, bounded queues, instance routing, physical drain and private ObservationLog |
 
 Small support packages remain at the top level because they do not define a
 separate product capability: `component` owns stable component names,
@@ -51,13 +51,13 @@ modelcompat/              pure tensor and runtime compatibility contracts
 modelcatalog/             shared ModelSpec projection and validation
 firstfloor/               leaf single-runner actor, SLO batching and framed IPC
 serving/                  admission, snapshots, routes, drain, JSONL/S3 windows
-├── entrypoint/           authenticated HTTPS query, management and inference
+├── httpapi/              authenticated HTTPS query, management and inference
 ├── kube/                 private uncached writer, TokenReview/SAR, measured
 │                         catalog and current Node/Pod/native observations
 └── firstfloor/           typed native HTTP client and correlated progress facts
 ```
 
-[`../cmd/serving-entrypoint/`](../cmd/serving-entrypoint/) assembles concrete
+[`../cmd/chill-server/`](../cmd/chill-server/) assembles concrete
 adapters. Serving does not import Profiler controllers or candidate resolvers.
 The native runtime is firstfloor with explicit ORT CPU/CUDA or RKNN execution,
 per-UID/definition batch isolation and shared actor/replay batching decisions.

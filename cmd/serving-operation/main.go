@@ -27,8 +27,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/entrypoint"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -151,7 +151,7 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, ownership.Close()) }()
-	journal, err := serving.NewJournal(serving.JournalConfig{
+	journal, err := serving.NewObservationLog(serving.ObservationLogConfig{
 		Directory: manifest.JournalDirectory, Store: manifest.Measurement.Location.Store,
 		Window: time.Minute, Writer: objects,
 	})
@@ -159,7 +159,7 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, journal.Close(context.WithoutCancel(ctx))) }()
-	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1024, Journal: journal})
+	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1024, ObservationLog: journal})
 	if err != nil {
 		return err
 	}
@@ -375,7 +375,7 @@ type executionManifest struct {
 
 type executionConfiguration struct {
 	Settings         serving.SchedulerSettings          `json:"settings"`
-	ProfileCampaigns []entrypoint.ProfileCampaign       `json:"profileCampaigns"`
+	ProfileCampaigns []httpapi.ProfileCampaign          `json:"profileCampaigns"`
 	Preparations     map[string]servingkube.PrepareSpec `json:"preparations"`
 	StaticRouting    map[string]map[string]int          `json:"staticRouting"`
 }
@@ -673,14 +673,14 @@ func runExecution(
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, ownership.Close()) }()
-	journal, err := serving.NewJournal(serving.JournalConfig{
+	journal, err := serving.NewObservationLog(serving.ObservationLogConfig{
 		Directory: m.JournalDirectory, Store: spec.Store.Store, Window: time.Minute, Writer: objects,
 	})
 	if err != nil {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, journal.Close(context.WithoutCancel(ctx))) }()
-	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1024, Journal: journal})
+	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1024, ObservationLog: journal})
 	if err != nil {
 		return err
 	}
@@ -749,7 +749,7 @@ func (m executionManifest) validate() error {
 func selectExecutionPreparation(
 	ctx context.Context, ownerClient *http.Client, m executionManifest, config executionConfiguration,
 ) (servingkube.PrepareSpec, error) {
-	var selections entrypoint.ProfileSelectionsView
+	var selections httpapi.ProfileSelectionsView
 	if err := readExecutionOwner(ctx, ownerClient, m.OwnerURL, "/api/v1/scheduler/profiles", &selections); err != nil {
 		return servingkube.PrepareSpec{}, err
 	}

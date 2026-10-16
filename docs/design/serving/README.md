@@ -2,7 +2,7 @@
 
 ## 현재 구현 범위
 
-`cmd/serving-entrypoint`는 단일 HTTPS Workload owner다. Kubernetes bearer 신원을
+`cmd/chill-server`는 단일 HTTPS ChillServer다. Kubernetes bearer 신원을
 TokenReview/SAR로 검증하고 모델 및 Workload 등록, 조회, 수정, 삭제와 추론을 제공한다.
 `internal/serving`은 불변 적용 snapshot, 접수 gate, bounded Workload 큐,
 인스턴스별 route와 physical drain 및 private JSONL 관측을 소유한다.
@@ -121,7 +121,7 @@ CPU quota·threads와 실제 affinity를 각각 확인하며, 한 배치 내부�
 여러 Pod의 인스턴스는 각자 배치 하나씩 병렬 실행할 수 있다.
 
 현재 구성은 실제 Node label과 자원, native 준비와 연결 관측으로 산출한다.
-파드 수·실측 자원 조건·배치 정책·전력모드의 후보 계산과 실제 전환은 스케줄러 owner가 연결한다.
+파드 수·실측 자원 조건·배치 정책·전력모드의 후보 계산과 실제 전환은 스케줄러가 연결한다.
 자원 변경과 전환 계약은 [전환 명세](../../spec/05_transition_control.md)의 기준으로 구분한다.
 메모리는 프로파일에서 관측한 사용량으로 필요한 예산을 산정하는 가용성 제약이다.
 시스템 예약분과 프로파일에 포함되지 않은 서빙 부가 사용량을 고려하며,
@@ -191,7 +191,7 @@ CHILL은 요청별 원시 시각과 처리 결과를 보존하고, 워크로드�
 
 ### 시간 기준과 실행 종료
 
-종단 지연은 entrypoint의 동일 monotonic 기준으로 최초 수신부터 응답 반환 완료까지 측정한다.
+종단 지연은 ChillServer의 동일 monotonic 기준으로 최초 수신부터 응답 반환 완료까지 측정한다.
 firstfloor는 queue/service/backend/native elapsed를 해당 worker의 monotonic 기준으로 제공한다.
 SDK의 `ObservedAt`은 local receipt 시각이다. remote UTC는 원시 관측 시각으로 보존하고,
 worker duration과 local observation age·측정 transport envelope를 각각 적용한다.
@@ -327,14 +327,14 @@ strategic-merge primitive-list delta로 자기 항목만 변경한다. 다른 fi
 UID 변경이나 API의 실제 metadata 제약 오류는 그대로 반환한다. 해제 전
 UID/container-bound 실제 종료 증거와 Pod 종료 확인은 유지한다.
 기존 EdgeMesh 설정이나 다른 workload는 변경하지 않는다.
-namespace owner Role에는 Service GET/DELETE를 기본으로 허용하며,
+namespace의 ChillServer Role에는 Service GET/DELETE를 기본으로 허용하며,
 scheduler/native operation 경로가 켜진 경우 CREATE를 추가한다.
 
 ## 구현 대응
 
 | 현재 기능 | 구현 경계 |
 |---|---|
-| 모델 및 Workload CRUD | HTTPS owner와 private uncached Kubernetes writer, TokenReview/SAR, resourceVersion `If-Match`, 참조 삭제 보호 |
+| 모델 및 Workload CRUD | HTTPS ChillServer와 private uncached Kubernetes writer, TokenReview/SAR, resourceVersion `If-Match`, 참조 삭제 보호 |
 | 요청 접수 및 분배 | immutable applied snapshot, bounded Workload 큐, 준비된 인스턴스의 route와 가중치 합 |
 | 모델 변경 및 삭제 | 모든 관련 admission 닫기, 전체 physical drain, 해제, 닫힌 새 snapshot 전체 게시 후 gate 열기 |
 | 현재 POOL | 실제 Node label과 자원, native instance와 확인된 Workload 연결. 별도 Pool CRD나 합성 Node 없음 |
@@ -346,11 +346,11 @@ scheduler/native operation 경로가 켜진 경우 CREATE를 추가한다.
 
 원자 동작 측정 command의 membership은 detached Node와 명시적으로 선택한
 `measurement-*` isolated POOL 사이의 이동만 허용한다. 다른 live POOL의 Node를
-편입하지 않으며 동일 Node UID, 선택된 Workload 없음, exclusive journal 조건을 유지한다.
+편입하지 않으며 동일 Node UID, 선택된 Workload 없음, 독점 관측 기록 조건을 유지한다.
 같은 출발·도착 상태의 no-op는 membership 비용으로 측정하지 않는다.
 
 `serving-operation --execute-config FILE`은 측정과 별개의 수동 원자 실행 경계다.
-`--measurement-config`와 함께 사용하지 않으며, catalog 검증·현재 owner에 Loaded인
+`--measurement-config`와 함께 사용하지 않으며, catalog 검증·현재 ChillServer에 Loaded인
 `ort-cpu` 또는 `ort-cuda` profile의 기존 `preparations[profileID]`만 준비한다.
 GPU prepare/remove도 기존 측정 profile 검증·정확한 physical Node·GPU UUID·whole-device
 자원 예산·native runtime 일치 경계를 재사용하며 CPU fallback이나 GPU UUID 재매핑을 허용하지 않는다.
@@ -361,13 +361,13 @@ podUID/containerID instance 또는 membership의 pool), `profileID`, `namespace`
 `journalDirectory`, 별도 HTTPS 신뢰·caller 인증의 `ownerURL`/`ownerCAFile`/
 `ownerTokenFile`, `schedulerConfigMap`/`schedulerConfigKey`/`sourceConfigRV`,
 `expectedPool`, 명시 history 시작 시각 `routingHistoryFrom`이다. store는 별도 입력 없이
-owner-loaded preparation의 binding에서 가져온다. `before.pods`/`actual.pods`,
+ChillServer가 로드한 preparation의 binding에서 가져온다. `before.pods`/`actual.pods`,
 observer와 raw power/latency는 현재 모든 외부 Pod의 실제 identity와 소비를 포함한다.
-Kubernetes credential은 Kubernetes 작업에만 사용하며 owner로 자동 전달하지 않는다.
-owner는 명시한 CA 파일과 caller token을 모두 요구하며 ambient trust로 대체하지 않는다.
+Kubernetes credential은 Kubernetes 작업에만 사용하며 ChillServer로 자동 전달하지 않는다.
+ChillServer는 명시한 CA 파일과 caller token을 모두 요구하며 ambient trust로 대체하지 않는다.
 verified HTTPS origin 하나만 허용하고 redirect를 따르지 않는다.
 startup bundle은 catalog 검증 profile의 공통 `Profile.NativeBundle()` producer에서
-owner와 CLI가 같은 key/declared size를 도출한다. owner만 immutable publisher이며 CLI는
+ChillServer와 CLI가 같은 key/declared size를 도출한다. ChillServer만 immutable publisher이며 CLI는
 저장된 payload를 다시 읽어 size를 자가 증명하거나 bytes/digest 비교 gate를 추가하지 않는다.
 기존 materializer가 producer-declared size를 확인한 뒤 native startup 파일을 게시한다.
 이 trusted publisher 계약을 같은 크기의 임의 변조에 대한 암호학적 증명으로 해석하지 않는다.
@@ -376,11 +376,11 @@ owner와 CLI가 같은 key/declared size를 도출한다. owner만 immutable pub
 policy에 연결한다. 선택이 없으면 configured bootstrap policy를 그대로 유지한다.
 planner의 calibration 선택과 기존 인스턴스에 실제 적용된 native policy를 혼동하지 않는다.
 
-실행 전에 desired/current controls OFF, 진행 중 owner action 없음, 같은 native
+실행 전에 desired/current controls OFF, 진행 중 ChillServer action 없음, 같은 native
 ConfigMap resourceVersion의 전체 `staticRouting` 성공 acknowledgement와 실제
-route readback 일치를 요구한다. 모든 동작의 owner snapshot은 해당 완료보다 늦고
+route readback 일치를 요구한다. 모든 동작의 ChillServer snapshot은 해당 완료보다 늦고
 현재 시각보다 미래가 아니어야 한다. remove는 전체 경로에서 이미 제외된 정확한 configured
-source만 허용하며, complete ack 이후 owner `snapshot.outstanding`에서 그 source의
+source만 허용하며, complete ack 이후 ChillServer `snapshot.outstanding`에서 그 source의
 execution·transport·response 소유권이 모두 사라졌음을 확인한다. controls OFF·진행 중 action 없음·
 같은 ConfigMap revision에서 controlled routing은 새 UID나 instance 재발견으로 제외된 ingress를
 다시 열지 않으므로 이 zero는 단조적이다. 별도 하한 age gate 대신 실행 직전 revision 재확인과
@@ -389,15 +389,15 @@ fresh Node/Pod 및 각 동작의 물리 검증에 의존한다. automatic freshn
 ack은 일시적인 `state.results`가 아니라 기존 `/api/v1/observations/scheduler`의
 `action.actual`에서 exact source revision의 최신 manual result를 찾는다. 명시
 `routingHistoryFrom`부터 고정 query 종료 시각까지 명시 `limit=50`과 기존 cursor로
-모든 page를 조회하고 최신 matching ack를 고른 뒤 새 owner snapshot을 읽는다.
-owner의 큰 기본 page 한도에 기대지 않으며, page 응답은 기존 64MiB read bound를 유지한다.
+모든 page를 조회하고 최신 matching ack를 고른 뒤 새 ChillServer snapshot을 읽는다.
+ChillServer의 큰 기본 page 한도에 기대지 않으며, page 응답은 기존 64MiB read bound를 유지한다.
 보관 기간을 늘리거나 시작 이후 전체 history를 조회하지 않는다.
 `/pools`의 waiting/running/assignedUnknown 0이나 native queue empty만으로 이를
-대체하지 않는다. prepare/membership target은 owner instance가 없어야 한다.
+대체하지 않는다. prepare/membership target은 ChillServer instance가 없어야 한다.
 prepare는 fresh Node/모든 active Pod 요청·init/sidecar/overhead를 기존 capture 경로로
-다시 합산하고 owner의 inventory/reserved와 공통 `ValidateNodeBudget`으로 admission한다.
+다시 합산하고 ChillServer의 inventory/reserved와 공통 `ValidateNodeBudget`으로 admission한다.
 설정된 serving namespace의 기존 serving Pod, 미확인 GPU 소유권, CPU overlap/예약 부족, memory 초과와 실제 Node
-MemoryPressure는 거절한다. 오래된 owner aggregate의 Ready는 재사용하지 않는다.
+MemoryPressure는 거절한다. 오래된 ChillServer aggregate의 Ready는 재사용하지 않는다.
 이는 설정 reservation 기반 admission이지 실제 CPU 격리·외부 Pod의 성능 불변·SLO·에너지
 절감 보장이 아니다. membership은 설정된 serving namespace의 CHILL serving/accepted-work
 소유권과 drain을 확인하는 serving-pool label 변경이다. 다른 namespace의 동일 component label은
@@ -406,25 +406,25 @@ membership은 detached와 해당 configured preparation POOL 사이의 실제 �
 기존 sole writer `MoveNodePool`의 UID/resourceVersion patch/readback을 사용한다.
 원복도 새 현재 revision·expectedPool witness로 같은 경계를 호출한다. CLI는 완전한
 `OperationResult`를 stdout에 출력한다. 부모 실행자는 원래 두 Workload/SLO/model과
-전체 route map을 보존하고, 기존 owner `staticRouting`으로 한 UID만 바꾼 뒤 실제
+전체 route map을 보존하고, 기존 ChillServer `staticRouting`으로 한 UID만 바꾼 뒤 실제
 새 instance 완료를 관측하며, 전체 원래 route를 복구·ack·완전 drain한 다음 제거한다.
 이는 manual execution 근거이며 automatic scheduler judgment나 power 측정 근거가 아니다.
 
 prepare 입력은 부모가 캡처한 현재 ConfigMap JSON(`$CM_CAPTURE`)에서 생성한다.
-`PROFILE_ID`는 해당 revision에서 owner가 Loaded라고 확인한 기존 CPU/GPU profile ID이며,
-그 외 환경 변수는 부모가 확인한 namespace/HTTPS trust/caller token/독점 journal이다.
+`PROFILE_ID`는 해당 revision에서 ChillServer가 Loaded라고 확인한 기존 CPU/GPU profile ID이며,
+그 외 환경 변수는 부모가 확인한 namespace/HTTPS trust/caller token/독점 관측 기록이다.
 이 예시는 manifest 생성만 하며 Workload·SLO·model·route map을 변경하지 않는다.
 
 ```sh
 jq --arg key "$SCHEDULER_KEY" --arg profile "$PROFILE_ID" \
-  --arg operation "$OPERATION_ID" --arg journal "$JOURNAL_DIRECTORY" \
-  --arg owner "$OWNER_URL" --arg ca "$OWNER_CA_FILE" --arg token "$OWNER_TOKEN_FILE" \
+  --arg operation "$OPERATION_ID" --arg observationLog "$OBSERVATION_LOG_DIRECTORY" \
+  --arg chillServer "$CHILL_SERVER_URL" --arg ca "$CHILL_SERVER_CA_FILE" --arg token "$CHILL_SERVER_TOKEN_FILE" \
   --arg history "$ROUTING_HISTORY_FROM" \
   '. as $cm | ($cm.data[$key] | fromjson) as $config |
    $config.preparations[$profile] as $prepare |
    {operation: {id: $operation, kind: "prepare", node: $prepare.instance.node},
     profileID: $profile, namespace: $cm.metadata.namespace,
-    journalDirectory: $journal, ownerURL: $owner, ownerCAFile: $ca,
+    journalDirectory: $observationLog, ownerURL: $chillServer, ownerCAFile: $ca,
     ownerTokenFile: $token, schedulerConfigMap: $cm.metadata.name,
     schedulerConfigKey: $key, sourceConfigRV: $cm.metadata.resourceVersion,
     expectedPool: $prepare.instance.pool, routingHistoryFrom: $history}' "$CM_CAPTURE"
@@ -439,7 +439,7 @@ remove는 같은 current-config binding에 `operation.kind="remove"`와 실제 �
 `--kube-api-server URL --kube-token-file FILE --kube-ca-file FILE`이다.
 API server를 생략하면 기존 `rest.InClusterConfig()`만 사용하며 로컬 kubeconfig는
 읽지 않는다. 명시 API server에서 token/CA flags를 생략하면 표준 service-account
-token/CA 경로를 사용한다. owner CA/token은 manifest의 별도 명시 파일이며 자동 전달하지 않는다.
+token/CA 경로를 사용한다. ChillServer CA/token은 manifest의 별도 명시 파일이며 자동 전달하지 않는다.
 
 ## 프로파일 기반 지연 계산과 검증
 

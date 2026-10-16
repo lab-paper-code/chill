@@ -34,13 +34,13 @@ type ManagerConfig struct{ DrainTimeout time.Duration }
 // ponytail: one management lock and native list scans suit research-scale edits.
 // Split locks only if management contention is measured.
 type Manager struct {
-	mu          sync.Mutex
-	store       *Store
-	runtime     *serving.Runtime
-	journal     *serving.Journal
-	observer    *Observer
-	config      ManagerConfig
-	initialized bool
+	mu             sync.Mutex
+	store          *Store
+	runtime        *serving.Runtime
+	observationLog *serving.ObservationLog
+	observer       *Observer
+	config         ManagerConfig
+	initialized    bool
 	// A failed status write must not let a subsequent poll resume the operation.
 	// Only terminal failures are retained here; native status owns normal progress.
 	failed map[types.UID]api.WorkloadStatus
@@ -49,11 +49,11 @@ type Manager struct {
 	deletionChecks map[types.UID]*api.Workload
 }
 
-func NewManager(store *Store, runtime *serving.Runtime, journal *serving.Journal, observer *Observer, config ManagerConfig) (*Manager, error) {
-	if store == nil || store.client == nil || runtime == nil || journal == nil || observer == nil || config.DrainTimeout <= 0 {
-		return nil, errors.New("native store, runtime, journal, observer and positive drain timeout are required")
+func NewManager(store *Store, runtime *serving.Runtime, observationLog *serving.ObservationLog, observer *Observer, config ManagerConfig) (*Manager, error) {
+	if store == nil || store.client == nil || runtime == nil || observationLog == nil || observer == nil || config.DrainTimeout <= 0 {
+		return nil, errors.New("native store, runtime, observation log, observer and positive drain timeout are required")
 	}
-	return &Manager{store: store, runtime: runtime, journal: journal, observer: observer, config: config,
+	return &Manager{store: store, runtime: runtime, observationLog: observationLog, observer: observer, config: config,
 		failed: map[types.UID]api.WorkloadStatus{}, deletionChecks: map[types.UID]*api.Workload{}}, nil
 }
 
@@ -137,7 +137,7 @@ func (m *Manager) record(ctx context.Context, w *api.Workload, phase string, bef
 	if err != nil {
 		event.Error = failureReason(err)
 	}
-	return m.journal.ManagementEvent(event)
+	return m.observationLog.ManagementEvent(event)
 }
 
 func (m *Manager) fail(ctx context.Context, w *api.Workload, cause error) error {
@@ -165,8 +165,8 @@ func (m *Manager) fail(ctx context.Context, w *api.Workload, cause error) error 
 	if writeErr == nil {
 		delete(m.failed, w.UID)
 	}
-	journalErr := m.record(ctx, w, operationFailed, nil, nil, m.applied(w), now.Time, cause)
-	return errors.Join(cause, writeErr, journalErr)
+	observationLogErr := m.record(ctx, w, operationFailed, nil, nil, m.applied(w), now.Time, cause)
+	return errors.Join(cause, writeErr, observationLogErr)
 }
 
 func (m *Manager) failAccepted(ctx context.Context, w *api.Workload, status api.WorkloadStatus, cause error) error {
@@ -324,7 +324,7 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		w := &list.Items[i]
 		if err := m.restoreWorkload(ctx, w, interruptedModels[w.Spec.ModelRef.Name]); err != nil {
 			err = m.fail(ctx, w, err)
-			if _, unwritten := m.failed[w.UID]; unwritten || !m.journal.Health().Healthy {
+			if _, unwritten := m.failed[w.UID]; unwritten || !m.observationLog.Health().Healthy {
 				errs = append(errs, err)
 			}
 		}

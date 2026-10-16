@@ -20,6 +20,7 @@ func controllerWorkFixture(t *testing.T) (*SchedulerController, serving.Schedule
 	profile := *instance.Profile
 	profile.Condition.PowerMode = "policy-mode"
 	profile.Condition.CPU.AffinityCPUs = []int{0}
+	profile.Condition.CPU.ORTIntraOpThreads = 1
 	profile.IdleBaselineWatts = 12
 	profile.Evidence = []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}
 	profile.Batches = []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{float64(time.Millisecond)}, EnergyPerInputJoules: 0.1, MemoryBytes: 100}}
@@ -192,7 +193,7 @@ func TestControllerWorkIntervalReadsDelayedSpanOnce(t *testing.T) {
 	for index, offset := range []time.Duration{10 * time.Millisecond, 2 * time.Second} {
 		id := []string{"early", "late"}[index]
 		for _, kind := range []string{"received", "validated"} {
-			if err := controller.journal.RequestEvent(serving.RequestEvent{RequestID: id, WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: kind, At: from.Add(offset), ReceivedAt: from.Add(offset)}); err != nil {
+			if err := controller.observationLog.RequestEvent(serving.RequestEvent{RequestID: id, WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: kind, At: from.Add(offset), ReceivedAt: from.Add(offset)}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -227,11 +228,11 @@ func TestControllerWorkIntervalWaitsForDurableReceiptClassification(t *testing.T
 	receivedAt := from.Add(10 * time.Millisecond)
 	end := from.Add(time.Second)
 	definition := snapshot.Workloads[0]
-	if err := controller.journal.RequestEvent(serving.RequestEvent{RequestID: "classification-pending", WorkloadUID: definition.UID, Kind: "received", At: receivedAt, ReceivedAt: receivedAt}); err != nil {
+	if err := controller.observationLog.RequestEvent(serving.RequestEvent{RequestID: "classification-pending", WorkloadUID: definition.UID, Kind: "received", At: receivedAt, ReceivedAt: receivedAt}); err != nil {
 		t.Fatal(err)
 	}
 	// Ordinary rolling observations retain the receipt without classifying it.
-	rolling, err := controller.journal.LoadWindow(from, end)
+	rolling, err := controller.observationLog.LoadWindow(from, end)
 	if err != nil || len(rolling.Arrivals) != 1 || rolling.Arrivals[0].Compute || rolling.Arrivals[0].Accepted {
 		t.Fatalf("rolling observation contract changed: %+v %v", rolling, err)
 	}
@@ -250,7 +251,7 @@ func TestControllerWorkIntervalWaitsForDurableReceiptClassification(t *testing.T
 	controller.work = blocked
 	// Classification can be appended after the cutoff while referring to the
 	// original historical receipt; it must remain in the still-unconsumed span.
-	if err := controller.journal.RequestEvent(serving.RequestEvent{RequestID: "classification-pending", WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: "validated", At: end.Add(time.Millisecond), ReceivedAt: receivedAt}); err != nil {
+	if err := controller.observationLog.RequestEvent(serving.RequestEvent{RequestID: "classification-pending", WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: "validated", At: end.Add(time.Millisecond), ReceivedAt: receivedAt}); err != nil {
 		t.Fatal(err)
 	}
 	interval, err = controller.workInterval(end, decision.Settings)

@@ -76,7 +76,7 @@ remain separate from code-intelligence checks.
   architecture gate.
 - `chill-dashboard/` is a CHILL-internal Node web/BFF deployment unit, not a
   Go package or an invented architecture-lint component. Its API boundary is
-  the fixed HTTPS owner; validate it with its native pnpm checks and browser
+  the fixed HTTPS ChillServer; validate it with its native pnpm checks and browser
   smoke separately from `go list` and `.go-arch-lint.yml`.
 
 Detailed direction is encoded in `.go-arch-lint.yml` and grounded in the
@@ -95,7 +95,7 @@ import evidence. Component permissions live in `.go-arch-lint.yml`.
 | `modelcompat` / `model-compat` | None; stdlib-only pure compatibility and tensor/native-setting contracts |
 | `modelcatalog` / `model-catalog` | `api/v1alpha1`, `modelcompat` |
 | `serving` / `serving-core` | `evidencestore`, `firstfloor`, `metricobserver`, `modelcompat`, `profiling/derivation` |
-| `serving/entrypoint` / `serving-entrypoint` | `api/v1alpha1`, `serving`, `serving/kube` |
+| `serving/httpapi` / `serving-httpapi` | `api/v1alpha1`, `serving`, `serving/kube` |
 | `firstfloor` / `firstfloor` | No CHILL package imports; bounded native executor leaf |
 | `serving/firstfloor` / `serving-firstfloor` | `firstfloor`, `serving` |
 | `profiling/run` / `profiling-run` | `modelcompat`, native `firstfloor` metadata types shared with the measured executor |
@@ -104,7 +104,7 @@ import evidence. Component permissions live in `.go-arch-lint.yml`.
 ```sh
 go list -f '{{.ImportPath}} {{join .Imports " "}}' \
   ./internal/modelcompat ./internal/modelcatalog ./internal/serving \
-  ./internal/serving/entrypoint ./internal/serving/kube ./internal/serving/firstfloor ./internal/firstfloor
+  ./internal/serving/httpapi ./internal/serving/kube ./internal/serving/firstfloor ./internal/firstfloor
 ```
 
 The native executor leaf never imports Serving, profiling or Kubernetes. Serving
@@ -210,7 +210,7 @@ its selected provider is absent.
 Scheduler configuration is explicit and independent of Profiler enablement:
 set `servingEntrypoint.scheduler.configMap` to an existing ConfigMap in the
 serving namespace and `scheduler.key` (default `scheduler.json`) to its JSON
-entry. The owner reads it directly using
+entry. ChillServer reads it directly using
 `--serving-scheduler-configmap`/`--serving-scheduler-config-key`; settings updates
 require update permission on that exact named ConfigMap. The chart does not
 grant blanket ConfigMap update permission. `config/samples/serving-scheduler.json`
@@ -222,6 +222,6 @@ Mirror each configured power-cost measurement's namespace/name in Helm
 `servingEntrypoint.scheduler.powerCostSources` to grant named read access to
 the retained measurement and its immutable preparation ConfigMap.
 Raw service samples remain in immutable evidence bundles, not ConfigMaps.
-The owner creates/removes native Pods and their small config/credential objects;
+ChillServer creates/removes native Pods and their small config/credential objects;
 NodeActuation remains the sole power actuator and pool membership uses the
 existing Node label ownership.

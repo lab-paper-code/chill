@@ -5,7 +5,7 @@
 [스케줄러 SRS](../../spec/scheduler/SRS.md)의 SCH-01~32와
 [요구사항·구현 대조](scheduler-srs-audit.md)를 구현한다. 원본 `docs/spec/`의
 실행기 경계는 사용자 선택에 따라 firstfloor로 갱신했다. 2026-10-08의 소스에서
-확인한 재사용 지점은 기존 Serving Runtime·Journal·Kubernetes observer/manager,
+확인한 재사용 지점은 기존 Serving Runtime·관측 기록·Kubernetes observer/manager,
 검증된 Profiling evidence, NodeActuation, metricobserver와 powerwindow다.
 
 동료의 `/home/genesis1/ETRI/donghwan/firstfloor`는 그대로 보존한다. 해당 소스의
@@ -21,7 +21,7 @@ CHILL의 ingress Runtime은 Workload 등록·수용·ready 인스턴스 분배�
 | 소유자 | 입력과 책임 | 실제 완료 근거 |
 |---|---|---|
 | `internal/firstfloor` | bounded per-UID queue, frozen request SLO, 같은 UID의 호환 batch, energy-gain 대기, 단일 runner 실행 | 요청별 progress·실제 batch·runner 종료·동기 응답 |
-| `internal/serving` | 정의·receipt·수명·ingress 대기, 운영 부하, 후보 replay·SLO/energy 선택, 분배·decision journal | 실제 native 상태와 반환 결과·분배 적용 기록 |
+| `internal/serving` | 정의·receipt·수명·ingress 대기, 운영 부하, 후보 replay·SLO/energy 선택, 분배·판단 관측 기록 | 실제 native 상태와 반환 결과·분배 적용 기록 |
 | `internal/serving/firstfloor` | HTTP/metadata/progress의 typed 경계, native span과 client span | prepared metadata, 정확한 request/UID/definition/physical instance 상관 |
 | `internal/serving/kube` | 실제 자원 snapshot, profile/cost catalog, Pod·policy·membership 원자 동작, 전환 의존성 | API 반환에 이어 실제 Pod/native readiness·drain·삭제·membership 확인 |
 | 기존 Profiling owner | 동일 firstfloor 경로의 fixed-batch 측정·idle·raw evidence·curve | 원래 Run/Job/Node/container/image/actuation와 raw trial binding |
@@ -29,7 +29,7 @@ CHILL의 ingress Runtime은 Workload 등록·수용·ready 인스턴스 분배�
 | 기존 metric/evidence owner | Node별 wall-power·sample/failure·적분·immutable raw 보존 | 조건·구간·coverage가 확인된 watts/joules |
 
 `firstfloor`는 Serving/Profiler 도메인에 역참조하지 않는 실행기 leaf다.
-Serving core는 leaf를 사용하고 Kubernetes/API 호출은 kube owner에 둔다.
+Serving core는 leaf를 사용하고 Kubernetes/API 호출은 kube adapter에 둔다.
 프로파일러는 자체 runtime evidence 계약과 firstfloor 실행 경로를 연결한다.
 `.go-arch-lint.yml`에 이 방향과 실제 생산 패키지를 함께 반영한다.
 
@@ -74,9 +74,9 @@ name/datatype/shape/byte count와 outputs를 담아 여러 numeric/bool tensor�
 최근 관측은 같은 노드·프로파일·모델/입력 실행 조건의 호환 정의에 재사용하며,
 측정 인스턴스의 제거나 SLO가 다른 Workload UID만으로 근거를 버리지 않는다.
 해당 조건의 관측이 없으면 후보 평가는 Pending이고 실제 Serving 측정이 선행해야 한다.
-선택한 preparation의 `completionCalibration`은 실제 측정 후 닫혀 발행된 Journal
+선택한 preparation의 `completionCalibration`은 실제 측정 후 닫혀 발행된 관측 기록
 raw window의 고정 `from/to`와 metadata/definitions/requests object identity를 명시한다.
-owner가 기존 evidence bound로 immutable bytes를 한 번 읽어 complete window, frozen
+ChillServer가 기존 evidence bound로 immutable bytes를 한 번 읽어 complete window, frozen
 definition/assignment와 성공한 native exchange/response span을 검증하고 같은 reducer로
 관측 최댓값을 만든다. 이 측정 사실의 수명은 최근 arrival 60s 구간과 별개이며 arrival
 구간을 늘리지 않는다. 현재 live 관측과 선택한 calibration 중 호환 조건의 더 큰 값을
@@ -91,14 +91,14 @@ unbound 완료 근거는 자원/전환 불가 사유도 함께 보존하되 후�
 이미 관측한 action 실패의 ExecutionError 우선순위는 유지한다.
 native policy의 `envelopeSource`는 기존 256-byte 제한 안에서 관측량·고정 구간·trial 수와
 Serving `completionMeasurement` 출처 연결만 전달한다. preparation, route 적용과 replay가
-같은 연결 표현을 쓰며 snapshot/journal의 전체 `Source`와 raw references를 자르거나
+같은 연결 표현을 쓰며 snapshot/관측 기록의 전체 `Source`와 raw references를 자르거나
 바꾸지 않는다. 긴 provenance 때문에 SDK가 policy를 거절하는 문제를 상한 확대로 숨기지 않는다.
 request window마다 definition을 다시 쓰지 않으므로 과거 definition window도 같은
 selector의 `windows`에 포함할 수 있다. 모든 선택 stream의 frozen identity를 합친 뒤
 `receivedAt ∈ [from,to)`의 성공 trial만 줄이며 `trialIDs`로 원래 request를 찾는다.
-같은 raw cohort를 여러 preparation이 선택하면 owner는 그 refresh 안에서 한 번만 읽고
+같은 raw cohort를 여러 preparation이 선택하면 ChillServer는 그 refresh 안에서 한 번만 읽고
 조건별 typed fact를 연결한다. persistent cache나 현재 arrival 구간 변경은 없다.
-도착 시각 예측은 owner 분배 시점이라는 가정으로 명시하며 측정값으로 포장하지 않는다.
+도착 시각 예측은 ChillServer 분배 시점이라는 가정으로 명시하며 측정값으로 포장하지 않는다.
 인증·업로드·decode·accept·dispatch를 포함한 모든 non-native receipt→response 시간을 포함한다.
 queued/running의 예상 완료 및 worker의 SLO slack/수명 예약에는
 `max(0, observed joint overhead − actual frozen sender elapsed)`만 남겨 둔다.
@@ -115,7 +115,7 @@ Scheduler snapshot의 `observationEnd`는 Tick에 전달한 고정 historical cu
 arrival·completion 관측 구간은 `[observationEnd−observationWindow, observationEnd)`이며
 현재 시각으로 끝을 바꾸거나 구간을 늘리지 않는다. `at`는 blocking capture I/O가 끝난 뒤
 기존 Runtime mutex 안에서 현재 outstanding·Workload 정의·routing/credits와 함께 읽은 decision origin이다.
-`SchedulerInputs`는 이 in-process 필드만 같은 read로 동결하며, owner는 그 뒤 blocking I/O 없이
+`SchedulerInputs`는 이 in-process 필드만 같은 read로 동결하며, ChillServer는 그 뒤 blocking I/O 없이
 현재 정의로 option 호환성과 이미 읽은 완료 근거를 연결한다. 요청의
 Elapsed·remaining lifetime·native queue/service/return age는 이 같은 시각에 맞추고 원래
 ReceivedAt·불변 SLO·native sender elapsed·실제 source ObservedAt은 덮어쓰지 않는다.
@@ -222,8 +222,8 @@ node의 측정 baseline은 power mode·준비된 model/profile/resource 집합·
 이는 전체 공존 조합의 선행 campaign을 요구하는 조건과 구별된다.
 
 Serving 원자 동작은 `prepare`, `remove`, `resize`(prepare→route→drain→remove),
-`pool membership`, `power mode`다. production 실행 owner의 동일 함수를 측정
-measurement command가 호출한다. measurement owner는 first successful power sample
+`pool membership`, `power mode`다. production 실행 경계의 동일 함수를 측정
+measurement command가 호출한다. measurement service는 first successful power sample
 후 원자 동작을 시작하고 실제 readiness/drain/removal/read-back 완료를 관측한다.
 Raw record에 before/target/actual state, 시작/완료, 실패·부분 상태, samples/failures,
 metric source·구간·설정·raw identity를 보존한다. powerwindow로 wall joules를 적분하며
@@ -243,7 +243,7 @@ record다. delta eta와 whole wall joules의 범위, 같은 노드·구간의 �
 ### 5.1 한 운영 snapshot
 
 운영 observation window·control interval·comparison horizon을 독립 설정한다.
-Journal의 보존/발행 구간과 지정 구간의 분석 필터는 운영 부하와 구분한다.
+관측 기록의 보존/발행 구간과 지정 구간의 분석 필터는 운영 부하와 구분한다.
 모든 UID의 received/accepted/assigned/completion 사건을 한 번 수집해 해당 사건
 구간의 inputs/s를 구하고, 실제 malformed/거절 결과도 전체 유입에 남긴다.
 계산 가능한 compute demand와 total inflow는 모집단으로 구별한다.
@@ -307,7 +307,10 @@ Workload percentile을 계산한다. 평균 batch latency나 단계별 quantile�
 end-to-end percentile로 사용하지 않는다.
 
 CPU/GPU/memory는 전체 allocations와 system/비서빙 예약분을 포함한 예산으로
-검토한다. CPU 할당/실제 affinity는 분리하고 threads를 allocation에 연결한다.
+검토한다. `CPUCount`는 측정/실제 Pod request의 올림값이며 quota·ORT threads·
+허용 affinity 폭과 구분한다. 측정한 threads와 전체 affinity를 그대로 재현하고,
+affinity 폭이 threads보다 큰 구성도 허용한다. 서빙 mask 사이의 중복과 예약 침범은
+계속 차단한다.
 GPU UUID와 whole-device exclusive allocation을 확인한다. measured peak memory와
 Serving 부가 예산은 feasible 제약이다. Pod마다 한 prepared runner와 순차 batch를
 사용하며 replica는 Pod 수로 나타낸다.
@@ -374,7 +377,10 @@ global route는 같은 policy ConfigMap/ACK 경로를 쓰므로 기존 running r
 관측하지 못한 native ACK/남은 시간을 새 goal의 즉시 적용으로 replay하지 않고 Pending으로
 남긴다. running/native noncancelable 작업을 강제로 취소하지 않는다.
 controls OFF의 manual `staticRouting`도 기존 running route가 있으면 덮어쓰지 않고
-같은 journal에 sourceConfigRV·대기 이유·actual readback을 남긴다.
+같은 관측 기록에 sourceConfigRV·대기 이유·actual readback을 남긴다.
+route의 ConfigMap·annotation 저장은 desired 진행으로, `Actual.Native`에는 정확한
+native ACK만 남긴다. 뒤 인스턴스의 적용이 실패하면 이미 받은 ACK와 실제 routing을
+보존해 `partial`로 기록하며, 미확인 인스턴스를 적용 완료로 채우지 않는다.
 
 동일 comparison horizon에서 모든 POOL Node의 baseline을 한 번 적분한다.
 active/inactive/temporary Node를 포함한다. 원자 동작 구간의 wall joules는 그 구간의
@@ -394,7 +400,7 @@ baseline 소비를 **대체**하고, 실제 serving execution의 incremental ene
 `projected-work-history`는 첫 실제 logical 구성의 work를 0으로 시작한다. 이후 첫 control
 tick에서 완성된 observation window가 있으면 cursor 이후 `[Through, ObservationEnd)`를
 한 번 소비한다. 지연된 tick도 전체 차이를 읽으며 rolling-H를 다시 누적하지 않는다.
-추가 journal 읽기는 authoritative Observer refresh와 최종 `SchedulerInputs(time.Now)` 이전에 끝낸다. interval과 선택 receipt/
+추가 관측 기록 읽기는 authoritative Observer refresh와 최종 `SchedulerInputs(time.Now)` 이전에 끝낸다. interval과 선택 receipt/
 definition dependency의 불완전 근거는 cursor를 진행시키지 않는다. 관련 없는 오래된 incomplete
 metadata는 제외하되 실제 겹침·필수 dependency·불명 prefix를 무시하지 않는다.
 선택 receipt의 validated/accepted 근거나 terminal outcome이 아직 없으면 history만 Pending으로
@@ -417,7 +423,7 @@ retained universe가 `MaxCandidates`를 넘으면 명시적으로 Pending이며 
 process 재시작 또는 settings 변경은 이유가 기록된 새 비교로 시작한다.
 
 algorithm은 `decision.settings.algorithm`에서 제공하며 fixed-horizon에는 `policy`를 만들지 않는다.
-projected decision/journal의 `policy`는 startedAt/startReason, currentKey,
+projected decision/관측 기록의 `policy`는 startedAt/startReason, currentKey,
 `candidates`와 같은 순서의 candidateKeys, history.through/values, intervalFrom/To,
 kernels의 energy/completion/references/reasons,
 pendingReason, selection과 projection assumption을 제공한다. 이것은 live automatic 실행이나
@@ -425,7 +431,7 @@ FULL 통과 증거가 아니다. 제어 활성화는 별도이며 기본 sample�
 
 ## 6. 실제 적용과 관리 연동
 
-kube owner가 measured target별 worker profile bundle과 작은 mutable policy config를
+`serving/kube` 제어 구현이 measured target별 worker profile bundle과 작은 mutable policy config를
 제공한다. 큰 raw 분포는 immutable store/volume에서 startup에 한 번 로드하고
 request마다 복사하거나 ConfigMap에 반복 전송하는 대신 공유한다. actual native
 metadata/progress에서 profile·policy 적용과 readiness를 확인한다.
@@ -441,7 +447,7 @@ metadata/progress에서 profile·policy 적용과 readiness를 확인한다.
 아직 시작 전/중단 가능한 동작에 적용하고 physical effect가 발생한 뒤에는 관측된
 상태에서 다시 선택한다. 실패 Node·instance는 route에서 격리하고 실제 recovery
 proof에 따라 재사용한다. 기존 관리 admission gate·accepted definition·공유 UID
-보호·actual drain과 같은 owner를 사용한다.
+보호·actual drain과 동일한 Workload 관리·요청 처리 구현을 사용한다.
 
 평가 중 완료된 동작의 동일 ID·동일 계약은 live run의 terminal 결과가 stale snapshot의
 running/cancel보다 우선한다. physical identity로 갱신된 목표에서 같은 prepare를 다시
@@ -457,16 +463,16 @@ running/cancel보다 우선한다. physical identity로 갱신된 목표에서 �
 replay/candidate limits·seed, measured cost sources·transport envelope, 제어요소 활성
 상태를 설정·기록한다. 정적 구성/제어요소 off 실험도 같은 관측을 사용한다.
 
-Journal은 request/management와 더불어 decision/settings/action/power 원시 기록을
+ObservationLog는 request/management와 더불어 decision/settings/action/power 원시 기록을
 보존한다. 수신 모집단과 completion-event rate를 구별하고 unknown/missing과 0을
 각각 표현한다. node watts·whole energy·incremental energy·단위·meter/구간/coverage를
 연결한다. 모든 오류·거절·timeout/cancel·미완료·late와 요청/batch 수를 각각 제공한다.
 
 ### 7.1 구체 설정과 조회 계약
 
-HTTPS owner는 `--serving-scheduler-configmap=<name>`과
+HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 `--serving-scheduler-config-key=scheduler.json`으로 Serving namespace의 구성을 읽는다.
-빈 ConfigMap 이름은 기존 Workload owner만 실행하며, scheduler 구성에서
+빈 ConfigMap 이름은 기존 Workload 관리·추론만 실행하며, scheduler 구성에서
 `settings.controls.enabled=false`를 선택하면 동일 관측·후보 기록으로 정적 실험을 실행한다.
 
 시작 시 profile catalog와 scheduler 설정은 먼저 읽어 Observer에 제공하지만,
@@ -477,11 +483,11 @@ Workload 정의를 복원한 뒤, controls ON일 때만 기존 `EnableSchedulerR
 따라서 9개 controls ON 재시작도 빈 fresh runtime이 아니라 복원된 actual routing에서
 시작한다. 기본 controls OFF와 live `SetConfiguration`의 OFF→ON freeze는 그대로다.
 
-owner의 기존 `--request-timeout`(기본 30초)은 한 control 호출의 refresh와 CPU 후보 평가·
+ChillServer의 기존 `--request-timeout`(기본 30초)은 한 control 호출의 refresh와 CPU 후보 평가·
 interval projection에 같은 `callCtx`로 적용된다. replay/event·후보·방향별 kernel 반복은
 취소를 확인하고 정상 Feasible/Pending 대신 context 오류로 반환한다. `o.lock`과 `tickMu`는
 기존대로 snapshot 평가·설정 수락·publication을 직렬화한다. CPU 계산 도중 확인한 취소는
-snapshot/decision 발행 전에 오류로 반환한다. publication/journal 직전과 `OnDecision` 이후에도
+snapshot/decision 발행 전에 오류로 반환한다. publication/관측 기록 직전과 `OnDecision` 이후에도
 취소를 확인하며, callback 중/직후 취소는 이미 발행·기록한 유효 판단을 보존하되 context 오류를
 반환하고 history를 진행하거나 새 physical action을 시작하지 않는다. 이미 시작한 실제 동작을
 소급해 취소한 것으로 바꾸지 않는다. 호출이 잠금을 반환하면 다음 full refresh가 canonical
@@ -491,7 +497,7 @@ controls OFF와 나머지 구성을 함께 수락하며, 이전 ON 계산을 비
 |---|---|
 | `settings` | nanosecond duration의 observation/control/horizon, search/replay/resource bounds·seed·제어 활성 상태 |
 | `cpuInventory`, `gpuInventory`, `reserved` | Node별 실제 CPU IDs·물리 GPU UUIDs와 비서빙 전용 예약. quota는 별도 수량 예산 |
-| `preparations` | catalog profile ID별 `PrepareSpec`. 검증된 profile과 immutable service 분포 bundle은 owner가 연결 |
+| `preparations` | catalog profile ID별 `PrepareSpec`. 검증된 profile과 immutable service 분포 bundle은 ChillServer가 연결 |
 | `preparations[profileID].completionCalibration` | 선택 OPTIONAL: 고정 `from/to`, `windows[].metadata/definitions/requests`의 기존 `ObjectIdentity`; raw 계약·파일은 재작성하지 않음 |
 | `staticRouting` | OPTIONAL 전체 현재 Workload UID → physical instance ID → nonnegative int32 weight; UID마다 positive weight 하나 이상. controls OFF의 명시 config revision만 기존 typed ApplyTarget 경로로 적용·physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. stale UID/target은 오류; 선언을 유지하는 OFF refresh는 baseline을 보존하며 이후 CHILL은 실제 routing에서 시작 |
 | `costReferences`, `powerCostSources` | 실제 원자 동작 raw object와 Complete directed power-mode 측정의 출처 |
@@ -500,9 +506,9 @@ controls OFF와 나머지 구성을 함께 수락하며, 이전 ON 계산을 비
 | `powerObservation` | 기존 sampler의 `Interval/Duration/RequestTimeout/MaxEvents`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap` |
 
 `staticRouting`의 configuration 수신과 실제 적용은 별개다. 물리 source readiness가
-아직 없거나 UID/target 검증이 실패하면 owner listener를 막지 않고 기존 refresh
+아직 없거나 UID/target 검증이 실패하면 ChillServer listener를 막지 않고 기존 refresh
 cadence에서 controls OFF인 동안만 미적용 revision을 다시 평가한다. 실패는 선언
-원본·`sourceConfigRV`·실제 routing·오류를 가진 manual action으로 journal과 scheduler
+원본·`sourceConfigRV`·실제 routing·오류를 가진 manual action으로 관측 기록과 scheduler
 state에 남으며 적용 성공으로 표시하지 않는다. 전체 physical read-back이 일치한
 revision은 다시 적용하지 않고, controls ON에서는 미적용 선언도 재시도하지 않는다.
 
@@ -524,11 +530,11 @@ campaign은 성공한 실제 측정과 closed/published window 확인 후 select
 }
 ```
 
-`size` 예시는 실제값이 아니다. 기존 `Journal.Health().windows[].objects`는 Go 내부
-조회이며 HTTP `GET /readyz`는 `{ready}`만 노출한다. 발행한 object list는 기존 owner
+`size` 예시는 실제값이 아니다. 기존 `ObservationLog.Health().windows[].objects`는 Go 내부
+조회이며 HTTP `GET /readyz`는 `{ready}`만 노출한다. 발행한 object list는 기존 ChillServer
 PVC의 `<observationDirectory>/<windowID>/metadata.json`에 보존된다. immutable S3
 metadata는 object list를 붙이기 **전**에 업로드되므로 `published=false`/objects 없음이
-정상이다. 따라서 동일 window의 세 raw role을 위 selector로 명시한다. owner의 기존
+정상이다. 따라서 동일 window의 세 raw role을 위 selector로 명시한다. ChillServer의 기존
 configured evidence store `Reader.Open(ctx, ObjectIdentity)`가 `serving/<windowID>/...`
 bytes를 읽는다. 새 publisher/reader API, digest, schema version 또는 TTL은 추가하지 않는다.
 
@@ -547,7 +553,7 @@ inventory·적용 affinity를 raw에 연결하며 quota와 mask의 의미를 각
 | `GET /api/v1/observations/power` | 같은 고정 `from/to`의 raw 표본을 Node당 한 번 적분한 전체·활성 POOL J/평균 W; 누락은 null과 사유 |
 
 현재 `/scheduler`, `/scheduler/state`, `/scheduler/profiles`와 scheduler history는 선택적으로
-`view=compact`를 받는다. 생략하면 기존 full raw 응답이며 저장 journal·archive와
+`view=compact`를 받는다. 생략하면 기존 full raw 응답이며 저장 관측 기록·archive와
 page/cursor 선택은 바꾸지 않는다. 다른 `view` 값은 `InvalidQuery`로 거절한다.
 compact 응답은 같은 envelope에 `profiles`와
 `completionMeasurements` dictionary를 추가하고, snapshot의 instances/options/
@@ -564,11 +570,11 @@ history scan, raw evidence 복사, decoded cache 또는 fallback reader는 없�
 selections의 persisted/loaded 의미는 그대로다. POST 선택·DELETE 제거 응답은
 projection하지 않는다.
 
-power 조회는 controller가 수락한 owner configuration 하나를 atomic하게 읽어 meter
-구성을 고정한다. 긴 refresh·control Tick의 owner mutex를 기다리지 않으며, 새 설정은
+power 조회는 controller가 수락한 ChillServer configuration 하나를 atomic하게 읽어 meter
+구성을 고정한다. 긴 refresh·control Tick의 scheduler mutex를 기다리지 않으며, 새 설정은
 controller 적용 성공 뒤에만 게시한다. 거절된 refresh는 이전 설정을 그대로 유지한다.
 
-Journal 조회는 기존 writer mutex 아래에서 필요한 stream 경로·byte 길이와 window
+ObservationLog 조회는 기존 writer mutex 아래에서 필요한 stream 경로·byte 길이와 window
 상태를 한 번 함께 캡처하고, 파일 읽기·JSON decode·집계는 잠금을 푼 뒤 수행한다.
 완료된 append 뒤의 길이를 고정하므로 새 append·rotation을 현재 조회에 섞거나
 진행 중 record를 잘린 tail로 오인하지 않는다. 실제 read 오류·잘린 원본은 health와
@@ -610,16 +616,16 @@ Runtime의 retained-definition registry를 복제하거나 별도 정의 cache�
 boundary 거리 안에서만 보조하며, 합친 표본의 원래 gap·값·meter identity·보관 완전성과
 조회 구간의 coverage를 검사한다. 조회 중 실제 source 실패와 OOM/재시작 공백은
 누락으로 남기며, 이전 구간의 오래된 표본 때문에 정상적인 닫힌 구간을 무효화하지 않는다.
-닫힌 Journal window의 겹침은 예정 `EndsAt`보다 이른 실제 `ClosedAt`에서 끝난다.
+닫힌 ObservationLog window의 겹침은 예정 `EndsAt`보다 이른 실제 `ClosedAt`에서 끝난다.
 전력·membership·arrival·완료 overhead 조회가 같은 경계를 사용한다. boundary 표본은
 현재 선언의 Node·meter·scope와 source kind/endpoint/metric/labels가 일치한 뒤에만
 선택하며, source가 없거나 바뀐 과거 기록을 현재 meter의 실측으로 재해석하지 않는다.
 
 설정 변경은 검증된 identity의 groups/extra까지 사용하여 해당 namespace/name의
-`configmaps/update` Resource SAR를 추가 확인한다. decision과 snapshot을 journal에
+`configmaps/update` Resource SAR를 추가 확인한다. decision과 snapshot을 관측 기록에
 보존한 뒤 physical action을 시작하고, 실제 시작·완료·실패와 부분 상태를 별도로 기록한다.
 
-worker init은 `serving-entrypoint --materialize-profile`과 기존 store flags,
+worker init은 `/opt/chill/bin/serving-entrypoint --materialize-profile`과 기존 store flags,
 `--profile-object-key/size/output`으로 bounded immutable bundle을 원자적으로 제공한다.
 runtime image는 [firstfloor image recipe](../../../build/docker/firstfloor.Dockerfile)를 사용한다.
 measurement command는 제한된 `measurement-*` POOL과 관측된 요청 소유권·native
@@ -631,7 +637,7 @@ exclusive lock으로 소유하며, live Serving traffic과의 병행 측정은 �
 | SRS | 구현 경로 | 확인할 소비자 행동 |
 |---|---|---|
 | SCH-01~02, 19, 28 | candidate selection + decision record + actual membership | keep/change·SLO-first·energy 비교·overload·Pending 구별 |
-| SCH-03~08, 29, 31 | Runtime/Journal/window/native state | UID·frozen context·전체 유입·0/unknown·window 경계·관리 중 drain |
+| SCH-03~08, 29, 31 | Runtime/ObservationLog/window/native state | UID·frozen context·전체 유입·0/unknown·window 경계·관리 중 drain |
 | SCH-09~12 | model/runtime/profile catalog + resource snapshot | latest same-condition·같은 실행기·분포/memory·전체 할당·exclusive resources |
 | SCH-13~15 | shared selector + per-request replay | 공유 비선점·현재 running residual·E2E percentile·node-wide impact |
 | SCH-16~18 | idle/action/transition measurement + whole-pool integration | inactive/temp Node·wall/delta 의미·중복 제외·같은 horizon·실제 readiness |
@@ -656,7 +662,7 @@ exclusive lock으로 소유하며, live Serving traffic과의 병행 측정은 �
 6. 권한 있는 설정/상태/원시 관측 API·배포 구성을 연결하고 전체 smoke/gate를 수행한다.
 
 각 단위는 해당 소비자 행동의 deterministic regression과 실제 실행 경로를 확인한다.
-최종 local smoke는 실제 entrypoint→firstfloor→persistent runner의 요청·다중 UID·
+최종 local smoke는 실제 ChillServer HTTP API→firstfloor→persistent runner의 요청·다중 UID·
 개별 SLO·policy 적용·fixed profiling·결정/동작 결과를 관측한다. synthetic 자료와
 실제 backend/hardware 측정의 증거를 구별한다. live cluster·외부 소스·이미지 registry의
 변경은 별도 승인된 실행으로 다룬다.
@@ -750,8 +756,8 @@ image tag는 `scheduler-live-20261009`, Helm revision은 8에서 9로 변경했�
 
 - `fast-deploy --components all`의 operator·node-discovery·node-actuator·profiler·console과 별도 serving-entrypoint·dashboard를 build/push했다. 기본 `all`의 범위를 실제 script에서 확인했다.
 - Docker container builder의 연결 오류와 Docker driver의 multi-platform/HTTP registry 제한을 확인했다. root/owner는 `edge-builder`, 최종 Dashboard는 `chill-builder`로 publish했다. 외부 Docker/agent 설정은 변경하지 않았다.
-- 기존 PVC·ChillSystem UID `17722831-d04d-4d8f-9e63-1bc13d5eef07`와 사용자 Model/Workload를 보존했다. 새 stored-contract Journal은 `/data/scheduler-native-alpha2`를 사용한다.
-- 기존 owner의 재시작 306회와 read-only `/tmp`의 evidence candidate 생성 실패를 관측했다. read-only root는 유지하고 Helm에 128Mi `/tmp` emptyDir를 연결했다. Journal 경로는 `observationStorage.directory`로 선택한다.
+- 기존 PVC·ChillSystem UID `17722831-d04d-4d8f-9e63-1bc13d5eef07`와 사용자 Model/Workload를 보존했다. 새 저장 계약의 관측 기록은 `/data/scheduler-native-alpha2`를 사용한다.
+- 기존 서버의 재시작 306회와 read-only `/tmp`의 evidence candidate 생성 실패를 관측했다. read-only root는 유지하고 Helm에 128Mi `/tmp` emptyDir를 연결했다. 관측 기록 경로는 `observationStorage.directory`로 선택한다.
 - `serving-scheduler` ConfigMap은 실제 sample의 controls-off 설정으로 생성했다. inventory·profile·cost·meter를 작성한 측정값으로 대신 채우지 않았다.
 - 보존한 live values의 preflight는 resource 70개, kubeconform valid 58/invalid 0/errors 0/skipped 12와 CRD ownership을 통과했다. 실제 upgrade의 `--wait`도 통과했다.
 
@@ -776,7 +782,7 @@ image tag는 `scheduler-live-20261009`, Helm revision은 8에서 9로 변경했�
 CPUExecutionProvider` 계약과 이전 applied snapshot을 현재 native 등록 계약에
 맞춘 운영 전환이 필요하다. 해당 사용자 객체의 spec·UID는 유지했으며 상태를
 숨기거나 compatibility reader를 추가하지 않았다.
-새 Journal 경로에는 해당 이전 definition identity가 존재하지 않는다. 실제
+새 관측 기록 경로에는 해당 이전 definition identity가 존재하지 않는다. 실제
 `Manager.restoreDefinition`은 `RetainedDefinition(identity)`를 조회하고 확보된
 snapshot에만 복구를 허용한다. 관측한 실패는 이 경계에서 발생했으며, 새 운영
 정의는 explicit 관리 요청으로 적용하는 방식으로 전환한다.

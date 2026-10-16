@@ -30,7 +30,7 @@ API 응답으로 채우고, 제출 및 제어 버튼은 해당 API와 권한 검
 
 운영 판단은 `/scheduler`, 후보 비교는 `/scheduler/candidates`, 실제 부하는
 `/scheduler/load`에서 조회한다. 상세는 열 때의 응답을 유지하며 새 관측 시각을
-안내한다. load 응답의 arrivals는 owner가 생략하므로 UID와 원래 구간으로 전체
+안내한다. load 응답의 arrivals는 ChillServer가 생략하므로 UID와 원래 구간으로 전체
 적용 정의의 요청 관측에 연결한다. 후보가 제공한 정의 identity는 그대로 전달한다.
 요청 상세는 CHILL 배정과 nativeProgress의 실제 실행 관측을 구분한다.
 `/configuration`은 duration 네 필드, Serving 메모리, 반복 비교와 탐색 상한,
@@ -44,7 +44,7 @@ ms를 정확한 ns로 변환한다. 저장 검토는 현재 설정을 재조회�
 별도로 유지한다. 선택 기록은 같은 구간의 append offset에 limit=1로 복원하며
 종류, at, 대상과 action의 노드/시작 시각이 다르면 다른 사건으로 대체하지 않는다.
 A/B 비교는 각 판단의 입력 구간과 미래 horizon을 구분하고 UID/고정 정의별
-owner whole-window cohort를 조회한다. 웹은 백분위, 총에너지와 실험 점수를 계산하지 않는다.
+ChillServer whole-window cohort를 조회한다. 웹은 백분위, 총에너지와 실험 점수를 계산하지 않는다.
 동작은 제공된 단계와 before/actual을 표시하며 같은 ID의 다른 시작을 병합하지 않는다.
 전력 상세는 단일 기록 모달의 W 시계열과 meter/scope/source/coverage/실패를 표시한다.
 표본 시각은 collector 수신 시각이며 값 없음과 0 J는 별개다. 내보내기는 선택 기록
@@ -124,7 +124,7 @@ pnpm은 [원본 toolchain](https://github.com/shadcn-ui/ui/blob/e8c3143b1cd19128
 브라우저: 화면, 폼, 메모리 인증정보, Query cache
     → HTTPS chill-dashboard: Next.js 화면과 /api/chill Route Handler
     → HTTPS CHILL 공통 관리 진입점
-        → Serving의 Model 및 Workload owner와 요청 journal
+        → Serving의 Model 및 Workload 관리와 요청 관측 기록
         → Console query 및 검증된 Evidence 조회
         → 측정, 자원 관리, 설정과 전환의 해당 CHILL 생산자
 ```
@@ -147,13 +147,13 @@ App Router의 layout은 shell과 안전한 웹 설정을 전달한다. 인증된
 같은 origin의 BFF를 호출해 조회한다. 서버 데이터는 Query cache에, 작성 중 입력은 폼에,
 대상과 필터 및 구간은 URL에 둔다.
 
-공통 HTTPS 진입점은 `cmd/serving-entrypoint`에서 조립한다. 기존 Serving handler를 유지하고
+공통 HTTPS ChillServer는 `cmd/chill-server`에서 조립한다. 기존 Serving handler를 유지하고
 Console 조회는 요청별 사용자 인증 및 SAR 후 고정 private Console origin으로 중계한다.
 Console의 기존 Evidence Store binding, retained loader 및 production preflight resolver를 재사용한다.
 `--dashboard-url`은 API와 health 경로를 제외한 화면, 정적 자산과 BFF를 private Dashboard로
-중계한다. 공개 HTTPS owner → Dashboard BFF → HTTPS owner `/api/v1`의 경로는 서로 분리된다.
+중계한다. 공개 HTTPS ChillServer → Dashboard BFF → HTTPS ChillServer `/api/v1`의 경로는 서로 분리된다.
 Standalone Console과 CLI는 기존 query 및 검증 계약을 유지한다. 별도 ingress controller가
-없어도 owner의 HTTPS NodePort로 Dashboard에 접근할 수 있다.
+없어도 ChillServer의 HTTPS NodePort로 Dashboard에 접근할 수 있다.
 
 패키지 허용 범위는 [아키텍처 규칙](../../../.go-arch-lint.yml)을 따른다.
 Serving과 Console의 handler 연결은 `cmd/**`의 조립 권한을 사용한다.
@@ -174,7 +174,7 @@ CHILL에 전달한다. CHILL이 TokenReview와 대상 및 HTTP 동작의 Subject
 
 현재 [Authorizer](../../../internal/serving/kube/authorizer.go)는 TokenReview로 검증한
 username과 UID의 private `Principal`을 반환하고 SAR를 수행한다. handler와 manager는 그
-신원만 변경 작업과 management journal에 기록하며 클라이언트 신원 header는 신뢰하지 않는다.
+신원만 변경 작업과 관리 관측 기록에 남기며 클라이언트 신원 header는 신뢰하지 않는다.
 
 - 인증 누락, 거부 또는 무효 token은 401, 실제 SAR 거부는 403이다.
 - review 통신 실패, API 권한 오류와 SAR evaluation 오류는 503이며 변경을 접수하지 않는다.
@@ -215,7 +215,7 @@ update만 허용한다. Dashboard ServiceAccount에 사용자 변경 권한을 �
 ### 5.1 현재 재사용 가능한 표면
 
 아래 준비 상태의 근거는 소스의 HTTP 등록과 조회 구현이다.
-Serving 경로는 [현재 handler](../../../internal/serving/entrypoint/handler.go),
+Serving 경로는 [현재 handler](../../../internal/serving/httpapi/handler.go),
 Console 경로는 [현재 read handler](../../../internal/operatorconsole/readapi/handler.go)를 기준으로 한다.
 
 | method와 `/api/v1` 하위 경로 | 현재 제공 범위 | 웹 연결과 필요한 보완 |
@@ -228,9 +228,9 @@ Console 경로는 [현재 read handler](../../../internal/operatorconsole/readap
 | `GET /namespaces/{namespace}/profiling-runs/{name}/evidence-passport` | 검증된 Run 계보와 제한된 Evidence 요약 | 공통 HTTPS 경계에 인증을 적용해 재사용한다. |
 | `GET /namespaces/{namespace}/batch-energy-optimizations/{name}/result` | 캠페인의 봉인된 결과 | 진행 상세와 구분해 재사용한다. |
 | `POST /namespaces/{namespace}/batch-energy-optimizations/preflight` | 입력을 해석하고 계획을 반환하는 읽기 전용 요청 | 조건 안내에 사용한다. 캠페인 접수는 별도 POST로 수행한다. |
-| `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정, 실제 snapshot과 판단, 동작과 결과, 전체 설정 적용 및 행위자 journal | 고정 BFF 경로에 연결한다. 버전 조건과 dry-run 계약은 제공하지 않는다. |
+| `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정, 실제 snapshot과 판단, 동작과 결과, 전체 설정 적용 및 행위자 관측 기록 | 고정 BFF 경로에 연결한다. 버전 조건과 dry-run 계약은 제공하지 않는다. |
 | `GET /observations/load` | 명시적 구간의 수신, 접수, 배정과 완료 사건 수 및 사건률 | from/to를 필수로 전달한다. 완료는 수신 cohort와 별개의 사건 집계다. |
-| `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 총건수와 구간 완전성은 제공하지 않는다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 owner `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`·`completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
+| `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 총건수와 구간 완전성은 제공하지 않는다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`·`completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
 
 System, Inventory와 Run 목록은 기존
 [System query](../../../internal/operatorconsole/kube/system_query.go),
@@ -256,11 +256,11 @@ Inventory는 각 원본의 resourceVersion과 개별 조회 시각을 유지하�
 | `GET, POST /namespaces/{namespace}/power-mode-transition-costs`, `GET .../power-mode-transition-costs/{name}` | 대상 Node, 두 전력모드와 설정된 반복 측정 조건, 실제 시도와 결과 참조 | 기존 전환 비용 측정과 NodeActuator를 재사용한다. 조회 및 create adapter가 필요하다. |
 | `GET /profiles` | 조건별 성공 Run, 실행시간 분포, 처리량, 메모리, 전력과 에너지, 유휴 기준 및 trial 참조 | 검증된 Run과 campaign 결과의 조회 projection이 필요하다. |
 | `GET /namespaces/{namespace}/profiling-runs/{name}/evidence/raw`, `GET .../power-mode-transition-costs/{name}/result` | 권한 범위의 구조화된 raw 및 전환 측정 결과, 원본 참조와 단위 | 기존 검증 경계와 봉인된 결과 reader를 재사용하는 전송 경로가 필요하다. |
-| `GET, PUT /allowed-resources`, `POST /nodes/{uid}/maintenance` | 허용 Node와 실행 경로 및 전력모드, 제외 또는 복귀, version, 영향, 원본 작업 참조 | 자원 정책과 유지보수 owner가 필요하다. 적용은 CHILL의 실제 드레인과 actuator가 수행한다. |
-| `GET /observations/workloads/{uid}/requests/{requestID}` | 원본 적용 정의, 단계와 실제 outcome, CHILL 종단 지연과 SLO 초과 여부 | 기존 journal의 exact 요청 조회 전송 경로가 필요하다. |
+| `GET, PUT /allowed-resources`, `POST /nodes/{uid}/maintenance` | 허용 Node와 실행 경로 및 전력모드, 제외 또는 복귀, version, 영향, 원본 작업 참조 | 자원 정책과 유지보수 생산자가 필요하다. 적용은 CHILL의 실제 드레인과 actuator가 수행한다. |
+| `GET /observations/workloads/{uid}/requests/{requestID}` | 원본 적용 정의, 단계와 실제 outcome, CHILL 종단 지연과 SLO 초과 여부 | 기존 관측 기록의 exact 요청 조회 전송 경로가 필요하다. |
 | 운영 전력 집계 API (미제공) | 전체 및 활성 POOL, 전환 포함, 전체와 증분 에너지 및 누락 | 개별 node/meter/window 기록은 `GET /observations/scheduler`로 연결했다. POOL 집계와 동작별 귀속 생산자는 없다. |
 | `GET /experiments`, `GET /experiments/{id}` | 시나리오, 프로파일과 설정, 초기 구성, 제어요소, 요청과 전력 및 전환의 같은 시간축 참조 | 시스템 실험 기록과 조회 projection이 필요하다. |
-| 전체 변경 feed (미제공) | 영역 간 행위자, 대상과 접수 및 적용 결과 | 서비스 management journal과 scheduler settings 사건은 각각 연결했다. 영역 간 통합 feed는 제공되지 않는다. |
+| 전체 변경 feed (미제공) | 영역 간 행위자, 대상과 접수 및 적용 결과 | 서비스 관리 관측 기록과 scheduler settings 사건은 각각 연결했다. 영역 간 통합 feed는 제공되지 않는다. |
 | `GET /exports` | 자료 종류, 대상, from과 to 및 필터로 선택한 records, 집계 조건, 단위와 sourceRefs | 해당 생산자의 조회 및 archive를 사용하는 권한 검사와 비밀정보 제거가 필요하다. |
 
 목록에는 제한된 `limit`, opaque `cursor`, 검색 및 지원한 sort와 filter를 제공한다.
@@ -280,10 +280,10 @@ desired 및 applied version은 해당 생산자의 계약을 사용하고 전환
 - Evidence 조회와 내보내기는 [RetainedLoader](../../../internal/profiling/profiler/evidence/kube/retained_loader.go)의 검증된 타입을 사용한다. 검증은 그 경계에서 수행하고 raw 배열은 별도 bounded 조회 또는 내보내기로 제공한다.
 - 프로파일 조회는 검증된 성공 Run과 campaign 결과를 사용하고, 조건에 맞는 최신 성공 선택과 한 Run 내부 trial 집계를 각각 표시한다.
 - POOL projection은 실제 Pod와 Node, 모델 및 경로, 자원 할당과 검증된 전력모드 readback을 사용한다. 측정 당시 조건은 provenance로 표시한다.
-- 허용 자원과 유지보수 API는 버전 있는 선언, 확인 가능한 영향과 실제 진행을 반환한다. 내부 `MoveNodePool`은 실제 요청 드레인 후 label을 바꾸는 원자 동작으로 재사용한다. 목적지 선택과 유지보수 상태는 자원 관리 owner가 소유한다.
+- 허용 자원과 유지보수 API는 버전 있는 선언, 확인 가능한 영향과 실제 진행을 반환한다. 내부 `MoveNodePool`은 실제 요청 드레인 후 label을 바꾸는 원자 동작으로 재사용한다. 목적지 선택과 유지보수 상태는 자원 관리 생산자가 소유한다.
 - 구성 선택과 시스템 전환은 [구성 선택 명세](../../spec/04_configuration_selection.md)와 [전환 명세](../../spec/05_transition_control.md)의 생산자가 수행한다. [현재 구현 범위](../../../README.md#chill)에 맞춰 화면과 API의 연결 준비 상태를 표시한다.
 - 전력 생산자는 각 Node를 한 번 포함한 전체 POOL과 활성 범위, 실제 전환 소비와 관측 누락을 반환한다. 프로파일링 watts는 해당 측정 조건으로 한정한다.
-- 기존 request journal은 전체 선택 구간의 통계를 page 분할 전에 계산한다. 추가 분포와 백분위, SLO 초과 및 archive 조회도 Serving이 계산한다. archive 객체 참조와 실제 archive 조회 능력을 구분한다.
+- 기존 요청 관측 기록은 전체 선택 구간의 통계를 page 분할 전에 계산한다. 추가 분포와 백분위, SLO 초과 및 archive 조회도 Serving이 계산한다. archive 객체 참조와 실제 archive 조회 능력을 구분한다.
 - 변경의 actor와 전후 정의, 접수 및 적용 결과는 도메인 생산자가 보존한다. `changes`는 이 원본 기록의 조회 projection이다. 웹 접근 로그는 중계 진단으로 분리한다.
 
 측정 웹 동작은 immutable 요청 접수와 실제 진행 및 결과 조회로 구성한다.
@@ -304,7 +304,7 @@ desired 및 applied version은 해당 생산자의 계약을 사용하고 전환
 | `/` | 지금 확인할 일 목록. 접수 불가 서비스, 준비 안 된 노드, 목표 초과 예상, 실패·진행 중 변경을 심각한 순서로 나열하고 각 행이 해결 화면으로 이동한다. |
 | `/workloads`, `/models` | 서비스와 모델 목록. 주 동작은 추가다. |
 | `/workloads/[name]` | 서비스 상태의 결론과 다음 할 일 하나. 정의와 적용, 측정 근거, 배치, 최근 운영, 변경 기록은 행으로 각 화면에 연결한다. |
-| `/workloads/[name]/{definition,evidence,placement,operation,changes}` | 서비스의 한 측면. 배치는 `v1/pools`와 운영 판단의 요청 분배, 운영과 변경은 표시한 최근 구간의 owner 관측에서 읽는다. |
+| `/workloads/[name]/{definition,evidence,placement,operation,changes}` | 서비스의 한 측면. 배치는 `v1/pools`와 운영 판단의 요청 분배, 운영과 변경은 표시한 최근 구간의 ChillServer 관측에서 읽는다. |
 | `/models/[name]`, `/models/[name]/{files,services}` | 모델 요약, 파일과 실행 방식, 연결된 서비스와 삭제 영향. |
 | `/workloads/new`, `/models/new`, `/…/[name]/edit` | 단계형 등록·수정과 전후 검토. 버전 사전 조건, 충돌 시 최신 값 채택, 결과 미확인 처리를 유지한다. |
 | `/workloads/[name]/infer` | 입력 선택 → 확인 → 결과. 실행 batch는 보내지 않는다. |
@@ -366,7 +366,7 @@ Model과 Workload의 `If-Match`는 원본 metadata.resourceVersion을 사용한�
 각 영역을 독립 Query로 조회하고 지원 여부, 권한 없음, 데이터 없음, 오래된 관측,
 조회 실패와 동작 실패를 각각 표시한다. 실패한 영역에도 마지막 원본 관측 시각을 남기고
 다른 영역의 결과를 유지한다. capability는 실제 지원을, health와 readiness는 해당 원본의
-판정을 표시한다. `/readyz`의 journal health는 해당 저장소 준비로 표시한다.
+판정을 표시한다. `/readyz`의 관측 기록 health는 해당 저장소 준비로 표시한다.
 
 [Query 기본값](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults)을 다음과 같이 설정한다.
 조회와 mutation은 `retry: false`, focus와 reconnect refetch는 `false`로 설정한다.
@@ -387,7 +387,7 @@ fetch에 전달해 이동과 로그아웃 때 조회를 취소한다. 지원한 
 
 브라우저 왕복은 fetch 시작부터 완전한 응답 본문 수신까지 `performance.now()`로 측정한다.
 `X-Chill-Relay-Timing`은 CHILL 대기와 실행을 포함한 웹 중계 왕복이며 BFF 자체 처리 비용이 아니다.
-CHILL 종단 시간은 journal의 실제 요청 기록을 사용한다. 각 경계는 그 경계의 같은 시계를 사용한다.
+CHILL 종단 시간은 실제 요청 관측 기록을 사용한다. 각 경계는 그 경계의 같은 시계를 사용한다.
 
 원본 시간 문자열과 입력값은 그대로 보존하고 표시에는 명시한 시간대와 `Intl`을 사용한다.
 표에는 가로 스크롤을, 핵심 폼에는 좁은 화면의 세로 배치를 사용한다. Dialog의 focus,
@@ -398,7 +398,7 @@ CHILL 종단 시간은 journal의 실제 요청 기록을 사용한다. 각 경�
 
 [Next standalone 출력](https://nextjs.org/docs/app/api-reference/config/next-config-js/output)을
 사용한 Node 컨테이너로 배포한다. `public`과 `.next/static`도 runtime image에 포함한다.
-웹은 별도 Deployment와 ClusterIP Service를 가지며 공통 owner의 HTTPS gateway 또는
+웹은 별도 Deployment와 ClusterIP Service를 가지며 공통 ChillServer의 HTTPS gateway 또는
 명시적으로 설정한 TLS Ingress로 공개한다. chart 기본 Service 유형은 ClusterIP다.
 테스트용 NodePort는 해당 release의 `servingEntrypoint.service.type=NodePort`에서만 선택한다.
 
@@ -412,14 +412,14 @@ CHILL 종단 시간은 journal의 실제 요청 기록을 사용한다. 각 경�
 
 웹 Pod는 `automountServiceAccountToken: false`로 배포한다. API 원본의 설정과 작업은 CHILL이 유지하므로
 Dashboard 종료와 재시작 동안 Serving 및 관리 작업의 수명은 기존 계약을 따른다.
-공통 HTTPS mount에는 Console의 조회 RBAC와 owner의 기존 Evidence credential 참조를 연결한다.
+공통 HTTPS mount에는 Console의 조회 RBAC와 ChillServer의 기존 Evidence credential 참조를 연결한다.
 Console 조회 권한은 read-only와 필요한 이름 범위로 제한한다. 측정 생성 adapter에는
 허용 namespace의 Run, campaign 및 전환 비용 측정 객체에 필요한 create 권한만 추가한다.
 사용자 역할에는 새 HTTP 경로의 정확한 verb와 대상 권한을 추가하고 기존 CLI 및
 Standalone Console 권한과 구분한다. 읽기 전용 preflight의 POST 권한은 해당 경로에 한정한다.
 
 초기 검증 설정은 page 50개, 최대 200개, 기본 구간 1시간, 최대 24시간, 갱신 5초,
-조회 timeout 10초, 변경 timeout 60초, 요청 및 응답 body 최대 8 MiB다. owner와 웹 설정의 한도를 맞춘다.
+조회 timeout 10초, 변경 timeout 60초, 요청 및 응답 body 최대 8 MiB다. ChillServer와 웹 설정의 한도를 맞춘다.
 단일 추론 timeout은 사용자 값과 CHILL 상한을 사용하고 BFF의 전달 및 응답 여유를 별도로 설정한다.
 raw 및 내보내기는 producer의 제한된 page 또는 stream을 사용한다. 설정 변경은 실제 입력 규모를
 측정한 결과로 결정한다. 이 값은 웹 검증의 초기 설정이며 측정 및 제어 정책은 CHILL 설정을 사용한다.
@@ -437,12 +437,12 @@ raw 및 내보내기는 producer의 제한된 page 또는 stream을 사용한다
 | DB-FR-08~09 | 기존 infer와 exact 요청 관측, timeout 및 지연 경계 | 모델 공유와 추론 |
 | DB-FR-10~11 | POOL 실제 projection, Inventory, allowed-resources와 maintenance | POOL과 유지보수 |
 | DB-FR-12~14 | 측정 options, immutable create, 실제 status, profiles와 Passport 및 raw | 근거 부족, 측정과 실패 |
-| DB-FR-15~18 | `/scheduler` 실제/유지/목표와 근거, `/configuration` 모든 Settings 및 제어요소 편집 | 현재 owner 연결 검증. 허용 자원 전체 편집, 정적 실험 구성과 영향 예측 생산자는 미제공 |
+| DB-FR-15~18 | `/scheduler` 실제/유지/목표와 근거, `/configuration` 모든 Settings 및 제어요소 편집 | 현재 ChillServer 연결 검증. 허용 자원 전체 편집, 정적 실험 구성과 영향 예측 생산자는 미제공 |
 | DB-FR-19~21 | `/transitions` 계획·의존 동작과 before/actual, 상태·실패·partial, 판단 기록 링크 | 제공된 관측의 조회 검증. 수동 개입과 동작별 실측 에너지 귀속은 미제공 |
-| DB-FR-22~23 | UID journal, 전체 구간 cohort와 분포, SLO 초과 및 archive 조회 | 빈 구간과 집계 |
+| DB-FR-22~23 | UID 관측 기록, 전체 구간 cohort와 분포, SLO 초과 및 archive 조회 | 빈 구간과 집계 |
 | DB-FR-24 | `/scheduler/power` 개별 node/meter/window W/J, coverage와 누락 | 개별 기록 표시 검증. 전체/활성 POOL 및 증분 에너지 집계는 미제공 |
 | DB-FR-25 | `/scheduler/compare` A/B 조건과 예측, 입력 구간의 실제 cohort 및 전력 링크 | 판단 기록 비교 연결. 실험 생성·실행·수명주기와 인과 비교는 미제공 |
-| DB-FR-26~27 | 선택 기록/현재 페이지 export와 서비스·scheduler 설정 변경, 비밀 제거 및 검증 actor | 실제 설정 journal 조회와 원본 scope 보존. 영역 간 통합 feed는 미제공 |
+| DB-FR-26~27 | 선택 기록/현재 페이지 export와 서비스·scheduler 설정 변경, 비밀 제거 및 검증 actor | 실제 설정 관측 기록 조회와 원본 scope 보존. 영역 간 통합 feed는 미제공 |
 | DB-OP-01~05 | 4, 6절의 영향 확인, If-Match, 원본 작업 조회, 제출 잠금과 명시적 재제출 | 처리 중 수정과 삭제, 공유 모델 변경, 충돌과 연결 단절 |
 | DB-NFR-01~02 | 6, 7절의 native 입력, 접근성, 반응형, 시간 및 단위와 값 보존 | 안내형 등록, 접근성과 화면 안전 |
 | DB-NFR-03~04 | 7, 8, 10절의 bounded 조회와 별도 중계 비용 및 성능 예산 | 조회 부하와 재시작 |
@@ -451,7 +451,7 @@ raw 및 내보내기는 producer의 제한된 page 또는 stream을 사용한다
 현재 제공 API에 대한 웹 구현은 다음과 같다.
 
 1. 공식 고정 Git source와 MIT 원문을 보존한 독립 모듈, 전체 메뉴 및 route와 standalone image.
-2. 원본 bearer 및 native TLS 중계, 검증 actor, Model/Workload CRUD, 지원 입력 기반 infer, POOL과 journal.
+2. 원본 bearer 및 native TLS 중계, 검증 actor, Model/Workload CRUD, 지원 입력 기반 infer, POOL과 관측 기록.
 3. 인증된 System/Inventory/Run 목록, Passport, 봉인된 result와 read-only preflight.
 4. native QueryClient 신원 교체, If-Match 충돌 draft 보존, 201/200/202/204 구분, GET 404 및 새 UID 구분.
 5. 정책/측정 writer, selector, 시스템 전환, 운영 power와 실험은 실제 생산자 부재를 표시하고 비활성화한다.

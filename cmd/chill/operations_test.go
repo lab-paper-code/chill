@@ -13,22 +13,22 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/serving/entrypoint"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	"k8s.io/client-go/rest"
 )
 
 type fakeProfileOperations struct {
-	result entrypoint.ProfileSelectionResult
+	result httpapi.ProfileSelectionResult
 	err    error
 }
 
-func (f fakeProfileOperations) List(context.Context) (entrypoint.ProfileSelectionsView, error) {
-	return entrypoint.ProfileSelectionsView{}, f.err
+func (f fakeProfileOperations) List(context.Context) (httpapi.ProfileSelectionsView, error) {
+	return httpapi.ProfileSelectionsView{}, f.err
 }
-func (f fakeProfileOperations) Adopt(context.Context) (entrypoint.ProfileSelectionResult, error) {
+func (f fakeProfileOperations) Adopt(context.Context) (httpapi.ProfileSelectionResult, error) {
 	return f.result, f.err
 }
-func (f fakeProfileOperations) Unadopt(context.Context) (entrypoint.ProfileSelectionResult, error) {
+func (f fakeProfileOperations) Unadopt(context.Context) (httpapi.ProfileSelectionResult, error) {
 	return f.result, f.err
 }
 
@@ -45,8 +45,8 @@ func TestProfileAdoptionExitAndStructuredReason(t *testing.T) {
 		{"Loaded", true, true, false}, {"AlreadySelected", true, true, false},
 	} {
 		t.Run(test.status, func(t *testing.T) {
-			result := entrypoint.ProfileSelectionResult{
-				Campaign: entrypoint.ProfileCampaign{Namespace: "ns", Name: "task"}, Status: test.status,
+			result := httpapi.ProfileSelectionResult{
+				Campaign: httpapi.ProfileCampaign{Namespace: "ns", Name: "task"}, Status: test.status,
 				Persisted: test.persisted, Loaded: test.loaded, Code: "MeasuredState", Reason: "actual reason",
 			}
 			deps := dependencies{newProfiles: func(opts operationOptions) (profileOperations, error) {
@@ -61,7 +61,7 @@ func TestProfileAdoptionExitAndStructuredReason(t *testing.T) {
 			if (err != nil) != test.wantError {
 				t.Fatalf("error = %v", err)
 			}
-			var got entrypoint.ProfileSelectionResult
+			var got httpapi.ProfileSelectionResult
 			if err := json.Unmarshal([]byte(stdout.String()), &got); err != nil {
 				t.Fatal(err)
 			}
@@ -103,17 +103,17 @@ func TestProfileOwnerHTTPSCredentialsAndTrust(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_ = json.NewEncoder(w).Encode(entrypoint.ProfileSelectionsView{ConfigVersion: "rv1"})
+			_ = json.NewEncoder(w).Encode(httpapi.ProfileSelectionsView{ConfigVersion: "rv1"})
 			return
 		}
-		var request entrypoint.ProfileSelectionRequest
+		var request httpapi.ProfileSelectionRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
 		if r.Method != http.MethodPost || request.Campaign.Namespace != "ns" || request.Campaign.Name != "task" {
 			t.Errorf("wrong adoption request %#v", request)
 		}
-		_ = json.NewEncoder(w).Encode(entrypoint.ProfileSelectionResult{
+		_ = json.NewEncoder(w).Encode(httpapi.ProfileSelectionResult{
 			Campaign: request.Campaign, Status: "Persisted", Persisted: true,
 		})
 	}))

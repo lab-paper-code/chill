@@ -10,12 +10,12 @@ import (
 func TestShutdownCannotReopenAdmission(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	journal, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = journal.Close(context.Background()) })
-	runtime, err := NewRuntime(ctx, RuntimeConfig{QueueLimit: 1, Journal: journal})
+	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
+	runtime, err := NewRuntime(ctx, RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}

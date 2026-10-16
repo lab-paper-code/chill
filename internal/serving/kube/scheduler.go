@@ -72,7 +72,7 @@ type SchedulerController struct {
 	runtime         *serving.Runtime
 	observer        *Observer
 	operations      *Operations
-	journal         *serving.Journal
+	observationLog  *serving.ObservationLog
 	config          SchedulerControllerConfig
 	state           SchedulerControllerState
 	runs            map[string]*actionRun
@@ -86,15 +86,15 @@ type SchedulerController struct {
 
 // NewSchedulerController configures control without taking ownership of routing.
 // The composition root freezes routing after restoring the actual baseline.
-func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *Operations, journal *serving.Journal, config SchedulerControllerConfig) (*SchedulerController, error) {
-	if store == nil || kube == nil || runtime == nil || observer == nil || operations == nil || journal == nil {
-		return nil, errors.New("scheduler requires actual Kubernetes, runtime, observer, operation and journal owners")
+func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *Operations, observationLog *serving.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
+	if store == nil || kube == nil || runtime == nil || observer == nil || operations == nil || observationLog == nil {
+		return nil, errors.New("scheduler requires actual Kubernetes, runtime, observer, operation and observation log owners")
 	}
 	if err := validateSchedulerConfiguration(config); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, journal: journal, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}, nil
+	return &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}, nil
 }
 func (c *SchedulerController) Settings() serving.SchedulerSettings {
 	c.mu.Lock()
@@ -147,6 +147,11 @@ func (c *SchedulerController) setRoutingControl(before, after bool) {
 func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 	if err := config.Settings.Validate(); err != nil {
 		return err
+	}
+	for profile, preparation := range config.Preparations {
+		if err := validatePreparation(preparation); err != nil {
+			return fmt.Errorf("profile %s preparation: %w", profile, err)
+		}
 	}
 	meters := map[string]serving.NodeReference{}
 	for _, m := range config.Meters {
@@ -286,7 +291,7 @@ func (c *SchedulerController) workInterval(end time.Time, settings serving.Sched
 	if settings.Algorithm != serving.SchedulerAlgorithmProjectedWorkHistory || c.work == nil || end.Sub(c.work.history.Through) < settings.ObservationWindow {
 		return nil, nil
 	}
-	interval, err := c.journal.SchedulerHistoryWindow(c.work.history.Through, end)
+	interval, err := c.observationLog.SchedulerHistoryWindow(c.work.history.Through, end)
 	if err != nil {
 		return nil, err
 	}
@@ -485,12 +490,12 @@ func (c *SchedulerController) activeTargetLocked(kind string) *serving.Scheduler
 	return active.result.Operation.Target
 }
 func (c *SchedulerController) capture(ctx context.Context, now time.Time, config SchedulerControllerConfig) (serving.SchedulerSnapshot, error) {
-	arrivals, err := c.journal.SchedulerArrivals(now.Add(-config.Settings.ObservationWindow), now)
+	arrivals, err := c.observationLog.SchedulerArrivals(now.Add(-config.Settings.ObservationWindow), now)
 	if err != nil {
 		return serving.SchedulerSnapshot{}, err
 	}
 	s := serving.SchedulerSnapshot{ObservationEnd: now, Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines}
-	overheads, err := c.journal.ObservedOverhead(now.Add(-config.Settings.ObservationWindow), now)
+	overheads, err := c.observationLog.ObservedOverhead(now.Add(-config.Settings.ObservationWindow), now)
 	if err != nil {
 		return s, err
 	}
@@ -676,7 +681,9 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			}
 			for _, container := range p.Spec.Containers {
 				if container.Name == firstfloorContainerName {
-					instance.Allocation.CPUCount = int((container.Resources.Requests.Cpu().MilliValue() + 999) / 1000)
+					// Kubernetes request budget is independent of native affinity
+					// width and ORT threads; retain all three observed quantities.
+					instance.Allocation.CPUCount = int(container.Resources.Requests.Cpu().Value())
 				}
 			}
 			weight, e := strconv.Atoi(p.Annotations[ServingWeightAnnotation])

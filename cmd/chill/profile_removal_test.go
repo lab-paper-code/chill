@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/serving/entrypoint"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
 
 func TestProfileUnadoptionExplicitVersionAndOutcomes(t *testing.T) {
@@ -35,8 +35,8 @@ func TestProfileUnadoptionExplicitVersionAndOutcomes(t *testing.T) {
 					http.Error(w, "ConfigMap conflict: no mutation", http.StatusConflict)
 					return
 				}
-				_ = json.NewEncoder(w).Encode(entrypoint.ProfileSelectionResult{
-					Campaign: entrypoint.ProfileCampaign{Namespace: "ns", Name: "task"}, Status: test.status,
+				_ = json.NewEncoder(w).Encode(httpapi.ProfileSelectionResult{
+					Campaign: httpapi.ProfileCampaign{Namespace: "ns", Name: "task"}, Status: test.status,
 					Persisted: test.persisted, Loaded: test.loaded, ConfigVersion: "rv3",
 					Code: test.code, Reason: "actual owner state",
 				})
@@ -56,7 +56,7 @@ func TestProfileUnadoptionExplicitVersionAndOutcomes(t *testing.T) {
 				}
 				return
 			}
-			var result entrypoint.ProfileSelectionResult
+			var result httpapi.ProfileSelectionResult
 			if decodeErr := json.Unmarshal([]byte(stdout.String()), &result); decodeErr != nil ||
 				result.Persisted != test.persisted || result.Loaded != test.loaded || result.Status != test.status ||
 				result.Reason != "actual owner state" {

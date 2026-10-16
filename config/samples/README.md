@@ -107,7 +107,7 @@ projected-policy selection. Baseline decisions have no projected diagnostics.
 
 Keep profile selection in the scheduler ConfigMap JSON's `profileCampaigns` array
 as `{namespace,name}` entries; this is the only selection authority, not a Helm
-campaign list. The owner API's `POST /api/v1/scheduler/profiles` adds selections.
+campaign list. The ChillServer API's `POST /api/v1/scheduler/profiles` adds selections.
 Helm `servingEntrypoint.profileNamespaces` limits read-only `get` access to
 BatchEnergyOptimization and ProfilingRun resources in allowed namespaces; an
 empty list defaults to the serving namespace. It grants no measurement writes.

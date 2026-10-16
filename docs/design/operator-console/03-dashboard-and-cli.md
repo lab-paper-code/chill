@@ -58,8 +58,8 @@ kubectl chill profiles adopt TASK_NAME -n chill-system -o json
 kubectl chill profiles unadopt TASK_NAME -n chill-system --if-match CONFIG_VERSION -o json
 ```
 
-Measurements and profiles use the same verified owner HTTPS API as Dashboard.
-Submit sends the native manifest to the owner, which resolves the production Console
+Measurements and profiles use the same verified ChillServer HTTPS API as Dashboard.
+Submit sends the native manifest to ChillServer, which resolves the production Console
 preflight before one native Kubernetes create. Rejected or unavailable preflight
 creates nothing. Normal submit returns `202` with `request:"Accepted"` and the native
 task immediately; it does not wait for trials or retry the request.
@@ -67,11 +67,11 @@ task immediately; it does not wait for trials or retry the request.
 but the response is `200` with `request:"NOT_SUBMITTED"`. It starts no measurement.
 List returns native measurement resources in the requested namespace, including pending,
 failed and complete tasks; `-A` is not supported. Show preserves the existing Console
-result projection through the owner gateway. Its response limit remains 64 MiB plus
+result projection through the ChillServer gateway. Its response limit remains 64 MiB plus
 4 MiB for the task/status envelope. JSON retains conditions, reasons, result details
 and evidence references; table output summarizes progress.
 
-| Owner route | Contract |
+| ChillServer route | Contract |
 |---|---|
 | `GET /api/v1/namespaces/{namespace}/batch-energy-optimizations` | Native `BatchEnergyOptimizationList`, including UID and resourceVersion |
 | `POST /api/v1/namespaces/{namespace}/batch-energy-optimizations` | Native BEO manifest; production preflight then native create; `dryRun=All` validates without persistence |
@@ -83,7 +83,7 @@ raw objects and results**, then requests native measurement object deletion.
 Shared/current references must be cleared first; safely unadopt an unused selected
 profile before deletion. This is not an atomic transaction across S3 and Kubernetes:
 an error may leave some evidence already removed while the native object remains.
-The CLI preserves the owner's partial-failure reason and exits nonzero; it never
+The CLI preserves ChillServer's partial-failure reason and exits nonzero; it never
 retries automatically or reports preserved evidence. Native finalizers and garbage
 collection still govern object lifecycle; `DeletionRequested` does not claim final
 disappearance. `measurements delete` requires both `--uid` and `--if-match` from
@@ -106,38 +106,38 @@ Partial failures exit nonzero and are not automatically retried:
 - `503 MeasurementAuditIncomplete`: the mutation may have been accepted, but its final
   audit record could not be confirmed. Inspect current state before another mutation.
 
-Profile adoption/unadoption are separate, explicit scheduler-owner requests.
+Profile adoption/unadoption are separate, explicit ChillServer scheduler requests.
 `profiles unadopt` requires `--if-match` from `profiles list -o json`'s `configVersion`.
-The owner requires all controls OFF in persisted and accepted settings and rejects
+ChillServer requires all controls OFF in persisted and accepted settings and rejects
 active instances or frozen/in-progress transitions. It removes the selection and unused
 associated preparation, preserving unrelated configuration, evidence and serving Pods.
 `Removed` and already-absent `Unselected` succeed only with `persisted:false` and
 `loaded:false`; they do not claim a physical serving instance was stopped.
 If the ConfigMap removal commits but catalog refresh fails, `Pending` with
 `code:"ProfileUnloadFailed"` retains the actual `loaded` state and exits nonzero.
-A pending/rejected adoption also prints the owner's reason and exits nonzero.
+A pending/rejected adoption also prints ChillServer's reason and exits nonzero.
 A persisted adoption is not a physical-readiness claim: loaded state, profile ID and
 config version remain separate. HTTP success with a rejected/invalid semantic result
 is a command failure, not successful submission or unadoption.
-Owner commands use direct, verified HTTPS and caller bearer authentication:
+ChillServer commands use direct, verified HTTPS and caller bearer authentication:
 
 ```sh
 kubectl chill profiles list -n chill-system \
-  --serving-url https://OWNER_HOST:8080 --serving-ca-file owner-ca.pem \
+  --serving-url https://CHILL_SERVER_HOST:8080 --serving-ca-file chill-server-ca.pem \
   --token-file caller-token -o json
 ```
 
 `--serving-url` defaults to `https://SERVICE.NAMESPACE.svc:8080`, with
 `--serving-service chill-serving-entrypoint`. Use a reachable HTTPS origin whose
-certificate matches its hostname (including for a local tunnel). The owner CA is
+certificate matches its hostname (including for a local tunnel). The ChillServer CA is
 independent of the API-server CA; without `--serving-ca-file`, system roots apply.
 `--token-file` overrides kubeconfig bearer credentials. API-server client certificates
-alone do not authenticate to the owner and produce a credential-required error.
+alone do not authenticate to ChillServer and produce a credential-required error.
 The CLI does not forward API-server client certificates, impersonation or auth plugins,
 does not disable TLS verification and does not follow redirects with credentials.
-An owner HTTP 401 is a command failure, not an empty successful list.
+A ChillServer HTTP 401 is a command failure, not an empty successful list.
 
-All measurement/profile commands and standalone `preflight -f FILE` accept these owner
+All measurement/profile commands and standalone `preflight -f FILE` accept these ChillServer
 connection flags; none accept `--console-service` or mutate Kubernetes directly.
 Standalone preflight retains its structured resolving/rejected plan and reason;
 `resolves:false` prints that result and exits nonzero without submitting anything.

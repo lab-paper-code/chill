@@ -43,11 +43,12 @@ func parseOperationOptions(group, action string, args []string, stderr io.Writer
 	flags.StringVar(&opts.context, "context", "", "kubeconfig context override")
 	flags.StringVarP(&opts.output, "output", "o", outputFormatTable, "output format: table or json")
 	flags.StringVarP(&opts.namespace, "namespace", "n", "", "resource and Service namespace")
-	flags.StringVar(&opts.servingService, "serving-service", "chill-serving-entrypoint", "scheduler owner Service name")
-	flags.StringVar(&opts.servingURL, "serving-url", "", "HTTPS owner origin; default https://SERVICE.NAMESPACE.svc:8080")
-	flags.StringVar(&opts.servingCAFile, "serving-ca-file", "", "owner TLS CA file; default system trust roots")
+	flags.StringVar(&opts.servingService, "serving-service", "chill-serving-entrypoint", "ChillServer Service name")
+	flags.StringVar(&opts.servingURL, "serving-url", "",
+		"HTTPS ChillServer origin; default https://SERVICE.NAMESPACE.svc:8080")
+	flags.StringVar(&opts.servingCAFile, "serving-ca-file", "", "ChillServer TLS CA file; default system trust roots")
 	flags.StringVar(&opts.tokenFile, "token-file", "",
-		"owner caller bearer token file; default kubeconfig bearer credentials")
+		"ChillServer caller bearer token file; default kubeconfig bearer credentials")
 	if action == operationDelete || action == operationUnadopt {
 		flags.StringVar(&opts.ifMatch, "if-match", "", "required queried resourceVersion; profiles use configVersion")
 	}

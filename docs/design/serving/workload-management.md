@@ -18,16 +18,16 @@ native typed tensor·persistent runner의 동일 실행 경로로 Serving과 Pro
 | Workload는 cluster-scoped CRD로 저장 | 기존 cluster-scoped ModelSpec과 동일한 연구 클러스터 관리 범위를 사용하고, 등록 건은 Kubernetes UID로 구분 |
 | Workload 정의에는 모델 참조와 SLO만 저장 | 서비스 식별자는 객체 이름으로 표현. 정적 POOL 참조나 산출물 복사본을 선언에 추가하지 않음 |
 | POOL은 현재 구성의 운영 상태로 제공 | 현재 노드와 서빙 워크로드 관계가 바뀌므로 Workload 정의와 분리. 별도 Pool CRD는 추가하지 않음 |
-| 관리 API와 요청 접수 제어는 기존 Serving entrypoint에 배치 | 신규 접수 중지와 큐 상태를 실제로 소유하는 경로에서 변경을 적용. 별도 관리 서버와 WorkloadController를 만들지 않음 |
+| 관리 API와 요청 접수 제어는 기존 ChillServer에 배치 | 신규 접수 중지와 큐 상태를 실제로 소유하는 경로에서 변경을 적용. 별도 관리 서버와 WorkloadController를 만들지 않음 |
 | 정의 변경 writer는 하나로 제한 | 워크로드 생성과 모델 삭제의 경쟁, 모델 변경과 신규 접수 사이의 경쟁을 같은 관리 경계에서 처리 |
 | 요청은 수락 당시 적용 정의를 유지 | SLO 변경과 POOL 재구성 때문에 기존 요청의 의미가 바뀌지 않게 함 |
 | 큐는 bounded in-memory 구조 | SRS는 영속 요청 큐를 요구하지 않음. broker와 요청별 Kubernetes 객체를 추가하지 않음 |
 | 실행과 배칭은 firstfloor 재사용 | CHILL은 evidence·워크로드 문맥·정책을 연결하고 existing actor·queue·IPC runner가 실제 실행을 소유 |
 
-하나의 CHILL 서비스에 활성 Serving entrypoint 하나를 둔다. 다중 활성 진입점의 큐 동기화,
+하나의 CHILL 서비스에 활성 ChillServer 하나를 둔다. 다중 활성 진입점의 큐 동기화,
 분산 관리 잠금이나 고가용성 복구는 이 연구 클러스터의 구현 전제가 아니다.
 배포는 `replicas: 1`과 `strategy: Recreate`로 고정한다. replica 수만 1이어도 기본 RollingUpdate는
-두 프로세스를 겹쳐 실행할 수 있으므로 허용하지 않는다. 강제 Pod 삭제로 단일 owner를 우회하지 않는다.
+두 프로세스를 겹쳐 실행할 수 있으므로 허용하지 않는다. 강제 Pod 삭제로 단일 ChillServer를 우회하지 않는다.
 이 전제는 chart 검증과 실제 배포 검증에서 확인한다.
 
 ## 2. 현재 코드와 재사용 경계
@@ -35,11 +35,11 @@ native typed tensor·persistent runner의 동일 실행 경로로 Serving과 Pro
 | 현재 근거 | 구현 책임 |
 |---|---|
 | [ModelSpec API](../../../api/v1alpha1/modelspec_types.go)와 [modelcatalog](../../../internal/modelcatalog/) | 논리 모델, 산출물과 named tensor 계약의 공통 등록 검증 및 projection |
-| [HTTP entrypoint](../../../internal/serving/entrypoint/handler.go) | bearer 인증된 Workload 조회, 관리와 단일 샘플 추론. 기존 투명 모델 proxy 계약은 제거 |
-| [Serving core](../../../internal/serving/)와 [실행 진입점](../../../cmd/serving-entrypoint/) | 불변 적용 정의, 접수 gate, bounded 큐, 인스턴스 route와 실제 physical drain 및 조립 |
+| [HTTP API](../../../internal/serving/httpapi/handler.go) | bearer 인증된 Workload 조회, 관리와 단일 샘플 추론. 기존 투명 모델 proxy 계약은 제거 |
+| [Serving core](../../../internal/serving/)와 [ChillServer](../../../cmd/chill-server/) | 불변 적용 정의, 접수 gate, bounded 큐, 인스턴스 route와 실제 physical drain 및 조립 |
 | [modelcompat](../../../internal/modelcompat/) | Kubernetes와 독립적인 입력, 실행 경로와 native 설정 호환성. Profiler 후보 resolver를 Serving에 연결하지 않음 |
 | [Serving kube](../../../internal/serving/kube/) | private uncached writer, TokenReview/SAR, 현재 POOL과 native 관측, 선택된 완료 campaign의 검증된 profile catalog |
-| [firstfloor adapter](../../../internal/serving/firstfloor/) | 실제 HTTP V2 native 상태·추론과 요청별 monotonic progress. 사용자 인증 header는 owner 경계에 유지 |
+| [firstfloor adapter](../../../internal/serving/firstfloor/) | 실제 HTTP V2 native 상태·추론과 요청별 monotonic progress. 사용자 인증 header는 ChillServer 경계에 유지 |
 | [Evidence Loader](../../../internal/profiling/profiler/evidence/loader.go) | frozen 실행 조건과 원시 evidence의 typed 검증 경계. 이것만으로 SLO나 scientific admission을 증명하지 않음 |
 | [모델 호환성 ADR](../../adr/0012-model-artifact-compatibility-boundary.md) | 정적 호환성, 측정 근거, 현재 배치 가능성과 SLO 적합성을 서로 다른 판단으로 유지 |
 | [DeviceClass 상태 ADR](../../adr/0011-deviceclass-status-boundary.md) | DeviceClass를 POOL이나 실제 Serving 구성 저장소로 사용하지 않음 |
@@ -151,9 +151,9 @@ PoolState
 | 소유자 | 책임 |
 |---|---|
 | `internal/serving` | 적용 정의, 접수 gate, 워크로드별 미배정 큐, 요청 문맥과 관리 동작. Kubernetes와 HTTP에 의존하지 않는 core |
-| `internal/serving/entrypoint` | 조회와 관리 및 추론 HTTP 경로, 본문 제한과 디코딩, 오류 응답, backend 전달과 응답 전달 관측 |
+| `internal/serving/httpapi` | 조회와 관리 및 추론 HTTP 경로, 본문 제한과 디코딩, 오류 응답, backend 전달과 응답 전달 관측 |
 | `internal/serving/kube` | Workload와 ModelSpec의 private uncached 저장 및 조회, Kubernetes 권한 검증, 모델 및 profile boundary 연결, 상태 기록과 실제 구성 관측 |
-| `cmd/serving-entrypoint` | concrete 객체와 공유 transport의 조립, 설정 로딩과 종료 처리 |
+| `cmd/chill-server` | concrete 객체와 공유 transport의 조립, 설정 로딩과 종료 처리 |
 | 구성 및 전환 경계 | 현재 Node·physical allocation·ready/stop 상태, 후보 replay·whole-pool 비용과 원자 동작 완료 |
 | `internal/serving/firstfloor` 및 `internal/firstfloor` | frozen context·typed 입력 전달, actual state/progress, UID별 실측 SLO·에너지 배칭·순차 runner |
 
@@ -163,14 +163,14 @@ Profiler controller나 Profiler 전용 후보 resolver를 요청 handler에서 �
 구성은 기존 concrete 타입을 사용하며 범용 repository나 workflow engine을 추가하지 않는다.
 
 현재 [.go-arch-lint.yml](../../../.go-arch-lint.yml)은 `model-catalog`, `serving-core`,
-`serving-entrypoint`, `serving-kube`, `serving-firstfloor`, `firstfloor`를 구분한다.
+`serving-httpapi`, `serving-kube`, `serving-firstfloor`, `firstfloor`를 구분한다.
 허용 경계와 `go list`로 캡처한 실제 import는 [패키지 아키텍처](../code-intelligence/README.md#reviewed-model-and-serving-boundaries)에 기록한다.
 
 ## 5. API와 권한
 
 ### 5.1 HTTP 계약
 
-기존 Serving entrypoint의 HTTPS 경로는 다음과 같다. Workload 조회는 선언과 실제 적용 정의를 구분한다.
+ChillServer의 HTTPS 경로는 다음과 같다. Workload 조회는 선언과 실제 적용 정의를 구분한다.
 
 | 경로 | 의미와 결과 |
 |---|---|
@@ -196,15 +196,15 @@ Workload GET의 `desired.metadata.resourceVersion`과 Model GET의 `metadata.res
 다음은 이미 등록된 `detector`를 참조하는 예다:
 
 ```sh
-curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' "$OWNER/api/v1/workloads" \
+curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' "$CHILL_SERVER/api/v1/workloads" \
   --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
-curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
-  "$OWNER/api/v1/workloads/detector-fast"
+curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
+  "$CHILL_SERVER/api/v1/workloads/detector-fast"
 # RV는 방금 조회한 desired.metadata.resourceVersion이다.
-curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
   -H "If-Match: $RV" -H 'Content-Type: application/json' -X PUT \
-  "$OWNER/api/v1/workloads/detector-fast" \
+  "$CHILL_SERVER/api/v1/workloads/detector-fast" \
   --data '{"spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"200ms"}}}'
 ```
 
@@ -218,9 +218,9 @@ SLO-only 적용은 `200`, 드레인 변경과 Workload 삭제는 `202`다.
 `x / FP32 / [2]`, `enabled / BOOL / [1]`이면 한 요청은 다음과 같다:
 
 ```sh
-curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -H 'X-Chill-Request-Timeout: 5s' \
-  "$OWNER/api/v1/workloads/example/infer" \
+  "$CHILL_SERVER/api/v1/workloads/example/infer" \
   --data '{"inputs":[{"name":"x","datatype":"FP32","shape":[2],"data":[1,2]},{"name":"enabled","datatype":"BOOL","shape":[1],"data":[true]}]}'
 ```
 
@@ -229,8 +229,8 @@ curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
 명시적 요청 timeout은 양수이며 설정된 `requestTimeout` 이하이고 SLO와 별개다.
 
 ```sh
-curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
-  "$OWNER/api/v1/observations/workloads/$UID?from=$FROM&to=$TO&limit=100"
+curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
+  "$CHILL_SERVER/api/v1/observations/workloads/$UID?from=$FROM&to=$TO&limit=100"
 ```
 
 `from`/`to`는 RFC3339Nano, `definition`/`outcome`은 반복 가능한 필터,
@@ -264,11 +264,11 @@ backend로 보낼 때 사용자 `Authorization`, cookie와 신원 header를 전�
 backend 드레인과 준비를 기다리는 동안에는 잠금을 보유하지 않는다.
 작업 진행은 워크로드마다 하나이며, 공유 모델 변경은 관련 워크로드들을 함께 잠근 작업으로 취급한다.
 이 방식은 낮은 빈도의 연구 클러스터 관리 변경을 전제로 한다.
-참조와 충돌 판정은 이 owner가 반영한 현재 등록 상태 또는 uncached API 조회를 사용한다.
+참조와 충돌 판정은 ChillServer가 반영한 현재 등록 상태 또는 uncached API 조회를 사용한다.
 오래된 informer 결과만으로 모델 삭제나 참조 생성의 승인 여부를 정하지 않는다.
-전용 owner ServiceAccount만 managed 정의와 status를 쓴다. 상태는 resourceVersion precondition을
+전용 ChillServer ServiceAccount만 managed 정의와 status를 쓴다. 상태는 resourceVersion precondition을
 가진 full status Update로 기록하여 필수 `allowed:false`도 빠뜨리지 않는다.
-TLS Secret, TokenReview/SAR 권한, 유지되는 RWO PVC와 S3 연결은 chart의 owner 배포에 포함된다.
+TLS Secret, TokenReview/SAR 권한, 유지되는 RWO PVC와 S3 연결은 chart의 ChillServer 배포에 포함된다.
 
 ## 6. 등록과 입력 검증
 
@@ -396,7 +396,7 @@ Python 모델의 `execute` 반환은 native request release보다 이르므로 �
 1. 새 SLO와 수정 precondition을 검증한다. 진행 중 관리 작업이 있으면 거부한다.
 2. 원하는 정의를 저장한다.
 3. 워크로드별 수락 경계에서 새 적용 snapshot으로 교체한다.
-4. 적용과 관측 정의를 상태 및 journal에 기록한 뒤 완료 응답을 반환한다.
+4. 적용과 관측 정의를 상태 및 관측 기록에 남긴 뒤 완료 응답을 반환한다.
 
 기존 요청은 이전 snapshot을 유지한다. 새로 수락하는 요청은 새 SLO를 사용한다.
 진입 경로의 SLO 적용 완료와 POOL 재구성 완료를 동일한 사건으로 보고하지 않는다.
@@ -453,7 +453,7 @@ Python 모델의 `execute` 반환은 native request release보다 이르므로 �
 게시 → 전체 gate 열기의 barrier를 적용한다. 공유 인스턴스도 포함하며 일부 Workload만 먼저 열지 않는다.
 진행과 실패는 관련 워크로드의 관리 상태에서 조회하고, 관리 기록은 같은 모델 변경 대상과 연결한다.
 다중 객체 status 업데이트를 원자적 Kubernetes transaction이라고 설명하지 않으며,
-요청 경로의 적용 barrier는 단일 runtime owner가 소유한다.
+요청 경로의 적용 barrier는 단일 Runtime이 소유한다.
 
 ## 9. POOL 재구성과 요청 의미
 
@@ -500,7 +500,7 @@ physical ownership을 유지한다. persisted `executionComplete`로 재시작 d
 변경 및 삭제 기록에는 적용 전후 정의, 요청 저장과 관리 수락 및 실제 적용 시각, 진행 결과와 실패 원인을 남긴다.
 이는 실험 해석용 기록이며 runtime의 다중 버전 정의 저장소가 아니다.
 
-Serving과 Profiling은 각 관측 계약을 유지하며, 기존 JSONL journal과 Evidence Store의
+Serving과 Profiling은 각 관측 계약을 유지하며, 기존 JSONL 관측 기록과 Evidence Store의
 immutable 보존 수단으로 원시 근거를 제공한다.
 
 | 기록 | 필수 내용 |
@@ -511,11 +511,14 @@ immutable 보존 수단으로 원시 근거를 제공한다.
 | `scheduler` | 설정·snapshot·decision·action·power raw, source/meter/window·coverage·actual applied 결과 |
 
 각 stream은 같은 schema version과 관측 구간 metadata를 사용한다.
-private persistent directory에 append JSONL journal을 남기며 구간 종료 시
+private persistent directory에 append JSONL 관측 기록을 남기며 구간 종료 시
 `serving/<windowID>/` 아래 `metadata.json`, `definitions.jsonl`, `requests.jsonl`,
 `management.jsonl`, `scheduler.jsonl`을 immutable S3 object로 보존한다. 필터와 관측 구간은 metadata에 기록한다.
 Workload 삭제는 이 기록을 삭제하지 않는다. 실패한 구간은 보존 완료로 게시하지 않고
 닫히기 전에는 live 요청 상태와 이미 수집한 사건을 조회한다.
+닫힌 구간의 게시만 별도 잠금으로 직렬화하고 S3 업로드는 요청 writer 잠금 밖에서
+수행한다. 업로드 중에도 새 append·rotation·조회가 진행되며, 게시 결과만 writer
+잠금 아래 반영한다. `Flush`와 `Close`는 같은 게시 경계를 사용한다.
 요청별 Kubernetes 객체나 요청마다 갱신하는 status는 만들지 않는다.
 
 조회는 다음을 분리한다.
@@ -533,7 +536,7 @@ Workload 삭제는 이 기록을 삭제하지 않는다. 실패한 구간은 보
 백분위는 `gonum/stat.Empirical`이며 지연이나 완료 시각을 합성하지 않는다.
 SLO 변경 전후와 같은 이름의 재등록을 묵시적으로 같은 목표의 통계로 합치지 않는다.
 
-무영속 큐이므로 entrypoint 장애 후 수락 요청을 투명하게 재실행하지 않는다.
+무영속 큐이므로 ChillServer 장애 후 수락 요청을 투명하게 재실행하지 않는다.
 이미 보존된 수락 기록에 종료 사건이 없으면 분석 시 미완료로 남긴다.
 재시작은 실제 인스턴스와 연결 상태를 다시 확인하며, 실행 종료가 불명인 상태를 드레인 성공으로 보고하지 않는다.
 관측 저장 실패는 명시적인 오류와 기록 공백으로 드러내고, 실험 evidence가 보존된 것처럼 성공을 주장하지 않는다.
@@ -543,7 +546,7 @@ local 원시 기록이 온전한 archive-only 오류는 반환 및 로그에 남
 
 ## 12. 배포와 구현 검증 경계
 
-owner 설정은 [options.go](../../../cmd/serving-entrypoint/options.go)와
+ChillServer 설정은 [options.go](../../../cmd/chill-server/options.go)와
 [Helm values](../../../charts/chill/values.yaml)의 `servingEntrypoint`가 원본이다.
 기존 모델-only 공개 endpoint, 고정 테이블과 shape-only 호환 reader는 제거되었다.
 
@@ -559,13 +562,13 @@ TLS Secret은 release namespace에 미리 존재해야 한다. Serving namespace
 SAN과 맞는 HTTPS 주소를 사용한다. 프로파일 선택은 외부 scheduler ConfigMap의
 `profileCampaigns` 배열(`{namespace,name}` 항목)이 소유하며, Helm 값은 선택하지 않는다.
 `profileNamespaces`는 측정 조회·제출·객체 삭제와 프로파일 선택을 허용할 namespace 범위이며,
-빈 목록은 serving namespace를 사용한다. owner chart는 capacity나 측정 작업을 자동 생성하지 않는다.
+빈 목록은 serving namespace를 사용한다. ChillServer chart는 capacity나 측정 작업을 자동 생성하지 않는다.
 
 | Helm 값 | 실제 flag 또는 배포 계약 |
 |---|---|
-| `enabled`, `tls.secretName`, `port:8080` | HTTPS owner 활성화, `/etc/chill/tls/tls.crt`와 `tls.key`, `--bind-address` |
+| `enabled`, `tls.secretName`, `port:8080` | HTTPS ChillServer 활성화, `/etc/chill/tls/tls.crt`와 `tls.key`, `--bind-address` |
 | `namespace`, `actuationNamespace` | `--serving-namespace`, `--actuation-namespace`; 빈 값은 release namespace |
-| `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 목록은 serving namespace. Owner에 namespaced BEO `get/list/create/delete`, ProfilingRun `get`만 부여 |
+| `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 목록은 serving namespace. ChillServer에 namespaced BEO `get/list/create/delete`, ProfilingRun `get`만 부여 |
 | `profileConfidenceLevel:0.95` | `--profile-confidence-level`; measured idle baseline confidence |
 | `queueLimit:1024`, `requestTimeout:30s`, `drainTimeout:2m` | 각각 `--queue-limit`, `--request-timeout`, `--drain-timeout`; SLO timeout 아님 |
 | `sourceInterval:1s`, `profileInterval:1m`, `observationWindow:1m` | 현재 상태, profile refresh와 immutable window 주기 |
@@ -574,13 +577,13 @@ SAN과 맞는 HTTPS 주소를 사용한다. 프로파일 선택은 외부 schedu
 | `observationStorage.size:1Gi`, `storageClassName:null` | `/data`의 유지되는 private RWO PVC; null은 cluster default, 빈 문자열은 no StorageClass |
 | `observationStorage.directory:/data` | `--observation-directory`; stored-contract cutover는 같은 PVC의 새 경로를 선택하고 이전 raw 기록은 보존 |
 | `kubeAPI.apiServer/tokenFile/caFile` | 명시적 `--kube-api-server`, `--kube-token-file`, `--kube-ca-file`; 기본 in-cluster |
-| `kubeAPI.qps:50`, `kubeAPI.burst:100` | 항상 명시하는 `--kube-api-qps`, `--kube-api-burst`; owner 시작 경계에서 양수·유한 float32 범위를 검증 |
+| `kubeAPI.qps:50`, `kubeAPI.burst:100` | 항상 명시하는 `--kube-api-qps`, `--kube-api-burst`; ChillServer 시작 경계에서 양수·유한 float32 범위를 검증 |
 | `terminationGracePeriodSeconds:150` | `drainTimeout`과 HTTP 종료 여유보다 커야 함 |
 
-Owner의 Kubernetes API client budget은 `rest.Config`에 두 client 생성 전에 적용한다.
+ChillServer의 Kubernetes API client budget은 `rest.Config`에 두 client 생성 전에 적용한다.
 양수 QPS를 받은 typed clientset은 TokenReview·SAR와 다른 typed API group 사이에
 하나의 limiter를 공유하지만, 별도로 생성한 uncached Store client는 독립된 limiter를
-사용하므로 50 QPS가 owner 전체 API 요청의 합산 상한은 아니다. 기본 50/100은
+사용하므로 50 QPS가 ChillServer 전체 API 요청의 합산 상한은 아니다. 기본 50/100은
 후보 운영 budget이며 측정된 최적값이나 API server/APF 처리 용량 보장이 아니다.
 요청마다 기존 TokenReview와 SAR를 수행하며 인증 cache나 fail-closed 완화는 없다.
 향후 각 실험에는 두 flag를 포함한 실제 실행 인자를 고정·보존한다.
@@ -589,26 +592,26 @@ Owner의 Kubernetes API client budget은 `rest.Config`에 두 client 생성 전�
 명시적 budget을 추가했다. 실패 집계·미해명 decision 공백·재검증 결과는
 [실클러스터 제어 기록](../../plans/2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 보존한다.
 
-측정·프로파일 변경의 caller 권한은 owner ServiceAccount와 별개다.
+측정·프로파일 변경의 caller 권한은 ChillServer ServiceAccount와 별개다.
 차트의 unbound `FULLNAME-serving-manager` ClusterRole은 허용 namespace별 정확한
 `/chill/api/v1/namespaces/NS/batch-energy-optimizations` 및 해당 하위 경로에
 `get/post/delete`를 제공한다. 같은 이름의 namespace Role은 BEO `get/list/create/delete`만
 제공한다. 관리자가 선택한 caller에 필요한 ClusterRole과 namespace Role을 각각 binding한다.
 프로파일 adopt/unadopt는 unbound `FULLNAME-scheduler-editor` ClusterRole의 profile POST와
 namespace별 profile DELETE 및 serving namespace의 같은 이름 Role이 허용하는 설정 ConfigMap
-하나의 `update`가 모두 필요하다. owner는 TokenReview 후 `/chill` nonresource SAR와
+하나의 `update`가 모두 필요하다. ChillServer는 TokenReview 후 `/chill` nonresource SAR와
 native resource SAR를 수행한다. Dashboard SA나 모든 사용자에 자동 binding하지 않는다.
 측정 삭제는 UID와 `If-Match` resourceVersion을 모두 요구하며 귀속된 Evidence Store 원본·결과를
 **영구 삭제**한다. 공유·현재 참조는 보호하며 S3와 native 객체 삭제 사이의 부분 실패를 명시한다.
-owner만 공유 근거 참조 검사를 위해 전체 namespace의 BEO·ProfilingRun·ModelLoadedIdleBaseline·
+ChillServer만 공유 근거 참조 검사를 위해 전체 namespace의 BEO·ProfilingRun·ModelLoadedIdleBaseline·
 PowerModeTransitionCost에 `list`를 갖는다. 이 조회 권한은 caller에 부여하지 않으며, 허용 범위 밖의
 native 측정/child 객체 create/update/delete 권한이나 별도 child 삭제 권한을 추가하지 않는다.
-허용 profiling namespace에서는 owner에 Job `get/list`와 Pod `list`만 추가해 owned Run Job의
+허용 profiling namespace에서는 ChillServer에 Job `get/list`와 Pod `list`만 추가해 owned Run Job의
 UID/owner·종료 상태와 실제 Pod 참조를 검사한다. Job 생성 전 실패는 native Run 소유·생산자 이름의
 Job이 없음을 조회로 확인한다. caller에는 Job/Pod 권한을 추가하지 않는다.
-기존 owner Evidence Store credential에는 해당 bucket의 귀속 key에 대한 S3 `DeleteObject`가
+기존 ChillServer Evidence Store credential에는 해당 bucket의 귀속 key에 대한 S3 `DeleteObject`가
 필요하다. 차트는 외부 S3/IAM 정책을 자동 확대하지 않으며 credential을 caller에 전달하지 않는다.
-근거 삭제를 사용하기 전에는 owner뿐 아니라 profiler/controller 이미지도 함께 갱신한다.
+근거 삭제를 사용하기 전에는 ChillServer뿐 아니라 profiler/controller 이미지도 함께 갱신한다.
 현재 terminal BEO의 재실행 방지와 BEO·Run의 uncached typed 조회가 반영되어야 삭제 직후
 stale-cache reconcile이 근거를 다시 쓰는 창을 닫을 수 있다.
 
@@ -621,11 +624,11 @@ stale-cache reconcile이 근거를 다시 쓰는 창을 닫을 수 있다.
 S3 연결은 기존 `evidenceStore.connection`과 credentials Secret을 사용하며
 binary는 `--store-name`, `--store-endpoint`, `--store-bucket`, `--store-region`,
 `--store-credentials-secret`, `--observation-directory`, `--tls-cert/key`를 받는다.
-RWO PVC를 강제 해제하거나 Pod를 강제 삭제하여 owner/drain 전제를 우회하지 않는다.
+RWO PVC를 강제 해제하거나 Pod를 강제 삭제하여 ChillServer/drain 전제를 우회하지 않는다.
 
-owner의 read-only root filesystem은 유지하며 `/tmp`에는 128Mi bounded
+ChillServer의 read-only root filesystem은 유지하며 `/tmp`에는 128Mi bounded
 `emptyDir`를 제공한다. immutable evidence publication의 임시 candidate는 이
-writable scratch를 사용하고, 원시 Journal은 retained PVC에 기록한다.
+writable scratch를 사용하고, 원시 관측 기록은 retained PVC에 기록한다.
 
 ### 이전 serving cutover의 검증 기록
 

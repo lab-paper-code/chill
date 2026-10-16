@@ -618,7 +618,7 @@ run_selected_components() {
 		names+=("measurement-worker")
 	fi
 	if component_selected serving-entrypoint; then
-		"${function_name}" "build/docker/serving-entrypoint.Dockerfile" "${serving_entrypoint_image}" &
+		"${function_name}" "build/docker/chill-server.Dockerfile" "${serving_entrypoint_image}" &
 		pids+=("$!")
 		names+=("serving-entrypoint")
 	fi
@@ -693,7 +693,7 @@ run_ctr_plain_http_components() {
 	fi
 	if component_selected serving-entrypoint; then
 		ctr_plain_http_build_push_one serving-entrypoint \
-			"build/docker/serving-entrypoint.Dockerfile" "${serving_entrypoint_image}" &
+			"build/docker/chill-server.Dockerfile" "${serving_entrypoint_image}" &
 		pids+=("$!")
 		names+=("serving-entrypoint")
 	fi

@@ -98,17 +98,17 @@ kubectl apply --dry-run=server \
   -f config/samples/catalog/edge_v1alpha1_modelspec.yaml
 ```
 
-Register through the HTTPS owner instead. With `yq` v4 and `jq`, extract only the
+Register through HTTPS ChillServer instead. With `yq` v4 and `jq`, extract only the
 accepted API fields from the existing manifest:
 
 ```sh
 yq -o=json '.' config/samples/catalog/edge_v1alpha1_modelspec.yaml |
   jq '{name: .metadata.name, spec: .spec}' |
-  curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+  curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
     -H 'Content-Type: application/json' --data-binary @- \
-    "$OWNER/api/v1/models"
-curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
-  "$OWNER/api/v1/models/mobilenet-v2-050"
+    "$CHILL_SERVER/api/v1/models"
+curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
+  "$CHILL_SERVER/api/v1/models/mobilenet-v2-050"
 ```
 
 POST returns `201`. PUT accepts `{"spec": ...}` and DELETE has no body; both

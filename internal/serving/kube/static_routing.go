@@ -10,6 +10,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
+const manualStaticRoutingOperation = "manual-static-routing"
+
 // ApplyStaticRouting records a manual, configuration-sourced route application.
 // Ordinary autonomous actions subsequently operate on this actual distribution.
 func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing map[string]map[string]int, sourceRV string) (err error) {
@@ -29,11 +31,11 @@ func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing ma
 		return errors.New("manual staticRouting requires controls OFF and a source ConfigMap resourceVersion")
 	}
 	if config.OnAction == nil {
-		return errors.New("manual staticRouting requires the existing action journal")
+		return errors.New("manual staticRouting requires the existing action observation log")
 	}
 	result := OperationResult{
 		Operation: Operation{
-			ID: "manual-static-routing:" + sourceRV, Kind: "manual-static-routing",
+			ID: manualStaticRoutingOperation + ":" + sourceRV, Kind: manualStaticRoutingOperation,
 			SourceConfigRV: sourceRV, StaticRouting: routing,
 		},
 		StartedAt: time.Now().UTC(), Status: nativeOperationRunning,
@@ -52,7 +54,7 @@ func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing ma
 		return err
 	}
 	result.Before = OperationState{At: snapshot.At, Routing: snapshot.Routing}
-	target, err := serving.StaticRoutingTarget(snapshot, routing, "manual-static-routing:"+sourceRV)
+	target, err := serving.StaticRoutingTarget(snapshot, routing, manualStaticRoutingOperation+":"+sourceRV)
 	if err != nil {
 		return err
 	}
@@ -64,7 +66,12 @@ func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing ma
 	if err = config.OnAction(result); err != nil {
 		return err
 	}
-	return c.operations.ApplyTarget(ctx, target)
+	progress := len(result.Progress)
+	err = c.operations.ApplyTarget(ctx, target, &result)
+	if err != nil && len(result.Progress) > progress {
+		result.Status = nativeOperationPartial
+	}
+	return err
 }
 
 func (c *SchedulerController) finishStaticRouting(result OperationResult, actual map[string]map[string]int32, applyErr error, record func(OperationResult) error) error {
@@ -77,7 +84,12 @@ func (c *SchedulerController) finishStaticRouting(result OperationResult, actual
 		applyErr = errors.New("manual staticRouting complete physical readback differs from declared routing; accepted requests may still be draining")
 	}
 	if applyErr != nil {
-		result.Status = nativeOperationFailed
+		if result.Status != nativeOperationPartial {
+			result.Status = nativeOperationFailed
+		}
+		if len(result.Actual.Native) > 0 {
+			result.Status = nativeOperationPartial
+		}
 		result.Error = applyErr.Error()
 	} else {
 		result.Status = nativeOperationComplete

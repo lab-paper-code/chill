@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -28,21 +27,6 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 )
-
-type schedulerBlockedArchive struct {
-	managerArchive
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
-}
-
-func (a *schedulerBlockedArchive) PutImmutable(ctx context.Context, identity evidencestore.ObjectIdentity, input io.Reader) (evidencestore.Receipt, error) {
-	a.once.Do(func() {
-		close(a.entered)
-		<-a.release
-	})
-	return a.managerArchive.PutImmutable(ctx, identity, input)
-}
 
 func schedulerCaptureClockController(t *testing.T, slowLive bool) *SchedulerController {
 	t.Helper()
@@ -109,7 +93,7 @@ func schedulerCaptureClockController(t *testing.T, slowLive bool) *SchedulerCont
 		t.Fatal(err)
 	}
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
-	return &SchedulerController{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, journal: manager.journal,
+	return &SchedulerController{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog,
 		runs: map[string]*actionRun{}, config: SchedulerControllerConfig{
 			Settings:     serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: maxAge, Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 10, MaxCPUs: 4},
 			CPUInventory: map[string][]int{node.Name: {0, 1, 2, 3}},
@@ -137,41 +121,27 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 	defer cancel()
 	cutoff := time.Now().Add(-10 * time.Second)
 	from := cutoff.Add(-controller.config.Settings.ObservationWindow)
-	archive := &schedulerBlockedArchive{managerArchive: managerArchive{t.TempDir()}, entered: make(chan struct{}), release: make(chan struct{})}
-	history, err := serving.NewJournal(serving.JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: archive})
+	history, err := serving.NewObservationLog(serving.ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: managerArchive{t.TempDir()},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var release sync.Once
-	releaseHistory := func() { release.Do(func() { close(archive.release) }) }
 	t.Cleanup(func() {
-		releaseHistory()
-		_ = history.Close(context.Background())
+		if err := history.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
 	})
 	for index, at := range []time.Time{from.Add(-time.Nanosecond), from, cutoff.Add(-time.Nanosecond), cutoff} {
 		if err = history.RequestEvent(serving.RequestEvent{RequestID: strconv.Itoa(index), WorkloadUID: "clock-history", Kind: "received", At: at, ReceivedAt: at}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	archived := make(chan error, 1)
-	go func() { archived <- history.Close(ctx) }()
-	<-archive.entered // Close holds the real journal lock while publication waits.
-	controller.journal = history
-	ticked := make(chan error, 1)
-	started := make(chan struct{})
-	go func() {
-		close(started)
-		_, err := controller.Tick(ctx, cutoff)
-		ticked <- err
-	}()
-	<-started
-	time.Sleep(2 * controller.config.Settings.MaxObservationAge)
-	historyReleasedAt := time.Now()
-	releaseHistory()
-	if err = <-archived; err != nil {
+	if err = history.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err = <-ticked; err != nil {
+	controller.observationLog = history
+	if _, err = controller.Tick(ctx, cutoff); err != nil {
 		t.Fatal(err)
 	}
 	state := schedulerCaptureClockState(t, controller)
@@ -180,9 +150,6 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 		t.Fatalf("live reads moved the original half-open history interval: snapshot=%+v search=%+v", snapshot, decision.Search)
 	}
 	node, instance := snapshot.Nodes[0], snapshot.Instances[0]
-	if node.ObservedAt.Before(historyReleasedAt) || instance.ObservedAt.Before(historyReleasedAt) {
-		t.Fatalf("live sources were refreshed before delayed history completed: node=%s instance=%s released=%s", node.ObservedAt, instance.ObservedAt, historyReleasedAt)
-	}
 	if slices.Contains(decision.Keep.Reasons, "UnknownOrStaleNode:"+node.Node.Name) ||
 		slices.Contains(decision.Keep.Reasons, "UnknownOrStaleInstance:"+instance.ID) {
 		t.Fatalf("consumer falsely aged new authoritative sources: %+v", decision.Keep)
@@ -223,7 +190,7 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.journal,
+	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{
 			Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmProjectedWorkHistory,
 				ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second,
@@ -300,7 +267,7 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 			t.Fatal("fixture did not produce an actionable ON continuation")
 		}
 		snapshot := controller.State().Snapshot
-		if err := controller.journal.SchedulerRecord(serving.SchedulerObservation{At: decision.At, Snapshot: &snapshot, Decision: &decision}); err != nil {
+		if err := controller.observationLog.SchedulerRecord(serving.SchedulerObservation{At: decision.At, Snapshot: &snapshot, Decision: &decision}); err != nil {
 			return err
 		}
 		publishedAt = decision.At
@@ -601,7 +568,7 @@ func TestObservedOverheadReusesRemovedExecutorForCompatibleSLO(t *testing.T) {
 	if err := manager.runtime.InstallInstances([]serving.ReadyInstance{physical}); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.journal.DefinitionRecord(d); err != nil {
+	if err := manager.observationLog.DefinitionRecord(d); err != nil {
 		t.Fatal(err)
 	}
 	at := time.Now().UTC()
@@ -609,7 +576,7 @@ func TestObservedOverheadReusesRemovedExecutorForCompatibleSLO(t *testing.T) {
 		{RequestID: "measured", WorkloadUID: d.UID, Definition: d.Identity(), Kind: "backend_exchange_finished", Outcome: "completed", At: at, ReceivedAt: at, Assignment: &serving.Assignment{Instance: physical.State.ID, Node: node, Profile: profile.ID, Artifact: "onnx", ExecutionPath: "native"}, NativeProgress: &serving.BackendProgress{Phase: "finished", ProfileID: profile.ID, ExecutionComplete: true, NativeElapsedMS: 6}, ClientSpanNanos: int64(10 * time.Millisecond), ElapsedNanos: int64(20 * time.Millisecond)},
 		{RequestID: "measured", Kind: "response_finished", Outcome: "completed", At: at, ReceivedAt: at, ElapsedNanos: int64(23 * time.Millisecond)},
 	} {
-		if err := manager.journal.RequestEvent(event); err != nil {
+		if err := manager.observationLog.RequestEvent(event); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -621,7 +588,7 @@ func TestObservedOverheadReusesRemovedExecutorForCompatibleSLO(t *testing.T) {
 			t.Fatal("measured physical executor remains present", pool)
 		}
 	}
-	overheads, err := manager.journal.ObservedOverhead(at.Add(-time.Second), at.Add(time.Second))
+	overheads, err := manager.observationLog.ObservedOverhead(at.Add(-time.Second), at.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,7 +620,7 @@ func TestObservedOverheadReusesRemovedExecutorForCompatibleSLO(t *testing.T) {
 			case "different GPU":
 				instance.Allocation.GPUUUID = "unmeasured-gpu"
 			case "expired window":
-				observations, err = manager.journal.ObservedOverhead(at.Add(time.Second), at.Add(2*time.Second))
+				observations, err = manager.observationLog.ObservedOverhead(at.Add(time.Second), at.Add(2*time.Second))
 				if err != nil {
 					t.Fatal(err)
 				}

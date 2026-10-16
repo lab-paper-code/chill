@@ -444,11 +444,19 @@ func schedulerValidateInstance(settings SchedulerSettings, n SchedulerNode, i Sc
 	if i.Profile.Condition.NodeUID != n.Node.UID || i.Profile.Condition.PowerMode != n.PowerMode {
 		reasons = appendUnique(reasons, "ProfileConditionMismatch:"+i.ID)
 	}
-	if len(i.Allocation.CPUs) == 0 || i.Allocation.Threads != len(i.Allocation.CPUs) {
+	if i.Allocation.Threads < 1 || i.Allocation.Threads > len(i.Allocation.CPUs) ||
+		i.Allocation.Threads != i.Profile.Condition.CPU.ORTIntraOpThreads {
 		reasons = appendUnique(reasons, "CPUThreadAllocationMismatch:"+i.ID)
 	}
-	if len(i.Profile.Condition.CPU.AffinityCPUs) > 0 {
-		measured := append([]int(nil), i.Profile.Condition.CPU.AffinityCPUs...)
+	measuredAffinity := i.Profile.Condition.CPU.AffinityCPUs
+	if runtime := i.Profile.RuntimeMetadata; runtime != nil {
+		measuredAffinity = runtime.CPUAffinity
+		if i.Allocation.Threads != runtime.IntraOpThreads {
+			reasons = appendUnique(reasons, "CPUThreadAllocationMismatch:"+i.ID)
+		}
+	}
+	if len(measuredAffinity) > 0 {
+		measured := append([]int(nil), measuredAffinity...)
 		actual := append([]int(nil), i.Allocation.CPUs...)
 		sort.Ints(measured)
 		sort.Ints(actual)
@@ -525,7 +533,9 @@ func ValidateNodeBudget(n SchedulerNode, allocations []SchedulerAllocation, reas
 			reservedQuota += count
 		} else {
 			cpuBudget += count
-			if count != len(a.CPUs) {
+			// Request count and the measured affinity width are distinct. The
+			// full mask remains exclusive even when quota/threads use fewer CPUs.
+			if count > len(a.CPUs) {
 				reasons = appendUnique(reasons, "UnknownExclusiveCPUAffinity:"+n.Node.UID)
 			}
 		}

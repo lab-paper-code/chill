@@ -449,7 +449,7 @@ func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) 
 func TestObserverScannerPersistsExactNativePhasesWithoutReplacingResponse(t *testing.T) {
 	manager, _ := newManagerHarness(t)
 	definition := &serving.Definition{Name: "observed", UID: "observed-uid", Generation: 1, Model: serving.Model{Name: "model", UID: "model-uid", Generation: 1}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
-	if err := manager.journal.DefinitionRecord(definition); err != nil {
+	if err := manager.observationLog.DefinitionRecord(definition); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -459,7 +459,7 @@ func TestObserverScannerPersistsExactNativePhasesWithoutReplacingResponse(t *tes
 		{RequestID: requestID, WorkloadName: definition.Name, WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: "accepted", At: now, ReceivedAt: now},
 		{RequestID: requestID, WorkloadName: definition.Name, WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: "response_finished", At: now.Add(time.Millisecond), ReceivedAt: now, ElapsedNanos: int64(time.Millisecond), Outcome: "completed"},
 	} {
-		if err := manager.journal.RequestEvent(event); err != nil {
+		if err := manager.observationLog.RequestEvent(event); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -480,7 +480,7 @@ func TestObserverScannerPersistsExactNativePhasesWithoutReplacingResponse(t *tes
 	observer.wg.Add(1)
 	observer.mu.Unlock()
 	observer.scanLogs(context.Background(), id, stream)
-	result, err := manager.journal.Query(definition.UID, now.Add(-time.Second), now.Add(time.Second), nil, nil, 0, "")
+	result, err := manager.observationLog.Query(definition.UID, now.Add(-time.Second), now.Add(time.Second), nil, nil, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +517,7 @@ func TestObserverNodeMoveDrainsBeforeChangingNativeMembership(t *testing.T) {
 	manager, _ := newManagerHarness(t)
 	pod, node, _, _ := observerSourceFixture()
 	definition := &serving.Definition{Name: "draining", UID: "draining-uid", Generation: 1, Model: serving.Model{Name: "model", UID: "model-uid", Generation: 1}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
-	if err := manager.journal.DefinitionRecord(definition); err != nil {
+	if err := manager.observationLog.DefinitionRecord(definition); err != nil {
 		t.Fatal(err)
 	}
 	id := physicalID(pod.UID, pod.Status.ContainerStatuses[0].ContainerID)
@@ -527,13 +527,13 @@ func TestObserverNodeMoveDrainsBeforeChangingNativeMembership(t *testing.T) {
 		if kind == "assigned" {
 			event.Assignment = assignment
 		}
-		if err := manager.journal.RequestEvent(event); err != nil {
+		if err := manager.observationLog.RequestEvent(event); err != nil {
 			t.Fatal(err)
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	restored, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 4, Journal: manager.journal})
+	restored, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 4, ObservationLog: manager.observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}

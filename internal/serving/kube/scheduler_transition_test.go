@@ -81,11 +81,11 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 				NativeProgress: &serving.BackendProgress{Phase: "finished", ProfileID: profile.ID, ExecutionComplete: true, NativeElapsedMS: 6}, ClientSpanNanos: int64(10 * time.Millisecond), ElapsedNanos: int64(20*time.Millisecond + extra)},
 			{RequestID: request, Kind: "response_finished", Outcome: "completed", At: at, ReceivedAt: at, ElapsedNanos: int64(23*time.Millisecond + extra)},
 		} {
-			if err := manager.journal.RequestEvent(event); err != nil {
+			if err := manager.observationLog.RequestEvent(event); err != nil {
 				t.Fatal(err)
 			}
 		}
-		observed, err := manager.journal.ObservedOverhead(at.Add(-time.Second), at.Add(time.Second))
+		observed, err := manager.observationLog.ObservedOverhead(at.Add(-time.Second), at.Add(time.Second))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,7 +113,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	if err := manager.runtime.ApplySchedulerTarget(oldTarget); err != nil {
 		t.Fatal(err)
 	}
-	controller := &SchedulerController{runtime: manager.runtime, journal: manager.journal, runs: map[string]*actionRun{
+	controller := &SchedulerController{runtime: manager.runtime, observationLog: manager.observationLog, runs: map[string]*actionRun{
 		"acknowledged-route": {
 			action: serving.Action{ID: "acknowledged-route", Kind: operationRoute, Status: nativeOperationComplete},
 			result: &OperationResult{Operation: Operation{Target: &oldTarget}, Status: nativeOperationComplete},
@@ -265,7 +265,7 @@ func TestIndependentPreparationRecordsFrozenTargetBeforeCompletionDuringGlobalRo
 		if result.Status == "starting" {
 			started <- result
 			<-release
-			return context.Canceled // Exercise the real pre-execution journal failure path.
+			return context.Canceled // Exercise the real pre-execution observation log failure path.
 		}
 		return nil
 	}}
@@ -307,7 +307,7 @@ func TestFailedGoalCleanupRetainsRunningRouteFrozenTargetAndAgedPrerequisite(t *
 		DependsOn: []string{removed.ID},
 	}
 	failed := serving.Action{
-		ID: "failed-preparation-journal", Kind: operationPrepare, Status: nativeOperationFailed,
+		ID: "failed-preparation-observation-log", Kind: operationPrepare, Status: nativeOperationFailed,
 		Node: failedGoal.Instances[0].Node, Instance: failedGoal.Instances[0].ID,
 	}
 	frozen.Actions = []serving.Action{removed, routing}
@@ -335,7 +335,7 @@ func TestFailedGoalCleanupRetainsRunningRouteFrozenTargetAndAgedPrerequisite(t *
 			result: &OperationResult{
 				Operation: Operation{ID: failed.ID, Kind: failed.Kind, Node: failed.Node, Instance: failed.Instance, Target: &failedGoal},
 				Status:    nativeOperationFailed, StartedAt: now.Add(-5 * time.Second), EndedAt: now.Add(-4 * time.Second),
-				Error: "pre-execution preparation journal unavailable",
+				Error: "pre-execution preparation observation log unavailable",
 			},
 		},
 	}
@@ -457,7 +457,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 			case <-release:
 			case <-ctx.Done():
 			}
-			return context.Canceled // Existing pre-execution journal-failure fixture path.
+			return context.Canceled // Existing pre-execution observation log failure fixture path.
 		}
 		return nil
 	}

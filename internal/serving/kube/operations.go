@@ -265,7 +265,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 			if operation.Target == nil {
 				err = errors.New("routing target required")
 			} else {
-				err = o.ApplyTarget(ctx, *operation.Target)
+				err = o.ApplyTarget(ctx, *operation.Target, &result)
 			}
 		case operationStop:
 			err = o.StopInstance(ctx, operation.Instance)
@@ -278,7 +278,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 				err = o.PrepareInstance(ctx, *operation.Prepare)
 				if err == nil {
 					result.Progress = append(result.Progress, "replacement ready")
-					err = o.ApplyTarget(ctx, *operation.Target)
+					err = o.ApplyTarget(ctx, *operation.Target, &result)
 				}
 				if err == nil {
 					result.Progress = append(result.Progress, "routing applied")
@@ -290,10 +290,22 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 			err = fmt.Errorf("unsupported atomic operation %q", operation.Kind)
 		}
 	}
-	actual := OperationState{At: time.Now().UTC()}
+	actual := result.Actual
+	actual.At = time.Now().UTC()
 	var captureErr error
 	if operation.Kind != operationRoute {
 		actual, captureErr = o.Capture(ctx, operation.Node)
+		for id, state := range result.Actual.Native {
+			if _, observed := actual.Native[id]; !observed {
+				if actual.Native == nil {
+					actual.Native = map[string]native.State{}
+				}
+				actual.Native[id] = state
+			}
+		}
+		if result.Before.Routing != nil {
+			actual.Routing, _ = o.runtime.SchedulerRouting()
+		}
 	}
 	result.Actual = actual
 	err = errors.Join(err, captureErr)
@@ -447,6 +459,14 @@ func validatePreparation(spec PrepareSpec) error {
 	p := spec.Instance.Profile
 	if p == nil || p.Condition.Firstfloor == nil || p.RuntimeMetadata == nil || spec.Name == "" || spec.Instance.Node.UID != p.Condition.NodeUID {
 		return errors.New("measured firstfloor preparation contract required")
+	}
+	request, err := resource.ParseQuantity(p.Condition.CPU.Request)
+	count := spec.Instance.Allocation.CPUCount
+	if count == 0 {
+		count = len(spec.Instance.Allocation.CPUs)
+	}
+	if err != nil || request.Sign() <= 0 || int64(count) != request.Value() {
+		return errors.New("preparation CPU request count differs from measured profile")
 	}
 	if err := spec.Store.Validate(); err != nil {
 		return err
@@ -737,7 +757,24 @@ func (o *Operations) waitPowerState(ctx context.Context, node serving.NodeRefere
 }
 func port8080() intstr.IntOrString { return intstr.FromInt32(8080) }
 
-func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCandidate) error {
+func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCandidate, result *OperationResult) error {
+	result.Before.Routing, _ = o.runtime.SchedulerRouting()
+	if result.Before.Native == nil {
+		result.Before.Native = map[string]native.State{}
+	}
+	for _, pool := range o.runtime.Pools() {
+		for _, instance := range pool.Instances {
+			if instance.Native != nil {
+				if _, observed := result.Before.Native[instance.ID]; !observed {
+					result.Before.Native[instance.ID] = *instance.Native
+				}
+			}
+		}
+	}
+	defer func() {
+		result.Actual.At = time.Now().UTC()
+		result.Actual.Routing, _ = o.runtime.SchedulerRouting()
+	}()
 	for _, instance := range target.Instances {
 		if instance.Profile == nil || instance.Profile.Condition.Firstfloor == nil {
 			return errors.New("route target missing measured profile")
@@ -747,8 +784,8 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 			MaxBatchSize:   instance.MaxBatch, MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond),
 			CompletionOverheadMS: float64(instance.CompletionOverhead) / float64(time.Millisecond),
 			EnvelopeSource:       instance.CompletionPolicySource()}
-		if err := o.ApplyPolicy(ctx, instance.ID, policy); err != nil {
-			return err
+		if err := o.applyPolicy(ctx, instance.ID, policy, result); err != nil {
+			return fmt.Errorf("apply policy to %s: %w", instance.ID, err)
 		}
 	}
 	if err := o.observer.Refresh(ctx); err != nil {
@@ -767,9 +804,10 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		}
 	}
 	o.observer.mu.Unlock()
+	result.Progress = append(result.Progress, "routing applied and read back")
 	return nil
 }
-func (o *Operations) ApplyPolicy(ctx context.Context, instanceID string, policy native.Policy) error {
+func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy native.Policy, result *OperationResult) error {
 	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err
@@ -797,6 +835,10 @@ func (o *Operations) ApplyPolicy(ctx context.Context, instanceID string, policy 
 	if config.Policy.ProfileID != policy.ProfileID {
 		return errors.New("policy cannot change immutable profile")
 	}
+	if native.EffectiveDeadlinePolicy(config.Policy.DeadlinePolicy) != native.EffectiveDeadlinePolicy(policy.DeadlinePolicy) {
+		return errors.New("policy cannot change immutable deadline policy")
+	}
+	policyChanged := !reflect.DeepEqual(config.Policy, policy)
 	config.Policy = policy
 	raw, err := json.Marshal(config)
 	if err != nil {
@@ -807,10 +849,16 @@ func (o *Operations) ApplyPolicy(ctx context.Context, instanceID string, policy 
 	if err = o.store.client.Patch(ctx, cm, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		return err
 	}
+	if policyChanged {
+		result.Progress = append(result.Progress, instanceID+": desired policy configuration persisted")
+	}
 	previous := selected.DeepCopy()
 	selected.Annotations[ServingPolicyAnnotation] = policy.DecisionID
 	if err = o.store.client.Patch(ctx, selected, client.MergeFromWithOptions(previous, client.MergeFromWithOptimisticLock{})); err != nil {
 		return err
+	}
+	if previous.Annotations[ServingPolicyAnnotation] != policy.DecisionID {
+		result.Progress = append(result.Progress, instanceID+": desired policy annotation persisted")
 	}
 	return o.wait(ctx, func() (bool, error) {
 		current, e := o.kube.CoreV1().Pods(selected.Namespace).Get(ctx, selected.Name, meta.GetOptions{})
@@ -832,7 +880,15 @@ func (o *Operations) ApplyPolicy(ctx context.Context, instanceID string, policy 
 		actual.Batches = nil
 		expected := policy
 		expected.Batches = nil
-		return state.Ready && state.Metadata.ProfileID == policy.ProfileID && state.Metadata.DecisionID == policy.DecisionID && reflect.DeepEqual(actual, expected), nil
+		if !state.Ready || state.Metadata.ProfileID != policy.ProfileID || state.Metadata.DecisionID != policy.DecisionID || !reflect.DeepEqual(actual, expected) {
+			return false, nil
+		}
+		if result.Actual.Native == nil {
+			result.Actual.Native = map[string]native.State{}
+		}
+		result.Actual.Native[physicalID(current.UID, firstfloorStatus(current).ContainerID)] = state
+		result.Progress = append(result.Progress, instanceID+": native policy acknowledged")
+		return true, nil
 	})
 }
 func nodeClassMatches(node *core.Node, class *edge.DeviceClass) bool {

@@ -2,7 +2,7 @@
 
 CHILL (Cost-aware Heterogeneous Inference for Latency and Load) is a Kubernetes-native research operator for energy-minimal edge inference under tail-latency SLOs.
 
-The repo implements profiling, an HTTPS Workload management/inference owner,
+The repo implements profiling, ChillServer for HTTPS Workload management/inference,
 and a measured-profile scheduler with native firstfloor serving. Immutable
 request SLOs drive batch selection; measured whole-POOL energy and transition
 costs drive configuration selection. Public implementation decisions live in:
@@ -84,19 +84,19 @@ credentials and internal storage endpoints stay inside the Console Pod.
 
 ### Workload HTTPS API
 
-The single owner registers ModelSpecs and Workloads, queries desired/applied
+The single ChillServer registers ModelSpecs and Workloads, queries desired/applied
 definitions and current Pools, and accepts one named-tensor inference sample
 per request. Bearer tokens are verified by Kubernetes TokenReview and authorized
 by SubjectAccessReview for the HTTP path and verb. Managers use this API, not
 direct Kubernetes writes to managed ModelSpecs or Workloads.
 
 ```sh
-# OWNER is the HTTPS endpoint covered by OWNER_CA and its TLS certificate.
-curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' "$OWNER/api/v1/workloads" \
+# CHILL_SERVER is the HTTPS endpoint covered by CHILL_SERVER_CA and its TLS certificate.
+curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' "$CHILL_SERVER/api/v1/workloads" \
   --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
-curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
-  "$OWNER/api/v1/workloads/detector-fast"
+curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
+  "$CHILL_SERVER/api/v1/workloads/detector-fast"
 ```
 
 Registration can return `201` with admission closed (`MissingEvidence`).
@@ -105,7 +105,7 @@ DELETE; stale versions return `409`. Model registration, inference, updates,
 observation filters, and exact deployment settings are in the
 [Workload contract](docs/design/serving/workload-management.md).
 The [model sample guide](config/samples/catalog/README.md) submits prepared
-manifests through this owner.
+manifests through ChillServer.
 
 The following is the previous serving work unit's verification checkpoint.
 Current firstfloor scheduler evidence is recorded in the
@@ -124,7 +124,7 @@ execution have **not** been verified.
 ### Dashboard
 
 The [Dashboard module](chill-dashboard/README.md) is part of the same CHILL
-release. It presents the native owner APIs, not an independent control plane.
+release. It presents the native ChillServer APIs, not an independent control plane.
 Its [design and exercised scope](docs/design/dashboard/README.md) distinguish
 the current core from pending SRS producers.
 
@@ -134,9 +134,9 @@ Build its standalone image from the repository root:
 docker build -f build/docker/dashboard.Dockerfile -t "$DASHBOARD_IMAGE" .
 ```
 
-Enable `dashboard.enabled` together with the TLS owner. Supply the Dashboard
-image and a `dashboard.caSecretName` containing `ca.crt` for the native owner.
-The chart keeps the web Service private. The owner serves the web application
+Enable `dashboard.enabled` together with TLS-enabled ChillServer. Supply the Dashboard
+image and a `dashboard.caSecretName` containing `ca.crt` for ChillServer.
+The chart keeps the web Service private. ChillServer serves the web application
 and BFF on its existing HTTPS listener; the BFF verifies its fixed native
 HTTPS origin. Native API paths retain TokenReview/SubjectAccessReview.
 
@@ -179,7 +179,7 @@ make helm-install
 make helm-uninstall
 ```
 
-Enable the owner only with an existing TLS Secret, persistent observation storage,
+Enable ChillServer only with an existing TLS Secret, persistent observation storage,
 and an existing scheduler ConfigMap for profile adoption; the chart does not create native serving capacity:
 
 ```sh
@@ -191,11 +191,11 @@ helm upgrade --install chill charts/chill \
 ```
 
 The scheduler ConfigMap's `profileCampaigns` array is the only profile selection
-authority; adopt completed measurements through the owner API rather than Helm
+authority; adopt completed measurements through the ChillServer API rather than Helm
 values. `servingEntrypoint.profileNamespaces` grants read-only access to
 measurements in those namespaces; an empty list defaults to the serving
-namespace. The owner is fixed to one replica with `Recreate`, exposes HTTPS on
-port `8080`, and keeps a private RWO journal plus immutable Evidence Store windows.
+namespace. ChillServer is fixed to one replica with `Recreate`, exposes HTTPS on
+port `8080`, and keeps a private RWO ObservationLog plus immutable Evidence Store windows.
 
 ### Targeted NodeActuator replacement
 

@@ -68,7 +68,7 @@ components:
   profiler-kube: { in: internal/profiling/profiler/kube }
   profiler-worker: { in: internal/profiling/profiler/worker }
   serving-core: { in: internal/serving }
-  serving-entrypoint: { in: internal/serving/entrypoint }
+  serving-httpapi: { in: internal/serving/httpapi }
   serving-kube: { in: internal/serving/kube }
   firstfloor: { in: internal/firstfloor }
   serving-firstfloor: { in: internal/serving/firstfloor }
@@ -275,7 +275,7 @@ deps:
       - workload-core
       - model-compat
 
-  serving-entrypoint:
+  serving-httpapi:
     mayDependOn:
       - serving-core
       - api

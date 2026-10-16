@@ -318,7 +318,7 @@ build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/console ./cmd/console
 	go build -o bin/metric-observer ./cmd/metric-observer
 	go build -o bin/measurement-worker ./cmd/measurement-worker
-	go build -o bin/serving-entrypoint ./cmd/serving-entrypoint
+	go build -o bin/chill-server ./cmd/chill-server
 	go build -o bin/serving-worker ./cmd/serving-worker
 	go build -o bin/serving-operation ./cmd/serving-operation
 
@@ -360,9 +360,9 @@ docker-build-metric-observer: ## Build the MetricObserver image.
 docker-build-measurement-worker: ## Build the CPU ORT measurement worker image.
 	$(CONTAINER_TOOL) build -f build/docker/measurement-worker.Dockerfile -t $(MEASUREMENT_WORKER_IMG) .
 
-.PHONY: docker-build-serving-entrypoint
-docker-build-serving-entrypoint: ## Build the inference entry point image.
-	$(CONTAINER_TOOL) build -f build/docker/serving-entrypoint.Dockerfile -t $(SERVING_ENTRYPOINT_IMG) .
+.PHONY: docker-build-chill-server
+docker-build-chill-server: ## Build the ChillServer image.
+	$(CONTAINER_TOOL) build -f build/docker/chill-server.Dockerfile -t $(SERVING_ENTRYPOINT_IMG) .
 
 .PHONY: docker-build-firstfloor
 docker-build-firstfloor: ## Build the native CPU serving runtime image.
@@ -489,11 +489,11 @@ docker-buildx-workload-observer: ## Build and push the bounded WorkloadObserver 
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/workload-observer.Dockerfile --tag $(WORKLOAD_OBSERVER_IMG) .
 
-.PHONY: docker-buildx-serving-entrypoint
-docker-buildx-serving-entrypoint: ## Build and push the inference entry point image for cross-platform support.
+.PHONY: docker-buildx-chill-server
+docker-buildx-chill-server: ## Build and push the ChillServer image for cross-platform support.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/serving-entrypoint.Dockerfile --tag $(SERVING_ENTRYPOINT_IMG) .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/chill-server.Dockerfile --tag $(SERVING_ENTRYPOINT_IMG) .
 
 .PHONY: docker-buildx-dashboard
 docker-buildx-dashboard: ## Build and push the Dashboard image for cross-platform support.

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -13,8 +14,8 @@ import (
 )
 
 type RuntimeConfig struct {
-	QueueLimit int
-	Journal    *Journal
+	QueueLimit     int
+	ObservationLog *ObservationLog
 }
 
 type Receipt struct {
@@ -93,12 +94,12 @@ type Runtime struct {
 }
 
 func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
-	if config.QueueLimit <= 0 || config.Journal == nil {
-		return nil, errors.New("positive queue limit and journal are required")
+	if config.QueueLimit <= 0 || config.ObservationLog == nil {
+		return nil, errors.New("positive queue limit and observation log are required")
 	}
 	backendCtx, cancel := context.WithCancel(ctx)
 	r := &Runtime{config: config, ctx: backendCtx, cancel: cancel, workloads: map[string]*runtimeWorkload{}, names: map[string]string{}, instances: map[string]*runtimeInstance{}, nodes: map[string][]NodeReference{}, calls: map[string]*Call{}, definitions: map[string]*Definition{}, changed: make(chan struct{}, 1)}
-	definitions, pending, err := config.Journal.runtimeFacts()
+	definitions, pending, err := config.ObservationLog.runtimeFacts()
 	if err != nil {
 		cancel()
 		return nil, err
@@ -176,7 +177,7 @@ func (r *Runtime) eventAt(c *Call, kind, outcome, code string, now time.Time) er
 		e.SLO = &c.definition.SLO
 		e.InputPath = &c.input.path
 	}
-	if err := r.config.Journal.RequestEvent(e); err != nil {
+	if err := r.config.ObservationLog.RequestEvent(e); err != nil {
 		r.observationError = err
 		return err
 	}
@@ -222,7 +223,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	if !receipt.Deadline.IsZero() {
 		lifetime = receipt.Deadline.Sub(receipt.ReceivedAt).Nanoseconds()
 	}
-	if err := r.config.Journal.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: time.Now().UTC(), ReceivedAt: receipt.ReceivedAt, SLO: &d.SLO, InputPath: &validated.path, LifetimeNanos: lifetime}); err != nil {
+	if err := r.config.ObservationLog.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: time.Now().UTC(), ReceivedAt: receipt.ReceivedAt, SLO: &d.SLO, InputPath: &validated.path, LifetimeNanos: lifetime}); err != nil {
 		return nil, failure("ObservationUnavailable", "cannot persist validated compute demand")
 	}
 	r.mu.Lock()
@@ -238,7 +239,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 		return nil, failure(w.reason, "new requests are stopped: %s", w.reason)
 	}
 	if r.observationError != nil {
-		return nil, failure("ObservationUnavailable", "request journal is unavailable")
+		return nil, failure("ObservationUnavailable", "request observation log is unavailable")
 	}
 	if w.definition.Model.UID != d.Model.UID || w.definition.Model.Generation != d.Model.Generation {
 		return nil, failure("DefinitionChanged", "model changed before acceptance")
@@ -310,13 +311,8 @@ func (r *Runtime) removeQueuedLocked(c *Call) {
 	if w == nil {
 		return
 	}
-	for i, queued := range w.queue {
-		if queued == c {
-			copy(w.queue[i:], w.queue[i+1:])
-			w.queue[len(w.queue)-1] = nil
-			w.queue = w.queue[:len(w.queue)-1]
-			return
-		}
+	if index := slices.Index(w.queue, c); index >= 0 {
+		w.queue = slices.Delete(w.queue, index, index+1)
 	}
 }
 
@@ -469,7 +465,7 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) erro
 			}
 		}
 	}
-	if err := r.config.Journal.RequestEvent(e); err != nil {
+	if err := r.config.ObservationLog.RequestEvent(e); err != nil {
 		r.observationError = err
 		return err
 	}
@@ -557,7 +553,7 @@ func (r *Runtime) publish(d *Definition, stopped bool, reason string) error {
 	if w != nil && (w.definition.Model.UID != d.Model.UID || w.definition.Model.Generation != d.Model.Generation) && !r.drainedLocked(w) {
 		return failure("DrainIncomplete", "old model requests remain")
 	}
-	if err := r.config.Journal.DefinitionRecord(d); err != nil {
+	if err := r.config.ObservationLog.DefinitionRecord(d); err != nil {
 		return err
 	}
 	if w == nil {
@@ -588,7 +584,7 @@ func (r *Runtime) OpenAdmission(uid string) error {
 		return failure("WorkloadNotFound", "registration is not applied")
 	}
 	if r.observationError != nil {
-		return failure("ObservationUnavailable", "request journal is unavailable")
+		return failure("ObservationUnavailable", "request observation log is unavailable")
 	}
 	w.stopped = false
 	w.reason = ""
@@ -742,24 +738,9 @@ func sameInputs(a, b []modelcompat.InputTensor) bool {
 		return false
 	}
 	for _, x := range a {
-		found := false
-		for _, y := range b {
-			if x.Name != y.Name || x.Datatype != y.Datatype || len(x.SampleShape) != len(y.SampleShape) {
-				continue
-			}
-			equal := true
-			for n := range x.SampleShape {
-				if x.SampleShape[n] != y.SampleShape[n] {
-					equal = false
-					break
-				}
-			}
-			if equal {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.ContainsFunc(b, func(y modelcompat.InputTensor) bool {
+			return x.Name == y.Name && x.Datatype == y.Datatype && slices.Equal(x.SampleShape, y.SampleShape)
+		}) {
 			return false
 		}
 	}

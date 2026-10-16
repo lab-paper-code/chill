@@ -12,7 +12,7 @@ export function parseSchedulerJSON(text: string): unknown {
   if (!preciseJSONSupported()) throw new Error("정밀 정수 JSON을 지원하는 최신 Chrome, Edge 또는 Firefox를 사용해 주세요.")
   return restoreEvidence(native.parse(text, (_key, value, context) => typeof value === "number" && !Number.isSafeInteger(value) && /^-?\d+$/.test(context?.source ?? "") ? BigInt(context!.source!) : value))
 }
-// internal/serving/entrypoint/scheduler_presentation.go: view=compact replaces only instance `profile` and
+// internal/serving/httpapi/scheduler_presentation.go: view=compact replaces only instance `profile` and
 // `completionMeasurement` with {"$ref":key} into two top-level dictionaries. Restoring yields the full response.
 function restoreEvidence(root: unknown): unknown {
   if (!root || typeof root !== "object" || !("profiles" in root) || !("completionMeasurements" in root)) return root

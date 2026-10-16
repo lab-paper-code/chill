@@ -44,6 +44,7 @@ const (
 	ServingSlotAnnotation    = "edge.dacs.io/serving-slot"
 	sourceFinalizer          = "edge.dacs.io/serving-source-termination"
 	firstfloorContainerName  = "firstfloor"
+	profileInitContainerName = "profile"
 	nonTerminalPodSelector   = "status.phase!=Succeeded,status.phase!=Failed"
 )
 
@@ -432,11 +433,11 @@ func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.Curv
 	bundle := pod.Spec.InitContainers[1]
 	var bundleStatus *corev1.ContainerStatus
 	for i := range pod.Status.InitContainerStatuses {
-		if pod.Status.InitContainerStatuses[i].Name == "profile" {
+		if pod.Status.InitContainerStatuses[i].Name == profileInitContainerName {
 			bundleStatus = &pod.Status.InitContainerStatuses[i]
 		}
 	}
-	if bundle.Name != "profile" || bundle.Image != condition.RuntimeImage || bundleStatus == nil || bundleStatus.State.Terminated == nil || bundleStatus.State.Terminated.ExitCode != 0 || !observedImage(bundle.Image, bundleStatus.ImageID, condition.RuntimeImage) {
+	if bundle.Name != profileInitContainerName || bundle.Image != condition.RuntimeImage || bundleStatus == nil || bundleStatus.State.Terminated == nil || bundleStatus.State.Terminated.ExitCode != 0 || !observedImage(bundle.Image, bundleStatus.ImageID, condition.RuntimeImage) {
 		return errors.New("immutable profile materialization unconfirmed")
 	}
 	return nil

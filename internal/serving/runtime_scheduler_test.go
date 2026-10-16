@@ -82,15 +82,15 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 	second := schedulerTestCPU(snapshot.Instances[0])
 	second.ID, second.Weight = "i2", 2
 	snapshot.Instances = append(snapshot.Instances, second)
-	j, err := NewJournal(JournalConfig{
+	observationLog, err := NewObservationLog(ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Window: time.Hour,
 		Writer: &observationArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = j.Close(context.Background()) }()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, Journal: j})
+	defer func() { _ = observationLog.Close(context.Background()) }()
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,12 +191,12 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	settings.Controls.Enabled = false
 	snapshot.Instances[0] = schedulerMeasuredInstance(snapshot.Instances[0], snapshot.Workloads[0], 100*time.Millisecond)
 	d := snapshot.Workloads[0]
-	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = j.Close(context.Background()) }()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, Journal: j})
+	defer func() { _ = observationLog.Close(context.Background()) }()
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,16 +244,16 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	d.Model.Paths[0].Tensors = tensors
 	p.Condition.LogicalModel = d.Model.Name
 	p.Condition.Tensor.Tensors = tensors
-	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		if err := j.Close(context.Background()); err != nil {
+		if err := observationLog.Close(context.Background()); err != nil {
 			t.Error(err)
 		}
 	}()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, Journal: j})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,16 +387,16 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 	p := snapshot.Instances[0].Profile
 	d.Model.Paths[0].Path = p.Condition.Artifact.Path
 	p.Condition.LogicalModel = d.Model.Name
-	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		if err := j.Close(context.Background()); err != nil {
+		if err := observationLog.Close(context.Background()); err != nil {
 			t.Error(err)
 		}
 	}()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, Journal: j})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,15 +425,15 @@ func TestControlledRoutingKeepsNewWorkloadQueuedAfterInstanceRediscovery(t *test
 	tensors := []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{1}}}
 	d.Model.Paths[0].Path, d.Model.Paths[0].Tensors = p.Condition.Artifact.Path, tensors
 	p.Condition.LogicalModel, p.Condition.Tensor.Tensors = d.Model.Name, tensors
-	j, err := NewJournal(JournalConfig{
+	observationLog, err := NewObservationLog(ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Window: time.Hour,
 		Writer: &observationArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = j.Close(context.Background()) }()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, Journal: j})
+	defer func() { _ = observationLog.Close(context.Background()) }()
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,16 +580,16 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 		}
 	}
 
-	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		if err := j.Close(context.Background()); err != nil {
+		if err := observationLog.Close(context.Background()); err != nil {
 			t.Error(err)
 		}
 	}()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 32, Journal: j})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 32, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}

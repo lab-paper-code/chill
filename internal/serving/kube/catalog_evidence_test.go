@@ -302,7 +302,7 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 	targetDuration := float64(config.Measurement.DurationSeconds)
 	cpu := profilingrun.RuntimeCPU{CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4, ORTInterOpThreads: 1, AffinityCPUCount: 4, AffinityCPUs: []int{0, 1, 2, 3}, CPUSetEffective: "0-3"}
 	if config.State.RuntimeFamily == profilingrun.FirstfloorRuntimeFamily {
-		cpu.CgroupCPUMax = "200000 100000"
+		cpu.CgroupCPUMax = measuredTwoCoreCPUMax
 		cpu.ORTIntraOpThreads = 2
 		cpu.AffinityCPUCount = 2
 		cpu.AffinityCPUs = []int{0, 1}
@@ -346,7 +346,7 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 		ModelInstanceCount: 1, MaxBatchSize: 1, MaxQueueSize: 32,
 		Runtime: firstfloor.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.16.0", ModelPath: "/model/model.onnx", Inputs: inputs,
 			Providers: []string{provider}, AvailableProviders: []string{provider}, Device: "cpu", CPUAffinity: []int{0, 1}, IntraOpThreads: 2, InterOpThreads: 1, InitializedBatches: []int{1},
-			CgroupCPUMax: "200000 100000", CPUSet: "0-3"}}
+			CgroupCPUMax: measuredTwoCoreCPUMax, CPUSet: "0-3"}}
 	activeNative := native
 	activeNative.ExecutionCount, activeNative.InferenceCount = 2, 2
 	activeNative.BatchExecutionCounts = map[string]uint64{"1": 2}

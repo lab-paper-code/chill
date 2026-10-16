@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
@@ -51,12 +52,12 @@ func TestStaticRoutingCompletionRequiresCompleteReadbackAndAppearsInState(t *tes
 		t.Run(test.name, func(t *testing.T) {
 			controller := &SchedulerController{}
 			result := OperationResult{Operation: Operation{
-				ID: "manual-static-routing:42", Kind: "manual-static-routing", SourceConfigRV: "42",
+				ID: "manual-static-routing:42", Kind: manualStaticRoutingOperation, SourceConfigRV: "42",
 				Target: &serving.SchedulerCandidate{Routing: wanted},
 			}}
-			var journaled OperationResult
+			var recorded OperationResult
 			err := controller.finishStaticRouting(result, test.actual, nil, func(result OperationResult) error {
-				journaled = result
+				recorded = result
 				return nil
 			})
 			if (err != nil) != test.wantError {
@@ -67,7 +68,7 @@ func TestStaticRoutingCompletionRequiresCompleteReadbackAndAppearsInState(t *tes
 				t.Fatalf("manual result missing from scheduler state: %+v", state.Results)
 			}
 			actual := state.Results[0]
-			if actual.Operation.Kind != "manual-static-routing" || actual.Operation.SourceConfigRV != "42" || actual.Operation.Target != result.Operation.Target {
+			if actual.Operation.Kind != manualStaticRoutingOperation || actual.Operation.SourceConfigRV != "42" || actual.Operation.Target != result.Operation.Target {
 				t.Fatalf("manual provenance/expected target lost: %+v", actual.Operation)
 			}
 			if !maps.EqualFunc(actual.Actual.Routing, test.actual, func(left, right map[string]int32) bool { return maps.Equal(left, right) }) {
@@ -77,8 +78,8 @@ func TestStaticRoutingCompletionRequiresCompleteReadbackAndAppearsInState(t *tes
 			if test.wantError {
 				wantStatus = nativeOperationFailed
 			}
-			if actual.Status != wantStatus || journaled.Status != wantStatus || actual.EndedAt.IsZero() {
-				t.Fatalf("journal/state completion disagree: state=%+v journal=%+v", actual, journaled)
+			if actual.Status != wantStatus || recorded.Status != wantStatus || actual.EndedAt.IsZero() {
+				t.Fatalf("observation log/state completion disagree: state=%+v recorded=%+v", actual, recorded)
 			}
 			controller.reconcileSnapshot(serving.SchedulerSnapshot{}, nil, actual.EndedAt.Add(2*time.Second), time.Second)
 			if len(controller.State().Results) != 0 {
@@ -88,19 +89,19 @@ func TestStaticRoutingCompletionRequiresCompleteReadbackAndAppearsInState(t *tes
 	}
 }
 
-func TestStaticRoutingJournalFailureRemainsVisibleAsPartial(t *testing.T) {
+func TestStaticRoutingObservationLogFailureRemainsVisibleAsPartial(t *testing.T) {
 	controller := &SchedulerController{}
 	routing := map[string]map[string]int32{"w": {"physical": 1}}
-	recordError := errors.New("journal unavailable")
+	recordError := errors.New("observation log unavailable")
 	err := controller.finishStaticRouting(OperationResult{
-		Operation: Operation{Kind: "manual-static-routing", SourceConfigRV: "42", Target: &serving.SchedulerCandidate{Routing: routing}},
+		Operation: Operation{Kind: manualStaticRoutingOperation, SourceConfigRV: "42", Target: &serving.SchedulerCandidate{Routing: routing}},
 	}, routing, nil, func(OperationResult) error { return recordError })
 	if !errors.Is(err, recordError) {
-		t.Fatalf("journal failure lost: %v", err)
+		t.Fatalf("observation log failure lost: %v", err)
 	}
 	state := controller.State()
 	if len(state.Results) != 1 || state.Results[0].Status != nativeOperationPartial || state.Results[0].Error == "" {
-		t.Fatalf("journal failure incorrectly completed or hidden: %+v", state.Results)
+		t.Fatalf("observation log failure incorrectly completed or hidden: %+v", state.Results)
 	}
 }
 
@@ -123,7 +124,7 @@ func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
 			var recorded []OperationResult
 			controller := &SchedulerController{
 				store: manager.store, kube: manager.observer.kube, runtime: manager.runtime,
-				observer: manager.observer, journal: manager.journal,
+				observer: manager.observer, observationLog: manager.observationLog,
 				config: SchedulerControllerConfig{
 					Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Minute},
 					OnAction: func(result OperationResult) error {
@@ -162,7 +163,7 @@ func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
 	}
 }
 
-func TestManualStaticRoutingJournalsPendingWithoutOverwritingRunningGlobalRoute(t *testing.T) {
+func TestManualStaticRoutingRecordsPendingWithoutOverwritingRunningGlobalRoute(t *testing.T) {
 	controller, target, _ := acknowledgedHandoffFixture(t)
 	for _, run := range controller.runs {
 		run.action.Status = nativeOperationRunning
@@ -191,5 +192,48 @@ func TestManualStaticRoutingJournalsPendingWithoutOverwritingRunningGlobalRoute(
 		if run.action.Status != nativeOperationRunning {
 			t.Fatal("manual pending configuration canceled or completed the existing route")
 		}
+	}
+}
+
+func TestStaticRoutingPartialFailureClassification(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		persisted  bool
+		nativeACK  bool
+		wantStatus string
+	}{
+		{name: "no physical or desired effect", wantStatus: nativeOperationFailed},
+		{name: "desired persisted without native ACK", persisted: true, wantStatus: nativeOperationPartial},
+		{name: "native ACK before later failure", nativeACK: true, wantStatus: nativeOperationPartial},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			controller := &SchedulerController{}
+			routing := map[string]map[string]int32{"w": {"physical": 1}}
+			result := OperationResult{
+				Operation: Operation{Kind: manualStaticRoutingOperation, Target: &serving.SchedulerCandidate{Routing: routing}},
+			}
+			if test.persisted {
+				result.Status = nativeOperationPartial
+				result.Progress = []string{"physical: desired policy configuration persisted"}
+			}
+			if test.nativeACK {
+				result.Actual.Native = map[string]firstfloor.State{
+					"physical": {Ready: true, At: time.Now().UTC(), Metadata: firstfloor.Metadata{DecisionID: "route"}},
+				}
+			}
+			applyErr := errors.New("later native state unavailable")
+			var recorded OperationResult
+			err := controller.finishStaticRouting(result, routing, applyErr, func(result OperationResult) error {
+				recorded = result
+				return nil
+			})
+			if !errors.Is(err, applyErr) {
+				t.Fatalf("physical failure lost: %v", err)
+			}
+			actual := controller.State().Results[0]
+			if actual.Status != test.wantStatus || recorded.Status != test.wantStatus {
+				t.Fatalf("physical effect classification lost: state=%s recorded=%s", actual.Status, recorded.Status)
+			}
+		})
 	}
 }

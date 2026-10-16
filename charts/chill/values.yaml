@@ -356,7 +356,7 @@ servingEntrypoint:
     # Required only when enabled; existing kubernetes.io/tls Secret in release namespace.
     secretName: ""
   observationStorage:
-    # Journal path inside the retained PVC; select a fresh path for a stored-contract cutover.
+    # ObservationLog path inside the retained PVC; select a fresh path for a stored-contract cutover.
     directory: /data
     size: 1Gi
     # null uses the cluster default; "" explicitly requests no StorageClass.

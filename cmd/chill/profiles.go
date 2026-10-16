@@ -11,13 +11,13 @@ import (
 	"net/url"
 	"text/tabwriter"
 
-	"github.com/lab-paper-code/chill/internal/serving/entrypoint"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
 
 type profileOperations interface {
-	List(context.Context) (entrypoint.ProfileSelectionsView, error)
-	Adopt(context.Context) (entrypoint.ProfileSelectionResult, error)
-	Unadopt(context.Context) (entrypoint.ProfileSelectionResult, error)
+	List(context.Context) (httpapi.ProfileSelectionsView, error)
+	Adopt(context.Context) (httpapi.ProfileSelectionResult, error)
+	Unadopt(context.Context) (httpapi.ProfileSelectionResult, error)
 }
 
 type profileClient struct{ *ownerClient }
@@ -37,8 +37,8 @@ func newProfileOperations(opts operationOptions) (profileOperations, error) {
 	return &profileClient{owner}, nil
 }
 
-func (q *profileClient) List(ctx context.Context) (entrypoint.ProfileSelectionsView, error) {
-	var result entrypoint.ProfileSelectionsView
+func (q *profileClient) List(ctx context.Context) (httpapi.ProfileSelectionsView, error) {
+	var result httpapi.ProfileSelectionsView
 	err := q.read(ctx, http.MethodGet, "/api/v1/scheduler/profiles", nil, "", maximumEvidencePassportBytes, &result)
 	if err == nil && result.ConfigVersion == "" {
 		return result, errors.New("owner returned an unexpected profile selection view")
@@ -46,10 +46,10 @@ func (q *profileClient) List(ctx context.Context) (entrypoint.ProfileSelectionsV
 	return result, err
 }
 
-func (q *profileClient) Adopt(ctx context.Context) (entrypoint.ProfileSelectionResult, error) {
-	var result entrypoint.ProfileSelectionResult
-	payload, err := json.Marshal(entrypoint.ProfileSelectionRequest{
-		Campaign: entrypoint.ProfileCampaign{Namespace: q.opts.namespace, Name: q.opts.name},
+func (q *profileClient) Adopt(ctx context.Context) (httpapi.ProfileSelectionResult, error) {
+	var result httpapi.ProfileSelectionResult
+	payload, err := json.Marshal(httpapi.ProfileSelectionRequest{
+		Campaign: httpapi.ProfileCampaign{Namespace: q.opts.namespace, Name: q.opts.name},
 	})
 	if err != nil {
 		return result, err
@@ -61,8 +61,8 @@ func (q *profileClient) Adopt(ctx context.Context) (entrypoint.ProfileSelectionR
 	return result, err
 }
 
-func (q *profileClient) Unadopt(ctx context.Context) (entrypoint.ProfileSelectionResult, error) {
-	var result entrypoint.ProfileSelectionResult
+func (q *profileClient) Unadopt(ctx context.Context) (httpapi.ProfileSelectionResult, error) {
+	var result httpapi.ProfileSelectionResult
 	path := "/api/v1/scheduler/profiles/" + url.PathEscape(q.opts.namespace) + "/" + url.PathEscape(q.opts.name)
 	err := q.read(ctx, http.MethodDelete, path, nil, q.opts.ifMatch, maximumEvidencePassportBytes, &result)
 	if err == nil && (result.Campaign.Namespace != q.opts.namespace || result.Campaign.Name != q.opts.name) {
@@ -96,7 +96,7 @@ func executeProfiles(ctx context.Context, args []string, stdout, stderr io.Write
 		}
 		return writeProfilesTable(stdout, result.ConfigVersion, result.Selections)
 	}
-	var result entrypoint.ProfileSelectionResult
+	var result httpapi.ProfileSelectionResult
 	if args[0] == operationUnadopt {
 		result, err = q.Unadopt(ctx)
 	} else {
@@ -108,7 +108,7 @@ func executeProfiles(ctx context.Context, args []string, stdout, stderr io.Write
 	if opts.output == outputFormatJSON {
 		err = writeOperationJSON(stdout, result)
 	} else {
-		err = writeProfilesTable(stdout, result.ConfigVersion, []entrypoint.ProfileSelectionResult{result})
+		err = writeProfilesTable(stdout, result.ConfigVersion, []httpapi.ProfileSelectionResult{result})
 	}
 	if err != nil {
 		return err
@@ -127,7 +127,7 @@ func executeProfiles(ctx context.Context, args []string, stdout, stderr io.Write
 	return nil
 }
 
-func writeProfilesTable(writer io.Writer, version string, selections []entrypoint.ProfileSelectionResult) error {
+func writeProfilesTable(writer io.Writer, version string, selections []httpapi.ProfileSelectionResult) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	const header = "CONFIG_VERSION\t%s\n\n" +
 		"NAMESPACE\tMEASUREMENT_TASK\tSTATUS\tPERSISTED\tLOADED\tPROFILE_ID\tCODE\tREASON\n"

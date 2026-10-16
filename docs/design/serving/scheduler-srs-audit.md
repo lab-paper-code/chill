@@ -35,7 +35,7 @@ firstfloor 통합의 완료 증거와 구분한다. 채택에 따라 필요한 �
 | SCH-04 | 라우팅의 워크로드 전체·인스턴스별 부하와 결과 | 간소화: 수신 모집단과 완료 사건 집계의 의미 구분 | received/accepted/assigned/결과 기록 존재. 각 사건 구간의 운영 부하 계산 필요. 신규 endpoint와 모든 처리율 필드의 제공은 설계 선택 |
 | SCH-05 | 라우팅의 유입·native 대기·실행; Workload WM-30 | 유지 | ingress queue와 waiting/running/assignedUnknown 관측 존재. native 현재 큐의 적시 관측 계약 연결 필요 |
 | SCH-06 | 시스템 평가·라우팅의 inputs/s와 요청 수 | 유지 | 요청별 UID·배정 인스턴스 보존. 운영 요청률과 인스턴스·노드 합산 입력 구성 필요 |
-| SCH-07 | 시스템 명세의 SLO 관측과 집계 | 유지 | Journal 보존·지정 구간 분석 존재. 운영 이동 구간과 제어·비교 기간의 독립 설정 필요 |
+| SCH-07 | 시스템 명세의 SLO 관측과 집계 | 유지 | 관측 기록 보존·지정 구간 분석 존재. 운영 이동 구간과 제어·비교 기간의 독립 설정 필요 |
 | SCH-08 | 측정 실패; 구성 적격성; Dashboard DB-FR-16, DB-FR-21 | 유지 | evidence/readiness 오류와 assignedUnknown 존재. 판단 입력의 확보 상태와 평가 대기 연결 필요 |
 | SCH-09 | 측정의 조건·최신 성공 선택·근거 재사용 | 유지 | 선택 campaign의 검증된 native profile catalog 존재. 같은 조건의 최신 성공 선택·후보 적용 연결 필요 |
 | SCH-10 | 시스템 자원·구성 선택의 배치 제약 | 유지 | 관측 Pod의 CPU와 memory 조건 확인 존재. 전체 할당 예산·CPU 분리·물리 GPU 전용 배치 선택 필요 |
@@ -55,14 +55,14 @@ firstfloor 통합의 완료 증거와 구분한다. 채택에 따라 필요한 �
 | SCH-24 | 전환 실행의 동작·완료·실패 계약 | 유지 | Workload operation, native readiness, NodeActuation read-back 존재. 구성 전환의 동작 의존성·부분 적용 결과 연결 필요 |
 | SCH-25 | 전환 실행의 서비스 용량·진행 순서 | 유지 | 기존 요청의 실제 drain·연결 해제 존재. 신규 capacity 준비·분배 이동·독립 동작 진행을 구성 목표에 연결 |
 | SCH-26 | 전환 실행의 실패·노드 소실·다음 판단 | 유지 | physical identity와 readiness/log-stream 소실 격리 존재. 실제 부분 완료에서 다음 후보를 선택하는 루프 필요 |
-| SCH-27 | 구성 선택의 시간 변화·전환 재판단 | 유지 | owner별 진행 상태 존재. 기존 동작 재사용과 부하 변화의 동일 판단 로직 연결 필요 |
+| SCH-27 | 구성 선택의 시간 변화·전환 재판단 | 유지 | 구성요소별 진행 상태 존재. 기존 동작 재사용과 부하 변화의 동일 판단 로직 연결 필요 |
 | SCH-28 | 시스템 SLO 한계·구성 선택의 실행 가능성 | 유지 | queue/lifetime/resource/evidence 오류와 실제 요청 결과 존재. 전체 한계·일시적 준비 제약·평가 대기를 분리한 대응 판단 필요 |
 | SCH-29 | Workload WM-14~16, WM-19~22, WM-25 | 유지 | 관리 gate·기존 요청 마무리·공유 Workload 분리 존재. 관리 변화와 후보·현재 구성 갱신 연결 |
 | SCH-30 | 라우팅의 반영 시점·전환 관측·Dashboard DB-FR-15~21 | 보완: 라우팅 결정 시각과 실제 반영 시각 구분 | request/management와 전환 evidence 존재. 판단·정책 적용·동작·power를 같은 시간축에 연결 |
 | SCH-31 | 시스템 관측·평가; 라우팅 결과; Dashboard DB-FR-22~24 | 유지 | 원시 요청·지연 분포·결과·실제 batch 기록 존재. Serving 전체 POOL power와 판단/전환 기록을 연결해 종단 재계산 |
 | SCH-32 | 시스템 평가·설계 선택; Dashboard DB-FR-17~18 | 유지 | queue/timeout/refresh/campaign 등의 실행 설정 존재. scheduler 설정의 권한 검증·변경·적용·실험 기록 연결 필요 |
 
-기존 영역의 행동은 그 owner를 재사용하는 제약으로 유지한다. 워크로드 CRUD,
+기존 영역의 행동은 해당 생산자를 재사용하는 제약으로 유지한다. 워크로드 CRUD,
 profiling campaign, 물리 actuation, 추론 서버를 스케줄러 내부에 재구현할 요구사항으로
 해석하지 않는다. 특정 broker, Prometheus 배포, 별도 DB·CRD, 예측기, 플러그인 registry,
 범용 복구 엔진, 모든 공존 조합의 선행 측정은 고수준 SRS가 요구하는 구현물이 아니다.
@@ -72,7 +72,7 @@ profiling campaign, 물리 actuation, 추론 서버를 스케줄러 내부에 �
 | 소스 | 제공하는 현재 계약 | 구현 설계에서 구별할 의미 |
 |---|---|---|
 | [Serving core](../../../internal/serving/runtime.go)·[types](../../../internal/serving/types.go) | 불변 요청 정의·receipt, per-UID queue, observed instance·assignment·native progress·drain | 준비된 현재 capacity와 목표 capacity; assignment와 native queue entry |
-| [Journal](../../../internal/serving/observations.go) | request/management 원시 기록, 지정 구간 결과, paging, incomplete 표시 | publication/rotation window와 운영 이동 구간; 분석 필터와 운영 전체 모집단 |
+| [ObservationLog](../../../internal/serving/observation_log.go) | request/management 원시 기록, 지정 구간 결과, paging, incomplete 표시 | publication/rotation window와 운영 이동 구간; 분석 필터와 운영 전체 모집단 |
 | [Catalog](../../../internal/serving/kube/catalog.go)·[derive](../../../internal/profiling/derivation/derive.go) | frozen 조건과 raw duration, incremental energy/input, measured memory | 최신 선택과 명시적 campaign 선택; incremental energy와 전체 node baseline |
 | [Kubernetes observer](../../../internal/serving/kube/observer.go) | 외부 owner의 Pod 관측·native probe·실제 자원/전력 확인, 안전한 cleanup와 pool 이동 | 현재 Pod 관측과 신규 Pod/resource/policy writer |
 | [NodeActuation API](../../../api/v1alpha1/nodeactuation_types.go)·[controller](../../../internal/nodeactuator/controller/) | immutable 대상·정책, 안전 확인·apply·독립 read-back·Ready/Failed | 선언/명령 성공과 실제 적용; 단일 물리 writer 유지 |
@@ -136,7 +136,7 @@ catalog는 raw runner-service 분포를 선택하며 원래 client 지연을 bac
 대신 새 native sample·batch identity와 측정 조건을 연결한다.
 
 기존 model-loaded idle·power-mode directed raw evidence는 각 측정 의미를 유지한다.
-unloaded baseline과 실제 준비·제거·membership 동작은 같은 owner의 원자 동작과
+unloaded baseline과 실제 준비·제거·membership 동작은 같은 실행 경계의 원자 동작과
 wall-power sampler로 측정한다. matching state의 baseline이 있으면 우선하고,
 공존 상태에서는 explicit additive 예상과 그 가정·출처 및 실제 오차를 구분한다.
 native/Pod before·after 상태와 inference counter 불변·independent host read-back을
@@ -163,11 +163,11 @@ SRS의 부정·대조형 서술 검사는 일치 항목 0건이다. 실패·미�
 |---|---|---|
 | AC-01, 02, 09, 10, 21 | `internal/serving/scheduler_test.go`의 SLO-first·공유 residual·node-wide 자원·전환 baseline·finite horizon regression | 계산·상태 전이 검증; 물리 에너지 절감은 종단 측정 대상 |
 | AC-03, 08 | kube catalog/resource 및 native evidence·CPU 계약 regression | 같은 조건·최신 근거·자원 제약 검증; GPU/RKNN 실물 실행은 별도 |
-| AC-04, 06, 18 | Journal window regression, 실제 HTTPS load 조회·raw cursor | 실제 유입 3·접수/배정/완료 1, 사건 구간·모집단·paging 확인 |
+| AC-04, 06, 18 | ObservationLog window regression, 실제 HTTPS load 조회·raw cursor | 실제 유입 3·접수/배정/완료 1, 사건 구간·모집단·paging 확인 |
 | AC-05, 07, 12, 16 | native/SDK/runtime regression, 실제 ORT CPU 다중 UID·typed inference·명시적 수명 smoke | SDK physical 완료와 native 상태, SLO 초과·수명 분리 확인 |
 | AC-11, 13, 14, 15, 22 | kube 원자 동작·controller·membership/drain regression와 envtest 통합 suite | API·완료 조건·의존성 검증; kubelet·host 전력 전환은 별도 |
 | AC-17 | Workload manager·Runtime의 정의 보존·관리 gate·공유 분리 regression | 접수 당시 정의와 기존 요청의 소유권 유지 |
-| AC-19, 20 | 실제 TokenReview/SAR HTTPS settings/state/raw API와 controller tick | 전후 설정·검증/적용 시각·판단 journal; 미측정 local 상태는 `Pending`/`MissingPoolInventory`, physical action 0건 |
+| AC-19, 20 | 실제 TokenReview/SAR HTTPS settings/state/raw API와 controller tick | 전후 설정·검증/적용 시각·판단 관측 기록; 미측정 local 상태는 `Pending`/`MissingPoolInventory`, physical action 0건 |
 
 ### 5.3 실행 결과
 

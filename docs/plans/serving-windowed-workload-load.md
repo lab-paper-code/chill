@@ -2,7 +2,7 @@
 
 **상태:** 스케줄러 구현 설계에 통합 — [확정 설계](../design/serving/scheduler-implementation.md)의 운영 관측과 후보 입력에 이 계획의 지정 구간 분석을 연결한다. 아래는 최초 커밋 후보의 기록이다.
 
-**목표:** 기존 CHILL Journal 기록으로 지정 구간의 Workload 수신·접수·배정 요청 수와 요청률, 인스턴스별 해당 Workload 배정량을 계산해 기존 관측 API에 제공한다.
+**목표:** 기존 CHILL 관측 기록으로 지정 구간의 Workload 수신·접수·배정 요청 수와 요청률, 인스턴스별 해당 Workload 배정량을 계산해 기존 관측 API에 제공한다.
 
 **예정 커밋:** `feat(serving): expose windowed workload load observations`
 
@@ -32,12 +32,12 @@
 - [Runtime](../../internal/serving/runtime.go)의 `Receive`, `Accept`, `dispatchLocked`는 각각 `received`, `accepted`, `assigned` 사건을 기록한다.
 - 요청 기록에는 Request ID, Workload UID, 사건 시각과 배정 정보가 있다. 접수 전 수신·거절 기록에는 Definition이 없을 수 있다.
 - `dispatchLocked`는 배정 사건을 영속화한 뒤 `execute`를 시작한다. 후속 사건에도 같은 Assignment가 복사될 수 있다.
-- [관측 구현](../../internal/serving/observations.go)의 `collectObservationFacts`는 해당 UID의 요청 기록을 수신 구간·결과 필터와 무관하게 수집한다.
+- [관측 구현](../../internal/serving/observation_log.go)의 `collectObservationFacts`는 해당 UID의 요청 기록을 수신 구간·결과 필터와 무관하게 수집한다.
 - 기존 `aggregate`는 수신 시각 기준 모집단으로 결과·지연을 계산한다. 이 모집단을 배정 요청률에 그대로 사용하면 구간 전에 수신된 backlog를 놓친다.
-- 기존 `Journal.Query`는 전체 집계 후 원시 이벤트를 페이지로 나눈다. 새 집계도 이 순서를 유지한다.
+- 기존 `ObservationLog.Query`는 전체 집계 후 원시 이벤트를 페이지로 나눈다. 새 집계도 이 순서를 유지한다.
 - [Dashboard 응답 타입](../../chill-dashboard/lib/read-types.ts)에도 관측 응답 계약이 선언되어 있어 함께 갱신해야 한다.
 
-새 저장소·캐시·주기적 수집기 없이 이 경로를 재사용한다. 원시 Journal schema와 기존 결과·지연 집계 의미는 바꾸지 않는다.
+새 저장소·캐시·주기적 수집기 없이 이 경로를 재사용한다. 원시 관측 기록 schema와 기존 결과·지연 집계 의미는 바꾸지 않는다.
 
 ## 4. 집계 계약
 
@@ -61,9 +61,9 @@
 - Workload 이름이 아니라 UID로 집계한다. 삭제 후 같은 이름으로 등록한 Workload의 기록을 합치지 않는다.
 - 인스턴스 집계 키는 과거 Assignment의 POOL·노드 UID·물리 인스턴스 식별자다. 응답의 노드 이름도 당시 기록을 사용한다.
 - `instances`는 해당 UID의 배정량 분해이며, 모든 Workload를 합친 인스턴스 전체 부하가 아니다.
-- 새 `load`는 해당 UID의 전체 Definition·전체 outcome을 대상으로 한다. 요청의 `definition`·`outcome` 필터와 JournalConfig의 기본 분석 필터는 기존 분석 필드에만 적용한다.
+- 새 `load`는 해당 UID의 전체 Definition·전체 outcome을 대상으로 한다. 요청의 `definition`·`outcome` 필터와 ObservationLogConfig의 기본 분석 필터는 기존 분석 필드에만 적용한다.
 - 이는 Definition이 없는 접수 전 수신 기록과 실패·거절을 전체 유입량에서 숨기지 않기 위한 계약이다.
-- 같은 Journal 상태에서 `limit`·`cursor`를 바꿔도 `load`는 동일하다. 페이지 사이에 새 기록이 생긴 경우까지 동일한 snapshot을 보장하는 기능은 추가하지 않는다.
+- 같은 ObservationLog 상태에서 `limit`·`cursor`를 바꿔도 `load`는 동일하다. 페이지 사이에 새 기록이 생긴 경우까지 동일한 snapshot을 보장하는 기능은 추가하지 않는다.
 
 ## 5. 관측 API 변경안
 
@@ -112,8 +112,8 @@ GET /api/v1/observations/workloads/{uid}?from=…&to=…
 
 | 파일 | 예정 변경 |
 |---|---|
-| [internal/serving/observations.go](../../internal/serving/observations.go) | 응답 타입과 사건별 집계, 기존 Query 연결 |
-| [internal/serving/observations_test.go](../../internal/serving/observations_test.go) | 아래 소비자 관점 회귀 검증 |
+| [internal/serving/observation_log.go](../../internal/serving/observation_log.go) | 응답 타입과 사건별 집계, 기존 Query 연결 |
+| [internal/serving/observation_log_test.go](../../internal/serving/observation_log_test.go) | 아래 소비자 관점 회귀 검증 |
 | [chill-dashboard/lib/read-types.ts](../../chill-dashboard/lib/read-types.ts) | nullable load 응답 타입 동기화 |
 | [docs/design/serving/workload-management.md](../design/serving/workload-management.md) | 5.1·11장의 관측 API·집계 계약 갱신 |
 
@@ -128,7 +128,7 @@ GET /api/v1/observations/workloads/{uid}?from=…&to=…
 - 접수 전 거절은 수신량에만 포함하고, 분석 필터로 전체 부하가 바뀌지 않는다. 설정된 기본 분석 필터도 같은 규칙을 따른다.
 - 여러 인스턴스의 해당 Workload 배정량을 분리하고, 후속 backend·응답 사건의 Assignment를 중복 집계하지 않는다.
 - 같은 이름의 다른 UID를 분리한다.
-- 같은 Journal 상태에서 페이지 크기·cursor에 관계없이 동일한 `load`를 반환한다.
+- 같은 ObservationLog 상태에서 페이지 크기·cursor에 관계없이 동일한 `load`를 반환한다.
 - 정상 관측 무요청 구간, 경계 생략 시 null, 읽기 오류·불완전 기록 표시를 구분한다.
 - 기존 수신 cohort, 결과 분류와 지연 통계의 동작을 유지한다.
 
@@ -141,7 +141,7 @@ make test
 pnpm --dir chill-dashboard typecheck
 ```
 
-테스트와 별도로 임시 Journal에 수신·접수·배정·응답 기록을 넣고 실제 `Journal.Query`를 호출하는 smoke를 수행한다. backlog·구간 경계·페이지 변경의 반환값을 관찰하고, 임시 파일은 제거한다.
+테스트와 별도로 임시 ObservationLog에 수신·접수·배정·응답 기록을 넣고 실제 `ObservationLog.Query`를 호출하는 smoke를 수행한다. backlog·구간 경계·페이지 변경의 반환값을 관찰하고, 임시 파일은 제거한다.
 
 현재 파일 범위에서는 production package·내부 import 경계, Kubernetes API·생성물, Helm·배포 토폴로지를 변경하지 않는다. 이 표면이 실제로 변경되면 repository 지침의 추가 gate를 적용한다. 기존 Go semantic golden query 경로에 영향을 주는 변경이면 `make gopls-check`도 수행한다.
 

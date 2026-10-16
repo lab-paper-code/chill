@@ -7,10 +7,10 @@ RUN go mod download
 COPY api/ api/
 COPY internal/ internal/
 COPY cmd/serving-worker/ cmd/serving-worker/
-COPY cmd/serving-entrypoint/ cmd/serving-entrypoint/
+COPY cmd/chill-server/ cmd/chill-server/
 COPY cmd/measurement-worker/ cmd/measurement-worker/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /out/serving-worker ./cmd/serving-worker \
-    && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /out/serving-entrypoint ./cmd/serving-entrypoint \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /out/chill-server ./cmd/chill-server \
     && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /out/measurement-worker ./cmd/measurement-worker
 
 # CPU is the default. GPU/RKNN builds must supply a vendor-compatible base and
@@ -23,7 +23,8 @@ ARG PIP_EXTRA_INDEX_URL
 ARG CUDA_DRIVER_PACKAGES
 RUN python3 -m pip install --no-cache-dir numpy==${NUMPY_VERSION} ${ORT_PACKAGE}==${ONNXRUNTIME_VERSION} ${CUDA_DRIVER_PACKAGES}
 COPY --from=builder /out/serving-worker /opt/chill/bin/serving-worker
-COPY --from=builder /out/serving-entrypoint /opt/chill/bin/serving-entrypoint
+# Materializer path is part of the measured runtime-image contract.
+COPY --from=builder /out/chill-server /opt/chill/bin/serving-entrypoint
 COPY --from=builder /out/measurement-worker /measurement-worker
 COPY runtime/firstfloor/ /opt/chill/runtime/firstfloor/
 COPY runtime/ortcpu/runner.py /opt/chill/runtime/ortcpu/runner.py
