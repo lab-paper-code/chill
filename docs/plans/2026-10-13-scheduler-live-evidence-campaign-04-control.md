@@ -976,3 +976,25 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   등록 Workload0일 때의 CLI empty-route ACK 판정이다. 기존 격리·설정·조회 경계로 줄일 수 있는지 먼저 본다.
 - Eval 턴 사이48초 공백과 임시 스크립트 문법 오류는 단일 독립 controller·기존 emitter 재사용으로 해결했다.
   새 캠페인 엔진·전체 명령 래퍼를 만들 근거는 아니다. 새 운영 기능의 범위는 Dashboard 종단 검증 뒤 확정한다.
+
+## Main compact 배포 후 독립 브라우저 종단 대조 — 2026-10-16
+
+- Main `bb67eb0` 이미지에서 인증 후 정확03:36:41.636416–03:37:21.636416Z를
+  실제 페이지0→50→100으로 열어50+50+14건을 확인했다. 기존502는 재발하지 않았다.
+  첫 판단의 유지안·선택 목표·실제 구성 근거를 펼쳤고 profile/완료 오버헤드가 복원됐다.
+- 3쪽 offset103의 Latte 제거 완료 시각03:37:18.76444766Z·physical4417/f785·원본 expected/actual이
+  owner114건 및 실제 Pod 부재와 일치한다. GPU 채택 화면은1.79J·6회차·CPU1/core3/fixed를 표시하며
+  loaded를 실행기 Ready로 표시하지 않는다.
+- 같은40초의 전력 화면과 API는 complete/whole8896.215690533672J·active196.96873142725255J로 일치했다.
+  whole10노드와 activeRpi를 구분하고 원본 시각 없음·수집 시각 사용 caveat를 표시했다. 절감 비교는 아니다.
+- 역사 요청2건씩의 p90/p95와 ID·Rpi physical·native finished를 대조했다. 추가 실제 UI 추론은 단1건
+  `42cd4ceaa6c72382cea2aec1de22dc82`이며129.103566ms·native batch488로 완료했다.
+  자동화 결과 대기 predicate가 맞지 않아 도구가 탭을 종료했지만 재제출하지 않았다.
+  API의 유일 요청·finished 원본과 새 브라우저 관측 창으로 완료를 확인했다. 기존40초 비교에 합치지 않는다.
+- 04:26:05.708707Z 최종 snapshot은 owner9490/CPU2/1Gi/Go768·PVC8Gi·Dashboard bb67,
+  실제9OFF/fixed·두 Workload접수Ready·outstanding0·Rpi488/488/requests[]이다.
+- 남은 실제 UI 결함: 제거 기록의 “이 변경 동작 자세히 보기”가 `/transitions/...`에서
+  “기록을 확인해야 해요”로 간다. query는 정상 파싱되고 decoded path ID와도 일치한다.
+  경로 인코딩 불일치는 아직 추정이며 Main에 정확한 재현 URL·출처를 전달했다. 전체 완료는 보류한다.
+  근거: `dashboard-final-e2e-progress.json`, `dashboard-final-*.png`,
+  `final-current-readonly-20261016T041406Z/`, `final-post-ui-readonly-20261016T042545Z/`.
