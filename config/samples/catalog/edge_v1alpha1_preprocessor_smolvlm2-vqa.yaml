@@ -16,11 +16,21 @@ spec:
   artifacts:
   - target: {model: smolvlm2-500m-video-instruct, artifact: onnx-fp32-arm64}
     source:
-      image: "155.230.35.213:5000/chill/chill-smolvlm2-vqa-preprocessor@sha256:a66c07a1a49cf8e379da1e6a33124a7033dcd2696fcb40d93a6e01c22d179b29"
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-vqa-preprocessor@sha256:832d492053f6515795e44179c1ce6c54894762170553adb8d5c30f9a3f5099db"
       architecture: arm64
       path: /artifact/smolvlm2-vqa
   - target: {model: smolvlm2-500m-video-instruct, artifact: onnx-fp32-amd64}
     source:
-      image: "155.230.35.213:5000/chill/chill-smolvlm2-vqa-preprocessor@sha256:a66c07a1a49cf8e379da1e6a33124a7033dcd2696fcb40d93a6e01c22d179b29"
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-vqa-preprocessor@sha256:832d492053f6515795e44179c1ce6c54894762170553adb8d5c30f9a3f5099db"
       architecture: amd64
       path: /artifact/smolvlm2-vqa
+  - target: {model: smolvlm2-500m-video-instruct, artifact: onnx-int8-arm64}
+    source:
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-vqa-preprocessor@sha256:832d492053f6515795e44179c1ce6c54894762170553adb8d5c30f9a3f5099db"
+      architecture: arm64
+      path: /artifact/smolvlm2-vqa-1tile
+  - target: {model: smolvlm2-500m-video-instruct, artifact: onnx-int8-amd64}
+    source:
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-vqa-preprocessor@sha256:832d492053f6515795e44179c1ce6c54894762170553adb8d5c30f9a3f5099db"
+      architecture: amd64
+      path: /artifact/smolvlm2-vqa-1tile

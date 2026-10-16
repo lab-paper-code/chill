@@ -3,7 +3,7 @@
 The carrier directory also holds the processor and tokenizer files of
 HuggingFaceTB/SmolVLM2-500M-Video-Instruct at the revision pinned in
 build/model-artifacts/smolvlm2/stage.py. Sessions are keyed by model file
-basename. ONNX I/O read from that revision's fp32 graphs:
+basename. ONNX I/O, the same in that revision's fp32 and int8 graphs:
 
   vision_encoder        pixel_values f32 [b, k, 3, 512, 512],
                         pixel_attention_mask bool [b, k, 512, 512]

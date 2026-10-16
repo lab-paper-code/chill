@@ -24,6 +24,24 @@ spec:
       - /artifact/vision_encoder.onnx
       - /artifact/embed_tokens.onnx
       - /artifact/decoder_model_merged.onnx
+  - name: onnx-int8-arm64
+    format: onnx
+    source:
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-500m-onnx-int8@sha256:2c4306131b02560e8c36c9b9031eed3711cbaa754ef57472042652d4e5994983"
+      architecture: arm64
+      files:
+      - /artifact/vision_encoder.onnx
+      - /artifact/embed_tokens.onnx
+      - /artifact/decoder_model_merged.onnx
+  - name: onnx-int8-amd64
+    format: onnx
+    source:
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-500m-onnx-int8@sha256:2c4306131b02560e8c36c9b9031eed3711cbaa754ef57472042652d4e5994983"
+      architecture: amd64
+      files:
+      - /artifact/vision_encoder.onnx
+      - /artifact/embed_tokens.onnx
+      - /artifact/decoder_model_merged.onnx
   executionPaths:
   - name: firstfloor-ort-cpu-arm64
     artifact: onnx-fp32-arm64
@@ -60,6 +78,26 @@ spec:
     runtime:
       family: firstfloor
       backend: ort-cuda
+      settings:
+        firstfloor:
+          maxBatchSize: 4
+          maxQueueSize: 64
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cpu-int8-arm64
+    artifact: onnx-int8-arm64
+    runtime:
+      family: firstfloor
+      backend: ort-cpu
+      settings:
+        firstfloor:
+          maxBatchSize: 4
+          maxQueueSize: 64
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cpu-int8-amd64
+    artifact: onnx-int8-amd64
+    runtime:
+      family: firstfloor
+      backend: ort-cpu
       settings:
         firstfloor:
           maxBatchSize: 4

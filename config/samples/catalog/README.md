@@ -151,10 +151,12 @@ Structural validation does not prove image access, runtime support or hardware
 compatibility. Those facts and measured evidence are resolved by profiling and
 native admission. The samples declare firstfloor ORT CPU and ORT CUDA paths for
 each architecture (`firstfloor-ort-cpu-arm64`, `firstfloor-ort-cpu-amd64`,
-`firstfloor-ort-cuda-arm64`, `firstfloor-ort-cuda-amd64`) and mobilenet adds
-`firstfloor-rknnlite`. A path binds one artifact of one architecture; profiling
-measures through the same firstfloor paths. Native serving consumes a completed
-firstfloor campaign with every initialized measured batch size.
+`firstfloor-ort-cuda-arm64`, `firstfloor-ort-cuda-amd64`), mobilenet adds
+`firstfloor-rknnlite`, and SmolVLM adds the int8 CPU paths
+`firstfloor-ort-cpu-int8-arm64` and `firstfloor-ort-cpu-int8-amd64`. A path binds
+one artifact of one architecture; profiling measures through the same firstfloor
+paths. Native serving consumes a completed firstfloor campaign with every
+initialized measured batch size.
 
 ## Preprocessor, SmolVLM model and dataset carriers
 
@@ -172,10 +174,14 @@ staging scripts need `huggingface_hub`; the dataset builder also needs `pyarrow`
 mkdir -p /tmp/chill-mobilenet-pre/artifact
 cp -r build/model-artifacts/preprocessors/mobilenet-nchw \
   build/model-artifacts/preprocessors/mobilenet-nhwc /tmp/chill-mobilenet-pre/artifact/
-# SmolVLM2: fp32 ONNX files and processor files of one pinned Hugging Face revision.
+# SmolVLM2: fp32 or int8 ONNX files and processor files of one pinned Hugging Face
+# revision. One preprocessor carrier holds the tiled and the one-tile directories.
 python3 build/model-artifacts/smolvlm2/stage.py model /tmp/chill-smolvlm2-model/artifact
+python3 build/model-artifacts/smolvlm2/stage.py model-int8 /tmp/chill-smolvlm2-int8/artifact
 python3 build/model-artifacts/smolvlm2/stage.py preprocessor \
   /tmp/chill-smolvlm2-pre/artifact/smolvlm2-vqa
+python3 build/model-artifacts/smolvlm2/stage.py preprocessor-1tile \
+  /tmp/chill-smolvlm2-pre/artifact/smolvlm2-vqa-1tile
 # VQAv2: disjoint profiling and evaluation records split by question_id.
 python3 build/model-artifacts/vqav2/build_subset.py \
   --output /tmp/chill-vqav2/artifact/vqav2-val-subset
@@ -197,8 +203,15 @@ The SmolVLM2 model carrier holds the artifacts `onnx-fp32-arm64` and
 each with three files: `/artifact/vision_encoder.onnx`, `/artifact/embed_tokens.onnx`
 and `/artifact/decoder_model_merged.onnx`. The runner keys their sessions
 `vision_encoder`, `embed_tokens` and `decoder_model_merged`; the module records
-their pinned input and output names. The mobilenet ONNX carrier holds its single
-file at `/artifact/mobilenet-v2-050.onnx`.
+their pinned input and output names. The int8 carrier holds the artifacts
+`onnx-int8-arm64` and `onnx-int8-amd64`: the revision's `*_int8.onnx` files,
+which have the same inputs and outputs, staged under the same three names. Their
+Preprocessor directory `smolvlm2-vqa-1tile` turns image splitting off, so each
+image is one 512 tile of 64 tokens and one unit. On ORT 1.27 CPU with 4 threads
+the int8 one-tile runner peaks at 1.0 GiB resident for one sample and 1.8 GiB for
+four, which fits `jetson-nano-4g`. ORT 1.23.2 CUDA cannot initialize the int8
+`vision_encoder`, so the int8 artifacts have CPU paths only. The mobilenet ONNX
+carrier holds its single file at `/artifact/mobilenet-v2-050.onnx`.
 
 After the ModelSpecs, Preprocessors and Dataset, register the two Workloads in
 [`../manual/edge_v1alpha1_workload_mobilenet.yaml`](../manual/edge_v1alpha1_workload_mobilenet.yaml)

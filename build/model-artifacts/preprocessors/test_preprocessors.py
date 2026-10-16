@@ -134,9 +134,9 @@ class FakeSmolVLM:
 class SmolVLMTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        stage = load(ROOT.parent / "smolvlm2" / "stage.py", "smolvlm2_stage")
+        cls.stage = load(ROOT.parent / "smolvlm2" / "stage.py", "smolvlm2_stage")
         cls.directory = tempfile.TemporaryDirectory()
-        stage.stage_preprocessor(Path(cls.directory.name))
+        cls.stage.stage_preprocessor(Path(cls.directory.name))
         cls.module = load(Path(cls.directory.name) / "preprocessor.py", "smolvlm2_vqa")
 
     @classmethod
@@ -158,6 +158,16 @@ class SmolVLMTest(unittest.TestCase):
         self.assertEqual(inputs["pixel_values"].shape, (2, 17, 3, 512, 512))
         self.assertEqual(len(inputs["input_ids"]), 2)
         self.assertEqual(module.preprocess([{"image": CORRUPT, "question": b"q"}])[0], None)
+
+    def test_one_tile_variant_encodes_each_image_as_one_tile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.stage.stage_preprocessor(Path(directory), one_tile=True)
+            module = load(Path(directory) / "preprocessor.py", "smolvlm2_vqa_1tile")
+        inputs, report = module.preprocess([
+            {"image": jpeg((300, 300)), "question": b"What color is it?"}, module.WARMUP_SAMPLE])
+        self.assertEqual(report, [1, 1])
+        self.assertEqual(inputs["pixel_values"].shape, (2, 1, 3, 512, 512))
+        self.assertEqual((inputs["input_ids"] == module.IMAGE_TOKEN).sum(axis=1).tolist(), [64, 64])
 
     def test_infer_merges_image_features_and_decodes_greedily_until_eos_or_limit(self):
         module = self.module

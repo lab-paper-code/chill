@@ -508,9 +508,9 @@ Serving Pod는 `serving-worker`만 실행하고(`operations.go:362`) 직접 runn
 | 자산 | 위치와 내용 |
 |---|---|
 | carrier Dockerfile | `build/docker/derived-model-artifact.Dockerfile`을 build context의 `artifact/` 디렉터리 전체를 `/artifact/`로 복사하는 형태로 바꾸고 모델, 전처리, 데이터셋 carrier에 공통 사용. 데이터셋 carrier는 multi-arch로 빌드 |
-| SmolVLM ONNX 산출물 | HF `HuggingFaceTB/SmolVLM2-500M-Video-Instruct`의 고정 revision에서 `onnx/vision_encoder*.onnx`, `onnx/embed_tokens*.onnx`, `onnx/decoder_model_merged*.onnx` 중 한 변형 세 파일. 같은 multi-arch carrier를 가리키는 산출물 `onnx-fp32-arm64`, `onnx-fp32-amd64`, 실행 경로 `firstfloor-ort-{cpu,cuda}-{arm64,amd64}` |
+| SmolVLM ONNX 산출물 | HF `HuggingFaceTB/SmolVLM2-500M-Video-Instruct`의 고정 revision에서 `onnx/vision_encoder*.onnx`, `onnx/embed_tokens*.onnx`, `onnx/decoder_model_merged*.onnx` 중 한 변형 세 파일을 `build/model-artifacts/smolvlm2/stage.py`가 같은 세 이름(`vision_encoder.onnx`, `embed_tokens.onnx`, `decoder_model_merged.onnx`)으로 놓는다. fp32 multi-arch carrier를 가리키는 산출물 `onnx-fp32-arm64`, `onnx-fp32-amd64`, 실행 경로 `firstfloor-ort-{cpu,cuda}-{arm64,amd64}`. `*_int8.onnx` 변형은 입출력이 fp32와 같고, int8 multi-arch carrier를 가리키는 산출물 `onnx-int8-arm64`, `onnx-int8-amd64`, 실행 경로 `firstfloor-ort-cpu-int8-{arm64,amd64}`를 가진다. `onnxruntime-gpu` 1.23.2 CUDA EP는 int8 `vision_encoder`의 session 초기화에 실패하므로 int8 산출물에는 CUDA 경로가 없다 |
 | mobilenet 전처리 | Preprocessor `mobilenet-imagenet` 하나의 두 산출물 디렉터리 `build/model-artifacts/preprocessors/mobilenet-nchw/`(`canonical-onnx-arm64`, `canonical-onnx-amd64` 대상), `mobilenet-nhwc/`(`mobilenet-v2-050-rk3588` 대상). JPEG 복호, 짧은 변 256 resize, 224 center crop, ImageNet 정규화. 단위 수 1, 출력 `label`(UTF8 class index), `WARMUP_SAMPLE`은 module이 import 시 메모리에서 만드는 작은 JPEG. ModelSpec `mobilenet-v2-050`의 실행 경로는 `firstfloor-ort-{cpu,cuda}-{arm64,amd64}`와 `firstfloor-rknnlite` |
-| SmolVLM 전처리 | Preprocessor `smolvlm2-vqa`의 산출물 디렉터리 `build/model-artifacts/preprocessors/smolvlm2-vqa/`. `SmolVLMProcessor`(이미지 분할, longest edge 2048, 타일 512, 타일당 64 토큰)와 chat template, 4.5절의 decode loop, tokenizer와 processor 설정 파일. 단위 수는 타일 수, 출력 `answer` |
+| SmolVLM 전처리 | Preprocessor `smolvlm2-vqa`의 산출물 디렉터리 `build/model-artifacts/preprocessors/smolvlm2-vqa/`. `SmolVLMProcessor`(이미지 분할, longest edge 2048, 타일 512, 타일당 64 토큰)와 chat template, 4.5절의 decode loop, tokenizer와 processor 설정 파일. 단위 수는 타일 수, 출력 `answer`. fp32 산출물이 대상이다. 같은 carrier의 `smolvlm2-vqa-1tile` 디렉터리는 같은 module에 이미지 분할을 끈 processor 설정(`do_image_splitting: false`)을 담아 이미지마다 512 타일 하나와 64 토큰을 만들고 단위 수는 1이다. int8 산출물이 대상이다 |
 | VQAv2 부분집합 | `build/model-artifacts/vqav2/build_subset.py`가 `lmms-lab-encoder/VQAv2` validation split의 고정 revision에서 고정 seed로 레코드를 골라 `question_id`로 나누어 `profiling/<question_id>/{image,question}`, `evaluation/<question_id>/{image,question}`을 만든다. 부분집합은 고정한 shard 하나(`validation-00000-of-00068`)에서만 뽑아 전체 split을 내려받지 않는다. 단위 테스트가 두 디렉터리의 `question_id` 분리를 확인한다. 같은 Dataset이 두 Workload에 쓰이며 mobilenet 전처리는 `image` 필드만 사용 |
 | PLC 이상 탐지 | `build/model-artifacts/plc-anomaly/build_windows.py`가 `edge_poc2.zip`의 `PLC_EXTRUDER_01`(`port_type` 9006) 레코드를 `measurement_time` 순으로 10초 넘는 간격 없는 연속 60개 비중첩 window로 자르고 측정 날짜로 train(07-28..08-13), threshold 검증(08-14..08-16), profiling(08-17..08-18에서 256개), evaluation(08-19..08-20에서 1024개)으로 나눈다. Dataset `plc-extruder-01-windows`의 필드 `records`(UTF8)는 수집된 원본 레코드 60개의 JSON 배열이다. `train_export.py`가 10개 특징의 LSTM AutoEncoder를 CPU에서 학습하고 window별 MSE `score`를 내는 ONNX opset 16 파일 하나(ModelSpec `plc-lstm-ae`의 산출물 `onnx-fp32-arm64`, `onnx-fp32-amd64`, 실행 경로 `firstfloor-ort-{cpu,cuda}-{arm64,amd64}`)와 train 평균, 표준편차, 검증 점수 99백분위 threshold를 담은 `stats.json`을 만든다. opset 16은 JetPack 4의 ONNX Runtime 1.11이 읽는 최신 opset이다. Preprocessor `plc-extruder-anomaly`(`build/model-artifacts/preprocessors/plc-extruder-anomaly/`)는 z-score 후 `[b, 60, 10]`을 만들고 단위 수 1, 출력 `score`, `anomaly`. Workload `plc-anomaly` |
 | runtime image | `build/docker/firstfloor.Dockerfile`에 `pillow`와 SmolVLM 지원 transformers 고정 버전을 더한다. 로컬 환경의 transformers는 4.46.3이므로 SmolVLM processor를 처음 포함한 release 이상으로 고정한다. 같은 Dockerfile의 Makefile target이 DeviceClass별 runtime을 만든다: CPU(`python:3.11-slim`, multi-arch), amd64 CUDA(`nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04`, `onnxruntime-gpu` 1.23.2), JetPack 6 Orin Nano(`l4t-jetpack:r36.4.0`, jetson-ai-lab `onnxruntime-gpu` 1.24.0), JetPack 5 AGX Orin과 Xavier NX(`l4t-jetpack:r35.4.1`, standalone CPython 3.11, NVIDIA `onnxruntime-gpu` 1.16.0), JetPack 4.6 Jetson Nano(`l4t-tensorrt:r8.2.1-runtime`의 CUDA 10.2와 cuDNN 8.2, Ubuntu 18.04 Python 3.8, NVIDIA `onnxruntime-gpu` 1.11.0, Pillow 10.4.0), RKNN(`rknn-toolkit-lite2` 2.3.2, host `librknnrt.so`). PyPI `onnxruntime-gpu` 1.27.0은 CUDA 13(driver R580 이상)을 요구하고 RTX node driver는 570, 555이므로 CUDA image는 CUDA 12 wheel을 쓴다. runner와 측정 helper는 Python 3.8 이상에서 실행되고, GPU UUID는 `libcuda.so.1` driver API로 확인한다. 근거와 고정 버전은 `docs/design/code-intelligence/README.md`의 native runtime 절 |
@@ -521,14 +521,15 @@ Serving Pod는 `serving-worker`만 실행하고(`operations.go:362`) 직접 runn
 
 실행 경로 하나는 한 아키텍처의 산출물 하나에 묶인다. CPU 경로는 모든 DeviceClass의 후보다. CUDA와 RKNN
 경로는 아래 DeviceClass에서만 후보이며, 각 DeviceClass의 Profiler 실행 선언은 `hack/runtime-declarations.py`가
-해당 runtime image 변형을 그 Node에서 검사해 만든다. 측정 Job의 runtime 메모리 상한 16 GiB는 SmolVLM
-batch 4의 최대 상주 메모리(12.7 GB)를 담는다.
+해당 runtime image 변형을 그 Node에서 검사해 만든다. 측정 Job의 runtime 메모리 상한 16 GiB는 SmolVLM fp32
+batch 4의 최대 상주 메모리(12.7 GB)를 담는다. SmolVLM int8 한 타일 경로의 최대 상주 메모리는 ORT 1.27 CPU, 4 thread에서
+batch 1이 1.0 GiB, batch 4가 1.8 GiB이므로 4 GB와 8 GB DeviceClass에서 batch 4까지 담긴다.
 
 | DeviceClass | 아키텍처 | ORT CPU(`TAG`) | ORT CUDA | RKNNLite(`TAG-rknn`) | evidence 제외 |
 |---|---|---|---|---|---|
 | `raspberry-pi-5-8g` | arm64 | 세 Workload | - | - | - |
 | `orangepi-5-plus-16g` | arm64 | 세 Workload | - | mobilenet(`firstfloor-rknnlite`) | - |
-| `jetson-nano-4g` | arm64 | mobilenet, PLC | mobilenet, PLC(`TAG-l4t-r32`) | - | SmolVLM(4 GB 메모리가 batch 1 최대 상주 5.2 GB보다 작고, transformers가 Python 3.9 이상을 요구함) |
+| `jetson-nano-4g` | arm64 | 세 Workload(SmolVLM은 `firstfloor-ort-cpu-int8-arm64`) | mobilenet, PLC(`TAG-l4t-r32`) | - | SmolVLM CUDA 경로(transformers가 Python 3.9 이상을 요구함), SmolVLM fp32 경로(4 GB 메모리가 batch 1 최대 상주 5.2 GB보다 작음) |
 | `jetson-agx-orin-64g` | arm64 | 세 Workload | 세 Workload(`TAG-l4t-r35`) | - | - |
 | `jetson-xavier-nx-8g` | arm64 | 세 Workload | 세 Workload(`TAG-l4t-r35`) | - | - |
 | `jetson-orin-nano-8g` | arm64 | 세 Workload | 세 Workload(`TAG-l4t-r36`) | - | - |
@@ -536,7 +537,8 @@ batch 4의 최대 상주 메모리(12.7 GB)를 담는다.
 | `edge-server-rtx-2080-ti-64g` | amd64 | 세 Workload | 세 Workload(`TAG-cuda`) | - | - |
 
 arm64 DeviceClass는 `firstfloor-ort-cpu-arm64`, `firstfloor-ort-cuda-arm64`, amd64 DeviceClass는
-`firstfloor-ort-cpu-amd64`, `firstfloor-ort-cuda-amd64` 경로를 사용한다. CPU 선언은 DeviceClass 단위다. CUDA
+`firstfloor-ort-cpu-amd64`, `firstfloor-ort-cuda-amd64` 경로를 사용하고, SmolVLM은 아키텍처별 int8 CPU 경로
+`firstfloor-ort-cpu-int8-arm64`, `firstfloor-ort-cpu-int8-amd64`도 사용한다. CPU 선언은 DeviceClass 단위다. CUDA
 선언은 GPU UUID를 읽은 Node 하나를 `node`로 명시하고, Profiler는 Run의 target Node와 `node`가 같은 선언만
 고른다. 그래서 GPU Node마다 선언이 하나씩 있다(`jetson-nano`, `jetsono`, `jetsonx`, `orin-nano`, `genesis2`, `genesis3`).
 `genesis1`은 전환 관측 Node이고 metric source가 없어 측정 후보가 아니다. RKNN 선언은 `orangepi` Node의
@@ -611,6 +613,8 @@ Dashboard와 load generator 영역으로 나누어 동시에 진행하고 한 in
 | runtime image의 통합 runner smoke(CPU), mobilenet | 4개 batch 중 잘린 JPEG 1개가 항목 오류가 되고 나머지 3개가 `label`을 반환, runner 유지, `service_ms` 72 |
 | 같은 smoke의 SmolVLM | 3개 batch의 단위 수 17, 17, 13, 답 `Up.`, `Watching.`, `Http://foodiebaker.com.`, `first_token_ms` 50404, `backend_ms` 53974(8 CPU) |
 | amd64 CUDA runtime image의 같은 smoke(`ort-cuda`, RTX 2080 Ti, driver 570, `onnxruntime-gpu` 1.23.2) | 세 workload 모두 ready, provider `[CUDAExecutionProvider, CPUExecutionProvider]`, 확인된 GPU UUID. mobilenet batch 2 `label` 반환. PLC batch 4 중 잘린 레코드 1개가 항목 오류, 정상 2개 `anomaly` false와 주입 이상 1개 true, batch 32 전부 반환, runner 유지. SmolVLM batch 2 단위 수 17, 17, 답 `Up.`, `Watching.`, `first_token_ms` 1444 |
+| CPU runtime image의 SmolVLM int8 한 타일 경로(`--memory=3584m`, `--cpus=4`, 4 thread, VQAv2 evaluation 레코드 4개) | batch 1과 batch 4 모두 단위 수 1, 최대 상주 메모리(runner `VmHWM`) batch 1 1.0 GiB, batch 4 1.8 GiB. batch 1 답 `Gray.`, `yes.`, `brick.`, `black shirt and tie.`, `service_ms` 1268-1465. batch 4 답 `Gray.`, `yes.`, `brick.`, `black shirt and tie`, `service_ms` 4941. 같은 레코드의 fp32 타일 경로(8 thread, batch 1, 단위 수 13)는 답 `Gray.`, `No.`, `Wood.`, `Black shirt and tie.`, 최대 상주 메모리 5.6 GiB, `service_ms` 19226-32494 |
+| amd64 CUDA runtime image의 같은 int8 산출물 | `vision_encoder` session 초기화 실패(`transformer_memcpy.cc` provider 없는 node), `embed_tokens`와 `decoder_model_merged`는 초기화 |
 
 다음은 검증하지 않았다: live cluster의 등록, serving과 관측, Jetson과 RKNN 장비의 실행, 실제 Node의
 profiling Job, 이기종 혼합 부하 평가. 이 검증은 merge 시점 절차(8장)의 재등록과 재측정 뒤에 수행한다.
