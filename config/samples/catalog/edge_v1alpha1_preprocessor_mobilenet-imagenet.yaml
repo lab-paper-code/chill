@@ -14,16 +14,16 @@ spec:
   artifacts:
   - target: {model: mobilenet-v2-050, artifact: canonical-onnx-arm64}
     source:
-      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:aa5f3b95c9fc3950f5b432847a5a8f2f44d556990ac94b9c476576b912c9a381"
+      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:c2c52412abf1729965b9ced7efbfeaa8b0fb5c99aebfc01c907d06d92165f60a"
       architecture: arm64
       path: /artifact/mobilenet-nchw
   - target: {model: mobilenet-v2-050, artifact: canonical-onnx-amd64}
     source:
-      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:aa5f3b95c9fc3950f5b432847a5a8f2f44d556990ac94b9c476576b912c9a381"
+      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:c2c52412abf1729965b9ced7efbfeaa8b0fb5c99aebfc01c907d06d92165f60a"
       architecture: amd64
       path: /artifact/mobilenet-nchw
   - target: {model: mobilenet-v2-050, artifact: mobilenet-v2-050-rk3588}
     source:
-      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:aa5f3b95c9fc3950f5b432847a5a8f2f44d556990ac94b9c476576b912c9a381"
+      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:c2c52412abf1729965b9ced7efbfeaa8b0fb5c99aebfc01c907d06d92165f60a"
       architecture: arm64
       path: /artifact/mobilenet-nhwc
