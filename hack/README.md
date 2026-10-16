@@ -58,6 +58,7 @@ docker manifest inspect --insecure 155.230.35.213:5000/chill/chill-firstfloor:TA
 CPU_ARM64_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
 CPU_AMD64_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
 CUDA_AMD64_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
+CUDA_L4T_R32_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
 CUDA_L4T_R35_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
 CUDA_L4T_R36_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
 RKNN_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
@@ -65,20 +66,18 @@ RKNN_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
 ```
 
 The tags are `TAG` for CPU (`linux/arm64` and `linux/amd64` children),
-`TAG-cuda`, `TAG-l4t-r35`, `TAG-l4t-r36`, and `TAG-rknn`. The generator runs
+`TAG-cuda`, `TAG-l4t-r32`, `TAG-l4t-r35`, `TAG-l4t-r36`, and `TAG-rknn`. The generator runs
 one probe Pod per image in `chill-system` on a Node of the target class, with
 the measurement Job's user, groups, privilege, and `nvidia.com/gpu` request. It
 builds each payload from the architecture, ONNX Runtime providers, and package
 versions read inside the image, reads the GPU UUID through the CUDA driver on
-every GPU Node (`jetsono`, `jetsonx`, `orin-nano`, `genesis2`, `genesis3`), and
+every GPU Node (`jetson-nano`, `jetsono`, `jetsonx`, `orin-nano`, `genesis2`, `genesis3`), and
 reads the RKNPU driver version and device-tree token on `orangepi`. Every
 DeviceClass receives one class-level CPU declaration; each GPU Node receives its
 own CUDA declaration with `node` set, because the GPU UUID names that Node's
 device, and `orangepi-5-plus-16g` adds its RKNN declaration, each when the image
 variable is set. `genesis1` runs the transition observer and has no metric
-source, so it is not probed. `jetson-nano-4g` has no CUDA declaration because
-L4T r32 ships CUDA 10.2, for which no ONNX Runtime CUDA build supports the
-Python 3.10 the firstfloor runtime needs.
+source, so it is not probed.
 
 Replace the `executionDeclarations` list in the values file with the output's
 list and validate the render with

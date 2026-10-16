@@ -9,8 +9,8 @@ exact-image inspection output, not a restated claim.
 
 Environment (runnable per-platform child references, REPOSITORY@sha256:DIGEST):
   CPU_ARM64_IMAGE, CPU_AMD64_IMAGE  required
-  CUDA_AMD64_IMAGE, CUDA_L4T_R35_IMAGE, CUDA_L4T_R36_IMAGE, RKNN_IMAGE
-                                    optional; an unset one omits its
+  CUDA_AMD64_IMAGE, CUDA_L4T_R32_IMAGE, CUDA_L4T_R35_IMAGE, CUDA_L4T_R36_IMAGE,
+  RKNN_IMAGE                        optional; an unset one omits its
                                     declarations and says so on stderr
   NAMESPACE (chill-system), KUBECTL (kubectl), INSPECT_TIMEOUT_SECONDS (3600)
 
@@ -37,12 +37,10 @@ CPU = {"arm64": ("CPU_ARM64_IMAGE", "rasp5"), "amd64": ("CPU_AMD64_IMAGE", "latt
 # DeviceClass, architecture, CUDA image variable, CUDA Nodes, CUDA groups.
 # The GPU UUID binds a CUDA declaration to the Node it was read on, so every GPU
 # Node of a class is probed and gets its own declaration.
-# jetson-nano-4g has no CUDA entry: L4T r32 ships CUDA 10.2, and no ONNX Runtime
-# CUDA wheel exists there for the Python >= 3.10 the firstfloor runtime needs.
 CLASSES = [
     ("raspberry-pi-5-8g", "arm64", None, (), []),
     ("orangepi-5-plus-16g", "arm64", None, (), []),
-    ("jetson-nano-4g", "arm64", None, (), []),
+    ("jetson-nano-4g", "arm64", "CUDA_L4T_R32_IMAGE", ("jetson-nano",), [VIDEO_GID]),
     ("jetson-agx-orin-64g", "arm64", "CUDA_L4T_R35_IMAGE", ("jetsono",), [VIDEO_GID]),
     ("jetson-xavier-nx-8g", "arm64", "CUDA_L4T_R35_IMAGE", ("jetsonx",), [VIDEO_GID]),
     ("jetson-orin-nano-8g", "arm64", "CUDA_L4T_R36_IMAGE", ("orin-nano",), [VIDEO_GID]),
@@ -76,13 +74,16 @@ if mode != "rknnlite":
     import onnxruntime
     facts.update(ortVersion=onnxruntime.__version__, providers=onnxruntime.get_available_providers())
 if mode == "ort-cuda":
-    import uuid
-    from cuda.bindings import driver as cu
-    if cu.cuInit(0)[0] != cu.CUresult.CUDA_SUCCESS:
+    import ctypes, uuid
+    cu, count = ctypes.CDLL("libcuda.so.1"), ctypes.c_int()
+    if cu.cuInit(0) or cu.cuDeviceGetCount(ctypes.byref(count)):
         raise SystemExit("CUDA driver initialization failed")
-    count = cu.cuDeviceGetCount()[1]
-    facts["gpuUUIDs"] = ["GPU-" + str(uuid.UUID(bytes=bytes(cu.cuDeviceGetUuid(cu.cuDeviceGet(i)[1])[1].bytes)))
-                         for i in range(count)]
+    facts["gpuUUIDs"] = []
+    for i in range(count.value):
+        device, raw = ctypes.c_int(), ctypes.create_string_buffer(16)
+        if cu.cuDeviceGet(ctypes.byref(device), i) or cu.cuDeviceGetUuid(raw, device):
+            raise SystemExit("CUDA device UUID query failed")
+        facts["gpuUUIDs"].append("GPU-" + str(uuid.UUID(bytes=raw.raw)))
 if mode == "rknnlite":
     facts["driverVersion"] = open("/sys/module/rknpu/version").read().strip()
     facts["compatible"] = [t for t in open("/proc/device-tree/compatible", "rb").read().decode().split("\0") if t]

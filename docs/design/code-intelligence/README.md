@@ -183,24 +183,26 @@ operand. Commands, artifacts, metadata, and limitations are in
 `make docker-build-firstfloor` builds `build/docker/firstfloor.Dockerfile`.
 It ships `/opt/chill/bin/serving-worker`, `/opt/chill/bin/serving-entrypoint` (including
 `--materialize-profile` mode), `/measurement-worker`, the persistent firstfloor
-runner and its sibling ORT/RKNNLite helpers. CPU defaults install NumPy 2.2.6
-and ONNX Runtime 1.27.0; every build installs the preprocessor module libraries
-Pillow 12.3.0, transformers 4.50.0, num2words 0.5.14 and Jinja2 3.1.6, so a
-vendor base needs Python 3.10 or newer. `make build` includes serving-worker and
-serving-operation; `make test-runtime` selects the firstfloor runtime suite.
-No published image digest or hardware qualification is implied.
+runner and its sibling ORT/RKNNLite helpers, which run on Python 3.8 or newer.
+CPU defaults install NumPy 2.2.6 and ONNX Runtime 1.27.0 and the preprocessor
+module libraries Pillow 12.3.0, transformers 4.50.0, num2words 0.5.14 and
+Jinja2 3.1.6 (`MODULE_PACKAGES`), which need Python 3.10 or newer. `make build`
+includes serving-worker and serving-operation; `make test-runtime` selects the
+firstfloor runtime suite. No published image digest or hardware qualification
+is implied.
 
 Vendor runtime variants are Make targets over the same Dockerfile. Each
 `docker-buildx-firstfloor-*` target pushes `$(FIRSTFLOOR_IMG)-<variant>`;
 `FIRSTFLOOR_OUTPUT=--load` keeps the build local. Pins live in the Makefile
-`FIRSTFLOOR_*` variables and the Dockerfile `l4t-r35` stage.
+`FIRSTFLOOR_*` variables and the Dockerfile `l4t-r32` and `l4t-r35` stages.
 
 | Target | DeviceClass | Base | Python | Runtime packages |
 |---|---|---|---|---|
 | `docker-buildx-firstfloor` | all CPU paths, `linux/arm64,linux/amd64` | `python:3.11-slim` | 3.11 | `onnxruntime` 1.27.0 |
-| `docker-buildx-firstfloor-cuda` | `edge-server-rtx-2080-ti-64g` | `nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04` | 3.10 | `onnxruntime-gpu` 1.23.2, `cuda-bindings` 12.9.7, `cuda-pathfinder` 1.8.3 |
-| `docker-buildx-firstfloor-l4t-r36` | `jetson-orin-nano-8g` (JetPack 6.1/6.2, L4T r36.4) | `nvcr.io/nvidia/l4t-jetpack:r36.4.0` | 3.10 | `onnxruntime-gpu` 1.24.0 from `pypi.jetson-ai-lab.io/jp6/cu126`, `cuda-bindings` 12.9.7 |
-| `docker-buildx-firstfloor-l4t-r35` | `jetson-agx-orin-64g`, `jetson-xavier-nx-8g` (JetPack 5.1.2, L4T r35.4.1) | `nvcr.io/nvidia/l4t-jetpack:r35.4.1` with standalone CPython | 3.11 | NVIDIA JetPack 5.1.1 `onnxruntime-gpu` 1.16.0, NumPy 1.26.4, `cuda-bindings` 11.8.7 |
+| `docker-buildx-firstfloor-cuda` | `edge-server-rtx-2080-ti-64g` | `nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04` | 3.10 | `onnxruntime-gpu` 1.23.2 |
+| `docker-buildx-firstfloor-l4t-r36` | `jetson-orin-nano-8g` (JetPack 6.1/6.2, L4T r36.4) | `nvcr.io/nvidia/l4t-jetpack:r36.4.0` | 3.10 | `onnxruntime-gpu` 1.24.0 from `pypi.jetson-ai-lab.io/jp6/cu126` |
+| `docker-buildx-firstfloor-l4t-r35` | `jetson-agx-orin-64g`, `jetson-xavier-nx-8g` (JetPack 5.1.2, L4T r35.4.1) | `nvcr.io/nvidia/l4t-jetpack:r35.4.1` with standalone CPython | 3.11 | NVIDIA JetPack 5.1.1 `onnxruntime-gpu` 1.16.0, NumPy 1.26.4 |
+| `docker-buildx-firstfloor-l4t-r32` | `jetson-nano-4g` (JetPack 4.6, L4T r32) | `nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime` (L4T r32.7.1) with Ubuntu 18.04 Python 3.8 | 3.8 | NVIDIA JetPack 4 `onnxruntime-gpu` 1.11.0, NumPy 1.24.4, Pillow 10.4.0 |
 | `docker-buildx-firstfloor-rknn` | `orangepi-5-plus-16g` | `python:3.11-slim` | 3.11 | `onnxruntime` 1.27.0, `rknn-toolkit-lite2` 2.3.2 |
 
 Version evidence, checked against the official indexes:
@@ -223,15 +225,22 @@ Version evidence, checked against the official indexes:
   [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
   CPython 3.11 and the checksum-pinned 1.16.0 cp311 wheel. A host on another r35
   revision uses the matching `l4t-jetpack` tag.
-- `jetson-nano-4g` runs L4T r32 (kernel 4.9.253-tegra, JetPack 4), whose last
-  CUDA is 10.2. Jetson Zoo JetPack 4 ONNX Runtime wheels stop at Python 3.9 and
-  no CUDA 11 or newer exists for that board, so no ONNX Runtime CUDA wheel meets
-  the Python 3.10 floor. Its CUDA path is evidence-excluded; the CPU image
-  serves it.
+- `jetson-nano-4g` runs L4T r32.6.1 (JetPack 4.6, kernel 4.9.253-tegra), whose
+  last CUDA is 10.2 with cuDNN 8.2. The Jetson Zoo JetPack 4 table ends at
+  `onnxruntime-gpu` 1.11.0, whose cp38 wheel links CUDA 10.2, cuDNN 8 and
+  TensorRT 8 and needs `GLIBC_2.27` and `GLIBCXX_3.4.21`. The node's NVIDIA
+  container runtime mounts only the host driver (`l4t.csv`), so the `l4t-r32`
+  stage starts from the JetPack 4.6.1 TensorRT runtime image, which carries the
+  CUDA 10.2 and cuDNN 8.2 user libraries, and installs Ubuntu 18.04's Python
+  3.8 in a venv and the checksum-pinned wheel. ONNX Runtime 1.11 loads ONNX
+  opsets up to 16, so the PLC autoencoder is exported at opset 16. The
+  mobilenet and PLC modules import there; the SmolVLM module needs transformers
+  on Python 3.9 or newer.
 
-Every CUDA image carries `cuda-bindings`: the runner verifies the masked single
-GPU's physical UUID through the CUDA Driver API, not `nvidia-smi`, and rejects a
-missing driver or mismatched allocation. Use NVIDIA's device plugin/container
+Every CUDA image verifies the masked single GPU's physical UUID through the CUDA
+Driver API in `libcuda.so.1` (`cuInit`, `cuDeviceGetCount`, `cuDeviceGetUuid`,
+present from CUDA 10.2 through 12.x), not `nvidia-smi`, and rejects a missing
+driver or mismatched allocation. Use NVIDIA's device plugin/container
 runtime and the physical GPU UUID inventory. See
 [ONNX Runtime CUDA requirements](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements).
 An image holds one ORT distribution, CPU or GPU. The RKNN image installs the

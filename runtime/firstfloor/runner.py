@@ -201,18 +201,21 @@ def ort_sessions(options, files, metadata):
     if options.runtime == "ort-cuda":
         if not options.gpu_uuid or os.environ.get("CUDA_VISIBLE_DEVICES") != options.gpu_uuid:
             raise ValueError("CUDA_VISIBLE_DEVICES must pin the explicit physical GPU UUID")
-        from cuda.bindings import driver as cu
+        # The libcuda driver API keeps these v1 entry points from CUDA 10.2 through 12.x.
+        import ctypes
 
-        if cu.cuInit(0)[0] != cu.CUresult.CUDA_SUCCESS:
+        try:
+            cu = ctypes.CDLL("libcuda.so.1")
+        except OSError as error:
+            raise ValueError("CUDA driver initialization failed") from error
+        if cu.cuInit(0) != 0:
             raise ValueError("CUDA driver initialization failed")
-        status, count = cu.cuDeviceGetCount()
-        if status != cu.CUresult.CUDA_SUCCESS or count != 1:
+        count, device, actual = ctypes.c_int(), ctypes.c_int(), ctypes.create_string_buffer(16)
+        if cu.cuDeviceGetCount(ctypes.byref(count)) != 0 or count.value != 1:
             raise ValueError("explicit GPU allocation must expose exactly one CUDA device")
-        status, device = cu.cuDeviceGet(0)
-        if status != cu.CUresult.CUDA_SUCCESS:
+        if cu.cuDeviceGet(ctypes.byref(device), 0) != 0:
             raise ValueError("selected CUDA device could not be obtained")
-        status, actual = cu.cuDeviceGetUuid(device)
-        if status != cu.CUresult.CUDA_SUCCESS or "GPU-" + str(uuid.UUID(bytes=bytes(actual.bytes))) != options.gpu_uuid:
+        if cu.cuDeviceGetUuid(actual, device) != 0 or "GPU-" + str(uuid.UUID(bytes=actual.raw)) != options.gpu_uuid:
             raise ValueError("selected physical GPU UUID could not be verified")
         # ORT always places shape subgraphs on the CPU EP; the measured profile records the actual provider chain.
         providers, expected = [(provider, {"device_id": 0})], [provider, "CPUExecutionProvider"]

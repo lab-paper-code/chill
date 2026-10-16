@@ -122,12 +122,24 @@ class RunnerContractTest(unittest.TestCase):
             def get_providers(self):
                 return state["chain"]
 
-        driver = SimpleNamespace(CUresult=SimpleNamespace(CUDA_SUCCESS=0), cuInit=lambda flags: (0,),
-                                 cuDeviceGetCount=lambda: (0, 1), cuDeviceGet=lambda index: (0, 0),
-                                 cuDeviceGetUuid=lambda device: (0, SimpleNamespace(bytes=gpu.bytes)))
+        class Driver:
+            def cuInit(self, flags):
+                return 0
+
+            def cuDeviceGetCount(self, count):
+                count._obj.value = 1
+                return 0
+
+            def cuDeviceGet(self, device, index):
+                return 0
+
+            def cuDeviceGetUuid(self, actual, device):
+                actual.raw = state.get("actual", gpu).bytes
+                return 0
+
         ort = SimpleNamespace(__version__="test", get_available_providers=lambda: [cuda, cpu],
                               SessionOptions=Options, InferenceSession=Session)
-        modules = {"onnxruntime": ort, "cuda": SimpleNamespace(), "cuda.bindings": SimpleNamespace(driver=driver)}
+        modules = {"onnxruntime": ort}
         uuid_text = f"GPU-{gpu}"
 
         def sessions(runtime, chain):
@@ -137,7 +149,8 @@ class RunnerContractTest(unittest.TestCase):
             runner.ort_sessions(options, [Path("model.onnx")], metadata)
             return metadata
 
-        with mock.patch.dict(sys.modules, modules), mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": uuid_text}):
+        with mock.patch.dict(sys.modules, modules), mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": uuid_text}), \
+                mock.patch("ctypes.CDLL", return_value=Driver()):
             # CUDA sessions keep ORT's CPU-preferred shape nodes; no CPU-fallback ban is configured.
             self.assertEqual(sessions("ort-cuda", [cuda, cpu])["providers"], [cuda, cpu])
             self.assertNotIn("session.disable_cpu_ep_fallback", state["entries"])
@@ -145,6 +158,9 @@ class RunnerContractTest(unittest.TestCase):
             for runtime, chain in (("ort-cuda", [cuda]), ("ort-cuda", [cpu]), ("ort-cpu", [cuda, cpu])):
                 with self.subTest(runtime=runtime, chain=chain), self.assertRaises(ValueError):
                     sessions(runtime, chain)
+            state["actual"] = uuid.UUID(int=2)
+            with self.assertRaisesRegex(ValueError, "UUID could not be verified"):
+                sessions("ort-cuda", [cuda, cpu])
 
 
 if __name__ == "__main__":

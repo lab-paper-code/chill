@@ -170,6 +170,14 @@ profiling:
       deviceClass: "*"
       executionPath: firstfloor-ort-cpu-amd64
       workloadMode: idle-model-loaded
+    - name: cuda-ort-nano-active-v1
+      deviceClass: jetson-nano-4g
+      executionPath: firstfloor-ort-cuda-arm64
+      workloadMode: saturated-serial-fixed-batch
+    - name: cuda-ort-nano-idle-v1
+      deviceClass: jetson-nano-4g
+      executionPath: firstfloor-ort-cuda-arm64
+      workloadMode: idle-model-loaded
     - name: cuda-ort-agx-orin-active-v1
       deviceClass: jetson-agx-orin-64g
       executionPath: firstfloor-ort-cuda-arm64
