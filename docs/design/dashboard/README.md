@@ -230,7 +230,7 @@ Console 경로는 [현재 read handler](../../../internal/operatorconsole/readap
 | `POST /namespaces/{namespace}/batch-energy-optimizations/preflight` | 입력을 해석하고 계획을 반환하는 읽기 전용 요청 | 조건 안내에 사용한다. 캠페인 접수는 별도 POST로 수행한다. |
 | `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정, 실제 snapshot과 판단, 동작과 결과, 전체 설정 적용 및 행위자 journal | 고정 BFF 경로에 연결한다. 버전 조건과 dry-run 계약은 제공하지 않는다. |
 | `GET /observations/load` | 명시적 구간의 수신, 접수, 배정과 완료 사건 수 및 사건률 | from/to를 필수로 전달한다. 완료는 수신 cohort와 별개의 사건 집계다. |
-| `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 총건수와 구간 완전성은 제공하지 않는다. |
+| `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 총건수와 구간 완전성은 제공하지 않는다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 owner `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`·`completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
 
 System, Inventory와 Run 목록은 기존
 [System query](../../../internal/operatorconsole/kube/system_query.go),

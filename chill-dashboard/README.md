@@ -48,6 +48,10 @@ PUT `v1/scheduler/settings`, GET `v1/observations/load` and GET
 `v1/observations/scheduler`. Both observation routes require explicit RFC3339Nano
 `from` and `to`; load has no paging input. Scheduler history accepts bounded
 `limit` and nonnegative `cursor` in retained append order, not a total count.
+The relay reads GET `v1/scheduler`, `/state`, `/profiles` and scheduler history
+with owner `view=compact` (the only accepted `view`), and `parseSchedulerJSON`
+restores the shared `profile`/`completionMeasurement` `$ref`s into the full
+response before any screen reads it; a missing reference is an error.
 Settings PUT sends the Settings object itself; owner journal and ConfigMap
 storage remain authoritative. There is no version precondition or dry-run.
 
