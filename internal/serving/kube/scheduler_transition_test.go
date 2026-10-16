@@ -347,3 +347,136 @@ func TestFailedGoalCleanupRetainsRunningRouteFrozenTargetAndAgedPrerequisite(t *
 		t.Fatal("terminal cleanup discarded the live route's aged prerequisite or completed its running operation")
 	}
 }
+
+func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectLoss(t *testing.T) {
+	controller, acknowledged, physical := acknowledgedHandoffFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	controller.ctx, controller.cancel = ctx, cancel
+	t.Cleanup(controller.Close)
+	const (
+		slot     = "prepared-slot"
+		planned  = "planned"
+		starting = "starting"
+	)
+	physical.State.TargetID = slot
+	if err := controller.runtime.InstallInstances([]serving.ReadyInstance{physical}); err != nil {
+		t.Fatal(err)
+	}
+	wanted := acknowledged.Instances[0]
+	wanted.ID, wanted.Ready = slot, false
+	action := serving.Action{ID: "finished-prepare", Kind: operationPrepare, Node: wanted.Node, Instance: slot,
+		From: "unloaded", To: serving.SchedulerInstanceState(wanted), Status: nativeOperationRunning, Cancelable: true}
+	goal := serving.SchedulerCandidate{ID: "preparing-target", Instances: []serving.SchedulerInstance{wanted},
+		Routing: map[string]map[string]int32{wanted.WorkloadUIDs[0]: {slot: 1}}, Actions: []serving.Action{action}}
+	config := SchedulerControllerConfig{Preparations: map[string]PrepareSpec{wanted.Profile.ID: {}}}
+	operation := scheduledOperation(action, &goal, config)
+	canceled := false
+	run := &actionRun{action: action, result: &OperationResult{Operation: operation, Status: nativeOperationRunning},
+		cancel: func() { canceled = true }}
+	controller.runs = map[string]*actionRun{action.ID: run}
+	controller.goal = &goal
+	observed := acknowledged.Instances[0]
+	observed.TargetID = slot
+	snapshot := controller.reconcileSnapshot(serving.SchedulerSnapshot{
+		At: time.Now().UTC(), Instances: []serving.SchedulerInstance{observed},
+	}, &goal, time.Now().UTC(), time.Minute)
+	decision := serving.SchedulerDecision{
+		Settings:   serving.SchedulerSettings{Controls: serving.SchedulerControls{Enabled: true}},
+		Candidates: []serving.SchedulerCandidate{{Keep: true, Actions: snapshot.Actions}},
+	}
+	serving.FinalizeSchedulerTarget(snapshot, &decision, 0)
+	if decision.Target.Instances[0].ID != physical.State.ID ||
+		decision.Target.Actions[0].Instance != slot || decision.Target.Actions[0].Status != nativeOperationRunning {
+		t.Fatal("fixture did not preserve the captured running logical action in its physical continuation", decision.Target)
+	}
+	// Publish completion only after capturing the old running action, just as a
+	// real executor can finish while the controller evaluates that snapshot.
+	publish := make(chan struct{})
+	published := make(chan struct{})
+	receipt := OperationResult{Operation: operation, Status: nativeOperationComplete, EndedAt: time.Now().UTC(),
+		Actual: OperationState{Node: wanted.Node, Pool: wanted.Pool, Instances: []serving.InstanceState{physical.State}}}
+	controller.wg.Add(1)
+	go func() {
+		defer controller.wg.Done()
+		select {
+		case <-publish:
+		case <-ctx.Done():
+			return
+		}
+		controller.mu.Lock()
+		run.action.Status, run.result = nativeOperationComplete, &receipt
+		controller.state.Results = append(controller.state.Results, receipt)
+		controller.mu.Unlock()
+		close(published)
+	}()
+	close(publish)
+	<-published
+	controller.wg.Wait()
+	if !controller.actionEffectPresent(snapshot, run) {
+		t.Fatal("completed receipt lacks its existing consumer-visible Ready physical effect")
+	}
+	starts := 0
+	config.OnAction = func(result OperationResult) error {
+		if result.Status == starting {
+			starts++
+			return context.Canceled // Trap an erroneous second launch before any physical write.
+		}
+		return nil
+	}
+	controller.launch(*decision.Target, config)
+	controller.wg.Wait()
+	staleCancel := *decision.Target
+	staleCancel.Actions = append([]serving.Action(nil), staleCancel.Actions...)
+	staleCancel.Actions[0].Status = nativeOperationCancel
+	controller.launch(staleCancel, config)
+	if starts != 0 || canceled || controller.runs[action.ID] != run || run.result != &receipt ||
+		run.action.Status != nativeOperationComplete || len(controller.State().Results) != 1 {
+		t.Fatalf("stale target replayed/canceled or overwrote the completed receipt: starts=%d canceled=%v results=%+v",
+			starts, canceled, controller.State().Results)
+	}
+	if !controller.actionEffectPresent(snapshot, run) {
+		t.Fatal("stale continuation changed the completed physical effect")
+	}
+	if err := controller.runtime.InstallInstances(nil); err != nil {
+		t.Fatal(err)
+	}
+	controller.reconcileSnapshot(serving.SchedulerSnapshot{At: time.Now().UTC()}, controller.goal, time.Now().UTC(), time.Minute)
+	if controller.runs[action.ID] != nil {
+		t.Fatal("lost physical effect retained its terminal action identity")
+	}
+	fresh := goal
+	fresh.ID = "after-physical-loss"
+	fresh.Actions = []serving.Action{action}
+	fresh.Actions[0].ID, fresh.Actions[0].Status = "fresh-prepare", planned
+	started := make(chan OperationResult, 1)
+	release := make(chan struct{})
+	config.OnAction = func(result OperationResult) error {
+		if result.Status == starting {
+			started <- result
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			return context.Canceled // Existing pre-execution journal-failure fixture path.
+		}
+		return nil
+	}
+	controller.launch(fresh, config)
+	select {
+	case initial := <-started:
+		controller.mu.Lock()
+		current := controller.runs[fresh.Actions[0].ID]
+		valid := current != nil && current.action.Status == nativeOperationRunning &&
+			initial.Operation.Prepare != nil && initial.Operation.Instance == slot
+		controller.mu.Unlock()
+		close(release)
+		controller.wg.Wait()
+		if !valid {
+			t.Fatal("fresh identity did not reach the real launch path after effect loss")
+		}
+	case <-time.After(5 * time.Second):
+		cancel()
+		controller.wg.Wait()
+		t.Fatal("completed identity blacklisted a fresh action for the same logical slot")
+	}
+}

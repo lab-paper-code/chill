@@ -443,6 +443,11 @@ metadata/progress에서 profile·policy 적용과 readiness를 확인한다.
 proof에 따라 재사용한다. 기존 관리 admission gate·accepted definition·공유 UID
 보호·actual drain과 같은 owner를 사용한다.
 
+평가 중 완료된 동작의 동일 ID·동일 계약은 live run의 terminal 결과가 stale snapshot의
+running/cancel보다 우선한다. physical identity로 갱신된 목표에서 같은 prepare를 다시
+구성·실행하지 않는다. 실제 effect가 소실되면 기존 reconciliation이 기록을 퇴역시키고
+새 판단의 새 action identity로 준비하므로 logical slot을 영구 차단하는 규칙은 아니다.
+
 ## 7. 설정·권한·관측 API
 
 `/api/v1/scheduler`에서 settings/current snapshot/decision/target/actions와 적용

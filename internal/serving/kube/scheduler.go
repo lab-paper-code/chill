@@ -774,6 +774,18 @@ func slotName(slot string) string {
 	sum := sha256.Sum256([]byte(slot))
 	return "serving-" + hex.EncodeToString(sum[:10])
 }
+
+func (c *SchedulerController) conflictingActionRunning(action serving.Action) bool {
+	// Global policy writes share one ConfigMap/ACK path. Independent Node
+	// preparations remain concurrent; one mutation per Node stays serialized.
+	for _, r := range c.runs {
+		if r.action.Status == nativeOperationRunning && ((action.Node.UID != "" && r.action.Node == action.Node) || (action.Kind == operationRoute && r.action.Kind == operationRoute)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *SchedulerController) launch(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -786,6 +798,12 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	for phase := range 2 {
 		for _, action := range target.Actions {
 			if (action.Kind == operationStop) != (phase == 0) {
+				continue
+			}
+			// Evaluation can retain a running snapshot after its live run finishes.
+			// Reconciliation, not a stale target, retires a terminal action identity.
+			if run := c.runs[action.ID]; run != nil && actionEquivalent(run.action, action) &&
+				run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel {
 				continue
 			}
 			if action.Status == nativeOperationCancel {
@@ -812,14 +830,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			if !ready {
 				continue
 			}
-			// Global policy writes share one ConfigMap/ACK path. Independent Node
-			// preparations remain concurrent; one mutation per Node stays serialized.
-			for _, r := range c.runs {
-				if r.action.Status == nativeOperationRunning && ((action.Node.UID != "" && r.action.Node == action.Node) || (action.Kind == operationRoute && r.action.Kind == operationRoute)) {
-					ready = false
-				}
-			}
-			if !ready {
+			if c.conflictingActionRunning(action) {
 				continue
 			}
 			operation := scheduledOperation(action, &target, config)
