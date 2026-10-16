@@ -10,7 +10,28 @@ export function preciseJSONSupported(): boolean {
 }
 export function parseSchedulerJSON(text: string): unknown {
   if (!preciseJSONSupported()) throw new Error("정밀 정수 JSON을 지원하는 최신 Chrome, Edge 또는 Firefox를 사용해 주세요.")
-  return native.parse(text, (_key, value, context) => typeof value === "number" && !Number.isSafeInteger(value) && /^-?\d+$/.test(context?.source ?? "") ? BigInt(context!.source!) : value)
+  return restoreEvidence(native.parse(text, (_key, value, context) => typeof value === "number" && !Number.isSafeInteger(value) && /^-?\d+$/.test(context?.source ?? "") ? BigInt(context!.source!) : value))
+}
+// internal/serving/entrypoint/scheduler_presentation.go: view=compact replaces only instance `profile` and
+// `completionMeasurement` with {"$ref":key} into two top-level dictionaries. Restoring yields the full response.
+function restoreEvidence(root: unknown): unknown {
+  if (!root || typeof root !== "object" || !("profiles" in root) || !("completionMeasurements" in root)) return root
+  const {profiles, completionMeasurements, ...full} = root as Record<string, unknown>
+  const dictionaries: Record<string, Record<string, unknown>> = {profile: profiles as Record<string, unknown>, completionMeasurement: completionMeasurements as Record<string, unknown>}
+  const walk = (value: unknown): void => {
+    if (!value || typeof value !== "object") return
+    if (Array.isArray(value)) { value.forEach(walk); return }
+    const object = value as Record<string, unknown>
+    for (const key of Object.keys(object)) {
+      const item = object[key] as {$ref?: unknown} | null
+      if (key in dictionaries && item && typeof item === "object" && typeof item.$ref === "string") {
+        if (!Object.hasOwn(dictionaries[key], item.$ref)) throw new Error(`응답의 ${key} 참조 ${item.$ref}를 찾지 못했어요.`)
+        object[key] = dictionaries[key][item.$ref]
+      } else walk(item)
+    }
+  }
+  walk(full)
+  return full
 }
 export function stringifySchedulerJSON(value: unknown, space?: number): string {
   return JSON.stringify(value, (_key, item) => {

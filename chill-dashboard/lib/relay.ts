@@ -70,7 +70,10 @@ export function relayPlan(method: string, segments: string[], search: string, co
   // A server dry-run creates nothing, so it keeps the query lifetime like preflight instead of an unknown mutation outcome.
   const dryRun = query === "dryRun" && params.has("dryRun")
   if (kind !== "infer" && method !== "GET" && !dryRun && !/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) kind = "mutation"
-  const allowed = query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []
+  // Owner compact reads keep every evidence object once and share repeats by $ref; parseSchedulerJSON restores them.
+  const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state" || route === "v1/scheduler/profiles")
+  const allowed = compact ? ["view"] : []
+  allowed.push(...(query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
   for (const key of new Set(params.keys())) {
     const values = params.getAll(key)
     if (!allowed.includes(key) || (values.length > 1 && key !== "definition" && key !== "outcome") || values.length > 32 || values.some(value => /[\x00-\x1f\x7f\ufffd]/.test(value))) throw new RelayFailure("DashboardQueryInvalid", 400)
@@ -80,6 +83,8 @@ export function relayPlan(method: string, segments: string[], search: string, co
         if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > max || (key === "limit" && Number(value) < 1)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "condition") {
         if (Buffer.byteLength(value) > 128 || !/^[^=]+=(True|False|Unknown)$/.test(value)) throw new RelayFailure("DashboardQueryInvalid", 400)
+      } else if (key === "view") {
+        if (value !== "compact") throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "dryRun") {
         if (value !== "All") throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (Buffer.byteLength(value) > (key === "outcome" ? 64 : 256) || (key !== "q" && !value)) throw new RelayFailure("DashboardQueryInvalid", 400)
@@ -93,6 +98,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
     const window = timestampNanos(to) - timestampNanos(from)
     if (window <= 0n || window > BigInt(config.maxWindowHours * 3600000) * 1000000n) throw new RelayFailure("DashboardQueryInvalid", 400)
   }
+  if (compact) params.set("view", "compact")
   const suffix = params.toString()
   // Native inference may consume its entire cap; keep a bounded delivery margin.
   return { path: `/api/${route}${suffix ? `?${suffix}` : ""}`, kind, timeoutMs: kind === "infer" ? config.inferTimeoutMs + config.queryTimeoutMs : kind === "mutation" || route === "v1/scheduler/profiles" ? config.mutationTimeoutMs : config.queryTimeoutMs, bodyAllowed: method === "POST" || method === "PUT" }

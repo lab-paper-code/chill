@@ -74,7 +74,10 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
   const to = "2026-01-01T01:00:00.000000001Z"
   const window = new URLSearchParams({ from, to })
   for (const path of ["v1/scheduler", "v1/scheduler/state", "v1/scheduler/settings"]) {
-    assert.deepEqual(plan("GET", path), { path: `/api/${path}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
+    const compact = path.endsWith("/settings") ? "" : "?view=compact"
+    assert.deepEqual(plan("GET", path), { path: `/api/${path}${compact}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
+    if (compact) assert.equal(plan("GET", path, "?view=compact").path, `/api/${path}${compact}`)
+    assert.throws(() => plan("GET", path, compact ? "?view=full" : "?view=compact"), /DashboardQueryInvalid/)
     assert.throws(() => plan("GET", path, "?limit=1"), /DashboardQueryInvalid/)
     for (const method of ["POST", "DELETE", "PATCH", "HEAD", "OPTIONS", ...(path.endsWith("/settings") ? [] : ["PUT"])]) {
       assert.throws(() => plan(method, path), /DashboardMethodNotAllowed/)
@@ -84,7 +87,8 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
     path: "/api/v1/scheduler/settings", kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: true,
   })
   assert.throws(() => plan("PUT", "v1/scheduler/settings", "?from=now"), /DashboardQueryInvalid/)
-  assert.deepEqual(plan("GET", "v1/scheduler/profiles"), { path: "/api/v1/scheduler/profiles", kind: "query", timeoutMs: config.mutationTimeoutMs, bodyAllowed: false })
+  assert.deepEqual(plan("GET", "v1/scheduler/profiles"), { path: "/api/v1/scheduler/profiles?view=compact", kind: "query", timeoutMs: config.mutationTimeoutMs, bodyAllowed: false })
+  assert.throws(() => plan("POST", "v1/scheduler/profiles", "?view=compact"), /DashboardQueryInvalid/)
   assert.deepEqual(plan("POST", "v1/scheduler/profiles"), { path: "/api/v1/scheduler/profiles", kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: true })
   for (const method of ["PUT", "DELETE", "PATCH"]) assert.throws(() => plan(method, "v1/scheduler/profiles"), /DashboardMethodNotAllowed/)
   assert.throws(() => plan("GET", "v1/scheduler/profiles", "?limit=1"), /DashboardQueryInvalid/)
@@ -109,9 +113,9 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
   assert.deepEqual(plan("GET", "v1/observations/power", `?${window}`), {
     path: `/api/v1/observations/power?${window}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false,
   })
-  assert.equal(plan("GET", "v1/observations/scheduler", `?${window}`).path, `/api/v1/observations/scheduler?${window}&limit=7`)
+  assert.equal(plan("GET", "v1/observations/scheduler", `?${window}`).path, `/api/v1/observations/scheduler?${window}&limit=7&view=compact`)
   assert.equal(plan("GET", "v1/observations/scheduler", `?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}`).path,
-    `/api/v1/observations/scheduler?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}`)
+    `/api/v1/observations/scheduler?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}&view=compact`)
   for (const path of ["v1/observations/load", "v1/observations/power", "v1/observations/scheduler"]) {
     for (const method of ["POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]) {
       assert.throws(() => plan(method, path, `?${window}`), /DashboardMethodNotAllowed/)

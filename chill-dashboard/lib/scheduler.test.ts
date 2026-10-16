@@ -27,3 +27,17 @@ test("review detects control or exact integer changes across numeric representat
   assert.equal(settingsEqual(current,{...current,algorithm:"projected-work-history"}),false)
   assert.equal(settingsEqual(current,{...current,controls:{...current.controls,power:true}}),false)
 })
+
+test("compact scheduler reads restore shared evidence into the full response", () => {
+  const compact = '{"configVersion":"1","state":{"snapshot":{"instances":[{"id":"a","profile":{"$ref":"p"},"completionMeasurement":{"$ref":"c"}},{"id":"b","profile":{"$ref":"p"},"completionMeasurement":null}]},"decision":{"keep":{"instances":[{"profile":{"$ref":"p"}}]},"target":null}},"profiles":{"p":{"id":"p","energy":12345678901234567890}},"completionMeasurements":{"c":{"profile":"p"}}}'
+  type Instance = {profile:{id:string;energy:bigint};completionMeasurement:unknown}
+  const full = parseSchedulerJSON(compact) as {state:{snapshot:{instances:Instance[]};decision:{keep:{instances:Instance[]}}}}
+  assert.deepEqual(Object.keys(full), ["configVersion","state"])
+  assert.equal(full.state.snapshot.instances[0].profile.energy, 12345678901234567890n)
+  assert.equal(full.state.snapshot.instances[1].profile.id, "p")
+  assert.equal(full.state.decision.keep.instances[0].profile.id, "p")
+  assert.deepEqual(full.state.snapshot.instances[0].completionMeasurement, {profile:"p"})
+  assert.equal(full.state.snapshot.instances[1].completionMeasurement, null)
+  assert.throws(() => parseSchedulerJSON(compact.replace('"$ref":"c"', '"$ref":"missing"')), /missing/)
+  assert.deepEqual(parseSchedulerJSON('{"profile":{"$ref":"p"}}'), {profile:{$ref:"p"}})
+})
