@@ -53,7 +53,7 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** 준비 정책 ACK 수정의 실제 수렴을 확인했으며, 세 실행기 준비·초기 경로 확인 뒤 새 FULL 부하 검증을 진행한다. Main compact 연결은 별도 대기다.
+**현재 우선:** 남은8건을 실제 종료 근거로 error 종결하고 세 실행기·요청 접수를 복구했다. Dashboard에서 고정 기간 비교를 선택했으며 같은 부하·SLO·100회/128후보로 새 FULL 기능 검증을 진행한다. Main compact 연결은 별도 대기다.
 
 1. **FULL 통합 실적:** 새 CUDA profile·실제 owner 요청·GPU prepare/remove 비용을 연결했다.
    동일 초기 3실행기·동일 190건 부하의 OFF/FULL 비교에서 모두 완료·두 SLO를 통과했고,
@@ -96,13 +96,14 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 현재 상태·다음 작업
 
-- owner `b200966e`, CPU2/1Gi·Go soft768MiB·API50/100으로 새 실행 준비를 진행한다.
-  같은8Gi PVC의 새 관측 경로를 사용하고 기존 Workload UID·Model·SLO를 유지했다.
+- owner `ef175ee3`, CPU2/1Gi·Go soft768MiB·API50/100이며 실제9OFF·Rpi 경로 반영과 GET128/128을 확인했다.
+  사용자 승인 후 두 Workload를 같은 이름·Model·SLO의 새 UID로 재등록했고, 원래 측정 조건2Gi의 새 prepare/remove 비용을 실측·채택했다.
   9ON 재시작의 재구성 분포와 실제 추론은 확인했지만, 이전 route weight의 영속 복원은 아니다.
 - 이전 Rpi8건·Latte6건은 실제 컨테이너 종료 후 기존 observer가 `error/InstanceStopped`로 종결했다.
   원래 timeout/불완전 응답과 torn journal은 보존했다. 새 API는 새 작업 단위만 조회하며 과거18:22 기록은 raw에 남는다.
-- Latte PARTIAL의 정책 ACK 불일치를 수정·배포했고 같은 실제 인스턴스에서 owner/native Ready를 확인했다.
-  측정 정책과 원래 PARTIAL 결과는 보존했다. 같은 source CLI로 남은 준비 후 새 부하 검증을 진행한다.
+- 새2Gi FULL 구간916건은 완료185·timeout731로 실패했다. 전력은 불완전하여 총합null이며 완료된 자동 제어 기록은 없다.
+  실제 스택은 투영 replay와 같은 잠금을 기다리는 refresh·PUT을 보였다. 보존 입력은 최대21×21×100 replay이며 미발행 tick의 정확한 입력은 확보하지 못했다.
+  새 owner의9OFF·Rpi 반영 후 남은8건은 실제 Latte 종료로 `error/InstanceStopped` 종결했다. 현재 새 Latte 포함 세 실행기와 두 Workload 접수가 정상이며 실패185/731 결과는 그대로다.
 - 개별 제어·Jetson6전력 동작·CUDA 실측·이전 FULL 통합 실적은 제어 기록에 둔다.
   이를 에너지 절감·자동 전력모드 선택·최종 Dashboard 종단 완료로 확대하지 않는다.
 

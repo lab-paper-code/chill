@@ -886,3 +886,51 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   측정 정책은 그대로다. 과거 PARTIAL 결과는 바꾸지 않았다.
   `prepare-policy-b200-cutover/result.json`에서 9OFF·Rpi ACK353693522·outstanding0을 확인했다.
   이 시점에는 새 부하/T0/GPU 준비를 시작하지 않았다. 이후 실행은 별도 실제 결과로 기록한다.
+
+## GPU 실제 측정 조건 복원과 새 FULL 실패 — 2026-10-16
+
+- 새 GPU 준비는414212096B cap에서 OOMKilled였다. 동일 SDK·CPU/GPU·PodSpec의 이전 성공만으로
+  원인을 확정하지 않았다. 원래 성공 측정 Job `2fc2c37c-45c2-4fab-bb6a-d7231552cd39`의 실제
+  request/limit와 frozen 정책은 모두2Gi였다. lifetime highwater는 실행 상한의 보증이 아니다.
+- 사용자 승인으로 두 세션 소유 Workload를 해제해 기존 격리 경로를 그대로 사용했다.
+  2Gi prepare8.071496611초/613.08790080215J, remove4.306534710초/420.35326433845006J가
+  각각 Accepted/Complete로 새 directed key에 채택됐다. 단일 trial이며 원래 관측 메모리는 변경하지 않았다.
+  같은 이름·Model·SLO로 재등록한 UID는 relaxed8194ef04-cb2a-4c87-9947-6d2f91baa410,
+  tight15dbfd9e-7f7a-4ce8-a2af-96cf7d780ee5다.
+  `gpu-2gi-new-measurement-unit/final-new-measurement-unit-summary.json`에 복원 근거를 남겼다.
+- 새 FULL 구간00:30:31.523653–00:35:11.523780Z는916건 중185완료/731timeout으로 실패했다.
+  클라이언트와 received/response_finished ID 집합은 같다. 전력은 jetsono timeout으로 불완전하여
+  whole-pool 합계는null이다. 자동 동작 완료 기록이 없고 관측 timeout도 있으므로 물리적 부재로 확대하지 않는다.
+- 실제 native per-ID finished185건은 완료 client185건과 정확히 같다. 나머지 cached assigned8건은
+  BackendUnavailable·executionComplete=false이며 native progress가 없어 소유권을 유지한다.
+  해당 ledger에는 inner error detail이 저장되지 않아 원인을 복원할 수 없다.
+- 단 한 번의 승인된 gdb attach00:41:05.866368–00:41:10.745880Z 후 정상 detach했다.
+  실제 실행 스택은 replay→projection kernels→Tick이고 refresh·PUT은 동일 owner mutex에서 대기했다.
+  기존 timeout30초가 pure CPU에 전달되지 않았다. retained21×21×MC100의 유한 연산량과
+  무한 반복을 구분한다. canonical9OFF·Rpi revision353849182 저장과 실제 반영 완료도 구분한다.
+  근거는 `full-load-reversal-gpu2gi-new-uids/`와 `stale-owner-2gi-full-readonly-forensics/`다.
+
+## 기존 CPU 판단 기한 복구 — 2026-10-16
+
+- `ef175ee3`는 기존30초 call context를 후보 열거·재귀 배치·평가·투영·replay로 전달한다.
+  owner/controller 잠금은 유지한다. 계산 중 취소되면 부분 decision/kernel/history를 발행하지 않는다.
+  유효한 판단을 이미 기록한 뒤 callback에서 취소되면 그 기록은 남기되 history commit·새 제어 시작은 막는다.
+- 보존된 마지막 완료 입력을 실제 SDK 이벤트로 재구성한 smoke는441 eligible edge에서1339 replay를
+  실제 진입한 뒤30.000623736초에 `context deadline exceeded`로 반환했고 부분 kernel은0이었다.
+  미발행 정체 tick의 정확한 입력 재현이나 계산량 최적화로 주장하지 않는다(`artifact://3953`).
+- focused3package 및 `make lint test arch-check gopls-check`가 통과했다.
+  correctness review의 후보 열거 취소 누락을 수정한 뒤 NoFindings, ponytail review도 NoFindings였다.
+  이 시점은 배포·실제 OFF 반영 확인 전이며 전체 FULL 통과가 아니다.
+
+- ef175 실제 배포 이미지 `sha256:6d93714857e25524341e3972b9a2b7fe655e59fc5da19a9e646a3ebe2ae6aa51`에서
+  같은 journal을 정상 읽고01:16:22.292506554Z에 기존Rpi revision353849182를 실제 완료 ACK했다.
+  GET128/128·8/s는 모두200이었다. 재시작은 새 work-history 비교 기간이며 unknown8건의 완료 근거가 아니다.
+- 정확한 이전 Latte의 단 한 번 SIGTERM 후 kubelet의 Terminated/Completed/exit0을 확인했고,
+ 01:24:02.128492124–01:24:02.128707864Z에 기존 observer가 정확한8건을 `error/InstanceStopped`로 종결했다.
+  원래 RequestTimeout 기록은 보존했다. 정상 CLI remove/prepare로 새 Latte를 복구했고 두 Workload의
+  접수·세 실행기 Ready·outstanding0·9OFF/Rpi 실제 경로를 확인했다.
+  근거는 `latte-exact-physical-boundary-eight-closure/final-eight-closure-and-three-ready-handoff.json`이다.
+- 다음 기능 검증은 기존 고정 기간 비교 방식으로 별도 선언한다. 실제 Dashboard에서 알고리즘만
+  변경 검토·저장했으며01:34:12.859569246Z의 판단에도 fixed-horizon을 확인했다.
+  제어9OFF·100회·128후보·원래 SLO와 부하는 변경하지 않았다.
+  `fixed-horizon-dashboard-setting-proof.json`과 실제 화면을 보존했다. 이 선택은 이력 예측 계산량 개선의 증거가 아니다.
