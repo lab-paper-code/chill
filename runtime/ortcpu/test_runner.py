@@ -150,6 +150,20 @@ class RunnerTest(unittest.TestCase):
                 io.BytesIO(b'{"schemaVersion":"a","schemaVersion":"b"}')
             )
 
+    def test_own_cgroup_root_follows_proc_self_cgroup_in_host_namespace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "cgroup.controllers").write_text("cpu memory\n")
+            own = root / "kubepods.slice" / "pod.slice" / "cri.scope"
+            own.mkdir(parents=True)
+            (own / "cpu.max").write_text("200000 100000\n")
+            self_cgroup = root / "self-cgroup"
+            self_cgroup.write_text("0::/kubepods.slice/pod.slice/cri.scope\n")
+            self.assertEqual(runner.own_cgroup_root(root, self_cgroup), own)
+            # A namespaced container already sees its own cgroup at the root.
+            (root / "cpu.max").write_text("max 100000\n")
+            self.assertEqual(runner.own_cgroup_root(root, self_cgroup), root)
+
     def test_validate_request_rejects_unknown_contract_field(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.onnx"

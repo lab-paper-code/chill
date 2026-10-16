@@ -24,7 +24,24 @@ IDLE_WORKLOAD = "idle-model-loaded"
 IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha6"
 MAX_REQUEST_BYTES = 1 << 20
 SIGNAL_POLL_SECONDS = 0.01
-CGROUP_ROOT = Path("/sys/fs/cgroup")
+
+
+def own_cgroup_root(root: Path = Path("/sys/fs/cgroup"), self_cgroup: Path = Path("/proc/self/cgroup")) -> Path:
+    """Return this process's cgroup v2 directory. A privileged container (RKNN)
+    shares the host cgroup namespace, so /sys/fs/cgroup is the host root, which
+    has no cpu.max; its own cgroup is the 0:: path of /proc/self/cgroup."""
+    # ponytail: v2 only; a privileged container on a cgroup v1 host keeps the root view.
+    if (root / "cpu.max").is_file() or not (root / "cgroup.controllers").is_file():
+        return root
+    try:
+        lines = self_cgroup.read_text().splitlines()
+    except OSError:
+        return root
+    own = next((root / line[3:].lstrip("/") for line in lines if line.startswith("0::")), root)
+    return own if own.is_dir() else root
+
+
+CGROUP_ROOT = own_cgroup_root()
 
 
 class ContractError(Exception):
