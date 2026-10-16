@@ -102,7 +102,7 @@ class RunnerTest(unittest.TestCase):
     def test_metadata_mismatch_is_rejected(self) -> None:
         cases = [
             ("name", {"name": b"wrong"}),
-            ("datatype", {"datatype": 1}),
+            ("datatype", {"datatype": 2}),
             ("sampleShape", {"shape": (1, 3, 112, 224)}),
             ("rank4", {"shape": (1, 224, 3)}),
             ("exactly one", {"count": 2}),
@@ -115,6 +115,11 @@ class RunnerTest(unittest.TestCase):
                     with self.assertRaisesRegex(runner.ContractError, message):
                         runner.validate_runtime_inputs(Path("/model.rknn"), valid_candidate(), 1)
                 library.rknn_destroy.assert_called_once()
+
+    def test_metadata_accepts_float16_internal_input(self) -> None:
+        library = metadata_library(datatype=1)
+        with mock.patch.object(runner.ctypes, "CDLL", return_value=library):
+            runner.validate_runtime_inputs(Path("/model.rknn"), valid_candidate(), 1)
 
     def test_metadata_validates_selected_dynamic_batch(self) -> None:
         candidate = valid_candidate()

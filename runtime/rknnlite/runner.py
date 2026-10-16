@@ -289,7 +289,9 @@ def validate_runtime_inputs(
             tensor = capability["tensors"][0]
             if attribute.name.decode("utf-8") != tensor["name"]:
                 raise ContractError("RKNN runtime input name does not match declaration")
-            if attribute.type != 0:  # RKNN_TENSOR_FLOAT32
+            # A float artifact built without quantization reports RKNN_TENSOR_FLOAT16
+            # (1); with pass_through off the runtime converts the FP32 input.
+            if attribute.type not in (0, 1) or attribute.pass_through:  # RKNN_TENSOR_FLOAT32/FLOAT16
                 raise ContractError("RKNN runtime input datatype does not match FP32 declaration")
             shape = nhwc_shape(list(attribute.dims[:attribute.n_dims]), attribute.fmt)
             expected = [batch, *tensor["sampleShape"]]
