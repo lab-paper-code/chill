@@ -78,8 +78,6 @@ profiling:
   workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer@sha256:678654b566df573d013deb9e2a44245ade06be2c5e6d10a413213b6005068125"
   # executionDeclarations is hack/runtime-declarations.py output only
   # (hack/README.md); regenerate the whole list after a runtime image push.
-  # The jetsonx CUDA declaration is pending that Node's recovery; until a probe
-  # on jetsonx adds it, jetson-xavier-nx-8g has its CPU declaration only.
   executionDeclarations:
     - deviceClass: raspberry-pi-5-8g
       runtime:
@@ -106,6 +104,11 @@ profiling:
     - deviceClass: jetson-xavier-nx-8g
       runtime:
         payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:cd8d793701171d0356328c7531705885ddeccd6068d9b7cdb19423f97935605b","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+    - deviceClass: jetson-xavier-nx-8g
+      runtime:
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:2a212cb0b12f698547a713d8d4c1534e6b1433f5d6e624edfc6ddfe0df3038fe","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.18.0"},{"name":"numpy","version":"1.26.4"}],"verification":"exact-image-runtime-inspection-v1"}'
+      node: "jetsonx"
+      access: {"privileged": false, "supplementalGroups": [44], "resources": {"nvidia.com/gpu": "1"}, "gpuUUID": "GPU-eb9f176d-1c12-53c1-9f4e-30591e940814"}
     - deviceClass: jetson-orin-nano-8g
       runtime:
         payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:cd8d793701171d0356328c7531705885ddeccd6068d9b7cdb19423f97935605b","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
