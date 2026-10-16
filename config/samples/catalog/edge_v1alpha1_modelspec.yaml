@@ -1,5 +1,5 @@
 # Use metadata.name and spec as serving management API input, not kubectl apply.
-# Replace PUSHED_DIGEST with the digest of the pushed carrier (README.md).
+# Images pin the pushed carrier digests (README.md).
 apiVersion: edge.dacs.io/v1alpha1
 kind: ModelSpec
 metadata:
@@ -9,14 +9,14 @@ spec:
   - name: canonical-onnx-arm64
     format: onnx
     source:
-      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:PUSHED_DIGEST"
+      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:a6a670b244d5d93987160f62e52da97a09fdcb731ded67c1123e614276aee406"
       architecture: arm64
       files:
       - /artifact/mobilenet-v2-050.onnx
   - name: canonical-onnx-amd64
     format: onnx
     source:
-      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:PUSHED_DIGEST"
+      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:a6a670b244d5d93987160f62e52da97a09fdcb731ded67c1123e614276aee406"
       architecture: amd64
       files:
       - /artifact/mobilenet-v2-050.onnx

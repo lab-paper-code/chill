@@ -1,12 +1,12 @@
 # Use metadata.name and spec as serving management API input, not kubectl apply.
-# Replace PUSHED_DIGEST with the multi-arch index digest of the pushed carrier (README.md).
+# The image pins the pushed multi-arch carrier index digest (README.md).
 apiVersion: edge.dacs.io/v1alpha1
 kind: Dataset
 metadata:
   name: plc-extruder-01-windows
 spec:
   source:
-    image: "155.230.35.213:5000/chill/chill-plc-extruder-01-windows@sha256:PUSHED_DIGEST"
+    image: "155.230.35.213:5000/chill/chill-plc-extruder-01-windows@sha256:9dc95ce1687f4747a32097dc77d492cd8d1c5c04a261fe8a1681adaf3336cfe6"
     path: /artifact/plc-extruder-01-windows
   fields:
   - {name: records, format: UTF8, maxBytes: 65536}

@@ -1,5 +1,5 @@
 # Use metadata.name and spec as serving management API input, not kubectl apply.
-# Replace PUSHED_DIGEST with the digest of the pushed carrier (README.md).
+# Images pin the pushed multi-arch carrier index digest (README.md).
 apiVersion: edge.dacs.io/v1alpha1
 kind: Preprocessor
 metadata:
@@ -15,11 +15,11 @@ spec:
   artifacts:
   - target: {model: plc-lstm-ae, artifact: onnx-fp32-arm64}
     source:
-      image: "155.230.35.213:5000/chill/chill-plc-extruder-anomaly-preprocessor@sha256:PUSHED_DIGEST"
+      image: "155.230.35.213:5000/chill/chill-plc-extruder-anomaly-preprocessor@sha256:b401741de336ef745607054b1ef6ea8d0d020ebe64fd4ecacb5ed1c85e411a28"
       architecture: arm64
       path: /artifact/plc-extruder-anomaly
   - target: {model: plc-lstm-ae, artifact: onnx-fp32-amd64}
     source:
-      image: "155.230.35.213:5000/chill/chill-plc-extruder-anomaly-preprocessor@sha256:PUSHED_DIGEST"
+      image: "155.230.35.213:5000/chill/chill-plc-extruder-anomaly-preprocessor@sha256:b401741de336ef745607054b1ef6ea8d0d020ebe64fd4ecacb5ed1c85e411a28"
       architecture: amd64
       path: /artifact/plc-extruder-anomaly

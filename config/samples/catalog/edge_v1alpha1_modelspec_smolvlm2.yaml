@@ -1,5 +1,5 @@
 # Use metadata.name and spec as serving management API input, not kubectl apply.
-# Replace PUSHED_DIGEST with the digest of the pushed carrier (README.md).
+# Images pin the pushed multi-arch carrier index digest (README.md).
 apiVersion: edge.dacs.io/v1alpha1
 kind: ModelSpec
 metadata:
@@ -9,7 +9,7 @@ spec:
   - name: onnx-fp32-arm64
     format: onnx
     source:
-      image: "155.230.35.213:5000/chill/chill-smolvlm2-500m-onnx@sha256:PUSHED_DIGEST"
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-500m-onnx@sha256:c227f6f7f256e878dc7b8a20910c1bfceb74b8e82c25fa1828e67d0225b4e7ba"
       architecture: arm64
       files:
       - /artifact/vision_encoder.onnx
@@ -18,7 +18,7 @@ spec:
   - name: onnx-fp32-amd64
     format: onnx
     source:
-      image: "155.230.35.213:5000/chill/chill-smolvlm2-500m-onnx@sha256:PUSHED_DIGEST"
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-500m-onnx@sha256:c227f6f7f256e878dc7b8a20910c1bfceb74b8e82c25fa1828e67d0225b4e7ba"
       architecture: amd64
       files:
       - /artifact/vision_encoder.onnx

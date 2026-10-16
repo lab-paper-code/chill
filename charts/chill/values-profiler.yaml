@@ -72,10 +72,10 @@ profiler:
 
 profiling:
   # Both observers run on the measured Node, so they are multi-arch indexes.
-  # Replace PUSHED_DIGEST with the index digest pushed by
-  # `make docker-buildx-metric-observer docker-buildx-workload-observer`.
-  metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer@sha256:PUSHED_DIGEST"
-  workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer@sha256:PUSHED_DIGEST"
+  # A rebuild by `make docker-buildx-metric-observer docker-buildx-workload-observer`
+  # replaces these index digests.
+  metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer@sha256:fb30371b1fdd3c18dd1315cba8333b3a0662a80c4cb19020b35d0c9a7de2d327"
+  workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer@sha256:678654b566df573d013deb9e2a44245ade06be2c5e6d10a413213b6005068125"
   # executionDeclarations holds exact-image inspection output only. After the
   # firstfloor runtime images are pushed, generate the whole list with
   # hack/runtime-declarations.py (hack/README.md) and place it here.

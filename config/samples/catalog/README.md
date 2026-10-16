@@ -159,9 +159,10 @@ firstfloor campaign with every initialized measured batch size.
 ## Preprocessor, SmolVLM model and dataset carriers
 
 Every carrier uses the carrier Dockerfile above. Stage the build context, build,
-push, and replace `PUSHED_DIGEST` in the sample with the pushed image index
-digest. Each Preprocessor declares one artifact per target model artifact, so
-the `arm64` and `amd64` ONNX artifacts each name the same multi-arch carrier. A
+and push; the samples pin the pushed image index digests, so a rebuilt carrier
+replaces its digest in the sample. Each Preprocessor declares one artifact per
+target model artifact, so the `arm64` and `amd64` ONNX artifacts each name the
+same multi-arch carrier. A
 preprocessor directory holds the `preprocessor.py` module that the firstfloor
 runner imports; its libraries come from the firstfloor runtime image. The
 staging scripts need `huggingface_hub`; the dataset builder also needs `pyarrow`.
