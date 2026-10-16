@@ -75,16 +75,28 @@ worktree에는 main 작업 디렉토리의 사본을 두고 편집한다. 병합
 - 병합 시 절차:
   1. worktree의 `docs/spec/00_measurement.md`를 main 사본에 옮긴다.
   2. 구현 설계 8장의 정리 대상(ModelSpec, Workload, 측정 객체, Evidence Store 객체, serving journal)을 삭제한다.
-  3. 모델, 전처리, 데이터셋 carrier와 firstfloor runtime image 변형(CPU, `cuda`, `l4t-r35`, `l4t-r36`, `rknn`),
-     metric observer와 workload observer image를 빌드하고 push한다.
-  4. sample과 `charts/chill/values-profiler.yaml`의 `PUSHED_DIGEST`를 push한 digest로 바꾼다.
-  5. cluster에서 `hack/runtime-declarations.py`를 실행하고 출력의 선언을 `values-profiler.yaml`의
-     `executionDeclarations`에 붙인 뒤 Profiler를 배포한다.
-  6. ModelSpec, Preprocessor, Dataset, Workload를 다시 등록한다.
-  7. 다시 측정하고 scheduler 설정의 campaign과 profile을 다시 선택한다.
-  8. live cluster, Jetson과 RKNN 장비, 실제 Node의 profiling Job, 혼합 부하 평가를 검증한다.
-- CHILL 밖의 환경 조건(해당 DeviceClass 측정 전에 해결):
-  - `orin-nano`의 thermal exporter가 `device_thermal_*` series를 내지 않는다.
-  - `orin-nano`의 NVIDIA device plugin이 healthy device 0개를 보고한다.
-  - `edge-server-rtx-2080-ti-64g`의 CUDA 선언은 GPU UUID를 읽은 `genesis2`에만 묶이므로 이 DeviceClass의
-    CUDA 측정은 `genesis2`에서만 이루어진다.
+  3. CHILL 시스템 image(operator, serving, profiler, measurement worker, node actuator, dashboard)를 이 브랜치로
+     빌드하고 push한 뒤 배포한다. carrier, firstfloor runtime 변형, observer image와 `executionDeclarations`는
+     이미 push하고 고정했다(`~/.cache/chill-assets/ops/pushed-images.md`).
+  4. ModelSpec, Preprocessor, Dataset, Workload를 다시 등록한다.
+  5. 다시 측정하고 scheduler 설정의 campaign과 profile을 다시 선택한다.
+  6. live cluster의 serving 경로와 혼합 부하 평가를 검증한다.
+
+## 호스트와 클러스터 변경 기록
+
+이 작업이 레포 밖에 남긴 변경이다. 상세 기록과 rollback은 `~/.cache/chill-assets/ops/<항목>/`에 있다.
+
+|대상|변경|이유|rollback|
+|---|---|---|---|
+|`orin-nano` 호스트|`/etc/systemd/system/nvidia-cdi-refresh.service.d/10-after-nvpmodel.conf`에 `[Unit] After=nvpmodel.service`|`nvidia-cdi-refresh`의 `nvidia-smi`가 GPU golden context를 먼저 만들어 부팅 시 `nvpmodel`이 모드를 적용하지 못했다. 모드 이름만 바뀌고 클럭과 게이팅은 그대로였다|drop-in 디렉터리 삭제, `daemon-reload`, 재부팅 (`orin-nano-nvpmodel/ROLLBACK.txt`)|
+|`monitoring/edge-metrics-exporter-jetson` DaemonSet|image `edge-metrics-exporter:sha-63abb94-thermal-eagain`, updateStrategy `OnDelete`. `orin-nano` 파드만 교체|L4T R36.4의 열 센서 EAGAIN이 Python 3.12에서 `TypeError`로 올라와 열 지표 수집이 멈췄다. 영구 수정은 edge-metrics 저장소에 `thermal-eagain.patch` 반영과 Helm 값 갱신이 필요하다|`orin-nano-thermal/` 의 patch 명령|
+|`kube-system/nvidia-device-plugin-jetson` DaemonSet|env `DEVICE_ID_STRATEGY=index`, `DEVICE_LIST_STRATEGY=envvar` (jetsono, jetsonx, jetson-nano)|CUDA Pod가 CDI `unsupported device id: tegra`로 생성되지 못했다|`jetson-device-plugin/`|
+|`chill-system/chill-node-actuator-config`|전력모드 기록을 위해 임시 정책을 두 번 열었다(08:16~08:45Z, 11:07~11:18Z). 원본 바이트로 복원하고 DaemonSet 원래 revision 복귀를 확인했다|actuator 허용 목록에 없는 모드는 적용되지 않는다|복원 완료|
+|`hetero-*` NodeActuation 16개|기록용으로 남겼다(Ready, 더 이상 동작 없음)|전력모드 근거|`power-modes/SUMMARY.md`, `orin-nano-nvpmodel/SUMMARY.md`의 삭제 명령|
+|registry `155.230.35.213:5000`|`hetero-` 태그 image와 carrier만 새로 push했다. 기존 태그는 그대로다|실기기 검증과 sample digest 고정|`pushed-images.md`|
+|namespace `chill-ops-check`|테스트 Pod를 만들고 모두 지웠다|실기기 runner smoke|비어 있음|
+
+- jetsonx는 08:00Z 무렵 SmolVLM fp32 CUDA 적재 중 unified memory 고갈로 멈췄고 사용자가 재시작했다.
+- 캠페인의 `mobilenet-v2-050-orin-nano-cuda-q1/q2` 측정은 호스트 수정 전 "25W"로 기록되었으므로 실제 25W 상태가 아니다.
+- `jetsono`에도 `nvidia-cdi-refresh`가 켜져 있다. 지금은 `nvidia-smi`가 없어 건너뛰지만, 설치되면 같은 문제가 생기므로
+  같은 drop-in이 필요하다.
