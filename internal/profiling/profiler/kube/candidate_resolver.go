@@ -100,6 +100,7 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		configMap,
 		r.options.ConfigMapKey,
 		selection.DeviceClass,
+		selection.Node,
 		modelPath.Runtime.Family,
 		modelPath.Runtime.Backend,
 	)
@@ -225,7 +226,7 @@ func validateCandidateSelection(selection profiler.CandidateSelection) error {
 	for name, value := range map[string]string{
 		"ModelSpec": selection.ModelSpec, "DeviceClass": selection.DeviceClass,
 		"execution path": selection.ExecutionPath, "power mode": selection.PowerMode,
-		"preprocessor": selection.Preprocessor,
+		"preprocessor": selection.Preprocessor, "Node": selection.Node,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("candidate %s is required without surrounding whitespace", name)

@@ -20,10 +20,12 @@ var ErrCPURequestExceedsAllocatable = errors.New("CPU request exceeds selected N
 var ErrCPUQuotaExceedsAllocatable = errors.New("CPU quota exceeds selected Node allocatable CPU")
 
 // CandidateSelection names the catalog objects one Run measures. Dataset is
-// empty for idle measurement.
+// empty for idle measurement. Node is the Run's target Node; it selects the
+// execution declaration bound to that Node's physical device.
 type CandidateSelection struct {
 	ModelSpec     string
 	DeviceClass   string
+	Node          string
 	ExecutionPath string
 	PowerMode     string
 	Preprocessor  string
@@ -492,6 +494,9 @@ func (r PreparationRequest) Validate() error {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
+	}
+	if r.Candidate.Node != r.TargetNode {
+		return errors.New("candidate Node must be the target Node")
 	}
 	cpuRequest, err := resource.ParseQuantity(r.CPURequest)
 	if err != nil || cpuRequest.Sign() <= 0 {

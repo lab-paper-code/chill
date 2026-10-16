@@ -71,7 +71,7 @@ Use its JSON producer output as `runtime.payload` in a
 `profiling.executionDeclarations` entry for a matching ARM64 DeviceClass. Merge
 the entry into the existing declaration list; do not replace unrelated entries.
 The fact-source envelope and Helm renderer use
-`chill.dacs.io/profiler-execution-facts.v1alpha7`. An older envelope is rejected
+`chill.dacs.io/profiler-execution-facts.v1alpha8`. An older envelope is rejected
 by the current resolver, even when its contained runtime declarations are valid.
 
 Adding this entry does not add a ModelSpec execution path or start a measurement.

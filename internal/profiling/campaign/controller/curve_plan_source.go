@@ -146,6 +146,7 @@ func (p *CurvePlanProjector) resolveCandidateReportAndBatches(
 	selection := profiler.CandidateSelection{
 		ModelSpec:     parent.Spec.State.Candidate.ModelSpec,
 		DeviceClass:   parent.Spec.State.Candidate.DeviceClass,
+		Node:          parent.Spec.State.TargetNode,
 		ExecutionPath: parent.Spec.State.Candidate.ExecutionPath,
 		PowerMode:     parent.Spec.State.Candidate.PowerMode,
 		Preprocessor:  parent.Spec.State.Candidate.Preprocessor,

@@ -30,6 +30,7 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 			Candidate: profiler.CandidateSelection{
 				ModelSpec:     spec.Candidate.ModelSpec,
 				DeviceClass:   spec.Candidate.DeviceClass,
+				Node:          spec.TargetNode,
 				ExecutionPath: spec.Candidate.ExecutionPath,
 				PowerMode:     spec.Candidate.PowerMode,
 				Preprocessor:  spec.Candidate.Preprocessor,

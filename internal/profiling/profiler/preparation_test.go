@@ -562,6 +562,7 @@ func fixtureRequest(config profilingrun.RunConfig) PreparationRequest {
 		Candidate: CandidateSelection{
 			ModelSpec:     config.State.Model,
 			DeviceClass:   config.State.DeviceClass,
+			Node:          config.TargetNode.Name,
 			ExecutionPath: config.Candidate.ExecutionPath,
 			PowerMode:     config.State.PowerMode,
 			Preprocessor:  config.State.Preprocessor.Name,

@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	executionFactsSchema     = "chill.dacs.io/profiler-execution-facts.v1alpha7"
+	executionFactsSchema     = "chill.dacs.io/profiler-execution-facts.v1alpha8"
 	runtimeDeclarationSchema = "chill.dacs.io/runtime-declaration.v1alpha2"
 	trustedRuntimeInspection = "exact-image-runtime-inspection-v1"
 )
@@ -33,8 +33,12 @@ type executionFactsDocument struct {
 	Declarations        []executionDeclaration `json:"declarations"`
 }
 
+// executionDeclaration applies to every Node of DeviceClass unless Node names
+// the one Node its facts were read on. A declaration carrying a GPU UUID is
+// physical-device identity and therefore always names its Node.
 type executionDeclaration struct {
 	DeviceClass string                   `json:"deviceClass"`
+	Node        string                   `json:"node,omitempty"`
 	Runtime     runtimeDeclarationSource `json:"runtime"`
 	Host        *hostExecutionContract   `json:"host,omitempty"`
 	Access      *runtimeAccessContract   `json:"access,omitempty"`
@@ -111,16 +115,21 @@ type npuAllocationClaim struct {
 
 type resolvedExecutionDeclaration struct {
 	DeviceClass         string
+	Node                string
 	Runtime             runtimeDeclaration
 	Host                *hostExecutionContract
 	Access              *runtimeAccessContract
 	MetricObserverImage string
 }
 
+// selectExecutionDeclaration returns the one declaration for deviceClass and
+// the runtime family/backend that applies to node: a Node-bound declaration
+// only on its Node, a class-level one on every Node of the class.
 func selectExecutionDeclaration(
 	configMap *corev1.ConfigMap,
 	configMapKey string,
 	deviceClass string,
+	node string,
 	runtimeFamily string,
 	runtimeBackend string,
 ) (resolvedExecutionDeclaration, error) {
@@ -159,22 +168,25 @@ func selectExecutionDeclaration(
 		}
 		backends := append([]string(nil), declaration.Runtime.Runtime.Backends...)
 		slices.Sort(backends)
-		identity := declaration.DeviceClass + "\x00" + declaration.Runtime.Runtime.Family +
+		identity := declaration.DeviceClass + "\x00" + declaration.Node + "\x00" + declaration.Runtime.Runtime.Family +
 			"\x00" + strings.Join(backends, "\x00")
 		if _, duplicate := seen[identity]; duplicate {
 			return resolvedExecutionDeclaration{}, fmt.Errorf(
-				"duplicate execution declaration for %s/%s/%s",
+				"duplicate execution declaration for %s/%s/%s/%s",
 				declaration.DeviceClass,
+				declaration.Node,
 				declaration.Runtime.Runtime.Family,
 				strings.Join(backends, ","),
 			)
 		}
 		seen[identity] = struct{}{}
-		if declaration.DeviceClass == deviceClass && declaration.Runtime.Runtime.Family == runtimeFamily &&
+		if declaration.DeviceClass == deviceClass && (declaration.Node == "" || declaration.Node == node) &&
+			declaration.Runtime.Runtime.Family == runtimeFamily &&
 			slices.Contains(declaration.Runtime.Runtime.Backends, runtimeBackend) {
 			if selected != nil {
 				return resolvedExecutionDeclaration{}, fmt.Errorf(
-					"multiple trusted execution declarations for %s/%s/%s",
+					"multiple trusted execution declarations for %s on %s/%s/%s",
+					node,
 					deviceClass,
 					runtimeFamily,
 					runtimeBackend,
@@ -191,7 +203,8 @@ func selectExecutionDeclaration(
 	}
 	if selected == nil {
 		return resolvedExecutionDeclaration{}, fmt.Errorf(
-			"no trusted execution declaration for %s/%s/%s",
+			"no trusted execution declaration for %s on %s/%s/%s",
+			node,
 			deviceClass,
 			runtimeFamily,
 			runtimeBackend,
@@ -228,6 +241,12 @@ func validateExecutionDeclaration(source executionDeclaration) (resolvedExecutio
 			"deviceClass is required without surrounding whitespace",
 		)
 	}
+	if source.Node != "" && len(k8svalidation.IsDNS1123Subdomain(source.Node)) != 0 {
+		return resolvedExecutionDeclaration{}, errors.New("node must be a Kubernetes Node name")
+	}
+	if source.Access != nil && source.Access.GPUUUID != "" && source.Node == "" {
+		return resolvedExecutionDeclaration{}, errors.New("a declaration carrying a GPU UUID requires the node it was read on")
+	}
 	runtime, err := decodeRuntimeDeclaration(source.Runtime)
 	if err != nil {
 		return resolvedExecutionDeclaration{}, err
@@ -256,7 +275,7 @@ func validateExecutionDeclaration(source executionDeclaration) (resolvedExecutio
 		return resolvedExecutionDeclaration{}, errors.New("firstfloor CUDA declaration requires runtime access")
 	}
 	return resolvedExecutionDeclaration{
-		DeviceClass: source.DeviceClass, Runtime: runtime,
+		DeviceClass: source.DeviceClass, Node: source.Node, Runtime: runtime,
 		Host: cloneHostExecutionContract(source.Host), Access: cloneRuntimeAccessContract(source.Access),
 	}, nil
 }

@@ -536,9 +536,11 @@ batch 4의 최대 상주 메모리(12.7 GB)를 담는다.
 | `edge-server-rtx-2080-ti-64g` | amd64 | 세 Workload | 세 Workload(`TAG-cuda`) | - | - |
 
 arm64 DeviceClass는 `firstfloor-ort-cpu-arm64`, `firstfloor-ort-cuda-arm64`, amd64 DeviceClass는
-`firstfloor-ort-cpu-amd64`, `firstfloor-ort-cuda-amd64` 경로를 사용한다. CUDA 선언은 GPU UUID를 읽은 Node
-(`jetsono`, `jetsonx`, `orin-nano`, `genesis2`)에 묶이고, RKNN 선언은 `orangepi` Node의 RKNPU driver와
-host `librknnrt.so`에 묶인다.
+`firstfloor-ort-cpu-amd64`, `firstfloor-ort-cuda-amd64` 경로를 사용한다. CPU 선언은 DeviceClass 단위다. CUDA
+선언은 GPU UUID를 읽은 Node 하나를 `node`로 명시하고, Profiler는 Run의 target Node와 `node`가 같은 선언만
+고른다. 그래서 GPU Node마다 선언이 하나씩 있다(`jetsono`, `jetsonx`, `orin-nano`, `genesis2`, `genesis3`).
+`genesis1`은 전환 관측 Node이고 metric source가 없어 측정 후보가 아니다. RKNN 선언은 `orangepi` Node의
+RKNPU driver와 host `librknnrt.so`에 묶인다.
 
 ## 8. 저장 계약
 
@@ -561,6 +563,7 @@ host `librknnrt.so`에 묶인다.
 | `measurementProtocolIdentitySchemaVersion`(`identity.go:15`) | `measurement-protocol-identity.v1alpha1` | `v1alpha2`(`MeasurementContract`의 데이터셋) | identity를 담은 Run과 evidence |
 | `observationSchema`(`internal/serving/observations.go:20`) | `serving-observations.v1alpha2` | `v1alpha3`(진행 필드, `InputPath` 삭제, Definition 형태) | serving journal window 전체 |
 | `firstfloorRequestSchemaVersion`(`internal/profiling/profiler/worker/firstfloor.go:9`, `measurement.py:22`) | `firstfloor-runtime-request.v1alpha1` | `v1alpha2` | - (전달용 계약) |
+| `executionFactsSchema`(`internal/profiling/profiler/kube/execution_facts.go:23`, `profiler_facts.yaml`) | `profiler-execution-facts.v1alpha7` | `v1alpha8`(선언의 `node`, GPU UUID 선언에 필수) | Profiler fact-source ConfigMap(Helm으로 다시 render) |
 | 직접 runner 요청(`ort-cpu-runtime-request.v1alpha15`, `rknnlite-runtime-request.v1alpha11`) | 사용 중 | 실행 경로와 함께 삭제 | - |
 
 외곽 형태가 그대로인 다음 version은 유지하고, 안에 담은 계약 때문에 읽을 수 없는 객체는 위 정리 대상과

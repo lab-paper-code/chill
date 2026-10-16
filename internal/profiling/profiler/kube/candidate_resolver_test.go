@@ -453,8 +453,8 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 				config := objects[2].(*corev1.ConfigMap)
 				config.Data["execution-facts.yaml"] = strings.Replace(
 					config.Data["execution-facts.yaml"],
+					"profiler-execution-facts.v1alpha8",
 					"profiler-execution-facts.v1alpha7",
-					"profiler-execution-facts.v1alpha6",
 					1,
 				)
 			},
@@ -616,7 +616,7 @@ func candidateResolverOptions() CandidateResolverOptions {
 
 func validCandidateSelection() profiler.CandidateSelection {
 	return profiler.CandidateSelection{
-		ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
+		ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g", Node: "lattepanda",
 		ExecutionPath: "ort-cpu", PowerMode: profilingrun.FixedPowerMode,
 		Preprocessor: "mobilenet-imagenet", Dataset: "vqav2-val-subset",
 	}
@@ -624,7 +624,7 @@ func validCandidateSelection() profiler.CandidateSelection {
 
 func validRKNNCandidateSelection() profiler.CandidateSelection {
 	return profiler.CandidateSelection{
-		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
+		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g", Node: "orangepi",
 		ExecutionPath: profilingrun.RKNNLiteExecutionPath, PowerMode: profilingrun.FixedPowerMode,
 		Preprocessor: "mobilenet-imagenet",
 	}
@@ -732,7 +732,7 @@ func validRKNNCandidateObjects() []client.Object {
 
 func validExecutionFacts() string {
 	payload := validRuntimeDeclaration()
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha7
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha8
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
   - deviceClass: lattepanda-3-delta-8g
@@ -744,7 +744,7 @@ declarations:
 
 func validRKNNExecutionFacts() string {
 	payload := validRKNNRuntimeDeclaration()
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha7
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha8
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
   - deviceClass: orangepi-5-plus-16g

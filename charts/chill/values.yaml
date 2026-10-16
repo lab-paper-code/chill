@@ -150,8 +150,9 @@ profiling:
     workspaceBytes: 134217728
   # The runtime CPU quota is not part of these envelopes: the AllocatableCPUQuota
   # policy derives it from the measured Node at run time, for every path alike.
-  # A CUDA envelope selects nothing on its own; the DeviceClass also needs a
-  # CUDA declaration, which carries the GPU UUID and the nvidia.com/gpu resource.
+  # A CUDA envelope selects nothing on its own; the measured Node also needs its
+  # own CUDA declaration, which names the Node and carries its GPU UUID and the
+  # nvidia.com/gpu resource.
   executionPolicies:
     - name: cpu-ort-arm64-active-v1
       deviceClass: "*"

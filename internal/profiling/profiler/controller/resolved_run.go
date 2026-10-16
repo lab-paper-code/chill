@@ -61,7 +61,7 @@ func preparationFromRunConfig(config profilingrun.RunConfig) profiler.Preparatio
 	measurement.Dataset = nil
 	request := profiler.PreparationRequest{
 		Candidate: profiler.CandidateSelection{
-			ModelSpec: config.State.Model, DeviceClass: config.State.DeviceClass,
+			ModelSpec: config.State.Model, DeviceClass: config.State.DeviceClass, Node: config.TargetNode.Name,
 			ExecutionPath: config.Candidate.ExecutionPath, PowerMode: config.State.PowerMode,
 			Preprocessor: config.State.Preprocessor.Name,
 		},

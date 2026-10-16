@@ -34,19 +34,20 @@ VIDEO_GID = 44
 
 # CPU images are inspected once per architecture on a CPU-only Node.
 CPU = {"arm64": ("CPU_ARM64_IMAGE", "rasp5"), "amd64": ("CPU_AMD64_IMAGE", "lattepanda")}
-# DeviceClass, architecture, CUDA image variable, CUDA Node, CUDA groups.
-# The GPU UUID binds a CUDA declaration to the Node it was read on.
+# DeviceClass, architecture, CUDA image variable, CUDA Nodes, CUDA groups.
+# The GPU UUID binds a CUDA declaration to the Node it was read on, so every GPU
+# Node of a class is probed and gets its own declaration.
 # jetson-nano-4g has no CUDA entry: L4T r32 ships CUDA 10.2, and no ONNX Runtime
 # CUDA wheel exists there for the Python >= 3.10 the firstfloor runtime needs.
 CLASSES = [
-    ("raspberry-pi-5-8g", "arm64", None, None, []),
-    ("orangepi-5-plus-16g", "arm64", None, None, []),
-    ("jetson-nano-4g", "arm64", None, None, []),
-    ("jetson-agx-orin-64g", "arm64", "CUDA_L4T_R35_IMAGE", "jetsono", [VIDEO_GID]),
-    ("jetson-xavier-nx-8g", "arm64", "CUDA_L4T_R35_IMAGE", "jetsonx", [VIDEO_GID]),
-    ("jetson-orin-nano-8g", "arm64", "CUDA_L4T_R36_IMAGE", "orin-nano", [VIDEO_GID]),
-    ("lattepanda-3-delta-8g", "amd64", None, None, []),
-    ("edge-server-rtx-2080-ti-64g", "amd64", "CUDA_AMD64_IMAGE", "genesis2", []),
+    ("raspberry-pi-5-8g", "arm64", None, (), []),
+    ("orangepi-5-plus-16g", "arm64", None, (), []),
+    ("jetson-nano-4g", "arm64", None, (), []),
+    ("jetson-agx-orin-64g", "arm64", "CUDA_L4T_R35_IMAGE", ("jetsono",), [VIDEO_GID]),
+    ("jetson-xavier-nx-8g", "arm64", "CUDA_L4T_R35_IMAGE", ("jetsonx",), [VIDEO_GID]),
+    ("jetson-orin-nano-8g", "arm64", "CUDA_L4T_R36_IMAGE", ("orin-nano",), [VIDEO_GID]),
+    ("lattepanda-3-delta-8g", "amd64", None, (), []),
+    ("edge-server-rtx-2080-ti-64g", "amd64", "CUDA_AMD64_IMAGE", ("genesis2", "genesis3"), []),
 ]
 RKNN_CLASS, RKNN_NODE = "orangepi-5-plus-16g", "orangepi"
 # The RKNN host boundary is the Orange Pi installation; the probe reads the
@@ -171,9 +172,21 @@ def entry(device_class, declaration, **blocks):
     return "\n".join(lines)
 
 
+def cuda_entry(device_class, architecture, image, node, groups, probe=None):
+    """One declaration bound to node and the GPU UUID the probe read there."""
+    access = {"privileged": False, "supplementalGroups": groups}
+    facts = (probe or inspect)(image, node, "ort-cuda", access)
+    if len(facts["gpuUUIDs"]) != 1:
+        fail(f"{image} on {node}: expected one allocated GPU, found {facts['gpuUUIDs']}")
+    access = {**access, "resources": {"nvidia.com/gpu": "1"}, "gpuUUID": facts["gpuUUIDs"][0]}
+    if not groups:
+        del access["supplementalGroups"]
+    return entry(device_class, payload(image, architecture, "ort-cuda", facts), node=node, access=access)
+
+
 def main():
     entries, probed = [], {}
-    for device_class, architecture, cuda_variable, cuda_node, groups in CLASSES:
+    for device_class, architecture, cuda_variable, cuda_nodes, groups in CLASSES:
         variable, node = CPU[architecture]
         image = os.environ.get(variable) or fail(f"{variable} is required")
         if image not in probed:
@@ -185,14 +198,8 @@ def main():
         if not image:
             print(f"{device_class}: CUDA declaration omitted, {cuda_variable} is unset", file=sys.stderr)
             continue
-        access = {"privileged": False, "supplementalGroups": groups}
-        facts = inspect(image, cuda_node, "ort-cuda", access)
-        if len(facts["gpuUUIDs"]) != 1:
-            fail(f"{image} on {cuda_node}: expected one allocated GPU, found {facts['gpuUUIDs']}")
-        access = {**access, "resources": {"nvidia.com/gpu": "1"}, "gpuUUID": facts["gpuUUIDs"][0]}
-        if not groups:
-            del access["supplementalGroups"]
-        entries.append(entry(device_class, payload(image, architecture, "ort-cuda", facts), access=access))
+        for cuda_node in cuda_nodes:
+            entries.append(cuda_entry(device_class, architecture, image, cuda_node, groups))
     image = os.environ.get("RKNN_IMAGE")
     if image:
         facts = inspect(image, RKNN_NODE, "rknnlite", RKNN_ACCESS)
@@ -223,6 +230,12 @@ def self_check():
         raise AssertionError("drifted probe facts were accepted")
     text = entry("jetson-orin-nano-8g", declaration, access={"gpuUUID": "GPU-x"})
     assert json.loads(text.split("payload: '")[1].split("'\n")[0]) == declaration
+    amd64 = {**facts, "machine": "x86_64"}
+    texts = [cuda_entry("edge-server-rtx-2080-ti-64g", "amd64", image, node, [],
+                        probe=lambda _i, n, _b, _a: {**amd64, "gpuUUIDs": [f"GPU-{n}"]})
+             for node in ("genesis2", "genesis3")]
+    for node, text in zip(("genesis2", "genesis3"), texts):
+        assert f'      node: "{node}"' in text and f'"gpuUUID": "GPU-{node}"' in text, text
     print("runtime declarations self-check: ok")
 
 
