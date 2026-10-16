@@ -934,3 +934,45 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   변경 검토·저장했으며01:34:12.859569246Z의 판단에도 fixed-horizon을 확인했다.
   제어9OFF·100회·128후보·원래 SLO와 부하는 변경하지 않았다.
   `fixed-horizon-dashboard-setting-proof.json`과 실제 화면을 보존했다. 이 선택은 이력 예측 계산량 개선의 증거가 아니다.
+
+## 소유 실행기 장애·격리·복구 — 2026-10-16
+
+- 첫 단위는 ON 이후 다음 Eval 프로세스 시작까지48.29초가 지연돼 안전 조건을 잃었고
+  신호를 보내지 않았다. NOT_INJECTED로 보존했으며120건 HTTP200과 정상90초 전력은 장애 검증이 아니다.
+- 별도 선언한 단일 독립 controller 단위는02:29:51.436032–02:31:21.436032Z다.
+  실제 ON02:29:57.020951975Z→manual map 제거57.190580Z→정확한 Latte에 단 한 번 SIGTERM57.703177Z였다.
+  kubelet Terminated/Completed/exit0을 확인했다. 신호 순간 in-flight0이므로 실행 중 요청 중단은 미검증이다.
+- 118건 정상 완료·2건 BackendUnavailable 오류였다. 두 오류는 `error/InstanceStopped`로 종결했고,
+  이후 각 Workload53건이 Rpi에서 정상 완료됐다. p90/p95 목표 수치와 오류2건을 분리한다.
+  whole10 정확90초 에너지는21493.613048035484J이며 비교·절감 주장은 없다.
+- 자동 대체4417/f785는 실제 Ready였지만 같은 prepare ID를 오래된 running snapshot으로 다시 실행해
+  COMPLETE 뒤 PARTIAL이 기록됐다. physicalized target에서 logical slot을 못 찾아 두 번째 Prepare가nil이었다.
+  Node/pool은 정상이었고 validator는 유지한다. 공유 launch의 live terminal identity 우선으로 수정·검증 중이다.
+- 최종 실제9OFF·Rpi ACK353935226·접수Ready·outstanding0을 확인했고 새 자동 대체는 건드리지 않았다.
+  상세 시각·오류·action/cursor는 `owned-latte-fault-protocol/new-declared-single-controller-20261016T022127Z/integrated-final-report.json`에 둔다.
+
+## 완료 action 재실행 수정·최종 실동작·Dashboard 차단 — 2026-10-16
+
+- `20e5a759`는 동일 action ID·계약의 live terminal receipt를 오래된 running/cancel snapshot보다
+  우선한다. 효과 상실 후 기존 reconciliation의 새 identity는 허용한다. guard·저장 계약은 완화하지 않았다.
+  과한 native 프로토콜 test fixture는 제거하고 상태 전이 회귀만 남겼다. correctness·ponytail NoFindings,
+  focused 회귀와 `make lint test arch-check gopls-check`가 통과했다.
+- 이미지 `sha256:9490e8ecf941d3b6c5c54de90cacd17d01da3a4c7e7ba178bba817cd71d8cc80`를 배포한
+  03:36:41.636416–03:37:21.636416Z 실제40초에서 ALL9ON 판단4건과 요청4/4 완료를 확인했다.
+  route/stop/drain/remove는 각각 시작1·완료1·partial0·중복0이며 이후에도 완료 receipt가 유지됐다.
+  이는 일반 제어 smoke이고 결정적 race 재현은 별도 회귀 테스트의 근거다. 전력 비교는 하지 않았다.
+- 최종9OFF/fixed·Rpi ACK353984654·접수Ready·outstanding0·owner restart0이다.
+  유휴 Latte는 정상 자동 제거됐고 GPU도 없다. 관련 근거·페이지·event/action 참조는
+  `terminal-receipt-replacement-smoke-20e5a759-20261016T033504Z/`에 둔다.
+- 같은40초를 실제 Dashboard에서 다시 열어 **502 DashboardResponseTooLarge**를 확인했다.
+  owner compact4경로는 모두200이고 첫 이력50건은2042133B·nextCursor50이었다.
+  `dashboard-latest-full-history-blocker.json`과 실제 화면을 보존했다. Main 참조 복원·조회 연결 후
+  화면 대조가 남아 있으며 전체 목표를 완료하지 않았다.
+
+### 운영 API·UX 회고 입력 — 종단 완료 전 후보만 정리
+
+- 부모 세션 Eval/Bash 메타데이터와 실행별 `/tmp` 원본을 함께 확인했다. 빌드·lint·브라우저 조작은 운영 API 후보가 아니다.
+- 반복된 실제 공백은 불확실 소유권의 정확한 실행기 종료·종결 절차, 측정 Job의 메모리 제한과 준비 할당의 대응,
+  등록 Workload0일 때의 CLI empty-route ACK 판정이다. 기존 격리·설정·조회 경계로 줄일 수 있는지 먼저 본다.
+- Eval 턴 사이48초 공백과 임시 스크립트 문법 오류는 단일 독립 controller·기존 emitter 재사용으로 해결했다.
+  새 캠페인 엔진·전체 명령 래퍼를 만들 근거는 아니다. 새 운영 기능의 범위는 Dashboard 종단 검증 뒤 확정한다.

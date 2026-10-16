@@ -53,19 +53,14 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** 남은8건을 실제 종료 근거로 error 종결하고 세 실행기·요청 접수를 복구했다. Dashboard에서 고정 기간 비교를 선택했으며 같은 부하·SLO·100회/128후보로 새 FULL 기능 검증을 진행한다. Main compact 연결은 별도 대기다.
+**현재 우선:** 실제 제어·장애·복구와 후속 결함 수정·배포 검증을 마쳤다. Main compact 연결 완료 후 실제 Dashboard 종단 대조가 남았다.
 
-1. **FULL 통합 실적:** 새 CUDA profile·실제 owner 요청·GPU prepare/remove 비용을 연결했다.
-   동일 초기 3실행기·동일 190건 부하의 OFF/FULL 비교에서 모두 완료·두 SLO를 통과했고,
-   FULL 판단이 Rpi를 선택해 route·stop·drain·remove 8동작을 완료했다.
-   전체 10 meter의 사전 선언 240초 wall energy는 FULL이 6.23% 높았다. 절감 성공은 아니다.
-   후보 탐색 제한과 일시 Pending/Overload, 앞선 실패도 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 보존한다.
-2. **Dashboard 연결 대기:** 알고리즘 변경·다음 판단·전후 이력·복원과 실제 UI 추론 완료를 확인했다.
-   원시 근거를 보존하는 owner compact 4경로를 배포했다. 실 API 11페이지·523건의
-   최대 5.33MB를 확인했다. Main에 공통 복원·조회 연결 프롬프트를 전달했고 완료 통지를 기다린다.
-3. **남은 종단:** 부하 반전·실패·부분 적용·격리·복구의 실제 근거 누락만 보완하고,
-   Dashboard에서 판단→실제 완료→서빙·SLO·전력을 대조한다. 이후 놓친 운영 흐름만 회고한다.
-   개별 Jetson 전력 왕복 검증은 완료했지만 고정 전력 profile 통합이 자동 전력모드 최적화의 입증은 아니다.
+1. **실제 제어 검증 완료:** 개별 제어·폐루프 비교·변동/버스트·장애/격리/복구 결과를
+   [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 보존한다. 실패·미검증·전력 누락은 통과로 바꾸지 않는다.
+2. **Dashboard 연결 대기:** 알고리즘 선택·저장·다음 판단 및 UI 추론은 확인했다.
+   owner compact4경로는 모두200이다. 최신 실측40초를 실제 화면에서 다시 열어502 DashboardResponseTooLarge를 확인했으며 Main 연결·배포 완료를 기다린다.
+3. **마지막 종단·회고:** 화면의 판단→실제 완료→서빙·SLO·전력을 exact interval과 대조하고,
+   단계별 `/tmp·Eval·Bash`에서 놓친 필수 운영 흐름만 확정한다. 종단 검증 전 추가 측정·기능은 벌리지 않는다.
 
 ### 단계 경계의 운영 API·UX 고도화
 
@@ -96,16 +91,13 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 현재 상태·다음 작업
 
-- owner `ef175ee3`, CPU2/1Gi·Go soft768MiB·API50/100이며 실제9OFF·Rpi 경로 반영과 GET128/128을 확인했다.
-  사용자 승인 후 두 Workload를 같은 이름·Model·SLO의 새 UID로 재등록했고, 원래 측정 조건2Gi의 새 prepare/remove 비용을 실측·채택했다.
-  9ON 재시작의 재구성 분포와 실제 추론은 확인했지만, 이전 route weight의 영속 복원은 아니다.
-- 이전 Rpi8건·Latte6건은 실제 컨테이너 종료 후 기존 observer가 `error/InstanceStopped`로 종결했다.
-  원래 timeout/불완전 응답과 torn journal은 보존했다. 새 API는 새 작업 단위만 조회하며 과거18:22 기록은 raw에 남는다.
-- 새2Gi FULL 구간916건은 완료185·timeout731로 실패했다. 전력은 불완전하여 총합null이며 완료된 자동 제어 기록은 없다.
-  실제 스택은 투영 replay와 같은 잠금을 기다리는 refresh·PUT을 보였다. 보존 입력은 최대21×21×100 replay이며 미발행 tick의 정확한 입력은 확보하지 못했다.
-  새 owner의9OFF·Rpi 반영 후 남은8건은 실제 Latte 종료로 `error/InstanceStopped` 종결했다. 현재 새 Latte 포함 세 실행기와 두 Workload 접수가 정상이며 실패185/731 결과는 그대로다.
-- 개별 제어·Jetson6전력 동작·CUDA 실측·이전 FULL 통합 실적은 제어 기록에 둔다.
-  이를 에너지 절감·자동 전력모드 선택·최종 Dashboard 종단 완료로 확대하지 않는다.
+- owner `20e5a759`, CPU2/1Gi·Go soft768MiB·API50/100, fixed-horizon이다.
+  최종 실제9OFF·Rpi ACK353984654·접수Ready·assigned/pending/outstanding0을 확인했다. Rpi만 실행 중이며 GPU·유휴 Latte는 없다.
+- GPU는 원래 측정 조건2Gi와 새 prepare/remove 비용을 사용한다. 사용자 승인 재등록 뒤 Model·SLO는 그대로다.
+- 이력 예측의30초 기한 미전파와 완료 action 재실행 결함을 수정·리뷰·배포했다.
+  마지막40초 실동작에서 route/stop/drain/remove가 각각 시작1·완료1·중복0이었고 요청4/4가 완료됐다.
+- 변동 부하310/310 완료에도 버스트 SLO는 실패했다. 실제 장애는118완료·2오류이며 오류를 숨기지 않았다.
+  이력 예측 계산량 개선·전체 에너지 절감·자동 전력모드 최적화·최종 Dashboard 완료는 주장하지 않는다.
 
 ## 진행 기록 찾아보기
 
