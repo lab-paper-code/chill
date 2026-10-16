@@ -201,7 +201,7 @@ Vendor runtime variants are Make targets over the same Dockerfile. Each
 | `docker-buildx-firstfloor` | all CPU paths, `linux/arm64,linux/amd64` | `python:3.11-slim` | 3.11 | `onnxruntime` 1.27.0 |
 | `docker-buildx-firstfloor-cuda` | `edge-server-rtx-2080-ti-64g` | `nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04` | 3.10 | `onnxruntime-gpu` 1.23.2 |
 | `docker-buildx-firstfloor-l4t-r36` | `jetson-orin-nano-8g` (JetPack 6.1/6.2, L4T r36.4) | `nvcr.io/nvidia/l4t-jetpack:r36.4.0` | 3.10 | `onnxruntime-gpu` 1.24.0 from `pypi.jetson-ai-lab.io/jp6/cu126` |
-| `docker-buildx-firstfloor-l4t-r35` | `jetson-agx-orin-64g`, `jetson-xavier-nx-8g` (JetPack 5.1.2, L4T r35.4.1) | `nvcr.io/nvidia/l4t-jetpack:r35.4.1` with standalone CPython | 3.11 | NVIDIA JetPack 5.1.1 `onnxruntime-gpu` 1.16.0, NumPy 1.26.4 |
+| `docker-buildx-firstfloor-l4t-r35` | `jetson-agx-orin-64g`, `jetson-xavier-nx-8g` (JetPack 5.1.2, L4T r35.4.1) | `nvcr.io/nvidia/l4t-jetpack:r35.4.1` with standalone CPython and libstdc++6 13.1 | 3.11 | NVIDIA JetPack 5.1.2 `onnxruntime-gpu` 1.18.0, NumPy 1.26.4 |
 | `docker-buildx-firstfloor-l4t-r32` | `jetson-nano-4g` (JetPack 4.6, L4T r32) | `nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime` (L4T r32.7.1) with Ubuntu 18.04 Python 3.8 | 3.8 | NVIDIA JetPack 4 `onnxruntime-gpu` 1.11.0, NumPy 1.24.4, Pillow 10.4.0 |
 | `docker-buildx-firstfloor-rknn` | `orangepi-5-plus-16g` | `python:3.11-slim` | 3.11 | `onnxruntime` 1.27.0, `rknn-toolkit-lite2` 2.3.2 |
 
@@ -218,13 +218,19 @@ Version evidence, checked against the official indexes:
 - NVIDIA's [Jetson Zoo](https://elinux.org/Jetson_Zoo#ONNX_Runtime) publishes
   JetPack 5 `onnxruntime-gpu` wheels for Python 3.8 to 3.11, linked to CUDA 11.4,
   cuDNN 8 and NumPy 1.x: 1.16.0 for JetPack 5.1.1 and 1.17.0 and 1.18.0 for
-  JetPack 5.1.2. The 1.17.0 and 1.18.0 wheels require `GLIBCXX_3.4.29`, newer
-  than the Ubuntu 20.04 libstdc++ in L4T r35; 1.16.0 requires `GLIBCXX_3.4.26`
-  and JetPack 5.1.1 and 5.1.2 share CUDA 11.4 and cuDNN 8.6. L4T r35 ships
-  Python 3.8, so the `l4t-r35` stage installs a checksum-pinned
+  JetPack 5.1.2. SmolVLM's decoder uses `com.microsoft:RotaryEmbedding`, a
+  contrib operator from ONNX Runtime 1.17, so the `l4t-r35` stage installs the
+  checksum-pinned 1.18.0 cp311 wheel, whose CUDA provider carries native sm_53,
+  sm_62, sm_72 and sm_87 code. That wheel needs `GLIBCXX_3.4.29` and at most
+  `GLIBC_2.29`; L4T r35's Ubuntu 20.04 has glibc 2.31 and libstdc++ 10.3
+  (`GLIBCXX_3.4.28`), so the stage installs the checksum-pinned
+  ubuntu-toolchain-r/test focal build of `libstdc++6` 13.1.0 (with its
+  `gcc-13-base`), built against glibc 2.31 and backward compatible with the
+  L4T CUDA, cuDNN and TensorRT libraries. L4T r35 ships Python 3.8, so the
+  stage also installs a checksum-pinned
   [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
-  CPython 3.11 and the checksum-pinned 1.16.0 cp311 wheel. A host on another r35
-  revision uses the matching `l4t-jetpack` tag.
+  CPython 3.11. A host on another r35 revision uses the matching
+  `l4t-jetpack` tag.
 - `jetson-nano-4g` runs L4T r32.6.1 (JetPack 4.6, kernel 4.9.253-tegra), whose
   last CUDA is 10.2 with cuDNN 8.2. The Jetson Zoo JetPack 4 table ends at
   `onnxruntime-gpu` 1.11.0, whose cp38 wheel links CUDA 10.2, cuDNN 8 and

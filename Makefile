@@ -429,7 +429,7 @@ docker-buildx-firstfloor-l4t-r35: ## Build and push the JetPack 5 (L4T r35.4) CU
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_L4T_R35_IMG) \
 		--build-arg RUNTIME_IMAGE=l4t-r35 --build-arg NUMPY_VERSION=1.26.4 \
-		--build-arg ORT_PACKAGE=onnxruntime-gpu --build-arg ONNXRUNTIME_VERSION=1.16.0 .
+		--build-arg ORT_PACKAGE=onnxruntime-gpu --build-arg ONNXRUNTIME_VERSION=1.18.0 .
 
 .PHONY: docker-buildx-firstfloor-rknn
 docker-buildx-firstfloor-rknn: ## Build and push the arm64 RKNNLite runtime (host librknnrt).
