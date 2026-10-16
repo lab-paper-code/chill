@@ -134,7 +134,10 @@ profiling:
     maxWorkloadEvents: 10000
     maxWorkloadResultBytes: 8388608
     runtimeMemoryRequestBytes: 134217728
-    runtimeMemoryLimitBytes: 1073741824
+    # SmolVLM2-500M fp32 under ORT 1.27 CPU peaks at 5.2 GB resident for one
+    # sample and 12.7 GB for four, so the limit admits the sample maxBatchSize.
+    # The limit reserves nothing; the request above is what scheduling sees.
+    runtimeMemoryLimitBytes: 17179869184
     observerCPURequest: 5m
     observerCPULimit: 100m
     observerMemoryRequestBytes: 16777216
@@ -145,14 +148,58 @@ profiling:
     workloadObserverMemoryLimitBytes: 134217728
     coordinationReserveBytes: 1048576
     workspaceBytes: 134217728
+  # The runtime CPU quota is not part of these envelopes: the AllocatableCPUQuota
+  # policy derives it from the measured Node at run time, for every path alike.
+  # A CUDA envelope selects nothing on its own; the DeviceClass also needs a
+  # CUDA declaration, which carries the GPU UUID and the nvidia.com/gpu resource.
   executionPolicies:
-    - name: cpu-ort-active-v1
+    - name: cpu-ort-arm64-active-v1
       deviceClass: "*"
-      executionPath: firstfloor-ort-cpu
+      executionPath: firstfloor-ort-cpu-arm64
       workloadMode: saturated-serial-fixed-batch
-    - name: cpu-ort-idle-v1
+    - name: cpu-ort-arm64-idle-v1
       deviceClass: "*"
-      executionPath: firstfloor-ort-cpu
+      executionPath: firstfloor-ort-cpu-arm64
+      workloadMode: idle-model-loaded
+    - name: cpu-ort-amd64-active-v1
+      deviceClass: "*"
+      executionPath: firstfloor-ort-cpu-amd64
+      workloadMode: saturated-serial-fixed-batch
+    - name: cpu-ort-amd64-idle-v1
+      deviceClass: "*"
+      executionPath: firstfloor-ort-cpu-amd64
+      workloadMode: idle-model-loaded
+    - name: cuda-ort-agx-orin-active-v1
+      deviceClass: jetson-agx-orin-64g
+      executionPath: firstfloor-ort-cuda-arm64
+      workloadMode: saturated-serial-fixed-batch
+    - name: cuda-ort-agx-orin-idle-v1
+      deviceClass: jetson-agx-orin-64g
+      executionPath: firstfloor-ort-cuda-arm64
+      workloadMode: idle-model-loaded
+    - name: cuda-ort-orin-nano-active-v1
+      deviceClass: jetson-orin-nano-8g
+      executionPath: firstfloor-ort-cuda-arm64
+      workloadMode: saturated-serial-fixed-batch
+    - name: cuda-ort-orin-nano-idle-v1
+      deviceClass: jetson-orin-nano-8g
+      executionPath: firstfloor-ort-cuda-arm64
+      workloadMode: idle-model-loaded
+    - name: cuda-ort-xavier-active-v1
+      deviceClass: jetson-xavier-nx-8g
+      executionPath: firstfloor-ort-cuda-arm64
+      workloadMode: saturated-serial-fixed-batch
+    - name: cuda-ort-xavier-idle-v1
+      deviceClass: jetson-xavier-nx-8g
+      executionPath: firstfloor-ort-cuda-arm64
+      workloadMode: idle-model-loaded
+    - name: cuda-ort-edge-server-active-v1
+      deviceClass: edge-server-rtx-2080-ti-64g
+      executionPath: firstfloor-ort-cuda-amd64
+      workloadMode: saturated-serial-fixed-batch
+    - name: cuda-ort-edge-server-idle-v1
+      deviceClass: edge-server-rtx-2080-ti-64g
+      executionPath: firstfloor-ort-cuda-amd64
       workloadMode: idle-model-loaded
     - name: rknnlite-active-v1
       deviceClass: orangepi-5-plus-16g
@@ -163,11 +210,45 @@ profiling:
       executionPath: firstfloor-rknnlite
       workloadMode: idle-model-loaded
 
+# Each entry is a mode the Node actuator has applied and independently read
+# back on the testbed Node of that class. The remaining catalog modes (Orin
+# Nano MAXN_SUPER and 7W, the other seven Xavier NX modes) gain an entry once
+# such an actuation settles on them.
 powerActuation:
   policies:
     - name: xavier-nvpmodel-v1
       deviceClass: jetson-xavier-nx-8g
       powerMode: MODE_15W_6CORE
+      actuatorKind: JetsonNVPModel
+      settlingDurationSeconds: 60
+      maxActuationDurationSeconds: 900
+    - name: xavier-mode-20w-6core-v1
+      deviceClass: jetson-xavier-nx-8g
+      powerMode: MODE_20W_6CORE
+      actuatorKind: JetsonNVPModel
+      settlingDurationSeconds: 60
+      maxActuationDurationSeconds: 900
+    - name: nano-maxn-native-v1
+      deviceClass: jetson-nano-4g
+      powerMode: MAXN
+      actuatorKind: JetsonNVPModel
+      settlingDurationSeconds: 60
+      maxActuationDurationSeconds: 900
+    - name: nano-5w-v1
+      deviceClass: jetson-nano-4g
+      powerMode: 5W
+      actuatorKind: JetsonNVPModel
+      settlingDurationSeconds: 60
+      maxActuationDurationSeconds: 900
+    - name: orin-nano-25w-native-v1
+      deviceClass: jetson-orin-nano-8g
+      powerMode: 25W
+      actuatorKind: JetsonNVPModel
+      settlingDurationSeconds: 60
+      maxActuationDurationSeconds: 900
+    - name: orin-nano-15w-v1
+      deviceClass: jetson-orin-nano-8g
+      powerMode: 15W
       actuatorKind: JetsonNVPModel
       settlingDurationSeconds: 60
       maxActuationDurationSeconds: 900

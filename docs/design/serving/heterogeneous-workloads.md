@@ -484,8 +484,7 @@ Serving Pod는 `serving-worker`만 실행하고(`operations.go:362`) 직접 runn
   사용하므로 유지한다.
 - `hack/fast-deploy.sh`의 measurement-worker component: image와 platform 변수(`:18`, `:22`), 사용법(`:62`, `:87`),
   component 목록(`:237`), image 선택(`:361-362`, `:389-390`), 출력(`:442`, `:446`, `:837`), 빌드(`:614-618`, `:687-692`).
-- Profiler 값: `charts/chill/values-profiler-arm64.yaml:80`, `:83`, `:86`의 `onnxruntime` runtime 선언과
-  `:89`의 `rknnlite` runtime 선언.
+- Profiler 값: `charts/chill/values-profiler.yaml`의 `onnxruntime`, `rknnlite` runtime 선언.
 - 실행 경로 sample: `config/samples/catalog/edge_v1alpha1_modelspec.yaml:58-66`의 `ort-cpu`, `rknnlite` 경로와
   ModelSpec 실행 경로의 직접 family 검증(3.3절).
 

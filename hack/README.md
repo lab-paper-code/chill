@@ -44,3 +44,40 @@ with hooks disabled. The chart hook remains only as a safety net for direct
 
 `make helm-purge-crds` is intentionally guarded and requires
 `CONFIRM_PURGE_CRDS=chill`.
+
+## Profiler runtime declarations
+
+`charts/chill/values-profiler.yaml` takes `profiling.executionDeclarations`
+only as exact-image inspection output. After the firstfloor runtime images are
+pushed, list each per-platform child digest and run the generator against the
+testbed:
+
+```sh
+docker manifest inspect --insecure 155.230.35.213:5000/chill/chill-firstfloor:TAG \
+  | jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture) \(.digest)"'
+CPU_ARM64_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
+CPU_AMD64_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
+CUDA_AMD64_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
+CUDA_L4T_R35_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
+CUDA_L4T_R36_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
+RKNN_IMAGE=155.230.35.213:5000/chill/chill-firstfloor@sha256:... \
+  hack/runtime-declarations.py > /tmp/runtime-declarations.yaml
+```
+
+The tags are `TAG` for CPU (`linux/arm64` and `linux/amd64` children),
+`TAG-cuda`, `TAG-l4t-r35`, `TAG-l4t-r36`, and `TAG-rknn`. The generator runs
+one probe Pod per image in `chill-system` on a Node of the target class, with
+the measurement Job's user, groups, privilege, and `nvidia.com/gpu` request. It
+builds each payload from the architecture, ONNX Runtime providers, and package
+versions read inside the image, reads the GPU UUID through the CUDA driver on
+`jetsono`, `jetsonx`, `orin-nano`, and `genesis2`, and reads the RKNPU driver
+version and device-tree token on `orangepi`. Every DeviceClass receives a CPU
+declaration; the CUDA classes and `orangepi-5-plus-16g` add theirs when the
+image variable is set. `jetson-nano-4g` has no CUDA declaration because L4T r32
+ships CUDA 10.2, for which no ONNX Runtime CUDA build supports the Python 3.10
+the firstfloor runtime needs.
+
+Replace the `executionDeclarations` list in the values file with the output's
+list and validate the render with
+`make helm-lint helm-template HELM_VALUES=charts/chill/values-profiler.yaml`.
+`hack/runtime-declarations.py --self-check` checks the payload builder offline.

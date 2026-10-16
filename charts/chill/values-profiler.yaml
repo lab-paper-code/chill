@@ -1,0 +1,217 @@
+# Opt-in Profiler facts for every CHILL testbed candidate Node, arm64 and amd64.
+# Node-specific metric sources remain explicit entries in the same frozen facts.
+#
+# The Operator image is pinned here even though this file is about Profiler
+# facts. Applying this file without that pin resolves the chart default
+# daclab/chill-operator, which rolls the cluster back to a published release
+# that predates the Profiler and Evidence Store operands. The rolled-back
+# Operator still runs, so the symptom is a missing EvidenceStoreAvailable
+# condition rather than a missing Pod.
+operator:
+  image:
+    repository: "155.230.35.213:5000/chill/chill-operator"
+    tag: "sha-44fae46"
+    pullPolicy: Always
+
+# Pin Node discovery here because an unpinned operand silently resolves the
+# published image from the chart default.
+nodeDiscovery:
+  image:
+    repository: "155.230.35.213:5000/chill/chill-node-discovery"
+    tag: "sha-643e9b5"
+    pullPolicy: Always
+
+evidenceStore:
+  enabled: true
+  configRef:
+    name: chill-evidence-store-config
+
+# The Node actuator is pinned and enabled here for the same reason as the
+# Operator above: this file is the only committed description of the testbed,
+# and applying it without this block leaves the chart default
+# nodeActuator.enabled=false. The AGX Orin actuated rows then become
+# unreachable, and the failure is silent because every other operand stays
+# healthy. The DaemonSet still lands only on Nodes carrying the
+# edge.dacs.io/node-actuation=enabled opt-in label.
+nodeActuator:
+  enabled: true
+  image:
+    repository: "155.230.35.213:5000/chill/chill-node-actuator"
+    tag: "sha-44fae46"
+    pullPolicy: Always
+  # Every actuatable Node in this testbed is a KubeEdge edge Node carrying
+  # node-role.kubernetes.io/edge:NoSchedule. The chart default
+  # nodeActuator.tolerations is empty, which silently yields a DaemonSet with
+  # DESIRED=0 rather than a scheduling error, so the toleration is explicit here.
+  tolerations:
+    - key: node-role.kubernetes.io/edge
+      operator: Exists
+      effect: NoSchedule
+  # The workload-safety adapter is fail-closed: any Pod on the target Node
+  # outside these namespaces blocks Node-wide actuation. The chart default is
+  # kube-system alone, which no KubeEdge edge Node can ever satisfy — each one
+  # permanently runs edgemesh-agent and edge-eclipse-mosquitto, the monitoring
+  # DaemonSets, and CHILL's own node-discovery. Note that
+  # edge-metrics-exporter-jetson lives in monitoring: without that namespace the
+  # Node cannot be actuated without also refusing the exporter that supplies the
+  # power metric being measured.
+  allowedNamespaces:
+    - kube-system
+    - kubeedge
+    - monitoring
+    - chill-system
+
+profiler:
+  enabled: true
+  image:
+    repository: "155.230.35.213:5000/chill/chill-profiler"
+    tag: "sha-5c0a29c"
+    pullPolicy: Always
+  transitionObserver:
+    observerNodeName: genesis1
+
+profiling:
+  # Both observers run on the measured Node, so they are multi-arch indexes.
+  # Replace PUSHED_DIGEST with the index digest pushed by
+  # `make docker-buildx-metric-observer docker-buildx-workload-observer`.
+  metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer@sha256:PUSHED_DIGEST"
+  workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer@sha256:PUSHED_DIGEST"
+  # executionDeclarations holds exact-image inspection output only. After the
+  # firstfloor runtime images are pushed, generate the whole list with
+  # hack/runtime-declarations.py (hack/README.md) and place it here.
+  metricSources:
+    - node: rasp5
+      kind: edge-metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=raspberrypi-5
+      powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: raspberrypi-5
+        device_type: raspberry_pi
+      thermalEndpoint: http://155.230.34.243:9102/metrics
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
+    - node: orangepi
+      kind: edge-metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=orangepi-5-plus
+      powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: orangepi-5-plus
+        device_type: orange_pi
+      thermalEndpoint: http://155.230.34.143:9102/metrics
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
+    - node: jetsono
+      kind: edge-metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-orin
+      powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: jetson-orin
+        device_type: jetson_orin
+      thermalEndpoint: http://155.230.34.203:9102/metrics
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
+    - node: jetsonx
+      kind: edge-metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-xavier
+      powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: jetson-xavier
+        device_type: jetson_xavier
+      thermalEndpoint: http://155.230.34.179:9102/metrics
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
+    - node: orin-nano
+      kind: edge-metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=orin-nano
+      powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: orin-nano
+        device_type: jetson_orin_nano
+      thermalEndpoint: http://155.230.35.207:9102/metrics
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
+    - node: jetson-nano
+      kind: edge-metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-nano
+      powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: jetson-nano
+        device_type: jetson_nano
+      thermalEndpoint: http://155.230.35.199:9102/metrics
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
+    - node: lattepanda
+      kind: edge-metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=lattepanda-3-delta
+      powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: lattepanda-3-delta
+        device_type: lattepanda
+      thermalEndpoint: http://155.230.34.144:9102/metrics
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
+    - node: genesis2
+      kind: edge-metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=genesis2
+      powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: genesis2
+        device_type: edge_server
+      thermalEndpoint: http://155.230.35.200:9102/metrics
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
+    - node: genesis3
+      kind: edge-metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=genesis3
+      powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: genesis3
+        device_type: edge_server
+      thermalEndpoint: http://155.230.35.215:9102/metrics
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
