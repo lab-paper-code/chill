@@ -159,6 +159,9 @@ SRS의 부정·대조형 서술 검사는 일치 항목 0건이다. 실패·미�
 
 ### 5.2 수용 시나리오의 확인 수준
 
+아래 표와 5.3절은 초기 구현 체크포인트의 검증 기록이다. 최신 실클러스터 결과와
+미충족 요구는 [현재 검증 현황](../../plans/2026-10-13-scheduler-live-evidence-campaign.md)을 따른다.
+
 | 시나리오 | 실행한 확인 | 증거의 경계 |
 |---|---|---|
 | AC-01, 02, 09, 10, 21 | `internal/serving/scheduler_test.go`의 SLO-first·공유 residual·node-wide 자원·전환 baseline·finite horizon regression | 계산·상태 전이 검증; 물리 에너지 절감은 종단 측정 대상 |
@@ -173,11 +176,11 @@ SRS의 부정·대조형 서술 검사는 일치 항목 0건이다. 실패·미�
 
 최종 Go regression·`make lint test`와 runtime suites, generated artifacts,
 architecture·pinned gopls, default/Profiler Helm 및 deployment graph gate를 실행했다.
-구체 명령·렌더 입력·실제 backend smoke는 [구현 설계 10절](scheduler-implementation.md#10-구현-완료와-실행-증거)에 기록한다.
+구체 명령·렌더 입력·실제 backend smoke는 [실행 이력 10절](scheduler-execution-history.md#10-구현-완료와-실행-증거)에 기록한다.
 Ponytail 검수는 actor/replay selector·기존 metric/store·원자 동작을 재사용하고
 중복 검증·wiring-only test·별도 lifecycle 엔진을 제거하는 방향으로 반영했다.
 
-동료 작업 디렉토리·live cluster·이미지 registry는 수정하지 않았다. local CPU
+이 체크포인트에서는 동료 작업 디렉토리·live cluster·이미지 registry를 수정하지 않았다. local CPU
 service/profile smoke는 wall-energy·실물 Node identity·frozen image campaign을
 갖춘 scientific evidence와 구분한다. hardware 종단 SLO·총에너지·공존 오차,
 GPU/RKNN 실물과 live/kind e2e는 이번 검증에 포함하지 않았다.

@@ -590,7 +590,7 @@ ChillServer의 Kubernetes API client budget은 `rest.Config`에 두 client 생�
 
 실제 8 requests/s 실행에서 기본 5/10 limiter의 TokenReview 대기가 약 5초에 달해
 명시적 budget을 추가했다. 실패 집계·미해명 decision 공백·재검증 결과는
-[실클러스터 제어 기록](../../plans/2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 보존한다.
+[실클러스터 제어 기록](../../plans/2026-10-13-scheduler-live-evidence-campaign-05-closed-loop.md#고부하-실행-실패와-kubernetes-client-예산--2026-10-15)에 보존한다.
 
 측정·프로파일 변경의 caller 권한은 ChillServer ServiceAccount와 별개다.
 차트의 unbound `FULLNAME-serving-manager` ClusterRole은 허용 namespace별 정확한

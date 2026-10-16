@@ -1,8 +1,8 @@
-# CHILL 캠페인 진행 기록 — 실행 선언·상시 모델 등록과 설정 지속성
+# CHILL 캠페인 과거 기록 — 실행 선언·상시 모델 등록과 설정 지속성
 
-[현재 목표·규칙·상태와 다음 의존성](2026-10-13-scheduler-live-evidence-campaign.md)
+[현재 목표·판정·다음 의존성](2026-10-13-scheduler-live-evidence-campaign.md)
 
-아래는 기록 당시의 진행 상태다. 현재 상태는 캠페인 진입 문서를 따른다.
+2026-10-13의 선언·설정 기록이다. 아래 현재·미검증·의존성은 당시 상태이며 현재 작업 지시가 아니다.
 
 ### 2026-10-13 — rasp5용 firstfloor Profiler 실행 선언 연결
 
@@ -26,8 +26,8 @@
 
 - 변경 전 실제 Console preflight는 HTTP 200이지만 `resolves=false`였으며,
   이유는 `unsupported Profiler execution facts schema "chill.dacs.io/profiler-execution-facts.v1alpha6"`였다.
-- 현재 Go resolver는 v1alpha7을 요구하지만 live ConfigMap과 Helm renderer는
-  v1alpha6을 사용하고 있었다. 진행 중인 측정 객체가 없음을 확인한 뒤 live envelope을
+- 당시 Go resolver는 v1alpha7을 요구했지만 live ConfigMap과 Helm renderer는
+  v1alpha6이었다. 진행 중인 측정 객체가 없음을 확인한 뒤 live envelope을
   v1alpha7로 변경하고, `charts/chill/templates/profiler_facts.yaml`도 v1alpha7로 맞췄다.
   이전 schema reader나 compatibility shim은 추가하지 않았다.
 - pinned gopls `v0.23.0`의 references/definition과 반환된 source로
@@ -61,11 +61,7 @@
 
 - 같은 명시 입력의 `helm template` manifest를 보존했고, fact source가 v1alpha7 및
   선언 5개와 정확한 native image를 출력하는 것을 확인했다.
-- Helm upgrade나 Deployment rollout은 수행하지 않았다. live 선언 추가는 ConfigMap
-  patch이며 Helm release values에 자동 저장되지 않는다. 후속 upgrade에는 기존 항목을
-  유지한 merged `profiling.executionDeclarations`를 명시적으로 포함해야 한다.
-  현재 전체 5개 항목의 override snapshot은
-  `/tmp/chill-firstfloor-declaration-unit2-preserved-values.yaml`에 보존했다.
+- 당시 Helm upgrade/rollout은 하지 않았다. live patch가 release values에 저장되지 않아 이후 v1alpha6으로 되돌아갔고, 아래 release13에서 merged `profiling.executionDeclarations`를 저장해 해소했다. 당시 선언5개의 snapshot은 `/tmp/chill-firstfloor-declaration-unit2-preserved-values.yaml`이다.
 
 #### 근거 위치와 남은 범위
 
@@ -82,14 +78,10 @@
   golden-query·deployment graph·e2e gate는 실행하지 않았다.
 - Profiler controller의 실제 Run 실행·observer·원시 evidence 보존은 검증하지 않았다.
   검증한 것은 배포된 read-only preflight에서의 production profiling resolver 선택이다.
-- 남은 선행조건은 상시 모델의 firstfloor 경로 등록과 정식 frozen 측정 요청·observer
-  실행 연결이다. 기존 상시 ModelSpec과 Workload는 아직 이전 정의를 유지한다.
+- 이 단계에서 상시 모델 firstfloor 경로·정식 frozen 측정·observer는 미실행이었다. 모델/설정 연결은 아래 기록, 실제 Run은 [정식 측정 기록](2026-10-13-scheduler-live-evidence-campaign-03-profiling.md)에 있다.
 
 ### 연속 실행 — 상시 native 모델 및 설정 지속성
 
-- 사용자가 추가 승인 없이 의존성 순서대로 끝까지 실행하도록 승인했다.
-  실제 Dashboard FULL 제어 표시·브라우저 e2e, 기존 API 우선, 필요한 코드의 작은
-  커밋·ponytail 리뷰·리팩토링, 매 중간 검증의 `docs/spec/` 대조를 완료 조건에 반영했다.
 - 상시 `mobilenet-v2-050-firstfloor`를 owner HTTPS로 등록했다(HTTP 201,
   UID `545ef2c0-b931-4c96-b978-b4cef1195210`). 기존 사용자 모델·Workload는 유지했다.
 - 이후 다른 Helm 배포에서 live-only 선언이 v1alpha6으로 되돌아간 사실을 실제 preflight
@@ -101,7 +93,7 @@
 - production preflight가 다시 `resolves=true`와 정확한 native child image를 반환했다.
   선언의 Helm values 보존도 확인했다.
 - 기존 active/idle 실행 policy 형식을 재사용하여 `firstfloor-ort-cpu` policy 두 개를
-  추가했다. release revision 14 upgrade 통과. 현재 정식 Run을 실행하여 검증 중이다.
+  추가했다. release revision14 upgrade는 통과했고 정식 Run은 당시 실행 중이었다.
 - schema/producer sample 변경의 ponytail 리뷰: `Lean already. Ship.` 리팩토링 추가 없음.
   default/Profiler Helm gate와 live resolver smoke 후 commit `873b6a0`
   (`fix(helm): align profiler facts with native execution declarations`)에 해당 3개 파일만 포함했다.

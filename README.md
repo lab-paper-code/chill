@@ -109,7 +109,7 @@ manifests through ChillServer.
 
 The following is the previous serving work unit's verification checkpoint.
 Current firstfloor scheduler evidence is recorded in the
-[scheduler implementation](docs/design/serving/scheduler-implementation.md).
+[live evidence index](docs/plans/2026-10-13-scheduler-live-evidence-campaign.md).
 
 Local isolated kind verified HTTPS auth, lifecycle and reference protection,
 private JSONL/S3 archival, and admission closed without evidence. The actual

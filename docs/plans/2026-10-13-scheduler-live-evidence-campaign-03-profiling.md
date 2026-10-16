@@ -1,8 +1,8 @@
-# CHILL 캠페인 진행 기록 — 정식 측정·노드 조사와 반복 trial
+# CHILL 캠페인 과거 기록 — 정식 측정·노드 조사와 반복 trial
 
-[현재 목표·규칙·상태와 다음 의존성](2026-10-13-scheduler-live-evidence-campaign.md)
+[현재 목표·판정·다음 의존성](2026-10-13-scheduler-live-evidence-campaign.md)
 
-아래는 기록 당시의 진행 상태다. 현재 상태는 캠페인 진입 문서를 따른다.
+2026-10-13~14의 측정 기록이다. 아래 현재·실행 중·미지원은 당시 상태이며 현재 작업 지시가 아니다.
 
 ### 연속 실행 — 정식 native Run과 evidence 재조회 완료
 
@@ -36,9 +36,6 @@
 - 근거: `/tmp/chill-native-campaign-first-run-success.json`,
   `...-first-run-success-pod.json`, `...-first-run-passport.json`,
   `...-first-run-failed.json`, `...-corrected-run-old-controller.json`.
-- 다음 의존성 단위: 활성 노드 전체의 실제 자원·상주 작업·물리 meter 연결 및
-  실행 가능한 경로 확인. gateway `/devices`에서 서로 다른 Shelly 10개가 연결되어
-  있고, source 확인상 scrape마다 `Switch.GetStatus` RPC를 실행한다.
 
 ### 연속 실행 — 10노드 조사와 latest 실행/조회 연결
 
@@ -56,7 +53,7 @@
   CPU provider를 확인했다. 검사 Pod는 제거했다.
 - 기존 ONNX를 그대로 담은 ARM64/AMD64 carrier를 OCI index로 연결했고,
   우리 native ModelSpec만 owner PUT/If-Match로 generation 2로 갱신했다.
-  현재 모델 하나에 두 실제 architecture 경로가 있으며, 구 버전 reader/alias가 아니다.
+  당시 한 모델에 두 실제 architecture 경로를 연결했으며 구 버전 reader/alias가 아니다.
   기존 사용자 모델·Workload와 모델 가중치는 변경하지 않았다.
 - native declaration 12개, metric source 10개, 실행 policy 10개를 기존 release values에
   병합했다. latest owner와 Dashboard image 및 좁은 power read RBAC를 배포했다.
@@ -101,10 +98,9 @@
 - orangepi idle 첫 실행 및 retry는 `/sys/fs/cgroup/memory.peak` 파일 부재로
   runtime exit3였다. observer timeout은 시작 신호가 없던 후속 실패다.
   메모리 값을 꾸며 성공시키거나 나머지 5노드 결과로 대체하지 않았다.
-- 성공 5노드만 q1 terminal 이후 q2/affinity=[2,3] campaign을 시작했다.
-  active campaign 중 stored evidence 계약은 바꾸지 않는다.
+- 성공5노드의 q1 terminal 이후에만 q2/affinity=[2,3]을 시작했다. 당시 active campaign의 stored evidence 계약은 유지했다.
 - 네 Jetson의 public host config/status/online CPU를 read-only Pod로 읽고 검사 Pod를
-  모두 제거했다. 현재 mode: Nano/MAXN id0·CPU0-3, AGX/MAXN id0·0-11,
+  모두 제거했다. 당시 mode: Nano/MAXN id0·CPU0-3, AGX/MAXN id0·0-11,
   Xavier/MODE_15W_6CORE id2·0-5, Orin Nano/25W id1·0-5.
   class의 name/id와 실제 config가 일치한다. mode 변경은 이 검사에서 하지 않았다.
 - 근거: `fixed-q1-created.json`, `rasp-q1-result.json`,

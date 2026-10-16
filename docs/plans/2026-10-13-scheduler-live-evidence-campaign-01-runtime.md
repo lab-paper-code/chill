@@ -1,31 +1,9 @@
-# CHILL 캠페인 진행 기록 — 초기 작업 후보와 ARM64 실행 이미지 검증
+# CHILL 캠페인 과거 기록 — ARM64 실행 이미지 검증
 
-[현재 목표·규칙·상태와 다음 의존성](2026-10-13-scheduler-live-evidence-campaign.md)
+[현재 목표·판정·다음 의존성](2026-10-13-scheduler-live-evidence-campaign.md)
 
-아래는 기록 당시의 진행 상태다. 현재 상태는 캠페인 진입 문서를 따른다.
+2026-10-13의 런타임 smoke 기록이다. 당시 미검증 범위·의존성은 현재 작업 지시가 아니다.
 
-## 다음 작업 후보
-
-원자 제어 비용의 남은 의존 단위와 실제 owner/Dashboard 제어 시간창을 연결한다.
-10개 q1/q2 프로파일은 Complete이며, native 인스턴스별 Service와 실제 POOL 탈퇴·편입을
-구현해 production command로 검증했다. genesis2 q1/q2·편입/탈퇴와 Latte q1/q2 비용,
-rasp5 q1 준비·유휴·제거가 보존됐다. genesis1, rasp5 q2 및 나머지 membership을 마친다.
-같은 노드의 q1/q2는 겹치지 않으며 실패 원본과 실제 부수 효과를 남긴다.
-
-Jetson power는 사용자가 선택한 다른 작업 소유자 조율까지 blocked다.
-orangepi의 kernel memory peak와 Orin Nano actuator readiness 문제는 성공으로 대체하지 않는다.
-owner의 장기 journal은 3,504 window·201,299,805 JSONL bytes이며, 측정 시 closed/unpublished는
-0개였다. 전체 파일 scan과 shared lock의 알려진 연구 규모 한계를 유지한다.
-제어 시나리오는 원본을 보존한 별도 시간창과 기본 1분 archive window에서 수행한다.
-이는 범용 조회 성능의 수정이나 FULL 통과 주장과 구분한다.
-
-## 진행 기록
-
-### 2026-10-13 — 세션 목표 및 반복 워크플로우 기록
-
-- 완료: 궁극적 목표·완료 기준·단일 작업 반복 규칙·실행 경계를 이 문서에 기록했다.
-- 이번 단위에서 측정·제어 실행이나 클러스터 설정 변경은 하지 않았다.
-- 이 기록 시점에는 다음 작업 후보가 미착수였으며, 런타임 이미지·실행 선언을 검증하지 않았다.
 
 ### 2026-10-13 — rasp5용 firstfloor ORT CPU 이미지 확보·실행 검증
 
@@ -67,10 +45,7 @@ owner의 장기 journal은 3,504 window·201,299,805 JSONL bytes이며, 측정 �
 
 #### 실행 및 보존 근거
 
-- 성공한 이미지 게시 명령:
-  `docker buildx build --builder edge-builder --platform linux/arm64 --file build/docker/firstfloor.Dockerfile --output type=image,name=155.230.35.213:5000/chill/chill-firstfloor:rasp5-ortcpu-20261013-unit1,push=true,registry.insecure=true --metadata-file /tmp/chill-rasp5-firstfloor-unit1-build.json --progress plain .`
-- 첫 `--push`는 HTTP registry를 HTTPS로 접속하여 실패했다. 위 실행에만 HTTP exporter
-  옵션을 지정하여 게시했다. 외부 Docker/BuildKit 설정은 변경하지 않았다.
+- 첫 `--push`는 HTTP registry를 HTTPS로 접속하여 실패했다. `edge-builder`의 해당 게시에만 `--output type=image,...,push=true,registry.insecure=true`를 지정해 성공했으며 외부 Docker/BuildKit 설정은 변경하지 않았다.
 - 격리 ConfigMap·Pod를 생성하여 init carrier에서 모델을 복사하고, loopback worker와
   실제 persistent ORT runner를 실행했다. 서비스 노출·서비스 계정 token mount는 없었다.
 - 초기 `kubectl logs -f`는 생성 직후 Pod not found로 종료됐다. Kubernetes API의 실제
@@ -84,7 +59,7 @@ owner의 장기 journal은 3,504 window·201,299,805 JSONL bytes이며, 측정 �
 - 검증용 Pod·ConfigMap을 삭제했고 재조회에서 남은 객체가 없음을 확인했다.
   throwaway 실행 script·Pod manifest도 정리했다. 게시 이미지는 후속 측정을 위해 유지한다.
 
-#### 미검증 범위와 남은 의존성
+#### 당시 미검증 범위
 
 - 전력·idle·에너지·memory peak·관측 coverage, production `measurement.py` 전체 실행,
   ProfilingRun controller·정식 evidence 보존·scheduler admission은 이번 단위에서
@@ -93,6 +68,5 @@ owner의 장기 journal은 3,504 window·201,299,805 JSONL bytes이며, 측정 �
   다른 세션의 Dashboard 변경을 보존했다.
 - 소스 변경이 없어 `make lint test`, architecture/gopls, Helm 및 e2e gate는 실행하지 않았다.
   이미지 빌드와 실장비 추론 smoke가 이번 단위의 실행 검증이다.
-- 남은 선행조건: 이 이미지에 맞는 firstfloor Profiler 실행 선언 및 정식 frozen
-  측정 요청·observer 연결. 다음 작업 요청에서 하나의 단위로 선택한다.
+- 당시 firstfloor Profiler 실행 선언·정식 frozen 측정·observer 연결은 미실행이었다. 후속 결과는 [실행 선언 기록](2026-10-13-scheduler-live-evidence-campaign-02-declarations.md)에 있다.
 
