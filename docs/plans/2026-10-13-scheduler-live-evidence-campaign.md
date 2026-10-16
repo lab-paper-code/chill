@@ -57,8 +57,8 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 1. **실제 제어 검증 완료:** 개별 제어·폐루프 비교·변동/버스트·장애/격리/복구 결과를
    [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 보존한다. 실패·미검증·전력 누락은 통과로 바꾸지 않는다.
-2. **Dashboard 종단 대조:** `bb67eb0` 배포에서 이력3쪽114건과 근거 복원은 정상이다.
-   제거 완료 원본도 일치하지만 “이 변경 동작 자세히 보기”는 valid query에도 기록 확인 화면으로 가므로 전체 완료는 보류한다.
+2. **Dashboard 종단 대조:** `dad2aec` ChillServer 배포 뒤 측정·판단·새 라우팅 ACK·추론/지연·전력·Pools를 실제 화면과 API/클러스터로 대조했다.
+   Dashboard `bb67eb0`의 개별 변경 상세 링크는 새 완료 기록에서도 실패하므로 전체 완료는 보류한다.
 3. **최종 판정·회고:** 명세에 맞는 기능 연결, 판단 알고리즘의 검증 범위·계산 한계,
    SLO·에너지의 연구 결과를 구분한다. `/tmp·Eval·Bash` 반복에서 필수 운영 개선만 추리고 종단 검증 전 새 기능·측정은 벌리지 않는다.
 
@@ -91,13 +91,13 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 현재 상태·다음 작업
 
-- owner `20e5a759`, CPU2/1Gi·Go soft768MiB·API50/100, fixed-horizon이다.
-  최종 실제9OFF·Rpi ACK353984654·접수Ready·assigned/pending/outstanding0을 확인했다. Rpi만 실행 중이며 GPU·유휴 Latte는 없다.
+- ChillServer `dad2aec`/image `fb5348b8`, CPU2/1Gi·Go soft768MiB·API50/100, fixed-horizon이다.
+  설정 RV353984654·실제9OFF·Rpi 접수Ready·outstanding0·새 서버 restart0을 확인했다. 기존 PVC·Dashboard·Rpi UID/container는 보존했다.
 - GPU는 원래 측정 조건2Gi와 새 prepare/remove 비용을 사용한다. 사용자 승인 재등록 뒤 Model·SLO는 그대로다.
 - 이력 예측의30초 기한 미전파와 완료 action 재실행 결함을 수정·리뷰·배포했다.
   마지막40초 실동작에서 route/stop/drain/remove가 각각 시작1·완료1·중복0이었고 요청4/4가 완료됐다.
-- 최신 UI 추론은 별도1건 `42cd4ceaa6c72382cea2aec1de22dc82`가 Rpi에서129.103566ms에 완료됐다.
-  동일40초 전력 화면/API는 whole8896.215690533672J·active196.96873142725255J로 일치하며 원본 측정 시각 부재 caveat를 표시한다.
+- 새 배포의 실제 UI 추론1건 `b2b9ffb87a6b7caf49a3a6e4e9a52735`가 Rpi에서126.417525ms·native batch492로 완료됐다.
+  같은08:09:00–08:10:00Z 전력 화면/API는 whole15442.435242944202J·active293.6367253111J로 일치하며 원본 시각 부재 caveat를 표시한다.
 - 변동 부하310/310 완료에도 버스트 SLO는 실패했다. 실제 장애는118완료·2오류이며 오류를 숨기지 않았다.
   이력 예측 계산량 개선·전체 에너지 절감·자동 전력모드 최적화·최종 Dashboard 완료는 주장하지 않는다.
 

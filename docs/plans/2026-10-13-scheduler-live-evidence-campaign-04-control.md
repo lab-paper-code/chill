@@ -998,3 +998,32 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   경로 인코딩 불일치는 아직 추정이며 Main에 정확한 재현 URL·출처를 전달했다. 전체 완료는 보류한다.
   근거: `dashboard-final-e2e-progress.json`, `dashboard-final-*.png`,
   `final-current-readonly-20261016T041406Z/`, `final-post-ui-readonly-20261016T042545Z/`.
+
+## ChillServer 리팩토링 이미지 배포·새 Dashboard E2E — 2026-10-16
+
+- `dad2aec`의 amd64 ChillServer를 build/push하여
+  `sha256:fb5348b80d54f74cf4ff1d00d49eebe2d7881740bff1c44567b88c4b6ef08e0f`로 배포했다.
+  firstfloor CPU 이미지도 로컬 build·실제 materializer/worker 실행·ORT1.27.0/NumPy2.2.6을 확인했으나
+  고정된 측정 이미지·프로파일은 교체하지 않았다.
+- Deployment는 이미지 한 필드만 바꿨다. CPU2/1Gi·Go768MiB·SA·PVC8Gi·Dashboard bb67·
+  설정 UID/RV353984654·fixed/9OFF를 보존했다. 새 서버 Pod `2e85cc88-0763-4792-86a7-42305f7ee0d4`는
+  restart0이며 verified-CA HTTPS `/readyz`와 설정·상태·Workload API가200이었다.
+- 07:59:45Z의 시작 단계에서 UID map/실행기 준비 미충족2건은 실패로 남았다. 이후
+  07:59:55.581137959–07:59:56.479005085Z의 기존 static routing은 complete였다.
+  이력 offset24 원본에 Rpi의 정확한 native ACK·적용 전후 상태·실제 routing이 보존됐고
+  Dashboard의 실행 중→완료 및 원본과 일치했다. 다른 제어를 새로 활성화한 실험은 아니다.
+- 실제 Dashboard에서 측정25개·채택3개, GPU 측정1.79J/6회차와 loaded 의미,
+  fixed-horizon 판단·예상 에너지·실제 Rpi 구성, `/pools`200을 확인했다.
+  실제 UI 추론 POST는 단1건이며 `b2b9ffb87a6b7caf49a3a6e4e9a52735`가 완료됐다.
+  화면 대기140.30ms·서비스126.417525ms, 같은9개 사건·Rpi UID/container·측정 profile·native batch492/finished를
+  owner API와 대조했다. SLO 통계나 에너지 절감의 입증은 아니다.
+- 같은08:09:00–08:10:00Z의 화면/API는 complete, 전체10노드15442.435242944202J,
+  활성Rpi293.6367253111J였다. 원본 시각 없음·수집 시각 사용 caveat를 유지했다.
+  정상 API 조회에서502/504는 관측되지 않았다. 브라우저 대기 predicate 실패로 닫힌 탭은
+  재개했으며 추론을 재제출하지 않았다.
+- 잔여 UI 결함은 새 `manual-static-routing:353984654` 완료 기록에서도 동일하다.
+  `/transitions/manual-static-routing%3A353984654`의 from07:59:00Z/to08:01:00Z,
+  offset24·kind action·at07:59:56.479322726Z·startedAt07:59:55.581137959Z를 가진 실제 링크가
+  “기록을 확인해야 해요”로 간다. 이력 창의 완료·원본은 정상이며 Main 수정 전 전체 완료는 보류한다.
+- 원본: `/tmp/chill-refactor-deploy-dad2aec-before.json`, `...-e2e.json`, `...-server-build.json`,
+  `...-firstfloor-build.json`과 실제 브라우저 스크린샷. 최종9OFF·접수Ready·outstanding0·기존Rpi restart0을 확인했다.
