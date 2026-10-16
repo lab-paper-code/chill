@@ -1027,3 +1027,16 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   “기록을 확인해야 해요”로 간다. 이력 창의 완료·원본은 정상이며 Main 수정 전 전체 완료는 보류한다.
 - 원본: `/tmp/chill-refactor-deploy-dad2aec-before.json`, `...-e2e.json`, `...-server-build.json`,
   `...-firstfloor-build.json`과 실제 브라우저 스크린샷. 최종9OFF·접수Ready·outstanding0·기존Rpi restart0을 확인했다.
+
+## 상세 링크 수정 후 독립 최종 대조 — 2026-10-16
+
+- Main `7b43c7c` 배포 뒤 전달받은 전용 URL을 새 브라우저에서 직접 열었다.
+  offset24는 “설정한 요청 분배 적용 / 전체 노드 / 완료”로 표시되며 BFF 조회는
+  해당 구간의 `limit=1&cursor=24` 한 건200이었다. 현재 상태 fallback 요청은 없었다.
+- “변경 내용 자세히”의 변경 후 실행기 원본은 ready=true,
+  ACK시각07:59:56.374698422Z, decision `manual-static-routing:353984654`,
+  Rpi q2 profile 및 기존 fc63/a38c physical과 일치했다.
+  표시 JSON을 앞서 보존한 실제 `actual.native`와 구조적으로 대조해 동일함을 확인했다.
+  사건·시작·완료 시각도 offset24 원본과 일치했다. 실제 화면을 보존하고 탭을 닫았다.
+- 이로써 마지막 Dashboard 링크 차단은 해소됐다. 기존 버스트 실패·전력 원본 시각 부재·
+  알고리즘 계산 한계·에너지 절감 및 자동 전력모드 최적화 미입증을 통과로 바꾸지는 않는다.
