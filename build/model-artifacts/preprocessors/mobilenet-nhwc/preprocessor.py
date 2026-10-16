@@ -42,12 +42,19 @@ def preprocess(samples):
             report.append(f"{type(error).__name__}: {error}")
             continue
         report.append(1)
-    return (np.stack(arrays) if arrays else None), report
+    if not arrays:
+        return None, report
+    # RKNN runs only its compiled batch shapes, so failed items are zero-padded
+    # back to the requested batch and their logits dropped after inference.
+    batch = np.zeros((len(samples), 224, 224, 3), np.float32)
+    batch[:len(arrays)] = arrays
+    return (batch, len(arrays)), report
 
 
 def infer(sessions, inputs, max_new_tokens, first_token):
     (rknn,) = sessions.values()
-    return rknn.inference(inputs=[inputs], data_format=["nhwc"])[0]
+    batch, count = inputs
+    return rknn.inference(inputs=[batch], data_format=["nhwc"])[0][:count]
 
 
 def postprocess(logits):

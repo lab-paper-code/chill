@@ -50,14 +50,20 @@ class FakeRKNN:
 
 
 class MobilenetTest(unittest.TestCase):
-    def check(self, directory, shape):
+    def check(self, directory, shape, padded=False):
         module = load(ROOT / directory / "preprocessor.py", directory.replace("-", "_"))
         inputs, report = module.preprocess([{"image": jpeg((300, 200))}, {"image": CORRUPT}, module.WARMUP_SAMPLE])
         self.assertEqual(report[0::2], [1, 1])
         self.assertIsInstance(report[1], str)
-        self.assertEqual((inputs.shape, inputs.dtype), ((2, *shape), np.float32))
+        array = inputs
+        if padded:
+            array, count = inputs
+            self.assertEqual((count, array.shape[0]), (2, 3))
+            self.assertFalse(array[2].any())
+            array = array[:2]
+        self.assertEqual((array.shape, array.dtype), ((2, *shape), np.float32))
         expected = (np.array([124, 116, 104]) / 255 - module.MEAN) / module.STD
-        channels = inputs[0].reshape(3, -1).mean(axis=1) if shape[0] == 3 else inputs[0].reshape(-1, 3).mean(axis=0)
+        channels = array[0].reshape(3, -1).mean(axis=1) if shape[0] == 3 else array[0].reshape(-1, 3).mean(axis=0)
         np.testing.assert_allclose(channels, expected, atol=0.05)
         self.assertEqual(module.preprocess([{"image": CORRUPT}])[0], None)
         logits = np.zeros((2, 1000), np.float32)
@@ -71,11 +77,11 @@ class MobilenetTest(unittest.TestCase):
         self.assertIs(session.feeds["input"], inputs)
         self.assertEqual(module.postprocess(outputs), [{"label": b"7"}, {"label": b"999"}])
 
-    def test_nhwc_module_classifies_raw_jpegs_and_reports_a_corrupt_one(self):
-        module, inputs, logits = self.check("mobilenet-nhwc", (224, 224, 3))
-        rknn = FakeRKNN(logits)
+    def test_nhwc_module_pads_a_corrupt_one_to_the_requested_batch(self):
+        module, inputs, logits = self.check("mobilenet-nhwc", (224, 224, 3), padded=True)
+        rknn = FakeRKNN(np.vstack([logits, np.zeros((1, 1000), np.float32)]))
         outputs = module.infer({"mobilenet-v2-050-rk3588": rknn}, inputs, 0, lambda: self.fail("not generative"))
-        self.assertEqual(rknn.inputs, ([inputs], ["nhwc"]))
+        self.assertEqual(rknn.inputs, ([inputs[0]], ["nhwc"]))
         self.assertEqual(module.postprocess(outputs), [{"label": b"7"}, {"label": b"999"}])
 
 
