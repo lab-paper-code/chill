@@ -184,6 +184,37 @@ After the ModelSpecs, Preprocessors and Dataset, register the two Workloads in
 and [`../manual/edge_v1alpha1_workload_smolvlm2.yaml`](../manual/edge_v1alpha1_workload_smolvlm2.yaml)
 at `$OWNER/api/v1/workloads`; both use the `vqav2-val-subset` Dataset.
 
+## PLC extruder anomaly carriers
+
+The PLC workload scores windows of 60 consecutive `PLC_EXTRUDER_01` records
+(`port_type` 9006) from the `edge_poc2.zip` collection. Its raw `records` field
+is the JSON array of the window's records exactly as collected. The builders
+need `pyarrow`; the training script also needs `torch`, `numpy`, `onnx` and
+`onnxruntime`, trains on CPU with a fixed seed, and checks that ONNX Runtime
+reproduces the PyTorch scores.
+
+```sh
+# Dataset: disjoint profiling and evaluation windows split by measurement date.
+python3 build/model-artifacts/plc-anomaly/build_windows.py \
+  --output /tmp/chill-plc-dataset/artifact/plc-extruder-01-windows
+# Model and statistics: the train split fits the model, mean and std; the
+# validation split sets the threshold.
+python3 build/model-artifacts/plc-anomaly/train_export.py \
+  --model-dir /tmp/chill-plc-model/artifact \
+  --preprocessor-dir /tmp/chill-plc-pre/artifact/plc-extruder-anomaly
+cp build/model-artifacts/preprocessors/plc-extruder-anomaly/preprocessor.py \
+  /tmp/chill-plc-pre/artifact/plc-extruder-anomaly/
+```
+
+Build the model and preprocessor contexts for `linux/arm64` and the dataset
+context as multi-arch, as above. The [`plc-lstm-ae` ModelSpec](edge_v1alpha1_modelspec_plc.yaml)
+has one file, `/artifact/plc-lstm-ae.onnx`, mapping `records` f32 `[batch, 60, 10]`
+to `score` f32 `[batch]`. The [`plc-extruder-anomaly` Preprocessor](edge_v1alpha1_preprocessor_plc-extruder-anomaly.yaml)
+directory holds `preprocessor.py` and its `stats.json`; it outputs `score` and
+`anomaly` (`true` above the threshold). Register them with the
+[`plc-extruder-01-windows` Dataset](edge_v1alpha1_dataset_plc.yaml), then the
+[`plc-anomaly` Workload](../manual/edge_v1alpha1_workload_plc.yaml).
+
 `make test-artifact-tools` runs the module and dataset builder tests. The
 SmolVLM module tests skip unless `python3` has the runtime image's preprocessor
 libraries; put a virtual environment with them first on `PATH` to run them.

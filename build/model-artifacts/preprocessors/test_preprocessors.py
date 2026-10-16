@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -173,6 +174,38 @@ class SmolVLMTest(unittest.TestCase):
         fake = FakeSmolVLM(module, [[words[0], module.EOS], [module.EOS]])
         tokens = module.infer(fake.sessions(), inputs, 16, lambda: None)
         self.assertEqual((len(fake.steps), tokens.shape), (2, (2, 2)))
+
+
+class PLCTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        carrier = Path(self.directory.name)
+        carrier.joinpath("preprocessor.py").write_bytes((ROOT / "plc-extruder-anomaly" / "preprocessor.py").read_bytes())
+        carrier.joinpath("stats.json").write_text(json.dumps(
+            {"features": ["A", "B"], "window": 3, "mean": [1, 10], "std": [2, 5], "threshold": 0.5}))
+        self.module = load(carrier / "preprocessor.py", "plc_extruder_anomaly")
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def test_module_scores_raw_windows_and_reports_malformed_ones(self):
+        module = self.module
+        good = json.dumps([{"A": 3, "B": 20.0, "MOLD_TEMP": 0, "stats": None}] * 3).encode()
+        bad = [b"\xff", b"{}", json.dumps([{"A": 1, "B": 1}] * 2).encode(),
+               json.dumps([{"A": 1, "B": 1}, {"A": "1", "B": 1}, {"A": 1, "B": 1}]).encode(),
+               json.dumps([{"A": 1}, {"A": 1, "B": 1}, {"A": 1, "B": 1}]).encode(),
+               json.dumps([{"A": 1e300, "B": 1}] + [{"A": 1, "B": 1}] * 2).encode()]
+        inputs, report = module.preprocess([{"records": good}, *({"records": b} for b in bad), module.WARMUP_SAMPLE])
+        self.assertEqual(report[0::len(bad) + 1], [1, 1])
+        self.assertTrue(all(isinstance(item, str) for item in report[1:-1]))
+        self.assertEqual((inputs.shape, inputs.dtype), ((2, 3, 2), np.float32))
+        np.testing.assert_allclose(inputs[0], [[1, 2]] * 3)
+        self.assertEqual(module.preprocess([{"records": bad[0]}])[0], None)
+        session = FakeORT(np.array([0.25, 0.75], np.float32))
+        outputs = module.infer({"plc-lstm-ae": session}, inputs, 0, lambda: self.fail("not generative"))
+        self.assertIs(session.feeds["records"], inputs)
+        self.assertEqual(module.postprocess(outputs), [{"score": b"0.25", "anomaly": b"false"},
+                                                       {"score": b"0.75", "anomaly": b"true"}])
 
 
 if __name__ == "__main__":
