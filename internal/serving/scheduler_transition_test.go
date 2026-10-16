@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"slices"
@@ -36,7 +37,7 @@ func preparedPlacementFixture(t *testing.T) (SchedulerSettings, SchedulerSnapsho
 		EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope,
 		Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "remove-old-source", Size: 1},
 	}}
-	candidates, _ := EnumerateScheduler(settings, snapshot)
+	candidates, _ := schedulerEnumerateForTest(t, settings, snapshot)
 	for _, candidate := range candidates {
 		if !candidate.Keep && len(candidate.Instances) == 1 && candidate.Instances[0].Node == prepared.Node {
 			return settings, snapshot, candidate
@@ -259,7 +260,7 @@ func TestUnboundPreparedReuseRetainsActualOwnershipFenceAndSlotProvenance(t *tes
 				snapshot.Routing = map[string]map[string]int32{snapshot.Workloads[0].UID: {snapshot.Instances[0].ID: 1}}
 			}
 			wantReuse := owner == "scheduler-slot" || owner == compatibleOwner
-			candidates, _ := EnumerateScheduler(settings, snapshot)
+			candidates, _ := schedulerEnumerateForTest(t, settings, snapshot)
 			found := false
 			for _, candidate := range candidates {
 				if candidate.Keep || len(candidate.Instances) != 1 || candidate.Instances[0].Node != prepared.Node {
@@ -326,7 +327,7 @@ func overlappingResourceFixture(t *testing.T) (SchedulerSettings, SchedulerSnaps
 	source := snapshot.Instances[0]
 	snapshot.Routing[snapshot.Workloads[0].UID][source.ID] = 3
 	snapshot.Routing[snapshot.Workloads[1].UID][source.ID] = 7
-	candidates, _ := EnumerateScheduler(settings, snapshot)
+	candidates, _ := schedulerEnumerateForTest(t, settings, snapshot)
 	for _, candidate := range candidates {
 		if candidate.Keep || len(candidate.Instances) != 1 || len(candidate.Instances[0].Allocation.CPUs) != 2 {
 			continue
@@ -417,7 +418,7 @@ func TestOverlappingResourceChangeWaitsForAcceptedResponseBeforeRemoval(t *testi
 		}
 	}
 	state.receiveNative()
-	if !state.chooseBatches() || !state.startActions() || state.actionByID[drain.ID].done {
+	if !state.chooseBatches(context.Background()) || !state.startActions() || state.actionByID[drain.ID].done {
 		t.Fatalf("stop did not retain the actual nonpreemptive native work until drain: %+v", state.out)
 	}
 	source := state.byID[snapshot.Instances[0].ID]
@@ -430,7 +431,7 @@ func TestOverlappingResourceChangeWaitsForAcceptedResponseBeforeRemoval(t *testi
 		}
 		state.now = source.finish
 		state.completeExecution()
-		if !state.startActions() || !state.chooseBatches() {
+		if !state.startActions() || !state.chooseBatches(context.Background()) {
 			t.Fatalf("accepted native queue could not finish nonpreemptively: %+v", state.out)
 		}
 	}
@@ -454,7 +455,9 @@ func TestLegalOverlappingResourceDAGStillReportsMeasuredOutageOverload(t *testin
 			ID: "arrival-" + d.UID, Definition: d, Compute: true, At: snapshot.At.Add(-settings.ObservationWindow + time.Millisecond),
 		})
 	}
-	schedulerEvaluateCandidate(settings, snapshot, &target)
+	if err := schedulerEvaluateCandidate(context.Background(), settings, snapshot, &target); err != nil {
+		t.Fatal(err)
+	}
 	if !slices.Equal(target.Reasons, []string{"SLOCapacityExceeded"}) || target.ExpectedJoules == nil || target.Status != schedulerStatusOverload {
 		t.Fatalf("legal break must retain measured outage/SLO evaluation, not force feasibility: %+v", target)
 	}
@@ -483,7 +486,7 @@ func TestResourceTransitionResumesAcrossActualZeroBindingInterval(t *testing.T) 
 			snapshot.Actions = append(snapshot.Actions, action)
 		}
 	}
-	decision := EvaluateScheduler(settings, snapshot)
+	decision := schedulerEvaluateForTest(t, settings, snapshot)
 	if decision.Target == nil || !decision.Target.Keep || len(decision.Keep.Instances) != 0 {
 		t.Fatalf("actual empty interval lost its existing measured continuation: %+v", decision)
 	}
@@ -506,7 +509,7 @@ func TestResourceTransitionResumesAcrossActualZeroBindingInterval(t *testing.T) 
 	prepare := requireTransitionAction(t, target.Actions, schedulerActionPrepare)
 	prepare.Status = schedulerActionComplete
 	snapshot.Actions = append(snapshot.Actions, prepare)
-	decision = EvaluateScheduler(settings, snapshot)
+	decision = schedulerEvaluateForTest(t, settings, snapshot)
 	if decision.Target == nil || len(decision.Target.Instances) != 1 || decision.Target.Instances[0].ID != prepared.ID {
 		t.Fatalf("ready physical slot did not continue the existing target: %+v", decision)
 	}
@@ -529,7 +532,7 @@ func TestResourceTransitionResumesAcrossActualZeroBindingInterval(t *testing.T) 
 	}
 	snapshot.Instances[0].CompletionObserved = false
 	snapshot.Instances[0].CompletionMeasurement = nil
-	decision = EvaluateScheduler(settings, snapshot)
+	decision = schedulerEvaluateForTest(t, settings, snapshot)
 	if decision.Target != nil {
 		t.Fatalf("continuation resurrected a frozen proof after the actual consumer reset: %+v", decision)
 	}
@@ -550,7 +553,7 @@ func TestRunningGlobalRouteIsNotReplayedAsInstantAcknowledgementOfNewGoal(t *tes
 	}
 	result := schedulerReplayForTest(settings, snapshot, target)
 	schedulerRequireReason(t, result.reasons, "InProgressRoutingAcknowledgementUnobserved")
-	decision := EvaluateScheduler(settings, snapshot)
+	decision := schedulerEvaluateForTest(t, settings, snapshot)
 	if decision.Target != nil || decision.Status != schedulerStatusPending {
 		t.Fatalf("unobserved existing ACK was invented as the new target or zero ETA: %+v", decision)
 	}

@@ -37,7 +37,7 @@ func TestSchedulerOutstandingUsesCurrentReadTimeAfterCaptureIO(t *testing.T) {
 		t.Errorf("capture I/O was omitted from request age/lifetime: elapsed=%s remaining=%v; want %s/%s",
 			request.Elapsed, request.RemainingLifetime, wantElapsed, wantRemaining)
 	}
-	decision := EvaluateScheduler(settings, snapshot)
+	decision := schedulerEvaluateForTest(t, settings, snapshot)
 	estimate := schedulerRequireEstimate(t, decision.Keep, d.UID)
 	wantCompletion := float64(wantElapsed) + snapshot.Instances[0].Profile.Batches[0].DurationNanos[0]
 	if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != wantCompletion ||
@@ -225,7 +225,7 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	snapshot.Instances[0].ObservedAt = snapshot.At
 	current := r.SchedulerInputs(func() time.Time { return snapshot.At })
 	snapshot.At, snapshot.Outstanding = current.At, current.Outstanding
-	decision := EvaluateScheduler(settings, snapshot)
+	decision := schedulerEvaluateForTest(t, settings, snapshot)
 	estimate := schedulerRequireEstimate(t, decision.Keep, d.UID)
 	if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != float64(106*time.Millisecond) {
 		t.Fatalf("SDK-to-exchange leg must not be subtracted twice from the response tail: %+v", estimate)
@@ -500,13 +500,13 @@ func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T)
 	snapshot.Instances = []SchedulerInstance{first, last}
 	snapshot.Routing = map[string]map[string]int32{"w1": {"i2": 1}, "w2": {"i1": 3, "i2": 1}}
 	settings.Controls.Enabled = false
-	keep, _ := EnumerateScheduler(settings, snapshot)
+	keep, _ := schedulerEnumerateForTest(t, settings, snapshot)
 	t.Run("keep", func(t *testing.T) {
 		assertSchedulerCandidateDistribution(t, snapshot, keep[0], [2]int{0, 6}, "")
 	})
 	for _, routing := range []bool{false, true} {
 		settings.Controls.Routing = routing
-		e := schedulerEnumeration{settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+		e := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
 		e.emit(snapshot.Instances)
 		expected := [][2]int{{0, 6}}
 		name := "routing-disabled"
@@ -531,7 +531,7 @@ func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T)
 		prepared[n].ID += "-slot"
 	}
 	settings.Controls.Routing = false
-	e := schedulerEnumeration{settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+	e := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
 	e.emit(prepared)
 	t.Run("prepared-physical-identities", func(t *testing.T) {
 		assertSchedulerCandidateDistribution(t, snapshot, e.result[0], [2]int{6, 6}, "")
@@ -541,7 +541,7 @@ func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T)
 	sharedSnapshot.Instances[0].WorkloadUIDs = []string{"w1"}
 	sharedSnapshot.Instances[1].WorkloadUIDs = []string{"w2"}
 	sharedSnapshot.Routing = map[string]map[string]int32{"w1": {"i1": 3}, "w2": {"i2": 1}}
-	shared := schedulerEnumeration{settings: settings, snapshot: sharedSnapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+	shared := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: sharedSnapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
 	shared.emit([]SchedulerInstance{first})
 	t.Run("new-shared-workload-routing-disabled", func(t *testing.T) {
 		assertSchedulerCandidateDistribution(t, sharedSnapshot, shared.result[0], [2]int{8, 8}, "")
@@ -550,7 +550,7 @@ func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T)
 	creditSnapshot.Routing = map[string]map[string]int32{"w1": {"i2": 1}, "w2": {"i1": 1, "i2": 3}}
 	for _, routing := range []bool{false, true} {
 		settings.Controls.Routing = routing
-		credits := schedulerEnumeration{settings: settings, snapshot: creditSnapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+		credits := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: creditSnapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
 		credits.emit(snapshot.Instances)
 		expected, name := [2]int{0, 2}, "retained"
 		if routing {

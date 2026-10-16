@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"reflect"
@@ -8,14 +9,25 @@ import (
 	"sort"
 )
 
-func EnumerateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) ([]SchedulerCandidate, SchedulerSearch) {
-	search := schedulerSearchPopulation(settings, snapshot)
-	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: append([]SchedulerNode(nil), snapshot.Nodes...), Instances: append([]SchedulerInstance(nil), snapshot.Instances...), Routing: schedulerInstanceRouting(snapshot.Workloads, snapshot.Instances)}
-	maps.Copy(keep.Routing, snapshot.Routing)
+func EnumerateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) ([]SchedulerCandidate, SchedulerSearch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, SchedulerSearch{}, err
+	}
+	search := schedulerSearchPopulation(ctx, settings, snapshot)
+	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: append([]SchedulerNode(nil), snapshot.Nodes...), Instances: append([]SchedulerInstance(nil), snapshot.Instances...), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
+	for uid, routing := range snapshot.Routing {
+		if err := ctx.Err(); err != nil {
+			return nil, SchedulerSearch{}, err
+		}
+		keep.Routing[uid] = routing
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, SchedulerSearch{}, err
+	}
 	result := []SchedulerCandidate{keep}
 	if settings.Validate() != nil || !settings.Controls.Enabled {
 		search.Examined = 1
-		return result, search
+		return result, search, ctx.Err()
 	}
 	if snapshot.InProgressTarget != nil {
 		keep.Actions = schedulerPlan(snapshot, *snapshot.InProgressTarget)
@@ -23,30 +35,42 @@ func EnumerateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) 
 	}
 	workloads := append([]*Definition(nil), snapshot.Workloads...)
 	for _, d := range workloads {
+		if err := ctx.Err(); err != nil {
+			return nil, SchedulerSearch{}, err
+		}
 		if d == nil {
 			search.Examined = 1
-			return result, search
+			return result, search, ctx.Err()
 		}
 	}
 	sort.Slice(workloads, func(i, j int) bool { return workloads[i].UID < workloads[j].UID })
-	e := schedulerEnumeration{settings: settings, snapshot: snapshot, search: search, workloads: workloads, options: schedulerMeasuredOptions(settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep, true): true}, result: result}
-	e.controlBase = schedulerUnroutedTransition(snapshot)
+	e := schedulerEnumeration{ctx: ctx, settings: settings, snapshot: snapshot, search: search, workloads: workloads, options: schedulerMeasuredOptions(ctx, settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep, true): true}, result: result}
+	e.controlBase = schedulerUnroutedTransition(ctx, snapshot)
 	if !settings.Controls.Sharing {
-		e.groups = schedulerExistingWorkloadGroups(workloads, e.controlInstances())
+		e.groups = schedulerExistingWorkloadGroups(ctx, workloads, e.controlInstances())
 	}
 	e.visit(0, nil)
 	e.search.Examined = len(e.result)
-	return e.result, e.search
+	if err := ctx.Err(); err != nil {
+		return nil, SchedulerSearch{}, err
+	}
+	return e.result, e.search, nil
 }
 
-func schedulerInstanceRouting(workloads []*Definition, instances []SchedulerInstance) map[string]map[string]int32 {
+func schedulerInstanceRouting(ctx context.Context, workloads []*Definition, instances []SchedulerInstance) map[string]map[string]int32 {
 	routing := make(map[string]map[string]int32, len(workloads))
 	for _, d := range workloads {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if d == nil {
 			continue
 		}
 		weights := map[string]int32{}
 		for _, i := range instances {
+			if ctx.Err() != nil {
+				return nil
+			}
 			if schedulerHas(i.WorkloadUIDs, d.UID) && i.Weight > 0 {
 				weights[i.ID] = i.Weight
 			}
@@ -56,10 +80,13 @@ func schedulerInstanceRouting(workloads []*Definition, instances []SchedulerInst
 	return routing
 }
 
-func schedulerSearchPopulation(settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerSearch {
+func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerSearch {
 	search := SchedulerSearch{Bounds: settings, WindowStart: snapshot.ObservationEnd.Add(-settings.ObservationWindow), WindowEnd: snapshot.ObservationEnd, Population: "received events in [windowStart,windowEnd); validated compute arrivals (including capacity/evidence rejections) replayed; outstanding retained independently"}
 	loads := map[string]*SchedulerLoad{}
 	for _, a := range snapshot.Arrivals {
+		if ctx.Err() != nil {
+			return search
+		}
 		if a.At.Before(search.WindowStart) || !a.At.Before(search.WindowEnd) {
 			continue
 		}
@@ -84,10 +111,16 @@ func schedulerSearchPopulation(settings SchedulerSettings, snapshot SchedulerSna
 	}
 	keys := []string{}
 	for key := range loads {
+		if ctx.Err() != nil {
+			return search
+		}
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
+		if ctx.Err() != nil {
+			return search
+		}
 		load := *loads[key]
 		if settings.ObservationWindow > 0 {
 			load.InputsPerSecond = float64(load.ComputeInputs) / settings.ObservationWindow.Seconds()
@@ -97,9 +130,12 @@ func schedulerSearchPopulation(settings SchedulerSettings, snapshot SchedulerSna
 	return search
 }
 
-func schedulerMeasuredOptions(settings SchedulerSettings, snapshot SchedulerSnapshot) []SchedulerOption {
+func schedulerMeasuredOptions(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) []SchedulerOption {
 	options := []SchedulerOption{}
 	for _, o := range snapshot.Options {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if !settings.Controls.Batching {
 			options = append(options, o)
 			continue
@@ -108,6 +144,9 @@ func schedulerMeasuredOptions(settings SchedulerSettings, snapshot SchedulerSnap
 			continue
 		}
 		for _, b := range o.Instance.Profile.Batches {
+			if ctx.Err() != nil {
+				return nil
+			}
 			if b.Batch <= o.Instance.MaxBatch {
 				variant := o
 				variant.Instance.MaxBatch = b.Batch
@@ -119,6 +158,9 @@ func schedulerMeasuredOptions(settings SchedulerSettings, snapshot SchedulerSnap
 	// Latest successful evidence wins for otherwise identical execution conditions.
 	latest := map[string]SchedulerOption{}
 	for _, o := range options {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if o.Instance.Profile == nil {
 			continue
 		}
@@ -136,6 +178,9 @@ func schedulerMeasuredOptions(settings SchedulerSettings, snapshot SchedulerSnap
 	}
 	options = nil
 	for _, o := range latest {
+		if ctx.Err() != nil {
+			return nil
+		}
 		options = append(options, o)
 	}
 	sort.Slice(options, func(i, j int) bool { return schedulerOptionKey(options[i]) < schedulerOptionKey(options[j]) })
@@ -143,14 +188,20 @@ func schedulerMeasuredOptions(settings SchedulerSettings, snapshot SchedulerSnap
 }
 
 // Sharing OFF preserves the existing physical UID cohorts, not singleton UIDs.
-func schedulerExistingWorkloadGroups(workloads []*Definition, instances []SchedulerInstance) [][]*Definition {
+func schedulerExistingWorkloadGroups(ctx context.Context, workloads []*Definition, instances []SchedulerInstance) [][]*Definition {
 	groups := make([][]*Definition, 0, len(instances))
 	seen := map[string]bool{}
 	assigned := map[string]bool{}
 	for _, instance := range instances {
+		if ctx.Err() != nil {
+			return nil
+		}
 		group := []*Definition{}
 		uids := []string{}
 		for _, d := range workloads {
+			if ctx.Err() != nil {
+				return nil
+			}
 			if schedulerHas(instance.WorkloadUIDs, d.UID) {
 				group = append(group, d)
 				uids = append(uids, d.UID)
@@ -164,6 +215,9 @@ func schedulerExistingWorkloadGroups(workloads []*Definition, instances []Schedu
 		}
 	}
 	for _, d := range workloads {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if !assigned[d.UID] {
 			groups = append(groups, []*Definition{d})
 		}
@@ -172,6 +226,7 @@ func schedulerExistingWorkloadGroups(workloads []*Definition, instances []Schedu
 }
 
 type schedulerEnumeration struct {
+	ctx         context.Context
 	settings    SchedulerSettings
 	snapshot    SchedulerSnapshot
 	search      SchedulerSearch
@@ -186,13 +241,16 @@ type schedulerEnumeration struct {
 
 // A drained routing gap does not change the selected cohort, replica count or
 // per-UID weights. Resource occupancy and physical reuse still use the snapshot.
-func schedulerUnroutedTransition(snapshot SchedulerSnapshot) *SchedulerCandidate {
+func schedulerUnroutedTransition(ctx context.Context, snapshot SchedulerSnapshot) *SchedulerCandidate {
 	goal := snapshot.InProgressTarget
 	if goal == nil || len(goal.Routing) != len(snapshot.Workloads) {
 		return nil
 	}
 	missing := false
 	for _, d := range snapshot.Workloads {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if d == nil || !schedulerPositiveRouting(goal.Routing[d.UID]) {
 			return nil
 		}
@@ -228,6 +286,9 @@ func (e *schedulerEnumeration) controlRouting() map[string]map[string]int32 {
 }
 
 func (e *schedulerEnumeration) visit(w int, chosen []SchedulerInstance) {
+	if e.ctx.Err() != nil {
+		return
+	}
 	if len(e.result) >= e.settings.MaxCandidates {
 		e.search.Truncated = true
 		return
@@ -245,7 +306,13 @@ func (e *schedulerEnumeration) visit(w int, chosen []SchedulerInstance) {
 	// A sharing alternative attaches the UID to one compatible physical runner.
 	if e.settings.Controls.Sharing {
 		for j, i := range chosen {
+			if e.ctx.Err() != nil {
+				return
+			}
 			for _, o := range e.options {
+				if e.ctx.Err() != nil {
+					return
+				}
 				if schedulerOptionCondition(o) == schedulerOptionCondition(SchedulerOption{Instance: i}) && schedulerHas(o.CompatibleUIDs, d.UID) {
 					next := append([]SchedulerInstance(nil), chosen...)
 					next[j].WorkloadUIDs = append(append([]string(nil), next[j].WorkloadUIDs...), d.UID)
@@ -257,12 +324,18 @@ func (e *schedulerEnumeration) visit(w int, chosen []SchedulerInstance) {
 	}
 	count := 0
 	for _, i := range e.controlInstances() {
+		if e.ctx.Err() != nil {
+			return
+		}
 		if e.sameGroup(i, group) {
 			count++
 		}
 	}
 	limit := e.replicaLimit(group, chosen)
 	for n := 1; n <= limit; n++ {
+		if e.ctx.Err() != nil {
+			return
+		}
 		if !e.settings.Controls.Replicas && n != count {
 			continue
 		}
@@ -283,6 +356,9 @@ func (e *schedulerEnumeration) sameGroup(instance SchedulerInstance, group []*De
 	}
 	count := 0
 	for _, d := range e.workloads {
+		if e.ctx.Err() != nil {
+			return false
+		}
 		if schedulerHas(instance.WorkloadUIDs, d.UID) {
 			if !slices.Contains(group, d) {
 				return false
@@ -296,8 +372,14 @@ func (e *schedulerEnumeration) sameGroup(instance SchedulerInstance, group []*De
 func (e *schedulerEnumeration) replicaLimit(group []*Definition, chosen []SchedulerInstance) int {
 	limit := e.settings.MaxReplicas
 	for _, d := range group {
+		if e.ctx.Err() != nil {
+			return 0
+		}
 		count := 0
 		for _, instance := range chosen {
+			if e.ctx.Err() != nil {
+				return 0
+			}
 			if schedulerHas(instance.WorkloadUIDs, d.UID) {
 				count++
 			}
@@ -310,11 +392,17 @@ func (e *schedulerEnumeration) replicaLimit(group []*Definition, chosen []Schedu
 func (e *schedulerEnumeration) sourceIndex(group []*Definition, chosen []SchedulerInstance) int {
 	ordinal := 0
 	for _, instance := range chosen {
+		if e.ctx.Err() != nil {
+			return -1
+		}
 		if e.sameGroup(instance, group) {
 			ordinal++
 		}
 	}
 	for index, instance := range e.controlInstances() {
+		if e.ctx.Err() != nil {
+			return -1
+		}
 		if e.sameGroup(instance, group) {
 			if ordinal == 0 {
 				return index
@@ -326,29 +414,25 @@ func (e *schedulerEnumeration) sourceIndex(group []*Definition, chosen []Schedul
 }
 
 func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
-	nodes := append([]SchedulerNode(nil), e.snapshot.Nodes...)
-	modes := map[string]string{}
-	for _, i := range chosen {
-		if i.Profile != nil {
-			modes[i.Node.UID] = i.Profile.Condition.PowerMode
-		}
+	if e.ctx.Err() != nil {
+		return
 	}
-	for n := range nodes {
-		if m, ok := modes[nodes[n].Node.UID]; ok {
-			nodes[n].PowerMode = m
-		}
-		for _, i := range chosen {
-			if i.Node.UID == nodes[n].Node.UID {
-				nodes[n].Pool = i.Pool
-			}
-		}
+	nodes := e.candidateNodes(chosen)
+	if e.ctx.Err() != nil {
+		return
 	}
 	c := SchedulerCandidate{Nodes: nodes, Instances: append([]SchedulerInstance(nil), chosen...)}
 	// Preserve physical identity only when the complete measured allocation matches.
 	used := map[string][]string{}
 	for j := range c.Instances {
+		if e.ctx.Err() != nil {
+			return
+		}
 		source, anchored := e.sources[c.Instances[j].ID]
 		for _, old := range e.snapshot.Instances {
+			if e.ctx.Err() != nil {
+				return
+			}
 			if _, preserved := used[old.ID]; !preserved && e.canReuseSlot(old, source, anchored, c.Instances[j].WorkloadUIDs) && old.Node == c.Instances[j].Node && old.Pool == c.Instances[j].Pool && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
 				c.Instances[j].ID = old.ID
 				c.Instances[j].Ready = old.Ready
@@ -363,6 +447,9 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 	}
 	c.Routing = e.routing(c.Instances, chosen, used)
 	add := func(c SchedulerCandidate) {
+		if e.ctx.Err() != nil {
+			return
+		}
 		key := schedulerConfigKey(c, true)
 		if e.seen[key] {
 			return
@@ -379,7 +466,13 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 	add(c)
 	if e.settings.Controls.Routing {
 		for _, d := range e.workloads {
+			if e.ctx.Err() != nil {
+				return
+			}
 			for _, i := range c.Instances {
+				if e.ctx.Err() != nil {
+					return
+				}
 				if !schedulerHas(i.WorkloadUIDs, d.UID) {
 					continue
 				}
@@ -390,6 +483,36 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 			}
 		}
 	}
+}
+
+func (e *schedulerEnumeration) candidateNodes(chosen []SchedulerInstance) []SchedulerNode {
+	nodes := append([]SchedulerNode(nil), e.snapshot.Nodes...)
+	modes := map[string]string{}
+	for _, i := range chosen {
+		if e.ctx.Err() != nil {
+			return nil
+		}
+		if i.Profile != nil {
+			modes[i.Node.UID] = i.Profile.Condition.PowerMode
+		}
+	}
+	for n := range nodes {
+		if e.ctx.Err() != nil {
+			return nil
+		}
+		if m, ok := modes[nodes[n].Node.UID]; ok {
+			nodes[n].PowerMode = m
+		}
+		for _, i := range chosen {
+			if e.ctx.Err() != nil {
+				return nil
+			}
+			if i.Node.UID == nodes[n].Node.UID {
+				nodes[n].Pool = i.Pool
+			}
+		}
+	}
+	return nodes
 }
 
 func (e *schedulerEnumeration) canReuseSlot(old SchedulerInstance, source int, anchored bool, uids []string) bool {
@@ -405,11 +528,14 @@ func (e *schedulerEnumeration) canReuseSlot(old SchedulerInstance, source int, a
 }
 
 func (e *schedulerEnumeration) routing(instances, chosen []SchedulerInstance, used map[string][]string) map[string]map[string]int32 {
-	routing := schedulerInstanceRouting(e.workloads, instances)
+	routing := schedulerInstanceRouting(e.ctx, e.workloads, instances)
 	if e.settings.Controls.Routing {
 		return routing
 	}
 	for index, instance := range instances {
+		if e.ctx.Err() != nil {
+			return nil
+		}
 		oldUIDs, preserved := used[instance.ID]
 		sourceID := instance.ID
 		if source, anchored := e.sources[chosen[index].ID]; anchored {
@@ -420,6 +546,9 @@ func (e *schedulerEnumeration) routing(instances, chosen []SchedulerInstance, us
 			continue
 		}
 		for _, uid := range instance.WorkloadUIDs {
+			if e.ctx.Err() != nil {
+				return nil
+			}
 			if !schedulerHas(oldUIDs, uid) {
 				continue
 			}
@@ -435,6 +564,9 @@ func (e *schedulerEnumeration) routing(instances, chosen []SchedulerInstance, us
 }
 
 func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance) {
+	if e.ctx.Err() != nil {
+		return
+	}
 	group := e.group(w)
 	d := group[0]
 	if left == 0 {
@@ -449,6 +581,9 @@ func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance)
 		source = e.sourceIndex(group, xs)
 	}
 	for k := start; k < len(e.options); k++ {
+		if e.ctx.Err() != nil {
+			return
+		}
 		o := e.options[k]
 		if slices.ContainsFunc(group, func(d *Definition) bool {
 			return !schedulerHas(o.CompatibleUIDs, d.UID) || !e.optionAllowed(d, o, group, source)
@@ -458,6 +593,9 @@ func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance)
 		i := o.Instance
 		i.WorkloadUIDs = make([]string, len(group))
 		for index, d := range group {
+			if e.ctx.Err() != nil {
+				return
+			}
 			i.WorkloadUIDs[index] = d.UID
 		}
 		i.ID = fmt.Sprintf("target-%s-%d-%d", d.UID, k, len(xs))
@@ -474,6 +612,9 @@ func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance)
 		}
 		conflict := false
 		for _, old := range xs {
+			if e.ctx.Err() != nil {
+				return
+			}
 			if old.Node.UID == i.Node.UID && (old.Pool != i.Pool || old.Profile.Condition.PowerMode != i.Profile.Condition.PowerMode) {
 				conflict = true
 			}

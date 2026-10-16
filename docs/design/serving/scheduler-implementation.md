@@ -472,6 +472,16 @@ Workload 정의를 복원한 뒤, controls ON일 때만 기존 `EnableSchedulerR
 따라서 9개 controls ON 재시작도 빈 fresh runtime이 아니라 복원된 actual routing에서
 시작한다. 기본 controls OFF와 live `SetConfiguration`의 OFF→ON freeze는 그대로다.
 
+owner의 기존 `--request-timeout`(기본 30초)은 한 control 호출의 refresh와 CPU 후보 평가·
+interval projection에 같은 `callCtx`로 적용된다. replay/event·후보·방향별 kernel 반복은
+취소를 확인하고 정상 Feasible/Pending 대신 context 오류로 반환한다. `o.lock`과 `tickMu`는
+기존대로 snapshot 평가·설정 수락·publication을 직렬화한다. CPU 계산 도중 확인한 취소는
+snapshot/decision 발행 전에 오류로 반환한다. publication/journal 직전과 `OnDecision` 이후에도
+취소를 확인하며, callback 중/직후 취소는 이미 발행·기록한 유효 판단을 보존하되 context 오류를
+반환하고 history를 진행하거나 새 physical action을 시작하지 않는다. 이미 시작한 실제 동작을
+소급해 취소한 것으로 바꾸지 않는다. 호출이 잠금을 반환하면 다음 full refresh가 canonical
+controls OFF와 나머지 구성을 함께 수락하며, 이전 ON 계산을 비동기로 재사용하지 않는다.
+
 | 구성 필드 | 의미와 실제 근거 |
 |---|---|
 | `settings` | nanosecond duration의 observation/control/horizon, search/replay/resource bounds·seed·제어 활성 상태 |

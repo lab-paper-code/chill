@@ -232,6 +232,9 @@ func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {
 func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.SchedulerDecision, error) {
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return serving.SchedulerDecision{}, err
+	}
 	c.mu.Lock()
 	config := c.config
 	goal := c.goal
@@ -241,17 +244,36 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return serving.SchedulerDecision{}, err
+	}
 	snapshot = c.reconcileSnapshot(snapshot, goal, snapshot.At, config.Settings.ObservationWindow)
-	decision := serving.EvaluateScheduler(config.Settings, snapshot)
-	work, decision := c.applyWorkPolicy(snapshot, decision, interval, intervalErr)
+	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot)
+	if err != nil {
+		return serving.SchedulerDecision{}, err
+	}
+	work, decision, err := c.applyWorkPolicy(ctx, snapshot, decision, interval, intervalErr)
+	if err != nil {
+		return serving.SchedulerDecision{}, err
+	}
 	c.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		c.mu.Unlock()
+		return serving.SchedulerDecision{}, err
+	}
 	c.state.Snapshot = snapshot
 	c.state.Decision = decision
 	c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return serving.SchedulerDecision{}, err
+	}
 	if config.OnDecision != nil {
 		if err := config.OnDecision(decision); err != nil {
 			return decision, fmt.Errorf("persist decision before physical action: %w", err)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return serving.SchedulerDecision{}, err
 	}
 	c.work = work
 	if config.Settings.Controls.Enabled && decision.Target != nil {
@@ -271,9 +293,12 @@ func (c *SchedulerController) workInterval(end time.Time, settings serving.Sched
 	return &interval, nil
 }
 
-func (c *SchedulerController) applyWorkPolicy(snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision, interval *serving.LoadWindow, intervalErr error) (*schedulerWorkState, serving.SchedulerDecision) {
+func (c *SchedulerController) applyWorkPolicy(ctx context.Context, snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision, interval *serving.LoadWindow, intervalErr error) (*schedulerWorkState, serving.SchedulerDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, serving.SchedulerDecision{}, err
+	}
 	if decision.Settings.Algorithm != serving.SchedulerAlgorithmProjectedWorkHistory {
-		return c.work, decision
+		return c.work, decision, nil
 	}
 	policy := &serving.SchedulerPolicyDecision{}
 	decision.Policy = policy
@@ -282,11 +307,11 @@ func (c *SchedulerController) applyWorkPolicy(snapshot serving.SchedulerSnapshot
 	policy.CurrentKey = currentKey
 	if err != nil {
 		policy.PendingReason = err.Error()
-		return c.work, pendingWorkSelection(snapshot, decision)
+		return c.work, pendingWorkSelection(snapshot, decision), nil
 	}
 	if !decision.Settings.Controls.Enabled {
 		policy.Selection = "ControlsOff"
-		return c.work, decision
+		return c.work, decision, nil
 	}
 	work := c.work
 	if work == nil {
@@ -299,11 +324,17 @@ func (c *SchedulerController) applyWorkPolicy(snapshot serving.SchedulerSnapshot
 	next := *work
 	next.configurations = make(map[string]serving.SchedulerCandidate, len(work.configurations))
 	for key, configuration := range work.configurations {
+		if err := ctx.Err(); err != nil {
+			return nil, serving.SchedulerDecision{}, err
+		}
 		next.configurations[key] = configuration
 	}
 	policy.StartedAt, policy.StartReason, policy.History = work.startedAt, work.startReason, work.history
 	policy.CandidateKeys = make([]string, len(decision.Candidates))
 	for index, candidate := range decision.Candidates {
+		if err := ctx.Err(); err != nil {
+			return nil, serving.SchedulerDecision{}, err
+		}
 		if candidate.ExpectedJoules == nil {
 			continue
 		}
@@ -317,14 +348,14 @@ func (c *SchedulerController) applyWorkPolicy(snapshot serving.SchedulerSnapshot
 		policy.CandidateKeys[index] = key
 		if _, exists := next.configurations[key]; !exists && len(next.configurations) >= decision.Settings.MaxCandidates {
 			policy.PendingReason = "RetainedLogicalConfigurationsExceedMaxCandidates"
-			return work, pendingWorkSelection(snapshot, decision)
+			return work, pendingWorkSelection(snapshot, decision), nil
 		}
 		candidate.Actions, candidate.Keep = nil, false
 		next.configurations[key] = candidate
 	}
 	if intervalErr != nil {
 		policy.PendingReason = intervalErr.Error()
-		return &next, pendingWorkSelection(snapshot, decision)
+		return &next, pendingWorkSelection(snapshot, decision), nil
 	}
 	if interval != nil {
 		policy.IntervalFrom, policy.IntervalTo = interval.From, interval.To
@@ -332,26 +363,32 @@ func (c *SchedulerController) applyWorkPolicy(snapshot serving.SchedulerSnapshot
 		projected.Arrivals = interval.Arrivals
 		settings := decision.Settings
 		settings.ObservationWindow, settings.Horizon = interval.Duration, interval.Duration
-		policy.Kernels = serving.ProjectSchedulerWorkKernels(settings, projected, next.configurations, work.history.Values)
+		policy.Kernels, err = serving.ProjectSchedulerWorkKernels(ctx, settings, projected, next.configurations, work.history.Values)
+		if err != nil {
+			return nil, serving.SchedulerDecision{}, err
+		}
 		advanced, advanceErr := serving.AdvanceSchedulerWorkHistory(work.history, interval.From, interval.To, policy.Kernels)
 		if advanceErr != nil {
 			policy.PendingReason = advanceErr.Error()
-			return &next, pendingWorkSelection(snapshot, decision)
+			return &next, pendingWorkSelection(snapshot, decision), nil
 		}
 		next.history = advanced
 		policy.History = advanced
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, serving.SchedulerDecision{}, err
+	}
 	selected, pending := serving.SelectSchedulerWorkCandidate(next.history, decision.Candidates, policy.CandidateKeys)
 	if pending != "" {
 		policy.PendingReason = pending
-		return &next, pendingWorkSelection(snapshot, decision)
+		return &next, pendingWorkSelection(snapshot, decision), nil
 	}
 	serving.FinalizeSchedulerTarget(snapshot, &decision, selected)
 	policy.Selection = schedulerPolicyProjected
 	if decision.Target.Status != schedulerPolicyFeasible {
 		policy.Selection = schedulerPolicySLOResponse
 	}
-	return &next, decision
+	return &next, decision, nil
 }
 
 func pendingWorkSelection(snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision) serving.SchedulerDecision {

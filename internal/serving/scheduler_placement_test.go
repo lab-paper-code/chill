@@ -63,7 +63,7 @@ func placementOnlyFixture() (SchedulerSettings, SchedulerSnapshot) {
 
 func TestPlacementOnlyMovesExistingSharedCPU1WithoutChangingOtherControls(t *testing.T) {
 	settings, snapshot := placementOnlyFixture()
-	candidates, _ := EnumerateScheduler(settings, snapshot)
+	candidates, _ := schedulerEnumerateForTest(t, settings, snapshot)
 	found := false
 	for _, candidate := range candidates {
 		if len(candidate.Instances) != 1 {
@@ -120,7 +120,7 @@ func TestSharingOffPreservesCohortsWhileResourcesAndReplicasVary(t *testing.T) {
 			}
 			snapshot.Instances = []SchedulerInstance{first, second}
 		}
-		candidates, _ := EnumerateScheduler(settings, snapshot)
+		candidates, _ := schedulerEnumerateForTest(t, settings, snapshot)
 		if len(candidates) < 2 {
 			t.Fatal("disabled sharing prevented independent resource/replica alternatives")
 		}
@@ -160,7 +160,7 @@ func TestPlacementOnlyUsesDestinationPhysicalAffinityWithoutResizing(t *testing.
 		option.Instance.Profile, option.Instance.Allocation.CPUs = &profile, []int{2}
 		option.Instance = schedulerMeasuredInstance(option.Instance, snapshot.Workloads[0], 0)
 	}
-	candidates, _ := EnumerateScheduler(settings, snapshot)
+	candidates, _ := schedulerEnumerateForTest(t, settings, snapshot)
 	found := false
 	for _, candidate := range candidates {
 		instance := candidate.Instances[0]
@@ -201,7 +201,7 @@ func TestPlacementOnlyTransfersEachCohortUIDWeightInsteadOfOptionWeight(t *testi
 	for index := range snapshot.Options {
 		snapshot.Options[index].Instance.Weight = 19
 	}
-	candidates, _ := EnumerateScheduler(settings, snapshot)
+	candidates, _ := schedulerEnumerateForTest(t, settings, snapshot)
 	moved := false
 	for _, candidate := range candidates {
 		if len(candidate.Instances) != 2 {
@@ -268,7 +268,7 @@ func TestDisabledControlsAreBoundToExactOverlappingCohortNotSingletons(t *testin
 			case "batching":
 				settings.Controls.Batching = false
 			}
-			candidates, _ := EnumerateScheduler(settings, snapshot)
+			candidates, _ := schedulerEnumerateForTest(t, settings, snapshot)
 			if len(candidates) < 2 {
 				t.Fatal("exact-cohort fencing removed all legitimate independent-control alternatives")
 			}

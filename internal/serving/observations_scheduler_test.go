@@ -148,7 +148,7 @@ func TestObservedOverheadJoinsReceiptResidualAndResponseByInstance(t *testing.T)
 	snapshot.Instances[0].CompletionOverhead = measurement.Completion
 	snapshot.Instances[0].CompletionMeasurement = &measurement
 	snapshot.Arrivals = []SchedulerArrival{{At: snapshot.At.Add(-settings.ObservationWindow), Definition: snapshot.Workloads[0], Compute: true, Accepted: true}}
-	decision := EvaluateScheduler(settings, snapshot)
+	decision := schedulerEvaluateForTest(t, settings, snapshot)
 	estimate := schedulerRequireEstimate(t, decision.Keep, snapshot.Workloads[0].UID)
 	if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos < float64(1207*ms) || decision.Keep.Status != schedulerStatusOverload {
 		t.Fatalf("large receipt-to-dispatch delay must miss the 1s SLO: %+v", decision.Keep)

@@ -79,11 +79,9 @@ func TestStaticExclusiveBaselineThenSharedTargetDrainsPhysicalBinding(t *testing
 	settings, _ := schedulerFixture()
 	snapshot.Instances = []SchedulerInstance{target.Instances[1], target.Instances[0]}
 	snapshot.Routing = target.Routing
-	enumeration := schedulerEnumeration{
-		settings: settings, snapshot: snapshot, workloads: []*Definition{&second, first},
+	enumeration := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: snapshot, workloads: []*Definition{&second, first},
 		options: []SchedulerOption{{Instance: other, CompatibleUIDs: []string{first.UID, second.UID}}},
-		seen:    map[string]bool{},
-	}
+		seen:    map[string]bool{}}
 	enumeration.visit(1, []SchedulerInstance{snapshot.Instances[0]})
 	if len(enumeration.result) == 0 {
 		t.Fatal("ordinary sharing enumeration did not attach the second UID")

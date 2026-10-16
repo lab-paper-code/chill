@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"math"
 	"math/rand/v2"
 	"reflect"
@@ -29,13 +30,13 @@ func TestReplayCompletionSubtractsOnlyActualConsumedSender(t *testing.T) {
 				r.ReceivedAt = r.ReceivedAt.Add(-r.RunningElapsed)
 			}
 			snap.Outstanding = []SchedulerRequest{r}
-			decision := EvaluateScheduler(s, snap)
+			decision := schedulerEvaluateForTest(t, s, snap)
 			e := schedulerRequireEstimate(t, decision.Keep, d.UID)
 			if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(want) || e.PredictedOutcomes["timeout"] != 0 {
 				t.Fatalf("%s sender=%g must consume predispatch only once: want %s got %+v reasons=%v", phase, senderMS, want, e, decision.Keep.Reasons)
 			}
 			snap.Outstanding[0].NativeSenderElapsedMS = nil
-			missing := EvaluateScheduler(s, snap)
+			missing := schedulerEvaluateForTest(t, s, snap)
 			schedulerRequireReason(t, missing.Keep.Reasons, "MissingNativeSenderContext")
 		}
 	}
@@ -51,7 +52,7 @@ func TestSchedulerReplayDeadlineModesPreserveTimeoutPopulation(t *testing.T) {
 			snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = mode
 			zero := 0.0
 			snap.Outstanding = []SchedulerRequest{{ID: "infeasible", Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
-			decision := EvaluateScheduler(s, snap)
+			decision := schedulerEvaluateForTest(t, s, snap)
 			e := schedulerRequireEstimate(t, decision.Keep, d.UID)
 			if decision.Keep.ExpectedJoules == nil || decision.Target == nil || decision.Status != schedulerStatusOverload {
 				t.Fatalf("supported mode must be evaluable, not missing evidence or caller expiry: %+v", decision)
@@ -81,7 +82,7 @@ func TestSchedulerReplayDropsAtSLOBoundaryWhileBatchRuns(t *testing.T) {
 	state := schedulerReplayState{settings: s, snap: snap, c: SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, rng: rand.New(rand.NewPCG(1, 0)), horizon: float64(s.Horizon), out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	state.initializeInstances()
 	state.initializeOutstanding()
-	if !state.initializeRunning() || !state.chooseBatches() {
+	if !state.initializeRunning() || !state.chooseBatches(context.Background()) {
 		t.Fatalf("active batch initialization failed: %+v", state.out)
 	}
 	next, remaining := state.nextEvent()
@@ -89,7 +90,7 @@ func TestSchedulerReplayDropsAtSLOBoundaryWhileBatchRuns(t *testing.T) {
 		t.Fatalf("infeasible prediction must not drop while active; actual expiry must be next: next=%g state=%+v", next, state.instances[0])
 	}
 	state.now = next
-	if !state.chooseBatches() || len(state.instances[0].queue) != 0 || state.instances[0].outstanding != 1 || len(state.instances[0].batch) != 1 || state.out.outcomes[queued.Identity()]["timeout"] != 1 || len(state.out.samples[queued.Identity()]) != 0 {
+	if !state.chooseBatches(context.Background()) || len(state.instances[0].queue) != 0 || state.instances[0].outstanding != 1 || len(state.instances[0].batch) != 1 || state.out.outcomes[queued.Identity()]["timeout"] != 1 || len(state.out.samples[queued.Identity()]) != 0 {
 		t.Fatalf("deadline boundary must release only queued request: %+v %+v", state.instances[0], state.out)
 	}
 	state.now = float64(100 * time.Millisecond)

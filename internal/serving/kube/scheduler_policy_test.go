@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"testing"
@@ -41,7 +42,10 @@ func controllerWorkFixture(t *testing.T) (*SchedulerController, serving.Schedule
 
 func TestControllerWorkPolicyConsumesDisjointIntervalsAndPreservesProgress(t *testing.T) {
 	controller, snapshot, decision := controllerWorkFixture(t)
-	work, first := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	work, first, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if first.Policy.Selection != schedulerPolicyProjected || len(work.history.Values) != 1 {
 		t.Fatalf("initial actual state missing: %+v", first.Policy)
 	}
@@ -53,7 +57,10 @@ func TestControllerWorkPolicyConsumesDisjointIntervalsAndPreservesProgress(t *te
 	goal := decision.Keep
 	snapshot.InProgressTarget = &goal
 	interval := &serving.LoadWindow{From: from, To: snapshot.ObservationEnd, Duration: time.Second}
-	advanced, result := controller.applyWorkPolicy(snapshot, decision, interval, nil)
+	advanced, result, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, interval, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Policy.PendingReason != "" || !advanced.history.Through.Equal(interval.To) || len(result.Policy.Kernels) != 1 {
 		t.Fatalf("interval did not advance: %+v", result.Policy)
 	}
@@ -68,11 +75,17 @@ func TestControllerWorkPolicyConsumesDisjointIntervalsAndPreservesProgress(t *te
 	snapshot.Routing = map[string]map[string]int32{snapshot.Workloads[0].UID: {snapshot.Instances[0].ID: 1}}
 	decision.Keep.Instances, decision.Keep.Routing = snapshot.Instances, snapshot.Routing
 	decision.Candidates = []serving.SchedulerCandidate{decision.Keep}
-	unchanged, after := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	unchanged, after, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if oldID == snapshot.Instances[0].ID || !unchanged.history.Through.Equal(advanced.history.Through) || len(unchanged.history.Values) != len(advanced.history.Values) || after.Policy.Kernels != nil {
 		t.Fatal("replacement reset or duplicated history")
 	}
-	blocked, pending := controller.applyWorkPolicy(snapshot, decision, nil, errors.New("missing interval evidence"))
+	blocked, pending, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, errors.New("missing interval evidence"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !blocked.history.Through.Equal(advanced.history.Through) || pending.Policy.Selection != "KeepWhileHistoryPending" || pending.Policy.PendingReason == "" {
 		t.Fatal("missing interval advanced cursor or became a projected choice")
 	}
@@ -80,7 +93,10 @@ func TestControllerWorkPolicyConsumesDisjointIntervalsAndPreservesProgress(t *te
 
 func TestControllerWorkPolicyRespectsActualSLOAndBaseline(t *testing.T) {
 	controller, snapshot, decision := controllerWorkFixture(t)
-	work, _ := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	work, _, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	controller.work = work
 	alternative := decision.Keep
 	alternative.Keep, alternative.ID = false, "different-batching"
@@ -97,18 +113,27 @@ func TestControllerWorkPolicyRespectsActualSLOAndBaseline(t *testing.T) {
 		work.history.Values[current] = 100
 	}
 	work.history.Values[key] = 0
-	_, selected := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	_, selected, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if selected.Target == nil || selected.Target.Keep || selected.Policy.Selection != schedulerPolicyProjected {
 		t.Fatal("history energy choice never reached target finalization")
 	}
 	decision.Candidates[1].Status = controllerWorkTestOverload
 	decision.Candidates[1].WorstExceedance = 1
-	_, safe := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	_, safe, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if safe.Target == nil || !safe.Target.Keep {
 		t.Fatal("cheap infeasible history displaced actual feasible Keep")
 	}
 	decision.Settings.Algorithm = serving.SchedulerAlgorithmFixedHorizon
-	_, baseline := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	_, baseline, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if baseline.Target != decision.Target || baseline.Policy != nil {
 		t.Fatal("baseline mode changed selection or allocated projected diagnostics")
 	}
@@ -116,7 +141,10 @@ func TestControllerWorkPolicyRespectsActualSLOAndBaseline(t *testing.T) {
 
 func TestControllerWorkPolicyPendingKeepsBoundAndIdentifiesSLOResponse(t *testing.T) {
 	controller, snapshot, decision := controllerWorkFixture(t)
-	work, _ := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	work, _, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	controller.work = work
 	alternative := decision.Keep
 	alternative.ID, alternative.Keep = "new-feasible-policy", false
@@ -124,7 +152,10 @@ func TestControllerWorkPolicyPendingKeepsBoundAndIdentifiesSLOResponse(t *testin
 	alternative.Instances[0].MaxWait = time.Millisecond
 	decision.Candidates = append(decision.Candidates, alternative)
 	decision.Settings.MaxCandidates = 1
-	bounded, pending := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	bounded, pending, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(bounded.configurations) != 1 || pending.Policy.PendingReason != "RetainedLogicalConfigurationsExceedMaxCandidates" || !pending.Target.Keep {
 		t.Fatal("configured universe bound discarded retained history or silently grew")
 	}
@@ -132,12 +163,18 @@ func TestControllerWorkPolicyPendingKeepsBoundAndIdentifiesSLOResponse(t *testin
 	decision.Keep.Status, decision.Keep.WorstExceedance = controllerWorkTestOverload, 2
 	decision.Candidates[0] = decision.Keep
 	decision.Target = &alternative
-	_, safety := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	_, safety, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if safety.Target == nil || safety.Target.Keep || safety.Policy.Selection != schedulerPolicySLOResponse || safety.Policy.PendingReason == "" {
 		t.Fatal("missing projected history hid the actual feasible SLO response")
 	}
 	decision.Candidates[1].Status, decision.Candidates[1].WorstExceedance = controllerWorkTestOverload, 1
-	_, overload := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	_, overload, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if overload.Target == nil || overload.Target.Keep || overload.Target.WorstExceedance != 1 || overload.Policy.Selection != schedulerPolicySLOResponse {
 		t.Fatal("history replaced the existing all-infeasible overload ordering")
 	}
@@ -145,7 +182,10 @@ func TestControllerWorkPolicyPendingKeepsBoundAndIdentifiesSLOResponse(t *testin
 
 func TestControllerWorkIntervalReadsDelayedSpanOnce(t *testing.T) {
 	controller, snapshot, decision := controllerWorkFixture(t)
-	work, _ := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	work, _, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	controller.work = work
 	from := work.history.Through
 	definition := snapshot.Workloads[0]
@@ -163,7 +203,10 @@ func TestControllerWorkIntervalReadsDelayedSpanOnce(t *testing.T) {
 		t.Fatalf("delayed tick lost the earlier non-overlapping receipts: %+v %v", interval, err)
 	}
 	snapshot.ObservationEnd, snapshot.At = end, end.Add(time.Millisecond)
-	advanced, result := controller.applyWorkPolicy(snapshot, decision, interval, nil)
+	advanced, result, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, interval, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Policy.PendingReason != "" || !advanced.history.Through.Equal(end) {
 		t.Fatalf("complete delayed interval not consumed: %+v", result.Policy)
 	}
@@ -175,7 +218,10 @@ func TestControllerWorkIntervalReadsDelayedSpanOnce(t *testing.T) {
 
 func TestControllerWorkIntervalWaitsForDurableReceiptClassification(t *testing.T) {
 	controller, snapshot, decision := controllerWorkFixture(t)
-	work, _ := controller.applyWorkPolicy(snapshot, decision, nil, nil)
+	work, _, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	controller.work = work
 	from := work.history.Through
 	receivedAt := from.Add(10 * time.Millisecond)
@@ -194,7 +240,10 @@ func TestControllerWorkIntervalWaitsForDurableReceiptClassification(t *testing.T
 		t.Fatal("unclassified receipt became an empty successful history interval")
 	}
 	snapshot.ObservationEnd, snapshot.At = end, end.Add(time.Millisecond)
-	blocked, pending := controller.applyWorkPolicy(snapshot, decision, interval, evidenceErr)
+	blocked, pending, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, interval, evidenceErr)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !blocked.history.Through.Equal(from) || pending.Policy.PendingReason == "" {
 		t.Fatal("history cursor skipped a receipt before classification was durable")
 	}
@@ -208,12 +257,37 @@ func TestControllerWorkIntervalWaitsForDurableReceiptClassification(t *testing.T
 	if err != nil || interval == nil || len(interval.Arrivals) != 1 || !interval.Arrivals[0].Compute || interval.Arrivals[0].Accepted || !interval.Arrivals[0].At.Equal(receivedAt) {
 		t.Fatalf("late classification lost the historical compute demand: %+v %v", interval, err)
 	}
-	advanced, result := controller.applyWorkPolicy(snapshot, decision, interval, nil)
+	advanced, result, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, interval, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Policy.PendingReason != "" || !advanced.history.Through.Equal(end) {
 		t.Fatalf("durably classified interval did not advance: %+v", result.Policy)
 	}
 	controller.work = advanced
 	if repeat, err := controller.workInterval(end, decision.Settings); repeat != nil || err != nil {
 		t.Fatal("classified receipt interval was consumed twice")
+	}
+}
+
+func TestControllerCanceledProjectionPreservesCommittedHistory(t *testing.T) {
+	controller, snapshot, decision := controllerWorkFixture(t)
+	work, _, err := controller.applyWorkPolicy(context.Background(), snapshot, decision, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.work = work
+	through := work.history.Through
+	interval := &serving.LoadWindow{From: through, To: through.Add(time.Second), Duration: time.Second}
+	snapshot.ObservationEnd, snapshot.At = interval.To, interval.To.Add(time.Millisecond)
+	decision.Settings.Replays = 1_000_000_000
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	next, result, err := controller.applyWorkPolicy(ctx, snapshot, decision, interval, nil)
+	if !errors.Is(err, context.DeadlineExceeded) || next != nil || result.Status != "" {
+		t.Fatalf("canceled kernel became a partial history decision: %+v %+v %v", next, result, err)
+	}
+	if controller.work != work || !work.history.Through.Equal(through) || len(work.history.Values) != 1 || len(work.configurations) != 1 {
+		t.Fatal("canceled projection changed the previously committed history")
 	}
 }

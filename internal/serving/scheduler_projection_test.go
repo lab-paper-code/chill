@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"reflect"
@@ -33,6 +34,15 @@ func schedulerProjectionFixture() (SchedulerSettings, SchedulerSnapshot, Schedul
 	return settings, snapshot, source, target
 }
 
+func schedulerProjectForTest(t testing.TB, settings SchedulerSettings, snapshot SchedulerSnapshot, source, target SchedulerCandidate) SchedulerTransitionProjection {
+	t.Helper()
+	projection, err := ProjectSchedulerTransition(context.Background(), settings, snapshot, source, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return projection
+}
+
 func TestSchedulerProjectionDirectedWholePoolAndDiagonal(t *testing.T) {
 	settings, snapshot, source, target := schedulerProjectionFixture()
 	for _, test := range []struct {
@@ -46,7 +56,7 @@ func TestSchedulerProjectionDirectedWholePoolAndDiagonal(t *testing.T) {
 		{"diagonal", source, source, 1.2, nil, []string{"prepare-second", "remove-first", "prepare-first", "remove-second"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result := ProjectSchedulerTransition(settings, snapshot, test.from, test.to)
+			result := schedulerProjectForTest(t, settings, snapshot, test.from, test.to)
 			if result.ExpectedJoules == nil || !result.TransitionComplete || result.Status != schedulerStatusFeasible || math.Abs(*result.ExpectedJoules-test.joules) > 1e-9 {
 				t.Fatalf("projection=%+v; want %gJ", result, test.joules)
 			}
@@ -71,7 +81,7 @@ func TestSchedulerProjectionDirectedWholePoolAndDiagonal(t *testing.T) {
 	snapshot.Nodes = append(append([]SchedulerNode(nil), snapshot.Nodes...), idleNode)
 	snapshot.Baselines = append(snapshot.Baselines, idleBaseline)
 	source.Nodes, target.Nodes = snapshot.Nodes, snapshot.Nodes
-	wholePool := ProjectSchedulerTransition(settings, snapshot, source, target)
+	wholePool := schedulerProjectForTest(t, settings, snapshot, source, target)
 	if wholePool.ExpectedJoules == nil || math.Abs(*wholePool.ExpectedJoules-7.98) > 1e-9 || !slices.Contains(wholePool.References, idleBaseline.ID) {
 		t.Fatalf("uninvolved pool baseline missing: %+v", wholePool)
 	}
@@ -80,19 +90,19 @@ func TestSchedulerProjectionDirectedWholePoolAndDiagonal(t *testing.T) {
 func TestSchedulerProjectionRejectsIncompleteAndMissingDirectedPrimitive(t *testing.T) {
 	settings, snapshot, source, target := schedulerProjectionFixture()
 	settings.Horizon, settings.ObservationWindow = 25*time.Millisecond, 25*time.Millisecond
-	incomplete := ProjectSchedulerTransition(settings, snapshot, source, target)
+	incomplete := schedulerProjectForTest(t, settings, snapshot, source, target)
 	if incomplete.ExpectedJoules != nil || incomplete.TransitionComplete {
 		t.Fatalf("partial edge was accepted: %+v", incomplete)
 	}
 	schedulerRequireReason(t, incomplete.Reasons, "ProjectionTransitionExceedsInterval")
 	settings.Horizon, settings.ObservationWindow = 100*time.Millisecond, 100*time.Millisecond
 	snapshot.Costs = snapshot.Costs[1:]
-	missing := ProjectSchedulerTransition(settings, snapshot, source, target)
+	missing := schedulerProjectForTest(t, settings, snapshot, source, target)
 	if missing.ExpectedJoules != nil || missing.TransitionComplete {
 		t.Fatalf("missing directed edge accepted: %+v", missing)
 	}
 	schedulerRequireReason(t, missing.Reasons, "MissingOperationCost")
-	reverse := ProjectSchedulerTransition(settings, snapshot, target, source)
+	reverse := schedulerProjectForTest(t, settings, snapshot, target, source)
 	if reverse.ExpectedJoules == nil || !reverse.TransitionComplete {
 		t.Fatalf("unaffected reverse edge invalidated: %+v", reverse)
 	}
@@ -102,7 +112,7 @@ func TestSchedulerProjectionDiscardsActualProgressWithoutMutation(t *testing.T) 
 	settings, snapshot, source, target := schedulerProjectionFixture()
 	snapshot.At = snapshot.At.Add(10 * time.Millisecond)
 	snapshot.Arrivals = []SchedulerArrival{{ID: "one", At: snapshot.ObservationEnd.Add(-settings.ObservationWindow), Definition: snapshot.Workloads[0], Accepted: true}}
-	clean := ProjectSchedulerTransition(settings, snapshot, source, target)
+	clean := schedulerProjectForTest(t, settings, snapshot, source, target)
 	snapshot.Actions = []Action{{ID: "actual-running", Kind: schedulerActionPrepare, Status: phaseRunning}}
 	snapshot.InProgressTarget = &source
 	snapshot.Outstanding = []SchedulerRequest{{ID: "actual-running", Phase: phaseRunning}}
@@ -112,7 +122,7 @@ func TestSchedulerProjectionDiscardsActualProgressWithoutMutation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	projected := ProjectSchedulerTransition(settings, snapshot, source, target)
+	projected := schedulerProjectForTest(t, settings, snapshot, source, target)
 	after, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +138,7 @@ func TestSchedulerProjectionDiscardsActualProgressWithoutMutation(t *testing.T) 
 	renamed.Instances = append([]SchedulerInstance(nil), source.Instances...)
 	renamed.Instances[0].ID, renamed.Instances[0].Ready = "different-physical-id", false
 	renamed.Instances[0].ObservedAt = time.Time{}
-	diagonal := ProjectSchedulerTransition(settings, snapshot, renamed, source)
+	diagonal := schedulerProjectForTest(t, settings, snapshot, renamed, source)
 	if diagonal.ExpectedJoules == nil || !diagonal.TransitionComplete || math.Abs(*diagonal.ExpectedJoules-2.2) > 1e-9 {
 		t.Fatalf("hypothetical source required fabricated native readiness: %+v", diagonal)
 	}

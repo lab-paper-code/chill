@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 )
 
@@ -204,6 +206,123 @@ func TestSchedulerCaptureSlowLiveReadRemainsStale(t *testing.T) {
 	if decision.Keep.Status != "Pending" || !slices.Contains(decision.Keep.Reasons, "UnknownOrStaleNode:"+node.Node.Name) ||
 		!slices.Contains(decision.Keep.Reasons, "UnknownOrStaleInstance:"+instance.ID) {
 		t.Fatalf("consumer accepted genuinely stale live observations: %+v", decision.Keep)
+	}
+}
+
+func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
+	t.Helper()
+	manager, _ := newManagerHarness(t)
+	_, node, _, class := observerSourceFixture()
+	if err := manager.store.client.Create(context.Background(), &class); err != nil {
+		t.Fatal(err)
+	}
+	kube := kubefake.NewSimpleClientset(node)
+	manager.observer.kube = kube
+	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.journal,
+		SchedulerControllerConfig{
+			Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmProjectedWorkHistory,
+				ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second,
+				Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 10, MaxCPUs: 4,
+				Controls: serving.SchedulerControls{Enabled: true, Placement: true, Resources: true, Replicas: true,
+					Sharing: true, Routing: true, Batching: true, Power: true, Membership: true}},
+			CPUInventory: map[string][]int{node.Name: {0, 1, 2, 3}},
+			Baselines: []serving.NodeBaseline{{ID: "empty-pool-idle", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},
+				PowerMode: "fixed", Watts: 10, Meter: "node-wall", Scope: "node-exclusive-wall", MeasuredAt: time.Now(),
+				Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "empty-pool-idle", Size: 1}}},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(controller.Close)
+	return controller
+}
+
+func TestSchedulerTickDeadlinePreservesPublishedStateAndAllowsControlsOff(t *testing.T) {
+	controller := schedulerEmptyPoolController(t)
+	first, err := controller.Tick(context.Background(), time.Now().UTC())
+	if err != nil || first.Target == nil || first.Keep.ExpectedJoules == nil {
+		t.Fatalf("empty physical pool was not evaluable: %+v %v", first, err)
+	}
+	config := controller.config
+	config.Settings.Replays = 1_000_000_000
+	if err := controller.SetConfiguration(config); err != nil {
+		t.Fatal(err)
+	}
+	before := controller.State()
+	decisions := 0
+	controller.config.OnDecision = func(serving.SchedulerDecision) error { decisions++; return nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	decision, err := controller.Tick(ctx, time.Now().UTC())
+	if !errors.Is(err, context.DeadlineExceeded) || decision.Status != "" {
+		t.Fatalf("CPU deadline became a publishable decision: %+v %v", decision, err)
+	}
+	after := controller.State()
+	if decisions != 0 || !after.Snapshot.At.Equal(before.Snapshot.At) || after.Decision.At != before.Decision.At ||
+		controller.work != nil || len(after.Actions) != 0 || len(after.Results) != 0 {
+		t.Fatal("canceled evaluation published state, committed history or started physical work")
+	}
+	off := config
+	off.Settings.Controls = serving.SchedulerControls{}
+	applied := make(chan error, 1)
+	go func() { applied <- controller.SetConfiguration(off) }()
+	select {
+	case err := <-applied:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled evaluation retained the configuration lock")
+	}
+	if controller.Settings().Controls != (serving.SchedulerControls{}) || len(controller.State().Actions) != 0 {
+		t.Fatal("all controls OFF did not replace the canceled ON evaluation")
+	}
+}
+
+func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarget(t *testing.T) {
+	controller := schedulerEmptyPoolController(t)
+	if _, err := controller.Tick(context.Background(), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	before := controller.work
+	controller.goal = &serving.SchedulerCandidate{ID: "unfinished-route", Nodes: controller.State().Snapshot.Nodes,
+		Routing: map[string]map[string]int32{}, Actions: []serving.Action{{ID: "unfinished-route", Kind: operationRoute, Status: "planned"}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var publishedAt time.Time
+	controller.config.OnDecision = func(decision serving.SchedulerDecision) error {
+		if decision.Target == nil || len(decision.Target.Actions) == 0 || !decision.Settings.Controls.Enabled {
+			t.Fatal("fixture did not produce an actionable ON continuation")
+		}
+		snapshot := controller.State().Snapshot
+		if err := controller.journal.SchedulerRecord(serving.SchedulerObservation{At: decision.At, Snapshot: &snapshot, Decision: &decision}); err != nil {
+			return err
+		}
+		publishedAt = decision.At
+		cancel()
+		return nil
+	}
+	if decision, err := controller.Tick(ctx, time.Now().UTC()); !errors.Is(err, context.Canceled) || decision.Status != "" {
+		t.Fatalf("late cancellation became a successful ON decision: %+v %v", decision, err)
+	}
+	if controller.work != before || len(controller.State().Actions) != 0 {
+		t.Fatal("late canceled ON result advanced history or launched its route")
+	}
+	if publishedAt.IsZero() || !controller.State().Decision.At.Equal(publishedAt) {
+		t.Fatal("late cancellation hid an already published and recorded valid decision")
+	}
+	off := controller.config
+	off.Settings.Controls = serving.SchedulerControls{}
+	if err := controller.SetConfiguration(off); err != nil {
+		t.Fatal(err)
+	}
+	if controller.Settings().Controls.Enabled || len(controller.State().Actions) != 0 {
+		t.Fatal("outdated ON continuation acted after controls OFF")
 	}
 }
 
@@ -438,7 +557,10 @@ func TestCaptureNodePodsAggregatesNonServingBudget(t *testing.T) {
 			settings := serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 2}
 			// Isolate the captured non-serving budget in the actual consumer.
 			snapshot.Instances = nil
-			decision := serving.EvaluateScheduler(settings, snapshot)
+			decision, err := serving.EvaluateScheduler(context.Background(), settings, snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
 			cpuInfeasible, memoryInfeasible, unknownAffinity := false, false, false
 			for _, reason := range decision.Keep.Reasons {
 				cpuInfeasible = cpuInfeasible || strings.HasPrefix(reason, "CPUBudgetInfeasible:")

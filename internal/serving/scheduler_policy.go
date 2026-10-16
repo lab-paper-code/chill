@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"time"
@@ -29,7 +30,10 @@ type SchedulerPolicyDecision struct {
 
 // ProjectSchedulerWorkKernels reuses already identified bounded configurations;
 // each ordered edge (including each diagonal) is evaluated exactly once.
-func ProjectSchedulerWorkKernels(settings SchedulerSettings, observed SchedulerSnapshot, configurations map[string]SchedulerCandidate, sources map[string]float64) map[string]map[string]SchedulerTransitionProjection {
+func ProjectSchedulerWorkKernels(ctx context.Context, settings SchedulerSettings, observed SchedulerSnapshot, configurations map[string]SchedulerCandidate, sources map[string]float64) (map[string]map[string]SchedulerTransitionProjection, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	kernels := make(map[string]map[string]SchedulerTransitionProjection, len(sources))
 	invalid := settings.Validate()
 	if invalid == nil && settings.ObservationWindow != settings.Horizon {
@@ -39,6 +43,9 @@ func ProjectSchedulerWorkKernels(settings SchedulerSettings, observed SchedulerS
 		current, exists := configurations[source]
 		kernels[source] = make(map[string]SchedulerTransitionProjection, len(configurations))
 		for destination, target := range configurations {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if invalid != nil {
 				kernels[source][destination] = SchedulerTransitionProjection{Status: schedulerStatusPending, Reasons: []string{invalid.Error()}}
 				continue
@@ -47,10 +54,17 @@ func ProjectSchedulerWorkKernels(settings SchedulerSettings, observed SchedulerS
 				kernels[source][destination] = SchedulerTransitionProjection{Status: schedulerStatusPending, Reasons: []string{"MissingHistoryConfiguration"}}
 				continue
 			}
-			kernels[source][destination] = projectSchedulerTransition(settings, observed, current, target, source == destination)
+			projection, err := projectSchedulerTransition(ctx, settings, observed, current, target, source == destination)
+			if err != nil {
+				return nil, err
+			}
+			kernels[source][destination] = projection
 		}
 	}
-	return kernels
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return kernels, nil
 }
 
 // SchedulerWorkHistory stores relative projected work through one receipt cutoff.
