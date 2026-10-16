@@ -45,6 +45,26 @@ type JetsonNVPModelConfig struct {
 	Command        []string        `json:"command"`
 	CommandTimeout string          `json:"commandTimeout"`
 	HostPaths      []HostPathMount `json:"hostPaths"`
+	// EnsureBootOrdering adds an init container that orders
+	// nvidia-cdi-refresh.service after nvpmodel.service on hosts that have it,
+	// so the boot-established power modes apply at boot.
+	EnsureBootOrdering bool `json:"ensureBootOrdering"`
+}
+
+// bootOrderingHostPaths scope the boot-ordering init container to the systemd
+// unit directories: the packaged one read-only, the local one writable for the
+// drop-in.
+var bootOrderingHostPaths = []HostPathMount{
+	{Name: "host-systemd-etc", HostPath: "/etc/systemd/system", MountPath: jetson.HostSystemdEtcDir, Type: corev1.HostPathDirectory},
+	{Name: "host-systemd-lib", HostPath: "/lib/systemd/system", MountPath: jetson.HostSystemdLibDir, Type: corev1.HostPathDirectory, ReadOnly: true},
+}
+
+// podHostPaths is every host path the Pod mounts.
+func (c JetsonNVPModelConfig) podHostPaths() []HostPathMount {
+	if !c.EnsureBootOrdering {
+		return c.HostPaths
+	}
+	return append(slices.Clone(c.HostPaths), bootOrderingHostPaths...)
 }
 
 type HostPathMount struct {
@@ -110,7 +130,7 @@ func (c Config) validateHostAdapters() error {
 	if err := (jetson.NVPModelOptions{Command: c.JetsonNVPModel.Command, Timeout: duration}).Validate(); err != nil {
 		return fmt.Errorf("validate jetsonNVPModel command: %w", err)
 	}
-	if err := validateHostPaths(c.JetsonNVPModel.HostPaths); err != nil {
+	if err := validateHostPaths(c.JetsonNVPModel.podHostPaths()); err != nil {
 		return fmt.Errorf("validate jetsonNVPModel host paths: %w", err)
 	}
 	if c.PodSecurityContext == nil || c.PodSecurityContext.RunAsUser == nil || *c.PodSecurityContext.RunAsUser != 0 ||

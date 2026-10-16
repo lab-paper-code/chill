@@ -88,7 +88,7 @@ worktree에는 main 작업 디렉토리의 사본을 두고 편집한다. 병합
 
 |대상|변경|이유|rollback|
 |---|---|---|---|
-|`orin-nano` 호스트|`/etc/systemd/system/nvidia-cdi-refresh.service.d/10-after-nvpmodel.conf`에 `[Unit] After=nvpmodel.service`|`nvidia-cdi-refresh`의 `nvidia-smi`가 GPU golden context를 먼저 만들어 부팅 시 `nvpmodel`이 모드를 적용하지 못했다. 모드 이름만 바뀌고 클럭과 게이팅은 그대로였다|drop-in 디렉터리 삭제, `daemon-reload`, 재부팅 (`orin-nano-nvpmodel/ROLLBACK.txt`)|
+|`orin-nano`, `jetsono` 호스트|`/etc/systemd/system/nvidia-cdi-refresh.service.d/10-after-nvpmodel.conf`에 `[Unit] After=nvpmodel.service`. CHILL node-actuator가 관리한다(init container, `nodeActuator.jetsonNVPModel.ensureBootOrdering`, ADR 0015)|`nvidia-cdi-refresh`의 `nvidia-smi`가 GPU golden context를 먼저 만들어 부팅 시 `nvpmodel`이 모드를 적용하지 못했다. 모드 이름만 바뀌고 클럭과 게이팅은 그대로였다|`ensureBootOrdering: false`로 바꾼 뒤 drop-in 디렉터리 삭제, `daemon-reload`, 재부팅 (`orin-nano-nvpmodel/ROLLBACK.txt`)|
 |`monitoring/edge-metrics-exporter-jetson` DaemonSet|image `edge-metrics-exporter:sha-63abb94-thermal-eagain`, updateStrategy `OnDelete`. `orin-nano` 파드만 교체|L4T R36.4의 열 센서 EAGAIN이 Python 3.12에서 `TypeError`로 올라와 열 지표 수집이 멈췄다. 영구 수정은 edge-metrics 저장소에 `thermal-eagain.patch` 반영과 Helm 값 갱신이 필요하다|`orin-nano-thermal/` 의 patch 명령|
 |`kube-system/nvidia-device-plugin-jetson` DaemonSet|env `DEVICE_ID_STRATEGY=index`, `DEVICE_LIST_STRATEGY=envvar` (jetsono, jetsonx, jetson-nano)|CUDA Pod가 CDI `unsupported device id: tegra`로 생성되지 못했다|`jetson-device-plugin/`|
 |`chill-system/chill-node-actuator-config`|전력모드 기록을 위해 임시 정책을 두 번 열었다(08:16~08:45Z, 11:07~11:18Z). 원본 바이트로 복원하고 DaemonSet 원래 revision 복귀를 확인했다|actuator 허용 목록에 없는 모드는 적용되지 않는다|복원 완료|
@@ -98,5 +98,5 @@ worktree에는 main 작업 디렉토리의 사본을 두고 편집한다. 병합
 
 - jetsonx는 08:00Z 무렵 SmolVLM fp32 CUDA 적재 중 unified memory 고갈로 멈췄고 사용자가 재시작했다.
 - 캠페인의 `mobilenet-v2-050-orin-nano-cuda-q1/q2` 측정은 호스트 수정 전 "25W"로 기록되었으므로 실제 25W 상태가 아니다.
-- `jetsono`에도 `nvidia-cdi-refresh`가 켜져 있다. 지금은 `nvidia-smi`가 없어 건너뛰지만, 설치되면 같은 문제가 생기므로
-  같은 drop-in이 필요하다.
+- `jetsono`에도 `nvidia-cdi-refresh`가 켜져 있다. 지금은 `nvidia-smi`가 없어 건너뛰고, node-actuator가 같은 drop-in을
+  써 두었으므로 설치되어도 `nvpmodel.service` 다음에 실행된다.

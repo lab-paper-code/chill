@@ -29,6 +29,7 @@ data:
       commandTimeout: {{ .Values.nodeActuator.jetsonNVPModel.commandTimeout | quote }}
       hostPaths:
 {{- toYaml .Values.nodeActuator.jetsonNVPModel.hostPaths | nindent 8 }}
+      ensureBootOrdering: {{ .Values.nodeActuator.jetsonNVPModel.ensureBootOrdering }}
     nodeSelector:
 {{- toYaml .Values.nodeActuator.nodeSelector | nindent 6 }}
     {{- with .Values.nodeActuator.affinity }}

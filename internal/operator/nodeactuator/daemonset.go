@@ -8,9 +8,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 
 	"github.com/lab-paper-code/chill/internal/component"
 	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
+	"github.com/lab-paper-code/chill/internal/nodeactuator/jetson"
 )
 
 const containerName = component.NodeActuator
@@ -55,12 +57,13 @@ func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
 					ServiceAccountName: config.ServiceAccountName,
 					NodeSelector:       config.NodeSelector, Affinity: config.Affinity,
 					Tolerations: config.Tolerations, SecurityContext: config.PodSecurityContext,
-					Volumes: hostVolumes(config),
+					Volumes:        hostVolumes(config.JetsonNVPModel.podHostPaths()),
+					InitContainers: bootOrderingInitContainers(config),
 					Containers: []corev1.Container{{
 						Name: containerName, Image: config.Image, ImagePullPolicy: config.ImagePullPolicy,
 						Command: []string{"/node-actuator"}, Args: args,
 						Env: nodeIdentityEnvironment(), SecurityContext: config.SecurityContext,
-						VolumeMounts:   hostVolumeMounts(config),
+						VolumeMounts:   hostVolumeMounts(config.JetsonNVPModel.HostPaths),
 						Resources:      config.Resources,
 						LivenessProbe:  httpProbe("healthz", config.HealthProbePort),
 						ReadinessProbe: httpProbe("readyz", config.HealthProbePort),
@@ -107,9 +110,9 @@ func nodeActuatorArgs(
 	return args, nil
 }
 
-func hostVolumes(config Config) []corev1.Volume {
-	volumes := make([]corev1.Volume, 0, len(config.JetsonNVPModel.HostPaths))
-	for _, hostPath := range config.JetsonNVPModel.HostPaths {
+func hostVolumes(hostPaths []HostPathMount) []corev1.Volume {
+	volumes := make([]corev1.Volume, 0, len(hostPaths))
+	for _, hostPath := range hostPaths {
 		pathType := hostPath.Type
 		volumes = append(volumes, corev1.Volume{
 			Name: hostPath.Name,
@@ -121,14 +124,34 @@ func hostVolumes(config Config) []corev1.Volume {
 	return volumes
 }
 
-func hostVolumeMounts(config Config) []corev1.VolumeMount {
-	mounts := make([]corev1.VolumeMount, 0, len(config.JetsonNVPModel.HostPaths))
-	for _, hostPath := range config.JetsonNVPModel.HostPaths {
+func hostVolumeMounts(hostPaths []HostPathMount) []corev1.VolumeMount {
+	mounts := make([]corev1.VolumeMount, 0, len(hostPaths))
+	for _, hostPath := range hostPaths {
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: hostPath.Name, MountPath: hostPath.MountPath, ReadOnly: hostPath.ReadOnly,
 		})
 	}
 	return mounts
+}
+
+// bootOrderingInitContainers writes the nvidia-cdi-refresh.service ordering
+// drop-in before the actuator starts. It holds no capability: root owns the
+// systemd directory it writes. systemd reads the drop-in at the next boot,
+// which is the only boot the ordering affects, so no daemon-reload is needed.
+func bootOrderingInitContainers(config Config) []corev1.Container {
+	if !config.JetsonNVPModel.EnsureBootOrdering {
+		return nil
+	}
+	return []corev1.Container{{
+		Name: "ensure-boot-ordering", Image: config.Image, ImagePullPolicy: config.ImagePullPolicy,
+		Command: []string{"/node-actuator", jetson.EnsureBootOrderingCommand},
+		SecurityContext: &corev1.SecurityContext{
+			Privileged: ptr.To(false), AllowPrivilegeEscalation: ptr.To(false), ReadOnlyRootFilesystem: ptr.To(true),
+			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+		VolumeMounts: hostVolumeMounts(bootOrderingHostPaths),
+		Resources:    config.Resources,
+	}}
 }
 
 func nodeIdentityEnvironment() []corev1.EnvVar {

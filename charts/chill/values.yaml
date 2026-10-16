@@ -460,6 +460,13 @@ nodeActuator:
         mountPath: /sys
         type: Directory
         readOnly: false
+    # An init container orders nvidia-cdi-refresh.service after nvpmodel.service
+    # on Nodes that have that unit, by writing
+    # /etc/systemd/system/nvidia-cdi-refresh.service.d/10-after-nvpmodel.conf.
+    # Otherwise the unit creates the GPU golden context first and the
+    # boot-time power-mode apply fails. systemd reads the drop-in at the next
+    # boot, so no daemon-reload is needed. Nodes without the unit are unchanged.
+    ensureBootOrdering: true
   nodeSelector:
     edge.dacs.io/node-actuation: enabled
   affinity: {}
