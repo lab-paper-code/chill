@@ -27,7 +27,8 @@ SEED, HIDDEN, EPOCHS, BATCH, LR = 0, 32, 30, 256, 1e-3
 THRESHOLD_PERCENTILE = 99
 # Sensor-fault sentinel: train and threshold use only windows without it.
 FAULT_FEATURES, FAULT_VALUE = ("BILLET_TEMP_NO1", "BILLET_TEMP_NO2", "BILLET_TEMP_NO3"), 1000
-OPSET = 17
+# Opset 16 is the newest ONNX Runtime 1.11 loads, the last CUDA build for JetPack 4.
+OPSET = 16
 
 
 class Scorer(nn.Module):
