@@ -274,12 +274,13 @@ profiling:
       workloadMode: idle-model-loaded
 
 # Each entry is a mode the Node actuator has applied and independently read
-# back on the testbed Node of that class. Every Xavier NX mode changes in place
-# within a second. The Orin Nano MAXN_SUPER and 7W have no entry: each Orin
-# Nano transition restarts the Node, and on the testbed the boot-time nvpmodel
-# service exits on "Golden image context is already created" before applying
-# the mode, so those modes are read back by name while CPU and GPU clocks stay
-# at their boot defaults.
+# back on the testbed Node of that class. For Xavier NX and Orin Nano the
+# host's online CPUs and CPU and GPU clock caps also match the mode's nvpmodel
+# configuration. Every Xavier NX mode changes in place within a second. The
+# Orin Nano 15W, 25W and MAXN_SUPER share one GPU power-gating mask and change
+# in place within half a second; 7W gates more of the GPU, so a transition into
+# or out of it restarts the Node (about 75 seconds to read-back) and every Orin
+# Nano duration below covers a boot.
 powerActuation:
   policies:
     - name: xavier-nvpmodel-v1
@@ -357,6 +358,18 @@ powerActuation:
     - name: orin-nano-15w-v1
       deviceClass: jetson-orin-nano-8g
       powerMode: 15W
+      actuatorKind: JetsonNVPModel
+      settlingDurationSeconds: 60
+      maxActuationDurationSeconds: 900
+    - name: orin-nano-maxn-super-v1
+      deviceClass: jetson-orin-nano-8g
+      powerMode: MAXN_SUPER
+      actuatorKind: JetsonNVPModel
+      settlingDurationSeconds: 60
+      maxActuationDurationSeconds: 900
+    - name: orin-nano-7w-v1
+      deviceClass: jetson-orin-nano-8g
+      powerMode: 7W
       actuatorKind: JetsonNVPModel
       settlingDurationSeconds: 60
       maxActuationDurationSeconds: 900

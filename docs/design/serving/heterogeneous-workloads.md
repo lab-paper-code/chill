@@ -555,6 +555,15 @@ DeviceClass에서 그 경로는 측정되지 않고 evidence를 만들지 않으
   `jetson-xavier-nx-8g`는 ORT 1.18.0 모델 적재 중 Node가 응답을 멈췄고(6 GiB 상한), `jetson-orin-nano-8g`는
   7 GiB 상한에서도 654 MB arena 할당에서 메모리 부족으로 실패했다. `jetson-agx-orin-64g`는 batch 1 답 `Gray.`를
   반환했다(runner VmHWM 3.9 GB). 두 DeviceClass의 SmolVLM은 int8 한 타일 CPU 경로로 측정한다.
+- `jetson-orin-nano-8g`의 전력 모드: 모든 모드가 boot 기본값 0과 다른 GPU power-gating mask(`tpc_pg_mask`,
+  `fbp_pg_mask`)를 쓰고, 이 mask는 GPU golden context가 생기기 전에만 바뀐다. JetPack 6에서
+  nvidia-container-toolkit의 `nvidia-cdi-refresh.service`는 boot 중 `nvidia-smi -L`로 golden context를 만들므로,
+  이 unit이 `nvpmodel.service`보다 먼저 실행되면 `nvpmodel.service`는 "Reboot required"로 끝나고 어떤 설정도
+  적용하지 않는다. 그래도 `nvpmodel -q`는 `/var/lib/nvpmodel/status`의 모드 이름을 보고하므로 actuator read-back은
+  통과하고 CPU와 GPU clock은 boot 기본값에 머문다. 테스트베드 `orin-nano`는
+  `/etc/systemd/system/nvidia-cdi-refresh.service.d/10-after-nvpmodel.conf`(`After=nvpmodel.service`)로 이 순서를
+  고정하고, 네 모드 모두에서 online CPU, CPU와 GPU 최대 clock, mask가 `nvpmodel.conf`와 같다. JetPack 4, 5 Node에는
+  `/usr/bin/nvidia-smi`가 없어 이 unit이 실행되지 않는다.
 
 CPU 선언은 DeviceClass 단위다. CUDA
 선언은 GPU UUID를 읽은 Node 하나를 `node`로 명시하고, Profiler는 Run의 target Node와 `node`가 같은 선언만
