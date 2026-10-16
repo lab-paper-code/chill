@@ -13,6 +13,22 @@ METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 WORKLOAD_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-workload-observer:$(IMAGE_TAG)
 SERVING_ENTRYPOINT_IMG ?= $(IMAGE_NAMESPACE)/chill-serving-entrypoint:$(IMAGE_TAG)
 FIRSTFLOOR_IMG ?= $(IMAGE_NAMESPACE)/chill-firstfloor:$(IMAGE_TAG)
+FIRSTFLOOR_CUDA_IMG ?= $(FIRSTFLOOR_IMG)-cuda
+FIRSTFLOOR_L4T_R36_IMG ?= $(FIRSTFLOOR_IMG)-l4t-r36
+FIRSTFLOOR_L4T_R35_IMG ?= $(FIRSTFLOOR_IMG)-l4t-r35
+FIRSTFLOOR_RKNN_IMG ?= $(FIRSTFLOOR_IMG)-rknn
+# Vendor runtime pins. CUDA 12.5 matches the oldest RTX node driver (555);
+# onnxruntime-gpu 1.24+ has no cp310 wheel and 1.27 requires CUDA 13.
+FIRSTFLOOR_CUDA_BASE ?= nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04@sha256:1e3baf68df7f8206887d2e36b37ac8ad669c847dffd11d9b8cb4173e1e1aedf2
+FIRSTFLOOR_CUDA_ORT_VERSION ?= 1.23.2
+FIRSTFLOOR_CUDA_PACKAGES ?= cuda-bindings==12.9.7 cuda-pathfinder==1.8.3
+FIRSTFLOOR_L4T_R36_BASE ?= nvcr.io/nvidia/l4t-jetpack:r36.4.0@sha256:34ccf0f3b63c6da9eee45f2e79de9bf7fdf3beda9abfd72bbf285ae9d40bb673
+FIRSTFLOOR_L4T_R36_ORT_VERSION ?= 1.24.0
+FIRSTFLOOR_L4T_R36_INDEX ?= https://pypi.jetson-ai-lab.io/jp6/cu126/+simple
+FIRSTFLOOR_L4T_R35_PACKAGES ?= cuda-bindings==11.8.7
+FIRSTFLOOR_RKNN_PACKAGES ?= rknn-toolkit-lite2==2.3.2
+# --push publishes; --load keeps a single-platform build local.
+FIRSTFLOOR_OUTPUT ?= --push
 DASHBOARD_IMG ?= $(IMAGE_NAMESPACE)/chill-dashboard:$(IMAGE_TAG)
 RKNN_CONVERTER_PYTHON ?= python3
 RKNN_SOURCE_ONNX ?=
@@ -377,7 +393,41 @@ docker-push-firstfloor: ## Push the native runtime image.
 docker-buildx-firstfloor: ## Build and push the native CPU runtime for selected platforms.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_IMG) .
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=$(PLATFORMS) -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_IMG) .
+
+.PHONY: docker-buildx-firstfloor-cuda
+docker-buildx-firstfloor-cuda: ## Build and push the amd64 CUDA runtime (RTX, driver >= 555).
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/amd64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_CUDA_IMG) \
+		--build-arg RUNTIME_IMAGE=$(FIRSTFLOOR_CUDA_BASE) --build-arg APT_PACKAGES="python3 python3-pip" \
+		--build-arg ORT_PACKAGE=onnxruntime-gpu --build-arg ONNXRUNTIME_VERSION=$(FIRSTFLOOR_CUDA_ORT_VERSION) \
+		--build-arg EXTRA_PACKAGES="$(FIRSTFLOOR_CUDA_PACKAGES)" .
+
+.PHONY: docker-buildx-firstfloor-l4t-r36
+docker-buildx-firstfloor-l4t-r36: ## Build and push the JetPack 6 (L4T r36.4) CUDA runtime.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_L4T_R36_IMG) \
+		--build-arg RUNTIME_IMAGE=$(FIRSTFLOOR_L4T_R36_BASE) --build-arg APT_PACKAGES="python3 python3-pip" \
+		--build-arg ORT_PACKAGE=onnxruntime-gpu --build-arg ONNXRUNTIME_VERSION=$(FIRSTFLOOR_L4T_R36_ORT_VERSION) \
+		--build-arg PIP_EXTRA_INDEX_URL=$(FIRSTFLOOR_L4T_R36_INDEX) --build-arg EXTRA_PACKAGES="$(FIRSTFLOOR_CUDA_PACKAGES)" .
+
+.PHONY: docker-buildx-firstfloor-l4t-r35
+docker-buildx-firstfloor-l4t-r35: ## Build and push the JetPack 5 (L4T r35.4) CUDA runtime.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_L4T_R35_IMG) \
+		--build-arg RUNTIME_IMAGE=l4t-r35 --build-arg NUMPY_VERSION=1.26.4 \
+		--build-arg ORT_PACKAGE=onnxruntime-gpu --build-arg ONNXRUNTIME_VERSION=1.16.0 \
+		--build-arg EXTRA_PACKAGES="$(FIRSTFLOOR_L4T_R35_PACKAGES)" .
+
+.PHONY: docker-buildx-firstfloor-rknn
+docker-buildx-firstfloor-rknn: ## Build and push the arm64 RKNNLite runtime (host librknnrt).
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_RKNN_IMG) \
+		--build-arg EXTRA_PACKAGES="$(FIRSTFLOOR_RKNN_PACKAGES)" .
 
 .PHONY: docker-build-dashboard
 docker-build-dashboard: ## Build the independent Dashboard image.

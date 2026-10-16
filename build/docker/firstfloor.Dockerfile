@@ -13,17 +13,36 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /out/serving-worke
     && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /out/serving-entrypoint ./cmd/serving-entrypoint \
     && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /out/measurement-worker ./cmd/measurement-worker
 
-# CPU is the default. GPU/RKNN builds must supply a vendor-compatible base and
-# packages described in docs/design/serving/scheduler-implementation.md.
+# JetPack 5.1.2 base (L4T r35.4.1, CUDA 11.4, cuDNN 8.6). Its Ubuntu 20.04
+# Python is 3.8, so this stage adds a standalone CPython 3.11 and NVIDIA's
+# JetPack 5.1.1 onnxruntime-gpu 1.16.0 cp311 wheel (same CUDA/cuDNN); the 1.17
+# and 1.18 wheels need GLIBCXX_3.4.29, newer than Ubuntu 20.04's libstdc++.
+# Select with RUNTIME_IMAGE=l4t-r35; other builds skip this stage.
+FROM scratch AS l4t-r35-downloads
+ADD --checksum=sha256:643954c07b04c18e215f812691cd5fa15d924fec1f3a5fdd9c1789484382ac24 \
+    https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.11.17%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz /python.tar.gz
+ADD --checksum=sha256:9ec67e08fc25ea34cef4c17efba9fb32b7db970c3d8782323ad95c2997a6cfb1 \
+    https://nvidia.box.com/shared/static/g74cjqh8fcyd9faobm7yeif8mmxdvc0g.whl /onnxruntime_gpu-1.16.0-cp311-cp311-linux_aarch64.whl
+
+FROM nvcr.io/nvidia/l4t-jetpack:r35.4.1@sha256:d1c8e971ab994235840eacc31c4ef4173bf9156317b1bf8aabe7e01eb21b2a0e AS l4t-r35
+ENV PATH=/opt/python/bin:${PATH}
+RUN --mount=from=l4t-r35-downloads,target=/downloads tar -C /opt -xzf /downloads/python.tar.gz \
+    && python3 -m pip install --no-cache-dir --no-deps /downloads/onnxruntime_gpu-1.16.0-cp311-cp311-linux_aarch64.whl
+
+# CPU is the default. Vendor variants are the Makefile docker-buildx-firstfloor-*
+# targets; see docs/design/code-intelligence/README.md.
 FROM ${RUNTIME_IMAGE}
+ARG APT_PACKAGES
 ARG NUMPY_VERSION=2.2.6
 ARG ONNXRUNTIME_VERSION=1.27.0
 ARG ORT_PACKAGE=onnxruntime
 ARG PIP_EXTRA_INDEX_URL
-ARG CUDA_DRIVER_PACKAGES
+ARG EXTRA_PACKAGES
+RUN if [ -n "${APT_PACKAGES}" ]; then apt-get update \
+    && apt-get install -y --no-install-recommends ${APT_PACKAGES} && rm -rf /var/lib/apt/lists/*; fi
 # Preprocessor module libraries. transformers 4.50.0 is the first release with
 # SmolVLM; its processor module imports without torch (4.57.6 requires torch).
-RUN python3 -m pip install --no-cache-dir numpy==${NUMPY_VERSION} ${ORT_PACKAGE}==${ONNXRUNTIME_VERSION} ${CUDA_DRIVER_PACKAGES} \
+RUN python3 -m pip install --no-cache-dir numpy==${NUMPY_VERSION} ${ORT_PACKAGE}==${ONNXRUNTIME_VERSION} ${EXTRA_PACKAGES} \
     pillow==12.3.0 transformers==4.50.0 num2words==0.5.14 jinja2==3.1.6
 COPY --from=builder /out/serving-worker /opt/chill/bin/serving-worker
 COPY --from=builder /out/serving-entrypoint /opt/chill/bin/serving-entrypoint
