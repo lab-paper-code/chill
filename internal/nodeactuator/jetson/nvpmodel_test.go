@@ -35,9 +35,111 @@ func TestNVPModelObserveParsesIndependentNameAndID(t *testing.T) {
 		observation.Target.JetsonNVPModel.ID != 2 || !observation.ObservedAt.Equal(now) {
 		t.Fatalf("observation = %#v", observation)
 	}
-	wantCommand := []string{"/host/ld.so", "--library-path", "/host/lib", "/host/nvpmodel", "-q"}
+	wantCommand := []string{"/host/ld.so", "--library-path", "/host/lib", "/host/nvpmodel", "-q", "--verbose"}
 	if !reflect.DeepEqual(runner.commands, [][]string{wantCommand}) {
 		t.Fatalf("commands = %#v, want %#v", runner.commands, wantCommand)
+	}
+}
+
+// Verbose query excerpts captured from the testbed boards (2026-10-16).
+const (
+	orinNanoJP6Header = "NVPM VERB: Config file: /etc/nvpmodel.conf\n" +
+		"NVPM VERB: parsing done for /etc/nvpmodel.conf\n" +
+		"NVPM VERB: Current mode: NV Power Mode: 25W\n1\n" +
+		"NVPM VERB: PARAM CPU_ONLINE: ARG CORE_0: PATH /sys/devices/system/cpu/cpu0/online: REAL_VAL: 1 CONF_VAL: 1\n"
+	orinNanoJP6Established = orinNanoJP6Header +
+		"NVPM VERB: PARAM FBP_POWER_GATING: ARG FBP_PG_MASK: PATH /sys/devices/platform/gpu.0/fbp_pg_mask: REAL_VAL: 2 CONF_VAL: 2\n" +
+		"NVPM VERB: PARAM TPC_POWER_GATING: ARG TPC_PG_MASK: PATH /sys/devices/platform/gpu.0/tpc_pg_mask: REAL_VAL: 240 CONF_VAL: 240\n" +
+		"NVPM VERB: PARAM GPU_POWER_CONTROL_ENABLE: ARG GPU_PWR_CNTL_EN: PATH /sys/devices/platform/gpu.0/power/control: REAL_VAL: auto CONF_VAL: on\n" +
+		"NVPM VERB: PARAM CPU_A78_0: ARG MAX_FREQ: PATH /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: REAL_VAL: 1344000 CONF_VAL: 1344000\n"
+	// The boot-time nvpmodel.service found the GPU golden context already
+	// created and applied nothing; the status file still names 25W.
+	orinNanoJP6Nominal = orinNanoJP6Header +
+		"NVPM VERB: PARAM FBP_POWER_GATING: ARG FBP_PG_MASK: PATH /sys/devices/platform/gpu.0/fbp_pg_mask: REAL_VAL: 0 CONF_VAL: 2\n" +
+		"NVPM VERB: PARAM TPC_POWER_GATING: ARG TPC_PG_MASK: PATH /sys/devices/platform/gpu.0/tpc_pg_mask: REAL_VAL: 0 CONF_VAL: 240\n" +
+		"NVPM VERB: PARAM CPU_A78_0: ARG MAX_FREQ: PATH /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: REAL_VAL: 1728000 CONF_VAL: 1344000\n"
+	agxOrinJP5 = "NVPM VERB: Config file: /etc/nvpmodel.conf\n" +
+		"NVPM VERB: parsing done for /etc/nvpmodel.conf\n" +
+		"NVPM VERB: Current mode: NV Power Mode: MAXN\n0\n" +
+		"NVPM VERB: PARAM TPC_POWER_GATING: ARG TPC_PG_MASK: PATH /sys/devices/gpu.0/tpc_pg_mask: REAL_VAL: 0 CONF_VAL: 0\n" +
+		"NVPM VERB: PARAM GPU: ARG MAX_FREQ: PATH /sys/devices/17000000.ga10b/devfreq/17000000.ga10b/max_freq: REAL_VAL: 1300500000 CONF_VAL: 9223372036854775807\n"
+	// gv11b reports its fuse-adjusted mask; the kernel logs a write of 1 as
+	// "no value change, same mask already set".
+	xavierNXJP5 = "NVPM VERB: Config file: /etc/nvpmodel.conf\n" +
+		"NVPM VERB: parsing done for /etc/nvpmodel.conf\n" +
+		"NVPM VERB: Current mode: NV Power Mode: MODE_15W_6CORE\n2\n" +
+		"NVPM VERB: PARAM TPC_POWER_GATING: ARG TPC_PG_MASK: PATH /sys/devices/gpu.0/tpc_pg_mask: REAL_VAL: 4 CONF_VAL: 1\n" +
+		"NVPM VERB: PARAM CPU_DENVER_0: ARG MAX_FREQ: PATH /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: REAL_VAL: 1420800 CONF_VAL: 1420800\n"
+	// R32 prints no power-gating lines.
+	nanoJP4 = "NVPM VERB: Config file: /etc/nvpmodel.conf\n" +
+		"NVPM VERB: parsing done for /etc/nvpmodel.conf\n" +
+		"NVPM WARN: fan mode is not set!\n" +
+		"NVPM VERB: Current mode: NV Power Mode: MAXN\n0\n" +
+		"NVPM VERB: PARAM CPU_ONLINE: ARG CORE_0: PATH /sys/devices/system/cpu/cpu0/online: REAL_VAL: 1 CONF_VAL: 1\n"
+)
+
+func TestNVPModelObserveAcceptsEstablishedModesInEveryBoardFormat(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		output string
+		mode   string
+		id     int32
+	}{
+		"orin nano jetpack 6": {orinNanoJP6Established, "25W", 1},
+		"agx orin jetpack 5":  {agxOrinJP5, "MAXN", 0},
+		"xavier nx jetpack 5": {xavierNXJP5, "MODE_15W_6CORE", 2},
+		"nano jetpack 4":      {nanoJP4, "MAXN", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			adapter, runner, now := testAdapter(t)
+			runner.output = []byte(tc.output)
+			observation, err := adapter.Observe(context.Background(), testRequest(now))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if observation.PowerMode != tc.mode || observation.Target.JetsonNVPModel.ID != tc.id {
+				t.Fatalf("observation = %#v, want %s/%d", observation, tc.mode, tc.id)
+			}
+		})
+	}
+}
+
+func TestNVPModelObserveRejectsAModeRecordedWithoutItsGating(t *testing.T) {
+	t.Parallel()
+	adapter, runner, now := testAdapter(t)
+	runner.output = []byte(orinNanoJP6Nominal)
+	_, err := adapter.Observe(context.Background(), testRequest(now))
+	if err == nil || !strings.Contains(err.Error(), "FBP_POWER_GATING reads 0 where the mode configures 2") ||
+		!strings.Contains(err.Error(), "recorded, not established") {
+		t.Fatalf("err = %v, want the nominal 25W rejected", err)
+	}
+}
+
+func TestNVPModelObserveFailsClosedOnUnreadableGating(t *testing.T) {
+	t.Parallel()
+	for name, line := range map[string]string{
+		"missing conf":    "NVPM VERB: PARAM TPC_POWER_GATING: ARG TPC_PG_MASK: PATH /x: REAL_VAL: 0\n",
+		"non-numeric val": "NVPM VERB: PARAM TPC_POWER_GATING: ARG TPC_PG_MASK: PATH /x: REAL_VAL: ? CONF_VAL: 240\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			adapter, runner, now := testAdapter(t)
+			runner.output = []byte(orinNanoJP6Header + line)
+			if _, err := adapter.Observe(context.Background(), testRequest(now)); err == nil {
+				t.Fatalf("gating line %q was accepted", line)
+			}
+		})
+	}
+}
+
+func TestNVPModelApplyFailsWithoutRestartWhenTheBootLeftTheTargetNominal(t *testing.T) {
+	t.Parallel()
+	adapter, runner, now := scriptedAdapter(t, scriptedResponse{output: orinNanoJP6Nominal})
+	err := adapter.Apply(context.Background(), modeRequest(now, "25W", 1), applyTarget(1))
+	if err == nil || !strings.Contains(err.Error(), "recorded, not established") {
+		t.Fatalf("err = %v, want the nominal target refused", err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("commands = %#v, want the query only and no restart", runner.commands)
 	}
 }
 
@@ -99,7 +201,7 @@ func TestNVPModelApplyPassesOnlyTypedIDAndDoesNotSelfVerify(t *testing.T) {
 	if err := adapter.Apply(context.Background(), modeRequest(now, "MODE_50W", 3), applyTarget(3)); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{{"-q"}, {"-m", "3"}}
+	want := [][]string{{"-q", "--verbose"}, {"-m", "3"}}
 	got := [][]string{commandArguments(runner.commands[0]), commandArguments(runner.commands[1])}
 	if len(runner.commands) != 2 || !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
@@ -114,7 +216,7 @@ func TestNVPModelApplyLeavesANodeAlreadyHoldingTheTargetAlone(t *testing.T) {
 	if err := adapter.Apply(context.Background(), modeRequest(now, "MODE_30W", 2), applyTarget(2)); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.commands) != 1 || !reflect.DeepEqual(commandArguments(runner.commands[0]), []string{"-q"}) {
+	if len(runner.commands) != 1 || !reflect.DeepEqual(commandArguments(runner.commands[0]), []string{"-q", "--verbose"}) {
 		t.Fatalf("commands = %#v, want a query only", runner.commands)
 	}
 }
@@ -136,7 +238,7 @@ func TestNVPModelApplyRecordsTheTargetAndRestartsWhenTheModeNeedsABoot(t *testin
 	if !restarted {
 		t.Fatal("the Node was not restarted")
 	}
-	want := [][]string{{"-q"}, {"-m", "2"}, {"--force", "-m", "2"}}
+	want := [][]string{{"-q", "--verbose"}, {"-m", "2"}, {"--force", "-m", "2"}}
 	got := make([][]string, 0, len(runner.commands))
 	for _, command := range runner.commands {
 		got = append(got, commandArguments(command))

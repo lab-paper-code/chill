@@ -559,8 +559,9 @@ DeviceClass에서 그 경로는 측정되지 않고 evidence를 만들지 않으
   `fbp_pg_mask`)를 쓰고, 이 mask는 GPU golden context가 생기기 전에만 바뀐다. JetPack 6에서
   nvidia-container-toolkit의 `nvidia-cdi-refresh.service`는 boot 중 `nvidia-smi -L`로 golden context를 만들므로,
   이 unit이 `nvpmodel.service`보다 먼저 실행되면 `nvpmodel.service`는 "Reboot required"로 끝나고 어떤 설정도
-  적용하지 않는다. 그래도 `nvpmodel -q`는 `/var/lib/nvpmodel/status`의 모드 이름을 보고하므로 actuator read-back은
-  통과하고 CPU와 GPU clock은 boot 기본값에 머문다. 테스트베드 `orin-nano`는
+  적용하지 않는다. 이때 `nvpmodel -q`는 `/var/lib/nvpmodel/status`의 모드 이름을 그대로 보고하고 CPU와 GPU clock은
+  boot 기본값에 머문다. actuator read-back은 `nvpmodel -q --verbose`에서 mode가 설정하는 gating mask가 0으로 남은
+  상태를 기록만 된 모드로 보고 실패로 처리한다. 테스트베드 `orin-nano`는
   `/etc/systemd/system/nvidia-cdi-refresh.service.d/10-after-nvpmodel.conf`(`After=nvpmodel.service`)로 이 순서를
   고정하고, 네 모드 모두에서 online CPU, CPU와 GPU 최대 clock, mask가 `nvpmodel.conf`와 같다. JetPack 4, 5 Node에는
   `/usr/bin/nvidia-smi`가 없어 이 unit이 실행되지 않는다.
