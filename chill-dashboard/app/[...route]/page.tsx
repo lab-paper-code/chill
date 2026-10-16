@@ -22,7 +22,9 @@ type ModelSection = typeof modelSections[number]
 
 // One route, one screen. Each screen does exactly one job; dependent detail opens in a dialog.
 export default async function Page({params,searchParams}:{params:Promise<{route:string[]}>;searchParams:Promise<Record<string,string|string[]|undefined>>}) {
-  const {route} = await params
+  // Next keeps catch-all segments percent-encoded (`a%3Ab`); screens compare and re-encode plain names.
+  let route:string[]
+  try { route = (await params).route.map(decodeURIComponent) } catch { notFound() }
   const search = await searchParams
   const [head, name, sub] = route
   const create = name === "new" && !search.uid
