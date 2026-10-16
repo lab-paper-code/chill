@@ -12,10 +12,15 @@ spec:
     fields:
     - {name: label, format: UTF8}
   artifacts:
-  - target: {model: mobilenet-v2-050, artifact: canonical-onnx}
+  - target: {model: mobilenet-v2-050, artifact: canonical-onnx-arm64}
     source:
       image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:PUSHED_DIGEST"
       architecture: arm64
+      path: /artifact/mobilenet-nchw
+  - target: {model: mobilenet-v2-050, artifact: canonical-onnx-amd64}
+    source:
+      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:PUSHED_DIGEST"
+      architecture: amd64
       path: /artifact/mobilenet-nchw
   - target: {model: mobilenet-v2-050, artifact: mobilenet-v2-050-rk3588}
     source:

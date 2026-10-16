@@ -37,28 +37,42 @@ make rknn-convert-artifact \
 ```
 
 The [carrier Dockerfile](../../../build/docker/derived-model-artifact.Dockerfile)
-copies the build context's `artifact/` directory to `/artifact/`:
+copies the build context's `artifact/` directory to `/artifact/`. Build ONNX
+carriers for both architectures; the image index digest then serves one
+`arm64` artifact and one `amd64` artifact in the `ModelSpec`. The RKNN carrier
+serves only `arm64`, so build it with `--platform linux/arm64`.
 
 ```sh
 mkdir -p /tmp/chill-model-carrier/artifact
 cp /path/to/model.onnx /tmp/chill-model-carrier/artifact/model.onnx
 docker buildx build \
-  --platform linux/arm64 \
-  --build-arg BASE_IMAGE=REGISTRY/RUNNABLE-BASE@sha256:DIGEST \
+  --platform linux/amd64,linux/arm64 \
+  --build-arg BASE_IMAGE=REGISTRY/RUNNABLE-MULTIARCH-BASE@sha256:INDEX-DIGEST \
   --file build/docker/derived-model-artifact.Dockerfile \
   --tag REGISTRY/MODEL-ARTIFACT:BUILD-ID \
   --push /tmp/chill-model-carrier
 ```
 
-Use the digest returned by the registry or build, not `BUILD-ID`, in the
-`ModelSpec`. On a host for the declared architecture, verify the immutable
+Use the image index digest returned by the registry or build, not `BUILD-ID`, in
+the `ModelSpec`. On a host of each declared architecture, verify the immutable
 carrier and the exact catalogued path before registration:
 
 ```sh
-docker run --rm --platform linux/arm64 --entrypoint sh \
-  REGISTRY/MODEL-ARTIFACT@sha256:DIGEST \
+docker run --rm --platform linux/ARCH --entrypoint sh \
+  REGISTRY/MODEL-ARTIFACT@sha256:INDEX-DIGEST \
   -ec 'test -s "$1" && command -v cp >/dev/null' \
   verify /artifact/model.onnx
+```
+
+For mobilenet, stage the context from the existing `arm64` carrier and rebuild
+it as `155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact`:
+
+```sh
+id=$(docker create --platform linux/arm64 \
+  155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721)
+mkdir -p /tmp/chill-model-carrier/artifact
+docker cp "$id:/artifact/mobilenet-v2-050.onnx" /tmp/chill-model-carrier/artifact/
+docker rm "$id"
 ```
 
 ## Fill the ModelSpec
@@ -135,15 +149,19 @@ yq -o=json '.' config/samples/catalog/edge_v1alpha1_preprocessor_smolvlm2-vqa.ya
 
 Structural validation does not prove image access, runtime support or hardware
 compatibility. Those facts and measured evidence are resolved by profiling and
-native admission. The sample declares matching firstfloor ORT CPU/RKNN paths,
-and profiling measures through the same firstfloor paths. Native serving
-consumes a completed firstfloor campaign with every initialized measured batch
-size.
+native admission. The samples declare firstfloor ORT CPU and ORT CUDA paths for
+each architecture (`firstfloor-ort-cpu-arm64`, `firstfloor-ort-cpu-amd64`,
+`firstfloor-ort-cuda-arm64`, `firstfloor-ort-cuda-amd64`) and mobilenet adds
+`firstfloor-rknnlite`. A path binds one artifact of one architecture; profiling
+measures through the same firstfloor paths. Native serving consumes a completed
+firstfloor campaign with every initialized measured batch size.
 
 ## Preprocessor, SmolVLM model and dataset carriers
 
 Every carrier uses the carrier Dockerfile above. Stage the build context, build,
-push, and replace `PUSHED_DIGEST` in the sample with the pushed digest. A
+push, and replace `PUSHED_DIGEST` in the sample with the pushed image index
+digest. Each Preprocessor declares one artifact per target model artifact, so
+the `arm64` and `amd64` ONNX artifacts each name the same multi-arch carrier. A
 preprocessor directory holds the `preprocessor.py` module that the firstfloor
 runner imports; its libraries come from the firstfloor runtime image. The
 staging scripts need `huggingface_hub`; the dataset builder also needs `pyarrow`.
@@ -168,16 +186,18 @@ docker buildx build \
   --push /tmp/chill-vqav2
 ```
 
-Build the other contexts like the model carrier above for `linux/arm64`. The
-dataset carrier is multi-arch, so its sample uses the image index digest.
+Build the other contexts the same way for `linux/amd64,linux/arm64`; every
+sample carrier except the RKNN model is multi-arch, so the samples use image
+index digests.
 
-The SmolVLM2 model carrier is one artifact, `onnx-fp32` of the
+The SmolVLM2 model carrier holds the artifacts `onnx-fp32-arm64` and
+`onnx-fp32-amd64` of the
 [`smolvlm2-500m-video-instruct` ModelSpec](edge_v1alpha1_modelspec_smolvlm2.yaml),
-with three files: `/artifact/vision_encoder.onnx`, `/artifact/embed_tokens.onnx`
+each with three files: `/artifact/vision_encoder.onnx`, `/artifact/embed_tokens.onnx`
 and `/artifact/decoder_model_merged.onnx`. The runner keys their sessions
 `vision_encoder`, `embed_tokens` and `decoder_model_merged`; the module records
-their pinned input and output names. The mobilenet ModelSpec keeps its existing
-carriers, whose single files sit at the same `/artifact/<file>` paths.
+their pinned input and output names. The mobilenet ONNX carrier holds its single
+file at `/artifact/mobilenet-v2-050.onnx`.
 
 After the ModelSpecs, Preprocessors and Dataset, register the two Workloads in
 [`../manual/edge_v1alpha1_workload_mobilenet.yaml`](../manual/edge_v1alpha1_workload_mobilenet.yaml)
@@ -206,8 +226,8 @@ cp build/model-artifacts/preprocessors/plc-extruder-anomaly/preprocessor.py \
   /tmp/chill-plc-pre/artifact/plc-extruder-anomaly/
 ```
 
-Build the model and preprocessor contexts for `linux/arm64` and the dataset
-context as multi-arch, as above. The [`plc-lstm-ae` ModelSpec](edge_v1alpha1_modelspec_plc.yaml)
+Build the model, preprocessor and dataset contexts for
+`linux/amd64,linux/arm64`, as above. The [`plc-lstm-ae` ModelSpec](edge_v1alpha1_modelspec_plc.yaml)
 has one file, `/artifact/plc-lstm-ae.onnx`, mapping `records` f32 `[batch, 60, 10]`
 to `score` f32 `[batch]`. The [`plc-extruder-anomaly` Preprocessor](edge_v1alpha1_preprocessor_plc-extruder-anomaly.yaml)
 directory holds `preprocessor.py` and its `stats.json`; it outputs `score` and

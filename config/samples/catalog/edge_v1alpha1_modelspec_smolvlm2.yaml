@@ -6,7 +6,7 @@ metadata:
   name: smolvlm2-500m-video-instruct
 spec:
   artifacts:
-  - name: onnx-fp32
+  - name: onnx-fp32-arm64
     format: onnx
     source:
       image: "155.230.35.213:5000/chill/chill-smolvlm2-500m-onnx@sha256:PUSHED_DIGEST"
@@ -15,12 +15,51 @@ spec:
       - /artifact/vision_encoder.onnx
       - /artifact/embed_tokens.onnx
       - /artifact/decoder_model_merged.onnx
+  - name: onnx-fp32-amd64
+    format: onnx
+    source:
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-500m-onnx@sha256:PUSHED_DIGEST"
+      architecture: amd64
+      files:
+      - /artifact/vision_encoder.onnx
+      - /artifact/embed_tokens.onnx
+      - /artifact/decoder_model_merged.onnx
   executionPaths:
-  - name: firstfloor-ort-cpu
-    artifact: onnx-fp32
+  - name: firstfloor-ort-cpu-arm64
+    artifact: onnx-fp32-arm64
     runtime:
       family: firstfloor
       backend: ort-cpu
+      settings:
+        firstfloor:
+          maxBatchSize: 4
+          maxQueueSize: 64
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cuda-arm64
+    artifact: onnx-fp32-arm64
+    runtime:
+      family: firstfloor
+      backend: ort-cuda
+      settings:
+        firstfloor:
+          maxBatchSize: 4
+          maxQueueSize: 64
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cpu-amd64
+    artifact: onnx-fp32-amd64
+    runtime:
+      family: firstfloor
+      backend: ort-cpu
+      settings:
+        firstfloor:
+          maxBatchSize: 4
+          maxQueueSize: 64
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cuda-amd64
+    artifact: onnx-fp32-amd64
+    runtime:
+      family: firstfloor
+      backend: ort-cuda
       settings:
         firstfloor:
           maxBatchSize: 4

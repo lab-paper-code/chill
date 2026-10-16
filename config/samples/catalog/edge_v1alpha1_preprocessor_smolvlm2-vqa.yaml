@@ -14,8 +14,13 @@ spec:
     - {name: answer, format: UTF8}
   maxNewTokens: 16
   artifacts:
-  - target: {model: smolvlm2-500m-video-instruct, artifact: onnx-fp32}
+  - target: {model: smolvlm2-500m-video-instruct, artifact: onnx-fp32-arm64}
     source:
       image: "155.230.35.213:5000/chill/chill-smolvlm2-vqa-preprocessor@sha256:PUSHED_DIGEST"
       architecture: arm64
+      path: /artifact/smolvlm2-vqa
+  - target: {model: smolvlm2-500m-video-instruct, artifact: onnx-fp32-amd64}
+    source:
+      image: "155.230.35.213:5000/chill/chill-smolvlm2-vqa-preprocessor@sha256:PUSHED_DIGEST"
+      architecture: amd64
       path: /artifact/smolvlm2-vqa

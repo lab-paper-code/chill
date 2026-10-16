@@ -13,8 +13,13 @@ spec:
     - {name: score, format: UTF8}
     - {name: anomaly, format: UTF8}
   artifacts:
-  - target: {model: plc-lstm-ae, artifact: onnx-fp32}
+  - target: {model: plc-lstm-ae, artifact: onnx-fp32-arm64}
     source:
       image: "155.230.35.213:5000/chill/chill-plc-extruder-anomaly-preprocessor@sha256:PUSHED_DIGEST"
       architecture: arm64
+      path: /artifact/plc-extruder-anomaly
+  - target: {model: plc-lstm-ae, artifact: onnx-fp32-amd64}
+    source:
+      image: "155.230.35.213:5000/chill/chill-plc-extruder-anomaly-preprocessor@sha256:PUSHED_DIGEST"
+      architecture: amd64
       path: /artifact/plc-extruder-anomaly
