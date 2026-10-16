@@ -32,7 +32,7 @@ func boundedCostRead(ctx context.Context, reader evidencestore.Reader, ref evide
 		return nil, err
 	}
 	if ref.Size > maxBytes || maxBytes < 1 {
-		return nil, errors.New("power cost object exceeds bound")
+		return nil, errors.New("cost object exceeds bound")
 	}
 	stream, err := reader.Open(ctx, ref)
 	if err != nil {
@@ -44,7 +44,7 @@ func boundedCostRead(ctx context.Context, reader evidencestore.Reader, ref evide
 		return nil, err
 	}
 	if int64(len(raw)) != ref.Size {
-		return nil, errors.New("power cost exact size mismatch")
+		return nil, errors.New("cost exact size mismatch")
 	}
 	return raw, nil
 }

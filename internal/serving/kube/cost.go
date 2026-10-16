@@ -1,11 +1,8 @@
 package kube
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"math"
 	"reflect"
 	"slices"
@@ -79,29 +76,11 @@ func LoadOperationMeasurements(ctx context.Context, reader evidencestore.Reader,
 }
 func readOperationMeasurement(ctx context.Context, reader evidencestore.Reader, ref evidencestore.ObjectIdentity, maxBytes int64) (OperationMeasurement, error) {
 	var record OperationMeasurement
-	if err := ref.Validate(); err != nil {
-		return record, err
-	}
-	if ref.Size > maxBytes {
-		return record, errors.New("operation raw evidence exceeds bound")
-	}
-	stream, err := reader.Open(ctx, ref)
+	raw, err := boundedCostRead(ctx, reader, ref, maxBytes)
 	if err != nil {
 		return record, err
 	}
-	raw, readErr := io.ReadAll(io.LimitReader(stream, ref.Size+1))
-	err = errors.Join(readErr, stream.Close())
-	if err != nil || int64(len(raw)) != ref.Size {
-		return record, errors.Join(err, errors.New("operation raw evidence size mismatch"))
-	}
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
-	if err = d.Decode(&record); err == nil {
-		var extra any
-		if e := d.Decode(&extra); !errors.Is(e, io.EOF) {
-			err = errors.New("trailing operation raw JSON")
-		}
-	}
+	err = strictCostDecode(raw, &record)
 	return record, err
 }
 func validateRetainedMeasurement(record OperationMeasurement) error {

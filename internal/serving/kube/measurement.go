@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -277,20 +278,14 @@ func measurementCost(record OperationMeasurement, reference evidencestore.Object
 func stateProfileKeys(state OperationState) []string { return append([]string(nil), state.States...) }
 func operationCostKeys(result OperationResult) (string, string, error) {
 	difference := func(a, b []string) []string {
-		remaining := append([]string(nil), b...)
+		remaining := slices.Clone(b)
 		var diff []string
 		for _, value := range a {
-			index := -1
-			for i, v := range remaining {
-				if v == value {
-					index = i
-					break
-				}
-			}
+			index := slices.Index(remaining, value)
 			if index < 0 {
 				diff = append(diff, value)
 			} else {
-				remaining = append(remaining[:index], remaining[index+1:]...)
+				remaining = slices.Delete(remaining, index, index+1)
 			}
 		}
 		return diff
