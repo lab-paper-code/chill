@@ -10,7 +10,8 @@ import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { datatypes, positiveIntegers, resourceHref as href, sloTarget as target, workloadSpec, type ModelResource, type ModelList, type ModelSpec, type ModelArtifact, type ExecutionPath, type TensorContract, fieldFormats, type RawField, type PreprocessorArtifact, type PreprocessorResource, type PreprocessorSpec, type DatasetResource, type DatasetSpec, type WorkloadResource, type WorkloadSpec, type WorkloadView } from "@/lib/domain"
+import { backendsByFormat, datatypes, formatText, positiveIntegers, resourceHref as href, sloTarget as target, workloadSpec, type ModelResource, type ModelList, type ModelSpec, type ModelArtifact, type ExecutionPath, type TensorContract, fieldFormats, type RawField, type PreprocessorArtifact, type PreprocessorResource, type PreprocessorSpec, type DatasetResource, type DatasetSpec, type WorkloadResource, type WorkloadSpec, type WorkloadView } from "@/lib/domain"
+import { explain } from "@/lib/labels"
 import { ServiceSection, serviceSections, useServiceSignals, type ServiceSectionId } from "@/features/service-hub"
 
 type Kind = "models" | "workloads" | "preprocessors" | "datasets"
@@ -24,7 +25,7 @@ const emptyTarget = (): PreprocessorArtifact => ({ target: { model: "", artifact
 const subsets = (path: string) => [`${path.replace(/\/+$/, "")}/profiling`, `${path.replace(/\/+$/, "")}/evaluation`]
 const emptyTensor = (): TensorContract => ({ name: "", datatype: "FP32", sampleShape: [1] })
 const emptyArtifact = (): ModelArtifact => ({ name: "", format: "", source: { image: "", architecture: "", files: [""] } })
-const emptyPath = (): ExecutionPath => ({ name: "", artifact: "", runtime: { family: "", backend: "" } })
+const emptyPath = (): ExecutionPath => ({ name: "", artifact: "", runtime: { family: "firstfloor", backend: "", settings: { firstfloor: { maxBatchSize: 1, maxQueueSize: 1, deadlinePolicy: "keep" } } } })
 type Referenced = Exclude<Kind, "workloads">
 // Services that use a catalog object by name, by applied definition, or as an in-flight change target.
 const connected = (list: WorkloadView[] | undefined, kind: Referenced, name: string, uid?: string) => list?.filter(w => {
@@ -47,16 +48,14 @@ function josa(word: string, [after, plain]: [string, string]) {
   const c = word.charCodeAt(word.length - 1) - 0xac00
   return word + ((c >= 0 && c < 11172 ? c % 28 !== 0 : /[lmn013678]$/i.test(word)) ? after : plain)
 }
-const nouns: Record<string, string> = { image: "이미지", question: "질문", answer: "답", label: "분류 결과" }
 type Named = { name: string; format: RawField["format"] }
-const noun = (f: Named) => f.format === "JPEG" ? "이미지" : nouns[f.name] ?? f.name
 const and = (words: string[]) => words.map((w, i) => i < words.length - 1 ? josa(w, ["과", "와"]) : w).join(" ")
-const nounList = (fields: Named[]) => and([...new Set(fields.map(noun))])
-const formatLabel = (f: Named) => f.format === "JPEG" ? "JPEG 이미지" : "글"
+// Contract names as written, with only the format in plain words: "사진 image와 글 question".
+const named = (fields: Named[]) => and(fields.map(f => `${formatText(f.format)} ${f.name}`))
 // The plain conclusion of a catalog contract: what it takes and returns, or which records it holds.
 const conclusion = (spec: PreprocessorSpec | DatasetSpec) => "input" in spec
-  ? `${josa(nounList(spec.input.fields), ["을", "를"])} 받아 ${josa(nounList(spec.output.fields), ["을", "를"])} 돌려줘요`
-  : `${nounList(spec.fields)} 기록을 담고 있어요`
+  ? `${josa(named(spec.input.fields), ["을", "를"])} 받아 ${josa(named(spec.output.fields), ["을", "를"])} 돌려줘요`
+  : `${named(spec.fields)} 기록을 담고 있어요`
 // Preview of serving/kube snapshot(): a model path runs only when the preprocessor targets its existing artifact.
 function preprocessorGap(p: PreprocessorSpec, model: ModelResource | undefined) {
   if (!model) return ""
@@ -143,6 +142,8 @@ function ModelFields({ spec, set, step, models }: { spec: ModelSpec; set: (spec:
   const pi = Math.min(pathIndex, Math.max(0, spec.executionPaths.length - 1))
   const row = spec.artifacts[index]
   const execution = spec.executionPaths[pi]
+  const format = spec.artifacts.find(a => a.name === execution?.artifact)?.format ?? ""
+  const backends = backendsByFormat[format] ?? []
   function artifact(change: Partial<ModelArtifact>) { set({ ...spec, artifacts: spec.artifacts.map((a, i) => i === index ? { ...a, ...change } : a) }) }
   function path(change: Partial<ExecutionPath>) { set({ ...spec, executionPaths: spec.executionPaths.map((p, i) => i === pi ? { ...p, ...change } : p) }) }
   return <div className="grid gap-5">
@@ -168,9 +169,16 @@ function ModelFields({ spec, set, step, models }: { spec: ModelSpec; set: (spec:
       })}<Button type="button" variant="outline" onClick={() => artifact({ input: { tensors: [...(row.input?.tensors ?? []), emptyTensor()] } })}>입력 추가</Button>
     </>}
     {step === "paths" && <><Field label="설정할 실행 방식"><select aria-label="설정할 실행 방식" className={select} value={pi} onChange={event => setPathIndex(Number(event.target.value))}>{spec.executionPaths.map((p, i) => <option key={i} value={i}>{p.name || `실행 방식 ${i + 1}`}</option>)}</select></Field>
-      {execution && <div key={pi} className="grid gap-4"><Text label="실행 방식 이름" value={execution.name} set={name => path({ name })} /><Field label="사용할 모델 파일"><select required aria-label="사용할 모델 파일" className={select} value={execution.artifact} onChange={event => path({ artifact: event.target.value })}><option value="">파일 선택</option>{spec.artifacts.map((a, i) => <option key={i} value={a.name}>{a.name || "이름 없는 파일"}</option>)}</select></Field><Choice label="실행 소프트웨어" value={execution.runtime.family} set={family => path({ runtime: { ...execution.runtime, family } })} options={["firstfloor", "onnxruntime", "rknnlite"]} /><Choice label="처리 방식" value={execution.runtime.backend} set={backend => path({ runtime: { ...execution.runtime, backend } })} options={execution.runtime.family === "firstfloor" ? ["ort-cpu", "ort-cuda", "rknnlite"] : execution.runtime.family === "rknnlite" ? ["not-applicable"] : ["CPUExecutionProvider", "CUDAExecutionProvider", "TensorrtExecutionProvider"]} />
-        <label className="flex gap-2 text-sm"><input type="checkbox" checked={!!execution.runtime.settings?.firstfloor} onChange={event => path({ runtime: { ...execution.runtime, settings: event.target.checked ? { firstfloor: { maxBatchSize: 1, maxQueueSize: 1, deadlinePolicy: "keep" } } : undefined } })} />firstfloor 요청 처리 설정 사용</label>
-        <p className="text-sm text-muted-foreground">firstfloor에는 이 설정이 필요해요. ONNX 파일은 ort-cpu 또는 ort-cuda, RKNN 파일은 rknnlite를 고르세요. 대기 한도는 서비스마다 따로 적용돼요. 다른 실행 소프트웨어에서는 설정을 꺼 주세요. 최종 조합은 저장할 때 확인해요.</p>
+      {execution && <div key={pi} className="grid gap-4"><Text label="실행 방식 이름" value={execution.name} set={name => path({ name })} /><Field label="사용할 모델 파일"><select required aria-label="사용할 모델 파일" className={select} value={execution.artifact} onChange={event => {
+        // The backend follows the artifact format; a kept pick survives only when the new format still allows it.
+        const allowed = backendsByFormat[spec.artifacts.find(a => a.name === event.target.value)?.format ?? ""] ?? []
+        path({ artifact: event.target.value, runtime: { ...execution.runtime, family: "firstfloor", backend: allowed.includes(execution.runtime.backend) ? execution.runtime.backend : allowed.length === 1 ? allowed[0] : "" } })
+      }}><option value="">파일 선택</option>{spec.artifacts.map((a, i) => <option key={i} value={a.name}>{a.name || "이름 없는 파일"}</option>)}</select></Field>
+        <p className="text-sm">실행기는 {explain("firstfloor")[0]}로 정해져 있어요.</p>
+        {format === "rknn" && <p className="notice text-sm">RKNN 파일로 실행하려면 Rockchip RK3588 장비용으로 변환한 파일이어야 해요. 변환 정보에 지원 묶음 크기를 적고, 모델 입력은 실수(FP32) 값으로 된 3축 입력 하나여야 해요.</p>}
+        {backends.length ? <Choices label="처리 방식" value={execution.runtime.backend} set={backend => path({ runtime: { ...execution.runtime, family: "firstfloor", backend, settings: execution.runtime.settings ?? emptyPath().runtime.settings } })} options={backends.map(backend => ({ value: backend, label: explain(backend)[0] }))} />
+          : <p className="text-sm text-muted-foreground">{execution.artifact ? "이 파일 형식으로는 실행할 수 없어요. ONNX나 RKNN 파일을 골라 주세요." : "사용할 모델 파일을 먼저 골라 주세요. 처리 방식은 파일 형식에 맞는 것만 보여요."}</p>}
+        <p className="text-sm text-muted-foreground">한 번에 묶어 실행할 요청 수와 대기 한도를 정해요. 대기 한도는 서비스마다 따로 적용돼요. 최종 조합은 저장할 때 확인해요.</p>
         {execution.runtime.settings?.firstfloor && <>{([["maxBatchSize", "최대 묶음 크기 · 건"], ["maxQueueSize", "서비스별 대기 한도 · 건"]] as const).map(([key, label]) => <Integer key={key} label={label} value={execution.runtime.settings!.firstfloor![key]} set={value => path({ runtime: { ...execution.runtime, settings: { firstfloor: { ...execution.runtime.settings!.firstfloor!, [key]: value } } } })} />)}<Field label="응답 목표를 지키기 어려운 요청"><select required aria-label="응답 목표를 지키기 어려운 요청" className={select} value={execution.runtime.settings.firstfloor.deadlinePolicy ?? "keep"} onChange={event => path({ runtime: { ...execution.runtime, settings: { firstfloor: { ...execution.runtime.settings!.firstfloor!, deadlinePolicy: event.target.value as "drop" | "keep" | "defer" } } } })}><option value="keep">계속 처리 (기본값)</option><option value="drop">실행 전 거절</option><option value="defer">정상 대기 요청 뒤로 미루기</option></select></Field><p className="text-sm text-muted-foreground">이미 실행 중인 요청은 끝까지 처리해요. 정책을 바꾸면 새 실행 인스턴스로 교체돼요. 고정 묶음 측정에서는 거절하거나 미루지 않아요.</p></>}
         <Button type="button" variant="outline" onClick={() => set({ ...spec, executionPaths: spec.executionPaths.filter((_, i) => i !== pi) })}>이 실행 방식 빼기</Button></div>}
       <Button type="button" variant="outline" onClick={() => { setPathIndex(spec.executionPaths.length); set({ ...spec, executionPaths: [...spec.executionPaths, emptyPath()] }) }}>실행 방식 추가</Button>
@@ -211,7 +219,7 @@ function DefinitionSummary({ spec }: { spec: Spec }) {
   ]} />
   return "modelRef" in spec ? <Facts items={brief(spec)} /> : <Facts items={[
     ...spec.artifacts.map((a, i): [string, string] => [`파일 ${a.name || i + 1}`, `${a.format} · ${a.source.files.join(", ")}${a.input ? ` · 입력 ${a.input.tensors.map(t => `${t.name} (${t.sampleShape.join(" × ")})`).join(", ")}` : ""}`]),
-    ...spec.executionPaths.map((p, i): [string, string] => [`실행 방식 ${p.name || i + 1}`, `${p.artifact} · ${p.runtime.family} / ${p.runtime.backend}`]),
+    ...spec.executionPaths.map((p, i): [string, string] => [`실행 방식 ${p.name || i + 1}`, `${p.artifact} · ${explain(p.runtime.backend)[0]}`]),
   ]} />
 }
 function serviceRow(w: WorkloadView) {
@@ -249,7 +257,7 @@ function UserRows({ users }: { users: Users }) {
     {users.preprocessors.length > 0 && <Rows label="대상으로 삼은 전처리기">{users.preprocessors.map(p => <Row key={p.name} href={href("preprocessors", p.name, p.uid)} label={p.name} hint="전처리기 보기" />)}</Rows>}
   </>
 }
-// Known users block deletion without a request; the owner still answers 409 when this view is stale.
+// Known users block deletion without a request; ChillServer still answers 409 when this view is stale.
 function DeleteRow({ kind, r, users, open }: { kind: Kind; r: ResourceState; users: Users; open: () => void }) {
   if (!users.workloads.length && !users.preprocessors.length) return <Row label="삭제" hint="되돌릴 수 없어요" onClick={() => { if (!r.blocked && !r.conflict) open() }} />
   return <RowDialog label="삭제" hint="쓰는 곳이 있어서 지금은 지울 수 없어요" title={`${josa(who(users), ["이", "가"])} 쓰고 있어서 지울 수 없어요`} description={unblock(kind, users)}><UserRows users={users} /></RowDialog>
@@ -265,7 +273,7 @@ function refusal(failure: { code?: string; message?: string } | null, workloads:
   return { workloads: names.map(name => ({ name, uid: uid(name) })), preprocessors: targeting.map(name => ({ name, uid: "" })) }
 }
 
-// One registration: owner read, If-Match version, conflict, unknown outcome and deletion tracking.
+// One registration: ChillServer read, If-Match version, conflict, unknown outcome and deletion tracking.
 function useResource(kind: Kind, name?: string) {
   const queryClient = useQueryClient()
   const expectedUID = useSearchParams().get("uid")
@@ -340,9 +348,11 @@ function Problem({ r, kind }: { r: ResourceState; kind: Kind }) {
       <SourceJSON title="거절 이유 자세히" value={{ status: error.status, error: failure, body: error.body }} />
     </div>
   }
+  // A body code reads as its sentence and next action; the code itself stays in 변경 오류 자세히.
+  const [meaning, step] = failure?.code ? explain(failure.code) : ["변경을 저장하지 못했어요."]
   return <div role="alert" className="notice">
-    <p className="font-medium">{error.unknownOutcome ? "저장 결과를 확인하지 못했어요" : "변경을 저장하지 못했어요"}</p>
-    <p>작성한 내용은 그대로 있어요. {failure?.field?.includes("slo") ? "응답 목표를 확인해 주세요." : failure?.field?.includes("preprocessorRef") ? "선택한 전처리기를 확인해 주세요." : failure?.field?.includes("datasetRef") ? "선택한 데이터셋이 있고 전처리기 입력 필드를 담는지 확인해 주세요." : failure?.field?.includes("target") ? "대상 모델과 모델 파일을 확인해 주세요." : failure?.field?.includes("model") ? "선택한 모델을 확인해 주세요." : failure?.field?.includes("source") ? "보관 주소와 위치를 확인해 주세요." : failure?.field?.includes("artifact") ? "모델 파일과 입력 정보를 확인해 주세요." : failure?.field?.includes("execution") ? "실행 방식을 확인해 주세요." : /input|output|fields/.test(failure?.field ?? "") ? "입력과 출력 필드를 확인해 주세요. 연결된 서비스의 전처리기와 데이터셋 필드가 맞아야 해요." : "자세한 이유를 확인하고 다시 시도해 주세요."} 결과가 불확실하면 현재 상태를 먼저 확인해 주세요. 자동으로 다시 보내지 않아요.</p>
+    <p className="font-medium">{error.unknownOutcome ? "저장 결과를 확인하지 못했어요" : meaning}</p>
+    <p>작성한 내용은 그대로 있어요. {failure?.field?.includes("slo") ? "응답 목표를 확인해 주세요." : failure?.field?.includes("preprocessorRef") ? "선택한 전처리기를 확인해 주세요." : failure?.field?.includes("datasetRef") ? "선택한 데이터셋이 있고 전처리기 입력 필드를 담는지 확인해 주세요." : failure?.field?.includes("target") ? "대상 모델과 모델 파일을 확인해 주세요." : failure?.field?.includes("model") ? "선택한 모델을 확인해 주세요." : failure?.field?.includes("source") ? "보관 주소와 위치를 확인해 주세요." : failure?.field?.includes("artifact") ? "모델 파일과 입력 정보를 확인해 주세요." : failure?.field?.includes("execution") ? "실행 방식을 확인해 주세요." : /input|output|fields/.test(failure?.field ?? "") ? "입력과 출력 필드를 확인해 주세요. 연결된 서비스의 전처리기와 데이터셋 필드가 맞아야 해요." : step ?? "자세한 이유를 확인하고 다시 시도해 주세요."} 결과가 불확실하면 현재 상태를 먼저 확인해 주세요. 자동으로 다시 보내지 않아요.</p>
     <div className="flex flex-wrap gap-2"><SourceJSON title="변경 오류 자세히" value={{ status: error.status, error: failure, body: error.body }} />{r.name ? <Button size="sm" variant="outline" onClick={() => void r.detail.refetch()}>최신 상태 확인</Button> : <Button asChild size="sm" variant="outline"><Link href={`/${kind}`}>목록에서 확인</Link></Button>}</div>
   </div>
 }
@@ -404,19 +414,18 @@ export function ServicePage({ name }: { name: string }) {
   if (r.deletedUID) return <Deleted kind="workloads" name={name} uid={r.deletedUID} r={r} />
   if ((r.wrongUID || r.identityChanged) && r.current) return <Mismatch kind="workloads" name={name} uid={r.current.metadata.uid} />
   const uid = view?.desired.metadata.uid ?? ""
-  const reason = view ? view.reason || view.readiness : ""
-  const failed = view?.operation?.phase === "Failed"
-  const measured = !!view?.supportedInputs.length && reason !== "MissingEvidence"
-  const missingDataset = reason === "MissingDataset"
-  const title = !view ? name : view.admission ? "추론을 시작할 수 있어요" : failed ? "설정 변경이 실패했어요" : s.operating ? "설정을 적용하고 있어요" : missingDataset ? "측정할 데이터셋을 정해야 요청을 받을 수 있어요" : !measured ? "측정 결과가 있어야 요청을 받을 수 있어요" : "아직 요청을 받지 못해요"
-  const next = !view ? null : view.admission ? [href("workloads", name, uid, "infer"), "추론하기"] : failed ? [href("workloads", name, uid, "edit"), "설정 수정"] : s.operating ? [href("workloads", name, uid, "definition"), "적용 진행 보기"] : missingDataset ? [href("workloads", name, uid, "edit"), "데이터셋 정하기"] : !measured ? ["/measurements", "측정 결과 찾기"] : ["MissingRuntime", "NativeNotReady"].includes(reason) ? [href("workloads", name, uid, "placement"), "배치 확인하기"] : [href("workloads", name, uid, "edit"), "설정 수정"]
-  return <Screen back={["/workloads", "서비스"]} status={view && <StatusBadge value={view.admission ? "Ready" : reason}>{view.admission ? "요청 받는 중" : undefined}</StatusBadge>} title={title} lede={view && `${name} · ${view.desired.spec.modelRef.name} 모델 · ${view.desired.spec.preprocessorRef.name} 전처리기 · ${target(view.desired.spec)}`} action={next && <Button asChild><Link href={next[0]}>{next[1]}</Link></Button>}>
+  // The headline and next step come from the code table; an in-flight change outranks the last runtime reason.
+  const code = !view ? "" : view.admission ? "Ready" : ["Changing", "Deleting"].includes(view.readiness) ? view.readiness : view.reason || view.readiness
+  const [title, step] = view ? explain(code) : [name]
+  const next = !view ? null : view.admission ? [href("workloads", name, uid, "infer"), "추론하기"] : s.operating ? [href("workloads", name, uid, "definition"), "적용 진행 보기"] : view.readiness === "Failed" || code === "MissingDataset" ? [href("workloads", name, uid, "edit"), "설정 수정"] : code === "MissingEvidence" || !view.supportedInputs.length ? ["/measurements", "측정 결과 찾기"] : ["MissingRuntime", "NativeNotReady"].includes(code) ? [href("workloads", name, uid, "placement"), "배치 확인하기"] : [href("workloads", name, uid, "edit"), "설정 수정"]
+  return <Screen back={["/workloads", "서비스"]} status={view && <StatusBadge value={view.admission ? "Ready" : code}>{view.admission ? "요청 받는 중" : undefined}</StatusBadge>} title={title} lede={view && [step, `${name} · ${view.desired.spec.modelRef.name} 모델 · ${view.desired.spec.preprocessorRef.name} 전처리기 · ${target(view.desired.spec)}`].filter(Boolean).join(" ")} action={next && <Button asChild><Link href={next[0]}>{next[1]}</Link></Button>}>
     <QueryGate query={r.detail}>{view && <>
       <Problem r={r} kind="workloads" />
       <Rows label="자세히">{(Object.keys(serviceSections) as ServiceSectionId[]).map(id => <Row key={id} href={href("workloads", name, uid, id)} label={serviceSections[id][0]} hint={serviceSections[id][1]} value={s.values[id]} />)}</Rows>
       <Rows label="관리">
         <Row href={href("workloads", name, uid, "edit")} label="설정 수정" hint="모델, 전처리기, 데이터셋이나 응답 목표 바꾸기" />
         <Row label="삭제" hint="되돌릴 수 없어요" onClick={() => { if (!r.blocked && !r.conflict) setDeleting(true) }} />
+        <RowDialog label="원본 상태 보기" title={`${name} 상태 원본`}><SourceJSON inline value={{ readiness: view.readiness, reason: view.reason, admission: view.admission, operation: view.operation, observedAt: view.observedAt }} /></RowDialog>
       </Rows>
       {deleting && <DeleteConfirm kind="workloads" name={name} r={r} close={() => setDeleting(false)} />}
     </>}</QueryGate>
@@ -444,7 +453,7 @@ export function ModelPage({ name }: { name: string }) {
     <QueryGate query={r.detail}>{model && <>
       <Problem r={r} kind="models" />
       <Rows label="자세히">
-        <Row href={href("models", name, uid, "files")} label="파일과 실행 방식" hint="모델 파일, 입력, 실행 소프트웨어" value={`파일 ${model.spec.artifacts.length}개 · 실행 ${model.spec.executionPaths.length}개`} />
+        <Row href={href("models", name, uid, "files")} label="파일과 실행 방식" hint="모델 파일, 입력, 처리 방식" value={`파일 ${model.spec.artifacts.length}개 · 실행 ${model.spec.executionPaths.length}개`} />
         <Row href={href("models", name, uid, "services")} label="연결된 서비스" hint="이 모델을 쓰는 서비스" value={count === undefined ? r.workloads.error ? "확인 불가" : "확인 중" : `${count}개`} />
       </Rows>
       <Rows label="관리">
@@ -486,7 +495,7 @@ export function ModelSectionPage({ name, section }: { name: string; section: "fi
       <Rows label="실행 방식">{spec.executionPaths.map((p, i) => {
         const ff = p.runtime.settings?.firstfloor
         return <RowDialog key={i} label={p.name || `실행 방식 ${i + 1}`} hint={`${p.artifact} 파일 사용`} title={`${p.name || `실행 방식 ${i + 1}`} 실행 방식`}>
-          <Facts items={[["사용하는 파일", p.artifact], ["실행 소프트웨어", p.runtime.family], ["처리 방식", p.runtime.backend], ["요청 처리 설정", ff ? `최대 묶음 ${ff.maxBatchSize}건 · 대기 한도 ${ff.maxQueueSize}건 · ${ff.deadlinePolicy === "drop" ? "실행 전 거절" : ff.deadlinePolicy === "defer" ? "뒤로 미루기" : "계속 처리"}` : "사용 안 함"]]} />
+          <Facts items={[["사용하는 파일", p.artifact], ["처리 방식", explain(p.runtime.backend)[0]], ["요청 처리 설정", ff ? `최대 묶음 ${ff.maxBatchSize}건 · 대기 한도 ${ff.maxQueueSize}건 · ${ff.deadlinePolicy === "drop" ? "실행 전 거절" : ff.deadlinePolicy === "defer" ? "뒤로 미루기" : "계속 처리"}` : "사용 안 함"]]} />
         </RowDialog>
       })}</Rows>
       <Rows><RowDialog label="원본 자료 보기" title="파일과 실행 설정 원본"><SourceJSON inline value={spec} /></RowDialog></Rows>
@@ -518,11 +527,10 @@ export function CatalogPage({ kind, name }: { kind: "preprocessors" | "datasets"
   return <Screen back={[`/${kind}`, kindLabel(kind)]} title={spec ? conclusion(spec) : name} lede={`${name} · ${count === undefined ? r.workloads.error ? "쓰는 서비스를 확인하지 못했어요" : "쓰는 서비스를 확인하고 있어요" : count ? `서비스 ${count}개가 써요` : "아직 쓰는 서비스가 없어요"}`}>
     <QueryGate query={r.detail}>{item && spec && <>
       <Problem r={r} kind={kind} />
-      <Facts items={"input" in spec ? [
-        ...spec.input.fields.map((f): [string, string] => [`받는 ${noun(f)}`, `${formatLabel(f)} · 최대 ${size(f.maxBytes)}`]),
-        ...spec.output.fields.map((f): [string, string] => [`돌려주는 ${noun(f)}`, formatLabel(f)]),
-        ...(spec.maxNewTokens ? [["최대 생성 토큰", `${spec.maxNewTokens}개`] as [string, string]] : []),
-      ] : spec.fields.map((f): [string, string] => [`${noun(f)} 기록`, `${formatLabel(f)} · 최대 ${size(f.maxBytes)}`])} />
+      {"input" in spec ? <>
+        <Facts label="받는 입력" items={spec.input.fields.map((f): [string, string] => [f.name, `${formatText(f.format)} · 최대 ${size(f.maxBytes)}`])} />
+        <Facts label="돌려주는 출력" items={[...spec.output.fields.map((f): [string, string] => [f.name, formatText(f.format)]), ...(spec.maxNewTokens ? [["최대 생성 토큰", `${spec.maxNewTokens}개`] as [string, string]] : [])]} />
+      </> : <Facts label="기록 필드" items={spec.fields.map((f): [string, string] => [f.name, `${formatText(f.format)} · 최대 ${size(f.maxBytes)}`])} />}
       {"input" in spec
         ? <Rows label="맞춘 모델 파일">{spec.artifacts.map((a, i) => <RowDialog key={i} label={`${a.target.model} · ${a.target.artifact} · ${a.source.architecture}`} title={`${a.target.artifact} 파일용 전처리 파일`}><Facts items={[["대상 모델", a.target.model], ["대상 모델 파일", a.target.artifact], ["대상 장비", a.source.architecture], ["전처리 파일 보관 주소", a.source.image], ["보관 이미지 안의 파일 위치", a.source.path]]} /></RowDialog>)}</Rows>
         : <Rows><RowDialog label="데이터 보관 위치" value={spec.source.path} title="데이터 보관 위치"><Facts items={[["보관 주소", spec.source.image], ["데이터 위치", spec.source.path], ["측정용 묶음", subsets(spec.source.path)[0]], ["평가용 묶음", subsets(spec.source.path)[1]]]} /></RowDialog></Rows>}
@@ -560,7 +568,7 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
   const savedPreprocessor = original && "preprocessorRef" in original.spec ? original.spec.preprocessorRef.name : ""
   const chosenPreprocessor = preprocessors.data?.items.find(p => p.metadata.name === preprocessorRef)
   const chosenDataset = datasets.data?.items.find(d => d.metadata.name === datasetRef)
-  // The saved preprocessor stays selectable: the owner accepts it, the service just has no runnable path.
+  // The saved preprocessor stays selectable: ChillServer accepts it, the service just has no runnable path.
   const preprocessorProblem = chosenPreprocessor && preprocessorRef !== savedPreprocessor ? preprocessorGap(chosenPreprocessor.spec, selected) : ""
   const datasetProblem = chosenDataset ? datasetGap(chosenDataset.spec, chosenPreprocessor?.spec) : ""
   const steps: Step[] = [...(original ? [] : ["name" as const]), ...kindSteps[kind], "review"]
@@ -581,7 +589,7 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
       if (step === "review") { if (!locked) void r.submit(original ? "PUT" : "POST", original ? { spec: draft() } : { name, spec: draft() }); return }
       if (step === "artifacts" && (!spec.artifacts.length || spec.artifacts.some(a => !a.name.trim() || !a.format.trim() || !a.source.image.trim() || !a.source.architecture.trim() || !a.source.files.length || a.source.files.some(file => !file)))) throw new Error("파일마다 이름, 형식, 보관 주소, 대상 장비와 모델 파일 위치를 적어 주세요. 위에서 설정할 파일을 바꿀 수 있어요.")
       if (step === "inputs" && spec.artifacts.some(a => a.format === "rknn" && (!a.input?.tensors.length || a.input.tensors.some(t => !t.name.trim())))) throw new Error("RKNN 모델 파일에 입력 이름과 크기를 설정해 주세요. 위에서 설정할 파일을 바꿀 수 있어요.")
-      if (step === "paths" && (!spec.executionPaths.length || spec.executionPaths.some(p => !p.name.trim() || !p.artifact || !p.runtime.family.trim() || !p.runtime.backend.trim()))) throw new Error("실행 방식마다 이름, 파일, 실행 소프트웨어와 처리 방식을 설정해 주세요.")
+      if (step === "paths" && (!spec.executionPaths.length || spec.executionPaths.some(p => !p.name.trim() || !p.artifact || !p.runtime.backend.trim()))) throw new Error("실행 방식마다 이름, 파일과 처리 방식을 정해 주세요.")
       if (step === "preprocessor" && preprocessorProblem) throw new Error(`${preprocessorRef}: ${preprocessorProblem}. 다른 전처리기를 골라 주세요.`)
       if (step === "datasetRef" && datasetProblem) throw new Error(`${datasetRef}: ${datasetProblem}. 다른 데이터셋을 고르거나 데이터셋 없이 진행해 주세요.`)
       if (steps[index + 1] === "review") draft()
@@ -623,7 +631,7 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
     slo: "예: 99.5%라면 1,000건 중 995건이 정한 시간 안에 응답하도록 목표를 정해요. 요청을 기다리는 제한 시간과는 달라요. 바꾼 목표는 새로 받는 요청부터 적용돼요.",
     artifacts: "새 파일은 담당자가 알려 준 보관 주소와 파일 위치가 필요해요. 외부 저장소의 파일 목록은 여기서 조회할 수 없어요.",
     inputs: "RKNN 모델 파일이 요구하는 입력 이름과 크기를 옮겨 적어 주세요. ONNX 파일의 입력은 전처리기가 정해요.",
-    paths: "모델을 실행할 소프트웨어를 정해요. 정하는 것만으로 장비가 준비되지는 않고, 측정과 준비 확인이 필요해요.",
+    paths: "모델 파일마다 어떤 장치에서 실행할지 정해요. 고를 수 있는 처리 방식은 파일 형식이 정해요. 정하는 것만으로 장비가 준비되지는 않고, 측정과 준비 확인이 필요해요.",
     fields: "필드 이름과 형식은 요청과 데이터셋에서 그대로 써요. 최대 크기는 바이트로 적어요 (1 MiB = 1048576). 최대 생성 토큰은 글을 만드는 모델에만 정해요.",
     targets: "대상 모델 파일마다 그 파일에 맞는 전처리 파일을 하나씩 정해요. 전처리기가 대상으로 삼은 모델 파일은 모델에서 뺄 수 없어요.",
     dataset: "데이터 위치 아래 profiling 폴더는 측정용, evaluation 폴더는 평가용이에요. 각 폴더는 기록 ID/필드 이름 파일로 이뤄져요.",

@@ -26,6 +26,10 @@ type CatalogRef = { name: string }
 type AppliedRef = { name: string; uid: string; generation: number }
 export type WorkloadSpec = { modelRef: CatalogRef; preprocessorRef: CatalogRef; datasetRef?: CatalogRef; slo: { percentile: number; targetLatency: string } }
 export type Operation = { kind: string; phase: string; targetGeneration: number; targetCatalogUID?: string; targetCatalogGeneration?: number; acceptedAt: string; appliedAt?: string; completedAt?: string; reason?: string; error?: string; actorUsername?: string; actorUID?: string }
+// The only artifact format → firstfloor backend pairs ChillServer accepts (internal/modelcatalog/catalog.go:107-123).
+export const backendsByFormat: Record<string, readonly string[]> = { onnx: ["ort-cpu", "ort-cuda"], rknn: ["rknnlite"] }
+// The plain word for a contract field format; the field name itself is always shown as written.
+export const formatText = (format: RawField["format"]) => format === "JPEG" ? "사진" : "글"
 export type WorkloadStatus = { appliedDefinition?: { workloadGeneration: number; modelRef: AppliedRef; preprocessorRef: AppliedRef; datasetRef?: Omit<AppliedRef, "generation">; slo: WorkloadSpec["slo"] }; admission: { allowed: boolean; reason?: string; observedAt: string }; operation?: Operation }
 export type WorkloadResource = { metadata: Metadata; spec: WorkloadSpec; status?: WorkloadStatus; apiVersion?: string; kind?: string }
 export type AppliedDefinition = {
