@@ -74,68 +74,68 @@ profiling:
   # Both observers run on the measured Node, so they are multi-arch indexes.
   # A rebuild by `make docker-buildx-metric-observer docker-buildx-workload-observer`
   # replaces these index digests.
-  metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer@sha256:fb30371b1fdd3c18dd1315cba8333b3a0662a80c4cb19020b35d0c9a7de2d327"
-  workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer@sha256:678654b566df573d013deb9e2a44245ade06be2c5e6d10a413213b6005068125"
+  metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer@sha256:e06bf34792f261f3e836b48509a31caaa19f08a7328f91a3d48d103863b878d5"
+  workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer@sha256:2cd9b7c0bccfc348c51a268fa236502286465a16daea58575981e78605b5111e"
   # executionDeclarations is hack/runtime-declarations.py output only
   # (hack/README.md); regenerate the whole list after a runtime image push.
   executionDeclarations:
     - deviceClass: raspberry-pi-5-8g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:cd8d793701171d0356328c7531705885ddeccd6068d9b7cdb19423f97935605b","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:89add3f221f1f36c300cc2c11a4d02554ebbb0e45e491ab3070949d0539da383","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
     - deviceClass: orangepi-5-plus-16g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:cd8d793701171d0356328c7531705885ddeccd6068d9b7cdb19423f97935605b","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:89add3f221f1f36c300cc2c11a4d02554ebbb0e45e491ab3070949d0539da383","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
     - deviceClass: jetson-nano-4g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:cd8d793701171d0356328c7531705885ddeccd6068d9b7cdb19423f97935605b","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:89add3f221f1f36c300cc2c11a4d02554ebbb0e45e491ab3070949d0539da383","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
     - deviceClass: jetson-nano-4g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:09920f3c80115bcac5a5b106adbb15900fc9e9202b22d5b653c26711855b94d0","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.11.0"},{"name":"numpy","version":"1.24.4"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:a203d06c23140794399966750c249aa241d64c603ffcd823b663cfe8833f6f88","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.11.0"},{"name":"numpy","version":"1.24.4"}],"verification":"exact-image-runtime-inspection-v1"}'
       node: "jetson-nano"
       access: {"privileged": false, "supplementalGroups": [44], "resources": {"nvidia.com/gpu": "1"}, "gpuUUID": "GPU-a220528a-4ef6-34d2-ac51-72ebc267ecf9"}
     - deviceClass: jetson-agx-orin-64g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:cd8d793701171d0356328c7531705885ddeccd6068d9b7cdb19423f97935605b","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:89add3f221f1f36c300cc2c11a4d02554ebbb0e45e491ab3070949d0539da383","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
     - deviceClass: jetson-agx-orin-64g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:2a212cb0b12f698547a713d8d4c1534e6b1433f5d6e624edfc6ddfe0df3038fe","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.18.0"},{"name":"numpy","version":"1.26.4"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:8147fa4b539a97372435f9aec528d7913d593116771e9266c3bf43aabd7b0ab1","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.18.0"},{"name":"numpy","version":"1.26.4"}],"verification":"exact-image-runtime-inspection-v1"}'
       node: "jetsono"
       access: {"privileged": false, "supplementalGroups": [44], "resources": {"nvidia.com/gpu": "1"}, "gpuUUID": "GPU-752f23d0-949d-5de7-bedd-14b75a5eb458"}
     - deviceClass: jetson-xavier-nx-8g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:cd8d793701171d0356328c7531705885ddeccd6068d9b7cdb19423f97935605b","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:89add3f221f1f36c300cc2c11a4d02554ebbb0e45e491ab3070949d0539da383","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
     - deviceClass: jetson-xavier-nx-8g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:2a212cb0b12f698547a713d8d4c1534e6b1433f5d6e624edfc6ddfe0df3038fe","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.18.0"},{"name":"numpy","version":"1.26.4"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:8147fa4b539a97372435f9aec528d7913d593116771e9266c3bf43aabd7b0ab1","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.18.0"},{"name":"numpy","version":"1.26.4"}],"verification":"exact-image-runtime-inspection-v1"}'
       node: "jetsonx"
       access: {"privileged": false, "supplementalGroups": [44], "resources": {"nvidia.com/gpu": "1"}, "gpuUUID": "GPU-eb9f176d-1c12-53c1-9f4e-30591e940814"}
     - deviceClass: jetson-orin-nano-8g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:cd8d793701171d0356328c7531705885ddeccd6068d9b7cdb19423f97935605b","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:89add3f221f1f36c300cc2c11a4d02554ebbb0e45e491ab3070949d0539da383","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
     - deviceClass: jetson-orin-nano-8g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:4eeedd09cb9c1506924aa5c09fb27d1b284fb03d3c7a3346c28cf0a981fa1cfd","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.24.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:2f349b38dc8a6c462735dbf90e8940c1b5a1bf83e213fad5fd4eb228094e6608","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.24.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
       node: "orin-nano"
       access: {"privileged": false, "supplementalGroups": [44], "resources": {"nvidia.com/gpu": "1"}, "gpuUUID": "GPU-31ec0c91-d383-5ca3-8772-28981cf737aa"}
     - deviceClass: lattepanda-3-delta-8g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:b5c83b2aaf179396af35efa23526ceaa2fc87654d3ad91c0e6fa317b31d75e52","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:0596bf8f40a4a998db651242efb3a1df4212f7e8b4ffb4177aa6e5ef40d39962","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
     - deviceClass: edge-server-rtx-2080-ti-64g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:b5c83b2aaf179396af35efa23526ceaa2fc87654d3ad91c0e6fa317b31d75e52","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:0596bf8f40a4a998db651242efb3a1df4212f7e8b4ffb4177aa6e5ef40d39962","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
     - deviceClass: edge-server-rtx-2080-ti-64g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:f0f0413e769544d85df3ab6ac3316ab7858a079b78e7dd64061f68e6732f3e15","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.23.2"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:d03c542fa2aea14fbabf4caee0f194e30ddb9f978b5c1dfb1823a47f2b3a19c3","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.23.2"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
       node: "genesis2"
       access: {"privileged": false, "resources": {"nvidia.com/gpu": "1"}, "gpuUUID": "GPU-7ba62428-ecac-9bd9-a546-40e2a748daed"}
     - deviceClass: edge-server-rtx-2080-ti-64g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:f0f0413e769544d85df3ab6ac3316ab7858a079b78e7dd64061f68e6732f3e15","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.23.2"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:d03c542fa2aea14fbabf4caee0f194e30ddb9f978b5c1dfb1823a47f2b3a19c3","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.23.2"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
       node: "genesis3"
       access: {"privileged": false, "resources": {"nvidia.com/gpu": "1"}, "gpuUUID": "GPU-24ddd1e2-68a6-ca12-34d6-448c2697f325"}
     - deviceClass: orangepi-5-plus-16g
       runtime:
-        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:ad5466f5116ff6c71c38b5a5760aed5a35a80a0aa643c1a8b40065763f992b6d","architecture":"arm64","runtime":{"family":"firstfloor","backends":["rknnlite"]},"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:7b2068cd09e566923fae9738ede57b706db74ac3af2a3ace218061ff4cbd100a","architecture":"arm64","runtime":{"family":"firstfloor","backends":["rknnlite"]},"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"verification":"exact-image-runtime-inspection-v1"}'
       host: {"libraries": [{"name": "librknnrt", "hostPath": "/usr/lib/librknnrt.so", "containerPath": "/usr/lib/librknnrt.so"}], "devices": [{"path": "/dev/dri/card0"}, {"path": "/dev/dri/card1"}, {"path": "/dev/dri/renderD128"}, {"path": "/dev/dri/renderD129"}], "allocation": {"resourceName": "", "exclusivityClaimed": false}, "driver": {"name": "rknpu", "versionPath": "/sys/module/rknpu/version", "version": "0.9.6"}, "platform": {"compatiblePath": "/proc/device-tree/compatible", "compatibleToken": "rockchip,rk3588"}}
       access: {"privileged": true, "supplementalGroups": [44, 110]}
   metricSources:
