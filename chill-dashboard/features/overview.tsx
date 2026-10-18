@@ -86,9 +86,10 @@ function PowerRow({label,joules,watts}:{label:string;joules:number|null;watts:nu
   return <Row href="/scheduler/power" label={label} hint={joules == null ? "이 구간은 전력 값이 비어 있어요" : `${joules.toFixed(1)} J${watts == null ? "" : ` · 평균 ${watts.toFixed(1)} W`}`} />
 }
 
-// Home: CHILL now over the last hour. Each summary is an independent existing read and links to its detail screen.
+// Home: CHILL now over the last 5 minutes. Each summary is an independent existing read and links to its detail screen.
+// ponytail: ChillServer integrates power per request (live: 5 min ≈ 1 s, 15 min ≈ 11 s > query timeout); widen when that read gets cheaper.
 export function OverviewPage() {
-  const [range] = React.useState(() => { const to = new Date(); return {from:new Date(to.getTime() - 3600000).toISOString(), to:to.toISOString()} })
+  const [range] = React.useState(() => { const to = new Date(); return {from:new Date(to.getTime() - 300000).toISOString(), to:to.toISOString()} })
   const {token, config} = useSession()
   const systems = useChillQuery<SystemsView>("v1/systems")
   const workloads = useChillQuery<WorkloadView[]>("v1/workloads")
