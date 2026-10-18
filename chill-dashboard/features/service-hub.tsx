@@ -27,7 +27,7 @@ const ms = (nanos:WireInteger) => `${nanosToMilliseconds(nanos)}밀리초`
 const met = (row?:ObservationCohort) => !row?.sampleCount || row.quantileNanos == null || row.targetLatencyNanos == null ? undefined : Number(row.quantileNanos) <= Number(row.targetLatencyNanos)
 const actor = (name?:string) => name?.startsWith("system:serviceaccount:") ? name.split(":").at(-1) : name ?? "담당자 기록 없음"
 
-// Each signal comes from its owner response; the service screen shows one short value per section.
+// Each signal comes from the chill server response that holds it; the service screen shows one short value per section.
 export function useServiceSignals(view?:WorkloadView) {
   const uid = view?.desired.metadata.uid ?? ""
   const [range,setRange] = React.useState(lastHour)

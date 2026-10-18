@@ -3,15 +3,15 @@ import test from "node:test"
 import { serverConfig, publicConfig } from "./server-config.ts"
 import { boundedBody, relay, relayPlan } from "./relay.ts"
 
-test("fixed-owner relay enforces path, origin, body and credential boundaries", async () => {
+test("fixed-chill-server relay enforces path, origin, body and credential boundaries", async () => {
   const env = {
-    CHILL_BASE_URL: "https://owner.example:8443", CHILL_NAMESPACE: "research", CHILL_SYSTEM_NAME: "chill",
+    CHILL_BASE_URL: "https://chill.example:8443", CHILL_NAMESPACE: "research", CHILL_SYSTEM_NAME: "chill",
     CHILL_QUERY_TIMEOUT_MS: "10000", CHILL_MUTATION_TIMEOUT_MS: "60000", CHILL_INFER_TIMEOUT_MS: "30000",
     CHILL_MAX_REQUEST_BYTES: "8388608", CHILL_PAGE_SIZE: "50", CHILL_MAX_PAGE_SIZE: "200",
     CHILL_MAX_WINDOW_HOURS: "24", CHILL_POLL_INTERVAL_MS: "5000",
   }
   const config = serverConfig(env)
-  for (const value of ["http://owner.example", "https://secret@owner.example", "https://owner.example/api", "https://owner.example/?token=secret", "https://owner.example/#secret", "https://owner.example\\evil", "https://owner.example?", ""]) {
+  for (const value of ["http://chill.example", "https://secret@chill.example", "https://chill.example/api", "https://chill.example/?token=secret", "https://chill.example/#secret", "https://chill.example\\evil", "https://chill.example?", ""]) {
     assert.throws(() => serverConfig({ ...env, CHILL_BASE_URL: value }), /DashboardConfigInvalid/)
   }
   for (const changes of [{ CHILL_QUERY_TIMEOUT_MS: "NaN" }, { CHILL_INFER_TIMEOUT_MS: "0" }, { CHILL_MAX_REQUEST_BYTES: "999999999" }, { CHILL_PAGE_SIZE: "51", CHILL_MAX_PAGE_SIZE: "50" }, { CHILL_POLL_INTERVAL_MS: "1" }, { CHILL_NAMESPACE: "" }, { CHILL_SYSTEM_NAME: "" }]) {
@@ -52,7 +52,7 @@ test("fixed-owner relay enforces path, origin, body and credential boundaries", 
   Object.assign(process.env, env)
   try {
     const safe = publicConfig()
-    assert.equal("owner" in safe, false)
+    assert.equal("chillServer" in safe, false)
     assert.equal((await relay(new Request("https://dashboard.example/api/chill/v1/models"), ["v1", "models"])).status, 401)
     const foreign = new Request("https://dashboard.example/api/chill/v1/models", { method: "POST", headers: { authorization: "Bearer secret", origin: "https://evil.example" } })
     assert.equal((await relay(foreign, ["v1", "models"])).status, 403)
@@ -71,7 +71,7 @@ test("fixed-owner relay enforces path, origin, body and credential boundaries", 
 
 test("scheduler consumer routes enforce exact methods and bounded observation queries", () => {
   const config = serverConfig({
-    CHILL_BASE_URL: "https://owner.example", CHILL_NAMESPACE: "research", CHILL_SYSTEM_NAME: "chill",
+    CHILL_BASE_URL: "https://chill.example", CHILL_NAMESPACE: "research", CHILL_SYSTEM_NAME: "chill",
     CHILL_PAGE_SIZE: "7", CHILL_MAX_PAGE_SIZE: "20", CHILL_MAX_WINDOW_HOURS: "1",
   })
   const plan = (method: string, path: string, search = "") => relayPlan(method, path.split("/"), search, config)

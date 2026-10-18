@@ -54,7 +54,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/observations/scheduler") { methods = ["GET"]; query = "schedulerHistory" }
   else if (route === "v1/scheduler" || route === "v1/scheduler/state") methods = ["GET"]
   else if (route === "v1/scheduler/settings") methods = ["GET", "PUT"]
-  // ponytail: the owner verifies every selected campaign on read (13-30 s observed), so this read gets the mutation bound; drop when the owner caches verification.
+  // ponytail: the chill server verifies every selected campaign on read (13-30 s observed), so this read gets the mutation bound; drop when the chill server caches verification.
   else if (route === "v1/scheduler/profiles") methods = ["GET", "POST"]
   else if (/^v1\/(systems|inventory)$/.test(route)) { methods = ["GET"]; query = "page" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs$/.test(route)) { methods = ["GET"]; query = "runs" }
@@ -70,7 +70,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   // A server dry-run creates nothing, so it keeps the query lifetime like preflight instead of an unknown mutation outcome.
   const dryRun = query === "dryRun" && params.has("dryRun")
   if (kind !== "infer" && method !== "GET" && !dryRun && !/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) kind = "mutation"
-  // Owner compact reads keep every evidence object once and share repeats by $ref; parseSchedulerJSON restores them.
+  // Chill server compact reads keep every evidence object once and share repeats by $ref; parseSchedulerJSON restores them.
   const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state" || route === "v1/scheduler/profiles")
   const allowed = compact ? ["view"] : []
   allowed.push(...(query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
@@ -131,11 +131,11 @@ export async function boundedBody(stream: ReadableStream<Uint8Array> | null, lim
   }
 }
 
-function upstream(owner: URL, path: string, method: string, headers: Record<string, string>, body: Buffer, limit: number, signal: AbortSignal): Promise<{ status: number; headers: IncomingMessage["headers"]; body: Buffer }> {
+function upstream(chillServer: URL, path: string, method: string, headers: Record<string, string>, body: Buffer, limit: number, signal: AbortSignal): Promise<{ status: number; headers: IncomingMessage["headers"]; body: Buffer }> {
   const { promise, resolve, reject } = Promise.withResolvers<{ status: number; headers: IncomingMessage["headers"]; body: Buffer }>()
   let responseHeaders: IncomingMessage["headers"] = {}
   // Native Node trust includes NODE_EXTRA_CA_CERTS; never a custom trust-any agent.
-  const req = httpsRequest(owner, { method, path, headers, signal, rejectUnauthorized: true, maxHeaderSize: 16384 }, res => {
+  const req = httpsRequest(chillServer, { method, path, headers, signal, rejectUnauthorized: true, maxHeaderSize: 16384 }, res => {
     responseHeaders = res.headers
     const chunks: Buffer[] = []
     let bytes = 0
@@ -206,7 +206,7 @@ export async function relay(request: Request, segments: string[]): Promise<Respo
     if (body.length && !plan.bodyAllowed) return relayFailure("DashboardBodyNotAllowed", 400)
     if (controller.signal.aborted) throw new RelayFailure("DashboardRelayCanceled", 499)
     sent = true
-    const result = await upstream(config.owner, plan.path, request.method, headers, body, config.maxRequestBytes, controller.signal)
+    const result = await upstream(config.chillServer, plan.path, request.method, headers, body, config.maxRequestBytes, controller.signal)
     const responseHeaders = new Headers({ "Cache-Control": "no-store", "X-Chill-Relay-Timing": (performance.now() - started).toFixed(1) })
     for (const name of ["content-type", "content-encoding", "x-chill-request-id", "x-chill-workload-uid", "if-match"]) {
       const value = result.headers[name]

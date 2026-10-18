@@ -11,7 +11,7 @@ export type PublicConfig = {
   pollIntervalMs: number
 }
 
-export type ServerConfig = PublicConfig & { owner: URL }
+export type ServerConfig = PublicConfig & { chillServer: URL }
 
 // Evaluated at request time: standalone images receive deployment settings at runtime.
 export function serverConfig(env: Readonly<Record<string, string | undefined>> = process.env): ServerConfig {
@@ -31,11 +31,11 @@ export function serverConfig(env: Readonly<Record<string, string | undefined>> =
   }
   const raw = env.CHILL_BASE_URL
   if (!raw || raw !== raw.trim() || !/^https:\/\/[^/?#\\@]+\/?$/.test(raw)) return invalid()
-  let owner: URL
-  try { owner = new URL(raw) } catch { return invalid() }
-  if (owner.protocol !== "https:" || !owner.hostname || owner.username || owner.password || owner.pathname !== "/" || owner.search || owner.hash || raw.includes("\\")) return invalid()
+  let chillServer: URL
+  try { chillServer = new URL(raw) } catch { return invalid() }
+  if (chillServer.protocol !== "https:" || !chillServer.hostname || chillServer.username || chillServer.password || chillServer.pathname !== "/" || chillServer.search || chillServer.hash || raw.includes("\\")) return invalid()
   const config = {
-    owner,
+    chillServer,
     namespace: name("CHILL_NAMESPACE", 63),
     systemName: name("CHILL_SYSTEM_NAME", 253),
     queryTimeoutMs: integer("CHILL_QUERY_TIMEOUT_MS", 10_000, 3_600_000),
