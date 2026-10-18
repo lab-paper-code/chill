@@ -208,16 +208,15 @@ func e2eProfilingRun(namespaceName, name string) *edgev1alpha1.ProfilingRun {
 			MeasurementStateSpec: edgev1alpha1.MeasurementStateSpec{
 				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
 					ModelSpec: "gc-fixture", DeviceClass: "gc-fixture",
-					ExecutionPath: "gc-fixture", PowerMode: "fixed",
+					ExecutionPath: "gc-fixture", PowerMode: "fixed", Preprocessor: "gc-fixture",
 				},
 				TargetNode: "gc-fixture",
 				CPURequest: resource.MustParse("1m"),
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 1, DurationSeconds: 1,
-				WorkloadMode:     "saturated-serial-fixed-batch",
-				InputGenerator:   "numpy-default-rng-seed-0-inputs-v1",
-				OutputValidation: "nonempty-shape-batch-v1",
+				WorkloadMode: "saturated-serial-fixed-batch",
+				Dataset:      "gc-fixture",
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 2, TimeoutMilliseconds: 1, DurationSeconds: 1,

@@ -33,7 +33,8 @@ func schedulerCaptureClockController(t *testing.T, slowLive bool) *SchedulerCont
 	manager, _ := newManagerHarness(t)
 	pod, node, profile, class := observerSourceFixture()
 	profile.RuntimeMetadata.RuntimeVersion = "test-runtime"
-	profile.RuntimeMetadata.Inputs = []native.InputSpec{}
+	profile.RuntimeMetadata.Inputs = profile.Condition.Preprocessor.Inputs
+	profile.RuntimeMetadata.Outputs = profile.Condition.Preprocessor.Outputs
 	profile.RuntimeMetadata.InitializedBatches = []int{1}
 	if err := manager.store.client.Create(context.Background(), &class); err != nil {
 		t.Fatal(err)
@@ -54,7 +55,7 @@ func schedulerCaptureClockController(t *testing.T, slowLive bool) *SchedulerCont
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/state"):
 			actual := *profile.RuntimeMetadata
-			actual.ModelPath = "/model/model.onnx"
+			actual.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
 			response = native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{
 				Model: "chill_model", Mode: "serving", ProfileID: profile.ID, AppliedAt: time.Now().UTC(),
 				Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
@@ -557,7 +558,7 @@ func TestCaptureNodePodsRejectsMemoryOverflow(t *testing.T) {
 
 func TestObservedOverheadReusesRemovedExecutorForCompatibleSLO(t *testing.T) {
 	manager, _ := newManagerHarness(t)
-	d := &serving.Definition{Name: "original", UID: "original-uid", Generation: 1, Model: serving.Model{Name: "model", UID: "model-uid", Generation: 1, Paths: []serving.ModelPath{{Name: "native", Artifact: "onnx", Path: "/model.onnx"}}}, SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}}
+	d := &serving.Definition{Name: "original", UID: "original-uid", Generation: 1, Model: serving.Model{Name: "model", UID: "model-uid", Generation: 1, Paths: []serving.ModelPath{{Name: "native", Artifact: "onnx", Files: []string{"/model.onnx"}}}}, Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"}, SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}}
 	profile := managerProfile(d)
 	profile.NodeName, profile.Condition.NodeUID = "node", "node-uid"
 	profile.RuntimeMetadata = &native.RuntimeMetadata{CPUAffinity: []int{0}, IntraOpThreads: 1}

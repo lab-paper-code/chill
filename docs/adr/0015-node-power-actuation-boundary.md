@@ -80,6 +80,22 @@ operations. NVIDIA locked GPU clocks remain a separate adapter and privilege
 contract. No composite actuator is added until a measured experiment requires
 atomic composition.
 
+The NodeActuator also owns the host boot-ordering prerequisite of Jetson
+power modes. A mode that sets GPU power-gating masks applies at boot only when
+`nvpmodel.service` runs before `nvidia-cdi-refresh.service`
+(nvidia-container-toolkit), whose `nvidia-smi` call creates the GPU golden
+context and fixes the masks. With `nodeActuator.jetsonNVPModel.ensureBootOrdering`
+(default `true`), an init container of the actuator Pod, using the actuator
+image and holding zero capabilities, ensures exactly one file:
+`/etc/systemd/system/nvidia-cdi-refresh.service.d/10-after-nvpmodel.conf`
+containing `[Unit]` and `After=nvpmodel.service`. It writes that file only on a
+Node whose `/etc/systemd/system` or `/lib/systemd/system` holds
+`nvidia-cdi-refresh.service`, rewrites it only when its content differs, and
+leaves every other Node unchanged. It mounts `/lib/systemd/system` read-only and
+`/etc/systemd/system` writable, and reaches only those two directories. systemd
+reads the drop-in at the next boot, the only boot the ordering affects, so the
+container performs no `daemon-reload`, unit restart, or Node restart.
+
 ## Consequences
 
 Power actuation adds a separate operand boundary; it is not folded into the

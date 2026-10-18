@@ -1,6 +1,8 @@
 package projection
 
 import (
+	"slices"
+
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 )
@@ -56,12 +58,10 @@ func projectTrial(
 	for _, repetition := range raw.Runtime.RepetitionResults {
 		latencies = append(latencies, repetition.LatencyMilliseconds...)
 		for _, sample := range repetition.NativeSamples {
-			nativeSamples = append(nativeSamples, profilederivation.NativeServiceSample{
-				BatchID: sample.BatchID, BatchSize: sample.BatchSize,
-				RunnerServiceMilliseconds: sample.RunnerServiceMilliseconds,
-				BackendCallMilliseconds:   sample.BackendCallMilliseconds,
-				NativeRequestMilliseconds: sample.NativeRequestMilliseconds,
-			})
+			copied := profilederivation.NativeServiceSample(sample)
+			copied.RecordIDs = slices.Clone(sample.RecordIDs)
+			copied.Units = slices.Clone(sample.Units)
+			nativeSamples = append(nativeSamples, copied)
 		}
 	}
 	samples := make([]profilederivation.Sample, len(raw.Metrics.Samples))

@@ -13,8 +13,17 @@ import (
 
 func TestValidateWorkload(t *testing.T) {
 	valid := edgev1alpha1.WorkloadSpec{
-		ModelRef: edgev1alpha1.WorkloadModelReference{Name: "detector.v2"},
-		SLO:      edgev1alpha1.WorkloadSLO{Percentile: 99, TargetLatency: metav1.Duration{Duration: 100 * time.Millisecond}},
+		ModelRef:        edgev1alpha1.CatalogReference{Name: "detector.v2"},
+		PreprocessorRef: edgev1alpha1.CatalogReference{Name: "imagenet"},
+		SLO:             edgev1alpha1.WorkloadSLO{Percentile: 99, TargetLatency: metav1.Duration{Duration: 100 * time.Millisecond}},
+	}
+	for name, spec := range map[string]edgev1alpha1.WorkloadSpec{
+		"missing preprocessor": {ModelRef: valid.ModelRef, SLO: valid.SLO},
+		"invalid dataset":      {ModelRef: valid.ModelRef, PreprocessorRef: valid.PreprocessorRef, DatasetRef: &edgev1alpha1.CatalogReference{Name: "VQA"}, SLO: valid.SLO},
+	} {
+		if err := edgev1alpha1.ValidateWorkload("detector-fast", spec); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
 	}
 	for _, tc := range []struct {
 		name       string

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"path"
 	"reflect"
 	"slices"
 	"strconv"
@@ -18,6 +17,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	core "k8s.io/api/core/v1"
@@ -322,7 +322,8 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 	return result, err
 }
 func samePreparedPod(actual, desired *core.Pod) bool {
-	if actual.Annotations[ServingProfileAnnotation] != desired.Annotations[ServingProfileAnnotation] || actual.Annotations[ServingSlotAnnotation] != desired.Annotations[ServingSlotAnnotation] || actual.Spec.NodeName != desired.Spec.NodeName || len(actual.Spec.Containers) != 1 || !samePreparedContainer(actual.Spec.Containers[0], desired.Spec.Containers[0]) || len(actual.Spec.InitContainers) != len(desired.Spec.InitContainers) {
+	if actual.Annotations[ServingProfileAnnotation] != desired.Annotations[ServingProfileAnnotation] || actual.Annotations[ServingSlotAnnotation] != desired.Annotations[ServingSlotAnnotation] || actual.Spec.NodeName != desired.Spec.NodeName || len(actual.Spec.Containers) != 1 || !samePreparedContainer(actual.Spec.Containers[0], desired.Spec.Containers[0]) || actual.Spec.Containers[0].TerminationMessagePolicy != desired.Spec.Containers[0].TerminationMessagePolicy || len(actual.Spec.InitContainers) != len(desired.Spec.InitContainers) ||
+		!slices.EqualFunc(actual.Spec.Volumes, desired.Spec.Volumes, samePreparedVolume) || !slices.Equal(supplementalGroups(actual), supplementalGroups(desired)) {
 		return false
 	}
 	for i := range desired.Spec.InitContainers {
@@ -331,6 +332,26 @@ func samePreparedPod(actual, desired *core.Pod) bool {
 		}
 	}
 	return true
+}
+
+// samePreparedVolume compares the measured host source and type; the API
+// server defaults an omitted HostPath type to the empty type.
+func samePreparedVolume(a, b core.Volume) bool {
+	if a.Name != b.Name || (a.EmptyDir != nil) != (b.EmptyDir != nil) || (a.HostPath != nil) != (b.HostPath != nil) {
+		return false
+	}
+	return a.HostPath == nil || a.HostPath.Path == b.HostPath.Path && ptr.Deref(a.HostPath.Type, "") == ptr.Deref(b.HostPath.Type, "")
+}
+
+func supplementalGroups(pod *core.Pod) []int64 {
+	if pod.Spec.SecurityContext == nil {
+		return nil
+	}
+	return pod.Spec.SecurityContext.SupplementalGroups
+}
+
+func privilegedContainer(container core.Container) bool {
+	return container.SecurityContext != nil && ptr.Deref(container.SecurityContext.Privileged, false)
 }
 
 func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) error {
@@ -348,7 +369,11 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 	if string(node.UID) != spec.Instance.Node.UID || node.Labels[ServingPoolLabel] != spec.Instance.Pool {
 		return errors.New("actual Node/pool differs from preparation")
 	}
-	decisionID, err := o.ensurePreparationConfig(ctx, spec)
+	host, delivery, err := measuredRuntimeDelivery(p)
+	if err != nil {
+		return err
+	}
+	decisionID, err := o.ensurePreparationConfig(ctx, spec, delivery)
 	if err != nil {
 		return err
 	}
@@ -369,12 +394,26 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		requests["nvidia.com/gpu"] = resource.MustParse("1")
 		limits["nvidia.com/gpu"] = resource.MustParse("1")
 	}
+	if host.AcceleratorResource != "" {
+		requests = requests.DeepCopy()
+		limits = limits.DeepCopy()
+		requests[host.AcceleratorResource] = resource.MustParse("1")
+		limits[host.AcceleratorResource] = resource.MustParse("1")
+	}
 	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}, Annotations: map[string]string{ServingProfileAnnotation: p.ID, ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), ServingPolicyAnnotation: decisionID, ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{sourceFinalizer}}, Spec: core.PodSpec{NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), InitContainers: []core.Container{
-		{Name: "artifact", Image: p.Condition.Artifact.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$1" "$2"`, "artifact-copy", p.Condition.Artifact.Path, path.Join("/chill-artifact", "model"+path.Ext(p.Condition.Artifact.Path))}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
+		{Name: "artifact", Image: p.Condition.Artifact.Image, Command: []string{"sh", "-ec"}, Args: append([]string{`cp "$@" /chill-artifact/`, "--"}, p.Condition.Artifact.Files...), Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
+		{Name: "preprocessor", Image: p.Condition.Preprocessor.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp -R "$1"/. /chill-preprocessor/`, "--", p.Condition.Preprocessor.Path}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "preprocessor", MountPath: "/chill-preprocessor"}}},
 		{Name: "profile", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Resources: initResources, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
-	}, Containers: []core.Container{{Name: "firstfloor", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-worker"}, Args: []string{"--config=/config/config.json", "--bind-address=:8080", "--node-name=" + node.Name}, Ports: []core.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: core.ResourceRequirements{Requests: requests, Limits: limits}, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "profile", MountPath: "/profile", ReadOnly: true}, {Name: "config", MountPath: "/config", ReadOnly: true}}, ReadinessProbe: &core.Probe{ProbeHandler: core.ProbeHandler{HTTPGet: &core.HTTPGetAction{Path: "/v2/health/ready", Port: port8080()}}, PeriodSeconds: 1}}}, Volumes: []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}}}}
+	}, Containers: []core.Container{{Name: "firstfloor", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-worker"}, Args: []string{"--config=/config/config.json", "--bind-address=:8080", "--node-name=" + node.Name}, Ports: []core.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: core.ResourceRequirements{Requests: requests, Limits: limits}, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "preprocessor", MountPath: "/preprocessor", ReadOnly: true}, {Name: "profile", MountPath: "/profile", ReadOnly: true}, {Name: "config", MountPath: "/config", ReadOnly: true}}, TerminationMessagePolicy: core.TerminationMessageFallbackToLogsOnError, ReadinessProbe: &core.Probe{ProbeHandler: core.ProbeHandler{HTTPGet: &core.HTTPGetAction{Path: "/v2/health/ready", Port: port8080()}}, PeriodSeconds: 1}}}, Volumes: []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}}}}
 	if spec.Instance.Allocation.GPUUUID != "" {
 		pod.Spec.Containers[0].Env = []core.EnvVar{{Name: "CUDA_VISIBLE_DEVICES", Value: spec.Instance.Allocation.GPUUUID}}
+	}
+	if delivery != nil {
+		runtime := &pod.Spec.Containers[0]
+		runtime.VolumeMounts = append(runtime.VolumeMounts, host.VolumeMounts...)
+		runtime.SecurityContext = &core.SecurityContext{Privileged: ptr.To(host.Privileged), AllowPrivilegeEscalation: ptr.To(host.Privileged)}
+		pod.Spec.Volumes = append(pod.Spec.Volumes, host.Volumes...)
+		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: host.SupplementalGroups}
 	}
 	if err = o.store.client.Create(ctx, pod); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
@@ -411,7 +450,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 			return false, errors.New("prepared Pod identity changed")
 		}
 		if current.Status.Phase == core.PodFailed {
-			return false, errors.New("native preparation Pod failed")
+			return false, fmt.Errorf("native preparation Pod failed%s", terminationMessages(current))
 		}
 		for _, pool := range o.runtime.Pools() {
 			for _, i := range pool.Instances {
@@ -423,7 +462,37 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		return false, nil
 	})
 }
-func (o *Operations) ensurePreparationConfig(ctx context.Context, spec PrepareSpec) (string, error) {
+
+// measuredRuntimeDelivery returns the measured RKNNLite delivery and its host
+// projection. The runner reads the delivery file; the Pod gets the same host
+// access the measured profiling Job projected from it.
+func measuredRuntimeDelivery(p *serving.Profile) (profilingrun.RuntimeDeliveryProjection, []byte, error) {
+	if p.Condition.Backend != profilingrun.FirstfloorRKNNLiteBackend {
+		return profilingrun.RuntimeDeliveryProjection{}, nil, nil
+	}
+	var frozen profilingrun.CandidateRuntimeDelivery
+	if err := json.Unmarshal(p.RuntimeDelivery, &frozen); err != nil {
+		return profilingrun.RuntimeDeliveryProjection{}, nil, fmt.Errorf("decode measured RKNNLite delivery: %w", err)
+	}
+	host, err := profilingrun.ProjectRuntimeDelivery(p.Condition.Backend, frozen)
+	if err != nil {
+		return profilingrun.RuntimeDeliveryProjection{}, nil, err
+	}
+	return host, p.RuntimeDelivery, nil
+}
+
+// terminationMessages names each failed container with its termination
+// message, so runner start errors (DP-03) reach the preparation failure.
+func terminationMessages(pod *core.Pod) string {
+	text := ""
+	for _, status := range slices.Concat(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses) {
+		if t := status.State.Terminated; t != nil && t.ExitCode != 0 && t.Message != "" {
+			text += fmt.Sprintf("; %s: %s", status.Name, strings.TrimSpace(t.Message))
+		}
+	}
+	return text
+}
+func (o *Operations) ensurePreparationConfig(ctx context.Context, spec PrepareSpec, delivery []byte) (string, error) {
 	raw, err := json.Marshal(spec.Config)
 	if err != nil {
 		return "", err
@@ -432,6 +501,9 @@ func (o *Operations) ensurePreparationConfig(ctx context.Context, spec PrepareSp
 		return "", errors.New("native mutable config exceeds small policy bound")
 	}
 	cm := &core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: o.config.Namespace, Name: spec.Name}, Data: map[string]string{"config.json": string(raw)}}
+	if delivery != nil {
+		cm.Data["delivery.json"] = string(delivery)
+	}
 	if err = o.store.client.Create(ctx, cm); err != nil && !apierrors.IsAlreadyExists(err) {
 		return "", err
 	}
@@ -448,7 +520,7 @@ func (o *Operations) ensurePreparationConfig(ctx context.Context, spec PrepareSp
 		desired := spec.Config
 		previous.Policy = native.Policy{DeadlinePolicy: native.EffectiveDeadlinePolicy(previous.Policy.DeadlinePolicy)}
 		desired.Policy = native.Policy{DeadlinePolicy: native.EffectiveDeadlinePolicy(desired.Policy.DeadlinePolicy)}
-		if !reflect.DeepEqual(previous, desired) {
+		if !reflect.DeepEqual(previous, desired) || existing.Data["delivery.json"] != cm.Data["delivery.json"] {
 			return "", errors.New("existing immutable preparation execution config differs")
 		}
 		return decisionID, nil
@@ -908,7 +980,7 @@ func samePreparedContainer(actual, desired core.Container) bool {
 		reflect.DeepEqual(actual.Env, desired.Env) &&
 		maps.EqualFunc(actual.Resources.Requests, desired.Resources.Requests, resource.Quantity.Equal) &&
 		maps.EqualFunc(actual.Resources.Limits, desired.Resources.Limits, resource.Quantity.Equal) &&
-		reflect.DeepEqual(actual.VolumeMounts, desired.VolumeMounts)
+		reflect.DeepEqual(actual.VolumeMounts, desired.VolumeMounts) && privilegedContainer(actual) == privilegedContainer(desired)
 }
 func (o *Operations) validateOperationBinding(ctx context.Context, operation Operation) error {
 	if operation.Kind == operationRoute {

@@ -33,9 +33,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 	t.Helper()
 	ctx := context.Background()
 	manager, _ := newManagerHarness(t)
-	if _, err := manager.CreateModel(ctx, "model", managerModelSpec()); err != nil {
-		t.Fatal(err)
-	}
+	createManagerCatalog(t, manager)
 	if _, err := manager.CreateWorkload(ctx, "workload", managerWorkloadSpec()); err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +58,8 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 		pod.Annotations[ServingProfileAnnotation] = profile.ID
 		pod.Annotations[ServingPolicyAnnotation] = "old-route"
 		cfg := native.Config{Model: "chill_model", Mode: "serving",
-			Inputs:          []native.InputSpec{{Name: "x", Datatype: "FP32", Shape: []int{1}}},
-			RunnerCommand:   []string{"python3", "../../../runtime/firstfloor/runner.py", "--echo", "--warmup-iterations", "1"},
+			Inputs: []string{"input"}, Outputs: []string{"output"},
+			RunnerCommand:   []string{"python3", "../../../runtime/firstfloor/runner.py", "--echo", "--preprocessor", "../../../runtime/firstfloor/testdata/echo", "--warmup-iterations", "1"},
 			RunnerTimeoutMS: 3000, MaxQueueRequests: 4, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20,
 			MaxBatchSize: 1, BatchSizes: []int{1},
 			Policy: native.Policy{DecisionID: "old-route", ProfileID: profile.ID, MaxBatchSize: 1, DeadlinePolicy: "keep", EnvelopeSource: "explicit synthetic fixture",

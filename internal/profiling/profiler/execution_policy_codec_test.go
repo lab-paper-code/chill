@@ -138,7 +138,6 @@ func currentExecutionPolicyTestRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	config := testRunConfig(t)
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&config)
 	return config
 }

@@ -6,12 +6,10 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 const (
-	IdleRuntimeResultSchemaVersion = "chill.dacs.io/model-loaded-idle-runtime.v1alpha5"
+	IdleRuntimeResultSchemaVersion = "chill.dacs.io/model-loaded-idle-runtime.v1alpha6"
 )
 
 // IdleRuntimeResult contains runtime-owned facts for one model-loaded idle
@@ -30,7 +28,7 @@ type IdleRuntimeResult struct {
 	AvailableProviders           []string                   `json:"availableProviders,omitempty"`
 	RKNN                         *RKNNRuntimeEvidence       `json:"rknn,omitempty"`
 	Firstfloor                   *FirstfloorRuntimeEvidence `json:"firstfloor,omitempty"`
-	Inputs                       []modelcompat.InputTensor  `json:"inputs"`
+	Inputs                       []string                   `json:"inputs"`
 	MemoryBytes                  uint64                     `json:"memoryBytes,omitempty"`
 	MemorySource                 string                     `json:"memorySource,omitempty"`
 	MemorySamples                []MemorySample             `json:"memorySamples,omitempty"`
@@ -69,7 +67,7 @@ func ValidateIdleRuntime(config RunConfig, podUID string, result IdleRuntimeResu
 //nolint:gocyclo // Idle validation deliberately exposes every model-residency and timing gate.
 func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntimeResult) error {
 	if config.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode ||
-		(!IsSupportedCPUORTRunConfig(config) && !IsSupportedFirstfloorRunConfig(config) && !IsSupportedRKNNLiteRunConfig(config)) {
+		!IsSupportedFirstfloorRunConfig(config) {
 		return errors.New("idle runtime requires a supported model-loaded idle RunConfig")
 	}
 	checks := []struct{ name, want, got string }{
@@ -91,8 +89,8 @@ func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntim
 	if strings.TrimSpace(result.RuntimeVersion) == "" {
 		return errors.New("idle runtime identity is incomplete")
 	}
-	if err := validateRuntimeInputs(config, result.Inputs); err != nil {
-		return err
+	if !slices.Equal(result.Inputs, config.State.Preprocessor.Inputs) {
+		return errors.New("idle runtime input field evidence does not match the frozen preprocessor inputs")
 	}
 	loaded, loadErr := time.Parse(time.RFC3339Nano, result.ModelLoadCompletedAt)
 	settlingStarted, settleStartErr := time.Parse(time.RFC3339Nano, result.SettlingStartedAt)
@@ -141,35 +139,19 @@ func validateIdleRuntimePathEvidence(config RunConfig, result IdleRuntimeResult)
 		result.CPUContract.AffinityCPUCount != len(config.CPU.AffinityCPUs)) {
 		return errors.New("idle actual CPU affinity differs from requested frozen CPU IDs")
 	}
-	if IsSupportedFirstfloorRunConfig(config) {
-		if err := validateRuntimeMemory(result.MemoryBytes, result.MemorySource, result.MemorySamples,
-			result.MeasurementWindow); err != nil {
-			return err
-		}
-		if result.DerivedContract.Provider != result.Provider {
-			return errors.New("idle firstfloor derived provider evidence mismatch")
-		}
-		if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
-			result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
-			return err
-		}
-		return validateFirstfloorRuntimeEvidence(config, result.Firstfloor, 0)
+	if !IsSupportedFirstfloorRunConfig(config) {
+		return errors.New("idle runtime result requires a supported firstfloor RunConfig")
 	}
-	if IsSupportedCPUORTRunConfig(config) {
-		if result.RKNN != nil || result.Firstfloor != nil || result.Provider != config.State.Backend ||
-			!contains(result.AvailableProviders, config.State.Backend) ||
-			(result.SchemaVersion == IdleRuntimeResultSchemaVersion &&
-				result.DerivedContract.Provider != config.State.Backend) ||
-			result.CPUContract.ORTIntraOpThreads != config.CPU.ORTIntraOpThreads ||
-			result.CPUContract.ORTInterOpThreads != config.CPU.ORTInterOpThreads ||
-			result.CPUContract.AffinityCPUCount < config.CPU.ORTIntraOpThreads {
-			return errors.New("idle CPU ONNX Runtime evidence mismatch")
-		}
-		return nil
+	if err := validateRuntimeMemory(result.MemoryBytes, result.MemorySource, result.MemorySamples,
+		result.MeasurementWindow); err != nil {
+		return err
 	}
-	if !IsSupportedRKNNLiteRunConfig(config) || result.SchemaVersion != IdleRuntimeResultSchemaVersion ||
-		result.Firstfloor != nil || result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
-		return errors.New("idle runtime result does not match an explicit supported path")
+	if result.DerivedContract.Provider != result.Provider {
+		return errors.New("idle firstfloor derived provider evidence mismatch")
 	}
-	return validateRKNNRuntimeEvidence(config, result.RKNN)
+	if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
+		result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
+		return err
+	}
+	return validateFirstfloorRuntimeEvidence(config, result.Firstfloor, 0)
 }

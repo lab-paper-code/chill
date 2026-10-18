@@ -29,7 +29,7 @@ func TestFirstfloorCUDAJobProjectsDeclaredAcceleratorAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if projection.AcceleratorResource != "nvidia.com/gpu" || projection.ArtifactDestination != cpuORTModelDestination ||
+	if projection.AcceleratorResource != "nvidia.com/gpu" ||
 		projection.SecurityContext.Privileged == nil || !*projection.SecurityContext.Privileged ||
 		len(projection.SupplementalGroups) != 1 || projection.SupplementalGroups[0] != 44 {
 		t.Fatalf("CUDA access was lost: %+v", projection)

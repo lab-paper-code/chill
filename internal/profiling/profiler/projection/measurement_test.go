@@ -40,6 +40,10 @@ func TestTrialProjectsVerifiedEvidence(t *testing.T) {
 	if trial.Batch < 1 || trial.TrialID == "" {
 		t.Fatalf("accepted evaluation returned no usable trial: %+v", trial)
 	}
+	if len(trial.NativeSamples) == 0 || len(trial.NativeSamples[0].RecordIDs) != trial.Batch ||
+		len(trial.NativeSamples[0].Units) != trial.Batch || trial.NativeSamples[0].PreprocessMilliseconds == 0 {
+		t.Fatalf("projected native samples lost raw trial fields: %+v", trial.NativeSamples)
+	}
 }
 
 func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapshot(t *testing.T) {
@@ -61,7 +65,7 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 	raw := profilerevidence.RawMeasurement{
 		RunConfig: config,
 		Runtime: profilingrun.RuntimeResult{
-			Inputs:               modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+			Inputs:               config.State.Preprocessor.Inputs,
 			MeasurementStartedAt: started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:   started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			InferenceCount:       2,
@@ -112,7 +116,7 @@ func TestProjectIdleObservationPreservesRawProvenanceAndRuntimeWindow(t *testing
 	raw := profilerevidence.IdleRawMeasurement{
 		RunConfig: config,
 		Runtime: profilingrun.IdleRuntimeResult{
-			Inputs:               modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+			Inputs:               config.State.Preprocessor.Inputs,
 			ModelLoadCompletedAt: started.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt:    started.Add(-60 * time.Second).Format(time.RFC3339Nano),
 			SettlingCompletedAt:  started.Format(time.RFC3339Nano),
@@ -140,22 +144,25 @@ func projectionBool(value bool) *bool { return &value }
 func projectionRunConfig() profilingrun.RunConfig {
 	return profilingrun.RunConfig{
 		State: profilingrun.ExecutionState{
-			DeviceClass: "lattepanda", Model: "mobilenet",
-			RuntimeFamily: "onnxruntime", Backend: "CPUExecutionProvider", PowerMode: "fixed",
+			DeviceClass: "lattepanda", Model: "mobilenet", ArtifactFiles: []string{"/artifact/model.onnx"},
+			RuntimeFamily: profilingrun.FirstfloorRuntimeFamily, Backend: profilingrun.FirstfloorORTCPUBackend,
+			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}, PowerMode: "fixed",
+			Preprocessor: profilingrun.PreprocessorState{
+				Name: "mobilenet-imagenet", UID: "preprocessor-uid", Image: "preprocessor", Architecture: "amd64",
+				Path: "/artifact/mobilenet-nchw", Inputs: []string{"image"}, Outputs: []string{"label"},
+			},
 		},
 		Images: profilingrun.Images{Runtime: "runtime", Artifact: "artifact", MetricObserver: "observer"},
 		Delivery: profilingrun.CandidateRuntimeDelivery{
-			ArtifactCapability: &profilingrun.CandidateArtifactCapability{
-				Tensors: []modelcompat.InputTensor{
-					{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}},
-				},
-			},
+			ArtifactCapability: &profilingrun.CandidateArtifactCapability{},
 		},
 		TargetNode: profilingrun.NodeSnapshot{Name: "lattepanda", UID: "node-uid"},
 		CPU:        profilingrun.CPUContract{Policy: "allocatable", PolicyVersion: "v1", Limit: "4"},
 		Measurement: profilingrun.MeasurementContract{
-			Batch: 2, WarmupIterations: 20, DurationSeconds: 30,
-			WorkloadMode: "saturated", InputGenerator: "seeded", OutputValidation: "shape",
+			Batch: 2, WarmupIterations: 20, DurationSeconds: 30, WorkloadMode: "saturated",
+			Dataset: &profilingrun.DatasetContract{
+				Name: "vqav2-val-subset", UID: "dataset-uid", Image: "dataset", Path: "/artifact/vqav2-val-subset",
+			},
 		},
 		Metrics: profilingrun.MetricContract{
 			SourceKind: "edge-metrics", NodeName: "lattepanda",
@@ -196,7 +203,7 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 		t.Fatal(err)
 	}
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
 	if err := config.Validate(); err != nil {
@@ -260,7 +267,7 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 			Backend:                   config.State.Backend,
 			Provider:                  config.State.Backend,
 			AvailableProviders:        []string{config.State.Backend},
-			Inputs:                    modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+			Inputs:                    config.State.Preprocessor.Inputs,
 			BatchSize:                 config.Measurement.Batch,
 			WarmupIterations:          config.Measurement.WarmupIterations,
 			WarmupCompletedAt:         started.Add(-time.Second).Format(time.RFC3339Nano),
@@ -270,10 +277,6 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 			MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30,
 			TargetDurationSeconds:     &targetDuration,
-			OutputValidation: profilingrun.OutputValidation{
-				Method: config.Measurement.OutputValidation, Passed: true,
-				OutputShapes: [][]int{{config.Measurement.Batch, 1000}},
-			},
 			CPUContract: profilingrun.RuntimeCPU{
 				CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
 				ORTInterOpThreads: config.CPU.ORTInterOpThreads,
@@ -316,6 +319,7 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 		},
 		Workload: &workload,
 	}
+	applyFirstfloorRuntime(config, &raw.Runtime)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)

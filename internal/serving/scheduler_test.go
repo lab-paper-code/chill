@@ -20,7 +20,6 @@ import (
 const (
 	schedulerTestNewModel    = "new-model"
 	schedulerTestSecondMeter = "wall-n2"
-	schedulerTestWideInput   = "wide"
 	schedulerTestNewInstance = "new"
 	schedulerTestOther       = "other"
 	schedulerTestEcoMode     = "eco"
@@ -31,12 +30,11 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	s := SchedulerSettings{Algorithm: SchedulerAlgorithmFixedHorizon, ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, Horizon: 100 * time.Millisecond, MaxObservationAge: time.Second, Seed: 42, Replays: 3, MaxCandidates: 30, MaxReplicas: 2, MaxInstances: 4, MaxReplayRequests: 100, MaxCPUs: 4, Controls: SchedulerControls{Enabled: true, Placement: true, Resources: true, Replicas: true, Sharing: true, Routing: true, Batching: true, Power: true, Membership: true}}
 	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, Pool: "pool", PowerMode: "fixed", Ready: true, CPUs: []int{0, 1, 2, 3}, MemoryBytes: 10000, ObservedAt: at}
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
-	inputs := []modelcompat.InputTensor{{Name: "x", Datatype: "FP32", SampleShape: []int32{1}}}
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
-	path := ModelPath{Name: "cpu", Artifact: "model", Path: "/model", Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Tensors: inputs, Firstfloor: settings}
-	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
-	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", CPU: derivation.CurveCPUContract{Policy: "quota-affinity", PolicyVersion: "v1", Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1, AffinityCPUs: []int{0}}, PlannedBatchSizes: []int{1}, Tensor: derivation.CurveTensorContract{Tensors: inputs}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Path: "/model", Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(10 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
-	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelPath: "/model", Inputs: []firstfloor.InputSpec{{Name: "x", Datatype: "FP32", Shape: []int{-1, 1}}}, Outputs: []firstfloor.InputSpec{{Name: "y", Datatype: "FP32", Shape: []int{-1, 1}}}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
+	path := ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: settings}
+	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
+	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", CPU: derivation.CurveCPUContract{Policy: "quota-affinity", PolicyVersion: "v1", Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1, AffinityCPUs: []int{0}}, PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(10 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
+	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
 	i := SchedulerInstance{ID: "i1", Node: node.Node, Pool: node.Pool, Profile: p, WorkloadUIDs: []string{d.UID}, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Capacity: 100, Weight: 1, MaxBatch: 1, EnvelopeSource: "measured transport", CompletionObserved: true, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
 	i = schedulerMeasuredInstance(i, d, 0)
 	b := NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: schedulerNodeWallScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
@@ -550,35 +548,6 @@ func TestSchedulerRoutingSharesUIDCreditsAndSortsPhysicalIDs(t *testing.T) {
 	}
 }
 
-func TestSchedulerRoutingKeepsInputPathsSeparate(t *testing.T) {
-	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
-	d := snap.Workloads[0]
-	path := d.Model.Paths[0]
-	path.Name = schedulerTestWideInput
-	path.Artifact = schedulerTestWideInput
-	path.Tensors = []modelcompat.InputTensor{{Name: "x", Datatype: "FP32", SampleShape: []int32{2}}}
-	d.Model.Paths = append(d.Model.Paths, path)
-	wide := schedulerTestCPU(snap.Instances[0])
-	wide.ID = schedulerTestWideInput
-	wide.Profile.Condition.Artifact.Name = schedulerTestWideInput
-	wide.Profile.Condition.Artifact.ExecutionPath = schedulerTestWideInput
-	wide.Profile.Condition.Tensor.Tensors = path.Tensors
-	wide.Profile.Batches = append([]BatchProfile(nil), wide.Profile.Batches...)
-	wide.Profile.Batches[0].DurationNanos = []float64{float64(30 * time.Millisecond)}
-	wide = schedulerMeasuredInstance(wide, d, 0)
-	snap.Instances = append(snap.Instances, wide)
-	snap.RoutingCredits = map[string]map[int]map[string]int64{d.UID: {0: {"i1": 100, schedulerTestWideInput: -100}, 1: {"i1": 100, schedulerTestWideInput: -100}}}
-	snap.Outstanding = []SchedulerRequest{{ID: "narrow", QueueOrder: 0, Definition: d, InputPath: 0, ReceivedAt: snap.At, Phase: "pending"}, {ID: schedulerTestWideInput, QueueOrder: 1, Definition: d, InputPath: 1, ReceivedAt: snap.At, Phase: "pending"}}
-	result := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances})
-	if len(result.reasons) > 0 || !reflect.DeepEqual(result.samples[d.Identity()], []float64{float64(10 * time.Millisecond), float64(30 * time.Millisecond)}) {
-		t.Fatalf("credit cannot override actual tensor compatibility: %+v", result)
-	}
-	snap.Outstanding[1].InputPath = -1
-	decision := schedulerEvaluateForTest(t, s, snap)
-	schedulerRequireReason(t, decision.Keep.Reasons, "UnknownInputRoute")
-}
-
 func TestSchedulerNativeQueueOrderSurvivesReceiptOrderAndUIDSort(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.Controls.Enabled = false
@@ -796,7 +765,7 @@ func TestSchedulerUnobservedCompletionOverheadIsNotSLOQualified(t *testing.T) {
 }
 
 func TestSchedulerCompletionProofMustRemainBoundToConsumedQuantityAndCondition(t *testing.T) {
-	for _, condition := range []string{"quantity", "node", "profile", "runtime", "CPU", "threads", "GPU", "artifact", "input"} {
+	for _, condition := range []string{"quantity", "node", "profile", "runtime", "CPU", "threads", "GPU", "artifact", "preprocessor", "dataset"} {
 		t.Run(condition, func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
 			settings.Controls.Enabled = false
@@ -821,8 +790,10 @@ func TestSchedulerCompletionProofMustRemainBoundToConsumedQuantityAndCondition(t
 				instance.Allocation.GPUUUID = "unmeasured-GPU"
 			case "artifact":
 				profile.Condition.Artifact.Name = "unmeasured-artifact"
-			case "input":
-				profile.Condition.Tensor.Tensors = []modelcompat.InputTensor{{Name: "x", Datatype: "FP32", SampleShape: []int32{2}}}
+			case "preprocessor":
+				profile.Condition.Preprocessor.Inputs = []string{"unmeasured-field"}
+			case "dataset":
+				profile.Condition.ActiveProtocol.Dataset = &derivation.CurveDatasetContract{Name: "data", UID: "replaced-data-uid"}
 			}
 			if !instance.CompletionObserved || !instance.CompletionMeasurement.Valid() {
 				t.Fatal("mutation regression must retain the original proof and scalar flag")

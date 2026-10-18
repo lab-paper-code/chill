@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/modelcompat-report.v1alpha12",
+  "schemaVersion": "chill.dacs.io/modelcompat-report.v1alpha13",
   "scope": "StaticCompatibility",
   "inputs": {
     "modelSpec": {
@@ -38,11 +38,10 @@
   "artifactSupply": {
     "image": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "architecture": "amd64",
-    "path": "/artifact/mobilenet-v2-050.onnx"
+    "files": ["/artifact/mobilenet-v2-050.onnx"]
   },
-  "artifactCapability": {
-    "tensors": [{"name": "input", "datatype": "FP32", "sampleShape": [3, 224, 224]}]
-  },
+  "artifactCapability": {},
+  "firstfloor": {"maxBatchSize": 4, "maxQueueSize": 32},
   "metricObserverImage": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "verdict": "Compatible",
   "reasons": []

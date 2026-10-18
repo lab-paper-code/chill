@@ -638,7 +638,8 @@ func schedulerOptionCondition(o SchedulerOption) string {
 		return ""
 	}
 	p := i.Profile
-	return fmt.Sprint(i.Node, i.Pool, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Tensor, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait, i.CompletionOverhead, i.EnvelopeSource, i.CompletionObserved)
+	// A top-level *CurveDatasetContract prints its value (&{name uid}), not its address.
+	return fmt.Sprint(i.Node, i.Pool, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait, i.CompletionOverhead, i.EnvelopeSource, i.CompletionObserved)
 }
 
 // SchedulerLogicalConfigKey identifies configuration semantics, not a physical
@@ -801,9 +802,6 @@ func schedulerSameResourceChoice(old, target SchedulerInstance) bool {
 }
 func schedulerProfileMatches(d *Definition, p *Profile) bool {
 	return d != nil && profilePath(d, p) != nil
-}
-func schedulerRequestMatches(d *Definition, path int, p *Profile) bool {
-	return d != nil && p != nil && path >= 0 && path < len(d.Model.Paths) && sameInputs(d.Model.Paths[path].Tensors, p.Condition.Tensor.Tensors) && schedulerProfileMatches(d, p)
 }
 
 // Refresh forecast facts without mutating an executing operation's frozen target.

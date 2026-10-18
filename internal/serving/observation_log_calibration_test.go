@@ -187,7 +187,7 @@ func requireBoundedCompletionPolicy(t *testing.T, instance SchedulerInstance, fa
 	}
 	config := native.Config{
 		Model: "model", Mode: "serving", ProfilePath: "/profile/bundle.json",
-		Inputs:        []native.InputSpec{{Name: "x", Datatype: "FP32", Shape: []int{1}}},
+		Inputs: []string{"x"}, Outputs: []string{"y"},
 		RunnerCommand: []string{"runner"}, RunnerTimeoutMS: 1000,
 		MaxQueueRequests: 4, MaxQueueBytes: 1024, MaxRequestBytes: 1024,
 		MaxBatchSize: 1, BatchSizes: []int{1}, Policy: policy,

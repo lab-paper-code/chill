@@ -1,7 +1,8 @@
-"""Verified HTTPS client for CHILL's one-sample Workload inference API."""
+"""Verified HTTPS client for CHILL's one-sample Workload raw inference API."""
 
 from __future__ import annotations
 
+import base64
 import ipaddress
 import json
 import math
@@ -9,7 +10,7 @@ import re
 import ssl
 from dataclasses import dataclass
 from http.client import HTTPSConnection
-from typing import Dict, Optional, Sequence
+from typing import Mapping, Optional
 from urllib.parse import urlsplit
 
 
@@ -93,46 +94,20 @@ class WorkloadHTTPClient:
             context=ssl.create_default_context(cafile=ca_file),
         )
 
-    def infer(
-        self, workload_id: str, inputs: Sequence[Dict[str, object]]
-    ) -> InferenceResponse:
-        """Send named tensors with sample shapes, never a client batch axis."""
+    def infer(self, workload_id: str, inputs: Mapping[str, bytes]) -> InferenceResponse:
+        """Send one raw sample: every preprocessor input field name mapped to its bytes."""
         if not _valid_identifier(workload_id):
             raise ValueError("workload_id must be a Kubernetes DNS subdomain name")
-        if not isinstance(inputs, (list, tuple)) or not inputs:
-            raise ValueError("inputs must be a nonempty sequence of named sample tensors")
-        names = set()
-        for tensor in inputs:
-            if not isinstance(tensor, dict) or set(tensor) != {
-                "name", "datatype", "shape", "data"
-            }:
-                raise ValueError("each input must contain only name, datatype, shape and data")
-            name, datatype = tensor["name"], tensor["datatype"]
-            shape, data = tensor["shape"], tensor["data"]
-            if not isinstance(name, str) or not name or name in names:
-                raise ValueError("input names must be nonempty and unique")
-            names.add(name)
-            if not isinstance(datatype, str) or datatype not in {
-                "BOOL", "BYTES", "INT8", "INT16", "INT32", "INT64",
-                "UINT8", "UINT16", "UINT32", "UINT64", "FP16", "FP32", "FP64",
-            }:
-                raise ValueError("input datatype is not supported by the JSON API")
-            if not isinstance(shape, list) or any(
-                type(dimension) is not int or not 0 < dimension <= 2147483647
-                for dimension in shape
-            ):
-                raise ValueError("input shape must contain positive int32 sample dimensions")
-            count = 1
-            for dimension in shape:
-                count *= dimension
-            if not isinstance(data, list) or len(data) != count or any(
-                type(value) not in (bool, str, int, float) for value in data
-            ):
-                raise ValueError("input data must be a flat array matching its sample shape")
-        try:
-            body = json.dumps({"inputs": inputs}, allow_nan=False).encode("utf-8")
-        except (TypeError, ValueError, UnicodeError):
-            raise ValueError("inputs must contain finite JSON values") from None
+        if not isinstance(inputs, Mapping) or not inputs:
+            raise ValueError("inputs must be a nonempty mapping of field name to bytes")
+        fields = []
+        for name, data in inputs.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError("input field names must be nonempty strings")
+            if not isinstance(data, bytes) or not data:
+                raise ValueError("input field data must be nonempty bytes")
+            fields.append({"name": name, "datatype": "BYTES", "data": base64.b64encode(data).decode("ascii")})
+        body = json.dumps({"inputs": fields}).encode("utf-8")
 
         self._connection.request(
             "POST",

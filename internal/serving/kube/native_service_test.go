@@ -3,16 +3,19 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -23,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -193,7 +197,8 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	manager, _ := newManagerHarness(t)
 	fixture, node, profile, class := observerSourceFixture()
 	profile.RuntimeMetadata.RuntimeVersion = "test-runtime"
-	profile.RuntimeMetadata.Inputs = []native.InputSpec{}
+	profile.RuntimeMetadata.Inputs = profile.Condition.Preprocessor.Inputs
+	profile.RuntimeMetadata.Outputs = profile.Condition.Preprocessor.Outputs
 	profile.RuntimeMetadata.InitializedBatches = []int{1}
 	manager.observer.SetProfiles([]serving.Profile{profile})
 	kube := kubefake.NewSimpleClientset(node)
@@ -230,7 +235,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}).Build()
 	currentPolicy := native.Policy{DecisionID: "manual-static-routing:current", ProfileID: profile.ID, MaxBatchSize: 1, CompletionOverheadMS: 17}
 	actualRuntime := *profile.RuntimeMetadata
-	actualRuntime.ModelPath = "/model/model.onnx"
+	actualRuntime.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Native state reports the mounted policy, never the Pod annotation.
 		_ = json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{
@@ -263,7 +268,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	if err := bindPreparationAffinity(&persisted); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := operations.ensurePreparationConfig(ctx, persisted); err != nil {
+	if _, err := operations.ensurePreparationConfig(ctx, persisted, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Recreate after routing has changed the retained ConfigMap's mutable policy.
@@ -305,5 +310,113 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}
 	if !reflect.DeepEqual(config.Policy, currentPolicy) {
 		t.Fatal("preparation reset the current mutable policy", config.Policy)
+	}
+}
+
+func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
+	ctx := context.Background()
+	_, node, profile, _ := observerSourceFixture()
+	profile.Condition.Backend = profilingrun.FirstfloorRKNNLiteBackend
+	profile.RuntimeMetadata.IntraOpThreads, profile.RuntimeMetadata.InterOpThreads = 0, 0
+	delivery, err := json.Marshal(profilingrun.CandidateRuntimeDelivery{
+		ArtifactCapability: &profilingrun.CandidateArtifactCapability{},
+		HostContract: &profilingrun.CandidateReportHostContract{
+			Libraries: []profilingrun.CandidateReportHostLibrary{{
+				Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
+			}},
+			Driver:   profilingrun.CandidateReportHostDriver{Name: "rknpu", VersionPath: "/sys/kernel/debug/rknpu/version", Version: "0.9.8"},
+			Devices:  []profilingrun.CandidateReportHostDevice{{Path: "/dev/dri/renderD129"}},
+			Platform: &profilingrun.CandidateReportHostPlatform{CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588"},
+		},
+		RuntimeAccess: &profilingrun.CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44, 110}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.RuntimeDelivery = delivery
+	scheme := runtime.NewScheme()
+	if err = core.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	kube := kubefake.NewSimpleClientset(node)
+	// Stop at the transport Service so the test inspects only the created Pod.
+	kube.PrependReactor("create", "services", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("stop after Pod creation")
+	})
+	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	spec := PrepareSpec{
+		Name: "measured-rknn",
+		Instance: serving.SchedulerInstance{
+			ID: "measured-rknn", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: "pool", Profile: &profile,
+			Allocation: serving.SchedulerAllocation{CPUs: []int{0}, CPUCount: 1, MemoryBytes: 1 << 20},
+		},
+		Bundle: evidencestore.ObjectIdentity{Store: "store", Key: "bundle", Size: 1},
+		Store:  storekube.Binding{Store: "store", Endpoint: "http://store", Bucket: "bucket", Region: "region", CredentialsSecretName: "secret"},
+		Config: native.Config{
+			Mode: nativeServingMode, ProfilePath: "/profile/bundle.json",
+			RunnerCommand: []string{"python3", "--delivery-json", "/config/delivery.json"},
+			Policy:        native.Policy{ProfileID: profile.ID, DeadlinePolicy: profile.Condition.Firstfloor.DeadlinePolicy},
+		},
+		MemoryBytes: 1 << 20,
+	}
+	if err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
+		t.Fatalf("preparation did not reach Pod creation: %v", err)
+	}
+	config := &core.ConfigMap{}
+	if err = store.client.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: spec.Name}, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Data["delivery.json"] != string(delivery) {
+		t.Fatal("runner delivery file differs from the measured delivery")
+	}
+	pod := &core.Pod{}
+	if err = store.client.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: spec.Name}, pod); err != nil {
+		t.Fatal(err)
+	}
+	container := pod.Spec.Containers[0]
+	if container.SecurityContext == nil || container.SecurityContext.Privileged == nil || !*container.SecurityContext.Privileged ||
+		pod.Spec.SecurityContext == nil || !reflect.DeepEqual(pod.Spec.SecurityContext.SupplementalGroups, []int64{44, 110}) {
+		t.Fatalf("measured privilege or supplemental groups were not reproduced: %+v %+v", container.SecurityContext, pod.Spec.SecurityContext)
+	}
+	mounted := map[string]string{}
+	for _, volume := range pod.Spec.Volumes {
+		if volume.HostPath == nil {
+			continue
+		}
+		for _, mount := range container.VolumeMounts {
+			if mount.Name == volume.Name {
+				mounted[mount.MountPath] = volume.HostPath.Path
+			}
+		}
+	}
+	for _, path := range []string{"/usr/lib/librknnrt.so", "/sys/kernel/debug/rknpu/version", "/proc/device-tree/compatible", "/dev/dri/renderD129"} {
+		if mounted[path] != path {
+			t.Fatalf("measured host path %s was not projected: %v", path, mounted)
+		}
+	}
+	// The unchanged existing Pod is reused; one with another host source, group
+	// set or privilege is a different preparation.
+	if err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
+		t.Fatalf("unchanged existing preparation was not reused: %v", err)
+	}
+	original := pod.DeepCopy()
+	for name, mutate := range map[string]func(*core.Pod){
+		"host source":         func(p *core.Pod) { p.Spec.Volumes[len(p.Spec.Volumes)-1].HostPath.Path = "/dev/dri/renderD128" },
+		"supplemental groups": func(p *core.Pod) { p.Spec.SecurityContext.SupplementalGroups = []int64{44} },
+		"privilege":           func(p *core.Pod) { p.Spec.Containers[0].SecurityContext.Privileged = ptr.To(false) },
+	} {
+		existing := &core.Pod{}
+		if err = store.client.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: spec.Name}, existing); err != nil {
+			t.Fatal(err)
+		}
+		existing.Spec = *original.Spec.DeepCopy()
+		mutate(existing)
+		if err = store.client.Update(ctx, existing); err != nil {
+			t.Fatal(err)
+		}
+		if err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "existing preparation Pod differs") {
+			t.Fatalf("existing Pod with different %s was reused: %v", name, err)
+		}
 	}
 }

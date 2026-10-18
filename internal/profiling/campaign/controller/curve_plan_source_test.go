@@ -286,20 +286,11 @@ func TestCurvePlanSourceUsesCanonicalArtifactDeclaredInputAndCampaignBatchSizes(
 	parent.Spec.BatchSizes = []int32{1, 2, 4, 8, 16, 32}
 	_, report := curvePlanCandidateReport(t, parent)
 	report.Selection.Artifact = "canonical-onnx"
-	report.ArtifactSupply.Path = "/artifact/canonical.onnx"
-	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
-		Tensors: []modelcompat.InputTensor{
-			{Name: "canonical-input", Datatype: "FP32", SampleShape: []int32{3, 192, 256}},
-		},
-	}
+	report.ArtifactSupply.Files = []string{"/artifact/canonical.onnx"}
+	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{}
 	reportBytes := encodeCurvePlanCandidateReport(t, report)
 	model := curvePlanModel(report)
 	model.Spec.Artifacts[0].Derivation = nil
-	model.Spec.Artifacts[0].Input = &edgev1alpha1.ModelArtifactInputContract{
-		Tensors: []edgev1alpha1.ModelInputTensor{
-			{Name: "canonical-input", Datatype: "FP32", SampleShape: []int32{3, 192, 256}},
-		},
-	}
 	preparer := &fakeCurvePlanPreparer{
 		report: report, reportBytes: reportBytes, nodeUID: "node-uid",
 	}
@@ -326,45 +317,12 @@ func TestCurvePlanSourceUsesCanonicalArtifactDeclaredInputAndCampaignBatchSizes(
 		shared.Conversion.ToolVersion != "" {
 		t.Fatalf("canonical artifact conversion contract = %+v", shared.Conversion)
 	}
-	if !reflect.DeepEqual(shared.Tensor.Tensors, report.ArtifactCapability.Tensors) {
-		t.Fatalf("canonical artifact tensor contract = %+v", shared.Tensor)
+	if !slices.Equal(shared.Artifact.Files, report.ArtifactSupply.Files) || shared.ActiveProtocol.Dataset == nil {
+		t.Fatalf("canonical artifact files or dataset = %+v %+v", shared.Artifact, shared.ActiveProtocol)
 	}
 	if len(preparer.requests) != 2 || preparer.requests[0].Measurement.Batch != 1 ||
 		preparer.requests[1].Measurement.Batch != 1 {
 		t.Fatalf("canonical artifact preparation requests = %+v", preparer.requests)
-	}
-}
-
-func TestCurvePlanSourceRejectsArtifactWithoutDeclaredInputContract(t *testing.T) {
-	parent := testParent()
-	parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
-	parent.Spec.BatchSizes = []int32{1, 2}
-	_, report := curvePlanCandidateReport(t, parent)
-	report.Selection.Artifact = "undeclared-input"
-	report.ArtifactCapability.DeclaredBatchSizes = nil
-	report.ArtifactCapability.TargetPlatform = ""
-	reportBytes := encodeCurvePlanCandidateReport(t, report)
-	model := curvePlanModel(report)
-	model.Spec.Artifacts[0].Derivation = nil
-	model.Spec.Artifacts[0].Input = nil
-	source, err := NewCurvePlanSource(
-		&fakeCurvePlanModelReader{model: model},
-		&fakeCurvePlanCandidateResolver{reportBytes: reportBytes},
-		&fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"},
-		newFakeCurvePlanStore(),
-		CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
-	)
-	if err != nil {
-		t.Fatalf("construct curve-plan source: %v", err)
-	}
-
-	_, _, _, err = source.Resolve(context.Background(), parent)
-	var missing *ArtifactInputContractMissingError
-	if !errors.As(err, &missing) {
-		t.Fatalf("Resolve() error = %v, want ArtifactInputContractMissingError", err)
-	}
-	if missing.Artifact != "undeclared-input" {
-		t.Fatalf("missing input contract error = %v, artifact = %q", err, missing.Artifact)
 	}
 }
 
@@ -531,13 +489,10 @@ func curvePlanCandidateReport(
 			PowerModes:   []string{profilingrun.FixedPowerMode},
 		},
 		ArtifactSupply: profilingrun.CandidateReportArtifactSupply{
-			Image: "artifact@sha256:bbbbbbbb", Architecture: "amd64", Path: "/artifact/derived.onnx",
+			Image: "artifact@sha256:bbbbbbbb", Architecture: "amd64", Files: []string{"/artifact/derived.onnx"},
 		},
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
 			TargetPlatform: "cpu", DeclaredBatchSizes: []int32{4, 1, 2},
-			Tensors: []modelcompat.InputTensor{
-				{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}},
-			},
 		},
 		MetricObserverImage: "metric@sha256:cccccccc",
 		Verdict:             "Compatible",
@@ -565,11 +520,6 @@ func curvePlanModel(report profilingrun.CandidateReport) *edgev1alpha1.ModelSpec
 		},
 		Spec: edgev1alpha1.ModelSpecSpec{Artifacts: []edgev1alpha1.ModelArtifact{{
 			Name: report.Selection.Artifact, Format: "onnx",
-			Input: &edgev1alpha1.ModelArtifactInputContract{
-				Tensors: []edgev1alpha1.ModelInputTensor{
-					{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}},
-				},
-			},
 			Derivation: &edgev1alpha1.ModelArtifactDerivation{
 				SourceArtifact: "canonical-onnx", TargetPlatform: "cpu",
 				DeclaredBatchSizes: []int32{1, 2, 4},
@@ -669,8 +619,14 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		},
 		State: profilingrun.ExecutionState{
 			DeviceClass: request.Candidate.DeviceClass, Model: request.Candidate.ModelSpec,
-			Artifact: artifact, ArtifactPath: p.report.ArtifactSupply.Path,
-			RuntimeFamily: "onnxruntime", Backend: "CPUExecutionProvider", PowerMode: request.Candidate.PowerMode,
+			Artifact: artifact, ArtifactFiles: p.report.ArtifactSupply.Files,
+			RuntimeFamily: "firstfloor", Backend: "ort-cpu", PowerMode: request.Candidate.PowerMode,
+			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 32, MaxQueueSize: 64},
+			Preprocessor: profilingrun.PreprocessorState{
+				Name: request.Candidate.Preprocessor, UID: "preprocessor-uid", Image: "preprocessor@sha256:eeeeeeee",
+				Architecture: p.report.DeviceClassFacts.Architecture, Path: "/artifact/mobilenet-nchw",
+				Inputs: []string{"image"}, Outputs: []string{"label"},
+			},
 		},
 		Images: profilingrun.Images{
 			Runtime: p.report.Inputs.RuntimeDeclaration.Image, Artifact: p.report.ArtifactSupply.Image,
@@ -703,6 +659,11 @@ func (p *fakeCurvePlanPreparer) Prepare(
 			DurationSeconds:      request.Metrics.DurationSeconds,
 		},
 		Workload: profilingrun.CurrentWorkloadContract(),
+	}
+	if request.Candidate.Dataset != "" {
+		config.Measurement.Dataset = &profilingrun.DatasetContract{
+			Name: request.Candidate.Dataset, UID: "dataset-uid", Image: "dataset@sha256:ffffffff", Path: "/artifact/dataset",
+		}
 	}
 	if config.State.PowerMode != profilingrun.FixedPowerMode {
 		config.Actuation = &profilingrun.ActuationContract{

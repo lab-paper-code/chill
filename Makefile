@@ -11,11 +11,27 @@ PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
 CONSOLE_IMG ?= $(IMAGE_NAMESPACE)/chill-console:$(IMAGE_TAG)
 METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 WORKLOAD_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-workload-observer:$(IMAGE_TAG)
-MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TAG)
 SERVING_ENTRYPOINT_IMG ?= $(IMAGE_NAMESPACE)/chill-serving-entrypoint:$(IMAGE_TAG)
 FIRSTFLOOR_IMG ?= $(IMAGE_NAMESPACE)/chill-firstfloor:$(IMAGE_TAG)
+FIRSTFLOOR_CUDA_IMG ?= $(FIRSTFLOOR_IMG)-cuda
+FIRSTFLOOR_L4T_R36_IMG ?= $(FIRSTFLOOR_IMG)-l4t-r36
+FIRSTFLOOR_L4T_R32_IMG ?= $(FIRSTFLOOR_IMG)-l4t-r32
+FIRSTFLOOR_L4T_R35_IMG ?= $(FIRSTFLOOR_IMG)-l4t-r35
+FIRSTFLOOR_RKNN_IMG ?= $(FIRSTFLOOR_IMG)-rknn
+# Vendor runtime pins. CUDA 12.5 matches the oldest RTX node driver (555);
+# onnxruntime-gpu 1.24+ has no cp310 wheel and 1.27 requires CUDA 13.
+FIRSTFLOOR_CUDA_BASE ?= nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04@sha256:1e3baf68df7f8206887d2e36b37ac8ad669c847dffd11d9b8cb4173e1e1aedf2
+FIRSTFLOOR_CUDA_ORT_VERSION ?= 1.23.2
+FIRSTFLOOR_L4T_R36_BASE ?= nvcr.io/nvidia/l4t-jetpack:r36.4.0@sha256:34ccf0f3b63c6da9eee45f2e79de9bf7fdf3beda9abfd72bbf285ae9d40bb673
+FIRSTFLOOR_L4T_R36_ORT_VERSION ?= 1.24.0
+FIRSTFLOOR_L4T_R36_INDEX ?= https://pypi.jetson-ai-lab.io/jp6/cu126/+simple
+# The JetPack 4 image runs Python 3.8, so its module libraries are the last
+# Python 3.8 releases; transformers needs 3.9, so SmolVLM is not imported there.
+FIRSTFLOOR_L4T_R32_MODULE_PACKAGES ?= pillow==10.4.0
+FIRSTFLOOR_RKNN_PACKAGES ?= rknn-toolkit-lite2==2.3.2
+# --push publishes; --load keeps a single-platform build local.
+FIRSTFLOOR_OUTPUT ?= --push
 DASHBOARD_IMG ?= $(IMAGE_NAMESPACE)/chill-dashboard:$(IMAGE_TAG)
-RKNNLITE_MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-rknnlite-measurement-worker-arm64:$(IMAGE_TAG)
 RKNN_CONVERTER_PYTHON ?= python3
 RKNN_SOURCE_ONNX ?=
 RKNN_TOOL_WHEEL ?=
@@ -115,15 +131,22 @@ test-runtime: ## Run production runtime contract tests.
 	python3 -m unittest discover -s runtime/firstfloor -p 'test_*.py'
 
 .PHONY: test-artifact-tools
-test-artifact-tools: ## Run model-artifact build-tool tests.
+test-artifact-tools: ## Run model-artifact build-tool and preprocessor module tests.
 	python3 -m unittest discover -s build/model-artifacts/rknn -p 'test_*.py'
+	python3 -m unittest discover -s build/model-artifacts/preprocessors -p 'test_*.py'
+	python3 -m unittest discover -s build/model-artifacts/vqav2 -p 'test_*.py'
+	python3 -m unittest discover -s build/model-artifacts/plc-anomaly -p 'test_*.py'
+
+.PHONY: test-loadgen
+test-loadgen: ## Run load-generator tests.
+	PYTHONPATH=load-generator/src python3 -m unittest discover -s load-generator/tests
 
 .PHONY: test-helm-release-flow
 test-helm-release-flow: ## Verify values-file and explicit image precedence in the Helm release flow.
 	./hack/helm-release-flow-test.sh
 
 .PHONY: test
-test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-helm-release-flow ## Run tests.
+test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
@@ -356,10 +379,6 @@ docker-build-console: ## Build the Console API image.
 docker-build-metric-observer: ## Build the MetricObserver image.
 	$(CONTAINER_TOOL) build -f build/docker/metric-observer.Dockerfile -t $(METRIC_OBSERVER_IMG) .
 
-.PHONY: docker-build-measurement-worker
-docker-build-measurement-worker: ## Build the CPU ORT measurement worker image.
-	$(CONTAINER_TOOL) build -f build/docker/measurement-worker.Dockerfile -t $(MEASUREMENT_WORKER_IMG) .
-
 .PHONY: docker-build-chill-server
 docker-build-chill-server: ## Build the ChillServer image.
 	$(CONTAINER_TOOL) build -f build/docker/chill-server.Dockerfile -t $(SERVING_ENTRYPOINT_IMG) .
@@ -376,14 +395,55 @@ docker-push-firstfloor: ## Push the native runtime image.
 docker-buildx-firstfloor: ## Build and push the native CPU runtime for selected platforms.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_IMG) .
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=$(PLATFORMS) -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_IMG) .
+
+.PHONY: docker-buildx-firstfloor-cuda
+docker-buildx-firstfloor-cuda: ## Build and push the amd64 CUDA runtime (RTX, driver >= 555).
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/amd64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_CUDA_IMG) \
+		--build-arg RUNTIME_IMAGE=$(FIRSTFLOOR_CUDA_BASE) --build-arg APT_PACKAGES="python3 python3-pip" \
+		--build-arg ORT_PACKAGE=onnxruntime-gpu --build-arg ONNXRUNTIME_VERSION=$(FIRSTFLOOR_CUDA_ORT_VERSION) .
+
+.PHONY: docker-buildx-firstfloor-l4t-r36
+docker-buildx-firstfloor-l4t-r36: ## Build and push the JetPack 6 (L4T r36.4) CUDA runtime.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_L4T_R36_IMG) \
+		--build-arg RUNTIME_IMAGE=$(FIRSTFLOOR_L4T_R36_BASE) --build-arg APT_PACKAGES="python3 python3-pip" \
+		--build-arg ORT_PACKAGE=onnxruntime-gpu --build-arg ONNXRUNTIME_VERSION=$(FIRSTFLOOR_L4T_R36_ORT_VERSION) \
+		--build-arg PIP_EXTRA_INDEX_URL=$(FIRSTFLOOR_L4T_R36_INDEX) .
+
+.PHONY: docker-buildx-firstfloor-l4t-r32
+docker-buildx-firstfloor-l4t-r32: ## Build and push the JetPack 4.6 (L4T r32, Jetson Nano) CUDA runtime.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_L4T_R32_IMG) \
+		--build-arg RUNTIME_IMAGE=l4t-r32 --build-arg NUMPY_VERSION=1.24.4 \
+		--build-arg ORT_PACKAGE=onnxruntime-gpu --build-arg ONNXRUNTIME_VERSION=1.11.0 \
+		--build-arg MODULE_PACKAGES="$(FIRSTFLOOR_L4T_R32_MODULE_PACKAGES)" .
+
+.PHONY: docker-buildx-firstfloor-l4t-r35
+docker-buildx-firstfloor-l4t-r35: ## Build and push the JetPack 5 (L4T r35.4) CUDA runtime.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_L4T_R35_IMG) \
+		--build-arg RUNTIME_IMAGE=l4t-r35 --build-arg NUMPY_VERSION=1.26.4 \
+		--build-arg ORT_PACKAGE=onnxruntime-gpu --build-arg ONNXRUNTIME_VERSION=1.18.0 .
+
+.PHONY: docker-buildx-firstfloor-rknn
+docker-buildx-firstfloor-rknn: ## Build and push the arm64 RKNNLite runtime (host librknnrt).
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_RKNN_IMG) \
+		--build-arg EXTRA_PACKAGES="$(FIRSTFLOOR_RKNN_PACKAGES)" .
 
 .PHONY: docker-build-dashboard
 docker-build-dashboard: ## Build the independent Dashboard image.
 	$(CONTAINER_TOOL) build -f build/docker/dashboard.Dockerfile -t $(DASHBOARD_IMG) .
 
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-discovery docker-build-node-actuator docker-build-profiler docker-build-console docker-build-metric-observer docker-build-measurement-worker ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-discovery docker-build-node-actuator docker-build-profiler docker-build-console docker-build-metric-observer ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.
@@ -416,12 +476,8 @@ docker-push-dashboard: ## Push the independent Dashboard image.
 docker-push-metric-observer: ## Push the MetricObserver image.
 	$(CONTAINER_TOOL) push $(METRIC_OBSERVER_IMG)
 
-.PHONY: docker-push-measurement-worker
-docker-push-measurement-worker: ## Push the CPU ORT measurement worker image.
-	$(CONTAINER_TOOL) push $(MEASUREMENT_WORKER_IMG)
-
 .PHONY: docker-push-all
-docker-push-all: docker-push-operator docker-push-node-discovery docker-push-node-actuator docker-push-profiler docker-push-console docker-push-metric-observer docker-push-measurement-worker ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-discovery docker-push-node-actuator docker-push-profiler docker-push-console docker-push-metric-observer ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
 # architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
@@ -430,8 +486,6 @@ docker-push-all: docker-push-operator docker-push-node-discovery docker-push-nod
 # - be able to push the images to your registry
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
 PLATFORMS ?= linux/arm64,linux/amd64
-MEASUREMENT_WORKER_PLATFORMS ?= $(PLATFORMS)
-RKNNLITE_MEASUREMENT_WORKER_PLATFORM ?= linux/arm64
 .PHONY: docker-buildx
 docker-buildx: docker-buildx-operator ## Build and push the operator image for cross-platform support.
 
@@ -471,18 +525,6 @@ docker-buildx-metric-observer: ## Build and push the MetricObserver image for cr
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/metric-observer.Dockerfile --tag $(METRIC_OBSERVER_IMG) .
 
-.PHONY: docker-buildx-measurement-worker
-docker-buildx-measurement-worker: ## Build and push the verified CPU ORT measurement worker platform.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(MEASUREMENT_WORKER_PLATFORMS) -f build/docker/measurement-worker.Dockerfile --tag $(MEASUREMENT_WORKER_IMG) .
-
-.PHONY: docker-buildx-rknnlite-measurement-worker
-docker-buildx-rknnlite-measurement-worker: ## Build and push the verified arm64 RKNNLite measurement worker.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --provenance=false --platform=$(RKNNLITE_MEASUREMENT_WORKER_PLATFORM) -f build/docker/rknnlite-measurement-worker.Dockerfile --tag $(RKNNLITE_MEASUREMENT_WORKER_IMG) .
-
 .PHONY: docker-buildx-workload-observer
 docker-buildx-workload-observer: ## Build and push the bounded WorkloadObserver helper image.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
@@ -502,7 +544,7 @@ docker-buildx-dashboard: ## Build and push the Dashboard image for cross-platfor
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/dashboard.Dockerfile --tag $(DASHBOARD_IMG) .
 
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-node-actuator docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-node-actuator docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer ## Build and push all component images for their supported platforms.
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.

@@ -401,7 +401,7 @@ func TestOverlappingResourceChangeWaitsForAcceptedResponseBeforeRemoval(t *testi
 	state.initializeInstances()
 	state.initializeActions()
 	state.initializeOutstanding()
-	state.routeCredits = map[schedulerRouteKey][]int64{}
+	state.routeCredits = map[string][]int64{}
 	state.weights, state.available = make([]int32, len(state.instances)), make([]bool, len(state.instances))
 	if !state.startActions() || state.actionByID[stop.ID].done || state.actionByID[remove.ID].started {
 		t.Fatalf("future compatible target bypassed the actual accepted-ingress stop guard: %+v", state.out)

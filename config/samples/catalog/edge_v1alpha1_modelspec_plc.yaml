@@ -1,0 +1,63 @@
+# Use metadata.name and spec as serving management API input, not kubectl apply.
+# Images pin the pushed multi-arch carrier index digest (README.md).
+apiVersion: edge.dacs.io/v1alpha1
+kind: ModelSpec
+metadata:
+  name: plc-lstm-ae
+spec:
+  artifacts:
+  - name: onnx-fp32-arm64
+    format: onnx
+    source:
+      image: "155.230.35.213:5000/chill/chill-plc-lstm-ae-onnx@sha256:bf4f2a90aa4589df06b3879ada3ab7f9d90e4bc35d2337b70666d802967095a2"
+      architecture: arm64
+      files:
+      - /artifact/plc-lstm-ae.onnx
+  - name: onnx-fp32-amd64
+    format: onnx
+    source:
+      image: "155.230.35.213:5000/chill/chill-plc-lstm-ae-onnx@sha256:bf4f2a90aa4589df06b3879ada3ab7f9d90e4bc35d2337b70666d802967095a2"
+      architecture: amd64
+      files:
+      - /artifact/plc-lstm-ae.onnx
+  executionPaths:
+  - name: firstfloor-ort-cpu-arm64
+    artifact: onnx-fp32-arm64
+    runtime:
+      family: firstfloor
+      backend: ort-cpu
+      settings:
+        firstfloor:
+          maxBatchSize: 32
+          maxQueueSize: 64
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cuda-rnn-arm64
+    artifact: onnx-fp32-arm64
+    runtime:
+      family: firstfloor
+      backend: ort-cuda
+      settings:
+        firstfloor:
+          maxBatchSize: 32
+          maxQueueSize: 64
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cpu-amd64
+    artifact: onnx-fp32-amd64
+    runtime:
+      family: firstfloor
+      backend: ort-cpu
+      settings:
+        firstfloor:
+          maxBatchSize: 32
+          maxQueueSize: 64
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cuda-amd64
+    artifact: onnx-fp32-amd64
+    runtime:
+      family: firstfloor
+      backend: ort-cuda
+      settings:
+        firstfloor:
+          maxBatchSize: 32
+          maxQueueSize: 64
+          deadlinePolicy: keep

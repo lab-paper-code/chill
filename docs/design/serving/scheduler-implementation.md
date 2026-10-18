@@ -40,7 +40,7 @@ Serving core는 leaf를 사용하고 Kubernetes/API 호출은 kube adapter에 �
 
 외부 요청은 Workload별 독립 입력 1개와 불변 UID·definition·개별 SLO를 유지한다.
 [Workload 요청 경로](workload-management.md#7-요청-경로와-큐)를 재사용하며,
-[실행기·시간 계약](scheduler-runtime-measurement.md#요청과-실제-모델)에 named tensor,
+[실행기·시간 계약](scheduler-runtime-measurement.md#요청과-실제-모델)에 원시 입력 필드,
 IPC, deadline policy, 원래 monotonic elapsed와 physical release 조건을 둔다.
 
 판단은 고정 historical `observationEnd`와 현재 outstanding의 decision origin `at`를

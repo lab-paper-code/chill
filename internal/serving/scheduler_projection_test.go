@@ -116,7 +116,7 @@ func TestSchedulerProjectionDiscardsActualProgressWithoutMutation(t *testing.T) 
 	snapshot.Actions = []Action{{ID: "actual-running", Kind: schedulerActionPrepare, Status: phaseRunning}}
 	snapshot.InProgressTarget = &source
 	snapshot.Outstanding = []SchedulerRequest{{ID: "actual-running", Phase: phaseRunning}}
-	snapshot.RoutingCredits = map[string]map[int]map[string]int64{"w1": {0: {"i1": 123}}}
+	snapshot.RoutingCredits = map[string]map[string]int64{"w1": {"i1": 123}}
 	snapshot.Instances[0].ArrivalAges = map[string][]time.Duration{"w1": {time.Millisecond}}
 	before, err := json.Marshal(snapshot)
 	if err != nil {

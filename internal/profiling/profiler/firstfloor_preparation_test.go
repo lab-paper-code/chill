@@ -53,14 +53,4 @@ func TestFirstfloorAffinityFreezesExactSortedDetachedCPUIds(t *testing.T) {
 			t.Fatalf("invalid affinity accepted: %v", invalid)
 		}
 	}
-	request.CPUAffinity = []int{8, 31}
-	candidate.State.RuntimeFamily = firstRuntimeFamily
-	candidate.State.Backend = firstRuntimeBackend
-	if _, err := freezeCPUContract(request, candidate, profilingrun.NodeSnapshot{AllocatableCPU: "4"}); err == nil {
-		t.Fatal("explicit affinity exposed on an independent reference producer")
-	}
-	request.CPUAffinity = nil
-	if _, err := freezeCPUContract(request, candidate, profilingrun.NodeSnapshot{AllocatableCPU: "4"}); err != nil {
-		t.Fatalf("default reference experiment changed: %v", err)
-	}
 }

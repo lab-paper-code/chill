@@ -3,7 +3,7 @@
 ```text
 config/samples
 ├── catalog/    normal model registration
-├── manual/     optional manual DeviceClass registration
+├── manual/     optional manual DeviceClass registration and Workload samples
 └── profiling/  experiment requests; apply one at a time
 ```
 
@@ -28,17 +28,17 @@ Do not give manager credentials direct ModelSpec or Workload write access.
 ```text
 ModelSpec
 ├── artifacts[]       immutable model files
-│   ├── source        OCI image, architecture, and path
-│   ├── input.tensors  name, uppercase datatype, and sampleShape without the batch axis
+│   ├── source        OCI image, architecture, and model files
+│   ├── input.tensors  RKNN only: name, uppercase datatype, and sampleShape without the batch axis
 │   └── derivation    conversion facts for a derived artifact
 └── executionPaths[]  artifact-to-runtime bindings
 ```
 
-Use immutable image digests and declare every input's exact name, uppercase
-datatype and sample shape. Multiple named numeric/bool tensors are
-supported; layout is not a separate registration field. A canonical artifact
-needs no `derivation`; a converted artifact records its source, target platform,
-supported batches, and converter. Shape-only compatibility readers are absent.
+Use immutable image digests and list every model file the runtime loads.
+An RKNN artifact declares its input's exact name, uppercase datatype and sample
+shape; a Preprocessor artifact defines the raw inputs of every other format. A
+canonical artifact needs no `derivation`; a converted artifact records its
+source, target platform, supported batches, and converter.
 
 ## Profiling requests
 
@@ -71,7 +71,7 @@ Use its JSON producer output as `runtime.payload` in a
 `profiling.executionDeclarations` entry for a matching ARM64 DeviceClass. Merge
 the entry into the existing declaration list; do not replace unrelated entries.
 The fact-source envelope and Helm renderer use
-`chill.dacs.io/profiler-execution-facts.v1alpha7`. An older envelope is rejected
+`chill.dacs.io/profiler-execution-facts.v1alpha8`. An older envelope is rejected
 by the current resolver, even when its contained runtime declarations are valid.
 
 Adding this entry does not add a ModelSpec execution path or start a measurement.

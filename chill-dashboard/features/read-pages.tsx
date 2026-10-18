@@ -4,11 +4,12 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
-import type { RunsView, ProfilingRun, Passport } from "@/lib/read-types"
+import type { RunsView, ProfilingRun, Passport, NativeSample } from "@/lib/read-types"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DataTable, type DataColumn } from "@/components/data-table"
 
 const runFilters:[string,string][]=[["","전체"],["ExecutionComplete=True","실행 완료"],["ExecutionComplete=False","실행 미완료"],["ExecutionComplete=Unknown","실행 확인 중"],["EvidenceVerified=True","근거 검증 완료"],["EvidenceVerified=False","근거 미검증"],["EvidenceVerified=Unknown","근거 확인 중"]]
 function runCandidate(row:ProfilingRun,key:string) {
@@ -170,13 +171,22 @@ export function MeasurementCheckPage() {
 }
 
 // Fields the passport carries but the shared read type leaves open.
-type RunSpec = {candidate?:{modelSpec?:string;deviceClass?:string;executionPath?:string;powerMode?:string};targetNode?:string;measurement?:{cpuQuota?:string;cpuAffinity?:number[];durationSeconds?:number;inputGenerator?:string}}
+type RunSpec = {candidate?:{modelSpec?:string;preprocessor?:string;deviceClass?:string;executionPath?:string;powerMode?:string};targetNode?:string;measurement?:{cpuQuota?:string;cpuAffinity?:number[];durationSeconds?:number;dataset?:string}}
 type Thermal = {samples?:number;activeSamples?:number;latchedSamples?:number;maximumTemperatureCelsius?:{maximum?:number};issues?:number}
 type Coresidence = {continuous?:boolean;initialActivePods?:number;finalActivePods?:number;materialEvents?:number}
 const num=(value:number,digits=1)=>value.toLocaleString("ko-KR",{maximumFractionDigits:digits})
 const providers:Record<string,string>={CUDAExecutionProvider:"GPU (CUDA)",CPUExecutionProvider:"CPU",TensorrtExecutionProvider:"GPU (TensorRT)"}
 const conditionTrue=(data:Passport,type:string)=>data.run.conditions?.find(condition=>condition.type===type)?.status==="True"
-const verified=(data:Passport)=>conditionTrue(data,"ExecutionComplete")&&conditionTrue(data,"EvidenceVerified")&&data.measurement.runtime.outputValidation.passed
+const verified=(data:Passport)=>conditionTrue(data,"ExecutionComplete")&&conditionTrue(data,"EvidenceVerified")
+// One row per profile batch execution; stage spans are the batch's, recordIDs and units are per request.
+const sampleColumns:DataColumn<NativeSample>[]=[
+  {key:"batch",label:"배치",value:row=>`${String(row.batchID)} · ${row.batchSize}건`,sortValue:row=>row.batchSize},
+  {key:"records",label:"데이터셋 기록",value:row=>row.recordIDs?.join(", ")||"없음"},
+  {key:"units",label:"단위 수",value:row=>row.units?.join(", ")||"없음"},
+  {key:"stages",label:"전처리 / 추론 / 후처리 ms",value:row=>`${num(row.preprocessMs,2)} / ${num(row.backendCallMs,2)} / ${num(row.postprocessMs,2)}`,sortValue:row=>row.backendCallMs},
+  {key:"firstToken",label:"첫 토큰 ms",value:row=>row.firstTokenMs===undefined?"생성형 아님":num(row.firstTokenMs,2)},
+  {key:"service",label:"runner 교환 / 요청 ms",value:row=>`${num(row.runnerServiceMs,2)} / ${num(row.nativeRequestMs,2)}`,sortValue:row=>row.nativeRequestMs},
+]
 function measuredWhat(data:Passport) {
   const spec=data.run.spec as RunSpec, r=data.measurement.runtime
   const at=new Date(r.measurementStartedAt).toLocaleString("ko-KR",{dateStyle:"medium",timeStyle:"short"})
@@ -203,7 +213,8 @@ function PassportSummary({data}:{data:Passport}) {
     ]}/>
     <p className="-mt-4 px-1 text-sm text-muted-foreground">{pods?.initialActivePods!==undefined?`같은 노드에서 함께 돌던 Pod ${pods.initialActivePods}개를 포함한 값이에요. `:""}지금 운영 중 소비와는 달라요.</p>
     <Facts label="측정 조건" items={[
-      ["모델",spec.candidate?.modelSpec ?? "정보 없음"],
+      ["모델",`${spec.candidate?.modelSpec ?? "정보 없음"}${spec.candidate?.preprocessor?` · 전처리기 ${spec.candidate.preprocessor}`:""}`],
+      ["데이터셋",spec.measurement?.dataset ?? "없음"],
       ["장비",`${spec.targetNode ?? p.source.nodeName ?? "정보 없음"}${spec.candidate?.deviceClass?` · ${spec.candidate.deviceClass}`:""}`],
       ["실행 방식",`${providers[r.provider] ?? r.provider} · ${r.family} ${r.version}`],
       ["CPU",spec.measurement?.cpuQuota?`${spec.measurement.cpuQuota}개${spec.measurement.cpuAffinity?.length?` (코어 ${spec.measurement.cpuAffinity.join(", ")})`:""}`:"제한 없음"],
@@ -211,7 +222,6 @@ function PassportSummary({data}:{data:Passport}) {
     ]}/>
     <Facts label="믿을 수 있는지" items={[
       ["실행과 근거",verified(data)?<StatusBadge tone="ok">검증 완료</StatusBadge>:<StatusBadge tone="warn">확인 필요</StatusBadge>],
-      ["출력 확인",r.outputValidation.passed?"모든 응답이 올바른 형태였어요":"올바르지 않은 응답이 있었어요"],
       ["발열",thermal?throttled?`성능 제한이 ${throttled}번 걸렸어요`:`성능 제한 없음${thermal.maximumTemperatureCelsius?.maximum!==undefined?` · 최고 ${thermal.maximumTemperatureCelsius.maximum}°C`:""}`:"관측 없음"],
       ["다른 작업",pods?podsChanged?"측정 중 같은 노드의 Pod가 바뀌었어요":"측정 중 같은 노드의 Pod 변화가 없었어요":"관측 없음"],
     ]}/>
@@ -228,7 +238,11 @@ export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:s
       title={!data?`${name} 측정 결과`:other?"같은 이름으로 다시 등록된 다른 측정이에요":`요청 1건을 평균 ${num(data.measurement.runtime.latencyMilliseconds.mean)}ms에 처리했어요`}
       lede={other?"이전 자료로 사용할 수 없어요.":data?measuredWhat(data):name}>
       <QueryGate query={passport}>{data&&!other&&<PassportSummary data={data}/>}
-        {data&&<Rows><RowDialog label="원본 자료" hint="실행 조건, 검증, 지연, 전력의 원래 값" title="측정 원본 자료" description="측정 전력은 현재 운영 소비가 아니에요.">
+        {data&&<Rows>
+          {!!data.measurement.runtime.nativeSamples?.length&&<RowDialog label="배치 실행 기록" hint="데이터셋 기록, 단위 수, 단계 시간" value={`${data.measurement.runtime.nativeSamples.length}번`} title="배치 실행 기록" description="배치 단계 시간은 같은 배치의 요청이 함께 써요. 단위 수는 분석용 관측값이에요.">
+            <DataTable data={data.measurement.runtime.nativeSamples} columns={sampleColumns}/>
+          </RowDialog>}
+          <RowDialog label="원본 자료" hint="실행 조건, 검증, 지연, 전력의 원래 값" title="측정 원본 자료" description="측정 전력은 현재 운영 소비가 아니에요.">
           <SourceExport value={{conditions:{kind,namespace,name,expectedUID},source:data}} filename={`chill-passport-${name}.json`}/>
           <SourceJSON inline title="실행 조건·검증·지연·전력 원본" value={data}/>
         </RowDialog></Rows>}

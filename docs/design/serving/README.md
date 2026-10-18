@@ -11,6 +11,8 @@ TokenReview/SAR로 검증하고 모델·Workload CRUD와 추론을 제공한다.
 firstfloor actor·persistent ORT CPU/CUDA·RKNNLite runner와 같은 실행 경로의 profiling을
 연결했다. 실제 실행·측정 근거가 없는 인스턴스는 Ready 추론 대상으로 취급하지 않는다.
 구현 구조, 로컬 smoke와 qualified hardware evidence는 서로 다른 확인 수준이다.
+Workload는 Preprocessor와 Dataset을 참조하고 원시 표본(JPEG, UTF8)을 받으며, 전처리 module이 runner
+안에서 모델 입력을 만든다. 설계와 검증 기록은 [이기종 워크로드 구현 설계](heterogeneous-workloads.md)에 있다.
 
 ## 문서 탐색
 
@@ -20,6 +22,7 @@ firstfloor actor·persistent ORT CPU/CUDA·RKNNLite runner와 같은 실행 경�
 | 판단 입력·후보 replay·SLO/에너지 선택·전환 DAG·제어 불변식 | [스케줄러 구현 설계](scheduler-implementation.md) |
 | firstfloor typed 요청·IPC·시간·수명·CPU/장치·fixed-batch·baseline·catalog | [실행기와 측정 계약](scheduler-runtime-measurement.md) |
 | scheduler 설정·calibration JSON·compact API·관측 조회 | [설정과 관측 API](scheduler-api.md) |
+| 원시 표본·전처리기와 데이터셋 catalog·여러 모델 파일 산출물·데이터셋 표본 측정 | [이기종 워크로드 구현 설계](heterogeneous-workloads.md) |
 | Pod-bound Service·EdgeMesh 전달·수동 원자 실행·manifest | [인스턴스 전달과 수동 실행](scheduler-operations.md) |
 | 요구사항별 구현 대응과 당시 검증 수준 | [스케줄러 SRS 대조](scheduler-srs-audit.md) |
 | 온라인 전환 문헌·알고리즘 적용 한계 | [온라인 전환 레퍼런스](online-switching-references.md) |
@@ -64,3 +67,5 @@ CHILL이 physical instance를 선택하고 EdgeMesh는 해당 단일 목적지�
 전체 FULL 통과는 주장하지 않는다. 현재 미완료 근거와 해소된 과거 blocker는
 [실클러스터 검증 현황](../../plans/2026-10-13-scheduler-live-evidence-campaign.md)에서 구분하며,
 과거 배포·synthetic 실행 결과를 현재 hardware 종단 통과로 재사용하지 않는다.
+원시 표본 경로는 runtime image의 CPU runner smoke까지 확인했고 live cluster, Jetson과 RKNN 실행,
+혼합 부하 평가는 [이기종 워크로드 9.1절](heterogeneous-workloads.md#91-검증-기록)의 미검증 범위다.

@@ -43,7 +43,11 @@ and a second restart cannot follow.
 
 Keep the existing fail-closed behavior. A refusal the tool gives for any other
 reason stays a typed terminal failure, and every apply is still followed by an
-independent read-back before the state is accepted.
+independent read-back before the state is accepted. The read-back confirms the
+gating mask in effect, not only the reported name: a mode whose configured
+gating mask still reads ungated is recorded but not established, so the
+read-back fails, and a Node that returns from its restart in that state fails
+rather than restarting again.
 
 ## Consequences
 

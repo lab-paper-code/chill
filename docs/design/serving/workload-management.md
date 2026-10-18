@@ -9,7 +9,7 @@
 구성 선택과 adaptive SLO 배칭의 요구사항은 [스케줄러 SRS](../../spec/scheduler/SRS.md)를 따른다.
 firstfloor actor와 후보 replay는 같은 실측 SLO·에너지 selector를 사용한다.
 실행기 분담과 실제 전환·원시 관측은 [스케줄러 구현 설계](scheduler-implementation.md)에 기록한다.
-native typed tensor·persistent runner의 동일 실행 경로로 Serving과 Profiling을 연결한다.
+native 원시 입력·전처리 module·persistent runner의 동일 실행 경로로 Serving과 Profiling을 연결한다.
 
 ### 핵심 결정
 
@@ -46,10 +46,10 @@ native typed tensor·persistent runner의 동일 실행 경로로 Serving과 Pro
 | [ChillSystem 상태 ADR](../../adr/0008-chillsystem-status-surface.md) | 설치 상태에 워크로드 큐, 노드 구성이나 관리 작업 상태를 덧붙이지 않음 |
 | [전환 소유권 ADR](../../adr/0018-transition-ownership-boundary.md) | 전력 변경은 NodeActuator의 단일 writer를 유지. 워크로드 등록이 측정이나 전력 전환을 소유하지 않음 |
 
-현재 입력 계약은 `tensors[].name`, `datatype`, `sampleShape`이며 여러 numeric/bool tensor를
-하나의 독립 샘플로 검증한다. 모델별 고정 테이블과 shape-only reader는 남기지 않는다.
+현재 입력 계약은 Workload가 참조하는 Preprocessor의 원시 입력 필드(`name`, `format`, `maxBytes`)이며
+필드 전체를 하나의 독립 표본으로 검증한다. 모델별 고정 테이블과 shape-only reader는 남기지 않는다.
 `DeviceProfile`을 새 profile DB로 사용하지 않고 선택된 완료 campaign의 메모리 view를 사용한다.
-standalone ORT 및 RKNNLite reference 결과와 firstfloor native 측정은 각각의 frozen 실행 조건으로 관리한다.
+프로파일링은 firstfloor native 경로로만 측정하고 각 측정은 frozen 실행 조건으로 관리한다.
 
 ## 3. 데이터 모델과 원본
 
@@ -67,6 +67,10 @@ metadata:
 spec:
   modelRef:
     name: detector
+  preprocessorRef:
+    name: detector-preprocessor
+  datasetRef:
+    name: detector-records
   slo:
     percentile: 99.5
     targetLatency: 100ms
@@ -74,7 +78,9 @@ spec:
 
 - `metadata.name`은 외부 서비스 식별자다. Kubernetes 객체 이름의 형식과 길이 제한을 API에 명시한다.
 - `metadata.uid`는 등록 건 식별자다. 삭제 후 같은 이름으로 생성한 객체는 별도 등록 건이다.
-- `spec.modelRef`는 기존 ModelSpec을 참조한다. POOL, 노드, 인스턴스와 profile 참조를 Workload spec에 넣지 않는다.
+- `spec.modelRef`는 기존 ModelSpec을, `spec.preprocessorRef`는 기존 Preprocessor를 참조한다. 선택 항목인
+  `spec.datasetRef`는 활성 측정이 표본을 뽑는 Dataset을 참조한다. POOL, 노드, 인스턴스와 profile 참조를
+  Workload spec에 넣지 않는다.
 - `percentile`은 `0 < p ≤ 100`이며 유한해야 한다. `targetLatency`는 명시적 단위를 가진 양수 duration이다.
   Go `time.Duration`이 표현하지 못하는 값은 오류로 반환하고, 잘라내거나 근사하지 않는다.
 - 이름 변경은 지원하지 않는다. 다른 식별자가 필요하면 별도 등록 건으로 생성한다.
@@ -198,14 +204,14 @@ Workload GET의 `desired.metadata.resourceVersion`과 Model GET의 `metadata.res
 ```sh
 curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' "$CHILL_SERVER/api/v1/workloads" \
-  --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
+  --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"preprocessorRef":{"name":"detector-preprocessor"},"datasetRef":{"name":"detector-records"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
 curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
   "$CHILL_SERVER/api/v1/workloads/detector-fast"
 # RV는 방금 조회한 desired.metadata.resourceVersion이다.
 curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
   -H "If-Match: $RV" -H 'Content-Type: application/json' -X PUT \
   "$CHILL_SERVER/api/v1/workloads/detector-fast" \
-  --data '{"spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"200ms"}}}'
+  --data '{"spec":{"modelRef":{"name":"detector"},"preprocessorRef":{"name":"detector-preprocessor"},"datasetRef":{"name":"detector-records"},"slo":{"percentile":99.5,"targetLatency":"200ms"}}}'
 ```
 
 조회는 `desired`, `appliedDefinition`, `supportedInputs`, `admission`, `readiness`,
@@ -214,17 +220,17 @@ curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
 SLO-only 적용은 `200`, 드레인 변경과 Workload 삭제는 `202`다.
 삭제 완료 뒤 상세는 실제 `404`, 같은 이름 재등록은 새 UID다. 참조 없는 Model 삭제는 `204`다.
 
-입력은 조회한 계약의 batch-free shape를 사용한다. 예를 들어 등록된 두 tensor가
-`x / FP32 / [2]`, `enabled / BOOL / [1]`이면 한 요청은 다음과 같다:
+입력은 적용 정의의 Preprocessor 원시 입력 필드를 사용하며 각 필드는 `BYTES`와 base64 `data`다.
+예를 들어 `mobilenet-imagenet` 전처리기의 입력 필드가 `image / JPEG`이면 한 요청은 다음과 같다:
 
 ```sh
 curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -H 'X-Chill-Request-Timeout: 5s' \
   "$CHILL_SERVER/api/v1/workloads/example/infer" \
-  --data '{"inputs":[{"name":"x","datatype":"FP32","shape":[2],"data":[1,2]},{"name":"enabled","datatype":"BOOL","shape":[1],"data":[true]}]}'
+  --data '{"inputs":[{"name":"image","datatype":"BYTES","data":"'"$(base64 -w0 cat.jpg)"'"}]}'
 ```
 
-이는 `example`에 이 계약을 등록했을 때의 예이며 detector의 입력을 대신하지 않는다.
+이는 `example`이 이 전처리기를 참조할 때의 예이며 detector의 입력을 대신하지 않는다.
 응답은 해당 backend 결과이고 `X-Chill-Request-ID`, 확인된 경우 `X-Chill-Workload-UID`를 제공한다.
 명시적 요청 timeout은 양수이며 설정된 `requestTimeout` 이하이고 SLO와 별개다.
 
@@ -312,18 +318,13 @@ idle baseline confidence는 `profileConfidenceLevel`로 설정하며 선택 prof
 
 ### 구현된 입력 계약
 
-ModelSpec, campaign frozen 조건, worker, evidence와 sample은 모두 named tensor 계약을 사용한다.
-이름이나 FP32를 추정해 보충하지 않고 shape-only 호환 decoder나 alias를 두지 않는다.
-
-산출물 입력 계약은 `tensors[]`의 `name`, `datatype`, `sampleShape`로 표현한다.
-입력 이름은 유일하고 shape는 batch 축을 제외한다. 지원 입력 조회는 이 계약과 실행 근거를 연결해 제공한다.
-서로 다른 산출물의 계약을 한 모델의 단일 shape로 합치지 않는다.
-
-외부 추론 본문은 named tensor의 `name/datatype/shape/data`를 사용하며, 각 tensor는 독립 샘플 하나다.
-클라이언트의 batch 축이나 내부 실행 배치 크기는 받지 않는다.
-입력 이름, 자료형, sample shape와 실제 데이터 수 및 자료형 범위를 경계에서 확인한다.
-자료형과 입력 형태는 실제 측정 및 실행 경로가 지원하는 범위만 허용하고, 지원하지 않는 인코딩은 명시적으로 거부한다.
-backend 전달 시 같은 native 실행 계약의 batch 축과 모델 경로, frozen UID·정의·개별 SLO·elapsed를 연결한다.
+Workload는 Preprocessor와 Dataset을 참조하고, 외부 추론 본문은 Preprocessor 원시 입력 계약의 필드
+(`JPEG`, `UTF8`)를 base64로 담은 표본 하나다. 실행 배치는 CHILL 내부에서 요청들로 구성한다.
+gateway는 필드 이름 집합, 크기 상한, JPEG 헤더와 UTF-8을 경계에서 확인하고, 화소 복호와 모델 입력 생성은
+경로별 전처리 산출물의 module이 runner 안에서 수행한다. 모델 입력 tensor 계약은 RKNN 산출물의 `input`에만
+있다. 전처리 실패 항목은 `422 PreprocessFailed`, 배치 실행 오류는 `502 BackendError`다.
+backend 전달 시 native 실행 계약의 batch 축과 모델 파일, frozen UID와 정의, 개별 SLO와 elapsed를 연결한다.
+계약 전체는 [이기종 워크로드 구현 설계](heterogeneous-workloads.md) 3장과 4장이 원본이다.
 
 API, campaign frozen 조건, worker와 evidence는 같은 계약을 사용한다.
 [저장 계약 ADR](../../adr/0019-durable-stored-contract-compatibility.md)에 따라 읽을 수 없는
@@ -479,8 +480,8 @@ native actor에 전달한다. 같은 UID·정의의 호환 요청을 묶고 공�
 running batch는 비선점 대기로 반영한다. mutable cap/wait/envelope는 immutable
 measured bundle과 분리하며 actual state에 profile/decision/cap·적용 시각을 제공한다.
 
-persistent runner는 numeric/bool named multi-tensor 입력·typed named 출력과 실제
-batch 크기를 반환한다. Profiling은 동일 actor/runner에서 fixed K를 순차 실행하고
+persistent runner는 원시 `BYTES` 필드를 전처리 module로 모델 입력으로 만들고, 요청별 출력 필드
+또는 항목 실패와 실제 batch 크기를 반환한다. Profiling은 동일 actor/runner에서 fixed K를 순차 실행하고
 warmup과 measured service/backend/native/client spans·memory를 구분한다.
 CPU quota/threads와 actual affinity, CUDA GPU UUID, RKNN delivered capability를 연결한다.
 
@@ -633,7 +634,8 @@ writable scratch를 사용하고, 원시 관측 기록은 retained PVC에 기록
 ### 이전 serving cutover의 검증 기록
 
 아래 표는 firstfloor scheduler 통합 이전 작업 단위의 실행 기록이다.
-현재 firstfloor 구현의 검증 결과는 scheduler 구현 문서의 최종 실행 기록으로 구분한다.
+현재 firstfloor 구현의 검증 결과는 scheduler 구현 문서의 최종 실행 기록으로 구분한다. 원시 표본과
+전처리 module 경로의 검증 기록은 [이기종 워크로드 구현 설계 9.1절](heterogeneous-workloads.md#91-검증-기록)에 있다.
 
 | 실행 경계 | 관측된 결과 |
 |---|---|

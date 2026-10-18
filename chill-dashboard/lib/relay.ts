@@ -44,8 +44,8 @@ export function relayPlan(method: string, segments: string[], search: string, co
   let methods: string[] = []
   let query: "none" | "page" | "runs" | "observations" | "load" | "schedulerHistory" | "dryRun" | "uid" = "none"
   let kind: RelayPlan["kind"] = "query"
-  if (/^v1\/(models|workloads)$/.test(route)) methods = ["GET", "POST"]
-  else if (/^v1\/(models|workloads)\/[^/]+$/.test(route)) methods = ["GET", "PUT", "DELETE"]
+  if (/^v1\/(models|workloads|preprocessors|datasets)$/.test(route)) methods = ["GET", "POST"]
+  else if (/^v1\/(models|workloads|preprocessors|datasets)\/[^/]+$/.test(route)) methods = ["GET", "PUT", "DELETE"]
   else if (/^v1\/workloads\/[^/]+\/infer$/.test(route)) { methods = ["POST"]; kind = "infer" }
   else if (/^v1\/pools(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
   else if (/^v1\/observations\/workloads\/[^/]+$/.test(route)) { methods = ["GET"]; query = "observations" }

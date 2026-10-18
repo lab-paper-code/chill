@@ -7,17 +7,15 @@
 
 ## 요청과 실제 모델
 
-외부 Workload API는 입력 1개, named multi-tensor, 현재 numeric/bool datatype,
-개별 응답 계약을 유지한다. native `/v2/models/{model}/infer`는 sample에 batch 축을
-붙인다. metadata에는 request ID, UID, 불변 definition identity, 원래 receipt,
+외부 Workload API는 입력 1개를 Preprocessor 원시 입력 필드(`BYTES`, base64 `data`)로 받고
+개별 응답 계약을 유지한다. native `/v2/models/{model}/infer`는 필드마다 원소 1개를 보내고
+firstfloor가 batch 축을 붙인다. metadata에는 request ID, UID, 불변 definition identity, 원래 receipt,
 개별 percentile/target, 전달 시점 경과 시간, 명시적 수명과 profile 근거를 보낸다.
 
-입력 경계는 선언된 이름·datatype·sample shape와 정확한 element 수를 검사한다.
-numeric JSON은 trim 전에 stdlib `json.Valid`로 전체 문법·trailing 값을 확인하고,
-flat array의 scalar를 `bytes.Cut`으로 순회해 기존 `strconv` 범위·finite 검사를 적용한다.
-정수는 float64로 바꾸지 않아 INT64/UINT64 정밀도를 유지하며 FP16의 65504 한계와
-FP32 overflow도 거절한다. nested/string/null/bool을 숫자로 받지 않고 기존 BOOL/BYTES
-검사 경로는 유지한다. Go 1.22 지원 stdlib만 사용하며 validation 생략이나 새 parser 의존성은 없다.
+입력 경계는 필드 이름 집합, `BYTES` datatype, 1 이상 `maxBytes` 이하의 길이를 검사한다.
+`JPEG`는 시작 바이트와 `image.DecodeConfig` 헤더를, `UTF8`은 `utf8.Valid`를 확인한다.
+화소 복호와 모델 입력 생성은 runner 안의 전처리 module이 수행한다. 계약 전체는
+[이기종 워크로드 4.1절](heterogeneous-workloads.md#41-원시-표본-요청)이 원본이다.
 
 firstfloor는 model/input/runtime 조건이 고정된 한 runner를 유지한다. 같은 UID의
 호환 입력을 배치하며 Workload별 SLO와 결과는 개별 request에 남긴다. ORT CPU,
@@ -25,18 +23,17 @@ firstfloor는 model/input/runtime 조건이 고정된 한 runner를 유지한다
 물리 GPU 한 장을 사용하고 CPU fallback 조건을 실제 오류로 처리한다. SDK가
 지원하는 tensor·batch·layout 범위를 확인하여 범위 밖 입력은 오류로 반환한다.
 개발 echo mode는 explicit synthetic 실행으로 분리한다.
-ORT가 CPU fallback을 비활성화한 세션에도 default CPU EP를 등록할 수 있다.
-CUDA-first에 default CPU EP만 추가된 경우 실제 session 설정이 fallback disabled인지
-확인한다. 등록 provider 목록은 그대로 기록하며, CPU-only graph 실행은 계속 거부한다.
+CUDA session의 provider 목록은 정확히 CUDA EP 다음 default CPU EP다. ORT는 shape
+부분 그래프를 항상 CPU EP에 두며, 측정 profile은 실제 provider 목록을 기록한다.
+CPU-only graph 실행은 계속 거부한다.
 
-IPC는 기존 bounded length-prefix header + binary payload를 재사용한다. tensor별
-name/datatype/shape/byte count와 outputs를 담아 여러 numeric/bool tensor를
-전달한다. UINT64 등의 JSON 숫자는 정수 정밀도를 유지하고, FP16 변환은 유지되는
-라이브러리를 사용한다. profile·tensor·policy는 해당 외부 경계에서 검증하여
+IPC는 기존 bounded length-prefix header + binary payload를 재사용한다. 원시 필드별
+`{name, datatype: BYTES, shape: [n], bytes}` descriptor와 outputs를 header에 담고, payload는
+원소마다 little-endian uint32 길이와 바이트로 framing한 n개 원소를 필드 순서대로 잇는다.
+profile·입력·policy는 해당 외부 경계에서 검증하여
 실행 중에는 검증된 자료와 immutable request context를 공유한다.
-길이는 big-endian uint32, 작은 header는 JSON, tensor payload는 little-endian binary다.
-tensor 값을 IPC의 JSON 배열로 전달하지 않는다. 공개 HTTP JSON은 유지하며
-multi-tensor·정밀 UINT64·BOOL·FP16·CUDA 지원을 이 내부 전송과 구별한다.
+frame 길이는 big-endian uint32, 작은 header는 JSON이며 입력 값을 IPC의 JSON 배열로
+전달하지 않는다. 결과는 `output` frame의 요청별 항목 결과와 출력 필드 `BYTES`로 돌아온다.
 
 ## 시간과 수명
 
@@ -155,6 +152,12 @@ Serving의 초기화 batch domain과 native 최대 용량은 검증된 runtime m
 맞춘다. 초기화가 `[1,2]`이고 측정 곡선이 `[1]`인 경우에도 초기화 조건은
 그대로 유지하며, dispatch와 policy cap은 측정한 `[1]` 안에서만 선택한다.
 kernel cgroup lifetime peak는 worker와 runner를 포함한 runtime container 범위다.
+Serving preparation은 measured profile의 raw evidence에 담긴 RunConfig delivery를 그대로 사용한다.
+RKNNLite Pod는 그 delivery를 preparation ConfigMap의 `delivery.json`으로 받아 runner에
+`--delivery-json /config/delivery.json`을 전달한다. profiling Job과 같은 projection
+(`profilingrun.ProjectRuntimeDelivery`)으로 host library, driver, platform, device hostPath와
+privileged, supplemental group, allocation resource를 받는다. RKNNLite는 ONNX Runtime thread를 쓰지
+않으므로 thread 수 0으로 측정되고 같은 값으로 배치된다.
 
 latest successful profile은 같은 frozen node/model/artifact/runtime/input/resources/
 power/protocol 조건별로 선택한다. 명시적 source 선택 범위 안의 최신 성공을

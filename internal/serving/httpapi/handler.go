@@ -82,6 +82,16 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("GET /api/v1/models/{id}", h.management)
 	h.mux.HandleFunc("PUT /api/v1/models/{id}", h.management)
 	h.mux.HandleFunc("DELETE /api/v1/models/{id}", h.management)
+	h.mux.HandleFunc("GET /api/v1/preprocessors", h.management)
+	h.mux.HandleFunc("POST /api/v1/preprocessors", h.management)
+	h.mux.HandleFunc("GET /api/v1/preprocessors/{id}", h.management)
+	h.mux.HandleFunc("PUT /api/v1/preprocessors/{id}", h.management)
+	h.mux.HandleFunc("DELETE /api/v1/preprocessors/{id}", h.management)
+	h.mux.HandleFunc("GET /api/v1/datasets", h.management)
+	h.mux.HandleFunc("POST /api/v1/datasets", h.management)
+	h.mux.HandleFunc("GET /api/v1/datasets/{id}", h.management)
+	h.mux.HandleFunc("PUT /api/v1/datasets/{id}", h.management)
+	h.mux.HandleFunc("DELETE /api/v1/datasets/{id}", h.management)
 	h.mux.HandleFunc("GET /api/v1/pools", h.management)
 	h.mux.HandleFunc("GET /api/v1/pools/{id}", h.management)
 	h.mux.HandleFunc("GET /api/v1/observations/workloads/{uid}", h.observations)
@@ -260,6 +270,10 @@ func (h *Handler) management(w http.ResponseWriter, r *http.Request) {
 				status = http.StatusNoContent
 			}
 		}
+	case strings.HasPrefix(r.URL.Path, "/api/v1/preprocessors"):
+		value, status, err = h.preprocessors(ctx, w, r, id)
+	case strings.HasPrefix(r.URL.Path, "/api/v1/datasets"):
+		value, status, err = h.datasets(ctx, w, r, id)
 	case strings.HasPrefix(r.URL.Path, "/api/v1/pools"):
 		value, err = h.poolView(id)
 	}
@@ -272,6 +286,89 @@ func (h *Handler) management(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sendJSON(w, status, value)
+}
+
+func (h *Handler) preprocessors(ctx context.Context, w http.ResponseWriter, r *http.Request, id string) (any, int, error) {
+	switch r.Method {
+	case http.MethodPost:
+		var body struct {
+			Name string               `json:"name"`
+			Spec api.PreprocessorSpec `json:"spec"`
+		}
+		if err := h.decode(w, r, &body); err != nil {
+			return nil, 0, err
+		}
+		value, err := h.manager.CreatePreprocessor(ctx, body.Name, body.Spec)
+		return value, http.StatusCreated, err
+	case http.MethodPut:
+		var body struct {
+			Spec api.PreprocessorSpec `json:"spec"`
+		}
+		version, err := precondition(r)
+		if err == nil {
+			err = h.decode(w, r, &body)
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		value, accepted, err := h.manager.UpdatePreprocessor(ctx, id, version, body.Spec)
+		if accepted {
+			return value, http.StatusAccepted, err
+		}
+		return value, http.StatusOK, err
+	case http.MethodDelete:
+		version, err := precondition(r)
+		if err == nil {
+			err = h.manager.DeletePreprocessor(ctx, id, version)
+		}
+		return nil, http.StatusNoContent, err
+	}
+	if id == "" {
+		value, err := h.manager.ListPreprocessors(ctx)
+		return value, http.StatusOK, err
+	}
+	value, err := h.manager.GetPreprocessor(ctx, id)
+	return value, http.StatusOK, err
+}
+
+func (h *Handler) datasets(ctx context.Context, w http.ResponseWriter, r *http.Request, id string) (any, int, error) {
+	switch r.Method {
+	case http.MethodPost:
+		var body struct {
+			Name string          `json:"name"`
+			Spec api.DatasetSpec `json:"spec"`
+		}
+		if err := h.decode(w, r, &body); err != nil {
+			return nil, 0, err
+		}
+		value, err := h.manager.CreateDataset(ctx, body.Name, body.Spec)
+		return value, http.StatusCreated, err
+	case http.MethodPut:
+		var body struct {
+			Spec api.DatasetSpec `json:"spec"`
+		}
+		version, err := precondition(r)
+		if err == nil {
+			err = h.decode(w, r, &body)
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		value, err := h.manager.UpdateDataset(ctx, id, version, body.Spec)
+		return value, http.StatusOK, err
+	case http.MethodDelete:
+		version, err := precondition(r)
+		if err == nil {
+			err = h.manager.DeleteDataset(ctx, id, version)
+		}
+		return nil, http.StatusNoContent, err
+	}
+	if id == "" {
+		value, err := h.manager.ListDatasets(ctx)
+		return value, http.StatusOK, err
+	}
+	value, err := h.manager.GetDataset(ctx, id)
+	return value, http.StatusOK, err
 }
 
 func (h *Handler) poolView(id string) (any, error) {
@@ -372,6 +469,8 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 			outcome = "timeout"
 		case "RequestCanceled":
 			outcome = "canceled"
+		case "PreprocessFailed":
+			outcome = "preprocess_failed"
 		}
 		completeError(err, outcome)
 		return
@@ -481,9 +580,9 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusForbidden
 	case "NotFound", "WorkloadNotFound", "PoolNotFound":
 		status = http.StatusNotFound
-	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
+	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
 		status = http.StatusBadRequest
-	case "AlreadyExists", "ModelReferenced", "ModelDeleting", "ResourceVersionConflict", "OperationConflict", "RegistrationConflict", "ModelIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse", "ProfileInUse":
+	case "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse", "ProfileInUse":
 		status = http.StatusConflict
 	case "QueueFull":
 		status = http.StatusTooManyRequests
@@ -491,6 +590,8 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusGatewayTimeout
 	case "RequestCanceled", "SLODeadlineDrop":
 		status = http.StatusRequestTimeout
+	case "PreprocessFailed":
+		status = http.StatusUnprocessableEntity
 	case "BackendError", "BackendUnavailable", "BackendResponseInvalid", "BackendResponseTooLarge", "BackendContextMismatch":
 		status = http.StatusBadGateway
 	}

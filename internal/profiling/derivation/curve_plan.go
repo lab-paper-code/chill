@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha8"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha9"
 	curveRuntimeFirstfloor = "firstfloor"
 	curveBackendORTCUDA    = "ort-cuda"
 	curveBackendORTCPU     = "ort-cpu"
@@ -56,18 +56,18 @@ type CurveMetricSourceContract struct {
 // CurveProtocolContract contains the mode-specific protocol fields that must
 // remain fixed across batches. Batch is intentionally absent.
 type CurveProtocolContract struct {
-	WorkloadMode               string `json:"workloadMode"`
-	InputGenerator             string `json:"inputGenerator"`
-	OutputValidation           string `json:"outputValidation"`
-	WarmupIterations           int    `json:"warmupIterations"`
-	SettlingDurationSeconds    int    `json:"settlingDurationSeconds"`
-	DurationSeconds            int    `json:"durationSeconds"`
-	MetricIntervalMilliseconds int    `json:"metricIntervalMilliseconds"`
-	MetricTimeoutMilliseconds  int    `json:"metricTimeoutMilliseconds"`
-	MetricDurationSeconds      int    `json:"metricDurationSeconds"`
-	MetricObserverImage        string `json:"metricObserverImage"`
-	WorkloadObserverImage      string `json:"workloadObserverImage"`
-	WorkloadSchemaVersion      string `json:"workloadSchemaVersion"`
+	WorkloadMode string `json:"workloadMode"`
+	// Dataset is the active protocol's sample source; idle protocols have none.
+	Dataset                    *CurveDatasetContract `json:"dataset,omitempty"`
+	WarmupIterations           int                   `json:"warmupIterations"`
+	SettlingDurationSeconds    int                   `json:"settlingDurationSeconds"`
+	DurationSeconds            int                   `json:"durationSeconds"`
+	MetricIntervalMilliseconds int                   `json:"metricIntervalMilliseconds"`
+	MetricTimeoutMilliseconds  int                   `json:"metricTimeoutMilliseconds"`
+	MetricDurationSeconds      int                   `json:"metricDurationSeconds"`
+	MetricObserverImage        string                `json:"metricObserverImage"`
+	WorkloadObserverImage      string                `json:"workloadObserverImage"`
+	WorkloadSchemaVersion      string                `json:"workloadSchemaVersion"`
 }
 
 // CurveConversionContract identifies how the immutable plan artifact was derived.
@@ -77,17 +77,32 @@ type CurveConversionContract struct {
 	ToolVersion    string `json:"toolVersion,omitempty"`
 }
 
-type CurveTensorContract struct {
-	Tensors []modelcompat.InputTensor `json:"tensors"`
+// CurveDatasetContract identifies the dataset whose profiling records an
+// active measurement sampled. Matching uses name and UID.
+type CurveDatasetContract struct {
+	Name string `json:"name"`
+	UID  string `json:"uid"`
 }
 
 // CurveArtifactContract binds the one immutable artifact every planned batch
 // executes.
 type CurveArtifactContract struct {
-	ExecutionPath string `json:"executionPath"`
-	Name          string `json:"name"`
-	Path          string `json:"path"`
-	Image         string `json:"image"`
+	ExecutionPath string   `json:"executionPath"`
+	Name          string   `json:"name"`
+	Files         []string `json:"files"`
+	Image         string   `json:"image"`
+}
+
+// CurvePreprocessorContract is the preprocessing module and raw contract every
+// planned batch executes. MaxNewTokens is 0 for non-generative preprocessing.
+type CurvePreprocessorContract struct {
+	Name         string   `json:"name"`
+	Image        string   `json:"image"`
+	Architecture string   `json:"architecture"`
+	Path         string   `json:"path"`
+	MaxNewTokens int      `json:"maxNewTokens,omitempty"`
+	Inputs       []string `json:"inputs"`
+	Outputs      []string `json:"outputs"`
 }
 
 // CurvePlanSpec is the raw material selected for one measurement plan.
@@ -108,8 +123,8 @@ type CurvePlanSpec struct {
 	IdleProtocol      CurveProtocolContract           `json:"idleProtocol"`
 	Conversion        CurveConversionContract         `json:"conversion"`
 	Artifact          CurveArtifactContract           `json:"artifact"`
+	Preprocessor      CurvePreprocessorContract       `json:"preprocessor"`
 	PlannedBatchSizes []int                           `json:"plannedBatchSizes"`
-	Tensor            CurveTensorContract             `json:"tensor"`
 }
 
 type curvePlanRecord struct {
@@ -265,16 +280,22 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 	for name, value := range map[string]string{
 		"execution path": shared.Artifact.ExecutionPath,
 		"name":           shared.Artifact.Name,
-		"path":           shared.Artifact.Path,
 		"image":          shared.Artifact.Image,
 	} {
 		if !cleanCurveValue(value) {
 			return fmt.Errorf("curve plan artifact %s is required without surrounding whitespace", name)
 		}
 	}
-	if shared.Artifact.Path == "/" || !strings.HasPrefix(shared.Artifact.Path, "/") ||
-		path.Clean(shared.Artifact.Path) != shared.Artifact.Path {
-		return errors.New("curve plan artifact path is invalid")
+	if len(shared.Artifact.Files) == 0 {
+		return errors.New("curve plan artifact files are required")
+	}
+	for _, file := range shared.Artifact.Files {
+		if !cleanCurvePath(file) {
+			return errors.New("curve plan artifact file path is invalid")
+		}
+	}
+	if err := validateCurvePreprocessor(shared.Preprocessor); err != nil {
+		return err
 	}
 	if len(shared.PlannedBatchSizes) == 0 {
 		return errors.New("curve plan requires at least one planned batch size")
@@ -292,8 +313,21 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 		}
 		seenBatches[plannedBatchSize] = struct{}{}
 	}
-	if err := modelcompat.ValidateInputTensors(shared.Tensor.Tensors); err != nil {
-		return fmt.Errorf("curve plan tensor contract: %w", err)
+	return nil
+}
+
+func validateCurvePreprocessor(preprocessor CurvePreprocessorContract) error {
+	if !cleanCurveValue(preprocessor.Name) || !cleanCurveValue(preprocessor.Image) ||
+		!cleanCurveValue(preprocessor.Architecture) || !cleanCurvePath(preprocessor.Path) ||
+		preprocessor.MaxNewTokens < 0 || len(preprocessor.Inputs) == 0 || len(preprocessor.Outputs) == 0 {
+		return errors.New("curve plan preprocessor contract is incomplete")
+	}
+	for _, fields := range [][]string{preprocessor.Inputs, preprocessor.Outputs} {
+		for index, name := range fields {
+			if !cleanCurveValue(name) || slices.Contains(fields[:index], name) {
+				return errors.New("curve plan preprocessor field names must be unique and nonempty")
+			}
+		}
 	}
 	return nil
 }
@@ -355,10 +389,13 @@ func validateCurveMetricSource(source CurveMetricSourceContract) error {
 }
 
 func validateCurveProtocol(mode string, protocol CurveProtocolContract) error {
-	for _, value := range []string{protocol.WorkloadMode, protocol.InputGenerator, protocol.OutputValidation} {
-		if !cleanCurveValue(value) {
-			return fmt.Errorf("curve plan %s protocol is incomplete", mode)
-		}
+	if !cleanCurveValue(protocol.WorkloadMode) {
+		return fmt.Errorf("curve plan %s protocol is incomplete", mode)
+	}
+	dataset := protocol.Dataset
+	if (dataset != nil) != (mode == "active") ||
+		(dataset != nil && (!cleanCurveValue(dataset.Name) || !cleanCurveValue(dataset.UID))) {
+		return fmt.Errorf("curve plan %s protocol dataset is invalid", mode)
 	}
 	if protocol.WarmupIterations < 0 || protocol.SettlingDurationSeconds < 0 ||
 		protocol.DurationSeconds < 1 ||
@@ -395,11 +432,25 @@ func cleanCurveValue(value string) bool {
 	return value != "" && strings.TrimSpace(value) == value
 }
 
+func cleanCurvePath(value string) bool {
+	return value != "/" && strings.HasPrefix(value, "/") && path.Clean(value) == value
+}
+
 // CloneCurvePlanSpec separates caller-owned mutable execution conditions.
 func CloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 	shared.PlannedBatchSizes = append([]int(nil), shared.PlannedBatchSizes...)
 	shared.CPU.AffinityCPUs = slices.Clone(shared.CPU.AffinityCPUs)
-	shared.Tensor.Tensors = modelcompat.CloneInputTensors(shared.Tensor.Tensors)
+	shared.Artifact.Files = slices.Clone(shared.Artifact.Files)
+	shared.Preprocessor.Inputs = slices.Clone(shared.Preprocessor.Inputs)
+	shared.Preprocessor.Outputs = slices.Clone(shared.Preprocessor.Outputs)
+	if shared.ActiveProtocol.Dataset != nil {
+		dataset := *shared.ActiveProtocol.Dataset
+		shared.ActiveProtocol.Dataset = &dataset
+	}
+	if shared.IdleProtocol.Dataset != nil {
+		dataset := *shared.IdleProtocol.Dataset
+		shared.IdleProtocol.Dataset = &dataset
+	}
 	shared.Firstfloor = modelcompat.CloneFirstfloorRuntimeSettings(shared.Firstfloor)
 	if shared.RuntimeAccess != nil {
 		access := *shared.RuntimeAccess

@@ -115,60 +115,20 @@ func buildRuntimeAdapter(
 	runConfig profilingrun.VerifiedRunConfig,
 	stdout, stderr io.Writer,
 ) (worker.Runtime, error) {
-	runConfigRecord, err := runConfig.Record()
+	runtimeAdapter, err := worker.NewFirstfloorRuntime(worker.CPURuntimeConfig{
+		Command:            opts.firstfloorRuntimeCommand,
+		ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
+		MeasurementStartPath:    opts.measurementStartPath,
+		WorkloadWindowReadyPath: opts.workloadWindowReadyPath,
+		MeasurementEndPath:      opts.measurementEndPath,
+		ResultPath:              opts.runtimeResultPath(), ObserverReadyTimeout: opts.observerReadyTimeout,
+		MaxLatencySamples: opts.maxLatencySamples, MaxInputBytes: opts.maxInputBytes,
+		MaxResultBytes: opts.maxRuntimeResultBytes, Stdout: stdout, Stderr: stderr,
+	}, runConfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("construct firstfloor adapter: %w", err)
 	}
-	if profilingrun.IsSupportedCPUORTRunConfig(runConfigRecord) ||
-		profilingrun.IsSupportedFirstfloorRunConfig(runConfigRecord) {
-		command := opts.runtimeCommand
-		if profilingrun.IsSupportedFirstfloorRunConfig(runConfigRecord) {
-			command = opts.firstfloorRuntimeCommand
-		}
-		modelPath := opts.modelPath
-		if runConfigRecord.State.Backend == "rknnlite" {
-			modelPath = defaultRKNNLiteModelPath
-		}
-		config := worker.CPURuntimeConfig{
-			Command: command, ModelPath: modelPath,
-			ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
-			MeasurementStartPath:    opts.measurementStartPath,
-			WorkloadWindowReadyPath: opts.workloadWindowReadyPath,
-			MeasurementEndPath:      opts.measurementEndPath,
-			ResultPath:              opts.runtimeResultPath(), ObserverReadyTimeout: opts.observerReadyTimeout,
-			MaxLatencySamples: opts.maxLatencySamples, MaxInputBytes: opts.maxInputBytes,
-			MaxResultBytes: opts.maxRuntimeResultBytes, Stdout: stdout, Stderr: stderr,
-		}
-		var runtimeAdapter *worker.CPURuntime
-		if profilingrun.IsSupportedFirstfloorRunConfig(runConfigRecord) {
-			runtimeAdapter, err = worker.NewFirstfloorRuntime(config, runConfig)
-		} else {
-			runtimeAdapter, err = worker.NewORTCPURuntime(config)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("construct %s adapter: %w", runConfigRecord.State.RuntimeFamily, err)
-		}
-		return runtimeAdapter, nil
-	}
-	if profilingrun.IsSupportedRKNNLiteRunConfig(runConfigRecord) {
-		runtimeAdapter, err := worker.NewRKNNLiteRuntime(worker.RKNNLiteRuntimeConfig{
-			Command:            []string{"python3", "/opt/chill/runtime/rknnlite/runner.py"},
-			ModelPath:          defaultRKNNLiteModelPath,
-			ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
-			MeasurementStartPath:    opts.measurementStartPath,
-			WorkloadWindowReadyPath: opts.workloadWindowReadyPath,
-			MeasurementEndPath:      opts.measurementEndPath,
-			ResultPath:              opts.runtimeResultPath(), ObserverReadyTimeout: opts.observerReadyTimeout,
-			MaxLatencySamples: opts.maxLatencySamples, MaxInputBytes: opts.maxInputBytes,
-			MaxResultBytes: opts.maxRuntimeResultBytes, Delivery: runConfigRecord.Delivery,
-			Stdout: stdout, Stderr: stderr,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("construct RKNNLite adapter: %w", err)
-		}
-		return runtimeAdapter, nil
-	}
-	return nil, errors.New("construct runtime adapter: RunConfig execution path is unsupported")
+	return runtimeAdapter, nil
 }
 
 func writeReceipt(path string, receipt evidencestore.Receipt) error {

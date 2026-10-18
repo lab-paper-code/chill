@@ -80,21 +80,37 @@ func (a *NVPModel) Observe(
 	ctx context.Context,
 	request nodeactuator.Request,
 ) (nodeactuator.Observation, error) {
-	if request.Target.Kind != nodeactuator.ActuatorKindJetsonNVPModel {
-		return nodeactuator.Observation{}, fmt.Errorf("NVPModel cannot observe actuator kind %q", request.Target.Kind)
-	}
-	commandCtx, cancel, err := a.commandContext(ctx, request)
+	observation, unestablished, err := a.query(ctx, request)
 	if err != nil {
 		return nodeactuator.Observation{}, err
 	}
-	defer cancel()
-	output, commandErr := a.runner.CombinedOutput(commandCtx, appendCommand(a.options.Command, "-q"))
-	if commandErr != nil {
-		return nodeactuator.Observation{}, commandError("query NVPModel", commandErr, output)
+	if unestablished != "" {
+		return nodeactuator.Observation{}, nominalModeError(observation, unestablished)
 	}
-	mode, id, err := parseQueryOutput(output)
+	return observation, nil
+}
+
+// query reads the reported mode and, separately, the first power-gating mask
+// the mode configures that is not in effect ("" when every mask is).
+func (a *NVPModel) query(
+	ctx context.Context,
+	request nodeactuator.Request,
+) (nodeactuator.Observation, string, error) {
+	if request.Target.Kind != nodeactuator.ActuatorKindJetsonNVPModel {
+		return nodeactuator.Observation{}, "", fmt.Errorf("NVPModel cannot observe actuator kind %q", request.Target.Kind)
+	}
+	commandCtx, cancel, err := a.commandContext(ctx, request)
 	if err != nil {
-		return nodeactuator.Observation{}, fmt.Errorf("parse NVPModel query: %w", err)
+		return nodeactuator.Observation{}, "", err
+	}
+	defer cancel()
+	output, commandErr := a.runner.CombinedOutput(commandCtx, appendCommand(a.options.Command, "-q", "--verbose"))
+	if commandErr != nil {
+		return nodeactuator.Observation{}, "", commandError("query NVPModel", commandErr, output)
+	}
+	mode, id, unestablished, err := parseQueryOutput(output)
+	if err != nil {
+		return nodeactuator.Observation{}, "", fmt.Errorf("parse NVPModel query: %w", err)
 	}
 	return nodeactuator.Observation{
 		PowerMode: mode,
@@ -105,7 +121,12 @@ func (a *NVPModel) Observe(
 			},
 		},
 		ObservedAt: a.now().UTC(),
-	}, nil
+	}, unestablished, nil
+}
+
+func nominalModeError(observation nodeactuator.Observation, unestablished string) error {
+	return fmt.Errorf("NVPModel reports mode %s but %s; the mode is recorded, not established",
+		observation.PowerMode, unestablished)
 }
 
 func (a *NVPModel) Apply(
@@ -120,8 +141,13 @@ func (a *NVPModel) Apply(
 	}
 	// A Node that already holds the requested mode is left alone. This is what
 	// bounds the restart below: after the Node comes back holding the target,
-	// a repeated Apply reaches this return and never restarts it again.
-	if current, err := a.Observe(ctx, request); err == nil && holdsTarget(current, request, target) {
+	// a repeated Apply reaches this return and never restarts it again. A Node
+	// that came back naming the target without its gating mask is a boot that
+	// did not establish it; restarting again would not bound, so it fails.
+	if current, unestablished, err := a.query(ctx, request); err == nil && holdsTarget(current, request, target) {
+		if unestablished != "" {
+			return nominalModeError(current, unestablished)
+		}
 		return nil
 	}
 
@@ -200,19 +226,56 @@ func appendCommand(base []string, arguments ...string) []string {
 	return append(command, arguments...)
 }
 
-func parseQueryOutput(output []byte) (string, int32, error) {
+// Verbose queries name the mode on a "Current mode:" line; plain queries print
+// the name alone. Each PARAM line pairs the value in effect with the mode's.
+const (
+	verboseModePrefix  = "NVPM VERB: Current mode: "
+	verboseParamPrefix = "NVPM VERB: PARAM "
+)
+
+// parseQueryOutput returns the reported mode name and ID, and the first
+// power-gating mask the mode configures that reads ungated.
+//
+// The mode name and ID come from /var/lib/nvpmodel/status, which records the
+// requested mode even when the boot that should establish it did not. The
+// TPC/FBP gating masks are the part only a boot sets: the kernel brings them
+// up at 0 and nvpmodel aborts the whole mode when it cannot write them, so a
+// mask still reading 0 under a mode that configures it non-zero is a mode
+// recorded but not established. Only that case is rejected: the Xavier NX
+// (gv11b) kernel reports its fuse-adjusted mask (4 for a configured 1) and
+// treats them as equal, so a literal comparison would reject every
+// established Xavier mode. Jetson Nano (R32) queries print no gating lines and
+// keep the name and ID check alone.
+// ponytail: zero-versus-configured only; a non-zero mask left from another
+// mode (mode recorded without any restart) is caught by Apply's restart check.
+func parseQueryOutput(output []byte) (string, int32, string, error) {
 	const modePrefix = "NV Power Mode:"
-	var mode string
+	var mode, unestablished string
 	var id *int32
 	for _, rawLine := range bytes.Split(output, []byte{'\n'}) {
 		line := strings.TrimSpace(strings.TrimSuffix(string(rawLine), "\r"))
+		if param, ok := strings.CutPrefix(line, verboseParamPrefix); ok {
+			name, _, _ := strings.Cut(param, ":")
+			if name != "TPC_POWER_GATING" && name != "FBP_POWER_GATING" {
+				continue
+			}
+			inEffect, configured, err := gatingValues(param)
+			if err != nil {
+				return "", 0, "", fmt.Errorf("%s: %w", name, err)
+			}
+			if unestablished == "" && inEffect == 0 && configured != 0 {
+				unestablished = fmt.Sprintf("%s reads 0 where the mode configures %d", name, configured)
+			}
+			continue
+		}
+		line = strings.TrimPrefix(line, verboseModePrefix)
 		if strings.HasPrefix(line, modePrefix) {
 			if mode != "" {
-				return "", 0, errors.New("query contains multiple power-mode names")
+				return "", 0, "", errors.New("query contains multiple power-mode names")
 			}
 			mode = strings.TrimSpace(strings.TrimPrefix(line, modePrefix))
 			if mode == "" || len(strings.Fields(mode)) != 1 {
-				return "", 0, errors.New("query contains an invalid power-mode name")
+				return "", 0, "", errors.New("query contains an invalid power-mode name")
 			}
 			continue
 		}
@@ -221,15 +284,37 @@ func parseQueryOutput(output []byte) (string, int32, error) {
 			continue
 		}
 		if id != nil {
-			return "", 0, errors.New("query contains multiple power-mode IDs")
+			return "", 0, "", errors.New("query contains multiple power-mode IDs")
 		}
 		value := int32(parsed)
 		id = &value
 	}
 	if mode == "" || id == nil {
-		return "", 0, errors.New("query omitted the power-mode name or ID")
+		return "", 0, "", errors.New("query omitted the power-mode name or ID")
 	}
-	return mode, *id, nil
+	return mode, *id, unestablished, nil
+}
+
+// gatingValues reads "... REAL_VAL: <n> CONF_VAL: <n>" from a PARAM line.
+func gatingValues(param string) (int64, int64, error) {
+	fields := strings.Fields(param)
+	values := map[string]int64{}
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] != "REAL_VAL:" && fields[i] != "CONF_VAL:" {
+			continue
+		}
+		value, err := strconv.ParseInt(fields[i+1], 10, 64)
+		if err != nil {
+			return 0, 0, fmt.Errorf("unreadable %s %q", fields[i], fields[i+1])
+		}
+		values[fields[i]] = value
+	}
+	inEffect, hasInEffect := values["REAL_VAL:"]
+	configured, hasConfigured := values["CONF_VAL:"]
+	if !hasInEffect || !hasConfigured {
+		return 0, 0, errors.New("gating line omits REAL_VAL or CONF_VAL")
+	}
+	return inEffect, configured, nil
 }
 
 func commandError(operation string, err error, output []byte) error {

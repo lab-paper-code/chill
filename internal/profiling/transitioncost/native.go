@@ -66,7 +66,7 @@ func validNativeNode(node *NativeNodeObservation) error {
 func validNativeState(state *native.State) bool {
 	m := &state.Metadata
 	return state.Ready && !state.At.IsZero() && m.Mode == "serving" && m.ProfileID != "" &&
-		!m.Runtime.Synthetic && m.Runtime.RuntimeVersion != "" && m.Runtime.ModelPath != "" &&
+		!m.Runtime.Synthetic && m.Runtime.RuntimeVersion != "" && len(m.Runtime.ModelFiles) != 0 &&
 		len(m.Runtime.CPUAffinity) > 0 && m.Runtime.IntraOpThreads >= 1 &&
 		len(m.Runtime.CPUAffinity) >= m.Runtime.IntraOpThreads && len(state.Requests) == 0
 }
@@ -115,8 +115,9 @@ func cloneNativeObservation(source *NativeNodeObservation) *NativeNodeObservatio
 		state.Metadata.Runtime.CPUAffinity = slices.Clone(state.Metadata.Runtime.CPUAffinity)
 		state.Metadata.Runtime.Providers = slices.Clone(state.Metadata.Runtime.Providers)
 		state.Metadata.Runtime.InitializedBatches = slices.Clone(state.Metadata.Runtime.InitializedBatches)
-		state.Metadata.Runtime.Inputs = cloneNativeSpecs(state.Metadata.Runtime.Inputs)
-		state.Metadata.Runtime.Outputs = cloneNativeSpecs(state.Metadata.Runtime.Outputs)
+		state.Metadata.Runtime.ModelFiles = slices.Clone(state.Metadata.Runtime.ModelFiles)
+		state.Metadata.Runtime.Inputs = slices.Clone(state.Metadata.Runtime.Inputs)
+		state.Metadata.Runtime.Outputs = slices.Clone(state.Metadata.Runtime.Outputs)
 		if state.ArrivalAgesMS != nil {
 			ages := make(map[string][]float64, len(state.ArrivalAgesMS))
 			for uid, v := range state.ArrivalAgesMS {
@@ -126,13 +127,6 @@ func cloneNativeObservation(source *NativeNodeObservation) *NativeNodeObservatio
 		}
 	}
 	return &copy
-}
-func cloneNativeSpecs(source []native.InputSpec) []native.InputSpec {
-	result := slices.Clone(source)
-	for i := range result {
-		result[i].Shape = slices.Clone(result[i].Shape)
-	}
-	return result
 }
 func nativeProcessObserved(node *NativeNodeObservation, process *ProcessIdentity) bool {
 	if node == nil || process == nil || process.ContainerName != "firstfloor" {

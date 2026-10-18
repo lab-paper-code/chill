@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -349,7 +351,7 @@ func testRunConfig(t *testing.T) profilingrun.RunConfig {
 		t.Fatal(err)
 	}
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
 	if err := config.Validate(); err != nil {
@@ -378,8 +380,7 @@ func testIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 	config.Measurement.WarmupIterations = 0
 	config.Measurement.SettlingDurationSeconds = 30
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-	config.Measurement.InputGenerator = profilingrun.NoInputGenerator
-	config.Measurement.OutputValidation = profilingrun.NoOutputValidation
+	config.Measurement.Dataset = nil
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -401,9 +402,9 @@ func idleRuntimeResult(config profilingrun.RunConfig, podUID string) profilingru
 		Runtime:                      config.State.RuntimeFamily,
 		RuntimeVersion:               "1.16.0",
 		Backend:                      config.State.Backend,
-		Provider:                     config.State.Backend,
-		AvailableProviders:           []string{config.State.Backend},
-		Inputs:                       modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+		Provider:                     testCPUProvider,
+		AvailableProviders:           []string{testCPUProvider},
+		Inputs:                       config.State.Preprocessor.Inputs,
 		ModelLoadCompletedAt:         modelLoaded.Format(time.RFC3339Nano),
 		SettlingStartedAt:            settlingStarted.Format(time.RFC3339Nano),
 		SettlingCompletedAt:          settlingCompleted.Format(time.RFC3339Nano),
@@ -412,14 +413,49 @@ func idleRuntimeResult(config profilingrun.RunConfig, podUID string) profilingru
 		MeasurementElapsedSeconds:    float64(config.Measurement.DurationSeconds),
 		InferenceCountAfterModelLoad: 0,
 		ModelResidentAtEnd:           true,
-		CPUContract: profilingrun.RuntimeCPU{
-			CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
-			ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: config.CPU.ORTIntraOpThreads,
-			CPUSetEffective: "0-3",
-		},
+		CPUContract:                  testRuntimeCPU(config),
 		DerivedContract: profilingrun.DerivedContract{
-			Backend: config.State.Backend, Provider: config.State.Backend,
+			Backend: config.State.Backend, Provider: testCPUProvider,
 			NodeSnapshot: config.TargetNode,
+		},
+		MemoryBytes: testMemoryBytes, MemorySource: testMemorySource,
+		Firstfloor: testFirstfloorEvidence(config, "1.16.0", 0),
+	}
+}
+
+const (
+	testCPUProvider  = "CPUExecutionProvider"
+	testMemoryBytes  = 123456
+	testMemorySource = "cgroup-v2-memory.peak:runtime-container-lifetime"
+)
+
+func testRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
+	return profilingrun.RuntimeCPU{
+		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
+		ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: 4,
+		AffinityCPUs: []int{0, 1, 2, 3}, CPUSetEffective: "0-3",
+	}
+}
+
+func testFirstfloorEvidence(
+	config profilingrun.RunConfig, runtimeVersion string, executions uint64,
+) *profilingrun.FirstfloorRuntimeEvidence {
+	counts := map[string]uint64{}
+	if executions > 0 {
+		counts[strconv.Itoa(config.Measurement.Batch)] = executions
+	}
+	cpu := testRuntimeCPU(config)
+	return &profilingrun.FirstfloorRuntimeEvidence{
+		Mode: "profiling", ModelInstanceCount: 1, MaxBatchSize: 4, MaxQueueSize: 32,
+		DeadlinePolicy: modelcompat.EffectiveDeadlinePolicy(config.State.Firstfloor.DeadlinePolicy),
+		ExecutionCount: executions, InferenceCount: executions * uint64(config.Measurement.Batch),
+		BatchExecutionCounts: counts,
+		Runtime: firstfloor.RuntimeMetadata{
+			Runtime: config.State.Backend, RuntimeVersion: runtimeVersion, ModelFiles: config.State.ModelFiles(),
+			Inputs: config.State.Preprocessor.Inputs, Outputs: config.State.Preprocessor.Outputs, Providers: []string{testCPUProvider}, AvailableProviders: []string{testCPUProvider},
+			Device: "cpu", CPUAffinity: cpu.AffinityCPUs, IntraOpThreads: cpu.ORTIntraOpThreads,
+			InterOpThreads: cpu.ORTInterOpThreads, InitializedBatches: []int{config.Measurement.Batch},
+			CgroupCPUMax: cpu.CgroupCPUMax, CPUSet: cpu.CPUSetEffective,
 		},
 	}
 }
@@ -432,32 +468,34 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 		ExperimentID: podUID, NodeName: config.TargetNode.Name, Model: config.State.Model,
 		Architecture: "x86_64",
 		Runtime:      config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
-		Backend: config.State.Backend, Provider: config.State.Backend,
-		AvailableProviders: []string{config.State.Backend}, BatchSize: config.Measurement.Batch,
-		Inputs:            modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+		Backend: config.State.Backend, Provider: testCPUProvider,
+		AvailableProviders: []string{testCPUProvider}, BatchSize: config.Measurement.Batch,
+		Inputs:            config.State.Preprocessor.Inputs,
 		WarmupIterations:  config.Measurement.WarmupIterations,
 		WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
 		InferenceCount:    2, MeasurementMode: "duration",
 		MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 		MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
-		OutputValidation: profilingrun.OutputValidation{
-			Method: config.Measurement.OutputValidation, Passed: true,
-			OutputShapes: [][]int{{config.Measurement.Batch, 1000}},
-		},
-		CPUContract: profilingrun.RuntimeCPU{
-			CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
-			ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: config.CPU.ORTIntraOpThreads,
-			CPUSetEffective: "0-3",
-		},
+		CPUContract: testRuntimeCPU(config),
 		DerivedContract: profilingrun.DerivedContract{
-			Backend: config.State.Backend, Provider: config.State.Backend,
+			Backend: config.State.Backend, Provider: testCPUProvider,
 			NodeSnapshot: config.TargetNode,
 		},
+		MemoryBytes: testMemoryBytes, MemorySource: testMemorySource,
+		Firstfloor: testFirstfloorEvidence(config, "1.16.0", 2),
 		RepetitionResults: []profilingrun.Repetition{{
 			Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			LatencyMilliseconds: []float64{1, 2},
+			NativeSamples: []profilingrun.NativeServiceSample{
+				{BatchID: 1, BatchSize: config.Measurement.Batch, RecordIDs: []string{"r"}, Units: []int{1},
+					RunnerServiceMilliseconds: 0.7,
+					BackendCallMilliseconds:   0.4, NativeRequestMilliseconds: 0.9},
+				{BatchID: 2, BatchSize: config.Measurement.Batch, RecordIDs: []string{"r"}, Units: []int{1},
+					RunnerServiceMilliseconds: 0.7,
+					BackendCallMilliseconds:   0.4, NativeRequestMilliseconds: 0.9},
+			},
 		}},
 	}
 }

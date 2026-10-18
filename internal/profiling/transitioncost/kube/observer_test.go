@@ -421,7 +421,7 @@ func newObserver(t *testing.T, reader client.Reader, request transitionkube.Requ
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "fixture-profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelPath: "/model/model.onnx", CPUAffinity: []int{0}, IntraOpThreads: 1}}})
+		_ = json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "fixture-profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"}, CPUAffinity: []int{0}, IntraOpThreads: 1}}})
 	}))
 	t.Cleanup(server.Close)
 	endpoint, _ := url.Parse(server.URL)

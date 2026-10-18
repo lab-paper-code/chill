@@ -14,7 +14,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 
@@ -87,7 +86,7 @@ func deriverIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 		t.Fatal(err)
 	}
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
 	config.Measurement.Batch = 1
@@ -95,8 +94,7 @@ func deriverIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 	config.Measurement.SettlingDurationSeconds = 60
 	config.Measurement.DurationSeconds = 30
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-	config.Measurement.InputGenerator = "none"
-	config.Measurement.OutputValidation = "none"
+	config.Measurement.Dataset = nil
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +132,7 @@ func deriverIdleEvidence(
 			Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 			Backend: config.State.Backend, Provider: config.State.Backend,
 			AvailableProviders:        []string{config.State.Backend},
-			Inputs:                    modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+			Inputs:                    config.State.Preprocessor.Inputs,
 			ModelLoadCompletedAt:      started.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt:         started.Add(-60 * time.Second).Format(time.RFC3339Nano),
 			SettlingCompletedAt:       started.Format(time.RFC3339Nano),
@@ -176,6 +174,7 @@ func deriverIdleEvidence(
 			Continuous: true,
 		},
 	}
+	applyFirstfloorIdleRuntime(config, &raw.Runtime)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)

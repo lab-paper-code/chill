@@ -65,7 +65,7 @@ func TestStaticExclusiveBaselineThenSharedTargetDrainsPhysicalBinding(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := runtime.Accept(receipt, &InferenceInput{Inputs: []TensorInput{{Name: "x", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]")}}})
+	call, err := runtime.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}

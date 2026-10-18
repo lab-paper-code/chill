@@ -125,37 +125,39 @@ separately.
 
 ## Profiling runtime input contracts
 
-Every frozen RunConfig carries `delivery.artifactCapability.tensors`, including
-canonical ONNX artifacts with no target platform or artifact-declared batch set.
-Each tensor declares `name`, uppercase `datatype`, and batch-free
-`sampleShape`; the selected measurement batch is added only at invocation.
-The standalone ORT/RKNNLite request schemas are v1alpha15/v1alpha11; the native
-firstfloor request is v1alpha1. RunConfig is v1alpha16, active runtime results are
-v1alpha7 and model-loaded idle results are v1alpha5. Results record typed,
-batch-free `inputs` and native results retain actual firstfloor runtime facts.
-Readers consume the current schema and its explicit input declarations.
+Profiling measures only through firstfloor with dataset-sampled raw inputs and
+preprocessor artifacts, as designed in
+[heterogeneous workloads](../serving/heterogeneous-workloads.md#5-프로파일링).
 
-[CPU ORT](../../../runtime/ortcpu/runner.py) validates every declared input name,
-datatype, rank, fixed sample dimension, and selected batch against session
-metadata before either active or idle measurement. A symbolic runtime batch
-axis accepts the selected batch; a fixed axis must equal it. Named multi-input
-feeds support BOOL, UINT8/16/32/64, INT8/16/32/64, and FP16/32/64. Unsupported
-datatypes fail explicitly. The `numpy-default-rng-seed-0-inputs-v1` generator
-fills floating tensors with seeded standard-normal values cast to the declared
-dtype and integer/boolean tensors with seeded zero/one values; the combined
-input byte budget is admitted before allocating any feed.
+The candidate resolver reads the Preprocessor and Dataset and selects the
+preprocessor artifact that targets the chosen model artifact. The frozen
+RunConfig (v1alpha17) records the model files, that preprocessor artifact and,
+for active measurement, the Dataset. Only RKNN artifacts carry
+`delivery.artifactCapability.tensors`; each tensor declares `name`, uppercase
+`datatype`, and batch-free `sampleShape`. The native firstfloor request is
+v1alpha2, active runtime results are v1alpha8 and model-loaded idle results are
+v1alpha6. Results record raw field names as `inputs` and the loaded
+`modelFiles`; active samples keep `recordIDs`, `units`, and stage timings.
 
-[RKNNLite](../../../runtime/rknnlite/runner.py) supports one FP32 tensor with
-rank-three NHWC sample dimensions. It validates the artifact input name,
-datatype, shape, and selected static or dynamic batch through the delivered
-`librknnrt` library before initializing the measured Lite2 context. This
+[firstfloor measurement](../../../runtime/firstfloor/measurement.py) compares the
+actual actor model files, raw input fields, initialized batches, threads, CPU
+affinity, and provider against the frozen RunConfig before either active or idle
+measurement. Each execution draws its batch from the dataset `profiling`
+records with a fixed-seed `random.Random`, outside the timed interval. Warmup
+runs the module's `WARMUP_SAMPLE`; a preprocessing failure of a measured sample
+fails the trial.
+
+The [RKNNLite helpers](../../../runtime/rknnlite/runner.py) support one FP32
+tensor with rank-three NHWC sample dimensions. The
+[firstfloor runner](../../../runtime/firstfloor/runner.py) validates the artifact
+input name, datatype, shape, and selected static or dynamic batch through the
+delivered `librknnrt` library before initializing the Lite2 context. This
 temporary metadata context performs no inference and is destroyed before
 measurement. Official
 [RKNN C API metadata](https://github.com/airockchip/rknn-toolkit2/blob/master/rknpu2/runtime/Linux/librknn_api/include/rknn_api.h)
 defines the queried structures and NCHW/NHWC layouts; NCHW metadata is explicitly
-reordered to the NHWC invocation shape. Inference explicitly requests
-`float32`/`nhwc`; unsupported contracts or unavailable metadata fail, including
-for model-loaded idle runs.
+reordered to the NHWC invocation shape. Inference requests `nhwc`; unsupported
+contracts or unavailable metadata fail, including for model-loaded idle runs.
 
 The [RKNN exporter](../../../build/model-artifacts/rknn/export_rknn.py) accepts
 one FP32 rank-four NCHW ONNX input with symbolic batch and positive fixed sample
@@ -200,7 +202,7 @@ The current implementation and the required alignment are distinct:
 | CPU ORT threads | Intra-op threads fit the selected frozen affinity/quota; inter-op threads are one |
 | CPU observations | Explicit `spec.measurement.cpuAffinity` freezes physical IDs; actual affinity and cgroup quota are separately read back |
 | Memory | Runtime requests/limits come from the selected execution policy, not a per-Run measurement parameter |
-| Accelerator execution | firstfloor ORT CUDA pins a physical GPU UUID; RKNN retains actual queried ABI/core capabilities; standalone ORT CPU/RKNN remain reference paths |
+| Accelerator execution | firstfloor ORT CUDA pins a physical GPU UUID; RKNN retains actual queried ABI/core capabilities |
 
 Sources: [public Run fields](../../../api/v1alpha1/profilingrun_types.go),
 [CPU freezing](../../../internal/profiling/profiler/preparation.go),
@@ -467,8 +469,8 @@ plans but do not expand a plan's authorization:
 - [Evidence Store](components/evidence-store.md) owns immutable evidence object
   storage and verification boundaries. Its Profiler-consumption plan remains
   separately review-gated.
-- [Measurement Worker](components/measurement-worker.md) fixes the first
-  CPU-ORT Job-local execution, synchronization, raw-write, and receipt contract.
+- [Measurement Worker](components/measurement-worker.md) fixes the firstfloor
+  Job-local execution, synchronization, raw-write, and receipt contract.
 
 ## Supporting records
 

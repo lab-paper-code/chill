@@ -171,7 +171,7 @@ func writeWorkloadTestRunConfig(t *testing.T, directory string) {
 		t.Fatal(err)
 	}
 	runConfig.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	runConfig.State.ArtifactPath = "/artifact/model.onnx"
+	runConfig.State.ArtifactFiles = []string{"/artifact/model.onnx"}
 	runConfig.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	runConfig.Workload = profilingrun.CurrentWorkloadContract()
 	canonical, err := runConfig.CanonicalJSON()

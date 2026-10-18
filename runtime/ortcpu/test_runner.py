@@ -1,147 +1,43 @@
 from __future__ import annotations
 
 import io
-import json
 import tempfile
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
 import runner
 
-
-class FakeArray:
-    shape = (1, 1000)
-    size = 1000
+REQUEST_SCHEMA = "chill.dacs.io/firstfloor-runtime-request.v1alpha2"
 
 
-class FakeInput:
-    name = "input"
-    type = "tensor(float)"
-    shape = [1, 3, 224, 224]
-
-
-class FakeSample:
-    nbytes = 1 * 3 * 224 * 224 * 4
-
-    def __init__(self) -> None:
-        self.flat = FakeFlat(self.nbytes // 4)
-
-    def reshape(self, dimension: int) -> "FakeFlat":
-        if dimension != -1:
-            raise AssertionError(f"unexpected reshape dimension {dimension}")
-        return self.flat
-
-
-class FakeFlat:
-    def __init__(self, length: int) -> None:
-        self.length = length
-
-    def __len__(self) -> int:
-        return self.length
-
-    def __setitem__(self, key: slice, values: "FakeChunk") -> None:
-        if key.start is None or key.stop is None or key.step is not None:
-            raise AssertionError(f"unexpected input slice {key}")
-        if values.length != key.stop - key.start:
-            raise AssertionError(
-                "generated chunk length does not match its destination"
-            )
-
-
-class FakeChunk:
-    def __init__(self, length: int) -> None:
-        self.length = length
-
-
-class FakeGenerator:
-    def __init__(self) -> None:
-        self.calls: list[int] = []
-
-    def standard_normal(self, length: int) -> FakeChunk:
-        self.calls.append(length)
-        return FakeChunk(length)
-
-
-class FakeNumpy:
-    float32 = object()
-    last_generator: FakeGenerator | None = None
-
-    @staticmethod
-    def empty(shape: list[int], *, dtype: object) -> FakeSample:
-        if shape != [1, 3, 224, 224] or dtype is not FakeNumpy.float32:
-            raise AssertionError(
-                f"unexpected input allocation shape={shape} dtype={dtype}"
-            )
-        return FakeSample()
-
-    class random:
-        @staticmethod
-        def default_rng(seed: int) -> FakeGenerator:
-            if seed != 0:
-                raise AssertionError(f"unexpected seed {seed}")
-            generator = FakeGenerator()
-            FakeNumpy.last_generator = generator
-            return generator
+def validate(request: dict[str, object]) -> None:
+    runner.validate_request(request, REQUEST_SCHEMA, "ort-cpu")
 
 
 class FakeSession:
     def __init__(self) -> None:
-        self.calls = 0
+        self.calls: list[str] = []
 
     def get_providers(self) -> list[str]:
         return ["CPUExecutionProvider"]
 
-    def get_inputs(self) -> list[FakeInput]:
-        return [FakeInput()]
+    def prepare_next(self) -> None:
+        self.calls.append("prepare")
 
-    def run(self, _outputs: object, feeds: dict[str, FakeSample]) -> list[FakeArray]:
-        if set(feeds) != {"input"}:
-            raise AssertionError(f"unexpected feeds {feeds}")
-        self.calls += 1
-        return [FakeArray()]
-
-
-class FakeSessionOptions:
-    intra_op_num_threads = 0
-    inter_op_num_threads = 0
-
-
-class FakeORT:
-    __version__ = "test-ort"
-    last_session: FakeSession | None = None
-
-    @staticmethod
-    def get_available_providers() -> list[str]:
-        return ["CPUExecutionProvider"]
-
-    @staticmethod
-    def SessionOptions() -> FakeSessionOptions:
-        return FakeSessionOptions()
-
-    @classmethod
-    def InferenceSession(
-        cls, _path: str, *, sess_options: FakeSessionOptions, providers: list[str]
-    ) -> FakeSession:
-        if (
-            sess_options.intra_op_num_threads != 4
-            or sess_options.inter_op_num_threads != 1
-        ):
-            raise AssertionError("ORT thread options do not match RunConfig")
-        if providers != ["CPUExecutionProvider"]:
-            raise AssertionError(f"unexpected providers {providers}")
-        cls.last_session = FakeSession()
-        return cls.last_session
+    def run(self) -> None:
+        self.calls.append("run")
 
 
 def valid_request(model_path: Path) -> dict[str, object]:
     return {
-        "schemaVersion": runner.REQUEST_SCHEMA,
+        "schemaVersion": REQUEST_SCHEMA,
         "podUID": "pod-uid",
         "scheduledNodeName": "lattepanda",
-        "modelPath": str(model_path),
+        "modelDirectory": "/model",
+        "preprocessorPath": "/preprocessor",
+        "datasetPath": "/dataset",
         "observerReadyPaths": [
             str(model_path.parent / "observer-ready"),
             str(model_path.parent / "workload-observer-ready"),
@@ -161,15 +57,23 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "deviceClass": "lattepanda-3-delta-8g",
                 "model": "mobilenet-v2-050",
                 "artifact": "canonical-onnx",
-                "artifactPath": "/artifact/mobilenet-v2-050.onnx",
-                "runtimeFamily": "onnxruntime",
-                "backend": "CPUExecutionProvider",
+                "artifactFiles": ["/artifact/mobilenet-v2-050.onnx"],
+                "runtimeFamily": "firstfloor",
+                "backend": "ort-cpu",
                 "powerMode": "fixed",
+                "firstfloor": {"maxBatchSize": 1, "maxQueueSize": 1},
+                "preprocessor": {
+                    "name": "mobilenet-imagenet",
+                    "uid": "pre-uid",
+                    "image": "registry/preprocessors:1",
+                    "architecture": "amd64",
+                    "path": "/artifact/mobilenet-nchw",
+                    "inputs": ["image"],
+                    "outputs": ["label"],
+                },
             },
             "images": {},
-            "delivery": {"artifactCapability": {"tensors": [
-                {"name": "input", "datatype": "FP32", "sampleShape": [3, 224, 224]}
-            ]}},
+            "delivery": {"artifactCapability": {}},
             "targetNode": {
                 "name": "lattepanda",
                 "uid": "node-uid",
@@ -191,8 +95,12 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "warmupIterations": 2,
                 "durationSeconds": 1,
                 "workloadMode": runner.SUPPORTED_WORKLOAD,
-                "inputGenerator": runner.SUPPORTED_INPUT_GENERATOR,
-                "outputValidation": runner.SUPPORTED_OUTPUT_VALIDATION,
+                "dataset": {
+                    "name": "vqav2",
+                    "uid": "dataset-uid",
+                    "image": "registry/datasets:1",
+                    "path": "/artifact/vqav2",
+                },
             },
             "metrics": {},
             "workload": {},
@@ -202,113 +110,59 @@ def valid_request(model_path: Path) -> dict[str, object]:
 
 def valid_idle_request(model_path: Path) -> dict[str, object]:
     request = valid_request(model_path)
+    del request["datasetPath"]
     request["runConfig"]["measurement"] = {
         "batch": 1,
         "warmupIterations": 0,
         "settlingDurationSeconds": 60,
         "durationSeconds": 30,
         "workloadMode": runner.IDLE_WORKLOAD,
-        "inputGenerator": runner.NO_INPUT_GENERATOR,
-        "outputValidation": runner.NO_OUTPUT_VALIDATION,
     }
     return request
 
 
 class RunnerTest(unittest.TestCase):
-    def test_named_multi_input_measurement_uses_declared_dtypes(self) -> None:
-        import numpy
-
-        tensors = [
-            {"name": "tokens", "datatype": "INT64", "sampleShape": [4]},
-            {"name": "weights", "datatype": "FP32", "sampleShape": [4]},
-            {"name": "mask", "datatype": "BOOL", "sampleShape": [4]},
-        ]
-        session = mock.Mock()
-        session.get_providers.return_value = ["CPUExecutionProvider"]
-        session.get_inputs.return_value = [
-            SimpleNamespace(name=t["name"], type=runner.INPUT_DATATYPES[t["datatype"]][0], shape=["batch", 4])
-            for t in reversed(tensors)
-        ]
-        session.run.return_value = [numpy.ones((2, 1), dtype=numpy.float32)]
-        with tempfile.TemporaryDirectory() as directory:
-            model = Path(directory) / "model.onnx"
-            model.write_bytes(b"model")
-            request = valid_request(model)
-            request["runConfig"]["delivery"]["artifactCapability"]["tensors"] = tensors
-            request["runConfig"]["measurement"]["batch"] = 2
-            with ExitStack() as stack:
-                stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="x86_64"))
-                stack.enter_context(mock.patch.object(runner, "validate_cpu_contract", return_value=("400000 100000", [0], "0")))
-                stack.enter_context(mock.patch.object(FakeORT, "InferenceSession", return_value=session))
-                stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
-                stack.enter_context(mock.patch.object(runner, "publish_immutable"))
-                stack.enter_context(mock.patch.object(runner, "cpu_stat", return_value={}))
-                stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 1.1, 1.1]))
-                result = runner.execute(request, FakeORT, numpy)
-            self.assertEqual(session.run.call_count, 3)
-            for call in session.run.call_args_list:
-                feeds = call.args[1]
-                self.assertEqual(set(feeds), {"tokens", "weights", "mask"})
-                self.assertEqual(feeds["tokens"].dtype, numpy.dtype("int64"))
-                self.assertEqual(feeds["weights"].dtype, numpy.dtype("float32"))
-                self.assertEqual(feeds["mask"].dtype, numpy.dtype("bool"))
-                self.assertTrue(all(value.shape == (2, 4) for value in feeds.values()))
-            self.assertEqual(result["inputs"], tensors)
-            self.assertEqual(result["batchSize"], 2)
-            self.assertNotIn("inputShape", result)
-
-    def test_metadata_mismatch_fails_before_active_or_idle_window(self) -> None:
-        mismatches = [
-            ("names", SimpleNamespace(name="wrong", type="tensor(float)", shape=[1, 3, 224, 224])),
-            ("datatype", SimpleNamespace(name="input", type="tensor(int64)", shape=[1, 3, 224, 224])),
-            ("rank", SimpleNamespace(name="input", type="tensor(float)", shape=[1, 224, 224])),
-            ("sampleShape", SimpleNamespace(name="input", type="tensor(float)", shape=["batch", 3, "height", 224])),
-            ("batch", SimpleNamespace(name="input", type="tensor(float)", shape=[2, 3, 224, 224])),
-        ]
-        with tempfile.TemporaryDirectory() as directory:
-            model = Path(directory) / "model.onnx"
-            model.write_bytes(b"model")
-            for factory in (valid_request, valid_idle_request):
-                for message, metadata in mismatches:
-                    with self.subTest(mode=factory.__name__, mismatch=message), ExitStack() as stack:
-                        request = factory(model)
-                        stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="x86_64"))
-                        stack.enter_context(mock.patch.object(runner, "validate_cpu_contract", return_value=("", [], "")))
-                        stack.enter_context(mock.patch.object(FakeSession, "get_inputs", return_value=[metadata]))
-                        publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
-                        with self.assertRaisesRegex(runner.ContractError, message):
-                            runner.execute(request, FakeORT, FakeNumpy)
-                        publish.assert_not_called()
-                        self.assertEqual(FakeORT.last_session.calls, 0)
-
-    def test_capability_requires_named_typed_tensors(self) -> None:
-        for tensors, message in [
-            ([], "non-empty"),
-            ([{"name": "input", "datatype": "float32", "sampleShape": [4]}], "datatype"),
-            ([{"name": "input", "datatype": "FP32", "sampleShape": [0]}], "sampleShape"),
-            ([{"name": "input", "datatype": "FP32", "sampleShape": [4]}] * 2, "unique"),
+    def test_raw_sample_contract_fields_are_required_by_mode(self) -> None:
+        validate(valid_idle_request(Path("/model")))
+        for mutate, message in [
+            (lambda r: r.pop("datasetPath"), "missing=\\['datasetPath'\\]"),
+            (lambda r: r.update(modelPath="/model/model.onnx"), "unknown=\\['modelPath'\\]"),
+            (lambda r: r["runConfig"]["measurement"].pop("dataset"), "missing=\\['dataset'\\]"),
+            (lambda r: r["runConfig"]["measurement"].update(inputGenerator="none"), "inputGenerator"),
+            (lambda r: r["runConfig"]["state"].update(artifactFiles=[]), "artifactFiles"),
+            (lambda r: r["runConfig"]["state"].update(artifactFiles=["/a/m.onnx", "/b/m.onnx"]), "basenames"),
+            (lambda r: r["runConfig"]["state"]["preprocessor"].update(inputs=["image", "image"]), "unique"),
+            (lambda r: r["runConfig"]["state"]["preprocessor"].update(maxNewTokens=0), "maxNewTokens"),
         ]:
-            with self.subTest(tensors=tensors):
-                request = valid_request(Path("/model.onnx"))
-                request["runConfig"]["delivery"]["artifactCapability"]["tensors"] = tensors
+            with self.subTest(message=message):
+                request = valid_request(Path("/model"))
+                mutate(request)
                 with self.assertRaisesRegex(runner.ContractError, message):
-                    runner.validate_request(request)
-
-    def test_multi_input_budget_is_admitted_before_any_allocation(self) -> None:
-        numpy = mock.Mock()
-        tensors = [
-            {"name": name, "datatype": "FP32", "sampleShape": [4]}
-            for name in ("first", "second")
-        ]
-        with self.assertRaisesRegex(runner.ContractError, "size budget"):
-            runner.generate_inputs(numpy, tensors, 1, 16)
-        numpy.empty.assert_not_called()
+                    validate(request)
+        idle = valid_idle_request(Path("/model"))
+        idle["datasetPath"] = "/dataset"
+        with self.assertRaisesRegex(runner.ContractError, "unknown=\\['datasetPath'\\]"):
+            validate(idle)
 
     def test_decode_request_rejects_duplicate_field(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "duplicate JSON field"):
             runner.decode_request(
                 io.BytesIO(b'{"schemaVersion":"a","schemaVersion":"b"}')
             )
+
+    def test_own_cgroup_root_follows_proc_self_cgroup_in_host_namespace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "cgroup.controllers").write_text("cpu memory\n")
+            own = root / "kubepods.slice" / "pod.slice" / "cri.scope"
+            own.mkdir(parents=True)
+            (own / "cpu.max").write_text("200000 100000\n")
+            self_cgroup = root / "self-cgroup"
+            self_cgroup.write_text("0::/kubepods.slice/pod.slice/cri.scope\n")
+            self.assertEqual(runner.own_cgroup_root(root, self_cgroup), own)
+            # A namespaced container already sees its own cgroup at the root.
+            (root / "cpu.max").write_text("max 100000\n")
+            self.assertEqual(runner.own_cgroup_root(root, self_cgroup), root)
 
     def test_validate_request_rejects_unknown_contract_field(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -319,13 +173,13 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 runner.ContractError, "unknown=\\['unknown'\\]"
             ):
-                runner.validate_request(request)
+                validate(request)
 
     def test_validate_request_accepts_current_cpu_run_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
-            runner.validate_request(valid_request(model))
+            validate(valid_request(model))
 
     def test_validate_request_accepts_configured_cpu_quota(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -341,7 +195,7 @@ class RunnerTest(unittest.TestCase):
                 }
             )
 
-            runner.validate_request(request)
+            validate(request)
             self.assertEqual(
                 runner.derived_contract(request["runConfig"])["cpu"]["budgetSource"],
                 "ProfilingRunMeasurementCPUQuota",
@@ -358,11 +212,11 @@ class RunnerTest(unittest.TestCase):
                 "actuator": {"kind": "JetsonNVPModel", "jetsonNVPModel": {"id": 2}},
                 "policyName": "jetson-mode-15w",
             }
-            runner.validate_request(request)
+            validate(request)
 
             request["runConfig"]["actuation"]["actuator"]["jetsonNVPModel"]["id"] = -1
             with self.assertRaisesRegex(runner.ContractError, "jetsonNVPModel.id"):
-                runner.validate_request(request)
+                validate(request)
 
     def test_validate_request_rejects_null_actuation_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -374,7 +228,7 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 runner.ContractError, "actuation must be an object"
             ):
-                runner.validate_request(request)
+                validate(request)
 
     def test_validate_request_rejects_unsupported_schemas(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -385,14 +239,14 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 runner.ContractError, "supported CPU RunConfig schema"
             ):
-                runner.validate_request(request)
+                validate(request)
 
             request = valid_request(model)
             request["schemaVersion"] = "unsupported"
             with self.assertRaisesRegex(
                 runner.ContractError, "unsupported runtime request"
             ):
-                runner.validate_request(request)
+                validate(request)
 
     def test_validate_request_requires_job_timing_binding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -403,7 +257,7 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 runner.ContractError, "observerReadyTimeoutMilliseconds"
             ):
-                runner.validate_request(request)
+                validate(request)
 
     def test_validate_request_rejects_scheduled_node_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -412,7 +266,7 @@ class RunnerTest(unittest.TestCase):
             request = valid_request(model)
             request["scheduledNodeName"] = "other-node"
             with self.assertRaisesRegex(runner.ContractError, "scheduled Node"):
-                runner.validate_request(request)
+                validate(request)
 
     def test_validate_request_requires_job_resource_budgets(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -423,7 +277,7 @@ class RunnerTest(unittest.TestCase):
                     request = valid_request(model)
                     del request[field]
                     with self.assertRaisesRegex(runner.ContractError, field):
-                        runner.validate_request(request)
+                        validate(request)
 
     def test_validate_request_keeps_active_and_idle_measurement_fields_disjoint(
         self,
@@ -436,18 +290,16 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 runner.ContractError, "unknown=\\['settlingDurationSeconds'\\]"
             ):
-                runner.validate_request(active)
+                validate(active)
 
             idle = valid_idle_request(model)
             del idle["runConfig"]["measurement"]["settlingDurationSeconds"]
             with self.assertRaisesRegex(
                 runner.ContractError, "missing=\\['settlingDurationSeconds'\\]"
             ):
-                runner.validate_request(idle)
+                validate(idle)
 
     def test_producer_budgets_fail_before_growth(self) -> None:
-        with self.assertRaisesRegex(runner.ContractError, "input tensors"):
-            runner.admitted_input_bytes([8, 3, 224, 224], "FP32", 1024)
         with self.assertRaisesRegex(runner.ContractError, "latency sample budget"):
             runner.measurement_complete(0.5, 1, 10, 10)
         self.assertTrue(runner.measurement_complete(1.0, 1, 10, 10))
@@ -458,12 +310,12 @@ class RunnerTest(unittest.TestCase):
         request = valid_request(Path("/model/model.onnx"))
         cpu = request["runConfig"]["cpu"]
         cpu["affinityCPUs"] = list(range(100, 100 + cpu["ortIntraOpThreads"]))
-        runner.validate_request(request)
+        validate(request)
         for invalid in (None, [], [True], [-1], [100, 100]):
             with self.subTest(invalid=invalid):
                 cpu["affinityCPUs"] = invalid
                 with self.assertRaises(runner.ContractError):
-                    runner.validate_request(request)
+                    validate(request)
         run = {"cpu": {"limit": "2", "ortIntraOpThreads": 2, "affinityCPUs": [17, 9]}}
         with mock.patch.object(runner, "read_cpu_environment", return_value=("200000 100000", [9, 17], "9,17,31")):
             self.assertEqual(runner.validate_cpu_contract(run), ("200000 100000", [9, 17], "9,17,31"))
@@ -537,184 +389,122 @@ class RunnerTest(unittest.TestCase):
                 runner.publish_immutable(result, b"second")
             self.assertEqual(result.read_bytes(), b"first")
 
-    def test_execute_produces_bound_runtime_result(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            model = Path(directory) / "model.onnx"
-            model.write_bytes(b"model")
-            request = valid_request(model)
-            with ExitStack() as stack:
-                stack.enter_context(
-                    mock.patch.object(runner.platform, "machine", return_value="x86_64")
-                )
-                stack.enter_context(
-                    mock.patch.object(
-                        runner,
-                        "validate_cpu_contract",
-                        return_value=("400000 100000", [0, 1, 2, 3], "0-3"),
-                    )
-                )
-                wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
-                publish = stack.enter_context(
-                    mock.patch.object(runner, "publish_immutable")
-                )
-                stack.enter_context(
-                    mock.patch.object(
-                        runner,
-                        "cpu_stat",
-                        side_effect=[{"usage_usec": 10}, {"usage_usec": 30}],
-                    )
-                )
-                stack.enter_context(
-                    mock.patch.object(
-                        runner,
-                        "now",
-                        side_effect=[
-                            "2026-07-16T00:00:00.000000Z",
-                            "2026-07-16T00:00:00.100000Z",
-                            "2026-07-16T00:00:01.200000Z",
-                            "2026-07-16T00:00:01.300000Z",
-                            "2026-07-16T00:00:01.400000Z",
-                        ],
-                    )
-                )
-                stack.enter_context(
-                    mock.patch.object(
-                        runner.time, "monotonic", side_effect=[0.0, 1.1, 1.1]
-                    )
-                )
-                stack.enter_context(
-                    mock.patch.object(
-                        runner.time, "perf_counter_ns", side_effect=[0, 5_000_000]
-                    )
-                )
-                stack.enter_context(
-                    mock.patch.object(
-                        runner.time, "process_time", side_effect=[2.0, 2.8]
-                    )
-                )
-                result = runner.execute(request, FakeORT, FakeNumpy)
-
-            self.assertEqual(
-                publish.call_args_list,
-                [
-                    mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
-                    mock.call(Path(request["measurementStartPath"]), b"signal\n"),
-                    mock.call(Path(request["measurementEndPath"]), b"signal\n"),
-                ],
+    def test_execute_loaded_produces_bound_runtime_result(self) -> None:
+        request = valid_request(Path("/model/model.onnx"))
+        session = FakeSession()
+        before = mock.Mock()
+        with ExitStack() as stack:
+            wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
+            publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
+            stack.enter_context(
+                mock.patch.object(runner, "cpu_stat", side_effect=[{"usage_usec": 10}, {"usage_usec": 30}])
             )
-            self.assertEqual(
-                wait.call_args_list,
-                [mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]]
-                + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
+            stack.enter_context(
+                mock.patch.object(
+                    runner,
+                    "now",
+                    side_effect=[
+                        "2026-07-16T00:00:00.100000Z",
+                        "2026-07-16T00:00:01.200000Z",
+                        "2026-07-16T00:00:01.300000Z",
+                        "2026-07-16T00:00:01.400000Z",
+                    ],
+                )
             )
-            self.assertEqual(FakeORT.last_session.calls, 3)
-            self.assertEqual(result["schemaVersion"], runner.RESULT_SCHEMA)
-            self.assertEqual(result["inputs"], request["runConfig"]["delivery"]["artifactCapability"]["tensors"])
-            self.assertNotIn("inputShape", result)
-            self.assertNotIn("bSat", result)
-            self.assertEqual(result["status"], "Succeeded")
-            self.assertEqual(result["experimentId"], "pod-uid")
-            self.assertEqual(result["nodeName"], request["scheduledNodeName"])
-            self.assertEqual(result["provider"], "CPUExecutionProvider")
-            self.assertEqual(result["inferenceCount"], 1)
-            self.assertEqual(result["latencyMs"]["mean"], 5.0)
-            self.assertEqual(
-                result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 20}
-            )
-            self.assertEqual(
-                result["derivedExecutionContract"]["nodeSnapshot"]["uid"], "node-uid"
-            )
-            self.assertEqual(result["outputValidation"]["outputShapes"], [[1, 1000]])
-            generator = FakeNumpy.last_generator
-            if generator is None:
-                self.fail("input generator was not created")
-            self.assertEqual(sum(generator.calls), 1 * 3 * 224 * 224)
-            self.assertLessEqual(
-                max(generator.calls), runner.INPUT_GENERATION_CHUNK_ELEMENTS
+            stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 1.1, 1.1]))
+            ticks = iter([0, 5_000_000])
+            stack.enter_context(mock.patch.object(
+                runner.time, "perf_counter_ns", side_effect=lambda: session.calls.append("timer") or next(ticks)
+            ))
+            stack.enter_context(mock.patch.object(runner.time, "process_time", side_effect=[2.0, 2.8]))
+            result = runner.execute_loaded(
+                request, session, "test-ort", ["CPUExecutionProvider"], "x86_64",
+                "400000 100000", [0, 1, 2, 3], "0-3", before, "CPUExecutionProvider",
             )
 
-    def test_execute_idle_loads_model_then_issues_no_inference(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            model = Path(directory) / "model.onnx"
-            model.write_bytes(b"model")
-            request = valid_idle_request(model)
-            with ExitStack() as stack:
-                stack.enter_context(
-                    mock.patch.object(runner.platform, "machine", return_value="x86_64")
-                )
-                stack.enter_context(
-                    mock.patch.object(
-                        runner,
-                        "validate_cpu_contract",
-                        return_value=("400000 100000", [0, 1, 2, 3], "0-3"),
-                    )
-                )
-                wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
-                publish = stack.enter_context(
-                    mock.patch.object(runner, "publish_immutable")
-                )
-                sleep = stack.enter_context(mock.patch.object(runner.time, "sleep"))
-                stack.enter_context(
-                    mock.patch.object(
-                        runner,
-                        "cpu_stat",
-                        side_effect=[{"usage_usec": 10}, {"usage_usec": 15}],
-                    )
-                )
-                stack.enter_context(
-                    mock.patch.object(
-                        runner,
-                        "now",
-                        side_effect=[
-                            "2026-07-16T00:00:00.000000Z",
-                            "2026-07-16T00:00:01.000000Z",
-                            "2026-07-16T00:01:01.000000Z",
-                            "2026-07-16T00:01:01.100000Z",
-                            "2026-07-16T00:01:31.200000Z",
-                            "2026-07-16T00:01:31.300000Z",
-                        ],
-                    )
-                )
-                stack.enter_context(
-                    mock.patch.object(
-                        runner.time,
-                        "monotonic",
-                        side_effect=[0.0, 0.0, 60.0, 100.0, 100.0, 130.0, 130.0],
-                    )
-                )
-                stack.enter_context(
-                    mock.patch.object(
-                        runner.time, "process_time", side_effect=[2.0, 2.1]
-                    )
-                )
-                result = runner.execute(request, FakeORT, FakeNumpy)
+        before.assert_called_once_with()
+        self.assertEqual(
+            publish.call_args_list,
+            [
+                mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
+                mock.call(Path(request["measurementStartPath"]), b"signal\n"),
+                mock.call(Path(request["measurementEndPath"]), b"signal\n"),
+            ],
+        )
+        self.assertEqual(
+            wait.call_args_list,
+            [mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]]
+            + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
+        )
+        self.assertEqual(session.calls, ["prepare", "timer", "run", "timer"])
+        self.assertEqual(result["schemaVersion"], runner.RESULT_SCHEMA)
+        self.assertEqual(result["inputs"], ["image"])
+        self.assertNotIn("outputValidation", result)
+        self.assertEqual(result["status"], "Succeeded")
+        self.assertEqual(result["experimentId"], "pod-uid")
+        self.assertEqual(result["nodeName"], request["scheduledNodeName"])
+        self.assertEqual(result["provider"], "CPUExecutionProvider")
+        self.assertEqual(result["inferenceCount"], 1)
+        self.assertEqual(result["latencyMs"]["mean"], 5.0)
+        self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 20})
+        self.assertEqual(result["derivedExecutionContract"]["nodeSnapshot"]["uid"], "node-uid")
 
-            self.assertEqual(FakeORT.last_session.calls, 0)
-            self.assertEqual(result["schemaVersion"], runner.IDLE_RESULT_SCHEMA)
-            self.assertEqual(result["inputs"], request["runConfig"]["delivery"]["artifactCapability"]["tensors"])
-            self.assertEqual(result["inferenceCountAfterModelLoad"], 0)
-            self.assertTrue(result["modelResidentAtEnd"])
-            self.assertEqual(result["settlingStartedAt"], "2026-07-16T00:00:01.000000Z")
-            self.assertEqual(
-                result["measurementStartedAt"], "2026-07-16T00:01:01.100000Z"
+    def test_execute_idle_issues_no_inference(self) -> None:
+        request = valid_idle_request(Path("/model/model.onnx"))
+        session = FakeSession()
+        with ExitStack() as stack:
+            wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
+            publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
+            sleep = stack.enter_context(mock.patch.object(runner.time, "sleep"))
+            stack.enter_context(
+                mock.patch.object(runner, "cpu_stat", side_effect=[{"usage_usec": 10}, {"usage_usec": 15}])
             )
-            self.assertEqual(
-                result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 5}
+            stack.enter_context(
+                mock.patch.object(
+                    runner,
+                    "now",
+                    side_effect=[
+                        "2026-07-16T00:00:01.000000Z",
+                        "2026-07-16T00:01:01.000000Z",
+                        "2026-07-16T00:01:01.100000Z",
+                        "2026-07-16T00:01:31.200000Z",
+                        "2026-07-16T00:01:31.300000Z",
+                    ],
+                )
             )
-            self.assertGreaterEqual(sleep.call_count, 2)
-            self.assertEqual(
-                publish.call_args_list,
-                [
-                    mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
-                    mock.call(Path(request["measurementStartPath"]), b"signal\n"),
-                    mock.call(Path(request["measurementEndPath"]), b"signal\n"),
-                ],
+            stack.enter_context(
+                mock.patch.object(
+                    runner.time, "monotonic", side_effect=[0.0, 0.0, 60.0, 100.0, 100.0, 130.0, 130.0]
+                )
             )
-            self.assertEqual(
-                wait.call_args_list,
-                [mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]]
-                + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
+            stack.enter_context(mock.patch.object(runner.time, "process_time", side_effect=[2.0, 2.1]))
+            result = runner.execute_idle(
+                request, "test-ort", session, ["CPUExecutionProvider"], "x86_64",
+                "400000 100000", [0, 1, 2, 3], "0-3", "2026-07-16T00:00:00.000000Z", "CPUExecutionProvider",
             )
+
+        self.assertEqual(session.calls, [])
+        self.assertEqual(result["schemaVersion"], runner.IDLE_RESULT_SCHEMA)
+        self.assertEqual(result["inputs"], ["image"])
+        self.assertEqual(result["inferenceCountAfterModelLoad"], 0)
+        self.assertTrue(result["modelResidentAtEnd"])
+        self.assertEqual(result["settlingStartedAt"], "2026-07-16T00:00:01.000000Z")
+        self.assertEqual(result["measurementStartedAt"], "2026-07-16T00:01:01.100000Z")
+        self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 5})
+        self.assertGreaterEqual(sleep.call_count, 2)
+        self.assertEqual(
+            publish.call_args_list,
+            [
+                mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
+                mock.call(Path(request["measurementStartPath"]), b"signal\n"),
+                mock.call(Path(request["measurementEndPath"]), b"signal\n"),
+            ],
+        )
+        self.assertEqual(
+            wait.call_args_list,
+            [mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]]
+            + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
+        )
 
 
 if __name__ == "__main__":

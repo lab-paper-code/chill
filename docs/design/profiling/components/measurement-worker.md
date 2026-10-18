@@ -4,13 +4,13 @@
 
 ## Status
 
-Implemented for the first CPU ONNX Runtime profiling path. The causal
-metric/workload end-fence success path was live-verified with three sequential,
-same-RunConfig Runs admitted by `wall-power-v2`. This document does not authorize
-batch campaigns, batch-energy optimization, another runtime, or serving.
+Implemented for the firstfloor profiling path. The causal metric/workload
+end-fence success path was live-verified with three sequential, same-RunConfig
+Runs admitted by `wall-power-v2`. This document does not authorize batch
+campaigns, batch-energy optimization, another runtime, or serving.
 
-The current RunConfig and runtime request schemas, CPU ORT and RKNNLite adapters,
-separate idle runtime/raw schemas, shared immutable finalization/loading, and
+The current RunConfig and firstfloor request schemas, the firstfloor runtime
+adapter, separate idle runtime/raw schemas, shared immutable finalization/loading, and
 idle admission dispatch are implemented. The earlier active and idle paths were
 live-verified; the current simplified semantic contracts have not yet been
 re-run on the live cluster.
@@ -86,7 +86,7 @@ artifact init container
 
 runtime container (the measurement worker and sole raw writer)
   -> verify RunConfig and artifact
-  -> run the explicit CPU ONNX Runtime adapter
+  -> run the firstfloor runtime adapter
   -> coordinate the measurement window
   -> validate MetricObserver and WorkloadObserver results
   -> assemble and immutably store RawMeasurement
@@ -109,9 +109,10 @@ the runtime worker. The MetricObserver does not receive storage credentials and
 cannot publish Run evidence.
 
 The `runtime` image is the complete trusted worker/runtime environment for the
-selected path. It contains the CHILL worker entrypoint and the explicit CPU ORT
-adapter. The separately pinned `metricObserver` image contains the bounded
-observer helper. A separately pinned WorkloadObserver image receives the only
+selected path. It contains the CHILL worker entrypoint, the firstfloor actor and
+runner, and their ORT and RKNNLite contract helpers. The separately pinned
+`metricObserver` image contains the bounded observer helper. A separately
+pinned WorkloadObserver image receives the only
 Kubernetes API credential in the Job. The trusted execution declaration must
 therefore reference the worker/runtime image selected for the Run. The artifact
 image remains an init-container supply image.
@@ -133,8 +134,8 @@ The Job materializer consumes this resolved execution fact:
 
 It is resolved from the already trusted artifact declaration and recorded in the
 RunConfig. The destination path inside the shared model volume belongs to the
-explicit runtime adapter (`model.onnx` for CPU ORT and `model.rknn` for
-RKNNLite) and is not caller-selectable. RKNNLite additionally projects only the
+runtime adapter (`model.onnx` for ORT backends and `model.rknn` for the RKNNLite
+backend) and is not caller-selectable. RKNNLite additionally projects only the
 verified report's exact host library, driver-version, platform-compatible, and
 device paths. File facts are read-only, device nodes remain writable, runtime
 container privilege and host mounts apply only to that container, and an
@@ -143,11 +144,12 @@ supplemental groups are necessarily Pod-level, but observers receive no device
 mount or privilege.
 
 The Go worker verifies the projected candidate report once before constructing
-the runtime adapter. `runtime/rknnlite/runner.py` then owns RKNNLite-specific
-artifact, image-package, host-library, driver, platform, character-device,
-core-mask, initialization, and inference checks; it does not reuse ONNX Runtime
-provider vocabulary. The Go adapter compares the emitted mutable observations
-with the sealed candidate projection before raw evidence construction.
+the runtime adapter. The firstfloor runner and the RKNNLite helpers in
+`runtime/rknnlite/runner.py` then own RKNNLite-specific artifact,
+image-package, host-library, driver, platform, character-device, core-mask,
+initialization, and inference checks; they do not reuse ONNX Runtime provider
+vocabulary. `runtime/firstfloor/measurement.py` compares the actual runtime
+facts with the delivered host declarations before raw evidence construction.
 
 Active and idle Runs use only the current RunConfig schema. The optional
 physical host contract is represented as semantic library, driver, platform,
@@ -215,7 +217,7 @@ An accelerator path appends one exact `hostPath` volume per verified host fact;
 it never mounts a whole device directory or exposes those volumes to either
 observer.
 
-The runtime workspace holds the private CPU ORT result and bounded temporary
+The runtime workspace holds the private firstfloor result and bounded temporary
 file used to verify evidence before upload. It is not a cross-container
 protocol or retained evidence location.
 
@@ -357,7 +359,7 @@ these delivery bindings.
 Job composition also supplies bounded producer capacities. The MetricObserver
 must admit the complete duration/interval polling schedule within one combined
 sample-and-failure event cap before polling begins, then enforce that cap while
-recording. The CPU ORT runtime must reject an input tensor before allocation if
+recording. The firstfloor runtime must reject an input tensor before allocation if
 its calculated bytes exceed the supplied input budget, cap retained latency
 samples during measurement, and reject a serialized runtime result that
 exceeds its result-byte budget. These capacities are versioned worker delivery
@@ -412,7 +414,7 @@ Profiler controller
   -> never executes inference or polls power
 
 runtime worker
-  -> explicit CPU ORT adapter
+  -> firstfloor runtime adapter
   -> internal/profiling/profiler/evidence raw codec
   -> internal/evidencestore + S3 adapter
 

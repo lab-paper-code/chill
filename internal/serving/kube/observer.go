@@ -369,7 +369,7 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 	expected := *profile.RuntimeMetadata
 	// Delivery changes only the verified artifact's mount location, not the
 	// measured runtime, model bytes, provider, device or execution allocation.
-	expected.ModelPath = path.Join("/model", "model"+path.Ext(condition.Artifact.Path))
+	expected.ModelFiles = deliveredModelFiles(condition.Artifact.Files)
 	return firstfloor.Spec{Endpoint: endpoint, ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: node.Labels[ServingPoolLabel], Profile: profile, Weight: int32(weight), Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[ServingPolicyAnnotation]}, nil
 }
 
@@ -409,38 +409,57 @@ func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *servin
 	return confirmedPower(node, class, condition.PowerMode, actuations)
 }
 
-func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.CurvePlanSpec) error {
-	if len(pod.Spec.Containers) != 1 || len(pod.Spec.InitContainers) != 2 || len(pod.Spec.EphemeralContainers) != 0 || pod.Spec.HostNetwork {
-		return errors.New("native source requires isolated firstfloor runner, artifact and immutable profile init containers")
+// deliveredModelFiles is the sorted set of model files the runner loads: every
+// frozen artifact file copied to /model under its basename.
+func deliveredModelFiles(files []string) []string {
+	delivered := make([]string, len(files))
+	for i, file := range files {
+		delivered[i] = path.Join("/model", path.Base(file))
 	}
-	runtime, artifact := pod.Spec.Containers[0], pod.Spec.InitContainers[0]
+	slices.Sort(delivered)
+	return delivered
+}
+
+func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.CurvePlanSpec) error {
+	if len(pod.Spec.Containers) != 1 || len(pod.Spec.InitContainers) != 3 || len(pod.Spec.EphemeralContainers) != 0 || pod.Spec.HostNetwork {
+		return errors.New("native source requires isolated firstfloor runner, artifact, preprocessor and immutable profile init containers")
+	}
+	runtime, artifact, preprocessor, bundle := pod.Spec.Containers[0], pod.Spec.InitContainers[0], pod.Spec.InitContainers[1], pod.Spec.InitContainers[2]
 	status := firstfloorStatus(pod)
-	if runtime.Name != firstfloorContainerName || artifact.Name != "artifact" || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || !observedImage(runtime.Image, status.ImageID, condition.RuntimeImage) {
+	if runtime.Name != firstfloorContainerName || artifact.Name != "artifact" || preprocessor.Name != "preprocessor" || bundle.Name != profileInitContainerName || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || !observedImage(runtime.Image, status.ImageID, condition.RuntimeImage) {
 		return errors.New("actual immutable native runtime image/container unavailable")
 	}
-	var init *corev1.ContainerStatus
-	for i := range pod.Status.InitContainerStatuses {
-		if pod.Status.InitContainerStatuses[i].Name == "artifact" {
-			init = &pod.Status.InitContainerStatuses[i]
-		}
-	}
-	if init == nil || init.State.Terminated == nil || init.State.Terminated.ExitCode != 0 || !observedImage(artifact.Image, init.ImageID, condition.Artifact.Image) {
+	if !initCompleted(pod, artifact, condition.Artifact.Image) {
 		return errors.New("immutable artifact preparation unconfirmed")
 	}
-	if !slices.Equal(artifact.Command, []string{"sh", "-ec"}) || !slices.Equal(artifact.Args, []string{`cp "$1" "$2"`, "artifact-copy", condition.Artifact.Path, path.Join("/chill-artifact", "model"+path.Ext(condition.Artifact.Path))}) || !artifactProjection(pod, artifact, runtime, condition.Artifact.Path) {
-		return errors.New("artifact must use the verified read-only shared-volume projection")
-	}
-	bundle := pod.Spec.InitContainers[1]
-	var bundleStatus *corev1.ContainerStatus
-	for i := range pod.Status.InitContainerStatuses {
-		if pod.Status.InitContainerStatuses[i].Name == profileInitContainerName {
-			bundleStatus = &pod.Status.InitContainerStatuses[i]
+	for _, file := range condition.Artifact.Files {
+		if path.Dir(file) != "/artifact" {
+			return errors.New("artifact must use the verified read-only shared-volume projection")
 		}
 	}
-	if bundle.Name != profileInitContainerName || bundle.Image != condition.RuntimeImage || bundleStatus == nil || bundleStatus.State.Terminated == nil || bundleStatus.State.Terminated.ExitCode != 0 || !observedImage(bundle.Image, bundleStatus.ImageID, condition.RuntimeImage) {
+	if !slices.Equal(artifact.Command, []string{"sh", "-ec"}) || !slices.Equal(artifact.Args, append([]string{`cp "$@" /chill-artifact/`, "--"}, condition.Artifact.Files...)) || !sharedProjection(pod, artifact, runtime, "/chill-artifact", "/model") {
+		return errors.New("artifact must use the verified read-only shared-volume projection")
+	}
+	if !initCompleted(pod, preprocessor, condition.Preprocessor.Image) {
+		return errors.New("immutable preprocessor preparation unconfirmed")
+	}
+	if !slices.Equal(preprocessor.Command, []string{"sh", "-ec"}) || !slices.Equal(preprocessor.Args, []string{`cp -R "$1"/. /chill-preprocessor/`, "--", condition.Preprocessor.Path}) || !sharedProjection(pod, preprocessor, runtime, "/chill-preprocessor", "/preprocessor") {
+		return errors.New("preprocessor must use the verified read-only shared-volume projection")
+	}
+	if !initCompleted(pod, bundle, condition.RuntimeImage) {
 		return errors.New("immutable profile materialization unconfirmed")
 	}
 	return nil
+}
+
+// initCompleted confirms the init container ran the frozen image and exited 0.
+func initCompleted(pod *corev1.Pod, init corev1.Container, image string) bool {
+	for _, status := range pod.Status.InitContainerStatuses {
+		if status.Name == init.Name {
+			return status.State.Terminated != nil && status.State.Terminated.ExitCode == 0 && observedImage(init.Image, status.ImageID, image)
+		}
+	}
+	return false
 }
 
 func validateSourceResources(runtime *corev1.Container, node *corev1.Node, profile *serving.Profile) error {
@@ -469,13 +488,10 @@ func validateSourceResources(runtime *corev1.Container, node *corev1.Node, profi
 	return nil
 }
 func observedImage(requested, actual, frozen string) bool { return requested == frozen && actual != "" }
-func artifactProjection(pod *corev1.Pod, artifact, runtime corev1.Container, filename string) bool {
-	if path.Dir(filename) != "/artifact" {
-		return false
-	}
-	for _, a := range artifact.VolumeMounts {
+func sharedProjection(pod *corev1.Pod, init, runtime corev1.Container, initPath, runtimePath string) bool {
+	for _, a := range init.VolumeMounts {
 		for _, r := range runtime.VolumeMounts {
-			if a.Name == r.Name && a.MountPath == "/chill-artifact" && r.MountPath == "/model" && !a.ReadOnly && r.ReadOnly && a.SubPath == "" && r.SubPath == "" && a.SubPathExpr == "" && r.SubPathExpr == "" {
+			if a.Name == r.Name && a.MountPath == initPath && r.MountPath == runtimePath && !a.ReadOnly && r.ReadOnly && a.SubPath == "" && r.SubPath == "" && a.SubPathExpr == "" && r.SubPathExpr == "" {
 				for _, volume := range pod.Spec.Volumes {
 					if volume.Name == a.Name && volume.EmptyDir != nil {
 						return true

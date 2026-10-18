@@ -1,45 +1,80 @@
 # Use metadata.name and spec as serving management API input, not kubectl apply.
+# Images pin the pushed carrier digests (README.md).
 apiVersion: edge.dacs.io/v1alpha1
 kind: ModelSpec
 metadata:
   name: mobilenet-v2-050
 spec:
   artifacts:
-  - name: canonical-onnx
+  - name: canonical-onnx-arm64
     format: onnx
     source:
-      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
+      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:a6a670b244d5d93987160f62e52da97a09fdcb731ded67c1123e614276aee406"
       architecture: arm64
-      path: /artifact/mobilenet-v2-050.onnx
-    input:
-      tensors:
-      - name: input
-        datatype: FP32
-        sampleShape: [3, 224, 224]
+      files:
+      - /artifact/mobilenet-v2-050.onnx
+  - name: canonical-onnx-amd64
+    format: onnx
+    source:
+      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:a6a670b244d5d93987160f62e52da97a09fdcb731ded67c1123e614276aee406"
+      architecture: amd64
+      files:
+      - /artifact/mobilenet-v2-050.onnx
   - name: mobilenet-v2-050-rk3588
     format: rknn
     source:
       image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:c9eb4abc86b376f43c419cd01782bc3709fd14d8452a4953ea8f396fd3b702a5"
       architecture: arm64
-      path: /artifact/mobilenet-v2-050-rk3588.rknn
+      files:
+      - /artifact/mobilenet-v2-050-rk3588.rknn
     input:
       tensors:
       - name: input
         datatype: FP32
         sampleShape: [224, 224, 3]
     derivation:
-      sourceArtifact: canonical-onnx
+      sourceArtifact: canonical-onnx-arm64
       targetPlatform: rk3588
       declaredBatchSizes: [1, 2, 4, 8, 16]
       conversion:
         tool: rknn-toolkit2
         version: 2.3.2
   executionPaths:
-  - name: firstfloor-ort-cpu
-    artifact: canonical-onnx
+  - name: firstfloor-ort-cpu-arm64
+    artifact: canonical-onnx-arm64
     runtime:
       family: firstfloor
       backend: ort-cpu
+      settings:
+        firstfloor:
+          maxBatchSize: 16
+          maxQueueSize: 256
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cuda-arm64
+    artifact: canonical-onnx-arm64
+    runtime:
+      family: firstfloor
+      backend: ort-cuda
+      settings:
+        firstfloor:
+          maxBatchSize: 16
+          maxQueueSize: 256
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cpu-amd64
+    artifact: canonical-onnx-amd64
+    runtime:
+      family: firstfloor
+      backend: ort-cpu
+      settings:
+        firstfloor:
+          maxBatchSize: 16
+          maxQueueSize: 256
+          deadlinePolicy: keep
+  - name: firstfloor-ort-cuda-amd64
+    artifact: canonical-onnx-amd64
+    runtime:
+      family: firstfloor
+      backend: ort-cuda
       settings:
         firstfloor:
           maxBatchSize: 16
@@ -55,13 +90,3 @@ spec:
           maxBatchSize: 16
           maxQueueSize: 256
           deadlinePolicy: defer
-  - name: ort-cpu
-    artifact: canonical-onnx
-    runtime:
-      family: onnxruntime
-      backend: CPUExecutionProvider
-  - name: rknnlite
-    artifact: mobilenet-v2-050-rk3588
-    runtime:
-      family: rknnlite
-      backend: not-applicable

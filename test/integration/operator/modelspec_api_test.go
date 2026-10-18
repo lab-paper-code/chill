@@ -32,7 +32,7 @@ var _ = Describe("ModelSpec API", func() {
 			Format: "rknn",
 			Source: edgev1alpha1.ModelArtifactSource{
 				Image: "registry.example/model-rknn@sha256:digest", Architecture: "arm64",
-				Path: "/artifact/model.rknn",
+				Files: []string{"/artifact/model.rknn"},
 			},
 			Input: &edgev1alpha1.ModelArtifactInputContract{
 				Tensors: []edgev1alpha1.ModelInputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}},
@@ -74,11 +74,11 @@ var _ = Describe("ModelSpec API", func() {
 		Entry("empty artifact source architecture", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.Artifacts[0].Source.Architecture = ""
 		}),
-		Entry("relative artifact source path", func(model *edgev1alpha1.ModelSpec) {
-			model.Spec.Artifacts[0].Source.Path = "artifact/model.onnx"
+		Entry("relative artifact source file", func(model *edgev1alpha1.ModelSpec) {
+			model.Spec.Artifacts[0].Source.Files = []string{"artifact/model.onnx"}
 		}),
-		Entry("missing artifact input contract", func(model *edgev1alpha1.ModelSpec) {
-			model.Spec.Artifacts[0].Input = nil
+		Entry("empty artifact source files", func(model *edgev1alpha1.ModelSpec) {
+			model.Spec.Artifacts[0].Source.Files = []string{}
 		}),
 		Entry("duplicate artifact name", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.Artifacts = append(model.Spec.Artifacts, model.Spec.Artifacts[0])
@@ -163,10 +163,7 @@ func validModelSpec(name string) *edgev1alpha1.ModelSpec {
 					Format: "onnx",
 					Source: edgev1alpha1.ModelArtifactSource{
 						Image: "registry.example/model@sha256:digest", Architecture: "arm64",
-						Path: "/artifact/model.onnx",
-					},
-					Input: &edgev1alpha1.ModelArtifactInputContract{
-						Tensors: []edgev1alpha1.ModelInputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}},
+						Files: []string{"/artifact/model.onnx"},
 					},
 				},
 			},
@@ -175,8 +172,11 @@ func validModelSpec(name string) *edgev1alpha1.ModelSpec {
 					Name:     "ort-cpu",
 					Artifact: "canonical-onnx",
 					Runtime: edgev1alpha1.ModelRuntimeRequirement{
-						Family:  "onnxruntime",
-						Backend: "CPUExecutionProvider",
+						Family:  "firstfloor",
+						Backend: "ort-cpu",
+						Settings: &edgev1alpha1.ModelRuntimeSettings{
+							Firstfloor: &edgev1alpha1.FirstfloorRuntimeSettings{MaxBatchSize: 4, MaxQueueSize: 32},
+						},
 					},
 				},
 			},

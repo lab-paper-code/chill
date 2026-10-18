@@ -10,7 +10,6 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
@@ -495,7 +494,7 @@ func loadRunConfig(t *testing.T) profilingrun.RunConfig {
 		t.Fatal(err)
 	}
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
 	if err := config.Validate(); err != nil {
@@ -526,7 +525,7 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 			Backend:                   config.State.Backend,
 			Provider:                  config.State.Backend,
 			AvailableProviders:        []string{config.State.Backend},
-			Inputs:                    modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+			Inputs:                    config.State.Preprocessor.Inputs,
 			BatchSize:                 config.Measurement.Batch,
 			WarmupIterations:          config.Measurement.WarmupIterations,
 			WarmupCompletedAt:         started.Add(-time.Second).UTC().Format(time.RFC3339Nano),
@@ -536,11 +535,6 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 			MeasurementEndedAt:        started.Add(30 * time.Second).UTC().Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30,
 			TargetDurationSeconds:     &targetDuration,
-			OutputValidation: profilingrun.OutputValidation{
-				Method:       config.Measurement.OutputValidation,
-				Passed:       true,
-				OutputShapes: [][]int{{config.Measurement.Batch, 1000}},
-			},
 			CPUContract: profilingrun.RuntimeCPU{
 				CgroupCPUMax:       "400000 100000",
 				ORTIntraOpThreads:  config.CPU.ORTIntraOpThreads,
@@ -612,6 +606,7 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 		InitialActivePods: []workloadobserver.Pod{runPod}, FinalActivePods: []workloadobserver.Pod{runPod},
 		Continuous: true,
 	}
+	applyFirstfloorRuntime(config, &raw.Runtime)
 	return raw
 }
 
@@ -620,8 +615,7 @@ func idleRunConfig(t *testing.T) profilingrun.RunConfig {
 	config := loadRunConfig(t)
 	config.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
-		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
@@ -633,7 +627,7 @@ func validIdleRaw(t *testing.T, config profilingrun.RunConfig) IdleRawMeasuremen
 	t.Helper()
 	activeShape := validRaw(t, config)
 	started := activeShape.Metrics.StartedAt
-	return IdleRawMeasurement{
+	idle := IdleRawMeasurement{
 		SchemaVersion: IdleRawMeasurementSchemaVersion,
 		RunConfig:     config,
 		PodUID:        activeShape.PodUID,
@@ -644,7 +638,7 @@ func validIdleRaw(t *testing.T, config profilingrun.RunConfig) IdleRawMeasuremen
 			Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 			Backend: config.State.Backend, Provider: config.State.Backend,
 			AvailableProviders:        []string{config.State.Backend},
-			Inputs:                    modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
+			Inputs:                    config.State.Preprocessor.Inputs,
 			ModelLoadCompletedAt:      started.Add(-61 * time.Second).UTC().Format(time.RFC3339Nano),
 			SettlingStartedAt:         started.Add(-60 * time.Second).UTC().Format(time.RFC3339Nano),
 			SettlingCompletedAt:       started.UTC().Format(time.RFC3339Nano),
@@ -664,6 +658,8 @@ func validIdleRaw(t *testing.T, config profilingrun.RunConfig) IdleRawMeasuremen
 		Metrics:  activeShape.Metrics,
 		Workload: activeShape.Workload,
 	}
+	applyFirstfloorIdleRuntime(config, &idle.Runtime)
+	return idle
 }
 
 func validExecutionEvidence(

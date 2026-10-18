@@ -1,7 +1,6 @@
 package projection
 
 import (
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -26,15 +25,10 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
-		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
 	spec, err := ProjectCurvePlanSpec(
 		"test-curve", active, idle,
-		profilingrun.CandidateArtifactCapability{
-			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1, 2},
-			Tensors: modelcompat.CloneInputTensors(active.Delivery.ArtifactCapability.Tensors),
-		},
 		profilederivation.CurveConversionContract{
 			TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
 		},
@@ -43,8 +37,12 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 	if err != nil {
 		t.Fatalf("project curve plan: %v", err)
 	}
-	if !reflect.DeepEqual(spec.Tensor.Tensors, active.Delivery.ArtifactCapability.Tensors) {
-		t.Fatalf("projected tensor contract = %+v", spec.Tensor)
+	if !slices.Equal(spec.Artifact.Files, active.State.ArtifactFiles) ||
+		spec.Preprocessor.Name != active.State.Preprocessor.Name ||
+		!slices.Equal(spec.Preprocessor.Inputs, active.State.Preprocessor.Inputs) ||
+		spec.ActiveProtocol.Dataset == nil || spec.ActiveProtocol.Dataset.UID != active.Measurement.Dataset.UID ||
+		spec.IdleProtocol.Dataset != nil {
+		t.Fatalf("projected preprocessing contract = %+v %+v", spec.Artifact, spec.Preprocessor)
 	}
 	plan, err := profilederivation.NewCurvePlan(spec)
 	if err != nil {
@@ -67,11 +65,10 @@ func TestCurveCPUProjectionPreservesExactDetachedAffinityAndStateIdentity(t *tes
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
-		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
 	spec, err := ProjectCurvePlanSpec(
-		"test-curve", active, idle, *active.Delivery.ArtifactCapability,
+		"test-curve", active, idle,
 		profilederivation.CurveConversionContract{}, []int{1, 2},
 	)
 	if err != nil {
@@ -100,44 +97,45 @@ func TestCurveCPUProjectionPreservesExactDetachedAffinityAndStateIdentity(t *tes
 	}
 }
 
-func TestCurvePlanProjectionFreezesCompleteInputs(t *testing.T) {
+func TestCurvePlanProjectionFreezesPreprocessingInputs(t *testing.T) {
 	active := curvePlanRunConfig()
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
-		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
-	capability := *active.Delivery.ArtifactCapability
 	spec, err := ProjectCurvePlanSpec(
-		"test-curve", active, idle, capability, profilederivation.CurveConversionContract{}, []int{1, 2},
+		"test-curve", active, idle, profilederivation.CurveConversionContract{}, []int{1, 2},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := modelcompat.CloneInputTensors(capability.Tensors)
-	capability.Tensors[0].Name = "mutated"
-	capability.Tensors[0].Datatype = "INT32"
-	capability.Tensors[0].SampleShape[0]++
-	if !reflect.DeepEqual(spec.Tensor.Tensors, want) {
-		t.Fatal("capability mutation changed the projected input contract")
+	active.State.Preprocessor.Inputs[0] = "mutated"
+	active.State.ArtifactFiles[0] = "/mutated"
+	if spec.Preprocessor.Inputs[0] != "image" || spec.Artifact.Files[0] != "/artifact/model.rknn" {
+		t.Fatal("RunConfig mutation changed the projected preprocessing contract")
 	}
-	for _, field := range []string{"name", "datatype", "shape", "missing"} {
-		t.Run(field, func(t *testing.T) {
+	for name, test := range map[string]struct {
+		mutate func(*profilingrun.RunConfig)
+		match  string
+	}{
+		"preprocessor image": {func(c *profilingrun.RunConfig) { c.State.Preprocessor.Image = "other" }, "preprocessor facts"},
+		"preprocessor outputs": {
+			func(c *profilingrun.RunConfig) { c.State.Preprocessor.Outputs = []string{"answer"} }, "preprocessor facts",
+		},
+		"artifact files": {func(c *profilingrun.RunConfig) { c.State.ArtifactFiles = []string{"/artifact/a.rknn"} }, "artifact facts"},
+		"dataset UID": {func(c *profilingrun.RunConfig) {
+			dataset := *c.Measurement.Dataset
+			dataset.UID = "other-dataset-uid"
+			c.Measurement.Dataset = &dataset
+		}, "measurement-protocol facts"},
+	} {
+		t.Run(name, func(t *testing.T) {
 			drifted := curvePlanRunConfig()
-			switch field {
-			case "name":
-				drifted.Delivery.ArtifactCapability.Tensors[0].Name = "other-input"
-			case "datatype":
-				drifted.Delivery.ArtifactCapability.Tensors[0].Datatype = "INT32"
-			case "shape":
-				drifted.Delivery.ArtifactCapability.Tensors[0].SampleShape[0]++
-			case "missing":
-				drifted.Delivery.ArtifactCapability = nil
-			}
+			test.mutate(&drifted)
 			if err := validateCurvePlanRunConfig(drifted, drifted.TargetNode.UID, spec, spec.ActiveProtocol); err == nil ||
-				!strings.Contains(err.Error(), "curve-plan input tensor facts") {
-				t.Fatalf("input contract drift error = %v", err)
+				!strings.Contains(err.Error(), test.match) {
+				t.Fatalf("preprocessing drift error = %v", err)
 			}
 		})
 	}
@@ -178,6 +176,12 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 				idle.Candidate.Inputs.ModelSpec.UID = "different-model-uid"
 			},
 		},
+		{
+			name: "preprocessor",
+			mutate: func(idle *profilingrun.RunConfig) {
+				idle.State.Preprocessor.Path = "/artifact/other"
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -185,16 +189,11 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 			idle := active
 			idle.Measurement = profilingrun.MeasurementContract{
 				Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-				WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
-				InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+				WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 			}
 			test.mutate(&idle)
 			if _, err := ProjectCurvePlanSpec(
 				"test-curve", active, idle,
-				profilingrun.CandidateArtifactCapability{
-					TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1, 2},
-					Tensors: modelcompat.CloneInputTensors(active.Delivery.ArtifactCapability.Tensors),
-				},
 				profilederivation.CurveConversionContract{
 					TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
 				},
@@ -211,8 +210,7 @@ func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) 
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
-		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
 	activeProtocol, err := projectCurveProtocol(active)
 	if err != nil {
@@ -226,18 +224,17 @@ func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) 
 		Name: "test-curve", LogicalModel: active.State.Model,
 		DeviceClass: active.State.DeviceClass, NodeUID: active.TargetNode.UID,
 		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
+		Firstfloor:   modelcompat.CloneFirstfloorRuntimeSettings(active.State.Firstfloor),
 		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
 		CPU:            projectCurveCPU(active.CPU),
 		MetricSource:   projectCurveMetricSource(active.Metrics),
 		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,
 		Artifact: profilederivation.CurveArtifactContract{
 			ExecutionPath: active.Candidate.ExecutionPath, Name: active.State.Artifact,
-			Path: active.State.ArtifactPath, Image: active.Images.Artifact,
+			Files: active.State.ArtifactFiles, Image: active.Images.Artifact,
 		},
+		Preprocessor:      projectCurvePreprocessor(active.State.Preprocessor),
 		PlannedBatchSizes: []int{1},
-		Tensor: profilederivation.CurveTensorContract{
-			Tensors: modelcompat.CloneInputTensors(active.Delivery.ArtifactCapability.Tensors),
-		},
 	}
 	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatal(err)
@@ -263,16 +260,15 @@ func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 	active := curvePlanRunConfig()
 	active.Candidate.ExecutionPath = "ort-cpu"
 	active.State.Artifact = "canonical-onnx"
-	active.State.ArtifactPath = "/artifact/model.onnx"
-	active.State.RuntimeFamily = "onnxruntime"
-	active.State.Backend = "CPUExecutionProvider"
+	active.State.ArtifactFiles = []string{"/artifact/model.onnx"}
+	active.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
+	active.State.Backend = profilingrun.FirstfloorORTCPUBackend
 	active.State.HostContract = nil
 	active.Measurement.Batch = 2
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
-		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
 	activeProtocol, err := projectCurveProtocol(active)
 	if err != nil {
@@ -286,17 +282,16 @@ func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 		Name: "test-curve", LogicalModel: active.State.Model,
 		DeviceClass: active.State.DeviceClass, NodeUID: active.TargetNode.UID,
 		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
+		Firstfloor:   modelcompat.CloneFirstfloorRuntimeSettings(active.State.Firstfloor),
 		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
 		CPU: projectCurveCPU(active.CPU), MetricSource: projectCurveMetricSource(active.Metrics),
 		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,
 		Artifact: profilederivation.CurveArtifactContract{
 			ExecutionPath: active.Candidate.ExecutionPath, Name: active.State.Artifact,
-			Path: active.State.ArtifactPath, Image: active.Images.Artifact,
+			Files: active.State.ArtifactFiles, Image: active.Images.Artifact,
 		},
+		Preprocessor:      projectCurvePreprocessor(active.State.Preprocessor),
 		PlannedBatchSizes: []int{1, 2},
-		Tensor: profilederivation.CurveTensorContract{
-			Tensors: modelcompat.CloneInputTensors(active.Delivery.ArtifactCapability.Tensors),
-		},
 	}
 	if _, err := profilederivation.NewCurvePlan(shared); err != nil {
 		t.Fatalf("construct converter-free ORT plan: %v", err)
@@ -341,7 +336,7 @@ func curvePlanRunConfig() profilingrun.RunConfig {
 		ExecutionPath: "rknnlite", Verdict: "Compatible",
 	}
 	config.State.Artifact = "model-bs1"
-	config.State.ArtifactPath = "/artifact/model.rknn"
+	config.State.ArtifactFiles = []string{"/artifact/model.rknn"}
 	config.State.HostContract = &profilingrun.CandidateReportHostContract{}
 	config.Images = profilingrun.Images{
 		Runtime: "runtime", Artifact: "artifact", MetricObserver: "metric", WorkloadObserver: "workload",

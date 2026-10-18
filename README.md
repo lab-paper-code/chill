@@ -85,8 +85,8 @@ credentials and internal storage endpoints stay inside the Console Pod.
 ### Workload HTTPS API
 
 The single ChillServer registers ModelSpecs and Workloads, queries desired/applied
-definitions and current Pools, and accepts one named-tensor inference sample
-per request. Bearer tokens are verified by Kubernetes TokenReview and authorized
+definitions and current Pools, and accepts one raw inference sample per request:
+the Workload's Preprocessor input fields as base64 `BYTES`. Bearer tokens are verified by Kubernetes TokenReview and authorized
 by SubjectAccessReview for the HTTP path and verb. Managers use this API, not
 direct Kubernetes writes to managed ModelSpecs or Workloads.
 
@@ -94,12 +94,13 @@ direct Kubernetes writes to managed ModelSpecs or Workloads.
 # CHILL_SERVER is the HTTPS endpoint covered by CHILL_SERVER_CA and its TLS certificate.
 curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' "$CHILL_SERVER/api/v1/workloads" \
-  --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
+  --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"preprocessorRef":{"name":"detector-preprocessor"},"datasetRef":{"name":"detector-records"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
 curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
   "$CHILL_SERVER/api/v1/workloads/detector-fast"
 ```
 
-Registration can return `201` with admission closed (`MissingEvidence`).
+Registration can return `201` with admission closed (`MissingDataset` without a
+`datasetRef`, otherwise `MissingEvidence` until measured).
 Use the queried `desired.metadata.resourceVersion` as `If-Match` for PUT or
 DELETE; stale versions return `409`. Model registration, inference, updates,
 observation filters, and exact deployment settings are in the

@@ -79,11 +79,19 @@ spec:
                     maxLength: 128
                     minLength: 1
                     type: string
+                  preprocessor:
+                    description: |-
+                      Preprocessor names the cluster-scoped Preprocessor whose artifact for the
+                      selected model artifact runs beside the model.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
                 required:
                 - deviceClass
                 - executionPath
                 - modelSpec
                 - powerMode
+                - preprocessor
                 type: object
               cpuRequest:
                 anyOf:
@@ -121,18 +129,17 @@ spec:
                       consumed while freezing the Run and is not duplicated in MeasurementContract.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
+                  dataset:
+                    description: |-
+                      Dataset names the cluster-scoped Dataset whose profiling records active
+                      measurement samples. Idle measurement has none.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
                   durationSeconds:
                     format: int32
                     minimum: 1
                     type: integer
-                  inputGenerator:
-                    maxLength: 128
-                    minLength: 1
-                    type: string
-                  outputValidation:
-                    maxLength: 128
-                    minLength: 1
-                    type: string
                   settlingDurationSeconds:
                     description: |-
                       SettlingDurationSeconds is required only for model-loaded idle. The
@@ -152,18 +159,14 @@ spec:
                 required:
                 - batch
                 - durationSeconds
-                - inputGenerator
-                - outputValidation
                 - warmupIterations
                 - workloadMode
                 type: object
                 x-kubernetes-validations:
                 - message: measurement fields must match the selected workloadMode
                   rule: 'self.workloadMode == ''idle-model-loaded'' ? self.warmupIterations
-                    == 0 && has(self.settlingDurationSeconds) && self.inputGenerator
-                    == ''none'' && self.outputValidation == ''none'' : !has(self.settlingDurationSeconds)
-                    && self.inputGenerator == ''numpy-default-rng-seed-0-inputs-v1''
-                    && self.outputValidation == ''nonempty-shape-batch-v1'''
+                    == 0 && has(self.settlingDurationSeconds) && !has(self.dataset)
+                    : !has(self.settlingDurationSeconds) && has(self.dataset)'
                 - message: cpuQuota must be positive
                   rule: '!has(self.cpuQuota) || quantity(self.cpuQuota).compareTo(quantity(''0''))
                     > 0'

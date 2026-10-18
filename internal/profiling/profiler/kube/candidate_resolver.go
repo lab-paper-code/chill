@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -24,9 +25,10 @@ type CandidateResolverOptions struct {
 	ConfigMapKey  string
 }
 
-// KubernetesCandidateResolver performs exact reads of the three authorities
-// required for one static candidate: ModelSpec, DeviceClass, and the trusted
-// installation-time execution declaration.
+// KubernetesCandidateResolver performs exact reads of the authorities
+// required for one static candidate: ModelSpec, DeviceClass, Preprocessor,
+// the active measurement's Dataset, and the trusted installation-time
+// execution declaration.
 type KubernetesCandidateResolver struct {
 	reader  client.Reader
 	options CandidateResolverOptions
@@ -74,6 +76,17 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 	if err := r.reader.Get(ctx, key, configMap); err != nil {
 		return profiler.ResolvedCandidate{}, fmt.Errorf("get Profiler fact-source ConfigMap %s: %w", key, err)
 	}
+	preprocessor := &edgev1alpha1.Preprocessor{}
+	if err := r.reader.Get(ctx, types.NamespacedName{Name: selection.Preprocessor}, preprocessor); err != nil {
+		return profiler.ResolvedCandidate{}, fmt.Errorf("get Preprocessor %q: %w", selection.Preprocessor, err)
+	}
+	var dataset *edgev1alpha1.Dataset
+	if selection.Dataset != "" {
+		dataset = &edgev1alpha1.Dataset{}
+		if err := r.reader.Get(ctx, types.NamespacedName{Name: selection.Dataset}, dataset); err != nil {
+			return profiler.ResolvedCandidate{}, fmt.Errorf("get Dataset %q: %w", selection.Dataset, err)
+		}
+	}
 
 	modelPath, artifact, err := selectModelPath(model, selection.ExecutionPath)
 	if err != nil {
@@ -87,15 +100,15 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		configMap,
 		r.options.ConfigMapKey,
 		selection.DeviceClass,
+		selection.Node,
 		modelPath.Runtime.Family,
 		modelPath.Runtime.Backend,
 	)
 	if err != nil {
 		return profiler.ResolvedCandidate{}, err
 	}
-	if modelPath.Runtime.Family == profilingrun.RKNNLiteRuntimeFamily ||
-		(modelPath.Runtime.Family == profilingrun.FirstfloorRuntimeFamily &&
-			modelPath.Runtime.Backend == profilingrun.FirstfloorRKNNLiteBackend) {
+	if modelPath.Runtime.Family == profilingrun.FirstfloorRuntimeFamily &&
+		modelPath.Runtime.Backend == profilingrun.FirstfloorRKNNLiteBackend {
 		if declaration.Host == nil || declaration.Host.Platform == nil || declaration.Access == nil ||
 			len(declaration.Runtime.Packages) != 1 || declaration.Runtime.Packages[0].Name != rknnLitePackage {
 			return profiler.ResolvedCandidate{}, errors.New("RKNNLite requires declared host, platform, runtime access, and rknn-toolkit-lite2 package")
@@ -125,6 +138,22 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 	if artifact.Source.Architecture != deviceClass.Spec.Architecture {
 		return profiler.ResolvedCandidate{}, errors.New("artifact supply architecture does not match DeviceClass")
 	}
+	preprocessorArtifact, ok := modelcatalog.PreprocessorArtifact(preprocessor, model.Name, artifact.Name)
+	if !ok {
+		return profiler.ResolvedCandidate{}, fmt.Errorf("Preprocessor %q has no artifact for ModelSpec %q artifact %q",
+			preprocessor.Name, model.Name, artifact.Name)
+	}
+	var frozenDataset *profilingrun.DatasetContract
+	if dataset != nil {
+		if mismatched := modelcatalog.Compatible(dataset, preprocessor); len(mismatched) != 0 {
+			return profiler.ResolvedCandidate{}, fmt.Errorf("Dataset %q records do not satisfy Preprocessor %q input fields %s",
+				dataset.Name, preprocessor.Name, strings.Join(mismatched, ","))
+		}
+		frozenDataset = &profilingrun.DatasetContract{
+			Name: dataset.Name, UID: string(dataset.UID),
+			Image: dataset.Spec.Source.Image, Path: dataset.Spec.Source.Path,
+		}
+	}
 	report, err := buildCandidateReport(candidateReportInput{
 		Model: model, DeviceClass: deviceClass, ConfigMap: configMap,
 		ConfigMapKey: r.options.ConfigMapKey,
@@ -153,11 +182,13 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		State: profilingrun.ExecutionState{
 			DeviceClass: selection.DeviceClass,
 			Model:       selection.ModelSpec, Artifact: artifact.Name,
-			ArtifactPath:  artifact.Source.Path,
+			ArtifactFiles: slices.Clone(artifact.Source.Files),
 			RuntimeFamily: modelPath.Runtime.Family, Backend: modelPath.Runtime.Backend,
 			PowerMode: selection.PowerMode, HostContract: reportHostContract(declaration.Host),
-			Firstfloor: modelcatalog.FirstfloorSettings(modelPath.Runtime),
+			Firstfloor:   modelcatalog.FirstfloorSettings(modelPath.Runtime),
+			Preprocessor: freezePreprocessor(preprocessor, preprocessorArtifact),
 		},
+		Dataset:              frozenDataset,
 		DeviceArchitecture:   deviceClass.Spec.Architecture,
 		DeviceNodeSelector:   deviceFacts.nodeSelector,
 		DevicePowerModes:     deviceFacts.powerModes,
@@ -165,15 +196,37 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		RuntimeImage:         declaration.Runtime.Image,
 		ArtifactImage:        artifact.Source.Image,
 		ArtifactArchitecture: artifact.Source.Architecture,
-		ArtifactPath:         artifact.Source.Path,
 		MetricObserverImage:  declaration.MetricObserverImage,
 	}, nil
+}
+
+func freezePreprocessor(
+	preprocessor *edgev1alpha1.Preprocessor,
+	artifact edgev1alpha1.PreprocessorArtifact,
+) profilingrun.PreprocessorState {
+	state := profilingrun.PreprocessorState{
+		Name: preprocessor.Name, UID: string(preprocessor.UID),
+		Image: artifact.Source.Image, Architecture: artifact.Source.Architecture, Path: artifact.Source.Path,
+		Inputs:  make([]string, len(preprocessor.Spec.Input.Fields)),
+		Outputs: make([]string, len(preprocessor.Spec.Output.Fields)),
+	}
+	if preprocessor.Spec.MaxNewTokens != nil {
+		state.MaxNewTokens = int(*preprocessor.Spec.MaxNewTokens)
+	}
+	for index, field := range preprocessor.Spec.Input.Fields {
+		state.Inputs[index] = field.Name
+	}
+	for index, field := range preprocessor.Spec.Output.Fields {
+		state.Outputs[index] = field.Name
+	}
+	return state
 }
 
 func validateCandidateSelection(selection profiler.CandidateSelection) error {
 	for name, value := range map[string]string{
 		"ModelSpec": selection.ModelSpec, "DeviceClass": selection.DeviceClass,
 		"execution path": selection.ExecutionPath, "power mode": selection.PowerMode,
+		"preprocessor": selection.Preprocessor, "Node": selection.Node,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("candidate %s is required without surrounding whitespace", name)

@@ -10,6 +10,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"gonum.org/v1/gonum/stat"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -63,27 +64,22 @@ type EvidencePassportMeasurement struct {
 }
 
 type EvidencePassportRuntime struct {
-	Family             string                           `json:"family"`
-	Version            string                           `json:"version"`
-	Provider           string                           `json:"provider"`
-	Architecture       string                           `json:"architecture"`
-	Batch              int                              `json:"batch"`
-	WarmupIterations   int                              `json:"warmupIterations"`
-	MeasurementStarted time.Time                        `json:"measurementStartedAt"`
-	MeasurementEnded   time.Time                        `json:"measurementEndedAt"`
-	ElapsedSeconds     float64                          `json:"elapsedSeconds"`
-	CompletedCalls     int                              `json:"completedCalls"`
-	CompletedItems     int                              `json:"completedItems"`
-	ThroughputItems    float64                          `json:"throughputItemsPerSecond"`
-	Latency            EvidencePassportLatency          `json:"latencyMilliseconds"`
-	OutputValidation   EvidencePassportOutputValidation `json:"outputValidation"`
-}
-
-// EvidencePassportOutputValidation keeps the Console contract independent from
-// the complete runtime evidence schema while preserving the verified result.
-type EvidencePassportOutputValidation struct {
-	Method string `json:"method"`
-	Passed bool   `json:"passed"`
+	Family             string                  `json:"family"`
+	Version            string                  `json:"version"`
+	Provider           string                  `json:"provider"`
+	Architecture       string                  `json:"architecture"`
+	Batch              int                     `json:"batch"`
+	WarmupIterations   int                     `json:"warmupIterations"`
+	MeasurementStarted time.Time               `json:"measurementStartedAt"`
+	MeasurementEnded   time.Time               `json:"measurementEndedAt"`
+	ElapsedSeconds     float64                 `json:"elapsedSeconds"`
+	CompletedCalls     int                     `json:"completedCalls"`
+	CompletedItems     int                     `json:"completedItems"`
+	ThroughputItems    float64                 `json:"throughputItemsPerSecond"`
+	Latency            EvidencePassportLatency `json:"latencyMilliseconds"`
+	// NativeSamples are the raw trials of every repetition: record IDs, unit
+	// counts, and stage times per batch execution.
+	NativeSamples []profilingrun.NativeServiceSample `json:"nativeSamples,omitempty"`
 }
 
 type EvidencePassportLatency struct {
@@ -167,8 +163,10 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 		return EvidencePassport{}, err
 	}
 	latencies := make([]float64, 0, runtime.InferenceCount)
+	var samples []profilingrun.NativeServiceSample
 	for _, repetition := range runtime.RepetitionResults {
 		latencies = append(latencies, repetition.LatencyMilliseconds...)
+		samples = append(samples, repetition.NativeSamples...)
 	}
 	latency, err := summarizeLatency(latencies)
 	if err != nil {
@@ -215,9 +213,7 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 				// the producer's summary field.
 				ThroughputItems: throughputItems,
 				Latency:         latency,
-				OutputValidation: EvidencePassportOutputValidation{
-					Method: runtime.OutputValidation.Method, Passed: runtime.OutputValidation.Passed,
-				},
+				NativeSamples:   samples,
 			},
 			Power: EvidencePassportPower{
 				Source: EvidencePassportPowerSource{

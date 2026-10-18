@@ -37,6 +37,8 @@ func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.Evide
 		{"Read at", passport.ReadAt.Format(time.RFC3339Nano)},
 		{"Model", run.Spec.Candidate.ModelSpec},
 		{"Execution path", run.Spec.Candidate.ExecutionPath},
+		{"Preprocessor", run.Spec.Candidate.Preprocessor},
+		{"Dataset", display(run.Spec.Measurement.Dataset)},
 		{"Device class", run.Spec.Candidate.DeviceClass},
 		{"Target node", run.Spec.TargetNode},
 		{"Power mode", run.Spec.Candidate.PowerMode},
@@ -57,9 +59,6 @@ func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.Evide
 		{"Completed calls", fmt.Sprint(runtime.CompletedCalls)},
 		{"Completed items", fmt.Sprint(runtime.CompletedItems)},
 		{"Throughput", fmt.Sprintf("%.3f items/s", runtime.ThroughputItems)},
-		{"Output validation", fmt.Sprintf(
-			"%s (passed=%t)", runtime.OutputValidation.Method, runtime.OutputValidation.Passed,
-		)},
 	}); err != nil {
 		return err
 	}

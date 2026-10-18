@@ -135,14 +135,14 @@ func validOptions(t *testing.T) options {
 	}
 	return options{
 		runConfig: string(config), podUID: "pod-uid", scheduledNodeName: "lattepanda",
-		modelPath: defaultModelPath, workspacePath: defaultWorkspacePath,
+		workspacePath:           defaultWorkspacePath,
 		observerReadyPaths:      []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath},
 		workloadWindowStartPath: defaultWorkloadWindowStartPath, measurementStartPath: defaultMeasurementStartPath,
 		workloadWindowReadyPath: defaultWorkloadWindowReadyPath, measurementEndPath: defaultMeasurementEndPath,
 		metricResultPath: defaultMetricResultPath, workloadResultPath: defaultWorkloadResultPath,
-		terminationMessagePath: defaultTerminationMessagePath,
-		runtimeCommand:         []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"},
-		attemptTimeout:         10 * time.Minute, observerReadyTimeout: time.Minute,
+		terminationMessagePath:   defaultTerminationMessagePath,
+		firstfloorRuntimeCommand: []string{"python3", "/opt/chill/runtime/firstfloor/measurement.py"},
+		attemptTimeout:           10 * time.Minute, observerReadyTimeout: time.Minute,
 		metricResultTimeout: time.Minute, workloadResultTimeout: time.Minute,
 		maxLatencySamples: 1000, maxInputBytes: 1 << 20,
 		maxRuntimeResultBytes: 1 << 20, maxMetricResultBytes: 1 << 20, maxWorkloadResultBytes: 1 << 20,
@@ -163,7 +163,7 @@ func validCPUConfig(t *testing.T) profilingrun.RunConfig {
 		t.Fatal(err)
 	}
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
 	if err := config.Validate(); err != nil {

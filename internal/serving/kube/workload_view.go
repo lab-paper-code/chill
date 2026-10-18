@@ -7,18 +7,17 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-// SupportedInput is measured support for the actual applied definition, not a
-// claim that every declared path is measured or that an executor is ready.
+// SupportedInput is measured support of one execution path for the actual
+// applied definition, not a claim that an executor is ready. The raw input and
+// output contract is the applied definition's preprocessor input and output.
 type SupportedInput struct {
-	ExecutionPath string                    `json:"executionPath"`
-	Artifact      string                    `json:"artifact"`
-	Tensors       []modelcompat.InputTensor `json:"tensors"`
-	Profiles      []SupportedProfile        `json:"profiles"`
+	ExecutionPath string             `json:"executionPath"`
+	Artifact      string             `json:"artifact"`
+	Profiles      []SupportedProfile `json:"profiles"`
 }
 
 type SupportedProfile struct {
@@ -57,7 +56,7 @@ func (m *Manager) view(w *api.Workload) WorkloadView {
 		}
 		profiles := m.observer.Profiles()
 		for _, path := range state.Applied.Model.Paths {
-			input := SupportedInput{ExecutionPath: path.Name, Artifact: path.Artifact, Tensors: path.Tensors, Profiles: []SupportedProfile{}}
+			input := SupportedInput{ExecutionPath: path.Name, Artifact: path.Artifact, Profiles: []SupportedProfile{}}
 			for i := range profiles {
 				profile := &profiles[i]
 				if profile.Condition.Artifact.ExecutionPath == path.Name && serving.MatchesProfile(state.Applied, profile) {

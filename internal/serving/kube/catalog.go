@@ -336,6 +336,7 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 	metricSource := idleRaw.Metrics.Source
 	batches := make(map[int]*catalogBatch)
 	var runtimeMetadata *profilingrun.FirstfloorRuntimeEvidence
+	var delivery profilingrun.CandidateRuntimeDelivery
 	for _, verified := range active {
 		if _, err := profilerprojection.ProjectVerifiedCurveState(plan, verified, idle[0]); err != nil {
 			return serving.Profile{}, nil, err
@@ -349,7 +350,7 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 		}
 		if raw.Runtime.Firstfloor != nil {
 			if runtimeMetadata == nil {
-				runtimeMetadata = raw.Runtime.Firstfloor
+				runtimeMetadata, delivery = raw.Runtime.Firstfloor, raw.RunConfig.Delivery
 			} else if !reflect.DeepEqual(runtimeMetadata.Runtime, raw.Runtime.Firstfloor.Runtime) {
 				return serving.Profile{}, nil, errors.New("firstfloor trials have different actual initialized runner conditions")
 			}
@@ -400,6 +401,9 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 	}
 	if runtimeMetadata != nil {
 		profile.RuntimeMetadata = &runtimeMetadata.Runtime
+		if profile.RuntimeDelivery, err = json.Marshal(delivery); err != nil {
+			return serving.Profile{}, nil, err
+		}
 	}
 	var issues []CatalogIssue
 	for _, batchSize := range condition.PlannedBatchSizes {
@@ -444,14 +448,9 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 	profile.Condition = profilederivation.CloneCurvePlanSpec(profile.Condition)
 	if profile.RuntimeMetadata != nil {
 		metadata := *profile.RuntimeMetadata
+		metadata.ModelFiles = slices.Clone(metadata.ModelFiles)
 		metadata.Inputs = slices.Clone(metadata.Inputs)
-		for i := range metadata.Inputs {
-			metadata.Inputs[i].Shape = slices.Clone(metadata.Inputs[i].Shape)
-		}
 		metadata.Outputs = slices.Clone(metadata.Outputs)
-		for i := range metadata.Outputs {
-			metadata.Outputs[i].Shape = slices.Clone(metadata.Outputs[i].Shape)
-		}
 		metadata.Providers = slices.Clone(metadata.Providers)
 		metadata.AvailableProviders = slices.Clone(metadata.AvailableProviders)
 		metadata.CPUAffinity = slices.Clone(metadata.CPUAffinity)
@@ -459,6 +458,7 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 		metadata.RKNN = slices.Clone(metadata.RKNN)
 		profile.RuntimeMetadata = &metadata
 	}
+	profile.RuntimeDelivery = slices.Clone(profile.RuntimeDelivery)
 	profile.MetricSource.MetricLabels = maps.Clone(profile.MetricSource.MetricLabels)
 	if profile.MetricSource.ThermalMetrics != nil {
 		thermal := *profile.MetricSource.ThermalMetrics
@@ -542,15 +542,15 @@ func validateCatalogRunProtocol(campaign *edgev1alpha1.BatchEnergyOptimization, 
 		protocol := campaign.Spec.IdleProtocol
 		if measurement.WarmupIterations != 0 || measurement.SettlingDurationSeconds == nil ||
 			*measurement.SettlingDurationSeconds != protocol.SettlingDurationSeconds ||
-			measurement.DurationSeconds != protocol.DurationSeconds || measurement.InputGenerator != "none" ||
-			measurement.OutputValidation != "none" || run.Spec.MetricObservation != protocol.MetricObservation {
+			measurement.DurationSeconds != protocol.DurationSeconds || measurement.Dataset != "" ||
+			run.Spec.MetricObservation != protocol.MetricObservation {
 			return errors.New("idle Run protocol contradicts campaign")
 		}
 	} else {
 		protocol := campaign.Spec.ActiveProtocol
 		if measurement.WorkloadMode != "saturated-serial-fixed-batch" || measurement.SettlingDurationSeconds != nil ||
 			measurement.WarmupIterations != protocol.WarmupIterations || measurement.DurationSeconds != protocol.DurationSeconds ||
-			measurement.InputGenerator != protocol.InputGenerator || measurement.OutputValidation != protocol.OutputValidation ||
+			measurement.Dataset != protocol.Dataset ||
 			run.Spec.MetricObservation != protocol.MetricObservation {
 			return errors.New("active Run protocol contradicts campaign")
 		}
@@ -612,7 +612,7 @@ func validateCatalogRunConfig(run *edgev1alpha1.ProfilingRun, config profilingru
 	}
 	if config.Measurement.WarmupIterations != int(measurement.WarmupIterations) ||
 		config.Measurement.DurationSeconds != int(measurement.DurationSeconds) || config.Measurement.SettlingDurationSeconds != settling ||
-		config.Measurement.InputGenerator != measurement.InputGenerator || config.Measurement.OutputValidation != measurement.OutputValidation ||
+		(config.Measurement.Dataset == nil) != (measurement.Dataset == "") || (config.Measurement.Dataset != nil && config.Measurement.Dataset.Name != measurement.Dataset) ||
 		config.Metrics.IntervalMilliseconds != int(run.Spec.MetricObservation.IntervalMilliseconds) ||
 		config.Metrics.TimeoutMilliseconds != int(run.Spec.MetricObservation.TimeoutMilliseconds) ||
 		config.Metrics.DurationSeconds != int(run.Spec.MetricObservation.DurationSeconds) {

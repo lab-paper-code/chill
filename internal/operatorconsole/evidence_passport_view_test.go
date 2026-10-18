@@ -34,8 +34,15 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 			MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30.001, InferenceCount: 3,
 			ThroughputItemsPerSecond: 400,
-			RepetitionResults:        []profilingrun.Repetition{{LatencyMilliseconds: []float64{3, 1, 2}}},
-			OutputValidation:         profilingrun.OutputValidation{Method: "shape", Passed: true},
+			RepetitionResults: []profilingrun.Repetition{
+				{LatencyMilliseconds: []float64{3, 1}, NativeSamples: []profilingrun.NativeServiceSample{
+					{BatchID: 1, BatchSize: 4, RecordIDs: []string{"a", "b", "c", "d"}, Units: []int{1, 1, 1, 1}},
+					{BatchID: 2, BatchSize: 4, RecordIDs: []string{"e", "f", "g", "h"}, Units: []int{1, 1, 1, 1}},
+				}},
+				{LatencyMilliseconds: []float64{2}, NativeSamples: []profilingrun.NativeServiceSample{
+					{BatchID: 3, BatchSize: 4, RecordIDs: []string{"i", "j", "k", "l"}, Units: []int{1, 1, 1, 1}},
+				}},
+			},
 		},
 		Metrics: metricobserver.Result{
 			Source: metricobserver.SourceIdentity{
@@ -72,6 +79,10 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 		runtime.ThroughputItems != 2000 || runtime.Latency.Mean != 2 || runtime.Latency.P50 != 2 ||
 		runtime.Latency.P95 != 3 || runtime.Latency.P99 != 3 {
 		t.Fatalf("runtime facts = %#v", runtime)
+	}
+	if len(runtime.NativeSamples) != 3 || runtime.NativeSamples[0].BatchID != 1 ||
+		runtime.NativeSamples[2].BatchID != 3 || runtime.NativeSamples[2].RecordIDs[3] != "l" {
+		t.Fatalf("native samples = %#v", runtime.NativeSamples)
 	}
 	power := got.Measurement.Power
 	if power.Watts == nil || power.Watts.Minimum != 8 || power.Watts.Mean != 12 || power.Watts.Maximum != 18 ||

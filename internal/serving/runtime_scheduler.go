@@ -17,10 +17,8 @@ func (r *Runtime) EnableSchedulerRouting() {
 	r.routeTargets = make(map[string]map[string]int32, len(r.workloads))
 	for uid, workload := range r.workloads {
 		targets := map[string]int32{}
-		for _, route := range workload.routes {
-			for _, entry := range route.entries {
-				targets[entry.instance.State.ID] = entry.instance.Weight
-			}
+		for _, entry := range workload.route.entries {
+			targets[entry.instance.State.ID] = entry.instance.Weight
 		}
 		r.routeTargets[uid] = targets
 	}
@@ -182,7 +180,7 @@ func (r *Runtime) retainAcceptedRoutesLocked(targets map[string]map[string]int32
 			if executable {
 				continue
 			}
-			for _, entry := range workload.routes[call.input.path].entries {
+			for _, entry := range workload.route.entries {
 				if !r.instanceServesCallLocked(entry.instance, call) {
 					continue
 				}
@@ -199,8 +197,7 @@ func (r *Runtime) instanceServesCallLocked(instance *runtimeInstance, call *Call
 	if instance == nil || !instance.State.Ready || instance.State.Stopped || (instance.OwnerWorkloadUID != "" && instance.OwnerWorkloadUID != call.receipt.UID) {
 		return false
 	}
-	path := profilePath(call.definition, instance.Profile)
-	return path != nil && sameInputs(call.definition.Model.Paths[call.input.path].Tensors, path.Tensors)
+	return profilePath(call.definition, instance.Profile) != nil
 }
 
 // StopSchedulerInstance closes new routing after accepted ingress can execute
@@ -218,7 +215,7 @@ func (r *Runtime) StopSchedulerInstance(id string) (bool, error) {
 				continue
 			}
 			alternative := false
-			for _, entry := range workload.routes[call.input.path].entries {
+			for _, entry := range workload.route.entries {
 				if entry.instance.State.ID != id && r.instanceServesCallLocked(entry.instance, call) {
 					alternative = true
 					break
@@ -301,7 +298,7 @@ func (r *Runtime) schedulerOutstandingLocked(now time.Time) []SchedulerRequest {
 		if call.definition == nil || (call.backendDone && call.transportDone && call.responseRecorded) {
 			continue
 		}
-		request := SchedulerRequest{ID: call.receipt.ID, Definition: call.definition, InputPath: call.input.path, QueueOrder: queueOrder[call], ReceivedAt: call.receipt.ReceivedAt, Elapsed: now.Sub(call.receipt.ReceivedAt), Phase: phasePending}
+		request := SchedulerRequest{ID: call.receipt.ID, Definition: call.definition, QueueOrder: queueOrder[call], ReceivedAt: call.receipt.ReceivedAt, Elapsed: now.Sub(call.receipt.ReceivedAt), Phase: phasePending}
 		if request.Elapsed < 0 {
 			request.Elapsed = 0
 		}
@@ -390,24 +387,21 @@ func (r *Runtime) extendNativeOutstandingLocked(request *SchedulerRequest, call 
 	}
 }
 
-func (r *Runtime) SchedulerRouting() (map[string]map[string]int32, map[string]map[int]map[string]int64) {
+func (r *Runtime) SchedulerRouting() (map[string]map[string]int32, map[string]map[string]int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.schedulerRoutingLocked()
 }
 
-func (r *Runtime) schedulerRoutingLocked() (map[string]map[string]int32, map[string]map[int]map[string]int64) {
+func (r *Runtime) schedulerRoutingLocked() (map[string]map[string]int32, map[string]map[string]int64) {
 	weights := map[string]map[string]int32{}
-	credits := map[string]map[int]map[string]int64{}
+	credits := map[string]map[string]int64{}
 	for uid, workload := range r.workloads {
 		weights[uid] = map[string]int32{}
-		credits[uid] = map[int]map[string]int64{}
-		for path, route := range workload.routes {
-			credits[uid][path] = map[string]int64{}
-			for index, entry := range route.entries {
-				weights[uid][entry.instance.State.ID] = route.weights[index]
-				credits[uid][path][entry.instance.State.ID] = route.current[index]
-			}
+		credits[uid] = map[string]int64{}
+		for index, entry := range workload.route.entries {
+			weights[uid][entry.instance.State.ID] = workload.route.weights[index]
+			credits[uid][entry.instance.State.ID] = workload.route.current[index]
 		}
 	}
 	return weights, credits

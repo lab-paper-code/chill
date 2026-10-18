@@ -9,19 +9,16 @@ import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { ChartAreaInteractive } from "@/components/chart-area-interactive"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
+import { parseSchedulerJSON } from "@/lib/scheduler"
+import { StageBreakdown, duration } from "@/components/stage-breakdown"
 import { localDateTime, utcDateTime } from "@/lib/date-time"
 import { when, actorName } from "@/features/scheduler-history"
 
 type UIDChoice={desired:{metadata:{name:string;uid:string}}}
-const outcomeLabels:Record<string,string>={completed:"완료",error:"오류",rejected:"접수 거부",timeout:"시간 초과",canceled:"취소",incomplete:"미완료",delivery_failed:"전달 실패"}
+const outcomeLabels:Record<string,string>={completed:"완료",error:"오류",rejected:"접수 거부",timeout:"시간 초과",canceled:"취소",incomplete:"미완료",delivery_failed:"전달 실패",preprocess_failed:"전처리 실패"}
 const outcomes=Object.keys(outcomeLabels)
 const presets:[key:string,label:string,hours:number][]=[["15m","최근 15분",.25],["1h","최근 1시간",1],["24h","최근 24시간",24]]
-function span(from:string,to:string) {
-  const minutes=Math.round((Date.parse(to)-Date.parse(from))/60000)
-  return minutes%60?`${minutes}분`:`${minutes/60}시간`
-}
-const ms=(value?:WireInteger)=>value===undefined?"미제공":`${nanosToMilliseconds(value)} ms`
+const ms=(value?:WireInteger|null)=>value==null?"정보 없음":duration(Number(value)/1e6)
 
 export function ObservationsPage({changes=false}:{changes?:boolean}) {
   const uid=useSearchParams().get("uid")
@@ -64,7 +61,7 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
     // A page belongs to the exact submitted window, never the unsaved form.
     const next=new URLSearchParams(params.toString());if(cursor)next.set("cursor",cursor);else next.delete("cursor");router.replace(`${path}?${next}`)
   }
-  const data=query.data,definitions=data?.definitions??[],period=from&&to?span(from,to):""
+  const data=query.data,definitions=data?.definitions??[],period=from&&to?duration(Date.parse(to)-Date.parse(from)):""
   const definitionLabel=(identity:string)=>{const index=definitions.findIndex(item=>item.identity===identity);return index<0?"이전 적용 설정":`적용 설정 ${index+1}`}
   const more=!!data?.nextCursor||params.has("cursor"),count=data?.management?.length??0
   const title=!data?`${name} ${changes?"변경 이력":"요청 기록"}`:changes?(count?`${period} 동안 변경 ${count}건${more?" 이상":""}이 있었어요`:`${period} 동안 변경이 없었어요`):data.total?`${period} 동안 요청 ${data.total}건을 받았어요`:`${period} 동안 받은 요청이 없어요`
@@ -73,7 +70,7 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
       <Conditions changes={changes} path={path} definitions={definitions} poll={poll} setPoll={setPoll}/>
       {data&&!changes&&<RowDialog label="구간 통계" hint="결과별 건수와 응답 시간" title="구간 통계" description="고른 기간 전체를 집계했어요. 아래 요청 목록과 따로 계산해요.">
         <Facts items={[["전체 요청",`${data.total}건`],["조건에 맞는 요청",`${data.selected}건`],...Object.entries(data.outcomes).map(([key,value]):[string,string]=>[outcomeLabels[key]??"기타 결과",`${value}건`])]}/>
-        {data.cohorts?.length?<><h3 className="font-semibold">적용 설정별 응답 시간</h3><Facts items={data.cohorts.map((row):[string,string]=>[definitionLabel(row.definition),`표본 ${row.sampleCount}건 · ${row.quantileNanos==null?"값 없음":`${row.percentile===undefined?"백분위 미제공":`${row.percentile}% 기준`} ${Number(row.quantileNanos)/1e6} ms`} · 목표 ${row.targetLatencyNanos==null?"없음":`${nanosToMilliseconds(row.targetLatencyNanos)} ms`}`])}/>
+        {data.cohorts?.length?<><h3 className="font-semibold">적용 설정별 응답 시간</h3><Facts items={data.cohorts.map((row):[string,string]=>[definitionLabel(row.definition),`표본 ${row.sampleCount}건 · ${row.quantileNanos==null?"값 없음":`${row.percentile===undefined?"백분위 정보 없음":`${row.percentile}% 기준`} ${ms(row.quantileNanos)}`} · 목표 ${row.targetLatencyNanos==null?"없음":ms(row.targetLatencyNanos)}`])}/>
           <ChartAreaInteractive data={data.cohorts.map(row=>({definition:row.definition,quantileNanos:row.quantileNanos===null?null:Number(row.quantileNanos),label:definitionLabel(row.definition)}))}/></>:<p>응답 시간 표본이 없어요.</p>}
         <SourceJSON inline title="적용 설정 원본 보기" value={definitions}/>
       </RowDialog>}
@@ -88,7 +85,7 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
       {changes?(data.management?.length?<Rows label="변경">{data.management.map((row,index)=><RowDialog key={index} label={statusLabel(row.kind)} hint={`${when(row.at)} · ${actorName(row.actorUsername)}`} value={statusLabel(row.phase)} title="변경 자세히" description="변경 전후와 처리 결과예요.">
         <Facts items={[["시각",when(row.at)],["변경",statusLabel(row.kind)],["상태",statusLabel(row.phase)],["담당자",actorName(row.actorUsername)]]}/>{row.error&&<p role="alert">{row.error}</p>}<SourceJSON inline title="변경 전후 원본 보기" value={row}/>
       </RowDialog>)}</Rows>:<Empty title="이 기간에는 변경이 없어요"/>)
-      :data.requests?.length?<Rows label="요청">{data.requests.map((row,index)=><RowDialog key={index} label={row.outcome?outcomeLabels[row.outcome]??"기타 결과":statusLabel(row.kind)} hint={`${when(row.at)}${params.get("requestID")===row.requestID?" · 선택한 요청":""}`} value={ms(row.elapsedNanos)} title="요청 자세히" description="CHILL 배정과 실행 진행을 확인해요."><RequestDetails row={row}/></RowDialog>)}</Rows>:<Empty title="이 조건에 맞는 요청이 없어요"/>}
+      :data.requests?.length?<Rows label="요청">{data.requests.map((row,index)=><RowDialog key={index} label={row.outcome?outcomeLabels[row.outcome]??"기타 결과":statusLabel(row.kind)} hint={`${when(row.at)}${row.nativeProgress?.firstTokenMS!==undefined?` · 첫 토큰 ${duration(row.nativeProgress.firstTokenMS)}`:""}${params.get("requestID")===row.requestID?" · 선택한 요청":""}`} value={ms(row.elapsedNanos)} title="요청 자세히" description="결과와 단계별 시간을 확인해요."><RequestDetails row={row}/></RowDialog>)}</Rows>:<Empty title="이 조건에 맞는 요청이 없어요"/>}
       {more&&<div className="flex gap-2"><Button variant="outline" disabled={!params.has("cursor")} onClick={()=>page()}>처음으로</Button><Button variant="outline" disabled={!data.nextCursor} onClick={()=>page(data.nextCursor)}>다음 기록 보기</Button></div>}
     </>}</QueryGate>
   </Screen>
@@ -97,7 +94,7 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
 function Conditions({changes,path,definitions,poll,setPoll}:{changes:boolean;path:string;definitions:ObservationResult["definitions"];poll:boolean;setPoll:(value:boolean)=>void}) {
   const params=useSearchParams(),[open,setOpen]=React.useState(false)
   const from=params.get("from")??"",to=params.get("to")??"",filters=params.getAll("outcome").length+params.getAll("definition").length
-  return <RowDialog open={open} onOpenChange={setOpen} label="조회 조건" value={`${from&&to?span(from,to):""}${filters?` · 조건 ${filters}개`:""}${poll?" · 자동 새로고침":""}`} title="조회 조건" description="기간과 보고 싶은 결과를 골라요.">
+  return <RowDialog open={open} onOpenChange={setOpen} label="조회 조건" value={`${from&&to?duration(Date.parse(to)-Date.parse(from)):""}${filters?` · 조건 ${filters}개`:""}${poll?" · 자동 새로고침":""}`} title="조회 조건" description="기간과 보고 싶은 결과를 골라요.">
     <ConditionsForm changes={changes} path={path} definitions={definitions} poll={poll} setPoll={setPoll} done={()=>setOpen(false)}/>
   </RowDialog>
 }
@@ -144,15 +141,20 @@ function ConditionsForm({changes,path,definitions,poll,setPoll,done}:{changes:bo
   </form>
 }
 
+// Plain summary first; identities and assignment stay under 실행 자세히.
 function RequestDetails({row}:{row:RequestEvent}) {
   const assignment=row.assignment,native=row.nativeProgress
-  return <div className="space-y-4 [&_dd]:break-all">
-    <Facts items={[["요청",row.requestID],["서비스",`${row.workloadName} / ${row.workloadUID??"UID 미제공"}`],["적용 설정",row.definition??"미제공"],["단계와 시각",`${statusLabel(row.kind)} / ${row.at}`],["수신 시각",row.receivedAt],["입력 경로",row.inputPath??"미제공"],["요청 유효 시간",ms(row.lifetimeNanos)],["클라이언트 관측 시간",ms(row.clientSpanNanos)],["실행 완료 관측",row.executionComplete?"완료 확인":"완료 확인 대기"],["응답 목표",row.slo?`${row.slo.percentile}% 기준 / ${ms(row.slo.targetLatencyNanos)}`:"미제공"]]}/>
-    <h3 className="font-semibold">CHILL 배정</h3>
-    {assignment?<Facts items={[["실행 그룹과 노드",`${assignment.pool} / ${assignment.node.name} / ${assignment.node.uid}`],["인스턴스와 배정 시각",`${assignment.instance} / ${assignment.dispatchedAt}`],["실행 경로와 모델 자료",`${assignment.executionPath} / ${assignment.artifact}`],["프로파일과 신뢰 수준",`${assignment.profile} / ${assignment.profileConfidenceLevel}`]]}/>:<p>이 단계에는 배정 관측이 없어요.</p>}
-    <h3 className="font-semibold">Native 실행 진행</h3>
-    {native?<Facts items={[["실행 인스턴스",row.nativeInstance??"미제공"],["단계와 시각",`${statusLabel(native.phase)} / ${native.at}`],["실행 대상",`${native.requestID} / ${native.workloadUID} / ${native.definition}`],["배치 ID와 크기",`${native.batchID===undefined?"미제공":String(native.batchID)} / ${native.batchSize??"미제공"}`],["프로파일과 판단 ID",`${native.profileID??"미제공"} / ${native.decisionID??"미제공"}`],["큐 대기 / 서비스 실행 / Backend / Native 경과",`${native.queueMS} / ${native.serviceMS} / ${native.backendMS} / ${native.nativeElapsedMS} ms`],["실행 완료 관측",native.executionComplete?"완료 확인":"완료 확인 대기"],["처리 결과",native.outcome?outcomeLabels[native.outcome]??native.outcome:"미제공"],...(native.error?[["실행 오류",native.error] as [string,string]]:[])]}/>:<p>실행 인스턴스 {row.nativeInstance??"미제공"} · 이 단계에는 Native 실행 관측이 없어요.</p>}
+  return <div className="space-y-4">
+    <Facts items={[["결과",row.outcome?outcomeLabels[row.outcome]??"기타 결과":statusLabel(row.kind)],[row.kind==="validated"?"입력 검사까지":"걸린 시간",row.slo?`응답 목표 ${ms(row.slo.targetLatencyNanos)} 중 ${ms(row.elapsedNanos)}`:ms(row.elapsedNanos)]]}/>
+    {native?<StageBreakdown progress={native}/>:<p className="text-sm text-muted-foreground">이 단계에는 실행 기록이 없어요.</p>}
     {row.error&&<p role="alert">{row.error}</p>}
-    <SourceJSON inline value={row}/>
+    <details className="space-y-4 [&_dd]:break-all"><summary>실행 자세히</summary>
+      <Facts items={[["요청",row.requestID],["서비스",`${row.workloadName} / ${row.workloadUID??"정보 없음"}`],["적용 설정",row.definition??"정보 없음"],["단계와 시각",`${statusLabel(row.kind)} / ${row.at}`],["수신 시각",row.receivedAt],[row.kind==="validated"?"입력 검사 경과":"수신 후 경과",ms(row.elapsedNanos)],["요청 유효 시간",ms(row.lifetimeNanos)],["클라이언트 관측 시간",ms(row.clientSpanNanos)],["실행 완료 관측",row.executionComplete?"완료 확인":"완료 확인 대기"],["응답 목표",row.slo?`${row.slo.percentile}% 기준 / ${ms(row.slo.targetLatencyNanos)}`:"정보 없음"]]}/>
+      <h3 className="font-semibold">CHILL 배정</h3>
+      {assignment?<Facts items={[["실행 그룹과 노드",`${assignment.pool} / ${assignment.node.name} / ${assignment.node.uid}`],["인스턴스와 배정 시각",`${assignment.instance} / ${assignment.dispatchedAt}`],["실행 경로와 모델 자료",`${assignment.executionPath} / ${assignment.artifact}`],["프로파일과 신뢰 수준",`${assignment.profile} / ${assignment.profileConfidenceLevel}`]]}/>:<p>이 단계에는 배정 관측이 없어요.</p>}
+      <h3 className="font-semibold">실행 기록</h3>
+      {native?<Facts items={[["실행 인스턴스",row.nativeInstance??"정보 없음"],["단계와 시각",`${statusLabel(native.phase)} / ${native.at}`],["실행 대상",`${native.requestID} / ${native.workloadUID} / ${native.definition}`],["배치 ID와 크기",`${native.batchID===undefined?"정보 없음":String(native.batchID)} / ${native.batchSize??"정보 없음"}`],["프로파일과 판단 ID",`${native.profileID??"정보 없음"} / ${native.decisionID??"정보 없음"}`],["큐 대기 / 서비스 실행 / 실행 경과",`${duration(native.queueMS)} / ${duration(native.serviceMS)} / ${duration(native.nativeElapsedMS)}`],["배치 단계 · 전처리 / 추론 / 후처리",`${duration(native.preprocessMS)} / ${duration(native.backendMS)} / ${duration(native.postprocessMS)}`],["첫 토큰",native.firstTokenMS===undefined?"정보 없음":duration(native.firstTokenMS)],["이 요청의 처리 단위",native.units===undefined?"정보 없음":`${native.units}개`],["실행 완료 관측",native.executionComplete?"완료 확인":"완료 확인 대기"],["처리 결과",native.outcome?outcomeLabels[native.outcome]??statusLabel(native.outcome):"정보 없음"],...(native.error?[["실행 오류",native.error] as [string,string]]:[])]}/>:<p>실행 인스턴스 {row.nativeInstance??"정보 없음"} · 이 단계에는 실행 기록이 없어요.</p>}
+      <SourceJSON inline value={row}/>
+    </details>
   </div>
 }

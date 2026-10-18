@@ -2,12 +2,12 @@ package firstfloor
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
-	"reflect"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -38,34 +38,42 @@ func validateContext(r RequestContext, id string) error {
 	}
 	return nil
 }
-func prepareInputs(specs []InputSpec, inputs []Tensor, size int) ([][]byte, int, error) {
-	if len(specs) != len(inputs) {
-		return nil, 0, errors.New("every named model input required")
+
+// prepareInputs keeps each configured field's elements framed as uint32
+// little-endian length plus bytes. Content checks belong to the gateway.
+func prepareInputs(names []string, inputs []Field, size int) ([][]byte, int, error) {
+	if len(names) != len(inputs) {
+		return nil, 0, errors.New("every configured raw input field required exactly once")
 	}
-	data := make([][]byte, len(specs))
+	data := make([][]byte, len(names))
 	total := 0
-	for i, s := range specs {
-		var t *Tensor
+	for i, name := range names {
+		var f *Field
 		for j := range inputs {
-			if inputs[j].Name == s.Name {
-				if t != nil {
-					return nil, 0, errors.New("duplicate tensor name")
+			if inputs[j].Name == name {
+				if f != nil {
+					return nil, 0, errors.New("duplicate input field name")
 				}
-				t = &inputs[j]
+				f = &inputs[j]
 			}
 		}
-		if t == nil || t.Datatype != s.Datatype || !reflect.DeepEqual(t.Shape, append([]int{size}, s.Shape...)) {
-			return nil, 0, errors.New("input name, datatype or single-sample shape differs from initialized model")
+		if f == nil || len(f.Data) != size {
+			return nil, 0, errors.New("input field name or element count differs from configuration")
 		}
-		b, e := encodeTensor(*t)
-		if e != nil {
-			return nil, 0, e
+		n := 0
+		for _, element := range f.Data {
+			if len(element) > MaxFrameBytes-4-total-n {
+				return nil, 0, errors.New("combined inputs exceed IPC frame cap")
+			}
+			n += 4 + len(element)
 		}
-		if len(b) > MaxFrameBytes-total {
-			return nil, 0, errors.New("combined inputs exceed IPC frame cap")
+		framed := make([]byte, 0, n)
+		for _, element := range f.Data {
+			framed = binary.LittleEndian.AppendUint32(framed, uint32(len(element)))
+			framed = append(framed, element...)
 		}
-		data[i] = b
-		total += len(b)
+		data[i] = framed
+		total += n
 	}
 	return data, total, nil
 }
@@ -76,16 +84,16 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if req.URL.Path != base+"/infer" && req.URL.Path != base+"/profile" {
-		writeError(w, http.StatusNotFound, errors.New("unknown path or model"), true)
+		writeError(w, http.StatusNotFound, errors.New("unknown path or model"))
 		return
 	}
 	if req.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
-		writeError(w, http.StatusMethodNotAllowed, errors.New("POST required"), true)
+		writeError(w, http.StatusMethodNotAllowed, errors.New("POST required"))
 		return
 	}
 	if !h.scheduler.Ready() {
-		writeError(w, http.StatusServiceUnavailable, ErrUnavailable, true)
+		writeError(w, http.StatusServiceUnavailable, ErrUnavailable)
 		return
 	}
 	received := time.Now()
@@ -93,7 +101,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case h.admission <- struct{}{}:
 		defer func() { <-h.admission }()
 	default:
-		writeError(w, http.StatusTooManyRequests, ErrQueueFull, true)
+		writeError(w, http.StatusTooManyRequests, ErrQueueFull)
 		return
 	}
 	req.Body = http.MaxBytesReader(w, req.Body, int64(cfg.MaxRequestBytes))
@@ -113,7 +121,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if r.bytes > cfg.MaxQueueBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, errors.New("input exceeds queue byte cap"), true)
+		writeError(w, http.StatusRequestEntityTooLarge, errors.New("input exceeds queue byte cap"))
 		return
 	}
 	h.submitRequest(w, req, r)
@@ -126,12 +134,12 @@ func (h *handler) serveStatus(w http.ResponseWriter, req *http.Request, base str
 		if h.scheduler.Ready() {
 			w.WriteHeader(http.StatusOK)
 		} else {
-			writeError(w, http.StatusServiceUnavailable, ErrUnavailable, true)
+			writeError(w, http.StatusServiceUnavailable, ErrUnavailable)
 		}
 	case base + "/metadata", base + "/state":
 		state, e := h.scheduler.State(req.Context())
 		if e != nil {
-			writeError(w, http.StatusServiceUnavailable, e, true)
+			writeError(w, http.StatusServiceUnavailable, e)
 			return true
 		}
 		if req.URL.Path == base+"/metadata" {
@@ -158,7 +166,7 @@ func decodeRequest(decoder *json.Decoder, v any) error {
 }
 func prepareProfile(w http.ResponseWriter, ctx context.Context, decoder *json.Decoder, cfg *Config, r *request) bool {
 	if cfg.Mode != modeProfiling {
-		writeError(w, http.StatusConflict, errors.New("fixed K endpoint requires profiling mode"), true)
+		writeError(w, http.StatusConflict, errors.New("fixed K endpoint requires profiling mode"))
 		return false
 	}
 	var p ProfileRequest
@@ -166,13 +174,13 @@ func prepareProfile(w http.ResponseWriter, ctx context.Context, decoder *json.De
 		bodyError(w, ctx, e)
 		return false
 	}
-	if !initialized(cfg.BatchSizes, p.BatchSize) || p.Executions < 1 || p.Executions > 10000 {
-		writeError(w, http.StatusBadRequest, errors.New("initialized fixed batch and 1..10000 executions required"), true)
+	if !initialized(cfg.BatchSizes, p.BatchSize) {
+		writeError(w, http.StatusBadRequest, errors.New("initialized fixed batch required"))
 		return false
 	}
 	d, n, e := prepareInputs(cfg.Inputs, p.Inputs, p.BatchSize)
 	if e != nil {
-		writeError(w, http.StatusBadRequest, e, true)
+		writeError(w, http.StatusBadRequest, e)
 		return false
 	}
 	p.Inputs = nil
@@ -184,7 +192,7 @@ func prepareProfile(w http.ResponseWriter, ctx context.Context, decoder *json.De
 }
 func prepareInference(w http.ResponseWriter, ctx context.Context, decoder *json.Decoder, cfg *Config, r *request) bool {
 	if cfg.Mode != modeServing {
-		writeError(w, http.StatusConflict, errors.New("inference endpoint requires serving mode"), true)
+		writeError(w, http.StatusConflict, errors.New("inference endpoint requires serving mode"))
 		return false
 	}
 	var inference Request
@@ -193,12 +201,12 @@ func prepareInference(w http.ResponseWriter, ctx context.Context, decoder *json.
 		return false
 	}
 	if e := validateContext(inference.Context, inference.ID); e != nil {
-		writeError(w, http.StatusBadRequest, e, true)
+		writeError(w, http.StatusBadRequest, e)
 		return false
 	}
 	d, n, e := prepareInputs(cfg.Inputs, inference.Inputs, 1)
 	if e != nil {
-		writeError(w, http.StatusBadRequest, e, true)
+		writeError(w, http.StatusBadRequest, e)
 		return false
 	}
 	r.data = d
@@ -207,7 +215,7 @@ func prepareInference(w http.ResponseWriter, ctx context.Context, decoder *json.
 	if r.context.LifetimeMS > 0 {
 		remaining := r.context.LifetimeMS - r.context.SenderElapsedMS - remainingCompletionOverheadMS(cfg.Policy, r.context.SenderElapsedMS)
 		if remaining <= 0 {
-			writeError(w, http.StatusRequestTimeout, context.DeadlineExceeded, true)
+			writeError(w, http.StatusRequestTimeout, context.DeadlineExceeded)
 			return false
 		}
 		r.lifetime = r.received.Add(time.Duration(remaining * float64(time.Millisecond)))
@@ -229,19 +237,23 @@ func (h *handler) submitRequest(w http.ResponseWriter, req *http.Request, r *req
 			return
 		}
 		status := http.StatusServiceUnavailable
-		if errors.Is(v.err, ErrQueueFull) {
+		var failedItem *preprocessError
+		var failedBatch *batchError
+		var progress *Progress
+		switch {
+		case errors.As(v.err, &failedItem):
+			status = http.StatusUnprocessableEntity
+		case errors.As(v.err, &failedBatch):
+			status = http.StatusInternalServerError
+		case errors.Is(v.err, ErrQueueFull):
 			status = http.StatusTooManyRequests
-		} else if errors.Is(v.err, context.DeadlineExceeded) || errors.Is(v.err, context.Canceled) {
+		case errors.Is(v.err, context.DeadlineExceeded) || errors.Is(v.err, context.Canceled):
 			status = http.StatusRequestTimeout
 		}
-		if errors.Is(v.err, ErrDeadlineDrop) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
-			writeJSON(w, ErrorResponse{Error: v.err.Error(), ExecutionComplete: v.complete,
-				Progress: &v.response.Progress})
-		} else {
-			writeError(w, status, v.err, v.complete)
+		if r.profile == nil && (failedItem != nil || failedBatch != nil || errors.Is(v.err, ErrDeadlineDrop)) {
+			progress = &v.response.Progress
 		}
+		writeFailure(w, status, v.err, v.complete, progress)
 		return
 	}
 	if r.profile != nil {
@@ -258,7 +270,7 @@ func bodyError(w http.ResponseWriter, ctx context.Context, e error) {
 	} else if ctx.Err() != nil {
 		status = http.StatusRequestTimeout
 	}
-	writeError(w, status, e, true)
+	writeError(w, status, e)
 }
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -266,14 +278,17 @@ func writeJSON(w http.ResponseWriter, v any) {
 		slog.Warn("write JSON response", "error", err)
 	}
 }
-func writeError(w http.ResponseWriter, status int, e error, complete bool) {
+func writeError(w http.ResponseWriter, status int, e error) {
+	writeFailure(w, status, e, true, nil)
+}
+func writeFailure(w http.ResponseWriter, status int, e error, complete bool, p *Progress) {
 	s := e.Error()
 	if len(s) > MaxErrorBytes {
 		s = "error exceeds detail bound"
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(ErrorResponse{Error: s, ExecutionComplete: complete}); err != nil {
+	if err := json.NewEncoder(w).Encode(ErrorResponse{Error: s, ExecutionComplete: complete, Progress: p}); err != nil {
 		slog.Warn("write error response", "error", err)
 	}
 }

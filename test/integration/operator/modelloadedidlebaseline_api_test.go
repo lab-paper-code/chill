@@ -78,7 +78,7 @@ func validModelLoadedIdleBaseline(name string) *edgev1alpha1.ModelLoadedIdleBase
 			State: edgev1alpha1.MeasurementStateSpec{
 				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
 					ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
-					ExecutionPath: "ort-cpu", PowerMode: "fixed",
+					ExecutionPath: "ort-cpu", PowerMode: "fixed", Preprocessor: "mobilenet-imagenet",
 				},
 				TargetNode: "lattepanda", CPURequest: resource.MustParse("100m"),
 			},

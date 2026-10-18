@@ -56,13 +56,11 @@ type ActiveProtocolSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	DurationSeconds int32 `json:"durationSeconds"`
 
+	// Dataset names the cluster-scoped Dataset whose profiling records every
+	// active child Run samples.
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	InputGenerator string `json:"inputGenerator"`
-
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	OutputValidation string `json:"outputValidation"`
+	// +kubebuilder:validation:MaxLength=253
+	Dataset string `json:"dataset"`
 
 	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation"`
 }

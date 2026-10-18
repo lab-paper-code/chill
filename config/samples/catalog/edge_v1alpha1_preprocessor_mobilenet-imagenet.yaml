@@ -1,0 +1,29 @@
+# Use metadata.name and spec as serving management API input, not kubectl apply.
+# Images pin the pushed multi-arch carrier index digest (README.md).
+apiVersion: edge.dacs.io/v1alpha1
+kind: Preprocessor
+metadata:
+  name: mobilenet-imagenet
+spec:
+  input:
+    fields:
+    - {name: image, format: JPEG, maxBytes: 4194304}
+  output:
+    fields:
+    - {name: label, format: UTF8}
+  artifacts:
+  - target: {model: mobilenet-v2-050, artifact: canonical-onnx-arm64}
+    source:
+      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:c2c52412abf1729965b9ced7efbfeaa8b0fb5c99aebfc01c907d06d92165f60a"
+      architecture: arm64
+      path: /artifact/mobilenet-nchw
+  - target: {model: mobilenet-v2-050, artifact: canonical-onnx-amd64}
+    source:
+      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:c2c52412abf1729965b9ced7efbfeaa8b0fb5c99aebfc01c907d06d92165f60a"
+      architecture: amd64
+      path: /artifact/mobilenet-nchw
+  - target: {model: mobilenet-v2-050, artifact: mobilenet-v2-050-rk3588}
+    source:
+      image: "155.230.35.213:5000/chill/chill-mobilenet-imagenet-preprocessor@sha256:c2c52412abf1729965b9ced7efbfeaa8b0fb5c99aebfc01c907d06d92165f60a"
+      architecture: arm64
+      path: /artifact/mobilenet-nhwc

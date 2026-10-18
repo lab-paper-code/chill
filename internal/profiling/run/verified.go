@@ -110,6 +110,13 @@ func cloneRunConfig(source RunConfig) RunConfig {
 	result.CPU.AffinityCPUs = slices.Clone(source.CPU.AffinityCPUs)
 	result.State.Firstfloor = modelcompat.CloneFirstfloorRuntimeSettings(source.State.Firstfloor)
 	result.State.HostContract = cloneCandidateHostContract(source.State.HostContract)
+	result.State.ArtifactFiles = slices.Clone(source.State.ArtifactFiles)
+	result.State.Preprocessor.Inputs = slices.Clone(source.State.Preprocessor.Inputs)
+	result.State.Preprocessor.Outputs = slices.Clone(source.State.Preprocessor.Outputs)
+	if source.Measurement.Dataset != nil {
+		dataset := *source.Measurement.Dataset
+		result.Measurement.Dataset = &dataset
+	}
 	result.Delivery = cloneRuntimeDelivery(source.Delivery)
 	result.Metrics.MetricLabels = maps.Clone(source.Metrics.MetricLabels)
 	if source.Actuation != nil {

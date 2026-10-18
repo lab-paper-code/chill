@@ -30,8 +30,11 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 			Candidate: profiler.CandidateSelection{
 				ModelSpec:     spec.Candidate.ModelSpec,
 				DeviceClass:   spec.Candidate.DeviceClass,
+				Node:          spec.TargetNode,
 				ExecutionPath: spec.Candidate.ExecutionPath,
 				PowerMode:     spec.Candidate.PowerMode,
+				Preprocessor:  spec.Candidate.Preprocessor,
+				Dataset:       spec.Measurement.Dataset,
 			},
 			TargetNode: spec.TargetNode,
 			CPURequest: spec.CPURequest.String(),
@@ -40,8 +43,6 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 				WarmupIterations: int(spec.Measurement.WarmupIterations),
 				DurationSeconds:  int(spec.Measurement.DurationSeconds),
 				WorkloadMode:     spec.Measurement.WorkloadMode,
-				InputGenerator:   spec.Measurement.InputGenerator,
-				OutputValidation: spec.Measurement.OutputValidation,
 			},
 			Metrics: profiler.MetricObservationPolicy{
 				IntervalMilliseconds: int(spec.MetricObservation.IntervalMilliseconds),

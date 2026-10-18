@@ -1,0 +1,181 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: preprocessors.edge.dacs.io
+spec:
+  group: edge.dacs.io
+  names:
+    kind: Preprocessor
+    listKind: PreprocessorList
+    plural: preprocessors
+    singular: preprocessor
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Preprocessor is the Schema for the preprocessors API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PreprocessorSpec declares the raw sample contract and per-model-artifact
+              preprocessing code.
+            properties:
+              artifacts:
+                description: Artifacts binds one preprocessing code directory to each
+                  target model artifact.
+                items:
+                  description: PreprocessorArtifact is the preprocessing code for
+                    one target model artifact.
+                  properties:
+                    source:
+                      description: PreprocessorArtifactSource identifies one exact
+                        code carrier and its in-container directory.
+                      properties:
+                        architecture:
+                          description: Architecture is the Kubernetes architecture
+                            supported by the carrier.
+                          minLength: 1
+                          type: string
+                        image:
+                          description: Image is an immutable OCI image reference containing
+                            the code directory.
+                          minLength: 1
+                          type: string
+                        path:
+                          description: Path is the clean absolute directory containing
+                            preprocessor.py.
+                          pattern: ^/[A-Za-z0-9._/-]+$
+                          type: string
+                      required:
+                      - architecture
+                      - image
+                      - path
+                      type: object
+                    target:
+                      description: PreprocessorTarget names one ModelSpec artifact.
+                      properties:
+                        artifact:
+                          description: Artifact is a ModelArtifact name in that ModelSpec.
+                          minLength: 1
+                          type: string
+                        model:
+                          description: Model is the ModelSpec name.
+                          minLength: 1
+                          type: string
+                      required:
+                      - artifact
+                      - model
+                      type: object
+                  required:
+                  - source
+                  - target
+                  type: object
+                minItems: 1
+                type: array
+              input:
+                description: Input declares every field of one raw sample.
+                properties:
+                  fields:
+                    items:
+                      description: RawField declares one size-bounded raw field.
+                      properties:
+                        format:
+                          description: Format is the field content format.
+                          enum:
+                          - JPEG
+                          - UTF8
+                          type: string
+                        maxBytes:
+                          description: MaxBytes is the inclusive upper bound of the
+                            field size.
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        name:
+                          description: 'Name is one path element: dataset records
+                            store the field as <recordID>/<name>.'
+                          maxLength: 256
+                          minLength: 1
+                          pattern: ^([^/\\.][^/\\]*|\.[^/\\.][^/\\]*|\.\.[^/\\]+)$
+                          type: string
+                      required:
+                      - format
+                      - maxBytes
+                      - name
+                      type: object
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                required:
+                - fields
+                type: object
+              maxNewTokens:
+                description: MaxNewTokens bounds generation and is declared only by
+                  generative preprocessing.
+                format: int32
+                minimum: 1
+                type: integer
+              output:
+                description: Output declares every field of one raw response.
+                properties:
+                  fields:
+                    items:
+                      description: RawOutputField declares one raw response field.
+                      properties:
+                        format:
+                          description: Format is the field content format.
+                          enum:
+                          - JPEG
+                          - UTF8
+                          type: string
+                        name:
+                          description: 'Name is one path element: dataset records
+                            store the field as <recordID>/<name>.'
+                          maxLength: 256
+                          minLength: 1
+                          pattern: ^([^/\\.][^/\\]*|\.[^/\\.][^/\\]*|\.\.[^/\\]+)$
+                          type: string
+                      required:
+                      - format
+                      - name
+                      type: object
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                required:
+                - fields
+                type: object
+            required:
+            - artifacts
+            - input
+            - output
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true

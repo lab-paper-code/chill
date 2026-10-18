@@ -87,6 +87,39 @@ func TestBuildDaemonSetUpdateStrategy(t *testing.T) {
 	}
 }
 
+func TestBuildDaemonSetEnsuresJetsonBootOrderingOnlyWhenEnabled(t *testing.T) {
+	t.Parallel()
+	config := validConfig()
+	daemonSet, err := buildDaemonSet(validOptions(), config)
+	if err != nil || len(daemonSet.Spec.Template.Spec.InitContainers) != 0 {
+		t.Fatalf("disabled boot ordering: err=%v spec=%#v", err, daemonSet)
+	}
+	config.JetsonNVPModel.EnsureBootOrdering = true
+	daemonSet, err = buildDaemonSet(validOptions(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := daemonSet.Spec.Template.Spec
+	if len(spec.InitContainers) != 1 || len(spec.Volumes) != len(config.JetsonNVPModel.HostPaths)+2 ||
+		len(spec.Containers[0].VolumeMounts) != len(config.JetsonNVPModel.HostPaths) {
+		t.Fatalf("boot-ordering Pod surface = %#v", spec)
+	}
+	initContainer := spec.InitContainers[0]
+	security := initContainer.SecurityContext
+	if initContainer.Image != config.Image || !reflect.DeepEqual(initContainer.Command, []string{"/node-actuator", "ensure-jetson-boot-ordering"}) ||
+		security == nil || *security.Privileged || *security.AllowPrivilegeEscalation || !*security.ReadOnlyRootFilesystem ||
+		len(security.Capabilities.Add) != 0 || !reflect.DeepEqual(security.Capabilities.Drop, []corev1.Capability{"ALL"}) {
+		t.Fatalf("boot-ordering init container = %#v", initContainer)
+	}
+	want := []corev1.VolumeMount{
+		{Name: "host-systemd-etc", MountPath: "/host/etc/systemd/system"},
+		{Name: "host-systemd-lib", MountPath: "/host/lib/systemd/system", ReadOnly: true},
+	}
+	if !reflect.DeepEqual(initContainer.VolumeMounts, want) {
+		t.Fatalf("boot-ordering mounts = %#v", initContainer.VolumeMounts)
+	}
+}
+
 func hasPolicyArg(args []string, want actuatorcore.ActuationPolicySpec) bool {
 	for _, argument := range args {
 		const prefix = "--allowed-policy="
@@ -115,6 +148,10 @@ func TestConfigRejectsImplicitEligibilityOrAuthorization(t *testing.T) {
 		},
 		"broad host path": func(config *Config) {
 			config.JetsonNVPModel.HostPaths[0].HostPath = "/"
+		},
+		"boot-ordering host path collision": func(config *Config) {
+			config.JetsonNVPModel.EnsureBootOrdering = true
+			config.JetsonNVPModel.HostPaths[0].HostPath = "/etc/systemd/system"
 		},
 		"no restart capability": func(config *Config) {
 			config.SecurityContext.Capabilities.Add = nil

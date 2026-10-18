@@ -14,7 +14,7 @@ export const navigation = [
   {title:"운영",url:"/scheduler",icon:BrainCircuit,prefixes:["/scheduler","/transitions","/resources","/pools"]},
   {title:"측정",url:"/measurements",icon:FlaskConical,prefixes:["/measurements"]},
   {title:"기록",url:"/records",icon:History,prefixes:["/records","/observations","/changes","/scheduler/history","/scheduler/power","/scheduler/compare","/experiments"]},
-  {title:"설정",url:"/settings",icon:SlidersHorizontal,prefixes:["/settings","/models","/configuration"]},
+  {title:"설정",url:"/settings",icon:SlidersHorizontal,prefixes:["/settings","/models","/preprocessors","/datasets","/configuration"]},
 ]
 const under = (prefix:string, pathname:string) => pathname === prefix || pathname.startsWith(`${prefix}/`)
 // The longest matching prefix wins, so /scheduler/history belongs to 기록, not 운영.

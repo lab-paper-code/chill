@@ -13,6 +13,8 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
+const testARM64Architecture = "arm64"
+
 func TestPreparerUpgradesProvenFirstPathRunConfig(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
 	resolvers := fixtureResolvers(expected, candidateBytes)
@@ -35,41 +37,53 @@ func TestPreparerUpgradesProvenFirstPathRunConfig(t *testing.T) {
 	}
 }
 
-func TestPreparerFreezesNamedArtifactInputs(t *testing.T) {
-	for _, path := range []string{"ort", "rknn"} {
-		t.Run(path, func(t *testing.T) {
-			expected, candidateBytes := preparationFixture(t)
-			if path == "rknn" {
-				expected, candidateBytes = rknnPreparationFixture(t)
-			}
-			prepared, err := newFixturePreparer(t, fixtureResolvers(expected, candidateBytes)).Prepare(
-				context.Background(), fixtureRequest(expected),
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(prepared.RunConfig.Delivery.ArtifactCapability.Tensors, expected.Delivery.ArtifactCapability.Tensors) {
-				t.Fatal("preparation changed the artifact's named inputs")
-			}
-			for _, mutate := range []func([]modelcompat.InputTensor){
-				func(inputs []modelcompat.InputTensor) { inputs[0].Name = "other" },
-				func(inputs []modelcompat.InputTensor) { inputs[0].Datatype = "INT32" },
-				func(inputs []modelcompat.InputTensor) { inputs[0].SampleShape[0]++ },
-			} {
-				report, err := profilingrun.DecodeCandidateReport(candidateBytes)
-				if err != nil {
-					t.Fatal(err)
-				}
-				mutate(report.ArtifactCapability.Tensors)
-				payload, err := json.Marshal(report)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := profilingrun.ValidateCandidateReport(payload, prepared.RunConfig); err == nil {
-					t.Fatal("candidate input contract drift did not invalidate the frozen Run")
-				}
-			}
-		})
+func TestPreparerFreezesRKNNArtifactInputs(t *testing.T) {
+	expected, candidateBytes := rknnPreparationFixture(t)
+	prepared, err := newFixturePreparer(t, fixtureResolvers(expected, candidateBytes)).Prepare(
+		context.Background(), fixtureRequest(expected),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(prepared.RunConfig.Delivery.ArtifactCapability.Tensors, expected.Delivery.ArtifactCapability.Tensors) {
+		t.Fatal("preparation changed the artifact's named inputs")
+	}
+	for _, mutate := range []func([]modelcompat.InputTensor){
+		func(inputs []modelcompat.InputTensor) { inputs[0].Name = "other" },
+		func(inputs []modelcompat.InputTensor) { inputs[0].Datatype = "INT32" },
+		func(inputs []modelcompat.InputTensor) { inputs[0].SampleShape[0]++ },
+	} {
+		report, err := profilingrun.DecodeCandidateReport(candidateBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(report.ArtifactCapability.Tensors)
+		payload, err := json.Marshal(report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := profilingrun.ValidateCandidateReport(payload, prepared.RunConfig); err == nil {
+			t.Fatal("candidate input contract drift did not invalidate the frozen Run")
+		}
+	}
+}
+
+func TestPreparerFreezesPreprocessorAndActiveDataset(t *testing.T) {
+	expected, candidateBytes := preparationFixture(t)
+	prepared, err := newFixturePreparer(t, fixtureResolvers(expected, candidateBytes)).Prepare(
+		context.Background(), fixtureRequest(expected),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(prepared.RunConfig.State.Preprocessor, expected.State.Preprocessor) ||
+		!reflect.DeepEqual(prepared.RunConfig.Measurement.Dataset, expected.Measurement.Dataset) {
+		t.Fatalf("preparation did not freeze the resolved preprocessor and dataset: %+v", prepared.RunConfig)
+	}
+	request := fixtureRequest(expected)
+	request.Candidate.Dataset = ""
+	if err := request.Validate(); err == nil {
+		t.Fatal("active measurement request without a dataset was accepted")
 	}
 }
 
@@ -119,7 +133,7 @@ func TestPreparerFreezesExplicitRKNNLitePathWithoutORTSettings(t *testing.T) {
 		t.Fatalf("prepared RKNNLite config drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
 	}
 	if prepared.RunConfig.CPU.ORTIntraOpThreads != 0 || prepared.RunConfig.CPU.ORTInterOpThreads != 0 ||
-		!profilingrun.IsSupportedRKNNLiteRunConfig(prepared.RunConfig) {
+		!profilingrun.IsSupportedFirstfloorRunConfig(prepared.RunConfig) {
 		t.Fatalf("RKNNLite worker CPU contract drifted: %#v", prepared.RunConfig.CPU)
 	}
 	if prepared.RunConfig.Candidate.ExecutionPath != "rknnlite-bs2" || prepared.RunConfig.Measurement.Batch != 2 {
@@ -284,6 +298,27 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			},
 			match: "runtime/backend contract is not supported",
 		},
+		{
+			name: "preprocessor architecture differs from target Node",
+			mutate: func(resolvers *fakePreparationResolvers) {
+				resolvers.candidate.result.State.Preprocessor.Architecture = testARM64Architecture
+			},
+			match: "preprocessor artifact architecture",
+		},
+		{
+			name: "candidate preprocessor mismatch",
+			mutate: func(resolvers *fakePreparationResolvers) {
+				resolvers.candidate.result.State.Preprocessor.Name = "other-preprocessor"
+			},
+			match: "preprocessor does not match request",
+		},
+		{
+			name: "candidate dataset missing",
+			mutate: func(resolvers *fakePreparationResolvers) {
+				resolvers.candidate.result.Dataset = nil
+			},
+			match: "dataset does not match request",
+		},
 	}
 
 	for _, test := range tests {
@@ -321,19 +356,11 @@ func TestPreparerRejectsInternalReportMaterialDriftBeforeNodeResolution(t *testi
 			match: "artifact image mismatch",
 		},
 		{
-			name: "artifact path drift",
+			name: "artifact files report drift",
 			mutate: func(candidate *ResolvedCandidate) {
-				candidate.ArtifactPath = "/artifact/other.onnx"
+				candidate.State.ArtifactFiles = []string{"/artifact/other.onnx"}
 			},
-			match: "does not match execution state",
-		},
-		{
-			name: "artifact path report drift",
-			mutate: func(candidate *ResolvedCandidate) {
-				candidate.State.ArtifactPath = "/artifact/other.onnx"
-				candidate.ArtifactPath = candidate.State.ArtifactPath
-			},
-			match: "artifact path mismatch",
+			match: "artifact files mismatch",
 		},
 	}
 
@@ -375,11 +402,10 @@ func promoteFixtureCandidateReport(t *testing.T, payload []byte, candidate *Reso
 		PowerModes:   []string{candidate.State.PowerMode},
 	}
 	candidate.ArtifactArchitecture = candidate.DeviceArchitecture
-	candidate.ArtifactPath = "/artifact/model.onnx"
-	candidate.State.ArtifactPath = candidate.ArtifactPath
+	candidate.State.ArtifactFiles = []string{"/artifact/model.onnx"}
 	report.ArtifactSupply = profilingrun.CandidateReportArtifactSupply{
 		Image: candidate.ArtifactImage, Architecture: candidate.ArtifactArchitecture,
-		Path: candidate.ArtifactPath,
+		Files: candidate.State.ArtifactFiles,
 	}
 	report.MetricObserverImage = candidate.MetricObserverImage
 	encoded, err := json.Marshal(report)
@@ -530,22 +556,30 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 }
 
 func fixtureRequest(config profilingrun.RunConfig) PreparationRequest {
-	return PreparationRequest{
+	measurement := config.Measurement
+	measurement.Dataset = nil
+	request := PreparationRequest{
 		Candidate: CandidateSelection{
 			ModelSpec:     config.State.Model,
 			DeviceClass:   config.State.DeviceClass,
+			Node:          config.TargetNode.Name,
 			ExecutionPath: config.Candidate.ExecutionPath,
 			PowerMode:     config.State.PowerMode,
+			Preprocessor:  config.State.Preprocessor.Name,
 		},
 		TargetNode:  config.TargetNode.Name,
 		CPURequest:  config.CPU.Request,
-		Measurement: config.Measurement,
+		Measurement: measurement,
 		Metrics: MetricObservationPolicy{
 			IntervalMilliseconds: config.Metrics.IntervalMilliseconds,
 			TimeoutMilliseconds:  config.Metrics.TimeoutMilliseconds,
 			DurationSeconds:      config.Metrics.DurationSeconds,
 		},
 	}
+	if config.Measurement.Dataset != nil {
+		request.Candidate.Dataset = config.Measurement.Dataset.Name
+	}
+	return request
 }
 
 func preparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
@@ -559,7 +593,7 @@ func preparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 		t.Fatal(err)
 	}
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
 	candidateBytes, err := os.ReadFile("testdata/candidate-report.json")
@@ -580,11 +614,13 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	config.Candidate.ExecutionPath = "rknnlite-bs2"
 	config.State.DeviceClass = "orangepi-5-plus-16g"
 	config.State.Artifact = "mobilenet-v2-050-rk3588-bs2"
-	config.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs2.rknn"
-	config.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
-	config.State.Backend = profilingrun.RKNNLiteBackend
+	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050-rk3588-bs2.rknn"}
+	config.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
+	config.State.Backend = profilingrun.FirstfloorRKNNLiteBackend
+	config.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
 	config.TargetNode.Name = "orangepi5plus"
-	config.TargetNode.Architecture = "arm64"
+	config.TargetNode.Architecture = testARM64Architecture
+	config.State.Preprocessor.Architecture = testARM64Architecture
 	config.TargetNode.AllocatableCPU = "8"
 	config.CPU.Limit = "8"
 	config.CPU.ORTIntraOpThreads = 0
@@ -623,7 +659,7 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	}
 	report.ArtifactSupply = profilingrun.CandidateReportArtifactSupply{
 		Image: config.Images.Artifact, Architecture: config.TargetNode.Architecture,
-		Path: config.State.ArtifactPath,
+		Files: config.State.ArtifactFiles,
 	}
 	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
 		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{2},
@@ -662,6 +698,7 @@ func fixtureResolvers(config profilingrun.RunConfig, report []byte) *fakePrepara
 			Inputs:             config.Candidate.Inputs,
 			Verdict:            config.Candidate.Verdict,
 			State:              config.State,
+			Dataset:            config.Measurement.Dataset,
 			DeviceArchitecture: config.TargetNode.Architecture,
 			DeviceNodeSelector: map[string]string{
 				"edge.dacs.io/device-class": config.State.DeviceClass,
@@ -670,7 +707,6 @@ func fixtureResolvers(config profilingrun.RunConfig, report []byte) *fakePrepara
 			RuntimeImage:         config.Images.Runtime,
 			ArtifactImage:        config.Images.Artifact,
 			ArtifactArchitecture: config.TargetNode.Architecture,
-			ArtifactPath:         config.State.ArtifactPath,
 			MetricObserverImage:  config.Images.MetricObserver,
 		}},
 		node: &fakeNodeResolver{result: config.TargetNode},

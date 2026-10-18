@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
-const testINT32Datatype = "INT32"
+const (
+	mutatedValue = "mutated"
+	mutatedPath  = "/mutated"
+)
 
 func TestNewCurvePlanCarriesThePlannedBatchSizes(t *testing.T) {
 	shared := validCurvePlanSpec()
@@ -48,20 +49,20 @@ func TestNewCurvePlanRejectsInvalidArtifactAndPlannedBatchSizes(t *testing.T) {
 		{name: "empty artifact name", mutate: func(shared *CurvePlanSpec) {
 			shared.Artifact.Name = ""
 		}},
-		{name: "empty artifact path", mutate: func(shared *CurvePlanSpec) {
-			shared.Artifact.Path = ""
+		{name: "no artifact files", mutate: func(shared *CurvePlanSpec) {
+			shared.Artifact.Files = nil
 		}},
 		{name: "empty artifact image", mutate: func(shared *CurvePlanSpec) {
 			shared.Artifact.Image = ""
 		}},
-		{name: "root artifact path", mutate: func(shared *CurvePlanSpec) {
-			shared.Artifact.Path = "/"
+		{name: "root artifact file", mutate: func(shared *CurvePlanSpec) {
+			shared.Artifact.Files = []string{"/"}
 		}},
-		{name: "relative artifact path", mutate: func(shared *CurvePlanSpec) {
-			shared.Artifact.Path = "artifact/model.rknn"
+		{name: "relative artifact file", mutate: func(shared *CurvePlanSpec) {
+			shared.Artifact.Files = []string{"artifact/model.rknn"}
 		}},
-		{name: "unclean artifact path", mutate: func(shared *CurvePlanSpec) {
-			shared.Artifact.Path = "/artifact/../model.rknn"
+		{name: "unclean artifact file", mutate: func(shared *CurvePlanSpec) {
+			shared.Artifact.Files = []string{"/artifact/../model.rknn"}
 		}},
 		{name: "non-positive batch", mutate: func(shared *CurvePlanSpec) {
 			shared.PlannedBatchSizes = []int{0, 1}
@@ -141,16 +142,18 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 
 	// Inputs and projections are copies, not mutation paths into the initialized record.
 	shared.PlannedBatchSizes[0] = 99
-	shared.Tensor.Tensors[0].Name = "mutated"
-	shared.Tensor.Tensors[0].Datatype = testINT32Datatype
-	shared.Tensor.Tensors[0].SampleShape[0] = 99
+	shared.Artifact.Files[0] = mutatedPath
+	shared.Preprocessor.Inputs[0] = mutatedValue
+	shared.ActiveProtocol.Dataset.UID = mutatedValue
 	projected := contract.Shared()
 	projected.PlannedBatchSizes[0] = 99
-	projected.Tensor.Tensors[0].Name = "projected"
-	projected.Tensor.Tensors[0].Datatype = testINT32Datatype
-	projected.Tensor.Tensors[0].SampleShape[0] = 99
+	projected.Artifact.Files[0] = "/projected"
+	projected.Preprocessor.Outputs[0] = "projected"
+	projected.ActiveProtocol.Dataset.UID = "projected"
 	if !reflect.DeepEqual(contract.PlannedBatchSizes(), []int{1, 2, 4}) ||
-		!reflect.DeepEqual(contract.Shared().Tensor, validCurvePlanSpec().Tensor) {
+		!reflect.DeepEqual(contract.Shared().Artifact, validCurvePlanSpec().Artifact) ||
+		!reflect.DeepEqual(contract.Shared().Preprocessor, validCurvePlanSpec().Preprocessor) ||
+		!reflect.DeepEqual(contract.Shared().ActiveProtocol, validCurvePlanSpec().ActiveProtocol) {
 		t.Fatal("curve plan was mutable through a caller slice")
 	}
 
@@ -168,7 +171,7 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 	}
 }
 
-func TestCurvePlanFreezesCompleteTensorIdentity(t *testing.T) {
+func TestCurvePlanFreezesPreprocessorAndDatasetIdentity(t *testing.T) {
 	contract, err := NewCurvePlan(validCurvePlanSpec())
 	if err != nil {
 		t.Fatal(err)
@@ -177,17 +180,15 @@ func TestCurvePlanFreezesCompleteTensorIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"name", "datatype", "shape"} {
-		t.Run(field, func(t *testing.T) {
+	for name, mutate := range map[string]func(*CurvePlanSpec){
+		"preprocessor image":  func(shared *CurvePlanSpec) { shared.Preprocessor.Image = testImage("preprocessor", "e") },
+		"preprocessor inputs": func(shared *CurvePlanSpec) { shared.Preprocessor.Inputs = []string{"image", "question"} },
+		"max new tokens":      func(shared *CurvePlanSpec) { shared.Preprocessor.MaxNewTokens = 16 },
+		"dataset UID":         func(shared *CurvePlanSpec) { shared.ActiveProtocol.Dataset.UID = "other-dataset-uid" },
+	} {
+		t.Run(name, func(t *testing.T) {
 			changed := contract.Shared()
-			switch field {
-			case "name":
-				changed.Tensor.Tensors[0].Name = "other-input"
-			case "datatype":
-				changed.Tensor.Tensors[0].Datatype = testINT32Datatype
-			case "shape":
-				changed.Tensor.Tensors[0].SampleShape[0]++
-			}
+			mutate(&changed)
 			other, err := NewCurvePlan(changed)
 			if err != nil {
 				t.Fatal(err)
@@ -197,35 +198,32 @@ func TestCurvePlanFreezesCompleteTensorIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			if bytes.Equal(canonical, otherJSON) {
-				t.Fatal("changed tensor contract retained the frozen plan identity")
+				t.Fatal("changed preprocessing contract retained the frozen plan identity")
 			}
 			verified := testVerifiedState(contract)
 			verified.Shared = changed
 			if _, err := VerifyCurvePlan(contract, verified); err == nil ||
 				err.Error() != "verified curve state does not match the plan" {
-				t.Fatalf("changed tensor verification error = %v", err)
+				t.Fatalf("changed preprocessing verification error = %v", err)
 			}
 		})
 	}
 }
 
-func TestCurvePlanRejectsIncompleteTensorContract(t *testing.T) {
-	for _, field := range []string{"tensors", "name", "datatype", "shape"} {
-		t.Run(field, func(t *testing.T) {
+func TestCurvePlanRejectsIncompletePreprocessorAndDataset(t *testing.T) {
+	for name, mutate := range map[string]func(*CurvePlanSpec){
+		"preprocessor path":      func(shared *CurvePlanSpec) { shared.Preprocessor.Path = "relative" },
+		"preprocessor inputs":    func(shared *CurvePlanSpec) { shared.Preprocessor.Inputs = nil },
+		"duplicate output":       func(shared *CurvePlanSpec) { shared.Preprocessor.Outputs = []string{"label", "label"} },
+		"active without dataset": func(shared *CurvePlanSpec) { shared.ActiveProtocol.Dataset = nil },
+		"idle with dataset":      func(shared *CurvePlanSpec) { shared.IdleProtocol.Dataset = &CurveDatasetContract{Name: "d", UID: "u"} },
+		"dataset without UID":    func(shared *CurvePlanSpec) { shared.ActiveProtocol.Dataset.UID = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
 			shared := validCurvePlanSpec()
-			switch field {
-			case "tensors":
-				shared.Tensor.Tensors = nil
-			case "name":
-				shared.Tensor.Tensors[0].Name = ""
-			case "datatype":
-				shared.Tensor.Tensors[0].Datatype = ""
-			case "shape":
-				shared.Tensor.Tensors[0].SampleShape[0] = 0
-			}
-			if _, err := NewCurvePlan(shared); err == nil ||
-				!strings.Contains(err.Error(), "curve plan tensor contract:") {
-				t.Fatalf("incomplete tensor contract error = %v", err)
+			mutate(&shared)
+			if _, err := NewCurvePlan(shared); err == nil {
+				t.Fatal("incomplete preprocessing contract accepted")
 			}
 		})
 	}
@@ -269,11 +267,11 @@ func TestVerifyCurvePlanOwnsTheVerifiedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	verified.Shared.PlannedBatchSizes[0] = 99
-	verified.Shared.Tensor.Tensors[0].Name = "mutated"
-	verified.Shared.Tensor.Tensors[0].Datatype = testINT32Datatype
-	verified.Shared.Tensor.Tensors[0].SampleShape[0] = 99
+	verified.Shared.Artifact.Files[0] = mutatedPath
+	verified.Shared.Preprocessor.Inputs[0] = mutatedValue
 	if plan.state.Shared.PlannedBatchSizes[0] == 99 ||
-		!reflect.DeepEqual(plan.state.Shared.Tensor, validCurvePlanSpec().Tensor) {
+		!reflect.DeepEqual(plan.state.Shared.Artifact, validCurvePlanSpec().Artifact) ||
+		!reflect.DeepEqual(plan.state.Shared.Preprocessor, validCurvePlanSpec().Preprocessor) {
 		t.Fatal("verified curve-plan state was mutable through caller slices")
 	}
 }
@@ -500,16 +498,16 @@ func validCurvePlanSpec() CurvePlanSpec {
 		},
 		Artifact: CurveArtifactContract{
 			ExecutionPath: "rknnlite", Name: "artifact",
-			Path: "/artifact/model.rknn", Image: testImage("artifact", "c"),
+			Files: []string{"/artifact/model.rknn"}, Image: testImage("artifact", "c"),
+		},
+		Preprocessor: CurvePreprocessorContract{
+			Name: "mobilenet-imagenet", Image: testImage("preprocessor", "d"), Architecture: "arm64",
+			Path: "/artifact/mobilenet-nhwc", Inputs: []string{"image"}, Outputs: []string{"label"},
 		},
 		PlannedBatchSizes: []int{1, 2, 4},
-		Tensor: CurveTensorContract{Tensors: []modelcompat.InputTensor{
-			{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
-		}},
 	}
 	shared.ActiveProtocol.WarmupIterations = 20
-	shared.IdleProtocol.InputGenerator = "none"
-	shared.IdleProtocol.OutputValidation = "none"
+	shared.ActiveProtocol.Dataset = &CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
 	shared.IdleProtocol.SettlingDurationSeconds = 5
 	return shared
 }
@@ -525,7 +523,7 @@ func testCurvePlanSpec(batchCount int) CurvePlanSpec {
 
 func testCurveProtocol(mode, metricImage, workloadImage string) CurveProtocolContract {
 	return CurveProtocolContract{
-		WorkloadMode: mode, InputGenerator: "seeded", OutputValidation: "shape",
+		WorkloadMode:               mode,
 		DurationSeconds:            30,
 		MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900,
 		MetricDurationSeconds: 31, MetricObserverImage: metricImage,

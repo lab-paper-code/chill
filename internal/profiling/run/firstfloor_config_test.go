@@ -24,6 +24,7 @@ func firstfloorFrozenConfig(backend string) RunConfig {
 		host := rknnHostContractForTest()
 		config.State.HostContract = &host
 		config.Delivery = rknnDeliveryForTest(2, &host)
+		config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050-rk3588-bs2.rknn"}
 		config.Measurement.Batch = 2
 		config.CPU.ORTIntraOpThreads = 0
 		config.CPU.ORTInterOpThreads = 0
@@ -77,8 +78,8 @@ func TestFirstfloorFrozenBackendRequirements(t *testing.T) {
 			if err := config.Validate(); err != nil {
 				t.Fatal(err)
 			}
-			if !IsSupportedFirstfloorRunConfig(config) || IsSupportedCPUORTRunConfig(config) || IsSupportedRKNNLiteRunConfig(config) {
-				t.Fatal("native execution was confused with standalone execution")
+			if !IsSupportedFirstfloorRunConfig(config) {
+				t.Fatal("native execution was not supported")
 			}
 		})
 	}

@@ -18,17 +18,17 @@ import (
 )
 
 const (
-	testPodUID              = "pod-uid"
-	rknnIdleSuccessTestMode = "idle-success"
-	mutatedCopyName         = "mutated-copy"
-	testDifferentIdentity   = "other"
+	testPodUID            = "pod-uid"
+	idleSuccessTestMode   = "idle-success"
+	mutatedCopyName       = "mutated-copy"
+	testDifferentIdentity = "other"
 )
 
-func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
-	t.Setenv("CHILL_ORT_CPU_HELPER", "success")
+func TestFirstfloorRuntimeUsesDedicatedResultFile(t *testing.T) {
+	t.Setenv("CHILL_FIRSTFLOOR_HELPER", "success")
 	directory := t.TempDir()
 	resultPath := filepath.Join(directory, "runtime-result.json")
-	runtime := newTestORTCPURuntime(t, resultPath)
+	runtime := newTestFirstfloorRuntime(t, resultPath)
 	config := testRunConfig(t)
 
 	result, err := runtime.Measure(context.Background(), runtimeRequest(config))
@@ -43,7 +43,7 @@ func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.mode != runtimeMeasurementActive || active.Provider != config.State.Backend || active.ExperimentID != testPodUID {
+	if result.mode != runtimeMeasurementActive || active.Provider != testCPUProvider || active.ExperimentID != testPodUID {
 		t.Fatalf("unexpected runtime result: %#v", result)
 	}
 	active.NodeName = mutatedCopyName
@@ -60,10 +60,10 @@ func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	}
 }
 
-func TestORTCPURuntimeDecodesIdleResultByRunConfigMode(t *testing.T) {
-	t.Setenv("CHILL_ORT_CPU_HELPER", "idle-success")
+func TestFirstfloorRuntimeDecodesIdleResultByRunConfigMode(t *testing.T) {
+	t.Setenv("CHILL_FIRSTFLOOR_HELPER", idleSuccessTestMode)
 	directory := t.TempDir()
-	runtime := newTestORTCPURuntime(t, filepath.Join(directory, "runtime-result.json"))
+	runtime := newTestFirstfloorRuntime(t, filepath.Join(directory, "runtime-result.json"))
 	config := testIdleRunConfig(t)
 
 	result, err := runtime.Measure(context.Background(), runtimeRequest(config))
@@ -84,22 +84,47 @@ func TestORTCPURuntimeDecodesIdleResultByRunConfigMode(t *testing.T) {
 	}
 }
 
-func TestORTCPURequestMatchesPythonContract(t *testing.T) {
+func TestFirstfloorRequestMatchesPythonContract(t *testing.T) {
 	multiInput := testRunConfig(t)
-	multiInput.Delivery.ArtifactCapability.Tensors = []modelcompat.InputTensor{
-		{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}},
-		{Name: "mask", Datatype: "INT64", SampleShape: []int32{224, 224}},
+	multiInput.State.Preprocessor.Inputs = []string{"image", "question"}
+	multiInput.State.Preprocessor.Outputs = []string{"answer"}
+	multiInput.State.Preprocessor.MaxNewTokens = 16
+	rknn := testRunConfig(t)
+	rknn.State.Backend = profilingrun.FirstfloorRKNNLiteBackend
+	rknn.State.Artifact, rknn.State.ArtifactFiles = "model-rk3588-bs1", []string{"/artifact/model.rknn"}
+	rknn.State.Preprocessor.Architecture = "arm64"
+	rknn.TargetNode.Architecture = "arm64"
+	rknn.CPU.ORTIntraOpThreads, rknn.CPU.ORTInterOpThreads = 0, 0
+	rknn.Delivery = profilingrun.CandidateRuntimeDelivery{
+		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
+			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1},
+			Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}},
+		},
+		RuntimePackages: []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}},
+		HostContract: &profilingrun.CandidateReportHostContract{
+			Libraries: []profilingrun.CandidateReportHostLibrary{{
+				Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
+			}},
+			Driver:  profilingrun.CandidateReportHostDriver{Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6"},
+			Devices: []profilingrun.CandidateReportHostDevice{{Path: "/dev/dri/renderD128"}},
+			Platform: &profilingrun.CandidateReportHostPlatform{
+				CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588",
+			},
+		},
+		RuntimeAccess: &profilingrun.CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44}},
 	}
+	rknn.State.HostContract = rknn.Delivery.HostContract
 	for _, test := range []struct {
 		name   string
 		config profilingrun.RunConfig
 	}{
 		{name: "active", config: testRunConfig(t)},
 		{name: "idle", config: testIdleRunConfig(t)},
-		{name: "multiple typed inputs", config: multiInput},
+		{name: "multiple raw fields", config: multiInput},
+		{name: "RKNN omits ORT threads", config: rknn},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
+			runtime := newTestFirstfloorRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
 			payload, err := runtime.encodeRequest(runtimeRequest(test.config))
 			if err != nil {
 				t.Fatal(err)
@@ -108,16 +133,16 @@ func TestORTCPURequestMatchesPythonContract(t *testing.T) {
 			if err != nil {
 				t.Fatal("python3 is required for the Go-to-Python runtime contract test")
 			}
-			runtimeDirectory, err := filepath.Abs("../../../../runtime/ortcpu")
+			runtimeDirectory, err := filepath.Abs("../../../../runtime/firstfloor")
 			if err != nil {
 				t.Fatal(err)
 			}
 			const validator = `
 import sys
 sys.path.insert(0, sys.argv[1])
-import runner
-request = runner.decode_request(sys.stdin.buffer)
-runner.validate_request(request)
+import measurement
+request = measurement.common.decode_request(sys.stdin.buffer)
+measurement.validate_request(request)
 `
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -131,7 +156,7 @@ runner.validate_request(request)
 	}
 }
 
-func TestORTCPURuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
+func TestFirstfloorRuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
 	config := testRunConfig(t)
 
 	t.Run("stale result", func(t *testing.T) {
@@ -139,7 +164,7 @@ func TestORTCPURuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
 		if err := os.WriteFile(resultPath, []byte("{}"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		runtime := newTestORTCPURuntime(t, resultPath)
+		runtime := newTestFirstfloorRuntime(t, resultPath)
 		if _, err := runtime.Measure(context.Background(), runtimeRequest(config)); err == nil ||
 			!strings.Contains(err.Error(), "already exists") {
 			t.Fatalf("expected stale result rejection, got %v", err)
@@ -147,8 +172,8 @@ func TestORTCPURuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
 	})
 
 	t.Run("unknown result field", func(t *testing.T) {
-		t.Setenv("CHILL_ORT_CPU_HELPER", "unknown-field")
-		runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
+		t.Setenv("CHILL_FIRSTFLOOR_HELPER", "unknown-field")
+		runtime := newTestFirstfloorRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
 		if _, err := runtime.Measure(context.Background(), runtimeRequest(config)); err == nil ||
 			!strings.Contains(err.Error(), "unknown field") {
 			t.Fatalf("expected strict result rejection, got %v", err)
@@ -156,11 +181,14 @@ func TestORTCPURuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
 	})
 }
 
-func TestORTCPURuntimeRejectsUnsupportedPathBeforeExecution(t *testing.T) {
+func TestFirstfloorRuntimeRejectsUnsupportedPathBeforeExecution(t *testing.T) {
 	resultPath := filepath.Join(t.TempDir(), "runtime-result.json")
-	runtime := newTestORTCPURuntime(t, resultPath)
+	runtime := newTestFirstfloorRuntime(t, resultPath)
 	config := testRunConfig(t)
-	config.State.Backend = "CUDAExecutionProvider"
+	config.State.Backend = profilingrun.FirstfloorORTCUDABackend
+	config.Delivery.RuntimeAccess = &profilingrun.CandidateReportRuntimeAccess{
+		GPUUUID: "GPU-a", Resources: map[string]string{"nvidia.com/gpu": "1"},
+	}
 	if _, err := runtime.Measure(context.Background(), runtimeRequest(config)); err == nil ||
 		!strings.Contains(err.Error(), "unsupported runtime path") {
 		t.Fatalf("expected unsupported path rejection, got %v", err)
@@ -170,10 +198,10 @@ func TestORTCPURuntimeRejectsUnsupportedPathBeforeExecution(t *testing.T) {
 	}
 }
 
-func TestORTCPURuntimeRequiresJobTimingBinding(t *testing.T) {
+func TestFirstfloorRuntimeRequiresJobTimingBinding(t *testing.T) {
 	directory := t.TempDir()
-	_, err := NewORTCPURuntime(CPURuntimeConfig{
-		Command: []string{"ort-cpu"}, ModelPath: filepath.Join(directory, "model.onnx"),
+	_, err := NewFirstfloorRuntime(CPURuntimeConfig{
+		Command:                 []string{"firstfloor"},
 		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
 		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
 		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
@@ -182,16 +210,16 @@ func TestORTCPURuntimeRequiresJobTimingBinding(t *testing.T) {
 		ResultPath:              filepath.Join(directory, "result.json"), MaxResultBytes: 1 << 20,
 		MaxLatencySamples: 100, MaxInputBytes: 1 << 20,
 		Stdout: io.Discard, Stderr: io.Discard,
-	})
+	}, runtimeRequest(testRunConfig(t)).RunConfig)
 	if err == nil || !strings.Contains(err.Error(), "supplied by the Job") {
 		t.Fatalf("expected missing observer-ready timeout rejection, got %v", err)
 	}
 }
 
-func TestORTCPURuntimeRequiresJobResourceBudgets(t *testing.T) {
+func TestFirstfloorRuntimeRequiresJobResourceBudgets(t *testing.T) {
 	directory := t.TempDir()
-	_, err := NewORTCPURuntime(CPURuntimeConfig{
-		Command: []string{"ort-cpu"}, ModelPath: filepath.Join(directory, "model.onnx"),
+	_, err := NewFirstfloorRuntime(CPURuntimeConfig{
+		Command:                 []string{"firstfloor"},
 		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
 		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
 		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
@@ -199,7 +227,7 @@ func TestORTCPURuntimeRequiresJobResourceBudgets(t *testing.T) {
 		MeasurementEndPath:      filepath.Join(directory, "measurement-end"),
 		ResultPath:              filepath.Join(directory, "result.json"), MaxResultBytes: 1 << 20,
 		ObserverReadyTimeout: time.Second, Stdout: io.Discard, Stderr: io.Discard,
-	})
+	}, runtimeRequest(testRunConfig(t)).RunConfig)
 	if err == nil || !strings.Contains(err.Error(), "resource budgets") {
 		t.Fatalf("expected missing resource budget rejection, got %v", err)
 	}
@@ -238,167 +266,6 @@ func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
 	}
 	if sealed.Source.NodeName != result.Source.NodeName {
 		t.Fatalf("sealed metric result was changed through a detached record: %#v", sealed)
-	}
-}
-
-func TestRKNNLiteRuntimeUsesVerifiedDeliveryForActiveAndIdle(t *testing.T) {
-	for _, idle := range []bool{false, true} {
-		name := "active"
-		mode := "success"
-		if idle {
-			name = "idle"
-			mode = rknnIdleSuccessTestMode
-		}
-		t.Run(name, func(t *testing.T) {
-			t.Setenv("CHILL_RKNN_LITE_HELPER", mode)
-			resultPath := filepath.Join(t.TempDir(), "runtime-result.json")
-			runtime := newTestRKNNLiteRuntime(t, resultPath, testRKNNDelivery())
-			result, err := runtime.Measure(context.Background(), runtimeRequest(testRKNNRunConfig(t, idle)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if idle {
-				if _, err := result.idleResult(); err != nil || result.mode != runtimeMeasurementIdle {
-					t.Fatalf("unexpected idle result: %#v err=%v", result, err)
-				}
-			} else {
-				verified, err := result.activeResult()
-				if err != nil {
-					t.Fatalf("unexpected active result: %#v err=%v", result, err)
-				}
-				active, err := verified.Record()
-				if err != nil || result.mode != runtimeMeasurementActive || active.RKNN == nil {
-					t.Fatalf("unexpected active result: %#v err=%v", result, err)
-				}
-			}
-		})
-	}
-}
-
-func TestRKNNLiteRequestMatchesPythonContract(t *testing.T) {
-	for _, idle := range []bool{false, true} {
-		name := "active"
-		if idle {
-			name = "idle"
-		}
-		t.Run(name, func(t *testing.T) {
-			runtime := newTestRKNNLiteRuntime(
-				t,
-				filepath.Join(t.TempDir(), "runtime-result.json"),
-				testRKNNDelivery(),
-			)
-			payload, err := runtime.encodeRequest(runtimeRequest(testRKNNRunConfig(t, idle)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			python, err := exec.LookPath("python3")
-			if err != nil {
-				t.Fatal("python3 is required for the Go-to-Python RKNNLite contract test")
-			}
-			runtimeDirectory, err := filepath.Abs("../../../../runtime/rknnlite")
-			if err != nil {
-				t.Fatal(err)
-			}
-			const validator = `
-import sys
-sys.path.insert(0, sys.argv[1])
-import runner
-request = runner.decode_request(sys.stdin.buffer)
-runner.validate_request(request)
-`
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			command := exec.CommandContext(ctx, python, "-c", validator, runtimeDirectory)
-			command.Stdin = bytes.NewReader(payload)
-			output, err := command.CombinedOutput()
-			if err != nil {
-				t.Fatalf("Python rejected the Go RKNNLite request: %v\n%s", err, output)
-			}
-		})
-	}
-}
-
-func TestRKNNLiteRuntimeRejectsObservedHostDrift(t *testing.T) {
-	t.Setenv("CHILL_RKNN_LITE_HELPER", "host-drift")
-	runtime := newTestRKNNLiteRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"), testRKNNDelivery())
-	if _, err := runtime.Measure(context.Background(), runtimeRequest(testRKNNRunConfig(t, false))); err == nil ||
-		!strings.Contains(err.Error(), "host libraries") {
-		t.Fatalf("expected observed host-contract rejection, got %v", err)
-	}
-}
-
-func TestRKNNLiteRuntimeOwnsTypedDelivery(t *testing.T) {
-	delivery := testRKNNDelivery()
-	runtime := newTestRKNNLiteRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"), delivery)
-	delivery.ArtifactCapability.Tensors[0].Name = "changed"
-	delivery.ArtifactCapability.Tensors[0].SampleShape[0] = 99
-	if runtime.config.Delivery.ArtifactCapability.Tensors[0].Name != "input" ||
-		runtime.config.Delivery.ArtifactCapability.Tensors[0].SampleShape[0] != 224 {
-		t.Fatal("runtime delivery aliases caller-owned tensor contract")
-	}
-}
-
-func TestRKNNLiteRejectsUnsupportedTypedInputs(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(*profilingrun.CandidateArtifactCapability)
-	}{
-		{"multiple inputs", func(c *profilingrun.CandidateArtifactCapability) {
-			c.Tensors = append(c.Tensors, modelcompat.InputTensor{Name: testDifferentIdentity, Datatype: "FP32", SampleShape: []int32{224, 224, 3}})
-		}},
-		{"non FP32", func(c *profilingrun.CandidateArtifactCapability) { c.Tensors[0].Datatype = "INT32" }},
-		{"non rank3", func(c *profilingrun.CandidateArtifactCapability) { c.Tensors[0].SampleShape = []int32{224, 224} }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			delivery := testRKNNDelivery()
-			test.mutate(delivery.ArtifactCapability)
-			if err := validateRKNNLiteDelivery(delivery); err == nil ||
-				!strings.Contains(err.Error(), "one FP32 rank-3 NHWC") {
-				t.Fatalf("unsupported RKNN input contract accepted: %v", err)
-			}
-		})
-	}
-}
-
-func TestRKNNLiteRejectsTypedInputEvidenceDrift(t *testing.T) {
-	runtime := newTestRKNNLiteRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"), testRKNNDelivery())
-	for _, test := range []struct {
-		name   string
-		mutate func([]modelcompat.InputTensor)
-	}{
-		{"name", func(inputs []modelcompat.InputTensor) { inputs[0].Name = testDifferentIdentity }},
-		{"datatype", func(inputs []modelcompat.InputTensor) { inputs[0].Datatype = "INT32" }},
-		{"shape", func(inputs []modelcompat.InputTensor) { inputs[0].SampleShape[0] = 223 }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			inputs := modelcompat.CloneInputTensors(runtime.config.Delivery.ArtifactCapability.Tensors)
-			test.mutate(inputs)
-			if err := runtime.validateObservedContract("2.3.2", testRKNNEvidence(), inputs); err == nil ||
-				!strings.Contains(err.Error(), "inputs do not match") {
-				t.Fatalf("typed evidence drift accepted: %v", err)
-			}
-		})
-	}
-	if err := runtime.validateObservedContract("2.3.2", testRKNNEvidence(), nil); err == nil {
-		t.Fatal("missing observed inputs accepted")
-	}
-}
-
-func TestRKNNLiteRuntimeRequiresCompleteVerifiedDelivery(t *testing.T) {
-	directory := t.TempDir()
-	_, err := NewRKNNLiteRuntime(RKNNLiteRuntimeConfig{
-		Command: []string{"rknnlite"}, ModelPath: filepath.Join(directory, "model.rknn"),
-		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
-		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
-		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
-		WorkloadWindowReadyPath: filepath.Join(directory, "workload-window-ready"),
-		MeasurementEndPath:      filepath.Join(directory, "measurement-end"),
-		ResultPath:              filepath.Join(directory, "result.json"),
-		ObserverReadyTimeout:    time.Second, MaxLatencySamples: 100, MaxInputBytes: 1 << 20,
-		MaxResultBytes: 1 << 20, Stdout: io.Discard, Stderr: io.Discard,
-	})
-	if err == nil || !strings.Contains(err.Error(), "delivery contract") {
-		t.Fatalf("expected incomplete verified delivery rejection, got %v", err)
 	}
 }
 
@@ -499,8 +366,8 @@ func TestMetricResultFileHasBoundedWait(t *testing.T) {
 	}
 }
 
-func TestORTCPUHelperProcess(t *testing.T) {
-	mode := os.Getenv("CHILL_ORT_CPU_HELPER")
+func TestFirstfloorHelperProcess(t *testing.T) {
+	mode := os.Getenv("CHILL_FIRSTFLOOR_HELPER")
 	if mode == "" {
 		return
 	}
@@ -510,7 +377,9 @@ func TestORTCPUHelperProcess(t *testing.T) {
 	if err := decoder.Decode(&request); err != nil {
 		os.Exit(10)
 	}
-	if request.SchemaVersion != ortCPURequestSchemaVersion || request.ModelPath == "" ||
+	if request.SchemaVersion != firstfloorRequestSchemaVersion || request.ModelDirectory != modelDirectory ||
+		request.PreprocessorPath != preprocessorPath ||
+		(request.DatasetPath == datasetPath) != (request.RunConfig.Measurement.Dataset != nil) ||
 		len(request.ObserverReadyPaths) == 0 || request.MeasurementStartPath == "" || request.MeasurementEndPath == "" ||
 		request.ObserverReadyTimeoutMilliseconds < 1 || request.MaxLatencySamples < 1 ||
 		request.MaxInputBytes < 1 || request.MaxResultBytes < 1 {
@@ -524,7 +393,7 @@ func TestORTCPUHelperProcess(t *testing.T) {
 		os.Exit(11)
 	}
 	var result any
-	if mode == rknnIdleSuccessTestMode {
+	if mode == idleSuccessTestMode {
 		result = idleRuntimeResult(request.RunConfig, request.PodUID)
 	} else {
 		result = runtimeResult(request.RunConfig, request.PodUID)
@@ -547,63 +416,11 @@ func TestORTCPUHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestRKNNLiteHelperProcess(t *testing.T) {
-	mode := os.Getenv("CHILL_RKNN_LITE_HELPER")
-	if mode == "" {
-		return
-	}
-	var request rknnLiteRequest
-	decoder := json.NewDecoder(os.Stdin)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil || request.SchemaVersion != rknnLiteRequestSchemaVersion {
-		os.Exit(20)
-	}
-	resultPath := helperResultPath(os.Args)
-	if resultPath == "" {
-		os.Exit(21)
-	}
-	var result any
-	if mode == "idle-success" {
-		idle := idleRuntimeResult(request.RunConfig, request.PodUID)
-		idle.Architecture = "aarch64"
-		idle.RuntimeVersion = "2.3.2"
-		idle.Provider = ""
-		idle.AvailableProviders = nil
-		idle.CPUContract.AffinityCPUCount = 4
-		idle.CPUContract.ORTIntraOpThreads = 0
-		idle.CPUContract.ORTInterOpThreads = 0
-		idle.DerivedContract.Provider = ""
-		idle.RKNN = testRKNNEvidence()
-		result = idle
-	} else {
-		active := runtimeResult(request.RunConfig, request.PodUID)
-		active.Architecture = "aarch64"
-		active.RuntimeVersion = "2.3.2"
-		active.Provider = ""
-		active.AvailableProviders = nil
-		active.CPUContract.AffinityCPUCount = 4
-		active.CPUContract.ORTIntraOpThreads = 0
-		active.CPUContract.ORTInterOpThreads = 0
-		active.DerivedContract.Provider = ""
-		active.RKNN = testRKNNEvidence()
-		active.Inputs = modelcompat.CloneInputTensors(request.RunConfig.Delivery.ArtifactCapability.Tensors)
-		if mode == "host-drift" {
-			active.RKNN.HostLibraries[0].Path = "/opt/vendor/lib/other.so"
-		}
-		result = active
-	}
-	if err := writeAtomicJSON(resultPath, result); err != nil {
-		os.Exit(23)
-	}
-	os.Exit(0)
-}
-
-func newTestORTCPURuntime(t *testing.T, resultPath string) *CPURuntime {
+func newTestFirstfloorRuntime(t *testing.T, resultPath string) *CPURuntime {
 	t.Helper()
 	directory := filepath.Dir(resultPath)
-	runtime, err := NewORTCPURuntime(CPURuntimeConfig{
-		Command:                 []string{os.Args[0], "-test.run=TestORTCPUHelperProcess", "--"},
-		ModelPath:               filepath.Join(directory, "model.onnx"),
+	runtime, err := NewFirstfloorRuntime(CPURuntimeConfig{
+		Command:                 []string{os.Args[0], "-test.run=TestFirstfloorHelperProcess", "--"},
 		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
 		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
 		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
@@ -611,109 +428,11 @@ func newTestORTCPURuntime(t *testing.T, resultPath string) *CPURuntime {
 		MeasurementEndPath:      filepath.Join(directory, "measurement-end"), ResultPath: resultPath,
 		ObserverReadyTimeout: time.Second, MaxLatencySamples: 100, MaxInputBytes: 1 << 20,
 		MaxResultBytes: 1 << 20, Stdout: io.Discard, Stderr: io.Discard,
-	})
+	}, runtimeRequest(testRunConfig(t)).RunConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return runtime
-}
-
-func newTestRKNNLiteRuntime(
-	t *testing.T,
-	resultPath string,
-	delivery profilingrun.CandidateRuntimeDelivery,
-) *RKNNLiteRuntime {
-	t.Helper()
-	directory := filepath.Dir(resultPath)
-	runtime, err := NewRKNNLiteRuntime(RKNNLiteRuntimeConfig{
-		Command:                 []string{os.Args[0], "-test.run=TestRKNNLiteHelperProcess", "--"},
-		ModelPath:               filepath.Join(directory, "model.rknn"),
-		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
-		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
-		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
-		WorkloadWindowReadyPath: filepath.Join(directory, "workload-window-ready"),
-		MeasurementEndPath:      filepath.Join(directory, "measurement-end"),
-		ResultPath:              resultPath,
-		ObserverReadyTimeout:    time.Second, MaxLatencySamples: 100, MaxInputBytes: 1 << 20,
-		MaxResultBytes: 1 << 20, Delivery: delivery, Stdout: io.Discard, Stderr: io.Discard,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return runtime
-}
-
-func testRKNNRunConfig(t *testing.T, idle bool) profilingrun.RunConfig {
-	t.Helper()
-	config := testRunConfig(t)
-	config.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
-	config.State.Artifact = "model-rk3588-bs1"
-	config.State.ArtifactPath = "/artifact/model.rknn"
-	config.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
-	config.State.Backend = profilingrun.RKNNLiteBackend
-	delivery := testRKNNDelivery()
-	config.State.HostContract = delivery.HostContract
-	config.Delivery = delivery
-	config.TargetNode.Architecture = "arm64"
-	config.CPU.ORTIntraOpThreads = 0
-	config.CPU.ORTInterOpThreads = 0
-	if idle {
-		config.Measurement.WarmupIterations = 0
-		config.Measurement.SettlingDurationSeconds = 30
-		config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-		config.Measurement.InputGenerator = profilingrun.NoInputGenerator
-		config.Measurement.OutputValidation = profilingrun.NoOutputValidation
-	}
-	if err := config.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	return config
-}
-
-func testRKNNDelivery() profilingrun.CandidateRuntimeDelivery {
-	return profilingrun.CandidateRuntimeDelivery{
-		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
-			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1},
-			Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}},
-		},
-		RuntimePackages: []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}},
-		HostContract: &profilingrun.CandidateReportHostContract{
-			Libraries: []profilingrun.CandidateReportHostLibrary{{
-				Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
-			}},
-			Driver: profilingrun.CandidateReportHostDriver{
-				Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6",
-			},
-			Devices: []profilingrun.CandidateReportHostDevice{
-				{Path: "/dev/dri/card0"}, {Path: "/dev/dri/renderD128"},
-			},
-			Platform: &profilingrun.CandidateReportHostPlatform{
-				CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588",
-			},
-		},
-		RuntimeAccess: &profilingrun.CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44, 110}},
-	}
-}
-
-func testRKNNEvidence() *profilingrun.RKNNRuntimeEvidence {
-	return &profilingrun.RKNNRuntimeEvidence{
-		Package: profilingrun.RKNNPackageObservation{Name: "rknn-toolkit-lite2", Version: "2.3.2"},
-		HostLibraries: []profilingrun.RKNNHostLibraryObservation{{
-			Name: "librknnrt", Path: "/usr/lib/librknnrt.so",
-		}},
-		Driver: profilingrun.RKNNDriverObservation{
-			Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6",
-		},
-		Platform: profilingrun.RKNNPlatformObservation{
-			CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588", Matched: true,
-		},
-		Devices: []profilingrun.RKNNDeviceObservation{
-			{Path: "/dev/dri/card0", CharacterDevice: true, Opened: true},
-			{Path: "/dev/dri/renderD128", CharacterDevice: true, Opened: true},
-		},
-		CoreMask: profilingrun.RKNNLiteCoreMask, InputLayout: profilingrun.RKNNLiteInputLayout,
-		InitSucceeded: true, LoadSucceeded: true, SelectedBatch: 1,
-	}
 }
 
 func runtimeRequest(config profilingrun.RunConfig) RuntimeRequest {

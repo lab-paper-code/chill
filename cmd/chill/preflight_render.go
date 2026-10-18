@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 func writeBatchEnergyOptimizationPreflight(
@@ -51,12 +50,20 @@ func writeBatchEnergyOptimizationPreflightTable(
 		Shared struct {
 			PlannedBatchSizes []int `json:"plannedBatchSizes"`
 			Artifact          struct {
-				Name          string `json:"name"`
-				ExecutionPath string `json:"executionPath"`
+				Name          string   `json:"name"`
+				ExecutionPath string   `json:"executionPath"`
+				Files         []string `json:"files"`
 			} `json:"artifact"`
-			DeviceClass string                                `json:"deviceClass"`
-			PowerMode   string                                `json:"powerMode"`
-			Tensor      profilederivation.CurveTensorContract `json:"tensor"`
+			Preprocessor struct {
+				Name string `json:"name"`
+			} `json:"preprocessor"`
+			ActiveProtocol struct {
+				Dataset struct {
+					Name string `json:"name"`
+				} `json:"dataset"`
+			} `json:"activeProtocol"`
+			DeviceClass string `json:"deviceClass"`
+			PowerMode   string `json:"powerMode"`
 		} `json:"shared"`
 	}
 	if len(preflight.Plan) != 0 {
@@ -64,19 +71,14 @@ func writeBatchEnergyOptimizationPreflightTable(
 			return fmt.Errorf("decode BatchEnergyOptimization preflight plan: %w", err)
 		}
 	}
-	_, err := fmt.Fprintf(table, "PLANNED_BATCH_SIZES\t%s\nARTIFACT\t%s\nEXECUTION_PATH\t%s\n"+
-		"DEVICE_CLASS\t%s\nPOWER_MODE\t%s\n",
+	_, err := fmt.Fprintf(table, "PLANNED_BATCH_SIZES\t%s\nARTIFACT\t%s\nARTIFACT_FILES\t%s\nEXECUTION_PATH\t%s\n"+
+		"PREPROCESSOR\t%s\nDATASET\t%s\nDEVICE_CLASS\t%s\nPOWER_MODE\t%s\n",
 		display(formatIntegers(plan.Shared.PlannedBatchSizes)), display(plan.Shared.Artifact.Name),
-		display(plan.Shared.Artifact.ExecutionPath), display(plan.Shared.DeviceClass),
-		display(plan.Shared.PowerMode))
+		display(strings.Join(plan.Shared.Artifact.Files, ",")), display(plan.Shared.Artifact.ExecutionPath),
+		display(plan.Shared.Preprocessor.Name), display(plan.Shared.ActiveProtocol.Dataset.Name),
+		display(plan.Shared.DeviceClass), display(plan.Shared.PowerMode))
 	if err != nil {
 		return err
-	}
-	for _, tensor := range plan.Shared.Tensor.Tensors {
-		if _, err := fmt.Fprintf(table, "INPUT_TENSOR\t%s\nDATATYPE\t%s\nSAMPLE_SHAPE\t%v\n",
-			display(tensor.Name), display(tensor.Datatype), tensor.SampleShape); err != nil {
-			return err
-		}
 	}
 	return table.Flush()
 }

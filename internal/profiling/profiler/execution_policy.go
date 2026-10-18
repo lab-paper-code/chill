@@ -57,9 +57,8 @@ func DeriveExecutionPlan(
 	if err := frozen.Validate(); err != nil {
 		return ExecutionPlan{}, err
 	}
-	if !profilingrun.IsSupportedCPUORTRunConfig(config) && !profilingrun.IsSupportedFirstfloorRunConfig(config) &&
-		!profilingrun.IsSupportedRKNNLiteRunConfig(config) {
-		return ExecutionPlan{}, errors.New("measurement worker requires a supported explicit RunConfig")
+	if !profilingrun.IsSupportedFirstfloorRunConfig(config) {
+		return ExecutionPlan{}, errors.New("measurement worker requires a supported firstfloor RunConfig")
 	}
 	policy := frozen.Policy
 	if (policy.DeviceClass != "*" && policy.DeviceClass != config.State.DeviceClass) ||

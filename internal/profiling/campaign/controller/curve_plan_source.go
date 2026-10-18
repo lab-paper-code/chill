@@ -11,7 +11,6 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/modelcatalog"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
@@ -39,16 +38,6 @@ type CurvePlanStore interface {
 type CurvePlanSourceOptions struct {
 	Store          string
 	MaxObjectBytes int64
-}
-
-// ArtifactInputContractMissingError identifies a selected artifact that cannot
-// supply the tensor contract required by an immutable curve plan.
-type ArtifactInputContractMissingError struct {
-	Artifact string
-}
-
-func (e *ArtifactInputContractMissingError) Error() string {
-	return fmt.Sprintf("artifact %q declares no input tensor contract", e.Artifact)
 }
 
 // CurvePlanProjector resolves the immutable plan one BatchEnergyOptimization selects.
@@ -124,9 +113,11 @@ func (p *CurvePlanProjector) Project(
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, err
 	}
-	capability, conversion, err := p.resolveCurveArtifactContracts(
-		ctx, parent.Spec.State.Candidate.ModelSpec, report,
-	)
+	artifact, err := p.resolveArtifact(ctx, parent.Spec.State.Candidate.ModelSpec, report)
+	if err != nil {
+		return profilederivation.CurvePlan{}, nil, err
+	}
+	conversion, err := resolveConversion(artifact, report)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, err
 	}
@@ -135,7 +126,6 @@ func (p *CurvePlanProjector) Project(
 		parent.Name,
 		active.RunConfig,
 		idle.RunConfig,
-		capability,
 		conversion,
 		plannedBatchSizes,
 	)
@@ -156,8 +146,11 @@ func (p *CurvePlanProjector) resolveCandidateReportAndBatches(
 	selection := profiler.CandidateSelection{
 		ModelSpec:     parent.Spec.State.Candidate.ModelSpec,
 		DeviceClass:   parent.Spec.State.Candidate.DeviceClass,
+		Node:          parent.Spec.State.TargetNode,
 		ExecutionPath: parent.Spec.State.Candidate.ExecutionPath,
 		PowerMode:     parent.Spec.State.Candidate.PowerMode,
+		Preprocessor:  parent.Spec.State.Candidate.Preprocessor,
+		Dataset:       parent.Spec.ActiveProtocol.Dataset,
 	}
 	resolved, err := p.resolver.ResolveCandidate(ctx, selection)
 	if err != nil {
@@ -203,35 +196,6 @@ func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare idle curve-plan RunConfig: %w", err)
 	}
 	return active, idle, transition, nil
-}
-
-func (p *CurvePlanProjector) resolveCurveArtifactContracts(
-	ctx context.Context,
-	modelSpecName string,
-	report profilingrun.CandidateReport,
-) (profilingrun.CandidateArtifactCapability, profilederivation.CurveConversionContract, error) {
-	artifact, err := p.resolveArtifact(ctx, modelSpecName, report)
-	if err != nil {
-		return profilingrun.CandidateArtifactCapability{}, profilederivation.CurveConversionContract{}, err
-	}
-	conversion, err := resolveConversion(artifact, report)
-	if err != nil {
-		return profilingrun.CandidateArtifactCapability{}, profilederivation.CurveConversionContract{}, err
-	}
-	if artifact.Input == nil {
-		return profilingrun.CandidateArtifactCapability{}, profilederivation.CurveConversionContract{},
-			&ArtifactInputContractMissingError{Artifact: artifact.Name}
-	}
-	capability := profilingrun.CandidateArtifactCapability{
-		Tensors: modelcatalog.InputTensors(artifact.Input),
-	}
-	if report.ArtifactCapability != nil {
-		capability.TargetPlatform = report.ArtifactCapability.TargetPlatform
-		capability.DeclaredBatchSizes = append(
-			[]int32(nil), report.ArtifactCapability.DeclaredBatchSizes...,
-		)
-	}
-	return capability, conversion, nil
 }
 
 // Resolve returns the plan recorded for the campaign. The stored plan is read

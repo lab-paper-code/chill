@@ -14,20 +14,22 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-const (
-	firstExecutionPath  = "ort-cpu"
-	firstRuntimeFamily  = "onnxruntime"
-	firstRuntimeBackend = "CPUExecutionProvider"
-)
+const firstExecutionPath = "ort-cpu"
 
 var ErrCPURequestExceedsAllocatable = errors.New("CPU request exceeds selected Node allocatable CPU")
 var ErrCPUQuotaExceedsAllocatable = errors.New("CPU quota exceeds selected Node allocatable CPU")
 
+// CandidateSelection names the catalog objects one Run measures. Dataset is
+// empty for idle measurement. Node is the Run's target Node; it selects the
+// execution declaration bound to that Node's physical device.
 type CandidateSelection struct {
 	ModelSpec     string
 	DeviceClass   string
+	Node          string
 	ExecutionPath string
 	PowerMode     string
+	Preprocessor  string
+	Dataset       string
 }
 
 // PreparationRequest contains caller-selected Run inputs. Resolved endpoint,
@@ -50,12 +52,15 @@ type MetricObservationPolicy struct {
 
 // ResolvedCandidate is one already-evaluated static execution path and its
 // exact report. The preparer independently verifies these facts against the
-// report before freezing them.
+// report before freezing them. State carries the selected preprocessor
+// artifact; Dataset is present only when the selection names one and the
+// resolver found it compatible with the preprocessor input contract.
 type ResolvedCandidate struct {
 	ReportBytes          []byte
 	Inputs               profilingrun.CandidateReportInputs
 	Verdict              string
 	State                profilingrun.ExecutionState
+	Dataset              *profilingrun.DatasetContract
 	DeviceArchitecture   string
 	DeviceNodeSelector   map[string]string
 	DevicePowerModes     []string
@@ -63,7 +68,6 @@ type ResolvedCandidate struct {
 	RuntimeImage         string
 	ArtifactImage        string
 	ArtifactArchitecture string
-	ArtifactPath         string
 	MetricObserverImage  string
 }
 
@@ -185,6 +189,10 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	}
 	if err := validateCPURequestFitsNode(request.CPURequest, node.AllocatableCPU); err != nil {
 		return PreparedRun{}, err
+	}
+	if candidate.State.Preprocessor.Architecture != node.Architecture {
+		return PreparedRun{}, fmt.Errorf("preprocessor artifact architecture %q does not match target Node architecture %q",
+			candidate.State.Preprocessor.Architecture, node.Architecture)
 	}
 	cpuContract, err := freezeCPUContract(request, candidate, node)
 	if err != nil {
@@ -330,13 +338,8 @@ func freezeCPUContract(
 			return profilingrun.CPUContract{}, errors.New("CPU affinity IDs must be nonnegative and unique")
 		}
 	}
-	if len(contract.AffinityCPUs) > 0 && candidate.State.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily {
-		return profilingrun.CPUContract{}, errors.New("explicit CPU affinity requires firstfloor execution")
-	}
-	if (candidate.State.RuntimeFamily == firstRuntimeFamily && candidate.State.Backend == firstRuntimeBackend) ||
-		(candidate.State.RuntimeFamily == profilingrun.FirstfloorRuntimeFamily &&
-			(candidate.State.Backend == profilingrun.FirstfloorORTCPUBackend ||
-				candidate.State.Backend == profilingrun.FirstfloorORTCUDABackend)) {
+	if candidate.State.Backend == profilingrun.FirstfloorORTCPUBackend ||
+		candidate.State.Backend == profilingrun.FirstfloorORTCUDABackend {
 		contract.ORTIntraOpThreads = threadCount
 		contract.ORTInterOpThreads = 1
 	}
@@ -359,6 +362,11 @@ func (p *Preparer) freeze(
 	if node.Name != request.TargetNode {
 		return profilingrun.RunConfig{}, errors.New("resolved Node identity does not match requested target")
 	}
+	measurement := request.Measurement
+	if candidate.Dataset != nil {
+		dataset := *candidate.Dataset
+		measurement.Dataset = &dataset
+	}
 	config := profilingrun.RunConfig{
 		SchemaVersion: profilingrun.RunConfigSchemaVersion,
 		Candidate: profilingrun.CandidateIdentity{
@@ -374,7 +382,7 @@ func (p *Preparer) freeze(
 		Delivery:    delivery,
 		TargetNode:  node,
 		CPU:         cpuContract,
-		Measurement: request.Measurement,
+		Measurement: measurement,
 		Metrics: profilingrun.MetricContract{
 			SourceKind: metrics.Kind, NodeName: node.Name, Endpoint: metrics.Endpoint, PowerMetric: metrics.PowerMetric,
 			MetricLabels:         maps.Clone(metrics.MetricLabels),
@@ -399,18 +407,18 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	if candidate.State.PowerMode != request.PowerMode {
 		return errors.New("resolved candidate power mode does not match request")
 	}
-	switch {
-	case candidate.State.RuntimeFamily == firstRuntimeFamily &&
-		candidate.State.Backend == firstRuntimeBackend:
-	case candidate.State.RuntimeFamily == profilingrun.FirstfloorRuntimeFamily &&
-		(candidate.State.Backend == profilingrun.FirstfloorORTCPUBackend ||
-			candidate.State.Backend == profilingrun.FirstfloorORTCUDABackend ||
-			candidate.State.Backend == profilingrun.FirstfloorRKNNLiteBackend) &&
-		candidate.State.Firstfloor != nil:
-	case candidate.State.RuntimeFamily == profilingrun.RKNNLiteRuntimeFamily &&
-		candidate.State.Backend == profilingrun.RKNNLiteBackend &&
-		candidate.State.HostContract != nil:
-	default:
+	if candidate.State.Preprocessor.Name != request.Preprocessor {
+		return errors.New("resolved candidate preprocessor does not match request")
+	}
+	if (candidate.Dataset == nil && request.Dataset != "") ||
+		(candidate.Dataset != nil && candidate.Dataset.Name != request.Dataset) {
+		return errors.New("resolved candidate dataset does not match request")
+	}
+	if candidate.State.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily ||
+		(candidate.State.Backend != profilingrun.FirstfloorORTCPUBackend &&
+			candidate.State.Backend != profilingrun.FirstfloorORTCUDABackend &&
+			candidate.State.Backend != profilingrun.FirstfloorRKNNLiteBackend) ||
+		candidate.State.Firstfloor == nil {
 		return errors.New("resolved candidate runtime/backend contract is not supported")
 	}
 	if strings.TrimSpace(candidate.DeviceArchitecture) == "" || len(candidate.DeviceNodeSelector) == 0 {
@@ -435,18 +443,17 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 }
 
 func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
-	if candidate.State.ArtifactPath != candidate.ArtifactPath {
-		return errors.New("resolved candidate artifact path does not match execution state")
-	}
 	report, err := profilingrun.DecodeCandidateReport(candidate.ReportBytes)
 	if err != nil {
 		return err
+	}
+	if !slices.Equal(candidate.State.ArtifactFiles, report.ArtifactSupply.Files) {
+		return errors.New("candidate report artifact files mismatch")
 	}
 	checks := []struct{ name, want, got string }{
 		{"DeviceClass architecture", candidate.DeviceArchitecture, report.DeviceClassFacts.Architecture},
 		{"artifact image", candidate.ArtifactImage, report.ArtifactSupply.Image},
 		{"artifact architecture", candidate.ArtifactArchitecture, report.ArtifactSupply.Architecture},
-		{"artifact path", candidate.State.ArtifactPath, report.ArtifactSupply.Path},
 		{"metric-observer image", candidate.MetricObserverImage, report.MetricObserverImage},
 		{"power mode", candidate.State.PowerMode, report.Selection.PowerMode},
 	}
@@ -480,12 +487,16 @@ func (r PreparationRequest) Validate() error {
 		"candidate DeviceClass":   r.Candidate.DeviceClass,
 		"candidate executionPath": r.Candidate.ExecutionPath,
 		"candidate powerMode":     r.Candidate.PowerMode,
+		"candidate preprocessor":  r.Candidate.Preprocessor,
 		"target Node":             r.TargetNode,
 		"CPU request":             r.CPURequest,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
+	}
+	if r.Candidate.Node != r.TargetNode {
+		return errors.New("candidate Node must be the target Node")
 	}
 	cpuRequest, err := resource.ParseQuantity(r.CPURequest)
 	if err != nil || cpuRequest.Sign() <= 0 {
@@ -522,14 +533,16 @@ func (r PreparationRequest) Validate() error {
 		r.Measurement.DurationSeconds < 1 {
 		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
 	}
-	for name, value := range map[string]string{
-		"measurement workloadMode":     r.Measurement.WorkloadMode,
-		"measurement inputGenerator":   r.Measurement.InputGenerator,
-		"measurement outputValidation": r.Measurement.OutputValidation,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("%s is required without surrounding whitespace", name)
-		}
+	workloadMode := r.Measurement.WorkloadMode
+	if strings.TrimSpace(workloadMode) == "" || strings.TrimSpace(workloadMode) != workloadMode {
+		return errors.New("measurement workloadMode is required without surrounding whitespace")
+	}
+	if r.Measurement.Dataset != nil {
+		return errors.New("measurement dataset is frozen from the resolved catalog, not requested")
+	}
+	if active := workloadMode != profilingrun.IdleModelLoadedWorkloadMode; active != (r.Candidate.Dataset != "") ||
+		strings.TrimSpace(r.Candidate.Dataset) != r.Candidate.Dataset {
+		return errors.New("active measurement requires a dataset and idle measurement has none")
 	}
 	return nil
 }

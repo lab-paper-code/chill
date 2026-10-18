@@ -63,14 +63,20 @@ const sections:Record<ServiceSectionId,(view:WorkloadView,s:Signals)=>Part> = {
       body: <>
         <Facts items={[
           ["설정한 모델", desired.spec.modelRef.name],
+          ["설정한 전처리기", desired.spec.preprocessorRef.name],
+          ["설정한 데이터셋", desired.spec.datasetRef?.name ?? "없어요. 측정할 데이터셋을 정해야 요청을 받아요"],
           ["설정한 응답 목표", sloTarget(desired.spec)],
           ["적용된 모델", applied?.model.name ?? "아직 없어요"],
+          ["적용된 전처리기", applied?.preprocessor.name ?? "아직 없어요"],
+          ["적용된 데이터셋", !applied ? "아직 없어요" : applied.dataset?.name ?? "없어요"],
           ["적용된 응답 목표", applied ? `${applied.slo.percentile}%의 요청을 ${applied.slo.targetLatencyNanos / 1000000}밀리초 안에 처리` : "아직 없어요"],
           ["설정 변경", op ? `${statusLabel(op.kind)} · ${statusLabel(op.phase)}` : "진행 중인 변경 없음"],
           ["처리 중인 요청", `배정 대기 ${view.pending}건 · 배정됨 ${view.assigned}건`],
         ]} />
         <Rows>
           <Row href={applied ? resourceHref("models", applied.model.name, applied.model.uid) : `/models/${encodeURIComponent(desired.spec.modelRef.name)}`} label="모델 보기" />
+          <Row href={applied ? resourceHref("preprocessors", applied.preprocessor.name, applied.preprocessor.uid) : `/preprocessors/${encodeURIComponent(desired.spec.preprocessorRef.name)}`} label="전처리기 보기" />
+          {applied?.dataset ? <Row href={resourceHref("datasets", applied.dataset.name, applied.dataset.uid)} label="데이터셋 보기" /> : desired.spec.datasetRef && <Row href={`/datasets/${encodeURIComponent(desired.spec.datasetRef.name)}`} label="데이터셋 보기" />}
           {op && <RowDialog label="변경 작업 기록" value={statusLabel(op.phase)} title="변경 작업 기록">
             <Facts items={[["작업", statusLabel(op.kind)], ["접수", localTime(op.acceptedAt)], ["끝남", op.completedAt ? localTime(op.completedAt) : "아직이에요"], ["요청한 사람", actor(op.actorUsername)]]} />
             {op.error && <p role="alert">{op.error}</p>}
@@ -83,14 +89,18 @@ const sections:Record<ServiceSectionId,(view:WorkloadView,s:Signals)=>Part> = {
     }
   },
   evidence(view) {
-    const inputs = view.supportedInputs
+    const inputs = view.supportedInputs, preprocessor = view.appliedDefinition?.preprocessor
     const missing = view.appliedDefinition?.model.paths.filter(path => !inputs.some(input => input.executionPath === path.name)) ?? []
     return {
       title: inputs.length ? `측정이 끝난 입력이 ${inputs.length}개 있어요` : "측정 결과가 필요해요",
       lede: "측정이 끝난 실행 방식만 추론에 쓸 수 있어요. 파일이나 실행 방식을 등록하는 것만으로는 시작할 수 없어요.",
       body: inputs.length || missing.length ? <Rows>
         {inputs.map((input, index) => <RowDialog key={index} label={input.executionPath} hint={input.artifact} value="측정 완료" title={`${input.executionPath} 입력과 측정 근거`}>
-          <Facts items={[...input.tensors.map(t => [t.name, `${t.datatype} · 크기 ${t.sampleShape.join(" × ")}`] as [string,string]), ["연결된 측정", `${input.profiles.length}개`]]} />
+          <Facts items={[
+            ...(preprocessor?.input ?? []).map((f): [string, string] => [`입력 ${f.name}`, `BYTES · ${f.format} · 최대 ${f.maxBytes}바이트`]),
+            ...(preprocessor?.output ?? []).map((f): [string, string] => [`출력 ${f.name}`, `BYTES · ${f.format}`]),
+            ["전처리기", preprocessor?.name ?? "아직 없어요"], ["연결된 측정", `${input.profiles.length}개`],
+          ]} />
           <SourceJSON inline title="입력과 측정 근거" value={input} />
         </RowDialog>)}
         {missing.map(path => <Row key={path.name} href="/measurements" label={path.name} hint={path.artifact} value="측정 필요" />)}

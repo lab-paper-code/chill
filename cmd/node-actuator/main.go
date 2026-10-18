@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -17,6 +18,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
+	"github.com/lab-paper-code/chill/internal/nodeactuator/jetson"
 )
 
 var (
@@ -30,6 +32,15 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == jetson.EnsureBootOrderingCommand {
+		wrote, err := jetson.EnsureBootOrdering(jetson.HostSystemdEtcDir, jetson.HostSystemdLibDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ensure Jetson boot ordering:", err)
+			os.Exit(1)
+		}
+		fmt.Println("Jetson boot ordering ensured; drop-in written:", wrote)
+		return
+	}
 	opts := options{nodeName: os.Getenv("NODE_NAME"), podUID: os.Getenv("POD_UID")}
 	opts.bindFlags(flag.CommandLine)
 	zapOptions := zap.Options{Development: true}

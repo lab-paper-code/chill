@@ -15,11 +15,9 @@ profiler_image="${PROFILER_IMG:-}"
 console_image="${CONSOLE_IMG:-}"
 metric_observer_image="${METRIC_OBSERVER_IMG:-}"
 workload_observer_image="${WORKLOAD_OBSERVER_IMG:-}"
-measurement_worker_image="${MEASUREMENT_WORKER_IMG:-}"
 serving_entrypoint_image="${SERVING_ENTRYPOINT_IMG:-}"
 dashboard_image="${DASHBOARD_IMG:-}"
 platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
-measurement_worker_platforms="${MEASUREMENT_WORKER_PLATFORMS:-${platforms}}"
 push_mode="${CHILL_FAST_PUSH_MODE:-auto}"
 pull_policy="${CHILL_FAST_PULL_POLICY:-Always}"
 components="${CHILL_FAST_COMPONENTS:-all}"
@@ -59,8 +57,8 @@ Options:
   --platforms LIST             Buildx platforms. Default: ${platforms}
   --components NAME            all, operator, node-discovery, node-actuator,
                                profiler, console, metric-observer,
-                               workload-observer, measurement-worker, or
-                               serving-entrypoint, or dashboard. Default: ${components}
+                               workload-observer, serving-entrypoint, or
+                               dashboard. Default: ${components}
   --push-mode MODE             auto, registry-direct, docker, buildx, ctr-plain-http, or none. Default: ${push_mode}
   --observe MODE               summary or full. Default: ${observe_mode}
   --helm-release NAME          Helm release. Default: ${release}
@@ -81,10 +79,8 @@ Environment:
   CONSOLE_IMG                  Full Console API image ref. Overrides registry/tag defaults.
   METRIC_OBSERVER_IMG          Full MetricObserver image ref. Overrides registry/tag defaults.
   WORKLOAD_OBSERVER_IMG        Full WorkloadObserver image ref. Overrides registry/tag defaults.
-  MEASUREMENT_WORKER_IMG       Full measurement worker image ref. Overrides registry/tag defaults.
   SERVING_ENTRYPOINT_IMG       Full inference entry point image ref. Overrides registry/tag defaults.
   DASHBOARD_IMG                Full Dashboard image ref. Overrides registry/tag defaults.
-  MEASUREMENT_WORKER_PLATFORMS Measurement worker platforms. Default: ${measurement_worker_platforms}
   IMAGE_TAG                    Image tag when --tag is not provided.
   CONTAINER_TOOL               docker-compatible build tool. Default: docker
   BUILDX_BUILDER               Optional buildx builder for multi-platform builds.
@@ -234,7 +230,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${components}" in
-all|operator|node-discovery|node-actuator|profiler|console|metric-observer|workload-observer|measurement-worker|serving-entrypoint|dashboard) ;;
+all|operator|node-discovery|node-actuator|profiler|console|metric-observer|workload-observer|serving-entrypoint|dashboard) ;;
 *)
 	echo "unsupported --components value: ${components}" >&2
 	exit 1
@@ -358,9 +354,6 @@ fi
 if [[ -z "${workload_observer_image}" ]] && component_selected workload-observer; then
 	workload_observer_image="${registry}/${image_namespace}/chill-workload-observer:${image_tag}"
 fi
-if [[ -z "${measurement_worker_image}" ]] && component_selected measurement-worker; then
-	measurement_worker_image="${registry}/${image_namespace}/chill-measurement-worker:${image_tag}"
-fi
 if [[ -z "${serving_entrypoint_image}" ]] && component_selected serving-entrypoint; then
 	serving_entrypoint_image="${registry}/${image_namespace}/chill-serving-entrypoint:${image_tag}"
 fi
@@ -385,9 +378,6 @@ if [[ -n "${metric_observer_image}" ]]; then
 fi
 if [[ -n "${workload_observer_image}" ]]; then
 	split_image_ref "${workload_observer_image}" "workload-observer"
-fi
-if [[ -n "${measurement_worker_image}" ]]; then
-	split_image_ref "${measurement_worker_image}" "measurement-worker"
 fi
 if [[ -n "${serving_entrypoint_image}" ]]; then
 	split_image_ref "${serving_entrypoint_image}" "serving-entrypoint"
@@ -439,11 +429,9 @@ echo "profiler image: ${profiler_image:-chart default}"
 echo "console image: ${console_image:-disabled}"
 echo "metric-observer image: ${metric_observer_image:-not selected}"
 echo "workload-observer image: ${workload_observer_image:-not selected}"
-echo "measurement-worker image: ${measurement_worker_image:-not selected}"
 echo "serving-entrypoint image: ${serving_entrypoint_image:-not selected}"
 echo "dashboard image: ${dashboard_image:-not selected}"
 echo "platforms: ${platforms}"
-echo "measurement-worker platforms: ${measurement_worker_platforms}"
 echo "components: ${components}"
 if [[ -n "${buildx_builder}" ]]; then
 	echo "buildx builder: ${buildx_builder}"
@@ -502,7 +490,6 @@ docker_push_one() {
 buildx_push_one() {
 	local dockerfile="$1"
 	local image="$2"
-	local target_platforms="${3:-${platforms}}"
 	local args=()
 	while IFS= read -r arg; do
 		[[ -n "${arg}" ]] && args+=("${arg}")
@@ -511,7 +498,7 @@ buildx_push_one() {
 	run "${container_tool}" buildx build \
 		"${args[@]}" \
 		--push \
-		--platform="${target_platforms}" \
+		--platform="${platforms}" \
 		--file "${dockerfile}" \
 		--tag "${image}" \
 		.
@@ -520,7 +507,6 @@ buildx_push_one() {
 registry_direct_build_push_one() {
 	local dockerfile="$1"
 	local image="$2"
-	local target_platforms="${3:-${platforms}}"
 	local args=()
 	while IFS= read -r arg; do
 		[[ -n "${arg}" ]] && args+=("${arg}")
@@ -528,7 +514,7 @@ registry_direct_build_push_one() {
 
 	run "${container_tool}" buildx build \
 		"${args[@]}" \
-		--platform="${target_platforms}" \
+		--platform="${platforms}" \
 		--file "${dockerfile}" \
 		--tag "${image}" \
 		--output "type=registry,registry.insecure=true" \
@@ -540,7 +526,6 @@ ctr_plain_http_build_push_one() (
 	local name="$1"
 	local dockerfile="$2"
 	local image="$3"
-	local target_platforms="${4:-${platforms}}"
 	local tmpdir archive
 	local args=()
 	while IFS= read -r arg; do
@@ -552,7 +537,7 @@ ctr_plain_http_build_push_one() (
 
 	run "${container_tool}" buildx build \
 		"${args[@]}" \
-		--platform="${target_platforms}" \
+		--platform="${platforms}" \
 		--file "${dockerfile}" \
 		--tag "${image}" \
 		--output "type=oci,dest=${archive}" \
@@ -610,12 +595,6 @@ run_selected_components() {
 		"${function_name}" "build/docker/workload-observer.Dockerfile" "${workload_observer_image}" &
 		pids+=("$!")
 		names+=("workload-observer")
-	fi
-	if component_selected measurement-worker; then
-		"${function_name}" "build/docker/measurement-worker.Dockerfile" \
-			"${measurement_worker_image}" "${measurement_worker_platforms}" &
-		pids+=("$!")
-		names+=("measurement-worker")
 	fi
 	if component_selected serving-entrypoint; then
 		"${function_name}" "build/docker/chill-server.Dockerfile" "${serving_entrypoint_image}" &
@@ -683,13 +662,6 @@ run_ctr_plain_http_components() {
 			"build/docker/workload-observer.Dockerfile" "${workload_observer_image}" &
 		pids+=("$!")
 		names+=("workload-observer")
-	fi
-	if component_selected measurement-worker; then
-		ctr_plain_http_build_push_one measurement-worker \
-			"build/docker/measurement-worker.Dockerfile" "${measurement_worker_image}" \
-			"${measurement_worker_platforms}" &
-		pids+=("$!")
-		names+=("measurement-worker")
 	fi
 	if component_selected serving-entrypoint; then
 		ctr_plain_http_build_push_one serving-entrypoint \
@@ -834,7 +806,6 @@ echo "profiler image: ${profiler_image:-chart default}"
 echo "console image: ${console_image:-disabled}"
 echo "metric-observer image: ${metric_observer_image:-not selected}"
 echo "workload-observer image: ${workload_observer_image:-not selected}"
-echo "measurement-worker image: ${measurement_worker_image:-not selected}"
 echo "serving-entrypoint image: ${serving_entrypoint_image:-not selected}"
 echo "dashboard image: ${dashboard_image:-not selected}"
 try "${helm_bin}" status "${release}" --namespace "${release_namespace}"

@@ -20,7 +20,7 @@ class WorkloadHTTPClientTest(unittest.TestCase):
             "X-Chill-Request-ID": "request-1",
             "X-Chill-Workload-UID": "uid-1",
         }.get(name)
-        inputs = [{"name": "image", "datatype": "FP32", "shape": [3], "data": [1, 2, 3]}]
+        inputs = {"image": b"\xff\xd8\xff\xe0", "question": "무엇?".encode("utf-8")}
         client = WorkloadHTTPClient(
             "https://chill.example:8443/",
             bearer_token="token",
@@ -41,7 +41,13 @@ class WorkloadHTTPClientTest(unittest.TestCase):
                 )
                 args, kwargs = connection.request.call_args
                 self.assertEqual(("POST", "/api/v1/workloads/image-service/infer"), args)
-                self.assertEqual({"inputs": inputs}, json.loads(kwargs["body"]))
+                self.assertEqual(
+                    {"inputs": [
+                        {"name": "image", "datatype": "BYTES", "data": "/9j/4A=="},
+                        {"name": "question", "datatype": "BYTES", "data": "66y07JeHPw=="},
+                    ]},
+                    json.loads(kwargs["body"]),
+                )
                 self.assertEqual(
                     {"Content-Type": "application/json", "Authorization": "Bearer token"},
                     kwargs["headers"],
@@ -102,17 +108,13 @@ class WorkloadHTTPClientTest(unittest.TestCase):
         client = WorkloadHTTPClient(
             "https://chill.example", bearer_token="token", timeout_seconds=5
         )
-        sample = {"name": "image", "datatype": "FP32", "shape": [3], "data": [1, 2, 3]}
+        sample = {"image": b"\xff\xd8\xff"}
         for workload_id in ("", "../model", "a/b", "a%2fb", "a?next=other", "a#b", "a\r\n", "a..b", "A", "a" * 64):
             with self.subTest(workload_id=workload_id), self.assertRaisesRegex(ValueError, "workload_id"):
-                client.infer(workload_id, [sample])
+                client.infer(workload_id, sample)
         for inputs in (
-            [], b'{"inputs":[]}', {"inputs": [sample], "model": "other"},
-            [dict(sample, batch=2)], [dict(sample, parameters={"slo": 1})],
-            [dict(sample, name="")], [sample, sample], [dict(sample, datatype="unknown")],
-            [dict(sample, shape=[True])], [dict(sample, shape=[0])],
-            [dict(sample, shape=[2, 3])], [dict(sample, data=[[1, 2, 3]])],
-            [dict(sample, data=[1, 2, float("nan")])],
+            {}, [("image", b"\xff")], b'{"inputs":[]}', {"": b"x"}, {1: b"x"},
+            {"image": ""}, {"image": b""}, {"image": "text"}, {"image": bytearray(b"x")},
         ):
             with self.subTest(inputs=inputs), self.assertRaises(ValueError):
                 client.infer("image-service", inputs)
@@ -127,10 +129,7 @@ class WorkloadHTTPClientTest(unittest.TestCase):
         )
         connection_type.return_value.request.side_effect = TimeoutError()
         with self.assertRaises(TimeoutError):
-            client.infer(
-                "image-service",
-                [{"name": "value", "datatype": "FP32", "shape": [], "data": [1]}],
-            )
+            client.infer("image-service", {"value": b"1"})
         connection_type.return_value.request.assert_called_once()
 
 

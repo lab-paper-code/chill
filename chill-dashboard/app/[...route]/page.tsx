@@ -1,6 +1,6 @@
 import { Suspense } from "react"
 import { notFound } from "next/navigation"
-import { ServicesPage, ServicePage, ServiceSectionPage, ResourceEditor, ModelsPage, ModelPage, ModelSectionPage } from "@/features/management"
+import { ServicesPage, ServicePage, ServiceSectionPage, ResourceEditor, ModelsPage, ModelPage, ModelSectionPage, CatalogListPage, CatalogPage } from "@/features/management"
 import { InferencePage } from "@/features/inference"
 import { ObservationsPage } from "@/features/observations"
 import { MeasurementRunsPage, MeasurementGroupPage, MeasurementCheckPage, MeasurementDetail, ExperimentsPage } from "@/features/read-pages"
@@ -15,6 +15,8 @@ import { SchedulerProfilesPage } from "@/features/scheduler-profiles"
 import { MeasurementPlansPage, MeasurementPlanPage } from "@/features/measurement-plans"
 import { MeasurementRequestPage } from "@/features/measurement-request"
 
+const catalog = ["workloads", "models", "preprocessors", "datasets"] as const
+type CatalogKind = typeof catalog[number]
 const serviceSections = ["definition", "evidence", "placement", "operation", "changes"] as const
 const modelSections = ["files", "services"] as const
 type ServiceSection = typeof serviceSections[number]
@@ -31,14 +33,16 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   const key = `${route.join("/")}/${search.uid ?? ""}`
   let page:React.ReactNode
   if (head === "workloads" && route.length === 1) page = <ServicesPage />
-  else if ((head === "workloads" || head === "models") && create && route.length === 2) page = <ResourceEditor key={key} kind={head} />
-  else if ((head === "workloads" || head === "models") && route.length === 3 && sub === "edit") page = <ResourceEditor key={key} kind={head} name={name} />
+  else if (catalog.includes(head as CatalogKind) && create && route.length === 2) page = <ResourceEditor key={key} kind={head as CatalogKind} />
+  else if (catalog.includes(head as CatalogKind) && route.length === 3 && sub === "edit") page = <ResourceEditor key={key} kind={head as CatalogKind} name={name} />
   else if (head === "workloads" && route.length === 2) page = <ServicePage key={key} name={name} />
   else if (head === "workloads" && route.length === 3 && sub === "infer") page = <InferencePage name={name} />
   else if (head === "workloads" && route.length === 3 && serviceSections.includes(sub as ServiceSection)) page = <ServiceSectionPage key={key} name={name} section={sub as ServiceSection} />
   else if (head === "models" && route.length === 1) page = <ModelsPage />
   else if (head === "models" && route.length === 2) page = <ModelPage key={key} name={name} />
   else if (head === "models" && route.length === 3 && modelSections.includes(sub as ModelSection)) page = <ModelSectionPage key={key} name={name} section={sub as ModelSection} />
+  else if ((head === "preprocessors" || head === "datasets") && route.length === 1) page = <CatalogListPage kind={head} />
+  else if ((head === "preprocessors" || head === "datasets") && route.length === 2) page = <CatalogPage key={key} kind={head} name={name} />
   else if (head === "resources" && route.length === 1) page = <ResourcesPage />
   else if (head === "pools" && route.length === 1) page = <PoolsPage />
   else if (head === "pools" && route.length === 2) page = <PoolPage id={name} />

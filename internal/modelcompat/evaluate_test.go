@@ -16,25 +16,6 @@ func TestEvaluate(t *testing.T) {
 	}{
 		{name: "compatible", wantVerdict: VerdictCompatible},
 		{
-			name: "compatible native firstfloor ONNX relation",
-			mutate: func(input *Input) {
-				input.Path.RuntimeFamily = runtimeFamilyFirstfloor
-				input.Path.Backend = "ort-cpu"
-				input.Runtime.Family = runtimeFamilyFirstfloor
-				input.Runtime.Backends = []string{"ort-cpu"}
-			},
-			wantVerdict: VerdictCompatible,
-		},
-		{
-			name: "standalone ORT is not firstfloor evidence",
-			mutate: func(input *Input) {
-				input.Path.RuntimeFamily = runtimeFamilyFirstfloor
-				input.Path.Backend = "ort-cpu"
-			},
-			wantVerdict: VerdictIncompatible,
-			wantReasons: []Reason{conflict(ReasonRuntimeFamilyMismatch)},
-		},
-		{
 			name: "compatible firstfloor RKNN relation",
 			mutate: func(input *Input) {
 				input.Artifact.Format = artifactFormatRKNN
@@ -58,17 +39,6 @@ func TestEvaluate(t *testing.T) {
 			wantReasons: []Reason{unknown(ReasonArtifactRuntimeRelationUnknown)},
 		},
 		{
-			name: "compatible RKNNLite relation",
-			mutate: func(input *Input) {
-				input.Artifact.Format = artifactFormatRKNN
-				input.Path.RuntimeFamily = runtimeFamilyRKNNLite
-				input.Path.Backend = "not-applicable"
-				input.Runtime.Family = runtimeFamilyRKNNLite
-				input.Runtime.Backends = []string{"not-applicable"}
-			},
-			wantVerdict: VerdictCompatible,
-		},
-		{
 			name: "missing declaration",
 			mutate: func(input *Input) {
 				input.Runtime = nil
@@ -84,7 +54,7 @@ func TestEvaluate(t *testing.T) {
 				input.Runtime = nil
 			},
 			wantVerdict: VerdictUnknown,
-			wantReasons: []Reason{unknown(ReasonRuntimeDeclarationMissing)},
+			wantReasons: []Reason{unknown(ReasonArtifactRuntimeRelationUnknown), unknown(ReasonRuntimeDeclarationMissing)},
 		},
 		{
 			name: "untrusted declaration",
@@ -157,7 +127,7 @@ func TestEvaluate(t *testing.T) {
 		{
 			name: "backend present among multiple values",
 			mutate: func(input *Input) {
-				input.Runtime.Backends = []string{"OtherBackend", "CPUExecutionProvider"}
+				input.Runtime.Backends = []string{"OtherBackend", "ort-cpu"}
 			},
 			wantVerdict: VerdictCompatible,
 		},
@@ -233,15 +203,15 @@ func compatibleInput() Input {
 	return Input{
 		Artifact: ArtifactRequirement{Format: "onnx"},
 		Path: ExecutionPathRequirement{
-			RuntimeFamily: "onnxruntime",
-			Backend:       "CPUExecutionProvider",
+			RuntimeFamily: runtimeFamilyFirstfloor,
+			Backend:       "ort-cpu",
 		},
 		DeviceClass: DeviceClassInfo{Architecture: "amd64"},
 		Runtime: &RuntimeDeclaration{
 			Trusted:      true,
 			Architecture: "amd64",
-			Family:       "onnxruntime",
-			Backends:     []string{"CPUExecutionProvider"},
+			Family:       runtimeFamilyFirstfloor,
+			Backends:     []string{"ort-cpu"},
 		},
 	}
 }

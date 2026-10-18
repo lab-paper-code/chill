@@ -1,0 +1,16 @@
+# Submit this definition through the serving management API, not kubectl apply.
+# The management owner validates catalog references and serializes changes.
+apiVersion: edge.dacs.io/v1alpha1
+kind: Workload
+metadata:
+  name: plc-anomaly
+spec:
+  modelRef:
+    name: plc-lstm-ae
+  preprocessorRef:
+    name: plc-extruder-anomaly
+  datasetRef:
+    name: plc-extruder-01-windows
+  slo:
+    percentile: 99
+    targetLatency: 50ms

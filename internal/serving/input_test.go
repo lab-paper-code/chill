@@ -1,100 +1,69 @@
 package serving
 
 import (
-	"encoding/json"
-	"strings"
+	"bytes"
+	"errors"
+	"image"
+	"image/jpeg"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/modelcompat"
+	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
-func TestValidateInputTensorBoundaries(t *testing.T) {
-	for _, tc := range []struct {
-		datatype, data string
-		count          int32
-		valid          bool
+func TestValidateInputChecksRawContract(t *testing.T) {
+	var picture bytes.Buffer
+	if err := jpeg.Encode(&picture, image.NewGray(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatal(err)
+	}
+	contract := []RawField{{Name: "image", Format: "JPEG", MaxBytes: 4096}, {Name: "question", Format: "UTF8", MaxBytes: 8}}
+	sample := func(imageData, question []byte) *InferenceInput {
+		return &InferenceInput{Inputs: []RawInput{{Name: "question", Datatype: "BYTES", Data: question}, {Name: "image", Datatype: "BYTES", Data: imageData}}}
+	}
+	if err := validateInput(sample(picture.Bytes(), []byte("why?")), contract); err != nil {
+		t.Fatalf("valid sample rejected: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		input *InferenceInput
+		field string
 	}{
-		{"INT8", "[-128,127]", 2, true}, {"INT8", "[-129]", 1, false},
-		{"UINT8", "[0,255]", 2, true}, {"UINT8", "[256]", 1, false},
-		{"INT16", "[-32768,32767]", 2, true}, {"INT16", "[-32769]", 1, false},
-		{"UINT16", "[0,65535]", 2, true}, {"UINT16", "[65536]", 1, false},
-		{"INT32", "[-2147483648,2147483647]", 2, true}, {"INT32", "[-2147483649]", 1, false},
-		{"UINT32", "[0,4294967295]", 2, true}, {"UINT32", "[4294967296]", 1, false},
-		{"INT64", "[-9223372036854775808,9223372036854775807]", 2, true},
-		{"INT64", "[-9223372036854775809]", 1, false}, {"INT64", "[1.0]", 1, false},
-		{"UINT64", "[0,18446744073709551615]", 2, true},
-		{"UINT64", "[18446744073709551616]", 1, false}, {"UINT64", "[-0]", 1, false},
-		{"FP16", "[-65504,65504]", 2, true}, {"FP16", "[65504.0001]", 1, false},
-		{"FP32", "[-3.4028234663852886e38,3.4028234663852886e38]", 2, true},
-		{"FP32", "[3.5e38]", 1, false}, {"FP32", "[ \n1e-3\t ]", 1, true},
-		{"FP64", "[1.7976931348623157e308]", 1, true}, {"FP64", "[1e309]", 1, false},
-		{"FP32", "[]", 0, true}, {"FP32", "[ ]", 0, true},
-		{"FP32", "[]", 1, false}, {"FP32", "[1]", 0, false},
-		{"FP32", "1", 1, false}, {"FP32", "null", 1, false}, {"FP32", "[null]", 1, false},
-		{"FP32", "[\"1\"]", 1, false}, {"FP32", "[[1]]", 1, false}, {"FP32", "[{}]", 1, false},
-		{"FP32", `["1,2"]`, 1, false}, {"FP32", "[[1,2]]", 2, false},
-		{"FP32", "\u00a0[1]", 1, false}, {"FP32", "[1]\u00a0", 1, false},
-		{"FP32", "[true]", 1, false}, {"FP32", "[1,]", 1, false}, {"FP32", "[01]", 1, false},
-		{"FP32", "[+1]", 1, false}, {"FP32", "[NaN]", 1, false}, {"FP32", "[Infinity]", 1, false},
-		{"FP32", "[1] []", 1, false}, {"FP32", "[1] false", 1, false}, {"FP32", "[1", 1, false},
-		{"FP32", "[1 2]", 2, false}, {"FP32", "[1,2]", 1, false}, {"FP32", "[1]", 2, false},
-		{"BOOL", "[true,false]", 2, true}, {"BOOL", "[1]", 1, false},
-		{"BYTES", `["a,b","c\"d"]`, 2, true}, {"BYTES", "[null]", 1, false},
+		"missing field":   {&InferenceInput{Inputs: []RawInput{{Name: "image", Datatype: "BYTES", Data: picture.Bytes()}}}, "inputs"},
+		"unknown field":   {&InferenceInput{Inputs: []RawInput{{Name: "image", Datatype: "BYTES", Data: picture.Bytes()}, {Name: "other", Datatype: "BYTES", Data: []byte("a")}}}, "inputs"},
+		"duplicate field": {&InferenceInput{Inputs: []RawInput{{Name: "image", Datatype: "BYTES", Data: picture.Bytes()}, {Name: "image", Datatype: "BYTES", Data: picture.Bytes()}}}, "inputs"},
+		"not BYTES":       {&InferenceInput{Inputs: []RawInput{{Name: "question", Datatype: "FP32", Data: []byte("a")}, {Name: "image", Datatype: "BYTES", Data: picture.Bytes()}}}, "inputs[0].datatype"},
+		"empty":           {sample(picture.Bytes(), nil), "inputs[0].data"},
+		"over maxBytes":   {sample(picture.Bytes(), []byte("123456789")), "inputs[0].data"},
+		"bad UTF-8":       {sample(picture.Bytes(), []byte{0xff, 0xfe}), "inputs[0].data"},
+		"not JPEG":        {sample([]byte("GIF89a"), []byte("why?")), "inputs[1].data"},
+		"bad JPEG header": {sample([]byte{0xFF, 0xD8, 0xFF, 0x00, 0x01}, []byte("why?")), "inputs[1].data"},
 	} {
-		t.Run(tc.datatype+":"+tc.data, func(t *testing.T) {
-			shape := []int32{tc.count}
-			input := &InferenceInput{Inputs: []TensorInput{{
-				Name: "input", Datatype: tc.datatype, Shape: shape, Data: json.RawMessage(tc.data),
-			}}}
-			paths := []ModelPath{{Tensors: []modelcompat.InputTensor{{
-				Name: "input", Datatype: tc.datatype, SampleShape: shape,
-			}}}}
-			_, err := validateInput(input, paths)
-			if (err == nil) != tc.valid {
-				t.Fatalf("unexpected tensor boundary verdict: %v", err)
-			}
-		})
+		var domain *Error
+		if err := validateInput(tc.input, contract); !errors.As(err, &domain) || domain.Code != "InvalidInput" || domain.Field != tc.field {
+			t.Errorf("%s: got %v (%+v), want InvalidInput at %s", name, err, domain, tc.field)
+		}
 	}
 }
 
-func TestValidateInputKeepsDeclaredTensorContract(t *testing.T) {
-	for _, mismatch := range []string{"name", "datatype", "shape", "duplicate"} {
-		t.Run(mismatch, func(t *testing.T) {
-			input := &InferenceInput{Inputs: []TensorInput{{
-				Name: "input", Datatype: "FP32", Shape: []int32{1}, Data: json.RawMessage("[0]"),
-			}}}
-			paths := []ModelPath{{Tensors: []modelcompat.InputTensor{{
-				Name: "input", Datatype: "FP32", SampleShape: []int32{1},
-			}}}}
-			switch mismatch {
-			case "name":
-				input.Inputs[0].Name = "other"
-			case "datatype":
-				input.Inputs[0].Datatype = "INT32"
-			case "shape":
-				input.Inputs[0].Shape = []int32{1, 1}
-			case "duplicate":
-				input.Inputs = append(input.Inputs, input.Inputs[0])
-			}
-			if _, err := validateInput(input, paths); err == nil {
-				t.Fatal("mismatched declared tensor contract was admitted")
-			}
-		})
+func TestProfilePathRequiresAppliedPreprocessorAndDataset(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	d, measured := snapshot.Workloads[0], *snapshot.Instances[0].Profile
+	if profilePath(d, &measured) == nil {
+		t.Fatal("fixture profile must match its definition")
 	}
-}
-
-func BenchmarkValidateInputImageFP32(b *testing.B) {
-	const elements = 3 * 224 * 224
-	data := json.RawMessage("[" + strings.Repeat("0.123456789,", elements-1) + "0.123456789]")
-	shape := []int32{3, 224, 224}
-	input := &InferenceInput{Inputs: []TensorInput{{Name: "input", Datatype: "FP32", Shape: shape, Data: data}}}
-	paths := []ModelPath{{Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: shape}}}}
-	b.ReportAllocs()
-	b.SetBytes(int64(len(data)))
-	b.ResetTimer()
-	for range b.N {
-		if _, err := validateInput(input, paths); err != nil {
-			b.Fatal(err)
+	for name, mutate := range map[string]func(*Definition, *Profile){
+		"preprocessor image": func(_ *Definition, p *Profile) { p.Condition.Preprocessor.Image = "other@sha256:1" },
+		"preprocessor name":  func(d *Definition, _ *Profile) { d.Preprocessor.Name = "other" },
+		"output fields":      func(d *Definition, _ *Profile) { d.Preprocessor.Output = []RawField{{Name: "z"}} },
+		"max new tokens":     func(d *Definition, _ *Profile) { d.Preprocessor.MaxNewTokens = 8 },
+		"dataset UID": func(_ *Definition, p *Profile) {
+			p.Condition.ActiveProtocol.Dataset = &derivation.CurveDatasetContract{Name: "data", UID: "other"}
+		},
+		"no applied dataset":  func(d *Definition, _ *Profile) { d.Dataset = nil },
+		"no measured dataset": func(_ *Definition, p *Profile) { p.Condition.ActiveProtocol.Dataset = nil },
+	} {
+		definition, profile := *d, measured
+		mutate(&definition, &profile)
+		if profilePath(&definition, &profile) != nil {
+			t.Errorf("%s mismatch matched the profile", name)
 		}
 	}
 }

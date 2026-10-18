@@ -2,12 +2,14 @@
 """Measure the production firstfloor actor and its production IPC runner."""
 from __future__ import annotations
 
+import base64
 import http.client
 import json
 import math
 import os
 from pathlib import Path
 import platform
+import random
 import socket
 import subprocess
 import sys
@@ -19,9 +21,11 @@ from urllib.parse import quote
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from ortcpu import runner as common
 
-REQUEST_SCHEMA = "chill.dacs.io/firstfloor-runtime-request.v1alpha1"
+REQUEST_SCHEMA = "chill.dacs.io/firstfloor-runtime-request.v1alpha2"
 FRAME_BYTES = 64 << 20
 PROVIDERS = {"ort-cpu": "CPUExecutionProvider", "ort-cuda": "CUDAExecutionProvider", "rknnlite": ""}
+# ponytail: seed is a constant; move it to the active protocol configuration when an experiment varies the seed.
+SAMPLE_SEED = 0
 
 
 def deadline_policy(settings: dict[str, Any]) -> str:
@@ -49,7 +53,11 @@ def validate_request(request: dict[str, Any]) -> None:
     backend = state.get("backend")
     if backend not in PROVIDERS:
         raise common.ContractError("unsupported firstfloor backend")
-    common.validate_request(request, REQUEST_SCHEMA, "firstfloor", backend)
+    if backend == "rknnlite" and isinstance(run.get("cpu"), dict):
+        # Go omits zero ORT thread counts for RKNN RunConfigs.
+        run["cpu"].setdefault("ortIntraOpThreads", 0)
+        run["cpu"].setdefault("ortInterOpThreads", 0)
+    common.validate_request(request, REQUEST_SCHEMA, backend)
     settings = common.require_object(state["firstfloor"], "state.firstfloor")
     common.require_fields(settings, {"maxBatchSize", "maxQueueSize"} |
                           ({"deadlinePolicy"} if "deadlinePolicy" in settings else set()), "state.firstfloor")
@@ -98,30 +106,48 @@ def memory_sampler(run: dict[str, Any], root: Path = common.CGROUP_ROOT) -> comm
     return None
 
 
-def positive_ms(value: Any, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-        raise common.ContractError(f"{name} must contain positive finite milliseconds")
+def milliseconds(value: Any, name: str, positive: bool = True) -> float:
+    if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or
+            value < 0 or (positive and value == 0)):
+        raise common.ContractError(f"{name} must contain {'positive' if positive else 'nonnegative'} finite milliseconds")
     return float(value)
 
 
-def native_sample(response: dict[str, Any], batch: int) -> dict[str, Any]:
-    for field in ("batchSize", "executions", "items"):
-        common.require_integer(response.get(field), "actual " + field, 1)
-    if (response.get("batchSize") != batch or response.get("executions") != 1 or
-            response.get("items") != batch or response.get("executionComplete") is not True):
+def native_sample(response: dict[str, Any], batch: int, record_ids: list[str], generative: bool) -> dict[str, Any]:
+    common.require_integer(response.get("batchSize"), "actual batchSize", 1)
+    if response.get("batchSize") != batch or response.get("executionComplete") is not True:
         raise common.ContractError("actor did not complete exactly one requested fixed-K execution")
-    arrays = [response.get(key) for key in ("batchIDs", "serviceSamplesMS", "backendSamplesMS", "nativeSamplesMS")]
+    keys = ["batchIDs", "serviceSamplesMS", "preprocessSamplesMS", "backendSamplesMS",
+            "postprocessSamplesMS", "nativeSamplesMS"]
+    if generative:
+        keys.append("firstTokenSamplesMS")
+    elif "firstTokenSamplesMS" in response:
+        raise common.ContractError("non-generative execution reported a first-token span")
+    arrays = [response.get(key) for key in keys]
     if any(not isinstance(values, list) or len(values) != 1 for values in arrays):
         raise common.ContractError("native timing samples and batch IDs must be present and aligned")
     batch_id = common.require_integer(arrays[0][0], "native batch ID", 1)
     if batch_id > (1 << 64) - 1:
         raise common.ContractError("native batch ID exceeds uint64")
-    service, backend, native = [positive_ms(values[0], "native timing sample") for values in arrays[1:]]
-    total = positive_ms(response.get("nativeElapsedMS"), "native elapsed")
-    if backend > service or service > native or native > total:
+    service = milliseconds(arrays[1][0], "native service sample")
+    preprocess = milliseconds(arrays[2][0], "native preprocess sample", positive=False)
+    backend = milliseconds(arrays[3][0], "native backend sample")
+    postprocess = milliseconds(arrays[4][0], "native postprocess sample", positive=False)
+    native = milliseconds(arrays[5][0], "native request sample")
+    total = milliseconds(response.get("nativeElapsedMS"), "native elapsed")
+    units = response.get("units")
+    if not isinstance(units, list) or len(units) != batch or len(record_ids) != batch:
+        raise common.ContractError("native units and sampled record IDs must align with the fixed batch")
+    for value in units:
+        common.require_integer(value, "native units item", 1)
+    if preprocess + backend + postprocess > service or service > native or native > total:
         raise common.ContractError("native timing spans are not nested")
-    return {"batchID": batch_id, "batchSize": batch, "runnerServiceMs": service,
-            "backendCallMs": backend, "nativeRequestMs": native}
+    sample = {"batchID": batch_id, "batchSize": batch, "recordIDs": list(record_ids), "units": units,
+              "runnerServiceMs": service, "preprocessMs": preprocess, "backendCallMs": backend,
+              "postprocessMs": postprocess, "nativeRequestMs": native}
+    if generative:
+        sample["firstTokenMs"] = milliseconds(arrays[6][0], "native first-token sample")
+    return sample
 
 
 def validate_rknn_facts(facts: dict[str, Any], delivery: dict[str, Any]) -> None:
@@ -163,10 +189,11 @@ def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max
         raise common.ContractError("actual runtime must match the real frozen backend")
     common.require_string(actual.get("runtimeVersion"), "actual runtime version")
     common.require_string(actual.get("numpyVersion"), "actual numpy version")
-    inputs = [{"name": t["name"], "datatype": t["datatype"], "shape": t["sampleShape"]}
-              for t in run["delivery"]["artifactCapability"]["tensors"]]
-    if actual.get("modelPath") != request["modelPath"] or actual.get("inputs") != inputs:
-        raise common.ContractError("actual model path/input metadata differs from frozen declarations")
+    preprocessor = state["preprocessor"]
+    model_files = sorted(str(Path(request["modelDirectory"]) / Path(item).name) for item in state["artifactFiles"])
+    if (actual.get("modelFiles") != model_files or actual.get("inputs") != preprocessor["inputs"] or
+            actual.get("outputs") != preprocessor["outputs"]):
+        raise common.ContractError("actual model files/input/output metadata differs from frozen declarations")
     if (actual.get("intraOpThreads") != cpu["ortIntraOpThreads"] or
             actual.get("interOpThreads") != cpu["ortInterOpThreads"] or
             actual.get("cpuAffinity") != affinity or actual.get("initializedBatches") != initialized_batches(run) or
@@ -196,18 +223,6 @@ def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max
     available = actual.get("availableProviders", [])
     if not isinstance(available, list) or (backend != "rknnlite" and PROVIDERS[backend] not in available):
         raise common.ContractError("actual available providers do not support the selected backend")
-    outputs = actual.get("outputs")
-    if not isinstance(outputs, list) or not outputs:
-        raise common.ContractError("actual runtime output metadata is missing")
-    names = set()
-    for output in outputs:
-        name = common.require_string(output.get("name"), "actual output name")
-        if name in names or output.get("datatype") not in common.INPUT_DATATYPES:
-            raise common.ContractError("actual output metadata is invalid")
-        names.add(name)
-        shape = output.get("shape")
-        if not isinstance(shape, list) or any(type(dim) is not int or dim < 1 for dim in shape):
-            raise common.ContractError("actual output sample shapes must be initialized")
     if backend == "rknnlite":
         validate_rknn_facts(common.require_object(actual.get("rknn"), "actual RKNN runtime facts"), run["delivery"])
     return actual
@@ -215,14 +230,21 @@ def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max
 
 class FirstfloorSession:
     """One real profile call per common measurement call, with correlated spans."""
-    def __init__(self, port: int, request: dict[str, Any], numpy: Any):
-        self.request, self.numpy = request, numpy
+    def __init__(self, port: int, request: dict[str, Any]):
+        self.request = request
         self.connection = http.client.HTTPConnection("127.0.0.1", port, timeout=None)
         self.path = "/v2/models/" + quote(request["runConfig"]["state"]["model"], safe="")
         self.samples: list[dict[str, Any]] = []
         self.payload: bytes | None = None
-        self.output_specs: list[dict[str, Any]] = []
+        self.record_ids: list[str] = []
         self.baseline: dict[str, int] = {}
+        self.rng = random.Random(SAMPLE_SEED)
+        self.records: list[str] = []
+        if "datasetPath" in request:
+            with os.scandir(request["datasetPath"]) as entries:
+                self.records = sorted(entry.name for entry in entries if entry.is_dir())
+            if len(self.records) < request["runConfig"]["measurement"]["batch"]:
+                raise common.ContractError("dataset has fewer profiling records than the fixed batch")
 
     def json_call(self, method: str, path: str, payload: bytes | None = None) -> dict[str, Any]:
         self.connection.request(method, path, payload, {"Content-Type": "application/json"})
@@ -251,39 +273,29 @@ class FirstfloorSession:
     def get_providers(self) -> list[str]:
         return self.metadata()["runtime"]["providers"]
 
-    def prepare_inputs(self, feeds: dict[str, Any]) -> None:
-        tensors = self.request["runConfig"]["delivery"]["artifactCapability"]["tensors"]
-        inputs = [{"name": t["name"], "datatype": t["datatype"], "shape": list(feeds[t["name"]].shape),
-                   "data": feeds[t["name"]].reshape(-1).tolist()} for t in tensors]
-        self.payload = json.dumps({"batchSize": self.request["runConfig"]["measurement"]["batch"],
-                                   "executions": 1, "inputs": inputs}, separators=(",", ":"), allow_nan=False).encode()
+    def prepare_next(self) -> None:
+        """Draw the next execution's records and build its body outside the timed call."""
+        run = self.request["runConfig"]
+        batch, root = run["measurement"]["batch"], Path(self.request["datasetPath"])
+        self.record_ids = self.rng.sample(self.records, batch)
+        inputs = [{"name": name, "data": [base64.b64encode((root / record / name).read_bytes()).decode("ascii")
+                                          for record in self.record_ids]}
+                  for name in run["state"]["preprocessor"]["inputs"]]
+        self.payload = json.dumps({"batchSize": batch, "inputs": inputs}, separators=(",", ":")).encode()
         if len(self.payload) > FRAME_BYTES:
             raise common.ContractError("native JSON input exceeds worker request capacity")
 
-    def run(self, _outputs: Any, _feeds: dict[str, Any]) -> list[Any]:
+    def run(self) -> None:
         if self.payload is None:
             raise common.ContractError("native input has not been prepared")
-        response = self.json_call("POST", self.path + "/profile", self.payload)
-        batch = self.request["runConfig"]["measurement"]["batch"]
-        sample = native_sample(response, batch)
+        payload, self.payload = self.payload, None
+        response = self.json_call("POST", self.path + "/profile", payload)
+        run = self.request["runConfig"]
+        sample = native_sample(response, run["measurement"]["batch"], self.record_ids,
+                               run["state"]["preprocessor"].get("maxNewTokens", 0) > 0)
         if self.samples and sample["batchID"] <= self.samples[-1]["batchID"]:
             raise common.ContractError("native batch IDs must increase monotonically")
-        outputs = response.get("outputs")
-        if (not isinstance(outputs, list) or not outputs or
-                [tensor.get("name") for tensor in outputs] != [tensor["name"] for tensor in self.output_specs]):
-            raise common.ContractError("actual native profile output names differ from loaded model metadata")
-        arrays = []
-        for tensor, spec in zip(outputs, self.output_specs):
-            datatype, shape, data = tensor.get("datatype"), tensor.get("shape"), tensor.get("data")
-            if (datatype not in common.INPUT_DATATYPES or not isinstance(shape, list) or not shape or
-                    shape[0] != batch or any(type(dim) is not int or dim < 1 for dim in shape) or
-                    datatype != spec["datatype"] or shape[1:] != spec["shape"] or
-                    not isinstance(data, list) or len(data) != math.prod(shape)):
-                raise common.ContractError("actual native output tensor is invalid")
-            arrays.append(self.numpy.asarray(data, dtype=common.INPUT_DATATYPES[datatype][1]).reshape(shape))
-        common.validate_outputs(arrays, batch)
         self.samples.append(sample)
-        return arrays
 
 
 def wait_ready(process: subprocess.Popen, session: FirstfloorSession, timeout: float) -> None:
@@ -306,28 +318,31 @@ def wait_ready(process: subprocess.Popen, session: FirstfloorSession, timeout: f
 def worker_config(request: dict[str, Any]) -> dict[str, Any]:
     run = request["runConfig"]
     backend = run["state"]["backend"]
+    preprocessor = run["state"]["preprocessor"]
     command = [sys.executable, str(Path(__file__).with_name("runner.py")), "--runtime", backend,
-               "--model", request["modelPath"], "--intra-op-threads", str(run["cpu"]["ortIntraOpThreads"]),
+               "--model-dir", request["modelDirectory"], "--preprocessor", request["preprocessorPath"],
+               "--intra-op-threads", str(run["cpu"]["ortIntraOpThreads"]),
                "--warmup-iterations", str(run["measurement"]["warmupIterations"])]
     affinity = common.requested_cpu_affinity(run["cpu"])
     if affinity is not None:
         command += ["--cpu-affinity", ",".join(map(str, affinity))]
     if backend == "ort-cuda":
         command += ["--gpu-uuid", run["delivery"]["runtimeAccess"]["gpuUUID"]]
-    return {"model": run["state"]["model"], "mode": "profiling",
-            "inputs": [{"name": t["name"], "datatype": t["datatype"], "shape": t["sampleShape"]}
-                       for t in run["delivery"]["artifactCapability"]["tensors"]],
-            "runnerCommand": command, "runnerTimeoutMS": request["observerReadyTimeoutMilliseconds"],
-            "maxQueueRequests": run["state"]["firstfloor"]["maxQueueSize"],
-            "policy": {"deadlinePolicy": deadline_policy(run["state"]["firstfloor"])},
-            "maxQueueBytes": min(request["maxInputBytes"], FRAME_BYTES), "maxRequestBytes": FRAME_BYTES,
-            "batchSizes": initialized_batches(run), "maxBatchSize": run["state"]["firstfloor"]["maxBatchSize"]}
+    config = {"model": run["state"]["model"], "mode": "profiling",
+              "inputs": preprocessor["inputs"], "outputs": preprocessor["outputs"],
+              "runnerCommand": command, "runnerTimeoutMS": request["observerReadyTimeoutMilliseconds"],
+              "maxQueueRequests": run["state"]["firstfloor"]["maxQueueSize"],
+              "policy": {"deadlinePolicy": deadline_policy(run["state"]["firstfloor"])},
+              "maxQueueBytes": min(request["maxInputBytes"], FRAME_BYTES), "maxRequestBytes": FRAME_BYTES,
+              "batchSizes": initialized_batches(run), "maxBatchSize": run["state"]["firstfloor"]["maxBatchSize"]}
+    if preprocessor.get("maxNewTokens", 0) > 0:
+        config["maxNewTokens"] = preprocessor["maxNewTokens"]
+    return config
 
 
-def execute(request: dict[str, Any], numpy: Any, workspace: Path) -> dict[str, Any]:
+def execute(request: dict[str, Any], workspace: Path) -> dict[str, Any]:
     validate_request(request)
-    run, model = request["runConfig"], Path(request["modelPath"])
-    common.validate_model_file(model)
+    run = request["runConfig"]
     architecture = platform.machine()
     if common.normalize_architecture(architecture) != common.normalize_architecture(run["targetNode"]["architecture"]):
         raise common.ContractError("actual architecture differs from frozen Node")
@@ -335,13 +350,13 @@ def execute(request: dict[str, Any], numpy: Any, workspace: Path) -> dict[str, A
     cpu_max, affinity, cpuset = common.validate_cpu_contract(run)
     sampler = memory_sampler(run)
     try:
-        return execute_sampled(request, numpy, workspace, run, model, architecture, cpu_max, affinity, cpuset, sampler)
+        return execute_sampled(request, workspace, run, architecture, cpu_max, affinity, cpuset, sampler)
     finally:
         if sampler is not None:
             sampler.close()
 
 
-def execute_sampled(request: dict[str, Any], numpy: Any, workspace: Path, run: dict[str, Any], model: Path,
+def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any],
                     architecture: str, cpu_max: Any, affinity: Any, cpuset: Any,
                     sampler: common.MemorySampler | None) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="firstfloor-", dir=workspace) as directory:
@@ -355,18 +370,17 @@ def execute_sampled(request: dict[str, Any], numpy: Any, workspace: Path, run: d
         with socket.socket() as address:
             address.bind(("127.0.0.1", 0))
             port = address.getsockname()[1]
+        session = FirstfloorSession(port, request)
         child_environment = None
         if run["state"]["backend"] == "ort-cuda":
             child_environment = dict(os.environ, CUDA_VISIBLE_DEVICES=run["delivery"]["runtimeAccess"]["gpuUUID"])
         process = subprocess.Popen(["/opt/chill/bin/serving-worker", "--config", str(config_path),
                                     "--bind-address", f"127.0.0.1:{port}", "--node-name", request["scheduledNodeName"]],
                                    stdout=sys.stderr, stderr=sys.stderr, start_new_session=True, env=child_environment)
-        session = FirstfloorSession(port, request, numpy)
         try:
             wait_ready(process, session, request["observerReadyTimeoutMilliseconds"] / 1000.0)
             loaded_at = common.now()
             actual = validate_metadata(session.metadata(), request, cpu_max, affinity, cpuset)
-            session.output_specs = actual["outputs"]
             measurement = run["measurement"]
             if measurement["workloadMode"] == common.IDLE_WORKLOAD:
                 session.baseline = session.counts()
@@ -375,13 +389,9 @@ def execute_sampled(request: dict[str, Any], numpy: Any, workspace: Path, run: d
                                              memory_sampler=sampler)
                 executions = 0
             else:
-                feeds = common.generate_inputs(numpy, run["delivery"]["artifactCapability"]["tensors"],
-                                               measurement["batch"], request["maxInputBytes"])
-                session.prepare_inputs(feeds)
-                result = common.execute_loaded(request, session, numpy, actual["runtimeVersion"], actual.get("availableProviders", []),
-                                               architecture, cpu_max, affinity, cpuset, feeds,
-                                               session.begin_measurement, warmup_already_completed=True,
-                                               result_provider=PROVIDERS[run["state"]["backend"]],
+                result = common.execute_loaded(request, session, actual["runtimeVersion"], actual.get("availableProviders", []),
+                                               architecture, cpu_max, affinity, cpuset,
+                                               session.begin_measurement, PROVIDERS[run["state"]["backend"]],
                                                memory_sampler=sampler)
                 executions = result["inferenceCount"]
                 if len(session.samples) != executions or len(result["repetitionResults"][0]["latencyMs"]) != executions:
@@ -432,8 +442,7 @@ def main() -> None:
         request = common.decode_request(sys.stdin.buffer)
         validate_request(request)
         common.apply_cpu_affinity(request["runConfig"])
-        import numpy
-        result = execute(request, numpy, arguments.result_file.parent)
+        result = execute(request, arguments.result_file.parent)
         common.publish_immutable(arguments.result_file, common.encode_result(result, request["maxResultBytes"]))
     except (common.ContractError, OSError, ValueError, http.client.HTTPException) as error:
         common.fail(str(error))

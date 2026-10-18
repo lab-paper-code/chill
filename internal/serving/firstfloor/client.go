@@ -11,7 +11,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -128,20 +127,12 @@ func validateMetadata(spec Spec, actual native.Metadata) error {
 
 func validateProfileInputs(spec Spec, actual native.Metadata) error {
 	condition := spec.Profile.Condition
-	expected := make([]native.InputSpec, len(condition.Tensor.Tensors))
-	for i, t := range condition.Tensor.Tensors {
-		shape := make([]int, len(t.SampleShape))
-		for j, d := range t.SampleShape {
-			shape[j] = int(d)
-		}
-		expected[i] = native.InputSpec{Name: t.Name, Datatype: t.Datatype, Shape: shape}
-	}
 	if spec.Profile.RuntimeMetadata == nil {
 		return errors.New("verified native initialization evidence unavailable")
 	}
 	batches := spec.Profile.RuntimeMetadata.InitializedBatches
-	if !reflect.DeepEqual(actual.Runtime.Inputs, expected) || !slices.Equal(actual.Runtime.InitializedBatches, batches) || len(batches) == 0 || len(spec.Profile.Batches) == 0 || actual.MaxBatchSize != slices.Max(batches) || actual.Runtime.WarmupIterations != condition.ActiveProtocol.WarmupIterations {
-		return errors.New("actual native tensors/batches/warmup differ from measured condition")
+	if !slices.Equal(actual.Runtime.Inputs, condition.Preprocessor.Inputs) || !slices.Equal(actual.Runtime.Outputs, condition.Preprocessor.Outputs) || !slices.Equal(actual.Runtime.InitializedBatches, batches) || len(batches) == 0 || len(spec.Profile.Batches) == 0 || actual.MaxBatchSize != slices.Max(batches) || actual.Runtime.WarmupIterations != condition.ActiveProtocol.WarmupIterations {
+		return errors.New("actual native raw fields/batches/warmup differ from measured condition")
 	}
 	return nil
 }
@@ -151,7 +142,7 @@ func validateMeasuredRuntime(spec Spec, actual native.RuntimeMetadata) error {
 		return errors.New("verified runtime/provider/device/affinity evidence unavailable")
 	}
 	measured := spec.ExpectedRuntime
-	if actual.ModelPath != measured.ModelPath || actual.Runtime != measured.Runtime || actual.RuntimeVersion != measured.RuntimeVersion || actual.NumpyVersion != measured.NumpyVersion || actual.Device != measured.Device || actual.GPUUUID != measured.GPUUUID || !slices.Equal(actual.Providers, measured.Providers) || !slices.Equal(actual.CPUAffinity, measured.CPUAffinity) {
+	if !slices.Equal(actual.ModelFiles, measured.ModelFiles) || actual.Runtime != measured.Runtime || actual.RuntimeVersion != measured.RuntimeVersion || actual.NumpyVersion != measured.NumpyVersion || actual.Device != measured.Device || actual.GPUUUID != measured.GPUUUID || !slices.Equal(actual.Providers, measured.Providers) || !slices.Equal(actual.CPUAffinity, measured.CPUAffinity) {
 		return errors.New("actual runtime/provider/device/affinity differs from verified profile")
 	}
 	return nil
@@ -174,7 +165,7 @@ func (c *Client) Probe(ctx context.Context, spec Spec) (serving.ReadyInstance, e
 	return result, nil
 }
 func progress(p native.Progress) serving.BackendProgress {
-	return serving.BackendProgress{RequestID: p.RequestID, WorkloadUID: p.WorkloadUID, Definition: p.Definition, Phase: p.Phase, At: p.At, Outcome: p.Outcome, BatchID: p.BatchID, BatchSize: p.BatchSize, ProfileID: p.ProfileID, DecisionID: p.DecisionID, QueueMS: p.QueueMS, ServiceMS: p.ServiceMS, BackendMS: p.BackendMS, NativeElapsedMS: p.NativeElapsedMS, ExecutionComplete: p.ExecutionComplete}
+	return serving.BackendProgress{RequestID: p.RequestID, WorkloadUID: p.WorkloadUID, Definition: p.Definition, Phase: p.Phase, At: p.At, Outcome: p.Outcome, BatchID: p.BatchID, BatchSize: p.BatchSize, ProfileID: p.ProfileID, DecisionID: p.DecisionID, QueueMS: p.QueueMS, ServiceMS: p.ServiceMS, BackendMS: p.BackendMS, PreprocessMS: p.PreprocessMS, PostprocessMS: p.PostprocessMS, FirstTokenMS: p.FirstTokenMS, Units: p.Units, NativeElapsedMS: p.NativeElapsedMS, ExecutionComplete: p.ExecutionComplete}
 }
 func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (serving.BackendResult, error) {
 	if d.Definition == nil || d.Input == nil || d.RequestID == "" || spec.Profile == nil {
@@ -185,14 +176,9 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 		lifetime = float64(d.Deadline.Sub(d.ReceivedAt)) / float64(time.Millisecond)
 	}
 	request := native.Request{ID: d.RequestID, Context: native.RequestContext{RequestID: d.RequestID, WorkloadUID: d.Definition.UID, Definition: d.Definition.Identity(), ReceivedAt: d.ReceivedAt, SenderElapsedMS: float64(d.Elapsed) / float64(time.Millisecond), SLO: native.SLO{Percentile: d.Definition.SLO.Percentile, TargetMS: float64(d.Definition.SLO.TargetLatency) / float64(time.Millisecond)}, LifetimeMS: lifetime}}
-	request.Inputs = make([]native.Tensor, len(d.Input.Inputs))
-	for i, t := range d.Input.Inputs {
-		shape := make([]int, len(t.Shape)+1)
-		shape[0] = 1
-		for j, v := range t.Shape {
-			shape[j+1] = int(v)
-		}
-		request.Inputs[i] = native.Tensor{Name: t.Name, Datatype: t.Datatype, Shape: shape, Data: t.Data}
+	request.Inputs = make([]native.Field, len(d.Input.Inputs))
+	for i, field := range d.Input.Inputs {
+		request.Inputs[i] = native.Field{Name: field.Name, Data: [][]byte{field.Data}}
 	}
 	raw, err := json.Marshal(request)
 	if err != nil {
@@ -209,30 +195,36 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 		if err = decode(body, &failure); err != nil {
 			return result, err
 		}
-		if failure.Progress != nil {
-			p := failure.Progress
-			if status != http.StatusRequestTimeout || !failure.ExecutionComplete ||
-				!validDeadlineDrop(p, &d, spec.Profile.ID) {
-				return result, errors.New("native drop lacks correlated no-execution proof")
-			}
-			result.Finished = true
-			converted := progress(*p)
-			result.Progress = &converted
-			return result, &serving.Error{Code: "SLODeadlineDrop", Message: failure.Error}
+		if failure.Progress == nil {
+			result.Finished = failure.ExecutionComplete
+			return result, errors.New(failure.Error)
 		}
-		result.Finished = failure.ExecutionComplete
-		return result, errors.New(failure.Error)
+		p := failure.Progress
+		var outcome error
+		switch {
+		case !failure.ExecutionComplete:
+		case status == http.StatusRequestTimeout && validDeadlineDrop(p, &d, spec.Profile.ID):
+			outcome = &serving.Error{Code: "SLODeadlineDrop", Message: failure.Error}
+		case status == http.StatusUnprocessableEntity && p.Outcome == native.OutcomePreprocessFailed && executed(p, &d, spec.Profile.ID):
+			outcome = &serving.Error{Code: "PreprocessFailed", Message: failure.Error}
+		case status == http.StatusInternalServerError && p.Outcome == native.OutcomeBatchError && executed(p, &d, spec.Profile.ID):
+			outcome = &serving.Error{Code: "BackendError", Message: failure.Error}
+		}
+		if outcome == nil {
+			return result, errors.New("native failure lacks correlated execution proof")
+		}
+		result.Finished = true
+		converted := progress(*p)
+		result.Progress = &converted
+		return result, outcome
 	}
 	var response native.Response
 	if err = decode(body, &response); err != nil {
 		return result, err
 	}
 	p := response.Progress
-	if response.ID != d.RequestID || response.ModelName != spec.ModelName || p.RequestID != d.RequestID || p.WorkloadUID != d.Definition.UID || p.Definition != d.Definition.Identity() || p.ProfileID != spec.Profile.ID || p.Phase != phaseFinished || !p.ExecutionComplete || !response.ExecutionComplete || p.At.IsZero() || p.BatchSize < 1 || len(response.Outputs) == 0 {
+	if response.ID != d.RequestID || response.ModelName != spec.ModelName || !response.ExecutionComplete || len(response.Outputs) == 0 || !executed(&p, &d, spec.Profile.ID) {
 		return result, errors.New("native response lacks correlated actual completion proof")
-	}
-	if !validNativeSpans(p) {
-		return result, errors.New("native response contains invalid actual monotonic spans")
 	}
 	result.Finished = true
 	converted := progress(p)
@@ -240,12 +232,19 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	return result, nil
 }
 func validDeadlineDrop(p *native.Progress, d *serving.Dispatch, profileID string) bool {
-	return p.Outcome == native.OutcomeDeadlineDrop &&
-		p.RequestID == d.RequestID && p.WorkloadUID == d.Definition.UID &&
+	return p.Outcome == native.OutcomeDeadlineDrop && correlated(p, d, profileID) &&
+		p.BatchID == 0 && p.BatchSize == 0 && p.ServiceMS == 0 && p.BackendMS == 0
+}
+
+// executed reports a finished record of this request inside an actual batch.
+func executed(p *native.Progress, d *serving.Dispatch, profileID string) bool {
+	return correlated(p, d, profileID) && p.BatchSize >= 1
+}
+
+func correlated(p *native.Progress, d *serving.Dispatch, profileID string) bool {
+	return p.RequestID == d.RequestID && p.WorkloadUID == d.Definition.UID &&
 		p.Definition == d.Definition.Identity() && p.ProfileID == profileID &&
-		p.Phase == phaseFinished && !p.At.IsZero() && p.ExecutionComplete &&
-		p.BatchID == 0 && p.BatchSize == 0 && p.ServiceMS == 0 && p.BackendMS == 0 &&
-		validNativeSpans(*p)
+		p.Phase == phaseFinished && !p.At.IsZero() && p.ExecutionComplete && validNativeSpans(*p)
 }
 
 var ErrNotProgress = errors.New("not a firstfloor progress record")
@@ -269,7 +268,7 @@ func ParseProgress(line []byte) (serving.BackendProgress, error) {
 	return progress(p), nil
 }
 func validNativeSpans(p native.Progress) bool {
-	for _, value := range []float64{p.QueueMS, p.ServiceMS, p.BackendMS, p.NativeElapsedMS} {
+	for _, value := range []float64{p.QueueMS, p.ServiceMS, p.BackendMS, p.PreprocessMS, p.PostprocessMS, p.FirstTokenMS, p.NativeElapsedMS} {
 		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
 			return false
 		}

@@ -49,6 +49,7 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 					ModelSpec:     "mobilenet-v2-050",
 					DeviceClass:   "lattepanda-3-delta-8g",
 					ExecutionPath: "ort-cpu",
+					Preprocessor:  "mobilenet-imagenet",
 					PowerMode:     "fixed",
 				},
 				TargetNode: "lattepanda",
@@ -57,8 +58,7 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				WarmupIterations: 20,
 				DurationSeconds:  30,
-				InputGenerator:   "numpy-default-rng-seed-0-inputs-v1",
-				OutputValidation: "nonempty-shape-batch-v1",
+				Dataset:          "vqav2-val-subset",
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000,
 					TimeoutMilliseconds:  500,

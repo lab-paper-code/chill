@@ -23,25 +23,20 @@ func firstfloorResult(config RunConfig) RuntimeResult {
 	result.DerivedContract.Provider = cpuExecutionProvider
 	result.MemoryBytes, result.MemorySource = 123456, memoryPeakCgroupV2
 	result.CPUContract.AffinityCPUs = []int{0, 1, 2, 3}
-	inputs := make([]firstfloor.InputSpec, len(result.Inputs))
-	for i, tensor := range result.Inputs {
-		shape := make([]int, len(tensor.SampleShape))
-		for j, dimension := range tensor.SampleShape {
-			shape[j] = int(dimension)
-		}
-		inputs[i] = firstfloor.InputSpec{Name: tensor.Name, Datatype: tensor.Datatype, Shape: shape}
-	}
 	result.Firstfloor = &FirstfloorRuntimeEvidence{
 		Mode: "profiling", ModelInstanceCount: 1, MaxBatchSize: 4, MaxQueueSize: 32,
 		DeadlinePolicy: modelcompat.EffectiveDeadlinePolicy(config.State.Firstfloor.DeadlinePolicy),
 		ExecutionCount: 1, InferenceCount: 1, BatchExecutionCounts: map[string]uint64{"1": 1},
 		Runtime: firstfloor.RuntimeMetadata{Runtime: FirstfloorORTCPUBackend, RuntimeVersion: result.RuntimeVersion,
-			ModelPath: "/model/model.onnx", Inputs: inputs, Providers: []string{cpuExecutionProvider},
+			ModelFiles: config.State.ModelFiles(), Inputs: config.State.Preprocessor.Inputs,
+			Outputs: config.State.Preprocessor.Outputs, Providers: []string{cpuExecutionProvider},
 			AvailableProviders: []string{cpuExecutionProvider}, Device: "cpu", CPUAffinity: []int{0, 1, 2, 3},
 			IntraOpThreads: 4, InterOpThreads: 1, InitializedBatches: []int{1, 2, 4}, CgroupCPUMax: "400000 100000", CPUSet: "0-3"},
 	}
 	result.RepetitionResults[0].NativeSamples = []NativeServiceSample{{BatchID: 21, BatchSize: 1,
-		RunnerServiceMilliseconds: 0.7, BackendCallMilliseconds: 0.4, NativeRequestMilliseconds: 0.9}}
+		RecordIDs: []string{"262148000"}, Units: []int{1}, RunnerServiceMilliseconds: 0.7,
+		PreprocessMilliseconds: 0.1, BackendCallMilliseconds: 0.4, PostprocessMilliseconds: 0.1,
+		NativeRequestMilliseconds: 0.9}}
 	return result
 }
 
@@ -72,11 +67,13 @@ func TestFirstfloorEvidenceRetainsDistinctCorrelatedSpans(t *testing.T) {
 		name   string
 		mutate func(*RuntimeResult)
 	}{
-		{"standalone family", func(r *RuntimeResult) { r.Runtime = cpuORTRuntimeFamily }},
+		{"other family", func(r *RuntimeResult) { r.Runtime = "onnxruntime" }},
 		{"synthetic runner", func(r *RuntimeResult) { r.Firstfloor.Runtime.Synthetic = true }},
 		{"missing memory", func(r *RuntimeResult) { r.MemoryBytes = 0 }},
 		{"wrong memory scope", func(r *RuntimeResult) { r.MemorySource = "process-rss" }},
-		{"different input", func(r *RuntimeResult) { r.Firstfloor.Runtime.Inputs[0].Name = "other" }},
+		{"different input", func(r *RuntimeResult) { r.Firstfloor.Runtime.Inputs = []string{"other"} }},
+		{"different output", func(r *RuntimeResult) { r.Firstfloor.Runtime.Outputs = nil }},
+		{"different model files", func(r *RuntimeResult) { r.Firstfloor.Runtime.ModelFiles = []string{"/model/model.onnx"} }},
 		{"wrong max", func(r *RuntimeResult) { r.Firstfloor.MaxBatchSize = 2 }},
 		{"batch not initialized", func(r *RuntimeResult) { r.Firstfloor.Runtime.InitializedBatches = []int{2, 4} }},
 		{"wrong provider", func(r *RuntimeResult) { r.Firstfloor.Runtime.Providers[0] = "CUDAExecutionProvider" }},
@@ -86,6 +83,14 @@ func TestFirstfloorEvidenceRetainsDistinctCorrelatedSpans(t *testing.T) {
 		{"wrong batch", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].BatchSize = 2 }},
 		{"invalid backend", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].BackendCallMilliseconds = math.NaN() }},
 		{"nested span order", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].RunnerServiceMilliseconds = 0.2 }},
+		{"record IDs short of batch", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].RecordIDs = nil }},
+		{"units short of batch", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].Units = nil }},
+		{"zero units", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].Units = []int{0} }},
+		{"negative preprocess", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].PreprocessMilliseconds = -1 }},
+		{"infinite postprocess", func(r *RuntimeResult) {
+			r.RepetitionResults[0].NativeSamples[0].PostprocessMilliseconds = math.Inf(1)
+		}},
+		{"first token without generation", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].FirstTokenMilliseconds = 0.3 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -95,6 +100,19 @@ func TestFirstfloorEvidenceRetainsDistinctCorrelatedSpans(t *testing.T) {
 				t.Fatal("contradictory native evidence accepted")
 			}
 		})
+	}
+}
+
+func TestFirstfloorGenerativeNativeSamplesRequireFirstToken(t *testing.T) {
+	config := firstfloorRunConfig()
+	config.State.Preprocessor.MaxNewTokens = 16
+	result := firstfloorResult(config)
+	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+		t.Fatal("generative native sample without a first-token span was accepted")
+	}
+	result.RepetitionResults[0].NativeSamples[0].FirstTokenMilliseconds = 0.3
+	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -175,15 +193,6 @@ func TestFirstfloorCUDARejectsCPUFallbackAndWrongWholeGPU(t *testing.T) {
 	result.Firstfloor.Runtime.GPUUUID = "GPU-a"
 	if err := validateFirstfloorPath(config, result.Firstfloor, nil, result.Provider, result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestStandaloneEvidenceCannotAssertActorSpans(t *testing.T) {
-	config := validRunConfig()
-	result := validRuntimeResult(config)
-	result.RepetitionResults[0].NativeSamples = firstfloorResult(firstfloorRunConfig()).RepetitionResults[0].NativeSamples
-	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
-		t.Fatal("reference result asserted native actor execution")
 	}
 }
 
