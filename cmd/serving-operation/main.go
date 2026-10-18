@@ -468,7 +468,9 @@ func validateExecutionOwner(
 	if acknowledged == nil || acknowledged.Operation.Kind != manualStaticRouting ||
 		acknowledged.Operation.SourceConfigRV != m.SourceConfigRV ||
 		acknowledged.Status != operationComplete || acknowledged.EndedAt.IsZero() ||
-		!reflect.DeepEqual(acknowledged.Operation.StaticRouting, config.StaticRouting) {
+		// omitempty drops an empty acknowledged map, so compare an empty map as nil.
+		!(len(acknowledged.Operation.StaticRouting) == 0 && len(config.StaticRouting) == 0 ||
+			reflect.DeepEqual(acknowledged.Operation.StaticRouting, config.StaticRouting)) {
 		return errors.New("current complete staticRouting revision lacks a successful owner acknowledgement")
 	}
 	snapshot := owner.State.Snapshot
