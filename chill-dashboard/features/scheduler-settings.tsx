@@ -189,9 +189,9 @@ export function SchedulerSettingsPage() {
       <Rows label="고급">{group("advanced")}</Rows>
       <Rows>
         <Row href="/changes?scope=scheduler" label="최근 변경 기록" hint="누가 언제 운영 설정을 바꿨는지"/>
-        {state.data&&(routing
+        {routing
           ?<Row href={`/transitions/${encodeURIComponent(routing.operation.id)}?${new URLSearchParams({view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배" hint="가장 최근에 적용한 서비스 → 인스턴스 비율"/>
-          :<Row href="/transitions" label="설정한 요청 분배" hint="설정 기반 분배 기록이 비어 있어요"/>)}
+          :<Row href="/transitions" label="설정한 요청 분배" hint={state.data?"설정 기반 분배 기록이 비어 있어요":state.error?"분배 기록을 불러오지 못했어요":"분배 기록을 확인하고 있어요"}/>}
         <Row href="/scheduler" label="지금 운영 판단 보기"/>
         {settings.data&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(settings.data),2)}</pre><SourceExport value={settings.data} filename="chill-scheduler-settings.json"/></RowDialog>}
       </Rows>

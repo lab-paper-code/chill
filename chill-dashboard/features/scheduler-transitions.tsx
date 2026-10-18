@@ -66,22 +66,11 @@ function ResultDetails({value}:{value:OperationResult}) {
 }
 
 const routingKind="manual-static-routing"
-// Failure texts written by internal/serving/kube/static_routing.go and internal/serving/static_routing.go, in plain words.
-// Any other text is shown as ChillServer wrote it; the full error and progress stay in the 원본 view.
-const routingReasons:[string,string][]=[
-  ["readback differs","실제 분배가 설정과 달라요. 받은 요청을 마무리하는 중일 수 있어요."],
-  ["waits for running global route","앞서 진행 중인 분배 변경이 끝나지 않아 반영하지 않았어요."],
-  ["requires controls OFF","자동 적용이 켜져 있어 설정한 분배를 쓰지 않아요."],
-  ["not currently ready and compatible","설정한 인스턴스가 준비되지 않았거나 그 서비스와 맞지 않아요."],
-  ["lacks positive distribution","설정한 분배에 빠진 서비스가 있어요."],
-  ["complete current workload UID map","설정한 분배에 빠진 서비스가 있어요."],
-]
 function routingConclusion(result:OperationResult):[title:string,lede:string] {
   const split=`설정 revision ${result.operation.sourceConfigRV||"없음"}의 분배`
   if(result.status==="complete")return [`${split}가 반영됐어요`,"설정한 비율과 실제로 읽어 온 비율을 나란히 보여줘요."]
   if(result.status==="running"||result.status==="starting")return [`${split}를 반영하고 있어요`,"실행기가 준비되기를 기다리고 있어요. 반영되면 실제 비율이 채워져요."]
-  const reason=result.error?routingReasons.find(([text])=>result.error!.includes(text))?.[1]??result.error:"남겨진 이유가 없어요."
-  return [`${split}를 ${result.status==="partial"?"일부만 반영했어요":"반영하지 못했어요"}`,reason]
+  return [`${split}를 ${result.status==="partial"?"일부만 반영했어요":"반영하지 못했어요"}`,"설정한 분배를 반영하지 못했어요. 원본 보기에서 ChillServer가 남긴 이유를 확인해 주세요."]
 }
 // Declared split (operation.staticRouting) next to the read-back split (actual.routing), as each service's share per instance.
 function RoutingSplit({result}:{result:OperationResult}) {
@@ -208,7 +197,7 @@ function HistoryRecord({id}:{id:string}) {
     title={routing?routing[0]:action?kindLabel(action.kind):valid&&!query.data?"변경 기록":"기록을 확인해야 해요"}
     lede={!valid?"구간, 위치와 기록 정보가 모두 필요해요. 현재 동작으로 대신 보여주지 않아요.":routing?routing[1]:action?`${actionNodeName(action.node)} · ${when(event!.at)}`:query.data?"보관 범위나 기록이 달라졌어요. 같은 동작의 다른 사건으로 대신 보여주지 않아요.":undefined}>
     {valid&&<QueryGate query={query}>{action&&ref&&<>
-      <Facts items={[["노드",actionNodeName(action.node)],["관측 단계",label(action.phase)],["시작",when(action.startedAt)],["완료",when(action.completedAt)]]}/>
+      <Facts items={[["노드",actionNodeName(action.node)],...(routing?[["기록 시각",when(event!.at)] as [string,string]]:[]),["관측 단계",label(action.phase)],["시작",when(action.startedAt)],["완료",when(action.completedAt)]]}/>
       {routed?<RoutingSplit result={routed}/>:action.error&&<p role="alert">실행 중 오류가 있었어요. 내용은 자세히에서 볼 수 있어요.</p>}
       <Rows><RowDialog label="변경 내용 자세히" hint="계획, 변경 전후 상태와 원본" title="변경 기록 상세"><HistoryDetails row={{event:event!,ref}}/></RowDialog></Rows>
     </>}</QueryGate>}

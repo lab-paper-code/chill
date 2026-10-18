@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import type { CurvePlanSpec, ProfileSelection, ProfileSelectionsView, SchedulerProfile, SchedulerView } from "@/lib/read-types"
-import { codeText } from "@/lib/labels"
+import { explain } from "@/lib/labels"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceJSON, StatusBadge, type Tone } from "@/components/read-region"
 import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
@@ -33,7 +33,7 @@ const same = (selection:ProfileSelection, namespace:string, name:string) => sele
 // The four measurement conditions of a profile (CurvePlanSpec), in plain words. Raw values stay in the 원본 view.
 export const conditionRows = (condition:CurvePlanSpec):[string,string][] => [
   ["모델 파일", `${condition.logicalModel} / ${condition.artifact.name}`],
-  ["실행 방식", [condition.runtimeFamily, condition.backend].map(code => codeText[code]?.[0] ?? code).join(" · ")],
+  ["실행 방식", [condition.runtimeFamily, condition.backend].map(code => explain(code)[0]).join(" · ")],
   ["전처리기", condition.preprocessor.name || "없음"],
   ["데이터셋", condition.activeProtocol.dataset?.name ?? "없음"],
 ]
