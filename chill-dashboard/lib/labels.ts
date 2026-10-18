@@ -1,12 +1,15 @@
 // Code → [plain sentence, next action]. Sources are the ChillServer files named per group (design §6.4).
 // Screens show the sentence; the raw code stays in the 원본 view.
-export const codeText: Record<string, readonly [string, string?]> = {
+// Every failure or waiting code carries a next action.
+type Guide = readonly [string, string]
+// Display-only labels: settled states and component or runtime names that ask nothing of the reader.
+type Label = readonly [string]
+
+const guides: Record<string, Guide> = {
   // Workload readiness states: internal/serving/kube/workload_view.go
-  Ready: ["요청을 받을 수 있어요."],
   Waiting: ["아직 요청을 받을 준비가 안 됐어요.", "아래 이유를 확인해 주세요."],
   Preparing: ["측정 결과는 있고, 실행을 준비하고 있어요.", "잠시 후 다시 확인해 주세요."],
   Changing: ["설정을 바꾸고 있어요. 바꾸는 동안 새 요청은 기다려요.", "끝날 때까지 기다려 주세요."],
-  Deleting: ["지우고 있어요. 받은 요청을 마무리한 뒤 사라져요."],
   Failed: ["마지막 작업이 실패했어요.", "원본 보기에서 이유를 확인하고 다시 요청해 주세요."],
 
   // Readiness reasons: workload_view.go, internal/serving/runtime.go, earlier Dashboard reasons
@@ -19,15 +22,15 @@ export const codeText: Record<string, readonly [string, string?]> = {
   RestartDrain: ["ChillServer가 다시 시작해서, 이전 요청을 마무리할 때까지 새 요청을 멈췄어요.", "마무리될 때까지 기다려 주세요."],
   RestartUnconfirmed: ["ChillServer가 다시 시작한 뒤 이 실행기 상태를 아직 확인하지 못했어요.", "잠시 후 다시 확인해 주세요."],
   InstanceStopped: ["실행기가 멈춰서 이 실행기의 요청은 끝나지 못했어요.", "다른 실행기가 준비됐는지 확인해 주세요."],
-  NodeDrained: ["장비에서 실행기를 비워서 이 실행기는 요청을 받지 않아요."],
-  NoCurrentReadiness: ["지금 구성에 이 실행기가 없어서 요청을 받지 않아요."],
-  ConditionChangedBeforeDrain: ["처리 중인 요청이 남은 채 실행 조건이 바뀌어서, 마무리될 때까지 기다리고 있어요."],
+  NodeDrained: ["장비에서 실행기를 비워서 이 실행기는 요청을 받지 않아요.", "다른 실행기가 준비됐는지 확인해 주세요."],
+  NoCurrentReadiness: ["지금 구성에 이 실행기가 없어서 요청을 받지 않아요.", "운영 판단의 현재 구성을 확인해 주세요."],
+  ConditionChangedBeforeDrain: ["처리 중인 요청이 남은 채 실행 조건이 바뀌어서, 마무리될 때까지 기다리고 있어요.", "마무리될 때까지 기다려 주세요."],
   ManagementOperationFailed: ["설정 변경을 끝내지 못했어요.", "원본 보기에서 이유를 확인하고 다시 요청해 주세요."],
   DrainTimeout: ["받은 요청이 제한 시간 안에 끝나지 않아 변경을 멈췄어요.", "처리 중인 요청을 확인한 뒤 다시 요청해 주세요."],
   SharedUpdateFailed: ["함께 바꾸던 다른 서비스의 변경이 실패해서 이 변경도 멈췄어요.", "실패한 서비스를 먼저 확인해 주세요."],
 
   // Serving errors: internal/serving/httpapi/handler.go, internal/serving/kube/manager.go, runtime.go, firstfloor/client.go
-  Unauthenticated: ["접속 정보를 다시 확인해 주세요."],
+  Unauthenticated: ["접속 정보를 확인하지 못했어요.", "다시 접속해 주세요."],
   Forbidden: ["이 작업을 할 권한이 없어요.", "관리자에게 권한을 요청해 주세요."],
   AuthorizationUnavailable: ["지금은 권한을 확인할 수 없어요.", "잠시 후 다시 시도해 주세요."],
   NotFound: ["항목을 찾을 수 없어요.", "목록에서 다시 골라 주세요."],
@@ -55,9 +58,9 @@ export const codeText: Record<string, readonly [string, string?]> = {
   ModelArtifactReferenced: ["전처리기가 대상으로 삼은 모델 파일은 뺄 수 없어요.", "그 파일을 남기거나 전처리기의 대상에서 먼저 빼 주세요."],
   PreprocessorReferenced: ["이 전처리기를 쓰는 서비스가 있어서 지울 수 없어요.", "서비스를 먼저 바꾸거나 지워 주세요."],
   DatasetReferenced: ["이 데이터셋을 쓰는 서비스가 있어서 지울 수 없어요.", "서비스를 먼저 바꾸거나 지워 주세요."],
-  ModelDeleting: ["모델을 지우고 있어서 바꿀 수 없어요."],
-  PreprocessorDeleting: ["전처리기를 지우고 있어서 바꿀 수 없어요."],
-  DatasetDeleting: ["데이터셋을 지우고 있어서 바꿀 수 없어요."],
+  ModelDeleting: ["모델을 지우고 있어서 바꿀 수 없어요.", "삭제가 끝난 뒤 목록을 다시 확인해 주세요."],
+  PreprocessorDeleting: ["전처리기를 지우고 있어서 바꿀 수 없어요.", "삭제가 끝난 뒤 목록을 다시 확인해 주세요."],
+  DatasetDeleting: ["데이터셋을 지우고 있어서 바꿀 수 없어요.", "삭제가 끝난 뒤 목록을 다시 확인해 주세요."],
   DefinitionChanged: ["요청을 받는 사이 모델이나 전처리 설정이 바뀌었어요.", "다시 보내 주세요."],
   WorkloadChanged: ["요청을 받는 사이 서비스 등록이 바뀌었어요.", "서비스 상태를 확인한 뒤 다시 보내 주세요."],
   IdentityUnavailable: ["등록 정보를 아직 확인할 수 없어요.", "잠시 후 다시 시도해 주세요."],
@@ -71,17 +74,17 @@ export const codeText: Record<string, readonly [string, string?]> = {
   ServiceUnavailable: ["지금은 요청을 처리할 수 없어요.", "잠시 후 다시 시도해 주세요."],
   QueueFull: ["대기 중인 요청이 너무 많아요.", "잠시 후 다시 보내 주세요."],
   RequestTimeout: ["정한 시간 안에 답을 받지 못했어요.", "잠시 후 다시 보내 주세요."],
-  RequestCanceled: ["요청을 취소했어요."],
+  RequestCanceled: ["요청을 취소했어요.", "필요하면 다시 보내 주세요."],
   SLODeadlineDrop: ["응답 목표 시간을 넘길 것이 확실해서 처리하지 않았어요.", "부하가 줄어든 뒤 다시 보내 주세요."],
   PreprocessFailed: ["입력을 처리할 수 있는 형태로 바꾸지 못했어요.", "입력 형식이 전처리기 계약과 맞는지 확인해 주세요."],
   BackendError: ["모델 실행 중 오류가 났어요.", "원본 보기에서 자세한 내용을 확인해 주세요."],
   BackendUnavailable: ["실행기와 연결하지 못했어요.", "실행기 상태를 확인해 주세요."],
   BackendResponseInvalid: ["실행기의 응답을 이해하지 못했어요.", "원본 보기에서 자세한 내용을 확인해 주세요."],
-  BackendResponseTooLarge: ["실행기의 응답이 너무 커요."],
+  BackendResponseTooLarge: ["실행기의 응답이 너무 커요.", "서비스의 출력 크기 설정을 확인한 뒤 다시 보내 주세요."],
   BackendContextMismatch: ["실행기의 응답이 이 요청과 맞지 않아요.", "원본 보기에서 자세한 내용을 확인해 주세요."],
-  ResponseDeliveryFailed: ["결과를 만들었지만 전달하지 못했어요."],
+  ResponseDeliveryFailed: ["결과를 만들었지만 전달하지 못했어요.", "서비스 완료 기록을 확인한 뒤 필요하면 다시 보내 주세요."],
   IncompleteObservation: ["고른 기간에 빠진 기록이 있어요.", "다른 기간을 골라 주세요."],
-  InvalidObservation: ["기록에 필요한 시각이 빠져 있어요."],
+  InvalidObservation: ["기록에 필요한 시각이 빠져 있어요.", "잠시 후 다시 조회해 주세요."],
   SchedulerUnavailable: ["운영 판단 기능이 이 배포에 연결되지 않았어요.", "배포 설정에서 스케줄러를 켜 주세요."],
   MeasurementUnavailable: ["지금은 측정 기능을 쓸 수 없어요.", "잠시 후 다시 시도해 주세요."],
   MeasurementPreflightUnavailable: ["측정 요청을 미리 확인하지 못했어요.", "잠시 후 다시 시도해 주세요."],
@@ -99,13 +102,12 @@ export const codeText: Record<string, readonly [string, string?]> = {
   ProfileUnavailable: ["이 측정에서 채택할 수 있는 결과가 없어요.", "측정 상세에서 결과를 확인해 주세요."],
   ProfileNamespaceNotAllowed: ["이 저장 영역의 측정은 채택할 수 없어요.", "허용된 저장 영역의 측정을 골라 주세요."],
   ConfigurationRequired: ["채택에 필요한 실행 준비 정보가 없어요.", "측정을 다시 채택해 주세요."],
-  ProfileLoadPending: ["채택은 저장됐고, 운영 판단에 반영되기를 기다리고 있어요."],
+  ProfileLoadPending: ["채택은 저장됐고, 운영 판단에 반영되기를 기다리고 있어요.", "잠시 후 다시 확인해 주세요."],
   ProfileLoadFailed: ["채택은 저장됐지만 운영 판단에 반영하지 못했어요.", "원본 보기에서 이유를 확인해 주세요."],
-  ProfileUnselected: ["채택하지 않은 측정이에요."],
-  ProfileUnloadPending: ["해제는 저장됐고, 운영 판단에서 빠지기를 기다리고 있어요."],
+  ProfileUnloadPending: ["해제는 저장됐고, 운영 판단에서 빠지기를 기다리고 있어요.", "잠시 후 다시 확인해 주세요."],
   ProfileUnloadFailed: ["해제는 저장됐지만 운영 판단에 반영하지 못했어요.", "잠시 후 다시 확인해 주세요."],
   MeasurementPending: ["측정이 아직 끝나지 않았어요.", "측정이 끝난 뒤 채택해 주세요."],
-  MeasurementRejected: ["실패했거나 지우는 중인 측정이라 채택할 수 없어요."],
+  MeasurementRejected: ["실패했거나 지우는 중인 측정이라 채택할 수 없어요.", "다른 측정 결과를 골라 주세요."],
   InvalidEvidence: ["측정 기록을 검증하지 못했어요.", "원본 보기에서 이유를 확인해 주세요."],
   MeasurementEvidenceMissing: ["운영에 필요한 측정 기록이 모자라요.", "필요한 크기를 포함해 다시 측정해 주세요."],
   MemoryEvidenceMissing: ["메모리 사용량 기록이 없는 측정이에요.", "다시 측정해 주세요."],
@@ -124,49 +126,67 @@ export const codeText: Record<string, readonly [string, string?]> = {
 
   // Dashboard relay errors: lib/relay.ts, app/api/config/route.ts
   DashboardRouteNotAllowed: ["Dashboard가 열지 않는 주소예요.", "메뉴에서 다시 들어가 주세요."],
-  DashboardMethodNotAllowed: ["Dashboard가 허용하지 않는 요청이에요."],
+  DashboardMethodNotAllowed: ["Dashboard가 허용하지 않는 요청이에요.", "메뉴에서 다시 들어가 주세요."],
   DashboardQueryInvalid: ["조회 조건이 올바르지 않아요.", "기간과 조건을 다시 골라 주세요."],
-  DashboardRelayCanceled: ["요청을 취소했어요."],
+  DashboardRelayCanceled: ["요청을 취소했어요.", "필요하면 다시 시도해 주세요."],
   DashboardRequestTooLarge: ["보낸 내용이 너무 커요.", "내용을 줄여 다시 보내 주세요."],
   DashboardResponseTooLarge: ["응답이 너무 커서 받지 않았어요.", "조회 범위를 줄여 주세요."],
   DashboardConfigInvalid: ["Dashboard 배포 설정이 올바르지 않아요.", "배포 설정을 확인해 주세요."],
-  DashboardAuthenticationRequired: ["접속 정보를 다시 확인해 주세요."],
+  DashboardAuthenticationRequired: ["접속 정보가 없어요.", "먼저 접속해 주세요."],
   DashboardOriginDenied: ["이 주소에서 보낸 변경은 받을 수 없어요.", "Dashboard 주소로 다시 접속해 주세요."],
   DashboardHeaderInvalid: ["요청 정보가 올바르지 않아요.", "새로 고친 뒤 다시 시도해 주세요."],
-  DashboardBodyNotAllowed: ["이 요청에는 내용을 함께 보낼 수 없어요."],
+  DashboardBodyNotAllowed: ["이 요청에는 내용을 함께 보낼 수 없어요.", "새로 고친 뒤 다시 시도해 주세요."],
   DashboardRelayTimeout: ["응답이 늦어지고 있어요.", "잠시 후 다시 시도해 주세요."],
   DashboardRelayUnavailable: ["ChillServer에 연결하지 못했어요.", "잠시 후 다시 시도해 주세요."],
 
-  // Measurement outcomes and failure reasons: internal/profiling/campaign/controller/curve_deriver.go, reconciler.go
-  "MinimumFound/LocalMinimum": ["크기를 더 키우면 에너지가 늘어서 탐색을 멈췄어요."],
-  "MinimumFound/SearchSpaceExhausted": ["정한 크기를 모두 재고 가장 적은 것을 골랐어요."],
+  // Measurement failure reasons: internal/profiling/campaign/controller/reconciler.go
   TransitionFailed: ["측정할 상태로 장비를 바꾸지 못했어요.", "장비의 전력 모드 설정을 확인한 뒤 다시 요청해 주세요."],
   RetryLimitExhausted: ["다시 시도할 수 있는 횟수를 모두 써도 측정이 실패했어요.", "원본 보기에서 실패 이유를 확인한 뒤 다시 요청해 주세요."],
-  CurvePlanResolutionFailed: ["측정 계획을 만들지 못했어요. ChillServer가 계속 다시 시도해요.", "원본 보기에서 이유를 확인하고 필요하면 조건을 고쳐 주세요."],
+  CurvePlanResolutionFailed: ["측정 계획을 만들지 못해 측정을 끝냈어요.", "원본 보기에서 이유를 확인하고 조건을 고친 뒤 다시 요청해 주세요."],
 
-  // ChillSystem condition reasons: internal/operator/system/status.go
-  ComponentsAvailable: ["켜 둔 구성요소가 모두 정상이에요."],
+  // ChillSystem condition reasons that need action: internal/operator/system/status.go
   ComponentsDisabled: ["관리하는 구성요소를 모두 꺼 두었어요.", "필요한 구성요소를 시스템 설정에서 켜 주세요."],
   ComponentsNotReady: ["준비되지 않은 구성요소가 있어요.", "아래 구성요소별 상태를 확인해 주세요."],
   ObservationFailed: ["구성요소 상태를 확인하지 못했어요.", "잠시 후 다시 확인해 주세요."],
-  NodeDiscoveryReady: ["장비 탐색기가 정상이에요."],
   NodeDiscoveryMissing: ["장비 탐색기가 설치되어 있지 않아요.", "설치 상태를 확인해 주세요."],
   NodeDiscoveryPending: ["장비 탐색기를 실행할 장비가 아직 없어요.", "장비 연결 상태를 확인해 주세요."],
   NodeDiscoveryProgressing: ["장비 탐색기를 배포하고 있어요.", "잠시 후 다시 확인해 주세요."],
   NodeDiscoveryDegraded: ["장비 탐색기에 문제가 있어요.", "원본 보기에서 이유를 확인해 주세요."],
-  ProfilerReady: ["측정기가 정상이에요."],
   ProfilerMissing: ["측정기가 설치되어 있지 않아요.", "설치 상태를 확인해 주세요."],
   ProfilerProgressing: ["측정기를 배포하고 있어요.", "잠시 후 다시 확인해 주세요."],
   ProfilerDegraded: ["측정기에 문제가 있어요.", "원본 보기에서 이유를 확인해 주세요."],
-  NodeActuatorReady: ["전력 모드 제어기가 정상이에요."],
   NodeActuatorMissing: ["전력 모드 제어기가 설치되어 있지 않아요.", "설치 상태를 확인해 주세요."],
   NodeActuatorPending: ["전력 모드 제어기를 실행할 장비가 아직 없어요.", "장비 연결 상태를 확인해 주세요."],
   NodeActuatorProgressing: ["전력 모드 제어기를 배포하고 있어요.", "잠시 후 다시 확인해 주세요."],
   NodeActuatorDegraded: ["전력 모드 제어기에 문제가 있어요.", "원본 보기에서 이유를 확인해 주세요."],
-  EvidenceStoreReady: ["측정 기록 저장소가 정상이에요."],
   EvidenceStoreMissing: ["측정 기록 저장소가 설치되어 있지 않아요.", "설치 상태를 확인해 주세요."],
   EvidenceStoreProgressing: ["측정 기록 저장소를 준비하고 있어요.", "잠시 후 다시 확인해 주세요."],
   EvidenceStoreDegraded: ["측정 기록 저장소에 문제가 있어요.", "원본 보기에서 이유를 확인해 주세요."],
+}
+
+const labels: Record<string, Label> = {
+  // Settled workload states: internal/serving/kube/workload_view.go
+  Ready: ["요청을 받을 수 있어요."],
+  Deleting: ["지우고 있어요. 받은 요청을 마무리한 뒤 사라져요."],
+  ProfileUnselected: ["채택하지 않은 측정이에요."],
+
+  // Measurement outcomes: internal/profiling/campaign/controller/curve_deriver.go
+  "MinimumFound/LocalMinimum": ["크기를 더 키우면 에너지가 늘어서 탐색을 멈췄어요."],
+  "MinimumFound/SearchSpaceExhausted": ["정한 크기를 모두 재고 가장 적은 것을 골랐어요."],
+
+  // ChillSystem healthy reasons: internal/operator/system/status.go
+  ComponentsAvailable: ["켜 둔 구성요소가 모두 정상이에요."],
+  NodeDiscoveryReady: ["장비 탐색기가 정상이에요."],
+  ProfilerReady: ["측정기가 정상이에요."],
+  NodeActuatorReady: ["전력 모드 제어기가 정상이에요."],
+  EvidenceStoreReady: ["측정 기록 저장소가 정상이에요."],
+
+  // ChillSystem condition types as component names: api/v1alpha1/chillsystem_types.go, used by status.go.
+  // The overall "Ready" type shares its key with the workload Ready state above.
+  NodeDiscoveryAvailable: ["장비 탐색기"],
+  ProfilerAvailable: ["측정기"],
+  NodeActuatorAvailable: ["전력 모드 제어기"],
+  EvidenceStoreAvailable: ["측정 기록 저장소"],
 
   // Runtime family, backends and providers: internal/modelcatalog/catalog.go, Passport measurement.runtime.provider
   firstfloor: ["CHILL 실행기"],
@@ -177,6 +197,8 @@ export const codeText: Record<string, readonly [string, string?]> = {
   CUDAExecutionProvider: ["GPU (CUDA)"],
   TensorrtExecutionProvider: ["GPU (TensorRT)"],
 }
+
+export const codeText: Record<string, Guide | Label> = { ...labels, ...guides }
 // A code outside the table gets the common sentence; the caller keeps the raw code in its 원본 view.
 export const explain = (code: string): readonly [string, string?] =>
   codeText[code] ?? ["새 상태의 설명이 준비 중이에요.", "원본 보기에서 자세한 내용을 확인해 주세요."]
