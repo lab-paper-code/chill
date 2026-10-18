@@ -67,10 +67,11 @@ function ResultDetails({value}:{value:OperationResult}) {
 
 const routingKind="manual-static-routing"
 function routingConclusion(result:OperationResult):[title:string,lede:string] {
-  const split=`설정 revision ${result.operation.sourceConfigRV||"없음"}의 분배`
+  // sourceConfigRV is a storage revision; it stays in the 원본 view.
+  const split="설정한 분배"
   if(result.status==="complete")return [`${split}가 반영됐어요`,"설정한 비율과 실제로 읽어 온 비율을 나란히 보여줘요."]
   if(result.status==="running"||result.status==="starting")return [`${split}를 반영하고 있어요`,"실행기가 준비되기를 기다리고 있어요. 반영되면 실제 비율이 채워져요."]
-  return [`${split}를 ${result.status==="partial"?"일부만 반영했어요":"반영하지 못했어요"}`,"설정한 분배를 반영하지 못했어요. 원본 보기에서 ChillServer가 남긴 이유를 확인해 주세요."]
+  return [`${split}를 ${result.status==="partial"?"일부만 반영했어요":"반영하지 못했어요"}`,"원본 보기에서 ChillServer가 남긴 이유를 확인해 주세요."]
 }
 // Declared split (operation.staticRouting) next to the read-back split (actual.routing), as each service's share per instance.
 function RoutingSplit({result}:{result:OperationResult}) {
