@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError } from "@/lib/client"
-import type { SchedulerAlgorithm, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
+import type { OperationResult, SchedulerAlgorithm, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
 import { millisecondsToNanos, nanosToMilliseconds, wireInteger, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"algorithm">
-// internal/serving/scheduler_policy.go: the owner rejects any other value.
+// internal/serving/scheduler_policy.go: ChillServer rejects any other value.
 export const algorithms:Record<SchedulerAlgorithm,{label:string;help:string}> = {
   "fixed-horizon":{label:"고정 기간 비교",help:"후보마다 정한 기간 동안의 에너지를 비교해요."},
   "projected-work-history":{label:"작업 이력 예측",help:"최근 작업 이력으로 앞으로의 부하를 예측해 비교해요."},
@@ -108,6 +108,8 @@ export function SchedulerSettingsPage() {
   const serverError=mutation.error?.data&&typeof mutation.error.data==="object"?mutation.error.data as {field?:string;message?:string;code?:string}:undefined
   const count=baseline&&draft?changedRows(baseline,draft).length:0
   const shown=count?draft:settings.data
+  // The newest configuration-sourced routing result opens in its /transitions detail (same identity as the transitions list).
+  const routing=state.data?.results?.filter(item=>item.operation.kind==="manual-static-routing").reduce<OperationResult|undefined>((latest,item)=>!latest||Date.parse(item.startedAt)>Date.parse(latest.startedAt)?item:latest,undefined)
   const back:[string,string]=["/settings","설정"]
 
   // Edits accumulate on the draft; the first edit pins the baseline used for the concurrency check.
@@ -187,6 +189,9 @@ export function SchedulerSettingsPage() {
       <Rows label="고급">{group("advanced")}</Rows>
       <Rows>
         <Row href="/changes?scope=scheduler" label="최근 변경 기록" hint="누가 언제 운영 설정을 바꿨는지"/>
+        {state.data&&(routing
+          ?<Row href={`/transitions/${encodeURIComponent(routing.operation.id)}?${new URLSearchParams({view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배" hint="가장 최근에 적용한 서비스 → 인스턴스 비율"/>
+          :<Row href="/transitions" label="설정한 요청 분배" hint="설정 기반 분배 기록이 비어 있어요"/>)}
         <Row href="/scheduler" label="지금 운영 판단 보기"/>
         {settings.data&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(settings.data),2)}</pre><SourceExport value={settings.data} filename="chill-scheduler-settings.json"/></RowDialog>}
       </Rows>

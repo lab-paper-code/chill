@@ -4,7 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useChillQuery } from "@/lib/client"
-import type { NodeRef, OperationResult, OperationState, SchedulerAction, SchedulerActionObservation, SchedulerControllerState, SchedulerObservationPage, SchedulerOperation } from "@/lib/read-types"
+import type { NodeRef, OperationResult, OperationState, Routing, SchedulerAction, SchedulerActionObservation, SchedulerControllerState, SchedulerObservationPage, SchedulerOperation } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
 import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { safeSource } from "@/lib/source-export"
@@ -65,6 +65,43 @@ function ResultDetails({value}:{value:OperationResult}) {
   return <><p role="status">관측 결과 {label(value.status)}</p><p>시작 {time(value.startedAt)} / 종료 {time(value.endedAt)}</p>{value.error&&<p role="alert" className="break-all">{value.error}</p>}<h3>제공된 진행 기록</h3><Lines values={value.progress}/><OperationDetails value={value.operation}/><StateDetails title="변경 전 관측" state={value.before}/><StateDetails title="실제 변경 후 관측" state={value.actual}/>{value.drainNative&&<section><h3>기존 요청 마무리 관측</h3><Native value={value.drainNative}/></section>}</>
 }
 
+const routingKind="manual-static-routing"
+// Failure texts written by internal/serving/kube/static_routing.go and internal/serving/static_routing.go, in plain words.
+// Any other text is shown as ChillServer wrote it; the full error and progress stay in the 원본 view.
+const routingReasons:[string,string][]=[
+  ["readback differs","실제 분배가 설정과 달라요. 받은 요청을 마무리하는 중일 수 있어요."],
+  ["waits for running global route","앞서 진행 중인 분배 변경이 끝나지 않아 반영하지 않았어요."],
+  ["requires controls OFF","자동 적용이 켜져 있어 설정한 분배를 쓰지 않아요."],
+  ["not currently ready and compatible","설정한 인스턴스가 준비되지 않았거나 그 서비스와 맞지 않아요."],
+  ["lacks positive distribution","설정한 분배에 빠진 서비스가 있어요."],
+  ["complete current workload UID map","설정한 분배에 빠진 서비스가 있어요."],
+]
+function routingConclusion(result:OperationResult):[title:string,lede:string] {
+  const split=`설정 revision ${result.operation.sourceConfigRV||"없음"}의 분배`
+  if(result.status==="complete")return [`${split}가 반영됐어요`,"설정한 비율과 실제로 읽어 온 비율을 나란히 보여줘요."]
+  if(result.status==="running"||result.status==="starting")return [`${split}를 반영하고 있어요`,"실행기가 준비되기를 기다리고 있어요. 반영되면 실제 비율이 채워져요."]
+  const reason=result.error?routingReasons.find(([text])=>result.error!.includes(text))?.[1]??result.error:"남겨진 이유가 없어요."
+  return [`${split}를 ${result.status==="partial"?"일부만 반영했어요":"반영하지 못했어요"}`,reason]
+}
+// Declared split (operation.staticRouting) next to the read-back split (actual.routing), as each service's share per instance.
+function RoutingSplit({result}:{result:OperationResult}) {
+  const state=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
+  const declared=result.operation.staticRouting??{},actual=result.actual.routing
+  const services=new Map((state.data?.snapshot.workloads??[]).flatMap(item=>item?[[item.uid,item.name] as const]:[]))
+  const nodes=new Map((result.operation.target?.instances??[]).map(instance=>[instance.id,instance.node.name]))
+  const ids=[...new Set([declared,actual??{}].flatMap(routing=>Object.values(routing).flatMap(weights=>Object.keys(weights))))].sort()
+  const instanceName=(id:string)=>{const node=nodes.get(id)??"이전";const same=ids.filter(other=>(nodes.get(other)??"이전")===node);return `${node} 실행기${same.length>1?` ${same.indexOf(id)+1}`:""}`}
+  const share=(routing:Routing|undefined,uid:string,id:string)=>{
+    if(!routing)return "반영 대기"
+    const weights=routing[uid]??{},total=Object.values(weights).reduce((sum,weight)=>sum+weight,0)
+    return total?`${(100*(weights[id]??0)/total).toLocaleString("ko-KR",{maximumFractionDigits:1})}%`:"0%"
+  }
+  const uids=[...new Set([...Object.keys(declared),...Object.keys(actual??{})])]
+  return <section className="rows-group" aria-label="서비스 → 인스턴스 비율"><h2 className="rows-label">서비스 → 인스턴스 비율</h2><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스 → 인스턴스</th><th>설정한 비율</th><th>실제 비율</th></tr></thead><tbody>
+    {uids.flatMap(uid=>[...new Set([...Object.keys(declared[uid]??{}),...Object.keys(actual?.[uid]??{})])].map(id=><tr key={`${uid}/${id}`}><td>{services.get(uid)??"이전 등록 서비스"} → {instanceName(id)}</td><td>{share(declared,uid,id)}</td><td>{share(actual,uid,id)}</td></tr>))}
+  </tbody></table></div>{!uids.length&&<p>설정한 분배가 기록되지 않았어요.</p>}</section>
+}
+
 type CurrentRow={action?:SchedulerAction;result?:OperationResult;id:string;node:NodeRef;kind:string;status:string}
 function currentLink(row:CurrentRow) {
   return `/transitions/${encodeURIComponent(row.id)}?${new URLSearchParams({view:"current",stage:row.result?"result":"action",node:row.node.uid,...(row.result?{startedAt:row.result.startedAt}:{})})}`
@@ -89,7 +126,7 @@ function CurrentSummary({row,rows}:{row:CurrentRow;rows:CurrentRow[]}) {
   </>
   return result?<>
     <Facts items={[["노드",actionNodeName(row.node)],["결과",label(result.status)],["시작",when(result.startedAt)],["종료",when(result.endedAt)]]}/>
-    {result.error&&<p role="alert">실행 중 오류가 있었어요. 내용은 원본 자료에서 볼 수 있어요.</p>}
+    {row.kind===routingKind?<RoutingSplit result={result}/>:result.error&&<p role="alert">실행 중 오류가 있었어요. 내용은 원본 자료에서 볼 수 있어요.</p>}
     <Rows>
       <RowDialog label="진행 기록" value={`${result.progress?.length??0}개`} title="진행 기록"><Lines values={result.progress}/></RowDialog>
       <RowDialog label="실행 대상과 계획" title="실행 대상과 계획"><OperationDetails value={result.operation}/></RowDialog>
@@ -124,9 +161,10 @@ function CurrentAction({id}:{id:string}) {
   const selected=rows.filter(row=>row.id===id&&(!stage||stage===(row.result?"result":"action"))&&(node===null||row.node.uid===node)&&(startedAt===null||row.result?.startedAt===startedAt))
   const selectionRequested=stage!==null||node!==null||startedAt!==null
   const row=selected.length===1?selected[0]:undefined
+  const routing=row?.result&&row.kind===routingKind?routingConclusion(row.result):undefined
   return <Screen back={["/transitions","변경 진행"]} status={row&&<Badge status={row.status}/>}
-    title={!query.data?"변경 상세":row?`${kindLabel(row.kind)}${row.result?" 결과":""}`:selected.length?"같은 동작이 여럿 있어요":"이 동작을 지금 찾을 수 없어요"}
-    lede={!query.data?undefined:row?`${actionNodeName(row.node)}에서 ${row.result?"실행한":"진행하는"} 변경이에요.`:selected.length?"노드와 시작 시각을 보고 하나를 골라 주세요.":selectionRequested?"현재 상태에 같은 동작이 없어요. 다른 결과로 대신 보여주지 않아요.":"현재 상태에 이 동작이 없어요. 변경 기록에서 찾아 주세요."}>
+    title={!query.data?"변경 상세":routing?routing[0]:row?`${kindLabel(row.kind)}${row.result?" 결과":""}`:selected.length?"같은 동작이 여럿 있어요":"이 동작을 지금 찾을 수 없어요"}
+    lede={!query.data?undefined:routing?routing[1]:row?`${actionNodeName(row.node)}에서 ${row.result?"실행한":"진행하는"} 변경이에요.`:selected.length?"노드와 시작 시각을 보고 하나를 골라 주세요.":selectionRequested?"현재 상태에 같은 동작이 없어요. 다른 결과로 대신 보여주지 않아요.":"현재 상태에 이 동작이 없어요. 변경 기록에서 찾아 주세요."}>
     <QueryGate query={query}>{query.data&&(row?<CurrentSummary row={row} rows={rows}/>:selected.length?<Rows label="고를 항목">{selected.map((item,index)=><Row key={index} href={currentLink(item)} label={item.result?"실행 결과":"현재 동작"} hint={`${actionNodeName(item.node)} · ${item.result?`${when(item.result.startedAt)} 시작`:"시작 시각 없음"}`} value={<Badge status={item.status}/>}/>)}</Rows>:<Rows><Row href="/transitions?view=history" label="변경 기록에서 찾기"/></Rows>)}</QueryGate>
   </Screen>
 }
@@ -165,12 +203,13 @@ function HistoryRecord({id}:{id:string}) {
   const query=useChillQuery<SchedulerObservationPage>(schedulerRecordPath(ref),{enabled:valid,decoder:parseSchedulerJSON})
   const event=query.data?.events?.[0],matches=valid&&schedulerRecordMatches(ref,event)&&!!event?.action
   const action=matches?event!.action:undefined
+  const routed=action?.kind===routingKind?result(action.actual,action):undefined,routing=routed&&routingConclusion(routed)
   return <Screen back={[historyWindow(ref?.from??params.get("from"),ref?.to??params.get("to")),"변경 기록"]} status={action&&<Badge status={action.phase}/>}
-    title={action?kindLabel(action.kind):valid&&!query.data?"변경 기록":"기록을 확인해야 해요"}
-    lede={!valid?"구간, 위치와 기록 정보가 모두 필요해요. 현재 동작으로 대신 보여주지 않아요.":action?`${actionNodeName(action.node)} · ${when(event!.at)}`:query.data?"보관 범위나 기록이 달라졌어요. 같은 동작의 다른 사건으로 대신 보여주지 않아요.":undefined}>
+    title={routing?routing[0]:action?kindLabel(action.kind):valid&&!query.data?"변경 기록":"기록을 확인해야 해요"}
+    lede={!valid?"구간, 위치와 기록 정보가 모두 필요해요. 현재 동작으로 대신 보여주지 않아요.":routing?routing[1]:action?`${actionNodeName(action.node)} · ${when(event!.at)}`:query.data?"보관 범위나 기록이 달라졌어요. 같은 동작의 다른 사건으로 대신 보여주지 않아요.":undefined}>
     {valid&&<QueryGate query={query}>{action&&ref&&<>
       <Facts items={[["노드",actionNodeName(action.node)],["관측 단계",label(action.phase)],["시작",when(action.startedAt)],["완료",when(action.completedAt)]]}/>
-      {action.error&&<p role="alert">실행 중 오류가 있었어요. 내용은 자세히에서 볼 수 있어요.</p>}
+      {routed?<RoutingSplit result={routed}/>:action.error&&<p role="alert">실행 중 오류가 있었어요. 내용은 자세히에서 볼 수 있어요.</p>}
       <Rows><RowDialog label="변경 내용 자세히" hint="계획, 변경 전후 상태와 원본" title="변경 기록 상세"><HistoryDetails row={{event:event!,ref}}/></RowDialog></Rows>
     </>}</QueryGate>}
   </Screen>

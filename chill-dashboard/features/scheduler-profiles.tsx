@@ -4,7 +4,8 @@ import * as React from "react"
 import { useRouter } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery, useSession } from "@/lib/client"
-import type { ProfileSelection, ProfileSelectionsView, SchedulerView } from "@/lib/read-types"
+import type { CurvePlanSpec, ProfileSelection, ProfileSelectionsView, SchedulerProfile, SchedulerView } from "@/lib/read-types"
+import { codeText } from "@/lib/labels"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceJSON, StatusBadge, type Tone } from "@/components/read-region"
 import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
@@ -29,6 +30,27 @@ export function selectionOutcome(selection:ProfileSelection):{tone:Tone;badge:st
 const loadedNote = "운영 판단에 반영됐다는 건 판단에 쓸 수 있다는 뜻이에요. GPU 서빙 준비나 실제 서빙, 자동 제어가 끝났다는 뜻은 아니에요."
 const resultHref = (selection:ProfileSelection) => `/measurements/batch-energy-optimizations/${encodeURIComponent(selection.campaign.namespace)}/${encodeURIComponent(selection.campaign.name)}`
 const same = (selection:ProfileSelection, namespace:string, name:string) => selection.campaign.namespace === namespace && selection.campaign.name === name
+// The four measurement conditions of a profile (CurvePlanSpec), in plain words. Raw values stay in the 원본 view.
+export const conditionRows = (condition:CurvePlanSpec):[string,string][] => [
+  ["모델 파일", `${condition.logicalModel} / ${condition.artifact.name}`],
+  ["실행 방식", [condition.runtimeFamily, condition.backend].map(code => codeText[code]?.[0] ?? code).join(" · ")],
+  ["전처리기", condition.preprocessor.name || "없음"],
+  ["데이터셋", condition.activeProtocol.dataset?.name ?? "없음"],
+]
+// Loaded profiles reach the client only inside the state: as options (with the services they fit) and as running instances.
+function loadedProfiles(view?:ProfileSelectionsView) {
+  const snapshot = view?.state.snapshot, names = new Map((snapshot?.workloads ?? []).flatMap(item => item ? [[item.uid, item.name] as const] : []))
+  const found = new Map<string,{profile:SchedulerProfile;services:Set<string>}>()
+  const add = (profile:SchedulerProfile|null, uids:string[]|null) => {
+    if (!profile) return
+    const entry = found.get(profile.id) ?? {profile, services:new Set<string>()}
+    for (const uid of uids ?? []) entry.services.add(names.get(uid) ?? "이전 등록 서비스")
+    found.set(profile.id, entry)
+  }
+  for (const option of snapshot?.options ?? []) add(option.instance.profile, option.compatibleUIDs)
+  for (const instance of snapshot?.instances ?? []) add(instance.profile, instance.workloadUIDs)
+  return found
+}
 
 export function useProfileSelections() {
   return useChillQuery<ProfileSelectionsView>(profilesPath, {decoder:parseSchedulerJSON})
@@ -56,16 +78,22 @@ function SelectionFacts({selection}:{selection:ProfileSelection}) {
 export function SchedulerProfilesPage() {
   const query = useProfileSelections(), router = useRouter(), {config} = useSession()
   const [name, setName] = React.useState(""), [open, setOpen] = React.useState(false)
-  const selections = query.data?.selections ?? []
+  const selections = query.data?.selections ?? [], profiles = loadedProfiles(query.data)
   const loaded = selections.filter(selection => selection.status === "Persisted" && selection.loaded).length
   return <Screen back={["/scheduler","운영"]} status={<AutoControl/>}
     title={!query.data ? "측정 프로파일" : selections.length ? `운영 판단이 측정 프로파일 ${loaded}개를 쓰고 있어요` : "아직 채택한 측정 프로파일이 없어요"}
     lede="측정 결과를 채택하면 운영 판단이 그 결과로 구성을 비교해요. 자동 적용이 꺼져 있으면 구성은 바뀌지 않아요.">
     <QueryGate query={query}>
       {selections.length ? <Rows label="채택한 측정 결과">{selections.map(selection => {
-        const outcome = selectionOutcome(selection)
-        return <Row key={`${selection.campaign.namespace}/${selection.campaign.name}`} href={resultHref(selection)} label={selection.campaign.name}
-          hint={outcome.sentence} value={<StatusBadge tone={outcome.tone}>{outcome.badge}</StatusBadge>}/>
+        const outcome = selectionOutcome(selection), found = selection.profileID ? profiles.get(selection.profileID) : undefined
+        const services = found?.services.size ? [...found.services].join(", ") : "맞는 서비스가 없어요"
+        return <RowDialog key={`${selection.campaign.namespace}/${selection.campaign.name}`} label={selection.campaign.name}
+          hint={found ? `${services} · ${conditionRows(found.profile.condition).map(([,value]) => value).join(" · ")}` : outcome.sentence} value={<StatusBadge tone={outcome.tone}>{outcome.badge}</StatusBadge>} title={selection.campaign.name}>
+          {found ? <Facts label="측정 조건" items={[["서비스", services], ["장비", found.profile.nodeName], ...conditionRows(found.profile.condition)]}/> : <p>운영 판단이 이 결과를 불러오면 측정 조건을 보여줘요.</p>}
+          <SelectionFacts selection={selection}/>
+          {found && <SourceJSON inline value={found.profile.condition} title="측정 조건 원본 보기"/>}
+          <Rows><Row href={resultHref(selection)} label="측정 결과 보기"/></Rows>
+        </RowDialog>
       })}</Rows> : query.data && <Empty title="측정 결과 화면에서 채택할 수 있어요"/>}
       {query.data && <p className="px-1 text-sm text-muted-foreground">{loadedNote}</p>}
     </QueryGate>
