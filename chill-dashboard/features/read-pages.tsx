@@ -4,7 +4,8 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
-import type { RunsView, ProfilingRun, Passport, NativeSample } from "@/lib/read-types"
+import type { RunsView, ProfilingRun, Passport, NativeSample, MeasurementPreflight } from "@/lib/read-types"
+import { codeText } from "@/lib/labels"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
@@ -18,11 +19,6 @@ function runCandidate(row:ProfilingRun,key:string) {
 }
 type RunListSpec = {targetNode?:string;measurement?:{batch?:number;cpuQuota?:string;workloadMode?:string}}
 const listSpec=(row:ProfilingRun)=>row.spec as RunListSpec
-// Execution path names are declarations such as cuda-amd64 or firstfloor-ort-cpu-arm64; unknown names stay as written.
-export function pathLabel(path:string) {
-  const unit=/cuda|tensorrt/.test(path)?"GPU (CUDA)":/rknn/.test(path)?"NPU (RKNN)":/cpu/.test(path)?"CPU":path
-  return /firstfloor/.test(path)&&unit!==path?`${unit} · firstfloor`:unit
-}
 // Only problems are worth a badge; a verified run is the normal case.
 function runProblem(row:ProfilingRun):"failed"|"unverified"|"pending"|null {
   const evidence=row.status.conditions?.find(item=>item.type==="EvidenceVerified")?.status
@@ -65,7 +61,7 @@ export function MeasurementRunsPage() {
         const [, node, path]=JSON.parse(key) as string[]
         const dates=rows.map(row=>row.creationTimestamp).sort(),first=day(dates[0]),last=day(dates[dates.length-1])
         const href=`/measurements/group?${new URLSearchParams([...shared,["model",model],["node",node],["path",path]])}`
-        return <Row key={key} href={href} label={`${node} · ${pathLabel(path)}`} hint={`${rows.length}번 측정 · ${first===last?first:`${first} – ${last}`}`} value={problemSummary(rows)}/>
+        return <Row key={key} href={href} label={`${node} · ${path}`} hint={`${rows.length}번 측정 · ${first===last?first:`${first} – ${last}`}`} value={problemSummary(rows)}/>
       })}</Rows>)}
       {!runs.length&&<Empty title="조건에 맞는 측정이 없어요"/>}
       {page&&(page.offset>0||page.nextOffset!==undefined)&&<div className="grid gap-2"><p className="text-sm text-muted-foreground">한 번에 {page.limit}건씩 묶어 보여줘요. 지금은 {page.offset+1}–{page.offset+runs.length}번째예요.</p><div className="flex gap-2"><Button variant="outline" disabled={page.offset===0} onClick={()=>go(Math.max(0,page.offset-page.limit))}>이전 측정</Button><Button variant="outline" disabled={page.nextOffset===undefined} onClick={()=>go(page.nextOffset??0)}>다음 측정</Button></div></div>}
@@ -97,7 +93,7 @@ export function MeasurementGroupPage() {
       value={(()=>{const problem=runProblem(row);return problem?problemBadge[problem]:null})()}/>
   })}</Rows>
   return <Screen back={[`/measurements/runs?${back}`,"개별 측정 회차"]} status={problemSummary(rows)??undefined}
-    title={query.data?rows.length?`${node}에서 ${pathLabel(path)}로 ${rows.length}번 쟀어요`:"이 조건의 측정을 찾지 못했어요":"측정 결과"} lede={model}>
+    title={query.data?rows.length?`${node}에서 ${path}로 ${rows.length}번 쟀어요`:"이 조건의 측정을 찾지 못했어요":"측정 결과"} lede={model}>
     <QueryGate query={query}>
       {section("부하를 걸고 잰 측정",rows.filter(row=>!idle(row)))}
       {section("모델만 올려두고 잰 기준 전력",rows.filter(idle))}
@@ -134,14 +130,29 @@ function EvidenceLookup() {
   </form>
 }
 
+// /measurements/new review and /measurements/check share this conclusion and plan summary; the raw plan stays in 원본.
+export const preflightConclusion=(answer:MeasurementPreflight)=>answer.resolves?"이 조건으로 측정할 수 있어요":"이 조건으로는 측정할 수 없어요"
+export function PreflightAnswer({answer}:{answer:MeasurementPreflight}) {
+  if(!answer.resolves||!answer.plan)return <p role="alert" className="text-sm text-destructive">{answer.reason}</p>
+  // CurvePlanSpec.activeProtocol keeps untyped fields open; ChillServer always writes both of these.
+  const shared=answer.plan.shared,{warmupIterations,durationSeconds}=shared.activeProtocol,sizes=shared.plannedBatchSizes??[]
+  return <Facts label="이렇게 측정해요" items={[
+    ["한 번에 처리할 건수",sizes.length?`${sizes.join(", ")}건`:"자동으로 정해요"],
+    ["크기마다 반복",`${answer.campaign.spec.trialsPerBatch}번`],
+    ["한 회차 측정 구간",`예열 ${String(warmupIterations)}번 뒤 ${String(durationSeconds)}초`],
+  ]}/>
+}
+
 // Funnel: storage area → plan → review, then the preflight answer.
 export function MeasurementCheckPage() {
   const {config}=useSession(),mutation=useChillMutation()
   const [step,setStep]=React.useState(0),[namespace,setNamespace]=React.useState(config.namespace),[source,setSource]=React.useState(""),[plan,setPlan]=React.useState<object|null>(null),[error,setError]=React.useState("")
   const back:[string,string]=["/measurements","측정 결과"]
-  if(mutation.data)return <Screen back={back} status={<StatusBadge tone="info">조건 확인 응답</StatusBadge>} title="조건 확인 결과를 받았어요" lede="측정을 접수하거나 끝낸 것은 아니에요."
+  const answer=mutation.data?.data as MeasurementPreflight|undefined
+  if(mutation.data&&answer)return <Screen back={back} status={<StatusBadge tone={answer.resolves?"ok":"fail"}>{answer.resolves?"측정 가능":"측정 불가"}</StatusBadge>} title={preflightConclusion(answer)} lede="조건만 확인했어요. 측정을 접수하지는 않았어요."
     action={<Button variant="outline" onClick={()=>{mutation.reset();setStep(0)}}>다른 계획 확인하기</Button>}>
-    <Rows><RowDialog label="확인 결과 보기" title="조건 확인 결과"><SourceJSON inline title="조건 확인 결과" value={{status:mutation.data.status,source:mutation.data.data}}/></RowDialog></Rows>
+    <PreflightAnswer answer={answer}/>
+    <Rows><RowDialog label="원본 보기" title="조건 확인 원본"><SourceJSON inline title="조건 확인 원본" value={{status:mutation.data.status,source:answer}}/></RowDialog></Rows>
   </Screen>
   function next() {
     if(step===0&&!namespace.trim()){setError("저장 영역을 입력해 주세요.");return}
@@ -175,7 +186,7 @@ type RunSpec = {candidate?:{modelSpec?:string;preprocessor?:string;deviceClass?:
 type Thermal = {samples?:number;activeSamples?:number;latchedSamples?:number;maximumTemperatureCelsius?:{maximum?:number};issues?:number}
 type Coresidence = {continuous?:boolean;initialActivePods?:number;finalActivePods?:number;materialEvents?:number}
 const num=(value:number,digits=1)=>value.toLocaleString("ko-KR",{maximumFractionDigits:digits})
-const providers:Record<string,string>={CUDAExecutionProvider:"GPU (CUDA)",CPUExecutionProvider:"CPU",TensorrtExecutionProvider:"GPU (TensorRT)"}
+const plain=(code:string)=>codeText[code]?.[0]??code
 const conditionTrue=(data:Passport,type:string)=>data.run.conditions?.find(condition=>condition.type===type)?.status==="True"
 const verified=(data:Passport)=>conditionTrue(data,"ExecutionComplete")&&conditionTrue(data,"EvidenceVerified")
 // One row per profile batch execution; stage spans are the batch's, recordIDs and units are per request.
@@ -190,7 +201,7 @@ const sampleColumns:DataColumn<NativeSample>[]=[
 function measuredWhat(data:Passport) {
   const spec=data.run.spec as RunSpec, r=data.measurement.runtime
   const at=new Date(r.measurementStartedAt).toLocaleString("ko-KR",{dateStyle:"medium",timeStyle:"short"})
-  return [spec.candidate?.modelSpec, spec.targetNode ?? data.measurement.power.source.nodeName, providers[r.provider] ?? r.provider, `${at}에 ${num(r.elapsedSeconds)}초 동안`].filter(Boolean).join(" · ")
+  return [spec.candidate?.modelSpec, spec.targetNode ?? data.measurement.power.source.nodeName, plain(r.provider), `${at}에 ${num(r.elapsedSeconds)}초 동안`].filter(Boolean).join(" · ")
 }
 // One measurement, read top to bottom: how fast, how much power, under what conditions, and whether to trust it.
 function PassportSummary({data}:{data:Passport}) {
@@ -216,7 +227,7 @@ function PassportSummary({data}:{data:Passport}) {
       ["모델",`${spec.candidate?.modelSpec ?? "정보 없음"}${spec.candidate?.preprocessor?` · 전처리기 ${spec.candidate.preprocessor}`:""}`],
       ["데이터셋",spec.measurement?.dataset ?? "없음"],
       ["장비",`${spec.targetNode ?? p.source.nodeName ?? "정보 없음"}${spec.candidate?.deviceClass?` · ${spec.candidate.deviceClass}`:""}`],
-      ["실행 방식",`${providers[r.provider] ?? r.provider} · ${r.family} ${r.version}`],
+      ["측정한 실행 환경",`${plain(r.provider)} · ${plain(r.family)} ${r.version} · ${r.architecture}`],
       ["CPU",spec.measurement?.cpuQuota?`${spec.measurement.cpuQuota}개${spec.measurement.cpuAffinity?.length?` (코어 ${spec.measurement.cpuAffinity.join(", ")})`:""}`:"제한 없음"],
       ["예열",`${r.warmupIterations}번 실행 후 측정`],
     ]}/>

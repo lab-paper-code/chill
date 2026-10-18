@@ -6,11 +6,13 @@ import { useState, type ReactNode } from "react"
 import { useChillMutation, useChillQuery, useSession, type ApiError } from "@/lib/client"
 import { QueryGate, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
-import { pathLabel } from "@/features/read-pages"
+import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
+import { powerModeText } from "@/features/resources"
+import { codeText } from "@/lib/labels"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
-import type { InventoryClass, InventoryNode, InventoryView, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec } from "@/lib/read-types"
+import type { InventoryClass, InventoryNode, InventoryView, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight } from "@/lib/read-types"
 
 const back: [string, string] = ["/measurements", "측정"]
 const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
@@ -203,7 +205,7 @@ export function MeasurementRequestPage() {
 
 function Funnel({ namespace, from, context, more, refetchPlans, checking }: { namespace: string; from: string | null; context: Context; more: boolean; refetchPlans: () => Promise<{ error: ApiError | null }>; checking: boolean }) {
   const router = useRouter()
-  const dry = useChillMutation(), send = useChillMutation()
+  const dry = useChillMutation(), pre = useChillMutation(), send = useChillMutation()
   const [start] = useState(() => begin(from, context))
   const [d, setD] = useState(start.draft)
   const [index, setIndex] = useState(start.index)
@@ -217,7 +219,7 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
   const update = (patch: Partial<Draft>) => { setD(current => ({ ...current, ...patch })); setError("") }
 
   function go(next: number) {
-    setError(""); dry.reset(); send.reset(); setIndex(next)
+    setError(""); dry.reset(); pre.reset(); send.reset(); setIndex(next)
     if (steps[next] !== "review") return
     // Pin the suggested name so a later list refresh can never change what gets sent.
     const pinned = { ...d, name: v.name }
@@ -229,8 +231,11 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
     setError("같은 이름의 측정이 이미 있어요. 다른 이름을 정해 주세요.")
     void refetchPlans()
   }
+  // Server dry-run checks admission; ChillServer preflight resolves the plan. Both must pass before submit.
   function verify(draft = d) {
-    dry.mutate({ path: `${listPath}?dryRun=All`, method: "POST", body: manifest(draft, context, namespace) }, { onError: e => { if (e.status === 409) conflict() } })
+    const body = manifest(draft, context, namespace)
+    dry.mutate({ path: `${listPath}?dryRun=All`, method: "POST", body }, { onError: e => { if (e.status === 409) conflict() } })
+    pre.mutate({ path: `${listPath}/preflight`, method: "POST", body })
   }
   function submit() {
     send.mutate({ path: listPath, method: "POST", body: manifest(d, context, namespace) }, {
@@ -261,15 +266,19 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
     </Screen>
   }
 
-  const passed = dry.isSuccess && (dry.data?.data as MeasurementMutation | null)?.request === "NOT_SUBMITTED"
-  const denied = dry.error?.status === 403 || send.error?.status === 403
+  const answer = pre.data?.data as MeasurementPreflight | undefined
+  const admitted = dry.isSuccess && (dry.data?.data as MeasurementMutation | null)?.request === "NOT_SUBMITTED"
+  const passed = admitted && answer?.resolves === true
+  const unresolved = answer?.resolves === false
+  const pending = dry.isPending || pre.isPending
+  const denied = dry.error?.status === 403 || pre.error?.status === 403 || send.error?.status === 403
   const rejected = !!dry.error && dry.error.status >= 400 && dry.error.status < 500
-  const unchecked = (!!dry.error && !rejected) || (dry.isSuccess && !passed)
+  const unchecked = (!!dry.error && !rejected) || (dry.isSuccess && !admitted) || !!pre.error || (pre.isSuccess && !answer)
   const sizes = v.declared ?? d.batchSizes
   const titles: Record<Step, string> = {
     workload: "어떤 서비스의 조건으로 잴까요?", device: "어느 장비에서 잴까요?", run: "어떻게 실행할까요?", size: "한 번에 몇 건씩, 몇 번씩 잴까요?",
     advanced: v.protocol.from ? "이전 측정과 같은 방식으로 재요" : "어떤 방식으로 잴까요?", name: "이름을 정해 주세요",
-    review: denied ? "측정을 요청할 권한이 없어요" : send.error ? "측정을 요청하지 못했어요" : dry.isPending ? "요청할 수 있는지 확인하고 있어요" : rejected ? "이대로는 요청할 수 없어요" : unchecked ? "요청할 수 있는지 확인하지 못했어요" : "이대로 측정을 요청할까요?",
+    review: denied ? "측정을 요청할 권한이 없어요" : send.error ? "측정을 요청하지 못했어요" : pending ? "요청할 수 있는지 확인하고 있어요" : unresolved ? preflightConclusion(answer!) : rejected ? "이대로는 요청할 수 없어요" : unchecked ? "요청할 수 있는지 확인하지 못했어요" : answer ? preflightConclusion(answer) : "이대로 측정을 요청할까요?",
   }
   const ledes: Record<Step, string> = {
     workload: "서비스가 쓰는 모델, 전처리기, 데이터셋으로 재요.",
@@ -278,12 +287,12 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
     size: "크기마다 정한 횟수만큼 재서 전력을 가장 적게 쓰는 크기를 찾아요.",
     advanced: v.protocol.from ? "바꾸고 싶을 때만 열어 보세요." : "처음 하는 측정이라 재는 방식을 정해 주세요.",
     name: start.copied ? "기존 측정 조건을 그대로 가져왔어요. 이름만 새로 정하면 돼요." : "추천한 이름을 그대로 써도 돼요. 이 이름으로 결과를 찾아요.",
-    review: denied ? "권한이 있는 계정으로 다시 접속해 주세요. 작성한 내용은 그대로 있어요." : send.error ? `${failure(send.error).message} 작성한 내용은 그대로 있어요.` : dry.isPending ? "실제로 요청하지는 않아요." : rejected ? `${failure(dry.error!).message} 이전 단계에서 고쳐 주세요.` : unchecked ? "잠시 뒤 다시 확인해 주세요. 아직 요청하지 않았어요." : "미리 확인을 통과했어요. 아직 요청하지 않았어요.",
+    review: denied ? "권한이 있는 계정으로 다시 접속해 주세요. 작성한 내용은 그대로 있어요." : send.error ? `${failure(send.error).message} 작성한 내용은 그대로 있어요.` : pending ? "실제로 요청하지는 않아요." : unresolved ? "이전 단계에서 조건을 고쳐 주세요. 아직 요청하지 않았어요." : rejected ? `${failure(dry.error!).message} 이전 단계에서 고쳐 주세요.` : unchecked ? "잠시 뒤 다시 확인해 주세요. 아직 요청하지 않았어요." : "미리 확인을 통과했어요. 아직 요청하지 않았어요.",
   }
-  const badge = step !== "review" ? null : dry.isPending ? <StatusBadge tone="info">확인 중</StatusBadge> : passed && !send.error ? <StatusBadge tone="ok">확인 통과</StatusBadge> : <StatusBadge tone="fail">요청 불가</StatusBadge>
+  const badge = step !== "review" ? null : pending ? <StatusBadge tone="info">확인 중</StatusBadge> : passed && !send.error ? <StatusBadge tone="ok">확인 통과</StatusBadge> : <StatusBadge tone="fail">요청 불가</StatusBadge>
   const chips = [...new Set([...batchChoices.filter(b => !v.max || b <= v.max), ...d.batchSizes])].sort((a, b) => a - b)
   const primary = step !== "review" ? <Button className="flex-[2]" onClick={next}>다음</Button>
-    : unchecked ? <Button className="flex-[2]" disabled={dry.isPending} onClick={() => verify()}>다시 확인하기</Button>
+    : unchecked ? <Button className="flex-[2]" disabled={pending} onClick={() => verify()}>다시 확인하기</Button>
     : <Button className="flex-[2]" disabled={!passed || denied || send.isPending} onClick={submit}>{send.isPending ? "요청하고 있어요" : "측정 요청하기"}</Button>
 
   return <Screen back={back} status={<span className="flex items-center gap-2 text-sm text-muted-foreground">{index + 1} / {steps.length}{badge}</span>} title={titles[step]} lede={ledes[step]}
@@ -309,8 +318,8 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
       })
       : <Empty title="고를 수 있는 장비가 없어요"><Button asChild variant="outline"><Link href="/resources">장비 보기</Link></Button></Empty>)}
     {step === "run" && <>
-      <Pick label="실행 방식" name="path" value={d.path} set={path => update({ path, batchSizes: d.batchSizes.length ? d.batchSizes : sameCondition(context.plans, d.model, d.deviceClass, path)?.spec.batchSizes ?? [] })} options={(v.model?.spec.executionPaths ?? []).map(p => ({ value: p.name, label: pathLabel(p.name), hint: `${p.name} · ${p.runtime.family} · ${p.runtime.backend}`, disabled: v.cls ? pathReason(v.model!, p, v.cls) : "" }))} />
-      {v.cls && v.cls.powerModes.length > 1 && <Pick label="전력 모드" name="power" value={d.powerMode} set={powerMode => update({ powerMode })} options={v.cls.powerModes.map(m => ({ value: m.name, label: m.name }))} />}
+      <Pick label="실행 방식" name="path" value={d.path} set={path => update({ path, batchSizes: d.batchSizes.length ? d.batchSizes : sameCondition(context.plans, d.model, d.deviceClass, path)?.spec.batchSizes ?? [] })} options={(v.model?.spec.executionPaths ?? []).map(p => ({ value: p.name, label: p.name, hint: `${codeText[p.runtime.family]?.[0] ?? p.runtime.family} · ${codeText[p.runtime.backend]?.[0] ?? p.runtime.backend}`, disabled: v.cls ? pathReason(v.model!, p, v.cls) : "" }))} />
+      {v.cls && v.cls.powerModes.length > 0 && <Pick label="전력 모드" name="power" value={v.powerMode} set={powerMode => update({ powerMode })} options={v.cls.powerModes.map(m => ({ value: m.name, label: m.name, hint: powerModeText(m.actuator) }))} />}
     </>}
     {step === "size" && <div className="grid gap-6">
       {v.declared
@@ -334,12 +343,13 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
       {v.taken.has(v.name) && !error && <p role="status" className="text-sm text-muted-foreground">같은 이름의 측정이 이미 있어요.</p>}
     </>}
     {step === "review" && <>
+      {answer && <PreflightAnswer answer={answer} />}
       <Facts items={[
         ["모델", d.model],
         ["전처리기", d.preprocessor],
         ["데이터셋", d.dataset],
         ["장비", `${d.node} · ${d.deviceClass}`],
-        ["실행 방식", `${pathLabel(d.path)} · 전력 모드 ${v.powerMode}`],
+        ["실행 방식", `${d.path} · 전력 모드 ${v.powerMode}`],
         ["크기별 반복", `한 번에 ${sizes.join(", ")}건씩 · 크기마다 ${v.trials}번`],
         ["CPU", `${v.cpu}개${v.affinity.length ? ` · 코어 ${v.affinity.join(", ")}` : ""}`],
         ["측정 방식", v.protocol.from ? "이전 측정과 같아요" : "직접 정했어요"],
@@ -349,6 +359,7 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
       <Rows>
         <RowDialog label="보낼 내용 보기" title="보낼 내용"><SourceJSON inline value={manifest(d, context, namespace)} /></RowDialog>
         {dry.error && <RowDialog label="확인 결과 자세히" title="미리 확인한 결과"><SourceJSON inline value={{ status: dry.error.status, body: dry.error.data ?? dry.error.body }} /></RowDialog>}
+        {(answer || pre.error) && <RowDialog label="측정 계획 원본" title="ChillServer가 확인한 측정 계획"><SourceJSON inline value={answer ?? { status: pre.error!.status, body: pre.error!.data ?? pre.error!.body }} /></RowDialog>}
         {send.error && <RowDialog label="받은 응답 보기" title="받은 응답"><SourceJSON inline value={{ status: send.error.status, body: send.error.data ?? send.error.body }} /></RowDialog>}
       </Rows>
     </>}

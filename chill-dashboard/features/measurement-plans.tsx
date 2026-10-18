@@ -11,7 +11,7 @@ import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/r
 import { Empty, Facts, Figure, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { pathLabel } from "@/features/read-pages"
+import { explain } from "@/lib/labels"
 import { ProfileAdoption, useProfileSelections } from "@/features/scheduler-profiles"
 
 const plansPath = (namespace:string) => `v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
@@ -20,21 +20,13 @@ const day = (at:string) => new Date(at).toLocaleString("ko-KR", {month:"long", d
 const num = (value:number, digits = 2) => value.toLocaleString("ko-KR", {minimumFractionDigits:digits, maximumFractionDigits:digits})
 // Upper bound only: an adaptive search may stop before every batch size is measured.
 const plannedTrials = (spec:MeasurementPlanSpec) => spec.batchSizes?.length ? (spec.batchSizes.length + 1) * spec.trialsPerBatch : undefined
-const failureLabels:Record<string,string> = {
-  TransitionFailed:"측정할 상태로 장비를 바꾸지 못했어요.",
-  RetryLimitExhausted:"다시 시도할 수 있는 횟수를 모두 써도 측정이 실패했어요.",
-}
-const outcomeLabels:Record<string,string> = {
-  LocalMinimum:"크기를 더 키우면 에너지가 늘어서 탐색을 멈췄어요.",
-  SearchSpaceExhausted:"정한 크기를 모두 재고 가장 적은 것을 골랐어요.",
-}
-function planCause(plan:{conditions?:{type:string;status:string;reason?:string}[];outcome?:string}) {
+// A failed condition's reason as [sentence, next action]; the raw reason stays in 원본.
+function planCause(plan:{conditions?:{type:string;status:string;reason?:string}[]}) {
   const failed = plan.conditions?.find(condition => condition.status === "False")
-  return failed?.reason ? failureLabels[failed.reason] ?? "측정을 끝내지 못했어요." : undefined
+  return failed?.reason ? explain(failed.reason) : undefined
 }
 function condition(spec:MeasurementPlanSpec) {
-  const c = spec.state.candidate
-  return `${spec.state.targetNode} · ${pathLabel(c.executionPath)}${spec.cpuQuota ? ` · CPU ${spec.cpuQuota}개` : ""}`
+  return `${spec.state.targetNode} · ${spec.state.candidate.executionPath}${spec.cpuQuota ? ` · CPU ${spec.cpuQuota}개` : ""}`
 }
 const adoptedNames = (selections:{campaign:{namespace:string;name:string};persisted:boolean;loaded:boolean}[]|null|undefined) =>
   new Set((selections ?? []).filter(selection => selection.persisted || selection.loaded).map(selection => `${selection.campaign.namespace}/${selection.campaign.name}`))
@@ -51,7 +43,7 @@ export function MeasurementPlansPage() {
   const running = byPhase("Measuring"), failed = byPhase("Failed"), done = plans.filter(plan => plan.status?.phase === "Complete")
   const row = (plan:MeasurementPlan) => {
     const status = plan.status ?? {}, isAdopted = adopted.has(`${plan.metadata.namespace}/${plan.metadata.name}`)
-    const hint = status.phase === "Failed" ? planCause(status) ?? "측정을 끝내지 못했어요." : status.phase === "Complete" ? `${day(plan.metadata.creationTimestamp)} · ${plan.metadata.name}` : `${status.completedTrials ?? 0}번 쟀어요 · ${day(plan.metadata.creationTimestamp)} 시작`
+    const hint = status.phase === "Failed" ? planCause(status)?.[0] ?? "측정을 끝내지 못했어요." : status.phase === "Complete" ? `${day(plan.metadata.creationTimestamp)} · ${plan.metadata.name}` : `${status.completedTrials ?? 0}번 쟀어요 · ${day(plan.metadata.creationTimestamp)} 시작`
     return <Row key={plan.metadata.uid} href={planHref(plan.metadata.namespace, plan.metadata.name, plan.metadata.uid)} label={`${plan.spec.state.candidate.modelSpec} · ${condition(plan.spec)}`} hint={hint}
       value={isAdopted ? <StatusBadge tone="ok">채택됨</StatusBadge> : status.phase === "Measuring" ? <StatusBadge tone="info">측정 중</StatusBadge> : status.phase === "Failed" ? <StatusBadge tone="fail">실패</StatusBadge> : null}/>
   }
@@ -92,7 +84,7 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
     lede={`${name} · 결과와 근거 파일 ${deleted.deletedEvidence?.length ?? 0}개를 함께 지웠어요.`} action={<Button asChild><Link href="/measurements">측정 목록으로</Link></Button>}>
     <Rows><RowDialog label="지운 파일" value={`${deleted.deletedEvidence?.length ?? 0}개`} title="지운 근거 파일"><SourceJSON inline value={deleted}/></RowDialog></Rows>
   </Screen>
-  const phase = campaign?.phase
+  const phase = campaign?.phase, cause = campaign ? planCause(campaign) : undefined
   const result = (data?.result ?? null) as ResultBody | null, detail = result?.detail
   const adopted = adoptedNames(profiles.data?.selections).has(`${namespace}/${name}`)
   const planned = spec ? plannedTrials(spec) : undefined
@@ -110,8 +102,8 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
     action={campaign && !other && phase === "Failed" ? <Button asChild><Link href={`/measurements/new?from=${encodeURIComponent(name)}`}>같은 조건으로 다시 요청</Link></Button> : undefined}>
     <QueryGate query={query}>{campaign && spec && !other && <>
       {phase === "Measuring" && <Figure label="지금까지 잰 회차" value={campaign.completedTrials ?? 0} unit={planned ? `/ 최대 ${planned}번` : "번"} note="회차마다 끝나면 자동으로 갱신돼요."/>}
-      {phase === "Failed" && <p className="text-muted-foreground">{planCause(campaign) ?? "측정을 끝내지 못했어요."} 지금까지 {campaign.completedTrials ?? 0}번 쟀어요.</p>}
-      {phase === "Complete" && detail?.minimumIncrementalWorkJoulesPerItem !== undefined && <Figure label="요청 1건에 더 드는 에너지" value={num(detail.minimumIncrementalWorkJoulesPerItem)} unit="J" note={detail.completionReason ? outcomeLabels[detail.completionReason] : undefined}/>}
+      {phase === "Failed" && <p className="text-muted-foreground">{cause?.[0] ?? "측정을 끝내지 못했어요."} 지금까지 {campaign.completedTrials ?? 0}번 쟀어요.{cause?.[1] && ` ${cause[1]}`}</p>}
+      {phase === "Complete" && detail?.minimumIncrementalWorkJoulesPerItem !== undefined && <Figure label="요청 1건에 더 드는 에너지" value={num(detail.minimumIncrementalWorkJoulesPerItem)} unit="J" note={campaign.outcome ? explain(campaign.outcome)[0] : undefined}/>}
       {phase === "Complete" && !!detail?.incrementalWorkByBatch?.length && <section className="rows-group" aria-label="크기별 에너지"><h2 className="rows-label">크기별 요청 1건에 더 드는 에너지</h2>
         <dl className="energy-rows">{detail.incrementalWorkByBatch.map(item => <div key={item.batch} className="energy-row"><dt>한 번에 {item.batch}건</dt>
           <div className="energy-track" aria-hidden="true"><div className="energy-fill" data-hot={item.batch !== detail.bestBatch} style={{width:`${scale ? Math.max(item.incrementalWorkJoulesPerItem / scale * 100, 2) : 0}%`}}/></div>
@@ -119,7 +111,7 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
         <p className="px-1 text-sm text-muted-foreground">유휴 상태 전력을 뺀, 요청 처리로 늘어난 에너지예요. 지금 운영 중 소비와는 달라요.</p></section>}
       <Rows label="자세히">
         <RowDialog label="측정 조건" title="측정 조건" value={`${spec.batchSizes?.length ? spec.batchSizes.join("·") + "건" : "자동"} · ${spec.trialsPerBatch}번씩`}>
-          <Facts items={[["모델", spec.state.candidate.modelSpec], ["장비", `${spec.state.targetNode} · ${spec.state.candidate.deviceClass}`], ["실행 방식", pathLabel(spec.state.candidate.executionPath)], ["전력 모드", spec.state.candidate.powerMode],
+          <Facts items={[["모델", spec.state.candidate.modelSpec], ["장비", `${spec.state.targetNode} · ${spec.state.candidate.deviceClass}`], ["실행 방식", spec.state.candidate.executionPath], ["전력 모드", spec.state.candidate.powerMode],
             ["한 번에 보내는 건수", spec.batchSizes?.length ? spec.batchSizes.map(size => `${size}건`).join(", ") : "자동으로 정해요"], ["크기마다 반복", `${spec.trialsPerBatch}번`], ["CPU", spec.cpuQuota ? `${spec.cpuQuota}개${spec.cpuAffinity?.length ? ` (코어 ${spec.cpuAffinity.join(", ")})` : ""}` : "제한 없음"],
             ["한 회차 측정 시간", `${spec.activeProtocol.durationSeconds ?? "-"}초`], ["실패 시 재시도", `${spec.retryLimit}번`]]}/>
         </RowDialog>
@@ -135,7 +127,7 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
   </Screen>
 }
 
-// Permanent: the owner deletes owned result, curve plan, serving bundle and per-trial evidence, then the native object.
+// Permanent: ChillServer deletes the result, curve plan, serving bundle and per-trial evidence it created, then the native object.
 function DeleteMeasurement({namespace, name, uid, version, trials, blocked, onDeleted}:{namespace:string;name:string;uid:string;version:string;trials:number;blocked?:string;onDeleted:(result:MeasurementMutation)=>void}) {
   const mutation = useChillMutation(), client = useQueryClient()
   const [open, setOpen] = React.useState(false), [understood, setUnderstood] = React.useState(false), [unknown, setUnknown] = React.useState(false)

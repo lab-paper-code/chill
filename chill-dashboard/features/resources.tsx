@@ -4,12 +4,21 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
-import type { InventoryView, PoolState, PoolsView } from "@/lib/read-types"
+import type { InventoryView, PoolState, PoolsView, PowerModeActuator } from "@/lib/read-types"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 
 const back:[string,string]=["/scheduler","운영 판단"]
+
+// api/v1alpha1/deviceclass_types.go: how ChillServer applies one declared power mode. Shared with the measurement request.
+export function powerModeText(actuator:PowerModeActuator) {
+  switch(actuator.kind){
+    case "Fixed": return "장비 기본 상태 그대로 써요"
+    case "JetsonNVPModel": return `Jetson 전력 모드 ${actuator.jetsonNVPModel.id}번으로 바꿔요`
+    case "NvidiaLockedGPUClock": {const clock=actuator.nvidiaLockedGPUClock;return `GPU 클럭을 ${clock.minMHz}~${clock.maxMHz} MHz로 고정해요${clock.mode===undefined?"":` (고정 방식 ${clock.mode})`}`}
+  }
+}
 
 export function ResourcesPage() {
   const params=useSearchParams(),router=useRouter(),{config}=useSession()
@@ -32,6 +41,7 @@ export function ResourcesPage() {
       {data.classes?.length?<Rows label="장비 종류">{data.classes.map(row=><RowDialog key={row.uid||row.name} label={row.name} hint={`${row.architecture} · ${row.memory}${row.accelerator?` · ${row.accelerator}`:""}`} value={`${row.nodes.filter(node=>node.ready==="True").length}/${row.nodes.length}대 준비`} title={row.name}>
         <ul className="grid gap-1.5">{row.nodes.map(node=><li key={node.uid} className="flex flex-wrap items-center gap-2"><span className="font-medium">{node.name}</span><StatusBadge tone={node.ready==="True"?"ok":node.ready==="False"?"warn":"idle"}>{node.ready==="True"?"준비됨":node.ready==="False"?"준비되지 않음":"상태 확인 안 됨"}</StatusBadge>{node.schedulingDisabled&&<StatusBadge tone="idle">배정 중지</StatusBadge>}</li>)}</ul>
         {!row.nodes.length&&<p>이 종류의 노드가 없어요.</p>}
+        <Facts label="전력 모드" items={row.powerModes.map(mode=>[mode.name,powerModeText(mode.actuator)])}/>
         <p className="text-sm text-muted-foreground">등록된 사양과 노드 상태예요. 실행 적합성과 여유 용량을 보장하지 않아요.</p>
         <SourceJSON inline value={row}/>
       </RowDialog>)}</Rows>:<p>조건에 맞는 장비가 없어요.</p>}
