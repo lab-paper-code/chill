@@ -48,14 +48,13 @@ function josa(word: string, [after, plain]: [string, string]) {
   const c = word.charCodeAt(word.length - 1) - 0xac00
   return word + ((c >= 0 && c < 11172 ? c % 28 !== 0 : /[lmn013678]$/i.test(word)) ? after : plain)
 }
-type Named = { name: string; format: RawField["format"] }
 const and = (words: string[]) => words.map((w, i) => i < words.length - 1 ? josa(w, ["과", "와"]) : w).join(" ")
-// Contract names as written, with only the format in plain words: "사진 image와 글 question".
-const named = (fields: Named[]) => and(fields.map(f => `${formatText(f.format)} ${f.name}`))
+// Contract names as written, each with its format in plain words: "image(사진), question(글)".
+const named = (fields: { name: string; format: RawField["format"] }[]) => fields.map(f => `${f.name}(${formatText(f.format)})`).join(", ")
 // The plain conclusion of a catalog contract: what it takes and returns, or which records it holds.
 const conclusion = (spec: PreprocessorSpec | DatasetSpec) => "input" in spec
-  ? `${josa(named(spec.input.fields), ["을", "를"])} 받아 ${josa(named(spec.output.fields), ["을", "를"])} 돌려줘요`
-  : `${named(spec.fields)} 기록을 담고 있어요`
+  ? `${named(spec.input.fields)} 입력을 받아 ${named(spec.output.fields)} 출력을 만들어요`
+  : `${named(spec.fields)} 필드가 있는 기록을 담고 있어요`
 // Preview of serving/kube snapshot(): a model path runs only when the preprocessor targets its existing artifact.
 function preprocessorGap(p: PreprocessorSpec, model: ModelResource | undefined) {
   if (!model) return ""
@@ -144,7 +143,11 @@ function ModelFields({ spec, set, step, models }: { spec: ModelSpec; set: (spec:
   const execution = spec.executionPaths[pi]
   const format = spec.artifacts.find(a => a.name === execution?.artifact)?.format ?? ""
   const backends = backendsByFormat[format] ?? []
-  function artifact(change: Partial<ModelArtifact>) { set({ ...spec, artifacts: spec.artifacts.map((a, i) => i === index ? { ...a, ...change } : a) }) }
+  // A format change clears the backend of every path on this file that the new format no longer allows.
+  function artifact(change: Partial<ModelArtifact>) {
+    const allowed = backendsByFormat[change.format ?? row.format] ?? []
+    set({ ...spec, artifacts: spec.artifacts.map((a, i) => i === index ? { ...a, ...change } : a), executionPaths: spec.executionPaths.map(p => p.artifact === row.name && !allowed.includes(p.runtime.backend) ? { ...p, runtime: { ...p.runtime, backend: "" } } : p) })
+  }
   function path(change: Partial<ExecutionPath>) { set({ ...spec, executionPaths: spec.executionPaths.map((p, i) => i === pi ? { ...p, ...change } : p) }) }
   return <div className="grid gap-5">
     {step !== "paths" && <><Field label="설정할 모델 파일"><select aria-label="설정할 모델 파일" className={select} value={index} onChange={event => setArtifactIndex(Number(event.target.value))}>{spec.artifacts.map((a, i) => <option key={i} value={i}>{a.name || `파일 ${i + 1}`}</option>)}</select></Field>{!row && <p>모델 파일을 추가해 주세요.</p>}</>}
@@ -590,6 +593,9 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
       if (step === "artifacts" && (!spec.artifacts.length || spec.artifacts.some(a => !a.name.trim() || !a.format.trim() || !a.source.image.trim() || !a.source.architecture.trim() || !a.source.files.length || a.source.files.some(file => !file)))) throw new Error("파일마다 이름, 형식, 보관 주소, 대상 장비와 모델 파일 위치를 적어 주세요. 위에서 설정할 파일을 바꿀 수 있어요.")
       if (step === "inputs" && spec.artifacts.some(a => a.format === "rknn" && (!a.input?.tensors.length || a.input.tensors.some(t => !t.name.trim())))) throw new Error("RKNN 모델 파일에 입력 이름과 크기를 설정해 주세요. 위에서 설정할 파일을 바꿀 수 있어요.")
       if (step === "paths" && (!spec.executionPaths.length || spec.executionPaths.some(p => !p.name.trim() || !p.artifact || !p.runtime.backend.trim()))) throw new Error("실행 방식마다 이름, 파일과 처리 방식을 정해 주세요.")
+      // Same pairs as ChillServer (internal/modelcatalog/catalog.go:107-123): firstfloor with a backend its artifact format allows.
+      const invalid = step === "paths" ? spec.executionPaths.find(p => p.runtime.family !== "firstfloor" || !(backendsByFormat[spec.artifacts.find(a => a.name === p.artifact)?.format ?? ""] ?? []).includes(p.runtime.backend)) : undefined
+      if (invalid) throw new Error(`${invalid.name}: 고른 모델 파일 형식에서 쓸 수 없는 처리 방식이에요. 처리 방식을 다시 골라 주세요.`)
       if (step === "preprocessor" && preprocessorProblem) throw new Error(`${preprocessorRef}: ${preprocessorProblem}. 다른 전처리기를 골라 주세요.`)
       if (step === "datasetRef" && datasetProblem) throw new Error(`${datasetRef}: ${datasetProblem}. 다른 데이터셋을 고르거나 데이터셋 없이 진행해 주세요.`)
       if (steps[index + 1] === "review") draft()
