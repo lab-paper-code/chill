@@ -351,7 +351,11 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 			Pod:  profilerevidence.PodTerminalFacts{Namespace: pod.Namespace, Name: pod.Name, UID: podUID, ControllerOwnerUID: "job-" + podUID, NodeName: config.TargetNode.Name, Phase: "Succeeded"},
 			Node: profilerevidence.NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID}, NodeWorkload: profilerevidence.NodeWorkload{ObservedAt: completed.Add(time.Second),
 				Pods: []profilerevidence.WorkloadPod{{Namespace: pod.Namespace, Name: pod.Name, UID: podUID, Phase: "Succeeded", Images: pod.Images}}}}}
-	for name, image := range map[string]string{"runtime": config.Images.Runtime, "artifact": config.Images.Artifact, "metric-observer": config.Images.MetricObserver, "workload-observer": config.Images.WorkloadObserver} {
+	images := map[string]string{"runtime": config.Images.Runtime, "artifact": config.Images.Artifact, "preprocessor": config.State.Preprocessor.Image, "metric-observer": config.Images.MetricObserver, "workload-observer": config.Images.WorkloadObserver}
+	if config.Measurement.Dataset != nil {
+		images["dataset"] = config.Measurement.Dataset.Image
+	}
+	for name, image := range images {
 		execution.Terminal.Containers = append(execution.Terminal.Containers, profilerevidence.ContainerTerminal{Name: name, RequestedImage: image, ImageID: "containerd://" + name,
 			Reason: "Completed", StartedAt: start, FinishedAt: completed.Add(-time.Second)})
 	}

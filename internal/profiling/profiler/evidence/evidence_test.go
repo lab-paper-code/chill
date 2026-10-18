@@ -697,16 +697,6 @@ func validExecutionEvidenceBytes(
 	t.Helper()
 	location := time.FixedZone("KST", 9*60*60)
 	completed := time.Date(2026, time.July, 16, 12, 1, 0, 0, location)
-	container := func(name, image string) ContainerTerminal {
-		return ContainerTerminal{
-			Name:           name,
-			RequestedImage: image,
-			ImageID:        "containerd://" + name + "-image-id",
-			Reason:         "Completed",
-			StartedAt:      completed.Add(-time.Minute),
-			FinishedAt:     completed.Add(-time.Second),
-		}
-	}
 	return ExecutionEvidence{
 		SchemaVersion: ExecutionEvidenceSchemaVersion,
 		RunConfig:     config,
@@ -731,13 +721,8 @@ func validExecutionEvidenceBytes(
 				NodeName:           config.TargetNode.Name,
 				Phase:              "Succeeded",
 			},
-			Node: NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
-			Containers: []ContainerTerminal{
-				container("metric-observer", config.Images.MetricObserver),
-				container("workload-observer", config.Images.WorkloadObserver),
-				container("runtime", config.Images.Runtime),
-				container("artifact", config.Images.Artifact),
-			},
+			Node:       NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
+			Containers: terminalContainers(config, completed),
 			NodeWorkload: NodeWorkload{
 				ObservedAt: completed.Add(time.Second),
 				Pods: []WorkloadPod{
@@ -820,4 +805,32 @@ func cloneActuationFactsForTest(input *ActuationFacts) *ActuationFacts {
 	}
 	copy.Target.Actuator = cloneTarget(copy.Target.Actuator)
 	return &copy
+}
+
+// terminalContainers mirrors the measurement Job: model, preprocessor and
+// (active only) dataset copies, the runtime, and the observers.
+func terminalContainers(config profilingrun.RunConfig, completed time.Time) []ContainerTerminal {
+	container := func(name, image string) ContainerTerminal {
+		return ContainerTerminal{
+			Name:           name,
+			RequestedImage: image,
+			ImageID:        "containerd://" + name + "-image-id",
+			Reason:         "Completed",
+			StartedAt:      completed.Add(-time.Minute),
+			FinishedAt:     completed.Add(-time.Second),
+		}
+	}
+	containers := []ContainerTerminal{
+		container("metric-observer", config.Images.MetricObserver),
+		container("runtime", config.Images.Runtime),
+		container("artifact", config.Images.Artifact),
+		container("preprocessor", config.State.Preprocessor.Image),
+	}
+	if config.Images.WorkloadObserver != "" {
+		containers = append(containers, container("workload-observer", config.Images.WorkloadObserver))
+	}
+	if config.Measurement.Dataset != nil {
+		containers = append(containers, container("dataset", config.Measurement.Dataset.Image))
+	}
+	return containers
 }

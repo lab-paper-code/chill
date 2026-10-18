@@ -49,8 +49,12 @@ func (f TerminalFacts) validate(config profilingrun.RunConfig, rawPodUID string)
 func validateContainers(config profilingrun.RunConfig, containers []ContainerTerminal) error {
 	expected := map[string]string{
 		"artifact":        config.Images.Artifact,
+		"preprocessor":    config.State.Preprocessor.Image,
 		"runtime":         config.Images.Runtime,
 		"metric-observer": config.Images.MetricObserver,
+	}
+	if config.Measurement.Dataset != nil {
+		expected["dataset"] = config.Measurement.Dataset.Image
 	}
 	if config.Images.WorkloadObserver != "" {
 		expected["workload-observer"] = config.Images.WorkloadObserver

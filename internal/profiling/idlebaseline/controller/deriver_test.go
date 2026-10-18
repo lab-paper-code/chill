@@ -231,6 +231,7 @@ func deriverExecution(
 			Containers: []profilerevidence.ContainerTerminal{
 				container("metric-observer", config.Images.MetricObserver), container("workload-observer", config.Images.WorkloadObserver),
 				container("runtime", config.Images.Runtime), container("artifact", config.Images.Artifact),
+				container("preprocessor", config.State.Preprocessor.Image),
 			},
 			NodeWorkload: profilerevidence.NodeWorkload{
 				ObservedAt: completed.Add(time.Second), Pods: []profilerevidence.WorkloadPod{{

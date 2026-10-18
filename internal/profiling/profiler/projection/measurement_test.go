@@ -354,6 +354,8 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 				container("workload-observer", config.Images.WorkloadObserver),
 				container("runtime", config.Images.Runtime),
 				container("artifact", config.Images.Artifact),
+				container("preprocessor", config.State.Preprocessor.Image),
+				container("dataset", config.Measurement.Dataset.Image),
 			},
 			NodeWorkload: profilerevidence.NodeWorkload{
 				ObservedAt: completed.Add(time.Second),
