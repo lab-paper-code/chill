@@ -54,7 +54,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/observations/scheduler") { methods = ["GET"]; query = "schedulerHistory" }
   else if (route === "v1/scheduler" || route === "v1/scheduler/state") methods = ["GET"]
   else if (route === "v1/scheduler/settings") methods = ["GET", "PUT"]
-  // ponytail: the chill server verifies every selected campaign on read (13-30 s observed), so this read gets the mutation bound; drop when the chill server caches verification.
+  // ponytail: ChillServer verifies every selected campaign on read (13-30 s observed), so this read gets the mutation bound; drop when ChillServer caches verification.
   else if (route === "v1/scheduler/profiles") methods = ["GET", "POST"]
   else if (/^v1\/(systems|inventory)$/.test(route)) { methods = ["GET"]; query = "page" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs$/.test(route)) { methods = ["GET"]; query = "runs" }
@@ -70,7 +70,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   // A server dry-run creates nothing, so it keeps the query lifetime like preflight instead of an unknown mutation outcome.
   const dryRun = query === "dryRun" && params.has("dryRun")
   if (kind !== "infer" && method !== "GET" && !dryRun && !/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) kind = "mutation"
-  // Chill server compact reads keep every evidence object once and share repeats by $ref; parseSchedulerJSON restores them.
+  // ChillServer compact reads keep every evidence object once and share repeats by $ref; parseSchedulerJSON restores them.
   const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state" || route === "v1/scheduler/profiles")
   const allowed = compact ? ["view"] : []
   allowed.push(...(query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))

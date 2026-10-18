@@ -110,7 +110,7 @@ function ActualPair({identity,a,b,aRef,bRef}:{identity:ServiceIdentity;a:Schedul
   const bq=useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(identity.uid)}?${new URLSearchParams(Array.from(bp).filter(([key])=>key!=="uid"))}`,{enabled:valid(bp),decoder:parseSchedulerJSON})
   return <section className="space-y-3"><h3 className="break-all font-semibold">서비스 {identity.uid} / 고정 정의 {identity.definition}</h3>
     {[{params:ap,query:aq,label:"A"},{params:bp,query:bq,label:"B"}].map(({params,query,label})=><div key={label} className="space-y-2"><h4 className="font-medium">{label} 입력 구간의 실제 결과</h4>{valid(params)?<><QueryGate query={query}>{query.data&&<ActualSummary data={query.data}/>}</QueryGate><Link href={`/observations?${params}`}>같은 조건으로 요청 기록 열기</Link></>:<p>입력 구간이나 고정 정의가 없어 실제 결과를 볼 수 없어요.</p>}</div>)}
-    <SourceExport filename="scheduler-comparison-actual.json" value={{scope:"선택 A/B 기록과 서비스별 실제 chill server 조회",source:"v1/observations/workloads/:uid",records:{a:{ref:aRef,event:a},b:{ref:bRef,event:b}},identity,conditions:{a:ap.toString(),b:bp.toString()},actual:{a:aq.data??null,b:bq.data??null}}}/>
+    <SourceExport filename="scheduler-comparison-actual.json" value={{scope:"선택 A/B 기록과 서비스별 실제 ChillServer 조회",source:"v1/observations/workloads/:uid",records:{a:{ref:aRef,event:a},b:{ref:bRef,event:b}},identity,conditions:{a:ap.toString(),b:bp.toString()},actual:{a:aq.data??null,b:bq.data??null}}}/>
   </section>
 }
 export function SchedulerComparePage() {
