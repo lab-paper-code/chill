@@ -16,7 +16,7 @@ export function powerModeText(actuator:PowerModeActuator) {
   switch(actuator.kind){
     case "Fixed": return "장비 기본 상태 그대로 써요"
     case "JetsonNVPModel": return `Jetson 전력 모드 ${actuator.jetsonNVPModel.id}번으로 바꿔요`
-    case "NvidiaLockedGPUClock": {const clock=actuator.nvidiaLockedGPUClock;return `GPU 클럭을 ${clock.minMHz}~${clock.maxMHz} MHz로 고정해요${clock.mode===undefined?"":` (고정 방식 ${clock.mode})`}`}
+    case "NvidiaLockedGPUClock": return `GPU 클럭을 ${actuator.nvidiaLockedGPUClock.minMHz}~${actuator.nvidiaLockedGPUClock.maxMHz} MHz로 고정해요`
   }
 }
 
