@@ -6,14 +6,15 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Button } from "@/components/ui/button"
 import { safeSource } from "@/lib/source-export"
 import { stringifySchedulerJSON } from "@/lib/scheduler"
+import { explain } from "@/lib/labels"
 import { Braces, CircleCheck, CircleDashed, CircleX, Download, Info, RefreshCw, TriangleAlert } from "lucide-react"
 
 export type Tone = "ok" | "warn" | "fail" | "info" | "idle"
 const tones: Record<string, Tone> = {
   Ready: "ok", Applied: "ok", Completed: "ok", True: "ok", completed: "ok", response_finished: "ok",
-  Waiting: "warn", Degraded: "warn", MissingEvidence: "warn", MissingDataset: "warn", MissingRuntime: "warn", NativeNotReady: "warn", Draining: "warn", False: "warn", deferred: "warn", timeout: "warn", incomplete: "warn",
+  Waiting: "warn", Degraded: "warn", MissingEvidence: "warn", MissingDataset: "warn", MissingRuntime: "warn", NativeNotReady: "warn", Draining: "warn", False: "warn", deferred: "warn", timeout: "warn", incomplete: "warn", Preparing: "warn",
   Failed: "fail", error: "fail", rejected: "fail", delivery_failed: "fail",
-  Accepted: "info", Applying: "info", Deleting: "info", Registration: "info", Update: "info", Delete: "info", ModelUpdate: "info", PreprocessorUpdate: "info", pending: "info", assigned: "info", queued: "info", running: "info", returning: "info", request_received: "info",
+  Accepted: "info", Applying: "info", Changing: "info", Deleting: "info", Registration: "info", Update: "info", Delete: "info", ModelUpdate: "info", PreprocessorUpdate: "info", pending: "info", assigned: "info", queued: "info", running: "info", returning: "info", request_received: "info",
 }
 const toneIcons = {ok: CircleCheck, warn: TriangleAlert, fail: CircleX, info: Info, idle: CircleDashed}
 export const toneOf = (value?: string): Tone => value ? tones[value] ?? "idle" : "idle"
@@ -32,7 +33,7 @@ const errorLabels: Record<number, string> = {
 }
 export function statusLabel(value?: string): string {
   const labels: Record<string, string> = {
-    Ready: "사용 가능", Waiting: "준비 중", Deleting: "삭제 중", Degraded: "확인 필요",
+    Ready: "사용 가능", Waiting: "준비 중", Preparing: "실행 준비 중", Changing: "변경 중", Deleting: "삭제 중", Degraded: "확인 필요",
     MissingEvidence: "측정 결과가 필요해요", MissingDataset: "데이터셋이 필요해요", MissingRuntime: "실행 환경이 필요해요",
     NativeNotReady: "실행 준비 중", Registration: "등록", Update: "수정", Delete: "삭제", ModelUpdate: "모델 변경", PreprocessorUpdate: "전처리기 변경",
     Accepted: "접수됨", Applying: "적용 중", Applied: "적용됨", Draining: "기존 요청 마무리 중",
@@ -62,10 +63,12 @@ type GateQuery = {data?:unknown;error:ApiError|null;isPending:boolean;isFetching
 function QueryState({query,children,inlineSource=false}:{query:GateQuery;children:React.ReactNode;inlineSource?:boolean}) {
   const {token} = useSession()
   const denied = query.error?.status === 401 || query.error?.status === 403
-  const code = query.error?.data && typeof query.error.data === "object" && "code" in query.error.data ? query.error.data.code : undefined
+  const code = query.error?.data && typeof query.error.data === "object" && "code" in query.error.data && typeof query.error.data.code === "string" ? query.error.data.code : undefined
+  // Body codes read as a sentence and next action; status-only errors keep the status sentence. The code stays in 문제 자세히 보기.
+  const [sentence, next] = code ? explain(code) : [errorLabels[query.error?.status ?? 0] ?? "정보를 불러오지 못했어요."]
   return <>
     {!token ? <p>먼저 접속해 주세요.</p> : query.isPending && !query.error ? <div className="skeleton" role="status"><span className="sr-only">불러오고 있어요.</span><span /><span /><span /></div> : null}
-    {query.error && <div role="alert" className="notice"><p className="flex items-start gap-2 font-medium"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-fail" aria-hidden="true" />{query.error.unknownOutcome ? "결과를 확인하지 못했어요. 다시 보내기 전에 상태를 확인해 주세요." : code === "SchedulerUnavailable" ? "운영 판단 API는 배포 설정에서 연결합니다. 현재는 스케줄러 설정이 연결되지 않았습니다." : code === "DashboardPrecisionUnsupported" ? query.error.body : errorLabels[query.error.status] ?? "정보를 불러오지 못했어요."}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => void query.refetch()} disabled={!token || query.isFetching}><RefreshCw className={query.isFetching ? "animate-spin" : undefined} aria-hidden="true" />다시 불러오기</Button><SourceJSON inline={inlineSource} title="문제 자세히 보기" value={{status:query.error.status,error:query.error.data ?? query.error.body}} /></div>{query.data !== undefined && !denied && <p>아래는 이전에 확인한 정보예요.</p>}</div>}
+    {query.error && <div role="alert" className="notice"><p className="flex items-start gap-2 font-medium"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-fail" aria-hidden="true" />{query.error.unknownOutcome ? "결과를 확인하지 못했어요. 다시 보내기 전에 상태를 확인해 주세요." : code === "DashboardPrecisionUnsupported" ? query.error.body : sentence}</p>{!query.error.unknownOutcome && code !== "DashboardPrecisionUnsupported" && next && <p>{next}</p>}<div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => void query.refetch()} disabled={!token || query.isFetching}><RefreshCw className={query.isFetching ? "animate-spin" : undefined} aria-hidden="true" />다시 불러오기</Button><SourceJSON inline={inlineSource} title="문제 자세히 보기" value={{status:query.error.status,error:query.error.data ?? query.error.body}} /></div>{query.data !== undefined && !denied && <p>아래는 이전에 확인한 정보예요.</p>}</div>}
     {token && !denied && query.data !== undefined && children}
   </>
 }
