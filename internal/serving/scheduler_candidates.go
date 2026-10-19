@@ -265,7 +265,7 @@ func schedulerMeasuredOptions(ctx context.Context, settings SchedulerSettings, s
 			}
 		}
 	}
-	sort.Slice(options, func(i, j int) bool { return schedulerOptionKey(options[i]) < schedulerOptionKey(options[j]) })
+	sort.SliceStable(options, func(i, j int) bool { return schedulerOptionLess(options[i], options[j]) })
 	// Latest successful evidence wins for otherwise identical execution conditions.
 	latest := map[string]SchedulerOption{}
 	for _, o := range options {
@@ -294,7 +294,7 @@ func schedulerMeasuredOptions(ctx context.Context, settings SchedulerSettings, s
 		}
 		options = append(options, o)
 	}
-	sort.Slice(options, func(i, j int) bool { return schedulerOptionKey(options[i]) < schedulerOptionKey(options[j]) })
+	sort.Slice(options, func(i, j int) bool { return schedulerOptionLess(options[i], options[j]) })
 	return options
 }
 
@@ -765,7 +765,14 @@ func (e *schedulerEnumeration) sameModel(a, b SchedulerInstance) bool {
 	return nameA == nameB && (uidA == "" || uidB == "" || uidA == uidB)
 }
 func schedulerOptionKey(o SchedulerOption) string {
-	return o.Instance.Node.UID + "/" + schedulerState(o.Instance) + fmt.Sprint(o.CompatibleUIDs)
+	return o.Instance.Node.UID + "/" + schedulerState(o.Instance) + fmt.Sprint(o.Instance.MaxBatch, o.Instance.MaxWait, o.CompatibleUIDs)
+}
+
+// schedulerOptionLess is a total order on distinct execution conditions, so the
+// maxCandidates cut does not depend on map iteration or input order.
+func schedulerOptionLess(a, b SchedulerOption) bool {
+	ka, kb := schedulerOptionKey(a), schedulerOptionKey(b)
+	return ka < kb || ka == kb && schedulerOptionCondition(a) < schedulerOptionCondition(b)
 }
 func schedulerOptionCondition(o SchedulerOption) string {
 	i := o.Instance

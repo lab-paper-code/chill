@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -866,5 +867,39 @@ func TestSchedulerEnumerationStopsAtMaxCandidates(t *testing.T) {
 	candidates, search, err := EnumerateScheduler(ctx, settings, snapshot)
 	if err != nil || len(candidates) != settings.MaxCandidates || !search.Truncated {
 		t.Fatalf("enumeration did not stop at the cap: candidates=%d truncated=%v err=%v", len(candidates), search.Truncated, err)
+	}
+}
+
+// Batch variants of one measured option share Node, profile and allocation; the
+// truncated candidate list must still be the same on every run and input order.
+func TestSchedulerCandidateCutIsRepeatable(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	settings.MaxCandidates, settings.MaxReplicas = 12, 2
+	base := snapshot.Instances[0]
+	profile := *base.Profile
+	profile.Batches = append(append([]BatchProfile(nil), profile.Batches...), BatchProfile{Batch: 2, DurationNanos: []float64{float64(15 * time.Millisecond)}, EnergyPerInputJoules: 0.8, MemoryBytes: 100})
+	base.Profile, base.MaxBatch = &profile, 2
+	snapshot.Instances, snapshot.Options = nil, nil
+	for n := range 3 {
+		node := poolsAddNode(&snapshot, fmt.Sprint("n", n+2), map[string]float64{"fixed": 10})
+		snapshot.Options = append(snapshot.Options, poolsOption(poolsInstance(base, fmt.Sprint("option-", n), node, "fixed", "w1")))
+	}
+	var want []string
+	for run := range 20 {
+		shuffled := snapshot
+		shuffled.Options = slices.Clone(snapshot.Options)
+		rand.New(rand.NewPCG(uint64(run), 0)).Shuffle(len(shuffled.Options), func(i, j int) {
+			shuffled.Options[i], shuffled.Options[j] = shuffled.Options[j], shuffled.Options[i]
+		})
+		candidates, _ := schedulerEnumerateForTest(t, settings, shuffled)
+		got := make([]string, len(candidates))
+		for j, c := range candidates {
+			got[j] = c.ID + "=" + schedulerConfigKey(c)
+		}
+		if want == nil {
+			want = got
+		} else if !slices.Equal(got, want) {
+			t.Fatalf("run %d candidate list differs:\n%v\n%v", run, got, want)
+		}
 	}
 }
