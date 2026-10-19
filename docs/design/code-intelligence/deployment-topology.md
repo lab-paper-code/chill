@@ -28,7 +28,7 @@ make code-intelligence-review
 `deployment-graph-check` regenerates both profiles and verifies:
 
 - kubeconform accepts both manifests;
-- the Profiler profile adds the reviewed thirteen-resource set;
+- the Profiler profile adds the reviewed fifteen-resource set;
 - the Profiler graph contains its ServiceAccount and Role/ClusterRole binding
   relationships;
 - `ChillSystem` references the Profiler ConfigMap;

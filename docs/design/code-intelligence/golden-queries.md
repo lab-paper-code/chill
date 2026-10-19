@@ -69,8 +69,10 @@ synthetic transition-observer Node adds:
 
 ```text
 ClusterRole/chill-profiler
+ClusterRole/chill-profiler-transition-observer
 ClusterRole/chill-profiler-workload-observer
 ClusterRoleBinding/chill-profiler
+ClusterRoleBinding/chill-profiler-transition-observer
 ClusterRoleBinding/chill-profiler-workload-observer
 ConfigMap/chill-profiler-config
 ConfigMap/chill-profiler-facts
