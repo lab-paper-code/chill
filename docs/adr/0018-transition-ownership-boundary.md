@@ -33,7 +33,7 @@ them, and two Run-level rules actively prevent observing one:
 [execution evidence](../../internal/profiling/profiler/evidence/actuation.go) is invalid if
 any measurement container started before the actuation became ready, so power
 sampling never covers the transition interval; and
-[workload safety](../../internal/nodeactuator/controller/workload_safety.go)
+workload safety (superseded by [ADR 0022](0022-workload-pool-membership-boundary.md))
 fails closed while a foreign Pod occupies the Node, so no inference can be in
 flight during an apply. Both rules are correct for a Run — a measurement window
 must not contain the transition that establishes its state, and a Node must not
@@ -77,7 +77,7 @@ after its Job, and delaying Run completion until restoration—and the requireme
 that every transition be bound to an owning Run. It preserves ADR 0015's
 dedicated NodeActuator as CHILL's sole Node-wide power-state writer, its
 Node-local `Observe` and `Apply` boundary, independent read-back, Lease
-serialization, fail-closed workload safety, and the requirement to prove any
+serialization, and the requirement to prove any
 requested restoration.
 
 ADR 0016 is unchanged: declared batch-size capability and execution-state

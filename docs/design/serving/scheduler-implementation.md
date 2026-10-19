@@ -14,7 +14,7 @@ firstfloor의 Go 큐·배처·persistent Python IPC runner를 `internal/firstflo
 | 세부 계약 | 원본 문서 |
 |---|---|
 | 실행기·시간·CPU·fixed-batch·baseline·catalog | [실행기와 측정](scheduler-runtime-measurement.md) |
-| 설정·calibration selector·API·관측 조회 | [설정과 관측 API](scheduler-api.md) |
+| 설정·completion margin·API·관측 조회 | [설정과 관측 API](scheduler-api.md) |
 | Pod-bound 전달·수동 원자 실행 예시 | [인스턴스 전달과 수동 실행](scheduler-operations.md) |
 | 과거 build·smoke·배포 결과 | [실행·배포 이력](scheduler-execution-history.md) |
 | 최신 live evidence·수용 범위 | [라이브 증거 캠페인](../../plans/2026-10-13-scheduler-live-evidence-campaign.md) |
@@ -26,7 +26,7 @@ firstfloor의 Go 큐·배처·persistent Python IPC runner를 `internal/firstflo
 | `internal/firstfloor` | bounded per-UID queue, frozen request SLO, 같은 UID의 호환 batch, energy-gain 대기, 단일 runner 실행 | 요청별 progress·실제 batch·runner 종료·동기 응답 |
 | `internal/serving` | 정의·receipt·수명·ingress 대기, 운영 부하, 후보 replay·SLO/energy 선택, 분배·판단 관측 기록 | 실제 native 상태와 반환 결과·분배 적용 기록 |
 | `internal/serving/firstfloor` | HTTP/metadata/progress의 typed 경계, native span과 client span | prepared metadata, 정확한 request/UID/definition/physical instance 상관 |
-| `internal/serving/kube` | 실제 자원 snapshot, profile/cost catalog, Pod·policy·membership 원자 동작, 전환 의존성 | API 반환에 이어 실제 Pod/native readiness·drain·삭제·membership 확인 |
+| `internal/serving/kube` | 실제 자원 snapshot, profile/cost catalog, Pod·policy·power 원자 동작, 전환 의존성 | API 반환에 이어 실제 Pod/native readiness·drain·삭제·Node 상태 확인 |
 | 기존 Profiling owner | 동일 firstfloor 경로의 fixed-batch 측정·idle·raw evidence·curve | 원래 Run/Job/Node/container/image/actuation와 raw trial binding |
 | 기존 NodeActuator | 유일한 호스트 전력모드 변경 | 독립 read-back·settling·Ready/Failed |
 | 기존 metric/evidence owner | Node별 wall-power·sample/failure·적분·immutable raw 보존 | 조건·구간·coverage가 확인된 watts/joules |
@@ -45,8 +45,8 @@ IPC, deadline policy, 원래 monotonic elapsed와 physical release 조건을 둔
 
 판단은 고정 historical `observationEnd`와 현재 outstanding의 decision origin `at`를
 구분한다. source 시각을 재표시하지 않고 미래·오래된 물리 관측은 Pending으로 둔다.
-완료 overhead는 matching 실행 조건의 실측으로 한 번만 반영하며 이미 소모한 sender
-elapsed를 중복 가산하지 않는다. 상세 window·calibration·반환 milestone 규칙은
+완료 여유는 설정의 `completionMarginMS`를 요청마다 한 번 반영하며 이미 소모한 sender
+elapsed는 원래 receipt 경과에서만 뺀다. 상세 window·margin·반환 milestone 규칙은
 [시간과 수명](scheduler-runtime-measurement.md#시간과-수명)이 원본이다.
 
 ### 3.3 같은 선택 함수의 실행과 replay
@@ -197,7 +197,7 @@ rolling witness 문자열 대신 physical/logical target ID·UID별 weight와 �
 completion bound/capacity/batch/wait/deadline 조건으로 식별한다.
 complete 표시만으로 동작을 재사용하지 않는다. 현재 snapshot에서 prepare의 Ready
 identity/state, route의 실제 분배·대상 조건, stop의 실제 중지·분배 차단, drain의
-실제 중지·분배 차단과 outstanding 부재, remove의 실제 부재·drain, power/membership의 실제 Node 상태를
+실제 중지·분배 차단과 outstanding 부재, remove의 실제 부재·drain, power의 실제 Node 상태를
 확인하며 효과가 사라졌으면 새로운 실행 가능한 동작을 생성한다. 검증된 run으로 다음
 stop→drain→remove 의존성을 진행하며, 실제 target·소비 수치 변경은 다시 적용한다.
 새 policy 수치 적용 중에도 이미 traffic이 옮겨진 이전 source의 정리는 굶기지 않는다.
@@ -220,7 +220,7 @@ global route는 같은 policy ConfigMap/ACK 경로를 쓰므로 기존 running r
 준비를 전역 lock으로 막지 않는다. 진행 중 route는 자신의 frozen target으로 표시하며
 관측하지 못한 native ACK/남은 시간을 새 goal의 즉시 적용으로 replay하지 않고 Pending으로
 남긴다. running/native noncancelable 작업을 강제로 취소하지 않는다.
-controls OFF의 manual `staticRouting`도 기존 running route가 있으면 덮어쓰지 않고
+자율 제어 대상이 아닌 Workload의 `staticRouting`도 기존 running route가 있으면 덮어쓰지 않고
 같은 관측 기록에 sourceConfigRV·대기 이유·actual readback을 남긴다.
 route의 ConfigMap·annotation 저장은 desired 진행으로, `Actual.Native`에는 정확한
 native ACK만 남긴다. 뒤 인스턴스의 적용이 실패하면 이미 받은 ACK와 실제 routing을
@@ -271,7 +271,7 @@ projected decision/관측 기록의 `policy`는 startedAt/startReason, currentKe
 `candidates`와 같은 순서의 candidateKeys, history.through/values, intervalFrom/To,
 kernels의 energy/completion/references/reasons,
 pendingReason, selection과 projection assumption을 제공한다. 이것은 live automatic 실행이나
-FULL 통과 증거가 아니다. 제어 활성화는 별도이며 기본 sample은 fixed-horizon/controls OFF다.
+FULL 통과 증거가 아니다. 자율 제어는 `settings.autonomousWorkloads`에 나열한 Workload UID에만 적용한다.
 
 ## 6. 실제 적용과 관리 연동
 
@@ -281,7 +281,7 @@ request마다 복사하거나 ConfigMap에 반복 전송하는 대신 공유한�
 metadata/progress에서 profile·policy 적용과 readiness를 확인한다.
 
 전환 기록은 desired/start/progress/complete/failed/partial과 prerequisite를 가진다.
-실제 준비 Pod, NodeActuation, routing 적용, drain·remove·membership 완료를 확인하여
+실제 준비 Pod, NodeActuation, routing 적용, drain·remove 완료를 확인하여
 다음 동작을 시작한다. resource 변경 후보는 같은 기존 원자 동작을 조합하되 실제
 동시 allocation 예산에 따라 prepare-first 또는 drain/remove-first DAG를 사용한다.
 기존 독립 writer를 중복 생성하는 대신 NodeActuation을 생성해 sole host actuator를 사용한다.
@@ -302,8 +302,9 @@ running/cancel보다 우선한다. physical identity로 갱신된 목표에서 �
 
 시작 시 profile catalog와 scheduler 설정을 Observer에 제공하지만 생성자는 routing을
 freeze하지 않는다. 첫 `observer.Refresh`·`manager.Initialize`가 성공하여 ready instance와
-Workload 정의를 복원한 뒤 controls ON일 때만 `EnableSchedulerRouting`으로 실제 분포를
-freeze한다. 첫 Tick·HTTPS serving보다 앞선 경계이며 기본 OFF와 live OFF→ON도 유지한다.
+Workload 정의를 복원한 뒤 `settings.autonomousWorkloads`가 비어 있지 않을 때
+`EnableSchedulerRouting`으로 실제 분포를 freeze한다. 첫 Tick·HTTPS serving보다 앞선
+경계이며 live 설정에서 첫 자율 Workload가 추가될 때도 같은 freeze를 적용한다.
 
 ChillServer의 기존 `--request-timeout`(기본 30초)은 한 control 호출의 refresh와 CPU 후보 평가·
 interval projection에 같은 `callCtx`로 적용된다. replay/event·후보·방향별 kernel 반복은
@@ -313,7 +314,7 @@ snapshot/decision 발행 전에 오류로 반환한다. publication/관측 기�
 취소를 확인하며, callback 중/직후 취소는 이미 발행·기록한 유효 판단을 보존하되 context 오류를
 반환하고 history를 진행하거나 새 physical action을 시작하지 않는다. 이미 시작한 실제 동작을
 소급해 취소한 것으로 바꾸지 않는다. 호출이 잠금을 반환하면 다음 full refresh가 canonical
-controls OFF와 나머지 구성을 함께 수락하며, 이전 ON 계산을 비동기로 재사용하지 않는다.
+settings와 나머지 구성을 함께 수락하며, 이전 계산을 비동기로 재사용하지 않는다.
 
 ## 7. 설정·권한·관측 API
 
@@ -321,15 +322,15 @@ controls OFF와 나머지 구성을 함께 수락하며, 이전 ON 계산을 비
 상태를 제공한다. settings 변경은 기존 TokenReview·SubjectAccessReview 경계를
 통과해 scheduler ConfigMap write 권한으로 검증하고 before/after·actor·검증 결과·
 영향 범위·실제 적용 시간을 기록한다. observation/control/horizon, resource bounds,
-replay/candidate limits·seed, measured cost sources·transport envelope, 제어요소 활성
-상태를 설정·기록한다. 정적 구성/제어요소 off 실험도 같은 관측을 사용한다.
+replay/candidate limits·seed, completion margin, 자율 Workload 목록과 비자율 Workload의
+`staticRouting` 부분 map을 설정·기록한다. 정적 구성 실험도 같은 관측을 사용한다.
 
 ObservationLog는 request/management와 더불어 decision/settings/action/power 원시 기록을
 보존한다. 수신 모집단과 completion-event rate를 구별하고 unknown/missing과 0을
 각각 표현한다. node watts·whole energy·incremental energy·단위·meter/구간/coverage를
 연결한다. 모든 오류·거절·timeout/cancel·미완료·late와 요청/batch 수를 각각 제공한다.
 
-설정 필드·calibration JSON·compact projection·관측 조회의 window/coverage·제외 규칙은
+설정 필드·compact projection·관측 조회의 window/coverage·제외 규칙은
 [설정과 관측 API](scheduler-api.md), manual CLI·manifest는
 [인스턴스 전달과 수동 실행](scheduler-operations.md)이 원본이다.
 
@@ -337,14 +338,14 @@ ObservationLog는 request/management와 더불어 decision/settings/action/power
 
 | SRS | 구현 경로 | 확인할 소비자 행동 |
 |---|---|---|
-| SCH-01~02, 19, 28 | candidate selection + decision record + actual membership | keep/change·SLO-first·energy 비교·overload·Pending 구별 |
+| SCH-01~02, 19, 28 | candidate selection + decision record + actual CHILL serving instances | keep/change·SLO-first·energy 비교·overload·Pending 구별 |
 | SCH-03~08, 29, 31 | Runtime/ObservationLog/window/native state | UID·frozen context·전체 유입·0/unknown·window 경계·관리 중 drain |
 | SCH-09~12 | model/runtime/profile catalog + resource snapshot | latest same-condition·같은 실행기·분포/memory·전체 할당·exclusive resources |
 | SCH-13~15 | shared selector + per-request replay | 공유 비선점·현재 running residual·E2E percentile·node-wide impact |
 | SCH-16~18 | idle/action/transition measurement + whole-pool integration | inactive/temp Node·wall/delta 의미·중복 제외·같은 horizon·실제 readiness |
 | SCH-20~23 | Runtime routing + firstfloor actor | ready 즉시 전달·원래 elapsed·UID compatible batch·energy-gain wait·명시적 수명 |
 | SCH-24~27, 30 | kube atomic actions + operation ledger | prepare-route-drain-remove·actual effect·partial failure·in-progress reuse·appliedAt |
-| SCH-32 | authenticated settings + control flags + frozen record | 권한·변경 결과/영향/적용·동일 조건의 static/off 비교 |
+| SCH-32 | authenticated settings + per-Workload autonomy + frozen record | 권한·변경 결과/영향/적용·동일 조건의 static 비교 |
 
 ### Ponytail 검수 반영
 

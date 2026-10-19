@@ -1,7 +1,7 @@
 # Scheduler 설정과 관측 API
 
 현재 설정·권한·조회 및 관측 기록 처리 계약이다. 판단·제어 불변식은
-[스케줄러 구현 설계](scheduler-implementation.md), 실행기·측정과 calibration의
+[스케줄러 구현 설계](scheduler-implementation.md), 실행기와 측정의
 해석은 [실행기와 측정 계약](scheduler-runtime-measurement.md#시간과-수명)을 따른다.
 외부 Workload HTTP·인증·리소스 변경은 [Workload 관리](workload-management.md#5-api와-권한),
 기본 JSONL/S3 보존·집계 모집단은 [관측과 보존](workload-management.md#11-관측과-보존)이 원본이다.
@@ -10,86 +10,64 @@
 
 HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 `--serving-scheduler-config-key=scheduler.json`으로 Serving namespace의 구성을 읽는다.
-빈 ConfigMap 이름은 기존 Workload 관리·추론만 실행하며, scheduler 구성에서
-`settings.controls.enabled=false`를 선택하면 동일 관측·후보 기록으로 정적 실험을 실행한다.
+빈 ConfigMap 이름은 기존 Workload 관리와 추론만 실행한다. scheduler는
+`settings.autonomousWorkloads`의 Workload만 자동제어하고, 나머지 Workload는 동일 관측과 후보 기록 아래 현재 배치를 유지한다.
 
 | 구성 필드 | 의미와 실제 근거 |
 |---|---|
 | `settings` | nanosecond duration의 observation/control/horizon, search/replay/resource bounds·seed·제어 활성 상태 |
 | `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `50`은 잠정 값이며 E1의 `completionResidualNanos` 분포로 정한다([워크로드별 POOL](workload-pools.md#36-완료-여유)) |
+| `settings.autonomousWorkloads` | 자동제어할 Workload UID 목록. decision은 Workload마다 `workloads[]`에 `Disabled`, `MeasurementEvidenceMissing`, `Controlled` 상태와 사유를 남긴다([워크로드별 자동제어](workload-pools.md#31-워크로드별-자동제어)) |
 | `cpuInventory`, `gpuInventory`, `reserved` | Node별 실제 CPU IDs·물리 GPU UUIDs와 비서빙 전용 예약. quota는 별도 수량 예산 |
-| `preparations` | catalog profile ID별 `PrepareSpec`. 검증된 profile과 immutable service 분포 bundle은 ChillServer가 연결 |
-| `preparations[profileID]`의 firstfloor `Policy.fixedBatchSize` | 0 또는 생략은 dynamic. 양수 B는 비교 기준 strict fixed-size serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](scheduler-runtime-measurement.md#strict-fixed-size-baseline-serving)) |
-| `preparations[profileID].completionCalibration` | 선택 OPTIONAL: 고정 `from/to`, `windows[].metadata/definitions/requests`의 기존 `ObjectIdentity`; raw 계약·파일은 재작성하지 않음 |
-| `staticRouting` | OPTIONAL 전체 현재 Workload UID → physical instance ID → nonnegative int32 weight; UID마다 positive weight 하나 이상. controls OFF의 명시 config revision만 기존 typed ApplyTarget 경로로 적용·physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. stale UID/target은 오류; 선언을 유지하는 OFF refresh는 baseline을 보존하며 이후 CHILL은 실제 routing에서 시작 |
-| `costReferences`, `powerCostSources` | 실제 원자 동작 raw object와 Complete directed power-mode 측정의 출처 |
+| `staticRouting` | OPTIONAL 부분 map: 자동제어하지 않는 현재 Workload UID → physical instance ID → nonnegative int32 weight; 선언한 UID마다 positive weight 하나 이상. 선언하지 않은 UID는 현재 routing을 유지한다. 명시 config revision을 기존 typed ApplyTarget 경로로 적용하고 physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. 현재가 아닌 UID, `autonomousWorkloads`의 UID와 stale target은 오류 |
 | `meters` | 정확한 Node UID·exclusive wall scope·metric series에 연결한 meter 선언 |
 | `powerRequests` | Node UID/power mode별 기존 sole actuator의 NodeActuation 요청 |
 | `powerObservation` | 기존 sampler의 `Interval/Duration/RequestTimeout/MaxEvents`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap` |
 
+profile 후보, profile ID별 `PrepareSpec`, 원자 동작 비용과 power mode 비용은 조건마다 최신
+완료 측정에서 도출하며 구성 필드가 없다. 측정 기록의 store key는
+`serving/operation-measurements/<Node UID>/<operation ID>.json`이다. firstfloor
+`Policy.fixedBatchSize`의 0 또는 생략은 dynamic이고 양수 B는 비교 기준 strict fixed-size
+serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](scheduler-runtime-measurement.md#strict-fixed-size-baseline-serving)).
+
 `staticRouting`의 configuration 수신과 실제 적용은 별개다. 물리 source readiness가
 아직 없거나 UID/target 검증이 실패하면 ChillServer listener를 막지 않고 기존 refresh
-cadence에서 controls OFF인 동안만 미적용 revision을 다시 평가한다. 실패는 선언
-원본·`sourceConfigRV`·실제 routing·오류를 가진 manual action으로 관측 기록과 scheduler
+cadence에서 미적용 revision을 다시 평가한다. 실패는 선언
+원본, `sourceConfigRV`, 실제 routing과 오류를 가진 manual action으로 관측 기록과 scheduler
 state에 남으며 적용 성공으로 표시하지 않는다. 전체 physical read-back이 일치한
-revision은 다시 적용하지 않고, controls ON에서는 미적용 선언도 재시도하지 않는다.
-
-## Completion calibration selector와 발행 객체
-
-Calibration selector의 정확한 preparation payload 형태는 다음과 같다. 값은 실제
-측정과 발행 object identity에서 채우며 Serving lifecycle은 selector를 자동 작성하지 않는다.
-campaign은 성공한 실제 측정과 closed/published window 확인 후 selector 단계를 출력한다.
-
-```json
-{
-  "completionCalibration": {
-    "from": "<fixed receipt cohort start RFC3339Nano>",
-    "to": "<fixed receipt cohort end RFC3339Nano>",
-    "windows": [{
-      "metadata": {"store": "<store>", "key": "serving/<windowID>/metadata.json", "size": 123},
-      "definitions": {"store": "<store>", "key": "serving/<windowID>/definitions.jsonl", "size": 456},
-      "requests": {"store": "<store>", "key": "serving/<windowID>/requests.jsonl", "size": 789}
-    }]
-  }
-}
-```
-
-`size` 예시는 실제값이 아니다. 기존 `ObservationLog.Health().windows[].objects`는 Go 내부
-조회이며 HTTP `GET /readyz`는 `{ready}`만 노출한다. 발행한 object list는 기존 ChillServer
-PVC의 `<observationDirectory>/<windowID>/metadata.json`에 보존된다. immutable S3
-metadata는 object list를 붙이기 **전**에 업로드되므로 `published=false`/objects 없음이
-정상이다. 따라서 동일 window의 세 raw role을 위 selector로 명시한다. ChillServer의 기존
-configured evidence store `Reader.Open(ctx, ObjectIdentity)`가 `serving/<windowID>/...`
-bytes를 읽는다. 새 publisher/reader API, digest, schema version 또는 TTL은 추가하지 않는다.
+revision은 다시 적용하지 않는다.
 
 ## API와 compact projection
 
 | API | 동작 |
 |---|---|
-| `GET /api/v1/scheduler` | settings와 실제 snapshot·decision·actions·results |
+| `GET /api/v1/scheduler` | settings와 실제 snapshot, decision, actions, results, `costIssues` |
 | `GET /api/v1/scheduler/settings`, `/state` | 운영 설정 또는 현재 판단·적용 상태 |
-| `PUT /api/v1/scheduler` 또는 `/settings` | 직접 `SchedulerSettings`를 검증하고 named ConfigMap에 저장·적용 |
+| `PUT /api/v1/scheduler` 또는 `/settings` | 직접 `SchedulerSettings`를 검증하고 named ConfigMap에 저장하고 적용 |
+| `GET /api/v1/scheduler/profiles` | 읽기 전용. `configVersion`, 완료 측정에서 도출한 조건별 최신 `profiles`, profile ID별 `preparations`, profile을 만들지 못한 측정의 `insufficiencies[]`(CatalogIssue `source/code/reason`) |
+| `GET /api/v1/pools` | 실제 CHILL 인스턴스의 owner와 binding에서 도출한 `workloads[]`(`workload`, 활성 POOL `nodes`, `instances`), 측정 taint Node의 `measurement[]`, `available[]`와 `other[]`(`node/ready/powerMode/reasons`), `observedAt`, observer `issues` |
+| `GET /api/v1/pools/{uid}` | 해당 Workload의 활성 POOL 하나. 없으면 `PoolNotFound` |
 | `GET /api/v1/observations/load` | 사건 구간의 모든 UID 유입·접수·배정·완료율과 instance assignment 집계 |
 | `GET /api/v1/observations/scheduler` | 고정 `from/to`, bounded `limit`, append-order `cursor/nextCursor`의 원시 기록 |
 | `GET /api/v1/observations/power` | 같은 고정 `from/to`의 raw 표본을 Node당 한 번 적분한 전체·활성 POOL J/평균 W; 누락은 null과 사유 |
 
-현재 `/scheduler`, `/scheduler/state`, `/scheduler/profiles`와 scheduler history는 선택적으로
-`view=compact`를 받는다. 생략하면 기존 full raw 응답이며 저장 관측 기록·archive와
+`/scheduler/state`의 `costIssues[]`(CostIssue `source/code/reason`)는 비용에 기여하지 못한
+측정이다. decision은 `workloads[]`, snapshot Node의 `measurement`와 `reasons`,
+`search.comparedNodes`를 담는다. `comparedNodes`는 어떤 후보가 바꾸는 Node이며
+`expectedJoules`는 이 Node만 합산한다. 관측 기록의 인스턴스는 profile을 `profileID`로 보존한다.
+
+현재 `/scheduler`, `/scheduler/state`와 scheduler history는 선택적으로
+`view=compact`를 받는다. 생략하면 기존 full raw 응답이며 저장 관측 기록, archive와
 page/cursor 선택은 바꾸지 않는다. 다른 `view` 값은 `InvalidQuery`로 거절한다.
-compact 응답은 같은 envelope에 `profiles`와
-`completionMeasurements` dictionary를 추가하고, snapshot의 instances/options/
-inProgressTarget 및 decision의 keep/target/candidates 안 인스턴스의 `profile`과
-`completionMeasurement`만 `{"$ref":"응답 내 key"}`로 치환한다. nil은 그대로다.
-dictionary에는 원본의 전체 측정 객체를 보존한다. profile ID와 completion의
-profile/Node UID/측정 구간이 key의 기준이며 같은 식별자의 다른 보존 값은 별도
-suffix key로 남긴다. 같은 값의 반복만 공유하며 equality는 admission/validation
-gate가 아니다. 소비자는 이 두 필드만 dictionary로 해석한 뒤 기존 화면 계약을
-사용한다. SLO·정책·설정·후보 순서·물리/선택 인스턴스 신원·사유·출처와 action
-acknowledgement 원본은 바꾸지 않는다. 응답 한 page의 얕은 DTO만 만들며 별도
-history scan, raw evidence 복사, decoded cache 또는 fallback reader는 없다.
-`GET /scheduler/profiles`도 같은 state projection을 사용하며 configVersion과
-selections의 persisted/loaded 의미는 그대로다. POST 선택·DELETE 제거 응답은
-projection하지 않는다.
+compact 응답은 같은 envelope에 `profiles` dictionary를 추가하고, snapshot의 instances/options/
+inProgressTarget 및 decision의 keep/target/candidates 안 인스턴스의 `profile`만
+`{"$ref":"응답 내 key"}`로 치환한다. nil은 그대로다. dictionary에는 원본 profile 객체를
+보존한다. profile ID가 key의 기준이며 같은 ID의 다른 보존 값은 별도 suffix key로 남긴다.
+같은 값의 반복만 공유하며 equality는 admission/validation gate가 아니다. 소비자는 이
+필드만 dictionary로 해석한 뒤 기존 화면 계약을 사용한다. SLO, 정책, 설정, 후보 순서,
+물리/선택 인스턴스 신원, 사유, 출처와 action acknowledgement 원본은 바꾸지 않는다.
+응답 한 page의 얕은 DTO만 만들며 별도 history scan, raw evidence 복사, decoded cache
+또는 fallback reader는 없다.
 
 power 조회는 controller가 수락한 ChillServer configuration 하나를 atomic하게 읽어 meter
 구성을 고정한다. 긴 refresh·control Tick의 scheduler mutex를 기다리지 않으며, 새 설정은
@@ -111,16 +89,15 @@ scheduler history는 실제 `SchedulerObservation.At` min/max가 `[from,to)`와 
 다음 일치 record 하나로 continuation을 확인하며 matching-offset cursor 의미를 유지한다.
 window wall time은 append 시각이지 사건 시각의 범위가 아니므로 필터에 쓰지 않는다.
 power는 실제 기록 구간의 겹침(표본 0개 포함), coverage boundary 거리로 확장한 실제
-sample 시각 범위, 모든 nil-policy window, membership transition과 최신 prior baseline의
+sample 시각 범위, 모든 nil-policy window, 활성 POOL 인스턴스 전환과 최신 prior baseline의
 후보 window를 합쳐 읽는다. baseline 동률·시각 범위를 가로지르는 window도 보존한다.
 정확한 Node·meter·scope·source와 가장 가까운 유효 표본 선택은 기존 reducer가 담당하며,
 서로 다른 series의 전역 최근접 표본으로 nil-policy window를 제거하지 않는다.
-결정·profile 분포 대신 집계에 필요한 실제 표본·meter·coverage·membership만 decode한다.
+집계에 필요한 실제 표본, meter, coverage와 활성 POOL 인스턴스만 decode한다.
 capture의 arrivals/load는 receipt 사건의 실제 `ReceivedAt`(없으면 `At`)와 나머지 사건의
 `At` 범위로 request prefix를 선택한다. 선택될 receipt가 있을 수 있는 최초 prefix 뒤는
 `ReceivedAt` 없는 늦은 definition/accepted/outcome 사실도 합치도록 끝까지 유지한다.
-완료 overhead는 모든 request의 실제 `ReceivedAt` 범위를 사용하며 실행 조건 검증과
-누락 제외는 기존 reducer에 둔다. 두 조회 모두 전체 definitions와 window metadata를
+두 조회 모두 전체 definitions와 window metadata를
 보존하고, 오래된 append window·역순 시각·알 수 없는 prefix를 빈 성공으로 바꾸지 않는다.
 definition은 기존 validation/counting pass에서 기록 유무만 보존하며, prefix byte 수가
 일치하고 신뢰되는 빈 stream만 열지 않는다. 사건 시각과 무관하게 모든 nonempty 과거
@@ -140,7 +117,7 @@ boundary 거리 안에서만 보조하며, 합친 표본의 원래 gap·값·met
 조회 구간의 coverage를 검사한다. 조회 중 실제 source 실패와 OOM/재시작 공백은
 누락으로 남기며, 이전 구간의 오래된 표본 때문에 정상적인 닫힌 구간을 무효화하지 않는다.
 닫힌 ObservationLog window의 겹침은 예정 `EndsAt`보다 이른 실제 `ClosedAt`에서 끝난다.
-전력·membership·arrival·완료 overhead 조회가 같은 경계를 사용한다. boundary 표본은
+전력, 활성 POOL 전환과 arrival 조회가 같은 경계를 사용한다. boundary 표본은
 현재 선언의 Node·meter·scope와 source kind/endpoint/metric/labels가 일치한 뒤에만
 선택하며, source가 없거나 바뀐 과거 기록을 현재 meter의 실측으로 재해석하지 않는다.
 

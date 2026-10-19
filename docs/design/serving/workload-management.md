@@ -17,7 +17,7 @@ native 원시 입력·전처리 module·persistent runner의 동일 실행 경�
 |---|---|
 | Workload는 cluster-scoped CRD로 저장 | 기존 cluster-scoped ModelSpec과 동일한 연구 클러스터 관리 범위를 사용하고, 등록 건은 Kubernetes UID로 구분 |
 | Workload 정의에는 모델 참조와 SLO만 저장 | 서비스 식별자는 객체 이름으로 표현. 정적 POOL 참조나 산출물 복사본을 선언에 추가하지 않음 |
-| POOL은 현재 구성의 운영 상태로 제공 | 현재 노드와 서빙 워크로드 관계가 바뀌므로 Workload 정의와 분리. 별도 Pool CRD는 추가하지 않음 |
+| POOL은 현재 구성의 운영 상태로 제공 | 활성 POOL은 CHILL 서빙 인스턴스에서 산출하고, 측정 POOL은 Node taint로 표시. Workload 정의와 분리하며 별도 Pool CRD는 추가하지 않음 |
 | 관리 API와 요청 접수 제어는 기존 ChillServer에 배치 | 신규 접수 중지와 큐 상태를 실제로 소유하는 경로에서 변경을 적용. 별도 관리 서버와 WorkloadController를 만들지 않음 |
 | 정의 변경 writer는 하나로 제한 | 워크로드 생성과 모델 삭제의 경쟁, 모델 변경과 신규 접수 사이의 경쟁을 같은 관리 경계에서 처리 |
 | 요청은 수락 당시 적용 정의를 유지 | SLO 변경과 POOL 재구성 때문에 기존 요청의 의미가 바뀌지 않게 함 |
@@ -38,7 +38,7 @@ native 원시 입력·전처리 module·persistent runner의 동일 실행 경�
 | [HTTP API](../../../internal/serving/httpapi/handler.go) | bearer 인증된 Workload 조회, 관리와 단일 샘플 추론. 기존 투명 모델 proxy 계약은 제거 |
 | [Serving core](../../../internal/serving/)와 [ChillServer](../../../cmd/chill-server/) | 불변 적용 정의, 접수 gate, bounded 큐, 인스턴스 route와 실제 physical drain 및 조립 |
 | [modelcompat](../../../internal/modelcompat/) | Kubernetes와 독립적인 입력, 실행 경로와 native 설정 호환성. Profiler 후보 resolver를 Serving에 연결하지 않음 |
-| [Serving kube](../../../internal/serving/kube/) | private uncached writer, TokenReview/SAR, 현재 POOL과 native 관측, 선택된 완료 campaign의 검증된 profile catalog |
+| [Serving kube](../../../internal/serving/kube/) | private uncached writer, TokenReview/SAR, 현재 POOL과 native 관측, 완료된 측정에서 산출한 검증된 profile catalog |
 | [firstfloor adapter](../../../internal/serving/firstfloor/) | 실제 HTTP V2 native 상태·추론과 요청별 monotonic progress. 사용자 인증 header는 ChillServer 경계에 유지 |
 | [Evidence Loader](../../../internal/profiling/profiler/evidence/loader.go) | frozen 실행 조건과 원시 evidence의 typed 검증 경계. 이것만으로 SLO나 scientific admission을 증명하지 않음 |
 | [모델 호환성 ADR](../../adr/0012-model-artifact-compatibility-boundary.md) | 정적 호환성, 측정 근거, 현재 배치 가능성과 SLO 적합성을 서로 다른 판단으로 유지 |
@@ -117,23 +117,27 @@ PoolState
   servingWorkloads: 현재 연결된 Workload 이름과 UID
 ```
 
-- 노드의 현재 논리 소속은 CHILL 소유의 `edge.dacs.io/serving-pool` Node label 하나로 기록한다.
-  DeviceClass label은 장비 분류이고, POOL label은 동적 운영 소속이므로 서로 대신하지 않는다.
-  이 label의 writer는 전환 실행 어댑터 하나이며, 모델 관리 API나 장비 discovery가 소속을 따로 수정하지 않는다.
+- 활성 POOL 소속은 CHILL 서빙 인스턴스의 owner와 Workload binding에서 산출한다.
+  별도 소속 Node label은 두지 않으며, DeviceClass label은 장비 분류로만 사용한다.
+- 측정 POOL은 운영자가 적용하는 `chill.dacs.io/measurement:NoSchedule` Node taint로 표시한다
+  (`kubectl taint node <node> chill.dacs.io/measurement=true:NoSchedule`, 해제는
+  `kubectl taint node <node> chill.dacs.io/measurement-`). 스케줄러는 이 노드를 후보에서 제외하고,
+  해당 노드의 prepare와 ChangePower는 `NodeInMeasurement`로 실패한다.
+- 서빙 인스턴스가 없고 측정 taint도 없는 노드는 가용 노드이며, 가장 낮은 전력모드로 유지한다.
 - 실제 인스턴스의 원본은 Kubernetes Pod와 실행기 관측이다. Pod 식별 metadata는 관측 대상을 찾는 데 사용하며,
-  Running, label이나 원하는 설정만으로 모델 준비와 워크로드 연결 완료를 증명하지 않는다.
+  Running이나 원하는 설정만으로 모델 준비와 워크로드 연결 완료를 증명하지 않는다.
 - `servingWorkloads`는 실제 인스턴스의 확인된 워크로드 연결에서 산출한다.
   등록이나 목표 배정만 있는 워크로드는 포함하지 않는다. 드레인 중인 기존 연결은 실제 해제될 때까지 유지한다.
 - 조회하는 `PoolState`는 현재 구성 snapshot에 노드와 참조 목록을 함께 보유한다.
   독립적으로 수정할 서빙 워크로드 목록이나 Workload 쪽의 역방향 POOL 필드는 만들지 않는다.
-- 노드별 label은 단일 소속을 표현한다. 여러 POOL 상태를 산출할 때 같은 Node UID를 중복 배정하지 않는다.
+- 한 노드는 서빙 인스턴스의 binding으로 하나의 활성 POOL에 속한다. 여러 POOL 상태를 산출할 때 같은 Node UID를 중복 배정하지 않는다.
   노드의 Serving 참여 여부와 POOL 소속은 구분하며, 비활성 노드도 전체 POOL 비용 관측에서 제외하지 않는다.
 
 현재 구성은 스케줄러가 선택한 목표와 분리한다. 전환 실행이 실제 준비, 연결, 드레인과 자원 해제를
 확인한 결과로 현재 구성을 갱신하고, 같은 snapshot으로 POOL 조회와 분배 대상을 제공한다.
 조회에는 각 관측의 시각과 source identity를 포함한다. runtime 내부 snapshot의 일관성과
 여러 Kubernetes 리소스 및 backend 관측의 원자성은 다르므로, 이들을 한 API transaction처럼 설명하지 않는다.
-재시작 시 Node label, 관리 대상 Pod와 실행기 상태를 다시 관측한다. 확인할 수 없는 관계는
+재시작 시 Node taint, 관리 대상 Pod와 실행기 상태를 다시 관측한다. 확인할 수 없는 관계는
 불명 사유를 표시하고 신규 분배에서 제외한다. 오래된 목표를 실제 서빙 관계로 복구하지 않는다.
 재시작 시 접수 gate는 먼저 닫는다. 삭제 의도와 진행 중 작업, 원하는 정의와 마지막 적용 identity의
 차이를 실제 실행 상태와 대조한 뒤에만 접수를 연다. status 저장 실패를 적용 성공으로 덮어쓰지 않는다.
@@ -458,14 +462,14 @@ Python 모델의 `execute` 반환은 native request release보다 이르므로 �
 
 ## 9. POOL 재구성과 요청 의미
 
-구성 선택 알고리즘은 스케줄러 SRS의 구현 과제다. 현재 POOL은 실제 Node의 소속 label과 자원,
+구성 선택 알고리즘은 스케줄러 SRS의 구현 과제다. 현재 POOL은 실제 Node의 측정 taint와 자원,
 준비된 native 인스턴스 및 확인된 Workload 연결로 산출한다. 등록만으로 노드를 합성하지 않는다.
 Workload spec이나 서비스 식별자를 POOL 이동을 위해 수정하지 않는다.
 
 - 새 인스턴스는 실제 모델 준비와 워크로드 연결이 확인된 후 분배에 편입한다.
 - 제외할 인스턴스는 신규 배정을 막고 이미 배정된 요청을 마무리한 뒤 연결 및 자원을 해제한다.
-- 노드를 다른 POOL로 옮기면 기존 POOL의 해당 노드에 남은 연결과 실행을 먼저 마무리한다.
-  실제 소속 label을 바꾸고 새 POOL의 준비된 구성에 편입한다. 같은 노드를 두 POOL의 현재 용량으로 세지 않는다.
+- 노드를 다른 POOL로 옮기는 것은 기존 Workload 인스턴스의 remove와 새 Workload 인스턴스의 prepare로 수행한다.
+  기존 연결과 실행을 먼저 마무리하고 새 POOL의 준비된 구성에 편입한다. 같은 노드를 두 POOL의 현재 용량으로 세지 않는다.
 - 준비 인스턴스가 없는 동안에도 실행 근거가 유효하면 Workload 유입 큐를 설정 범위에서 유지한다.
 - 실제 관측 결과를 현재 구성 snapshot에 반영하고 POOL 조회 및 유효한 분배 대상을 함께 갱신한다.
 - 노드 전력모드 변경은 모든 공유 Workload에 영향을 주며 현재 관측에 드러낸다. 자동 비용 비교와 구성 선택은 스케줄러 구현 과제다.
@@ -560,9 +564,10 @@ helm upgrade --install chill charts/chill --namespace chill-system --create-name
 
 TLS Secret은 release namespace에 미리 존재해야 한다. Serving namespace에도 scheduler ConfigMap을
 먼저 만들어야 한다. CA 검증을 끄지 않고 certificate의
-SAN과 맞는 HTTPS 주소를 사용한다. 프로파일 선택은 외부 scheduler ConfigMap의
-`profileCampaigns` 배열(`{namespace,name}` 항목)이 소유하며, Helm 값은 선택하지 않는다.
-`profileNamespaces`는 측정 조회·제출·객체 삭제와 프로파일 선택을 허용할 namespace 범위이며,
+SAN과 맞는 HTTPS 주소를 사용한다. 스케줄러 후보와 비용은 `profileNamespaces`의 완료된 측정에서
+조건별 최신 결과로 산출하며, Workload별 자율 제어는 외부 scheduler ConfigMap의
+`settings.autonomousWorkloads`(Workload UID 목록)가 소유한다. Helm 값은 이를 선택하지 않는다.
+`profileNamespaces`는 측정 조회·제출·객체 삭제와 프로파일 산출을 허용할 namespace 범위이며,
 빈 목록은 serving namespace를 사용한다. ChillServer chart는 capacity나 측정 작업을 자동 생성하지 않는다.
 
 | Helm 값 | 실제 flag 또는 배포 계약 |
@@ -598,9 +603,9 @@ ChillServer의 Kubernetes API client budget은 `rest.Config`에 두 client 생�
 `/chill/api/v1/namespaces/NS/batch-energy-optimizations` 및 해당 하위 경로에
 `get/post/delete`를 제공한다. 같은 이름의 namespace Role은 BEO `get/list/create/delete`만
 제공한다. 관리자가 선택한 caller에 필요한 ClusterRole과 namespace Role을 각각 binding한다.
-프로파일 adopt/unadopt는 unbound `FULLNAME-scheduler-editor` ClusterRole의 profile POST와
-namespace별 profile DELETE 및 serving namespace의 같은 이름 Role이 허용하는 설정 ConfigMap
-하나의 `update`가 모두 필요하다. ChillServer는 TokenReview 후 `/chill` nonresource SAR와
+스케줄러 설정 변경은 unbound `FULLNAME-scheduler-editor` ClusterRole의 `/chill/api/v1/scheduler/settings` PUT과
+serving namespace의 같은 이름 Role이 허용하는 설정 ConfigMap 하나의 `update`가 모두 필요하다.
+`GET /api/v1/scheduler/profiles`는 읽기 전용이다. ChillServer는 TokenReview 후 `/chill` nonresource SAR와
 native resource SAR를 수행한다. Dashboard SA나 모든 사용자에 자동 binding하지 않는다.
 측정 삭제는 UID와 `If-Match` resourceVersion을 모두 요구하며 귀속된 Evidence Store 원본·결과를
 **영구 삭제**한다. 공유·현재 참조는 보호하며 S3와 native 객체 삭제 사이의 부분 실패를 명시한다.
@@ -682,7 +687,7 @@ e2e와 위의 미검증 실행 경계는 최종 gate 통과와 구분한다. Go-
 | WM-22 | 3.1절과 8.3절 및 11장, 삭제 완료 후 서비스 제거와 UID별 기록 보존 |
 | WM-23 | 5.2절과 8.4절, 원하는 참조 및 적용 참조 확인과 모델 삭제 거부 |
 | WM-24 | 8.4절, 관련 Workload 전체와 공유 인스턴스의 모델 변경 barrier |
-| WM-25 | 3.2절과 9장, 실제 POOL 노드 및 서빙 참조 갱신과 Workload 정의 유지 |
+| WM-25 | 3.2절과 9장, 서빙 인스턴스에서 산출한 POOL 노드 및 서빙 참조 갱신과 Workload 정의 유지 |
 | WM-26 | 6장과 10장, 입력 계약 검증과 Workload별 호환 배치 |
 | WM-27 | 6장과 3.3절, 입력과 실행 근거의 대응 및 실제 선택 profile 기록 |
 | WM-28 | 3.3절과 7장 및 9장, 수락 정의와 최초 수신 및 실제 배정 기록 유지 |

@@ -196,7 +196,9 @@ The scheduler derives its candidates and costs from completed measurements in th
 namespace): the latest successful BatchEnergyOptimization per measured condition, the
 serving-operation records under `serving/operation-measurements/` in the Evidence Store,
 and Complete PowerModeTransitionCost objects. `GET /api/v1/scheduler/profiles` lists the
-derived profiles and the measurements that contribute none. The Evidence Store
+derived profiles and the measurements that contribute none; it is read-only. Completed
+measurements become candidates automatically, and autonomous control is enabled per
+Workload by listing its UID in the ConfigMap's `settings.autonomousWorkloads`. The Evidence Store
 credentials need list permission on the bucket. ChillServer is fixed to one replica
 with `Recreate`, exposes HTTPS on port `8080`, and keeps a private RWO ObservationLog
 plus immutable Evidence Store windows.

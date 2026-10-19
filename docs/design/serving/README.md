@@ -21,7 +21,7 @@ Workload는 Preprocessor와 Dataset을 참조하고 원시 표본(JPEG, UTF8)을
 | Workload·POOL·입력·CRUD·권한·접수·드레인 | [워크로드 관리](workload-management.md) |
 | 판단 입력·후보 replay·SLO/에너지 선택·전환 DAG·제어 불변식 | [스케줄러 구현 설계](scheduler-implementation.md) |
 | firstfloor typed 요청·IPC·시간·수명·CPU/장치·fixed-batch·baseline·catalog | [실행기와 측정 계약](scheduler-runtime-measurement.md) |
-| scheduler 설정·calibration JSON·compact API·관측 조회 | [설정과 관측 API](scheduler-api.md) |
+| scheduler 설정, compact API와 관측 조회 | [설정과 관측 API](scheduler-api.md) |
 | 원시 표본·전처리기와 데이터셋 catalog·여러 모델 파일 산출물·데이터셋 표본 측정 | [이기종 워크로드 구현 설계](heterogeneous-workloads.md) |
 | 워크로드별 활성 POOL, 측정 POOL, 가용 노드, 워크로드별 자동제어와 완료 여유 | [워크로드별 POOL과 자동제어](workload-pools.md) |
 | 판단 기록 크기, 판단 stream, 구성 기록, 관측 window 보존 한도 | [판단 기록 다이어트 (M0)](decision-record-diet.md) |

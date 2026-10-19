@@ -42,8 +42,8 @@ Intervals of different character are reported separately and are never summed.
 A result that reports one interval reports its character with it.
 
 The measured boundary opens at the durable pre-mutation fence and closes at
-terminal Ready. Lease acquisition, workload safety, and previous-state
-observation precede the fence and are preparation rather than transition.
+terminal Ready. Lease acquisition and previous-state observation precede the
+fence and are preparation rather than transition.
 
 Current instrumentation cannot isolate the device interval. The fence round trip
 lies inside it, and that round trip is what distinguishes a state change from a

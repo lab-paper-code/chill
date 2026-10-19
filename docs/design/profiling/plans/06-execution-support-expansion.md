@@ -196,12 +196,12 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Implement the internal status reconciler with an exact local-Node filter,
   a durable pre-mutation fence, independent read-back, and one terminal
   outcome; keep its production gate open until an operand wires it.
-- [x] Implement a fail-closed Kubernetes workload-safety observation that
-  retains every active blocking Pod identity outside explicit namespace and
-  exact Pod-UID allowances; install no implicit default policy.
+- [x] Actuate regardless of Pods on the target Node; measurement results record
+  the Node's Pods and whether CHILL placed each one
+  ([ADR 0022](../../../adr/0022-workload-pool-membership-boundary.md)).
 - [x] Reject any transition whose actuation-policy name is absent from
-  the actuator's explicit authorization set before crossing a Lease, safety,
-  or host port.
+  the actuator's explicit authorization set before crossing a Lease or host
+  port.
 - [x] Add an opt-in command and Operator-owned/Helm-configured DaemonSet
   lifecycle with exact Node/self-Pod identity, shared Go policy naming,
   scoped API permissions, and a stop gate that retains the operand for every
@@ -211,8 +211,8 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   read-back proof closes the mutation gate.
 - [x] Serialize every runnable transition with the exact Node-UID Lease;
   terminal `Ready` and `Failed` release that Lease.
-- [x] Apply the fail-closed workload-safety policy from explicit namespace and
-  exact self-Pod allowances before any host operation.
+- [x] Admit every authorized transition before any host operation without a
+  per-Pod admission check.
 - [x] Fix `apply -> read-back -> settling -> Ready` as the transition lifecycle
   and require a matching completed transition before measurement.
 - [x] Reconstruct the durable transition after controller restart without
@@ -270,20 +270,16 @@ identity from exact handoff UID, and takeover is allowed only after a trusted
 renew/acquire timestamp plus configured duration expires. Release uses object
 preconditions and refuses a foreign holder. The pure lifecycle requires
 `observe previous -> compare target -> apply only when different -> settle ->
-Ready`; deadline, safety rejection, target mismatch, and port failure all
+Ready`; deadline, target mismatch, and port failure all
 produce one terminal failure without a recovery chain. `Ready` and `Failed`
 release the Lease, and returning to an earlier state requires another
 `NodeActuation` with that state as its target. The internal status reconciler
 drives these primitives from durable `NodeActuation` state. It records the
 apply phase before invoking the host port, separates command completion from
-target read-back, and reconciles Lease status after restart. Its
-workload-safety adapter lists active Pods on the exact target Node and allows
-only explicitly configured namespaces or exact Pod UIDs; this permits the
-per-Node DaemonSet to exclude only its own Pod without trusting every workload in
-the release namespace. An unapproved Pod or an incomplete blocker set fails
-closed. The reconciler independently requires the handoff's policy name to be
+target read-back, and reconciles Lease status after restart. The reconciler
+independently requires the handoff's policy name to be
 in its installed authorization set before crossing any port. The runnable
-operand selects these allowances and consumes the Lease and lifecycle paths. The
+operand consumes the Lease and lifecycle paths. The
 archived AGX Orin campaign contains apply/read-back and restoration evidence
 under a superseded stored contract; it does not prove the current v1alpha9
 one-way lifecycle. Live validation of the current contract and bounded host

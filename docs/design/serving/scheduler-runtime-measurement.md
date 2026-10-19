@@ -38,48 +38,23 @@ frame 길이는 big-endian uint32, 작은 header는 JSON이며 입력 값을 IPC
 ## 시간과 수명
 
 원래 receipt와 sender의 monotonic elapsed를 보존한다. 서로 다른 호스트의 UTC를
-그대로 빼서 요청 나이를 확정하지 않는다. Serving의 완료 오버헤드는
-`(exchange finish − receipt − native elapsed) + (response finish − exchange finish)`의 관측 최댓값이다.
-단방향 전달 시간이나 미래 지연의 보장 상한이 아니며 완료 시점에 한 번만 반영한다.
-최근 관측은 같은 노드·프로파일·모델/입력 실행 조건의 호환 정의에 재사용하며,
-측정 인스턴스의 제거나 SLO가 다른 Workload UID만으로 근거를 버리지 않는다.
-해당 조건의 관측이 없으면 후보 평가는 Pending이고 실제 Serving 측정이 선행해야 한다.
-선택한 preparation의 `completionCalibration`은 실제 측정 후 닫혀 발행된 관측 기록
-raw window의 고정 `from/to`와 metadata/definitions/requests object identity를 명시한다.
-ChillServer가 기존 evidence bound로 immutable bytes를 한 번 읽어 complete window, frozen
-definition/assignment와 성공한 native exchange/response span을 검증하고 같은 reducer로
-관측 최댓값을 만든다. 이 측정 사실의 수명은 최근 arrival 60s 구간과 별개이며 arrival
-구간을 늘리지 않는다. 현재 live 관측과 선택한 calibration 중 호환 조건의 더 큰 값을
-사용한다. selector를 제거하면 다음 config refresh에서 calibration은 사라진다.
-`completionMeasurement`는 고정 구간·성공 request 수·raw `references`·`source`를 보존하고
-instance/option/candidate에 연결한다. 설정의 `completionObserved=true`만으로는 근거가
-되지 않으며 누락·미완료·다른 profile/Node/runtime/CPU/GPU 조건은 Pending이다.
-consumer는 raw 구조를 다시 검증하지 않고 typed fact의 관측값과 사용 scalar가 같으며
-Node/profile/model/input/runtime/CPU/GPU 실행 조건이 여전히 matching인지 연결한다.
-proof를 가진 instance라도 이 값이나 조건만 변경하면 Pending으로 돌아간다.
-unbound 완료 근거는 자원/전환 불가 사유도 함께 보존하되 후보 상태를 Pending으로 둔다.
-이미 관측한 action 실패의 ExecutionError 우선순위는 유지한다.
-native policy의 `envelopeSource`는 기존 256-byte 제한 안에서 관측량·고정 구간·trial 수와
-Serving `completionMeasurement` 출처 연결만 전달한다. preparation, route 적용과 replay가
-같은 연결 표현을 쓰며 snapshot/관측 기록의 전체 `Source`와 raw references를 자르거나
-바꾸지 않는다. 긴 provenance 때문에 SDK가 policy를 거절하는 문제를 상한 확대로 숨기지 않는다.
-request window마다 definition을 다시 쓰지 않으므로 과거 definition window도 같은
-selector의 `windows`에 포함할 수 있다. 모든 선택 stream의 frozen identity를 합친 뒤
-`receivedAt ∈ [from,to)`의 성공 trial만 줄이며 `trialIDs`로 원래 request를 찾는다.
-같은 raw cohort를 여러 preparation이 선택하면 ChillServer는 그 refresh 안에서 한 번만 읽고
-조건별 typed fact를 연결한다. persistent cache나 현재 arrival 구간 변경은 없다.
-도착 시각 예측은 ChillServer 분배 시점이라는 가정으로 명시하며 측정값으로 포장하지 않는다.
-인증·업로드·decode·accept·dispatch를 포함한 모든 non-native receipt→response 시간을 포함한다.
-queued/running의 예상 완료 및 worker의 SLO slack/수명 예약에는
-`max(0, observed joint overhead − actual frozen sender elapsed)`만 남겨 둔다.
-이미 소모한 dispatch 이전 시간은 원래 receipt 경과와 sender context에 포함되어 있으므로
-다시 더하지 않는다. running에도 실제 sender witness가 없으면 평가를 Pending으로 둔다.
-returning 요청은 receipt→exchange의 non-native 잔여 span과 실제 exchange finish 이후
-응답 시간을 각각 한 번 빼고 남은 시간만 더한다. SDK finished callback은 exchange finish가
-아니므로 exchange milestone 전에는 returning으로 전환하지 않으며 native finished 확인은 보존한다.
-필요한 실제 milestone이 없거나 잘못됐으면 Pending이다.
-worker의 local monotonic queue/service 경과 시간과 원래 receipt 이후 경과 시간을
-사용해 추가 대기 여유를 판단하며 실제 span과 예상값의 출처를 raw context에 연결한다.
+그대로 빼서 요청 나이를 확정하지 않는다. 완료 여유는 scheduler 설정의 필수 값
+`settings.completionMarginMS`(유한, 0 이상)이며 ChillServer가 요청마다 firstfloor
+`RequestContext.completionMarginMS`로 전달한다. 이 값은 운영자가 정한 non-native
+receipt→response 시간(인증, 업로드, decode, accept, dispatch, 응답 전송)의 여유이며
+측정값으로 포장하지 않는다. 관측하지 않은 overhead 때문에 후보 평가를 Pending으로 두지 않는다.
+observation cohort의 `completionResidualNanos`는 실제 완료의 non-native 잔여 시간을
+분석용으로 보존한다.
+
+worker는 `internal/firstfloor/policy.go`의
+`requestSlack = RemainingSLOMS − completionMarginMS − serviceCost(batch, percentile)`로
+SLO 여유를 계산한다. `RemainingSLOMS`는 SLO에서 frozen sender elapsed와 local
+monotonic queue/service 경과를 뺀 값이다. 명시적 수명은 `server.go`에서
+`lifetimeMS − senderElapsedMS − completionMarginMS`를 원래 receipt 기준으로 남겨 둔다.
+sender elapsed는 원래 receipt 경과에서 한 번만 빼며 margin 자체는 sender elapsed만큼
+줄이지 않는다. Serving replay는 queued/running 예상 완료에 같은 margin을 한 번 더하고,
+returning 요청에는 `max(0, completionMarginMS − 응답 경과)`만 남긴다.
+worker는 실제 span과 예상값의 출처를 raw context에 연결한다.
 
 Scheduler snapshot의 `observationEnd`는 Tick에 전달한 고정 historical cutoff다.
 arrival·completion 관측 구간은 `[observationEnd−observationWindow, observationEnd)`이며
@@ -160,8 +135,8 @@ privileged, supplemental group, allocation resource를 받는다. RKNNLite는 ON
 않으므로 thread 수 0으로 측정되고 같은 값으로 배치된다.
 
 latest successful profile은 같은 frozen node/model/artifact/runtime/input/resources/
-power/protocol 조건별로 선택한다. 명시적 source 선택 범위 안의 최신 성공을
-사용하고 독립 후보의 오류·누락 이유를 보존한다. source의 SLO와 무관하게 matching
+power/protocol 조건별로 선택한다. 완료된 측정 중 조건별 최신 성공을 후보와 비용의
+근거로 사용하고 독립 후보의 오류·누락 이유를 보존한다. source의 SLO와 무관하게 matching
 execution profile을 재사용한다. 기존 ORT/RKNN reference 측정은 고유 실험 owner를
 유지하며 firstfloor serving evidence와 실행 조건으로 구별한다.
 
@@ -170,9 +145,9 @@ schema를 함께 갱신한다. 이전 testbed 객체의 정리는 ADR 0019의 �
 현재 진행 중 campaign의 stored 계약 변경은 해당 campaign 정리 후 적용한다.
 
 Catalog는 매 refresh에서 현재 Campaign의 native UID/resourceVersion·terminal 적격성을
-읽고 선택된 이름마다 현재 검증 entry 하나만 유지한다. 같은 source의 immutable profile은
+읽고 Campaign마다 현재 검증 entry 하나만 유지한다. 같은 source의 immutable profile은
 재다운로드·재도출하지 않으며 caller가 바꿀 수 있는 slice/map/pointer는 분리해서 반환한다.
-UID/RV 변경·pending·삭제·선택 해제는 기존 entry를 버리고 필요한 경우 원래 전체 evidence
+UID/RV 변경·pending·삭제는 기존 entry를 버리고 필요한 경우 원래 전체 evidence
 검증을 다시 수행한다. 새 검증 오류에서 이전 success로 돌아가지 않는다. 이 lifecycle 재사용은
 control tick/profile ticker/profile GET의 반복 raw reload를 제거하지만 native 관측은 계속
 실제로 갱신하며 snapshot 시각이나 freshness 기준을 바꾸지 않는다.
@@ -231,8 +206,10 @@ node의 측정 baseline은 power mode·준비된 model/profile/resource 집합·
 사용한다. 공유 instance는 한 번 더하고, 실제 공존 측정과의 오차·가정·출처를 기록한다.
 이는 전체 공존 조합의 선행 campaign을 요구하는 조건과 구별된다.
 
-Serving 원자 동작은 `prepare`, `remove`, `resize`(prepare→route→drain→remove),
-`pool membership`, `power mode`다. production 실행 경계의 동일 함수를 측정
+Serving 원자 동작 측정 대상은 `prepare`, `remove`, `power mode`이며 `resize`
+(prepare→route→drain→remove)는 이들의 조합이다. 측정 Node는 운영자가 붙인
+`chill.dacs.io/measurement:NoSchedule` taint로 격리하며 scheduler는 이 Node를 후보에서 제외한다.
+production 실행 경계의 동일 함수를 측정
 measurement command가 호출한다. measurement service는 first successful power sample
 후 원자 동작을 시작하고 실제 readiness/drain/removal/read-back 완료를 관측한다.
 Raw record에 before/target/actual state, 시작/완료, 실패·부분 상태, samples/failures,
