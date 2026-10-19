@@ -12,6 +12,7 @@ flat list of equally authoritative files.
 | Operator console | [operator-console/README.md](operator-console/README.md) | Operator-facing concepts, workflows, interfaces, use cases, and requirements |
 | Dashboard implementation | [dashboard/README.md](dashboard/README.md) | Pinned web template, core architecture, API ownership and gaps, and full Dashboard SRS acceptance |
 | Code intelligence and architecture analysis | [code-intelligence/README.md](code-intelligence/README.md) | Current semantic-navigation, package-boundary, optional indexing, and Helm-topology evidence contract |
+| Node platform | [platform/README.md](platform/README.md) | Node agent DaemonSets and the sources of per-node facts (CPU and GPU inventory, power-mode requests, wall meters) |
 | Architecture rethink (proposal, not accepted) | [architecture-rethink/README.md](architecture-rethink/README.md) | Alternatives B1–B3 to the current global replay scheduler and multi-writer node state, migration path M0–M5, and proposed spec sentence changes awaiting approval |
 
 Architectural decisions that must remain stable across design areas belong in
