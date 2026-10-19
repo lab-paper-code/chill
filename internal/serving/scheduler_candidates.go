@@ -679,6 +679,12 @@ func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance)
 	if e.ctx.Err() != nil {
 		return
 	}
+	// The cap bounds the walk, not only the emitted set: without it every
+	// placement prefix is still expanded after the last candidate is kept.
+	if len(e.result) >= e.settings.MaxCandidates {
+		e.search.Truncated = true
+		return
+	}
 	group := e.group(w)
 	d := group[0]
 	if left == 0 {

@@ -843,3 +843,28 @@ func TestSchedulerEnumerationHonorsInFlightDeadline(t *testing.T) {
 		t.Fatalf("canceled enumeration leaked a partial decision: %+v", decision)
 	}
 }
+
+// E1 shape: one autonomous Workload with no instances, sharing off, 19 measured
+// options over 7 Nodes, 8 replicas. The cap must end the walk, not only the set.
+func TestSchedulerEnumerationStopsAtMaxCandidates(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	settings.Controls.Sharing = false
+	settings.MaxCandidates, settings.MaxReplicas, settings.MaxInstances = 32, 8, 16
+	base := snapshot.Instances[0]
+	snapshot.Instances, snapshot.Options = nil, nil
+	nodes := []NodeReference{snapshot.Nodes[0].Node}
+	for n := range 6 {
+		nodes = append(nodes, poolsAddNode(&snapshot, fmt.Sprint("n", n+2), map[string]float64{"fixed": 10}))
+	}
+	for k := range 19 {
+		option := poolsInstance(base, fmt.Sprint("option-", k), nodes[k%len(nodes)], "fixed", "w1")
+		option.Allocation.CPUs = []int{k % 4}
+		snapshot.Options = append(snapshot.Options, poolsOption(option))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	candidates, search, err := EnumerateScheduler(ctx, settings, snapshot)
+	if err != nil || len(candidates) != settings.MaxCandidates || !search.Truncated {
+		t.Fatalf("enumeration did not stop at the cap: candidates=%d truncated=%v err=%v", len(candidates), search.Truncated, err)
+	}
+}
