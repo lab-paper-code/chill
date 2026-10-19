@@ -391,7 +391,10 @@ compatibility readers.
 - Power observation does not become Ready: create no `NodeActuation` and
   retain no transition observation.
 - The observed source state differs from frozen `s`: terminate with
-  `SourceStateMismatch`; do not relabel the observation.
+  `SourceStateMismatch`; do not relabel the observation. The first direction's
+  `s` is `spec.modes[0]`, and nothing sets it beforehand: the operator must put
+  the Node in `modes[0]` (e.g. a `NodeActuation`) before creating the
+  `PowerModeTransitionCost`, or the first attempt ends `SourceStateMismatch`.
 - The Node already holds `s'`: no transition occurred and no transition
   observation is accepted.
 - Actuation or independent target read-back fails: retain partial raw evidence

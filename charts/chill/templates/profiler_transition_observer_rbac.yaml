@@ -64,6 +64,13 @@ rules:
       - nodes
     verbs:
       - get
+  # Each coexistent runner is read through its chill-executor-<Pod UID> Service.
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - get
   - apiGroups:
       - ""
     resources:

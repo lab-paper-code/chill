@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -120,10 +121,8 @@ func TestObserverRetainsRestartedServingProcess(t *testing.T) {
 		}
 		go func() {
 			time.Sleep(4 * time.Millisecond)
-			created <- kubeClient.Create(
-				context.Background(),
-				readyPod("serving-new", "containerd://new", 1),
-			)
+			pod := readyPod("serving-new", "containerd://new", 1)
+			created <- errors.Join(kubeClient.Create(context.Background(), executorService(pod)), kubeClient.Create(context.Background(), pod))
 		}()
 	})
 	if err != nil {
@@ -448,8 +447,22 @@ func newClient(t *testing.T, objects ...client.Object) client.WithWatch {
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add CHILL scheme: %v", err)
 	}
+	// Every runner Pod gets its chill-executor-<Pod UID> Service, the only dial target.
+	for _, object := range objects {
+		if pod, ok := object.(*corev1.Pod); ok {
+			objects = append(objects, executorService(pod))
+		}
+	}
 	objects = append(objects, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "jetsono", UID: "node-uid"}})
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+}
+
+func executorService(pod *corev1.Pod) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: pod.Namespace, Name: "chill-executor-" + string(pod.UID)},
+		Spec: corev1.ServiceSpec{ClusterIP: "10.96.0.10", Selector: map[string]string{"edge.dacs.io/serving-pod-uid": string(pod.UID)},
+			Ports: []corev1.ServicePort{{Name: "http", Protocol: corev1.ProtocolTCP, Port: 8080}}},
+	}
 }
 
 func createActuation(t *testing.T, kubeClient client.Client, actuation *edgev1alpha1.NodeActuation) {
@@ -469,6 +482,9 @@ func createActuation(t *testing.T, kubeClient client.Client, actuation *edgev1al
 type nativeHTTPTransport struct{ endpoint *url.URL }
 
 func (t nativeHTTPTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.URL.Host != "10.96.0.10:8080" {
+		return nil, fmt.Errorf("dialed %s, not the runner Service", request.URL.Host)
+	}
 	copy := request.Clone(request.Context())
 	copy.URL.Scheme = t.endpoint.Scheme
 	copy.URL.Host = t.endpoint.Host

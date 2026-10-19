@@ -89,16 +89,22 @@ func (o *Observer) nativeInstance(ctx context.Context, pod *core.Pod,
 		return transitioncost.NativeInstanceObservation{}, errors.New(
 			"all coexistent native sources must have actual running/readiness identities")
 	}
+	// The runner is reachable across the edge tunnel only through its
+	// chill-executor-<Pod UID> Service, never by PodIP.
+	service := &core.Service{}
+	if err := o.reader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: "chill-executor-" + string(pod.UID)}, service); err != nil {
+		return transitioncost.NativeInstanceObservation{}, fmt.Errorf("get native Service: %w", err)
+	}
 	port := int32(0)
-	for _, p := range container.Ports {
-		if p.Name == "http" && p.HostPort == 0 {
-			port = p.ContainerPort
+	for _, p := range service.Spec.Ports {
+		if p.Name == "http" && p.Protocol == core.ProtocolTCP {
+			port = p.Port
 		}
 	}
-	if port < 1 || net.ParseIP(pod.Status.PodIP) == nil {
-		return transitioncost.NativeInstanceObservation{}, errors.New("native Pod HTTP endpoint unavailable")
+	if port < 1 || net.ParseIP(service.Spec.ClusterIP) == nil || service.Spec.Selector["edge.dacs.io/serving-pod-uid"] != string(pod.UID) {
+		return transitioncost.NativeInstanceObservation{}, errors.New("native Service HTTP endpoint unavailable")
 	}
-	endpoint := "http://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(port))) + "/v2/models/chill_model/state"
+	endpoint := "http://" + net.JoinHostPort(service.Spec.ClusterIP, strconv.Itoa(int(port))) + "/v2/models/chill_model/state"
 	state, err := o.readNativeState(ctx, endpoint)
 	if err != nil {
 		return transitioncost.NativeInstanceObservation{}, err
