@@ -149,7 +149,7 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 	}
 	state := schedulerCaptureClockState(t, controller)
 	snapshot, decision := state.Snapshot, state.Decision
-	if !snapshot.ObservationEnd.Equal(cutoff) || !decision.Search.WindowStart.Equal(from) || !decision.Search.WindowEnd.Equal(cutoff) || decision.Search.Received != 2 {
+	if !snapshot.ObservationEnd.Equal(cutoff) || !decision.Search.WindowStart.Equal(from) || !decision.Search.WindowEnd.Equal(cutoff) || decision.Search.Received != 2 || decision.EvaluationElapsed <= 0 {
 		t.Fatalf("live reads moved the original half-open history interval: snapshot=%+v search=%+v", snapshot, decision.Search)
 	}
 	node, instance := snapshot.Nodes[0], snapshot.Instances[0]

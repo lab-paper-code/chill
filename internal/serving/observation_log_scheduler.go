@@ -65,15 +65,32 @@ func (observationLog *ObservationLog) SchedulerRecord(event SchedulerObservation
 			target := recordedCandidate(*d.Target)
 			recorded.Target = &target
 		}
+		// Keep and Target carry the full bodies; the evaluated list keeps summaries.
 		recorded.Candidates = slices.Clone(d.Candidates)
-		for i := range recorded.Candidates {
-			recorded.Candidates[i] = recordedCandidate(recorded.Candidates[i])
+		for i, c := range d.Candidates {
+			recorded.Candidates[i] = SchedulerCandidate{
+				ID: c.ID, Keep: c.Keep, Status: c.Status, Reasons: c.Reasons, Actions: c.Actions,
+				ExpectedJoules: c.ExpectedJoules, WorstExceedance: c.WorstExceedance,
+			}
+		}
+		if d.Policy != nil {
+			policy := *d.Policy
+			policy.Kernels = nil // Live projection input; History keeps its result.
+			recorded.Policy = &policy
 		}
 		event.Decision = &recorded
 	}
 	if s := event.Snapshot; s != nil {
 		recorded := *s
 		recorded.Instances = recordedInstances(s.Instances)
+		// Window counts stay in Decision.Search; the request stream holds arrivals.
+		recorded.Arrivals = nil
+		recorded.Outstanding = slices.Clone(s.Outstanding)
+		for i, r := range recorded.Outstanding {
+			if r.Definition != nil {
+				recorded.Outstanding[i].DefinitionID, recorded.Outstanding[i].Definition = r.Definition.Identity(), nil
+			}
+		}
 		recorded.Options = slices.Clone(s.Options)
 		for i := range recorded.Options {
 			recorded.Options[i].Instance = recordedInstance(recorded.Options[i].Instance)

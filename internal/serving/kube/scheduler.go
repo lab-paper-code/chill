@@ -227,6 +227,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	config := c.config
 	goal := c.goal
 	c.mu.Unlock()
+	started := time.Now()
 	interval, intervalErr := c.workInterval(now, config.Settings)
 	snapshot, err := c.capture(ctx, now, config)
 	if err != nil {
@@ -244,6 +245,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
+	decision.EvaluationElapsed = time.Since(started)
 	c.mu.Lock()
 	if err := ctx.Err(); err != nil {
 		c.mu.Unlock()

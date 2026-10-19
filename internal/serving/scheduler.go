@@ -106,6 +106,7 @@ type SchedulerRequest struct {
 	QueueOrder            int            `json:"queueOrder"`
 	RemainingLifetime     *time.Duration `json:"remainingLifetimeNanos,omitempty"`
 	Definition            *Definition    `json:"definition"`
+	DefinitionID          string         `json:"definitionID,omitempty"` // Stored records keep Definition.Identity().
 	ReceivedAt            time.Time      `json:"receivedAt"`
 	Elapsed               time.Duration  `json:"elapsedNanos"`
 	QueueAge              time.Duration  `json:"queueAgeNanos"`
@@ -211,17 +212,17 @@ type SchedulerEstimate struct {
 type SchedulerCandidate struct {
 	ID              string                      `json:"id"`
 	Keep            bool                        `json:"keep"`
-	Nodes           []SchedulerNode             `json:"nodes"`
-	Instances       []SchedulerInstance         `json:"instances"`
-	Routing         map[string]map[string]int32 `json:"routing"`
+	Nodes           []SchedulerNode             `json:"nodes,omitempty"`
+	Instances       []SchedulerInstance         `json:"instances,omitempty"`
+	Routing         map[string]map[string]int32 `json:"routing,omitempty"`
 	Actions         []Action                    `json:"actions"`
 	Status          string                      `json:"status"`
 	Reasons         []string                    `json:"reasons"`
-	SLO             []SchedulerEstimate         `json:"slo"`
+	SLO             []SchedulerEstimate         `json:"slo,omitempty"`
 	ExpectedJoules  *float64                    `json:"expectedJoules"`
 	WorstExceedance float64                     `json:"worstExceedance"`
-	Assumptions     []string                    `json:"assumptions"`
-	Sources         []string                    `json:"sources"`
+	Assumptions     []string                    `json:"assumptions,omitempty"`
+	Sources         []string                    `json:"sources,omitempty"`
 }
 type SchedulerSearch struct {
 	Examined      int               `json:"examined"`
@@ -269,6 +270,8 @@ type SchedulerDecision struct {
 	Workloads  []SchedulerWorkloadState `json:"workloads"`
 	References []string                 `json:"references"`
 	Policy     *SchedulerPolicyDecision `json:"policy,omitempty"`
+	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
+	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
 }
 
 func (s SchedulerSettings) Validate() error {

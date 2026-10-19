@@ -483,3 +483,88 @@ func TestDefinitionCensusLoadsAppendsToPreviouslyEmptyPrefixes(t *testing.T) {
 		})
 	}
 }
+
+// Scale of docs/design/serving/decision-record-diet.md §1.
+func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = observationLog.Close(context.Background()) }()
+	_, snapshot := schedulerFixture()
+	at := time.Now().UTC().Add(-time.Minute)
+	instance := snapshot.Instances[0]
+	profile := *instance.Profile
+	profile.Batches = make([]BatchProfile, 6)
+	for b := range profile.Batches {
+		profile.Batches[b] = BatchProfile{Batch: b + 1, DurationNanos: make([]float64, 200)}
+		for s := range profile.Batches[b].DurationNanos {
+			profile.Batches[b].DurationNanos[s] = 12345678.9 + float64(s)
+		}
+	}
+	instance.Profile = &profile
+	instance.ArrivalAges = map[string][]time.Duration{"w1": {time.Second, 2 * time.Second}}
+	instances := repeated([]SchedulerInstance{instance}, 6)
+	nodes := repeated(snapshot.Nodes, 8)
+	snapshot.Nodes, snapshot.Instances = nodes, instances
+	snapshot.Workloads = repeated(snapshot.Workloads, 3)
+	snapshot.Options = repeated(snapshot.Options[:1], 16)
+	for i := range snapshot.Options {
+		snapshot.Options[i].Instance = instance
+	}
+	definition := snapshot.Workloads[0]
+	snapshot.Arrivals = repeated([]SchedulerArrival{{ID: "request", At: at, Definition: definition, Accepted: true, Compute: true, WorkloadUID: "w1"}}, 3000)
+	snapshot.Outstanding = repeated([]SchedulerRequest{{ID: "request", Definition: definition, ReceivedAt: at, Phase: "queued", Instance: "i1"}}, 20)
+	actions := []Action{{ID: "prepare", Kind: "prepare", Node: nodes[0].Node, Instance: "i1", DependsOn: []string{}, Status: "planned"}}
+	joules := 42.5
+	candidate := SchedulerCandidate{
+		ID: "candidate", Nodes: nodes, Instances: instances, Routing: map[string]map[string]int32{"w1": {"i1": 1}}, Actions: actions,
+		Status: "evaluated", Reasons: []string{"reason"}, ExpectedJoules: &joules, WorstExceedance: 0.25,
+		SLO: []SchedulerEstimate{{UID: "w1", Definition: definition.Identity(), Samples: 100, Percentile: 95}}, Assumptions: []string{"assumption"}, Sources: []string{"source"},
+	}
+	decision := SchedulerDecision{At: at, Status: "target", Keep: candidate, Target: &candidate, Candidates: repeated([]SchedulerCandidate{candidate}, 128), EvaluationElapsed: 3 * time.Millisecond,
+		Policy: &SchedulerPolicyDecision{Kernels: map[string]map[string]SchedulerTransitionProjection{"a": {"b": {}}}}}
+	event := SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}
+	before, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = observationLog.SchedulerRecord(event); err != nil {
+		t.Fatal(err)
+	}
+	info, err := observationLog.files["scheduler"].Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("decision record bytes: before %d after %d", len(before), info.Size())
+	if info.Size() > 100<<10 {
+		t.Fatalf("stored decision record %d bytes exceeds 100KiB", info.Size())
+	}
+	// The Dashboard history route reads this page.
+	page, _, err := observationLog.SchedulerObservationPage(at, at.Add(time.Second), 1, 0)
+	if err != nil || len(page) != 1 {
+		t.Fatalf("stored decision not readable: %+v %v", page, err)
+	}
+	stored, storedSnapshot := page[0].Decision, page[0].Snapshot
+	if stored.EvaluationElapsed != 3*time.Millisecond || stored.Policy.Kernels != nil {
+		t.Fatalf("decision timing or kernels: %+v", stored)
+	}
+	if stored.Keep.Instances[0].ProfileID != profile.ID || stored.Keep.Instances[0].Profile != nil || stored.Target.SLO == nil || len(stored.Target.Nodes) != 8 {
+		t.Fatalf("keep or target lost its body: %+v", stored.Keep)
+	}
+	summary := stored.Candidates[127]
+	if len(stored.Candidates) != 128 || summary.ID != "candidate" || summary.Status != "evaluated" || *summary.ExpectedJoules != joules || summary.WorstExceedance != 0.25 || len(summary.Actions) != 1 || summary.Instances != nil || summary.SLO != nil {
+		t.Fatalf("candidate summary: %+v", summary)
+	}
+	if storedSnapshot.Arrivals != nil || storedSnapshot.Outstanding[0].Definition != nil || storedSnapshot.Outstanding[0].DefinitionID != definition.Identity() || storedSnapshot.Instances[0].ArrivalAges["w1"][1] != 2*time.Second {
+		t.Fatalf("snapshot replay inputs: %+v", storedSnapshot)
+	}
+}
+
+func repeated[T any](items []T, n int) []T {
+	out := make([]T, 0, len(items)*n)
+	for range n {
+		out = append(out, items...)
+	}
+	return out
+}
