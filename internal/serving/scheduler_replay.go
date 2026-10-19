@@ -320,6 +320,23 @@ func schedulerRouted(c SchedulerCandidate, uid string) bool {
 	return false
 }
 
+// SchedulerFixedBatchAutonomy rejects autonomy for a Workload still routed to a
+// strict fixed-batch baseline; the operator removes that routing first.
+func SchedulerFixedBatchAutonomy(snapshot SchedulerSnapshot, autonomous []string) error {
+	fixed := SchedulerCandidate{Routing: snapshot.Routing}
+	for _, i := range snapshot.Instances {
+		if i.FixedBatchSize > 0 {
+			fixed.Instances = append(fixed.Instances, i)
+		}
+	}
+	for _, uid := range autonomous {
+		if schedulerRouted(fixed, uid) {
+			return fmt.Errorf("workload %s is routed to a fixedBatchSize instance; remove that routing before enabling autonomy", uid)
+		}
+	}
+	return nil
+}
+
 // schedulerSLOTargets are every Controlled Workload plus each other Workload
 // with an instance on a Node that has a planned action, or whose bindings change.
 func schedulerSLOTargets(snapshot SchedulerSnapshot, c SchedulerCandidate, controlled []string) map[string]bool {
@@ -1350,7 +1367,7 @@ func (s *schedulerReplayState) operationCost(a *schedulerReplayAction) *Operatio
 				state = append(state, schedulerState(i.config))
 			}
 		}
-		if len(state) == 0 && schedulerAvailable(s.snap, schedulerSnapshotNode(s.snap.Nodes, a.action.Node)) {
+		if n := slices.IndexFunc(s.snap.Nodes, func(n SchedulerNode) bool { return n.Node == a.action.Node }); len(state) == 0 && n >= 0 && schedulerAvailable(s.snap, s.snap.Nodes[n]) {
 			// Re-entering an available Node: its power raise uses the transition
 			// measured with the runner the next prepare loads.
 			for _, next := range s.actions {
@@ -1372,15 +1389,6 @@ func (s *schedulerReplayState) operationCost(a *schedulerReplayAction) *Operatio
 		return nil
 	}
 	return cost
-}
-
-func schedulerSnapshotNode(nodes []SchedulerNode, node NodeReference) SchedulerNode {
-	for _, n := range nodes {
-		if n.Node == node {
-			return n
-		}
-	}
-	return SchedulerNode{}
 }
 
 func (s *schedulerReplayState) sampleOperation(a *schedulerReplayAction, cost *OperationCost) bool {

@@ -162,7 +162,7 @@ func TestOwnerMutationFlagsRejectBeforeClientCreation(t *testing.T) {
 		called := false
 		deps := dependencies{
 			newMeasurements: func(operationOptions) (measurementOperations, error) { called = true; return nil, nil },
-			newProfiles:     func(operationOptions) (profileOperations, error) { called = true; return nil, nil },
+			newProfiles:     func(operationOptions) (*profileClient, error) { called = true; return nil, nil },
 			newPreflightQuery: func(operationOptions) (batchEnergyOptimizationPreflightQuery, error) {
 				called = true
 				return nil, nil

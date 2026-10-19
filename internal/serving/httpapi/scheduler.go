@@ -88,6 +88,10 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 	}
 	// The stored list names only current Workloads.
 	settings.AutonomousWorkloads = slices.DeleteFunc(slices.Clone(settings.AutonomousWorkloads), func(uid string) bool { return !current[uid] })
+	if err := serving.SchedulerFixedBatchAutonomy(h.config.Scheduler.State().Snapshot, settings.AutonomousWorkloads); err != nil {
+		sendError(w, &serving.Error{Code: "InvalidBody", Message: err.Error(), Field: "autonomousWorkloads"})
+		return
+	}
 	h.config.SchedulerLock.Lock()
 	defer h.config.SchedulerLock.Unlock()
 	username, uid := principal.Actor()

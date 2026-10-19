@@ -34,7 +34,7 @@ type dependencies struct {
 	newRunShowQuery   func(profilingRunShowOptions) (evidencePassportQuery, error)
 	newPreflightQuery func(operationOptions) (batchEnergyOptimizationPreflightQuery, error)
 	newMeasurements   func(operationOptions) (measurementOperations, error)
-	newProfiles       func(operationOptions) (profileOperations, error)
+	newProfiles       func(operationOptions) (*profileClient, error)
 }
 
 func productionDependencies() dependencies {

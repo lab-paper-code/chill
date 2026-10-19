@@ -369,16 +369,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 	if err := bindPreparationAffinity(&spec); err != nil {
 		return err
 	}
-	node, err := o.kube.CoreV1().Nodes().Get(ctx, spec.Instance.Node.Name, meta.GetOptions{})
-	if err != nil {
-		return err
-	}
-	if string(node.UID) != spec.Instance.Node.UID {
-		return errors.New("actual Node differs from preparation")
-	}
-	if err = o.admitNode(node); err != nil {
-		return err
-	}
+	node := spec.Instance.Node
 	host, delivery, err := measuredRuntimeDelivery(p)
 	if err != nil {
 		return err
@@ -425,6 +416,10 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		runtime.SecurityContext = &core.SecurityContext{Privileged: ptr.To(host.Privileged), AllowPrivilegeEscalation: ptr.To(host.Privileged)}
 		pod.Spec.Volumes = append(pod.Spec.Volumes, host.Volumes...)
 		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: host.SupplementalGroups}
+	}
+	// ponytail: admitted just before the Pod create; the remaining window closes with M3 single-writer fencing.
+	if err = o.admittedNode(ctx, node); err != nil {
+		return err
 	}
 	if err = o.store.client.Create(ctx, pod); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
@@ -752,14 +747,8 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 	if request == nil || request.Spec.Node.Name != node.Name || request.Spec.Node.UID != node.UID {
 		return errors.New("exact NodeActuation target required")
 	}
-	current, err := o.kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
+	err := o.admittedNode(ctx, node)
 	if err != nil {
-		return err
-	}
-	if string(current.UID) != node.UID {
-		return errors.New("physical Node identity changed")
-	}
-	if err = o.admitNode(current); err != nil {
 		return err
 	}
 	o.observer.mu.Lock()
@@ -785,6 +774,10 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 	}
 	copy := request.DeepCopy()
 	copy.Namespace = o.config.ActuationNamespace
+	// ponytail: re-admitted just before the NodeActuation create; the remaining window closes with M3 single-writer fencing.
+	if err = o.admittedNode(ctx, node); err != nil {
+		return err
+	}
 	if err = o.store.client.Create(ctx, copy); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
 	}
@@ -828,6 +821,18 @@ func (o *Operations) placeServingPod(pod *core.Pod, owner *serving.WorkloadRefer
 	if owner != nil {
 		pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: owner.Name, UID: types.UID(owner.UID)}}
 	}
+}
+
+// admittedNode GETs the exact Node and admits it for this operation.
+func (o *Operations) admittedNode(ctx context.Context, ref serving.NodeReference) error {
+	node, err := o.kube.CoreV1().Nodes().Get(ctx, ref.Name, meta.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if string(node.UID) != ref.UID {
+		return errors.New("physical Node identity changed")
+	}
+	return o.admitNode(node)
 }
 
 // admitNode lets measurement operations act only on a measurement POOL Node and

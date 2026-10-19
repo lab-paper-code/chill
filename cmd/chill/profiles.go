@@ -13,13 +13,9 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
 
-type profileOperations interface {
-	List(context.Context) (httpapi.ProfilesView, error)
-}
-
 type profileClient struct{ *ownerClient }
 
-func newProfileOperations(opts operationOptions) (profileOperations, error) {
+func newProfileOperations(opts operationOptions) (*profileClient, error) {
 	config, namespace, err := loadKubernetesConfig(opts.kubeconfig, opts.context)
 	if err != nil {
 		return nil, err

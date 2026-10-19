@@ -39,6 +39,11 @@ func ProjectSchedulerWorkKernels(ctx context.Context, settings SchedulerSettings
 	if invalid == nil && settings.ObservationWindow != settings.Horizon {
 		invalid = fmt.Errorf("projection requires one completed receipt interval")
 	}
+	retained := make([]SchedulerCandidate, 0, len(configurations))
+	for _, c := range configurations {
+		retained = append(retained, c)
+	}
+	compared := schedulerComparedNodes(observed, retained)
 	for source := range sources {
 		current, exists := configurations[source]
 		kernels[source] = make(map[string]SchedulerTransitionProjection, len(configurations))
@@ -54,7 +59,7 @@ func ProjectSchedulerWorkKernels(ctx context.Context, settings SchedulerSettings
 				kernels[source][destination] = SchedulerTransitionProjection{Status: schedulerStatusPending, Reasons: []string{"MissingHistoryConfiguration"}}
 				continue
 			}
-			projection, err := projectSchedulerTransition(ctx, settings, observed, current, target, source == destination)
+			projection, err := projectSchedulerTransition(ctx, settings, observed, current, target, source == destination, compared)
 			if err != nil {
 				return nil, err
 			}

@@ -35,7 +35,10 @@ func EnumerateScheduler(ctx context.Context, settings SchedulerSettings, snapsho
 	if snapshot.InProgressTarget != nil {
 		keep.Actions = schedulerPlan(snapshot, *snapshot.InProgressTarget)
 	} else {
-		keep.Actions = schedulerFixedActions(snapshot, keep)
+		// Only the shared lowering of available Nodes.
+		p := schedulerPlanState{snap: snapshot, target: &keep, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
+		p.changeNodes(keep)
+		keep.Actions = p.actions
 	}
 	result[0] = keep
 	workloads := []*Definition{}
@@ -163,13 +166,6 @@ func schedulerCommonNodes(settings SchedulerSettings, snapshot SchedulerSnapshot
 		}
 	}
 	return nodes
-}
-
-// schedulerFixedActions plans only the shared lowering of available Nodes.
-func schedulerFixedActions(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
-	p := schedulerPlanState{snap: snap, target: &c, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
-	p.changeNodes(c)
-	return p.actions
 }
 
 func schedulerInstanceRouting(ctx context.Context, workloads []*Definition, instances []SchedulerInstance) map[string]map[string]int32 {

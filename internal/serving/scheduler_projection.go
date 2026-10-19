@@ -43,10 +43,10 @@ func ProjectSchedulerTransition(ctx context.Context, settings SchedulerSettings,
 		}
 		return out, ctx.Err()
 	}
-	return projectSchedulerTransition(ctx, settings, observed, source, target, sourceKey == targetKey)
+	return projectSchedulerTransition(ctx, settings, observed, source, target, sourceKey == targetKey, nil)
 }
 
-func projectSchedulerTransition(ctx context.Context, settings SchedulerSettings, observed SchedulerSnapshot, source, target SchedulerCandidate, diagonal bool) (SchedulerTransitionProjection, error) {
+func projectSchedulerTransition(ctx context.Context, settings SchedulerSettings, observed SchedulerSnapshot, source, target SchedulerCandidate, diagonal bool, compared map[NodeReference]bool) (SchedulerTransitionProjection, error) {
 	if err := ctx.Err(); err != nil {
 		return SchedulerTransitionProjection{}, err
 	}
@@ -80,7 +80,7 @@ func projectSchedulerTransition(ctx context.Context, settings SchedulerSettings,
 	}
 	energy := 0.0
 	for replay := range settings.Replays {
-		r, err := schedulerReplayModel(ctx, settings, snap, target, rand.New(rand.NewPCG(uint64(settings.Seed), uint64(replay))), true, nil)
+		r, err := schedulerReplayModel(ctx, settings, snap, target, rand.New(rand.NewPCG(uint64(settings.Seed), uint64(replay))), true, compared)
 		if err != nil {
 			return SchedulerTransitionProjection{}, err
 		}

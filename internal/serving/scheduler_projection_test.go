@@ -87,6 +87,25 @@ func TestSchedulerProjectionDirectedWholePoolAndDiagonal(t *testing.T) {
 	}
 }
 
+// Spec ②: an unchanged Node without a baseline does not block projected-work kernels.
+func TestSchedulerWorkKernelsIgnoreUnchangedNodeWithoutBaseline(t *testing.T) {
+	settings, snapshot, source, target := schedulerProjectionFixture()
+	bare := snapshot.Nodes[0]
+	bare.Node.UID += "-bare"
+	bare.Node.Name += "-bare"
+	snapshot.Nodes = append(append([]SchedulerNode(nil), snapshot.Nodes...), bare)
+	source.Nodes, target.Nodes = snapshot.Nodes, snapshot.Nodes
+	kernels, err := ProjectSchedulerWorkKernels(context.Background(), settings, snapshot, map[string]SchedulerCandidate{"a": source, "b": target}, map[string]float64{"a": 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for destination, edge := range kernels["a"] {
+		if edge.Status != schedulerStatusFeasible || edge.ExpectedJoules == nil {
+			t.Fatalf("edge a->%s pending: %+v", destination, edge)
+		}
+	}
+}
+
 func TestSchedulerProjectionRejectsIncompleteAndMissingDirectedPrimitive(t *testing.T) {
 	settings, snapshot, source, target := schedulerProjectionFixture()
 	settings.Horizon, settings.ObservationWindow = 25*time.Millisecond, 25*time.Millisecond

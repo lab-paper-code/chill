@@ -228,7 +228,10 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	namespaces := o.profileNamespaces()
+	namespaces := o.opts.profileNamespaces
+	if len(namespaces) == 0 {
+		namespaces = []string{o.opts.servingNamespace}
+	}
 	view, err := o.catalog.Refresh(ctx, namespaces)
 	if err != nil {
 		return err

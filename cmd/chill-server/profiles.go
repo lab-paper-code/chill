@@ -26,13 +26,6 @@ import (
 
 const preparationUnavailable = "PreparationUnavailable"
 
-func (o *schedulerService) profileNamespaces() []string {
-	if len(o.opts.profileNamespaces) == 0 {
-		return []string{o.opts.servingNamespace}
-	}
-	return o.opts.profileNamespaces
-}
-
 // profilesView returns the catalog of the accepted configuration without
 // waiting behind refresh or Tick.
 func (o *schedulerService) profilesView(context.Context) (httpapi.ProfilesView, error) {
