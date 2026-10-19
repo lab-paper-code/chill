@@ -187,6 +187,37 @@ CPU 측정의 `cpuAffinity`와 campaign의 `cpuQuota`는 선택한 physical mask
 inventory·적용 affinity를 raw에 연결하며 quota와 mask의 의미를 각각 유지한다.
 기존 quota-only reference 측정은 별도 조건으로 유지한다.
 
+## Strict fixed-size baseline serving
+
+`SCH-35`의 비교 기준 실험 설정이다. 기준 동작은 상류 snapshot
+`/home/genesis1/ETRI/donghwan/firstfloor`(HANDOFF.md 기준일 2026-10-14)의
+`README.md:74-81`과 `internal/serving/fixed_scheduler.go`다.
+
+운영자는 firstfloor serving policy의 `fixedBatchSize`로 B를 설정한다. 0은 dynamic이다.
+B는 frozen Run/instance 설정과 worker metadata ack에 기록하며 CLI flag는 두지 않는다.
+worker 시작 시 B는 측정된 `Policy.Batches`, 초기화된 `BatchSizes`, `MaxBatchSize`,
+큐 용량 안에 있어야 하고 profiling mode에서는 거절한다. B는 instance 수명 동안 고정이며,
+B의 profile을 제거하는 reload는 거절하고 현재 snapshot을 유지한다. B 변경은 instance 교체다.
+
+actor의 선택 함수는 `sameQueue`의 `(WorkloadUID, Definition)` 그룹 중 B개 이상 대기한
+그룹에서 기존 stable EDF 순서로 정확히 B개를 고른다. B개 미만이면 dispatch하지 않는다.
+`MaxBatchWaitMS` 타이머, SLO 여유, completion margin, energy gain, `deadlinePolicy`의
+drop/defer는 선택에 쓰지 않는다. SLO가 지난 요청도 B에 포함해 실행하고 초과로 기록한다.
+caller cancel과 명시적 lifetime은 대기 요청을 제거해 슬롯과 byte를 돌려주고, 큐 count/byte
+cap은 기존 오류로 거절한다. 종료 시 남은 tail은 실행하지 않고 대기 요청을 unavailable로
+끝낸다. progress의 `BatchSize`는 B이며 profiling fixed-K `/profile` 경로와는 별개다.
+
+자동제어와 replay는 `fixedBatchSize>0` instance를 후보로 쓰지 않으므로 replay는 이 선택을
+재현하지 않는다. 비교는 같은 부하에서 관측 기록의 실측 지연·에너지로 한다.
+
+구현 단위의 파일은 `internal/firstfloor/types.go`(Policy와 metadata 필드),
+`config.go`(시작 검증), `policy.go`(B 선택 분기), `scheduler.go`(SLO 경로 분리, reload 거절),
+`internal/serving/kube/operations.go`, `scheduler.go`(전달과 ack 비교, 변경 시 교체),
+`internal/serving/firstfloor/client.go`(metadata 검증), 자동제어 후보 필터다.
+검사는 `internal/firstfloor/worker_test.go`의 B-1 미실행, B+1 정확히 B 실행과 tail 대기,
+SLO 경과 후 실행, cancel/lifetime 용량 회수, shutdown tail 미실행, 잘못된 B와 B 제거 reload
+거절, 그리고 `internal/serving/kube` ack 비교 테스트다.
+
 ## baseline과 실제 원자 동작 측정
 
 profile은 raw service 분포, incremental energy/input, measured memory뿐 아니라

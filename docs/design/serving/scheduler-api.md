@@ -19,6 +19,7 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 | `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `50`은 잠정 값이며 E1의 `completionResidualNanos` 분포로 정한다([워크로드별 POOL](workload-pools.md#36-완료-여유)) |
 | `cpuInventory`, `gpuInventory`, `reserved` | Node별 실제 CPU IDs·물리 GPU UUIDs와 비서빙 전용 예약. quota는 별도 수량 예산 |
 | `preparations` | catalog profile ID별 `PrepareSpec`. 검증된 profile과 immutable service 분포 bundle은 ChillServer가 연결 |
+| `preparations[profileID]`의 firstfloor `Policy.fixedBatchSize` | 0 또는 생략은 dynamic. 양수 B는 비교 기준 strict fixed-size serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](scheduler-runtime-measurement.md#strict-fixed-size-baseline-serving)) |
 | `preparations[profileID].completionCalibration` | 선택 OPTIONAL: 고정 `from/to`, `windows[].metadata/definitions/requests`의 기존 `ObjectIdentity`; raw 계약·파일은 재작성하지 않음 |
 | `staticRouting` | OPTIONAL 전체 현재 Workload UID → physical instance ID → nonnegative int32 weight; UID마다 positive weight 하나 이상. controls OFF의 명시 config revision만 기존 typed ApplyTarget 경로로 적용·physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. stale UID/target은 오류; 선언을 유지하는 OFF refresh는 baseline을 보존하며 이후 CHILL은 실제 routing에서 시작 |
 | `costReferences`, `powerCostSources` | 실제 원자 동작 raw object와 Complete directed power-mode 측정의 출처 |
