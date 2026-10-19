@@ -16,7 +16,7 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 | 구성 필드 | 의미와 실제 근거 |
 |---|---|
 | `settings` | nanosecond duration의 observation/control/horizon, search/replay/resource bounds·seed·제어 활성 상태 |
-| `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `50`은 잠정 값이며 E1의 `completionResidualNanos` 분포로 정한다([워크로드별 POOL](workload-pools.md#36-완료-여유)) |
+| `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `139`는 E1(rasp5 CPU, 2 req/s 60분, n=8312)의 `completionResidualNanos` p99 138.23 ms를 올림한 값이다([워크로드별 POOL](workload-pools.md#36-완료-여유)) |
 | `settings.autonomousWorkloads` | 자동제어할 Workload UID 목록. decision은 Workload마다 `workloads[]`에 `Disabled`, `MeasurementEvidenceMissing`, `Controlled` 상태와 사유를 남긴다([워크로드별 자동제어](workload-pools.md#31-워크로드별-자동제어)) |
 | `cpuInventory`, `gpuInventory`, `reserved` | Node별 실제 CPU IDs·물리 GPU UUIDs와 비서빙 전용 예약. quota는 별도 수량 예산 |
 | `staticRouting` | OPTIONAL 부분 map: 자동제어하지 않는 현재 Workload UID → physical instance ID → nonnegative int32 weight; 선언한 UID마다 positive weight 하나 이상. 선언하지 않은 UID는 현재 routing을 유지한다. 명시 config revision을 기존 typed ApplyTarget 경로로 적용하고 physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. 현재가 아닌 UID, `autonomousWorkloads`의 UID와 stale target은 오류 |

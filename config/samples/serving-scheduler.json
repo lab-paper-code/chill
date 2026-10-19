@@ -13,7 +13,7 @@
     "maxReplayRequests": 100000,
     "maxCPUs": 256,
     "servingMemoryBytes": 0,
-    "completionMarginMS": 50,
+    "completionMarginMS": 139,
     "autonomousWorkloads": [],
     "controls": {
       "placement": false,
