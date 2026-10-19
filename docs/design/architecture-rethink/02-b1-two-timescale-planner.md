@@ -1,7 +1,7 @@
 # 02. B1 — 두 시간척도 분리와 분석형 용량 계획기
 
-상태: **권고(B2와 함께)**. 명세 변경 ①, ①', ②, ③, ④가 필요하다([06](06-spec-change-proposals.md)).
-채택 전 M4 shadow 검증을 통과해야 한다([05](05-recommendation-migration.md), [07](07-validation.md)).
+상태: **채택(B2와 함께, 이행 단계 M4)**. 명세 변경 ①, ①', ②, ③, ④가 필요하다([06](06-spec-change-proposals.md)).
+전환 전에 M4 shadow 검증을 통과해야 한다([05](05-recommendation-migration.md), [07](07-validation.md)).
 
 ## 핵심 아이디어
 

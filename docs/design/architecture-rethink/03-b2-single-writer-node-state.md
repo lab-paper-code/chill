@@ -1,7 +1,8 @@
 # 03. B2 — 노드 상태의 단일 writer, native fence, 측정 admission
 
-상태: **권고(B1과 함께)**. **명세 변경 불필요**(메커니즘만 바뀜). 판단 알고리즘과 독립적이라 A나 B1 어느 쪽과도
-조합할 수 있다. workload-pools 설계 commit 5(§3.3 전체)를 이것으로 대체하는 것이 제안의 핵심이다.
+상태: **채택(B1과 함께, 이행 단계 M3)**. **명세 변경 불필요**(메커니즘만 바뀜). 판단 알고리즘과 독립적이라 A나 B1
+어느 쪽과도 조합할 수 있다. workload-pools 설계 §3.3에서 운영자가 손으로 붙이고 떼는 taint `chill.dacs.io/measurement`를
+단일 writer가 측정 객체에 따라 다루게 한다.
 
 ## 핵심 아이디어
 
@@ -14,21 +15,20 @@
 
 1. 측정 controller가 Measurement CR에 노드를 요청한다.
 2. 단일 writer가 노드가 비어 있는지(CHILL serving 인스턴스 없음) 확인한 뒤 taint
-   `chill.dacs.io/measuring=<owner>:NoSchedule`과 grant generation을 쓴다. 서빙 중이면 거절하고 사유를 남긴다
-   (`SCH-34`, `DB-FR-34`).
-3. serving Pod에는 이 toleration이 없으므로 **kube-scheduler가 배치를 거부**한다. check-then-act가 필요 없다.
-   측정 Job Pod는 toleration을 갖는다.
+   `chill.dacs.io/measurement=<owner>:NoSchedule`과 grant generation을 쓴다. 서빙 중이면 거절하고 사유를 남긴다
+   (`SCH-34`, `DB-FR-34`). taint key는 M3 전의 운영자 절차와 같다.
+3. 측정 Job Pod는 toleration을 갖고, kube-scheduler가 다른 Pod의 배치를 거부한다. CHILL serving Pod는 `spec.nodeName`으로
+   만들어 kube-scheduler를 거치지 않으므로, 이미 workload-pools §3.3대로 ChillServer가 taint 노드를 배치, 내림, 전력
+   변경에서 뺀다. 단일 writer는 같은 프로세스에서 grant와 prepare를 정렬하므로 확인과 동작 사이의 경쟁 구간이 없다.
 4. 전력 변경에는 grant generation을 **fencing token**으로 실어 보내고, agent는 오래된 generation을 거절한다.
-   ADR 0022가 Node별 Lease를 기각한 이유("만료 뒤 늦게 도착한 요청을 막지 못한다")를 이것으로 해결한다.
+   만료 뒤 늦게 도착한 요청도 generation이 맞지 않아 거절된다.
 5. 측정이 terminal이 되면 controller가 요청을 지우고, writer가 taint를 지운다(반환).
 6. 측정 객체가 삭제되면 ownerRef GC가 동작하고, writer가 "요청자 없음"을 보고 taint를 지운다.
-   ADR 0022의 수동 annotation 정리가 필요 없어진다.
+   운영자의 수동 정리가 필요 없다.
 
-ADR 0022/workload-pools §3.3은 "ChillServer 단일 writer"를 기각했다. 이유는 (a) `serving-operation`도 자기
-프로세스에서 serving Pod를 만든다, (b) 세 controller의 점유 요청을 ChillServer가 watch·승인하는 경로가 더
-필요하다는 것이었다. 이 제안의 반론: (a)는 `serving-operation`을 ChillServer에 요청하는 클라이언트로 바꿔
-생성 경로를 하나로 줄이면 해소되고, (b)의 승인 경로는 "요청 field → 승인 status" 한 쌍(Kueue AdmissionCheck 패턴)
-이라 4개 실행 주체의 Acquire/Release/Check와 ~10곳의 terminal 사유 처리보다 작다.
+단일 writer에 필요한 것은 두 가지다. `serving-operation`을 ChillServer에 요청하는 클라이언트로 바꿔 serving Pod
+생성 경로를 하나로 줄이는 것과, 측정 controller의 "요청 field → 승인 status" 한 쌍(Kueue AdmissionCheck 패턴)이다.
+여러 실행 주체가 각자 점유를 쓰고 확인하는 방식보다 작고, check-then-act 경쟁 구간이 없다.
 
 ## 부수 정리
 
@@ -46,12 +46,9 @@ ADR 0022/workload-pools §3.3은 "ChillServer 단일 writer"를 기각했다. �
 
 ## 현재 설계에서 지우는 것
 
-- workload-pools §3.3 거의 전부:
-  - 4개 실행 주체의 `Acquire`/`Release`/`Check`(`internal/measurementpool` 신규 package 포함)
-  - Busy 시 10초 `RequeueAfter` polling
-  - `NodeServing`/`NodeNotInMeasurementPool` terminal 사유 처리 지점 ~10곳과 각 focused test
-  - Run/Job 경계 owner 확인
-- ADR 0022의 ponytail 경쟁 구간.
+- workload-pools §3.3의 운영자 taint 절차(붙이고 떼는 `kubectl taint`, serving 인스턴스 없음 확인). taint key,
+  toleration과 ChillServer의 taint 노드 제외는 그대로 쓴다.
+- 운영자가 준비하는 전환 비용 runner와 Service. 단일 writer가 측정 소유로 만들고 반환 전에 지운다.
 - NodeActuation의 phase 기계.
 - `serving-operation`이 직접 Pod를 만드는 두 번째 생성 경로.
 

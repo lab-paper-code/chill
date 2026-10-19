@@ -2,9 +2,9 @@
 
 ## 상태
 
-**제안(미채택).** 2026-10-19 작성. 이 디렉터리는 결정이 아니라 *제안과 그 근거*다.
-명세(`docs/spec/`) 변경 제안은 사용자 승인 전까지 효력이 없다. 채택되면 해당 부분을 ADR과
-각 도메인 설계로 옮기고 이 문서의 상태를 갱신한다.
+**채택.** 사용자가 B1과 B2, 이행 단계 M0–M5를 채택했고 B3는 비교 실험 기준선으로 둔다. 명세 변경은
+[06](06-spec-change-proposals.md)에서 사용자가 승인한 항목만 효력이 있다. 각 단계를 구현할 때 해당 부분을 ADR과
+도메인 설계로 옮긴다.
 
 ## 왜 이 문서가 있는가
 
@@ -29,8 +29,8 @@ distributed-systems architect 관점에서 다시 본 결과다. 외부 선례(�
 **B1(두 시간척도 분리: 빠른 데이터 경로 + 분석형 용량 계획기)과 B2(노드 상태 단일 writer +
 native fence + 측정 admission)를 함께 채택하고, B3(완전 분산 autoscaler/governor/consolidator)는
 비교 실험 기준선으로 둔다.** ~10MB 결정 기록은 명세가 요구한 것이 아니라 구현의 선택이므로
-명세 변경 없이 즉시 줄일 수 있다(M0). workload-pools 설계의 commit 1–4는 유지하고, commit 5
-(측정 POOL annotation + 4개 실행 주체의 Acquire/Release/Check)는 B2로 대체한다.
+명세 변경 없이 즉시 줄일 수 있다(M0). workload-pools 설계의 commit 1–5는 유지한다. M3 전까지 측정 격리는 운영자가
+붙이고 떼는 taint `chill.dacs.io/measurement`(§3.3)이고, B2(M3)는 같은 taint를 단일 writer가 다루게 한다.
 
 ## 의도 보존 메모 (다음 에이전트가 오해하기 쉬운 지점)
 
