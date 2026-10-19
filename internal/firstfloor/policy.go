@@ -86,6 +86,9 @@ func batchFeasible(requests []RequestState, head int, b BatchProfile) bool {
 // is never preempted; only expired queued drops can be selected while active.
 // ponytail: bounded O(requests²*profiles) scan; index only if measured CPU warrants it.
 func ChooseBatch(p Policy, requests []RequestState) BatchChoice {
+	if p.FixedBatchSize > 0 {
+		return chooseFixedBatch(p.FixedBatchSize, requests)
+	}
 	head, deferred, active := queueHeads(requests)
 	mode := EffectiveDeadlinePolicy(p.DeadlinePolicy)
 	if mode == DeadlineDrop && head >= 0 && SLOExpired(requests[head]) {
@@ -187,4 +190,32 @@ func energyGainWait(p Policy, requests []RequestState, head, count int, availabl
 		}
 	}
 	return choice
+}
+
+// chooseFixedBatch serves exactly size requests of the earliest EDF compatible
+// group that has size queued; SLO, margin, energy and deadlinePolicy are unused.
+func chooseFixedBatch(size int, requests []RequestState) BatchChoice {
+	best := -1
+	for i, r := range requests {
+		if r.Phase == phaseRunning {
+			return BatchChoice{Reason: "active"}
+		}
+		if !normalRequest(r) || best >= 0 && !earlierEDF(requests, i, best) {
+			continue
+		}
+		count := 0
+		for _, q := range requests {
+			if normalRequest(q) && sameQueue(q, r) {
+				count++
+			}
+		}
+		if count >= size {
+			best = i
+		}
+	}
+	if best < 0 {
+		return BatchChoice{Reason: "fixed_batch_filling"}
+	}
+	r := requests[best]
+	return BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition, Size: size, Reason: "fixed_batch"}
 }

@@ -71,7 +71,7 @@ func TestAcknowledgedExistingHandoffDoesNotStarveCleanupOnPolicyRefresh(t *testi
 }
 
 func TestHandoffCleanupRequiresExistingAcknowledgedReadyEffectNotJustGatewayMap(t *testing.T) {
-	for _, missing := range []string{"completed run", "native readiness", "profile identity", "allocation", "policy ack", "routing", "physical destination"} {
+	for _, missing := range []string{"completed run", "native readiness", "profile identity", "allocation", "policy ack", "fixed batch ack", "routing", "physical destination"} {
 		t.Run(missing, func(t *testing.T) {
 			controller, target, physical := acknowledgedHandoffFixture(t)
 			switch missing {
@@ -85,6 +85,8 @@ func TestHandoffCleanupRequiresExistingAcknowledgedReadyEffectNotJustGatewayMap(
 				controller.state.Snapshot.Instances[0].Allocation.MemoryBytes++
 			case "policy ack":
 				physical.State.Native.Metadata.Policy.MaxBatchSize++
+			case "fixed batch ack":
+				physical.State.Native.Metadata.Policy.FixedBatchSize = 1
 			case "routing":
 				target.Routing = map[string]map[string]int32{target.Instances[0].WorkloadUIDs[0]: {target.Instances[0].ID: 2}}
 			case "physical destination":

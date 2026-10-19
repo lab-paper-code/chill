@@ -111,7 +111,7 @@ func schedulerWorkloadStates(settings SchedulerSettings, snapshot SchedulerSnaps
 }
 
 func (e *schedulerEnumeration) fixedInstance(i SchedulerInstance) bool {
-	if slices.ContainsFunc(e.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == i.Node && n.Measurement }) {
+	if i.FixedBatchSize > 0 || slices.ContainsFunc(e.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == i.Node && n.Measurement }) {
 		return true
 	}
 	// An owner that is no current Workload is ignored, like any unknown UID.

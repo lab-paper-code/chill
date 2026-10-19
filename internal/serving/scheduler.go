@@ -77,20 +77,21 @@ type SchedulerInstance struct {
 	OwnerWorkloadUID string        `json:"ownerWorkloadUID,omitempty"`
 	Node             NodeReference `json:"node"`
 	// Profile is the catalog body in memory; stored records keep only ProfileID.
-	Profile      *Profile                   `json:"profile,omitempty"`
-	ProfileID    string                     `json:"profileID,omitempty"`
-	WorkloadUIDs []string                   `json:"workloadUIDs"`
-	Allocation   SchedulerAllocation        `json:"allocation"`
-	Ready        bool                       `json:"ready"`
-	Stopped      bool                       `json:"stopped"`
-	Capacity     int                        `json:"capacity"`
-	Weight       int32                      `json:"weight"`
-	MaxBatch     int                        `json:"maxBatch"`
-	MaxWait      time.Duration              `json:"maxWaitNanos"`
-	ObservedAt   time.Time                  `json:"observedAt"`
-	ArrivalAges  map[string][]time.Duration `json:"arrivalAgesNanos"`
-	IdleMeter    string                     `json:"idleMeter"`
-	IdleScope    string                     `json:"idleScope"`
+	Profile        *Profile                   `json:"profile,omitempty"`
+	ProfileID      string                     `json:"profileID,omitempty"`
+	WorkloadUIDs   []string                   `json:"workloadUIDs"`
+	Allocation     SchedulerAllocation        `json:"allocation"`
+	Ready          bool                       `json:"ready"`
+	Stopped        bool                       `json:"stopped"`
+	Capacity       int                        `json:"capacity"`
+	Weight         int32                      `json:"weight"`
+	MaxBatch       int                        `json:"maxBatch"`
+	FixedBatchSize int                        `json:"fixedBatchSize,omitempty"` // Strict baseline B; autonomous control never moves it.
+	MaxWait        time.Duration              `json:"maxWaitNanos"`
+	ObservedAt     time.Time                  `json:"observedAt"`
+	ArrivalAges    map[string][]time.Duration `json:"arrivalAgesNanos"`
+	IdleMeter      string                     `json:"idleMeter"`
+	IdleScope      string                     `json:"idleScope"`
 }
 
 // Options are evidence-bound placements supplied by the catalog, not invented

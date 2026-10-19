@@ -93,6 +93,7 @@ type Policy struct {
 	MaxBatchWaitMS float64        `json:"maxBatchWaitMS"`
 	MaxBatchSize   int            `json:"maxBatchSize,omitempty"`   // Zero permits every initialized measured batch.
 	DeadlinePolicy string         `json:"deadlinePolicy,omitempty"` // Frozen for the instance; omitted means keep.
+	FixedBatchSize int            `json:"fixedBatchSize,omitempty"` // Frozen for the instance; zero is dynamic.
 	Batches        []BatchProfile `json:"-"`                        // Immutable bundle, loaded once. Policy file never repeats samples.
 }
 type Config struct {

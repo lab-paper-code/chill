@@ -97,6 +97,9 @@ func ValidateConfig(c *Config) error {
 	if c.Mode == modeServing {
 		return validatePolicy(c.Policy, c.BatchSizes)
 	}
+	if c.Policy.FixedBatchSize != 0 {
+		return errors.New("fixedBatchSize applies to serving only")
+	}
 	return nil
 }
 func uniqueNames(names []string) bool {
@@ -148,21 +151,25 @@ func validatePolicy(p Policy, sizes []int) error {
 	return validateBatchCap(p, sizes)
 }
 func validateBatchCap(p Policy, sizes []int) error {
-	if p.MaxBatchSize < 0 {
-		return errors.New("policy maxBatchSize must be nonnegative")
+	if p.MaxBatchSize < 0 || p.FixedBatchSize < 0 {
+		return errors.New("policy maxBatchSize and fixedBatchSize must be nonnegative")
 	}
-	if p.MaxBatchSize == 0 {
-		return nil
+	if p.MaxBatchSize != 0 && (!initialized(sizes, p.MaxBatchSize) || !measured(p, p.MaxBatchSize)) {
+		return errors.New("policy batch cap was not initialized and measured")
 	}
-	if !initialized(sizes, p.MaxBatchSize) {
-		return errors.New("policy batch cap was not initialized")
+	// Initialized sizes are already within maxBatchSize and the queue capacity.
+	if p.FixedBatchSize != 0 && (!allowedBatch(p, p.FixedBatchSize) || !initialized(sizes, p.FixedBatchSize) || !measured(p, p.FixedBatchSize)) {
+		return errors.New("fixed batch size must be an allowed, initialized and measured batch")
 	}
+	return nil
+}
+func measured(p Policy, size int) bool {
 	for _, b := range p.Batches {
-		if b.Size == p.MaxBatchSize {
-			return nil
+		if b.Size == size {
+			return true
 		}
 	}
-	return errors.New("policy batch cap has no measured profile")
+	return false
 }
 
 // WatchConfig retains the initialized execution and immutable samples. Only the

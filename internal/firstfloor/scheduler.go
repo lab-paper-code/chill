@@ -89,8 +89,8 @@ func (s *Scheduler) submit(ctx context.Context, r *request) result {
 }
 func (s *Scheduler) Update(ctx context.Context, cfg *Config) error {
 	current := s.config.Load()
-	if EffectiveDeadlinePolicy(cfg.Policy.DeadlinePolicy) != EffectiveDeadlinePolicy(current.Policy.DeadlinePolicy) {
-		return errors.New("deadline policy changes require restart")
+	if EffectiveDeadlinePolicy(cfg.Policy.DeadlinePolicy) != EffectiveDeadlinePolicy(current.Policy.DeadlinePolicy) || cfg.Policy.FixedBatchSize != current.Policy.FixedBatchSize {
+		return errors.New("deadline policy and fixed batch size changes require restart")
 	}
 	copyCfg := *cfg
 	copyCfg.Policy = current.Policy
@@ -362,7 +362,7 @@ func (a *schedulerActor) expireQueued(now time.Time) time.Time {
 		for _, r := range *pending {
 			e := requestError(r, now)
 			state := RequestState{Context: r.context, ElapsedMS: milliseconds(now.Sub(r.received))}
-			drop := a.cfg.Mode == modeServing && index == 0 && EffectiveDeadlinePolicy(a.cfg.Policy.DeadlinePolicy) == DeadlineDrop
+			drop := a.cfg.Mode == modeServing && index == 0 && a.cfg.Policy.FixedBatchSize == 0 && EffectiveDeadlinePolicy(a.cfg.Policy.DeadlinePolicy) == DeadlineDrop
 			if e == nil && drop && SLOExpired(state) {
 				e = ErrDeadlineDrop
 			}

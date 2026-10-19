@@ -527,8 +527,8 @@ func (o *Operations) ensurePreparationConfig(ctx context.Context, spec PrepareSp
 		}
 		decisionID := previous.Policy.DecisionID
 		desired := spec.Config
-		previous.Policy = native.Policy{DeadlinePolicy: native.EffectiveDeadlinePolicy(previous.Policy.DeadlinePolicy)}
-		desired.Policy = native.Policy{DeadlinePolicy: native.EffectiveDeadlinePolicy(desired.Policy.DeadlinePolicy)}
+		previous.Policy = native.Policy{DeadlinePolicy: native.EffectiveDeadlinePolicy(previous.Policy.DeadlinePolicy), FixedBatchSize: previous.Policy.FixedBatchSize}
+		desired.Policy = native.Policy{DeadlinePolicy: native.EffectiveDeadlinePolicy(desired.Policy.DeadlinePolicy), FixedBatchSize: desired.Policy.FixedBatchSize}
 		if !reflect.DeepEqual(previous, desired) || existing.Data["delivery.json"] != cm.Data["delivery.json"] {
 			return "", errors.New("existing immutable preparation execution config differs")
 		}
@@ -896,7 +896,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		}
 		policy := native.Policy{DecisionID: target.ID, ProfileID: instance.Profile.ID,
 			DeadlinePolicy: native.EffectiveDeadlinePolicy(instance.Profile.Condition.Firstfloor.DeadlinePolicy),
-			MaxBatchSize:   instance.MaxBatch, MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond)}
+			MaxBatchSize:   instance.MaxBatch, MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond), FixedBatchSize: instance.FixedBatchSize}
 		if err := o.applyPolicy(ctx, instance.ID, policy, result); err != nil {
 			return fmt.Errorf("apply policy to %s: %w", instance.ID, err)
 		}
@@ -948,8 +948,8 @@ func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy 
 	if config.Policy.ProfileID != policy.ProfileID {
 		return errors.New("policy cannot change immutable profile")
 	}
-	if native.EffectiveDeadlinePolicy(config.Policy.DeadlinePolicy) != native.EffectiveDeadlinePolicy(policy.DeadlinePolicy) {
-		return errors.New("policy cannot change immutable deadline policy")
+	if native.EffectiveDeadlinePolicy(config.Policy.DeadlinePolicy) != native.EffectiveDeadlinePolicy(policy.DeadlinePolicy) || config.Policy.FixedBatchSize != policy.FixedBatchSize {
+		return errors.New("policy cannot change immutable deadline policy or fixed batch size")
 	}
 	policyChanged := !reflect.DeepEqual(config.Policy, policy)
 	config.Policy = policy

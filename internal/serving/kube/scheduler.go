@@ -543,7 +543,8 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	s.Routing, s.RoutingCredits = current.Routing, current.RoutingCredits
 	for _, profile := range profiles {
 		template, ok := config.Preparations[profile.ID]
-		if !ok {
+		// A strict fixed-size preparation is a baseline, never an autonomous candidate.
+		if !ok || template.Config.Policy.FixedBatchSize > 0 {
 			continue
 		}
 		instance := template.Instance
@@ -635,7 +636,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			allocation := serving.SchedulerAllocation{CPUs: slices.Clone(m.Runtime.CPUAffinity), GPUUUID: m.Runtime.GPUUUID, Threads: m.Runtime.IntraOpThreads, MemoryBytes: uint64(p.Spec.Containers[0].Resources.Limits.Memory().Value())}
 			instance := serving.SchedulerInstance{ID: state.ID, Node: state.Node, Profile: profile, Allocation: allocation, Ready: state.Ready && state.Native.Ready, Capacity: m.MaxQueueRequests, Weight: 1, MaxBatch: m.MaxBatchSize, ObservedAt: state.ObservedAt, MaxWait: time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))}
 			instance.TargetID, instance.OwnerWorkloadUID = state.TargetID, state.OwnerWorkloadUID
-			instance.Stopped = state.Stopped
+			instance.Stopped, instance.FixedBatchSize = state.Stopped, m.Policy.FixedBatchSize
 			if m.Policy.MaxBatchSize > 0 {
 				instance.MaxBatch = m.Policy.MaxBatchSize
 			}
@@ -891,7 +892,7 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 				template.Name = slotName(i.ID)
 				template.Config.Policy = native.Policy{ProfileID: i.Profile.ID, DecisionID: target.ID,
 					DeadlinePolicy: native.EffectiveDeadlinePolicy(i.Profile.Condition.Firstfloor.DeadlinePolicy),
-					MaxBatchSize:   i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / float64(time.Millisecond)}
+					MaxBatchSize:   i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / float64(time.Millisecond), FixedBatchSize: i.FixedBatchSize}
 				operation.Prepare = &template
 				break
 			}
@@ -1038,7 +1039,7 @@ func schedulerPolicyAcknowledged(wanted serving.SchedulerInstance, actual native
 	if maxBatch == 0 {
 		maxBatch = actual.MaxBatchSize
 	}
-	return actual.Policy.ProfileID == wanted.Profile.ID && maxBatch == wanted.MaxBatch &&
+	return actual.Policy.ProfileID == wanted.Profile.ID && maxBatch == wanted.MaxBatch && actual.Policy.FixedBatchSize == wanted.FixedBatchSize &&
 		actual.Policy.MaxBatchWaitMS == float64(wanted.MaxWait)/float64(time.Millisecond) &&
 		native.EffectiveDeadlinePolicy(actual.Policy.DeadlinePolicy) == native.EffectiveDeadlinePolicy(wanted.Profile.Condition.Firstfloor.DeadlinePolicy)
 }

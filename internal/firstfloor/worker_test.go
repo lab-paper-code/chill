@@ -638,3 +638,97 @@ func TestWorkerDeadlineDropHTTP(t *testing.T) {
 		t.Fatalf("HTTP SLO drop must release accepted work without execution: %+v", state)
 	}
 }
+
+func TestFixedBatchActorServesExactlyB(t *testing.T) {
+	cfg := &Config{Model: "synthetic", Mode: modeServing, Inputs: []string{"input"}, Outputs: []string{"output"}, RunnerCommand: []string{"python3", "../../runtime/firstfloor/runner.py", "--echo", "--preprocessor", "../../runtime/firstfloor/testdata/echo", "--delay-ms", "4", "--warmup-iterations", "1"}, RunnerTimeoutMS: 3000, MaxQueueRequests: 3, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20, MaxBatchSize: 2, BatchSizes: []int{1, 2}, Policy: testPolicy()}
+	cfg.Policy.FixedBatchSize, cfg.Policy.DeadlinePolicy = 2, DeadlineDrop
+	if e := ValidateConfig(cfg); e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner, e := StartRunner(ctx, cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	s := NewScheduler(ctx, cfg, runner)
+	submit := func(ctx context.Context, r *request) chan result {
+		reply := make(chan result, 1)
+		go func() { reply <- s.submit(ctx, r) }()
+		return reply
+	}
+	late := submit(context.Background(), actorRequest(t, cfg, "late", "a", 1))
+	cancelled, cancelQueued := context.WithCancel(context.Background())
+	cancelledReply := submit(cancelled, actorRequest(t, cfg, "cancelled", "b", 100))
+	expiring := actorRequest(t, cfg, "expiring", "c", 100)
+	expiring.lifetime = time.Now().Add(50 * time.Millisecond)
+	expiringReply := submit(context.Background(), expiring)
+	state := awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 3 })
+	if state.Metadata.Policy.FixedBatchSize != 2 || state.Executions != 0 {
+		t.Fatalf("B-1 compatible requests must wait without SLO drop: %+v", state)
+	}
+	if reply := s.submit(context.Background(), actorRequest(t, cfg, "full", "a", 100)); !errors.Is(reply.err, ErrQueueFull) {
+		t.Fatalf("queue count cap must reject: %+v", reply)
+	}
+	cancelQueued()
+	if reply := <-cancelledReply; !errors.Is(reply.err, context.Canceled) {
+		t.Fatalf("cancelled queued request must be removed: %+v", reply)
+	}
+	if reply := <-expiringReply; !errors.Is(reply.err, context.DeadlineExceeded) || !reply.complete {
+		t.Fatalf("explicit lifetime must remove queued request: %+v", reply)
+	}
+	second := submit(context.Background(), actorRequest(t, cfg, "second", "a", 100))
+	for _, reply := range []chan result{late, second} {
+		if r := <-reply; r.err != nil || r.response.Progress.BatchSize != 2 || r.response.Progress.Outcome != outcomeCompleted {
+			t.Fatalf("B compatible requests must run as exactly B, SLO-expired included: %+v", r)
+		}
+	}
+	tail := submit(context.Background(), actorRequest(t, cfg, "tail", "a", 1))
+	awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 })
+	time.Sleep(20 * time.Millisecond)
+	state = awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 })
+	if state.Executions != 1 || state.Requests[0].Phase != phaseQueued {
+		t.Fatalf("tail below B must wait: %+v", state)
+	}
+	cancel()
+	if r := <-tail; !errors.Is(r.err, ErrUnavailable) || r.response.Progress.BatchSize != 0 {
+		t.Fatalf("shutdown must end the tail unexecuted: %+v", r)
+	}
+	<-s.Done()
+}
+
+func TestFixedBatchValidationAndReload(t *testing.T) {
+	base := func() *Config {
+		return &Config{Model: "synthetic", Mode: modeServing, Inputs: []string{"input"}, Outputs: []string{"output"}, RunnerCommand: []string{"runner"}, RunnerTimeoutMS: 1000, MaxQueueRequests: 4, MaxQueueBytes: 32, MaxRequestBytes: 32, MaxBatchSize: 3, BatchSizes: []int{1, 2, 3}, Policy: testPolicy()}
+	}
+	for name, adjust := range map[string]func(*Config){
+		"negative":      func(c *Config) { c.Policy.FixedBatchSize = -1 },
+		"unmeasured":    func(c *Config) { c.Policy.FixedBatchSize = 3 },
+		"capped":        func(c *Config) { c.Policy.FixedBatchSize, c.Policy.MaxBatchSize = 2, 1 },
+		"profiling":     func(c *Config) { c.Mode, c.Policy.FixedBatchSize = modeProfiling, 2 },
+		"uninitialized": func(c *Config) { c.BatchSizes, c.MaxBatchSize, c.Policy.FixedBatchSize = []int{1, 3}, 3, 2 },
+	} {
+		cfg := base()
+		adjust(cfg)
+		if err := ValidateConfig(cfg); err == nil {
+			t.Fatalf("%s fixed batch size accepted", name)
+		}
+	}
+	cfg := base()
+	cfg.Policy.FixedBatchSize = 2
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	s := &Scheduler{}
+	s.config.Store(cfg)
+	for _, change := range []func(*Config){
+		func(c *Config) { c.Policy.MaxBatchSize = 1 },
+		func(c *Config) { c.Policy.FixedBatchSize = 1 },
+	} {
+		next := *cfg
+		change(&next)
+		if err := s.Update(context.Background(), &next); err == nil || s.config.Load() != cfg {
+			t.Fatalf("reload removing B was accepted: %+v", next.Policy)
+		}
+	}
+}

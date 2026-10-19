@@ -112,6 +112,9 @@ func validateMetadata(spec Spec, actual native.Metadata) error {
 	if native.EffectiveDeadlinePolicy(actual.Policy.DeadlinePolicy) != native.EffectiveDeadlinePolicy(condition.Firstfloor.DeadlinePolicy) {
 		return errors.New("native deadline policy differs from frozen profile")
 	}
+	if b := actual.Policy.FixedBatchSize; b < 0 || b > 0 && !slices.ContainsFunc(spec.Profile.Batches, func(p serving.BatchProfile) bool { return p.Batch == b }) {
+		return errors.New("native fixed batch size has no measured profile")
+	}
 	if spec.DecisionID != "" && actual.DecisionID != spec.DecisionID {
 		return errors.New("native policy acknowledgment pending")
 	}
