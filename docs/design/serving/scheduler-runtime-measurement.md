@@ -193,7 +193,8 @@ inventory·적용 affinity를 raw에 연결하며 quota와 mask의 의미를 각
 `/home/genesis1/ETRI/donghwan/firstfloor`(HANDOFF.md 기준일 2026-10-14)의
 `README.md:74-81`과 `internal/serving/fixed_scheduler.go`다.
 
-운영자는 firstfloor serving policy의 `fixedBatchSize`로 B를 설정한다. 0은 dynamic이다.
+운영자는 `serving-operation --execute-config` prepare manifest의 `fixedBatchSize`로 B를 설정하며
+이 값은 derived preparation의 firstfloor policy에 들어간다. 0은 dynamic이다.
 B는 frozen Run/instance 설정과 worker metadata ack에 기록하며 CLI flag는 두지 않는다.
 worker 시작 시 B는 측정된 `Policy.Batches`, 초기화된 `BatchSizes`, `MaxBatchSize`,
 큐 용량 안에 있어야 하고 profiling mode에서는 거절한다. B는 instance 수명 동안 고정이며,

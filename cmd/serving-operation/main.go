@@ -351,6 +351,8 @@ type executionManifest struct {
 	SourceConfigRV     string                `json:"sourceConfigRV"`
 	WorkloadUID        string                `json:"workloadUID"`
 	RoutingHistoryFrom time.Time             `json:"routingHistoryFrom"`
+	// FixedBatchSize sets the prepared instance's strict baseline B; zero is dynamic.
+	FixedBatchSize int `json:"fixedBatchSize,omitempty"`
 }
 
 type executionConfiguration struct {
@@ -617,6 +619,8 @@ func runExecution(
 		return err
 	}
 	if op.Kind == operationPrepare {
+		// The worker start and metadata ack validate B against the measured profile.
+		spec.Config.Policy.FixedBatchSize, spec.Instance.FixedBatchSize = m.FixedBatchSize, m.FixedBatchSize
 		if err = bindExecutionBundle(&spec); err != nil {
 			return err
 		}
@@ -698,7 +702,7 @@ func (m executionManifest) validate() error {
 		m.ProfileID == "" || op.ID == "" || op.Node.Name == "" || op.Node.UID == "" ||
 		(op.Kind != operationPrepare && op.Kind != operationRemove) ||
 		op.Prepare != nil || op.Target != nil || op.Actuation != nil || op.StaticRouting != nil || op.SourceConfigRV != "" ||
-		(op.Kind == operationRemove) != (op.Instance != "") {
+		(op.Kind == operationRemove) != (op.Instance != "") || op.Kind == operationRemove && m.FixedBatchSize != 0 {
 		return errors.New("bounded execute manifest requires exact scope, workloadUID and only configured " +
 			"prepare or exact remove")
 	}
