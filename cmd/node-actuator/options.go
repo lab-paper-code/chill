@@ -16,32 +16,25 @@ import (
 )
 
 type options struct {
-	nodeName          string
-	podUID            string
-	watchNamespace    string
-	leaseNamespace    string
-	leaseDuration     int
-	allowedNamespaces stringListFlag
-	allowedPolicies   policyListFlag
-	jetsonCommand     stringListFlag
-	jetsonTimeout     time.Duration
-	kubeAPIServer     string
-	kubeAPITokenFile  string
-	kubeAPICAFile     string
-	metricsAddr       string
-	probeAddr         string
+	nodeName         string
+	watchNamespace   string
+	leaseNamespace   string
+	leaseDuration    int
+	allowedPolicies  policyListFlag
+	jetsonCommand    stringListFlag
+	jetsonTimeout    time.Duration
+	kubeAPIServer    string
+	kubeAPITokenFile string
+	kubeAPICAFile    string
+	metricsAddr      string
+	probeAddr        string
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.nodeName, "node-name", o.nodeName, "Exact assigned Kubernetes Node name.")
-	flags.StringVar(&o.podUID, "pod-uid", o.podUID, "Exact NodeActuator Pod UID excluded from workload safety.")
 	flags.StringVar(&o.watchNamespace, "watch-namespace", o.watchNamespace, "Namespace containing NodeActuation handoffs.")
 	flags.StringVar(&o.leaseNamespace, "lease-namespace", o.leaseNamespace, "Namespace containing Node-UID Leases.")
 	flags.IntVar(&o.leaseDuration, "lease-duration-seconds", 30, "Node-UID Lease duration in seconds.")
-	flags.Var(
-		&o.allowedNamespaces, "allowed-namespace",
-		"Explicit workload namespace allowed during actuation; repeatable.",
-	)
 	flags.Var(
 		&o.allowedPolicies, "allowed-policy",
 		"Authorized actuation-policy JSON object; repeatable.",
@@ -69,7 +62,7 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 
 func (o options) validate() error {
 	for name, value := range map[string]string{
-		"node name": o.nodeName, "Pod UID": o.podUID, "watch namespace": o.watchNamespace,
+		"node name": o.nodeName, "watch namespace": o.watchNamespace,
 		"Lease namespace": o.leaseNamespace, "metrics bind address": o.metricsAddr,
 		"health probe bind address": o.probeAddr, "Kubernetes API token file": o.kubeAPITokenFile,
 		"Kubernetes API CA file": o.kubeAPICAFile,
@@ -81,7 +74,7 @@ func (o options) validate() error {
 	if len(validation.IsDNS1123Subdomain(o.nodeName)) != 0 {
 		return errors.New("node name must be a valid DNS subdomain")
 	}
-	for _, namespace := range append([]string{o.watchNamespace, o.leaseNamespace}, o.allowedNamespaces...) {
+	for _, namespace := range []string{o.watchNamespace, o.leaseNamespace} {
 		if len(validation.IsDNS1123Label(namespace)) != 0 {
 			return fmt.Errorf("invalid namespace %q", namespace)
 		}
@@ -89,22 +82,14 @@ func (o options) validate() error {
 	if o.leaseDuration < 5 || o.leaseDuration > 300 {
 		return errors.New("Lease duration must be between 5 and 300 seconds")
 	}
-	if len(o.allowedNamespaces) == 0 || len(o.allowedPolicies) == 0 {
-		return errors.New("at least one allowed namespace and actuation policy are required")
+	if len(o.allowedPolicies) == 0 {
+		return errors.New("at least one actuation policy is required")
 	}
 	if len(o.jetsonCommand) == 0 || o.jetsonTimeout < time.Second || o.jetsonTimeout > 5*time.Minute {
 		return errors.New("Jetson NVPModel command and a timeout between 1 second and 5 minutes are required")
 	}
 	if strings.TrimSpace(o.kubeAPIServer) != o.kubeAPIServer {
 		return errors.New("Kubernetes API server must not have surrounding whitespace")
-	}
-	if err := validateUniqueStrings(o.allowedNamespaces, "namespace", func(value string) error {
-		if len(validation.IsDNS1123Label(value)) != 0 {
-			return fmt.Errorf("invalid namespace %q", value)
-		}
-		return nil
-	}); err != nil {
-		return err
 	}
 	if err := validateUniquePolicies(o.allowedPolicies); err != nil {
 		return err
@@ -148,20 +133,6 @@ func (f *stringListFlag) Set(value string) error {
 		return errors.New("repeated value is required without surrounding whitespace")
 	}
 	*f = append(*f, value)
-	return nil
-}
-
-func validateUniqueStrings(values []string, kind string, validate func(string) error) error {
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		if err := validate(value); err != nil {
-			return err
-		}
-		if _, duplicate := seen[value]; duplicate {
-			return fmt.Errorf("duplicate allowed %s %q", kind, value)
-		}
-		seen[value] = struct{}{}
-	}
 	return nil
 }
 

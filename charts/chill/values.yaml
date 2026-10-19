@@ -419,8 +419,6 @@ nodeActuator:
     discoverFromDefaultEndpoint: true
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-  allowedNamespaces:
-    - kube-system
   jetsonNVPModel:
     command:
       - /host/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1

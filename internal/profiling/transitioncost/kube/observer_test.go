@@ -172,7 +172,6 @@ func TestObserverDoesNotGeneralizePreApplyFailures(t *testing.T) {
 	for _, stage := range []edgev1alpha1.NodeActuationFailureStage{
 		edgev1alpha1.NodeActuationFailureStageLease,
 		edgev1alpha1.NodeActuationFailureStagePolicy,
-		edgev1alpha1.NodeActuationFailureStageSafety,
 		edgev1alpha1.NodeActuationFailureStageObservePrevious,
 	} {
 		t.Run(string(stage), func(t *testing.T) {

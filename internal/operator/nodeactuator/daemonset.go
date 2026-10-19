@@ -93,9 +93,6 @@ func nodeActuatorArgs(
 		"--kube-api-token-file="+config.KubeAPITokenFile,
 		"--kube-api-ca-file="+config.KubeAPICAFile,
 	)
-	for _, namespace := range config.AllowedNamespaces {
-		args = append(args, "--allowed-namespace="+namespace)
-	}
 	for _, policy := range policies {
 		encoded, err := json.Marshal(policy)
 		if err != nil {
@@ -157,7 +154,6 @@ func bootOrderingInitContainers(config Config) []corev1.Container {
 func nodeIdentityEnvironment() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{Name: "NODE_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "spec.nodeName"}}},
-		{Name: "POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 	}
 }
 

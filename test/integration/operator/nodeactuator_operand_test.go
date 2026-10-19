@@ -108,7 +108,7 @@ func nodeActuatorIntegrationConfig() operatornodeactuator.Config {
 	return operatornodeactuator.Config{
 		Image: "daclab/chill-node-actuator:test", ImagePullPolicy: corev1.PullIfNotPresent,
 		ServiceAccountName: "chill-node-actuator", MetricsBindAddress: "0", HealthProbePort: 8081,
-		LeaseDurationSeconds: 30, AllowedNamespaces: []string{"kube-system"},
+		LeaseDurationSeconds: 30,
 		UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
 			Type:          appsv1.RollingUpdateDaemonSetStrategyType,
 			RollingUpdate: &appsv1.RollingUpdateDaemonSet{MaxUnavailable: &maxUnavailable},

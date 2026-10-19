@@ -118,9 +118,6 @@
 {{- if empty .Values.nodeActuator.kubernetesClient.caFile -}}
 {{- fail "nodeActuator.kubernetesClient.caFile must not be empty when nodeActuator.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeActuator.allowedNamespaces -}}
-{{- fail "nodeActuator.allowedNamespaces must not be empty when nodeActuator.enabled=true" -}}
-{{- end -}}
 {{- if empty .Values.nodeActuator.nodeSelector -}}
 {{- fail "nodeActuator.nodeSelector must explicitly select eligible Nodes" -}}
 {{- end -}}

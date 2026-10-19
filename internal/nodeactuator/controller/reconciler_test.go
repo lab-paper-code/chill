@@ -10,6 +10,8 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,24 +61,6 @@ func (l *recordingLeaseController) Release(context.Context, nodeactuator.Request
 	return true, nil
 }
 
-type staticSafetyChecker struct {
-	calls   int
-	allowed bool
-	now     time.Time
-	err     error
-}
-
-func (s *staticSafetyChecker) Check(
-	context.Context,
-	nodeactuator.Request,
-) (WorkloadSafetyResult, error) {
-	s.calls++
-	if s.err != nil {
-		return WorkloadSafetyResult{}, s.err
-	}
-	return WorkloadSafetyResult{Allowed: s.allowed, ObservedAt: s.now}, nil
-}
-
 type memoryHostActuator struct {
 	target       nodeactuator.Target
 	applyCalls   []nodeactuator.Target
@@ -124,16 +108,19 @@ func TestTransitionReconcilerFencesApplyAndReleasesLeaseAtReady(t *testing.T) {
 	scheme := transitionReconcilerScheme(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&edgev1alpha1.NodeActuation{}).
-		WithObjects(transition).
+		WithObjects(transition, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a", Name: "external", UID: "external-uid"},
+			Spec:       corev1.PodSpec{NodeName: "jetsonx"},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+		}).
 		Build()
 	lease := &recordingLeaseController{}
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	safety := &staticSafetyChecker{allowed: true, now: now}
 	host := &memoryHostActuator{target: nvpTarget(1)}
-	reconciler := newTestTransitionReconciler(t, kubeClient, lease, safety, host, &now)
+	reconciler := newTestTransitionReconciler(t, kubeClient, lease, host, &now)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(transition)}
 
-	reconcileTimes(t, ctx, reconciler, request, 4)
+	reconcileTimes(t, ctx, reconciler, request, 3)
 	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
 	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseApplying || len(host.applyCalls) != 0 ||
 		current.Status.ApplyStartedAt == nil {
@@ -173,12 +160,11 @@ func TestTransitionReconcilerSkipsApplyWhenTargetIsAlreadyActive(t *testing.T) {
 		Build()
 	lease := &recordingLeaseController{}
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	safety := &staticSafetyChecker{allowed: true, now: now}
 	host := &memoryHostActuator{target: nvpTarget(2)}
-	reconciler := newTestTransitionReconciler(t, kubeClient, lease, safety, host, &now)
+	reconciler := newTestTransitionReconciler(t, kubeClient, lease, host, &now)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(transition)}
 
-	reconcileTimes(t, ctx, reconciler, request, 5)
+	reconcileTimes(t, ctx, reconciler, request, 4)
 	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
 	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseSettling || len(host.applyCalls) != 0 ||
 		current.Status.PreviousObservation == nil || current.Status.TargetObservation == nil ||
@@ -215,12 +201,11 @@ func TestTransitionReconcilerRecordsTransitionCostOnlyAtReady(t *testing.T) {
 			Build()
 		lease := &recordingLeaseController{}
 		now := time.Date(2026, 8, 6, 12, 0, 0, 125_000_000, time.UTC)
-		safety := &staticSafetyChecker{allowed: true, now: now}
 		host := &memoryHostActuator{target: nvpTarget(1), now: func() time.Time { return now }}
-		reconciler := newTestTransitionReconciler(t, kubeClient, lease, safety, host, &now)
+		reconciler := newTestTransitionReconciler(t, kubeClient, lease, host, &now)
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(transition)}
 
-		reconcileTimes(t, ctx, reconciler, request, 4)
+		reconcileTimes(t, ctx, reconciler, request, 3)
 		now = now.Add(1375 * time.Millisecond)
 		reconcileTimes(t, ctx, reconciler, request, 3)
 		current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
@@ -253,12 +238,11 @@ func TestTransitionReconcilerRecordsTransitionCostOnlyAtReady(t *testing.T) {
 			Build()
 		lease := &recordingLeaseController{}
 		now := time.Date(2026, 8, 6, 12, 0, 0, 125_000_000, time.UTC)
-		safety := &staticSafetyChecker{allowed: true, now: now}
 		host := &memoryHostActuator{target: nvpTarget(1), applyErr: errors.New("command interrupted")}
-		reconciler := newTestTransitionReconciler(t, kubeClient, lease, safety, host, &now)
+		reconciler := newTestTransitionReconciler(t, kubeClient, lease, host, &now)
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(transition)}
 
-		reconcileTimes(t, ctx, reconciler, request, 4)
+		reconcileTimes(t, ctx, reconciler, request, 3)
 		now = now.Add(375 * time.Millisecond)
 		reconcileTimes(t, ctx, reconciler, request, 1)
 		current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
@@ -280,7 +264,7 @@ func TestExecuteLeaseActionSchedulesLifecycleProgressAfterRenewal(t *testing.T) 
 		Build()
 	lease := &recordingLeaseController{}
 	reconciler := newTestTransitionReconciler(
-		t, kubeClient, lease, &staticSafetyChecker{allowed: true},
+		t, kubeClient, lease,
 		&memoryHostActuator{}, nil,
 	)
 
@@ -315,7 +299,7 @@ func TestExecuteLeaseActionReacquiresWithoutDiscardingDurableProgress(t *testing
 		Build()
 	lease := &recordingLeaseController{}
 	reconciler := newTestTransitionReconciler(
-		t, kubeClient, lease, &staticSafetyChecker{allowed: true},
+		t, kubeClient, lease,
 		&memoryHostActuator{}, nil,
 	)
 
@@ -340,15 +324,14 @@ func TestTransitionReconcilerIgnoresATransitionForAnotherNode(t *testing.T) {
 	scheme := transitionReconcilerScheme(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(transition).Build()
 	lease := &recordingLeaseController{}
-	safety := &staticSafetyChecker{}
 	host := &memoryHostActuator{target: nvpTarget(1)}
 	now := time.Now()
-	reconciler := newTestTransitionReconciler(t, kubeClient, lease, safety, host, &now)
+	reconciler := newTestTransitionReconciler(t, kubeClient, lease, host, &now)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(transition)}
 	if _, err := reconciler.Reconcile(ctx, request); err != nil {
 		t.Fatal(err)
 	}
-	if lease.acquireCalls != 0 || safety.calls != 0 || host.observeCalls != 0 || len(host.applyCalls) != 0 {
+	if lease.acquireCalls != 0 || host.observeCalls != 0 || len(host.applyCalls) != 0 {
 		t.Fatal("foreign Node transition crossed a controller port")
 	}
 }
@@ -364,9 +347,8 @@ func TestTransitionReconcilerRejectsUnconfiguredPolicyBeforeEveryPort(t *testing
 		Build()
 	lease := &recordingLeaseController{}
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	safety := &staticSafetyChecker{allowed: true, now: now}
 	host := &memoryHostActuator{target: nvpTarget(1)}
-	reconciler := newTestTransitionReconciler(t, kubeClient, lease, safety, host, &now)
+	reconciler := newTestTransitionReconciler(t, kubeClient, lease, host, &now)
 	disallowed := testAllowedPolicy()
 	disallowed.PowerMode = "MAXN"
 	reconciler.options.AllowedPolicies = []nodeactuator.ActuationPolicySpec{disallowed}
@@ -377,10 +359,10 @@ func TestTransitionReconcilerRejectsUnconfiguredPolicyBeforeEveryPort(t *testing
 	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseFailed ||
 		current.Status.TerminalFailure == nil ||
 		current.Status.TerminalFailure.Stage != edgev1alpha1.NodeActuationFailureStagePolicy ||
-		lease.observeCalls != 0 || lease.acquireCalls != 0 || safety.calls != 0 ||
+		lease.observeCalls != 0 || lease.acquireCalls != 0 ||
 		host.observeCalls != 0 || len(host.applyCalls) != 0 {
-		t.Fatalf("policy rejection crossed a port: lease=%#v safety=%d host=%#v status=%#v",
-			lease, safety.calls, host, current.Status)
+		t.Fatalf("policy rejection crossed a port: lease=%#v host=%#v status=%#v",
+			lease, host, current.Status)
 	}
 }
 
@@ -395,12 +377,11 @@ func TestTransitionReconcilerTerminatesApplyFailureAndReleasesLease(t *testing.T
 		Build()
 	lease := &recordingLeaseController{}
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	safety := &staticSafetyChecker{allowed: true, now: now}
 	host := &memoryHostActuator{target: nvpTarget(1), applyErr: errors.New("command interrupted")}
-	reconciler := newTestTransitionReconciler(t, kubeClient, lease, safety, host, &now)
+	reconciler := newTestTransitionReconciler(t, kubeClient, lease, host, &now)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(transition)}
 
-	reconcileTimes(t, ctx, reconciler, request, 5)
+	reconcileTimes(t, ctx, reconciler, request, 4)
 	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
 	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseFailed ||
 		current.Status.TerminalFailure == nil ||
@@ -448,13 +429,12 @@ func newTestTransitionReconciler(
 	t *testing.T,
 	kubeClient client.Client,
 	lease LeaseController,
-	safety WorkloadSafetyChecker,
 	host HostActuator,
 	now *time.Time,
 ) *TransitionReconciler {
 	t.Helper()
 	reconciler, err := NewTransitionReconciler(
-		kubeClient, lease, safety, host,
+		kubeClient, lease, host,
 		TransitionReconcilerOptions{
 			AssignedNode:    nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
 			AllowedPolicies: []nodeactuator.ActuationPolicySpec{testAllowedPolicy()},
@@ -515,6 +495,9 @@ func transitionReconcilerScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	return scheme

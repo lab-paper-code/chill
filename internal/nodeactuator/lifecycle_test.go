@@ -20,13 +20,7 @@ func TestDecideHappyPathKeepsApplyAndTargetReadBackSeparate(t *testing.T) {
 		want   Action
 	}{
 		{name: "acquire Node Lease", mutate: func(s *Snapshot) { s.Lock = LockObservation{State: LockNotHeld} }, want: ActionAcquireLease},
-		{name: "check safety after Lease", mutate: func(s *Snapshot) { s.Phase = PhasePending }, want: ActionCheckSafety},
-		{name: "repeat unknown safety", mutate: func(s *Snapshot) {
-			s.Phase = PhaseCheckingSafety
-			s.Safety = SafetyUnknown
-			s.SafetyObservedAt = nil
-		}, want: ActionCheckSafety},
-		{name: "observe previous after safety", mutate: func(s *Snapshot) { s.Phase = PhaseCheckingSafety; s.Safety = SafetyAllowed }, want: ActionObservePrevious},
+		{name: "observe previous after Lease", mutate: func(s *Snapshot) { s.Phase = PhasePending }, want: ActionObservePrevious},
 		{name: "repeat previous observation", mutate: func(s *Snapshot) { s.Phase = PhaseObservingPrevious }, want: ActionObservePrevious},
 		{name: "apply retained target", mutate: func(s *Snapshot) { s.Phase = PhaseObservingPrevious; s.PreviousObservation = &previous }, want: ActionApplyTarget},
 		{name: "settle without apply when target is already active", mutate: func(s *Snapshot) {
@@ -96,7 +90,7 @@ func TestDecideCountsSettlingFromTheRecordedStart(t *testing.T) {
 	}
 }
 
-func TestDecideFailsClosedOnSafetyReadBackAndDeadline(t *testing.T) {
+func TestDecideFailsClosedOnReadBackAndDeadline(t *testing.T) {
 	t.Parallel()
 	base := validSnapshot()
 	previous := observation(1, base.Now.Add(-time.Second))
@@ -111,10 +105,6 @@ func TestDecideFailsClosedOnSafetyReadBackAndDeadline(t *testing.T) {
 		wantStage  FailureStage
 		wantReason string
 	}{
-		{name: "unsafe workload", mutate: func(s *Snapshot) {
-			s.Phase = PhaseCheckingSafety
-			s.Safety = SafetyBlocked
-		}, want: ActionMarkFailed, wantStage: FailureStageSafety, wantReason: "WorkloadSafetyBlocked"},
 		{name: "target mismatch fails", mutate: func(s *Snapshot) {
 			s.Phase = PhaseVerifying
 			s.PreviousObservation = &previous
@@ -221,8 +211,7 @@ func validSnapshot() Snapshot {
 			Deadline: now.Add(15 * time.Minute), StageRequestedAt: now,
 		},
 		Now: now, Phase: PhasePending,
-		Lock:   LockObservation{State: LockHeld, RetryAfter: 10 * time.Second},
-		Safety: SafetyAllowed, SafetyObservedAt: &now,
+		Lock: LockObservation{State: LockHeld, RetryAfter: 10 * time.Second},
 	}
 }
 

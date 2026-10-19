@@ -47,19 +47,6 @@ nodeActuator:
     - key: node-role.kubernetes.io/edge
       operator: Exists
       effect: NoSchedule
-  # The workload-safety adapter is fail-closed: any Pod on the target Node
-  # outside these namespaces blocks Node-wide actuation. The chart default is
-  # kube-system alone, which no KubeEdge edge Node can ever satisfy — each one
-  # permanently runs edgemesh-agent and edge-eclipse-mosquitto, the monitoring
-  # DaemonSets, and CHILL's own node-discovery. Note that
-  # edge-metrics-exporter-jetson lives in monitoring: without that namespace the
-  # Node cannot be actuated without also refusing the exporter that supplies the
-  # power metric being measured.
-  allowedNamespaces:
-    - kube-system
-    - kubeedge
-    - monitoring
-    - chill-system
 
 profiler:
   enabled: true

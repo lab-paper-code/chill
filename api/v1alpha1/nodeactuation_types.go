@@ -3,13 +3,12 @@ package v1alpha1
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 // NodeActuationPhase is the NodeActuator-owned observed lifecycle phase.
-// +kubebuilder:validation:Enum=Pending;AcquiringLease;CheckingSafety;ObservingPrevious;Applying;Verifying;Settling;Ready;Failed
+// +kubebuilder:validation:Enum=Pending;AcquiringLease;ObservingPrevious;Applying;Verifying;Settling;Ready;Failed
 type NodeActuationPhase string
 
 const (
 	NodeActuationPhasePending           NodeActuationPhase = "Pending"
 	NodeActuationPhaseAcquiringLease    NodeActuationPhase = "AcquiringLease"
-	NodeActuationPhaseCheckingSafety    NodeActuationPhase = "CheckingSafety"
 	NodeActuationPhaseObservingPrevious NodeActuationPhase = "ObservingPrevious"
 	NodeActuationPhaseApplying          NodeActuationPhase = "Applying"
 	NodeActuationPhaseVerifying         NodeActuationPhase = "Verifying"
@@ -19,13 +18,12 @@ const (
 )
 
 // NodeActuationFailureStage identifies the operation that failed terminally.
-// +kubebuilder:validation:Enum=Lease;Policy;Safety;ObservePrevious;Apply;Verify;Settle
+// +kubebuilder:validation:Enum=Lease;Policy;ObservePrevious;Apply;Verify;Settle
 type NodeActuationFailureStage string
 
 const (
 	NodeActuationFailureStageLease           NodeActuationFailureStage = "Lease"
 	NodeActuationFailureStagePolicy          NodeActuationFailureStage = "Policy"
-	NodeActuationFailureStageSafety          NodeActuationFailureStage = "Safety"
 	NodeActuationFailureStageObservePrevious NodeActuationFailureStage = "ObservePrevious"
 	NodeActuationFailureStageApply           NodeActuationFailureStage = "Apply"
 	NodeActuationFailureStageVerify          NodeActuationFailureStage = "Verify"
@@ -111,44 +109,6 @@ type NodeActuationFailure struct {
 	OccurredAt metav1.Time `json:"occurredAt"`
 }
 
-// NodeActuationSafetyVerdict is the fail-closed workload coexistence result.
-// +kubebuilder:validation:Enum=Allowed;Blocked
-type NodeActuationSafetyVerdict string
-
-const (
-	NodeActuationSafetyAllowed NodeActuationSafetyVerdict = "Allowed"
-	NodeActuationSafetyBlocked NodeActuationSafetyVerdict = "Blocked"
-)
-
-type NodeActuationPodReference struct {
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	Namespace string `json:"namespace"`
-
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	Name string `json:"name"`
-
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	UID string `json:"uid"`
-}
-
-// NodeActuationSafetyObservation records the workload set result used by the
-// actuator. Raw Pod objects remain authoritative in Kubernetes.
-// +kubebuilder:validation:XValidation:rule="self.verdict == 'Allowed' ? !has(self.blockingPods) || size(self.blockingPods) == 0 : has(self.blockingPods) && size(self.blockingPods) > 0",message="Blocked safety requires blockingPods and Allowed safety forbids them"
-type NodeActuationSafetyObservation struct {
-	Verdict NodeActuationSafetyVerdict `json:"verdict"`
-
-	ObservedAt metav1.Time `json:"observedAt"`
-
-	// +optional
-	// +kubebuilder:validation:MaxItems=32
-	// +listType=map
-	// +listMapKey=uid
-	BlockingPods []NodeActuationPodReference `json:"blockingPods,omitempty"`
-}
-
 // NodeActuationTransitionCost records the duration of one completed state
 // change in integer milliseconds.
 type NodeActuationTransitionCost struct {
@@ -186,10 +146,6 @@ type NodeActuationStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=1024
 	Message string `json:"message,omitempty"`
-
-	// Safety is the latest fail-closed workload coexistence observation.
-	// +optional
-	Safety *NodeActuationSafetyObservation `json:"safety,omitempty"`
 
 	// Lease names the Node-UID-keyed lock held for this handoff.
 	// +optional

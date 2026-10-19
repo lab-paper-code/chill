@@ -243,7 +243,6 @@ spec:
                 enum:
                 - Pending
                 - AcquiringLease
-                - CheckingSafety
                 - ObservingPrevious
                 - Applying
                 - Verifying
@@ -342,55 +341,6 @@ spec:
               reason:
                 maxLength: 128
                 type: string
-              safety:
-                description: Safety is the latest fail-closed workload coexistence
-                  observation.
-                properties:
-                  blockingPods:
-                    items:
-                      properties:
-                        name:
-                          maxLength: 253
-                          minLength: 1
-                          type: string
-                        namespace:
-                          maxLength: 63
-                          minLength: 1
-                          type: string
-                        uid:
-                          maxLength: 128
-                          minLength: 1
-                          type: string
-                      required:
-                      - name
-                      - namespace
-                      - uid
-                      type: object
-                    maxItems: 32
-                    type: array
-                    x-kubernetes-list-map-keys:
-                    - uid
-                    x-kubernetes-list-type: map
-                  observedAt:
-                    format: date-time
-                    type: string
-                  verdict:
-                    description: NodeActuationSafetyVerdict is the fail-closed workload
-                      coexistence result.
-                    enum:
-                    - Allowed
-                    - Blocked
-                    type: string
-                required:
-                - observedAt
-                - verdict
-                type: object
-                x-kubernetes-validations:
-                - message: Blocked safety requires blockingPods and Allowed safety
-                    forbids them
-                  rule: 'self.verdict == ''Allowed'' ? !has(self.blockingPods) ||
-                    size(self.blockingPods) == 0 : has(self.blockingPods) && size(self.blockingPods)
-                    > 0'
               settlingStartedAt:
                 format: date-time
                 type: string
@@ -499,7 +449,6 @@ spec:
                     enum:
                     - Lease
                     - Policy
-                    - Safety
                     - ObservePrevious
                     - Apply
                     - Verify

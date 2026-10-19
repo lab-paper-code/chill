@@ -8,12 +8,11 @@ import (
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 )
 
-func TestOptionsRequireExactNodePodAndPolicyInputs(t *testing.T) {
+func TestOptionsRequireExactNodeAndPolicyInputs(t *testing.T) {
 	t.Parallel()
 	valid := options{
-		nodeName: "jetsonx", podUID: "pod-uid", watchNamespace: "chill-system",
+		nodeName: "jetsonx", watchNamespace: "chill-system",
 		leaseNamespace: "chill-system", leaseDuration: 30,
-		allowedNamespaces: []string{"kube-system"},
 		allowedPolicies: []nodeactuator.ActuationPolicySpec{{
 			Name: "xavier-mode", DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
 			ActuatorKind:            nodeactuator.ActuatorKindJetsonNVPModel,
@@ -30,8 +29,8 @@ func TestOptionsRequireExactNodePodAndPolicyInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*options){
-		"missing Pod UID":   func(candidate *options) { candidate.podUID = "" },
-		"missing namespace": func(candidate *options) { candidate.allowedNamespaces = nil },
+		"missing node name": func(candidate *options) { candidate.nodeName = "" },
+		"missing policy":    func(candidate *options) { candidate.allowedPolicies = nil },
 		"bad policy": func(candidate *options) {
 			candidate.allowedPolicies = append(policyListFlag(nil), candidate.allowedPolicies...)
 			candidate.allowedPolicies[0].PowerMode = "fixed"

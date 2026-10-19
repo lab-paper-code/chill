@@ -13,7 +13,6 @@ type Phase string
 const (
 	PhasePending           Phase = "Pending"
 	PhaseAcquiringLease    Phase = "AcquiringLease"
-	PhaseCheckingSafety    Phase = "CheckingSafety"
 	PhaseObservingPrevious Phase = "ObservingPrevious"
 	PhaseApplying          Phase = "Applying"
 	PhaseVerifying         Phase = "Verifying"
@@ -31,20 +30,11 @@ const (
 	LockLost     LockState = "Lost"
 )
 
-type SafetyState string
-
-const (
-	SafetyUnknown SafetyState = "Unknown"
-	SafetyAllowed SafetyState = "Allowed"
-	SafetyBlocked SafetyState = "Blocked"
-)
-
 type FailureStage string
 
 const (
 	FailureStageLease           FailureStage = "Lease"
 	FailureStagePolicy          FailureStage = "Policy"
-	FailureStageSafety          FailureStage = "Safety"
 	FailureStageObservePrevious FailureStage = "ObservePrevious"
 	FailureStageApply           FailureStage = "Apply"
 	FailureStageVerify          FailureStage = "Verify"
@@ -57,7 +47,6 @@ const (
 	ActionAcquireLease    Action = "AcquireLease"
 	ActionRenewLease      Action = "RenewLease"
 	ActionWaitForLease    Action = "WaitForLease"
-	ActionCheckSafety     Action = "CheckSafety"
 	ActionObservePrevious Action = "ObservePrevious"
 	ActionApplyTarget     Action = "ApplyTarget"
 	ActionObserveTarget   Action = "ObserveTarget"
@@ -104,8 +93,6 @@ type Snapshot struct {
 	Now                 time.Time
 	Phase               Phase
 	Lock                LockObservation
-	Safety              SafetyState
-	SafetyObservedAt    *time.Time
 	PreviousObservation *Observation
 	TargetObservation   *Observation
 	VerifiedAt          *time.Time
@@ -148,13 +135,6 @@ func Decide(snapshot Snapshot) (Decision, error) {
 	if snapshot.Lock.RetryAfter == 0 {
 		return Decision{Action: ActionRenewLease}, nil
 	}
-	if snapshot.Safety == SafetyBlocked {
-		failure := &Failure{
-			Stage: FailureStageSafety, Reason: "WorkloadSafetyBlocked",
-			Message: "an unapproved workload prevents Node-wide actuation",
-		}
-		return Decision{Action: ActionMarkFailed, Failure: failure}, nil
-	}
 
 	return decideHeldPhase(snapshot)
 }
@@ -162,14 +142,7 @@ func Decide(snapshot Snapshot) (Decision, error) {
 func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 	switch snapshot.Phase {
 	case "", PhasePending, PhaseAcquiringLease:
-		return Decision{Action: ActionCheckSafety}, nil
-	case PhaseCheckingSafety:
-		switch snapshot.Safety {
-		case SafetyUnknown:
-			return Decision{Action: ActionCheckSafety}, nil
-		case SafetyAllowed:
-			return Decision{Action: ActionObservePrevious}, nil
-		}
+		return Decision{Action: ActionObservePrevious}, nil
 	case PhaseObservingPrevious:
 		if snapshot.PreviousObservation == nil {
 			return Decision{Action: ActionObservePrevious}, nil
@@ -220,13 +193,6 @@ func (s Snapshot) Validate() error {
 	if !validLockObservation(s.Lock) {
 		return errors.New("invalid lock observation")
 	}
-	if s.Safety != "" && s.Safety != SafetyUnknown && s.Safety != SafetyAllowed && s.Safety != SafetyBlocked {
-		return fmt.Errorf("unsupported safety observation %q", s.Safety)
-	}
-	if (s.Safety == SafetyUnknown || s.Safety == "") && s.SafetyObservedAt != nil ||
-		s.Safety != SafetyUnknown && s.Safety != "" && s.SafetyObservedAt == nil {
-		return errors.New("safety verdict and observation time must be present together")
-	}
 	for name, observation := range map[string]*Observation{
 		"previous": s.PreviousObservation, "target": s.TargetObservation,
 	} {
@@ -260,7 +226,7 @@ func observationMatchesRequest(observation *Observation, request Request) bool {
 
 func validPhase(phase Phase) bool {
 	switch phase {
-	case "", PhasePending, PhaseAcquiringLease, PhaseCheckingSafety, PhaseObservingPrevious,
+	case "", PhasePending, PhaseAcquiringLease, PhaseObservingPrevious,
 		PhaseApplying, PhaseVerifying, PhaseSettling, PhaseReady, PhaseFailed:
 		return true
 	default:
@@ -281,7 +247,7 @@ func validLockObservation(observation LockObservation) bool {
 
 func validFailureStage(stage FailureStage) bool {
 	switch stage {
-	case FailureStageLease, FailureStagePolicy, FailureStageSafety, FailureStageObservePrevious, FailureStageApply,
+	case FailureStageLease, FailureStagePolicy, FailureStageObservePrevious, FailureStageApply,
 		FailureStageVerify, FailureStageSettle:
 		return true
 	default:
@@ -293,8 +259,6 @@ func deadlineFailureStage(phase Phase) FailureStage {
 	switch phase {
 	case "", PhasePending, PhaseAcquiringLease:
 		return FailureStageLease
-	case PhaseCheckingSafety:
-		return FailureStageSafety
 	case PhaseObservingPrevious:
 		return FailureStageObservePrevious
 	case PhaseApplying:

@@ -41,7 +41,7 @@ func main() {
 		fmt.Println("Jetson boot ordering ensured; drop-in written:", wrote)
 		return
 	}
-	opts := options{nodeName: os.Getenv("NODE_NAME"), podUID: os.Getenv("POD_UID")}
+	opts := options{nodeName: os.Getenv("NODE_NAME")}
 	opts.bindFlags(flag.CommandLine)
 	zapOptions := zap.Options{Development: true}
 	zapOptions.BindFlags(flag.CommandLine)

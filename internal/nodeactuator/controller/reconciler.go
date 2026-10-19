@@ -25,10 +25,6 @@ type LeaseController interface {
 	Release(context.Context, nodeactuator.Request) (bool, error)
 }
 
-type WorkloadSafetyChecker interface {
-	Check(context.Context, nodeactuator.Request) (WorkloadSafetyResult, error)
-}
-
 type HostActuator interface {
 	Observe(context.Context, nodeactuator.Request) (nodeactuator.Observation, error)
 	Apply(context.Context, nodeactuator.Request, nodeactuator.Target) error
@@ -66,7 +62,6 @@ func (o TransitionReconcilerOptions) Validate() error {
 type TransitionReconciler struct {
 	client.Client
 	lease    LeaseController
-	safety   WorkloadSafetyChecker
 	actuator HostActuator
 	options  TransitionReconcilerOptions
 	now      func() time.Time
@@ -75,18 +70,17 @@ type TransitionReconciler struct {
 func NewTransitionReconciler(
 	kubeClient client.Client,
 	lease LeaseController,
-	safety WorkloadSafetyChecker,
 	actuator HostActuator,
 	options TransitionReconcilerOptions,
 ) (*TransitionReconciler, error) {
-	if kubeClient == nil || lease == nil || safety == nil || actuator == nil {
-		return nil, errors.New("Kubernetes client, Lease, workload safety, and host actuator are required")
+	if kubeClient == nil || lease == nil || actuator == nil {
+		return nil, errors.New("Kubernetes client, Lease, and host actuator are required")
 	}
 	if err := options.Validate(); err != nil {
 		return nil, err
 	}
 	return &TransitionReconciler{
-		Client: kubeClient, lease: lease, safety: safety, actuator: actuator,
+		Client: kubeClient, lease: lease, actuator: actuator,
 		options: TransitionReconcilerOptions{
 			AssignedNode:    options.AssignedNode,
 			AllowedPolicies: append([]nodeactuator.ActuationPolicySpec(nil), options.AllowedPolicies...),
@@ -214,8 +208,6 @@ func (r *TransitionReconciler) execute(
 		return r.executeLeaseAction(ctx, transition, snapshot, decision)
 	case nodeactuator.ActionWaitForLease, nodeactuator.ActionWaitForSettling:
 		return ctrl.Result{RequeueAfter: decision.RequeueAfter}, nil
-	case nodeactuator.ActionCheckSafety:
-		return r.executeSafetyAction(ctx, transition, snapshot)
 	case nodeactuator.ActionObservePrevious, nodeactuator.ActionApplyTarget,
 		nodeactuator.ActionObserveTarget, nodeactuator.ActionStartSettling,
 		nodeactuator.ActionMarkReady:
@@ -258,36 +250,6 @@ func (r *TransitionReconciler) executeLeaseAction(
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{Requeue: true}, nil
-}
-
-func (r *TransitionReconciler) executeSafetyAction(
-	ctx context.Context,
-	transition *edgev1alpha1.NodeActuation,
-	snapshot nodeactuator.Snapshot,
-) (ctrl.Result, error) {
-	result, err := r.safety.Check(ctx, snapshot.Request)
-	if err != nil {
-		return r.failTerminally(ctx, transition, snapshot, nodeactuator.Failure{
-			Stage: nodeactuator.FailureStageSafety, Reason: "WorkloadSafetyCheckFailed", Message: err.Error(),
-		})
-	}
-	if err := result.Validate(); err != nil {
-		return r.failTerminally(ctx, transition, snapshot, nodeactuator.Failure{
-			Stage: nodeactuator.FailureStageSafety, Reason: "WorkloadSafetyResultInvalid", Message: err.Error(),
-		})
-	}
-	err = r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
-		status.Safety = projectSafetyResult(result)
-		if status.Phase != edgev1alpha1.NodeActuationPhaseReady {
-			status.Phase = edgev1alpha1.NodeActuationPhaseCheckingSafety
-		}
-		if result.Allowed {
-			status.Reason, status.Message = "WorkloadSafetyAllowed", "all observed active Pods are explicitly allowed"
-		} else {
-			status.Reason, status.Message = "WorkloadSafetyBlocked", "an observed active Pod is not explicitly allowed"
-		}
-	})
-	return ctrl.Result{}, err
 }
 
 func (r *TransitionReconciler) executeTargetAction(
@@ -471,23 +433,6 @@ func (r *TransitionReconciler) patchStatus(
 	}
 	transition.Status = desired.Status
 	return nil
-}
-
-func projectSafetyResult(result WorkloadSafetyResult) *edgev1alpha1.NodeActuationSafetyObservation {
-	verdict := edgev1alpha1.NodeActuationSafetyAllowed
-	if !result.Allowed {
-		verdict = edgev1alpha1.NodeActuationSafetyBlocked
-	}
-	projected := &edgev1alpha1.NodeActuationSafetyObservation{
-		Verdict: verdict, ObservedAt: metav1.NewTime(result.ObservedAt),
-		BlockingPods: make([]edgev1alpha1.NodeActuationPodReference, 0, len(result.BlockingPods)),
-	}
-	for _, pod := range result.BlockingPods {
-		projected.BlockingPods = append(projected.BlockingPods, edgev1alpha1.NodeActuationPodReference{
-			Namespace: pod.Namespace, Name: pod.Name, UID: pod.UID,
-		})
-	}
-	return projected
 }
 
 func projectHostObservation(observation nodeactuator.Observation) *edgev1alpha1.NodeActuationObservation {

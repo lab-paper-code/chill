@@ -31,7 +31,6 @@ type Config struct {
 	KubeAPIServer        string                             `json:"kubeAPIServer,omitempty"`
 	KubeAPITokenFile     string                             `json:"kubeAPITokenFile"`
 	KubeAPICAFile        string                             `json:"kubeAPICAFile"`
-	AllowedNamespaces    []string                           `json:"allowedNamespaces"`
 	ActuationPolicies    []actuatorcore.ActuationPolicySpec `json:"actuationPolicies"`
 	JetsonNVPModel       *JetsonNVPModelConfig              `json:"jetsonNVPModel,omitempty"`
 	NodeSelector         map[string]string                  `json:"nodeSelector"`
@@ -110,9 +109,6 @@ func (c Config) Validate() error {
 	default:
 		problems = append(problems, "updateStrategy.type must be RollingUpdate or OnDelete")
 	}
-	if err := validateAllowedNamespaces(c.AllowedNamespaces); err != nil {
-		problems = append(problems, err.Error())
-	}
 	if _, err := configuredPolicies(c.ActuationPolicies); err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -187,23 +183,6 @@ func validateHostPaths(hostPaths []HostPathMount) error {
 			}
 			seen[value] = struct{}{}
 		}
-	}
-	return nil
-}
-
-func validateAllowedNamespaces(namespaces []string) error {
-	if len(namespaces) == 0 {
-		return errors.New("allowedNamespaces must contain at least one explicit namespace")
-	}
-	seen := make(map[string]struct{}, len(namespaces))
-	for _, namespace := range namespaces {
-		if strings.TrimSpace(namespace) != namespace || len(validation.IsDNS1123Label(namespace)) != 0 {
-			return fmt.Errorf("invalid allowed namespace %q", namespace)
-		}
-		if _, duplicate := seen[namespace]; duplicate {
-			return fmt.Errorf("duplicate allowed namespace %q", namespace)
-		}
-		seen[namespace] = struct{}{}
 	}
 	return nil
 }

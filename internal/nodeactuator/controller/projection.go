@@ -67,20 +67,6 @@ func ProjectSnapshot(
 		Lock: nodeactuator.LockObservation{
 			State: lease.State, RetryAfter: lease.RetryAfter,
 		},
-		Safety: nodeactuator.SafetyUnknown,
-	}
-	if transition.Status.Safety != nil {
-		snapshot.SafetyObservedAt = &transition.Status.Safety.ObservedAt.Time
-		switch transition.Status.Safety.Verdict {
-		case edgev1alpha1.NodeActuationSafetyAllowed:
-			snapshot.Safety = nodeactuator.SafetyAllowed
-		case edgev1alpha1.NodeActuationSafetyBlocked:
-			snapshot.Safety = nodeactuator.SafetyBlocked
-		default:
-			return nodeactuator.Snapshot{}, fmt.Errorf(
-				"unsupported workload safety verdict %q", transition.Status.Safety.Verdict,
-			)
-		}
 	}
 	snapshot.PreviousObservation, err = projectObservation(transition.Status.PreviousObservation)
 	if err != nil {

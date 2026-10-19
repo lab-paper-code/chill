@@ -21,8 +21,6 @@ data:
     kubeAPIServer: {{ $kubeAPIServer | quote }}
     kubeAPITokenFile: {{ .Values.nodeActuator.kubernetesClient.tokenFile | quote }}
     kubeAPICAFile: {{ .Values.nodeActuator.kubernetesClient.caFile | quote }}
-    allowedNamespaces:
-{{- toYaml .Values.nodeActuator.allowedNamespaces | nindent 6 }}
     actuationPolicies:
 {{- toYaml .Values.powerActuation.policies | nindent 6 }}
     jetsonNVPModel:

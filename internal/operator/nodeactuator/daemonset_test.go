@@ -40,14 +40,12 @@ func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
 	container := daemonSet.Spec.Template.Spec.Containers[0]
 	if container.Command[0] != "/node-actuator" || container.SecurityContext == nil ||
 		container.SecurityContext.Privileged == nil || *container.SecurityContext.Privileged ||
-		!hasArg(container.Args, "--allowed-namespace=kube-system") ||
 		!hasPolicyArg(container.Args, config.ActuationPolicies[0]) ||
 		!hasArg(container.Args, "--jetson-nvpmodel-command=/host/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1") ||
 		!hasArg(container.Args, "--kube-api-server=https://kubernetes.example:6443") ||
 		!hasArg(container.Args, "--kube-api-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token") ||
 		!hasArg(container.Args, "--kube-api-ca-file=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt") ||
-		!hasFieldEnvironment(container.Env, "NODE_NAME", "spec.nodeName") ||
-		!hasFieldEnvironment(container.Env, "POD_UID", "metadata.uid") {
+		!hasFieldEnvironment(container.Env, "NODE_NAME", "spec.nodeName") {
 		t.Fatalf("NodeActuator container contract = %#v", container)
 	}
 	if !hasHostMount(daemonSet, "host-sys", "/sys", "/sys", false) ||
@@ -138,7 +136,6 @@ func TestConfigRejectsImplicitEligibilityOrAuthorization(t *testing.T) {
 	t.Parallel()
 	for name, mutate := range map[string]func(*Config){
 		"node selection": func(config *Config) { config.NodeSelector = nil },
-		"namespace":      func(config *Config) { config.AllowedNamespaces = nil },
 		"policy":         func(config *Config) { config.ActuationPolicies = nil },
 		"host adapter":   func(config *Config) { config.JetsonNVPModel = nil },
 		"API token":      func(config *Config) { config.KubeAPITokenFile = "" },
@@ -185,7 +182,7 @@ func validConfig() Config {
 	return Config{
 		Image: "daclab/chill-node-actuator:test", ImagePullPolicy: corev1.PullIfNotPresent,
 		ServiceAccountName: "chill-node-actuator", MetricsBindAddress: "0", HealthProbePort: 8081,
-		LeaseDurationSeconds: 30, AllowedNamespaces: []string{"kube-system"},
+		LeaseDurationSeconds: 30,
 		UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
 			Type:          appsv1.RollingUpdateDaemonSetStrategyType,
 			RollingUpdate: &appsv1.RollingUpdateDaemonSet{MaxUnavailable: &maxUnavailable},

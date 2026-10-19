@@ -86,25 +86,6 @@ var _ = Describe("NodeActuation API", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
 	})
-
-	It("requires exact blocking Pod identities for a blocked safety verdict", func() {
-		ctx := context.Background()
-		transition := validNodeActuation(uniqueNodeActuationName("safety"))
-		Expect(k8sClient.Create(ctx, transition)).To(Succeed())
-
-		now := metav1.Now()
-		transition.Status.Safety = &edgev1alpha1.NodeActuationSafetyObservation{
-			Verdict: edgev1alpha1.NodeActuationSafetyBlocked, ObservedAt: now,
-		}
-		err := k8sClient.Status().Update(ctx, transition)
-		Expect(err).To(HaveOccurred())
-		Expect(apierrors.IsInvalid(err)).To(BeTrue())
-
-		transition.Status.Safety.BlockingPods = []edgev1alpha1.NodeActuationPodReference{{
-			Namespace: "tenant-a", Name: "serving", UID: "pod-uid",
-		}}
-		Expect(k8sClient.Status().Update(ctx, transition)).To(Succeed())
-	})
 })
 
 func validNodeActuation(name string) *edgev1alpha1.NodeActuation {

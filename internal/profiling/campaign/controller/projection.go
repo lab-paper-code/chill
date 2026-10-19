@@ -73,7 +73,6 @@ func projectOwnedTransition(
 	switch transition.Status.Phase {
 	case "", edgev1alpha1.NodeActuationPhasePending,
 		edgev1alpha1.NodeActuationPhaseAcquiringLease,
-		edgev1alpha1.NodeActuationPhaseCheckingSafety,
 		edgev1alpha1.NodeActuationPhaseObservingPrevious,
 		edgev1alpha1.NodeActuationPhaseApplying,
 		edgev1alpha1.NodeActuationPhaseVerifying,

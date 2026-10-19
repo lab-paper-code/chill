@@ -28,16 +28,6 @@ func setupTransitionController(ctx context.Context, manager ctrl.Manager, opts o
 	if err != nil {
 		return fmt.Errorf("construct Node Lease manager: %w", err)
 	}
-	safety, err := actuatorcontroller.NewKubernetesWorkloadSafetyChecker(
-		manager.GetAPIReader(),
-		actuatorcontroller.WorkloadSafetyOptions{
-			AllowedNamespaces: append([]string(nil), opts.allowedNamespaces...),
-			AllowedPodUIDs:    []string{opts.podUID},
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("construct workload safety checker: %w", err)
-	}
 	hostActuator, err := jetson.NewNVPModel(jetson.NVPModelOptions{
 		Command: append([]string(nil), opts.jetsonCommand...), Timeout: opts.jetsonTimeout,
 	})
@@ -45,7 +35,7 @@ func setupTransitionController(ctx context.Context, manager ctrl.Manager, opts o
 		return fmt.Errorf("construct Jetson NVPModel adapter: %w", err)
 	}
 	reconciler, err := actuatorcontroller.NewTransitionReconciler(
-		manager.GetClient(), leases, safety, hostActuator,
+		manager.GetClient(), leases, hostActuator,
 		actuatorcontroller.TransitionReconcilerOptions{
 			AssignedNode:    assigned,
 			AllowedPolicies: append([]nodeactuator.ActuationPolicySpec(nil), opts.allowedPolicies...),
