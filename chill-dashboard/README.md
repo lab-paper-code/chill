@@ -50,7 +50,7 @@ PUT `v1/scheduler/settings`, GET `v1/observations/load` and GET
 `limit` and nonnegative `cursor` in retained append order, not a total count.
 The relay reads GET `v1/scheduler`, `/state`, `/profiles` and scheduler history
 with ChillServer `view=compact` (the only accepted `view`), and `parseSchedulerJSON`
-restores the shared `profile`/`completionMeasurement` `$ref`s into the full
+restores the shared `profile` `$ref`s into the full
 response before any screen reads it; a missing reference is an error.
 Settings PUT sends the Settings object itself; ObservationLog and ConfigMap
 storage remain authoritative. There is no version precondition or dry-run.

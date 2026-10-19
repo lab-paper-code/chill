@@ -4,13 +4,12 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
-	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
-// Compact reads share only the two large repeated evidence objects. Everything
+// Compact reads share only the large repeated profile evidence. Everything
 // else, including policy, candidate order and action acknowledgements, is intact.
 // These references belong to this response, not to the stored observation contract.
 type schedulerEvidenceRef struct {
@@ -18,15 +17,11 @@ type schedulerEvidenceRef struct {
 }
 
 type schedulerReadEvidence struct {
-	Profiles               map[string]*serving.Profile          `json:"profiles"`
-	CompletionMeasurements map[string]*serving.ObservedOverhead `json:"completionMeasurements"`
+	Profiles map[string]*serving.Profile `json:"profiles"`
 }
 
 func newSchedulerReadEvidence() schedulerReadEvidence {
-	return schedulerReadEvidence{
-		Profiles:               make(map[string]*serving.Profile),
-		CompletionMeasurements: make(map[string]*serving.ObservedOverhead),
-	}
+	return schedulerReadEvidence{Profiles: make(map[string]*serving.Profile)}
 }
 
 func (e *schedulerReadEvidence) profile(p *serving.Profile) *schedulerEvidenceRef {
@@ -46,31 +41,13 @@ func (e *schedulerReadEvidence) profile(p *serving.Profile) *schedulerEvidenceRe
 	}
 }
 
-func (e *schedulerReadEvidence) completion(m *serving.ObservedOverhead) *schedulerEvidenceRef {
-	if m == nil {
-		return nil
-	}
-	identity := m.Profile + "@" + m.Node.UID + "@" + m.From.Format(time.RFC3339Nano) + "/" + m.To.Format(time.RFC3339Nano)
-	key := identity
-	for variant := 0; ; variant++ {
-		if previous, exists := e.CompletionMeasurements[key]; !exists {
-			e.CompletionMeasurements[key] = m
-			return &schedulerEvidenceRef{Ref: key}
-		} else if previous == m || reflect.DeepEqual(previous, m) {
-			return &schedulerEvidenceRef{Ref: key}
-		}
-		key = identity + "#" + strconv.Itoa(variant+1)
-	}
-}
-
 type schedulerReadInstance struct {
 	*serving.SchedulerInstance
-	Profile               *schedulerEvidenceRef `json:"profile"`
-	CompletionMeasurement *schedulerEvidenceRef `json:"completionMeasurement,omitempty"`
+	Profile *schedulerEvidenceRef `json:"profile"`
 }
 
 func (e *schedulerReadEvidence) instance(instance *serving.SchedulerInstance) schedulerReadInstance {
-	return schedulerReadInstance{instance, e.profile(instance.Profile), e.completion(instance.CompletionMeasurement)}
+	return schedulerReadInstance{instance, e.profile(instance.Profile)}
 }
 
 func (e *schedulerReadEvidence) instances(instances []serving.SchedulerInstance) []schedulerReadInstance {

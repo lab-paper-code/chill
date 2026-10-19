@@ -86,6 +86,7 @@ type Runtime struct {
 	profiles          []Profile
 	nodes             map[string][]NodeReference
 	routingControlled bool
+	completionMargin  float64
 	routeTargets      map[string]map[string]int32
 	calls             map[string]*Call
 	definitions       map[string]*Definition
@@ -362,7 +363,7 @@ func (r *Runtime) dispatchLocked() {
 			c.phase = phaseAssigned
 			i.outstanding++
 			c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
-			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline}
+			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline, CompletionMarginMS: r.completionMargin}
 			go r.execute(c, i.Execute, dispatch)
 		}
 	}
@@ -678,6 +679,13 @@ func (r *Runtime) SetNodes(nodes map[string][]NodeReference) {
 	defer r.mu.Unlock()
 	r.nodes = nodes
 	r.signal()
+}
+
+// SetCompletionMargin applies the configured completion margin to later dispatches.
+func (r *Runtime) SetCompletionMargin(ms float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.completionMargin = ms
 }
 
 func (r *Runtime) InstallInstances(instances []ReadyInstance) error {

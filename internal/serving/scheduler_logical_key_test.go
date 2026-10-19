@@ -57,9 +57,6 @@ func TestSchedulerLogicalConfigKeyPreservesExecutorReplacementAndOrdering(t *tes
 	candidate.ID, candidate.Keep = "different-decision", true
 	candidate.Instances[0].ID = "replacement-pod/replacement-container"
 	candidate.Instances[0].ObservedAt = time.Unix(999, 0)
-	candidate.Instances[0].CompletionOverhead += time.Second
-	candidate.Instances[0].CompletionObserved = false
-	candidate.Instances[0].EnvelopeSource = "new observation"
 	candidate.Instances[0].Ready = false
 	for _, route := range candidate.Routing {
 		route[candidate.Instances[0].ID] = route["physical-first"]

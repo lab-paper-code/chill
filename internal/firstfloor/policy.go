@@ -19,11 +19,8 @@ func RemainingSLOMS(r RequestState) float64 {
 	return r.Context.SLO.TargetMS - r.Context.SenderElapsedMS - r.ElapsedMS
 }
 func SLOExpired(r RequestState) bool { return RemainingSLOMS(r) <= 0 }
-func remainingCompletionOverheadMS(p Policy, senderElapsedMS float64) float64 {
-	return math.Max(0, p.CompletionOverheadMS-senderElapsedMS)
-}
-func requestSlack(p Policy, r RequestState, b BatchProfile) float64 {
-	return RemainingSLOMS(r) - remainingCompletionOverheadMS(p, r.Context.SenderElapsedMS) - serviceCost(b, r.Context.SLO.Percentile)
+func requestSlack(r RequestState, b BatchProfile) float64 {
+	return RemainingSLOMS(r) - r.Context.CompletionMarginMS - serviceCost(b, r.Context.SLO.Percentile)
 }
 func allowedBatch(p Policy, size int) bool {
 	return p.MaxBatchSize >= 0 && (p.MaxBatchSize == 0 || size <= p.MaxBatchSize)
@@ -72,11 +69,11 @@ func nextCompatible(requests []RequestState, head, previous int) int {
 	}
 	return best
 }
-func batchFeasible(p Policy, requests []RequestState, head int, b BatchProfile) bool {
+func batchFeasible(requests []RequestState, head int, b BatchProfile) bool {
 	previous := -1
 	for range b.Size {
 		previous = nextCompatible(requests, head, previous)
-		if previous < 0 || requestSlack(p, requests[previous], b) < 0 {
+		if previous < 0 || requestSlack(requests[previous], b) < 0 {
 			return false
 		}
 	}
@@ -124,7 +121,7 @@ func ChooseBatch(p Policy, requests []RequestState) BatchChoice {
 		if fastest.Size == 0 || cost < fastestCost || cost == fastestCost && b.Size > fastest.Size {
 			fastest, fastestCost = b, cost
 		}
-		if r.Phase != phaseDeferred && batchFeasible(p, requests, head, b) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
+		if r.Phase != phaseDeferred && batchFeasible(requests, head, b) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
 			available = b
 		}
 	}
@@ -174,7 +171,7 @@ func energyGainWait(p Policy, requests []RequestState, head, count int, availabl
 			if !normalRequest(q) {
 				continue
 			}
-			slack := requestSlack(p, q, b)
+			slack := requestSlack(q, b)
 			if sameQueue(q, r) {
 				allowed = math.Min(allowed, p.MaxBatchWaitMS-q.QueueMS)
 			} else {

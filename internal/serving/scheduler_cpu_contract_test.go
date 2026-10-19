@@ -21,7 +21,6 @@ func measuredWideAffinityFixture() (SchedulerSettings, SchedulerSnapshot) {
 	profile.RuntimeMetadata = &metadata
 	instance.Profile = &profile
 	instance.Allocation.CPUs, instance.Allocation.CPUCount, instance.Allocation.Threads = slices.Clone(metadata.CPUAffinity), 2, 2
-	*instance = schedulerMeasuredInstance(*instance, snapshot.Workloads[0], 0)
 	snapshot.Arrivals = []SchedulerArrival{{ID: "measured-arrival", At: snapshot.At.Add(-settings.ObservationWindow), Definition: snapshot.Workloads[0], Compute: true, Accepted: true}}
 	return settings, snapshot
 }

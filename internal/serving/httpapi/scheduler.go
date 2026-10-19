@@ -71,12 +71,13 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	var settings serving.SchedulerSettings
-	if err := h.decode(w, r, &settings); err != nil {
+	var input serving.SchedulerSettingsInput
+	if err := h.decode(w, r, &input); err != nil {
 		sendError(w, err)
 		return
 	}
-	if err := settings.Validate(); err != nil {
+	settings, err := input.Settings()
+	if err != nil {
 		sendError(w, &serving.Error{Code: "InvalidBody", Message: err.Error(), Field: "settings"})
 		return
 	}
@@ -96,7 +97,7 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	err := persistSchedulerSettings(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
+	err = persistSchedulerSettings(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
 		h.config.SchedulerConfigMap, h.config.SchedulerConfigKey, settings)
 	if err == nil {
 		// Only the scheduler service's full refresh can accept a configuration. Applying

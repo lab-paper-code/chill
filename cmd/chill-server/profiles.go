@@ -558,7 +558,6 @@ func (o *schedulerService) measuredPreparation(
 	}
 	hash := sha256.Sum256([]byte(p.ID))
 	name := "measured-" + hex.EncodeToString(hash[:12])
-	unknown := "completion-evidence-unavailable"
 	settings := p.Condition.Firstfloor
 	if p.Condition.Backend != "ort-cpu" && p.Condition.Backend != "ort-cuda" && !rknn {
 		return spec, fmt.Errorf(
@@ -574,7 +573,7 @@ func (o *schedulerService) measuredPreparation(
 				Threads: runtime.IntraOpThreads, GPUUUID: runtime.GPUUUID, MemoryBytes: memory,
 			},
 			Capacity: int(settings.MaxQueueSize), Weight: 1,
-			MaxBatch: p.Batches[len(p.Batches)-1].Batch, EnvelopeSource: unknown,
+			MaxBatch: p.Batches[len(p.Batches)-1].Batch,
 		},
 		Config: native.Config{
 			Model:        "chill_model",
@@ -594,7 +593,7 @@ func (o *schedulerService) measuredPreparation(
 			MaxBatchSize: int(settings.MaxBatchSize), ProfilePath: "/profile/bundle.json",
 			Policy: native.Policy{
 				DecisionID: name, ProfileID: p.ID, MaxBatchSize: p.Batches[len(p.Batches)-1].Batch,
-				DeadlinePolicy: settings.DeadlinePolicy, EnvelopeSource: unknown,
+				DeadlinePolicy: settings.DeadlinePolicy,
 			},
 		},
 	}

@@ -31,20 +31,18 @@ const (
 )
 
 type SchedulerControllerConfig struct {
-	Settings               serving.SchedulerSettings
-	CPUInventory           map[string][]int
-	GPUInventory           map[string][]string
-	Reserved               map[string]serving.SchedulerAllocation
-	Preparations           map[string]PrepareSpec
-	Costs                  []serving.OperationCost
-	Baselines              []serving.NodeBaseline
-	Meters                 []MeterDeclaration
-	PowerRequests          map[string]*edge.NodeActuation
-	StaticRouting          bool
-	CompletionCalibrations map[string]map[string]serving.ObservedOverhead
-	CalibrationErrors      map[string]string
-	OnDecision             func(serving.SchedulerDecision) error
-	OnAction               func(OperationResult) error
+	Settings      serving.SchedulerSettings
+	CPUInventory  map[string][]int
+	GPUInventory  map[string][]string
+	Reserved      map[string]serving.SchedulerAllocation
+	Preparations  map[string]PrepareSpec
+	Costs         []serving.OperationCost
+	Baselines     []serving.NodeBaseline
+	Meters        []MeterDeclaration
+	PowerRequests map[string]*edge.NodeActuation
+	StaticRouting bool
+	OnDecision    func(serving.SchedulerDecision) error
+	OnAction      func(OperationResult) error
 }
 type SchedulerControllerState struct {
 	Snapshot serving.SchedulerSnapshot `json:"snapshot"`
@@ -495,10 +493,6 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		return serving.SchedulerSnapshot{}, err
 	}
 	s := serving.SchedulerSnapshot{ObservationEnd: now, Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines}
-	overheads, err := c.observationLog.ObservedOverhead(now.Add(-config.Settings.ObservationWindow), now)
-	if err != nil {
-		return s, err
-	}
 	// Historical reads must finish before refreshing authoritative live sources.
 	if err = c.observer.Refresh(ctx); err != nil {
 		return s, err
@@ -583,25 +577,13 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			s.Options = append(s.Options, serving.SchedulerOption{Instance: instance, CompatibleUIDs: compatible})
 		}
 	}
-	bindCompletionOverhead(&s, physical, config, overheads)
+	bindInstanceFacts(&s, physical, config.Meters)
 	return s, nil
 }
 
-func bindCompletionOverhead(
-	s *serving.SchedulerSnapshot, physical map[string]serving.InstanceState, config SchedulerControllerConfig,
-	overheads map[string]serving.ObservedOverhead,
-) {
-	for profile, facts := range config.CompletionCalibrations {
-		for id, fact := range facts {
-			overheads["calibration/"+profile+"/"+id] = fact
-		}
-	}
+func bindInstanceFacts(s *serving.SchedulerSnapshot, physical map[string]serving.InstanceState, meters []MeterDeclaration) {
 	for index := range s.Instances {
 		instance := &s.Instances[index]
-		observeOverhead(instance, overheads)
-		if instance.Profile != nil && !instance.CompletionObserved && config.CalibrationErrors[instance.Profile.ID] != "" {
-			instance.EnvelopeSource = "completion calibration Pending: " + config.CalibrationErrors[instance.Profile.ID]
-		}
 		state := physical[instance.ID]
 		instance.ArrivalAges = map[string][]time.Duration{}
 		if state.Native != nil {
@@ -611,15 +593,10 @@ func bindCompletionOverhead(
 				}
 			}
 		}
-		bindProfileMeter(instance, config.Meters)
+		bindProfileMeter(instance, meters)
 	}
 	for index := range s.Options {
-		observeOverhead(&s.Options[index].Instance, overheads)
-		if instance := &s.Options[index].Instance; instance.Profile != nil &&
-			!instance.CompletionObserved && config.CalibrationErrors[instance.Profile.ID] != "" {
-			instance.EnvelopeSource = "completion calibration Pending: " + config.CalibrationErrors[instance.Profile.ID]
-		}
-		bindProfileMeter(&s.Options[index].Instance, config.Meters)
+		bindProfileMeter(&s.Options[index].Instance, meters)
 	}
 }
 func (c *SchedulerController) captureNodePower(ctx context.Context, s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n *core.Node, acts *edge.NodeActuationList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
@@ -673,7 +650,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			}
 			m := state.Native.Metadata
 			allocation := serving.SchedulerAllocation{CPUs: slices.Clone(m.Runtime.CPUAffinity), GPUUUID: m.Runtime.GPUUUID, Threads: m.Runtime.IntraOpThreads, MemoryBytes: uint64(p.Spec.Containers[0].Resources.Limits.Memory().Value())}
-			instance := serving.SchedulerInstance{ID: state.ID, Node: state.Node, Pool: state.Pool, Profile: profile, Allocation: allocation, Ready: state.Ready && state.Native.Ready, Capacity: m.MaxQueueRequests, Weight: 1, MaxBatch: m.MaxBatchSize, ObservedAt: state.ObservedAt, MaxWait: time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond)), CompletionOverhead: time.Duration(m.Policy.CompletionOverheadMS * float64(time.Millisecond)), EnvelopeSource: m.Policy.EnvelopeSource}
+			instance := serving.SchedulerInstance{ID: state.ID, Node: state.Node, Pool: state.Pool, Profile: profile, Allocation: allocation, Ready: state.Ready && state.Native.Ready, Capacity: m.MaxQueueRequests, Weight: 1, MaxBatch: m.MaxBatchSize, ObservedAt: state.ObservedAt, MaxWait: time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))}
 			instance.TargetID, instance.OwnerWorkloadUID = state.TargetID, state.OwnerWorkloadUID
 			instance.Stopped = state.Stopped
 			if m.Policy.MaxBatchSize > 0 {
@@ -932,9 +909,7 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 				template.Name = slotName(i.ID)
 				template.Config.Policy = native.Policy{ProfileID: i.Profile.ID, DecisionID: target.ID,
 					DeadlinePolicy: native.EffectiveDeadlinePolicy(i.Profile.Condition.Firstfloor.DeadlinePolicy),
-					MaxBatchSize:   i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / float64(time.Millisecond),
-					CompletionOverheadMS: float64(i.CompletionOverhead) / float64(time.Millisecond),
-					EnvelopeSource:       i.CompletionPolicySource()}
+					MaxBatchSize:   i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / float64(time.Millisecond)}
 				operation.Prepare = &template
 				break
 			}
@@ -946,30 +921,6 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 	return operation
 }
 
-// observeOverhead uses recent completed requests on the exact physical Node and
-// immutable measured profile, including executors that no longer exist. Frozen
-// model/input definitions establish compatibility; workload UID and SLO are not
-// execution conditions. No matching measurement leaves the bootstrap unobserved.
-func observeOverhead(instance *serving.SchedulerInstance, overheads map[string]serving.ObservedOverhead) {
-	instance.CompletionObserved = false
-	instance.CompletionMeasurement = nil
-	observedID := ""
-	for id, o := range overheads {
-		if !o.Matches(*instance) {
-			continue
-		}
-		if instance.CompletionObserved && (o.Completion < instance.CompletionOverhead || o.Completion == instance.CompletionOverhead && id >= observedID) {
-			continue
-		}
-		source := o.Source
-		if id != instance.ID {
-			source = "inherited from " + id + ": " + source
-		}
-		instance.CompletionOverhead, instance.EnvelopeSource, instance.CompletionObserved = o.Completion, source, true
-		instance.CompletionMeasurement = &o
-		observedID = id
-	}
-}
 func bindProfileMeter(instance *serving.SchedulerInstance, meters []MeterDeclaration) {
 	if instance.Profile == nil {
 		return
@@ -1089,8 +1040,7 @@ func schedulerPhysicalState(id string, physical []serving.InstanceState) *servin
 }
 
 func schedulerTargetReady(wanted serving.SchedulerInstance, snapshot serving.SchedulerSnapshot, physical []serving.InstanceState, requirePolicy bool) bool {
-	if wanted.Profile == nil || !wanted.CompletionObserved || !wanted.CompletionMeasurement.Valid() ||
-		wanted.CompletionOverhead != wanted.CompletionMeasurement.Completion || !wanted.CompletionMeasurement.Matches(wanted) {
+	if wanted.Profile == nil {
 		return false
 	}
 	state := schedulerPhysicalState(wanted.ID, physical)
@@ -1117,7 +1067,6 @@ func schedulerPolicyAcknowledged(wanted serving.SchedulerInstance, actual native
 	}
 	return actual.Policy.ProfileID == wanted.Profile.ID && maxBatch == wanted.MaxBatch &&
 		actual.Policy.MaxBatchWaitMS == float64(wanted.MaxWait)/float64(time.Millisecond) &&
-		actual.Policy.CompletionOverheadMS == float64(wanted.CompletionOverhead)/float64(time.Millisecond) &&
 		native.EffectiveDeadlinePolicy(actual.Policy.DeadlinePolicy) == native.EffectiveDeadlinePolicy(wanted.Profile.Condition.Firstfloor.DeadlinePolicy)
 }
 func podBudget(pod *core.Pod) (int64, int64, bool) {

@@ -294,20 +294,6 @@ func TestExecuteOwnerTLSDoesNotForwardCredentialsAcrossRedirect(t *testing.T) {
 	}
 }
 
-func TestExecuteCalibrationDoesNotInventAnObservedBootstrap(t *testing.T) {
-	spec := servingkube.PrepareSpec{}
-	spec.Config.Policy.CompletionOverheadMS = 123
-	spec.Config.Policy.EnvelopeSource = "bootstrap-not-observed"
-	if err := bindExecutionPolicy(context.Background(), nil, &spec); err != nil ||
-		spec.Config.Policy.CompletionOverheadMS != 123 || spec.Instance.CompletionObserved {
-		t.Fatalf("configured bootstrap was changed or labelled observed: %+v, %v", spec, err)
-	}
-	spec.CompletionCalibration = &serving.CompletionCalibration{}
-	if err := bindExecutionPolicy(context.Background(), nil, &spec); err == nil {
-		t.Fatal("selected but unavailable calibration silently became a bootstrap fallback")
-	}
-}
-
 func TestExecuteRejectsInlinePreparationBeforeConstructingClients(t *testing.T) {
 	m := executionManifest{Namespace: "own", JournalDirectory: "exclusive", SchedulerConfigMap: "scheduler",
 		SchedulerConfigKey: "config.json", SourceConfigRV: "10", ProfileID: "profile",
@@ -344,11 +330,11 @@ func TestExecuteBundleUsesCatalogDeclarationAndValidatesNativePolicy(t *testing.
 				Inputs: []string{"x"}, Outputs: []string{"y"},
 				RunnerTimeoutMS: 1000, MaxQueueRequests: 4, MaxQueueBytes: 1024, MaxRequestBytes: 1024,
 				BatchSizes: []int{1, 2}, MaxBatchSize: 2,
-				Policy: native.Policy{DecisionID: "manual", MaxBatchSize: cap, EnvelopeSource: "bootstrap-not-observed"},
+				Policy: native.Policy{DecisionID: "manual", MaxBatchSize: cap},
 			},
 		}
 		spec.Store.Store = "evidence"
-		err := bindExecutionBundle(context.Background(), nil, &spec)
+		err := bindExecutionBundle(&spec)
 		if cap == 2 {
 			if err == nil {
 				t.Fatal("initialized but unmeasured batch cap was accepted")
@@ -363,8 +349,8 @@ func TestExecuteBundleUsesCatalogDeclarationAndValidatesNativePolicy(t *testing.
 			spec.Config.Policy.ProfileID != profile.ID || spec.Config.Policy.Batches != nil {
 			t.Fatalf("startup delivery lost catalog identity or embedded mutable samples: %+v", spec)
 		}
-		if profile.Batches[0].DurationNanos[0] != 2e6 || spec.Instance.CompletionObserved {
-			t.Fatal("delivery changed measured samples or invented observed completion")
+		if profile.Batches[0].DurationNanos[0] != 2e6 {
+			t.Fatal("delivery changed measured samples")
 		}
 	}
 }

@@ -18,7 +18,7 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const observationSchema = "chill.dacs.io/serving-observations.v1alpha3"
+const observationSchema = "chill.dacs.io/serving-observations.v1alpha4"
 const observationSchedulerStream = "scheduler"
 const observationRequestStream = "requests"
 const observationDefinitionStream = "definitions"
@@ -515,14 +515,15 @@ func (observationLog *ObservationLog) Health() ObservationLogHealth {
 }
 
 type ObservationCohort struct {
-	Definition         string         `json:"definition"`
-	Total              int            `json:"total"`
-	Outcomes           map[string]int `json:"outcomes"`
-	SampleCount        int            `json:"sampleCount"`
-	LatencyNanos       []float64      `json:"latencyNanos"`
-	Percentile         *float64       `json:"percentile,omitempty"`
-	QuantileNanos      *float64       `json:"quantileNanos"`
-	TargetLatencyNanos *int64         `json:"targetLatencyNanos,omitempty"`
+	Definition              string         `json:"definition"`
+	Total                   int            `json:"total"`
+	Outcomes                map[string]int `json:"outcomes"`
+	SampleCount             int            `json:"sampleCount"`
+	LatencyNanos            []float64      `json:"latencyNanos"`
+	CompletionResidualNanos []float64      `json:"completionResidualNanos"`
+	Percentile              *float64       `json:"percentile,omitempty"`
+	QuantileNanos           *float64       `json:"quantileNanos"`
+	TargetLatencyNanos      *int64         `json:"targetLatencyNanos,omitempty"`
 }
 
 type ObservationResult struct {
@@ -558,6 +559,7 @@ type requestFacts struct {
 	definition string
 	outcome    string
 	completion *RequestEvent
+	dispatched *int64
 	accepted   bool
 }
 
@@ -573,6 +575,10 @@ func (f *requestFacts) addEvent(e *RequestEvent) {
 	}
 	if e.Kind == phaseAccepted {
 		f.accepted = true
+	}
+	if e.Kind == phaseAssigned {
+		elapsed := e.ElapsedNanos
+		f.dispatched = &elapsed
 	}
 	if e.Outcome != "" && !strings.HasPrefix(e.Kind, "backend_") &&
 		e.Kind != phaseAssigned && e.Kind != phaseReceived && e.Kind != phaseAccepted {
@@ -696,10 +702,15 @@ func (result *ObservationResult) aggregate(
 		}
 		if e := f.completion; e != nil && e.ElapsedNanos > 0 && !e.ReceivedAt.IsZero() {
 			cohort.LatencyNanos = append(cohort.LatencyNanos, float64(e.ElapsedNanos))
+			if p := e.NativeProgress; p != nil && f.dispatched != nil && p.ExecutionComplete && schedulerFinite(p.NativeElapsedMS) && p.NativeElapsedMS >= 0 {
+				cohort.CompletionResidualNanos = append(cohort.CompletionResidualNanos,
+					float64(e.ElapsedNanos-*f.dispatched)-p.NativeElapsedMS*float64(time.Millisecond))
+			}
 		}
 	}
 	for _, c := range cohorts {
 		sort.Float64s(c.LatencyNanos)
+		sort.Float64s(c.CompletionResidualNanos)
 		c.SampleCount = len(c.LatencyNanos)
 		if c.SampleCount > 0 && c.Percentile != nil && *c.Percentile > 0 && *c.Percentile <= 100 {
 			q := stat.Quantile(*c.Percentile/100, stat.Empirical, c.LatencyNanos, nil)

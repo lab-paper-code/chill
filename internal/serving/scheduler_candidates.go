@@ -44,7 +44,7 @@ func EnumerateScheduler(ctx context.Context, settings SchedulerSettings, snapsho
 		}
 	}
 	sort.Slice(workloads, func(i, j int) bool { return workloads[i].UID < workloads[j].UID })
-	e := schedulerEnumeration{ctx: ctx, settings: settings, snapshot: snapshot, search: search, workloads: workloads, options: schedulerMeasuredOptions(ctx, settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep, true): true}, result: result}
+	e := schedulerEnumeration{ctx: ctx, settings: settings, snapshot: snapshot, search: search, workloads: workloads, options: schedulerMeasuredOptions(ctx, settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep): true}, result: result}
 	e.controlBase = schedulerUnroutedTransition(ctx, snapshot)
 	if !settings.Controls.Sharing {
 		e.groups = schedulerExistingWorkloadGroups(ctx, workloads, e.controlInstances())
@@ -437,9 +437,6 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 				c.Instances[j].ID = old.ID
 				c.Instances[j].Ready = old.Ready
 				c.Instances[j].TargetID, c.Instances[j].OwnerWorkloadUID = old.TargetID, old.OwnerWorkloadUID
-				if old.CompletionObserved && old.CompletionMeasurement.Valid() && old.CompletionOverhead == old.CompletionMeasurement.Completion && old.CompletionMeasurement.Matches(c.Instances[j]) {
-					schedulerCopyCompletion(&c.Instances[j], old)
-				}
 				used[old.ID] = old.WorkloadUIDs
 				break
 			}
@@ -450,7 +447,7 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 		if e.ctx.Err() != nil {
 			return
 		}
-		key := schedulerConfigKey(c, true)
+		key := schedulerConfigKey(c)
 		if e.seen[key] {
 			return
 		}
@@ -639,7 +636,7 @@ func schedulerOptionCondition(o SchedulerOption) string {
 	}
 	p := i.Profile
 	// A top-level *CurveDatasetContract prints its value (&{name uid}), not its address.
-	return fmt.Sprint(i.Node, i.Pool, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait, i.CompletionOverhead, i.EnvelopeSource, i.CompletionObserved)
+	return fmt.Sprint(i.Node, i.Pool, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait)
 }
 
 // SchedulerLogicalConfigKey identifies configuration semantics, not a physical
@@ -713,7 +710,7 @@ func SchedulerLogicalConfigKey(snapshot SchedulerSnapshot, candidate SchedulerCa
 	return fmt.Sprintf("%q", [][]string{nodes, instances, workloads}), nil
 }
 
-func schedulerConfigKey(c SchedulerCandidate, includeObservation bool) string {
+func schedulerConfigKey(c SchedulerCandidate) string {
 	parts := []string{}
 	for _, i := range c.Instances {
 		uids := append([]string(nil), i.WorkloadUIDs...)
@@ -730,11 +727,7 @@ func schedulerConfigKey(c SchedulerCandidate, includeObservation bool) string {
 		if i.Profile != nil && i.Profile.Condition.Firstfloor != nil {
 			deadlinePolicy = i.Profile.Condition.Firstfloor.DeadlinePolicy
 		}
-		part := fmt.Sprint(i.ID, i.Node.UID, i.Pool, schedulerState(i), uids, weights, i.Capacity, i.MaxBatch, i.MaxWait, i.CompletionOverhead, deadlinePolicy, i.CompletionObserved)
-		if includeObservation {
-			part += i.EnvelopeSource
-		}
-		parts = append(parts, part)
+		parts = append(parts, fmt.Sprint(i.ID, i.Node.UID, i.Pool, schedulerState(i), uids, weights, i.Capacity, i.MaxBatch, i.MaxWait, deadlinePolicy))
 	}
 	sort.Strings(parts)
 	for _, n := range c.Nodes {
@@ -811,14 +804,6 @@ func schedulerCurrentTarget(snapshot SchedulerSnapshot, target SchedulerCandidat
 	target.Routing = maps.Clone(target.Routing)
 	for index, wanted := range target.Instances {
 		current := wanted
-		current.CompletionObserved, current.CompletionMeasurement = false, nil
-		for _, option := range snapshot.Options {
-			observed := option.Instance
-			if observed.Node == wanted.Node && observed.Pool == wanted.Pool && schedulerState(observed) == schedulerState(wanted) {
-				schedulerCopyCompletion(&current, observed)
-				break
-			}
-		}
 		for _, actual := range snapshot.Instances {
 			if !actual.Ready || actual.Stopped || !schedulerSamePhysicalTarget(actual, wanted) {
 				continue
@@ -828,7 +813,6 @@ func schedulerCurrentTarget(snapshot SchedulerSnapshot, target SchedulerCandidat
 			}
 			current.ID, current.TargetID, current.OwnerWorkloadUID = actual.ID, actual.TargetID, actual.OwnerWorkloadUID
 			current.Ready = true
-			schedulerCopyCompletion(&current, actual)
 			if current.ID != wanted.ID {
 				for _, uid := range wanted.WorkloadUIDs {
 					weights := maps.Clone(target.Routing[uid])
@@ -846,19 +830,12 @@ func schedulerCurrentTarget(snapshot SchedulerSnapshot, target SchedulerCandidat
 	return target
 }
 
-func schedulerCopyCompletion(target *SchedulerInstance, observed SchedulerInstance) {
-	target.CompletionOverhead = observed.CompletionOverhead
-	target.CompletionObserved = observed.CompletionObserved
-	target.CompletionMeasurement = observed.CompletionMeasurement
-	target.EnvelopeSource = observed.EnvelopeSource
-}
-
 func schedulerPlan(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
 	p := schedulerPlanState{snap: snap, target: &c, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
 	p.changeNodes(c)
 	p.prepareTargets(c)
 	// Candidate ordinals and rolling witness text are not operation identity.
-	route := p.add(schedulerActionRoute, NodeReference{}, "", "", schedulerConfigKey(c, false), p.prepares)
+	route := p.add(schedulerActionRoute, NodeReference{}, "", "", schedulerConfigKey(c), p.prepares)
 	p.retireOld(c, route)
 	p.continueActions()
 	return p.actions
@@ -985,16 +962,8 @@ func schedulerSnapshotTargetMatches(actual, wanted SchedulerInstance) bool {
 	if actual.OwnerWorkloadUID != "" && (len(wanted.WorkloadUIDs) != 1 || wanted.WorkloadUIDs[0] != actual.OwnerWorkloadUID) {
 		return false
 	}
-	return actual.Capacity == wanted.Capacity && actual.MaxBatch == wanted.MaxBatch &&
-		actual.MaxWait == wanted.MaxWait && actual.CompletionOverhead == wanted.CompletionOverhead &&
-		reflect.DeepEqual(actual.Profile.Condition.Firstfloor, wanted.Profile.Condition.Firstfloor) &&
-		schedulerCompletionMatches(actual) && schedulerCompletionMatches(wanted)
-}
-
-func schedulerCompletionMatches(instance SchedulerInstance) bool {
-	return instance.CompletionObserved && instance.CompletionMeasurement != nil &&
-		instance.CompletionOverhead == instance.CompletionMeasurement.Completion &&
-		instance.CompletionMeasurement.Matches(instance)
+	return actual.Capacity == wanted.Capacity && actual.MaxBatch == wanted.MaxBatch && actual.MaxWait == wanted.MaxWait &&
+		reflect.DeepEqual(actual.Profile.Condition.Firstfloor, wanted.Profile.Condition.Firstfloor)
 }
 
 func schedulerInstanceRouted(routing map[string]map[string]int32, id string) bool {

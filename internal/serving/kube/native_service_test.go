@@ -233,7 +233,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 			return nil
 		},
 	}).Build()
-	currentPolicy := native.Policy{DecisionID: "manual-static-routing:current", ProfileID: profile.ID, MaxBatchSize: 1, CompletionOverheadMS: 17}
+	currentPolicy := native.Policy{DecisionID: "manual-static-routing:current", ProfileID: profile.ID, MaxBatchSize: 1, MaxBatchWaitMS: 17}
 	actualRuntime := *profile.RuntimeMetadata
 	actualRuntime.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

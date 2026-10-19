@@ -113,7 +113,7 @@ func settingsControllerForTest(
 
 func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 	for _, tc := range []struct {
-		name                                                                                                   string
+		name, omit                                                                                             string
 		resourceAllowed, updateFailure, observationLogFailure, invalidSettings, refreshFailure, missingRefresh bool
 		want                                                                                                   int
 	}{
@@ -125,6 +125,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			observationLogFailure: true, want: http.StatusServiceUnavailable,
 		},
 		{name: "validation prevents write", resourceAllowed: true, invalidSettings: true, want: http.StatusBadRequest},
+		{name: "omitted completion margin prevents write", resourceAllowed: true, omit: `"completionMarginMS":0,`, want: http.StatusBadRequest},
 		{
 			name: "refresh failure does not enable stale catalog", resourceAllowed: true,
 			refreshFailure: true, want: http.StatusServiceUnavailable,
@@ -223,6 +224,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			raw = bytes.Replace(raw, []byte(tc.omit), nil, 1)
 			request := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/settings", bytes.NewReader(raw))
 			request.Header.Set("Authorization", "Bearer reviewed-token")
 			response := httptest.NewRecorder()
@@ -241,7 +243,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 					assertSchedulerSettingsRefreshFailed(t, observationLog, controller, refreshes)
 				}
 				assertSchedulerSettingsUnapplied(t, persisted, controller, before, wantDesired)
-				if (tc.observationLogFailure || !tc.resourceAllowed || tc.invalidSettings || tc.missingRefresh) && updates != 0 {
+				if (tc.observationLogFailure || !tc.resourceAllowed || tc.invalidSettings || tc.omit != "" || tc.missingRefresh) && updates != 0 {
 					t.Fatal("denied/unrecorded/invalid/unrefreshable settings performed CM write")
 				}
 				return
@@ -323,17 +325,10 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	equalProfile := *profile
 	differentProfile := *profile
 	differentProfile.Batches = []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{56}}}
-	measurement := &serving.ObservedOverhead{Profile: profile.ID, Node: serving.NodeReference{UID: "node-uid"},
-		Completion: time.Millisecond, From: at.Add(-time.Minute), To: at,
-		Definitions: map[string]*serving.Definition{"workload": {UID: "workload", Generation: 7}},
-		References:  []evidencestore.ObjectIdentity{{Store: "raw", Key: "completion", Size: 456}}}
-	equalMeasurement := *measurement
-	differentMeasurement := *measurement
-	differentMeasurement.Completion = 2 * time.Millisecond
 	instances := []serving.SchedulerInstance{
-		{ID: "physical", TargetID: "selected-slot", Node: measurement.Node, Profile: profile, CompletionMeasurement: measurement},
-		{ID: "equal", Profile: &equalProfile, CompletionMeasurement: &equalMeasurement},
-		{ID: "different", Profile: &differentProfile, CompletionMeasurement: &differentMeasurement},
+		{ID: "physical", TargetID: "selected-slot", Node: serving.NodeReference{UID: "node-uid"}, Profile: profile},
+		{ID: "equal", Profile: &equalProfile},
+		{ID: "different", Profile: &differentProfile},
 		{ID: "missing"},
 	}
 	candidate := serving.SchedulerCandidate{ID: "selected", Instances: instances}
@@ -343,21 +338,17 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	evidence := newSchedulerReadEvidence()
 	projected := evidence.observations([]serving.SchedulerObservation{event})
 	got := projected[0].Decision.Candidates[0].Instances
-	if len(evidence.Profiles) != 2 || len(evidence.CompletionMeasurements) != 2 ||
-		got[0].Profile.Ref != got[1].Profile.Ref || got[0].Profile.Ref == got[2].Profile.Ref ||
-		got[0].CompletionMeasurement.Ref != got[1].CompletionMeasurement.Ref ||
-		got[0].CompletionMeasurement.Ref == got[2].CompletionMeasurement.Ref {
+	if len(evidence.Profiles) != 2 || got[0].Profile.Ref != got[1].Profile.Ref || got[0].Profile.Ref == got[2].Profile.Ref {
 		t.Fatal("equal evidence was not shared, or differing same-identity evidence was discarded")
 	}
 	for i := range instances {
 		if instances[i].Profile == nil {
-			if got[i].Profile != nil || got[i].CompletionMeasurement != nil {
+			if got[i].Profile != nil {
 				t.Fatal("missing evidence became fabricated evidence")
 			}
 			continue
 		}
-		if !reflect.DeepEqual(evidence.Profiles[got[i].Profile.Ref], instances[i].Profile) ||
-			!reflect.DeepEqual(evidence.CompletionMeasurements[got[i].CompletionMeasurement.Ref], instances[i].CompletionMeasurement) {
+		if !reflect.DeepEqual(evidence.Profiles[got[i].Profile.Ref], instances[i].Profile) {
 			t.Fatal("reference changed a measured quantity or immutable evidence identity")
 		}
 	}
@@ -378,8 +369,7 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	if profileFields := wire.Profile; len(profileFields) != 1 || profileFields["$ref"] == nil {
 		t.Fatal("compact wire response still includes the repeated inline profile")
 	}
-	if profile.Batches[0].DurationNanos[0] != 12 || instances[0].Profile != profile ||
-		instances[0].CompletionMeasurement != measurement || measurement.Completion != time.Millisecond {
+	if profile.Batches[0].DurationNanos[0] != 12 || instances[0].Profile != profile {
 		t.Fatal("read projection mutated the raw source")
 	}
 }

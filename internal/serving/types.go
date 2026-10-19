@@ -276,6 +276,8 @@ type Dispatch struct {
 	ReceivedAt time.Time
 	Elapsed    time.Duration
 	Deadline   time.Time
+	// CompletionMarginMS is the scheduler setting current at dispatch.
+	CompletionMarginMS float64
 }
 
 type BackendResult struct {

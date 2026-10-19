@@ -511,38 +511,6 @@ func validateExecutionOwner(
 	return nil
 }
 
-func bindExecutionPolicy(ctx context.Context, reader evidencestore.Reader, spec *servingkube.PrepareSpec) error {
-	if spec.CompletionCalibration == nil {
-		return nil // Preserve configured bootstrap policy; do not claim calibration.
-	}
-	facts, err := serving.LoadCompletionCalibration(ctx, reader, *spec.CompletionCalibration, 64<<20)
-	if err != nil {
-		return err
-	}
-	instance := &spec.Instance
-	selected := ""
-	for id, fact := range facts {
-		if !fact.Matches(*instance) || (selected != "" && (fact.Completion < instance.CompletionOverhead ||
-			fact.Completion == instance.CompletionOverhead && id >= selected)) {
-			continue
-		}
-		instance.CompletionOverhead, instance.CompletionMeasurement = fact.Completion, &fact
-		instance.CompletionObserved, instance.EnvelopeSource = true, fact.Source
-		selected = id
-	}
-	if selected == "" {
-		return errors.New("selected immutable completion calibration lacks the configured measured execution condition")
-	}
-	spec.Config.Policy = native.Policy{
-		DecisionID: spec.Config.Policy.DecisionID, ProfileID: instance.Profile.ID,
-		DeadlinePolicy: native.EffectiveDeadlinePolicy(instance.Profile.Condition.Firstfloor.DeadlinePolicy),
-		MaxBatchSize:   instance.MaxBatch, MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond),
-		CompletionOverheadMS: float64(instance.CompletionOverhead) / float64(time.Millisecond),
-		EnvelopeSource:       instance.CompletionPolicySource(),
-	}
-	return nil
-}
-
 func validateExecutionNode(
 	ctx context.Context, kube kubernetes.Interface, m executionManifest, spec servingkube.PrepareSpec,
 	inventory []serving.SchedulerNode,
@@ -665,7 +633,7 @@ func runExecution(
 		return err
 	}
 	if op.Kind == operationPrepare {
-		if err = bindExecutionBundle(ctx, objects, &spec); err != nil {
+		if err = bindExecutionBundle(&spec); err != nil {
 			return err
 		}
 		op.Prepare = &spec
@@ -797,10 +765,7 @@ func bindExecutionCatalog(
 	return view.Profiles, nil
 }
 
-func bindExecutionBundle(ctx context.Context, objects evidencestore.Reader, spec *servingkube.PrepareSpec) error {
-	if err := bindExecutionPolicy(ctx, objects, spec); err != nil {
-		return err
-	}
+func bindExecutionBundle(spec *servingkube.PrepareSpec) error {
 	profile := spec.Instance.Profile
 	bundle := profile.NativeBundle()
 	raw, err := json.Marshal(bundle)

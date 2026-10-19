@@ -188,7 +188,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	settings.Controls.Enabled = false
-	snapshot.Instances[0] = schedulerMeasuredInstance(snapshot.Instances[0], snapshot.Workloads[0], 100*time.Millisecond)
+	settings.CompletionMarginMS = 100
 	d := snapshot.Workloads[0]
 	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
@@ -211,7 +211,7 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 			t.Fatal(err)
 		}
 		pending := r.SchedulerInputs(time.Now).Outstanding
-		if len(pending) != 1 || pending[0].ExchangeResidual != nil || pending[0].Phase == phaseReturning || !call.backendDone || call.progress == nil || call.progress.Phase != "finished" || !call.progress.ExecutionComplete {
+		if len(pending) != 1 || pending[0].Phase == phaseReturning || !call.backendDone || call.progress == nil || call.progress.Phase != "finished" || !call.progress.ExecutionComplete {
 			t.Fatalf("early SDK completion must preserve native confirmation without claiming exchange completion: %+v", pending)
 		}
 		// The SDK callback can precede HTTP completion by a material return leg.
@@ -226,8 +226,8 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	snapshot.At, snapshot.Outstanding = current.At, current.Outstanding
 	decision := schedulerEvaluateForTest(t, settings, snapshot)
 	estimate := schedulerRequireEstimate(t, decision.Keep, d.UID)
-	if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != float64(106*time.Millisecond) {
-		t.Fatalf("SDK-to-exchange leg must not be subtracted twice from the response tail: %+v", estimate)
+	if want := float64(call.exchangeFinishedAt.Sub(received) + 100*time.Millisecond); estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != want {
+		t.Fatalf("completion margin must start at exchange completion, not the early SDK callback: %+v want %v", estimate, want)
 	}
 	if call.receipt.Deadline != deadline || snapshot.Outstanding[0].RemainingLifetime == nil || *snapshot.Outstanding[0].RemainingLifetime != deadline.Sub(snapshot.At) {
 		t.Fatal("exchange accounting changed the original accepted deadline")

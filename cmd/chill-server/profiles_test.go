@@ -102,7 +102,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Instance.Ready || spec.Instance.CompletionObserved || spec.Instance.Profile != nil ||
+	if spec.Instance.Ready || spec.Instance.Profile != nil ||
 		spec.Bundle.Size != 0 || spec.Config.Policy.Batches != nil {
 		t.Fatal("selection fabricated readiness/evidence/publication")
 	}

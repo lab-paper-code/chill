@@ -71,33 +71,11 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 		Allocation:   serving.SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1024},
 		WorkloadUIDs: []string{d.UID}, Ready: true, Capacity: 8, Weight: 1, MaxBatch: 1,
 	}
-	at := time.Now().UTC()
-	measure := func(request string, extra time.Duration) {
-		for _, event := range []serving.RequestEvent{
-			{RequestID: request, WorkloadUID: d.UID, Definition: d.Identity(), Kind: "backend_exchange_finished", Outcome: "completed", At: at, ReceivedAt: at,
-				Assignment:     &serving.Assignment{Instance: wanted.ID, Node: node, Profile: profile.ID, Artifact: profile.Condition.Artifact.Name, ExecutionPath: profile.Condition.Artifact.ExecutionPath},
-				NativeProgress: &serving.BackendProgress{Phase: "finished", ProfileID: profile.ID, ExecutionComplete: true, NativeElapsedMS: 6}, ClientSpanNanos: int64(10 * time.Millisecond), ElapsedNanos: int64(20*time.Millisecond + extra)},
-			{RequestID: request, Kind: "response_finished", Outcome: "completed", At: at, ReceivedAt: at, ElapsedNanos: int64(23*time.Millisecond + extra)},
-		} {
-			if err := manager.observationLog.RequestEvent(event); err != nil {
-				t.Fatal(err)
-			}
-		}
-		observed, err := manager.observationLog.ObservedOverhead(at.Add(-time.Second), at.Add(time.Second))
-		if err != nil {
-			t.Fatal(err)
-		}
-		observeOverhead(&wanted, observed)
-		if !wanted.CompletionObserved {
-			t.Fatal("actual completed trial did not produce a compatible typed completion proof")
-		}
-	}
-	measure("acknowledged-trial", 0)
 	oldTarget := serving.SchedulerCandidate{ID: "old-target", Instances: []serving.SchedulerInstance{wanted}, Routing: map[string]map[string]int32{d.UID: {wanted.ID: 1}}}
 	physical := serving.ReadyInstance{
 		State: serving.InstanceState{ID: wanted.ID, Node: node, Pool: wanted.Pool, Profile: profile.ID, Ready: true, Native: &native.State{Ready: true, Metadata: native.Metadata{
 			ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: wanted.Capacity, MaxBatchSize: wanted.MaxBatch,
-			Policy: native.Policy{ProfileID: profile.ID, MaxBatchSize: wanted.MaxBatch, CompletionOverheadMS: float64(wanted.CompletionOverhead) / float64(time.Millisecond), DeadlinePolicy: "keep"},
+			Policy: native.Policy{ProfileID: profile.ID, MaxBatchSize: wanted.MaxBatch, DeadlinePolicy: "keep"},
 		}}},
 		Profile: &profile, Weight: 1, Capacity: wanted.Capacity,
 		Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
@@ -118,7 +96,6 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 		},
 	}}
 	controller.state.Snapshot.Instances = []serving.SchedulerInstance{wanted}
-	measure("new-quantity-trial", time.Millisecond)
 	newTarget := serving.SchedulerCandidate{ID: "updated-target", Instances: []serving.SchedulerInstance{wanted}, Routing: oldTarget.Routing, Actions: []serving.Action{
 		{ID: "updated-policy-route", Kind: operationRoute, Status: "planned"},
 		{ID: "stop-unrouted-source", Kind: operationStop, Instance: "old-source", DependsOn: []string{"updated-policy-route"}},
@@ -126,10 +103,10 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	return controller, newTarget, physical
 }
 
-func TestAcknowledgedExistingHandoffDoesNotStarveCleanupOnPolicyQuantityRefresh(t *testing.T) {
+func TestAcknowledgedExistingHandoffDoesNotStarveCleanupOnPolicyRefresh(t *testing.T) {
 	controller, target, _ := acknowledgedHandoffFixture(t)
 	if !controller.dependenciesReady(target.Actions[0], target) {
-		t.Fatal("changed consumed policy quantity must still schedule its own route application")
+		t.Fatal("a refreshed policy route must still schedule its own route application")
 	}
 	if !controller.dependenciesReady(target.Actions[1], target) {
 		t.Fatal("an acknowledged ready/profile/allocation-matched actual handoff should allow old-source stop independently of a refreshed policy route")
@@ -137,7 +114,7 @@ func TestAcknowledgedExistingHandoffDoesNotStarveCleanupOnPolicyQuantityRefresh(
 }
 
 func TestHandoffCleanupRequiresExistingAcknowledgedReadyEffectNotJustGatewayMap(t *testing.T) {
-	for _, missing := range []string{"completed run", "native readiness", "profile identity", "allocation", "policy ack", "typed proof", "observed flag", "routing", "physical destination"} {
+	for _, missing := range []string{"completed run", "native readiness", "profile identity", "allocation", "policy ack", "routing", "physical destination"} {
 		t.Run(missing, func(t *testing.T) {
 			controller, target, physical := acknowledgedHandoffFixture(t)
 			switch missing {
@@ -150,11 +127,7 @@ func TestHandoffCleanupRequiresExistingAcknowledgedReadyEffectNotJustGatewayMap(
 			case "allocation":
 				controller.state.Snapshot.Instances[0].Allocation.MemoryBytes++
 			case "policy ack":
-				physical.State.Native.Metadata.Policy.CompletionOverheadMS++
-			case "typed proof":
-				target.Instances[0].CompletionMeasurement = nil
-			case "observed flag":
-				target.Instances[0].CompletionObserved = false
+				physical.State.Native.Metadata.Policy.MaxBatchSize++
 			case "routing":
 				target.Routing = map[string]map[string]int32{target.Instances[0].WorkloadUIDs[0]: {target.Instances[0].ID: 2}}
 			case "physical destination":

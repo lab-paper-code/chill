@@ -12,12 +12,14 @@ export function parseSchedulerJSON(text: string): unknown {
   if (!preciseJSONSupported()) throw new Error("정밀 정수 JSON을 지원하는 최신 Chrome, Edge 또는 Firefox를 사용해 주세요.")
   return restoreEvidence(native.parse(text, (_key, value, context) => typeof value === "number" && !Number.isSafeInteger(value) && /^-?\d+$/.test(context?.source ?? "") ? BigInt(context!.source!) : value))
 }
-// internal/serving/httpapi/scheduler_presentation.go: view=compact replaces only instance `profile` and
-// `completionMeasurement` with {"$ref":key} into two top-level dictionaries. Restoring yields the full response.
+// internal/serving/httpapi/scheduler_presentation.go: view=compact replaces only instance `profile`
+// with {"$ref":key} into the top-level `profiles` dictionary. Restoring yields the full response.
 function restoreEvidence(root: unknown): unknown {
-  if (!root || typeof root !== "object" || !("profiles" in root) || !("completionMeasurements" in root)) return root
-  const {profiles, completionMeasurements, ...full} = root as Record<string, unknown>
-  const dictionaries: Record<string, Record<string, unknown>> = {profile: profiles as Record<string, unknown>, completionMeasurement: completionMeasurements as Record<string, unknown>}
+  if (!root || typeof root !== "object" || !("profiles" in root)) return root
+  const {profiles, ...full} = root as Record<string, unknown>
+  // Catalog views carry a `profiles` array; only the compact dictionary is an object.
+  if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) return root
+  const dictionaries: Record<string, Record<string, unknown>> = {profile: profiles as Record<string, unknown>}
   const walk = (value: unknown): void => {
     if (!value || typeof value !== "object") return
     if (Array.isArray(value)) { value.forEach(walk); return }
@@ -56,6 +58,12 @@ export function wireInteger(text: string, minimum: bigint, maximum: bigint): big
   if (!/^-?\d+$/.test(text)) throw new Error("정수로 입력합니다.")
   const value = BigInt(text)
   if (value < minimum || value > maximum) throw new Error(`${minimum}~${maximum} 범위로 입력합니다.`)
+  return value
+}
+// settings.completionMarginMS: finite nonnegative milliseconds, as SchedulerSettings.Validate accepts.
+export function marginMilliseconds(text: string): number {
+  const value = Number(text)
+  if (!/^\d+(?:\.\d+)?$/.test(text) || !Number.isFinite(value)) throw new Error("0 이상의 밀리초로 입력합니다.")
   return value
 }
 

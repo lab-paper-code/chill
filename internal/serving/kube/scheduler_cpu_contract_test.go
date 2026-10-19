@@ -47,7 +47,7 @@ func TestNativePodReadbackKeepsMeasuredWideAffinityResourceEvaluable(t *testing.
 				ID: id, Node: sn.Node, Pool: sn.Pool, Profile: profile.ID, Ready: true, ObservedAt: at,
 				Native: &native.State{Ready: true, Metadata: native.Metadata{
 					ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: 4, MaxBatchSize: 1,
-					Policy: native.Policy{MaxBatchSize: 1, EnvelopeSource: "completion-evidence-unavailable"},
+					Policy: native.Policy{MaxBatchSize: 1},
 				}},
 			}
 			snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at}
@@ -82,9 +82,6 @@ func TestNativePodReadbackKeepsMeasuredWideAffinityResourceEvaluable(t *testing.
 						t.Fatalf("actual native readback became resource-infeasible: %v", decision.Keep.Reasons)
 					}
 				}
-			}
-			if snapshot.Instances[0].CompletionObserved || decision.Keep.ExpectedJoules != nil {
-				t.Fatal("resource evaluability fabricated missing completion evidence")
 			}
 		})
 	}

@@ -17,7 +17,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-const OperationMeasurementSchema = "chill.dacs.io/serving-operation-measurement.v1alpha1"
+const OperationMeasurementSchema = "chill.dacs.io/serving-operation-measurement.v1alpha2"
 const measurementInsufficient = "Insufficient"
 
 // MeterDeclaration is explicit evidence scope, never inferred from an URL.

@@ -78,131 +78,6 @@ func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
 	}
 }
 
-func TestObservedOverheadJoinsReceiptResidualAndResponseByInstance(t *testing.T) {
-	settings, snapshot := schedulerFixture()
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := observationLog.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	}()
-	from := time.Now().UTC().Add(-time.Second)
-	to := from.Add(time.Second)
-	ms := time.Millisecond
-	// exchangeAt starts at receipt; client starts only at the native HTTP call.
-	record := func(id, instance, workload string, receivedAt time.Time, outcome string, client, native, exchangeAt, responseAt time.Duration) {
-		t.Helper()
-		d := *snapshot.Workloads[0]
-		d.UID = workload
-		if err := observationLog.DefinitionRecord(&d); err != nil {
-			t.Fatal(err)
-		}
-		progress := &BackendProgress{Phase: "finished", ProfileID: "profile", ExecutionComplete: true, NativeElapsedMS: float64(native) / float64(ms)}
-		for _, e := range []RequestEvent{
-			{RequestID: id, Kind: eventBackendExchangeFinished, Outcome: outcome, At: receivedAt, ReceivedAt: receivedAt, WorkloadUID: workload, Definition: d.Identity(), ElapsedNanos: int64(exchangeAt), ClientSpanNanos: int64(client), Assignment: &Assignment{Instance: instance, Node: snapshot.Instances[0].Node, Profile: snapshot.Instances[0].Profile.ID, Artifact: snapshot.Instances[0].Profile.Condition.Artifact.Name, ExecutionPath: snapshot.Instances[0].Profile.Condition.Artifact.ExecutionPath}, NativeProgress: progress},
-			{RequestID: id, Kind: "response_finished", Outcome: outcome, At: receivedAt, ReceivedAt: receivedAt, ElapsedNanos: int64(responseAt)},
-		} {
-			if err := observationLog.RequestEvent(e); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	record("a", "i1", "w1", from, "completed", 10*ms, 6*ms, 20*ms, 23*ms)
-	record("b", "i1", "w2", from.Add(ms), "completed", 12*ms, 5*ms, 30*ms, 31*ms)
-	record("dropped", "i1", "w1", from.Add(2*ms), "timeout", 900*ms, 1*ms, 900*ms, 950*ms)
-	record("before", "i1", "w1", from.Add(-ms), "completed", 800*ms, 1*ms, 800*ms, 850*ms)
-	record("at-end", "i1", "w1", to, "completed", 800*ms, 1*ms, 800*ms, 850*ms)
-	record("clock-inconsistent", "i2", "w1", from, "completed", 3*ms, 5*ms, 20*ms, 21*ms)
-	got, err := observationLog.ObservedOverhead(from, to)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("unmeasured instance must stay absent, not zero: %+v", got)
-	}
-	// a: (20-6)+(23-20)=17ms, b: (30-5)+(31-30)=26ms.
-	if o := got["i1"]; o.Completion != 26*ms || o.Requests != 2 || len(o.Definitions) != 2 || o.Node != snapshot.Instances[0].Node || o.Profile != snapshot.Instances[0].Profile.ID || o.Artifact != snapshot.Instances[0].Profile.Condition.Artifact.Name || o.ExecutionPath != snapshot.Instances[0].Profile.Condition.Artifact.ExecutionPath || o.Source == "" {
-		t.Fatalf("overhead must be the observed maximum of completed in-window requests for the instance: %+v", o)
-	}
-	adjacent, err := observationLog.ObservedOverhead(to, to.Add(time.Second))
-	if err != nil || len(adjacent) != 1 || adjacent["i1"].Requests != 1 || adjacent["i1"].Completion != 849*ms {
-		t.Fatalf("receipt exactly at the prior window end must belong to the adjacent window: %+v %v", adjacent, err)
-	}
-	empty, err := observationLog.ObservedOverhead(to.Add(time.Second), to.Add(2*time.Second))
-	if err != nil || len(empty) != 0 {
-		t.Fatalf("measurements outside the receipt window must not be reused: %+v %v", empty, err)
-	}
-	// A slow upload/auth/decode before dispatch is part of the receipt-based SLO,
-	// even though the native HTTP client span is only 10ms.
-	record("slow-ingress", "i1", "w1", from, "completed", 10*ms, 6*ms, 1210*ms, 1213*ms)
-	delayed, err := observationLog.ObservedOverhead(from, to)
-	if err != nil || delayed["i1"].Completion != 1207*ms {
-		t.Fatalf("receipt-to-dispatch delay was omitted: %+v %v", delayed, err)
-	}
-	settings.Controls.Enabled = false
-	snapshot.Workloads[0].SLO.TargetLatency = time.Second
-	measurement := delayed["i1"]
-	snapshot.Instances[0].CompletionOverhead = measurement.Completion
-	snapshot.Instances[0].CompletionMeasurement = &measurement
-	snapshot.Arrivals = []SchedulerArrival{{At: snapshot.At.Add(-settings.ObservationWindow), Definition: snapshot.Workloads[0], Compute: true, Accepted: true}}
-	decision := schedulerEvaluateForTest(t, settings, snapshot)
-	estimate := schedulerRequireEstimate(t, decision.Keep, snapshot.Workloads[0].UID)
-	if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos < float64(1207*ms) || decision.Keep.Status != schedulerStatusOverload {
-		t.Fatalf("large receipt-to-dispatch delay must miss the 1s SLO: %+v", decision.Keep)
-	}
-	observationLog.windows[observationLog.active].Incomplete = true
-	if _, err := observationLog.ObservedOverhead(from, to.Add(time.Second)); err == nil {
-		t.Fatal("overhead from an incomplete observation window became usable")
-	}
-}
-
-func TestObservedOverheadRequiresFrozenExecutionIdentity(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = observationLog.Close(context.Background()) }()
-	d := &Definition{UID: "workload", Generation: 1, Model: Model{UID: "model", Generation: 1, Paths: []ModelPath{{Name: "native", Artifact: "artifact"}}}}
-	if err := observationLog.DefinitionRecord(d); err != nil {
-		t.Fatal(err)
-	}
-	at := time.Now().UTC()
-	for _, name := range []string{"definition missing", "node missing", "profile mismatch", "input path mismatch", "conflicting executor"} {
-		a := Assignment{Instance: name, Node: NodeReference{Name: "node", UID: "node-uid"}, Profile: "profile", Artifact: "artifact", ExecutionPath: "native"}
-		p := BackendProgress{Phase: "finished", ProfileID: a.Profile, ExecutionComplete: true, NativeElapsedMS: 1}
-		e := RequestEvent{RequestID: name, WorkloadUID: d.UID, Definition: d.Identity(), Kind: eventBackendExchangeFinished, Outcome: "completed", At: at, ReceivedAt: at, Assignment: &a, NativeProgress: &p, ClientSpanNanos: int64(2 * time.Millisecond), ElapsedNanos: int64(3 * time.Millisecond)}
-		switch name {
-		case "definition missing":
-			e.Definition = "not-retained"
-		case "node missing":
-			a.Node.UID = ""
-		case "profile mismatch":
-			p.ProfileID = "different-runtime"
-		case "input path mismatch":
-			a.ExecutionPath = "different-input"
-		}
-		for trial := range 2 {
-			e.RequestID = name + string(rune('a'+trial))
-			if name == "conflicting executor" && trial == 1 {
-				a.Profile, p.ProfileID = "other-profile", "other-profile"
-			}
-			if err := observationLog.RequestEvent(e); err != nil {
-				t.Fatal(err)
-			}
-			if err := observationLog.RequestEvent(RequestEvent{RequestID: e.RequestID, Kind: "response_finished", Outcome: "completed", At: at, ReceivedAt: at, ElapsedNanos: int64(4 * time.Millisecond)}); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	got, err := observationLog.ObservedOverhead(at.Add(-time.Second), at.Add(time.Second))
-	if err != nil || len(got) != 0 {
-		t.Fatalf("missing or conflicting execution identities must stay unobserved: %+v %v", got, err)
-	}
-}
-
 func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
 	const laterActionID = "second"
 	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
@@ -500,46 +375,6 @@ func TestRequestCensusKeepsLateFactsAcrossWindows(t *testing.T) {
 	check()
 }
 
-func TestRequestCensusUsesReceiptTimeForOverhead(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
-	from := time.Now().UTC().Add(-24 * time.Hour)
-	to := from.Add(time.Minute)
-	d := &Definition{UID: "workload", Generation: 1, Model: Model{UID: "model", Generation: 1, Paths: []ModelPath{{Name: "native", Artifact: "artifact"}}}}
-	if err := observationLog.DefinitionRecord(d); err != nil {
-		t.Fatal(err)
-	}
-	assignment := &Assignment{Instance: "physical", Node: NodeReference{Name: "node", UID: "node-uid"}, Profile: "profile", Artifact: "artifact", ExecutionPath: "native"}
-	exchange := RequestEvent{
-		RequestID: "measured", Kind: eventBackendExchangeFinished, At: to.Add(3 * time.Hour), ReceivedAt: from,
-		Outcome: outcomeCompleted, WorkloadUID: d.UID, Definition: d.Identity(), Assignment: assignment,
-		NativeProgress:  &BackendProgress{Phase: phaseFinished, ProfileID: "profile", ExecutionComplete: true, NativeElapsedMS: 6},
-		ClientSpanNanos: int64(10 * time.Millisecond), ElapsedNanos: int64(20 * time.Millisecond),
-	}
-	if err := observationLog.RequestEvent(exchange); err != nil {
-		t.Fatal(err)
-	}
-	if err := observationLog.finish(); err != nil {
-		t.Fatal(err)
-	}
-	if err := observationLog.start(time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	if err := observationLog.RequestEvent(RequestEvent{RequestID: exchange.RequestID, Kind: eventResponseFinished, At: from.Add(-2 * time.Hour), ReceivedAt: from, Outcome: outcomeCompleted, ElapsedNanos: int64(23 * time.Millisecond)}); err != nil {
-		t.Fatal(err)
-	}
-	overheads, err := observationLog.ObservedOverhead(from, to)
-	if err != nil || len(overheads) != 1 || overheads[assignment.Instance].Completion != 17*time.Millisecond || overheads[assignment.Instance].Requests != 1 {
-		t.Fatalf("receipt-based overhead changed across append windows: %+v %v", overheads, err)
-	}
-	if overheads, err := observationLog.ObservedOverhead(to.Add(4*time.Hour), to.Add(5*time.Hour)); err != nil || len(overheads) != 0 {
-		t.Fatalf("missing overhead became a fabricated zero measurement: %+v %v", overheads, err)
-	}
-}
-
 func TestRequestCensusKeepsUnknownPrefixesAndIncompleteMetadata(t *testing.T) {
 	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
@@ -559,9 +394,6 @@ func TestRequestCensusKeepsUnknownPrefixesAndIncompleteMetadata(t *testing.T) {
 	observationLog.windows[observationLog.active].Incomplete = true
 	if load, err := observationLog.LoadWindow(current, current.Add(time.Second)); err != nil || len(load.Arrivals) != 0 || len(load.IncompleteWindows) != 1 {
 		t.Fatalf("pruned metadata completeness was lost: %+v %v", load, err)
-	}
-	if _, err := observationLog.ObservedOverhead(current, current.Add(time.Second)); err == nil {
-		t.Fatal("empty pruned overhead ignored incomplete window metadata")
 	}
 	// Direct writes bypass counted appends: changed prefixes must be scanned
 	// even when their known bounds say the query is empty.
@@ -585,8 +417,8 @@ func TestRequestCensusKeepsUnknownPrefixesAndIncompleteMetadata(t *testing.T) {
 	if _, err := observationLog.files[observationRequestStream].WriteString("{not-json}\n"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := observationLog.ObservedOverhead(from, to); err == nil {
-		t.Fatal("unknown corrupt prefix became an empty overhead success")
+	if _, err := observationLog.SchedulerArrivals(from, to); err == nil {
+		t.Fatal("unknown corrupt prefix became an empty success")
 	}
 }
 

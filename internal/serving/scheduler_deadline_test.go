@@ -11,19 +11,19 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
-func TestReplayCompletionSubtractsOnlyActualConsumedSender(t *testing.T) {
+func TestReplayCompletionIsNativeCompletionPlusMargin(t *testing.T) {
 	for _, phase := range []string{phaseQueued, phaseRunning} {
 		for _, senderMS := range []float64{400, 500} {
 			s, snap := schedulerFixture()
 			s.Controls.Enabled = false
+			s.CompletionMarginMS = 7
 			snap.Arrivals = nil
 			d := snap.Workloads[0]
 			d.SLO.TargetLatency = 607 * time.Millisecond
-			snap.Instances[0] = schedulerMeasuredInstance(snap.Instances[0], d, 407*time.Millisecond)
 			snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
 			snap.Instances[0].Profile.Batches[0].DurationNanos = []float64{float64(100 * time.Millisecond)}
 			r := SchedulerRequest{ID: "consumed", Definition: d, ReceivedAt: snap.At.Add(-time.Duration(senderMS) * time.Millisecond), Elapsed: time.Duration(senderMS) * time.Millisecond, Phase: phase, Instance: "i1", BatchID: "actual", NativeSenderElapsedMS: &senderMS}
-			want := time.Duration(senderMS)*time.Millisecond + 100*time.Millisecond + time.Duration(math.Max(0, 407-senderMS))*time.Millisecond
+			want := time.Duration(senderMS)*time.Millisecond + 100*time.Millisecond + 7*time.Millisecond
 			if phase == phaseRunning {
 				r.RunningElapsed = 20 * time.Millisecond
 				r.Elapsed += r.RunningElapsed
@@ -33,7 +33,7 @@ func TestReplayCompletionSubtractsOnlyActualConsumedSender(t *testing.T) {
 			decision := schedulerEvaluateForTest(t, s, snap)
 			e := schedulerRequireEstimate(t, decision.Keep, d.UID)
 			if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(want) || e.PredictedOutcomes["timeout"] != 0 {
-				t.Fatalf("%s sender=%g must consume predispatch only once: want %s got %+v reasons=%v", phase, senderMS, want, e, decision.Keep.Reasons)
+				t.Fatalf("%s sender=%g must add the full margin to native completion: want %s got %+v reasons=%v", phase, senderMS, want, e, decision.Keep.Reasons)
 			}
 			snap.Outstanding[0].NativeSenderElapsedMS = nil
 			missing := schedulerEvaluateForTest(t, s, snap)
@@ -165,10 +165,9 @@ func TestSchedulerReplayKeepOverdueUsesMinimumServiceCost(t *testing.T) {
 func TestSchedulerReplayObservedDropReturningNeverBecomesSuccess(t *testing.T) {
 	s, snap := schedulerFixture()
 	d := snap.Workloads[0]
-	snap.Instances[0] = schedulerMeasuredInstance(snap.Instances[0], d, 5*time.Millisecond)
+	s.CompletionMarginMS = 5
 	life := time.Millisecond
-	residual := time.Duration(0)
-	snap.Outstanding = []SchedulerRequest{{ID: "drop-returning", Definition: d, ReceivedAt: snap.At, Phase: phaseReturning, Instance: "i1", NativeOutcome: "deadline_drop", RemainingLifetime: &life, ExchangeResidual: &residual}}
+	snap.Outstanding = []SchedulerRequest{{ID: "drop-returning", Definition: d, ReceivedAt: snap.At, Phase: phaseReturning, Instance: "i1", NativeOutcome: "deadline_drop", RemainingLifetime: &life}}
 	result := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances})
 	if len(result.reasons) > 0 || len(result.samples[d.Identity()]) != 0 || result.outcomes[d.Identity()]["timeout"] != 1 || result.outcomes[d.Identity()]["completed"] != 0 || result.outcomes[d.Identity()]["expired-returning"] != 0 {
 		t.Fatalf("observed SLO drop must preserve outcome despite return/caller lifetime: %+v", result)
@@ -212,7 +211,7 @@ func TestSchedulerReplayCannotSwitchFrozenDeadlineMode(t *testing.T) {
 	schedulerRequireReason(t, state.out.reasons, "ImmutableNativeDeadlinePolicyMismatch")
 }
 
-func TestSchedulerReplayOverheadUpdatePreservesCapturedSender(t *testing.T) {
+func TestSchedulerReplayPolicyUpdatePreservesCapturedSender(t *testing.T) {
 	_, snap := schedulerFixture()
 	d := snap.Workloads[0]
 	snap.Outstanding = []SchedulerRequest{{ID: "pending", Definition: d, ReceivedAt: snap.At.Add(-20 * time.Millisecond), Elapsed: 20 * time.Millisecond, Phase: phasePending}}
@@ -224,13 +223,13 @@ func TestSchedulerReplayOverheadUpdatePreservesCapturedSender(t *testing.T) {
 	instance := state.instances[0]
 	before := state.nativeRequestState(instance, state.requests[0])
 	target := snap.Instances[0]
-	target = schedulerMeasuredInstance(target, d, 50*time.Millisecond)
+	target.MaxWait = 50 * time.Millisecond
 	state.goal.Instances = []SchedulerInstance{target}
 	if !state.applyRoute() {
-		t.Fatalf("permitted envelope update failed: %+v", state.out)
+		t.Fatalf("permitted policy update failed: %+v", state.out)
 	}
 	after := state.nativeRequestState(instance, state.requests[0])
 	if before.Context.SenderElapsedMS != 20 || after.Context.SenderElapsedMS != 20 || firstfloor.RemainingSLOMS(before) != firstfloor.RemainingSLOMS(after) {
-		t.Fatalf("overhead update changed already admitted native context: before=%+v after=%+v", before, after)
+		t.Fatalf("policy update changed already admitted native context: before=%+v after=%+v", before, after)
 	}
 }

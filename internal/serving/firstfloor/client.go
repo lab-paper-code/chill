@@ -175,7 +175,7 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	if !d.Deadline.IsZero() {
 		lifetime = float64(d.Deadline.Sub(d.ReceivedAt)) / float64(time.Millisecond)
 	}
-	request := native.Request{ID: d.RequestID, Context: native.RequestContext{RequestID: d.RequestID, WorkloadUID: d.Definition.UID, Definition: d.Definition.Identity(), ReceivedAt: d.ReceivedAt, SenderElapsedMS: float64(d.Elapsed) / float64(time.Millisecond), SLO: native.SLO{Percentile: d.Definition.SLO.Percentile, TargetMS: float64(d.Definition.SLO.TargetLatency) / float64(time.Millisecond)}, LifetimeMS: lifetime}}
+	request := native.Request{ID: d.RequestID, Context: native.RequestContext{RequestID: d.RequestID, WorkloadUID: d.Definition.UID, Definition: d.Definition.Identity(), ReceivedAt: d.ReceivedAt, SenderElapsedMS: float64(d.Elapsed) / float64(time.Millisecond), CompletionMarginMS: d.CompletionMarginMS, SLO: native.SLO{Percentile: d.Definition.SLO.Percentile, TargetMS: float64(d.Definition.SLO.TargetLatency) / float64(time.Millisecond)}, LifetimeMS: lifetime}}
 	request.Inputs = make([]native.Field, len(d.Input.Inputs))
 	for i, field := range d.Input.Inputs {
 		request.Inputs[i] = native.Field{Name: field.Name, Data: [][]byte{field.Data}}

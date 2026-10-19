@@ -113,7 +113,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		c.Assumptions = append(c.Assumptions, "incremental batch joules attributed uniformly over empirical service occupancy; only overlap with [0,horizon) counted, SLO completions may extend beyond horizon")
 		c.Reasons = append(c.Reasons, snapshot.Reasons...)
 		c.Assumptions = append(c.Assumptions, "explicit frozen lifetimes expire pending/queued work independently of frozen drop/keep/defer SLO policy; running work remains nonpreemptive; percentile population excludes predicted lifetime failures and SLO timeouts")
-		c.Assumptions = append(c.Assumptions, "completion overhead reserves only the remainder after actual frozen sender elapsed and never delays native arrival (not a measured one-way claim); queued/running sender elapsed is an actor witness; native wait rate uses last two worker arrivals and oldest-time history eviction, equal forecast timestamps tie by UID")
+		c.Assumptions = append(c.Assumptions, "configured completion margin is added once to native completion and never delays native arrival; queued/running sender elapsed is an actor witness; native wait rate uses last two worker arrivals and oldest-time history eviction, equal forecast timestamps tie by UID")
 		c.Reasons = append(c.Reasons, snapshotReasons...)
 		c.Reasons = append(c.Reasons, schedulerValidateResources(settings, c.Nodes, c.Instances)...)
 		if !c.Keep {
@@ -288,11 +288,6 @@ func schedulerIneligibleStatus(reasons []string) string {
 		}
 	}
 	for _, r := range reasons {
-		if strings.HasPrefix(r, "CompletionOverheadUnobserved:") {
-			return schedulerStatusPending
-		}
-	}
-	for _, r := range reasons {
 		if strings.HasPrefix(r, "TemporaryReadinessResourceInfeasible") || strings.HasPrefix(r, "NoReadyCapacityOrTransitionPrerequisite") {
 			return "InfeasibleTransition"
 		}
@@ -389,7 +384,7 @@ func schedulerValidateRequest(r SchedulerRequest, ids map[string]bool, reasons [
 	if r.RemainingLifetime != nil && *r.RemainingLifetime < 0 {
 		reasons = appendUnique(reasons, "InvalidRequestLifetime:"+r.ID)
 	}
-	if r.Phase == phaseReturning && (r.ExchangeResidual == nil || *r.ExchangeResidual < 0 || r.ReturnElapsed < 0) {
+	if r.Phase == phaseReturning && r.ReturnElapsed < 0 {
 		reasons = appendUnique(reasons, "MissingReturningCompletionEvidence:"+r.ID)
 	}
 	if (r.Phase == phaseQueued || r.Phase == phaseDeferred || r.Phase == phaseRunning) && (r.NativeSenderElapsedMS == nil || !schedulerFinite(*r.NativeSenderElapsedMS) || *r.NativeSenderElapsedMS < 0) {
@@ -458,11 +453,8 @@ func schedulerValidateInstance(settings SchedulerSettings, n SchedulerNode, i Sc
 			reasons = appendUnique(reasons, "MeasuredAffinityMismatch:"+i.ID)
 		}
 	}
-	if i.EnvelopeSource == "" || i.CompletionOverhead < 0 || i.Capacity < 1 || i.Weight < 0 || i.MaxWait < 0 {
+	if i.Capacity < 1 || i.Weight < 0 || i.MaxWait < 0 {
 		reasons = appendUnique(reasons, "MissingQueueOrTransportEvidence:"+i.ID)
-	}
-	if !i.CompletionObserved || i.CompletionMeasurement == nil || i.CompletionOverhead != i.CompletionMeasurement.Completion || !i.CompletionMeasurement.Matches(i) {
-		reasons = appendUnique(reasons, "CompletionOverheadUnobserved:"+i.ID)
 	}
 	if len(i.Profile.Batches) == 0 || i.Profile.ID == "" || len(i.Profile.Evidence) == 0 {
 		reasons = appendUnique(reasons, "MissingProfileEvidence:"+i.ID)
@@ -565,8 +557,7 @@ func ValidateNodeBudget(n SchedulerNode, allocations []SchedulerAllocation, reas
 
 func schedulerPolicy(i SchedulerInstance) firstfloor.Policy {
 	p := firstfloor.Policy{
-		ProfileID: i.Profile.ID, MaxBatchSize: i.MaxBatch, CompletionOverheadMS: float64(i.CompletionOverhead) / 1e6,
-		EnvelopeSource: i.CompletionPolicySource(), MaxBatchWaitMS: float64(i.MaxWait) / 1e6,
+		ProfileID: i.Profile.ID, MaxBatchSize: i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / 1e6,
 	}
 	if i.Profile.Condition.Firstfloor != nil {
 		p.DeadlinePolicy = i.Profile.Condition.Firstfloor.DeadlinePolicy
@@ -827,8 +818,8 @@ func (s *schedulerReplayState) initializeOutstanding() {
 				i.batch = append(i.batch, x)
 			case phaseReturning:
 				x.returning = true
-				// Disjoint receipt-to-exchange non-native time and post-exchange response age are already elapsed.
-				x.completion = math.Max(0, float64(i.config.CompletionOverhead)-float64(*r.ExchangeResidual)-float64(r.ReturnElapsed))
+				// Native completion precedes the observed response age; the margin starts there.
+				x.completion = math.Max(0, s.settings.CompletionMarginMS*1e6-float64(r.ReturnElapsed))
 			}
 		}
 	}
@@ -986,9 +977,9 @@ func (s *schedulerReplayState) expireRequests() {
 					}
 				}
 				i.queue = kept
-				r.completion = s.now + math.Max(0, float64(i.config.CompletionOverhead)-r.senderMS*1e6)
+				r.completion = s.now + s.settings.CompletionMarginMS*1e6
 				if !math.IsInf(r.native, 1) {
-					r.completion = math.Max(s.now, r.native) + math.Max(0, float64(i.config.CompletionOverhead)-r.senderMS*1e6)
+					r.completion = math.Max(s.now, r.native) + s.settings.CompletionMarginMS*1e6
 				}
 				r.native = math.Inf(1)
 			}
@@ -1002,7 +993,7 @@ func (s *schedulerReplayState) completeExecution() {
 			for _, r := range i.batch {
 				r.running = false
 				r.returning = true
-				r.completion = s.now + math.Max(0, float64(i.config.CompletionOverhead)-r.senderMS*1e6)
+				r.completion = s.now + s.settings.CompletionMarginMS*1e6
 			}
 			i.batch = nil
 			i.finish = math.Inf(1)
@@ -1106,8 +1097,6 @@ func (s *schedulerReplayState) applyRoute() bool {
 				i.config = v
 				i.policy.MaxBatchSize = v.MaxBatch
 				i.policy.MaxBatchWaitMS = float64(v.MaxWait) / 1e6
-				i.policy.CompletionOverheadMS = float64(v.CompletionOverhead) / 1e6
-				i.policy.EnvelopeSource = v.CompletionPolicySource()
 				i.stopped = false
 			}
 		}
@@ -1459,7 +1448,7 @@ func (s *schedulerReplayState) nativeRequestState(i *schedulerReplayInstance, r 
 	} else if r.deferred {
 		phase = phaseDeferred
 	}
-	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: d.Identity(), ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now - r.queueAt) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
+	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: d.Identity(), ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: s.settings.CompletionMarginMS, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now - r.queueAt) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
 }
 
 func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {

@@ -4,7 +4,7 @@ import * as React from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError } from "@/lib/client"
 import type { OperationResult, SchedulerAlgorithm, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
-import { millisecondsToNanos, nanosToMilliseconds, wireInteger, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
+import { millisecondsToNanos, nanosToMilliseconds, wireInteger, marginMilliseconds, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
@@ -25,6 +25,7 @@ const fields: Field[] = [
   {key:"controlIntervalNanos",label:"운영 판단 주기",help:"이 간격마다 새로 판단해요.",group:"cycle"},
   {key:"horizonNanos",label:"에너지 비교 기간",help:"후보마다 앞으로 이 기간의 에너지를 비교해요.",group:"cycle"},
   {key:"maxObservationAgeNanos",label:"관측을 쓸 수 있는 시간",help:"이보다 오래된 관측은 판단에 쓰지 않아요.",group:"cycle"},
+  {key:"completionMarginMS",label:"완료 여유",help:"실행이 끝난 뒤 응답까지 요청마다 이만큼 더해 예상 완료 시각을 계산해요.",group:"cycle",unit:"ms"},
   {key:"servingMemoryBytes",label:"서비스 실행 메모리",help:"모델 메모리 외에 인스턴스마다 확보할 실행 메모리예요. 노드 자원은 배포 설정에서 관리해요.",group:"limit"},
   {key:"maxReplicas",label:"복제 수 상한",help:"서비스 복제 수를 이만큼까지 살펴봐요.",group:"limit",unit:"개"},
   {key:"maxInstances",label:"인스턴스 수 상한",help:"인스턴스 수를 이만큼까지 살펴봐요.",group:"limit",unit:"개"},
@@ -171,10 +172,10 @@ export function SchedulerSettingsPage() {
 
   const group=(name:Field["group"])=>shown&&fields.filter(field=>field.group===name).map(field=><EditRow key={field.key} label={field.label} help={field.help} value={plain(field,shown[field.key])} changed={!!count&&String(baseline![field.key])!==String(shown[field.key])}
     initial={field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key]):String(shown[field.key])} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
-    range={field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="seed"?"-9223372036854775808 ~ 9223372036854775807 사이 정수":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
+    range={field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="seed"?"-9223372036854775808 ~ 9223372036854775807 사이 정수":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{
-      // Same validation as the wire: ms with ≤6 decimals → nanos, signed int64 seed, uint64 memory bytes, positive int64 otherwise.
-      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text):field.key==="seed"?wireInteger(text,-9223372036854775808n,9223372036854775807n):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
+      // Same validation as the wire: ms with ≤6 decimals → nanos, nonnegative margin ms, signed int64 seed, uint64 memory bytes, positive int64 otherwise.
+      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="seed"?wireInteger(text,-9223372036854775808n,9223372036854775807n):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
       edit(base=>({...base,[field.key]:parsed}))
     }} disabled={blocked}/>)
   return <Screen back={back} title="운영 설정"

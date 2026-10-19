@@ -27,7 +27,6 @@ func placementOnlyFixture() (SchedulerSettings, SchedulerSnapshot) {
 	current.Allocation.MemoryBytes = 295698432
 	current.MaxBatch, current.Weight = 2, 1
 	current.WorkloadUIDs = []string{first.UID, second.UID}
-	current = schedulerMeasuredInstance(current, first, 0)
 	snapshot.Instances = []SchedulerInstance{current}
 	snapshot.Routing = map[string]map[string]int32{first.UID: {current.ID: 1}, second.UID: {current.ID: 1}}
 	snapshot.Nodes[0].MemoryBytes = 8 << 30
@@ -40,7 +39,6 @@ func placementOnlyFixture() (SchedulerSettings, SchedulerSnapshot) {
 	profile.ID, profile.NodeName, profile.Condition.NodeUID = "destination-cpu1", destination.Node.Name, destination.Node.UID
 	remote.ID, remote.Node, remote.Profile = "destination-slot", destination.Node, &profile
 	remote.Allocation.MemoryBytes = 292552704
-	remote = schedulerMeasuredInstance(remote, first, 0)
 	snapshot.Options = nil
 	for _, cpu1 := range []SchedulerInstance{current, remote} {
 		snapshot.Options = append(snapshot.Options, SchedulerOption{Instance: cpu1, CompatibleUIDs: []string{first.UID, second.UID}})
@@ -55,7 +53,6 @@ func placementOnlyFixture() (SchedulerSettings, SchedulerSnapshot) {
 		profile.RuntimeMetadata = &metadata
 		cpu2.Profile = &profile
 		cpu2.Allocation.CPUs, cpu2.Allocation.CPUCount, cpu2.Allocation.Threads = []int{2, 3}, 2, 2
-		cpu2 = schedulerMeasuredInstance(cpu2, first, 0)
 		snapshot.Options = append(snapshot.Options, SchedulerOption{Instance: cpu2, CompatibleUIDs: []string{first.UID, second.UID}})
 	}
 	return settings, snapshot
@@ -158,7 +155,6 @@ func TestPlacementOnlyUsesDestinationPhysicalAffinityWithoutResizing(t *testing.
 		profile.Condition.CPU.AffinityCPUs, metadata.CPUAffinity = []int{2}, []int{2}
 		profile.RuntimeMetadata = &metadata
 		option.Instance.Profile, option.Instance.Allocation.CPUs = &profile, []int{2}
-		option.Instance = schedulerMeasuredInstance(option.Instance, snapshot.Workloads[0], 0)
 	}
 	candidates, _ := schedulerEnumerateForTest(t, settings, snapshot)
 	found := false
@@ -196,7 +192,6 @@ func TestPlacementOnlyTransfersEachCohortUIDWeightInsteadOfOptionWeight(t *testi
 	profile := *second.Profile
 	profile.ID, profile.NodeName, profile.Condition.NodeUID = "third-cpu1", third.Node.Name, third.Node.UID
 	option.ID, option.Node, option.Profile = "third-slot", third.Node, &profile
-	option = schedulerMeasuredInstance(option, snapshot.Workloads[0], 0)
 	snapshot.Options = append(snapshot.Options, SchedulerOption{Instance: option, CompatibleUIDs: []string{snapshot.Workloads[0].UID, snapshot.Workloads[1].UID}})
 	for index := range snapshot.Options {
 		snapshot.Options[index].Instance.Weight = 19
@@ -230,7 +225,6 @@ func overlappingControlFixture() (SchedulerSettings, SchedulerSnapshot) {
 	snapshot.Nodes[1].CPUs = []int{0, 1, 2, 3, 4, 5, 6, 7}
 	a := snapshot.Options[3].Instance
 	a.ID, a.MaxBatch, a.WorkloadUIDs = "singleton-a", 1, []string{snapshot.Workloads[0].UID}
-	a = schedulerMeasuredInstance(a, snapshot.Workloads[0], 0)
 	b := a
 	profile := *a.Profile
 	metadata := *profile.RuntimeMetadata
@@ -238,7 +232,6 @@ func overlappingControlFixture() (SchedulerSettings, SchedulerSnapshot) {
 	profile.Condition.CPU.AffinityCPUs, metadata.CPUAffinity = []int{4, 5}, []int{4, 5}
 	profile.RuntimeMetadata = &metadata
 	b.ID, b.Profile, b.Allocation.CPUs, b.WorkloadUIDs = "singleton-b", &profile, []int{4, 5}, []string{snapshot.Workloads[1].UID}
-	b = schedulerMeasuredInstance(b, snapshot.Workloads[1], 0)
 	third := snapshot.Nodes[1]
 	third.Node = NodeReference{Name: "third", UID: "n3"}
 	snapshot.Nodes = append(snapshot.Nodes, third)
@@ -246,7 +239,6 @@ func overlappingControlFixture() (SchedulerSettings, SchedulerSnapshot) {
 	targetProfile := *a.Profile
 	targetProfile.ID, targetProfile.NodeName, targetProfile.Condition.NodeUID = "third-cpu2-batch1", third.Node.Name, third.Node.UID
 	target.ID, target.Node, target.Profile = "third-slot", third.Node, &targetProfile
-	target = schedulerMeasuredInstance(target, snapshot.Workloads[0], 0)
 	for _, instance := range []SchedulerInstance{a, b, target} {
 		snapshot.Options = append(snapshot.Options, SchedulerOption{Instance: instance, CompatibleUIDs: []string{snapshot.Workloads[0].UID, snapshot.Workloads[1].UID}})
 	}

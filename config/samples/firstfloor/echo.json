@@ -15,8 +15,6 @@
     "deadlinePolicy": "keep",
     "decisionID": "explicit-synthetic-development",
     "profileID": "explicit-synthetic-not-measured",
-    "completionOverheadMS": 2,
-    "envelopeSource": "explicit-synthetic-development-only",
     "maxBatchWaitMS": 20,
     "maxBatchSize": 4
   }

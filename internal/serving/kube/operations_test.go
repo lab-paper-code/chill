@@ -62,7 +62,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 			RunnerCommand:   []string{"python3", "../../../runtime/firstfloor/runner.py", "--echo", "--preprocessor", "../../../runtime/firstfloor/testdata/echo", "--warmup-iterations", "1"},
 			RunnerTimeoutMS: 3000, MaxQueueRequests: 4, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20,
 			MaxBatchSize: 1, BatchSizes: []int{1},
-			Policy: native.Policy{DecisionID: "old-route", ProfileID: profile.ID, MaxBatchSize: 1, DeadlinePolicy: "keep", EnvelopeSource: "explicit synthetic fixture",
+			Policy: native.Policy{DecisionID: "old-route", ProfileID: profile.ID, MaxBatchSize: 1, DeadlinePolicy: "keep",
 				Batches: []native.BatchProfile{{Size: 1, ServiceSamplesMS: []float64{1}, EnergyPerItemJ: 1}}},
 		}
 		if err := native.ValidateConfig(&cfg); err != nil {
@@ -105,7 +105,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 		id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
 		spec := sdk.Spec{Endpoint: "http://" + service.Spec.ClusterIP + ":8080", ModelName: cfg.Model}
 		instance := serving.SchedulerInstance{ID: id, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: "pool", Profile: &profile,
-			WorkloadUIDs: []string{definition.UID}, MaxBatch: 1, Capacity: 4, EnvelopeSource: "explicit synthetic fixture", CompletionOverhead: time.Millisecond}
+			WorkloadUIDs: []string{definition.UID}, MaxBatch: 1, Capacity: 4, MaxWait: time.Millisecond}
 		target.Instances = append(target.Instances, instance)
 		ready = append(ready, serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: instance.Node, Pool: instance.Pool, Profile: profile.ID, Ready: true, Native: &state},
 			Profile: &profile, Weight: 1, Capacity: 4,
@@ -248,9 +248,7 @@ func assertRouteNativeACKs(t *testing.T, target serving.SchedulerCandidate, resu
 		if !state.Ready || state.At.IsZero() ||
 			state.Metadata.DecisionID != target.ID || policy.DecisionID != target.ID ||
 			policy.ProfileID != target.Instances[0].Profile.ID || policy.DeadlinePolicy != "keep" ||
-			policy.MaxBatchSize != 1 || policy.CompletionOverheadMS != 1 ||
-			policy.MaxBatchWaitMS != float64(target.Instances[0].MaxWait)/float64(time.Millisecond) ||
-			policy.EnvelopeSource != target.Instances[0].CompletionPolicySource() {
+			policy.MaxBatchSize != 1 || policy.MaxBatchWaitMS != float64(target.Instances[0].MaxWait)/float64(time.Millisecond) {
 			t.Fatalf("%s lost full observed native ACK: %+v", id, state)
 		}
 		if !slices.Contains(result.Progress, id+": native policy acknowledged") {

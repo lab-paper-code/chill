@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,19 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 	}
 	if _, err = decodeSchedulerConfiguration(`{"settings":`+string(rawSettings)+`}`, 1); err == nil {
 		t.Fatal("over-limit configuration accepted")
+	}
+	var omitted map[string]json.RawMessage
+	if err = json.Unmarshal(rawSettings, &omitted); err != nil || string(omitted["completionMarginMS"]) != "0" {
+		t.Fatalf("zero margin fixture: %s %v", rawSettings, err)
+	}
+	delete(omitted, "completionMarginMS")
+	withoutMargin, err := json.Marshal(omitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = decodeSchedulerConfiguration(`{"settings":`+string(withoutMargin)+`}`, 1<<20); err == nil ||
+		!strings.Contains(err.Error(), "completionMarginMS required") {
+		t.Fatalf("omitted completionMarginMS accepted: %v", err)
 	}
 }
 

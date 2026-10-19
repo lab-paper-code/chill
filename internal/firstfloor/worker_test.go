@@ -13,7 +13,7 @@ import (
 )
 
 func testPolicy() Policy {
-	return Policy{DecisionID: "decision-1", ProfileID: "synthetic-profile", EnvelopeSource: "explicit-synthetic", MaxBatchWaitMS: 100, Batches: []BatchProfile{{Size: 1, ServiceSamplesMS: []float64{10}, EnergyPerItemJ: 2}, {Size: 2, ServiceSamplesMS: []float64{12}, EnergyPerItemJ: 1}}}
+	return Policy{DecisionID: "decision-1", ProfileID: "synthetic-profile", MaxBatchWaitMS: 100, Batches: []BatchProfile{{Size: 1, ServiceSamplesMS: []float64{10}, EnergyPerItemJ: 2}, {Size: 2, ServiceSamplesMS: []float64{12}, EnergyPerItemJ: 1}}}
 }
 func testState(uid string, target float64, rate float64) RequestState {
 	return RequestState{Context: RequestContext{WorkloadUID: uid, Definition: uid + "/1", SLO: SLO{Percentile: 95, TargetMS: target}}, ArrivalRate: rate, Phase: "queued"}
@@ -87,26 +87,25 @@ func TestMeasuredSelector(t *testing.T) {
 	q = []RequestState{testState("a", 50, 100)}
 	q[0].Context.SenderElapsedMS = 25
 	q[0].ElapsedMS = 10
-	p.CompletionOverheadMS = 6
+	q[0].Context.CompletionMarginMS = 6
 	if c := ChooseBatch(p, q); c.WaitMS != 0 {
-		t.Fatalf("sender, local and envelopes all consume original slack: %+v", c)
+		t.Fatalf("sender, local and completion margin all consume original slack: %+v", c)
 	}
 }
-func TestConsumedSenderOverheadPreservesFeasibleDeadlineAndLifetime(t *testing.T) {
+func TestCompletionMarginIsReservedOnceRegardlessOfSenderElapsed(t *testing.T) {
 	p := testPolicy()
 	p.DeadlinePolicy = DeadlineDrop
-	p.CompletionOverheadMS = 407
 	p.Batches = []BatchProfile{{Size: 1, ServiceSamplesMS: []float64{100}, EnergyPerItemJ: 1}}
 	q := testState("uid", 507, 0)
-	q.Context.SenderElapsedMS = 400
-	if slack := requestSlack(p, q, p.Batches[0]); slack != 0 {
-		t.Fatalf("400ms already consumed + 100ms service + 7ms residual must fit 507ms: %v", slack)
+	q.Context.SenderElapsedMS, q.Context.CompletionMarginMS = 400, 7
+	if slack := requestSlack(q, p.Batches[0]); slack != 0 {
+		t.Fatalf("400ms sender + 100ms service + 7ms margin must fit 507ms exactly: %v", slack)
 	}
 	if c := ChooseBatch(p, []RequestState{q}); c.Size != 1 || c.Reason == OutcomeDeadlineDrop {
 		t.Fatalf("feasible deadline must execute: %+v", c)
 	}
-	for _, sender := range []float64{400, 500} {
-		wire := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: sender, LifetimeMS: 507, SLO: SLO{Percentile: 95, TargetMS: 507}}, Inputs: rawInputs("sample")}
+	for _, sender := range []float64{0, 400, 500} {
+		wire := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: sender, CompletionMarginMS: 7, LifetimeMS: 507, SLO: SLO{Percentile: 95, TargetMS: 507}}, Inputs: rawInputs("sample")}
 		body, err := json.Marshal(wire)
 		if err != nil {
 			t.Fatal(err)
@@ -114,12 +113,19 @@ func TestConsumedSenderOverheadPreservesFeasibleDeadlineAndLifetime(t *testing.T
 		cfg := &Config{Mode: modeServing, Inputs: []string{"input"}, Outputs: []string{"output"}, Policy: p}
 		r := &request{received: time.Now()}
 		w := httptest.NewRecorder()
-		if !prepareInference(w, context.Background(), json.NewDecoder(bytes.NewReader(body)), cfg, r) {
+		accepted := prepareInference(w, context.Background(), json.NewDecoder(bytes.NewReader(body)), cfg, r)
+		if sender == 500 {
+			if accepted || w.Code != http.StatusRequestTimeout {
+				t.Fatalf("lifetime consumed by sender and margin was accepted: %d", w.Code)
+			}
+			continue
+		}
+		if !accepted {
 			t.Fatalf("feasible lifetime rejected: %d %s", w.Code, w.Body.String())
 		}
-		want := time.Duration(507-sender-remainingCompletionOverheadMS(p, sender)) * time.Millisecond
+		want := time.Duration(507-sender-7) * time.Millisecond
 		if got := r.lifetime.Sub(r.received); got != want {
-			t.Fatalf("lifetime must reserve only unconsumed overhead: got %s want %s", got, want)
+			t.Fatalf("lifetime must reserve the full margin once: got %s want %s", got, want)
 		}
 	}
 }
@@ -214,7 +220,6 @@ func TestLocalActorCancellationSnapshotsAndTypedOutputs(t *testing.T) {
 	awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 && state.Requests[0].Phase == phaseRunning })
 	next := *cfg
 	next.Policy.DecisionID = "decision-2"
-	next.Policy.CompletionOverheadMS = 5
 	next.Policy.MaxBatchSize = 1
 	if e := s.Update(context.Background(), &next); e != nil {
 		t.Fatal(e)
@@ -424,8 +429,8 @@ func TestNativeLifetimeWitnessKeepsAcceptedDeadlineAcrossPolicyChange(t *testing
 	go func() { result <- s.submit(context.Background(), r) }()
 	awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 && state.Requests[0].Phase == phaseRunning })
 	next := *cfg
-	next.Policy.DecisionID = "changed-envelope"
-	next.Policy.CompletionOverheadMS = 1000
+	next.Policy.DecisionID = "changed-policy"
+	next.Policy.MaxBatchWaitMS = 1
 	if err := s.Update(context.Background(), &next); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +443,7 @@ func TestNativeLifetimeWitnessKeepsAcceptedDeadlineAcrossPolicyChange(t *testing
 	remaining := state.Requests[0].RemainingLifetimeMS
 	lower, upper := milliseconds(deadline.Sub(after)), milliseconds(deadline.Sub(before))
 	if remaining == nil || *remaining < lower || *remaining > upper {
-		t.Fatalf("accepted deadline changed with mutable envelope: remaining=%v bounds=[%g,%g]", remaining, lower, upper)
+		t.Fatalf("accepted deadline changed with mutable policy: remaining=%v bounds=[%g,%g]", remaining, lower, upper)
 	}
 	if completed := <-result; completed.err != nil || !completed.complete {
 		t.Fatalf("physical execution: %+v", completed)

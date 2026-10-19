@@ -52,13 +52,14 @@ type SLO struct {
 	TargetMS   float64 `json:"targetMS"`
 }
 type RequestContext struct {
-	RequestID       string    `json:"requestID"`
-	WorkloadUID     string    `json:"workloadUID"`
-	Definition      string    `json:"definition"`
-	ReceivedAt      time.Time `json:"receivedAt"`
-	SenderElapsedMS float64   `json:"senderElapsedMS"`
-	SLO             SLO       `json:"slo"`
-	LifetimeMS      float64   `json:"lifetimeMS,omitempty"` // Zero means no explicit lifetime; measured from original receipt.
+	RequestID          string    `json:"requestID"`
+	WorkloadUID        string    `json:"workloadUID"`
+	Definition         string    `json:"definition"`
+	ReceivedAt         time.Time `json:"receivedAt"`
+	SenderElapsedMS    float64   `json:"senderElapsedMS"`
+	CompletionMarginMS float64   `json:"completionMarginMS"`
+	SLO                SLO       `json:"slo"`
+	LifetimeMS         float64   `json:"lifetimeMS,omitempty"` // Zero means no explicit lifetime; measured from original receipt.
 }
 type Request struct {
 	ID      string         `json:"id"`
@@ -87,14 +88,12 @@ type ProfileBundle struct {
 	Batches   []BatchProfile `json:"batches"`
 }
 type Policy struct {
-	DecisionID           string         `json:"decisionID"`
-	ProfileID            string         `json:"profileID"`
-	CompletionOverheadMS float64        `json:"completionOverheadMS"`
-	EnvelopeSource       string         `json:"envelopeSource"`
-	MaxBatchWaitMS       float64        `json:"maxBatchWaitMS"`
-	MaxBatchSize         int            `json:"maxBatchSize,omitempty"`   // Zero permits every initialized measured batch.
-	DeadlinePolicy       string         `json:"deadlinePolicy,omitempty"` // Frozen for the instance; omitted means keep.
-	Batches              []BatchProfile `json:"-"`                        // Immutable bundle, loaded once. Policy file never repeats samples.
+	DecisionID     string         `json:"decisionID"`
+	ProfileID      string         `json:"profileID"`
+	MaxBatchWaitMS float64        `json:"maxBatchWaitMS"`
+	MaxBatchSize   int            `json:"maxBatchSize,omitempty"`   // Zero permits every initialized measured batch.
+	DeadlinePolicy string         `json:"deadlinePolicy,omitempty"` // Frozen for the instance; omitted means keep.
+	Batches        []BatchProfile `json:"-"`                        // Immutable bundle, loaded once. Policy file never repeats samples.
 }
 type Config struct {
 	Model            string   `json:"model"`

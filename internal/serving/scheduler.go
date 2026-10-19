@@ -25,6 +25,7 @@ type SchedulerSettings struct {
 	MaxReplayRequests  int               `json:"maxReplayRequests"`
 	MaxCPUs            int               `json:"maxCPUs"`
 	ServingMemoryBytes uint64            `json:"servingMemoryBytes"`
+	CompletionMarginMS float64           `json:"completionMarginMS"`
 	Controls           SchedulerControls `json:"controls"`
 }
 type SchedulerControls struct {
@@ -60,32 +61,24 @@ type SchedulerNode struct {
 	Reason      string                `json:"reason,omitempty"`
 }
 type SchedulerInstance struct {
-	ID                 string              `json:"id"`
-	TargetID           string              `json:"targetID,omitempty"`
-	OwnerWorkloadUID   string              `json:"ownerWorkloadUID,omitempty"`
-	Node               NodeReference       `json:"node"`
-	Pool               string              `json:"pool"`
-	Profile            *Profile            `json:"profile"`
-	WorkloadUIDs       []string            `json:"workloadUIDs"`
-	Allocation         SchedulerAllocation `json:"allocation"`
-	Ready              bool                `json:"ready"`
-	Stopped            bool                `json:"stopped"`
-	Capacity           int                 `json:"capacity"`
-	Weight             int32               `json:"weight"`
-	MaxBatch           int                 `json:"maxBatch"`
-	MaxWait            time.Duration       `json:"maxWaitNanos"`
-	CompletionOverhead time.Duration       `json:"completionOverheadNanos"`
-	EnvelopeSource     string              `json:"envelopeSource"`
-	// CompletionObserved is true only when CompletionOverhead is a Serving
-	// observation for the same measured execution condition and compatible
-	// definitions. A configured bootstrap value keeps the instance servable but
-	// is not SLO evidence, whatever its value.
-	CompletionObserved    bool                       `json:"completionObserved"`
-	CompletionMeasurement *ObservedOverhead          `json:"completionMeasurement,omitempty"`
-	ObservedAt            time.Time                  `json:"observedAt"`
-	ArrivalAges           map[string][]time.Duration `json:"arrivalAgesNanos"`
-	IdleMeter             string                     `json:"idleMeter"`
-	IdleScope             string                     `json:"idleScope"`
+	ID               string                     `json:"id"`
+	TargetID         string                     `json:"targetID,omitempty"`
+	OwnerWorkloadUID string                     `json:"ownerWorkloadUID,omitempty"`
+	Node             NodeReference              `json:"node"`
+	Pool             string                     `json:"pool"`
+	Profile          *Profile                   `json:"profile"`
+	WorkloadUIDs     []string                   `json:"workloadUIDs"`
+	Allocation       SchedulerAllocation        `json:"allocation"`
+	Ready            bool                       `json:"ready"`
+	Stopped          bool                       `json:"stopped"`
+	Capacity         int                        `json:"capacity"`
+	Weight           int32                      `json:"weight"`
+	MaxBatch         int                        `json:"maxBatch"`
+	MaxWait          time.Duration              `json:"maxWaitNanos"`
+	ObservedAt       time.Time                  `json:"observedAt"`
+	ArrivalAges      map[string][]time.Duration `json:"arrivalAgesNanos"`
+	IdleMeter        string                     `json:"idleMeter"`
+	IdleScope        string                     `json:"idleScope"`
 }
 
 // Options are evidence-bound placements supplied by the catalog, not invented
@@ -108,7 +101,6 @@ type SchedulerRequest struct {
 	BatchID               string         `json:"batchID,omitempty"`
 	RunningElapsed        time.Duration  `json:"runningElapsedNanos"`
 	ReturnElapsed         time.Duration  `json:"returnElapsedNanos"`
-	ExchangeResidual      *time.Duration `json:"exchangeResidualNanos,omitempty"`
 	ArrivalRate           float64        `json:"arrivalRate"`
 	NativeSenderElapsedMS *float64       `json:"nativeSenderElapsedMS,omitempty"`
 	NativeOutcome         string         `json:"nativeOutcome,omitempty"`
@@ -172,7 +164,7 @@ type Action struct {
 type SchedulerSnapshot struct {
 	// At is the current request read and decision origin, after capture I/O.
 	At time.Time `json:"at"`
-	// ObservationEnd is the fixed historical arrival/calibration cutoff.
+	// ObservationEnd is the fixed historical arrival cutoff.
 	ObservationEnd   time.Time                   `json:"observationEnd"`
 	Workloads        []*Definition               `json:"workloads"`
 	Nodes            []SchedulerNode             `json:"nodes"`
@@ -256,7 +248,27 @@ func (s SchedulerSettings) Validate() error {
 	if s.Replays <= 0 || s.MaxCandidates < 1 || s.MaxReplicas < 1 || s.MaxInstances < 1 || s.MaxReplayRequests < 1 || s.MaxCPUs < 1 {
 		return fmt.Errorf("scheduler search and replay bounds must be positive")
 	}
+	if math.IsNaN(s.CompletionMarginMS) || math.IsInf(s.CompletionMarginMS, 0) || s.CompletionMarginMS < 0 {
+		return fmt.Errorf("completionMarginMS must be finite and nonnegative")
+	}
 	return nil
+}
+
+// SchedulerSettingsInput is the settings decode boundary; it tells an omitted
+// completionMarginMS apart from zero.
+type SchedulerSettingsInput struct {
+	SchedulerSettings
+	CompletionMarginMS *float64 `json:"completionMarginMS"`
+}
+
+// Settings returns validated settings carrying the supplied margin.
+func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
+	if in.CompletionMarginMS == nil {
+		return SchedulerSettings{}, fmt.Errorf("completionMarginMS required")
+	}
+	settings := in.SchedulerSettings
+	settings.CompletionMarginMS = *in.CompletionMarginMS
+	return settings, settings.Validate()
 }
 
 // SmoothWeightedRoute is shared by ingress and replay. State belongs to a UID's

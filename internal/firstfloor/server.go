@@ -33,7 +33,7 @@ func identity(s string) bool {
 	return true
 }
 func validateContext(r RequestContext, id string) error {
-	if id != r.RequestID || !identity(id) || !identity(r.WorkloadUID) || !identity(r.Definition) || r.ReceivedAt.IsZero() || !durationOK(r.SenderElapsedMS) || !durationOK(r.LifetimeMS) || !durationOK(r.SLO.TargetMS) || r.SLO.TargetMS <= 0 || !finite(r.SLO.Percentile) || r.SLO.Percentile <= 0 || r.SLO.Percentile > 100 {
+	if id != r.RequestID || !identity(id) || !identity(r.WorkloadUID) || !identity(r.Definition) || r.ReceivedAt.IsZero() || !durationOK(r.SenderElapsedMS) || !durationOK(r.CompletionMarginMS) || !durationOK(r.LifetimeMS) || !durationOK(r.SLO.TargetMS) || r.SLO.TargetMS <= 0 || !finite(r.SLO.Percentile) || r.SLO.Percentile <= 0 || r.SLO.Percentile > 100 {
 		return errors.New("complete bounded immutable request identity, receipt, elapsed, SLO and lifetime required")
 	}
 	return nil
@@ -213,7 +213,7 @@ func prepareInference(w http.ResponseWriter, ctx context.Context, decoder *json.
 	r.bytes = n
 	r.context = inference.Context
 	if r.context.LifetimeMS > 0 {
-		remaining := r.context.LifetimeMS - r.context.SenderElapsedMS - remainingCompletionOverheadMS(cfg.Policy, r.context.SenderElapsedMS)
+		remaining := r.context.LifetimeMS - r.context.SenderElapsedMS - r.context.CompletionMarginMS
 		if remaining <= 0 {
 			writeError(w, http.StatusRequestTimeout, context.DeadlineExceeded)
 			return false

@@ -124,8 +124,8 @@ func validateInitializedBatches(c *Config) error {
 	return nil
 }
 func validatePolicy(p Policy, sizes []int) error {
-	if !identity(p.DecisionID) || !identity(p.ProfileID) || p.EnvelopeSource == "" || len(p.EnvelopeSource) > 256 || !durationOK(p.CompletionOverheadMS) || !durationOK(p.MaxBatchWaitMS) {
-		return errors.New("bounded decision/profile IDs and measured envelope source required")
+	if !identity(p.DecisionID) || !identity(p.ProfileID) || !durationOK(p.MaxBatchWaitMS) {
+		return errors.New("bounded decision/profile IDs required")
 	}
 	sort.Slice(p.Batches, func(i, j int) bool { return p.Batches[i].Size < p.Batches[j].Size })
 	if len(p.Batches) == 0 || p.Batches[0].Size != 1 {

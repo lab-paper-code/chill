@@ -108,20 +108,26 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 }
 
 func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfiguration, error) {
-	var config schedulerConfiguration
+	// The wire settings field shadows the embedded one, so an omitted margin stays distinguishable from zero.
+	var wire struct {
+		schedulerConfiguration
+		Settings serving.SchedulerSettingsInput `json:"settings"`
+	}
 	if int64(len(raw)) > maxBytes {
-		return config, errors.New("scheduler configuration exceeds body bound")
+		return schedulerConfiguration{}, errors.New("scheduler configuration exceeds body bound")
 	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&config); err != nil {
-		return config, err
+	if err := decoder.Decode(&wire); err != nil {
+		return schedulerConfiguration{}, err
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return config, errors.New("one scheduler configuration object required")
+		return schedulerConfiguration{}, errors.New("one scheduler configuration object required")
 	}
-	if err := config.Settings.Validate(); err != nil {
+	config := wire.schedulerConfiguration
+	var err error
+	if config.Settings, err = wire.Settings.Settings(); err != nil {
 		return config, err
 	}
 	if err := config.validateInventory(); err != nil {
@@ -212,58 +218,6 @@ func metricSource(identity metricobserver.SourceIdentity) (metricobserver.Source
 	return edgemetrics.NewPowerSeries(identity, &http.Client{})
 }
 
-func (o *schedulerService) loadCompletionCalibrations(
-	ctx context.Context, preparations map[string]servingkube.PrepareSpec,
-) (
-	map[string]map[string]serving.ObservedOverhead, map[string]string,
-) {
-	calibrations := make(map[string]map[string]serving.ObservedOverhead)
-	failures := make(map[string]string)
-	// Reuse shared raw cohorts only within this refresh; no persistent cache.
-	type calibrationLoad struct {
-		selection *serving.CompletionCalibration
-		facts     map[string]serving.ObservedOverhead
-		err       error
-	}
-	loads := make([]calibrationLoad, 0, len(preparations))
-	for profile, preparation := range preparations {
-		selection := preparation.CompletionCalibration
-		if selection == nil {
-			continue
-		}
-		var loaded *calibrationLoad
-		for index := range loads {
-			prior := &loads[index]
-			if prior.selection.From.Equal(selection.From) && prior.selection.To.Equal(selection.To) &&
-				slices.Equal(prior.selection.Windows, selection.Windows) {
-				loaded = prior
-				break
-			}
-		}
-		if loaded == nil {
-			facts, err := serving.LoadCompletionCalibration(ctx, o.objects, *selection, o.opts.maxEvidenceBytes)
-			loads = append(loads, calibrationLoad{selection: selection, facts: facts, err: err})
-			loaded = &loads[len(loads)-1]
-		}
-		if loaded.err != nil {
-			failures[profile] = loaded.err.Error()
-			continue
-		}
-		matching := make(map[string]serving.ObservedOverhead)
-		for id, fact := range loaded.facts {
-			if fact.Matches(preparation.Instance) {
-				matching[id] = fact
-			}
-		}
-		if len(matching) == 0 {
-			failures[profile] = "completion calibration lacks matching measured execution conditions"
-		} else {
-			calibrations[profile] = matching
-		}
-	}
-	return calibrations, failures
-}
-
 func (o *schedulerService) refresh(ctx context.Context) (err error) {
 	o.lock.Lock()
 	defer o.lock.Unlock()
@@ -350,12 +304,10 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		preparation.Config.Policy.Batches = nil
 		preparations[profile.ID] = preparation
 	}
-	calibrations, calibrationErrors := o.loadCompletionCalibrations(ctx, preparations)
 	controllerConfig := servingkube.SchedulerControllerConfig{
 		Settings: config.Settings, CPUInventory: config.CPUInventory, GPUInventory: config.GPUInventory,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs, Baselines: baselines,
 		Meters: config.Meters, PowerRequests: config.PowerRequests,
-		CompletionCalibrations: calibrations, CalibrationErrors: calibrationErrors,
 		StaticRouting: config.StaticRouting != nil,
 		OnDecision:    o.recordDecision, OnAction: o.recordAction,
 	}
@@ -370,6 +322,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	}
 	// Publish the complete configuration only after the controller accepted it.
 	o.observer.SetProfiles(profiles)
+	o.execution.SetCompletionMargin(config.Settings.CompletionMarginMS)
 	o.configuration.Store(&config)
 	o.resourceVersion = cm.ResourceVersion
 	o.profiles = signature

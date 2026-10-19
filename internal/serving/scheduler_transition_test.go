@@ -82,7 +82,6 @@ func TestCompletedSemanticRouteSurvivesWitnessAndOrdinalRefresh(t *testing.T) {
 	snapshot.Routing = target.Routing
 	snapshot.At = snapshot.At.Add(10 * time.Second)
 	target.ID = "another-candidate-ordinal"
-	target.Instances[0].EnvelopeSource = "same measured quantity, later reporting window"
 	target.Instances[0].ObservedAt = snapshot.At
 	target.Actions = schedulerPlan(snapshot, target)
 	reused := requireTransitionAction(t, target.Actions, schedulerActionRoute)
@@ -108,7 +107,7 @@ func TestCompletedSemanticRouteSurvivesWitnessAndOrdinalRefresh(t *testing.T) {
 }
 
 func TestConsumedPolicyAndActualTargetChangesStillReplanRoute(t *testing.T) {
-	for _, change := range []string{"completion quantity", "batch", "wait", "capacity", "deadline", "routing", "physical target"} {
+	for _, change := range []string{"batch", "wait", "capacity", "deadline", "routing", "physical target"} {
 		t.Run(change, func(t *testing.T) {
 			_, snapshot, target := preparedPlacementFixture(t)
 			completed := requireTransitionAction(t, target.Actions, schedulerActionRoute)
@@ -117,8 +116,6 @@ func TestConsumedPolicyAndActualTargetChangesStillReplanRoute(t *testing.T) {
 			snapshot.Routing = target.Routing
 			snapshot.At = snapshot.At.Add(10 * time.Second)
 			switch change {
-			case "completion quantity":
-				target.Instances[0] = schedulerMeasuredInstance(target.Instances[0], snapshot.Workloads[0], time.Millisecond)
 			case "batch":
 				target.Instances[0].MaxBatch = 1
 			case "wait":
@@ -168,7 +165,7 @@ func TestCompletedActionsRequireTheirCurrentSnapshotEffect(t *testing.T) {
 						snapshot.Instances = nil
 					}
 				case schedulerActionRoute:
-					old.Node, old.Instance, old.To = NodeReference{}, "", schedulerConfigKey(target, false)
+					old.Node, old.Instance, old.To = NodeReference{}, "", schedulerConfigKey(target)
 					if !present {
 						snapshot.Routing = map[string]map[string]int32{snapshot.Workloads[0].UID: {}}
 					}
@@ -504,7 +501,6 @@ func TestResourceTransitionResumesAcrossActualZeroBindingInterval(t *testing.T) 
 	prepared := target.Instances[0]
 	prepared.TargetID, prepared.ID, prepared.WorkloadUIDs = prepared.ID, preparedPhysicalID, nil
 	prepared.Ready = true
-	prepared = schedulerMeasuredInstance(prepared, snapshot.Workloads[0], time.Millisecond)
 	snapshot.Instances = []SchedulerInstance{prepared}
 	prepare := requireTransitionAction(t, target.Actions, schedulerActionPrepare)
 	prepare.Status = schedulerActionComplete
@@ -527,22 +523,12 @@ func TestResourceTransitionResumesAcrossActualZeroBindingInterval(t *testing.T) 
 	if target.Instances[0].ID == prepared.ID || target.Routing[snapshot.Workloads[0].UID][prepared.ID] != 0 {
 		t.Fatal("continuation mutated the executing operation's frozen target")
 	}
-	if decision.Target.Instances[0].CompletionOverhead != time.Millisecond {
-		t.Fatalf("continuation ignored the current consumed completion quantity: %+v", decision.Target.Instances[0])
-	}
-	snapshot.Instances[0].CompletionObserved = false
-	snapshot.Instances[0].CompletionMeasurement = nil
-	decision = schedulerEvaluateForTest(t, settings, snapshot)
-	if decision.Target != nil {
-		t.Fatalf("continuation resurrected a frozen proof after the actual consumer reset: %+v", decision)
-	}
-	schedulerRequireReason(t, decision.Keep.Reasons, "CompletionOverheadUnobserved")
 }
 
 func TestRunningGlobalRouteIsNotReplayedAsInstantAcknowledgementOfNewGoal(t *testing.T) {
 	settings, snapshot, target := overlappingResourceFixture(t)
 	current := SchedulerCandidate{ID: "in-progress-current", Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
-	running := Action{ID: "in-progress-global-route", Kind: schedulerActionRoute, Status: phaseRunning, To: schedulerConfigKey(current, false), Elapsed: time.Second}
+	running := Action{ID: "in-progress-global-route", Kind: schedulerActionRoute, Status: phaseRunning, To: schedulerConfigKey(current), Elapsed: time.Second}
 	current.Actions = []Action{running}
 	snapshot.InProgressTarget, snapshot.Actions = &current, []Action{running}
 	target.Actions = schedulerPlan(snapshot, target)

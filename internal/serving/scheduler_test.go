@@ -35,8 +35,7 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
 	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", CPU: derivation.CurveCPUContract{Policy: "quota-affinity", PolicyVersion: "v1", Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1, AffinityCPUs: []int{0}}, PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(10 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
-	i := SchedulerInstance{ID: "i1", Node: node.Node, Pool: node.Pool, Profile: p, WorkloadUIDs: []string{d.UID}, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Capacity: 100, Weight: 1, MaxBatch: 1, EnvelopeSource: "measured transport", CompletionObserved: true, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
-	i = schedulerMeasuredInstance(i, d, 0)
+	i := SchedulerInstance{ID: "i1", Node: node.Node, Pool: node.Pool, Profile: p, WorkloadUIDs: []string{d.UID}, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
 	b := NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: schedulerNodeWallScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
 	b.Reference.Size = 1
 	p.Evidence[0].Size = 1
@@ -88,19 +87,6 @@ func schedulerReplayForTest(s SchedulerSettings, snap SchedulerSnapshot, c Sched
 	return result
 }
 
-// schedulerMeasuredInstance supplies a new completed native trial for an
-// explicitly measured fixture condition; it never rebinds an old typed proof.
-func schedulerMeasuredInstance(i SchedulerInstance, d *Definition, completion time.Duration) SchedulerInstance {
-	at := i.ObservedAt
-	exchange := time.Millisecond + completion
-	fact := &overheadFact{}
-	fact.add(&RequestEvent{Kind: eventBackendExchangeFinished, WorkloadUID: d.UID, Definition: d.Identity(), Assignment: &Assignment{Instance: i.ID, Node: i.Node, Profile: i.Profile.ID, Artifact: i.Profile.Condition.Artifact.Name, ExecutionPath: i.Profile.Condition.Artifact.ExecutionPath}, NativeProgress: &BackendProgress{ProfileID: i.Profile.ID, Phase: phaseFinished, ExecutionComplete: true, NativeElapsedMS: 1}, ClientSpanNanos: int64(time.Millisecond), ElapsedNanos: int64(exchange)})
-	fact.add(&RequestEvent{Kind: eventResponseFinished, ElapsedNanos: int64(exchange)})
-	measurement := overheadProjection(map[string]*overheadFact{"fixture-trial": fact}, map[string]*Definition{d.Identity(): d}, at.Add(-time.Second), at, nil)[i.ID]
-	i.CompletionMeasurement = &measurement
-	i.CompletionOverhead, i.EnvelopeSource, i.CompletionObserved = measurement.Completion, measurement.Source, measurement.Valid()
-	return i
-}
 func schedulerTestCPU(i SchedulerInstance) SchedulerInstance {
 	p := *i.Profile
 	p.ID += "-other-cpu"
@@ -112,9 +98,6 @@ func schedulerTestCPU(i SchedulerInstance) SchedulerInstance {
 	}
 	i.Profile = &p
 	i.Allocation.CPUs = []int{1}
-	for _, d := range i.CompletionMeasurement.Definitions {
-		return schedulerMeasuredInstance(i, d, i.CompletionOverhead)
-	}
 	return i
 }
 
@@ -302,7 +285,6 @@ func TestSchedulerSLOFeasibleBeforeEnergyIncludingTransition(t *testing.T) {
 	target.Node = node.Node
 	target.Profile = &p
 	target.IdleMeter = schedulerTestSecondMeter
-	target = schedulerMeasuredInstance(target, d, 0)
 	snap.Options = []SchedulerOption{{Instance: target, CompatibleUIDs: []string{d.UID}}}
 	b := snap.Baselines[0]
 	b.Node = node.Node
@@ -387,44 +369,22 @@ func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
 	}
 	schedulerRequireReason(t, pending.Keep.Reasons, "NativeOwnershipPending")
 	s.Controls.Enabled = false
-	snap.Instances[0] = schedulerMeasuredInstance(snap.Instances[0], snap.Workloads[0], 5*time.Millisecond)
+	s.CompletionMarginMS = 5
 	call := &Call{
 		receipt:            Receipt{ID: "returning", UID: snap.Workloads[0].UID, ReceivedAt: snap.At.Add(-10 * time.Millisecond)},
 		definition:         snap.Workloads[0],
 		assignment:         &Assignment{Instance: "i1"},
 		backendDone:        true,
 		exchangeFinishedAt: snap.At.Add(-2 * time.Millisecond),
-		clientSpan:         8 * time.Millisecond,
 		progress:           &BackendProgress{Phase: "finished", ExecutionComplete: true, NativeElapsedMS: 6},
 	}
 	runtime := &Runtime{calls: map[string]*Call{"returning": call}}
-	clock := func() time.Time { return snap.At }
-	current := runtime.SchedulerInputs(clock)
+	current := runtime.SchedulerInputs(func() time.Time { return snap.At })
 	snap.At, snap.Outstanding = current.At, current.Outstanding
 	returned := schedulerEvaluateForTest(t, s, snap)
 	e := schedulerRequireEstimate(t, returned.Keep, snap.Workloads[0].UID)
-	if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(11*time.Millisecond) {
-		t.Fatalf("original age already includes 2ms receipt-to-exchange residual and 2ms response tail; only 1ms of joint 5ms remains: %+v", e)
-	}
-	// A measured zero residual is evidence, not a missing observation.
-	call.progress.NativeElapsedMS = 8
-	current = runtime.SchedulerInputs(clock)
-	snap.At, snap.Outstanding = current.At, current.Outstanding
-	zero := schedulerEvaluateForTest(t, s, snap)
-	e = schedulerRequireEstimate(t, zero.Keep, snap.Workloads[0].UID)
 	if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(13*time.Millisecond) {
-		t.Fatalf("zero exchange residual must retain the remaining response tail: %+v", e)
-	}
-	call.progress.NativeElapsedMS = 6
-	for _, clientSpan := range []time.Duration{0, 5 * time.Millisecond} {
-		call.clientSpan = clientSpan
-		current = runtime.SchedulerInputs(clock)
-		snap.At, snap.Outstanding = current.At, current.Outstanding
-		missing := schedulerEvaluateForTest(t, s, snap)
-		if missing.Target != nil || snap.Outstanding[0].ExchangeResidual != nil {
-			t.Fatalf("missing or negative exchange residual must not become completion evidence: %+v", missing)
-		}
-		schedulerRequireReason(t, missing.Keep.Reasons, "MissingReturningCompletionEvidence")
+		t.Fatalf("original 10ms age includes the 2ms response tail; 3ms of the 5ms margin remains: %+v", e)
 	}
 }
 
@@ -481,7 +441,6 @@ func TestSchedulerFrozenOldDefinitionPendingSurvivesModelCutover(t *testing.T) {
 	p.ID = "new-profile"
 	p.Condition.Artifact.Name = schedulerTestNewModel
 	target.Profile = &p
-	target = schedulerMeasuredInstance(target, &updated, 0)
 	before := 10.0
 	snap.Costs = []OperationCost{{ID: schedulerActionPrepare, Node: target.Node, Kind: schedulerActionPrepare, From: "unloaded", To: SchedulerInstanceState(target), PowerMode: "fixed", BeforeBaselineWatts: &before, Trials: []OperationTrial{{Duration: 5 * time.Millisecond, Joules: 0.2}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: schedulerActionPrepare, Size: 1}}, {ID: schedulerActionRemove, Node: target.Node, Kind: schedulerActionRemove, From: SchedulerInstanceState(snap.Instances[0]), To: "unloaded", PowerMode: "fixed", BeforeBaselineWatts: &before, Trials: []OperationTrial{{Duration: time.Millisecond, Joules: 0.1}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: schedulerActionRemove, Size: 1}}}
 	c := SchedulerCandidate{ID: "model-cutover", Nodes: snap.Nodes, Instances: []SchedulerInstance{target}}
@@ -503,7 +462,6 @@ func TestSchedulerLoadedPowerWitnessAndNewBundleReadiness(t *testing.T) {
 	p.Condition.PowerMode = schedulerTestEcoMode
 	p.IdleBaselineWatts = 8
 	target.Profile = &p
-	target = schedulerMeasuredInstance(target, snap.Workloads[0], 0)
 	snap.Options = []SchedulerOption{{Instance: target, CompatibleUIDs: old.WorkloadUIDs}}
 	unloaded := snap.Baselines[0]
 	unloaded.ID = "eco-idle"
@@ -737,75 +695,14 @@ func TestSchedulerEnergyOverflowRemainsUnknownNotJSONInfinity(t *testing.T) {
 	schedulerRequireReason(t, decision.Keep.Reasons, "ExpectedEnergyOutsidePhysicalNumericalRange")
 }
 
-func TestSchedulerUnobservedCompletionOverheadIsNotSLOQualified(t *testing.T) {
-	s, snap := schedulerFixture()
-	snap.Instances[0].CompletionObserved = false
-	decision := schedulerEvaluateForTest(t, s, snap)
-	if decision.Keep.ExpectedJoules != nil || decision.Target != nil || decision.Keep.Status != schedulerStatusPending {
-		t.Fatalf("bootstrap completion overhead must not qualify SLO evaluation: %+v", decision)
-	}
-	schedulerRequireReason(t, decision.Keep.Reasons, "CompletionOverheadUnobserved:i1")
-	// A scalar flag without a boundary-validated typed fact is still unobserved.
-	measurement := snap.Instances[0].CompletionMeasurement
-	snap.Instances[0].CompletionMeasurement = nil
-	snap.Instances[0].CompletionObserved = true
-	decision = schedulerEvaluateForTest(t, s, snap)
-	schedulerRequireReason(t, decision.Keep.Reasons, "CompletionOverheadUnobserved:i1")
-	snap.Instances[0].CompletionMeasurement = measurement
-	snap.Instances[0].CompletionObserved = true
-	decision = schedulerEvaluateForTest(t, s, snap)
-	for _, r := range decision.Keep.Reasons {
-		if strings.HasPrefix(r, "CompletionOverheadUnobserved") {
-			t.Fatalf("observed completion overhead still unqualified: %v", decision.Keep.Reasons)
+func TestSchedulerWithoutCompletionObservationsIsNotPending(t *testing.T) {
+	for _, margin := range []float64{0, 5} {
+		s, snap := schedulerFixture()
+		s.CompletionMarginMS = margin
+		decision := schedulerEvaluateForTest(t, s, snap)
+		if decision.Keep.Status == schedulerStatusPending || decision.Keep.ExpectedJoules == nil {
+			t.Fatalf("margin %g without completion observations must stay evaluable: %+v", margin, decision.Keep)
 		}
-	}
-	if decision.Keep.ExpectedJoules == nil {
-		t.Fatalf("observed instance must be evaluable: %+v", decision.Keep.Reasons)
-	}
-}
-
-func TestSchedulerCompletionProofMustRemainBoundToConsumedQuantityAndCondition(t *testing.T) {
-	for _, condition := range []string{"quantity", "node", "profile", "runtime", "CPU", "threads", "GPU", "artifact", "preprocessor", "dataset"} {
-		t.Run(condition, func(t *testing.T) {
-			settings, snapshot := schedulerFixture()
-			settings.Controls.Enabled = false
-			snapshot.Options = nil
-			instance := &snapshot.Instances[0]
-			profile := *instance.Profile
-			instance.Profile = &profile
-			switch condition {
-			case "quantity":
-				instance.CompletionOverhead += time.Nanosecond
-			case "node":
-				instance.Node.UID = "replacement-node"
-			case "profile":
-				profile.ID = "replacement-profile"
-			case "runtime":
-				profile.Condition.Backend = "unmeasured-runtime"
-			case "CPU":
-				instance.Allocation.CPUs = []int{1}
-			case "threads":
-				instance.Allocation.Threads = 2
-			case "GPU":
-				instance.Allocation.GPUUUID = "unmeasured-GPU"
-			case "artifact":
-				profile.Condition.Artifact.Name = "unmeasured-artifact"
-			case "preprocessor":
-				profile.Condition.Preprocessor.Inputs = []string{"unmeasured-field"}
-			case "dataset":
-				profile.Condition.ActiveProtocol.Dataset = &derivation.CurveDatasetContract{Name: "data", UID: "replaced-data-uid"}
-			}
-			if !instance.CompletionObserved || !instance.CompletionMeasurement.Valid() {
-				t.Fatal("mutation regression must retain the original proof and scalar flag")
-			}
-			decision := schedulerEvaluateForTest(t, settings, snapshot)
-			if condition != "node" {
-				schedulerRequireReason(t, decision.Keep.Reasons, "CompletionOverheadUnobserved:i1")
-			}
-			if decision.Keep.Status != schedulerStatusPending || decision.Keep.ExpectedJoules != nil || decision.Target != nil {
-				t.Fatalf("mutated consumed measurement condition must remain Pending: %+v", decision.Keep)
-			}
-		})
 	}
 }
 
@@ -833,7 +730,7 @@ func TestSchedulerQuarantinedUnusedNodeDoesNotBlockKnownCPU(t *testing.T) {
 	profile := *instance.Profile
 	profile.ID, profile.NodeName, profile.Condition.NodeUID = "gpu-node-profile", quarantined.Node.Name, quarantined.Node.UID
 	instance.Node, instance.Profile, instance.IdleMeter = quarantined.Node, &profile, baseline.Meter
-	snapshot.Instances[0] = schedulerMeasuredInstance(instance, snapshot.Workloads[0], 0)
+	snapshot.Instances[0] = instance
 	selected := schedulerEvaluateForTest(t, settings, snapshot)
 	if selected.Keep.Status != schedulerStatusPending || selected.Keep.ExpectedJoules != nil {
 		t.Fatalf("candidate using the quarantined Node became evaluable: %+v", selected.Keep)

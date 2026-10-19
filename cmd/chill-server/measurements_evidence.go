@@ -458,36 +458,12 @@ func (g *measurementReferenceGuard) preparation(preparation *servingkube.Prepare
 	if preparation == nil {
 		return false
 	}
-	if g.locations[preparation.Bundle.Location()] ||
-		strings.HasPrefix(preparation.Config.Policy.ProfileID, g.profilePrefix) || g.instance(preparation.Instance) {
-		return true
-	}
-	if calibration := preparation.CompletionCalibration; calibration != nil {
-		for _, window := range calibration.Windows {
-			if g.locations[window.Metadata.Location()] || g.locations[window.Definitions.Location()] ||
-				g.locations[window.Requests.Location()] {
-				return true
-			}
-		}
-	}
-	return false
+	return g.locations[preparation.Bundle.Location()] ||
+		strings.HasPrefix(preparation.Config.Policy.ProfileID, g.profilePrefix) || g.instance(preparation.Instance)
 }
 
 func (g *measurementReferenceGuard) instance(instance serving.SchedulerInstance) bool {
-	if g.profile(instance.Profile) {
-		return true
-	}
-	if completion := instance.CompletionMeasurement; completion != nil {
-		if strings.HasPrefix(completion.Profile, g.profilePrefix) {
-			return true
-		}
-		for _, reference := range completion.References {
-			if g.locations[reference.Location()] {
-				return true
-			}
-		}
-	}
-	return false
+	return g.profile(instance.Profile)
 }
 
 func (g *measurementReferenceGuard) operation(operation servingkube.Operation) bool {
