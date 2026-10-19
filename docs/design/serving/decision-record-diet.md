@@ -41,7 +41,7 @@ arrival × `Definition`이다.
 | `keep`, `target` | 후보 전체. 인스턴스는 `profileID`만 담는다 |
 | `candidates` | 평가 순서의 요약 `{id, keep, status, expectedJoules, worstExceedance, reasons, actions}`. keep과 target의 본문은 `keep`, `target` 필드에 있고 목록에서는 `id`로 대응한다. `policy.candidateKeys`와 index가 맞는다 |
 | `policy` | `kernels`를 뺀 나머지. 진행한 결과는 `history`에 남는다 |
-| `evaluationElapsedNanos` | Tick의 capture 시작부터 판단 확정까지의 monotonic 경과 |
+| `evaluationElapsedNanos` | Tick의 판단 시작(이력 구간 계산과 capture 포함)부터 판단 확정까지의 monotonic 경과 |
 | snapshot | 판단마다 저장한다. `arrivals`는 빼고, 창 경계와 개수는 `search`의 `windowStart`, `windowEnd`, `received`, `accepted`, `computeInputs`, `loads`에 있다 |
 | `outstanding[]` | `definition` 대신 `definitionID`(`Definition.Identity()`). 정의 본문은 snapshot `workloads`에 있다 |
 | replay 입력 | 노드와 인스턴스의 `observedAt`, 인스턴스의 `arrivalAges`, 동작의 `elapsedNanos`, `routingCredits`를 원값으로 유지한다 |

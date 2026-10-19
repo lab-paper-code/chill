@@ -270,7 +270,7 @@ type SchedulerDecision struct {
 	Workloads  []SchedulerWorkloadState `json:"workloads"`
 	References []string                 `json:"references"`
 	Policy     *SchedulerPolicyDecision `json:"policy,omitempty"`
-	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
+	// EvaluationElapsed is the monotonic Tick time from history work and capture to the decision.
 	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
 }
 
