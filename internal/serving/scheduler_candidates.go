@@ -1167,8 +1167,17 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 			}
 			from := oldNode.PowerMode
 			// An available Node first drops to its lowest mode, the same in every
-			// candidate; re-entering it raises the mode from there.
-			if lowest := SchedulerLowestMode(p.snap.Baselines, n.Node); lowest != "" && lowest != from && schedulerAvailable(p.snap, oldNode) {
+			// candidate; re-entering it raises the mode from there. While that
+			// lowering runs the Node reports no mode, so the unfinished Fixed
+			// action stays the common lowering rather than a compared change.
+			if i := slices.IndexFunc(p.snap.Actions, func(a Action) bool {
+				return a.Fixed && a.Node == n.Node && (a.Status == schedulerActionPlanned || a.Status == phaseRunning)
+			}); i >= 0 {
+				old := p.snap.Actions[i]
+				p.add(schedulerActionPower, n.Node, "", old.From, old.To, nil)
+				p.actions[len(p.actions)-1].Fixed = true
+				from = old.To
+			} else if lowest := SchedulerLowestMode(p.snap.Baselines, n.Node); lowest != "" && lowest != from && schedulerAvailable(p.snap, oldNode) {
 				p.add(schedulerActionPower, n.Node, "", from, lowest, nil)
 				p.actions[len(p.actions)-1].Fixed = true
 				from = lowest

@@ -325,6 +325,24 @@ func TestSchedulerAvailableNodeLoweringAndReentry(t *testing.T) {
 	schedulerRequireReason(t, reentered(schedulerEvaluateForTest(t, s, snap)).Reasons, "MissingOperationCost")
 }
 
+// §3.4: while the Fixed lowering runs the Node reports no mode; keep still needs no power cost.
+func TestSchedulerKeepWithRunningFixedLoweringNeedsNoPowerCost(t *testing.T) {
+	s, snap := schedulerFixture()
+	idle := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+	snap.Costs = nil
+	keep := schedulerEvaluateForTest(t, s, snap).Keep
+	lowering := keep.Actions[slices.IndexFunc(keep.Actions, func(a Action) bool { return a.Node == idle && a.Fixed })]
+	lowering.Status = phaseRunning
+	snap.Actions = []Action{lowering}
+	snap.InProgressTarget = &keep
+	snap.Nodes[1].PowerMode = ""
+	snap.Nodes[1].Reasons = []string{NodePowerModeUnavailable}
+	c := schedulerEvaluateForTest(t, s, snap).Keep
+	if slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Node == idle && !a.Fixed }) || slices.ContainsFunc(c.Reasons, func(r string) bool { return strings.HasPrefix(r, "MissingOperationCost") }) {
+		t.Fatalf("running Fixed lowering replanned as a compared power change: %+v %v", c.Actions, c.Reasons)
+	}
+}
+
 // §9.1 후보: SLO target set.
 func TestSchedulerSLOTargetsIncludeOnlyAffectedDisabledWorkloads(t *testing.T) {
 	n1, n2 := NodeReference{Name: "node1", UID: "n1"}, NodeReference{Name: "node2", UID: "n2"}
