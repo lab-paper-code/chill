@@ -82,7 +82,15 @@ arrival × `Definition`이다.
 
 ## 6. 검증 기록
 
-구현 후 이 절에 E1 결과를 기록한다.
+E1 재실행(2026-10-19 UTC, rev 35)의 측정 결과다.
+
+| 지표 | 측정 결과 |
+|---|---|
+| 저장 decision record 중앙값 | 185,359 B (약 185 KB), 목표 ≤100 KB; 498건, 2 req/s에서 66.3 MB/h |
+| ChillServer RSS 최대 | 111.4 MiB (512 MiB limit); E1 중 재시작 0회 |
+| 관측 PVC 증가 | soak 2 req/s에서 273 MiB/h (`du -sk`, helper pod) |
+| Tick p99 at 2 req/s | 6,166 ms (6.6 s) |
+| Tick p99 / max at 5 req/s | 22,575 / 22,575 ms (최대 22.6 s) |
 
 ## 7. M0 범위 밖
 

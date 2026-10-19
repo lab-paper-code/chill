@@ -448,7 +448,52 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
 
 ### 9.3 검증 기록
 
-구현 후 이 절에 실행 경계별 결과를 기록한다.
+E1은 2026-10-19 UTC에 수행했다. 첫 실행과 rev 35 재실행 결과를 기록한다.
+
+| 실행 | 배포와 이미지 | 설정 | 첫 구성 |
+|---|---|---|---|
+| 첫 실행 (E1 #1) | 2026-10-19 UTC | — | 30 s timeout으로 Tick 133회 실패, 첫 구성 없음, 1,660건 중 성공 0건, p95 30.08 s |
+| 재실행 | 2026-10-19 UTC / rev 35; `chill-serving-entrypoint:pools-e669615`, `chill-profiler:pools-e669615` | `maxCandidates=32`, `replays=10`, `completionMarginMS=139` (초기 50) | 활성화 6 s 뒤 rasp5 `mnv2-rasp5-cpu-q1-ed628c8` 한 인스턴스(CPU [3], Fixed); 24 s 뒤 Ready |
+
+재실행의 단계별 Tick과 SLO 결과다.
+
+| 부하 | Tick p50 / p99 / max (ms) | 요청 p95 (ms) | 1 s 이내 완료 | SLO |
+|---|---:|---:|---:|---|
+| 0.633 req/s | 913 / 1,749 / 1,749 | 77.5 | 62 / 62 | 충족 |
+| 2 req/s | 3,475 / 6,166 / 6,166 | 140.1 | 300 / 300 | 충족 |
+| 5 req/s | 7,495 / 22,575 / 22,575 | 200.2 | 750 / 750 | 충족 |
+| soak 2 req/s | 4,769 / 6,601 / 6,948 | 161.4 | 7,139 / 7,199 (99.17%) | 충족 |
+| E1 전체 | 4,574 / 12,655 / 22,575 | 164.5 | 8,252 / 8,312 (99.28%) | 충족 |
+
+| 측정 | 결과 |
+|---|---|
+| `completionResidualNanos` 전체 E1 | p50 3.29 ms / p99 138.23 ms / max 405.73 ms (n=8,312); `completionMarginMS=139` |
+| 잔여 지연 산출 | D-11 쿼리 실패로 PVC 사본에서 계산; API 결과와 20:10:20–20:35 구간(n=1,070) 및 0.633 req/s(n=62)에서 일치 |
+| 비교 집합 에너지 예측 | 499,333 J / 138.7 W (1 h) |
+| 비교 집합 에너지 실측 | 495,741 J / 137.7 W (1 h) |
+| 전체 POOL 에너지 실측 | 521,589 J / 144.9 W (1 h, control-plane genesis1 제외) |
+
+확인한 결함과 환경 제한이다.
+
+| ID | 확인 내용 |
+|---|---|
+| D-1 | 첫 실행의 Tick이 30 s deadline으로 133회 실패해 첫 구성이 없었고 요청 1,660건 중 성공이 없었다. |
+| D-2 | 60 s 이상 settling이 필요한 MLIB 실행에서 runner의 60 s `IdleTimeout`이 연결을 닫았다. |
+| D-3 | PMTC observer의 runner PodIP 연결이 edge tunnel에서 실패했다; Service 경유 관측은 재실행에서 성공했다. |
+| D-4 | PMTC는 `modes[0]` 상태에서 시작해야 하며, 첫 시도는 `SourceStateMismatch`로 실패했다. |
+| D-5 환경 | orin-nano Pod DNS의 `127.0.0.53` 질의가 거부되어 해당 노드의 serving prepare를 진행하지 못했다. |
+| D-6 환경 | jetson-nano MAXN→5W NodeActuation이 `Applying`에 머물렀고 SSH 연결이 시간 초과됐다. |
+| D-7 | 빈 노드의 `Fixed` 전력 내림에 power cost가 요구됐으며, rev 35 재실행에서는 측정 비용 없이 낮은 모드로 전환했다. |
+| D-8 | `powerRequests`가 고정 이름 NodeActuation을 재사용해 반복 전환에 stale Ready 상태가 남을 수 있어 `e1r-*` 이름을 사용했다. |
+| D-9 | measurement toleration이 없는 ChillServer Pod가 genesis1 taint 상태에서 Pending이었다. |
+| D-10 | 실패한 measurement prepare가 finalizer가 남은 Pod와 ConfigMap을 남겨 수동 정리가 필요했다. |
+| D-11 | workload observation query가 전체 요청 stream을 읽고 범위 필터를 적용해 ChillServer를 2회 OOM-kill했다. |
+| D-12 | jetsono의 MAXN↔MODE_15W 전환이 노드를 재부팅해 적재된 runner가 종료되고 재진입 전력 비용을 얻지 못했다. |
+| D-13 | jetsonx 전환은 약 1.5 s로 meter 약 1 s 간격보다 짧아 PMTC 15회 모두 `PowerWindowInsufficient`였다. |
+| D-14 | serving-operation이 상태 변화가 증명되지 않은 remove를 Accepted로 저장해 CostIssue가 남았다. |
+| D-15 | decision record 중앙값은 185,359 B로 ≤100 KB 목표를 넘었다; candidates 96,890 B, snapshot 70,394 B였다. |
+| D-16 | CPU 500 m 제한에서 Tick p50은 2 req/s 3,475 ms, 5 req/s 7,495 ms였고, 5 req/s 최대는 22,575 ms였다. |
+| D-17 | 요청 하나가 `assigned` 단계일 때 전체 Tick이 Pending이 됐다; soak 37/360회, 5 req/s 3/17회였다. |
 
 ## 10. 갱신할 문서
 
