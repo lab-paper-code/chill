@@ -69,6 +69,7 @@ type operationEvidence struct {
 	cost     *serving.OperationCost
 	baseline *serving.NodeBaseline
 	err      error
+	skip     bool // a recorded non-Accepted attempt: valid history, never a cost or issue
 }
 
 type powerEvidence struct {
@@ -109,6 +110,7 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 			e.measurements[identity] = evidence
 		}
 		switch {
+		case evidence.skip:
 		case evidence.err != nil:
 			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: evidence.err.Error()})
 		case !slices.ContainsFunc(meters, func(m MeterDeclaration) bool { return reflect.DeepEqual(m, evidence.meter) }):
@@ -184,6 +186,9 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 	evidence := operationEvidence{err: strictCostDecode(raw, &record)}
 	if evidence.err != nil {
 		return evidence, nil
+	}
+	if record.Verdict != measurementAccepted {
+		return operationEvidence{skip: true}, nil
 	}
 	evidence.meter = record.Request.Meter
 	if evidence.err = validateRetainedMeasurement(record, ref); evidence.err != nil {

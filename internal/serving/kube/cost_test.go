@@ -81,7 +81,7 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 		objects.objects[key] = raw
 	}
 	invalid := OperationMeasurementPrefix + "uid/invalid.json"
-	objects.objects[invalid] = []byte(`{"verdict":"Insufficient"}`)
+	objects.objects[invalid] = []byte(`{"verdict":"Accepted"}`)
 	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}, objects, 1<<20)
 	if err != nil {
 		t.Fatal(err)
@@ -122,6 +122,35 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 	objects.listErr = errors.New("list denied")
 	if _, err = evidence.Refresh(ctx, nil, []MeterDeclaration{costTestMeter}, nil); err == nil {
 		t.Fatal("listing failure produced a partial cost view")
+	}
+}
+
+func TestCostEvidenceIgnoresNonAcceptedAttempts(t *testing.T) {
+	at := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
+	insufficient := func(id string, end time.Time) (string, []byte) {
+		key, raw := costTestRecord(t, id, "fixed", end)
+		return key, bytes.Replace(raw, []byte(`"verdict":"Accepted"`), []byte(`"verdict":"Insufficient"`), 1)
+	}
+	for _, withAccepted := range []bool{true, false} {
+		objects := &costTestObjects{objects: map[string][]byte{}, opens: map[string]int{}}
+		key, raw := insufficient("retry-gap", at.Add(time.Hour))
+		objects.objects[key] = raw
+		if withAccepted {
+			key, raw = costTestRecord(t, "accepted", "fixed", at)
+			objects.objects[key] = raw
+		}
+		evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().Build()}, objects, 1<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view, err := evidence.Refresh(context.Background(), nil, []MeterDeclaration{costTestMeter}, nil)
+		wantCosts := 0
+		if withAccepted {
+			wantCosts = 1
+		}
+		if err != nil || len(view.Issues) != 0 || len(view.Costs) != wantCosts || (withAccepted && view.Costs[0].ID != "accepted") {
+			t.Fatalf("withAccepted=%v: costs %+v issues %+v err %v", withAccepted, view.Costs, view.Issues, err)
+		}
 	}
 }
 

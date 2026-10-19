@@ -195,7 +195,8 @@ page 끝까지 읽는다(`internal/evidencestore/s3/client.go:10-14`에 메서�
 보관하고, 더는 나열되지 않는 identity는 버린다. PowerModeTransitionCost는 UID와 result identity로 같은 보관을 한다.
 
 한 기록이나 측정의 실패는 그 출처의 `CostIssue{Source, Code, Reason}`(`CostEvidenceInvalid`, `MeterUndeclared`)가 되어
-scheduler 상태에 보이고 나머지는 계속 쓴다. 현재는 하나의 실패가 refresh 전체를 멈춘다(`scheduler_service.go:305-313`).
+scheduler 상태에 보이고 나머지는 계속 쓴다. Verdict가 Accepted가 아닌 기록(실패한 시도)과 Complete가 아닌 측정은 issue 없이 건너뛴다.
+현재는 하나의 실패가 refresh 전체를 멈춘다(`scheduler_service.go:305-313`).
 나열 자체가 실패하면 그 refresh가 실패하고 이전 구성이 유지된다(`:286-304`). refresh의 재사용 판단(`:301`)은 비용
 identity 집합도 비교한다. 측정 삭제 보호의 비용 목록 항목(`measurements_evidence.go:584-592`)은 삭제한다.
 
