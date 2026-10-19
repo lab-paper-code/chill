@@ -10,12 +10,13 @@ import (
 // the current physical runner already served two independently identified UIDs.
 func placementOnlyFixture() (SchedulerSettings, SchedulerSnapshot) {
 	settings, snapshot := schedulerFixture()
-	settings.Controls = SchedulerControls{Enabled: true, Placement: true}
+	settings.Controls = SchedulerControls{Placement: true, Membership: true}
 	settings.MaxCandidates = 128
 	first := snapshot.Workloads[0]
 	second := *first
 	second.Name, second.UID = "second", "w2"
 	snapshot.Workloads = append(snapshot.Workloads, &second)
+	settings.AutonomousWorkloads = []string{first.UID, second.UID}
 	current := snapshot.Instances[0]
 	current.Profile.Condition.Firstfloor.MaxBatchSize = 2
 	current.Profile.Condition.PlannedBatchSizes = []int{1, 2}
@@ -221,7 +222,7 @@ func TestPlacementOnlyTransfersEachCohortUIDWeightInsteadOfOptionWeight(t *testi
 
 func overlappingControlFixture() (SchedulerSettings, SchedulerSnapshot) {
 	settings, snapshot := placementOnlyFixture()
-	settings.Controls = SchedulerControls{Enabled: true, Placement: true, Resources: true, Batching: true}
+	settings.Controls = SchedulerControls{Placement: true, Resources: true, Batching: true, Membership: true}
 	snapshot.Nodes[1].CPUs = []int{0, 1, 2, 3, 4, 5, 6, 7}
 	a := snapshot.Options[3].Instance
 	a.ID, a.MaxBatch, a.WorkloadUIDs = "singleton-a", 1, []string{snapshot.Workloads[0].UID}

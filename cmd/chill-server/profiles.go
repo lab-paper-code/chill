@@ -276,11 +276,9 @@ func (o *schedulerService) selectProfile(
 func (o *schedulerService) profileRemovalReference(selection httpapi.ProfileCampaign) (string, string) {
 	prefix := selection.Namespace + "/" + selection.Name + "/"
 	if o.execution != nil {
-		for _, pool := range o.execution.Pools() {
-			for _, instance := range pool.Instances {
-				if strings.HasPrefix(instance.Profile, prefix) {
-					return instance.Profile, "physical serving instance " + instance.ID + " still references the profile"
-				}
+		for _, instance := range o.execution.Instances() {
+			if strings.HasPrefix(instance.Profile, prefix) {
+				return instance.Profile, "physical serving instance " + instance.ID + " still references the profile"
 			}
 		}
 	}
@@ -344,10 +342,11 @@ func (o *schedulerService) removeProfile(
 		return result, nil
 	}
 	// A failed refresh must not let a previously queued Tick launch an old
-	// catalog. Pause automatic controls before changing selection ownership.
-	if config.Settings.Controls.Enabled || (o.controller != nil && o.controller.Settings().Controls.Enabled) {
+	// catalog. Turn off autonomous control before changing selection ownership.
+	if len(config.Settings.AutonomousWorkloads) > 0 ||
+		(o.controller != nil && len(o.controller.Settings().AutonomousWorkloads) > 0) {
 		result.Code = "ProfileControlsEnabled"
-		result.Reason = "pause automatic scheduler controls before removing a profile"
+		result.Reason = "turn off autonomous control of every Workload before removing a profile"
 		return result, nil
 	}
 	// Native Pods remain authoritative even when the observer has not discovered
@@ -530,9 +529,8 @@ func (o *schedulerService) measuredPreparation(
 	if err != nil {
 		return spec, err
 	}
-	pool := node.Labels[servingkube.ServingPoolLabel]
-	if string(node.UID) != p.Condition.NodeUID || pool == "" {
-		return spec, fmt.Errorf("measured Node UID and configured serving pool required")
+	if string(node.UID) != p.Condition.NodeUID {
+		return spec, fmt.Errorf("measured Node UID required")
 	}
 	var memory uint64
 	for _, batch := range p.Batches {
@@ -567,7 +565,7 @@ func (o *schedulerService) measuredPreparation(
 	spec = servingkube.PrepareSpec{
 		Name: name, Store: binding, MemoryBytes: memory,
 		Instance: serving.SchedulerInstance{
-			ID: name, Node: serving.NodeReference{Name: p.NodeName, UID: p.Condition.NodeUID}, Pool: pool,
+			ID: name, Node: serving.NodeReference{Name: p.NodeName, UID: p.Condition.NodeUID},
 			Allocation: serving.SchedulerAllocation{
 				CPUs: slices.Clone(runtime.CPUAffinity), CPUCount: int(request.Value()),
 				Threads: runtime.IntraOpThreads, GPUUUID: runtime.GPUUUID, MemoryBytes: memory,

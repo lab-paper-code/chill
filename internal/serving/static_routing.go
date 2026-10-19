@@ -2,22 +2,55 @@ package serving
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 )
 
 // StaticRoutingTarget selects only current physical, measured, ready instances.
-// It declares a manual baseline; it does not enumerate a scheduling decision.
-func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[string]int, id string) (SchedulerCandidate, error) {
+// It declares a manual distribution for disabled Workloads; every Workload the
+// map omits keeps its current distribution. It does not enumerate a decision.
+func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[string]int, autonomous []string, id string) (SchedulerCandidate, error) {
 	target := SchedulerCandidate{ID: id, Nodes: snapshot.Nodes, Routing: map[string]map[string]int32{}}
-	if len(routing) != len(snapshot.Workloads) {
-		return target, fmt.Errorf("staticRouting requires the complete current workload UID map")
+	definitions := map[string]*Definition{}
+	for _, definition := range snapshot.Workloads {
+		definitions[definition.UID] = definition
+	}
+	for uid := range routing {
+		if definitions[uid] == nil {
+			return target, fmt.Errorf("staticRouting names Workload %q that is not current", uid)
+		}
+		if slices.Contains(autonomous, uid) {
+			return target, fmt.Errorf("staticRouting names autonomous Workload %q; it applies to disabled Workloads only", uid)
+		}
 	}
 	instances := map[string]SchedulerInstance{}
+	bind := func(physical, uid string) {
+		instance, exists := instances[physical]
+		if !exists {
+			for _, actual := range snapshot.Instances {
+				if actual.ID == physical {
+					instance = actual
+					instance.WorkloadUIDs = nil
+				}
+			}
+		}
+		instance.WorkloadUIDs = append(instance.WorkloadUIDs, uid)
+		instances[physical] = instance
+	}
 	for _, definition := range snapshot.Workloads {
-		weights, ok := routing[definition.UID]
-		if !ok || len(weights) == 0 {
-			return target, fmt.Errorf("staticRouting lacks positive distribution for current workload %q", definition.UID)
+		weights, declared := routing[definition.UID]
+		if !declared {
+			target.Routing[definition.UID] = maps.Clone(snapshot.Routing[definition.UID])
+			if target.Routing[definition.UID] == nil {
+				target.Routing[definition.UID] = map[string]int32{}
+			}
+			for physical, weight := range target.Routing[definition.UID] {
+				if weight > 0 {
+					bind(physical, definition.UID)
+				}
+			}
+			continue
 		}
 		target.Routing[definition.UID] = map[string]int32{}
 		positive := false
@@ -40,13 +73,7 @@ func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[stri
 				continue
 			}
 			positive = true
-			instance, exists := instances[physical]
-			if !exists {
-				instance = *selected
-				instance.WorkloadUIDs = nil
-			}
-			instance.WorkloadUIDs = append(instance.WorkloadUIDs, definition.UID)
-			instances[physical] = instance
+			bind(physical, definition.UID)
 			target.Routing[definition.UID][physical] = int32(weight)
 		}
 		if !positive {

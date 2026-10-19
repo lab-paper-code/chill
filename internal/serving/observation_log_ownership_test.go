@@ -73,7 +73,7 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	assignment := &Assignment{Instance: "physical", Node: NodeReference{Name: "node", UID: "node-uid"}, Pool: "pool", Profile: "profile"}
+	assignment := &Assignment{Instance: "physical", Node: NodeReference{Name: "node", UID: "node-uid"}, Profile: "profile"}
 	for _, event := range []RequestEvent{
 		{RequestID: "request", WorkloadUID: d.UID, Definition: d.Identity(), Kind: "assigned", At: now, ReceivedAt: now, Assignment: assignment},
 		{RequestID: "request", WorkloadUID: d.UID, Definition: d.Identity(), Kind: "backend_finished", At: now, NativeProgress: &BackendProgress{Phase: "finished", ExecutionComplete: false}},

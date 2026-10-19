@@ -11,25 +11,26 @@ import (
 
 // SchedulerSettings separates the observed population from the control cadence
 // and the interval over which every candidate's complete pool cost is compared.
+// AutonomousWorkloads lists the Workload UIDs under autonomous control.
 type SchedulerSettings struct {
-	Algorithm          string            `json:"algorithm"`
-	ObservationWindow  time.Duration     `json:"observationWindowNanos"`
-	ControlInterval    time.Duration     `json:"controlIntervalNanos"`
-	Horizon            time.Duration     `json:"horizonNanos"`
-	MaxObservationAge  time.Duration     `json:"maxObservationAgeNanos"`
-	Seed               int64             `json:"seed"`
-	Replays            int               `json:"replays"`
-	MaxCandidates      int               `json:"maxCandidates"`
-	MaxReplicas        int               `json:"maxReplicas"`
-	MaxInstances       int               `json:"maxInstances"`
-	MaxReplayRequests  int               `json:"maxReplayRequests"`
-	MaxCPUs            int               `json:"maxCPUs"`
-	ServingMemoryBytes uint64            `json:"servingMemoryBytes"`
-	CompletionMarginMS float64           `json:"completionMarginMS"`
-	Controls           SchedulerControls `json:"controls"`
+	Algorithm           string            `json:"algorithm"`
+	ObservationWindow   time.Duration     `json:"observationWindowNanos"`
+	ControlInterval     time.Duration     `json:"controlIntervalNanos"`
+	Horizon             time.Duration     `json:"horizonNanos"`
+	MaxObservationAge   time.Duration     `json:"maxObservationAgeNanos"`
+	Seed                int64             `json:"seed"`
+	Replays             int               `json:"replays"`
+	MaxCandidates       int               `json:"maxCandidates"`
+	MaxReplicas         int               `json:"maxReplicas"`
+	MaxInstances        int               `json:"maxInstances"`
+	MaxReplayRequests   int               `json:"maxReplayRequests"`
+	MaxCPUs             int               `json:"maxCPUs"`
+	ServingMemoryBytes  uint64            `json:"servingMemoryBytes"`
+	CompletionMarginMS  float64           `json:"completionMarginMS"`
+	AutonomousWorkloads []string          `json:"autonomousWorkloads"`
+	Controls            SchedulerControls `json:"controls"`
 }
 type SchedulerControls struct {
-	Enabled    bool `json:"enabled"`
 	Placement  bool `json:"placement"`
 	Resources  bool `json:"resources"`
 	Replicas   bool `json:"replicas"`
@@ -47,25 +48,34 @@ type SchedulerAllocation struct {
 	CPUCount    int    `json:"cpuCount"`
 	CPUReserved bool   `json:"cpuReserved"`
 }
+
+// Node reasons: configuration a Node of the entire POOL lacks.
+const (
+	NodePlacementInventoryMissing  = "PlacementInventoryMissing"
+	NodePlacementBudgetUnavailable = "PlacementBudgetUnavailable"
+	NodePowerModeUnavailable       = "PowerModeUnavailable"
+)
+
+// SchedulerNode is one Node of the entire POOL. Measurement marks the
+// measurement POOL; Reasons name configuration the Node lacks.
 type SchedulerNode struct {
 	Node        NodeReference         `json:"node"`
-	Pool        string                `json:"pool"`
 	PowerMode   string                `json:"powerMode"`
 	Ready       bool                  `json:"ready"`
+	Measurement bool                  `json:"measurement,omitempty"`
 	CPUs        []int                 `json:"cpus"`
 	GPUUUIDs    []string              `json:"gpuUUIDs"`
 	MemoryBytes uint64                `json:"memoryBytes"`
 	Reserved    SchedulerAllocation   `json:"reserved"`
 	NonServing  []SchedulerAllocation `json:"nonServing"`
 	ObservedAt  time.Time             `json:"observedAt"`
-	Reason      string                `json:"reason,omitempty"`
+	Reasons     []string              `json:"reasons,omitempty"`
 }
 type SchedulerInstance struct {
 	ID               string                     `json:"id"`
 	TargetID         string                     `json:"targetID,omitempty"`
 	OwnerWorkloadUID string                     `json:"ownerWorkloadUID,omitempty"`
 	Node             NodeReference              `json:"node"`
-	Pool             string                     `json:"pool"`
 	Profile          *Profile                   `json:"profile"`
 	WorkloadUIDs     []string                   `json:"workloadUIDs"`
 	Allocation       SchedulerAllocation        `json:"allocation"`
@@ -148,14 +158,16 @@ type OperationCost struct {
 	BeforeBaselineWatts *float64                     `json:"beforeBaselineWatts,omitempty"`
 }
 type Action struct {
-	ID         string        `json:"id"`
-	Kind       string        `json:"kind"` // prepare, route, stop, drain, remove, power, membership
-	Node       NodeReference `json:"node"`
-	Instance   string        `json:"instance,omitempty"`
-	From       string        `json:"from,omitempty"`
-	To         string        `json:"to,omitempty"`
-	DependsOn  []string      `json:"dependsOn"`
-	CostID     string        `json:"costID,omitempty"`
+	ID        string        `json:"id"`
+	Kind      string        `json:"kind"` // prepare, route, stop, drain, remove, power
+	Node      NodeReference `json:"node"`
+	Instance  string        `json:"instance,omitempty"`
+	From      string        `json:"from,omitempty"`
+	To        string        `json:"to,omitempty"`
+	DependsOn []string      `json:"dependsOn"`
+	CostID    string        `json:"costID,omitempty"`
+	// Fixed lowers an available Node to its lowest power mode; every candidate shares it.
+	Fixed      bool          `json:"fixed,omitempty"`
 	Status     string        `json:"status"` // planned, running, complete, failed, cancel
 	Elapsed    time.Duration `json:"elapsedNanos"`
 	Cancelable bool          `json:"cancelable"`
@@ -217,6 +229,8 @@ type SchedulerSearch struct {
 	ComputeInputs int               `json:"computeInputs"`
 	Population    string            `json:"population"`
 	Loads         []SchedulerLoad   `json:"loads"`
+	// ComparedNodes are the Nodes some candidate changes; ExpectedJoules sums only them.
+	ComparedNodes []NodeReference `json:"comparedNodes"`
 }
 type SchedulerLoad struct {
 	UID             string  `json:"uid"`
@@ -224,6 +238,19 @@ type SchedulerLoad struct {
 	Accepted        int     `json:"accepted"`
 	ComputeInputs   int     `json:"computeInputs"`
 	InputsPerSecond float64 `json:"inputsPerSecond"`
+}
+
+// Workload decision states.
+const (
+	WorkloadDisabled                   = "Disabled"
+	WorkloadMeasurementEvidenceMissing = "MeasurementEvidenceMissing"
+	WorkloadControlled                 = "Controlled"
+)
+
+type SchedulerWorkloadState struct {
+	UID    string `json:"uid"`
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
 }
 type SchedulerDecision struct {
 	At         time.Time                `json:"at"`
@@ -234,6 +261,7 @@ type SchedulerDecision struct {
 	Reasons    []string                 `json:"reasons"`
 	Settings   SchedulerSettings        `json:"settings"`
 	Search     SchedulerSearch          `json:"search"`
+	Workloads  []SchedulerWorkloadState `json:"workloads"`
 	References []string                 `json:"references"`
 	Policy     *SchedulerPolicyDecision `json:"policy,omitempty"`
 }

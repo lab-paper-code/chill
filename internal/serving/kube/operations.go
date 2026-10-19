@@ -43,7 +43,6 @@ const (
 	operationDrain           = "drain"
 	operationResize          = "resize"
 	operationRoute           = "route"
-	operationMembership      = "membership"
 	nativeOperationComplete  = "complete"
 	nativeOperationRunning   = "running"
 	nativeOperationCancel    = "cancel"
@@ -54,6 +53,7 @@ const (
 )
 
 // PrepareSpec freezes one measured execution and immutable profile delivery.
+// Owner, when set, makes the prepared instance serve only that Workload.
 type PrepareSpec struct {
 	Name        string                       `json:"name"`
 	Instance    serving.SchedulerInstance    `json:"instance"`
@@ -61,13 +61,13 @@ type PrepareSpec struct {
 	Store       storekube.Binding            `json:"store"`
 	Config      native.Config                `json:"config"`
 	MemoryBytes uint64                       `json:"memoryBytes"`
+	Owner       *serving.WorkloadReference   `json:"owner,omitempty"`
 }
 type Operation struct {
 	ID             string                      `json:"id"`
 	Kind           string                      `json:"kind"`
 	Node           serving.NodeReference       `json:"node"`
 	Instance       string                      `json:"instance,omitempty"`
-	Pool           string                      `json:"pool,omitempty"`
 	Prepare        *PrepareSpec                `json:"prepare,omitempty"`
 	Actuation      *edge.NodeActuation         `json:"actuation,omitempty"`
 	Target         *serving.SchedulerCandidate `json:"target,omitempty"`
@@ -77,7 +77,6 @@ type Operation struct {
 type OperationState struct {
 	At        time.Time                   `json:"at"`
 	Node      serving.NodeReference       `json:"node"`
-	Pool      string                      `json:"pool"`
 	PowerMode string                      `json:"powerMode"`
 	Instances []serving.InstanceState     `json:"instances"`
 	Native    map[string]native.State     `json:"native"`
@@ -97,11 +96,19 @@ type OperationResult struct {
 	Progress    []string                `json:"progress"`
 	DrainNative map[string]native.State `json:"drainNative,omitempty"`
 }
+
+// OperationConfig.Measurement selects measurement operations: they prepare only
+// on a measurement POOL Node and tolerate its taint. Other operations refuse it.
 type OperationConfig struct {
 	Namespace          string
 	ActuationNamespace string
 	PollInterval       time.Duration
+	Measurement        bool
 }
+
+// ErrNodeInMeasurement rejects a Workload action on a measurement POOL Node.
+var ErrNodeInMeasurement = errors.New("NodeInMeasurement: Node carries the " + profilingrun.MeasurementTaintKey + " taint")
+
 type Operations struct {
 	store    *Store
 	kube     kubernetes.Interface
@@ -147,7 +154,6 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 	if string(current.UID) != node.UID {
 		return s, errors.New("physical Node identity changed")
 	}
-	s.Pool = current.Labels[ServingPoolLabel]
 	var acts edge.NodeActuationList
 	if err = o.store.client.List(ctx, &acts, client.InNamespace(o.config.ActuationNamespace)); err != nil {
 		return s, err
@@ -162,11 +168,9 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 	if latest != nil && latest.Status.Phase == edge.NodeActuationPhaseReady && latest.Status.TargetObservation != nil {
 		s.PowerMode = latest.Status.TargetObservation.PowerMode
 	}
-	for _, pool := range o.runtime.Pools() {
-		for _, i := range pool.Instances {
-			if i.Node.UID == node.UID {
-				s.Instances = append(s.Instances, i)
-			}
+	for _, i := range o.runtime.Instances() {
+		if i.Node.UID == node.UID {
+			s.Instances = append(s.Instances, i)
 		}
 	}
 	pods, err := o.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{})
@@ -256,8 +260,6 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 			if err == nil {
 				result.Progress = append(result.Progress, "stop/drain/termination/removal observed")
 			}
-		case operationMembership:
-			err = o.observer.MoveNodePool(ctx, operation.Node, operation.Pool)
 		case operationPower:
 			err = o.ChangePower(ctx, operation.Node, operation.Actuation)
 		case operationRoute:
@@ -313,7 +315,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 		result.Status = nativeOperationComplete
 	} else {
 		result.Status = nativeOperationFailed
-		if !reflect.DeepEqual(before.Pods, actual.Pods) || before.Pool != actual.Pool || before.PowerMode != actual.PowerMode || len(result.Progress) > 0 {
+		if !reflect.DeepEqual(before.Pods, actual.Pods) || before.PowerMode != actual.PowerMode || len(result.Progress) > 0 {
 			result.Status = nativeOperationPartial
 		}
 		result.Error = err.Error()
@@ -365,8 +367,11 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 	if err != nil {
 		return err
 	}
-	if string(node.UID) != spec.Instance.Node.UID || node.Labels[ServingPoolLabel] != spec.Instance.Pool {
-		return errors.New("actual Node/pool differs from preparation")
+	if string(node.UID) != spec.Instance.Node.UID {
+		return errors.New("actual Node differs from preparation")
+	}
+	if err = o.admitNode(node); err != nil {
+		return err
 	}
 	host, delivery, err := measuredRuntimeDelivery(p)
 	if err != nil {
@@ -404,6 +409,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		{Name: "preprocessor", Image: p.Condition.Preprocessor.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp -R "$1"/. /chill-preprocessor/`, "--", p.Condition.Preprocessor.Path}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "preprocessor", MountPath: "/chill-preprocessor"}}},
 		{Name: "profile", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Resources: initResources, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
 	}, Containers: []core.Container{{Name: "firstfloor", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-worker"}, Args: []string{"--config=/config/config.json", "--bind-address=:8080", "--node-name=" + node.Name}, Ports: []core.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: core.ResourceRequirements{Requests: requests, Limits: limits}, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "preprocessor", MountPath: "/preprocessor", ReadOnly: true}, {Name: "profile", MountPath: "/profile", ReadOnly: true}, {Name: "config", MountPath: "/config", ReadOnly: true}}, TerminationMessagePolicy: core.TerminationMessageFallbackToLogsOnError, ReadinessProbe: &core.Probe{ProbeHandler: core.ProbeHandler{HTTPGet: &core.HTTPGetAction{Path: "/v2/health/ready", Port: port8080()}}, PeriodSeconds: 1}}}, Volumes: []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}}}}
+	o.placeServingPod(pod, spec.Owner)
 	if spec.Instance.Allocation.GPUUUID != "" {
 		pod.Spec.Containers[0].Env = []core.EnvVar{{Name: "CUDA_VISIBLE_DEVICES", Value: spec.Instance.Allocation.GPUUUID}}
 	}
@@ -451,11 +457,9 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		if current.Status.Phase == core.PodFailed {
 			return false, fmt.Errorf("native preparation Pod failed%s", terminationMessages(current))
 		}
-		for _, pool := range o.runtime.Pools() {
-			for _, i := range pool.Instances {
-				if strings.HasPrefix(i.ID, string(pod.UID)+"/") && i.Ready {
-					return true, nil
-				}
+		for _, i := range o.runtime.Instances() {
+			if strings.HasPrefix(i.ID, string(pod.UID)+"/") && i.Ready {
+				return true, nil
 			}
 		}
 		return false, nil
@@ -740,9 +744,19 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 	if request == nil || request.Spec.Node.Name != node.Name || request.Spec.Node.UID != node.UID {
 		return errors.New("exact NodeActuation target required")
 	}
+	current, err := o.kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if string(current.UID) != node.UID {
+		return errors.New("physical Node identity changed")
+	}
+	if err = o.admitNode(current); err != nil {
+		return err
+	}
 	o.observer.mu.Lock()
 	o.observer.movingNodes[node.UID] = true
-	err := o.observer.detachNodeLocked(ctx, node.UID)
+	err = o.observer.detachNodeLocked(ctx, node.UID)
 	o.observer.mu.Unlock()
 	if err != nil {
 		return err
@@ -796,6 +810,30 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 	o.observer.mu.Unlock()
 	return o.observer.Refresh(ctx)
 }
+
+// placeServingPod lets a measurement instance tolerate the measurement taint
+// and records the Workload that owns a manually prepared instance.
+func (o *Operations) placeServingPod(pod *core.Pod, owner *serving.WorkloadReference) {
+	if o.config.Measurement {
+		pod.Spec.Tolerations = []core.Toleration{profilingrun.MeasurementToleration()}
+	}
+	if owner != nil {
+		pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: owner.Name, UID: types.UID(owner.UID)}}
+	}
+}
+
+// admitNode lets measurement operations act only on a measurement POOL Node and
+// every other operation only outside it.
+func (o *Operations) admitNode(node *core.Node) error {
+	tainted := profilingrun.InMeasurement(node)
+	if o.config.Measurement && !tainted {
+		return errors.New("measurement operation requires the " + profilingrun.MeasurementTaintKey + " taint on Node " + node.Name)
+	}
+	if !o.config.Measurement && tainted {
+		return ErrNodeInMeasurement
+	}
+	return nil
+}
 func (o *Operations) waitPowerState(ctx context.Context, node serving.NodeReference, before OperationState) error {
 	if err := o.wait(ctx, func() (bool, error) {
 		after, e := o.Capture(ctx, node)
@@ -833,12 +871,10 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	if result.Before.Native == nil {
 		result.Before.Native = map[string]native.State{}
 	}
-	for _, pool := range o.runtime.Pools() {
-		for _, instance := range pool.Instances {
-			if instance.Native != nil {
-				if _, observed := result.Before.Native[instance.ID]; !observed {
-					result.Before.Native[instance.ID] = *instance.Native
-				}
+	for _, instance := range o.runtime.Instances() {
+		if instance.Native != nil {
+			if _, observed := result.Before.Native[instance.ID]; !observed {
+				result.Before.Native[instance.ID] = *instance.Native
 			}
 		}
 	}
@@ -991,8 +1027,8 @@ func (o *Operations) validateOperationBinding(ctx context.Context, operation Ope
 		return errors.New("operation physical Node identity changed")
 	}
 	if operation.Kind == operationPrepare || operation.Kind == operationResize {
-		if operation.Prepare == nil || operation.Prepare.Instance.Node != operation.Node || operation.Prepare.Instance.Pool != actual.Labels[ServingPoolLabel] {
-			return errors.New("prepare physical Node/pool differs from operation scope")
+		if operation.Prepare == nil || operation.Prepare.Instance.Node != operation.Node {
+			return errors.New("prepare physical Node differs from operation scope")
 		}
 	}
 	if operation.Kind == operationResize {
@@ -1001,7 +1037,7 @@ func (o *Operations) validateOperationBinding(ctx context.Context, operation Ope
 		}
 		matched := false
 		for _, i := range operation.Target.Instances {
-			if i.ID == operation.Prepare.Instance.ID && i.Node == operation.Node && i.Pool == operation.Prepare.Instance.Pool {
+			if i.ID == operation.Prepare.Instance.ID && i.Node == operation.Node {
 				matched = true
 			}
 		}
@@ -1031,11 +1067,9 @@ func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operat
 		if pod.Spec.NodeName != actual.Name || status == nil || status.ContainerID != containerID || pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
 			return errors.New("operation instance belongs to different physical Node/source")
 		}
-		for _, pool := range o.runtime.Pools() {
-			for _, i := range pool.Instances {
-				if i.ID == operation.Instance && (i.Node != operation.Node || i.Pool != actual.Labels[ServingPoolLabel]) {
-					return errors.New("operation physical instance pool observation changed")
-				}
+		for _, i := range o.runtime.Instances() {
+			if i.ID == operation.Instance && i.Node != operation.Node {
+				return errors.New("operation physical instance Node observation changed")
 			}
 		}
 		return nil

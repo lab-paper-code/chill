@@ -78,8 +78,7 @@ func TestSchedulerLogicalConfigKeyPreservesExecutorReplacementAndOrdering(t *tes
 
 func TestSchedulerLogicalConfigKeyTracksControlSemantics(t *testing.T) {
 	changes := map[string]func(*SchedulerSnapshot, *SchedulerCandidate){
-		"power":      func(_ *SchedulerSnapshot, c *SchedulerCandidate) { c.Nodes[0].PowerMode = "other-mode" },
-		"membership": func(_ *SchedulerSnapshot, c *SchedulerCandidate) { c.Nodes[0].Pool = "other-pool" },
+		"power": func(_ *SchedulerSnapshot, c *SchedulerCandidate) { c.Nodes[0].PowerMode = "other-mode" },
 		"profile": func(_ *SchedulerSnapshot, c *SchedulerCandidate) {
 			p := *c.Instances[0].Profile
 			p.ID = schedulerLogicalTestNewProfile

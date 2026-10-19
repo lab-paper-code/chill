@@ -15,7 +15,7 @@ import (
 
 func TestIdleRejectsInferenceBetweenEmptySnapshots(t *testing.T) {
 	node := serving.NodeReference{Name: "node", UID: "uid"}
-	before := OperationState{Node: node, Pool: "pool", PowerMode: "fixed", Pods: []string{"pod"}, States: []string{"profile:[0]::1024:1"}, Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 3, CompletedRequests: 3, Executions: 2}}}
+	before := OperationState{Node: node, PowerMode: "fixed", Pods: []string{"pod"}, States: []string{"profile:[0]::1024:1"}, Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 3, CompletedRequests: 3, Executions: 2}}}
 	after := before
 	after.Native = map[string]native.State{"physical": {Ready: true, AcceptedRequests: 4, CompletedRequests: 4, Executions: 3}}
 	if err := stableIdle(before, before); err != nil {
@@ -24,7 +24,7 @@ func TestIdleRejectsInferenceBetweenEmptySnapshots(t *testing.T) {
 	if err := stableIdle(before, after); err == nil {
 		t.Fatal("empty queues hid actual inference inside idle window")
 	}
-	unloaded := OperationState{Node: node, Pool: "pool", PowerMode: "fixed", Native: map[string]native.State{}}
+	unloaded := OperationState{Node: node, PowerMode: "fixed", Native: map[string]native.State{}}
 	if err := stableIdle(unloaded, unloaded); err != nil {
 		t.Fatal("actual unloaded idle rejected", err)
 	}
@@ -75,7 +75,7 @@ func TestIsolationFailureCannotPersistAcceptedScientificCost(t *testing.T) {
 	joules, watts := 12.0, 6.0
 	node := serving.NodeReference{Name: "node", UID: "uid"}
 	record := OperationMeasurement{SchemaVersion: OperationMeasurementSchema, Verdict: "Accepted", WallJoules: &joules, MeanWatts: &watts, Request: MeasurementRequest{Operation: Operation{Node: node}}, Result: OperationResult{EndedAt: time.Unix(10, 0)}}
-	witness := MeasurementIsolation{Node: node, Pool: "measurement-test", CheckedAt: time.Unix(11, 0), Workloads: []serving.WorkloadReference{{Name: "late", UID: "late-uid"}}}
+	witness := MeasurementIsolation{Node: node, Tainted: true, CheckedAt: time.Unix(11, 0), Workloads: []serving.WorkloadReference{{Name: "late", UID: "late-uid"}}}
 	if err := record.applyIsolation(witness, errors.New("actual new Workload ownership")); err == nil {
 		t.Fatal("ownership violation ignored")
 	}
@@ -89,5 +89,17 @@ func TestIsolationFailureCannotPersistAcceptedScientificCost(t *testing.T) {
 	}
 	if stored.Verdict != "Insufficient" || stored.WallJoules != nil || stored.MeanWatts != nil || stored.Isolation == nil || stored.Isolation.Error == "" || len(stored.Isolation.Workloads) != 1 {
 		t.Fatal("failed final isolation remained accepted", stored)
+	}
+}
+
+func TestIsolationRejectsUntaintedWitness(t *testing.T) {
+	joules := 12.0
+	node := serving.NodeReference{Name: "node", UID: "uid"}
+	for _, tainted := range []bool{true, false} {
+		record := OperationMeasurement{Verdict: "Accepted", WallJoules: &joules, Request: MeasurementRequest{Operation: Operation{Node: node}}, Result: OperationResult{EndedAt: time.Unix(10, 0)}}
+		err := record.applyIsolation(MeasurementIsolation{Node: node, Tainted: tainted, CheckedAt: time.Unix(11, 0)}, nil)
+		if (err == nil) != tainted || (record.WallJoules == nil) != !tainted {
+			t.Fatalf("tainted=%v: err=%v joules=%v", tainted, err, record.WallJoules)
+		}
 	}
 }

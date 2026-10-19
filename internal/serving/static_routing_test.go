@@ -36,7 +36,7 @@ func TestStaticExclusiveBaselineThenSharedTargetDrainsPhysicalBinding(t *testing
 	for _, instance := range snapshot.Instances {
 		physical := instance.ID
 		instances = append(instances, ReadyInstance{
-			State:   InstanceState{ID: physical, Node: instance.Node, Pool: instance.Pool, Profile: instance.Profile.ID, Ready: true},
+			State:   InstanceState{ID: physical, Node: instance.Node, Profile: instance.Profile.ID, Ready: true},
 			Profile: instance.Profile, Weight: 1, Capacity: 1,
 			Execute: func(context.Context, Dispatch) (BackendResult, error) {
 				if physical == "i1" {
@@ -51,7 +51,7 @@ func TestStaticExclusiveBaselineThenSharedTargetDrainsPhysicalBinding(t *testing
 		t.Fatal(err)
 	}
 	baseline := map[string]map[string]int{first.UID: {"i1": 1}, second.UID: {"i2": 1}}
-	target, err := StaticRoutingTarget(snapshot, baseline, "manual-static-routing:42")
+	target, err := StaticRoutingTarget(snapshot, baseline, nil, "manual-static-routing:42")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,8 +80,8 @@ func TestStaticExclusiveBaselineThenSharedTargetDrainsPhysicalBinding(t *testing
 	snapshot.Instances = []SchedulerInstance{target.Instances[1], target.Instances[0]}
 	snapshot.Routing = target.Routing
 	enumeration := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: snapshot, workloads: []*Definition{&second, first},
-		options: []SchedulerOption{{Instance: other, CompatibleUIDs: []string{first.UID, second.UID}}},
-		seen:    map[string]bool{}}
+		options:    []SchedulerOption{{Instance: other, CompatibleUIDs: []string{first.UID, second.UID}}},
+		controlled: map[string]bool{first.UID: true, second.UID: true}, seen: map[string]bool{}}
 	enumeration.visit(1, []SchedulerInstance{snapshot.Instances[0]})
 	if len(enumeration.result) == 0 {
 		t.Fatal("ordinary sharing enumeration did not attach the second UID")
@@ -108,14 +108,35 @@ func TestStaticExclusiveBaselineThenSharedTargetDrainsPhysicalBinding(t *testing
 		t.Fatal("drained zero-route binding retained")
 	}
 	for _, invalid := range []map[string]map[string]int{
-		{first.UID: {"i1": 1}},
 		{first.UID: {"i1": 1}, "stale": {"i2": 1}},
 		{first.UID: {"logical-alias": 1}, second.UID: {"i2": 1}},
 		{first.UID: {"i1": -1}, second.UID: {"i2": 1}},
 		{first.UID: {"i1": 0}, second.UID: {"i2": 1}},
 	} {
-		if _, err = StaticRoutingTarget(snapshot, invalid, "manual-static-routing:43"); err == nil {
+		if _, err = StaticRoutingTarget(snapshot, invalid, nil, "manual-static-routing:43"); err == nil {
 			t.Fatalf("invalid declaration accepted: %v", invalid)
 		}
+	}
+}
+
+// A partial map keeps unlisted Workloads' routing; autonomous entries are rejected.
+func TestStaticRoutingPartialKeepsUnlistedAndRejectsAutonomous(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	second := *snapshot.Workloads[0]
+	second.Name, second.UID = "partial", "w2"
+	snapshot.Workloads = append(snapshot.Workloads, &second)
+	other := snapshot.Instances[0]
+	other.ID = "i2"
+	snapshot.Instances = append(snapshot.Instances, other)
+	snapshot.Routing = map[string]map[string]int32{"w1": {"i1": 1}, "w2": {"i2": 3}}
+	target, err := StaticRoutingTarget(snapshot, map[string]map[string]int{"w1": {"i2": 1}}, nil, "partial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Routing["w1"]["i2"] != 1 || len(target.Routing["w1"]) != 1 || target.Routing["w2"]["i2"] != 3 || len(target.Routing["w2"]) != 1 {
+		t.Fatalf("partial staticRouting changed an unlisted Workload: %v", target.Routing)
+	}
+	if _, err = StaticRoutingTarget(snapshot, map[string]map[string]int{"w1": {"i2": 1}}, []string{"w1"}, "autonomous"); err == nil {
+		t.Fatal("staticRouting entry for an autonomous Workload accepted")
 	}
 }

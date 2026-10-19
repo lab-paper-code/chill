@@ -3,7 +3,6 @@ package kube
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,14 +29,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
-	ServingPoolLabel         = "edge.dacs.io/serving-pool"
 	ServingProfileAnnotation = "edge.dacs.io/serving-profile"
 	ServingWeightAnnotation  = "edge.dacs.io/serving-weight"
 	ServingPolicyAnnotation  = "edge.dacs.io/serving-policy"
@@ -178,19 +175,17 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	if err = o.store.client.List(ctx, &actuations, client.InNamespace(o.config.ActuationNamespace)); err != nil {
 		return o.refreshFailure(err)
 	}
-	currentNodes := map[string][]serving.NodeReference{}
+	measurement := []serving.NodeReference{}
 	byName := map[string]*corev1.Node{}
 	for i := range nodes.Items {
 		node := &nodes.Items[i]
 		byName[node.Name] = node
-		if pool := node.Labels[ServingPoolLabel]; pool != "" && node.UID != "" {
-			currentNodes[pool] = append(currentNodes[pool], serving.NodeReference{Name: node.Name, UID: string(node.UID)})
+		if profilingrun.InMeasurement(node) && node.UID != "" {
+			measurement = append(measurement, serving.NodeReference{Name: node.Name, UID: string(node.UID)})
 		}
 	}
-	for pool := range currentNodes {
-		sort.Slice(currentNodes[pool], func(i, j int) bool { return currentNodes[pool][i].Name < currentNodes[pool][j].Name })
-	}
-	o.runtime.SetNodes(currentNodes)
+	sort.Slice(measurement, func(i, j int) bool { return measurement[i].Name < measurement[j].Name })
+	o.runtime.SetMeasurementNodes(measurement)
 	// Start a native status watch before using this snapshot for execution or cleanup.
 	if o.podWatch == nil {
 		w, e := o.kube.CoreV1().Pods(o.config.Namespace).Watch(o.ctx, metav1.ListOptions{ResourceVersion: pods.ResourceVersion})
@@ -238,27 +233,25 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 func (o *Observer) restoreSources(pods []corev1.Pod) {
 	// Restored accepted assignments identify exact physical sources, not routes.
 	// Join all namespace Pods by UID so relabeling cannot hide drain evidence.
-	for _, pool := range o.runtime.Pools() {
-		for _, instance := range pool.Instances {
-			outstanding := 0
-			for _, counts := range []map[string]int{instance.AssignedUnknown, instance.Waiting, instance.Running} {
-				for _, count := range counts {
-					outstanding += count
-				}
+	for _, instance := range o.runtime.Instances() {
+		outstanding := 0
+		for _, counts := range []map[string]int{instance.AssignedUnknown, instance.Waiting, instance.Running} {
+			for _, count := range counts {
+				outstanding += count
 			}
-			if outstanding == 0 || o.sources[instance.ID] != nil {
-				continue
-			}
-			podUID, containerID, ok := strings.Cut(instance.ID, "/")
-			if !ok {
-				continue
-			}
-			for i := range pods {
-				pod := &pods[i]
-				if string(pod.UID) == podUID {
-					o.sources[instance.ID] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: containerID, ownerUID: types.UID(workloadOwner(pod.OwnerReferences))}
-					break
-				}
+		}
+		if outstanding == 0 || o.sources[instance.ID] != nil {
+			continue
+		}
+		podUID, containerID, ok := strings.Cut(instance.ID, "/")
+		if !ok {
+			continue
+		}
+		for i := range pods {
+			pod := &pods[i]
+			if string(pod.UID) == podUID {
+				o.sources[instance.ID] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: containerID, ownerUID: types.UID(workloadOwner(pod.OwnerReferences))}
+				break
 			}
 		}
 	}
@@ -290,7 +283,7 @@ func (o *Observer) refreshSource(ctx context.Context, pod *corev1.Pod, node *cor
 		err = ownershipErr
 	}
 	if node != nil && o.movingNodes[string(node.UID)] {
-		err = errors.New("NodePoolTransition")
+		err = errors.New("NodePowerTransition")
 	}
 	var instance serving.ReadyInstance
 	if err == nil {
@@ -314,14 +307,14 @@ func (o *Observer) refreshSource(ctx context.Context, pod *corev1.Pod, node *cor
 	if err == nil {
 		return instance, true
 	}
-	if status := firstfloorStatus(pod); status != nil && status.ContainerID != "" && node != nil && node.Labels[ServingPoolLabel] != "" {
-		return serving.ReadyInstance{State: serving.InstanceState{ID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: node.Labels[ServingPoolLabel], Profile: pod.Annotations[ServingProfileAnnotation], Reason: err.Error(), ObservedAt: time.Now().UTC()}}, true
+	if status := firstfloorStatus(pod); status != nil && status.ContainerID != "" && node != nil {
+		return serving.ReadyInstance{State: serving.InstanceState{ID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: pod.Annotations[ServingProfileAnnotation], Reason: err.Error(), ObservedAt: time.Now().UTC()}}, true
 	}
 	return serving.ReadyInstance{}, false
 }
 func (o *Observer) refreshFailure(err error) error {
 	o.issue("refresh", err)
-	o.runtime.SetNodes(nil)
+	o.runtime.SetMeasurementNodes(nil)
 	_ = o.runtime.InstallInstances(nil)
 	return err
 }
@@ -370,12 +363,12 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 	// Delivery changes only the verified artifact's mount location, not the
 	// measured runtime, model bytes, provider, device or execution allocation.
 	expected.ModelFiles = deliveredModelFiles(condition.Artifact.Files)
-	return firstfloor.Spec{Endpoint: endpoint, ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: node.Labels[ServingPoolLabel], Profile: profile, Weight: int32(weight), Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[ServingPolicyAnnotation]}, nil
+	return firstfloor.Spec{Endpoint: endpoint, ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile, Weight: int32(weight), Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[ServingPolicyAnnotation]}, nil
 }
 
 func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation) error {
-	if pod.UID == "" || node == nil || node.UID == "" || node.DeletionTimestamp != nil || node.Labels[ServingPoolLabel] == "" {
-		return errors.New("current Node UID and serving-pool membership unavailable")
+	if pod.UID == "" || node == nil || node.UID == "" || node.DeletionTimestamp != nil {
+		return errors.New("current Node UID unavailable")
 	}
 	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning || !podReady(pod) {
 		return errors.New("Pod is not currently ready")
@@ -750,13 +743,11 @@ func (o *Observer) bindCleanupSources(uid types.UID, objects []client.Object) er
 		if !ok {
 			continue
 		}
-		for _, pool := range o.runtime.Pools() {
-			for _, instance := range pool.Instances {
-				if strings.HasPrefix(instance.ID, string(pod.UID)+"/") {
-					for _, workload := range instance.Workloads {
-						if workload.UID != string(uid) {
-							return errors.New("Workload-owned resource is still shared by another registration")
-						}
+		for _, instance := range o.runtime.Instances() {
+			if strings.HasPrefix(instance.ID, string(pod.UID)+"/") {
+				for _, workload := range instance.Workloads {
+					if workload.UID != string(uid) {
+						return errors.New("Workload-owned resource is still shared by another registration")
 					}
 				}
 			}
@@ -872,94 +863,12 @@ func (o *Observer) Close() error {
 	return nil
 }
 
-// MoveNodePool is the sole Node membership writer. It observes actual drain,
-// removes idle old bindings, then changes only the native membership label.
-// It neither selects a destination nor retries/resumes a failed operation.
-func (o *Observer) MoveNodePool(ctx context.Context, reference serving.NodeReference, pool string) error {
-	o.mu.Lock()
-	locked := true
-	defer func() {
-		if locked {
-			o.mu.Unlock()
-		}
-	}()
-	if o.closed {
-		return errors.New("observer is closed")
-	}
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if reference.Name == "" || reference.UID == "" || len(validation.IsValidLabelValue(pool)) != 0 {
-		return errors.New("exact Node identity and valid destination Pool are required")
-	}
-	if o.movingNodes[reference.UID] {
-		return errors.New("Node Pool transition already in progress")
-	}
-	node, err := o.kube.CoreV1().Nodes().Get(ctx, reference.Name, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	if string(node.UID) != reference.UID || node.DeletionTimestamp != nil {
-		return errors.New("Node identity is no longer current")
-	}
-	previous := node.Labels[ServingPoolLabel]
-	if previous == pool {
-		return o.refreshLocked(ctx)
-	}
-	o.movingNodes[reference.UID] = true
-	defer func() {
-		if !locked {
-			o.mu.Lock()
-			locked = true
-		}
-		delete(o.movingNodes, reference.UID)
-	}()
-	if err := o.detachNodeLocked(ctx, reference.UID); err != nil {
-		return err
-	}
-	o.mu.Unlock()
-	locked = false
-	// Re-read after drain, then use native resourceVersion conflict protection.
-	// External mutation is a failure, not a reason to silently retry the patch.
-	node, err = o.kube.CoreV1().Nodes().Get(ctx, reference.Name, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	if string(node.UID) != reference.UID || node.DeletionTimestamp != nil || node.Labels[ServingPoolLabel] != previous {
-		return errors.New("Node membership changed during drain")
-	}
-	labels := map[string]any{ServingPoolLabel: pool}
-	if pool == "" {
-		labels[ServingPoolLabel] = nil
-	}
-	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": node.UID, "resourceVersion": node.ResourceVersion, "labels": labels}})
-	if err != nil {
-		return err
-	}
-	if _, err = o.kube.CoreV1().Nodes().Patch(ctx, node.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
-		return err
-	}
-	current, err := o.kube.CoreV1().Nodes().Get(ctx, node.Name, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	if string(current.UID) != reference.UID || current.Labels[ServingPoolLabel] != pool {
-		return errors.New("new native Node membership remains unconfirmed")
-	}
-	o.mu.Lock()
-	locked = true
-	delete(o.movingNodes, reference.UID)
-	return o.refreshLocked(ctx)
-}
-
 // detachNodeLocked returns with the source lock held, releasing it only while
 // waiting for actual outstanding calls so native termination can be observed.
 func (o *Observer) detachNodeLocked(ctx context.Context, uid string) error {
-	for _, state := range o.runtime.Pools() {
-		for _, instance := range state.Instances {
-			if instance.Node.UID == uid {
-				o.runtime.DisableInstance(instance.ID, "NodePoolTransition")
-			}
+	for _, instance := range o.runtime.Instances() {
+		if instance.Node.UID == uid {
+			o.runtime.DisableInstance(instance.ID, "NodePowerTransition")
 		}
 	}
 	// The shared Changed channel is only a wake-up hint. Polling here re-reads
@@ -986,7 +895,7 @@ func (o *Observer) detachNodeLocked(ctx context.Context, uid string) error {
 			return ctx.Err()
 		}
 		if o.closed {
-			return errors.New("observer closed during Node Pool transition")
+			return errors.New("observer closed during Node power transition")
 		}
 	}
 }

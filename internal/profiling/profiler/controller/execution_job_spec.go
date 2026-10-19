@@ -127,7 +127,7 @@ func buildExecutionJob(
 					},
 					Tolerations: []corev1.Toleration{{
 						Key: "node-role.kubernetes.io/edge", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule,
-					}},
+					}, profilingrun.MeasurementToleration()},
 					SecurityContext: runtimePodSecurityContext(runtimeProjection.SupplementalGroups),
 					InitContainers:  deliveryContainers(prepared.RunConfig),
 					Containers: []corev1.Container{

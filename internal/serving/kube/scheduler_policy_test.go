@@ -29,15 +29,16 @@ func controllerWorkFixture(t *testing.T) (*SchedulerController, serving.Schedule
 	at := time.Now().UTC()
 	snapshot := serving.SchedulerSnapshot{At: at.Add(time.Millisecond), ObservationEnd: at,
 		Workloads: controller.runtime.SchedulerInputs(time.Now).Workloads,
-		Nodes:     []serving.SchedulerNode{{Node: instance.Node, Pool: instance.Pool, PowerMode: profile.Condition.PowerMode, Ready: true, CPUs: []int{0, 1}, MemoryBytes: 10000, ObservedAt: at}},
+		Nodes:     []serving.SchedulerNode{{Node: instance.Node, PowerMode: profile.Condition.PowerMode, Ready: true, CPUs: []int{0, 1}, MemoryBytes: 10000, ObservedAt: at}},
 		Instances: []serving.SchedulerInstance{instance},
 		Routing:   map[string]map[string]int32{instance.WorkloadUIDs[0]: {instance.ID: 1}},
 		Baselines: []serving.NodeBaseline{{ID: "policy-idle", Node: instance.Node, PowerMode: profile.Condition.PowerMode, Watts: 10, Meter: instance.IdleMeter, Scope: instance.IdleScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle", Size: 1}}},
 	}
-	settings := serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmProjectedWorkHistory, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Hour, Replays: 1, MaxCandidates: 4, MaxReplicas: 2, MaxInstances: 4, MaxReplayRequests: 10, MaxCPUs: 2, Controls: serving.SchedulerControls{Enabled: true}}
+	settings := serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmProjectedWorkHistory, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Hour, Replays: 1, MaxCandidates: 4, MaxReplicas: 2, MaxInstances: 4, MaxReplayRequests: 10, MaxCPUs: 2, AutonomousWorkloads: instance.WorkloadUIDs}
 	energy := 1.0
 	keep := serving.SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing, Status: schedulerPolicyFeasible, ExpectedJoules: &energy}
-	decision := serving.SchedulerDecision{Settings: settings, Keep: keep, Candidates: []serving.SchedulerCandidate{keep}, Target: &keep, Status: "Keep"}
+	decision := serving.SchedulerDecision{Settings: settings, Keep: keep, Candidates: []serving.SchedulerCandidate{keep}, Target: &keep, Status: "Keep",
+		Workloads: []serving.SchedulerWorkloadState{{UID: instance.WorkloadUIDs[0], State: serving.WorkloadControlled}}}
 	return controller, snapshot, decision
 }
 

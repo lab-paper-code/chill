@@ -150,7 +150,7 @@ func TestConsumedPolicyAndActualTargetChangesStillReplanRoute(t *testing.T) {
 }
 
 func TestCompletedActionsRequireTheirCurrentSnapshotEffect(t *testing.T) {
-	for _, kind := range []string{schedulerActionPrepare, schedulerActionRoute, schedulerActionStop, schedulerActionDrain, schedulerActionRemove, schedulerActionPower, schedulerActionMembership} {
+	for _, kind := range []string{schedulerActionPrepare, schedulerActionRoute, schedulerActionStop, schedulerActionDrain, schedulerActionRemove, schedulerActionPower} {
 		for _, present := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/present=%v", kind, present), func(t *testing.T) {
 				_, snapshot := schedulerFixture()
@@ -187,11 +187,6 @@ func TestCompletedActionsRequireTheirCurrentSnapshotEffect(t *testing.T) {
 					}
 				case schedulerActionPower:
 					old.Instance, old.To = "", snapshot.Nodes[0].PowerMode
-					if !present {
-						old.To += "-unobserved"
-					}
-				case schedulerActionMembership:
-					old.Instance, old.To = "", snapshot.Nodes[0].Pool
 					if !present {
 						old.To += "-unobserved"
 					}
@@ -319,7 +314,7 @@ func TestResumedExecutorCannotReuseHistoricalDrainBeforeNewStopAndHandoff(t *tes
 func overlappingResourceFixture(t *testing.T) (SchedulerSettings, SchedulerSnapshot, SchedulerCandidate) {
 	t.Helper()
 	settings, snapshot := placementOnlyFixture()
-	settings.Controls = SchedulerControls{Enabled: true, Resources: true}
+	settings.Controls = SchedulerControls{Resources: true, Membership: true}
 	snapshot.Nodes, snapshot.Options = snapshot.Nodes[:1], snapshot.Options[:2]
 	source := snapshot.Instances[0]
 	snapshot.Routing[snapshot.Workloads[0].UID][source.ID] = 3
@@ -452,7 +447,7 @@ func TestLegalOverlappingResourceDAGStillReportsMeasuredOutageOverload(t *testin
 			ID: "arrival-" + d.UID, Definition: d, Compute: true, At: snapshot.At.Add(-settings.ObservationWindow + time.Millisecond),
 		})
 	}
-	if err := schedulerEvaluateCandidate(context.Background(), settings, snapshot, &target); err != nil {
+	if err := schedulerEvaluateCandidate(context.Background(), settings, snapshot, &target, nil, schedulerSLOTargets(snapshot, target, settings.AutonomousWorkloads)); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(target.Reasons, []string{"SLOCapacityExceeded"}) || target.ExpectedJoules == nil || target.Status != schedulerStatusOverload {

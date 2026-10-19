@@ -144,6 +144,11 @@ const guides: Record<string, Guide> = {
   RetryLimitExhausted: ["다시 시도할 수 있는 횟수를 모두 써도 측정이 실패했어요.", "원본 보기에서 실패 이유를 확인한 뒤 다시 요청해 주세요."],
   CurvePlanResolutionFailed: ["측정 계획을 만들지 못해 측정을 끝냈어요.", "원본 보기에서 이유를 확인하고 조건을 고친 뒤 다시 요청해 주세요."],
 
+  // Scheduler node reasons: internal/serving SchedulerNode.Reasons
+  PlacementInventoryMissing: ["CPU와 GPU 목록을 아직 확인하지 못했어요.", "배포 설정의 장비 목록을 확인해 주세요."],
+  PlacementBudgetUnavailable: ["서비스에 쓸 수 있는 자원 예산을 확인하지 못했어요.", "배포 설정의 예약 자원을 확인해 주세요."],
+  PowerModeUnavailable: ["지금 전력 모드를 확인하지 못했어요.", "전력 모드 제어기 상태를 확인해 주세요."],
+
   // ChillSystem condition reasons that need action: internal/operator/system/status.go
   ComponentsDisabled: ["관리하는 구성요소를 모두 꺼 두었어요.", "필요한 구성요소를 시스템 설정에서 켜 주세요."],
   ComponentsNotReady: ["준비되지 않은 구성요소가 있어요.", "아래 구성요소별 상태를 확인해 주세요."],

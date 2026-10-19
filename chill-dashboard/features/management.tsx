@@ -10,9 +10,12 @@ import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { backendsByFormat, datatypes, formatText, positiveIntegers, resourceHref as href, sloTarget as target, workloadSpec, type ModelResource, type ModelList, type ModelSpec, type ModelArtifact, type ExecutionPath, type TensorContract, fieldFormats, type RawField, type PreprocessorArtifact, type PreprocessorResource, type PreprocessorSpec, type DatasetResource, type DatasetSpec, type WorkloadResource, type WorkloadSpec, type WorkloadView } from "@/lib/domain"
+import { backendsByFormat, datatypes, definitionIdentity, formatText, positiveIntegers, resourceHref as href, sloTarget as target, workloadSpec, type ModelResource, type ModelList, type ModelSpec, type ModelArtifact, type ExecutionPath, type TensorContract, fieldFormats, type RawField, type PreprocessorArtifact, type PreprocessorResource, type PreprocessorSpec, type DatasetResource, type DatasetSpec, type WorkloadResource, type WorkloadSpec, type WorkloadView } from "@/lib/domain"
 import { explain } from "@/lib/labels"
+import type { ObservationCohort, SchedulerSettings, SchedulerWorkloadState } from "@/lib/read-types"
+import { parseSchedulerJSON, preciseJSONSupported } from "@/lib/scheduler"
 import { ServiceSection, serviceSections, useServiceSignals, type ServiceSectionId } from "@/features/service-hub"
+import { putSchedulerSettings } from "@/features/scheduler-settings"
 
 type Kind = "models" | "workloads" | "preprocessors" | "datasets"
 type Catalog = PreprocessorResource | DatasetResource
@@ -408,6 +411,45 @@ export function ModelsPage() {
   </Screen>
 }
 
+const workloadStates: Record<string, string> = { Disabled: "자동 제어를 꺼 두었어요", MeasurementEvidenceMissing: "측정 근거가 생기면 자동 제어를 시작해요", Controlled: "운영 판단이 구성을 정하고 있어요" }
+// One Workload's autonomous control. The switch PUTs the full current settings with this UID toggled in
+// autonomousWorkloads; the state comes from the latest decision.workloads.
+function Autonomy({ uid, state, cohorts, current }: { uid: string; state?: SchedulerWorkloadState; cohorts: ObservationCohort[]; current?: string }) {
+  const settings = useChillQuery<SchedulerSettings>("v1/scheduler/settings", { decoder: parseSchedulerJSON })
+  const mutation = useChillMutation(), client = useQueryClient(), [error, setError] = useState("")
+  const on = settings.data?.autonomousWorkloads?.includes(uid) ?? false, margin = settings.data?.completionMarginMS
+  const stateText = state ? workloadStates[state.state] ?? statusLabel(state.state) : "첫 판단을 기다리고 있어요"
+  async function toggle(next: boolean) {
+    setError("")
+    try {
+      const latest = (await settings.refetch()).data
+      if (!latest) throw new Error("현재 운영 설정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.")
+      const others = (latest.autonomousWorkloads ?? []).filter(id => id !== uid)
+      await putSchedulerSettings(mutation.mutateAsync, client, { ...latest, autonomousWorkloads: next ? [...others, uid] : others })
+    } catch (caught) { setError(caught instanceof ApiError && caught.status === 403 ? "운영 설정을 바꾸려면 설정 변경 권한이 필요해요." : caught instanceof Error ? caught.message : "설정을 적용하지 못했어요.") }
+  }
+  return <Rows label="자동 제어">
+    <RowDialog label="자동 제어" hint={stateText} value={<StatusBadge tone={on ? "ok" : "idle"}>{settings.error ? "확인 불가" : !settings.data ? "확인 중" : on ? "켜짐" : "꺼짐"}</StatusBadge>} title="이 서비스의 자동 제어">
+      <label className="switch"><input type="checkbox" role="switch" checked={on} disabled={!settings.data || mutation.isPending || !preciseJSONSupported()} onChange={event => void toggle(event.target.checked)} />운영 판단이 이 서비스의 구성을 정하게 하기</label>
+      {error && <p role="alert">{error}</p>}
+      <Facts items={[["판단 상태", stateText], ["사유", state?.reason || "없어요"]]} />
+      <p className="text-sm text-muted-foreground">자동 제어를 끈 서비스는 마지막 구성을 그대로 유지해요. 설정한 요청 분배와 직접 실행한 변경은 그대로 적용돼요.</p>
+    </RowDialog>
+    <RowDialog label="완료 여유 확인" hint="실행이 끝난 뒤 응답까지 걸린 시간과 설정한 여유" value={margin === undefined ? "확인 중" : `설정 ${margin}밀리초`} title="완료 여유와 실제 완료 지연">
+      {cohorts.map(row => {
+        // ChillServer sorts completionResidualNanos ascending; ranks are nearest-rank observed values.
+        const sorted = row.completionResidualNanos ?? [], at = (p: number) => `${(sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)] / 1e6).toLocaleString("ko-KR", { maximumFractionDigits: 3 })}밀리초`
+        return <Facts key={row.definition} label={row.definition === current ? "현재 적용 설정" : "이전 적용 설정"} items={sorted.length ? [
+          ["표본", `${sorted.length}건`], ["중앙값", at(0.5)], ["95번째 백분위", at(0.95)], ["최대", at(1)],
+          ["설정 여유보다 길었던 요청", margin === undefined ? "확인 중" : `${sorted.filter(nanos => nanos > margin * 1e6).length}건`],
+        ] : [["표본", "아직 없어요"]]} />
+      })}
+      {!cohorts.length && <p>최근 1시간 동안 완료된 요청이 없어요.</p>}
+      <p className="text-sm text-muted-foreground">요청마다 종단 경과에서 전달 시점 경과와 실행기 처리 시간을 뺀 값이에요. 운영 설정에서 완료 여유를 바꿀 수 있어요.</p>
+    </RowDialog>
+  </Rows>
+}
+
 // One service: the plain conclusion, its next step, and a row per section.
 export function ServicePage({ name }: { name: string }) {
   const r = useResource("workloads", name)
@@ -425,6 +467,7 @@ export function ServicePage({ name }: { name: string }) {
     <QueryGate query={r.detail}>{view && <>
       <Problem r={r} kind="workloads" />
       <Rows label="자세히">{(Object.keys(serviceSections) as ServiceSectionId[]).map(id => <Row key={id} href={href("workloads", name, uid, id)} label={serviceSections[id][0]} hint={serviceSections[id][1]} value={s.values[id]} />)}</Rows>
+      <Autonomy uid={uid} state={s.scheduler.data?.state.decision.workloads?.find(row => row.uid === uid)} cohorts={s.observations.data?.cohorts ?? []} current={view.appliedDefinition && definitionIdentity(view.appliedDefinition)} />
       <Rows label="관리">
         <Row href={href("workloads", name, uid, "edit")} label="설정 수정" hint="모델, 전처리기, 데이터셋이나 응답 목표 바꾸기" />
         <Row label="삭제" hint="되돌릴 수 없어요" onClick={() => { if (!r.blocked && !r.conflict) setDeleting(true) }} />

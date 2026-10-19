@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
@@ -43,7 +45,6 @@ import (
 const (
 	operationPrepare    = "prepare"
 	operationRemove     = "remove"
-	operationMembership = "membership"
 	operationComplete   = "complete"
 	operationFailed     = "failed"
 	manualStaticRouting = "manual-static-routing"
@@ -59,7 +60,6 @@ type commandManifest struct {
 	Namespace          string                                   `json:"namespace"`
 	ActuationNamespace string                                   `json:"actuationNamespace"`
 	JournalDirectory   string                                   `json:"journalDirectory"`
-	IsolatedPool       string                                   `json:"isolatedPool"`
 }
 
 func main() {
@@ -76,7 +76,7 @@ func run(ctx context.Context) error {
 	var timeout time.Duration
 	flag.StringVar(&file, "measurement-config", "", "bounded JSON atomic operation measurement manifest")
 	flag.StringVar(&executeFile, "execute-config", "",
-		"bounded JSON manual prepare/remove/membership manifest (not a measurement)")
+		"bounded JSON manual prepare/remove manifest for one non-autonomous Workload (not a measurement)")
 	flag.StringVar(&apiServer, "kube-api-server", "", "Kubernetes API endpoint")
 	flag.StringVar(&token, "kube-token-file", "", "Kubernetes token path")
 	flag.StringVar(&ca, "kube-ca-file", "", "Kubernetes CA path")
@@ -124,17 +124,14 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(manifest.IsolatedPool, "measurement-") ||
-		manifest.Namespace == "" || manifest.JournalDirectory == "" {
-		return errors.New("explicit measurement-* isolated pool, restricted namespace " +
-			"and exclusive observation directory required")
+	if manifest.Namespace == "" || manifest.JournalDirectory == "" {
+		return errors.New("restricted namespace and exclusive observation directory required")
 	}
 	direct, err := client.New(config, client.Options{Scheme: scheme})
 	if err != nil {
 		return err
 	}
-	initialPool, err := validateMeasurementNode(ctx, kube, manifest)
-	if err != nil {
+	if err = validateMeasurementNode(ctx, kube, manifest); err != nil {
 		return err
 	}
 	objects, err := stores3.New(stores3.Config{
@@ -193,19 +190,11 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 			models[p.Condition.LogicalModel] = true
 		}
 	}
-	readIsolation := func(checkCtx context.Context, expectedPool string) (servingkube.MeasurementIsolation, error) {
-		return readMeasurementIsolation(checkCtx, kube, direct,
-			manifest.Measurement.Operation.Node, expectedPool, models)
-	}
-	if _, err = readIsolation(ctx, initialPool); err != nil {
-		return err
-	}
 	isolationCheck := func(checkCtx context.Context) (servingkube.MeasurementIsolation, error) {
-		pool := manifest.IsolatedPool
-		if manifest.Measurement.Operation.Kind == operationMembership {
-			pool = manifest.Measurement.Operation.Pool
-		}
-		return readIsolation(checkCtx, pool)
+		return readMeasurementIsolation(checkCtx, kube, direct, manifest.Measurement.Operation.Node, models)
+	}
+	if _, err = isolationCheck(ctx); err != nil {
+		return err
 	}
 	if err = observer.Refresh(ctx); err != nil {
 		return err
@@ -213,7 +202,7 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 	operations, err := servingkube.NewOperations(store, kube, execution, observer, native,
 		servingkube.OperationConfig{
 			Namespace: manifest.Namespace, ActuationNamespace: manifest.ActuationNamespace,
-			PollInterval: 100 * time.Millisecond,
+			PollInterval: 100 * time.Millisecond, Measurement: true,
 		})
 	if err != nil {
 		return err
@@ -266,29 +255,20 @@ func readJSONManifest(path string, manifest any) error {
 	return nil
 }
 
-func validateMeasurementNode(ctx context.Context, kube kubernetes.Interface, manifest commandManifest) (string, error) {
+// The measurement POOL is the set of Nodes carrying the measurement taint.
+func validateMeasurementNode(ctx context.Context, kube kubernetes.Interface, manifest commandManifest) error {
 	physical, err := kube.CoreV1().Nodes().Get(ctx, manifest.Measurement.Operation.Node.Name, metav1.GetOptions{})
 	if err != nil {
-		return "", err
+		return err
 	}
-	pool := physical.Labels[servingkube.ServingPoolLabel]
 	if string(physical.UID) != manifest.Measurement.Operation.Node.UID {
-		return "", errors.New("actual physical Node identity differs from measurement")
+		return errors.New("actual physical Node identity differs from measurement")
 	}
-	if manifest.Measurement.Operation.Kind == operationMembership {
-		target := manifest.Measurement.Operation.Pool
-		if pool == target || (pool != "" && pool != manifest.IsolatedPool) ||
-			(target != "" && target != manifest.IsolatedPool) {
-			return "", errors.New("measurement membership must change between detached and explicitly isolated pool states")
-		}
-	} else if pool != manifest.IsolatedPool {
-		return "", errors.New("actual physical Node must belong to explicitly isolated measurement pool")
+	if !profilingrun.InMeasurement(physical) {
+		return fmt.Errorf("measurement requires Node %s to carry the %s:NoSchedule taint",
+			physical.Name, profilingrun.MeasurementTaintKey)
 	}
-	if prepare := manifest.Measurement.Operation.Prepare; prepare != nil &&
-		prepare.Instance.Pool != manifest.IsolatedPool {
-		return "", errors.New("measurement preparation must remain in isolated pool")
-	}
-	return pool, nil
+	return nil
 }
 
 func bindMeasurementProfile(prepare *servingkube.PrepareSpec, profiles []serving.Profile) error {
@@ -306,7 +286,7 @@ func bindMeasurementProfile(prepare *servingkube.PrepareSpec, profiles []serving
 }
 
 func readMeasurementIsolation(ctx context.Context, kube kubernetes.Interface, direct client.Client,
-	expectedNode serving.NodeReference, expectedPool string, models map[string]bool,
+	expectedNode serving.NodeReference, models map[string]bool,
 ) (servingkube.MeasurementIsolation, error) {
 	witness := servingkube.MeasurementIsolation{Workloads: []serving.WorkloadReference{}}
 	node, err := kube.CoreV1().Nodes().Get(ctx, expectedNode.Name, metav1.GetOptions{})
@@ -314,7 +294,7 @@ func readMeasurementIsolation(ctx context.Context, kube kubernetes.Interface, di
 		return witness, err
 	}
 	witness.Node = serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	witness.Pool = node.Labels[servingkube.ServingPoolLabel]
+	witness.Tainted = profilingrun.InMeasurement(node)
 	var workloads api.WorkloadList
 	if err = direct.List(ctx, &workloads); err != nil {
 		return witness, err
@@ -326,8 +306,8 @@ func readMeasurementIsolation(ctx context.Context, kube kubernetes.Interface, di
 		}
 	}
 	witness.CheckedAt = time.Now().UTC()
-	if witness.Node != expectedNode || witness.Pool != expectedPool || len(witness.Workloads) != 0 {
-		return witness, errors.New("actual physical Node/pool or Workload ownership violates measurement isolation")
+	if witness.Node != expectedNode || !witness.Tainted || len(witness.Workloads) != 0 {
+		return witness, errors.New("actual physical Node/taint or Workload ownership violates measurement isolation")
 	}
 	return witness, nil
 }
@@ -356,7 +336,7 @@ func measurementPowerSource(ctx context.Context, direct client.Client,
 }
 
 // Manual execution is separate from zero-inference operation-cost measurement.
-// Routing remains the live owner's complete-map staticRouting configuration.
+// It changes one non-autonomous Workload; routing remains the live owner's staticRouting configuration.
 type executionManifest struct {
 	Operation          servingkube.Operation `json:"operation"`
 	ProfileID          string                `json:"profileID"`
@@ -369,7 +349,7 @@ type executionManifest struct {
 	SchedulerConfigMap string                `json:"schedulerConfigMap"`
 	SchedulerConfigKey string                `json:"schedulerConfigKey"`
 	SourceConfigRV     string                `json:"sourceConfigRV"`
-	ExpectedPool       string                `json:"expectedPool"`
+	WorkloadUID        string                `json:"workloadUID"`
 	RoutingHistoryFrom time.Time             `json:"routingHistoryFrom"`
 }
 
@@ -447,8 +427,11 @@ func readExecutionConfiguration(
 	if err = config.Settings.Validate(); err != nil {
 		return config, err
 	}
-	if config.Settings.Controls.Enabled || config.StaticRouting == nil {
-		return config, errors.New("manual execution requires desired controls OFF and explicit complete staticRouting")
+	if config.StaticRouting == nil {
+		return config, errors.New("manual execution requires explicit staticRouting")
+	}
+	if slices.Contains(config.Settings.AutonomousWorkloads, m.WorkloadUID) {
+		return config, errors.New("manual execution requires the Workload outside desired autonomousWorkloads")
 	}
 	return config, nil
 }
@@ -457,8 +440,13 @@ func validateExecutionOwner(
 	m executionManifest, config executionConfiguration, owner executionOwnerView,
 	acknowledged *servingkube.OperationResult, checkedAt time.Time,
 ) error {
-	if config.Settings.Controls.Enabled || owner.Settings.Controls.Enabled {
-		return errors.New("desired and live owner controls must be OFF")
+	snapshot := owner.State.Snapshot
+	if !slices.ContainsFunc(snapshot.Workloads, func(d *serving.Definition) bool { return d.UID == m.WorkloadUID }) {
+		return errors.New("workloadUID must name a current owner Workload")
+	}
+	if slices.Contains(config.Settings.AutonomousWorkloads, m.WorkloadUID) ||
+		slices.Contains(owner.Settings.AutonomousWorkloads, m.WorkloadUID) {
+		return errors.New("desired and live owner must keep the Workload outside autonomousWorkloads")
 	}
 	for _, action := range owner.State.Actions {
 		if action.Status == "running" || action.Status == "cancel" {
@@ -471,14 +459,14 @@ func validateExecutionOwner(
 		// omitempty drops an empty acknowledged map, so compare an empty map as nil.
 		!(len(acknowledged.Operation.StaticRouting) == 0 && len(config.StaticRouting) == 0 ||
 			reflect.DeepEqual(acknowledged.Operation.StaticRouting, config.StaticRouting)) {
-		return errors.New("current complete staticRouting revision lacks a successful owner acknowledgement")
+		return errors.New("current staticRouting revision lacks a successful owner acknowledgement")
 	}
-	snapshot := owner.State.Snapshot
 	if !snapshot.At.After(acknowledged.EndedAt) || snapshot.At.After(checkedAt) {
 		return errors.New("owner snapshot must be later than current staticRouting completion and not in the future")
 	}
-	// Use the existing complete-map validation, including current Workload UIDs.
-	target, err := serving.StaticRoutingTarget(snapshot, config.StaticRouting, "manual-execution-preflight")
+	// staticRouting is a partial map of non-autonomous Workloads; unlisted Workloads keep current routing.
+	target, err := serving.StaticRoutingTarget(snapshot, config.StaticRouting,
+		config.Settings.AutonomousWorkloads, "manual-execution-preflight")
 	if err != nil {
 		return err
 	}
@@ -486,9 +474,12 @@ func validateExecutionOwner(
 		return maps.EqualFunc(a, b, func(x, y map[string]int32) bool { return maps.Equal(x, y) })
 	}
 	if !equalRouting(target.Routing, acknowledged.Actual.Routing) || !equalRouting(target.Routing, snapshot.Routing) {
-		return errors.New("complete acknowledged/current physical routing differs from staticRouting")
+		return errors.New("acknowledged/current physical routing differs from staticRouting")
 	}
 	if m.Operation.Kind == operationRemove {
+		if err := removableBy(snapshot, m.Operation.Instance, m.WorkloadUID); err != nil {
+			return err
+		}
 		for _, route := range target.Routing {
 			if route[m.Operation.Instance] > 0 {
 				return errors.New("remove target still receives owner routing; " +
@@ -511,6 +502,21 @@ func validateExecutionOwner(
 	return nil
 }
 
+// removableBy allows a remove only of an instance no other Workload owns or is bound to.
+func removableBy(snapshot serving.SchedulerSnapshot, id, workloadUID string) error {
+	i := slices.IndexFunc(snapshot.Instances, func(s serving.SchedulerInstance) bool { return s.ID == id })
+	if i < 0 {
+		return errors.New("remove target is absent from the owner snapshot")
+	}
+	instance := snapshot.Instances[i]
+	if (instance.OwnerWorkloadUID != "" && instance.OwnerWorkloadUID != workloadUID) ||
+		slices.ContainsFunc(instance.WorkloadUIDs, func(uid string) bool { return uid != workloadUID }) {
+		return errors.New("InstanceShared: remove target serves other Workloads; " +
+			"change their distribution through staticRouting")
+	}
+	return nil
+}
+
 func validateExecutionNode(
 	ctx context.Context, kube kubernetes.Interface, m executionManifest, spec servingkube.PrepareSpec,
 	inventory []serving.SchedulerNode,
@@ -519,18 +525,8 @@ func validateExecutionNode(
 	if err != nil {
 		return err
 	}
-	if string(node.UID) != m.Operation.Node.UID || node.DeletionTimestamp != nil ||
-		node.Labels[servingkube.ServingPoolLabel] != m.ExpectedPool {
-		return errors.New("actual Node identity or expected initial pool changed")
-	}
-	if m.Operation.Kind == operationMembership {
-		if m.Operation.Pool == m.ExpectedPool ||
-			(m.Operation.Pool != "" && m.Operation.Pool != spec.Instance.Pool) ||
-			(m.ExpectedPool != "" && m.ExpectedPool != spec.Instance.Pool) {
-			return errors.New("membership may only change between detached and the configured preparation pool")
-		}
-	} else if m.ExpectedPool != spec.Instance.Pool {
-		return errors.New("actual pool differs from configured preparation pool")
+	if string(node.UID) != m.Operation.Node.UID || node.DeletionTimestamp != nil {
+		return errors.New("actual Node identity changed")
 	}
 	pods, err := kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -539,28 +535,15 @@ func validateExecutionNode(
 	if m.Operation.Kind == operationRemove {
 		return validateExecutionRemoval(pods.Items, m, spec)
 	}
-	if m.Operation.Kind == operationPrepare {
-		for _, nodeInventory := range inventory {
-			if nodeInventory.Node == spec.Instance.Node && nodeInventory.Pool == spec.Instance.Pool {
-				return servingkube.ValidatePreparationCapacity(m.Namespace, node, pods, nodeInventory, spec.Instance)
-			}
-		}
-		return errors.New("preparation Node inventory is absent from the acknowledged fresh owner snapshot")
-	}
-	for _, pod := range pods.Items {
-		if pod.Spec.NodeName != node.Name {
-			continue
-		}
-		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-			continue
-		}
-		if pod.Namespace == m.Namespace && pod.Labels["app.kubernetes.io/component"] == "serving-instance" {
-			return fmt.Errorf("membership target has an active serving Pod: %s/%s", pod.Namespace, pod.Name)
+	for _, nodeInventory := range inventory {
+		if nodeInventory.Node == spec.Instance.Node {
+			return servingkube.ValidatePreparationCapacity(m.Namespace, node, pods, nodeInventory, spec.Instance)
 		}
 	}
-	return nil
+	return errors.New("preparation Node inventory is absent from the acknowledged fresh owner snapshot")
 }
 
+// The configured preparation carries no owner or exactly the manifest Workload as owner.
 func validateExecutionRemoval(pods []corev1.Pod, m executionManifest, spec servingkube.PrepareSpec) error {
 	for _, pod := range pods {
 		if pod.Spec.NodeName != m.Operation.Node.Name {
@@ -570,10 +553,13 @@ func validateExecutionRemoval(pods []corev1.Pod, m executionManifest, spec servi
 			if string(pod.UID)+"/"+status.ContainerID != m.Operation.Instance || status.Name != "firstfloor" {
 				continue
 			}
-			if pod.Namespace != m.Namespace || pod.Name != spec.Name || len(pod.OwnerReferences) != 0 ||
+			owners := pod.OwnerReferences
+			if pod.Namespace != m.Namespace || pod.Name != spec.Name || len(owners) > 1 ||
+				(len(owners) == 1 && (owners[0].APIVersion != api.GroupVersion.String() ||
+					owners[0].Kind != "Workload" || string(owners[0].UID) != m.WorkloadUID)) ||
 				pod.Annotations[servingkube.ServingProfileAnnotation] != m.ProfileID ||
 				pod.Annotations[servingkube.ServingSlotAnnotation] != spec.Instance.ID {
-				return errors.New("remove source is not the exact configured unowned preparation")
+				return errors.New("remove source is not the exact configured preparation of this Workload")
 			}
 			return nil
 		}
@@ -692,6 +678,11 @@ func runExecution(
 	if err = validateExecutionNode(ctx, kube, m, spec, owner.State.Snapshot.Nodes); err != nil {
 		return err
 	}
+	for _, d := range owner.State.Snapshot.Workloads {
+		if d.UID == m.WorkloadUID {
+			spec.Owner = &serving.WorkloadReference{Name: d.Name, UID: d.UID}
+		}
+	}
 	// Native resourceVersion is re-read immediately before physical execution;
 	// do not turn a stale owner/configuration witness into an ownership bypass.
 	if _, err = readExecutionConfiguration(ctx, kube, m); err != nil {
@@ -705,13 +696,13 @@ func runExecution(
 func (m executionManifest) validate() error {
 	op := m.Operation
 	if m.Namespace == "" || m.JournalDirectory == "" || m.SchedulerConfigMap == "" || m.SchedulerConfigKey == "" ||
-		m.SourceConfigRV == "" || m.RoutingHistoryFrom.IsZero() ||
+		m.SourceConfigRV == "" || m.WorkloadUID == "" || m.RoutingHistoryFrom.IsZero() ||
 		m.ProfileID == "" || op.ID == "" || op.Node.Name == "" || op.Node.UID == "" ||
-		(op.Kind != operationPrepare && op.Kind != operationRemove && op.Kind != operationMembership) ||
+		(op.Kind != operationPrepare && op.Kind != operationRemove) ||
 		op.Prepare != nil || op.Target != nil || op.Actuation != nil || op.StaticRouting != nil || op.SourceConfigRV != "" ||
-		(op.Kind == operationRemove) != (op.Instance != "") || (op.Kind != operationMembership && op.Pool != "") {
-		return errors.New("bounded execute manifest requires exact scope and only configured " +
-			"prepare, exact remove or serving-pool membership")
+		(op.Kind == operationRemove) != (op.Instance != "") {
+		return errors.New("bounded execute manifest requires exact scope, workloadUID and only configured " +
+			"prepare or exact remove")
 	}
 	return nil
 }

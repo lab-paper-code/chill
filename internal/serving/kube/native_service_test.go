@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
@@ -256,7 +258,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	operations := &Operations{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
 		config: OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond}}
 	spec := PrepareSpec{Name: fixture.Name, MemoryBytes: 1024,
-		Instance: serving.SchedulerInstance{ID: "slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: "pool", Profile: &profile, Weight: 1,
+		Instance: serving.SchedulerInstance{ID: "slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 1,
 			Allocation: serving.SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1024}},
 		Store:  storekube.Binding{Store: "evidence", Endpoint: "http://evidence", Bucket: "bucket", Region: "region", CredentialsSecretName: "credentials"},
 		Bundle: evidencestore.ObjectIdentity{Store: "evidence", Key: "bundle", Size: 1},
@@ -290,11 +292,9 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	if err := manager.observer.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, pool := range manager.runtime.Pools() {
-		for _, instance := range pool.Instances {
-			if instance.Ready {
-				t.Fatal("stale bootstrap annotation incorrectly acknowledged the current native policy")
-			}
+	for _, instance := range manager.runtime.Instances() {
+		if instance.Ready {
+			t.Fatal("stale bootstrap annotation incorrectly acknowledged the current native policy")
 		}
 	}
 	if err := operations.PrepareInstance(ctx, spec); err != nil {
@@ -348,7 +348,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 	spec := PrepareSpec{
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
-			ID: "measured-rknn", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: "pool", Profile: &profile,
+			ID: "measured-rknn", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile,
 			Allocation: serving.SchedulerAllocation{CPUs: []int{0}, CPUCount: 1, MemoryBytes: 1 << 20},
 		},
 		Bundle: evidencestore.ObjectIdentity{Store: "store", Key: "bundle", Size: 1},
@@ -418,5 +418,59 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 		if err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "existing preparation Pod differs") {
 			t.Fatalf("existing Pod with different %s was reused: %v", name, err)
 		}
+	}
+}
+
+func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name                 string
+		measurement, tainted bool
+		admitted             bool
+	}{
+		{name: "workload operation on measurement Node", tainted: true},
+		{name: "measurement operation on untainted Node", measurement: true},
+		{name: "measurement operation on measurement Node", measurement: true, tainted: true, admitted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, node, _, _ := observerSourceFixture()
+			if tc.tainted {
+				node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Effect: core.TaintEffectNoSchedule}}
+			}
+			scheme := runtime.NewScheme()
+			if err := core.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			kube := kubefake.NewSimpleClientset(node)
+			// Stop at the transport Service so the test inspects only the created Pod.
+			kube.PrependReactor("create", "services", func(ktesting.Action) (bool, runtime.Object, error) {
+				return true, nil, errors.New("stop after Pod creation")
+			})
+			store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+			operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: tc.measurement}}
+			spec := measuredCPUPreparationFixture()
+			err := operations.PrepareInstance(ctx, spec)
+			pod := &core.Pod{}
+			getErr := store.client.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: spec.Name}, pod)
+			if !tc.admitted {
+				if err == nil || errors.Is(err, ErrNodeInMeasurement) == tc.measurement || !apierrors.IsNotFound(getErr) {
+					t.Fatalf("prepare admitted or created a Pod: err=%v get=%v", err, getErr)
+				}
+				if !tc.measurement {
+					// store/observer nil: reaching any effect past admission panics.
+					request := &edge.NodeActuation{Spec: edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: node.Name, UID: string(node.UID)}}}
+					if err = (&Operations{kube: kube}).ChangePower(ctx, spec.Instance.Node, request); !errors.Is(err, ErrNodeInMeasurement) {
+						t.Fatalf("power change on measurement Node: %v", err)
+					}
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "stop after Pod creation") || getErr != nil {
+				t.Fatalf("measurement preparation did not reach Pod creation: %v %v", err, getErr)
+			}
+			if !slices.Contains(pod.Spec.Tolerations, profilingrun.MeasurementToleration()) {
+				t.Fatalf("measurement Pod lacks the measurement toleration: %+v", pod.Spec.Tolerations)
+			}
+		})
 	}
 }

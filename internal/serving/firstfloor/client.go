@@ -28,7 +28,6 @@ type Spec struct {
 	ModelName  string
 	InstanceID string
 	Node       serving.NodeReference
-	Pool       string
 	Profile    *serving.Profile
 	Weight     int32
 	Capacity   int
@@ -158,7 +157,7 @@ func (c *Client) Probe(ctx context.Context, spec Spec) (serving.ReadyInstance, e
 	if err = validateMetadata(spec, state.Metadata); err != nil {
 		return serving.ReadyInstance{}, err
 	}
-	result := serving.ReadyInstance{State: serving.InstanceState{ID: spec.InstanceID, Node: spec.Node, Pool: spec.Pool, Profile: spec.Profile.ID, Ready: true, ObservedAt: time.Now().UTC(), Native: &state}, Profile: spec.Profile, Weight: spec.Weight, Capacity: spec.Capacity}
+	result := serving.ReadyInstance{State: serving.InstanceState{ID: spec.InstanceID, Node: spec.Node, Profile: spec.Profile.ID, Ready: true, ObservedAt: time.Now().UTC(), Native: &state}, Profile: spec.Profile, Weight: spec.Weight, Capacity: spec.Capacity}
 	result.Execute = func(ctx context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 		return c.Execute(ctx, spec, dispatch)
 	}

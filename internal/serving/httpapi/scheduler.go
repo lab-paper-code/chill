@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -81,6 +82,12 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, &serving.Error{Code: "InvalidBody", Message: err.Error(), Field: "settings"})
 		return
 	}
+	current := map[string]bool{}
+	for _, d := range h.runtime.SchedulerInputs(time.Now).Workloads {
+		current[d.UID] = true
+	}
+	// The stored list names only current Workloads.
+	settings.AutonomousWorkloads = slices.DeleteFunc(slices.Clone(settings.AutonomousWorkloads), func(uid string) bool { return !current[uid] })
 	h.config.SchedulerLock.Lock()
 	defer h.config.SchedulerLock.Unlock()
 	username, uid := principal.Actor()

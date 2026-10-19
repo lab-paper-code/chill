@@ -80,7 +80,7 @@ func projectSchedulerTransition(ctx context.Context, settings SchedulerSettings,
 	}
 	energy := 0.0
 	for replay := range settings.Replays {
-		r, err := schedulerReplayModel(ctx, settings, snap, target, rand.New(rand.NewPCG(uint64(settings.Seed), uint64(replay))), true)
+		r, err := schedulerReplayModel(ctx, settings, snap, target, rand.New(rand.NewPCG(uint64(settings.Seed), uint64(replay))), true, nil)
 		if err != nil {
 			return SchedulerTransitionProjection{}, err
 		}
@@ -107,8 +107,8 @@ func projectSchedulerTransition(ctx context.Context, settings SchedulerSettings,
 	return out, ctx.Err()
 }
 
-// Resource facts always come from the captured inventory. Only the logical pool
-// and power choice belong to a candidate. Physical IDs are private replay slots;
+// Resource facts always come from the captured inventory. Only the power
+// choice belongs to a candidate. Physical IDs are private replay slots;
 // matching unchanged execution conditions reuse a slot, never actual progress.
 func schedulerProjectionCandidate(ctx context.Context, observed SchedulerSnapshot, c SchedulerCandidate, source []SchedulerInstance) (SchedulerCandidate, []string) {
 	nodes, reasons := schedulerProjectionNodes(ctx, observed.Nodes, c.Nodes)
@@ -127,7 +127,7 @@ func schedulerProjectionCandidate(ctx context.Context, observed SchedulerSnapsho
 				if ctx.Err() != nil {
 					return out, reasons
 				}
-				if !used[previous.ID] && previous.Node == instance.Node && previous.Pool == instance.Pool && schedulerState(previous) == schedulerState(instance) {
+				if !used[previous.ID] && previous.Node == instance.Node && schedulerState(previous) == schedulerState(instance) {
 					instance.ID = previous.ID
 					used[previous.ID] = true
 					break
@@ -201,7 +201,7 @@ func schedulerProjectionNodes(ctx context.Context, observed, choices []Scheduler
 				return nodes, reasons
 			}
 			if choice.Node == n.Node {
-				nodes[index].Pool, nodes[index].PowerMode = choice.Pool, choice.PowerMode
+				nodes[index].PowerMode = choice.PowerMode
 				found = true
 				break
 			}

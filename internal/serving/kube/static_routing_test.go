@@ -15,23 +15,12 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
-func TestStaticRoutingNeverAppliesAsAutonomousAction(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		enabled  bool
-		revision string
-	}{
-		{name: "autonomous controls active", enabled: true, revision: "42"},
-		{name: "no configuration provenance"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			controller := &SchedulerController{config: SchedulerControllerConfig{
-				Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, Controls: serving.SchedulerControls{Enabled: test.enabled}},
-			}}
-			if err := controller.ApplyStaticRouting(context.Background(), nil, test.revision); err == nil {
-				t.Fatal("manual routing reached capture/apply without OFF controls and source revision")
-			}
-		})
+func TestStaticRoutingRequiresSourceRevision(t *testing.T) {
+	controller := &SchedulerController{config: SchedulerControllerConfig{
+		Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon},
+	}}
+	if err := controller.ApplyStaticRouting(context.Background(), nil, ""); err == nil {
+		t.Fatal("manual routing reached capture/apply without source revision")
 	}
 }
 

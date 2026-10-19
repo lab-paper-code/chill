@@ -17,6 +17,7 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,6 +29,7 @@ const (
 	schedulerPolicyFeasible    = "Feasible"
 	schedulerPolicyProjected   = "ProjectedWorkHistory"
 	schedulerPolicySLOResponse = "ActualSLOSafetyResponse"
+	controlPlaneLabel          = "node-role.kubernetes.io/control-plane"
 )
 
 type SchedulerControllerConfig struct {
@@ -106,16 +108,17 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
 	c.mu.Lock()
-	before := c.config.Settings.Controls.Enabled
+	before := len(c.config.Settings.AutonomousWorkloads) > 0
 	previousStatic := c.config.StaticRouting
-	if c.config.Settings != config.Settings {
+	if !reflect.DeepEqual(c.config.Settings, config.Settings) {
 		c.work = nil
 		c.workStartReason = "SettingsChanged"
 	}
 	c.config = config
 	c.mu.Unlock()
-	c.setRoutingControl(before, config.Settings.Controls.Enabled)
-	if previousStatic && !config.StaticRouting && !config.Settings.Controls.Enabled && !before {
+	after := len(config.Settings.AutonomousWorkloads) > 0
+	c.setRoutingControl(before, after)
+	if previousStatic && !config.StaticRouting && !after && !before {
 		c.runtime.DisableSchedulerRouting()
 	}
 	return nil
@@ -279,8 +282,13 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		return serving.SchedulerDecision{}, err
 	}
 	c.work = work
-	if config.Settings.Controls.Enabled && decision.Target != nil {
+	// A decision without a target still lowers available Nodes (Fixed actions).
+	if decision.Target != nil {
 		c.launch(*decision.Target, config)
+	} else {
+		keep := decision.Keep
+		keep.Actions = slices.DeleteFunc(slices.Clone(keep.Actions), func(a serving.Action) bool { return !a.Fixed })
+		c.launch(keep, config)
 	}
 	return decision, nil
 }
@@ -312,8 +320,8 @@ func (c *SchedulerController) applyWorkPolicy(ctx context.Context, snapshot serv
 		policy.PendingReason = err.Error()
 		return c.work, pendingWorkSelection(snapshot, decision), nil
 	}
-	if !decision.Settings.Controls.Enabled {
-		policy.Selection = "ControlsOff"
+	if !slices.ContainsFunc(decision.Workloads, func(w serving.SchedulerWorkloadState) bool { return w.State == serving.WorkloadControlled }) {
+		policy.Selection = "NoControlledWorkload"
 		return c.work, decision, nil
 	}
 	work := c.work
@@ -517,33 +525,33 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		profileByID[profiles[i].ID] = &profiles[i]
 	}
 	physical := map[string]serving.InstanceState{}
-	for _, pool := range c.runtime.Pools() {
-		for _, state := range pool.Instances {
-			physical[state.ID] = state
-		}
+	for _, state := range c.runtime.Instances() {
+		physical[state.ID] = state
 	}
+	// The entire POOL is every Node without the control-plane role.
 	for i := range nodes.Items {
 		n := &nodes.Items[i]
-		pool := n.Labels[ServingPoolLabel]
-		if pool == "" {
+		if _, controlPlane := n.Labels[controlPlaneLabel]; controlPlane {
 			continue
 		}
-		sn := serving.SchedulerNode{Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Pool: pool, CPUs: slices.Clone(config.CPUInventory[n.Name]), GPUUUIDs: slices.Clone(config.GPUInventory[n.Name]), Reserved: config.Reserved[n.Name], MemoryBytes: uint64(n.Status.Allocatable.Memory().Value()), ObservedAt: nodesObservedAt}
+		sn := serving.SchedulerNode{Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Measurement: profilingrun.InMeasurement(n), CPUs: slices.Clone(config.CPUInventory[n.Name]), GPUUUIDs: slices.Clone(config.GPUInventory[n.Name]), Reserved: config.Reserved[n.Name], MemoryBytes: uint64(n.Status.Allocatable.Memory().Value()), ObservedAt: nodesObservedAt}
 		for _, condition := range n.Status.Conditions {
 			if condition.Type == core.NodeReady {
 				sn.Ready = condition.Status == core.ConditionTrue
 			}
 		}
-		if len(sn.CPUs) == 0 || int64(len(sn.CPUs)) > n.Status.Allocatable.Cpu().Value() {
-			sn.Reason = "physical CPU inventory unavailable or exceeds actual allocatable budget"
-			s.Reasons = append(s.Reasons, n.Name+": "+sn.Reason)
-		}
-		c.captureNodePower(ctx, &s, &sn, n, &acts, physical, profileByID)
 		gpuQuantity := n.Status.Allocatable["nvidia.com/gpu"]
-		if int64(len(sn.GPUUUIDs)) > gpuQuantity.Value() {
-			sn.Reason = "physical GPU inventory exceeds actual device allocation"
-			sn.Ready = false
-			s.Reasons = append(s.Reasons, n.Name+": "+sn.Reason)
+		if len(sn.CPUs) == 0 || int64(len(sn.CPUs)) > n.Status.Allocatable.Cpu().Value() || int64(len(sn.GPUUUIDs)) > gpuQuantity.Value() {
+			sn.Reasons = append(sn.Reasons, serving.NodePlacementInventoryMissing)
+		}
+		c.captureNodePower(ctx, &sn, n, &acts, physical, profileByID)
+		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
+		requested := false
+		for key := range config.PowerRequests {
+			requested = requested || strings.HasPrefix(key, sn.Node.UID+"/")
+		}
+		if sn.PowerMode == "" || !requested || lowest != "" && lowest != sn.PowerMode && config.PowerRequests[sn.Node.UID+"/"+lowest] == nil {
+			sn.Reasons = append(sn.Reasons, serving.NodePowerModeUnavailable)
 		}
 		captureNodePods(&s, &sn, n, pods, physical, profileByID)
 		s.Nodes = append(s.Nodes, sn)
@@ -558,14 +566,6 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		}
 		instance := template.Instance
 		instance.Profile = profileByID[profile.ID]
-		for _, node := range s.Nodes {
-			if node.Node == instance.Node {
-				if instance.Pool == "" {
-					instance.Pool = node.Pool
-				}
-				break
-			}
-		}
 		instance.ObservedAt = now
 		var compatible []string
 		for _, d := range s.Workloads {
@@ -599,7 +599,7 @@ func bindInstanceFacts(s *serving.SchedulerSnapshot, physical map[string]serving
 		bindProfileMeter(&s.Options[index].Instance, meters)
 	}
 }
-func (c *SchedulerController) captureNodePower(ctx context.Context, s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n *core.Node, acts *edge.NodeActuationList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
+func (c *SchedulerController) captureNodePower(ctx context.Context, sn *serving.SchedulerNode, n *core.Node, acts *edge.NodeActuationList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
 	var latest *edge.NodeActuation
 	for j := range acts.Items {
 		a := &acts.Items[j]
@@ -620,14 +620,15 @@ func (c *SchedulerController) captureNodePower(ctx context.Context, s *serving.S
 	}
 	if sn.PowerMode == "" {
 		actual := OperationState{Node: sn.Node}
-		e := c.operations.captureFixedPower(ctx, &actual, n, acts.Items)
-		if e != nil || actual.PowerMode == "" {
-			s.Reasons = append(s.Reasons, n.Name+": current power state unavailable")
-		} else {
+		if c.operations.captureFixedPower(ctx, &actual, n, acts.Items) == nil {
 			sn.PowerMode = actual.PowerMode
 		}
 	}
 }
+
+// captureNodePods records CHILL serving instances and the non-serving budget.
+// A Pod CHILL did not place leaves the Node in the POOL; when its GPU or CPU use
+// cannot be admitted the Node gets PlacementBudgetUnavailable.
 func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n *core.Node, pods *core.PodList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
 	var nonServingMilliCPU int64
 	var nonServingMemory uint64
@@ -650,7 +651,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			}
 			m := state.Native.Metadata
 			allocation := serving.SchedulerAllocation{CPUs: slices.Clone(m.Runtime.CPUAffinity), GPUUUID: m.Runtime.GPUUUID, Threads: m.Runtime.IntraOpThreads, MemoryBytes: uint64(p.Spec.Containers[0].Resources.Limits.Memory().Value())}
-			instance := serving.SchedulerInstance{ID: state.ID, Node: state.Node, Pool: state.Pool, Profile: profile, Allocation: allocation, Ready: state.Ready && state.Native.Ready, Capacity: m.MaxQueueRequests, Weight: 1, MaxBatch: m.MaxBatchSize, ObservedAt: state.ObservedAt, MaxWait: time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))}
+			instance := serving.SchedulerInstance{ID: state.ID, Node: state.Node, Profile: profile, Allocation: allocation, Ready: state.Ready && state.Native.Ready, Capacity: m.MaxQueueRequests, Weight: 1, MaxBatch: m.MaxBatchSize, ObservedAt: state.ObservedAt, MaxWait: time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))}
 			instance.TargetID, instance.OwnerWorkloadUID = state.TargetID, state.OwnerWorkloadUID
 			instance.Stopped = state.Stopped
 			if m.Policy.MaxBatchSize > 0 {
@@ -674,17 +675,13 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			continue
 		}
 		milliCPU, memory, gpu := podBudget(p)
-		if gpu {
-			sn.Ready = false
-			sn.Reason = "non-serving physical GPU ownership unobserved"
-			// Placement uncertainty quarantines this Node, not unrelated candidates.
-		}
 		nonServingMilliCPU += milliCPU
+		if gpu {
+			sn.Reasons = appendReason(sn.Reasons, serving.NodePlacementBudgetUnavailable)
+		}
 		if math.MaxUint64-nonServingMemory < uint64(memory) {
-			sn.Ready = false
-			sn.Reason = "non-serving memory budget overflow"
-			s.Reasons = append(s.Reasons, n.Name+": "+sn.Reason)
-			return
+			sn.Reasons = appendReason(sn.Reasons, serving.NodePlacementBudgetUnavailable)
+			continue
 		}
 		nonServingMemory += uint64(memory)
 	}
@@ -694,24 +691,27 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		sn.NonServing = append(sn.NonServing, serving.SchedulerAllocation{CPUCount: int((nonServingMilliCPU + 999) / 1000), CPUReserved: len(sn.Reserved.CPUs) > 0, MemoryBytes: nonServingMemory})
 	}
 	if nonServingMilliCPU > int64(len(sn.Reserved.CPUs))*1000 {
-		sn.Ready = false
-		sn.Reason = "non-serving CPU affinity unknown and exclusive reservation insufficient"
-		s.Reasons = append(s.Reasons, n.Name+": "+sn.Reason)
+		sn.Reasons = appendReason(sn.Reasons, serving.NodePlacementBudgetUnavailable)
 	}
+}
+
+func appendReason(reasons []string, reason string) []string {
+	if slices.Contains(reasons, reason) {
+		return reasons
+	}
+	return append(reasons, reason)
 }
 
 // ValidatePreparationCapacity admits coexistence using fresh physical Pod
 // requests and the owner's configured inventory/reservations, not CPU isolation.
 // Only serving-namespace Pods establish serving ownership; all Pod requests count.
-// It never moves membership or retires an existing serving instance.
+// It never retires an existing serving instance.
 func ValidatePreparationCapacity(
 	servingNamespace string,
 	node *core.Node, pods *core.PodList, inventory serving.SchedulerNode, wanted serving.SchedulerInstance,
 ) error {
-	if inventory.Node != wanted.Node || inventory.Pool != wanted.Pool ||
-		string(node.UID) != wanted.Node.UID || node.Name != wanted.Node.Name ||
-		node.Labels[ServingPoolLabel] != wanted.Pool {
-		return errors.New("preparation inventory differs from the current physical Node/pool")
+	if inventory.Node != wanted.Node || string(node.UID) != wanted.Node.UID || node.Name != wanted.Node.Name {
+		return errors.New("preparation inventory differs from the current physical Node")
 	}
 	ready := false
 	for _, condition := range node.Status.Conditions {
@@ -736,12 +736,12 @@ func ValidatePreparationCapacity(
 	// Discard the older aggregate; the same capture path recomputes all current
 	// foreign/system Pod requests, init/sidecar maxima and overhead exactly once.
 	inventory.NonServing = nil
-	inventory.Ready = ready
+	inventory.Reasons = nil
 	inventory.MemoryBytes = uint64(memory)
 	var snapshot serving.SchedulerSnapshot
 	captureNodePods(&snapshot, &inventory, node, pods, nil, nil)
-	if !inventory.Ready {
-		return fmt.Errorf("preparation non-serving admission: %s", inventory.Reason)
+	if len(inventory.Reasons) != 0 {
+		return fmt.Errorf("preparation non-serving admission: %s", strings.Join(inventory.Reasons, "; "))
 	}
 	allocations := append([]serving.SchedulerAllocation{inventory.Reserved}, inventory.NonServing...)
 	allocations = append(allocations, wanted.Allocation)
@@ -773,10 +773,13 @@ func (c *SchedulerController) conflictingActionRunning(action serving.Action) bo
 func (c *SchedulerController) launch(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if target.Keep && len(target.Actions) == 0 {
+	if len(target.Actions) == 0 {
 		return
 	}
-	c.goal = &target
+	// Fixed lowering alone is no transition to track.
+	if !target.Keep || slices.ContainsFunc(target.Actions, func(a serving.Action) bool { return !a.Fixed }) {
+		c.goal = &target
+	}
 	// Decide eligible old-source stops before starting policy refreshes that can
 	// supersede the existing acknowledged handoff proof in this same tick.
 	for phase := range 2 {
@@ -880,10 +883,7 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 }
 
 func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCandidate) bool {
-	var physical []serving.InstanceState
-	for _, pool := range c.runtime.Pools() {
-		physical = append(physical, pool.Instances...)
-	}
+	physical := c.runtime.Instances()
 	if !c.routingTargetPresent(&target, c.state.Snapshot, physical, false) {
 		return false
 	}
@@ -897,7 +897,7 @@ func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCa
 	return false
 }
 func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig) Operation {
-	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Pool: action.To, Target: target}
+	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target}
 	if action.Kind == operationPrepare {
 		for _, i := range target.Instances {
 			if i.ID == action.Instance && i.Profile != nil && i.Profile.Condition.Firstfloor != nil {
@@ -942,10 +942,7 @@ func (c *SchedulerController) actionEffectPresent(snapshot serving.SchedulerSnap
 		return false
 	}
 	a := run.action
-	var physical []serving.InstanceState
-	for _, pool := range c.runtime.Pools() {
-		physical = append(physical, pool.Instances...)
-	}
+	physical := c.runtime.Instances()
 	switch a.Kind {
 	case operationPrepare:
 		p := run.result.Operation.Prepare
@@ -978,12 +975,6 @@ func (c *SchedulerController) actionEffectPresent(snapshot serving.SchedulerSnap
 			}
 		}
 		return true
-	case operationMembership:
-		for _, n := range snapshot.Nodes {
-			if n.Node == a.Node {
-				return n.Pool == a.To
-			}
-		}
 	case operationPower:
 		for _, n := range snapshot.Nodes {
 			if n.Node == a.Node {
@@ -1049,7 +1040,7 @@ func schedulerTargetReady(wanted serving.SchedulerInstance, snapshot serving.Sch
 	}
 	captured := slices.ContainsFunc(snapshot.Instances, func(actual serving.SchedulerInstance) bool {
 		return actual.ID == state.ID && actual.Ready && !actual.Stopped && actual.Node == wanted.Node &&
-			actual.Pool == wanted.Pool && serving.SchedulerInstanceState(actual) == serving.SchedulerInstanceState(wanted)
+			serving.SchedulerInstanceState(actual) == serving.SchedulerInstanceState(wanted)
 	})
 	if !captured || state.Native.Metadata.ProfileID != wanted.Profile.ID || state.Native.Metadata.MaxQueueRequests != wanted.Capacity {
 		return false

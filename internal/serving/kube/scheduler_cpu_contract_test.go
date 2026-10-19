@@ -39,12 +39,12 @@ func TestNativePodReadbackKeepsMeasuredWideAffinityResourceEvaluable(t *testing.
 			}
 			at := time.Unix(100, 0)
 			sn := serving.SchedulerNode{
-				Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: "pool",
+				Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},
 				CPUs: []int{0, 1, 2, 3}, MemoryBytes: 1 << 30, Ready: true, PowerMode: "fixed", ObservedAt: at,
 			}
 			id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
 			state := serving.InstanceState{
-				ID: id, Node: sn.Node, Pool: sn.Pool, Profile: profile.ID, Ready: true, ObservedAt: at,
+				ID: id, Node: sn.Node, Profile: profile.ID, Ready: true, ObservedAt: at,
 				Native: &native.State{Ready: true, Metadata: native.Metadata{
 					ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: 4, MaxBatchSize: 1,
 					Policy: native.Policy{MaxBatchSize: 1},
@@ -98,7 +98,7 @@ func measuredCPUPreparationFixture() PrepareSpec {
 	return PrepareSpec{
 		Name: pod.Name, MemoryBytes: 1024,
 		Instance: serving.SchedulerInstance{
-			ID: "measured-slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: "pool",
+			ID: "measured-slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},
 			Profile: &profile, Weight: 1,
 			Allocation: serving.SchedulerAllocation{CPUs: []int{0, 1, 2, 3}, CPUCount: 2, Threads: 2, MemoryBytes: 1024},
 		},
@@ -130,7 +130,7 @@ func TestSchedulerConfigurationBindsCPUCountToMeasuredRequest(t *testing.T) {
 			if err := controller.SetConfiguration(changed); err == nil || !strings.Contains(err.Error(), "CPU request count differs") {
 				t.Fatalf("inconsistent profile-bound count %d entered planning: %v", count, err)
 			}
-			if controller.Settings() != settings {
+			if controller.Settings().ControlInterval != settings.ControlInterval {
 				t.Fatal("rejected preparation replaced the admitted configuration")
 			}
 		})

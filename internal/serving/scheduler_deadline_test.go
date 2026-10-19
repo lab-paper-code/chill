@@ -15,7 +15,7 @@ func TestReplayCompletionIsNativeCompletionPlusMargin(t *testing.T) {
 	for _, phase := range []string{phaseQueued, phaseRunning} {
 		for _, senderMS := range []float64{400, 500} {
 			s, snap := schedulerFixture()
-			s.Controls.Enabled = false
+			s.AutonomousWorkloads = nil
 			s.CompletionMarginMS = 7
 			snap.Arrivals = nil
 			d := snap.Workloads[0]
@@ -46,7 +46,6 @@ func TestSchedulerReplayDeadlineModesPreserveTimeoutPopulation(t *testing.T) {
 	for _, mode := range []string{"", firstfloor.DeadlineKeep, firstfloor.DeadlineDrop, firstfloor.DeadlineDefer} {
 		t.Run("mode="+mode, func(t *testing.T) {
 			s, snap := schedulerFixture()
-			s.Controls.Enabled = false
 			d := snap.Workloads[0]
 			d.SLO.TargetLatency = time.Millisecond
 			snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = mode
@@ -58,7 +57,7 @@ func TestSchedulerReplayDeadlineModesPreserveTimeoutPopulation(t *testing.T) {
 				t.Fatalf("supported mode must be evaluable, not missing evidence or caller expiry: %+v", decision)
 			}
 			if mode == firstfloor.DeadlineDrop {
-				if e.Samples != 0 || e.ExpectedNanos != nil || e.PredictedOutcomes["timeout"] != s.Replays || e.PredictedOutcomes["completed"] != 0 || math.Abs(*decision.Keep.ExpectedJoules-1.2) > 1e-9 {
+				if e.Samples != 0 || e.ExpectedNanos != nil || e.PredictedOutcomes["timeout"] != s.Replays || e.PredictedOutcomes["completed"] != 0 || math.Abs(schedulerReplayForTest(s, snap, decision.Keep).energy-1.2) > 1e-9 {
 					t.Fatalf("drop must not execute or contribute successful latency: %+v", decision.Keep)
 				}
 				schedulerRequireReason(t, decision.Keep.Reasons, "SLODeadlineDrops")

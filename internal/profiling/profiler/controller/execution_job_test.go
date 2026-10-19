@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -77,6 +78,9 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	}
 	pod := job.Spec.Template.Spec
 	assertDeliveryTopology(t, pod, prepared.RunConfig)
+	if !slices.Contains(pod.Tolerations, corev1.Toleration{Key: "chill.dacs.io/measurement", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}) {
+		t.Fatalf("pod tolerations = %#v, want measurement toleration", pod.Tolerations)
+	}
 	runtimeContainer := findContainer(t, pod.Containers, "runtime")
 	for _, path := range []string{"/model", "/preprocessor", "/dataset"} {
 		if mount := findMountPath(t, runtimeContainer.VolumeMounts, path); !mount.ReadOnly {

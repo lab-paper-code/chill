@@ -61,7 +61,7 @@ func (a settingsArchive) PutImmutable(
 
 func settingsControllerForTest(
 	t *testing.T, kube kubernetes.Interface, observationLog *serving.ObservationLog, settings serving.SchedulerSettings,
-) *servingkube.SchedulerController {
+) (*servingkube.SchedulerController, *serving.Runtime) {
 	t.Helper()
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected REST request while changing settings: %s", r.URL.Path)
@@ -108,13 +108,14 @@ func settingsControllerForTest(
 		t.Fatal(err)
 	}
 	t.Cleanup(controller.Close)
-	return controller
+	return controller, execution
 }
 
 func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name, omit                                                                                             string
 		resourceAllowed, updateFailure, observationLogFailure, invalidSettings, refreshFailure, missingRefresh bool
+		autonomous, stored                                                                                     []string
 		want                                                                                                   int
 	}{
 		{name: "persist and apply", resourceAllowed: true, want: http.StatusOK},
@@ -127,21 +128,26 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 		{name: "validation prevents write", resourceAllowed: true, invalidSettings: true, want: http.StatusBadRequest},
 		{name: "omitted completion margin prevents write", resourceAllowed: true, omit: `"completionMarginMS":0,`, want: http.StatusBadRequest},
 		{
-			name: "refresh failure does not enable stale catalog", resourceAllowed: true,
-			refreshFailure: true, want: http.StatusServiceUnavailable,
+			name: "refresh failure does not enable stale catalog", resourceAllowed: true, refreshFailure: true,
+			autonomous: []string{"workload-uid"}, stored: []string{"workload-uid"}, want: http.StatusServiceUnavailable,
 		},
 		{
 			name: "missing owner refresh prevents persistence", resourceAllowed: true,
 			missingRefresh: true, want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "absent autonomous Workload removed", resourceAllowed: true,
+			autonomous: []string{"workload-uid", "deleted-uid"}, stored: []string{"workload-uid"}, want: http.StatusOK,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := schedulerSettingsForTest()
 			after := before
 			after.Seed = 99
-			if tc.refreshFailure {
-				after.Controls.Enabled = true
-			}
+			// PUT stores only autonomous UIDs of current Workloads.
+			after.AutonomousWorkloads = tc.autonomous
+			stored := after
+			stored.AutonomousWorkloads = tc.stored
 			if tc.invalidSettings {
 				after.ObservationWindow = 0
 			}
@@ -190,13 +196,16 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			controller := settingsControllerForTest(t, kube, observationLog, before)
+			controller, execution := settingsControllerForTest(t, kube, observationLog, before)
+			if err := execution.Publish(&serving.Definition{Name: "workload", UID: "workload-uid"}); err != nil {
+				t.Fatal(err)
+			}
 			if tc.observationLogFailure {
 				if err = observationLog.Close(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 			}
-			handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, observationLog: observationLog, config: HandlerConfig{
+			handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 				Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler",
 				SchedulerConfigKey: "scheduler.json", SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20,
 			}}
@@ -248,10 +257,10 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				}
 				return
 			}
-			if controller.Settings() != after || updates != 1 || refreshes != 1 || persisted.Data["other"] != "untouched" {
+			if !reflect.DeepEqual(controller.Settings(), stored) || updates != 1 || refreshes != 1 || persisted.Data["other"] != "untouched" {
 				t.Fatal("settings not durably applied or unrelated CM data altered")
 			}
-			assertSchedulerSettingsAudit(t, persisted, response.Body.Bytes(), observationLog, before, after)
+			assertSchedulerSettingsAudit(t, persisted, response.Body.Bytes(), observationLog, before, stored)
 		})
 	}
 }
@@ -267,7 +276,7 @@ func assertSchedulerSettingsUnapplied(
 	if err := json.Unmarshal([]byte(persisted.Data["scheduler.json"]), &desired); err != nil {
 		t.Fatal(err)
 	}
-	if controller.Settings() != before || desired.Settings != wantDesired {
+	if !reflect.DeepEqual(controller.Settings(), before) || !reflect.DeepEqual(desired.Settings, wantDesired) {
 		t.Fatal("failed settings change lost desired-versus-accepted policy separation")
 	}
 }
@@ -276,7 +285,7 @@ func assertSchedulerSettingsRefreshFailed(
 	t *testing.T, observationLog *serving.ObservationLog, controller *servingkube.SchedulerController, refreshes int,
 ) {
 	t.Helper()
-	if refreshes != 1 || controller.Settings().Controls.Enabled {
+	if refreshes != 1 || len(controller.Settings().AutonomousWorkloads) != 0 {
 		t.Fatal("post-persistence refresh failure enabled the previously accepted catalog")
 	}
 	records, _, err := observationLog.SchedulerObservationPage(
@@ -308,7 +317,7 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 		t.Fatal(err)
 	}
 	if applied.ActorUsername != actorUsername || applied.ActorUID != "actor-uid" ||
-		applied.Before != before || applied.After != after || applied.AppliedAt == nil {
+		!reflect.DeepEqual(applied.Before, before) || !reflect.DeepEqual(applied.After, after) || applied.AppliedAt == nil {
 		t.Fatalf("missing actual audit result: %+v", applied)
 	}
 	records, _, err := observationLog.SchedulerObservationPage(
@@ -379,5 +388,47 @@ func TestSchedulerCompactQueryRejectsAmbiguousViews(t *testing.T) {
 		if _, err := schedulerCompactQuery(httptest.NewRequest(http.MethodGet, "/api/v1/scheduler?"+query, nil)); err == nil {
 			t.Fatalf("ambiguous view silently selected a representation: %s", query)
 		}
+	}
+}
+
+func TestPoolsShowMeasurementNodeAndWorkloadActivePool(t *testing.T) {
+	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: settingsArchive{directory: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := observationLog.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	controller, execution := settingsControllerForTest(t, fake.NewSimpleClientset(), observationLog, schedulerSettingsForTest())
+	tainted := serving.NodeReference{Name: "tainted", UID: "tainted-uid"}
+	serves := serving.NodeReference{Name: "serves", UID: "serves-uid"}
+	execution.SetMeasurementNodes([]serving.NodeReference{tainted})
+	if err := execution.InstallInstances([]serving.ReadyInstance{
+		{State: serving.InstanceState{ID: "owned", Node: serves}, OwnerWorkloadUID: "workload-uid"},
+		{State: serving.InstanceState{ID: "measured", Node: tainted}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{runtime: execution, observer: &servingkube.Observer{}, config: HandlerConfig{Scheduler: controller}}
+	view, err := handler.poolView("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pools serving.PoolsState
+	if err := json.Unmarshal(raw, &pools); err != nil {
+		t.Fatal(err)
+	}
+	if len(pools.Measurement) != 1 || pools.Measurement[0].Node != tainted || len(pools.Measurement[0].Instances) != 1 ||
+		len(pools.Workloads) != 1 || pools.Workloads[0].Workload.UID != "workload-uid" ||
+		!reflect.DeepEqual(pools.Workloads[0].Nodes, []serving.NodeReference{serves}) {
+		t.Fatalf("pools=%s", raw)
 	}
 }

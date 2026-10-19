@@ -12,8 +12,8 @@ import (
 
 const manualStaticRoutingOperation = "manual-static-routing"
 
-// ApplyStaticRouting records a manual, configuration-sourced route application.
-// Ordinary autonomous actions subsequently operate on this actual distribution.
+// ApplyStaticRouting records a manual, configuration-sourced route application
+// for disabled Workloads; every other Workload keeps its current distribution.
 func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing map[string]map[string]int, sourceRV string) (err error) {
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
@@ -27,8 +27,8 @@ func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing ma
 		}
 	}
 	c.mu.Unlock()
-	if config.Settings.Controls.Enabled || sourceRV == "" {
-		return errors.New("manual staticRouting requires controls OFF and a source ConfigMap resourceVersion")
+	if sourceRV == "" {
+		return errors.New("manual staticRouting requires a source ConfigMap resourceVersion")
 	}
 	if config.OnAction == nil {
 		return errors.New("manual staticRouting requires the existing action observation log")
@@ -54,7 +54,7 @@ func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing ma
 		return err
 	}
 	result.Before = OperationState{At: snapshot.At, Routing: snapshot.Routing}
-	target, err := serving.StaticRoutingTarget(snapshot, routing, manualStaticRoutingOperation+":"+sourceRV)
+	target, err := serving.StaticRoutingTarget(snapshot, routing, config.Settings.AutonomousWorkloads, manualStaticRoutingOperation+":"+sourceRV)
 	if err != nil {
 		return err
 	}

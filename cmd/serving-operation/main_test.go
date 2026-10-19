@@ -16,6 +16,7 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	corev1 "k8s.io/api/core/v1"
@@ -24,38 +25,31 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestMeasurementMembershipIsolation(t *testing.T) {
-	const isolated = "measurement-campaign"
+func TestMeasurementNodeRequiresTaint(t *testing.T) {
 	cases := []struct {
-		name, kind, source, target, uid string
-		allowed                         bool
+		name, uid string
+		tainted   bool
+		allowed   bool
 	}{
-		{"join detached node", operationMembership, "", isolated, "node-uid", true},
-		{"detach isolated node", operationMembership, isolated, "", "node-uid", true},
-		{"reject detached no-op", operationMembership, "", "", "node-uid", false},
-		{"reject attached no-op", operationMembership, isolated, isolated, "node-uid", false},
-		{"idle isolated node", "idle", isolated, "", "node-uid", true},
-		{"reject detached idle", "idle", "", "", "node-uid", false},
-		{"preserve another source pool", operationMembership, "live-pool", isolated, "node-uid", false},
-		{"preserve another measurement pool", operationMembership, "measurement-other", isolated, "node-uid", false},
-		{"reject another target pool", operationMembership, isolated, "measurement-other", "node-uid", false},
-		{"reject replaced physical node", operationMembership, "", isolated, "old-uid", false},
+		{"tainted node", "node-uid", true, true},
+		{"reject untainted node", "node-uid", false, false},
+		{"reject replaced physical node", "old-uid", true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			kube := fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{
-				Name: "node", UID: "node-uid", Labels: map[string]string{servingkube.ServingPoolLabel: tc.source},
-			}})
-			manifest := commandManifest{IsolatedPool: isolated}
-			manifest.Measurement.Operation = servingkube.Operation{
-				Kind: tc.kind, Node: serving.NodeReference{Name: "node", UID: tc.uid}, Pool: tc.target,
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid"}}
+			if tc.tainted {
+				node.Spec.Taints = []corev1.Taint{{
+					Key: profilingrun.MeasurementTaintKey, Value: "true", Effect: corev1.TaintEffectNoSchedule,
+				}}
 			}
-			pool, err := validateMeasurementNode(context.Background(), kube, manifest)
+			var manifest commandManifest
+			manifest.Measurement.Operation = servingkube.Operation{
+				Kind: "idle", Node: serving.NodeReference{Name: "node", UID: tc.uid},
+			}
+			err := validateMeasurementNode(context.Background(), fake.NewSimpleClientset(node), manifest)
 			if (err == nil) != tc.allowed {
 				t.Fatalf("allowed=%t, error=%v", tc.allowed, err)
-			}
-			if tc.allowed && pool != tc.source {
-				t.Fatalf("initial isolation pool=%q, actual source=%q", pool, tc.source)
 			}
 		})
 	}
@@ -78,7 +72,8 @@ func executionOwnerFixture() (executionManifest, executionConfiguration, executi
 	second := *first
 	second.Name, second.UID = "tight", "tight"
 	m := executionManifest{
-		SourceConfigRV: "10", Operation: servingkube.Operation{Kind: operationRemove, Instance: "replica"},
+		SourceConfigRV: "10", WorkloadUID: "relaxed",
+		Operation: servingkube.Operation{Kind: operationRemove, Instance: "replica"},
 	}
 	config := executionConfiguration{StaticRouting: routing}
 	owner := executionOwnerView{
@@ -88,7 +83,11 @@ func executionOwnerFixture() (executionManifest, executionConfiguration, executi
 		State: servingkube.SchedulerControllerState{
 			Snapshot: serving.SchedulerSnapshot{
 				At: now.Add(-time.Millisecond), Workloads: []*serving.Definition{first, &second},
-				Instances: []serving.SchedulerInstance{{ID: "source", Profile: profile, Ready: true}}, Routing: actual,
+				Instances: []serving.SchedulerInstance{
+					{ID: "source", Profile: profile, Ready: true},
+					{ID: "replica", Profile: profile, Ready: true, OwnerWorkloadUID: "relaxed"},
+				},
+				Routing: actual,
 			},
 			Results: []servingkube.OperationResult{{
 				Operation: servingkube.Operation{Kind: manualStaticRouting, SourceConfigRV: "10", StaticRouting: routing},
@@ -103,8 +102,8 @@ func executionOwnerFixture() (executionManifest, executionConfiguration, executi
 func TestExecuteRequiresOwnerAcknowledgementAndFullResponseDrain(t *testing.T) {
 	for _, name := range []string{
 		"safe", "returning", "assigned", "routed", "pre-ack snapshot", "before acknowledgement", "wrong revision",
-		"wrong actual", "missing UID", "desired controls", "live controls", "running",
-		"failed acknowledgement", "occupied membership", "future snapshot",
+		"wrong actual", "unknown workload", "desired autonomous", "live autonomous", "running",
+		"failed acknowledgement", "occupied prepare", "future snapshot", "shared instance",
 	} {
 		t.Run(name, func(t *testing.T) {
 			m, config, owner, now := executionOwnerFixture()
@@ -128,29 +127,35 @@ func TestExecuteRequiresOwnerAcknowledgementAndFullResponseDrain(t *testing.T) {
 				m.SourceConfigRV = "11"
 			case "wrong actual":
 				acknowledged.Actual.Routing = map[string]map[string]int32{"relaxed": {"source": 1}}
-			case "missing UID":
-				delete(config.StaticRouting, "tight")
-			case "desired controls":
-				config.Settings.Controls.Enabled = true
-			case "live controls":
-				owner.Settings.Controls.Enabled = true
+			case "unknown workload":
+				m.WorkloadUID = "absent"
+			case "desired autonomous":
+				config.Settings.AutonomousWorkloads = []string{"relaxed"}
+			case "live autonomous":
+				owner.Settings.AutonomousWorkloads = []string{"relaxed"}
 			case "running":
 				owner.State.Actions = []serving.Action{{Status: "running"}}
 			case "failed acknowledgement":
 				acknowledged.Status = operationFailed
-			case "occupied membership":
-				m.Operation.Kind = operationMembership
+			case "occupied prepare":
+				m.Operation = servingkube.Operation{Kind: operationPrepare}
+			case "shared instance":
+				owner.State.Snapshot.Instances[1].OwnerWorkloadUID = ""
+				owner.State.Snapshot.Instances[1].WorkloadUIDs = []string{"tight"}
 			}
 			err := validateExecutionOwner(m, config, owner, &acknowledged, now)
 			if (err == nil) != (name == "safe") {
 				t.Fatalf("unexpected owner safety verdict: %v", err)
+			}
+			if name == "shared instance" && !strings.HasPrefix(err.Error(), "InstanceShared") {
+				t.Fatalf("remove of an instance bound to another Workload: %v", err)
 			}
 		})
 	}
 }
 
 func TestExecuteOwnerAllowsAgedPostAckSnapshot(t *testing.T) {
-	for _, kind := range []string{operationPrepare, operationMembership, operationRemove} {
+	for _, kind := range []string{operationPrepare, operationRemove} {
 		t.Run(kind, func(t *testing.T) {
 			m, config, owner, now := executionOwnerFixture()
 			m.Operation = servingkube.Operation{
@@ -170,76 +175,38 @@ func TestExecuteOwnerAllowsAgedPostAckSnapshot(t *testing.T) {
 	}
 }
 
-func TestExecuteNodeProtectsServingMembershipAndExactSource(t *testing.T) {
-	const daemonCase = "daemon"
+func TestExecuteNodeProtectsExactRemoveSource(t *testing.T) {
 	const exactRemoveCase = "exact remove"
-	const servingDaemonCase = "serving daemon"
-	const foreignRemoveCase = "foreign remove"
-	const changedContainerCase = "changed container"
-	const foreignComponentCase = "foreign component collision"
-	for _, name := range []string{
-		"empty join", "empty rollback", "foreign namespace", daemonCase, servingDaemonCase, "changed UID",
-		"changed pool", "foreign destination", exactRemoveCase, foreignRemoveCase, changedContainerCase, foreignComponentCase,
-	} {
+	for _, name := range []string{"changed UID", exactRemoveCase, "foreign remove", "changed container"} {
 		t.Run(name, func(t *testing.T) {
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "target", UID: "node-uid"}}
 			spec := servingkube.PrepareSpec{Name: "measured", Instance: serving.SchedulerInstance{
-				ID: "slot", Node: serving.NodeReference{Name: "target", UID: "node-uid"}, Pool: "live",
+				ID: "slot", Node: serving.NodeReference{Name: "target", UID: "node-uid"},
 			}}
-			m := executionManifest{Namespace: "own", ProfileID: "profile",
-				Operation: servingkube.Operation{Kind: operationMembership, Node: spec.Instance.Node, Pool: "live"},
+			m := executionManifest{Namespace: "own", ProfileID: "profile", WorkloadUID: "relaxed",
+				Operation: servingkube.Operation{
+					Kind: operationRemove, Node: spec.Instance.Node, Instance: "pod-uid/containerd://exact",
+				},
 			}
 			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Namespace: "foreign", Name: "busy"}, Spec: corev1.PodSpec{NodeName: "target"},
+				ObjectMeta: metav1.ObjectMeta{Namespace: "own", Name: "measured", UID: "pod-uid", Annotations: map[string]string{
+					servingkube.ServingProfileAnnotation: "profile", servingkube.ServingSlotAnnotation: "slot",
+				}},
+				Spec: corev1.PodSpec{NodeName: "target"},
+				Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{
+					{Name: "firstfloor", ContainerID: "containerd://exact"},
+				}},
 			}
 			switch name {
-			case "empty rollback":
-				node.Labels = map[string]string{servingkube.ServingPoolLabel: "live"}
-				m.ExpectedPool, m.Operation.Pool = "live", ""
 			case "changed UID":
 				node.UID = "replacement"
-			case "changed pool":
-				node.Labels = map[string]string{servingkube.ServingPoolLabel: "other"}
-			case "foreign destination":
-				m.Operation.Pool = "other"
-			case foreignComponentCase:
-				pod.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
-			case daemonCase, servingDaemonCase:
-				controller := true
-				pod.OwnerReferences = []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "DaemonSet", Controller: &controller}}
-				if name == servingDaemonCase {
-					pod.Namespace = m.Namespace
-					pod.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
-				}
-			case exactRemoveCase, foreignRemoveCase, changedContainerCase:
-				node.Labels = map[string]string{servingkube.ServingPoolLabel: "live"}
-				m.ExpectedPool, m.Operation.Kind = "live", operationRemove
-				m.Operation.Instance = "pod-uid/containerd://exact"
-				pod.Namespace, pod.Name, pod.UID = "own", "measured", "pod-uid"
-				pod.Annotations = map[string]string{
-					servingkube.ServingProfileAnnotation: "profile", servingkube.ServingSlotAnnotation: "slot",
-				}
-				pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "firstfloor", ContainerID: "containerd://exact"}}
-				if name == foreignRemoveCase {
-					pod.Namespace = "foreign"
-				}
-				if name == changedContainerCase {
-					pod.Status.ContainerStatuses[0].ContainerID = "containerd://replacement"
-				}
+			case "foreign remove":
+				pod.Namespace = "foreign"
+			case "changed container":
+				pod.Status.ContainerStatuses[0].ContainerID = "containerd://replacement"
 			}
-			kube := fake.NewSimpleClientset(node)
-			if name == "foreign namespace" || name == daemonCase || name == servingDaemonCase ||
-				name == exactRemoveCase || name == foreignRemoveCase ||
-				name == changedContainerCase || name == foreignComponentCase {
-				_, err := kube.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{})
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			err := validateExecutionNode(context.Background(), kube, m, spec, nil)
-			allowed := name == "empty join" || name == "empty rollback" || name == "foreign namespace" ||
-				name == daemonCase || name == exactRemoveCase || name == foreignComponentCase
-			if (err == nil) != allowed {
+			err := validateExecutionNode(context.Background(), fake.NewSimpleClientset(node, pod), m, spec, nil)
+			if (err == nil) != (name == exactRemoveCase) {
 				t.Fatalf("unexpected physical safety verdict: %v", err)
 			}
 		})
@@ -297,7 +264,7 @@ func TestExecuteOwnerTLSDoesNotForwardCredentialsAcrossRedirect(t *testing.T) {
 func TestExecuteRejectsInlinePreparationBeforeConstructingClients(t *testing.T) {
 	m := executionManifest{Namespace: "own", JournalDirectory: "exclusive", SchedulerConfigMap: "scheduler",
 		SchedulerConfigKey: "config.json", SourceConfigRV: "10", ProfileID: "profile",
-		RoutingHistoryFrom: time.Unix(1, 0),
+		WorkloadUID: "relaxed", RoutingHistoryFrom: time.Unix(1, 0),
 		Operation: servingkube.Operation{ID: operationPrepare, Kind: operationPrepare,
 			Node: serving.NodeReference{Name: "node", UID: "uid"}, Prepare: &servingkube.PrepareSpec{}}}
 	if err := runExecution(context.Background(), m, kubeconfig.Options{}, time.Second); err == nil {
@@ -355,12 +322,10 @@ func TestExecuteBundleUsesCatalogDeclarationAndValidatesNativePolicy(t *testing.
 	}
 }
 
-func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
-	const foreignMembership = "membership with foreign Pods"
-	const servingMembership = "membership with serving Pod"
+func TestExecutePrepareBudget(t *testing.T) {
 	const foreignComponentCase = "foreign component collision"
 	for _, name := range []string{
-		"fits", "stale aggregate", "stale readiness", foreignMembership, servingMembership,
+		"fits", "stale aggregate", "stale readiness",
 		"missing inventory", "missing reservation", "overlap", "CPU overbudget", "memory overbudget",
 		"foreign GPU", "GPU fits", "GPU occupied", "GPU outside inventory",
 		"serving Pod", "Node unready", "actual memory pressure", foreignComponentCase,
@@ -368,8 +333,7 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ref := serving.NodeReference{Name: "worker", UID: "node-uid"}
 			node := &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: ref.Name, UID: "node-uid",
-					Labels: map[string]string{servingkube.ServingPoolLabel: "live"}},
+				ObjectMeta: metav1.ObjectMeta{Name: ref.Name, UID: "node-uid"},
 				Status: corev1.NodeStatus{
 					Allocatable: corev1.ResourceList{
 						corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("7838032Ki"),
@@ -398,16 +362,16 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 			system.Spec.Containers[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("605m")
 			system.Spec.Containers[0].Resources.Requests[corev1.ResourceMemory] = resource.MustParse("210Mi")
 			spec := servingkube.PrepareSpec{Instance: serving.SchedulerInstance{
-				Node: ref, Pool: "live", Allocation: serving.SchedulerAllocation{
+				Node: ref, Allocation: serving.SchedulerAllocation{
 					CPUs: []int{3}, CPUCount: 1, Threads: 1, MemoryBytes: 295698432,
 				},
 			}}
 			m := executionManifest{
 				Namespace: "own",
-				Operation: servingkube.Operation{Kind: operationPrepare, Node: ref}, ExpectedPool: "live",
+				Operation: servingkube.Operation{Kind: operationPrepare, Node: ref},
 			}
 			inventory := []serving.SchedulerNode{{
-				Node: ref, Pool: "live", Ready: true, CPUs: []int{0, 1, 2, 3},
+				Node: ref, Ready: true, CPUs: []int{0, 1, 2, 3},
 				Reserved: serving.SchedulerAllocation{CPUs: []int{0, 1}},
 			}}
 			if name == "GPU fits" || name == "GPU occupied" || name == "GPU outside inventory" {
@@ -420,13 +384,6 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 				inventory[0].NonServing = []serving.SchedulerAllocation{{CPUCount: 100, MemoryBytes: 1 << 40}}
 			case "stale readiness":
 				inventory[0].Ready = false
-			case foreignMembership:
-				m.Operation.Kind = operationMembership
-				foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
-			case servingMembership:
-				m.Operation.Kind = operationMembership
-				foreign.Namespace = m.Namespace
-				foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 			case "missing inventory":
 				inventory = nil
 			case "missing reservation":
@@ -457,9 +414,9 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 			kube := fake.NewSimpleClientset(node, foreign, other, system)
 			err := validateExecutionNode(context.Background(), kube, m, spec, inventory)
 			allowed := name == "fits" || name == "stale aggregate" || name == "stale readiness" ||
-				name == foreignMembership || name == foreignComponentCase || name == "GPU fits"
+				name == foreignComponentCase || name == "GPU fits"
 			if (err == nil) != allowed {
-				t.Fatalf("unexpected fresh preparation/membership admission: %v", err)
+				t.Fatalf("unexpected fresh preparation admission: %v", err)
 			}
 		})
 	}

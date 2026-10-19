@@ -80,7 +80,7 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 		if err != nil {
 			return err
 		}
-		if actual == nil || !actual.State.Ready || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node || actual.State.Pool != wanted.Pool {
+		if actual == nil || !actual.State.Ready || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node {
 			return failure("TargetNotReady", "target %q lacks matching actual readiness", wanted.ID)
 		}
 		for _, uid := range wanted.WorkloadUIDs {

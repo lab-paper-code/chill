@@ -104,10 +104,10 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 		}
 		id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
 		spec := sdk.Spec{Endpoint: "http://" + service.Spec.ClusterIP + ":8080", ModelName: cfg.Model}
-		instance := serving.SchedulerInstance{ID: id, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: "pool", Profile: &profile,
+		instance := serving.SchedulerInstance{ID: id, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile,
 			WorkloadUIDs: []string{definition.UID}, MaxBatch: 1, Capacity: 4, MaxWait: time.Millisecond}
 		target.Instances = append(target.Instances, instance)
-		ready = append(ready, serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: instance.Node, Pool: instance.Pool, Profile: profile.ID, Ready: true, Native: &state},
+		ready = append(ready, serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: instance.Node, Profile: profile.ID, Ready: true, Native: &state},
 			Profile: &profile, Weight: 1, Capacity: 4,
 			Execute: func(ctx context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 				return nativeClient.Execute(ctx, spec, dispatch)

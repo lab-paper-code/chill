@@ -102,7 +102,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("initialize Workload service: %w", err)
 	}
-	if scheduler != nil && scheduler.controller.Settings().Controls.Enabled {
+	if scheduler != nil && len(scheduler.controller.Settings().AutonomousWorkloads) > 0 {
 		execution.EnableSchedulerRouting()
 	}
 	handlerConfig := httpapi.HandlerConfig{

@@ -182,7 +182,6 @@ type WorkloadReference struct {
 }
 
 type Assignment struct {
-	Pool                   string                         `json:"pool"`
 	Node                   NodeReference                  `json:"node"`
 	Instance               string                         `json:"instance"`
 	Artifact               string                         `json:"artifact"`
@@ -199,7 +198,6 @@ type InstanceState struct {
 	TargetID         string              `json:"targetID,omitempty"`
 	OwnerWorkloadUID string              `json:"ownerWorkloadUID,omitempty"`
 	Node             NodeReference       `json:"node"`
-	Pool             string              `json:"pool"`
 	Profile          string              `json:"profile"`
 	Ready            bool                `json:"ready"`
 	Stopped          bool                `json:"stopped"`
@@ -214,12 +212,32 @@ type InstanceState struct {
 	Native          *firstfloor.State `json:"native,omitempty"`
 }
 
-type PoolState struct {
-	ID               string              `json:"id"`
-	CurrentNodes     []NodeReference     `json:"currentNodes"`
-	ServingWorkloads []WorkloadReference `json:"servingWorkloads"`
-	Instances        []InstanceState     `json:"instances"`
-	ObservedAt       time.Time           `json:"observedAt"`
+// PoolsState derives POOL membership from actual instances. A Workload's
+// active POOL is the Nodes of instances it owns or is bound to.
+type PoolsState struct {
+	Workloads   []WorkloadPool    `json:"workloads"`
+	Measurement []MeasurementPool `json:"measurement"`
+	Available   []PoolNode        `json:"available"`
+	Other       []PoolNode        `json:"other"`
+	ObservedAt  time.Time         `json:"observedAt"`
+}
+
+type WorkloadPool struct {
+	Workload  WorkloadReference `json:"workload"`
+	Nodes     []NodeReference   `json:"nodes"`
+	Instances []InstanceState   `json:"instances"`
+}
+
+type MeasurementPool struct {
+	Node      NodeReference   `json:"node"`
+	Instances []InstanceState `json:"instances"`
+}
+
+type PoolNode struct {
+	Node      NodeReference `json:"node"`
+	Ready     bool          `json:"ready"`
+	PowerMode string        `json:"powerMode"`
+	Reasons   []string      `json:"reasons"`
 }
 
 type WorkloadState struct {

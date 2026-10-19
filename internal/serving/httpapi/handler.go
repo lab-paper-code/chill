@@ -371,20 +371,26 @@ func (h *Handler) datasets(ctx context.Context, w http.ResponseWriter, r *http.R
 	return value, http.StatusOK, err
 }
 
+// poolView derives the active POOLs from runtime instances, the measurement POOL
+// from the taint, and the available Nodes from the latest scheduler snapshot.
 func (h *Handler) poolView(id string) (any, error) {
-	pools := h.runtime.Pools()
+	var nodes []serving.SchedulerNode
+	if h.config.Scheduler != nil {
+		nodes = h.config.Scheduler.State().Snapshot.Nodes
+	}
+	pools := h.runtime.Pools(nodes)
 	if id == "" {
 		return struct {
-			Items  []serving.PoolState         `json:"items"`
+			serving.PoolsState
 			Issues []servingkube.ObserverIssue `json:"issues"`
 		}{pools, h.observer.Issues()}, nil
 	}
-	for _, pool := range pools {
-		if pool.ID == id {
+	for _, pool := range pools.Workloads {
+		if pool.Workload.UID == id {
 			return pool, nil
 		}
 	}
-	return nil, &serving.Error{Code: "PoolNotFound", Message: "no current pool has this identifier"}
+	return nil, &serving.Error{Code: "PoolNotFound", Message: "no current Workload active POOL has this UID"}
 }
 
 func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {

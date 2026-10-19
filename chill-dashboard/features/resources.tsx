@@ -1,10 +1,10 @@
 "use client"
 
 import * as React from "react"
-import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
-import type { InventoryView, PoolState, PoolsView, PowerModeActuator } from "@/lib/read-types"
+import type { ActivePool, InstanceState, InventoryView, PoolNode, PoolsView, PowerModeActuator } from "@/lib/read-types"
+import { explain } from "@/lib/labels"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
@@ -51,36 +51,53 @@ export function ResourcesPage() {
   </Screen>
 }
 
+// One plain sentence per reason code; the code itself stays in the 원본 view.
+function NodeRows({label,rows}:{label:string;rows:PoolNode[]}) {
+  return <Rows label={label}>{rows.map(row=><Row key={row.node.uid} label={row.node.name} hint={[row.powerMode&&`전력모드 ${row.powerMode}`,...(row.reasons??[]).map(reason=>explain(reason)[0])].filter(Boolean).join(" ")||undefined} value={<StatusBadge tone={row.ready?"ok":"warn"}>{row.ready?"준비됨":"준비 중"}</StatusBadge>}/>)}</Rows>
+}
+function InstanceRows({label,rows}:{label:string;rows:InstanceState[]}) {
+  return <Rows label={label}>{rows.map(row=><RowDialog key={row.id} label={row.node.name} hint={(row.workloads??[]).map(workload=>workload.name).join(", ")||"연결된 서비스 없음"} value={<StatusBadge tone={row.ready?"ok":"warn"}>{row.ready?"준비됨":"준비 중"}</StatusBadge>} title={`${row.node.name} 인스턴스`}>
+    <Facts items={[["인스턴스",row.id],["노드",row.node.name],["상태",row.ready?"준비됨":row.reason?explain(row.reason)[0]:"준비 중"],["서비스",(row.workloads??[]).map(workload=>workload.name).join(", ")||"없음"]]}/>
+    <SourceJSON inline value={row}/>
+  </RowDialog>)}</Rows>
+}
+
+// Every Node once per role: each Workload's active POOL, the measurement POOL, available Nodes, and the rest.
 export function PoolsPage() {
-  const query=useChillQuery<PoolsView>("v1/pools"),data=query.data
-  return <Screen back={back} title={!data?"실행 그룹":data.items?.length?`실행 그룹이 ${data.items.length}개 있어요`:"실행 그룹이 없어요"} lede="노드를 묶어 서비스를 실행하는 단위예요.">
+  const query=useChillQuery<PoolsView>("v1/pools"),data=query.data,pools=data?.workloads??[]
+  const shared=new Set(pools.flatMap(pool=>pool.nodes??[]).map(node=>node.uid).filter((uid,index,all)=>all.indexOf(uid)!==index))
+  return <Screen back={back} title={!data?"실행 그룹":pools.length?`서비스 ${pools.length}개가 실행 그룹을 쓰고 있어요`:"실행 중인 서비스가 없어요"} lede="서비스마다 인스턴스가 있는 노드가 그 서비스의 실행 그룹이에요. 여러 서비스가 한 노드를 함께 쓸 수 있어요.">
     <QueryGate query={query}>{data&&<>
-      {!!data.items?.length&&<Rows label="실행 그룹">{data.items.map(row=><Row key={row.id} href={`/pools/${encodeURIComponent(row.id)}`} label={(row.currentNodes??[]).map(node=>node.name).join(", ")||"노드 없는 그룹"} hint={(row.servingWorkloads??[]).map(workload=>workload.name).join(", ")||"실행 중인 서비스 없음"} value={`인스턴스 ${row.instances?.length??0}개`}/>)}</Rows>}
-      <Rows><RowDialog label="원본 자료" title="실행 그룹 조회 원본"><SourceJSON inline value={data}/></RowDialog></Rows>
+      {!!pools.length&&<Rows label="서비스별 실행 그룹">{pools.map(pool=><Row key={pool.workload.uid} href={`/pools/${encodeURIComponent(pool.workload.uid)}`} label={pool.workload.name} hint={(pool.nodes??[]).map(node=>shared.has(node.uid)?`${node.name}(함께 씀)`:node.name).join(", ")||"노드 없음"} value={`인스턴스 ${pool.instances?.length??0}개`}/>)}</Rows>}
+      {!!data.measurement?.length&&<Rows label="측정 중인 노드">{data.measurement.map(row=><RowDialog key={row.node.uid} label={row.node.name} value={`인스턴스 ${row.instances?.length??0}개`} title={`${row.node.name}에서 측정 중인 인스턴스`}>
+        {row.instances?.length?<InstanceRows label="인스턴스" rows={row.instances}/>:<p>이 노드에는 CHILL 인스턴스가 없어요.</p>}
+        <SourceJSON inline value={row}/>
+      </RowDialog>)}</Rows>}
+      {!!data.available?.length&&<NodeRows label="바로 쓸 수 있는 노드" rows={data.available}/>}
+      {!!data.other?.length&&<NodeRows label="그 밖의 노드" rows={data.other}/>}
+      <Rows><RowDialog label="원본 자료" title="실행 그룹 조회 원본"><p>관측 {data.observedAt}</p><SourceJSON inline value={data}/></RowDialog></Rows>
     </>}</QueryGate>
-    <Rows><Row href="/scheduler/candidates?view=snapshot" label="실제 자원 구성 보기" hint="운영 판단이 본 노드·인스턴스·할당"/></Rows>
+    <Rows><Row href="/scheduler/candidates?view=snapshot" label="실제 자원 구성 보기" hint="운영 판단이 본 노드와 인스턴스, 할당"/></Rows>
   </Screen>
 }
 
+// One Workload's active POOL; id is the Workload UID.
 export function PoolPage({id}:{id:string}) {
   const [poll,setPoll]=React.useState(false)
-  const query=useChillQuery<PoolState>(`v1/pools/${encodeURIComponent(id)}`,{poll}),data=query.data
+  const query=useChillQuery<ActivePool>(`v1/pools/${encodeURIComponent(id)}`,{poll}),data=query.data
   const instances=data?.instances??[],ready=instances.filter(row=>row.ready).length
-  return <Screen back={["/pools","실행 그룹"]} title={!data?"실행 그룹":instances.length?`인스턴스 ${instances.length}개 중 ${ready}개가 준비됐어요`:"실행 중인 인스턴스가 없어요"} lede={data?`노드 ${(data.currentNodes??[]).map(node=>node.name).join(", ")||"없음"}`:undefined}>
+  return <Screen back={["/pools","실행 그룹"]} title={!data?"실행 그룹":instances.length?`인스턴스 ${instances.length}개 중 ${ready}개가 준비됐어요`:"실행 중인 인스턴스가 없어요"} lede={data&&`${data.workload.name} 서비스의 실행 그룹이에요. 노드 ${(data.nodes??[]).map(node=>node.name).join(", ")||"없음"}`}>
     <QueryGate query={query}>{data&&<>
-      {instances.length>0&&<Rows label="인스턴스">{instances.map(row=><RowDialog key={row.id} label={row.node.name} hint={(row.workloads??[]).map(workload=>workload.name).join(", ")||"서비스 없음"} value={<StatusBadge tone={row.ready?"ok":"warn"}>{row.ready?"준비됨":"준비되지 않음"}</StatusBadge>} title={`${row.node.name} 인스턴스`}>
-        <Facts items={[["노드",row.node.name],["상태",row.ready?"준비됨":"준비되지 않음"],["서비스",(row.workloads??[]).map(workload=>workload.name).join(", ")||"없음"]]}/>
-        <SourceJSON inline value={row}/>
-      </RowDialog>)}</Rows>}
+      {instances.length>0&&<InstanceRows label="인스턴스" rows={instances}/>}
       <Rows>
-        <RowDialog label="노드" value={`${data.currentNodes?.length??0}대`} title="그룹의 노드"><ul className="grid gap-1.5">{(data.currentNodes??[]).map(row=><li key={row.uid}>{row.name}</li>)}</ul>{!data.currentNodes?.length&&<p>노드가 없어요.</p>}</RowDialog>
-        <RowDialog label="서비스" value={`${data.servingWorkloads?.length??0}개`} title="그룹에서 실행 중인 서비스"><ul className="grid gap-1.5">{(data.servingWorkloads??[]).map(row=><li key={row.uid}><Link href={`/workloads/${encodeURIComponent(row.name)}?uid=${encodeURIComponent(row.uid)}`}>{row.name}</Link></li>)}</ul>{!data.servingWorkloads?.length&&<p>실행 중인 서비스가 없어요.</p>}</RowDialog>
-        <Row href={`/scheduler/candidates?view=snapshot&pool=${encodeURIComponent(id)}`} label="실제 자원 구성 보기" hint="자원 할당과 전력모드"/>
+        <Row href={`/workloads/${encodeURIComponent(data.workload.name)}?uid=${encodeURIComponent(data.workload.uid)}`} label="서비스 보기" hint={data.workload.name}/>
+        <Row href="/pools" label="다른 실행 그룹과 노드 보기" hint="측정 중인 노드와 바로 쓸 수 있는 노드"/>
+        <Row href="/scheduler/candidates?view=snapshot" label="실제 자원 구성 보기" hint="자원 할당과 전력모드"/>
       </Rows>
     </>}</QueryGate>
     <Rows label="더 보기">
       <RowDialog label="자동 새로고침" value={poll?"켜짐":"꺼짐"} title="자동 새로고침"><label className="switch"><input type="checkbox" checked={poll} onChange={event=>setPoll(event.target.checked)}/>그룹 상태를 자동으로 확인하기</label></RowDialog>
-      {data&&<RowDialog label="원본 자료와 내보내기" title="실행 그룹 원본"><p>현재 그룹 관측 {data.observedAt}</p><SourceJSON inline value={data}/><SourceExport value={data} filename={`chill-pool-${id}.json`}/></RowDialog>}
+      {data&&<RowDialog label="원본 자료와 내보내기" title="실행 그룹 원본"><SourceJSON inline value={data}/><SourceExport value={data} filename={`chill-pool-${id}.json`}/></RowDialog>}
     </Rows>
   </Screen>
 }

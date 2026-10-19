@@ -11,18 +11,20 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
@@ -110,7 +112,7 @@ func schedulerCaptureClockState(t *testing.T, controller *SchedulerController) S
 	}
 	instance := snapshot.Instances[0]
 	if !snapshot.Nodes[0].ObservedAt.Before(snapshot.At) || !instance.ObservedAt.Before(snapshot.At) ||
-		!instance.ObservedAt.Equal(controller.runtime.Pools()[0].Instances[0].ObservedAt) {
+		!instance.ObservedAt.Equal(controller.runtime.Instances()[0].ObservedAt) {
 		t.Fatalf("capture restamped source observations: node=%s instance=%s at=%s", snapshot.Nodes[0].ObservedAt, instance.ObservedAt, snapshot.At)
 	}
 	return state
@@ -196,8 +198,8 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 			Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmProjectedWorkHistory,
 				ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second,
 				Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 10, MaxCPUs: 4,
-				Controls: serving.SchedulerControls{Enabled: true, Placement: true, Resources: true, Replicas: true,
-					Sharing: true, Routing: true, Batching: true, Power: true, Membership: true}},
+				Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true,
+					Sharing: true, Routing: true, Batching: true, Power: true}},
 			CPUInventory: map[string][]int{node.Name: {0, 1, 2, 3}},
 			Baselines: []serving.NodeBaseline{{ID: "empty-pool-idle", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},
 				PowerMode: "fixed", Watts: 10, Meter: "node-wall", Scope: "node-exclusive-wall", MeasuredAt: time.Now(),
@@ -264,7 +266,7 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 	defer cancel()
 	var publishedAt time.Time
 	controller.config.OnDecision = func(decision serving.SchedulerDecision) error {
-		if decision.Target == nil || len(decision.Target.Actions) == 0 || !decision.Settings.Controls.Enabled {
+		if decision.Target == nil || len(decision.Target.Actions) == 0 {
 			t.Fatal("fixture did not produce an actionable ON continuation")
 		}
 		snapshot := controller.State().Snapshot
@@ -284,13 +286,70 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 	if publishedAt.IsZero() || !controller.State().Decision.At.Equal(publishedAt) {
 		t.Fatal("late cancellation hid an already published and recorded valid decision")
 	}
-	off := controller.config
-	off.Settings.Controls = serving.SchedulerControls{}
-	if err := controller.SetConfiguration(off); err != nil {
+}
+
+func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
+	controller := schedulerEmptyPoolController(t)
+	ctx := context.Background()
+	_, base, _, _ := observerSourceFixture()
+	config := controller.config
+	config.CPUInventory = map[string][]int{}
+	config.PowerRequests = map[string]*edge.NodeActuation{}
+	want := map[string]struct {
+		reasons     []string
+		measurement bool
+	}{
+		base.Name:   {},
+		"bare":      {reasons: []string{serving.NodePlacementInventoryMissing}},
+		"unpowered": {reasons: []string{serving.NodePowerModeUnavailable}},
+		"measured":  {measurement: true},
+	}
+	for _, name := range []string{"control-plane", "bare", "unpowered", "measured"} {
+		node := base.DeepCopy()
+		node.Name, node.UID = name, types.UID(name+"-uid")
+		switch name {
+		case "control-plane":
+			node.Labels[controlPlaneLabel] = ""
+		case "measured":
+			node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Effect: core.TaintEffectNoSchedule}}
+		}
+		if _, err := controller.kube.CoreV1().Nodes().Create(ctx, node, meta.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name := range want {
+		if name != "bare" {
+			config.CPUInventory[name] = []int{0, 1, 2, 3}
+		}
+		if name != "unpowered" { // base Node UID is "node-uid" too
+			config.PowerRequests[name+"-uid/fixed"] = &edge.NodeActuation{}
+		}
+	}
+	snapshot, err := controller.capture(ctx, time.Now().UTC(), config)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if controller.Settings().Controls.Enabled || len(controller.State().Actions) != 0 {
-		t.Fatal("outdated ON continuation acted after controls OFF")
+	if len(snapshot.Nodes) != len(want) {
+		t.Fatalf("entire POOL = %+v, want %d non-control-plane Nodes", snapshot.Nodes, len(want))
+	}
+	for _, node := range snapshot.Nodes {
+		expected, ok := want[node.Node.Name]
+		if !ok || !node.Ready || !slices.Equal(node.Reasons, expected.reasons) || node.Measurement != expected.measurement {
+			t.Fatalf("%s: ready=%v reasons=%v measurement=%v", node.Node.Name, node.Ready, node.Reasons, node.Measurement)
+		}
+	}
+}
+
+func TestSchedulerLaunchTracksGoalOnlyForNonFixedActions(t *testing.T) {
+	for _, fixed := range []bool{true, false} {
+		controller := &SchedulerController{runs: map[string]*actionRun{}}
+		// Completed actions are skipped, so launch starts no operation.
+		controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true, Actions: []serving.Action{
+			{ID: "lower", Kind: operationPower, Fixed: fixed, Status: nativeOperationComplete},
+		}}, SchedulerControllerConfig{})
+		if (controller.goal == nil) != fixed {
+			t.Fatalf("fixed=%v: goal=%+v", fixed, controller.goal)
+		}
 	}
 }
 
@@ -312,96 +371,6 @@ func TestPreparedPodRequiresMeasuredGPUEnvironment(t *testing.T) {
 	}
 }
 
-func TestIndependentMembershipMutationsDoNotShareOneNodeLock(t *testing.T) {
-	observer := newTestObserver(t)
-	nodes := map[string]*core.Node{"a": {ObjectMeta: meta.ObjectMeta{Name: "a", UID: "a-uid", Labels: map[string]string{ServingPoolLabel: "old"}}}, "b": {ObjectMeta: meta.ObjectMeta{Name: "b", UID: "b-uid", Labels: map[string]string{ServingPoolLabel: "old"}}}}
-	var mu sync.Mutex
-	aStarted := make(chan struct{})
-	bStarted := make(chan struct{})
-	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if strings.HasSuffix(r.URL.Path, "/pods") {
-			if r.URL.Query().Get("watch") == "true" {
-				w.WriteHeader(http.StatusOK)
-				w.(http.Flusher).Flush()
-				<-r.Context().Done()
-				return
-			}
-			if err := json.NewEncoder(w).Encode(core.PodList{TypeMeta: meta.TypeMeta{Kind: "PodList", APIVersion: "v1"}}); err != nil {
-				t.Error(err)
-			}
-			return
-		}
-		name := strings.TrimPrefix(r.URL.Path, "/api/v1/nodes/")
-		if r.Method == http.MethodPatch {
-			if name == "a" {
-				close(aStarted)
-				<-release
-			} else {
-				close(bStarted)
-			}
-			mu.Lock()
-			nodes[name].Labels[ServingPoolLabel] = "new"
-			mu.Unlock()
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if r.URL.Path == "/api/v1/nodes" {
-			if err := json.NewEncoder(w).Encode(core.NodeList{TypeMeta: meta.TypeMeta{Kind: "NodeList", APIVersion: "v1"}, Items: []core.Node{*nodes["a"], *nodes["b"]}}); err != nil {
-				t.Error(err)
-			}
-			return
-		}
-		if node := nodes[name]; node != nil {
-			if err := json.NewEncoder(w).Encode(node); err != nil {
-				t.Error(err)
-			}
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(func() {
-		if err := observer.Close(); err != nil {
-			t.Error(err)
-		}
-		server.CloseClientConnections()
-		server.Close()
-	})
-	kube, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	observer.kube = kube
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	result := make(chan error, 2)
-	go func() { result <- observer.MoveNodePool(ctx, serving.NodeReference{Name: "a", UID: "a-uid"}, "new") }()
-	select {
-	case <-aStarted:
-	case <-ctx.Done():
-		t.Fatal("first actual Node mutation never started")
-	}
-	go func() { result <- observer.MoveNodePool(ctx, serving.NodeReference{Name: "b", UID: "b-uid"}, "new") }()
-	select {
-	case <-bStarted:
-		close(release)
-	case <-ctx.Done():
-		close(release)
-		t.Fatal("independent Node mutation blocked behind unrelated Node API call")
-	}
-	for range 2 {
-		if err := <-result; err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, name := range []string{"a", "b"} {
-		actual, err := kube.CoreV1().Nodes().Get(ctx, name, meta.GetOptions{})
-		if err != nil || actual.Labels[ServingPoolLabel] != "new" {
-			t.Fatal("desired membership was not actually read back", name, err)
-		}
-	}
-}
 func TestRemoveRejectsPhysicalInstanceOnDifferentNodeBeforeMutation(t *testing.T) {
 	observer := newTestObserver(t)
 	mutated := false
@@ -428,7 +397,7 @@ func TestRemoveRejectsPhysicalInstanceOnDifferentNodeBeforeMutation(t *testing.T
 			}
 			return
 		}
-		if err := json.NewEncoder(w).Encode(core.Node{ObjectMeta: meta.ObjectMeta{Name: "a", UID: "node-a", Labels: map[string]string{ServingPoolLabel: "measurement-test"}}}); err != nil {
+		if err := json.NewEncoder(w).Encode(core.Node{ObjectMeta: meta.ObjectMeta{Name: "a", UID: "node-a"}}); err != nil {
 			t.Error(err)
 		}
 	}))
@@ -452,7 +421,7 @@ func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run) {
 		t.Fatal("history treated as current prepared effect")
 	}
-	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "pod/container", TargetID: "slot", Node: node, Pool: "pool", Profile: profile.ID, Ready: true, Native: &native.State{Ready: true}}, Profile: profile, Weight: 1, Capacity: 1, Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
+	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "pod/container", TargetID: "slot", Node: node, Profile: profile.ID, Ready: true, Native: &native.State{Ready: true}}, Profile: profile, Weight: 1, Capacity: 1, Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 		panic("regression only observes physical state")
 	}}
 	if err := observer.runtime.InstallInstances([]serving.ReadyInstance{instance}); err != nil {
@@ -487,14 +456,14 @@ func TestCaptureNodePodsAggregatesNonServingBudget(t *testing.T) {
 		reserved   []int
 		memory     uint64
 		gpu        bool
-		wantReady  bool
+		available  bool
 		wantCPU    int
 		wantMemory bool
 	}{
-		{name: "fractional requests fit", cpu: "10m", reserved: []int{0}, memory: 1000, wantReady: true, wantCPU: 1},
+		{name: "fractional requests fit", cpu: "10m", reserved: []int{0}, memory: 1000, available: true, wantCPU: 1},
 		{name: "real CPU overbudget", cpu: "110m", reserved: []int{0}, memory: 1000, wantCPU: 2},
 		{name: "missing exclusive reservation", cpu: "10m", memory: 1000, wantCPU: 1},
-		{name: "real memory overbudget", cpu: "10m", reserved: []int{0}, memory: 99, wantReady: true, wantCPU: 1, wantMemory: true},
+		{name: "real memory overbudget", cpu: "10m", reserved: []int{0}, memory: 99, available: true, wantCPU: 1, wantMemory: true},
 		{name: "unknown GPU ownership", cpu: "10m", reserved: []int{0}, memory: 1000, gpu: true, wantCPU: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -514,29 +483,23 @@ func TestCaptureNodePodsAggregatesNonServingBudget(t *testing.T) {
 			physical := map[string]serving.InstanceState{"native-pod/container": {ID: "native-pod/container", Node: sn.Node, Profile: "profile", Native: &native.State{}}}
 			snapshot := serving.SchedulerSnapshot{At: at}
 			captureNodePods(&snapshot, &sn, node, pods, physical, map[string]*serving.Profile{"profile": {ID: "profile"}})
-			if sn.Ready != tc.wantReady || len(sn.NonServing) != 1 || len(snapshot.Instances) != 1 {
+			if !sn.Ready || slices.Contains(sn.Reasons, serving.NodePlacementBudgetUnavailable) == tc.available || len(sn.NonServing) != 1 || len(snapshot.Instances) != 1 {
 				t.Fatal("incorrect readiness or physical classification", sn, snapshot.Instances)
 			}
 			allocation := sn.NonServing[0]
 			if allocation.CPUCount != tc.wantCPU || allocation.MemoryBytes != 100 || allocation.CPUReserved != (len(tc.reserved) > 0) {
 				t.Fatal("non-serving requests were not aggregated exactly", allocation)
 			}
-			snapshot.Nodes = []serving.SchedulerNode{sn}
-			settings := serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 2}
 			// Isolate the captured non-serving budget in the actual consumer.
-			snapshot.Instances = nil
-			decision, err := serving.EvaluateScheduler(context.Background(), settings, snapshot)
-			if err != nil {
-				t.Fatal(err)
-			}
+			reasons := serving.ValidateNodeBudget(sn, sn.NonServing, nil)
 			cpuInfeasible, memoryInfeasible, unknownAffinity := false, false, false
-			for _, reason := range decision.Keep.Reasons {
+			for _, reason := range reasons {
 				cpuInfeasible = cpuInfeasible || strings.HasPrefix(reason, "CPUBudgetInfeasible:")
 				memoryInfeasible = memoryInfeasible || strings.HasPrefix(reason, "MemoryBudgetInfeasible:")
 				unknownAffinity = unknownAffinity || strings.HasPrefix(reason, "UnknownExclusiveCPUAffinity:")
 			}
 			if cpuInfeasible != (len(tc.reserved) > 0 && tc.wantCPU > len(tc.reserved)) || memoryInfeasible != tc.wantMemory || unknownAffinity != (len(tc.reserved) == 0) {
-				t.Fatal("consumer miscounted the captured budget", decision.Keep.Reasons)
+				t.Fatal("consumer miscounted the captured budget", reasons)
 			}
 		})
 	}
@@ -551,7 +514,7 @@ func TestCaptureNodePodsRejectsMemoryOverflow(t *testing.T) {
 	}
 	snapshot := serving.SchedulerSnapshot{}
 	captureNodePods(&snapshot, &sn, node, pods, nil, nil)
-	if sn.Ready {
+	if !slices.Contains(sn.Reasons, serving.NodePlacementBudgetUnavailable) {
 		t.Fatal("overflowing effective memory requests became an available node")
 	}
 }
@@ -559,7 +522,7 @@ func TestCaptureNodePodsRejectsMemoryOverflow(t *testing.T) {
 func TestNonServingGPUOwnershipQuarantinesOnlyItsNode(t *testing.T) {
 	node := &core.Node{ObjectMeta: meta.ObjectMeta{Name: "quarantined-gpu", UID: "gpu-node"}}
 	state := serving.SchedulerNode{
-		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: "pool", Ready: true,
+		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Ready: true,
 		CPUs: []int{0, 1}, Reserved: serving.SchedulerAllocation{CPUs: []int{0}}, MemoryBytes: 4096,
 	}
 	pods := &core.PodList{Items: []core.Pod{{
@@ -574,7 +537,7 @@ func TestNonServingGPUOwnershipQuarantinesOnlyItsNode(t *testing.T) {
 	}}}
 	snapshot := serving.SchedulerSnapshot{}
 	captureNodePods(&snapshot, &state, node, pods, nil, nil)
-	if state.Ready || state.Reason == "" || len(snapshot.Reasons) != 0 {
+	if !state.Ready || !slices.Contains(state.Reasons, serving.NodePlacementBudgetUnavailable) || len(snapshot.Reasons) != 0 {
 		t.Fatalf("node-local GPU uncertainty became a global evaluation gap: node=%+v reasons=%v", state, snapshot.Reasons)
 	}
 	if len(state.NonServing) != 1 || state.NonServing[0].CPUCount != 1 ||

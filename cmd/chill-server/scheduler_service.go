@@ -332,14 +332,14 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 }
 
 // An acknowledged configuration can await actual physical readiness. The normal
-// refresh cadence applies its manual baseline once, never while controls are ON.
+// refresh cadence applies its manual distribution for disabled Workloads once.
 func (o *schedulerService) applyStaticRouting(ctx context.Context) {
 	config := o.configuration.Load()
 	if config.StaticRouting == nil {
 		o.staticAppliedRV = ""
 		return
 	}
-	if config.Settings.Controls.Enabled || o.staticAppliedRV == o.resourceVersion {
+	if o.staticAppliedRV == o.resourceVersion {
 		return
 	}
 	if err := o.controller.ApplyStaticRouting(ctx, config.StaticRouting, o.resourceVersion); err != nil {

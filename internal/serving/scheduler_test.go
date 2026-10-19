@@ -27,15 +27,15 @@ const (
 
 func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	at := time.Unix(100, 0)
-	s := SchedulerSettings{Algorithm: SchedulerAlgorithmFixedHorizon, ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, Horizon: 100 * time.Millisecond, MaxObservationAge: time.Second, Seed: 42, Replays: 3, MaxCandidates: 30, MaxReplicas: 2, MaxInstances: 4, MaxReplayRequests: 100, MaxCPUs: 4, Controls: SchedulerControls{Enabled: true, Placement: true, Resources: true, Replicas: true, Sharing: true, Routing: true, Batching: true, Power: true, Membership: true}}
-	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, Pool: "pool", PowerMode: "fixed", Ready: true, CPUs: []int{0, 1, 2, 3}, MemoryBytes: 10000, ObservedAt: at}
+	s := SchedulerSettings{Algorithm: SchedulerAlgorithmFixedHorizon, ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, Horizon: 100 * time.Millisecond, MaxObservationAge: time.Second, Seed: 42, Replays: 3, MaxCandidates: 30, MaxReplicas: 2, MaxInstances: 4, MaxReplayRequests: 100, MaxCPUs: 4, AutonomousWorkloads: []string{"w1"}, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Sharing: true, Routing: true, Batching: true, Power: true, Membership: true}}
+	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, PowerMode: "fixed", Ready: true, CPUs: []int{0, 1, 2, 3}, MemoryBytes: 10000, ObservedAt: at}
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
 	path := ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: settings}
 	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
 	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", CPU: derivation.CurveCPUContract{Policy: "quota-affinity", PolicyVersion: "v1", Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1, AffinityCPUs: []int{0}}, PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(10 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
-	i := SchedulerInstance{ID: "i1", Node: node.Node, Pool: node.Pool, Profile: p, WorkloadUIDs: []string{d.UID}, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
+	i := SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUIDs: []string{d.UID}, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
 	b := NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: schedulerNodeWallScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
 	b.Reference.Size = 1
 	p.Evidence[0].Size = 1
@@ -103,7 +103,7 @@ func schedulerTestCPU(i SchedulerInstance) SchedulerInstance {
 
 func TestSchedulerWindowPopulationAndZeroSample(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	d := snap.Workloads[0]
 	start := snap.ObservationEnd.Add(-s.ObservationWindow)
 	snap.Arrivals = []SchedulerArrival{{At: start.Add(-time.Nanosecond), Definition: d, Accepted: true}, {At: start, Definition: d, Accepted: true}, {At: start.Add(time.Millisecond), Outcome: "malformed"}, {At: snap.ObservationEnd, Definition: d, Accepted: true}}
@@ -130,7 +130,8 @@ func TestSchedulerWindowPopulationAndZeroSample(t *testing.T) {
 	if e.Samples != 0 || e.ExpectedNanos != nil {
 		t.Fatalf("empty percentile must be null: %+v", e)
 	}
-	if empty.Keep.ExpectedJoules == nil || math.Abs(*empty.Keep.ExpectedJoules-1.2) > 1e-9 {
+	// A decision sums only ComparedNodes; the replay itself still counts every Node.
+	if joules := schedulerReplayForTest(s, snap, empty.Keep).energy; math.Abs(joules-1.2) > 1e-9 {
 		t.Fatalf("empty serving still consumes physical idle: %+v", empty.Keep)
 	}
 }
@@ -171,7 +172,7 @@ func TestSchedulerObservationTimeBounds(t *testing.T) {
 
 func TestSchedulerSharedUIDNonpreemptiveBlockingAndResidual(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	s.Horizon = 200 * time.Millisecond
 	a := snap.Workloads[0]
 	b := *a
@@ -203,7 +204,7 @@ func TestSchedulerSharedUIDNonpreemptiveBlockingAndResidual(t *testing.T) {
 
 func TestSchedulerEnergyCountsPhysicalSharedIdleAndInactiveNodesOnce(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	other := *snap.Workloads[0]
 	other.UID = "w2"
 	snap.Workloads = append(snap.Workloads, &other)
@@ -217,9 +218,8 @@ func TestSchedulerEnergyCountsPhysicalSharedIdleAndInactiveNodesOnce(t *testing.
 	b.Meter = schedulerTestSecondMeter
 	b.Watts = 20
 	snap.Baselines = append(snap.Baselines, b)
-	decision := schedulerEvaluateForTest(t, s, snap)
-	if decision.Keep.ExpectedJoules == nil || math.Abs(*decision.Keep.ExpectedJoules-3.2) > 1e-9 {
-		t.Fatalf("shared model once + whole inactive node once: %+v", decision.Keep)
+	if joules := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}).energy; math.Abs(joules-3.2) > 1e-9 {
+		t.Fatalf("shared model once + whole inactive node once: %g", joules)
 	}
 	// A measured coexistence baseline replaces, rather than adds to, derived idle.
 	b = snap.Baselines[0]
@@ -227,13 +227,12 @@ func TestSchedulerEnergyCountsPhysicalSharedIdleAndInactiveNodesOnce(t *testing.
 	b.State = []string{SchedulerInstanceState(snap.Instances[0])}
 	b.Watts = 15
 	snap.Baselines = append(snap.Baselines, b)
-	decision = schedulerEvaluateForTest(t, s, snap)
-	if decision.Keep.ExpectedJoules == nil || math.Abs(*decision.Keep.ExpectedJoules-3.5) > 1e-9 {
-		t.Fatalf("matching whole state must win: %+v", decision.Keep)
+	if joules := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}).energy; math.Abs(joules-3.5) > 1e-9 {
+		t.Fatalf("matching whole state must win: %g", joules)
 	}
 	snap.Baselines[1].Meter = "wall-n1"
-	pending := schedulerEvaluateForTest(t, s, snap)
-	schedulerRequireReason(t, pending.Keep.Reasons, "NonDistinctNodeMeter")
+	pending := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances})
+	schedulerRequireReason(t, pending.reasons, "NonDistinctNodeMeter")
 }
 
 func TestSchedulerTransitionWallReplacesBaselineAndReadinessGatesRouting(t *testing.T) {
@@ -368,7 +367,7 @@ func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
 		t.Fatal("assignment is not native execution proof")
 	}
 	schedulerRequireReason(t, pending.Keep.Reasons, "NativeOwnershipPending")
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	s.CompletionMarginMS = 5
 	call := &Call{
 		receipt:            Receipt{ID: "returning", UID: snap.Workloads[0].UID, ReceivedAt: snap.At.Add(-10 * time.Millisecond)},
@@ -390,7 +389,7 @@ func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
 
 func TestSchedulerRejectedComputeAndUnknownCPUQuota(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	snap.Arrivals = []SchedulerArrival{{ID: "capacity-rejected", At: snap.At.Add(-s.ObservationWindow), Definition: snap.Workloads[0], Compute: true, Outcome: "QueueFull"}}
 	decision := schedulerEvaluateForTest(t, s, snap)
 	e := schedulerRequireEstimate(t, decision.Keep, snap.Workloads[0].UID)
@@ -486,7 +485,7 @@ func TestSchedulerLoadedPowerWitnessAndNewBundleReadiness(t *testing.T) {
 
 func TestSchedulerRoutingSharesUIDCreditsAndSortsPhysicalIDs(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	d := snap.Workloads[0]
 	newer := *d
 	newer.Generation++
@@ -508,7 +507,7 @@ func TestSchedulerRoutingSharesUIDCreditsAndSortsPhysicalIDs(t *testing.T) {
 
 func TestSchedulerNativeQueueOrderSurvivesReceiptOrderAndUIDSort(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	d := snap.Workloads[0]
 	later := *d
 	later.UID = "a"
@@ -528,7 +527,7 @@ func TestSchedulerNativeQueueOrderSurvivesReceiptOrderAndUIDSort(t *testing.T) {
 
 func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.MaxCandidates = 1 // keep only, with w1 still an SLO target
 	d := snap.Workloads[0]
 	life := 5 * time.Millisecond
 	snap.Outstanding = []SchedulerRequest{{ID: "first", QueueOrder: 0, RemainingLifetime: &life, Definition: d, ReceivedAt: snap.At, Phase: "queued", Instance: "i1"}, {ID: "second", QueueOrder: 1, RemainingLifetime: &life, Definition: d, ReceivedAt: snap.At, Phase: "queued", Instance: "i1"}}
@@ -538,7 +537,7 @@ func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T
 	}
 	decision := schedulerEvaluateForTest(t, s, snap)
 	e := schedulerRequireEstimate(t, decision.Keep, d.UID)
-	if decision.Status != schedulerStatusLifetime || decision.Target != nil || e.ExpectedNanos != nil || e.Samples != 0 || e.PredictedOutcomes["expired-running"] != s.Replays || e.PredictedOutcomes["expired-queued"] != s.Replays || decision.Keep.ExpectedJoules == nil || math.Abs(*decision.Keep.ExpectedJoules-2.2) > 1e-9 {
+	if decision.Status != schedulerStatusLifetime || decision.Target != nil || e.ExpectedNanos != nil || e.Samples != 0 || e.PredictedOutcomes["expired-running"] != s.Replays || e.PredictedOutcomes["expired-queued"] != s.Replays || math.Abs(schedulerReplayForTest(s, snap, decision.Keep).energy-2.2) > 1e-9 {
 		t.Fatalf("expired running work stays physical; queued expires; no successful fake zero percentile: %+v", decision)
 	}
 	snap.Outstanding = nil
@@ -559,14 +558,14 @@ func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T
 
 func TestSchedulerFiniteHorizonEnergyClipsExecutionAndOperation(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	d := snap.Workloads[0]
 	for j := 0; j < 3; j++ {
 		snap.Arrivals = append(snap.Arrivals, SchedulerArrival{ID: strings.Repeat("x", j+1), At: snap.At.Add(-s.ObservationWindow + 95*time.Millisecond), Definition: d, Accepted: true})
 	}
 	decision := schedulerEvaluateForTest(t, s, snap)
 	e := schedulerRequireEstimate(t, decision.Keep, d.UID)
-	if decision.Keep.ExpectedJoules == nil || math.Abs(*decision.Keep.ExpectedJoules-1.7) > 1e-9 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(30*time.Millisecond) {
+	if joules := schedulerReplayForTest(s, snap, decision.Keep).energy; math.Abs(joules-1.7) > 1e-9 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(30*time.Millisecond) {
 		t.Fatalf("only half first batch overlaps H; later SLO completions still included: %+v", decision.Keep)
 	}
 	snap.Arrivals = nil
@@ -575,7 +574,7 @@ func TestSchedulerFiniteHorizonEnergyClipsExecutionAndOperation(t *testing.T) {
 	snap.Outstanding = []SchedulerRequest{{ID: phaseRunning, Definition: d, ReceivedAt: snap.At.Add(-7 * time.Millisecond), Elapsed: 7 * time.Millisecond, RunningElapsed: 7 * time.Millisecond, Phase: phaseRunning, Instance: "i1", BatchID: "actual"}}
 	snap.Outstanding[0].NativeSenderElapsedMS = &zeroSender
 	running := schedulerEvaluateForTest(t, s, snap)
-	if running.Keep.ExpectedJoules == nil || math.Abs(*running.Keep.ExpectedJoules-0.112) > 1e-9 {
+	if joules := schedulerReplayForTest(s, snap, running.Keep).energy; math.Abs(joules-0.112) > 1e-9 {
 		t.Fatalf("running execution overlap is 1/10 batch plus 1ms baseline: %+v", running.Keep)
 	}
 	snap.Outstanding = nil
@@ -646,7 +645,7 @@ func TestSchedulerTerminalPrepareDoesNotReuseAbsentEffect(t *testing.T) {
 
 func TestSchedulerCurrentBatchPolicyUsesFrozenNativeSenderContext(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	a := snap.Workloads[0]
 	b := *a
 	b.UID = "b"
@@ -668,31 +667,28 @@ func TestSchedulerCurrentBatchPolicyUsesFrozenNativeSenderContext(t *testing.T) 
 
 func TestSchedulerDerivedBaselinePreservesMeasuredSignedIdleDelta(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	snap.Instances[0].Profile.IdleBaselineWatts = 8
-	decision := schedulerEvaluateForTest(t, s, snap)
-	if decision.Keep.ExpectedJoules == nil || math.Abs(*decision.Keep.ExpectedJoules-0.8) > 1e-9 {
-		t.Fatalf("derived unloaded + measured signed loaded-idle delta must retain exact subtraction: %+v", decision.Keep)
+	keep := SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}
+	if joules := schedulerReplayForTest(s, snap, keep).energy; math.Abs(joules-0.8) > 1e-9 {
+		t.Fatalf("derived unloaded + measured signed loaded-idle delta must retain exact subtraction: %g", joules)
 	}
 	snap.Instances[0].Profile.IdleBaselineWatts = 1
 	other := schedulerTestCPU(snap.Instances[0])
 	other.ID = schedulerTestOther
 	snap.Instances = append(snap.Instances, other)
-	outside := schedulerEvaluateForTest(t, s, snap)
-	schedulerRequireReason(t, outside.Keep.Reasons, "DerivedNodeBaselineOutsidePhysicalRange")
+	keep.Instances = snap.Instances
+	schedulerRequireReason(t, schedulerReplayForTest(s, snap, keep).reasons, "DerivedNodeBaselineOutsidePhysicalRange")
 }
 
 func TestSchedulerEnergyOverflowRemainsUnknownNotJSONInfinity(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Controls.Enabled = false
+	s.AutonomousWorkloads = nil
 	d := snap.Workloads[0]
 	snap.Instances[0].Profile.Batches[0].EnergyPerInputJoules = math.MaxFloat64
 	snap.Arrivals = []SchedulerArrival{{ID: "one", At: snap.At.Add(-s.ObservationWindow), Definition: d, Compute: true}, {ID: "two", At: snap.At.Add(-s.ObservationWindow + time.Millisecond), Definition: d, Compute: true}}
-	decision := schedulerEvaluateForTest(t, s, snap)
-	if decision.Keep.ExpectedJoules != nil || decision.Target != nil {
-		t.Fatalf("unrepresentable expected energy must remain ineligible: %+v", decision)
-	}
-	schedulerRequireReason(t, decision.Keep.Reasons, "ExpectedEnergyOutsidePhysicalNumericalRange")
+	result := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances})
+	schedulerRequireReason(t, result.reasons, "ExpectedEnergyOutsidePhysicalNumericalRange")
 }
 
 func TestSchedulerWithoutCompletionObservationsIsNotPending(t *testing.T) {
@@ -708,11 +704,11 @@ func TestSchedulerWithoutCompletionObservationsIsNotPending(t *testing.T) {
 
 func TestSchedulerQuarantinedUnusedNodeDoesNotBlockKnownCPU(t *testing.T) {
 	settings, snapshot := schedulerFixture()
-	settings.Controls.Enabled = false
+	settings.AutonomousWorkloads = nil
 	snapshot.Options = nil
 	quarantined := snapshot.Nodes[0]
 	quarantined.Node = NodeReference{Name: "quarantined-gpu", UID: "gpu-node"}
-	quarantined.Ready, quarantined.Reason = false, "non-serving physical GPU ownership unobserved"
+	quarantined.Ready, quarantined.Reasons = false, []string{NodePlacementBudgetUnavailable}
 	snapshot.Nodes = append(snapshot.Nodes, quarantined)
 	baseline := snapshot.Baselines[0]
 	baseline.ID, baseline.Node, baseline.Meter, baseline.Watts = "gpu-idle", quarantined.Node, "wall-gpu-node", 20
@@ -720,10 +716,10 @@ func TestSchedulerQuarantinedUnusedNodeDoesNotBlockKnownCPU(t *testing.T) {
 	snapshot.Baselines = append(snapshot.Baselines, baseline)
 	known := schedulerEvaluateForTest(t, settings, snapshot)
 	if known.Keep.Status == schedulerStatusPending || known.Keep.ExpectedJoules == nil ||
-		math.Abs(*known.Keep.ExpectedJoules-3.2) > 1e-9 {
+		math.Abs(schedulerReplayForTest(settings, snapshot, known.Keep).energy-3.2) > 1e-9 {
 		t.Fatalf("unused quarantined node blocked known CPU or lost whole-POOL energy: %+v", known.Keep)
 	}
-	if known.Keep.Nodes[1].Ready || known.Keep.Nodes[1].Reason == "" {
+	if known.Keep.Nodes[1].Ready || len(known.Keep.Nodes[1].Reasons) == 0 {
 		t.Fatal("evaluation hid the quarantined Node's actual eligibility")
 	}
 	instance := snapshot.Instances[0]
@@ -788,6 +784,7 @@ func TestSchedulerEnumerationHonorsInFlightDeadline(t *testing.T) {
 		definition.Name, definition.UID = fmt.Sprintf("workload-%02d", index), fmt.Sprintf("uid-%02d", index)
 		snapshot.Workloads = append(snapshot.Workloads, &definition)
 		snapshot.Options[0].CompatibleUIDs = append(snapshot.Options[0].CompatibleUIDs, definition.UID)
+		settings.AutonomousWorkloads = append(settings.AutonomousWorkloads, definition.UID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()

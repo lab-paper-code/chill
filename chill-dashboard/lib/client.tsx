@@ -138,9 +138,10 @@ export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boo
   },retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => options.poll && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
   return {...query,data:query.error && [401,403].includes(query.error.status) ? undefined : query.data}
 }
+export type ChillMutationInput = {path:string;method:"POST"|"PUT"|"DELETE";body?:unknown;version?:string;timeout?:string}
 export function useChillMutation() {
   const {token,signals} = useSession()
-  return useMutation<RelayResponse,ApiError,{path:string;method:"POST"|"PUT"|"DELETE";body?:unknown;version?:string;timeout?:string}>({retry:false,mutationFn:async input => {
+  return useMutation<RelayResponse,ApiError,ChillMutationInput>({retry:false,mutationFn:async input => {
     if (!token) throw new ApiError(401,"인증 필요",null)
     const controller = new AbortController()
     signals.add(controller)

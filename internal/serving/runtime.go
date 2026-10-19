@@ -84,7 +84,7 @@ type Runtime struct {
 	names             map[string]string
 	instances         map[string]*runtimeInstance
 	profiles          []Profile
-	nodes             map[string][]NodeReference
+	measurement       []NodeReference
 	routingControlled bool
 	completionMargin  float64
 	routeTargets      map[string]map[string]int32
@@ -100,7 +100,7 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		return nil, errors.New("positive queue limit and observation log are required")
 	}
 	backendCtx, cancel := context.WithCancel(ctx)
-	r := &Runtime{config: config, ctx: backendCtx, cancel: cancel, workloads: map[string]*runtimeWorkload{}, names: map[string]string{}, instances: map[string]*runtimeInstance{}, nodes: map[string][]NodeReference{}, calls: map[string]*Call{}, definitions: map[string]*Definition{}, changed: make(chan struct{}, 1)}
+	r := &Runtime{config: config, ctx: backendCtx, cancel: cancel, workloads: map[string]*runtimeWorkload{}, names: map[string]string{}, instances: map[string]*runtimeInstance{}, calls: map[string]*Call{}, definitions: map[string]*Definition{}, changed: make(chan struct{}, 1)}
 	definitions, pending, err := config.ObservationLog.runtimeFacts()
 	if err != nil {
 		cancel()
@@ -126,7 +126,7 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		}
 		instance := r.instances[c.assignment.Instance]
 		if instance == nil {
-			instance = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{ID: c.assignment.Instance, Node: c.assignment.Node, Pool: c.assignment.Pool, Profile: c.assignment.Profile, Reason: "RestartUnconfirmed"}}, bindings: map[string]bool{}}
+			instance = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{ID: c.assignment.Instance, Node: c.assignment.Node, Profile: c.assignment.Profile, Reason: "RestartUnconfirmed"}}, bindings: map[string]bool{}}
 			r.instances[c.assignment.Instance] = instance
 		}
 		instance.bindings[d.UID] = true
@@ -346,7 +346,7 @@ func (r *Runtime) dispatchLocked() {
 				break
 			}
 			i := entry.instance
-			c.assignment = &Assignment{Pool: i.State.Pool, Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: time.Now().UTC()}
+			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: time.Now().UTC()}
 			c.assignment.ProfileReference = i.Profile.Reference
 			c.assignment.ProfileEvidence = i.Profile.Evidence
 			c.assignment.ProfileConfidenceLevel = i.Profile.ConfidenceLevel
@@ -674,10 +674,12 @@ func (r *Runtime) SetProfiles(profiles []Profile) {
 	r.dispatchLocked()
 	r.signal()
 }
-func (r *Runtime) SetNodes(nodes map[string][]NodeReference) {
+
+// SetMeasurementNodes publishes the Nodes that carry the measurement POOL taint.
+func (r *Runtime) SetMeasurementNodes(nodes []NodeReference) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.nodes = nodes
+	r.measurement = nodes
 	r.signal()
 }
 
@@ -719,7 +721,7 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 			i.State.Reason = candidate.State.Reason
 			continue
 		}
-		if i.outstanding > 0 && (i.State.Profile != candidate.Profile.ID || i.State.Node != candidate.State.Node || i.State.Pool != candidate.State.Pool) {
+		if i.outstanding > 0 && (i.State.Profile != candidate.Profile.ID || i.State.Node != candidate.State.Node) {
 			i.State.Reason = "ConditionChangedBeforeDrain"
 			continue
 		}
@@ -864,20 +866,15 @@ func (r *Runtime) State(name string) (WorkloadState, error) {
 	return state, nil
 }
 
-func (r *Runtime) Pools() []PoolState {
+// Instances lists every actual instance with its bindings and outstanding work.
+func (r *Runtime) Instances() []InstanceState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	now := time.Now().UTC()
-	pools := map[string]*PoolState{}
-	get := func(id string) *PoolState {
-		if pools[id] == nil {
-			pools[id] = &PoolState{ID: id, ObservedAt: now}
-		}
-		return pools[id]
-	}
-	for id, nodes := range r.nodes {
-		get(id).CurrentNodes = append([]NodeReference(nil), nodes...)
-	}
+	return r.instancesLocked()
+}
+
+func (r *Runtime) instancesLocked() []InstanceState {
+	result := make([]InstanceState, 0, len(r.instances))
 	for _, i := range r.instances {
 		state := i.State
 		state.OwnerWorkloadUID = i.OwnerWorkloadUID
@@ -904,25 +901,82 @@ func (r *Runtime) Pools() []PoolState {
 			}
 		}
 		sort.Slice(state.Workloads, func(a, b int) bool { return state.Workloads[a].UID < state.Workloads[b].UID })
-		pool := get(state.Pool)
-		pool.Instances = append(pool.Instances, state)
-	}
-	result := make([]PoolState, 0, len(pools))
-	for _, pool := range pools {
-		seen := map[string]bool{}
-		for _, i := range pool.Instances {
-			for _, w := range i.Workloads {
-				if !seen[w.UID] {
-					pool.ServingWorkloads = append(pool.ServingWorkloads, w)
-					seen[w.UID] = true
-				}
-			}
-		}
-		sort.Slice(pool.Instances, func(a, b int) bool { return pool.Instances[a].ID < pool.Instances[b].ID })
-		sort.Slice(pool.ServingWorkloads, func(a, b int) bool { return pool.ServingWorkloads[a].UID < pool.ServingWorkloads[b].UID })
-		result = append(result, *pool)
+		result = append(result, state)
 	}
 	sort.Slice(result, func(a, b int) bool { return result[a].ID < result[b].ID })
+	return result
+}
+
+// Pools derives each Workload's active POOL from the instances it owns or is
+// bound to, the measurement POOL from the taint, and the remaining Nodes of the
+// entire POOL from the latest scheduler snapshot.
+func (r *Runtime) Pools(nodes []SchedulerNode) PoolsState {
+	r.mu.Lock()
+	instances := r.instancesLocked()
+	measurement := slices.Clone(r.measurement)
+	names := map[string]string{}
+	for uid, w := range r.workloads {
+		names[uid] = w.definition.Name
+	}
+	r.mu.Unlock()
+	return BuildPools(instances, measurement, nodes, names)
+}
+
+// BuildPools is the pure POOL derivation behind Runtime.Pools.
+func BuildPools(instances []InstanceState, measurement []NodeReference, nodes []SchedulerNode, names map[string]string) PoolsState {
+	result := PoolsState{Workloads: []WorkloadPool{}, Measurement: []MeasurementPool{}, Available: []PoolNode{}, Other: []PoolNode{}, ObservedAt: time.Now().UTC()}
+	pools := map[string]*WorkloadPool{}
+	measured := map[NodeReference]*MeasurementPool{}
+	for _, node := range measurement {
+		measured[node] = &MeasurementPool{Node: node, Instances: []InstanceState{}}
+	}
+	served := map[NodeReference]bool{}
+	active := map[NodeReference]bool{}
+	for _, instance := range instances {
+		served[instance.Node] = true
+		if pool := measured[instance.Node]; pool != nil {
+			pool.Instances = append(pool.Instances, instance)
+		}
+		uids := []string{}
+		if instance.OwnerWorkloadUID != "" {
+			uids = append(uids, instance.OwnerWorkloadUID)
+		}
+		for _, w := range instance.Workloads {
+			uids = appendUnique(uids, w.UID)
+		}
+		for _, uid := range uids {
+			pool := pools[uid]
+			if pool == nil {
+				pool = &WorkloadPool{Workload: WorkloadReference{Name: names[uid], UID: uid}, Nodes: []NodeReference{}, Instances: []InstanceState{}}
+				pools[uid] = pool
+			}
+			if !slices.Contains(pool.Nodes, instance.Node) {
+				pool.Nodes = append(pool.Nodes, instance.Node)
+			}
+			pool.Instances = append(pool.Instances, instance)
+			active[instance.Node] = true
+		}
+	}
+	for _, pool := range pools {
+		sort.Slice(pool.Nodes, func(a, b int) bool { return pool.Nodes[a].Name < pool.Nodes[b].Name })
+		result.Workloads = append(result.Workloads, *pool)
+	}
+	sort.Slice(result.Workloads, func(a, b int) bool { return result.Workloads[a].Workload.UID < result.Workloads[b].Workload.UID })
+	for _, node := range measurement {
+		result.Measurement = append(result.Measurement, *measured[node])
+	}
+	for _, n := range nodes {
+		if measured[n.Node] != nil {
+			continue
+		}
+		node := PoolNode{Node: n.Node, Ready: n.Ready, PowerMode: n.PowerMode, Reasons: n.Reasons}
+		switch {
+		case n.Ready && !served[n.Node]:
+			result.Available = append(result.Available, node)
+		case !active[n.Node]:
+			result.Other = append(result.Other, node)
+		}
+	}
 	return result
 }
 

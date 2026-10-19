@@ -88,9 +88,7 @@ func TestMeasuredAdoptionRequiresExplicitUnreservedPhysicalInventory(t *testing.
 }
 func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *testing.T) {
 	service := &schedulerService{
-		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{
-			Name: "node", UID: "node-uid", Labels: map[string]string{servingkube.ServingPoolLabel: "pool"},
-		}}),
+		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),
 		opts: options{
 			storeName: "store", storeEndpoint: "http://store", storeBucket: "bucket", storeRegion: "region",
 			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second,
@@ -133,7 +131,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
 	node := &core.Node{
 		ObjectMeta: meta.ObjectMeta{
-			Name: "node", UID: "node-uid", Labels: map[string]string{servingkube.ServingPoolLabel: "pool"},
+			Name: "node", UID: "node-uid",
 		},
 		Status: core.NodeStatus{
 			Conditions: []core.NodeCondition{{Type: core.NodeReady, Status: core.ConditionTrue}},
@@ -172,7 +170,7 @@ func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
 				t.Fatalf("preparation conflated measured request, affinity or threads: %+v", spec)
 			}
 			inventory := serving.SchedulerNode{
-				Node: spec.Instance.Node, Pool: "pool", CPUs: []int{0, 1, 2, 3}, MemoryBytes: 1 << 30,
+				Node: spec.Instance.Node, CPUs: []int{0, 1, 2, 3}, MemoryBytes: 1 << 30,
 			}
 			if err = servingkube.ValidatePreparationCapacity(
 				"serving", node, &core.PodList{}, inventory, spec.Instance,
@@ -318,7 +316,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	}
 	if err := execution.InstallInstances([]serving.ReadyInstance{{
 		State: serving.InstanceState{
-			ID: "physical", Pool: "pool", Node: serving.NodeReference{Name: "node", UID: "uid"},
+			ID: "physical", Node: serving.NodeReference{Name: "node", UID: "uid"},
 			Profile: profile.ID, Ready: true,
 		},
 		Profile: &profile, Weight: 1, Capacity: 1,
@@ -362,8 +360,9 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 	ctx := context.Background()
 	config := profileRemovalConfiguration()
+	config.Settings.AutonomousWorkloads = []string{"original-workload-uid"}
 	config.Settings.Controls = serving.SchedulerControls{
-		Enabled: true, Placement: true, Resources: true, Replicas: true, Sharing: true,
+		Placement: true, Resources: true, Replicas: true, Sharing: true,
 		Routing: true, Batching: true, Power: true, Membership: true,
 	}
 	service := profileRemovalService(t, config)
@@ -389,7 +388,7 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 	}
 	dispatched := make(chan serving.Dispatch, 1)
 	instance := serving.ReadyInstance{
-		State: serving.InstanceState{ID: "original-pod/container", Pool: "pool",
+		State: serving.InstanceState{ID: "original-pod/container",
 			Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Profile: profile.ID, Ready: true},
 		Profile: &profile, Weight: 1, Capacity: 1,
 		Execute: func(_ context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
@@ -454,7 +453,7 @@ func profileRemovalConfiguration() schedulerConfiguration {
 		id := "measurements/" + name + "/uid"
 		config.Preparations[id] = servingkube.PrepareSpec{
 			Name: name, MemoryBytes: 4096,
-			Instance: serving.SchedulerInstance{ID: name, Pool: "pool", Capacity: 8, Weight: 1},
+			Instance: serving.SchedulerInstance{ID: name, Capacity: 8, Weight: 1},
 			Config:   native.Config{Policy: native.Policy{ProfileID: id}},
 		}
 	}
@@ -640,7 +639,7 @@ func TestProfileRemovalRejectsCurrentRpiCPU2AndUnobservedNativePod(t *testing.T)
 				profile.ID = id
 				err := service.execution.InstallInstances([]serving.ReadyInstance{{
 					State: serving.InstanceState{
-						ID: "physical-pod/container", Pool: "pool", Node: serving.NodeReference{Name: "rpi", UID: "rpi-uid"},
+						ID: "physical-pod/container", Node: serving.NodeReference{Name: "rpi", UID: "rpi-uid"},
 						Profile: id, Ready: true,
 					},
 					Profile: &profile, Weight: 1, Capacity: 1,
@@ -662,10 +661,9 @@ func TestProfileRemovalRejectsCurrentRpiCPU2AndUnobservedNativePod(t *testing.T)
 				t.Fatal("in-use rejection changed scheduler intent")
 			}
 			if !nativePod {
-				pools := service.execution.Pools()
-				if len(pools) != 1 || len(pools[0].Instances) != 1 ||
-					!pools[0].Instances[0].Ready || pools[0].Instances[0].Stopped {
-					t.Fatalf("profile rejection stopped or removed the physical executor: %+v", pools)
+				instances := service.execution.Instances()
+				if len(instances) != 1 || !instances[0].Ready || instances[0].Stopped {
+					t.Fatalf("profile rejection stopped or removed the physical executor: %+v", instances)
 				}
 			}
 			for _, action := range service.kube.(*fake.Clientset).Actions() {
@@ -730,14 +728,16 @@ func TestProfileRemovalFailedRefreshKeepsAcceptedCatalogAndReportsPending(t *tes
 	}
 }
 
-func TestProfileRemovalRequiresDesiredAndAcceptedAutomaticControlsOff(t *testing.T) {
+func TestProfileRemovalRequiresDesiredAndAcceptedAutonomyOff(t *testing.T) {
 	for _, activeOnly := range []bool{false, true} {
 		config := profileRemovalConfiguration()
-		config.Settings.Controls.Enabled = !activeOnly
+		if !activeOnly {
+			config.Settings.AutonomousWorkloads = []string{"workload-uid"}
+		}
 		service := profileRemovalService(t, config)
 		if activeOnly {
 			settings := service.controller.Settings()
-			settings.Controls.Enabled = true
+			settings.AutonomousWorkloads = []string{"workload-uid"}
 			if err := service.controller.SetConfiguration(servingkube.SchedulerControllerConfig{
 				Settings: settings,
 			}); err != nil {
@@ -747,10 +747,10 @@ func TestProfileRemovalRequiresDesiredAndAcceptedAutomaticControlsOff(t *testing
 		result, err := service.removeProfile(context.Background(),
 			httpapi.ProfileCampaign{Namespace: "measurements", Name: "genesis2-gpu"}, "1", servingkube.Principal{})
 		if err != nil || result.Status != profileSelectionRejected || result.Code != "ProfileControlsEnabled" {
-			t.Fatalf("automatic controls could launch an old catalog after removal: %+v %v", result, err)
+			t.Fatalf("autonomous control could launch an old catalog after removal: %+v %v", result, err)
 		}
 		if actual := persistedRemovalConfiguration(t, service); !reflect.DeepEqual(actual, config) {
-			t.Fatal("enabled-controls rejection changed persisted intent")
+			t.Fatal("autonomous-control rejection changed persisted intent")
 		}
 	}
 }

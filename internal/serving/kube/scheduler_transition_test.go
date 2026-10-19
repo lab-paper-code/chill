@@ -67,13 +67,13 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	profile.RuntimeMetadata = &native.RuntimeMetadata{CPUAffinity: []int{0}, IntraOpThreads: 1}
 	node := serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID}
 	wanted := serving.SchedulerInstance{
-		ID: "destination-physical", Node: node, Pool: "pool", Profile: &profile,
+		ID: "destination-physical", Node: node, Profile: &profile,
 		Allocation:   serving.SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1024},
 		WorkloadUIDs: []string{d.UID}, Ready: true, Capacity: 8, Weight: 1, MaxBatch: 1,
 	}
 	oldTarget := serving.SchedulerCandidate{ID: "old-target", Instances: []serving.SchedulerInstance{wanted}, Routing: map[string]map[string]int32{d.UID: {wanted.ID: 1}}}
 	physical := serving.ReadyInstance{
-		State: serving.InstanceState{ID: wanted.ID, Node: node, Pool: wanted.Pool, Profile: profile.ID, Ready: true, Native: &native.State{Ready: true, Metadata: native.Metadata{
+		State: serving.InstanceState{ID: wanted.ID, Node: node, Profile: profile.ID, Ready: true, Native: &native.State{Ready: true, Metadata: native.Metadata{
 			ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: wanted.Capacity, MaxBatchSize: wanted.MaxBatch,
 			Policy: native.Policy{ProfileID: profile.ID, MaxBatchSize: wanted.MaxBatch, DeadlinePolicy: "keep"},
 		}}},
@@ -158,11 +158,9 @@ func TestUnboundRuntimeAndSchedulerCaptureRetainVerifiedOwnerAndSlotFacts(t *tes
 		t.Fatal(err)
 	}
 	var unbound *serving.InstanceState
-	for _, pool := range controller.runtime.Pools() {
-		for index := range pool.Instances {
-			if pool.Instances[index].ID == physical.State.ID {
-				unbound = &pool.Instances[index]
-			}
+	for _, instance := range controller.runtime.Instances() {
+		if instance.ID == physical.State.ID {
+			unbound = &instance
 		}
 	}
 	if unbound == nil || len(unbound.Workloads) != 0 || unbound.OwnerWorkloadUID != uid || unbound.TargetID != physical.State.TargetID {
@@ -173,12 +171,12 @@ func TestUnboundRuntimeAndSchedulerCaptureRetainVerifiedOwnerAndSlotFacts(t *tes
 	id := physicalID(pod.UID, status.ContainerID)
 	state := serving.InstanceState{
 		ID: id, TargetID: unbound.TargetID, OwnerWorkloadUID: unbound.OwnerWorkloadUID,
-		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: "pool", Profile: profile.ID, Ready: true,
+		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile.ID, Ready: true,
 		Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata}},
 	}
 	pod.Annotations[ServingSlotAnnotation] = state.TargetID
 	snapshot := serving.SchedulerSnapshot{}
-	sn := serving.SchedulerNode{Node: state.Node, Pool: state.Pool, Ready: true}
+	sn := serving.SchedulerNode{Node: state.Node, Ready: true}
 	captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}},
 		map[string]serving.InstanceState{id: state}, map[string]*serving.Profile{profile.ID: &profile})
 	if len(snapshot.Instances) != 1 || len(snapshot.Instances[0].WorkloadUIDs) != 0 ||
@@ -352,7 +350,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 		At: time.Now().UTC(), Instances: []serving.SchedulerInstance{observed},
 	}, &goal, time.Now().UTC(), time.Minute)
 	decision := serving.SchedulerDecision{
-		Settings:   serving.SchedulerSettings{Controls: serving.SchedulerControls{Enabled: true}},
+		Settings:   serving.SchedulerSettings{AutonomousWorkloads: wanted.WorkloadUIDs},
 		Candidates: []serving.SchedulerCandidate{{Keep: true, Actions: snapshot.Actions}},
 	}
 	serving.FinalizeSchedulerTarget(snapshot, &decision, 0)
@@ -365,7 +363,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	publish := make(chan struct{})
 	published := make(chan struct{})
 	receipt := OperationResult{Operation: operation, Status: nativeOperationComplete, EndedAt: time.Now().UTC(),
-		Actual: OperationState{Node: wanted.Node, Pool: wanted.Pool, Instances: []serving.InstanceState{physical.State}}}
+		Actual: OperationState{Node: wanted.Node, Instances: []serving.InstanceState{physical.State}}}
 	controller.wg.Add(1)
 	go func() {
 		defer controller.wg.Done()

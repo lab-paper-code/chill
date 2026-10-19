@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { useQueryClient } from "@tanstack/react-query"
-import { useChillQuery, useChillMutation, useSession, ApiError } from "@/lib/client"
+import { useQueryClient, type QueryClient } from "@tanstack/react-query"
+import { useChillQuery, useChillMutation, useSession, ApiError, type ChillMutationInput, type RelayResponse } from "@/lib/client"
 import type { OperationResult, SchedulerAlgorithm, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
 import { millisecondsToNanos, nanosToMilliseconds, wireInteger, marginMilliseconds, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
-type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"algorithm">
+type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"algorithm"|"autonomousWorkloads">
 // internal/serving/scheduler_policy.go: ChillServer rejects any other value.
 export const algorithms:Record<SchedulerAlgorithm,{label:string;help:string}> = {
   "fixed-horizon":{label:"고정 기간 비교",help:"후보마다 정한 기간 동안의 에너지를 비교해요."},
@@ -36,11 +36,12 @@ const fields: Field[] = [
   {key:"seed",label:"비교 재현용 시드",help:"같은 조건을 다시 만들 때 쓰는 값이에요.",group:"advanced"},
 ]
 const controls: {key:keyof SchedulerSettings["controls"];label:string}[] = [
-  {key:"enabled",label:"자동 적용"},{key:"placement",label:"배치 위치"},{key:"resources",label:"자원 할당"},
+  {key:"placement",label:"배치 위치"},{key:"resources",label:"자원 할당"},
   {key:"replicas",label:"복제 수"},{key:"sharing",label:"인스턴스 공유"},{key:"routing",label:"요청 분배"},
   {key:"batching",label:"배칭"},{key:"power",label:"전력모드"},{key:"membership",label:"실행 그룹 소속"},
 ]
 const onOff = (on:boolean) => on?"사용":"사용 안 함"
+const autonomous = (settings:SchedulerSettings) => `${settings.autonomousWorkloads?.length??0}개`
 const mib = (bytes:WireInteger|string) => `약 ${(Number(bytes)/1048576).toLocaleString("ko-KR",{maximumFractionDigits:3})}MiB`
 const time = (at:string) => new Date(at).toLocaleString("ko-KR")
 function plain(field:Field,value:WireInteger):string {
@@ -52,6 +53,7 @@ function plain(field:Field,value:WireInteger):string {
 function changedRows(before:SchedulerSettings,after:SchedulerSettings) {
   return [
     ...(before.algorithm!==after.algorithm?[["판단 방식",`${algorithmLabel(before.algorithm)} → ${algorithmLabel(after.algorithm)}`] as [string,string]]:[]),
+    ...(String(before.autonomousWorkloads)!==String(after.autonomousWorkloads)?[["자동 제어 서비스",`${autonomous(before)} → ${autonomous(after)}`] as [string,string]]:[]),
     ...fields.filter(field=>String(before[field.key])!==String(after[field.key])).map(field=>[field.label,`${plain(field,before[field.key])} → ${plain(field,after[field.key])}`] as [string,string]),
     ...controls.filter(control=>before.controls[control.key]!==after.controls[control.key]).map(control=>[control.label,`${onOff(before.controls[control.key])} → ${onOff(after.controls[control.key])}`] as [string,string]),
   ]
@@ -61,7 +63,15 @@ export function SettingChanges({before,after,stored=false}:{before:SchedulerSett
   return rows.length?<Facts items={rows}/>:<p>{stored?"기록의 전후 설정이 같아요.":"바꾼 값과 현재 설정이 같아요."}</p>
 }
 export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
-  return <Facts items={[["판단 방식",algorithmLabel(settings.algorithm)],...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
+  return <Facts items={[["판단 방식",algorithmLabel(settings.algorithm)],["자동 제어 서비스",autonomous(settings)],...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
+}
+
+// The one settings write: PUT the full settings, then refresh every scheduler read. Shared with the Workload screen.
+export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Promise<RelayResponse>,client:QueryClient,settings:SchedulerSettings) {
+  const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON(settings)})
+  const applied=parseSchedulerJSON(response.body) as SchedulerSettingsChange
+  await client.invalidateQueries({predicate:query=>typeof query.queryKey[1]==="string"&&(query.queryKey[1].startsWith("v1/scheduler")||query.queryKey[1].startsWith("v1/observations/scheduler"))})
+  return applied
 }
 
 // One row, one value: the dialog edits only this value and adds it to the draft.
@@ -80,7 +90,7 @@ function EditRow({label,help,value,changed,initial,unit,range,save,disabled}:{la
 
 function AlgorithmRow({value,changed,save,disabled}:{value:SchedulerAlgorithm;changed:boolean;save:(value:SchedulerAlgorithm)=>void;disabled:boolean}) {
   const [open,setOpen]=React.useState(false),[next,setNext]=React.useState(value)
-  return <RowDialog label="운영 판단 알고리즘" hint={changed?"바꾼 값이에요":undefined} value={algorithmLabel(value)} title="운영 판단 알고리즘" description="바꾸면 다음 판단부터 이 방식으로 후보를 비교해요. 자동 적용이 꺼져 있으면 실제 구성은 바뀌지 않아요." open={open} onOpenChange={state=>{setOpen(state);setNext(value)}}>
+  return <RowDialog label="운영 판단 알고리즘" hint={changed?"바꾼 값이에요":undefined} value={algorithmLabel(value)} title="운영 판단 알고리즘" description="바꾸면 다음 판단부터 이 방식으로 후보를 비교해요. 실제 구성은 자동 제어를 켠 서비스에서만 바뀌어요." open={open} onOpenChange={state=>{setOpen(state);setNext(value)}}>
     <form className="grid gap-4" onSubmit={event=>{event.preventDefault();save(next);setOpen(false)}}>
       <ul className="rows">{(Object.keys(algorithms) as SchedulerAlgorithm[]).map(key=><li key={key}><label className="row"><input type="radio" name="algorithm" checked={next===key} onChange={()=>setNext(key)}/><span className="row-main"><span className="row-text">{algorithms[key].label}</span><span className="row-hint">{algorithms[key].help}</span></span></label></li>)}</ul>
       <Button type="submit" disabled={disabled}>바꾸기</Button>
@@ -133,10 +143,8 @@ export function SchedulerSettingsPage() {
     saving.current=true;setSubmittedAt(new Date().toISOString());setRecoveryStarted(0);setHistoryWindow(null)
     const selected=review;setReview(null);setReviewOpen(false);setResult(null);setResponseError(null)
     try {
-      const response=await mutation.mutateAsync({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON(selected)})
-      const applied=parseSchedulerJSON(response.body) as SchedulerSettingsChange
+      const applied=await putSchedulerSettings(mutation.mutateAsync,client,selected)
       setResult(applied);setBaseline(null);setDraft(null)
-      await client.invalidateQueries({predicate:query=>typeof query.queryKey[1]==="string"&&(query.queryKey[1].startsWith("v1/scheduler")||query.queryKey[1].startsWith("v1/observations/scheduler"))})
     } catch(error) {if(!(error instanceof ApiError))setResponseError("적용 응답을 해석하지 못했어요. 현재 설정과 최근 변경 기록을 확인해 주세요.")}
     finally {saving.current=false}
   }
@@ -179,13 +187,13 @@ export function SchedulerSettingsPage() {
       edit(base=>({...base,[field.key]:parsed}))
     }} disabled={blocked}/>)
   return <Screen back={back} title="운영 설정"
-    lede={!precise?"이 브라우저는 큰 정수를 정확히 다루지 못해 설정을 바꿀 수 없어요. 최신 브라우저에서 열어 주세요.":settings.data?(settings.data.controls.enabled?"판단 결과를 자동으로 적용하고 있어요.":"판단만 하고 자동으로 적용하지는 않아요."):undefined}
+    lede={!precise?"이 브라우저는 큰 정수를 정확히 다루지 못해 설정을 바꿀 수 없어요. 최신 브라우저에서 열어 주세요.":settings.data?(settings.data.autonomousWorkloads?.length?`서비스 ${settings.data.autonomousWorkloads.length}개를 자동으로 제어하고 있어요. 서비스 화면에서 켜고 끌 수 있어요.`:"모든 서비스가 마지막 구성을 유지해요. 서비스 화면에서 자동 제어를 켤 수 있어요."):undefined}
     action={count>0&&<Button ref={reviewLauncher} onClick={()=>void inspect()} disabled={blocked}>{reviewing?"현재 값을 확인하고 있어요":`변경 ${count}건 검토`}</Button>}>
     <QueryGate query={settings}>{shown&&<>
       <Rows label="판단 방식"><AlgorithmRow value={shown.algorithm} changed={!!count&&baseline!.algorithm!==shown.algorithm} save={algorithm=>edit(base=>({...base,algorithm}))} disabled={blocked}/></Rows>
       <Rows label="판단 주기와 범위">{group("cycle")}</Rows>
       <Rows label="자원 한도">{group("limit")}</Rows>
-      <Rows label="자동 조정 항목">{controls.map(control=><EditRow key={control.key} label={control.label} help={control.key==="enabled"?"켜면 판단 결과를 실제로 적용해요. 끄면 판단만 해요.":`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]}
+      <Rows label="자동 조정 항목">{controls.map(control=><EditRow key={control.key} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]}
         initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>)}</Rows>
       <Rows label="고급">{group("advanced")}</Rows>
       <Rows>

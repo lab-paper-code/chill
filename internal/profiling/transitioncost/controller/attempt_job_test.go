@@ -3,6 +3,7 @@ package controller
 import (
 	"encoding/json"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,6 +32,9 @@ func TestBuildAttemptJobProjectsOneOffTargetAttempt(t *testing.T) {
 	}
 	assertAttemptJobIdentityAndBounds(t, job, request)
 	pod := job.Spec.Template.Spec
+	if !slices.Contains(pod.Tolerations, corev1.Toleration{Key: "chill.dacs.io/measurement", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}) {
+		t.Fatalf("pod tolerations = %#v, want measurement toleration", pod.Tolerations)
+	}
 	assertAttemptPod(t, pod, request, options)
 	container := pod.Containers[0]
 	assertAttemptContainer(t, container, options)

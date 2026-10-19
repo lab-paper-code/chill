@@ -79,22 +79,19 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 	}
 }
 
-func TestStaticRoutingAcknowledgementDoesNotReapplyOrRunWithControlsOn(t *testing.T) {
+func TestStaticRoutingAcknowledgementDoesNotReapply(t *testing.T) {
 	for _, test := range []struct {
 		name          string
-		enabled       bool
 		declared      bool
 		appliedRV     string
 		wantAppliedRV string
 	}{
 		{name: "completed revision is not reapplied", declared: true, appliedRV: "42", wantAppliedRV: "42"},
-		{name: "unapplied declaration stays unapplied while ON", declared: true, enabled: true},
 		{name: "declaration removal clears acknowledgement", appliedRV: "41"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			service := &schedulerService{resourceVersion: "42", staticAppliedRV: test.appliedRV}
 			config := &schedulerConfiguration{}
-			config.Settings.Controls.Enabled = test.enabled
 			if test.declared {
 				config.StaticRouting = map[string]map[string]int{"current": {"physical": 1}}
 			}

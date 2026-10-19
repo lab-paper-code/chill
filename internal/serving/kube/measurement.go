@@ -47,9 +47,12 @@ type OperationMeasurement struct {
 	MeanWatts         *float64              `json:"meanWatts,omitempty"`
 	Isolation         *MeasurementIsolation `json:"isolation,omitempty"`
 }
+
+// MeasurementIsolation witnesses the measured Node at the end: it still carries
+// the measurement POOL taint and no Workload uses the measured models.
 type MeasurementIsolation struct {
 	Node      serving.NodeReference       `json:"node"`
-	Pool      string                      `json:"pool"`
+	Tainted   bool                        `json:"tainted"`
 	Workloads []serving.WorkloadReference `json:"workloads"`
 	CheckedAt time.Time                   `json:"checkedAt"`
 	Error     string                      `json:"error,omitempty"`
@@ -162,7 +165,7 @@ func validateMeasurementRequest(request MeasurementRequest, source metricobserve
 	return nil
 }
 func stableIdle(before, after OperationState) error {
-	if before.Node != after.Node || before.Pool != after.Pool || before.PowerMode == "" || before.PowerMode != after.PowerMode || !reflect.DeepEqual(before.Pods, after.Pods) || !reflect.DeepEqual(before.States, after.States) || len(before.Reasons) > 0 || len(after.Reasons) > 0 || len(before.Native) != len(after.Native) {
+	if before.Node != after.Node || before.PowerMode == "" || before.PowerMode != after.PowerMode || !reflect.DeepEqual(before.Pods, after.Pods) || !reflect.DeepEqual(before.States, after.States) || len(before.Reasons) > 0 || len(after.Reasons) > 0 || len(before.Native) != len(after.Native) {
 		return errors.New("idle physical state changed or native observation incomplete")
 	}
 	for id, a := range before.Native {
@@ -303,8 +306,6 @@ func operationCostKeys(result OperationResult) (string, string, error) {
 		if len(removed) == 1 && len(added) == 0 {
 			return removed[0], nativeStateUnloaded, nil
 		}
-	case operationMembership:
-		return result.Before.Pool, result.Actual.Pool, nil
 	}
 	return "", "", errors.New("cost requires exactly one proven primitive state effect; resize uses measured prepare/remove composition")
 }
@@ -330,7 +331,7 @@ func operationZeroInference(result OperationResult) error {
 }
 func (record *OperationMeasurement) applyIsolation(witness MeasurementIsolation, err error) error {
 	record.Isolation = &witness
-	if err == nil && (witness.Node != record.Request.Operation.Node || witness.CheckedAt.Before(record.Result.EndedAt) || len(witness.Workloads) != 0) {
+	if err == nil && (witness.Node != record.Request.Operation.Node || !witness.Tainted || witness.CheckedAt.Before(record.Result.EndedAt) || len(witness.Workloads) != 0) {
 		err = errors.New("final actual isolation witness does not match operation boundary")
 	}
 	if err != nil {

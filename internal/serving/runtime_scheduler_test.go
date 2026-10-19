@@ -11,7 +11,7 @@ import (
 
 func TestSchedulerOutstandingUsesCurrentReadTimeAfterCaptureIO(t *testing.T) {
 	settings, snapshot := schedulerFixture()
-	settings.Controls.Enabled = false
+	settings.AutonomousWorkloads = nil
 	settings.MaxObservationAge = 5 * time.Second
 	d := snapshot.Workloads[0]
 	d.SLO.TargetLatency = time.Second
@@ -103,7 +103,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 	for _, wanted := range snapshot.Instances {
 		instances = append(instances, ReadyInstance{
 			State: InstanceState{
-				ID: wanted.ID, Node: wanted.Node, Pool: wanted.Pool, Profile: wanted.Profile.ID, Ready: true,
+				ID: wanted.ID, Node: wanted.Node, Profile: wanted.Profile.ID, Ready: true,
 			},
 			Profile: wanted.Profile, Weight: wanted.Weight, Capacity: wanted.Capacity,
 			Execute: func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
@@ -187,7 +187,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 
 func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	settings, snapshot := schedulerFixture()
-	settings.Controls.Enabled = false
+	settings.AutonomousWorkloads = nil
 	settings.CompletionMarginMS = 100
 	d := snapshot.Workloads[0]
 	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
@@ -259,7 +259,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	started := make(chan Dispatch, 2)
 	exchanged := make(chan struct{}, 2)
 	actualAt := time.Now().Add(-time.Second)
-	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Pool: "pool", Profile: p.ID, Ready: true, ObservedAt: actualAt, Native: &native.State{}}, Profile: p, Weight: 1, Capacity: 1, Execute: func(ctx context.Context, dispatch Dispatch) (BackendResult, error) {
+	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: actualAt, Native: &native.State{}}, Profile: p, Weight: 1, Capacity: 1, Execute: func(ctx context.Context, dispatch Dispatch) (BackendResult, error) {
 		started <- dispatch
 		<-ctx.Done()
 		exchanged <- struct{}{}
@@ -297,7 +297,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	if stopped, err := r.StopSchedulerInstance("i1"); err != nil || stopped {
 		t.Fatalf("accepted ingress stranded: %v %v", stopped, err)
 	}
-	if state := r.Pools()[0].Instances[0]; !state.Ready || !state.ObservedAt.Equal(actualAt) {
+	if state := r.Instances()[0]; !state.Ready || !state.ObservedAt.Equal(actualAt) {
 		t.Fatalf("retirement or source freshness changed: %+v", state)
 	}
 	canceled, cancel := context.WithCancel(context.Background())
@@ -398,7 +398,7 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.EnableSchedulerRouting()
-	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "new", Node: snapshot.Nodes[0].Node, Pool: "pool", Profile: p.ID, Ready: true}, Profile: p, Weight: 1, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
+	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "new", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true}, Profile: p, Weight: 1, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
 		t.Fatal(err)
 	}
 	if state, err := r.State(d.Name); err != nil || state.Reason != "Preparing" {
@@ -433,7 +433,7 @@ func TestControlledRoutingKeepsNewWorkloadQueuedAfterInstanceRediscovery(t *test
 	}
 	instance := ReadyInstance{
 		State: InstanceState{
-			ID: "excluded", Node: snapshot.Nodes[0].Node, Pool: "pool", Profile: p.ID, Ready: true,
+			ID: "excluded", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true,
 		},
 		Profile: p, Weight: 1, Capacity: 1,
 		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil },
@@ -486,14 +486,15 @@ func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T)
 	last.ID, last.Weight = "i2", 1
 	snapshot.Instances = []SchedulerInstance{first, last}
 	snapshot.Routing = map[string]map[string]int32{"w1": {"i2": 1}, "w2": {"i1": 3, "i2": 1}}
-	settings.Controls.Enabled = false
+	settings.AutonomousWorkloads = nil
+	controlled := map[string]bool{"w1": true, "w2": true}
 	keep, _ := schedulerEnumerateForTest(t, settings, snapshot)
 	t.Run("keep", func(t *testing.T) {
 		assertSchedulerCandidateDistribution(t, snapshot, keep[0], [2]int{0, 6}, "")
 	})
 	for _, routing := range []bool{false, true} {
 		settings.Controls.Routing = routing
-		e := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+		e := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, controlled: controlled, common: snapshot.Nodes, seen: map[string]bool{}}
 		e.emit(snapshot.Instances)
 		expected := [][2]int{{0, 6}}
 		name := "routing-disabled"
@@ -518,7 +519,7 @@ func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T)
 		prepared[n].ID += "-slot"
 	}
 	settings.Controls.Routing = false
-	e := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+	e := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, controlled: controlled, common: snapshot.Nodes, seen: map[string]bool{}}
 	e.emit(prepared)
 	t.Run("prepared-physical-identities", func(t *testing.T) {
 		assertSchedulerCandidateDistribution(t, snapshot, e.result[0], [2]int{6, 6}, "")
@@ -528,7 +529,7 @@ func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T)
 	sharedSnapshot.Instances[0].WorkloadUIDs = []string{"w1"}
 	sharedSnapshot.Instances[1].WorkloadUIDs = []string{"w2"}
 	sharedSnapshot.Routing = map[string]map[string]int32{"w1": {"i1": 3}, "w2": {"i2": 1}}
-	shared := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: sharedSnapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+	shared := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: sharedSnapshot, workloads: snapshot.Workloads, controlled: controlled, common: snapshot.Nodes, seen: map[string]bool{}}
 	shared.emit([]SchedulerInstance{first})
 	t.Run("new-shared-workload-routing-disabled", func(t *testing.T) {
 		assertSchedulerCandidateDistribution(t, sharedSnapshot, shared.result[0], [2]int{8, 8}, "")
@@ -537,7 +538,7 @@ func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T)
 	creditSnapshot.Routing = map[string]map[string]int32{"w1": {"i2": 1}, "w2": {"i1": 1, "i2": 3}}
 	for _, routing := range []bool{false, true} {
 		settings.Controls.Routing = routing
-		credits := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: creditSnapshot, workloads: snapshot.Workloads, seen: map[string]bool{}}
+		credits := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: creditSnapshot, workloads: snapshot.Workloads, controlled: controlled, common: snapshot.Nodes, seen: map[string]bool{}}
 		credits.emit(snapshot.Instances)
 		expected, name := [2]int{0, 2}, "retained"
 		if routing {
@@ -586,7 +587,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	for _, wanted := range candidate.Instances {
 		profiles = append(profiles, *wanted.Profile)
 		instances = append(instances, ReadyInstance{
-			State:   InstanceState{ID: "physical-" + wanted.ID, TargetID: wanted.ID, Node: wanted.Node, Pool: wanted.Pool, Profile: wanted.Profile.ID, Ready: true},
+			State:   InstanceState{ID: "physical-" + wanted.ID, TargetID: wanted.ID, Node: wanted.Node, Profile: wanted.Profile.ID, Ready: true},
 			Profile: wanted.Profile, Weight: wanted.Weight, Capacity: wanted.Capacity,
 			Execute: func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
 				return BackendResult{Body: []byte(dispatch.Assignment.Instance), Finished: true}, nil

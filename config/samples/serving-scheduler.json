@@ -15,8 +15,8 @@
     "maxCPUs": 256,
     "servingMemoryBytes": 0,
     "completionMarginMS": 50,
+    "autonomousWorkloads": [],
     "controls": {
-      "enabled": false,
       "placement": false,
       "resources": false,
       "replicas": false,

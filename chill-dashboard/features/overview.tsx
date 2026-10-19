@@ -34,7 +34,7 @@ function attention(workloads?:WorkloadView[], scheduler?:SchedulerView):Attentio
   }
   if (scheduler) {
     const {snapshot, decision} = scheduler.state
-    for (const node of snapshot.nodes ?? []) if (!node.ready) items.push({key:`node/${node.node.uid}`,tone:"warn",badge:"노드 준비 안 됨",title:`${node.node.name} 노드가 준비되지 않았어요`,hint:node.reason ? explain(node.reason)[0] : "준비 확인을 기다려요",href:node.pool ? `/pools/${encodeURIComponent(node.pool)}` : "/resources"})
+    for (const node of snapshot.nodes ?? []) if (!node.ready) items.push({key:`node/${node.node.uid}`,tone:"warn",badge:"노드 준비 안 됨",title:`${node.node.name} 노드가 준비되지 않았어요`,hint:node.reasons?.length ? explain(node.reasons[0])[0] : "준비 확인을 기다려요",href:"/pools"})
     if (decision.at && !decision.at.startsWith("0001-")) {
       const chosen = decision.target && decision.target.id !== decision.keep.id ? decision.target : decision.keep
       for (const estimate of chosen.slo ?? []) if (estimate.normalizedExceedance > 0) {

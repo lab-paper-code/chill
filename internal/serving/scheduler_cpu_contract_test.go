@@ -8,7 +8,7 @@ import (
 
 func measuredWideAffinityFixture() (SchedulerSettings, SchedulerSnapshot) {
 	settings, snapshot := schedulerFixture()
-	settings.Controls.Enabled = false
+	settings.AutonomousWorkloads = nil
 	snapshot.Options = nil
 	instance := &snapshot.Instances[0]
 	profile := *instance.Profile

@@ -57,8 +57,8 @@ export function useProfileSelections() {
 }
 function AutoControl() {
   const view = useChillQuery<SchedulerView>("v1/scheduler", {decoder:parseSchedulerJSON})
-  const enabled = view.data?.settings.controls.enabled
-  return enabled === undefined ? null : enabled ? <StatusBadge tone="info">자동 적용 켜짐</StatusBadge> : <StatusBadge tone="idle">자동 적용 꺼짐</StatusBadge>
+  const count = view.data?.settings.autonomousWorkloads?.length
+  return count === undefined ? null : count ? <StatusBadge tone="info">자동 제어 서비스 {count}개</StatusBadge> : <StatusBadge tone="idle">자동 제어 서비스 없음</StatusBadge>
 }
 function SelectionFacts({selection}:{selection:ProfileSelection}) {
   const outcome = selectionOutcome(selection)

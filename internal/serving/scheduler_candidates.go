@@ -25,16 +25,22 @@ func EnumerateScheduler(ctx context.Context, settings SchedulerSettings, snapsho
 		return nil, SchedulerSearch{}, err
 	}
 	result := []SchedulerCandidate{keep}
-	if settings.Validate() != nil || !settings.Controls.Enabled {
+	if settings.Validate() != nil {
 		search.Examined = 1
 		return result, search, ctx.Err()
 	}
+	// Lowering available Nodes is a fixed rule every candidate, keep included, shares.
+	common := schedulerCommonNodes(settings, snapshot)
+	keep.Nodes = common
 	if snapshot.InProgressTarget != nil {
 		keep.Actions = schedulerPlan(snapshot, *snapshot.InProgressTarget)
-		result[0] = keep
+	} else {
+		keep.Actions = schedulerFixedActions(snapshot, keep)
 	}
-	workloads := append([]*Definition(nil), snapshot.Workloads...)
-	for _, d := range workloads {
+	result[0] = keep
+	workloads := []*Definition{}
+	controlled := map[string]bool{}
+	for _, d := range snapshot.Workloads {
 		if err := ctx.Err(); err != nil {
 			return nil, SchedulerSearch{}, err
 		}
@@ -43,18 +49,127 @@ func EnumerateScheduler(ctx context.Context, settings SchedulerSettings, snapsho
 			return result, search, ctx.Err()
 		}
 	}
+	for _, state := range schedulerWorkloadStates(settings, snapshot) {
+		if state.State == WorkloadControlled {
+			controlled[state.UID] = true
+		}
+	}
+	for _, d := range snapshot.Workloads {
+		if controlled[d.UID] {
+			workloads = append(workloads, d)
+		}
+	}
+	if len(workloads) == 0 {
+		search.Examined = 1
+		return result, search, ctx.Err()
+	}
 	sort.Slice(workloads, func(i, j int) bool { return workloads[i].UID < workloads[j].UID })
-	e := schedulerEnumeration{ctx: ctx, settings: settings, snapshot: snapshot, search: search, workloads: workloads, options: schedulerMeasuredOptions(ctx, settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep): true}, result: result}
+	e := schedulerEnumeration{ctx: ctx, settings: settings, snapshot: snapshot, search: search, workloads: workloads, controlled: controlled, common: common, options: schedulerMeasuredOptions(ctx, settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep): true}, result: result}
 	e.controlBase = schedulerUnroutedTransition(ctx, snapshot)
+	base := snapshot.Instances
+	if e.controlBase != nil {
+		base = e.controlBase.Instances
+	}
+	// Instances of a Workload outside autonomous control, and every instance in
+	// the measurement POOL, stay as they are in every candidate.
+	for _, i := range base {
+		if e.fixedInstance(i) {
+			e.fixed = append(e.fixed, i)
+		} else {
+			e.movable = append(e.movable, i)
+		}
+	}
 	if !settings.Controls.Sharing {
 		e.groups = schedulerExistingWorkloadGroups(ctx, workloads, e.controlInstances())
 	}
-	e.visit(0, nil)
+	e.visit(0, slices.Clone(e.fixed))
 	e.search.Examined = len(e.result)
 	if err := ctx.Err(); err != nil {
 		return nil, SchedulerSearch{}, err
 	}
 	return e.result, e.search, nil
+}
+
+// schedulerWorkloadStates classifies every current Workload for this decision.
+func schedulerWorkloadStates(settings SchedulerSettings, snapshot SchedulerSnapshot) []SchedulerWorkloadState {
+	states := []SchedulerWorkloadState{}
+	for _, d := range snapshot.Workloads {
+		if d == nil {
+			continue
+		}
+		state := SchedulerWorkloadState{UID: d.UID, State: WorkloadControlled}
+		switch {
+		case !slices.Contains(settings.AutonomousWorkloads, d.UID):
+			state.State, state.Reason = WorkloadDisabled, "AutonomousControlOff"
+		case !slices.ContainsFunc(snapshot.Options, func(o SchedulerOption) bool { return schedulerHas(o.CompatibleUIDs, d.UID) }):
+			state.State, state.Reason = WorkloadMeasurementEvidenceMissing, "NoCompletedMeasurementMatches"
+		}
+		states = append(states, state)
+	}
+	sort.Slice(states, func(i, j int) bool { return states[i].UID < states[j].UID })
+	return states
+}
+
+func (e *schedulerEnumeration) fixedInstance(i SchedulerInstance) bool {
+	if slices.ContainsFunc(e.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == i.Node && n.Measurement }) {
+		return true
+	}
+	// An owner that is no current Workload is ignored, like any unknown UID.
+	if !e.controlled[i.OwnerWorkloadUID] && slices.ContainsFunc(e.snapshot.Workloads, func(d *Definition) bool { return d.UID == i.OwnerWorkloadUID }) {
+		return true
+	}
+	return slices.ContainsFunc(i.WorkloadUIDs, func(uid string) bool { return !e.controlled[uid] })
+}
+
+// SchedulerLowestMode is the power mode of the Node's lowest unloaded baseline,
+// ties broken by name; "" when the Node has no unloaded baseline.
+func SchedulerLowestMode(baselines []NodeBaseline, node NodeReference) string {
+	latest := map[string]*NodeBaseline{}
+	for j := range baselines {
+		b := &baselines[j]
+		if b.Node != node || len(b.State) != 0 || b.Scope != schedulerNodeWallScope || b.Meter == "" || !schedulerFinite(b.Watts) || b.Watts < 0 || b.ID == "" || b.Reference.Validate() != nil {
+			continue
+		}
+		if previous := latest[b.PowerMode]; previous == nil || b.MeasuredAt.After(previous.MeasuredAt) {
+			latest[b.PowerMode] = b
+		}
+	}
+	lowest := ""
+	for mode, b := range latest {
+		if lowest == "" || b.Watts < latest[lowest].Watts || b.Watts == latest[lowest].Watts && mode < lowest {
+			lowest = mode
+		}
+	}
+	return lowest
+}
+
+// schedulerAvailable reports a Ready Node outside the measurement POOL without
+// a CHILL serving instance whose power mode can change.
+func schedulerAvailable(snapshot SchedulerSnapshot, n SchedulerNode) bool {
+	return n.Ready && !n.Measurement && !slices.Contains(n.Reasons, NodePowerModeUnavailable) &&
+		!slices.ContainsFunc(snapshot.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node })
+}
+
+// schedulerCommonNodes places every available Node at its lowest power mode
+// when power control is on; every candidate starts from this state.
+func schedulerCommonNodes(settings SchedulerSettings, snapshot SchedulerSnapshot) []SchedulerNode {
+	nodes := append([]SchedulerNode(nil), snapshot.Nodes...)
+	if !settings.Controls.Power {
+		return nodes
+	}
+	for index, n := range nodes {
+		if lowest := SchedulerLowestMode(snapshot.Baselines, n.Node); lowest != "" && schedulerAvailable(snapshot, n) {
+			nodes[index].PowerMode = lowest
+		}
+	}
+	return nodes
+}
+
+// schedulerFixedActions plans only the shared lowering of available Nodes.
+func schedulerFixedActions(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
+	p := schedulerPlanState{snap: snap, target: &c, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
+	p.changeNodes(c)
+	return p.actions
 }
 
 func schedulerInstanceRouting(ctx context.Context, workloads []*Definition, instances []SchedulerInstance) map[string]map[string]int32 {
@@ -232,6 +347,10 @@ type schedulerEnumeration struct {
 	search      SchedulerSearch
 	controlBase *SchedulerCandidate
 	workloads   []*Definition
+	controlled  map[string]bool
+	common      []SchedulerNode
+	fixed       []SchedulerInstance
+	movable     []SchedulerInstance
 	groups      [][]*Definition
 	sources     map[string]int
 	options     []SchedulerOption
@@ -271,11 +390,9 @@ func schedulerPositiveRouting(weights map[string]int32) bool {
 	return false
 }
 
+// controlInstances are the current instances autonomous control may change.
 func (e *schedulerEnumeration) controlInstances() []SchedulerInstance {
-	if e.controlBase != nil {
-		return e.controlBase.Instances
-	}
-	return e.snapshot.Instances
+	return e.movable
 }
 
 func (e *schedulerEnumeration) controlRouting() map[string]map[string]int32 {
@@ -313,7 +430,7 @@ func (e *schedulerEnumeration) visit(w int, chosen []SchedulerInstance) {
 				if e.ctx.Err() != nil {
 					return
 				}
-				if schedulerOptionCondition(o) == schedulerOptionCondition(SchedulerOption{Instance: i}) && schedulerHas(o.CompatibleUIDs, d.UID) {
+				if i.OwnerWorkloadUID == "" && !schedulerHas(i.WorkloadUIDs, d.UID) && schedulerPlacementNode(e.snapshot.Nodes, i.Node) && schedulerOptionCondition(o) == schedulerOptionCondition(SchedulerOption{Instance: i}) && schedulerHas(o.CompatibleUIDs, d.UID) {
 					next := append([]SchedulerInstance(nil), chosen...)
 					next[j].WorkloadUIDs = append(append([]string(nil), next[j].WorkloadUIDs...), d.UID)
 					e.visit(w+1, next)
@@ -423,8 +540,12 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 	}
 	c := SchedulerCandidate{Nodes: nodes, Instances: append([]SchedulerInstance(nil), chosen...)}
 	// Preserve physical identity only when the complete measured allocation matches.
+	// Fixed instances lead the chosen list and keep their own identity.
 	used := map[string][]string{}
-	for j := range c.Instances {
+	for _, fixed := range e.fixed {
+		used[fixed.ID] = fixed.WorkloadUIDs
+	}
+	for j := len(e.fixed); j < len(c.Instances); j++ {
 		if e.ctx.Err() != nil {
 			return
 		}
@@ -433,7 +554,7 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 			if e.ctx.Err() != nil {
 				return
 			}
-			if _, preserved := used[old.ID]; !preserved && e.canReuseSlot(old, source, anchored, c.Instances[j].WorkloadUIDs) && old.Node == c.Instances[j].Node && old.Pool == c.Instances[j].Pool && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
+			if _, preserved := used[old.ID]; !preserved && e.canReuseSlot(old, source, anchored, c.Instances[j].WorkloadUIDs) && old.Node == c.Instances[j].Node && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
 				c.Instances[j].ID = old.ID
 				c.Instances[j].Ready = old.Ready
 				c.Instances[j].TargetID, c.Instances[j].OwnerWorkloadUID = old.TargetID, old.OwnerWorkloadUID
@@ -443,6 +564,15 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 		}
 	}
 	c.Routing = e.routing(c.Instances, chosen, used)
+	// Workloads outside autonomous control keep their current distribution.
+	for _, d := range e.snapshot.Workloads {
+		if !e.controlled[d.UID] {
+			c.Routing[d.UID] = maps.Clone(e.controlRouting()[d.UID])
+			if c.Routing[d.UID] == nil {
+				c.Routing[d.UID] = map[string]int32{}
+			}
+		}
+	}
 	add := func(c SchedulerCandidate) {
 		if e.ctx.Err() != nil {
 			return
@@ -483,7 +613,7 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 }
 
 func (e *schedulerEnumeration) candidateNodes(chosen []SchedulerInstance) []SchedulerNode {
-	nodes := append([]SchedulerNode(nil), e.snapshot.Nodes...)
+	nodes := append([]SchedulerNode(nil), e.common...)
 	modes := map[string]string{}
 	for _, i := range chosen {
 		if e.ctx.Err() != nil {
@@ -494,26 +624,15 @@ func (e *schedulerEnumeration) candidateNodes(chosen []SchedulerInstance) []Sche
 		}
 	}
 	for n := range nodes {
-		if e.ctx.Err() != nil {
-			return nil
-		}
 		if m, ok := modes[nodes[n].Node.UID]; ok {
 			nodes[n].PowerMode = m
-		}
-		for _, i := range chosen {
-			if e.ctx.Err() != nil {
-				return nil
-			}
-			if i.Node.UID == nodes[n].Node.UID {
-				nodes[n].Pool = i.Pool
-			}
 		}
 	}
 	return nodes
 }
 
 func (e *schedulerEnumeration) canReuseSlot(old SchedulerInstance, source int, anchored bool, uids []string) bool {
-	if old.OwnerWorkloadUID != "" && (len(uids) != 1 || uids[0] != old.OwnerWorkloadUID) {
+	if !schedulerOwnerAllows(old.OwnerWorkloadUID, uids) {
 		return false
 	}
 	if !anchored || old.ID == e.controlInstances()[source].ID {
@@ -607,12 +726,13 @@ func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance)
 				delete(e.sources, i.ID)
 			}
 		}
+		// One Node runs one power mode, and all its instances reference one ModelSpec.
 		conflict := false
 		for _, old := range xs {
 			if e.ctx.Err() != nil {
 				return
 			}
-			if old.Node.UID == i.Node.UID && (old.Pool != i.Pool || old.Profile.Condition.PowerMode != i.Profile.Condition.PowerMode) {
+			if old.Node.UID == i.Node.UID && (old.Profile == nil || old.Profile.Condition.PowerMode != i.Profile.Condition.PowerMode || !e.sameModel(old, i)) {
 				conflict = true
 			}
 		}
@@ -626,8 +746,24 @@ func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance)
 		e.place(w, next, left-1, append(append([]SchedulerInstance(nil), xs...), i))
 	}
 }
+
+// sameModel reports whether two instances reference one ModelSpec: the same
+// name, and the same UID when both reach a current Workload definition.
+func (e *schedulerEnumeration) sameModel(a, b SchedulerInstance) bool {
+	model := func(i SchedulerInstance) (string, string) {
+		for _, d := range e.snapshot.Workloads {
+			if d.UID == i.OwnerWorkloadUID || schedulerHas(i.WorkloadUIDs, d.UID) {
+				return d.Model.Name, d.Model.UID
+			}
+		}
+		return i.Profile.Condition.LogicalModel, ""
+	}
+	nameA, uidA := model(a)
+	nameB, uidB := model(b)
+	return nameA == nameB && (uidA == "" || uidB == "" || uidA == uidB)
+}
 func schedulerOptionKey(o SchedulerOption) string {
-	return o.Instance.Node.UID + "/" + o.Instance.Pool + "/" + schedulerState(o.Instance) + fmt.Sprint(o.CompatibleUIDs)
+	return o.Instance.Node.UID + "/" + schedulerState(o.Instance) + fmt.Sprint(o.CompatibleUIDs)
 }
 func schedulerOptionCondition(o SchedulerOption) string {
 	i := o.Instance
@@ -636,7 +772,7 @@ func schedulerOptionCondition(o SchedulerOption) string {
 	}
 	p := i.Profile
 	// A top-level *CurveDatasetContract prints its value (&{name uid}), not its address.
-	return fmt.Sprint(i.Node, i.Pool, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait)
+	return fmt.Sprint(i.Node, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait)
 }
 
 // SchedulerLogicalConfigKey identifies configuration semantics, not a physical
@@ -649,7 +785,7 @@ func SchedulerLogicalConfigKey(snapshot SchedulerSnapshot, candidate SchedulerCa
 			return "", fmt.Errorf("logical configuration has missing or duplicate Node UID %q", node.Node.UID)
 		}
 		nodeIDs[node.Node.UID] = true
-		nodes = append(nodes, fmt.Sprintf("%q/%q/%q", node.Node.UID, node.Pool, node.PowerMode))
+		nodes = append(nodes, fmt.Sprintf("%q/%q", node.Node.UID, node.PowerMode))
 	}
 	definitions := map[string]*Definition{}
 	for _, definition := range snapshot.Workloads {
@@ -688,7 +824,7 @@ func SchedulerLogicalConfigKey(snapshot SchedulerSnapshot, candidate SchedulerCa
 			routes = append(routes, fmt.Sprintf("%q/%d", uid, weight))
 		}
 		sort.Strings(routes)
-		instances = append(instances, fmt.Sprintf("%q/%q/%q/%q/%d/%t/%d/%d/%d/%q/%q", instance.Node.UID, instance.Pool, schedulerState(instance), uids, instance.Allocation.CPUCount, instance.Allocation.CPUReserved, instance.Capacity, instance.MaxBatch, instance.MaxWait, deadlinePolicy, routes))
+		instances = append(instances, fmt.Sprintf("%q/%q/%q/%d/%t/%d/%d/%d/%q/%q", instance.Node.UID, schedulerState(instance), uids, instance.Allocation.CPUCount, instance.Allocation.CPUReserved, instance.Capacity, instance.MaxBatch, instance.MaxWait, deadlinePolicy, routes))
 	}
 	for uid, routing := range candidate.Routing {
 		if definitions[uid] == nil {
@@ -727,11 +863,11 @@ func schedulerConfigKey(c SchedulerCandidate) string {
 		if i.Profile != nil && i.Profile.Condition.Firstfloor != nil {
 			deadlinePolicy = i.Profile.Condition.Firstfloor.DeadlinePolicy
 		}
-		parts = append(parts, fmt.Sprint(i.ID, i.Node.UID, i.Pool, schedulerState(i), uids, weights, i.Capacity, i.MaxBatch, i.MaxWait, deadlinePolicy))
+		parts = append(parts, fmt.Sprint(i.ID, i.Node.UID, schedulerState(i), uids, weights, i.Capacity, i.MaxBatch, i.MaxWait, deadlinePolicy))
 	}
 	sort.Strings(parts)
 	for _, n := range c.Nodes {
-		parts = append(parts, n.Node.UID+"/"+n.Pool+"/"+n.PowerMode)
+		parts = append(parts, n.Node.UID+"/"+n.PowerMode)
 	}
 	return fmt.Sprint(parts)
 }
@@ -743,6 +879,23 @@ func schedulerNodeMode(nodes []SchedulerNode, node NodeReference) string {
 	}
 	return ""
 }
+
+// schedulerPlacementNode reports a Node that accepts new placements.
+func schedulerPlacementNode(nodes []SchedulerNode, node NodeReference) bool {
+	for _, n := range nodes {
+		if n.Node == node {
+			return !n.Measurement && !slices.Contains(n.Reasons, NodePlacementInventoryMissing) && !slices.Contains(n.Reasons, NodePlacementBudgetUnavailable)
+		}
+	}
+	return false
+}
+
+// inActivePool reports whether uid owns or is bound to an instance on node.
+func (e *schedulerEnumeration) inActivePool(uid string, node NodeReference) bool {
+	return slices.ContainsFunc(e.snapshot.Instances, func(i SchedulerInstance) bool {
+		return i.Node == node && (i.OwnerWorkloadUID == uid || schedulerHas(i.WorkloadUIDs, uid))
+	})
+}
 func (e *schedulerEnumeration) optionAllowed(d *Definition, o SchedulerOption, group []*Definition, source int) bool {
 	s, snap := e.settings, e.snapshot
 	i := o.Instance
@@ -752,15 +905,17 @@ func (e *schedulerEnumeration) optionAllowed(d *Definition, o SchedulerOption, g
 	if i.Profile == nil || i.Node.UID != i.Profile.Condition.NodeUID || !schedulerProfileMatches(d, i.Profile) {
 		return false
 	}
+	if !schedulerPlacementNode(snap.Nodes, i.Node) {
+		return false
+	}
 	for _, n := range snap.Nodes {
-		if n.Node == i.Node {
-			if !s.Controls.Power && n.PowerMode != i.Profile.Condition.PowerMode {
-				return false
-			}
-			if !s.Controls.Membership && n.Pool != i.Pool {
-				return false
-			}
+		if n.Node == i.Node && n.PowerMode != i.Profile.Condition.PowerMode && (!s.Controls.Power || slices.Contains(n.Reasons, NodePowerModeUnavailable)) {
+			return false
 		}
+	}
+	// Membership OFF keeps each Workload within its current active POOL.
+	if !s.Controls.Membership && !e.inActivePool(d.UID, i.Node) {
+		return false
 	}
 	for index, old := range e.controlInstances() {
 		if !schedulerHas(old.WorkloadUIDs, d.UID) || (e.groups != nil && (!e.sameGroup(old, group) || (source >= 0 && index != source))) {
@@ -808,7 +963,7 @@ func schedulerCurrentTarget(snapshot SchedulerSnapshot, target SchedulerCandidat
 			if !actual.Ready || actual.Stopped || !schedulerSamePhysicalTarget(actual, wanted) {
 				continue
 			}
-			if actual.OwnerWorkloadUID != "" && (len(wanted.WorkloadUIDs) != 1 || wanted.WorkloadUIDs[0] != actual.OwnerWorkloadUID) {
+			if !schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUIDs) {
 				continue
 			}
 			current.ID, current.TargetID, current.OwnerWorkloadUID = actual.ID, actual.TargetID, actual.OwnerWorkloadUID
@@ -852,7 +1007,7 @@ type schedulerPlanState struct {
 
 func (p *schedulerPlanState) add(kind string, node NodeReference, id, from, to string, deps []string) string {
 	a := Action{ID: fmt.Sprintf("%s-%s-%s-%d-%d", kind, node.UID, id, p.snap.At.UnixNano(), len(p.actions)), Kind: kind, Node: node, Instance: id, From: from, To: to, DependsOn: append([]string(nil), deps...), Status: schedulerActionPlanned}
-	if kind == schedulerActionPrepare || kind == schedulerActionRemove || kind == schedulerActionPower || kind == schedulerActionMembership {
+	if kind == schedulerActionPrepare || kind == schedulerActionRemove || kind == schedulerActionPower {
 		if tail := p.nodeTail[node.UID]; tail != "" {
 			a.DependsOn = append(a.DependsOn, tail)
 		}
@@ -880,7 +1035,7 @@ func (p *schedulerPlanState) add(kind string, node NodeReference, id, from, to s
 			break
 		}
 	}
-	if kind == schedulerActionPrepare || kind == schedulerActionRemove || kind == schedulerActionPower || kind == schedulerActionMembership {
+	if kind == schedulerActionPrepare || kind == schedulerActionRemove || kind == schedulerActionPower {
 		p.nodeTail[node.UID] = a.ID
 	}
 	p.actions = append(p.actions, a)
@@ -924,15 +1079,8 @@ func (p *schedulerPlanState) completedEffectPresent(action Action) bool {
 		return !slices.ContainsFunc(p.snap.Instances, func(instance SchedulerInstance) bool { return instance.ID == action.Instance }) &&
 			!slices.ContainsFunc(p.snap.Outstanding, func(request SchedulerRequest) bool { return request.Instance == action.Instance }) &&
 			!schedulerInstanceRouted(p.snap.Routing, action.Instance)
-	case schedulerActionPower, schedulerActionMembership:
-		for _, node := range p.snap.Nodes {
-			if node.Node == action.Node {
-				if action.Kind == schedulerActionPower {
-					return node.PowerMode == action.To
-				}
-				return node.Pool == action.To
-			}
-		}
+	case schedulerActionPower:
+		return schedulerNodeMode(p.snap.Nodes, action.Node) == action.To
 	}
 	return false
 }
@@ -955,11 +1103,11 @@ func (p *schedulerPlanState) routeEffectPresent() bool {
 
 func schedulerSnapshotTargetMatches(actual, wanted SchedulerInstance) bool {
 	if actual.Profile == nil || wanted.Profile == nil || !actual.Ready || actual.Stopped ||
-		actual.ID != wanted.ID || actual.Node != wanted.Node || actual.Pool != wanted.Pool ||
+		actual.ID != wanted.ID || actual.Node != wanted.Node ||
 		schedulerState(actual) != schedulerState(wanted) {
 		return false
 	}
-	if actual.OwnerWorkloadUID != "" && (len(wanted.WorkloadUIDs) != 1 || wanted.WorkloadUIDs[0] != actual.OwnerWorkloadUID) {
+	if !schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUIDs) {
 		return false
 	}
 	return actual.Capacity == wanted.Capacity && actual.MaxBatch == wanted.MaxBatch && actual.MaxWait == wanted.MaxWait &&
@@ -976,14 +1124,19 @@ func schedulerInstanceRouted(routing map[string]map[string]int32, id string) boo
 }
 
 func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
-	// Power and membership affect every runner on the node, never only one UID.
+	// Power affects every runner on the node, never only one UID.
 	for _, n := range c.Nodes {
 		for _, oldNode := range p.snap.Nodes {
-			if n.Node != oldNode.Node {
+			if n.Node != oldNode.Node || n.PowerMode == oldNode.PowerMode {
 				continue
 			}
-			if n.PowerMode == oldNode.PowerMode && n.Pool == oldNode.Pool {
-				continue
+			from := oldNode.PowerMode
+			// An available Node first drops to its lowest mode, the same in every
+			// candidate; re-entering it raises the mode from there.
+			if lowest := SchedulerLowestMode(p.snap.Baselines, n.Node); lowest != "" && lowest != from && schedulerAvailable(p.snap, oldNode) {
+				p.add(schedulerActionPower, n.Node, "", from, lowest, nil)
+				p.actions[len(p.actions)-1].Fixed = true
+				from = lowest
 			}
 			deps := []string{}
 			drains := map[string]string{}
@@ -998,23 +1151,14 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 			}
 			// Directed power trials retain their loaded process witness. Immutable native
 			// bundles are removed only after actual mode/readiness proof, then rebuilt.
-			if n.PowerMode != oldNode.PowerMode {
-				dep := p.add(schedulerActionPower, n.Node, "", oldNode.PowerMode, n.PowerMode, deps)
+			if n.PowerMode != from {
+				dep := p.add(schedulerActionPower, n.Node, "", from, n.PowerMode, deps)
 				deps = []string{dep}
 			}
-			removed := []string{}
 			for _, i := range p.snap.Instances {
 				if i.Node == n.Node {
-					rmDeps := deps
-					if n.PowerMode == oldNode.PowerMode {
-						rmDeps = []string{drains[i.ID]}
-					}
-					rm := p.add(schedulerActionRemove, n.Node, i.ID, schedulerState(i), "unloaded", rmDeps)
-					removed = append(removed, rm)
+					p.add(schedulerActionRemove, n.Node, i.ID, schedulerState(i), "unloaded", deps)
 				}
-			}
-			if n.Pool != oldNode.Pool {
-				p.add(schedulerActionMembership, n.Node, "", oldNode.Pool, n.Pool, removed)
 			}
 			if tail := p.nodeTail[n.Node.UID]; tail != "" {
 				p.prepares = append(p.prepares, tail)
@@ -1060,7 +1204,12 @@ func (p *schedulerPlanState) runningPreparation(wanted SchedulerInstance) string
 
 func schedulerSamePhysicalTarget(actual, wanted SchedulerInstance) bool {
 	return (actual.ID == wanted.ID || (actual.TargetID != "" && actual.TargetID == wanted.ID)) &&
-		actual.Node == wanted.Node && actual.Pool == wanted.Pool && schedulerState(actual) == schedulerState(wanted)
+		actual.Node == wanted.Node && schedulerState(actual) == schedulerState(wanted)
+}
+
+// schedulerOwnerAllows reports whether an owned instance serves only its owner.
+func schedulerOwnerAllows(owner string, uids []string) bool {
+	return owner == "" || !slices.ContainsFunc(uids, func(uid string) bool { return uid != owner })
 }
 
 // Keep make-before-break whenever it fits. Otherwise release only obsolete
