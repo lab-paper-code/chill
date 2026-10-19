@@ -56,6 +56,7 @@ func TestReplayArrivalHistoryAgesFromNativeObservation(t *testing.T) {
 		source: SchedulerRequest{
 			ID: "after-capture", Definition: d, Instance: "i1", ReceivedAt: snapshot.At,
 		},
+		identity:   d.Identity(),
 		dispatched: true,
 	}
 	state := schedulerReplayState{
@@ -177,7 +178,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 	}
 	state.initializeInstances()
 	state.initializeOutstanding()
-	next := &schedulerReplayRequest{source: SchedulerRequest{ID: "next", Definition: d}}
+	next := &schedulerReplayRequest{source: SchedulerRequest{ID: "next", Definition: d}, identity: d.Identity()}
 	state.requests = append(state.requests, next)
 	state.routeRequests()
 	if actualNext == "" || !next.dispatched || next.source.Instance != actualNext {
@@ -564,7 +565,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	}
 	for range 8 {
 		for _, d := range snapshot.Workloads {
-			replay.requests = append(replay.requests, &schedulerReplayRequest{source: SchedulerRequest{Definition: d}})
+			replay.requests = append(replay.requests, &schedulerReplayRequest{source: SchedulerRequest{Definition: d}, identity: d.Identity()})
 		}
 	}
 

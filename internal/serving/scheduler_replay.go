@@ -35,6 +35,7 @@ const (
 
 type schedulerReplayRequest struct {
 	source     SchedulerRequest
+	identity   string // source.Definition.Identity(), formatted once
 	arrival    float64
 	native     float64
 	queueAt    float64
@@ -949,7 +950,7 @@ func (s *schedulerReplayState) initializeOutstanding() {
 		return a.ID < b.ID
 	})
 	for _, r := range outstanding {
-		x := &schedulerReplayRequest{source: r, observed: true, arrival: 0, native: math.Inf(1), expires: math.Inf(1), queueAt: -float64(r.QueueAge), running: r.Phase == phaseRunning, deferred: r.Phase == phaseDeferred}
+		x := &schedulerReplayRequest{source: r, identity: r.Definition.Identity(), observed: true, arrival: 0, native: math.Inf(1), expires: math.Inf(1), queueAt: -float64(r.QueueAge), running: r.Phase == phaseRunning, deferred: r.Phase == phaseDeferred}
 		if r.NativeSenderElapsedMS != nil {
 			x.senderMS = *r.NativeSenderElapsedMS
 		}
@@ -957,10 +958,10 @@ func (s *schedulerReplayState) initializeOutstanding() {
 			x.expires = float64(*r.RemainingLifetime)
 		}
 		s.requests = append(s.requests, x)
-		s.out.definitions[r.Definition.Identity()] = r.Definition
+		s.out.definitions[x.identity] = r.Definition
 		if r.NativeOutcome == firstfloor.OutcomeDeadlineDrop {
 			x.dropped = true
-			key := r.Definition.Identity()
+			key := x.identity
 			if s.out.outcomes[key] == nil {
 				s.out.outcomes[key] = map[string]int{}
 			}
@@ -1016,12 +1017,12 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 				return false
 			}
 			r := SchedulerRequest{ID: fmt.Sprintf("replay-%g-%d", cycle, j), Definition: a.Definition, ReceivedAt: s.snap.At.Add(time.Duration(at)), Phase: phasePending}
-			x := &schedulerReplayRequest{source: r, arrival: at, native: math.Inf(1), expires: math.Inf(1)}
+			x := &schedulerReplayRequest{source: r, identity: a.Definition.Identity(), arrival: at, native: math.Inf(1), expires: math.Inf(1)}
 			if a.Lifetime > 0 {
 				x.expires = at + float64(a.Lifetime)
 			}
 			s.requests = append(s.requests, x)
-			s.out.definitions[a.Definition.Identity()] = a.Definition
+			s.out.definitions[x.identity] = a.Definition
 		}
 	}
 	return true
@@ -1073,9 +1074,9 @@ func (s *schedulerReplayState) initializeRunning() bool {
 		if len(i.batch) == 0 {
 			continue
 		}
-		head := i.batch[0].source
+		head := i.batch[0]
 		for _, r := range i.batch {
-			if r.source.BatchID != head.BatchID || r.source.Definition.Identity() != head.Definition.Identity() {
+			if r.source.BatchID != head.source.BatchID || r.identity != head.identity {
 				s.out.reasons = append(s.out.reasons, "InconsistentRunningBatch:"+i.config.ID)
 				return false
 			}
@@ -1086,7 +1087,7 @@ func (s *schedulerReplayState) initializeRunning() bool {
 			return false
 		}
 		residual := []float64{}
-		elapsed := float64(head.RunningElapsed)
+		elapsed := float64(head.source.RunningElapsed)
 		for _, v := range b.DurationNanos {
 			if v > elapsed {
 				residual = append(residual, v-elapsed)
@@ -1121,7 +1122,7 @@ func (s *schedulerReplayState) expireRequests() {
 		} else if r.returning {
 			kind = "expired-returning"
 		}
-		key := r.source.Definition.Identity()
+		key := r.identity
 		if s.out.outcomes[key] == nil {
 			s.out.outcomes[key] = map[string]int{}
 		}
@@ -1168,7 +1169,7 @@ func (s *schedulerReplayState) completeExecution() {
 			if i != nil && r.dispatched {
 				i.outstanding--
 			}
-			key := r.source.Definition.Identity()
+			key := r.identity
 			if !r.expired && !r.dropped {
 				latency := float64(r.source.Elapsed) + r.completion - r.arrival
 				s.out.samples[key] = append(s.out.samples[key], latency)
@@ -1616,7 +1617,7 @@ func (s *schedulerReplayState) nativeRequestState(i *schedulerReplayInstance, r 
 	} else if r.deferred {
 		phase = phaseDeferred
 	}
-	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: d.Identity(), ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: s.settings.CompletionMarginMS, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now - r.queueAt) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
+	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: s.settings.CompletionMarginMS, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now - r.queueAt) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
 }
 
 func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
@@ -1624,25 +1625,38 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 		if !i.loaded || !i.ready || len(i.queue) == 0 {
 			continue
 		}
+		type queued struct {
+			r     *schedulerReplayRequest
+			state firstfloor.RequestState
+			slo   float64
+		}
+		entries := make([]queued, 0, len(i.queue))
 		states := make([]firstfloor.RequestState, 0, len(i.queue)+len(i.batch))
 		for len(i.queue) > 0 {
 			if ctx.Err() != nil {
 				return false
 			}
+			// State and EDF key are fixed at s.now: build each once, then sort.
+			entries = entries[:0]
+			for _, r := range i.queue {
+				state := s.nativeRequestState(i, r)
+				entries = append(entries, queued{r: r, state: state, slo: firstfloor.RemainingSLOMS(state)})
+			}
 			// Match the actor's stable EDF normal queue and contiguous deferred FIFO.
-			sort.SliceStable(i.queue, func(a, b int) bool {
-				left, right := i.queue[a], i.queue[b]
-				if left.deferred != right.deferred {
-					return !left.deferred
+			sort.SliceStable(entries, func(a, b int) bool {
+				left, right := entries[a], entries[b]
+				if left.r.deferred != right.r.deferred {
+					return !left.r.deferred
 				}
-				if left.deferred {
+				if left.r.deferred {
 					return false
 				}
-				return firstfloor.RemainingSLOMS(s.nativeRequestState(i, left)) < firstfloor.RemainingSLOMS(s.nativeRequestState(i, right))
+				return left.slo < right.slo
 			})
 			states = states[:0]
-			for _, r := range i.queue {
-				states = append(states, s.nativeRequestState(i, r))
+			for j, e := range entries {
+				i.queue[j] = e.r
+				states = append(states, e.state)
 			}
 			for _, r := range i.batch {
 				states = append(states, s.nativeRequestState(i, r))
@@ -1671,7 +1685,7 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 					r.dropped = true
 					r.completed = true
 					i.outstanding--
-					key := r.source.Definition.Identity()
+					key := r.identity
 					if s.out.outcomes[key] == nil {
 						s.out.outcomes[key] = map[string]int{}
 					}
@@ -1694,7 +1708,7 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 			deferred := i.queue[0].deferred
 			rest := i.queue[:0]
 			for _, r := range i.queue {
-				if len(i.batch) < choice.Size && r.deferred == deferred && r.source.Definition.UID == choice.WorkloadUID && r.source.Definition.Identity() == choice.Definition {
+				if len(i.batch) < choice.Size && r.deferred == deferred && r.source.Definition.UID == choice.WorkloadUID && r.identity == choice.Definition {
 					i.batch = append(i.batch, r)
 				} else {
 					rest = append(rest, r)
