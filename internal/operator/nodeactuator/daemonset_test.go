@@ -58,6 +58,21 @@ func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
 	}
 }
 
+func TestBuildDaemonSetToleratesMeasurementTaint(t *testing.T) {
+	t.Parallel()
+	config := validConfig()
+	edge := corev1.Toleration{Key: "node-role.kubernetes.io/edge", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	config.Tolerations = []corev1.Toleration{edge}
+	daemonSet, err := buildDaemonSet(validOptions(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []corev1.Toleration{edge, profilingrun.MeasurementToleration()}
+	if got := daemonSet.Spec.Template.Spec.Tolerations; !reflect.DeepEqual(got, want) || len(config.Tolerations) != 1 {
+		t.Fatalf("Tolerations = %#v, configured = %#v", got, config.Tolerations)
+	}
+}
+
 func TestBuildDaemonSetUpdateStrategy(t *testing.T) {
 	t.Parallel()
 	for name, strategy := range map[string]appsv1.DaemonSetUpdateStrategy{

@@ -2,6 +2,7 @@ package nodediscovery
 
 import (
 	"path"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -41,7 +42,8 @@ func buildDaemonSet(options Options, config Config) *appsv1.DaemonSet {
 					SecurityContext:    config.PodSecurityContext,
 					NodeSelector:       config.NodeSelector,
 					Affinity:           buildAffinity(config),
-					Tolerations:        config.Tolerations,
+					// Node agents stay on measurement POOL Nodes.
+					Tolerations: append(slices.Clone(config.Tolerations), profilingrun.MeasurementToleration()),
 					Containers: []corev1.Container{
 						{
 							Name:            containerName,

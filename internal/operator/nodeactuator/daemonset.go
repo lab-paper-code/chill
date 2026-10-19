@@ -3,6 +3,7 @@ package nodeactuator
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -58,9 +59,11 @@ func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
 					DNSPolicy:          corev1.DNSClusterFirstWithHostNet,
 					ServiceAccountName: config.ServiceAccountName,
 					NodeSelector:       config.NodeSelector, Affinity: config.Affinity,
-					Tolerations: config.Tolerations, SecurityContext: config.PodSecurityContext,
-					Volumes:        hostVolumes(config.JetsonNVPModel.podHostPaths()),
-					InitContainers: bootOrderingInitContainers(config),
+					// The actuator stays on measurement POOL Nodes; transition-cost measurements need it there.
+					Tolerations:     append(slices.Clone(config.Tolerations), profilingrun.MeasurementToleration()),
+					SecurityContext: config.PodSecurityContext,
+					Volumes:         hostVolumes(config.JetsonNVPModel.podHostPaths()),
+					InitContainers:  bootOrderingInitContainers(config),
 					Containers: []corev1.Container{{
 						Name: containerName, Image: config.Image, ImagePullPolicy: config.ImagePullPolicy,
 						Command: []string{"/node-actuator"}, Args: args,

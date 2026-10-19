@@ -1,6 +1,7 @@
 package nodediscovery
 
 import (
+	"reflect"
 	"testing"
 
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -47,6 +48,17 @@ func TestBuildDaemonSet(t *testing.T) {
 	if daemonSet.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.
 		NodeSelectorTerms[0].MatchExpressions[0].Values[0] != "bad-edge" {
 		t.Fatalf("Affinity = %#v, want excluded node", daemonSet.Spec.Template.Spec.Affinity)
+	}
+}
+
+func TestBuildDaemonSetToleratesMeasurementTaint(t *testing.T) {
+	config := validConfig()
+	edge := corev1.Toleration{Key: "node-role.kubernetes.io/edge", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	config.Tolerations = []corev1.Toleration{edge}
+	got := buildDaemonSet(validOptions(), config).Spec.Template.Spec.Tolerations
+	want := []corev1.Toleration{edge, profilingrun.MeasurementToleration()}
+	if !reflect.DeepEqual(got, want) || len(config.Tolerations) != 1 {
+		t.Fatalf("Tolerations = %#v, configured = %#v", got, config.Tolerations)
 	}
 }
 
