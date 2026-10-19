@@ -3,89 +3,252 @@ package kube
 import (
 	"context"
 	"errors"
+	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"slices"
+	"strings"
 
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// LoadOperationMeasurements validates retained raw evidence once at selection;
-// no missing/short trial becomes a usable zero. Power costs retain their existing
-// directed transition-cost loader instead of masquerading as generic records.
-func LoadOperationMeasurements(ctx context.Context, reader evidencestore.Reader, references []evidencestore.ObjectIdentity, maxBytes int64) ([]serving.OperationCost, []serving.NodeBaseline, error) {
-	if reader == nil || maxBytes < 1 {
-		return nil, nil, errors.New("bounded evidence reader required")
+// OperationMeasurementPrefix holds every serving-operation measurement record.
+const OperationMeasurementPrefix = "serving/operation-measurements/"
+
+// Cost issue codes.
+const (
+	CostEvidenceInvalid = "CostEvidenceInvalid"
+	MeterUndeclared     = "MeterUndeclared"
+)
+
+// OperationMeasurementKey is the fixed store key of one operation measurement.
+func OperationMeasurementKey(operation Operation) string {
+	return OperationMeasurementPrefix + operation.Node.UID + "/" + operation.ID + ".json"
+}
+
+// CostIssue is one measurement that contributes no cost.
+type CostIssue struct {
+	Source string `json:"source"`
+	Code   string `json:"code"`
+	Reason string `json:"reason"`
+}
+
+// CostView is the cost evidence derived from completed measurements.
+type CostView struct {
+	Costs     []serving.OperationCost
+	Baselines []serving.NodeBaseline
+	Issues    []CostIssue
+	// Sources names every listed measurement identity.
+	Sources []string
+}
+
+type costObjects interface {
+	evidencestore.Reader
+	evidencestore.Lister
+}
+
+// CostEvidence derives operation costs, unloaded baselines and power mode
+// transition costs from completed measurements. Stored objects are immutable,
+// so each identity is read once and dropped when it is no longer listed.
+type CostEvidence struct {
+	store        *Store
+	objects      costObjects
+	maxBytes     int64
+	measurements map[evidencestore.ObjectIdentity]operationEvidence
+	power        map[string]powerEvidence
+}
+
+type operationEvidence struct {
+	meter    MeterDeclaration
+	cost     *serving.OperationCost
+	baseline *serving.NodeBaseline
+	err      error
+}
+
+type powerEvidence struct {
+	node   serving.NodeReference
+	source metricobserver.SourceIdentity
+	costs  []serving.OperationCost
+}
+
+func NewCostEvidence(store *Store, objects costObjects, maxBytes int64) (*CostEvidence, error) {
+	if store == nil || objects == nil || maxBytes < 1 {
+		return nil, errors.New("native store and bounded evidence lister required")
 	}
-	costs := make([]serving.OperationCost, 0, len(references))
-	var baselines []serving.NodeBaseline
-	meters := map[string]serving.NodeReference{}
-	var failures []error
-	series := make([]MeterDeclaration, 0, len(references))
-	for _, ref := range references {
-		record, err := readOperationMeasurement(ctx, reader, ref, maxBytes)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		if err := validateRetainedMeasurement(record); err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		meter := record.Request.Meter
-		if previous, ok := meters[meter.ID]; ok && previous != meter.Node {
-			failures = append(failures, errors.New("one meter declared node-exclusive for multiple Nodes"))
-			continue
-		}
-		meters[meter.ID] = meter.Node
-		ambiguous := false
-		for _, previous := range series {
-			if previous.Node != meter.Node && sameWallSeries(previous.Source, meter.Source) {
-				ambiguous = true
-				break
-			}
-		}
-		if ambiguous {
-			failures = append(failures, errors.New("one physical wall series declared for multiple Nodes"))
-			continue
-		}
-		series = append(series, meter)
-		if record.Isolation != nil && (record.Isolation.Error != "" || record.Isolation.Node != record.Request.Operation.Node || len(record.Isolation.Workloads) != 0 || record.Isolation.CheckedAt.Before(record.Result.EndedAt)) {
-			failures = append(failures, errors.New("operation isolation boundary failed"))
-			continue
-		}
-		if record.Request.Operation.Kind == operationIdle {
-			baseline, err := idleMeasurementBaseline(record, ref)
-			if err != nil {
-				failures = append(failures, err)
+	return &CostEvidence{store: store, objects: objects, maxBytes: maxBytes,
+		measurements: map[evidencestore.ObjectIdentity]operationEvidence{}, power: map[string]powerEvidence{}}, nil
+}
+
+// Refresh lists operation measurements under the fixed prefix and Complete
+// PowerModeTransitionCost objects in namespaces. A listing failure fails the
+// refresh; one failed record or measurement becomes its own CostIssue.
+func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters []MeterDeclaration, profiles []serving.Profile) (CostView, error) {
+	view := CostView{Issues: []CostIssue{}}
+	identities, err := e.objects.List(ctx, OperationMeasurementPrefix)
+	if err != nil {
+		return CostView{}, err
+	}
+	listed := map[evidencestore.ObjectIdentity]bool{}
+	for _, identity := range identities {
+		listed[identity] = true
+		view.Sources = append(view.Sources, fmt.Sprintf("%s/%s/%d", identity.Store, identity.Key, identity.Size))
+		evidence, cached := e.measurements[identity]
+		if !cached {
+			var readErr error
+			evidence, readErr = e.readOperationEvidence(ctx, identity)
+			if readErr != nil {
+				view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: readErr.Error()})
 				continue
 			}
-			baselines = append(baselines, baseline)
-			continue
+			e.measurements[identity] = evidence
 		}
-		cost, err := measurementCost(record, ref)
-		if err != nil {
-			failures = append(failures, err)
-			continue
+		switch {
+		case evidence.err != nil:
+			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: evidence.err.Error()})
+		case !slices.ContainsFunc(meters, func(m MeterDeclaration) bool { return reflect.DeepEqual(m, evidence.meter) }):
+			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: MeterUndeclared, Reason: "record meter " + evidence.meter.ID + " differs from every configured meter"})
+		case evidence.baseline != nil:
+			view.Baselines = append(view.Baselines, *evidence.baseline)
+		default:
+			view.Costs = append(view.Costs, *evidence.cost)
 		}
-		costs = append(costs, cost)
 	}
-	return costs, baselines, errors.Join(failures...)
+	maps.DeleteFunc(e.measurements, func(identity evidencestore.ObjectIdentity, _ operationEvidence) bool { return !listed[identity] })
+	if err = e.refreshPower(ctx, namespaces, meters, profiles, &view); err != nil {
+		return CostView{}, err
+	}
+	view.Costs = latestCosts(view.Costs)
+	view.Baselines = latestBaselines(view.Baselines)
+	slices.Sort(view.Sources)
+	return view, nil
 }
-func readOperationMeasurement(ctx context.Context, reader evidencestore.Reader, ref evidencestore.ObjectIdentity, maxBytes int64) (OperationMeasurement, error) {
-	var record OperationMeasurement
-	raw, err := boundedCostRead(ctx, reader, ref, maxBytes)
+
+func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, meters []MeterDeclaration, profiles []serving.Profile, view *CostView) error {
+	listed := map[string]bool{}
+	for _, namespace := range namespaces {
+		measurements := &edge.PowerModeTransitionCostList{}
+		if err := e.store.client.List(ctx, measurements, client.InNamespace(namespace)); err != nil {
+			return err
+		}
+		for i := range measurements.Items {
+			measurement := &measurements.Items[i]
+			result := measurement.Status.Result
+			if measurement.DeletionTimestamp != nil || measurement.Status.ObservedGeneration != measurement.Generation ||
+				measurement.Status.Phase != edge.PowerModeTransitionCostPhaseComplete || result == nil {
+				continue
+			}
+			name := measurement.Namespace + "/" + measurement.Name
+			identity := name + "/" + string(measurement.UID) + "/" + result.Store + "/" + result.Key
+			listed[identity] = true
+			view.Sources = append(view.Sources, identity)
+			evidence, cached := e.power[identity]
+			if !cached {
+				var err error
+				if evidence, err = e.loadPowerCost(ctx, measurement, profiles); err != nil {
+					view.Issues = append(view.Issues, CostIssue{Source: name, Code: CostEvidenceInvalid, Reason: err.Error()})
+					continue
+				}
+				e.power[identity] = evidence
+			}
+			i := slices.IndexFunc(meters, func(m MeterDeclaration) bool {
+				return m.Node == evidence.node && reflect.DeepEqual(m.Source, evidence.source)
+			})
+			if i < 0 {
+				view.Issues = append(view.Issues, CostIssue{Source: name, Code: MeterUndeclared, Reason: "no configured meter has the measured Node and power source"})
+				continue
+			}
+			for _, cost := range evidence.costs {
+				cost.Meter, cost.Scope = meters[i].ID, meters[i].Scope
+				view.Costs = append(view.Costs, cost)
+			}
+		}
+	}
+	maps.DeleteFunc(e.power, func(identity string, _ powerEvidence) bool { return !listed[identity] })
+	return nil
+}
+
+// readOperationEvidence returns an error only when the object cannot be read;
+// a readable record that fails validation is retained with its error.
+func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencestore.ObjectIdentity) (operationEvidence, error) {
+	raw, err := boundedCostRead(ctx, e.objects, ref, e.maxBytes)
 	if err != nil {
-		return record, err
+		return operationEvidence{}, err
 	}
-	err = strictCostDecode(raw, &record)
-	return record, err
+	var record OperationMeasurement
+	evidence := operationEvidence{err: strictCostDecode(raw, &record)}
+	if evidence.err != nil {
+		return evidence, nil
+	}
+	evidence.meter = record.Request.Meter
+	if evidence.err = validateRetainedMeasurement(record, ref); evidence.err != nil {
+		return evidence, nil
+	}
+	if record.Request.Operation.Kind == operationIdle {
+		baseline, err := idleMeasurementBaseline(record, ref)
+		evidence.baseline, evidence.err = &baseline, err
+		return evidence, nil
+	}
+	cost, err := measurementCost(record, ref)
+	evidence.cost, evidence.err = &cost, err
+	return evidence, nil
 }
-func validateRetainedMeasurement(record OperationMeasurement) error {
+
+// latestCosts keeps the latest cost per condition: Node, kind, from, to and
+// the Node power mode for operations; Node, from, to and the loaded state for
+// power. Equal times keep the smaller ID.
+func latestCosts(costs []serving.OperationCost) []serving.OperationCost {
+	key := func(c serving.OperationCost) string {
+		condition := c.PowerMode
+		if c.Kind == operationPower {
+			condition = strings.Join(c.BeforeState, "\x00")
+		}
+		return strings.Join([]string{c.Node.UID, c.Kind, c.From, c.To, condition}, "\x01")
+	}
+	return latestBy(costs, key, func(c serving.OperationCost) (string, int64) { return c.ID, c.MeasuredAt.UnixNano() })
+}
+
+// latestBaselines keeps one unloaded or loaded baseline per Node, mode and state.
+func latestBaselines(baselines []serving.NodeBaseline) []serving.NodeBaseline {
+	key := func(b serving.NodeBaseline) string {
+		return strings.Join(append([]string{b.Node.UID, b.PowerMode}, b.State...), "\x01")
+	}
+	return latestBy(baselines, key, func(b serving.NodeBaseline) (string, int64) { return b.ID, b.MeasuredAt.UnixNano() })
+}
+
+func latestBy[T any](items []T, key func(T) string, order func(T) (string, int64)) []T {
+	indices := map[string]int{}
+	var result []T
+	for _, item := range items {
+		k := key(item)
+		index, found := indices[k]
+		if !found {
+			indices[k] = len(result)
+			result = append(result, item)
+			continue
+		}
+		id, at := order(item)
+		oldID, oldAt := order(result[index])
+		if at > oldAt || (at == oldAt && id < oldID) {
+			result[index] = item
+		}
+	}
+	return result
+}
+func validateRetainedMeasurement(record OperationMeasurement, ref evidencestore.ObjectIdentity) error {
+	if ref.Key != OperationMeasurementKey(record.Request.Operation) {
+		return errors.New("record is not at its fixed operation measurement key")
+	}
 	if record.Result.Operation.ID != record.Request.Operation.ID || record.Result.Operation.Node != record.Request.Operation.Node || record.Result.Operation.Kind != record.Request.Operation.Kind || record.Request.Coverage.MaximumBoundaryDistance <= 0 || record.Request.Coverage.MaximumGap <= 0 || record.Request.Coverage.MinimumCoverage <= 0 || record.Request.Coverage.MinimumCoverage > 1 || !record.Result.EndedAt.After(record.Result.StartedAt) {
 		return errors.New("raw operation conditions/window mismatch")
+	}
+	if record.Isolation != nil && (record.Isolation.Error != "" || record.Isolation.Node != record.Request.Operation.Node || len(record.Isolation.Workloads) != 0 || record.Isolation.CheckedAt.Before(record.Result.EndedAt)) {
+		return errors.New("operation isolation boundary failed")
 	}
 	if err := record.Request.Sampling.Validate(); err != nil {
 		return err

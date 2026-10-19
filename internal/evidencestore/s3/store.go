@@ -18,6 +18,7 @@ var (
 	_ evidencestore.ImmutableWriter = (*Store)(nil)
 	_ evidencestore.Reader          = (*Store)(nil)
 	_ evidencestore.LocationReader  = (*Store)(nil)
+	_ evidencestore.Lister          = (*Store)(nil)
 )
 
 type Store struct {
@@ -108,6 +109,27 @@ func (s *Store) Delete(ctx context.Context, location evidencestore.ObjectLocatio
 		return nil
 	}
 	return translate("delete evidence object", err)
+}
+
+// List reads every ListObjectsV2 page under prefix.
+func (s *Store) List(ctx context.Context, prefix string) ([]evidencestore.ObjectIdentity, error) {
+	var objects []evidencestore.ObjectIdentity
+	input := &awss3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix)}
+	for {
+		output, err := s.client.ListObjectsV2(ctx, input)
+		if err != nil {
+			return nil, translate("list evidence objects", err)
+		}
+		for _, object := range output.Contents {
+			objects = append(objects, evidencestore.ObjectIdentity{
+				Store: s.logicalStore, Key: aws.ToString(object.Key), Size: aws.ToInt64(object.Size),
+			})
+		}
+		if !aws.ToBool(output.IsTruncated) {
+			return objects, nil
+		}
+		input.ContinuationToken = output.NextContinuationToken
+	}
 }
 
 func (s *Store) validateLocation(location evidencestore.ObjectLocation) error {

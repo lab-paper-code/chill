@@ -39,7 +39,7 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 	for _, memory := range []uint64{4096, 0} {
 		t.Run(fmt.Sprint(memory), func(t *testing.T) {
 			catalog, source, objects, planReference := catalogEvidenceFixture(t, memory)
-			view, err := catalog.Refresh(context.Background(), []types.NamespacedName{source})
+			view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -52,11 +52,7 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 			if len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
 				t.Fatalf("same-firstfloor measurements unavailable: %+v", view)
 			}
-			profile, issues, err := catalog.readProfile(context.Background(), source)
-			if err != nil || len(issues) != 0 {
-				t.Fatalf("retained raw measurement facts unavailable: %+v %v", issues, err)
-			}
-			assertCatalogRawProfile(t, profile)
+			assertCatalogRawProfile(t, view.Profiles[0])
 			// Change only the frozen artifact while keeping the current schema and
 			// declared size valid. Structurally valid but mismatching is ineligible.
 			plan, err := profilederivation.DecodeCurvePlan(objects[planReference.Location()])
@@ -88,7 +84,7 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 			if err := catalog.store.client.Update(context.Background(), campaign); err != nil {
 				t.Fatal(err)
 			}
-			view, err = catalog.Refresh(context.Background(), []types.NamespacedName{source})
+			view, err = catalog.Refresh(context.Background(), []string{source.Namespace})
 			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != invalidEvidenceCode {
 				t.Fatalf("artifact mismatch remained a candidate: %+v, %v", view, err)
 			}
@@ -121,7 +117,7 @@ func TestCatalogRejectsRunAffinityChangedFromCampaignSource(t *testing.T) {
 	if err := catalog.store.client.Update(ctx, run); err != nil {
 		t.Fatal(err)
 	}
-	view, err := catalog.Refresh(ctx, []types.NamespacedName{source})
+	view, err := catalog.Refresh(ctx, []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
 		view.Insufficiencies[0].Code != invalidEvidenceCode || !strings.Contains(view.Insufficiencies[0].Reason, "CPU affinity") {
 		t.Fatalf("source CPU selection drift accepted: %+v %v", view, err)
@@ -366,7 +362,7 @@ func TestCatalogRetainsAdmittedFactsWithCallerOwnedViews(t *testing.T) {
 	const callerMutation = "caller-mutated"
 	catalog, source, objects, plan := catalogEvidenceFixture(t, 4096)
 	ctx := context.Background()
-	view, err := catalog.Refresh(ctx, []types.NamespacedName{source})
+	view, err := catalog.Refresh(ctx, []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 1 {
 		t.Fatalf("initial admission failed: %+v %v", view, err)
 	}
@@ -386,7 +382,7 @@ func TestCatalogRetainsAdmittedFactsWithCallerOwnedViews(t *testing.T) {
 	// unavailability; current native Campaign metadata must still be read.
 	clear(objects)
 	for range 2 {
-		view, err = catalog.Refresh(ctx, []types.NamespacedName{source})
+		view, err = catalog.Refresh(ctx, []string{source.Namespace})
 		if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
 			t.Fatalf("unchanged terminal admission was lost: %+v %v", view, err)
 		}
@@ -410,7 +406,7 @@ func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T
 		t.Run(change, func(t *testing.T) {
 			catalog, source, objects, _ := catalogEvidenceFixture(t, 4096)
 			ctx := context.Background()
-			view, err := catalog.Refresh(ctx, []types.NamespacedName{source})
+			view, err := catalog.Refresh(ctx, []string{source.Namespace})
 			if err != nil || len(view.Profiles) != 1 {
 				t.Fatalf("initial admission failed: %+v %v", view, err)
 			}
@@ -420,6 +416,8 @@ func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T
 			if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
 				t.Fatal(err)
 			}
+			// Incomplete and deleted measurements are skipped; changed evidence is read again.
+			issues := 1
 			switch change {
 			case "version":
 				campaign.Annotations = map[string]string{"catalog-test-revision": "changed"}
@@ -427,10 +425,14 @@ func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T
 			case "pending":
 				campaign.Status.Phase = "Measuring"
 				err = catalog.store.client.Status().Update(ctx, campaign)
+				issues = 0
 			case "unselected":
 				_, err = catalog.Refresh(ctx, nil)
 			case "deleted", recreatedSource:
 				err = catalog.store.client.Delete(ctx, campaign)
+				if err == nil && change != recreatedSource {
+					issues = 0
+				}
 				if err == nil && change == recreatedSource {
 					campaign.UID, campaign.ResourceVersion = "replacement-uid", ""
 					err = catalog.store.client.Create(ctx, campaign)
@@ -440,8 +442,8 @@ func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T
 				t.Fatal(err)
 			}
 			for range 2 {
-				view, err = catalog.Refresh(ctx, []types.NamespacedName{source})
-				if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 {
+				view, err = catalog.Refresh(ctx, []string{source.Namespace})
+				if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != issues {
 					t.Fatalf("changed source reused an old success: %+v %v", view, err)
 				}
 			}
@@ -458,7 +460,7 @@ func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T
 					t.Fatal(err)
 				}
 			}
-			view, err = catalog.Refresh(ctx, []types.NamespacedName{source})
+			view, err = catalog.Refresh(ctx, []string{source.Namespace})
 			if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
 				t.Fatalf("fresh evidence did not restore admission: %+v %v", view, err)
 			}

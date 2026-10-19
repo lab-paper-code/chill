@@ -12,7 +12,6 @@ import { Empty, Facts, Figure, Row, RowDialog, Rows, Screen } from "@/components
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { explain } from "@/lib/labels"
-import { ProfileAdoption, useProfileSelections } from "@/features/scheduler-profiles"
 
 const plansPath = (namespace:string) => `v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
 export const planHref = (namespace:string, name:string, uid?:string) => `/measurements/batch-energy-optimizations/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${uid ? `?uid=${encodeURIComponent(uid)}` : ""}`
@@ -28,8 +27,6 @@ function planCause(plan:{conditions?:{type:string;status:string;reason?:string}[
 function condition(spec:MeasurementPlanSpec) {
   return `${spec.state.targetNode} · ${spec.state.candidate.executionPath}${spec.cpuQuota ? ` · CPU ${spec.cpuQuota}개` : ""}`
 }
-const adoptedNames = (selections:{campaign:{namespace:string;name:string};persisted:boolean;loaded:boolean}[]|null|undefined) =>
-  new Set((selections ?? []).filter(selection => selection.persisted || selection.loaded).map(selection => `${selection.campaign.namespace}/${selection.campaign.name}`))
 
 // /measurements: one row per measurement, grouped by state, newest first.
 export function MeasurementPlansPage() {
@@ -37,19 +34,18 @@ export function MeasurementPlansPage() {
   const probe = useChillQuery<MeasurementPlanList>(plansPath(namespace))
   const measuring = (probe.data?.items ?? []).some(plan => plan.status?.phase === "Measuring")
   const query = useChillQuery<MeasurementPlanList>(plansPath(namespace), {poll:measuring})
-  const profiles = useProfileSelections(), adopted = adoptedNames(profiles.data?.selections)
   const plans = [...(query.data?.items ?? [])].sort((a, b) => b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))
   const byPhase = (phase:string) => plans.filter(plan => (plan.status?.phase ?? "Measuring") === phase)
   const running = byPhase("Measuring"), failed = byPhase("Failed"), done = plans.filter(plan => plan.status?.phase === "Complete")
   const row = (plan:MeasurementPlan) => {
-    const status = plan.status ?? {}, isAdopted = adopted.has(`${plan.metadata.namespace}/${plan.metadata.name}`)
+    const status = plan.status ?? {}
     const hint = status.phase === "Failed" ? planCause(status)?.[0] ?? "측정을 끝내지 못했어요." : status.phase === "Complete" ? `${day(plan.metadata.creationTimestamp)} · ${plan.metadata.name}` : `${status.completedTrials ?? 0}번 쟀어요 · ${day(plan.metadata.creationTimestamp)} 시작`
     return <Row key={plan.metadata.uid} href={planHref(plan.metadata.namespace, plan.metadata.name, plan.metadata.uid)} label={`${plan.spec.state.candidate.modelSpec} · ${condition(plan.spec)}`} hint={hint}
-      value={isAdopted ? <StatusBadge tone="ok">채택됨</StatusBadge> : status.phase === "Measuring" ? <StatusBadge tone="info">측정 중</StatusBadge> : status.phase === "Failed" ? <StatusBadge tone="fail">실패</StatusBadge> : null}/>
+      value={status.phase === "Measuring" ? <StatusBadge tone="info">측정 중</StatusBadge> : status.phase === "Failed" ? <StatusBadge tone="fail">실패</StatusBadge> : null}/>
   }
   return <Screen status={failed.length ? <StatusBadge tone="fail">실패 {failed.length}개</StatusBadge> : undefined}
     title={!query.data ? "측정" : running.length ? `측정 ${running.length}개가 진행 중이에요` : plans.length ? `측정 ${plans.length}개가 있어요` : "아직 요청한 측정이 없어요"}
-    lede="모델을 장비에서 실행해 크기별 에너지를 재요. 결과를 채택하면 운영 판단이 그 결과로 구성을 비교해요."
+    lede="모델을 장비에서 실행해 크기별 에너지를 재요. 끝난 측정은 운영 판단이 바로 구성 비교에 써요."
     action={<Button asChild><Link href="/measurements/new">새 측정 요청</Link></Button>}>
     <QueryGate query={query}>
       {running.length > 0 && <Rows label="진행 중">{running.map(row)}</Rows>}
@@ -58,7 +54,7 @@ export function MeasurementPlansPage() {
       {query.data && !plans.length && <Empty title="새 측정을 요청해 보세요"/>}
     </QueryGate>
     <Rows label="더 보기">
-      <Row href="/scheduler/profiles" label="채택한 측정 프로파일" hint="운영 판단이 쓰는 측정 결과" value={profiles.data ? `${adopted.size}개` : undefined}/>
+      <Row href="/scheduler/profiles" label="측정 프로파일" hint="운영 판단이 쓰는 측정 결과"/>
       <Row href="/measurements/runs" label="개별 측정 회차" hint="회차 하나하나의 결과와 근거"/>
       <Row href="/measurements/check" label="측정 계획 파일 검사" hint="파일로 된 계획의 조건만 확인해요"/>
       {query.data && <RowDialog label="원본 자료" title="측정 목록 원본"><SourceExport value={{namespace, source:query.data}} filename="chill-measurements.json"/><SourceJSON inline value={query.data}/></RowDialog>}
@@ -75,7 +71,6 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
   const path = `${plansPath(namespace)}/${encodeURIComponent(name)}/result`
   const probe = useChillQuery<CampaignResult>(path, {decoder:parseSchedulerJSON})
   const query = useChillQuery<CampaignResult>(path, {decoder:parseSchedulerJSON, poll:probe.data?.campaign.phase === "Measuring"})
-  const profiles = useProfileSelections()
   const [deleted, setDeleted] = React.useState<MeasurementMutation|null>(null)
   const data = query.data, campaign = data?.campaign, spec = campaign?.spec as MeasurementPlanSpec | undefined
   const other = !!campaign && !!expectedUID && campaign.uid !== expectedUID
@@ -86,7 +81,6 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
   </Screen>
   const phase = campaign?.phase, cause = campaign ? planCause(campaign) : undefined
   const result = (data?.result ?? null) as ResultBody | null, detail = result?.detail
-  const adopted = adoptedNames(profiles.data?.selections).has(`${namespace}/${name}`)
   const planned = spec ? plannedTrials(spec) : undefined
   const title = !campaign ? name : other ? "같은 이름으로 다시 등록된 다른 측정이에요"
     : phase === "Measuring" ? "측정하고 있어요"
@@ -95,7 +89,7 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
   const badge = !campaign ? undefined : other ? <StatusBadge tone="fail">다른 측정</StatusBadge>
     : phase === "Measuring" ? <StatusBadge tone="info">측정 중</StatusBadge> : phase === "Failed" ? <StatusBadge tone="fail">실패</StatusBadge> : <StatusBadge tone="ok">완료</StatusBadge>
   const manage = campaign && <Rows label="관리"><DeleteMeasurement namespace={namespace} name={name} uid={campaign.uid} version={campaign.resourceVersion} trials={campaign.completedTrials ?? 0}
-    blocked={phase === "Measuring" ? "진행 중인 측정은 지울 수 없어요. 끝난 뒤에 지워 주세요." : adopted ? "운영 판단이 쓰고 있는 측정이에요. 먼저 채택을 해제해 주세요." : undefined} onDeleted={setDeleted}/></Rows>
+    blocked={phase === "Measuring" ? "진행 중인 측정은 지울 수 없어요. 끝난 뒤에 지워 주세요." : undefined} onDeleted={setDeleted}/></Rows>
   const scale = Math.max(...(detail?.incrementalWorkByBatch ?? []).map(item => item.incrementalWorkJoulesPerItem), 0)
   return <Screen back={back} status={badge} title={title}
     lede={spec && !other ? `${spec.state.candidate.modelSpec} · ${condition(spec)}` : name}
@@ -122,7 +116,7 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
         {phase !== "Complete" && <Row href={`/measurements/runs?q=${encodeURIComponent(name)}`} label="지금까지의 회차" hint="이 측정 이름으로 찾은 회차"/>}
         <RowDialog label="원본 자료" title="측정 원본 자료"><SourceExport value={{namespace, name, expectedUID, source:data}} filename={`chill-measurement-${name}.json`}/><SourceJSON inline value={data}/></RowDialog>
       </Rows>
-      {phase === "Complete" ? <ProfileAdoption namespace={namespace} name={name} ready={data?.result !== null}>{manage}</ProfileAdoption> : manage}
+      {manage}
     </>}</QueryGate>
   </Screen>
 }

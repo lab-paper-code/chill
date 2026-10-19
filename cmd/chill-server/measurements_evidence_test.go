@@ -18,7 +18,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
-	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	"github.com/lab-paper-code/chill/internal/serving"
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
@@ -225,7 +224,7 @@ func TestMeasurementDeletesExactOwnedEvidenceRawFirstWithoutTouchingSharedArtifa
 
 func TestMeasurementSharedReferenceAndForeignOwnershipBlockBeforeAnyS3Delete(t *testing.T) {
 	modes := []string{
-		"other measurement", "foreign execution", "baseline", "native raw sharing", "current cost", "accepted old cost",
+		"other measurement", "foreign execution", "baseline", "native raw sharing",
 		"foreign own execution", "foreign own result", "active Job", "missing Job active Pod",
 		"unfinalized Run", "recoverable failure",
 	}
@@ -302,38 +301,6 @@ func TestMeasurementSharedReferenceAndForeignOwnershipBlockBeforeAnyS3Delete(t *
 					},
 					Status: core.PodStatus{Phase: core.PodRunning},
 				})
-			}
-			if mode == "current cost" || mode == "accepted old cost" {
-				settings := serving.SchedulerSettings{
-					Algorithm:         serving.SchedulerAlgorithmFixedHorizon,
-					ObservationWindow: 1, ControlInterval: 1, Horizon: 1, MaxObservationAge: 1,
-					Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 1,
-				}
-				config := schedulerConfiguration{Settings: settings}
-				costConfig := config
-				costConfig.CostReferences = []evidencestore.ObjectIdentity{{Store: "evidence", Key: "cost.json", Size: 100}}
-				storage.objects["cost.json"] = []byte(`{"request":{"operation":{"prepare":` +
-					`{"config":{"policy":{"profileID":"allowed/task/native-uid"}}}}}}`)
-				if mode == "current cost" {
-					config = costConfig
-				}
-				encoded, err := json.Marshal(config)
-				if err != nil {
-					t.Fatal(err)
-				}
-				kube := kubefake.NewSimpleClientset(&core.ConfigMap{
-					ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "scheduler"},
-					Data:       map[string]string{"scheduler.json": string(encoded)},
-				})
-				opts := service.opts
-				opts.schedulerConfigMap = "scheduler"
-				opts.schedulerConfigKey = "scheduler.json"
-				opts.maxRequestBytes = 1 << 20
-				service.kube = kube
-				service.scheduler = &schedulerService{kube: kube, opts: opts}
-				if mode == "accepted old cost" {
-					service.scheduler.configuration.Store(&costConfig)
-				}
 			}
 			_, err := service.delete(context.Background(), task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
 			var domain *serving.Error
@@ -517,52 +484,6 @@ func TestFailedCampaignWithPublishedPreJobFailureCanBeDeleted(t *testing.T) {
 			}
 			if err != nil || !result.EvidenceDeleted || len(result.DeletedEvidence) != 5 {
 				t.Fatalf("permanent pre-Job failed campaign is undeletable: %+v %v", result, err)
-			}
-		})
-	}
-}
-
-func TestPowerCostReferencesProtectAcceptedAndRawNativeProfiles(t *testing.T) {
-	var node transitioncost.NativeNodeObservation
-	witness := `{"instances":[{"state":{"metadata":{"profileID":"allowed/task/native-uid"}}}]}`
-	if err := json.Unmarshal([]byte(witness), &node); err != nil {
-		t.Fatal(err)
-	}
-	for _, finalized := range []bool{true, false} {
-		t.Run(map[bool]string{true: "accepted observation", false: "raw observation"}[finalized], func(t *testing.T) {
-			record := struct {
-				RawEvidence evidencestore.ObjectIdentity              `json:"rawEvidence"`
-				Observation transitioncost.FinalizedObservationRecord `json:"observation"`
-			}{
-				RawEvidence: evidencestore.ObjectIdentity{Store: "evidence", Key: "power/raw.json", Size: 1},
-			}
-			if finalized {
-				record.Observation.AcceptedObservation = &transitioncost.FinalizedAcceptedObservationRecord{
-					BeforeNative: &node,
-				}
-			}
-			payload, err := json.Marshal(record)
-			if err != nil {
-				t.Fatal(err)
-			}
-			objects := map[string][]byte{"power/final.json": payload}
-			if !finalized {
-				raw, err := transitioncost.EncodeRawRecord(transitioncost.RawObservation{BeforeNative: &node})
-				if err != nil {
-					t.Fatal(err)
-				}
-				objects["power/raw.json"] = raw
-			}
-			storage := deletionStore(t, objects)
-			service := deletionService(nil, storage)
-			guard := &measurementReferenceGuard{profilePrefix: "allowed/task/"}
-			reference := evidencestore.ObjectIdentity{
-				Store: "evidence", Key: "power/final.json", Size: int64(len(payload)),
-			}
-			err = service.checkPowerTrialEvidence(context.Background(), reference, guard)
-			var domain *serving.Error
-			if !errors.As(err, &domain) || domain.Code != "MeasurementInUse" || storage.deleteCalls() != 0 {
-				t.Fatalf("current power-cost reference was not protected: %v", err)
 			}
 		})
 	}

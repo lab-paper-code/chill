@@ -217,8 +217,6 @@ func writeUsage(writer io.Writer) error {
 			"  kubectl chill measurements delete NAME --uid UID --if-match RESOURCE_VERSION [-n NAMESPACE] [-o table|json]\n"+
 			"    Permanently deletes the measurement's owned raw evidence/results; no automatic retry.\n"+
 			"  kubectl chill profiles list [-n NAMESPACE] [-o table|json]\n"+
-			"  kubectl chill profiles adopt NAME [-n NAMESPACE] [-o table|json]\n"+
-			"  kubectl chill profiles unadopt NAME --if-match CONFIG_VERSION [-n NAMESPACE] [-o table|json]\n"+
 			"  Owner commands: [--serving-url HTTPS_ORIGIN] [--serving-ca-file PATH] "+
 			"[--token-file PATH] [--serving-service NAME]"); err != nil {
 		return err

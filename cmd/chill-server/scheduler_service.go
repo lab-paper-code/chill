@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,7 +15,6 @@ import (
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
@@ -36,14 +34,10 @@ type powerObservationConfig struct {
 }
 
 type schedulerConfiguration struct {
-	ProfileCampaigns []httpapi.ProfileCampaign              `json:"profileCampaigns"`
 	Settings         serving.SchedulerSettings              `json:"settings"`
 	CPUInventory     map[string][]int                       `json:"cpuInventory"`
 	GPUInventory     map[string][]string                    `json:"gpuInventory"`
 	Reserved         map[string]serving.SchedulerAllocation `json:"reserved"`
-	Preparations     map[string]servingkube.PrepareSpec     `json:"preparations"`
-	CostReferences   []evidencestore.ObjectIdentity         `json:"costReferences"`
-	PowerCostSources []servingkube.PowerCostSource          `json:"powerCostSources"`
 	Meters           []servingkube.MeterDeclaration         `json:"meters"`
 	PowerRequests    map[string]*edge.NodeActuation         `json:"powerRequests"`
 	PowerObservation *powerObservationConfig                `json:"powerObservation,omitempty"`
@@ -51,26 +45,27 @@ type schedulerConfiguration struct {
 }
 
 type schedulerService struct {
-	lock                      sync.Mutex
-	controller                *servingkube.SchedulerController
-	operations                *servingkube.Operations
-	store                     *servingkube.Store
-	kube                      kubernetes.Interface
-	execution                 *serving.Runtime
-	observer                  *servingkube.Observer
-	objects                   *stores3.Store
-	observationLog            *serving.ObservationLog
-	opts                      options
-	catalog                   *servingkube.Catalog
-	resourceVersion, profiles string
-	profileLoadError          string
-	staticAppliedRV           string
-	configuration             atomic.Pointer[schedulerConfiguration]
-	ctx                       context.Context
-	cancel                    context.CancelFunc
-	powerCancel               context.CancelFunc
-	wg                        sync.WaitGroup
-	powerWG                   sync.WaitGroup
+	lock                     sync.Mutex
+	controller               *servingkube.SchedulerController
+	operations               *servingkube.Operations
+	store                    *servingkube.Store
+	kube                     kubernetes.Interface
+	execution                *serving.Runtime
+	observer                 *servingkube.Observer
+	objects                  *stores3.Store
+	observationLog           *serving.ObservationLog
+	opts                     options
+	catalog                  *servingkube.Catalog
+	costs                    *servingkube.CostEvidence
+	resourceVersion, sources string
+	staticAppliedRV          string
+	configuration            atomic.Pointer[schedulerConfiguration]
+	profiles                 atomic.Pointer[httpapi.ProfilesView]
+	ctx                      context.Context
+	cancel                   context.CancelFunc
+	powerCancel              context.CancelFunc
+	wg                       sync.WaitGroup
+	powerWG                  sync.WaitGroup
 }
 
 func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kubernetes.Interface,
@@ -94,6 +89,9 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 		objects: objects, observationLog: observationLog, opts: opts, ctx: serviceCtx, cancel: cancel,
 	}
 	service.catalog, err = servingkube.NewCatalog(store, objects, opts.maxEvidenceBytes, opts.profileConfidenceLevel)
+	if err == nil {
+		service.costs, err = servingkube.NewCostEvidence(store, objects, opts.maxEvidenceBytes)
+	}
 	if err != nil {
 		cancel()
 		return nil, err
@@ -135,11 +133,6 @@ func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfigur
 	}
 	if err := config.validatePower(); err != nil {
 		return config, err
-	}
-	for profile, preparation := range config.Preparations {
-		if profile == "" || preparation.Instance.Profile != nil {
-			return config, errors.New("preparations select verified catalog profile IDs, not embedded profiles")
-		}
 	}
 	return config, nil
 }
@@ -228,12 +221,6 @@ func (o *schedulerService) refresh(ctx context.Context) (err error) {
 // excludes Tick and operator mutations.
 func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.servingNamespace).Get(ctx, o.opts.schedulerConfigMap, meta.GetOptions{})
-	defer func() {
-		o.profileLoadError = ""
-		if err != nil {
-			o.profileLoadError = err.Error()
-		}
-	}()
 	if err != nil {
 		return err
 	}
@@ -241,73 +228,34 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	view, err := o.readSelectedProfiles(ctx, config.ProfileCampaigns)
+	namespaces := o.profileNamespaces()
+	view, err := o.catalog.Refresh(ctx, namespaces)
 	if err != nil {
 		return err
 	}
-	profiles := view.Profiles
-	ids := make([]string, len(profiles))
-	for i, p := range profiles {
-		ids[i] = p.ID
+	costs, err := o.costs.Refresh(ctx, namespaces, config.Meters, view.Profiles)
+	if err != nil {
+		return err
 	}
-	slices.Sort(ids)
-	signature := strings.Join(ids, "\x00")
-	if o.controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.profiles {
+	sources := costs.Sources
+	for _, p := range view.Profiles {
+		sources = append(sources, p.ID)
+	}
+	for _, issue := range costs.Issues {
+		sources = append(sources, issue.Code+":"+issue.Source)
+	}
+	slices.Sort(sources)
+	signature := strings.Join(sources, "\x00")
+	if o.controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources {
 		o.applyStaticRouting(ctx)
 		return nil
 	}
-	costs, baselines, err := servingkube.LoadOperationMeasurements(ctx, o.objects,
-		config.CostReferences, o.opts.maxEvidenceBytes)
-	if err != nil {
-		return err
-	}
-	powerCosts, err := o.operations.LoadPowerCosts(ctx, o.objects, config.PowerCostSources, o.opts.maxEvidenceBytes)
-	if err != nil {
-		return err
-	}
-	costs = append(costs, powerCosts...)
-	preparations := make(map[string]servingkube.PrepareSpec, len(config.Preparations))
-	for _, profile := range profiles {
-		preparation, selected := config.Preparations[profile.ID]
-		if !selected {
-			continue
-		}
-		preparation.Instance.Profile = &profile
-		if preparation.Instance.Node.UID != profile.Condition.NodeUID || preparation.Instance.Node.Name != profile.NodeName {
-			return fmt.Errorf("profile %s preparation Node differs from measured condition", profile.ID)
-		}
-		if preparation.Store.Store != o.opts.storeName || preparation.Store.Endpoint != o.opts.storeEndpoint ||
-			preparation.Store.Bucket != o.opts.storeBucket || preparation.Store.Region != o.opts.storeRegion {
-			return errors.New("preparation store differs from configured immutable profile store")
-		}
-		if err = preparation.Store.Validate(); err != nil {
-			return err
-		}
-		bundle := profile.NativeBundle()
-		raw, err := json.Marshal(bundle)
-		if err != nil {
-			return err
-		}
-		if int64(len(raw)) > o.opts.maxEvidenceBytes {
-			return errors.New("verified profile bundle exceeds immutable object bound")
-		}
-		identity := evidencestore.ObjectIdentity{
-			Store: o.opts.storeName, Key: "serving/profiles/" + profile.ID + "/bundle.json", Size: int64(len(raw)),
-		}
-		if _, err = o.objects.PutImmutable(ctx, identity, bytes.NewReader(raw)); err != nil {
-			return err
-		}
-		preparation.Bundle = identity
-		preparation.Config.Mode = "serving"
-		preparation.Config.ProfilePath = "/profile/bundle.json"
-		preparation.Config.Policy.ProfileID = profile.ID
-		preparation.Config.Policy.Batches = nil
-		preparations[profile.ID] = preparation
-	}
+	preparations, issues := o.preparations(ctx, config, view.Profiles)
+	view.Insufficiencies = append(view.Insufficiencies, issues...)
 	controllerConfig := servingkube.SchedulerControllerConfig{
 		Settings: config.Settings, CPUInventory: config.CPUInventory, GPUInventory: config.GPUInventory,
-		Reserved: config.Reserved, Preparations: preparations, Costs: costs, Baselines: baselines,
-		Meters: config.Meters, PowerRequests: config.PowerRequests,
+		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
+		CostIssues: costs.Issues, Meters: config.Meters, PowerRequests: config.PowerRequests,
 		StaticRouting: config.StaticRouting != nil,
 		OnDecision:    o.recordDecision, OnAction: o.recordAction,
 	}
@@ -321,11 +269,20 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		return err
 	}
 	// Publish the complete configuration only after the controller accepted it.
-	o.observer.SetProfiles(profiles)
+	o.observer.SetProfiles(view.Profiles)
 	o.execution.SetCompletionMargin(config.Settings.CompletionMarginMS)
 	o.configuration.Store(&config)
+	published := httpapi.ProfilesView{
+		ConfigVersion: cm.ResourceVersion, CatalogView: view,
+		Preparations: make(map[string]servingkube.PrepareSpec, len(preparations)),
+	}
+	for id, spec := range preparations {
+		spec.Instance.Profile = nil // the profile body is in Profiles
+		published.Preparations[id] = spec
+	}
+	o.profiles.Store(&published)
 	o.resourceVersion = cm.ResourceVersion
-	o.profiles = signature
+	o.sources = signature
 	o.restartPower(config)
 	o.applyStaticRouting(ctx)
 	return nil

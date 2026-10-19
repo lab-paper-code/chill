@@ -545,11 +545,9 @@ servingEntrypoint:
   scheduler:
     configMap: ""
     key: scheduler.json
-    # Read grants for actual retained PowerModeTransitionCost objects and their
-    # immutable preparation ConfigMaps; entries are {namespace: ..., name: ...}.
-    powerCostSources: []
-  # Namespaces allowed for measurement list/create/delete and profile operations;
-  # empty uses the serving namespace. Measurement deletion also removes owned evidence.
+  # Namespaces whose completed measurements the scheduler derives profiles and
+  # costs from, and where measurements are listed, created and deleted; empty
+  # uses the serving namespace. Measurement deletion also removes owned evidence.
   profileNamespaces: []
   tls:
     # Required only when enabled; existing kubernetes.io/tls Secret in release namespace.

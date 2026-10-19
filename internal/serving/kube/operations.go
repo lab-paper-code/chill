@@ -362,7 +362,7 @@ func privilegedContainer(container core.Container) bool {
 }
 
 func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) error {
-	if err := validatePreparation(spec); err != nil {
+	if err := ValidatePreparation(spec); err != nil {
 		return err
 	}
 	p := spec.Instance.Profile
@@ -536,7 +536,9 @@ func (o *Operations) ensurePreparationConfig(ctx context.Context, spec PrepareSp
 	}
 	return spec.Config.Policy.DecisionID, nil
 }
-func validatePreparation(spec PrepareSpec) error {
+
+// ValidatePreparation checks a preparation against its measured profile.
+func ValidatePreparation(spec PrepareSpec) error {
 	p := spec.Instance.Profile
 	if p == nil || p.Condition.Firstfloor == nil || p.RuntimeMetadata == nil || spec.Name == "" || spec.Instance.Node.UID != p.Condition.NodeUID {
 		return errors.New("measured firstfloor preparation contract required")

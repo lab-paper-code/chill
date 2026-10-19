@@ -89,25 +89,17 @@ const guides: Record<string, Guide> = {
   MeasurementUnavailable: ["지금은 측정 기능을 쓸 수 없어요.", "잠시 후 다시 시도해 주세요."],
   MeasurementPreflightUnavailable: ["측정 요청을 미리 확인하지 못했어요.", "잠시 후 다시 시도해 주세요."],
   MeasurementPreflightRejected: ["이 조건으로는 측정 계획을 만들 수 없어요.", "원본 보기에서 이유를 확인하고 조건을 바꿔 주세요."],
-  MeasurementInUse: ["진행 중이거나 운영에 쓰고 있는 측정이라 지울 수 없어요.", "측정이 끝나거나 채택을 해제한 뒤 지워 주세요."],
+  MeasurementInUse: ["진행 중이거나 지금 실행 중인 서비스가 쓰고 있는 측정이라 지울 수 없어요.", "측정이 끝나거나 그 서비스 인스턴스가 정리된 뒤 지워 주세요."],
   MeasurementAuditUnavailable: ["측정 변경 기록을 저장할 수 없어서 요청하지 않았어요.", "잠시 후 다시 시도해 주세요."],
   MeasurementAuditIncomplete: ["측정 변경은 접수됐을 수 있지만 기록을 끝내지 못했어요.", "다시 보내기 전에 측정 목록을 확인해 주세요."],
   MeasurementEvidenceUnavailable: ["측정 기록 저장소에 접근할 수 없어서 지우지 않았어요.", "잠시 후 다시 시도해 주세요."],
   MeasurementEvidenceDeletionIncomplete: ["측정 기록 일부만 지웠어요. 측정 자체는 남아 있어요.", "측정을 다시 확인한 뒤 삭제를 다시 요청해 주세요."],
   MeasurementDeletionIncomplete: ["측정 기록은 지웠지만 측정 자체가 지워졌는지 확인하지 못했어요.", "측정을 다시 확인한 뒤 삭제를 다시 요청해 주세요."],
 
-  // Profile adoption codes: cmd/chill-server/profiles.go, internal/serving/kube/catalog.go
-  ProfileInUse: ["지금 운영 구성이 이 측정 결과를 쓰고 있어요.", "다른 측정 결과로 바꾼 뒤 해제해 주세요."],
-  ProfileControlsEnabled: ["자동 운영이 켜져 있어서 해제할 수 없어요.", "자동 운영을 끈 뒤 다시 시도해 주세요."],
-  ProfileUnavailable: ["이 측정에서 채택할 수 있는 결과가 없어요.", "측정 상세에서 결과를 확인해 주세요."],
-  ProfileNamespaceNotAllowed: ["이 저장 영역의 측정은 채택할 수 없어요.", "허용된 저장 영역의 측정을 골라 주세요."],
-  ConfigurationRequired: ["채택에 필요한 실행 준비 정보가 없어요.", "측정을 다시 채택해 주세요."],
-  ProfileLoadPending: ["채택은 저장됐고, 운영 판단에 반영되기를 기다리고 있어요.", "잠시 후 다시 확인해 주세요."],
-  ProfileLoadFailed: ["채택은 저장됐지만 운영 판단에 반영하지 못했어요.", "원본 보기에서 이유를 확인해 주세요."],
-  ProfileUnloadPending: ["해제는 저장됐고, 운영 판단에서 빠지기를 기다리고 있어요.", "잠시 후 다시 확인해 주세요."],
-  ProfileUnloadFailed: ["해제는 저장됐지만 운영 판단에 반영하지 못했어요.", "잠시 후 다시 확인해 주세요."],
-  MeasurementPending: ["측정이 아직 끝나지 않았어요.", "측정이 끝난 뒤 채택해 주세요."],
-  MeasurementRejected: ["실패했거나 지우는 중인 측정이라 채택할 수 없어요.", "다른 측정 결과를 골라 주세요."],
+  // Profile and cost issues: cmd/chill-server/profiles.go, internal/serving/kube/catalog.go, internal/serving/kube/cost.go
+  PreparationUnavailable: ["이 측정 결과로는 실행을 준비할 수 없어요.", "원본 보기에서 이유를 확인해 주세요."],
+  CostEvidenceInvalid: ["비용 측정 기록을 검증하지 못했어요.", "원본 보기에서 이유를 확인해 주세요."],
+  MeterUndeclared: ["운영 설정에 없는 계측기로 잰 비용이에요.", "운영 설정의 계측기와 같은 계측기로 다시 측정해 주세요."],
   InvalidEvidence: ["측정 기록을 검증하지 못했어요.", "원본 보기에서 이유를 확인해 주세요."],
   MeasurementEvidenceMissing: ["운영에 필요한 측정 기록이 모자라요.", "필요한 크기를 포함해 다시 측정해 주세요."],
   MemoryEvidenceMissing: ["메모리 사용량 기록이 없는 측정이에요.", "다시 측정해 주세요."],
@@ -173,7 +165,6 @@ const labels: Record<string, Label> = {
   // Settled workload states: internal/serving/kube/workload_view.go
   Ready: ["요청을 받을 수 있어요."],
   Deleting: ["지우고 있어요. 받은 요청을 마무리한 뒤 사라져요."],
-  ProfileUnselected: ["채택하지 않은 측정이에요."],
 
   // Measurement outcomes: internal/profiling/campaign/controller/curve_deriver.go
   "MinimumFound/LocalMinimum": ["크기를 더 키우면 에너지가 늘어서 탐색을 멈췄어요."],

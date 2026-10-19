@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -12,25 +11,19 @@ import (
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	core "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
-	ktesting "k8s.io/client-go/testing"
 )
 
 func measuredAdoptionProfile() serving.Profile {
@@ -187,29 +180,6 @@ func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
 	}
 }
 
-func TestProfileSelectionReportsPendingRejectedAndSuperseded(t *testing.T) {
-	selection := httpapi.ProfileCampaign{Namespace: "measurements", Name: "complete"}
-	for _, code := range []string{"MeasurementPending", "MeasurementRejected", "InvalidEvidence"} {
-		view := servingkube.CatalogView{Insufficiencies: []servingkube.CatalogIssue{{
-			Source: types.NamespacedName{Namespace: selection.Namespace, Name: selection.Name},
-			Code:   code, Reason: "actual measurement failure",
-		}}}
-		result := profileSelection(selection, view)
-		if result.Code != code || result.Reason != "actual measurement failure" || result.Persisted || result.Loaded {
-			t.Fatalf("misreported rejected input: %+v", result)
-		}
-		if (result.Status == profileSelectionPending) != (code == "MeasurementPending") {
-			t.Fatalf("wrong status: %+v", result)
-		}
-	}
-	result := profileSelection(selection, servingkube.CatalogView{
-		Profiles: []serving.Profile{{ID: "measurements/complete-new/uid"}},
-	})
-	if result.ProfileID != "" || result.Code != "ProfileUnavailable" {
-		t.Fatal("campaign name prefix aliased another measurement")
-	}
-}
-
 func TestGeneratedPreparationRejectsUnrepresentableMeasuredRuntimeAccess(t *testing.T) {
 	for _, access := range []derivation.CurveRuntimeAccessContract{
 		{Privileged: true, SupplementalGroups: []int64{44}},
@@ -269,9 +239,8 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1,
 		MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 2,
 	}
-	rejected := schedulerConfiguration{
-		Settings: settings, CostReferences: []evidencestore.ObjectIdentity{{}},
-	}
+	// The native store is unreachable, so listing completed measurements fails.
+	rejected := schedulerConfiguration{Settings: settings}
 	raw, err := json.Marshal(rejected)
 	if err != nil {
 		t.Fatal(err)
@@ -337,13 +306,13 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	}
 	service := &schedulerService{
 		kube: kube, observer: observer, objects: objects, catalog: catalog, resourceVersion: acceptedVersion,
-		profiles: profile.ID, staticAppliedRV: acceptedVersion,
+		sources: profile.ID, staticAppliedRV: acceptedVersion,
 		opts: options{servingNamespace: "serving", schedulerConfigMap: "scheduler",
 			schedulerConfigKey: "scheduler.json", maxRequestBytes: 1 << 20, maxEvidenceBytes: 1024},
 	}
 	service.configuration.Store(accepted)
 	if err := service.refresh(ctx); err == nil {
-		t.Fatal("invalid cost reference was accepted")
+		t.Fatal("refresh succeeded without listing completed measurements")
 	}
 	after, err := execution.State(definition.Name)
 	if err != nil || !after.Admission || after.Reason != before.Reason {
@@ -359,13 +328,13 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 
 func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 	ctx := context.Background()
-	config := profileRemovalConfiguration()
+	config := schedulerTestConfiguration()
 	config.Settings.AutonomousWorkloads = []string{"original-workload-uid"}
 	config.Settings.Controls = serving.SchedulerControls{
 		Placement: true, Resources: true, Replicas: true, Sharing: true,
 		Routing: true, Batching: true, Power: true, Membership: true,
 	}
-	service := profileRemovalService(t, config)
+	service := schedulerTestService(t, config)
 	profile := measuredAdoptionProfile()
 	profile.Condition.LogicalModel = "model"
 	service.observer.SetProfiles([]serving.Profile{profile})
@@ -434,8 +403,8 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 	}
 }
 
-func profileRemovalConfiguration() schedulerConfiguration {
-	config := schedulerConfiguration{
+func schedulerTestConfiguration() schedulerConfiguration {
+	return schedulerConfiguration{
 		Settings: serving.SchedulerSettings{
 			Algorithm:         serving.SchedulerAlgorithmFixedHorizon,
 			ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
@@ -445,22 +414,10 @@ func profileRemovalConfiguration() schedulerConfiguration {
 		CPUInventory: map[string][]int{"rpi": {0, 1, 2, 3}},
 		GPUInventory: map[string][]string{"genesis2": {"GPU-measured"}},
 		Reserved:     map[string]serving.SchedulerAllocation{"rpi": {CPUs: []int{0}}},
-		Preparations: map[string]servingkube.PrepareSpec{},
 	}
-	for _, name := range []string{"rpi-cpu1", "rpi-cpu2", "rpi-cpu3", "rpi-cpu4", "genesis2-gpu"} {
-		config.ProfileCampaigns = append(config.ProfileCampaigns,
-			httpapi.ProfileCampaign{Namespace: "measurements", Name: name})
-		id := "measurements/" + name + "/uid"
-		config.Preparations[id] = servingkube.PrepareSpec{
-			Name: name, MemoryBytes: 4096,
-			Instance: serving.SchedulerInstance{ID: name, Capacity: 8, Weight: 1},
-			Config:   native.Config{Policy: native.Policy{ProfileID: id}},
-		}
-	}
-	return config
 }
 
-func profileRemovalService(t *testing.T, config schedulerConfiguration) *schedulerService {
+func schedulerTestService(t *testing.T, config schedulerConfiguration) *schedulerService {
 	t.Helper()
 	ctx := context.Background()
 	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
@@ -493,8 +450,7 @@ func profileRemovalService(t *testing.T, config schedulerConfiguration) *schedul
 	if err := edge.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	// No evidence producer is needed to remove a selection. Retained unavailable
-	// sources are handled by the actual Catalog as independent insufficiencies.
+	// No evidence producer is needed: every native read returns NotFound.
 	apiServer := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(apiServer.Close)
 	store, err := servingkube.NewStore(&rest.Config{Host: apiServer.URL}, scheme)
@@ -510,14 +466,6 @@ func profileRemovalService(t *testing.T, config schedulerConfiguration) *schedul
 			Namespace: "serving", Name: "scheduler", ResourceVersion: "1", Labels: map[string]string{"operator": "kept"},
 		},
 		Data: map[string]string{"scheduler.json": string(raw), "unrelated": "operator value"},
-	})
-	kube.PrependReactor("update", "configmaps", func(action ktesting.Action) (bool, runtime.Object, error) {
-		cm := action.(ktesting.UpdateAction).GetObject().(*core.ConfigMap)
-		if cm.ResourceVersion != "1" {
-			t.Fatalf("update omitted the fetched native version: %q", cm.ResourceVersion)
-		}
-		cm.ResourceVersion = "2"
-		return false, nil, nil
 	})
 	observer, err := servingkube.NewObserver(store, kube, execution, &sdk.Client{},
 		servingkube.ObserverConfig{Namespace: "serving"})
@@ -545,212 +493,13 @@ func profileRemovalService(t *testing.T, config schedulerConfiguration) *schedul
 		t.Fatal(err)
 	}
 	t.Cleanup(controller.Close)
-	profiles := make([]serving.Profile, 0, len(config.ProfileCampaigns))
-	ids := make([]string, 0, len(config.ProfileCampaigns))
-	for _, campaign := range config.ProfileCampaigns {
-		id := campaign.Namespace + "/" + campaign.Name + "/uid"
-		profiles, ids = append(profiles, serving.Profile{ID: id}), append(ids, id)
-	}
-	observer.SetProfiles(profiles)
 	service := &schedulerService{
 		kube: kube, store: store, execution: execution, observer: observer, objects: objects,
 		catalog: catalog, operations: operations, controller: controller, observationLog: observationLog,
-		resourceVersion: "1", profiles: strings.Join(ids, "\x00"),
+		resourceVersion: "1",
 		opts: options{servingNamespace: "serving", schedulerConfigMap: "scheduler", schedulerConfigKey: "scheduler.json",
 			profileNamespaces: []string{"measurements"}, maxRequestBytes: 1 << 20, maxEvidenceBytes: 1024},
 	}
 	service.configuration.Store(&config)
 	return service
-}
-
-func persistedRemovalConfiguration(t *testing.T, service *schedulerService) schedulerConfiguration {
-	t.Helper()
-	cm, err := service.kube.CoreV1().ConfigMaps("serving").Get(context.Background(), "scheduler", meta.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cm.Data["unrelated"] != "operator value" || cm.Labels["operator"] != "kept" {
-		t.Fatal("profile removal changed unowned ConfigMap fields")
-	}
-	config, err := decodeSchedulerConfiguration(cm.Data["scheduler.json"], 1<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return config
-}
-
-func TestProfileRemovalKeepsFourOtherSelectionsAndPreparations(t *testing.T) {
-	config := profileRemovalConfiguration()
-	service := profileRemovalService(t, config)
-	target := httpapi.ProfileCampaign{Namespace: "measurements", Name: "genesis2-gpu"}
-	result, err := service.removeProfile(context.Background(), target, "1", servingkube.Principal{})
-	if err != nil || result.Status != "Removed" || result.Persisted || result.Loaded || result.ConfigVersion != "2" {
-		t.Fatalf("unused GPU did not unadopt and unpublish: %+v %v", result, err)
-	}
-	actual := persistedRemovalConfiguration(t, service)
-	expected := profileRemovalConfiguration()
-	expected.ProfileCampaigns = expected.ProfileCampaigns[:4]
-	delete(expected.Preparations, "measurements/genesis2-gpu/uid")
-	if !reflect.DeepEqual(actual, expected) {
-		t.Fatalf("unadopt changed unrelated settings, inventory, costs or preparations: got=%+v want=%+v", actual, expected)
-	}
-	for _, action := range service.kube.(*fake.Clientset).Actions() {
-		if action.GetResource().Resource == "pods" && action.GetVerb() != "list" {
-			t.Fatalf("unadopt mutated physical serving Pods: %+v", action)
-		}
-	}
-	view, err := service.profileSelections(context.Background())
-	if err != nil || view.ConfigVersion != "2" || len(view.Selections) != 4 {
-		t.Fatalf("GET retained removed selection: %+v %v", view, err)
-	}
-	for _, item := range view.Selections {
-		if item.Campaign == target || !item.Persisted {
-			t.Fatalf("GET reintroduced removal or unselected a retained campaign: %+v", item)
-		}
-	}
-	for _, profile := range service.observer.Profiles() {
-		if strings.HasPrefix(profile.ID, "measurements/genesis2-gpu/") {
-			t.Fatal("ordinary refresh retained removed profile publication")
-		}
-	}
-	result, err = service.removeProfile(context.Background(), target, "2", servingkube.Principal{})
-	if err != nil || result.Status != "Unselected" || result.Persisted || result.Loaded {
-		t.Fatalf("same-version retry was not idempotent: %+v %v", result, err)
-	}
-}
-
-func TestProfileRemovalRejectsCurrentRpiCPU2AndUnobservedNativePod(t *testing.T) {
-	for _, nativePod := range []bool{false, true} {
-		t.Run(map[bool]string{false: "actual runtime", true: "starting native Pod"}[nativePod], func(t *testing.T) {
-			config := profileRemovalConfiguration()
-			service := profileRemovalService(t, config)
-			id := "measurements/rpi-cpu2/uid"
-			if nativePod {
-				_, err := service.kube.CoreV1().Pods("serving").Create(context.Background(), &core.Pod{
-					ObjectMeta: meta.ObjectMeta{Name: "rpi-cpu2", Namespace: "serving", UID: "physical-pod",
-						Annotations: map[string]string{servingkube.ServingProfileAnnotation: id}},
-					Status: core.PodStatus{Phase: core.PodPending},
-				}, meta.CreateOptions{})
-				if err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				profile := measuredAdoptionProfile()
-				profile.ID = id
-				err := service.execution.InstallInstances([]serving.ReadyInstance{{
-					State: serving.InstanceState{
-						ID: "physical-pod/container", Node: serving.NodeReference{Name: "rpi", UID: "rpi-uid"},
-						Profile: id, Ready: true,
-					},
-					Profile: &profile, Weight: 1, Capacity: 1,
-					Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
-						t.Error("profile removal dispatched inference")
-						return serving.BackendResult{}, nil
-					},
-				}})
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			result, err := service.removeProfile(context.Background(),
-				httpapi.ProfileCampaign{Namespace: "measurements", Name: "rpi-cpu2"}, "1", servingkube.Principal{})
-			if err != nil || result.Status != profileSelectionRejected || result.Code != profileInUse || !result.Persisted {
-				t.Fatalf("current CPU2 profile unadopted: %+v %v", result, err)
-			}
-			if actual := persistedRemovalConfiguration(t, service); !reflect.DeepEqual(actual, config) {
-				t.Fatal("in-use rejection changed scheduler intent")
-			}
-			if !nativePod {
-				instances := service.execution.Instances()
-				if len(instances) != 1 || !instances[0].Ready || instances[0].Stopped {
-					t.Fatalf("profile rejection stopped or removed the physical executor: %+v", instances)
-				}
-			}
-			for _, action := range service.kube.(*fake.Clientset).Actions() {
-				if action.GetVerb() == "update" || action.GetVerb() == "delete" || action.GetVerb() == "patch" {
-					t.Fatalf("in-use rejection changed a native object: %+v", action)
-				}
-			}
-		})
-	}
-}
-
-func TestProfileRemovalVersionConflictsDoNotPublishOrOverwrite(t *testing.T) {
-	for _, concurrentWrite := range []bool{false, true} {
-		name := map[bool]string{false: "stale requested version", true: "writer wins native update"}[concurrentWrite]
-		t.Run(name, func(t *testing.T) {
-			config := profileRemovalConfiguration()
-			service := profileRemovalService(t, config)
-			before := service.observer.Profiles()
-			version := "stale"
-			if concurrentWrite {
-				version = "1"
-				service.kube.(*fake.Clientset).PrependReactor("update", "configmaps", func(
-					ktesting.Action,
-				) (bool, runtime.Object, error) {
-					return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "configmaps"},
-						"scheduler", errors.New("concurrent operator write"))
-				})
-			}
-			result, err := service.removeProfile(context.Background(),
-				httpapi.ProfileCampaign{Namespace: "measurements", Name: "genesis2-gpu"}, version, servingkube.Principal{})
-			if !apierrors.IsConflict(err) || !result.Persisted && concurrentWrite {
-				t.Fatalf("resourceVersion conflict was not returned: %+v %v", result, err)
-			}
-			if actual := persistedRemovalConfiguration(t, service); !reflect.DeepEqual(actual, config) ||
-				!reflect.DeepEqual(service.observer.Profiles(), before) {
-				t.Fatal("version conflict changed persisted intent or accepted catalog")
-			}
-		})
-	}
-}
-
-func TestProfileRemovalFailedRefreshKeepsAcceptedCatalogAndReportsPending(t *testing.T) {
-	config := profileRemovalConfiguration()
-	config.CostReferences = []evidencestore.ObjectIdentity{{}}
-	service := profileRemovalService(t, config)
-	before := service.observer.Profiles()
-	accepted := service.configuration.Load()
-	result, err := service.removeProfile(context.Background(),
-		httpapi.ProfileCampaign{Namespace: "measurements", Name: "genesis2-gpu"}, "1", servingkube.Principal{})
-	if err != nil || result.Status != profileSelectionPending || result.Code != "ProfileUnloadFailed" ||
-		result.Persisted || !result.Loaded {
-		t.Fatalf("partial removal claimed catalog application: %+v %v", result, err)
-	}
-	actual := persistedRemovalConfiguration(t, service)
-	if len(actual.ProfileCampaigns) != 4 || len(actual.Preparations) != 4 ||
-		!reflect.DeepEqual(actual.CostReferences, config.CostReferences) {
-		t.Fatal("failed refresh lost committed removal or changed unowned evidence selection")
-	}
-	if !reflect.DeepEqual(service.observer.Profiles(), before) || service.configuration.Load() != accepted ||
-		service.resourceVersion != "1" || service.profileLoadError == "" {
-		t.Fatal("failed removal refresh partially published the rejected configuration")
-	}
-}
-
-func TestProfileRemovalRequiresDesiredAndAcceptedAutonomyOff(t *testing.T) {
-	for _, activeOnly := range []bool{false, true} {
-		config := profileRemovalConfiguration()
-		if !activeOnly {
-			config.Settings.AutonomousWorkloads = []string{"workload-uid"}
-		}
-		service := profileRemovalService(t, config)
-		if activeOnly {
-			settings := service.controller.Settings()
-			settings.AutonomousWorkloads = []string{"workload-uid"}
-			if err := service.controller.SetConfiguration(servingkube.SchedulerControllerConfig{
-				Settings: settings,
-			}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		result, err := service.removeProfile(context.Background(),
-			httpapi.ProfileCampaign{Namespace: "measurements", Name: "genesis2-gpu"}, "1", servingkube.Principal{})
-		if err != nil || result.Status != profileSelectionRejected || result.Code != "ProfileControlsEnabled" {
-			t.Fatalf("autonomous control could launch an old catalog after removal: %+v %v", result, err)
-		}
-		if actual := persistedRemovalConfiguration(t, service); !reflect.DeepEqual(actual, config) {
-			t.Fatal("autonomous-control rejection changed persisted intent")
-		}
-	}
 }

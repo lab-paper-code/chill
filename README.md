@@ -181,7 +181,7 @@ make helm-uninstall
 ```
 
 Enable ChillServer only with an existing TLS Secret, persistent observation storage,
-and an existing scheduler ConfigMap for profile adoption; the chart does not create native serving capacity:
+and an existing scheduler ConfigMap; the chart does not create native serving capacity:
 
 ```sh
 helm upgrade --install chill charts/chill \
@@ -191,12 +191,15 @@ helm upgrade --install chill charts/chill \
   --set servingEntrypoint.scheduler.configMap=serving-scheduler
 ```
 
-The scheduler ConfigMap's `profileCampaigns` array is the only profile selection
-authority; adopt completed measurements through the ChillServer API rather than Helm
-values. `servingEntrypoint.profileNamespaces` grants read-only access to
-measurements in those namespaces; an empty list defaults to the serving
-namespace. ChillServer is fixed to one replica with `Recreate`, exposes HTTPS on
-port `8080`, and keeps a private RWO ObservationLog plus immutable Evidence Store windows.
+The scheduler derives its candidates and costs from completed measurements in the
+`servingEntrypoint.profileNamespaces` namespaces (an empty list defaults to the serving
+namespace): the latest successful BatchEnergyOptimization per measured condition, the
+serving-operation records under `serving/operation-measurements/` in the Evidence Store,
+and Complete PowerModeTransitionCost objects. `GET /api/v1/scheduler/profiles` lists the
+derived profiles and the measurements that contribute none. The Evidence Store
+credentials need list permission on the bucket. ChillServer is fixed to one replica
+with `Recreate`, exposes HTTPS on port `8080`, and keeps a private RWO ObservationLog
+plus immutable Evidence Store windows.
 
 ### Targeted NodeActuator replacement
 

@@ -2,6 +2,7 @@ package serving
 
 import (
 	"encoding/json"
+	"slices"
 	"sort"
 	"time"
 
@@ -57,7 +58,54 @@ func (observationLog *ObservationLog) SchedulerRecord(event SchedulerObservation
 	if event.At.IsZero() {
 		return failure("InvalidObservation", "scheduler observation time is required")
 	}
+	if d := event.Decision; d != nil {
+		recorded := *d
+		recorded.Keep = recordedCandidate(d.Keep)
+		if d.Target != nil {
+			target := recordedCandidate(*d.Target)
+			recorded.Target = &target
+		}
+		recorded.Candidates = slices.Clone(d.Candidates)
+		for i := range recorded.Candidates {
+			recorded.Candidates[i] = recordedCandidate(recorded.Candidates[i])
+		}
+		event.Decision = &recorded
+	}
+	if s := event.Snapshot; s != nil {
+		recorded := *s
+		recorded.Instances = recordedInstances(s.Instances)
+		recorded.Options = slices.Clone(s.Options)
+		for i := range recorded.Options {
+			recorded.Options[i].Instance = recordedInstance(recorded.Options[i].Instance)
+		}
+		if s.InProgressTarget != nil {
+			target := recordedCandidate(*s.InProgressTarget)
+			recorded.InProgressTarget = &target
+		}
+		event.Snapshot = &recorded
+	}
 	return observationLog.append(observationSchedulerStream, observationRecord{Scheduler: &event})
+}
+
+// Stored records keep profile IDs; the catalog serves profile bodies.
+func recordedCandidate(c SchedulerCandidate) SchedulerCandidate {
+	c.Instances = recordedInstances(c.Instances)
+	return c
+}
+
+func recordedInstances(instances []SchedulerInstance) []SchedulerInstance {
+	recorded := slices.Clone(instances)
+	for i := range recorded {
+		recorded[i] = recordedInstance(recorded[i])
+	}
+	return recorded
+}
+
+func recordedInstance(instance SchedulerInstance) SchedulerInstance {
+	if instance.Profile != nil {
+		instance.ProfileID, instance.Profile = instance.Profile.ID, nil
+	}
+	return instance
 }
 
 type WorkloadLoad struct {

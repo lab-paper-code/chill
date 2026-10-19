@@ -270,12 +270,11 @@ entry. ChillServer reads it directly using
 require update permission on that exact named ConfigMap. The chart does not
 grant blanket ConfigMap update permission. `config/samples/serving-scheduler.json`
 is a valid controls-off example, not a calibrated deployment. Before enabling
-controls, populate physical CPU/GPU inventory, non-serving reservations, measured
-profile preparation bundles, meter identities, immutable operation-cost
-references and existing actuator-backed power requests from the actual cluster.
-Mirror each configured power-cost measurement's namespace/name in Helm
-`servingEntrypoint.scheduler.powerCostSources` to grant named read access to
-the retained measurement and its immutable preparation ConfigMap.
+controls, populate physical CPU/GPU inventory, non-serving reservations, meter
+identities and existing actuator-backed power requests from the actual cluster.
+Profiles and costs come from completed measurements in
+`servingEntrypoint.profileNamespaces`; the chart grants ConfigMap read there for
+power mode transition cost preparations.
 Raw service samples remain in immutable evidence bundles, not ConfigMaps.
 ChillServer creates/removes native Pods and their small config/credential objects;
 NodeActuation remains the sole power actuator and pool membership uses the

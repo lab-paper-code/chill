@@ -131,7 +131,7 @@ func TestCatalogBoundsAndStrictlyDecodesTerminalObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
-	view, err := catalog.Refresh(context.Background(), []types.NamespacedName{source, source})
+	view, err := catalog.Refresh(context.Background(), []string{source.Namespace, source.Namespace})
 	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || objects.opens != 1 {
 		t.Fatalf("malformed source became eligible or was read twice: %+v, opens=%d, err=%v", view, objects.opens, err)
 	}
@@ -147,13 +147,13 @@ func TestCatalogBoundsAndStrictlyDecodesTerminalObjects(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := catalog.Refresh(ctx, []types.NamespacedName{source}); !errors.Is(err, context.Canceled) {
+	if _, err := catalog.Refresh(ctx, []string{source.Namespace}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled refresh returned publishable view: %v", err)
 	}
 }
 
-func TestCatalogReportsActualIncompleteAndFailedMeasurementWithoutEvidenceReads(t *testing.T) {
-	for _, phase := range []string{"Measuring", measurementPhaseFailed} {
+func TestCatalogSkipsIncompleteAndFailedMeasurementWithoutEvidenceReads(t *testing.T) {
+	for _, phase := range []string{"Measuring", "Failed"} {
 		t.Run(phase, func(t *testing.T) {
 			scheme := runtime.NewScheme()
 			if err := edgev1alpha1.AddToScheme(scheme); err != nil {
@@ -171,17 +171,9 @@ func TestCatalogReportsActualIncompleteAndFailedMeasurementWithoutEvidenceReads(
 			if err != nil {
 				t.Fatal(err)
 			}
-			view, err := catalog.Refresh(context.Background(), []types.NamespacedName{{Namespace: campaign.Namespace, Name: campaign.Name}})
-			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || objects.opens != 0 {
+			view, err := catalog.Refresh(context.Background(), []string{campaign.Namespace})
+			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 0 || objects.opens != 0 {
 				t.Fatalf("terminal gate: %+v %v", view, err)
-			}
-			want := "MeasurementPending"
-			if phase == measurementPhaseFailed {
-				want = "MeasurementRejected"
-			}
-			issue := view.Insufficiencies[0]
-			if issue.Code != want || !strings.Contains(issue.Reason, "ActualReason: actual failure detail") {
-				t.Fatalf("lost actual measurement state: %+v", issue)
 			}
 		})
 	}

@@ -117,9 +117,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		handlerConfig.SchedulerLock = &scheduler.lock
 		handlerConfig.RefreshScheduler = scheduler.refreshLocked
 		handlerConfig.OperatingPower = scheduler.operatingPower
-		handlerConfig.ProfileSelections = scheduler.profileSelections
-		handlerConfig.SelectProfile = scheduler.selectProfile
-		handlerConfig.RemoveProfile = scheduler.removeProfile
+		handlerConfig.Profiles = scheduler.profilesView
 	}
 	authorizer := &servingkube.Authorizer{Client: kube}
 	measurements, err := newMeasurementService(store.Client(), kube, scheduler, objects, opts)

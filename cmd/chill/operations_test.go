@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,70 +14,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	"k8s.io/client-go/rest"
 )
-
-type fakeProfileOperations struct {
-	result httpapi.ProfileSelectionResult
-	err    error
-}
-
-func (f fakeProfileOperations) List(context.Context) (httpapi.ProfileSelectionsView, error) {
-	return httpapi.ProfileSelectionsView{}, f.err
-}
-func (f fakeProfileOperations) Adopt(context.Context) (httpapi.ProfileSelectionResult, error) {
-	return f.result, f.err
-}
-func (f fakeProfileOperations) Unadopt(context.Context) (httpapi.ProfileSelectionResult, error) {
-	return f.result, f.err
-}
-
-func TestProfileAdoptionExitAndStructuredReason(t *testing.T) {
-	for _, test := range []struct {
-		status    string
-		persisted bool
-		loaded    bool
-		wantError bool
-	}{
-		{"Pending", false, false, true}, {"Rejected", false, false, true},
-		{"Pending", true, false, true}, {"Rejected", true, false, true},
-		{"Persisted", true, false, false}, {"Persisted", true, true, false},
-		{"Loaded", true, true, false}, {"AlreadySelected", true, true, false},
-	} {
-		t.Run(test.status, func(t *testing.T) {
-			result := httpapi.ProfileSelectionResult{
-				Campaign: httpapi.ProfileCampaign{Namespace: "ns", Name: "task"}, Status: test.status,
-				Persisted: test.persisted, Loaded: test.loaded, Code: "MeasuredState", Reason: "actual reason",
-			}
-			deps := dependencies{newProfiles: func(opts operationOptions) (profileOperations, error) {
-				if opts.namespace != "ns" || opts.servingService != "chill-serving-entrypoint" {
-					t.Fatalf("options %#v", opts)
-				}
-				return fakeProfileOperations{result: result}, nil
-			}}
-			var stdout strings.Builder
-			err := execute(context.Background(),
-				[]string{profilesCommand, "adopt", "task", "-n", "ns", "-o", "json"}, &stdout, io.Discard, deps)
-			if (err != nil) != test.wantError {
-				t.Fatalf("error = %v", err)
-			}
-			var got httpapi.ProfileSelectionResult
-			if err := json.Unmarshal([]byte(stdout.String()), &got); err != nil {
-				t.Fatal(err)
-			}
-			if got.Status != test.status || got.Reason != result.Reason ||
-				got.Loaded != test.loaded || got.Persisted != test.persisted {
-				t.Fatalf("result %#v", got)
-			}
-		})
-	}
-	failure := errors.New("forbidden")
-	err := execute(context.Background(), []string{profilesCommand, "adopt", "task"}, io.Discard, io.Discard,
-		dependencies{newProfiles: func(operationOptions) (profileOperations, error) {
-			return fakeProfileOperations{err: failure}, nil
-		}})
-	if !errors.Is(err, failure) {
-		t.Fatalf("error = %v", err)
-	}
-}
 
 func TestProfileOwnerHTTPSCredentialsAndTrust(t *testing.T) {
 	requests := 0
@@ -102,20 +36,10 @@ func TestProfileOwnerHTTPSCredentialsAndTrust(t *testing.T) {
 			t.Error("forwarded API-server client certificate")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet {
-			_ = json.NewEncoder(w).Encode(httpapi.ProfileSelectionsView{ConfigVersion: "rv1"})
-			return
+		if r.Method != http.MethodGet {
+			t.Errorf("profiles are read-only: %s", r.Method)
 		}
-		var request httpapi.ProfileSelectionRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		if r.Method != http.MethodPost || request.Campaign.Namespace != "ns" || request.Campaign.Name != "task" {
-			t.Errorf("wrong adoption request %#v", request)
-		}
-		_ = json.NewEncoder(w).Encode(httpapi.ProfileSelectionResult{
-			Campaign: request.Campaign, Status: "Persisted", Persisted: true,
-		})
+		_ = json.NewEncoder(w).Encode(httpapi.ProfilesView{ConfigVersion: "rv1"})
 	}))
 	defer server.Close()
 	dir := t.TempDir()
@@ -146,10 +70,6 @@ func TestProfileOwnerHTTPSCredentialsAndTrust(t *testing.T) {
 	if err != nil || list.ConfigVersion != "rv1" {
 		t.Fatalf("list %#v error %v", list, err)
 	}
-	result, err := q.Adopt(context.Background())
-	if err != nil || !result.Persisted || result.Loaded {
-		t.Fatalf("adopt %#v error %v", result, err)
-	}
 	reject = true
 	if _, err := q.List(context.Background()); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("401 error = %v", err)
@@ -176,7 +96,7 @@ func TestProfileOwnerHTTPSCredentialsAndTrust(t *testing.T) {
 	if _, err := q.List(context.Background()); err == nil {
 		t.Fatal("accepted owner redirect")
 	}
-	if leaked != 0 || requests != 4 {
+	if leaked != 0 || requests != 3 {
 		t.Fatalf("redirect leaked=%d owner requests=%d", leaked, requests)
 	}
 }

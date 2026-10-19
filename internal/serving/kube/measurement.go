@@ -9,6 +9,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -28,12 +29,13 @@ type MeterDeclaration struct {
 	Source metricobserver.SourceIdentity `json:"source"`
 }
 type MeasurementRequest struct {
-	Operation    Operation                    `json:"operation"`
-	Meter        MeterDeclaration             `json:"meter"`
-	Sampling     metricobserver.Request       `json:"sampling"`
-	Coverage     powerwindow.Policy           `json:"coverage"`
-	Location     evidencestore.ObjectLocation `json:"location"`
-	IdleDuration time.Duration                `json:"idleDurationNanos,omitempty"`
+	Operation Operation              `json:"operation"`
+	Meter     MeterDeclaration       `json:"meter"`
+	Sampling  metricobserver.Request `json:"sampling"`
+	Coverage  powerwindow.Policy     `json:"coverage"`
+	// Store is the logical store; the key is OperationMeasurementKey.
+	Store        string        `json:"store"`
+	IdleDuration time.Duration `json:"idleDurationNanos,omitempty"`
 }
 type OperationMeasurement struct {
 	SchemaVersion     string                `json:"schemaVersion"`
@@ -133,7 +135,7 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 	if encodeErr != nil {
 		return record, evidencestore.Receipt{}, encodeErr
 	}
-	identity := evidencestore.ObjectIdentity{Store: request.Location.Store, Key: request.Location.Key, Size: int64(len(raw))}
+	identity := evidencestore.ObjectIdentity{Store: request.Store, Key: OperationMeasurementKey(request.Operation), Size: int64(len(raw))}
 	// A cancelled caller must not discard already collected failed/partial facts.
 	writeCtx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancelWrite()
@@ -153,7 +155,10 @@ func validateMeasurementRequest(request MeasurementRequest, source metricobserve
 	if err := request.Sampling.Validate(); err != nil {
 		return err
 	}
-	if err := request.Location.Validate(); err != nil {
+	if strings.ContainsAny(request.Operation.Node.UID+request.Operation.ID, "/\\") {
+		return errors.New("operation ID and Node UID must be single key components")
+	}
+	if err := (evidencestore.ObjectLocation{Store: request.Store, Key: OperationMeasurementKey(request.Operation)}).Validate(); err != nil {
 		return err
 	}
 	if request.Meter.ID == "" || request.Meter.Scope != measurementWallScope || request.Meter.Node != request.Operation.Node || !reflect.DeepEqual(request.Meter.Source, source.Identity()) || source.Identity().NodeName != request.Operation.Node.Name {
@@ -276,7 +281,7 @@ func measurementCost(record OperationMeasurement, reference evidencestore.Object
 			beforeBaseline = &watts
 		}
 	}
-	return serving.OperationCost{ID: record.Request.Operation.ID, Node: record.Request.Operation.Node, Kind: record.Request.Operation.Kind, From: from, To: to, Trials: []serving.OperationTrial{{Duration: record.Result.EndedAt.Sub(record.Result.StartedAt), Joules: joules}}, EnergyScope: "whole-wall", Meter: record.Request.Meter.ID, Scope: record.Request.Meter.Scope, Reference: reference, PowerMode: record.Result.Before.PowerMode, BeforeState: stateProfileKeys(record.Result.Before), TargetState: stateProfileKeys(record.Result.Actual), BeforeBaselineWatts: beforeBaseline}, nil
+	return serving.OperationCost{ID: record.Request.Operation.ID, Node: record.Request.Operation.Node, Kind: record.Request.Operation.Kind, From: from, To: to, Trials: []serving.OperationTrial{{Duration: record.Result.EndedAt.Sub(record.Result.StartedAt), Joules: joules}}, EnergyScope: "whole-wall", Meter: record.Request.Meter.ID, Scope: record.Request.Meter.Scope, Reference: reference, PowerMode: record.Result.Before.PowerMode, BeforeState: stateProfileKeys(record.Result.Before), TargetState: stateProfileKeys(record.Result.Actual), BeforeBaselineWatts: beforeBaseline, MeasuredAt: record.Result.EndedAt}, nil
 }
 func stateProfileKeys(state OperationState) []string { return append([]string(nil), state.States...) }
 func operationCostKeys(result OperationResult) (string, string, error) {

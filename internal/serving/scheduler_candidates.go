@@ -993,7 +993,52 @@ func schedulerPlan(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
 	route := p.add(schedulerActionRoute, NodeReference{}, "", "", schedulerConfigKey(c), p.prepares)
 	p.retireOld(c, route)
 	p.continueActions()
+	p.selectCosts()
 	return p.actions
+}
+
+// selectCosts picks each operation cost by the key replay checks: the Node
+// power mode for prepare and remove, the loaded state for power.
+func (p *schedulerPlanState) selectCosts() {
+	modes := map[NodeReference]string{}
+	loaded := map[NodeReference][]string{}
+	for _, n := range p.snap.Nodes {
+		modes[n.Node] = n.PowerMode
+	}
+	for _, i := range p.snap.Instances {
+		loaded[i.Node] = append(loaded[i.Node], schedulerState(i))
+	}
+	for index := range p.actions {
+		a := &p.actions[index]
+		mode := modes[a.Node]
+		matches := func(cost OperationCost) bool { return cost.PowerMode == mode }
+		switch a.Kind {
+		case schedulerActionPrepare:
+			loaded[a.Node] = append(loaded[a.Node], a.To)
+		case schedulerActionRemove:
+			if i := slices.Index(loaded[a.Node], a.From); i >= 0 {
+				loaded[a.Node] = slices.Delete(loaded[a.Node], i, i+1)
+			}
+		case schedulerActionPower:
+			state := slices.Clone(loaded[a.Node])
+			if len(state) == 0 {
+				for _, next := range p.actions[index+1:] {
+					if next.Kind == schedulerActionPrepare && next.Node == a.Node && schedulerHas(next.DependsOn, a.ID) {
+						state = []string{next.To}
+					}
+				}
+			}
+			matches = func(cost OperationCost) bool { return schedulerEqualState(state, cost.BeforeState) }
+			modes[a.Node] = a.To
+		default:
+			continue
+		}
+		for _, cost := range p.snap.Costs {
+			if a.CostID == "" && cost.Node == a.Node && cost.Kind == a.Kind && cost.From == a.From && cost.To == a.To && matches(cost) {
+				a.CostID = cost.ID
+			}
+		}
+	}
 }
 
 type schedulerPlanState struct {
@@ -1010,12 +1055,6 @@ func (p *schedulerPlanState) add(kind string, node NodeReference, id, from, to s
 	if kind == schedulerActionPrepare || kind == schedulerActionRemove || kind == schedulerActionPower {
 		if tail := p.nodeTail[node.UID]; tail != "" {
 			a.DependsOn = append(a.DependsOn, tail)
-		}
-		for _, cost := range p.snap.Costs {
-			if cost.Node == node && cost.Kind == kind && cost.From == from && cost.To == to {
-				a.CostID = cost.ID
-				break
-			}
 		}
 	}
 	p.addRunningPrerequisites(&a)

@@ -35,7 +35,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -52,7 +51,7 @@ const (
 
 type commandManifest struct {
 	Measurement        servingkube.MeasurementRequest           `json:"measurement"`
-	Campaigns          []types.NamespacedName                   `json:"campaigns"`
+	ProfileNamespaces  []string                                 `json:"profileNamespaces"`
 	StoreEndpoint      string                                   `json:"storeEndpoint"`
 	StoreBucket        string                                   `json:"storeBucket"`
 	StoreRegion        string                                   `json:"storeRegion"`
@@ -135,7 +134,7 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 		return err
 	}
 	objects, err := stores3.New(stores3.Config{
-		LogicalStore: manifest.Measurement.Location.Store, Endpoint: manifest.StoreEndpoint,
+		LogicalStore: manifest.Measurement.Store, Endpoint: manifest.StoreEndpoint,
 		Bucket: manifest.StoreBucket, Region: manifest.StoreRegion,
 		AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		SessionToken: os.Getenv("AWS_SESSION_TOKEN"),
@@ -149,7 +148,7 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 	}
 	defer func() { retErr = errors.Join(retErr, ownership.Close()) }()
 	journal, err := serving.NewObservationLog(serving.ObservationLogConfig{
-		Directory: manifest.JournalDirectory, Store: manifest.Measurement.Location.Store,
+		Directory: manifest.JournalDirectory, Store: manifest.Measurement.Store,
 		Window: time.Minute, Writer: objects,
 	})
 	if err != nil {
@@ -176,7 +175,7 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 	if err != nil {
 		return err
 	}
-	view, err := catalog.Refresh(ctx, manifest.Campaigns)
+	view, err := catalog.Refresh(ctx, manifest.ProfileNamespaces)
 	if err != nil {
 		return err
 	}
@@ -340,6 +339,7 @@ func measurementPowerSource(ctx context.Context, direct client.Client,
 type executionManifest struct {
 	Operation          servingkube.Operation `json:"operation"`
 	ProfileID          string                `json:"profileID"`
+	ProfileNamespaces  []string              `json:"profileNamespaces"`
 	Namespace          string                `json:"namespace"`
 	ActuationNamespace string                `json:"actuationNamespace"`
 	JournalDirectory   string                `json:"journalDirectory"`
@@ -354,10 +354,8 @@ type executionManifest struct {
 }
 
 type executionConfiguration struct {
-	Settings         serving.SchedulerSettings          `json:"settings"`
-	ProfileCampaigns []httpapi.ProfileCampaign          `json:"profileCampaigns"`
-	Preparations     map[string]servingkube.PrepareSpec `json:"preparations"`
-	StaticRouting    map[string]map[string]int          `json:"staticRouting"`
+	Settings      serving.SchedulerSettings `json:"settings"`
+	StaticRouting map[string]map[string]int `json:"staticRouting"`
 }
 
 type executionOwnerView struct {
@@ -601,7 +599,7 @@ func runExecution(
 	if err != nil {
 		return err
 	}
-	spec, err := selectExecutionPreparation(ctx, ownerClient, m, selected)
+	spec, err := selectExecutionPreparation(ctx, ownerClient, m)
 	if err != nil {
 		return err
 	}
@@ -614,7 +612,7 @@ func runExecution(
 	if err != nil {
 		return err
 	}
-	profiles, err := bindExecutionCatalog(ctx, store, objects, selected, m, &spec)
+	profiles, err := bindExecutionCatalog(ctx, store, objects, m, &spec)
 	if err != nil {
 		return err
 	}
@@ -708,38 +706,29 @@ func (m executionManifest) validate() error {
 }
 
 func selectExecutionPreparation(
-	ctx context.Context, ownerClient *http.Client, m executionManifest, config executionConfiguration,
+	ctx context.Context, ownerClient *http.Client, m executionManifest,
 ) (servingkube.PrepareSpec, error) {
-	var selections httpapi.ProfileSelectionsView
-	if err := readExecutionOwner(ctx, ownerClient, m.OwnerURL, "/api/v1/scheduler/profiles", &selections); err != nil {
+	var view httpapi.ProfilesView
+	if err := readExecutionOwner(ctx, ownerClient, m.OwnerURL, "/api/v1/scheduler/profiles", &view); err != nil {
 		return servingkube.PrepareSpec{}, err
 	}
-	loaded := false
-	for _, selection := range selections.Selections {
-		loaded = loaded || (selection.ProfileID == m.ProfileID && selection.Loaded && selection.Persisted &&
-			selection.ConfigVersion == m.SourceConfigRV)
-	}
-	spec, configured := config.Preparations[m.ProfileID]
-	if !loaded || !configured || selections.ConfigVersion != m.SourceConfigRV || spec.Instance.Profile != nil ||
+	spec, prepared := view.Preparations[m.ProfileID]
+	if !prepared || view.ConfigVersion != m.SourceConfigRV || spec.Instance.Profile != nil ||
 		spec.Instance.Node != m.Operation.Node {
-		return spec, errors.New("preparation/profile must equal the current owner-loaded configured binding")
+		return spec, errors.New("preparation/profile must equal the current owner-loaded derived preparation")
 	}
 	return spec, spec.Store.Validate()
 }
 
 func bindExecutionCatalog(
 	ctx context.Context, store *servingkube.Store, objects *stores3.Store,
-	config executionConfiguration, m executionManifest, spec *servingkube.PrepareSpec,
+	m executionManifest, spec *servingkube.PrepareSpec,
 ) ([]serving.Profile, error) {
 	catalog, err := servingkube.NewCatalog(store, objects, 64<<20, 0.95)
 	if err != nil {
 		return nil, err
 	}
-	campaigns := make([]types.NamespacedName, len(config.ProfileCampaigns))
-	for i, campaign := range config.ProfileCampaigns {
-		campaigns[i] = types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
-	}
-	view, err := catalog.Refresh(ctx, campaigns)
+	view, err := catalog.Refresh(ctx, m.ProfileNamespaces)
 	if err != nil {
 		return nil, err
 	}
@@ -751,7 +740,7 @@ func bindExecutionCatalog(
 	if profile.NodeName != m.Operation.Node.Name || profile.Condition.NodeUID != m.Operation.Node.UID ||
 		(profile.Condition.Backend != "ort-cpu" && profile.Condition.Backend != "ort-cuda") ||
 		profile.RuntimeMetadata == nil || (profile.Condition.Backend == "ort-cpu" && profile.RuntimeMetadata.GPUUUID != "") {
-		return nil, errors.New("execute requires a configured measured ort-cpu or ort-cuda profile on the exact Node")
+		return nil, errors.New("execute requires a derived measured ort-cpu or ort-cuda profile on the exact Node")
 	}
 	return view.Profiles, nil
 }

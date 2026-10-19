@@ -8,7 +8,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -281,6 +283,31 @@ type fakeClient struct {
 	deleteObject func(context.Context, *awss3.DeleteObjectInput) (*awss3.DeleteObjectOutput, error)
 	headBucket   func(context.Context, *awss3.HeadBucketInput) (*awss3.HeadBucketOutput, error)
 	createBucket func(context.Context, *awss3.CreateBucketInput) (*awss3.CreateBucketOutput, error)
+	list         func(context.Context, *awss3.ListObjectsV2Input) (*awss3.ListObjectsV2Output, error)
+}
+
+func (c *fakeClient) ListObjectsV2(ctx context.Context, input *awss3.ListObjectsV2Input, _ ...func(*awss3.Options)) (*awss3.ListObjectsV2Output, error) {
+	if c.list == nil {
+		return nil, errors.New("unexpected ListObjectsV2 call")
+	}
+	return c.list(ctx, input)
+}
+
+func TestListReadsEveryPage(t *testing.T) {
+	store := testObjectStore(&fakeClient{list: func(_ context.Context, input *awss3.ListObjectsV2Input) (*awss3.ListObjectsV2Output, error) {
+		if stringValue(input.Bucket) != testPhysicalBucket || stringValue(input.Prefix) != "p/" {
+			t.Fatalf("list input = %+v", input)
+		}
+		if input.ContinuationToken == nil {
+			return &awss3.ListObjectsV2Output{Contents: []types.Object{{Key: aws.String("p/a"), Size: aws.Int64(1)}},
+				IsTruncated: aws.Bool(true), NextContinuationToken: aws.String("next")}, nil
+		}
+		return &awss3.ListObjectsV2Output{Contents: []types.Object{{Key: aws.String("p/b"), Size: aws.Int64(2)}}}, nil
+	}}, t.TempDir())
+	objects, err := store.List(context.Background(), "p/")
+	if err != nil || len(objects) != 2 || objects[1] != (evidencestore.ObjectIdentity{Store: store.logicalStore, Key: "p/b", Size: 2}) {
+		t.Fatalf("List() = %+v, %v", objects, err)
+	}
 }
 
 func (c *fakeClient) HeadBucket(

@@ -90,10 +90,8 @@ kubectl -n "$SERVING_NAMESPACE" create configmap serving-scheduler \
 ```
 
 Set Helm `servingEntrypoint.scheduler.configMap=serving-scheduler`; the default
-key is `scheduler.json`. Populate inventories, reservations, measured profile
-preparations, evidence-cost references and exact meter identities before
-enabling any controls. Mirror configured power measurement namespace/name pairs
-in `servingEntrypoint.scheduler.powerCostSources` for named read permissions.
+key is `scheduler.json`. Populate inventories, reservations and exact meter
+identities before enabling any controls.
 No Profiler experiment is started by this configuration.
 
 `settings.algorithm` is required: `fixed-horizon` retains the named comparison
@@ -105,9 +103,7 @@ in decision settings; projected decisions additionally expose `policy` cursor,
 finite work, kernel sources, pending reasons and actual safety-response versus
 projected-policy selection. Baseline decisions have no projected diagnostics.
 
-Keep profile selection in the scheduler ConfigMap JSON's `profileCampaigns` array
-as `{namespace,name}` entries; this is the only selection authority, not a Helm
-campaign list. The ChillServer API's `POST /api/v1/scheduler/profiles` adds selections.
-Helm `servingEntrypoint.profileNamespaces` limits read-only `get` access to
-BatchEnergyOptimization and ProfilingRun resources in allowed namespaces; an
-empty list defaults to the serving namespace. It grants no measurement writes.
+Profiles, operation costs, unloaded baselines and power mode transition costs come
+from completed measurements in Helm `servingEntrypoint.profileNamespaces`; an empty
+list defaults to the serving namespace. A measurement record or power mode
+transition cost contributes only when its meter equals an entry of `meters`.

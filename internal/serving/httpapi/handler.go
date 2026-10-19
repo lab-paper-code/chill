@@ -30,9 +30,7 @@ type HandlerConfig struct {
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
 	RefreshScheduler                                           func(context.Context) error
-	ProfileSelections                                          func(context.Context) (ProfileSelectionsView, error)
-	SelectProfile                                              func(context.Context, ProfileSelectionRequest, servingkube.Principal) (ProfileSelectionResult, error)
-	RemoveProfile                                              func(context.Context, ProfileCampaign, string, servingkube.Principal) (ProfileSelectionResult, error)
+	Profiles                                                   func(context.Context) (ProfilesView, error)
 	ListMeasurements                                           func(context.Context, string) (api.BatchEnergyOptimizationList, error)
 	SubmitMeasurement                                          func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
 	DeleteMeasurement                                          func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
@@ -101,8 +99,6 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("PUT /api/v1/scheduler/settings", h.scheduler)
 	h.mux.HandleFunc("PUT /api/v1/scheduler", h.scheduler)
 	h.mux.HandleFunc("GET /api/v1/scheduler/profiles", h.schedulerProfiles)
-	h.mux.HandleFunc("POST /api/v1/scheduler/profiles", h.schedulerProfiles)
-	h.mux.HandleFunc("DELETE /api/v1/scheduler/profiles/{namespace}/{name}", h.removeSchedulerProfile)
 	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
 	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
 	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}", h.measurements)
@@ -588,7 +584,7 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusNotFound
 	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
 		status = http.StatusBadRequest
-	case "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse", "ProfileInUse":
+	case "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
 		status = http.StatusConflict
 	case "QueueFull":
 		status = http.StatusTooManyRequests

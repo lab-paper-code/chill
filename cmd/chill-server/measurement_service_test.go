@@ -12,8 +12,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
-	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
@@ -181,7 +179,7 @@ func assertNativeMeasurementDeleteOptions(t *testing.T, task *api.BatchEnergyOpt
 
 func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T) {
 	modes := []string{
-		"stale version", "replaced UID", "selected", "preparation source", "physical source",
+		"stale version", "replaced UID", "physical source",
 		"active measurement", measurementFinalizerTest, "deleted",
 	}
 	for _, mode := range modes {
@@ -203,27 +201,7 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 						return c.Delete(ctx, object, opts...)
 					},
 				}).Build()
-			settings := serving.SchedulerSettings{
-				Algorithm:         serving.SchedulerAlgorithmFixedHorizon,
-				ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
-				MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1,
-				MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 1,
-			}
-			config := schedulerConfiguration{Settings: settings}
-			if mode == "selected" {
-				config.ProfileCampaigns = []httpapi.ProfileCampaign{{Namespace: "allowed", Name: "task"}}
-			}
-			if mode == "preparation source" {
-				config.Preparations = map[string]servingkube.PrepareSpec{"allowed/task/native-uid": {}}
-			}
-			encoded, err := json.Marshal(config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			kube := kubefake.NewSimpleClientset(&core.ConfigMap{
-				ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler"},
-				Data:       map[string]string{"scheduler.json": string(encoded)},
-			})
+			kube := kubefake.NewSimpleClientset()
 			if mode == "physical source" {
 				pod := &core.Pod{ObjectMeta: meta.ObjectMeta{
 					Name: "starting", Annotations: map[string]string{

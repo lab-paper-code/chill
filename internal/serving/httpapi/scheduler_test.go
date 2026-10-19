@@ -30,6 +30,8 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
+const actorUsername = "operator"
+
 func schedulerSettingsForTest() serving.SchedulerSettings {
 	return serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
 		MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1,

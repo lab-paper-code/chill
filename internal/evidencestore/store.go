@@ -25,3 +25,8 @@ type Reader interface {
 type LocationReader interface {
 	OpenLocation(context.Context, ObjectLocation) (io.ReadCloser, error)
 }
+
+// Lister returns every object identity under a key prefix of one store.
+type Lister interface {
+	List(context.Context, string) ([]ObjectIdentity, error)
+}

@@ -263,6 +263,50 @@ func TestSchedulerTransitionWallReplacesBaselineAndReadinessGatesRouting(t *test
 	schedulerRequireReason(t, missing.reasons, "MissingOperationCost")
 }
 
+func TestSchedulerPlanSelectsCostByReplayKey(t *testing.T) {
+	_, snap := schedulerFixture()
+	target := snap.Instances[0]
+	target.ID = schedulerTestNewInstance
+	current := snap.Instances[0]
+	prepare := OperationCost{Node: target.Node, Kind: schedulerActionPrepare, From: "unloaded", To: SchedulerInstanceState(target)}
+	power := OperationCost{Node: target.Node, Kind: schedulerActionPower, From: "fixed", To: schedulerTestEcoMode}
+	snap.Costs = nil
+	for _, c := range []struct {
+		id, mode string
+		state    []string
+	}{{"prepare-eco", schedulerTestEcoMode, nil}, {"prepare-fixed", "fixed", nil}} {
+		cost := prepare
+		cost.ID, cost.PowerMode = c.id, c.mode
+		snap.Costs = append(snap.Costs, cost)
+	}
+	for _, c := range []struct {
+		id    string
+		state []string
+	}{{"power-other", []string{"other"}}, {"power-loaded", []string{SchedulerInstanceState(current)}}} {
+		cost := power
+		cost.ID, cost.BeforeState = c.id, c.state
+		snap.Costs = append(snap.Costs, cost)
+	}
+	costOf := func(actions []Action, kind string) string {
+		for _, a := range actions {
+			if a.Kind == kind {
+				return a.CostID
+			}
+		}
+		return ""
+	}
+	added := schedulerPlan(snap, SchedulerCandidate{Nodes: snap.Nodes, Instances: []SchedulerInstance{current, target}})
+	if got := costOf(added, schedulerActionPrepare); got != "prepare-fixed" {
+		t.Fatalf("prepare cost ignored the Node power mode: %s", got)
+	}
+	nodes := append([]SchedulerNode(nil), snap.Nodes...)
+	nodes[0].PowerMode = schedulerTestEcoMode
+	lowered := schedulerPlan(snap, SchedulerCandidate{Nodes: nodes, Instances: []SchedulerInstance{current}})
+	if got := costOf(lowered, schedulerActionPower); got != "power-loaded" {
+		t.Fatalf("power cost ignored the loaded state: %s", got)
+	}
+}
+
 func TestSchedulerSLOFeasibleBeforeEnergyIncludingTransition(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.Horizon = 200 * time.Millisecond

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -202,6 +203,17 @@ func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 	if err != nil || len(page) != 1 || next != 2 {
 		t.Fatalf("unselected payload was fully decoded or scan was not bounded: %+v %d %v", page, next, err)
 	}
+	// Stored records keep only the profile ID of each instance.
+	stored := snapshot
+	stored.Instances = slices.Clone(snapshot.Instances)
+	for i := range stored.Instances {
+		stored.Instances[i].ProfileID, stored.Instances[i].Profile = stored.Instances[i].Profile.ID, nil
+	}
+	stored.Options = slices.Clone(snapshot.Options)
+	for i := range stored.Options {
+		stored.Options[i].Instance.ProfileID, stored.Options[i].Instance.Profile = stored.Options[i].Instance.Profile.ID, nil
+	}
+	selected.Snapshot = &stored
 	want, err := json.Marshal(selected)
 	if err != nil {
 		t.Fatal(err)

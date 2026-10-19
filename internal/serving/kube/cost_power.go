@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"reflect"
 	"slices"
@@ -20,11 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 )
-
-type PowerCostSource struct {
-	Measurement types.NamespacedName `json:"measurement"`
-	Meter       MeterDeclaration     `json:"meter"`
-}
 
 func boundedCostRead(ctx context.Context, reader evidencestore.Reader, ref evidencestore.ObjectIdentity, maxBytes int64) ([]byte, error) {
 	if err := ref.Validate(); err != nil {
@@ -59,41 +53,24 @@ func strictCostDecode(raw []byte, target any) error {
 	}
 	return nil
 }
-func (o *Operations) LoadPowerCosts(ctx context.Context, objects evidencestore.Reader, sources []PowerCostSource, maxBytes int64) ([]serving.OperationCost, error) {
-	var costs []serving.OperationCost
-	var failures []error
-	for _, source := range sources {
-		loaded, err := o.loadPowerCost(ctx, objects, source, maxBytes)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("power measurement %s: %w", source.Measurement, err))
-			continue
-		}
-		costs = append(costs, loaded...)
-	}
-	return costs, errors.Join(failures...)
-}
-func (o *Operations) loadPowerCost(ctx context.Context, objects evidencestore.Reader, source PowerCostSource, maxBytes int64) ([]serving.OperationCost, error) {
-	measurement := &edge.PowerModeTransitionCost{}
-	if err := o.store.client.Get(ctx, source.Measurement, measurement); err != nil {
-		return nil, err
-	}
-	if measurement.DeletionTimestamp != nil || measurement.UID == "" || measurement.Status.ObservedGeneration != measurement.Generation || measurement.Status.Phase != edge.PowerModeTransitionCostPhaseComplete || measurement.Status.Result == nil {
-		return nil, errors.New("current Complete power measurement required")
-	}
-	preparedWire, err := o.readPowerPreparation(ctx, source.Measurement, measurement.UID)
+
+// loadPowerCost verifies one Complete measurement; the caller binds its meter.
+func (e *CostEvidence) loadPowerCost(ctx context.Context, measurement *edge.PowerModeTransitionCost, profiles []serving.Profile) (powerEvidence, error) {
+	key := types.NamespacedName{Namespace: measurement.Namespace, Name: measurement.Name}
+	preparedWire, err := e.readPowerPreparation(ctx, key, measurement.UID)
 	if err != nil {
-		return nil, err
+		return powerEvidence{}, err
 	}
 	prepared := preparedWire.Prepared
 	node := serving.NodeReference{Name: prepared.TargetNode.Name, UID: prepared.TargetNode.UID}
-	if node != source.Meter.Node || measurement.Spec.TargetNode != node.Name || source.Meter.Scope != "node-exclusive-wall" || source.Meter.ID == "" || !reflect.DeepEqual(prepared.PowerSource, source.Meter.Source) {
-		return nil, errors.New("power source exact physical Node/meter mismatch")
+	if measurement.Spec.TargetNode != node.Name || prepared.PowerSource.NodeName != node.Name {
+		return powerEvidence{}, errors.New("power source exact physical Node mismatch")
 	}
 	ref := measurement.Status.Result
 	identity := evidencestore.ObjectIdentity{Store: ref.Store, Key: ref.Key, Size: ref.Size}
-	raw, err := boundedCostRead(ctx, objects, identity, maxBytes)
+	raw, err := boundedCostRead(ctx, e.objects, identity, e.maxBytes)
 	if err != nil {
-		return nil, err
+		return powerEvidence{}, err
 	}
 	var result struct {
 		SchemaVersion string `json:"schemaVersion"`
@@ -106,33 +83,33 @@ func (o *Operations) loadPowerCost(ctx context.Context, objects evidencestore.Re
 		DirectedTable *transitioncost.DirectedTableRecord `json:"directedTable,omitempty"`
 	}
 	if err = strictCostDecode(raw, &result); err != nil {
-		return nil, err
+		return powerEvidence{}, err
 	}
 	if result.SchemaVersion != transitioncost.MeasurementResultSchemaVersion || result.Outcome != "Complete" || result.DirectedTable == nil || len(result.Directions) != len(prepared.Directions) {
-		return nil, errors.New("complete directed result contract missing")
+		return powerEvidence{}, errors.New("complete directed result contract missing")
 	}
 	if _, err = transitioncost.RestoreDirectedTable(*result.DirectedTable); err != nil {
-		return nil, err
+		return powerEvidence{}, err
 	}
-	costs := make([]serving.OperationCost, 0, len(prepared.Directions))
+	evidence := powerEvidence{node: node, source: prepared.PowerSource}
 	for index, direction := range prepared.Directions {
-		cost := serving.OperationCost{ID: source.Measurement.String() + "/" + direction.FrozenContract.SourceState.PowerMode + "->" + direction.FrozenContract.TargetState.PowerMode, Node: node, Kind: operationPower, From: direction.FrozenContract.SourceState.PowerMode, To: direction.FrozenContract.TargetState.PowerMode, EnergyScope: "whole-wall", Meter: source.Meter.ID, Scope: source.Meter.Scope, Reference: identity}
+		cost := serving.OperationCost{ID: key.String() + "/" + direction.FrozenContract.SourceState.PowerMode + "->" + direction.FrozenContract.TargetState.PowerMode, Node: node, Kind: operationPower, From: direction.FrozenContract.SourceState.PowerMode, To: direction.FrozenContract.TargetState.PowerMode, EnergyScope: "whole-wall", Reference: identity}
 		for _, finalRef := range result.Directions[index].FinalEvidence {
-			if err := o.appendPowerTrial(ctx, objects, finalRef, maxBytes, direction.FrozenContract, prepared.Policy, source.Meter, &cost); err != nil {
-				return nil, err
+			if err := e.appendPowerTrial(ctx, finalRef, direction.FrozenContract, prepared.Policy, prepared.PowerSource, profiles, &cost); err != nil {
+				return powerEvidence{}, err
 			}
 		}
 		if len(cost.Trials) != int(result.Directions[index].AcceptedCount) || len(cost.Trials) < int(measurement.Spec.AcceptedCountTarget) {
-			return nil, errors.New("accepted directed raw trial count incomplete")
+			return powerEvidence{}, errors.New("accepted directed raw trial count incomplete")
 		}
-		costs = append(costs, cost)
+		evidence.costs = append(evidence.costs, cost)
 	}
-	return costs, nil
+	return evidence, nil
 }
-func (o *Operations) readPowerPreparation(ctx context.Context, key types.NamespacedName, owner types.UID) (powerPreparationWire, error) {
+func (e *CostEvidence) readPowerPreparation(ctx context.Context, key types.NamespacedName, owner types.UID) (powerPreparationWire, error) {
 	var preparedWire powerPreparationWire
 	preparation := &core.ConfigMap{}
-	if err := o.store.client.Get(ctx, key, preparation); err != nil {
+	if err := e.store.client.Get(ctx, key, preparation); err != nil {
 		return preparedWire, err
 	}
 	if preparation.Immutable == nil || !*preparation.Immutable || len(preparation.OwnerReferences) != 1 || preparation.OwnerReferences[0].UID != owner || preparation.OwnerReferences[0].Kind != "PowerModeTransitionCost" {
@@ -146,8 +123,8 @@ func (o *Operations) readPowerPreparation(ctx context.Context, key types.Namespa
 	}
 	return preparedWire, nil
 }
-func (o *Operations) appendPowerTrial(ctx context.Context, objects evidencestore.Reader, finalRef evidencestore.ObjectIdentity, maxBytes int64, contract transitioncost.FrozenContract, policy transitioncost.Policy, meter MeterDeclaration, cost *serving.OperationCost) error {
-	payload, err := boundedCostRead(ctx, objects, finalRef, maxBytes)
+func (e *CostEvidence) appendPowerTrial(ctx context.Context, finalRef evidencestore.ObjectIdentity, contract transitioncost.FrozenContract, policy transitioncost.Policy, source metricobserver.SourceIdentity, profiles []serving.Profile, cost *serving.OperationCost) error {
+	payload, err := boundedCostRead(ctx, e.objects, finalRef, e.maxBytes)
 	if err != nil {
 		return err
 	}
@@ -165,7 +142,7 @@ func (o *Operations) appendPowerTrial(ctx context.Context, objects evidencestore
 	if _, err = transitioncost.RestoreFinalizedObservation(final.Observation); err != nil {
 		return err
 	}
-	rawTrial, err := boundedCostRead(ctx, objects, final.RawEvidence, maxBytes)
+	rawTrial, err := boundedCostRead(ctx, e.objects, final.RawEvidence, e.maxBytes)
 	if err != nil {
 		return err
 	}
@@ -184,10 +161,10 @@ func (o *Operations) appendPowerTrial(ctx context.Context, objects evidencestore
 	if !ok {
 		return nil
 	}
-	if !reflect.DeepEqual(observation.PowerSource, meter.Source) || observation.BeforeNative.NodeName != cost.Node.Name || observation.BeforeNative.NodeUID != cost.Node.UID {
+	if !reflect.DeepEqual(observation.PowerSource, source) || observation.BeforeNative.NodeName != cost.Node.Name || observation.BeforeNative.NodeUID != cost.Node.UID {
 		return errors.New("retained power source/native physical Node mismatch")
 	}
-	if err = o.validatePowerNativeProfiles(observation.BeforeNative); err != nil {
+	if err = validatePowerNativeProfiles(profiles, observation.BeforeNative); err != nil {
 		return err
 	}
 	beforeState := nativeCostState(observation.BeforeNative)
@@ -198,6 +175,9 @@ func (o *Operations) appendPowerTrial(ctx context.Context, objects evidencestore
 	cost.BeforeState = beforeState
 	cost.TargetState = targetState
 	cost.Trials = append(cost.Trials, serving.OperationTrial{Duration: time.Duration(accepted.TauMilliseconds() * float64(time.Millisecond)), Joules: accepted.TransitionWallJoules()})
+	if accepted.CompletedAt().After(cost.MeasuredAt) {
+		cost.MeasuredAt = accepted.CompletedAt()
+	}
 	return nil
 }
 func nativeCostState(node *transitioncost.NativeNodeObservation) []string {
@@ -235,8 +215,7 @@ type powerPreparationWire struct {
 	} `json:"prepared"`
 }
 
-func (o *Operations) validatePowerNativeProfiles(node *transitioncost.NativeNodeObservation) error {
-	profiles := o.observer.Profiles()
+func validatePowerNativeProfiles(profiles []serving.Profile, node *transitioncost.NativeNodeObservation) error {
 	for _, instance := range node.Instances {
 		var profile *serving.Profile
 		for index := range profiles {

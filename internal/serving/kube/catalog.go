@@ -26,16 +26,15 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/validation"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const invalidEvidenceCode = "InvalidEvidence"
-const measurementPhaseFailed = "Failed"
 const catalogCompletePhase = "Complete"
 
-// Catalog reads fresh native Campaign metadata and retains one verified terminal
-// profile per selected name/UID/resourceVersion. Inference never reads campaigns
-// or downloads evidence; callers own the mutable parts of each returned view.
+// Catalog lists native Campaigns and retains one verified terminal profile per
+// name/UID/resourceVersion. Inference never reads campaigns or downloads
+// evidence; callers own the mutable parts of each returned view.
 // Loader verification proves stored structure and binding, not admission.
 // Batch distributions retain every raw RUNNER SERVICE sample in nanoseconds,
 // never client roundtrip or backend-call time. Energy uses the existing exact
@@ -83,39 +82,43 @@ func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectByt
 	}, nil
 }
 
-// Refresh follows only explicitly selected terminal campaigns. A bad source
-// cannot contribute a partial profile; independent selections remain usable.
-// Cancellation returns no view, so callers cannot publish a partial refresh.
-func (c *Catalog) Refresh(ctx context.Context, selections []types.NamespacedName) (CatalogView, error) {
+// Refresh reads every Complete campaign in namespaces. A bad source cannot
+// contribute a partial profile; other sources remain usable. Cancellation
+// returns no view, so callers cannot publish a partial refresh.
+func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (CatalogView, error) {
 	view := CatalogView{Profiles: []serving.Profile{}, Insufficiencies: []CatalogIssue{}}
-	seen := make(map[types.NamespacedName]struct{}, len(selections))
-	for _, source := range selections {
-		if err := ctx.Err(); err != nil {
+	seen := map[types.NamespacedName]struct{}{}
+	for _, namespace := range namespaces {
+		campaigns := &edgev1alpha1.BatchEnergyOptimizationList{}
+		if err := c.store.client.List(ctx, campaigns, client.InNamespace(namespace)); err != nil {
 			return CatalogView{}, err
 		}
-		if _, duplicate := seen[source]; duplicate {
-			continue
-		}
-		seen[source] = struct{}{}
-		profile, issues, err := c.readProfile(ctx, source)
-		if err != nil {
-			if ctx.Err() != nil {
-				return CatalogView{}, ctx.Err()
-			}
-			view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: "InvalidEvidence", Reason: err.Error()})
-			continue
-		}
-		view.Insufficiencies = append(view.Insufficiencies, issues...)
-		if len(profile.Batches) > 0 {
-			if !completeNativeProfile(profile) {
-				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor serving requires measured batch 1 and an initialized measured subset within the frozen maximum"})
+		for i := range campaigns.Items {
+			campaign := &campaigns.Items[i]
+			if campaign.DeletionTimestamp != nil || campaign.Status.Phase != catalogCompletePhase || campaign.Status.ObservedGeneration != campaign.Generation {
 				continue
 			}
-			view.Profiles = append(view.Profiles, profile)
+			source := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
+			if _, duplicate := seen[source]; duplicate {
+				continue
+			}
+			seen[source] = struct{}{}
+			profile, issues, err := c.readProfile(ctx, campaign)
+			if err != nil {
+				if ctx.Err() != nil {
+					return CatalogView{}, ctx.Err()
+				}
+				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: "InvalidEvidence", Reason: err.Error()})
+				continue
+			}
+			view.Insufficiencies = append(view.Insufficiencies, issues...)
+			if len(profile.Batches) > 0 {
+				view.Profiles = append(view.Profiles, profile)
+			}
 		}
 	}
 	for source := range c.current {
-		if _, selected := seen[source]; !selected {
+		if _, listed := seen[source]; !listed {
 			delete(c.current, source)
 		}
 	}
@@ -149,8 +152,8 @@ func completeNativeProfile(profile serving.Profile) bool {
 	return true
 }
 
-// Explicit source selection remains the scope. Plan names, campaign UIDs and
-// SLOs are not execution conditions; source completion decides the latest success.
+// Plan names, campaign UIDs and SLOs are not execution conditions; source
+// completion decides the latest success.
 func latestConditionProfiles(profiles []serving.Profile) ([]serving.Profile, error) {
 	result := make([]serving.Profile, 0, len(profiles))
 	indices := make(map[string]int, len(profiles))
@@ -181,27 +184,8 @@ func latestConditionProfiles(profiles []serving.Profile) ([]serving.Profile, err
 }
 
 //nolint:gocyclo // This refresh boundary follows the explicit ordered campaign, plan, Run, and raw-evidence checks.
-func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) (serving.Profile, []CatalogIssue, error) {
-	if len(validation.IsDNS1123Label(source.Namespace)) != 0 || len(validation.IsDNS1123Subdomain(source.Name)) != 0 {
-		return serving.Profile{}, nil, errors.New("campaign namespace and name must be valid Kubernetes names")
-	}
-	campaign := &edgev1alpha1.BatchEnergyOptimization{}
-	if err := c.store.client.Get(ctx, source, campaign); err != nil {
-		delete(c.current, source)
-		return serving.Profile{}, nil, fmt.Errorf("get campaign %s: %w", source, err)
-	}
-	if campaign.DeletionTimestamp != nil || campaign.Status.Phase != catalogCompletePhase || campaign.Status.ObservedGeneration != campaign.Generation {
-		delete(c.current, source)
-		code := "MeasurementPending"
-		if campaign.DeletionTimestamp != nil || campaign.Status.Phase == measurementPhaseFailed {
-			code = "MeasurementRejected"
-		}
-		reason := fmt.Sprintf("measurement phase %q, outcome %q, observed generation %d/%d", campaign.Status.Phase, campaign.Status.Outcome, campaign.Status.ObservedGeneration, campaign.Generation)
-		for _, condition := range campaign.Status.Conditions {
-			reason += "; " + condition.Reason + ": " + condition.Message
-		}
-		return serving.Profile{}, []CatalogIssue{{Source: source, Code: code, Reason: reason}}, nil
-	}
+func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization) (serving.Profile, []CatalogIssue, error) {
+	source := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
 	if campaign.Status.Result == nil {
 		delete(c.current, source)
 		return serving.Profile{}, nil, errors.New("completed campaign has no terminal result reference")

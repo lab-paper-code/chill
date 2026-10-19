@@ -40,6 +40,7 @@ type SchedulerControllerConfig struct {
 	Preparations  map[string]PrepareSpec
 	Costs         []serving.OperationCost
 	Baselines     []serving.NodeBaseline
+	CostIssues    []CostIssue
 	Meters        []MeterDeclaration
 	PowerRequests map[string]*edge.NodeActuation
 	StaticRouting bool
@@ -51,6 +52,8 @@ type SchedulerControllerState struct {
 	Decision serving.SchedulerDecision `json:"decision"`
 	Actions  []serving.Action          `json:"actions"`
 	Results  []OperationResult         `json:"results"`
+	// CostIssues are the measurements the configured costs omit.
+	CostIssues []CostIssue `json:"costIssues"`
 }
 type actionRun struct {
 	action  serving.Action
@@ -149,11 +152,6 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 	if err := config.Settings.Validate(); err != nil {
 		return err
 	}
-	for profile, preparation := range config.Preparations {
-		if err := validatePreparation(preparation); err != nil {
-			return fmt.Errorf("profile %s preparation: %w", profile, err)
-		}
-	}
 	meters := map[string]serving.NodeReference{}
 	for _, m := range config.Meters {
 		if m.ID == "" || m.Scope != measurementWallScope || m.Node.Name == "" || m.Node.UID == "" || m.Source.NodeName != m.Node.Name {
@@ -195,24 +193,8 @@ func (c *SchedulerController) State() SchedulerControllerState {
 	result := c.state
 	result.Actions = c.actionsLocked(time.Now())
 	result.Results = append([]OperationResult(nil), c.state.Results...)
+	result.CostIssues = c.config.CostIssues
 	return result
-}
-
-// CatalogRemovalBlocker reports live execution ownership, not prospective
-// snapshot Options or evaluated candidates. The coordinator serializes this
-// check and its catalog mutation with Tick using its existing owner lock.
-func (c *SchedulerController) CatalogRemovalBlocker() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.goal != nil {
-		return "scheduler target " + c.goal.ID + " remains frozen"
-	}
-	for _, run := range c.runs {
-		if run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel {
-			return "scheduler operation " + run.action.ID + " remains in progress"
-		}
-	}
-	return ""
 }
 func (c *SchedulerController) Close() { c.cancel(); c.wg.Wait() }
 func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {

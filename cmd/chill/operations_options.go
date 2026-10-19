@@ -17,7 +17,6 @@ const (
 	operationSubmit  = "submit"
 	operationList    = "list"
 	operationDelete  = "delete"
-	operationUnadopt = "unadopt"
 	dryRunServer     = "server"
 )
 
@@ -49,10 +48,8 @@ func parseOperationOptions(group, action string, args []string, stderr io.Writer
 	flags.StringVar(&opts.servingCAFile, "serving-ca-file", "", "ChillServer TLS CA file; default system trust roots")
 	flags.StringVar(&opts.tokenFile, "token-file", "",
 		"ChillServer caller bearer token file; default kubeconfig bearer credentials")
-	if action == operationDelete || action == operationUnadopt {
-		flags.StringVar(&opts.ifMatch, "if-match", "", "required queried resourceVersion; profiles use configVersion")
-	}
 	if action == operationDelete {
+		flags.StringVar(&opts.ifMatch, "if-match", "", "required queried resourceVersion")
 		flags.StringVar(&opts.uid, "uid", "",
 			"required queried measurement UID; deletion irreversibly removes owned evidence")
 	}
@@ -68,7 +65,7 @@ func parseOperationOptions(group, action string, args []string, stderr io.Writer
 		}
 		return opts, fmt.Errorf("%w: %v", errUsage, err)
 	}
-	needsName := action == operationShow || action == "adopt" || action == operationUnadopt || action == operationDelete
+	needsName := action == operationShow || action == operationDelete
 	expectedNames := 0
 	if needsName {
 		expectedNames = 1
@@ -91,10 +88,8 @@ func parseOperationOptions(group, action string, args []string, stderr io.Writer
 		values["manifest file"] = opts.file
 	}
 	values["serving Service"] = opts.servingService
-	if action == operationDelete || action == operationUnadopt {
-		values["resourceVersion"] = opts.ifMatch
-	}
 	if action == operationDelete {
+		values["resourceVersion"] = opts.ifMatch
 		values["measurement UID"] = opts.uid
 	}
 	for label, value := range values {

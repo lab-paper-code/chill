@@ -42,7 +42,6 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 		{name: "negative physical CPU", fields: `"cpuInventory":{"node":[-1]}`},
 		{name: "unobserved reserved CPU", fields: `"cpuInventory":{"node":[0]},"reserved":{"node":{"cpus":[2]}}`},
 		{name: "duplicate GPU identity", fields: `"gpuInventory":{"node":["GPU-real","GPU-real"]}`},
-		{name: "fake profile injection", fields: `"preparations":{"p":{"instance":{"profile":{"id":"fake"}}}}`},
 		{name: "fake cost injection", fields: `"costs":[{"id":"fake","trials":[{"joules":0}]}]`},
 		{name: "invalid meter scope", fields: `"meters":[{"id":"wall","node":{"name":"node","uid":"uid"},` +
 			`"scope":"inferred","source":{"nodeName":"node"}}]`},

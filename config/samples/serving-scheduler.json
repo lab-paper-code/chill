@@ -1,5 +1,4 @@
 {
-  "profileCampaigns": [],
   "settings": {
     "algorithm": "fixed-horizon",
     "observationWindowNanos": 60000000000,
@@ -30,9 +29,6 @@
   "cpuInventory": {},
   "gpuInventory": {},
   "reserved": {},
-  "preparations": {},
-  "costReferences": [],
-  "powerCostSources": [],
   "meters": [],
   "powerRequests": {}
 }

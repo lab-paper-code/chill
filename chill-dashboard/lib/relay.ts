@@ -54,15 +54,13 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/observations/scheduler") { methods = ["GET"]; query = "schedulerHistory" }
   else if (route === "v1/scheduler" || route === "v1/scheduler/state") methods = ["GET"]
   else if (route === "v1/scheduler/settings") methods = ["GET", "PUT"]
-  // ponytail: ChillServer verifies every selected campaign on read (13-30 s observed), so this read gets the mutation bound; drop when ChillServer caches verification.
-  else if (route === "v1/scheduler/profiles") methods = ["GET", "POST"]
+  else if (route === "v1/scheduler/profiles") methods = ["GET"]
   else if (/^v1\/(systems|inventory)$/.test(route)) { methods = ["GET"]; query = "page" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs$/.test(route)) { methods = ["GET"]; query = "runs" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs\/[^/]+\/evidence-passport$/.test(route) || /^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/[^/]+\/result$/.test(route)) methods = ["GET"]
   else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) methods = ["POST"] // Read-only producer; query lifetime and no unknown mutation outcome.
   else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations$/.test(route)) { methods = ["GET", "POST"]; if (method === "POST") query = "dryRun" }
   else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/[^/]+$/.test(route)) { methods = ["DELETE"]; query = "uid" }
-  else if (/^v1\/scheduler\/profiles\/[^/]+\/[^/]+$/.test(route)) methods = ["DELETE"]
   if (!methods.length) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   if (!methods.includes(method)) throw new RelayFailure("DashboardMethodNotAllowed", 405)
   if (Buffer.byteLength(search) > 4096 || /%(?![0-9a-fA-F]{2})/.test(search)) throw new RelayFailure("DashboardQueryInvalid", 400)
@@ -71,7 +69,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   const dryRun = query === "dryRun" && params.has("dryRun")
   if (kind !== "infer" && method !== "GET" && !dryRun && !/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) kind = "mutation"
   // ChillServer compact reads keep every evidence object once and share repeats by $ref; parseSchedulerJSON restores them.
-  const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state" || route === "v1/scheduler/profiles")
+  const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state")
   const allowed = compact ? ["view"] : []
   allowed.push(...(query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
   for (const key of new Set(params.keys())) {
@@ -101,7 +99,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (compact) params.set("view", "compact")
   const suffix = params.toString()
   // Native inference may consume its entire cap; keep a bounded delivery margin.
-  return { path: `/api/${route}${suffix ? `?${suffix}` : ""}`, kind, timeoutMs: kind === "infer" ? config.inferTimeoutMs + config.queryTimeoutMs : kind === "mutation" || route === "v1/scheduler/profiles" ? config.mutationTimeoutMs : config.queryTimeoutMs, bodyAllowed: method === "POST" || method === "PUT" }
+  return { path: `/api/${route}${suffix ? `?${suffix}` : ""}`, kind, timeoutMs: kind === "infer" ? config.inferTimeoutMs + config.queryTimeoutMs : kind === "mutation" ? config.mutationTimeoutMs : config.queryTimeoutMs, bodyAllowed: method === "POST" || method === "PUT" }
 }
 
 export async function boundedBody(stream: ReadableStream<Uint8Array> | null, limit: number, signal: AbortSignal): Promise<Buffer> {

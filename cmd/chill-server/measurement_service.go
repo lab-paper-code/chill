@@ -177,11 +177,6 @@ func (o *measurementService) delete(
 	if task.Status.Phase == "Measuring" {
 		return result, &serving.Error{Code: "MeasurementInUse", Message: "an active measurement cannot be deleted"}
 	}
-	if o.scheduler != nil {
-		if err := o.deletionReferences(ctx, namespace, name); err != nil {
-			return result, err
-		}
-	}
 	pods, err := o.kube.CoreV1().Pods(o.opts.servingNamespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return result, err
@@ -235,41 +230,4 @@ func (o *measurementService) delete(
 	}
 	result.Request = "DeletionRequested"
 	return result, nil
-}
-
-// Called with the same scheduler lock used for selection and catalog refresh.
-func (o *measurementService) deletionReferences(ctx context.Context, namespace, name string) error {
-	scheduler := o.scheduler
-	cm, err := scheduler.kube.CoreV1().ConfigMaps(scheduler.opts.servingNamespace).
-		Get(ctx, scheduler.opts.schedulerConfigMap, meta.GetOptions{})
-	if err != nil {
-		return err
-	}
-	config, err := decodeSchedulerConfiguration(cm.Data[scheduler.opts.schedulerConfigKey], scheduler.opts.maxRequestBytes)
-	if err != nil {
-		return err
-	}
-	selection := httpapi.ProfileCampaign{Namespace: namespace, Name: name}
-	inUse := measurementInUse("measurement is selected or remains a scheduler profile source; " +
-		"unadopt and wait for catalog refresh before deleting")
-	if slices.Contains(config.ProfileCampaigns, selection) {
-		return inUse
-	}
-	prefix := namespace + "/" + name + "/"
-	for profile := range config.Preparations {
-		if strings.HasPrefix(profile, prefix) {
-			return inUse
-		}
-	}
-	if scheduler.observer != nil {
-		for _, profile := range scheduler.observer.Profiles() {
-			if strings.HasPrefix(profile.ID, prefix) {
-				return inUse
-			}
-		}
-	}
-	if _, reason := scheduler.profileRemovalReference(selection); reason != "" {
-		return &serving.Error{Code: "MeasurementInUse", Message: reason}
-	}
-	return nil
 }

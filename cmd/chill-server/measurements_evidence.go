@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -15,10 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
-	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -299,14 +295,12 @@ func (o *measurementService) readDeletionEvidence(
 }
 
 type measurementReferenceGuard struct {
-	locations     map[evidencestore.ObjectLocation]bool
-	ownedUIDs     map[string]bool
-	profilePrefix string
+	locations map[evidencestore.ObjectLocation]bool
+	ownedUIDs map[string]bool
 }
 
 func sharedMeasurementEvidence() error {
-	return measurementInUse("another native measurement, baseline, or current cost/preparation " +
-		"references the owned evidence")
+	return measurementInUse("another native measurement or baseline references the owned evidence")
 }
 
 // Only fields defined as evidence/profile references participate. Metadata,
@@ -386,7 +380,7 @@ func (o *measurementService) checkSharedEvidence(
 ) error {
 	guard := &measurementReferenceGuard{
 		locations: make(map[evidencestore.ObjectLocation]bool, len(owned)),
-		ownedUIDs: map[string]bool{string(task.UID): true}, profilePrefix: task.Namespace + "/" + task.Name + "/",
+		ownedUIDs: map[string]bool{string(task.UID): true},
 	}
 	for _, location := range owned {
 		guard.locations[location] = true
@@ -434,230 +428,6 @@ func (o *measurementService) checkSharedEvidence(
 	for i := range power.Items {
 		if err := o.sharedReference(ctx, power.Items[i].Status.Result, guard); err != nil {
 			return err
-		}
-	}
-	return o.checkCurrentCostEvidence(ctx, task, power, guard)
-}
-
-func (g *measurementReferenceGuard) profile(profile *serving.Profile) bool {
-	if profile == nil {
-		return false
-	}
-	if strings.HasPrefix(profile.ID, g.profilePrefix) || g.locations[profile.Reference.Location()] {
-		return true
-	}
-	for _, reference := range profile.Evidence {
-		if g.locations[reference.Location()] {
-			return true
-		}
-	}
-	return false
-}
-
-func (g *measurementReferenceGuard) preparation(preparation *servingkube.PrepareSpec) bool {
-	if preparation == nil {
-		return false
-	}
-	return g.locations[preparation.Bundle.Location()] ||
-		strings.HasPrefix(preparation.Config.Policy.ProfileID, g.profilePrefix) || g.instance(preparation.Instance)
-}
-
-func (g *measurementReferenceGuard) instance(instance serving.SchedulerInstance) bool {
-	return g.profile(instance.Profile)
-}
-
-func (g *measurementReferenceGuard) operation(operation servingkube.Operation) bool {
-	if g.preparation(operation.Prepare) {
-		return true
-	}
-	if operation.Target != nil {
-		for _, instance := range operation.Target.Instances {
-			if g.instance(instance) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (g *measurementReferenceGuard) operationState(state servingkube.OperationState) bool {
-	for _, instance := range state.Instances {
-		if strings.HasPrefix(instance.Profile, g.profilePrefix) ||
-			(instance.Native != nil && strings.HasPrefix(instance.Native.Metadata.ProfileID, g.profilePrefix)) {
-			return true
-		}
-	}
-	for _, native := range state.Native {
-		if strings.HasPrefix(native.Metadata.ProfileID, g.profilePrefix) {
-			return true
-		}
-	}
-	for _, encoded := range state.States {
-		if strings.HasPrefix(encoded, g.profilePrefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func (o *measurementService) checkOperationCost(
-	ctx context.Context, reference evidencestore.ObjectIdentity, guard *measurementReferenceGuard,
-) error {
-	if guard.locations[reference.Location()] {
-		return sharedMeasurementEvidence()
-	}
-	payload, err := o.readDeletionEvidence(ctx, reference.Location(), false)
-	if err != nil {
-		return err
-	}
-	var record servingkube.OperationMeasurement
-	if err := json.Unmarshal(payload, &record); err != nil {
-		return err
-	}
-	if guard.operation(record.Request.Operation) || guard.operation(record.Result.Operation) ||
-		guard.operationState(record.Result.Before) || guard.operationState(record.Result.Actual) {
-		return sharedMeasurementEvidence()
-	}
-	for _, state := range record.StateObservations {
-		if guard.operationState(state) {
-			return sharedMeasurementEvidence()
-		}
-	}
-	return nil
-}
-
-func (o *measurementService) checkCurrentCostEvidence(
-	ctx context.Context, task *api.BatchEnergyOptimization, power *api.PowerModeTransitionCostList,
-	guard *measurementReferenceGuard,
-) error {
-	if o.scheduler == nil {
-		return nil
-	}
-	scheduler := o.scheduler
-	cm, err := scheduler.kube.CoreV1().ConfigMaps(scheduler.opts.servingNamespace).
-		Get(ctx, scheduler.opts.schedulerConfigMap, meta.GetOptions{})
-	if err != nil {
-		return err
-	}
-	config, err := decodeSchedulerConfiguration(cm.Data[scheduler.opts.schedulerConfigKey], scheduler.opts.maxRequestBytes)
-	if err != nil {
-		return err
-	}
-	configs := []schedulerConfiguration{config}
-	accepted := scheduler.configuration.Load()
-	if accepted != nil && (scheduler.resourceVersion == "" || scheduler.resourceVersion != cm.ResourceVersion) {
-		configs = append(configs, *accepted)
-	}
-	for _, config := range configs {
-		if slices.Contains(config.ProfileCampaigns, httpapi.ProfileCampaign{Namespace: task.Namespace, Name: task.Name}) {
-			return sharedMeasurementEvidence()
-		}
-		for profile, preparation := range config.Preparations {
-			if strings.HasPrefix(profile, guard.profilePrefix) || guard.preparation(&preparation) {
-				return sharedMeasurementEvidence()
-			}
-		}
-		for _, reference := range config.CostReferences {
-			if err := o.checkOperationCost(ctx, reference, guard); err != nil {
-				return err
-			}
-		}
-		for _, source := range config.PowerCostSources {
-			if err := o.checkPowerCostEvidence(ctx, source, power, guard); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (g *measurementReferenceGuard) powerNode(node *transitioncost.NativeNodeObservation) bool {
-	if node == nil {
-		return false
-	}
-	for _, instance := range node.Instances {
-		if strings.HasPrefix(instance.State.Metadata.ProfileID, g.profilePrefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func (o *measurementService) checkPowerCostEvidence(
-	ctx context.Context, source servingkube.PowerCostSource, power *api.PowerModeTransitionCostList,
-	guard *measurementReferenceGuard,
-) error {
-	var reference *api.ProfilingRunEvidenceReference
-	for i := range power.Items {
-		if power.Items[i].Namespace == source.Measurement.Namespace && power.Items[i].Name == source.Measurement.Name {
-			reference = power.Items[i].Status.Result
-			break
-		}
-	}
-	if reference == nil {
-		return fmt.Errorf("current power cost source %s cannot be verified before cleanup", source.Measurement)
-	}
-	location := evidencestore.ObjectLocation{Store: reference.Store, Key: reference.Key}
-	payload, err := o.readDeletionEvidence(ctx, location, false)
-	if err != nil {
-		return err
-	}
-	var result struct {
-		Directions []struct {
-			FinalEvidence []evidencestore.ObjectIdentity `json:"finalEvidence"`
-		} `json:"directions"`
-	}
-	if err := json.Unmarshal(payload, &result); err != nil {
-		return err
-	}
-	for _, direction := range result.Directions {
-		for _, final := range direction.FinalEvidence {
-			if err := o.checkPowerTrialEvidence(ctx, final, guard); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (o *measurementService) checkPowerTrialEvidence(
-	ctx context.Context, final evidencestore.ObjectIdentity, guard *measurementReferenceGuard,
-) error {
-	if guard.locations[final.Location()] {
-		return sharedMeasurementEvidence()
-	}
-	payload, err := o.readDeletionEvidence(ctx, final.Location(), false)
-	if err != nil {
-		return err
-	}
-	var record struct {
-		RawEvidence evidencestore.ObjectIdentity              `json:"rawEvidence"`
-		Observation transitioncost.FinalizedObservationRecord `json:"observation"`
-	}
-	if err := json.Unmarshal(payload, &record); err != nil {
-		return err
-	}
-	if guard.locations[record.RawEvidence.Location()] {
-		return sharedMeasurementEvidence()
-	}
-	if accepted := record.Observation.AcceptedObservation; accepted != nil &&
-		(guard.powerNode(accepted.BeforeNative) || guard.powerNode(accepted.AfterNative)) {
-		return sharedMeasurementEvidence()
-	}
-	payload, err = o.readDeletionEvidence(ctx, record.RawEvidence.Location(), false)
-	if err != nil {
-		return err
-	}
-	raw, err := transitioncost.DecodeRawRecord(payload)
-	if err != nil {
-		return err
-	}
-	if guard.powerNode(raw.BeforeNative) || guard.powerNode(raw.AfterNative) {
-		return sharedMeasurementEvidence()
-	}
-	for i := range raw.NativeObservations {
-		if guard.powerNode(&raw.NativeObservations[i]) {
-			return sharedMeasurementEvidence()
 		}
 	}
 	return nil

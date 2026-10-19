@@ -109,41 +109,27 @@ func measuredCPUPreparationFixture() PrepareSpec {
 	}
 }
 
-func TestSchedulerConfigurationBindsCPUCountToMeasuredRequest(t *testing.T) {
-	settings := serving.SchedulerSettings{
-		Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Second,
-		ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second,
-		Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 4,
-	}
-	controller := &SchedulerController{}
-	spec := measuredCPUPreparationFixture()
-	config := SchedulerControllerConfig{Settings: settings, Preparations: map[string]PrepareSpec{spec.Instance.Profile.ID: spec}}
-	if err := controller.SetConfiguration(config); err != nil {
+func TestPreparationBindsCPUCountToMeasuredRequest(t *testing.T) {
+	if err := ValidatePreparation(measuredCPUPreparationFixture()); err != nil {
 		t.Fatalf("consistent wide-affinity preparation rejected: %v", err)
 	}
 	for _, count := range []int{-1, 0, 1, 3, 4} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			inconsistent := measuredCPUPreparationFixture()
 			inconsistent.Instance.Allocation.CPUCount = count
-			changed := SchedulerControllerConfig{Settings: settings, Preparations: map[string]PrepareSpec{inconsistent.Instance.Profile.ID: inconsistent}}
-			changed.Settings.ControlInterval = 2 * time.Second
-			if err := controller.SetConfiguration(changed); err == nil || !strings.Contains(err.Error(), "CPU request count differs") {
+			if err := ValidatePreparation(inconsistent); err == nil || !strings.Contains(err.Error(), "CPU request count differs") {
 				t.Fatalf("inconsistent profile-bound count %d entered planning: %v", count, err)
-			}
-			if controller.Settings().ControlInterval != settings.ControlInterval {
-				t.Fatal("rejected preparation replaced the admitted configuration")
 			}
 		})
 	}
 	// Existing zero-count semantics use affinity width, but only when that
 	// effective count equals the measured request rounded to a CPU budget.
-	spec = measuredCPUPreparationFixture()
+	spec := measuredCPUPreparationFixture()
 	spec.Instance.Allocation.CPUCount = 0
 	spec.Instance.Allocation.CPUs = []int{0, 1}
 	spec.Instance.Profile.Condition.CPU.AffinityCPUs = []int{0, 1}
 	spec.Instance.Profile.RuntimeMetadata.CPUAffinity = []int{0, 1}
-	config.Preparations = map[string]PrepareSpec{spec.Instance.Profile.ID: spec}
-	if err := controller.SetConfiguration(config); err != nil {
+	if err := ValidatePreparation(spec); err != nil {
 		t.Fatalf("consistent implicit request budget rejected: %v", err)
 	}
 }
