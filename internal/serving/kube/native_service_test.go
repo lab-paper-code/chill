@@ -17,6 +17,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -310,6 +311,52 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}
 	if !reflect.DeepEqual(config.Policy, currentPolicy) {
 		t.Fatal("preparation reset the current mutable policy", config.Policy)
+	}
+}
+
+func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
+	ctx := context.Background()
+	_, node, profile, _ := observerSourceFixture()
+	profile.Condition.RuntimeAccess = &profilederivation.CurveRuntimeAccessContract{SupplementalGroups: []int64{44}}
+	var err error
+	scheme := runtime.NewScheme()
+	if err = core.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	kube := kubefake.NewSimpleClientset(node)
+	// Stop at the transport Service so the test inspects only the created Pod.
+	kube.PrependReactor("create", "services", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("stop after Pod creation")
+	})
+	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	spec := PrepareSpec{
+		Name: "measured-rknn",
+		Instance: serving.SchedulerInstance{
+			ID: "measured-rknn", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile,
+			Allocation: serving.SchedulerAllocation{CPUs: []int{0}, CPUCount: 1, Threads: 1, MemoryBytes: 1 << 20},
+		},
+		Bundle: evidencestore.ObjectIdentity{Store: "store", Key: "bundle", Size: 1},
+		Store:  storekube.Binding{Store: "store", Endpoint: "http://store", Bucket: "bucket", Region: "region", CredentialsSecretName: "secret"},
+		Config: native.Config{
+			Mode: nativeServingMode, ProfilePath: "/profile/bundle.json",
+			RunnerCommand: []string{"python3", "--delivery-json", "/config/delivery.json"},
+			Policy:        native.Policy{ProfileID: profile.ID, DeadlinePolicy: profile.Condition.Firstfloor.DeadlinePolicy},
+		},
+		MemoryBytes: 1 << 20,
+	}
+	if err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
+		t.Fatalf("preparation did not reach Pod creation: %v", err)
+	}
+	pod := &core.Pod{}
+	if err = store.client.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: spec.Name}, pod); err != nil {
+		t.Fatal(err)
+	}
+	if pod.Labels[profilingrun.MeasurementWorkloadLabelKey] != profilingrun.ServingInstanceRole {
+		t.Fatalf("Pod labels = %#v", pod.Labels)
+	}
+	if pod.Spec.SecurityContext == nil || !reflect.DeepEqual(pod.Spec.SecurityContext.SupplementalGroups, []int64{44}) {
+		t.Fatalf("measured supplemental groups were not reproduced: %+v", pod.Spec.SecurityContext)
 	}
 }
 

@@ -180,10 +180,17 @@ func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
 	}
 }
 
+func TestMeasuredSupplementalGroupsAreReproducible(t *testing.T) {
+	profile := measuredAdoptionProfile()
+	profile.Condition.RuntimeAccess = &derivation.CurveRuntimeAccessContract{SupplementalGroups: []int64{44}}
+	if err := reproducibleRuntimeAccess(profile); err != nil {
+		t.Fatalf("measured supplemental groups refused: %v", err)
+	}
+}
+
 func TestGeneratedPreparationRejectsUnrepresentableMeasuredRuntimeAccess(t *testing.T) {
 	for _, access := range []derivation.CurveRuntimeAccessContract{
 		{Privileged: true, SupplementalGroups: []int64{44}},
-		{SupplementalGroups: []int64{44}},
 		{Resources: map[string]string{"other.device/accelerator": "1"}},
 	} {
 		profile := measuredAdoptionProfile()

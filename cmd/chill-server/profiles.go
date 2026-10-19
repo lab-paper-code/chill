@@ -123,11 +123,9 @@ func reproducibleRuntimeAccess(p serving.Profile) error {
 	if access == nil {
 		return nil
 	}
-	if access.Privileged || len(access.SupplementalGroups) != 0 {
-		return fmt.Errorf(
-			"serving preparation cannot reproduce measured runtimeAccess privileged=%t supplementalGroups=%v",
-			access.Privileged, access.SupplementalGroups,
-		)
+	// SupplementalGroups are reproduced on the serving Pod security context.
+	if access.Privileged {
+		return fmt.Errorf("serving preparation cannot reproduce measured runtimeAccess privileged=true")
 	}
 	for resource, quantity := range access.Resources {
 		if resource != "nvidia.com/gpu" || quantity != "1" || p.RuntimeMetadata.GPUUUID == "" {

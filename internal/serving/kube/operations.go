@@ -416,6 +416,9 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		runtime.SecurityContext = &core.SecurityContext{Privileged: ptr.To(host.Privileged), AllowPrivilegeEscalation: ptr.To(host.Privileged)}
 		pod.Spec.Volumes = append(pod.Spec.Volumes, host.Volumes...)
 		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: host.SupplementalGroups}
+	} else if access := p.Condition.RuntimeAccess; access != nil && len(access.SupplementalGroups) != 0 {
+		// Reproduce the measured device-group access (e.g. Jetson video group for CUDA).
+		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: slices.Clone(access.SupplementalGroups)}
 	}
 	// ponytail: admitted just before the Pod create; the remaining window closes with M3 single-writer fencing.
 	if err = o.admittedNode(ctx, node); err != nil {
