@@ -30,7 +30,7 @@ func reachesEndFence(pod corev1.Pod, request Request) bool {
 func initialActivePods(items []corev1.Pod, request Request) (map[string]workloadobserver.Pod, error) {
 	active := make(map[string]workloadobserver.Pod, len(items))
 	for index := range items {
-		pod, err := projectPod(items[index], request.Target.NodeName, request.SelectorLabelKeys)
+		pod, err := ProjectPod(items[index], request.Target.NodeName, request.SelectorLabelKeys)
 		if err != nil {
 			return nil, fmt.Errorf("project listed Pod: %w", err)
 		}
@@ -49,7 +49,7 @@ func initialActivePods(items []corev1.Pod, request Request) (map[string]workload
 	return active, nil
 }
 
-func projectPod(pod corev1.Pod, nodeName string, labelKeys []string) (workloadobserver.Pod, error) {
+func ProjectPod(pod corev1.Pod, nodeName string, labelKeys []string) (workloadobserver.Pod, error) {
 	if pod.Spec.NodeName != nodeName {
 		return workloadobserver.Pod{}, fmt.Errorf(
 			"Pod %s/%s belongs to Node %q, expected %q",

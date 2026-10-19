@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -19,6 +20,9 @@ func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
 	daemonSet, err := buildDaemonSet(options, config)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if daemonSet.Spec.Template.Labels[profilingrun.MeasurementWorkloadLabelKey] != profilingrun.SystemRole {
+		t.Fatalf("Pod labels = %#v", daemonSet.Spec.Template.Labels)
 	}
 	if !reflect.DeepEqual(daemonSet.Spec.UpdateStrategy, config.UpdateStrategy) {
 		t.Fatalf("DaemonSet update strategy = %#v, want %#v", daemonSet.Spec.UpdateStrategy, config.UpdateStrategy)

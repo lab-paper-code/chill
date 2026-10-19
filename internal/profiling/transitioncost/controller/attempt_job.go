@@ -115,8 +115,9 @@ func BuildAttemptJob(
 	activeDeadline := request.Prepared.PowerRequest.Duration + options.ActiveDeadlineOverhead
 	deadlineSeconds := durationSecondsCeiling(activeDeadline)
 	labels := map[string]string{
-		"app.kubernetes.io/name":      component.DefaultSystemName,
-		"app.kubernetes.io/component": transitionObserverContainerName,
+		"app.kubernetes.io/name":                 component.DefaultSystemName,
+		"app.kubernetes.io/component":            transitionObserverContainerName,
+		profilingrun.MeasurementWorkloadLabelKey: profilingrun.TransitionObserverRole,
 	}
 	annotations := map[string]string{
 		transitionDirectionIndexAnnotation: strconv.Itoa(request.DirectionIndex),

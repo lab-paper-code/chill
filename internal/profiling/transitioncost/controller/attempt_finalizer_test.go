@@ -14,6 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -460,5 +461,5 @@ func finalizationReceipt(
 	}
 }
 func powerNativeFixture(at time.Time, process transitioncost.ProcessIdentity) *transitioncost.NativeNodeObservation {
-	return &transitioncost.NativeNodeObservation{NodeName: "target", NodeUID: "target-uid", ReceivedAt: at, Pods: []string{"measure/serving/pod"}, Instances: []transitioncost.NativeInstanceObservation{{Namespace: "measure", PodName: "serving", PodUID: "pod", ContainerID: process.ContainerID, StartedAt: process.StartedAt, RestartCount: process.RestartCount, Image: "fixture-image", ImageID: "fixture-image-id", CPURequestMilli: 1000, CPULimitMilli: 1000, MemoryRequestBytes: 128, MemoryLimitBytes: 128, State: native.State{At: time.Unix(1, 0), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"}, CPUAffinity: []int{0}, IntraOpThreads: 1}}}}}}
+	return &transitioncost.NativeNodeObservation{NodeName: "target", NodeUID: "target-uid", ReceivedAt: at, Pods: []workloadobserver.Pod{{Namespace: "measure", Name: "serving", UID: "pod", Phase: "Running", Images: []string{"fixture-image"}}}, Instances: []transitioncost.NativeInstanceObservation{{Namespace: "measure", PodName: "serving", PodUID: "pod", ContainerID: process.ContainerID, StartedAt: process.StartedAt, RestartCount: process.RestartCount, Image: "fixture-image", ImageID: "fixture-image-id", CPURequestMilli: 1000, CPULimitMilli: 1000, MemoryRequestBytes: 128, MemoryLimitBytes: 128, State: native.State{At: time.Unix(1, 0), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"}, CPUAffinity: []int{0}, IntraOpThreads: 1}}}}}}
 }

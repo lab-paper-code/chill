@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -18,6 +19,9 @@ func TestBuildDeployment(t *testing.T) {
 	}
 
 	deployment := buildDeployment(instance, config)
+	if deployment.Spec.Template.Labels[profilingrun.MeasurementWorkloadLabelKey] != profilingrun.SystemRole {
+		t.Fatalf("Pod labels = %#v", deployment.Spec.Template.Labels)
+	}
 	if deployment.Namespace != instance.Namespace || deployment.Name != instance.DeploymentName {
 		t.Fatalf("Deployment key = %s/%s", deployment.Namespace, deployment.Name)
 	}

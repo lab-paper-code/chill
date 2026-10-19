@@ -3,6 +3,7 @@ package nodediscovery
 import (
 	"testing"
 
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -11,6 +12,9 @@ func TestBuildDaemonSet(t *testing.T) {
 	config := validConfig()
 	config.ExcludeNodeNames = []string{"bad-edge"}
 	daemonSet := buildDaemonSet(validOptions(), config)
+	if daemonSet.Spec.Template.Labels[profilingrun.MeasurementWorkloadLabelKey] != profilingrun.SystemRole {
+		t.Fatalf("Pod labels = %#v", daemonSet.Spec.Template.Labels)
+	}
 
 	if daemonSet.Name != "chill-node-discovery" {
 		t.Fatalf("Name = %q, want chill-node-discovery", daemonSet.Name)

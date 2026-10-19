@@ -13,6 +13,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/component"
 	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/nodeactuator/jetson"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 const containerName = component.NodeActuator
@@ -34,19 +35,20 @@ func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
 		"app.kubernetes.io/instance":  options.SystemName,
 		"app.kubernetes.io/component": component.NodeActuator,
 	}
-	labels := make(map[string]string, len(selectorLabels)+2)
+	labels := make(map[string]string, len(selectorLabels)+3)
 	for key, value := range selectorLabels {
 		labels[key] = value
 	}
 	labels["app.kubernetes.io/managed-by"] = "chill-operator"
 	labels["app.kubernetes.io/part-of"] = component.DefaultSystemName
+	labels[profilingrun.MeasurementWorkloadLabelKey] = profilingrun.SystemRole
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Namespace: options.Namespace, Name: options.DaemonSetName, Labels: labels},
 		Spec: appsv1.DaemonSetSpec{
 			Selector:       &metav1.LabelSelector{MatchLabels: selectorLabels},
 			UpdateStrategy: config.UpdateStrategy,
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: selectorLabels},
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					// A restart is part of establishing a boot-established power
 					// mode, and reboot(2) restarts the Node only from the host PID

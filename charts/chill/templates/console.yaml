@@ -167,6 +167,7 @@ spec:
         app.kubernetes.io/name: {{ include "chill.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: operator-console
+        edge.dacs.io/workload-role: system
     spec:
       serviceAccountName: {{ include "chill.consoleServiceAccountName" . }}
       securityContext:

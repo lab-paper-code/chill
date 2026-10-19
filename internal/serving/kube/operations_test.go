@@ -14,8 +14,10 @@ import (
 	"time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -291,5 +293,30 @@ func TestRouteRejectsImmutableProfileAndDeadlinePolicyBeforePersistence(t *testi
 				t.Fatalf("immutable %s changed desired config", field)
 			}
 		})
+	}
+}
+
+func TestCaptureRecordsNodePodsWithWorkloadRole(t *testing.T) {
+	manager, _ := newManagerHarness(t)
+	node := &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}
+	pod := func(name string, labels map[string]string) *core.Pod {
+		return &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: "apps", Name: name, UID: types.UID(name), Labels: labels},
+			Spec:   core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Name: "main", Image: name + "-image"}}},
+			Status: core.PodStatus{Phase: core.PodRunning}}
+	}
+	external := pod("external", map[string]string{"app": "external"})
+	system := pod("system", map[string]string{profilingrun.MeasurementWorkloadLabelKey: profilingrun.SystemRole})
+	operations := &Operations{store: manager.store, kube: kubefake.NewSimpleClientset(node, external, system), runtime: manager.runtime}
+	state, err := operations.Capture(context.Background(), serving.NodeReference{Name: node.Name, UID: string(node.UID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []workloadobserver.Pod{
+		{Namespace: "apps", Name: "external", UID: "external", Phase: "Running", Images: []string{"external-image"}},
+		{Namespace: "apps", Name: "system", UID: "system", Phase: "Running", Images: []string{"system-image"},
+			Labels: map[string]string{profilingrun.MeasurementWorkloadLabelKey: profilingrun.SystemRole}},
+	}
+	if !reflect.DeepEqual(state.Pods, want) {
+		t.Fatalf("Pods = %+v", state.Pods)
 	}
 }

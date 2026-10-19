@@ -374,6 +374,9 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 	if err = store.client.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: spec.Name}, pod); err != nil {
 		t.Fatal(err)
 	}
+	if pod.Labels[profilingrun.MeasurementWorkloadLabelKey] != profilingrun.ServingInstanceRole {
+		t.Fatalf("Pod labels = %#v", pod.Labels)
+	}
 	container := pod.Spec.Containers[0]
 	if container.SecurityContext == nil || container.SecurityContext.Privileged == nil || !*container.SecurityContext.Privileged ||
 		pod.Spec.SecurityContext == nil || !reflect.DeepEqual(pod.Spec.SecurityContext.SupplementalGroups, []int64{44, 110}) {

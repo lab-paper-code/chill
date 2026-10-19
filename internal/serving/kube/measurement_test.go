@@ -11,11 +11,12 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 func TestIdleRejectsInferenceBetweenEmptySnapshots(t *testing.T) {
 	node := serving.NodeReference{Name: "node", UID: "uid"}
-	before := OperationState{Node: node, PowerMode: "fixed", Pods: []string{"pod"}, States: []string{"profile:[0]::1024:1"}, Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 3, CompletedRequests: 3, Executions: 2}}}
+	before := OperationState{Node: node, PowerMode: "fixed", Pods: []workloadobserver.Pod{{UID: "pod"}}, States: []string{"profile:[0]::1024:1"}, Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 3, CompletedRequests: 3, Executions: 2}}}
 	after := before
 	after.Native = map[string]native.State{"physical": {Ready: true, AcceptedRequests: 4, CompletedRequests: 4, Executions: 3}}
 	if err := stableIdle(before, before); err != nil {

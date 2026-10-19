@@ -8,6 +8,9 @@ const (
 	WorkloadContractSchemaVersion = "chill.dacs.io/workload-contract.v1alpha1"
 	MeasurementWorkloadLabelKey   = "edge.dacs.io/workload-role"
 	MeasurementWorkloadLabelValue = "profiling-run"
+	ServingInstanceRole           = "serving-instance"
+	TransitionObserverRole        = "transition-observer"
+	SystemRole                    = "system"
 )
 
 // WorkloadContract freezes only the observation semantics used by current

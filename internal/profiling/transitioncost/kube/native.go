@@ -12,9 +12,13 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	workloadkube "github.com/lab-paper-code/chill/internal/workloadobserver/kube"
 	core "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -36,7 +40,11 @@ func (o *Observer) nativeNode(ctx context.Context) (*transitioncost.NativeNodeOb
 		if pod.Spec.NodeName != node.Name || pod.Status.Phase == core.PodSucceeded || pod.Status.Phase == core.PodFailed {
 			continue
 		}
-		observed.Pods = append(observed.Pods, pod.Namespace+"/"+pod.Name+"/"+string(pod.UID))
+		projected, err := workloadkube.ProjectPod(pod, node.Name, []string{profilingrun.MeasurementWorkloadLabelKey})
+		if err != nil {
+			return nil, err
+		}
+		observed.Pods = append(observed.Pods, projected)
 		var container *core.Container
 		for i := range pod.Spec.Containers {
 			if pod.Spec.Containers[i].Name == "firstfloor" {
@@ -54,7 +62,7 @@ func (o *Observer) nativeNode(ctx context.Context) (*transitioncost.NativeNodeOb
 		observed.Instances = append(observed.Instances, instance)
 	}
 	observed.ReceivedAt = o.now().UTC()
-	slices.Sort(observed.Pods)
+	slices.SortFunc(observed.Pods, func(a, b workloadobserver.Pod) int { return strings.Compare(a.UID, b.UID) })
 	slices.SortFunc(observed.Instances, func(a, b transitioncost.NativeInstanceObservation) int {
 		if a.PodUID < b.PodUID {
 			return -1

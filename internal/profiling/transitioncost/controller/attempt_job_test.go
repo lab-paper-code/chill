@@ -13,6 +13,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -31,6 +32,9 @@ func TestBuildAttemptJobProjectsOneOffTargetAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertAttemptJobIdentityAndBounds(t, job, request)
+	if job.Spec.Template.Labels[profilingrun.MeasurementWorkloadLabelKey] != profilingrun.TransitionObserverRole {
+		t.Fatalf("Pod labels = %#v", job.Spec.Template.Labels)
+	}
 	pod := job.Spec.Template.Spec
 	if !slices.Contains(pod.Tolerations, corev1.Toleration{Key: "chill.dacs.io/measurement", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}) {
 		t.Fatalf("pod tolerations = %#v, want measurement toleration", pod.Tolerations)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 // NativeInstanceObservation is actual Pod allocation joined to one physical
@@ -34,7 +35,7 @@ type NativeNodeObservation struct {
 	NodeName   string                      `json:"nodeName"`
 	NodeUID    string                      `json:"nodeUID"`
 	ReceivedAt time.Time                   `json:"receivedAt"` // observer clock after actual HTTP responses
-	Pods       []string                    `json:"pods"`       // all nonterminal Node Pod physical membership
+	Pods       []workloadobserver.Pod      `json:"pods"`       // all nonterminal Node Pods
 	Instances  []NativeInstanceObservation `json:"instances"`
 }
 type NativeReadFailure struct {
@@ -81,7 +82,7 @@ func VerifyNativeTransition(before, after *NativeNodeObservation) error {
 	if err := validNativeNode(after); err != nil {
 		return err
 	}
-	if before.NodeName != after.NodeName || before.NodeUID != after.NodeUID || !slices.Equal(before.Pods, after.Pods) || len(before.Instances) != len(after.Instances) {
+	if before.NodeName != after.NodeName || before.NodeUID != after.NodeUID || !slices.EqualFunc(before.Pods, after.Pods, workloadobserver.SamePod) || len(before.Instances) != len(after.Instances) {
 		return errors.New("native Node identity/membership changed during transition")
 	}
 	for _, a := range before.Instances {

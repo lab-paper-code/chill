@@ -4,7 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useChillQuery } from "@/lib/client"
-import type { NodeRef, OperationResult, OperationState, Routing, SchedulerAction, SchedulerActionObservation, SchedulerControllerState, SchedulerObservationPage, SchedulerOperation } from "@/lib/read-types"
+import { workloadRoleLabel, type NodeRef, type OperationResult, type OperationState, type Routing, type SchedulerAction, type SchedulerActionObservation, type SchedulerControllerState, type SchedulerObservationPage, type SchedulerOperation } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
 import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { safeSource } from "@/lib/source-export"
@@ -44,7 +44,7 @@ function Native({value}:{value:unknown}) {
 }
 
 function StateDetails({state,title}:{state:OperationState;title:string}) {
-  return <section className="space-y-3"><h3>{title}</h3><p>관측 {time(state.at)}</p><p>노드 <Node node={state.node}/> / 전력모드 {state.powerMode||"제공 없음"}</p><h4>관측된 상태</h4><Lines values={state.states}/><Lines values={state.reasons}/><p>Pod {state.pods?.join(", ")||"제공된 목록 없음"}</p><h4>인스턴스</h4>{state.instances?.length?state.instances.map((instance,index)=><details key={index}><summary>{instance.id} / 준비 {instance.ready?"완료":"확인 대기"}</summary><p><Node node={instance.node}/> / 프로파일 {instance.profile} / 관측 {time(instance.observedAt)}</p>{instance.reason&&<p>{instance.reason}</p>}<ul>{instance.workloads?.map(workload=><li key={workload.uid}>{workload.name} ({workload.uid}) / 대기 {String(instance.waiting?.[workload.uid]??"미제공")} / 실행 {String(instance.running?.[workload.uid]??"미제공")} / 배정 후 확인 대기 {String(instance.assignedUnknown?.[workload.uid]??"미제공")}</li>)}</ul></details>):<p>제공된 인스턴스 없음</p>}<h4>실행기 관측</h4><Native value={state.native}/></section>
+  return <section className="space-y-3"><h3>{title}</h3><p>관측 {time(state.at)}</p><p>노드 <Node node={state.node}/> / 전력모드 {state.powerMode||"제공 없음"}</p><h4>관측된 상태</h4><Lines values={state.states}/><Lines values={state.reasons}/><p>CHILL이 배치하지 않은 Pod {state.pods?state.pods.filter(pod=>!pod.labels?.[workloadRoleLabel]).map(pod=>`${pod.namespace}/${pod.name}`).join(", ")||"없음":"제공된 목록 없음"}</p><h4>인스턴스</h4>{state.instances?.length?state.instances.map((instance,index)=><details key={index}><summary>{instance.id} / 준비 {instance.ready?"완료":"확인 대기"}</summary><p><Node node={instance.node}/> / 프로파일 {instance.profile} / 관측 {time(instance.observedAt)}</p>{instance.reason&&<p>{instance.reason}</p>}<ul>{instance.workloads?.map(workload=><li key={workload.uid}>{workload.name} ({workload.uid}) / 대기 {String(instance.waiting?.[workload.uid]??"미제공")} / 실행 {String(instance.running?.[workload.uid]??"미제공")} / 배정 후 확인 대기 {String(instance.assignedUnknown?.[workload.uid]??"미제공")}</li>)}</ul></details>):<p>제공된 인스턴스 없음</p>}<h4>실행기 관측</h4><Native value={state.native}/></section>
 }
 
 function OperationDetails({value}:{value:SchedulerOperation}) {

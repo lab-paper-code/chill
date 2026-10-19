@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	corev1 "k8s.io/api/core/v1"
@@ -45,6 +48,14 @@ func TestObserverCapturesOneInPlaceTransition(t *testing.T) {
 	}
 	if callbackCount != 1 {
 		t.Fatalf("ready callback count = %d, want 1", callbackCount)
+	}
+	wantPods := []workloadobserver.Pod{{
+		Namespace: "measurements", Name: "serving", UID: "serving", Phase: "Running",
+		Images: []string{"example.invalid/firstfloor:fixture"},
+		Labels: map[string]string{profilingrun.MeasurementWorkloadLabelKey: profilingrun.ServingInstanceRole},
+	}}
+	if raw.BeforeNative == nil || !reflect.DeepEqual(raw.BeforeNative.Pods, wantPods) {
+		t.Fatalf("native Pods = %+v", raw.BeforeNative)
 	}
 	if raw.SourceReadBack.State != (transitioncost.StateIdentity{
 		DeviceType: "jetson_orin", Model: "mobilenet-v2-050", PowerMode: "MAXN",
@@ -380,7 +391,7 @@ func readyPod(name, containerID string, restartCount int32) *corev1.Pod {
 	startedAt := metav1.NewTime(time.Now().UTC().Add(-time.Minute))
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "measurements", Name: name, UID: types.UID(name), Labels: map[string]string{"app": "serving"},
+			Namespace: "measurements", Name: name, UID: types.UID(name), Labels: map[string]string{"app": "serving", profilingrun.MeasurementWorkloadLabelKey: profilingrun.ServingInstanceRole},
 		},
 		Spec: corev1.PodSpec{
 			NodeName:   "jetsono",

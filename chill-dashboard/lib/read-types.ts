@@ -62,7 +62,10 @@ export type SchedulerDecision = {at:string;status:string;keep:SchedulerCandidate
 // Weights per workload UID and instance ID; original weights, not probabilities.
 export type Routing = Record<string,Record<string,number>>
 export type SchedulerOperation = {id:string;kind:string;node:NodeRef;instance?:string;prepare?:{name:string;instance:SchedulerInstance;bundle:unknown;store:unknown;config:unknown;memoryBytes:WireInteger};actuation?:unknown;target?:SchedulerCandidate;sourceConfigRV?:string;staticRouting?:Routing}
-export type OperationState = {at:string;node:NodeRef;powerMode:string;instances:InstanceState[]|null;native:Record<string,unknown>|null;pods:string[]|null;states:string[]|null;reasons?:string[];routing?:Routing}
+// Pods carrying this label were placed by CHILL: internal/profiling/run/workload.go
+export const workloadRoleLabel = "edge.dacs.io/workload-role"
+export type WorkloadPod = {namespace:string;name:string;uid:string;phase:string;images:string[];labels?:Record<string,string>}
+export type OperationState = {at:string;node:NodeRef;powerMode:string;instances:InstanceState[]|null;native:Record<string,unknown>|null;pods:WorkloadPod[]|null;states:string[]|null;reasons?:string[];routing?:Routing}
 export type OperationResult = {operation:SchedulerOperation;before:OperationState;actual:OperationState;startedAt:string;endedAt:string;status:string;error?:string;progress:string[]|null;drainNative?:Record<string,unknown>}
 export type SchedulerControllerState = {snapshot:SchedulerSnapshot;decision:SchedulerDecision;actions:SchedulerAction[]|null;results:OperationResult[]|null}
 export type SchedulerView = {settings:SchedulerSettings;state:SchedulerControllerState}

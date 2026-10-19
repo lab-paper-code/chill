@@ -205,7 +205,7 @@ func (o *Observer) receive(
 			endFenceResourceVersion = pod.ResourceVersion
 		}
 
-		projected, err := projectPod(*pod, request.Target.NodeName, request.SelectorLabelKeys)
+		projected, err := ProjectPod(*pod, request.Target.NodeName, request.SelectorLabelKeys)
 		if err != nil {
 			return &workloadobserver.Failure{Reason: workloadobserver.FailureReasonWatchFailed, Message: err.Error()}
 		}

@@ -83,6 +83,7 @@ spec:
       labels:
         app.kubernetes.io/component: uninstall-cleanup
         {{- include "chill.selectorLabels" . | nindent 8 }}
+        edge.dacs.io/workload-role: system
     spec:
       restartPolicy: Never
       serviceAccountName: {{ include "chill.uninstallCleanupServiceAccountName" . }}

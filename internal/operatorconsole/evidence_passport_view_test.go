@@ -109,8 +109,8 @@ func assertPassportWorkload(t *testing.T, workload *EvidencePassportWorkload) {
 	t.Helper()
 	if workload == nil || !workload.Continuous || workload.InitialActivePods != 3 ||
 		len(workload.CoResidents) != 2 || workload.CoResidents[0].Name != "fastdds" ||
-		workload.CoResidents[0].CHILLMeasurement || workload.CoResidents[0].Changed ||
-		workload.CoResidents[1].CHILLMeasurement || workload.CoResidents[1].Changed {
+		workload.CoResidents[0].CHILLMeasurement || workload.CoResidents[0].Changed || workload.CoResidents[0].CHILLPlaced ||
+		workload.CoResidents[1].CHILLMeasurement || workload.CoResidents[1].Changed || !workload.CoResidents[1].CHILLPlaced {
 		t.Fatalf("workload facts = %#v", workload)
 	}
 }
@@ -131,7 +131,7 @@ func passportWorkloadResult(
 	allowed := workloadobserver.Pod{
 		Namespace: "monitoring", Name: "edge-metrics", UID: "metrics-uid", Phase: "Running",
 		Owner:  &workloadobserver.OwnerIdentity{Kind: "DaemonSet", Name: "edge-metrics", UID: "owner-uid"},
-		Images: []string{"metrics@sha256:" + strings.Repeat("c", 64)}, Labels: map[string]string{"app": "edge-metrics"},
+		Images: []string{"metrics@sha256:" + strings.Repeat("c", 64)}, Labels: map[string]string{"app": "edge-metrics", profilingrun.MeasurementWorkloadLabelKey: profilingrun.SystemRole},
 	}
 	pods := []workloadobserver.Pod{run, unexpected, allowed}
 	return workloadobserver.Result{

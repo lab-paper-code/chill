@@ -17,6 +17,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 const (
@@ -68,6 +69,9 @@ func TestConfigValidate(t *testing.T) {
 
 func TestBuildDeployment(t *testing.T) {
 	deployment := buildDeployment(validOptions(), validConfig())
+	if deployment.Spec.Template.Labels[profilingrun.MeasurementWorkloadLabelKey] != profilingrun.SystemRole {
+		t.Fatalf("Pod labels = %#v", deployment.Spec.Template.Labels)
+	}
 	if deployment.Namespace != testManagementNamespace || deployment.Name != testProfilerName {
 		t.Fatalf("Deployment key = %s/%s", deployment.Namespace, deployment.Name)
 	}

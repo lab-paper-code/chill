@@ -33,6 +33,7 @@ type EvidencePassportWorkloadCoResident struct {
 	PresentAtEnd     bool                           `json:"presentAtEnd"`
 	EventKinds       []string                       `json:"eventKinds,omitempty"`
 	CHILLMeasurement bool                           `json:"chillMeasurement"`
+	CHILLPlaced      bool                           `json:"chillPlaced"`
 	Changed          bool                           `json:"changed"`
 }
 
@@ -81,6 +82,8 @@ func summarizeWorkload(
 		}
 		entry.view.CHILLMeasurement = entry.view.CHILLMeasurement ||
 			profilingrun.IsMeasurementWorkload(ownerKind, pod.Labels)
+		_, placed := pod.Labels[profilingrun.MeasurementWorkloadLabelKey]
+		entry.view.CHILLPlaced = entry.view.CHILLPlaced || placed
 	}
 	for _, pod := range result.InitialActivePods {
 		add(pod, true, false, "")

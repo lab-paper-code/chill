@@ -20,6 +20,8 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	workloadkube "github.com/lab-paper-code/chill/internal/workloadobserver/kube"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -80,7 +82,7 @@ type OperationState struct {
 	PowerMode string                      `json:"powerMode"`
 	Instances []serving.InstanceState     `json:"instances"`
 	Native    map[string]native.State     `json:"native"`
-	Pods      []string                    `json:"pods"`
+	Pods      []workloadobserver.Pod      `json:"pods"`
 	States    []string                    `json:"states"`
 	Reasons   []string                    `json:"reasons,omitempty"`
 	Routing   map[string]map[string]int32 `json:"routing,omitempty"`
@@ -182,7 +184,11 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 		if p.Spec.NodeName != node.Name || p.Status.Phase == core.PodSucceeded || p.Status.Phase == core.PodFailed {
 			continue
 		}
-		s.Pods = append(s.Pods, p.Namespace+"/"+p.Name+"/"+string(p.UID))
+		pod, e := workloadkube.ProjectPod(*p, node.Name, []string{profilingrun.MeasurementWorkloadLabelKey})
+		if e != nil {
+			return s, e
+		}
+		s.Pods = append(s.Pods, pod)
 		if p.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
 			continue
 		}
@@ -211,7 +217,7 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 			return s, err
 		}
 	}
-	slices.Sort(s.Pods)
+	slices.SortFunc(s.Pods, func(a, b workloadobserver.Pod) int { return strings.Compare(a.UID, b.UID) })
 	slices.Sort(s.States)
 	return s, nil
 }
@@ -404,7 +410,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		requests[host.AcceleratorResource] = resource.MustParse("1")
 		limits[host.AcceleratorResource] = resource.MustParse("1")
 	}
-	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}, Annotations: map[string]string{ServingProfileAnnotation: p.ID, ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), ServingPolicyAnnotation: decisionID, ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{sourceFinalizer}}, Spec: core.PodSpec{NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), InitContainers: []core.Container{
+	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent, profilingrun.MeasurementWorkloadLabelKey: profilingrun.ServingInstanceRole}, Annotations: map[string]string{ServingProfileAnnotation: p.ID, ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), ServingPolicyAnnotation: decisionID, ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{sourceFinalizer}}, Spec: core.PodSpec{NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), InitContainers: []core.Container{
 		{Name: "artifact", Image: p.Condition.Artifact.Image, Command: []string{"sh", "-ec"}, Args: append([]string{`cp "$@" /chill-artifact/`, "--"}, p.Condition.Artifact.Files...), Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
 		{Name: "preprocessor", Image: p.Condition.Preprocessor.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp -R "$1"/. /chill-preprocessor/`, "--", p.Condition.Preprocessor.Path}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "preprocessor", MountPath: "/chill-preprocessor"}}},
 		{Name: "profile", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Resources: initResources, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
@@ -843,7 +849,7 @@ func (o *Operations) waitPowerState(ctx context.Context, node serving.NodeRefere
 		if len(after.Reasons) > 0 {
 			return false, nil
 		}
-		if !slices.Equal(before.Pods, after.Pods) || !slices.Equal(before.States, after.States) || len(before.Native) != len(after.Native) {
+		if !slices.EqualFunc(before.Pods, after.Pods, workloadobserver.SamePod) || !slices.Equal(before.States, after.States) || len(before.Native) != len(after.Native) {
 			return false, errors.New("power transition changed actual loaded state")
 		}
 		for id, a := range before.Native {

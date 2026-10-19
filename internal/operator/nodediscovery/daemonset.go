@@ -8,6 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lab-paper-code/chill/internal/component"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 const (
@@ -32,7 +33,7 @@ func buildDaemonSet(options Options, config Config) *appsv1.DaemonSet {
 				MatchLabels: selectorLabels,
 			},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: selectorLabels},
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: config.ServiceAccountName,
 					HostNetwork:        config.HostNetwork,
@@ -72,6 +73,7 @@ func workloadLabels(systemName string) map[string]string {
 	labels := workloadSelectorLabels(systemName)
 	labels["app.kubernetes.io/managed-by"] = "chill-operator"
 	labels["app.kubernetes.io/part-of"] = component.DefaultSystemName
+	labels[profilingrun.MeasurementWorkloadLabelKey] = profilingrun.SystemRole
 	return labels
 }
 

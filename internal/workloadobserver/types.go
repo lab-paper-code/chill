@@ -56,6 +56,11 @@ type Pod struct {
 	Labels    map[string]string `json:"labels,omitempty"`
 }
 
+// SamePod reports whether two records name the same Pod instance.
+func SamePod(a, b Pod) bool {
+	return a.Namespace == b.Namespace && a.Name == b.Name && a.UID == b.UID
+}
+
 // Event is one material change to the active Pod set. ResourceVersion remains
 // an opaque Kubernetes identity and is never parsed as a number.
 type Event struct {

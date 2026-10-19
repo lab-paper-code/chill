@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/lab-paper-code/chill/internal/component"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 const (
@@ -23,6 +24,9 @@ func TestBuildBootstrapJob(t *testing.T) {
 	}
 
 	job := buildBootstrapJob(instance, config, testConfigResourceVersion)
+	if job.Spec.Template.Labels[profilingrun.MeasurementWorkloadLabelKey] != profilingrun.SystemRole {
+		t.Fatalf("Pod labels = %#v", job.Spec.Template.Labels)
+	}
 	if job.Namespace != instance.Namespace || job.Name != instance.BootstrapJobName {
 		t.Fatalf("Job key = %s/%s", job.Namespace, job.Name)
 	}

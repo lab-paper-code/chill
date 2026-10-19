@@ -22,6 +22,7 @@ spec:
         app.kubernetes.io/name: {{ include "chill.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: dashboard
+        edge.dacs.io/workload-role: system
     spec:
       automountServiceAccountToken: false
       securityContext:

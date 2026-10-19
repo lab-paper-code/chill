@@ -140,7 +140,8 @@ def inspect(image, node, backend, access):
     pod = {
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"generateName": "chill-runtime-inspect-",
-                     "labels": {"app.kubernetes.io/name": "chill-runtime-inspect"}},
+                     "labels": {"app.kubernetes.io/name": "chill-runtime-inspect",
+                                "edge.dacs.io/workload-role": "system"}},
         "spec": {"nodeName": node, "restartPolicy": "Never", "tolerations": [{"operator": "Exists"}],
                  "securityContext": {"runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
                                      "supplementalGroups": access.get("supplementalGroups", [])},

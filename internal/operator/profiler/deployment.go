@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/lab-paper-code/chill/internal/component"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 const containerName = component.Profiler
@@ -30,7 +31,7 @@ func buildDeployment(options Options, config Config) *appsv1.Deployment {
 			Selector: &metav1.LabelSelector{MatchLabels: selectorLabels},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: selectorLabels,
+					Labels: labels,
 					Annotations: map[string]string{
 						"kubectl.kubernetes.io/default-container": containerName,
 					},
@@ -128,6 +129,7 @@ func workloadLabels(systemName string) map[string]string {
 	labels := workloadSelectorLabels(systemName)
 	labels["app.kubernetes.io/managed-by"] = "chill-operator"
 	labels["app.kubernetes.io/part-of"] = component.DefaultSystemName
+	labels[profilingrun.MeasurementWorkloadLabelKey] = profilingrun.SystemRole
 	return labels
 }
 

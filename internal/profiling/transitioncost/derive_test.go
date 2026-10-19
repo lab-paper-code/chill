@@ -8,6 +8,7 @@ import (
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 const mode30W = "MODE_30W"
@@ -540,7 +541,7 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 		PostTransitionProcess: &process,
 	}
 	nativeWitness := func(at time.Time) *transitioncost.NativeNodeObservation {
-		return &transitioncost.NativeNodeObservation{NodeName: "target", NodeUID: "target-uid", ReceivedAt: at, Pods: []string{"measure/serving/pod"}, Instances: []transitioncost.NativeInstanceObservation{{Namespace: "measure", PodName: "serving", PodUID: "pod", ContainerID: process.ContainerID, StartedAt: process.StartedAt, Image: "fixture-image", ImageID: "fixture-image-id", CPURequestMilli: 1000, CPULimitMilli: 1000, MemoryRequestBytes: 128, MemoryLimitBytes: 128, State: native.State{At: testTime(1), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"}, CPUAffinity: []int{0}, IntraOpThreads: 1}}}}}}
+		return &transitioncost.NativeNodeObservation{NodeName: "target", NodeUID: "target-uid", ReceivedAt: at, Pods: []workloadobserver.Pod{{Namespace: "measure", Name: "serving", UID: "pod", Phase: "Running", Images: []string{"fixture-image"}}}, Instances: []transitioncost.NativeInstanceObservation{{Namespace: "measure", PodName: "serving", PodUID: "pod", ContainerID: process.ContainerID, StartedAt: process.StartedAt, Image: "fixture-image", ImageID: "fixture-image-id", CPURequestMilli: 1000, CPULimitMilli: 1000, MemoryRequestBytes: 128, MemoryLimitBytes: 128, State: native.State{At: testTime(1), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"}, CPUAffinity: []int{0}, IntraOpThreads: 1}}}}}}
 	}
 	raw.BeforeNative = nativeWitness(testTime(1))
 	raw.AfterNative = nativeWitness(testTime(6))

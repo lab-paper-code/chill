@@ -17,6 +17,7 @@ spec:
         kubectl.kubernetes.io/default-container: operator
       labels:
         {{- include "chill.operatorSelectorLabels" . | nindent 8 }}
+        edge.dacs.io/workload-role: system
     spec:
       serviceAccountName: {{ include "chill.operatorServiceAccountName" . }}
       securityContext:

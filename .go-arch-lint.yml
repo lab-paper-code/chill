@@ -159,6 +159,7 @@ deps:
       - node-actuator-core
       - node-actuator-jetson
       - operator
+      - profiling-run
 
   evidence-core:
     anyVendorDeps: true
@@ -207,6 +208,7 @@ deps:
       - power-window
       - firstfloor
       - metric-core
+      - workload-core
   transition-cost-controller:
     mayDependOn:
       - api
@@ -224,6 +226,9 @@ deps:
       - api
       - transition-cost-core
       - firstfloor
+      - profiling-run
+      - workload-core
+      - workload-kube
   transition-cost-worker:
     mayDependOn:
       - evidence-core
@@ -318,6 +323,8 @@ deps:
       - transition-cost-core
       - power-window
       - platform-core
+      - workload-core
+      - workload-kube
 
   profiler-controller:
     mayDependOn:
