@@ -325,8 +325,8 @@ binding이 바뀌는 `Disabled` Workload다. 전력모드 변경은 노드의 �
 모든 후보와 snapshot을 담고 option은 완료된 측정 수만큼 늘어난다. 저장 기록의 `SchedulerInstance`는 profile 본문 대신
 `profileID`만 담고, profile 본문은 catalog(`GET /api/v1/scheduler/profiles`)에서 조회한다. HTTP 조회의 기존 압축
 (`internal/serving/httpapi/scheduler_presentation.go:17-73`)은 조회 경계에 그대로 둔다. 이 변경은 결정 기록 축소 M0
-([05](../architecture-rethink/05-recommendation-migration.md))의 일부이며, M0의 나머지(snapshot 변경 시 저장, 후보 요약,
-판단 stream 분리)는 M0가 정한다.
+([05](../architecture-rethink/05-recommendation-migration.md))의 일부이며, M0의 나머지(후보 요약, snapshot
+축소)는 [판단 기록 다이어트](decision-record-diet.md)가 정한다.
 
 ## 5. API와 Dashboard
 
