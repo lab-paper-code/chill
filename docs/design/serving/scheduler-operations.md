@@ -215,10 +215,10 @@ taint이며, 측정 instance는 이 taint의 toleration을 갖는다. manifest�
 `sampling`, `coverage`, 논리 `store`, 선택 `idleDurationNanos`), `profileNamespaces`,
 `storeEndpoint`/`storeBucket`/`storeRegion`, `metricSources`, `namespace`, 선택 `actuationNamespace`,
 독점 `journalDirectory`이다. command는 실제 Node UID와 taint를 확인하고 prepare를 catalog 검증
-profile에 연결한다. 대상 Node의 profile model을 쓰는 Workload가 없을 때 동일 원자 동작을 실행하며,
+profile에 연결한다. taint가 ChillServer를 이 Node에서 떼어 두므로 같은 model을 쓰는 Workload가 있어도 동일 원자 동작을 실행하며,
 declared meter는 Node에서 해석한 실제 metric source와 같아야 한다. 측정 끝의 격리 witness
 `isolation`은 Node, taint 유무 `Tainted`, 그 model을 쓰는 Workload 목록을 기록한다. Node가 다르거나
-taint가 없거나 Workload가 있으면 기록은 `Insufficient`로 남는다. 기록은 ChillServer store의 고정 key
+taint가 없으면 기록은 `Insufficient`로 남는다. 기록은 ChillServer store의 고정 key
 `serving/operation-measurements/<Node UID>/<operation ID>.json`에 immutable로 쓰며 manifest는 key를
 받지 않는다. observation directory는 process exclusive lock으로 소유하며, live Serving traffic과의
 병행 측정은 이 측정 조건과 구분한다.

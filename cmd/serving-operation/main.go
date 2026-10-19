@@ -305,8 +305,9 @@ func readMeasurementIsolation(ctx context.Context, kube kubernetes.Interface, di
 		}
 	}
 	witness.CheckedAt = time.Now().UTC()
-	if witness.Node != expectedNode || !witness.Tainted || len(witness.Workloads) != 0 {
-		return witness, errors.New("actual physical Node/taint or Workload ownership violates measurement isolation")
+	// The taint keeps ChillServer off this Node, so Workloads of the same model are recorded, not refused.
+	if witness.Node != expectedNode || !witness.Tainted {
+		return witness, errors.New("actual physical Node or taint violates measurement isolation")
 	}
 	return witness, nil
 }

@@ -336,7 +336,7 @@ func operationZeroInference(result OperationResult) error {
 }
 func (record *OperationMeasurement) applyIsolation(witness MeasurementIsolation, err error) error {
 	record.Isolation = &witness
-	if err == nil && (witness.Node != record.Request.Operation.Node || !witness.Tainted || witness.CheckedAt.Before(record.Result.EndedAt) || len(witness.Workloads) != 0) {
+	if err == nil && (witness.Node != record.Request.Operation.Node || !witness.Tainted || witness.CheckedAt.Before(record.Result.EndedAt)) {
 		err = errors.New("final actual isolation witness does not match operation boundary")
 	}
 	if err != nil {

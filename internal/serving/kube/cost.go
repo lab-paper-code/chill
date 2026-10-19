@@ -247,7 +247,7 @@ func validateRetainedMeasurement(record OperationMeasurement, ref evidencestore.
 	if record.Result.Operation.ID != record.Request.Operation.ID || record.Result.Operation.Node != record.Request.Operation.Node || record.Result.Operation.Kind != record.Request.Operation.Kind || record.Request.Coverage.MaximumBoundaryDistance <= 0 || record.Request.Coverage.MaximumGap <= 0 || record.Request.Coverage.MinimumCoverage <= 0 || record.Request.Coverage.MinimumCoverage > 1 || !record.Result.EndedAt.After(record.Result.StartedAt) {
 		return errors.New("raw operation conditions/window mismatch")
 	}
-	if record.Isolation != nil && (record.Isolation.Error != "" || record.Isolation.Node != record.Request.Operation.Node || len(record.Isolation.Workloads) != 0 || record.Isolation.CheckedAt.Before(record.Result.EndedAt)) {
+	if record.Isolation != nil && (record.Isolation.Error != "" || record.Isolation.Node != record.Request.Operation.Node || record.Isolation.CheckedAt.Before(record.Result.EndedAt)) {
 		return errors.New("operation isolation boundary failed")
 	}
 	if err := record.Request.Sampling.Validate(); err != nil {
