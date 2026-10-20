@@ -369,8 +369,6 @@ func (r *Runtime) extendNativeOutstandingLocked(request *SchedulerRequest, call 
 				if request.RemainingLifetime == nil || remaining < *request.RemainingLifetime {
 					request.RemainingLifetime = &remaining
 				}
-			} else if native.Context.LifetimeMS > 0 && (request.Phase == phaseQueued || request.Phase == phaseDeferred) {
-				request.Phase = phaseAssigned
 			}
 			break
 		}

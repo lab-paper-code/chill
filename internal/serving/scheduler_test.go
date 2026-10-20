@@ -396,7 +396,7 @@ func TestSchedulerResourcesAndNodeWidePowerPrerequisites(t *testing.T) {
 	schedulerRequireReason(t, result.reasons, "MissingOperationCost")
 }
 
-func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
+func TestSchedulerBoundsSeedInFlightAndReturnPopulation(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.MaxCandidates = 2
 	snap.Options = append(snap.Options, snap.Options[0])
@@ -406,14 +406,15 @@ func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
 	if !reflect.DeepEqual(first, second) || len(first.Candidates) > 2 || !first.Search.Truncated || !first.Candidates[0].Keep {
 		t.Fatalf("bound/seed/current reproducibility failed: %+v", first.Search)
 	}
-	snap.Outstanding = []SchedulerRequest{{ID: "unknown", Definition: snap.Workloads[0], ReceivedAt: snap.At, Phase: phaseAssigned, Instance: "i1"}}
-	pending := schedulerEvaluateForTest(t, s, snap)
-	if pending.Target != nil {
-		t.Fatal("assignment is not native execution proof")
-	}
-	schedulerRequireReason(t, pending.Keep.Reasons, "NativeOwnershipPending")
 	s.AutonomousWorkloads = nil
 	s.CompletionMarginMS = 5
+	// E1: dispatched after the native observation, so the native queue does not list it yet.
+	snap.Outstanding = []SchedulerRequest{{ID: "in-flight", Definition: snap.Workloads[0], ReceivedAt: snap.At.Add(-5 * time.Millisecond), Elapsed: 5 * time.Millisecond, Phase: phaseAssigned, Instance: "i1"}}
+	inFlight := schedulerEvaluateForTest(t, s, snap)
+	e := schedulerRequireEstimate(t, inFlight.Keep, snap.Workloads[0].UID)
+	if len(inFlight.Keep.Reasons) > 0 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(20*time.Millisecond) {
+		t.Fatalf("5ms age + 10ms native service + 5ms margin on its assigned instance: %v %+v", inFlight.Keep.Reasons, e)
+	}
 	call := &Call{
 		receipt:            Receipt{ID: "returning", UID: snap.Workloads[0].UID, ReceivedAt: snap.At.Add(-10 * time.Millisecond)},
 		definition:         snap.Workloads[0],
@@ -426,7 +427,7 @@ func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
 	current := runtime.SchedulerInputs(func() time.Time { return snap.At })
 	snap.At, snap.Outstanding = current.At, current.Outstanding
 	returned := schedulerEvaluateForTest(t, s, snap)
-	e := schedulerRequireEstimate(t, returned.Keep, snap.Workloads[0].UID)
+	e = schedulerRequireEstimate(t, returned.Keep, snap.Workloads[0].UID)
 	if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(13*time.Millisecond) {
 		t.Fatalf("original 10ms age includes the 2ms response tail; 3ms of the 5ms margin remains: %+v", e)
 	}

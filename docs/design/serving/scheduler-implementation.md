@@ -94,7 +94,9 @@ baseline과 추론 제외 기준은 [측정 계약](scheduler-runtime-measuremen
 
 Runtime의 pending/assigned와 firstfloor 현재 queued/running·running elapsed·batch를
 physical instance/UID/definition에 연결한다. assignment와 실제 queue entry를
-구별하고 unknown ownership·관측 공백·오래된 자료는 판단의 입력 상태에 표시한다.
+구별한다. native queue에 아직 없는 배정 요청은 배정된 instance로 전달 중인 요청이며,
+replay는 이를 시작 시점에 그 instance의 native queue 끝에 넣어 남은 service 전체를 계산한다.
+unknown instance·관측 공백·오래된 자료는 판단의 입력 상태에 표시한다.
 현재와 목표의 Node UID·단일 POOL 소속·ready/capacity/resource 상태를 함께 캡처한다.
 완료/실패 Pod는 이미 제외하던 자원 예산 캡처와 steady source refresh에서
 Kubernetes field selector로 제외하여 종료된 profiling 이력의 반복 전송·해석을 피한다.

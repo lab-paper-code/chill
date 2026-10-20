@@ -509,9 +509,7 @@ func schedulerValidateRequest(r SchedulerRequest, ids map[string]bool, reasons [
 		reasons = appendUnique(reasons, "UnknownRequestContext:"+r.ID)
 		return reasons
 	}
-	if r.Phase == phaseAssigned {
-		reasons = appendUnique(reasons, "NativeOwnershipPending:"+r.ID)
-	} else if r.Phase != phasePending && r.Phase != phaseQueued && r.Phase != phaseDeferred && r.Phase != phaseRunning && r.Phase != phaseReturning {
+	if r.Phase != phasePending && r.Phase != phaseAssigned && r.Phase != phaseQueued && r.Phase != phaseDeferred && r.Phase != phaseRunning && r.Phase != phaseReturning {
 		reasons = appendUnique(reasons, "UnknownRequestPhase:"+r.ID)
 	}
 	if r.Phase != phasePending && !ids[r.Instance] {
@@ -967,11 +965,15 @@ func (s *schedulerReplayState) initializeOutstanding() {
 			}
 			s.out.outcomes[key]["timeout"]++
 		}
-		if r.Phase == phaseQueued || r.Phase == phaseDeferred || r.Phase == phaseRunning || r.Phase == phaseReturning {
+		if r.Phase == phaseAssigned || r.Phase == phaseQueued || r.Phase == phaseDeferred || r.Phase == phaseRunning || r.Phase == phaseReturning {
 			x.dispatched = true
 			i := s.byID[r.Instance]
 			i.outstanding++
 			switch r.Phase {
+			case phaseAssigned:
+				// In transit: it reaches the tail of the native queue at replay start.
+				x.native = 0
+				x.senderMS = float64(r.Elapsed) / 1e6
 			case phaseQueued, phaseDeferred:
 				i.queue = append(i.queue, x)
 			case phaseRunning:
