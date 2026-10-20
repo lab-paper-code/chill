@@ -3,11 +3,51 @@ package serving
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 )
+
+// E1: after a ChillServer restart the instance bound only to the tight-SLO
+// Workload served every compatible Workload, including disabled ones.
+func TestRuntimeRestartKeepsPersistedRouting(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	controlled := snapshot.Workloads[0]
+	disabled := *controlled
+	disabled.Name, disabled.UID = "disabled", "w2"
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = observationLog.Close(context.Background()) }()
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.cancel()
+	i := snapshot.Instances[0]
+	r.SetProfiles([]Profile{*i.Profile})
+	for _, d := range []*Definition{controlled, &disabled} {
+		if err = r.Publish(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: i.ID, Node: i.Node, Profile: i.Profile.ID, Ready: true}, Profile: i.Profile, Weight: 1, Routing: map[string]int32{controlled.UID: 1}, Capacity: 1,
+		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]map[string]int32{controlled.UID: {i.ID: 1}, disabled.UID: {}}
+	for _, phase := range []string{"restored", "autonomy enabled"} {
+		if phase == "autonomy enabled" {
+			r.EnableSchedulerRouting()
+		}
+		if weights, _ := r.SchedulerRouting(); !reflect.DeepEqual(weights, want) {
+			t.Fatalf("%s: %v, want %v", phase, weights, want)
+		}
+	}
+}
 
 func TestSchedulerOutstandingUsesCurrentReadTimeAfterCaptureIO(t *testing.T) {
 	settings, snapshot := schedulerFixture()

@@ -30,6 +30,7 @@ type Spec struct {
 	Node       serving.NodeReference
 	Profile    *serving.Profile
 	Weight     int32
+	Routing    map[string]int32
 	Capacity   int
 	// ExpectedRuntime comes from verified profile evidence, not desired metadata.
 	ExpectedRuntime *native.RuntimeMetadata
@@ -160,7 +161,7 @@ func (c *Client) Probe(ctx context.Context, spec Spec) (serving.ReadyInstance, e
 	if err = validateMetadata(spec, state.Metadata); err != nil {
 		return serving.ReadyInstance{}, err
 	}
-	result := serving.ReadyInstance{State: serving.InstanceState{ID: spec.InstanceID, Node: spec.Node, Profile: spec.Profile.ID, Ready: true, ObservedAt: time.Now().UTC(), Native: &state}, Profile: spec.Profile, Weight: spec.Weight, Capacity: spec.Capacity}
+	result := serving.ReadyInstance{State: serving.InstanceState{ID: spec.InstanceID, Node: spec.Node, Profile: spec.Profile.ID, Ready: true, ObservedAt: time.Now().UTC(), Native: &state}, Profile: spec.Profile, Weight: spec.Weight, Routing: spec.Routing, Capacity: spec.Capacity}
 	result.Execute = func(ctx context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 		return c.Execute(ctx, spec, dispatch)
 	}

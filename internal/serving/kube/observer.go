@@ -3,6 +3,7 @@ package kube
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -37,6 +38,8 @@ import (
 const (
 	ServingProfileAnnotation = "edge.dacs.io/serving-profile"
 	ServingWeightAnnotation  = "edge.dacs.io/serving-weight"
+	// ServingRoutingAnnotation holds the last applied weight per Workload UID.
+	ServingRoutingAnnotation = "edge.dacs.io/serving-routing"
 	ServingPolicyAnnotation  = "edge.dacs.io/serving-policy"
 	ServingSlotAnnotation    = "edge.dacs.io/serving-slot"
 	sourceFinalizer          = "edge.dacs.io/serving-source-termination"
@@ -351,6 +354,12 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 	if e != nil || weight < 1 {
 		return empty, errors.New("explicit positive serving weight required")
 	}
+	var routing map[string]int32
+	if raw, routed := pod.Annotations[ServingRoutingAnnotation]; routed {
+		if e = json.Unmarshal([]byte(raw), &routing); e != nil || routing == nil {
+			return empty, errors.New("invalid applied serving routing")
+		}
+	}
 	if err := validateSourceContainers(pod, condition); err != nil {
 		return empty, err
 	}
@@ -363,7 +372,7 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 	// Delivery changes only the verified artifact's mount location, not the
 	// measured runtime, model bytes, provider, device or execution allocation.
 	expected.ModelFiles = deliveredModelFiles(condition.Artifact.Files)
-	return firstfloor.Spec{Endpoint: endpoint, ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile, Weight: int32(weight), Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[ServingPolicyAnnotation]}, nil
+	return firstfloor.Spec{Endpoint: endpoint, ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile, Weight: int32(weight), Routing: routing, Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[ServingPolicyAnnotation]}, nil
 }
 
 func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation) error {

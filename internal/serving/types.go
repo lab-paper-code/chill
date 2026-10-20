@@ -315,6 +315,7 @@ type ReadyInstance struct {
 	State            InstanceState
 	Profile          *Profile
 	Weight           int32
+	Routing          map[string]int32 // last applied weight per Workload UID; nil applies Weight to every compatible Workload
 	Capacity         int
 	OwnerWorkloadUID string
 	Execute          func(context.Context, Dispatch) (BackendResult, error)

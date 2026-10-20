@@ -17,8 +17,8 @@ func (r *Runtime) EnableSchedulerRouting() {
 	r.routeTargets = make(map[string]map[string]int32, len(r.workloads))
 	for uid, workload := range r.workloads {
 		targets := map[string]int32{}
-		for _, entry := range workload.route.entries {
-			targets[entry.instance.State.ID] = entry.instance.Weight
+		for index, entry := range workload.route.entries {
+			targets[entry.instance.State.ID] = workload.route.weights[index]
 		}
 		r.routeTargets[uid] = targets
 	}
@@ -39,6 +39,9 @@ func (r *Runtime) DisableSchedulerRouting() {
 func (r *Runtime) routeWeightLocked(uid string, instance *runtimeInstance) int32 {
 	if r.routingControlled {
 		return r.routeTargets[uid][instance.State.ID]
+	}
+	if instance.Routing != nil {
+		return instance.Routing[uid]
 	}
 	return instance.Weight
 }

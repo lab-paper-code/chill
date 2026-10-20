@@ -240,6 +240,38 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 	}
 }
 
+// A route records the applied distribution on every runtime instance's Pod; the
+// restarted observer reads it back instead of binding every compatible Workload.
+func TestRoutePersistsAppliedDistributionOnPods(t *testing.T) {
+	operations, target, pods := routeAcknowledgmentFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	annotations := func() []string {
+		values := []string{}
+		for _, pod := range pods {
+			stored := &core.Pod{}
+			if err := operations.store.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, stored); err != nil {
+				t.Fatal(err)
+			}
+			values = append(values, stored.Annotations[ServingRoutingAnnotation])
+		}
+		return values
+	}
+	uid := target.Instances[0].WorkloadUIDs[0]
+	if err := operations.persistRouting(ctx, map[string]map[string]int32{uid: {target.Instances[0].ID: 2}, "disabled-uid": {}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := annotations(), []string{`{"` + uid + `":2}`, `{}`}; !slices.Equal(got, want) {
+		t.Fatalf("persisted routing %v, want %v", got, want)
+	}
+	if _, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationRoute, Target: &target}); err != nil {
+		t.Fatal(err)
+	}
+	if got := annotations(); !slices.Equal(got, []string{`{}`, `{}`}) {
+		t.Fatalf("withdrawn routing persisted as %v", got)
+	}
+}
+
 func assertRouteNativeACKs(t *testing.T, target serving.SchedulerCandidate, result OperationResult, count int) {
 	t.Helper()
 	if len(result.Actual.Native) != count {

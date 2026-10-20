@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -61,8 +62,13 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.InstanceID != "pod-uid/containerd://running" || spec.Endpoint != "http://10.96.0.10:8080" || spec.Capacity != 4 {
+	if spec.InstanceID != "pod-uid/containerd://running" || spec.Endpoint != "http://10.96.0.10:8080" || spec.Capacity != 4 || spec.Routing != nil {
 		t.Fatalf("wrong physical source: %+v", spec)
+	}
+	routed := pod.DeepCopy()
+	routed.Annotations[ServingRoutingAnnotation] = `{"tight":2}`
+	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, nil, "http://10.96.0.10:8080"); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
+		t.Fatalf("applied routing not restored: %+v %v", spec.Routing, err)
 	}
 	opaque := pod.DeepCopy()
 	opaque.Status.ContainerStatuses[0].ImageID = "opaque-runtime-image"
@@ -78,6 +84,9 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		{"architecture", func(_ *corev1.Pod, n *corev1.Node, _ *serving.Profile) { n.Status.NodeInfo.Architecture = "arm64" }},
 		{"explicit weight", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
 			delete(p.Annotations, ServingWeightAnnotation)
+		}},
+		{"applied routing", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
+			p.Annotations[ServingRoutingAnnotation] = "null"
 		}},
 		{"image evidence missing", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) { p.Status.ContainerStatuses[0].ImageID = "" }},
 		{"configured image mismatch", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) { p.Spec.Containers[0].Image = "other-image" }},

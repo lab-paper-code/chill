@@ -925,7 +925,56 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		}
 	}
 	o.observer.mu.Unlock()
+	if err := o.persistRouting(ctx, weights); err != nil {
+		return err
+	}
 	result.Progress = append(result.Progress, "routing applied and read back")
+	return nil
+}
+
+// persistRouting records the applied distribution on each runtime instance's Pod;
+// a restarted ChillServer restores it instead of binding every compatible Workload.
+func (o *Operations) persistRouting(ctx context.Context, weights map[string]map[string]int32) error {
+	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
+	if err != nil {
+		return err
+	}
+	known := map[string]bool{}
+	for _, instance := range o.runtime.Instances() {
+		known[instance.ID] = true
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		status := firstfloorStatus(pod)
+		if status == nil {
+			continue
+		}
+		id := physicalID(pod.UID, status.ContainerID)
+		if !known[id] {
+			continue
+		}
+		routing := map[string]int32{}
+		for uid, route := range weights {
+			if route[id] > 0 {
+				routing[uid] = route[id]
+			}
+		}
+		raw, err := json.Marshal(routing)
+		if err != nil {
+			return err
+		}
+		if pod.Annotations[ServingRoutingAnnotation] == string(raw) {
+			continue
+		}
+		previous := pod.DeepCopy()
+		if pod.Annotations == nil {
+			pod.Annotations = map[string]string{}
+		}
+		pod.Annotations[ServingRoutingAnnotation] = string(raw)
+		if err = o.store.client.Patch(ctx, pod, client.MergeFromWithOptions(previous, client.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy native.Policy, result *OperationResult) error {
