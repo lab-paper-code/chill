@@ -98,33 +98,7 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 	default:
 		record.Reason = "no successful first power sample; operation was not invoked"
 	}
-	if operationErr == nil && request.Operation.Kind != operationIdle && request.Operation.Kind != operationPower {
-		operationErr = operationZeroInference(record.Result)
-	}
-	if record.Result.StartedAt.IsZero() {
-		record.Verdict = measurementInsufficient
-	} else if operationErr != nil {
-		record.Verdict = operationFailed
-		record.Reason = operationErr.Error()
-	} else {
-		samples := make([]powerwindow.Sample, len(power.Samples))
-		for i, s := range power.Samples {
-			samples[i] = powerwindow.Sample{ObservedAt: s.ObservedAt, Watts: s.Watts}
-		}
-		joules, integrationErr := powerwindow.Integrate(powerwindow.Window{Start: record.Result.StartedAt, End: record.Result.EndedAt, Samples: samples}, request.Coverage)
-		if integrationErr != nil {
-			record.Reason = integrationErr.Error()
-		} else if observeErr != nil {
-			record.Reason = observeErr.Error()
-		} else {
-			record.Verdict = measurementAccepted
-			record.WallJoules = &joules
-			if request.Operation.Kind == operationIdle {
-				watts := joules / record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds()
-				record.MeanWatts = &watts
-			}
-		}
-	}
+	operationErr = record.judge(operationErr, observeErr)
 	if finalIsolation != nil {
 		checkCtx, cancelCheck := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		witness, isolationErr := finalIsolation(checkCtx)
@@ -147,6 +121,46 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 		}
 	}
 	return record, receipt, errors.Join(operationErr, observeErr, writeErr)
+}
+
+// judge sets the verdict from the actual result and power window. A generic
+// operation is Accepted only with the primitive state effect its cost needs.
+func (record *OperationMeasurement) judge(operationErr, observeErr error) error {
+	generic := record.Request.Operation.Kind != operationIdle && record.Request.Operation.Kind != operationPower
+	if operationErr == nil && generic {
+		operationErr = operationZeroInference(record.Result)
+	}
+	if record.Result.StartedAt.IsZero() {
+		record.Verdict = measurementInsufficient
+	} else if operationErr != nil {
+		record.Verdict = operationFailed
+		record.Reason = operationErr.Error()
+	} else {
+		var effectErr error
+		if generic {
+			_, _, effectErr = operationCostKeys(record.Result)
+		}
+		samples := make([]powerwindow.Sample, len(record.Power.Samples))
+		for i, s := range record.Power.Samples {
+			samples[i] = powerwindow.Sample{ObservedAt: s.ObservedAt, Watts: s.Watts}
+		}
+		joules, integrationErr := powerwindow.Integrate(powerwindow.Window{Start: record.Result.StartedAt, End: record.Result.EndedAt, Samples: samples}, record.Request.Coverage)
+		if effectErr != nil {
+			record.Reason = effectErr.Error()
+		} else if integrationErr != nil {
+			record.Reason = integrationErr.Error()
+		} else if observeErr != nil {
+			record.Reason = observeErr.Error()
+		} else {
+			record.Verdict = measurementAccepted
+			record.WallJoules = &joules
+			if record.Request.Operation.Kind == operationIdle {
+				watts := joules / record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds()
+				record.MeanWatts = &watts
+			}
+		}
+	}
+	return operationErr
 }
 func validateMeasurementRequest(request MeasurementRequest, source metricobserver.Source, writer evidencestore.ImmutableWriter) error {
 	if writer == nil || source == nil {

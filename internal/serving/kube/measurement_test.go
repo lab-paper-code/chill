@@ -72,6 +72,24 @@ func TestResizeRemovedSourceNeedsRetainedActualZeroInferenceProof(t *testing.T) 
 		t.Fatal("serving-inclusive wall cost would be double counted by replay")
 	}
 }
+func TestMeasuredOperationNeedsProvenStateEffect(t *testing.T) {
+	start := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	measured := func(before, actual []string) OperationMeasurement {
+		record := OperationMeasurement{Verdict: measurementInsufficient, Request: MeasurementRequest{Operation: Operation{ID: "remove", Kind: operationRemove}, Coverage: powerwindow.Policy{MaximumBoundaryDistance: time.Millisecond, MinimumCoverage: 1, MaximumGap: time.Second}}, Result: OperationResult{Status: "complete", StartedAt: start, EndedAt: start.Add(time.Second), Before: OperationState{States: before}, Actual: OperationState{States: actual}}, Power: metricobserver.Result{Samples: []metricobserver.Sample{{ObservedAt: start, Watts: 20}, {ObservedAt: start.Add(time.Second), Watts: 20}}}}
+		record.Result.Operation = record.Request.Operation
+		if err := record.judge(nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		return record
+	}
+	// The runner was already gone: before and after are both empty.
+	if record := measured(nil, nil); record.Verdict != measurementInsufficient || record.WallJoules != nil || record.Reason == "" {
+		t.Fatalf("remove without a state effect was accepted: %+v", record)
+	}
+	if record := measured([]string{"old:[0]::1024:1"}, nil); record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != 20 {
+		t.Fatalf("remove with its state effect was rejected: %+v", record)
+	}
+}
 func TestIsolationFailureCannotPersistAcceptedScientificCost(t *testing.T) {
 	joules, watts := 12.0, 6.0
 	node := serving.NodeReference{Name: "node", UID: "uid"}
