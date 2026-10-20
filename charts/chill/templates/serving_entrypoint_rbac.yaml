@@ -204,7 +204,7 @@ rules:
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory"]
     verbs: [get]
-  - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/profiles"]
+  - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/profiles", "/chill/api/v1/scheduler/capacity"]
     verbs: [get]
   {{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
   - nonResourceURLs:
