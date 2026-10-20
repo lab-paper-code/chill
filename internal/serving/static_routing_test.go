@@ -2,6 +2,7 @@ package serving
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 )
@@ -111,7 +112,6 @@ func TestStaticExclusiveBaselineThenSharedTargetDrainsPhysicalBinding(t *testing
 		{first.UID: {"i1": 1}, "stale": {"i2": 1}},
 		{first.UID: {"logical-alias": 1}, second.UID: {"i2": 1}},
 		{first.UID: {"i1": -1}, second.UID: {"i2": 1}},
-		{first.UID: {"i1": 0}, second.UID: {"i2": 1}},
 	} {
 		if _, err = StaticRoutingTarget(snapshot, invalid, nil, "manual-static-routing:43"); err == nil {
 			t.Fatalf("invalid declaration accepted: %v", invalid)
@@ -138,5 +138,24 @@ func TestStaticRoutingPartialKeepsUnlistedAndRejectsAutonomous(t *testing.T) {
 	}
 	if _, err = StaticRoutingTarget(snapshot, map[string]map[string]int{"w1": {"i2": 1}}, []string{"w1"}, "autonomous"); err == nil {
 		t.Fatal("staticRouting entry for an autonomous Workload accepted")
+	}
+}
+
+// An empty or all-zero entry removes a disabled Workload's routes and frees its instances.
+func TestStaticRoutingEmptyEntryUnroutesWorkload(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	second := *snapshot.Workloads[0]
+	second.Name, second.UID = "unrouted", "w2"
+	snapshot.Workloads = append(snapshot.Workloads, &second)
+	snapshot.Instances[0].WorkloadUIDs = []string{"w1", "w2"}
+	snapshot.Routing = map[string]map[string]int32{"w1": {"i1": 1}, "w2": {"i1": 1}}
+	for _, entry := range []map[string]int{{}, {"i1": 0}} {
+		target, err := StaticRoutingTarget(snapshot, map[string]map[string]int{"w2": entry}, nil, "unroute")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(target.Routing["w2"]) != 0 || target.Routing["w1"]["i1"] != 1 || len(target.Instances) != 1 || !slices.Equal(target.Instances[0].WorkloadUIDs, []string{"w1"}) {
+			t.Fatalf("entry %v left w2 routed: %v %+v", entry, target.Routing, target.Instances)
+		}
 	}
 }

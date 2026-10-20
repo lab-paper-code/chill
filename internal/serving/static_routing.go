@@ -9,7 +9,8 @@ import (
 
 // StaticRoutingTarget selects only current physical, measured, ready instances.
 // It declares a manual distribution for disabled Workloads; every Workload the
-// map omits keeps its current distribution. It does not enumerate a decision.
+// map omits keeps its current distribution, and an entry without a positive
+// weight removes that Workload's routes. It does not enumerate a decision.
 func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[string]int, autonomous []string, id string) (SchedulerCandidate, error) {
 	target := SchedulerCandidate{ID: id, Nodes: snapshot.Nodes, Routing: map[string]map[string]int32{}}
 	definitions := map[string]*Definition{}
@@ -53,7 +54,6 @@ func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[stri
 			continue
 		}
 		target.Routing[definition.UID] = map[string]int32{}
-		positive := false
 		for physical, weight := range weights {
 			if weight < 0 || int64(weight) > math.MaxInt32 {
 				return target, fmt.Errorf("staticRouting weight for %q must be a nonnegative int32", physical)
@@ -72,12 +72,8 @@ func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[stri
 			if weight == 0 {
 				continue
 			}
-			positive = true
 			bind(physical, definition.UID)
 			target.Routing[definition.UID][physical] = int32(weight)
-		}
-		if !positive {
-			return target, fmt.Errorf("staticRouting lacks positive distribution for UID %q", definition.UID)
 		}
 	}
 	for _, instance := range instances {
