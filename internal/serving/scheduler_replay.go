@@ -1368,20 +1368,7 @@ func (s *schedulerReplayState) operationCost(a *schedulerReplayAction) *Operatio
 				state = append(state, schedulerState(i.config))
 			}
 		}
-		if n := slices.IndexFunc(s.snap.Nodes, func(n SchedulerNode) bool { return n.Node == a.action.Node }); len(state) == 0 && n >= 0 && schedulerAvailable(s.snap, s.snap.Nodes[n]) {
-			// Re-entering an available Node: its power raise uses the transition
-			// measured with the runner the next prepare loads.
-			for _, next := range s.actions {
-				if next.action.Kind == schedulerActionPrepare && next.action.Node == a.action.Node && schedulerHas(next.action.DependsOn, a.action.ID) {
-					state = []string{next.action.To}
-				}
-			}
-			if !schedulerEqualState(state, cost.BeforeState) || !schedulerEqualState(state, cost.TargetState) {
-				s.out.reasons = append(s.out.reasons, "MissingOperationCost:"+a.action.ID)
-				return nil
-			}
-			s.out.assumptions = appendUnique(s.out.assumptions, "ReentryPowerCostFromLoadedRunner")
-		} else if !schedulerEqualState(state, cost.BeforeState) || !schedulerEqualState(state, cost.TargetState) {
+		if !schedulerEqualState(state, cost.BeforeState) || !schedulerEqualState(state, cost.TargetState) {
 			s.out.reasons = append(s.out.reasons, "PowerLoadedWitnessMismatch:"+a.action.ID)
 			return nil
 		}

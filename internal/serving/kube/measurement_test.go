@@ -72,13 +72,24 @@ func TestPowerCostUsesEmptyNodeModeChange(t *testing.T) {
 	if cost.Kind != operationPower || cost.From != "eco" || cost.To != "boost" || len(cost.BeforeState) != 0 || len(cost.TargetState) != 0 || cost.Trials[0].Joules != 30 || cost.Trials[0].Duration != 2*time.Second {
 		t.Fatalf("empty-Node power cost %+v", cost)
 	}
-	record.Result.Actual.PowerMode = "eco"
+	judged := record
+	judged.Verdict, judged.WallJoules = measurementInsufficient, nil
+	if err = judged.judge(nil, nil); err != nil || judged.Verdict != measurementAccepted || *judged.WallJoules != joules {
+		t.Fatalf("empty-Node power change not accepted when measured: %+v", judged)
+	}
+	record.Result.Actual.PowerMode = record.Result.Before.PowerMode
 	if _, err = measurementCost(record, cost.Reference); err == nil {
 		t.Fatal("power record without a mode change became a transition cost")
 	}
-	record.Result.Actual = OperationState{PowerMode: "boost", States: []string{"new:[0]::1024:1"}}
+	// A loaded power change belongs to PowerModeTransitionCost.
+	loaded := []string{"new:[0]::1024:1"}
+	record.Result.Before.States, record.Result.Actual = loaded, OperationState{PowerMode: "boost", States: loaded}
 	if _, err = measurementCost(record, cost.Reference); err == nil {
-		t.Fatal("power record that changed the loaded state became a transition cost")
+		t.Fatal("loaded power record became a serving-operation transition cost")
+	}
+	record.Verdict, record.WallJoules = measurementInsufficient, nil
+	if err = record.judge(nil, nil); err != nil || record.Verdict == measurementAccepted {
+		t.Fatal("loaded power change accepted when measured")
 	}
 }
 func TestResizeRemovedSourceNeedsRetainedActualZeroInferenceProof(t *testing.T) {

@@ -126,7 +126,7 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 // judge sets the verdict from the actual result and power window. A generic
 // operation is Accepted only with the primitive state effect its cost needs.
 func (record *OperationMeasurement) judge(operationErr, observeErr error) error {
-	generic := record.Request.Operation.Kind != operationIdle && record.Request.Operation.Kind != operationPower
+	generic := record.Request.Operation.Kind != operationIdle
 	if operationErr == nil && generic {
 		operationErr = operationZeroInference(record.Result)
 	}
@@ -262,13 +262,13 @@ func measurementCost(record OperationMeasurement, reference evidencestore.Object
 	if record.SchemaVersion != OperationMeasurementSchema || record.Verdict != measurementAccepted || record.Result.Status != nativeOperationComplete || record.WallJoules == nil || math.IsNaN(*record.WallJoules) || math.IsInf(*record.WallJoules, 0) || *record.WallJoules < 0 || !record.Result.EndedAt.After(record.Result.StartedAt) {
 		return serving.OperationCost{}, errors.New("operation cost lacks accepted actual window")
 	}
-	if record.Request.Operation.Kind == operationIdle || record.Request.Operation.Kind == operationPower {
-		return serving.OperationCost{}, errors.New("idle baselines and directed NodeActuation trials use their distinct cost contracts")
+	if record.Request.Operation.Kind == operationIdle {
+		return serving.OperationCost{}, errors.New("idle baselines use their distinct cost contract")
 	}
 	if err := operationZeroInference(record.Result); err != nil {
 		return serving.OperationCost{}, err
 	}
-	if record.Result.Before.PowerMode == "" || record.Result.Before.PowerMode != record.Result.Actual.PowerMode {
+	if record.Request.Operation.Kind != operationPower && (record.Result.Before.PowerMode == "" || record.Result.Before.PowerMode != record.Result.Actual.PowerMode) {
 		return serving.OperationCost{}, errors.New("generic operation host power condition unknown or changed")
 	}
 	samples := make([]powerwindow.Sample, len(record.Power.Samples))
@@ -324,6 +324,11 @@ func operationCostKeys(result OperationResult) (string, string, error) {
 		added := difference(result.Actual.States, result.Before.States)
 		if len(removed) == 1 && len(added) == 0 {
 			return removed[0], nativeStateUnloaded, nil
+		}
+	case operationPower:
+		// The measured power change is the empty-Node transition; the loaded one is a PowerModeTransitionCost.
+		if before, after := result.Before.PowerMode, result.Actual.PowerMode; before != "" && after != "" && before != after && len(result.Before.States) == 0 && len(result.Actual.States) == 0 {
+			return before, after, nil
 		}
 	}
 	return "", "", errors.New("cost requires exactly one proven primitive state effect; resize uses measured prepare/remove composition")

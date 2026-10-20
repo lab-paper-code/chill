@@ -159,7 +159,7 @@ func TestSchedulerComparedNodesLimitEnergyAndBaselineNeeds(t *testing.T) {
 	snap.Costs = []OperationCost{
 		poolsCost(schedulerActionPrepare, move, "unloaded", schedulerState(moved), "fixed"),
 		poolsCost(schedulerActionRemove, base.Node, schedulerState(base), "unloaded", "fixed", schedulerState(base)),
-		poolsCost(schedulerActionPower, eco, "fixed", schedulerTestEcoMode, "", schedulerState(raised)),
+		poolsCost(schedulerActionPower, eco, "fixed", schedulerTestEcoMode, ""),
 		poolsCost(schedulerActionPrepare, eco, "unloaded", schedulerState(raised), schedulerTestEcoMode),
 	}
 	decision := schedulerEvaluateForTest(t, s, snap)
@@ -277,7 +277,7 @@ func TestSchedulerDirectMoveBetweenActivePools(t *testing.T) {
 	}
 }
 
-// §9.1 후보: available Nodes start at their lowest mode; re-entry uses the loaded power cost.
+// §9.1 후보: available Nodes start at their lowest mode; re-entry uses the empty-Node power cost.
 func TestSchedulerAvailableNodeLoweringAndReentry(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.MaxCandidates = 200
@@ -287,8 +287,12 @@ func TestSchedulerAvailableNodeLoweringAndReentry(t *testing.T) {
 	snap.Nodes[2].PowerMode = "boost"
 	option := poolsInstance(snap.Instances[0], "opt", reentry, "fixed", "w1")
 	snap.Options = append(snap.Options, poolsOption(option))
-	power := poolsCost(schedulerActionPower, reentry, schedulerTestEcoMode, "fixed", "", schedulerState(option))
-	snap.Costs = []OperationCost{power, poolsCost(schedulerActionPrepare, reentry, "unloaded", schedulerState(option), "fixed")}
+	// Re-entry prices the raise measured on the empty Node; a loaded-runner raise has another condition.
+	power := poolsCost(schedulerActionPower, reentry, schedulerTestEcoMode, "fixed", "")
+	loaded := poolsCost(schedulerActionPower, reentry, schedulerTestEcoMode, "fixed", "", schedulerState(option))
+	loaded.ID += "-loaded"
+	prepare := poolsCost(schedulerActionPrepare, reentry, "unloaded", schedulerState(option), "fixed")
+	snap.Costs = []OperationCost{loaded, power, prepare}
 	// The re-entry candidate keeps i1, so its only operations are on the re-entered Node.
 	reentered := func(d SchedulerDecision) SchedulerCandidate {
 		for _, c := range d.Candidates {
@@ -318,10 +322,10 @@ func TestSchedulerAvailableNodeLoweringAndReentry(t *testing.T) {
 	if len(onNode) < 3 || !onNode[0].Fixed || onNode[0].To != schedulerTestEcoMode || !slices.Contains(onNode[1].DependsOn, onNode[0].ID) {
 		t.Fatalf("Fixed lowering does not precede the re-entry actions: %+v", onNode)
 	}
-	if !slices.Contains(c.Assumptions, "ReentryPowerCostFromLoadedRunner") || slices.ContainsFunc(c.Reasons, func(r string) bool { return strings.HasPrefix(r, "MissingOperationCost") }) {
-		t.Fatalf("re-entry power did not use the loaded transition cost: %v %v", c.Assumptions, c.Reasons)
+	if !slices.Contains(c.Sources, power.ID) || !slices.Contains(c.Sources, prepare.ID) || slices.Contains(c.Sources, loaded.ID) || slices.ContainsFunc(c.Reasons, func(r string) bool { return strings.HasPrefix(r, "MissingOperationCost") }) {
+		t.Fatalf("re-entry did not use the empty-Node transition and target-mode prepare: %v %v", c.Sources, c.Reasons)
 	}
-	snap.Costs = snap.Costs[1:]
+	snap.Costs = []OperationCost{loaded, prepare}
 	schedulerRequireReason(t, reentered(schedulerEvaluateForTest(t, s, snap)).Reasons, "MissingOperationCost")
 }
 

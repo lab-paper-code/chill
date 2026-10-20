@@ -524,3 +524,53 @@ func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
 		})
 	}
 }
+
+// The measured power change runs on the empty measurement Node like the measured prepare.
+func TestMeasuredPowerChangeOnEmptyMeasurementNode(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	manager, _ := newManagerHarness(t)
+	_, node, _, class := observerSourceFixture()
+	node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Effect: core.TaintEffectNoSchedule}}
+	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+	actuation := func(mode string, at time.Time) *edge.NodeActuation {
+		return &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Name: mode, Namespace: "chill-system"}, Spec: edge.NodeActuationSpec{
+			Node: edge.ProfilingRunObjectReference{Name: node.Name, UID: string(node.UID)}, PowerMode: mode,
+			Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorFixed}, StageRequestedAt: meta.NewTime(at.Truncate(time.Second))}}
+	}
+	ready := func(a *edge.NodeActuation) {
+		now := meta.NewMicroTime(time.Now())
+		a.Status = edge.NodeActuationStatus{ObservedGeneration: a.Generation, Phase: edge.NodeActuationPhaseReady, ReadyAt: &now,
+			TargetObservation: &edge.NodeActuationObservation{PowerMode: a.Spec.PowerMode, Actuator: a.Spec.Actuator}}
+	}
+	lowered := actuation("eco", time.Now().Add(-time.Hour))
+	ready(lowered)
+	// The fake actuator confirms every requested mode at once.
+	manager.store.client = fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(&class, lowered).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
+			if err := c.Create(ctx, object, opts...); err != nil {
+				return err
+			}
+			if a, ok := object.(*edge.NodeActuation); ok {
+				ready(a)
+				return c.Update(ctx, a)
+			}
+			return nil
+		},
+	}).Build()
+	kube := kubefake.NewSimpleClientset(node)
+	manager.observer.kube = kube
+	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := operations.Execute(ctx, Operation{ID: "raise", Kind: operationPower, Node: ref, Actuation: actuation("boost", time.Now())})
+	if err != nil || result.Status != nativeOperationComplete {
+		t.Fatalf("measured power change on the measurement Node: %v %+v", err, result)
+	}
+	from, to, err := operationCostKeys(result)
+	if err != nil || from != "eco" || to != "boost" || len(result.Before.States) != 0 {
+		t.Fatalf("empty-Node transition keys %q->%q %v %+v", from, to, err, result.Before)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"testing"
 	"time"
 
@@ -177,13 +178,25 @@ func TestCostEvidencePowerCostNeedsConfiguredMeterAndKeepsLoadedStatesApart(t *t
 	evidence.power["measurements/power/power-uid/store/power/result.json"] = powerEvidence{
 		node: costTestMeter.Node, source: costTestMeter.Source, costs: []serving.OperationCost{power("measurements/power/fixed->eco", []string{"a"}, at)},
 	}
+	// A serving-operation power record on the empty Node is the empty-state condition of the same pair.
+	key, raw := costTestRecord(t, "raise", "fixed", at)
+	var record OperationMeasurement
+	if err = json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	record.Request.Operation.Kind, record.Result.Operation.Kind = operationPower, operationPower
+	record.Result.Actual = OperationState{PowerMode: "eco"}
+	if objects.objects[key], err = json.Marshal(record); err != nil {
+		t.Fatal(err)
+	}
 	view, err := evidence.Refresh(context.Background(), []string{"measurements"}, nil, nil)
-	if err != nil || len(view.Costs) != 0 || len(view.Issues) != 1 || view.Issues[0].Code != MeterUndeclared {
+	if err != nil || len(view.Costs) != 0 || len(view.Issues) != 2 || view.Issues[0].Code != MeterUndeclared || view.Issues[1].Code != MeterUndeclared {
 		t.Fatalf("power cost without a configured meter contributed: %+v %v", view, err)
 	}
 	view, err = evidence.Refresh(context.Background(), []string{"measurements"}, []MeterDeclaration{costTestMeter}, nil)
-	if err != nil || len(view.Costs) != 1 || view.Costs[0].Meter != costTestMeter.ID {
-		t.Fatalf("configured meter not bound: %+v %v", view, err)
+	empty := slices.IndexFunc(view.Costs, func(c serving.OperationCost) bool { return c.ID == "raise" })
+	if err != nil || len(view.Costs) != 2 || view.Costs[0].Meter != costTestMeter.ID || empty < 0 || view.Costs[empty].From != record.Result.Before.PowerMode || view.Costs[empty].To != record.Result.Actual.PowerMode || len(view.Costs[empty].BeforeState) != 0 {
+		t.Fatalf("configured meter not bound or empty-Node power record missing: %+v %v", view, err)
 	}
 	latest := latestCosts([]serving.OperationCost{
 		power("old-a", []string{"a"}, at), power("new-a", []string{"a"}, at.Add(time.Hour)), power("b", []string{"b"}, at),

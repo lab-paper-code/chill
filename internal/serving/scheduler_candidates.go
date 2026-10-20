@@ -1030,13 +1030,6 @@ func (p *schedulerPlanState) selectCosts() {
 			}
 		case schedulerActionPower:
 			state := slices.Clone(loaded[a.Node])
-			if len(state) == 0 {
-				for _, next := range p.actions[index+1:] {
-					if next.Kind == schedulerActionPrepare && next.Node == a.Node && schedulerHas(next.DependsOn, a.ID) {
-						state = []string{next.To}
-					}
-				}
-			}
 			matches = func(cost OperationCost) bool { return schedulerEqualState(state, cost.BeforeState) }
 			modes[a.Node] = a.To
 		default:
