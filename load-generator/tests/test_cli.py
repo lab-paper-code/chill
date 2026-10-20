@@ -113,3 +113,22 @@ class ReplayTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MainTest(unittest.TestCase):
+    def test_replay_receives_workers(self) -> None:
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "q1").mkdir()
+            (root / "q1" / "image").write_bytes(b"jpeg")
+            (root / "token").write_text("secret\n")
+            with patch("chill_loadgen.cli.WorkloadHTTPClient"), patch("chill_loadgen.cli.replay") as run:
+                main([
+                    "replay", "--endpoint", "https://chill.example", "--token-file", str(root / "token"),
+                    "--workload", "vqa", "--dataset-dir", str(root), "--fields", "image",
+                    "--rate", "1", "--duration", "1", "--workers", "3",
+                ])
+
+        self.assertEqual(3, run.call_args.kwargs["workers"])

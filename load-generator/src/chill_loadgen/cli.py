@@ -192,6 +192,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         duration=args.duration,
         arrivals=args.arrivals,
         seed=args.seed,
+        workers=args.workers,
         new_client=lambda: WorkloadHTTPClient(
             args.endpoint, bearer_token=token, timeout_seconds=args.timeout, ca_file=args.ca_file
         ),

@@ -13,6 +13,7 @@ class WorkloadHTTPClientTest(unittest.TestCase):
         self, connection_type: Mock, context_factory: Mock
     ) -> None:
         connection = connection_type.return_value
+        connection.sock = None  # never-idle connection
         response = connection.getresponse.return_value
         body = b'{"code":"QueueFull"}'
         response.read.return_value = body
@@ -127,6 +128,7 @@ class WorkloadHTTPClientTest(unittest.TestCase):
         client = WorkloadHTTPClient(
             "https://chill.example", bearer_token="token", timeout_seconds=5
         )
+        connection_type.return_value.sock = None
         connection_type.return_value.request.side_effect = TimeoutError()
         with self.assertRaises(TimeoutError):
             client.infer("image-service", {"value": b"1"})
@@ -135,3 +137,28 @@ class WorkloadHTTPClientTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StaleConnectionTest(unittest.TestCase):
+    @patch("chill_loadgen.http_client.HTTPSConnection")
+    def test_reopens_peer_closed_idle_connection_before_sending(self, connection_type: Mock) -> None:
+        import socket
+
+        local, peer = socket.socketpair()
+        peer.close()  # server idle timeout closed the kept-alive connection
+        connection = connection_type.return_value
+        connection.sock = local
+        events = []
+        connection.close.side_effect = lambda: events.append("close")
+        connection.request.side_effect = lambda *a, **k: events.append("request")
+        connection.getresponse.return_value.status = 200
+        client = WorkloadHTTPClient("https://chill.example", bearer_token="t", timeout_seconds=1)
+
+        client.infer("vqa", {"image": b"a"})
+        self.assertEqual(["close", "request"], events)
+
+        connection.sock = None  # fresh connection: nothing to check
+        events.clear()
+        client.infer("vqa", {"image": b"a"})
+        self.assertEqual(["request"], events)
+        local.close()

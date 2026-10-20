@@ -7,6 +7,7 @@ import ipaddress
 import json
 import math
 import re
+import select
 import ssl
 from dataclasses import dataclass
 from http.client import HTTPSConnection
@@ -109,6 +110,11 @@ class WorkloadHTTPClient:
             fields.append({"name": name, "datatype": "BYTES", "data": base64.b64encode(data).decode("ascii")})
         body = json.dumps({"inputs": fields}).encode("utf-8")
 
+        # An idle keep-alive socket readable before we send means the peer closed it
+        # (ChillServer's idle timeout); reopen once here, never after the request is sent.
+        sock = self._connection.sock
+        if sock is not None and select.select([sock], [], [], 0)[0]:
+            self._connection.close()
         self._connection.request(
             "POST",
             f"/api/v1/workloads/{workload_id}/infer",
