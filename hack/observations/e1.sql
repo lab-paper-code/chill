@@ -9,11 +9,13 @@ CREATE VIEW c AS SELECT *, regexp_extract(filename, '([^/]+)\.jsonl$', 1) AS sta
 WITH j AS (
   SELECT c.stage, r.outcome, r.elapsedNanos AS e2e, r.executionComplete AS done,
     r.elapsedNanos - r.dispatchedNanos - r.nativeElapsedMS * 1e6 AS residual,
+    r.elapsedNanos / 1e6 - (r.queueMS + r.serviceMS) AS margin, -- outside firstfloor queue + execution
     r.outcome NOT IN ('delivery_failed', 'incomplete', 'canceled') AND r.elapsedNanos > 0 AS sample
   FROM c LEFT JOIN r ON c.requestID = r.requestID)
 SELECT stage, count(*) AS sent, count(outcome) AS recorded,
   empirical(list(e2e) FILTER (WHERE sample), 0.95) / 1e6 AS p95_ms,
   count(*) FILTER (WHERE outcome = 'completed' AND e2e < 1e9) AS within_1s,
+  empirical(list(margin) FILTER (WHERE outcome = 'completed' AND margin IS NOT NULL), 0.95) AS margin_p95_ms,
   empirical(list(residual) FILTER (WHERE sample AND done), 0.50) / 1e6 AS residual_p50_ms,
   empirical(list(residual) FILTER (WHERE sample AND done), 0.99) / 1e6 AS residual_p99_ms,
   max(residual) FILTER (WHERE sample AND done) / 1e6 AS residual_max_ms
