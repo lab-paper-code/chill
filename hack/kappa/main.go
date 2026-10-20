@@ -603,6 +603,8 @@ func (pl *planner) annotate(p *plan) bool {
 
 // plans lists node plans: keep, and on a placeable Node every set of measured
 // option variants (one variant per option) that fits the Node budget at one mode.
+//
+//nolint:gocyclo // Plan enumeration checks mode, budget and costs in one ordered pass.
 func (pl *planner) plans(node serving.SchedulerNode, options []serving.SchedulerOption) []*plan {
 	current, fixed := []serving.SchedulerInstance{}, false
 	for _, i := range pl.snap.Instances {
@@ -853,6 +855,7 @@ func (pl *planner) configJoules(instances []serving.SchedulerInstance, load floa
 	return j
 }
 
+//nolint:gocyclo // One offline comparison pass over recorded decisions, kept in record order.
 func compare(e *engine, profilesFile, recordsFile string, margin float64, cache string, sweep string) error {
 	var catalog struct {
 		Profiles []serving.Profile `json:"profiles"`
@@ -865,7 +868,7 @@ func compare(e *engine, profilesFile, recordsFile string, margin float64, cache 
 	if err = errors.Join(err, openErr); err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	profiles := map[string]*serving.Profile{}
 	for j := range catalog.Profiles {
 		profiles[catalog.Profiles[j].ID] = &catalog.Profiles[j]

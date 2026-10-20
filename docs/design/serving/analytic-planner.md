@@ -31,7 +31,7 @@
 - 행이 없으면 그 option은 `CapacityPending`으로 계획에서 빠지고, 켜진 Workload에 κ가 있는 option이 하나도 없으면 판단이 `CapacityPending`이다. 시작 계산이 끝날 때까지 자동제어는 이 상태로 기다린다.
 - 행마다 `management` stream에 `capacity-row-built` 사건(행 전체, 계산 시각, 걸린 시간)을 남긴다. 이 사건은 기록이고 판단은 읽지 않는다.
 
-**계산 시간.** 지금 재생은 요청 수의 제곱으로 느려진다(창 2,000 요청 0.19 s, 8,000 요청 2.8 s). 60 s 창은 빠른 option에서 8,700 요청이고 option 하나의 검증에 2,135 s가 들었다. 그래서 commit 1이 재생의 사건 선택을 heap으로 바꾸고, 생성 도착마다 만들던 `Definition.Identity()`(`scheduler_replay.go:1030`)를 도착 원형마다 한 번 만든다. 격자는 이분 탐색보다 판정 횟수가 많지만 미충족 판정은 실패 창 2개에서 멈춘다 `[추론: 행당 이분 탐색의 약 2.5배]`. commit 2가 E1 tight 38행의 시작 계산 시간을 잰다. 목표는 몇 분(5분) 안이다. 서버 안에서 넘으면 행을 별도 Job으로 나눠 병렬로 계산한다. 그래도 넘으면 시작 때 마지막 `capacity-row-built` 기록을 이전 표로 읽어 판단하고 새 표를 뒤에서 계산해 끝나면 바꾼다. 두 단계는 측정이 목표를 넘을 때만 넣는다.
+**계산 시간.** 이전 재생은 사건마다 창의 모든 요청을 훑어 요청 수의 제곱으로 느려졌다(창 2,000 요청 0.19 s, 8,000 요청 2.8 s). 60 s 창은 빠른 option에서 8,700 요청이고 option 하나의 검증에 2,135 s가 들었다. commit 1은 사건마다 도착했고 끝나지 않은 요청만 훑고 다음 도착은 도착 순서 목록의 맨 앞에서 읽으며, `Definition.Identity()`를 도착 원형마다 한 번 만든다. 판단은 같은 값이고 1 ms 간격 창의 재생은 2,000 요청 102 ms에서 3.3 ms, 8,000 요청 1,703 ms에서 16.7 ms가 되었다(`BenchmarkSchedulerReplayWindow`). 격자는 이분 탐색보다 판정 횟수가 많지만 미충족 판정은 실패 창 2개에서 멈춘다 `[추론: 행당 이분 탐색의 약 2.5배]`. commit 2가 E1 tight 38행의 시작 계산 시간을 잰다. 목표는 몇 분(5분) 안이다. 서버 안에서 넘으면 행을 별도 Job으로 나눠 병렬로 계산한다. 그래도 넘으면 시작 때 마지막 `capacity-row-built` 기록을 이전 표로 읽어 판단하고 새 표를 뒤에서 계산해 끝나면 바꾼다. 두 단계는 측정이 목표를 넘을 때만 넣는다.
 
 **imagenet.** imagenet(p99 100 ms)은 모든 option에서 κ 0이다(m 139 ms > 목표 100 ms, `hack/kappa`). 이 Workload는 꺼진 채로 두므로 행을 계산하지 않는다.
 
@@ -85,7 +85,7 @@
 **전환 전 운영 단계.** testbed에는 공유 인스턴스가 있다. rasp5 인스턴스(Pod `serving-d42ad89cca2909bb6b02`)의 `edge.dacs.io/serving-routing`이 relaxed(`ae87…`), tight(`c210…`), imagenet(`e06b…`)를 모두 가리키고 세 Workload는 꺼져 있다(e1/report-4.md 5절). 사용자 결정으로 tight만 rasp5 인스턴스에 남고 relaxed와 imagenet은 분배하지 않는다. commit 6 배포 전에 지금 image로 다음을 한다.
 1. `/api/v1/pools`, `/api/v1/scheduler/state`, Pod annotation을 `~/.cache/chill-assets/ops/m4-unshare/before/`에 남긴다.
 2. tight를 `staticRouting`으로 rasp5 인스턴스에만 분배한다.
-3. relaxed와 imagenet은 지금 `staticRouting`으로 뺄 수 없다(선언한 UID마다 양의 가중치가 필요하고 선언하지 않은 UID는 지금 분배를 유지한다, [설정 API](scheduler-api.md)). 두 Workload를 삭제하거나, 빈 분배를 받는 작은 변경을 먼저 넣는다(13장 질문).
+3. relaxed와 imagenet은 `staticRouting`에 빈 항목(`{}`)을 주어 분배에서 뺀다. positive weight가 없는 항목은 그 Workload의 routing을 모두 지운다([설정 API](scheduler-api.md)).
 4. pools와 annotation에서 모든 인스턴스가 Workload 하나인지 확인한다. 되돌리기는 이전 `staticRouting`이다.
 
 **M5 정리 후보(M4에서는 그대로).** Runtime의 인스턴스별 다중 binding과 route 복원(`runtime.go`, `runtime_scheduler.go`, `InstanceState.Workloads[]`와 UID별 카운터), `staticRouting`의 다중 UID alias(`static_routing.go`, `kube/static_routing.go`), `serving-operation`의 `InstanceShared` 거절(`cmd/serving-operation/main.go:489-518`), `edge.dacs.io/serving-routing` annotation의 reader와 writer와 annotation이 없을 때의 fallback(`kube/observer.go`, `kube/operations.go`), Dashboard의 인스턴스별 여러 서비스 표시(`resources.tsx`, `read-types.ts`), 설계 문서(workload-management, heterogeneous-workloads, scheduler-runtime-measurement)의 공유 문단. 같은 노드 공동 사용, 프로파일 재사용, Bundle은 유지한다.
@@ -104,7 +104,7 @@
 
 | # | commit | 내용 | 의존 |
 |---|---|---|---|
-| 1 | `perf(serving): select replay events with a heap` | `nextEvent`의 선형 탐색을 heap으로. 생성 도착의 `Definition.Identity()`를 도착 원형마다 한 번. 기존 재생 test의 판단과 같은 값 | 없음 |
+| 1 | `perf(serving): replay only arrived requests per event` | 사건마다 도착했고 끝나지 않은 요청만 훑고 다음 도착은 도착 순서 목록에서 읽는다. 생성 도착의 `Definition.Identity()`를 도착 원형마다 한 번. 기존 재생 test의 판단과 같은 값 | 없음 |
 | 2 | `feat(serving): build per-option SLO capacity rows` | `internal/serving/capacity.go`(`hack/kappa`의 κ 계산 이동, 격자와 단조 검사), 시작과 입력 변경 때 자동제어 Workload의 행만 계산하는 용량표 worker, 행 병렬, `capacity-row-built`, 네 설정, `CapacityPending`, `CapacityRejected`, `/api/v1/scheduler/capacity` 조회, E1 tight 표의 시작 계산 시간 측정. Tick은 그대로 | 1 |
 | 3 | `feat(loadgen): send Poisson arrivals` | `chill_loadgen replay --arrivals poisson --seed`. 지금은 고정 간격뿐이다(`cli.py:55-58`) | 없음 |
 | 4 | `chore(hack): report the non-execution latency percentile` | `e1.sql`에 5장의 열 | 없음 |
@@ -115,7 +115,7 @@
 
 | commit | 검사 |
 |---|---|
-| 1 | heap 전후 재생 결과가 기존 scheduler test 전체에서 같음. 8,000 요청 창 시간 기록 |
+| 1 | 변경 전후 재생 결과가 기존 scheduler test 전체에서 같음. 8,000 요청 창 시간 기록 |
 | 2 | 고정 fixture profile의 κ가 상수와 같음(재생이나 배칭 규칙 변경이 κ를 바꾸면 실패한다). 같은 행을 두 번 계산하면 같은 값. 충족, 미충족, 충족 격자는 `NonMonotone`이고 κ 없음. 창 요청 수가 `λ × capacityWindow` 이상. 19/20 판정 경계. m 139 ms, p99 100 ms에서 κ 0. 시작 때 자동제어 Workload의 행만 계산하고 꺼진 Workload의 행은 없음. 자동제어를 켜거나 SLO, profile, m, 설정이 바뀌면 빠진 행만 계산하고 그 외 변경은 계산하지 않음. 계산 중 판단은 `CapacityPending`. 행마다 `capacity-row-built` 기록. strict decode가 네 필드 누락을 거절 |
 | 3 | 같은 seed의 도착 시각이 같고 평균 간격이 1/rate 근처 |
 | 6 판정 | 3장 표의 40 req/s 두 예. 모드 변경 계획의 `κ_ret` 0. route 뒤 remove 계획은 keep κ를 남김. `W > L − m`인 계획은 에너지가 작아도 선택되지 않음. 모든 계획이 미충족이면 최대 초과량 순. SLO가 다른 Workload 두 개에서 각자 판정. 실제 분배에서 한 인스턴스가 두 Workload에 있으면 `SharedInstance`. 꺼진 Workload 노드는 keep뿐이고 binding 변경으로 판정 대상이 늘지 않음. `StaticRoutingTarget`이 두 UID alias를 거절. 단일 `workloadUID` 기록 왕복과 `OperatingPower` 소속. 공유 fixture(`scheduler_placement_test.go`, `scheduler_test.go`의 교차 UID 대기, `runtime_scheduler_test.go`, `scheduler_transition_test.go`)는 Workload별 인스턴스로 다시 씀 |
@@ -205,5 +205,4 @@ commit 6에서 모두 지운다.
 - 결정: κ는 기존 재생, 포아송 도착, 격자와 이분 탐색으로 계산한다. Tick은 κ 합, 노드 계획, Pareto DP이고 재생이 없다. 비교 기간은 `T = max(60 s, 최장 사슬)` 하나다. 전환 중 SLO는 Workload마다 필수 조건이다. 인스턴스 공유는 연구 범위 밖이고 M4는 계획기와 저장 모델의 부담만 지운다(6장). 전환은 shadow 없이 오프라인 비교와 실클러스터 단계로 확인하고 문제가 있으면 이전 image로 되돌린다. 완료 여유는 5장 규칙이다. imagenet은 꺼진 채로 둔다. Workload 여러 개의 칸 크기는 E5 전에 11장 측정으로 다시 검토한다. `projected-work-history`는 전환에서 지운다.
 - 결정: 10장 승인 묶음(①, ①', ④, ⑤)을 반영한다. 공유를 풀 때 tight만 rasp5 인스턴스에 남고 relaxed와 imagenet은 분배하지 않는다.
 - 결정: 용량표는 ChillServer가 시작할 때마다 자동제어 Workload의 행만 다시 계산하고, 행 단위로 병렬 계산한다. 남긴 행은 기록이다. 몇 분 안에 끝나지 않으면 이전 표로 판단하며 뒤에서 다시 계산한다(2장).
-- 질문 1: relaxed와 imagenet은 삭제하는가, 빈 `staticRouting`을 받는 작은 변경을 6장 운영 단계 전에 넣는가.
-- 질문 2: firstfloor가 배치 상한을 재준비 없이 바꿀 수 있는지 확인하지 않았다. 지금은 교체(remove와 prepare)로 센다. 바꿀 수 있다면 비용이 없는 동작으로 둘 수 있다.
+- 질문: firstfloor가 배치 상한을 재준비 없이 바꿀 수 있는지 확인하지 않았다. 지금은 교체(remove와 prepare)로 센다. 바꿀 수 있다면 비용이 없는 동작으로 둘 수 있다.
