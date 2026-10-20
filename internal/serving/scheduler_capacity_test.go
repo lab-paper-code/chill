@@ -3,6 +3,7 @@ package serving
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"math/rand/v2"
 	"reflect"
@@ -478,7 +479,7 @@ func TestCapacityRouteWeightsStayWithinKappa(t *testing.T) {
 		// Rounding gives 334 to the first, 33.4 req/s over 33.35, and no other has room.
 		{100, []float64{33.35, 33.35, 33.3}, nil, false},
 	} {
-		weights, _, ok := capacityWeights(c.rate, items(c.kappa...))
+		weights, _, ok := capacityWeights(c.rate, 0, items(c.kappa...))
 		sum := int32(0)
 		for k, w := range weights {
 			sum += w
@@ -489,6 +490,40 @@ func TestCapacityRouteWeightsStayWithinKappa(t *testing.T) {
 		if ok != c.within || sum != schedulerRouteUnits || c.want != nil && !slices.Equal(weights, c.want) {
 			t.Fatalf("rate %g κ %v: weights %v ok %v", c.rate, c.kappa, weights, ok)
 		}
+	}
+}
+
+// m4 r2: λ 12.8 lagged a 40 req/s load with 160 queued and no instance left
+// (κ_ret 0). Filling λ alone gave the cheapest new instance (rasp5 q2) all
+// 1,000 units; λ plus the backlog drain B/(L − m) exceeds the four new
+// instances' κ sum, so the weights follow κ and every instance takes load.
+func TestCapacityOverloadWeightsDrainTheBacklog(t *testing.T) {
+	kappa := []float64{42.01676682274319, 48.2933028258133, 114.5538148895834, 144.47154833104395}
+	p := &capacityPlanner{ctx: context.Background(), cells: 50, period: 147, routes: []float64{0}, settings: capacityTestSettings}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 12.8, queued: 160, slack: 1 - 0.139}}
+	choice := []int{}
+	for n, k := range kappa {
+		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
+		keep := &capacityPlan{keep: true, items: [][]capacityItem{nil}, retained: [][]capacityItem{nil}}
+		add := &capacityPlan{items: [][]capacityItem{{{id: fmt.Sprint("i", n), kappa: k, e: float64(n + 1)}}}, retained: [][]capacityItem{nil}}
+		p.plans = append(p.plans, []*capacityPlan{keep, add})
+		p.compared = append(p.compared, true)
+		choice = append(choice, 1)
+	}
+	res := p.evaluate(choice, 15.926122415)
+	j := res.judgments[0]
+	if math.Abs(j.backlog-363.85436691200005) > 1e-6 || math.Abs(res.sums[0][0]-349.3354328691838) > 1e-9 {
+		t.Fatalf("incident judgment B=%g κ_new=%g", j.backlog, res.sums[0][0])
+	}
+	want := map[string]int32{"i0": 120, "i1": 138, "i2": 328, "i3": 414}
+	if !maps.Equal(res.weights[0], want) || res.weightsExceeded {
+		t.Fatalf("weights %v, want κ-proportional %v", res.weights[0], want)
+	}
+	// Without backlog the λ fill stays on the cheapest instance.
+	p.ws[0].queued = 0
+	p.ws[0].rate = 0.5
+	if res = p.evaluate(choice, 0); !maps.Equal(res.weights[0], map[string]int32{"i0": 1000}) {
+		t.Fatalf("no backlog: %v", res.weights[0])
 	}
 }
 

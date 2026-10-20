@@ -985,31 +985,35 @@ func capacityFixedWeights(rate float64, items []capacityItem) ([]int32, []float6
 	return weights, y, ok
 }
 
-// capacityWeights fills rate onto items (sorted by e) up to each κ and rounds
-// the shares to integers summing to schedulerRouteUnits by largest remainder.
-// A weight whose share of rate exceeds its κ moves one unit at a time to the
-// item with the most room; ok is false when no item has room. At zero rate the
-// weights are equal; under overload they follow κ.
-func capacityWeights(rate float64, items []capacityItem) ([]int32, []float64, bool) {
+// capacityWeights fills rate plus the backlog drain rate onto items (sorted by
+// e) up to each κ and rounds the shares to integers summing to
+// schedulerRouteUnits by largest remainder. y is the fill of rate alone, for
+// request energy. A weight whose share of rate exceeds its κ moves one unit at
+// a time to the item with the most room; ok is false when no item has room.
+// At zero load the weights are equal; past the κ sum they follow κ.
+func capacityWeights(rate, drain float64, items []capacityItem) ([]int32, []float64, bool) {
 	n := len(items)
 	if n == 0 {
 		return nil, nil, true
 	}
+	fill := rate + drain
 	y, shares := make([]float64, n), make([]float64, n)
-	total, left := 0.0, rate
+	total, left, routed := 0.0, rate, fill
 	for k, item := range items {
 		y[k] = min(left, item.kappa)
 		left -= y[k]
+		shares[k] = min(routed, item.kappa)
+		routed -= shares[k]
 		total += item.kappa
 	}
 	for k := range items {
 		switch {
-		case rate == 0 || total == 0:
+		case fill == 0 || total == 0:
 			shares[k] = 1 / float64(n)
-		case total < rate:
+		case total < fill:
 			shares[k] = items[k].kappa / total
 		default:
-			shares[k] = y[k] / rate
+			shares[k] /= fill
 		}
 	}
 	weights := make([]int32, n)
@@ -1115,7 +1119,12 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 			weightSum += float64(item.weight)
 		}
 		j := capacityJudge(ws, knew, kret, present[w], r)
-		weights, y, ok := capacityWeights(ws.rate, items[w])
+		// Under the transition rule the route also drains B within L − m.
+		drain := 0.0
+		if ws.rate > kret && ws.slack > 0 {
+			drain = j.backlog / ws.slack
+		}
+		weights, y, ok := capacityWeights(ws.rate, drain, items[w])
 		if !p.settings.Controls.Routing {
 			weights, y, ok = capacityFixedWeights(ws.rate, items[w])
 		}
