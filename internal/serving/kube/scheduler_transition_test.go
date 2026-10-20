@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -164,12 +165,12 @@ func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(
 	if _, launched := controller.runs[target.Actions[0].ID]; launched {
 		t.Fatal("a different global route overwrote the policy path before the existing native ACK")
 	}
-	snapshot := controller.reconcileSnapshot(controller.state.Snapshot, controller.goal, time.Now(), time.Minute)
+	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, controller.goal, time.Now(), time.Minute)
 	if snapshot.InProgressTarget != frozen || snapshot.InProgressTarget.ID == target.ID {
 		t.Fatalf("actual running route was relabeled as the newly selected goal: %+v", snapshot.InProgressTarget)
 	}
 	controller.goal = nil
-	snapshot = controller.reconcileSnapshot(controller.state.Snapshot, nil, time.Now(), time.Minute)
+	snapshot, _ = controller.reconcileSnapshot(controller.state.Snapshot, nil, time.Now(), time.Minute)
 	if snapshot.InProgressTarget != frozen {
 		t.Fatal("available frozen operation target was lost when the selected goal was absent")
 	}
@@ -267,7 +268,7 @@ func TestFailedGoalCleanupRetainsRunningRouteFrozenTargetAndAgedPrerequisite(t *
 			},
 		},
 	}
-	snapshot := controller.reconcileSnapshot(controller.state.Snapshot, controller.goal, now, time.Minute)
+	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, controller.goal, now, time.Minute)
 	if controller.goal != nil || snapshot.InProgressTarget != frozen {
 		t.Fatalf("failed selected goal erased or relabeled the actual running route: %+v", snapshot.InProgressTarget)
 	}
@@ -305,7 +306,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	controller.goal = &goal
 	observed := acknowledged.Instances[0]
 	observed.TargetID = slot
-	snapshot := controller.reconcileSnapshot(serving.SchedulerSnapshot{
+	snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{
 		At: time.Now().UTC(), Instances: []serving.SchedulerInstance{observed},
 	}, &goal, time.Now().UTC(), time.Minute)
 	// The planner continues a running goal as keep with the goal's instances,
@@ -370,10 +371,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	if err := controller.runtime.InstallInstances(nil); err != nil {
 		t.Fatal(err)
 	}
-	controller.reconcileSnapshot(serving.SchedulerSnapshot{At: time.Now().UTC()}, controller.goal, time.Now().UTC(), time.Minute)
-	if controller.runs[action.ID] != nil {
-		t.Fatal("lost physical effect retained its terminal action identity")
-	}
+	requireLostEffectFailsGoal(t, controller, action.ID)
 	fresh := goal
 	fresh.ID = "after-physical-loss"
 	fresh.Actions = []serving.Action{action}
@@ -408,5 +406,23 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 		cancel()
 		controller.wg.Wait()
 		t.Fatal("completed identity blacklisted a fresh action for the same logical slot")
+	}
+}
+
+// requireLostEffectFailsGoal checks m4 r2: the prepared instance died after its
+// prepare completed. The goal fails with that action instead of preparing it
+// again under TransitionInProgress, and the failure expires with the window.
+func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, id string) {
+	t.Helper()
+	now := time.Now().UTC()
+	snapshot, lost := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, controller.goal, now, time.Minute)
+	if controller.goal != nil || snapshot.InProgressTarget != nil || controller.runs[id].action.Status != nativeOperationFailed ||
+		len(lost) != 1 || lost[0].Operation.ID != id || lost[0].Status != nativeOperationFailed ||
+		!slices.ContainsFunc(snapshot.Actions, func(a serving.Action) bool { return a.ID == id && a.Status == nativeOperationFailed }) {
+		t.Fatalf("lost prepared effect kept the goal: goal %v lost %+v actions %+v", controller.goal, lost, snapshot.Actions)
+	}
+	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, nil, now.Add(2*time.Minute), time.Minute)
+	if controller.runs[id] != nil {
+		t.Fatal("failed action outlived the observation window")
 	}
 }

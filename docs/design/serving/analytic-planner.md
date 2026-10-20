@@ -212,7 +212,7 @@ commit 6에서 모두 지운다.
 4장의 계획기를 `internal/serving/scheduler_capacity.go`가 다음 규칙으로 구현한다.
 
 - **설정 gate.** placement, resources, batching, membership이 꺼져 있으면 option 변형은 그 Workload의 지금 인스턴스 하나와 노드, CPU와 GPU 선택, 배치 상한과 대기 시간이 같아야 한다(membership은 그 Workload의 인스턴스가 있는 노드만). `maxReplicas`와 `maxInstances`는 POOL 전체의 Workload별 인스턴스 수와 전체 인스턴스 수 상한이고, replicas가 꺼져 있으면 Workload별 인스턴스 수가 지금 수와 같다. DP 점은 이 수를 값으로 가지므로 상한을 정확히 지킨다. 노드마다 가장 큰 계획의 합이 상한 안이면 수 값을 두지 않는다. `maxCPUs`는 인스턴스마다의 CPU 수 상한이다. routing이 꺼져 있으면 남는 인스턴스는 지금 가중치를, 새 인스턴스는 option의 가중치를 쓰고 같은 κ 검사를 받는다.
-- **진행 중 전환.** 실행 중인 목표에 Fixed가 아닌 동작이 남아 있으면 판단은 그 목표를 keep으로 이어 가고 사유는 `TransitionInProgress`다. 가용 노드 최저 모드 낮춤만 남은 목표는 공통 상태이므로 계획을 막지 않는다.
+- **진행 중 전환.** 실행 중인 목표에 Fixed가 아닌 동작이 남아 있으면 판단은 그 목표를 keep으로 이어 가고 사유는 `TransitionInProgress`다. 가용 노드 최저 모드 낮춤만 남은 목표는 공통 상태이므로 계획을 막지 않는다. 목표의 동작이 실패하거나, 끝난 동작의 효과가 사라지면(준비한 인스턴스가 OOMKilled되거나 Ready가 아님) 그 동작은 `failed`(`completed effect lost`)로 action 기록에 남고 목표는 버려지며, 다음 판단은 실제 상태에서 다시 계획한다. 실패한 동작은 관측 창 동안 snapshot `actions`에 남고, 그동안 같은 노드에서 같은 상태를 준비하는 계획은 `PreparationFailed`로 빠진다. 근거: m4 r2에서 rasp5 q2 Pod가 route 뒤 약 15 s마다 OOMKilled되었고, 목표가 `TransitionInProgress`로 남아 prepare와 route를 30 s마다 되풀이했다.
 - **DP 요청 에너지.** DP는 칸 배정의 요청 에너지를 [0, T] 전체에 target 배정으로 센다. 최종 순위와 `ExpectedJoules`는 4장의 route 분할 식으로 정확히 계산한다. e는 profile의 배치 1 입력당 에너지다.
 - **가중치 척도.** 지금 가중치의 합이 1,000이 아니면 첫 판단이 route 동작 하나로 1,000 척도의 가중치를 적용한다.
 - **제외 사유.** 4장의 사유에 더해 기준 전력이 없으면 `MissingUnloadedNodeBaseline:<노드>:<모드>`, 측정 POOL 노드는 `MeasurementNode`, 준비되지 않은 노드는 `NodeUnavailable`, 비서빙 예산 노드는 `PlacementBudgetUnavailable`을 기록한다.

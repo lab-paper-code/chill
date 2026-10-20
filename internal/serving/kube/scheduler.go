@@ -227,7 +227,14 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	snapshot = c.reconcileSnapshot(snapshot, goal, snapshot.At, config.Settings.ObservationWindow)
+	snapshot, lost := c.reconcileSnapshot(snapshot, goal, snapshot.At, config.Settings.ObservationWindow)
+	for _, result := range lost {
+		if config.OnAction != nil {
+			if err := config.OnAction(result); err != nil {
+				return serving.SchedulerDecision{}, fmt.Errorf("record lost action effect: %w", err)
+			}
+		}
+	}
 	c.capacity.Ensure(c.ctx, config.Settings, snapshot)
 	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, c.capacity.Rows())
 	if err != nil {
@@ -263,24 +270,28 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	}
 	return decision, nil
 }
-func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, observationWindow time.Duration) serving.SchedulerSnapshot {
+
+// reconcileSnapshot attaches the run status and the goal still in progress. A
+// goal action whose completed effect is gone (its instance died or left Ready)
+// fails, the goal is abandoned and lost returns those failures. Failed runs
+// stay in snapshot.Actions for one observation window.
+func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, observationWindow time.Duration) (serving.SchedulerSnapshot, []OperationResult) {
 	c.mu.Lock()
 	snapshot.InProgressTarget = nil
 	if goal == nil {
 		goal = c.activeTargetLocked("")
 		c.goal = goal
 	}
+	var lost []OperationResult
 	if goal != nil {
-		for _, desired := range goal.Actions {
-			if run := c.runs[desired.ID]; run != nil && run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel && run.result != nil && run.result.Status != nativeOperationComplete {
-				goal = nil
-				c.goal = nil
-				break
-			}
+		var failed bool
+		if lost, failed = c.failGoalLocked(snapshot, goal, now); failed {
+			goal = nil
+			c.goal = nil
 		}
 	}
 	for id, run := range c.runs {
-		if run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel && !c.actionEffectPresent(snapshot, run) {
+		if run.action.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, run) {
 			delete(c.runs, id)
 		}
 	}
@@ -327,7 +338,31 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 		}
 	}
 	c.mu.Unlock()
-	return snapshot
+	return snapshot, lost
+}
+
+// failGoalLocked marks goal actions whose completed effect is gone as failed,
+// returns them, and reports whether any goal action failed.
+func (c *SchedulerController) failGoalLocked(
+	snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time,
+) ([]OperationResult, bool) {
+	var lost []OperationResult
+	failed := false
+	for _, desired := range goal.Actions {
+		run := c.runs[desired.ID]
+		if run == nil || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil {
+			continue
+		}
+		// Fixed lowering is undone by the goal's own raise of the same Node.
+		if !desired.Fixed && run.result.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, run) {
+			result := *run.result
+			result.Status, result.Error, result.EndedAt = nativeOperationFailed, "completed effect lost", now
+			run.result, run.action.Status, run.action.Reason = &result, nativeOperationFailed, result.Error
+			lost = append(lost, result)
+		}
+		failed = failed || run.result.Status != nativeOperationComplete
+	}
+	return lost, failed
 }
 
 func (c *SchedulerController) activeTargetLocked(kind string) *serving.SchedulerCandidate {

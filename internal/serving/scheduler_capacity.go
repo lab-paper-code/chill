@@ -26,6 +26,7 @@ const (
 	schedulerPlanMissingOperationCost = "MissingOperationCost"
 	schedulerPlanInfeasibleResources  = "InfeasibleResources"
 	schedulerPlanFixedWorkload        = "FixedWorkload"
+	schedulerPlanPreparationFailed    = "PreparationFailed"
 
 	schedulerRouteUnits    = 1000  // route weights of one Workload sum to this
 	schedulerMaxCells      = 50    // load cells per Workload
@@ -607,6 +608,14 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	for _, i := range plan.instances {
 		if len(schedulerValidateInstance(p.settings, at, i, nil)) != 0 {
 			plan.record.Reason = schedulerPlanInfeasibleResources
+			return plan
+		}
+		// A failed preparation stays in the actions for one observation window.
+		if !slices.ContainsFunc(current, func(old SchedulerInstance) bool { return old.ID == i.ID }) &&
+			slices.ContainsFunc(p.snapshot.Actions, func(a Action) bool {
+				return a.Kind == schedulerActionPrepare && a.Status == schedulerActionFailed && a.Node == node.Node && a.To == schedulerState(i)
+			}) {
+			plan.record.Reason = schedulerPlanPreparationFailed
 			return plan
 		}
 	}

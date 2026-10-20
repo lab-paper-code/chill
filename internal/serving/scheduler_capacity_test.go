@@ -554,6 +554,31 @@ func TestCapacityBatchLimitChangeIsReplacement(t *testing.T) {
 	}
 }
 
+// m4 r2: a preparation whose instance died fails the goal; while that failure
+// stays in snapshot.Actions (one observation window) no plan prepares the same
+// state on that Node again.
+func TestCapacityFailedPreparationWaitsOneWindow(t *testing.T) {
+	s, snap := schedulerFixture()
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+	add := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
+	snap.Options = append(snap.Options, poolsOption(add))
+	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(add), "fixed")}
+	capacityLoad(s, &snap, snap.Workloads[0], 150)
+	rows := capacityRowsForTest(s, snap, nil)
+	if d := capacityDecideForTest(t, s, snap, rows); d.Target == nil || !poolsOn(*d.Target, n2) {
+		t.Fatalf("fixture must prepare on n2: %+v", d.Target)
+	}
+	snap.Actions = []Action{{ID: "prepare-lost", Kind: schedulerActionPrepare, Node: n2, Instance: "target-w1-" + add.Profile.ID + "-1",
+		From: "unloaded", To: schedulerState(add), Status: schedulerActionFailed, Reason: "completed effect lost"}}
+	d := capacityDecideForTest(t, s, snap, rows)
+	if d.Target == nil || poolsOn(*d.Target, n2) || slices.Contains(d.Reasons, schedulerTransitionInProgress) {
+		t.Fatalf("failed preparation planned again: %+v", d.Target)
+	}
+	if !slices.ContainsFunc(poolsPlans(d, n2), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanPreparationFailed }) {
+		t.Fatalf("exclusion not recorded: %+v", poolsPlans(d, n2))
+	}
+}
+
 // §9 6 DP: request energy splits at the route: [0, r] by the retained instance
 // up to κ_ret, its overflow and [r, T] by the target fill.
 func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
