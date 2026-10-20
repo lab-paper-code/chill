@@ -48,6 +48,12 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 		{name: "invalid power polling", fields: `"powerObservation":{"sampling":{"Interval":0,` +
 			`"Duration":1000000000,"RequestTimeout":1,"MaxEvents":10},"coverage":` +
 			`{"MaximumBoundaryDistance":1,"MinimumCoverage":1,"MaximumGap":1}}`},
+		{name: "power boundary distance at one minute", valid: true, fields: `"powerObservation":{"sampling":` +
+			`{"Interval":1000000000,"Duration":1000000000,"RequestTimeout":1,"MaxEvents":10},"coverage":` +
+			`{"MaximumBoundaryDistance":60000000000,"MinimumCoverage":1,"MaximumGap":1}}`},
+		{name: "power boundary distance over one minute", fields: `"powerObservation":{"sampling":` +
+			`{"Interval":1000000000,"Duration":1000000000,"RequestTimeout":1,"MaxEvents":10},"coverage":` +
+			`{"MaximumBoundaryDistance":60000000001,"MinimumCoverage":1,"MaximumGap":1}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := `{"settings":` + string(rawSettings) + `,` + tc.fields + `}`

@@ -196,7 +196,7 @@ func (config schedulerConfiguration) validatePower() error {
 			return err
 		}
 		p := config.PowerObservation.Coverage
-		if p.MaximumBoundaryDistance <= 0 || p.MaximumGap <= 0 ||
+		if p.MaximumBoundaryDistance <= 0 || p.MaximumBoundaryDistance > time.Minute || p.MaximumGap <= 0 ||
 			math.IsNaN(p.MinimumCoverage) || p.MinimumCoverage <= 0 || p.MinimumCoverage > 1 {
 			return errors.New("explicit finite power coverage policy required")
 		}
