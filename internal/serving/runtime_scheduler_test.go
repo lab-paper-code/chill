@@ -247,6 +247,23 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 	}
 }
 
+func TestProgressSinceReachesRestoredAssignments(t *testing.T) {
+	start := time.Now()
+	restored := start.Add(-time.Minute)
+	r := &Runtime{calls: map[string]*Call{
+		"restored": {assignment: &Assignment{Instance: "i1", DispatchedAt: restored}},
+		"current":  {assignment: &Assignment{Instance: "i1", DispatchedAt: start.Add(time.Second)}},
+		"other":    {assignment: &Assignment{Instance: "i2", DispatchedAt: start.Add(-time.Hour)}},
+		"queued":   {},
+	}}
+	if since := r.ProgressSince("i1", start); !since.Equal(restored) {
+		t.Fatalf("restored assignment completion would be skipped: %v", since)
+	}
+	if since := r.ProgressSince("i3", start); !since.Equal(start) {
+		t.Fatalf("idle instance replays earlier process output: %v", since)
+	}
+}
+
 func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	settings.AutonomousWorkloads = nil

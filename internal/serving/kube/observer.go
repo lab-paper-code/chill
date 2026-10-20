@@ -60,7 +60,7 @@ type ObserverIssue struct {
 
 // processStart bounds log follows so a restarted ChillServer skips progress
 // that an earlier process already recorded.
-var processStart = metav1.Now()
+var processStart = time.Now()
 
 type nativeSource struct {
 	pod         types.NamespacedName
@@ -621,8 +621,12 @@ func (o *Observer) startLogs(ctx context.Context, pod *corev1.Pod, owner string)
 	if source != nil && source.cancel != nil {
 		return nil
 	}
+	options := &corev1.PodLogOptions{Container: firstfloorContainerName, Follow: true, Timestamps: true}
+	if since := o.runtime.ProgressSince(id, processStart); !since.IsZero() {
+		options.SinceTime = &metav1.Time{Time: since}
+	}
 	logCtx, cancel := context.WithCancel(o.ctx)
-	stream, err := o.kube.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: firstfloorContainerName, Follow: true, Timestamps: true, SinceTime: &processStart}).Stream(logCtx)
+	stream, err := o.kube.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, options).Stream(logCtx)
 	if err != nil {
 		cancel()
 		return fmt.Errorf("native progress source unavailable: %w", err)

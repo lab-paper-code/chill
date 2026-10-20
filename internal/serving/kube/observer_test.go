@@ -476,7 +476,7 @@ func TestObserverLogFollowSkipsLinesBeforeProcessStart(t *testing.T) {
 			continue
 		}
 		options := action.(ktesting.GenericAction).GetValue().(*corev1.PodLogOptions)
-		if options.SinceTime == nil || !options.SinceTime.Equal(&processStart) || !options.Follow {
+		if options.SinceTime == nil || !options.SinceTime.Time.Equal(processStart) || !options.Follow {
 			t.Fatalf("restarted log follow replays earlier container output: %+v", options)
 		}
 		return

@@ -437,6 +437,20 @@ func (r *Runtime) releaseLocked(c *Call) {
 	}
 }
 
+// ProgressSince bounds a native log follow: progress older than since is
+// already recorded unless an outstanding assignment was dispatched earlier,
+// as restored assignments from a previous process are. Zero means everything.
+func (r *Runtime) ProgressSince(instance string, since time.Time) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.calls {
+		if c.assignment != nil && c.assignment.Instance == instance && c.assignment.DispatchedAt.Before(since) {
+			since = c.assignment.DispatchedAt
+		}
+	}
+	return since
+}
+
 func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
