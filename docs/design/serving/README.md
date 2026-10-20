@@ -26,6 +26,7 @@ Workload는 Preprocessor와 Dataset을 참조하고 원시 표본(JPEG, UTF8)을
 | 워크로드별 활성 POOL, 측정 POOL, 가용 노드, 워크로드별 자동제어와 완료 여유 | [워크로드별 POOL과 자동제어](workload-pools.md) |
 | 판단 기록 크기 | [판단 기록 다이어트 (M0)](decision-record-diet.md) |
 | 요청 행, 불변 값의 ID 참조, 시간 세그먼트와 로컬 버퍼, 오프라인 표 산출 | [관측 분리 (M1)](observability-split.md) |
+| 용량표, 공유 지연 상한, 구성 탐색, 상위 K 재생 검증, 비교 기간, shadow와 오프라인 A/B | [분석형 계획기 (M4)](analytic-planner.md) |
 | Pod-bound Service·EdgeMesh 전달·수동 원자 실행·manifest | [인스턴스 전달과 수동 실행](scheduler-operations.md) |
 | 요구사항별 구현 대응과 당시 검증 수준 | [스케줄러 SRS 대조](scheduler-srs-audit.md) |
 | 온라인 전환 문헌·알고리즘 적용 한계 | [온라인 전환 레퍼런스](online-switching-references.md) |

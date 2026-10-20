@@ -17,7 +17,7 @@
 | **M1 관측 분리** | 요청당 행 하나, 판단 기록 불변 값의 ID 참조, 시간 단위 gzip 세그먼트(S3)와 2시간 로컬 버퍼, 요청 구간만 읽는 조회, S3 세그먼트로 만드는 오프라인 표. 설계는 [관측 분리](../serving/observability-split.md) | 불필요 | observation log의 원시 보존 역할(형식만 변경) |
 | **M2 node agent** | discovery·전력·census 통합 DaemonSet, inventory 자동화, ConfigMap 수작업 필드 삭제 | 불필요 | NodeActuator의 실제 전력 적용 로직 |
 | **M3 B2 측정 admission** | workload-pools §3.3의 taint `chill.dacs.io/measurement`를 운영자 대신 단일 writer가 측정 객체에 따라 붙이고 뗌, 서빙 노드 거절, fencing generation, `serving-operation`을 ChillServer 클라이언트로, 전환 비용 runner 자동 생성 | 불필요 | 측정 controller의 측정 본체, Job, S3 evidence, taint key와 toleration, ChillServer의 taint 노드 제외 |
-| **M4 B1 shadow → 전환** | 분석형 평가기를 재생과 나란히 돌려 불일치를 기록. 기존 10MB 기록으로 오프라인 A/B. 통과하면 탐색은 분석형, 재생은 상위 K 검증기로 | **필요**: 06 문서 ①, ①', ②, ③, ④ | `scheduler_replay.go`(검증기·오프라인 simulator), 후보의 동작 DAG, `internal/serving/kube/operations.go`의 prepare/route/drain/remove |
+| **M4 B1 shadow → 전환** | 분석형 평가기를 재생과 나란히 돌려 불일치를 기록. 기존 10MB 기록으로 오프라인 A/B. 통과하면 탐색은 분석형, 재생은 상위 K 검증기로. 설계는 [분석형 계획기](../serving/analytic-planner.md) | **필요**: 06 문서 ①, ①', ②, ③, ④ | `scheduler_replay.go`(검증기·오프라인 simulator), 후보의 동작 DAG, `internal/serving/kube/operations.go`의 prepare/route/drain/remove |
 | **M5 정리** | Measurement CRD 통합, NodeActuation CRD 삭제, Go 바이너리와 runtime image 분리 | 불필요 | Workload, ModelSpec, Dataset, Preprocessor CRD |
 
 명세 변경 ②(공통 항 소거)는 A에도 적용되며 workload-pools 설계에 반영되어 있다.
