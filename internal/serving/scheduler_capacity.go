@@ -101,7 +101,13 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	}
 	// Lowering available Nodes is a fixed rule every plan, keep included, shares.
 	keep.Nodes = schedulerCommonNodes(settings, snapshot)
-	transition := snapshot.InProgressTarget != nil && slices.ContainsFunc(snapshot.InProgressTarget.Actions, func(a Action) bool { return !a.Fixed && a.Status != schedulerActionCancel })
+	// Run status lives in snapshot.Actions; the goal keeps its planned copies,
+	// so a goal action is finished only when its run reports it complete.
+	transition := snapshot.InProgressTarget != nil && slices.ContainsFunc(snapshot.InProgressTarget.Actions, func(a Action) bool {
+		return !a.Fixed && a.Status != schedulerActionCancel && a.Status != schedulerActionComplete && !slices.ContainsFunc(snapshot.Actions, func(run Action) bool {
+			return run.ID == a.ID && run.Status == schedulerActionComplete
+		})
+	})
 	var goal SchedulerCandidate
 	if transition {
 		goal = schedulerCurrentTarget(snapshot, *snapshot.InProgressTarget)
@@ -959,6 +965,26 @@ func (j capacityJudgment) worst() float64 {
 	return worst
 }
 
+// capacityFixedWeights keeps each item's current weight (an option's weight
+// for a new instance) when routing is not controlled; ok is false when some
+// instance's share of rate exceeds its κ or no weight is positive.
+func capacityFixedWeights(rate float64, items []capacityItem) ([]int32, []float64, bool) {
+	weights, y := make([]int32, len(items)), make([]float64, len(items))
+	total := 0.0
+	for k, item := range items {
+		weights[k] = item.weight
+		total += float64(item.weight)
+	}
+	ok := len(items) == 0 || total > 0
+	for k, item := range items {
+		if total > 0 {
+			y[k] = rate * float64(weights[k]) / total
+		}
+		ok = ok && y[k] <= item.kappa*(1+1e-12)
+	}
+	return weights, y, ok
+}
+
 // capacityWeights fills rate onto items (sorted by e) up to each κ and rounds
 // the shares to integers summing to schedulerRouteUnits by largest remainder.
 // A weight whose share of rate exceeds its κ moves one unit at a time to the
@@ -1090,6 +1116,13 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		}
 		j := capacityJudge(ws, knew, kret, present[w], r)
 		weights, y, ok := capacityWeights(ws.rate, items[w])
+		if !p.settings.Controls.Routing {
+			weights, y, ok = capacityFixedWeights(ws.rate, items[w])
+		}
+		units := 0.0
+		for _, weight := range weights {
+			units += float64(weight)
+		}
 		routes := map[string]int32{}
 		for k, item := range items[w] {
 			if weights[k] > 0 {
@@ -1106,7 +1139,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 				}
 				excess := math.Inf(1)
 				if item.kappa > 0 {
-					excess = ws.rate*float64(weights[k])/schedulerRouteUnits/item.kappa - 1
+					excess = ws.rate*float64(weights[k])/units/item.kappa - 1
 				}
 				worst = max(worst, excess)
 			}

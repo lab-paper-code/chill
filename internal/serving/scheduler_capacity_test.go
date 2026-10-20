@@ -268,11 +268,37 @@ func TestCapacitySharedInstanceWaits(t *testing.T) {
 func TestCapacityTransitionInProgressContinuesGoal(t *testing.T) {
 	s, snap := schedulerFixture()
 	goal := SchedulerCandidate{ID: "goal", Nodes: snap.Nodes, Instances: snap.Instances, Routing: map[string]map[string]int32{"w1": {"i1": 2}},
-		Actions: []Action{{ID: "route", Kind: schedulerActionRoute, Status: phaseRunning}}}
+		Actions: []Action{{ID: "route", Kind: schedulerActionRoute, Status: schedulerActionPlanned}}}
 	snap.InProgressTarget = &goal
+	snap.Actions = []Action{{ID: "route", Kind: schedulerActionRoute, Status: phaseRunning}}
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
 	if d.Status != schedulerStatusKeep || d.Target == nil || d.Target.ID != "goal" || !d.Target.Keep || !slices.Contains(d.Reasons, schedulerTransitionInProgress) || d.Capacity != nil {
 		t.Fatalf("in-progress goal must continue: %+v", d)
+	}
+	// The goal's copies stay planned; once the run reports the route complete, planning resumes.
+	snap.Actions[0].Status = schedulerActionComplete
+	if d = capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil)); slices.Contains(d.Reasons, schedulerTransitionInProgress) {
+		t.Fatalf("a finished transition must not hold planning: %+v", d)
+	}
+}
+
+// Routing control off keeps current weights and judges each instance's κ against them.
+func TestCapacityRoutingOffKeepsWeightsAndChecksKappa(t *testing.T) {
+	items := []capacityItem{{id: "a", kappa: 30, weight: 1}, {id: "b", kappa: 100, weight: 3}}
+	weights, y, ok := capacityFixedWeights(100, items)
+	if !ok || !slices.Equal(weights, []int32{1, 3}) || y[0] != 25 || y[1] != 75 {
+		t.Fatalf("fixed weights must stay and fit κ: %v %v %t", weights, y, ok)
+	}
+	items[0].kappa = 20
+	if _, _, ok = capacityFixedWeights(100, items); ok {
+		t.Fatal("a fixed share beyond κ must fail the final judgment")
+	}
+	s, snap := schedulerFixture()
+	s.Controls.Routing = false
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": 7}}
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	if d.Target != nil && d.Target.Routing["w1"]["i1"] != 7 {
+		t.Fatalf("routing off launched new weights: %+v", d.Target.Routing)
 	}
 }
 
@@ -286,7 +312,7 @@ func TestCapacityPendingWithoutRows(t *testing.T) {
 }
 
 // capacityTestSettings bound synthetic planners loosely, replicas ON.
-var capacityTestSettings = SchedulerSettings{Horizon: time.Minute, MaxReplicas: 100, MaxInstances: 100, Controls: SchedulerControls{Replicas: true}}
+var capacityTestSettings = SchedulerSettings{Horizon: time.Minute, MaxReplicas: 100, MaxInstances: 100, Controls: SchedulerControls{Replicas: true, Routing: true}}
 
 // capacityRandomPlanner builds a planner over synthetic node plans.
 func capacityRandomPlanner(rng *rand.Rand, workloads, nodes, cells int) *capacityPlanner {
