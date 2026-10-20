@@ -84,6 +84,7 @@ func TestSchedulerReplayDropsAtSLOBoundaryWhileBatchRuns(t *testing.T) {
 	if !state.initializeRunning() || !state.chooseBatches(context.Background()) {
 		t.Fatalf("active batch initialization failed: %+v", state.out)
 	}
+	state.admitArrivals()
 	next, remaining := state.nextEvent()
 	if !remaining || next != float64(5*time.Millisecond) || len(state.instances[0].queue) != 1 {
 		t.Fatalf("infeasible prediction must not drop while active; actual expiry must be next: next=%g state=%+v", next, state.instances[0])
@@ -217,6 +218,7 @@ func TestSchedulerReplayPolicyUpdatePreservesCapturedSender(t *testing.T) {
 	state := schedulerReplayState{snap: snap, c: SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, routingApplied: true, routeCredits: map[string][]int64{}, weights: make([]int32, 1), available: make([]bool, 1), out: schedulerReplayResult{definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	state.initializeInstances()
 	state.initializeOutstanding()
+	state.admitArrivals()
 	state.routeRequests()
 	state.receiveNative()
 	instance := state.instances[0]

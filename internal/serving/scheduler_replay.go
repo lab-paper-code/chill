@@ -731,8 +731,10 @@ type schedulerReplayState struct {
 	goal           SchedulerCandidate
 	actions        []*schedulerReplayAction
 	actionByID     map[string]*schedulerReplayAction
-	requests       []*schedulerReplayRequest
-	routeCredits   map[string][]int64 // Workload UID
+	requests       []*schedulerReplayRequest // ordered by arrival
+	live           []*schedulerReplayRequest // arrived and not completed, in requests order
+	arrived        int                       // requests[:arrived] have arrived
+	routeCredits   map[string][]int64        // Workload UID
 	routingApplied bool
 	weights        []int32
 	available      []bool
@@ -768,8 +770,6 @@ func schedulerReplayModel(ctx context.Context, settings SchedulerSettings, snap 
 	s.routingApplied = c.Keep && snap.InProgressTarget == nil
 	s.weights = make([]int32, len(s.instances))
 	s.available = make([]bool, len(s.instances))
-	// ponytail: bounded scan of requests/instances per event; use an event heap only
-	// when the configured MaxReplayRequests ceiling makes measured CPU material.
 	for steps := 1; ; steps++ {
 		if err := ctx.Err(); err != nil {
 			return schedulerReplayResult{}, err
@@ -778,6 +778,7 @@ func schedulerReplayModel(ctx context.Context, settings SchedulerSettings, snap 
 			s.out.reasons = append(s.out.reasons, "ReplayEventBoundExceeded")
 			return s.out, ctx.Err()
 		}
+		s.admitArrivals()
 		// Complete physical execution before choosing another UID's nonpreemptive batch.
 		s.expireRequests()
 		s.completeExecution()
@@ -1013,6 +1014,7 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 		}
 		return arrivals[i].At.Before(arrivals[j].At)
 	})
+	identities := map[*Definition]string{}
 	for cycle := 0.0; len(arrivals) > 0 && cycle < s.horizon; cycle += window {
 		for j, a := range arrivals {
 			if ctx.Err() != nil {
@@ -1027,7 +1029,12 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 				return false
 			}
 			r := SchedulerRequest{ID: fmt.Sprintf("replay-%g-%d", cycle, j), Definition: a.Definition, ReceivedAt: s.snap.At.Add(time.Duration(at)), Phase: phasePending}
-			x := &schedulerReplayRequest{source: r, identity: a.Definition.Identity(), arrival: at, native: math.Inf(1), expires: math.Inf(1)}
+			identity, ok := identities[a.Definition]
+			if !ok {
+				identity = a.Definition.Identity()
+				identities[a.Definition] = identity
+			}
+			x := &schedulerReplayRequest{source: r, identity: identity, arrival: at, native: math.Inf(1), expires: math.Inf(1)}
 			if a.Lifetime > 0 {
 				x.expires = at + float64(a.Lifetime)
 			}
@@ -1051,7 +1058,7 @@ func (s *schedulerReplayState) retainedIngress(i *schedulerReplayInstance) bool 
 	if i == nil {
 		return false
 	}
-	for _, r := range s.requests {
+	for _, r := range s.live {
 		if r.observed && !r.expired && !r.dispatched && !r.completed && schedulerHas(i.config.WorkloadUIDs, r.source.Definition.UID) && schedulerProfileMatches(r.source.Definition, i.config.Profile) && !s.hasRoutedAlternative(r, i) {
 			return true
 		}
@@ -1117,8 +1124,26 @@ func (s *schedulerReplayState) initializeRunning() bool {
 	return true
 }
 
+// admitArrivals keeps s.live to the requests a step can touch, so a step costs
+// the in-flight population rather than the whole window.
+func (s *schedulerReplayState) admitArrivals() {
+	live := s.live[:0]
+	for _, r := range s.live {
+		if !r.completed {
+			live = append(live, r)
+		}
+	}
+	clear(s.live[len(live):])
+	for ; s.arrived < len(s.requests) && s.requests[s.arrived].arrival <= s.now; s.arrived++ {
+		if r := s.requests[s.arrived]; !r.completed {
+			live = append(live, r)
+		}
+	}
+	s.live = live
+}
+
 func (s *schedulerReplayState) expireRequests() {
-	for _, r := range s.requests {
+	for _, r := range s.live {
 		if r.completed || r.expired || r.dropped || r.expires > s.now {
 			continue
 		}
@@ -1172,7 +1197,7 @@ func (s *schedulerReplayState) completeExecution() {
 			i.wake = s.now
 		}
 	}
-	for _, r := range s.requests {
+	for _, r := range s.live {
 		if r.returning && !r.completed && r.completion <= s.now {
 			r.completed = true
 			i := s.byID[r.source.Instance]
@@ -1513,7 +1538,7 @@ func (s *schedulerReplayState) retainedRouteCredit(uid string, i SchedulerInstan
 }
 
 func (s *schedulerReplayState) routeRequests() {
-	for _, r := range s.requests {
+	for _, r := range s.live {
 		if r.completed || r.expired || r.dispatched || r.arrival > s.now {
 			continue
 		}
@@ -1557,7 +1582,7 @@ func (s *schedulerReplayState) routeRequests() {
 }
 
 func (s *schedulerReplayState) receiveNative() {
-	for _, r := range s.requests {
+	for _, r := range s.live {
 		if r.dispatched && !r.returning && !r.completed && r.native <= s.now {
 			r.native = math.Inf(1)
 			r.queueAt = s.now
@@ -1739,15 +1764,16 @@ func (s *schedulerReplayState) addBatchEnergy(i *schedulerReplayInstance, b *Bat
 
 func (s *schedulerReplayState) nextEvent() (float64, bool) {
 	next := math.Inf(1)
-	remaining := false
-	for _, r := range s.requests {
+	// Unarrived requests expire after they arrive, so the earliest arrival bounds them all.
+	remaining := s.arrived < len(s.requests)
+	if remaining {
+		next = s.requests[s.arrived].arrival
+	}
+	for _, r := range s.live {
 		if r.completed {
 			continue
 		}
 		remaining = true
-		if r.arrival > s.now {
-			next = math.Min(next, r.arrival)
-		}
 		if !r.expired && r.expires > s.now {
 			next = math.Min(next, r.expires)
 		}

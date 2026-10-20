@@ -125,6 +125,7 @@ func TestReplayArrivalHistoryAgesFromNativeObservation(t *testing.T) {
 		requests: []*schedulerReplayRequest{arrival},
 	}
 	state.initializeInstances()
+	state.admitArrivals()
 	state.receiveNative()
 	rate := state.nativeRequestState(state.byID["i1"], arrival).ArrivalRate
 	wantRate := float64(time.Second) / float64(3*time.Second+10*time.Millisecond)
@@ -241,6 +242,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 	state.initializeOutstanding()
 	next := &schedulerReplayRequest{source: SchedulerRequest{ID: "next", Definition: d}, identity: d.Identity()}
 	state.requests = append(state.requests, next)
+	state.admitArrivals()
 	state.routeRequests()
 	if actualNext == "" || !next.dispatched || next.source.Instance != actualNext {
 		t.Fatalf("post-capture credits predicted %s, next real dispatch was %s", next.source.Instance, actualNext)
@@ -692,6 +694,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	if !replay.applyRoute() {
 		t.Fatalf("candidate cannot be replayed: %v", replay.out.reasons)
 	}
+	replay.admitArrivals()
 	replay.routeRequests()
 	if err = r.ApplySchedulerTarget(candidate); err != nil {
 		t.Fatal(err)

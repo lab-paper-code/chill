@@ -393,6 +393,7 @@ func TestOverlappingResourceChangeWaitsForAcceptedResponseBeforeRemoval(t *testi
 	state.initializeInstances()
 	state.initializeActions()
 	state.initializeOutstanding()
+	state.admitArrivals()
 	state.routeCredits = map[string][]int64{}
 	state.weights, state.available = make([]int32, len(state.instances)), make([]bool, len(state.instances))
 	if !state.startActions() || state.actionByID[stop.ID].done || state.actionByID[remove.ID].started {
