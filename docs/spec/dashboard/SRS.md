@@ -150,7 +150,7 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
 
 - `DB-FR-10` 전체 POOL, 워크로드별 활성 POOL, 측정 POOL과 가용 노드를 구분하고 소속 노드, 워크로드,
   인스턴스, 모델과 실행 경로, CPU, GPU, 메모리 할당 및 노드 전력모드를 조회해야 한다.
-  여러 활성 POOL이 함께 쓰는 노드와 공유 인스턴스의 관계, 목표 및 실제 자원 조건을 구분해야 한다.
+  여러 활성 POOL이 함께 쓰는 노드와 그 위 워크로드별 인스턴스, 목표 및 실제 자원 조건을 구분해야 한다.
 - `DB-FR-11` 운영자가 제공할 노드, 실행 대상과 전력모드의 허용 범위를 선언하고
   유지보수 제외 및 복귀를 요청할 수 있어야 한다. ChillServer의 관리 API를 사용하고,
   영향받는 워크로드, 용량과 실제 POOL 관계 및 적용 진행을 표시해야 한다.
@@ -286,7 +286,7 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
 | DB-FR-04 runtime 계열과 backend, DB-FR-13 실제 실행 장치 | [측정의 단위](../00_measurement.md#측정의-단위)의 firstfloor/backend 실행 경로, [자원 할당과 측정 축](../00_measurement.md#자원-할당과-측정-축)의 요청 및 실제 적용 조건, [ADR 0012](../../adr/0012-model-artifact-compatibility-boundary.md)의 산출물과 실행 경로, [요청과 실제 모델](../../design/serving/scheduler-runtime-measurement.md#요청과-실제-모델)의 실제 provider 기록. ChillServer가 제공할 조회: 각 측정 결과의 실제 backend와 실행 장치 (Evidence Passport runtime은 family, version, provider와 architecture를 제공). |
 | DB-FR-06 준비 상태와 사유, DB-OP-05 오류 코드 | [워크로드 SRS 상태의 의미](../workloads/SRS.md#32-상태의-의미), [입력과 요청 결과](../workloads/SRS.md#6-입력과-요청-결과)의 외부 제공 의미, 사용자 업무 용어의 안내형 화면이라는 사용자 요구 |
 | DB-FR-12 사전 확인 | [측정 설정과 실패](../00_measurement.md#측정-설정과-실패), [운영자 콘솔 Dashboard와 CLI 설계](../../design/operator-console/03-dashboard-and-cli.md)의 읽기 전용 사전 확인 |
-| DB-FR-14 프로파일 조건 | [노드 자원과 모델 인스턴스](../README.md#노드-자원과-모델-인스턴스)의 인스턴스 공유 조건, [이기종 워크로드 핵심 결정](../../design/serving/heterogeneous-workloads.md#핵심-결정)의 프로파일 조건, [WM-08](../workloads/SRS.md#31-등록-검증) |
+| DB-FR-14 프로파일 조건 | [노드 자원과 모델 인스턴스](../README.md#노드-자원과-모델-인스턴스)의 프로파일 적용 조건, [이기종 워크로드 핵심 결정](../../design/serving/heterogeneous-workloads.md#핵심-결정)의 프로파일 조건, [WM-08](../workloads/SRS.md#31-등록-검증) |
 | DB-FR-18 설정 기반 요청 분배 | [SCH-30, SCH-32](../scheduler/SRS.md#36-관리-연동관측과-운영-설정)의 라우팅 결정과 실제 반영 및 정적 구성 실험, [Scheduler 구성 입력](../../design/serving/scheduler-api.md#구성-입력)의 `staticRouting`과 실제 반영. 선언된 분배와 출처 설정은 `manual-static-routing` 동작 기록(`internal/serving/kube/operations.go`)으로 조회한다. |
 | DB-FR-29 | [DP-01](../catalog/SRS.md#31-전처리)과 [WM-04](../workloads/SRS.md#22-정의와-조회-정보)의 원시 입력 및 출력 계약, [원시 표본 요청](../../design/serving/heterogeneous-workloads.md#41-원시-표본-요청), 워크로드와 모델에 독립적인 화면이라는 사용자 요구 |
 | DB-FR-30 | [WM-08](../workloads/SRS.md#31-등록-검증), [SCH-09](../scheduler/SRS.md#32-근거와-실행-가능한-후보), [ADR 0012](../../adr/0012-model-artifact-compatibility-boundary.md)의 DeviceClass별 실행 호환, [DeviceClass별 후보](../../design/serving/heterogeneous-workloads.md#71-deviceclass별-후보). ChillServer가 제공할 조회: 실행 경로와 DeviceClass의 호환 판정과 사유 |
