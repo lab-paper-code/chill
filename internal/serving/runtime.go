@@ -441,6 +441,10 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) erro
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c := r.calls[progress.RequestID]
+	if c == nil {
+		// Unknown requests are already settled or belong to an earlier process.
+		return nil
+	}
 	e := RequestEvent{RequestID: progress.RequestID, WorkloadUID: progress.WorkloadUID, Definition: progress.Definition, Kind: "backend_" + progress.Phase, At: progress.At, NativeInstance: instance, Outcome: progress.Outcome, Error: progress.Error}
 	e.NativeProgress = &progress
 	e.ExecutionComplete = progress.ExecutionComplete
@@ -448,33 +452,29 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) erro
 		e.WorkloadName = d.Name
 		e.SLO = &d.SLO
 	}
-	if c != nil {
-		if c.assignment == nil || c.assignment.Instance != instance || c.receipt.UID != progress.WorkloadUID || c.identity != progress.Definition {
-			return failure("BackendContextMismatch", "native progress does not match its assigned request")
+	if c.assignment == nil || c.assignment.Instance != instance || c.receipt.UID != progress.WorkloadUID || c.identity != progress.Definition {
+		return failure("BackendContextMismatch", "native progress does not match its assigned request")
+	}
+	e.Assignment = c.assignment
+	e.ReceivedAt = c.receipt.ReceivedAt
+	if !c.receipt.Deadline.IsZero() {
+		e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
+	}
+	if !c.backendDone {
+		c.progress = &progress
+		if progress.Phase == phaseRunning || ((progress.Phase == phaseQueued || progress.Phase == phaseDeferred) && c.phase != phaseRunning) {
+			c.phase = progress.Phase
 		}
-		e.Assignment = c.assignment
-		e.ReceivedAt = c.receipt.ReceivedAt
-		if !c.receipt.Deadline.IsZero() {
-			e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
-		}
-		if !c.backendDone {
-			c.progress = &progress
-			if progress.Phase == phaseRunning || ((progress.Phase == phaseQueued || progress.Phase == phaseDeferred) && c.phase != phaseRunning) {
-				c.phase = progress.Phase
-			}
-			if progress.Phase == phaseFinished && progress.ExecutionComplete {
-				c.phase = phaseFinished
-				c.backendDone = true
-			}
+		if progress.Phase == phaseFinished && progress.ExecutionComplete {
+			c.phase = phaseFinished
+			c.backendDone = true
 		}
 	}
 	if err := r.config.ObservationLog.RequestEvent(e); err != nil {
 		r.observationError = err
 		return err
 	}
-	if c != nil {
-		r.releaseLocked(c)
-	}
+	r.releaseLocked(c)
 	r.dispatchLocked()
 	r.signal()
 	return nil

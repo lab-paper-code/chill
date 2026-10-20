@@ -460,7 +460,31 @@ func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) 
 	}
 }
 
-func TestObserverScannerPersistsExactNativePhasesWithoutReplacingResponse(t *testing.T) {
+func TestObserverLogFollowSkipsLinesBeforeProcessStart(t *testing.T) {
+	pod, _, _, _ := observerSourceFixture()
+	kube := kubefake.NewSimpleClientset(pod)
+	observer := newTestObserver(t)
+	observer.kube = kube
+	observer.mu.Lock()
+	err := observer.startLogs(context.Background(), pod, "")
+	observer.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range kube.Actions() {
+		if action.GetSubresource() != "log" {
+			continue
+		}
+		options := action.(ktesting.GenericAction).GetValue().(*corev1.PodLogOptions)
+		if options.SinceTime == nil || !options.SinceTime.Equal(&processStart) || !options.Follow {
+			t.Fatalf("restarted log follow replays earlier container output: %+v", options)
+		}
+		return
+	}
+	t.Fatal("log follow not opened")
+}
+
+func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	manager, _ := newManagerHarness(t)
 	definition := &serving.Definition{Name: "observed", UID: "observed-uid", Generation: 1, Model: serving.Model{Name: "model", UID: "model-uid", Generation: 1}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
 	if err := manager.observationLog.DefinitionRecord(definition); err != nil {
@@ -498,17 +522,13 @@ func TestObserverScannerPersistsExactNativePhasesWithoutReplacingResponse(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	phases := []string{}
 	for _, event := range result.Requests {
 		if strings.HasPrefix(event.Kind, "backend_") {
-			if event.NativeInstance != id || event.Outcome != "" {
-				t.Fatal("native observation invented a source or response outcome")
-			}
-			phases = append(phases, event.Kind)
+			t.Fatalf("settled request gained replayed progress: %+v", event)
 		}
 	}
-	if !slices.Equal(phases, []string{"backend_queued", "backend_running", "backend_finished"}) || result.Outcomes["completed"] != 1 {
-		t.Fatalf("raw phases/response outcome changed: %+v", result)
+	if result.Outcomes["completed"] != 1 {
+		t.Fatalf("response outcome changed: %+v", result)
 	}
 }
 
