@@ -182,15 +182,14 @@ type WorkloadReference struct {
 }
 
 type Assignment struct {
-	Node                   NodeReference                  `json:"node"`
-	Instance               string                         `json:"instance"`
-	Artifact               string                         `json:"artifact"`
-	ExecutionPath          string                         `json:"executionPath"`
-	Profile                string                         `json:"profile"`
-	ProfileReference       evidencestore.ObjectIdentity   `json:"profileReference"`
-	ProfileEvidence        []evidencestore.ObjectIdentity `json:"profileEvidence"`
-	ProfileConfidenceLevel float64                        `json:"profileConfidenceLevel"`
-	DispatchedAt           time.Time                      `json:"dispatchedAt"`
+	Node          NodeReference `json:"node"`
+	Instance      string        `json:"instance"`
+	Artifact      string        `json:"artifact"`
+	ExecutionPath string        `json:"executionPath"`
+	Profile       string        `json:"profile"`
+	DispatchedAt  time.Time     `json:"dispatchedAt"`
+	// ProfileBody is the catalog body in memory; observation rows keep Profile.
+	ProfileBody *Profile `json:"-"`
 }
 
 type InstanceState struct {

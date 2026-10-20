@@ -25,7 +25,7 @@
 
 ### 3.1 행
 
-`requests` stream의 줄은 행 객체 하나이고 `kind`가 `assigned` 또는 `final`이다. 같은 `requestID`의 `final`은 `assigned`를 대신한다. 모든 reducer는 `requestID`로 합쳐 `final`, 없으면 `assigned`, 없으면 메모리의 열린 행을 쓴다.
+`requests` stream의 줄은 행 객체 하나이고 `kind`가 `assigned` 또는 `final`이다. 같은 `requestID`의 `final`은 `assigned`를 대신한다. 모든 reducer는 `requestID`로 합쳐 `final`, 없으면 메모리의 열린 행, 없으면 `assigned`를 쓴다. 열린 행은 같은 요청의 `assigned`에 접수 단계까지 더한 것이다.
 
 | 행 | 내용 | 쓰는 지점 |
 |---|---|---|
@@ -36,7 +36,7 @@
 |---|---|
 | 식별 | `requestID`, `workloadUID`, `definitionID`, `node`, `instance`, `profileID`, `decisionID` |
 | 결과 | `outcome`, `error`, `executionComplete`, `clientSpanNanos` |
-| 시각 | `receivedAt`, `lifetimeNanos`, `elapsedNanos`(응답 종료), 단계 오프셋 `validatedNanos`, `acceptedNanos`, `dispatchedNanos`, `queuedNanos`, `runningNanos`, `executedNanos`, `exchangeNanos`. 오프셋은 `receivedAt` 기준이고 도달하지 않은 단계는 비어 있다 |
+| 시각 | `receivedAt`, `lifetimeNanos`, `elapsedNanos`(응답 종료), 단계 오프셋 `validatedNanos`, `acceptedNanos`, `dispatchedNanos`, `queuedNanos`, `runningNanos`, `executedNanos`, `exchangeNanos`. 오프셋은 `receivedAt` 기준이고 도달하지 않은 단계는 비어 있다. 같은 단계를 두 경로가 알리면(교환 결과와 firstfloor 로그의 `backend_finished`) 먼저 접은 시각을 쓰고, 응답 종료만 마지막 값을 쓴다 |
 | 배치 | 마지막 backend 진행의 `batchID`, `batchSize`, `queueMS`, `serviceMS`, `backendMS`, `preprocessMS`, `postprocessMS`, `firstTokenMS`, `units`, `nativeElapsedMS` |
 
 - profile 본문(근거 참조, confidence, 측정 조건의 artifact와 실행 경로)은 `profileID`로, SLO와 워크로드 이름은 `definitionID`로 같은 시간의 `catalog`에서 찾는다(4장, `WM-27`).
@@ -53,7 +53,7 @@
 
 ## 4. 불변 값의 ID 참조
 
-판단과 전력 기록은 불변 값을 ID로 참조하고, 본문은 `catalog` stream의 행 `{kind, key, at, body}`에 둔다. log는 한 시간 안에서 key를 처음 참조할 때, 그리고 같은 key의 본문이 그 프로세스에서 마지막에 쓴 본문과 다를 때 catalog 행을 쓴다. 그래서 시간 세그먼트 하나가 그 시간의 모든 참조를 담는다. 읽기는 참조한 기록의 시각 이전에서 같은 key의 마지막 catalog 행을 쓴다(DuckDB `ASOF JOIN`). 재시작 뒤 다시 쓴 같은 본문은 결과를 바꾸지 않는다.
+판단과 전력 기록은 불변 값을 ID로 참조하고, 본문은 `catalog` stream의 행 `{kind, key, at, body}`에 둔다. log는 한 시간 안에서 key를 처음 참조할 때, 그리고 같은 key의 본문이 그 프로세스에서 마지막에 쓴 본문과 다를 때 catalog 행을 쓴다. 그래서 시간 세그먼트 하나가 그 시간의 모든 참조를 담는다. 행의 `at`은 그 행을 쓰게 한 기록의 시각이다. 읽기는 참조한 기록의 시각 이전에서 같은 key의 마지막 catalog 행을 쓰고(DuckDB `ASOF JOIN`), 그보다 앞선 기록은 그 key의 첫 행을 쓴다. 재시작 뒤 다시 쓴 같은 본문은 결과를 바꾸지 않는다.
 
 | kind | key | 참조하는 곳 |
 |---|---|---|
@@ -63,7 +63,7 @@
 | `meter` | meter ID | 전력 행. 본문은 노드, scope, source, sampling, coverage 정책 |
 
 - target: `target.id == keep.id`이면 target을 `{id, keep: true}`로 저장한다(7.7 KB 절약).
-- 전력 행: `{at, node, meter, samples[{observedAt, watts}], powerJoules, powerError}`. 표본으로 다시 계산되는 `summary`는 쓰지 않는다.
+- 전력 행: `{at, startedAt, node, meter, samples, failures, powerJoules, powerError}`. `at`은 관측 끝이고, `failures`는 읽기 실패가 있을 때만 있다. 표본으로 다시 계산되는 `summary`는 쓰지 않는다.
 - options는 노드 가용성에 따라 판단마다 다른 계획 입력이라 그대로 둔다. 인스턴스는 이미 `profileID`만 담는다.
 - `SchedulerObservationPage`는 참조와 target을 본문으로 채워 돌려준다. API와 Dashboard가 받는 형태는 그대로다.
 - `candidates` 요약과 부하 0의 판단을 바뀔 때만 쓰는 일은 M4가 평가기와 함께 정한다.

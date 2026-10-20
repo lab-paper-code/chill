@@ -101,28 +101,26 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	}
 	backendCtx, cancel := context.WithCancel(ctx)
 	r := &Runtime{config: config, ctx: backendCtx, cancel: cancel, workloads: map[string]*runtimeWorkload{}, names: map[string]string{}, instances: map[string]*runtimeInstance{}, calls: map[string]*Call{}, definitions: map[string]*Definition{}, changed: make(chan struct{}, 1)}
-	definitions, pending, err := config.ObservationLog.runtimeFacts()
-	if err != nil {
-		cancel()
-		return nil, err
-	}
+	definitions, pending := config.ObservationLog.runtimeFacts()
 	r.definitions = definitions
-	// Existing assignments are observed to completion, never executed again.
-	for _, fact := range pending {
-		d := definitions[fact.event.Definition]
-		if d == nil {
+	// Assigned rows without a final row are observed to completion, never
+	// executed again; each closes with one incomplete final row.
+	for _, row := range pending {
+		d := definitions[row.DefinitionID]
+		if d == nil || row.Node == nil || row.DispatchedAt == nil {
 			cancel()
 			return nil, errors.New("unfinished assignment has no retained definition")
 		}
 		w := r.workloads[d.UID]
 		if w == nil {
-			w = &runtimeWorkload{definition: d, identity: fact.event.Definition, stopped: true, reason: "RestartDrain", calls: map[string]*Call{}}
+			w = &runtimeWorkload{definition: d, identity: row.DefinitionID, stopped: true, reason: "RestartDrain", calls: map[string]*Call{}}
 			r.workloads[d.UID] = w
 			r.names[d.Name] = d.UID
 		}
-		c := &Call{runtime: r, receipt: Receipt{ID: fact.event.RequestID, Name: d.Name, UID: d.UID, ReceivedAt: fact.event.ReceivedAt}, definition: d, identity: fact.event.Definition, assignment: fact.event.Assignment, phase: fact.phase, transportDone: true, responseRecorded: fact.responseRecorded}
-		if fact.event.LifetimeNanos > 0 {
-			c.receipt.Deadline = c.receipt.ReceivedAt.Add(time.Duration(fact.event.LifetimeNanos))
+		assignment := &Assignment{Node: *row.Node, Instance: row.Instance, Profile: row.ProfileID, DispatchedAt: *row.DispatchedAt}
+		c := &Call{runtime: r, receipt: Receipt{ID: row.RequestID, Name: d.Name, UID: d.UID, ReceivedAt: row.ReceivedAt}, definition: d, identity: row.DefinitionID, assignment: assignment, phase: phaseAssigned, transportDone: true}
+		if row.LifetimeNanos > 0 {
+			c.receipt.Deadline = c.receipt.ReceivedAt.Add(time.Duration(row.LifetimeNanos))
 		}
 		instance := r.instances[c.assignment.Instance]
 		if instance == nil {
@@ -132,13 +130,11 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		instance.bindings[d.UID] = true
 		instance.outstanding++
 		c.instance = instance
-		if !c.responseRecorded {
-			if err := r.event(c, eventResponseFinished, outcomeIncomplete, "EntrypointRestarted"); err != nil {
-				cancel()
-				return nil, err
-			}
-			c.responseRecorded = true
+		if err := r.event(c, eventResponseFinished, outcomeIncomplete, "EntrypointRestarted"); err != nil {
+			cancel()
+			return nil, err
 		}
+		c.responseRecorded = true
 		r.calls[c.receipt.ID] = c
 		w.calls[c.receipt.ID] = c
 	}
@@ -291,7 +287,8 @@ func (r *Runtime) Response(receipt Receipt, outcome, code string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c := r.calls[receipt.ID]
-	if c == nil {
+	live := c != nil
+	if !live {
 		c = &Call{receipt: receipt}
 	}
 	if c.responseRecorded {
@@ -301,9 +298,21 @@ func (r *Runtime) Response(receipt Receipt, outcome, code string) error {
 		return err
 	}
 	c.responseRecorded = true
+	if !live {
+		// A request rejected before acceptance closes with its response.
+		return r.closeLocked(c)
+	}
 	r.releaseLocked(c)
 	r.dispatchLocked()
 	r.signal()
+	return nil
+}
+
+func (r *Runtime) closeLocked(c *Call) error {
+	if err := r.config.ObservationLog.RequestClosed(c.receipt.ID); err != nil {
+		r.observationError = err
+		return err
+	}
 	return nil
 }
 
@@ -347,9 +356,7 @@ func (r *Runtime) dispatchLocked() {
 			}
 			i := entry.instance
 			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: time.Now().UTC()}
-			c.assignment.ProfileReference = i.Profile.Reference
-			c.assignment.ProfileEvidence = i.Profile.Evidence
-			c.assignment.ProfileConfidenceLevel = i.Profile.ConfidenceLevel
+			c.assignment.ProfileBody = i.Profile
 			if err := r.event(c, phaseAssigned, "", ""); err != nil {
 				c.assignment = nil
 				r.removeQueuedLocked(c)
@@ -435,6 +442,7 @@ func (r *Runtime) releaseLocked(c *Call) {
 	if w := r.workloads[c.receipt.UID]; w != nil {
 		delete(w.calls, c.receipt.ID)
 	}
+	_ = r.closeLocked(c) // The Runtime refuses new work while observation fails.
 }
 
 // ProgressSince bounds a native log follow: progress older than since is

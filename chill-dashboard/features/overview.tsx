@@ -7,7 +7,7 @@ import type { LoadWindow, MeasurementPlanList, OperatingPower, SchedulerView, Sy
 import { resourceHref, sloTarget, type WorkloadView } from "@/lib/domain"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { explain } from "@/lib/labels"
-import { localDateTime } from "@/lib/date-time"
+import { gapNotice, localDateTime } from "@/lib/date-time"
 import { QueryGate, SourceJSON, StatusBadge, statusLabel, toneOf, type Tone } from "@/components/read-region"
 import { Row, RowDialog, Rows, Screen } from "@/components/screen"
 
@@ -118,7 +118,7 @@ export function OverviewPage() {
     <Section label="부하" query={load}>
       {(load.data?.workloads ?? []).map(row => <Row key={row.uid} href="/scheduler/load" label={names.get(row.uid) ?? "이전 등록 서비스"} hint={`수신 ${row.received} · 접수 ${row.accepted} · 완료 ${row.completed}`} />)}
       {load.data && !load.data.workloads?.length && <Row href="/scheduler/load" label="이 구간에 들어온 요청이 없어요" />}
-      {!!load.data?.incompleteWindows?.length && <RowDialog label="관측이 빠진 구간이 있어요" hint="이 구간의 수는 실제보다 적을 수 있어요" value={<StatusBadge tone="warn">관측 공백</StatusBadge>} title="관측이 빠진 구간"><SourceJSON inline title="원본" value={{incompleteWindows:load.data.incompleteWindows}} /></RowDialog>}
+      {load.data?.gapUntil && <Row href="/scheduler/load" label="관측 공백이 있어요" hint={gapNotice(load.data.gapUntil)} value={<StatusBadge tone="warn">관측 공백</StatusBadge>} />}
     </Section>
     <Section label="대기열" query={scheduler}>
       {snapshot && <Row href="/scheduler/load" label={`대기 요청 ${snapshot.outstanding?.length ?? 0}건`} hint={`관측 ${localDateTime(snapshot.at)}`} />}
@@ -128,7 +128,7 @@ export function OverviewPage() {
         <PowerRow label="전체 POOL" joules={power.data.wholePoolJoules} watts={power.data.wholePoolMeanWatts} />
         <PowerRow label="활성 POOL" joules={power.data.activePoolJoules} watts={power.data.activePoolMeanWatts} />
         <Row href="/scheduler/power" label="집계 구간" hint={`${localDateTime(power.data.from)} ~ ${localDateTime(power.data.to)}`} value={gap ? undefined : <StatusBadge tone="ok">빠짐 없음</StatusBadge>} />
-        {gap && <RowDialog label="관측이 빠진 구간이 있어요" hint="원본에서 이유를 확인해 주세요" value={<StatusBadge tone="warn">관측 공백</StatusBadge>} title="전력 관측 공백"><SourceJSON inline title="원본" value={{reasons:power.data.reasons,incompleteWindows:power.data.incompleteWindows}} /></RowDialog>}
+        {gap && <RowDialog label="관측이 빠진 구간이 있어요" hint={power.data.gapUntil ? gapNotice(power.data.gapUntil) : "원본에서 이유를 확인해 주세요"} value={<StatusBadge tone="warn">관측 공백</StatusBadge>} title="전력 관측 공백"><SourceJSON inline title="원본" value={{reasons:power.data.reasons,gapUntil:power.data.gapUntil}} /></RowDialog>}
       </>}
     </Section>
     <Section label="진행 작업" query={scheduler}>

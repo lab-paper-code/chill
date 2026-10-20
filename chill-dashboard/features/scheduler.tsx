@@ -9,7 +9,7 @@ import { conditionRows } from "@/features/scheduler-profiles"
 import type { LoadWindow, OperatingPower, SchedulerAllocation, SchedulerCandidate, SchedulerDecision, SchedulerDefinition, SchedulerEstimate, SchedulerInstance, SchedulerNode, SchedulerSnapshot, SchedulerView, WireInteger } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
-import { localDateTime, utcDateTime } from "@/lib/date-time"
+import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
 import { DataTable } from "@/components/data-table"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge, statusLabel, type Tone } from "@/components/read-region"
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
@@ -235,7 +235,7 @@ export function SchedulerLoadPage() {
       </form>
     </RowDialog></Rows>
     <QueryGate query={query}>{data&&<>
-      {!!data.incompleteWindows?.length&&<p role="alert">관측이 빠진 구간이 {data.incompleteWindows.length}개 있어요. 실제보다 적게 셌을 수 있어요.</p>}
+      {data.gapUntil&&<p role="alert">{gapNotice(data.gapUntil)}. 실제보다 적게 셌을 수 있어요.</p>}
       {rows.length?<Rows label="서비스별">{rows.map((row,index)=><RowDialog key={`${row.uid}/${index}`} label={name(row.uid)} hint={`배정 ${row.assigned}건 · 완료 ${row.completed}건`} value={`${row.received}건`} title={`${name(row.uid)} 부하`}>
         <Facts items={[["받음",`${row.received}건 · ${row.receivedInputsPerSecond} 입력/s`],["접수",`${row.accepted}건 · ${row.acceptedInputsPerSecond} 입력/s`],["배정",`${row.assigned}건 · ${row.assignedInputsPerSecond} 입력/s`],["완료",`${row.completed}건 · ${row.completionEventsPerSecond} 건/s`]]}/>
         <h3>인스턴스별 배정</h3>{Object.entries(row.instanceAssignments??{}).map(([instance,count])=><p key={instance} className="break-all">{instance}: {count}건</p>)}{!Object.keys(row.instanceAssignments??{}).length&&<p>제공된 배정이 없어요.</p>}
@@ -243,7 +243,7 @@ export function SchedulerLoadPage() {
         <p className="break-all text-sm text-muted-foreground">서비스 UID {row.uid||"제공 없음"}</p>
         <SourceJSON inline value={row}/><SourceExport filename="chill-load-selected-service.json" value={{scope:"선택 서비스의 구간 집계",source:"v1/observations/load",from:data.from,to:data.to,population:data.population,workload:row,arrivals:null}}/>
       </RowDialog>)}</Rows>:<p>선택한 서비스와 구간의 사건 집계가 없어요.</p>}
-      <Rows><RowDialog label="원본 자료와 내보내기" title="선택 구간 원본"><Facts items={[["구간",<span key="range" className="break-all">{data.from} ~ {data.to}</span>],["길이",ms(data.durationNanos)],["모집단",data.population]]}/><h3>관측이 빠진 구간</h3>{data.incompleteWindows?.length?<Lines values={data.incompleteWindows}/>:<p>보고된 불완전 구간이 없어요.</p>}<SourceJSON inline title="선택 구간 원본" value={data}/><SourceExport filename="chill-load-selected-window.json" value={{scope:"선택 구간의 전체 응답",source:"v1/observations/load",from:data.from,to:data.to,population:data.population,sourceData:data}}/></RowDialog></Rows>
+      <Rows><RowDialog label="원본 자료와 내보내기" title="선택 구간 원본"><Facts items={[["구간",<span key="range" className="break-all">{data.from} ~ {data.to}</span>],["길이",ms(data.durationNanos)],["모집단",data.population],["관측 시작",data.gapUntil?gapNotice(data.gapUntil):"구간 전체를 관측했어요"]]}/><SourceJSON inline title="선택 구간 원본" value={data}/><SourceExport filename="chill-load-selected-window.json" value={{scope:"선택 구간의 전체 응답",source:"v1/observations/load",from:data.from,to:data.to,population:data.population,sourceData:data}}/></RowDialog></Rows>
     </>}</QueryGate>
   </Screen>
 }
@@ -254,7 +254,7 @@ export function PowerInterval({from,to}:{from:string;to:string}) {
   return <QueryGate query={query}>{data&&<div className="space-y-4">
     <p>정확한 집계 구간 {data.from} ~ {data.to} / 범위 {data.scope}</p><StatusBadge tone={data.complete?"ok":"warn"}>{data.complete?"계측 집계 완료":"관측 공백 있음"}</StatusBadge><p className="text-sm text-muted-foreground">ChillServer가 같은 구간의 노드 벽전력을 한 번씩 적분한 실측값입니다. 현재 설정, 후보의 예상 에너지 또는 Serving 참여 여부만으로 소비를 계산하지 않습니다.</p>
     <dl className="grid gap-3 sm:grid-cols-2"><div><dt>전체 POOL (서빙 비참여 노드 포함)</dt><dd>{measuredEnergy(data.wholePoolJoules)} / 평균 {watts(data.wholePoolMeanWatts)}</dd></div><div><dt>활성 POOL (구간 중 실제 Serving 참여)</dt><dd>{measuredEnergy(data.activePoolJoules)} / 평균 {watts(data.activePoolMeanWatts)}</dd></div></dl>
-    {data.reasons?.length>0&&<div role="status"><h3>측정 공백과 집계 사유</h3><Lines values={data.reasons}/></div>}{data.incompleteWindows?.length>0&&<div role="status"><h3>보관 관측 불완전 구간</h3><Lines values={data.incompleteWindows}/></div>}
+    {data.reasons?.length>0&&<div role="status"><h3>측정 공백과 집계 사유</h3><Lines values={data.reasons}/></div>}{data.gapUntil&&<p role="status">{gapNotice(data.gapUntil)}</p>}
     <DataTable data={data.nodes??[]} columns={[
       {key:"node",label:"기대 노드",value:row=><span>{row.node.name}<small className="block break-all">{row.node.uid}</small></span>},
       {key:"scope",label:"계측기와 범위",value:row=><span>{row.meter||"계측기 없음"}<small className="block">{row.scope}</small></span>},

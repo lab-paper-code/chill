@@ -24,7 +24,7 @@ type options struct {
 	queueLimit, maxQueryEvents                                                               int
 	maxRequestBytes, maxEvidenceBytes                                                        int64
 	profileConfidenceLevel                                                                   float64
-	requestTimeout, drainTimeout, sourceInterval, profileInterval, observationWindow         time.Duration
+	requestTimeout, drainTimeout, sourceInterval, profileInterval                            time.Duration
 	profileNamespaces                                                                        []string
 	definitions, outcomes                                                                    []string
 	materializeProfile                                                                       bool
@@ -73,7 +73,6 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.DurationVar(&o.drainTimeout, "drain-timeout", 2*time.Minute, "Management and process shutdown drain bound.")
 	f.DurationVar(&o.sourceInterval, "source-interval", time.Second, "Current instance and management refresh interval.")
 	f.DurationVar(&o.profileInterval, "profile-interval", time.Minute, "Selected profiling evidence refresh interval.")
-	f.DurationVar(&o.observationWindow, "observation-window", time.Minute, "Raw observation publication window.")
 	f.Float64Var(&o.profileConfidenceLevel, "profile-confidence-level", 0.95, "Measured idle-baseline confidence.")
 	f.Func("profile-namespace", "Allowed measurement namespace; repeatable; empty uses serving namespace.",
 		func(value string) error {
@@ -130,7 +129,7 @@ func (o options) validate() error {
 		return errors.New("queue, body, evidence and query bounds must be positive")
 	}
 	if o.requestTimeout <= 0 || o.drainTimeout <= 0 || o.sourceInterval <= 0 ||
-		o.profileInterval <= 0 || o.observationWindow <= 0 {
+		o.profileInterval <= 0 {
 		return errors.New("request, drain, refresh and observation durations must be positive")
 	}
 	if !(o.profileConfidenceLevel > 0 && o.profileConfidenceLevel < 1) {

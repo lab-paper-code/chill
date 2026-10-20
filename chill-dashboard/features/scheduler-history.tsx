@@ -8,7 +8,7 @@ import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage } from "@/lib/read-types"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
-import { localDateTime, utcDateTime } from "@/lib/date-time"
+import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
 import { SettingChanges, algorithmLabel } from "@/features/scheduler-settings"
 import { QueryGate, SourceJSON, SourceExport, statusLabel } from "@/components/read-region"
@@ -66,7 +66,7 @@ export function HistoryControls({history,children}:{history:SchedulerHistoryQuer
   </Rows>
 }
 export function HistoryPaging({history}:{history:SchedulerHistoryQuery}){
-  return <div className="grid gap-2"><p className="text-sm text-muted-foreground">기록을 {history.rows.length}건 불러왔어요. 기간 전체 건수는 아니에요.</p><div className="flex gap-2"><Button variant="outline" onClick={()=>history.page()} disabled={history.cursor==="0"}>처음으로</Button><Button variant="outline" onClick={()=>history.page(history.query.data?.nextCursor)} disabled={!history.query.data?.nextCursor}>다음 기록 보기</Button></div></div>
+  return <div className="grid gap-2">{history.query.data?.gapUntil&&<p role="status">{gapNotice(history.query.data.gapUntil)}</p>}<p className="text-sm text-muted-foreground">기록을 {history.rows.length}건 불러왔어요. 기간 전체 건수는 아니에요.</p><div className="flex gap-2"><Button variant="outline" onClick={()=>history.page()} disabled={history.cursor==="0"}>처음으로</Button><Button variant="outline" onClick={()=>history.page(history.query.data?.nextCursor)} disabled={!history.query.data?.nextCursor}>다음 기록 보기</Button></div></div>
 }
 
 function RecordDetails({row}:{row:SchedulerHistoryRow}){

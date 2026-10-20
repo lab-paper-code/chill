@@ -7,6 +7,7 @@ import { Line, LineChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { useChillQuery } from "@/lib/client"
 import type { ObservationResult, SchedulerCandidate, SchedulerObservation, SchedulerObservationPage, SchedulerView } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
+import { gapNotice } from "@/lib/date-time"
 import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { DetailsDialog, QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
@@ -101,7 +102,7 @@ function StoredDetails({event}:{event:SchedulerObservation}) {
   return <>{snapshot?<DetailsDialog label="초기 구성 자세히" title="판단과 함께 제공된 초기 구성"><SnapshotDetails snapshot={snapshot}/></DetailsDialog>:<p>짝지어진 초기 구성이 없어요. 다른 시각의 구성으로 추정하지 않아요.</p>}{view&&[decision.keep,decision.target].filter((candidate):candidate is SchedulerCandidate=>!!candidate).map((candidate,index)=><DetailsDialog key={`${candidate.id}-${index}`} label={candidate.keep?"유지안 근거":"목표 근거"} title="선택 기록의 후보 근거"><CandidateDetails candidate={candidate} view={view}/></DetailsDialog>)}</>
 }
 function ActualSummary({data}:{data:ObservationResult}) {
-  return <><p>전체 구간 {data.from} ~ {data.to}</p><p>전체 {data.total}건 / 선택 조건 {data.selected}건</p><p>모집단 {data.samplePopulation} / 방법 {data.quantileMethod}</p>{Object.entries(data.outcomes).map(([outcome,count])=><p key={outcome}>{outcome}: {count}건</p>)}{data.cohorts.length?data.cohorts.map(cohort=><p key={cohort.definition} className="break-all">정의 {cohort.definition} / 전체 {cohort.total}건 / 지연 표본 {cohort.sampleCount}개 / {cohort.percentile===undefined?"백분위 미제공":`${cohort.percentile}%`} 지연 {cohort.quantileNanos==null?"값 없음":`${Number(cohort.quantileNanos)/1e6} ms`} / 목표 {cohort.targetLatencyNanos==null?"미제공":`${nanosToMilliseconds(cohort.targetLatencyNanos)} ms`}</p>):<p>제공된 집계가 없어 지연 값을 계산하지 않아요.</p>}{data.incompleteWindows?.length?<p role="status">관측 공백: {data.incompleteWindows.join(" / ")}</p>:null}</>
+  return <><p>전체 구간 {data.from} ~ {data.to}</p><p>전체 {data.total}건 / 선택 조건 {data.selected}건</p><p>모집단 {data.samplePopulation} / 방법 {data.quantileMethod}</p>{Object.entries(data.outcomes).map(([outcome,count])=><p key={outcome}>{outcome}: {count}건</p>)}{data.cohorts.length?data.cohorts.map(cohort=><p key={cohort.definition} className="break-all">정의 {cohort.definition} / 전체 {cohort.total}건 / 지연 표본 {cohort.sampleCount}개 / {cohort.percentile===undefined?"백분위 미제공":`${cohort.percentile}%`} 지연 {cohort.quantileNanos==null?"값 없음":`${Number(cohort.quantileNanos)/1e6} ms`} / 목표 {cohort.targetLatencyNanos==null?"미제공":`${nanosToMilliseconds(cohort.targetLatencyNanos)} ms`}</p>):<p>제공된 집계가 없어 지연 값을 계산하지 않아요.</p>}{data.gapUntil?<p role="status">{gapNotice(data.gapUntil)}</p>:null}</>
 }
 function ActualPair({identity,a,b,aRef,bRef}:{identity:ServiceIdentity;a:SchedulerObservation;b:SchedulerObservation;aRef:SchedulerRecordRef;bRef:SchedulerRecordRef}) {
   const [ap,bp]=[a,b].map(event=>new URLSearchParams({uid:identity.uid,definition:identity.definition,from:event.decision!.search.windowStart,to:event.decision!.search.windowEnd,limit:"1"}))

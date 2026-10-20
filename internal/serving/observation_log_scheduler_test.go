@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ import (
 )
 
 func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}, Definitions: []string{"unrelated"}, Outcomes: []string{"completed"}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}, Definitions: []string{"unrelated"}, Outcomes: []string{"completed"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,20 +83,31 @@ func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
 	}
 }
 
-func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
-	const laterActionID = "second"
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
+func repeated[T any](items []T, n int) []T {
+	out := make([]T, 0, len(items)*n)
+	for range n {
+		out = append(out, items...)
+	}
+	return out
+}
+
+// appendObservationLine writes a raw scheduler line at clock time.
+func appendObservationLine(t *testing.T, observationLog *ObservationLog, clock *observationClock, line string) {
+	t.Helper()
+	observationLog.mu.Lock()
+	defer observationLog.mu.Unlock()
+	if err := observationLog.writeLocked(observationSchedulerStream, clock.now(), []byte(line+"\n")); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		if err := observationLog.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	}()
-	// Event time is deliberately older than every append window's metadata.
-	from := time.Now().UTC().Add(-2 * time.Hour)
+}
+
+func TestSchedulerRawCursorBoundsAppendOrder(t *testing.T) {
+	const laterActionID = "second"
+	config := ObservationLogConfig{Directory: t.TempDir()}
+	from := observationTestHour.Add(10 * time.Minute)
 	to := from.Add(time.Second)
+	observationLog, clock := clockedObservationLog(t, config, observationTestHour)
+	clock.set(from.Add(30 * time.Second))
 	for _, event := range []SchedulerObservation{
 		{At: from.Add(-time.Nanosecond), Action: &SchedulerActionObservation{ID: "outside"}},
 		{At: from.Add(-24 * time.Hour), Action: &SchedulerActionObservation{ID: "distant"}},
@@ -103,67 +115,45 @@ func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
 		{At: from, Action: &SchedulerActionObservation{ID: laterActionID}},
 		{At: to, Action: &SchedulerActionObservation{ID: "boundary"}},
 	} {
-		if err = observationLog.SchedulerRecord(event); err != nil {
-			t.Fatal(err)
-		}
-		if err := observationLog.finish(); err != nil {
-			t.Fatal(err)
-		}
-		if err := observationLog.start(time.Now().UTC()); err != nil {
+		if err := observationLog.SchedulerRecord(event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	check := func() {
+	check := func(observationLog *ObservationLog) {
 		t.Helper()
-		first, next, err := observationLog.SchedulerObservationPage(from, to, 1, 0)
+		first, next, _, err := observationLog.SchedulerObservationPage(from, to, 1, 0)
 		if err != nil || len(first) != 1 || first[0].Action.ID != "first" || next != 1 {
 			t.Fatalf("first bounded append page: %+v %d %v", first, next, err)
 		}
-		second, next, err := observationLog.SchedulerObservationPage(from, to, 1, next)
+		second, next, _, err := observationLog.SchedulerObservationPage(from, to, 1, next)
 		if err != nil || len(second) != 1 || second[0].Action.ID != laterActionID || next != -1 {
 			t.Fatalf("raw cursor reordered/backfilled events: %+v %d %v", second, next, err)
 		}
-		end, next, err := observationLog.SchedulerObservationPage(from, to, 1, 2)
+		end, next, _, err := observationLog.SchedulerObservationPage(from, to, 1, 2)
 		if err != nil || len(end) != 0 || next != -1 {
 			t.Fatalf("cursor at selected count must return an empty terminal page: %+v %d %v", end, next, err)
 		}
-		if _, _, err = observationLog.SchedulerObservationPage(from, to, 1, 3); err == nil {
+		if _, _, _, err = observationLog.SchedulerObservationPage(from, to, 1, 3); err == nil {
 			t.Fatal("out-of-range cursor accepted")
 		}
 	}
-	check()
+	check(observationLog)
 	if err := observationLog.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	observationLog, err = NewObservationLog(observationLog.config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	check()
+	restored, _ := clockedObservationLog(t, observationLog.config, observationTestHour)
+	check(restored)
 }
 
 func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = observationLog.Close(context.Background()) }()
-	from := time.Now().UTC().Add(-time.Hour)
+	from := observationTestHour.Add(10 * time.Minute)
 	to := from.Add(time.Minute)
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	clock.set(from)
 	appendSentinel := func(at time.Time) {
 		t.Helper()
-		// Valid JSON, but full SchedulerObservation decoding must reject action.id.
-		record := map[string]any{
-			"schemaVersion": observationSchema,
-			"window":        observationLog.windows[observationLog.active].ID,
-			"scheduler": map[string]any{
-				"at":     at,
-				"action": map[string]any{"id": 42},
-			},
-		}
-		if err := json.NewEncoder(observationLog.files["scheduler"]).Encode(record); err != nil {
-			t.Fatal(err)
-		}
+		// Valid JSON, but full decoding must reject action.id.
+		appendObservationLine(t, observationLog, clock, fmt.Sprintf(`{"at":%q,"action":{"id":42}}`, at.Format(time.RFC3339Nano)))
 	}
 	appendSentinel(from.Add(-time.Nanosecond))
 	appendSentinel(from)
@@ -171,6 +161,13 @@ func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 	node := snapshot.Nodes[0].Node
 	completed := from.Add(time.Second)
 	joules := 12.5
+	power := &metricobserver.Result{
+		// Power rows keep their end as the record time.
+		Source: operatingTestSource, StartedAt: from, EndedAt: from.Add(time.Millisecond),
+		Samples:  []metricobserver.Sample{{ObservedAt: from, Watts: 12.5, RequestLatencySeconds: 0.1}},
+		Failures: []metricobserver.Failure{{ObservedAt: completed, Message: "retained failure"}},
+	}
+	power.Summary = metricobserver.Summarize(*power)
 	selected := SchedulerObservation{
 		At:       from.Add(time.Millisecond),
 		Decision: &SchedulerDecision{At: from, Status: "retained", Keep: SchedulerCandidate{Status: "keep"}},
@@ -183,13 +180,7 @@ func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 			Actual:   json.RawMessage(`{"resources":{"cpus":[1],"memory":256}}`),
 			Error:    "retained action detail", Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "action", Size: 123}},
 		},
-		Power: &metricobserver.Result{
-			StartedAt: from, EndedAt: completed,
-			Samples:  []metricobserver.Sample{{ObservedAt: from, Watts: 12.5, RequestLatencySeconds: 0.1}},
-			Failures: []metricobserver.Failure{{ObservedAt: completed, Message: "retained failure"}},
-			Summary:  metricobserver.Summary{Attempts: 2, SuccessfulSamples: 1, Failures: 1},
-		},
-		Node: &node, Meter: "meter", PowerScope: "node",
+		Power: power, Node: &node, Meter: "meter", PowerScope: "node",
 		PowerSampling: &metricobserver.Request{Interval: time.Second, Duration: time.Minute, RequestTimeout: time.Second, MaxEvents: 100},
 		PowerCoverage: &powerwindow.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: 0.9, MaximumGap: 2 * time.Second},
 		PowerJoules:   &joules, PowerError: "retained power detail",
@@ -199,10 +190,8 @@ func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 	}
 	appendSentinel(from.Add(2 * time.Millisecond))
 	// A bounded page must stop after its lookahead, not scan the remaining file.
-	if _, err := observationLog.files["scheduler"].WriteString("{not-json}\n"); err != nil {
-		t.Fatal(err)
-	}
-	page, next, err := observationLog.SchedulerObservationPage(from, to, 1, 1)
+	appendObservationLine(t, observationLog, clock, "{not-json}")
+	page, next, _, err := observationLog.SchedulerObservationPage(from, to, 1, 1)
 	if err != nil || len(page) != 1 || next != 2 {
 		t.Fatalf("unselected payload was fully decoded or scan was not bounded: %+v %d %v", page, next, err)
 	}
@@ -229,47 +218,26 @@ func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 		t.Fatalf("selected raw details lost:\n got %s\nwant %s", got, want)
 	}
 	for _, offset := range []int{0, next} {
-		if _, _, err := observationLog.SchedulerObservationPage(from, to, 1, offset); err == nil {
+		if _, _, _, err := observationLog.SchedulerObservationPage(from, to, 1, offset); err == nil {
 			t.Fatalf("selected type-invalid payload accepted at offset %d", offset)
 		}
 	}
-	if _, _, err := observationLog.SchedulerObservationPage(from, to, 1, 3); err == nil {
+	if _, _, _, err := observationLog.SchedulerObservationPage(from, to, 1, 3); err == nil {
 		t.Fatal("syntax error after skipped payloads was ignored")
 	}
 }
 
-func TestSchedulerRawPageRejectsInvalidUnselectedEnvelopes(t *testing.T) {
-	for _, corruption := range []string{"schema", "window", "syntax"} {
+func TestSchedulerRawPageRejectsInvalidUnselectedLines(t *testing.T) {
+	for corruption, line := range map[string]string{"syntax": "{not-json}", "time": `{"at":"not-a-time"}`, "ignored-subtree": `{"at":"2026-10-20T10:09:00Z","snapshot":{"options":-01}}`} {
 		t.Run(corruption, func(t *testing.T) {
-			observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = observationLog.Close(context.Background()) }()
-			from := time.Now().UTC().Add(-time.Hour)
-			record := map[string]any{
-				"schemaVersion": observationSchema,
-				"window":        observationLog.windows[observationLog.active].ID,
-				"scheduler":     map[string]any{"at": from.Add(-time.Nanosecond)},
-			}
-			switch corruption {
-			case "schema":
-				record["schemaVersion"] = "not-the-observation-schema"
-			case "window":
-				record["window"] = "not-the-containing-window"
-			}
-			if corruption == "syntax" {
-				_, err = observationLog.files["scheduler"].WriteString("{not-json}\n")
-			} else {
-				err = json.NewEncoder(observationLog.files["scheduler"]).Encode(record)
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			from := observationTestHour.Add(10 * time.Minute)
+			observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+			clock.set(from)
+			appendObservationLine(t, observationLog, clock, line)
 			if err := observationLog.SchedulerRecord(SchedulerObservation{At: from}); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := observationLog.SchedulerObservationPage(from, from.Add(time.Minute), 1, 0); err == nil {
+			if _, _, _, err := observationLog.SchedulerObservationPage(from, from.Add(time.Minute), 1, 0); err == nil {
 				t.Fatal("unselected invalid record was ignored")
 			}
 			if observationLog.Health().Healthy {
@@ -280,20 +248,13 @@ func TestSchedulerRawPageRejectsInvalidUnselectedEnvelopes(t *testing.T) {
 }
 
 func TestSchedulerRawPagePreservesReorderedEscapedEnvelope(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = observationLog.Close(context.Background()) }()
-	at := time.Date(2026, 10, 15, 10, 7, 1, 478738123, time.FixedZone("record-zone", 9*60*60))
-	raw := fmt.Sprintf(
-		`{"scheduler":{"unknown":{"number":9007199254740993,"text":"schemaVersion/window/at"},"snapshot":{"at":%q,"instances":[]},"action":{"id":"reordered-source"},"at":%q},"w\u0069ndow":%q,"SCHEMAVERSION":%q}`+"\n",
-		at.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano), observationLog.windows[0].ID, observationSchema,
-	)
-	if _, err = observationLog.files["scheduler"].WriteString(raw); err != nil {
-		t.Fatal(err)
-	}
-	page, next, err := observationLog.SchedulerObservationPage(at.Add(-time.Nanosecond), at.Add(time.Nanosecond), 1, 0)
+	at := time.Date(2026, 10, 20, 19, 7, 1, 478738123, time.FixedZone("record-zone", 9*60*60))
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	clock.set(at)
+	appendObservationLine(t, observationLog, clock, fmt.Sprintf(
+		`{"unknown":{"number":9007199254740993,"text":"at"},"snapshot":{"at":%q,"instances":[]},"action":{"id":"reordered-source"},"\u0061t":%q}`,
+		at.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano)))
+	page, next, _, err := observationLog.SchedulerObservationPage(at.Add(-time.Nanosecond), at.Add(time.Nanosecond), 1, 0)
 	if err != nil || len(page) != 1 || next != -1 {
 		t.Fatalf("reordered envelope rejected: %+v %d %v", page, next, err)
 	}
@@ -302,211 +263,56 @@ func TestSchedulerRawPagePreservesReorderedEscapedEnvelope(t *testing.T) {
 	}
 }
 
-func TestSchedulerRawPageRejectsMalformedIgnoredSubtrees(t *testing.T) {
-	for _, invalid := range []string{`-01`, `1e`, `["value",]`, `"bad\q"`} {
-		t.Run(invalid, func(t *testing.T) {
-			observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = observationLog.Close(context.Background()) }()
-			from := time.Now().UTC()
-			raw := fmt.Sprintf(
-				`{"schemaVersion":%q,"window":%q,"scheduler":{"at":%q,"snapshot":{"options":%s}}}`+"\n",
-				observationSchema, observationLog.windows[0].ID, from.Add(-time.Second).Format(time.RFC3339Nano), invalid,
-			)
-			if _, err = observationLog.files["scheduler"].WriteString(raw); err != nil {
-				t.Fatal(err)
-			}
-			if err = observationLog.SchedulerRecord(SchedulerObservation{At: from}); err != nil {
-				t.Fatal(err)
-			}
-			if _, _, err = observationLog.SchedulerObservationPage(from, from.Add(time.Second), 1, 0); err == nil || observationLog.Health().Healthy {
-				t.Fatalf("malformed skipped JSON did not preserve error/health boundary: %v", err)
-			}
-		})
-	}
-}
-
-func TestRequestCensusKeepsLateFactsAcrossWindows(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
-	rotate := func() {
-		t.Helper()
-		if err := observationLog.finish(); err != nil {
-			t.Fatal(err)
-		}
-		if err := observationLog.start(time.Now().UTC()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	appendEvents := func(events ...RequestEvent) {
-		t.Helper()
-		for _, event := range events {
-			if err := observationLog.RequestEvent(event); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	from := time.Now().UTC().Add(-24 * time.Hour)
-	to := from.Add(time.Minute)
-	d := &Definition{UID: "workload", Generation: 1}
-	if err := observationLog.DefinitionRecord(d); err != nil {
-		t.Fatal(err)
-	}
-	rotate() // Definition and receipt must not need the same append window.
-	appendEvents(RequestEvent{RequestID: "old", Kind: phaseReceived, At: from.Add(-time.Hour)})
-	rotate()
-	appendEvents(RequestEvent{RequestID: "arrival", Kind: phaseReceived, At: to.Add(time.Hour), ReceivedAt: from})
-	rotate()
-	appendEvents(
-		RequestEvent{RequestID: "arrival", Kind: "validated", At: to.Add(2 * time.Hour), WorkloadUID: d.UID, Definition: d.Identity()},
-		RequestEvent{RequestID: "arrival", Kind: phaseAccepted, At: to.Add(2 * time.Hour), LifetimeNanos: int64(time.Second)},
-	)
-	rotate()
-	appendEvents(RequestEvent{RequestID: "arrival", Kind: eventResponseFinished, At: from.Add(-time.Hour), Outcome: outcomeCompleted})
-	check := func() {
-		t.Helper()
-		arrivals, err := observationLog.SchedulerArrivals(from, to)
-		if err != nil || len(arrivals) != 1 {
-			t.Fatalf("receipt-time selection lost arrival: %+v %v", arrivals, err)
-		}
-		if a := arrivals[0]; a.ID != "arrival" || !a.At.Equal(from) || a.Definition == nil || a.Definition.Identity() != d.Identity() ||
-			!a.Compute || !a.Accepted || a.Outcome != outcomeCompleted || a.Lifetime != time.Second {
-			t.Fatalf("later facts without ReceivedAt or older definition were pruned: %+v", a)
-		}
-	}
-	check()
-	if err := observationLog.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	observationLog, err = NewObservationLog(observationLog.config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	check()
-}
-
-func TestRequestCensusKeepsUnknownPrefixesAndIncompleteMetadata(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
-	from := time.Now().UTC().Add(-24 * time.Hour)
-	to := from.Add(time.Minute)
-	if err := observationLog.RequestEvent(RequestEvent{RequestID: "old", Kind: phaseReceived, At: from.Add(-time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
-	if arrivals, err := observationLog.SchedulerArrivals(from, to); err != nil || len(arrivals) != 0 {
-		t.Fatalf("old facts became current arrivals: %+v %v", arrivals, err)
-	}
-	// An empty pruned stream must not hide overlapping incomplete metadata.
-	current := observationLog.windows[observationLog.active].StartedAt
-	observationLog.windows[observationLog.active].Incomplete = true
-	if load, err := observationLog.LoadWindow(current, current.Add(time.Second)); err != nil || len(load.Arrivals) != 0 || len(load.IncompleteWindows) != 1 {
-		t.Fatalf("pruned metadata completeness was lost: %+v %v", load, err)
-	}
-	// Direct writes bypass counted appends: changed prefixes must be scanned
-	// even when their known bounds say the query is empty.
-	event := RequestEvent{RequestID: "uncounted", Kind: phaseReceived, At: from.Add(-time.Hour), ReceivedAt: from}
-	if err := json.NewEncoder(observationLog.files[observationRequestStream]).Encode(observationRecord{SchemaVersion: observationSchema, Window: observationLog.windows[observationLog.active].ID, Request: &event}); err != nil {
-		t.Fatal(err)
-	}
-	if err := observationLog.finish(); err != nil {
-		t.Fatal(err)
-	}
-	if err := observationLog.start(time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	if err := observationLog.RequestEvent(RequestEvent{RequestID: event.RequestID, Kind: eventResponseFinished, At: from.Add(-time.Hour), Outcome: outcomeIncomplete}); err != nil {
-		t.Fatal(err)
-	}
-	arrivals, err := observationLog.SchedulerArrivals(from, to)
-	if err != nil || len(arrivals) != 1 || arrivals[0].ID != event.RequestID || arrivals[0].Outcome != outcomeIncomplete {
-		t.Fatalf("unknown prefix or its later facts became an empty success: %+v %v", arrivals, err)
-	}
-	if _, err := observationLog.files[observationRequestStream].WriteString("{not-json}\n"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := observationLog.SchedulerArrivals(from, to); err == nil {
-		t.Fatal("unknown corrupt prefix became an empty success")
-	}
-}
-
-func TestWorkloadObservationReadsOnlyRequestedWindow(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
+func TestWorkloadObservationReadsOnlyRequestedRange(t *testing.T) {
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	d := &Definition{UID: "workload", Generation: 1, SLO: SLO{Percentile: 99, TargetLatency: time.Second}}
 	if err := observationLog.DefinitionRecord(d); err != nil {
 		t.Fatal(err)
 	}
-	appendEvents := func(events ...RequestEvent) {
+	request := func(id string, received time.Time, close bool) {
 		t.Helper()
-		for _, event := range events {
-			event.WorkloadUID, event.Definition = d.UID, d.Identity()
-			if err := observationLog.RequestEvent(event); err != nil {
+		clock.set(received)
+		for _, e := range []RequestEvent{
+			{Kind: phaseReceived, At: received},
+			{Kind: phaseAccepted, At: received},
+			{Kind: phaseAssigned, At: received, Assignment: &Assignment{Instance: "i1", DispatchedAt: received}},
+			{Kind: eventResponseFinished, At: received.Add(time.Millisecond), ElapsedNanos: int64(time.Millisecond), Outcome: outcomeCompleted},
+		} {
+			e.RequestID, e.WorkloadUID, e.Definition, e.ReceivedAt = id, d.UID, d.Identity(), received
+			if err := observationLog.RequestEvent(e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if close {
+			if err := observationLog.RequestClosed(id); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	request := func(id string, received time.Time) []RequestEvent {
-		return []RequestEvent{
-			{RequestID: id, Kind: phaseReceived, At: received, ReceivedAt: received},
-			{RequestID: id, Kind: phaseAccepted, At: received, ReceivedAt: received},
-			{RequestID: id, Kind: eventResponseFinished, At: received.Add(time.Millisecond), ReceivedAt: received, ElapsedNanos: int64(time.Millisecond), Outcome: outcomeCompleted},
+	for minute := range 120 {
+		for second := 0; second < 60; second += 15 {
+			received := observationTestHour.Add(time.Duration(minute)*time.Minute + time.Duration(second)*time.Second)
+			request(fmt.Sprintf("%d-%d", minute, second), received, true)
 		}
 	}
-	base := time.Now().UTC().Add(-48 * time.Hour)
-	const windows, perWindow, target = 20, 200, 10
-	from := base.Add(target * time.Hour)
+	from := observationTestHour.Add(50 * time.Minute)
 	to := from.Add(2 * time.Minute)
-	for w := range windows {
-		if w > 0 {
-			if err := observationLog.finish(); err != nil {
-				t.Fatal(err)
-			}
-			if err := observationLog.start(time.Now().UTC()); err != nil {
-				t.Fatal(err)
-			}
-		}
-		for r := range perWindow {
-			appendEvents(request(fmt.Sprintf("%d-%d", w, r), base.Add(time.Duration(w)*time.Hour+time.Duration(r)*15*time.Second))...)
-		}
-		switch w {
-		case target:
-			late := request("late", from.Add(time.Minute))
-			appendEvents(late[:2]...)
-			// Out-of-range lines keep a valid envelope but fail full decoding.
-			for range 3 {
-				raw := fmt.Sprintf(`{"schemaVersion":%q,"window":%q,"request":{"requestID":"sentinel","workloadUID":%q,"kind":"received","at":%q,"receivedAt":%q,"elapsedNanos":"bad"}}`+"\n",
-					observationSchema, observationLog.windows[observationLog.active].ID, d.UID, to.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano))
-				if _, err := observationLog.files[observationRequestStream].WriteString(raw); err != nil {
-					t.Fatal(err)
-				}
-			}
-		case target + 1:
-			appendEvents(request("late", from.Add(time.Minute))[2])
-		}
+	request("late", from.Add(time.Minute), false)
+	clock.set(observationTestHour.Add(119 * time.Minute))
+	if err := observationLog.RequestClosed("late"); err != nil {
+		t.Fatal(err)
 	}
-	// Windows outside the requested receipts are unreadable: any read fails the query.
-	for w, window := range observationLog.windows {
-		if w == target || w == target+1 {
-			continue
-		}
-		name := filepath.Join(observationLog.config.Directory, window.ID, observationRequestStream+".jsonl")
-		info, err := os.Stat(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(name, bytes.Repeat([]byte{'x'}, int(info.Size())), 0o600); err != nil {
-			t.Fatal(err)
+	// Request files before from are unreadable: any read fails the query.
+	names, err := filepath.Glob(filepath.Join(observationLog.root, "*", "requests.*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		minute, _ := time.Parse("20060102T15/requests.04.jsonl", filepath.Base(filepath.Dir(name))+"/"+filepath.Base(name))
+		if minute.Before(from) {
+			if err := os.WriteFile(name, []byte("not json\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	result, err := observationLog.Query(d.UID, from, to, nil, nil, 0, "")
@@ -515,70 +321,19 @@ func TestWorkloadObservationReadsOnlyRequestedWindow(t *testing.T) {
 	}
 	const want = 2*time.Minute/(15*time.Second) + 1 // receipts every 15 s plus the late request
 	if result.Total != int(want) || result.Outcomes[outcomeCompleted] != int(want) || len(result.Cohorts) != 1 ||
-		result.Cohorts[0].SampleCount != int(want) || len(result.Requests) != 3*int(want) {
-		t.Fatalf("narrow window result: total %d outcomes %v cohorts %+v requests %d", result.Total, result.Outcomes, result.Cohorts, len(result.Requests))
+		result.Cohorts[0].SampleCount != int(want) || len(result.Requests) != int(want) {
+		t.Fatalf("narrow range result: total %d outcomes %v cohorts %+v requests %d", result.Total, result.Outcomes, result.Cohorts, len(result.Requests))
 	}
 }
 
-func TestDefinitionCensusLoadsAppendsToPreviouslyEmptyPrefixes(t *testing.T) {
-	for _, counted := range []bool{true, false} {
-		t.Run(fmt.Sprintf("counted=%t", counted), func(t *testing.T) {
-			observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
-			from := time.Now().UTC().Add(-24 * time.Hour)
-			to := from.Add(time.Minute)
-			d := &Definition{UID: "retained", Generation: 1}
-			if err := observationLog.RequestEvent(RequestEvent{RequestID: "waiting", Kind: phaseReceived, At: from, Definition: d.Identity()}); err != nil {
-				t.Fatal(err)
-			}
-			arrivals, err := observationLog.SchedulerArrivals(from, to)
-			if err != nil || len(arrivals) != 1 || arrivals[0].Definition != nil {
-				t.Fatalf("missing definition must stay unknown: %+v %v", arrivals, err)
-			}
-			if counted {
-				err = observationLog.DefinitionRecord(d)
-			} else {
-				// A changed prefix must invalidate the known-empty summary.
-				err = json.NewEncoder(observationLog.files[observationDefinitionStream]).Encode(observationRecord{
-					SchemaVersion: observationSchema, Window: observationLog.windows[observationLog.active].ID,
-					Definition: &DefinitionObservation{Identity: d.Identity(), Definition: d},
-				})
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			check := func() {
-				t.Helper()
-				arrivals, err := observationLog.SchedulerArrivals(from, to)
-				if err != nil || len(arrivals) != 1 || arrivals[0].Definition == nil || arrivals[0].Definition.Identity() != d.Identity() {
-					t.Fatalf("new or uncounted definition remained pruned: %+v %v", arrivals, err)
-				}
-			}
-			check()
-			if err := observationLog.Close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			observationLog, err = NewObservationLog(observationLog.config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			check()
-		})
-	}
-}
-
-// Scale of docs/design/serving/decision-record-diet.md §1.
+// Scale of docs/design/serving/observability-split.md §1: a 185 KB E1 decision.
+//
+//nolint:gocyclo // One E1-scale record checked field by field.
 func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = observationLog.Close(context.Background()) }()
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	_, snapshot := schedulerFixture()
-	at := time.Now().UTC().Add(-time.Minute)
+	at := observationTestHour.Add(10 * time.Minute)
+	clock.set(at)
 	instance := snapshot.Instances[0]
 	profile := *instance.Profile
 	profile.Batches = make([]BatchProfile, 6)
@@ -590,15 +345,38 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 	}
 	instance.Profile = &profile
 	instance.ArrivalAges = map[string][]time.Duration{"w1": {time.Second, 2 * time.Second}}
-	instances := repeated([]SchedulerInstance{instance}, 6)
+	instances := repeated([]SchedulerInstance{instance}, 9)
 	nodes := repeated(snapshot.Nodes, 8)
 	snapshot.Nodes, snapshot.Instances = nodes, instances
-	snapshot.Workloads = repeated(snapshot.Workloads, 3)
-	snapshot.Options = repeated(snapshot.Options[:1], 16)
+	definition := snapshot.Workloads[0]
+	snapshot.Workloads = make([]*Definition, 16)
+	for i := range snapshot.Workloads {
+		d := *definition
+		d.Generation = int64(i + 1)
+		snapshot.Workloads[i] = &d
+	}
+	snapshot.Options = repeated(snapshot.Options[:1], 30)
 	for i := range snapshot.Options {
 		snapshot.Options[i].Instance = instance
 	}
-	definition := snapshot.Workloads[0]
+	baseline := snapshot.Baselines[0]
+	snapshot.Baselines = make([]NodeBaseline, 43)
+	for i := range snapshot.Baselines {
+		snapshot.Baselines[i] = baseline
+		snapshot.Baselines[i].ID = fmt.Sprintf("baseline-%02d", i)
+		snapshot.Baselines[i].Reference = evidencestore.ObjectIdentity{Store: "evidence", Key: fmt.Sprintf("profiling/baselines/node-%02d/idle.json", i), Size: 4096}
+	}
+	snapshot.Costs = make([]OperationCost, 42)
+	for i := range snapshot.Costs {
+		subtracted := 3.5
+		snapshot.Costs[i] = OperationCost{
+			ID: fmt.Sprintf("cost-%02d", i), Node: nodes[0].Node, Kind: "prepare", From: "absent", To: "ready",
+			Trials:      repeated([]OperationTrial{{Duration: 1234567890, Joules: 12.345678}}, 5),
+			EnergyScope: "target-baseline-delta", SubtractedWatts: &subtracted, Meter: "wall", Scope: "node-exclusive-wall",
+			Reference:   evidencestore.ObjectIdentity{Store: "evidence", Key: fmt.Sprintf("profiling/costs/node-a/%02d.json", i), Size: 8192},
+			BeforeState: []string{"profile-a/cpu-0-3"}, TargetState: []string{"profile-a/cpu-0-3", "profile-b/cpu-4-7"}, MeasuredAt: at,
+		}
+	}
 	snapshot.Arrivals = repeated([]SchedulerArrival{{ID: "request", At: at, Definition: definition, Accepted: true, Compute: true, WorkloadUID: "w1"}}, 3000)
 	snapshot.Outstanding = repeated([]SchedulerRequest{{ID: "request", Definition: definition, ReceivedAt: at, Phase: "queued", Instance: "i1"}}, 20)
 	actions := []Action{{ID: "prepare", Kind: "prepare", Node: nodes[0].Node, Instance: "i1", DependsOn: []string{}, Status: "planned"}}
@@ -608,49 +386,180 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 		Status: "evaluated", Reasons: []string{"reason"}, ExpectedJoules: &joules, WorstExceedance: 0.25,
 		SLO: []SchedulerEstimate{{UID: "w1", Definition: definition.Identity(), Samples: 100, Percentile: 95}}, Assumptions: []string{"assumption"}, Sources: []string{"source"},
 	}
-	decision := SchedulerDecision{At: at, Status: "target", Keep: candidate, Target: &candidate, Candidates: repeated([]SchedulerCandidate{candidate}, 128), EvaluationElapsed: 3 * time.Millisecond,
+	decision := SchedulerDecision{At: at, Status: "target", Keep: candidate, Target: &candidate, Candidates: repeated([]SchedulerCandidate{candidate}, 340), EvaluationElapsed: 3 * time.Millisecond,
 		Policy: &SchedulerPolicyDecision{Kernels: map[string]map[string]SchedulerTransitionProjection{"a": {"b": {}}}}}
 	event := SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}
-	before, err := json.Marshal(event)
+	if err := observationLog.SchedulerRecord(event); err != nil {
+		t.Fatal(err)
+	}
+	info, err := observationLog.files[observationSchedulerStream].Stat()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = observationLog.SchedulerRecord(event); err != nil {
-		t.Fatal(err)
-	}
-	info, err := observationLog.files["scheduler"].Stat()
+	catalog, err := observationLog.files[observationCatalogStream].Stat()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("decision record bytes: before %d after %d", len(before), info.Size())
-	if info.Size() > 100<<10 {
-		t.Fatalf("stored decision record %d bytes exceeds 100KiB", info.Size())
+	var line schedulerLine
+	data, err := os.ReadFile(observationLog.files[observationSchedulerStream].Name())
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The Dashboard history route reads this page.
-	page, _, err := observationLog.SchedulerObservationPage(at, at.Add(time.Second), 1, 0)
+	if err := json.Unmarshal(data, &line); err != nil {
+		t.Fatal(err)
+	}
+	if target := line.Decision.Target; target == nil || target.ID != candidate.ID || !target.Keep || target.Nodes != nil || target.Status != "" {
+		t.Fatalf("target equal to keep was stored in full: %+v", target)
+	}
+	if line.Snapshot.Workloads != nil || line.Snapshot.Costs != nil || line.Snapshot.Baselines != nil || len(line.Snapshot.CostRefs) != 42 {
+		t.Fatalf("snapshot stored bodies instead of references: %+v", line.Snapshot)
+	}
+	// The Dashboard history route reads this page with every body filled in.
+	page, _, _, err := observationLog.SchedulerObservationPage(at, at.Add(time.Second), 1, 0)
 	if err != nil || len(page) != 1 {
 		t.Fatalf("stored decision not readable: %+v %v", page, err)
 	}
 	stored, storedSnapshot := page[0].Decision, page[0].Snapshot
+	// The page holds every body inline, as the v1alpha4 record did.
+	before, err := json.Marshal(page[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("decision record bytes: v1alpha4 %d v1alpha5 %d (catalog rows %d once per hour)", len(before), info.Size(), catalog.Size())
+	if info.Size() > 135<<10 {
+		t.Fatalf("stored decision record %d bytes exceeds 135 KiB", info.Size())
+	}
 	if stored.EvaluationElapsed != 3*time.Millisecond || stored.Policy.Kernels != nil {
 		t.Fatalf("decision timing or kernels: %+v", stored)
 	}
 	if stored.Keep.Instances[0].ProfileID != profile.ID || stored.Keep.Instances[0].Profile != nil || stored.Target.SLO == nil || len(stored.Target.Nodes) != 8 {
 		t.Fatalf("keep or target lost its body: %+v", stored.Keep)
 	}
-	summary := stored.Candidates[127]
-	if len(stored.Candidates) != 128 || summary.ID != "candidate" || summary.Status != "evaluated" || *summary.ExpectedJoules != joules || summary.WorstExceedance != 0.25 || len(summary.Actions) != 1 || summary.Instances != nil || summary.SLO != nil {
+	summary := stored.Candidates[339]
+	if len(stored.Candidates) != 340 || summary.ID != "candidate" || summary.Status != "evaluated" || *summary.ExpectedJoules != joules || summary.WorstExceedance != 0.25 || len(summary.Actions) != 1 || summary.Instances != nil || summary.SLO != nil {
 		t.Fatalf("candidate summary: %+v", summary)
 	}
 	if storedSnapshot.Arrivals != nil || storedSnapshot.Outstanding[0].Definition != nil || storedSnapshot.Outstanding[0].DefinitionID != definition.Identity() || storedSnapshot.Instances[0].ArrivalAges["w1"][1] != 2*time.Second {
 		t.Fatalf("snapshot replay inputs: %+v", storedSnapshot)
 	}
+	for name, pair := range map[string][2]any{
+		"workloads": {storedSnapshot.Workloads, snapshot.Workloads}, "costs": {storedSnapshot.Costs, snapshot.Costs},
+		"baselines": {storedSnapshot.Baselines, snapshot.Baselines}, "target": {stored.Target, stored.Keep},
+	} {
+		got, _ := json.Marshal(pair[0])
+		want, _ := json.Marshal(pair[1])
+		if !bytes.Equal(got, want) {
+			t.Fatalf("page did not restore %s", name)
+		}
+	}
 }
 
-func repeated[T any](items []T, n int) []T {
-	out := make([]T, 0, len(items)*n)
-	for range n {
-		out = append(out, items...)
+func TestSchedulerCatalogFollowsMeterChangeRestartAndHour(t *testing.T) {
+	config := ObservationLogConfig{Directory: t.TempDir()}
+	observationLog, clock := clockedObservationLog(t, config, observationTestHour)
+	node := NodeReference{Name: "node", UID: "node-uid"}
+	_, snapshot := schedulerFixture()
+	record := func(observationLog *ObservationLog, at time.Time, gap time.Duration) {
+		t.Helper()
+		clock.set(at)
+		power := &metricobserver.Result{Source: operatingTestSource, StartedAt: at.Add(-time.Second), EndedAt: at, Samples: []metricobserver.Sample{{ObservedAt: at, Watts: 10}}}
+		policy := powerwindow.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: 1, MaximumGap: gap}
+		if err := observationLog.SchedulerRecord(SchedulerObservation{At: at, Power: power, Node: &node, Meter: "wall", PowerScope: "node-exclusive-wall", PowerCoverage: &policy}); err != nil {
+			t.Fatal(err)
+		}
+		s := snapshot
+		s.At = at
+		if err := observationLog.SchedulerRecord(SchedulerObservation{At: at, Snapshot: &s}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	return out
+	first, second := observationTestHour.Add(10*time.Minute), observationTestHour.Add(20*time.Minute)
+	record(observationLog, first, time.Second)
+	record(observationLog, second, 2*time.Second) // The meter configuration changed.
+	page := func(observationLog *ObservationLog) []SchedulerObservation {
+		t.Helper()
+		records, _, _, err := observationLog.SchedulerObservationPage(observationTestHour, observationTestHour.Add(time.Hour), 10, 0)
+		if err != nil || len(records) < 4 {
+			t.Fatalf("page: %+v %v", records, err)
+		}
+		return records
+	}
+	want := page(observationLog)
+	if want[0].PowerCoverage.MaximumGap != time.Second || want[2].PowerCoverage.MaximumGap != 2*time.Second || want[0].Power.Source.Endpoint != operatingTestSource.Endpoint {
+		t.Fatalf("meter body did not follow its change: %+v %+v", want[0], want[2])
+	}
+	if err := observationLog.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restored, restoredClock := clockedObservationLog(t, observationLog.config, observationTestHour)
+	clock = restoredClock
+	record(restored, observationTestHour.Add(30*time.Minute), 2*time.Second) // Rewrites the same body.
+	if got := page(restored)[:4]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("catalog rewrite after restart changed earlier records")
+	}
+	// Each hour directory's catalog alone resolves that hour's references.
+	record(restored, observationTestHour.Add(time.Hour+time.Minute), 2*time.Second)
+	keys := map[string]bool{}
+	names, err := filepath.Glob(filepath.Join(restored.root, "20261020T11", "catalog.*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+			var row CatalogRow
+			if err := json.Unmarshal(line, &row); err != nil {
+				t.Fatal(err)
+			}
+			keys[row.Kind+"/"+row.Key] = true
+		}
+	}
+	for _, key := range []string{"meter/wall", "definition/" + snapshot.Workloads[0].Identity(), "profile/" + snapshot.Instances[0].Profile.ID, "baseline/" + baselineRef(snapshot.Baselines[0])} {
+		if !keys[key] {
+			t.Fatalf("hour catalog lacks %s: %v", key, keys)
+		}
+	}
+}
+
+func TestOperatingPowerAcrossMinuteBoundaryKeepsJoules(t *testing.T) {
+	node := NodeReference{Name: "node", UID: "node-uid"}
+	meters := []OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: operatingTestSource}}
+	from := observationTestHour.Add(10*time.Minute - 5*time.Second)
+	to := from.Add(10 * time.Second)
+	measure := func(split bool) OperatingPowerWindow {
+		t.Helper()
+		observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+		clock.set(from.Add(-2 * time.Second))
+		snapshot := SchedulerSnapshot{At: from.Add(-time.Second), Instances: []SchedulerInstance{{ID: "ready", Node: node, Ready: true, WorkloadUIDs: []string{"w"}}}}
+		if err := observationLog.SchedulerRecord(SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
+			t.Fatal(err)
+		}
+		policy := powerwindow.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: 1, MaximumGap: 2 * time.Second}
+		for chunk := range 4 {
+			start := from.Add(time.Duration(chunk*3-1) * time.Second)
+			power := &metricobserver.Result{Source: operatingTestSource, StartedAt: start, EndedAt: start.Add(3 * time.Second)}
+			for s := range 3 {
+				at := start.Add(time.Duration(s) * time.Second)
+				power.Samples = append(power.Samples, metricobserver.Sample{ObservedAt: at, Watts: 10 + float64(at.Sub(from)/time.Second)})
+			}
+			if split {
+				clock.set(power.EndedAt)
+			}
+			if err := observationLog.SchedulerRecord(SchedulerObservation{At: power.EndedAt, Power: power, Node: &node, Meter: "wall", PowerScope: "node-exclusive-wall", PowerCoverage: &policy}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		result, err := observationLog.OperatingPower(from, to, meters, 100)
+		if err != nil || result.WholePoolJoules == nil {
+			t.Fatalf("power: %+v %v", result, err)
+		}
+		return result
+	}
+	whole, split := measure(false), measure(true)
+	if *whole.WholePoolJoules != *split.WholePoolJoules || *whole.ActivePoolJoules != *split.ActivePoolJoules {
+		t.Fatalf("minute files changed energy: %v %v", *whole.WholePoolJoules, *split.WholePoolJoules)
+	}
 }

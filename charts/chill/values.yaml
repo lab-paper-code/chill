@@ -566,7 +566,6 @@ servingEntrypoint:
   sourceInterval: 1s
   profileInterval: 1m
   profileConfidenceLevel: 0.95
-  observationWindow: 1m
   observationDefinitions: []
   observationOutcomes: []
   maxRequestBytes: 8388608

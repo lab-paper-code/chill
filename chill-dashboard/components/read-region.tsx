@@ -11,10 +11,10 @@ import { Braces, CircleCheck, CircleDashed, CircleX, Download, Info, RefreshCw, 
 
 export type Tone = "ok" | "warn" | "fail" | "info" | "idle"
 const tones: Record<string, Tone> = {
-  Ready: "ok", Applied: "ok", Completed: "ok", True: "ok", completed: "ok", response_finished: "ok",
+  Ready: "ok", Applied: "ok", Completed: "ok", True: "ok", completed: "ok",
   Waiting: "warn", Degraded: "warn", MissingEvidence: "warn", MissingDataset: "warn", MissingRuntime: "warn", NativeNotReady: "warn", Draining: "warn", False: "warn", deferred: "warn", timeout: "warn", incomplete: "warn", Preparing: "warn",
   Failed: "fail", error: "fail", rejected: "fail", delivery_failed: "fail",
-  Accepted: "info", Applying: "info", Changing: "info", Deleting: "info", Registration: "info", Update: "info", Delete: "info", ModelUpdate: "info", PreprocessorUpdate: "info", pending: "info", assigned: "info", queued: "info", running: "info", returning: "info", request_received: "info",
+  Accepted: "info", Applying: "info", Changing: "info", Deleting: "info", Registration: "info", Update: "info", Delete: "info", ModelUpdate: "info", PreprocessorUpdate: "info", pending: "info", assigned: "info", queued: "info", running: "info", returning: "info",
 }
 const toneIcons = {ok: CircleCheck, warn: TriangleAlert, fail: CircleX, info: Info, idle: CircleDashed}
 export const toneOf = (value?: string): Tone => value ? tones[value] ?? "idle" : "idle"
@@ -42,7 +42,6 @@ export function statusLabel(value?: string): string {
     canceled: "취소", incomplete: "처리 중", delivery_failed: "응답 전달 실패",
     pending: "배정 대기", assigned: "배정됨", queued: "실행 대기", running: "실행 중", returning: "응답 보내는 중",
     deferred: "목표 시간을 넘겨 뒤로 미뤄짐",
-    request_received: "요청 도착", response_finished: "응답 완료",
     AppliedSnapshotUnavailable: "적용 결과 확인 대기",
     Running: "실행 중", Pending: "대기 중", Succeeded: "완료", Complete: "완료", Planned: "계획됨",
   }

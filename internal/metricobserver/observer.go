@@ -120,7 +120,7 @@ func (o *Observer) observe(
 
 func (o *Observer) finish(result Result) Result {
 	result.EndedAt = o.now()
-	result.Summary = summarize(result)
+	result.Summary = Summarize(result)
 	return result
 }
 
@@ -196,7 +196,7 @@ func classify(err error) FailureReason {
 	}
 }
 
-func summarize(result Result) Summary {
+func Summarize(result Result) Summary {
 	latencies := make([]float64, 0, len(result.Samples)+len(result.Failures))
 	for _, sample := range result.Samples {
 		latencies = append(latencies, sample.RequestLatencySeconds)

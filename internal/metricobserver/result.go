@@ -32,7 +32,7 @@ func (r Result) Validate() error {
 	if err := validateFailures(r.Failures, r.StartedAt, r.EndedAt); err != nil {
 		return err
 	}
-	if r.Summary != summarize(r) {
+	if r.Summary != Summarize(r) {
 		return errors.New("metric observation summary does not match raw attempts")
 	}
 	return nil

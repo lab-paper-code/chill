@@ -281,7 +281,7 @@ func TestSummarizeUsesRawRecords(t *testing.T) {
 		},
 		Failures: []Failure{{ObservedAt: started.Add(2 * time.Second), RequestLatencySeconds: 0.2}},
 	}
-	summary := summarize(result)
+	summary := Summarize(result)
 	if summary.Attempts != 3 || summary.SuccessfulSamples != 2 || summary.Failures != 1 {
 		t.Fatalf("summary counts = %#v", summary)
 	}
@@ -303,7 +303,7 @@ func TestResultValidateRejectsDriftedRawFacts(t *testing.T) {
 			Thermal: &ThermalReading{ObservationAvailable: boolPointer(true), Active: boolPointer(false)},
 		}},
 	}
-	valid.Summary = summarize(valid)
+	valid.Summary = Summarize(valid)
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid result rejected: %v", err)
 	}

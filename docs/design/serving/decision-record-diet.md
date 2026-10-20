@@ -55,8 +55,7 @@ arrival × `Definition`이다.
 ### 3.1 알려진 한계
 
 - 저장 판단의 replay는 그 판단이 참조한 profile의 측정이 catalog와 evidence store에 남아 있어야 한다.
-- 관측 PVC의 보존 한도는 M1이 정한다. 그때까지 PVC는 판단 기록과 요청 stream만큼 계속 증가하므로, E1에서 잰 시간당
-  증가로 `observationStorage` 크기를 정한다.
+- 관측 PVC는 [M1](observability-split.md#5-세그먼트와-보존)의 시간 세그먼트 2시간과 S3가 멈춘 동안의 미업로드분을 담는다.
 - 저장 계약은 미배포 `v1alpha4`의 형태를 이어서 바꾼다([workload-pools 8장](workload-pools.md#8-커밋-단위)).
 
 ## 4. 검사

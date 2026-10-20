@@ -2,99 +2,82 @@ package serving
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
-func TestRestartIgnoresUnpublishedWindowStaging(t *testing.T) {
-	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
-	if err := os.Mkdir(filepath.Join(config.Directory, ".starting-interrupted"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	observationLog, err := NewObservationLog(config)
-	if err != nil {
-		t.Fatalf("interrupted window creation blocked owner startup: %v", err)
-	}
-	if err = observationLog.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-}
+const restoredRequest = "request"
 
-func TestFailedRotationPreservesCompletedWindow(t *testing.T) {
-	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
-	observationLog, err := NewObservationLog(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := observationLog.finish(); err != nil {
-		t.Fatal(err)
-	}
-	closedAt := *observationLog.Health().Windows[0].ClosedAt
-	blocked := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(blocked, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	observationLog.config.Directory = blocked
-
-	if err := observationLog.RequestEvent(RequestEvent{RequestID: "r", WorkloadUID: "uid", Kind: "received", At: time.Now().UTC()}); err == nil {
-		t.Fatal("failed window publication accepted an event")
-	}
-	if err := observationLog.Flush(context.Background()); err == nil {
-		t.Fatal("failed window publication was not reported by flush")
-	}
-	for _, window := range observationLog.Health().Windows {
-		if window.Incomplete {
-			t.Fatalf("finished window %s was flagged incomplete by a failed start", window.ID)
-		}
-	}
-	observationLog.config.Directory = config.Directory
-	if err := observationLog.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if window := observationLog.Health().Windows[0]; window.ClosedAt == nil || !window.ClosedAt.Equal(closedAt) {
-		t.Fatalf("failed rotation changed completed window boundary: before=%v after=%v", closedAt, window.ClosedAt)
-	}
-}
-
+// An assigned row without a final row survives a crash: the restart restores
+// it under RestartDrain and writes one incomplete final row after completion.
 func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	ctx := context.Background()
+	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}}
+	observationLog, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		if err := observationLog.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	}()
 	d := &Definition{Name: "workload", UID: "uid", Generation: 1, Model: Model{UID: "model", Generation: 1}, SLO: SLO{Percentile: 99, TargetLatency: time.Second}}
 	if err = observationLog.DefinitionRecord(d); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	assignment := &Assignment{Instance: "physical", Node: NodeReference{Name: "node", UID: "node-uid"}, Profile: "profile"}
+	assignment := &Assignment{Instance: "physical", Node: NodeReference{Name: "node", UID: "node-uid"}, Profile: "profile", DispatchedAt: now}
 	for _, event := range []RequestEvent{
-		{RequestID: "request", WorkloadUID: d.UID, Definition: d.Identity(), Kind: "assigned", At: now, ReceivedAt: now, Assignment: assignment},
-		{RequestID: "request", WorkloadUID: d.UID, Definition: d.Identity(), Kind: "backend_finished", At: now, NativeProgress: &BackendProgress{Phase: "finished", ExecutionComplete: false}},
-		{RequestID: "request", WorkloadUID: d.UID, Definition: d.Identity(), Kind: "response_finished", At: now, Outcome: "canceled"},
+		{RequestID: restoredRequest, WorkloadUID: d.UID, Definition: d.Identity(), Kind: phaseReceived, At: now, ReceivedAt: now},
+		{RequestID: restoredRequest, WorkloadUID: d.UID, Definition: d.Identity(), Kind: phaseAssigned, At: now, ReceivedAt: now, Assignment: assignment},
+		{RequestID: restoredRequest, WorkloadUID: d.UID, Definition: d.Identity(), Kind: "backend_finished", At: now, NativeProgress: &BackendProgress{Phase: "finished", ExecutionComplete: false}},
+		{RequestID: restoredRequest, WorkloadUID: d.UID, Definition: d.Identity(), Kind: eventResponseFinished, At: now, Outcome: "canceled"},
 	} {
 		if err = observationLog.RequestEvent(event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	restored, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	if err = observationLog.Close(ctx); err != nil { // Crash: the open row is lost.
+		t.Fatal(err)
+	}
+	restartedLog, err := NewObservationLog(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := NewRuntime(ctx, RuntimeConfig{QueueLimit: 1, ObservationLog: restartedLog})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer restored.cancel()
+	if restored.workloads[d.UID].reason != "RestartDrain" {
+		t.Fatalf("restored assignment did not close admission: %+v", restored.workloads[d.UID])
+	}
 	if detached, err := restored.DetachInstance("physical"); err != nil || detached {
 		t.Fatalf("bare finished phase freed restarted physical ownership: %v %v", detached, err)
 	}
 	if err = restored.ConfirmInstanceStopped("physical"); err != nil {
 		t.Fatal(err)
 	}
-	confirmed, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	if err = restartedLog.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	finals := 0
+	for _, row := range readRequestRows(t, config.Directory) {
+		if row.Kind == requestRowFinal {
+			finals++
+			if row.RequestID != restoredRequest || row.Outcome != outcomeIncomplete || row.Error != "EntrypointRestarted" {
+				t.Fatalf("restored request closed with a wrong final row: %+v", row)
+			}
+		}
+	}
+	if finals != 1 {
+		t.Fatalf("restored request has %d final rows", finals)
+	}
+	confirmedLog, err := NewObservationLog(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = confirmedLog.Close(ctx) }()
+	confirmed, err := NewRuntime(ctx, RuntimeConfig{QueueLimit: 1, ObservationLog: confirmedLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,4 +85,31 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 	if !confirmed.Drained(d.UID) {
 		t.Fatal("actual container termination proof lost at restart")
 	}
+}
+
+func readRequestRows(t *testing.T, directory string) []RequestRow {
+	t.Helper()
+	names, err := filepath.Glob(filepath.Join(directory, observationVersion, "*", observationRequestStream+".*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []RequestRow
+	for _, name := range names {
+		file, err := os.Open(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoder := json.NewDecoder(file)
+		for decoder.More() {
+			var row RequestRow
+			if err := decoder.Decode(&row); err != nil {
+				t.Fatal(err)
+			}
+			rows = append(rows, row)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return rows
 }

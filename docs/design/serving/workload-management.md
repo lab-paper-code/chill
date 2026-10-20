@@ -511,20 +511,17 @@ immutable 보존 수단으로 원시 근거를 제공한다.
 
 | 기록 | 필수 내용 |
 |---|---|
-| `definitions` | Workload UID와 적용 identity, 서비스 이름, 모델 및 입력 정의와 SLO |
-| `requests` | request ID별 수신과 수락 및 배정, 큐와 실행 관측 및 반환 사건, 결과와 오류. 각 사건의 시각 및 관측 주체 |
+| `definitions.jsonl` | Workload UID와 적용 identity, 서비스 이름, 모델 및 입력 정의와 SLO. 지우지 않는 루트 파일 |
+| `requests` | 요청당 배정 행과 최종 행. 수신, 검증, 접수, 배정, 큐, 실행, 교환, 응답 단계의 수신 기준 오프셋, 마지막 batch 사실, 결과와 오류 |
 | `management` | 대상 UID와 변경 종류, 적용 전후 정의, 요청 저장과 수락 및 실제 적용 시각, 단계와 최종 결과 |
-| `scheduler` | 설정·snapshot·decision·action·power raw, source/meter/window·coverage·actual applied 결과 |
+| `scheduler` | 설정, snapshot, decision, action, 전력 표본 raw. 불변 본문은 catalog key로 참조한다 |
+| `catalog` | 그 시간에 참조한 정의, profile, 비용, baseline, meter 본문 |
 
-각 stream은 같은 schema version과 관측 구간 metadata를 사용한다.
-private persistent directory에 append JSONL 관측 기록을 남기며 구간 종료 시
-`serving/<windowID>/` 아래 `metadata.json`, `definitions.jsonl`, `requests.jsonl`,
-`management.jsonl`, `scheduler.jsonl`을 immutable S3 object로 보존한다. 필터와 관측 구간은 metadata에 기록한다.
-Workload 삭제는 이 기록을 삭제하지 않는다. 실패한 구간은 보존 완료로 게시하지 않고
-닫히기 전에는 live 요청 상태와 이미 수집한 사건을 조회한다.
-닫힌 구간의 게시만 별도 잠금으로 직렬화하고 S3 업로드는 요청 writer 잠금 밖에서
-수행한다. 업로드 중에도 새 append·rotation·조회가 진행되며, 게시 결과만 writer
-잠금 아래 반영한다. `Flush`와 `Close`는 같은 게시 경계를 사용한다.
+형식과 보존은 [관측 분리](observability-split.md)가 정한다. private persistent directory의
+`v1alpha5/<시>/<stream>.<분>.jsonl`에 append하고, 지난 시간은 stream마다 gzip 하나로
+`serving/observations.v1alpha5/<시>/`에 immutable S3 object로 보존한다. 로컬은 현재 시간과
+직전 시간을 남긴다. Workload 삭제는 이 기록을 삭제하지 않는다. 업로드는 요청 writer 잠금 밖에서
+수행하고, 업로드 중에도 새 append와 조회가 진행된다. `Flush`와 `Close`는 같은 업로드 경계를 사용한다.
 요청별 Kubernetes 객체나 요청마다 갱신하는 status는 만들지 않는다.
 
 조회는 다음을 분리한다.
@@ -536,14 +533,14 @@ Workload 삭제는 이 기록을 삭제하지 않는다. 실패한 구간은 보
 
 집계는 구간, 등록 UID, 적용 정의, outcome 필터와 지연 표본 모집단을 반환하며
 전체 필터 모집단을 집계한 뒤 raw event page를 투영한다.
-`response_finished`의 양수 monotonic elapsed만 사용하고 `delivery_failed`, `canceled`,
+최종 행의 양수 monotonic elapsed만 사용하고 `delivery_failed`, `canceled`,
 `incomplete`는 제외한다. error/rejected/timeout outcome은 각각 별도로 집계한다.
 지연 표본이 없으면 `sampleCount:0`, `quantileNanos:null`이다.
 백분위는 `gonum/stat.Empirical`이며 지연이나 완료 시각을 합성하지 않는다.
 SLO 변경 전후와 같은 이름의 재등록을 묵시적으로 같은 목표의 통계로 합치지 않는다.
 
 무영속 큐이므로 ChillServer 장애 후 수락 요청을 투명하게 재실행하지 않는다.
-이미 보존된 수락 기록에 종료 사건이 없으면 분석 시 미완료로 남긴다.
+최종 행이 없는 배정 행은 재시작 뒤 RestartDrain이 맡아 실행 종료를 관측하고 미완료 최종 행을 쓴다.
 재시작은 실제 인스턴스와 연결 상태를 다시 확인하며, 실행 종료가 불명인 상태를 드레인 성공으로 보고하지 않는다.
 관측 저장 실패는 명시적인 오류와 기록 공백으로 드러내고, 실험 evidence가 보존된 것처럼 성공을 주장하지 않는다.
 event append 또는 local sync/read 오류는 기록 무결성을 닫고 해당 window를 incomplete로 남긴다.
@@ -578,7 +575,7 @@ SAN과 맞는 HTTPS 주소를 사용한다. 스케줄러 후보와 비용은 `pr
 | `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 목록은 serving namespace. ChillServer에 namespaced BEO `get/list/create/delete`, ProfilingRun `get`만 부여 |
 | `profileConfidenceLevel:0.95` | `--profile-confidence-level`; measured idle baseline confidence |
 | `queueLimit:1024`, `requestTimeout:30s`, `drainTimeout:2m` | 각각 `--queue-limit`, `--request-timeout`, `--drain-timeout`; SLO timeout 아님 |
-| `sourceInterval:1s`, `profileInterval:1m`, `observationWindow:1m` | 현재 상태, profile refresh와 immutable window 주기 |
+| `sourceInterval:1s`, `profileInterval:1m` | 현재 상태와 profile refresh 주기. 관측 업로드는 1분 주기다 |
 | `maxRequestBytes:8388608`, `maxEvidenceBytes:67108864`, `maxQueryEvents:1000` | HTTP body, evidence object와 raw query page 상한 |
 | `observationDefinitions:[]`, `observationOutcomes:[]` | 반복 `--observation-definition`, `--observation-outcome` 기본 집계 필터 |
 | `observationStorage.size:1Gi`, `storageClassName:null` | `/data`의 유지되는 private RWO PVC; null은 cluster default, 빈 문자열은 no StorageClass |

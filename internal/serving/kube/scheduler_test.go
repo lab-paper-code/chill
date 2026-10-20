@@ -125,7 +125,7 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 	cutoff := time.Now().Add(-10 * time.Second)
 	from := cutoff.Add(-controller.config.Settings.ObservationWindow)
 	history, err := serving.NewObservationLog(serving.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: managerArchive{t.TempDir()},
+		Directory: t.TempDir(), Store: "evidence", Writer: managerArchive{t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)

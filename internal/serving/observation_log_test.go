@@ -1,12 +1,15 @@
 package serving
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,53 +22,52 @@ import (
 type observationArchive struct {
 	directory string
 	fail      bool
+	failKey   string
+	mu        sync.Mutex
+	outcomes  map[string]evidencestore.CreateOutcome
 }
 
 func (a *observationArchive) PutImmutable(_ context.Context, identity evidencestore.ObjectIdentity, source io.Reader) (evidencestore.Receipt, error) {
-	if a.fail {
+	if a.fail || a.failKey != "" && strings.Contains(identity.Key, a.failKey) {
 		return evidencestore.Receipt{}, errors.New("archive unavailable")
 	}
 	if err := identity.Validate(); err != nil {
 		return evidencestore.Receipt{}, err
 	}
+	data, err := io.ReadAll(source)
+	if err != nil || int64(len(data)) != identity.Size {
+		return evidencestore.Receipt{}, errors.Join(err, errors.New("incomplete archive write"))
+	}
 	name := filepath.Join(a.directory, identity.Key)
 	if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
 		return evidencestore.Receipt{}, err
 	}
-	file, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	outcome := evidencestore.CreateOutcomeCreated
-	if errors.Is(err, os.ErrExist) {
+	if existing, err := os.ReadFile(name); err == nil {
+		if !bytes.Equal(existing, data) {
+			return evidencestore.Receipt{}, errors.New("immutable object conflict")
+		}
 		outcome = evidencestore.CreateOutcomeExisting
-	} else if err != nil {
+	} else if err := os.WriteFile(name, data, 0600); err != nil {
 		return evidencestore.Receipt{}, err
-	} else {
-		n, copyErr := io.Copy(file, source)
-		if copyErr == nil {
-			copyErr = file.Sync()
-		}
-		closeErr := file.Close()
-		if copyErr != nil || closeErr != nil || n != identity.Size {
-			return evidencestore.Receipt{}, errors.Join(
-				copyErr, closeErr, errors.New("incomplete archive write"), os.Remove(name),
-			)
-		}
 	}
+	a.mu.Lock()
+	if a.outcomes == nil {
+		a.outcomes = map[string]evidencestore.CreateOutcome{}
+	}
+	a.outcomes[identity.Key] = outcome
+	a.mu.Unlock()
 	return evidencestore.Receipt{SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: identity, Outcome: outcome}, nil
 }
 
 type pausedObservationArchive struct {
-	observationArchive
+	*observationArchive
 	entered chan struct{}
 	resume  chan struct{}
 	once    sync.Once
-	mu      sync.Mutex
-	puts    map[string]int
 }
 
 func (a *pausedObservationArchive) PutImmutable(ctx context.Context, identity evidencestore.ObjectIdentity, source io.Reader) (evidencestore.Receipt, error) {
-	a.mu.Lock()
-	a.puts[identity.Key]++
-	a.mu.Unlock()
 	pause := false
 	a.once.Do(func() {
 		pause = true
@@ -75,6 +77,48 @@ func (a *pausedObservationArchive) PutImmutable(ctx context.Context, identity ev
 		<-a.resume
 	}
 	return a.observationArchive.PutImmutable(ctx, identity, source)
+}
+
+// observationClock chooses the write time, and so the segment file, in tests.
+type observationClock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func (c *observationClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *observationClock) set(at time.Time) {
+	c.mu.Lock()
+	c.at = at
+	c.mu.Unlock()
+}
+
+var observationTestHour = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+
+// clockedObservationLog writes at clock time; its process started at started.
+func clockedObservationLog(t *testing.T, config ObservationLogConfig, started time.Time) (*ObservationLog, *observationClock) {
+	t.Helper()
+	if config.Directory == "" {
+		config.Directory = t.TempDir()
+	}
+	if config.Store == "" {
+		config.Store = "evidence"
+	}
+	if config.Writer == nil {
+		config.Writer = &observationArchive{directory: t.TempDir()}
+	}
+	observationLog, err := NewObservationLog(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := &observationClock{at: started}
+	observationLog.now, observationLog.started = clock.now, started
+	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
+	return observationLog, clock
 }
 
 func awaitObservationLogOperation(t *testing.T, done <-chan error) {
@@ -89,24 +133,16 @@ func awaitObservationLogOperation(t *testing.T, done <-chan error) {
 	}
 }
 
-func TestObservationLogUploadAllowsRuntimeIngressRotationAndConcurrentClose(t *testing.T) {
+func TestObservationLogUploadAllowsRuntimeIngressAndConcurrentClose(t *testing.T) {
 	ctx := context.Background()
 	archive := &pausedObservationArchive{
-		observationArchive: observationArchive{directory: t.TempDir()},
-		entered:            make(chan struct{}), resume: make(chan struct{}), puts: map[string]int{},
+		observationArchive: &observationArchive{directory: t.TempDir()},
+		entered:            make(chan struct{}), resume: make(chan struct{}),
 	}
-	observationLog, err := NewObservationLog(ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: archive,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour.Add(59*time.Minute))
 	var release sync.Once
 	resume := func() { release.Do(func() { close(archive.resume) }) }
-	t.Cleanup(func() {
-		resume()
-		_ = observationLog.Close(ctx)
-	})
+	t.Cleanup(resume)
 	runtime, err := NewRuntime(ctx, RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
@@ -116,28 +152,20 @@ func TestObservationLogUploadAllowsRuntimeIngressRotationAndConcurrentClose(t *t
 	if err := runtime.Publish(definition); err != nil {
 		t.Fatal(err)
 	}
-	appendRequest := func() Receipt {
+	appendRequest := func() {
 		t.Helper()
-		var receipt Receipt
 		done := make(chan error, 1)
 		go func() {
-			var err error
-			receipt, err = runtime.Receive(definition.Name, time.Now())
+			receipt, err := runtime.Receive(definition.Name, time.Now())
 			if err == nil {
 				err = runtime.Response(receipt, "rejected", "InvalidInput")
 			}
 			done <- err
 		}()
 		awaitObservationLogOperation(t, done)
-		return receipt
 	}
-	expire := func() {
-		observationLog.mu.Lock()
-		observationLog.windows[observationLog.active].EndsAt = time.Now().Add(-time.Second)
-		observationLog.mu.Unlock()
-	}
-	receipts := []Receipt{appendRequest()}
-	expire()
+	appendRequest()
+	clock.set(observationTestHour.Add(time.Hour + 30*time.Second))
 	flushDone := make(chan error, 1)
 	go func() { flushDone <- observationLog.Flush(ctx) }()
 	select {
@@ -145,128 +173,347 @@ func TestObservationLogUploadAllowsRuntimeIngressRotationAndConcurrentClose(t *t
 	case <-time.After(5 * time.Second):
 		t.Fatal("flush never reached the file-backed archive")
 	}
-	receipts = append(receipts, appendRequest())
-	expire()
-	receipts = append(receipts, appendRequest())
-
-	var health ObservationLogHealth
+	appendRequest()
+	appendRequest()
 	var observations ObservationResult
 	readDone := make(chan error, 1)
 	go func() {
-		health = observationLog.Health()
 		var err error
 		observations, err = observationLog.Query(definition.UID, time.Time{}, time.Time{}, nil, nil, 0, "")
 		readDone <- err
 	}()
 	awaitObservationLogOperation(t, readDone)
-	if !health.Healthy || len(health.Windows) != 3 || health.Windows[0].Published ||
-		health.Windows[0].ClosedAt == nil || health.Windows[1].ClosedAt == nil || health.Windows[2].ClosedAt != nil {
-		t.Fatalf("upload blocked or changed local rotation: %+v", health)
+	if observations.Total != 3 || observations.Outcomes["rejected"] != 3 || len(observations.Requests) != 3 {
+		t.Fatalf("request rows unavailable during upload: %+v", observations)
 	}
-	if observations.Total != 3 || observations.Outcomes["rejected"] != 3 || len(observations.Requests) != 6 {
-		t.Fatalf("runtime receipt/response facts unavailable during upload: %+v", observations)
-	}
-
 	operations := []func(context.Context) error{observationLog.Flush, observationLog.Close, observationLog.Flush, observationLog.Close}
-	started := make(chan struct{}, len(operations))
 	done := make(chan error, len(operations))
 	for _, operation := range operations {
-		go func(operation func(context.Context) error) {
-			started <- struct{}{}
-			done <- operation(ctx)
-		}(operation)
-	}
-	for range operations {
-		<-started
+		go func(operation func(context.Context) error) { done <- operation(ctx) }(operation)
 	}
 	resume()
 	awaitObservationLogOperation(t, flushDone)
 	for range operations {
 		awaitObservationLogOperation(t, done)
 	}
-	checkArchivedRuntimeRequests(t, archive, observationLog.Health(), receipts)
-}
-
-func checkArchivedRuntimeRequests(t *testing.T, archive *pausedObservationArchive, health ObservationLogHealth, receipts []Receipt) {
-	t.Helper()
-	if !health.Healthy || len(health.Windows) != 3 {
-		t.Fatalf("concurrent publication changed retained windows: %+v", health)
+	rows := gunzipLines(t, filepath.Join(archive.directory, observationArchivePrefix+"20261020T10", "requests.jsonl.gz"))
+	if len(rows) != 1 || !strings.Contains(rows[0], `"kind":"final"`) {
+		t.Fatalf("past hour archive lost or invented rows: %q", rows)
 	}
-	retained := make(map[string]map[string]int)
-	for _, window := range health.Windows {
-		if window.ClosedAt == nil || !window.Published || window.Incomplete || len(window.Objects) != 5 {
-			t.Fatalf("closed window lost publication: %+v", window)
-		}
-		for _, object := range window.Objects {
-			if _, err := os.Stat(filepath.Join(archive.directory, object.Key)); err != nil {
-				t.Fatal(err)
-			}
-		}
-		checkArchivedRequestStream(t, archive.directory, window, retained)
-	}
-	if len(retained) != len(receipts) {
-		t.Fatalf("publication lost or invented runtime requests: %+v", retained)
-	}
-	for _, receipt := range receipts {
-		if events := retained[receipt.ID]; len(events) != 2 || events[phaseReceived] != 1 || events[eventResponseFinished] != 1 {
-			t.Fatalf("publication lost or duplicated request %s: %+v", receipt.ID, events)
-		}
-	}
-	archive.mu.Lock()
-	defer archive.mu.Unlock()
-	if len(archive.puts) != 15 {
-		t.Fatalf("publication skipped closed-window objects: %+v", archive.puts)
-	}
-	for key, count := range archive.puts {
-		if count != 1 {
-			t.Fatalf("concurrent Flush/Close published %s %d times", key, count)
-		}
+	if !observationLog.Health().Healthy {
+		t.Fatalf("concurrent archive passes changed local health: %+v", observationLog.Health())
 	}
 }
 
-func checkArchivedRequestStream(t *testing.T, directory string, window ObservationWindow, retained map[string]map[string]int) {
+func gunzipLines(t *testing.T, name string) []string {
 	t.Helper()
-	file, err := os.Open(filepath.Join(directory, "serving", window.ID, "requests.jsonl"))
+	file, err := os.Open(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			t.Error(err)
-		}
-	}()
-	decoder := json.NewDecoder(file)
-	var header ObservationWindow
-	if err := decoder.Decode(&header); err != nil {
+	defer func() { _ = file.Close() }()
+	reader, err := gzip.NewReader(file)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if header.ID != window.ID {
-		t.Fatalf("archived stream belongs to another window: %+v", header)
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for {
-		var record observationRecord
-		err := decoder.Decode(&record)
-		if errors.Is(err, io.EOF) {
-			break
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+}
+
+func TestObservationSegmentsFollowWriteMinute(t *testing.T) {
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	for _, at := range []time.Time{observationTestHour.Add(3*time.Minute + 59*time.Second), observationTestHour.Add(4 * time.Minute), observationTestHour.Add(time.Hour)} {
+		clock.set(at)
+		// The event time does not choose the file; the write time does.
+		if err := observationLog.ManagementEvent(ManagementEvent{WorkloadUID: "uid", Kind: "apply", At: observationTestHour}); err != nil {
+			t.Fatal(err)
 		}
+	}
+	for _, name := range []string{"20261020T10/management.03.jsonl", "20261020T10/management.04.jsonl", "20261020T11/management.00.jsonl"} {
+		data, err := os.ReadFile(filepath.Join(observationLog.root, name))
+		if err != nil || bytes.Count(data, []byte{'\n'}) != 1 {
+			t.Fatalf("%s: %q %v", name, data, err)
+		}
+	}
+}
+
+func seedObservationMinutes(t *testing.T, observationLog *ObservationLog, clock *observationClock, minutes ...time.Time) {
+	t.Helper()
+	for index, at := range minutes {
+		clock.set(at)
+		id := "request-" + at.Format("1504")
+		d := &Definition{Name: "workload", UID: "uid", Generation: int64(index + 1)}
+		if err := observationLog.DefinitionRecord(d); err != nil {
+			t.Fatal(err)
+		}
+		for _, kind := range []string{phaseReceived, phaseAccepted, eventResponseFinished} {
+			if err := observationLog.RequestEvent(RequestEvent{RequestID: id, WorkloadUID: "uid", Definition: d.Identity(), Kind: kind, At: at, ReceivedAt: at, Outcome: map[string]string{eventResponseFinished: outcomeCompleted}[kind]}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := observationLog.RequestClosed(id); err != nil {
+			t.Fatal(err)
+		}
+		snapshot := SchedulerSnapshot{At: at, Workloads: []*Definition{d}}
+		if err := observationLog.SchedulerRecord(SchedulerObservation{At: at, Snapshot: &snapshot}); err != nil {
+			t.Fatal(err)
+		}
+		if err := observationLog.ManagementEvent(ManagementEvent{WorkloadUID: "uid", Kind: "apply", At: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestObservationArchiveRetriesHourUntilEveryStreamUploads(t *testing.T) {
+	ctx := context.Background()
+	archive := &observationArchive{directory: t.TempDir()}
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(10*time.Second), observationTestHour.Add(time.Minute+10*time.Second))
+	hour := filepath.Join(observationLog.root, "20261020T10")
+	clock.set(observationTestHour.Add(time.Hour + 5*time.Minute))
+	if err := observationLog.ManagementEvent(ManagementEvent{WorkloadUID: "uid", Kind: "apply", At: clock.now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := observationLog.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, stream := range observationStreams {
+		var want []string
+		for _, minute := range []string{"00", "01"} {
+			data, err := os.ReadFile(filepath.Join(hour, stream+"."+minute+".jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want = append(want, strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")...)
+		}
+		got := gunzipLines(t, filepath.Join(archive.directory, observationArchivePrefix+"20261020T10", stream+".jsonl.gz"))
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Fatalf("%s archive differs from its minute files:\n got %q\nwant %q", stream, got, want)
+		}
+	}
+	if _, err := os.Stat(hour); err != nil {
+		t.Fatalf("the previous hour was deleted: %v", err)
+	}
+	clock.set(observationTestHour.Add(2*time.Hour + time.Minute))
+	if err := os.Remove(filepath.Join(archive.directory, observationArchivePrefix+"20261020T10", "scheduler.jsonl.gz")); err != nil {
+		t.Fatal(err)
+	}
+	archive.failKey = "scheduler"
+	if err := observationLog.Flush(ctx); err == nil {
+		t.Fatal("failed stream upload was hidden")
+	}
+	if _, err := os.Stat(hour); err != nil {
+		t.Fatalf("hour deleted after a failed stream: %v", err)
+	}
+	archive.failKey = ""
+	if err := observationLog.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(hour); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("uploaded hour was kept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(observationLog.root, "20261020T11")); err != nil {
+		t.Fatalf("the previous hour was deleted: %v", err)
+	}
+	keys := map[evidencestore.CreateOutcome]int{}
+	for key, outcome := range archive.outcomes {
+		if strings.Contains(key, "20261020T10") {
+			keys[outcome]++
+		}
+	}
+	if keys[evidencestore.CreateOutcomeCreated] != 1 || keys[evidencestore.CreateOutcomeExisting] != 3 {
+		t.Fatalf("retry did not mix Existing and Created: %+v", archive.outcomes)
+	}
+}
+
+func TestObservationStartTruncatesTornLines(t *testing.T) {
+	config := ObservationLogConfig{Directory: t.TempDir()}
+	observationLog, clock := clockedObservationLog(t, config, observationTestHour)
+	config = observationLog.config
+	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(time.Second))
+	if err := observationLog.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	torn := []string{
+		filepath.Join(observationLog.root, "20261020T10", "management.00.jsonl"),
+		filepath.Join(observationLog.root, observationDefinitionsFile),
+	}
+	for _, name := range torn {
+		file, err := os.OpenFile(name, os.O_APPEND|os.O_WRONLY, 0600)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if record.Window != window.ID || record.Request == nil {
-			t.Fatalf("invalid archived request fact: %+v", record)
+		if _, err := file.WriteString(`{"workloadUID":"uid","kind":`); err != nil {
+			t.Fatal(err)
 		}
-		event := record.Request
-		if retained[event.RequestID] == nil {
-			retained[event.RequestID] = map[string]int{}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
 		}
-		retained[event.RequestID][event.Kind]++
+	}
+	restored, _ := clockedObservationLog(t, config, observationTestHour)
+	for _, name := range torn {
+		data, err := os.ReadFile(name)
+		if err != nil || bytes.Count(data, []byte{'\n'}) != 1 || data[len(data)-1] != '\n' {
+			t.Fatalf("%s kept a torn line: %q %v", name, data, err)
+		}
+	}
+	if err := restored.ManagementEvent(ManagementEvent{WorkloadUID: "uid", Kind: "apply", At: observationTestHour}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := restored.Query("uid", time.Time{}, time.Time{}, nil, nil, 0, "")
+	if err != nil || len(result.Management) != 2 || result.Total != 1 || len(result.Definitions) != 1 {
+		t.Fatalf("repaired files lost records: %+v %v", result, err)
+	}
+}
+
+func TestObservationQueriesOpenOnlyTheirRange(t *testing.T) {
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	from := observationTestHour.Add(30 * time.Minute)
+	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(time.Second), from.Add(-30*time.Second), from.Add(time.Second))
+	// Files outside each query's range would fail any read.
+	for _, name := range []string{"requests.00", "management.00", "management.31", "scheduler.00", "scheduler.33"} {
+		if err := os.WriteFile(filepath.Join(observationLog.root, "20261020T10", name+".jsonl"), []byte("not json\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	to := from.Add(2 * time.Second)
+	if result, err := observationLog.Query("uid", from, to, nil, nil, 0, ""); err != nil || result.Total != 1 || len(result.Management) != 1 {
+		t.Fatalf("workload query: %+v %v", result, err)
+	}
+	if load, err := observationLog.LoadWindow(from, to); err != nil || len(load.Arrivals) != 1 {
+		t.Fatalf("load window: %+v %v", load, err)
+	}
+	if page, _, _, err := observationLog.SchedulerObservationPage(from, to, 10, 0); err != nil || len(page) != 1 {
+		t.Fatalf("scheduler page: %+v %v", page, err)
+	}
+	if power, err := observationLog.OperatingPower(from, to, nil, 10); err != nil || power.GapUntil != nil {
+		t.Fatalf("operating power: %+v %v", power, err)
+	}
+	if !observationLog.Health().Healthy {
+		t.Fatalf("a query opened a file outside its range: %+v", observationLog.Health())
+	}
+}
+
+func TestObservationGapBeforeLocalRetention(t *testing.T) {
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour.Add(5*time.Minute))
+	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(10*time.Minute))
+	early, start := observationTestHour, observationTestHour.Add(5*time.Minute)
+	result, err := observationLog.Query("uid", early, early.Add(time.Hour), nil, nil, 0, "")
+	if err != nil || result.GapUntil == nil || !result.GapUntil.Equal(start) || result.Total != 1 {
+		t.Fatalf("workload gap: %+v %v", result, err)
+	}
+	load, err := observationLog.LoadWindow(early, early.Add(time.Hour))
+	if err != nil || load.GapUntil == nil || !load.GapUntil.Equal(start) {
+		t.Fatalf("load gap: %+v %v", load, err)
+	}
+	var domain *Error
+	if _, err := observationLog.SchedulerHistoryWindow(early, early.Add(time.Hour)); !errors.As(err, &domain) || domain.Code != "ObservationGap" {
+		t.Fatalf("history before retention: %v", err)
+	}
+	if _, err := observationLog.SchedulerHistoryWindow(start, start.Add(time.Hour)); err != nil {
+		t.Fatalf("history after retention: %v", err)
+	}
+	power, err := observationLog.OperatingPower(early, early.Add(time.Hour), nil, 10)
+	if err != nil || power.GapUntil == nil || power.Complete || !strings.Contains(strings.Join(power.Reasons, " "), "retained locally only") {
+		t.Fatalf("power gap: %+v %v", power, err)
+	}
+	if fresh, err := observationLog.Query("uid", start, start.Add(time.Hour), nil, nil, 0, ""); err != nil || fresh.GapUntil != nil {
+		t.Fatalf("retained interval reported a gap: %+v %v", fresh, err)
+	}
+}
+
+func TestObservationQueryDuringDeletionKeepsResult(t *testing.T) {
+	ctx := context.Background()
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(time.Second), observationTestHour.Add(time.Minute))
+	want, err := observationLog.Query("uid", time.Time{}, time.Time{}, nil, nil, 0, "")
+	if err != nil || want.Total != 2 {
+		t.Fatalf("seeded rows: %+v %v", want, err)
+	}
+	read, err := observationLog.capture(map[string][2]time.Time{observationRequestStream: {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.close()
+	clock.set(observationTestHour.Add(3 * time.Hour))
+	if err := observationLog.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(observationLog.root, "20261020T10")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("hour was not deleted: %v", err)
+	}
+	rows, err := observationLog.requestRows(read, func(*requestEnvelope) bool { return true })
+	if err != nil || len(rows) != len(want.Requests) {
+		t.Fatalf("deletion changed an open read: %+v %v", rows, err)
+	}
+	// Concurrent reads and deletion under -race.
+	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(3*time.Hour))
+	clock.set(observationTestHour.Add(6 * time.Hour))
+	done := make(chan error, 1)
+	go func() { done <- observationLog.Flush(ctx) }()
+	for range 20 {
+		if _, err := observationLog.Query("uid", time.Time{}, time.Time{}, nil, nil, 0, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	awaitObservationLogOperation(t, done)
+}
+
+//nolint:gocyclo // Every final row field against its event.
+func TestRequestFinalRowMatchesEventCohort(t *testing.T) {
+	observationLog, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	d := &Definition{Name: "workload", UID: "uid", Generation: 1, SLO: SLO{Percentile: 95, TargetLatency: time.Second}}
+	if err := observationLog.DefinitionRecord(d); err != nil {
+		t.Fatal(err)
+	}
+	received := observationTestHour.Add(time.Second)
+	at := func(ms int) time.Time { return received.Add(time.Duration(ms) * time.Millisecond) }
+	assignment := &Assignment{Node: NodeReference{Name: "node", UID: "node-uid"}, Instance: "i1", Profile: "p1", DispatchedAt: at(20)}
+	native := &BackendProgress{Phase: phaseFinished, BatchID: 7, BatchSize: 2, QueueMS: 3, ServiceMS: 40, BackendMS: 45, NativeElapsedMS: 50, DecisionID: "decision", ExecutionComplete: true}
+	for _, e := range []RequestEvent{
+		{Kind: phaseReceived, At: received},
+		{Kind: "validated", At: at(5), ElapsedNanos: int64(5 * time.Millisecond)},
+		{Kind: phaseAccepted, At: at(10), ElapsedNanos: int64(10 * time.Millisecond)},
+		{Kind: phaseAssigned, At: at(20), ElapsedNanos: int64(20 * time.Millisecond), Assignment: assignment},
+		{Kind: "backend_queued", At: at(30)},
+		{Kind: "backend_running", At: at(40)},
+		{Kind: "backend_finished", At: at(90), NativeProgress: native, ExecutionComplete: true},
+		{Kind: eventBackendExchangeFinished, At: at(95), ElapsedNanos: int64(95 * time.Millisecond), Outcome: outcomeCompleted, ClientSpanNanos: 7},
+		{Kind: eventResponseFinished, At: at(100), ElapsedNanos: int64(100 * time.Millisecond), Outcome: outcomeCompleted},
+	} {
+		e.RequestID, e.WorkloadUID, e.Definition, e.ReceivedAt = restoredRequest, d.UID, d.Identity(), received
+		if err := observationLog.RequestEvent(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := observationLog.RequestClosed(restoredRequest); err != nil {
+		t.Fatal(err)
+	}
+	result, err := observationLog.Query(d.UID, received, received.Add(time.Second), nil, nil, 0, "")
+	if err != nil || len(result.Requests) != 1 || len(result.Cohorts) != 1 {
+		t.Fatalf("final row: %+v %v", result, err)
+	}
+	row := result.Requests[0]
+	ms := func(value *int64) int64 { return *value / int64(time.Millisecond) }
+	if row.Kind != requestRowFinal || row.DefinitionID != d.Identity() || row.ProfileID != "p1" || row.Instance != "i1" || row.DecisionID != "decision" ||
+		ms(row.ValidatedNanos) != 5 || ms(row.AcceptedNanos) != 10 || ms(row.DispatchedNanos) != 20 || ms(row.QueuedNanos) != 30 ||
+		ms(row.RunningNanos) != 40 || ms(row.ExecutedNanos) != 90 || ms(row.ExchangeNanos) != 95 || ms(row.ElapsedNanos) != 100 ||
+		row.BatchID != 7 || row.BatchSize != 2 || *row.NativeElapsedMS != 50 || !row.ExecutionComplete || row.ClientSpanNanos != 7 || row.DispatchedAt != nil {
+		t.Fatalf("final row fields: %+v", row)
+	}
+	cohort := result.Cohorts[0]
+	if len(cohort.LatencyNanos) != 1 || cohort.LatencyNanos[0] != float64(100*time.Millisecond) ||
+		len(cohort.CompletionResidualNanos) != 1 || cohort.CompletionResidualNanos[0] != float64(30*time.Millisecond) {
+		t.Fatalf("latency or completion residual: %+v", cohort)
 	}
 }
 
 func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 	ctx := context.Background()
-	archive := &observationArchive{directory: t.TempDir()}
-	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: archive}
+	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}}
 	observationLog, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
@@ -301,10 +548,15 @@ func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 	appendEvent("canceled", first, "response_finished", "canceled", 500)
 	appendEvent("new", replacement, "received", "", 0)
 	appendEvent("new", replacement, "response_finished", "completed", 999)
+	for _, id := range []string{"finished", "unfinished", "delivery", "canceled", "new"} {
+		if err := observationLog.RequestClosed(id); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := observationLog.ManagementEvent(ManagementEvent{WorkloadUID: first.UID, Kind: "delete", Phase: "applied", Before: changed, At: now}); err != nil {
 		t.Fatal(err)
 	}
-	checkObservationLogCohortPopulation(t, observationLog, archive, first, changed, now)
+	checkObservationLogCohortPopulation(t, observationLog, first, changed, now)
 	restored, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
@@ -342,9 +594,7 @@ func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 	}
 }
 
-func checkObservationLogCohortPopulation(
-	t *testing.T, observationLog *ObservationLog, archive *observationArchive, first, changed *Definition, now time.Time,
-) {
+func checkObservationLogCohortPopulation(t *testing.T, observationLog *ObservationLog, first, changed *Definition, now time.Time) {
 	t.Helper()
 	before, err := observationLog.Query(first.UID, now, now.Add(time.Second), nil, nil, 1, "")
 	if err != nil {
@@ -368,147 +618,183 @@ func checkObservationLogCohortPopulation(
 	if err := observationLog.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	health := observationLog.Health()
-	if !health.Windows[0].Published {
-		t.Fatalf("window not archived: %+v", health)
-	}
-	for _, object := range health.Windows[0].Objects {
-		if _, err := os.Stat(filepath.Join(archive.directory, object.Key)); err != nil {
+}
+
+func TestRequestFinalAfterTwoMinutesIsFoundByQuery(t *testing.T) {
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	received := observationTestHour.Add(time.Second)
+	assignment := &Assignment{Node: NodeReference{Name: "node", UID: "node-uid"}, Instance: "i1", Profile: "p1", DispatchedAt: received}
+	for _, kind := range []string{phaseReceived, phaseAccepted, phaseAssigned} {
+		if err := observationLog.RequestEvent(RequestEvent{RequestID: "late", WorkloadUID: "uid", Kind: kind, At: received, ReceivedAt: received, Assignment: assignment}); err != nil {
 			t.Fatal(err)
 		}
 	}
-}
-
-func TestObservationLogArchiveFailureAndInterruptedWindow(t *testing.T) {
-	ctx := context.Background()
-	archive := &observationArchive{directory: t.TempDir(), fail: true}
-	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: archive}
-	observationLog, err := NewObservationLog(config)
-	if err != nil {
+	clock.set(received.Add(2 * time.Minute))
+	if err := observationLog.RequestEvent(RequestEvent{RequestID: "late", Kind: eventResponseFinished, At: clock.now(), ReceivedAt: received, ElapsedNanos: int64(2 * time.Minute), Outcome: outcomeCompleted}); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
-	for _, kind := range []string{"received", "accepted"} {
-		if err := observationLog.RequestEvent(RequestEvent{RequestID: "interrupted", WorkloadUID: "uid", Kind: kind, At: now, ReceivedAt: now}); err != nil {
+	if err := observationLog.RequestClosed("late"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := observationLog.Query("uid", received, received.Add(time.Second), nil, nil, 0, "")
+	if err != nil || len(result.Requests) != 1 || result.Requests[0].Kind != requestRowFinal || result.Outcomes[outcomeCompleted] != 1 {
+		t.Fatalf("late final row missed: %+v %v", result, err)
+	}
+}
+
+func TestLoadWindowCountsAssignedAndFinalRequestOnce(t *testing.T) {
+	observationLog, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	received := observationTestHour.Add(time.Second)
+	assignment := &Assignment{Node: NodeReference{Name: "node", UID: "node-uid"}, Instance: "i1", Profile: "p1", DispatchedAt: received.Add(time.Millisecond)}
+	for _, e := range []RequestEvent{
+		{Kind: phaseReceived, At: received},
+		{Kind: "validated", At: received},
+		{Kind: phaseAccepted, At: received},
+		{Kind: phaseAssigned, At: received.Add(time.Millisecond), Assignment: assignment},
+		{Kind: eventResponseFinished, At: received.Add(2 * time.Millisecond), ElapsedNanos: int64(2 * time.Millisecond), Outcome: outcomeCompleted},
+	} {
+		e.RequestID, e.WorkloadUID, e.ReceivedAt = restoredRequest, "uid", received
+		if err := observationLog.RequestEvent(e); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Simulate process death, retaining raw streams and an open-window metadata.
-	observationLog.mu.Lock()
-	for _, file := range observationLog.files {
-		if err := file.Close(); err != nil {
+	if err := observationLog.RequestClosed(restoredRequest); err != nil {
+		t.Fatal(err)
+	}
+	if rows := readRequestRows(t, observationLog.config.Directory); len(rows) != 2 {
+		t.Fatalf("assigned and final rows: %+v", rows)
+	}
+	load, err := observationLog.LoadWindow(received, received.Add(time.Second))
+	if err != nil || len(load.Arrivals) != 1 || len(load.Workloads) != 1 || load.Workloads[0].Received != 1 ||
+		load.Workloads[0].Accepted != 1 || load.Workloads[0].Assigned != 1 || load.Workloads[0].Completed != 1 || load.Workloads[0].Instances["i1"] != 1 {
+		t.Fatalf("load counted a request twice: %+v %v", load, err)
+	}
+	arrivals, err := observationLog.SchedulerArrivals(received, received.Add(time.Second))
+	if err != nil || len(arrivals) != 1 || !arrivals[0].Accepted || !arrivals[0].Compute || arrivals[0].Outcome != outcomeCompleted {
+		t.Fatalf("arrivals: %+v %v", arrivals, err)
+	}
+}
+
+func TestAssignmentAppendFailureRevertsAssignment(t *testing.T) {
+	r, i, _ := routingRuntime(t, nil)
+	observationLog := r.config.ObservationLog
+	// A file where the hour directory belongs makes every append fail.
+	observationLog.now = func() time.Time { return observationTestHour }
+	if err := os.WriteFile(filepath.Join(observationLog.root, "20261020T10"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, snapshot := schedulerFixture()
+	d := snapshot.Workloads[0]
+	receipt, err := r.Receive(d.Name, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = call.Wait(context.Background())
+	var domain *Error
+	if !errors.As(err, &domain) || domain.Code != "ObservationUnavailable" || call.assignment != nil || r.instances[i.ID].outstanding != 0 {
+		t.Fatalf("failed assigned row kept the assignment: %v %+v", err, call.assignment)
+	}
+}
+
+func TestBackendProgressForUnknownRequestWritesNothing(t *testing.T) {
+	observationLog, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	// A native log read again after the request closed.
+	for _, kind := range []string{phaseReceived, eventResponseFinished} {
+		if err := observationLog.RequestEvent(RequestEvent{RequestID: "settled", WorkloadUID: "uid", Kind: kind, At: observationTestHour, Outcome: "rejected"}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	observationLog.closed = true
-	observationLog.mu.Unlock()
-	oldWindow := observationLog.Health().Windows[0]
-	file, err := os.OpenFile(filepath.Join(config.Directory, oldWindow.ID, "requests.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
+	if err := observationLog.RequestClosed("settled"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := file.WriteString("{\"request\":"); err != nil {
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := NewObservationLog(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := restored.Query("uid", time.Time{}, time.Time{}, nil, nil, 0, "")
-	if err != nil || result.Outcomes[outcomeIncomplete] != 1 || len(result.IncompleteWindows) != 1 {
-		t.Fatalf("lost interrupted record: %+v %v", result, err)
-	}
-	if err := restored.Close(ctx); err == nil {
-		t.Fatal("archive failure was hidden")
-	}
-	for _, w := range restored.Health().Windows {
-		if w.Published {
-			t.Fatal("failed archive marked published")
+	for _, kind := range []string{"backend_queued", "backend_running", "backend_finished"} {
+		if err := observationLog.RequestEvent(RequestEvent{RequestID: "settled", WorkloadUID: "uid", Kind: kind, At: observationTestHour}); err != nil {
+			t.Fatal(err)
 		}
 	}
-	archive.fail = false
-	if err := restored.Flush(ctx); err != nil {
+	if err := observationLog.RequestClosed("settled"); err != nil {
 		t.Fatal(err)
 	}
-	for _, w := range restored.Health().Windows {
-		if !w.Published {
-			t.Fatal("archive retry did not publish")
-		}
+	if rows := readRequestRows(t, observationLog.config.Directory); len(rows) != 1 || rows[0].QueuedNanos != nil || len(observationLog.open) != 0 {
+		t.Fatalf("unknown request progress wrote rows: %+v", rows)
 	}
 }
 
-func TestObservationLogArchiveFailureDoesNotPoisonRetainedRecords(t *testing.T) {
-	ctx := context.Background()
-	archive := &observationArchive{directory: t.TempDir(), fail: true}
-	observationLog, err := NewObservationLog(ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: archive,
-	})
-	if err != nil {
+// Scale: a profile with 19 evidence references, as in the E1 assignment.
+func TestRequestRowsStayUnderBudgetWithNineteenEvidenceReferences(t *testing.T) {
+	observationLog, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	_, snapshot := schedulerFixture()
+	profile := *snapshot.Instances[0].Profile
+	profile.Evidence = make([]evidencestore.ObjectIdentity, 19)
+	for index := range profile.Evidence {
+		profile.Evidence[index] = evidencestore.ObjectIdentity{Store: "evidence", Key: "profiling/runs/node-a/0123456789abcdef/raw/trial-" + strings.Repeat("0", 2) + string(rune('a'+index)) + ".json", Size: 123456}
+	}
+	d := snapshot.Workloads[0]
+	if err := observationLog.DefinitionRecord(d); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
-	if err := observationLog.RequestEvent(RequestEvent{
-		RequestID: "retained", WorkloadUID: "uid", Kind: "received", At: now,
-	}); err != nil {
+	received := observationTestHour.Add(time.Second)
+	at := func(ms int) time.Time { return received.Add(time.Duration(ms) * time.Millisecond) }
+	assignment := &Assignment{Node: NodeReference{Name: "edge-node-a", UID: "6f1c8f0e-3b8a-4c6f-9d55-1c2b3a4d5e6f"}, Instance: "pool-6f1c8f0e-instance-0", Profile: profile.ID, DispatchedAt: at(2), ProfileBody: &profile}
+	native := &BackendProgress{Phase: phaseFinished, BatchID: 123456, BatchSize: 4, QueueMS: 12.345, ServiceMS: 45.678, BackendMS: 50.123, PreprocessMS: 3.21, PostprocessMS: 1.23, NativeElapsedMS: 61.234, DecisionID: "decision-20261020T100000.123456789Z", ExecutionComplete: true}
+	for _, e := range []RequestEvent{
+		{Kind: phaseReceived, At: received},
+		{Kind: "validated", At: at(1)},
+		{Kind: phaseAccepted, At: at(1)},
+		{Kind: phaseAssigned, At: at(2), Assignment: assignment},
+		{Kind: "backend_queued", At: at(3), NativeProgress: native},
+		{Kind: "backend_running", At: at(20), NativeProgress: native},
+		{Kind: "backend_finished", At: at(70), NativeProgress: native, ExecutionComplete: true},
+		{Kind: eventBackendExchangeFinished, At: at(75), Outcome: outcomeCompleted, ClientSpanNanos: 74123456},
+		{Kind: eventResponseFinished, At: at(76), Outcome: outcomeCompleted},
+	} {
+		e.RequestID, e.WorkloadUID, e.Definition, e.ReceivedAt, e.LifetimeNanos = "0123456789abcdef0123456789abcdef", d.UID, d.Identity(), received, int64(time.Second)
+		e.Assignment = assignment
+		if err := observationLog.RequestEvent(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := observationLog.RequestClosed("0123456789abcdef0123456789abcdef"); err != nil {
 		t.Fatal(err)
 	}
-	if err := observationLog.Close(ctx); err == nil {
-		t.Fatal("archive failure was hidden")
+	sizes := map[string]int{}
+	total := 0
+	for _, row := range readRequestRows(t, observationLog.config.Directory) {
+		data, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sizes[row.Kind] = len(data) + 1
+		total += len(data) + 1
 	}
-	if !observationLog.Health().Healthy || observationLog.Health().Windows[0].Published {
-		t.Fatal("archive-only failure changed local durability or claimed publication")
-	}
-	archive.fail = false
-	if err := observationLog.Flush(ctx); err != nil {
-		t.Fatal(err)
-	}
-	result, err := observationLog.Query("uid", time.Time{}, time.Time{}, nil, nil, 0, "")
-	if err != nil || result.Total != 1 || !observationLog.Health().Healthy || !observationLog.Health().Windows[0].Published {
-		t.Fatalf("retained event or health lost after publication: %+v %v", result, err)
+	t.Logf("request row bytes: assigned %d final %d total %d", sizes[requestRowAssigned], sizes[requestRowFinal], total)
+	if total > 1536 {
+		t.Fatalf("request rows %d bytes exceed 1.5 KB", total)
 	}
 }
 
-func TestObservationLogAppendFailurePublishesIncompleteWindow(t *testing.T) {
-	archive := &observationArchive{directory: t.TempDir()}
+// Startup reads only the root definitions and the retained hours; older
+// stores under the directory, such as v1alpha4 windows, are never opened.
+func TestObservationStartupIgnoresOtherHistory(t *testing.T) {
 	directory := t.TempDir()
-	observationLog, err := NewObservationLog(ObservationLogConfig{
-		Directory: directory, Store: "evidence", Window: time.Hour, Writer: archive,
-	})
+	window := filepath.Join(directory, "20261019T000000.000000000Z-old")
+	if err := os.MkdirAll(window, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"metadata.json", "requests.jsonl", "scheduler.jsonl"} {
+		if err := os.WriteFile(filepath.Join(window, name), []byte("not json\n"), 0000); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: directory, Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
-	}
-	requests := observationLog.files["requests"]
-	if err := requests.Close(); err != nil {
-		t.Fatal(err)
-	}
-	observationLog.files["requests"], err = os.Open(filepath.Join(directory, observationLog.Health().Windows[0].ID, "requests.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := observationLog.RequestEvent(RequestEvent{
-		RequestID: "lost", WorkloadUID: "uid", Kind: "received", At: time.Now().UTC(),
-	}); err == nil {
-		t.Fatal("readonly stream accepted an event")
 	}
 	if err := observationLog.Close(context.Background()); err != nil {
 		t.Fatal(err)
-	}
-	health := observationLog.Health()
-	if health.Healthy {
-		t.Fatal("event loss did not close local durability health")
-	}
-	data, err := os.ReadFile(filepath.Join(archive.directory, "serving", health.Windows[0].ID, "metadata.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var window ObservationWindow
-	if err := json.Unmarshal(data, &window); err != nil {
-		t.Fatal(err)
-	}
-	if !window.Incomplete {
-		t.Fatal("missing event was archived as a complete window")
 	}
 }

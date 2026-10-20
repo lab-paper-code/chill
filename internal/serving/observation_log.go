@@ -1,10 +1,14 @@
 package serving
 
 import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,41 +23,24 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const observationSchema = "chill.dacs.io/serving-observations.v1alpha4"
-const observationSchedulerStream = "scheduler"
-const observationRequestStream = "requests"
-const observationDefinitionStream = "definitions"
+const (
+	observationVersion          = "v1alpha5"
+	observationRequestStream    = "requests"
+	observationSchedulerStream  = "scheduler"
+	observationManagementStream = "management"
+	observationCatalogStream    = "catalog"
+	observationDefinitionsFile  = "definitions.jsonl"
+	observationHourLayout       = "20060102T15"
+)
+
+var observationStreams = []string{observationRequestStream, observationSchedulerStream, observationManagementStream, observationCatalogStream}
 
 type ObservationLogConfig struct {
 	Directory   string
 	Store       string
-	Window      time.Duration
 	Writer      evidencestore.ImmutableWriter
 	Definitions []string
 	Outcomes    []string
-}
-
-type ObservationWindow struct {
-	SchemaVersion string                         `json:"schemaVersion"`
-	ID            string                         `json:"id"`
-	StartedAt     time.Time                      `json:"startedAt"`
-	EndsAt        time.Time                      `json:"endsAt"`
-	ClosedAt      *time.Time                     `json:"closedAt,omitempty"`
-	Duration      time.Duration                  `json:"durationNanos"`
-	Definitions   []string                       `json:"definitions,omitempty"`
-	Outcomes      []string                       `json:"outcomes,omitempty"`
-	Incomplete    bool                           `json:"incomplete"`
-	Published     bool                           `json:"published"`
-	Objects       []evidencestore.ObjectIdentity `json:"objects,omitempty"`
-}
-
-// overlaps uses the actual retained interval, not a closed window's planned end.
-func (w ObservationWindow) overlaps(from, to time.Time) bool {
-	end := w.EndsAt
-	if w.ClosedAt != nil && w.ClosedAt.Before(end) {
-		end = *w.ClosedAt
-	}
-	return w.StartedAt.Before(to) && end.After(from)
 }
 
 type DefinitionObservation struct {
@@ -61,456 +48,551 @@ type DefinitionObservation struct {
 	Definition *Definition `json:"definition"`
 }
 
-type observationRecord struct {
-	SchemaVersion string                 `json:"schemaVersion"`
-	Window        string                 `json:"window"`
-	Definition    *DefinitionObservation `json:"definition,omitempty"`
-	Request       *RequestEvent          `json:"request,omitempty"`
-	Management    *ManagementEvent       `json:"management,omitempty"`
-	Scheduler     *SchedulerObservation  `json:"scheduler,omitempty"`
+// RequestRow is one request in the requests stream. A final row supersedes the
+// assigned row of the same request. Stage offsets count from ReceivedAt; an
+// unreached stage stays empty.
+type RequestRow struct {
+	Kind              string         `json:"kind"`
+	RequestID         string         `json:"requestID"`
+	WorkloadUID       string         `json:"workloadUID,omitempty"`
+	DefinitionID      string         `json:"definitionID,omitempty"`
+	Node              *NodeReference `json:"node,omitempty"`
+	Instance          string         `json:"instance,omitempty"`
+	ProfileID         string         `json:"profileID,omitempty"`
+	DecisionID        string         `json:"decisionID,omitempty"`
+	Outcome           string         `json:"outcome,omitempty"`
+	Error             string         `json:"error,omitempty"`
+	ExecutionComplete bool           `json:"executionComplete,omitempty"`
+	ClientSpanNanos   int64          `json:"clientSpanNanos,omitempty"`
+	ReceivedAt        time.Time      `json:"receivedAt"`
+	LifetimeNanos     int64          `json:"lifetimeNanos,omitempty"`
+	DispatchedAt      *time.Time     `json:"dispatchedAt,omitempty"`
+	ElapsedNanos      *int64         `json:"elapsedNanos,omitempty"`
+	ValidatedNanos    *int64         `json:"validatedNanos,omitempty"`
+	AcceptedNanos     *int64         `json:"acceptedNanos,omitempty"`
+	DispatchedNanos   *int64         `json:"dispatchedNanos,omitempty"`
+	QueuedNanos       *int64         `json:"queuedNanos,omitempty"`
+	RunningNanos      *int64         `json:"runningNanos,omitempty"`
+	ExecutedNanos     *int64         `json:"executedNanos,omitempty"`
+	ExchangeNanos     *int64         `json:"exchangeNanos,omitempty"`
+	BatchID           uint64         `json:"batchID,omitempty"`
+	BatchSize         int            `json:"batchSize,omitempty"`
+	QueueMS           float64        `json:"queueMS,omitempty"`
+	ServiceMS         float64        `json:"serviceMS,omitempty"`
+	BackendMS         float64        `json:"backendMS,omitempty"`
+	PreprocessMS      float64        `json:"preprocessMS,omitempty"`
+	PostprocessMS     float64        `json:"postprocessMS,omitempty"`
+	FirstTokenMS      float64        `json:"firstTokenMS,omitempty"`
+	Units             int            `json:"units,omitempty"`
+	NativeElapsedMS   *float64       `json:"nativeElapsedMS,omitempty"`
+	profile           *Profile
+}
+
+const (
+	requestRowAssigned = "assigned"
+	requestRowFinal    = "final"
+)
+
+func (r *RequestRow) fold(e *RequestEvent) {
+	if e.WorkloadUID != "" {
+		r.WorkloadUID = e.WorkloadUID
+	}
+	if e.Definition != "" {
+		r.DefinitionID = e.Definition
+	}
+	if !e.ReceivedAt.IsZero() {
+		r.ReceivedAt = e.ReceivedAt
+	} else if r.ReceivedAt.IsZero() && e.Kind == phaseReceived {
+		r.ReceivedAt = e.At
+	}
+	if e.LifetimeNanos > 0 {
+		r.LifetimeNanos = e.LifetimeNanos
+	}
+	if a := e.Assignment; a != nil {
+		node, dispatched := a.Node, a.DispatchedAt
+		r.Node, r.Instance, r.ProfileID, r.DispatchedAt = &node, a.Instance, a.Profile, &dispatched
+		if a.ProfileBody != nil {
+			r.profile = a.ProfileBody
+		}
+	}
+	if e.ClientSpanNanos != 0 {
+		r.ClientSpanNanos = e.ClientSpanNanos
+	}
+	r.ExecutionComplete = r.ExecutionComplete || e.ExecutionComplete
+	if p := e.NativeProgress; p != nil {
+		r.BatchID, r.BatchSize, r.QueueMS, r.ServiceMS, r.BackendMS = p.BatchID, p.BatchSize, p.QueueMS, p.ServiceMS, p.BackendMS
+		r.PreprocessMS, r.PostprocessMS, r.FirstTokenMS, r.Units = p.PreprocessMS, p.PostprocessMS, p.FirstTokenMS, p.Units
+		native := p.NativeElapsedMS
+		r.NativeElapsedMS = &native
+		if p.DecisionID != "" {
+			r.DecisionID = p.DecisionID
+		}
+	}
+	offset := e.ElapsedNanos
+	if offset == 0 && !r.ReceivedAt.IsZero() {
+		offset = e.At.Sub(r.ReceivedAt).Nanoseconds()
+	}
+	var stage **int64
+	switch e.Kind {
+	case "validated":
+		stage = &r.ValidatedNanos
+	case phaseAccepted:
+		stage = &r.AcceptedNanos
+	case phaseAssigned:
+		stage = &r.DispatchedNanos
+	case "backend_" + phaseQueued:
+		stage = &r.QueuedNanos
+	case "backend_" + phaseRunning:
+		stage = &r.RunningNanos
+	case "backend_" + phaseFinished:
+		stage = &r.ExecutedNanos
+	case eventBackendExchangeFinished:
+		stage = &r.ExchangeNanos
+	case eventResponseFinished:
+		stage = &r.ElapsedNanos
+	}
+	if stage != nil && (*stage == nil || e.Kind == eventResponseFinished) {
+		*stage = &offset
+	}
+	if e.Kind == eventResponseFinished {
+		r.Outcome = e.Outcome
+	}
+	if e.Error != "" && (r.Error == "" || e.Kind == eventResponseFinished) {
+		r.Error = e.Error
+	}
+}
+
+func (r *RequestRow) accepted() bool { return r.AcceptedNanos != nil || r.DispatchedAt != nil }
+
+// CatalogRow holds an immutable body that other records reference by key.
+type CatalogRow struct {
+	Kind string          `json:"kind"`
+	Key  string          `json:"key"`
+	At   time.Time       `json:"at"`
+	Body json.RawMessage `json:"body"`
 }
 
 type ObservationLogHealth struct {
-	Healthy bool                `json:"healthy"`
-	Error   string              `json:"error,omitempty"`
-	Windows []ObservationWindow `json:"windows"`
+	Healthy bool   `json:"healthy"`
+	Error   string `json:"error,omitempty"`
 }
 
-// ObservationLog keeps raw facts in files and bounded, per-window event censuses;
-// queries capture both under the writer lock and scan selected prefixes outside it.
+type observationCatalogEntry struct {
+	hour string
+	body []byte
+}
+
+// ObservationLog appends minute files under hourly segment directories and
+// keeps only the open request rows and the definitions in memory.
 type ObservationLog struct {
-	mu               sync.Mutex
-	publishMu        sync.Mutex
-	config           ObservationLogConfig
-	windows          []ObservationWindow
-	active           int
-	files            map[string]*os.File
-	schedulerCensus  map[string]schedulerWindowCensus
-	schedulerWriter  observationCountingWriter
-	requestCensus    map[string]requestWindowCensus
-	requestWriter    observationCountingWriter
-	definitionWriter observationCountingWriter
-	closed           bool
-	lastError        error
-}
-
-// Counting the existing encoder writes avoids encoding or retaining records a
-// second time. Direct file rewrites do not advance this count and force a scan.
-type observationCountingWriter struct {
-	*os.File
-	bytes int64
-}
-
-func (w *observationCountingWriter) Write(data []byte) (int, error) {
-	n, err := w.File.Write(data)
-	w.bytes += int64(n)
-	return n, err
+	mu          sync.Mutex
+	publishMu   sync.Mutex
+	config      ObservationLogConfig
+	root        string
+	started     time.Time
+	now         func() time.Time
+	files       map[string]*os.File
+	definitions *os.File
+	retained    map[string]*Definition
+	open        map[string]*RequestRow
+	restored    []RequestRow
+	catalog     map[string]observationCatalogEntry
+	closed      bool
+	lastError   error
 }
 
 func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
-	if config.Directory == "" || config.Store == "" || config.Window <= 0 || config.Writer == nil {
-		return nil, errors.New("observation directory, store, positive window and immutable writer are required")
+	if config.Directory == "" || config.Store == "" || config.Writer == nil {
+		return nil, errors.New("observation directory, store and immutable writer are required")
 	}
-	if err := os.MkdirAll(config.Directory, 0700); err != nil {
+	l := &ObservationLog{
+		config: config, root: filepath.Join(config.Directory, observationVersion), started: time.Now().UTC(),
+		now: func() time.Time { return time.Now().UTC() }, files: map[string]*os.File{},
+		retained: map[string]*Definition{}, open: map[string]*RequestRow{}, catalog: map[string]observationCatalogEntry{},
+	}
+	if err := os.MkdirAll(l.root, 0700); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(config.Directory)
+	hours, err := l.hours()
 	if err != nil {
 		return nil, err
 	}
-	j := &ObservationLog{
-		config: config, active: -1,
-		schedulerCensus: map[string]schedulerWindowCensus{},
-		requestCensus:   map[string]requestWindowCensus{},
-	}
-	for _, entry := range entries {
-		// Hidden directories are unpublished staging, never observation windows.
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(config.Directory, entry.Name(), "metadata.json"))
-		if err != nil {
-			return nil, fmt.Errorf("read observation window %s: %w", entry.Name(), err)
-		}
-		var window ObservationWindow
-		if err := json.Unmarshal(data, &window); err != nil {
-			return nil, err
-		}
-		if window.SchemaVersion != observationSchema || window.ID != entry.Name() {
-			return nil, errors.New("invalid observation window metadata")
-		}
-		if window.ClosedAt == nil {
-			now := time.Now().UTC()
-			window.ClosedAt = &now
-			window.Incomplete = true
-		}
-		j.windows = append(j.windows, window)
-	}
-	streams := []string{observationDefinitionStream, observationRequestStream, "management", observationSchedulerStream}
-	read, err := j.snapshot(streams...)
-	if err != nil {
-		return nil, err
-	}
-	for _, stream := range streams {
-		if err := read.scan(stream, func(record observationRecord) {
-			if stream == observationSchedulerStream {
-				census := j.schedulerCensus[record.Window]
-				census.add(record.Scheduler)
-				j.schedulerCensus[record.Window] = census
-			}
-			if stream == observationRequestStream {
-				census := j.requestCensus[record.Window]
-				census.add(record.Request)
-				j.requestCensus[record.Window] = census
-			}
-			if stream == observationDefinitionStream && record.Definition != nil {
-				census := j.requestCensus[record.Window]
-				census.hasDefinitions = true
-				j.requestCensus[record.Window] = census
-			}
-		}); err != nil {
-			return nil, err
-		}
-		for _, prefix := range read.streams[stream] {
-			window := read.windows[prefix.window]
-			switch stream {
-			case observationSchedulerStream:
-				census := j.schedulerCensus[window.ID]
-				census.prefixBytes, census.trusted = prefix.bytes, !window.Incomplete
-				j.schedulerCensus[window.ID] = census
-			case observationRequestStream:
-				census := j.requestCensus[window.ID]
-				// Bounds cover accepted newline-framed facts even when metadata
-				// already marks a crash or ignored torn tail incomplete.
-				census.prefixBytes, census.trusted = prefix.bytes, true
-				j.requestCensus[window.ID] = census
-			case observationDefinitionStream:
-				census := j.requestCensus[window.ID]
-				census.definitionPrefixBytes, census.definitionsTrusted = prefix.bytes, true
-				j.requestCensus[window.ID] = census
-			}
-		}
-	}
-	for i := range j.windows {
-		if j.windows[i].Incomplete {
-			if err := j.saveWindow(i); err != nil {
+	// A crash can leave one torn line at the end of each stream's last file.
+	for _, stream := range observationStreams {
+		for index := len(hours) - 1; index >= 0; index-- {
+			files, err := l.hourFiles(hours[index], stream)
+			if err != nil {
 				return nil, err
 			}
+			if len(files) > 0 {
+				if err := truncateTornLine(files[len(files)-1].path); err != nil {
+					return nil, err
+				}
+				break
+			}
 		}
 	}
-	// A restart never resumes an accepted request or appends to a prior window.
-	if err := j.start(time.Now().UTC()); err != nil {
+	definitions := filepath.Join(l.root, observationDefinitionsFile)
+	if err := truncateTornLine(definitions); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	return j, nil
-}
-
-func (observationLog *ObservationLog) saveWindow(index int) error {
-	w := observationLog.windows[index]
-	return writeWindowMetadata(filepath.Join(observationLog.config.Directory, w.ID), w)
-}
-
-func writeWindowMetadata(directory string, w ObservationWindow) (result error) {
-	data, err := json.Marshal(w)
-	if err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(directory, ".metadata-")
-	if err != nil {
-		return err
-	}
-	name := file.Name()
-	defer func() {
-		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
-			result = errors.Join(result, err)
+	if err := scanObservationFile(definitions, -1, func(raw []byte) error {
+		var d DefinitionObservation
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return err
 		}
-	}()
-	if err := file.Chmod(0600); err != nil {
-		return errors.Join(err, file.Close())
+		l.retained[d.Identity] = d.Definition
+		return nil
+	}); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
 	}
-	if _, err := file.Write(data); err != nil {
-		return errors.Join(err, file.Close())
+	if l.definitions, err = os.OpenFile(definitions, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600); err != nil {
+		return nil, err
 	}
-	if err := file.Sync(); err != nil {
-		return errors.Join(err, file.Close())
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, filepath.Join(directory, "metadata.json"))
-}
-
-// start builds a window under a hidden staging name and publishes the complete
-// directory with one rename. A window directory therefore never exists without
-// its metadata and streams, and NewObservationLog only ever sees complete windows.
-func (observationLog *ObservationLog) start(now time.Time) (result error) {
-	const staging = ".starting-"
-	directory, err := os.MkdirTemp(observationLog.config.Directory, staging)
-	if err != nil {
-		return err
-	}
-	window := ObservationWindow{
-		SchemaVersion: observationSchema,
-		ID:            now.Format("20060102T150405.000000000Z") + "-" + strings.TrimPrefix(filepath.Base(directory), staging),
-		StartedAt:     now, EndsAt: now.Add(observationLog.config.Window), Duration: observationLog.config.Window,
-		Definitions: observationLog.config.Definitions, Outcomes: observationLog.config.Outcomes,
-	}
-	files := make(map[string]*os.File)
-	defer func() {
-		if result != nil {
-			for _, file := range files {
-				result = errors.Join(result, file.Close())
-			}
-			// Only this call's staging directory is removed; published windows stay visible.
-			result = errors.Join(result, os.RemoveAll(directory))
-		}
-	}()
-	if err := writeWindowMetadata(directory, window); err != nil {
-		return err
-	}
-	for _, stream := range []string{observationDefinitionStream, observationRequestStream, "management", observationSchedulerStream} {
-		file, err := os.OpenFile(filepath.Join(directory, stream+".jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	// RestartDrain observes assigned requests without a final row to completion.
+	rows := map[string]RequestRow{}
+	for _, hour := range hours {
+		files, err := l.hourFiles(hour, observationRequestStream)
 		if err != nil {
-			return err
+			return nil, errors.Join(err, l.definitions.Close())
 		}
-		files[stream] = file
-		// Metadata is the first JSONL record, including in an otherwise empty stream.
-		if err := json.NewEncoder(file).Encode(window); err != nil {
-			return err
+		for _, file := range files {
+			if err := scanObservationFile(file.path, -1, func(raw []byte) error {
+				var row RequestRow
+				if err := json.Unmarshal(raw, &row); err != nil {
+					return err
+				}
+				if row.Kind == requestRowFinal || rows[row.RequestID].Kind != requestRowFinal {
+					rows[row.RequestID] = row
+				}
+				return nil
+			}); err != nil {
+				return nil, errors.Join(err, l.definitions.Close())
+			}
 		}
 	}
-	info, err := files[observationSchedulerStream].Stat()
-	if err != nil {
-		return err
+	for _, row := range rows {
+		if row.Kind == requestRowAssigned {
+			l.restored = append(l.restored, row)
+			open := row
+			open.Kind = ""
+			l.open[row.RequestID] = &open
+		}
 	}
-	requestInfo, err := files[observationRequestStream].Stat()
-	if err != nil {
-		return err
-	}
-	definitionInfo, err := files[observationDefinitionStream].Stat()
-	if err != nil {
-		return err
-	}
-	if err := os.Rename(directory, filepath.Join(observationLog.config.Directory, window.ID)); err != nil {
-		return err
-	}
-	observationLog.windows = append(observationLog.windows, window)
-	observationLog.active = len(observationLog.windows) - 1
-	observationLog.files = files
-	observationLog.schedulerCensus[window.ID] = schedulerWindowCensus{prefixBytes: info.Size(), trusted: true}
-	observationLog.schedulerWriter = observationCountingWriter{File: files[observationSchedulerStream], bytes: info.Size()}
-	observationLog.requestCensus[window.ID] = requestWindowCensus{
-		prefixBytes: requestInfo.Size(), trusted: true,
-		definitionPrefixBytes: definitionInfo.Size(), definitionsTrusted: true,
-	}
-	observationLog.requestWriter = observationCountingWriter{File: files[observationRequestStream], bytes: requestInfo.Size()}
-	observationLog.definitionWriter = observationCountingWriter{File: files[observationDefinitionStream], bytes: definitionInfo.Size()}
-	return nil
+	return l, nil
 }
 
-func (observationLog *ObservationLog) append(stream string, record observationRecord) error {
-	observationLog.mu.Lock()
-	defer observationLog.mu.Unlock()
-	if observationLog.closed {
+func truncateTornLine(name string) error {
+	data, err := os.ReadFile(name)
+	if err != nil || len(data) == 0 || data[len(data)-1] == '\n' {
+		return err
+	}
+	return os.Truncate(name, int64(bytes.LastIndexByte(data, '\n')+1))
+}
+
+func observationHour(at time.Time) string { return at.UTC().Format(observationHourLayout) }
+
+func (l *ObservationLog) segment(stream string, at time.Time) string {
+	return filepath.Join(l.root, observationHour(at), stream+"."+at.UTC().Format("04")+".jsonl")
+}
+
+// hours lists retained hour directories, oldest first.
+func (l *ObservationLog) hours() ([]time.Time, error) {
+	entries, err := os.ReadDir(l.root)
+	if err != nil {
+		return nil, err
+	}
+	hours := []time.Time{}
+	for _, entry := range entries {
+		if hour, err := time.Parse(observationHourLayout, entry.Name()); err == nil && entry.IsDir() {
+			hours = append(hours, hour)
+		}
+	}
+	sort.Slice(hours, func(a, b int) bool { return hours[a].Before(hours[b]) })
+	return hours, nil
+}
+
+type observationSegment struct {
+	path string
+	at   time.Time
+}
+
+// hourFiles lists one stream's minute files of an hour in minute order.
+func (l *ObservationLog) hourFiles(hour time.Time, stream string) ([]observationSegment, error) {
+	entries, err := os.ReadDir(filepath.Join(l.root, observationHour(hour)))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var files []observationSegment
+	for _, entry := range entries {
+		minute, found := strings.CutPrefix(entry.Name(), stream+".")
+		minute, jsonl := strings.CutSuffix(minute, ".jsonl")
+		if m, err := strconv.Atoi(minute); found && jsonl && err == nil && len(minute) == 2 && m < 60 {
+			files = append(files, observationSegment{
+				path: filepath.Join(l.root, observationHour(hour), entry.Name()), at: hour.Add(time.Duration(m) * time.Minute),
+			})
+		}
+	}
+	sort.Slice(files, func(a, b int) bool { return files[a].at.Before(files[b].at) })
+	return files, nil
+}
+
+func (l *ObservationLog) appendLocked(stream string, now time.Time, value any) error {
+	if l.closed {
 		return errors.New("observation log is closed")
 	}
-	if observationLog.files == nil || !time.Now().Before(observationLog.windows[observationLog.active].EndsAt) {
-		if observationLog.files != nil {
-			if err := observationLog.finish(); err != nil {
-				observationLog.lastError = err
-				return err
-			}
-		}
-		if err := observationLog.start(time.Now().UTC()); err != nil {
-			observationLog.lastError = err
-			return err
-		}
-	}
-	record.SchemaVersion = observationSchema
-	record.Window = observationLog.windows[observationLog.active].ID
-	var err error
-	if stream == observationSchedulerStream {
-		err = json.NewEncoder(&observationLog.schedulerWriter).Encode(record)
-		census := observationLog.schedulerCensus[record.Window]
-		if err == nil {
-			census.add(record.Scheduler)
-			census.prefixBytes = observationLog.schedulerWriter.bytes
-		} else {
-			census.trusted = false
-		}
-		observationLog.schedulerCensus[record.Window] = census
-	} else if stream == observationRequestStream {
-		err = json.NewEncoder(&observationLog.requestWriter).Encode(record)
-		census := observationLog.requestCensus[record.Window]
-		if err == nil {
-			census.add(record.Request)
-			census.prefixBytes = observationLog.requestWriter.bytes
-		} else {
-			census.trusted = false
-		}
-		observationLog.requestCensus[record.Window] = census
-	} else if stream == observationDefinitionStream {
-		err = json.NewEncoder(&observationLog.definitionWriter).Encode(record)
-		census := observationLog.requestCensus[record.Window]
-		if err == nil {
-			census.hasDefinitions = census.hasDefinitions || record.Definition != nil
-			census.definitionPrefixBytes = observationLog.definitionWriter.bytes
-		} else {
-			census.definitionsTrusted = false
-		}
-		observationLog.requestCensus[record.Window] = census
-	} else {
-		err = json.NewEncoder(observationLog.files[stream]).Encode(record)
+	data, err := json.Marshal(value)
+	if err == nil {
+		err = l.writeLocked(stream, now, append(data, '\n'))
 	}
 	if err != nil {
-		observationLog.lastError = err
-		observationLog.windows[observationLog.active].Incomplete = true
+		l.lastError = err
 	}
 	return err
 }
 
-func (observationLog *ObservationLog) DefinitionRecord(definition *Definition) error {
+// ponytail: a failed partial write leaves a torn line that readers report;
+// rewind the file on failure if ENOSPC ever happens outside an S3 outage.
+func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) error {
+	name := l.segment(stream, now)
+	file := l.files[stream]
+	if file == nil || file.Name() != name {
+		if file != nil {
+			delete(l.files, stream)
+			if err := file.Close(); err != nil {
+				return err
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+			return err
+		}
+		var err error
+		if file, err = os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600); err != nil {
+			return err
+		}
+		l.files[stream] = file
+	}
+	_, err := file.Write(data)
+	return err
+}
+
+// referenceLocked writes a catalog row when the hour first references key, or
+// when its body differs from the last body this process wrote for it.
+func (l *ObservationLog) referenceLocked(kind, key string, at, now time.Time, body any) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	id, hour := kind+"/"+key, observationHour(now)
+	if entry, ok := l.catalog[id]; ok && entry.hour == hour && bytes.Equal(entry.body, data) {
+		return nil
+	}
+	if err := l.appendLocked(observationCatalogStream, now, CatalogRow{Kind: kind, Key: key, At: at, Body: data}); err != nil {
+		return err
+	}
+	l.catalog[id] = observationCatalogEntry{hour: hour, body: data}
+	return nil
+}
+
+func (l *ObservationLog) DefinitionRecord(definition *Definition) error {
 	if definition == nil {
 		return errors.New("definition is required")
 	}
-	return observationLog.append(observationDefinitionStream, observationRecord{Definition: &DefinitionObservation{Identity: definition.Identity(), Definition: definition}})
+	data, err := json.Marshal(DefinitionObservation{Identity: definition.Identity(), Definition: definition})
+	if err != nil {
+		return err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return errors.New("observation log is closed")
+	}
+	if _, err := l.definitions.Write(append(data, '\n')); err != nil {
+		l.lastError = err
+		return err
+	}
+	l.retained[definition.Identity()] = definition
+	return nil
 }
 
-func (observationLog *ObservationLog) RequestEvent(event RequestEvent) error {
+// RequestEvent folds one event into the request's open row. Only assignment
+// appends; an event without an open row is dropped.
+func (l *ObservationLog) RequestEvent(event RequestEvent) error {
 	if event.RequestID == "" || event.At.IsZero() {
 		return errors.New("request identity and event time are required")
 	}
-	// Producers supply classified codes, never transport bodies or credentials.
-	return observationLog.append(observationRequestStream, observationRecord{Request: &event})
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return errors.New("observation log is closed")
+	}
+	row := l.open[event.RequestID]
+	if row == nil {
+		if strings.HasPrefix(event.Kind, "backend_") {
+			return nil // Already settled, or read again from a native log.
+		}
+		row = &RequestRow{RequestID: event.RequestID}
+	}
+	next := *row
+	next.fold(&event)
+	if event.Kind == phaseAssigned {
+		assigned := next
+		assigned.Kind = requestRowAssigned
+		assigned.AcceptedNanos, assigned.ValidatedNanos, assigned.DispatchedNanos = nil, nil, nil
+		if err := l.appendRowLocked(&assigned); err != nil {
+			return err
+		}
+	}
+	l.open[event.RequestID] = &next
+	return nil
 }
 
-func (observationLog *ObservationLog) ManagementEvent(event ManagementEvent) error {
+// RequestClosed appends the final row of a request the Runtime has settled.
+func (l *ObservationLog) RequestClosed(id string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	row := l.open[id]
+	if row == nil {
+		return nil
+	}
+	delete(l.open, id)
+	final := *row
+	final.Kind, final.DispatchedAt = requestRowFinal, nil
+	return l.appendRowLocked(&final)
+}
+
+func (l *ObservationLog) appendRowLocked(row *RequestRow) error {
+	now := l.now()
+	if d := l.retained[row.DefinitionID]; d != nil {
+		if err := l.referenceLocked("definition", row.DefinitionID, now, now, d); err != nil {
+			return err
+		}
+	}
+	if row.profile != nil && row.ProfileID != "" {
+		if err := l.referenceLocked("profile", row.ProfileID, now, now, row.profile); err != nil {
+			return err
+		}
+	}
+	return l.appendLocked(observationRequestStream, now, row)
+}
+
+func (l *ObservationLog) ManagementEvent(event ManagementEvent) error {
 	if event.WorkloadUID == "" || event.At.IsZero() {
 		return errors.New("management UID and event time are required")
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	// Management codes are classified at the single registry boundary.
-	return observationLog.append("management", observationRecord{Management: &event})
+	return l.appendLocked(observationManagementStream, l.now(), event)
 }
 
-func (observationLog *ObservationLog) finish() error {
-	if observationLog.files == nil {
-		return nil
-	}
-	var result error
-	for _, file := range observationLog.files {
-		result = errors.Join(result, file.Sync(), file.Close())
-	}
-	observationLog.files = nil
-	now := time.Now().UTC()
-	observationLog.windows[observationLog.active].ClosedAt = &now
-	if result != nil {
-		observationLog.windows[observationLog.active].Incomplete = true
-	}
-	return errors.Join(result, observationLog.saveWindow(observationLog.active))
-}
+const observationArchivePrefix = "serving/observations." + observationVersion + "/"
 
-func (observationLog *ObservationLog) archive(ctx context.Context) error {
-	// Only publishers serialize: append, rotation and reads need only mu.
-	observationLog.publishMu.Lock()
-	defer observationLog.publishMu.Unlock()
-	observationLog.mu.Lock()
-	count := len(observationLog.windows)
-	observationLog.mu.Unlock()
+// archive uploads each past hour as one gzip object per stream. Equal input
+// makes equal bytes, so a repeated upload is Existing and nothing records
+// upload state. An hour is deleted once every stream succeeds in one pass and
+// the hour ended at least an hour ago.
+func (l *ObservationLog) archive(ctx context.Context) error {
+	l.publishMu.Lock()
+	defer l.publishMu.Unlock()
+	l.mu.Lock()
+	now := l.now() // Later appends choose this hour or a later one.
+	l.mu.Unlock()
+	hours, err := l.hours()
+	if err != nil {
+		return err
+	}
+	current := now.Truncate(time.Hour)
 	var result error
-	for i := 0; i < count; i++ {
-		observationLog.mu.Lock()
-		window := observationLog.windows[i]
-		observationLog.mu.Unlock()
-		if window.ClosedAt == nil || window.Published {
+	for _, hour := range hours {
+		if !hour.Before(current) {
 			continue
 		}
-		objects := make([]evidencestore.ObjectIdentity, 0, 5)
 		var failed error
-		for _, name := range []string{"definitions.jsonl", "requests.jsonl", "management.jsonl", "scheduler.jsonl", "metadata.json"} {
-			file, err := os.Open(filepath.Join(observationLog.config.Directory, window.ID, name))
-			if err != nil {
-				failed = err
-				break
+		for _, stream := range observationStreams {
+			if err := l.upload(ctx, hour, stream); err != nil {
+				failed = errors.Join(failed, err)
 			}
-			info, err := file.Stat()
-			if err != nil {
-				failed = errors.Join(err, file.Close())
-				break
-			}
-			object := evidencestore.ObjectIdentity{Store: observationLog.config.Store, Key: "serving/" + window.ID + "/" + name, Size: info.Size()}
-			_, err = observationLog.config.Writer.PutImmutable(ctx, object, file)
-			closeErr := file.Close()
-			if err = errors.Join(err, closeErr); err != nil {
-				failed = err
-				break
-			}
-			objects = append(objects, object)
 		}
-		if failed != nil {
-			result = errors.Join(result, failed)
-			continue
+		if failed == nil && !now.Before(hour.Add(2*time.Hour)) {
+			failed = os.RemoveAll(filepath.Join(l.root, observationHour(hour)))
 		}
-		observationLog.mu.Lock()
-		observationLog.windows[i].Objects = objects
-		observationLog.windows[i].Published = true
-		if err := observationLog.saveWindow(i); err != nil {
-			observationLog.windows[i].Published = false
-			observationLog.windows[i].Objects = nil
-			result = errors.Join(result, err)
-		}
-		observationLog.mu.Unlock()
+		result = errors.Join(result, failed)
 	}
 	return result
 }
 
-func (observationLog *ObservationLog) Flush(ctx context.Context) error {
-	observationLog.mu.Lock()
-	var result error
-	if !observationLog.closed {
-		if observationLog.files == nil || !time.Now().Before(observationLog.windows[observationLog.active].EndsAt) {
-			if observationLog.files != nil {
-				result = observationLog.finish()
-			}
-			if result == nil {
-				result = observationLog.start(time.Now().UTC())
-			}
-		} else {
-			for _, file := range observationLog.files {
-				result = errors.Join(result, file.Sync())
-			}
+func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream string) error {
+	files, err := l.hourFiles(hour, stream)
+	if err != nil || len(files) == 0 {
+		return err
+	}
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed) // Zero header time: equal input, equal bytes.
+	for _, segment := range files {
+		file, err := os.Open(segment.path)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(writer, file)
+		if err = errors.Join(err, file.Close()); err != nil {
+			return err
 		}
 	}
-	if result != nil {
-		observationLog.lastError = result
-		// A failed start or finish leaves no open window; finish marks itself.
-		if observationLog.files != nil && observationLog.active >= 0 {
-			observationLog.windows[observationLog.active].Incomplete = true
-		}
+	if err := writer.Close(); err != nil {
+		return err
 	}
-	observationLog.mu.Unlock()
-	return errors.Join(result, observationLog.archive(ctx))
+	object := evidencestore.ObjectIdentity{
+		Store: l.config.Store, Key: observationArchivePrefix + observationHour(hour) + "/" + stream + ".jsonl.gz",
+		Size: int64(compressed.Len()),
+	}
+	_, err = l.config.Writer.PutImmutable(ctx, object, &compressed)
+	return err
 }
 
-func (observationLog *ObservationLog) Close(ctx context.Context) error {
-	observationLog.mu.Lock()
+func (l *ObservationLog) Flush(ctx context.Context) error {
+	l.mu.Lock()
 	var result error
-	if !observationLog.closed {
-		result = observationLog.finish()
-		observationLog.closed = true
+	for _, file := range l.files {
+		result = errors.Join(result, file.Sync())
+	}
+	if !l.closed {
+		result = errors.Join(result, l.definitions.Sync())
 	}
 	if result != nil {
-		observationLog.lastError = result
+		l.lastError = result
 	}
-	observationLog.mu.Unlock()
-	return errors.Join(result, observationLog.archive(ctx))
+	l.mu.Unlock()
+	return errors.Join(result, l.archive(ctx))
 }
 
-func (observationLog *ObservationLog) Health() ObservationLogHealth {
-	observationLog.mu.Lock()
-	defer observationLog.mu.Unlock()
-	h := ObservationLogHealth{Healthy: observationLog.lastError == nil, Windows: append([]ObservationWindow(nil), observationLog.windows...)}
-	if observationLog.lastError != nil {
-		h.Error = observationLog.lastError.Error()
+func (l *ObservationLog) Close(ctx context.Context) error {
+	l.mu.Lock()
+	var result error
+	if !l.closed {
+		for stream, file := range l.files {
+			result = errors.Join(result, file.Sync(), file.Close())
+			delete(l.files, stream)
+		}
+		result = errors.Join(result, l.definitions.Sync(), l.definitions.Close())
+		l.closed = true
+	}
+	if result != nil {
+		l.lastError = result
+	}
+	l.mu.Unlock()
+	return errors.Join(result, l.archive(ctx))
+}
+
+func (l *ObservationLog) Health() ObservationLogHealth {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	h := ObservationLogHealth{Healthy: l.lastError == nil}
+	if l.lastError != nil {
+		h.Error = l.lastError.Error()
 	}
 	return h
 }
@@ -528,22 +610,22 @@ type ObservationCohort struct {
 }
 
 type ObservationResult struct {
-	UID               string                  `json:"uid"`
-	From              time.Time               `json:"from"`
-	To                time.Time               `json:"to"`
-	DefinitionFilter  []string                `json:"definitionFilter"`
-	OutcomeFilter     []string                `json:"outcomeFilter"`
-	Total             int                     `json:"total"`
-	Selected          int                     `json:"selected"`
-	Outcomes          map[string]int          `json:"outcomes"`
-	Cohorts           []ObservationCohort     `json:"cohorts"`
-	Definitions       []DefinitionObservation `json:"definitions"`
-	Requests          []RequestEvent          `json:"requests"`
-	Management        []ManagementEvent       `json:"management"`
-	NextCursor        string                  `json:"nextCursor,omitempty"`
-	QuantileMethod    string                  `json:"quantileMethod"`
-	SamplePopulation  string                  `json:"samplePopulation"`
-	IncompleteWindows []string                `json:"incompleteWindows,omitempty"`
+	UID              string                  `json:"uid"`
+	From             time.Time               `json:"from"`
+	To               time.Time               `json:"to"`
+	DefinitionFilter []string                `json:"definitionFilter"`
+	OutcomeFilter    []string                `json:"outcomeFilter"`
+	Total            int                     `json:"total"`
+	Selected         int                     `json:"selected"`
+	Outcomes         map[string]int          `json:"outcomes"`
+	Cohorts          []ObservationCohort     `json:"cohorts"`
+	Definitions      []DefinitionObservation `json:"definitions"`
+	Requests         []RequestRow            `json:"requests"`
+	Management       []ManagementEvent       `json:"management"`
+	NextCursor       string                  `json:"nextCursor,omitempty"`
+	QuantileMethod   string                  `json:"quantileMethod"`
+	SamplePopulation string                  `json:"samplePopulation"`
+	GapUntil         *time.Time              `json:"gapUntil,omitempty"`
 }
 
 func observationIncludes(filter []string, value string) bool {
@@ -554,144 +636,21 @@ func observationInInterval(at, from, to time.Time) bool {
 	return !at.IsZero() && (from.IsZero() || !at.Before(from)) && (to.IsZero() || at.Before(to))
 }
 
-type requestFacts struct {
-	events     []RequestEvent
-	received   time.Time
-	definition string
-	outcome    string
-	completion *RequestEvent
-	dispatched *int64
-	accepted   bool
-}
-
-func (f *requestFacts) addEvent(e *RequestEvent) {
-	f.events = append(f.events, *e)
-	if e.Definition != "" {
-		f.definition = e.Definition
-	}
-	if !e.ReceivedAt.IsZero() {
-		f.received = e.ReceivedAt
-	} else if e.Kind == phaseReceived {
-		f.received = e.At
-	}
-	if e.Kind == phaseAccepted {
-		f.accepted = true
-	}
-	if e.Kind == phaseAssigned {
-		elapsed := e.ElapsedNanos
-		f.dispatched = &elapsed
-	}
-	if e.Outcome != "" && !strings.HasPrefix(e.Kind, "backend_") &&
-		e.Kind != phaseAssigned && e.Kind != phaseReceived && e.Kind != phaseAccepted {
-		f.outcome = e.Outcome
-	}
-	if e.Kind == eventResponseFinished {
-		switch e.Outcome {
-		case "delivery_failed", outcomeIncomplete, "canceled":
-			f.completion = nil
-			return
-		}
-		f.completion = e
-		if f.outcome == "" {
-			f.outcome = outcomeCompleted
-		}
+func requestOutcome(row *RequestRow) string {
+	switch {
+	case row.Outcome != "":
+		return row.Outcome
+	case row.ElapsedNanos != nil:
+		return outcomeCompleted
+	case row.accepted():
+		return outcomeIncomplete
+	default:
+		return phasePending
 	}
 }
 
-func (read *observationSnapshot) collectObservationFacts(
-	result *ObservationResult,
-) (map[string]*Definition, map[string]*requestFacts, error) {
-	definitions := make(map[string]*Definition)
-	if err := read.scan(observationDefinitionStream, func(r observationRecord) {
-		d := r.Definition
-		if d != nil && d.Definition != nil && d.Definition.UID == result.UID &&
-			observationIncludes(result.DefinitionFilter, d.Identity) {
-			definitions[d.Identity] = d.Definition
-		}
-	}); err != nil {
-		return nil, nil, err
-	}
-	// Only requests received in [from,to) keep facts; other lines are checked
-	// by envelope and syntax without full decoding.
-	requests := make(map[string]*requestFacts)
-	if err := read.scanRaw(observationRequestStream, func(window string, raw []byte) (bool, error) {
-		var envelope struct {
-			SchemaVersion string `json:"schemaVersion"`
-			Window        string `json:"window"`
-			Request       *struct {
-				RequestID   string    `json:"requestID"`
-				WorkloadUID string    `json:"workloadUID"`
-				Kind        string    `json:"kind"`
-				At          time.Time `json:"at"`
-				ReceivedAt  time.Time `json:"receivedAt"`
-			} `json:"request"`
-		}
-		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(raw, &envelope); err != nil {
-			return false, err
-		}
-		if envelope.SchemaVersion != observationSchema || envelope.Window != window {
-			return false, errObservationRecordIdentity
-		}
-		e := envelope.Request
-		if e == nil || e.WorkloadUID != result.UID {
-			return false, observationJSONSyntaxError(raw)
-		}
-		f := requests[e.RequestID]
-		if f == nil {
-			received := e.ReceivedAt
-			if received.IsZero() && e.Kind == phaseReceived {
-				received = e.At
-			}
-			if !observationInInterval(received, result.From, result.To) {
-				return false, observationJSONSyntaxError(raw)
-			}
-			f = &requestFacts{}
-			requests[e.RequestID] = f
-		}
-		var record observationRecord
-		if err := json.Unmarshal(raw, &record); err != nil {
-			return false, err
-		}
-		f.addEvent(record.Request)
-		return false, nil
-	}); err != nil {
-		return nil, nil, err
-	}
-	return definitions, requests, nil
-}
-
-func (read *observationSnapshot) collectManagementFacts(result *ObservationResult) error {
-	if err := read.scan("management", func(r observationRecord) {
-		e := r.Management
-		if e == nil || e.WorkloadUID != result.UID || !observationInInterval(e.At, result.From, result.To) {
-			return
-		}
-		filter := result.DefinitionFilter
-		if len(filter) != 0 &&
-			(e.Before == nil || !observationIncludes(filter, e.Before.Identity())) &&
-			(e.Target == nil || !observationIncludes(filter, e.Target.Identity())) &&
-			(e.After == nil || !observationIncludes(filter, e.After.Identity())) {
-			return
-		}
-		result.Management = append(result.Management, *e)
-	}); err != nil {
-		return err
-	}
-	sort.SliceStable(result.Management, func(a, b int) bool {
-		return result.Management[a].At.Before(result.Management[b].At)
-	})
-	for _, w := range read.windows {
-		if w.Incomplete {
-			result.IncompleteWindows = append(result.IncompleteWindows, w.ID)
-		}
-	}
-	return nil
-}
-
-// Aggregate the whole selected population before projecting any raw-event page.
-func (result *ObservationResult) aggregate(
-	definitions map[string]*Definition, requests map[string]*requestFacts,
-) []RequestEvent {
+// Aggregate the whole selected population before projecting any row page.
+func (result *ObservationResult) aggregate(definitions map[string]*Definition, rows []*RequestRow) []RequestRow {
 	cohorts := make(map[string]*ObservationCohort)
 	for id, d := range definitions {
 		p := d.SLO.Percentile
@@ -701,42 +660,38 @@ func (result *ObservationResult) aggregate(
 		}
 		result.Definitions = append(result.Definitions, DefinitionObservation{Identity: id, Definition: d})
 	}
-	selectedEvents := []RequestEvent{}
-	for _, f := range requests {
-		if !observationInInterval(f.received, result.From, result.To) ||
-			!observationIncludes(result.DefinitionFilter, f.definition) {
+	selected := []RequestRow{}
+	for _, row := range rows {
+		if !observationInInterval(row.ReceivedAt, result.From, result.To) ||
+			!observationIncludes(result.DefinitionFilter, row.DefinitionID) {
 			continue
 		}
 		result.Total++
-		if f.outcome == "" {
-			if f.accepted {
-				f.outcome = outcomeIncomplete
-			} else {
-				f.outcome = phasePending
-			}
-		}
-		result.Outcomes[f.outcome]++
-		if !observationIncludes(result.OutcomeFilter, f.outcome) {
+		outcome := requestOutcome(row)
+		result.Outcomes[outcome]++
+		if !observationIncludes(result.OutcomeFilter, outcome) {
 			continue
 		}
 		result.Selected++
-		selectedEvents = append(selectedEvents, f.events...)
-		cohort := cohorts[f.definition]
+		selected = append(selected, *row)
+		cohort := cohorts[row.DefinitionID]
 		if cohort == nil {
-			cohort = &ObservationCohort{Definition: f.definition, Outcomes: make(map[string]int)}
-			cohorts[f.definition] = cohort
+			cohort = &ObservationCohort{Definition: row.DefinitionID, Outcomes: make(map[string]int)}
+			cohorts[row.DefinitionID] = cohort
 		}
 		cohort.Total++
-		cohort.Outcomes[f.outcome]++
-		switch f.outcome {
+		cohort.Outcomes[outcome]++
+		switch outcome {
 		case "delivery_failed", outcomeIncomplete, "canceled":
 			continue
 		}
-		if e := f.completion; e != nil && e.ElapsedNanos > 0 && !e.ReceivedAt.IsZero() {
-			cohort.LatencyNanos = append(cohort.LatencyNanos, float64(e.ElapsedNanos))
-			if p := e.NativeProgress; p != nil && f.dispatched != nil && p.ExecutionComplete && schedulerFinite(p.NativeElapsedMS) && p.NativeElapsedMS >= 0 {
+		if row.ElapsedNanos != nil && *row.ElapsedNanos > 0 {
+			elapsed := *row.ElapsedNanos
+			cohort.LatencyNanos = append(cohort.LatencyNanos, float64(elapsed))
+			if native := row.NativeElapsedMS; native != nil && row.DispatchedNanos != nil && row.ExecutionComplete &&
+				schedulerFinite(*native) && *native >= 0 {
 				cohort.CompletionResidualNanos = append(cohort.CompletionResidualNanos,
-					float64(e.ElapsedNanos-*f.dispatched)-p.NativeElapsedMS*float64(time.Millisecond))
+					float64(elapsed-*row.DispatchedNanos)-*native*float64(time.Millisecond))
 			}
 		}
 	}
@@ -752,20 +707,20 @@ func (result *ObservationResult) aggregate(
 	}
 	sort.Slice(result.Cohorts, func(a, b int) bool { return result.Cohorts[a].Definition < result.Cohorts[b].Definition })
 	sort.Slice(result.Definitions, func(a, b int) bool { return result.Definitions[a].Identity < result.Definitions[b].Identity })
-	return selectedEvents
+	return selected
 }
 
-func (observationLog *ObservationLog) Query(uid string, from, to time.Time, definitions, outcomes []string, limit int, cursor string) (ObservationResult, error) {
+func (l *ObservationLog) Query(uid string, from, to time.Time, definitions, outcomes []string, limit int, cursor string) (ObservationResult, error) {
 	if len(definitions) == 0 {
-		definitions = observationLog.config.Definitions
+		definitions = l.config.Definitions
 	}
 	if len(outcomes) == 0 {
-		outcomes = observationLog.config.Outcomes
+		outcomes = l.config.Outcomes
 	}
 	result := ObservationResult{
 		UID: uid, From: from, To: to, DefinitionFilter: definitions, OutcomeFilter: outcomes,
 		Outcomes: map[string]int{}, QuantileMethod: "gonum/stat.Empirical",
-		SamplePopulation: "response_finished excluding canceled, incomplete and delivery_failed; " +
+		SamplePopulation: "requests received in [from,to); final rows excluding canceled, incomplete and delivery_failed; " +
 			"positive monotonic elapsed latency",
 	}
 	if uid == "" || (!from.IsZero() && !to.IsZero() && !from.Before(to)) || limit < 0 {
@@ -779,91 +734,297 @@ func (observationLog *ObservationLog) Query(uid string, from, to time.Time, defi
 		}
 		offset = n
 	}
-	read, err := observationLog.snapshot(observationDefinitionStream, observationRequestStream, "management")
-	if err != nil {
-		return result, err
-	}
-	read.selectReceiptWindow(from, to)
-	definitionsByID, requests, err := read.collectObservationFacts(&result)
-	if err != nil {
-		return result, err
-	}
-	selectedEvents := result.aggregate(definitionsByID, requests)
-	sort.SliceStable(selectedEvents, func(a, b int) bool {
-		if selectedEvents[a].At.Equal(selectedEvents[b].At) {
-			return selectedEvents[a].RequestID < selectedEvents[b].RequestID
-		}
-		return selectedEvents[a].At.Before(selectedEvents[b].At)
+	// Rows follow receipt, and a final row can come at any later time.
+	read, err := l.capture(map[string][2]time.Time{
+		observationRequestStream: {from, {}}, observationManagementStream: {from, to},
 	})
-	if offset > len(selectedEvents) {
+	if err != nil {
+		return result, err
+	}
+	defer read.close()
+	result.GapUntil = read.gap(from)
+	byID := map[string]*Definition{}
+	for id, d := range read.definitions {
+		if d.UID == uid && observationIncludes(result.DefinitionFilter, id) {
+			byID[id] = d
+		}
+	}
+	rows, err := l.requestRows(read, func(row *requestEnvelope) bool {
+		return row.WorkloadUID == uid && observationInInterval(row.ReceivedAt, from, to)
+	})
+	if err != nil {
+		return result, err
+	}
+	selected := result.aggregate(byID, rows)
+	sort.SliceStable(selected, func(a, b int) bool {
+		if selected[a].ReceivedAt.Equal(selected[b].ReceivedAt) {
+			return selected[a].RequestID < selected[b].RequestID
+		}
+		return selected[a].ReceivedAt.Before(selected[b].ReceivedAt)
+	})
+	if offset > len(selected) {
 		return result, failure("InvalidQuery", "observation cursor is out of range")
 	}
-	end := len(selectedEvents)
+	end := len(selected)
 	if limit > 0 && limit < end-offset {
 		end = offset + limit
 		result.NextCursor = strconv.Itoa(end)
 	}
-	result.Requests = selectedEvents[offset:end]
-	if err := read.collectManagementFacts(&result); err != nil {
-		return result, err
+	result.Requests = selected[offset:end]
+	return result, l.queryManagement(read, &result)
+}
+
+func (l *ObservationLog) queryManagement(read *observationRead, result *ObservationResult) error {
+	err := l.scanStream(read, observationManagementStream, func(raw []byte) error {
+		var e ManagementEvent
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return err
+		}
+		filter := result.DefinitionFilter
+		if e.WorkloadUID != result.UID || !observationInInterval(e.At, result.From, result.To) || len(filter) != 0 &&
+			(e.Before == nil || !observationIncludes(filter, e.Before.Identity())) &&
+			(e.Target == nil || !observationIncludes(filter, e.Target.Identity())) &&
+			(e.After == nil || !observationIncludes(filter, e.After.Identity())) {
+			return nil
+		}
+		result.Management = append(result.Management, e)
+		return nil
+	})
+	sort.SliceStable(result.Management, func(a, b int) bool {
+		return result.Management[a].At.Before(result.Management[b].At)
+	})
+	return err
+}
+
+type requestEnvelope struct {
+	Kind        string    `json:"kind"`
+	RequestID   string    `json:"requestID"`
+	WorkloadUID string    `json:"workloadUID"`
+	ReceivedAt  time.Time `json:"receivedAt"`
+}
+
+// requestRows merges the captured rows by request: final, else the open row,
+// else assigned. Only rows the selector keeps are fully decoded.
+func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEnvelope) bool) ([]*RequestRow, error) {
+	rows := map[string]*RequestRow{}
+	err := l.scanStream(read, observationRequestStream, func(raw []byte) error {
+		var envelope requestEnvelope
+		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(raw, &envelope); err != nil {
+			return err
+		}
+		if !keep(&envelope) || envelope.Kind != requestRowFinal && rows[envelope.RequestID] != nil {
+			return observationJSONSyntaxError(raw)
+		}
+		row := &RequestRow{}
+		if err := json.Unmarshal(raw, row); err != nil {
+			return err
+		}
+		rows[row.RequestID] = row
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for id, row := range read.open {
+		if (rows[id] == nil || rows[id].Kind != requestRowFinal) &&
+			keep(&requestEnvelope{RequestID: id, WorkloadUID: row.WorkloadUID, ReceivedAt: row.ReceivedAt}) {
+			rows[id] = row
+		}
+	}
+	result := make([]*RequestRow, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, row)
 	}
 	return result, nil
 }
 
-type unfinishedBackend struct {
-	event            RequestEvent
-	phase            string
-	responseRecorded bool
+// runtimeFacts returns the retained definitions and the assigned requests
+// without a final row that a restart must drain.
+func (l *ObservationLog) runtimeFacts() (map[string]*Definition, []RequestRow) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	definitions := make(map[string]*Definition, len(l.retained))
+	for id, d := range l.retained {
+		definitions[id] = d
+	}
+	restored := l.restored
+	l.restored = nil
+	return definitions, restored
 }
 
-// Startup reads existing facts only. It does not replay inference or resume an
-// interrupted management operation.
-func (observationLog *ObservationLog) runtimeFacts() (map[string]*Definition, []unfinishedBackend, error) {
-	read, err := observationLog.snapshot(observationDefinitionStream, observationRequestStream)
+// observationRead holds files opened under the writer lock; reads and
+// decoding run outside it. Deleting an hour does not affect an open file.
+type observationRead struct {
+	files       map[string][]observationOpenFile
+	open        map[string]*RequestRow
+	definitions map[string]*Definition
+	start       time.Time
+}
+
+type observationOpenFile struct {
+	file *os.File
+	at   time.Time
+	size int64
+}
+
+func (r *observationRead) close() {
+	for _, files := range r.files {
+		for _, file := range files {
+			_ = file.file.Close()
+		}
+	}
+}
+
+// gap reports the start of local observation when the query begins before it.
+func (r *observationRead) gap(from time.Time) *time.Time {
+	if from.Before(r.start) {
+		start := r.start
+		return &start
+	}
+	return nil
+}
+
+// capture opens each stream's minute files whose minute lies in [from, to];
+// a zero to reads through the latest file.
+func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRead, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	read := &observationRead{files: map[string][]observationOpenFile{}, open: map[string]*RequestRow{}, definitions: map[string]*Definition{}, start: l.started}
+	for id, row := range l.open {
+		copied := *row
+		read.open[id] = &copied
+	}
+	for id, d := range l.retained {
+		read.definitions[id] = d
+	}
+	hours, err := l.hours()
 	if err != nil {
-		return nil, nil, err
+		l.lastError = err
+		return nil, err
 	}
-	definitions := map[string]*Definition{}
-	if err := read.scan(observationDefinitionStream, func(record observationRecord) {
-		if d := record.Definition; d != nil {
-			definitions[d.Identity] = d.Definition
-		}
-	}); err != nil {
-		return nil, nil, err
-	}
-	assigned := map[string]*unfinishedBackend{}
-	responded := map[string]bool{}
-	ended := map[string]bool{}
-	if err := read.scan(observationRequestStream, func(record observationRecord) {
-		e := record.Request
-		if e == nil {
-			return
-		}
-		switch e.Kind {
-		case phaseAssigned:
-			if e.Assignment != nil {
-				assigned[e.RequestID] = &unfinishedBackend{event: *e, phase: phaseAssigned}
+	first := true
+	for _, hour := range hours {
+		for _, stream := range observationStreams {
+			files, err := l.hourFiles(hour, stream)
+			if err != nil {
+				read.close()
+				l.lastError = err
+				return nil, err
 			}
-		case "backend_queued", "backend_deferred", "backend_running":
-			if a := assigned[e.RequestID]; a != nil {
-				a.phase = strings.TrimPrefix(e.Kind, "backend_")
+			if first && len(files) > 0 && files[0].at.Before(read.start) {
+				read.start = files[0].at
 			}
-		case "backend_finished":
-			if e.ExecutionComplete {
-				ended[e.RequestID] = true
+			bounds, wanted := ranges[stream]
+			for _, segment := range files {
+				if !wanted || segment.at.Before(bounds[0].Truncate(time.Minute)) || !bounds[1].IsZero() && segment.at.After(bounds[1]) {
+					continue
+				}
+				if err := read.openFile(stream, segment); err != nil {
+					read.close()
+					l.lastError = err
+					return nil, err
+				}
 			}
-		case eventResponseFinished:
-			responded[e.RequestID] = true
 		}
-	}); err != nil {
-		return nil, nil, err
+		first = false
 	}
-	pending := []unfinishedBackend{}
-	for id, fact := range assigned {
-		if !ended[id] {
-			fact.responseRecorded = responded[id]
-			pending = append(pending, *fact)
+	return read, nil
+}
+
+func (r *observationRead) openFile(stream string, segment observationSegment) error {
+	file, err := os.Open(segment.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil // Deleted by an archive pass after the listing.
+	}
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return errors.Join(err, file.Close())
+	}
+	r.files[stream] = append(r.files[stream], observationOpenFile{file: file, at: segment.at, size: info.Size()})
+	return nil
+}
+
+// errObservationStop ends a scan early without an error.
+var errObservationStop = errors.New("observation scan stopped")
+
+func (l *ObservationLog) scanStream(read *observationRead, stream string, visit func([]byte) error) error {
+	var scanner observationScanner
+	for _, file := range read.files[stream] {
+		err := scanner.scan(file.file, file.size, visit)
+		if errors.Is(err, errObservationStop) {
+			return nil
+		}
+		if err != nil {
+			l.mu.Lock()
+			l.lastError = err
+			l.mu.Unlock()
+			return fmt.Errorf("read %s: %w", file.file.Name(), err)
 		}
 	}
-	return definitions, pending, nil
+	return nil
+}
+
+func scanObservationFile(name string, size int64, visit func([]byte) error) (result error) {
+	file, err := os.Open(name)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, file.Close()) }()
+	var scanner observationScanner
+	return scanner.scan(file, size, visit)
+}
+
+// observationScanner keeps its read and long-line buffers across files.
+type observationScanner struct {
+	reader *bufio.Reader
+	long   []byte
+}
+
+// scan visits newline-terminated lines of a captured prefix; a negative size
+// reads to the end. A line still being written has no newline and is skipped.
+// Visitor bytes are borrowed for that call.
+func (s *observationScanner) scan(source io.Reader, size int64, visit func([]byte) error) error {
+	if size >= 0 {
+		source = io.LimitReader(source, size)
+	}
+	if s.reader == nil {
+		s.reader = bufio.NewReaderSize(source, 1<<16)
+	} else {
+		s.reader.Reset(source)
+	}
+	for {
+		line, err := s.reader.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			s.long = append(s.long[:0], line...)
+			for errors.Is(err, bufio.ErrBufferFull) {
+				line, err = s.reader.ReadSlice('\n')
+				s.long = append(s.long, line...)
+			}
+			line = s.long
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if len(line) > 1 {
+			if err := visit(line[:len(line)-1]); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// jsoniter's skipped-number fast path is not a complete syntax validator.
+// Keep the standard syntax boundary without materializing ignored payloads.
+func observationJSONSyntaxError(raw []byte) error {
+	if json.Valid(raw) {
+		return nil
+	}
+	var invalid json.RawMessage
+	return json.Unmarshal(raw, &invalid)
 }

@@ -102,7 +102,7 @@ func newManagerHarness(t *testing.T) (*Manager, serving.ObservationLogConfig) {
 		}
 	}
 	store := &Store{client: &managerAPI{Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&api.Workload{}, &corev1.Pod{}).Build()}}
-	config := serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: managerArchive{t.TempDir()}}
+	config := serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: managerArchive{t.TempDir()}}
 	observationLog, err := serving.NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)

@@ -12,11 +12,12 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { formatText, rawInferenceBody, rawOutputs, resourceHref, type RawField, type WorkloadView } from "@/lib/domain"
 import { explain } from "@/lib/labels"
-import type { BackendProgress } from "@/lib/read-types"
+import type { BackendProgress, ObservationResult } from "@/lib/read-types"
 import { WorkloadState } from "@/features/management"
+import { rowStages } from "@/features/observations"
+import { gapNotice } from "@/lib/date-time"
 
 type Stage = "fill" | "confirm" | "result"
-type RequestEvents = { requests: { requestID: string; workloadUID?: string; kind: string; elapsedNanos: number; outcome?: string; error?: string; at: string; receivedAt: string; nativeProgress?: BackendProgress }[]; nextCursor?: string; incompleteWindows?: string[] }
 const encoder = new TextEncoder(), decoder = new TextDecoder()
 // 512 → "512 B", 1024 → "1 KiB", 4194304 → "4 MiB".
 function size(bytes: number) {
@@ -63,8 +64,8 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
   observationLinkParams.set("workload", name)
   observationLinkParams.set("uid", workloadUID)
   if (requestID) observationLinkParams.set("requestID", requestID)
-  const observation = useChillQuery<RequestEvents>(`v1/observations/workloads/${encodeURIComponent(workloadUID)}?${observationParams}`, { enabled: !!requestID && !!submittedAt && !!observationTo && !mutation.isPending })
-  const completion = observation.data?.requests.find(event => event.requestID === requestID && event.workloadUID === workloadUID && event.kind === "response_finished")
+  const observation = useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(workloadUID)}?${observationParams}`, { enabled: !!requestID && !!submittedAt && !!observationTo && !mutation.isPending })
+  const completion = observation.data?.requests?.find(row => row.requestID === requestID && row.workloadUID === workloadUID && row.kind === "final")
 
   const sent = { path: `POST /api/v1/workloads/${name}/infer`, timeout, inputs: fields.map(field => ({ name: field.name, datatype: "BYTES", bytes: values[field.name]?.length ?? 0 })) }
   // Plain messages first; rawInferenceBody stays the shape authority, ChillServer the content authority.
@@ -117,9 +118,9 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
     const failure = mutation.error?.data as { code?: string } | null | undefined
     const [meaning, step] = failure?.code ? explain(failure.code) : ["자세한 오류를 확인해 주세요."]
     // The native response (or error body) carries this request's progress; the completion record is the fallback.
-    const reported = (received?.data as { progress?: BackendProgress } | null | undefined)?.progress ?? completion?.nativeProgress
+    const reported = (received?.data as { progress?: BackendProgress } | null | undefined)?.progress ?? (completion && rowStages(completion))
     const stages = typeof reported?.backendMS === "number" ? reported : undefined
-    const totalMs = completion ? completion.elapsedNanos / 1e6 : undefined
+    const totalMs = completion?.elapsedNanos != null ? Number(completion.elapsedNanos) / 1e6 : undefined
     const rtt = received?.browserRTT
     return <Screen back={back} status={<StatusBadge tone={mutation.isPending ? "info" : mutation.error ? unknown ? "warn" : "fail" : "ok"}>{mutation.isPending ? "기다리는 중" : unknown ? "결과 미확인" : mutation.error ? "실패" : "완료"}</StatusBadge>}
       title={mutation.isPending ? "결과를 기다리고 있어요" : unknown ? "실행 결과를 확인하지 못했어요" : mutation.error ? "실행을 끝내지 못했어요" : received ? "추론이 끝났어요" : "아직 응답을 받지 못했어요"}
@@ -138,15 +139,15 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
       <Rows>
         {requestID && submittedAt && observationTo && <Row href={`/observations?${observationLinkParams}`} label="이 요청의 처리 기록 확인" />}
         <RowDialog label="응답과 시간 측정 자세히" title="실제 응답과 시간 측정">
-          <Facts items={[["화면에서 기다린 시간", rtt == null ? "정보 없음" : duration(rtt)], ["웹 중계 왕복", received?.relayTiming ? duration(Number(received.relayTiming)) : "정보 없음"], ["서비스 처리 시간", completion ? `${duration(completion.elapsedNanos / 1e6)} · ${statusLabel(completion.outcome)}` : "완료 기록을 아직 못 찾았어요"]]} />
+          <Facts items={[["화면에서 기다린 시간", rtt == null ? "정보 없음" : duration(rtt)], ["웹 중계 왕복", received?.relayTiming ? duration(Number(received.relayTiming)) : "정보 없음"], ["서비스 처리 시간", completion && totalMs !== undefined ? `${duration(totalMs)} · ${statusLabel(completion.outcome)}` : "완료 기록을 아직 못 찾았어요"]]} />
           <p>화면 대기 시간은 브라우저 왕복이에요. 웹 중계 왕복에는 서비스 대기와 실행이 들어 있어서 중계 자체 비용이나 서비스 내부 처리 시간으로 쓰지 않아요.</p>
           <p>서비스 처리 시간은 요청 완료 기록으로만 확인해요. 기록이 없으면 0으로 짐작하지 않아요.</p>
           <SourceJSON inline title="응답과 요청 식별 정보" value={{ status: received?.status, submittedAt, requestID, workloadUID: received?.workloadUID, queriedUID: view.desired.metadata.uid, browserRTT: received?.browserRTT, relayTiming: received?.relayTiming, completion }} />
           {requestID && observationTo && <QueryGate query={observation}>
             <p>{submittedAt} ~ {observationTo} 사이 기록 {config.pageSize}개 안에서 이 요청의 완료 기록을 찾아요.</p>
             {!completion && <p>지금 조회한 자료에 완료 기록이 없어요. {observation.data?.nextCursor ? "다음 자료가 있으니 요청 기록 화면에서 더 확인해 주세요." : "잠시 뒤 다시 조회해 주세요."}</p>}
-            {observation.data?.incompleteWindows?.length ? <p>일부 관측 구간이 불완전해요: {observation.data.incompleteWindows.join(", ")}</p> : null}
-            <SourceJSON inline title="이 요청의 원본 이벤트" value={observation.data?.requests.filter(event => event.requestID === requestID)} />
+            {observation.data?.gapUntil && <p>{gapNotice(observation.data.gapUntil)}</p>}
+            <SourceJSON inline title="이 요청의 원본 기록" value={observation.data?.requests?.filter(row => row.requestID === requestID)} />
           </QueryGate>}
           <h3>실제 응답 본문</h3><pre className="source-json">{received?.body ?? "응답 미수신"}</pre>
           <SourceJSON inline title="실제 보낸 요청" value={sent} />

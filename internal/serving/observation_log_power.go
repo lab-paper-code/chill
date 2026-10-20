@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"math"
+	"os"
 	"sort"
 	"time"
 
@@ -45,7 +45,7 @@ type OperatingPowerWindow struct {
 	ActivePoolMeanWatts *float64             `json:"activePoolMeanWatts"`
 	Complete            bool                 `json:"complete"`
 	Reasons             []string             `json:"reasons"`
-	IncompleteWindows   []string             `json:"incompleteWindows"`
+	GapUntil            *time.Time           `json:"gapUntil,omitempty"`
 }
 
 type operatingPowerHistory struct {
@@ -58,142 +58,167 @@ type operatingPowerHistory struct {
 
 type operatingPowerNeighbor struct {
 	at      time.Time
-	records []observationRecord
+	records []*SchedulerObservation
 }
 
-// Decode only the physical power series and membership used by the reducer;
-// decisions and snapshot profiles can contain large unrelated distributions.
-func operatingPowerRecord(window string, raw []byte) (observationRecord, error) {
+// OperatingPowerRecord decodes only the power series and snapshot membership
+// of one stored scheduler line; decisions can carry large unrelated payloads.
+// A nil catalog keeps membership only.
+func OperatingPowerRecord(raw []byte, catalog *ObservationCatalog) (*SchedulerObservation, error) {
 	var projection struct {
-		SchemaVersion string `json:"schemaVersion"`
-		Window        string `json:"window"`
-		Scheduler     *struct {
-			Power         json.RawMessage `json:"power"`
-			Node          *NodeReference  `json:"node"`
-			Meter         string          `json:"meter"`
-			PowerScope    string          `json:"powerScope"`
-			PowerCoverage json.RawMessage `json:"powerCoverage"`
-			Snapshot      *struct {
-				At        time.Time `json:"at"`
-				Instances []struct {
-					Node         NodeReference `json:"node"`
-					Ready        bool          `json:"ready"`
-					Stopped      bool          `json:"stopped"`
-					WorkloadUIDs []string      `json:"workloadUIDs"`
-				} `json:"instances"`
-			} `json:"snapshot"`
-		} `json:"scheduler"`
+		At          time.Time       `json:"at"`
+		Node        *NodeReference  `json:"node"`
+		Meter       string          `json:"meter"`
+		StartedAt   *time.Time      `json:"startedAt"`
+		Samples     json.RawMessage `json:"samples"`
+		Failures    json.RawMessage `json:"failures"`
+		PowerJoules json.RawMessage `json:"powerJoules"`
+		PowerError  string          `json:"powerError"`
+		Snapshot    *struct {
+			At        time.Time `json:"at"`
+			Instances []struct {
+				Node         NodeReference `json:"node"`
+				Ready        bool          `json:"ready"`
+				Stopped      bool          `json:"stopped"`
+				WorkloadUIDs []string      `json:"workloadUIDs"`
+			} `json:"instances"`
+		} `json:"snapshot"`
 	}
 	if err := observationJSONSyntaxError(raw); err != nil {
-		return observationRecord{}, err
+		return nil, err
 	}
 	if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(raw, &projection); err != nil {
-		return observationRecord{}, err
+		return nil, err
 	}
-	if projection.SchemaVersion != observationSchema || projection.Window != window {
-		return observationRecord{}, errObservationRecordIdentity
-	}
-	record := observationRecord{SchemaVersion: projection.SchemaVersion, Window: projection.Window}
-	if event := projection.Scheduler; event != nil {
-		// Preserve standard numeric decoding for the consumed measurement blocks.
-		var power *metricobserver.Result
-		if len(event.Power) > 0 {
-			if err := json.Unmarshal(event.Power, &power); err != nil {
-				return observationRecord{}, err
+	event := &SchedulerObservation{At: projection.At}
+	if snapshot := projection.Snapshot; snapshot != nil {
+		membership := &SchedulerSnapshot{At: snapshot.At, Instances: make([]SchedulerInstance, len(snapshot.Instances))}
+		for index, instance := range snapshot.Instances {
+			membership.Instances[index] = SchedulerInstance{
+				Node: instance.Node, Ready: instance.Ready, Stopped: instance.Stopped, WorkloadUIDs: instance.WorkloadUIDs,
 			}
 		}
-		var coverage *powerwindow.Policy
-		if len(event.PowerCoverage) > 0 {
-			if err := json.Unmarshal(event.PowerCoverage, &coverage); err != nil {
-				return observationRecord{}, err
+		event.Snapshot = membership
+	}
+	if projection.Meter == "" || catalog == nil {
+		return event, nil
+	}
+	// Preserve standard numeric decoding for the consumed measurement blocks.
+	line := schedulerLine{At: projection.At, Node: projection.Node, Meter: projection.Meter, StartedAt: projection.StartedAt, PowerError: projection.PowerError}
+	for _, field := range []struct {
+		raw   json.RawMessage
+		value any
+	}{{projection.Samples, &line.Samples}, {projection.Failures, &line.Failures}, {projection.PowerJoules, &line.PowerJoules}} {
+		if len(field.raw) > 0 {
+			if err := json.Unmarshal(field.raw, field.value); err != nil {
+				return nil, err
 			}
 		}
-		record.Scheduler = &SchedulerObservation{
-			Power: power, Node: event.Node, Meter: event.Meter,
-			PowerScope: event.PowerScope, PowerCoverage: coverage,
-		}
-		if snapshot := event.Snapshot; snapshot != nil {
-			membership := &SchedulerSnapshot{At: snapshot.At, Instances: make([]SchedulerInstance, len(snapshot.Instances))}
-			for index, instance := range snapshot.Instances {
-				membership.Instances[index] = SchedulerInstance{
-					Node: instance.Node, Ready: instance.Ready,
-					Stopped: instance.Stopped, WorkloadUIDs: instance.WorkloadUIDs,
-				}
-			}
-			record.Scheduler.Snapshot = membership
-		}
 	}
-	return record, nil
-}
-
-// Keep a conservative union of power/support and membership candidates. Bounds
-// are per window, not per series: the reducer alone chooses exact physical
-// neighbors. In particular, every nil-policy window must remain readable.
-func (s *observationSnapshot) selectOperatingPower(from, to time.Time) {
-	var baselineBound time.Time
-	hasBaselineBound := false
-	for _, prefix := range s.streams[observationSchedulerStream] {
-		bounds := prefix.census.snapshotAt
-		if !prefix.census.trusted || !bounds.set || bounds.min.After(from) {
-			continue
-		}
-		candidate := bounds.max
-		if candidate.After(from) {
-			candidate = bounds.min // Straddlers can hide the latest prior snapshot.
-		}
-		if !hasBaselineBound || candidate.After(baselineBound) {
-			baselineBound, hasBaselineBound = candidate, true
-		}
-	}
-	prefixes := s.streams[observationSchedulerStream][:0]
-	for _, prefix := range s.streams[observationSchedulerStream] {
-		c := prefix.census
-		membership := c.snapshotAt.intersects(from, to) ||
-			c.snapshotAt.set && !c.snapshotAt.min.After(from) &&
-				(!hasBaselineBound || !c.snapshotAt.max.Before(baselineBound))
-		power := c.hasPower && (!c.minStarted.After(to) && !c.maxEnded.Before(from) ||
-			c.unboundedPower || c.sampleAt.set &&
-			!c.sampleAt.max.Before(from.Add(-c.maxBoundaryDistance)) &&
-			!c.sampleAt.min.After(to.Add(c.maxBoundaryDistance)))
-		if !c.trusted || power || membership {
-			prefixes = append(prefixes, prefix)
-		}
-	}
-	s.streams[observationSchedulerStream] = prefixes
+	return event, resolvePower(event, &line, catalog)
 }
 
 // OperatingPower integrates raw samples over one interval, never record totals.
-func (observationLog *ObservationLog) OperatingPower(from, to time.Time, meters []OperatingPowerMeter, limit int) (OperatingPowerWindow, error) {
-	result := OperatingPowerWindow{From: from, To: to, Scope: "whole-pool-wall", Nodes: []OperatingNodePower{}, Reasons: []string{}, IncompleteWindows: []string{}}
+// It reads [from-1m, to+1m], the configured bound on boundary distance, and
+// older files only until the membership baseline snapshot appears.
+func (l *ObservationLog) OperatingPower(from, to time.Time, meters []OperatingPowerMeter, limit int) (OperatingPowerWindow, error) {
+	if from.IsZero() || !from.Before(to) || limit <= 0 {
+		return ReduceOperatingPower(from, to, meters, limit, nil)
+	}
+	start, end := from.Add(-time.Minute), to.Add(time.Minute)
+	read, err := l.capture(map[string][2]time.Time{
+		observationSchedulerStream: {start, end}, observationCatalogStream: {start.Truncate(time.Hour), end},
+	})
+	if err != nil {
+		return OperatingPowerWindow{}, err
+	}
+	defer read.close()
+	catalog, err := l.catalogFor(read, observationSchedulerStream)
+	if err != nil {
+		return OperatingPowerWindow{}, err
+	}
+	result, err := ReduceOperatingPower(from, to, meters, limit, func(yield func(*SchedulerObservation) error) error {
+		baseline := false
+		visit := func(catalog *ObservationCatalog) func([]byte) error {
+			return func(raw []byte) error {
+				record, err := OperatingPowerRecord(raw, catalog)
+				if err != nil {
+					return err
+				}
+				baseline = baseline || record.Snapshot != nil && !record.Snapshot.At.After(from)
+				return yield(record)
+			}
+		}
+		if err := l.scanStream(read, observationSchedulerStream, visit(catalog)); err != nil {
+			return err
+		}
+		before := start.Truncate(time.Minute)
+		var scanner observationScanner
+		for !baseline {
+			older, at, err := l.openOlder(observationSchedulerStream, before)
+			if older == nil || err != nil {
+				return err
+			}
+			before = at
+			err = scanner.scan(older, -1, visit(nil))
+			if err = errors.Join(err, older.Close()); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if gap := read.gap(from); gap != nil {
+		result.GapUntil = gap
+		result.Complete = false
+		result.Reasons = append(result.Reasons, "observation is retained locally only from "+gap.Format(time.RFC3339))
+	}
+	return result, err
+}
+
+// openOlder opens the newest minute file of stream that starts before before.
+func (l *ObservationLog) openOlder(stream string, before time.Time) (*os.File, time.Time, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	hours, err := l.hours()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	for index := len(hours) - 1; index >= 0; index-- {
+		if !hours[index].Before(before) {
+			continue
+		}
+		files, err := l.hourFiles(hours[index], stream)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		for file := len(files) - 1; file >= 0; file-- {
+			if files[file].at.Before(before) {
+				opened, err := os.Open(files[file].path)
+				return opened, files[file].at, err
+			}
+		}
+	}
+	return nil, time.Time{}, nil
+}
+
+// ReduceOperatingPower integrates the whole and active POOL energy of
+// [from,to] from scheduler records given in any order. The ChillServer and the
+// offline table tool share it.
+func ReduceOperatingPower(from, to time.Time, meters []OperatingPowerMeter, limit int, records func(yield func(*SchedulerObservation) error) error) (OperatingPowerWindow, error) {
+	result := OperatingPowerWindow{From: from, To: to, Scope: "whole-pool-wall", Nodes: []OperatingNodePower{}, Reasons: []string{}}
 	if from.IsZero() || !from.Before(to) || limit <= 0 {
 		return result, failure("InvalidQuery", "positive explicit power interval and observation bound are required")
 	}
-	snapshot, err := observationLog.snapshot(observationSchedulerStream)
-	if err != nil {
-		return result, err
-	}
-	snapshot.selectOperatingPower(from, to)
 	byUID, history := configuredOperatingMeters(&result, meters)
 	var snapshots []SchedulerSnapshot
 	var baseline *SchedulerSnapshot
-	baselineWindow := ""
-	rawWindows := map[string]bool{}
 	matched := 0
-	err = snapshot.scanRaw(observationSchedulerStream, func(window string, raw []byte) (bool, error) {
-		record, err := operatingPowerRecord(window, raw)
-		if err != nil {
-			return false, err
-		}
-		event := record.Scheduler
-		if event == nil {
-			return false, nil
-		}
+	err := records(func(event *SchedulerObservation) error {
 		selected := false
 		if snapshot := event.Snapshot; snapshot != nil && !snapshot.At.IsZero() {
 			if !snapshot.At.After(from) {
 				if baseline == nil || !snapshot.At.Before(baseline.At) {
 					baseline = snapshot
-					baselineWindow = record.Window
 				}
 			} else if snapshot.At.Before(to) {
 				selected = true
@@ -203,22 +228,19 @@ func (observationLog *ObservationLog) OperatingPower(from, to time.Time, meters 
 			}
 		}
 		power := event.Power
-		if power != nil && event.Node != nil {
-			if index, expected := byUID[event.Node.UID]; expected && matchesOperatingMeter(history[index].meter, event) {
-				// Only configured physical series may compete for boundary support.
-				retainOperatingNeighbors(&history[index], record, from, to, limit)
+		if power != nil {
+			if event.Node == nil {
+				return nil
 			}
-			if index, expected := byUID[event.Node.UID]; !expected || !matchesOperatingMeter(history[index].meter, event) {
-				return false, nil
+			index, expected := byUID[event.Node.UID]
+			if !expected || !matchesOperatingMeter(history[index].meter, event) {
+				return nil
 			}
-		} else if power != nil {
-			return false, nil
-		}
-		if power != nil && !power.StartedAt.After(to) && !power.EndedAt.Before(from) {
-			rawWindows[record.Window] = true
-			selected = true
-			if matched < limit && event.Node != nil {
-				if index, expected := byUID[event.Node.UID]; expected && matchesOperatingMeter(history[index].meter, event) {
+			// Only configured physical series may compete for boundary support.
+			retainOperatingNeighbors(&history[index], event, from, to, limit)
+			if !power.StartedAt.After(to) && !power.EndedAt.Before(from) {
+				selected = true
+				if matched < limit {
 					mergeOperatingPower(&result.Nodes[index], &history[index], event, from, to)
 				}
 			}
@@ -226,14 +248,17 @@ func (observationLog *ObservationLog) OperatingPower(from, to time.Time, meters 
 		if selected {
 			matched++
 		}
-		return false, nil
+		return nil
 	})
 	if err != nil {
 		return result, err
 	}
-	matched = mergeOperatingNeighbors(&result, history, rawWindows, matched, limit)
-	rawComplete := operatingPowerCompleteness(&result, snapshot.windows, rawWindows, matched, limit)
-	snapshots, activeValid := operatingMembership(&result, snapshot.windows, baseline, baselineWindow, snapshots, byUID, rawComplete)
+	matched = mergeOperatingNeighbors(&result, history, matched, limit)
+	if matched > limit {
+		result.Reasons = append(result.Reasons, "selected raw observation count exceeds query bound")
+	}
+	rawComplete := len(result.Reasons) == 0
+	snapshots, activeValid := operatingMembership(&result, baseline, snapshots, byUID, rawComplete)
 	sumOperatingPower(&result, history, snapshots, rawComplete, activeValid)
 	return result, nil
 }
@@ -244,7 +269,7 @@ func configuredOperatingMeters(result *OperatingPowerWindow, meters []OperatingP
 	for _, meter := range meters {
 		if index, found := byUID[meter.Node.UID]; found {
 			node := &result.Nodes[index]
-			if node.Meter != meter.Meter || node.Scope != meter.Scope || node.Node != meter.Node || !sameOperatingSource(history[index].meter.Source, meter.Source) {
+			if node.Meter != meter.Meter || node.Scope != meter.Scope || node.Node != meter.Node {
 				node.Reasons = append(node.Reasons, "ambiguous configured meters for Node UID")
 			}
 			continue
@@ -263,20 +288,12 @@ func configuredOperatingMeters(result *OperatingPowerWindow, meters []OperatingP
 	return byUID, history
 }
 
-func sameOperatingSource(a, b metricobserver.SourceIdentity) bool {
-	return a.Kind == b.Kind && a.Endpoint == b.Endpoint && a.Metric == b.Metric && maps.Equal(a.MetricLabels, b.MetricLabels)
-}
-
+// The meter ID names one source; the catalog holds its body.
 func matchesOperatingMeter(meter OperatingPowerMeter, event *SchedulerObservation) bool {
-	return event.Node != nil && *event.Node == meter.Node && event.Meter == meter.Meter &&
-		event.PowerScope == meter.Scope && sameOperatingSource(meter.Source, event.Power.Source)
+	return event.Node != nil && *event.Node == meter.Node && event.Meter == meter.Meter && event.PowerScope == meter.Scope
 }
 
 func mergeOperatingPower(node *OperatingNodePower, raw *operatingPowerHistory, event *SchedulerObservation, from, to time.Time) {
-	if event.Meter != node.Meter || event.PowerScope != node.Scope {
-		node.Reasons = append(node.Reasons, "ambiguous retained meter/scope for Node UID")
-		return
-	}
 	power := event.Power
 	// PowerError is the collector chunk's verdict, not this query's coverage.
 	// Preserve actual source failures in the selected interval; integrate the
@@ -303,38 +320,37 @@ func mergeOperatingPower(node *OperatingNodePower, raw *operatingPowerHistory, e
 	}
 }
 
-// Adjacent observation windows can supply the nearest real boundary samples.
-func retainOperatingNeighbors(raw *operatingPowerHistory, record observationRecord, from, to time.Time, limit int) {
-	power := record.Scheduler.Power
-	for _, sample := range power.Samples {
-		if policy := record.Scheduler.PowerCoverage; policy != nil &&
+// Records outside the interval can supply the nearest real boundary samples.
+func retainOperatingNeighbors(raw *operatingPowerHistory, event *SchedulerObservation, from, to time.Time, limit int) {
+	for _, sample := range event.Power.Samples {
+		if policy := event.PowerCoverage; policy != nil &&
 			(sample.ObservedAt.Before(from) && from.Sub(sample.ObservedAt) > policy.MaximumBoundaryDistance ||
 				sample.ObservedAt.After(to) && sample.ObservedAt.Sub(to) > policy.MaximumBoundaryDistance) {
 			continue // Outside samples must satisfy the recorded boundary policy.
 		}
 		if sample.ObservedAt.Before(from) {
-			retainOperatingNeighbor(&raw.before, record, sample.ObservedAt, true, limit)
+			retainOperatingNeighbor(&raw.before, event, sample.ObservedAt, true, limit)
 		}
 		if sample.ObservedAt.After(to) {
-			retainOperatingNeighbor(&raw.after, record, sample.ObservedAt, false, limit)
+			retainOperatingNeighbor(&raw.after, event, sample.ObservedAt, false, limit)
 		}
 	}
 }
 
-func retainOperatingNeighbor(neighbor *operatingPowerNeighbor, record observationRecord, at time.Time, before bool, limit int) {
+func retainOperatingNeighbor(neighbor *operatingPowerNeighbor, event *SchedulerObservation, at time.Time, before bool, limit int) {
 	if neighbor.at.IsZero() || before && at.After(neighbor.at) || !before && at.Before(neighbor.at) {
 		neighbor.at = at
 		neighbor.records = neighbor.records[:0]
 	}
-	if len(neighbor.records) > 0 && neighbor.records[len(neighbor.records)-1].Scheduler == record.Scheduler {
+	if len(neighbor.records) > 0 && neighbor.records[len(neighbor.records)-1] == event {
 		return
 	}
 	if at.Equal(neighbor.at) && len(neighbor.records) <= limit {
-		neighbor.records = append(neighbor.records, record)
+		neighbor.records = append(neighbor.records, event)
 	}
 }
 
-func mergeOperatingNeighbors(result *OperatingPowerWindow, history []operatingPowerHistory, rawWindows map[string]bool, matched, limit int) int {
+func mergeOperatingNeighbors(result *OperatingPowerWindow, history []operatingPowerHistory, matched, limit int) int {
 	seen := map[*SchedulerObservation]bool{}
 	for index := range history {
 		raw, node := &history[index], &result.Nodes[index]
@@ -346,18 +362,17 @@ func mergeOperatingNeighbors(result *OperatingPowerWindow, history []operatingPo
 			if _, exact := raw.samples[boundary.UTC()]; exact {
 				continue
 			}
-			for _, record := range neighbor.records {
-				power := record.Scheduler.Power
+			for _, event := range neighbor.records {
+				power := event.Power
 				if !power.StartedAt.After(result.To) && !power.EndedAt.Before(result.From) {
 					continue // Already selected by the interval scan.
 				}
-				if seen[record.Scheduler] {
+				if seen[event] {
 					continue
 				}
-				seen[record.Scheduler] = true
-				rawWindows[record.Window] = true
+				seen[event] = true
 				if matched < limit {
-					mergeOperatingPower(node, raw, record.Scheduler, result.From, result.To)
+					mergeOperatingPower(node, raw, event, result.From, result.To)
 				}
 				matched++
 			}
@@ -396,33 +411,11 @@ func retainOperatingSample(node *OperatingNodePower, raw *operatingPowerHistory,
 	}
 }
 
-func operatingPowerCompleteness(result *OperatingPowerWindow, windows []ObservationWindow, rawWindows map[string]bool, matched, limit int) bool {
-	if matched > limit {
-		result.Reasons = append(result.Reasons, "selected raw observation count exceeds query bound")
-	}
-	for _, window := range windows {
-		if window.Incomplete && (rawWindows[window.ID] || window.overlaps(result.From, result.To)) {
-			result.IncompleteWindows = append(result.IncompleteWindows, window.ID)
-		}
-	}
-	if len(result.IncompleteWindows) > 0 {
-		result.Reasons = append(result.Reasons, "retained observation history is incomplete")
-	}
-	return len(result.Reasons) == 0
-}
-
-func operatingMembership(result *OperatingPowerWindow, windows []ObservationWindow, baseline *SchedulerSnapshot, baselineWindow string, snapshots []SchedulerSnapshot, byUID map[string]int, rawComplete bool) ([]SchedulerSnapshot, bool) {
+func operatingMembership(result *OperatingPowerWindow, baseline *SchedulerSnapshot, snapshots []SchedulerSnapshot, byUID map[string]int, rawComplete bool) ([]SchedulerSnapshot, bool) {
 	activeValid := baseline != nil && rawComplete
 	if baseline == nil {
 		result.Reasons = append(result.Reasons, "active membership has no retained snapshot at interval start")
 	} else {
-		for _, window := range windows {
-			if window.Incomplete && (window.ID == baselineWindow || window.overlaps(baseline.At, result.From)) {
-				activeValid = false
-				result.Reasons = append(result.Reasons, "active membership history since baseline snapshot is incomplete")
-				break
-			}
-		}
 		snapshots = append(snapshots, *baseline)
 	}
 	sort.SliceStable(snapshots, func(a, b int) bool { return snapshots[a].At.Before(snapshots[b].At) })

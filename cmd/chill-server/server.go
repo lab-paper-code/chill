@@ -54,7 +54,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	defer func() { retErr = errors.Join(retErr, observationOwner.Close()) }()
 	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
-		Directory: opts.observationDirectory, Store: opts.storeName, Window: opts.observationWindow,
+		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
 	})
 	if err != nil {
@@ -107,7 +107,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	handlerConfig := httpapi.HandlerConfig{
 		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout,
-		MaxQueryEvents: opts.maxQueryEvents, ObservationWindow: opts.observationWindow,
+		MaxQueryEvents: opts.maxQueryEvents,
 	}
 	if scheduler != nil {
 		handlerConfig.Scheduler = scheduler.controller
@@ -153,7 +153,7 @@ func serve(ctx context.Context, opts options, chillServer http.Handler, executio
 	defer sourceTicker.Stop()
 	profileTicker := time.NewTicker(opts.profileInterval)
 	defer profileTicker.Stop()
-	archiveTicker := time.NewTicker(opts.observationWindow)
+	archiveTicker := time.NewTicker(time.Minute)
 	defer archiveTicker.Stop()
 	var serveError error
 loop:
@@ -184,7 +184,7 @@ loop:
 		case <-archiveTicker.C:
 			callCtx, cancel := context.WithTimeout(ctx, opts.requestTimeout)
 			if err := observationLog.Flush(callCtx); err != nil {
-				ctrl.Log.Error(err, "publish serving observation window")
+				ctrl.Log.Error(err, "archive serving observation hours")
 			}
 			cancel()
 		}

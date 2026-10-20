@@ -187,7 +187,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				return false, nil, nil
 			})
 			observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
-				Directory: t.TempDir(), Store: "evidence", Window: time.Hour,
+				Directory: t.TempDir(), Store: "evidence",
 				Writer: settingsArchive{directory: t.TempDir()},
 			})
 			if err != nil {
@@ -290,7 +290,7 @@ func assertSchedulerSettingsRefreshFailed(
 	if refreshes != 1 || len(controller.Settings().AutonomousWorkloads) != 0 {
 		t.Fatal("post-persistence refresh failure enabled the previously accepted catalog")
 	}
-	records, _, err := observationLog.SchedulerObservationPage(
+	records, _, _, err := observationLog.SchedulerObservationPage(
 		time.Now().Add(-time.Minute), time.Now().Add(time.Second), 10, 0)
 	if err != nil || len(records) != 2 || records[1].Settings.AppliedAt != nil || records[1].Settings.Error == "" {
 		t.Fatalf("refresh failure audit claimed application: %+v %v", records, err)
@@ -322,7 +322,7 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 		!reflect.DeepEqual(applied.Before, before) || !reflect.DeepEqual(applied.After, after) || applied.AppliedAt == nil {
 		t.Fatalf("missing actual audit result: %+v", applied)
 	}
-	records, _, err := observationLog.SchedulerObservationPage(
+	records, _, _, err := observationLog.SchedulerObservationPage(
 		applied.ValidatedAt.Add(-time.Second), time.Now().Add(time.Second), 10, 0)
 	if err != nil || len(records) != 2 || records[0].Settings.AppliedAt != nil || records[1].Settings.AppliedAt == nil {
 		t.Fatalf("intent/application ledger=%+v error=%v", records, err)
@@ -395,7 +395,7 @@ func TestSchedulerCompactQueryRejectsAmbiguousViews(t *testing.T) {
 
 func TestPoolsShowMeasurementNodeAndWorkloadActivePool(t *testing.T) {
 	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: settingsArchive{directory: t.TempDir()},
+		Directory: t.TempDir(), Store: "evidence", Writer: settingsArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)

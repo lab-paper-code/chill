@@ -98,7 +98,6 @@ spec:
             - {{ printf "--source-interval=%s" .Values.servingEntrypoint.sourceInterval | quote }}
             - {{ printf "--profile-interval=%s" .Values.servingEntrypoint.profileInterval | quote }}
             - {{ printf "--profile-confidence-level=%v" .Values.servingEntrypoint.profileConfidenceLevel | quote }}
-            - {{ printf "--observation-window=%s" .Values.servingEntrypoint.observationWindow | quote }}
             - {{ printf "--max-request-bytes=%s" (.Values.servingEntrypoint.maxRequestBytes | toJson) | quote }}
             - {{ printf "--max-evidence-bytes=%s" (.Values.servingEntrypoint.maxEvidenceBytes | toJson) | quote }}
             {{- range .Values.servingEntrypoint.observationDefinitions }}

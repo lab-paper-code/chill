@@ -185,6 +185,7 @@ type SchedulerSnapshot struct {
 	// ObservationEnd is the fixed historical arrival cutoff.
 	ObservationEnd   time.Time                   `json:"observationEnd"`
 	Workloads        []*Definition               `json:"workloads"`
+	WorkloadIDs      []string                    `json:"workloadIDs,omitempty"` // Stored records reference the catalog.
 	Nodes            []SchedulerNode             `json:"nodes"`
 	Instances        []SchedulerInstance         `json:"instances"`
 	Routing          map[string]map[string]int32 `json:"routing"`
@@ -193,7 +194,9 @@ type SchedulerSnapshot struct {
 	Arrivals         []SchedulerArrival          `json:"arrivals"`
 	Options          []SchedulerOption           `json:"options"`
 	Baselines        []NodeBaseline              `json:"baselines"`
+	BaselineRefs     []string                    `json:"baselineRefs,omitempty"`
 	Costs            []OperationCost             `json:"costs"`
+	CostRefs         []string                    `json:"costRefs,omitempty"`
 	Actions          []Action                    `json:"actions"`
 	Reasons          []string                    `json:"reasons"`
 	References       []string                    `json:"references"`

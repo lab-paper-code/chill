@@ -149,7 +149,7 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 	defer func() { retErr = errors.Join(retErr, ownership.Close()) }()
 	journal, err := serving.NewObservationLog(serving.ObservationLogConfig{
 		Directory: manifest.JournalDirectory, Store: manifest.Measurement.Store,
-		Window: time.Minute, Writer: objects,
+		Writer: objects,
 	})
 	if err != nil {
 		return err
@@ -633,7 +633,7 @@ func runExecution(
 	}
 	defer func() { retErr = errors.Join(retErr, ownership.Close()) }()
 	journal, err := serving.NewObservationLog(serving.ObservationLogConfig{
-		Directory: m.JournalDirectory, Store: spec.Store.Store, Window: time.Minute, Writer: objects,
+		Directory: m.JournalDirectory, Store: spec.Store.Store, Writer: objects,
 	})
 	if err != nil {
 		return err

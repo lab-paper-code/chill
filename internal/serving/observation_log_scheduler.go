@@ -54,15 +54,59 @@ type SchedulerObservation struct {
 	PowerError    string                      `json:"powerError,omitempty"`
 }
 
-func (observationLog *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
+// schedulerLine is the stored scheduler record. Immutable bodies live in the
+// catalog: a power row names its meter, and a snapshot names definitions,
+// costs and baselines by reference.
+type schedulerLine struct {
+	At          time.Time                   `json:"at"`
+	Decision    *SchedulerDecision          `json:"decision,omitempty"`
+	Snapshot    *SchedulerSnapshot          `json:"snapshot,omitempty"`
+	Settings    *SchedulerSettingsChange    `json:"settings,omitempty"`
+	Action      *SchedulerActionObservation `json:"action,omitempty"`
+	Node        *NodeReference              `json:"node,omitempty"`
+	Meter       string                      `json:"meter,omitempty"`
+	StartedAt   *time.Time                  `json:"startedAt,omitempty"`
+	Samples     []metricobserver.Sample     `json:"samples,omitempty"`
+	Failures    []metricobserver.Failure    `json:"failures,omitempty"`
+	PowerJoules *float64                    `json:"powerJoules,omitempty"`
+	PowerError  string                      `json:"powerError,omitempty"`
+}
+
+// ObservationMeter is the catalog body of a meter.
+type ObservationMeter struct {
+	Node     NodeReference                 `json:"node"`
+	Scope    string                        `json:"scope"`
+	Source   metricobserver.SourceIdentity `json:"source"`
+	Sampling *metricobserver.Request       `json:"sampling,omitempty"`
+	Coverage *powerwindow.Policy           `json:"coverage,omitempty"`
+}
+
+func costRef(c OperationCost) string    { return c.ID + "@" + c.Reference.Key }
+func baselineRef(b NodeBaseline) string { return b.ID + "@" + b.Reference.Key }
+func (o *observationReferences) add(kind, key string, body any) {
+	o.rows = append(o.rows, observationReference{kind: kind, key: key, body: body})
+}
+
+type observationReference struct {
+	kind, key string
+	body      any
+}
+
+type observationReferences struct{ rows []observationReference }
+
+func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 	if event.At.IsZero() {
 		return failure("InvalidObservation", "scheduler observation time is required")
 	}
+	refs := &observationReferences{}
+	line := schedulerLine{At: event.At, Settings: event.Settings, Action: event.Action}
 	if d := event.Decision; d != nil {
 		recorded := *d
-		recorded.Keep = recordedCandidate(d.Keep)
-		if d.Target != nil {
-			target := recordedCandidate(*d.Target)
+		recorded.Keep = refs.candidate(d.Keep)
+		if d.Target != nil && d.Target.ID == d.Keep.ID {
+			recorded.Target = &SchedulerCandidate{ID: d.Target.ID, Keep: true}
+		} else if d.Target != nil {
+			target := refs.candidate(*d.Target)
 			recorded.Target = &target
 		}
 		// Keep and Target carry the full bodies; the evaluated list keeps summaries.
@@ -78,51 +122,205 @@ func (observationLog *ObservationLog) SchedulerRecord(event SchedulerObservation
 			policy.Kernels = nil // Live projection input; History keeps its result.
 			recorded.Policy = &policy
 		}
-		event.Decision = &recorded
+		line.Decision = &recorded
 	}
 	if s := event.Snapshot; s != nil {
 		recorded := *s
-		recorded.Instances = recordedInstances(s.Instances)
+		recorded.Instances = refs.instances(s.Instances)
 		// Window counts stay in Decision.Search; the request stream holds arrivals.
 		recorded.Arrivals = nil
+		recorded.Workloads, recorded.WorkloadIDs = nil, make([]string, len(s.Workloads))
+		for i, d := range s.Workloads {
+			recorded.WorkloadIDs[i] = d.Identity()
+			refs.add("definition", d.Identity(), d)
+		}
+		recorded.Costs, recorded.CostRefs = nil, make([]string, len(s.Costs))
+		for i, c := range s.Costs {
+			recorded.CostRefs[i] = costRef(c)
+			refs.add("cost", costRef(c), c)
+		}
+		recorded.Baselines, recorded.BaselineRefs = nil, make([]string, len(s.Baselines))
+		for i, b := range s.Baselines {
+			recorded.BaselineRefs[i] = baselineRef(b)
+			refs.add("baseline", baselineRef(b), b)
+		}
 		recorded.Outstanding = slices.Clone(s.Outstanding)
 		for i, r := range recorded.Outstanding {
 			if r.Definition != nil {
+				refs.add("definition", r.Definition.Identity(), r.Definition)
 				recorded.Outstanding[i].DefinitionID, recorded.Outstanding[i].Definition = r.Definition.Identity(), nil
 			}
 		}
 		recorded.Options = slices.Clone(s.Options)
 		for i := range recorded.Options {
-			recorded.Options[i].Instance = recordedInstance(recorded.Options[i].Instance)
+			recorded.Options[i].Instance = refs.instance(recorded.Options[i].Instance)
 		}
 		if s.InProgressTarget != nil {
-			target := recordedCandidate(*s.InProgressTarget)
+			target := refs.candidate(*s.InProgressTarget)
 			recorded.InProgressTarget = &target
 		}
-		event.Snapshot = &recorded
+		line.Snapshot = &recorded
 	}
-	return observationLog.append(observationSchedulerStream, observationRecord{Scheduler: &event})
+	if power := event.Power; power != nil {
+		if event.Meter == "" || event.Node == nil {
+			return failure("InvalidObservation", "power observation requires its meter and Node")
+		}
+		started := power.StartedAt
+		line.Node, line.Meter, line.StartedAt = event.Node, event.Meter, &started
+		line.Samples, line.Failures, line.PowerJoules, line.PowerError = power.Samples, power.Failures, event.PowerJoules, event.PowerError
+		refs.add("meter", event.Meter, ObservationMeter{
+			Node: *event.Node, Scope: event.PowerScope, Source: power.Source,
+			Sampling: event.PowerSampling, Coverage: event.PowerCoverage,
+		})
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	for _, ref := range refs.rows {
+		if err := l.referenceLocked(ref.kind, ref.key, event.At, now, ref.body); err != nil {
+			return err
+		}
+	}
+	return l.appendLocked(observationSchedulerStream, now, line)
 }
 
-// Stored records keep profile IDs; the catalog serves profile bodies.
-func recordedCandidate(c SchedulerCandidate) SchedulerCandidate {
-	c.Instances = recordedInstances(c.Instances)
+// Stored records keep profile IDs; the catalog holds profile bodies.
+func (o *observationReferences) candidate(c SchedulerCandidate) SchedulerCandidate {
+	c.Instances = o.instances(c.Instances)
 	return c
 }
 
-func recordedInstances(instances []SchedulerInstance) []SchedulerInstance {
+func (o *observationReferences) instances(instances []SchedulerInstance) []SchedulerInstance {
 	recorded := slices.Clone(instances)
 	for i := range recorded {
-		recorded[i] = recordedInstance(recorded[i])
+		recorded[i] = o.instance(recorded[i])
 	}
 	return recorded
 }
 
-func recordedInstance(instance SchedulerInstance) SchedulerInstance {
+func (o *observationReferences) instance(instance SchedulerInstance) SchedulerInstance {
 	if instance.Profile != nil {
+		o.add("profile", instance.Profile.ID, instance.Profile)
 		instance.ProfileID, instance.Profile = instance.Profile.ID, nil
 	}
 	return instance
+}
+
+// ObservationCatalog resolves a reference to the last catalog row of its key
+// at or before the referencing record; a record older than every row of its
+// key uses the earliest row.
+type ObservationCatalog struct {
+	rows map[string][]CatalogRow
+}
+
+func (c *ObservationCatalog) Add(row CatalogRow) {
+	if c.rows == nil {
+		c.rows = map[string][]CatalogRow{}
+	}
+	id := row.Kind + "/" + row.Key
+	c.rows[id] = append(c.rows[id], row)
+}
+
+func (c *ObservationCatalog) body(kind, key string, at time.Time, value any) error {
+	rows := c.rows[kind+"/"+key]
+	if len(rows) == 0 {
+		return failure("IncompleteObservation", "catalog has no %s %s", kind, key)
+	}
+	found := rows[0]
+	for _, row := range rows {
+		if !row.At.After(at) && !row.At.Before(found.At) {
+			found = row
+		}
+	}
+	return json.Unmarshal(found.Body, value)
+}
+
+// DecodeSchedulerLine decodes one stored scheduler line and fills every
+// reference from the catalog.
+func DecodeSchedulerLine(raw []byte, catalog *ObservationCatalog) (SchedulerObservation, error) {
+	var line schedulerLine
+	if err := json.Unmarshal(raw, &line); err != nil {
+		return SchedulerObservation{}, err
+	}
+	event := SchedulerObservation{At: line.At, Decision: line.Decision, Snapshot: line.Snapshot, Settings: line.Settings, Action: line.Action}
+	if d := event.Decision; d != nil && d.Target != nil && d.Target.ID == d.Keep.ID {
+		target := d.Keep
+		d.Target = &target
+	}
+	if s := event.Snapshot; s != nil {
+		s.Workloads, s.Costs, s.Baselines = nil, nil, nil
+		if len(s.WorkloadIDs) > 0 {
+			s.Workloads = make([]*Definition, len(s.WorkloadIDs))
+		}
+		for i, id := range s.WorkloadIDs {
+			if err := catalog.body("definition", id, line.At, &s.Workloads[i]); err != nil {
+				return event, err
+			}
+		}
+		if len(s.CostRefs) > 0 {
+			s.Costs = make([]OperationCost, len(s.CostRefs))
+		}
+		for i, id := range s.CostRefs {
+			if err := catalog.body("cost", id, line.At, &s.Costs[i]); err != nil {
+				return event, err
+			}
+		}
+		if len(s.BaselineRefs) > 0 {
+			s.Baselines = make([]NodeBaseline, len(s.BaselineRefs))
+		}
+		for i, id := range s.BaselineRefs {
+			if err := catalog.body("baseline", id, line.At, &s.Baselines[i]); err != nil {
+				return event, err
+			}
+		}
+		s.WorkloadIDs, s.CostRefs, s.BaselineRefs = nil, nil, nil
+	}
+	return event, resolvePower(&event, &line, catalog)
+}
+
+func resolvePower(event *SchedulerObservation, line *schedulerLine, catalog *ObservationCatalog) error {
+	if line.Meter == "" {
+		return nil
+	}
+	var meter ObservationMeter
+	if err := catalog.body("meter", line.Meter, line.At, &meter); err != nil {
+		return err
+	}
+	power := &metricobserver.Result{Source: meter.Source, EndedAt: line.At, Samples: line.Samples, Failures: line.Failures}
+	if line.StartedAt != nil {
+		power.StartedAt = *line.StartedAt
+	}
+	power.Summary = metricobserver.Summarize(*power)
+	event.Power, event.Node, event.Meter, event.PowerScope = power, line.Node, line.Meter, meter.Scope
+	event.PowerSampling, event.PowerCoverage = meter.Sampling, meter.Coverage
+	event.PowerJoules, event.PowerError = line.PowerJoules, line.PowerError
+	return nil
+}
+
+// catalogFor reads the catalog rows of every hour the captured files touch.
+func (l *ObservationLog) catalogFor(read *observationRead, stream string) (*ObservationCatalog, error) {
+	catalog := &ObservationCatalog{}
+	hours := map[time.Time]bool{}
+	var scanner observationScanner
+	for _, file := range read.files[stream] {
+		hours[file.at.Truncate(time.Hour)] = true
+	}
+	for _, file := range read.files[observationCatalogStream] {
+		if !hours[file.at.Truncate(time.Hour)] {
+			continue
+		}
+		if err := scanner.scan(file.file, file.size, func(raw []byte) error {
+			var row CatalogRow
+			if err := json.Unmarshal(raw, &row); err != nil {
+				return err
+			}
+			catalog.Add(row)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return catalog, nil
 }
 
 type WorkloadLoad struct {
@@ -139,135 +337,82 @@ type WorkloadLoad struct {
 }
 
 type LoadWindow struct {
-	From              time.Time          `json:"from"`
-	To                time.Time          `json:"to"`
-	Duration          time.Duration      `json:"durationNanos"`
-	Population        string             `json:"population"`
-	Workloads         []WorkloadLoad     `json:"workloads"`
-	Arrivals          []SchedulerArrival `json:"arrivals"`
-	IncompleteWindows []string           `json:"incompleteWindows"`
+	From       time.Time          `json:"from"`
+	To         time.Time          `json:"to"`
+	Duration   time.Duration      `json:"durationNanos"`
+	Population string             `json:"population"`
+	Workloads  []WorkloadLoad     `json:"workloads"`
+	Arrivals   []SchedulerArrival `json:"arrivals"`
+	GapUntil   *time.Time         `json:"gapUntil,omitempty"`
 }
 
-type windowLoadFact struct {
-	received                 time.Time
-	uid, definition, outcome string
-	lifetime                 time.Duration
-	accepted, compute        bool
+// LoadWindow counts each stage whose time, receipt plus stage offset, lies in
+// [from,to), independently of result cohort filters.
+func (l *ObservationLog) LoadWindow(from, to time.Time) (LoadWindow, error) {
+	return l.loadWindow(from, to, false)
 }
 
-func (fact *windowLoadFact) add(event *RequestEvent) {
-	if event.WorkloadUID != "" {
-		fact.uid = event.WorkloadUID
-	}
-	if event.Definition != "" {
-		fact.definition = event.Definition
-	}
-	if event.LifetimeNanos > 0 {
-		fact.lifetime = time.Duration(event.LifetimeNanos)
-	}
-	if event.Kind == phaseAccepted {
-		fact.accepted = true
-	}
-	if event.Kind == "validated" {
-		fact.compute = true
-	}
-	if event.Kind == eventResponseFinished {
-		fact.outcome = event.Outcome
-	}
+// SchedulerHistoryWindow requires the whole receipt interval to lie after both
+// the oldest retained observation and this process's start.
+func (l *ObservationLog) SchedulerHistoryWindow(from, to time.Time) (LoadWindow, error) {
+	return l.loadWindow(from, to, true)
 }
 
-// LoadWindow uses event-time [from,to), independently of archive rotation and
-// result cohort filters. Completed counts completion events, not received cohort.
-func (observationLog *ObservationLog) LoadWindow(from, to time.Time) (LoadWindow, error) {
-	return observationLog.loadWindow(from, to, false)
-}
-
-// SchedulerHistoryWindow requires complete evidence for one consumed receipt
-// interval and its selected request/definition dependencies, not unrelated history.
-func (observationLog *ObservationLog) SchedulerHistoryWindow(from, to time.Time) (LoadWindow, error) {
-	return observationLog.loadWindow(from, to, true)
-}
-
-func (observationLog *ObservationLog) loadWindow(from, to time.Time, history bool) (LoadWindow, error) {
-	result := LoadWindow{From: from, To: to, Duration: to.Sub(from), Population: "all ingress receipt events; computable demand separately marked after authorization and input validation; event-time [from,to); one request = one input"}
+func (l *ObservationLog) loadWindow(from, to time.Time, history bool) (LoadWindow, error) {
+	result := LoadWindow{From: from, To: to, Duration: to.Sub(from), Population: "all ingress receipts; computable demand separately marked after authorization and input validation; stage time [from,to); one request = one input"}
 	if from.IsZero() || !from.Before(to) {
 		return result, failure("InvalidQuery", "positive explicit load window is required")
 	}
-	snapshot, err := observationLog.snapshot(observationDefinitionStream, observationRequestStream)
+	read, err := l.capture(map[string][2]time.Time{observationRequestStream: {from, {}}})
 	if err != nil {
 		return result, err
 	}
-	snapshot.selectLoadWindow(from, to)
-	definitions := map[string]*Definition{}
-	var definitionWindows map[string]string
-	var requiredWindows map[string]bool
-	if history {
-		definitionWindows = map[string]string{}
-		requiredWindows = map[string]bool{}
+	defer read.close()
+	result.GapUntil = read.gap(from)
+	if history && (result.GapUntil != nil || from.Before(l.started)) {
+		return result, failure("ObservationGap", "history interval starts before retained observation")
 	}
-	if err := snapshot.scan(observationDefinitionStream, func(record observationRecord) {
-		if record.Definition != nil {
-			definitions[record.Definition.Identity] = record.Definition.Definition
-			if history {
-				definitionWindows[record.Definition.Identity] = record.Window
-			}
-		}
-	}); err != nil {
+	rows, err := l.requestRows(read, func(*requestEnvelope) bool { return true })
+	if err != nil {
 		return result, err
 	}
 	loads := map[string]*WorkloadLoad{}
-	facts := map[string]*windowLoadFact{}
-	if err := snapshot.scan(observationRequestStream, func(record observationRecord) {
-		event := record.Request
-		if event == nil {
-			return
-		}
-		at := event.At
-		if event.Kind == phaseReceived && !event.ReceivedAt.IsZero() {
-			at = event.ReceivedAt
-		}
-		fact := facts[event.RequestID]
-		if event.Kind == phaseReceived && observationInInterval(at, from, to) {
-			if fact == nil {
-				fact = &windowLoadFact{}
-				facts[event.RequestID] = fact
-			}
-			fact.received = at
-		}
-		if fact != nil {
-			fact.add(event)
-			if history {
-				requiredWindows[record.Window] = true
-			}
-		}
-		if !observationInInterval(at, from, to) {
-			return
-		}
-		load := loads[event.WorkloadUID]
-		if load == nil {
-			load = &WorkloadLoad{UID: event.WorkloadUID, Instances: map[string]int{}}
-			loads[event.WorkloadUID] = load
-		}
-		switch event.Kind {
-		case phaseReceived:
-			load.Received++
-		case phaseAccepted:
-			load.Accepted++
-		case phaseAssigned:
-			load.Assigned++
-			if event.Assignment != nil {
-				load.Instances[event.Assignment.Instance]++
-			}
-		case eventResponseFinished:
-			if event.Outcome == outcomeCompleted {
-				load.Completed++
-			}
-		}
-	}); err != nil {
-		return result, err
+	in := func(row *RequestRow, offset *int64) bool {
+		return offset != nil && observationInInterval(row.ReceivedAt.Add(time.Duration(*offset)), from, to)
 	}
-	for id, fact := range facts {
-		result.Arrivals = append(result.Arrivals, SchedulerArrival{ID: id, At: fact.received, WorkloadUID: fact.uid, Definition: definitions[fact.definition], Lifetime: fact.lifetime, Accepted: fact.accepted, Compute: fact.compute, Outcome: fact.outcome})
+	for _, row := range rows {
+		received := observationInInterval(row.ReceivedAt, from, to)
+		accepted := row.accepted() && (row.AcceptedNanos == nil && received || in(row, row.AcceptedNanos))
+		assigned := row.DispatchedAt != nil && observationInInterval(*row.DispatchedAt, from, to) || in(row, row.DispatchedNanos)
+		completed := row.Outcome == outcomeCompleted && in(row, row.ElapsedNanos)
+		if received {
+			arrival, err := requestArrival(row, read.definitions, history)
+			if err != nil {
+				return result, err
+			}
+			result.Arrivals = append(result.Arrivals, arrival)
+		}
+		if !received && !accepted && !assigned && !completed {
+			continue
+		}
+		load := loads[row.WorkloadUID]
+		if load == nil {
+			load = &WorkloadLoad{UID: row.WorkloadUID, Instances: map[string]int{}}
+			loads[row.WorkloadUID] = load
+		}
+		if received {
+			load.Received++
+		}
+		if accepted {
+			load.Accepted++
+		}
+		if assigned {
+			load.Assigned++
+			load.Instances[row.Instance]++
+		}
+		if completed {
+			load.Completed++
+		}
 	}
 	seconds := result.Duration.Seconds()
 	for _, load := range loads {
@@ -284,125 +429,81 @@ func (observationLog *ObservationLog) loadWindow(from, to time.Time, history boo
 		}
 		return result.Arrivals[a].At.Before(result.Arrivals[b].At)
 	})
-	result.IncompleteWindows, err = snapshot.loadWindowCompleteness(from, to, history, facts, definitions, definitionWindows, requiredWindows)
-	if err != nil {
-		return result, err
-	}
 	return result, nil
 }
 
-// loadWindowCompleteness only reads the selected facts and captured dependency
-// metadata; arrival construction stays in the ordinary load reduction.
-func (s *observationSnapshot) loadWindowCompleteness(from, to time.Time, history bool, facts map[string]*windowLoadFact, definitions map[string]*Definition, definitionWindows map[string]string, requiredWindows map[string]bool) ([]string, error) {
-	var overlapping []string
-	var incomplete map[string]bool
-	if history {
-		incomplete = map[string]bool{}
+// requestArrival is a received request as the scheduler replays it. History
+// requires a definition for computable demand and a class for every receipt.
+func requestArrival(row *RequestRow, definitions map[string]*Definition, history bool) (SchedulerArrival, error) {
+	arrival := SchedulerArrival{
+		ID: row.RequestID, At: row.ReceivedAt, WorkloadUID: row.WorkloadUID, Definition: definitions[row.DefinitionID],
+		Lifetime: time.Duration(row.LifetimeNanos), Accepted: row.accepted(), Compute: row.ValidatedNanos != nil || row.accepted(), Outcome: row.Outcome,
 	}
-	for _, window := range s.windows {
-		if !window.Incomplete {
-			continue
-		}
-		if window.overlaps(from, to) {
-			overlapping = append(overlapping, window.ID)
-		}
-		if history {
-			incomplete[window.ID] = true
-		}
+	if history && arrival.Definition == nil && arrival.Compute {
+		return arrival, failure("IncompleteObservation", "history receipt %s has no immutable definition", row.RequestID)
 	}
-	if !history {
-		return overlapping, nil
+	if history && !arrival.Compute && row.Outcome == "" {
+		return arrival, failure("IncompleteObservation", "history receipt %s has no durable demand classification or terminal outcome", row.RequestID)
 	}
-	if len(overlapping) > 0 {
-		return overlapping, failure("IncompleteObservation", "history interval overlaps incomplete observation window %s", overlapping[0])
-	}
-	for _, prefix := range s.streams[observationRequestStream] {
-		window := s.windows[prefix.window]
-		if incomplete[window.ID] && !prefix.requestCensus.trusted {
-			return overlapping, failure("IncompleteObservation", "history interval has an unknown incomplete request prefix in %s", window.ID)
-		}
-	}
-	for window := range requiredWindows {
-		if incomplete[window] {
-			return overlapping, failure("IncompleteObservation", "history receipt facts depend on incomplete observation window %s", window)
-		}
-	}
-	for id, fact := range facts {
-		if !fact.compute && !fact.accepted && fact.outcome == "" {
-			return overlapping, failure("IncompleteObservation", "history receipt %s has no durable demand classification or terminal outcome", id)
-		}
-		if (fact.compute || fact.accepted) && definitions[fact.definition] == nil {
-			return overlapping, failure("IncompleteObservation", "history receipt %s has no immutable definition", id)
-		}
-		if window := definitionWindows[fact.definition]; incomplete[window] {
-			return overlapping, failure("IncompleteObservation", "history receipt %s depends on incomplete definition window %s", id, window)
-		}
-	}
-	return overlapping, nil
+	return arrival, nil
 }
 
-func (observationLog *ObservationLog) SchedulerArrivals(from, to time.Time) ([]SchedulerArrival, error) {
-	window, err := observationLog.LoadWindow(from, to)
+func (l *ObservationLog) SchedulerArrivals(from, to time.Time) ([]SchedulerArrival, error) {
+	window, err := l.LoadWindow(from, to)
 	return window.Arrivals, err
 }
 
-// SchedulerObservationPage uses retained append order, decoding full payloads
-// only for page entries and stopping at the next matching event.
-// Cursor offsets apply to the selected event window, independently of archives.
-func (observationLog *ObservationLog) SchedulerObservationPage(from, to time.Time, limit, offset int) ([]SchedulerObservation, int, error) {
+// SchedulerObservationPage decodes full payloads only for page entries and
+// stops at the next matching event. Cursor offsets apply to the selected
+// records in append order.
+func (l *ObservationLog) SchedulerObservationPage(from, to time.Time, limit, offset int) ([]SchedulerObservation, int, *time.Time, error) {
 	if from.IsZero() || !from.Before(to) || limit <= 0 || offset < 0 {
-		return nil, -1, failure("InvalidQuery", "positive window, bounded limit and nonnegative cursor are required")
+		return nil, -1, nil, failure("InvalidQuery", "positive window, bounded limit and nonnegative cursor are required")
 	}
-	snapshot, err := observationLog.snapshot(observationSchedulerStream)
+	read, err := l.capture(map[string][2]time.Time{observationSchedulerStream: {from, to}, observationCatalogStream: {from.Add(-time.Hour), to}})
 	if err != nil {
-		return nil, -1, err
+		return nil, -1, nil, err
 	}
-	prefixes := snapshot.streams[observationSchedulerStream][:0]
-	for _, prefix := range snapshot.streams[observationSchedulerStream] {
-		if !prefix.census.trusted || prefix.census.schedulerAt.intersects(from, to) {
-			prefixes = append(prefixes, prefix)
-		}
+	defer read.close()
+	catalog, err := l.catalogFor(read, observationSchedulerStream)
+	if err != nil {
+		return nil, -1, nil, err
 	}
-	snapshot.streams[observationSchedulerStream] = prefixes
 	records := make([]SchedulerObservation, 0, limit)
 	matched, next := 0, -1
-	err = snapshot.scanRaw(observationSchedulerStream, func(window string, raw []byte) (bool, error) {
+	err = l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
 		var envelope struct {
-			SchemaVersion string `json:"schemaVersion"`
-			Window        string `json:"window"`
-			Scheduler     *struct {
-				At time.Time `json:"at"`
-			} `json:"scheduler"`
+			At time.Time `json:"at"`
 		}
 		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(raw, &envelope); err != nil {
-			return false, err
+			return err
 		}
-		if envelope.SchemaVersion != observationSchema || envelope.Window != window {
-			return false, errObservationRecordIdentity
-		}
-		if envelope.Scheduler == nil || !observationInInterval(envelope.Scheduler.At, from, to) {
-			return false, observationJSONSyntaxError(raw)
+		if !observationInInterval(envelope.At, from, to) {
+			return observationJSONSyntaxError(raw)
 		}
 		matched++
 		if matched <= offset {
-			return false, observationJSONSyntaxError(raw)
+			return observationJSONSyntaxError(raw)
 		}
 		if len(records) == limit {
 			next = offset + len(records)
-			return true, observationJSONSyntaxError(raw)
+			if err := observationJSONSyntaxError(raw); err != nil {
+				return err
+			}
+			return errObservationStop
 		}
-		var record observationRecord
-		if err := json.Unmarshal(raw, &record); err != nil {
-			return false, err
+		record, err := DecodeSchedulerLine(raw, catalog)
+		if err != nil {
+			return err
 		}
-		records = append(records, *record.Scheduler)
-		return false, nil
+		records = append(records, record)
+		return nil
 	})
 	if err != nil {
-		return nil, -1, err
+		return nil, -1, nil, err
 	}
 	if offset > matched {
-		return nil, -1, failure("InvalidQuery", "cursor exceeds selected observation count")
+		return nil, -1, nil, failure("InvalidQuery", "cursor exceeds selected observation count")
 	}
-	return records, next, nil
+	return records, next, read.gap(from), nil
 }

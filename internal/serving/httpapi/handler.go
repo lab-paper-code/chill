@@ -25,7 +25,6 @@ type HandlerConfig struct {
 	MaxRequestBytes                                            int64
 	RequestTimeout                                             time.Duration
 	MaxQueryEvents                                             int
-	ObservationWindow                                          time.Duration
 	Scheduler                                                  *servingkube.SchedulerController
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex

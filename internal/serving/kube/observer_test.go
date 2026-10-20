@@ -546,9 +546,9 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, event := range result.Requests {
-		if strings.HasPrefix(event.Kind, "backend_") {
-			t.Fatalf("settled request gained replayed progress: %+v", event)
+	for _, row := range result.Requests {
+		if row.QueuedNanos != nil || row.RunningNanos != nil || row.ExecutedNanos != nil {
+			t.Fatalf("settled request gained replayed progress: %+v", row)
 		}
 	}
 	if result.Outcomes["completed"] != 1 {

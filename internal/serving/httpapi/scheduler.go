@@ -173,7 +173,7 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 	}
 	query := r.URL.Query()
 	to := time.Now().UTC()
-	window := h.config.ObservationWindow
+	window := time.Minute
 	if h.config.Scheduler != nil {
 		window = h.config.Scheduler.Settings().ObservationWindow
 	}
@@ -214,7 +214,7 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "bounded limit and nonnegative cursor are required"})
 		return
 	}
-	records, nextOffset, err := h.observationLog.SchedulerObservationPage(from, to, limit, offset)
+	records, nextOffset, gapUntil, err := h.observationLog.SchedulerObservationPage(from, to, limit, offset)
 	if err != nil {
 		sendError(w, err)
 		return
@@ -231,8 +231,9 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 			To         time.Time                  `json:"to"`
 			Events     []schedulerReadObservation `json:"events"`
 			NextCursor string                     `json:"nextCursor,omitempty"`
+			GapUntil   *time.Time                 `json:"gapUntil,omitempty"`
 			schedulerReadEvidence
-		}{from, to, events, next, evidence})
+		}{from, to, events, next, gapUntil, evidence})
 		return
 	}
 	sendJSON(w, http.StatusOK, struct {
@@ -240,5 +241,6 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		To         time.Time                      `json:"to"`
 		Events     []serving.SchedulerObservation `json:"events"`
 		NextCursor string                         `json:"nextCursor,omitempty"`
-	}{from, to, records, next})
+		GapUntil   *time.Time                     `json:"gapUntil,omitempty"`
+	}{from, to, records, next, gapUntil})
 }

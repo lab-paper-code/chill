@@ -22,7 +22,7 @@ var operatingTestSource = metricobserver.SourceIdentity{Kind: "edge-metrics", En
 type operatingPowerScenario struct {
 	name                                                  string
 	missingInactive, zero, missingMembership, coverageGap bool
-	duplicateMeter, conflictingSample, incompleteHistory  bool
+	duplicateMeter, conflictingSample                     bool
 	boundedQuery, measured                                bool
 }
 
@@ -35,12 +35,11 @@ func TestOperatingPowerSameIntervalAndActualMembership(t *testing.T) {
 		{name: "coverage-gap", coverageGap: true},
 		{name: "duplicate-meter", duplicateMeter: true},
 		{name: "duplicate-sample-conflict", conflictingSample: true},
-		{name: "incomplete-history", incompleteHistory: true},
 		{name: "bounded-query", boundedQuery: true},
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+			observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,9 +130,6 @@ func seedOperatingPower(t *testing.T, observationLog *ObservationLog, from time.
 	if scenario.conflictingSample {
 		power(a, "wall-a", 0, 4, 0, 41)
 	}
-	if scenario.incompleteHistory {
-		observationLog.windows[observationLog.active].Incomplete = true
-	}
 	return meters
 }
 
@@ -169,131 +165,6 @@ func assertMissingOperatingPower(t *testing.T, got OperatingPowerWindow, scenari
 	if scenario.duplicateMeter && (got.Nodes[0].Joules != nil || got.Nodes[1].Joules == nil) {
 		t.Fatalf("ambiguous Node poisoned valid per-node observation: %+v", got.Nodes)
 	}
-	if scenario.incompleteHistory && len(got.IncompleteWindows) != 1 {
-		t.Fatalf("incomplete window identity lost: %+v", got)
-	}
-}
-
-func TestOperatingPowerProjectsLargeUnrelatedPayload(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := observationLog.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	})
-	from := time.Now().UTC().Add(time.Second)
-	to := from.Add(10 * time.Second)
-	meters := seedOperatingPower(t, observationLog, from, operatingPowerScenario{})
-	want, err := observationLog.OperatingPower(from, to, meters, 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertMeasuredOperatingPower(t, want, operatingPowerScenario{})
-
-	path := filepath.Join(observationLog.config.Directory, observationLog.windows[observationLog.active].ID, "scheduler.jsonl")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := bytes.Split(data, []byte{'\n'})
-	large := json.RawMessage(`{"nested":[` + strings.TrimSuffix(strings.Repeat(`{"distribution":[1,2,3,4]},`, 16384), ",") + `]}`)
-	var selected json.RawMessage
-	for index := 1; index < len(lines)-1; index++ {
-		var record map[string]json.RawMessage
-		if err := json.Unmarshal(lines[index], &record); err != nil {
-			t.Fatal(err)
-		}
-		var scheduler map[string]json.RawMessage
-		if err := json.Unmarshal(record["scheduler"], &scheduler); err != nil {
-			t.Fatal(err)
-		}
-		// These are valid JSON but not their unrelated scheduler field types.
-		// A full SchedulerObservation decode would reject them.
-		scheduler["decision"] = json.RawMessage(`{"candidates":` + string(large) + `}`)
-		if raw, found := scheduler["snapshot"]; found {
-			var snapshot map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &snapshot); err != nil {
-				t.Fatal(err)
-			}
-			var instances []map[string]json.RawMessage
-			if err := json.Unmarshal(snapshot["instances"], &instances); err != nil {
-				t.Fatal(err)
-			}
-			for _, instance := range instances {
-				instance["profile"] = json.RawMessage(`[` + string(large) + `]`)
-			}
-			snapshot["instances"], err = json.Marshal(instances)
-			if err != nil {
-				t.Fatal(err)
-			}
-			scheduler["snapshot"], err = json.Marshal(snapshot)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		record["scheduler"], err = json.Marshal(scheduler)
-		if err != nil {
-			t.Fatal(err)
-		}
-		lines[index], err = json.Marshal(record)
-		if err != nil {
-			t.Fatal(err)
-		}
-		selected = lines[index]
-	}
-	// Move the rewritten facts entirely outside the counted census bounds.
-	// The changed byte prefix must fall back to scanning, not silently prune.
-	rewritten := bytes.Join(lines, []byte{'\n'})
-	for _, offset := range []time.Duration{-time.Second, 0, 3 * time.Second, 4 * time.Second, 6 * time.Second, 10 * time.Second} {
-		at := from.Add(offset)
-		rewritten = bytes.ReplaceAll(rewritten, []byte(at.Format(time.RFC3339Nano)), []byte(at.Add(2*time.Hour).Format(time.RFC3339Nano)))
-	}
-	from, to = from.Add(2*time.Hour), to.Add(2*time.Hour)
-	want.From, want.To = from, to
-	if err := os.WriteFile(path, rewritten, 0600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := observationLog.OperatingPower(from, to, meters, 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("unrelated payload changed power, samples or active membership:\n got: %+v\nwant: %+v", got, want)
-	}
-	for _, field := range []string{"power", "powerCoverage", "snapshot"} {
-		t.Run("invalid-selected-"+field, func(t *testing.T) {
-			var record map[string]json.RawMessage
-			if err := json.Unmarshal(selected, &record); err != nil {
-				t.Fatal(err)
-			}
-			var scheduler map[string]json.RawMessage
-			if err := json.Unmarshal(record["scheduler"], &scheduler); err != nil {
-				t.Fatal(err)
-			}
-			switch field {
-			case "power":
-				scheduler[field] = json.RawMessage(`{"samples":[{"watts":"not-a-measurement"}]}`)
-			case "powerCoverage":
-				scheduler[field] = json.RawMessage(`{"MaximumGap":"not-a-duration"}`)
-			case "snapshot":
-				scheduler[field] = json.RawMessage(`{"instances":[{"ready":"not-a-bool"}]}`)
-			}
-			record["scheduler"], err = json.Marshal(scheduler)
-			if err != nil {
-				t.Fatal(err)
-			}
-			raw, err := json.Marshal(record)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := operatingPowerRecord(observationLog.windows[observationLog.active].ID, raw); err == nil {
-				t.Fatalf("invalid selected %s accepted", field)
-			}
-		})
-	}
 }
 
 func TestOperatingPowerInterpolatesRealBoundarySupport(t *testing.T) {
@@ -311,7 +182,7 @@ func TestOperatingPowerInterpolatesRealBoundarySupport(t *testing.T) {
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+			observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -345,17 +216,12 @@ func TestOperatingPowerInterpolatesRealBoundarySupport(t *testing.T) {
 			if scenario.adjacent {
 				const nodeIdentityDimension = "node"
 				// A closer neighbor from another series must not displace valid support.
-				for _, wrong := range []string{"meter", "scope", "source", "unknown-source", nodeIdentityDimension} {
+				// The meter ID names one source and scope; the catalog holds them.
+				for _, wrong := range []string{"meter", nodeIdentityDimension} {
 					source, otherNode, meter, scope := operatingTestSource, node, "ramp-wall", "node-exclusive-wall"
 					switch wrong {
 					case "meter":
 						meter = schedulerTestOther
-					case "scope":
-						scope = "shared-wall"
-					case "source":
-						source.Endpoint = "http://replacement/metrics"
-					case "unknown-source":
-						source = metricobserver.SourceIdentity{}
 					case nodeIdentityDimension:
 						otherNode.Name = schedulerTestOther
 					}
@@ -400,20 +266,11 @@ func TestOperatingPowerClosedWindowRejectsRealGapsNotCollectorChunkVerdicts(t *t
 		{name: "real-gap-over-two-seconds", gap: true, reason: "maximum sample gap exceeds policy"},
 		{name: "query-boundary-missing", fromOffset: -2 * time.Second, reason: "sample boundary distance exceeds policy"},
 		{name: "source-failure-in-query", failure: true, reason: "actual meter read failed"},
-		{name: "incomplete-window-closed-before-query"},
-		{name: "incomplete-window-crosses-query", reason: "raw history for selected interval is incomplete"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := observationLog.Close(context.Background()); err != nil {
-					t.Error(err)
-				}
-			})
-			base := time.Unix(1000, 0).UTC()
+			base := observationTestHour.Add(30 * time.Minute)
+			observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, base.Add(-time.Hour))
+			clock.set(base)
 			node := NodeReference{Name: "metered", UID: "physical-node"}
 			meters := []OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: operatingTestSource}}
 			policy := powerwindow.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: .75, MaximumGap: 2 * time.Second}
@@ -422,34 +279,6 @@ func TestOperatingPowerClosedWindowRejectsRealGapsNotCollectorChunkVerdicts(t *t
 				t.Fatal(err)
 			}
 			appendClosedPowerSeries(t, observationLog, node, base, policy, scenario.gap, scenario.failure)
-			if strings.HasPrefix(scenario.name, "incomplete-window-") {
-				closed := base.Add(-time.Second)
-				if scenario.name == "incomplete-window-crosses-query" {
-					closed = base.Add(time.Second)
-				}
-				previous := ObservationWindow{SchemaVersion: observationSchema, ID: "previous-owner", StartedAt: base.Add(-time.Hour), EndsAt: base.Add(time.Hour), Duration: 2 * time.Hour, ClosedAt: &closed, Incomplete: true}
-				directory := filepath.Join(observationLog.config.Directory, previous.ID)
-				if err := os.MkdirAll(directory, 0700); err != nil {
-					t.Fatal(err)
-				}
-				if err := writeWindowMetadata(directory, previous); err != nil {
-					t.Fatal(err)
-				}
-				header, err := json.Marshal(previous)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, stream := range []string{"definitions", "requests", "management", "scheduler"} {
-					if err := os.WriteFile(filepath.Join(directory, stream+".jsonl"), append(header, '\n'), 0600); err != nil {
-						t.Fatal(err)
-					}
-				}
-				observationLog.windows = append(observationLog.windows, previous)
-				fresh := SchedulerSnapshot{At: base.Add(-500 * time.Millisecond), Instances: snapshot.Instances}
-				if err := observationLog.SchedulerRecord(SchedulerObservation{At: fresh.At, Snapshot: &fresh}); err != nil {
-					t.Fatal(err)
-				}
-			}
 			from := base.Add(scenario.fromOffset)
 			to := from.Add(60 * time.Second)
 			got, err := observationLog.OperatingPower(from, to, meters, 100)
@@ -468,22 +297,6 @@ func TestOperatingPowerClosedWindowRejectsRealGapsNotCollectorChunkVerdicts(t *t
 				t.Fatalf("chunk verdict or stale sample poisoned closed query: %+v", got)
 			}
 		})
-	}
-}
-
-func TestObservationWindowOverlapUsesActualClose(t *testing.T) {
-	start := time.Unix(100, 0)
-	closed := start.Add(time.Minute)
-	window := ObservationWindow{StartedAt: start, EndsAt: start.Add(time.Hour), ClosedAt: &closed}
-	if window.overlaps(closed, closed.Add(time.Minute)) {
-		t.Fatal("planned end extended a closed observation window")
-	}
-	if !window.overlaps(closed.Add(-time.Second), closed.Add(time.Second)) {
-		t.Fatal("actual incomplete interval was hidden")
-	}
-	window.ClosedAt = nil
-	if !window.overlaps(closed, closed.Add(time.Minute)) {
-		t.Fatal("open observation window lost its planned bound")
 	}
 }
 
@@ -532,129 +345,134 @@ func appendClosedPowerSeries(
 	}
 }
 
-func TestOperatingPowerProjectionPreservesNumericTimeAndCombinedFields(t *testing.T) {
-	raw := []byte(fmt.Sprintf(`{
-		"scheduler": {
-			"snapshot":{"instances":[{"workloadUIDs":["w"],"stopped":false,"ready":true,"node":{"uid":"n","name":"node"},"profile":{"ignored":[9007199254740993]}}],"at":"2026-10-15T10:07:01.478738123+09:00"},
-			"powerCoverage":{"MaximumBoundaryDistance":9007199254740993,"MaximumGap":9007199254740995,"MinimumCoverage":0.12345678901234567},
-			"power":{"startedAt":"2026-10-15T01:07:01.478738123Z","endedAt":"2026-10-15T01:07:02.478738123Z","samples":[{"observedAt":"2026-10-15T01:07:01.478738123Z","watts":0.12345678901234567}],"summary":{"attempts":3}},
-			"node":{"name":"node","uid":"n"},"meter":"meter","powerScope":"node-exclusive-wall"
-		},
-		"w\u0069ndow":"numeric-window","SCHEMAVERSION":%q
-	}`, observationSchema))
-	got, err := operatingPowerRecord("numeric-window", raw)
+func TestOperatingPowerProjectsLargeUnrelatedPayload(t *testing.T) {
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var want observationRecord
-	if err = json.Unmarshal(raw, &want); err != nil {
+	t.Cleanup(func() {
+		if err := observationLog.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	from := time.Now().UTC().Add(time.Second)
+	to := from.Add(10 * time.Second)
+	meters := seedOperatingPower(t, observationLog, from, operatingPowerScenario{})
+	want, err := observationLog.OperatingPower(from, to, meters, 20)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got.Scheduler.Power, want.Scheduler.Power) ||
-		!reflect.DeepEqual(got.Scheduler.PowerCoverage, want.Scheduler.PowerCoverage) {
-		t.Fatalf("projection changed consumed numeric/time fields: got=%+v want=%+v", got.Scheduler, want.Scheduler)
+	assertMeasuredOperatingPower(t, want, operatingPowerScenario{})
+	names, err := filepath.Glob(filepath.Join(observationLog.root, "*", "scheduler.*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	member := got.Scheduler.Snapshot
-	if member == nil || !member.At.Equal(want.Scheduler.Snapshot.At) ||
+	large := json.RawMessage(`{"nested":[` + strings.TrimSuffix(strings.Repeat(`{"distribution":[1,2,3,4]},`, 16384), ",") + `]}`)
+	var selected json.RawMessage
+	for _, name := range names {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := bytes.Split(bytes.TrimSuffix(data, []byte{'\n'}), []byte{'\n'})
+		for index, line := range lines {
+			var record map[string]json.RawMessage
+			if err := json.Unmarshal(line, &record); err != nil {
+				t.Fatal(err)
+			}
+			// Valid JSON but not the unrelated fields' types: a full decode rejects it.
+			record["decision"] = json.RawMessage(`{"candidates":` + string(large) + `}`)
+			if raw, found := record["snapshot"]; found {
+				var snapshot map[string]json.RawMessage
+				if err := json.Unmarshal(raw, &snapshot); err != nil {
+					t.Fatal(err)
+				}
+				var instances []map[string]json.RawMessage
+				if err := json.Unmarshal(snapshot["instances"], &instances); err != nil {
+					t.Fatal(err)
+				}
+				for _, instance := range instances {
+					instance["profile"] = json.RawMessage(`[` + string(large) + `]`)
+				}
+				if snapshot["instances"], err = json.Marshal(instances); err != nil {
+					t.Fatal(err)
+				}
+				if record["snapshot"], err = json.Marshal(snapshot); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if lines[index], err = json.Marshal(record); err != nil {
+				t.Fatal(err)
+			}
+			if _, power := record["samples"]; power {
+				selected = lines[index]
+			}
+		}
+		if err := os.WriteFile(name, append(bytes.Join(lines, []byte{'\n'}), '\n'), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := observationLog.OperatingPower(from, to, meters, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unrelated payload changed power, samples or active membership:\n got: %+v\nwant: %+v", got, want)
+	}
+	for field, invalid := range map[string]string{
+		"samples": `[{"watts":"not-a-measurement"}]`, "startedAt": `"not-a-time"`, "snapshot": `{"instances":[{"ready":"not-a-bool"}]}`,
+	} {
+		t.Run("invalid-selected-"+field, func(t *testing.T) {
+			var record map[string]json.RawMessage
+			if err := json.Unmarshal(selected, &record); err != nil {
+				t.Fatal(err)
+			}
+			record[field] = json.RawMessage(invalid)
+			raw, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := OperatingPowerRecord(raw, &ObservationCatalog{}); err == nil {
+				t.Fatalf("invalid selected %s accepted", field)
+			}
+		})
+	}
+}
+
+func TestOperatingPowerProjectionPreservesNumericTimeAndCombinedFields(t *testing.T) {
+	raw := []byte(`{
+		"snapshot":{"instances":[{"workloadUIDs":["w"],"stopped":false,"ready":true,"node":{"uid":"n","name":"node"},"profile":{"ignored":[9007199254740993]}}],"at":"2026-10-15T10:07:01.478738123+09:00"},
+		"startedAt":"2026-10-15T01:07:01.478738123Z","samples":[{"observedAt":"2026-10-15T01:07:01.478738123Z","watts":0.12345678901234567}],
+		"at":"2026-10-15T01:07:02.478738123Z","node":{"name":"node","uid":"n"},"meter":"meter"
+	}`)
+	catalog := &ObservationCatalog{}
+	catalog.Add(CatalogRow{Kind: "meter", Key: "meter", At: time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC), Body: json.RawMessage(
+		`{"node":{"name":"node","uid":"n"},"scope":"node-exclusive-wall","source":{"kind":"edge-metrics","endpoint":"e","metric":"m"},` +
+			`"coverage":{"MaximumBoundaryDistance":9007199254740993,"MaximumGap":9007199254740995,"MinimumCoverage":0.12345678901234567}}`)})
+	got, err := OperatingPowerRecord(raw, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := DecodeSchedulerLine(raw, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Power, want.Power) || !reflect.DeepEqual(got.PowerCoverage, want.PowerCoverage) || got.PowerScope != want.PowerScope {
+		t.Fatalf("projection changed consumed numeric/time fields: got=%+v want=%+v", got, want)
+	}
+	member := got.Snapshot
+	if member == nil || !member.At.Equal(want.Snapshot.At) ||
 		len(member.Instances) != 1 || !member.Instances[0].Ready || member.Instances[0].Stopped ||
-		member.Instances[0].Node != *got.Scheduler.Node || !reflect.DeepEqual(member.Instances[0].WorkloadUIDs, []string{"w"}) {
+		member.Instances[0].Node != *got.Node || !reflect.DeepEqual(member.Instances[0].WorkloadUIDs, []string{"w"}) {
 		t.Fatalf("combined snapshot/power lost membership: %+v", member)
 	}
 }
 
 func TestOperatingPowerProjectionRejectsMalformedIgnoredSubtrees(t *testing.T) {
 	for _, invalid := range []string{`-01`, `1e`, `["value",]`, `"bad\q"`} {
-		raw := fmt.Sprintf(
-			`{"schemaVersion":%q,"window":"syntax-window","scheduler":{"decision":{"ignored":%s}}}`,
-			observationSchema, invalid,
-		)
-		if _, err := operatingPowerRecord("syntax-window", []byte(raw)); err == nil {
+		raw := fmt.Sprintf(`{"at":"2026-10-15T01:07:02Z","decision":{"ignored":%s}}`, invalid)
+		if _, err := OperatingPowerRecord([]byte(raw), &ObservationCatalog{}); err == nil {
 			t.Fatalf("malformed skipped power JSON accepted: %s", invalid)
 		}
-	}
-}
-
-func TestOperatingPowerCensusKeepsPhysicalNeighborsAndLatestMembership(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
-	from := time.Now().UTC().Add(-24 * time.Hour)
-	to := from.Add(10 * time.Second)
-	node := NodeReference{Name: "metered", UID: "physical-node"}
-	meters := []OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: operatingTestSource}}
-	policy := powerwindow.Policy{MaximumBoundaryDistance: 2 * time.Second, MinimumCoverage: 1, MaximumGap: 20 * time.Second}
-	// Every append window is distant from the actual facts. Rotate each group
-	// so the census must retain ties, straddlers and sample-only candidates.
-	appendWindow := func(events ...SchedulerObservation) {
-		t.Helper()
-		for _, event := range events {
-			if err := observationLog.SchedulerRecord(event); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := observationLog.finish(); err != nil {
-			t.Fatal(err)
-		}
-		if err := observationLog.start(time.Now().UTC()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	membership := func(at time.Time, active bool) SchedulerObservation {
-		snapshot := &SchedulerSnapshot{At: at}
-		if active {
-			snapshot.Instances = []SchedulerInstance{{Node: node, Ready: true, WorkloadUIDs: []string{"w"}}}
-		}
-		return SchedulerObservation{At: from.Add(48 * time.Hour), Snapshot: snapshot}
-	}
-	power := func(interval, sample time.Time, source metricobserver.SourceIdentity, coverage *powerwindow.Policy) SchedulerObservation {
-		result := &metricobserver.Result{Source: source, StartedAt: interval, EndedAt: interval}
-		if !sample.IsZero() {
-			result.Samples = []metricobserver.Sample{{ObservedAt: sample, Watts: 10}}
-		}
-		return SchedulerObservation{At: interval, Node: &node, Meter: "wall", PowerScope: "node-exclusive-wall", Power: result, PowerCoverage: coverage}
-	}
-	appendWindow(membership(from.Add(-time.Hour), true))
-	appendWindow(membership(from.Add(-time.Second), true))
-	appendWindow(membership(from.Add(-2*time.Second), true), membership(to.Add(time.Hour), true))
-	appendWindow(membership(from.Add(-time.Second), false)) // Last append wins the baseline tie.
-	appendWindow(membership(from.Add(5*time.Second), true))
-	appendWindow(power(from.Add(-time.Hour), from.Add(-time.Second), operatingTestSource, &policy))
-	appendWindow(power(to.Add(time.Hour), to.Add(time.Second), operatingTestSource, &policy))
-	wrongSource := operatingTestSource
-	wrongSource.Endpoint = "http://wrong-series/metrics"
-	appendWindow(power(from.Add(-2*time.Hour), from.Add(-100*time.Millisecond), wrongSource, nil))
-	appendWindow(power(to.Add(2*time.Hour), to.Add(100*time.Millisecond), wrongSource, nil))
-	got, err := observationLog.OperatingPower(from, to, meters, 20)
-	if err != nil || !got.Complete || got.WholePoolJoules == nil || math.Abs(*got.WholePoolJoules-100) > 1e-9 ||
-		got.ActivePoolJoules == nil || math.Abs(*got.ActivePoolJoules-50) > 1e-9 || got.Nodes[0].Samples != 2 {
-		t.Fatalf("actual timestamps, physical support or latest baseline tie lost: %+v %v", got, err)
-	}
-	if err := observationLog.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	observationLog, err = NewObservationLog(observationLog.config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	restored, err := observationLog.OperatingPower(from, to, meters, 20)
-	if err != nil || !reflect.DeepEqual(restored, got) {
-		t.Fatalf("startup census changed retained power: %+v %v", restored, err)
-	}
-	// Zero-sample overlapping records still consume the query bound.
-	appendWindow(power(from.Add(time.Second), time.Time{}, operatingTestSource, &policy))
-	bounded, err := observationLog.OperatingPower(from, to, meters, 3)
-	if err != nil || bounded.Complete || bounded.WholePoolJoules != nil ||
-		!strings.Contains(strings.Join(bounded.Reasons, " "), "exceeds query bound") {
-		t.Fatalf("empty power interval escaped the observation bound: %+v %v", bounded, err)
-	}
-	// A matching nil-policy neighbor is required even though a wrong physical
-	// series has a closer sample and neither record interval overlaps.
-	appendWindow(power(from.Add(-3*time.Hour), from.Add(-500*time.Millisecond), operatingTestSource, nil))
-	unbounded, err := observationLog.OperatingPower(from, to, meters, 20)
-	if err != nil || unbounded.Complete || unbounded.WholePoolJoules != nil ||
-		!strings.Contains(strings.Join(unbounded.Nodes[0].Reasons, " "), "no recorded coverage policy") {
-		t.Fatalf("nil-policy physical neighbor was pruned: %+v %v", unbounded, err)
 	}
 }

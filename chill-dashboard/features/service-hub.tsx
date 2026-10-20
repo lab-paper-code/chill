@@ -9,6 +9,7 @@ import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge, statusLabel } from "@/components/read-region"
 import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
+import { gapNotice } from "@/lib/date-time"
 
 // The five screens under one service, in the order a service becomes usable.
 export const serviceSections = {
@@ -134,7 +135,7 @@ const sections:Record<ServiceSectionId,(view:WorkloadView,s:Signals)=>Part> = {
     const verdict = met(s.cohort)
     return {
       title: !data ? "최근 운영" : !data.total ? "이 구간에 기록된 요청이 없어요" : verdict === undefined ? "아직 판단할 표본이 없어요" : verdict ? "응답 목표를 지키고 있어요" : "응답 목표를 넘었어요",
-      lede: data && `${localTime(data.from)} – ${localTime(data.to)} · 전체 ${data.total}건${data.incompleteWindows?.length ? " · 일부 기간의 기록이 불완전해요" : ""}`,
+      lede: data && `${localTime(data.from)} – ${localTime(data.to)} · 전체 ${data.total}건${data.gapUntil ? ` · ${gapNotice(data.gapUntil)}` : ""}`,
       body: <QueryGate query={s.observations}>{data && <>
         {!!data.cohorts?.length && <Rows label="적용 설정별 응답 속도">{data.cohorts.map(row => {
           const ok = met(row)
