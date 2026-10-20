@@ -14,87 +14,99 @@
 
 ## 2. 용량표
 
-**행.** 키는 option(노드, 모드, 할당, profile ID), 배치 상한 b, SLO(백분위 p, 목표 L), 완료 여유 m, 용량표 설정이다. deadlinePolicy는 profile이 정한다. 값은 κ, μ(b 이하 배치의 `b / 평균 실행시간` 최댓값), 창 설정, 창 seed 범위, 창별 백분위 지연, 계산 시간이다.
+**행.** 키는 option(노드, 모드, 할당, profile ID), 배치 상한 b, SLO(백분위 p, 목표 L), 완료 여유 m, 용량표 설정, `capacityVersion`이다. `capacityVersion`은 코드 상수이고 κ 계산, 재생, firstfloor 배칭 규칙이 κ를 바꾸면 올린다. 9장의 고정 κ test가 그 변경을 잡는다. deadlinePolicy는 profile이 정한다. 행 본문은 결정적인 값만 담는다: 입력, κ, μ(b 이하 배치의 `b / 평균 실행시간` 최댓값), 격자 판정 결과, 창별 백분위 지연. 계산 시각과 걸린 시간은 행 대신 `management` stream의 `capacity-row-built` 사건(행 키 포함)에 남긴다.
 
-**판정.** option 인스턴스 하나만 있는 keep snapshot에 요청률 λ의 포아송 도착을 넣고 `EvaluateScheduler`(반복 1회, 자동제어 꺼짐)의 SLO 추정을 읽는다. 백분위 지연(m 포함) ≤ L이고 timeout과 만료가 0이면 그 창은 충족이다. 창 하나는 빈 상태에서 시작하고 요청 수는 `max(capacityMinimumRequests, ⌈100/(1 − p)⌉, ⌈λ × capacityWindow⌉)`다. 100은 백분위 위에 표본 100개를 두는 고정 규칙이다. seed 1~`capacityWindows`의 독립 창 중 `capacityPassingWindows`개 이상이 충족하면 λ는 충족이다.
+**판정.** option 인스턴스 하나만 있는 keep snapshot에 요청률 λ의 포아송 도착을 넣고 `EvaluateScheduler`(반복 1회, 자동제어 꺼짐)의 SLO 추정을 읽는다. 백분위 지연(m 포함) ≤ L이고 timeout과 만료가 0이면 그 창은 충족이다. 창 하나는 빈 상태에서 시작하고 요청 수는 `max(capacityMinimumRequests, ⌈100/(1 − p)⌉, ⌈λ × capacityWindow⌉)`다. 100은 백분위 위에 표본 100개를 두는 고정 규칙이다. seed 1~`capacityWindows`의 독립 창 중 `capacityPassingWindows`개 이상이 충족하면 λ는 충족이다. seed의 도착 간격을 λ로 나눠 쓰므로(공통 난수) 판정은 결정적이다.
 
-**κ.** `[0.01μ, μ]`에서 0.5% μ까지 이분 탐색한다. seed의 도착 간격을 λ로 나눠 쓰므로(공통 난수) 결과가 결정적이다. 0.01μ가 충족하지 못하면 κ는 0이다.
+**κ.** 창 요청 수와 부하에 따른 배칭이 λ와 함께 바뀌므로 판정이 λ에 단조라는 보장이 없다. 그래서 격자 `λ_k = 0.05kμ`(k = 1~20)를 모두 판정하고, 충족 앞부분과 미충족 뒷부분으로 나뉠 때만 κ를 정한다. 마지막 충족 `λ_K`와 다음 격자 사이를 0.5% μ까지 이분 탐색한 값이 κ다. K = 0이면 κ 0, K = 20이면 κ = μ다. 미충족 뒤에 충족이 오면 행은 `NonMonotone`이고 κ가 없으며 그 option은 `CapacityRejected`로 계획에서 빠진다. 격자 결과는 행에 남아 조사에 쓴다. 격자 간격과 이분 탐색 폭은 `capacityVersion`에 속하는 상수다.
 
 **설정.** `capacityWindow` 60 s, `capacityWindows` 20, `capacityPassingWindows` 19, `capacityMinimumRequests` 1,000. 60 s 창이 필요한 근거: 요청 수 창만 쓰면 빠른 option(genesis2 cuda, 2,000 요청이 14 s)의 κ가 μ에 붙어 relaxed 1.2κ에서 20/20 충족이었고, 60 s 창에서는 0/20이다. 20개 중 19개 기준이 필요한 근거: 창 하나로 정한 κ는 1.0κ에서 6~12/20만 충족했다.
 
 **검증된 모양.** 이분 탐색에 쓰지 않은 seed 21~40에서 0.9κ는 모든 option이 20/20, 1.0κ는 16~20/20, 1.2κ는 0/20이다. κ는 절벽의 무릎이다. E1 tight(p95 1 s, m 139 ms) κ: rasp5 q1 34.3, jetsonx 18.3, orangepi 8.1, jetsono 48.1~49.7, orin-nano 38.9~41.3 req/s.
 
 **만드는 곳과 비용.**
-- ChillServer의 용량표 worker가 Workload의 SLO가 정해지거나 profile, m, 용량표 설정이 바뀔 때 빠진 행을 만든다. 자동제어를 켜기 전에 만들어지므로 켤 때 기다리지 않는다. 행 하나가 작업 하나이고 `GOMAXPROCS`개를 병렬로 돌린다.
-- 행은 evidence store에 `serving/capacity/<profileID>/<b>/<p>-<L>-<m>/<설정>.json`으로 `PutImmutable`하고, 재시작 뒤 읽는다. 키가 입력을 모두 담으므로 같은 키는 같은 값이다.
+- ChillServer의 용량표 worker가 Workload의 SLO가 정해지거나 profile, m, 용량표 설정, `capacityVersion`이 바뀔 때 빠진 행을 만든다. 자동제어를 켜기 전에 만들어지므로 켤 때 기다리지 않는다. 행 하나가 작업 하나이고 `GOMAXPROCS`개를 병렬로 돌린다.
+- 행은 evidence store에 `serving/capacity/<capacityVersion>/<profileID>/<b>/<p>-<L>-<m>/<설정>.json`으로 `PutImmutable`하고 재시작 뒤 읽는다. 본문이 결정적이라 다시 올려도 `Existing`이다.
 - 행이 없으면 그 option은 `CapacityPending`으로 계획에서 빠지고, 켜진 Workload에 κ가 있는 option이 하나도 없으면 판단이 `CapacityPending`이다.
-- 지금 재생은 요청 수의 제곱으로 느려진다(창 2,000 요청 0.19 s, 8,000 요청 2.8 s). 60 s 창은 빠른 option에서 8,700 요청이고 option 하나의 검증에 2,135 s가 들었다. 그래서 commit 1이 재생의 사건 선택을 heap으로 바꾼다. 행 수는 E1에서 option 변형 38개 × SLO 3개 = 114개다. 단일 코어 2,000 요청 창으로 1,626 s였다.
+- 지금 재생은 요청 수의 제곱으로 느려진다(창 2,000 요청 0.19 s, 8,000 요청 2.8 s). 60 s 창은 빠른 option에서 8,700 요청이고 option 하나의 검증에 2,135 s가 들었다. 그래서 commit 1이 재생의 사건 선택을 heap으로 바꾼다. 격자는 이분 탐색보다 판정 횟수가 많지만 미충족 판정은 실패 창 2개에서 멈춘다 `[추론: 행당 이분 탐색의 약 2.5배]`. 행 수는 E1에서 option 변형 38개 × SLO 3개 = 114개다.
 
-**imagenet.** imagenet(p99 100 ms)은 114행 모두 κ 0이다. m 139 ms가 목표 100 ms보다 크기 때문이다. 이 Workload를 켜면 판단은 `NoCapacity`다.
+**imagenet.** imagenet(p99 100 ms)은 114행 모두 κ 0이다(m 139 ms > 목표 100 ms). 이 Workload는 꺼진 채로 둔다.
 
 ## 3. 판정과 순서
 
-- 부하: `λ_w = (관측 창의 계산 도착 수 + 대기 수) / 창 길이`. 도착은 재생이 쓰던 `Compute` 또는 `Accepted` 도착이다.
-- SLO: 구성 c는 켜진 Workload마다 `Σ_{i∈c, w} κ_i ≥ λ_w`이면 충족이다. λ가 0이어도 켜진 Workload마다 인스턴스 하나 이상이다.
-- 전환 대기: route 시각 r까지 새 용량이 없다(make-before-break). 그때까지 남는 용량은 route 뒤에 지우는 keep 인스턴스의 κ다. 모드를 바꾸는 노드와 자원이 겹쳐 prepare 전에 인스턴스를 지우는 노드는 그 노드의 keep κ를 잃는다. 전환 대기는 `Σ_w max(0, λ_w − 남는 κ_w) × r`(요청 수)다.
-- 순서: 충족, 전환 대기가 작은 것, 에너지가 작은 것, keep, 논리 구성 key 사전 순. 충족하는 구성이 없으면 채운 부하가 큰 것을 먼저 두고 상태는 `Overload`다.
-- 전환 대기 항이 필요한 근거: 마지막 E1 snapshot에 포아송 40과 60 req/s를 넣으면 에너지만으로는 rasp5 q1 + q1-lut(route 20.2 s)가 나오고, 재생에서는 그 구성이 전환 중 SLO에서 진다. 전환 대기 순서로는 재생 계획기와 같은 genesis3 q2(route 10.7 s)를 고른다.
+구성 c와 route 시각 r에서 켜진 Workload w마다 아래 값을 정확한 κ 합으로 계산한다.
+
+| 값 | 정의 |
+|---|---|
+| `λ_w` | (관측 창의 계산 도착 수 + 대기 수) / 창 길이. 도착은 재생이 쓰던 `Compute` 또는 `Accepted` 도착 |
+| `κ_new,w` | c의 w 인스턴스 κ 합 |
+| `κ_ret,w` | route 전까지 남는 지금 인스턴스의 κ 합. 모드를 바꾸는 노드와 자원이 겹쳐 prepare 전에 지우는 인스턴스는 빠진다 |
+| `r` | route 전 사슬의 최대 시간(동작마다 측정 trial 최대 시간) |
+| `B_w` | `q_w + max(0, λ_w − κ_ret,w) × r`. `q_w`는 지금 대기 수 |
+
+- 최종 충족: `κ_new,w ≥ λ_w`. 초과량 `λ_w / κ_new,w − 1`. λ가 0이어도 켜진 Workload마다 인스턴스 하나 이상이다.
+- 전환 중 충족: `λ_w ≤ κ_ret,w`이면 충족이다(남은 인스턴스가 κ 안에서 처리). 아니면 route 뒤 EDF가 밀린 요청을 먼저 처리하므로 가장 오래 기다리는 요청의 대기는 `W_w = B_w / κ_new,w`이고, `W_w ≤ L_w − m`이면 충족이다. 초과량 `W_w / (L_w − m) − 1`. κ는 처리율 μ 이하라 이 대기는 실제보다 길다. 밀린 요청이 다 빠지는 시간 `B_w / (κ_new,w − λ_w)`도 기록한다.
+- 순서: 모든 w에서 두 충족을 만족하는 구성 중 에너지가 작은 것, keep, 논리 구성 key 사전 순. 그런 구성이 없으면 w와 두 초과량에 걸친 최대 초과량이 작은 것, 에너지 순이고 상태는 `Overload`다. keep은 r = 0이다.
+- 근거: 마지막 E1 snapshot에 포아송 40 req/s를 넣으면 에너지만으로는 rasp5 q1 + q1-lut(route 20.2 s)가 나오고 재생에서 전환 중 SLO에서 진다. 위 규칙으로 그 구성은 `B = 5.7 × 20.2 = 115`, `W = 115 / 69.2 = 1.67 s > 0.82 s`(L 1 s, m 177 ms)로 탈락한다. genesis3 q2 추가(route 10.7 s)는 `W = 61 / 144 = 0.42 s`로 충족이고, 재생 계획기와 같은 노드와 option이다.
 
 ## 4. 노드 계획과 DP
 
-**노드 계획.** 노드마다 keep, 그리고 배치 가능한 노드에서 측정 option 변형(option마다 변형 하나 이하) 집합 중 한 모드와 `ValidateNodeBudget`을 만족하는 것. 같은 노드에서 같은 option 두 개는 CPU affinity가 겹쳐 생기지 않는다. 꺼진 Workload의 인스턴스가 있는 노드는 keep뿐이다. 계획마다 κ 합, 남는 κ, 사슬, 전력을 둔다.
+**노드 계획.** 노드마다 keep, 그리고 배치 가능한 노드에서 측정 option 변형(option마다 변형 하나 이하) 집합 중 한 모드와 `ValidateNodeBudget`을 만족하는 것. 같은 노드에서 같은 option 두 개는 CPU affinity가 겹쳐 생기지 않는다. 꺼진 Workload의 인스턴스가 있는 노드는 keep뿐이다. 계획마다 Workload별 `κ_new`와 `κ_ret`, 사슬, 전력을 둔다.
+
+**공유 인스턴스.** 같은 모델 인스턴스 공유는 연구 범위 밖이다. 계획기는 공유 인스턴스를 만들지 않는다. 이미 있는 공유 인스턴스의 κ는 어느 Workload에도 세지 않고(`κ_new`, `κ_ret` 모두 0) 전력만 센다. 그 Workload들이 모두 켜져 있으면 노드 계획이 그 인스턴스를 지울 수 있고, 아니면 그 노드는 keep뿐이다. 공유 코드와 설정과 명세의 정리는 별도 조사가 정한다.
 
 **사슬.** `schedulerPlan`의 순서다. 모드 변경은 power, 모든 기존 remove, prepare가 route 전이다. 같은 모드에서는 자원이 함께 들어가지 않을 때만 remove가 prepare 앞이고, 아니면 route 뒤다. 동작마다 측정 trial의 평균 wall J, 평균 시간, 최대 시간을 쓴다. 비용이 없으면 그 계획은 `MissingOperationCost`로 빠진다. 같은 인스턴스의 배치 상한을 바꾸는 계획은 remove와 prepare로 센다(교체).
 
-**비교 기간.** `T = max(horizon, 공간의 최장 route 전 사슬 + 최장 route 뒤 remove)`를 판단마다 하나 정하고, keep과 모든 계획에 쓴다. 최대 시간으로 잡으므로 모든 사슬이 T 안에 끝난다. T는 `decision.capacity.comparisonNanos`로 기록한다. 비교 기간을 정하는 방법은 04 명세가 설계에 맡긴다.
+**비교 기간.** `T = max(horizon, 공간의 최장 route 전 사슬 + 최장 route 뒤 remove)`(최대 시간)를 판단마다 하나 정하고 keep과 모든 계획에 쓴다. 모든 사슬이 T 안에 끝난다. 비교 기간을 정하는 방법은 04 명세가 설계에 맡긴다.
 
-**에너지.** 노드 계획 하나의 [0, T] 에너지는 keep이면 `P_before × T`, 아니면 `J_pre + P_mid × (r − t_pre) + J_post + P_after × (T − r − t_post)`다. P는 `schedulerBaseline`의 적재 상태 전력(baseline 또는 profile 적재 유휴)이다. 요청 에너지는 인스턴스별 배정 부하 y와 요청당 증분 e로 `Σ y_i × e_i × T`다. 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.
+**에너지.** 노드 계획 하나의 [0, T] 노드 에너지는 keep이면 `P_before × T`, 아니면 `J_pre + P_mid × (r − t_pre) + J_post + P_after × (T − r − t_post)`(t는 평균 시간)다. P는 `schedulerBaseline`의 적재 상태 전력이다. 요청 에너지는 route에서 나눈다: [0, r]은 지금 routing으로 남는 인스턴스가 κ_ret까지 처리하고(`Σ y⁰_i e_i r`), 넘친 `max(0, λ − κ_ret) × r`건과 [r, T]는 target 배정 y로 처리한다(`Σ y_i e_i (T − r)`와 넘친 건수 × y 가중 평균 e). 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.
 
-**DP.** 서로 다른 route 시각 r마다 노드 순서 DP를 한 번 돈다. 상태는 (Workload별 채운 부하 칸, Workload별 남는 용량 칸, r에서 끝나는 사슬이 있는지)이고 값은 최소 에너지다. 부하는 칸 단위로 올림, κ는 내림이라 보수적이다. 칸 수는 상태 수가 20,000 이하가 되는 가장 큰 정수(최대 50)다. 부하는 e가 작은 인스턴스부터 κ까지 채운다. r마다 3장의 순서로 해를 비교한다.
+**DP.** 서로 다른 r마다 노드 순서 DP를 한 번 돈다. 칸은 (Workload별 배정 부하 칸, r에서 끝나는 사슬이 있는지)이고, 칸마다 (에너지, Workload별 정확한 `κ_new` 합, `κ_ret` 합)의 Pareto 집합을 둔다(에너지는 작을수록, 용량은 클수록 낫다). 부하 칸은 요청 에너지 배정에만 쓰고(계획은 `⌈κ/칸⌉`칸까지 받는다), 충족은 마지막에 Pareto 점의 정확한 합으로 3장 규칙을 적용한다. 그래서 칸 크기는 충족을 바꾸지 않고 에너지 배정의 정밀도만 바꾼다. 칸 수는 Workload 수에 따라 칸 상태가 20,000 이하인 가장 큰 정수(최대 50)다.
 
-**router 가중치.** 고른 해의 인스턴스별 배정 부하 y에 비례한 정수(합 100, 인스턴스마다 최소 1)다.
+**router 가중치.** 고른 해의 인스턴스 κ로 e가 작은 인스턴스부터 κ까지 λ를 채운 y를, 합 1,000의 정수로 최대 나머지 반올림한다. 반올림 뒤 모든 인스턴스에서 `λ_w × weight / 1,000 ≤ κ_i`를 확인하고, 넘치면 그 인스턴스의 한 단위를 여유가 가장 큰 인스턴스로 옮긴다. 옮길 곳이 없으면 그 해는 `RouteWeightExceedsCapacity`로 최종 미충족이다. 배정 0인 인스턴스는 가중치 0이고, λ가 0이면 같은 가중치다. keep도 같은 규칙으로 가중치를 다시 정하고 route만 바뀌면 사슬 없이 route 동작 하나다.
 
-**판단 기록.** `ExpectedJoules`는 위 분석 합이다. `decision.capacity`는 T, λ, 고른 r, 전환 대기, κ 합, 노드 계획 수, r마다의 최선 해(key, κ 합, 전환 대기, J), 사용한 용량표 행 키를 담는다(`SCH-30`의 후보별 평가).
+**판단 기록.** `ExpectedJoules`는 고른 해를 정확한 y로 다시 계산한 위 분석 합이다. `decision.capacity`는 T, Workload별 λ, `κ_new`, `κ_ret`, B, W, 두 초과량, 고른 r, 가중치, 사용한 용량표 행 키, 그리고 노드 계획마다 key, 적격 여부, 제외 사유(`MissingOperationCost`, `CapacityPending`, `CapacityRejected`, `InfeasibleResources`, `FixedWorkload`, `PlacementInventoryMissing`), κ, 사슬 시간, J를 담는다(`SCH-30`). 계획의 조합은 기록하지 않는다.
 
-**비용.** 노드와 계획 수에 비례하고 요청 수와 무관하다. E1 기록 판단 498건에서 노드 계획 37개, Tick p50 1.84 ms, p99 3.02 ms(단일 코어)다.
+**비용.** 노드와 계획 수에 비례하고 요청 수와 무관하다. 시제품(칸 DP)은 E1 기록 판단 498건에서 노드 계획 37개, Tick p50 1.84 ms, p99 3.02 ms(단일 코어)였다. Pareto 집합 크기는 commit 6 test가 기록한다.
 
-## 5. 완료 여유 규칙 (제안)
+## 5. 완료 여유 규칙
 
-κ는 m에 둔감하지만(rasp5 tight m 139 ms 34.3, m 179 ms 34.2) 지연 예측과 짧은 SLO의 κ는 m을 그대로 더한다. E1 2 req/s에서 rasp5 실측 종단 p95는 209.7 ms, 재생 예측은 m 139 ms에서 174.2 ms였다. 차이는 검증과 전처리(p95 103.2 ms)와 응답 교환이 m보다 긴 데서 온다. 제안: m은 요청 행의 `elapsedNanos − (queueMS + serviceMS)`(firstfloor 큐와 실행 밖 시간)의 SLO 백분위로 정한다. E1 값은 약 177 ms다. 운영자가 E 실행의 `hack/observations/e1.sql` 열로 확인하고 설정을 바꾼다. m이 바뀌면 2장의 행이 다시 만들어진다.
+사용자가 채택했다. m은 요청 행의 `elapsedNanos − (queueMS + serviceMS)`(firstfloor 큐와 실행 밖 시간)의 Workload SLO 백분위로 정한다. E1 2 req/s에서 rasp5 실측 종단 p95 209.7 ms, 재생 예측(m 139 ms) 174.2 ms였고, 차이는 검증과 전처리(p95 103.2 ms)와 응답 교환이 m보다 길어서다. E1 값은 약 177 ms다. `hack/observations/e1.sql`이 이 열을 내고 운영자가 E 실행 결과로 `completionMarginMS`를 바꾼다. m이 바뀌면 2장의 행이 다시 만들어진다. κ는 m에 둔감하지만(rasp5 tight m 139 ms 34.3, m 179 ms 34.2) 3장의 `L − m`과 짧은 SLO의 κ는 m을 그대로 쓴다.
 
-## 6. 범위 밖과 그대로
+## 6. 그대로 남는 것
 
-- 그대로: 재생 코드(용량표 계산과 오프라인 검증), `schedulerPlan`, `schedulerMeasuredOptions`, `schedulerBaseline`, 전환 실행기, 가용 노드 최저 모드 규칙, 비교 집합, firstfloor batcher.
-- 공유 인스턴스: κ는 Workload 하나의 행이다. 계획기는 공유 인스턴스를 만들지 않고, 이미 있는 공유 인스턴스는 그 노드의 keep으로 둔다.
+재생 코드(용량표 계산과 오프라인 검증), `schedulerPlan`, `schedulerMeasuredOptions`, `schedulerBaseline`, 전환 실행기, 가용 노드 최저 모드 규칙, 비교 집합, firstfloor batcher.
 
 ## 7. 설정과 저장 계약
 
 | 대상 | 변경 |
 |---|---|
 | 추가(commit 2) | `capacityWindow`(> 0), `capacityWindows`(≥ 1), `capacityPassingWindows`(1 ≤ x ≤ `capacityWindows`), `capacityMinimumRequests`(≥ 1). 설정 decode가 strict(`scheduler_service.go:118`)라 배포 때 `serving-scheduler` ConfigMap과 Dashboard 설정 화면을 같이 바꾼다 |
-| 삭제(commit 5) | `algorithm`, `replays`, `seed`, `maxCandidates`, `maxReplayRequests`. 같은 방식으로 ConfigMap과 Dashboard를 바꾼다 |
-| 판단 기록 | `v1alpha5`에 `decision.capacity`가 더해지고 `candidates`, `search.truncated`, `policy`가 빠진다. 관측 reader는 없는 필드를 빈 값으로 읽으므로 버전을 올리지 않는다(ADR 0019) |
-| evidence store | `serving/capacity/` prefix(새 object, 읽는 곳은 용량표 worker) |
+| 삭제(commit 6) | `algorithm`, `replays`, `seed`, `maxCandidates`, `maxReplayRequests`. 같은 방식으로 ConfigMap과 Dashboard를 바꾼다 |
+| 판단 기록 | `v1alpha5`에 `decision.capacity`와 `management`의 `capacity-row-built`가 더해지고 `candidates`, `search.truncated`, `policy`가 빠진다. 관측 reader는 없는 필드를 빈 값으로 읽으므로 버전을 올리지 않는다(ADR 0019) |
+| evidence store | `serving/capacity/<capacityVersion>/` prefix. `capacityVersion`을 올리면 이전 prefix는 읽지 않고 지운다 |
 
 ## 8. 커밋 단위
 
 | # | commit | 내용 | 의존 |
 |---|---|---|---|
 | 1 | `perf(serving): select replay events with a heap` | `nextEvent`의 선형 탐색을 heap으로. 기존 재생 test의 판단과 같은 값 | 없음 |
-| 2 | `feat(serving): build per-option SLO capacity rows` | `internal/serving/capacity.go`(`hack/kappa`의 κ 계산 이동), 용량표 worker, evidence store 행, 네 설정, `CapacityPending`, `/api/v1/scheduler/capacity` 조회. Tick은 그대로 | 1 |
+| 2 | `feat(serving): build per-option SLO capacity rows` | `internal/serving/capacity.go`(`hack/kappa`의 κ 계산 이동, 격자와 단조 검사), `capacityVersion`, 용량표 worker, evidence store 행, `capacity-row-built`, 네 설정, `CapacityPending`, `CapacityRejected`, `/api/v1/scheduler/capacity` 조회. Tick은 그대로 | 1 |
 | 3 | `feat(loadgen): send Poisson arrivals` | `chill_loadgen replay --arrivals poisson --seed`. 지금은 고정 간격뿐이다(`cli.py:55-58`) | 없음 |
-| 4 | `docs(spec): judge SLO with per-option capacity` | 10장의 ①과 ④(SRS). ①'는 로컬 사본에 같은 문장 | 사용자 승인 |
-| 5 | `feat(serving): plan with capacity sums and node plans` | `internal/serving/scheduler_capacity.go`의 노드 계획, 사슬, T, DP, 가중치, `decision.capacity`. `EvaluateScheduler` 교체, 12장 삭제, `hack/kappa`의 compare가 서버 계획기와 `v1alpha5` 세그먼트를 쓰도록 변경, 설정 삭제, ConfigMap, Dashboard, 문서 | 2, 4, 11장 오프라인 비교 |
+| 4 | `chore(hack): report the non-execution latency percentile` | `e1.sql`에 5장의 열 | 없음 |
+| 5 | `docs(spec): judge SLO with per-option capacity` | 10장의 ①과 ④(SRS). ①'는 로컬 사본에 같은 문장 | 사용자 승인 |
+| 6 | `feat(serving): plan with capacity sums and node plans` | `internal/serving/scheduler_capacity.go`의 노드 계획, 사슬, T, 전환 판정, Pareto DP, 가중치, `decision.capacity`. `EvaluateScheduler` 교체, 12장 삭제, `hack/kappa` compare가 서버 계획기와 `v1alpha5` 세그먼트를 쓰도록 변경, 설정 삭제, ConfigMap, Dashboard, 문서 | 2, 5, 11장 오프라인 비교 |
 
 ## 9. 검사
 
 | commit | 검사 |
 |---|---|
 | 1 | heap 전후 재생 결과가 기존 scheduler test 전체에서 같음. 8,000 요청 창 시간 기록 |
-| 2 | fixture profile의 κ가 같은 입력의 `hack/kappa` 값과 같음. 같은 행을 두 번 만들면 같은 값(결정성). 창 요청 수가 `λ × capacityWindow` 이상. 19/20 판정 경계. m 139 ms, p99 100 ms에서 κ 0. profile, SLO, m, 설정 변경이 새 키를 만들고 그 외 변경은 만들지 않음. 재시작 뒤 store에서 읽고 다시 계산하지 않음. 행 없음은 `CapacityPending`. strict decode가 네 필드 누락을 거절 |
+| 2 | 고정 fixture profile의 κ가 상수와 같음(재생이나 배칭 규칙 변경이 κ를 바꾸면 실패하고 `capacityVersion`을 올리라고 알림). 같은 행을 두 번 만들면 같은 본문. 충족, 미충족, 충족 격자는 `NonMonotone`이고 κ 없음. 창 요청 수가 `λ × capacityWindow` 이상. 19/20 판정 경계. m 139 ms, p99 100 ms에서 κ 0. profile, SLO, m, 설정, version 변경이 새 키를 만들고 그 외 변경은 만들지 않음. 재시작 뒤 store에서 읽고 다시 계산하지 않음. strict decode가 네 필드 누락을 거절 |
 | 3 | 같은 seed의 도착 시각이 같고 평균 간격이 1/rate 근처 |
-| 5 DP | 무작위 소형 fixture에서 DP 결과가 brute force와 같음(Workload 1개와 2개, `hack/kappa` test의 600개를 옮김). 모드 변경 계획의 남는 κ 0과 그에 따른 순서. route 뒤 remove 계획은 keep κ를 남김. 배치 상한 변경이 remove와 prepare. 공유 인스턴스와 꺼진 Workload 노드는 keep뿐 |
-| 5 기간과 기록 | 사슬 197 s, horizon 60 s에서 keep과 모든 계획의 T가 같고 trial J 전체 포함, `TransitionExceedsHorizon` 없음. option 40개에서 재진입 계획이 DP에 있음(D-22). 가중치 합 100, 최소 1, 배정 부하 비례. 입력 순서를 섞은 두 snapshot의 판단이 `reflect.DeepEqual`. 완전 동률은 keep |
+| 6 판정 | 3장 표의 40 req/s 두 예. 모드 변경 계획의 `κ_ret` 0. route 뒤 remove 계획은 keep κ를 남김. `W > L − m`인 계획은 에너지가 작아도 선택되지 않음. 모든 계획이 미충족이면 최대 초과량 순. SLO가 다른 Workload 두 개에서 각자 판정. 공유 인스턴스 κ 0과 그 노드 계획 |
+| 6 DP | 무작위 소형 fixture(Workload 1~3개)에서 DP의 충족 판정이 정확한 κ 합 brute force와 같음(예: κ 0.34λ 인스턴스 세 개가 충족). 칸 수를 바꿔도 충족 판정이 같음. 가중치 반올림 뒤 모든 인스턴스가 κ 안(예: κ 99.6과 0.4, λ 100). 배치 상한 변경이 remove와 prepare. 요청 에너지가 route에서 나뉨 |
+| 6 기간과 기록 | 사슬 197 s, horizon 60 s에서 keep과 모든 계획의 T가 같고 trial J 전체 포함, `TransitionExceedsHorizon` 없음. option 40개에서 재진입 계획이 DP에 있음(D-22). 제외된 노드 계획이 사유와 함께 기록됨. 입력 순서를 섞은 두 snapshot의 판단이 `reflect.DeepEqual`. 완전 동률은 keep |
 | 전체 | `make lint test`, `make arch-check`, `make helm-lint helm-template`, `make dashboard-check` |
 
 ## 10. 명세 변경 제안
@@ -126,17 +138,19 @@
 
 | 확인 | 방법 | 목표 |
 |---|---|---|
-| 오프라인 비교 | `hack/kappa -mode compare`, E1 기록 판단 498건 | 완료: target이 있는 457건 모두 일치, 에너지 차 0 J. commit 5 뒤 `v1alpha5` 세그먼트로 다시 |
-| 에너지 정확도(오프라인) | E1 1시간의 기록 snapshot마다 분석 합 `ExpectedJoules`를 다시 계산해 60 s당 평균 × 60과 실측 비교 집합 495,741 J 비교 | 차이 ≤ 2%(재생 예측 +0.7%) |
-| 실클러스터 단계 | commit 5 배포 뒤 tight 자동제어, 포아송 0.633, 2, 5 req/s 각 5분, 그리고 rasp5 κ(34.3)를 넘는 40 req/s 5분, soak 2 req/s 1시간 | 40 req/s에서 첫 판단이 추가 인스턴스를 고르고, 단계마다 SLO 충족(전환 구간 제외), 전환 대기 예측과 관측 큐 비교 기록 |
-| Tick | 같은 실행의 `evaluationElapsedNanos`, CPU | 40 req/s에서도 Tick p99 ≤ 100 ms, CPU가 500m 아래, 간격 ≤ 15 s |
-| 에너지(실측) | 1시간 `ExpectedJoules` 합과 `OperatingPower` 실측 | 차이 ≤ 2% |
-| 용량표 | worker의 행 수와 계산 시간, κ 0.9배와 1.2배 포아송 단계(rasp5) | 0.9κ 충족, 1.2κ 초과, 전체 표 계산 시간 기록 |
-| 재진입 | 비용이 있는 가용 노드가 있는 판단의 `decision.capacity` | `TransitionExceedsHorizon` 0, T가 최장 사슬 이상, 재진입 계획이 DP에 있음 |
+| 오프라인 비교 | `hack/kappa -mode compare`, E1 기록 판단 498건 | 완료: target이 있는 457건 모두 일치, 에너지 차 0 J. commit 6 뒤 서버 계획기와 `v1alpha5` 세그먼트로 다시 |
+| 에너지 정확도(오프라인) | E1 1시간의 기록 snapshot마다 분석 합을 다시 계산하고, 판단마다 `ExpectedJoules / T`를 다음 판단까지 적분한 합을 실측 비교 집합 495,741 J와 비교 | 차이 ≤ 2%(재생 예측 +0.7%) |
+| 칸 크기의 과대 배치(오프라인) | E1 snapshot과 Workload 2~3개 합성 snapshot에서 부하를 바꿔 DP 해와 정확한 brute force 최소 에너지 해의 J 차이를 칸 수별로 | 분포 기록. E5 전 사용자 검토의 근거 |
+| 실클러스터 단계 | commit 6 배포 뒤 tight 자동제어, 포아송 0.633, 2, 5 req/s 각 5분, rasp5 κ(34.3)를 넘는 40 req/s 5분, soak 2 req/s 1시간 | 40 req/s에서 첫 판단이 추가 인스턴스를 고름. 전환 구간을 포함해 단계마다 SLO 충족. 예측 `B`, `W`, 비우는 시간과 관측 큐 비교 |
+| 점유 구간 | 같은 40 req/s 단계의 관측 처리량 | 응답 교환까지 인스턴스가 점유되면 rasp5 κ는 10.8이다. 이 단계가 어느 쪽인지 정한다 |
+| Tick | `evaluationElapsedNanos`, CPU | 40 req/s에서도 Tick p99 ≤ 100 ms, CPU가 500m 아래, 간격 ≤ 15 s |
+| 에너지(실측) | 판단마다 `ExpectedJoules / T`를 다음 판단까지 적분한 1시간 합과 `OperatingPower` 비교 집합 실측 | 차이 ≤ 2% |
+| 용량표 | worker의 행 수, `NonMonotone` 수, 계산 시간, κ 0.9배와 1.2배 포아송 단계(rasp5) | 0.9κ 충족, 1.2κ 초과, `NonMonotone` 0, 전체 표 계산 시간 기록 |
+| 재진입 | 비용이 있는 가용 노드가 있는 판단의 `decision.capacity` | `TransitionExceedsHorizon` 0, T가 최장 사슬 이상, 재진입 계획이 기록됨 |
 
 ## 12. 전환 뒤 삭제
 
-commit 5에서 모두 지운다.
+commit 6에서 모두 지운다.
 
 - `scheduler_candidates.go`: `EnumerateScheduler`와 깊이 우선 열거(`visit`, `place`, `emit`, `group`, `replicaLimit`, `sourceIndex`, `candidateNodes`, `canReuseSlot`, `routing`, `controlInstances`, `controlRouting`), route 변형, `Search.Truncated`.
 - `scheduler_replay.go`의 Tick 경로: 후보 재생 루프(`EvaluateScheduler` 본문과 `schedulerEvaluateCandidate`의 후보 평가), `schedulerBetter`, `FinalizeSchedulerTarget`의 후보 선택, `transitionComplete`, `TransitionExceedsHorizon`과 그 assumption 문장, `projection` 인자. 인스턴스 하나의 SLO 추정을 내는 재생 본체는 용량표가 쓰므로 남는다.
@@ -148,11 +162,7 @@ commit 5에서 모두 지운다.
 
 ## 13. 사용자 결정과 질문
 
-- 결정: κ는 기존 재생, 포아송 도착, 이분 탐색으로 미리 계산한다. Tick은 κ 합, 노드 계획, DP이고 재생이 없다. 비교 기간은 `T = max(60 s, 최장 사슬)` 하나다. 상위 K 검증, shadow, `hack/planner-ab`, 지연 공식, 여유율은 두지 않는다. `projected-work-history`는 전환에서 지운다.
+- 결정: κ는 기존 재생, 포아송 도착, 격자와 이분 탐색으로 미리 계산한다. Tick은 κ 합, 노드 계획, Pareto DP이고 재생이 없다. 비교 기간은 `T = max(60 s, 최장 사슬)` 하나다. 전환 중 SLO는 Workload마다 필수 조건이다. 계획기는 공유 인스턴스를 만들지 않고 기존 공유 인스턴스를 용량으로 세지 않는다. 전환은 shadow 없이 오프라인 비교와 실클러스터 단계로 확인하고 문제가 있으면 이전 image로 되돌린다. 완료 여유는 5장 규칙이다. imagenet은 꺼진 채로 둔다. Workload 여러 개의 칸 크기는 E5 전에 11장 측정으로 다시 검토한다. `projected-work-history`는 전환에서 지운다.
 - 질문 1: 10장 ①, ①', ④ 문장을 승인하는가. ①'의 04와 00은 로컬 사본이라 누가 반영하는가.
-- 질문 2: shadow가 없으므로 전환은 오프라인 비교와 commit 5 배포 뒤의 실클러스터 단계로 확인하고, 문제가 있으면 이전 image로 되돌린다. 받아들이는가.
-- 질문 3: 완료 여유를 `elapsed − (큐 + 실행)`의 SLO 백분위(E1 약 177 ms)로 정하는 5장 규칙을 채택하는가.
-- 질문 4: imagenet(p99 100 ms)은 어떤 option으로도 κ가 0이다. 목표를 바꾸는가, 켜지 않는 Workload로 두는가.
-- 질문 5: firstfloor가 배치 상한을 재준비 없이 바꿀 수 있는지 확인하지 않았다. 지금은 교체(remove와 prepare)로 센다. 바꿀 수 있다면 비용이 없는 동작으로 둘 수 있다.
-- 질문 6: 계획기는 공유 인스턴스를 만들지 않는다(6장). Workload 두 개 이상이 같은 노드를 쓰려면 각자 인스턴스를 둔다. 받아들이는가.
-- 질문 7: 응답 교환 구간에도 인스턴스가 점유된다면 rasp5 κ는 10.8로 1/3이 된다. 이 자료로는 가릴 수 없어 실클러스터 40 req/s 단계가 판정한다.
+- 질문 2: firstfloor가 배치 상한을 재준비 없이 바꿀 수 있는지 확인하지 않았다. 지금은 교체(remove와 prepare)로 센다. 바꿀 수 있다면 비용이 없는 동작으로 둘 수 있다.
+- 질문 3: `capacityVersion`은 사람이 올리는 상수이고 고정 κ test가 올릴 때를 알린다. 이 방식으로 충분한가. image마다 다시 계산하면 확실하지만 배포마다 표 전체를 다시 만든다.
