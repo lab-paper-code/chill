@@ -177,6 +177,27 @@ func (s *observationSnapshot) selectLoadWindow(from, to time.Time) {
 	s.streams[observationRequestStream] = prefixes
 }
 
+// selectReceiptWindow keeps prefixes that may hold facts of requests received
+// in [from,to): their receipts, later facts carrying such a ReceivedAt, and
+// later facts without ReceivedAt. Zero bounds are open.
+func (s *observationSnapshot) selectReceiptWindow(from, to time.Time) {
+	if to.IsZero() {
+		to = time.Unix(1<<62, 0)
+	}
+	prefixes := s.streams[observationRequestStream][:0]
+	following := false
+	for _, prefix := range s.streams[observationRequestStream] {
+		census := prefix.requestCensus
+		if !census.trusted || census.receiptAt.intersects(from, to) {
+			following = true
+		} else if !census.receivedAt.intersects(from, to) && (!following || !census.receivedAt.set || !census.receivedAt.min.IsZero()) {
+			continue
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	s.streams[observationRequestStream] = prefixes
+}
+
 func (s *observationSnapshot) scan(stream string, visit func(observationRecord)) error {
 	return s.scanRaw(stream, func(window string, line []byte) (bool, error) {
 		var record observationRecord

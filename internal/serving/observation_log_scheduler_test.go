@@ -1,9 +1,12 @@
 package serving
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -431,6 +434,89 @@ func TestRequestCensusKeepsUnknownPrefixesAndIncompleteMetadata(t *testing.T) {
 	}
 	if _, err := observationLog.SchedulerArrivals(from, to); err == nil {
 		t.Fatal("unknown corrupt prefix became an empty success")
+	}
+}
+
+func TestWorkloadObservationReadsOnlyRequestedWindow(t *testing.T) {
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
+	d := &Definition{UID: "workload", Generation: 1, SLO: SLO{Percentile: 99, TargetLatency: time.Second}}
+	if err := observationLog.DefinitionRecord(d); err != nil {
+		t.Fatal(err)
+	}
+	appendEvents := func(events ...RequestEvent) {
+		t.Helper()
+		for _, event := range events {
+			event.WorkloadUID, event.Definition = d.UID, d.Identity()
+			if err := observationLog.RequestEvent(event); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	request := func(id string, received time.Time) []RequestEvent {
+		return []RequestEvent{
+			{RequestID: id, Kind: phaseReceived, At: received, ReceivedAt: received},
+			{RequestID: id, Kind: phaseAccepted, At: received, ReceivedAt: received},
+			{RequestID: id, Kind: eventResponseFinished, At: received.Add(time.Millisecond), ReceivedAt: received, ElapsedNanos: int64(time.Millisecond), Outcome: outcomeCompleted},
+		}
+	}
+	base := time.Now().UTC().Add(-48 * time.Hour)
+	const windows, perWindow, target = 20, 200, 10
+	from := base.Add(target * time.Hour)
+	to := from.Add(2 * time.Minute)
+	for w := range windows {
+		if w > 0 {
+			if err := observationLog.finish(); err != nil {
+				t.Fatal(err)
+			}
+			if err := observationLog.start(time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for r := range perWindow {
+			appendEvents(request(fmt.Sprintf("%d-%d", w, r), base.Add(time.Duration(w)*time.Hour+time.Duration(r)*15*time.Second))...)
+		}
+		switch w {
+		case target:
+			late := request("late", from.Add(time.Minute))
+			appendEvents(late[:2]...)
+			// Out-of-range lines keep a valid envelope but fail full decoding.
+			for range 3 {
+				raw := fmt.Sprintf(`{"schemaVersion":%q,"window":%q,"request":{"requestID":"sentinel","workloadUID":%q,"kind":"received","at":%q,"receivedAt":%q,"elapsedNanos":"bad"}}`+"\n",
+					observationSchema, observationLog.windows[observationLog.active].ID, d.UID, to.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano))
+				if _, err := observationLog.files[observationRequestStream].WriteString(raw); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case target + 1:
+			appendEvents(request("late", from.Add(time.Minute))[2])
+		}
+	}
+	// Windows outside the requested receipts are unreadable: any read fails the query.
+	for w, window := range observationLog.windows {
+		if w == target || w == target+1 {
+			continue
+		}
+		name := filepath.Join(observationLog.config.Directory, window.ID, observationRequestStream+".jsonl")
+		info, err := os.Stat(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, bytes.Repeat([]byte{'x'}, int(info.Size())), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := observationLog.Query(d.UID, from, to, nil, nil, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = 2*time.Minute/(15*time.Second) + 1 // receipts every 15 s plus the late request
+	if result.Total != int(want) || result.Outcomes[outcomeCompleted] != int(want) || len(result.Cohorts) != 1 ||
+		result.Cohorts[0].SampleCount != int(want) || len(result.Requests) != 3*int(want) {
+		t.Fatalf("narrow window result: total %d outcomes %v cohorts %+v requests %d", result.Total, result.Outcomes, result.Cohorts, len(result.Requests))
 	}
 }
 

@@ -245,6 +245,7 @@ curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
 
 `from`/`to`는 RFC3339Nano, `definition`/`outcome`은 반복 가능한 필터,
 `cursor`는 반환된 `nextCursor`다. 집계는 raw page 크기와 무관한 전체 선택 모집단을 사용한다.
+모집단은 `[from,to)`에 접수된 요청이다. 조회는 이 접수 시각과 겹치는 관측 창의 줄만 해독하고, 그 요청의 사실만 메모리에 둔다.
 
 오류 응답은 `code`, `message`, 해당할 때 `field`다. 관리 단계는 Workload 조회의 `operation`으로 확인한다.
 존재하지 않는 객체는 `404`, 등록 및 입력 검증 오류는 `400`, 권한 오류는 `401` 또는 `403`,

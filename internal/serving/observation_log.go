@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	jsoniter "github.com/json-iterator/go"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"gonum.org/v1/gonum/stat"
 )
@@ -610,18 +611,49 @@ func (read *observationSnapshot) collectObservationFacts(
 	}); err != nil {
 		return nil, nil, err
 	}
+	// Only requests received in [from,to) keep facts; other lines are checked
+	// by envelope and syntax without full decoding.
 	requests := make(map[string]*requestFacts)
-	if err := read.scan(observationRequestStream, func(r observationRecord) {
-		e := r.Request
+	if err := read.scanRaw(observationRequestStream, func(window string, raw []byte) (bool, error) {
+		var envelope struct {
+			SchemaVersion string `json:"schemaVersion"`
+			Window        string `json:"window"`
+			Request       *struct {
+				RequestID   string    `json:"requestID"`
+				WorkloadUID string    `json:"workloadUID"`
+				Kind        string    `json:"kind"`
+				At          time.Time `json:"at"`
+				ReceivedAt  time.Time `json:"receivedAt"`
+			} `json:"request"`
+		}
+		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(raw, &envelope); err != nil {
+			return false, err
+		}
+		if envelope.SchemaVersion != observationSchema || envelope.Window != window {
+			return false, errObservationRecordIdentity
+		}
+		e := envelope.Request
 		if e == nil || e.WorkloadUID != result.UID {
-			return
+			return false, observationJSONSyntaxError(raw)
 		}
 		f := requests[e.RequestID]
 		if f == nil {
+			received := e.ReceivedAt
+			if received.IsZero() && e.Kind == phaseReceived {
+				received = e.At
+			}
+			if !observationInInterval(received, result.From, result.To) {
+				return false, observationJSONSyntaxError(raw)
+			}
 			f = &requestFacts{}
 			requests[e.RequestID] = f
 		}
-		f.addEvent(e)
+		var record observationRecord
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return false, err
+		}
+		f.addEvent(record.Request)
+		return false, nil
 	}); err != nil {
 		return nil, nil, err
 	}
@@ -751,6 +783,7 @@ func (observationLog *ObservationLog) Query(uid string, from, to time.Time, defi
 	if err != nil {
 		return result, err
 	}
+	read.selectReceiptWindow(from, to)
 	definitionsByID, requests, err := read.collectObservationFacts(&result)
 	if err != nil {
 		return result, err
