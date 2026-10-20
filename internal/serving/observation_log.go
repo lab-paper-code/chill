@@ -86,6 +86,10 @@ type RequestRow struct {
 	Units             int            `json:"units,omitempty"`
 	NativeElapsedMS   *float64       `json:"nativeElapsedMS,omitempty"`
 	profile           *Profile
+	// assignedHour holds this request's assigned row; it stays local until the final row.
+	assignedHour time.Time
+	// closing marks a settled request whose final row still awaits a successful append.
+	closing bool
 }
 
 const (
@@ -162,7 +166,9 @@ func (r *RequestRow) fold(e *RequestEvent) {
 	}
 }
 
-func (r *RequestRow) accepted() bool { return r.AcceptedNanos != nil || r.DispatchedAt != nil }
+func (r *RequestRow) accepted() bool {
+	return r.AcceptedNanos != nil || r.DispatchedAt != nil || r.DispatchedNanos != nil
+}
 
 // CatalogRow holds an immutable body that other records reference by key.
 type CatalogRow struct {
@@ -185,11 +191,13 @@ type observationCatalogEntry struct {
 // ObservationLog appends minute files under hourly segment directories and
 // keeps only the open request rows and the definitions in memory.
 type ObservationLog struct {
-	mu          sync.Mutex
-	publishMu   sync.Mutex
-	config      ObservationLogConfig
-	root        string
-	started     time.Time
+	mu        sync.Mutex
+	publishMu sync.Mutex
+	config    ObservationLogConfig
+	root      string
+	started   time.Time
+	// floor is the start of complete local observation; deleting an hour advances it.
+	floor       time.Time
 	now         func() time.Time
 	files       map[string]*os.File
 	definitions *os.File
@@ -249,12 +257,33 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	if l.definitions, err = os.OpenFile(definitions, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600); err != nil {
 		return nil, err
 	}
+	if err := l.restore(hours); err != nil {
+		return nil, errors.Join(err, l.definitions.Close())
+	}
+	return l, nil
+}
+
+// restore sets the floor of local observation and reopens assigned requests
+// without a final row for RestartDrain.
+func (l *ObservationLog) restore(hours []time.Time) error {
+	l.floor = l.started
+	if len(hours) > 0 {
+		for _, stream := range observationStreams {
+			files, err := l.hourFiles(hours[0], stream)
+			if err != nil {
+				return err
+			}
+			if len(files) > 0 && files[0].at.Before(l.floor) {
+				l.floor = files[0].at
+			}
+		}
+	}
 	// RestartDrain observes assigned requests without a final row to completion.
 	rows := map[string]RequestRow{}
 	for _, hour := range hours {
 		files, err := l.hourFiles(hour, observationRequestStream)
 		if err != nil {
-			return nil, errors.Join(err, l.definitions.Close())
+			return err
 		}
 		for _, file := range files {
 			if err := scanObservationFile(file.path, -1, func(raw []byte) error {
@@ -263,11 +292,12 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 					return err
 				}
 				if row.Kind == requestRowFinal || rows[row.RequestID].Kind != requestRowFinal {
+					row.assignedHour = hour
 					rows[row.RequestID] = row
 				}
 				return nil
 			}); err != nil {
-				return nil, errors.Join(err, l.definitions.Close())
+				return err
 			}
 		}
 	}
@@ -276,10 +306,14 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 			l.restored = append(l.restored, row)
 			open := row
 			open.Kind = ""
+			if row.DispatchedAt != nil && !row.ReceivedAt.IsZero() {
+				dispatched := row.DispatchedAt.Sub(row.ReceivedAt).Nanoseconds()
+				open.DispatchedNanos = &dispatched
+			}
 			l.open[row.RequestID] = &open
 		}
 	}
-	return l, nil
+	return nil
 }
 
 func truncateTornLine(name string) error {
@@ -354,8 +388,6 @@ func (l *ObservationLog) appendLocked(stream string, now time.Time, value any) e
 	return err
 }
 
-// ponytail: a failed partial write leaves a torn line that readers report;
-// rewind the file on failure if ENOSPC ever happens outside an S3 outage.
 func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) error {
 	name := l.segment(stream, now)
 	file := l.files[stream]
@@ -375,8 +407,20 @@ func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) 
 		}
 		l.files[stream] = file
 	}
-	_, err := file.Write(data)
-	return err
+	return appendWhole(file, data)
+}
+
+// appendWhole appends data or nothing: a short or failed write, such as
+// ENOSPC while S3 is down, is cut back so the next line starts on a boundary.
+func appendWhole(file *os.File, data []byte) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		return errors.Join(err, file.Truncate(info.Size()))
+	}
+	return nil
 }
 
 // referenceLocked writes a catalog row when the hour first references key, or
@@ -410,7 +454,7 @@ func (l *ObservationLog) DefinitionRecord(definition *Definition) error {
 	if l.closed {
 		return errors.New("observation log is closed")
 	}
-	if _, err := l.definitions.Write(append(data, '\n')); err != nil {
+	if err := appendWhole(l.definitions, append(data, '\n')); err != nil {
 		l.lastError = err
 		return err
 	}
@@ -442,9 +486,11 @@ func (l *ObservationLog) RequestEvent(event RequestEvent) error {
 		assigned := next
 		assigned.Kind = requestRowAssigned
 		assigned.AcceptedNanos, assigned.ValidatedNanos, assigned.DispatchedNanos = nil, nil, nil
-		if err := l.appendRowLocked(&assigned); err != nil {
+		hour, err := l.appendRowLocked(&assigned)
+		if err != nil {
 			return err
 		}
+		next.assignedHour = hour
 	}
 	l.open[event.RequestID] = &next
 	return nil
@@ -458,25 +504,36 @@ func (l *ObservationLog) RequestClosed(id string) error {
 	if row == nil {
 		return nil
 	}
-	delete(l.open, id)
-	final := *row
-	final.Kind, final.DispatchedAt = requestRowFinal, nil
-	return l.appendRowLocked(&final)
+	return l.closeRowLocked(id, row)
 }
 
-func (l *ObservationLog) appendRowLocked(row *RequestRow) error {
+// closeRowLocked keeps the open row until its final row is stored; Flush
+// retries a failed one.
+func (l *ObservationLog) closeRowLocked(id string, row *RequestRow) error {
+	row.closing = true
+	final := *row
+	final.Kind, final.DispatchedAt = requestRowFinal, nil
+	if _, err := l.appendRowLocked(&final); err != nil {
+		return err
+	}
+	delete(l.open, id)
+	return nil
+}
+
+// appendRowLocked returns the hour that holds the row.
+func (l *ObservationLog) appendRowLocked(row *RequestRow) (time.Time, error) {
 	now := l.now()
 	if d := l.retained[row.DefinitionID]; d != nil {
 		if err := l.referenceLocked("definition", row.DefinitionID, now, now, d); err != nil {
-			return err
+			return now, err
 		}
 	}
 	if row.profile != nil && row.ProfileID != "" {
 		if err := l.referenceLocked("profile", row.ProfileID, now, now, row.profile); err != nil {
-			return err
+			return now, err
 		}
 	}
-	return l.appendLocked(observationRequestStream, now, row)
+	return now.Truncate(time.Hour), l.appendLocked(observationRequestStream, now, row)
 }
 
 func (l *ObservationLog) ManagementEvent(event ManagementEvent) error {
@@ -494,13 +551,15 @@ const observationArchivePrefix = "serving/observations." + observationVersion + 
 // archive uploads each past hour as one gzip object per stream. Equal input
 // makes equal bytes, so a repeated upload is Existing and nothing records
 // upload state. An hour is deleted once every stream succeeds in one pass and
-// the hour ended at least an hour ago.
+// the hour ended at least an hour ago. The oldest hour holding the assigned
+// row of an unsettled request, and every later hour, stay for RestartDrain.
 func (l *ObservationLog) archive(ctx context.Context) error {
 	l.publishMu.Lock()
 	defer l.publishMu.Unlock()
 	l.mu.Lock()
 	now := l.now() // Later appends choose this hour or a later one.
 	l.mu.Unlock()
+	deleting := true
 	hours, err := l.hours()
 	if err != nil {
 		return err
@@ -517,12 +576,32 @@ func (l *ObservationLog) archive(ctx context.Context) error {
 				failed = errors.Join(failed, err)
 			}
 		}
-		if failed == nil && !now.Before(hour.Add(2*time.Hour)) {
-			failed = os.RemoveAll(filepath.Join(l.root, observationHour(hour)))
+		deleting = deleting && failed == nil && !now.Before(hour.Add(2*time.Hour))
+		if deleting {
+			deleting, failed = l.removeHour(hour)
 		}
 		result = errors.Join(result, failed)
 	}
 	return result
+}
+
+// removeHour deletes one uploaded hour under the writer lock, so a capture
+// opens the whole hour or sees it gone with the floor already past it.
+func (l *ObservationLog) removeHour(hour time.Time) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, row := range l.open {
+		if !row.assignedHour.IsZero() && !row.assignedHour.After(hour) {
+			return false, nil
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(l.root, observationHour(hour))); err != nil {
+		return false, err
+	}
+	if end := hour.Add(time.Hour); end.After(l.floor) {
+		l.floor = end
+	}
+	return true, nil
 }
 
 func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream string) error {
@@ -556,6 +635,11 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 func (l *ObservationLog) Flush(ctx context.Context) error {
 	l.mu.Lock()
 	var result error
+	for id, row := range l.open {
+		if row.closing && !l.closed {
+			result = errors.Join(result, l.closeRowLocked(id, row))
+		}
+	}
 	for _, file := range l.files {
 		result = errors.Join(result, file.Sync())
 	}
@@ -889,7 +973,7 @@ func (r *observationRead) gap(from time.Time) *time.Time {
 func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRead, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	read := &observationRead{files: map[string][]observationOpenFile{}, open: map[string]*RequestRow{}, definitions: map[string]*Definition{}, start: l.started}
+	read := &observationRead{files: map[string][]observationOpenFile{}, open: map[string]*RequestRow{}, definitions: map[string]*Definition{}, start: l.floor}
 	for id, row := range l.open {
 		copied := *row
 		read.open[id] = &copied
@@ -902,7 +986,6 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 		l.lastError = err
 		return nil, err
 	}
-	first := true
 	for _, hour := range hours {
 		for _, stream := range observationStreams {
 			files, err := l.hourFiles(hour, stream)
@@ -910,9 +993,6 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 				read.close()
 				l.lastError = err
 				return nil, err
-			}
-			if first && len(files) > 0 && files[0].at.Before(read.start) {
-				read.start = files[0].at
 			}
 			bounds, wanted := ranges[stream]
 			for _, segment := range files {
@@ -926,16 +1006,12 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 				}
 			}
 		}
-		first = false
 	}
 	return read, nil
 }
 
 func (r *observationRead) openFile(stream string, segment observationSegment) error {
 	file, err := os.Open(segment.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil // Deleted by an archive pass after the listing.
-	}
 	if err != nil {
 		return err
 	}

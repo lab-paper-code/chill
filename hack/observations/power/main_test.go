@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
 type nopWriter struct{}
@@ -58,7 +61,21 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	meters := []serving.OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: source}}
+	// The accepted scheduler configuration names the meter set.
+	declaration, err := json.Marshal(map[string]any{"meters": []servingkube.MeterDeclaration{
+		{ID: "wall", Node: node, Scope: "node-exclusive-wall", Source: source},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configFile := filepath.Join(t.TempDir(), "scheduler.json")
+	if err := os.WriteFile(configFile, declaration, 0600); err != nil {
+		t.Fatal(err)
+	}
+	meters, err := configuredMeters(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want, err := log.OperatingPower(from, to, meters, 1000)
 	if err != nil || want.WholePoolJoules == nil || want.ActivePoolJoules == nil {
 		t.Fatalf("server: %+v %v", want, err)
@@ -67,13 +84,41 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 		t.Fatal(err)
 	}
 	obs := segments(t, filepath.Join(directory, "v1alpha5"), t.TempDir())
-	got, err := run(obs, from, to)
+	if _, err := run(t.TempDir(), meters, from, to); err == nil {
+		t.Fatal("missing boundary hours accepted")
+	}
+	// fetch.sh brings the neighbor hours; an hour without records is empty.
+	for _, at := range []time.Time{from.Add(-time.Minute), to.Add(time.Minute)} {
+		name := filepath.Join(obs, at.UTC().Format("20060102T15"), "scheduler.jsonl.gz")
+		if _, err := os.Stat(name); err != nil {
+			writeGzip(t, name, nil)
+		}
+	}
+	got, err := run(obs, meters, from, to)
 	if err != nil || got.WholePoolJoules == nil || got.ActivePoolJoules == nil {
 		t.Fatalf("tool: %+v %v", got, err)
 	}
 	if *got.WholePoolJoules != *want.WholePoolJoules || *got.ActivePoolJoules != *want.ActivePoolJoules {
 		t.Fatalf("tool %v/%v J, server %v/%v J",
 			*got.WholePoolJoules, *got.ActivePoolJoules, *want.WholePoolJoules, *want.ActivePoolJoules)
+	}
+}
+
+func writeGzip(t *testing.T, name string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+		t.Fatal(err)
+	}
+	var buffer bytes.Buffer
+	writer := gzip.NewWriter(&buffer)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(name, buffer.Bytes(), 0600); err != nil {
+		t.Fatal(err)
 	}
 }
 

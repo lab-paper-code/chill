@@ -64,7 +64,8 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 	for _, row := range readRequestRows(t, config.Directory) {
 		if row.Kind == requestRowFinal {
 			finals++
-			if row.RequestID != restoredRequest || row.Outcome != outcomeIncomplete || row.Error != "EntrypointRestarted" {
+			if row.RequestID != restoredRequest || row.Outcome != outcomeIncomplete || row.Error != "EntrypointRestarted" ||
+				row.DispatchedNanos == nil || *row.DispatchedNanos != 0 {
 				t.Fatalf("restored request closed with a wrong final row: %+v", row)
 			}
 		}
@@ -84,6 +85,17 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 	defer confirmed.cancel()
 	if !confirmed.Drained(d.UID) {
 		t.Fatal("actual container termination proof lost at restart")
+	}
+	checkRestoredDemand(t, confirmedLog, now)
+}
+
+// The restored final row still counts as accepted, assigned computable demand.
+func checkRestoredDemand(t *testing.T, observationLog *ObservationLog, now time.Time) {
+	t.Helper()
+	load, err := observationLog.LoadWindow(now.Add(-time.Second), now.Add(time.Second))
+	if err != nil || len(load.Arrivals) != 1 || !load.Arrivals[0].Accepted || !load.Arrivals[0].Compute ||
+		len(load.Workloads) != 1 || load.Workloads[0].Accepted != 1 || load.Workloads[0].Assigned != 1 {
+		t.Fatalf("restored request lost its dispatch: %+v %v", load, err)
 	}
 }
 

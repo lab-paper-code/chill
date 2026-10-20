@@ -116,7 +116,7 @@ func clockedObservationLog(t *testing.T, config ObservationLogConfig, started ti
 		t.Fatal(err)
 	}
 	clock := &observationClock{at: started}
-	observationLog.now, observationLog.started = clock.now, started
+	observationLog.now, observationLog.started, observationLog.floor = clock.now, started, started
 	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
 	return observationLog, clock
 }

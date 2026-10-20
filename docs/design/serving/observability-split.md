@@ -47,7 +47,7 @@
 ### 3.2 재시작
 
 - 배정 전 요청(수신, 검증, 큐)은 crash 때 행이 남지 않는다. 사용자가 받아들인 손실이고, load-generator JSONL과 `requestID`로 join하면 드러난다(7장의 `recorded`).
-- 배정된 요청은 RestartDrain이 그대로 맡는다. 시작할 때 `runtimeFacts`가 로컬 `requests` 파일에서 `final`이 없는 `assigned` 행을 골라 지금처럼 호출을 복원하고 수신을 닫는다. 복원한 호출은 backend 완료를 관측한 뒤 `final`(`incomplete`, `EntrypointRestarted`)을 쓴다.
+- 배정된 요청은 RestartDrain이 그대로 맡는다. 시작할 때 `runtimeFacts`가 로컬 `requests` 파일에서 `final`이 없는 `assigned` 행을 골라 지금처럼 호출을 복원하고 수신을 닫는다. 복원한 행의 `dispatchedNanos`는 `dispatchedAt − receivedAt`이라 최종 행도 접수와 배정으로 셈한다. 복원한 호출은 backend 완료를 관측한 뒤 `final`(`incomplete`, `EntrypointRestarted`)을 쓴다.
 - firstfloor 로그 follow는 인스턴스의 복원한 배정 중 가장 이른 `dispatchedAt`부터 읽는다(없으면 프로세스 시작). 그 사이 다시 읽는 줄 중 열린 행이 없는 요청의 줄은 버려진다.
 - `RetainedDefinition`은 지우지 않는 루트 `definitions.jsonl`(정의 수에 비례, KB 단위)에서 읽는다.
 
@@ -72,7 +72,7 @@
 
 - 파일: `<directory>/v1alpha5/<YYYYMMDDTHH>/<stream>.<MM>.jsonl`. stream은 `requests`, `scheduler`, `management`, `catalog`이고, 쓰는 시각(UTC)의 분이 파일을 고른다. `DefinitionRecord`는 루트 `<directory>/v1alpha5/definitions.jsonl`에 append한다. 버전은 경로가 담으므로 줄에는 `schemaVersion`과 `window`가 없다.
 - 업로드: 1분 archive ticker가 지난 시간 디렉터리마다 stream별로 분 파일을 순서대로 이어 gzip한(`compress/gzip`, 헤더 시각 0) 파일을 `serving/observations.v1alpha5/<YYYYMMDDTHH>/<stream>.jsonl.gz`에 `PutImmutable`로 올린다. 같은 입력의 gzip은 같은 바이트이므로 재시작 뒤 다시 올리면 `CreateOutcomeExisting`이다. 그래서 업로드 여부를 저장하지 않는다.
-- 로컬 삭제: 한 archive pass에서 그 시간의 모든 stream이 `Created` 또는 `Existing`을 받고, 그 시간이 끝난 지 1시간이 지났으면 디렉터리를 지운다. 하나라도 실패하면 그 시간은 다음 pass에서 처음부터 다시 올린다. 로컬에는 현재 시간과 직전 시간이 남는다. PVC는 이 2시간과 S3가 멈춘 동안의 미업로드분을 담는 버퍼다. S3가 멈추면 PVC가 차고 append 실패가 `readyz`를 503으로 만든다.
+- 로컬 삭제: 한 archive pass에서 그 시간의 모든 stream이 `Created` 또는 `Existing`을 받고, 그 시간이 끝난 지 1시간이 지났으면 디렉터리를 지운다. 하나라도 실패하면 그 시간과 이후 시간은 남고, 다음 pass가 처음부터 다시 올린다. 아직 `final`이 없는 요청의 `assigned` 행이 있는 시간과 그 이후 시간도 남아 RestartDrain이 읽는다. 삭제는 `mu` 아래에서 하므로 조회는 한 시간을 통째로 열거나 지워진 것으로 본다. 로컬에는 보통 현재 시간과 직전 시간이 남는다. PVC는 이 2시간과 S3가 멈춘 동안의 미업로드분을 담는 버퍼다. S3가 멈추면 PVC가 차고 append 실패가 `readyz`를 503으로 만든다. 실패한 append는 쓰기 전 크기로 잘라 다음 줄이 개행 경계에서 시작하고(루트 `definitions.jsonl` 포함), 실패한 `final`은 열린 행에 남아 다음 `Flush`가 다시 쓴다.
 - 시작: 각 stream의 마지막 분 파일과 루트 `definitions.jsonl`을 마지막 개행까지 자른다(crash 때 쓰다 만 줄). 그 밖에 시작 때 읽는 것은 루트 definitions와 로컬 `requests`뿐이다.
 - 읽기는 대상 파일을 `mu` 아래에서 열고 잠금 밖에서 읽는다. 삭제는 열린 fd에 영향이 없다. 쓰는 중인 마지막 줄(개행 없음)은 무시한다.
 
@@ -87,7 +87,7 @@
 | `OperatingPower` | `scheduler`: `[from − 1분, to + 1분]`, 기준 snapshot은 `from`부터 거꾸로 첫 snapshot이 있는 분 파일까지 | 경계 표본 거리는 설정 검사에서 `maximumBoundaryDistance ≤ 1분`으로 묶는다. meter는 catalog의 coverage 정책을 쓴다 |
 | `SchedulerObservationPage` | `scheduler`: `[from, to]` | 지금처럼 limit에서 멈춘다 |
 
-- 관측 공백: `from`이 가장 오래된 로컬 분 파일보다 앞이면 결과에 `gapUntil`(그 파일의 시작)을 싣고 남은 구간만 집계한다. `OperatingPower`는 `complete=false`와 이유를 싣는다. `SchedulerHistoryWindow`는 `from`이 그 시작이나 프로세스 시작보다 앞이면 `ObservationGap`을 낸다(지금의 incomplete 창과 같은 오류 경로, `SCH-08` 공백 표시). 서버는 S3를 읽지 않는다. 2시간보다 오래된 구간은 7장의 오프라인 경로다.
+- 관측 공백: 로컬 관측의 시작은 기동 때 가장 오래된 로컬 분 파일(없으면 프로세스 시작)이고, 시간을 지울 때마다 그 시간의 끝으로 옮긴다. `from`이 그보다 앞이면 결과에 `gapUntil`(그 시작)을 싣고 남은 구간만 집계한다. `OperatingPower`는 `complete=false`와 이유를 싣는다. `SchedulerHistoryWindow`는 `from`이 그 시작이나 프로세스 시작보다 앞이면 `ObservationGap`을 낸다(지금의 incomplete 창과 같은 오류 경로, `SCH-08` 공백 표시). 서버는 S3를 읽지 않는다. 2시간보다 오래된 구간은 7장의 오프라인 경로다.
 - 비용: Tick의 `SchedulerArrivals(now − 60s, now)`는 분 파일 1~2개, 5 req/s에서 1 MB 이하를 읽는다(지금은 창 1~2개, 3.3~6.7 MB). 조회 메모리는 선택된 요청 수에 비례하고, 읽는 양의 최대치는 5 req/s 2시간의 행 36k개(약 47 MB)다.
 
 ## 7. 측정 표 산출
@@ -96,9 +96,9 @@
 
 | 파일 | 하는 일 |
 |---|---|
-| `fetch.sh <from시> <to시> <dir>` | evidence store의 S3 endpoint에서 시간 prefix를 `<dir>/obs/<시>/`로 받는다. 단계별 load-generator 출력은 실험 스크립트가 `<dir>/loadgen/<단계>.jsonl`로 둔다 |
+| `fetch.sh <from시> <to시> <dir>` | evidence store의 S3 endpoint에서 시간 prefix를 `<dir>/obs/<시>/`로 받는다. 전력 경계 표본과 기준 snapshot을 위해 앞뒤 한 시간을 더 받는다. 단계별 load-generator 출력은 실험 스크립트가 `<dir>/loadgen/<단계>.jsonl`로 둔다 |
 | `e1.sql` | `duckdb < hack/observations/e1.sql`. 요청 표와 Tick 표(`decision.evaluationElapsedNanos`) |
-| `power/main.go` | `go run ./hack/observations/power --dir <dir>/obs --from --to`. 전체와 활성 POOL 에너지 |
+| `power/main.go` | `go run ./hack/observations/power --dir <dir>/obs --scheduler-config <file> --from --to`. 전체와 활성 POOL 에너지. meter 집합은 실행 때 수락된 scheduler 설정의 `meters`이고, `[from − 1분, to + 1분]`이 걸친 시간의 segment가 없으면 거절한다 |
 
 E1 단계 표(요청 p95, 1 s 이내 완료, 잔여 지연)의 질의다.
 
@@ -122,7 +122,7 @@ FROM j GROUP BY stage ORDER BY stage;
 ```
 
 - `sent − recorded`가 서버 행이 없는 요청 수다. 표의 분모는 `sent`다. SLO 열은 `obs/*/catalog.jsonl.gz`의 `definition` 행과 `definitionID`로 join한다.
-- POOL 에너지: coverage 정책 적분과 snapshot 소속 재구성은 서버의 `OperatingPower` reducer를 그대로 쓴다. cutover commit이 reducer를 scheduler 기록 iterator를 받는 함수로 떼고(약 40줄), `power/main.go`가 gz 세그먼트를 그 iterator로 넘기고 catalog의 meter 행으로 meter를 만든다(약 120줄과 test 하나). SQL로 적분을 다시 쓰지 않으므로 서버와 같은 값이 나온다.
+- POOL 에너지: coverage 정책 적분과 snapshot 소속 재구성은 서버의 `OperatingPower` reducer를 그대로 쓴다. cutover commit이 reducer를 scheduler 기록 iterator를 받는 함수로 떼고(약 40줄), `power/main.go`가 gz 세그먼트를 그 iterator로 넘기고, 서버처럼 scheduler 설정의 meter 집합을 넘긴다. catalog의 meter 행은 기록된 본문을 푸는 데만 쓴다(약 120줄과 test 하나). SQL로 적분을 다시 쓰지 않으므로 서버와 같은 값이 나온다.
 - 검증은 구조 검사(줄 단위 JSON, 필드 형식)뿐이다. digest, 재인코딩 비교, byte 비교는 두지 않는다.
 
 ## 8. 예상 크기
