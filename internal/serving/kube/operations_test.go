@@ -246,30 +246,56 @@ func TestRoutePersistsAppliedDistributionOnPods(t *testing.T) {
 	operations, target, pods := routeAcknowledgmentFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	annotations := func() []string {
-		values := []string{}
-		for _, pod := range pods {
-			stored := &core.Pod{}
-			if err := operations.store.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, stored); err != nil {
-				t.Fatal(err)
-			}
-			values = append(values, stored.Annotations[ServingRoutingAnnotation])
-		}
-		return values
-	}
-	uid := target.Instances[0].WorkloadUIDs[0]
-	if err := operations.persistRouting(ctx, map[string]map[string]int32{uid: {target.Instances[0].ID: 2}, "disabled-uid": {}}); err != nil {
+	routed := `{"` + target.Instances[0].WorkloadUIDs[0] + `":1}`
+	if err := operations.persistRouting(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := annotations(), []string{`{"` + uid + `":2}`, `{}`}; !slices.Equal(got, want) {
-		t.Fatalf("persisted routing %v, want %v", got, want)
+	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{routed, routed}) {
+		t.Fatalf("persisted routing %v, want the frozen distribution %s", got, routed)
 	}
 	if _, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationRoute, Target: &target}); err != nil {
 		t.Fatal(err)
 	}
-	if got := annotations(); !slices.Equal(got, []string{`{}`, `{}`}) {
+	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{`{}`, `{}`}) {
 		t.Fatalf("withdrawn routing persisted as %v", got)
 	}
+}
+
+// Stop and drain withdraw an instance's routes without a route action; the Pod
+// records it so a restart does not resume traffic to a retiring instance.
+func TestStopAndDrainPersistWithdrawnRouting(t *testing.T) {
+	operations, target, pods := routeAcknowledgmentFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	routed := `{"` + target.Instances[0].WorkloadUIDs[0] + `":1}`
+	if err := operations.persistRouting(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := operations.StopInstance(ctx, target.Instances[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{`{}`, routed}) {
+		t.Fatalf("stop persisted %v", got)
+	}
+	if _, err := operations.Execute(ctx, Operation{ID: "drain", Kind: operationDrain, Node: target.Instances[1].Node, Instance: target.Instances[1].ID}); err != nil {
+		t.Fatal(err)
+	}
+	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{`{}`, `{}`}) {
+		t.Fatalf("drain persisted %v", got)
+	}
+}
+
+func podRoutingAnnotations(ctx context.Context, t *testing.T, operations *Operations, pods []*core.Pod) []string {
+	t.Helper()
+	values := []string{}
+	for _, pod := range pods {
+		stored := &core.Pod{}
+		if err := operations.store.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, stored); err != nil {
+			t.Fatal(err)
+		}
+		values = append(values, stored.Annotations[ServingRoutingAnnotation])
+	}
+	return values
 }
 
 func assertRouteNativeACKs(t *testing.T, target serving.SchedulerCandidate, result OperationResult, count int) {

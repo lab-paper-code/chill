@@ -277,7 +277,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 		case operationStop:
 			err = o.StopInstance(ctx, operation.Instance)
 		case operationDrain:
-			err = o.wait(ctx, func() (bool, error) { return o.runtime.DetachInstance(operation.Instance) })
+			err = o.detachInstance(ctx, operation.Instance)
 		case operationResize:
 			if operation.Prepare == nil || operation.Target == nil {
 				err = errors.New("resize requires prepared replacement and routing target")
@@ -406,7 +406,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		{Name: "preprocessor", Image: p.Condition.Preprocessor.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp -R "$1"/. /chill-preprocessor/`, "--", p.Condition.Preprocessor.Path}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "preprocessor", MountPath: "/chill-preprocessor"}}},
 		{Name: "profile", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Resources: initResources, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
 	}, Containers: []core.Container{{Name: "firstfloor", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-worker"}, Args: []string{"--config=/config/config.json", "--bind-address=:8080", "--node-name=" + node.Name}, Ports: []core.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: core.ResourceRequirements{Requests: requests, Limits: limits}, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "preprocessor", MountPath: "/preprocessor", ReadOnly: true}, {Name: "profile", MountPath: "/profile", ReadOnly: true}, {Name: "config", MountPath: "/config", ReadOnly: true}}, TerminationMessagePolicy: core.TerminationMessageFallbackToLogsOnError, ReadinessProbe: &core.Probe{ProbeHandler: core.ProbeHandler{HTTPGet: &core.HTTPGetAction{Path: "/v2/health/ready", Port: port8080()}}, PeriodSeconds: 1}}}, Volumes: []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}}}}
-	o.placeServingPod(pod, spec.Owner)
+	o.placeServingPod(pod, spec.Owner, spec.Instance.Weight)
 	if spec.Instance.Allocation.GPUUUID != "" {
 		pod.Spec.Containers[0].Env = []core.EnvVar{{Name: "CUDA_VISIBLE_DEVICES", Value: spec.Instance.Allocation.GPUUUID}}
 	}
@@ -607,7 +607,15 @@ func (o *Operations) StopInstance(ctx context.Context, id string) error {
 	o.observer.mu.Lock()
 	o.observer.removingInstances[id] = true
 	o.observer.mu.Unlock()
-	return nil
+	return o.persistRouting(ctx, id)
+}
+
+// detachInstance waits for the drain proof and records the withdrawn routes.
+func (o *Operations) detachInstance(ctx context.Context, id string) error {
+	if err := o.wait(ctx, func() (bool, error) { return o.runtime.DetachInstance(id) }); err != nil {
+		return err
+	}
+	return o.persistRouting(ctx, id)
 }
 func (o *Operations) removeInstance(ctx context.Context, node serving.NodeReference, id string, proof map[string]native.State) error {
 	uid, containerID, ok := strings.Cut(id, "/")
@@ -620,7 +628,7 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 	if err := o.StopInstance(ctx, id); err != nil {
 		return err
 	}
-	if err := o.wait(ctx, func() (bool, error) { return o.runtime.DetachInstance(id) }); err != nil {
+	if err := o.detachInstance(ctx, id); err != nil {
 		return err
 	}
 	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
@@ -816,14 +824,19 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 }
 
 // placeServingPod lets a measurement instance tolerate the measurement taint
-// and records the Workload that owns a manually prepared instance.
-func (o *Operations) placeServingPod(pod *core.Pod, owner *serving.WorkloadReference) {
+// and records the Workload that owns a manually prepared instance. A new Pod
+// serves only its owner until a route records the applied distribution.
+func (o *Operations) placeServingPod(pod *core.Pod, owner *serving.WorkloadReference, weight int32) {
 	if o.config.Measurement {
 		pod.Spec.Tolerations = []core.Toleration{profilingrun.MeasurementToleration()}
 	}
+	routing := map[string]int32{}
 	if owner != nil {
 		pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: owner.Name, UID: types.UID(owner.UID)}}
+		routing[owner.UID] = weight
 	}
+	raw, _ := json.Marshal(routing) // a string-to-int32 map always encodes
+	pod.Annotations[ServingRoutingAnnotation] = string(raw)
 }
 
 // admittedNode GETs the exact Node and admits it for this operation.
@@ -925,23 +938,28 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		}
 	}
 	o.observer.mu.Unlock()
-	if err := o.persistRouting(ctx, weights); err != nil {
+	if err := o.persistRouting(ctx, ""); err != nil {
 		return err
 	}
 	result.Progress = append(result.Progress, "routing applied and read back")
 	return nil
 }
 
-// persistRouting records the applied distribution on each runtime instance's Pod;
-// a restarted ChillServer restores it instead of binding every compatible Workload.
-func (o *Operations) persistRouting(ctx context.Context, weights map[string]map[string]int32) error {
+// persistRouting records the runtime's applied distribution on the Pod of instance
+// only, or of every runtime instance when only is empty; a restarted ChillServer
+// restores it instead of binding every compatible Workload. A standalone
+// serving-operation runtime names only the instance it stops.
+func (o *Operations) persistRouting(ctx context.Context, only string) error {
 	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err
 	}
-	known := map[string]bool{}
-	for _, instance := range o.runtime.Instances() {
-		known[instance.ID] = true
+	weights, _ := o.runtime.SchedulerRouting()
+	known := map[string]bool{only: only != ""}
+	if only == "" {
+		for _, instance := range o.runtime.Instances() {
+			known[instance.ID] = true
+		}
 	}
 	for i := range pods.Items {
 		pod := &pods.Items[i]

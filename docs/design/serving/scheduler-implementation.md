@@ -228,9 +228,12 @@ route의 ConfigMap·annotation 저장은 desired 진행으로, `Actual.Native`�
 native ACK만 남긴다. 뒤 인스턴스의 적용이 실패하면 이미 받은 ACK와 실제 routing을
 보존해 `partial`로 기록하며, 미확인 인스턴스를 적용 완료로 채우지 않는다.
 runtime에 적용된 routing은 각 인스턴스 Pod의 `edge.dacs.io/serving-routing` annotation에
-Workload UID별 가중치로 기록한다. ChillServer 재시작은 이 값을 다시 읽어 마지막 분배를 그대로
-복구하므로 꺼진 Workload도 마지막 구성을 유지한다. 이 annotation이 없는 Pod는
-`edge.dacs.io/serving-weight`를 호환되는 모든 Workload에 적용한다.
+Workload UID별 가중치로 기록한다. prepare는 스케줄러 Pod를 `{}`로, owner가 있는 수동 Pod를
+owner UID의 가중치로 만든다. route는 모든 인스턴스의 값을, stop과 drain은 해당 인스턴스의 값을
+갱신한다. 자율 제어 중 적용된 routing은 인스턴스의 정적 분배가 되어 자율 제어를 끈 뒤에도 유지된다.
+ChillServer 재시작은 이 값을 다시 읽어 마지막 분배를 그대로 복구하므로 꺼진 Workload도 마지막
+구성을 유지한다. 이 annotation이 없는 Pod는 `edge.dacs.io/serving-weight`를 호환되는 모든
+Workload에 적용한다.
 
 동일 comparison horizon에서 모든 POOL Node의 baseline을 한 번 적분한다.
 active/inactive/temporary Node를 포함한다. 원자 동작 구간의 wall joules는 그 구간의

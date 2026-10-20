@@ -10,9 +10,10 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
-// E1: after a ChillServer restart the instance bound only to the tight-SLO
-// Workload served every compatible Workload, including disabled ones.
-func TestRuntimeRestartKeepsPersistedRouting(t *testing.T) {
+// routingRuntime installs one instance compatible with a controlled and a disabled
+// Workload; seed is the instance's routing as read from its Pod.
+func routingRuntime(t *testing.T, seed map[string]int32) (*Runtime, SchedulerInstance, map[string]map[string]int32) {
+	t.Helper()
 	_, snapshot := schedulerFixture()
 	controlled := snapshot.Workloads[0]
 	disabled := *controlled
@@ -21,12 +22,12 @@ func TestRuntimeRestartKeepsPersistedRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = observationLog.Close(context.Background()) }()
+	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
 	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.cancel()
+	t.Cleanup(r.cancel)
 	i := snapshot.Instances[0]
 	r.SetProfiles([]Profile{*i.Profile})
 	for _, d := range []*Definition{controlled, &disabled} {
@@ -34,11 +35,17 @@ func TestRuntimeRestartKeepsPersistedRouting(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: i.ID, Node: i.Node, Profile: i.Profile.ID, Ready: true}, Profile: i.Profile, Weight: 1, Routing: map[string]int32{controlled.UID: 1}, Capacity: 1,
+	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: i.ID, Node: i.Node, Profile: i.Profile.ID, Ready: true}, Profile: i.Profile, Weight: 1, Routing: seed, Capacity: 1,
 		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]map[string]int32{controlled.UID: {i.ID: 1}, disabled.UID: {}}
+	return r, i, map[string]map[string]int32{controlled.UID: {i.ID: 1}, disabled.UID: {}}
+}
+
+// E1: after a ChillServer restart the instance bound only to the tight-SLO
+// Workload served every compatible Workload, including disabled ones.
+func TestRuntimeRestartKeepsPersistedRouting(t *testing.T) {
+	r, _, want := routingRuntime(t, map[string]int32{"w1": 1})
 	for _, phase := range []string{"restored", "autonomy enabled"} {
 		if phase == "autonomy enabled" {
 			r.EnableSchedulerRouting()
@@ -46,6 +53,20 @@ func TestRuntimeRestartKeepsPersistedRouting(t *testing.T) {
 		if weights, _ := r.SchedulerRouting(); !reflect.DeepEqual(weights, want) {
 			t.Fatalf("%s: %v, want %v", phase, weights, want)
 		}
+	}
+}
+
+// Disabling autonomy keeps the applied distribution, not the seed observed before it.
+func TestDisableSchedulerRoutingKeepsAppliedDistribution(t *testing.T) {
+	r, i, want := routingRuntime(t, nil)
+	r.EnableSchedulerRouting()
+	i.WorkloadUIDs = []string{"w1"}
+	if err := r.ApplySchedulerTarget(SchedulerCandidate{ID: "applied", Instances: []SchedulerInstance{i}, Routing: want}); err != nil {
+		t.Fatal(err)
+	}
+	r.DisableSchedulerRouting()
+	if weights, _ := r.SchedulerRouting(); !reflect.DeepEqual(weights, want) {
+		t.Fatalf("disabled autonomy rebuilt %v, want %v", weights, want)
 	}
 }
 

@@ -118,6 +118,15 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 		}
 	}
 	r.routeTargets = targets
+	// The applied distribution is each instance's static seed, as its Pod records it.
+	for _, instance := range r.instances {
+		instance.Routing = map[string]int32{}
+		for uid, distribution := range targets {
+			if weight := distribution[instance.State.ID]; weight > 0 {
+				instance.Routing[uid] = weight
+			}
+		}
+	}
 	r.routingControlled = true
 	r.rebuildLocked()
 	r.dispatchLocked()
@@ -232,6 +241,7 @@ func (r *Runtime) StopSchedulerInstance(id string) (bool, error) {
 	}
 	retiring.State.Stopped = true
 	retiring.State.Reason = "SchedulerDraining"
+	retiring.Routing = map[string]int32{}
 	for _, targets := range r.routeTargets {
 		delete(targets, id)
 	}
@@ -254,6 +264,7 @@ func (r *Runtime) DetachInstance(id string) (bool, error) {
 	if instance := r.instances[id]; instance != nil {
 		instance.State.Ready = false
 		instance.State.Reason = "InstanceDrained"
+		instance.Routing = map[string]int32{}
 		clear(instance.bindings)
 	}
 	for _, targets := range r.routeTargets {

@@ -360,6 +360,47 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 	}
 }
 
+// A new Pod is not routed until a route records its distribution; a manual
+// preparation serves only its owner.
+func TestPreparationSeedsRoutingBeforeRoute(t *testing.T) {
+	ctx := context.Background()
+	_, node, profile, _ := observerSourceFixture()
+	scheme := runtime.NewScheme()
+	if err := core.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	kube := kubefake.NewSimpleClientset(node)
+	kube.PrependReactor("create", "services", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("stop after Pod creation")
+	})
+	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	for _, owner := range []*serving.WorkloadReference{nil, {Name: "owner", UID: "owner-uid"}} {
+		name, want := "scheduler-prepared", `{}`
+		if owner != nil {
+			name, want = "manual-prepared", `{"owner-uid":2}`
+		}
+		spec := PrepareSpec{Name: name, Owner: owner, MemoryBytes: 1 << 20,
+			Instance: serving.SchedulerInstance{ID: name, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 2,
+				Allocation: serving.SchedulerAllocation{CPUs: []int{0}, CPUCount: 1, Threads: 1, MemoryBytes: 1 << 20}},
+			Bundle: evidencestore.ObjectIdentity{Store: "store", Key: "bundle", Size: 1},
+			Store:  storekube.Binding{Store: "store", Endpoint: "http://store", Bucket: "bucket", Region: "region", CredentialsSecretName: "secret"},
+			Config: native.Config{Mode: nativeServingMode, ProfilePath: "/profile/bundle.json",
+				Policy: native.Policy{ProfileID: profile.ID, DeadlinePolicy: profile.Condition.Firstfloor.DeadlinePolicy}},
+		}
+		if err := operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
+			t.Fatalf("%s preparation did not reach Pod creation: %v", name, err)
+		}
+		pod := &core.Pod{}
+		if err := store.client.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: name}, pod); err != nil {
+			t.Fatal(err)
+		}
+		if got := pod.Annotations[ServingRoutingAnnotation]; got != want {
+			t.Fatalf("%s Pod routing %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 	ctx := context.Background()
 	_, node, profile, _ := observerSourceFixture()
