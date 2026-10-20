@@ -240,6 +240,9 @@ active/inactive/temporary Node를 포함한다. 원자 동작 구간의 wall jou
 baseline 소비를 **대체**하고, 실제 serving execution의 incremental energy만 더한다.
 전환 eta를 사용할 때에는 원래 target baseline subtraction 의미를 맞춘다.
 서로 독립된 meter의 Node만 합산한다. 시간 단위의 readiness와 joules를 구별한다.
+후보의 모든 계획 동작(keep은 진행 중 동작)은 horizon 안에 끝나야 평가한다. replay마다 표본으로 뽑은
+동작 시간으로 계산한 동작 사슬이 horizon을 넘으면 그 후보는 `TransitionExceedsHorizon`으로 평가 대기다.
+그래서 평가된 후보는 모두 같은 horizon에서 동작 에너지 전체와 전환 뒤 구성을 함께 비교한다.
 
 `settings.algorithm`은 필수이며 `fixed-horizon`과 `projected-work-history`만 허용한다.
 전자는 기존 비교 기준으로, 실제 SLO-feasible 후보 중 prospective total energy를 최소화한다.

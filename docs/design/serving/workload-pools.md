@@ -150,6 +150,12 @@ NodeReady만 따른다. 그래서 외부 Pod가 있는 노드도 가용 노드�
 모드 변경이 노드를 재부팅하는 장비(jetsono)도 같다. meter가 분해하지 못하는 짧은 전환(jetsonx 약 1.5 s, meter 갱신 약 1 s)은
 비용이 없고, 그 비용이 없으면 다시 넣는 후보는 `MissingOperationCost`로 평가할 수 없다.
 
+replay는 에너지를 horizon까지 적분하므로 다시 넣는 후보는 power, prepare, route 사슬이 horizon 안에 끝날 때
+평가한다. 사슬이 horizon을 넘으면 그 후보는 `TransitionExceedsHorizon`으로 평가 대기이고, 평가된 후보는 모두
+power와 prepare의 측정 에너지 전체와 다시 넣은 뒤의 적재 baseline을 같은 horizon에서 비교한다. 이 규칙은 모든
+후보의 계획 동작에 같다. E1에서 측정한 빈 노드 전환은 jetsonx 63.5 s, jetsono 134.5 s, orin-nano 197.1 s이므로
+다시 넣는 후보를 평가하려면 horizon이 전환 시간과 prepare 시간의 합 이상이어야 한다.
+
 후보는 차이로 비교한다(`SCH-16`). 비교 집합은 어느 한 후보라도 위 공통 상태와 다른 인스턴스, 전력모드, 동작을 계획한
 노드이고, 모든 후보의 `ExpectedJoules`는 이 집합의 노드만 합한다. 집합 밖 노드(측정 POOL 노드와 모든 후보에서 비어 있는
 가용 노드 포함)는 모든 후보에 같아 소거한다. 결정 기록은 `SchedulerSearch.ComparedNodes`에 이 집합을 남긴다. 비교 집합

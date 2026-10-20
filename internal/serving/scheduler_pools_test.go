@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -327,6 +328,54 @@ func TestSchedulerAvailableNodeLoweringAndReentry(t *testing.T) {
 	}
 	snap.Costs = []OperationCost{loaded, prepare}
 	schedulerRequireReason(t, reentered(schedulerEvaluateForTest(t, s, snap)).Reasons, "MissingOperationCost")
+}
+
+// §3.4 D-20: re-entry is charged for its whole chain; a chain outlasting the horizon is not evaluable.
+func TestSchedulerReentryChainMustCompleteWithinHorizon(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.MaxCandidates, s.Replays = 200, 1
+	reentry := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+	snap.Nodes[1].PowerMode = schedulerTestEcoMode // already lowered, as in E1
+	option := poolsInstance(snap.Instances[0], "opt", reentry, "fixed", "w1")
+	snap.Options = append(snap.Options, poolsOption(option))
+	power := poolsCost(schedulerActionPower, reentry, schedulerTestEcoMode, "fixed", "")
+	prepare := poolsCost(schedulerActionPrepare, reentry, "unloaded", schedulerState(option), "fixed")
+	loadedWatts, _, _, _, reason := schedulerBaseline(snap.Baselines, SchedulerNode{Node: reentry, PowerMode: "fixed"}, []SchedulerInstance{option}, snap.Options)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	// Measured empty-Node raises in E1: jetsonx 63.5 s / 597.20 J, jetsono 134.5 s / 1968.96 J.
+	for _, trial := range []OperationTrial{{Duration: 63500 * time.Millisecond, Joules: 597.20}, {Duration: 134500 * time.Millisecond, Joules: 1968.96}} {
+		power.Trials = []OperationTrial{trial}
+		snap.Costs = []OperationCost{power, prepare}
+		for _, horizon := range []time.Duration{60 * time.Second, 300 * time.Second} {
+			s.Horizon = horizon
+			decision := schedulerEvaluateForTest(t, s, snap)
+			i := slices.IndexFunc(decision.Candidates, func(c SchedulerCandidate) bool {
+				return poolsOn(c, reentry) && slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return i.ID == "i1" })
+			})
+			if i < 0 {
+				t.Fatal("missing re-entry candidate")
+			}
+			c := decision.Candidates[i]
+			if horizon < trial.Duration {
+				schedulerRequireReason(t, c.Reasons, "TransitionExceedsHorizon")
+				if c.ExpectedJoules != nil {
+					t.Fatalf("%s re-entry priced within a %s horizon: %v J", trial.Duration, horizon, *c.ExpectedJoules)
+				}
+				continue
+			}
+			if c.ExpectedJoules == nil || decision.Keep.ExpectedJoules == nil {
+				t.Fatalf("%s re-entry unevaluable within %s: %v", trial.Duration, horizon, c.Reasons)
+			}
+			// Keep holds n3 at eco; re-entry pays the raise, the prepare, then loaded idle for the rest.
+			chain := trial.Duration + prepare.Trials[0].Duration
+			want := trial.Joules + prepare.Trials[0].Joules + loadedWatts*(horizon-chain).Seconds() - 6*horizon.Seconds()
+			if got := *c.ExpectedJoules - *decision.Keep.ExpectedJoules; math.Abs(got-want) > 1e-6 {
+				t.Fatalf("%s re-entry over keep = %v J, want %v J", trial.Duration, got, want)
+			}
+		}
+	}
 }
 
 // §3.4: while the Fixed lowering runs the Node reports no mode; keep still needs no power cost.

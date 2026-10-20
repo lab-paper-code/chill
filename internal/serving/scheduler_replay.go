@@ -215,7 +215,10 @@ func schedulerEvaluateCandidate(ctx context.Context, settings SchedulerSettings,
 		c.Reasons = appendUnique(c.Reasons, r.reasons...)
 		c.Assumptions = appendUnique(c.Assumptions, r.assumptions...)
 		c.Sources = appendUnique(c.Sources, r.sources...)
-		if len(r.reasons) != 0 {
+		if len(r.reasons) == 0 && !r.transitionComplete {
+			c.Reasons = append(c.Reasons, "TransitionExceedsHorizon")
+		}
+		if len(c.Reasons) != 0 {
 			break
 		}
 		energy += (r.energy - energy) / float64(replay+1)
@@ -811,6 +814,10 @@ func schedulerReplayModel(ctx context.Context, settings SchedulerSettings, snap 
 			s.out.transitionComplete = s.transitionComplete()
 			return s.out, ctx.Err()
 		}
+		// Energy stops at the horizon, so every planned action must finish inside it.
+		if !s.projection && s.now <= s.horizon && next >= s.horizon {
+			s.out.transitionComplete = s.actionsDone()
+		}
 		if !s.projection && !remaining && next >= s.horizon {
 			break
 		}
@@ -827,9 +834,10 @@ func schedulerReplayModel(ctx context.Context, settings SchedulerSettings, snap 
 }
 
 func (s *schedulerReplayState) transitionComplete() bool {
-	if !s.routingApplied {
-		return false
-	}
+	return s.routingApplied && s.actionsDone()
+}
+
+func (s *schedulerReplayState) actionsDone() bool {
 	for _, a := range s.actions {
 		if !a.done {
 			return false
@@ -1345,7 +1353,7 @@ func (s *schedulerReplayState) startOperation(a *schedulerReplayAction) bool {
 	a.start = s.now
 	a.finish = s.now + duration
 	s.out.sources = appendUnique(s.out.sources, cost.ID)
-	s.out.assumptions = appendUnique(s.out.assumptions, "operation trial wall joules replace baseline; paired trial mean wall power for partial horizon/continuation")
+	s.out.assumptions = appendUnique(s.out.assumptions, "operation trial wall joules replace baseline; paired trial mean wall power for continuation; every planned action completes within the horizon")
 	return true
 }
 
