@@ -460,28 +460,51 @@ func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) 
 	}
 }
 
-func TestObserverLogFollowSkipsLinesBeforeProcessStart(t *testing.T) {
+func TestObserverRefreshDoesNotWaitForBlockedLogStream(t *testing.T) {
 	pod, _, _, _ := observerSourceFixture()
-	kube := kubefake.NewSimpleClientset(pod)
+	containerID := pod.Status.ContainerStatuses[0].ContainerID
+	id := physicalID(pod.UID, containerID)
 	observer := newTestObserver(t)
+	observer.sources[id] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: containerID}
+	kube := kubefake.NewSimpleClientset(pod)
+	opened := make(chan *corev1.PodLogOptions, 1)
+	// A kubelet that never answers the log request until the observer closes.
+	kube.PrependReactor("get", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+		if action.GetSubresource() == "log" {
+			opened <- action.(ktesting.GenericAction).GetValue().(*corev1.PodLogOptions)
+			<-observer.ctx.Done()
+		}
+		return false, nil, nil
+	})
 	observer.kube = kube
-	observer.mu.Lock()
-	err := observer.startLogs(context.Background(), pod, "")
+	refreshed := make(chan error, 1)
+	go func() { refreshed <- observer.Refresh(context.Background()) }()
+	var options *corev1.PodLogOptions
+	select {
+	case options = <-opened:
+	case <-time.After(5 * time.Second):
+		t.Fatal("log follow not started")
+	}
+	select {
+	case err := <-refreshed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Refresh waited for the log stream")
+	}
+	if !observer.mu.TryLock() {
+		t.Fatal("opening log stream holds the observer lock")
+	}
+	source := observer.sources[id]
+	following := source.follow != nil
 	observer.mu.Unlock()
-	if err != nil {
-		t.Fatal(err)
+	if !following {
+		t.Fatal("pending log follow lost")
 	}
-	for _, action := range kube.Actions() {
-		if action.GetSubresource() != "log" {
-			continue
-		}
-		options := action.(ktesting.GenericAction).GetValue().(*corev1.PodLogOptions)
-		if options.SinceTime == nil || !options.SinceTime.Time.Equal(processStart) || !options.Follow {
-			t.Fatalf("restarted log follow replays earlier container output: %+v", options)
-		}
-		return
+	if options.SinceTime == nil || !options.SinceTime.Time.Equal(processStart) || !options.Follow {
+		t.Fatalf("restarted log follow replays earlier container output: %+v", options)
 	}
-	t.Fatal("log follow not opened")
 }
 
 func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
@@ -514,10 +537,11 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	stream := io.NopCloser(strings.NewReader(strings.Join(lines, "\n") + "\n"))
 	observer := manager.observer
 	observer.mu.Lock()
-	observer.sources[id] = &nativeSource{stream: stream}
-	observer.wg.Add(1)
+	observer.sources[id] = &nativeSource{}
 	observer.mu.Unlock()
-	observer.scanLogs(context.Background(), id, stream)
+	if err := observer.scanLogs(id, stream); err != nil {
+		t.Fatal(err)
+	}
 	result, err := manager.observationLog.Query(definition.UID, now.Add(-time.Second), now.Add(time.Second), nil, nil, 0, "")
 	if err != nil {
 		t.Fatal(err)

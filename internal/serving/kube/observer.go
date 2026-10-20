@@ -68,8 +68,16 @@ type nativeSource struct {
 	containerID string
 	ownerUID    types.UID
 	stopped     bool
-	cancel      context.CancelFunc
-	stream      io.ReadCloser
+	// follow identifies the current progress log follow.
+	follow context.Context
+	cancel context.CancelFunc
+}
+
+func (s *nativeSource) stopFollow() {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.follow, s.cancel = nil, nil
 }
 
 // Observer reads uncached Kubernetes facts and the native server. It never
@@ -276,7 +284,7 @@ func (o *Observer) refreshSource(ctx context.Context, pod *corev1.Pod, node *cor
 	if status := firstfloorStatus(pod); status != nil && status.State.Running != nil && status.ContainerID != "" {
 		id := physicalID(pod.UID, status.ContainerID)
 		if retained := o.sources[id]; retained != nil && !retained.stopped {
-			o.issue("logs/"+id, o.startLogs(ctx, pod, owner))
+			o.issue("logs/"+id, o.startLogs(pod, owner))
 		}
 	}
 	if pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
@@ -307,7 +315,7 @@ func (o *Observer) refreshSource(ctx context.Context, pod *corev1.Pod, node *cor
 				instance.OwnerWorkloadUID = owner
 				instance.State.TargetID = pod.Annotations[ServingSlotAnnotation]
 				instance.State.Stopped = o.removingInstances[spec.InstanceID]
-				err = o.startLogs(ctx, latest, owner)
+				err = o.startLogs(latest, owner)
 			}
 		}
 	}
@@ -557,10 +565,7 @@ func (o *Observer) observeTermination(pod *corev1.Pod) {
 		id := physicalID(pod.UID, terminal.ContainerID)
 		if source := o.sources[id]; source != nil {
 			source.stopped = true
-			if source.cancel != nil {
-				source.cancel()
-				source.cancel = nil
-			}
+			source.stopFollow()
 		}
 		if err := o.runtime.ConfirmInstanceStopped(id); err != nil {
 			o.issue(id, err)
@@ -595,9 +600,8 @@ func (o *Observer) watchPods(w watch.Interface) {
 					if changed || pod.DeletionTimestamp != nil || !status.Ready || !podReady(pod) {
 						o.runtime.DisableInstance(id, "native Pod readiness/identity unavailable")
 					}
-					if changed && source.cancel != nil {
-						source.cancel()
-						source.cancel = nil
+					if changed {
+						source.stopFollow()
 					}
 				}
 			} else if event.Type == watch.Error {
@@ -608,46 +612,58 @@ func (o *Observer) watchPods(w watch.Interface) {
 		}
 	}
 }
-func (o *Observer) startLogs(ctx context.Context, pod *corev1.Pod, owner string) error {
+
+// startLogs records the running executor and starts its progress follow. The
+// log stream opens in the follow goroutine because kubelets (KubeEdge edged in
+// particular) may answer slowly; Refresh and the lock never wait on it. SinceTime
+// keeps progress written while the stream opens, and exchange results complete
+// requests without it.
+func (o *Observer) startLogs(pod *corev1.Pod, owner string) error {
 	status := firstfloorStatus(pod)
 	id := physicalID(pod.UID, status.ContainerID)
 	source := o.sources[id]
 	if source != nil && source.stopped {
 		return errors.New("terminated physical executor cannot become current")
 	}
-	if source != nil && owner != "" {
+	if source == nil {
+		source = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: status.ContainerID, ownerUID: types.UID(owner)}
+		o.sources[id] = source
+	} else if owner != "" {
 		source.ownerUID = types.UID(owner)
 	}
-	if source != nil && source.cancel != nil {
+	if source.cancel != nil {
 		return nil
 	}
 	options := &corev1.PodLogOptions{Container: firstfloorContainerName, Follow: true, Timestamps: true}
 	if since := o.runtime.ProgressSince(id, processStart); !since.IsZero() {
 		options.SinceTime = &metav1.Time{Time: since}
 	}
-	logCtx, cancel := context.WithCancel(o.ctx)
-	stream, err := o.kube.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, options).Stream(logCtx)
-	if err != nil {
-		cancel()
-		return fmt.Errorf("native progress source unavailable: %w", err)
-	}
-	latest, err := o.kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
-	if err != nil || !sameNativeContainer(pod, latest) {
-		cancel()
-		return errors.Join(errors.New("native container changed while opening exact progress source"), stream.Close())
-	}
-	if source == nil {
-		source = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: status.ContainerID, ownerUID: types.UID(owner)}
-		o.sources[id] = source
-	}
-	source.cancel = cancel
-	source.stream = stream
+	source.follow, source.cancel = context.WithCancel(o.ctx)
 	o.wg.Add(1)
-	go o.scanLogs(logCtx, id, stream)
+	go o.followLogs(source.follow, id, pod.DeepCopy(), options)
 	return nil
 }
-func (o *Observer) scanLogs(ctx context.Context, id string, stream io.ReadCloser) {
+func (o *Observer) followLogs(ctx context.Context, id string, pod *corev1.Pod, options *corev1.PodLogOptions) {
 	defer o.wg.Done()
+	stream, err := o.kube.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, options).Stream(ctx)
+	if err != nil {
+		err = fmt.Errorf("native progress source unavailable: %w", err)
+	} else if latest, getErr := o.kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{}); getErr != nil || !sameNativeContainer(pod, latest) {
+		err = errors.Join(errors.New("native container changed while opening exact progress source"), getErr, stream.Close())
+	} else if err = o.scanLogs(id, stream); err == nil {
+		err = errors.New("native progress stream ended")
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if source := o.sources[id]; source != nil && source.follow == ctx {
+		if ctx.Err() == nil {
+			o.issue("logs/"+id, err)
+			o.runtime.DisableInstance(id, err.Error())
+		}
+		source.stopFollow()
+	}
+}
+func (o *Observer) scanLogs(id string, stream io.ReadCloser) error {
 	scanner := bufio.NewScanner(stream)
 	scanner.Buffer(make([]byte, 8192), 64<<10)
 	for scanner.Scan() {
@@ -662,21 +678,7 @@ func (o *Observer) scanLogs(ctx context.Context, id string, stream io.ReadCloser
 		o.issue("logs/"+id, err)
 		o.mu.Unlock()
 	}
-	streamErr := errors.Join(scanner.Err(), stream.Close())
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if source := o.sources[id]; source != nil && source.stream == stream {
-		source.cancel = nil
-		source.stream = nil
-		if ctx.Err() == nil {
-			err := streamErr
-			if err == nil {
-				err = errors.New("native progress stream ended")
-			}
-			o.issue("logs/"+id, err)
-			o.runtime.DisableInstance(id, err.Error())
-		}
-	}
+	return errors.Join(scanner.Err(), stream.Close())
 }
 
 // CleanupWorkload walks native owner references, never labels. Its Pod finalizer
@@ -871,9 +873,7 @@ func (o *Observer) Close() error {
 			o.podWatch.Stop()
 		}
 		for _, source := range o.sources {
-			if source.cancel != nil {
-				source.cancel()
-			}
+			source.stopFollow()
 		}
 	}
 	o.mu.Unlock()
