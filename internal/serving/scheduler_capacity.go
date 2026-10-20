@@ -951,8 +951,9 @@ func capacityJudge(w capacityWorkload, knew, kret float64, present bool, r float
 			j.drain = &drain
 		}
 	}
+	// Any backlog, the queue keep holds included, must drain within L − m.
 	switch {
-	case w.rate <= kret:
+	case j.backlog == 0:
 		j.transition = &zero
 	case j.wait != nil && w.slack > 0:
 		transition := *j.wait/w.slack - 1
@@ -1128,9 +1129,9 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 			weightSum += float64(item.weight)
 		}
 		j := capacityJudge(ws, knew, kret, present[w], r)
-		// Under the transition rule the route also drains B within L − m.
+		// The route also drains B within L − m.
 		drain := 0.0
-		if ws.rate > kret && ws.slack > 0 {
+		if j.backlog > 0 && ws.slack > 0 {
 			drain = j.backlog / ws.slack
 		}
 		weights, y, ok := capacityWeights(ws.rate, drain, items[w])

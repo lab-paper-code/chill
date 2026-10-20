@@ -493,6 +493,37 @@ func TestCapacityRouteWeightsStayWithinKappa(t *testing.T) {
 	}
 }
 
+// m4 r3: a closed-loop client held the measured λ at 29.5 below rasp5 q1's
+// κ 34.3 while 160 requests stayed queued. Keep drains them in
+// W = 160 / 34.3 = 4.66 s, past L − m = 0.861 s, so keep is not feasible and
+// adding genesis3 q2 (κ 109.7, W = 160 / 144 = 1.11 s) wins on exceedance.
+func TestCapacityQueuedBacklogFailsKeep(t *testing.T) {
+	p := &capacityPlanner{ctx: context.Background(), cells: 50, period: 60, routes: []float64{0, 10.7}, settings: capacityTestSettings}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 29.5, queued: 160, slack: 0.861, cells: 50, unit: 29.5 / 50}}
+	rasp5 := capacityItem{id: "q1", kappa: 34.3, e: 1, weight: 1000}
+	keep0 := &capacityPlan{keep: true, items: [][]capacityItem{{rasp5}}, retained: [][]capacityItem{{rasp5}}, before: 1}
+	keep1 := &capacityPlan{keep: true, items: [][]capacityItem{nil}, retained: [][]capacityItem{nil}, before: 1}
+	add := &capacityPlan{items: [][]capacityItem{{{id: "q2", kappa: 109.7, e: 2}}}, retained: [][]capacityItem{nil}, preMax: 10.7, preMean: 10.7, mid: 2, after: 2}
+	keep0.record.Eligible, keep1.record.Eligible, add.record.Eligible, add.record.Key = true, true, true, "add"
+	p.plans = [][]*capacityPlan{{keep0}, {keep1, add}}
+	p.compared = []bool{true, true}
+	for n := range 2 {
+		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
+	}
+	for _, plan := range []*capacityPlan{keep0, keep1, add} {
+		p.sum(plan)
+		p.serveTable(plan)
+	}
+	keep := p.evaluate([]int{0, 0}, 0)
+	if j := keep.judgments[0]; keep.feasible || j.wait == nil || math.Abs(*j.wait-160/34.3) > 1e-9 || *j.transition <= 0 {
+		t.Fatalf("keep with 160 queued judged feasible: %+v", j)
+	}
+	best, err := p.solve()
+	if err != nil || !slices.Equal(best.choice, []int{0, 1}) {
+		t.Fatalf("the backlog must force expansion: %+v %v", best, err)
+	}
+}
+
 // m4 r2: λ 12.8 lagged a 40 req/s load with 160 queued and no instance left
 // (κ_ret 0). Filling λ alone gave the cheapest new instance (rasp5 q2) all
 // 1,000 units; λ plus the backlog drain B/(L − m) exceeds the four new
