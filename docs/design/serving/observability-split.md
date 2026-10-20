@@ -49,7 +49,7 @@
 - 배정 전 요청(수신, 검증, 큐)은 crash 때 행이 남지 않는다. 사용자가 받아들인 손실이고, load-generator JSONL과 `requestID`로 join하면 드러난다(7장의 `recorded`).
 - 배정된 요청은 RestartDrain이 그대로 맡는다. 시작할 때 `runtimeFacts`가 로컬 `requests` 파일에서 `final`이 없는 `assigned` 행을 골라 지금처럼 호출을 복원하고 수신을 닫는다. 복원한 행의 `dispatchedNanos`는 `dispatchedAt − receivedAt`이라 최종 행도 접수와 배정으로 셈한다. 복원한 호출은 backend 완료를 관측한 뒤 `final`(`incomplete`, `EntrypointRestarted`)을 쓴다.
 - firstfloor 로그 follow는 인스턴스의 복원한 배정 중 가장 이른 `dispatchedAt`부터 읽는다(없으면 프로세스 시작). 그 사이 다시 읽는 줄 중 열린 행이 없는 요청의 줄은 버려진다.
-- `RetainedDefinition`은 지우지 않는 루트 `definitions.jsonl`(정의 수에 비례, KB 단위)에서 읽는다.
+- `RetainedDefinition`은 지우지 않는 루트 `definitions.jsonl`(정의 수에 비례, KB 단위)에서 읽는다. 재시작 때 다시 게시하는 정의는 같은 identity의 같은 본문이 이미 있으면 쓰지 않는다.
 
 ## 4. 불변 값의 ID 참조
 
@@ -87,7 +87,7 @@
 | `OperatingPower` | `scheduler`: `[from − 1분, to + 1분]`, 기준 snapshot은 `from`부터 거꾸로 첫 snapshot이 있는 분 파일까지 | 경계 표본 거리는 설정 검사에서 `maximumBoundaryDistance ≤ 1분`으로 묶는다. meter는 catalog의 coverage 정책을 쓴다 |
 | `SchedulerObservationPage` | `scheduler`: `[from, to]` | 지금처럼 limit에서 멈춘다 |
 
-- 관측 공백: 로컬 관측의 시작은 기동 때 가장 오래된 로컬 분 파일(없으면 프로세스 시작)이고, 시간을 지울 때마다 그 시간의 끝으로 옮긴다. `from`이 그보다 앞이면 결과에 `gapUntil`(그 시작)을 싣고 남은 구간만 집계한다. `OperatingPower`는 `complete=false`와 이유를 싣는다. `SchedulerHistoryWindow`는 `from`이 그 시작이나 프로세스 시작보다 앞이면 `ObservationGap`을 낸다(지금의 incomplete 창과 같은 오류 경로, `SCH-08` 공백 표시). 서버는 S3를 읽지 않는다. 2시간보다 오래된 구간은 7장의 오프라인 경로다.
+- 관측 공백: 로컬 관측의 시작은 기동 때 가장 오래된 로컬 분 파일(없으면 프로세스 시작)이고, 시간을 지울 때마다 그 시간의 끝으로 옮긴다. `from`이 그보다 앞이면 결과에 `gapUntil`(그 시작)을 싣고 남은 구간만 집계한다. `OperatingPower`는 `complete=false`와 이유를 싣는다. `from` 시점의 소속을 정하는 snapshot이 로컬 관측의 시작보다 앞에 있어 로컬에 없을 때도 `OperatingPower`는 그 시작을 `gapUntil`로 싣는다. `SchedulerHistoryWindow`는 `from`이 그 시작이나 프로세스 시작보다 앞이면 `ObservationGap`을 낸다(지금의 incomplete 창과 같은 오류 경로, `SCH-08` 공백 표시). 서버는 S3를 읽지 않는다. 2시간보다 오래된 구간은 7장의 오프라인 경로다.
 - 비용: Tick의 `SchedulerArrivals(now − 60s, now)`는 분 파일 1~2개, 5 req/s에서 1 MB 이하를 읽는다(지금은 창 1~2개, 3.3~6.7 MB). 조회 메모리는 선택된 요청 수에 비례하고, 읽는 양의 최대치는 5 req/s 2시간의 행 36k개(약 47 MB)다.
 
 ## 7. 측정 표 산출
@@ -149,6 +149,12 @@ FROM j GROUP BY stage ORDER BY stage;
 | S3 | `serving/observations.v1alpha5/<시>/<stream>.jsonl.gz`. 배포 뒤 `serving/<windowID>/`(`v1alpha4` 창)를 reader 없이 지운다. E1 표는 이미 만들었다 |
 | API | `Query`의 `requests[]`는 요청 행(`final`, 없으면 `assigned`). `Query`, `LoadWindow`, `OperatingPower`, scheduler 조회의 `incompleteWindows` 자리에 `gapUntil`. `ObservationLogHealth.windows` 삭제. `ObservationGap` 오류 추가 |
 | 설정 | `--observation-window`, Helm `servingEntrypoint.observationWindow` 삭제. scheduler 설정 `powerObservation.coverage.maximumBoundaryDistance ≤ 1분` |
+
+배포 순서:
+
+1. 새 ChillServer를 배포한다. 루트 `definitions.jsonl`은 비어서 시작하고, 적용된 정의는 이전 계약에서 옮기지 않는다(ADR 0019). 그래서 기존 Workload는 `AppliedSnapshotUnavailable`이 된다.
+2. 기존 Workload마다 지금 spec 그대로 `PUT /api/v1/workloads/{name}`을 보내 다시 적용한다. 적용이 `Completed`, 접수가 `Ready`가 되고 바인딩과 routing이 돌아오는지 확인한다.
+3. 위 표의 이전 로컬 디렉터리와 S3 사본을 지운다.
 
 ## 10. 삭제
 

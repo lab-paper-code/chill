@@ -137,8 +137,8 @@ func (l *ObservationLog) OperatingPower(from, to time.Time, meters []OperatingPo
 	if err != nil {
 		return OperatingPowerWindow{}, err
 	}
+	baseline := false
 	result, err := ReduceOperatingPower(from, to, meters, limit, func(yield func(*SchedulerObservation) error) error {
-		baseline := false
 		visit := func(catalog *ObservationCatalog) func([]byte) error {
 			return func(raw []byte) error {
 				record, err := OperatingPowerRecord(raw, catalog)
@@ -167,7 +167,13 @@ func (l *ObservationLog) OperatingPower(from, to time.Time, meters []OperatingPo
 		}
 		return nil
 	})
-	if gap := read.gap(from); gap != nil {
+	gap := read.gap(from)
+	if gap == nil && !baseline {
+		// The membership snapshot in force at from lies before local observation.
+		start := read.start
+		gap = &start
+	}
+	if gap != nil {
 		result.GapUntil = gap
 		result.Complete = false
 		result.Reasons = append(result.Reasons, "observation is retained locally only from "+gap.Format(time.RFC3339))

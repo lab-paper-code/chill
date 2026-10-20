@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -134,4 +135,57 @@ func TestCaptureSeesWholeHourOrGap(t *testing.T) {
 		}
 	}
 	awaitObservationLogOperation(t, done)
+}
+
+// A power interval whose membership snapshot lies before local observation
+// reports that start as its gap.
+func TestOperatingPowerReportsGapForMissingBaseline(t *testing.T) {
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	from := observationTestHour.Add(10 * time.Minute)
+	clock.set(from)
+	node := NodeReference{Name: "node", UID: "node-uid"}
+	snapshot := SchedulerSnapshot{At: from.Add(time.Second), Instances: []SchedulerInstance{{ID: "i", Node: node, Ready: true, WorkloadUIDs: []string{"w"}}}}
+	if err := observationLog.SchedulerRecord(SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
+		t.Fatal(err)
+	}
+	power, err := observationLog.OperatingPower(from, from.Add(time.Minute), nil, 10)
+	if err != nil || power.GapUntil == nil || !power.GapUntil.Equal(observationTestHour) || power.Complete {
+		t.Fatalf("missing baseline before local observation: %+v %v", power, err)
+	}
+	baseline := snapshot
+	baseline.At = from.Add(-time.Second)
+	if err := observationLog.SchedulerRecord(SchedulerObservation{At: baseline.At, Snapshot: &baseline}); err != nil {
+		t.Fatal(err)
+	}
+	if power, err = observationLog.OperatingPower(from, from.Add(time.Minute), nil, 10); err != nil || power.GapUntil != nil {
+		t.Fatalf("retained baseline reported a gap: %+v %v", power, err)
+	}
+}
+
+// Publishing the same definition again, as every restart does, appends nothing.
+func TestDefinitionRecordAppendsEachBodyOnce(t *testing.T) {
+	config := ObservationLogConfig{Directory: t.TempDir()}
+	observationLog, _ := clockedObservationLog(t, config, observationTestHour)
+	definition := &Definition{Name: "workload", UID: "uid", Generation: 1, SLO: SLO{Percentile: 95, TargetLatency: time.Second}}
+	if err := observationLog.DefinitionRecord(definition); err != nil {
+		t.Fatal(err)
+	}
+	if err := observationLog.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restarted, _ := clockedObservationLog(t, observationLog.config, observationTestHour)
+	changed := *definition
+	changed.SLO.TargetLatency = 2 * time.Second
+	for _, d := range []*Definition{definition, definition, &changed} {
+		if err := restarted.DefinitionRecord(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(restarted.root, observationDefinitionsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Count(string(data), "\n"); lines != 2 {
+		t.Fatalf("definitions.jsonl has %d lines, want the first and the changed body", lines)
+	}
 }

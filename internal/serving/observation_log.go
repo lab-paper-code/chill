@@ -454,6 +454,12 @@ func (l *ObservationLog) DefinitionRecord(definition *Definition) error {
 	if l.closed {
 		return errors.New("observation log is closed")
 	}
+	// A restart publishes every Workload again; the root file keeps each body once.
+	if retained := l.retained[definition.Identity()]; retained != nil {
+		if stored, err := json.Marshal(DefinitionObservation{Identity: definition.Identity(), Definition: retained}); err == nil && bytes.Equal(stored, data) {
+			return nil
+		}
+	}
 	if err := appendWhole(l.definitions, append(data, '\n')); err != nil {
 		l.lastError = err
 		return err
