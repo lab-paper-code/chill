@@ -5,7 +5,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from chill_loadgen.cli import load_records, main, replay
+from chill_loadgen.cli import arrival_offsets_ns, load_records, main, replay
 from chill_loadgen.http_client import InferenceResponse
 
 
@@ -100,6 +100,15 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual("TimeoutError", lines[1]["error"])
         self.assertNotIn("status", lines[1])
         self.assertEqual(2, client.closed)  # after the failure and at the end
+
+    def test_poisson_arrivals_repeat_per_seed_and_average_one_over_rate(self) -> None:
+        offsets = arrival_offsets_ns("poisson", 50, 200, 7)
+        self.assertEqual(offsets, arrival_offsets_ns("poisson", 50, 200, 7))
+        self.assertNotEqual(offsets, arrival_offsets_ns("poisson", 50, 200, 8))
+        self.assertEqual(sorted(offsets), offsets)
+        self.assertTrue(0 <= offsets[0] and offsets[-1] < 200_000_000_000)
+        mean_gap_s = (offsets[-1] - offsets[0]) / (len(offsets) - 1) / 1e9
+        self.assertAlmostEqual(1 / 50, mean_gap_s, delta=0.001)
 
 
 if __name__ == "__main__":

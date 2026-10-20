@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 import threading
 import time
@@ -38,6 +39,20 @@ def load_records(dataset_dir: Path, fields: Sequence[str]) -> List[Record]:
     return records
 
 
+def arrival_offsets_ns(arrivals: str, rate: float, duration: float, seed: int) -> List[int]:
+    """Return send offsets in [0, duration): a fixed interval, or seeded exponential gaps."""
+
+    if arrivals == "fixed":
+        return [round(index * 1_000_000_000 / rate) for index in range(int(rate * duration))]
+    rng = random.Random(seed)
+    offsets: List[int] = []
+    at = rng.expovariate(rate)
+    while at < duration:
+        offsets.append(round(at * 1_000_000_000))
+        at += rng.expovariate(rate)
+    return offsets
+
+
 def replay(
     records: Sequence[Record],
     *,
@@ -47,15 +62,16 @@ def replay(
     workers: int,
     new_client: Callable[[], WorkloadHTTPClient],
     out: TextIO,
+    arrivals: str = "fixed",
+    seed: int = 0,
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
-    """Send records round-robin at a fixed open-loop rate and write one JSON line per request."""
+    """Send records round-robin at an open-loop rate and write one JSON line per request."""
 
-    interval_ns = 1_000_000_000 / rate
     schedule = [
-        ScheduledRequest(str(index), round(index * interval_ns), 1)
-        for index in range(int(rate * duration))
+        ScheduledRequest(str(index), offset_ns, 1)
+        for index, offset_ns in enumerate(arrival_offsets_ns(arrivals, rate, duration, seed))
     ]
     lock = threading.Lock()
     start_ns = clock_ns()
@@ -141,6 +157,10 @@ def build_parser() -> argparse.ArgumentParser:
     replay_parser.add_argument("--fields", required=True, help="comma-separated preprocessor input fields")
     replay_parser.add_argument("--rate", required=True, type=_positive(float), help="requests per second")
     replay_parser.add_argument("--duration", required=True, type=_positive(float), help="seconds")
+    replay_parser.add_argument(
+        "--arrivals", choices=("fixed", "poisson"), default="fixed", help="send times (default fixed)"
+    )
+    replay_parser.add_argument("--seed", type=int, default=0, help="Poisson arrival seed (default 0)")
     replay_parser.add_argument("--workers", type=_positive(int), default=8, help="concurrent connections (default 8)")
     replay_parser.add_argument("--timeout", type=_positive(float), default=30, help="per-request seconds (default 30)")
     return parser
@@ -170,7 +190,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         workload=args.workload,
         rate=args.rate,
         duration=args.duration,
-        workers=args.workers,
+        arrivals=args.arrivals,
+        seed=args.seed,
         new_client=lambda: WorkloadHTTPClient(
             args.endpoint, bearer_token=token, timeout_seconds=args.timeout, ca_file=args.ca_file
         ),

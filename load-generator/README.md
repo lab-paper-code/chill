@@ -7,10 +7,13 @@ A dependency-free Python client and open-loop dataset replay CLI for CHILL.
 `chill-loadgen replay` sends a Dataset's `evaluation` subset to one registered
 Workload. Each record is a directory `<dataset-dir>/<recordID>/` holding one
 file per input field; `--fields` names the Workload preprocessor's input fields.
-Records are read once, ordered by record ID and cycled. Requests follow a fixed
+Records are read once, ordered by record ID and cycled. Requests follow an
 open-loop schedule of `--rate` per second for `--duration` seconds, spread
 round-robin over `--workers` connections (default 8), so slow responses do not
-slow the offered load until every connection is busy.
+slow the offered load until every connection is busy. `--arrivals fixed`
+(default) sends at a constant interval; `--arrivals poisson` draws exponential
+gaps of mean `1/--rate` from `--seed` (default 0), so the same seed repeats the
+same send times.
 
 ```sh
 chill-loadgen replay \
