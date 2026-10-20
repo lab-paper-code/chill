@@ -2,14 +2,27 @@ package kube
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/cache"
 	"k8s.io/client-go/kubernetes"
+)
+
+// An allowed review is reused this long, as kube-apiserver's webhook token and
+// authorization caches do; revocation takes effect within it. Each inference
+// otherwise spends two reviews of the Kubernetes client budget it shares with
+// scheduler capture.
+const (
+	allowedReviewTTL     = 10 * time.Second
+	allowedReviewEntries = 1024
 )
 
 var (
@@ -22,6 +35,14 @@ var (
 // HTTP path under /chill, outside Kubernetes' public /api/* discovery grants.
 type Authorizer struct {
 	Client kubernetes.Interface
+
+	allowedOnce sync.Once
+	allowed     *cache.LRUExpireCache
+}
+
+type allowedReview struct {
+	token      [sha256.Size]byte
+	verb, path string
 }
 
 // Principal contains only identity verified by TokenReview, never client headers.
@@ -45,7 +66,8 @@ func PrincipalFromContext(ctx context.Context) Principal {
 }
 
 // Authorize takes the bearer token, not the full Authorization header. Review
-// failures are fail-closed; returned errors contain neither tokens nor identity.
+// failures are fail-closed and never reused; returned errors contain neither
+// tokens nor identity.
 func (a *Authorizer) Authorize(ctx context.Context, token, verb, path string) (Principal, error) {
 	if token == "" || strings.ContainsAny(token, " \t\r\n") {
 		return Principal{}, ErrUnauthenticated
@@ -53,6 +75,19 @@ func (a *Authorizer) Authorize(ctx context.Context, token, verb, path string) (P
 	if a.Client == nil {
 		return Principal{}, ErrAuthorizationUnavailable
 	}
+	a.allowedOnce.Do(func() { a.allowed = cache.NewLRUExpireCache(allowedReviewEntries) })
+	key := allowedReview{token: sha256.Sum256([]byte(token)), verb: verb, path: path}
+	if principal, ok := a.allowed.Get(key); ok {
+		return principal.(Principal), nil
+	}
+	principal, err := a.review(ctx, token, verb, path)
+	if err == nil {
+		a.allowed.Add(key, principal, allowedReviewTTL)
+	}
+	return principal, err
+}
+
+func (a *Authorizer) review(ctx context.Context, token, verb, path string) (Principal, error) {
 	review, err := a.Client.AuthenticationV1().TokenReviews().Create(ctx, &authenticationv1.TokenReview{
 		Spec: authenticationv1.TokenReviewSpec{Token: token},
 	}, metav1.CreateOptions{})

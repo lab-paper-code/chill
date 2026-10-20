@@ -589,7 +589,12 @@ ChillServer의 Kubernetes API client budget은 `rest.Config`에 두 client 생�
 하나의 limiter를 공유하지만, 별도로 생성한 uncached Store client는 독립된 limiter를
 사용하므로 50 QPS가 ChillServer 전체 API 요청의 합산 상한은 아니다. 기본 50/100은
 후보 운영 budget이며 측정된 최적값이나 API server/APF 처리 용량 보장이 아니다.
-요청마다 기존 TokenReview와 SAR를 수행하며 인증 cache나 fail-closed 완화는 없다.
+허용된 TokenReview·SAR 결과는 token hash, HTTP 동작과 경로별로 10초 동안 재사용한다.
+kube-apiserver webhook 인증·인가 cache와 같은 방식이며 권한 회수는 10초 안에 반영된다.
+거절과 review 실패는 재사용하지 않고 매번 다시 검사한다.
+M4 24.7 requests/s 실행에서 요청마다 두 review가 50 QPS limiter를 채웠다. 추론 접수는
+약 25 requests/s에 묶였고(`validatedNanos` p95 2,591 ms), 같은 limiter를 쓰는 scheduler
+capture의 각 API 읽기도 약 1.3초씩 기다려 tick이 15–19초가 되었다.
 향후 각 실험에는 두 flag를 포함한 실제 실행 인자를 고정·보존한다.
 
 실제 8 requests/s 실행에서 기본 5/10 limiter의 TokenReview 대기가 약 5초에 달해
