@@ -449,7 +449,7 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
 | # | 시나리오 | 확인할 결과 |
 |---|---|---|
 | E1 | mobilenet Workload를 서빙한 적 없는 가용 노드에만 측정 근거가 있는 상태에서 인스턴스 0으로 자동제어를 켬, 잠정 `completionMarginMS`. 부하 0에서 시작해 평가 부하를 보냄 | 그 노드에 인스턴스 하나를 만들고 나머지 가용 노드를 가장 낮은 모드로 둠. 부하에 따라 다시 판단(`SCH-AC-24`). `completionResidualNanos` 분포를 기록하고 그 값으로 `completionMarginMS`를 정해 설정과 sample, [설정과 관측 API](scheduler-api.md)에 반영 |
-| E2 | 꺼진 Workload(수동 인스턴스), 근거 없는 켜진 Workload, 근거 있는 켜진 Workload 공존. 꺼진 Workload와 노드를 공유하는 전력 변경 유도 | 꺼진 Workload 인스턴스 유지와 SLO 판정 포함, `MeasurementEvidenceMissing` 표시, 나머지 판단 계속(`SCH-AC-25`) |
+| E2 | 꺼진 Workload(수동 인스턴스), 근거 없는 켜진 Workload, 근거 있는 켜진 Workload 공존. 켜진 Workload의 부하를 바꿔 꺼진 Workload 인스턴스가 있는 노드의 전력 변경이 유리한 상황을 만듦 | 꺼진 Workload 인스턴스가 있는 노드는 전력모드와 인스턴스가 그대로이고 결정 기록에 `FixedWorkload`로 남음, `MeasurementEvidenceMissing` 표시, 나머지 판단 계속(`SCH-AC-25`) |
 | E3 | taint를 붙인 노드(외부 Pod 있음)에서 BatchEnergyOptimization 측정과 진행 중 Job 삭제로 실패 유도, 운영자 runner를 둔 노드의 PowerModeTransitionCost 측정, `serving-operation` prepare와 remove 비용 측정 | 측정 중 스케줄러가 그 노드를 쓰지 않음, CHILL 배치 여부가 표시된 외부 Pod 목록, 측정 결과가 다음 refresh에서 후보와 비용 근거로 나타남(`SCH-AC-26`의 외부 Pod 부분). taint 자동화와 서빙 노드 거절은 M3 뒤 M3의 검증([07](../architecture-rethink/07-validation.md))에서 확인한다 |
 | E4 | 활성 POOL 사이 직접 이동이 선택되는 부하 전환 | 한 전환의 DAG와 비용, 단계별 소속(`SCH-AC-22`) |
 | E5 | mobilenet과 SmolVLM 혼합 부하, 두 Workload 자동제어 | Workload별 SLO 달성, 비교 집합 에너지와 실측 전체 POOL 에너지, `completionResidualNanos`와 설정 여유 비교 |
