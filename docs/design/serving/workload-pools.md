@@ -143,10 +143,12 @@ NodeReady만 따른다. 그래서 외부 Pod가 있는 노드도 가용 노드�
 
 가용 노드를 활성 POOL로 다시 넣는 후보는 그 전환 비용을 비교에 포함한다. 노드 단위 순서(`scheduler_candidates.go:1009-1048`)에
 따라 `Fixed` 내림 뒤에 power 동작(가장 낮은 모드에서 profile 모드로)과 prepare가 온다. 그 노드는 가장 낮은 모드에서
-출발한 것으로 계산한다. 빈 노드의 power 동작 비용은 측정하지 않으므로, 같은 Node와 모드 쌍에서 이어서 준비할
-인스턴스의 적재 상태로 측정한 전력모드 전환 비용(3.5절)을 쓴다. replay의 적재 상태 확인(`scheduler_replay.go:1219-1229`)은
-이 경우에만 다음 prepare의 상태와 비교하고, 결정 기록의 assumption에 `ReentryPowerCostFromLoadedRunner`를 남긴다.
-그 비용이 없으면 다시 넣는 후보는 `MissingOperationCost`로 평가할 수 없다.
+출발한 것으로 계산한다. 다시 넣는 비용은 빈 노드에서 측정한 전력모드 전환 비용과 profile 모드에서 측정한 prepare 비용의
+합이다. power 동작은 그 시점의 적재 상태, 곧 빈 상태를 `BeforeState`로 가진 전환 비용(3.5절)을 쓰고, replay의 적재 상태
+확인(`scheduler_replay.go:1364-1374`)이 같은 상태로 비용을 확인한다. prepare 비용은 노드 전력모드로 고른다. 빈 노드 전환은
+측정 POOL에서 `serving-operation`의 power 동작으로 측정하고([원자 동작 측정의 격리](scheduler-operations.md#원자-동작-측정의-격리)),
+모드 변경이 노드를 재부팅하는 장비(jetsono)도 같다. meter가 분해하지 못하는 짧은 전환(jetsonx 약 1.5 s, meter 갱신 약 1 s)은
+비용이 없고, 그 비용이 없으면 다시 넣는 후보는 `MissingOperationCost`로 평가할 수 없다.
 
 후보는 차이로 비교한다(`SCH-16`). 비교 집합은 어느 한 후보라도 위 공통 상태와 다른 인스턴스, 전력모드, 동작을 계획한
 노드이고, 모든 후보의 `ExpectedJoules`는 이 집합의 노드만 합한다. 집합 밖 노드(측정 POOL 노드와 모든 후보에서 비어 있는
@@ -181,7 +183,7 @@ profile의 측정 노드가 그 Workload의 후보 노드가 된다(`kube/schedu
 
 | 근거 | 위치와 나열 | 받아들이는 기록 | 조건별 최신 |
 |---|---|---|---|
-| operation 측정(`serving-operation`) | ChillServer store의 고정 prefix `serving/operation-measurements/<Node UID>/<operation ID>.json`. `serving-operation`이 이 규칙으로 key를 만들고 manifest는 key를 받지 않는다 | Verdict `Accepted`, 기존 검사(`kube/cost.go:27-98`) 통과, 기록의 meter(ID, Node, scope, source)가 현재 scheduler 설정 `meters`의 항목과 모두 같음 | 비용은 (Node UID, kind, from, to, 노드 전력모드)마다 `Result.EndedAt`이 가장 늦은 것. idle 기록의 baseline은 (Node, 전력모드, State)마다 하나 |
+| operation 측정(`serving-operation`) | ChillServer store의 고정 prefix `serving/operation-measurements/<Node UID>/<operation ID>.json`. `serving-operation`이 이 규칙으로 key를 만들고 manifest는 key를 받지 않는다 | Verdict `Accepted`, 기존 검사(`kube/cost.go:27-98`) 통과, 기록의 meter(ID, Node, scope, source)가 현재 scheduler 설정 `meters`의 항목과 모두 같음 | 비용은 (Node UID, kind, from, to, 노드 전력모드)마다 `Result.EndedAt`이 가장 늦은 것. power 기록은 측정 전후 모드가 from과 to이고 (Node UID, from, to, 적재 상태)마다 고른다. idle 기록의 baseline은 (Node, 전력모드, State)마다 하나 |
 | 전력모드 전환 비용 | profile namespace allowlist의 PowerModeTransitionCost 중 기존 `loadPowerCost` 조건(`kube/cost_power.go:75-130`)을 통과한 Complete. meter는 scheduler 설정 `meters`에서 같은 Node와 같은 source(`prepared.PowerSource`)를 가진 항목이다 | 같음 | (Node UID, from, to, 적재 상태)마다 받아들인 trial의 완료 시각 중 가장 늦은 값이 큰 측정, 같으면 이름순. 적재 상태는 runner의 profile과 할당을 담은 `BeforeState`(`cost_power.go:195-199`)이고 profile이 모델, 실행 경로, 장비를 정한다 |
 
 두 경우 모두 그 시각을 새 필드 `OperationCost.MeasuredAt`에 담는다. 조건이 다른 비용은 서로 대신하지 않는다. replay는
@@ -424,7 +426,7 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
 | replay | 완료 시각이 native 완료 + 여유, 관측 여부와 무관하게 Pending 사유 없음 |
 | 소속 도출 | owner, binding, 둘 다 없는 인스턴스의 노드 분류, 같은 노드의 두 Workload 활성 POOL |
 | 전체 POOL | inventory 없는 노드와 전력모드 수단 없는 노드가 사유와 함께 남음, 비교 집합이 상태가 바뀌는 노드만 담고 모든 후보에 같음, 비교 집합 밖 노드의 baseline이 없어도 판단이 진행됨, 비교 집합 노드의 baseline이 없으면 그 후보만 평가 불가 |
-| 후보 | 꺼진 Workload 인스턴스 고정, 최소 인스턴스, 같은 모델 조건, 직접 이동 DAG, 모든 후보가 가용 노드를 가장 낮은 모드에서 출발한 공통 상태로 계산하고 `Fixed` 내림이 그 노드의 다른 동작보다 앞서며 공통 항으로 비교에서 빠짐, target이 없을 때 유지 후보의 `Fixed` 동작만 실행, 다시 넣는 후보의 power 비용이 다음 prepare 상태의 전환 비용으로 계산됨, 판정 대상 집합 |
+| 후보 | 꺼진 Workload 인스턴스 고정, 최소 인스턴스, 같은 모델 조건, 직접 이동 DAG, 모든 후보가 가용 노드를 가장 낮은 모드에서 출발한 공통 상태로 계산하고 `Fixed` 내림이 그 노드의 다른 동작보다 앞서며 공통 항으로 비교에서 빠짐, target이 없을 때 유지 후보의 `Fixed` 동작만 실행, 다시 넣는 후보의 power 비용이 빈 노드 전환 비용으로 계산되고 그 비용이 없으면 `MissingOperationCost`, 판정 대상 집합 |
 | 도출 profile과 비용 | 같은 조건의 최신 성공 선택, 한 profile이나 비용 기록의 실패가 나머지를 막지 않음, 고정 prefix 나열과 identity별 한 번 읽기, `Accepted`만 받음, 현재 `meters`와 다른 meter의 operation 기록과 meter 없는 전환 비용의 `MeterUndeclared`, operation 비용은 노드 전력모드까지 같은 조건에서 최신, 전환 비용은 적재 상태가 다른 측정을 섞지 않고 trial 완료 시각으로 최신, planner가 같은 열쇠로 고름, 나열 실패 때 이전 구성 유지 |
 | 수동 변경 | 부분 `staticRouting`, 켜진 Workload 항목 거절, 공유 인스턴스 remove의 `InstanceShared` |
 | 측정 POOL | taint 노드가 배치, 전력 변경, `Fixed` 내림, 제거 대상에서 빠지고 pools API에 측정 POOL로 보임, 판단 뒤 taint가 붙은 노드에서 Workload prepare와 `ChangePower`가 `NodeInMeasurement`로 실패, 그 노드의 측정 인스턴스가 정리되지 않음, profiling과 transition attempt Job에 toleration, `serving-operation` 측정이 taint 없는 노드를 거절 |

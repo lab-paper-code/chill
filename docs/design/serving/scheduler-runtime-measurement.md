@@ -216,7 +216,8 @@ Raw record에 before/target/actual state, 시작/완료, 실패·부분 상태, 
 metric source·구간·설정·raw identity를 보존한다. powerwindow로 wall joules를 적분하며
 짧은 동작의 충분하지 않은 샘플은 `Insufficient`로 남긴다.
 `prepare`와 `remove`는 before와 actual state의 차이가 State 하나의 추가 또는 제거일 때만
-`Accepted`이며, 비용 조회도 같은 규칙을 적용한다. 그 밖의 기록은 이유와 함께 `Insufficient`로 남는다.
+`Accepted`이며, `power`는 before와 actual state가 모두 비어 있고 전력모드가 서로 다를 때만 `Accepted`다.
+비용 조회도 같은 규칙을 적용한다. 그 밖의 기록은 이유와 함께 `Insufficient`로 남는다.
 `remove`와 `resize`는 동일한 제거 경로에서 삭제 전 SDK native counter를
 `DrainNative`에 보존한다. 사라진 actor는 이 실제 drain 관측과 시작 counter가
 일치해야 zero-inference wall cost로 인정하며, 삭제나 빈 queue만으로 추론 부재를

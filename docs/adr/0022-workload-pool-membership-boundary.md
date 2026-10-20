@@ -64,8 +64,9 @@ Lowering an available Node to its lowest power mode is a fixed rule shared by
 every candidate, so its energy is a common term eliminated from the comparison;
 candidates compare only the Nodes whose state they change, and full-POOL energy
 is reported from measurements. Re-entering an available Node is a candidate
-transition whose cost is compared; its power raise uses the transition cost
-measured with the runner it is about to prepare, recorded as an assumption.
+transition whose cost is compared: the power-mode transition measured on the
+empty Node plus the prepare measured at the target mode. A transition shorter
+than the meter resolves has no cost, and that candidate is not evaluable.
 
 ## Consequences
 

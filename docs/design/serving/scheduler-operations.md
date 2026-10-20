@@ -222,3 +222,10 @@ taint가 없으면 기록은 `Insufficient`로 남는다. 기록은 ChillServer 
 `serving/operation-measurements/<Node UID>/<operation ID>.json`에 immutable로 쓰며 manifest는 key를
 받지 않는다. observation directory는 process exclusive lock으로 소유하며, live Serving traffic과의
 병행 측정은 이 측정 조건과 구분한다.
+
+`operation.kind`가 `power`인 측정은 `operation.actuation`의 NodeActuation으로 scheduler와 같은 `ChangePower`를 실행한다.
+측정 실행은 taint가 있는 Node에서만 동작을 허용하므로 power도 측정 prepare와 같은 경로로 진행한다. runner가 없는 빈
+Node를 가장 낮은 모드에서 profile 모드로 올린 기록이 가용 노드를 다시 넣는 power 비용이 된다. 기록의 측정 전후 모드가
+비용의 from과 to이고 비용의 적재 상태는 빈 상태다. power 기록은 측정 전후 State가 모두 비어 있을 때 `Accepted`이며, runner를
+적재한 전환은 PowerModeTransitionCost가 측정한다. 전환이 meter 표본 간격보다 짧으면 coverage 검사가 기록을
+`Insufficient`로 남긴다.
