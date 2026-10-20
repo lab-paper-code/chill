@@ -83,3 +83,7 @@ Replace the `executionDeclarations` list in the values file with the output's
 list and validate the render with
 `make helm-lint helm-template HELM_VALUES=charts/chill/values-profiler.yaml`.
 `hack/runtime-declarations.py --self-check` checks the payload builder offline.
+
+## Offline observation tables
+
+`hack/observations/` builds measurement tables from the hourly S3 observation segments: `fetch.sh <from-hour> <to-hour> <dir>` downloads them, `duckdb < hack/observations/e1.sql` in `<dir>` gives the E1 request and Tick tables, and `go run ./hack/observations/power --dir <dir>/obs --from --to` gives whole and active POOL energy with the ChillServer reducer.
