@@ -6,7 +6,7 @@
 // choice with the recorded replay target, and with the replay planner on one
 // recorded snapshot at swept Poisson loads.
 //
-//	go run ./hack/kappa -mode table    -scheduler scheduler-pre.json [-margin 139] [-window 60]
+//	go run ./hack/kappa -mode table    -scheduler scheduler-pre.json [-margin 139] [-window 60] [-workloads image-classification-tight-slo]
 //	go run ./hack/kappa -mode validate -scheduler scheduler-pre.json -options mnv2-rasp5-cpu-q1-ed628c8:1 [-scale 2.82]
 //	go run ./hack/kappa -mode compare  -scheduler scheduler-pre.json -profiles profiles-pre.json -records records.jsonl [-kappa-cache k.json] [-sweep 5,40,80]
 package main
@@ -21,6 +21,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -44,6 +45,7 @@ func main() {
 	window := flag.Float64("window", 0, "seconds of arrivals a window covers at least")
 	cache := flag.String("kappa-cache", "", "compare: kappa table JSON, read when present, written after a build")
 	sweep := flag.String("sweep", "", "compare: comma-separated loads (req/s) for the replay planner comparison")
+	workloads := flag.String("workloads", "", "table: comma-separated Workload names under autonomous control (default all)")
 	flag.Parse()
 	base, settings, err := loadScheduler(*schedulerFile)
 	if err == nil {
@@ -53,7 +55,7 @@ func main() {
 		e := &engine{base: base, settings: settings, seeds: *seeds, need: int(math.Ceil(*attainment * float64(*seeds))), window: *window, gaps: map[uint64][]float64{}}
 		switch *mode {
 		case "table":
-			err = e.table()
+			e.table(*workloads)
 		case "validate":
 			err = e.validate(*options, *scale)
 		case "compare":
@@ -248,27 +250,43 @@ func variants(options []serving.SchedulerOption) []serving.SchedulerOption {
 	return out
 }
 
-func (e *engine) table() error {
-	fmt.Printf("completion margin %g ms\n\n| option | b | mu (req/s) |", e.settings.CompletionMarginMS)
+// table builds the server capacity table (serving.CapacityTable) for the
+// Workloads named in workloads (all when empty), the way ChillServer does on
+// start, and prints every row with its build time and the whole table time.
+func (e *engine) table(workloads string) {
+	settings := e.settings
+	settings.CapacityWindow = time.Duration(max(e.window, 60) * 1e9)
+	settings.CapacityWindows, settings.CapacityPassingWindows, settings.CapacityMinimumRequests = e.seeds, e.need, 1000
+	settings.AutonomousWorkloads = nil
 	for _, w := range e.base.Workloads {
-		fmt.Printf(" kappa %s p%g %v |", w.Name, w.SLO.Percentile, w.SLO.TargetLatency)
-	}
-	fmt.Printf(" CPU s |\n|---|---|---|%s---|\n", strings.Repeat("---|", len(e.base.Workloads)))
-	began := time.Now()
-	for _, o := range variants(e.base.Options) {
-		rowBegan := time.Now()
-		fmt.Printf("| %s | %d | %.1f |", o.Instance.Profile.Condition.Name, o.Instance.MaxBatch, throughput(o.Instance.Profile, o.Instance.MaxBatch))
-		for _, w := range e.base.Workloads {
-			k, err := e.kappa(o, o.Instance.MaxBatch, w)
-			if err != nil {
-				return err
-			}
-			fmt.Printf(" %.1f |", k)
+		if workloads == "" || slices.Contains(strings.Split(workloads, ","), w.Name) {
+			settings.AutonomousWorkloads = append(settings.AutonomousWorkloads, w.UID)
 		}
-		fmt.Printf(" %.1f |\n", time.Since(rowBegan).Seconds())
 	}
-	fmt.Printf("\ntotal %.1f s\n", time.Since(began).Seconds())
-	return nil
+	began := time.Now()
+	table := serving.NewCapacityTable(runtime.GOMAXPROCS(0), nil, nil)
+	table.Ensure(context.Background(), settings, e.base)
+	table.Wait()
+	elapsed := time.Since(began)
+	names := map[string]string{}
+	for _, o := range e.base.Options {
+		if o.Instance.Profile != nil {
+			names[o.Instance.Profile.ID] = o.Instance.Profile.Condition.Name
+		}
+	}
+	fmt.Printf("completion margin %g ms, GOMAXPROCS %d\n\n| workload | option | b | mu (req/s) | kappa | status | s |\n|---|---|---|---|---|---|---|\n", settings.CompletionMarginMS, runtime.GOMAXPROCS(0))
+	nonMonotone := 0
+	for _, row := range table.Rows() {
+		kappa := "-"
+		if row.Kappa != nil {
+			kappa = fmt.Sprintf("%.1f", *row.Kappa)
+		}
+		if row.Reason == serving.CapacityNonMonotone {
+			nonMonotone++
+		}
+		fmt.Printf("| %s | %s | %d | %.1f | %s | %s %s | %.1f |\n", row.Input.WorkloadUID, names[row.Input.ProfileID], row.Input.MaxBatch, row.Mu, kappa, row.Status, row.Reason, row.Elapsed.Seconds())
+	}
+	fmt.Printf("\n%d rows, %d NonMonotone, table %.1f s\n", len(table.Rows()), nonMonotone, elapsed.Seconds())
 }
 
 // validate replays each selected option at 0.8, 0.9, 1.0 and 1.2 kappa in 20

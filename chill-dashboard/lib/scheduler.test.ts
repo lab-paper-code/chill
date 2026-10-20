@@ -21,7 +21,7 @@ test("duration conversion preserves nanoseconds and rejects nonpositive or overf
 })
 
 test("review detects control or exact integer changes across numeric representations", () => {
-  const current:SchedulerSettings={algorithm:"fixed-horizon",observationWindowNanos:1,controlIntervalNanos:1,horizonNanos:1,maxObservationAgeNanos:1,seed:-9223372036854775808n,servingMemoryBytes:18446744073709551615n,replays:1,maxCandidates:1,maxReplicas:1,maxInstances:1,maxReplayRequests:1,maxCPUs:1,completionMarginMS:0,autonomousWorkloads:[],controls:{placement:false,resources:false,replicas:false,sharing:false,routing:false,batching:false,power:false,membership:false}}
+  const current:SchedulerSettings={algorithm:"fixed-horizon",observationWindowNanos:1,controlIntervalNanos:1,horizonNanos:1,maxObservationAgeNanos:1,seed:-9223372036854775808n,servingMemoryBytes:18446744073709551615n,replays:1,maxCandidates:1,maxReplicas:1,maxInstances:1,maxReplayRequests:1,maxCPUs:1,completionMarginMS:0,capacityWindowNanos:1,capacityWindows:1,capacityPassingWindows:1,capacityMinimumRequests:1,autonomousWorkloads:[],controls:{placement:false,resources:false,replicas:false,sharing:false,routing:false,batching:false,power:false,membership:false}}
   assert.equal(settingsEqual(current,{...current,controlIntervalNanos:1n,controls:{...current.controls}}),true)
   assert.equal(settingsEqual(current,{...current,servingMemoryBytes:18446744073709551614n}),false)
   assert.equal(settingsEqual(current,{...current,algorithm:"projected-work-history"}),false)

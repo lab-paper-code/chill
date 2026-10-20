@@ -98,6 +98,7 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("PUT /api/v1/scheduler/settings", h.scheduler)
 	h.mux.HandleFunc("PUT /api/v1/scheduler", h.scheduler)
 	h.mux.HandleFunc("GET /api/v1/scheduler/profiles", h.schedulerProfiles)
+	h.mux.HandleFunc("GET /api/v1/scheduler/capacity", h.schedulerCapacity)
 	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
 	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
 	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}", h.measurements)

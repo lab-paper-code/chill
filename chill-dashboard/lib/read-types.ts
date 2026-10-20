@@ -36,6 +36,7 @@ export type SchedulerSettings = {
   observationWindowNanos:WireInteger; controlIntervalNanos:WireInteger; horizonNanos:WireInteger; maxObservationAgeNanos:WireInteger
   seed:WireInteger; replays:WireInteger; maxCandidates:WireInteger; maxReplicas:WireInteger; maxInstances:WireInteger; maxReplayRequests:WireInteger; maxCPUs:WireInteger; servingMemoryBytes:WireInteger
   completionMarginMS:number
+  capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger
   autonomousWorkloads:string[]|null
   controls:{placement:boolean;resources:boolean;replicas:boolean;sharing:boolean;routing:boolean;batching:boolean;power:boolean;membership:boolean}
 }

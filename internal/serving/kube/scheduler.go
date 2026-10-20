@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	goruntime "runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -76,6 +77,7 @@ type SchedulerController struct {
 	observer        *Observer
 	operations      *Operations
 	observationLog  *serving.ObservationLog
+	capacity        *serving.CapacityTable
 	config          SchedulerControllerConfig
 	state           SchedulerControllerState
 	runs            map[string]*actionRun
@@ -97,7 +99,11 @@ func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *se
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}, nil
+	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}
+	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
+		return observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: row.Input.WorkloadUID, Kind: serving.CapacityRowBuiltEvent, Phase: row.Status, At: row.BuiltAt, Capacity: &row})
+	}, observationLog.CapacityRecords)
+	return c, nil
 }
 func (c *SchedulerController) Settings() serving.SchedulerSettings {
 	c.mu.Lock()
@@ -196,7 +202,10 @@ func (c *SchedulerController) State() SchedulerControllerState {
 	result.CostIssues = c.config.CostIssues
 	return result
 }
-func (c *SchedulerController) Close() { c.cancel(); c.wg.Wait() }
+func (c *SchedulerController) Close() { c.cancel(); c.capacity.Wait(); c.wg.Wait() }
+
+// Capacity returns the capacity rows the autonomous Workloads need.
+func (c *SchedulerController) Capacity() []serving.CapacityRow { return c.capacity.Rows() }
 func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {
 	result := make([]serving.Action, 0, len(c.runs))
 	for _, r := range c.runs {
@@ -237,6 +246,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		return serving.SchedulerDecision{}, err
 	}
 	snapshot = c.reconcileSnapshot(snapshot, goal, snapshot.At, config.Settings.ObservationWindow)
+	c.capacity.Ensure(c.ctx, config.Settings, snapshot)
 	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot)
 	if err != nil {
 		return serving.SchedulerDecision{}, err

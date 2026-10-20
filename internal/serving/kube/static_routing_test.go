@@ -16,7 +16,7 @@ import (
 )
 
 func TestStaticRoutingRequiresSourceRevision(t *testing.T) {
-	controller := &SchedulerController{config: SchedulerControllerConfig{
+	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), config: SchedulerControllerConfig{
 		Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon},
 	}}
 	if err := controller.ApplyStaticRouting(context.Background(), nil, ""); err == nil {
@@ -39,7 +39,7 @@ func TestStaticRoutingCompletionRequiresCompleteReadbackAndAppearsInState(t *tes
 		{name: "wrong weight", actual: map[string]map[string]int32{"w1": {"physical-a": 3}, "w2": {"physical-b": 2}}, wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			controller := &SchedulerController{}
+			controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil)}
 			result := OperationResult{Operation: Operation{
 				ID: "manual-static-routing:42", Kind: manualStaticRoutingOperation, SourceConfigRV: "42",
 				Target: &serving.SchedulerCandidate{Routing: wanted},
@@ -79,7 +79,7 @@ func TestStaticRoutingCompletionRequiresCompleteReadbackAndAppearsInState(t *tes
 }
 
 func TestStaticRoutingObservationLogFailureRemainsVisibleAsPartial(t *testing.T) {
-	controller := &SchedulerController{}
+	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil)}
 	routing := map[string]map[string]int32{"w": {"physical": 1}}
 	recordError := errors.New("observation log unavailable")
 	err := controller.finishStaticRouting(OperationResult{
@@ -109,7 +109,7 @@ func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
 			}
 			routing := map[string]map[string]int{definitions[0].UID: {"unavailable-physical-source": 1}}
 			var recorded []OperationResult
-			controller := &SchedulerController{
+			controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil),
 				store: manager.store, kube: manager.observer.kube, runtime: manager.runtime,
 				observer: manager.observer, observationLog: manager.observationLog,
 				config: SchedulerControllerConfig{
@@ -194,7 +194,7 @@ func TestStaticRoutingPartialFailureClassification(t *testing.T) {
 		{name: "native ACK before later failure", nativeACK: true, wantStatus: nativeOperationPartial},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			controller := &SchedulerController{}
+			controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil)}
 			routing := map[string]map[string]int32{"w": {"physical": 1}}
 			result := OperationResult{
 				Operation: Operation{Kind: manualStaticRoutingOperation, Target: &serving.SchedulerCandidate{Routing: routing}},

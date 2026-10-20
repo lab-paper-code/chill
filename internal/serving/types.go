@@ -281,6 +281,8 @@ type ManagementEvent struct {
 	Target        *Definition `json:"target,omitempty"`
 	At            time.Time   `json:"at"`
 	Error         string      `json:"error,omitempty"`
+	// Capacity is the built row of a capacity-row-built event.
+	Capacity *CapacityRow `json:"capacity,omitempty"`
 }
 
 // Dispatch retains the original accepted context. Client cancellation can

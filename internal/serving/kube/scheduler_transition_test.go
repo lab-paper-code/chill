@@ -46,7 +46,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	if err := manager.runtime.ApplySchedulerTarget(oldTarget); err != nil {
 		t.Fatal(err)
 	}
-	controller := &SchedulerController{runtime: manager.runtime, observationLog: manager.observationLog, runs: map[string]*actionRun{
+	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), runtime: manager.runtime, observationLog: manager.observationLog, runs: map[string]*actionRun{
 		"acknowledged-route": {
 			action: serving.Action{ID: "acknowledged-route", Kind: operationRoute, Status: nativeOperationComplete},
 			result: &OperationResult{Operation: Operation{Target: &oldTarget}, Status: nativeOperationComplete},

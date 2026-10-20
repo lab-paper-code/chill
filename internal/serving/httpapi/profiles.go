@@ -31,3 +31,19 @@ func (h *Handler) schedulerProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 	sendJSON(w, http.StatusOK, view)
 }
+
+// schedulerCapacity returns the capacity rows the autonomous Workloads need;
+// a row still being computed is CapacityPending.
+func (h *Handler) schedulerCapacity(w http.ResponseWriter, r *http.Request) {
+	if err := h.authorize(r); err != nil {
+		sendError(w, err)
+		return
+	}
+	if h.config.Scheduler == nil {
+		sendError(w, &serving.Error{Code: "SchedulerUnavailable", Message: "scheduler is not enabled"})
+		return
+	}
+	sendJSON(w, http.StatusOK, struct {
+		Rows []serving.CapacityRow `json:"rows"`
+	}{h.config.Scheduler.Capacity()})
+}

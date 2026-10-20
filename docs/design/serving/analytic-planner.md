@@ -20,7 +20,7 @@
 
 **κ.** 창 요청 수와 부하에 따른 배칭이 λ와 함께 바뀌므로 판정이 λ에 단조라는 보장이 없다. 그래서 격자 `λ_k = 0.05kμ`(k = 1~20)를 모두 판정하고, 충족 앞부분과 미충족 뒷부분으로 나뉠 때만 κ를 정한다. 마지막 충족 `λ_K`와 다음 격자 사이를 0.5% μ까지 이분 탐색한 값이 κ다. K = 0이면 κ 0, K = 20이면 κ = μ다. 미충족 뒤에 충족이 오면 행은 `NonMonotone`이고 κ가 없으며 그 option은 `CapacityRejected`로 계획에서 빠진다. 격자 결과는 행에 남아 조사에 쓴다. 격자 간격과 이분 탐색 폭은 코드 상수다.
 
-**설정.** `capacityWindow` 60 s, `capacityWindows` 20, `capacityPassingWindows` 19, `capacityMinimumRequests` 1,000. 60 s 창이 필요한 근거: 요청 수 창만 쓰면 빠른 option(genesis2 cuda, 2,000 요청이 14 s)의 κ가 μ에 붙어 relaxed 1.2κ에서 20/20 충족이었고, 60 s 창에서는 0/20이다. 20개 중 19개 기준이 필요한 근거: 창 하나로 정한 κ는 1.0κ에서 6~12/20만 충족했다.
+**설정.** `capacityWindowNanos` 60 s, `capacityWindows` 20, `capacityPassingWindows` 19, `capacityMinimumRequests` 1,000. 60 s 창이 필요한 근거: 요청 수 창만 쓰면 빠른 option(genesis2 cuda, 2,000 요청이 14 s)의 κ가 μ에 붙어 relaxed 1.2κ에서 20/20 충족이었고, 60 s 창에서는 0/20이다. 20개 중 19개 기준이 필요한 근거: 창 하나로 정한 κ는 1.0κ에서 6~12/20만 충족했다.
 
 **검증된 모양.** 이분 탐색에 쓰지 않은 seed 21~40에서 0.9κ는 모든 option이 20/20, 1.0κ는 16~20/20, 1.2κ는 0/20이다. κ는 절벽의 무릎이다. E1 tight(p95 1 s, m 139 ms) κ: rasp5 q1 34.3, jetsonx 18.3, orangepi 8.1, jetsono 48.1~49.7, orin-nano 38.9~41.3 req/s.
 
@@ -28,10 +28,10 @@
 - ChillServer의 용량표 worker가 시작할 때 표 전체를 계산한다. 그 뒤에는 Workload의 자동제어가 켜지거나, 켜진 Workload의 SLO, profile, m, 용량표 설정이 바뀔 때 빠진 행을 계산한다. 표는 메모리에만 있고 시작마다 비어 있으므로 재생, 배칭 규칙, κ 계산 코드가 바뀐 image도 그 코드로 계산한 표를 쓴다.
 - 대상은 자동제어가 켜진 Workload의 SLO와 그 Workload에 측정 근거가 있는 option 변형이다. 꺼진 Workload의 노드는 keep뿐이라(4장) 그 κ를 쓰지 않는다. E1에서는 tight 하나라 option 변형 38개, 38행이다(SLO 3개 전체는 114행).
 - 행 하나가 작업 하나이고 행끼리 독립이라 병렬로 계산한다. ChillServer의 CPU limit은 500m(`charts/chill/values.yaml`)이라 서버 안의 병렬은 0.5 CPU에 묶인다.
-- 행이 없으면 그 option은 `CapacityPending`으로 계획에서 빠지고, 켜진 Workload에 κ가 있는 option이 하나도 없으면 판단이 `CapacityPending`이다. 시작 계산이 끝날 때까지 자동제어는 이 상태로 기다린다.
+- 계산한 행도 기록된 이전 행(계산 시간 문단)도 없으면 그 option은 `CapacityPending`으로 계획에서 빠지고, 켜진 Workload에 κ가 있는 option이 하나도 없으면 판단이 `CapacityPending`이다.
 - 행마다 `management` stream에 `capacity-row-built` 사건(행 전체, 계산 시각, 걸린 시간)을 남긴다. 이 사건은 기록이고 판단은 읽지 않는다.
 
-**계산 시간.** 이전 재생은 사건마다 창의 모든 요청을 훑어 요청 수의 제곱으로 느려졌다(창 2,000 요청 0.19 s, 8,000 요청 2.8 s). 60 s 창은 빠른 option에서 8,700 요청이고 option 하나의 검증에 2,135 s가 들었다. commit 1은 사건마다 도착했고 끝나지 않은 요청만 훑고 다음 도착은 도착 순서 목록의 맨 앞에서 읽으며, `Definition.Identity()`를 도착 원형마다 한 번 만든다. 판단은 같은 값이고 1 ms 간격 창의 재생은 2,000 요청 102 ms에서 3.3 ms, 8,000 요청 1,703 ms에서 16.7 ms가 되었다(`BenchmarkSchedulerReplayWindow`). 격자는 이분 탐색보다 판정 횟수가 많지만 미충족 판정은 실패 창 2개에서 멈춘다 `[추론: 행당 이분 탐색의 약 2.5배]`. commit 2가 E1 tight 38행의 시작 계산 시간을 잰다. 목표는 몇 분(5분) 안이다. 서버 안에서 넘으면 행을 별도 Job으로 나눠 병렬로 계산한다. 그래도 넘으면 시작 때 마지막 `capacity-row-built` 기록을 이전 표로 읽어 판단하고 새 표를 뒤에서 계산해 끝나면 바꾼다. 두 단계는 측정이 목표를 넘을 때만 넣는다.
+**계산 시간.** 이전 재생은 사건마다 창의 모든 요청을 훑어 요청 수의 제곱으로 느려졌다(창 2,000 요청 0.19 s, 8,000 요청 2.8 s). 60 s 창은 빠른 option에서 8,700 요청이고 option 하나의 검증에 2,135 s가 들었다. commit 1은 사건마다 도착했고 끝나지 않은 요청만 훑고 다음 도착은 도착 순서 목록의 맨 앞에서 읽으며, `Definition.Identity()`를 도착 원형마다 한 번 만든다. 판단은 같은 값이고 1 ms 간격 창의 재생은 2,000 요청 102 ms에서 3.3 ms, 8,000 요청 1,703 ms에서 16.7 ms가 되었다(`BenchmarkSchedulerReplayWindow`). 격자는 이분 탐색보다 판정 횟수가 많지만 미충족 판정은 실패 창 2개에서 멈춘다 `[추론: 행당 이분 탐색의 약 2.5배]`. E1 tight 38행의 시작 계산은 코어 하나(GOMAXPROCS 1)에서 1,386 s였다(행당 4~118 s, `NonMonotone` 0, `hack/kappa -mode table`). 0.5 CPU limit에서는 그 두 배쯤이다 `[추론]`. 목표 몇 분(5분)을 넘으므로 용량표 worker는 계산 중인 행마다 그 키의 마지막 `capacity-row-built` 기록(로컬 `management` stream, 그다음 보관된 시간 객체를 최근 순으로)을 이전 행으로 읽어 쓰고, 새 행이 계산되면 바꾼다. 이전 행은 `previous`로 표시하고, 기록이 없는 행은 `CapacityPending`이다. 행을 별도 Job으로 나누는 단계는 넣지 않았다.
 
 **imagenet.** imagenet(p99 100 ms)은 모든 option에서 κ 0이다(m 139 ms > 목표 100 ms, `hack/kappa`). 이 Workload는 꺼진 채로 두므로 행을 계산하지 않는다.
 
@@ -96,7 +96,7 @@
 
 | 대상 | 변경 |
 |---|---|
-| 추가(commit 2) | `capacityWindow`(> 0), `capacityWindows`(≥ 1), `capacityPassingWindows`(1 ≤ x ≤ `capacityWindows`), `capacityMinimumRequests`(≥ 1). 설정 decode가 strict(`scheduler_service.go:118`)라 배포 때 `serving-scheduler` ConfigMap과 Dashboard 설정 화면을 같이 바꾼다 |
+| 추가(commit 2) | `capacityWindowNanos`(> 0), `capacityWindows`(≥ 1), `capacityPassingWindows`(1 ≤ x ≤ `capacityWindows`), `capacityMinimumRequests`(≥ 1). 설정 decode가 strict(`scheduler_service.go:118`)라 배포 때 `serving-scheduler` ConfigMap과 Dashboard 설정 화면을 같이 바꾼다 |
 | 삭제(commit 6) | `algorithm`, `replays`, `seed`, `maxCandidates`, `maxReplayRequests`, `controls.sharing`. 같은 방식으로 ConfigMap과 Dashboard를 바꾼다 |
 | 판단 기록 | `v1alpha5`에 `decision.capacity`와 `management`의 `capacity-row-built`가 더해지고 `candidates`, `search.truncated`, `policy`가 빠진다. snapshot 인스턴스는 `workloadUID` 하나이고 `arrivalAgesNanos`가 빠진다. 관측 reader는 없는 필드를 빈 값으로 읽으므로 버전을 올리지 않는다(ADR 0019). 전환 전 시간의 기록은 새 reader에서 인스턴스의 Workload가 비므로 전환 시각을 걸치는 `OperatingPower` 구간은 쓰지 않는다 |
 

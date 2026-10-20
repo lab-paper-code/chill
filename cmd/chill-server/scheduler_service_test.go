@@ -26,7 +26,8 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 		Algorithm:         serving.SchedulerAlgorithmFixedHorizon,
 		ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
 		MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1,
-		MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 2,
+		MaxInstances: 1, MaxReplayRequests: 1,
+		CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 2,
 	}
 	rawSettings, err := json.Marshal(settings)
 	if err != nil {
@@ -81,6 +82,22 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 	if _, err = decodeSchedulerConfiguration(`{"settings":`+string(withoutMargin)+`}`, 1<<20); err == nil ||
 		!strings.Contains(err.Error(), "completionMarginMS required") {
 		t.Fatalf("omitted completionMarginMS accepted: %v", err)
+	}
+	// Each capacity setting is required; an omitted one decodes as zero and fails validation.
+	fields := []string{"capacityWindowNanos", "capacityWindows", "capacityPassingWindows", "capacityMinimumRequests"}
+	for _, field := range fields {
+		var without map[string]json.RawMessage
+		if err = json.Unmarshal(rawSettings, &without); err != nil {
+			t.Fatal(err)
+		}
+		delete(without, field)
+		raw, err := json.Marshal(without)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = decodeSchedulerConfiguration(`{"settings":`+string(raw)+`}`, 1<<20); err == nil {
+			t.Fatalf("settings without %s accepted", field)
+		}
 	}
 }
 

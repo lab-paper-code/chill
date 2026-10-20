@@ -66,7 +66,7 @@ func TestNativePodReadbackKeepsMeasuredWideAffinityResourceEvaluable(t *testing.
 			settings := serving.SchedulerSettings{
 				Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Second,
 				ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second,
-				Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 4,
+				Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4,
 			}
 			decision, err := serving.EvaluateScheduler(context.Background(), settings, snapshot)
 			if err != nil {

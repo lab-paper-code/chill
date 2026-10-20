@@ -14,6 +14,10 @@
     "maxCPUs": 256,
     "servingMemoryBytes": 0,
     "completionMarginMS": 139,
+    "capacityWindowNanos": 60000000000,
+    "capacityWindows": 20,
+    "capacityPassingWindows": 19,
+    "capacityMinimumRequests": 1000,
     "autonomousWorkloads": [],
     "controls": {
       "placement": false,

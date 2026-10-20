@@ -17,6 +17,7 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 |---|---|
 | `settings` | nanosecond duration의 observation/control/horizon, search/replay/resource bounds·seed·제어 활성 상태 |
 | `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `139`는 E1(rasp5 CPU, 2 req/s 60분, n=8312)의 `completionResidualNanos` p99 138.23 ms를 올림한 값이다([워크로드별 POOL](workload-pools.md#36-완료-여유)) |
+| `settings.capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests` | 필수. 용량표 행의 창 길이(> 0), 요청률마다 재생하는 창 수(≥ 1), 충족 창 수(1 이상 창 수 이하), 창의 최소 요청 수(≥ 1). sample은 60 s, 20, 19, 1,000이다([용량표 계획기](analytic-planner.md#2-용량표)) |
 | `settings.autonomousWorkloads` | 자동제어할 Workload UID 목록. decision은 Workload마다 `workloads[]`에 `Disabled`, `MeasurementEvidenceMissing`, `Controlled` 상태와 사유를 남긴다([워크로드별 자동제어](workload-pools.md#31-워크로드별-자동제어)) |
 | `cpuInventory`, `gpuInventory`, `reserved` | Node별 실제 CPU IDs·물리 GPU UUIDs와 비서빙 전용 예약. quota는 별도 수량 예산 |
 | `staticRouting` | OPTIONAL 부분 map: 자동제어하지 않는 현재 Workload UID → physical instance ID → nonnegative int32 weight. positive weight가 없는 항목(빈 map 포함)은 그 UID의 routing을 모두 지운다. 선언하지 않은 UID는 현재 routing을 유지한다. 명시 config revision을 기존 typed ApplyTarget 경로로 적용하고 physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. 현재가 아닌 UID, `autonomousWorkloads`의 UID와 stale target은 오류 |
@@ -45,6 +46,7 @@ revision은 다시 적용하지 않는다.
 | `GET /api/v1/scheduler/settings`, `/state` | 운영 설정 또는 현재 판단·적용 상태 |
 | `PUT /api/v1/scheduler` 또는 `/settings` | 직접 `SchedulerSettings`를 검증하고 named ConfigMap에 저장하고 적용 |
 | `GET /api/v1/scheduler/profiles` | 읽기 전용. `configVersion`, 완료 측정에서 도출한 조건별 최신 `profiles`, profile ID별 `preparations`, profile을 만들지 못한 측정의 `insufficiencies[]`(CatalogIssue `source/code/reason`) |
+| `GET /api/v1/scheduler/capacity` | 읽기 전용. 자동제어 Workload에 필요한 용량표 `rows[]`(`key`, `input`, `status`, `reason`, `mu`, `kappa`, 격자와 이분 탐색 판정, `builtAt`, `elapsedNanos`). 계산 중인 행은 `CapacityPending`, 단조가 아닌 행은 `CapacityRejected`와 `NonMonotone`이다. 표는 메모리에만 있고 행마다 `management` stream의 `capacity-row-built` 사건으로 남는다 |
 | `GET /api/v1/pools` | 실제 CHILL 인스턴스의 owner와 binding에서 도출한 `workloads[]`(`workload`, 활성 POOL `nodes`, `instances`), 측정 taint Node의 `measurement[]`, `available[]`와 `other[]`(`node/ready/powerMode/reasons`), `observedAt`, observer `issues` |
 | `GET /api/v1/pools/{uid}` | 해당 Workload의 활성 POOL 하나. 없으면 `PoolNotFound` |
 | `GET /api/v1/observations/load` | 사건 구간의 모든 UID 유입·접수·배정·완료율과 instance assignment 집계 |

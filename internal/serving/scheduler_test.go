@@ -28,7 +28,7 @@ const (
 
 func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	at := time.Unix(100, 0)
-	s := SchedulerSettings{Algorithm: SchedulerAlgorithmFixedHorizon, ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, Horizon: 100 * time.Millisecond, MaxObservationAge: time.Second, Seed: 42, Replays: 3, MaxCandidates: 30, MaxReplicas: 2, MaxInstances: 4, MaxReplayRequests: 100, MaxCPUs: 4, AutonomousWorkloads: []string{"w1"}, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Sharing: true, Routing: true, Batching: true, Power: true, Membership: true}}
+	s := SchedulerSettings{Algorithm: SchedulerAlgorithmFixedHorizon, ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, Horizon: 100 * time.Millisecond, MaxObservationAge: time.Second, Seed: 42, Replays: 3, MaxCandidates: 30, MaxReplicas: 2, MaxInstances: 4, MaxReplayRequests: 100, MaxCPUs: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Sharing: true, Routing: true, Batching: true, Power: true, Membership: true}}
 	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, PowerMode: "fixed", Ready: true, CPUs: []int{0, 1, 2, 3}, MemoryBytes: 10000, ObservedAt: at}
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}

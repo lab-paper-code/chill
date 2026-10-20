@@ -34,7 +34,7 @@ func controllerWorkFixture(t *testing.T) (*SchedulerController, serving.Schedule
 		Routing:   map[string]map[string]int32{instance.WorkloadUIDs[0]: {instance.ID: 1}},
 		Baselines: []serving.NodeBaseline{{ID: "policy-idle", Node: instance.Node, PowerMode: profile.Condition.PowerMode, Watts: 10, Meter: instance.IdleMeter, Scope: instance.IdleScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle", Size: 1}}},
 	}
-	settings := serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmProjectedWorkHistory, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Hour, Replays: 1, MaxCandidates: 4, MaxReplicas: 2, MaxInstances: 4, MaxReplayRequests: 10, MaxCPUs: 2, AutonomousWorkloads: instance.WorkloadUIDs}
+	settings := serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmProjectedWorkHistory, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Hour, Replays: 1, MaxCandidates: 4, MaxReplicas: 2, MaxInstances: 4, MaxReplayRequests: 10, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 2, AutonomousWorkloads: instance.WorkloadUIDs}
 	energy := 1.0
 	keep := serving.SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing, Status: schedulerPolicyFeasible, ExpectedJoules: &energy}
 	decision := serving.SchedulerDecision{Settings: settings, Keep: keep, Candidates: []serving.SchedulerCandidate{keep}, Target: &keep, Status: "Keep",

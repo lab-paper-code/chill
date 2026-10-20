@@ -13,22 +13,29 @@ import (
 // and the interval over which every candidate's complete pool cost is compared.
 // AutonomousWorkloads lists the Workload UIDs under autonomous control.
 type SchedulerSettings struct {
-	Algorithm           string            `json:"algorithm"`
-	ObservationWindow   time.Duration     `json:"observationWindowNanos"`
-	ControlInterval     time.Duration     `json:"controlIntervalNanos"`
-	Horizon             time.Duration     `json:"horizonNanos"`
-	MaxObservationAge   time.Duration     `json:"maxObservationAgeNanos"`
-	Seed                int64             `json:"seed"`
-	Replays             int               `json:"replays"`
-	MaxCandidates       int               `json:"maxCandidates"`
-	MaxReplicas         int               `json:"maxReplicas"`
-	MaxInstances        int               `json:"maxInstances"`
-	MaxReplayRequests   int               `json:"maxReplayRequests"`
-	MaxCPUs             int               `json:"maxCPUs"`
-	ServingMemoryBytes  uint64            `json:"servingMemoryBytes"`
-	CompletionMarginMS  float64           `json:"completionMarginMS"`
-	AutonomousWorkloads []string          `json:"autonomousWorkloads"`
-	Controls            SchedulerControls `json:"controls"`
+	Algorithm           string        `json:"algorithm"`
+	ObservationWindow   time.Duration `json:"observationWindowNanos"`
+	ControlInterval     time.Duration `json:"controlIntervalNanos"`
+	Horizon             time.Duration `json:"horizonNanos"`
+	MaxObservationAge   time.Duration `json:"maxObservationAgeNanos"`
+	Seed                int64         `json:"seed"`
+	Replays             int           `json:"replays"`
+	MaxCandidates       int           `json:"maxCandidates"`
+	MaxReplicas         int           `json:"maxReplicas"`
+	MaxInstances        int           `json:"maxInstances"`
+	MaxReplayRequests   int           `json:"maxReplayRequests"`
+	MaxCPUs             int           `json:"maxCPUs"`
+	ServingMemoryBytes  uint64        `json:"servingMemoryBytes"`
+	CompletionMarginMS  float64       `json:"completionMarginMS"`
+	AutonomousWorkloads []string      `json:"autonomousWorkloads"`
+	// Capacity rows judge CapacityWindows Poisson windows of at least
+	// CapacityWindow and CapacityMinimumRequests arrivals; a rate is met when
+	// CapacityPassingWindows of them meet the SLO.
+	CapacityWindow          time.Duration     `json:"capacityWindowNanos"`
+	CapacityWindows         int               `json:"capacityWindows"`
+	CapacityPassingWindows  int               `json:"capacityPassingWindows"`
+	CapacityMinimumRequests int               `json:"capacityMinimumRequests"`
+	Controls                SchedulerControls `json:"controls"`
 }
 type SchedulerControls struct {
 	Placement  bool `json:"placement"`
@@ -289,6 +296,9 @@ func (s SchedulerSettings) Validate() error {
 	}
 	if math.IsNaN(s.CompletionMarginMS) || math.IsInf(s.CompletionMarginMS, 0) || s.CompletionMarginMS < 0 {
 		return fmt.Errorf("completionMarginMS must be finite and nonnegative")
+	}
+	if s.CapacityWindow <= 0 || s.CapacityWindows < 1 || s.CapacityPassingWindows < 1 || s.CapacityPassingWindows > s.CapacityWindows || s.CapacityMinimumRequests < 1 {
+		return fmt.Errorf("capacity settings need capacityWindowNanos > 0, capacityWindows >= 1, 1 <= capacityPassingWindows <= capacityWindows and capacityMinimumRequests >= 1")
 	}
 	return nil
 }

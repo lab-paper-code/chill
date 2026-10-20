@@ -34,6 +34,10 @@ const fields: Field[] = [
   {key:"maxCandidates",label:"후보 수 상한",help:"한 번에 비교할 후보 수의 상한이에요.",group:"advanced",unit:"개"},
   {key:"maxReplayRequests",label:"비교 요청 수 상한",help:"반복 비교에 쓰는 요청 수의 상한이에요.",group:"advanced",unit:"건"},
   {key:"seed",label:"비교 재현용 시드",help:"같은 조건을 다시 만들 때 쓰는 값이에요.",group:"advanced"},
+  {key:"capacityWindowNanos",label:"용량 계산 창 길이",help:"용량을 계산할 때 창마다 적어도 이 시간만큼의 요청을 재생해요.",group:"advanced"},
+  {key:"capacityWindows",label:"용량 계산 창 수",help:"요청률마다 이만큼의 독립 창을 재생해요.",group:"advanced",unit:"개"},
+  {key:"capacityPassingWindows",label:"용량 충족 창 수",help:"이만큼의 창이 SLO를 지키면 그 요청률을 감당한다고 봐요. 창 수 이하로 정해요.",group:"advanced",unit:"개"},
+  {key:"capacityMinimumRequests",label:"용량 계산 최소 요청 수",help:"창마다 적어도 이만큼의 요청을 재생해요.",group:"advanced",unit:"건"},
 ]
 const controls: {key:keyof SchedulerSettings["controls"];label:string}[] = [
   {key:"placement",label:"배치 위치"},{key:"resources",label:"자원 할당"},
