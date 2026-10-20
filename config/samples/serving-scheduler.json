@@ -7,7 +7,7 @@
     "maxReplicas": 8,
     "maxInstances": 16,
     "maxCPUs": 256,
-    "servingMemoryBytes": 0,
+    "servingMemoryBytes": 134217728,
     "completionMarginMS": 139,
     "capacityWindowNanos": 60000000000,
     "capacityWindows": 20,

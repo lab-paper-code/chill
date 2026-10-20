@@ -64,7 +64,7 @@ func (o *schedulerService) preparation(
 	if err := o.checkProfileInventory(config, profile); err != nil {
 		return servingkube.PrepareSpec{}, err
 	}
-	spec, err := o.measuredPreparation(ctx, profile)
+	spec, err := o.measuredPreparation(ctx, profile, config.Settings.ServingMemoryBytes)
 	if err != nil {
 		return spec, err
 	}
@@ -135,8 +135,11 @@ func reproducibleRuntimeAccess(p serving.Profile) error {
 	}
 	return nil
 }
+
+// measuredPreparation sizes the Pod memory as the measured peak plus
+// servingMemory, the headroom for the requests firstfloor queues.
 func (o *schedulerService) measuredPreparation(
-	ctx context.Context, p serving.Profile,
+	ctx context.Context, p serving.Profile, servingMemory uint64,
 ) (servingkube.PrepareSpec, error) {
 	var spec servingkube.PrepareSpec
 	if p.RuntimeMetadata == nil || p.Condition.Firstfloor == nil {
@@ -162,10 +165,18 @@ func (o *schedulerService) measuredPreparation(
 		}
 		memory = max(memory, batch.MemoryBytes)
 	}
-	if memory == 0 || memory > uint64(1<<63-1) || len(runtime.CPUAffinity) == 0 || runtime.IntraOpThreads < 0 ||
+	// ponytail: Go's default GOGC=100 lets the firstfloor heap reach twice its live
+	// queue, so the queue cap is half the headroom; measure queue RSS if it OOMs again.
+	queueBytes := min(servingMemory/2, native.MaxFrameBytes)
+	if queueBytes < 1 {
+		return spec, fmt.Errorf("settings.servingMemoryBytes must hold the firstfloor queue")
+	}
+	if memory == 0 || servingMemory > uint64(1<<63-1) || memory > uint64(1<<63-1)-servingMemory ||
+		len(runtime.CPUAffinity) == 0 || runtime.IntraOpThreads < 0 ||
 		(runtime.IntraOpThreads == 0) != rknn || len(runtime.CPUAffinity) < runtime.IntraOpThreads {
 		return spec, fmt.Errorf("bounded measured memory and physical CPU/thread allocation required")
 	}
+	memory += servingMemory
 	request, err := resource.ParseQuantity(p.Condition.CPU.Request)
 	if err != nil || request.Sign() <= 0 {
 		return spec, fmt.Errorf("positive measured CPU request required")
@@ -208,7 +219,7 @@ func (o *schedulerService) measuredPreparation(
 				"--warmup-iterations", strconv.Itoa(runtime.WarmupIterations),
 			},
 			RunnerTimeoutMS: int(o.opts.requestTimeout / time.Millisecond), MaxQueueRequests: int(settings.MaxQueueSize),
-			MaxQueueBytes:   int(min(o.opts.maxEvidenceBytes, int64(native.MaxFrameBytes))),
+			MaxQueueBytes:   int(queueBytes),
 			MaxRequestBytes: int(min(o.opts.maxRequestBytes, int64(native.MaxFrameBytes))),
 			Mode:            "serving", BatchSizes: slices.Clone(runtime.InitializedBatches),
 			MaxBatchSize: int(settings.MaxBatchSize), ProfilePath: "/profile/bundle.json",

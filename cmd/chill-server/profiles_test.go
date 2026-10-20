@@ -89,7 +89,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		},
 	}
 	profile := measuredAdoptionProfile()
-	spec, err := service.measuredPreparation(context.Background(), profile)
+	spec, err := service.measuredPreparation(context.Background(), profile, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		t.Fatal("selection fabricated readiness/evidence/publication")
 	}
 	if !reflect.DeepEqual(spec.Config.BatchSizes, []int{1, 2, 4}) || spec.Config.Policy.MaxBatchSize != 2 ||
-		spec.MemoryBytes != 4096 || spec.Store.CredentialsSecretName != "actual-secret" {
+		spec.MemoryBytes != 4098 || spec.Store.CredentialsSecretName != "actual-secret" {
 		t.Fatalf("lost measured startup/delivery facts: %+v", spec)
 	}
 	if !reflect.DeepEqual(spec.Instance.Allocation.CPUs, []int{3}) ||
@@ -117,8 +117,35 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		t.Fatal("shared bundle producer changed raw distribution")
 	}
 	profile.Batches[1].MemoryBytes = 0
-	if _, err = service.measuredPreparation(context.Background(), profile); err == nil {
+	if _, err = service.measuredPreparation(context.Background(), profile, 2); err == nil {
 		t.Fatal("missing measured memory accepted")
+	}
+}
+
+// The queued request bytes firstfloor admits fit in the Pod memory above the
+// measured peak: the limit adds servingMemoryBytes, half of which is the queue.
+func TestMeasuredPreparationReservesQueueMemoryAboveMeasuredPeak(t *testing.T) {
+	service := &schedulerService{
+		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),
+		opts: options{
+			storeName: "store", storeEndpoint: "http://store", storeBucket: "bucket", storeRegion: "region",
+			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second,
+			maxEvidenceBytes: 64 << 20, maxRequestBytes: 8 << 20,
+		},
+	}
+	spec, err := service.measuredPreparation(context.Background(), measuredAdoptionProfile(), 128<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.MemoryBytes != 4096+128<<20 || spec.Instance.Allocation.MemoryBytes != spec.MemoryBytes ||
+		spec.Config.MaxQueueBytes != 64<<20 {
+		t.Fatalf("limit %d, queue %d", spec.MemoryBytes, spec.Config.MaxQueueBytes)
+	}
+	if 2*uint64(spec.Config.MaxQueueBytes) > spec.MemoryBytes-4096 {
+		t.Fatal("queued bytes exceed the memory headroom")
+	}
+	if _, err = service.measuredPreparation(context.Background(), measuredAdoptionProfile(), 1); err == nil {
+		t.Fatal("headroom without queue bytes accepted")
 	}
 }
 func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
@@ -151,7 +178,7 @@ func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
 			profile.RuntimeMetadata.IntraOpThreads = 2
 			profile.RuntimeMetadata.CgroupCPUMax = "200000 100000"
 			profile.RuntimeMetadata.GPUUUID = ""
-			spec, err := service.measuredPreparation(context.Background(), profile)
+			spec, err := service.measuredPreparation(context.Background(), profile, 128<<20)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -172,7 +199,7 @@ func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
 			}
 			for _, threads := range []int{0, 5} {
 				profile.RuntimeMetadata.IntraOpThreads = threads
-				if _, err = service.measuredPreparation(context.Background(), profile); err == nil {
+				if _, err = service.measuredPreparation(context.Background(), profile, 128<<20); err == nil {
 					t.Fatalf("invalid measured thread count %d accepted", threads)
 				}
 			}
@@ -196,7 +223,7 @@ func TestGeneratedPreparationRejectsUnrepresentableMeasuredRuntimeAccess(t *test
 		profile := measuredAdoptionProfile()
 		profile.Condition.RuntimeAccess = &access
 		// No clients: reject before any external lookup or configuration write.
-		spec, err := (&schedulerService{}).measuredPreparation(context.Background(), profile)
+		spec, err := (&schedulerService{}).measuredPreparation(context.Background(), profile, 0)
 		if err == nil || !strings.Contains(err.Error(), "cannot reproduce measured runtimeAccess") {
 			t.Fatalf("measured delivery access silently dropped: spec=%+v err=%v", spec, err)
 		}
