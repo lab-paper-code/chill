@@ -14,7 +14,7 @@
 | 단계 | 내용 | 명세 변경 | 그대로 남는 코드 |
 |---|---|---|---|
 | **M0 출혈 차단** (며칠) | `recordDecision`(`cmd/chill-server/scheduler_service.go:364-369`) 다이어트, 설계는 [판단 기록 다이어트](../serving/decision-record-diet.md):<br>• Keep/Target은 전체 저장, 나머지 후보는 요약(ID, status, J, worst exceedance, reasons, actions)<br>• `SchedulerInstance.Profile`은 profile ID로 대체(workload-pools §4.5)<br>• snapshot은 판단마다 저장하되 `Arrivals`는 빼고(창 개수는 `search`), 처리 중 요청은 정의 ID로 참조<br>• `ArrivalAges`, `observedAt`, 동작 경과는 replay 입력이라 원값 유지<br>• 판단마다 `evaluationElapsedNanos` 기록<br><br>18.8MB → 약 70KB(설계 2, 3장의 측정) | **불필요.** `SCH-30`은 "연결해 제공"이라 불변 근거의 ID 참조로 충족 | 전부 |
-| **M1 관측 분리** | ChillServer·firstfloor `/metrics`(native histogram), VictoriaMetrics 또는 Prometheus 하나, Dashboard 시계열을 PromQL로 전환, 요청당 wide row + 시간 단위 zstd 세그먼트(S3), 관측 PVC 보존 한도 | 불필요 | observation log의 원시 보존 역할(형식만 변경) |
+| **M1 관측 분리** | 요청당 행 하나, 판단 기록 불변 값의 ID 참조, 시간 단위 gzip 세그먼트(S3)와 2시간 로컬 버퍼, 요청 구간만 읽는 조회, S3 세그먼트로 만드는 오프라인 표. 설계는 [관측 분리](../serving/observability-split.md) | 불필요 | observation log의 원시 보존 역할(형식만 변경) |
 | **M2 node agent** | discovery·전력·census 통합 DaemonSet, inventory 자동화, ConfigMap 수작업 필드 삭제 | 불필요 | NodeActuator의 실제 전력 적용 로직 |
 | **M3 B2 측정 admission** | workload-pools §3.3의 taint `chill.dacs.io/measurement`를 운영자 대신 단일 writer가 측정 객체에 따라 붙이고 뗌, 서빙 노드 거절, fencing generation, `serving-operation`을 ChillServer 클라이언트로, 전환 비용 runner 자동 생성 | 불필요 | 측정 controller의 측정 본체, Job, S3 evidence, taint key와 toleration, ChillServer의 taint 노드 제외 |
 | **M4 B1 shadow → 전환** | 분석형 평가기를 재생과 나란히 돌려 불일치를 기록. 기존 10MB 기록으로 오프라인 A/B. 통과하면 탐색은 분석형, 재생은 상위 K 검증기로 | **필요**: 06 문서 ①, ①', ②, ③, ④ | `scheduler_replay.go`(검증기·오프라인 simulator), 후보의 동작 DAG, `internal/serving/kube/operations.go`의 prepare/route/drain/remove |

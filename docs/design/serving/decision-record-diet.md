@@ -94,5 +94,5 @@ E1 재실행(2026-10-19 UTC, rev 35)의 측정 결과다.
 
 ## 7. M0 범위 밖
 
-- M1: 관측 PVC 보존 한도, 요청 stream 형식(요청당 wide row, 시간 단위 zstd 세그먼트), `/metrics`와 PromQL.
+- M1: 요청당 행 하나, snapshot 불변 값의 ID 참조, 시간 단위 gzip 세그먼트와 2시간 로컬 버퍼([관측 분리](observability-split.md)).
 - M4: 계획이 바뀔 때만 쓰는 판단 기록, 분석형 평가기, `kernels` 재설계, live 판단 응답의 후보 축소.
