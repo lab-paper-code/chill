@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError, type ChillMutationInput, type RelayResponse } from "@/lib/client"
-import type { OperationResult, SchedulerAlgorithm, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
+import type { OperationResult, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
 import { millisecondsToNanos, nanosToMilliseconds, wireInteger, marginMilliseconds, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
@@ -12,13 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
-type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"algorithm"|"autonomousWorkloads">
-// internal/serving/scheduler_policy.go: ChillServer rejects any other value.
-export const algorithms:Record<SchedulerAlgorithm,{label:string;help:string}> = {
-  "fixed-horizon":{label:"고정 기간 비교",help:"후보마다 정한 기간 동안의 에너지를 비교해요."},
-  "projected-work-history":{label:"작업 이력 예측",help:"최근 작업 이력으로 앞으로의 부하를 예측해 비교해요."},
-}
-export const algorithmLabel = (value:string) => algorithms[value as SchedulerAlgorithm]?.label ?? "확인이 필요해요"
+type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads">
 type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"advanced";unit?:string}
 const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
@@ -30,10 +24,6 @@ const fields: Field[] = [
   {key:"maxReplicas",label:"복제 수 상한",help:"서비스 복제 수를 이만큼까지 살펴봐요.",group:"limit",unit:"개"},
   {key:"maxInstances",label:"인스턴스 수 상한",help:"인스턴스 수를 이만큼까지 살펴봐요.",group:"limit",unit:"개"},
   {key:"maxCPUs",label:"CPU 수 상한",help:"CPU 수를 이만큼까지 살펴봐요.",group:"limit",unit:"개"},
-  {key:"replays",label:"비교 반복 횟수",help:"후보마다 비교를 반복하는 횟수예요.",group:"advanced",unit:"회"},
-  {key:"maxCandidates",label:"후보 수 상한",help:"한 번에 비교할 후보 수의 상한이에요.",group:"advanced",unit:"개"},
-  {key:"maxReplayRequests",label:"비교 요청 수 상한",help:"반복 비교에 쓰는 요청 수의 상한이에요.",group:"advanced",unit:"건"},
-  {key:"seed",label:"비교 재현용 시드",help:"같은 조건을 다시 만들 때 쓰는 값이에요.",group:"advanced"},
   {key:"capacityWindowNanos",label:"용량 계산 창 길이",help:"용량을 계산할 때 창마다 적어도 이 시간만큼의 요청을 재생해요.",group:"advanced"},
   {key:"capacityWindows",label:"용량 계산 창 수",help:"요청률마다 이만큼의 독립 창을 재생해요.",group:"advanced",unit:"개"},
   {key:"capacityPassingWindows",label:"용량 충족 창 수",help:"이만큼의 창이 SLO를 지키면 그 요청률을 감당한다고 봐요. 창 수 이하로 정해요.",group:"advanced",unit:"개"},
@@ -41,7 +31,7 @@ const fields: Field[] = [
 ]
 const controls: {key:keyof SchedulerSettings["controls"];label:string}[] = [
   {key:"placement",label:"배치 위치"},{key:"resources",label:"자원 할당"},
-  {key:"replicas",label:"복제 수"},{key:"sharing",label:"인스턴스 공유"},{key:"routing",label:"요청 분배"},
+  {key:"replicas",label:"복제 수"},{key:"routing",label:"요청 분배"},
   {key:"batching",label:"배칭"},{key:"power",label:"전력모드"},{key:"membership",label:"실행 그룹 소속"},
 ]
 const onOff = (on:boolean) => on?"사용":"사용 안 함"
@@ -56,7 +46,6 @@ function plain(field:Field,value:WireInteger):string {
 }
 function changedRows(before:SchedulerSettings,after:SchedulerSettings) {
   return [
-    ...(before.algorithm!==after.algorithm?[["판단 방식",`${algorithmLabel(before.algorithm)} → ${algorithmLabel(after.algorithm)}`] as [string,string]]:[]),
     ...(String(before.autonomousWorkloads)!==String(after.autonomousWorkloads)?[["자동 제어 서비스",`${autonomous(before)} → ${autonomous(after)}`] as [string,string]]:[]),
     ...fields.filter(field=>String(before[field.key])!==String(after[field.key])).map(field=>[field.label,`${plain(field,before[field.key])} → ${plain(field,after[field.key])}`] as [string,string]),
     ...controls.filter(control=>before.controls[control.key]!==after.controls[control.key]).map(control=>[control.label,`${onOff(before.controls[control.key])} → ${onOff(after.controls[control.key])}`] as [string,string]),
@@ -67,7 +56,7 @@ export function SettingChanges({before,after,stored=false}:{before:SchedulerSett
   return rows.length?<Facts items={rows}/>:<p>{stored?"기록의 전후 설정이 같아요.":"바꾼 값과 현재 설정이 같아요."}</p>
 }
 export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
-  return <Facts items={[["판단 방식",algorithmLabel(settings.algorithm)],["자동 제어 서비스",autonomous(settings)],...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
+  return <Facts items={[["자동 제어 서비스",autonomous(settings)],...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
 }
 
 // The one settings write: PUT the full settings, then refresh every scheduler read. Shared with the Workload screen.
@@ -92,15 +81,6 @@ function EditRow({label,help,value,changed,initial,unit,range,save,disabled}:{la
   </RowDialog>
 }
 
-function AlgorithmRow({value,changed,save,disabled}:{value:SchedulerAlgorithm;changed:boolean;save:(value:SchedulerAlgorithm)=>void;disabled:boolean}) {
-  const [open,setOpen]=React.useState(false),[next,setNext]=React.useState(value)
-  return <RowDialog label="운영 판단 알고리즘" hint={changed?"바꾼 값이에요":undefined} value={algorithmLabel(value)} title="운영 판단 알고리즘" description="바꾸면 다음 판단부터 이 방식으로 후보를 비교해요. 실제 구성은 자동 제어를 켠 서비스에서만 바뀌어요." open={open} onOpenChange={state=>{setOpen(state);setNext(value)}}>
-    <form className="grid gap-4" onSubmit={event=>{event.preventDefault();save(next);setOpen(false)}}>
-      <ul className="rows">{(Object.keys(algorithms) as SchedulerAlgorithm[]).map(key=><li key={key}><label className="row"><input type="radio" name="algorithm" checked={next===key} onChange={()=>setNext(key)}/><span className="row-main"><span className="row-text">{algorithms[key].label}</span><span className="row-hint">{algorithms[key].help}</span></span></label></li>)}</ul>
-      <Button type="submit" disabled={disabled}>바꾸기</Button>
-    </form>
-  </RowDialog>
-}
 
 export function SchedulerSettingsPage() {
   const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON,poll:true})
@@ -184,17 +164,16 @@ export function SchedulerSettingsPage() {
 
   const group=(name:Field["group"])=>shown&&fields.filter(field=>field.group===name).map(field=><EditRow key={field.key} label={field.label} help={field.help} value={plain(field,shown[field.key])} changed={!!count&&String(baseline![field.key])!==String(shown[field.key])}
     initial={field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key]):String(shown[field.key])} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
-    range={field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="seed"?"-9223372036854775808 ~ 9223372036854775807 사이 정수":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
+    range={field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{
-      // Same validation as the wire: ms with ≤6 decimals → nanos, nonnegative margin ms, signed int64 seed, uint64 memory bytes, positive int64 otherwise.
-      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="seed"?wireInteger(text,-9223372036854775808n,9223372036854775807n):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
+      // Same validation as the wire: ms with ≤6 decimals → nanos, nonnegative margin ms, uint64 memory bytes, positive int64 otherwise.
+      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
       edit(base=>({...base,[field.key]:parsed}))
     }} disabled={blocked}/>)
   return <Screen back={back} title="운영 설정"
     lede={!precise?"이 브라우저는 큰 정수를 정확히 다루지 못해 설정을 바꿀 수 없어요. 최신 브라우저에서 열어 주세요.":settings.data?(settings.data.autonomousWorkloads?.length?`서비스 ${settings.data.autonomousWorkloads.length}개를 자동으로 제어하고 있어요. 서비스 화면에서 켜고 끌 수 있어요.`:"모든 서비스가 마지막 구성을 유지해요. 서비스 화면에서 자동 제어를 켤 수 있어요."):undefined}
     action={count>0&&<Button ref={reviewLauncher} onClick={()=>void inspect()} disabled={blocked}>{reviewing?"현재 값을 확인하고 있어요":`변경 ${count}건 검토`}</Button>}>
     <QueryGate query={settings}>{shown&&<>
-      <Rows label="판단 방식"><AlgorithmRow value={shown.algorithm} changed={!!count&&baseline!.algorithm!==shown.algorithm} save={algorithm=>edit(base=>({...base,algorithm}))} disabled={blocked}/></Rows>
       <Rows label="판단 주기와 범위">{group("cycle")}</Rows>
       <Rows label="자원 한도">{group("limit")}</Rows>
       <Rows label="자동 조정 항목">{controls.map(control=><EditRow key={control.key} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]}

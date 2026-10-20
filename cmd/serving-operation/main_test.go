@@ -57,8 +57,8 @@ func TestMeasurementNodeRequiresTaint(t *testing.T) {
 
 func executionOwnerFixture() (executionManifest, executionConfiguration, executionOwnerView, time.Time) {
 	now := time.Unix(100, 0)
-	routing := map[string]map[string]int{"relaxed": {"source": 1}, "tight": {"source": 2}}
-	actual := map[string]map[string]int32{"relaxed": {"source": 1}, "tight": {"source": 2}}
+	routing := map[string]map[string]int{"relaxed": {"source": 1}, "tight": {"tight-source": 2}}
+	actual := map[string]map[string]int32{"relaxed": {"source": 1}, "tight": {"tight-source": 2}}
 	profile := &serving.Profile{ID: "profile", Condition: derivation.CurvePlanSpec{
 		LogicalModel: "model",
 		ActiveProtocol: derivation.CurveProtocolContract{
@@ -70,7 +70,8 @@ func executionOwnerFixture() (executionManifest, executionConfiguration, executi
 		Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"},
 	}
 	second := *first
-	second.Name, second.UID = "tight", "tight"
+	const tight = "tight"
+	second.Name, second.UID = tight, tight
 	m := executionManifest{
 		SourceConfigRV: "10", WorkloadUID: "relaxed",
 		Operation: servingkube.Operation{Kind: operationRemove, Instance: "replica"},
@@ -78,13 +79,14 @@ func executionOwnerFixture() (executionManifest, executionConfiguration, executi
 	config := executionConfiguration{StaticRouting: routing}
 	owner := executionOwnerView{
 		Settings: serving.SchedulerSettings{
-			Algorithm: serving.SchedulerAlgorithmFixedHorizon, ControlInterval: time.Second,
+			ControlInterval: time.Second,
 		},
 		State: servingkube.SchedulerControllerState{
 			Snapshot: serving.SchedulerSnapshot{
 				At: now.Add(-time.Millisecond), Workloads: []*serving.Definition{first, &second},
 				Instances: []serving.SchedulerInstance{
 					{ID: "source", Profile: profile, Ready: true},
+					{ID: "tight-source", Profile: profile, Ready: true},
 					{ID: "replica", Profile: profile, Ready: true, OwnerWorkloadUID: "relaxed"},
 				},
 				Routing: actual,
@@ -140,8 +142,8 @@ func TestExecuteRequiresOwnerAcknowledgementAndFullResponseDrain(t *testing.T) {
 			case "occupied prepare":
 				m.Operation = servingkube.Operation{Kind: operationPrepare}
 			case "shared instance":
-				owner.State.Snapshot.Instances[1].OwnerWorkloadUID = ""
-				owner.State.Snapshot.Instances[1].WorkloadUIDs = []string{"tight"}
+				owner.State.Snapshot.Instances[2].OwnerWorkloadUID = ""
+				owner.State.Snapshot.Instances[2].WorkloadUID = "tight"
 			}
 			err := validateExecutionOwner(m, config, owner, &acknowledged, now)
 			if (err == nil) != (name == "safe") {

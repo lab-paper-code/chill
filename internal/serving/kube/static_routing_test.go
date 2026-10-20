@@ -17,7 +17,7 @@ import (
 
 func TestStaticRoutingRequiresSourceRevision(t *testing.T) {
 	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), config: SchedulerControllerConfig{
-		Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon},
+		Settings: serving.SchedulerSettings{},
 	}}
 	if err := controller.ApplyStaticRouting(context.Background(), nil, ""); err == nil {
 		t.Fatal("manual routing reached capture/apply without source revision")
@@ -113,7 +113,7 @@ func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
 				store: manager.store, kube: manager.observer.kube, runtime: manager.runtime,
 				observer: manager.observer, observationLog: manager.observationLog,
 				config: SchedulerControllerConfig{
-					Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Minute},
+					Settings: serving.SchedulerSettings{ObservationWindow: time.Minute},
 					OnAction: func(result OperationResult) error {
 						recorded = append(recorded, result)
 						return nil

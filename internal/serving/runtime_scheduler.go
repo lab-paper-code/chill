@@ -69,14 +69,12 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 		return err
 	}
 	for _, wanted := range candidate.Instances {
-		routeNeeded := false
-		for _, uid := range wanted.WorkloadUIDs {
-			if candidate.Routing[uid][wanted.ID] < 0 {
-				return failure("InvalidDistribution", "negative target weight")
-			}
-			routeNeeded = routeNeeded || candidate.Routing[uid][wanted.ID] > 0
+		uid := wanted.WorkloadUID
+		weight := candidate.Routing[uid][wanted.ID]
+		if weight < 0 {
+			return failure("InvalidDistribution", "negative target weight")
 		}
-		if !routeNeeded {
+		if uid == "" || weight == 0 {
 			continue
 		}
 		actual, err := r.schedulerSlotLocked(wanted.ID)
@@ -86,23 +84,17 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 		if actual == nil || !actual.State.Ready || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node {
 			return failure("TargetNotReady", "target %q lacks matching actual readiness", wanted.ID)
 		}
-		for _, uid := range wanted.WorkloadUIDs {
-			weight := candidate.Routing[uid][wanted.ID]
-			if weight == 0 {
-				continue
-			}
-			workload := r.workloads[uid]
-			if workload == nil || workload.detached || profilePath(workload.definition, actual.Profile) == nil || (actual.OwnerWorkloadUID != "" && actual.OwnerWorkloadUID != uid) {
-				return failure("DefinitionChanged", "target %q does not match current workload %q", wanted.ID, uid)
-			}
-			if targets[uid] == nil {
-				targets[uid] = map[string]int32{}
-			}
-			if _, duplicate := targets[uid][actual.State.ID]; duplicate {
-				return failure("InvalidDistribution", "duplicate physical target for workload")
-			}
-			targets[uid][actual.State.ID] = weight
+		workload := r.workloads[uid]
+		if workload == nil || workload.detached || profilePath(workload.definition, actual.Profile) == nil || (actual.OwnerWorkloadUID != "" && actual.OwnerWorkloadUID != uid) {
+			return failure("DefinitionChanged", "target %q does not match current workload %q", wanted.ID, uid)
 		}
+		if targets[uid] == nil {
+			targets[uid] = map[string]int32{}
+		}
+		if _, duplicate := targets[uid][actual.State.ID]; duplicate {
+			return failure("InvalidDistribution", "duplicate physical target for workload")
+		}
+		targets[uid][actual.State.ID] = weight
 	}
 	if validateOnly {
 		return nil
@@ -152,7 +144,7 @@ func (r *Runtime) validateSchedulerRoutingLocked(candidate SchedulerCandidate) e
 			}
 			found := false
 			for _, wanted := range candidate.Instances {
-				if wanted.ID == id && schedulerHas(wanted.WorkloadUIDs, uid) {
+				if wanted.ID == id && wanted.WorkloadUID == uid {
 					found = true
 					break
 				}

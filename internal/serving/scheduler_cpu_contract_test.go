@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"slices"
 	"testing"
 	"time"
@@ -27,15 +28,15 @@ func measuredWideAffinityFixture() (SchedulerSettings, SchedulerSnapshot) {
 
 func TestSchedulerMeasuredQuotaAndThreadsNeedNotFillAffinity(t *testing.T) {
 	settings, snapshot := measuredWideAffinityFixture()
-	decision := schedulerEvaluateForTest(t, settings, snapshot)
-	if decision.Keep.ExpectedJoules == nil || len(decision.Keep.Reasons) != 0 {
-		t.Fatalf("admitted measured allocation did not reach replay: %+v", decision.Keep)
+	keep := schedulerKeepForTest(t, settings, snapshot)
+	if keep.ExpectedJoules == nil || len(keep.Reasons) != 0 {
+		t.Fatalf("admitted measured allocation did not reach replay: %+v", keep)
 	}
-	estimate := schedulerRequireEstimate(t, decision.Keep, snapshot.Workloads[0].UID)
-	if estimate.Samples != settings.Replays || estimate.ExpectedNanos == nil || *estimate.ExpectedNanos < float64(time.Millisecond) {
+	estimate := schedulerRequireEstimate(t, keep, snapshot.Workloads[0].UID)
+	if estimate.Samples != 1 || estimate.ExpectedNanos == nil || *estimate.ExpectedNanos < float64(time.Millisecond) {
 		t.Fatalf("measured service did not replay: %+v", estimate)
 	}
-	allocation := decision.Keep.Instances[0].Allocation
+	allocation := keep.Instances[0].Allocation
 	if allocation.CPUCount != 2 || allocation.Threads != 2 || !slices.Equal(allocation.CPUs, []int{0, 1, 2, 3}) {
 		t.Fatalf("replay rewrote the measured CPU contract: %+v", allocation)
 	}
@@ -73,40 +74,11 @@ func TestSchedulerMeasuredWideAffinityRetainsResourceGuards(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			settings, snapshot := measuredWideAffinityFixture()
 			tc.change(&snapshot)
-			decision := schedulerEvaluateForTest(t, settings, snapshot)
-			schedulerRequireReason(t, decision.Keep.Reasons, tc.reason)
-		})
-	}
-}
-
-func TestSchedulerMeasuredCPUQuantitiesRemainDistinctInLogicalKey(t *testing.T) {
-	_, snapshot := measuredWideAffinityFixture()
-	candidate := SchedulerCandidate{Nodes: snapshot.Nodes, Instances: snapshot.Instances}
-	before, err := SchedulerLogicalConfigKey(snapshot, candidate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, quantity := range []string{"request", "affinity", "threads", "profile"} {
-		t.Run(quantity, func(t *testing.T) {
-			_, changed := measuredWideAffinityFixture()
-			instance := &changed.Instances[0]
-			switch quantity {
-			case "request":
-				instance.Allocation.CPUCount = 1
-			case "affinity":
-				instance.Allocation.CPUs = []int{0, 1}
-			case "threads":
-				instance.Allocation.Threads = 1
-			case "profile":
-				instance.Profile.ID = "different-measured-quota"
-			}
-			after, err := SchedulerLogicalConfigKey(changed, SchedulerCandidate{Nodes: changed.Nodes, Instances: changed.Instances})
+			decision, err := EvaluateScheduler(context.Background(), settings, snapshot, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if before == after {
-				t.Fatalf("logical key merged distinct measured %s", quantity)
-			}
+			schedulerRequireReason(t, decision.Keep.Reasons, tc.reason)
 		})
 	}
 }

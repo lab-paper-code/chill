@@ -75,23 +75,15 @@ func (e *schedulerReadEvidence) candidate(candidate *serving.SchedulerCandidate)
 
 type schedulerReadDecision struct {
 	*serving.SchedulerDecision
-	Keep       *schedulerReadCandidate  `json:"keep"`
-	Target     *schedulerReadCandidate  `json:"target"`
-	Candidates []schedulerReadCandidate `json:"candidates"`
+	Keep   *schedulerReadCandidate `json:"keep"`
+	Target *schedulerReadCandidate `json:"target"`
 }
 
 func (e *schedulerReadEvidence) decision(decision *serving.SchedulerDecision) *schedulerReadDecision {
 	if decision == nil {
 		return nil
 	}
-	result := &schedulerReadDecision{SchedulerDecision: decision, Keep: e.candidate(&decision.Keep), Target: e.candidate(decision.Target)}
-	if decision.Candidates != nil {
-		result.Candidates = make([]schedulerReadCandidate, len(decision.Candidates))
-		for i := range decision.Candidates {
-			result.Candidates[i] = schedulerReadCandidate{&decision.Candidates[i], e.instances(decision.Candidates[i].Instances)}
-		}
-	}
-	return result
+	return &schedulerReadDecision{SchedulerDecision: decision, Keep: e.candidate(&decision.Keep), Target: e.candidate(decision.Target)}
 }
 
 type schedulerReadOption struct {

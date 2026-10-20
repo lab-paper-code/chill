@@ -10,7 +10,8 @@ import (
 // StaticRoutingTarget selects only current physical, measured, ready instances.
 // It declares a manual distribution for disabled Workloads; every Workload the
 // map omits keeps its current distribution, and an entry without a positive
-// weight removes that Workload's routes. It does not enumerate a decision.
+// weight removes that Workload's routes. An instance serves one Workload, so a
+// final distribution that routes two Workloads to one instance is rejected.
 func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[string]int, autonomous []string, id string) (SchedulerCandidate, error) {
 	target := SchedulerCandidate{ID: id, Nodes: snapshot.Nodes, Routing: map[string]map[string]int32{}}
 	definitions := map[string]*Definition{}
@@ -26,18 +27,19 @@ func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[stri
 		}
 	}
 	instances := map[string]SchedulerInstance{}
-	bind := func(physical, uid string) {
+	bind := func(physical, uid string) error {
 		instance, exists := instances[physical]
-		if !exists {
-			for _, actual := range snapshot.Instances {
-				if actual.ID == physical {
-					instance = actual
-					instance.WorkloadUIDs = nil
-				}
+		if exists && instance.WorkloadUID != uid {
+			return fmt.Errorf("staticRouting routes Workloads %q and %q to instance %q; an instance serves one Workload", instance.WorkloadUID, uid, physical)
+		}
+		for _, actual := range snapshot.Instances {
+			if actual.ID == physical {
+				instance = actual
 			}
 		}
-		instance.WorkloadUIDs = append(instance.WorkloadUIDs, uid)
+		instance.WorkloadUID = uid
 		instances[physical] = instance
+		return nil
 	}
 	for _, definition := range snapshot.Workloads {
 		weights, declared := routing[definition.UID]
@@ -48,7 +50,9 @@ func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[stri
 			}
 			for physical, weight := range target.Routing[definition.UID] {
 				if weight > 0 {
-					bind(physical, definition.UID)
+					if err := bind(physical, definition.UID); err != nil {
+						return target, err
+					}
 				}
 			}
 			continue
@@ -72,7 +76,9 @@ func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[stri
 			if weight == 0 {
 				continue
 			}
-			bind(physical, definition.UID)
+			if err := bind(physical, definition.UID); err != nil {
+				return target, err
+			}
 			target.Routing[definition.UID][physical] = int32(weight)
 		}
 	}

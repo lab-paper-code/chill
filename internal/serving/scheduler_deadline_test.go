@@ -30,14 +30,13 @@ func TestReplayCompletionIsNativeCompletionPlusMargin(t *testing.T) {
 				r.ReceivedAt = r.ReceivedAt.Add(-r.RunningElapsed)
 			}
 			snap.Outstanding = []SchedulerRequest{r}
-			decision := schedulerEvaluateForTest(t, s, snap)
-			e := schedulerRequireEstimate(t, decision.Keep, d.UID)
+			keep := schedulerKeepForTest(t, s, snap)
+			e := schedulerRequireEstimate(t, keep, d.UID)
 			if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(want) || e.PredictedOutcomes["timeout"] != 0 {
-				t.Fatalf("%s sender=%g must add the full margin to native completion: want %s got %+v reasons=%v", phase, senderMS, want, e, decision.Keep.Reasons)
+				t.Fatalf("%s sender=%g must add the full margin to native completion: want %s got %+v reasons=%v", phase, senderMS, want, e, keep.Reasons)
 			}
 			snap.Outstanding[0].NativeSenderElapsedMS = nil
-			missing := schedulerEvaluateForTest(t, s, snap)
-			schedulerRequireReason(t, missing.Keep.Reasons, "MissingNativeSenderContext")
+			schedulerRequireReason(t, schedulerKeepForTest(t, s, snap).Reasons, "MissingNativeSenderContext")
 		}
 	}
 }
@@ -51,17 +50,16 @@ func TestSchedulerReplayDeadlineModesPreserveTimeoutPopulation(t *testing.T) {
 			snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = mode
 			zero := 0.0
 			snap.Outstanding = []SchedulerRequest{{ID: "infeasible", Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
-			decision := schedulerEvaluateForTest(t, s, snap)
-			e := schedulerRequireEstimate(t, decision.Keep, d.UID)
-			if decision.Keep.ExpectedJoules == nil || decision.Target == nil || decision.Status != schedulerStatusOverload {
-				t.Fatalf("supported mode must be evaluable, not missing evidence or caller expiry: %+v", decision)
+			keep := schedulerKeepForTest(t, s, snap)
+			e := schedulerRequireEstimate(t, keep, d.UID)
+			if keep.ExpectedJoules == nil || keep.Status != schedulerStatusOverload {
+				t.Fatalf("supported mode must be evaluable, not missing evidence or caller expiry: %+v", keep)
 			}
 			if mode == firstfloor.DeadlineDrop {
-				if e.Samples != 0 || e.ExpectedNanos != nil || e.PredictedOutcomes["timeout"] != s.Replays || e.PredictedOutcomes["completed"] != 0 || math.Abs(schedulerReplayForTest(s, snap, decision.Keep).energy-1.2) > 1e-9 {
-					t.Fatalf("drop must not execute or contribute successful latency: %+v", decision.Keep)
+				if e.Samples != 0 || e.ExpectedNanos != nil || e.PredictedOutcomes["timeout"] != 1 || e.PredictedOutcomes["completed"] != 0 || math.Abs(*keep.ExpectedJoules-1.2) > 1e-9 {
+					t.Fatalf("drop must not execute or contribute successful latency: %+v", keep)
 				}
-				schedulerRequireReason(t, decision.Keep.Reasons, "SLODeadlineDrops")
-			} else if e.Samples != s.Replays || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(10*time.Millisecond) || e.PredictedOutcomes["timeout"] != 0 {
+			} else if e.Samples != 1 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(10*time.Millisecond) || e.PredictedOutcomes["timeout"] != 0 {
 				t.Fatalf("keep/defer must execute despite SLO, without expiring caller: %+v", e)
 			}
 		})

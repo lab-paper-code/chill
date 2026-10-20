@@ -26,12 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	schedulerPolicyFeasible    = "Feasible"
-	schedulerPolicyProjected   = "ProjectedWorkHistory"
-	schedulerPolicySLOResponse = "ActualSLOSafetyResponse"
-	controlPlaneLabel          = "node-role.kubernetes.io/control-plane"
-)
+const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 
 type SchedulerControllerConfig struct {
 	Settings      serving.SchedulerSettings
@@ -62,31 +57,23 @@ type actionRun struct {
 	cancel  context.CancelFunc
 	started time.Time
 }
-type schedulerWorkState struct {
-	startedAt      time.Time
-	startReason    string
-	history        serving.SchedulerWorkHistory
-	configurations map[string]serving.SchedulerCandidate
-}
 type SchedulerController struct {
-	mu              sync.Mutex
-	tickMu          sync.Mutex
-	store           *Store
-	kube            kubernetes.Interface
-	runtime         *serving.Runtime
-	observer        *Observer
-	operations      *Operations
-	observationLog  *serving.ObservationLog
-	capacity        *serving.CapacityTable
-	config          SchedulerControllerConfig
-	state           SchedulerControllerState
-	runs            map[string]*actionRun
-	goal            *serving.SchedulerCandidate
-	work            *schedulerWorkState
-	workStartReason string
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
+	mu             sync.Mutex
+	tickMu         sync.Mutex
+	store          *Store
+	kube           kubernetes.Interface
+	runtime        *serving.Runtime
+	observer       *Observer
+	operations     *Operations
+	observationLog *serving.ObservationLog
+	capacity       *serving.CapacityTable
+	config         SchedulerControllerConfig
+	state          SchedulerControllerState
+	runs           map[string]*actionRun
+	goal           *serving.SchedulerCandidate
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
 }
 
 // NewSchedulerController configures control without taking ownership of routing.
@@ -119,10 +106,6 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	c.mu.Lock()
 	before := len(c.config.Settings.AutonomousWorkloads) > 0
 	previousStatic := c.config.StaticRouting
-	if !reflect.DeepEqual(c.config.Settings, config.Settings) {
-		c.work = nil
-		c.workStartReason = "SettingsChanged"
-	}
 	c.config = config
 	c.mu.Unlock()
 	after := len(config.Settings.AutonomousWorkloads) > 0
@@ -237,7 +220,6 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	goal := c.goal
 	c.mu.Unlock()
 	started := time.Now()
-	interval, intervalErr := c.workInterval(now, config.Settings)
 	snapshot, err := c.capture(ctx, now, config)
 	if err != nil {
 		return serving.SchedulerDecision{}, err
@@ -247,11 +229,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	}
 	snapshot = c.reconcileSnapshot(snapshot, goal, snapshot.At, config.Settings.ObservationWindow)
 	c.capacity.Ensure(c.ctx, config.Settings, snapshot)
-	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot)
-	if err != nil {
-		return serving.SchedulerDecision{}, err
-	}
-	work, decision, err := c.applyWorkPolicy(ctx, snapshot, decision, interval, intervalErr)
+	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, c.capacity.Rows())
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
@@ -275,7 +253,6 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	c.work = work
 	// A decision without a target still lowers available Nodes (Fixed actions).
 	if decision.Target != nil {
 		c.launch(*decision.Target, config)
@@ -285,127 +262,6 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		c.launch(keep, config)
 	}
 	return decision, nil
-}
-
-func (c *SchedulerController) workInterval(end time.Time, settings serving.SchedulerSettings) (*serving.LoadWindow, error) {
-	if settings.Algorithm != serving.SchedulerAlgorithmProjectedWorkHistory || c.work == nil || end.Sub(c.work.history.Through) < settings.ObservationWindow {
-		return nil, nil
-	}
-	interval, err := c.observationLog.SchedulerHistoryWindow(c.work.history.Through, end)
-	if err != nil {
-		return nil, err
-	}
-	return &interval, nil
-}
-
-func (c *SchedulerController) applyWorkPolicy(ctx context.Context, snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision, interval *serving.LoadWindow, intervalErr error) (*schedulerWorkState, serving.SchedulerDecision, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, serving.SchedulerDecision{}, err
-	}
-	if decision.Settings.Algorithm != serving.SchedulerAlgorithmProjectedWorkHistory {
-		return c.work, decision, nil
-	}
-	policy := &serving.SchedulerPolicyDecision{}
-	decision.Policy = policy
-	policy.Assumption = "non-overlapping receipt intervals; each counterfactual starts with settled hypothetical capacity and empty queues; directed whole-pool kernels replace operation baseline once; projected work is not physical queue history or a classical WFA guarantee"
-	currentKey, err := serving.SchedulerLogicalConfigKey(snapshot, decision.Keep)
-	policy.CurrentKey = currentKey
-	if err != nil {
-		policy.PendingReason = err.Error()
-		return c.work, pendingWorkSelection(snapshot, decision), nil
-	}
-	if !slices.ContainsFunc(decision.Workloads, func(w serving.SchedulerWorkloadState) bool { return w.State == serving.WorkloadControlled }) {
-		policy.Selection = "NoControlledWorkload"
-		return c.work, decision, nil
-	}
-	work := c.work
-	if work == nil {
-		reason := c.workStartReason
-		if reason == "" {
-			reason = "ProcessStart"
-		}
-		work = &schedulerWorkState{startedAt: snapshot.ObservationEnd, startReason: reason, history: serving.SchedulerWorkHistory{Through: snapshot.ObservationEnd, Values: map[string]float64{currentKey: 0}}, configurations: map[string]serving.SchedulerCandidate{currentKey: decision.Keep}}
-	}
-	next := *work
-	next.configurations = make(map[string]serving.SchedulerCandidate, len(work.configurations))
-	for key, configuration := range work.configurations {
-		if err := ctx.Err(); err != nil {
-			return nil, serving.SchedulerDecision{}, err
-		}
-		next.configurations[key] = configuration
-	}
-	policy.StartedAt, policy.StartReason, policy.History = work.startedAt, work.startReason, work.history
-	policy.CandidateKeys = make([]string, len(decision.Candidates))
-	for index, candidate := range decision.Candidates {
-		if err := ctx.Err(); err != nil {
-			return nil, serving.SchedulerDecision{}, err
-		}
-		if candidate.ExpectedJoules == nil {
-			continue
-		}
-		key, keyErr := currentKey, error(nil)
-		if index != 0 {
-			key, keyErr = serving.SchedulerLogicalConfigKey(snapshot, candidate)
-		}
-		if keyErr != nil {
-			continue
-		}
-		policy.CandidateKeys[index] = key
-		if _, exists := next.configurations[key]; !exists && len(next.configurations) >= decision.Settings.MaxCandidates {
-			policy.PendingReason = "RetainedLogicalConfigurationsExceedMaxCandidates"
-			return work, pendingWorkSelection(snapshot, decision), nil
-		}
-		candidate.Actions, candidate.Keep = nil, false
-		next.configurations[key] = candidate
-	}
-	if intervalErr != nil {
-		policy.PendingReason = intervalErr.Error()
-		return &next, pendingWorkSelection(snapshot, decision), nil
-	}
-	if interval != nil {
-		policy.IntervalFrom, policy.IntervalTo = interval.From, interval.To
-		projected := snapshot
-		projected.Arrivals = interval.Arrivals
-		settings := decision.Settings
-		settings.ObservationWindow, settings.Horizon = interval.Duration, interval.Duration
-		policy.Kernels, err = serving.ProjectSchedulerWorkKernels(ctx, settings, projected, next.configurations, work.history.Values)
-		if err != nil {
-			return nil, serving.SchedulerDecision{}, err
-		}
-		advanced, advanceErr := serving.AdvanceSchedulerWorkHistory(work.history, interval.From, interval.To, policy.Kernels)
-		if advanceErr != nil {
-			policy.PendingReason = advanceErr.Error()
-			return &next, pendingWorkSelection(snapshot, decision), nil
-		}
-		next.history = advanced
-		policy.History = advanced
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, serving.SchedulerDecision{}, err
-	}
-	selected, pending := serving.SelectSchedulerWorkCandidate(next.history, decision.Candidates, policy.CandidateKeys)
-	if pending != "" {
-		policy.PendingReason = pending
-		return &next, pendingWorkSelection(snapshot, decision), nil
-	}
-	serving.FinalizeSchedulerTarget(snapshot, &decision, selected)
-	policy.Selection = schedulerPolicyProjected
-	if decision.Target.Status != schedulerPolicyFeasible {
-		policy.Selection = schedulerPolicySLOResponse
-	}
-	return &next, decision, nil
-}
-
-func pendingWorkSelection(snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision) serving.SchedulerDecision {
-	decision.Policy.Selection = "Pending"
-	decision.Reasons = append(decision.Reasons, "ProjectedWorkHistoryPending:"+decision.Policy.PendingReason)
-	if decision.Keep.Status == schedulerPolicyFeasible {
-		serving.FinalizeSchedulerTarget(snapshot, &decision, 0)
-		decision.Policy.Selection = "KeepWhileHistoryPending"
-	} else if decision.Target != nil {
-		decision.Policy.Selection = schedulerPolicySLOResponse
-	}
-	return decision
 }
 func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, observationWindow time.Duration) serving.SchedulerSnapshot {
 	c.mu.Lock()
@@ -572,23 +428,13 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			s.Options = append(s.Options, serving.SchedulerOption{Instance: instance, CompatibleUIDs: compatible})
 		}
 	}
-	bindInstanceFacts(&s, physical, config.Meters)
+	bindProfileMeters(&s, config.Meters)
 	return s, nil
 }
 
-func bindInstanceFacts(s *serving.SchedulerSnapshot, physical map[string]serving.InstanceState, meters []MeterDeclaration) {
+func bindProfileMeters(s *serving.SchedulerSnapshot, meters []MeterDeclaration) {
 	for index := range s.Instances {
-		instance := &s.Instances[index]
-		state := physical[instance.ID]
-		instance.ArrivalAges = map[string][]time.Duration{}
-		if state.Native != nil {
-			for uid, ages := range state.Native.ArrivalAgesMS {
-				for _, age := range ages {
-					instance.ArrivalAges[uid] = append(instance.ArrivalAges[uid], time.Duration(age*float64(time.Millisecond)))
-				}
-			}
-		}
-		bindProfileMeter(instance, meters)
+		bindProfileMeter(&s.Instances[index], meters)
 	}
 	for index := range s.Options {
 		bindProfileMeter(&s.Options[index].Instance, meters)
@@ -663,8 +509,14 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			if e == nil {
 				instance.Weight = int32(weight)
 			}
+			// An instance serves one Workload; a shared one makes the decision wait.
 			for _, w := range state.Workloads {
-				instance.WorkloadUIDs = append(instance.WorkloadUIDs, w.UID)
+				if instance.WorkloadUID == "" || w.UID < instance.WorkloadUID {
+					instance.WorkloadUID = w.UID
+				}
+			}
+			if len(state.Workloads) > 1 {
+				s.Reasons = append(s.Reasons, serving.SchedulerSharedInstance+":"+instance.ID)
 			}
 			s.Instances = append(s.Instances, instance)
 			continue

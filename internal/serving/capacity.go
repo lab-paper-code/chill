@@ -260,25 +260,26 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	node.PowerMode, node.Ready, node.Measurement, node.Reasons, node.ObservedAt = o.Instance.Profile.Condition.PowerMode, true, false, nil, at
 	instance := o.Instance
 	instance.ID, instance.TargetID, instance.OwnerWorkloadUID = "capacity", "", ""
-	instance.WorkloadUIDs, instance.Ready, instance.Stopped = []string{w.UID}, true, false
-	instance.Weight, instance.ObservedAt, instance.ArrivalAges = 1, at, nil
+	instance.WorkloadUID, instance.Ready, instance.Stopped = w.UID, true, false
+	instance.Weight, instance.ObservedAt = 1, at
 	snapshot := SchedulerSnapshot{
 		At: at, ObservationEnd: at, Workloads: []*Definition{w}, Nodes: []SchedulerNode{node},
 		Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{w.UID: {instance.ID: 1}},
 		Arrivals: arrivals, Options: []SchedulerOption{o}, Baselines: b.baselines,
 	}
 	settings := b.settings
-	settings.Algorithm, settings.AutonomousWorkloads = SchedulerAlgorithmFixedHorizon, nil
+	settings.AutonomousWorkloads = nil
 	settings.ObservationWindow, settings.Horizon, settings.MaxObservationAge = span, span, time.Hour
-	settings.Replays, settings.Seed, settings.MaxReplayRequests = 1, int64(seed), n+1
-	decision, err := EvaluateScheduler(ctx, settings, snapshot)
+	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
+	// An empty compared set counts no energy, so no Node baseline is needed.
+	estimate, err := schedulerReplayEstimate(ctx, settings, snapshot, keep, uint64(seed), map[NodeReference]bool{})
 	if err != nil {
 		return 0, false, err
 	}
-	if len(decision.Keep.Reasons) != 0 {
-		return 0, false, fmt.Errorf("capacity replay: %s", strings.Join(decision.Keep.Reasons, ", "))
+	if len(estimate.Reasons) != 0 {
+		return 0, false, fmt.Errorf("capacity replay: %s", strings.Join(estimate.Reasons, ", "))
 	}
-	for _, e := range decision.Keep.SLO {
+	for _, e := range estimate.SLO {
 		if e.UID != w.UID || e.ExpectedNanos == nil {
 			continue
 		}

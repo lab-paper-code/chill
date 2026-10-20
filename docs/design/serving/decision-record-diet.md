@@ -38,16 +38,15 @@ arrival × `Definition`이다.
 
 | 대상 | 저장 형태 |
 |---|---|
-| `keep`, `target` | 후보 전체. 인스턴스는 `profileID`만 담는다 |
-| `candidates` | 평가 순서의 요약 `{id, keep, status, expectedJoules, worstExceedance, reasons, actions}`. keep과 target의 본문은 `keep`, `target` 필드에 있고 목록에서는 `id`로 대응한다. `policy.candidateKeys`와 index가 맞는다 |
-| `policy` | `kernels`를 뺀 나머지. 진행한 결과는 `history`에 남는다 |
-| `evaluationElapsedNanos` | Tick의 판단 시작(이력 구간 계산과 capture 포함)부터 판단 확정까지의 monotonic 경과 |
+| `keep`, `target` | 후보 전체. 인스턴스는 `profileID`만 담는다. target이 keep과 같으면 target은 `{id, keep}`만 담는다 |
+| `capacity` | 판단의 `decision.capacity` 전체(비교 기간, Workload별 κ 합과 판정, 노드 계획) |
+| `evaluationElapsedNanos` | Tick의 capture부터 판단 확정까지의 monotonic 경과 |
 | snapshot | 판단마다 저장한다. `arrivals`는 빼고, 창 경계와 개수는 `search`의 `windowStart`, `windowEnd`, `received`, `accepted`, `computeInputs`, `loads`에 있다 |
 | `outstanding[]` | `definition` 대신 `definitionID`(`Definition.Identity()`). 정의 본문은 snapshot `workloads`에 있다 |
-| replay 입력 | 노드와 인스턴스의 `observedAt`, 인스턴스의 `arrivalAges`, 동작의 `elapsedNanos`, `routingCredits`를 원값으로 유지한다 |
+| snapshot 원값 | 노드와 인스턴스의 `observedAt`, 인스턴스의 `workloadUID`, 동작의 `elapsedNanos`, `routingCredits`를 원값으로 유지한다 |
 
 이력 조회(`GET /api/v1/observations/scheduler`)와 Dashboard 이력, A/B 비교는 같은 route로 이 형태를 읽는다. Dashboard는
-요약 후보에 없는 필드를 비어 있는 값으로 표시하고, 처리 중 요청의 정의는 `definitionID`로 표시한다.
+처리 중 요청의 정의를 `definitionID`로 표시한다.
 
 2장과 같은 규모에서 저장 기록 1건은 약 68KB다(`TestSchedulerRecordStoresCompactDecision`). 10초 주기에서 시간당 약
 25MB다.
@@ -62,9 +61,9 @@ arrival × `Definition`이다.
 
 | 대상 | 검사 |
 |---|---|
-| 크기와 요약 | 2장 규모 기록이 100KiB 이하, 요약이 `id`, `status`, `expectedJoules`, `worstExceedance`, `actions`를 유지하고 본문 필드 없음 |
-| 이력 읽기 | 저장 기록이 `SchedulerObservationPage`로 읽히고 keep과 target이 전체 후보와 `profileID`를 담음, `kernels` 없음 |
-| snapshot | `arrivals` 없음, `outstanding`의 `definitionID`, `arrivalAges` 원값 |
+| 크기와 왕복 | E1 규모 기록이 135 KiB 이하이고 `capacity`가 그대로 왕복함(`TestSchedulerRecordStoresCompactDecision`) |
+| 이력 읽기 | 저장 기록이 `SchedulerObservationPage`로 읽히고 keep과 target이 전체 본문과 `profileID`를 담음 |
+| snapshot | `arrivals` 없음, `outstanding`의 `definitionID`, 인스턴스의 `workloadUID` |
 | 판단 시간 | Tick 판단의 `evaluationElapsedNanos`가 양수 |
 | Dashboard | `make dashboard-check` |
 

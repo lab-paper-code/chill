@@ -107,7 +107,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 		id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
 		spec := sdk.Spec{Endpoint: "http://" + service.Spec.ClusterIP + ":8080", ModelName: cfg.Model}
 		instance := serving.SchedulerInstance{ID: id, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile,
-			WorkloadUIDs: []string{definition.UID}, MaxBatch: 1, Capacity: 4, MaxWait: time.Millisecond}
+			WorkloadUID: definition.UID, MaxBatch: 1, Capacity: 4, MaxWait: time.Millisecond}
 		target.Instances = append(target.Instances, instance)
 		ready = append(ready, serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: instance.Node, Profile: profile.ID, Ready: true, Native: &state},
 			Profile: &profile, Weight: 1, Capacity: 4,
@@ -246,7 +246,7 @@ func TestRoutePersistsAppliedDistributionOnPods(t *testing.T) {
 	operations, target, pods := routeAcknowledgmentFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	routed := `{"` + target.Instances[0].WorkloadUIDs[0] + `":1}`
+	routed := `{"` + target.Instances[0].WorkloadUID + `":1}`
 	if err := operations.persistRouting(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestStopAndDrainPersistWithdrawnRouting(t *testing.T) {
 	operations, target, pods := routeAcknowledgmentFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	routed := `{"` + target.Instances[0].WorkloadUIDs[0] + `":1}`
+	routed := `{"` + target.Instances[0].WorkloadUID + `":1}`
 	if err := operations.persistRouting(ctx, ""); err != nil {
 		t.Fatal(err)
 	}

@@ -40,7 +40,7 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	to := from.Add(10 * time.Second)
 	node := serving.NodeReference{Name: "node", UID: "node-uid"}
 	source := metricobserver.SourceIdentity{Kind: "edge-metrics", Endpoint: "http://meter/metrics", Metric: "wall_watts"}
-	instance := serving.SchedulerInstance{ID: "i", Node: node, Ready: true, WorkloadUIDs: []string{"w"}}
+	instance := serving.SchedulerInstance{ID: "i", Node: node, Ready: true, WorkloadUID: "w"}
 	snapshot := serving.SchedulerSnapshot{At: from.Add(-time.Second), Instances: []serving.SchedulerInstance{instance}}
 	if err := log.SchedulerRecord(serving.SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
 		t.Fatal(err)

@@ -409,13 +409,6 @@ func TestObservationGapBeforeLocalRetention(t *testing.T) {
 	if err != nil || load.GapUntil == nil || !load.GapUntil.Equal(start) {
 		t.Fatalf("load gap: %+v %v", load, err)
 	}
-	var domain *Error
-	if _, err := observationLog.SchedulerHistoryWindow(early, early.Add(time.Hour)); !errors.As(err, &domain) || domain.Code != "ObservationGap" {
-		t.Fatalf("history before retention: %v", err)
-	}
-	if _, err := observationLog.SchedulerHistoryWindow(start, start.Add(time.Hour)); err != nil {
-		t.Fatalf("history after retention: %v", err)
-	}
 	power, err := observationLog.OperatingPower(early, early.Add(time.Hour), nil, 10)
 	if err != nil || power.GapUntil == nil || power.Complete || !strings.Contains(strings.Join(power.Reasons, " "), "retained locally only") {
 		t.Fatalf("power gap: %+v %v", power, err)

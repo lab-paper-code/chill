@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -60,7 +61,7 @@ func TestRuntimeRestartKeepsPersistedRouting(t *testing.T) {
 func TestDisableSchedulerRoutingKeepsAppliedDistribution(t *testing.T) {
 	r, i, want := routingRuntime(t, nil)
 	r.EnableSchedulerRouting()
-	i.WorkloadUIDs = []string{"w1"}
+	i.WorkloadUID = "w1"
 	if err := r.ApplySchedulerTarget(SchedulerCandidate{ID: "applied", Instances: []SchedulerInstance{i}, Routing: want}); err != nil {
 		t.Fatal(err)
 	}
@@ -97,40 +98,11 @@ func TestSchedulerOutstandingUsesCurrentReadTimeAfterCaptureIO(t *testing.T) {
 		t.Errorf("capture I/O was omitted from request age/lifetime: elapsed=%s remaining=%v; want %s/%s",
 			request.Elapsed, request.RemainingLifetime, wantElapsed, wantRemaining)
 	}
-	decision := schedulerEvaluateForTest(t, settings, snapshot)
-	estimate := schedulerRequireEstimate(t, decision.Keep, d.UID)
+	estimate := schedulerRequireEstimate(t, schedulerKeepForTest(t, settings, snapshot), d.UID)
 	wantCompletion := float64(wantElapsed) + snapshot.Instances[0].Profile.Batches[0].DurationNanos[0]
 	if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != wantCompletion ||
 		estimate.NormalizedExceedance <= 0 {
 		t.Fatalf("decision concealed already elapsed SLO time: %+v; want completion=%g", estimate, wantCompletion)
-	}
-}
-
-func TestReplayArrivalHistoryAgesFromNativeObservation(t *testing.T) {
-	_, snapshot := schedulerFixture()
-	d := snapshot.Workloads[0]
-	snapshot.At = snapshot.At.Add(3 * time.Second)
-	snapshot.Instances[0].ArrivalAges = map[string][]time.Duration{
-		d.UID: {10 * time.Millisecond, 20 * time.Millisecond},
-	}
-	arrival := &schedulerReplayRequest{
-		source: SchedulerRequest{
-			ID: "after-capture", Definition: d, Instance: "i1", ReceivedAt: snapshot.At,
-		},
-		identity:   d.Identity(),
-		dispatched: true,
-	}
-	state := schedulerReplayState{
-		snap: snapshot, c: SchedulerCandidate{Keep: true, Instances: snapshot.Instances},
-		requests: []*schedulerReplayRequest{arrival},
-	}
-	state.initializeInstances()
-	state.admitArrivals()
-	state.receiveNative()
-	rate := state.nativeRequestState(state.byID["i1"], arrival).ArrivalRate
-	wantRate := float64(time.Second) / float64(3*time.Second+10*time.Millisecond)
-	if rate != wantRate {
-		t.Fatalf("policy arrival rate omitted native observation age: got %g, want %g", rate, wantRate)
 	}
 }
 
@@ -305,8 +277,7 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	snapshot.Instances[0].ObservedAt = snapshot.At
 	current := r.SchedulerInputs(func() time.Time { return snapshot.At })
 	snapshot.At, snapshot.Outstanding = current.At, current.Outstanding
-	decision := schedulerEvaluateForTest(t, settings, snapshot)
-	estimate := schedulerRequireEstimate(t, decision.Keep, d.UID)
+	estimate := schedulerRequireEstimate(t, schedulerKeepForTest(t, settings, snapshot), d.UID)
 	if want := float64(call.exchangeFinishedAt.Sub(received) + 100*time.Millisecond); estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != want {
 		t.Fatalf("completion margin must start at exchange completion, not the early SDK callback: %+v want %v", estimate, want)
 	}
@@ -555,79 +526,51 @@ func TestControlledRoutingKeepsNewWorkloadQueuedAfterInstanceRediscovery(t *test
 	}
 }
 
-func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T) {
-	settings, snapshot := schedulerFixture()
+// The replay routes each Workload's requests over its own instances exactly
+// as the runtime does, for keep, a re-weighted target, prepared physical
+// identities and retained or reset route credits.
+func TestSchedulerReplayMatchesPerWorkloadDistribution(t *testing.T) {
+	_, snapshot := schedulerFixture()
 	second := *snapshot.Workloads[0]
 	second.Name, second.UID = "second-workload", "w2"
 	snapshot.Workloads = append(snapshot.Workloads, &second)
 	first := snapshot.Instances[0]
-	first.WorkloadUIDs = []string{snapshot.Workloads[0].UID, second.UID}
 	first.Weight = 3
-	last := schedulerTestCPU(first)
-	last.ID, last.Weight = "i2", 1
-	snapshot.Instances = []SchedulerInstance{first, last}
-	snapshot.Routing = map[string]map[string]int32{"w1": {"i2": 1}, "w2": {"i1": 3, "i2": 1}}
-	settings.AutonomousWorkloads = nil
-	controlled := map[string]bool{"w1": true, "w2": true}
-	keep, _ := schedulerEnumerateForTest(t, settings, snapshot)
-	t.Run("keep", func(t *testing.T) {
-		assertSchedulerCandidateDistribution(t, snapshot, keep[0], [2]int{0, 6}, "")
-	})
-	for _, routing := range []bool{false, true} {
-		settings.Controls.Routing = routing
-		e := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, controlled: controlled, common: snapshot.Nodes, seen: map[string]bool{}}
-		e.emit(snapshot.Instances)
-		expected := [][2]int{{0, 6}}
-		name := "routing-disabled"
-		if routing {
-			name = "routing-enabled"
-			expected = [][2]int{{6, 6}, {8, 6}, {0, 6}, {6, 8}, {6, 0}}
-		}
-		if len(e.result) != len(expected) {
-			t.Fatalf("missing distribution alternatives: got %d, want %d", len(e.result), len(expected))
-		}
-		for n, candidate := range e.result {
-			t.Run(name+"/"+candidate.ID, func(t *testing.T) {
-				assertSchedulerCandidateDistribution(t, snapshot, candidate, expected[n], "")
-			})
-		}
+	other := schedulerTestCPU(first)
+	other.ID, other.Weight = "i2", 1
+	third := other
+	third.ID, third.WorkloadUID = "i3", second.UID
+	snapshot.Instances = []SchedulerInstance{first, other, third}
+	snapshot.Routing = map[string]map[string]int32{"w1": {"i1": 3, "i2": 1}, "w2": {"i3": 1}}
+	candidate := func(w1 map[string]int32, instances []SchedulerInstance) SchedulerCandidate {
+		routing := map[string]map[string]int32{"w1": w1, "w2": {instances[2].ID: 1}}
+		return SchedulerCandidate{ID: "target", Nodes: snapshot.Nodes, Instances: instances, Routing: routing}
 	}
-	prepared := append([]SchedulerInstance(nil), snapshot.Instances...)
+	t.Run("keep", func(t *testing.T) {
+		assertSchedulerCandidateDistribution(t, snapshot, candidate(map[string]int32{"i1": 3, "i2": 1}, snapshot.Instances), [2]int{6, 0}, "")
+	})
+	t.Run("re-weighted", func(t *testing.T) {
+		assertSchedulerCandidateDistribution(t, snapshot, candidate(map[string]int32{"i1": 1, "i2": 1}, snapshot.Instances), [2]int{4, 0}, "")
+	})
+	prepared := slices.Clone(snapshot.Instances)
 	for n := range prepared {
 		profile := *prepared[n].Profile
 		profile.ID += "-prepared"
 		prepared[n].Profile = &profile
 		prepared[n].ID += "-slot"
 	}
-	settings.Controls.Routing = false
-	e := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: snapshot, workloads: snapshot.Workloads, controlled: controlled, common: snapshot.Nodes, seen: map[string]bool{}}
-	e.emit(prepared)
 	t.Run("prepared-physical-identities", func(t *testing.T) {
-		assertSchedulerCandidateDistribution(t, snapshot, e.result[0], [2]int{6, 6}, "")
-	})
-	sharedSnapshot := snapshot
-	sharedSnapshot.Instances = []SchedulerInstance{first, last}
-	sharedSnapshot.Instances[0].WorkloadUIDs = []string{"w1"}
-	sharedSnapshot.Instances[1].WorkloadUIDs = []string{"w2"}
-	sharedSnapshot.Routing = map[string]map[string]int32{"w1": {"i1": 3}, "w2": {"i2": 1}}
-	shared := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: sharedSnapshot, workloads: snapshot.Workloads, controlled: controlled, common: snapshot.Nodes, seen: map[string]bool{}}
-	shared.emit([]SchedulerInstance{first})
-	t.Run("new-shared-workload-routing-disabled", func(t *testing.T) {
-		assertSchedulerCandidateDistribution(t, sharedSnapshot, shared.result[0], [2]int{8, 8}, "")
+		assertSchedulerCandidateDistribution(t, snapshot, candidate(map[string]int32{"i1-slot": 3, "i2-slot": 1}, prepared), [2]int{6, 0}, "")
 	})
 	creditSnapshot := snapshot
-	creditSnapshot.Routing = map[string]map[string]int32{"w1": {"i2": 1}, "w2": {"i1": 1, "i2": 3}}
-	for _, routing := range []bool{false, true} {
-		settings.Controls.Routing = routing
-		credits := schedulerEnumeration{ctx: context.Background(), settings: settings, snapshot: creditSnapshot, workloads: snapshot.Workloads, controlled: controlled, common: snapshot.Nodes, seen: map[string]bool{}}
-		credits.emit(snapshot.Instances)
-		expected, name := [2]int{0, 2}, "retained"
-		if routing {
-			expected, name = [2]int{6, 6}, "reset"
-		}
+	creditSnapshot.Routing = map[string]map[string]int32{"w1": {"i1": 1, "i2": 3}, "w2": {"i3": 1}}
+	for name, c := range map[string]struct {
+		w1     map[string]int32
+		counts [2]int
+	}{"retained": {map[string]int32{"i1": 1, "i2": 3}, [2]int{2, 0}}, "reset": {map[string]int32{"i1": 3, "i2": 1}, [2]int{6, 0}}} {
 		for _, state := range []string{"lazy", "initialized"} {
 			t.Run("nonzero-credit/"+name+"/"+state, func(t *testing.T) {
-				assertSchedulerCandidateDistribution(t, creditSnapshot, credits.result[0], expected, state)
+				assertSchedulerCandidateDistribution(t, creditSnapshot, candidate(c.w1, snapshot.Instances), c.counts, state)
 			})
 		}
 	}

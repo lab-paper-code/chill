@@ -33,9 +33,9 @@ import (
 const actorUsername = "operator"
 
 func schedulerSettingsForTest() serving.SchedulerSettings {
-	return serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
-		MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1,
-		MaxInstances: 1, MaxReplayRequests: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 1}
+	return serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
+		MaxObservationAge: time.Second, MaxReplicas: 1,
+		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 1}
 }
 
 type settingsArchive struct{ directory string }
@@ -145,7 +145,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			before := schedulerSettingsForTest()
 			after := before
-			after.Seed = 99
+			after.MaxCPUs++
 			// PUT stores only autonomous UIDs of current Workloads.
 			after.AutonomousWorkloads = tc.autonomous
 			stored := after
@@ -343,12 +343,12 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 		{ID: "missing"},
 	}
 	candidate := serving.SchedulerCandidate{ID: "selected", Instances: instances}
-	decision := serving.SchedulerDecision{Keep: candidate, Target: &candidate, Candidates: []serving.SchedulerCandidate{candidate}}
+	decision := serving.SchedulerDecision{Keep: candidate, Target: &candidate}
 	snapshot := serving.SchedulerSnapshot{Instances: instances, Options: []serving.SchedulerOption{{Instance: instances[0]}}, InProgressTarget: &candidate}
 	event := serving.SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}
 	evidence := newSchedulerReadEvidence()
 	projected := evidence.observations([]serving.SchedulerObservation{event})
-	got := projected[0].Decision.Candidates[0].Instances
+	got := projected[0].Decision.Target.Instances
 	if len(evidence.Profiles) != 2 || got[0].Profile.Ref != got[1].Profile.Ref || got[0].Profile.Ref == got[2].Profile.Ref {
 		t.Fatal("equal evidence was not shared, or differing same-identity evidence was discarded")
 	}

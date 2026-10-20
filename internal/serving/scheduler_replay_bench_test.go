@@ -14,8 +14,9 @@ func BenchmarkSchedulerReplayWindow(b *testing.B) {
 	for _, n := range []int{2000, 8000} {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
 			s, snap := schedulerReplayWindow(n)
+			keep := SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}
 			for range b.N {
-				if _, err := EvaluateScheduler(context.Background(), s, snap); err != nil {
+				if _, err := schedulerReplayEstimate(context.Background(), s, snap, keep, 1, nil); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -25,7 +26,7 @@ func BenchmarkSchedulerReplayWindow(b *testing.B) {
 
 func schedulerReplayWindow(n int) (SchedulerSettings, SchedulerSnapshot) {
 	s, snap := schedulerFixture()
-	s.AutonomousWorkloads, s.Replays, s.MaxReplayRequests = nil, 1, n+1
+	s.AutonomousWorkloads = nil
 	gap := time.Millisecond
 	window := time.Duration(n) * gap
 	s.ObservationWindow, s.Horizon, s.MaxObservationAge = window, window, time.Hour

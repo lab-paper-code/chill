@@ -19,7 +19,7 @@ Workload는 Preprocessor와 Dataset을 참조하고 원시 표본(JPEG, UTF8)을
 | 알고 싶은 것 | 원본 문서 |
 |---|---|
 | Workload·POOL·입력·CRUD·권한·접수·드레인 | [워크로드 관리](workload-management.md) |
-| 판단 입력·후보 replay·SLO/에너지 선택·전환 DAG·제어 불변식 | [스케줄러 구현 설계](scheduler-implementation.md) |
+| 판단 입력, 용량표와 노드 계획 선택, 전환 DAG, 제어 불변식 | [스케줄러 구현 설계](scheduler-implementation.md) |
 | firstfloor typed 요청·IPC·시간·수명·CPU/장치·fixed-batch·baseline·catalog | [실행기와 측정 계약](scheduler-runtime-measurement.md) |
 | scheduler 설정, compact API와 관측 조회 | [설정과 관측 API](scheduler-api.md) |
 | 원시 표본·전처리기와 데이터셋 catalog·여러 모델 파일 산출물·데이터셋 표본 측정 | [이기종 워크로드 구현 설계](heterogeneous-workloads.md) |
@@ -47,15 +47,15 @@ flowchart TD
     D --> E["firstfloor UID·정의별 큐 / 공유 selector"]
     E --> F["persistent runner / 순차 batch 실행"]
     F --> G["요청별 결과·physical 완료·응답 관측"]
-    H["관측 snapshot / 후보 replay / SLO·에너지 판단"] --> I["policy·route·원자 전환 / 실제 ACK·상태 확인"]
+    H["관측 snapshot / 용량표 κ 합 / 노드 계획 선택"] --> I["policy·route·원자 전환 / 실제 ACK·상태 확인"]
     I --> D
 ```
 
 상자는 별도 서비스·CRD·메시지 브로커를 뜻하지 않는다. 요청 진입은 새 구성 계산이나
 raw evidence 다운로드를 기다리지 않고 현재 준비·physical capacity 안에서 분배한다.
 CHILL이 physical instance를 선택하고 EdgeMesh는 해당 단일 목적지로 운반한다.
-한 Pod는 runner 하나와 순차 실행 하나를 제공하며 여러 Workload가 공유할 수 있다.
-공유하더라도 UID·불변 정의·개별 SLO·원래 경과 시간과 물리 점유는 구분한다.
+한 Pod는 runner 하나와 순차 실행 하나를 제공하고 Workload 하나를 맡는다. 같은 모델의 Workload들은 한 노드를
+함께 쓰되 각자 인스턴스를 두며, UID, 불변 정의, 개별 SLO, 원래 경과 시간과 물리 점유를 구분한다.
 
 ## 요구사항과 증거의 권위
 

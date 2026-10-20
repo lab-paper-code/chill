@@ -109,19 +109,6 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 			target := refs.candidate(*d.Target)
 			recorded.Target = &target
 		}
-		// Keep and Target carry the full bodies; the evaluated list keeps summaries.
-		recorded.Candidates = slices.Clone(d.Candidates)
-		for i, c := range d.Candidates {
-			recorded.Candidates[i] = SchedulerCandidate{
-				ID: c.ID, Keep: c.Keep, Status: c.Status, Reasons: c.Reasons, Actions: c.Actions,
-				ExpectedJoules: c.ExpectedJoules, WorstExceedance: c.WorstExceedance,
-			}
-		}
-		if d.Policy != nil {
-			policy := *d.Policy
-			policy.Kernels = nil // Live projection input; History keeps its result.
-			recorded.Policy = &policy
-		}
 		line.Decision = &recorded
 	}
 	if s := event.Snapshot; s != nil {
@@ -349,16 +336,6 @@ type LoadWindow struct {
 // LoadWindow counts each stage whose time, receipt plus stage offset, lies in
 // [from,to), independently of result cohort filters.
 func (l *ObservationLog) LoadWindow(from, to time.Time) (LoadWindow, error) {
-	return l.loadWindow(from, to, false)
-}
-
-// SchedulerHistoryWindow requires the whole receipt interval to lie after both
-// the oldest retained observation and this process's start.
-func (l *ObservationLog) SchedulerHistoryWindow(from, to time.Time) (LoadWindow, error) {
-	return l.loadWindow(from, to, true)
-}
-
-func (l *ObservationLog) loadWindow(from, to time.Time, history bool) (LoadWindow, error) {
 	result := LoadWindow{From: from, To: to, Duration: to.Sub(from), Population: "all ingress receipts; computable demand separately marked after authorization and input validation; stage time [from,to); one request = one input"}
 	if from.IsZero() || !from.Before(to) {
 		return result, failure("InvalidQuery", "positive explicit load window is required")
@@ -369,9 +346,6 @@ func (l *ObservationLog) loadWindow(from, to time.Time, history bool) (LoadWindo
 	}
 	defer read.close()
 	result.GapUntil = read.gap(from)
-	if history && (result.GapUntil != nil || from.Before(l.started)) {
-		return result, failure("ObservationGap", "history interval starts before retained observation")
-	}
 	rows, err := l.requestRows(read, func(*requestEnvelope) bool { return true })
 	if err != nil {
 		return result, err
@@ -386,11 +360,7 @@ func (l *ObservationLog) loadWindow(from, to time.Time, history bool) (LoadWindo
 		assigned := row.DispatchedAt != nil && observationInInterval(*row.DispatchedAt, from, to) || in(row, row.DispatchedNanos)
 		completed := row.Outcome == outcomeCompleted && in(row, row.ElapsedNanos)
 		if received {
-			arrival, err := requestArrival(row, read.definitions, history)
-			if err != nil {
-				return result, err
-			}
-			result.Arrivals = append(result.Arrivals, arrival)
+			result.Arrivals = append(result.Arrivals, requestArrival(row, read.definitions))
 		}
 		if !received && !accepted && !assigned && !completed {
 			continue
@@ -432,20 +402,12 @@ func (l *ObservationLog) loadWindow(from, to time.Time, history bool) (LoadWindo
 	return result, nil
 }
 
-// requestArrival is a received request as the scheduler replays it. History
-// requires a definition for computable demand and a class for every receipt.
-func requestArrival(row *RequestRow, definitions map[string]*Definition, history bool) (SchedulerArrival, error) {
-	arrival := SchedulerArrival{
+// requestArrival is a received request as the scheduler counts it.
+func requestArrival(row *RequestRow, definitions map[string]*Definition) SchedulerArrival {
+	return SchedulerArrival{
 		ID: row.RequestID, At: row.ReceivedAt, WorkloadUID: row.WorkloadUID, Definition: definitions[row.DefinitionID],
 		Lifetime: time.Duration(row.LifetimeNanos), Accepted: row.accepted(), Compute: row.ValidatedNanos != nil || row.accepted(), Outcome: row.Outcome,
 	}
-	if history && arrival.Definition == nil && arrival.Compute {
-		return arrival, failure("IncompleteObservation", "history receipt %s has no immutable definition", row.RequestID)
-	}
-	if history && !arrival.Compute && row.Outcome == "" {
-		return arrival, failure("IncompleteObservation", "history receipt %s has no durable demand classification or terminal outcome", row.RequestID)
-	}
-	return arrival, nil
 }
 
 func (l *ObservationLog) SchedulerArrivals(from, to time.Time) ([]SchedulerArrival, error) {

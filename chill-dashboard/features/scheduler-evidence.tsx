@@ -88,7 +88,7 @@ export function SchedulerPowerPage() {
 type ServiceIdentity={uid:string;definition:string}
 function identities(event:SchedulerObservation):ServiceIdentity[] {
   const decision=event.decision
-  const all=[decision?.keep,...(decision?.candidates??[]),decision?.target].flatMap(candidate=>candidate?.slo??[])
+  const all=[decision?.keep,decision?.target].flatMap(candidate=>candidate?.slo??[])
   return all.filter((row,index)=>all.findIndex(item=>item.uid===row.uid&&item.definition===row.definition)===index).map(({uid,definition})=>({uid,definition}))
 }
 function Expected({candidate}:{candidate:SchedulerCandidate|null}) {

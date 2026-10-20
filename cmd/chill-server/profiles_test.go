@@ -241,11 +241,10 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := serving.SchedulerSettings{
-		Algorithm:         serving.SchedulerAlgorithmFixedHorizon,
 		ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
-		MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1,
-		MaxInstances: 1, MaxReplayRequests: 1,
-		CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 2,
+		MaxObservationAge: time.Second, MaxReplicas: 1,
+		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
+		CapacityMinimumRequests: 1, MaxCPUs: 2,
 	}
 	// The native store is unreachable, so listing completed measurements fails.
 	rejected := schedulerConfiguration{Settings: settings}
@@ -339,8 +338,7 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 	config := schedulerTestConfiguration()
 	config.Settings.AutonomousWorkloads = []string{"original-workload-uid"}
 	config.Settings.Controls = serving.SchedulerControls{
-		Placement: true, Resources: true, Replicas: true, Sharing: true,
-		Routing: true, Batching: true, Power: true, Membership: true,
+		Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true,
 	}
 	service := schedulerTestService(t, config)
 	profile := measuredAdoptionProfile()
@@ -414,11 +412,10 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 func schedulerTestConfiguration() schedulerConfiguration {
 	return schedulerConfiguration{
 		Settings: serving.SchedulerSettings{
-			Algorithm:         serving.SchedulerAlgorithmFixedHorizon,
 			ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
-			MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 5, MaxReplicas: 1,
-			MaxInstances: 5, MaxReplayRequests: 1,
-			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 2,
+			MaxObservationAge: time.Second, MaxReplicas: 1,
+			MaxInstances: 5, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
+			CapacityMinimumRequests: 1, MaxCPUs: 2,
 		},
 		CPUInventory: map[string][]int{"rpi": {0, 1, 2, 3}},
 		GPUInventory: map[string][]string{"genesis2": {"GPU-measured"}},

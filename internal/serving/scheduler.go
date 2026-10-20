@@ -10,20 +10,18 @@ import (
 )
 
 // SchedulerSettings separates the observed population from the control cadence
-// and the interval over which every candidate's complete pool cost is compared.
-// AutonomousWorkloads lists the Workload UIDs under autonomous control.
+// and the minimum interval over which every plan's complete pool cost is
+// compared. AutonomousWorkloads lists the Workload UIDs under autonomous control.
+// MaxReplicas, MaxInstances and MaxCPUs gate node plans: a plan holds at most
+// MaxReplicas instances of one Workload and MaxInstances instances in total,
+// each with at most MaxCPUs CPUs.
 type SchedulerSettings struct {
-	Algorithm           string        `json:"algorithm"`
 	ObservationWindow   time.Duration `json:"observationWindowNanos"`
 	ControlInterval     time.Duration `json:"controlIntervalNanos"`
 	Horizon             time.Duration `json:"horizonNanos"`
 	MaxObservationAge   time.Duration `json:"maxObservationAgeNanos"`
-	Seed                int64         `json:"seed"`
-	Replays             int           `json:"replays"`
-	MaxCandidates       int           `json:"maxCandidates"`
 	MaxReplicas         int           `json:"maxReplicas"`
 	MaxInstances        int           `json:"maxInstances"`
-	MaxReplayRequests   int           `json:"maxReplayRequests"`
 	MaxCPUs             int           `json:"maxCPUs"`
 	ServingMemoryBytes  uint64        `json:"servingMemoryBytes"`
 	CompletionMarginMS  float64       `json:"completionMarginMS"`
@@ -41,7 +39,6 @@ type SchedulerControls struct {
 	Placement  bool `json:"placement"`
 	Resources  bool `json:"resources"`
 	Replicas   bool `json:"replicas"`
-	Sharing    bool `json:"sharing"`
 	Routing    bool `json:"routing"`
 	Batching   bool `json:"batching"`
 	Power      bool `json:"power"`
@@ -84,26 +81,26 @@ type SchedulerInstance struct {
 	OwnerWorkloadUID string        `json:"ownerWorkloadUID,omitempty"`
 	Node             NodeReference `json:"node"`
 	// Profile is the catalog body in memory; stored records keep only ProfileID.
-	Profile        *Profile                   `json:"profile,omitempty"`
-	ProfileID      string                     `json:"profileID,omitempty"`
-	WorkloadUIDs   []string                   `json:"workloadUIDs"`
-	Allocation     SchedulerAllocation        `json:"allocation"`
-	Ready          bool                       `json:"ready"`
-	Stopped        bool                       `json:"stopped"`
-	Capacity       int                        `json:"capacity"`
-	Weight         int32                      `json:"weight"`
-	MaxBatch       int                        `json:"maxBatch"`
-	FixedBatchSize int                        `json:"fixedBatchSize,omitempty"` // Strict baseline B; autonomous control never moves it.
-	MaxWait        time.Duration              `json:"maxWaitNanos"`
-	ObservedAt     time.Time                  `json:"observedAt"`
-	ArrivalAges    map[string][]time.Duration `json:"arrivalAgesNanos"`
-	IdleMeter      string                     `json:"idleMeter"`
-	IdleScope      string                     `json:"idleScope"`
+	Profile   *Profile `json:"profile,omitempty"`
+	ProfileID string   `json:"profileID,omitempty"`
+	// WorkloadUID is the one Workload the instance serves; empty when unrouted.
+	WorkloadUID    string              `json:"workloadUID"`
+	Allocation     SchedulerAllocation `json:"allocation"`
+	Ready          bool                `json:"ready"`
+	Stopped        bool                `json:"stopped"`
+	Capacity       int                 `json:"capacity"`
+	Weight         int32               `json:"weight"`
+	MaxBatch       int                 `json:"maxBatch"`
+	FixedBatchSize int                 `json:"fixedBatchSize,omitempty"` // Strict baseline B; autonomous control never moves it.
+	MaxWait        time.Duration       `json:"maxWaitNanos"`
+	ObservedAt     time.Time           `json:"observedAt"`
+	IdleMeter      string              `json:"idleMeter"`
+	IdleScope      string              `json:"idleScope"`
 }
 
 // Options are evidence-bound placements supplied by the catalog, not invented
-// allocations. CompatibleUIDs permits sharing only after the catalog has checked
-// the model, runtime and full input contract for every listed immutable definition.
+// allocations. CompatibleUIDs lists the immutable definitions whose model,
+// runtime and full input contract the catalog checked against the profile.
 type SchedulerOption struct {
 	Instance       SchedulerInstance `json:"instance"`
 	CompatibleUIDs []string          `json:"compatibleUIDs"`
@@ -235,8 +232,8 @@ type SchedulerCandidate struct {
 	Sources         []string                    `json:"sources,omitempty"`
 }
 type SchedulerSearch struct {
+	// Examined counts the node plans built for the decision.
 	Examined      int               `json:"examined"`
-	Truncated     bool              `json:"truncated"`
 	Bounds        SchedulerSettings `json:"bounds"`
 	WindowStart   time.Time         `json:"windowStart"`
 	WindowEnd     time.Time         `json:"windowEnd"`
@@ -245,7 +242,7 @@ type SchedulerSearch struct {
 	ComputeInputs int               `json:"computeInputs"`
 	Population    string            `json:"population"`
 	Loads         []SchedulerLoad   `json:"loads"`
-	// ComparedNodes are the Nodes some candidate changes; ExpectedJoules sums only them.
+	// ComparedNodes are the Nodes with an eligible plan other than keep; ExpectedJoules sums only them.
 	ComparedNodes []NodeReference `json:"comparedNodes"`
 }
 type SchedulerLoad struct {
@@ -273,26 +270,22 @@ type SchedulerDecision struct {
 	Status     string                   `json:"status"`
 	Keep       SchedulerCandidate       `json:"keep"`
 	Target     *SchedulerCandidate      `json:"target"`
-	Candidates []SchedulerCandidate     `json:"candidates"`
 	Reasons    []string                 `json:"reasons"`
 	Settings   SchedulerSettings        `json:"settings"`
 	Search     SchedulerSearch          `json:"search"`
 	Workloads  []SchedulerWorkloadState `json:"workloads"`
 	References []string                 `json:"references"`
-	Policy     *SchedulerPolicyDecision `json:"policy,omitempty"`
-	// EvaluationElapsed is the monotonic Tick time from history work and capture to the decision.
+	Capacity   *SchedulerCapacity       `json:"capacity,omitempty"`
+	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
 }
 
 func (s SchedulerSettings) Validate() error {
-	if s.Algorithm != SchedulerAlgorithmFixedHorizon && s.Algorithm != SchedulerAlgorithmProjectedWorkHistory {
-		return fmt.Errorf("scheduler algorithm must be %q or %q", SchedulerAlgorithmFixedHorizon, SchedulerAlgorithmProjectedWorkHistory)
-	}
 	if s.ObservationWindow <= 0 || s.ControlInterval <= 0 || s.Horizon <= 0 || s.MaxObservationAge <= 0 {
 		return fmt.Errorf("scheduler time intervals must be positive")
 	}
-	if s.Replays <= 0 || s.MaxCandidates < 1 || s.MaxReplicas < 1 || s.MaxInstances < 1 || s.MaxReplayRequests < 1 || s.MaxCPUs < 1 {
-		return fmt.Errorf("scheduler search and replay bounds must be positive")
+	if s.MaxReplicas < 1 || s.MaxInstances < 1 || s.MaxCPUs < 1 {
+		return fmt.Errorf("maxReplicas, maxInstances and maxCPUs must be positive")
 	}
 	if math.IsNaN(s.CompletionMarginMS) || math.IsInf(s.CompletionMarginMS, 0) || s.CompletionMarginMS < 0 {
 		return fmt.Errorf("completionMarginMS must be finite and nonnegative")

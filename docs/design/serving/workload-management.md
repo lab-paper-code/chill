@@ -7,7 +7,7 @@
 실제 검증 범위와 남은 실행 증거는 12장에서 구분한다.
 
 구성 선택과 adaptive SLO 배칭의 요구사항은 [스케줄러 SRS](../../spec/scheduler/SRS.md)를 따른다.
-firstfloor actor와 후보 replay는 같은 실측 SLO·에너지 selector를 사용한다.
+firstfloor actor와 용량표 replay는 같은 실측 SLO·에너지 selector를 사용한다.
 실행기 분담과 실제 전환·원시 관측은 [스케줄러 구현 설계](scheduler-implementation.md)에 기록한다.
 native 원시 입력·전처리 module·persistent runner의 동일 실행 경로로 Serving과 Profiling을 연결한다.
 
@@ -164,7 +164,7 @@ PoolState
 | `internal/serving/httpapi` | 조회와 관리 및 추론 HTTP 경로, 본문 제한과 디코딩, 오류 응답, backend 전달과 응답 전달 관측 |
 | `internal/serving/kube` | Workload와 ModelSpec의 private uncached 저장 및 조회, Kubernetes 권한 검증, 모델 및 profile boundary 연결, 상태 기록과 실제 구성 관측 |
 | `cmd/chill-server` | concrete 객체와 공유 transport의 조립, 설정 로딩과 종료 처리 |
-| 구성 및 전환 경계 | 현재 Node·physical allocation·ready/stop 상태, 후보 replay·whole-pool 비용과 원자 동작 완료 |
+| 구성 및 전환 경계 | 현재 Node·physical allocation·ready/stop 상태, 용량표 κ 합과 노드 계획의 whole-pool 비용, 원자 동작 완료 |
 | `internal/serving/firstfloor` 및 `internal/firstfloor` | frozen context·typed 입력 전달, actual state/progress, UID별 실측 SLO·에너지 배칭·순차 runner |
 
 어댑터는 API와 core를 연결하지만 core가 API, Kubernetes client나 Profiler application을 import하지 않는다.

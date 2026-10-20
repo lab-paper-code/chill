@@ -3,11 +3,9 @@ package serving
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"math/rand/v2"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +26,7 @@ const (
 
 func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	at := time.Unix(100, 0)
-	s := SchedulerSettings{Algorithm: SchedulerAlgorithmFixedHorizon, ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, Horizon: 100 * time.Millisecond, MaxObservationAge: time.Second, Seed: 42, Replays: 3, MaxCandidates: 30, MaxReplicas: 2, MaxInstances: 4, MaxReplayRequests: 100, MaxCPUs: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Sharing: true, Routing: true, Batching: true, Power: true, Membership: true}}
+	s := SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, Horizon: 100 * time.Millisecond, MaxObservationAge: time.Second, MaxReplicas: 2, MaxInstances: 4, MaxCPUs: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
 	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, PowerMode: "fixed", Ready: true, CPUs: []int{0, 1, 2, 3}, MemoryBytes: 10000, ObservedAt: at}
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
@@ -36,7 +34,7 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
 	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", CPU: derivation.CurveCPUContract{Policy: "quota-affinity", PolicyVersion: "v1", Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1, AffinityCPUs: []int{0}}, PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(10 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
-	i := SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUIDs: []string{d.UID}, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
+	i := SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUID: d.UID, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
 	b := NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: schedulerNodeWallScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
 	b.Reference.Size = 1
 	p.Evidence[0].Size = 1
@@ -46,11 +44,11 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 func schedulerRequireEstimate(t *testing.T, c SchedulerCandidate, uid string) SchedulerEstimate {
 	t.Helper()
 	for _, e := range c.SLO {
-		if e.UID == uid {
+		if e.UID == uid || e.Definition == uid {
 			return e
 		}
 	}
-	t.Fatalf("missing UID %s in %+v", uid, c)
+	t.Fatalf("missing UID or definition %s in %+v", uid, c)
 	return SchedulerEstimate{}
 }
 func schedulerRequireReason(t *testing.T, reasons []string, prefix string) {
@@ -62,26 +60,30 @@ func schedulerRequireReason(t *testing.T, reasons []string, prefix string) {
 	}
 	t.Fatalf("missing %s in %v", prefix, reasons)
 }
-func schedulerEvaluateForTest(t testing.TB, settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerDecision {
-	t.Helper()
-	decision, err := EvaluateScheduler(context.Background(), settings, snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return decision
-}
 
-func schedulerEnumerateForTest(t testing.TB, settings SchedulerSettings, snapshot SchedulerSnapshot) ([]SchedulerCandidate, SchedulerSearch) {
+// schedulerTestSeed seeds every replay in these tests.
+const schedulerTestSeed = 42
+
+// schedulerKeepForTest replays the snapshot's keep candidate (continuing an
+// in-progress target) once and returns it with its SLO estimates.
+func schedulerKeepForTest(t testing.TB, settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerCandidate {
 	t.Helper()
-	candidates, search, err := EnumerateScheduler(context.Background(), settings, snapshot)
+	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: schedulerInstanceRouting(context.Background(), snapshot.Workloads, snapshot.Instances)}
+	for uid, routing := range snapshot.Routing {
+		keep.Routing[uid] = routing
+	}
+	if snapshot.InProgressTarget != nil {
+		keep.Actions = schedulerPlan(snapshot, schedulerCurrentTarget(snapshot, *snapshot.InProgressTarget))
+	}
+	keep, err := schedulerReplayEstimate(context.Background(), settings, snapshot, keep, schedulerTestSeed, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return candidates, search
+	return keep
 }
 
 func schedulerReplayForTest(s SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate) schedulerReplayResult {
-	result, err := schedulerReplay(context.Background(), s, snap, c, rand.New(rand.NewPCG(uint64(s.Seed), 0)))
+	result, err := schedulerReplay(context.Background(), s, snap, c, rand.New(rand.NewPCG(schedulerTestSeed, 0)), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -116,24 +118,23 @@ func TestSchedulerWindowPopulationAndZeroSample(t *testing.T) {
 		{ID: "after-cutoff", Definition: d, QueueOrder: 1, ReceivedAt: late,
 			Elapsed: snap.At.Sub(late), Phase: phasePending},
 	}
-	decision := schedulerEvaluateForTest(t, s, snap)
-	if decision.Search.Received != 2 || decision.Search.Accepted != 1 || decision.Search.ComputeInputs != 1 {
-		t.Fatalf("wrong population %+v", decision.Search)
+	search := schedulerSearchPopulation(context.Background(), s, snap)
+	if search.Received != 2 || search.Accepted != 1 || search.ComputeInputs != 1 {
+		t.Fatalf("wrong population %+v", search)
 	}
-	e := schedulerRequireEstimate(t, decision.Keep, d.UID)
-	if e.Samples != 3*s.Replays || e.ExpectedNanos == nil || *e.ExpectedNanos < float64(time.Second) {
+	e := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), d.UID)
+	if e.Samples != 3 || e.ExpectedNanos == nil || *e.ExpectedNanos < float64(time.Second) {
 		t.Fatalf("outstanding frozen timing lost: %+v", e)
 	}
 	snap.Arrivals = nil
 	snap.Outstanding = nil
-	empty := schedulerEvaluateForTest(t, s, snap)
-	e = schedulerRequireEstimate(t, empty.Keep, d.UID)
+	empty := schedulerKeepForTest(t, s, snap)
+	e = schedulerRequireEstimate(t, empty, d.UID)
 	if e.Samples != 0 || e.ExpectedNanos != nil {
 		t.Fatalf("empty percentile must be null: %+v", e)
 	}
-	// A decision sums only ComparedNodes; the replay itself still counts every Node.
-	if joules := schedulerReplayForTest(s, snap, empty.Keep).energy; math.Abs(joules-1.2) > 1e-9 {
-		t.Fatalf("empty serving still consumes physical idle: %+v", empty.Keep)
+	if joules := *empty.ExpectedJoules; math.Abs(joules-1.2) > 1e-9 {
+		t.Fatalf("empty serving still consumes physical idle: %+v", empty)
 	}
 }
 
@@ -162,7 +163,10 @@ func TestSchedulerObservationTimeBounds(t *testing.T) {
 				}
 				reason = "UnknownOrStaleInstance:" + snapshot.Instances[0].ID
 			}
-			decision := schedulerEvaluateForTest(t, settings, snapshot)
+			decision, err := EvaluateScheduler(context.Background(), settings, snapshot, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 			schedulerRequireReason(t, decision.Keep.Reasons, reason)
 			if decision.Target != nil || decision.Keep.ExpectedJoules != nil {
 				t.Fatalf("unknown, future or stale observation became actionable: %+v", decision)
@@ -171,45 +175,41 @@ func TestSchedulerObservationTimeBounds(t *testing.T) {
 	}
 }
 
-func TestSchedulerSharedUIDNonpreemptiveBlockingAndResidual(t *testing.T) {
+// A running batch blocks a queued request of a tighter definition version on
+// the same Workload instance: the conditioned residual, then its own service.
+func TestSchedulerNonpreemptiveBlockingAndResidual(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads = nil
 	s.Horizon = 200 * time.Millisecond
 	a := snap.Workloads[0]
 	b := *a
-	b.UID = "w2"
-	b.Name = schedulerTestOther
+	b.Generation++
 	b.SLO.TargetLatency = 30 * time.Millisecond
-	snap.Workloads = append(snap.Workloads, &b)
-	snap.Instances[0].WorkloadUIDs = append(snap.Instances[0].WorkloadUIDs, b.UID)
+	snap.Workloads = []*Definition{&b}
 	snap.Instances[0].Profile.Batches[0].DurationNanos = []float64{float64(100 * time.Millisecond)}
 	snap.Outstanding = []SchedulerRequest{{ID: "running-a", Definition: a, ReceivedAt: snap.At.Add(-40 * time.Millisecond), Elapsed: 40 * time.Millisecond, Phase: phaseRunning, Instance: "i1", BatchID: "native-7", RunningElapsed: 40 * time.Millisecond}, {ID: "queued-b", Definition: &b, ReceivedAt: snap.At, Phase: "queued", Instance: "i1"}}
 	zero := 0.0
 	snap.Outstanding[0].NativeSenderElapsedMS = &zero
 	snap.Outstanding[1].NativeSenderElapsedMS = &zero
-	decision := schedulerEvaluateForTest(t, s, snap)
-	e := schedulerRequireEstimate(t, decision.Keep, b.UID)
+	keep := schedulerKeepForTest(t, s, snap)
+	e := schedulerRequireEstimate(t, keep, b.Identity())
 	if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(160*time.Millisecond) || e.NormalizedExceedance == 0 {
-		t.Fatalf("cross UID running batch must block B for conditioned 60ms then service 100ms: %+v, reasons=%v", e, decision.Keep.Reasons)
+		t.Fatalf("running batch must block B for conditioned 60ms then service 100ms: %+v, reasons=%v", e, keep.Reasons)
 	}
-	if got := schedulerRequireEstimate(t, decision.Keep, a.UID); got.ExpectedNanos == nil || *got.ExpectedNanos != float64(100*time.Millisecond) {
+	if got := schedulerRequireEstimate(t, keep, a.Identity()); got.ExpectedNanos == nil || *got.ExpectedNanos != float64(100*time.Millisecond) {
 		t.Fatalf("frozen running elapsed lost %+v", got)
 	}
 	snap.Outstanding[0].RunningElapsed = 100 * time.Millisecond
-	pending := schedulerEvaluateForTest(t, s, snap)
-	if pending.Target != nil {
-		t.Fatalf("out-of-range elapsed cannot be zero residual: %+v", pending.Target)
+	pending := schedulerKeepForTest(t, s, snap)
+	if pending.ExpectedJoules != nil {
+		t.Fatalf("out-of-range elapsed cannot be zero residual: %+v", pending)
 	}
-	schedulerRequireReason(t, pending.Keep.Reasons, "RunningElapsedOutsideProfileRange")
+	schedulerRequireReason(t, pending.Reasons, "RunningElapsedOutsideProfileRange")
 }
 
-func TestSchedulerEnergyCountsPhysicalSharedIdleAndInactiveNodesOnce(t *testing.T) {
+func TestSchedulerEnergyCountsPhysicalIdleAndInactiveNodesOnce(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads = nil
-	other := *snap.Workloads[0]
-	other.UID = "w2"
-	snap.Workloads = append(snap.Workloads, &other)
-	snap.Instances[0].WorkloadUIDs = append(snap.Instances[0].WorkloadUIDs, other.UID)
 	n2 := snap.Nodes[0]
 	n2.Node = NodeReference{Name: "node2", UID: "n2"}
 	snap.Nodes = append(snap.Nodes, n2)
@@ -220,7 +220,7 @@ func TestSchedulerEnergyCountsPhysicalSharedIdleAndInactiveNodesOnce(t *testing.
 	b.Watts = 20
 	snap.Baselines = append(snap.Baselines, b)
 	if joules := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}).energy; math.Abs(joules-3.2) > 1e-9 {
-		t.Fatalf("shared model once + whole inactive node once: %g", joules)
+		t.Fatalf("loaded idle once + whole inactive node once: %g", joules)
 	}
 	// A measured coexistence baseline replaces, rather than adds to, derived idle.
 	b = snap.Baselines[0]
@@ -308,47 +308,6 @@ func TestSchedulerPlanSelectsCostByReplayKey(t *testing.T) {
 	}
 }
 
-func TestSchedulerSLOFeasibleBeforeEnergyIncludingTransition(t *testing.T) {
-	s, snap := schedulerFixture()
-	s.Horizon = 200 * time.Millisecond
-	d := snap.Workloads[0]
-	d.SLO.TargetLatency = 50 * time.Millisecond
-	snap.Instances[0].Profile.Batches[0].DurationNanos = []float64{float64(100 * time.Millisecond)}
-	snap.Instances[0].Profile.Batches[0].EnergyPerInputJoules = 0.1
-	snap.Arrivals = []SchedulerArrival{{At: snap.At.Add(-s.ObservationWindow + 20*time.Millisecond), Definition: d, Accepted: true}}
-	node := snap.Nodes[0]
-	node.Node = NodeReference{Name: "node2", UID: "n2"}
-	snap.Nodes = append(snap.Nodes, node)
-	p := *snap.Instances[0].Profile
-	p.ID = "fast"
-	p.NodeName = node.Node.Name
-	p.Condition.NodeUID = node.Node.UID
-	p.Batches = []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(time.Millisecond)}, EnergyPerInputJoules: 5, MemoryBytes: 100}}
-	target := snap.Instances[0]
-	target.ID = "fast-target"
-	target.Node = node.Node
-	target.Profile = &p
-	target.IdleMeter = schedulerTestSecondMeter
-	snap.Options = []SchedulerOption{{Instance: target, CompatibleUIDs: []string{d.UID}}}
-	b := snap.Baselines[0]
-	b.Node = node.Node
-	b.ID = "unloaded-n2"
-	b.Meter = schedulerTestSecondMeter
-	snap.Baselines = append(snap.Baselines, b)
-	snap.Costs = []OperationCost{{ID: "prep-fast", Node: node.Node, Kind: schedulerActionPrepare, From: "unloaded", To: SchedulerInstanceState(target), Trials: []OperationTrial{{Duration: 10 * time.Millisecond, Joules: 0.5}}, EnergyScope: "whole-wall", Meter: schedulerTestSecondMeter, Scope: schedulerNodeWallScope, PowerMode: "fixed"}, {ID: "remove-old", Node: snap.Nodes[0].Node, Kind: schedulerActionRemove, From: SchedulerInstanceState(snap.Instances[0]), To: "unloaded", Trials: []OperationTrial{{Duration: time.Millisecond, Joules: 0.2}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, PowerMode: "fixed"}}
-	for j := range snap.Costs {
-		snap.Costs[j].Reference = evidencestore.ObjectIdentity{Store: "raw", Key: snap.Costs[j].ID, Size: 1}
-	}
-	snap.Costs[1].BeforeState = []string{SchedulerInstanceState(snap.Instances[0])}
-	decision := schedulerEvaluateForTest(t, s, snap)
-	if decision.Target == nil || decision.Target.Keep || decision.Target.WorstExceedance != 0 {
-		t.Fatalf("SLO must beat cheap keep %+v", decision)
-	}
-	if decision.Keep.ExpectedJoules == nil || decision.Target.ExpectedJoules == nil || *decision.Target.ExpectedJoules <= *decision.Keep.ExpectedJoules {
-		t.Fatalf("fixture must compare higher-energy feasible target %+v", decision)
-	}
-}
-
 func TestSchedulerResourcesAndNodeWidePowerPrerequisites(t *testing.T) {
 	s, snap := schedulerFixture()
 	old := snap.Instances[0]
@@ -396,24 +355,16 @@ func TestSchedulerResourcesAndNodeWidePowerPrerequisites(t *testing.T) {
 	schedulerRequireReason(t, result.reasons, "MissingOperationCost")
 }
 
-func TestSchedulerBoundsSeedInFlightAndReturnPopulation(t *testing.T) {
+func TestSchedulerInFlightAndReturnPopulation(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.MaxCandidates = 2
-	snap.Options = append(snap.Options, snap.Options[0])
-	snap.Options[1].Instance = schedulerTestCPU(snap.Options[1].Instance)
-	first := schedulerEvaluateForTest(t, s, snap)
-	second := schedulerEvaluateForTest(t, s, snap)
-	if !reflect.DeepEqual(first, second) || len(first.Candidates) > 2 || !first.Search.Truncated || !first.Candidates[0].Keep {
-		t.Fatalf("bound/seed/current reproducibility failed: %+v", first.Search)
-	}
 	s.AutonomousWorkloads = nil
 	s.CompletionMarginMS = 5
 	// E1: dispatched after the native observation, so the native queue does not list it yet.
 	snap.Outstanding = []SchedulerRequest{{ID: "in-flight", Definition: snap.Workloads[0], ReceivedAt: snap.At.Add(-5 * time.Millisecond), Elapsed: 5 * time.Millisecond, Phase: phaseAssigned, Instance: "i1"}}
-	inFlight := schedulerEvaluateForTest(t, s, snap)
-	e := schedulerRequireEstimate(t, inFlight.Keep, snap.Workloads[0].UID)
-	if len(inFlight.Keep.Reasons) > 0 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(20*time.Millisecond) {
-		t.Fatalf("5ms age + 10ms native service + 5ms margin on its assigned instance: %v %+v", inFlight.Keep.Reasons, e)
+	inFlight := schedulerKeepForTest(t, s, snap)
+	e := schedulerRequireEstimate(t, inFlight, snap.Workloads[0].UID)
+	if len(inFlight.Reasons) > 0 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(20*time.Millisecond) {
+		t.Fatalf("5ms age + 10ms native service + 5ms margin on its assigned instance: %v %+v", inFlight.Reasons, e)
 	}
 	call := &Call{
 		receipt:            Receipt{ID: "returning", UID: snap.Workloads[0].UID, ReceivedAt: snap.At.Add(-10 * time.Millisecond)},
@@ -426,8 +377,7 @@ func TestSchedulerBoundsSeedInFlightAndReturnPopulation(t *testing.T) {
 	runtime := &Runtime{calls: map[string]*Call{"returning": call}}
 	current := runtime.SchedulerInputs(func() time.Time { return snap.At })
 	snap.At, snap.Outstanding = current.At, current.Outstanding
-	returned := schedulerEvaluateForTest(t, s, snap)
-	e = schedulerRequireEstimate(t, returned.Keep, snap.Workloads[0].UID)
+	e = schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), snap.Workloads[0].UID)
 	if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(13*time.Millisecond) {
 		t.Fatalf("original 10ms age includes the 2ms response tail; 3ms of the 5ms margin remains: %+v", e)
 	}
@@ -437,19 +387,20 @@ func TestSchedulerRejectedComputeAndUnknownCPUQuota(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads = nil
 	snap.Arrivals = []SchedulerArrival{{ID: "capacity-rejected", At: snap.At.Add(-s.ObservationWindow), Definition: snap.Workloads[0], Compute: true, Outcome: "QueueFull"}}
-	decision := schedulerEvaluateForTest(t, s, snap)
-	e := schedulerRequireEstimate(t, decision.Keep, snap.Workloads[0].UID)
-	if decision.Search.Accepted != 0 || decision.Search.ComputeInputs != 1 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(10*time.Millisecond) {
-		t.Fatalf("valid rejected demand must be replayed: %+v %+v", decision.Search, e)
+	keep := schedulerKeepForTest(t, s, snap)
+	e := schedulerRequireEstimate(t, keep, snap.Workloads[0].UID)
+	search := schedulerSearchPopulation(context.Background(), s, snap)
+	if search.Accepted != 0 || search.ComputeInputs != 1 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(10*time.Millisecond) {
+		t.Fatalf("valid rejected demand must be replayed: %+v %+v", search, e)
 	}
 	snap.Nodes[0].NonServing = []SchedulerAllocation{{CPUCount: 1, MemoryBytes: 500}}
-	unknown := schedulerEvaluateForTest(t, s, snap)
-	schedulerRequireReason(t, unknown.Keep.Reasons, "UnknownExclusiveCPUAffinity")
+	unknown := schedulerKeepForTest(t, s, snap)
+	schedulerRequireReason(t, unknown.Reasons, "UnknownExclusiveCPUAffinity")
 	snap.Nodes[0].Reserved.CPUs = []int{3}
 	snap.Nodes[0].NonServing[0].CPUReserved = true
-	covered := schedulerEvaluateForTest(t, s, snap)
-	if covered.Keep.ExpectedJoules == nil {
-		t.Fatalf("explicit reserved coverage should restore evaluability %v", covered.Keep.Reasons)
+	covered := schedulerKeepForTest(t, s, snap)
+	if covered.ExpectedJoules == nil {
+		t.Fatalf("explicit reserved coverage should restore evaluability %v", covered.Reasons)
 	}
 }
 
@@ -507,7 +458,7 @@ func TestSchedulerLoadedPowerWitnessAndNewBundleReadiness(t *testing.T) {
 	p.Condition.PowerMode = schedulerTestEcoMode
 	p.IdleBaselineWatts = 8
 	target.Profile = &p
-	snap.Options = []SchedulerOption{{Instance: target, CompatibleUIDs: old.WorkloadUIDs}}
+	snap.Options = []SchedulerOption{{Instance: target, CompatibleUIDs: []string{old.WorkloadUID}}}
 	unloaded := snap.Baselines[0]
 	unloaded.ID = "eco-idle"
 	unloaded.PowerMode = schedulerTestEcoMode
@@ -551,15 +502,13 @@ func TestSchedulerRoutingSharesUIDCreditsAndSortsPhysicalIDs(t *testing.T) {
 	}
 }
 
-func TestSchedulerNativeQueueOrderSurvivesReceiptOrderAndUIDSort(t *testing.T) {
+func TestSchedulerNativeQueueOrderSurvivesReceiptOrder(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads = nil
 	d := snap.Workloads[0]
 	later := *d
-	later.UID = "a"
-	later.Name = schedulerTestOther
+	later.Generation++
 	snap.Workloads = append(snap.Workloads, &later)
-	snap.Instances[0].WorkloadUIDs = append(snap.Instances[0].WorkloadUIDs, later.UID)
 	snap.Outstanding = []SchedulerRequest{{ID: "later-queue", QueueOrder: 1, Definition: &later, ReceivedAt: snap.At.Add(-time.Millisecond), Phase: "queued", Instance: "i1"}, {ID: "first-queue", QueueOrder: 0, Definition: d, ReceivedAt: snap.At, Phase: "queued", Instance: "i1"}}
 	zero := 0.0
 	for j := range snap.Outstanding {
@@ -573,7 +522,7 @@ func TestSchedulerNativeQueueOrderSurvivesReceiptOrderAndUIDSort(t *testing.T) {
 
 func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.MaxCandidates = 1 // keep only, with w1 still an SLO target
+	s.AutonomousWorkloads = nil
 	d := snap.Workloads[0]
 	life := 5 * time.Millisecond
 	snap.Outstanding = []SchedulerRequest{{ID: "first", QueueOrder: 0, RemainingLifetime: &life, Definition: d, ReceivedAt: snap.At, Phase: "queued", Instance: "i1"}, {ID: "second", QueueOrder: 1, RemainingLifetime: &life, Definition: d, ReceivedAt: snap.At, Phase: "queued", Instance: "i1"}}
@@ -581,23 +530,22 @@ func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T
 	for j := range snap.Outstanding {
 		snap.Outstanding[j].NativeSenderElapsedMS = &zero
 	}
-	decision := schedulerEvaluateForTest(t, s, snap)
-	e := schedulerRequireEstimate(t, decision.Keep, d.UID)
-	if decision.Status != schedulerStatusLifetime || decision.Target != nil || e.ExpectedNanos != nil || e.Samples != 0 || e.PredictedOutcomes["expired-running"] != s.Replays || e.PredictedOutcomes["expired-queued"] != s.Replays || math.Abs(schedulerReplayForTest(s, snap, decision.Keep).energy-2.2) > 1e-9 {
-		t.Fatalf("expired running work stays physical; queued expires; no successful fake zero percentile: %+v", decision)
+	keep := schedulerKeepForTest(t, s, snap)
+	e := schedulerRequireEstimate(t, keep, d.UID)
+	if keep.Status != schedulerStatusLifetime || e.ExpectedNanos != nil || e.Samples != 0 || e.PredictedOutcomes["expired-running"] != 1 || e.PredictedOutcomes["expired-queued"] != 1 || math.Abs(*keep.ExpectedJoules-2.2) > 1e-9 {
+		t.Fatalf("expired running work stays physical; queued expires; no successful fake zero percentile: %+v", keep)
 	}
 	snap.Outstanding = nil
 	snap.Arrivals = []SchedulerArrival{{ID: "trace", At: snap.At.Add(-s.ObservationWindow), Definition: d, Compute: true, Lifetime: life}}
-	projected := schedulerEvaluateForTest(t, s, snap)
-	pe := schedulerRequireEstimate(t, projected.Keep, d.UID)
-	if pe.PredictedOutcomes["expired-running"] != s.Replays {
+	pe := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), d.UID)
+	if pe.PredictedOutcomes["expired-running"] != 1 {
 		t.Fatalf("arrival lifetime must freeze into repeated demand: %+v", pe)
 	}
 	snap.Arrivals[0].Lifetime = 0
 	d.SLO.TargetLatency = time.Millisecond
-	unlimited := schedulerEvaluateForTest(t, s, snap)
-	ue := schedulerRequireEstimate(t, unlimited.Keep, d.UID)
-	if unlimited.Status != schedulerStatusOverload || ue.ExpectedNanos == nil || ue.Samples != s.Replays || ue.PredictedOutcomes["expired-running"] != 0 {
+	unlimited := schedulerKeepForTest(t, s, snap)
+	ue := schedulerRequireEstimate(t, unlimited, d.UID)
+	if unlimited.Status != schedulerStatusOverload || ue.ExpectedNanos == nil || ue.Samples != 1 || ue.PredictedOutcomes["expired-running"] != 0 {
 		t.Fatalf("SLO is never a request lifetime: %+v", unlimited)
 	}
 }
@@ -609,19 +557,18 @@ func TestSchedulerFiniteHorizonEnergyClipsExecutionAndOperation(t *testing.T) {
 	for j := 0; j < 3; j++ {
 		snap.Arrivals = append(snap.Arrivals, SchedulerArrival{ID: strings.Repeat("x", j+1), At: snap.At.Add(-s.ObservationWindow + 95*time.Millisecond), Definition: d, Accepted: true})
 	}
-	decision := schedulerEvaluateForTest(t, s, snap)
-	e := schedulerRequireEstimate(t, decision.Keep, d.UID)
-	if joules := schedulerReplayForTest(s, snap, decision.Keep).energy; math.Abs(joules-1.7) > 1e-9 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(30*time.Millisecond) {
-		t.Fatalf("only half first batch overlaps H; later SLO completions still included: %+v", decision.Keep)
+	keep := schedulerKeepForTest(t, s, snap)
+	e := schedulerRequireEstimate(t, keep, d.UID)
+	if joules := *keep.ExpectedJoules; math.Abs(joules-1.7) > 1e-9 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(30*time.Millisecond) {
+		t.Fatalf("only half first batch overlaps H; later SLO completions still included: %+v", keep)
 	}
 	snap.Arrivals = nil
 	s.Horizon = time.Millisecond
 	zeroSender := 0.0
 	snap.Outstanding = []SchedulerRequest{{ID: phaseRunning, Definition: d, ReceivedAt: snap.At.Add(-7 * time.Millisecond), Elapsed: 7 * time.Millisecond, RunningElapsed: 7 * time.Millisecond, Phase: phaseRunning, Instance: "i1", BatchID: "actual"}}
 	snap.Outstanding[0].NativeSenderElapsedMS = &zeroSender
-	running := schedulerEvaluateForTest(t, s, snap)
-	if joules := schedulerReplayForTest(s, snap, running.Keep).energy; math.Abs(joules-0.112) > 1e-9 {
-		t.Fatalf("running execution overlap is 1/10 batch plus 1ms baseline: %+v", running.Keep)
+	if joules := *schedulerKeepForTest(t, s, snap).ExpectedJoules; math.Abs(joules-0.112) > 1e-9 {
+		t.Fatalf("running execution overlap is 1/10 batch plus 1ms baseline: %g", joules)
 	}
 	snap.Outstanding = nil
 	s.Horizon = 5 * time.Millisecond
@@ -694,21 +641,18 @@ func TestSchedulerCurrentBatchPolicyUsesFrozenNativeSenderContext(t *testing.T) 
 	s.AutonomousWorkloads = nil
 	a := snap.Workloads[0]
 	b := *a
-	b.UID = "b"
-	b.Name = schedulerTestOther
+	b.Generation++
 	snap.Workloads = append(snap.Workloads, &b)
-	snap.Instances[0].WorkloadUIDs = append(snap.Instances[0].WorkloadUIDs, b.UID)
 	zero, forty := 0.0, 40.0
 	snap.Outstanding = []SchedulerRequest{{ID: "a", Definition: a, ReceivedAt: snap.At.Add(-80 * time.Millisecond), Elapsed: 80 * time.Millisecond, QueueAge: 10 * time.Millisecond, QueueOrder: 0, Phase: "queued", Instance: "i1", NativeSenderElapsedMS: &zero}, {ID: "b", Definition: &b, ReceivedAt: snap.At.Add(-50 * time.Millisecond), Elapsed: 50 * time.Millisecond, QueueOrder: 1, Phase: "queued", Instance: "i1", NativeSenderElapsedMS: &forty}}
-	decision := schedulerEvaluateForTest(t, s, snap)
-	ae := schedulerRequireEstimate(t, decision.Keep, a.UID)
-	be := schedulerRequireEstimate(t, decision.Keep, b.UID)
+	keep := schedulerKeepForTest(t, s, snap)
+	ae := schedulerRequireEstimate(t, keep, a.Identity())
+	be := schedulerRequireEstimate(t, keep, b.Identity())
 	if ae.ExpectedNanos == nil || be.ExpectedNanos == nil || *ae.ExpectedNanos != float64(100*time.Millisecond) || *be.ExpectedNanos != float64(60*time.Millisecond) {
-		t.Fatalf("actor policy uses real sender context, not reconstructed total age: %+v", decision.Keep)
+		t.Fatalf("actor policy uses real sender context, not reconstructed total age: %+v", keep)
 	}
 	snap.Outstanding[0].NativeSenderElapsedMS = nil
-	missing := schedulerEvaluateForTest(t, s, snap)
-	schedulerRequireReason(t, missing.Keep.Reasons, "MissingNativeSenderContext")
+	schedulerRequireReason(t, schedulerKeepForTest(t, s, snap).Reasons, "MissingNativeSenderContext")
 }
 
 func TestSchedulerDerivedBaselinePreservesMeasuredSignedIdleDelta(t *testing.T) {
@@ -741,9 +685,9 @@ func TestSchedulerWithoutCompletionObservationsIsNotPending(t *testing.T) {
 	for _, margin := range []float64{0, 5} {
 		s, snap := schedulerFixture()
 		s.CompletionMarginMS = margin
-		decision := schedulerEvaluateForTest(t, s, snap)
-		if decision.Keep.Status == schedulerStatusPending || decision.Keep.ExpectedJoules == nil {
-			t.Fatalf("margin %g without completion observations must stay evaluable: %+v", margin, decision.Keep)
+		keep := schedulerKeepForTest(t, s, snap)
+		if keep.Status == schedulerStatusPending || keep.ExpectedJoules == nil {
+			t.Fatalf("margin %g without completion observations must stay evaluable: %+v", margin, keep)
 		}
 	}
 }
@@ -760,12 +704,11 @@ func TestSchedulerQuarantinedUnusedNodeDoesNotBlockKnownCPU(t *testing.T) {
 	baseline.ID, baseline.Node, baseline.Meter, baseline.Watts = "gpu-idle", quarantined.Node, "wall-gpu-node", 20
 	baseline.Reference.Key = baseline.ID
 	snapshot.Baselines = append(snapshot.Baselines, baseline)
-	known := schedulerEvaluateForTest(t, settings, snapshot)
-	if known.Keep.Status == schedulerStatusPending || known.Keep.ExpectedJoules == nil ||
-		math.Abs(schedulerReplayForTest(settings, snapshot, known.Keep).energy-3.2) > 1e-9 {
-		t.Fatalf("unused quarantined node blocked known CPU or lost whole-POOL energy: %+v", known.Keep)
+	known := schedulerKeepForTest(t, settings, snapshot)
+	if known.Status == schedulerStatusPending || known.ExpectedJoules == nil || math.Abs(*known.ExpectedJoules-3.2) > 1e-9 {
+		t.Fatalf("unused quarantined node blocked known CPU or lost whole-POOL energy: %+v", known)
 	}
-	if known.Keep.Nodes[1].Ready || len(known.Keep.Nodes[1].Reasons) == 0 {
+	if known.Nodes[1].Ready || len(known.Nodes[1].Reasons) == 0 {
 		t.Fatal("evaluation hid the quarantined Node's actual eligibility")
 	}
 	instance := snapshot.Instances[0]
@@ -773,134 +716,17 @@ func TestSchedulerQuarantinedUnusedNodeDoesNotBlockKnownCPU(t *testing.T) {
 	profile.ID, profile.NodeName, profile.Condition.NodeUID = "gpu-node-profile", quarantined.Node.Name, quarantined.Node.UID
 	instance.Node, instance.Profile, instance.IdleMeter = quarantined.Node, &profile, baseline.Meter
 	snapshot.Instances[0] = instance
-	selected := schedulerEvaluateForTest(t, settings, snapshot)
-	if selected.Keep.Status != schedulerStatusPending || selected.Keep.ExpectedJoules != nil {
-		t.Fatalf("candidate using the quarantined Node became evaluable: %+v", selected.Keep)
+	selected := schedulerKeepForTest(t, settings, snapshot)
+	if selected.Status != schedulerStatusPending || selected.ExpectedJoules != nil {
+		t.Fatalf("an instance on the quarantined Node became evaluable: %+v", selected)
 	}
 }
 
 func TestSchedulerCanceledComputationReturnsContextError(t *testing.T) {
-	settings, snapshot, source, target := schedulerProjectionFixture()
+	settings, snapshot := schedulerFixture()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if decision, err := EvaluateScheduler(ctx, settings, snapshot); !errors.Is(err, context.Canceled) || decision.Target != nil {
+	if decision, err := EvaluateScheduler(ctx, settings, snapshot, nil); !errors.Is(err, context.Canceled) || decision.Target != nil {
 		t.Fatalf("canceled evaluation returned decision=%+v err=%v", decision, err)
-	}
-	if projection, err := ProjectSchedulerTransition(ctx, settings, snapshot, source, target); !errors.Is(err, context.Canceled) || projection.ExpectedJoules != nil {
-		t.Fatalf("canceled projection returned projection=%+v err=%v", projection, err)
-	}
-	if kernels, err := ProjectSchedulerWorkKernels(ctx, settings, snapshot, map[string]SchedulerCandidate{"source": source}, map[string]float64{"source": 0}); !errors.Is(err, context.Canceled) || kernels != nil {
-		t.Fatalf("canceled kernels returned kernels=%+v err=%v", kernels, err)
-	}
-}
-
-func TestSchedulerCPUComputationHonorsDeadline(t *testing.T) {
-	for _, stage := range []string{"evaluation", "projection", "kernels"} {
-		t.Run(stage, func(t *testing.T) {
-			settings, snapshot, source, _ := schedulerProjectionFixture()
-			settings.Replays = 1 << 30
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-			defer cancel()
-			var err error
-			switch stage {
-			case "evaluation":
-				_, err = EvaluateScheduler(ctx, settings, snapshot)
-			case "projection":
-				_, err = ProjectSchedulerTransition(ctx, settings, snapshot, source, source)
-			case "kernels":
-				var kernels map[string]map[string]SchedulerTransitionProjection
-				kernels, err = ProjectSchedulerWorkKernels(ctx, settings, snapshot, map[string]SchedulerCandidate{"source": source}, map[string]float64{"source": 0})
-				if kernels != nil {
-					t.Fatal("canceled kernel computation exposed partial history inputs")
-				}
-			}
-			if !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("CPU %s did not propagate deadline: %v", stage, err)
-			}
-		})
-	}
-}
-
-func TestSchedulerEnumerationHonorsInFlightDeadline(t *testing.T) {
-	settings, snapshot := schedulerFixture()
-	settings.MaxCandidates = 1 << 30
-	settings.MaxReplicas, settings.MaxInstances = 1, 21
-	for index := range 20 {
-		definition := *snapshot.Workloads[0]
-		definition.Name, definition.UID = fmt.Sprintf("workload-%02d", index), fmt.Sprintf("uid-%02d", index)
-		snapshot.Workloads = append(snapshot.Workloads, &definition)
-		snapshot.Options[0].CompatibleUIDs = append(snapshot.Options[0].CompatibleUIDs, definition.UID)
-		settings.AutonomousWorkloads = append(settings.AutonomousWorkloads, definition.UID)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		t.Fatalf("deadline expired before consumer started: %v", err)
-	}
-	decision, err := EvaluateScheduler(ctx, settings, snapshot)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("recursive candidate enumeration ignored the consumer deadline: %v", err)
-	}
-	if decision.Target != nil || len(decision.Candidates) != 0 || decision.Search.Examined != 0 {
-		t.Fatalf("canceled enumeration leaked a partial decision: %+v", decision)
-	}
-}
-
-// E1 shape: one autonomous Workload with no instances, sharing off, 19 measured
-// options over 7 Nodes, 8 replicas. The cap must end the walk, not only the set.
-func TestSchedulerEnumerationStopsAtMaxCandidates(t *testing.T) {
-	settings, snapshot := schedulerFixture()
-	settings.Controls.Sharing = false
-	settings.MaxCandidates, settings.MaxReplicas, settings.MaxInstances = 32, 8, 16
-	base := snapshot.Instances[0]
-	snapshot.Instances, snapshot.Options = nil, nil
-	nodes := []NodeReference{snapshot.Nodes[0].Node}
-	for n := range 6 {
-		nodes = append(nodes, poolsAddNode(&snapshot, fmt.Sprint("n", n+2), map[string]float64{"fixed": 10}))
-	}
-	for k := range 19 {
-		option := poolsInstance(base, fmt.Sprint("option-", k), nodes[k%len(nodes)], "fixed", "w1")
-		option.Allocation.CPUs = []int{k % 4}
-		snapshot.Options = append(snapshot.Options, poolsOption(option))
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	candidates, search, err := EnumerateScheduler(ctx, settings, snapshot)
-	if err != nil || len(candidates) != settings.MaxCandidates || !search.Truncated {
-		t.Fatalf("enumeration did not stop at the cap: candidates=%d truncated=%v err=%v", len(candidates), search.Truncated, err)
-	}
-}
-
-// Batch variants of one measured option share Node, profile and allocation; the
-// truncated candidate list must still be the same on every run and input order.
-func TestSchedulerCandidateCutIsRepeatable(t *testing.T) {
-	settings, snapshot := schedulerFixture()
-	settings.MaxCandidates, settings.MaxReplicas = 12, 2
-	base := snapshot.Instances[0]
-	profile := *base.Profile
-	profile.Batches = append(append([]BatchProfile(nil), profile.Batches...), BatchProfile{Batch: 2, DurationNanos: []float64{float64(15 * time.Millisecond)}, EnergyPerInputJoules: 0.8, MemoryBytes: 100})
-	base.Profile, base.MaxBatch = &profile, 2
-	snapshot.Instances, snapshot.Options = nil, nil
-	for n := range 3 {
-		node := poolsAddNode(&snapshot, fmt.Sprint("n", n+2), map[string]float64{"fixed": 10})
-		snapshot.Options = append(snapshot.Options, poolsOption(poolsInstance(base, fmt.Sprint("option-", n), node, "fixed", "w1")))
-	}
-	var want []string
-	for run := range 20 {
-		shuffled := snapshot
-		shuffled.Options = slices.Clone(snapshot.Options)
-		rand.New(rand.NewPCG(uint64(run), 0)).Shuffle(len(shuffled.Options), func(i, j int) {
-			shuffled.Options[i], shuffled.Options[j] = shuffled.Options[j], shuffled.Options[i]
-		})
-		candidates, _ := schedulerEnumerateForTest(t, settings, shuffled)
-		got := make([]string, len(candidates))
-		for j, c := range candidates {
-			got[j] = c.ID + "=" + schedulerConfigKey(c)
-		}
-		if want == nil {
-			want = got
-		} else if !slices.Equal(got, want) {
-			t.Fatalf("run %d candidate list differs:\n%v\n%v", run, got, want)
-		}
 	}
 }

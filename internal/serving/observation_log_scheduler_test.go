@@ -344,7 +344,7 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 		}
 	}
 	instance.Profile = &profile
-	instance.ArrivalAges = map[string][]time.Duration{"w1": {time.Second, 2 * time.Second}}
+	instance.WorkloadUID = "w1"
 	instances := repeated([]SchedulerInstance{instance}, 9)
 	nodes := repeated(snapshot.Nodes, 8)
 	snapshot.Nodes, snapshot.Instances = nodes, instances
@@ -386,8 +386,11 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 		Status: "evaluated", Reasons: []string{"reason"}, ExpectedJoules: &joules, WorstExceedance: 0.25,
 		SLO: []SchedulerEstimate{{UID: "w1", Definition: definition.Identity(), Samples: 100, Percentile: 95}}, Assumptions: []string{"assumption"}, Sources: []string{"source"},
 	}
-	decision := SchedulerDecision{At: at, Status: "target", Keep: candidate, Target: &candidate, Candidates: repeated([]SchedulerCandidate{candidate}, 340), EvaluationElapsed: 3 * time.Millisecond,
-		Policy: &SchedulerPolicyDecision{Kernels: map[string]map[string]SchedulerTransitionProjection{"a": {"b": {}}}}}
+	plans := repeated([]SchedulerNodePlan{{Node: nodes[0].Node, Key: "profile/b4/w1", Eligible: true, Kappa: map[string]float64{"w1": 34.3}, KappaRetained: map[string]float64{"w1": 0}, Pre: 20 * time.Second, Joules: 140}}, 60)
+	wait := 0.42
+	capacity := &SchedulerCapacity{Period: 197 * time.Second, Route: 20 * time.Second, Cells: 50, Plans: plans,
+		Workloads: []SchedulerCapacityWorkload{{UID: "w1", Rate: 40, KappaNew: 144, Backlog: 61, WaitSeconds: &wait, Weights: map[string]int32{"i1": 1000}, Rows: []string{"row"}}}}
+	decision := SchedulerDecision{At: at, Status: "target", Keep: candidate, Target: &candidate, Capacity: capacity, EvaluationElapsed: 3 * time.Millisecond}
 	event := SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}
 	if err := observationLog.SchedulerRecord(event); err != nil {
 		t.Fatal(err)
@@ -429,18 +432,14 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 	if info.Size() > 135<<10 {
 		t.Fatalf("stored decision record %d bytes exceeds 135 KiB", info.Size())
 	}
-	if stored.EvaluationElapsed != 3*time.Millisecond || stored.Policy.Kernels != nil {
-		t.Fatalf("decision timing or kernels: %+v", stored)
+	if stored.EvaluationElapsed != 3*time.Millisecond || !reflect.DeepEqual(stored.Capacity, capacity) {
+		t.Fatalf("decision timing or capacity: %+v", stored)
 	}
 	if stored.Keep.Instances[0].ProfileID != profile.ID || stored.Keep.Instances[0].Profile != nil || stored.Target.SLO == nil || len(stored.Target.Nodes) != 8 {
 		t.Fatalf("keep or target lost its body: %+v", stored.Keep)
 	}
-	summary := stored.Candidates[339]
-	if len(stored.Candidates) != 340 || summary.ID != "candidate" || summary.Status != "evaluated" || *summary.ExpectedJoules != joules || summary.WorstExceedance != 0.25 || len(summary.Actions) != 1 || summary.Instances != nil || summary.SLO != nil {
-		t.Fatalf("candidate summary: %+v", summary)
-	}
-	if storedSnapshot.Arrivals != nil || storedSnapshot.Outstanding[0].Definition != nil || storedSnapshot.Outstanding[0].DefinitionID != definition.Identity() || storedSnapshot.Instances[0].ArrivalAges["w1"][1] != 2*time.Second {
-		t.Fatalf("snapshot replay inputs: %+v", storedSnapshot)
+	if storedSnapshot.Arrivals != nil || storedSnapshot.Outstanding[0].Definition != nil || storedSnapshot.Outstanding[0].DefinitionID != definition.Identity() || storedSnapshot.Instances[0].WorkloadUID != "w1" {
+		t.Fatalf("snapshot inputs: %+v", storedSnapshot)
 	}
 	for name, pair := range map[string][2]any{
 		"workloads": {storedSnapshot.Workloads, snapshot.Workloads}, "costs": {storedSnapshot.Costs, snapshot.Costs},
@@ -533,7 +532,7 @@ func TestOperatingPowerAcrossMinuteBoundaryKeepsJoules(t *testing.T) {
 		t.Helper()
 		observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 		clock.set(from.Add(-2 * time.Second))
-		snapshot := SchedulerSnapshot{At: from.Add(-time.Second), Instances: []SchedulerInstance{{ID: "ready", Node: node, Ready: true, WorkloadUIDs: []string{"w"}}}}
+		snapshot := SchedulerSnapshot{At: from.Add(-time.Second), Instances: []SchedulerInstance{{ID: "ready", Node: node, Ready: true, WorkloadUID: "w"}}}
 		if err := observationLog.SchedulerRecord(SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
 			t.Fatal(err)
 		}

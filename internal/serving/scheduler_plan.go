@@ -9,90 +9,6 @@ import (
 	"sort"
 )
 
-func EnumerateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) ([]SchedulerCandidate, SchedulerSearch, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, SchedulerSearch{}, err
-	}
-	search := schedulerSearchPopulation(ctx, settings, snapshot)
-	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: append([]SchedulerNode(nil), snapshot.Nodes...), Instances: append([]SchedulerInstance(nil), snapshot.Instances...), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
-	for uid, routing := range snapshot.Routing {
-		if err := ctx.Err(); err != nil {
-			return nil, SchedulerSearch{}, err
-		}
-		keep.Routing[uid] = routing
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, SchedulerSearch{}, err
-	}
-	result := []SchedulerCandidate{keep}
-	if settings.Validate() != nil {
-		search.Examined = 1
-		return result, search, ctx.Err()
-	}
-	// Lowering available Nodes is a fixed rule every candidate, keep included, shares.
-	common := schedulerCommonNodes(settings, snapshot)
-	keep.Nodes = common
-	if snapshot.InProgressTarget != nil {
-		keep.Actions = schedulerPlan(snapshot, *snapshot.InProgressTarget)
-	} else {
-		// Only the shared lowering of available Nodes.
-		p := schedulerPlanState{snap: snapshot, target: &keep, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
-		p.changeNodes(keep)
-		keep.Actions = p.actions
-	}
-	result[0] = keep
-	workloads := []*Definition{}
-	controlled := map[string]bool{}
-	for _, d := range snapshot.Workloads {
-		if err := ctx.Err(); err != nil {
-			return nil, SchedulerSearch{}, err
-		}
-		if d == nil {
-			search.Examined = 1
-			return result, search, ctx.Err()
-		}
-	}
-	for _, state := range schedulerWorkloadStates(settings, snapshot) {
-		if state.State == WorkloadControlled {
-			controlled[state.UID] = true
-		}
-	}
-	for _, d := range snapshot.Workloads {
-		if controlled[d.UID] {
-			workloads = append(workloads, d)
-		}
-	}
-	if len(workloads) == 0 {
-		search.Examined = 1
-		return result, search, ctx.Err()
-	}
-	sort.Slice(workloads, func(i, j int) bool { return workloads[i].UID < workloads[j].UID })
-	e := schedulerEnumeration{ctx: ctx, settings: settings, snapshot: snapshot, search: search, workloads: workloads, controlled: controlled, common: common, options: schedulerMeasuredOptions(ctx, settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep): true}, result: result}
-	e.controlBase = schedulerUnroutedTransition(ctx, snapshot)
-	base := snapshot.Instances
-	if e.controlBase != nil {
-		base = e.controlBase.Instances
-	}
-	// Instances of a Workload outside autonomous control, and every instance in
-	// the measurement POOL, stay as they are in every candidate.
-	for _, i := range base {
-		if e.fixedInstance(i) {
-			e.fixed = append(e.fixed, i)
-		} else {
-			e.movable = append(e.movable, i)
-		}
-	}
-	if !settings.Controls.Sharing {
-		e.groups = schedulerExistingWorkloadGroups(ctx, workloads, e.controlInstances())
-	}
-	e.visit(0, slices.Clone(e.fixed))
-	e.search.Examined = len(e.result)
-	if err := ctx.Err(); err != nil {
-		return nil, SchedulerSearch{}, err
-	}
-	return e.result, e.search, nil
-}
-
 // schedulerWorkloadStates classifies every current Workload for this decision.
 func schedulerWorkloadStates(settings SchedulerSettings, snapshot SchedulerSnapshot) []SchedulerWorkloadState {
 	states := []SchedulerWorkloadState{}
@@ -111,17 +27,6 @@ func schedulerWorkloadStates(settings SchedulerSettings, snapshot SchedulerSnaps
 	}
 	sort.Slice(states, func(i, j int) bool { return states[i].UID < states[j].UID })
 	return states
-}
-
-func (e *schedulerEnumeration) fixedInstance(i SchedulerInstance) bool {
-	if i.FixedBatchSize > 0 || slices.ContainsFunc(e.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == i.Node && n.Measurement }) {
-		return true
-	}
-	// An owner that is no current Workload is ignored, like any unknown UID.
-	if !e.controlled[i.OwnerWorkloadUID] && slices.ContainsFunc(e.snapshot.Workloads, func(d *Definition) bool { return d.UID == i.OwnerWorkloadUID }) {
-		return true
-	}
-	return slices.ContainsFunc(i.WorkloadUIDs, func(uid string) bool { return !e.controlled[uid] })
 }
 
 // SchedulerLowestMode is the power mode of the Node's lowest unloaded baseline,
@@ -182,7 +87,7 @@ func schedulerInstanceRouting(ctx context.Context, workloads []*Definition, inst
 			if ctx.Err() != nil {
 				return nil
 			}
-			if schedulerHas(i.WorkloadUIDs, d.UID) && i.Weight > 0 {
+			if i.WorkloadUID == d.UID && i.Weight > 0 {
 				weights[i.ID] = i.Weight
 			}
 		}
@@ -298,478 +203,12 @@ func schedulerMeasuredOptions(ctx context.Context, settings SchedulerSettings, s
 	return options
 }
 
-// Sharing OFF preserves the existing physical UID cohorts, not singleton UIDs.
-func schedulerExistingWorkloadGroups(ctx context.Context, workloads []*Definition, instances []SchedulerInstance) [][]*Definition {
-	groups := make([][]*Definition, 0, len(instances))
-	seen := map[string]bool{}
-	assigned := map[string]bool{}
-	for _, instance := range instances {
-		if ctx.Err() != nil {
-			return nil
-		}
-		group := []*Definition{}
-		uids := []string{}
-		for _, d := range workloads {
-			if ctx.Err() != nil {
-				return nil
-			}
-			if schedulerHas(instance.WorkloadUIDs, d.UID) {
-				group = append(group, d)
-				uids = append(uids, d.UID)
-				assigned[d.UID] = true
-			}
-		}
-		key := fmt.Sprint(uids)
-		if len(group) > 0 && !seen[key] {
-			groups = append(groups, group)
-			seen[key] = true
-		}
-	}
-	for _, d := range workloads {
-		if ctx.Err() != nil {
-			return nil
-		}
-		if !assigned[d.UID] {
-			groups = append(groups, []*Definition{d})
-		}
-	}
-	return groups
-}
-
-type schedulerEnumeration struct {
-	ctx         context.Context
-	settings    SchedulerSettings
-	snapshot    SchedulerSnapshot
-	search      SchedulerSearch
-	controlBase *SchedulerCandidate
-	workloads   []*Definition
-	controlled  map[string]bool
-	common      []SchedulerNode
-	fixed       []SchedulerInstance
-	movable     []SchedulerInstance
-	groups      [][]*Definition
-	sources     map[string]int
-	options     []SchedulerOption
-	seen        map[string]bool
-	result      []SchedulerCandidate
-}
-
-// A drained routing gap does not change the selected cohort, replica count or
-// per-UID weights. Resource occupancy and physical reuse still use the snapshot.
-func schedulerUnroutedTransition(ctx context.Context, snapshot SchedulerSnapshot) *SchedulerCandidate {
-	goal := snapshot.InProgressTarget
-	if goal == nil || len(goal.Routing) != len(snapshot.Workloads) {
-		return nil
-	}
-	missing := false
-	for _, d := range snapshot.Workloads {
-		if ctx.Err() != nil {
-			return nil
-		}
-		if d == nil || !schedulerPositiveRouting(goal.Routing[d.UID]) {
-			return nil
-		}
-		missing = missing || !schedulerPositiveRouting(snapshot.Routing[d.UID])
-	}
-	if missing {
-		return goal
-	}
-	return nil
-}
-
-func schedulerPositiveRouting(weights map[string]int32) bool {
-	for _, weight := range weights {
-		if weight > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// controlInstances are the current instances autonomous control may change.
-func (e *schedulerEnumeration) controlInstances() []SchedulerInstance {
-	return e.movable
-}
-
-func (e *schedulerEnumeration) controlRouting() map[string]map[string]int32 {
-	if e.controlBase != nil {
-		return e.controlBase.Routing
-	}
-	return e.snapshot.Routing
-}
-
-func (e *schedulerEnumeration) visit(w int, chosen []SchedulerInstance) {
-	if e.ctx.Err() != nil {
-		return
-	}
-	if len(e.result) >= e.settings.MaxCandidates {
-		e.search.Truncated = true
-		return
-	}
-	countGroups := len(e.workloads)
-	if e.groups != nil {
-		countGroups = len(e.groups)
-	}
-	if w == countGroups {
-		e.emit(chosen)
-		return
-	}
-	group := e.group(w)
-	d := group[0]
-	// A sharing alternative attaches the UID to one compatible physical runner.
-	if e.settings.Controls.Sharing {
-		for j, i := range chosen {
-			if e.ctx.Err() != nil {
-				return
-			}
-			for _, o := range e.options {
-				if e.ctx.Err() != nil {
-					return
-				}
-				if i.OwnerWorkloadUID == "" && !schedulerHas(i.WorkloadUIDs, d.UID) && schedulerPlacementNode(e.snapshot.Nodes, i.Node) && schedulerOptionCondition(o) == schedulerOptionCondition(SchedulerOption{Instance: i}) && schedulerHas(o.CompatibleUIDs, d.UID) {
-					next := append([]SchedulerInstance(nil), chosen...)
-					next[j].WorkloadUIDs = append(append([]string(nil), next[j].WorkloadUIDs...), d.UID)
-					e.visit(w+1, next)
-					break
-				}
-			}
-		}
-	}
-	count := 0
-	for _, i := range e.controlInstances() {
-		if e.ctx.Err() != nil {
-			return
-		}
-		if e.sameGroup(i, group) {
-			count++
-		}
-	}
-	limit := e.replicaLimit(group, chosen)
-	for n := 1; n <= limit; n++ {
-		if e.ctx.Err() != nil {
-			return
-		}
-		if !e.settings.Controls.Replicas && n != count {
-			continue
-		}
-		e.place(w, 0, n, chosen)
-	}
-}
-
-func (e *schedulerEnumeration) group(w int) []*Definition {
-	if e.groups != nil {
-		return e.groups[w]
-	}
-	return e.workloads[w : w+1]
-}
-
-func (e *schedulerEnumeration) sameGroup(instance SchedulerInstance, group []*Definition) bool {
-	if e.groups == nil {
-		return schedulerHas(instance.WorkloadUIDs, group[0].UID)
-	}
-	count := 0
-	for _, d := range e.workloads {
-		if e.ctx.Err() != nil {
-			return false
-		}
-		if schedulerHas(instance.WorkloadUIDs, d.UID) {
-			if !slices.Contains(group, d) {
-				return false
-			}
-			count++
-		}
-	}
-	return count == len(group)
-}
-
-func (e *schedulerEnumeration) replicaLimit(group []*Definition, chosen []SchedulerInstance) int {
-	limit := e.settings.MaxReplicas
-	for _, d := range group {
-		if e.ctx.Err() != nil {
-			return 0
-		}
-		count := 0
-		for _, instance := range chosen {
-			if e.ctx.Err() != nil {
-				return 0
-			}
-			if schedulerHas(instance.WorkloadUIDs, d.UID) {
-				count++
-			}
-		}
-		limit = min(limit, e.settings.MaxReplicas-count)
-	}
-	return limit
-}
-
-func (e *schedulerEnumeration) sourceIndex(group []*Definition, chosen []SchedulerInstance) int {
-	ordinal := 0
-	for _, instance := range chosen {
-		if e.ctx.Err() != nil {
-			return -1
-		}
-		if e.sameGroup(instance, group) {
-			ordinal++
-		}
-	}
-	for index, instance := range e.controlInstances() {
-		if e.ctx.Err() != nil {
-			return -1
-		}
-		if e.sameGroup(instance, group) {
-			if ordinal == 0 {
-				return index
-			}
-			ordinal--
-		}
-	}
-	return -1
-}
-
-func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
-	if e.ctx.Err() != nil {
-		return
-	}
-	nodes := e.candidateNodes(chosen)
-	if e.ctx.Err() != nil {
-		return
-	}
-	c := SchedulerCandidate{Nodes: nodes, Instances: append([]SchedulerInstance(nil), chosen...)}
-	// Preserve physical identity only when the complete measured allocation matches.
-	// Fixed instances lead the chosen list and keep their own identity.
-	used := map[string][]string{}
-	for _, fixed := range e.fixed {
-		used[fixed.ID] = fixed.WorkloadUIDs
-	}
-	for j := len(e.fixed); j < len(c.Instances); j++ {
-		if e.ctx.Err() != nil {
-			return
-		}
-		source, anchored := e.sources[c.Instances[j].ID]
-		for _, old := range e.snapshot.Instances {
-			if e.ctx.Err() != nil {
-				return
-			}
-			if _, preserved := used[old.ID]; !preserved && e.canReuseSlot(old, source, anchored, c.Instances[j].WorkloadUIDs) && old.Node == c.Instances[j].Node && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
-				c.Instances[j].ID = old.ID
-				c.Instances[j].Ready = old.Ready
-				c.Instances[j].TargetID, c.Instances[j].OwnerWorkloadUID = old.TargetID, old.OwnerWorkloadUID
-				used[old.ID] = old.WorkloadUIDs
-				break
-			}
-		}
-	}
-	c.Routing = e.routing(c.Instances, chosen, used)
-	// Workloads outside autonomous control keep their current distribution.
-	for _, d := range e.snapshot.Workloads {
-		if !e.controlled[d.UID] {
-			c.Routing[d.UID] = maps.Clone(e.controlRouting()[d.UID])
-			if c.Routing[d.UID] == nil {
-				c.Routing[d.UID] = map[string]int32{}
-			}
-		}
-	}
-	add := func(c SchedulerCandidate) {
-		if e.ctx.Err() != nil {
-			return
-		}
-		key := schedulerConfigKey(c)
-		if e.seen[key] {
-			return
-		}
-		if len(e.result) >= e.settings.MaxCandidates {
-			e.search.Truncated = true
-			return
-		}
-		e.seen[key] = true
-		c.ID = fmt.Sprintf("candidate-%d", len(e.result))
-		c.Actions = schedulerPlan(e.snapshot, c)
-		e.result = append(e.result, c)
-	}
-	add(c)
-	if e.settings.Controls.Routing {
-		for _, d := range e.workloads {
-			if e.ctx.Err() != nil {
-				return
-			}
-			for _, i := range c.Instances {
-				if e.ctx.Err() != nil {
-					return
-				}
-				if !schedulerHas(i.WorkloadUIDs, d.UID) {
-					continue
-				}
-				r := c
-				r.Routing = maps.Clone(c.Routing)
-				r.Routing[d.UID] = map[string]int32{i.ID: 1}
-				add(r)
-			}
-		}
-	}
-}
-
-func (e *schedulerEnumeration) candidateNodes(chosen []SchedulerInstance) []SchedulerNode {
-	nodes := append([]SchedulerNode(nil), e.common...)
-	modes := map[string]string{}
-	for _, i := range chosen {
-		if e.ctx.Err() != nil {
-			return nil
-		}
-		if i.Profile != nil {
-			modes[i.Node.UID] = i.Profile.Condition.PowerMode
-		}
-	}
-	for n := range nodes {
-		if m, ok := modes[nodes[n].Node.UID]; ok {
-			nodes[n].PowerMode = m
-		}
-	}
-	return nodes
-}
-
-func (e *schedulerEnumeration) canReuseSlot(old SchedulerInstance, source int, anchored bool, uids []string) bool {
-	if !schedulerOwnerAllows(old.OwnerWorkloadUID, uids) {
-		return false
-	}
-	if !anchored || old.ID == e.controlInstances()[source].ID {
-		return true
-	}
-	// The routing origin is not a physical fence: an already prepared, unbound
-	// matching executor is the replacement, not another replica to prepare.
-	return old.Ready && !old.Stopped && len(old.WorkloadUIDs) == 0 && (old.TargetID != "" || old.OwnerWorkloadUID != "")
-}
-
-func (e *schedulerEnumeration) routing(instances, chosen []SchedulerInstance, used map[string][]string) map[string]map[string]int32 {
-	routing := schedulerInstanceRouting(e.ctx, e.workloads, instances)
-	if e.settings.Controls.Routing {
-		return routing
-	}
-	for index, instance := range instances {
-		if e.ctx.Err() != nil {
-			return nil
-		}
-		oldUIDs, preserved := used[instance.ID]
-		sourceID := instance.ID
-		if source, anchored := e.sources[chosen[index].ID]; anchored {
-			old := e.controlInstances()[source]
-			oldUIDs, preserved, sourceID = old.WorkloadUIDs, true, old.ID
-		}
-		if !preserved {
-			continue
-		}
-		for _, uid := range instance.WorkloadUIDs {
-			if e.ctx.Err() != nil {
-				return nil
-			}
-			if !schedulerHas(oldUIDs, uid) {
-				continue
-			}
-			if route, ok := e.controlRouting()[uid]; ok {
-				delete(routing[uid], instance.ID)
-				if route[sourceID] > 0 {
-					routing[uid][instance.ID] = route[sourceID]
-				}
-			}
-		}
-	}
-	return routing
-}
-
-func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance) {
-	if e.ctx.Err() != nil {
-		return
-	}
-	// The cap bounds the walk, not only the emitted set: without it every
-	// placement prefix is still expanded after the last candidate is kept.
-	if len(e.result) >= e.settings.MaxCandidates {
-		e.search.Truncated = true
-		return
-	}
-	group := e.group(w)
-	d := group[0]
-	if left == 0 {
-		e.visit(w+1, xs)
-		return
-	}
-	if len(xs) >= e.settings.MaxInstances {
-		return
-	}
-	source := -1
-	if e.groups != nil {
-		source = e.sourceIndex(group, xs)
-	}
-	for k := start; k < len(e.options); k++ {
-		if e.ctx.Err() != nil {
-			return
-		}
-		o := e.options[k]
-		if slices.ContainsFunc(group, func(d *Definition) bool {
-			return !schedulerHas(o.CompatibleUIDs, d.UID) || !e.optionAllowed(d, o, group, source)
-		}) {
-			continue
-		}
-		i := o.Instance
-		i.WorkloadUIDs = make([]string, len(group))
-		for index, d := range group {
-			if e.ctx.Err() != nil {
-				return
-			}
-			i.WorkloadUIDs[index] = d.UID
-		}
-		i.ID = fmt.Sprintf("target-%s-%d-%d", d.UID, k, len(xs))
-		i.Ready = true
-		if e.groups != nil {
-			if e.sources == nil {
-				e.sources = map[string]int{}
-			}
-			if source >= 0 {
-				e.sources[i.ID] = source
-			} else {
-				delete(e.sources, i.ID)
-			}
-		}
-		// One Node runs one power mode, and all its instances reference one ModelSpec.
-		conflict := false
-		for _, old := range xs {
-			if e.ctx.Err() != nil {
-				return
-			}
-			if old.Node.UID == i.Node.UID && (old.Profile == nil || old.Profile.Condition.PowerMode != i.Profile.Condition.PowerMode || !e.sameModel(old, i)) {
-				conflict = true
-			}
-		}
-		if conflict {
-			continue
-		}
-		next := k
-		if e.groups != nil {
-			next = 0
-		}
-		e.place(w, next, left-1, append(append([]SchedulerInstance(nil), xs...), i))
-	}
-}
-
-// sameModel reports whether two instances reference one ModelSpec: the same
-// name, and the same UID when both reach a current Workload definition.
-func (e *schedulerEnumeration) sameModel(a, b SchedulerInstance) bool {
-	model := func(i SchedulerInstance) (string, string) {
-		for _, d := range e.snapshot.Workloads {
-			if d.UID == i.OwnerWorkloadUID || schedulerHas(i.WorkloadUIDs, d.UID) {
-				return d.Model.Name, d.Model.UID
-			}
-		}
-		return i.Profile.Condition.LogicalModel, ""
-	}
-	nameA, uidA := model(a)
-	nameB, uidB := model(b)
-	return nameA == nameB && (uidA == "" || uidB == "" || uidA == uidB)
-}
 func schedulerOptionKey(o SchedulerOption) string {
 	return o.Instance.Node.UID + "/" + schedulerState(o.Instance) + fmt.Sprint(o.Instance.MaxBatch, o.Instance.MaxWait, o.CompatibleUIDs)
 }
 
 // schedulerOptionLess is a total order on distinct execution conditions, so the
-// maxCandidates cut does not depend on map iteration or input order.
+// node plans do not depend on map iteration or input order.
 func schedulerOptionLess(a, b SchedulerOption) bool {
 	ka, kb := schedulerOptionKey(a), schedulerOptionKey(b)
 	return ka < kb || ka == kb && schedulerOptionCondition(a) < schedulerOptionCondition(b)
@@ -784,82 +223,13 @@ func schedulerOptionCondition(o SchedulerOption) string {
 	return fmt.Sprint(i.Node, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait)
 }
 
-// SchedulerLogicalConfigKey identifies configuration semantics, not a physical
-// executor or a particular observation. Replica records retain joint routing.
-func SchedulerLogicalConfigKey(snapshot SchedulerSnapshot, candidate SchedulerCandidate) (string, error) {
-	nodes := make([]string, 0, len(candidate.Nodes))
-	nodeIDs := map[string]bool{}
-	for _, node := range candidate.Nodes {
-		if node.Node.UID == "" || nodeIDs[node.Node.UID] {
-			return "", fmt.Errorf("logical configuration has missing or duplicate Node UID %q", node.Node.UID)
-		}
-		nodeIDs[node.Node.UID] = true
-		nodes = append(nodes, fmt.Sprintf("%q/%q", node.Node.UID, node.PowerMode))
-	}
-	definitions := map[string]*Definition{}
-	for _, definition := range snapshot.Workloads {
-		if definition == nil || definition.UID == "" || definitions[definition.UID] != nil {
-			return "", fmt.Errorf("logical configuration requires unique immutable workload definitions")
-		}
-		definitions[definition.UID] = definition
-	}
-	instances := make([]string, 0, len(candidate.Instances))
-	instanceIDs := map[string]bool{}
-	for _, instance := range candidate.Instances {
-		if instance.ID == "" || instanceIDs[instance.ID] || !nodeIDs[instance.Node.UID] || instance.Profile == nil || instance.Profile.ID == "" {
-			return "", fmt.Errorf("logical configuration has unidentified instance %q", instance.ID)
-		}
-		instanceIDs[instance.ID] = true
-		uids := slices.Clone(instance.WorkloadUIDs)
-		sort.Strings(uids)
-		for index, uid := range uids {
-			if definitions[uid] == nil || (index > 0 && uids[index-1] == uid) {
-				return "", fmt.Errorf("instance %q has unknown or duplicate workload %q", instance.ID, uid)
-			}
-		}
-		deadlinePolicy := ""
-		if instance.Profile.Condition.Firstfloor != nil {
-			deadlinePolicy = instance.Profile.Condition.Firstfloor.DeadlinePolicy
-		}
-		routes := make([]string, 0, len(definitions))
-		for uid := range definitions {
-			weight := int32(0)
-			if schedulerHas(instance.WorkloadUIDs, uid) {
-				weight = instance.Weight
-			}
-			if routing, explicit := candidate.Routing[uid]; explicit {
-				weight = routing[instance.ID]
-			}
-			routes = append(routes, fmt.Sprintf("%q/%d", uid, weight))
-		}
-		sort.Strings(routes)
-		instances = append(instances, fmt.Sprintf("%q/%q/%q/%d/%t/%d/%d/%d/%q/%q", instance.Node.UID, schedulerState(instance), uids, instance.Allocation.CPUCount, instance.Allocation.CPUReserved, instance.Capacity, instance.MaxBatch, instance.MaxWait, deadlinePolicy, routes))
-	}
-	for uid, routing := range candidate.Routing {
-		if definitions[uid] == nil {
-			return "", fmt.Errorf("routing references unknown workload %q", uid)
-		}
-		for target := range routing {
-			if !instanceIDs[target] {
-				return "", fmt.Errorf("routing references unknown instance %q", target)
-			}
-		}
-	}
-	workloads := make([]string, 0, len(definitions))
-	for _, definition := range definitions {
-		workloads = append(workloads, fmt.Sprintf("%q/%g/%d", definition.Identity(), definition.SLO.Percentile, definition.SLO.TargetLatency))
-	}
-	sort.Strings(nodes)
-	sort.Strings(instances)
-	sort.Strings(workloads)
-	return fmt.Sprintf("%q", [][]string{nodes, instances, workloads}), nil
-}
-
 func schedulerConfigKey(c SchedulerCandidate) string {
 	parts := []string{}
 	for _, i := range c.Instances {
-		uids := append([]string(nil), i.WorkloadUIDs...)
-		sort.Strings(uids)
+		uids := []string{}
+		if i.WorkloadUID != "" {
+			uids = append(uids, i.WorkloadUID)
+		}
 		weights := []int32{}
 		for _, uid := range uids {
 			weight := i.Weight
@@ -887,61 +257,6 @@ func schedulerNodeMode(nodes []SchedulerNode, node NodeReference) string {
 		}
 	}
 	return ""
-}
-
-// schedulerPlacementNode reports a Node that accepts new placements.
-func schedulerPlacementNode(nodes []SchedulerNode, node NodeReference) bool {
-	for _, n := range nodes {
-		if n.Node == node {
-			return !n.Measurement && !slices.Contains(n.Reasons, NodePlacementInventoryMissing) && !slices.Contains(n.Reasons, NodePlacementBudgetUnavailable)
-		}
-	}
-	return false
-}
-
-// inActivePool reports whether uid owns or is bound to an instance on node.
-func (e *schedulerEnumeration) inActivePool(uid string, node NodeReference) bool {
-	return slices.ContainsFunc(e.snapshot.Instances, func(i SchedulerInstance) bool {
-		return i.Node == node && (i.OwnerWorkloadUID == uid || schedulerHas(i.WorkloadUIDs, uid))
-	})
-}
-func (e *schedulerEnumeration) optionAllowed(d *Definition, o SchedulerOption, group []*Definition, source int) bool {
-	s, snap := e.settings, e.snapshot
-	i := o.Instance
-	if len(i.Allocation.CPUs) > s.MaxCPUs {
-		return false
-	}
-	if i.Profile == nil || i.Node.UID != i.Profile.Condition.NodeUID || !schedulerProfileMatches(d, i.Profile) {
-		return false
-	}
-	if !schedulerPlacementNode(snap.Nodes, i.Node) {
-		return false
-	}
-	for _, n := range snap.Nodes {
-		if n.Node == i.Node && n.PowerMode != i.Profile.Condition.PowerMode && (!s.Controls.Power || slices.Contains(n.Reasons, NodePowerModeUnavailable)) {
-			return false
-		}
-	}
-	// Membership OFF keeps each Workload within its current active POOL.
-	if !s.Controls.Membership && !e.inActivePool(d.UID, i.Node) {
-		return false
-	}
-	for index, old := range e.controlInstances() {
-		if !schedulerHas(old.WorkloadUIDs, d.UID) || (e.groups != nil && (!e.sameGroup(old, group) || (source >= 0 && index != source))) {
-			continue
-		}
-		if !s.Controls.Placement && old.Node != i.Node {
-			continue
-		}
-		if !s.Controls.Resources && !schedulerSameResourceChoice(old, i) {
-			continue
-		}
-		if !s.Controls.Batching && (old.MaxBatch != i.MaxBatch || old.MaxWait != i.MaxWait) {
-			continue
-		}
-		return true
-	}
-	return s.Controls.Placement && s.Controls.Resources && s.Controls.Batching
 }
 
 func schedulerSameResourceChoice(old, target SchedulerInstance) bool {
@@ -972,13 +287,13 @@ func schedulerCurrentTarget(snapshot SchedulerSnapshot, target SchedulerCandidat
 			if !actual.Ready || actual.Stopped || !schedulerSamePhysicalTarget(actual, wanted) {
 				continue
 			}
-			if !schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUIDs) {
+			if !schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUID) {
 				continue
 			}
 			current.ID, current.TargetID, current.OwnerWorkloadUID = actual.ID, actual.TargetID, actual.OwnerWorkloadUID
 			current.Ready = true
 			if current.ID != wanted.ID {
-				for _, uid := range wanted.WorkloadUIDs {
+				if uid := wanted.WorkloadUID; uid != "" {
 					weights := maps.Clone(target.Routing[uid])
 					if weight, ok := weights[wanted.ID]; ok {
 						delete(weights, wanted.ID)
@@ -1148,7 +463,7 @@ func schedulerSnapshotTargetMatches(actual, wanted SchedulerInstance) bool {
 		schedulerState(actual) != schedulerState(wanted) {
 		return false
 	}
-	if !schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUIDs) {
+	if !schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUID) {
 		return false
 	}
 	return actual.Capacity == wanted.Capacity && actual.MaxBatch == wanted.MaxBatch && actual.MaxWait == wanted.MaxWait &&
@@ -1258,8 +573,8 @@ func schedulerSamePhysicalTarget(actual, wanted SchedulerInstance) bool {
 }
 
 // schedulerOwnerAllows reports whether an owned instance serves only its owner.
-func schedulerOwnerAllows(owner string, uids []string) bool {
-	return owner == "" || !slices.ContainsFunc(uids, func(uid string) bool { return uid != owner })
+func schedulerOwnerAllows(owner, uid string) bool {
+	return owner == "" || uid == "" || uid == owner
 }
 
 // Keep make-before-break whenever it fits. Otherwise release only obsolete

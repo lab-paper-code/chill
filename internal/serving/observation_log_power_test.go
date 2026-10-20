@@ -90,18 +90,18 @@ func seedOperatingPower(t *testing.T, observationLog *ObservationLog, from time.
 	}
 	if !scenario.missingMembership {
 		initial := SchedulerSnapshot{At: from.Add(-time.Second), Instances: []SchedulerInstance{
-			{ID: "a-1", Node: a, Ready: true, WorkloadUIDs: []string{"w"}},
-			{ID: "a-2", Node: a, Ready: true, WorkloadUIDs: []string{"w", "shared"}},
-			{ID: "b-stopped", Node: b, Ready: true, Stopped: true, WorkloadUIDs: []string{"w"}},
+			{ID: "a-1", Node: a, Ready: true, WorkloadUID: "w"},
+			{ID: "a-2", Node: a, Ready: true, WorkloadUID: "other"},
+			{ID: "b-stopped", Node: b, Ready: true, Stopped: true, WorkloadUID: "w"},
 		}}
 		appendRecord(SchedulerObservation{At: initial.At, Snapshot: &initial})
 		transition := SchedulerSnapshot{At: from.Add(3 * time.Second), Instances: []SchedulerInstance{
-			{ID: "a-preparing", Node: a, Ready: false, WorkloadUIDs: []string{"w"}},
+			{ID: "a-preparing", Node: a, Ready: false, WorkloadUID: "w"},
 			{ID: "a-unassigned", Node: a, Ready: true},
-			{ID: "b-ready", Node: b, Ready: true, WorkloadUIDs: []string{"w"}},
+			{ID: "b-ready", Node: b, Ready: true, WorkloadUID: "w"},
 		}}
 		if scenario.missingInactive {
-			transition.Instances[2].WorkloadUIDs = nil
+			transition.Instances[2].WorkloadUID = ""
 		}
 		appendRecord(SchedulerObservation{At: transition.At, Snapshot: &transition})
 	}
@@ -193,7 +193,7 @@ func TestOperatingPowerInterpolatesRealBoundarySupport(t *testing.T) {
 			})
 			base := time.Now().UTC().Add(time.Second)
 			node := NodeReference{Name: "ramp", UID: "ramp-uid"}
-			snapshot := SchedulerSnapshot{At: base, Instances: []SchedulerInstance{{ID: "ready", Node: node, Ready: true, WorkloadUIDs: []string{"workload"}}}}
+			snapshot := SchedulerSnapshot{At: base, Instances: []SchedulerInstance{{ID: "ready", Node: node, Ready: true, WorkloadUID: "workload"}}}
 			if err := observationLog.SchedulerRecord(SchedulerObservation{At: base, Snapshot: &snapshot}); err != nil {
 				t.Fatal(err)
 			}
@@ -274,7 +274,7 @@ func TestOperatingPowerClosedWindowRejectsRealGapsNotCollectorChunkVerdicts(t *t
 			node := NodeReference{Name: "metered", UID: "physical-node"}
 			meters := []OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: operatingTestSource}}
 			policy := powerwindow.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: .75, MaximumGap: 2 * time.Second}
-			snapshot := SchedulerSnapshot{At: base.Add(-20 * time.Second), Instances: []SchedulerInstance{{ID: "ready", Node: node, Ready: true, WorkloadUIDs: []string{"workload"}}}}
+			snapshot := SchedulerSnapshot{At: base.Add(-20 * time.Second), Instances: []SchedulerInstance{{ID: "ready", Node: node, Ready: true, WorkloadUID: "workload"}}}
 			if err := observationLog.SchedulerRecord(SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
 				t.Fatal(err)
 			}
@@ -441,7 +441,7 @@ func TestOperatingPowerProjectsLargeUnrelatedPayload(t *testing.T) {
 
 func TestOperatingPowerProjectionPreservesNumericTimeAndCombinedFields(t *testing.T) {
 	raw := []byte(`{
-		"snapshot":{"instances":[{"workloadUIDs":["w"],"stopped":false,"ready":true,"node":{"uid":"n","name":"node"},"profile":{"ignored":[9007199254740993]}}],"at":"2026-10-15T10:07:01.478738123+09:00"},
+		"snapshot":{"instances":[{"workloadUID":"w","stopped":false,"ready":true,"node":{"uid":"n","name":"node"},"profile":{"ignored":[9007199254740993]}}],"at":"2026-10-15T10:07:01.478738123+09:00"},
 		"startedAt":"2026-10-15T01:07:01.478738123Z","samples":[{"observedAt":"2026-10-15T01:07:01.478738123Z","watts":0.12345678901234567}],
 		"at":"2026-10-15T01:07:02.478738123Z","node":{"name":"node","uid":"n"},"meter":"meter"
 	}`)
@@ -463,7 +463,7 @@ func TestOperatingPowerProjectionPreservesNumericTimeAndCombinedFields(t *testin
 	member := got.Snapshot
 	if member == nil || !member.At.Equal(want.Snapshot.At) ||
 		len(member.Instances) != 1 || !member.Instances[0].Ready || member.Instances[0].Stopped ||
-		member.Instances[0].Node != *got.Node || !reflect.DeepEqual(member.Instances[0].WorkloadUIDs, []string{"w"}) {
+		member.Instances[0].Node != *got.Node || member.Instances[0].WorkloadUID != "w" {
 		t.Fatalf("combined snapshot/power lost membership: %+v", member)
 	}
 }

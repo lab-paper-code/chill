@@ -10,7 +10,7 @@ import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
-import { SettingChanges, algorithmLabel } from "@/features/scheduler-settings"
+import { SettingChanges } from "@/features/scheduler-settings"
 import { QueryGate, SourceJSON, SourceExport, statusLabel } from "@/components/read-region"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
@@ -76,7 +76,7 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
     <Facts items={[["종류",kinds[row.ref.kind]??row.ref.kind],["사건 시각",event.at],["보관 순서",row.ref.offset]]}/>
     {decision&&<>
       <h3 className="font-semibold">판단: {judgmentLabels[decision.status]??statusLabel(decision.status)}</h3>
-      <Facts items={[["판단 시각",decision.at],["판단 방식",algorithmLabel(decision.settings.algorithm)],["자동 제어 서비스",`${decision.settings.autonomousWorkloads?.length??0}개`],["입력 관측 구간",`${decision.search.windowStart} ~ ${decision.search.windowEnd}`],["모집단",decision.search.population],["미래 예상 기간",`${nanosToMilliseconds(decision.settings.horizonNanos)} ms`]]}/>
+      <Facts items={[["판단 시각",decision.at],["자동 제어 서비스",`${decision.settings.autonomousWorkloads?.length??0}개`],["입력 관측 구간",`${decision.search.windowStart} ~ ${decision.search.windowEnd}`],["모집단",decision.search.population],["미래 예상 기간",`${nanosToMilliseconds(decision.settings.horizonNanos)} ms`]]}/>
       <p>{decision.reasons?.join(", ")||"제공된 판단 사유가 없어요."}</p>
       {view?<><details><summary>유지안 근거</summary><CandidateDetails candidate={decision.keep} view={view}/></details>{decision.target&&<details><summary>선택 목표 근거</summary><CandidateDetails candidate={decision.target} view={view}/></details>}</>:<p>같은 기록에 실제 구성이 없어요. 후보 원본은 아래 원본에서 확인해요.</p>}
     </>}
@@ -134,7 +134,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
       {rows.length?<Rows label="기록">{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
         return <Row key={row.ref.offset} label={ev.decision?judgmentLabels[ev.decision.status]??statusLabel(ev.decision.status):ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}
-          hint={`${when(ev.at)}${ev.decision?` · ${algorithmLabel(ev.decision.settings.algorithm)}`:ev.settings?` · ${actorName(ev.settings.actorUsername)}`:ev.action?` · ${actionNodeName(ev.action.node)}`:ev.node?` · ${ev.node.name}`:""}`}
+          hint={`${when(ev.at)}${ev.decision?` · ${ev.decision.status}`:ev.settings?` · ${actorName(ev.settings.actorUsername)}`:ev.action?` · ${actionNodeName(ev.action.node)}`:ev.node?` · ${ev.node.name}`:""}`}
           value={mark||(ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"적용됨":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):undefined)}
           onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}/>
       })}</Rows>:<Empty title={settingsOnly?"이 기간에는 운영 설정 변경이 없어요":"보여줄 기록이 없어요"}>{history.query.data?.nextCursor&&<p>다음 기록에 더 있을 수 있어요.</p>}</Empty>}

@@ -511,7 +511,8 @@ func removableBy(snapshot serving.SchedulerSnapshot, id, workloadUID string) err
 	}
 	instance := snapshot.Instances[i]
 	if (instance.OwnerWorkloadUID != "" && instance.OwnerWorkloadUID != workloadUID) ||
-		slices.ContainsFunc(instance.WorkloadUIDs, func(uid string) bool { return uid != workloadUID }) {
+		(instance.WorkloadUID != "" && instance.WorkloadUID != workloadUID) ||
+		slices.Contains(snapshot.Reasons, serving.SchedulerSharedInstance+":"+id) {
 		return errors.New("InstanceShared: remove target serves other Workloads; " +
 			"change their distribution through staticRouting")
 	}

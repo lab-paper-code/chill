@@ -30,15 +30,13 @@ export type CampaignResult = {apiVersion:string;kind:string;readAt:string;campai
 
 // Scheduler wire integers retain int64/uint64 literals beyond Number's range.
 export type WireInteger = number | bigint
-export type SchedulerAlgorithm = "fixed-horizon" | "projected-work-history"
 export type SchedulerSettings = {
-  algorithm:SchedulerAlgorithm
   observationWindowNanos:WireInteger; controlIntervalNanos:WireInteger; horizonNanos:WireInteger; maxObservationAgeNanos:WireInteger
-  seed:WireInteger; replays:WireInteger; maxCandidates:WireInteger; maxReplicas:WireInteger; maxInstances:WireInteger; maxReplayRequests:WireInteger; maxCPUs:WireInteger; servingMemoryBytes:WireInteger
+  maxReplicas:WireInteger; maxInstances:WireInteger; maxCPUs:WireInteger; servingMemoryBytes:WireInteger
   completionMarginMS:number
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger
   autonomousWorkloads:string[]|null
-  controls:{placement:boolean;resources:boolean;replicas:boolean;sharing:boolean;routing:boolean;batching:boolean;power:boolean;membership:boolean}
+  controls:{placement:boolean;resources:boolean;replicas:boolean;routing:boolean;batching:boolean;power:boolean;membership:boolean}
 }
 export type SchedulerDefinition = {name:string;uid:string;generation:WireInteger;model:{name:string;uid:string;generation:WireInteger;paths:unknown[]|null};slo:{percentile:number;targetLatencyNanos:WireInteger}}
 export type SchedulerAllocation = {cpus:number[]|null;gpuUUID?:string;memoryBytes:WireInteger;threads:number;cpuCount:number;cpuReserved:boolean}
@@ -49,7 +47,7 @@ export type CurveProtocol = {workloadMode:string;dataset?:{name:string;uid:strin
 export type CurvePlanSpec = {name:string;logicalModel:string;deviceClass:string;nodeUID:string;runtimeFamily:string;backend:string;firstfloor?:{maxBatchSize:number;maxQueueSize:number;deadlinePolicy?:string};runtimeAccess?:{privileged:boolean;supplementalGroups?:number[];resources?:Record<string,string>;gpuUUID?:string};runtimeImage:string;powerMode:string;cpu:{policy:string;policyVersion:string;request:string;limit:string;ortIntraOpThreads:number;ortInterOpThreads:number;affinityCPUs?:number[];exclusivityClaimed:boolean};metricSource:{sourceKind:string;nodeName:string;endpoint:string;powerMetric:string};activeProtocol:CurveProtocol;idleProtocol:CurveProtocol;conversion:{targetPlatform?:string;tool?:string;toolVersion?:string};artifact:{executionPath:string;name:string;files:string[]|null;image:string};preprocessor:{name:string;image:string;architecture:string;path:string;maxNewTokens?:number;inputs:string[]|null;outputs:string[]|null};plannedBatchSizes:number[]|null}
 export type SchedulerProfile = {id:string;reference:unknown;evidence:unknown[]|null;nodeName:string;condition:CurvePlanSpec;batches:{batch:number;durationNanos:number[]|null;energyPerInputJoules:number;memoryBytes:WireInteger}[]|null;confidenceLevel:number;idleBaselineWatts:number;measuredAt:string;runtimeMetadata?:unknown;metricSource:PowerSource}
 // Stored decision records carry profileID only; GET v1/scheduler/profiles serves the profile body.
-export type SchedulerInstance = {id:string;node:NodeRef;profile?:SchedulerProfile|null;profileID?:string;workloadUIDs:string[]|null;allocation:SchedulerAllocation;ready:boolean;stopped:boolean;capacity:number;weight:number;maxBatch:number;maxWaitNanos:WireInteger;observedAt:string;arrivalAgesNanos:Record<string,WireInteger[]>|null;idleMeter:string;idleScope:string}
+export type SchedulerInstance = {id:string;node:NodeRef;profile?:SchedulerProfile|null;profileID?:string;workloadUID:string;allocation:SchedulerAllocation;ready:boolean;stopped:boolean;capacity:number;weight:number;maxBatch:number;maxWaitNanos:WireInteger;observedAt:string;idleMeter:string;idleScope:string}
 export type SchedulerRequest = {id:string;queueOrder:number;remainingLifetimeNanos?:WireInteger;definition:SchedulerDefinition|null;definitionID?:string;receivedAt:string;elapsedNanos:WireInteger;queueAgeNanos:WireInteger;phase:string;instance?:string;batchID?:string;runningElapsedNanos:WireInteger;returnElapsedNanos:WireInteger;arrivalRate:number;nativeSenderElapsedMS?:number;nativeOutcome?:string}
 export type SchedulerArrival = {id:string;lifetimeNanos:WireInteger;at:string;definition?:SchedulerDefinition;accepted:boolean;compute:boolean;workloadUID?:string;outcome?:string}
 export type NodeBaseline = {id:string;node:NodeRef;powerMode:string;state:string[]|null;watts:number;meter:string;scope:string;measuredAt:string;reference:unknown}
@@ -60,7 +58,11 @@ export type SchedulerCandidate = {id:string;keep:boolean;nodes?:SchedulerNode[]|
 export type SchedulerSnapshot = {at:string;workloads:(SchedulerDefinition|null)[]|null;nodes:SchedulerNode[]|null;instances:SchedulerInstance[]|null;routing:Record<string,Record<string,number>>|null;routingCredits:Record<string,Record<string,WireInteger>>|null;outstanding:SchedulerRequest[]|null;arrivals:SchedulerArrival[]|null;options:{instance:SchedulerInstance;compatibleUIDs:string[]|null}[]|null;baselines:NodeBaseline[]|null;costs:OperationCost[]|null;actions:SchedulerAction[]|null;reasons:string[]|null;references:string[]|null;inProgressTarget?:SchedulerCandidate}
 // state: Disabled, MeasurementEvidenceMissing, or Controlled.
 export type SchedulerWorkloadState = {uid:string;state:string;reason?:string}
-export type SchedulerDecision = {at:string;status:string;keep:SchedulerCandidate;target:SchedulerCandidate|null;candidates:SchedulerCandidate[]|null;reasons:string[]|null;settings:SchedulerSettings;workloads:SchedulerWorkloadState[]|null;search:{examined:number;truncated:boolean;bounds:SchedulerSettings;windowStart:string;windowEnd:string;received:number;accepted:number;computeInputs:number;population:string;loads:{uid:string;received:number;accepted:number;computeInputs:number;inputsPerSecond:number}[]|null;comparedNodes:NodeRef[]|null};references:string[]|null;evaluationElapsedNanos?:WireInteger}
+// internal/serving/scheduler_capacity.go SchedulerCapacity; a missing wait, drain or exceedance is unbounded.
+export type SchedulerCapacityWorkload = {uid:string;rate:number;queued:number;kappaNew:number;kappaRetained:number;backlog:number;waitSeconds?:number;drainSeconds?:number;finalExceedance?:number;transitionExceedance?:number;weights:Record<string,number>|null;rows:string[]|null}
+export type SchedulerNodePlan = {node:NodeRef;key:string;eligible:boolean;reason?:string;kappa?:Record<string,number>;kappaRetained?:Record<string,number>;preNanos:WireInteger;postNanos:WireInteger;joules:number}
+export type SchedulerCapacity = {periodNanos:WireInteger;routeNanos:WireInteger;cells:number;workloads:SchedulerCapacityWorkload[]|null;plans:SchedulerNodePlan[]|null}
+export type SchedulerDecision = {at:string;status:string;keep:SchedulerCandidate;target:SchedulerCandidate|null;reasons:string[]|null;settings:SchedulerSettings;workloads:SchedulerWorkloadState[]|null;search:{examined:number;bounds:SchedulerSettings;windowStart:string;windowEnd:string;received:number;accepted:number;computeInputs:number;population:string;loads:{uid:string;received:number;accepted:number;computeInputs:number;inputsPerSecond:number}[]|null;comparedNodes:NodeRef[]|null};references:string[]|null;capacity?:SchedulerCapacity;evaluationElapsedNanos?:WireInteger}
 // Weights per workload UID and instance ID; original weights, not probabilities.
 export type Routing = Record<string,Record<string,number>>
 export type SchedulerOperation = {id:string;kind:string;node:NodeRef;instance?:string;prepare?:{name:string;instance:SchedulerInstance;bundle:unknown;store:unknown;config:unknown;memoryBytes:WireInteger};actuation?:unknown;target?:SchedulerCandidate;sourceConfigRV?:string;staticRouting?:Routing}

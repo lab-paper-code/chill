@@ -98,7 +98,7 @@ func schedulerCaptureClockController(t *testing.T, slowLive bool) *SchedulerCont
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog,
 		runs: map[string]*actionRun{}, config: SchedulerControllerConfig{
-			Settings:     serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: maxAge, Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 10, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4},
+			Settings:     serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4},
 			CPUInventory: map[string][]int{node.Name: {0, 1, 2, 3}},
 		}}
 }
@@ -195,11 +195,10 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 	}
 	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{
-			Settings: serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmProjectedWorkHistory,
-				ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second,
-				Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 10, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4,
+			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second,
+				MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4,
 				Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true,
-					Sharing: true, Routing: true, Batching: true, Power: true}},
+					Routing: true, Batching: true, Power: true}},
 			CPUInventory: map[string][]int{node.Name: {0, 1, 2, 3}},
 			Baselines: []serving.NodeBaseline{{ID: "empty-pool-idle", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},
 				PowerMode: "fixed", Watts: 10, Meter: "node-wall", Scope: "node-exclusive-wall", MeasuredAt: time.Now(),
@@ -219,14 +218,10 @@ func TestSchedulerTickDeadlinePreservesPublishedStateAndAllowsControlsOff(t *tes
 		t.Fatalf("empty physical pool was not evaluable: %+v %v", first, err)
 	}
 	config := controller.config
-	config.Settings.Replays = 1_000_000_000
-	if err := controller.SetConfiguration(config); err != nil {
-		t.Fatal(err)
-	}
 	before := controller.State()
 	decisions := 0
 	controller.config.OnDecision = func(serving.SchedulerDecision) error { decisions++; return nil }
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now())
 	defer cancel()
 	decision, err := controller.Tick(ctx, time.Now().UTC())
 	if !errors.Is(err, context.DeadlineExceeded) || decision.Status != "" {
@@ -234,7 +229,7 @@ func TestSchedulerTickDeadlinePreservesPublishedStateAndAllowsControlsOff(t *tes
 	}
 	after := controller.State()
 	if decisions != 0 || !after.Snapshot.At.Equal(before.Snapshot.At) || after.Decision.At != before.Decision.At ||
-		controller.work != nil || len(after.Actions) != 0 || len(after.Results) != 0 {
+		len(after.Actions) != 0 || len(after.Results) != 0 {
 		t.Fatal("canceled evaluation published state, committed history or started physical work")
 	}
 	off := config
@@ -259,7 +254,6 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 	if _, err := controller.Tick(context.Background(), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	before := controller.work
 	controller.goal = &serving.SchedulerCandidate{ID: "unfinished-route", Nodes: controller.State().Snapshot.Nodes,
 		Routing: map[string]map[string]int32{}, Actions: []serving.Action{{ID: "unfinished-route", Kind: operationRoute, Status: "planned"}}}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -280,7 +274,7 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 	if decision, err := controller.Tick(ctx, time.Now().UTC()); !errors.Is(err, context.Canceled) || decision.Status != "" {
 		t.Fatalf("late cancellation became a successful ON decision: %+v %v", decision, err)
 	}
-	if controller.work != before || len(controller.State().Actions) != 0 {
+	if len(controller.State().Actions) != 0 {
 		t.Fatal("late canceled ON result advanced history or launched its route")
 	}
 	if publishedAt.IsZero() || !controller.State().Decision.At.Equal(publishedAt) {

@@ -144,7 +144,7 @@ func TestOperatingPowerReportsGapForMissingBaseline(t *testing.T) {
 	from := observationTestHour.Add(10 * time.Minute)
 	clock.set(from)
 	node := NodeReference{Name: "node", UID: "node-uid"}
-	snapshot := SchedulerSnapshot{At: from.Add(time.Second), Instances: []SchedulerInstance{{ID: "i", Node: node, Ready: true, WorkloadUIDs: []string{"w"}}}}
+	snapshot := SchedulerSnapshot{At: from.Add(time.Second), Instances: []SchedulerInstance{{ID: "i", Node: node, Ready: true, WorkloadUID: "w"}}}
 	if err := observationLog.SchedulerRecord(SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
 		t.Fatal(err)
 	}

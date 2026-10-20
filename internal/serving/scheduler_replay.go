@@ -6,7 +6,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"reflect"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -74,244 +73,80 @@ type schedulerReplayAction struct {
 	wallRate float64
 }
 type schedulerReplayResult struct {
-	energy             float64
-	samples            map[string][]float64
-	definitions        map[string]*Definition
-	reasons            []string
-	assumptions        []string
-	sources            []string
-	outcomes           map[string]map[string]int
-	transitionComplete bool
+	energy      float64
+	samples     map[string][]float64
+	definitions map[string]*Definition
+	reasons     []string
+	assumptions []string
+	sources     []string
+	outcomes    map[string]map[string]int
 }
 
-func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) (SchedulerDecision, error) {
-	if err := ctx.Err(); err != nil {
-		return SchedulerDecision{}, err
-	}
-	if snapshot.InProgressTarget != nil {
-		current := schedulerCurrentTarget(snapshot, *snapshot.InProgressTarget)
-		snapshot.InProgressTarget = &current
-	}
-	candidates, search, err := EnumerateScheduler(ctx, settings, snapshot)
-	if err != nil {
-		return SchedulerDecision{}, err
-	}
-	decision := SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: search, Workloads: schedulerWorkloadStates(settings, snapshot), References: append([]string(nil), snapshot.References...)}
-	if err := settings.Validate(); err != nil {
-		decision.Reasons = []string{err.Error()}
-		decision.Keep = candidates[0]
-		decision.Candidates = candidates
-		return decision, ctx.Err()
-	}
-	controlled := []string{}
-	for _, state := range decision.Workloads {
-		if state.State == WorkloadControlled {
-			controlled = append(controlled, state.UID)
-		}
-	}
-	compared := schedulerComparedNodes(snapshot, candidates)
-	for _, n := range snapshot.Nodes {
-		if compared[n.Node] {
-			decision.Search.ComparedNodes = append(decision.Search.ComparedNodes, n.Node)
-		}
-	}
-	snapshotReasons := schedulerValidateSnapshot(settings, snapshot)
-	best := -1
-	for j := range candidates {
-		if err := ctx.Err(); err != nil {
-			return SchedulerDecision{}, err
-		}
-		c := &candidates[j]
-		c.Assumptions = []string{"repeat actual validated compute arrival sequence over horizon, including capacity/evidence rejections; empirical service and correlated operation trial draws; frozen request definition and SLO"}
-		c.Assumptions = append(c.Assumptions, "incremental batch joules attributed uniformly over empirical service occupancy; only overlap with [0,horizon) counted, SLO completions may extend beyond horizon")
-		c.Reasons = append(c.Reasons, snapshot.Reasons...)
-		c.Assumptions = append(c.Assumptions, "explicit frozen lifetimes expire pending/queued work independently of frozen drop/keep/defer SLO policy; running work remains nonpreemptive; percentile population excludes predicted lifetime failures and SLO timeouts")
-		c.Assumptions = append(c.Assumptions, "configured completion margin is added once to native completion and never delays native arrival; queued/running sender elapsed is an actor witness; native wait rate uses last two worker arrivals and oldest-time history eviction, equal forecast timestamps tie by UID")
-		c.Reasons = append(c.Reasons, snapshotReasons...)
-		c.Reasons = append(c.Reasons, schedulerValidateResources(settings, c.Nodes, c.Instances)...)
-		c.Reasons = append(c.Reasons, schedulerMinimumInstanceReasons(snapshot, *c, controlled)...)
-		if !c.Keep {
-			c.Reasons = appendUnique(c.Reasons, schedulerValidateResources(settings, snapshot.Nodes, snapshot.Instances)...)
-		}
-		c.Status = schedulerStatusPending
-		if len(c.Reasons) == 0 {
-			if err := schedulerEvaluateCandidate(ctx, settings, snapshot, c, compared, schedulerSLOTargets(snapshot, *c, controlled)); err != nil {
-				return SchedulerDecision{}, err
-			}
-			if c.ExpectedJoules != nil && c.Status != schedulerStatusLifetime && (best < 0 || schedulerBetter(*c, candidates[best])) {
-				best = j
-			}
-		}
-		if c.ExpectedJoules == nil {
-			c.Status = schedulerIneligibleStatus(c.Reasons)
-		}
-	}
-	decision.Candidates = candidates
-	decision.Keep = candidates[0]
-	if best >= 0 {
-		FinalizeSchedulerTarget(snapshot, &decision, best)
-	}
-	if best < 0 {
-		status := candidates[0].Status
-		for _, c := range candidates {
-			if c.Status != status {
-				status = schedulerStatusPending
-				break
-			}
-		}
-		decision.Status = status
-		reason := "NoFullyEvaluableCandidateWithinReportedBounds"
-		switch status {
-		case schedulerStatusLifetime:
-			reason = "ExplicitRequestLifetimeCapacityExceeded"
-		case "InfeasibleResources":
-			reason = "NoResourceFeasibleCandidateWithinReportedBounds"
-		case "InfeasibleTransition":
-			reason = "NoReadyTransitionWithinReportedBounds"
-		case "ExecutionError":
-			reason = "ObservedOperationExecutionError"
-		}
-		decision.Reasons = appendUnique(decision.Reasons, reason)
-	}
-	return decision, ctx.Err()
-}
-
-// FinalizeSchedulerTarget uses the same physical continuation semantics for the
-// baseline and history-selected energy choice. The index is an evaluated candidate.
-func FinalizeSchedulerTarget(snapshot SchedulerSnapshot, decision *SchedulerDecision, index int) {
-	target := decision.Candidates[index]
-	if target.Keep && snapshot.InProgressTarget != nil {
-		goal := schedulerCurrentTarget(snapshot, *snapshot.InProgressTarget)
-		target.ID, target.Nodes, target.Instances, target.Routing = goal.ID, goal.Nodes, goal.Instances, goal.Routing
-	}
-	decision.Target = &target
-	decision.Status = target.Status
-	if target.Keep {
-		decision.Status = "Keep"
-	}
-	if target.Status == schedulerStatusOverload {
-		decision.Status = schedulerStatusOverload
-		decision.Reasons = appendUnique(decision.Reasons, "EvaluatedCandidatesExceedSLOWithinReportedSearchBounds")
-		for _, candidate := range decision.Candidates {
-			if candidate.ExpectedJoules == nil {
-				decision.Reasons = appendUnique(decision.Reasons, "UnevaluableCandidatesRemainPending")
-			}
-		}
-	}
-}
-
-// schedulerEvaluateCandidate sums energy over the compared Nodes and judges the
-// SLO of the targets Workloads only; every other estimate is still recorded.
-func schedulerEvaluateCandidate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, c *SchedulerCandidate, compared map[NodeReference]bool, targets map[string]bool) error {
-	all := map[string][]float64{}
-	definitions := map[string]*Definition{}
-	outcomes := map[string]map[string]int{}
-	energy := 0.0
-	for replay := range settings.Replays {
-		r, err := schedulerReplayModel(ctx, settings, snapshot, *c, rand.New(rand.NewPCG(uint64(settings.Seed), uint64(replay))), false, compared)
-		if err != nil {
-			return err
-		}
-		c.Reasons = appendUnique(c.Reasons, r.reasons...)
-		c.Assumptions = appendUnique(c.Assumptions, r.assumptions...)
-		c.Sources = appendUnique(c.Sources, r.sources...)
-		if len(r.reasons) == 0 && !r.transitionComplete {
-			c.Reasons = append(c.Reasons, "TransitionExceedsHorizon")
-		}
-		if len(c.Reasons) != 0 {
-			break
-		}
-		energy += (r.energy - energy) / float64(replay+1)
-		for key, ss := range r.samples {
-			all[key] = append(all[key], ss...)
-		}
-		for key, d := range r.definitions {
-			definitions[key] = d
-		}
-		for key, counts := range r.outcomes {
-			if outcomes[key] == nil {
-				outcomes[key] = map[string]int{}
-			}
-			for kind, count := range counts {
-				outcomes[key][kind] += count
-			}
-		}
-	}
+// schedulerReplayEstimate replays candidate c once with seed and records each
+// definition's SLO-percentile estimate and predicted outcomes in c. Energy
+// counts the compared Nodes only (nil counts every Node). Reasons name the
+// snapshot, resource or replay facts that block the replay.
+func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, c SchedulerCandidate, seed uint64, compared map[NodeReference]bool) (SchedulerCandidate, error) {
+	c.Status = schedulerStatusPending
+	c.Reasons = append(c.Reasons, snapshot.Reasons...)
+	c.Reasons = append(c.Reasons, schedulerValidateSnapshot(settings, snapshot)...)
+	c.Reasons = append(c.Reasons, schedulerValidateResources(settings, c.Nodes, c.Instances)...)
 	if len(c.Reasons) != 0 {
-		return ctx.Err()
+		return c, ctx.Err()
 	}
-	expected := energy
-	c.ExpectedJoules = &expected
+	r, err := schedulerReplay(ctx, settings, snapshot, c, rand.New(rand.NewPCG(seed, 0)), compared)
+	if err != nil {
+		return c, err
+	}
+	c.Reasons, c.Assumptions, c.Sources = appendUnique(c.Reasons, r.reasons...), r.assumptions, r.sources
+	if len(c.Reasons) != 0 {
+		return c, ctx.Err()
+	}
+	energy := r.energy
+	c.ExpectedJoules = &energy
 	c.Status = schedulerStatusFeasible
 	for _, d := range snapshot.Workloads {
-		definitions[d.Identity()] = d
+		r.definitions[d.Identity()] = d
 	}
 	keys := []string{}
-	for key := range definitions {
+	for key := range r.definitions {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		d := definitions[key]
-		samples := all[key]
-		e := SchedulerEstimate{UID: d.UID, Definition: key, Samples: len(samples), Percentile: d.SLO.Percentile, TargetNanos: int64(d.SLO.TargetLatency)}
-		e.PredictedOutcomes = outcomes[key]
+		d := r.definitions[key]
+		samples := r.samples[key]
+		e := SchedulerEstimate{UID: d.UID, Definition: key, Samples: len(samples), Percentile: d.SLO.Percentile, TargetNanos: int64(d.SLO.TargetLatency), PredictedOutcomes: r.outcomes[key]}
 		if len(samples) > 0 {
 			sort.Float64s(samples)
 			q := stat.Quantile(d.SLO.Percentile/100, stat.Empirical, samples, nil)
 			e.ExpectedNanos = &q
 			e.NormalizedExceedance = math.Max(0, q/float64(d.SLO.TargetLatency)-1)
-			if targets[d.UID] {
-				c.WorstExceedance = math.Max(c.WorstExceedance, e.NormalizedExceedance)
-			}
+			c.WorstExceedance = math.Max(c.WorstExceedance, e.NormalizedExceedance)
 		}
 		c.SLO = append(c.SLO, e)
 	}
 	if c.WorstExceedance > 0 {
 		c.Status = schedulerStatusOverload
-		c.Reasons = append(c.Reasons, "SLOCapacityExceeded")
 	}
-	for key, counts := range outcomes {
-		if targets[definitions[key].UID] && counts["timeout"] > 0 {
+	for _, counts := range r.outcomes {
+		if counts["timeout"] > 0 && c.Status != schedulerStatusLifetime {
 			c.Status = schedulerStatusOverload
-			c.Reasons = appendUnique(c.Reasons, "SLODeadlineDrops")
 		}
-	}
-	lifetimeFailures := false
-	for key, counts := range outcomes {
 		for kind, count := range counts {
-			if targets[definitions[key].UID] && strings.HasPrefix(kind, "expired-") && count > 0 {
-				lifetimeFailures = true
+			if strings.HasPrefix(kind, "expired-") && count > 0 {
+				c.Status = schedulerStatusLifetime
 			}
 		}
 	}
-	if lifetimeFailures {
-		c.Status = schedulerStatusLifetime
-		c.Reasons = append(c.Reasons, "ExplicitRequestLifetimeCapacityExceeded")
-	}
-	return ctx.Err()
-}
-
-// schedulerMinimumInstanceReasons names each Controlled Workload that the
-// candidate (keep: its in-progress target) leaves without a routed instance.
-func schedulerMinimumInstanceReasons(snapshot SchedulerSnapshot, c SchedulerCandidate, controlled []string) []string {
-	if c.Keep && snapshot.InProgressTarget != nil {
-		c = *snapshot.InProgressTarget
-	}
-	reasons := []string{}
-	for _, uid := range controlled {
-		if !schedulerRouted(c, uid) {
-			reasons = append(reasons, "MinimumInstance:"+uid)
-		}
-	}
-	return reasons
+	return c, ctx.Err()
 }
 
 // schedulerRouted reports whether some instance of c receives uid's requests.
 func schedulerRouted(c SchedulerCandidate, uid string) bool {
 	for _, i := range c.Instances {
 		weight := int32(0)
-		if schedulerHas(i.WorkloadUIDs, uid) {
+		if i.WorkloadUID == uid {
 			weight = i.Weight
 		}
 		if route, explicit := c.Routing[uid]; explicit {
@@ -340,107 +175,6 @@ func SchedulerFixedBatchAutonomy(snapshot SchedulerSnapshot, autonomous []string
 	}
 	return nil
 }
-
-// schedulerSLOTargets are every Controlled Workload plus each other Workload
-// with an instance on a Node that has a planned action, or whose bindings change.
-func schedulerSLOTargets(snapshot SchedulerSnapshot, c SchedulerCandidate, controlled []string) map[string]bool {
-	targets := map[string]bool{}
-	for _, uid := range controlled {
-		targets[uid] = true
-	}
-	acted := map[NodeReference]bool{}
-	for _, a := range c.Actions {
-		if !a.Fixed && a.Node.UID != "" {
-			acted[a.Node] = true
-		}
-	}
-	bound := func(instances []SchedulerInstance, uid string) []string {
-		ids := []string{}
-		for _, i := range instances {
-			if schedulerHas(i.WorkloadUIDs, uid) {
-				ids = append(ids, i.ID)
-			}
-		}
-		return ids
-	}
-	for _, d := range snapshot.Workloads {
-		if !schedulerEqualState(bound(snapshot.Instances, d.UID), bound(c.Instances, d.UID)) {
-			targets[d.UID] = true
-		}
-		for _, i := range snapshot.Instances {
-			if acted[i.Node] && (i.OwnerWorkloadUID == d.UID || schedulerHas(i.WorkloadUIDs, d.UID)) {
-				targets[d.UID] = true
-			}
-		}
-	}
-	return targets
-}
-
-// schedulerComparedNodes are the Nodes where some candidate plans instances,
-// routing, a power mode or a non-Fixed action that differ from the common
-// state every candidate starts from (keep's instances on the common Nodes).
-func schedulerComparedNodes(snapshot SchedulerSnapshot, candidates []SchedulerCandidate) map[NodeReference]bool {
-	signature := func(c SchedulerCandidate, node NodeReference) string {
-		parts := []string{schedulerNodeMode(c.Nodes, node)}
-		for _, i := range c.Instances {
-			if i.Node != node {
-				continue
-			}
-			routes := []string{}
-			for _, d := range snapshot.Workloads {
-				weight := int32(0)
-				if schedulerHas(i.WorkloadUIDs, d.UID) {
-					weight = i.Weight
-				}
-				if route, explicit := c.Routing[d.UID]; explicit {
-					weight = route[i.ID]
-				}
-				routes = append(routes, fmt.Sprint(d.UID, weight))
-			}
-			parts = append(parts, fmt.Sprint(i.ID, schedulerState(i), i.Capacity, i.MaxBatch, i.MaxWait, routes))
-		}
-		sort.Strings(parts[1:])
-		return fmt.Sprint(parts)
-	}
-	compared := map[NodeReference]bool{}
-	for _, n := range snapshot.Nodes {
-		common := signature(candidates[0], n.Node)
-		for _, c := range candidates {
-			if signature(c, n.Node) != common || slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Node == n.Node && !a.Fixed }) {
-				compared[n.Node] = true
-				break
-			}
-		}
-	}
-	return compared
-}
-func schedulerBetter(a, b SchedulerCandidate) bool {
-	if (a.Status == schedulerStatusFeasible) != (b.Status == schedulerStatusFeasible) {
-		return a.Status == schedulerStatusFeasible
-	}
-	if a.WorstExceedance != b.WorstExceedance {
-		return a.WorstExceedance < b.WorstExceedance
-	}
-	return *a.ExpectedJoules < *b.ExpectedJoules
-}
-func schedulerIneligibleStatus(reasons []string) string {
-	for _, r := range reasons {
-		if strings.HasPrefix(r, "ActionFailed") {
-			return "ExecutionError"
-		}
-	}
-	for _, r := range reasons {
-		if strings.HasPrefix(r, "TemporaryReadinessResourceInfeasible") || strings.HasPrefix(r, "NoReadyCapacityOrTransitionPrerequisite") {
-			return "InfeasibleTransition"
-		}
-	}
-	for _, r := range reasons {
-		if strings.Contains(r, "Infeasible") || strings.HasPrefix(r, "CPUThreadAllocationMismatch") || strings.HasPrefix(r, "DuplicateNode") {
-			return "InfeasibleResources"
-		}
-	}
-	return schedulerStatusPending
-}
 func appendUnique(xs []string, more ...string) []string {
 	for _, s := range more {
 		if !schedulerHas(xs, s) {
@@ -453,9 +187,6 @@ func schedulerValidateSnapshot(settings SchedulerSettings, snapshot SchedulerSna
 	reasons := schedulerValidateObservationTimes(&snapshot, settings.MaxObservationAge)
 	if len(snapshot.Nodes) == 0 {
 		reasons = append(reasons, "MissingPoolInventory")
-	}
-	if len(snapshot.Outstanding) > settings.MaxReplayRequests {
-		reasons = append(reasons, "ReplayRequestBoundExceeded")
 	}
 	ids := map[string]bool{}
 	for _, i := range snapshot.Instances {
@@ -739,27 +470,21 @@ type schedulerReplayState struct {
 	weights        []int32
 	available      []bool
 	now            float64
-	projection     bool
 	// compared limits energy to these Nodes; nil counts every Node.
 	compared map[NodeReference]bool
-}
-
-func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand) (schedulerReplayResult, error) {
-	return schedulerReplayModel(ctx, settings, snap, c, rng, false, nil)
 }
 
 func (s *schedulerReplayState) counted(node NodeReference) bool {
 	return s.compared == nil || s.compared[node]
 }
 
-// schedulerReplayModel shares the physical accounting engine; projection stops
-// at the receipt interval boundary rather than forecasting SLO completions.
-func schedulerReplayModel(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, projection bool, compared map[NodeReference]bool) (schedulerReplayResult, error) {
+// schedulerReplay replays candidate c over the horizon; energy counts the
+// compared Nodes only (nil counts every Node).
+func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool) (schedulerReplayResult, error) {
 	if err := ctx.Err(); err != nil {
 		return schedulerReplayResult{}, err
 	}
-	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.Horizon), out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
-	s.projection, s.compared = projection, compared
+	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.Horizon), compared: compared, out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	s.initializeInstances()
 	s.initializeActions()
 	s.initializeOutstanding()
@@ -774,7 +499,7 @@ func schedulerReplayModel(ctx context.Context, settings SchedulerSettings, snap 
 		if err := ctx.Err(); err != nil {
 			return schedulerReplayResult{}, err
 		}
-		if steps > settings.MaxReplayRequests*30+len(s.actions)*30+1000 {
+		if steps > (len(s.requests)+1)*30+len(s.actions)*30+1000 {
 			s.out.reasons = append(s.out.reasons, "ReplayEventBoundExceeded")
 			return s.out, ctx.Err()
 		}
@@ -784,10 +509,6 @@ func schedulerReplayModel(ctx context.Context, settings SchedulerSettings, snap 
 		s.completeExecution()
 		s.completeActions()
 		if !s.startActions() {
-			return s.out, ctx.Err()
-		}
-		if s.projection && s.now >= s.horizon {
-			s.out.transitionComplete = s.transitionComplete()
 			return s.out, ctx.Err()
 		}
 		// Native queue entries never move when the desired configuration changes.
@@ -811,15 +532,7 @@ func schedulerReplayModel(ctx context.Context, settings SchedulerSettings, snap 
 		if !s.accumulateEnergy(math.Min(next, s.horizon)) {
 			return s.out, ctx.Err()
 		}
-		if s.projection && next > s.horizon {
-			s.out.transitionComplete = s.transitionComplete()
-			return s.out, ctx.Err()
-		}
-		// Energy stops at the horizon, so every planned action must finish inside it.
-		if !s.projection && s.now <= s.horizon && next >= s.horizon {
-			s.out.transitionComplete = s.actionsDone()
-		}
-		if !s.projection && !remaining && next >= s.horizon {
+		if !remaining && next >= s.horizon {
 			break
 		}
 		if next <= s.now {
@@ -834,19 +547,6 @@ func schedulerReplayModel(ctx context.Context, settings SchedulerSettings, snap 
 	return s.out, ctx.Err()
 }
 
-func (s *schedulerReplayState) transitionComplete() bool {
-	return s.routingApplied && s.actionsDone()
-}
-
-func (s *schedulerReplayState) actionsDone() bool {
-	for _, a := range s.actions {
-		if !a.done {
-			return false
-		}
-	}
-	return true
-}
-
 func (s *schedulerReplayState) initializeInstances() {
 	s.instances = []*schedulerReplayInstance{}
 	s.byID = map[string]*schedulerReplayInstance{}
@@ -857,14 +557,6 @@ func (s *schedulerReplayState) initializeInstances() {
 	}
 	addInstance := func(i SchedulerInstance, loaded bool) {
 		x := &schedulerReplayInstance{config: i, loaded: loaded, ready: loaded && i.Ready, stopped: i.Stopped, finish: math.Inf(1), wake: 0, arrivalTimes: map[string][]float64{}}
-		if len(i.ArrivalAges) != 0 {
-			observationAge := s.snap.At.Sub(i.ObservedAt)
-			for uid, ages := range i.ArrivalAges {
-				for _, age := range ages {
-					x.arrivalTimes[uid] = append(x.arrivalTimes[uid], -float64(age)-float64(observationAge))
-				}
-			}
-		}
 		if i.Profile != nil {
 			x.policy = schedulerPolicy(i)
 		}
@@ -879,7 +571,7 @@ func (s *schedulerReplayState) initializeInstances() {
 			continue
 		}
 		for _, wanted := range s.goal.Instances {
-			if schedulerSamePhysicalTarget(actual, wanted) && schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUIDs) {
+			if schedulerSamePhysicalTarget(actual, wanted) && schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUID) {
 				if previous := s.byID[actual.TargetID]; previous != nil && previous != s.byID[actual.ID] {
 					s.out.reasons = appendUnique(s.out.reasons, "AmbiguousPreparedPhysicalTarget:"+actual.TargetID)
 				} else {
@@ -1024,10 +716,6 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 			if at >= s.horizon {
 				continue
 			}
-			if len(s.requests) >= s.settings.MaxReplayRequests {
-				s.out.reasons = append(s.out.reasons, "ReplayRequestBoundExceeded")
-				return false
-			}
 			r := SchedulerRequest{ID: fmt.Sprintf("replay-%g-%d", cycle, j), Definition: a.Definition, ReceivedAt: s.snap.At.Add(time.Duration(at)), Phase: phasePending}
 			identity, ok := identities[a.Definition]
 			if !ok {
@@ -1047,7 +735,7 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 
 func (s *schedulerReplayState) targetHandles(r *schedulerReplayRequest) bool {
 	for _, i := range s.goal.Instances {
-		if schedulerHas(i.WorkloadUIDs, r.source.Definition.UID) && schedulerProfileMatches(r.source.Definition, i.Profile) {
+		if i.WorkloadUID == r.source.Definition.UID && schedulerProfileMatches(r.source.Definition, i.Profile) {
 			return true
 		}
 	}
@@ -1059,7 +747,7 @@ func (s *schedulerReplayState) retainedIngress(i *schedulerReplayInstance) bool 
 		return false
 	}
 	for _, r := range s.live {
-		if r.observed && !r.expired && !r.dispatched && !r.completed && schedulerHas(i.config.WorkloadUIDs, r.source.Definition.UID) && schedulerProfileMatches(r.source.Definition, i.config.Profile) && !s.hasRoutedAlternative(r, i) {
+		if r.observed && !r.expired && !r.dispatched && !r.completed && i.config.WorkloadUID == r.source.Definition.UID && schedulerProfileMatches(r.source.Definition, i.config.Profile) && !s.hasRoutedAlternative(r, i) {
 			return true
 		}
 	}
@@ -1072,7 +760,7 @@ func (s *schedulerReplayState) hasRoutedAlternative(r *schedulerReplayRequest, r
 		routing = s.goal.Routing
 	}
 	for _, other := range s.instances {
-		if other == retiring || !other.loaded || !other.ready || other.stopped || !schedulerHas(other.config.WorkloadUIDs, r.source.Definition.UID) || !schedulerProfileMatches(r.source.Definition, other.config.Profile) {
+		if other == retiring || !other.loaded || !other.ready || other.stopped || other.config.WorkloadUID != r.source.Definition.UID || !schedulerProfileMatches(r.source.Definition, other.config.Profile) {
 			continue
 		}
 		weight := other.config.Weight
@@ -1269,7 +957,7 @@ func (s *schedulerReplayState) applyRoute() bool {
 					s.out.reasons = appendUnique(s.out.reasons, "NoReadyCapacityOrTransitionPrerequisite")
 					return false
 				}
-				if !schedulerOwnerAllows(i.config.OwnerWorkloadUID, v.WorkloadUIDs) {
+				if !schedulerOwnerAllows(i.config.OwnerWorkloadUID, v.WorkloadUID) {
 					s.out.reasons = appendUnique(s.out.reasons, "IncompatiblePreparedOwner:"+i.config.ID)
 					return false
 				}
@@ -1566,7 +1254,7 @@ func (s *schedulerReplayState) routeRequests() {
 			if r.observed && !s.targetHandles(r) {
 				s.weights[j] = i.config.Weight
 			}
-			s.available[j] = i.loaded && i.ready && !i.stopped && i.outstanding < i.config.Capacity && schedulerHas(i.config.WorkloadUIDs, uid) && schedulerProfileMatches(r.source.Definition, i.config.Profile)
+			s.available[j] = i.loaded && i.ready && !i.stopped && i.outstanding < i.config.Capacity && i.config.WorkloadUID == uid && schedulerProfileMatches(r.source.Definition, i.config.Profile)
 		}
 		selected := SmoothWeightedRoute(s.weights, credits, s.available)
 		if selected < 0 {

@@ -16,7 +16,7 @@
 
 **행.** 키는 option(노드, 모드, 할당, profile ID), 배치 상한 b, SLO(백분위 p, 목표 L), 완료 여유 m, 용량표 설정이다. deadlinePolicy는 profile이 정한다. 행은 입력, κ, μ(b 이하 배치의 `b / 평균 실행시간` 최댓값), 격자 판정 결과, 창별 백분위 지연을 담는다.
 
-**판정.** option 인스턴스 하나만 있는 keep snapshot에 요청률 λ의 포아송 도착을 넣고 `EvaluateScheduler`(반복 1회, 자동제어 꺼짐)의 SLO 추정을 읽는다. 백분위 지연(m 포함) ≤ L이고 timeout과 만료가 0이면 그 창은 충족이다. 창 하나는 빈 상태에서 시작하고 요청 수는 `max(capacityMinimumRequests, ⌈100/(1 − p)⌉, ⌈λ × capacityWindow⌉)`다. 100은 백분위 위에 표본 100개를 두는 고정 규칙이다. seed 1~`capacityWindows`의 독립 창 중 `capacityPassingWindows`개 이상이 충족하면 λ는 충족이다. seed의 도착 간격을 λ로 나눠 쓰므로(공통 난수) 판정은 결정적이다.
+**판정.** option 인스턴스 하나만 있는 keep snapshot에 요청률 λ의 포아송 도착을 넣고 재생 본체를 한 번 돌린 SLO 추정(`schedulerReplayEstimate`)을 읽는다. 백분위 지연(m 포함) ≤ L이고 timeout과 만료가 0이면 그 창은 충족이다. 창 하나는 빈 상태에서 시작하고 요청 수는 `max(capacityMinimumRequests, ⌈100/(1 − p)⌉, ⌈λ × capacityWindow⌉)`다. 100은 백분위 위에 표본 100개를 두는 고정 규칙이다. seed 1~`capacityWindows`의 독립 창 중 `capacityPassingWindows`개 이상이 충족하면 λ는 충족이다. seed의 도착 간격을 λ로 나눠 쓰므로(공통 난수) 판정은 결정적이다.
 
 **κ.** 창 요청 수와 부하에 따른 배칭이 λ와 함께 바뀌므로 판정이 λ에 단조라는 보장이 없다. 그래서 격자 `λ_k = 0.05kμ`(k = 1~20)를 모두 판정하고, 충족 앞부분과 미충족 뒷부분으로 나뉠 때만 κ를 정한다. 마지막 충족 `λ_K`와 다음 격자 사이를 0.5% μ까지 이분 탐색한 값이 κ다. K = 0이면 κ 0, K = 20이면 κ = μ다. 미충족 뒤에 충족이 오면 행은 `NonMonotone`이고 κ가 없으며 그 option은 `CapacityRejected`로 계획에서 빠진다. 격자 결과는 행에 남아 조사에 쓴다. 격자 간격과 이분 탐색 폭은 코드 상수다.
 
@@ -206,3 +206,16 @@ commit 6에서 모두 지운다.
 - 결정: 10장 승인 묶음(①, ①', ④, ⑤)을 반영한다. 공유를 풀 때 tight만 rasp5 인스턴스에 남고 relaxed와 imagenet은 분배하지 않는다.
 - 결정: 용량표는 ChillServer가 시작할 때마다 자동제어 Workload의 행만 다시 계산하고, 행 단위로 병렬 계산한다. 남긴 행은 기록이다. 몇 분 안에 끝나지 않으면 이전 표로 판단하며 뒤에서 다시 계산한다(2장).
 - 질문: firstfloor가 배치 상한을 재준비 없이 바꿀 수 있는지 확인하지 않았다. 지금은 교체(remove와 prepare)로 센다. 바꿀 수 있다면 비용이 없는 동작으로 둘 수 있다.
+
+## 14. 구현 규칙
+
+4장의 계획기를 `internal/serving/scheduler_capacity.go`가 다음 규칙으로 구현한다.
+
+- **설정 gate.** placement, resources, batching, membership이 꺼져 있으면 option 변형은 그 Workload의 지금 인스턴스 하나와 노드, CPU와 GPU 선택, 배치 상한과 대기 시간이 같아야 한다(membership은 그 Workload의 인스턴스가 있는 노드만). `maxReplicas`와 `maxInstances`는 POOL 전체의 Workload별 인스턴스 수와 전체 인스턴스 수 상한이고, replicas가 꺼져 있으면 Workload별 인스턴스 수가 지금 수와 같다. DP 점은 이 수를 값으로 가지므로 상한을 정확히 지킨다. 노드마다 가장 큰 계획의 합이 상한 안이면 수 값을 두지 않는다. `maxCPUs`는 인스턴스마다의 CPU 수 상한이다. routing이 꺼져 있으면 남는 인스턴스는 지금 가중치를, 새 인스턴스는 option의 가중치를 쓰고 같은 κ 검사를 받는다.
+- **진행 중 전환.** 실행 중인 목표에 Fixed가 아닌 동작이 남아 있으면 판단은 그 목표를 keep으로 이어 가고 사유는 `TransitionInProgress`다. 가용 노드 최저 모드 낮춤만 남은 목표는 공통 상태이므로 계획을 막지 않는다.
+- **DP 요청 에너지.** DP는 칸 배정의 요청 에너지를 [0, T] 전체에 target 배정으로 센다. 최종 순위와 `ExpectedJoules`는 4장의 route 분할 식으로 정확히 계산한다. e는 profile의 배치 1 입력당 에너지다.
+- **가중치 척도.** 지금 가중치의 합이 1,000이 아니면 첫 판단이 route 동작 하나로 1,000 척도의 가중치를 적용한다.
+- **제외 사유.** 4장의 사유에 더해 기준 전력이 없으면 `MissingUnloadedNodeBaseline:<노드>:<모드>`, 측정 POOL 노드는 `MeasurementNode`, 준비되지 않은 노드는 `NodeUnavailable`, 비서빙 예산 노드는 `PlacementBudgetUnavailable`을 기록한다.
+- **재사용 증거.** 분배되지 않은 준비된 인스턴스는 예약 slot(`targetID`)이나 그 Workload의 소유가 있을 때만 계획이 다시 쓴다.
+- **무한 값.** 용량이 없어 대기, 비우는 시간, 초과량이 정해지지 않으면 기록에서 그 필드가 빠지고 후보의 `worstExceedance`는 float 최댓값이다.
+- **DP 비용.** route 시각마다 같은 노드에서 에너지, κ 합, 칸별 요청 에너지가 모두 같거나 나쁜 계획은 빠지고, 칸은 Workload 하나씩 차례로 배정한다. 두 처리는 충족 판정을 바꾸지 않는다.

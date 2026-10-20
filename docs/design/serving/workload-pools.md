@@ -134,36 +134,35 @@ NodeReady만 따른다. 그래서 외부 Pod가 있는 노드도 가용 노드�
 같으면 이름순이다. DeviceClass의 `powerModes`는 순서와 전력 값을 갖지 않는다(`api/v1alpha1/deviceclass_types.go:8-42`,
 `internal/deviceclass/powermode.go:11-42`).
 
-가용 노드를 내리는 것은 탐색 축이 아닌 고정 규칙이고 모든 후보의 DAG에 공통으로 들어간다. `Controls.Power`가 켜져 있으면 모든 후보(유지 후보 포함)는
-판단 시점의 모든 가용 노드를 시각 0부터 가장 낮은 모드에 둔 공통 상태에서 계산한다. 계속 비어 있는 노드의
-에너지는 가장 낮은 모드의 unloaded baseline이다. 현재 모드가 다르면 후보의 DAG는 그 노드의 맨 앞에 power
-동작을 두고 `Action.Fixed=true`로 표시한다. 이 동작은 모든 후보에 같으므로 그 시간과 에너지는 공통 항으로 비교에서
-빠진다. 판단에 target이 없으면 controller는 유지 후보의 `Fixed` 동작만 실행한다. 빈 노드 전환 비용 측정은 이 규칙에
-필요하지 않다.
+가용 노드를 내리는 것은 고정 규칙이고 keep을 포함한 모든 계획의 DAG에 공통으로 들어간다. `Controls.Power`가 켜져 있으면
+모든 노드 계획은 판단 시점의 모든 가용 노드를 시각 0부터 가장 낮은 모드에 둔 공통 상태에서 계산한다. 계속 비어 있는 노드의
+에너지는 가장 낮은 모드의 unloaded baseline이다. 현재 모드가 다르면 DAG는 그 노드의 맨 앞에 power 동작을 두고
+`Action.Fixed=true`로 표시한다. 이 동작은 모든 계획에 같으므로 그 시간과 에너지는 공통 항으로 비교에서 빠진다. 판단에
+target이 없으면 controller는 keep의 `Fixed` 동작만 실행한다. 빈 노드 전환 비용 측정은 이 규칙에 필요하지 않다.
 
-가용 노드를 활성 POOL로 다시 넣는 후보는 그 전환 비용을 비교에 포함한다. 노드 단위 순서(`scheduler_candidates.go:1009-1048`)에
-따라 `Fixed` 내림 뒤에 power 동작(가장 낮은 모드에서 profile 모드로)과 prepare가 온다. 그 노드는 가장 낮은 모드에서
+가용 노드를 활성 POOL로 다시 넣는 노드 계획은 그 전환 비용을 비교에 포함한다. 노드 단위 순서(`schedulerPlan`)에 따라
+`Fixed` 내림 뒤에 power 동작(가장 낮은 모드에서 profile 모드로)과 prepare가 온다. 그 노드는 가장 낮은 모드에서
 출발한 것으로 계산한다. 다시 넣는 비용은 빈 노드에서 측정한 전력모드 전환 비용과 profile 모드에서 측정한 prepare 비용의
-합이다. power 동작은 그 시점의 적재 상태, 곧 빈 상태를 `BeforeState`로 가진 전환 비용(3.5절)을 쓰고, replay의 적재 상태
-확인(`scheduler_replay.go:1364-1374`)이 같은 상태로 비용을 확인한다. prepare 비용은 노드 전력모드로 고른다. 빈 노드 전환은
+합이다. `schedulerPlan`의 비용 선택은 power 동작에 그 시점의 적재 상태, 곧 빈 상태를 `BeforeState`로 가진 전환 비용(3.5절)을,
+prepare에 노드 전력모드가 같은 비용을 고른다. 빈 노드 전환은
 측정 POOL에서 `serving-operation`의 power 동작으로 측정하고([원자 동작 측정의 격리](scheduler-operations.md#원자-동작-측정의-격리)),
 모드 변경이 노드를 재부팅하는 장비(jetsono)도 같다. 측정 구간은 NodeActuation의 적용과 확인에 settling
 (`settlingDurationSeconds`, E1에서 60 s)을 더한 구간이다. 그래서 적용이 약 1.5 s인 jetsonx 전환도 63.5 s 구간으로
 coverage 검사를 통과해 `Accepted`이고, 비용에는 목표 모드에서 보낸 settling 에너지가 들어간다. 그 비용이 없으면 다시
-넣는 후보는 `MissingOperationCost`로 평가할 수 없다.
+넣는 노드 계획은 `MissingOperationCost`로 비교에서 빠진다.
 
-replay는 에너지를 horizon까지 적분하므로 다시 넣는 후보는 power, prepare, route 사슬이 horizon 안에 끝날 때
-평가한다. 사슬이 horizon을 넘으면 그 후보는 `TransitionExceedsHorizon`으로 평가 대기이고, 평가된 후보는 모두
-power와 prepare의 측정 에너지 전체와 다시 넣은 뒤의 적재 baseline을 같은 horizon에서 비교한다. 이 규칙은 모든
-후보의 계획 동작에 같다. E1에서 측정한 빈 노드 전환은 jetsonx 63.5 s, jetsono 134.5 s, orin-nano 197.1 s이므로
-다시 넣는 후보를 평가하려면 horizon이 전환 시간과 prepare 시간의 합 이상이어야 한다.
+비교 기간은 판단마다 하나인 `T = max(horizonNanos, 최장 route 전 사슬 + 최장 route 뒤 remove)`이고 keep과 모든 계획에
+같다([용량표 계획기 4장](analytic-planner.md#4-노드-계획과-dp)). 사슬은 동작마다 측정 trial의 최대 시간으로 재므로 다시
+넣는 계획의 power, prepare, route 사슬도 T 안에 끝나고, 모든 계획은 power와 prepare의 측정 에너지 전체와 다시 넣은 뒤의
+적재 baseline을 같은 T에서 비교한다. E1에서 측정한 빈 노드 전환은 jetsonx 63.5 s, jetsono 134.5 s, orin-nano 197.1 s이고,
+이런 사슬이 있는 판단의 T는 `horizonNanos` 60 s보다 길다.
 
-후보는 차이로 비교한다(`SCH-16`). 비교 집합은 어느 한 후보라도 위 공통 상태와 다른 인스턴스, 전력모드, 동작을 계획한
-노드이고, 모든 후보의 `ExpectedJoules`는 이 집합의 노드만 합한다. 집합 밖 노드(측정 POOL 노드와 모든 후보에서 비어 있는
-가용 노드 포함)는 모든 후보에 같아 소거한다. 결정 기록은 `SchedulerSearch.ComparedNodes`에 이 집합을 남긴다. 비교 집합
-노드의 계획 모드에 unloaded baseline이 없으면 그 후보의 에너지는 `MissingUnloadedNodeBaseline:<node>:<mode>`로 평가할 수
-없다(`scheduler_replay.go:1712-1713`). 집합 밖 노드의 baseline은 판단에 쓰지 않는다. 전체 POOL 에너지는 기존 운영 전력
-집계(`ObservationLog.OperatingPower`, `cmd/chill-server/scheduler_service.go:399-409`)로 실측해 보고한다.
+노드 계획은 차이로 비교한다(`SCH-16`). 비교 집합은 keep 밖의 적격 노드 계획이 있는 노드이고, keep과 target의
+`ExpectedJoules`는 이 집합의 노드만 합한다. 집합 밖 노드(측정 POOL 노드와 계획이 keep뿐인 노드 포함)는 모든 계획에 같아
+소거한다. 결정 기록은 `SchedulerSearch.ComparedNodes`에 이 집합을 남긴다. 노드 계획의 모드에 unloaded baseline이 없으면 그
+계획은 `MissingUnloadedNodeBaseline:<node>:<mode>` 사유로 비교에서 빠진다. 집합 밖 노드의 baseline은 판단에 쓰지 않는다.
+전체 POOL 에너지는 기존 운영 전력 집계(`ObservationLog.OperatingPower`, `cmd/chill-server/scheduler_service.go:399-409`)로
+실측해 보고한다.
 
 ### 3.5 후보 도출
 
@@ -194,10 +193,9 @@ profile의 측정 노드가 그 Workload의 후보 노드가 된다(`kube/schedu
 | operation 측정(`serving-operation`) | ChillServer store의 고정 prefix `serving/operation-measurements/<Node UID>/<operation ID>.json`. `serving-operation`이 이 규칙으로 key를 만들고 manifest는 key를 받지 않는다 | Verdict `Accepted`, 기존 검사(`kube/cost.go:27-98`) 통과, 기록의 meter(ID, Node, scope, source)가 현재 scheduler 설정 `meters`의 항목과 모두 같음 | 비용은 (Node UID, kind, from, to, 노드 전력모드)마다 `Result.EndedAt`이 가장 늦은 것. power 기록은 측정 전후 모드가 from과 to이고 (Node UID, from, to, 적재 상태)마다 고른다. idle 기록의 baseline은 (Node, 전력모드, State)마다 하나 |
 | 전력모드 전환 비용 | profile namespace allowlist의 PowerModeTransitionCost 중 기존 `loadPowerCost` 조건(`kube/cost_power.go:75-130`)을 통과한 Complete. meter는 scheduler 설정 `meters`에서 같은 Node와 같은 source(`prepared.PowerSource`)를 가진 항목이다 | 같음 | (Node UID, from, to, 적재 상태)마다 받아들인 trial의 완료 시각 중 가장 늦은 값이 큰 측정, 같으면 이름순. 적재 상태는 runner의 profile과 할당을 담은 `BeforeState`(`cost_power.go:195-199`)이고 profile이 모델, 실행 경로, 장비를 정한다 |
 
-두 경우 모두 그 시각을 새 필드 `OperationCost.MeasuredAt`에 담는다. 조건이 다른 비용은 서로 대신하지 않는다. replay는
-이미 prepare와 remove의 노드 전력모드(`scheduler_replay.go:1230-1233`)와 전력모드 변경의 적재 상태(`:1219-1229`)를
-확인하므로, planner의 비용 선택(`scheduler_candidates.go:882-886`)도 같은 열쇠로 고른다. 맞는 비용이 없으면 기존대로
-`MissingOperationCost`다(`scheduler_replay.go:1205-1210`).
+두 경우 모두 그 시각을 새 필드 `OperationCost.MeasuredAt`에 담는다. 조건이 다른 비용은 서로 대신하지 않는다. planner의
+비용 선택(`schedulerPlan`의 `selectCosts`)은 prepare와 remove에 노드 전력모드를, 전력모드 변경에 적재 상태(`BeforeState`)를
+열쇠로 쓴다. 맞는 비용이 없으면 그 노드 계획은 `MissingOperationCost`로 비교에서 빠진다.
 
 나열은 새 `evidencestore.Lister`(`List(ctx, prefix) ([]ObjectIdentity, error)`)로 한다. S3 구현은 `ListObjectsV2`를
 page 끝까지 읽는다(`internal/evidencestore/s3/client.go:10-14`에 메서드 추가). store 자격 증명에 list 권한이
@@ -303,41 +301,41 @@ snapshot의 노드는 3.4절의 전체 POOL이고 측정 POOL 노드(3.3절)는 
 
 | State | 조건 | 판단 |
 |---|---|---|
-| `Disabled` | 자동제어 꺼짐 | 마지막 구성 유지, 4.4절의 영향 평가 대상 |
-| `MeasurementEvidenceMissing` | 켜졌고 option 없음 | 후보 생성에서 빠지고 다른 Workload의 판단은 계속 |
-| `Controlled` | 켜졌고 option 있음 | 후보 생성 대상 |
+| `Disabled` | 자동제어 꺼짐 | 마지막 구성 유지, 인스턴스가 있는 노드는 keep뿐(4.4절) |
+| `MeasurementEvidenceMissing` | 켜졌고 option 없음 | 계획에서 빠지고 다른 Workload의 판단은 계속 |
+| `Controlled` | 켜졌고 option 있음 | 노드 계획과 판정 대상 |
 
-### 4.3 후보 생성
+### 4.3 노드 계획 규칙
 
-- 열거(`scheduler_candidates.go:288-344`)는 `Controlled` Workload만 바꾼다. 꺼진 Workload의 분배는 현재 값을 복사한다.
-- 꺼진 Workload가 owner이거나 binding된 인스턴스는 제거, 자원 변경, policy 변경 대상에서 빠진다. `Controlled`
-  Workload는 그 인스턴스로 가는 자기 분배를 바꿀 수 있다.
+노드 계획과 판정은 [용량표 계획기 4장](analytic-planner.md#4-노드-계획과-dp)과 [14장](analytic-planner.md#14-구현-규칙)이
+원본이다. Workload별 규칙은 다음과 같다.
+
+- 계획은 `Controlled` Workload의 인스턴스와 분배만 바꾼다. 꺼진 Workload의 분배는 현재 값을 그대로 둔다.
+- 꺼진 Workload가 owner이거나 꺼진 Workload를 맡은 인스턴스, strict fixed-size baseline 인스턴스가 있는 노드는
+  keep뿐이다(`FixedWorkload`).
 - 한 노드의 인스턴스는 모두 같은 ModelSpec을 참조한다.
-- `Controls.Membership`이 꺼져 있으면 `Controlled` Workload의 option은 그 Workload의 활성 POOL 노드에 한정한다
-  (`scheduler_candidates.go:767`의 Pool 비교를 대체).
-- `Controlled` Workload마다 분배 가중치가 양수인 인스턴스가 하나 이상 있어야 한다. 이를 어기는 후보는 유지 후보를
-  포함해 `MinimumInstance:<uid>` 사유로 선택하지 않는다. 부하가 0이어도 같다.
-- 3.2절의 연결 없는 인스턴스 정리를 포함한다. 가용 노드를 내리는 동작은 탐색 축이 아니며 모든 후보의 DAG에 공통
-  `Fixed` 동작으로 들어간다(3.4절).
-- 활성 POOL 사이의 직접 이동은 같은 노드의 remove와 prepare를 한 후보의 DAG로 만든다. 노드 단위 순서
-  (`scheduler_candidates.go:1009-1048`)는 membership 동작 없이 유지하고, 비용은 각 동작 비용의 합이다.
-- 첫 구성은 현재 인스턴스가 0인 `Controlled` Workload에 대해 option의 배치를 그대로 만든다. option 허용 규칙
-  (`scheduler_candidates.go:772-787`)에 따라 placement, resources, batching control이 켜져 있어야 한다.
+- `Controls.Membership`이 꺼져 있으면 `Controlled` Workload의 option은 그 Workload의 인스턴스가 있는 노드에 한정한다.
+- `Controlled` Workload는 부하가 0이어도 인스턴스가 하나 이상 있어야 최종 충족이다.
+- 3.2절의 연결 없는 인스턴스 정리를 포함한다. 가용 노드를 내리는 동작은 모든 계획의 DAG에 공통 `Fixed` 동작으로
+  들어간다(3.4절).
+- 활성 POOL 사이의 직접 이동은 같은 노드의 remove와 prepare를 한 DAG로 만든다. 노드 단위 순서(`schedulerPlan`)는
+  membership 동작 없이 유지하고, 비용은 각 동작 비용의 합이다.
+- 첫 구성은 현재 인스턴스가 0인 `Controlled` Workload에 대해 option의 배치를 그대로 만든다. 설정 gate에 따라
+  placement, resources, batching, membership control이 켜져 있어야 한다.
 
 ### 4.4 SLO 판정 대상과 에너지
 
-후보의 SLO 판정 대상은 `Controlled` Workload 전체와, 인스턴스가 계획된 동작이 있는 노드에 있거나 인스턴스의
-binding이 바뀌는 `Disabled` Workload다. 전력모드 변경은 노드의 동작이므로 이 규칙에 포함된다. 나머지 Workload의
-예측도 기록한다. 에너지는 3.4절의 비교 집합 노드를 합한다.
+판정 대상은 `Controlled` Workload 전체다. `Disabled` Workload의 인스턴스가 있는 노드는 keep뿐이므로 계획 동작은 그 노드의
+전력모드와 인스턴스를 바꾸지 않고, 꺼진 Workload의 SLO는 계획의 영향을 받지 않는다. 에너지는 3.4절의 비교 집합 노드를 합한다.
 
 ### 4.5 적용과 기록
 
 `Target`이 있으면 적용한다(`kube/scheduler.go:284`의 전체 활성 조건 삭제). 결정 기록(`cmd/chill-server/scheduler_service.go:411-416`)은
-모든 후보와 snapshot을 담고 option은 완료된 측정 수만큼 늘어난다. 저장 기록의 `SchedulerInstance`는 profile 본문 대신
+keep, target, `decision.capacity`와 snapshot을 담고 option은 완료된 측정 수만큼 늘어난다. 저장 기록의 `SchedulerInstance`는 profile 본문 대신
 `profileID`만 담고, profile 본문은 catalog(`GET /api/v1/scheduler/profiles`)에서 조회한다. HTTP 조회의 기존 압축
 (`internal/serving/httpapi/scheduler_presentation.go:17-73`)은 조회 경계에 그대로 둔다. 이 변경은 결정 기록 축소 M0
-([05](../architecture-rethink/05-recommendation-migration.md))의 일부이며, M0의 나머지(후보 요약, snapshot
-축소)는 [판단 기록 다이어트](decision-record-diet.md)가 정한다.
+([05](../architecture-rethink/05-recommendation-migration.md))의 일부이며, M0의 나머지(snapshot 축소)는
+[판단 기록 다이어트](decision-record-diet.md)가 정한다.
 
 ## 5. API와 Dashboard
 

@@ -11,11 +11,11 @@
 HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 `--serving-scheduler-config-key=scheduler.json`으로 Serving namespace의 구성을 읽는다.
 빈 ConfigMap 이름은 기존 Workload 관리와 추론만 실행한다. scheduler는
-`settings.autonomousWorkloads`의 Workload만 자동제어하고, 나머지 Workload는 동일 관측과 후보 기록 아래 현재 배치를 유지한다.
+`settings.autonomousWorkloads`의 Workload만 자동제어하고, 나머지 Workload는 동일 관측과 판단 기록 아래 현재 배치를 유지한다.
 
 | 구성 필드 | 의미와 실제 근거 |
 |---|---|
-| `settings` | nanosecond duration의 observation/control/horizon, search/replay/resource bounds·seed·제어 활성 상태 |
+| `settings` | nanosecond duration의 `observationWindowNanos`, `controlIntervalNanos`, `horizonNanos`(비교 기간 T의 하한, [용량표 계획기 4장](analytic-planner.md#4-노드-계획과-dp)), `maxObservationAgeNanos`, 자원 상한 `maxReplicas`, `maxInstances`, `maxCPUs`, `servingMemoryBytes`와 제어 활성 상태 `controls`(`placement`, `resources`, `replicas`, `routing`, `batching`, `power`, `membership`). 구성과 `PUT` 본문은 선언한 필드만 받는다 |
 | `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `139`는 E1(rasp5 CPU, 2 req/s 60분, n=8312)의 `completionResidualNanos` p99 138.23 ms를 올림한 값이다([워크로드별 POOL](workload-pools.md#36-완료-여유)) |
 | `settings.capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests` | 필수. 용량표 행의 창 길이(> 0), 요청률마다 재생하는 창 수(≥ 1), 충족 창 수(1 이상 창 수 이하), 창의 최소 요청 수(≥ 1). sample은 60 s, 20, 19, 1,000이다([용량표 계획기](analytic-planner.md#2-용량표)) |
 | `settings.autonomousWorkloads` | 자동제어할 Workload UID 목록. decision은 Workload마다 `workloads[]`에 `Disabled`, `MeasurementEvidenceMissing`, `Controlled` 상태와 사유를 남긴다([워크로드별 자동제어](workload-pools.md#31-워크로드별-자동제어)) |
@@ -54,19 +54,21 @@ revision은 다시 적용하지 않는다.
 | `GET /api/v1/observations/power` | 같은 고정 `from/to`의 raw 표본을 Node당 한 번 적분한 전체·활성 POOL J/평균 W; 누락은 null과 사유 |
 
 `/scheduler/state`의 `costIssues[]`(CostIssue `source/code/reason`)는 비용에 기여하지 못한
-측정이다. decision은 `workloads[]`, snapshot Node의 `measurement`와 `reasons`,
-`search.comparedNodes`를 담는다. `comparedNodes`는 어떤 후보가 바꾸는 Node이며
-`expectedJoules`는 이 Node만 합산한다. 관측 기록의 인스턴스는 profile을 `profileID`로 보존한다.
+측정이다. decision은 `keep`, `target`, `workloads[]`, `capacity`, snapshot Node의 `measurement`와 `reasons`,
+`search.examined`, `search.comparedNodes`를 담는다. `capacity`는 비교 기간, 고른 route 시각, Workload별 κ 합과 판정,
+가중치, 사용한 용량표 행, 모든 노드 계획과 제외 사유다([스케줄러 구현 설계 5.3절](scheduler-implementation.md#53-전환에너지선택)).
+`comparedNodes`는 keep 밖의 적격 노드 계획이 있는 Node이며 `expectedJoules`는 이 Node만 합산한다.
+관측 기록의 인스턴스는 profile을 `profileID`로, Workload를 `workloadUID` 하나로 보존한다.
 
 현재 `/scheduler`, `/scheduler/state`와 scheduler history는 선택적으로
 `view=compact`를 받는다. 생략하면 기존 full raw 응답이며 저장 관측 기록, archive와
 page/cursor 선택은 바꾸지 않는다. 다른 `view` 값은 `InvalidQuery`로 거절한다.
 compact 응답은 같은 envelope에 `profiles` dictionary를 추가하고, snapshot의 instances/options/
-inProgressTarget 및 decision의 keep/target/candidates 안 인스턴스의 `profile`만
+inProgressTarget 및 decision의 keep/target 안 인스턴스의 `profile`만
 `{"$ref":"응답 내 key"}`로 치환한다. nil은 그대로다. dictionary에는 원본 profile 객체를
 보존한다. profile ID가 key의 기준이며 같은 ID의 다른 보존 값은 별도 suffix key로 남긴다.
 같은 값의 반복만 공유하며 equality는 admission/validation gate가 아니다. 소비자는 이
-필드만 dictionary로 해석한 뒤 기존 화면 계약을 사용한다. SLO, 정책, 설정, 후보 순서,
+필드만 dictionary로 해석한 뒤 기존 화면 계약을 사용한다. SLO, 정책, 설정,
 물리/선택 인스턴스 신원, 사유, 출처와 action acknowledgement 원본은 바꾸지 않는다.
 응답 한 page의 얕은 DTO만 만들며 별도 history scan, raw evidence 복사, decoded cache
 또는 fallback reader는 없다.

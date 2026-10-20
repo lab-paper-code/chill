@@ -3,11 +3,11 @@ import { test } from "node:test"
 import { millisecondsToNanos, nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON, wireInteger, settingsEqual } from "./scheduler.ts"
 import type { SchedulerSettings } from "./read-types.ts"
 
-test("editing another setting preserves signed seed and maximum uint64 memory", () => {
-  const settings = parseSchedulerJSON('{"seed":-9223372036854775808,"servingMemoryBytes":18446744073709551615,"controlIntervalNanos":9223372036854775807,"replays":1}') as Record<string,unknown>
-  settings.replays = 2
+test("editing another setting preserves maximum int64 and uint64 integers", () => {
+  const settings = parseSchedulerJSON('{"servingMemoryBytes":18446744073709551615,"controlIntervalNanos":9223372036854775807,"maxReplicas":1}') as Record<string,unknown>
+  settings.maxReplicas = 2
   const saved = stringifySchedulerJSON(settings)
-  assert.equal(saved,'{"seed":-9223372036854775808,"servingMemoryBytes":18446744073709551615,"controlIntervalNanos":9223372036854775807,"replays":2}')
+  assert.equal(saved,'{"servingMemoryBytes":18446744073709551615,"controlIntervalNanos":9223372036854775807,"maxReplicas":2}')
   assert.deepEqual(parseSchedulerJSON(saved),settings)
   assert.deepEqual(parseSchedulerJSON('{"expectedJoules":null,"watts":0,"expectedNanos":1.25}'),{expectedJoules:null,watts:0,expectedNanos:1.25})
 })
@@ -21,10 +21,9 @@ test("duration conversion preserves nanoseconds and rejects nonpositive or overf
 })
 
 test("review detects control or exact integer changes across numeric representations", () => {
-  const current:SchedulerSettings={algorithm:"fixed-horizon",observationWindowNanos:1,controlIntervalNanos:1,horizonNanos:1,maxObservationAgeNanos:1,seed:-9223372036854775808n,servingMemoryBytes:18446744073709551615n,replays:1,maxCandidates:1,maxReplicas:1,maxInstances:1,maxReplayRequests:1,maxCPUs:1,completionMarginMS:0,capacityWindowNanos:1,capacityWindows:1,capacityPassingWindows:1,capacityMinimumRequests:1,autonomousWorkloads:[],controls:{placement:false,resources:false,replicas:false,sharing:false,routing:false,batching:false,power:false,membership:false}}
+  const current:SchedulerSettings={observationWindowNanos:1,controlIntervalNanos:1,horizonNanos:1,maxObservationAgeNanos:1,servingMemoryBytes:18446744073709551615n,maxReplicas:1,maxInstances:1,maxCPUs:1,completionMarginMS:0,capacityWindowNanos:1,capacityWindows:1,capacityPassingWindows:1,capacityMinimumRequests:1,autonomousWorkloads:[],controls:{placement:false,resources:false,replicas:false,routing:false,batching:false,power:false,membership:false}}
   assert.equal(settingsEqual(current,{...current,controlIntervalNanos:1n,controls:{...current.controls}}),true)
   assert.equal(settingsEqual(current,{...current,servingMemoryBytes:18446744073709551614n}),false)
-  assert.equal(settingsEqual(current,{...current,algorithm:"projected-work-history"}),false)
   assert.equal(settingsEqual(current,{...current,controls:{...current.controls,power:true}}),false)
 })
 

@@ -8,7 +8,7 @@
 
 firstfloor의 Go 큐·배처·persistent Python IPC runner를 `internal/firstfloor`,
 `cmd/serving-worker`, `runtime/firstfloor`에 연결했다. 동료의
-`/home/genesis1/ETRI/donghwan/firstfloor`는 보존한다. 실제 actor와 후보 replay는
+`/home/genesis1/ETRI/donghwan/firstfloor`는 보존한다. 실제 actor와 용량표 replay는
 같은 순수 선택 함수를 사용하고 ingress Runtime은 Workload 수용·분배·drain을 맡는다.
 
 | 세부 계약 | 원본 문서 |
@@ -24,7 +24,7 @@ firstfloor의 Go 큐·배처·persistent Python IPC runner를 `internal/firstflo
 | 소유자 | 입력과 책임 | 실제 완료 근거 |
 |---|---|---|
 | `internal/firstfloor` | bounded per-UID queue, frozen request SLO, 같은 UID의 호환 batch, energy-gain 대기, 단일 runner 실행 | 요청별 progress·실제 batch·runner 종료·동기 응답 |
-| `internal/serving` | 정의·receipt·수명·ingress 대기, 운영 부하, 후보 replay·SLO/energy 선택, 분배·판단 관측 기록 | 실제 native 상태와 반환 결과·분배 적용 기록 |
+| `internal/serving` | 정의·receipt·수명·ingress 대기, 운영 부하, 용량표와 κ 합 판정, 노드 계획 선택, 분배·판단 관측 기록 | 실제 native 상태와 반환 결과·분배 적용 기록 |
 | `internal/serving/firstfloor` | HTTP/metadata/progress의 typed 경계, native span과 client span | prepared metadata, 정확한 request/UID/definition/physical instance 상관 |
 | `internal/serving/kube` | 실제 자원 snapshot, profile/cost catalog, Pod·policy·power 원자 동작, 전환 의존성 | API 반환에 이어 실제 Pod/native readiness·drain·삭제·Node 상태 확인 |
 | 기존 Profiling owner | 동일 firstfloor 경로의 fixed-batch 측정·idle·raw evidence·curve | 원래 Run/Job/Node/container/image/actuation와 raw trial binding |
@@ -54,7 +54,7 @@ elapsed는 원래 receipt 경과에서만 뺀다. 상세 window·margin·반환 
 순수 batch 선택 함수의 입력은 검증된 batch별 service duration sample·incremental
 energy/input, 현재 per-UID 요청의 원래 경과 시간/SLO, queue age, 반환 envelope,
 max wait, 관측 요청률이다. 출력은 선택 UID·batch size·대기 시간과 판단 이유다.
-actual actor와 discrete-event replay가 이 함수를 공유한다.
+actual actor와 discrete-event replay가 이 함수를 공유하고, replay는 용량표 행의 κ 판정(5.2절)에 쓴다.
 
 1. normal 요청은 stable EDF로 선택하며 같은 UID/불변 정의의 호환 요청만 배치한다.
 2. 요청별 p-quantile service 비용과 원래 elapsed·반환 비용으로 여유를 계산한다.
@@ -82,7 +82,7 @@ profile은 incremental energy가 차감한 idle과 raw evidence를 보존한다.
 wall joules·부분 실패·불충분한 표본을 보존한다. 세부 실행 조건·catalog lifecycle·
 baseline과 추론 제외 기준은 [측정 계약](scheduler-runtime-measurement.md#같은-firstfloor-fixed-batch-경로)에 둔다.
 
-## 5. 판단 입력과 후보 계산
+## 5. 판단 입력과 계획
 
 ### 5.1 한 운영 snapshot
 
@@ -94,8 +94,8 @@ baseline과 추론 제외 기준은 [측정 계약](scheduler-runtime-measuremen
 
 Runtime의 pending/assigned와 firstfloor 현재 queued/running·running elapsed·batch를
 physical instance/UID/definition에 연결한다. assignment와 실제 queue entry를
-구별한다. native queue에 아직 없는 배정 요청은 배정된 instance로 전달 중인 요청이며,
-replay는 이를 시작 시점에 그 instance의 native queue 끝에 넣어 남은 service 전체를 계산한다.
+구별한다. 계획기는 Workload의 처리 중 요청 수를 요청률 λ와 밀린 요청 B의 대기 수 q로 센다
+([용량표 계획기 3장](analytic-planner.md#3-판정과-순서)).
 unknown instance·관측 공백·오래된 자료는 판단의 입력 상태에 표시한다.
 현재와 목표의 Node UID·단일 POOL 소속·ready/capacity/resource 상태를 함께 캡처한다.
 완료/실패 Pod는 이미 제외하던 자원 예산 캡처와 steady source refresh에서
@@ -103,54 +103,37 @@ Kubernetes field selector로 제외하여 종료된 profiling 이력의 반복 �
 source refresh의 최초/재시작 watch 복구는 전체 Pod를 읽고, 이후 빠진 retained
 executor는 기존 exact Pod GET과 UID/container 종료 확인을 유지한다.
 
-### 5.2 후보 집합과 재현 가능한 replay
+### 5.2 용량표와 노드 계획
 
-현재 유지 후보와 matching measured configurations의 Pod 개수·자원·배치 정책·
-node/pool 배치·power mode·분배를 구성한다. 설정된 bounded candidate/replay 수와
-검색 범위를 결과에 고정한다. 제한 도달은 검토 범위로 표시한다. 현재 선택이 이
-범위에서 가장 유리한 선택이라는 의미로 사용한다.
+Tick은 요청을 재생하지 않는다. 용량표 worker가 Tick 밖에서 켜진 Workload의 SLO와 측정 option 변형(option과
+배치 상한)마다 SLO를 지키는 최대 요청률 κ를 계산하고, Tick은 이 표의 κ 합으로 판정한다. 행의 키, 포아송 창 판정,
+격자와 이분 탐색, `NonMonotone`, 계산 시점과 이전 행 사용은 [용량표 계획기 2장](analytic-planner.md#2-용량표)이
+원본이고 설정은 `capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests`다.
+켜진 Workload에 κ가 있는 행이 하나도 없으면 판단은 `CapacityPending`이고 사유는 `CapacityPending:<Workload UID>`다.
 
-Sharing 제어가 OFF이면 현재 physical instance의 active UID 집합을 그대로 후보의
-단위로 사용한다. placement/resources/replicas를 바꾸더라도 기존 UID 집합을
-합치거나 쪼개지 않으며, replicas ON의 복제도 같은 UID 집합의 복제다. replicas
-OFF는 집합별 현재 물리 인스턴스 수를 보존하고 ON에서도 UID별 replica 상한을
-넘지 않는다. Resources OFF의 실행 자원 비교에서 프로파일 유래 memory request는
-제외하되, 선택한 대상의 실제 measured memory request와 전체 Node 예산 검증은
-그대로 유지한다. 메모리를 source 값으로 바꿔 붙이거나 독립 조절 변수로 삼지 않는다.
-다른 Node로의 placement는 Node-local CPU IDs·GPU UUIDs 대신 같은 CPU 수·스레드와
-GPU 할당 종류를 유지하며, 같은 Node에서는 기존 physical allocation을 그대로 비교한다.
-OFF 제어 비교는 같은 active UID 집합의 기존 인스턴스에만 연결한다. 중첩된
-singleton의 다른 배치·자원·위치를 공유 집합의 변경 허가로 사용하지 않는다.
-Routing OFF의 논리 replacement는 대응하는 기존 cohort replica의 UID별 실제
-weight를 이전하며, preparation option의 scalar weight로 바꾸지 않는다.
+창 하나는 option 인스턴스 하나만 있는 keep snapshot에 seed로 정한 포아송 도착을 넣고 3.3절의 선택 함수로 재생한다.
+실행 시간은 empirical service sample에서 뽑는다. 각 요청의 queue, 실행, 전달과 반환이 반영된 종료 시각에서
+**전체 end-to-end 분포**를 만들고 gonum/stat로 Workload percentile을 계산한다. percentile 지연(완료 여유 포함)이
+SLO 목표 이하이고 timeout과 만료가 0이면 그 창은 충족이다.
 
-현재 queued/running 요청에서 시작해 observation window의 실제 arrival sequence를
-comparison horizon에 반복한다. arrival 재사용 가정·raw service sample draws·seed·반복 수를 기록한다.
-현재 ingress는 실제 Workload queue 순서, native queued 요청은 actor state의 FIFO
-순서를 캡처한다. 원래 receipt 시각은 request 나이와 arrival 가정에 사용한다.
-명시적 original lifetime의 남은 시간은 queued/pending 취소와 실행 후 결과 상태에
-적용하며, 진행 중 batch의 물리 점유는 실제 completion까지 유지한다.
-weighted routing은 actual Runtime과 replay가 같은 deterministic
-smooth weighted rule을 사용하며, 한 UID에 여러 ready 대상과 집중 대상 모두를
-비교한다. 현재 outstanding·진행 중 batch와 공유 instance의 다른 UID도 포함한다.
-모든 후보는 active UID별 완전한 분배 map을 갖는다. keep은 실제 분배를 보존하며,
-새 준비 slot과 새로 공유된 UID는 인스턴스 weight로 분배를 구성한다. routing
-제어가 꺼진 경우 기존 physical instance가 이미 제공하던 UID의 실제 weight를
-보존한다. 집중 후보는 한 UID의 분배만
-교체하고 다른 UID의 분배를 유지한다. 적용 시 active UID의 분배 누락은 오류이며
-암묵적 weight fallback으로 보완하지 않는다. 준비 slot은 실제 Ready physical ID로
-해결하고 replay와 같은 smooth weighted rule로 요청을 분배한다.
-UID/input-path별 smooth-weighted credit은 같은 physical ID의 weight가 그대로인
-경우에만 유지한다. weight 변경·새 route entry는 0에서 시작하며 replay도 이미
-진행한 credit과 snapshot에서 처음 읽는 credit에 같은 reset 조건을 적용한다.
+노드마다 keep과, 그 노드에서 측정한 option 변형 집합 중 한 전력모드와 노드 예산(`ValidateNodeBudget`)을 만족하는
+노드 계획을 만든다. 한 노드의 인스턴스는 모두 같은 ModelSpec을 참조한다. 계획마다 Workload별 `κ_new`와 `κ_ret`,
+route 전후 동작 사슬과 전력을 둔다. 꺼진 Workload의 인스턴스가 있는 노드(`FixedWorkload`), 측정 POOL 노드
+(`MeasurementNode`), 준비되지 않은 노드(`NodeUnavailable`)와 배치 설정이 부족한 노드는 keep뿐이다. 비용, 용량표 행,
+자원이나 기준 전력이 없는 계획은 사유와 함께 기록에 남고 비교에서 빠진다. 노드 계획 규칙과 제외 사유는
+[4장](analytic-planner.md#4-노드-계획과-dp)과 [14장](analytic-planner.md#14-구현-규칙)이 원본이다. 꺼진 제어 축
+(placement, resources, replicas, routing, batching, membership)의 규칙과 `maxReplicas`, `maxInstances`, `maxCPUs`
+상한은 14장의 설정 gate를 따른다.
 
-각 반복은 실제 batch selector의 결정을 실행하면서 empirical service sample과
-같은 trial의 transition readiness/wall cost를 적용한다. 이미 running인 batch의
-잔여시간은 현재 elapsed를 넘는 관측 sample의 조건부 잔여분으로 계산한다.
-범위 밖 running elapsed는 profile-range 이유를 남긴다. 각 request의 queue·실행·
-전달/반환이 반영된 종료 시각에서 **전체 end-to-end 분포**를 만들고 gonum/stat로
-Workload percentile을 계산한다. 평균 batch latency나 단계별 quantile의 합을
-end-to-end percentile로 사용하지 않는다.
+인스턴스는 Workload 하나를 맡고, snapshot과 기록의 인스턴스는 `workloadUID` 하나를 가진다. 같은 모델의 Workload들은
+한 노드를 함께 쓰되 각자 인스턴스를 둔다. capture가 실제 분배에서 두 Workload 이상에 들어간 인스턴스를 찾으면
+snapshot 사유 `SharedInstance:<instance ID>`를 남기고 판단은 `SharedInstance` 상태로 기다린다. 운영자는
+`staticRouting`으로 분배를 나눈다([6장](analytic-planner.md#6-인스턴스-공유-정리)).
+
+ingress Runtime과 replay는 같은 deterministic smooth weighted rule로 요청을 분배한다. 판단의 분배는 켜진 Workload마다
+합 1,000의 정수 가중치이고, 꺼진 Workload의 분배는 현재 값을 그대로 둔다. 적용할 때 active UID마다 분배가 있어야 하고
+빠지면 오류다. 준비 slot은 실제 Ready physical ID로 해결한다. UID별 smooth-weighted credit은 같은 physical ID의
+weight가 그대로인 경우에 유지하고, weight 변경과 새 route entry는 0에서 시작한다.
 
 CPU/GPU/memory는 전체 allocations와 system/비서빙 예약분을 포함한 예산으로
 검토한다. `CPUCount`는 측정/실제 Pod request의 올림값이며 quota·ORT threads·
@@ -164,12 +147,9 @@ Serving 부가 예산은 feasible 제약이다. Pod마다 한 prepared runner와
 비서빙 Pod의 effective CPU request는 Node별 millicore 합계를 먼저 구한 뒤
 한 번만 올림하여 quota 수량 예산으로 기록하고, effective memory request도 합산한다.
 이 quota 합계는 OS affinity/exclusivity 관측의 증거가 아니다. 명시적 exclusive CPU
-예약이 전체 millicore 합계를 덮지 못하면 Node는 ready가 아니며, 비서빙 Pod의
-물리 GPU 소유권 미관측도 계속 차단한다. 현재 native 서빙 인스턴스는 이 합계에서 제외한다.
-GPU 소유권의 미관측은 해당 Node의 `ready=false`와 사유로 남기며 그 Node를
-사용하는 후보를 Pending으로 둔다. 다른 확인된 CPU Node의 후보를 전역 오류로
-막지 않는다. 격리된 Node도 전체 POOL 에너지·meter 범위에서 제외하지 않고,
-실제 자원 예산 및 전역 native/profile 관측 공백의 차단은 유지한다.
+예약이 전체 millicore 합계를 덮지 못하거나 CHILL이 배치하지 않은 Pod가 물리 GPU를 요청하면 그 Node는
+`PlacementBudgetUnavailable` 사유를 받고 노드 계획은 keep뿐이다. 현재 native 서빙 인스턴스는 이 합계에서 제외한다.
+사유가 있는 Node도 전체 POOL에 남아 다른 Node의 계획은 계속된다.
 
 ### 5.3 전환·에너지·선택
 
@@ -178,15 +158,15 @@ power source kind·NodeName·endpoint·metric·label selector로 연결한다.
 동반 thermal endpoint/metric은 별도 관측 identity로 보존하며 같은 벽전력량의
 연결 조건으로 사용하지 않는다. 다른 power series나 Node·범위는 계속 거절한다.
 
-모든 affected UID의 최종 상태와 전환 중 ready capacity를 같은 시간축으로 replay한다.
+전환은 Workload마다 최종 상태와 전환 중 상태를 함께 판정한다([용량표 계획기 3장](analytic-planner.md#3-판정과-순서)).
 node mode 변경·제거는 해당 노드의 모든 instance와 UID에 영향을 준다. 새 allocation을
 동시에 수용할 수 있으면 prepare→route 뒤 기존 source를 stop/drain/remove한다.
 exclusive CPU/GPU 또는 실제 예산 때문에 동시 점유가 불가능하면 최종 target에 없는
 blocking source만 기존 stop→drain→remove→prepare→route 의존성으로 교체한다.
 accepted ingress는 미래 target의 호환성만으로 포기하지 않는다. 현재 Ready이며 실제
 routing된 대체 source가 없으면 기존 source에서 먼저 dispatch하고 원래 identity로
-drain한다. 측정된 remove/prepare 시간·joules와 그동안의 실제 capacity, 대기 및 SLO를
-동일하게 replay하므로 합법적 DAG도 Pending/Overload일 수 있다.
+drain한다. route 전까지 남는 인스턴스의 κ 합 `κ_ret`와 route 시각 r까지 밀린 요청 B로 전환 중 대기 W를 판정하므로
+합법적 DAG도 전환 중 SLO에서 탈락할 수 있다. route 전에 인스턴스를 지우는 모드 변경 계획은 그만큼 `κ_ret`가 줄어든다.
 독립 Node의 안전한 동작은 병렬로, 같은 Node의 비용 구간은 의존 순서대로 반영한다.
 
 기존 logical cohort의 routing origin은 weight 보존 근거이며 새 physical slot을
@@ -212,16 +192,16 @@ handoff와 대상 변경은 원래 route 완료를 기다리고 accepted-context
 break-before-make에서 routing/bindings가 잠시 비어도 기존 실행의 frozen
 `Operation.Target`이 가진 UID cohort·replica 수·UID별 weight를 전환 의도의 근거로
 사용한다. actual 점유·ownership·Ready는 계속 현재 snapshot에서만 가져온다.
-Keep는 미완료 goal을 지우지 않고 남은 DAG를 진행하며 다른 일반 후보도 계속 평가한다.
+실행 중인 목표에 Fixed가 아닌 동작이 남아 있으면 판단은 그 목표를 keep으로 이어 가고 상태는 `Keep`, 사유는
+`TransitionInProgress`이며 새 계획을 만들지 않는다. 가용 노드 최저 모드 낮춤만 남은 목표는 계획을 막지 않는다.
 관측된 `TargetID`가 같은 실제 physical slot은 중복 prepare하지 않는다. 새 완료 proof와
 소비 수치는 현재 capture를 사용하고, 원래 실행의 frozen target을 덮어쓰거나 사라진
 proof를 복원하지 않는다.
 
 global route는 같은 policy ConfigMap/ACK 경로를 쓰므로 기존 running run을 통해
 직렬화한다. source release는 이전 global route 완료를 기다리되 독립 Node의 합법적
-준비를 전역 lock으로 막지 않는다. 진행 중 route는 자신의 frozen target으로 표시하며
-관측하지 못한 native ACK/남은 시간을 새 goal의 즉시 적용으로 replay하지 않고 Pending으로
-남긴다. running/native noncancelable 작업을 강제로 취소하지 않는다.
+준비를 전역 lock으로 막지 않는다. 진행 중 route는 자신의 frozen target으로 표시하며, native ACK를 관측할 때까지
+판단은 `TransitionInProgress`로 그 목표를 이어 간다. running/native noncancelable 작업은 끝날 때까지 둔다.
 자율 제어 대상이 아닌 Workload의 `staticRouting`도 기존 running route가 있으면 덮어쓰지 않고
 같은 관측 기록에 sourceConfigRV·대기 이유·actual readback을 남긴다.
 route의 ConfigMap·annotation 저장은 desired 진행으로, `Actual.Native`에는 정확한
@@ -235,55 +215,37 @@ ChillServer 재시작은 이 값을 다시 읽어 마지막 분배를 그대로 
 구성을 유지한다. 이 annotation이 없는 Pod는 `edge.dacs.io/serving-weight`를 호환되는 모든
 Workload에 적용한다.
 
-동일 comparison horizon에서 모든 POOL Node의 baseline을 한 번 적분한다.
-active/inactive/temporary Node를 포함한다. 원자 동작 구간의 wall joules는 그 구간의
-baseline 소비를 **대체**하고, 실제 serving execution의 incremental energy만 더한다.
-전환 eta를 사용할 때에는 원래 target baseline subtraction 의미를 맞춘다.
-서로 독립된 meter의 Node만 합산한다. 시간 단위의 readiness와 joules를 구별한다.
-후보의 모든 계획 동작(keep은 진행 중 동작)은 horizon 안에 끝나야 평가한다. replay마다 표본으로 뽑은
-동작 시간으로 계산한 동작 사슬이 horizon을 넘으면 그 후보는 `TransitionExceedsHorizon`으로 평가 대기다.
-그래서 평가된 후보는 모두 같은 horizon에서 동작 에너지 전체와 전환 뒤 구성을 함께 비교한다.
+비교 기간은 판단마다 하나인 `T = max(horizonNanos, 최장 route 전 사슬 + 최장 route 뒤 remove)`이고 keep과 모든 계획에
+같다. 사슬은 동작마다 측정 trial의 최대 시간으로 재므로 모든 계획 동작이 T 안에 끝나고, 비교는 동작 에너지 전체와
+전환 뒤 구성을 함께 담는다. 노드 계획의 [0, T] 노드 에너지는 `schedulerBaseline`의 적재 상태 전력과 원자 동작의
+평균 wall joules로 계산한다. 원자 동작 구간의 wall joules는 그 구간의 baseline 소비를 **대체**하고,
+`target-baseline-delta` 비용은 차감한 전력에 시간을 곱해 더한 wall joules로 쓴다. 요청 에너지는 profile의 입력당
+incremental energy를 route 시각에서 나눠 더한다. 비교 집합(`search.comparedNodes`) 밖의 노드는 모든 계획에 같아
+소거한다. 식은 [용량표 계획기 4장](analytic-planner.md#4-노드-계획과-dp)이 원본이다.
 
-`settings.algorithm`은 필수이며 `fixed-horizon`과 `projected-work-history`만 허용한다.
-전자는 기존 비교 기준으로, 실제 SLO-feasible 후보 중 prospective total energy를 최소화한다.
-후자는 같은 실제 SLO/resource/evidence/progress 평가를 통과한 후보의 energy 선택만 바꾼다.
-모든 후보가 infeasible한 과부하는 기존 worst normalized SLO 초과→energy 순서를 유지한다.
-근거가 부족한 판단은 Pending/reason으로 남긴다.
-표본 0의 percentile은 값 없음이다. keep/target/rejected 후보·예상치·설정·근거를
-원시 decision record에 남긴다. 실제 요청 완료와 whole-POOL 전력 기록을 같은
-관측 구간·UID·decision에 연결하여 분석자가 예측과 실측 차이를 계산한다.
+선택 순서는 [3장](analytic-planner.md#3-판정과-순서)이 정한다. 켜진 Workload마다 최종 충족(`κ_new ≥ λ`)과 전환 중
+충족(`λ ≤ κ_ret` 또는 `W ≤ L − m`)을 정확한 κ 합으로 판정하고, 모든 Workload에서 둘 다 충족하는 해 중 에너지가 작은 것,
+keep, 논리 구성 key 순으로 고른다. 그런 해가 없으면 최대 초과량이 작은 해, 에너지 순으로 고르고 상태는 `Overload`,
+사유는 `NoPlanMeetsSLO`다. 켜진 Workload는 부하가 0이어도 인스턴스가 하나 이상 있어야 최종 충족이다. 해는 route 시각
+r마다 노드 순서 Pareto DP로 찾고, 칸 크기는 충족 판정을 바꾸지 않는다([4장](analytic-planner.md#4-노드-계획과-dp)).
+snapshot의 목록은 정렬해 쓰므로 판단은 입력 순서와 무관하다.
 
-`projected-work-history`는 첫 실제 logical 구성의 work를 0으로 시작한다. 이후 첫 control
-tick에서 완성된 observation window가 있으면 cursor 이후 `[Through, ObservationEnd)`를
-한 번 소비한다. 지연된 tick도 전체 차이를 읽으며 rolling-H를 다시 누적하지 않는다.
-추가 관측 기록 읽기는 authoritative Observer refresh와 최종 `SchedulerInputs(time.Now)` 이전에 끝낸다. interval과 선택 receipt/
-definition dependency의 불완전 근거는 cursor를 진행시키지 않는다. 관련 없는 오래된 incomplete
-metadata는 제외하되 실제 겹침·필수 dependency·불명 prefix를 무시하지 않는다.
-선택 receipt의 validated/accepted 근거나 terminal outcome이 아직 없으면 history만 Pending으로
-유지하고 cursor를 멈춘다. 이후 durable classification은 최초 receipt 구간에 합쳐 한 번 소비한다.
+router 가중치는 고른 해의 인스턴스 κ에 입력당 에너지가 작은 인스턴스부터 λ를 채운 배정을 합 1,000의 정수로 반올림한
+값이다. 반올림 뒤 한 인스턴스의 몫이 κ를 넘고 옮길 곳이 없으면 그 해는 최종 미충족이고 사유 `RouteWeightExceedsCapacity`가
+붙는다. keep도 같은 규칙으로 가중치를 다시 정하고, 분배만 바뀌면 target은 route 동작 하나다.
 
-같은 replay/planner로 `K_k(q,s)`를 계산한다: hypothetical settled `q`에서 measured directed
-DAG를 거쳐 `s`로 가는 동안과 이후 Serving의 전체 POOL energy를 같은 interval에 한 번 집계한다.
-diagonal에는 전환이 없다. 완료하지 못한 전환·누락 primitive는 해당 edge가 unevaluable이다.
-`W_k(s)=min_q(W_{k-1}(q)+K_k(q,s))`이고 공통 최솟값만 빼서 normalize한다.
-실제 feasible 후보에서는 `W(s)+actual prospective joules`를 최소화하며 동률은 Keep,
-낮은 prospective energy, logical key 순이다. history가 Pending이면 feasible Keep를 유지하고,
-실제 SLO 대응이 필요하면 기존 선택을 `ActualSLOSafetyResponse`로 구분한다.
+판단 상태는 `Feasible`, `Overload`, `Keep`(지금 구성과 분배를 그대로 두는 충족 판단과 진행 중 전환을 이어 가는 판단),
+`Pending`(snapshot 검증 사유), `CapacityPending`, `SharedInstance`다. keep과 target은 `expectedJoules`와 `worstExceedance`를
+담는다. `expectedJoules`는 고른 해를 정확한 배정으로 다시 계산한 [0, T]의 분석 에너지이고 비교 집합 노드만 더한다.
+초과량이 정해지지 않으면 `worstExceedance`는 float 최댓값이다. `decision.capacity`는 비교 기간 `periodNanos`, 고른 route
+시각 `routeNanos`, 칸 수 `cells`, Workload별 `workloads[]`(`uid`, `rate`, `queued`, `kappaNew`, `kappaRetained`, `backlog`,
+`waitSeconds`, `drainSeconds`, `finalExceedance`, `transitionExceedance`, `weights`, `rows`)와 모든 노드 계획 `plans[]`
+(`node`, `key`, `eligible`, `reason`, `kappa`, `kappaRetained`, `preNanos`, `postNanos`, `joules`)를 담는다. 값이 정해지지
+않는 대기, 비우는 시간, 초과량 필드는 기록에서 빠진다. `search.examined`는 만든 노드 계획 수이고, `search.comparedNodes`는
+keep 밖의 적격 계획이 있는 노드다.
 
-매 projection은 counterfactual queue를 비우므로 실제 queue 경로의 offline optimum이나
-고전 WFA 경쟁비가 아니다. actual outstanding/진행 중 action/frozen route target은 기존 실행
-평가와 DAG에서만 유지한다. raw whole-wall operation 비용을 full service 비용에 다시 더하지 않는다.
-logical key는 물리 Pod/container·template 이름 대신 measured 조건과 replica별 전체 UID routing
-vector의 multiset이다. 기존 finite history는 bounded search에서 빠졌다는 이유로 버리지 않는다.
-retained universe가 `MaxCandidates`를 넘으면 명시적으로 Pending이며 임의 reset을 하지 않는다.
-process 재시작 또는 settings 변경은 이유가 기록된 새 비교로 시작한다.
-
-algorithm은 `decision.settings.algorithm`에서 제공하며 fixed-horizon에는 `policy`를 만들지 않는다.
-projected decision/관측 기록의 `policy`는 startedAt/startReason, currentKey,
-`candidates`와 같은 순서의 candidateKeys, history.through/values, intervalFrom/To,
-kernels의 energy/completion/references/reasons,
-pendingReason, selection과 projection assumption을 제공한다. 이것은 live automatic 실행이나
-FULL 통과 증거가 아니다. 자율 제어는 `settings.autonomousWorkloads`에 나열한 Workload UID에만 적용한다.
+실제 요청 완료와 whole-POOL 전력 기록을 같은 관측 구간, UID, decision에 연결하여 분석자가 예측과 실측 차이를 계산한다.
+자율 제어는 `settings.autonomousWorkloads`에 나열한 Workload UID에만 적용한다.
 
 ## 6. 실제 적용과 관리 연동
 
@@ -294,11 +256,11 @@ metadata/progress에서 profile·policy 적용과 readiness를 확인한다.
 
 전환 기록은 desired/start/progress/complete/failed/partial과 prerequisite를 가진다.
 실제 준비 Pod, NodeActuation, routing 적용, drain·remove 완료를 확인하여
-다음 동작을 시작한다. resource 변경 후보는 같은 기존 원자 동작을 조합하되 실제
+다음 동작을 시작한다. resource 변경 계획은 같은 기존 원자 동작을 조합하되 실제
 동시 allocation 예산에 따라 prepare-first 또는 drain/remove-first DAG를 사용한다.
 기존 독립 writer를 중복 생성하는 대신 NodeActuation을 생성해 sole host actuator를 사용한다.
 
-부하·Workload 관리 상태가 바뀌면 같은 snapshot/candidate 로직으로 재판단한다.
+부하·Workload 관리 상태가 바뀌면 같은 snapshot과 계획기로 재판단한다.
 이미 수행된 결과는 실제 현재 상태이며, 진행 중 동일 동작은 재사용한다. cancel은
 아직 시작 전/중단 가능한 동작에 적용하고 physical effect가 발생한 뒤에는 관측된
 상태에서 다시 선택한다. 실패 Node·instance는 route에서 격리하고 실제 recovery
@@ -318,13 +280,13 @@ Workload 정의를 복원한 뒤 `settings.autonomousWorkloads`가 비어 있지
 `EnableSchedulerRouting`으로 실제 분포를 freeze한다. 첫 Tick·HTTPS serving보다 앞선
 경계이며 live 설정에서 첫 자율 Workload가 추가될 때도 같은 freeze를 적용한다.
 
-ChillServer의 기존 `--request-timeout`(기본 30초)은 한 control 호출의 refresh와 CPU 후보 평가·
-interval projection에 같은 `callCtx`로 적용된다. replay/event·후보·방향별 kernel 반복은
-취소를 확인하고 정상 Feasible/Pending 대신 context 오류로 반환한다. `o.lock`과 `tickMu`는
+ChillServer의 기존 `--request-timeout`(기본 30초)은 한 control 호출의 refresh와 계획기 평가에 같은 `callCtx`로
+적용된다. 노드 계획 생성과 route 시각별 DP는 취소를 확인하고 판단 대신 context 오류를 반환한다. 용량표 행은 Tick 밖에서
+controller context로 계산하고 Tick은 그때까지의 행을 읽는다. `o.lock`과 `tickMu`는
 기존대로 snapshot 평가·설정 수락·publication을 직렬화한다. CPU 계산 도중 확인한 취소는
 snapshot/decision 발행 전에 오류로 반환한다. publication/관측 기록 직전과 `OnDecision` 이후에도
 취소를 확인하며, callback 중/직후 취소는 이미 발행·기록한 유효 판단을 보존하되 context 오류를
-반환하고 history를 진행하거나 새 physical action을 시작하지 않는다. 이미 시작한 실제 동작을
+반환하고 새 physical action을 시작하지 않는다. 이미 시작한 실제 동작을
 소급해 취소한 것으로 바꾸지 않는다. 호출이 잠금을 반환하면 다음 full refresh가 canonical
 settings와 나머지 구성을 함께 수락하며, 이전 계산을 비동기로 재사용하지 않는다.
 
@@ -334,7 +296,7 @@ settings와 나머지 구성을 함께 수락하며, 이전 계산을 비동기�
 상태를 제공한다. settings 변경은 기존 TokenReview·SubjectAccessReview 경계를
 통과해 scheduler ConfigMap write 권한으로 검증하고 before/after·actor·검증 결과·
 영향 범위·실제 적용 시간을 기록한다. observation/control/horizon, resource bounds,
-replay/candidate limits·seed, completion margin, 자율 Workload 목록과 비자율 Workload의
+용량표 설정, completion margin, 자율 Workload 목록과 비자율 Workload의
 `staticRouting` 부분 map을 설정·기록한다. 정적 구성 실험도 같은 관측을 사용한다.
 
 ObservationLog는 request/management와 더불어 decision/settings/action/power 원시 기록을
@@ -350,11 +312,11 @@ ObservationLog는 request/management와 더불어 decision/settings/action/power
 
 | SRS | 구현 경로 | 확인할 소비자 행동 |
 |---|---|---|
-| SCH-01~02, 19, 28 | candidate selection + decision record + actual CHILL serving instances | keep/change·SLO-first·energy 비교·overload·Pending 구별 |
+| SCH-01~02, 19, 28 | capacity planner + decision record + actual CHILL serving instances | keep/change·SLO-first·energy 비교·overload·Pending 구별 |
 | SCH-03~08, 29, 31 | Runtime/ObservationLog/window/native state | UID·frozen context·전체 유입·0/unknown·window 경계·관리 중 drain |
 | SCH-09~12 | model/runtime/profile catalog + resource snapshot | latest same-condition·같은 실행기·분포/memory·전체 할당·exclusive resources |
-| SCH-13~15 | shared selector + per-request replay | 공유 비선점·현재 running residual·E2E percentile·node-wide impact |
-| SCH-16~18 | idle/action/transition measurement + whole-pool integration | inactive/temp Node·wall/delta 의미·중복 제외·같은 horizon·실제 readiness |
+| SCH-13~15 | shared selector + capacity table replay + κ 합 판정 | E2E percentile 기반 κ, 전환 중과 최종 판정, node-wide impact |
+| SCH-16~18 | idle/action/transition measurement + whole-pool integration | inactive/temp Node·wall/delta 의미·중복 제외·같은 비교 기간 T·실제 readiness |
 | SCH-20~23 | Runtime routing + firstfloor actor | ready 즉시 전달·원래 elapsed·UID compatible batch·energy-gain wait·명시적 수명 |
 | SCH-24~27, 30 | kube atomic actions + operation ledger | prepare-route-drain-remove·actual effect·partial failure·in-progress reuse·appliedAt |
 | SCH-32 | authenticated settings + per-Workload autonomy + frozen record | 권한·변경 결과/영향/적용·동일 조건의 static 비교 |

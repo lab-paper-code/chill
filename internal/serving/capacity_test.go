@@ -139,7 +139,7 @@ func TestCapacityTableBuildsAutonomousRowsOnce(t *testing.T) {
 	}
 	// Inputs outside the row key start nothing.
 	snap.At = snap.At.Add(time.Minute)
-	s.ControlInterval, s.MaxCandidates = 2*s.ControlInterval, s.MaxCandidates+1
+	s.ControlInterval, s.MaxReplicas = 2*s.ControlInterval, s.MaxReplicas+1
 	table.Ensure(context.Background(), s, snap)
 	table.Wait()
 	if recorded.Load() != 1 {

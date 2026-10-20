@@ -77,10 +77,10 @@ func OperatingPowerRecord(raw []byte, catalog *ObservationCatalog) (*SchedulerOb
 		Snapshot    *struct {
 			At        time.Time `json:"at"`
 			Instances []struct {
-				Node         NodeReference `json:"node"`
-				Ready        bool          `json:"ready"`
-				Stopped      bool          `json:"stopped"`
-				WorkloadUIDs []string      `json:"workloadUIDs"`
+				Node        NodeReference `json:"node"`
+				Ready       bool          `json:"ready"`
+				Stopped     bool          `json:"stopped"`
+				WorkloadUID string        `json:"workloadUID"`
 			} `json:"instances"`
 		} `json:"snapshot"`
 	}
@@ -95,7 +95,7 @@ func OperatingPowerRecord(raw []byte, catalog *ObservationCatalog) (*SchedulerOb
 		membership := &SchedulerSnapshot{At: snapshot.At, Instances: make([]SchedulerInstance, len(snapshot.Instances))}
 		for index, instance := range snapshot.Instances {
 			membership.Instances[index] = SchedulerInstance{
-				Node: instance.Node, Ready: instance.Ready, Stopped: instance.Stopped, WorkloadUIDs: instance.WorkloadUIDs,
+				Node: instance.Node, Ready: instance.Ready, Stopped: instance.Stopped, WorkloadUID: instance.WorkloadUID,
 			}
 		}
 		event.Snapshot = membership
@@ -427,7 +427,7 @@ func operatingMembership(result *OperatingPowerWindow, baseline *SchedulerSnapsh
 	sort.SliceStable(snapshots, func(a, b int) bool { return snapshots[a].At.Before(snapshots[b].At) })
 	for _, snapshot := range snapshots {
 		for _, instance := range snapshot.Instances {
-			if instance.Ready && !instance.Stopped && len(instance.WorkloadUIDs) > 0 {
+			if instance.Ready && !instance.Stopped && instance.WorkloadUID != "" {
 				if _, found := byUID[instance.Node.UID]; !found {
 					activeValid = false
 					result.Reasons = append(result.Reasons, "active Node has no configured whole-node meter: "+instance.Node.UID)
@@ -566,7 +566,7 @@ func operatingActiveJoules(from, to time.Time, uid string, points []powerwindow.
 		}
 		member := false
 		for _, instance := range snapshot.Instances {
-			if instance.Node.UID == uid && instance.Ready && !instance.Stopped && len(instance.WorkloadUIDs) > 0 {
+			if instance.Node.UID == uid && instance.Ready && !instance.Stopped && instance.WorkloadUID != "" {
 				member = true
 				break
 			}

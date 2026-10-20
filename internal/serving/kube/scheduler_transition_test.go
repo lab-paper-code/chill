@@ -25,8 +25,8 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	node := serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID}
 	wanted := serving.SchedulerInstance{
 		ID: "destination-physical", Node: node, Profile: &profile,
-		Allocation:   serving.SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1024},
-		WorkloadUIDs: []string{d.UID}, Ready: true, Capacity: 8, Weight: 1, MaxBatch: 1,
+		Allocation:  serving.SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1024},
+		WorkloadUID: d.UID, Ready: true, Capacity: 8, Weight: 1, MaxBatch: 1,
 	}
 	oldTarget := serving.SchedulerCandidate{ID: "old-target", Instances: []serving.SchedulerInstance{wanted}, Routing: map[string]map[string]int32{d.UID: {wanted.ID: 1}}}
 	physical := serving.ReadyInstance{
@@ -88,7 +88,7 @@ func TestHandoffCleanupRequiresExistingAcknowledgedReadyEffectNotJustGatewayMap(
 			case "fixed batch ack":
 				physical.State.Native.Metadata.Policy.FixedBatchSize = 1
 			case "routing":
-				target.Routing = map[string]map[string]int32{target.Instances[0].WorkloadUIDs[0]: {target.Instances[0].ID: 2}}
+				target.Routing = map[string]map[string]int32{target.Instances[0].WorkloadUID: {target.Instances[0].ID: 2}}
 			case "physical destination":
 				target.Instances[0].ID = "another-physical-slot"
 			}
@@ -104,7 +104,7 @@ func TestHandoffCleanupRequiresExistingAcknowledgedReadyEffectNotJustGatewayMap(
 
 func TestUnboundRuntimeAndSchedulerCaptureRetainVerifiedOwnerAndSlotFacts(t *testing.T) {
 	controller, target, physical := acknowledgedHandoffFixture(t)
-	uid := target.Instances[0].WorkloadUIDs[0]
+	uid := target.Instances[0].WorkloadUID
 	physical.OwnerWorkloadUID = uid
 	physical.State.OwnerWorkloadUID = "not-the-runtime-owner-authority"
 	physical.State.TargetID = "verified-native-slot"
@@ -138,7 +138,7 @@ func TestUnboundRuntimeAndSchedulerCaptureRetainVerifiedOwnerAndSlotFacts(t *tes
 	sn := serving.SchedulerNode{Node: state.Node, Ready: true}
 	captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}},
 		map[string]serving.InstanceState{id: state}, map[string]*serving.Profile{profile.ID: &profile})
-	if len(snapshot.Instances) != 1 || len(snapshot.Instances[0].WorkloadUIDs) != 0 ||
+	if len(snapshot.Instances) != 1 || snapshot.Instances[0].WorkloadUID != "" ||
 		snapshot.Instances[0].OwnerWorkloadUID != uid || snapshot.Instances[0].TargetID != state.TargetID {
 		t.Fatalf("scheduler capture inferred ownerlessness from empty bindings: %+v", snapshot.Instances)
 	}
@@ -295,7 +295,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	action := serving.Action{ID: "finished-prepare", Kind: operationPrepare, Node: wanted.Node, Instance: slot,
 		From: "unloaded", To: serving.SchedulerInstanceState(wanted), Status: nativeOperationRunning, Cancelable: true}
 	goal := serving.SchedulerCandidate{ID: "preparing-target", Instances: []serving.SchedulerInstance{wanted},
-		Routing: map[string]map[string]int32{wanted.WorkloadUIDs[0]: {slot: 1}}, Actions: []serving.Action{action}}
+		Routing: map[string]map[string]int32{wanted.WorkloadUID: {slot: 1}}, Actions: []serving.Action{action}}
 	config := SchedulerControllerConfig{Preparations: map[string]PrepareSpec{wanted.Profile.ID: {}}}
 	operation := scheduledOperation(action, &goal, config)
 	canceled := false
@@ -308,11 +308,13 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	snapshot := controller.reconcileSnapshot(serving.SchedulerSnapshot{
 		At: time.Now().UTC(), Instances: []serving.SchedulerInstance{observed},
 	}, &goal, time.Now().UTC(), time.Minute)
-	decision := serving.SchedulerDecision{
-		Settings:   serving.SchedulerSettings{AutonomousWorkloads: wanted.WorkloadUIDs},
-		Candidates: []serving.SchedulerCandidate{{Keep: true, Actions: snapshot.Actions}},
-	}
-	serving.FinalizeSchedulerTarget(snapshot, &decision, 0)
+	// The planner continues a running goal as keep with the goal's instances,
+	// each resolved to its captured physical identity.
+	continued := goal
+	continued.Keep, continued.Actions = true, snapshot.Actions
+	continued.Instances = []serving.SchedulerInstance{goal.Instances[0]}
+	continued.Instances[0].ID, continued.Instances[0].TargetID = physical.State.ID, slot
+	decision := serving.SchedulerDecision{Target: &continued}
 	if decision.Target.Instances[0].ID != physical.State.ID ||
 		decision.Target.Actions[0].Instance != slot || decision.Target.Actions[0].Status != nativeOperationRunning {
 		t.Fatal("fixture did not preserve the captured running logical action in its physical continuation", decision.Target)

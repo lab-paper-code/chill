@@ -25,25 +25,24 @@ func poolsAddNode(snap *SchedulerSnapshot, uid string, watts map[string]float64)
 	return n.Node
 }
 
-// poolsInstance copies the fixture instance onto node at mode, bound to uids.
-func poolsInstance(base SchedulerInstance, id string, node NodeReference, mode string, uids ...string) SchedulerInstance {
+// poolsInstance copies the fixture instance onto node at mode, serving uid.
+func poolsInstance(base SchedulerInstance, id string, node NodeReference, mode, uid string) SchedulerInstance {
 	p := *base.Profile
-	p.ID, p.NodeName, p.Condition.NodeUID, p.Condition.PowerMode = "profile-"+node.UID+"-"+mode, node.Name, node.UID, mode
-	base.ID, base.Node, base.Profile, base.WorkloadUIDs, base.IdleMeter = id, node, &p, uids, "wall-"+node.UID
+	p.ID, p.NodeName, p.Condition.NodeUID, p.Condition.PowerMode = p.ID+"@"+node.UID+"-"+mode, node.Name, node.UID, mode
+	base.ID, base.Node, base.Profile, base.WorkloadUID, base.IdleMeter = id, node, &p, uid, "wall-"+node.UID
 	return base
 }
 
-// poolsCost is a measured operation; its 10W background baseline lets replay
-// adjust it to a different coexisting state (e.g. re-entry into an empty Node).
+// poolsCost is a measured operation of 1 ms and 0.01 J.
 func poolsCost(kind string, node NodeReference, from, to, mode string, loaded ...string) OperationCost {
-	id, before := kind+"-"+node.UID+"-"+to, 10.0
-	return OperationCost{ID: id, Node: node, Kind: kind, From: from, To: to, PowerMode: mode, BeforeState: loaded, TargetState: loaded, BeforeBaselineWatts: &before,
+	id := kind + "-" + node.UID + "-" + to
+	return OperationCost{ID: id, Node: node, Kind: kind, From: from, To: to, PowerMode: mode, BeforeState: loaded, TargetState: loaded,
 		Trials: []OperationTrial{{Duration: time.Millisecond, Joules: 0.01}}, EnergyScope: "whole-wall", Meter: "wall-" + node.UID,
 		Scope: schedulerNodeWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: id, Size: 1}}
 }
 
 func poolsOption(i SchedulerInstance) SchedulerOption {
-	return SchedulerOption{Instance: i, CompatibleUIDs: i.WorkloadUIDs}
+	return SchedulerOption{Instance: i, CompatibleUIDs: []string{i.WorkloadUID}}
 }
 
 func poolsOn(c SchedulerCandidate, node NodeReference) bool {
@@ -55,6 +54,18 @@ func poolsAddWorkload(snap *SchedulerSnapshot, uid string) *Definition {
 	d.Name, d.UID = "workload-"+uid, uid
 	snap.Workloads = append(snap.Workloads, &d)
 	return &d
+}
+
+// poolsPlans lists the recorded node plans on node.
+func poolsPlans(d SchedulerDecision, node NodeReference) []SchedulerNodePlan {
+	if d.Capacity == nil {
+		return nil
+	}
+	return slices.DeleteFunc(slices.Clone(d.Capacity.Plans), func(p SchedulerNodePlan) bool { return p.Node != node })
+}
+
+func poolsEligibleChange(d SchedulerDecision, node NodeReference) bool {
+	return slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return p.Eligible && p.Key != "keep" })
 }
 
 // §9.1 소속 도출.
@@ -108,7 +119,7 @@ func TestSchedulerDecisionRecordsWorkloadStates(t *testing.T) {
 		{UID: "w2", State: WorkloadMeasurementEvidenceMissing, Reason: "NoCompletedMeasurementMatches"},
 		{UID: "w3", State: WorkloadDisabled, Reason: "AutonomousControlOff"},
 	}
-	if got := schedulerEvaluateForTest(t, s, snap).Workloads; !reflect.DeepEqual(got, want) {
+	if got := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil)).Workloads; !reflect.DeepEqual(got, want) {
 		t.Fatalf("workload states %+v, want %+v", got, want)
 	}
 }
@@ -122,36 +133,38 @@ func TestSchedulerNodeReasonsKeepNodeWithoutPlacement(t *testing.T) {
 			if reason != "" {
 				snap.Nodes[1].Reasons = []string{reason}
 			}
-			snap.Options = append(snap.Options, poolsOption(poolsInstance(snap.Instances[0], "opt", node, schedulerTestEcoMode, "w1")))
-			candidates, _ := schedulerEnumerateForTest(t, s, snap)
-			placed := false
-			for _, c := range candidates {
-				if !slices.Equal(c.Nodes[1].Reasons, snap.Nodes[1].Reasons) {
-					t.Fatalf("Node reasons lost: %+v", c.Nodes[1])
-				}
-				placed = placed || poolsOn(c, node)
-				lowered := slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Node == node && a.Fixed })
-				if reason == NodePowerModeUnavailable && (lowered || c.Nodes[1].PowerMode != "fixed" || slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Node == node })) {
-					t.Fatalf("PowerModeUnavailable Node changed mode: %+v", c)
-				}
-				if reason != NodePowerModeUnavailable && c.Keep && (!lowered || c.Nodes[1].PowerMode != schedulerTestEcoMode) {
-					t.Fatalf("available Node was not lowered: %+v", c)
-				}
+			option := poolsInstance(snap.Instances[0], "opt", node, schedulerTestEcoMode, "w1")
+			snap.Options = append(snap.Options, poolsOption(option))
+			snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(option), schedulerTestEcoMode)}
+			d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+			if !slices.Equal(d.Keep.Nodes[1].Reasons, snap.Nodes[1].Reasons) {
+				t.Fatalf("Node reasons lost: %+v", d.Keep.Nodes[1])
 			}
-			if placed != (reason == "") {
-				t.Fatalf("placed=%v with reason %q", placed, reason)
+			lowered := slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == node && a.Fixed })
+			if reason == NodePowerModeUnavailable && (lowered || d.Keep.Nodes[1].PowerMode != "fixed") {
+				t.Fatalf("PowerModeUnavailable Node changed mode: %+v", d.Keep)
+			}
+			if reason != NodePowerModeUnavailable && (!lowered || d.Keep.Nodes[1].PowerMode != schedulerTestEcoMode) {
+				t.Fatalf("available Node was not lowered: %+v", d.Keep)
+			}
+			if placed := poolsEligibleChange(d, node); placed != (reason == "") {
+				t.Fatalf("placed=%v with reason %q: %+v", placed, reason, poolsPlans(d, node))
+			}
+			if reason == NodePlacementInventoryMissing && !slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return p.Reason == reason }) {
+				t.Fatalf("excluded Node plan lacks its reason: %+v", poolsPlans(d, node))
 			}
 		})
 	}
 }
 
-// §9.1 전체 POOL: ComparedNodes and per-candidate baseline needs.
+// §9.1 전체 POOL: ComparedNodes are the Nodes with an eligible change; only
+// their baselines are needed.
 func TestSchedulerComparedNodesLimitEnergyAndBaselineNeeds(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.MaxCandidates, s.MaxReplicas = 200, 1
+	s.MaxReplicas = 1
 	base := snap.Instances[0]
-	idle := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
-	bare := poolsAddNode(&snap, "n3", nil)
+	poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+	poolsAddNode(&snap, "n3", nil)
 	move := poolsAddNode(&snap, "n4", map[string]float64{"fixed": 10})
 	eco := poolsAddNode(&snap, "n5", map[string]float64{"fixed": 10})
 	moved := poolsInstance(base, "opt-move", move, "fixed", "w1")
@@ -163,285 +176,207 @@ func TestSchedulerComparedNodesLimitEnergyAndBaselineNeeds(t *testing.T) {
 		poolsCost(schedulerActionPower, eco, "fixed", schedulerTestEcoMode, ""),
 		poolsCost(schedulerActionPrepare, eco, "unloaded", schedulerState(raised), schedulerTestEcoMode),
 	}
-	decision := schedulerEvaluateForTest(t, s, snap)
-	if want := []NodeReference{base.Node, move, eco}; !slices.Equal(decision.Search.ComparedNodes, want) {
-		t.Fatalf("ComparedNodes %v, want %v", decision.Search.ComparedNodes, want)
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	if want := []NodeReference{base.Node, move}; !slices.Equal(d.Search.ComparedNodes, want) {
+		t.Fatalf("ComparedNodes %v, want %v", d.Search.ComparedNodes, want)
 	}
-	if decision.Keep.ExpectedJoules == nil {
-		t.Fatalf("Node %s without baseline outside ComparedNodes stopped the decision: %v", bare.UID, decision.Keep.Reasons)
+	if d.Keep.ExpectedJoules == nil || d.Target == nil {
+		t.Fatalf("a Node without baseline outside ComparedNodes stopped the decision: %+v", d)
 	}
-	for _, c := range decision.Candidates {
-		for _, node := range []NodeReference{idle, bare} {
-			ids := func(c SchedulerCandidate) (out []string) {
-				for _, i := range c.Instances {
-					if i.Node == node {
-						out = append(out, i.ID)
-					}
-				}
-				return out
-			}
-			if schedulerNodeMode(c.Nodes, node) != schedulerNodeMode(decision.Keep.Nodes, node) || !slices.Equal(ids(c), ids(decision.Keep)) {
-				t.Fatalf("candidate %s changed uncompared Node %s", c.ID, node.UID)
-			}
-		}
-		missing := slices.ContainsFunc(c.Reasons, func(r string) bool { return strings.HasPrefix(r, "MissingUnloadedNodeBaseline") })
-		if poolsOn(c, eco) {
-			schedulerRequireReason(t, c.Reasons, "MissingUnloadedNodeBaseline:n5:"+schedulerTestEcoMode)
-		} else if missing {
-			t.Fatalf("candidate %s without the eco Node lacks a baseline: %v", c.ID, c.Reasons)
-		}
+	if !slices.ContainsFunc(poolsPlans(d, eco), func(p SchedulerNodePlan) bool {
+		return strings.HasPrefix(p.Reason, "MissingUnloadedNodeBaseline:n5:"+schedulerTestEcoMode)
+	}) {
+		t.Fatalf("eco plan without its mode's baseline was not excluded: %+v", poolsPlans(d, eco))
 	}
 }
 
-// §9.1 후보: a Disabled Workload's instance is the same in every candidate.
+// §6, §9 row 6: a Node with a disabled Workload's instance is keep only, and
+// that Workload is never judged.
 func TestSchedulerDisabledWorkloadInstanceIsFixed(t *testing.T) {
 	s, snap := schedulerFixture()
 	poolsAddWorkload(&snap, "w2")
 	disabled := schedulerTestCPU(snap.Instances[0])
-	disabled.ID, disabled.WorkloadUIDs = "i2", []string{"w2"}
+	disabled.ID, disabled.WorkloadUID = "i2", "w2"
 	snap.Instances = append(snap.Instances, disabled)
 	snap.Routing = map[string]map[string]int32{"w1": {"i1": 1}, "w2": {"i2": 1}}
 	node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
-	snap.Options = append(snap.Options, poolsOption(poolsInstance(snap.Instances[0], "opt", node, "fixed", "w1")))
-	candidates, _ := schedulerEnumerateForTest(t, s, snap)
-	if len(candidates) < 2 {
-		t.Fatal("fixture enumerated no alternative")
+	option := poolsInstance(snap.Instances[0], "opt", node, "fixed", "w1")
+	snap.Options = append(snap.Options, poolsOption(option))
+	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(option), "fixed")}
+	capacityLoad(s, &snap, snap.Workloads[0], 150)
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 100 }))
+	if d.Target == nil || !poolsOn(*d.Target, node) {
+		t.Fatalf("fixture must add the n2 instance: %+v", d)
 	}
-	for _, c := range candidates {
-		if !slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return reflect.DeepEqual(i, disabled) }) ||
-			!reflect.DeepEqual(c.Routing["w2"], snap.Routing["w2"]) ||
-			slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Instance == disabled.ID }) {
-			t.Fatalf("candidate %s changed the Disabled Workload's instance: %+v", c.ID, c)
-		}
+	if !slices.ContainsFunc(poolsPlans(d, snap.Nodes[0].Node), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanFixedWorkload }) {
+		t.Fatalf("the disabled Workload's Node took a plan: %+v", poolsPlans(d, snap.Nodes[0].Node))
+	}
+	if !slices.ContainsFunc(d.Target.Instances, func(i SchedulerInstance) bool { return reflect.DeepEqual(i, disabled) }) ||
+		!reflect.DeepEqual(d.Target.Routing["w2"], snap.Routing["w2"]) ||
+		slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Instance == disabled.ID }) {
+		t.Fatalf("target changed the disabled Workload's instance: %+v", d.Target)
+	}
+	if len(d.Capacity.Workloads) != 1 || d.Capacity.Workloads[0].UID != "w1" {
+		t.Fatalf("a disabled Workload entered the judgment: %+v", d.Capacity.Workloads)
 	}
 }
 
-// §9.1 후보: MinimumInstance and first configuration.
+// §3: a controlled Workload needs an instance even at zero load.
 func TestSchedulerMinimumInstanceSelectsFirstConfiguration(t *testing.T) {
 	s, snap := schedulerFixture()
 	option := snap.Options[0].Instance
 	snap.Instances = nil
 	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, option.Node, "unloaded", schedulerState(option), "fixed")}
-	decision := schedulerEvaluateForTest(t, s, snap)
-	schedulerRequireReason(t, decision.Keep.Reasons, "MinimumInstance:w1")
-	if decision.Target == nil || decision.Target.Keep || !poolsOn(*decision.Target, option.Node) {
-		t.Fatalf("first configuration was not the target: %+v", decision)
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	if d.Keep.Status != schedulerStatusOverload || d.Target == nil || d.Target.Keep || d.Status != schedulerStatusFeasible || !poolsOn(*d.Target, option.Node) {
+		t.Fatalf("first configuration was not the target: %+v", d)
 	}
 }
 
-// §9.1 후보: all instances on one Node reference one ModelSpec.
+// §4: the instances on one Node reference one ModelSpec.
 func TestSchedulerSameNodeRequiresSameModel(t *testing.T) {
 	for _, same := range []bool{true, false} {
 		s, snap := schedulerFixture()
+		s.AutonomousWorkloads = []string{"w1", "w2"}
 		other := poolsAddWorkload(&snap, "w2")
 		if !same {
 			other.Model.UID = "m2"
 		}
 		node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
-		snap.Instances = append(snap.Instances, poolsInstance(snap.Instances[0], "i2", node, "fixed", "w2"))
-		snap.Options = append(snap.Options, poolsOption(poolsInstance(schedulerTestCPU(snap.Instances[0]), "opt", node, "fixed", "w1")))
-		candidates, _ := schedulerEnumerateForTest(t, s, snap)
-		placed := slices.ContainsFunc(candidates, func(c SchedulerCandidate) bool {
-			return slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return i.Node == node && schedulerHas(i.WorkloadUIDs, "w1") })
+		current := poolsInstance(snap.Instances[0], "i2", node, "fixed", "w2")
+		snap.Instances = append(snap.Instances, current)
+		snap.Routing = map[string]map[string]int32{"w1": {"i1": 1}, "w2": {"i2": 1}}
+		added := poolsInstance(schedulerTestCPU(snap.Instances[0]), "opt", node, "fixed", "w1")
+		snap.Options = append(snap.Options, poolsOption(current), poolsOption(added))
+		d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+		both := slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool {
+			return strings.Contains(p.Key, "/w1") && strings.Contains(p.Key, "/w2")
 		})
-		if placed != same {
-			t.Fatalf("same model=%v placed=%v", same, placed)
+		if both != same {
+			t.Fatalf("same model=%v planned both Workloads on one Node=%v", same, both)
 		}
 	}
 }
 
-// §9.1 후보: moving a Node between active POOLs is remove + prepare in one DAG.
+// §4: moving a Node between active POOLs is remove + prepare in one plan.
 func TestSchedulerDirectMoveBetweenActivePools(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.MaxCandidates = 200
 	s.AutonomousWorkloads = []string{"w1", "w2"}
 	poolsAddWorkload(&snap, "w2").Model.UID = "m2"
 	shared := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	spare := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10})
-	snap.Instances = append(snap.Instances, poolsInstance(snap.Instances[0], "i2", shared, "fixed", "w2"))
-	snap.Options = append(snap.Options,
-		// A different CPU, so w2's runner cannot be reused as w1's slot.
-		poolsOption(poolsInstance(schedulerTestCPU(snap.Instances[0]), "opt-w1", shared, "fixed", "w1")),
-		poolsOption(poolsInstance(snap.Instances[0], "opt-w2", spare, "fixed", "w2")))
-	candidates, _ := schedulerEnumerateForTest(t, s, snap)
-	found := false
-	for _, c := range candidates {
-		if slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Kind == "membership" }) {
-			t.Fatalf("membership action planned: %+v", c.Actions)
-		}
-		removed := slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Node == shared && a.Instance == "i2" })
-		prepared := slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Kind == schedulerActionPrepare && a.Node == shared })
-		found = found || removed && prepared
+	current := poolsInstance(snap.Instances[0], "i2", shared, "fixed", "w2")
+	snap.Instances = append(snap.Instances, current)
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": 1}, "w2": {"i2": 1}}
+	// A different CPU, so w2's runner cannot be reused as w1's slot.
+	w1 := poolsInstance(schedulerTestCPU(snap.Instances[0]), "opt-w1", shared, "fixed", "w1")
+	w2 := poolsInstance(snap.Instances[0], "opt-w2", spare, "fixed", "w2")
+	snap.Options = append(snap.Options, poolsOption(current), poolsOption(w1), poolsOption(w2))
+	snap.Costs = []OperationCost{
+		poolsCost(schedulerActionRemove, shared, schedulerState(current), "unloaded", "fixed"),
+		poolsCost(schedulerActionPrepare, shared, "unloaded", schedulerState(w1), "fixed"),
 	}
-	if !found {
-		t.Fatal("no candidate moved the Node from w2's to w1's active POOL")
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	i := slices.IndexFunc(poolsPlans(d, shared), func(p SchedulerNodePlan) bool { return p.Key == "profile-other-cpu@n2-fixed/b1/w1" })
+	if i < 0 {
+		t.Fatalf("no plan moved the Node from w2's to w1's active POOL: %+v", poolsPlans(d, shared))
+	}
+	if plan := poolsPlans(d, shared)[i]; !plan.Eligible || plan.Pre == 0 || plan.Post == 0 || plan.KappaRetained["w2"] == 0 {
+		t.Fatalf("move must prepare before and remove after the route, w2 serving until then: %+v", plan)
 	}
 }
 
-// §9.1 후보: available Nodes start at their lowest mode; re-entry uses the empty-Node power cost.
+// §4: available Nodes start at their lowest mode; re-entry uses the empty-Node power cost.
 func TestSchedulerAvailableNodeLoweringAndReentry(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.MaxCandidates = 200
 	idle := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
-	// The re-entered Node runs "boost"; candidates first lower it to eco, then raise it to the profile's mode.
+	// The re-entered Node runs "boost"; plans first lower it to eco, then raise it to the profile's mode.
 	reentry := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6, "boost": 12})
 	snap.Nodes[2].PowerMode = "boost"
 	option := poolsInstance(snap.Instances[0], "opt", reentry, "fixed", "w1")
 	snap.Options = append(snap.Options, poolsOption(option))
 	// Re-entry prices the raise measured on the empty Node; a loaded-runner raise has another condition.
 	power := poolsCost(schedulerActionPower, reentry, schedulerTestEcoMode, "fixed", "")
+	power.Trials = []OperationTrial{{Duration: 2 * time.Second, Joules: 20}}
 	loaded := poolsCost(schedulerActionPower, reentry, schedulerTestEcoMode, "fixed", "", schedulerState(option))
 	loaded.ID += "-loaded"
+	loaded.Trials = []OperationTrial{{Duration: 9 * time.Second, Joules: 90}}
 	prepare := poolsCost(schedulerActionPrepare, reentry, "unloaded", schedulerState(option), "fixed")
 	snap.Costs = []OperationCost{loaded, power, prepare}
-	// The re-entry candidate keeps i1, so its only operations are on the re-entered Node.
-	reentered := func(d SchedulerDecision) SchedulerCandidate {
-		for _, c := range d.Candidates {
-			if poolsOn(c, reentry) && slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return i.ID == "i1" }) {
-				return c
-			}
-		}
-		t.Fatal("missing re-entry candidate")
-		return SchedulerCandidate{}
+	rows := capacityRowsForTest(s, snap, nil)
+	d := capacityDecideForTest(t, s, snap, rows)
+	if schedulerNodeMode(d.Keep.Nodes, idle) != schedulerTestEcoMode || !slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == idle && a.Fixed }) {
+		t.Fatalf("keep does not start the available Node at its lowest mode: %+v", d.Keep)
 	}
-	decision := schedulerEvaluateForTest(t, s, snap)
-	for _, c := range decision.Candidates {
-		if schedulerNodeMode(c.Nodes, idle) != schedulerTestEcoMode || !slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Node == idle && a.Fixed }) {
-			t.Fatalf("candidate %s does not start the available Node at its lowest mode: %+v", c.ID, c)
-		}
+	if slices.Contains(d.Search.ComparedNodes, idle) || !slices.Contains(d.Search.ComparedNodes, reentry) {
+		t.Fatalf("ComparedNodes %v", d.Search.ComparedNodes)
 	}
-	if slices.Contains(decision.Search.ComparedNodes, idle) || !slices.Contains(decision.Search.ComparedNodes, reentry) {
-		t.Fatalf("ComparedNodes %v", decision.Search.ComparedNodes)
-	}
-	c := reentered(decision)
-	var onNode []Action
-	for _, a := range c.Actions {
-		if a.Node == reentry {
-			onNode = append(onNode, a)
-		}
-	}
-	if len(onNode) < 3 || !onNode[0].Fixed || onNode[0].To != schedulerTestEcoMode || !slices.Contains(onNode[1].DependsOn, onNode[0].ID) {
-		t.Fatalf("Fixed lowering does not precede the re-entry actions: %+v", onNode)
-	}
-	if !slices.Contains(c.Sources, power.ID) || !slices.Contains(c.Sources, prepare.ID) || slices.Contains(c.Sources, loaded.ID) || slices.ContainsFunc(c.Reasons, func(r string) bool { return strings.HasPrefix(r, "MissingOperationCost") }) {
-		t.Fatalf("re-entry did not use the empty-Node transition and target-mode prepare: %v %v", c.Sources, c.Reasons)
+	plans := poolsPlans(d, reentry)
+	i := slices.IndexFunc(plans, func(p SchedulerNodePlan) bool { return p.Eligible && p.Key != "keep" })
+	if i < 0 || (plans[i].Pre-2001*time.Millisecond).Abs() > time.Microsecond || math.Abs(plans[i].Joules-20.01) > 1e-9 {
+		t.Fatalf("re-entry did not use the empty-Node raise and the target-mode prepare: %+v", plans)
 	}
 	snap.Costs = []OperationCost{loaded, prepare}
-	schedulerRequireReason(t, reentered(schedulerEvaluateForTest(t, s, snap)).Reasons, "MissingOperationCost")
-}
-
-// §3.4 D-20: re-entry is charged for its whole chain; a chain outlasting the horizon is not evaluable.
-func TestSchedulerReentryChainMustCompleteWithinHorizon(t *testing.T) {
-	s, snap := schedulerFixture()
-	s.MaxCandidates, s.Replays = 200, 1
-	reentry := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
-	snap.Nodes[1].PowerMode = schedulerTestEcoMode // already lowered, as in E1
-	option := poolsInstance(snap.Instances[0], "opt", reentry, "fixed", "w1")
-	snap.Options = append(snap.Options, poolsOption(option))
-	power := poolsCost(schedulerActionPower, reentry, schedulerTestEcoMode, "fixed", "")
-	prepare := poolsCost(schedulerActionPrepare, reentry, "unloaded", schedulerState(option), "fixed")
-	loadedWatts, _, _, _, reason := schedulerBaseline(snap.Baselines, SchedulerNode{Node: reentry, PowerMode: "fixed"}, []SchedulerInstance{option}, snap.Options)
-	if reason != "" {
-		t.Fatal(reason)
-	}
-	// Measured empty-Node raises in E1: jetsonx 63.5 s / 597.20 J, jetsono 134.5 s / 1968.96 J.
-	for _, trial := range []OperationTrial{{Duration: 63500 * time.Millisecond, Joules: 597.20}, {Duration: 134500 * time.Millisecond, Joules: 1968.96}} {
-		power.Trials = []OperationTrial{trial}
-		snap.Costs = []OperationCost{power, prepare}
-		for _, horizon := range []time.Duration{60 * time.Second, 300 * time.Second} {
-			s.Horizon = horizon
-			decision := schedulerEvaluateForTest(t, s, snap)
-			i := slices.IndexFunc(decision.Candidates, func(c SchedulerCandidate) bool {
-				return poolsOn(c, reentry) && slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return i.ID == "i1" })
-			})
-			if i < 0 {
-				t.Fatal("missing re-entry candidate")
-			}
-			c := decision.Candidates[i]
-			if horizon < trial.Duration {
-				schedulerRequireReason(t, c.Reasons, "TransitionExceedsHorizon")
-				if c.ExpectedJoules != nil {
-					t.Fatalf("%s re-entry priced within a %s horizon: %v J", trial.Duration, horizon, *c.ExpectedJoules)
-				}
-				continue
-			}
-			if c.ExpectedJoules == nil || decision.Keep.ExpectedJoules == nil {
-				t.Fatalf("%s re-entry unevaluable within %s: %v", trial.Duration, horizon, c.Reasons)
-			}
-			// Keep holds n3 at eco; re-entry pays the raise, the prepare, then loaded idle for the rest.
-			chain := trial.Duration + prepare.Trials[0].Duration
-			want := trial.Joules + prepare.Trials[0].Joules + loadedWatts*(horizon-chain).Seconds() - 6*horizon.Seconds()
-			if got := *c.ExpectedJoules - *decision.Keep.ExpectedJoules; math.Abs(got-want) > 1e-6 {
-				t.Fatalf("%s re-entry over keep = %v J, want %v J", trial.Duration, got, want)
-			}
-		}
+	if !slices.ContainsFunc(poolsPlans(capacityDecideForTest(t, s, snap, rows), reentry), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanMissingOperationCost }) {
+		t.Fatal("re-entry without the empty-Node raise cost was not excluded")
 	}
 }
 
-// §3.4: while the Fixed lowering runs the Node reports no mode; keep still needs no power cost.
+// §4: while the Fixed lowering runs the Node reports no mode; keep needs no power cost
+// and the lowering alone is no transition that holds planning.
 func TestSchedulerKeepWithRunningFixedLoweringNeedsNoPowerCost(t *testing.T) {
 	s, snap := schedulerFixture()
 	idle := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	snap.Costs = nil
-	keep := schedulerEvaluateForTest(t, s, snap).Keep
+	rows := capacityRowsForTest(s, snap, nil)
+	keep := capacityDecideForTest(t, s, snap, rows).Keep
 	lowering := keep.Actions[slices.IndexFunc(keep.Actions, func(a Action) bool { return a.Node == idle && a.Fixed })]
 	lowering.Status = phaseRunning
 	snap.Actions = []Action{lowering}
 	snap.InProgressTarget = &keep
 	snap.Nodes[1].PowerMode = ""
 	snap.Nodes[1].Reasons = []string{NodePowerModeUnavailable}
-	c := schedulerEvaluateForTest(t, s, snap).Keep
-	if slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Node == idle && !a.Fixed }) || slices.ContainsFunc(c.Reasons, func(r string) bool { return strings.HasPrefix(r, "MissingOperationCost") }) {
-		t.Fatalf("running Fixed lowering replanned as a compared power change: %+v %v", c.Actions, c.Reasons)
+	d := capacityDecideForTest(t, s, snap, rows)
+	if slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == idle && !a.Fixed }) || slices.Contains(d.Reasons, schedulerTransitionInProgress) || d.Capacity == nil {
+		t.Fatalf("running Fixed lowering held planning or became a compared power change: %+v", d)
 	}
 }
 
-// §9.1 후보: SLO target set.
-func TestSchedulerSLOTargetsIncludeOnlyAffectedDisabledWorkloads(t *testing.T) {
-	n1, n2 := NodeReference{Name: "node1", UID: "n1"}, NodeReference{Name: "node2", UID: "n2"}
-	snap := SchedulerSnapshot{
-		Workloads: []*Definition{{UID: "w1"}, {UID: "w2"}, {UID: "w3"}},
-		Instances: []SchedulerInstance{{ID: "a", Node: n1, WorkloadUIDs: []string{"w2"}}, {ID: "b", Node: n2, WorkloadUIDs: []string{"w3"}}},
-	}
-	c := SchedulerCandidate{Instances: snap.Instances, Actions: []Action{
-		{Kind: schedulerActionPower, Node: n1, From: "fixed", To: "eco"},
-		{Kind: schedulerActionPower, Node: n2, From: "fixed", To: "eco", Fixed: true},
-	}}
-	if got := schedulerSLOTargets(snap, c, []string{"w1"}); !reflect.DeepEqual(got, map[string]bool{"w1": true, "w2": true}) {
-		t.Fatalf("SLO targets %v", got)
-	}
-}
-
-// §9.1 측정 POOL (serving side).
+// §3.4 측정 POOL (serving side): a measurement Node takes no plan.
 func TestSchedulerMeasurementNodeIsFixed(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.MaxCandidates = 200
 	empty := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	busy := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10})
 	other := poolsAddNode(&snap, "n4", map[string]float64{"fixed": 10})
 	snap.Nodes[1].Measurement, snap.Nodes[2].Measurement = true, true
-	measured := poolsInstance(snap.Instances[0], "measured", busy, "fixed")
+	measured := poolsInstance(snap.Instances[0], "measured", busy, "fixed", "")
 	snap.Instances = append(snap.Instances, measured)
+	elsewhere := poolsInstance(snap.Instances[0], "opt-other", other, "fixed", "w1")
 	snap.Options = append(snap.Options,
 		poolsOption(poolsInstance(snap.Instances[0], "opt-measurement", empty, "fixed", "w1")),
-		poolsOption(poolsInstance(snap.Instances[0], "opt-other", other, "fixed", "w1")))
-	candidates, _ := schedulerEnumerateForTest(t, s, snap)
-	if len(candidates) < 2 {
-		t.Fatal("fixture enumerated no alternative")
+		poolsOption(poolsInstance(snap.Instances[0], "opt-busy", busy, "fixed", "w1")),
+		poolsOption(elsewhere))
+	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, other, "unloaded", schedulerState(elsewhere), "fixed")}
+	capacityLoad(s, &snap, snap.Workloads[0], 150)
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 100 }))
+	if d.Target == nil || !poolsOn(*d.Target, other) {
+		t.Fatalf("fixture must add the n4 instance: %+v", d)
 	}
-	for _, c := range candidates {
-		if poolsOn(c, empty) || schedulerNodeMode(c.Nodes, empty) != "fixed" ||
-			slices.ContainsFunc(c.Actions, func(a Action) bool { return a.Node == empty || a.Node == busy }) ||
-			!slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return reflect.DeepEqual(i, measured) }) {
-			t.Fatalf("candidate %s changed the measurement POOL: %+v", c.ID, c)
+	for _, node := range []NodeReference{empty, busy} {
+		if poolsEligibleChange(d, node) || !slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return p.Reason == "MeasurementNode" }) {
+			t.Fatalf("measurement Node %s took a plan: %+v", node.UID, poolsPlans(d, node))
 		}
+	}
+	if poolsOn(*d.Target, empty) || slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Node == empty || a.Node == busy }) ||
+		!slices.ContainsFunc(d.Target.Instances, func(i SchedulerInstance) bool { return reflect.DeepEqual(i, measured) }) {
+		t.Fatalf("target changed the measurement POOL: %+v", d.Target)
 	}
 }
 
 // SCH-35: autonomy is rejected while the Workload is routed to a fixed-batch baseline.
 func TestSchedulerFixedBatchAutonomyRejectsRoutedBaseline(t *testing.T) {
 	_, snap := schedulerFixture()
-	uid := snap.Instances[0].WorkloadUIDs[0]
+	uid := snap.Instances[0].WorkloadUID
 	if err := SchedulerFixedBatchAutonomy(snap, []string{uid}); err != nil {
 		t.Fatal(err)
 	}
