@@ -227,5 +227,7 @@ taint가 없으면 기록은 `Insufficient`로 남는다. 기록은 ChillServer 
 측정 실행은 taint가 있는 Node에서만 동작을 허용하므로 power도 측정 prepare와 같은 경로로 진행한다. runner가 없는 빈
 Node를 가장 낮은 모드에서 profile 모드로 올린 기록이 가용 노드를 다시 넣는 power 비용이 된다. 기록의 측정 전후 모드가
 비용의 from과 to이고 비용의 적재 상태는 빈 상태다. power 기록은 측정 전후 State가 모두 비어 있을 때 `Accepted`이며, runner를
-적재한 전환은 PowerModeTransitionCost가 측정한다. 전환이 meter 표본 간격보다 짧으면 coverage 검사가 기록을
-`Insufficient`로 남긴다.
+적재한 전환은 PowerModeTransitionCost가 측정한다. power 측정 구간은 NodeActuation의 적용과 확인에 settling
+(`settlingDurationSeconds`)을 더한 구간이고, 비용에는 목표 모드의 settling 에너지가 들어간다. 그래서 적용이 meter 표본
+간격보다 짧은 전환(jetsonx 약 1.5 s)도 E1의 60 s settling으로 coverage 검사를 통과한다. 측정 구간 전체가 meter 표본
+간격보다 짧으면 coverage 검사가 기록을 `Insufficient`로 남긴다.

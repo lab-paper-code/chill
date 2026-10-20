@@ -147,8 +147,10 @@ NodeReady만 따른다. 그래서 외부 Pod가 있는 노드도 가용 노드�
 합이다. power 동작은 그 시점의 적재 상태, 곧 빈 상태를 `BeforeState`로 가진 전환 비용(3.5절)을 쓰고, replay의 적재 상태
 확인(`scheduler_replay.go:1364-1374`)이 같은 상태로 비용을 확인한다. prepare 비용은 노드 전력모드로 고른다. 빈 노드 전환은
 측정 POOL에서 `serving-operation`의 power 동작으로 측정하고([원자 동작 측정의 격리](scheduler-operations.md#원자-동작-측정의-격리)),
-모드 변경이 노드를 재부팅하는 장비(jetsono)도 같다. meter가 분해하지 못하는 짧은 전환(jetsonx 약 1.5 s, meter 갱신 약 1 s)은
-비용이 없고, 그 비용이 없으면 다시 넣는 후보는 `MissingOperationCost`로 평가할 수 없다.
+모드 변경이 노드를 재부팅하는 장비(jetsono)도 같다. 측정 구간은 NodeActuation의 적용과 확인에 settling
+(`settlingDurationSeconds`, E1에서 60 s)을 더한 구간이다. 그래서 적용이 약 1.5 s인 jetsonx 전환도 63.5 s 구간으로
+coverage 검사를 통과해 `Accepted`이고, 비용에는 목표 모드에서 보낸 settling 에너지가 들어간다. 그 비용이 없으면 다시
+넣는 후보는 `MissingOperationCost`로 평가할 수 없다.
 
 replay는 에너지를 horizon까지 적분하므로 다시 넣는 후보는 power, prepare, route 사슬이 horizon 안에 끝날 때
 평가한다. 사슬이 horizon을 넘으면 그 후보는 `TransitionExceedsHorizon`으로 평가 대기이고, 평가된 후보는 모두
