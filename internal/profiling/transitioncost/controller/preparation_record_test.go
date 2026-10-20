@@ -91,11 +91,6 @@ func TestPreparationRecordRejectsMalformedCurrentRecord(t *testing.T) {
 	}{
 		{name: "mutable", mutate: func(record *corev1.ConfigMap) { record.Immutable = nil }},
 		{name: "foreign owner", mutate: func(record *corev1.ConfigMap) { record.OwnerReferences[0].UID = "foreign" }},
-		{name: "unknown field", mutate: func(record *corev1.ConfigMap) {
-			record.BinaryData[preparationRecordDataKey] = []byte(strings.Replace(
-				string(record.BinaryData[preparationRecordDataKey]), `"prepared":`, `"unknown":true,"prepared":`, 1,
-			))
-		}},
 		{name: "old schema", mutate: func(record *corev1.ConfigMap) {
 			record.BinaryData[preparationRecordDataKey] = []byte(strings.Replace(
 				string(record.BinaryData[preparationRecordDataKey]), transitioncost.PreparationRecordSchemaVersion,
@@ -276,4 +271,19 @@ func (c *alreadyExistsPreparationClient) Create(
 ) error {
 	c.creates++
 	return apierrors.NewAlreadyExists(schema.GroupResource{Resource: "configmaps"}, "transition-cost")
+}
+
+func TestPreparationRecordIgnoresRetiredWorkloadUIDs(t *testing.T) {
+	measurement, prepared, scheme := preparationRecordFixture(t)
+	desired, err := buildPreparationRecord(measurement, prepared, scheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := strings.Replace(string(desired.BinaryData[preparationRecordDataKey]), `"prepared":{`, `"prepared":{"workloadUIDs":["old"],`, 1)
+	if payload == string(desired.BinaryData[preparationRecordDataKey]) {
+		t.Fatal("fixture did not embed workloadUIDs")
+	}
+	if _, err := decodePreparationRecord([]byte(payload)); err != nil {
+		t.Fatalf("stored preparation with workloadUIDs rejected: %v", err)
+	}
 }

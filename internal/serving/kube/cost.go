@@ -183,7 +183,7 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 		return operationEvidence{}, err
 	}
 	var record OperationMeasurement
-	evidence := operationEvidence{err: strictCostDecode(raw, &record)}
+	evidence := operationEvidence{err: decodeCostJSON(raw, &record)}
 	if evidence.err != nil {
 		return evidence, nil
 	}

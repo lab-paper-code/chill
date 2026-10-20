@@ -41,9 +41,11 @@ func boundedCostRead(ctx context.Context, reader evidencestore.Reader, ref evide
 	}
 	return raw, nil
 }
-func strictCostDecode(raw []byte, target any) error {
+
+// decodeCostJSON decodes stored evidence structurally; unknown fields from older or newer
+// writers are ignored and callers validate the semantics they rely on.
+func decodeCostJSON(raw []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
@@ -82,7 +84,7 @@ func (e *CostEvidence) loadPowerCost(ctx context.Context, measurement *edge.Powe
 		} `json:"directions"`
 		DirectedTable *transitioncost.DirectedTableRecord `json:"directedTable,omitempty"`
 	}
-	if err = strictCostDecode(raw, &result); err != nil {
+	if err = decodeCostJSON(raw, &result); err != nil {
 		return powerEvidence{}, err
 	}
 	if result.SchemaVersion != transitioncost.MeasurementResultSchemaVersion || result.Outcome != "Complete" || result.DirectedTable == nil || len(result.Directions) != len(prepared.Directions) {
@@ -115,7 +117,7 @@ func (e *CostEvidence) readPowerPreparation(ctx context.Context, key types.Names
 	if preparation.Immutable == nil || !*preparation.Immutable || len(preparation.OwnerReferences) != 1 || preparation.OwnerReferences[0].UID != owner || preparation.OwnerReferences[0].Kind != "PowerModeTransitionCost" {
 		return preparedWire, errors.New("immutable owned power preparation required")
 	}
-	if err := strictCostDecode(preparation.BinaryData["preparation.json"], &preparedWire); err != nil {
+	if err := decodeCostJSON(preparation.BinaryData["preparation.json"], &preparedWire); err != nil {
 		return preparedWire, err
 	}
 	if preparedWire.SchemaVersion != transitioncost.PreparationRecordSchemaVersion || preparedWire.Prepared == nil {
@@ -133,7 +135,7 @@ func (e *CostEvidence) appendPowerTrial(ctx context.Context, finalRef evidencest
 		RawEvidence   evidencestore.ObjectIdentity              `json:"rawEvidence"`
 		Observation   transitioncost.FinalizedObservationRecord `json:"observation"`
 	}
-	if err = strictCostDecode(payload, &final); err != nil {
+	if err = decodeCostJSON(payload, &final); err != nil {
 		return err
 	}
 	if final.SchemaVersion != transitioncost.FinalizedRecordSchemaVersion || !reflect.DeepEqual(final.Observation.FrozenContract, contract) {

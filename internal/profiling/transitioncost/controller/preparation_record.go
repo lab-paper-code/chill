@@ -153,8 +153,7 @@ func encodePreparationRecord(prepared PreparedMeasurement) ([]byte, error) {
 
 func decodePreparationRecord(payload []byte) (PreparedMeasurement, error) {
 	var record preparationRecordWire
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
+	decoder := json.NewDecoder(bytes.NewReader(payload)) // unknown fields (e.g. retired workloadUIDs) are ignored
 	if err := decoder.Decode(&record); err != nil {
 		return PreparedMeasurement{}, fmt.Errorf("decode transition preparation: %w", err)
 	}
