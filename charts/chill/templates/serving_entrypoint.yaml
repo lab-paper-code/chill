@@ -122,6 +122,12 @@ spec:
             - {{ printf "--kube-ca-file=%s" . | quote }}
             {{- end }}
           env:
+            # Go 1.22 sizes GOMAXPROCS from host cores; κ capacity rows run GOMAXPROCS-parallel.
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+                  divisor: "1"
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
