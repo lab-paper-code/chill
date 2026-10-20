@@ -554,6 +554,27 @@ func TestCapacityBatchLimitChangeIsReplacement(t *testing.T) {
 	}
 }
 
+// The measured prepare cost carries the bare measured peak; the planned
+// allocation adds servingMemoryBytes. The cost still matches: memory is a
+// placement constraint, not part of the measured transition condition.
+func TestCapacityPrepareCostIgnoresQueueMemory(t *testing.T) {
+	s, snap := schedulerFixture()
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+	measured := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
+	planned := measured
+	planned.Allocation.MemoryBytes += 500
+	snap.Options = append(snap.Options, poolsOption(planned))
+	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(measured), "fixed")}
+	capacityLoad(s, &snap, snap.Workloads[0], 150)
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	if d.Target == nil || !poolsOn(*d.Target, n2) || slices.ContainsFunc(poolsPlans(d, n2), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanMissingOperationCost }) {
+		t.Fatalf("prepare cost missed on memory: %+v plans %+v", d.Target, poolsPlans(d, n2))
+	}
+	if !schedulerEqualState([]string{schedulerState(planned)}, []string{schedulerState(measured)}) {
+		t.Fatal("replay loaded-state witness compares memory")
+	}
+}
+
 // m4 r2: a preparation whose instance died fails the goal; while that failure
 // stays in snapshot.Actions (one observation window) no plan prepares the same
 // state on that Node again.

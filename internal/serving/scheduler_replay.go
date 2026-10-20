@@ -1080,7 +1080,8 @@ func (s *schedulerReplayState) operationCost(a *schedulerReplayAction) *Operatio
 		s.out.reasons = append(s.out.reasons, "MissingOperationRawSource:"+a.action.ID)
 		return nil
 	}
-	if cost.Node != a.action.Node || cost.Kind != a.action.Kind || cost.From != a.action.From || cost.To != a.action.To {
+	if cost.Node != a.action.Node || cost.Kind != a.action.Kind || schedulerCostState(cost.From) != schedulerCostState(a.action.From) ||
+		schedulerCostState(cost.To) != schedulerCostState(a.action.To) {
 		s.out.reasons = append(s.out.reasons, "OperationConditionMismatch:"+a.action.ID)
 		return nil
 	}
@@ -1156,7 +1157,7 @@ func (s *schedulerReplayState) adjustOperationBackground(a *schedulerReplayActio
 			focal = a.action.From
 		}
 		for j, s := range measured {
-			if s == focal {
+			if schedulerCostState(s) == schedulerCostState(focal) {
 				removedFocal = s
 				measured = append(measured[:j], measured[j+1:]...)
 				break
@@ -1625,12 +1626,18 @@ func schedulerBaseline(baselines []NodeBaseline, node SchedulerNode, instances [
 	}
 	return watts, unloaded.Meter, sources, []string{"derived unloaded node baseline + (profile estimator's exact loaded idle - unloaded) once per physical instance; coexistence interference unmeasured; retained immutable bundles at a changed host mode use only matching measured mode/resource/model idle evidence"}, ""
 }
+
+// schedulerEqualState compares loaded-state multisets under schedulerCostState.
 func schedulerEqualState(a, b []string) bool {
-	a = append([]string(nil), a...)
-	b = append([]string(nil), b...)
-	sort.Strings(a)
-	sort.Strings(b)
-	return reflect.DeepEqual(a, b)
+	norm := func(states []string) []string {
+		out := make([]string, len(states))
+		for k, s := range states {
+			out[k] = schedulerCostState(s)
+		}
+		sort.Strings(out)
+		return out
+	}
+	return reflect.DeepEqual(norm(a), norm(b))
 }
 func schedulerIdleAtMode(i SchedulerInstance, mode string, options []SchedulerOption) (SchedulerInstance, bool) {
 	if i.Profile == nil {

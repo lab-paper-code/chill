@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -353,3 +354,16 @@ func schedulerState(i SchedulerInstance) string {
 	return fmt.Sprintf("%s:%v:%s:%d:%d", profile, cpus, i.Allocation.GPUUUID, i.Allocation.MemoryBytes, i.Allocation.Threads)
 }
 func SchedulerInstanceState(i SchedulerInstance) string { return schedulerState(i) }
+
+// schedulerCostState drops the memory field of a schedulerState: memory is a
+// measured placement constraint, not part of the measured operation condition
+// (as in schedulerSameResourceChoice), so a planned allocation with queue
+// headroom matches the cost measured at the bare peak. Other states pass.
+func schedulerCostState(state string) string {
+	if strings.Count(state, ":") < 4 {
+		return state
+	}
+	threads := strings.LastIndexByte(state, ':')
+	memory := strings.LastIndexByte(state[:threads], ':')
+	return state[:memory] + state[threads:]
+}

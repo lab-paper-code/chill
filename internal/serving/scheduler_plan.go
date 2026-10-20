@@ -351,7 +351,8 @@ func (p *schedulerPlanState) selectCosts() {
 			continue
 		}
 		for _, cost := range p.snap.Costs {
-			if a.CostID == "" && cost.Node == a.Node && cost.Kind == a.Kind && cost.From == a.From && cost.To == a.To && matches(cost) {
+			if a.CostID == "" && cost.Node == a.Node && cost.Kind == a.Kind && schedulerCostState(cost.From) == schedulerCostState(a.From) &&
+				schedulerCostState(cost.To) == schedulerCostState(a.To) && matches(cost) {
 				a.CostID = cost.ID
 			}
 		}
