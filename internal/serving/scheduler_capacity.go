@@ -1134,9 +1134,16 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		if j.backlog > 0 && ws.slack > 0 {
 			drain = j.backlog / ws.slack
 		}
-		weights, y, ok := capacityWeights(ws.rate, drain, items[w])
-		if !p.settings.Controls.Routing {
+		var weights []int32
+		var y []float64
+		var ok bool
+		switch current, carries := p.currentWeights(ws.d.UID, items[w], ws.rate+drain); {
+		case !p.settings.Controls.Routing:
 			weights, y, ok = capacityFixedWeights(ws.rate, items[w])
+		case carries:
+			weights, y, ok = capacityFixedWeights(ws.rate, current)
+		default:
+			weights, y, ok = capacityWeights(ws.rate, drain, items[w])
 		}
 		units := 0.0
 		for _, weight := range weights {
@@ -1187,6 +1194,34 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 	}
 	res.key = strings.Join(keys, "|")
 	return res
+}
+
+// currentWeights returns items carrying the Workload's current route weights
+// (a new instance 0). carries reports that every routed instance is among
+// items, the weights use the 1,000 scale and each share of fill (λ plus the
+// backlog drain) stays within its κ; the weights then stay as they are.
+func (p *capacityPlanner) currentWeights(uid string, items []capacityItem, fill float64) ([]capacityItem, bool) {
+	routes := p.keep.Routing[uid]
+	current := slices.Clone(items)
+	total, routed := int32(0), 0
+	for k := range current {
+		current[k].weight = max(0, routes[current[k].id])
+		total += current[k].weight
+		if current[k].weight > 0 {
+			routed++
+		}
+	}
+	positive := 0
+	for _, weight := range routes {
+		if weight > 0 {
+			positive++
+		}
+	}
+	if total != schedulerRouteUnits || routed != positive {
+		return nil, false
+	}
+	_, _, carries := capacityFixedWeights(fill, current)
+	return current, carries
 }
 
 // better orders feasible plan sets first, then the smaller worst exceedance,
@@ -1251,9 +1286,6 @@ func (s *capacityStage) insert(state int, point capacityPoint, vals []float64) {
 		}
 		qv := s.vals[int(index)*stride : int(index)*stride+stride]
 		if capacityAtLeast(qv, vals) {
-			if q.energy == point.energy && point.keep && !q.keep && slices.Equal(qv, vals) {
-				break // exact tie: keep replaces it below
-			}
 			return
 		}
 	}
@@ -1409,6 +1441,16 @@ func (p *capacityPlanner) solve() (capacityResult, error) {
 				}
 			}
 		}
+	}
+	// Keep is always a candidate: a plan that only relabels current instances
+	// carries more κ at the same energy, so the Pareto sets can drop keep, and an
+	// exact tie with keep must keep.
+	keep := p.evaluate(make([]int, len(p.plans)), 0)
+	switch {
+	case keep.feasible && keep.better(best):
+		best = &keep
+	case !keep.feasible && best == nil && keep.better(overload):
+		overload = &keep
 	}
 	if best != nil {
 		return *best, nil

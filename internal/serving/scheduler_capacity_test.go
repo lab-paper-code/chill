@@ -834,3 +834,62 @@ func TestCapacityExactTieKeepsCurrent(t *testing.T) {
 		t.Fatalf("exact tie must keep: %+v %v", best, err)
 	}
 }
+
+// m4 r4 D-R4-4: at 2 req/s genesis3 q2 and orangepi q1 stayed Ready but
+// unrouted. A node plan that takes such an instance back for the Workload is
+// physically keep, with the same energy and routing, yet it carried more κ, so
+// the DP pruned keep and the route-only plan was re-issued 22 times. Keep wins.
+func TestCapacityUnroutedTwinKeepsCurrent(t *testing.T) {
+	s, snap := schedulerFixture()
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+	idle := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "")
+	idle.TargetID = "slot-i2"
+	snap.Instances = append(snap.Instances, idle)
+	served := idle
+	served.WorkloadUID, served.TargetID = "w1", ""
+	snap.Options = append(snap.Options, poolsOption(served))
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": schedulerRouteUnits}}
+	capacityLoad(s, &snap, snap.Workloads[0], 20)
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	if d.Status != schedulerStatusKeep || d.Target == nil || !d.Target.Keep || slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return !a.Fixed }) {
+		t.Fatalf("an equal-energy relabel of keep was chosen: %s %+v", d.Status, d.Target)
+	}
+}
+
+// m4 r4 D-R4-1: at 40 req/s the weights switched almost every Tick between the
+// backlog drain shape (genesis3 takes load) and the energy shape (rasp5 q1 at
+// exactly its κ 25.3), 181 route actions in 75 min. Current weights now stay
+// while each instance's share of λ plus the backlog drain is within its κ, so
+// the r4 queue sequence changes the weights once.
+func TestCapacityFeasibleWeightsStay(t *testing.T) {
+	ids := []string{"q1", "lut", "g3", "opi"}
+	kappa := []float64{25.288198615188904, 25.68831509322024, 70.93509923703007, 7.53273799179367}
+	p := &capacityPlanner{ctx: context.Background(), cells: 50, period: 152, routes: []float64{0}, settings: capacityTestSettings}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, slack: 1 - 0.029}}
+	p.keep.Routing = map[string]map[string]int32{"w": {"q1": 643, "lut": 357}}
+	for n, id := range ids {
+		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
+		item := capacityItem{id: id, kappa: kappa[n], e: float64(n + 1)}
+		p.plans = append(p.plans, []*capacityPlan{{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}}})
+		p.compared = append(p.compared, true)
+	}
+	changes := 0
+	for _, tick := range []struct {
+		rate   float64
+		queued int
+	}{{39.32, 0}, {40.1, 52}, {39.32, 0}, {39.43, 3}, {40.73, 0}, {39.83, 1}, {40.23, 2}} {
+		p.ws[0].rate, p.ws[0].queued = tick.rate, tick.queued
+		res := p.evaluate(make([]int, len(ids)), 0)
+		if !res.feasible {
+			t.Fatalf("λ %g q %d infeasible: %+v", tick.rate, tick.queued, res.judgments[0])
+		}
+		if !maps.Equal(res.weights[0], p.keep.Routing["w"]) {
+			changes++
+			p.keep.Routing["w"] = res.weights[0]
+		}
+	}
+	// Only the backlog of 52 moves load off rasp5 q1 (0.643 × 40.1 > κ 25.3).
+	if changes != 1 || p.keep.Routing["w"]["g3"] == 0 {
+		t.Fatalf("%d weight changes, last %v", changes, p.keep.Routing["w"])
+	}
+}
