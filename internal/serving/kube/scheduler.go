@@ -16,6 +16,7 @@ import (
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
@@ -38,7 +39,9 @@ type SchedulerControllerConfig struct {
 	Costs        []serving.OperationCost
 	Baselines    []serving.NodeBaseline
 	CostIssues   []CostIssue
-	Meters       []MeterDeclaration
+	// CatalogIssues are the profiles the catalog or the preparations omit.
+	CatalogIssues []CatalogIssue
+	Meters        []MeterDeclaration
 	// PowerPolicies are the configured actuation policies; a non-Fixed
 	// DeviceClass mode with a policy is a mode ChillServer can request.
 	PowerPolicies []nodeactuator.ActuationPolicySpec
@@ -89,9 +92,8 @@ type SchedulerController struct {
 	// powerTargets holds, by "<Node UID>/<mode>", the request specs the last
 	// capture derived; a power action builds its NodeActuation when it starts.
 	powerTargets map[string]edge.NodeActuationSpec
-	// sequences holds the operation sequence IDs this process measured whose
-	// Node is not handed back yet; any other sequence taint a restart cut off.
-	sequences map[string]bool
+	// measureStep measures one step of an operation-cost measurement.
+	measureStep func(context.Context, SchedulerControllerConfig, MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error)
 	// unrouted holds when each captured instance last lost every route weight.
 	// overloaded holds the slots prepared while keep was in Overload: zero
 	// until the instance is Ready, then the end of its hold.
@@ -110,7 +112,8 @@ func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *se
 	ctx, cancel := context.WithCancel(context.Background())
 	measurement := *operations
 	measurement.config.Measurement = true
-	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, sequences: map[string]bool{}, ctx: ctx, cancel: cancel}
+	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}
+	c.measureStep = c.measureOperation
 	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
 		return observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: row.Input.WorkloadUID, Kind: serving.CapacityRowBuiltEvent, Phase: row.Status, At: row.BuiltAt, Capacity: &row})
 	}, observationLog.CapacityRecords)

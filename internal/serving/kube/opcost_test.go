@@ -1,0 +1,246 @@
+package kube
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/internal/serving"
+	core "k8s.io/api/core/v1"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// opcostHarness has a Complete BatchEnergyOptimization "beo" with a prepared
+// catalog profile, a wall meter and the cpuClass power modes. measured lists
+// the measured requests; verdicts sets a step's verdict by name.
+type opcostHarness struct {
+	*admissionHarness
+	evidence *memEvidence
+	mu       sync.Mutex
+	measured []MeasurementRequest
+	verdicts map[string]string
+}
+
+func newOpcostHarness(t *testing.T) *opcostHarness {
+	t.Helper()
+	h, _, evidence := sequenceHarness(t)
+	o := &opcostHarness{admissionHarness: h, evidence: evidence, verdicts: map[string]string{}}
+	class := cpuClass()
+	beo := beoRoot("beo", "node", catalogCompletePhase)
+	h.create(class, beo)
+	spec := measuredCPUPreparationFixture()
+	profile := *spec.Instance.Profile
+	profile.ID = "chill-system/beo/" + string(beo.UID)
+	spec.Instance.Profile = &profile
+	h.controller.observer.SetProfiles([]serving.Profile{profile})
+	h.controller.mu.Lock()
+	h.controller.config.Preparations = map[string]PrepareSpec{profile.ID: spec}
+	h.controller.config.Meters = []MeterDeclaration{{ID: "wall", Node: testNode, Scope: measurementWallScope}}
+	for _, m := range class.Spec.PowerModes {
+		h.controller.config.PowerPolicies = append(h.controller.config.PowerPolicies, nodeactuator.ActuationPolicySpec{Name: m.Name, DeviceClass: class.Name,
+			PowerMode: m.Name, ActuatorKind: string(m.Actuator.Kind), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60})
+	}
+	h.controller.mu.Unlock()
+	h.controller.measureStep = func(ctx context.Context, _ SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
+		o.mu.Lock()
+		o.measured = append(o.measured, request)
+		verdict := o.verdicts[request.Operation.ID[strings.LastIndex(request.Operation.ID, ".")+1:]]
+		o.mu.Unlock()
+		if act := request.Operation.Actuation; act != nil {
+			// Play the applied power change the step requested.
+			applied := meta.NewMicroTime(time.Now())
+			act = act.DeepCopy()
+			act.Namespace, act.Status.Phase, act.Status.ApplyStartedAt = "chill-system", edge.NodeActuationPhaseReady, &applied
+			if err := h.controller.store.client.Create(ctx, act); err != nil {
+				return OperationMeasurement{}, evidencestore.Receipt{}, err
+			}
+		}
+		if verdict == "" {
+			verdict = measurementAccepted
+		}
+		key := OperationMeasurementKey(request.Operation)
+		return OperationMeasurement{Verdict: verdict, Reason: "coverage"}, evidencestore.Receipt{Object: evidencestore.ObjectIdentity{Key: key}}, nil
+	}
+	return o
+}
+
+func beoRoot(name, node, phase string) *edge.BatchEnergyOptimization {
+	o := &edge.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: name, UID: types.UID(name + "-uid"), CreationTimestamp: meta.NewTime(time.Now().Add(-time.Hour))}}
+	o.Spec.State.TargetNode, o.Status.Phase = node, phase
+	return o
+}
+
+func opcostRoot(name string, created time.Time, steps ...edge.OperationCostStep) *edge.OperationCostMeasurement {
+	return &edge.OperationCostMeasurement{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: name, UID: types.UID(name + "-uid"), CreationTimestamp: meta.NewTime(created)},
+		Spec: edge.OperationCostMeasurementSpec{Node: "node", Steps: steps, Observation: edge.MeasurementObservationSpec{IntervalMilliseconds: 1000, RequestTimeoutMilliseconds: 800,
+			MaximumOperationSeconds: 900, MaximumBoundaryDistanceMilliseconds: 1500, MinimumCoverage: "0.9", MaximumGapMilliseconds: 3000}}}
+}
+
+func lane() []edge.OperationCostStep {
+	const beo = "beo"
+	idle := int32(120)
+	return []edge.OperationCostStep{{Name: "up", Kind: edge.OperationCostStepPower, PowerMode: "max"}, {Name: "prepare", Kind: edge.OperationCostStepPrepare, BatchEnergyOptimization: beo},
+		{Name: "idle", Kind: edge.OperationCostStepIdle, IdleDurationSeconds: &idle}, {Name: "remove", Kind: edge.OperationCostStepRemove, BatchEnergyOptimization: beo},
+		{Name: "down", Kind: edge.OperationCostStepPower, PowerMode: "low"}}
+}
+
+func (o *opcostHarness) status(m *edge.OperationCostMeasurement) edge.OperationCostMeasurementStatus {
+	o.t.Helper()
+	if err := o.controller.store.client.Get(context.Background(), client.ObjectKeyFromObject(m), m); err != nil {
+		o.t.Fatal(err)
+	}
+	return m.Status
+}
+
+func TestOperationCostRunsDeclaredStepsInOrder(t *testing.T) {
+	o := newOpcostHarness(t)
+	m := opcostRoot("cost", time.Now(), lane()...)
+	o.create(m)
+	o.admit()
+	status := o.status(m)
+	if status.Phase != edge.MeasurementPhaseComplete || len(status.Steps) != 5 || o.holder() != "" {
+		t.Fatalf("status %+v holder %q results %+v", status, o.holder(), o.controller.State().Results)
+	}
+	for i, step := range status.Steps {
+		want := fmt.Sprintf("%snode-uid/%s.%d.%s.json", OperationMeasurementPrefix, m.UID, i, lane()[i].Name)
+		if step.Key != want || step.Verdict != measurementAccepted {
+			t.Fatalf("step %d %+v, want key %s", i, step, want)
+		}
+	}
+	up, prepare, idle, remove := o.measured[0].Operation, o.measured[1].Operation, o.measured[2], o.measured[3].Operation
+	if up.Actuation == nil || len(up.Actuation.OwnerReferences) != 1 || up.Actuation.OwnerReferences[0].UID != m.UID || up.Actuation.Spec.PowerMode != "max" {
+		t.Fatalf("power step actuation %+v", up.Actuation)
+	}
+	if prepare.Prepare == nil || !strings.HasPrefix(prepare.Prepare.Instance.Profile.ID, "chill-system/beo/") || remove.Instance != prepare.Prepare.Name || idle.IdleDuration != 120*time.Second {
+		t.Fatalf("prepare %+v remove %q idle %s", prepare.Prepare, remove.Instance, idle.IdleDuration)
+	}
+	if idle.Sampling.MaxEvents != 902 || idle.Coverage.MinimumCoverage != 0.9 {
+		t.Fatalf("sampling %+v coverage %+v", idle.Sampling, idle.Coverage)
+	}
+	if got := o.annotation(m, profilingrun.InvalidAnnotation); got != "" {
+		t.Fatalf("own power steps marked the measurement invalid: %s", got)
+	}
+}
+
+func TestOperationCostStopsAtInsufficientStep(t *testing.T) {
+	o := newOpcostHarness(t)
+	o.verdicts["prepare"] = measurementInsufficient
+	m := opcostRoot("cost", time.Now(), lane()...)
+	o.create(m)
+	o.admit()
+	status := o.status(m)
+	if status.Phase != edge.MeasurementPhaseInsufficient || status.Reason != "coverage" || len(status.Steps) != 2 || len(o.measured) != 2 {
+		t.Fatalf("status %+v measured %d", status, len(o.measured))
+	}
+	sequence := o.evidence.sequence(t, string(m.UID))
+	if sequence.Requested != 5 || len(sequence.Saved) != 2 || sequence.Reason != "coverage" {
+		t.Fatalf("sequence %+v", sequence)
+	}
+}
+
+func TestOperationCostRestartFailsTheCutMeasurement(t *testing.T) {
+	o := newOpcostHarness(t)
+	m := opcostRoot("cost", time.Now(), lane()...)
+	m.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Now())}
+	done := opcostRoot("done", time.Now(), lane()...)
+	o.create(m, done)
+	if err := o.controller.patchMeasurementStatus(context.Background(), done, func() { done.Status.Phase = edge.MeasurementPhaseComplete }); err != nil {
+		t.Fatal(err)
+	}
+	saved := OperationMeasurementPrefix + "node-uid/" + string(m.UID) + ".0.up.json"
+	o.evidence.objects[saved] = []byte("{}")
+	for _, holder := range []string{string(m.UID), string(done.UID)} {
+		node, err := o.kube.CoreV1().Nodes().Get(context.Background(), "node", meta.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: holder, Effect: core.TaintEffectNoSchedule}}
+		if _, err = o.kube.CoreV1().Nodes().Update(context.Background(), node, meta.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		o.admit()
+		if o.holder() != "" {
+			t.Fatalf("%s not handed back", holder)
+		}
+	}
+	if status := o.status(m); status.Phase != edge.MeasurementPhaseFailed || status.Reason != sequenceRestartReason {
+		t.Fatalf("cut measurement %+v", status)
+	}
+	if sequence := o.evidence.sequence(t, string(m.UID)); sequence.Reason != sequenceRestartReason || len(sequence.Saved) != 1 || sequence.Saved[0] != saved {
+		t.Fatalf("sequence %+v", sequence)
+	}
+	if status := o.status(done); status.Phase != edge.MeasurementPhaseComplete || len(o.measured) != 0 {
+		t.Fatalf("complete measurement %+v measured %d", status, len(o.measured))
+	}
+}
+
+func TestOperationCostRefusalsLetTheNextRootGo(t *testing.T) {
+	prepare := func(beo string) edge.OperationCostStep {
+		return edge.OperationCostStep{Name: "prepare", Kind: edge.OperationCostStepPrepare, BatchEnergyOptimization: beo}
+	}
+	for _, test := range []struct {
+		name, want string
+		step       edge.OperationCostStep
+		namespace  string
+		issue      bool
+	}{
+		{name: "missing", step: prepare("absent"), want: "ProfileMissing absent NotFound"},
+		{name: "running", step: prepare("running"), want: "ProfileMissing running NotComplete"},
+		{name: "failed", step: prepare("failed"), want: "ProfileMissing failed Failed"},
+		{name: "issue", step: prepare("beo"), issue: true, want: "ProfileMissing beo MeasurementEvidenceMissing"},
+		{name: "other node", step: prepare("elsewhere"), want: "NodeMismatch elsewhere other"},
+		{name: "power mode", step: edge.OperationCostStep{Name: "up", Kind: edge.OperationCostStepPower, PowerMode: "turbo"}, want: "PowerModeUnknown turbo"},
+		{name: "namespace", step: prepare("beo"), namespace: "measurements", want: "ActuationNamespace measurements"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			o := newOpcostHarness(t)
+			o.create(beoRoot("running", "other", ""), beoRoot("failed", "node", campaignFailedPhase), beoRoot("elsewhere", "other", catalogCompletePhase))
+			o.controller.mu.Lock()
+			if test.issue {
+				o.controller.config.CatalogIssues = []CatalogIssue{{Source: types.NamespacedName{Namespace: "chill-system", Name: "beo"}, Code: "MeasurementEvidenceMissing"}}
+			}
+			if test.namespace != "" {
+				o.controller.config.MeasurementNamespaces = []string{"chill-system", test.namespace}
+			}
+			o.controller.mu.Unlock()
+			refused := opcostRoot("refused", time.Now().Add(-time.Minute), test.step)
+			if test.namespace != "" {
+				refused.Namespace = test.namespace
+			}
+			next := baselineRoot("next", time.Now())
+			o.create(refused, next)
+			o.admit()
+			if got := o.annotation(refused, profilingrun.AdmissionAnnotation); got != "Refused: "+test.want {
+				t.Fatalf("admission %q", got)
+			}
+			if status := o.status(refused); status.Phase != edge.MeasurementPhaseFailed || status.Reason != test.want {
+				t.Fatalf("status %+v", status)
+			}
+			if o.holder() != string(next.UID) {
+				t.Fatalf("next root not granted: holder %q", o.holder())
+			}
+		})
+	}
+}
+
+// A profile the catalog has not read yet holds the Node's queue.
+func TestOperationCostWaitsForTheCatalog(t *testing.T) {
+	o := newOpcostHarness(t)
+	o.controller.observer.SetProfiles(nil)
+	m := opcostRoot("cost", time.Now().Add(-time.Minute), lane()...)
+	next := baselineRoot("next", time.Now())
+	o.create(m, next)
+	o.admit()
+	if o.holder() != "" || o.annotation(m, profilingrun.AdmissionAnnotation) != "" || o.annotation(next, profilingrun.AdmissionAnnotation) != "" {
+		t.Fatalf("catalog lag did not hold the queue: holder %q", o.holder())
+	}
+}

@@ -1,6 +1,5 @@
-// serving-operation sends an operation measurement sequence or a manual
-// prepare/remove to ChillServer and prints ChillServer's result. ChillServer
-// admits the Node, runs the operations and stores the evidence.
+// serving-operation sends a manual prepare/remove to ChillServer and prints
+// ChillServer's result.
 package main
 
 import (
@@ -24,7 +23,6 @@ import (
 )
 
 const (
-	measurementsPath = "/api/v1/measurements/operations"
 	operationsPath   = "/api/v1/scheduler/operations"
 	maxManifestBytes = 4 << 20
 	maxResultBytes   = 64 << 20
@@ -41,9 +39,8 @@ func main() {
 
 func run(ctx context.Context, args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("serving-operation", flag.ContinueOnError)
-	var measurementFile, executeFile, server, caFile, tokenFile string
+	var executeFile, server, caFile, tokenFile string
 	var timeout time.Duration
-	flags.StringVar(&measurementFile, "measurement-config", "", "JSON array of operation measurement requests on one Node")
 	flags.StringVar(&executeFile, "execute-config", "",
 		"JSON manual prepare or remove of one Workload outside autonomous control")
 	flags.StringVar(&server, "chill-server", "", "ChillServer HTTPS origin")
@@ -53,8 +50,8 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if (measurementFile == "") == (executeFile == "") || timeout <= 0 {
-		return errors.New("exactly one of measurement-config or execute-config and a positive timeout are required")
+	if executeFile == "" || timeout <= 0 {
+		return errors.New("execute-config and a positive timeout are required")
 	}
 	c, err := chillClient(server, caFile, tokenFile)
 	if err != nil {
@@ -62,20 +59,6 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if measurementFile != "" {
-		var requests []servingkube.MeasurementRequest
-		if err = readManifest(measurementFile, &requests); err != nil {
-			return err
-		}
-		var result servingkube.SequenceResult
-		if err = post(ctx, c, server, measurementsPath, requests, &result, out); err != nil {
-			return err
-		}
-		if result.Error != "" {
-			return errors.New(result.Error)
-		}
-		return nil
-	}
 	var operation servingkube.ManualOperation
 	if err = readManifest(executeFile, &operation); err != nil {
 		return err

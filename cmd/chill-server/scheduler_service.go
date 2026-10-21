@@ -217,6 +217,10 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	for _, issue := range costs.Issues {
 		sources = append(sources, issue.Code+":"+issue.Source)
 	}
+	// A catalog issue refuses the measurements naming its profile.
+	for _, issue := range view.Insufficiencies {
+		sources = append(sources, "catalog:"+issue.Code+":"+issue.Source.String())
+	}
 	slices.Sort(sources)
 	signature := strings.Join(sources, "\x00")
 	if o.controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources {
@@ -228,7 +232,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	controllerConfig := servingkube.SchedulerControllerConfig{
 		Settings: config.Settings,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
-		CostIssues: costs.Issues, Meters: config.Meters, PowerPolicies: policies,
+		CostIssues: costs.Issues, CatalogIssues: view.Insufficiencies, Meters: config.Meters, PowerPolicies: policies,
 		StaticRouting: config.StaticRouting != nil, MeasurementNamespaces: namespaces,
 		Evidence: o.objects, EvidenceStore: o.opts.storeName, MeterSource: metricSource,
 		OnDecision: o.recordDecision, OnAction: o.recordAction,

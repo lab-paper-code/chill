@@ -292,7 +292,7 @@ metadata:
 rules:
   - nonResourceURLs: ["/chill/api/v1/scheduler/settings"]
     verbs: [put]
-  - nonResourceURLs: ["/chill/api/v1/scheduler/operations", "/chill/api/v1/measurements/operations"]
+  - nonResourceURLs: ["/chill/api/v1/scheduler/operations"]
     verbs: [post]
 {{- if .Values.servingEntrypoint.scheduler.configMap }}
 ---

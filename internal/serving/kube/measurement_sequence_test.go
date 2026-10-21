@@ -191,8 +191,8 @@ func TestOrderPowerChangeThenAdmission(t *testing.T) {
 	pending := &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "power"},
 		Spec: edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}, Deadline: meta.NewTime(time.Now().Add(time.Hour))}}
 	h.create(pending)
-	if _, err := h.controller.MeasureSequence(context.Background(), []MeasurementRequest{{Operation: Operation{ID: "idle", Kind: operationIdle, Node: testNode}}}); errorCode(err) != "NodeBusy" {
-		t.Fatalf("sequence admitted over a pending power change: %v", err)
+	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != "NodeBusy" {
+		t.Fatalf("manual prepare admitted over a pending power change: %v", err)
 	}
 	pending.Status.Phase = edge.NodeActuationPhaseFailed
 	if err := h.controller.store.client.Update(context.Background(), pending); err != nil {
@@ -226,7 +226,7 @@ func TestOrderTickDuringMeasurement(t *testing.T) {
 		t.Fatalf("measured Node not marked: %+v", snapshot.Nodes)
 	}
 	release := make(chan struct{})
-	h.controller.startNodeRun(Operation{ID: "held", Kind: operationSequenceKind, Node: testNode}, SchedulerControllerConfig{},
+	h.controller.startNodeRun(Operation{ID: "held", Kind: operationCostKind, Node: testNode}, SchedulerControllerConfig{},
 		func(context.Context, *OperationResult) error { <-release; return nil })
 	defer close(release)
 	h.controller.launch(serving.SchedulerCandidate{ID: "target", Actions: []serving.Action{{ID: "remove", Kind: operationRemove, Node: testNode, Instance: "p/c"}}}, h.controller.config)
@@ -272,89 +272,6 @@ func TestOrderMeasurementEndThenPowerChange(t *testing.T) {
 	}
 }
 
-func TestSequenceStopsAtFirstFailureAndRecordsIt(t *testing.T) {
-	h, _, evidence := sequenceHarness(t)
-	requests := []MeasurementRequest{
-		{Operation: Operation{ID: "idle", Kind: operationIdle, Node: testNode}},
-		{Operation: Operation{ID: "remove", Kind: operationRemove, Node: testNode}},
-	}
-	result, err := h.controller.MeasureSequence(context.Background(), requests)
-	if err != nil || !strings.HasPrefix(result.SequenceID, sequencePrefix) || !strings.Contains(result.Error, "no wall meter") || len(result.Measurements) != 0 {
-		t.Fatalf("result %+v err %v", result, err)
-	}
-	sequence := evidence.sequence(t, result.SequenceID)
-	if sequence.Requested != 2 || len(sequence.Saved) != 0 || sequence.Node != testNode || sequence.SchemaVersion != OperationSequenceSchema {
-		t.Fatalf("sequence record %+v", sequence)
-	}
-	if h.holder() != "" {
-		t.Fatal("sequence did not hand the Node back")
-	}
-	h.kube.Fake.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
-		return true, &core.PodList{Items: []core.Pod{*servingPod("serving-a")}}, nil
-	})
-	if _, err = h.controller.MeasureSequence(context.Background(), requests); errorCode(err) != refusedNodeServing {
-		t.Fatalf("sequence on a serving Node: %v", err)
-	}
-}
-
-// A sequence whose own hand-back fails is retried by Admit as a hand-back of
-// this process, never as a sequence a restart cut off.
-func TestRetriedSequenceHandBackKeepsItsSequenceRecord(t *testing.T) {
-	h, _, evidence := sequenceHarness(t)
-	failed := false
-	h.kube.PrependReactor("patch", "nodes", func(action ktesting.Action) (bool, runtime.Object, error) {
-		if !failed && !strings.Contains(string(action.(ktesting.PatchAction).GetPatch()), profilingrun.MeasurementTaintKey) {
-			failed = true
-			return true, nil, errors.New("conflict")
-		}
-		return false, nil, nil
-	})
-	requests := []MeasurementRequest{{Operation: Operation{ID: "idle", Kind: operationIdle, Node: testNode}}}
-	result, err := h.controller.MeasureSequence(context.Background(), requests)
-	if err != nil || h.holder() != result.SequenceID {
-		t.Fatalf("hand-back did not fail once: %+v %v holder %q", result, err, h.holder())
-	}
-	h.admit()
-	sequence := evidence.sequence(t, result.SequenceID)
-	if h.holder() != "" || sequence.Reason == sequenceRestartReason || sequence.Requested != 1 {
-		t.Fatalf("retry rewrote the sequence record: %+v holder %q", sequence, h.holder())
-	}
-}
-
-func TestRestartRecordsCutSequenceWithItsSavedRecords(t *testing.T) {
-	h, _, evidence := sequenceHarness(t)
-	saved := OperationMeasurementPrefix + "node-uid/seq-cut.0.prepare.json"
-	evidence.objects[saved] = []byte("{}")
-	evidence.objects[OperationMeasurementPrefix+"node-uid/other.json"] = []byte("{}")
-	node := h.node.DeepCopy()
-	node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "seq-cut", Effect: core.TaintEffectNoSchedule}}
-	if _, err := h.kube.CoreV1().Nodes().Update(context.Background(), node, meta.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	h.admit()
-	sequence := evidence.sequence(t, "seq-cut")
-	if sequence.Reason != sequenceRestartReason || len(sequence.Saved) != 1 || sequence.Saved[0] != saved || h.holder() != "" {
-		t.Fatalf("restart sequence %+v holder %q", sequence, h.holder())
-	}
-	costs, err := NewCostEvidence(h.controller.store, &costTestObjects{objects: evidence.objects, opens: map[string]int{}}, 1<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	view, err := costs.Refresh(context.Background(), nil, nil, nil)
-	incomplete := 0
-	for _, issue := range view.Issues {
-		if issue.Code == sequenceIncompleteCode {
-			incomplete++
-			if issue.Source != saved {
-				t.Fatalf("other record marked: %+v", issue)
-			}
-		}
-	}
-	if err != nil || incomplete != 1 {
-		t.Fatalf("SequenceIncomplete not counted once: %+v %v", view.Issues, err)
-	}
-}
-
 func TestManualOperationGuards(t *testing.T) {
 	h, _, _ := sequenceHarness(t)
 	h.controller.mu.Lock()
@@ -385,7 +302,7 @@ func TestManualOperationGuards(t *testing.T) {
 	}
 }
 
-// Tens of concurrent admissions, hand-backs, operation sequences and manual
+// Tens of concurrent admissions, hand-backs and manual
 // prepares on one Node never let a serving Pod and the measurement taint
 // coexist: every path goes through the single writer.
 func TestConcurrentRequestsNeverOverlapMeasurementAndServing(t *testing.T) {
@@ -407,12 +324,14 @@ func TestConcurrentRequestsNeverOverlapMeasurementAndServing(t *testing.T) {
 			}()
 		}
 	}
-	request := []MeasurementRequest{{Operation: Operation{ID: "idle", Kind: operationIdle, Node: testNode}}}
-	worker(10, func() { _, _ = h.controller.MeasureSequence(ctx, request) })
 	worker(10, func() { _, _ = h.controller.ExecuteManual(ctx, manualPrepare()) })
 	worker(2, func() { _ = h.controller.Admit(ctx) })
-	// Finish granted measurements and remove prepared instances, as their owners would.
+	// Finish granted measurements, queue new ones and remove prepared
+	// instances, as their owners would.
+	queued := 5
 	worker(1, func() {
+		queued++
+		_ = h.controller.store.client.Create(ctx, baselineRoot(fmt.Sprintf("idle-%d", queued), time.Now()))
 		var baselines edge.ModelLoadedIdleBaselineList
 		if h.controller.store.client.List(ctx, &baselines) == nil {
 			for i := range baselines.Items {

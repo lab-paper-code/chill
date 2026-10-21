@@ -116,11 +116,11 @@ automatic scheduler judgment나 power 측정 근거가 아니다.
 
 ## serving-operation CLI
 
-`serving-operation`은 위 route와 operation 측정 route에 JSON 파일을 보내고 ChillServer의 응답을 stdout에 쓰는
-클라이언트다. flags는 `--execute-config FILE` 또는 `--measurement-config FILE` 중 하나와 `--chill-server URL`
-(HTTPS origin 하나), `--chill-ca-file`, `--chill-token-file`, `--timeout`(기본 30분)이다. 명시한 CA와 token만 쓰고
-redirect를 따르지 않는다. manifest는 strict decode로 확인한 뒤 보낸다. 응답의 `error`가 있으면 0이 아닌 값으로 끝난다.
-ChillServer는 이 두 route를 `--operation-timeout`(기본 30분)까지 기다린다.
+`serving-operation`은 위 route에 JSON 파일을 보내고 ChillServer의 응답을 stdout에 쓰는 클라이언트다. flags는
+`--execute-config FILE`, `--chill-server URL`(HTTPS origin 하나), `--chill-ca-file`, `--chill-token-file`,
+`--timeout`(기본 30분)이다. 명시한 CA와 token만 쓰고 redirect를 따르지 않는다. manifest는 strict decode로 확인한 뒤
+보낸다. 응답의 `error`가 있으면 0이 아닌 값으로 끝난다. ChillServer는 이 route를 `--operation-timeout`(기본 30분)까지
+기다린다.
 
 ## 원자 동작 측정의 격리
 
@@ -128,20 +128,18 @@ ChillServer는 이 두 route를 `--operation-timeout`(기본 30분)까지 기다
 taint를 붙이고 뗀다([측정 admission](measurement-admission.md)).
 
 scheduler는 이 Node를 배치 대상에서 제외하고, 이 Node의 Workload prepare와 `ChangePower`는
-`NodeInMeasurement`로 실패한다. `POST /api/v1/measurements/operations`는 같은 Node의 순서 있는
-`MeasurementRequest`(`operation`, `meter`, `sampling`, `coverage`, 논리 `store`, 선택 `idleDurationNanos`) 배열을 받는다.
-ChillServer가 순서 전체를 한 번 승인하고(서빙 Pod가 있으면 `NodeServing`, 다른 것이 Node를 가졌으면 `NodeBusy`),
-taint 값인 순서 ID로 각 `operation.id`를 `<순서 ID>.<순번>.<요청 ID>`로 바꿔 차례로 측정한 뒤 Node를 반환한다.
-`meter`와 `store`는 비우거나 그 Node의 설정 meter와 ChillServer store와 같아야 하고, prepare는 catalog 검증 profile에
-연결한다. 측정 instance는 taint의 toleration을 갖고 ChillServer의 runtime과 observer로 관측한다. taint가 ChillServer를
+`NodeInMeasurement`로 실패한다. OperationCostMeasurement(`opcost`)는 한 Node의 원자 동작 순서를 선언하고, ChillServer가
+그 순서를 한 번 승인해 각 단계의 `operation.id`를 `<CR UID>.<순번>.<단계 이름>`으로 두고 차례로 측정한 뒤 Node를 반환한다
+([측정 admission](measurement-admission.md) 2.5절). meter와 store는 그 Node의 설정 meter와 ChillServer store이고, prepare는
+catalog 검증 profile에 연결한다. 측정 instance는 taint의 toleration을 갖고 ChillServer의 runtime과 observer로 관측한다. taint가 ChillServer를
 이 Node에서 떼어 두므로 같은 model을 쓰는 Workload가 있어도 동일 원자 동작을 실행한다. 측정 끝의 격리 witness
 `isolation`은 Node, taint 유무 `Tainted`, 그 model을 쓰는 Workload 목록을 기록한다. Node가 다르거나 taint가 없거나 그
 측정이 요청하지 않은 전력 변경이 측정 중 적용되었으면(`PowerChangedDuringMeasurement`) 기록은 `Insufficient`로 남는다.
 기록은 ChillServer store의 고정 key `serving/operation-measurements/<Node UID>/<operation ID>.json`에 immutable로 쓴다.
-요청이 실패하거나 `Accepted`가 아니면 순서가 멈추고, 끝나지 않은 순서는 `serving/operation-sequences/<순서 ID>.json`에
-기록된다. 응답은 `{sequenceID, measurements[{record, receipt}], error}`다.
+단계가 실패하거나 `Accepted`가 아니면 순서가 멈추고, 끝나지 않은 순서는 `serving/operation-sequences/<CR UID>.json`에
+기록된다. CR status는 단계마다 `{name, key, verdict}`와 phase(`Complete`, `Insufficient`, `Failed`)다.
 
-`operation.kind`가 `power`인 측정은 `operation.actuation`의 NodeActuation으로 scheduler와 같은 `ChangePower`를 실행한다.
+`power` 단계는 DeviceClass와 actuation policy로 만든 NodeActuation(owner는 CR)으로 scheduler와 같은 `ChangePower`를 실행한다.
 측정 실행은 taint가 있는 Node에서만 동작을 허용하므로 power도 측정 prepare와 같은 경로로 진행한다. runner가 없는 빈
 Node를 가장 낮은 모드에서 profile 모드로 올린 기록이 가용 노드를 다시 넣는 power 비용이 된다. 기록의 측정 전후 모드가
 비용의 from과 to이고 비용의 적재 상태는 빈 상태다. power 기록은 측정 전후 State가 모두 비어 있을 때 `Accepted`이며, runner를

@@ -28,7 +28,7 @@ M3는 그 위에 선다.
 ### 2.1 writer와 요청
 
 - writer는 ChillServer `SchedulerController`다. scheduler loop(`cmd/chill-server/scheduler_service.go:403-431`)가 매 제어
-  주기의 `Tick` 앞에 `Admit`를 부르고, operation 측정 요청(2.5절)도 같은 `Admit`를 부른다. `Admit`는 `tickMu`를 잡고
+  주기의 `Tick` 앞에 `Admit`를 부른다. `Admit`는 `tickMu`를 잡고
   Node, `edge.dacs.io/workload-role=serving-instance` Pod, 대상 노드의 Pod, NodeActuation(`kube/scheduler.go:405-408`과 같은
   목록), 측정 루트를 읽는다. `c.mu`는 `c.runs` 확인과 등록에만 잡는다. 전체 capture는 읽지 않는다.
 - 노드에 시간이 걸리는 일(runner 준비, 반환, operation 측정, 수동 동작)은 `launch`(`kube/scheduler.go:705-747`)처럼
@@ -42,7 +42,7 @@ M3는 그 위에 선다.
 | ModelLoadedIdleBaseline | `spec.state.targetNode` | `Complete`, `Insufficient` |
 | ProfilingRun(BEO, MLIB가 소유하지 않은 것) | `spec.targetNode` | `ExecutionComplete`가 `True` 또는 `False` |
 | PowerModeTransitionCost | `spec.targetNode` | `Complete`, `Failed` |
-| operation 측정 순서(2.5절) | 요청의 `Operation.Node` | 그 run이 끝남 |
+| OperationCostMeasurement(2.5절) | `spec.node` | `Complete`, `Insufficient`, `Failed` |
 
 BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므로 따로 요청하지 않는다.
 
@@ -116,29 +116,34 @@ BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므
   `transitioncost/raw_record.go:13`).
 - 실패하면 `Refused: RunnerPrepareFailed <오류>`를 쓰고 같은 run에서 반환한다.
 
-### 2.5 serving-operation은 ChillServer 클라이언트
+### 2.5 operation 비용 측정과 serving-operation
+
+- OperationCostMeasurement(`opcost`)는 한 노드에서 잴 원자 동작(`power`, `prepare`, `idle`, `remove`)을 순서대로 선언한다
+  ([measurement-api](measurement-api.md) 2장). 승인 전 확인은 BEO 이름이 가리키는 catalog profile(`ProfileMissing`,
+  `NodeMismatch`), actuation namespace(`ActuationNamespace`), `power` 모드(`PowerModeUnknown`), 노드 meter
+  (`MeterUndeclared`)다. catalog에 profile도 issue도 아직 없으면 기다린다. 거절은 annotation과 status `Failed`에 같은 사유를 쓴다.
+- 승인하면 같은 `tickMu` 안에서 노드 run을 등록하고, run이 ChillServer의 runtime과 observer를 쓰는 measurement 모드
+  `Operations`로 단계마다 `Measure`를 돌린 뒤 반환까지 한다. 각 `Operation.ID`는 `<CR UID>.<순번>.<단계 이름>`이고 저장
+  key(`kube/cost.go:33-35`)와 기록이 CR을 가리킨다. `power` 단계의 NodeActuation은 CR을 owner로 달아 반환의 무효 판정이
+  자기 단계를 세지 않는다. `prepare`와 `remove`는 그 profile의 preparation과 그 인스턴스다.
+- 단계가 실패하거나 `Accepted`가 아니면 순서가 멈춘다. `Measure`는 진행 중이던 요청의 기록을 `WithoutCancel`로
+  쓰며(`kube/measurement.go:107-109`), 취소가 오류로 판정에 들어가 Verdict가 `Insufficient`다 `[추론: :229의 취소 경로]`.
+- 모든 단계를 마치지 못한 순서는 불변 object `serving/operation-sequences/<CR UID>.json`
+  (`serving-operation-sequence.v1alpha1`, `{sequenceID, node, requested, saved, reason}`)을 쓴다. 저장된 기록은 각자 판정을
+  유지하고, 비용(`kube/cost.go:94`)은 그 순서의 기록을 비용으로 쓰면서 `CostIssue` `SequenceIncomplete <CR UID>`로 표시한다.
+- ChillServer 재시작은 실행 중인 순서를 끊는다. 재시작 뒤 첫 주기는 taint가 있고 `Granted`이며 terminal이 아닌 opcost를
+  끊긴 측정으로 보고, 그 UID로 시작하는 기록 key로 `saved`를 채워 reason `ChillServerRestart`로 순서 기록을 쓴 뒤 status를
+  `Failed: ChillServerRestart`로 쓰고 반환한다. terminal 루트는 status를 그대로 두고 반환만 한다.
+- 최종 isolation witness는 2.3절 단계 2와 같은 NodeActuation 검사를 더한다. 그 단계가 만든 NodeActuation은 제외한다.
+  걸리면 `Isolation.Error`가 `PowerChangedDuringMeasurement`이고 Verdict `Insufficient`다. `kube/cost.go:190`은 이 기록을
+  `CostIssue` `MeasurementInvalid`로 센다.
 
 | route | 몸체 | 동작 |
 |---|---|---|
-| `POST /api/v1/measurements/operations` | 같은 노드의 순서 있는 `[]MeasurementRequest`(`kube/measurement.go:31-39`), 예: prepare, idle, remove | 동기. `Admit`로 순서 전체를 한 번 승인받고(taint 값은 ChillServer가 만든 ID), 줄 1이면 409 `NodeBusy`, 줄 2, 3이면 409와 거절 사유. 승인되면 run이 ChillServer의 runtime과 observer를 쓰는 measurement 모드 `Operations`로 요청마다 `Measure`를 돌리고 반환까지 한다. 측정 인스턴스는 owner와 route가 없어 serving 요청을 받지 않는다. 응답은 지금 CLI stdout과 같은 `{record, receipt}` 목록 |
 | `POST /api/v1/scheduler/operations` | `{kind: prepare 또는 remove, workloadUID, profileID, node, instance, fixedBatchSize}` | `ExecuteManual`. `tickMu` 안에서 Workload가 자동제어 밖인지, 노드에 run이 없는지, prepare는 `ValidatePreparationCapacity`(`kube/scheduler.go:591-634`)를 마지막 snapshot의 노드와 live Node, Pod로, remove는 `removableBy`(`main.go:507-520`)와 route 가중치 0을 확인하고 run을 등록한 뒤 잠금 밖에서 같은 `Operations`로 실행 |
 
-- S3는 ChillServer binding, 전력원은 M2가 넣은 Profiler facts resolver다. 인증과 권한은 기존 TokenReview와 SAR이다.
-  두 route는 요청 한도 대신 `--operation-timeout`(기본 30분)을 쓴다. CLI는 manifest를 읽어 보내고 응답을 stdout에 쓴다.
-- 순서 ID는 taint 값이다. ChillServer는 각 요청의 `Operation.ID`를 `<순서 ID>.<순번>.<요청 ID>`로 바꿔 저장 key
-  (`kube/cost.go:31-33`)와 기록이 순서를 가리키게 한다(`/`만 금지, `kube/measurement.go:172-173`).
-- 요청이 실패하거나 client 연결이 끊기면 순서가 멈추고 반환이 돈다. `Measure`는 진행 중이던 요청의 기록을 `WithoutCancel`로
-  쓰며(`kube/measurement.go:107-109`), 취소가 오류로 판정에 들어가 Verdict가 `Insufficient`다 `[추론: :229의 취소 경로]`.
-- 모든 요청을 마치지 못한 순서의 반환은 불변 object `serving/operation-sequences/<순서 ID>.json`
-  (`serving-operation-sequence.v1alpha1`, `{sequenceID, node, requested, saved, reason}`)을 쓴다. 저장된 기록은 각자 판정을
-  유지하고, 비용(`kube/cost.go:94`)은 그 순서의 기록을 비용으로 쓰면서 `CostIssue` `SequenceIncomplete <순서 ID>`로 표시한다.
-- ChillServer 재시작은 실행 중인 순서를 끊는다. 재시작 순간에 진행 중이던 측정은 process가 죽으면 저장되지 않고, 종료
-  처리로 run context가 취소되면 위처럼 `Insufficient`로 저장된다. 첫 주기의 반환이 taint 값으로 순서 ID를 알고,
-  `saved`를 그 ID로 시작하는 기록 key에서 채워 reason `ChillServerRestart`로 순서 기록을 쓴다.
-- 최종 isolation witness(지금 `main.go:287-313`)는 2.3절 단계 2와 같은 NodeActuation 검사를 더한다. 그 측정의 `operationPower`
-  가 만든 NodeActuation(`kube/measurement.go:90`)은 제외한다. 걸리면 `Isolation.Error`가
-  `PowerChangedDuringMeasurement`이고 기존 경로대로 Verdict `Insufficient`다. `kube/cost.go:190`은 이 기록을 조용히 건너뛰는
-  대신 `CostIssue` `MeasurementInvalid`로 센다. 저장 형식은 그대로다.
+- 인증과 권한은 기존 TokenReview와 SAR이다. route는 요청 한도 대신 `--operation-timeout`(기본 30분)을 쓴다.
+  `serving-operation --execute-config`가 manifest를 읽어 보내고 응답을 stdout에 쓴다.
 - 인스턴스는 scheduler snapshot의 ID로 고르므로 `serving-<hash>` Pod도 지운다(문제 5).
 
 ### 2.6 측정 controller의 대기
@@ -156,8 +161,8 @@ BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므
 | Node taint `chill.dacs.io/measurement` | 값이 루트 UID나 operation 측정 ID | 저장 evidence가 아니다 |
 | 루트 annotation `chill.dacs.io/admission`, `chill.dacs.io/measurement-invalid`, `chill.dacs.io/runner-profile` | 새 key | 같음 |
 | transition-cost 준비 기록과 result | `runnerProfileID`, result `v1alpha4` | snapshot의 `Failed` PMTC 5개와 그 evidence를 지운다 |
-| operation 측정 `v1alpha2` | 그대로(`Isolation.Error`에 새 사유, `Operation.ID`에 순서 ID) | - |
-| `serving/operation-sequences/<순서 ID>.json` | 새 object `serving-operation-sequence.v1alpha1` | 끝나지 않은 순서만 쓴다 |
+| operation 측정 `v1alpha2` | 그대로(`Isolation.Error`에 새 사유, `Operation.ID`에 opcost CR UID) | - |
+| `serving/operation-sequences/<CR UID>.json` | 새 object `serving-operation-sequence.v1alpha1` | 끝나지 않은 순서만 쓴다 |
 | NodeActuation CRD | 그대로 | - |
 
 ## 4. 커밋 단위
@@ -205,7 +210,7 @@ M4 live test와 M2 배포가 끝난 뒤 한다.
 | E-A2 | 자동제어 Workload가 서빙 중인 노드에 BEO | `Refused: NodeServing`과 Pod 이름, taint 없음, 그 Workload의 SLO 위반 수가 직전 같은 길이 구간과 같음 |
 | E-A3 | CHILL이 배치하지 않은 Pod(예: `plan10-serving-jetsono`)가 있는 jetsono에 MLIB | 승인과 측정 진행, 그 Pod 그대로, 결과 Pod 목록에 그 Pod |
 | E-A4 | runner 없이 PMTC(jetsonx, 두 모드) | runner와 Service 자동 생성, result `runnerProfileID`, 방향마다 수용 시도가 목표 수, 반환 뒤 runner와 Service 0 |
-| E-A5 | host에서 `serving-operation --measurement-config`(prepare, idle, remove) | 승인 한 번, 기록 셋이 S3에 있고 비용 근거로 묶임, 반환 뒤 serving Pod 0 |
+| E-A5 | OperationCostMeasurement(prepare, idle, remove) apply | 승인 한 번, 기록 셋이 S3에 있고 비용 근거로 묶임, 반환 뒤 serving Pod 0 |
 | E-A6 | host에서 자동제어 밖 Workload의 `serving-<hash>` remove | Pod 제거, 관측 기록에 manual 동작 |
 | E-A7 | 측정 중 루트 삭제, operation 측정 순서 중 ChillServer 재시작 | 다음 주기에 반환. 재시작 쪽은 serving Pod 0, 가장 낮은 모드, 순서 기록, 앞 기록에 `SequenceIncomplete` |
 | E-A8 | 위 전체 동안 `measurement-invalid` 수와 `MeasurementInvalid` 수 | 기록. 0이 아니면 그 NodeActuation 출처를 확인 |

@@ -3,16 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
 func writeFile(t *testing.T, name, content string) string {
@@ -35,27 +31,6 @@ func chillServerFixture(t *testing.T, handler http.HandlerFunc) (string, string,
 
 func clientArgs(kind, manifest, url, ca, token string) []string {
 	return []string{kind, manifest, "--chill-server", url, "--chill-ca-file", ca, "--chill-token-file", token}
-}
-
-func TestMeasurementSendsRequestsAndFailsOnSequenceError(t *testing.T) {
-	var received []servingkube.MeasurementRequest
-	url, ca, token := chillServerFixture(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != measurementsPath || r.Header.Get("Authorization") != "Bearer caller-token" {
-			t.Errorf("request %s %q", r.URL.Path, r.Header.Get("Authorization"))
-		}
-		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
-			t.Error(err)
-		}
-		result := servingkube.SequenceResult{SequenceID: "seq-1", Error: "measurement Insufficient: power"}
-		_ = json.NewEncoder(w).Encode(result)
-	})
-	manifest := writeFile(t, "m.json", `[{"operation":{"id":"prepare","kind":"prepare","node":{"name":"n","uid":"u"}}}]`)
-	var out bytes.Buffer
-	err := run(context.Background(), clientArgs("--measurement-config", manifest, url, ca, token), &out)
-	if err == nil || len(received) != 1 || received[0].Operation.ID != "prepare" ||
-		!strings.Contains(out.String(), "seq-1") {
-		t.Fatalf("err=%v received=%+v out=%s", err, received, out.String())
-	}
 }
 
 func TestManifestRejectsUnknownFieldsBeforeSending(t *testing.T) {

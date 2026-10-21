@@ -89,6 +89,14 @@ func (c *SchedulerController) measurementRoots(ctx context.Context, namespaces [
 			terminal := o.Status.Phase == edge.PowerModeTransitionCostPhaseComplete || o.Status.Phase == edge.PowerModeTransitionCostPhaseFailed
 			roots = append(roots, measurementRoot{object: o, node: o.Spec.TargetNode, terminal: terminal})
 		}
+		var costs edge.OperationCostMeasurementList
+		if err := c.store.client.List(ctx, &costs, client.InNamespace(namespace)); err != nil {
+			return nil, err
+		}
+		for i := range costs.Items {
+			o := &costs.Items[i]
+			roots = append(roots, measurementRoot{object: o, node: o.Spec.Node, terminal: measurementTerminal(o.Status.Phase)})
+		}
 	}
 	return roots, nil
 }
@@ -134,7 +142,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 		return err
 	}
 	now := time.Now()
-	in := admissionInputs{config: config, pods: pods.Items, acts: acts, classes: classes.Items, now: now}
+	in := admissionInputs{config: config, pods: pods.Items, acts: acts, classes: classes.Items, roots: roots, profiles: c.observer.Profiles(), now: now}
 	byName := map[string]*core.Node{}
 	byUID := map[string]*measurementRoot{}
 	for i := range nodes.Items {
@@ -166,9 +174,14 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			claimed[node.Name] = true
 			continue
 		}
-		reason, detail := c.rootRefusal(root, node, in)
+		reason, detail, wait := c.rootRefusal(root, node, in)
+		if wait {
+			claimed[node.Name] = true
+			continue
+		}
 		if reason != "" {
-			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(reason, detail)))
+			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(reason, detail)),
+				c.failMeasurement(ctx, root.object, strings.TrimSpace(reason+" "+detail)))
 			continue
 		}
 		transition, _ := root.object.(*edge.PowerModeTransitionCost)
@@ -179,6 +192,11 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 				continue
 			}
 		}
+		cost, _ := root.object.(*edge.OperationCostMeasurement)
+		var profiles map[string]string
+		if cost != nil {
+			profiles, _, _, _ = c.operationCostRefusal(cost, node, in)
+		}
 		claimed[node.Name] = true
 		if err := c.setMeasurementTaint(ctx, node, string(root.object.GetUID())); err != nil {
 			errs = append(errs, err)
@@ -188,27 +206,38 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			c.startRunner(node, transition.DeepCopy(), runner, config)
 			continue
 		}
-		errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(now)))
+		if err := c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(now)); err != nil || cost == nil {
+			errs = append(errs, err)
+			continue
+		}
+		c.startOperationCost(node, cost.DeepCopy(), profiles, in)
 	}
 	return errors.Join(errs...)
 }
 
 // admissionInputs is what one Admit cycle read.
 type admissionInputs struct {
-	config  SchedulerControllerConfig
-	pods    []core.Pod
-	acts    []edge.NodeActuation
-	classes []edge.DeviceClass
-	now     time.Time
+	config   SchedulerControllerConfig
+	pods     []core.Pod
+	acts     []edge.NodeActuation
+	classes  []edge.DeviceClass
+	roots    []measurementRoot
+	profiles []serving.Profile
+	now      time.Time
 }
 
 // rootRefusal judges a waiting root on a Node nothing holds: a refusal reason
-// and detail, or none to grant it.
-func (c *SchedulerController) rootRefusal(root measurementRoot, node *core.Node, in admissionInputs) (reason, detail string) {
+// and detail, none to grant it, or wait while its catalog evidence lags.
+func (c *SchedulerController) rootRefusal(root measurementRoot, node *core.Node, in admissionInputs) (reason, detail string, wait bool) {
 	if serving := servingPodsOn(in.pods, node.Name); len(serving) > 0 {
-		return refusedNodeServing, strings.Join(serving, ",")
+		return refusedNodeServing, strings.Join(serving, ","), false
 	}
-	return cpuRefusal(root.object, node, in.classes, in.acts, in.config.Reserved[node.Name].CPUs)
+	if cost, ok := root.object.(*edge.OperationCostMeasurement); ok {
+		_, reason, detail, wait = c.operationCostRefusal(cost, node, in)
+		return reason, detail, wait
+	}
+	reason, detail = cpuRefusal(root.object, node, in.classes, in.acts, in.config.Reserved[node.Name].CPUs)
+	return reason, detail, false
 }
 
 // continueHeldNodes finishes the grant a restart cut off and starts the
@@ -224,16 +253,22 @@ func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []cor
 		root := byUID[holder]
 		if root != nil && !root.terminal {
 			granted, _, _ := profilingrun.Admission(root.object.GetAnnotations())
+			cost, _ := root.object.(*edge.OperationCostMeasurement)
+			if granted && cost != nil {
+				// No run of this process measures it: a restart cut it off.
+				c.restartedOperationCost(node, cost.DeepCopy(), config)
+				continue
+			}
 			if granted {
 				continue
 			}
-			if _, transition := root.object.(*edge.PowerModeTransitionCost); !transition {
+			if _, transition := root.object.(*edge.PowerModeTransitionCost); !transition && cost == nil {
 				// The taint was written and the grant was not: finish the grant.
 				errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(now)))
 				continue
 			}
-			// A runner preparation a restart cut off is handed back; the
-			// measurement then waits again.
+			// A runner preparation or a measurement run a restart cut off
+			// before its grant is handed back; the measurement then waits again.
 		}
 		if root != nil {
 			// The hand-back patches its own copy; this cycle keeps reading the listed one.
@@ -318,11 +353,8 @@ func (c *SchedulerController) setMeasurementTaint(ctx context.Context, node *cor
 func (c *SchedulerController) startHandBack(node *core.Node, holder string, root *measurementRoot, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + holder, Kind: handBackKind, Node: ref}
-	c.mu.Lock()
-	ran := c.sequences[holder]
-	c.mu.Unlock()
 	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
-		return c.handBack(ctx, ref, holder, root, !ran, result)
+		return c.handBack(ctx, ref, holder, root, root == nil, result)
 	})
 }
 
@@ -394,9 +426,8 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 // left, and removes the taint. A failed step keeps the taint; the next cycle
 // starts the hand-back again.
 //
-// interrupted is set when no run of this process measured on the Node: a
-// vanished measurement object is recorded as Interrupted and a sequence a
-// restart cut off gets its sequence record.
+// interrupted is set when the measurement object vanished: it is recorded as
+// Interrupted.
 func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeReference, holder string, root *measurementRoot, interrupted bool, result *OperationResult) error {
 	c.mu.Lock()
 	namespaces := c.config.MeasurementNamespaces
@@ -411,15 +442,7 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	}); err != nil {
 		return err
 	}
-	if root == nil && interrupted && strings.HasPrefix(holder, sequencePrefix) {
-		c.mu.Lock()
-		config := c.config
-		c.mu.Unlock()
-		if err := c.recordRestartedSequence(ctx, config, node, holder); err != nil {
-			return err
-		}
-		result.Progress = append(result.Progress, "sequence record "+sequenceRestartReason)
-	} else if root == nil && interrupted {
+	if root == nil && interrupted {
 		result.Progress = append(result.Progress, "Interrupted "+holder)
 	} else if root != nil {
 		granted, at, _ := profilingrun.Admission(root.object.GetAnnotations())
@@ -463,9 +486,6 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	if err = c.setMeasurementTaint(ctx, current, ""); err != nil {
 		return err
 	}
-	c.mu.Lock()
-	delete(c.sequences, holder)
-	c.mu.Unlock()
 	result.Progress = append(result.Progress, "taint removed")
 	return nil
 }

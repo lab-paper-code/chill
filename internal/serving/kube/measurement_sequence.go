@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -28,11 +27,8 @@ const (
 	// did not run every request.
 	OperationSequencePrefix = "serving/operation-sequences/"
 	OperationSequenceSchema = "serving-operation-sequence.v1alpha1"
-	// sequencePrefix starts every operation sequence ID, the taint value of its Node.
-	sequencePrefix         = "seq-"
-	operationSequenceKind  = "measurement-sequence"
-	sequenceIncompleteCode = "SequenceIncomplete"
-	sequenceRestartReason  = "ChillServerRestart"
+	sequenceIncompleteCode  = "SequenceIncomplete"
+	sequenceRestartReason   = "ChillServerRestart"
 )
 
 // measurementEvidence stores operation measurements and sequence records.
@@ -53,19 +49,6 @@ type OperationSequence struct {
 	Reason    string   `json:"reason"`
 }
 
-// MeasuredOperation is one saved operation measurement of a sequence.
-type MeasuredOperation struct {
-	Record  OperationMeasurement  `json:"record"`
-	Receipt evidencestore.Receipt `json:"receipt"`
-}
-
-// SequenceResult is the outcome of one operation sequence.
-type SequenceResult struct {
-	SequenceID   string              `json:"sequenceID"`
-	Measurements []MeasuredOperation `json:"measurements"`
-	Error        string              `json:"error,omitempty"`
-}
-
 // ManualOperation prepares or removes one instance of a Workload outside
 // autonomous control.
 type ManualOperation struct {
@@ -80,10 +63,9 @@ type ManualOperation struct {
 func refused(code, message string) error { return &serving.Error{Code: code, Message: message} }
 
 // admitNodeLocked checks that a request may take the Node now: it exists, no
-// measurement holds it, no run or power change is in flight, and no CHILL
-// serving Pod runs on it. Callers hold tickMu, so no run starts meanwhile and
-// a run that ended before the busy check has its Pods in the list after it.
-func (c *SchedulerController) admitNodeLocked(ctx context.Context, ref serving.NodeReference, measurement bool) (*core.Node, error) {
+// measurement holds it, and no run or power change is in flight. Callers hold
+// tickMu, so no run starts meanwhile.
+func (c *SchedulerController) admitNodeLocked(ctx context.Context, ref serving.NodeReference) (*core.Node, error) {
 	node, err := c.kube.CoreV1().Nodes().Get(ctx, ref.Name, meta.GetOptions{})
 	if err != nil || string(node.UID) != ref.UID {
 		return nil, refused(refusedNodeMissing, fmt.Sprintf("Node %s/%s is not present", ref.Name, ref.UID))
@@ -98,94 +80,7 @@ func (c *SchedulerController) admitNodeLocked(ctx context.Context, ref serving.N
 	if profilingrun.InMeasurement(node) || c.nodeBusy(node) || pendingActuation(acts, ref.UID, time.Now()) {
 		return nil, refused("NodeBusy", "Node "+ref.Name+" is held by a measurement, a run or a power change")
 	}
-	if !measurement {
-		return node, nil
-	}
-	pods, err := c.kube.CoreV1().Pods(c.observer.config.Namespace).List(ctx, meta.ListOptions{
-		LabelSelector: "app.kubernetes.io/component=" + servingInstanceComponent,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if names := servingPodsOn(pods.Items, ref.Name); len(names) > 0 {
-		return nil, refused(refusedNodeServing, strings.Join(names, ","))
-	}
 	return node, nil
-}
-
-// MeasureSequence measures the requests in order on one Node admitted once,
-// then hands the Node back. It stops at the first request that fails or is
-// not Accepted, and records a sequence that did not run every request.
-func (c *SchedulerController) MeasureSequence(ctx context.Context, requests []MeasurementRequest) (SequenceResult, error) {
-	if len(requests) == 0 {
-		return SequenceResult{}, refused("InvalidInput", "at least one measurement request is required")
-	}
-	ref := requests[0].Operation.Node
-	for _, r := range requests {
-		if r.Operation.Node != ref || r.Operation.ID == "" {
-			return SequenceResult{}, refused("InvalidInput", "every request needs an ID and the same Node")
-		}
-	}
-	c.tickMu.Lock()
-	c.mu.Lock()
-	config := c.config
-	c.mu.Unlock()
-	node, err := c.admitNodeLocked(ctx, ref, true)
-	if err != nil {
-		c.tickMu.Unlock()
-		return SequenceResult{}, err
-	}
-	if config.Evidence == nil || config.MeterSource == nil {
-		c.tickMu.Unlock()
-		return SequenceResult{}, errors.New("operation measurement evidence store is not configured")
-	}
-	id := sequencePrefix + string(uuid.NewUUID())
-	if err = c.setMeasurementTaint(ctx, node, id); err != nil {
-		c.tickMu.Unlock()
-		return SequenceResult{}, err
-	}
-	c.mu.Lock()
-	c.sequences[id] = true
-	c.mu.Unlock()
-	sequence := SequenceResult{SequenceID: id, Measurements: []MeasuredOperation{}}
-	done, outcome := c.startNodeRun(Operation{ID: id, Kind: operationSequenceKind, Node: ref}, config, func(runCtx context.Context, result *OperationResult) error {
-		measureCtx, stop := context.WithCancel(runCtx)
-		defer stop()
-		defer context.AfterFunc(ctx, stop)()
-		var measureErr error
-		for i, request := range requests {
-			request.Operation.ID = fmt.Sprintf("%s.%d.%s", id, i, request.Operation.ID)
-			record, receipt, err := c.measureOperation(measureCtx, config, request)
-			if receipt.Object.Key != "" {
-				sequence.Measurements = append(sequence.Measurements, MeasuredOperation{Record: record, Receipt: receipt})
-			}
-			if err == nil && record.Verdict != measurementAccepted {
-				err = fmt.Errorf("measurement %s: %s", record.Verdict, record.Reason)
-			}
-			if err != nil {
-				measureErr = err
-				break
-			}
-		}
-		if len(sequence.Measurements) < len(requests) || measureErr != nil {
-			reason := "stopped"
-			if measureErr != nil {
-				reason = measureErr.Error()
-			}
-			saved := make([]string, 0, len(sequence.Measurements))
-			for _, m := range sequence.Measurements {
-				saved = append(saved, m.Receipt.Object.Key)
-			}
-			measureErr = errors.Join(measureErr, c.recordSequence(runCtx, config, OperationSequence{
-				SequenceID: id, Node: ref, Requested: len(requests), Saved: saved, Reason: reason,
-			}))
-		}
-		return errors.Join(measureErr, c.handBack(runCtx, ref, id, nil, false, result))
-	})
-	c.tickMu.Unlock()
-	<-done
-	sequence.Error = outcome.Error
-	return sequence, nil
 }
 
 // measureOperation measures one request with the measurement operations: the
@@ -196,12 +91,6 @@ func (c *SchedulerController) measureOperation(ctx context.Context, config Sched
 	i := slices.IndexFunc(config.Meters, func(m MeterDeclaration) bool { return m.Node == request.Operation.Node })
 	if i < 0 {
 		return record, evidencestore.Receipt{}, refused(MeterUndeclared, "no wall meter is configured for Node "+request.Operation.Node.Name)
-	}
-	if request.Meter.ID != "" && !reflect.DeepEqual(request.Meter, config.Meters[i]) {
-		return record, evidencestore.Receipt{}, refused("InvalidInput", "declared meter differs from the configured meter of the Node")
-	}
-	if request.Store != "" && request.Store != config.EvidenceStore {
-		return record, evidencestore.Receipt{}, refused("InvalidInput", "measurements are stored in "+config.EvidenceStore)
 	}
 	request.Meter, request.Store = config.Meters[i], config.EvidenceStore
 	profiles := c.observer.Profiles()
@@ -338,7 +227,7 @@ func (c *SchedulerController) manualOperationLocked(ctx context.Context, request
 	if slices.Contains(config.Settings.AutonomousWorkloads, request.WorkloadUID) {
 		return Operation{}, refused("OperationConflict", "the Workload is under autonomous control")
 	}
-	node, err := c.admitNodeLocked(ctx, request.Node, false)
+	node, err := c.admitNodeLocked(ctx, request.Node)
 	if err != nil {
 		return Operation{}, err
 	}
