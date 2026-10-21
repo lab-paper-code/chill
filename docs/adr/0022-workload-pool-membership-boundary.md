@@ -48,8 +48,7 @@ forgotten removal only leaves a Node unused. M3
 ChillServer the only writer of the same taint: it admits a measurement object
 onto a Node without CHILL serving Pods or pending power changes, with the
 object's UID as the taint value, refuses a Node that runs a CHILL serving Pod and
-names it, names other Pods without removing them, creates the transition-cost
-runner, and hands the Node back at its lowest power mode when the object ends or
+names it, creates the transition-cost runner, and hands the Node back at its lowest power mode when the object ends or
 disappears. A power change applied inside a measurement window marks that
 measurement invalid; it is counted and not used.
 
