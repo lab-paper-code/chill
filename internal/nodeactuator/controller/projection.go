@@ -95,21 +95,6 @@ func projectObjectIdentity(reference edgev1alpha1.ProfilingRunObjectReference) n
 	return nodeactuator.ObjectIdentity{Name: reference.Name, UID: reference.UID}
 }
 
-func projectTarget(actuator edgev1alpha1.PowerModeActuator) nodeactuator.Target {
-	target := nodeactuator.Target{Kind: string(actuator.Kind)}
-	if actuator.JetsonNVPModel != nil {
-		target.JetsonNVPModel = &nodeactuator.JetsonNVPModelTarget{ID: actuator.JetsonNVPModel.ID}
-	}
-	if actuator.NvidiaLockedGPUClock != nil {
-		target.NvidiaLockedGPUClock = &nodeactuator.NvidiaLockedGPUClockTarget{
-			MinMHz: actuator.NvidiaLockedGPUClock.MinMHz,
-			MaxMHz: actuator.NvidiaLockedGPUClock.MaxMHz,
-			Mode:   actuator.NvidiaLockedGPUClock.Mode,
-		}
-	}
-	return target
-}
-
 func projectObservation(observation *edgev1alpha1.NodeActuationObservation) (*nodeactuator.Observation, error) {
 	if observation == nil {
 		return nil, nil

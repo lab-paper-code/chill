@@ -96,8 +96,13 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["nodes"]
-    # patch publishes the read-back power actuator annotation.
-    verbs: ["get", "patch"]
+    # watch reads its own Node's desired power mode; patch publishes the
+    # power-mode state, generation, and read-back.
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["deviceclasses"]
+    # get resolves the desired mode's actuator target.
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

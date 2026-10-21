@@ -1,20 +1,23 @@
 // Command node-agent publishes Node hardware signature and online-CPU metadata
-// on every Node. With --actuate it instead applies NodeActuations on its Node.
+// on every Node. With --actuate it instead applies the desired power mode its
+// Node's label names.
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -77,14 +80,16 @@ func runActuation(opts options) {
 	manager, err := ctrl.NewManager(kubernetesConfig, ctrl.Options{
 		Scheme: scheme, Metrics: metricsserver.Options{BindAddress: opts.metricsAddr},
 		HealthProbeBindAddress: opts.probeAddr,
-		Cache:                  cache.Options{DefaultNamespaces: map[string]cache.Config{opts.watchNamespace: {}}},
+		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
+			&corev1.Node{}: {Field: fields.OneTermEqualSelector("metadata.name", opts.nodeName)},
+		}},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start actuation manager")
 		os.Exit(1)
 	}
-	if err := setupTransitionController(context.Background(), manager, opts); err != nil {
-		setupLog.Error(err, "unable to register NodeActuation reconciler")
+	if err := setupPowerModeController(manager, opts); err != nil {
+		setupLog.Error(err, "unable to register power-mode reconciler")
 		os.Exit(1)
 	}
 	if err := manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -95,7 +100,7 @@ func runActuation(opts options) {
 		setupLog.Error(err, "unable to set up readiness check")
 		os.Exit(1)
 	}
-	setupLog.Info("starting node agent actuation", "node", opts.nodeName, "watchNamespace", opts.watchNamespace)
+	setupLog.Info("starting node agent actuation", "node", opts.nodeName)
 	if err := manager.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running node agent actuation")
 		os.Exit(1)

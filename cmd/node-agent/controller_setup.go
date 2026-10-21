@@ -1,55 +1,29 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	actuatorcontroller "github.com/lab-paper-code/chill/internal/nodeactuator/controller"
 	"github.com/lab-paper-code/chill/internal/nodeactuator/jetson"
-	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func setupTransitionController(ctx context.Context, manager ctrl.Manager, opts options) error {
-	node := &corev1.Node{}
-	if err := manager.GetAPIReader().Get(ctx, client.ObjectKey{Name: opts.nodeName}, node); err != nil {
-		return fmt.Errorf("resolve assigned Node %q: %w", opts.nodeName, err)
-	}
-	if node.UID == "" {
-		return errors.New("assigned Node has incomplete API identity")
-	}
-	assigned := nodeactuator.ObjectIdentity{Name: node.Name, UID: string(node.UID)}
-	leases, err := actuatorcontroller.NewNodeLock(manager.GetClient(), actuatorcontroller.LeaseOptions{
-		Namespace: opts.leaseNamespace, DurationSeconds: int32(opts.leaseDuration),
-	})
-	if err != nil {
-		return fmt.Errorf("construct Node Lease manager: %w", err)
-	}
+func setupPowerModeController(manager ctrl.Manager, opts options) error {
 	hostActuator, err := jetson.NewNVPModel(jetson.NVPModelOptions{
 		Command: append([]string(nil), opts.jetsonCommand...), Timeout: opts.jetsonTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("construct Jetson NVPModel adapter: %w", err)
 	}
-	reconciler, err := actuatorcontroller.NewTransitionReconciler(
-		manager.GetClient(), leases, hostActuator,
-		actuatorcontroller.TransitionReconcilerOptions{
-			AssignedNode:    assigned,
-			AllowedPolicies: append([]nodeactuator.ActuationPolicySpec(nil), opts.allowedPolicies...),
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("construct NodeActuation reconciler: %w", err)
+	reconciler := &actuatorcontroller.PowerModeReconciler{
+		Client: manager.GetClient(), Reader: manager.GetAPIReader(), Host: hostActuator, Node: opts.nodeName,
+		Policies: append([]nodeactuator.ActuationPolicySpec(nil), opts.allowedPolicies...),
+		Interval: 10 * time.Second, Timeout: opts.jetsonTimeout, Now: time.Now,
 	}
 	if err := reconciler.SetupWithManager(manager); err != nil {
-		return fmt.Errorf("set up NodeActuation reconciler: %w", err)
+		return fmt.Errorf("set up power-mode reconciler: %w", err)
 	}
-	return manager.Add(actuatorcontroller.ReadBackPublisher{
-		Client: manager.GetClient(), Host: hostActuator, Node: node.Name,
-		Interval: 10 * time.Second, Timeout: opts.jetsonTimeout,
-	})
+	return nil
 }
