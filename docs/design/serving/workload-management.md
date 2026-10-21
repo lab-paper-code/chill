@@ -119,9 +119,8 @@ PoolState
 
 - 활성 POOL 소속은 CHILL 서빙 인스턴스의 owner와 Workload binding에서 산출한다.
   별도 소속 Node label은 두지 않으며, DeviceClass label은 장비 분류로만 사용한다.
-- 측정 POOL은 운영자가 적용하는 `chill.dacs.io/measurement:NoSchedule` Node taint로 표시한다
-  (`kubectl taint node <node> chill.dacs.io/measurement=true:NoSchedule`, 해제는
-  `kubectl taint node <node> chill.dacs.io/measurement-`). 스케줄러는 이 노드를 후보에서 제외하고,
+- 측정 POOL은 `chill.dacs.io/measurement:NoSchedule` Node taint로 표시한다. ChillServer가 측정 객체에 따라
+  붙이고 뗀다([측정 admission](measurement-admission.md)). 스케줄러는 이 노드를 후보에서 제외하고,
   해당 노드의 prepare와 ChangePower는 `NodeInMeasurement`로 실패한다.
 - 서빙 인스턴스가 없고 측정 taint도 없는 노드는 가용 노드이며, 가장 낮은 전력모드로 유지한다.
 - 실제 인스턴스의 원본은 Kubernetes Pod와 실행기 관측이다. Pod 식별 metadata는 관측 대상을 찾는 데 사용하며,

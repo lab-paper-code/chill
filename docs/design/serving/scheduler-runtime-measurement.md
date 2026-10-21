@@ -207,7 +207,7 @@ node의 측정 baseline은 power mode·준비된 model/profile/resource 집합·
 이는 전체 공존 조합의 선행 campaign을 요구하는 조건과 구별된다.
 
 Serving 원자 동작 측정 대상은 `prepare`, `remove`, `power mode`이며 `resize`
-(prepare→route→drain→remove)는 이들의 조합이다. 측정 Node는 운영자가 붙인
+(prepare→route→drain→remove)는 이들의 조합이다. 측정 Node는 ChillServer가 측정에 붙인
 `chill.dacs.io/measurement:NoSchedule` taint로 격리하며 scheduler는 이 Node를 후보에서 제외한다.
 production 실행 경계의 동일 함수를 측정
 measurement command가 호출한다. measurement service는 first successful power sample

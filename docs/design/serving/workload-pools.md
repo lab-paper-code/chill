@@ -92,9 +92,9 @@ owner와 binding이 모두 없는 인스턴스는 어느 활성 POOL에도 속�
 
 ### 3.3 측정 POOL
 
-M3 전까지 측정 POOL은 taint `chill.dacs.io/measurement:NoSchedule`이 있는 노드다. 운영자는 측정 전에
-`kubectl taint node <node> chill.dacs.io/measurement=true:NoSchedule`을 붙이고, pools API에서 그 노드에 serving
-인스턴스가 없는 것을 확인한 뒤 측정을 시작하며, 끝나면 `kubectl taint node <node> chill.dacs.io/measurement-`로 뗀다.
+측정 POOL은 taint `chill.dacs.io/measurement:NoSchedule`이 있는 노드다. ChillServer가 측정 객체에 따라 이 taint를
+붙이고 떼는 유일한 writer이고, taint 값은 노드를 받은 측정이다. 승인, 거절, 반환은
+[측정 admission](measurement-admission.md)이 정한다.
 
 - 측정 Pod는 이 key의 toleration(`operator: Exists`, `effect: NoSchedule`)을 갖는다: profiling Job(measurement-worker,
   `profiler/controller/execution_job_spec.go:110-136`, idle baseline도 같은 경로), transition attempt Job
@@ -107,10 +107,6 @@ M3 전까지 측정 POOL은 taint `chill.dacs.io/measurement:NoSchedule`이 있�
 - `serving-operation --measurement-config`의 전제는 대상 노드의 taint다. `measurement-*` POOL label 조건
   (`cmd/serving-operation/main.go:127-130,269-294`)을 이것으로 바꾸고, 측정 인스턴스는 taint가 있는 노드에만 준비한다.
   격리 witness(`main.go:308-332`)는 `MeasurementIsolation.Pool` 대신 측정 끝의 taint 유무(`Tainted`)를 기록한다.
-
-M3([03](../architecture-rethink/03-b2-single-writer-node-state.md), [05](../architecture-rethink/05-recommendation-migration.md))는
-같은 taint를 측정 객체에 따라 단일 writer가 붙이고 떼게 하고, 서빙 중인 노드의 측정 거절, 전력 변경 fencing, 전환 비용
-runner 자동 생성을 더한다.
 
 ### 3.4 전체 POOL, 가용 노드와 전력모드
 

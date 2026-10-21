@@ -229,8 +229,8 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		Settings: config.Settings,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
 		CostIssues: costs.Issues, Meters: config.Meters, PowerPolicies: policies,
-		StaticRouting: config.StaticRouting != nil,
-		OnDecision:    o.recordDecision, OnAction: o.recordAction,
+		StaticRouting: config.StaticRouting != nil, MeasurementNamespaces: namespaces,
+		OnDecision: o.recordDecision, OnAction: o.recordAction,
 	}
 	if o.controller == nil {
 		o.controller, err = servingkube.NewSchedulerController(o.store, o.kube, o.execution,
@@ -427,6 +427,9 @@ func (o *schedulerService) Start() {
 				ctrl.Log.Error(err, "refresh scheduler operator configuration")
 			} else {
 				o.lock.Lock()
+				if err := o.controller.Admit(callCtx); err != nil {
+					ctrl.Log.Error(err, "admit measurements")
+				}
 				_, err := o.controller.Tick(callCtx, time.Now().UTC())
 				o.lock.Unlock()
 				if err != nil {

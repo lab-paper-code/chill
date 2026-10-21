@@ -99,6 +99,10 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (CatalogView
 				continue
 			}
 			source := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
+			if reason, invalid := campaign.Annotations[profilingrun.InvalidAnnotation]; invalid {
+				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: measurementInvalidCode, Reason: reason})
+				continue
+			}
 			if _, duplicate := seen[source]; duplicate {
 				continue
 			}

@@ -43,8 +43,10 @@ type SchedulerControllerConfig struct {
 	// DeviceClass mode with a policy is a mode ChillServer can request.
 	PowerPolicies []nodeactuator.ActuationPolicySpec
 	StaticRouting bool
-	OnDecision    func(serving.SchedulerDecision) error
-	OnAction      func(OperationResult) error
+	// MeasurementNamespaces hold the measurement objects Admit grants Nodes to.
+	MeasurementNamespaces []string
+	OnDecision            func(serving.SchedulerDecision) error
+	OnAction              func(OperationResult) error
 }
 type SchedulerControllerState struct {
 	Snapshot serving.SchedulerSnapshot `json:"snapshot"`

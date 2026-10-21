@@ -200,14 +200,8 @@ token/CA 경로를 사용한다. ChillServer CA/token은 manifest의 별도 명�
 
 ## 원자 동작 측정의 격리
 
-측정 POOL은 taint `chill.dacs.io/measurement:NoSchedule`이 있는 Node다. 운영자는 측정 전에 taint를
-붙이고, `GET /api/v1/pools`의 `measurement[]`에서 그 Node에 serving instance가 없음을 확인한 뒤
-측정을 시작한다. 측정이 끝나면 taint를 뗀다.
-
-```sh
-kubectl taint node <node> chill.dacs.io/measurement=true:NoSchedule
-kubectl taint node <node> chill.dacs.io/measurement-
-```
+측정 POOL은 taint `chill.dacs.io/measurement:NoSchedule`이 있는 Node다. ChillServer가 측정 객체에 따라
+taint를 붙이고 뗀다([측정 admission](measurement-admission.md)).
 
 scheduler는 이 Node를 배치 대상에서 제외하고, 이 Node의 prepare와 `ChangePower`는
 `NodeInMeasurement`로 실패한다. `serving-operation --measurement-config FILE`의 전제는 대상 Node의

@@ -14,6 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -146,6 +147,10 @@ func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, me
 				continue
 			}
 			name := measurement.Namespace + "/" + measurement.Name
+			if reason, invalid := measurement.Annotations[profilingrun.InvalidAnnotation]; invalid {
+				view.Issues = append(view.Issues, CostIssue{Source: name, Code: measurementInvalidCode, Reason: reason})
+				continue
+			}
 			identity := name + "/" + string(measurement.UID) + "/" + result.Store + "/" + result.Key
 			listed[identity] = true
 			view.Sources = append(view.Sources, identity)

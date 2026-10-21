@@ -195,6 +195,10 @@ rules:
   - apiGroups: [edge.dacs.io]
     resources: [profilingruns]
     verbs: [get]
+  # ChillServer admits measurements by annotating them.
+  - apiGroups: [edge.dacs.io]
+    resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts]
+    verbs: [patch]
   # Power mode transition cost preparations are owned ConfigMaps named after the measurement.
   - apiGroups: [""]
     resources: [configmaps]
