@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -429,63 +430,36 @@ func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, i
 
 // m4 r7: the rasp5 q1 prepare of plan-dc6ebf670833 started at 07:02:05 and
 // still waited at 07:12:30, so every decision kept TransitionInProgress.
-// Its measured prepare takes 22.7 s. Past that plus one observation window
-// the run is canceled and the goal is abandoned, so the next decision
-// re-plans from the actual state.
-func TestOverdueActionAbandonsGoal(t *testing.T) {
-	now := time.Now().UTC()
-	cost := serving.OperationCost{ID: "rasp5-q1-prepare", Trials: []serving.OperationTrial{{Duration: 22696359101}}}
-	prepare := serving.Action{ID: "prepare-rasp5-q1", Kind: operationPrepare, Node: serving.NodeReference{Name: "rasp5", UID: "rasp5-uid"},
-		Instance: "slot", CostID: cost.ID, Status: nativeOperationRunning, Cancelable: true}
-	route := serving.Action{ID: "route", Kind: operationRoute, DependsOn: []string{prepare.ID}, Status: "planned"}
-	goal := serving.SchedulerCandidate{ID: "plan-dc6ebf670833", Actions: []serving.Action{prepare, route}}
-	for _, elapsed := range []time.Duration{time.Minute, 3 * time.Minute} {
-		canceled := false
-		run := &actionRun{action: prepare, started: now.Add(-elapsed), cancel: func() { canceled = true },
-			result: &OperationResult{Operation: Operation{ID: prepare.ID, Kind: prepare.Kind, Target: &goal}, Status: "starting"}}
-		controller := &SchedulerController{runs: map[string]*actionRun{prepare.ID: run}, goal: &goal,
-			config: SchedulerControllerConfig{Costs: []serving.OperationCost{cost}}}
-		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, &goal, now, time.Minute)
-		overdue := elapsed > time.Minute+cost.Trials[0].Duration
-		if overdue != canceled || overdue != (controller.goal == nil) || overdue != (snapshot.InProgressTarget == nil) {
-			t.Fatalf("elapsed %v: canceled %v goal %v in progress %v", elapsed, canceled, controller.goal, snapshot.InProgressTarget)
+// A prepare runs under a timeout of its measured time plus one observation
+// window. Past it the run fails, the goal is dropped, and a still running
+// sibling prepare does not re-adopt it, so the next decision re-plans.
+func TestPrepareTimeoutFailsGoal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	prepare := serving.Action{ID: "prepare-rasp5-q1", Kind: operationPrepare, Node: serving.NodeReference{Name: "rasp5", UID: "rasp5-uid"}, Instance: "slot"}
+	sibling := serving.Action{ID: "prepare-genesis3-q1", Kind: operationPrepare, Node: serving.NodeReference{Name: "genesis3", UID: "genesis3-uid"},
+		Instance: "other", Status: nativeOperationRunning}
+	goal := serving.SchedulerCandidate{ID: "plan-dc6ebf670833", Actions: []serving.Action{prepare, sibling}}
+	controller := &SchedulerController{ctx: ctx, runs: map[string]*actionRun{sibling.ID: {action: sibling, started: time.Now(),
+		result: &OperationResult{Operation: Operation{ID: sibling.ID, Kind: sibling.Kind, Target: &goal}, Status: nativeOperationRunning}}}}
+	config := SchedulerControllerConfig{Settings: serving.SchedulerSettings{ObservationWindow: time.Millisecond}, OnAction: func(result OperationResult) error {
+		if result.Status != nativeOperationFailed {
+			time.Sleep(20 * time.Millisecond)
+			return context.Canceled // Skip the physical Execute; the deadline has passed.
 		}
-		if overdue && run.action.Reason != serving.ActionDeadlineExceeded {
-			t.Fatalf("overdue run reason %q", run.action.Reason)
-		}
+		return nil
+	}}
+	controller.launch(goal, config)
+	controller.wg.Wait()
+	run := controller.runs[prepare.ID]
+	if run.action.Status != nativeOperationFailed || !strings.HasPrefix(run.action.Reason, serving.ActionDeadlineExceeded) {
+		t.Fatalf("timed out prepare: status %q reason %q", run.action.Status, run.action.Reason)
 	}
-}
-
-// A goal dropped at a deadline stays dropped: its still running route (a
-// sibling of the overdue prepare) neither re-adopts the goal nor holds the
-// next decisions at TransitionInProgress, before or after the overdue run
-// ends.
-func TestDroppedGoalIsNotReadoptedBySibling(t *testing.T) {
-	now := time.Now().UTC()
-	prepare := serving.Action{ID: "prepare-rasp5-q1", Kind: operationPrepare, Node: serving.NodeReference{Name: "rasp5", UID: "rasp5-uid"},
-		Instance: "slot", Status: nativeOperationRunning, Cancelable: true}
-	route := serving.Action{ID: "route", Kind: operationRoute, Status: nativeOperationRunning}
-	goal := serving.SchedulerCandidate{ID: "plan-dc6ebf670833", Actions: []serving.Action{prepare, route}}
-	runs := map[string]*actionRun{
-		prepare.ID: {action: prepare, started: now.Add(-3 * time.Minute), cancel: func() {},
-			result: &OperationResult{Operation: Operation{ID: prepare.ID, Kind: prepare.Kind, Target: &goal}, Status: "starting"}},
-		route.ID: {action: route, started: now,
-			result: &OperationResult{Operation: Operation{ID: route.ID, Kind: route.Kind, Target: &goal}, Status: "starting"}},
-	}
-	controller := &SchedulerController{runs: runs, goal: &goal}
-	controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, &goal, now, time.Minute)
-	if controller.goal != nil {
-		t.Fatal("overdue goal kept")
-	}
-	for _, ended := range []bool{false, true} {
-		if ended {
-			// The canceled prepare finishes as failed.
-			runs[prepare.ID].action.Status = nativeOperationFailed
-			runs[prepare.ID].result = &OperationResult{Operation: runs[prepare.ID].result.Operation, Status: nativeOperationFailed, EndedAt: now}
-		}
-		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, nil, now, time.Minute)
+	now := time.Now()
+	for _, selected := range []*serving.SchedulerCandidate{&goal, nil} {
+		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, selected, now, time.Minute)
 		if controller.goal != nil || snapshot.InProgressTarget != nil {
-			t.Fatalf("prepare ended %v: dropped goal re-adopted: goal %v in progress %v", ended, controller.goal, snapshot.InProgressTarget)
+			t.Fatalf("goal kept after prepare timeout: goal %v in progress %v", controller.goal, snapshot.InProgressTarget)
 		}
 	}
 }
