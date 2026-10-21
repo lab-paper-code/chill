@@ -37,13 +37,19 @@ func projectTransitionMaterial(prepared profiler.PreparedRun) (*TransitionMateri
 }
 
 // projectNodeTransition projects the campaign's power mode on its granted Node
-// into the progress rules. It is nil until the campaign requested the mode.
+// into the progress rules. It is nil until the campaign requested the mode,
+// and again once the host left the settled mode, so the campaign requests it
+// anew.
 func projectNodeTransition(
 	node *corev1.Node,
 	material *TransitionMaterial,
 	now time.Time,
 ) *batchenergyoptimization.Transition {
 	if node.Labels[metadata.PowerMode] != material.PowerMode {
+		return nil
+	}
+	// A record that does not decode fails in PowerModeOutcome below.
+	if left, err := metadata.PowerModeLeft(node, material.PowerMode); err == nil && left {
 		return nil
 	}
 	maxDuration := time.Duration(material.MaxActuationDurationSeconds) * time.Second

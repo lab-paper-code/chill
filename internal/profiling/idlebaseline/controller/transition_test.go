@@ -121,6 +121,31 @@ func TestReconcilerClosesFailedPowerModeWithoutRun(t *testing.T) {
 	}
 }
 
+// A settled mode the host left since is requested again before the first Run.
+func TestReconcilerRequestsAgainAModeTheHostLeft(t *testing.T) {
+	parent := testBaselineParent()
+	node := grantedNode(parent, string(parent.UID))
+	setAgent(node, parent.Spec.State.Candidate.PowerMode, metadata.PowerModeSuccess, testNow.Add(-time.Hour))
+	node.Annotations[metadata.PowerModeGeneration] = "2"
+	kube := baselineFakeClient(t, parent, node)
+	reconciler := testReconcilerWithPreparer(t, kube, &fakeRunPreparer{prepared: testActuatedPreparedRun(parent)})
+	if _, err := reconciler.Reconcile(context.Background(), requestFor(parent)); err != nil {
+		t.Fatal(err)
+	}
+	assertRunCount(t, kube, parent.Namespace, 0)
+	updated := getNode(t, kube, node.Name)
+	if updated.Annotations[metadata.PowerModeRequestedAt] == node.Annotations[metadata.PowerModeRequestedAt] {
+		t.Fatal("the mode the host left was not requested again")
+	}
+	baseline := &edgev1alpha1.ModelLoadedIdleBaseline{}
+	if err := kube.Get(context.Background(), client.ObjectKeyFromObject(parent), baseline); err != nil {
+		t.Fatal(err)
+	}
+	if baseline.Status.Phase == edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient {
+		t.Fatalf("left mode closed the baseline: %#v", baseline.Status)
+	}
+}
+
 func testReconcilerWithPreparer(
 	t *testing.T,
 	kube client.Client,

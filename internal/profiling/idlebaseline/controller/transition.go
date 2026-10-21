@@ -48,7 +48,11 @@ func (r *Reconciler) ensureRequiredState(
 		return false, false, err
 	}
 	mode := prepared.RunConfig.Actuation.PowerMode
-	if node.Labels[metadata.PowerMode] != mode {
+	left, err := metadata.PowerModeLeft(node, mode)
+	if err != nil {
+		return false, false, err
+	}
+	if node.Labels[metadata.PowerMode] != mode || left {
 		return false, false, metadata.RequestPowerMode(ctx, r.client, node, mode, r.now())
 	}
 	maxDuration := time.Duration(prepared.ActuationPolicy.Policy.MaxActuationDurationSeconds) * time.Second

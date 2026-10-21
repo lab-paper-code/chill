@@ -94,13 +94,11 @@ func RequestPowerMode(ctx context.Context, c client.Client, node *corev1.Node, m
 		if err != nil {
 			return err
 		}
-		generation, _, err := NodePowerModeGeneration(node)
+		left, err := PowerModeLeft(node, mode)
 		if err != nil {
 			return err
 		}
-		state := node.Labels[PowerModeState]
-		left := state == PowerModeSuccess && transition.Generation != generation
-		if !ServesRequest(node, transition, mode) || (state != PowerModeFailed && !left) {
+		if !ServesRequest(node, transition, mode) || (node.Labels[PowerModeState] != PowerModeFailed && !left) {
 			return nil
 		}
 	}
@@ -123,6 +121,22 @@ func RequestPowerMode(ctx context.Context, c client.Client, node *corev1.Node, m
 func ServesRequest(node *corev1.Node, transition PowerModeTransitionRecord, mode string) bool {
 	return node.Labels[PowerMode] == mode && transition.PowerMode == mode &&
 		transition.RequestedAt == node.Annotations[PowerModeRequestedAt]
+}
+
+// PowerModeLeft reports whether the agent settled the Node's current request
+// for mode and the host changed since. A writer that needs mode requests it
+// again.
+func PowerModeLeft(node *corev1.Node, mode string) (bool, error) {
+	transition, _, err := NodePowerModeTransition(node)
+	if err != nil {
+		return false, err
+	}
+	generation, _, err := NodePowerModeGeneration(node)
+	if err != nil {
+		return false, err
+	}
+	return ServesRequest(node, transition, mode) && node.Labels[PowerModeState] == PowerModeSuccess &&
+		transition.Generation != generation, nil
 }
 
 // PowerModeDeadline is the end of the current request: its request time plus

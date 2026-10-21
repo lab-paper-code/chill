@@ -45,6 +45,13 @@ func campaignNode(powerMode, state string, applyStartedAt time.Time, generation 
 	return node
 }
 
+// leftNode moves node's generation past its settled record, as a reboot or a
+// change by hand does.
+func leftNode(node *corev1.Node) *corev1.Node {
+	node.Annotations[metadata.PowerModeGeneration] = "4"
+	return node
+}
+
 func TestProjectNodeTransitionFollowsTheAgent(t *testing.T) {
 	parent := testParent()
 	material, err := projectTransitionMaterial(actuatedPreparedRun(parent))
@@ -65,6 +72,7 @@ func TestProjectNodeTransitionFollowsTheAgent(t *testing.T) {
 			outcome: batchenergyoptimization.TransitionFailed},
 		{name: "settled", node: campaignNode(mode, metadata.PowerModeSuccess, now.Add(-2*time.Minute), 3),
 			outcome: batchenergyoptimization.TransitionEstablished},
+		{name: "host left the settled mode", node: leftNode(campaignNode(mode, metadata.PowerModeSuccess, now.Add(-2*time.Minute), 3))},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := projectNodeTransition(test.node, material, now)
