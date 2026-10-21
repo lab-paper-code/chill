@@ -8,10 +8,10 @@ import (
 const (
 	DefaultSystemName = "chill"
 
-	NodeDiscovery = "node-discovery"
-	NodeActuator  = "node-actuator"
-	Profiler      = "profiler"
-	EvidenceStore = "evidence-store"
+	NodeAgent          = "node-agent"
+	NodeAgentActuation = "node-agent-actuation"
+	Profiler           = "profiler"
+	EvidenceStore      = "evidence-store"
 
 	EvidenceStoreConfigKey            = "config.yaml"
 	EvidenceStoreS3Port         int32 = 9000
@@ -20,20 +20,16 @@ const (
 	ProfilerEvidenceStagingPath       = "/var/run/chill/evidence"
 )
 
-func NodeDiscoveryDaemonSetName(systemName string) string {
-	return defaultSystemName(systemName) + "-node-discovery"
+func NodeAgentDaemonSetName(systemName string) string {
+	return defaultSystemName(systemName) + "-node-agent"
 }
 
-func NodeDiscoveryConfigMapName(systemName string) string {
-	return defaultSystemName(systemName) + "-node-discovery-config"
+func NodeAgentActuationDaemonSetName(systemName string) string {
+	return defaultSystemName(systemName) + "-node-agent-actuation"
 }
 
-func NodeActuatorDaemonSetName(systemName string) string {
-	return defaultSystemName(systemName) + "-node-actuator"
-}
-
-func NodeActuatorConfigMapName(systemName string) string {
-	return defaultSystemName(systemName) + "-node-actuator-config"
+func NodeAgentConfigMapName(systemName string) string {
+	return defaultSystemName(systemName) + "-node-agent-config"
 }
 
 func ProfilerDeploymentName(systemName string) string {

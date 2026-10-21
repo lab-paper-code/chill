@@ -7,22 +7,18 @@ metadata:
     {{- include "chill.labels" . | nindent 4 }}
 spec:
   managementNamespace: {{ .Release.Namespace | quote }}
-  nodeDiscovery:
-    enabled: {{ .Values.nodeDiscovery.enabled }}
-    daemonSetName: {{ printf "%s-node-discovery" (include "chill.fullname" .) | quote }}
-    configMapName: {{ include "chill.nodeDiscoveryConfigName" . | quote }}
-    configMapKey: {{ .Values.nodeDiscovery.configMapKey | quote }}
+  nodeAgent:
+    enabled: {{ .Values.nodeAgent.enabled }}
+    actuation: {{ .Values.nodeAgent.actuation.enabled }}
+    {{- if .Values.nodeAgent.enabled }}
+    configRef:
+      name: {{ include "chill.nodeAgentConfigName" . | quote }}
+    {{- end }}
   profiler:
     enabled: {{ .Values.profiler.enabled }}
     {{- if .Values.profiler.enabled }}
     configRef:
       name: {{ include "chill.profilerConfigName" . | quote }}
-    {{- end }}
-  nodeActuator:
-    enabled: {{ .Values.nodeActuator.enabled }}
-    {{- if .Values.nodeActuator.enabled }}
-    configRef:
-      name: {{ include "chill.nodeActuatorConfigName" . | quote }}
     {{- end }}
   evidenceStore:
     enabled: {{ .Values.evidenceStore.enabled }}

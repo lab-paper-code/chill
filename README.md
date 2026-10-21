@@ -203,27 +203,23 @@ credentials need list permission on the bucket. ChillServer is fixed to one repl
 with `Recreate`, exposes HTTPS on port `8080`, and keeps a private RWO ObservationLog
 plus immutable Evidence Store windows.
 
-### Targeted NodeActuator replacement
+### Targeted node agent actuation replacement
 
-`nodeActuator.updateStrategy` renders the native DaemonSet strategy into the
-authoritative NodeActuator ConfigMap. The default is `RollingUpdate` with
+`nodeAgent.actuation.updateStrategy` renders the native DaemonSet strategy of
+the `chill-node-agent-actuation` DaemonSet into the authoritative node agent
+ConfigMap. The default is `RollingUpdate` with
 `maxUnavailable: 1`. For operator-elected replacement, use `type: OnDelete`
 and remove `rollingUpdate` entirely (a Helm override can set it to `null`).
 The full reconciler remains active; this is not a pause.
 
-For the first upgrade introducing this required field, build the operator with
-`make docker-build IMG=<reviewed-operator-image>` (Dockerfile:
-`build/docker/operator.Dockerfile`). Stage a new, unreferenced ConfigMap containing
-`updateStrategy`, deploy the new operator image, then switch the `ChillSystem`
-NodeActuator `configRef` to that ConfigMap. The old strict decoder rejects the new
-field; the new operator rejects an old config without it. During this cutover,
-the new operator may report a config error until the reference is switched.
-Do not modify the operand template until the new operator has reconciled
-`OnDelete`.
+To change the strategy on a running system, stage a new, unreferenced
+ConfigMap containing the new `actuation.updateStrategy`, then switch the
+`ChillSystem` `nodeAgent.configRef` to that ConfigMap. Do not modify the
+operand template until the operator has reconciled `OnDelete`.
 
 Record the original config and Pod UIDs first. With `OnDelete` observed on the
 DaemonSet, change the authoritative template config and delete only the
-operator-selected target NodeActuator Pod; wait for its replacement to be ready.
+operator-selected target actuation Pod; wait for its replacement to be ready.
 Never delete or restart the excluded AGX Pod or change its Node configuration.
 After the approved operation and power-mode restoration, restore the original
 template config while retaining `OnDelete`, replace only the selected target Pod
@@ -240,8 +236,14 @@ Default image repositories:
 
 ```text
 daclab/chill-operator:<chart appVersion>
-daclab/chill-node-discovery:<chart appVersion>
+daclab/chill-node-agent:<chart appVersion>
 ```
+
+The node agent runs as two DaemonSets from that image. `chill-node-agent`
+publishes hardware signature and online-CPU metadata on every Node.
+`chill-node-agent-actuation` (`nodeAgent.actuation.enabled`) applies
+NodeActuations on the Nodes selected by the `nodeSelector` of each DeviceClass
+named in `powerActuation.policies`.
 
 Once the system is installed, CHILL publishes a cluster-scoped status object:
 

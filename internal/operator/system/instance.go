@@ -13,19 +13,8 @@ func (r *ChillSystemReconciler) managementNamespace(system *edgev1alpha1.ChillSy
 	return cmp.Or(strings.TrimSpace(system.Spec.ManagementNamespace), r.namespace())
 }
 
-func nodeDiscoveryDaemonSetName(system *edgev1alpha1.ChillSystem) string {
-	return cmp.Or(
-		strings.TrimSpace(system.Spec.NodeDiscovery.DaemonSetName),
-		component.NodeDiscoveryDaemonSetName(system.Name),
-	)
-}
-
 func (r *ChillSystemReconciler) profilerDeploymentName(system *edgev1alpha1.ChillSystem) string {
 	return component.ProfilerDeploymentName(system.Name)
-}
-
-func (r *ChillSystemReconciler) nodeActuatorDaemonSetName(system *edgev1alpha1.ChillSystem) string {
-	return component.NodeActuatorDaemonSetName(system.Name)
 }
 
 func (r *ChillSystemReconciler) evidenceStoreDeploymentName(system *edgev1alpha1.ChillSystem) string {

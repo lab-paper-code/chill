@@ -15,8 +15,16 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
+// options holds every node-agent flag. Discovery reads the node, system,
+// host, signature, and interval fields; --actuate reads the rest.
 type options struct {
+	actuate          bool
 	nodeName         string
+	systemName       string
+	hostRoot         string
+	signatureFile    string
+	interval         time.Duration
+	once             bool
 	watchNamespace   string
 	leaseNamespace   string
 	leaseDuration    int
@@ -31,7 +39,15 @@ type options struct {
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
+	flags.BoolVar(&o.actuate, "actuate", false,
+		"Apply NodeActuations on the assigned Node instead of publishing discovery metadata.")
 	flags.StringVar(&o.nodeName, "node-name", o.nodeName, "Exact assigned Kubernetes Node name.")
+	flags.StringVar(&o.systemName, "system-name", o.systemName, "ChillSystem name that owns this node agent.")
+	flags.StringVar(&o.hostRoot, "host-root", "/host", "Root path containing read-only host mounts.")
+	flags.StringVar(&o.signatureFile, "signature-file", "/etc/chill/node-agent/signatures.yaml",
+		"YAML file containing node discovery signatures.")
+	flags.DurationVar(&o.interval, "interval", 10*time.Second, "How often to refresh node discovery metadata.")
+	flags.BoolVar(&o.once, "once", false, "Run one discovery pass and exit.")
 	flags.StringVar(&o.watchNamespace, "watch-namespace", o.watchNamespace, "Namespace containing NodeActuation handoffs.")
 	flags.StringVar(&o.leaseNamespace, "lease-namespace", o.leaseNamespace, "Namespace containing Node-UID Leases.")
 	flags.IntVar(&o.leaseDuration, "lease-duration-seconds", 30, "Node-UID Lease duration in seconds.")
@@ -47,7 +63,8 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		&o.jetsonTimeout, "jetson-nvpmodel-timeout", 30*time.Second,
 		"Maximum duration of one Jetson NVPModel host command.",
 	)
-	flags.StringVar(&o.kubeAPIServer, "kube-api-server", "", "Kubernetes API URL; empty uses standard in-cluster config.")
+	flags.StringVar(&o.kubeAPIServer, "kube-api-server", o.kubeAPIServer,
+		"Kubernetes API URL; empty uses standard in-cluster config.")
 	flags.StringVar(
 		&o.kubeAPITokenFile, "kube-api-token-file", kubeconfig.DefaultServiceAccountTokenFile,
 		"Path to the service account bearer token file.",
@@ -60,7 +77,7 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "Health probe bind address.")
 }
 
-func (o options) validate() error {
+func (o options) validateActuation() error {
 	for name, value := range map[string]string{
 		"node name": o.nodeName, "watch namespace": o.watchNamespace,
 		"Lease namespace": o.leaseNamespace, "metrics bind address": o.metricsAddr,

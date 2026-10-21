@@ -49,13 +49,13 @@ func TestBuildNodePatchPreservesExistingMetadata(t *testing.T) {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
 	if _, ok := payload.Metadata.Labels[metadata.DeviceClass]; ok {
-		t.Fatalf("device class label was included in node-discovery patch")
+		t.Fatalf("device class label was included in discovery patch")
 	}
 	if payload.Metadata.Labels[metadata.DeviceModel] != "orin-nano" {
 		t.Fatalf("device model label = %q, want orin-nano", payload.Metadata.Labels[metadata.DeviceModel])
 	}
 	if _, ok := payload.Metadata.Annotations["existing"]; ok {
-		t.Fatalf("unmanaged annotation was included in node-discovery patch")
+		t.Fatalf("unmanaged annotation was included in discovery patch")
 	}
 }
 
@@ -92,7 +92,7 @@ func TestRunOnceAnnotatesNoSourceFacts(t *testing.T) {
 		)
 	}
 	if _, ok := node.Labels[metadata.DeviceClass]; ok {
-		t.Fatalf("node-discovery set DeviceClass label")
+		t.Fatalf("discovery set DeviceClass label")
 	}
 	if node.Annotations[metadata.System] != "chill" {
 		t.Fatalf("system annotation = %q, want chill", node.Annotations[metadata.System])

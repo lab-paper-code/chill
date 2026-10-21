@@ -7,15 +7,17 @@ COPY go.mod go.mod
 COPY go.sum go.sum
 RUN go mod download
 
-COPY cmd/node-actuator/ cmd/node-actuator/
+COPY cmd/node-agent/ cmd/node-agent/
 COPY api/ api/
 COPY internal/kubeconfig/ internal/kubeconfig/
+COPY internal/metadata/ internal/metadata/
 COPY internal/nodeactuator/ internal/nodeactuator/
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /out/node-actuator ./cmd/node-actuator
+COPY internal/nodeprobe/ internal/nodeprobe/
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /out/node-agent ./cmd/node-agent
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
-COPY --from=builder /out/node-actuator .
+COPY --from=builder /out/node-agent .
 USER 65532:65532
 
-ENTRYPOINT ["/node-actuator"]
+ENTRYPOINT ["/node-agent"]

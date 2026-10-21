@@ -1,10 +1,9 @@
 {{- define "chill.validateValues" -}}
-{{- $nodeDiscoveryPlaceholderRepository := "chill/node-discovery" -}}
-{{- $nodeDiscoveryPlaceholderTag := "latest" -}}
-{{- $nodeDiscoveryImageTag := include "chill.nodeDiscoveryImageTag" . -}}
+{{- $nodeAgentPlaceholderRepository := "chill/node-agent" -}}
+{{- $nodeAgentPlaceholderTag := "latest" -}}
+{{- $nodeAgentImageTag := include "chill.nodeAgentImageTag" . -}}
 {{- $operatorImageTag := include "chill.operatorImageTag" . -}}
 {{- $profilerImageTag := include "chill.profilerImageTag" . -}}
-{{- $nodeActuatorImageTag := include "chill.nodeActuatorImageTag" . -}}
 {{- $consoleImageTag := include "chill.consoleImageTag" . -}}
 {{- $servingEntrypointImageTag := include "chill.servingEntrypointImageTag" . -}}
 {{- if empty (include "chill.systemName" .) -}}
@@ -78,8 +77,8 @@
 {{- if empty .Values.operator.image.pullPolicy -}}
 {{- fail "operator.image.pullPolicy must not be empty" -}}
 {{- end -}}
-{{- if empty .Values.operator.nodeDiscoveryReconcileInterval -}}
-{{- fail "operator.nodeDiscoveryReconcileInterval must not be empty" -}}
+{{- if empty .Values.operator.nodeAgentReconcileInterval -}}
+{{- fail "operator.nodeAgentReconcileInterval must not be empty" -}}
 {{- end -}}
 {{- if and .Values.operator.leaderElection (empty .Values.operator.leaderElectionID) -}}
 {{- fail "operator.leaderElectionID must not be empty when operator.leaderElection=true" -}}
@@ -87,51 +86,34 @@
 {{- if and (not .Values.operator.serviceAccount.create) (empty .Values.operator.serviceAccount.name) -}}
 {{- fail "operator.serviceAccount.name must be set when operator.serviceAccount.create=false" -}}
 {{- end -}}
-{{- if .Values.nodeActuator.enabled -}}
-{{- if empty .Values.nodeActuator.configMapKey -}}
-{{- fail "nodeActuator.configMapKey must not be empty when nodeActuator.enabled=true" -}}
+{{- if and .Values.nodeAgent.actuation.enabled (not .Values.nodeAgent.enabled) -}}
+{{- fail "nodeAgent.actuation.enabled=true requires nodeAgent.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeActuator.image.repository -}}
-{{- fail "nodeActuator.image.repository must not be empty when nodeActuator.enabled=true" -}}
+{{- if and .Values.nodeAgent.enabled .Values.nodeAgent.actuation.enabled -}}
+{{- $actuation := .Values.nodeAgent.actuation -}}
+{{- if empty $actuation.metricsBindAddress -}}
+{{- fail "nodeAgent.actuation.metricsBindAddress must not be empty when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}
-{{- if empty $nodeActuatorImageTag -}}
-{{- fail "nodeActuator.image.tag or Chart.appVersion must not be empty when nodeActuator.enabled=true" -}}
+{{- if or (lt (int $actuation.healthProbePort) 1) (gt (int $actuation.healthProbePort) 65535) -}}
+{{- fail "nodeAgent.actuation.healthProbePort must be between 1 and 65535 when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeActuator.image.pullPolicy -}}
-{{- fail "nodeActuator.image.pullPolicy must not be empty when nodeActuator.enabled=true" -}}
+{{- if or (lt (int $actuation.leaseDurationSeconds) 5) (gt (int $actuation.leaseDurationSeconds) 300) -}}
+{{- fail "nodeAgent.actuation.leaseDurationSeconds must be between 5 and 300 when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeActuator.metricsBindAddress -}}
-{{- fail "nodeActuator.metricsBindAddress must not be empty when nodeActuator.enabled=true" -}}
+{{- if empty $actuation.updateStrategy.type -}}
+{{- fail "nodeAgent.actuation.updateStrategy.type must not be empty when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}
-{{- if or (lt (int .Values.nodeActuator.healthProbePort) 1) (gt (int .Values.nodeActuator.healthProbePort) 65535) -}}
-{{- fail "nodeActuator.healthProbePort must be between 1 and 65535 when nodeActuator.enabled=true" -}}
+{{- if empty .Values.powerActuation.policies -}}
+{{- fail "powerActuation.policies must name at least one DeviceClass when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}
-{{- if or (lt (int .Values.nodeActuator.leaseDurationSeconds) 5) (gt (int .Values.nodeActuator.leaseDurationSeconds) 300) -}}
-{{- fail "nodeActuator.leaseDurationSeconds must be between 5 and 300 when nodeActuator.enabled=true" -}}
+{{- if empty $actuation.jetsonNVPModel.command -}}
+{{- fail "nodeAgent.actuation.jetsonNVPModel.command must not be empty when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeActuator.updateStrategy.type -}}
-{{- fail "nodeActuator.updateStrategy.type must not be empty when nodeActuator.enabled=true" -}}
+{{- if empty $actuation.jetsonNVPModel.commandTimeout -}}
+{{- fail "nodeAgent.actuation.jetsonNVPModel.commandTimeout must not be empty when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeActuator.kubernetesClient.tokenFile -}}
-{{- fail "nodeActuator.kubernetesClient.tokenFile must not be empty when nodeActuator.enabled=true" -}}
-{{- end -}}
-{{- if empty .Values.nodeActuator.kubernetesClient.caFile -}}
-{{- fail "nodeActuator.kubernetesClient.caFile must not be empty when nodeActuator.enabled=true" -}}
-{{- end -}}
-{{- if empty .Values.nodeActuator.nodeSelector -}}
-{{- fail "nodeActuator.nodeSelector must explicitly select eligible Nodes" -}}
-{{- end -}}
-{{- if empty .Values.nodeActuator.jetsonNVPModel.command -}}
-{{- fail "nodeActuator.jetsonNVPModel.command must not be empty when nodeActuator.enabled=true" -}}
-{{- end -}}
-{{- if empty .Values.nodeActuator.jetsonNVPModel.commandTimeout -}}
-{{- fail "nodeActuator.jetsonNVPModel.commandTimeout must not be empty when nodeActuator.enabled=true" -}}
-{{- end -}}
-{{- if empty .Values.nodeActuator.jetsonNVPModel.hostPaths -}}
-{{- fail "nodeActuator.jetsonNVPModel.hostPaths must not be empty when nodeActuator.enabled=true" -}}
-{{- end -}}
-{{- if and (not .Values.nodeActuator.serviceAccount.create) (empty .Values.nodeActuator.serviceAccount.name) -}}
-{{- fail "nodeActuator.serviceAccount.name must be set when nodeActuator.serviceAccount.create=false" -}}
+{{- if empty $actuation.jetsonNVPModel.hostPaths -}}
+{{- fail "nodeAgent.actuation.jetsonNVPModel.hostPaths must not be empty when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}
 {{- end -}}
 {{- if .Values.profiler.enabled -}}
@@ -236,39 +218,36 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- if .Values.nodeDiscovery.enabled -}}
-{{- if empty .Values.nodeDiscovery.configMapKey -}}
-{{- fail "nodeDiscovery.configMapKey must not be empty when nodeDiscovery.enabled=true" -}}
+{{- if .Values.nodeAgent.enabled -}}
+{{- if empty .Values.nodeAgent.image.repository -}}
+{{- fail "nodeAgent.image.repository must not be empty when nodeAgent.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeDiscovery.image.repository -}}
-{{- fail "nodeDiscovery.image.repository must not be empty when nodeDiscovery.enabled=true" -}}
+{{- if empty $nodeAgentImageTag -}}
+{{- fail "nodeAgent.image.tag or Chart.appVersion must not be empty when nodeAgent.enabled=true" -}}
 {{- end -}}
-{{- if empty $nodeDiscoveryImageTag -}}
-{{- fail "nodeDiscovery.image.tag or Chart.appVersion must not be empty when nodeDiscovery.enabled=true" -}}
+{{- if empty .Values.nodeAgent.image.pullPolicy -}}
+{{- fail "nodeAgent.image.pullPolicy must not be empty when nodeAgent.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeDiscovery.image.pullPolicy -}}
-{{- fail "nodeDiscovery.image.pullPolicy must not be empty when nodeDiscovery.enabled=true" -}}
+{{- if empty .Values.nodeAgent.updateStrategy.type -}}
+{{- fail "nodeAgent.updateStrategy.type must not be empty when nodeAgent.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeDiscovery.updateStrategy.type -}}
-{{- fail "nodeDiscovery.updateStrategy.type must not be empty when nodeDiscovery.enabled=true" -}}
+{{- if and .Values.nodeAgent.excludeNodeNames .Values.nodeAgent.affinity.nodeAffinity -}}
+{{- fail "nodeAgent.excludeNodeNames cannot be used together with nodeAgent.affinity.nodeAffinity" -}}
 {{- end -}}
-{{- if and .Values.nodeDiscovery.excludeNodeNames .Values.nodeDiscovery.affinity.nodeAffinity -}}
-{{- fail "nodeDiscovery.excludeNodeNames cannot be used together with nodeDiscovery.affinity.nodeAffinity" -}}
+{{- if empty .Values.nodeAgent.kubernetesClient.tokenFile -}}
+{{- fail "nodeAgent.kubernetesClient.tokenFile must not be empty when nodeAgent.enabled=true" -}}
 {{- end -}}
-{{- if and .Values.nodeDiscovery.kubernetesClient (empty .Values.nodeDiscovery.kubernetesClient.tokenFile) -}}
-{{- fail "nodeDiscovery.kubernetesClient.tokenFile must not be empty when nodeDiscovery.enabled=true" -}}
+{{- if empty .Values.nodeAgent.kubernetesClient.caFile -}}
+{{- fail "nodeAgent.kubernetesClient.caFile must not be empty when nodeAgent.enabled=true" -}}
 {{- end -}}
-{{- if and .Values.nodeDiscovery.kubernetesClient (empty .Values.nodeDiscovery.kubernetesClient.caFile) -}}
-{{- fail "nodeDiscovery.kubernetesClient.caFile must not be empty when nodeDiscovery.enabled=true" -}}
+{{- if and (eq .Values.nodeAgent.image.repository $nodeAgentPlaceholderRepository) (eq $nodeAgentImageTag $nodeAgentPlaceholderTag) (ne .Values.nodeAgent.image.pullPolicy "Never") -}}
+{{- fail "nodeAgent image chill/node-agent:latest is a local development placeholder, not a published runtime image; set nodeAgent.image.repository/tag to a published image or use nodeAgent.image.pullPolicy=Never with a node-local image" -}}
 {{- end -}}
-{{- if and (eq .Values.nodeDiscovery.image.repository $nodeDiscoveryPlaceholderRepository) (eq $nodeDiscoveryImageTag $nodeDiscoveryPlaceholderTag) (ne .Values.nodeDiscovery.image.pullPolicy "Never") -}}
-{{- fail "nodeDiscovery image chill/node-discovery:latest is a local development placeholder, not a published runtime image; set nodeDiscovery.image.repository/tag to a published image or use nodeDiscovery.image.pullPolicy=Never with a node-local image" -}}
+{{- if empty .Values.nodeAgent.sources -}}
+{{- fail "nodeAgent.sources must contain at least one source when nodeAgent.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeDiscovery.sources -}}
-{{- fail "nodeDiscovery.sources must contain at least one source when nodeDiscovery.enabled=true" -}}
-{{- end -}}
-{{- if empty .Values.nodeDiscovery.signatures -}}
-{{- fail "nodeDiscovery.signatures must contain at least one signature when nodeDiscovery.enabled=true" -}}
+{{- if empty .Values.nodeAgent.signatures -}}
+{{- fail "nodeAgent.signatures must contain at least one signature when nodeAgent.enabled=true" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

@@ -5,8 +5,7 @@ GIT_SHORT_SHA ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 IMAGE_TAG ?= $(if $(GIT_SHORT_SHA),sha-$(GIT_SHORT_SHA),$(CHART_APP_VERSION))
 IMG ?= $(IMAGE_NAMESPACE)/chill-operator:$(IMAGE_TAG)
 OPERATOR_IMG ?= $(IMG)
-NODE_DISCOVERY_IMG ?= $(IMAGE_NAMESPACE)/chill-node-discovery:$(IMAGE_TAG)
-NODE_ACTUATOR_IMG ?= $(IMAGE_NAMESPACE)/chill-node-actuator:$(IMAGE_TAG)
+NODE_AGENT_IMG ?= $(IMAGE_NAMESPACE)/chill-node-agent:$(IMAGE_TAG)
 PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
 CONSOLE_IMG ?= $(IMAGE_NAMESPACE)/chill-console:$(IMAGE_TAG)
 METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
@@ -66,7 +65,7 @@ FAST_DEPLOY_ARGS ?=
 RUN_NAMESPACE ?= $(HELM_NAMESPACE)
 RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
-HELM_FLOW_IMAGE_VARIABLES = OPERATOR_IMG NODE_DISCOVERY_IMG NODE_ACTUATOR_IMG PROFILER_IMG CONSOLE_IMG SERVING_ENTRYPOINT_IMG DASHBOARD_IMG
+HELM_FLOW_IMAGE_VARIABLES = OPERATOR_IMG NODE_AGENT_IMG PROFILER_IMG CONSOLE_IMG SERVING_ENTRYPOINT_IMG DASHBOARD_IMG
 helm_flow_image_assignment = $(if $(and $(strip $(HELM_VALUES)),$(filter file,$(origin $(1)))),,$(1)="$($(1))")
 HELM_FLOW_IMAGE_ENV = $(foreach variable,$(HELM_FLOW_IMAGE_VARIABLES),$(call helm_flow_image_assignment,$(variable)))
 HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" $(HELM_FLOW_IMAGE_ENV)
@@ -288,7 +287,7 @@ helm-install-smoke: ## Install or upgrade the chart without starting CHILL pods 
 		--set crds.enabled=false \
 		--set system.enabled=false \
 		--set operator.replicaCount=0 \
-		--set nodeDiscovery.enabled=false \
+		--set nodeAgent.enabled=false \
 		--set uninstallCleanup.enabled=false \
 		$(HELM_SET) \
 		--wait \
@@ -334,8 +333,7 @@ rknn-convert-artifact: ## Build one RKNN artifact covering every declared batch 
 build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/operator cmd/main.go
 	go build -o bin/kubectl-chill ./cmd/chill
-	go build -o bin/node-discovery ./cmd/node-discovery
-	go build -o bin/node-actuator ./cmd/node-actuator
+	go build -o bin/node-agent ./cmd/node-agent
 	go build -o bin/profiler ./cmd/profiler
 	go build -o bin/transition-observer ./cmd/transition-observer
 	go build -o bin/console ./cmd/console
@@ -359,17 +357,13 @@ docker-build: docker-build-operator ## Build the operator image.
 docker-build-operator: ## Build the operator image.
 	$(CONTAINER_TOOL) build -f build/docker/operator.Dockerfile -t $(OPERATOR_IMG) .
 
-.PHONY: docker-build-node-discovery
-docker-build-node-discovery: ## Build the node-discovery image.
-	$(CONTAINER_TOOL) build -f build/docker/node-discovery.Dockerfile -t $(NODE_DISCOVERY_IMG) .
+.PHONY: docker-build-node-agent
+docker-build-node-agent: ## Build the node-agent image.
+	$(CONTAINER_TOOL) build -f build/docker/node-agent.Dockerfile -t $(NODE_AGENT_IMG) .
 
 .PHONY: docker-build-profiler
 docker-build-profiler: ## Build the Profiler image.
 	$(CONTAINER_TOOL) build -f build/docker/profiler.Dockerfile -t $(PROFILER_IMG) .
-
-.PHONY: docker-build-node-actuator
-docker-build-node-actuator: ## Build the NodeActuator image.
-	$(CONTAINER_TOOL) build -f build/docker/node-actuator.Dockerfile -t $(NODE_ACTUATOR_IMG) .
 
 .PHONY: docker-build-console
 docker-build-console: ## Build the Console API image.
@@ -443,7 +437,7 @@ docker-build-dashboard: ## Build the independent Dashboard image.
 	$(CONTAINER_TOOL) build -f build/docker/dashboard.Dockerfile -t $(DASHBOARD_IMG) .
 
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-discovery docker-build-node-actuator docker-build-profiler docker-build-console docker-build-metric-observer ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-agent docker-build-profiler docker-build-console docker-build-metric-observer ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.
@@ -452,17 +446,13 @@ docker-push: docker-push-operator ## Push the operator image.
 docker-push-operator: ## Push the operator image.
 	$(CONTAINER_TOOL) push $(OPERATOR_IMG)
 
-.PHONY: docker-push-node-discovery
-docker-push-node-discovery: ## Push the node-discovery image.
-	$(CONTAINER_TOOL) push $(NODE_DISCOVERY_IMG)
+.PHONY: docker-push-node-agent
+docker-push-node-agent: ## Push the node-agent image.
+	$(CONTAINER_TOOL) push $(NODE_AGENT_IMG)
 
 .PHONY: docker-push-profiler
 docker-push-profiler: ## Push the Profiler image.
 	$(CONTAINER_TOOL) push $(PROFILER_IMG)
-
-.PHONY: docker-push-node-actuator
-docker-push-node-actuator: ## Push the NodeActuator image.
-	$(CONTAINER_TOOL) push $(NODE_ACTUATOR_IMG)
 
 .PHONY: docker-push-console
 docker-push-console: ## Push the Console API image.
@@ -477,10 +467,10 @@ docker-push-metric-observer: ## Push the MetricObserver image.
 	$(CONTAINER_TOOL) push $(METRIC_OBSERVER_IMG)
 
 .PHONY: docker-push-all
-docker-push-all: docker-push-operator docker-push-node-discovery docker-push-node-actuator docker-push-profiler docker-push-console docker-push-metric-observer ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-agent docker-push-profiler docker-push-console docker-push-metric-observer ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
-# architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
+# architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_AGENT_IMG=myregistry/chill/node-agent:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
 # - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 # - be able to push the images to your registry
@@ -495,23 +485,17 @@ docker-buildx-operator: ## Build and push the operator image for cross-platform 
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/operator.Dockerfile --tag $(OPERATOR_IMG) .
 
-.PHONY: docker-buildx-node-discovery
-docker-buildx-node-discovery: ## Build and push the node-discovery image for cross-platform support.
+.PHONY: docker-buildx-node-agent
+docker-buildx-node-agent: ## Build and push the node-agent image for cross-platform support.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/node-discovery.Dockerfile --tag $(NODE_DISCOVERY_IMG) .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/node-agent.Dockerfile --tag $(NODE_AGENT_IMG) .
 
 .PHONY: docker-buildx-profiler
 docker-buildx-profiler: ## Build and push the Profiler image for cross-platform support.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/profiler.Dockerfile --tag $(PROFILER_IMG) .
-
-.PHONY: docker-buildx-node-actuator
-docker-buildx-node-actuator: ## Build and push the NodeActuator image for cross-platform support.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/node-actuator.Dockerfile --tag $(NODE_ACTUATOR_IMG) .
 
 .PHONY: docker-buildx-console
 docker-buildx-console: ## Build and push the Console API image for cross-platform support.
@@ -544,7 +528,7 @@ docker-buildx-dashboard: ## Build and push the Dashboard image for cross-platfor
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/dashboard.Dockerfile --tag $(DASHBOARD_IMG) .
 
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-node-actuator docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer ## Build and push all component images for their supported platforms.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-agent docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer ## Build and push all component images for their supported platforms.
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.

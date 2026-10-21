@@ -31,7 +31,7 @@ if ! grep -Fx -- "${values_file}" "${values_only_capture}" >/dev/null; then
 	echo "values-only install did not retain HELM_VALUES" >&2
 	exit 1
 fi
-if grep -Eq '^(operator|nodeDiscovery|nodeActuator|profiler|console)\.image\.(repository|tag)=' \
+if grep -Eq '^(operator|nodeAgent|profiler|console)\.image\.(repository|tag)=' \
 	"${values_only_capture}"; then
 	echo "Makefile image defaults overrode HELM_VALUES" >&2
 	exit 1
@@ -60,7 +60,7 @@ for expected in \
 done
 
 component_image_values="$(
-	grep -Ec '^(operator|nodeDiscovery|nodeActuator|profiler|console)\.image\.(repository|tag)=' \
+	grep -Ec '^(operator|nodeAgent|profiler|console)\.image\.(repository|tag)=' \
 		"${explicit_capture}"
 )"
 if [[ "${component_image_values}" != "4" ]]; then

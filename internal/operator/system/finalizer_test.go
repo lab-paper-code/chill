@@ -101,9 +101,7 @@ func TestFinalizeDeletesDeviceClassesAndCleansNodes(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "chill"},
 		Spec: edgev1alpha1.ChillSystemSpec{
 			ManagementNamespace: "chill-system",
-			NodeDiscovery: edgev1alpha1.ChillNodeDiscoverySpec{
-				DaemonSetName: "chill-node-discovery",
-			},
+			NodeAgent:           edgev1alpha1.ChillNodeAgentSpec{Enabled: true},
 		},
 	}
 	node := &corev1.Node{

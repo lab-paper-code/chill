@@ -15,8 +15,7 @@ timeout="${HELM_TIMEOUT:-2m}"
 values_file="${HELM_VALUES:-}"
 extra_set="${HELM_SET:-}"
 operator_image="${OPERATOR_IMG:-}"
-node_discovery_image="${NODE_DISCOVERY_IMG:-}"
-node_actuator_image="${NODE_ACTUATOR_IMG:-}"
+node_agent_image="${NODE_AGENT_IMG:-}"
 profiler_image="${PROFILER_IMG:-}"
 console_image="${CONSOLE_IMG:-}"
 serving_entrypoint_image="${SERVING_ENTRYPOINT_IMG:-}"
@@ -42,8 +41,7 @@ Environment:
   HELM_SET               Extra Helm flags.
   CHILL_SYSTEM_NAME      Optional ChillSystem name for cleanup. Default: discover by release labels, then HELM_RELEASE.
   OPERATOR_IMG           Optional operator image repository:tag.
-  NODE_DISCOVERY_IMG     Optional node-discovery image repository:tag.
-  NODE_ACTUATOR_IMG      Optional NodeActuator image repository:tag.
+  NODE_AGENT_IMG         Optional node-agent image repository:tag.
   PROFILER_IMG           Optional Profiler image repository:tag.
   CONSOLE_IMG            Optional Console API image repository:tag.
   SERVING_ENTRYPOINT_IMG Optional serving entrypoint image repository:tag.
@@ -89,8 +87,7 @@ render_validate() {
 	trap "rm -f '${out}'" EXIT
 	local args=("--set" "system.name=${release}")
 	append_image_values args operator "${operator_image}"
-	append_image_values args nodeDiscovery "${node_discovery_image}"
-	append_image_values args nodeActuator "${node_actuator_image}"
+	append_image_values args nodeAgent "${node_agent_image}"
 	append_image_values args profiler "${profiler_image}"
 	append_image_values args console "${console_image}"
 	append_image_values args servingEntrypoint "${serving_entrypoint_image}"
@@ -131,8 +128,7 @@ install_release() {
 	fi
 	local args=("--set" "system.name=${release}")
 	append_image_values args operator "${operator_image}"
-	append_image_values args nodeDiscovery "${node_discovery_image}"
-	append_image_values args nodeActuator "${node_actuator_image}"
+	append_image_values args nodeAgent "${node_agent_image}"
 	append_image_values args profiler "${profiler_image}"
 	append_image_values args console "${console_image}"
 	append_image_values args servingEntrypoint "${serving_entrypoint_image}"

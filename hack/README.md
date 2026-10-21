@@ -33,9 +33,9 @@ make helm-uninstall
 
 When `HELM_VALUES` names a values file, that file owns component image values;
 Makefile-generated image defaults do not override it. An exact component image
-can still be overridden explicitly through `OPERATOR_IMG`,
-`NODE_DISCOVERY_IMG`, `NODE_ACTUATOR_IMG`, `PROFILER_IMG`, or `CONSOLE_IMG` in
-the command environment or Make command line.
+can still be overridden explicitly through `OPERATOR_IMG`, `NODE_AGENT_IMG`,
+`PROFILER_IMG`, or `CONSOLE_IMG` in the command environment or Make command
+line.
 
 `make helm-uninstall` treats runtime cleanup as CHILL's responsibility: it
 deletes the root `ChillSystem` and waits for finalizers before calling Helm

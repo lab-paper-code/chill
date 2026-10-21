@@ -14,8 +14,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/component"
 )
 
-var testNodeDiscoveryDaemonSetName = component.NodeDiscoveryDaemonSetName(component.DefaultSystemName)
-var testNodeActuatorDaemonSetName = component.NodeActuatorDaemonSetName(component.DefaultSystemName)
+var testNodeAgentDaemonSetName = component.NodeAgentDaemonSetName(component.DefaultSystemName)
+var testNodeAgentActuationDaemonSetName = component.NodeAgentActuationDaemonSetName(component.DefaultSystemName)
 var testProfilerDeploymentName = component.ProfilerDeploymentName(component.DefaultSystemName)
 var testEvidenceStoreDeploymentName = component.EvidenceStoreDeploymentName(component.DefaultSystemName)
 var testEvidenceStoreBootstrapJobName = component.EvidenceStoreBootstrapJobName(component.DefaultSystemName)
@@ -36,29 +36,28 @@ func TestBuildStatusReadyWithAllComponentsDisabled(t *testing.T) {
 
 func TestBuildStatusReadyWhenEnabledComponentsAreAvailable(t *testing.T) {
 	status := buildStatus(Observation{
-		NodeDiscoveryEnabled:   true,
-		NodeDiscoveryDaemonSet: daemonSet(6),
-		ProfilerEnabled:        true,
-		ProfilerDeployment:     deployment(1),
-		NodeActuatorEnabled:    true,
-		NodeActuatorDaemonSet:  namedDaemonSet(testNodeActuatorDaemonSetName, 2, 2),
+		NodeAgent:          DaemonSetObservation{Enabled: true, DaemonSet: daemonSet(6)},
+		ProfilerEnabled:    true,
+		ProfilerDeployment: deployment(1),
+		NodeAgentActuation: DaemonSetObservation{
+			Enabled: true, DaemonSet: namedDaemonSet(testNodeAgentActuationDaemonSetName, 2, 2),
+		},
 	}, nil, metav1.Now())
 
-	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionTrue, reasonNodeDiscoveryReady)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeAgentAvailable, metav1.ConditionTrue, "NodeAgentReady")
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable, metav1.ConditionTrue, reasonProfilerReady)
-	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeActuatorAvailable, metav1.ConditionTrue, reasonNodeActuatorReady)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeAgentActuationAvailable, metav1.ConditionTrue, "NodeAgentActuationReady")
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionTrue, reasonComponentsAvailable)
 }
 
 func TestBuildStatusNotReadyWhenProfilerIsMissing(t *testing.T) {
 	status := buildStatus(Observation{
-		NodeDiscoveryEnabled:   true,
-		NodeDiscoveryDaemonSet: daemonSet(6),
+		NodeAgent:              DaemonSetObservation{Enabled: true, DaemonSet: daemonSet(6)},
 		ProfilerEnabled:        true,
 		ProfilerDeploymentName: testProfilerDeploymentName,
 	}, nil, metav1.Now())
 
-	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionTrue, reasonNodeDiscoveryReady)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeAgentAvailable, metav1.ConditionTrue, "NodeAgentReady")
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable, metav1.ConditionFalse, reasonProfilerMissing)
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionFalse, reasonComponentsNotReady)
 }
@@ -94,13 +93,12 @@ func TestBuildStatusDegradedWhenProfilerExceedsProgressDeadline(t *testing.T) {
 	}
 }
 
-func TestBuildStatusNotReadyWhileNodeDiscoveryProgresses(t *testing.T) {
+func TestBuildStatusNotReadyWhileNodeAgentProgresses(t *testing.T) {
 	status := buildStatus(Observation{
-		NodeDiscoveryEnabled:   true,
-		NodeDiscoveryDaemonSet: daemonSet(4),
+		NodeAgent: DaemonSetObservation{Enabled: true, DaemonSet: daemonSet(4)},
 	}, nil, metav1.Now())
 
-	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionFalse, reasonNodeDiscoveryProgressing)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeAgentAvailable, metav1.ConditionFalse, "NodeAgentProgressing")
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionFalse, reasonComponentsNotReady)
 }
 
@@ -124,15 +122,14 @@ func TestBuildStatusNotReadyOnNativeWorkloadFailure(t *testing.T) {
 		Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Message: "deployment failed",
 	}}
 	status := buildStatus(Observation{
-		NodeDiscoveryEnabled:   true,
-		NodeDiscoveryDaemonSet: daemonSet,
-		ProfilerEnabled:        true,
-		ProfilerDeployment:     profiler,
+		NodeAgent:          DaemonSetObservation{Enabled: true, DaemonSet: daemonSet},
+		ProfilerEnabled:    true,
+		ProfilerDeployment: profiler,
 	}, nil, metav1.Now())
 
-	nodeCondition := requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionFalse, reasonNodeDiscoveryDegraded)
+	nodeCondition := requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeAgentAvailable, metav1.ConditionFalse, "NodeAgentDegraded")
 	if nodeCondition.Message != "daemonset failed" {
-		t.Fatalf("NodeDiscoveryAvailable message = %q", nodeCondition.Message)
+		t.Fatalf("NodeAgentAvailable message = %q", nodeCondition.Message)
 	}
 	profilerCondition := requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable, metav1.ConditionFalse, reasonProfilerDegraded)
 	if profilerCondition.Message != "deployment failed" {
@@ -275,7 +272,7 @@ func TestBuildStatusDropsDisabledAndObsoleteConditions(t *testing.T) {
 
 func daemonSet(ready int32) *appsv1.DaemonSet {
 	return &appsv1.DaemonSet{
-		ObjectMeta: metav1.ObjectMeta{Name: testNodeDiscoveryDaemonSetName},
+		ObjectMeta: metav1.ObjectMeta{Name: testNodeAgentDaemonSetName},
 		Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 6, NumberReady: ready, NumberAvailable: ready},
 	}
 }

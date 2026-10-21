@@ -94,7 +94,7 @@ func TestExecuteSystemWritesTable(t *testing.T) {
 		t.Fatalf("execute() error = %v", err)
 	}
 	for _, want := range []string{
-		"CHILLSYSTEMS_RV", "systems-rv", "chill-system", "NODE_DISCOVERY",
+		"CHILLSYSTEMS_RV", "systems-rv", "chill-system", "NODE_AGENT",
 		"ProfilerAvailable", "True", "ProfilerReady", "profiler is available",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -399,7 +399,7 @@ func testSystemSnapshot() operatorconsole.SystemSnapshot {
 			},
 			Spec: edgev1alpha1.ChillSystemSpec{
 				ManagementNamespace: "chill-system",
-				NodeDiscovery:       edgev1alpha1.ChillNodeDiscoverySpec{Enabled: true},
+				NodeAgent:           edgev1alpha1.ChillNodeAgentSpec{Enabled: true},
 				DeviceDiscovery:     edgev1alpha1.ChillDeviceDiscoverySpec{Enabled: true},
 				Profiler:            edgev1alpha1.ChillProfilerSpec{Enabled: true},
 				EvidenceStore:       edgev1alpha1.ChillEvidenceStoreSpec{Enabled: true},

@@ -1,0 +1,74 @@
+{{- if .Values.nodeAgent.enabled }}
+{{- $kubeAPIServer := include "chill.nodeAgentKubernetesAPIServer" . }}
+{{- $nodeSelector := default .Values.nodeSelection.nodeSelector .Values.nodeAgent.nodeSelector }}
+{{- $actuation := .Values.nodeAgent.actuation }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chill.nodeAgentConfigName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: node-agent
+    {{- include "chill.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    image: {{ include "chill.nodeAgentImage" . | quote }}
+    imagePullPolicy: {{ .Values.nodeAgent.image.pullPolicy | quote }}
+    kubeAPIServer: {{ $kubeAPIServer | quote }}
+    kubeAPITokenFile: {{ .Values.nodeAgent.kubernetesClient.tokenFile | quote }}
+    kubeAPICAFile: {{ .Values.nodeAgent.kubernetesClient.caFile | quote }}
+    discovery:
+      serviceAccountName: {{ include "chill.nodeAgentName" . | quote }}
+      hostRoot: {{ .Values.nodeAgent.hostRoot | quote }}
+      interval: {{ .Values.nodeAgent.interval | quote }}
+      signatureFile: {{ .Values.nodeAgent.signatureFile | quote }}
+      signatureConfigMapName: {{ include "chill.nodeAgentSignatureCatalogName" . | quote }}
+      signatureConfigMapKey: {{ include "chill.nodeAgentSignatureKey" . | quote }}
+      hostNetwork: {{ .Values.nodeAgent.hostNetwork }}
+      nodeSelector:
+{{- toYaml $nodeSelector | nindent 8 }}
+      excludeNodeNames:
+{{- toYaml .Values.nodeAgent.excludeNodeNames | nindent 8 }}
+      {{- with .Values.nodeAgent.affinity }}
+      affinity:
+{{- toYaml . | nindent 8 }}
+      {{- end }}
+      tolerations:
+{{- toYaml .Values.nodeAgent.tolerations | nindent 8 }}
+      resources:
+{{- toYaml .Values.nodeAgent.resources | nindent 8 }}
+      podSecurityContext:
+{{- toYaml .Values.nodeAgent.podSecurityContext | nindent 8 }}
+      securityContext:
+{{- toYaml .Values.nodeAgent.securityContext | nindent 8 }}
+      hostPaths:
+{{- toYaml .Values.nodeAgent.hostPaths | nindent 8 }}
+      updateStrategy:
+{{- toYaml .Values.nodeAgent.updateStrategy | nindent 8 }}
+    {{- if $actuation.enabled }}
+    actuation:
+      serviceAccountName: {{ include "chill.nodeAgentActuationName" . | quote }}
+      metricsBindAddress: {{ $actuation.metricsBindAddress | quote }}
+      healthProbePort: {{ $actuation.healthProbePort }}
+      leaseDurationSeconds: {{ $actuation.leaseDurationSeconds }}
+      updateStrategy:
+{{- toYaml $actuation.updateStrategy | nindent 8 }}
+      policies:
+{{- toYaml .Values.powerActuation.policies | nindent 8 }}
+      jetsonNVPModel:
+        command:
+{{- toYaml $actuation.jetsonNVPModel.command | nindent 10 }}
+        commandTimeout: {{ $actuation.jetsonNVPModel.commandTimeout | quote }}
+        hostPaths:
+{{- toYaml $actuation.jetsonNVPModel.hostPaths | nindent 10 }}
+        ensureBootOrdering: {{ $actuation.jetsonNVPModel.ensureBootOrdering }}
+      tolerations:
+{{- toYaml $actuation.tolerations | nindent 8 }}
+      resources:
+{{- toYaml $actuation.resources | nindent 8 }}
+      podSecurityContext:
+{{- toYaml $actuation.podSecurityContext | nindent 8 }}
+      securityContext:
+{{- toYaml $actuation.securityContext | nindent 8 }}
+    {{- end }}
+{{- end }}

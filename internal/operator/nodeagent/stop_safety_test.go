@@ -1,4 +1,4 @@
-package nodeactuator
+package nodeagent
 
 import (
 	"context"

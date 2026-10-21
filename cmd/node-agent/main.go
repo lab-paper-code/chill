@@ -1,3 +1,5 @@
+// Command node-agent publishes Node hardware signature and online-CPU metadata
+// on every Node. With --actuate it instead applies NodeActuations on its Node.
 package main
 
 import (
@@ -41,14 +43,26 @@ func main() {
 		fmt.Println("Jetson boot ordering ensured; drop-in written:", wrote)
 		return
 	}
-	opts := options{nodeName: os.Getenv("NODE_NAME")}
+	opts := options{
+		nodeName:      os.Getenv("NODE_NAME"),
+		systemName:    os.Getenv("CHILL_SYSTEM_NAME"),
+		kubeAPIServer: os.Getenv("CHILL_KUBE_API_SERVER"),
+	}
 	opts.bindFlags(flag.CommandLine)
 	zapOptions := zap.Options{Development: true}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
+	if !opts.actuate {
+		runDiscovery(opts)
+		return
+	}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
-	if err := opts.validate(); err != nil {
-		setupLog.Error(err, "invalid NodeActuator options")
+	runActuation(opts)
+}
+
+func runActuation(opts options) {
+	if err := opts.validateActuation(); err != nil {
+		setupLog.Error(err, "invalid actuation options")
 		os.Exit(1)
 	}
 	kubernetesConfig, err := kubeconfig.BuildConfig(kubeconfig.Options{
@@ -57,7 +71,7 @@ func main() {
 		CAFile:    opts.kubeAPICAFile,
 	})
 	if err != nil {
-		setupLog.Error(err, "unable to load NodeActuator Kubernetes client config")
+		setupLog.Error(err, "unable to load Kubernetes client config")
 		os.Exit(1)
 	}
 	manager, err := ctrl.NewManager(kubernetesConfig, ctrl.Options{
@@ -66,7 +80,7 @@ func main() {
 		Cache:                  cache.Options{DefaultNamespaces: map[string]cache.Config{opts.watchNamespace: {}}},
 	})
 	if err != nil {
-		setupLog.Error(err, "unable to start NodeActuator manager")
+		setupLog.Error(err, "unable to start actuation manager")
 		os.Exit(1)
 	}
 	if err := setupTransitionController(context.Background(), manager, opts); err != nil {
@@ -81,9 +95,9 @@ func main() {
 		setupLog.Error(err, "unable to set up readiness check")
 		os.Exit(1)
 	}
-	setupLog.Info("starting NodeActuator", "node", opts.nodeName, "watchNamespace", opts.watchNamespace)
+	setupLog.Info("starting node agent actuation", "node", opts.nodeName, "watchNamespace", opts.watchNamespace)
 	if err := manager.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem running NodeActuator")
+		setupLog.Error(err, "problem running node agent actuation")
 		os.Exit(1)
 	}
 }

@@ -37,7 +37,7 @@ operator:
   healthProbeBindAddress: ":8081"
   leaderElection: true
   leaderElectionID: 1ba2121f.dacs.io
-  nodeDiscoveryReconcileInterval: 30s
+  nodeAgentReconcileInterval: 30s
   nodeSelector: {}
   affinity: {}
   tolerations: []
@@ -400,104 +400,6 @@ powerActuation:
       settlingDurationSeconds: 60
       maxActuationDurationSeconds: 900
 
-nodeActuator:
-  enabled: false
-  configMapKey: config.yaml
-  image:
-    repository: daclab/chill-node-actuator
-    tag: ""
-    pullPolicy: IfNotPresent
-  metricsBindAddress: "0"
-  healthProbePort: 8081
-  leaseDurationSeconds: 30
-  updateStrategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 1
-  kubernetesClient:
-    apiServer: ""
-    discoverFromDefaultEndpoint: true
-    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-    caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-  jetsonNVPModel:
-    command:
-      - /host/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1
-      - --library-path
-      - /host/lib/aarch64-linux-gnu:/host/usr/lib/aarch64-linux-gnu/tegra
-      - /host/usr/sbin/nvpmodel
-    commandTimeout: 30s
-    hostPaths:
-      - name: host-nvpmodel
-        hostPath: /usr/sbin/nvpmodel
-        mountPath: /host/usr/sbin/nvpmodel
-        type: File
-        readOnly: true
-      - name: host-lib
-        hostPath: /lib/aarch64-linux-gnu
-        mountPath: /host/lib/aarch64-linux-gnu
-        type: Directory
-        readOnly: true
-      - name: host-tegra-lib
-        hostPath: /usr/lib/aarch64-linux-gnu/tegra
-        mountPath: /host/usr/lib/aarch64-linux-gnu/tegra
-        type: Directory
-        readOnly: true
-      - name: host-nvpmodel-config-dir
-        hostPath: /etc/nvpmodel
-        mountPath: /etc/nvpmodel
-        type: Directory
-        readOnly: true
-      - name: host-nvpmodel-config
-        hostPath: /etc/nvpmodel.conf
-        mountPath: /etc/nvpmodel.conf
-        type: File
-        readOnly: true
-      - name: host-nvpmodel-state
-        hostPath: /var/lib/nvpmodel
-        mountPath: /var/lib/nvpmodel
-        type: Directory
-        readOnly: false
-      - name: host-sys
-        hostPath: /sys
-        mountPath: /sys
-        type: Directory
-        readOnly: false
-    # An init container orders nvidia-cdi-refresh.service after nvpmodel.service
-    # on Nodes that have that unit, by writing
-    # /etc/systemd/system/nvidia-cdi-refresh.service.d/10-after-nvpmodel.conf.
-    # Otherwise the unit creates the GPU golden context first and the
-    # boot-time power-mode apply fails. systemd reads the drop-in at the next
-    # boot, so no daemon-reload is needed. Nodes without the unit are unchanged.
-    ensureBootOrdering: true
-  nodeSelector:
-    edge.dacs.io/node-actuation: enabled
-  affinity: {}
-  tolerations: []
-  resources:
-    limits:
-      cpu: 100m
-      memory: 64Mi
-    requests:
-      cpu: 10m
-      memory: 32Mi
-  podSecurityContext:
-    runAsUser: 0
-    runAsNonRoot: false
-  securityContext:
-    privileged: false
-    allowPrivilegeEscalation: false
-    readOnlyRootFilesystem: true
-    capabilities:
-      drop:
-        - ALL
-      # A power mode the device establishes at boot is reached by restarting the
-      # Node. This is the only capability the actuator may hold.
-      add:
-        - SYS_BOOT
-  serviceAccount:
-    create: true
-    name: ""
-
 console:
   enabled: false
   replicaCount: 1
@@ -809,14 +711,17 @@ discovery:
           - name: fixed
             actuator: {kind: Fixed}
 
-nodeDiscovery:
+# One node-agent image runs two DaemonSets. The agent on every Node publishes
+# hardware signature and online-CPU metadata without privilege. The actuation
+# agent applies NodeActuations on the Nodes selected by the nodeSelector of
+# each DeviceClass named in powerActuation.policies.
+nodeAgent:
   enabled: true
   hostNetwork: true
-  configMapKey: config.yaml
   # Online CPUs follow a power mode switch within one interval.
   interval: 10s
   hostRoot: /host
-  signatureFile: /etc/chill/node-discovery/signatures.yaml
+  signatureFile: /etc/chill/node-agent/signatures.yaml
   kubernetesClient:
     apiServer: ""
     discoverFromDefaultEndpoint: true
@@ -929,7 +834,7 @@ nodeDiscovery:
         model: z390-gaming-x
         accelerator: nvidia-geforce-rtx-2080-ti
   image:
-    repository: daclab/chill-node-discovery
+    repository: daclab/chill-node-agent
     tag: ""
     pullPolicy: IfNotPresent
   nodeSelector: {}
@@ -968,6 +873,89 @@ nodeDiscovery:
     capabilities:
       drop:
         - ALL
-  serviceAccount:
-    create: true
-    name: ""
+  actuation:
+    enabled: false
+    metricsBindAddress: "0"
+    healthProbePort: 8081
+    leaseDurationSeconds: 30
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
+    jetsonNVPModel:
+      command:
+        - /host/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1
+        - --library-path
+        - /host/lib/aarch64-linux-gnu:/host/usr/lib/aarch64-linux-gnu/tegra
+        - /host/usr/sbin/nvpmodel
+      commandTimeout: 30s
+      hostPaths:
+        - name: host-nvpmodel
+          hostPath: /usr/sbin/nvpmodel
+          mountPath: /host/usr/sbin/nvpmodel
+          type: File
+          readOnly: true
+        - name: host-lib
+          hostPath: /lib/aarch64-linux-gnu
+          mountPath: /host/lib/aarch64-linux-gnu
+          type: Directory
+          readOnly: true
+        - name: host-tegra-lib
+          hostPath: /usr/lib/aarch64-linux-gnu/tegra
+          mountPath: /host/usr/lib/aarch64-linux-gnu/tegra
+          type: Directory
+          readOnly: true
+        - name: host-nvpmodel-config-dir
+          hostPath: /etc/nvpmodel
+          mountPath: /etc/nvpmodel
+          type: Directory
+          readOnly: true
+        - name: host-nvpmodel-config
+          hostPath: /etc/nvpmodel.conf
+          mountPath: /etc/nvpmodel.conf
+          type: File
+          readOnly: true
+        - name: host-nvpmodel-state
+          hostPath: /var/lib/nvpmodel
+          mountPath: /var/lib/nvpmodel
+          type: Directory
+          readOnly: false
+        - name: host-sys
+          hostPath: /sys
+          mountPath: /sys
+          type: Directory
+          readOnly: false
+      # An init container orders nvidia-cdi-refresh.service after nvpmodel.service
+      # on Nodes that have that unit, by writing
+      # /etc/systemd/system/nvidia-cdi-refresh.service.d/10-after-nvpmodel.conf.
+      # Otherwise the unit creates the GPU golden context first and the
+      # boot-time power-mode apply fails. systemd reads the drop-in at the next
+      # boot, so no daemon-reload is needed. Nodes without the unit are unchanged.
+      ensureBootOrdering: true
+    # Every actuatable Node in this testbed is a KubeEdge edge Node carrying
+    # node-role.kubernetes.io/edge:NoSchedule.
+    tolerations:
+      - key: node-role.kubernetes.io/edge
+        operator: Exists
+        effect: NoSchedule
+    resources:
+      limits:
+        cpu: 100m
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 32Mi
+    podSecurityContext:
+      runAsUser: 0
+      runAsNonRoot: false
+    securityContext:
+      privileged: false
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+        # A power mode the device establishes at boot is reached by restarting
+        # the Node. This is the only capability the actuation agent may hold.
+        add:
+          - SYS_BOOT

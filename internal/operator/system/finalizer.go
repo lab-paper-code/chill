@@ -11,17 +11,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/component"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
-	operatornodeactuator "github.com/lab-paper-code/chill/internal/operator/nodeactuator"
+	"github.com/lab-paper-code/chill/internal/operator/nodeagent"
 	"github.com/lab-paper-code/chill/internal/operator/ownership"
 )
 
 func (r *ChillSystemReconciler) finalize(ctx context.Context, system *edgev1alpha1.ChillSystem) (bool, error) {
-	if done, err := r.deleteNodeActuatorDaemonSet(ctx, system); err != nil || !done {
-		return done, err
+	namespace := r.managementNamespace(system)
+	safe, err := nodeagent.SafeToStop(ctx, r.Client, namespace)
+	if err != nil || !safe {
+		return false, err
 	}
-	if done, err := r.deleteNodeDiscoveryDaemonSet(ctx, system); err != nil || !done {
-		return done, err
+	for _, name := range []string{
+		component.NodeAgentActuationDaemonSetName(system.Name),
+		component.NodeAgentDaemonSetName(system.Name),
+	} {
+		if done, err := r.deleteDaemonSet(ctx, types.NamespacedName{Namespace: namespace, Name: name}); err != nil || !done {
+			return done, err
+		}
 	}
 	if err := r.cleanupNodes(ctx, system); err != nil {
 		return false, err
@@ -32,46 +40,17 @@ func (r *ChillSystemReconciler) finalize(ctx context.Context, system *edgev1alph
 	return true, nil
 }
 
-func (r *ChillSystemReconciler) deleteNodeActuatorDaemonSet(
-	ctx context.Context,
-	system *edgev1alpha1.ChillSystem,
-) (bool, error) {
-	namespace := r.managementNamespace(system)
-	safe, err := operatornodeactuator.SafeToStop(ctx, r.Client, namespace)
-	if err != nil {
-		return false, err
-	}
-	if !safe {
-		return false, nil
-	}
-	key := types.NamespacedName{Namespace: namespace, Name: r.nodeActuatorDaemonSetName(system)}
+// deleteDaemonSet reports done once the DaemonSet is gone.
+func (r *ChillSystemReconciler) deleteDaemonSet(ctx context.Context, key types.NamespacedName) (bool, error) {
 	daemonSet := &appsv1.DaemonSet{}
 	if err := r.Get(ctx, key, daemonSet); err != nil {
 		if apierrors.IsNotFound(err) {
 			return true, nil
 		}
-		return false, fmt.Errorf("get NodeActuator DaemonSet %s during finalization: %w", key, err)
+		return false, fmt.Errorf("get DaemonSet %s during finalization: %w", key, err)
 	}
 	if err := r.Delete(ctx, daemonSet); err != nil && !apierrors.IsNotFound(err) {
-		return false, fmt.Errorf("delete NodeActuator DaemonSet %s during finalization: %w", key, err)
-	}
-	return false, nil
-}
-
-func (r *ChillSystemReconciler) deleteNodeDiscoveryDaemonSet(ctx context.Context, system *edgev1alpha1.ChillSystem) (bool, error) {
-	key := types.NamespacedName{
-		Namespace: r.managementNamespace(system),
-		Name:      nodeDiscoveryDaemonSetName(system),
-	}
-	daemonSet := &appsv1.DaemonSet{}
-	if err := r.Get(ctx, key, daemonSet); err != nil {
-		if apierrors.IsNotFound(err) {
-			return true, nil
-		}
-		return false, fmt.Errorf("get node-discovery DaemonSet %s during finalization: %w", key.String(), err)
-	}
-	if err := r.Delete(ctx, daemonSet); err != nil && !apierrors.IsNotFound(err) {
-		return false, fmt.Errorf("delete node-discovery DaemonSet %s during finalization: %w", key.String(), err)
+		return false, fmt.Errorf("delete DaemonSet %s during finalization: %w", key, err)
 	}
 	return false, nil
 }

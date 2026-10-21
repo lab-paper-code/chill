@@ -23,8 +23,7 @@ import (
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/operator/discovery"
 	operatorevidencestore "github.com/lab-paper-code/chill/internal/operator/evidencestore"
-	operatornodeactuator "github.com/lab-paper-code/chill/internal/operator/nodeactuator"
-	"github.com/lab-paper-code/chill/internal/operator/nodediscovery"
+	"github.com/lab-paper-code/chill/internal/operator/nodeagent"
 	operatorprofiler "github.com/lab-paper-code/chill/internal/operator/profiler"
 	"github.com/lab-paper-code/chill/internal/operator/system"
 	// +kubebuilder:scaffold:imports
@@ -56,10 +55,7 @@ func main() {
 	var deviceDiscoveryCatalogKey string
 	var systemName string
 	var systemNamespace string
-	var nodeDiscoveryConfigNamespace string
-	var nodeDiscoveryConfigName string
-	var nodeDiscoveryConfigKey string
-	var nodeDiscoveryReconcileInterval time.Duration
+	var nodeAgentReconcileInterval time.Duration
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -86,17 +82,8 @@ func main() {
 		"Default ChillSystem name used by compatibility refresh paths.")
 	flag.StringVar(&systemNamespace, "operator-namespace", system.DefaultNamespace(),
 		"Operator namespace and default CHILL management namespace.")
-	flag.StringVar(&nodeDiscoveryConfigNamespace, "node-discovery-config-namespace", os.Getenv("POD_NAMESPACE"),
-		"Namespace containing the node-discovery operator config ConfigMap.")
-	flag.StringVar(&nodeDiscoveryConfigName, "node-discovery-config-name", "",
-		"Name of the node-discovery operator config ConfigMap.")
-	flag.StringVar(&nodeDiscoveryConfigKey, "node-discovery-config-key", nodediscovery.DefaultConfigKey,
-		"Data key containing node-discovery operator config.")
-	flag.DurationVar(
-		&nodeDiscoveryReconcileInterval,
-		"node-discovery-reconcile-interval",
-		nodediscovery.DefaultReconcileInterval,
-		"Periodic refresh interval for node-discovery reconciliation.")
+	flag.DurationVar(&nodeAgentReconcileInterval, "node-agent-reconcile-interval", nodeagent.DefaultReconcileInterval,
+		"Periodic refresh interval for node agent reconciliation.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -112,9 +99,6 @@ func main() {
 	if err := systemOptions.DefaultAndValidate(); err != nil {
 		setupLog.Error(err, "invalid ChillSystem configuration")
 		os.Exit(1)
-	}
-	if nodeDiscoveryConfigNamespace == "" {
-		nodeDiscoveryConfigNamespace = systemOptions.Namespace
 	}
 	if deviceDiscoveryCatalogNamespace == "" {
 		deviceDiscoveryCatalogNamespace = systemOptions.Namespace
@@ -144,18 +128,16 @@ func main() {
 		setupLog.Error(err, "unable to register reconciler", "resource", "ChillSystem")
 		os.Exit(1)
 	}
-	if err = (&nodediscovery.Reconciler{
+	if err = (&nodeagent.Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-		Options: nodediscovery.Options{
+		Options: nodeagent.Options{
 			SystemName:        systemName,
-			Namespace:         nodeDiscoveryConfigNamespace,
-			ConfigMapName:     nodeDiscoveryConfigName,
-			ConfigMapKey:      nodeDiscoveryConfigKey,
-			ReconcileInterval: nodeDiscoveryReconcileInterval,
+			Namespace:         systemOptions.Namespace,
+			ReconcileInterval: nodeAgentReconcileInterval,
 		},
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to register reconciler", "resource", "NodeDiscovery")
+		setupLog.Error(err, "unable to register reconciler", "resource", "NodeAgent")
 		os.Exit(1)
 	}
 	if err = (&operatorprofiler.Reconciler{
@@ -167,17 +149,6 @@ func main() {
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register reconciler", "resource", "ProfilerOperand")
-		os.Exit(1)
-	}
-	if err = (&operatornodeactuator.Reconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Options: operatornodeactuator.Options{
-			SystemName: systemName,
-			Namespace:  systemOptions.Namespace,
-		},
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to register reconciler", "resource", "NodeActuatorOperand")
 		os.Exit(1)
 	}
 	if err = (&operatorevidencestore.Reconciler{

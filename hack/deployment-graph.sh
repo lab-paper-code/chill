@@ -265,8 +265,8 @@ check_outputs() {
     fail "Profiler diagram is missing its ClusterRole binding edge"
   check_edge_text "$profiler_dir/diagram.dot_json" $'kind: Role\n  name: chill-profiler-transition-observer' || \
     fail "Profiler diagram is missing its transition-observer Role binding edge"
-  check_edge_text "$default_dir/diagram.dot_json" 'spec.nodeDiscovery.configMapName' || \
-    fail "default diagram is missing the ChillSystem node-discovery config reference"
+  check_edge_text "$default_dir/diagram.dot_json" 'spec.nodeAgent.configRef.name' || \
+    fail "default diagram is missing the ChillSystem node-agent config reference"
   check_edge_text "$default_dir/diagram.dot_json" 'spec.deviceDiscovery.catalog.name' || \
     fail "default diagram is missing the ChillSystem device-catalog reference"
   check_edge_text "$profiler_dir/diagram.dot_json" 'spec.profiler.configRef.name' || \

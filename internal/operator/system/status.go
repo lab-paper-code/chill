@@ -19,22 +19,10 @@ const (
 	reasonComponentsNotReady  = "ComponentsNotReady"
 	reasonObservationFailed   = "ObservationFailed"
 
-	reasonNodeDiscoveryReady       = "NodeDiscoveryReady"
-	reasonNodeDiscoveryMissing     = "NodeDiscoveryMissing"
-	reasonNodeDiscoveryPending     = "NodeDiscoveryPending"
-	reasonNodeDiscoveryProgressing = "NodeDiscoveryProgressing"
-	reasonNodeDiscoveryDegraded    = "NodeDiscoveryDegraded"
-
 	reasonProfilerReady       = "ProfilerReady"
 	reasonProfilerMissing     = "ProfilerMissing"
 	reasonProfilerProgressing = "ProfilerProgressing"
 	reasonProfilerDegraded    = "ProfilerDegraded"
-
-	reasonNodeActuatorReady       = "NodeActuatorReady"
-	reasonNodeActuatorMissing     = "NodeActuatorMissing"
-	reasonNodeActuatorPending     = "NodeActuatorPending"
-	reasonNodeActuatorProgressing = "NodeActuatorProgressing"
-	reasonNodeActuatorDegraded    = "NodeActuatorDegraded"
 
 	reasonEvidenceStoreReady       = "EvidenceStoreReady"
 	reasonEvidenceStoreMissing     = "EvidenceStoreMissing"
@@ -51,22 +39,14 @@ type Observation struct {
 
 	Namespace string
 
-	NodeDiscoveryEnabled       bool
-	NodeDiscoveryDaemonSetName string
-	NodeDiscoveryDaemonSet     *appsv1.DaemonSet
-	NodeDiscoveryError         error
+	NodeAgent          DaemonSetObservation
+	NodeAgentActuation DaemonSetObservation
 
 	ProfilerEnabled        bool
 	ProfilerNamespace      string
 	ProfilerDeploymentName string
 	ProfilerDeployment     *appsv1.Deployment
 	ProfilerError          error
-
-	NodeActuatorEnabled       bool
-	NodeActuatorNamespace     string
-	NodeActuatorDaemonSetName string
-	NodeActuatorDaemonSet     *appsv1.DaemonSet
-	NodeActuatorError         error
 
 	EvidenceStoreEnabled          bool
 	EvidenceStoreNamespace        string
@@ -77,22 +57,30 @@ type Observation struct {
 	EvidenceStoreError            error
 }
 
+// DaemonSetObservation is one node agent DaemonSet the ChillSystem enables.
+type DaemonSetObservation struct {
+	Enabled   bool
+	Name      string
+	DaemonSet *appsv1.DaemonSet
+	Error     error
+}
+
 func buildStatus(observed Observation, previousConditions []metav1.Condition, now metav1.Time) edgev1alpha1.ChillSystemStatus {
 	status := edgev1alpha1.ChillSystemStatus{ObservedGeneration: observed.ObservedGeneration}
 	components := make([]metav1.Condition, 0, 4)
-	if observed.NodeDiscoveryEnabled {
-		condition := nodeDiscoveryAvailableCondition(observed)
-		condition.Type = edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable
+	if observed.NodeAgent.Enabled {
+		condition := daemonSetAvailableCondition(observed.NodeAgent, "NodeAgent")
+		condition.Type = edgev1alpha1.ChillSystemConditionNodeAgentAvailable
+		components = append(components, condition)
+	}
+	if observed.NodeAgentActuation.Enabled {
+		condition := daemonSetAvailableCondition(observed.NodeAgentActuation, "NodeAgentActuation")
+		condition.Type = edgev1alpha1.ChillSystemConditionNodeAgentActuationAvailable
 		components = append(components, condition)
 	}
 	if observed.ProfilerEnabled {
 		condition := profilerAvailableCondition(observed)
 		condition.Type = edgev1alpha1.ChillSystemConditionProfilerAvailable
-		components = append(components, condition)
-	}
-	if observed.NodeActuatorEnabled {
-		condition := nodeActuatorAvailableCondition(observed)
-		condition.Type = edgev1alpha1.ChillSystemConditionNodeActuatorAvailable
 		components = append(components, condition)
 	}
 	if observed.EvidenceStoreEnabled {
@@ -151,48 +139,43 @@ func readyCondition(components []metav1.Condition) metav1.Condition {
 	}
 }
 
-func nodeDiscoveryAvailableCondition(observed Observation) metav1.Condition {
-	if observed.NodeDiscoveryError != nil {
+// daemonSetAvailableCondition reports one node agent DaemonSet; component
+// prefixes the condition reasons.
+func daemonSetAvailableCondition(observed DaemonSetObservation, component string) metav1.Condition {
+	if observed.Error != nil {
 		return metav1.Condition{
-			Status:  metav1.ConditionUnknown,
-			Reason:  reasonObservationFailed,
-			Message: statusMessage(observed.NodeDiscoveryError.Error(), "failed to observe node-discovery DaemonSet"),
+			Status: metav1.ConditionUnknown, Reason: reasonObservationFailed,
+			Message: statusMessage(observed.Error.Error(), fmt.Sprintf("failed to observe DaemonSet %q", observed.Name)),
 		}
 	}
-	if observed.NodeDiscoveryDaemonSet == nil {
+	if observed.DaemonSet == nil {
 		return metav1.Condition{
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonNodeDiscoveryMissing,
-			Message: fmt.Sprintf("node-discovery DaemonSet %q is missing", observed.NodeDiscoveryDaemonSetName),
+			Status: metav1.ConditionFalse, Reason: component + "Missing",
+			Message: fmt.Sprintf("DaemonSet %q is missing", observed.Name),
 		}
 	}
-
-	daemonSet := observed.NodeDiscoveryDaemonSet
+	daemonSet := observed.DaemonSet
 	if condition := daemonSetFailureCondition(daemonSet); condition != nil {
 		return metav1.Condition{
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonNodeDiscoveryDegraded,
-			Message: statusMessage(condition.Message, fmt.Sprintf("node-discovery DaemonSet %q is degraded", daemonSet.Name)),
+			Status: metav1.ConditionFalse, Reason: component + "Degraded",
+			Message: statusMessage(condition.Message, fmt.Sprintf("DaemonSet %q is degraded", daemonSet.Name)),
 		}
 	}
 	if daemonSet.Status.DesiredNumberScheduled == 0 {
 		return metav1.Condition{
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonNodeDiscoveryPending,
-			Message: fmt.Sprintf("node-discovery DaemonSet %q has no scheduled Nodes", daemonSet.Name),
+			Status: metav1.ConditionFalse, Reason: component + "Pending",
+			Message: fmt.Sprintf("DaemonSet %q has no scheduled Nodes", daemonSet.Name),
 		}
 	}
 	if daemonSet.Status.NumberReady < daemonSet.Status.DesiredNumberScheduled {
 		return metav1.Condition{
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonNodeDiscoveryProgressing,
-			Message: fmt.Sprintf("node-discovery DaemonSet %q is progressing", daemonSet.Name),
+			Status: metav1.ConditionFalse, Reason: component + "Progressing",
+			Message: fmt.Sprintf("DaemonSet %q is progressing", daemonSet.Name),
 		}
 	}
 	return metav1.Condition{
-		Status:  metav1.ConditionTrue,
-		Reason:  reasonNodeDiscoveryReady,
-		Message: fmt.Sprintf("node-discovery DaemonSet %q is available", daemonSet.Name),
+		Status: metav1.ConditionTrue, Reason: component + "Ready",
+		Message: fmt.Sprintf("DaemonSet %q is available", daemonSet.Name),
 	}
 }
 
@@ -237,44 +220,6 @@ func profilerAvailableCondition(observed Observation) metav1.Condition {
 		Status:  metav1.ConditionTrue,
 		Reason:  reasonProfilerReady,
 		Message: fmt.Sprintf("Profiler Deployment %q is available", deployment.Name),
-	}
-}
-
-func nodeActuatorAvailableCondition(observed Observation) metav1.Condition {
-	if observed.NodeActuatorError != nil {
-		return metav1.Condition{
-			Status: metav1.ConditionUnknown, Reason: reasonObservationFailed,
-			Message: statusMessage(observed.NodeActuatorError.Error(), "failed to observe NodeActuator DaemonSet"),
-		}
-	}
-	if observed.NodeActuatorDaemonSet == nil {
-		return metav1.Condition{
-			Status: metav1.ConditionFalse, Reason: reasonNodeActuatorMissing,
-			Message: fmt.Sprintf("NodeActuator DaemonSet %q is missing", observed.NodeActuatorDaemonSetName),
-		}
-	}
-	daemonSet := observed.NodeActuatorDaemonSet
-	if condition := daemonSetFailureCondition(daemonSet); condition != nil {
-		return metav1.Condition{
-			Status: metav1.ConditionFalse, Reason: reasonNodeActuatorDegraded,
-			Message: statusMessage(condition.Message, fmt.Sprintf("NodeActuator DaemonSet %q is degraded", daemonSet.Name)),
-		}
-	}
-	if daemonSet.Status.DesiredNumberScheduled == 0 {
-		return metav1.Condition{
-			Status: metav1.ConditionFalse, Reason: reasonNodeActuatorPending,
-			Message: fmt.Sprintf("NodeActuator DaemonSet %q has no eligible Nodes", daemonSet.Name),
-		}
-	}
-	if daemonSet.Status.NumberReady < daemonSet.Status.DesiredNumberScheduled {
-		return metav1.Condition{
-			Status: metav1.ConditionFalse, Reason: reasonNodeActuatorProgressing,
-			Message: fmt.Sprintf("NodeActuator DaemonSet %q is progressing", daemonSet.Name),
-		}
-	}
-	return metav1.Condition{
-		Status: metav1.ConditionTrue, Reason: reasonNodeActuatorReady,
-		Message: fmt.Sprintf("NodeActuator DaemonSet %q is available", daemonSet.Name),
 	}
 }
 

@@ -28,14 +28,14 @@ func writeSystemsTable(writer io.Writer, view operatorconsole.SystemsView) error
 		return err
 	}
 	const systemHeader = "SYSTEM\tMANAGEMENT_NAMESPACE\tGENERATION\tOBSERVED\t" +
-		"NODE_DISCOVERY\tDEVICE_DISCOVERY\tPROFILER\tEVIDENCE_STORE"
+		"NODE_AGENT\tDEVICE_DISCOVERY\tPROFILER\tEVIDENCE_STORE"
 	if _, err := fmt.Fprintln(table, systemHeader); err != nil {
 		return err
 	}
 	for _, system := range view.Systems {
 		if _, err := fmt.Fprintf(table, "%s\t%s\t%d\t%d\t%t\t%t\t%t\t%t\n",
 			system.Name, display(system.Spec.ManagementNamespace), system.Generation,
-			system.Status.ObservedGeneration, system.Spec.NodeDiscovery.Enabled,
+			system.Status.ObservedGeneration, system.Spec.NodeAgent.Enabled,
 			system.Spec.DeviceDiscovery.Enabled, system.Spec.Profiler.Enabled,
 			system.Spec.EvidenceStore.Enabled); err != nil {
 			return err

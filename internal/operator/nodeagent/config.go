@@ -1,4 +1,4 @@
-package nodeactuator
+package nodeagent
 
 import (
 	"errors"
@@ -16,25 +16,61 @@ import (
 	"github.com/lab-paper-code/chill/internal/nodeactuator/jetson"
 )
 
-// rebootCapability is the one capability this operand may hold. A power mode
-// the device establishes at boot is reached by restarting the Node, and this is
-// the narrowest privilege that permits it. Nothing else is allowed alongside it.
+// rebootCapability is the one capability the actuation agent may hold. A power
+// mode the device establishes at boot is reached by restarting the Node, and
+// this is the narrowest privilege that permits it. Nothing else is allowed
+// alongside it.
 const rebootCapability = corev1.Capability("SYS_BOOT")
 
+// Config is the rendered node agent contract read by the operator. Discovery
+// runs on every Node; Actuation is present only when the ChillSystem enables it.
 type Config struct {
-	Image                string                             `json:"image"`
-	ImagePullPolicy      corev1.PullPolicy                  `json:"imagePullPolicy"`
+	Image            string            `json:"image"`
+	ImagePullPolicy  corev1.PullPolicy `json:"imagePullPolicy"`
+	KubeAPIServer    string            `json:"kubeAPIServer,omitempty"`
+	KubeAPITokenFile string            `json:"kubeAPITokenFile"`
+	KubeAPICAFile    string            `json:"kubeAPICAFile"`
+	Discovery        DiscoveryConfig   `json:"discovery"`
+	Actuation        *ActuationConfig  `json:"actuation,omitempty"`
+}
+
+// DiscoveryConfig is the unprivileged DaemonSet that publishes hardware
+// signature and online-CPU metadata on every Node.
+type DiscoveryConfig struct {
+	ServiceAccountName     string                         `json:"serviceAccountName"`
+	HostRoot               string                         `json:"hostRoot"`
+	Interval               string                         `json:"interval"`
+	SignatureFile          string                         `json:"signatureFile"`
+	SignatureConfigMapName string                         `json:"signatureConfigMapName"`
+	SignatureConfigMapKey  string                         `json:"signatureConfigMapKey"`
+	HostNetwork            bool                           `json:"hostNetwork,omitempty"`
+	NodeSelector           map[string]string              `json:"nodeSelector,omitempty"`
+	ExcludeNodeNames       []string                       `json:"excludeNodeNames,omitempty"`
+	Affinity               *corev1.Affinity               `json:"affinity,omitempty"`
+	Tolerations            []corev1.Toleration            `json:"tolerations,omitempty"`
+	Resources              corev1.ResourceRequirements    `json:"resources,omitempty"`
+	PodSecurityContext     *corev1.PodSecurityContext     `json:"podSecurityContext,omitempty"`
+	SecurityContext        *corev1.SecurityContext        `json:"securityContext,omitempty"`
+	HostPaths              []ReadOnlyHostPath             `json:"hostPaths,omitempty"`
+	UpdateStrategy         appsv1.DaemonSetUpdateStrategy `json:"updateStrategy"`
+}
+
+// ReadOnlyHostPath is a host directory mounted read-only under hostRoot.
+type ReadOnlyHostPath struct {
+	Name      string `json:"name"`
+	HostPath  string `json:"hostPath"`
+	MountPath string `json:"mountPath"`
+}
+
+// ActuationConfig is the privileged DaemonSet that applies NodeActuations on
+// Nodes of the DeviceClasses named by its policies.
+type ActuationConfig struct {
 	ServiceAccountName   string                             `json:"serviceAccountName"`
 	MetricsBindAddress   string                             `json:"metricsBindAddress"`
 	HealthProbePort      int32                              `json:"healthProbePort"`
 	LeaseDurationSeconds int32                              `json:"leaseDurationSeconds"`
-	KubeAPIServer        string                             `json:"kubeAPIServer,omitempty"`
-	KubeAPITokenFile     string                             `json:"kubeAPITokenFile"`
-	KubeAPICAFile        string                             `json:"kubeAPICAFile"`
-	ActuationPolicies    []actuatorcore.ActuationPolicySpec `json:"actuationPolicies"`
+	Policies             []actuatorcore.ActuationPolicySpec `json:"policies"`
 	JetsonNVPModel       *JetsonNVPModelConfig              `json:"jetsonNVPModel,omitempty"`
-	NodeSelector         map[string]string                  `json:"nodeSelector"`
-	Affinity             *corev1.Affinity                   `json:"affinity,omitempty"`
 	Tolerations          []corev1.Toleration                `json:"tolerations,omitempty"`
 	Resources            corev1.ResourceRequirements        `json:"resources,omitempty"`
 	PodSecurityContext   *corev1.PodSecurityContext         `json:"podSecurityContext,omitempty"`
@@ -60,7 +96,7 @@ var bootOrderingHostPaths = []HostPathMount{
 	{Name: "host-systemd-lib", HostPath: "/lib/systemd/system", MountPath: jetson.HostSystemdLibDir, Type: corev1.HostPathDirectory, ReadOnly: true},
 }
 
-// podHostPaths is every host path the Pod mounts.
+// podHostPaths is every host path the actuation Pod mounts.
 func (c JetsonNVPModelConfig) podHostPaths() []HostPathMount {
 	if !c.EnsureBootOrdering {
 		return c.HostPaths
@@ -76,44 +112,28 @@ type HostPathMount struct {
 	ReadOnly  bool                `json:"readOnly"`
 }
 
-func (c Config) Validate() error {
+// Validate checks the shared and discovery contract, and the actuation
+// contract when requireActuation is set.
+func (c Config) Validate(requireActuation bool) error {
 	var problems []string
 	for name, value := range map[string]string{
 		"image": c.Image, "imagePullPolicy": string(c.ImagePullPolicy),
-		"serviceAccountName": c.ServiceAccountName, "metricsBindAddress": c.MetricsBindAddress,
-		"kubeAPITokenFile": c.KubeAPITokenFile,
-		"kubeAPICAFile":    c.KubeAPICAFile,
+		"kubeAPITokenFile": c.KubeAPITokenFile, "kubeAPICAFile": c.KubeAPICAFile,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			problems = append(problems, name+" is required without surrounding whitespace")
 		}
 	}
-	if c.HealthProbePort < 1 || c.HealthProbePort > 65535 {
-		problems = append(problems, "healthProbePort must be between 1 and 65535")
-	}
-	if c.LeaseDurationSeconds < 5 || c.LeaseDurationSeconds > 300 {
-		problems = append(problems, "leaseDurationSeconds must be between 5 and 300")
-	}
 	if strings.TrimSpace(c.KubeAPIServer) != c.KubeAPIServer {
 		problems = append(problems, "kubeAPIServer must not have surrounding whitespace")
 	}
-	if len(c.NodeSelector) == 0 {
-		problems = append(problems, "nodeSelector must explicitly select eligible Nodes")
-	}
-	switch c.UpdateStrategy.Type {
-	case appsv1.RollingUpdateDaemonSetStrategyType:
-	case appsv1.OnDeleteDaemonSetStrategyType:
-		if c.UpdateStrategy.RollingUpdate != nil {
-			problems = append(problems, "updateStrategy.rollingUpdate must not be set with OnDelete")
+	problems = append(problems, c.Discovery.problems()...)
+	if requireActuation {
+		if c.Actuation == nil {
+			problems = append(problems, "actuation config is required when actuation is enabled")
+		} else {
+			problems = append(problems, c.Actuation.problems()...)
 		}
-	default:
-		problems = append(problems, "updateStrategy.type must be RollingUpdate or OnDelete")
-	}
-	if _, err := configuredPolicies(c.ActuationPolicies); err != nil {
-		problems = append(problems, err.Error())
-	}
-	if err := c.validateHostAdapters(); err != nil {
-		problems = append(problems, err.Error())
 	}
 	if len(problems) != 0 {
 		return errors.New(strings.Join(problems, "; "))
@@ -121,8 +141,75 @@ func (c Config) Validate() error {
 	return nil
 }
 
-func (c Config) validateHostAdapters() error {
-	for _, policy := range c.ActuationPolicies {
+func (c DiscoveryConfig) problems() []string {
+	var problems []string
+	for name, value := range map[string]string{
+		"discovery.serviceAccountName": c.ServiceAccountName, "discovery.hostRoot": c.HostRoot,
+		"discovery.interval": c.Interval, "discovery.signatureFile": c.SignatureFile,
+		"discovery.signatureConfigMapName": c.SignatureConfigMapName,
+		"discovery.signatureConfigMapKey":  c.SignatureConfigMapKey,
+	} {
+		if strings.TrimSpace(value) == "" {
+			problems = append(problems, name+" is required")
+		}
+	}
+	if _, err := time.ParseDuration(c.Interval); c.Interval != "" && err != nil {
+		problems = append(problems, fmt.Sprintf("discovery.interval must be a duration: %v", err))
+	}
+	if c.UpdateStrategy.Type == "" {
+		problems = append(problems, "discovery.updateStrategy.type is required")
+	}
+	if len(c.HostPaths) == 0 {
+		problems = append(problems, "discovery.hostPaths must contain at least one mount")
+	}
+	for i, hostPath := range c.HostPaths {
+		if strings.TrimSpace(hostPath.Name) == "" || strings.TrimSpace(hostPath.HostPath) == "" ||
+			strings.TrimSpace(hostPath.MountPath) == "" {
+			problems = append(problems, fmt.Sprintf("discovery.hostPaths[%d] requires name, hostPath, and mountPath", i))
+		}
+	}
+	if len(c.ExcludeNodeNames) > 0 && c.Affinity != nil && c.Affinity.NodeAffinity != nil &&
+		c.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		problems = append(problems, "discovery.excludeNodeNames cannot be combined with required nodeAffinity")
+	}
+	return problems
+}
+
+func (c ActuationConfig) problems() []string {
+	var problems []string
+	for name, value := range map[string]string{
+		"actuation.serviceAccountName": c.ServiceAccountName, "actuation.metricsBindAddress": c.MetricsBindAddress,
+	} {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			problems = append(problems, name+" is required without surrounding whitespace")
+		}
+	}
+	if c.HealthProbePort < 1 || c.HealthProbePort > 65535 {
+		problems = append(problems, "actuation.healthProbePort must be between 1 and 65535")
+	}
+	if c.LeaseDurationSeconds < 5 || c.LeaseDurationSeconds > 300 {
+		problems = append(problems, "actuation.leaseDurationSeconds must be between 5 and 300")
+	}
+	switch c.UpdateStrategy.Type {
+	case appsv1.RollingUpdateDaemonSetStrategyType:
+	case appsv1.OnDeleteDaemonSetStrategyType:
+		if c.UpdateStrategy.RollingUpdate != nil {
+			problems = append(problems, "actuation.updateStrategy.rollingUpdate must not be set with OnDelete")
+		}
+	default:
+		problems = append(problems, "actuation.updateStrategy.type must be RollingUpdate or OnDelete")
+	}
+	if err := validatePolicies(c.Policies); err != nil {
+		problems = append(problems, err.Error())
+	}
+	if err := c.validateHostAdapters(); err != nil {
+		problems = append(problems, err.Error())
+	}
+	return problems
+}
+
+func (c ActuationConfig) validateHostAdapters() error {
+	for _, policy := range c.Policies {
 		if policy.ActuatorKind != actuatorcore.ActuatorKindJetsonNVPModel {
 			return fmt.Errorf("no installed host adapter supports actuation-policy kind %q", policy.ActuatorKind)
 		}
@@ -187,27 +274,25 @@ func validateHostPaths(hostPaths []HostPathMount) error {
 	return nil
 }
 
-func configuredPolicies(specs []actuatorcore.ActuationPolicySpec) ([]actuatorcore.ActuationPolicySpec, error) {
+func validatePolicies(specs []actuatorcore.ActuationPolicySpec) error {
 	if len(specs) == 0 {
-		return nil, errors.New("actuationPolicies must contain at least one policy")
+		return errors.New("actuation.policies must contain at least one policy")
 	}
 	seenNames := make(map[string]struct{}, len(specs))
 	seenSelectors := make(map[string]struct{}, len(specs))
-	policies := make([]actuatorcore.ActuationPolicySpec, 0, len(specs))
 	for _, spec := range specs {
 		if err := spec.Validate(); err != nil {
-			return nil, fmt.Errorf("validate configured actuation policy %q: %w", spec.Name, err)
+			return fmt.Errorf("validate configured actuation policy %q: %w", spec.Name, err)
 		}
 		if _, duplicate := seenNames[spec.Name]; duplicate {
-			return nil, fmt.Errorf("duplicate configured actuation-policy name %q", spec.Name)
+			return fmt.Errorf("duplicate configured actuation-policy name %q", spec.Name)
 		}
 		seenNames[spec.Name] = struct{}{}
 		selector := spec.DeviceClass + "\x00" + spec.PowerMode + "\x00" + spec.ActuatorKind
 		if _, duplicate := seenSelectors[selector]; duplicate {
-			return nil, fmt.Errorf("duplicate configured actuation-policy selector %q", selector)
+			return fmt.Errorf("duplicate configured actuation-policy selector %q", selector)
 		}
 		seenSelectors[selector] = struct{}{}
-		policies = append(policies, spec)
 	}
-	return policies, nil
+	return nil
 }

@@ -98,13 +98,13 @@ var _ = Describe("ChillSystem API", func() {
 		Expect(observed.Status.Conditions).To(HaveLen(2))
 	})
 
-	It("requires and preserves the opt-in NodeActuator config reference", func() {
+	It("requires and preserves the node agent config reference", func() {
 		ctx := context.Background()
-		name := fmt.Sprintf("chillsystem-node-actuator-%d", time.Now().UnixNano())
+		name := fmt.Sprintf("chillsystem-node-agent-%d", time.Now().UnixNano())
 		system := &edgev1alpha1.ChillSystem{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec: edgev1alpha1.ChillSystemSpec{NodeActuator: edgev1alpha1.ChillNodeActuatorSpec{
-				Enabled: true, ConfigRef: corev1.LocalObjectReference{Name: "chill-node-actuator-config"},
+			Spec: edgev1alpha1.ChillSystemSpec{NodeAgent: edgev1alpha1.ChillNodeAgentSpec{
+				Enabled: true, Actuation: true, ConfigRef: corev1.LocalObjectReference{Name: "chill-node-agent-config"},
 			}},
 		}
 		Expect(k8sClient.Create(ctx, system)).To(Succeed())
@@ -112,13 +112,19 @@ var _ = Describe("ChillSystem API", func() {
 
 		stored := &edgev1alpha1.ChillSystem{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, stored)).To(Succeed())
-		Expect(stored.Spec.NodeActuator.Enabled).To(BeTrue())
-		Expect(stored.Spec.NodeActuator.ConfigRef.Name).To(Equal("chill-node-actuator-config"))
+		Expect(stored.Spec.NodeAgent.Enabled).To(BeTrue())
+		Expect(stored.Spec.NodeAgent.Actuation).To(BeTrue())
+		Expect(stored.Spec.NodeAgent.ConfigRef.Name).To(Equal("chill-node-agent-config"))
 
-		invalid := &edgev1alpha1.ChillSystem{
-			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("chillsystem-node-actuator-invalid-%d", time.Now().UnixNano())},
-			Spec:       edgev1alpha1.ChillSystemSpec{NodeActuator: edgev1alpha1.ChillNodeActuatorSpec{Enabled: true}},
+		for _, spec := range []edgev1alpha1.ChillNodeAgentSpec{
+			{Enabled: true},
+			{Actuation: true, ConfigRef: corev1.LocalObjectReference{Name: "chill-node-agent-config"}},
+		} {
+			invalid := &edgev1alpha1.ChillSystem{
+				ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("chillsystem-node-agent-invalid-%d", time.Now().UnixNano())},
+				Spec:       edgev1alpha1.ChillSystemSpec{NodeAgent: spec},
+			}
+			Expect(k8sClient.Create(ctx, invalid)).NotTo(Succeed())
 		}
-		Expect(k8sClient.Create(ctx, invalid)).NotTo(Succeed())
 	})
 })

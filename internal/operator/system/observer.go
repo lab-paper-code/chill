@@ -11,34 +11,41 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/component"
 )
 
 func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha1.ChillSystem) Observation {
 	observed := Observation{
-		ObservedGeneration:            system.Generation,
-		Namespace:                     r.managementNamespace(system),
-		NodeDiscoveryEnabled:          system.Spec.NodeDiscovery.Enabled,
-		NodeDiscoveryDaemonSetName:    nodeDiscoveryDaemonSetName(system),
+		ObservedGeneration: system.Generation,
+		Namespace:          r.managementNamespace(system),
+		NodeAgent: DaemonSetObservation{
+			Enabled: system.Spec.NodeAgent.Enabled,
+			Name:    component.NodeAgentDaemonSetName(system.Name),
+		},
+		NodeAgentActuation: DaemonSetObservation{
+			Enabled: system.Spec.NodeAgent.Enabled && system.Spec.NodeAgent.Actuation,
+			Name:    component.NodeAgentActuationDaemonSetName(system.Name),
+		},
 		ProfilerEnabled:               system.Spec.Profiler.Enabled,
 		ProfilerNamespace:             r.namespace(),
 		ProfilerDeploymentName:        r.profilerDeploymentName(system),
-		NodeActuatorEnabled:           system.Spec.NodeActuator.Enabled,
-		NodeActuatorNamespace:         r.managementNamespace(system),
-		NodeActuatorDaemonSetName:     r.nodeActuatorDaemonSetName(system),
 		EvidenceStoreEnabled:          system.Spec.EvidenceStore.Enabled,
 		EvidenceStoreNamespace:        r.managementNamespace(system),
 		EvidenceStoreDeploymentName:   r.evidenceStoreDeploymentName(system),
 		EvidenceStoreBootstrapJobName: r.evidenceStoreBootstrapJobName(system),
 	}
 
-	if observed.NodeDiscoveryEnabled {
-		daemonSet := &appsv1.DaemonSet{}
-		if err := r.Get(ctx, types.NamespacedName{Namespace: observed.Namespace, Name: observed.NodeDiscoveryDaemonSetName}, daemonSet); err != nil {
+	for _, daemonSet := range []*DaemonSetObservation{&observed.NodeAgent, &observed.NodeAgentActuation} {
+		if !daemonSet.Enabled {
+			continue
+		}
+		current := &appsv1.DaemonSet{}
+		if err := r.Get(ctx, types.NamespacedName{Namespace: observed.Namespace, Name: daemonSet.Name}, current); err != nil {
 			if !apierrors.IsNotFound(err) {
-				observed.NodeDiscoveryError = fmt.Errorf("observe node-discovery DaemonSet: %w", err)
+				daemonSet.Error = fmt.Errorf("observe DaemonSet %s: %w", daemonSet.Name, err)
 			}
 		} else {
-			observed.NodeDiscoveryDaemonSet = daemonSet
+			daemonSet.DaemonSet = current
 		}
 	}
 
@@ -51,18 +58,6 @@ func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha
 			}
 		} else {
 			observed.ProfilerDeployment = deployment
-		}
-	}
-
-	if observed.NodeActuatorEnabled {
-		daemonSet := &appsv1.DaemonSet{}
-		key := types.NamespacedName{Namespace: observed.NodeActuatorNamespace, Name: observed.NodeActuatorDaemonSetName}
-		if err := r.Get(ctx, key, daemonSet); err != nil {
-			if !apierrors.IsNotFound(err) {
-				observed.NodeActuatorError = fmt.Errorf("observe NodeActuator DaemonSet: %w", err)
-			}
-		} else {
-			observed.NodeActuatorDaemonSet = daemonSet
 		}
 	}
 

@@ -1,4 +1,4 @@
-package nodeactuator
+package nodeagent
 
 import (
 	"cmp"
@@ -12,10 +12,9 @@ func runtimeOptions(system *edgev1alpha1.ChillSystem, base Options) Options {
 	options := base.Defaulted()
 	options.SystemName = system.Name
 	options.Namespace = cmp.Or(strings.TrimSpace(system.Spec.ManagementNamespace), options.Namespace)
-	options.DaemonSetName = component.NodeActuatorDaemonSetName(system.Name)
 	options.ConfigMapName = cmp.Or(
-		strings.TrimSpace(system.Spec.NodeActuator.ConfigRef.Name),
-		component.NodeActuatorConfigMapName(system.Name),
+		strings.TrimSpace(system.Spec.NodeAgent.ConfigRef.Name),
+		component.NodeAgentConfigMapName(system.Name),
 	)
 	return options
 }

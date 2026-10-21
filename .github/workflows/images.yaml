@@ -24,9 +24,9 @@ jobs:
           - component: operator
             dockerfile: build/docker/operator.Dockerfile
             image: chill-operator
-          - component: node-discovery
-            dockerfile: build/docker/node-discovery.Dockerfile
-            image: chill-node-discovery
+          - component: node-agent
+            dockerfile: build/docker/node-agent.Dockerfile
+            image: chill-node-agent
           - component: profiler
             dockerfile: build/docker/profiler.Dockerfile
             image: chill-profiler

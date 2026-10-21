@@ -5,11 +5,11 @@ nodes:
     edges: |
       management_namespace = query_path(resource, "spec.managementNamespace")
 
-      node_discovery_config = query_path(resource, "spec.nodeDiscovery.configMapName")
-      if node_discovery_config:
+      node_agent_config = query_path(resource, "spec.nodeAgent.configRef.name")
+      if node_agent_config:
         edges.add_edge_to(
-          "spec.nodeDiscovery.configMapName",
-          node_discovery_config,
+          "spec.nodeAgent.configRef.name",
+          node_agent_config,
           management_namespace,
           "ConfigMap",
           "v1",

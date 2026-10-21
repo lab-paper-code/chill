@@ -53,12 +53,13 @@ privileged는 지금처럼 RKNN host delivery에서만 온다. group 값은 측�
 ### 2.3 agent 구성
 
 - 바이너리 `cmd/node-agent` 하나, 이미지 하나, operator 설정과 reconciler 하나(`internal/operator/nodeagent`).
-- DaemonSet은 권한 경계를 따라 둘이다.
+- DaemonSet과 ServiceAccount는 권한 경계를 따라 둘이다. actuation DaemonSet은 chart `nodeAgent.actuation.enabled`로
+  켜고, chart가 이 값을 ChillSystem `spec.nodeAgent.actuation`에 쓴다.
 
 | DaemonSet | 노드 | 하는 일 | 권한 |
 |---|---|---|---|
-| `chill-node-agent` | 모든 노드 | hardware signature discovery, `edge.dacs.io/cpus` | 지금 node-discovery와 같음(비root, 읽기 전용 `/proc`, `/sys`, `/etc`, Node `get`, `patch`) |
-| `chill-node-agent-actuation` | `powerActuation.policies`에 나오는 DeviceClass의 `nodeSelector`에 맞는 노드 | NodeActuation 적용(`--actuate`) | 지금 NodeActuator와 같음(hostPID, `SYS_BOOT`, 쓰기 `/sys`, nvpmodel mount) |
+| `chill-node-agent` | 모든 노드 | hardware signature discovery, `edge.dacs.io/cpus` | 비root, 읽기 전용 `/proc`, `/sys`, `/etc`, Node `get`, `patch` |
+| `chill-node-agent-actuation` | `powerActuation.policies`에 나오는 DeviceClass의 `nodeSelector`에 맞는 노드 | NodeActuation 적용(`--actuate`) | hostPID, `SYS_BOOT`, 쓰기 `/sys`, nvpmodel mount, Node `get`, `patch`, NodeActuation과 Lease 권한 |
 
 - operator가 두 DaemonSet에 `chill.dacs.io/measurement` toleration을 고정으로 붙인다. actuation 노드 선택은 DeviceClass
   `nodeSelector`를 nodeAffinity term으로 옮겨 만들고, operator는 DeviceClass를 watch한다. 손 label은 지운다.
@@ -92,7 +93,7 @@ ADR 0019 변경이 생긴다. 1장의 문제 중 이것으로 풀리는 것은 �
 
 ## 4. M3 준비
 
-- 노드 상태 writer는 node agent(바이너리와 ServiceAccount 하나, DaemonSet 둘)뿐이다. Node metadata의 discovery key와
+- 노드 상태 writer는 node agent(바이너리 하나, DaemonSet과 ServiceAccount 둘)뿐이다. Node metadata의 discovery key와
   `edge.dacs.io/cpus`는 `chill-node-agent`가, NodeActuation status는 `chill-node-agent-actuation`이 쓴다. M3의 taint와
   grant는 ChillServer가 쓰고 field가 겹치지 않는다. M3가 Server-Side Apply field manager로 이 분담을 강제할 때 agent의
   merge patch를 apply로 바꾼다.
@@ -134,7 +135,7 @@ ADR 0019 변경이 생긴다. 1장의 문제 중 이것으로 풀리는 것은 �
 | 5 | `feat(serving): read CPU inventory from nodes` | capture가 annotation을 읽음, `cpuInventory`와 `checkProfileInventory` 삭제, 예약 검사를 capture로 | 4 |
 | 6 | `feat(serving): request power modes from device classes and policies` | ChillServer가 Profiler facts를 읽음, 요청 가능 모드 도출, 동작 시각에 NodeActuation 생성, `powerRequests` 삭제 | - |
 | 7 | `feat(serving): derive wall meters from metric sources` | `metricSources.meterID`, schema `v1alpha6`, values, `meters` 삭제 | 6 |
-| 8 | `refactor(node-agent): merge node discovery and actuation` | `cmd/node-agent`, `internal/operator/nodeagent`, DeviceClass 기반 actuation 노드 선택, chart와 Makefile, `.go-arch-lint.yml`, 손 label 삭제 | 4 |
+| 8 | `refactor(node-agent): merge node discovery and actuation` | 완료. `cmd/node-agent`(기본은 discovery, `--actuate`는 actuation), `internal/operator/nodeagent`, DeviceClass 기반 actuation 노드 선택, chart `nodeAgent`와 Makefile 이미지 target `node-agent`, 손 label 삭제. `.go-arch-lint.yml`의 `entrypoints`와 `operator` component가 새 package를 덮는다 | 4 |
 | 9 | `feat(node-agent): publish the read-back power actuator` | 2.5절. actuation agent annotation, 전력모드 판정 함수 하나, `InstanceUnavailable` 노드 사유 | 8 |
 
 배포는 두 번이다. 3-7은 scheduler ConfigMap을 한 번 다시 쓰는 배포 하나다. 8-9는 그 뒤 따로 배포한다. 각 commit은 자기가

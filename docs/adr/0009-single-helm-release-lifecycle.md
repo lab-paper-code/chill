@@ -29,7 +29,7 @@ packages:
 - CRDs
 - operator ServiceAccount, RBAC, and Deployment
 - the cluster-scoped `ChillSystem` root CR
-- node-discovery ServiceAccount, RBAC, config, and discovery catalog
+- node-agent ServiceAccounts, RBAC, config, and discovery signature catalog
 
 The single-release install flow is:
 
@@ -46,7 +46,7 @@ helm uninstall chill --namespace chill-system --no-hooks
 
 The operator does not auto-create its own `ChillSystem` root. Helm owns the
 root declaration; the operator owns runtime reconciliation below that root,
-including finalization, node-discovery DaemonSets, node metadata cleanup, and
+including finalization, node-agent DaemonSets, node metadata cleanup, and
 CHILL-managed `DeviceClass` resources.
 
 Node-discovery metadata outlives any individual DaemonSet Pod. Pod replacement,

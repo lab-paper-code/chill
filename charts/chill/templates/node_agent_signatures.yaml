@@ -1,0 +1,16 @@
+{{- if .Values.nodeAgent.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chill.nodeAgentSignatureCatalogName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: node-agent
+    {{- include "chill.labels" . | nindent 4 }}
+data:
+  {{ include "chill.nodeAgentSignatureKey" . }}: |
+    sources:
+{{- toYaml .Values.nodeAgent.sources | nindent 6 }}
+    signatures:
+{{- toYaml .Values.nodeAgent.signatures | nindent 6 }}
+{{- end }}

@@ -25,7 +25,7 @@ func TestOptionsRequireExactNodeAndPolicyInputs(t *testing.T) {
 		kubeAPICAFile:    kubeconfig.DefaultServiceAccountCAFile,
 		metricsAddr:      "0", probeAddr: ":8081",
 	}
-	if err := valid.validate(); err != nil {
+	if err := valid.validateActuation(); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*options){
@@ -45,7 +45,7 @@ func TestOptionsRequireExactNodeAndPolicyInputs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			candidate := valid
 			mutate(&candidate)
-			if err := candidate.validate(); err == nil {
+			if err := candidate.validateActuation(); err == nil {
 				t.Fatalf("invalid options accepted: %#v", candidate)
 			}
 		})

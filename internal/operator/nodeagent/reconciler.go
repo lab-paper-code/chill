@@ -1,4 +1,4 @@
-package nodeactuator
+package nodeagent
 
 import (
 	"context"
@@ -20,6 +20,8 @@ import (
 
 var daemonSetResource = schema.GroupResource{Group: "apps", Resource: "daemonsets"}
 
+// Reconciler manages the node agent DaemonSet on every Node and, when enabled,
+// the actuation DaemonSet on Nodes of the DeviceClasses its policies name.
 type Reconciler struct {
 	client.Client
 	Scheme  *runtime.Scheme
@@ -28,6 +30,7 @@ type Reconciler struct {
 
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems,verbs=get;list;watch
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=nodeactuations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=create;delete;get;list;patch;update;watch
 
@@ -44,41 +47,57 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 func (r *Reconciler) reconcile(ctx context.Context, systemName string) (ctrl.Result, error) {
 	system := &edgev1alpha1.ChillSystem{}
 	if err := r.Get(ctx, types.NamespacedName{Name: systemName}, system); err != nil {
-		if apierrors.IsNotFound(err) {
-			return r.stop(ctx, r.Options.Defaulted())
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("get ChillSystem %s for node agent: %w", systemName, err)
 		}
-		return ctrl.Result{}, fmt.Errorf("get ChillSystem %s for NodeActuator: %w", systemName, err)
-	}
-	options := runtimeOptions(system, r.Options)
-	if !system.DeletionTimestamp.IsZero() || !system.Spec.NodeActuator.Enabled {
+		options := r.Options.Defaulted()
+		options.SystemName = systemName
 		return r.stop(ctx, options)
 	}
-	config, err := r.loadConfig(ctx, options)
+	options := runtimeOptions(system, r.Options)
+	spec := system.Spec.NodeAgent
+	if !system.DeletionTimestamp.IsZero() || !spec.Enabled {
+		return r.stop(ctx, options)
+	}
+	config, err := r.loadConfig(ctx, options, spec.Actuation)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	desired, err := buildDaemonSet(options, config)
+	if err := r.applyDaemonSet(ctx, system, buildAgentDaemonSet(options, config)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile node agent DaemonSet %s/%s: %w", options.Namespace, options.agentDaemonSetName(), err)
+	}
+	if !spec.Actuation {
+		return ctrl.Result{RequeueAfter: options.ReconcileInterval}, r.stopActuation(ctx, options)
+	}
+	classes := &edgev1alpha1.DeviceClassList{}
+	if err := r.List(ctx, classes); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list DeviceClasses for node agent actuation: %w", err)
+	}
+	actuation, err := buildActuationDaemonSet(options, config, classes.Items)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("build NodeActuator DaemonSet: %w", err)
+		return ctrl.Result{}, fmt.Errorf("build node agent actuation DaemonSet: %w", err)
 	}
-	if err := r.applyDaemonSet(ctx, system, desired); err != nil {
-		return ctrl.Result{}, fmt.Errorf("reconcile NodeActuator DaemonSet %s/%s: %w", options.Namespace, options.DaemonSetName, err)
+	if err := r.applyDaemonSet(ctx, system, actuation); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile node agent actuation DaemonSet %s/%s: %w", options.Namespace, actuation.Name, err)
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: options.ReconcileInterval}, nil
 }
 
 func (r *Reconciler) stop(ctx context.Context, options Options) (ctrl.Result, error) {
+	if err := r.deleteDaemonSet(ctx, options.Namespace, options.agentDaemonSetName()); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: options.ReconcileInterval}, r.stopActuation(ctx, options)
+}
+
+// stopActuation deletes the actuation DaemonSet only once no retained
+// transition depends on it; otherwise the periodic requeue retries.
+func (r *Reconciler) stopActuation(ctx context.Context, options Options) error {
 	safe, err := SafeToStop(ctx, r.Client, options.Namespace)
-	if err != nil {
-		return ctrl.Result{}, err
+	if err != nil || !safe {
+		return err
 	}
-	if !safe {
-		return ctrl.Result{RequeueAfter: options.ReconcileInterval}, nil
-	}
-	if err := r.deleteDaemonSet(ctx, options); err != nil {
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, nil
+	return r.deleteDaemonSet(ctx, options.Namespace, options.actuationDaemonSetName())
 }
 
 func (r *Reconciler) applyDaemonSet(
@@ -124,17 +143,17 @@ func (r *Reconciler) applyDaemonSet(
 	})
 }
 
-func (r *Reconciler) deleteDaemonSet(ctx context.Context, options Options) error {
-	key := types.NamespacedName{Namespace: options.Namespace, Name: options.DaemonSetName}
+func (r *Reconciler) deleteDaemonSet(ctx context.Context, namespace, name string) error {
+	key := types.NamespacedName{Namespace: namespace, Name: name}
 	daemonSet := &appsv1.DaemonSet{}
 	if err := r.Get(ctx, key, daemonSet); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("get NodeActuator DaemonSet %s: %w", key, err)
+		return fmt.Errorf("get DaemonSet %s: %w", key, err)
 	}
 	if err := r.Delete(ctx, daemonSet); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("delete NodeActuator DaemonSet %s: %w", key, err)
+		return fmt.Errorf("delete DaemonSet %s: %w", key, err)
 	}
 	return nil
 }

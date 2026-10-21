@@ -7,7 +7,7 @@ Accepted
 ## Context
 
 CHILL has component image workflows for `chill-operator`,
-`chill-node-discovery`, `chill-node-actuator`, and `chill-profiler`. The public path remains the
+`chill-node-agent`, and `chill-profiler`. The public path remains the
 external release and distribution path.
 
 For day-to-day development, however, Docker Hub is not the fastest feedback
@@ -21,10 +21,10 @@ The repository already has the main integration points needed for a parallel
 internal path:
 
 - `Makefile` image variables: `IMAGE_NAMESPACE`, `OPERATOR_IMG`,
-  `NODE_DISCOVERY_IMG`, `PROFILER_IMG`, `IMAGE_TAG`.
-- Docker build targets for the operator, node-discovery, and Profiler
+  `NODE_AGENT_IMG`, `PROFILER_IMG`, `IMAGE_TAG`.
+- Docker build targets for the operator, node-agent, and Profiler
   components.
-- Helm values for `operator.image.*`, `nodeDiscovery.image.*`, and
+- Helm values for `operator.image.*`, `nodeAgent.image.*`, and
   `profiler.image.*`.
 - A safe install-only Helm smoke path that can install the chart without
   starting CHILL runtime pods.
@@ -64,7 +64,7 @@ Use a private registry namespace for development images, for example:
 
 ```text
 registry.internal/chill/chill-operator
-registry.internal/chill/chill-node-discovery
+registry.internal/chill/chill-node-agent
 registry.internal/chill/chill-profiler
 ```
 
@@ -72,7 +72,7 @@ For the current Kubernetes testbed, use the existing internal registry:
 
 ```text
 155.230.35.213:5000/chill/chill-operator
-155.230.35.213:5000/chill/chill-node-discovery
+155.230.35.213:5000/chill/chill-node-agent
 155.230.35.213:5000/chill/chill-profiler
 ```
 
@@ -130,11 +130,10 @@ make fast-deploy FAST_DEPLOY_ARGS="--components operator --observe summary"
 The wrapper builds the same component matrix:
 
 - `chill-operator` from `build/docker/operator.Dockerfile`
-- `chill-node-discovery` from `build/docker/node-discovery.Dockerfile`
-- `chill-node-actuator` from `build/docker/node-actuator.Dockerfile`
+- `chill-node-agent` from `build/docker/node-agent.Dockerfile`
 
 The default remains `all`, but an explicit component selection may rebuild a
-single component, including `operator`, `node-discovery`, or `node-actuator`.
+single component, including `operator` or `node-agent`.
 The wrapper must resolve and reuse required deployed images that it does not
 rebuild; it must fail before uninstall if one cannot be resolved.
 
@@ -198,12 +197,12 @@ The reset deploy should reuse the existing Helm lifecycle targets:
 
 ```sh
 OPERATOR_IMG=registry.internal/chill/chill-operator:sha-<git-sha> \
-NODE_DISCOVERY_IMG=registry.internal/chill/chill-node-discovery:sha-<git-sha> \
+NODE_AGENT_IMG=registry.internal/chill/chill-node-agent:sha-<git-sha> \
 PROFILER_IMG=registry.internal/chill/chill-profiler:sha-<git-sha> \
 make helm-uninstall
 
 OPERATOR_IMG=registry.internal/chill/chill-operator:sha-<git-sha> \
-NODE_DISCOVERY_IMG=registry.internal/chill/chill-node-discovery:sha-<git-sha> \
+NODE_AGENT_IMG=registry.internal/chill/chill-node-agent:sha-<git-sha> \
 PROFILER_IMG=registry.internal/chill/chill-profiler:sha-<git-sha> \
 make helm-install
 ```
@@ -233,9 +232,9 @@ operator:
   image:
     repository: daclab/chill-operator
 
-nodeDiscovery:
+nodeAgent:
   image:
-    repository: daclab/chill-node-discovery
+    repository: daclab/chill-node-agent
 ```
 
 Internal deployments should override repositories and tags through either:
@@ -248,9 +247,9 @@ Do not hard-code registry credentials in Helm values.
 For the first implementation, prefer node-wide registry authentication and TLS
 trust configuration. That keeps the fast loop simple. The current
 chart/controller contract does not expose `imagePullSecrets` for both the
-operator Deployment and the operator-managed node-discovery DaemonSet. If
+operator Deployment and the operator-managed node-agent DaemonSets. If
 namespace-scoped pull secrets are required, add explicit chart values and
-node-discovery config support as a separate enhancement.
+node-agent config support as a separate enhancement.
 
 ## Registry and Cluster Requirements
 
@@ -340,10 +339,10 @@ Each run should report:
 - Helm revision;
 - `ChillSystem` status;
 - operator Deployment rollout status;
-- node-discovery DaemonSet status;
+- node-agent DaemonSet status;
 - pod status;
 - recent warning events;
-- recent bounded operator and node-discovery logs.
+- recent bounded operator and node-agent logs.
 
 `summary` observation mode reports rollout state, pod image IDs, and warning
 events. `full` mode additionally collects all recent events and bounded logs.

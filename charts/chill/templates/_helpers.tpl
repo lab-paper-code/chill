@@ -117,34 +117,38 @@ app.kubernetes.io/component: operator
 {{- default .Chart.AppVersion .Values.profiler.image.tag -}}
 {{- end -}}
 
-{{- define "chill.nodeActuatorName" -}}
-{{- printf "%s-node-actuator" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "chill.nodeAgentName" -}}
+{{- printf "%s-node-agent" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "chill.nodeActuatorConfigName" -}}
-{{- printf "%s-node-actuator-config" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "chill.nodeAgentActuationName" -}}
+{{- printf "%s-node-agent-actuation" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "chill.nodeActuatorServiceAccountName" -}}
-{{- if .Values.nodeActuator.serviceAccount.create -}}
-{{- default (include "chill.nodeActuatorName" .) .Values.nodeActuator.serviceAccount.name -}}
-{{- else -}}
-{{- default "default" .Values.nodeActuator.serviceAccount.name -}}
-{{- end -}}
+{{- define "chill.nodeAgentConfigName" -}}
+{{- printf "%s-node-agent-config" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "chill.nodeActuatorImageTag" -}}
-{{- default .Chart.AppVersion .Values.nodeActuator.image.tag -}}
+{{- define "chill.nodeAgentSignatureCatalogName" -}}
+{{- printf "%s-node-agent-signatures" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "chill.nodeActuatorImage" -}}
-{{- printf "%s:%s" .Values.nodeActuator.image.repository (include "chill.nodeActuatorImageTag" .) -}}
+{{- define "chill.nodeAgentSignatureKey" -}}
+signatures.yaml
 {{- end -}}
 
-{{- define "chill.nodeActuatorKubernetesAPIServer" -}}
-{{- if .Values.nodeActuator.kubernetesClient.apiServer -}}
-{{- .Values.nodeActuator.kubernetesClient.apiServer -}}
-{{- else if .Values.nodeActuator.kubernetesClient.discoverFromDefaultEndpoint -}}
+{{- define "chill.nodeAgentImageTag" -}}
+{{- default .Chart.AppVersion .Values.nodeAgent.image.tag -}}
+{{- end -}}
+
+{{- define "chill.nodeAgentImage" -}}
+{{- printf "%s:%s" .Values.nodeAgent.image.repository (include "chill.nodeAgentImageTag" .) -}}
+{{- end -}}
+
+{{- define "chill.nodeAgentKubernetesAPIServer" -}}
+{{- if .Values.nodeAgent.kubernetesClient.apiServer -}}
+{{- .Values.nodeAgent.kubernetesClient.apiServer -}}
+{{- else if .Values.nodeAgent.kubernetesClient.discoverFromDefaultEndpoint -}}
 {{- $endpoint := lookup "v1" "Endpoints" "default" "kubernetes" -}}
 {{- if and $endpoint $endpoint.subsets -}}
 {{- $subset := index $endpoint.subsets 0 -}}
@@ -223,14 +227,6 @@ app.kubernetes.io/component: operator
 {{- printf "%s:%s" .Values.uninstallCleanup.image.repository .Values.uninstallCleanup.image.tag -}}
 {{- end -}}
 
-{{- define "chill.nodeDiscoveryServiceAccountName" -}}
-{{- if .Values.nodeDiscovery.serviceAccount.create -}}
-{{- default (printf "%s-node-discovery" (include "chill.fullname" .)) .Values.nodeDiscovery.serviceAccount.name -}}
-{{- else -}}
-{{- default "default" .Values.nodeDiscovery.serviceAccount.name -}}
-{{- end -}}
-{{- end -}}
-
 {{- define "chill.discoveryCatalogName" -}}
 {{- default (printf "%s-device-catalog" (include "chill.fullname" .)) .Values.discovery.catalog.name -}}
 {{- end -}}
@@ -243,48 +239,7 @@ app.kubernetes.io/component: operator
 {{- default .Values.nodeSelection.labelSelector .Values.discovery.nodeLabelSelector -}}
 {{- end -}}
 
-{{- define "chill.nodeDiscoverySignatureCatalogName" -}}
-{{- printf "%s-node-discovery-signatures" (include "chill.fullname" .) -}}
-{{- end -}}
-
-{{- define "chill.nodeDiscoveryConfigName" -}}
-{{- printf "%s-node-discovery-config" (include "chill.fullname" .) -}}
-{{- end -}}
-
 {{- define "chill.systemName" -}}
 {{- default .Release.Name .Values.system.name -}}
 {{- end -}}
 
-{{- define "chill.nodeDiscoverySignatureKey" -}}
-signatures.yaml
-{{- end -}}
-
-{{- define "chill.nodeDiscoveryImage" -}}
-{{- printf "%s:%s" .Values.nodeDiscovery.image.repository (include "chill.nodeDiscoveryImageTag" .) -}}
-{{- end -}}
-
-{{- define "chill.nodeDiscoveryImageTag" -}}
-{{- default .Chart.AppVersion .Values.nodeDiscovery.image.tag -}}
-{{- end -}}
-
-{{- define "chill.nodeDiscoveryImagePullPolicy" -}}
-{{- .Values.nodeDiscovery.image.pullPolicy -}}
-{{- end -}}
-
-{{- define "chill.nodeDiscoveryKubernetesAPIServer" -}}
-{{- if .Values.nodeDiscovery.kubernetesClient.apiServer -}}
-{{- .Values.nodeDiscovery.kubernetesClient.apiServer -}}
-{{- else if .Values.nodeDiscovery.kubernetesClient.discoverFromDefaultEndpoint -}}
-{{- $endpoint := lookup "v1" "Endpoints" "default" "kubernetes" -}}
-{{- if and $endpoint $endpoint.subsets -}}
-{{- $subset := index $endpoint.subsets 0 -}}
-{{- if and $subset.addresses $subset.ports -}}
-{{- $address := index $subset.addresses 0 -}}
-{{- $port := index $subset.ports 0 -}}
-{{- if and $address.ip $port.port -}}
-{{- printf "https://%s:%v" $address.ip $port.port -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}

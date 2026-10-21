@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -22,49 +21,16 @@ import (
 	"github.com/lab-paper-code/chill/internal/nodeprobe"
 )
 
-func main() {
-	var nodeName string
-	var systemName string
-	var hostRoot string
-	var signatureFile string
-	var interval time.Duration
-	var once bool
-	var kubeAPIServer string
-	var kubeAPITokenFile string
-	var kubeAPICAFile string
-
-	flag.StringVar(&nodeName, "node-name", os.Getenv("NODE_NAME"), "Kubernetes Node name to patch.")
-	flag.StringVar(
-		&systemName,
-		"system-name",
-		os.Getenv("CHILL_SYSTEM_NAME"),
-		"ChillSystem name that owns this node-discovery instance.",
-	)
-	flag.StringVar(&hostRoot, "host-root", "/host", "Root path containing read-only host mounts.")
-	flag.StringVar(
-		&signatureFile,
-		"signature-file",
-		"/etc/chill/node-discovery/signatures.yaml",
-		"YAML file containing node discovery signatures.",
-	)
-	flag.DurationVar(&interval, "interval", 10*time.Second, "How often to refresh node discovery metadata.")
-	flag.BoolVar(&once, "once", false, "Run one discovery pass and exit.")
-	flag.StringVar(&kubeAPIServer, "kube-api-server", os.Getenv("CHILL_KUBE_API_SERVER"),
-		"Kubernetes API server URL. Leave empty to use standard in-cluster config.")
-	flag.StringVar(&kubeAPITokenFile, "kube-api-token-file", kubeconfig.DefaultServiceAccountTokenFile,
-		"Path to the service account bearer token file.")
-	flag.StringVar(&kubeAPICAFile, "kube-api-ca-file", kubeconfig.DefaultServiceAccountCAFile,
-		"Path to the Kubernetes API CA file.")
-	flag.Parse()
-
-	if nodeName == "" {
+// runDiscovery publishes the Node's discovery metadata every interval and
+// patches only on change.
+func runDiscovery(opts options) {
+	if opts.nodeName == "" {
 		log.Fatal("node name is required; set NODE_NAME or --node-name")
 	}
-
 	config, err := kubeconfig.BuildConfig(kubeconfig.Options{
-		APIServer: kubeAPIServer,
-		TokenFile: kubeAPITokenFile,
-		CAFile:    kubeAPICAFile,
+		APIServer: opts.kubeAPIServer,
+		TokenFile: opts.kubeAPITokenFile,
+		CAFile:    opts.kubeAPICAFile,
 	})
 	if err != nil {
 		log.Fatalf("load Kubernetes client config: %v", err)
@@ -80,13 +46,13 @@ func main() {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := runOnce(ctx, clientset, nodeName, systemName, hostRoot, signatureFile); err != nil {
+		if err := runOnce(ctx, clientset, opts.nodeName, opts.systemName, opts.hostRoot, opts.signatureFile); err != nil {
 			log.Printf("node discovery failed: %v", err)
 		}
-		if once {
+		if opts.once {
 			return
 		}
-		timer := time.NewTimer(interval)
+		timer := time.NewTimer(opts.interval)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {

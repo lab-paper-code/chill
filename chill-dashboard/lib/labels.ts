@@ -145,17 +145,17 @@ const guides: Record<string, Guide> = {
   ComponentsDisabled: ["관리하는 구성요소를 모두 꺼 두었어요.", "필요한 구성요소를 시스템 설정에서 켜 주세요."],
   ComponentsNotReady: ["준비되지 않은 구성요소가 있어요.", "아래 구성요소별 상태를 확인해 주세요."],
   ObservationFailed: ["구성요소 상태를 확인하지 못했어요.", "잠시 후 다시 확인해 주세요."],
-  NodeDiscoveryMissing: ["장비 탐색기가 설치되어 있지 않아요.", "설치 상태를 확인해 주세요."],
-  NodeDiscoveryPending: ["장비 탐색기를 실행할 장비가 아직 없어요.", "장비 연결 상태를 확인해 주세요."],
-  NodeDiscoveryProgressing: ["장비 탐색기를 배포하고 있어요.", "잠시 후 다시 확인해 주세요."],
-  NodeDiscoveryDegraded: ["장비 탐색기에 문제가 있어요.", "원본 보기에서 이유를 확인해 주세요."],
+  NodeAgentMissing: ["장비 탐색기가 설치되어 있지 않아요.", "설치 상태를 확인해 주세요."],
+  NodeAgentPending: ["장비 탐색기를 실행할 장비가 아직 없어요.", "장비 연결 상태를 확인해 주세요."],
+  NodeAgentProgressing: ["장비 탐색기를 배포하고 있어요.", "잠시 후 다시 확인해 주세요."],
+  NodeAgentDegraded: ["장비 탐색기에 문제가 있어요.", "원본 보기에서 이유를 확인해 주세요."],
   ProfilerMissing: ["측정기가 설치되어 있지 않아요.", "설치 상태를 확인해 주세요."],
   ProfilerProgressing: ["측정기를 배포하고 있어요.", "잠시 후 다시 확인해 주세요."],
   ProfilerDegraded: ["측정기에 문제가 있어요.", "원본 보기에서 이유를 확인해 주세요."],
-  NodeActuatorMissing: ["전력 모드 제어기가 설치되어 있지 않아요.", "설치 상태를 확인해 주세요."],
-  NodeActuatorPending: ["전력 모드 제어기를 실행할 장비가 아직 없어요.", "장비 연결 상태를 확인해 주세요."],
-  NodeActuatorProgressing: ["전력 모드 제어기를 배포하고 있어요.", "잠시 후 다시 확인해 주세요."],
-  NodeActuatorDegraded: ["전력 모드 제어기에 문제가 있어요.", "원본 보기에서 이유를 확인해 주세요."],
+  NodeAgentActuationMissing: ["전력 모드 제어기가 설치되어 있지 않아요.", "설치 상태를 확인해 주세요."],
+  NodeAgentActuationPending: ["전력 모드 제어기를 실행할 장비가 아직 없어요.", "장비 연결 상태를 확인해 주세요."],
+  NodeAgentActuationProgressing: ["전력 모드 제어기를 배포하고 있어요.", "잠시 후 다시 확인해 주세요."],
+  NodeAgentActuationDegraded: ["전력 모드 제어기에 문제가 있어요.", "원본 보기에서 이유를 확인해 주세요."],
   EvidenceStoreMissing: ["측정 기록 저장소가 설치되어 있지 않아요.", "설치 상태를 확인해 주세요."],
   EvidenceStoreProgressing: ["측정 기록 저장소를 준비하고 있어요.", "잠시 후 다시 확인해 주세요."],
   EvidenceStoreDegraded: ["측정 기록 저장소에 문제가 있어요.", "원본 보기에서 이유를 확인해 주세요."],
@@ -172,16 +172,16 @@ const labels: Record<string, Label> = {
 
   // ChillSystem healthy reasons: internal/operator/system/status.go
   ComponentsAvailable: ["켜 둔 구성요소가 모두 정상이에요."],
-  NodeDiscoveryReady: ["장비 탐색기가 정상이에요."],
+  NodeAgentReady: ["장비 탐색기가 정상이에요."],
   ProfilerReady: ["측정기가 정상이에요."],
-  NodeActuatorReady: ["전력 모드 제어기가 정상이에요."],
+  NodeAgentActuationReady: ["전력 모드 제어기가 정상이에요."],
   EvidenceStoreReady: ["측정 기록 저장소가 정상이에요."],
 
   // ChillSystem condition types as component names: api/v1alpha1/chillsystem_types.go, used by status.go.
   // The overall "Ready" type shares its key with the workload Ready state above.
-  NodeDiscoveryAvailable: ["장비 탐색기"],
+  NodeAgentAvailable: ["장비 탐색기"],
   ProfilerAvailable: ["측정기"],
-  NodeActuatorAvailable: ["전력 모드 제어기"],
+  NodeAgentActuationAvailable: ["전력 모드 제어기"],
   EvidenceStoreAvailable: ["측정 기록 저장소"],
 
   // Runtime family, backends and providers: internal/modelcatalog/catalog.go, Passport measurement.runtime.provider

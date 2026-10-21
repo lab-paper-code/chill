@@ -8,12 +8,12 @@ import (
 const (
 	// ChillSystemConditionReady reports whether the CHILL installation is usable.
 	ChillSystemConditionReady = "Ready"
-	// ChillSystemConditionNodeDiscoveryAvailable reports node-discovery workload availability.
-	ChillSystemConditionNodeDiscoveryAvailable = "NodeDiscoveryAvailable"
+	// ChillSystemConditionNodeAgentAvailable reports node-agent DaemonSet availability.
+	ChillSystemConditionNodeAgentAvailable = "NodeAgentAvailable"
 	// ChillSystemConditionProfilerAvailable reports Profiler controller workload availability.
 	ChillSystemConditionProfilerAvailable = "ProfilerAvailable"
-	// ChillSystemConditionNodeActuatorAvailable reports NodeActuator workload availability.
-	ChillSystemConditionNodeActuatorAvailable = "NodeActuatorAvailable"
+	// ChillSystemConditionNodeAgentActuationAvailable reports node-agent actuation DaemonSet availability.
+	ChillSystemConditionNodeAgentActuationAvailable = "NodeAgentActuationAvailable"
 	// ChillSystemConditionEvidenceStoreAvailable reports immutable evidence-store availability.
 	ChillSystemConditionEvidenceStoreAvailable = "EvidenceStoreAvailable"
 )
@@ -32,9 +32,9 @@ type ChillSystemSpec struct {
 	// +optional
 	ManagementNamespace string `json:"managementNamespace,omitempty"`
 
-	// NodeDiscovery configures the operator-managed node-discovery DaemonSet.
+	// NodeAgent configures the operator-managed node agent DaemonSets.
 	// +optional
-	NodeDiscovery ChillNodeDiscoverySpec `json:"nodeDiscovery,omitempty"`
+	NodeAgent ChillNodeAgentSpec `json:"nodeAgent,omitempty"`
 
 	// DeviceDiscovery configures node-based DeviceClass discovery.
 	// +optional
@@ -44,23 +44,25 @@ type ChillSystemSpec struct {
 	// +optional
 	Profiler ChillProfilerSpec `json:"profiler,omitempty"`
 
-	// NodeActuator configures the operator-managed per-Node actuator.
-	// +optional
-	NodeActuator ChillNodeActuatorSpec `json:"nodeActuator,omitempty"`
-
 	// EvidenceStore configures the operator-managed immutable evidence store.
 	// +optional
 	EvidenceStore ChillEvidenceStoreSpec `json:"evidenceStore,omitempty"`
 }
 
-// ChillNodeActuatorSpec configures the NodeActuator DaemonSet owned by a ChillSystem.
-// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || (has(self.configRef) && self.configRef.name.size() > 0)",message="configRef.name is required when nodeActuator is enabled"
-type ChillNodeActuatorSpec struct {
-	// Enabled controls whether the operator should run the per-Node actuator.
+// ChillNodeAgentSpec configures the node agent DaemonSets owned by a ChillSystem.
+// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || (has(self.configRef) && self.configRef.name.size() > 0)",message="configRef.name is required when nodeAgent is enabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.actuation) || !self.actuation || (has(self.enabled) && self.enabled)",message="actuation requires nodeAgent to be enabled"
+type ChillNodeAgentSpec struct {
+	// Enabled controls whether the operator should run the node agent on every Node.
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// ConfigRef references the NodeActuator configuration in the CHILL management namespace.
+	// Actuation controls whether the operator should run the node agent actuation
+	// DaemonSet on Nodes of the DeviceClasses named by the actuation policies.
+	// +optional
+	Actuation bool `json:"actuation,omitempty"`
+
+	// ConfigRef references the node agent configuration in the CHILL management namespace.
 	// +optional
 	ConfigRef corev1.LocalObjectReference `json:"configRef,omitempty"`
 }
@@ -86,25 +88,6 @@ type ChillProfilerSpec struct {
 	// ConfigRef references the Profiler workload configuration in the CHILL release namespace.
 	// +optional
 	ConfigRef corev1.LocalObjectReference `json:"configRef,omitempty"`
-}
-
-// ChillNodeDiscoverySpec configures the node-discovery DaemonSet owned by a ChillSystem.
-type ChillNodeDiscoverySpec struct {
-	// Enabled controls whether the operator should run node-discovery.
-	// +optional
-	Enabled bool `json:"enabled,omitempty"`
-
-	// DaemonSetName overrides the generated node-discovery DaemonSet name.
-	// +optional
-	DaemonSetName string `json:"daemonSetName,omitempty"`
-
-	// ConfigMapName overrides the generated node-discovery config ConfigMap name.
-	// +optional
-	ConfigMapName string `json:"configMapName,omitempty"`
-
-	// ConfigMapKey is the data key containing node-discovery config.
-	// +optional
-	ConfigMapKey string `json:"configMapKey,omitempty"`
 }
 
 // ChillDeviceDiscoverySpec configures DeviceClass discovery from Kubernetes Nodes.

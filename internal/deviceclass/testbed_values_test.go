@@ -10,7 +10,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func TestDefaultDeviceCatalogMatchesNodeDiscoverySignatures(t *testing.T) {
+func TestDefaultDeviceCatalogMatchesNodeAgentSignatures(t *testing.T) {
 	raw, err := os.ReadFile("../../charts/chill/values.yaml")
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
@@ -20,7 +20,7 @@ func TestDefaultDeviceCatalogMatchesNodeDiscoverySignatures(t *testing.T) {
 		Discovery struct {
 			Catalog Catalog `json:"catalog"`
 		} `json:"discovery"`
-		NodeDiscovery nodeprobe.SignatureCatalog `json:"nodeDiscovery"`
+		NodeAgent nodeprobe.SignatureCatalog `json:"nodeAgent"`
 	}
 	if err := yaml.Unmarshal(raw, &values); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
@@ -29,18 +29,18 @@ func TestDefaultDeviceCatalogMatchesNodeDiscoverySignatures(t *testing.T) {
 	if len(values.Discovery.Catalog.Classes) == 0 {
 		t.Fatal("default discovery catalog has no classes")
 	}
-	if len(values.NodeDiscovery.Signatures) == 0 {
-		t.Fatal("default node discovery has no signatures")
+	if len(values.NodeAgent.Signatures) == 0 {
+		t.Fatal("default node agent has no signatures")
 	}
 
-	signatureLabels := make([]map[string]string, 0, len(values.NodeDiscovery.Signatures))
-	for _, signature := range values.NodeDiscovery.Signatures {
+	signatureLabels := make([]map[string]string, 0, len(values.NodeAgent.Signatures))
+	for _, signature := range values.NodeAgent.Signatures {
 		signatureLabels = append(signatureLabels, signature.Facts.Labels())
 	}
 
 	for _, class := range values.Discovery.Catalog.Classes {
 		if !hasMatchingSignature(class.MatchLabels, signatureLabels) {
-			t.Errorf("catalog class %q cannot be reached by any nodeDiscovery.signature facts", class.Name)
+			t.Errorf("catalog class %q cannot be reached by any nodeAgent.signature facts", class.Name)
 		}
 	}
 
@@ -55,7 +55,7 @@ func TestDefaultDeviceCatalogMatchesNodeDiscoverySignatures(t *testing.T) {
 			continue
 		}
 		serverClassFound = true
-		for _, signature := range values.NodeDiscovery.Signatures {
+		for _, signature := range values.NodeAgent.Signatures {
 			if matchLabels(signature.Facts.Labels(), class.MatchLabels) {
 				if _, ok := serverModels[signature.Facts.Model]; ok {
 					serverModels[signature.Facts.Model] = true

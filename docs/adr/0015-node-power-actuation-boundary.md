@@ -84,7 +84,7 @@ The NodeActuator also owns the host boot-ordering prerequisite of Jetson
 power modes. A mode that sets GPU power-gating masks applies at boot only when
 `nvpmodel.service` runs before `nvidia-cdi-refresh.service`
 (nvidia-container-toolkit), whose `nvidia-smi` call creates the GPU golden
-context and fixes the masks. With `nodeActuator.jetsonNVPModel.ensureBootOrdering`
+context and fixes the masks. With `nodeAgent.actuation.jetsonNVPModel.ensureBootOrdering`
 (default `true`), an init container of the actuator Pod, using the actuator
 image and holding zero capabilities, ensures exactly one file:
 `/etc/systemd/system/nvidia-cdi-refresh.service.d/10-after-nvpmodel.conf`
@@ -98,8 +98,10 @@ container performs no `daemon-reload`, unit restart, or Node restart.
 
 ## Consequences
 
-Power actuation adds a separate operand boundary; it is not folded into the
-Operator, Profiler Deployment, node-discovery DaemonSet, or measurement Job.
+Power actuation adds a separate operand boundary: the `chill-node-agent-actuation`
+DaemonSet with its own ServiceAccount. It is not folded into the Operator,
+Profiler Deployment, the unprivileged `chill-node-agent` DaemonSet, or
+measurement Job.
 The eventual production package and its allowed imports must be mapped in
 `.go-arch-lint.yml` in the same implementation change.
 
