@@ -450,6 +450,8 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 		reason = "NodeUnavailable"
 	case node.Measurement:
 		reason = "MeasurementNode"
+	case slices.Contains(node.Reasons, NodeInstanceUnavailable):
+		reason = NodeInstanceUnavailable
 	case slices.Contains(node.Reasons, NodePlacementInventoryMissing):
 		reason = NodePlacementInventoryMissing
 	case slices.Contains(node.Reasons, NodePlacementBudgetUnavailable):

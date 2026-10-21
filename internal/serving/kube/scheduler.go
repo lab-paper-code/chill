@@ -569,7 +569,7 @@ func (c *SchedulerController) captureNodePower(ctx context.Context, sn *serving.
 	}
 	if sn.PowerMode == "" {
 		actual := OperationState{Node: sn.Node}
-		if c.operations.captureFixedPower(ctx, &actual, n, acts.Items) == nil {
+		if c.operations.captureClassPower(ctx, &actual, n, acts.Items) == nil {
 			sn.PowerMode = actual.PowerMode
 		}
 	}
@@ -595,7 +595,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		if isServing && p.Labels["app.kubernetes.io/component"] == servingInstanceComponent {
 			profile := profileByID[state.Profile]
 			if profile == nil || state.Native == nil {
-				s.Reasons = append(s.Reasons, p.Name+": actual native/profile snapshot unavailable")
+				sn.Reasons = appendReason(sn.Reasons, serving.NodeInstanceUnavailable)
 				continue
 			}
 			m := state.Native.Metadata

@@ -154,6 +154,26 @@ func TestObserverPowerUsesLatestActualReadBack(t *testing.T) {
 	if err := confirmedPower(node, &class, "mode", []edgev1alpha1.NodeActuation{record}); err == nil {
 		t.Fatal("desired target hid an actual mode mismatch")
 	}
+	// After a reboot interrupts a switch, the agent's read-back of the host decides.
+	raw, err := json.Marshal(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Annotations[chillmeta.PowerActuator] = string(raw)
+	failed := record.DeepCopy()
+	failed.Status.Phase = edgev1alpha1.NodeActuationPhaseFailed
+	for name, records := range map[string][]edgev1alpha1.NodeActuation{"no handoff": nil, "failed handoff": {*failed}} {
+		if err := confirmedPower(node, &class, "mode", records); err != nil {
+			t.Fatalf("%s: read-back not used: %v", name, err)
+		}
+	}
+	if err := confirmedPower(node, &class, "mode", []edgev1alpha1.NodeActuation{*pending}); err == nil {
+		t.Fatal("read-back hid a switch in progress")
+	}
+	node.Annotations[chillmeta.PowerActuator] = `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":0}}`
+	if err := confirmedPower(node, &class, "mode", []edgev1alpha1.NodeActuation{*failed}); err == nil {
+		t.Fatal("read-back of another mode confirmed this one")
+	}
 }
 
 func newTestObserver(t *testing.T, objects ...client.Object) *Observer {

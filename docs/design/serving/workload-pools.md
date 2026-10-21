@@ -124,6 +124,7 @@ runner 자동 생성을 더한다.
 | `PlacementInventoryMissing` | online CPU 목록이 없거나 읽을 수 없음, 측정 GPU가 allocatable보다 많음, 예약이 inventory 밖 | 배치 option에서 빠짐. 전력과 에너지는 계속 다룸 |
 | `PlacementBudgetUnavailable` | CHILL이 배치하지 않은 Pod의 GPU 소유를 확인할 수 없거나 그 CPU 요청이 예약을 넘음 | 같음 |
 | `PowerModeUnavailable` | 현재 모드를 모르거나, 요청 가능 모드(DeviceClass의 비고정 모드 중 actuation policy가 있는 모드)가 없거나, 가장 낮은 모드가 요청 가능 모드가 아님 | 현재 모드 유지 |
+| `InstanceUnavailable` | 노드의 CHILL serving 인스턴스의 native나 profile 상태를 읽지 못함 | 그 노드는 배치, 내림, 전력 변경에서 빠지고 다른 노드는 계속 계획한다 |
 
 현재 CPU inventory 부족은 snapshot 사유가 되어 모든 후보를 평가 대기로 만들고(`kube/scheduler.go:543-546`),
 `captureNodePods`는 CHILL이 배치하지 않은 Pod 때문에 `SchedulerNode.Ready=false`로 바꾼다(`kube/scheduler.go:699-722`).

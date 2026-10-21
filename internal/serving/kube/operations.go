@@ -213,7 +213,7 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 		s.States = append(s.States, serving.SchedulerInstanceState(serving.SchedulerInstance{Profile: &serving.Profile{ID: state.Metadata.ProfileID}, Allocation: allocation}))
 	}
 	if s.PowerMode == "" {
-		if err := o.captureFixedPower(ctx, &s, current, acts.Items); err != nil {
+		if err := o.captureClassPower(ctx, &s, current, acts.Items); err != nil {
 			return s, err
 		}
 	}
@@ -221,7 +221,11 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 	slices.Sort(s.States)
 	return s, nil
 }
-func (o *Operations) captureFixedPower(ctx context.Context, s *OperationState, current *core.Node, acts []edge.NodeActuation) error {
+
+// captureClassPower finds the Node's mode from its DeviceClass when no Ready
+// NodeActuation names it: a Fixed mode, or the mode whose actuator the
+// actuation agent read back from the host (confirmedPower).
+func (o *Operations) captureClassPower(ctx context.Context, s *OperationState, current *core.Node, acts []edge.NodeActuation) error {
 	if s.PowerMode == "" {
 		var classes edge.DeviceClassList
 		if err := o.store.client.List(ctx, &classes); err != nil {
@@ -230,9 +234,9 @@ func (o *Operations) captureFixedPower(ctx context.Context, s *OperationState, c
 		for i := range classes.Items {
 			class := &classes.Items[i]
 			for _, mode := range class.Spec.PowerModes {
-				if mode.Actuator.Kind == edge.PowerModeActuatorFixed && class.Spec.Architecture == current.Status.NodeInfo.Architecture && nodeClassMatches(current, class) && confirmedPower(current, class, mode.Name, acts) == nil {
+				if class.Spec.Architecture == current.Status.NodeInfo.Architecture && nodeClassMatches(current, class) && confirmedPower(current, class, mode.Name, acts) == nil {
 					if s.PowerMode != "" && s.PowerMode != mode.Name {
-						return errors.New("ambiguous fixed power mode")
+						return errors.New("ambiguous class power mode")
 					}
 					s.PowerMode = mode.Name
 				}

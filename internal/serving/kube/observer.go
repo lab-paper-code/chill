@@ -18,6 +18,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -518,8 +519,10 @@ func sharedProjection(pod *corev1.Pod, init, runtime corev1.Container, initPath,
 	return false
 }
 
-// Fixed is an immutable non-actuated class fact. Mutable state comes only from
-// the latest NodeActuator handoff's independent read-back, never its spec/labels.
+// Fixed is an immutable non-actuated class fact. Mutable state comes from the
+// latest NodeActuator handoff's independent read-back. When there is no handoff
+// or the latest one failed (a reboot can interrupt it), the actuation agent's
+// periodic read-back of the host, published on the Node, decides.
 func confirmedPower(node *corev1.Node, class *edgev1alpha1.DeviceClass, name string, records []edgev1alpha1.NodeActuation) error {
 	mode, err := deviceclass.FindPowerMode(class.Spec.PowerModes, name)
 	if err != nil {
@@ -543,6 +546,12 @@ func confirmedPower(node *corev1.Node, class *edgev1alpha1.DeviceClass, name str
 		}
 		return errors.New("Fixed class has conflicting mutable actuation evidence")
 	}
+	if (latest == nil || latest.Status.Phase == edgev1alpha1.NodeActuationPhaseFailed) && readBackActuator(node) != nil {
+		if !reflect.DeepEqual(*readBackActuator(node), mode.Actuator) {
+			return errors.New("Node read-back power actuator differs from measured condition")
+		}
+		return nil
+	}
 	if latest == nil || latest.Spec.DeviceClass != class.Name || latest.Status.ObservedGeneration != latest.Generation || latest.Status.Phase != edgev1alpha1.NodeActuationPhaseReady || latest.Status.VerifiedAt == nil || latest.Status.ReadyAt == nil || latest.Status.TargetObservation == nil {
 		return errors.New("current power state unconfirmed by NodeActuator")
 	}
@@ -551,6 +560,20 @@ func confirmedPower(node *corev1.Node, class *edgev1alpha1.DeviceClass, name str
 		return errors.New("NodeActuator actual power read-back differs from measured condition")
 	}
 	return nil
+}
+
+// readBackActuator is the actuator target the actuation agent last read back
+// from the host, or nil when the Node carries none.
+func readBackActuator(node *corev1.Node) *edgev1alpha1.PowerModeActuator {
+	raw, ok := node.Annotations[chillmeta.PowerActuator]
+	if !ok {
+		return nil
+	}
+	var actuator edgev1alpha1.PowerModeActuator
+	if json.Unmarshal([]byte(raw), &actuator) != nil {
+		return nil
+	}
+	return &actuator
 }
 
 func (o *Observer) observeTermination(pod *corev1.Pod) {

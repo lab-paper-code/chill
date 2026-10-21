@@ -193,6 +193,8 @@ deps:
     mayDependOn:
       - api
       - node-actuator-core
+      # The read-back annotation key.
+      - platform-core
   node-actuator-jetson:
     mayDependOn:
       - node-actuator-core

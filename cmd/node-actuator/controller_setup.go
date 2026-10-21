@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	actuatorcontroller "github.com/lab-paper-code/chill/internal/nodeactuator/controller"
@@ -47,5 +48,8 @@ func setupTransitionController(ctx context.Context, manager ctrl.Manager, opts o
 	if err := reconciler.SetupWithManager(manager); err != nil {
 		return fmt.Errorf("set up NodeActuation reconciler: %w", err)
 	}
-	return nil
+	return manager.Add(actuatorcontroller.ReadBackPublisher{
+		Client: manager.GetClient(), Host: hostActuator, Node: node.Name,
+		Interval: 10 * time.Second, Timeout: opts.jetsonTimeout,
+	})
 }

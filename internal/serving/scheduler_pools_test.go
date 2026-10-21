@@ -126,7 +126,7 @@ func TestSchedulerDecisionRecordsWorkloadStates(t *testing.T) {
 
 // §9.1 전체 POOL: Nodes lacking configuration stay with their reasons.
 func TestSchedulerNodeReasonsKeepNodeWithoutPlacement(t *testing.T) {
-	for _, reason := range []string{"", NodePlacementInventoryMissing, NodePowerModeUnavailable} {
+	for _, reason := range []string{"", NodePlacementInventoryMissing, NodePowerModeUnavailable, NodeInstanceUnavailable} {
 		t.Run("reason="+reason, func(t *testing.T) {
 			s, snap := schedulerFixture()
 			node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
@@ -141,16 +141,21 @@ func TestSchedulerNodeReasonsKeepNodeWithoutPlacement(t *testing.T) {
 				t.Fatalf("Node reasons lost: %+v", d.Keep.Nodes[1])
 			}
 			lowered := slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == node && a.Fixed })
-			if reason == NodePowerModeUnavailable && (lowered || d.Keep.Nodes[1].PowerMode != "fixed") {
-				t.Fatalf("PowerModeUnavailable Node changed mode: %+v", d.Keep)
+			kept := reason == NodePowerModeUnavailable || reason == NodeInstanceUnavailable
+			if kept && (lowered || d.Keep.Nodes[1].PowerMode != "fixed") {
+				t.Fatalf("%s Node changed mode: %+v", reason, d.Keep)
 			}
-			if reason != NodePowerModeUnavailable && (!lowered || d.Keep.Nodes[1].PowerMode != schedulerTestEcoMode) {
+			if !kept && (!lowered || d.Keep.Nodes[1].PowerMode != schedulerTestEcoMode) {
 				t.Fatalf("available Node was not lowered: %+v", d.Keep)
 			}
 			if placed := poolsEligibleChange(d, node); placed != (reason == "") {
 				t.Fatalf("placed=%v with reason %q: %+v", placed, reason, poolsPlans(d, node))
 			}
-			if reason == NodePlacementInventoryMissing && !slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return p.Reason == reason }) {
+			// The other Nodes are still planned: one unreadable instance never makes the decision wait.
+			if reason == NodeInstanceUnavailable && d.Keep.Status == schedulerStatusPending {
+				t.Fatalf("one Node's unreadable instance made the decision Pending: %+v", d.Keep.Reasons)
+			}
+			if (reason == NodePlacementInventoryMissing || reason == NodeInstanceUnavailable) && !slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return p.Reason == reason }) {
 				t.Fatalf("excluded Node plan lacks its reason: %+v", poolsPlans(d, node))
 			}
 		})

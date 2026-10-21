@@ -15,6 +15,9 @@ const (
 	DeviceModelRaw  = Prefix + "/device-model-raw"
 	// OnlineCPUs is the kernel cpuset list of the Node's online CPUs.
 	OnlineCPUs = Prefix + "/cpus"
+	// PowerActuator is the actuator target (PowerModeActuator JSON) the
+	// actuation agent last read back from the host.
+	PowerActuator = Prefix + "/power-actuator"
 
 	NodeDiscoveryResult        = Prefix + "/node-discovery-result"
 	NodeDiscoveryReason        = Prefix + "/node-discovery-reason"

@@ -88,6 +88,10 @@ const (
 	NodePlacementInventoryMissing  = "PlacementInventoryMissing"
 	NodePlacementBudgetUnavailable = "PlacementBudgetUnavailable"
 	NodePowerModeUnavailable       = "PowerModeUnavailable"
+	// NodeInstanceUnavailable: a CHILL serving instance on the Node has no
+	// readable native or profile state. The Node keeps its state; other Nodes
+	// are still planned.
+	NodeInstanceUnavailable = "InstanceUnavailable"
 )
 
 // SchedulerNode is one Node of the entire POOL. Measurement marks the

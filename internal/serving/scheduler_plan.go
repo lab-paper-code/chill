@@ -55,6 +55,7 @@ func SchedulerLowestMode(baselines []NodeBaseline, node NodeReference) string {
 // a CHILL serving instance whose power mode can change.
 func schedulerAvailable(snapshot SchedulerSnapshot, n SchedulerNode) bool {
 	return n.Ready && !n.Measurement && !slices.Contains(n.Reasons, NodePowerModeUnavailable) &&
+		!slices.Contains(n.Reasons, NodeInstanceUnavailable) &&
 		!slices.ContainsFunc(snapshot.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node })
 }
 
