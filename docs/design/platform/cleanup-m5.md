@@ -9,7 +9,7 @@
 | 1 | 측정 kind 여섯(BEO, MLIB, ProfilingRun, PMTC, opcost, occupancy) | 각자 유지(D1) | 없음 | - |
 | 2 | `DeviceProfile`, `ClusterEnergyModel` | 삭제(D1) | object 0개 | 3 |
 | 3 | NodeActuation CRD | Node label과 generation으로 교체(D2) | 기록에 선택 필드, NodeActuation object 삭제 | 5-7 |
-| 4 | Go 바이너리와 runtime image | worker image로 분리, 기존 runtime image 유지(D4) | 기록에 선택 필드 | 8 |
+| 4 | Go 바이너리와 runtime image | worker image 분리와 `workerImage` 기록(D4)은 worker를 고칠 때 그 수정 앞에서 한다 | 기록에 선택 필드 | 8 |
 | 5 | routing annotation 없음 fallback, `SharedInstance`, `InstanceShared` | 삭제 | Pod annotation만 바뀐다 | 4 |
 | 6 | Runtime 다중 UID binding, Dashboard 서비스 표시 | 유지 | 없음 | - |
 | 7 | 수동 prepare와 remove, `staticRouting` | 유지(D3). 측정 전용 경로는 측정 API가 지운다 | 없음 | 측정 API 5, 8 |
@@ -94,11 +94,12 @@ ADR 0020의 구간(fence, read-back, settling 시작, Ready)은 같은 네 시�
 ## 4. Go 바이너리와 runtime image
 
 - `build/docker/firstfloor.Dockerfile:9-14,71-74`가 `serving-worker`, materializer, `measurement-worker`를 runtime image에 넣는다. profile의 실행 상태 identity가 runtime image를 담고(`profiler/projection/identity.go:44,50`), 인스턴스는 profile의 runtime image로 뜬다(`kube/operations.go:412-413`). pools 배포에서는 `serving-worker`의 요청 형식 변경으로 BEO 18개의 profile을 다시 쟀다. 클러스터 v1.31.13의 ImageVolume은 alpha라 꺼져 있다.
-- 새 image `chill-worker`: busybox base, `/opt/chill/bin`에 `serving-worker`와 `measurement-worker`, Makefile `docker-build-worker`(multi-arch). 인스턴스 Pod와 ProfilingRun 실행 Job의 init container `chill-bin`이 emptyDir로 복사하고 runtime container가 `/opt/chill/bin`에 mount한다(`execution_job_spec.go:211`의 명령은 `/opt/chill/bin/measurement-worker`). profile init container(`--materialize-profile`)는 ChillServer image로 돈다 `[추론: Python을 쓰지 않는 Go 단계]`. serving source 확인(`kube/observer.go:445,465`)은 init container 둘과 각 image를 받는다.
+- 새 image `chill-worker`: busybox base, `/opt/chill/bin`에 `serving-worker`와 `measurement-worker`, Makefile `docker-build-worker`(multi-arch). 인스턴스 Pod와 ProfilingRun 실행 Job의 init container `chill-bin`이 emptyDir로 복사하고 runtime container가 `/opt/chill/bin`에 mount한다. live runtime image의 `measurement-worker`는 `/measurement-worker`(루트)에 있으므로 실행 Job 명령(`execution_job_spec.go:210-211`)을 `/opt/chill/bin/measurement-worker`로 바꾼다. profile init container(`--materialize-profile`)는 mount 없이 runtime image로 돌고 materializer는 runtime image의 것을 쓴다. serving source 확인(`kube/observer.go:458,460,480`)은 init container `chill-bin`과 그 image를 더 받는다.
 - mount가 image 안의 바이너리를 가리므로 live runtime image(`pools-ed628c8-*`)를 그대로 쓰고 기존 profile identity가 같다. `firstfloor.Dockerfile`은 Go builder 단계를 지우고, runtime image는 Python, ORT, `runtime/` runner가 바뀔 때만 만든다. worker image는 Helm `worker.image` 하나로 ChillServer와 Profiler에 준다.
 - worker image는 측정 protocol identity에 metric observer, workload observer image와 함께 들어간다(`identity.go:64-71`). 새 run은 새 protocol이고 기존 profile은 그대로 쓰인다. occupancy 기록은 `workerImage`를 기록만 한다. worker가 바뀐 뒤 d를 다시 잴지는 운영자가 정한다(D4).
 - metric observer, workload observer image는 node agent image에 합치지 않는다. 두 image가 protocol identity에 있고 합쳐서 풀리는 문제가 없다(node-agent 2.4절).
-- ADR 0019: ProfilingRun 고정 설정 `images.worker`와 occupancy `workerImage`는 선택 필드다. 측정 캠페인이 없을 때 배포한다.
+- ADR 0019: ProfilingRun 고정 설정 `images.worker`와 occupancy `workerImage`는 선택 필드다(identity에서는 `omitempty`, 측정 protocol identity schema version은 그대로). 측정 캠페인이 없을 때 배포한다.
+- **시점 규칙.** 분리와 D4는 `serving-worker`나 `measurement-worker`를 고쳐야 할 때 그 수정 앞에서 한다. 분리를 먼저 배포하면 runtime image digest가 그대로여서 profile과 d를 다시 재지 않는다. 배포에서 overlay의 runtime 선언 digest를 그대로 둔다. 분리 뒤 worker를 고치면 d는 이전 worker로 잰 값이므로 다시 잴지 운영자가 정한다.
 
 ## 5. 인스턴스 공유 정리
 
@@ -148,10 +149,10 @@ r7에서 ChillServer Pod를 지우자 새 Pod가 `observation directory already 
 | 5 | `feat(nodeagent): apply power modes from Node labels` | 3.1절: label watch, state, generation, bootID, transition annotation | - | 적용 성공과 실패, 같은 모드 `success`만, read-back 변화와 bootID 변화가 generation + 1, agent 재시작은 0, 재부팅 모드가 재시작 뒤 한 번 + 1, label 삭제 |
 | 6 | `feat(serving): request power modes through Node labels` | 3.2, 3.3절: ChillServer와 Profiler writer, admission 대기, stop safety, 기록의 generation, PMTC marker 출처 | 5, 측정 API 8 | writer 표마다 조건 밖 patch 없음, conflict, 기한 실패, 표의 기대 차이와 `PowerChangedDuringMeasurement`, 기존 evidence fixture decode |
 | 7 | `refactor(api): delete NodeActuation` | 3.5절 삭제, `make manifests generate`, chart | 6 | `make arch-check`, default와 Profiler render |
-| 8 | `build(serving): split Go binaries from the runtime image` | 4장 | 측정 API 7 | init container와 mount, identity test, render, live 기존 profile 하나로 prepare |
+| 8 | `build(serving): split Go binaries from the runtime image` | 4장, worker 수정 앞에서 | 측정 API 7 | init container와 mount, identity test, render, live 기존 profile 하나로 prepare |
 | 9 | `docs(design): record M5 decisions` | 05의 M5 행, node-agent 3장과 끝 문단, ADR 0015와 0020의 근거 문장, 5장의 설계 문서, 운영 문서 CLI 절 | 3-8 | 문서 link |
 
-- 1과 2는 다음 배포에 들어간다. 5-7은 P7b 캠페인 뒤 한 번에, 나머지는 E5 뒤 측정 캠페인이 없을 때 배포한다.
+- 1과 2는 다음 배포에 들어간다. 5-7은 P7b 캠페인 뒤 한 번에, 8은 worker 수정이 생길 때 그 수정 앞에, 나머지는 E5 뒤 측정 캠페인이 없을 때 배포한다.
 - 모든 commit: focused test, `make lint`, `make test`. 3, 7, 8은 `make arch-check`도 돈다.
 
 ## 11. 남은 질문
