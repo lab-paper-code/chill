@@ -187,6 +187,46 @@ func TestCapacityRateCoversOnlyTheObservedWindow(t *testing.T) {
 	}
 }
 
+// m4 r7 06:53:58 (plan-f95bc856f060): rasp5 q1-lut and q2 (κ 25.69 + 29.30)
+// carried λ 40.35 at weights 467/533. Loaded genesis3 q2 (κ 70.94) draws less
+// than its empty Node (49.80 W against 49.97 W), so preparing it was 1.5 J
+// cheaper over T while the carried weights left it at weight 0; one window
+// later idle removal took it out, and the next decision prepared it again.
+// A plan never prepares an instance its routing leaves at weight 0.
+func TestCapacityNeverPreparesAnUnroutedInstance(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge, s.CompletionMarginMS = time.Minute, 10*time.Second, 10*time.Minute, time.Hour, 29
+	s.MaxReplicas = 3
+	d := snap.Workloads[0]
+	d.SLO = SLO{Percentile: 95, TargetLatency: time.Second}
+	lut := snap.Instances[0]
+	q2 := schedulerTestCPU(lut)
+	q2.ID = "q2"
+	genesis3 := poolsAddNode(&snap, "genesis3", map[string]float64{"fixed": 49.97})
+	g3 := poolsInstance(lut, "g3", genesis3, "fixed", "w1")
+	profile := *g3.Profile
+	profile.IdleBaselineWatts = 49.80
+	g3.Profile = &profile
+	snap.Instances = append(snap.Instances, q2)
+	snap.Options = append(snap.Options, poolsOption(q2), poolsOption(g3))
+	snap.Routing = map[string]map[string]int32{"w1": {lut.ID: 467, q2.ID: 533}}
+	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, genesis3, "unloaded", schedulerState(g3), "fixed")}
+	capacityLoad(s, &snap, d, 40.35)
+	rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{lut.Profile.ID: 25.69, q2.Profile.ID: 29.30, g3.Profile.ID: 70.94}))
+	got := capacityDecideForTest(t, s, snap, rows)
+	if got.Target == nil {
+		t.Fatalf("no target: %s %v", got.Status, got.Reasons)
+	}
+	for _, a := range got.Target.Actions {
+		if a.Kind == schedulerActionPrepare && !schedulerInstanceRouted(got.Target.Routing, a.Instance) {
+			t.Fatalf("prepared %s at weight 0: routing %v", a.Instance, got.Target.Routing)
+		}
+	}
+	if got.Status != schedulerStatusKeep {
+		t.Fatalf("keep carries the load: %s %v", got.Status, got.Reasons)
+	}
+}
+
 // m4 r5 04:28:18: the first decision of the 40 req/s phase saw λ 42.5 with 161
 // queued. With the r5 κ (rasp5 q1 25.29, q1-lut 25.69, genesis3 q2 70.94) it
 // expands whatever the comparison period: the SLO judgment orders plans before

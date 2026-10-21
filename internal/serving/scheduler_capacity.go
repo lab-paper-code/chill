@@ -225,12 +225,14 @@ type capacityWorkload struct {
 
 // capacityItem is one instance serving a Workload: its κ, per-input energy e
 // (batch 1) and its route weight now (a new instance: its option's weight).
+// prepare marks a new instance.
 type capacityItem struct {
-	id     string
-	kappa  float64
-	e      float64
-	weight int32
-	row    string
+	id      string
+	kappa   float64
+	e       float64
+	weight  int32
+	row     string
+	prepare bool
 }
 
 type capacityPlan struct {
@@ -755,8 +757,9 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 			continue
 		}
 		item := chosen[i.ID]
-		item.id, item.e, item.weight = i.ID, capacityInputEnergy(i), i.Weight
-		if weight, current := p.keep.Routing[i.WorkloadUID][i.ID]; current || slices.ContainsFunc(p.snapshot.Instances, func(c SchedulerInstance) bool { return c.ID == i.ID }) {
+		existing := slices.ContainsFunc(p.snapshot.Instances, func(c SchedulerInstance) bool { return c.ID == i.ID })
+		item.id, item.e, item.weight, item.prepare = i.ID, capacityInputEnergy(i), i.Weight, !existing
+		if weight, current := p.keep.Routing[i.WorkloadUID][i.ID]; current || existing {
 			item.weight = weight
 		}
 		if plan.keep {
@@ -1164,6 +1167,8 @@ type capacityResult struct {
 	final bool
 	// weightsExceeded marks a route weight whose share of λ exceeds its κ.
 	weightsExceeded bool
+	// unroutedPrepare marks a new instance its weights leave at 0.
+	unroutedPrepare bool
 	judgments       []capacityJudgment
 	weights         []map[string]int32
 	rows            [][]string
@@ -1234,6 +1239,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 			if weights[k] > 0 {
 				routes[item.id] = weights[k]
 			}
+			res.unroutedPrepare = res.unroutedPrepare || item.prepare && weights[k] == 0
 		}
 		worst := j.worst()
 		if !ok {
@@ -1345,7 +1351,7 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		alt[n] = 0
 		r := p.routeOf(alt)
 		kept := p.evaluate(alt, r)
-		if !kept.feasible || p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route) {
+		if !kept.feasible || kept.unroutedPrepare || p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route) {
 			continue
 		}
 		kept.unpaid = append(slices.Clone(best.unpaid), p.snapshot.Nodes[n].Node.UID)
@@ -1569,6 +1575,10 @@ func (p *capacityPlanner) solve() (capacityResult, error) {
 					at = point.parent
 				}
 				res := p.evaluate(choice, r)
+				// A new instance at weight 0 would serve nothing until idle removal takes it.
+				if res.unroutedPrepare {
+					continue
+				}
 				if res.feasible {
 					if res.better(best) {
 						best = &res
