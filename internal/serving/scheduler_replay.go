@@ -485,7 +485,7 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 	if err := ctx.Err(); err != nil {
 		return schedulerReplayResult{}, err
 	}
-	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.Horizon), compared: compared, out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
+	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.ComparisonPeriod), compared: compared, out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	s.initializeInstances()
 	s.initializeActions()
 	s.initializeOutstanding()

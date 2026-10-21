@@ -109,7 +109,7 @@ func capacityChoiceForTest(t testing.TB, p *capacityPlanner, keys map[string]str
 // 10.7 s. L 1 s, m 177 ms.
 func capacityE1Fixture() (SchedulerSettings, SchedulerSnapshot, []CapacityRow, NodeReference) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.Horizon, s.MaxObservationAge, s.CompletionMarginMS = time.Second, time.Minute, time.Hour, 177
+	s.ObservationWindow, s.ComparisonPeriod, s.MaxObservationAge, s.CompletionMarginMS = time.Second, time.Minute, time.Hour, 177
 	d := snap.Workloads[0]
 	d.SLO = SLO{Percentile: 95, TargetLatency: time.Second}
 	rasp5 := snap.Nodes[0].Node
@@ -153,6 +153,35 @@ func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 	}
 	if slow.joules >= fast.joules || !fast.feasible {
 		t.Fatalf("fixture must make the slow route cheaper: %g vs %g", slow.joules, fast.joules)
+	}
+}
+
+// m4 r5 04:28:18: the first decision of the 40 req/s phase saw λ 42.5 with 161
+// queued. With the r5 κ (rasp5 q1 25.29, q1-lut 25.69, genesis3 q2 70.94) it
+// expands whatever the comparison period: the SLO judgment orders plans before
+// energy. The decision records T = max(comparisonPeriod, longest chain).
+func TestCapacityComparisonPeriodKeepsExpansionOnLoadRise(t *testing.T) {
+	s, snap, _, genesis3 := capacityE1Fixture()
+	s.ObservationWindow = time.Minute
+	d := snap.Workloads[0]
+	capacityLoad(s, &snap, d, 40)
+	for k := range 161 {
+		snap.Outstanding = append(snap.Outstanding, SchedulerRequest{ID: fmt.Sprint("queued-", k), Definition: d, ReceivedAt: snap.At, Phase: phasePending})
+	}
+	rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{
+		"profile": 25.288198615188904, snap.Options[1].Instance.Profile.ID: 25.68831509322024, snap.Options[2].Instance.Profile.ID: 70.93509923703007,
+	}))
+	var chosen string
+	for _, period := range []time.Duration{time.Minute, 10 * time.Minute} {
+		s.ComparisonPeriod = period
+		got := capacityDecideForTest(t, s, snap, rows)
+		if got.Target == nil || got.Target.Keep || !poolsOn(*got.Target, genesis3) || got.Capacity == nil || got.Capacity.Period != period {
+			t.Fatalf("T %v: no expansion on the first decision: %s %+v", period, got.Status, got.Capacity)
+		}
+		if chosen != "" && got.Target.ID != chosen {
+			t.Fatalf("T %v changed the expansion: %s vs %s", period, got.Target.ID, chosen)
+		}
+		chosen = got.Target.ID
 	}
 }
 
@@ -216,7 +245,7 @@ func TestCapacityOverloadOrdersByWorstExceedance(t *testing.T) {
 // §9 6 판정: two Workloads with different SLOs are judged each with its own L − m.
 func TestCapacityJudgesEachWorkloadWithItsSLO(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.Horizon, s.MaxObservationAge, s.CompletionMarginMS = time.Second, time.Minute, time.Hour, 100
+	s.ObservationWindow, s.ComparisonPeriod, s.MaxObservationAge, s.CompletionMarginMS = time.Second, time.Minute, time.Hour, 100
 	s.AutonomousWorkloads = []string{"w1", "w2"}
 	relaxed := snap.Workloads[0]
 	relaxed.SLO.TargetLatency = 10 * time.Second
@@ -313,7 +342,7 @@ func TestCapacityPendingWithoutRows(t *testing.T) {
 }
 
 // capacityTestSettings bound synthetic planners loosely, replicas ON.
-var capacityTestSettings = SchedulerSettings{Horizon: time.Minute, MaxReplicas: 100, MaxInstances: 100, Controls: SchedulerControls{Replicas: true, Routing: true}}
+var capacityTestSettings = SchedulerSettings{ComparisonPeriod: time.Minute, MaxReplicas: 100, MaxInstances: 100, Controls: SchedulerControls{Replicas: true, Routing: true}}
 
 // capacityRandomPlanner builds a planner over synthetic node plans.
 func capacityRandomPlanner(rng *rand.Rand, workloads, nodes, cells int) *capacityPlanner {
@@ -635,7 +664,7 @@ func TestCapacityFailedPreparationWaitsOneWindow(t *testing.T) {
 // up to κ_ret, its overflow and [r, T] by the target fill.
 func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.Horizon, s.MaxObservationAge = time.Second, time.Minute, time.Hour
+	s.ObservationWindow, s.ComparisonPeriod, s.MaxObservationAge = time.Second, time.Minute, time.Hour
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	add := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
 	profile := *add.Profile
@@ -662,7 +691,7 @@ func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 // every plan, and the plan pays its whole trial energy.
 func TestCapacityPeriodCoversTheLongestChain(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.Horizon = time.Minute
+	s.ComparisonPeriod = time.Minute
 	reentry := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	snap.Nodes[1].PowerMode = schedulerTestEcoMode // already lowered, as in E1
 	option := poolsInstance(snap.Instances[0], "opt", reentry, "fixed", "w1")

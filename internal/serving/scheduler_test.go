@@ -26,7 +26,7 @@ const (
 
 func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	at := time.Unix(100, 0)
-	s := SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, Horizon: 100 * time.Millisecond, MaxObservationAge: time.Second, MaxReplicas: 2, MaxInstances: 4, MaxCPUs: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
+	s := SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxObservationAge: time.Second, MaxReplicas: 2, MaxInstances: 4, MaxCPUs: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
 	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, PowerMode: "fixed", Ready: true, CPUs: []int{0, 1, 2, 3}, MemoryBytes: 10000, ObservedAt: at}
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
@@ -180,7 +180,7 @@ func TestSchedulerObservationTimeBounds(t *testing.T) {
 func TestSchedulerNonpreemptiveBlockingAndResidual(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads = nil
-	s.Horizon = 200 * time.Millisecond
+	s.ComparisonPeriod = 200 * time.Millisecond
 	a := snap.Workloads[0]
 	b := *a
 	b.Generation++
@@ -563,7 +563,7 @@ func TestSchedulerFiniteHorizonEnergyClipsExecutionAndOperation(t *testing.T) {
 		t.Fatalf("only half first batch overlaps H; later SLO completions still included: %+v", keep)
 	}
 	snap.Arrivals = nil
-	s.Horizon = time.Millisecond
+	s.ComparisonPeriod = time.Millisecond
 	zeroSender := 0.0
 	snap.Outstanding = []SchedulerRequest{{ID: phaseRunning, Definition: d, ReceivedAt: snap.At.Add(-7 * time.Millisecond), Elapsed: 7 * time.Millisecond, RunningElapsed: 7 * time.Millisecond, Phase: phaseRunning, Instance: "i1", BatchID: "actual"}}
 	snap.Outstanding[0].NativeSenderElapsedMS = &zeroSender
@@ -571,7 +571,7 @@ func TestSchedulerFiniteHorizonEnergyClipsExecutionAndOperation(t *testing.T) {
 		t.Fatalf("running execution overlap is 1/10 batch plus 1ms baseline: %g", joules)
 	}
 	snap.Outstanding = nil
-	s.Horizon = 5 * time.Millisecond
+	s.ComparisonPeriod = 5 * time.Millisecond
 	target := snap.Instances[0]
 	target.ID = schedulerTestNewInstance
 	snap.Instances = nil

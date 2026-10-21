@@ -76,7 +76,7 @@ func TestSchedulerReplayDropsAtSLOBoundaryWhileBatchRuns(t *testing.T) {
 	snap.Instances[0].Profile.Batches[0].DurationNanos = []float64{float64(100 * time.Millisecond)}
 	zero := 0.0
 	snap.Outstanding = []SchedulerRequest{{ID: "active", Definition: d, ReceivedAt: snap.At, Phase: phaseRunning, Instance: "i1", BatchID: "actual", NativeSenderElapsedMS: &zero}, {ID: "queued", Definition: &queued, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
-	state := schedulerReplayState{settings: s, snap: snap, c: SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, rng: rand.New(rand.NewPCG(1, 0)), horizon: float64(s.Horizon), out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
+	state := schedulerReplayState{settings: s, snap: snap, c: SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, rng: rand.New(rand.NewPCG(1, 0)), horizon: float64(s.ComparisonPeriod), out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	state.initializeInstances()
 	state.initializeOutstanding()
 	if !state.initializeRunning() || !state.chooseBatches(context.Background()) {

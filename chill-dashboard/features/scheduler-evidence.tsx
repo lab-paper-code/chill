@@ -131,7 +131,7 @@ export function SchedulerComparePage() {
   const scopes=(event:SchedulerObservation)=>event.snapshot?.baselines?.map(item=>({node:item.node.uid,meter:item.meter,scope:item.scope}))??null
   const aIDs=identities(left),bIDs=identities(right),aScopes=scopes(left),bScopes=scopes(right)
   const conditions=[
-    String(ad.settings.horizonNanos)!==String(bd.settings.horizonNanos)?"미래 예상 기간이 달라요.":null,
+    String(ad.capacity?.periodNanos)!==String(bd.capacity?.periodNanos)?"에너지 비교 기간이 달라요.":null,
     !aIDs.length||!bIDs.length?"한쪽 또는 양쪽에 서비스 정보가 없어요.":aIDs.length!==bIDs.length||aIDs.some(item=>!bIDs.some(other=>item.uid===other.uid&&item.definition===other.definition))?"서비스나 고정 정의가 달라요.":null,
     !aScopes?.length||!bScopes?.length?"한쪽 또는 양쪽에 계측 범위 정보가 없어요.":aScopes.length!==bScopes.length||aScopes.some(item=>!bScopes.some(other=>item.node===other.node&&item.meter===other.meter&&item.scope===other.scope))?"계측 범위가 달라요.":null,
     (!left.snapshot||!right.snapshot)?"짝지어진 초기 구성을 모두 확인할 수 없어요.":null,
@@ -147,7 +147,7 @@ export function SchedulerComparePage() {
     ["판단",event=>judgmentLabels[event.decision!.status]??"확인이 필요해요"],
     ["판단 시각",event=>when(event.decision!.at)],
     ["입력 관측 구간",event=>`${when(event.decision!.search.windowStart)} – ${when(event.decision!.search.windowEnd)}`],
-    ["미래 예상 기간",event=>`${nanosToMilliseconds(event.decision!.settings.horizonNanos)} ms`],
+    ["에너지 비교 기간",event=>event.decision!.capacity?`${nanosToMilliseconds(event.decision!.capacity.periodNanos)} ms`:"기록 없음"],
     ["받은 요청 / 접수",event=>`${event.decision!.search.received} / ${event.decision!.search.accepted}`],
     ["유지했을 때 예상 에너지",event=>event.decision!.keep.expectedJoules==null?"계산값 없음":`${event.decision!.keep.expectedJoules} J`],
     ["바꿨을 때 예상 에너지",event=>!event.decision!.target?"목표 없음":event.decision!.target.expectedJoules==null?"계산값 없음":`${event.decision!.target.expectedJoules} J`],
@@ -159,7 +159,7 @@ export function SchedulerComparePage() {
       ["기록 출처와 조회 범위",(event,ref)=><p className="break-all">v1/observations/scheduler / {ref.from} ~ {ref.to} / offset {ref.offset} / 사건 {event.at}</p>],
       ["입력 관측 구간",event=><p>{event.decision!.search.windowStart} ~ {event.decision!.search.windowEnd}</p>],
       ["모집단과 부하",event=><><p>{event.decision!.search.population}</p><p>수신 {event.decision!.search.received} / 접수 {event.decision!.search.accepted} / 계산 입력 {event.decision!.search.computeInputs}</p><SourceJSON inline title="서비스별 제공 부하" value={event.decision!.search.loads}/></>],
-      ["미래 예상 기간",event=><p>판단 {event.decision!.at} 기준 {nanosToMilliseconds(event.decision!.settings.horizonNanos)} ms. 입력 관측 구간과 별개예요.</p>],
+      ["에너지 비교 기간",event=><p>판단 {event.decision!.at} 기준 {event.decision!.capacity?`${nanosToMilliseconds(event.decision!.capacity.periodNanos)} ms`:"기록 없음"}. 입력 관측 구간과 별개예요.</p>],
       ["서비스와 고정 정의",event=><>{identities(event).map(item=><p className="break-all" key={`${item.uid}/${item.definition}`}>{item.uid} / {item.definition}</p>)}{!identities(event).length&&<p>예상 응답 목표에 서비스 정의가 없어요.</p>}<SourceJSON inline title="초기 구성의 서비스 정의" value={event.snapshot?.workloads??null}/></>],
     ]],
     ["운영 설정",[["운영 설정",event=><SettingsSummary settings={event.decision!.settings}/>]]],

@@ -11,15 +11,16 @@ import (
 )
 
 // SchedulerSettings separates the observed population from the control cadence
-// and the minimum interval over which every plan's complete pool cost is
-// compared. AutonomousWorkloads lists the Workload UIDs under autonomous control.
+// and the comparison period: every plan's complete pool energy is compared over
+// T = max(ComparisonPeriod, the longest transition chain). AutonomousWorkloads
+// lists the Workload UIDs under autonomous control.
 // MaxReplicas, MaxInstances and MaxCPUs gate node plans: a plan holds at most
 // MaxReplicas instances of one Workload and MaxInstances instances in total,
 // each with at most MaxCPUs CPUs.
 type SchedulerSettings struct {
 	ObservationWindow   time.Duration `json:"observationWindowNanos"`
 	ControlInterval     time.Duration `json:"controlIntervalNanos"`
-	Horizon             time.Duration `json:"horizonNanos"`
+	ComparisonPeriod    time.Duration `json:"comparisonPeriodNanos"`
 	MaxObservationAge   time.Duration `json:"maxObservationAgeNanos"`
 	MaxReplicas         int           `json:"maxReplicas"`
 	MaxInstances        int           `json:"maxInstances"`
@@ -315,7 +316,7 @@ type SchedulerDecision struct {
 }
 
 func (s SchedulerSettings) Validate() error {
-	if s.ObservationWindow <= 0 || s.ControlInterval <= 0 || s.Horizon <= 0 || s.MaxObservationAge <= 0 {
+	if s.ObservationWindow <= 0 || s.ControlInterval <= 0 || s.ComparisonPeriod <= 0 || s.MaxObservationAge <= 0 {
 		return fmt.Errorf("scheduler time intervals must be positive")
 	}
 	if s.MaxReplicas < 1 || s.MaxInstances < 1 || s.MaxCPUs < 1 {

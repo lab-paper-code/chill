@@ -216,7 +216,7 @@ ChillServer 재시작은 이 값을 다시 읽어 마지막 분배를 그대로 
 구성을 유지한다. 이 annotation이 없는 Pod는 `edge.dacs.io/serving-weight`를 호환되는 모든
 Workload에 적용한다.
 
-비교 기간은 판단마다 하나인 `T = max(horizonNanos, 최장 route 전 사슬 + 최장 route 뒤 remove)`이고 keep과 모든 계획에
+비교 기간은 판단마다 하나인 `T = max(comparisonPeriodNanos, 최장 route 전 사슬 + 최장 route 뒤 remove)`이고 keep과 모든 계획에
 같다. 사슬은 동작마다 측정 trial의 최대 시간으로 재므로 모든 계획 동작이 T 안에 끝나고, 비교는 동작 에너지 전체와
 전환 뒤 구성을 함께 담는다. 노드 계획의 [0, T] 노드 에너지는 `schedulerBaseline`의 적재 상태 전력과 원자 동작의
 평균 wall joules로 계산한다. 원자 동작 구간의 wall joules는 그 구간의 baseline 소비를 **대체**하고,

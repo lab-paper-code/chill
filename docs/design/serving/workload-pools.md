@@ -152,11 +152,11 @@ prepare에 노드 전력모드가 같은 비용을 고른다. 빈 노드 전환�
 coverage 검사를 통과해 `Accepted`이고, 비용에는 목표 모드에서 보낸 settling 에너지가 들어간다. 그 비용이 없으면 다시
 넣는 노드 계획은 `MissingOperationCost`로 비교에서 빠진다.
 
-비교 기간은 판단마다 하나인 `T = max(horizonNanos, 최장 route 전 사슬 + 최장 route 뒤 remove)`이고 keep과 모든 계획에
+비교 기간은 판단마다 하나인 `T = max(comparisonPeriodNanos, 최장 route 전 사슬 + 최장 route 뒤 remove)`이고 keep과 모든 계획에
 같다([용량표 계획기 4장](analytic-planner.md#4-노드-계획과-dp)). 사슬은 동작마다 측정 trial의 최대 시간으로 재므로 다시
 넣는 계획의 power, prepare, route 사슬도 T 안에 끝나고, 모든 계획은 power와 prepare의 측정 에너지 전체와 다시 넣은 뒤의
 적재 baseline을 같은 T에서 비교한다. E1에서 측정한 빈 노드 전환은 jetsonx 63.5 s, jetsono 134.5 s, orin-nano 197.1 s이고,
-이런 사슬이 있는 판단의 T는 `horizonNanos` 60 s보다 길다.
+이런 사슬이 있는 판단의 T는 E1의 비교 기간 하한 60 s보다 길었다.
 
 노드 계획은 차이로 비교한다(`SCH-16`). 비교 집합은 keep 밖의 적격 노드 계획이 있는 노드이고, keep과 target의
 `ExpectedJoules`는 이 집합의 노드만 합한다. 집합 밖 노드(측정 POOL 노드와 계획이 keep뿐인 노드 포함)는 모든 계획에 같아

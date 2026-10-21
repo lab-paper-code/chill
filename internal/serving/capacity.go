@@ -281,7 +281,7 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	}
 	settings := b.settings
 	settings.AutonomousWorkloads = nil
-	settings.ObservationWindow, settings.Horizon, settings.MaxObservationAge = span, span, time.Hour
+	settings.ObservationWindow, settings.ComparisonPeriod, settings.MaxObservationAge = span, span, time.Hour
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
 	// An empty compared set counts no energy, so no Node baseline is needed.
 	estimate, err := schedulerReplayEstimate(ctx, settings, snapshot, keep, uint64(seed), map[NodeReference]bool{})

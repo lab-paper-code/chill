@@ -242,7 +242,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := serving.SchedulerSettings{
-		ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
+		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 		CapacityMinimumRequests: 1, MaxCPUs: 2,
@@ -413,7 +413,7 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 func schedulerTestConfiguration() schedulerConfiguration {
 	return schedulerConfiguration{
 		Settings: serving.SchedulerSettings{
-			ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
+			ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Second, MaxReplicas: 1,
 			MaxInstances: 5, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 			CapacityMinimumRequests: 1, MaxCPUs: 2,

@@ -31,7 +31,7 @@ export type CampaignResult = {apiVersion:string;kind:string;readAt:string;campai
 // Scheduler wire integers retain int64/uint64 literals beyond Number's range.
 export type WireInteger = number | bigint
 export type SchedulerSettings = {
-  observationWindowNanos:WireInteger; controlIntervalNanos:WireInteger; horizonNanos:WireInteger; maxObservationAgeNanos:WireInteger
+  observationWindowNanos:WireInteger; controlIntervalNanos:WireInteger; comparisonPeriodNanos:WireInteger; maxObservationAgeNanos:WireInteger
   maxReplicas:WireInteger; maxInstances:WireInteger; maxCPUs:WireInteger; servingMemoryBytes:WireInteger
   completionMarginMS:number
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger

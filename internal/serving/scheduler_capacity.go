@@ -388,7 +388,7 @@ func (p *capacityPlanner) build() error {
 		p.examined += len(p.plans[n])
 	}
 	p.elideCounts()
-	p.period = max(p.settings.Horizon.Seconds(), pre+post)
+	p.period = max(p.settings.ComparisonPeriod.Seconds(), pre+post)
 	slices.Sort(routes)
 	p.routes = slices.Compact(routes)
 	for _, plans := range p.plans {

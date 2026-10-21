@@ -340,7 +340,7 @@ func TestOverlappingResourceChangeWaitsForAcceptedResponseBeforeRemoval(t *testi
 	remove := requireTransitionAction(t, target.Actions, schedulerActionRemove)
 	snapshot.Outstanding = []SchedulerRequest{{ID: "accepted", Definition: snapshot.Workloads[0], ReceivedAt: snapshot.At, Phase: "pending"}}
 	state := schedulerReplayState{
-		settings: settings, snap: snapshot, c: target, horizon: float64(settings.Horizon), rng: rand.New(rand.NewPCG(schedulerTestSeed, 0)),
+		settings: settings, snap: snapshot, c: target, horizon: float64(settings.ComparisonPeriod), rng: rand.New(rand.NewPCG(schedulerTestSeed, 0)),
 		out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}},
 	}
 	state.initializeInstances()
@@ -389,7 +389,7 @@ func TestOverlappingResourceChangeWaitsForAcceptedResponseBeforeRemoval(t *testi
 
 func TestLegalOverlappingResourceDAGStillReportsMeasuredOutageOverload(t *testing.T) {
 	settings, snapshot, target := overlappingResourceFixture(t)
-	settings.ObservationWindow, settings.Horizon = 40*time.Second, 40*time.Second
+	settings.ObservationWindow, settings.ComparisonPeriod = 40*time.Second, 40*time.Second
 	snapshot.Costs[0].Trials[0] = OperationTrial{Duration: 28 * time.Second, Joules: 560}
 	snapshot.Costs[1].Trials[0] = OperationTrial{Duration: 9 * time.Second, Joules: 180}
 	d := snapshot.Workloads[0]

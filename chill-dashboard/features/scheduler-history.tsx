@@ -76,7 +76,7 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
     <Facts items={[["종류",kinds[row.ref.kind]??row.ref.kind],["사건 시각",event.at],["보관 순서",row.ref.offset]]}/>
     {decision&&<>
       <h3 className="font-semibold">판단: {judgmentLabels[decision.status]??statusLabel(decision.status)}</h3>
-      <Facts items={[["판단 시각",decision.at],["자동 제어 서비스",`${decision.settings.autonomousWorkloads?.length??0}개`],["입력 관측 구간",`${decision.search.windowStart} ~ ${decision.search.windowEnd}`],["모집단",decision.search.population],["미래 예상 기간",`${nanosToMilliseconds(decision.settings.horizonNanos)} ms`]]}/>
+      <Facts items={[["판단 시각",decision.at],["자동 제어 서비스",`${decision.settings.autonomousWorkloads?.length??0}개`],["입력 관측 구간",`${decision.search.windowStart} ~ ${decision.search.windowEnd}`],["모집단",decision.search.population],["에너지 비교 기간",decision.capacity?`${nanosToMilliseconds(decision.capacity.periodNanos)} ms`:"기록 없음"]]}/>
       <p>{decision.reasons?.join(", ")||"제공된 판단 사유가 없어요."}</p>
       {view?<><details><summary>유지안 근거</summary><CandidateDetails candidate={decision.keep} view={view}/></details>{decision.target&&<details><summary>선택 목표 근거</summary><CandidateDetails candidate={decision.target} view={view}/></details>}</>:<p>같은 기록에 실제 구성이 없어요. 후보 원본은 아래 원본에서 확인해요.</p>}
     </>}

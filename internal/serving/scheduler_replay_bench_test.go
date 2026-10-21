@@ -29,7 +29,7 @@ func schedulerReplayWindow(n int) (SchedulerSettings, SchedulerSnapshot) {
 	s.AutonomousWorkloads = nil
 	gap := time.Millisecond
 	window := time.Duration(n) * gap
-	s.ObservationWindow, s.Horizon, s.MaxObservationAge = window, window, time.Hour
+	s.ObservationWindow, s.ComparisonPeriod, s.MaxObservationAge = window, window, time.Hour
 	p := *snap.Instances[0].Profile
 	p.Batches = []BatchProfile{{Batch: 1, DurationNanos: []float64{6e5, 8e5, 1e6}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
 	snap.Instances[0].Profile = &p
