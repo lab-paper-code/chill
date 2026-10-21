@@ -5,7 +5,7 @@
 `chill.dacs.io/measurement:NoSchedule`을 ChillServer 하나가 측정 객체에 따라 붙이고 뗀다. 원래 제안은
 [B2](../architecture-rethink/03-b2-single-writer-node-state.md), 노드 쪽 준비는 [M2](../platform/node-agent.md)다.
 
-코드 근거는 `e3867f5`다. live 근거는 2026-10-21 `kubectl get` snapshot과 M2, M4 live test에서 사용자가 확인한 사실이다.
+코드 근거는 `3dd5902`다. live 근거는 2026-10-21 `kubectl get` snapshot과 M2, M4 live test에서 사용자가 확인한 사실이다.
 실행으로 확인하지 않은 판단은 `[추론]`으로 표시한다.
 
 ## 1. 측정한 문제
@@ -14,7 +14,7 @@
 |---|---|---|
 | 1 | taint를 운영자가 손으로 붙이고 뗀다. 서빙 인스턴스가 없는지도 운영자가 pools API로 확인한다 | [3.3절](workload-pools.md#33-측정-pool), `scheduler-operations.md:203-210` |
 | 2 | 측정 controller는 taint를 보지 않고 시작한다. BEO, MLIB는 시작 전에 NodeActuation도 만든다 | `InMeasurement` 호출이 serving 쪽에만 있음, `campaign/controller/transition_builder.go:92`, `idlebaseline/controller/transition.go:112` |
-| 3 | ChillServer의 확인과 전력 변경 사이에 경쟁 구간이 있다 | `kube/operations.go:788`의 주석, 확인(`:789`)과 NodeActuation 생성(`:792`)이 별도 API 호출 |
+| 3 | serving NodeActuation이 그것을 만든 동작보다 오래 남는다 | `ChangePower`의 대기는 첫 `Get` 오류나 target 차이에서 끝나고(`kube/operations.go:132-140,796-803`), 실행은 `Failed`로 끝나도 NodeActuation은 Pending이나 Applying으로 남는다 |
 | 4 | `serving-operation`이 host에서 돌지 못한다 | live: S3 endpoint가 cluster 안 이름이고(`cmd/serving-operation/main.go:136-141`), 인스턴스 호출이 `chill-executor-<pod UID>` ClusterIP로 간다(`kube/native_service.go:25-43`) |
 | 5 | `serving-operation --execute-config`가 계획기 Pod를 지우지 못한다 | 제거 대상 이름을 `measured-<hash>`(`cmd/chill-server/profiles.go:191-192`)와 비교하고(`main.go:559`), 계획기 Pod는 `serving-<hash>`(`kube/scheduler.go:639-642`) |
 | 6 | 전환 비용 runner와 Service를 운영자가 준비한다 | snapshot: `chill-system`의 PMTC 5개가 모두 `servingService: chill-executor-<pod UID>`(손으로 준비한 runner), 모두 `Failed`, 수용 시도 0 |
@@ -27,11 +27,14 @@ M3는 그 위에 선다.
 
 ### 2.1 writer와 요청
 
-- writer는 ChillServer scheduler loop(`cmd/chill-server/scheduler_service.go:403-431`)다. 매 제어 주기의 `Tick` 앞에
-  `SchedulerController.Admit`를 부른다. `Admit`는 `ApplyStaticRouting`(`kube/static_routing.go:17-29`)처럼 `tickMu`와 `mu`를
-  잡고 새 capture를 읽는다. 잠금은 taint 추가에만 쓴다. runner 준비와 반환 작업은 taint가 있는 동안 goroutine에서 하므로
-  `Tick`을 막지 않는다. operation 측정은 요청을 받을 때 같은 `Admit` 경로로 승인을 받는다.
-- 측정 요청은 측정 루트 객체다. 대상 노드는 이름 필드에서 읽는다.
+- writer는 ChillServer `SchedulerController`다. scheduler loop(`cmd/chill-server/scheduler_service.go:403-431`)가 매 제어
+  주기의 `Tick` 앞에 `Admit`를 부르고, operation 측정 요청(2.5절)도 같은 `Admit`를 부른다. `Admit`는 `tickMu`를 잡고
+  Node, `edge.dacs.io/workload-role=serving-instance` Pod, 대상 노드의 Pod, NodeActuation(`kube/scheduler.go:405-408`과 같은
+  목록), 측정 루트를 읽는다. `c.mu`는 `c.runs` 확인과 등록에만 잡는다. 전체 capture는 읽지 않는다.
+- 노드에 시간이 걸리는 일(runner 준비, 반환, operation 측정, 수동 동작)은 `launch`(`kube/scheduler.go:705-747`)처럼
+  `tickMu` 안에서 그 노드의 `actionRun`으로 `c.runs`에 등록하고 잠금 밖 goroutine에서 실행한다. 결과는 기존 `OnAction`
+  기록으로 남는다. 등록된 run이 있는 노드에는 `Tick`(`conflictingActionRunning`, `:644-653`)도 `Admit`도 손대지 않는다.
+- 측정 요청은 측정 루트다. 대상 노드는 이름 필드에서 읽는다.
 
 | 루트 | 대상 | terminal |
 |---|---|---|
@@ -39,122 +42,137 @@ M3는 그 위에 선다.
 | ModelLoadedIdleBaseline | `spec.state.targetNode` | `Complete`, `Insufficient` |
 | ProfilingRun(BEO, MLIB가 소유하지 않은 것) | `spec.targetNode` | `ExecutionComplete`가 `True` 또는 `False` |
 | PowerModeTransitionCost | `spec.targetNode` | `Complete`, `Failed` |
-| operation 측정(2.5절) | 요청의 `Operation.Node` | ChillServer 안의 측정이 끝남 |
+| operation 측정 순서(2.5절) | 요청의 `Operation.Node` | 그 run이 끝남 |
 
-- BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므로 따로 요청하지 않는다.
+BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므로 따로 요청하지 않는다.
 
-### 2.2 승인, 거절, 반환
+### 2.2 승인과 거절
 
-한 노드에 승인은 하나다. 루트마다 `Admit`는 다음 하나를 한다.
+한 노드에 승인은 하나다. `Admit`는 대기 루트를 `creationTimestamp`, 이름 순으로 보고 위에서부터 처음 맞는 줄을 따른다.
 
-| 상황 | 동작 |
-|---|---|
-| 노드가 비었고 대기 루트 중 가장 먼저 만들어짐(`creationTimestamp`, 이름) | taint `chill.dacs.io/measurement=<루트 UID>:NoSchedule`, 루트 annotation `chill.dacs.io/admission: Granted` |
-| 노드에 CHILL serving Pod가 있음 | annotation `Refused: NodeServing <인스턴스 ID 목록>`. taint는 붙이지 않는다 |
-| 노드가 없음 | `Refused: NodeMissing` |
-| 다른 루트가 노드를 가졌거나 그 노드에서 scheduler 동작이 실행 중(`conflictingActionRunning`, `kube/scheduler.go:644-653`) | 다음 주기에 다시 본다 |
-| 승인된 루트가 terminal이거나 삭제됨, 또는 taint 값이 살아 있는 루트가 아님 | 반환: 2.4절 runner 제거, 2.3절 낮은 모드 확인, taint 제거 |
+| # | 상황 | 동작 |
+|---|---|---|
+| 1 | 노드에 taint가 있음, 그 노드의 run이 실행 중, 또는 Ready나 `Failed`가 아닌 NodeActuation이 있음 | 기다린다(다음 주기) |
+| 2 | 노드가 없음 | annotation `chill.dacs.io/admission: Refused: NodeMissing` |
+| 3 | 노드에 CHILL serving Pod가 있음 | `Refused: NodeServing <namespace/name 목록>`. taint는 붙이지 않는다 |
+| 4 | PMTC이고 runner 조건이 맞지 않음(2.4절) | `Refused: <사유>` |
+| 5 | 그 밖 | taint `chill.dacs.io/measurement=<루트 UID>:NoSchedule`, `Granted <RFC3339 시각>`. 외부 Pod가 있으면 `; ExternalPods <namespace/name 목록>`을 덧붙인다. PMTC는 runner 준비 뒤에 `Granted`(2.4절) |
 
-- "비었다"는 `edge.dacs.io/workload-role` serving Pod가 없다는 뜻이다(ADR 0022). 소유 Workload가 자동제어인지와 관계없이
-  활성 POOL 노드를 거절한다(`SCH-34`). CHILL이 배치하지 않은 Pod는 보지 않는다.
-- 거절은 terminal이다. 기각: drain 뒤 측정. `SCH-34`는 거절을 요구하고, drain은 서빙 중인 Workload의 SLO를 깬다.
-- 경쟁 구간이 없다. `Tick`은 `tickMu` 안에서 capture부터 `launch`(`kube/scheduler.go:655-750`)까지 하므로 승인이 그 사이에
-  끼지 못하고, 실행 중인 동작이 있는 노드는 승인을 미룬다. 승인 뒤 capture는 taint를 보고 노드를 뺀다
-  ([워크로드별 POOL 3.4절](workload-pools.md#34-전체-pool-가용-노드와-전력모드)).
-  `admittedNode`(`kube/operations.go:843-865`)는 그대로 남는다.
+- 줄 1이 먼저라서 다른 측정이 가진 노드의 대기 루트는 그 측정의 serving Pod(runner나 operation 측정 인스턴스) 때문에
+  거절되지 않는다. 줄 3은 taint 없는 노드에만 적용된다.
+- 줄 1의 NodeActuation 조건은 문제 3을 닫는다. 대기는 M2의 `deadline = now + maxActuationDurationSeconds`로 끝이 있다.
+- 줄 3은 Workload 소유와 자동제어 여부와 관계없이 CHILL serving Pod 하나로 거절한다(`SCH-34`). 거절은 terminal이다.
+  기각: drain 뒤 측정. `SCH-34`는 거절을 요구하고, drain은 서빙 중인 Workload의 SLO를 깬다.
+- 외부 Pod는 Succeeded나 Failed가 아니고, DaemonSet 소유나 mirror Pod가 아니며, `kube-system` 밖이고, CHILL 배치
+  label이 없는 Pod다(예: `plan10-serving-jetsono`). 승인 annotation에 이름을 남기고 지우지 않는다. 측정 결과의 Pod 목록
+  기록(workload-pools commit 5)은 그대로다. `SCH-34`와 `SCH-AC-26`은 외부 Pod가 있는 노드를 측정하라고 하므로 거절하지
+  않는다(8장 질문 1).
 - taint는 resourceVersion을 실은 merge patch로 쓴다. `spec.taints`는 atomic list이고 node lifecycle controller도 쓰므로
   Server-Side Apply field manager로 소유를 나누지 못한다. 충돌이면 다음 주기에 다시 한다.
-- 재시작은 level-based다. taint 값과 루트 목록이 API 서버에 있다. 운영자가 붙인 `=true` taint는 살아 있는 루트가 아니므로
-  첫 주기에 반환된다.
-- pools API `measurement[]`(`workload-pools.md:344`)에 `owner{kind, namespace, name}`를 더한다(`DB-FR-34`의 이동과 반환 진행).
+- 승인 뒤 capture는 taint를 보고 노드를 뺀다([워크로드별 POOL 3.4절](workload-pools.md#34-전체-pool-가용-노드와-전력모드)).
+  serving의 `admittedNode`(`kube/operations.go:843-865`)는 그대로 남는다.
 
-### 2.3 fencing과 반환 전력
+### 2.3 반환과 측정 무효
 
-- fencing token은 taint 값인 루트 UID다. 루트는 한 번만 승인되므로 값이 되풀이되지 않고 별도 counter가 필요 없다.
-- NodeActuation에 `spec.grant`(문자열)를 더한다. 측정 controller의 세 생성 위치(`campaign/controller/transition_builder.go:92`,
-  `idlebaseline/controller/transition.go:112`, `transitioncost/controller/attempt_materializer.go:377`)는 루트 UID를, ChillServer
-  serving `ChangePower`는 빈 값을 쓴다.
-- NodeActuator `Decide`(`internal/nodeactuator/lifecycle.go:112-127`)는 deadline 검사 옆에서 Node의 taint 값을 snapshot으로 받아,
-  grant가 다르면 적용 전에 `Failed`, 사유 `GrantMismatch`로 끝낸다. 빈 grant는 taint 없는 노드에서만 적용된다.
-- 반환 뒤 늦게 도착한 측정 요청은 taint가 없어 거절된다. 승인 전에 만든 serving 요청은 그 `ChangePower`가 Ready나 `Failed`
-  (deadline 만료 포함)까지 기다리며(`kube/operations.go:795-813`) 노드 동작으로 남으므로 승인과 겹치지 않는다. ChillServer
-  재시작으로 대기가 끊긴 요청은 승인 뒤에 도착해도 빈 grant라 거절된다.
-- 반환 때 writer는 taint를 떼기 전에 grant를 실은 `ChangePower`로 노드를 가장 낮은 전력모드에 놓고 독립 read-back을 확인한다.
-  측정이 재부팅이나 실패로 남긴 미확인 상태가 가용 노드로 넘어가지 않는다(문제 7). 확인이 실패하면 taint를 유지하고 사유를
-  남긴다. 측정 밖 노드의 미확인 상태는 범위 밖이다(8장 질문 3).
+반환은 그 노드의 `actionRun`이고 measurement 모드 `Operations`(`OperationConfig.Measurement`, `kube/operations.go:856-865`)로
+돈다. 시작 조건은 셋이다: 승인된 루트가 terminal이거나 삭제됨, taint 값이 살아 있는 루트도 실행 중인 run도 아님(운영자의
+`=true`, ChillServer 재시작으로 끊긴 operation 측정과 runner 준비), operation 측정 순서가 끝남. 순서는 다음과 같다.
+
+1. Ready나 `Failed`가 아닌 NodeActuation이 없어질 때까지 기다린다.
+2. 측정 무효 판정: 그 노드의 NodeActuation 중 루트가 만들지 않았고(owner UID가 루트 UID가 아님) `applyStartedAt`이 승인
+   시각과 반환 시작 사이에 있는 것이 있으면, 루트에 annotation `chill.dacs.io/measurement-invalid: PowerChangedDuringMeasurement
+   <NodeActuation 이름>`을 쓴다. taint 값이 살아 있는 루트가 아니면(삭제된 루트, 재시작으로 끊긴 operation 측정) 반환 run
+   결과에 `Interrupted <taint 값>`을 무효 측정으로 기록한다. operation 측정 기록은 2.5절의 witness가 판정한다.
+3. 노드의 CHILL serving Pod를 모두 remove한다. taint 노드의 serving Pod는 승인 뒤 그 측정이 만든 것뿐이다(줄 3). PMTC
+   runner Service도 지운다.
+4. 노드에 요청 가능한 전력모드가 있고 `SchedulerLowestMode`(`internal/serving/scheduler_plan.go:34`)가 빈 값이 아니면
+   그 모드로 `ChangePower`하고 독립 read-back을 확인한다. 둘 중 하나가 없으면(`Fixed` actuator, unloaded baseline 없음)
+   이 단계를 건너뛴다.
+5. taint를 뗀다.
+
+- 단계가 실패하면 run이 `Failed`와 사유를 기록하고 taint는 남는다. 다음 주기에 같은 조건으로 반환을 다시 시작한다.
+- 단계 4는 측정이 재부팅이나 실패로 남긴 미확인 전력 상태가 가용 노드로 넘어가지 않게 한다(문제 7).
+- 무효는 세기만 한다. 측정 근거를 읽는 곳은 annotation이 있는 루트를 쓰지 않는다: catalog(`kube/catalog.go:96-99`)와
+  비용(`kube/cost.go:146-150`)은 `CatalogIssue`, `CostIssue` 코드 `MeasurementInvalid`로 보이고, profiler의 baseline과
+  curve plan 출처(`transitioncost/controller/baseline_source.go`, `campaign/controller/curve_plan_source.go:314`)는 건너뛴다.
+- ChillServer 재시작은 level-based다. 살아 있고 terminal이 아닌 CR 루트의 taint는 그대로 두고, 나머지는 첫 주기에 위 순서로
+  반환한다. runner 준비 중 끊긴 PMTC는 `Granted`가 없으므로 반환 뒤 다시 대기 루트가 된다.
 
 ### 2.4 전환 비용 runner
 
-- PMTC 승인은 runner가 준비된 뒤에 `Granted`가 된다. writer는 taint를 붙이고, 측정 모드 Operations(2.5절)로 runner를
-  준비한다. profile은 catalog의 준비 가능한 profile 중 대상 Node UID, `spec.modelSpec`, `spec.executionPath`,
-  `spec.modes[0].powerMode`가 같은 것이다.
-- runner Pod는 PMTC를 owner로 갖는다. writer는 `spec.servingService` 이름으로 Service를 만들고 selector는 runner Pod의
-  `edge.dacs.io/serving-pod-uid`(`kube/native_service.go:20,39`)다. observer는 PMTC namespace에서 이 Service와 Pod를
-  읽으므로(`transitioncost/kube/observer.go:166-210`) PMTC는 serving namespace에 둔다.
-- 거절 사유: `RunnerProfileMissing`(맞는 profile 없음), `RunnerContainerUnsupported`(`spec.servingContainer`가 `firstfloor`가
-  아님), `RunnerNamespace`(PMTC namespace가 serving namespace와 다름).
-- 반환 때 runner를 remove하고 Service를 지운다. PMTC spec과 evidence 형식(`kube/cost_power.go:202-205`)은 그대로다.
+- 승인 전 확인(2.2절 줄 4): `RunnerProfileMissing`(catalog의 준비 가능한 profile 중 대상 Node UID, `spec.modelSpec`,
+  `spec.executionPath`, `spec.modes[0].powerMode`가 같은 것이 없음), `RunnerContainerUnsupported`(`spec.servingContainer`가
+  `firstfloor`가 아님), `RunnerNamespace`(PMTC namespace가 serving namespace와 다름). 맞는 profile이 여럿이면 가장 최근 측정이다.
+- taint를 붙이고 runner 준비 run을 등록한다. run은 measurement 모드로 runner를 준비하고, Pod owner를 PMTC로 두고,
+  `spec.servingService` 이름의 Service를 만든다. selector는 runner Pod의 `edge.dacs.io/serving-pod-uid`
+  (`kube/native_service.go:20,39`)다. observer는 PMTC namespace에서 이 Service와 Pod를 읽는다(`transitioncost/kube/observer.go:166-210`).
+- 성공하면 PMTC annotation `chill.dacs.io/runner-profile: <profile ID>`와 `Granted <시각>`을 쓴다. preparer가 profile ID를 준비
+  기록에 고정하고 result가 `runnerProfileID`로 싣는다(`transition-cost-measurement-result.v1alpha3`에서 `v1alpha4`,
+  `transitioncost/raw_record.go:13`).
+- 실패하면 `Refused: RunnerPrepareFailed <오류>`를 쓰고 같은 run에서 반환한다.
 
 ### 2.5 serving-operation은 ChillServer 클라이언트
 
 | route | 몸체 | 동작 |
 |---|---|---|
-| `POST /api/v1/measurements/operations` | `MeasurementRequest`(`kube/measurement.go:31-39`) | 202와 측정 ID. ChillServer가 ID를 루트로 승인을 받고, 관측 PVC 아래 측정 전용 directory와 Runtime으로 지금 `runMeasurement`(`main.go:104-224`)의 몸체를 돌린다. S3는 ChillServer binding, 전력원은 M2가 넣은 Profiler facts resolver |
-| `GET /api/v1/measurements/operations/{id}` | - | 진행, 기록, receipt. 메모리에 둔다. 기록 원본은 S3 |
-| `POST /api/v1/scheduler/operations` | `{kind: prepare 또는 remove, workloadUID, profileID, node, instance, fixedBatchSize}` | `SchedulerController.ExecuteManual`. `tickMu` 안에서 Workload가 자동제어 밖인지, 그 노드에 실행 중인 동작이 없는지, remove 대상이 `removableBy`(`main.go:507-520`)를 통과하고 route 가중치 0인지 보고, 같은 `Operations`와 `OnAction` 기록으로 실행 |
+| `POST /api/v1/measurements/operations` | 같은 노드의 순서 있는 `[]MeasurementRequest`(`kube/measurement.go:31-39`), 예: prepare, idle, remove | 동기. `Admit`로 순서 전체를 한 번 승인받고(taint 값은 ChillServer가 만든 ID), 줄 1이면 409 `NodeBusy`, 줄 2, 3이면 409와 거절 사유. 승인되면 run이 관측 PVC 아래 측정 전용 directory와 Runtime으로 지금 `runMeasurement`(`main.go:104-224`)의 몸체를 요청마다 돌리고 반환까지 한다. 응답은 지금 CLI stdout과 같은 `{record, receipt}` 목록 |
+| `POST /api/v1/scheduler/operations` | `{kind: prepare 또는 remove, workloadUID, profileID, node, instance, fixedBatchSize}` | `ExecuteManual`. `tickMu` 안에서 Workload가 자동제어 밖인지, 노드에 run이 없는지, prepare는 `ValidatePreparationCapacity`(`kube/scheduler.go:591-634`)를 마지막 snapshot의 노드와 live Node, Pod로, remove는 `removableBy`(`main.go:507-520`)와 route 가중치 0을 확인하고 run을 등록한 뒤 잠금 밖에서 같은 `Operations`로 실행 |
 
-- 인증과 권한은 기존 TokenReview와 SAR이다. CLI는 manifest를 읽어 보내고 결과를 stdout에 쓴다.
-- ChillServer 재시작은 실행 중인 operation 측정을 끝낸다. 그 ID는 살아 있는 루트가 아니므로 다음 주기에 반환된다.
+- S3는 ChillServer binding, 전력원은 M2가 넣은 Profiler facts resolver다. 인증과 권한은 기존 TokenReview와 SAR이다.
+  `server.go:145-148`에 `WriteTimeout`이 없어 긴 요청이 끝까지 간다. CLI는 manifest를 읽어 보내고 응답을 stdout에 쓴다.
+- client 연결이 끊기면 순서가 멈추고, `Measure`는 그때까지의 기록을 `WithoutCancel`로 쓰며(`kube/measurement.go:107-109`),
+  반환은 그대로 돈다.
+- 최종 isolation witness(지금 `main.go:287-313`)는 2.3절 단계 2와 같은 NodeActuation 검사를 더한다. 그 측정의 `operationPower`
+  가 만든 NodeActuation(`kube/measurement.go:90`)은 제외한다. 걸리면 `Isolation.Error`가
+  `PowerChangedDuringMeasurement`이고 기존 경로대로 Verdict `Insufficient`다. `kube/cost.go:190`은 이 기록을 조용히 건너뛰는
+  대신 `CostIssue` `MeasurementInvalid`로 센다. 저장 형식은 그대로다.
 - 인스턴스는 scheduler snapshot의 ID로 고르므로 `serving-<hash>` Pod도 지운다(문제 5).
 
 ### 2.6 측정 controller의 대기
 
-- 네 루트 reconciler는 child, Job, NodeActuation을 만들기 전에 annotation을 본다. 없으면 `RequeueAfter` 5초,
-  `Refused: <사유>`면 terminal로 끝낸다: BEO `Failed`, MLIB `Insufficient`, ProfilingRun `ExecutionComplete=False`, PMTC
-  `Failed`, 사유는 annotation의 첫 단어다.
-- Profiler RBAC는 그대로다(Node `get`, `charts/chill/templates/profiler_rbac.yaml:170-175`). ChillServer에 네 kind의
-  `list`, `patch`와 serving namespace Service `create`, `delete`를 더한다. Node `patch`는 이미 있다
-  (`serving_entrypoint_rbac.yaml:34-36`).
+- 네 루트 reconciler는 child, Job, NodeActuation을 만들기 전에 `Granted`를 본다. 없으면 `RequeueAfter` 5초, `Refused`면
+  terminal로 끝낸다: BEO `Failed`, MLIB `Insufficient`, ProfilingRun `ExecutionComplete=False`, PMTC `Failed`, 사유는
+  annotation의 첫 단어다.
+- RBAC: ChillServer에 네 kind의 `patch`만 더한다. `list`(`serving_entrypoint_rbac.yaml:16-18`), Node `patch`(`:34-36`),
+  serving namespace Service `create`, `delete`(`:83-89`)는 이미 있다. Profiler는 그대로다.
 
 ## 3. 저장 계약 (ADR 0019)
 
 | 대상 | 변경 | 처리 |
 |---|---|---|
-| Node taint `chill.dacs.io/measurement` | 값이 루트 UID | 저장 evidence가 아니다 |
-| 루트 annotation `chill.dacs.io/admission` | 새 key | 같음 |
-| NodeActuation CRD | `spec.grant` 추가(선택, 불변) | 기존 객체는 빈 grant로 읽힌다. M5에서 CRD가 사라진다 |
-| operation 측정 `v1alpha2`, `MeasurementIsolation.Tainted` | 그대로 | - |
-| PMTC spec, transition-cost evidence | 그대로 | snapshot의 `Failed` PMTC 5개는 지운다 |
+| Node taint `chill.dacs.io/measurement` | 값이 루트 UID나 operation 측정 ID | 저장 evidence가 아니다 |
+| 루트 annotation `chill.dacs.io/admission`, `chill.dacs.io/measurement-invalid`, `chill.dacs.io/runner-profile` | 새 key | 같음 |
+| transition-cost 준비 기록과 result | `runnerProfileID`, result `v1alpha4` | snapshot의 `Failed` PMTC 5개와 그 evidence를 지운다 |
+| operation 측정 `v1alpha2` | 그대로(`Isolation.Error`에 새 사유) | - |
+| NodeActuation CRD | 그대로 | - |
 
 ## 4. 커밋 단위
 
 | # | commit | 내용 | 선행 |
 |---|---|---|---|
-| 1 | `feat(serving): admit measurement nodes in ChillServer` | `kube/admission.go`(`Admit`, 승인, 거절, 대기, taint 반환), `cmd/chill-server`의 루트 목록과 terminal 판정, loop 연결, pools `owner`, RBAC | - |
-| 2 | `feat(profiling): wait for measurement admission` | 네 루트 reconciler의 annotation 대기와 거절 terminal | 1과 함께 배포 |
-| 3 | `feat(nodeactuator): fence power changes by measurement grant` | `spec.grant`, `make manifests generate`, `Decide`의 `GrantMismatch`, 네 생성 위치 | 2, M2 commit 6 |
-| 4 | `feat(serving): return measured nodes at a confirmed lowest mode` | 반환의 grant `ChangePower`와 read-back | 1, 3 |
-| 5 | `feat(serving): run operation measurements and manual operations in ChillServer` | 2.5절 route 셋, `ExecuteManual`, `serving-operation` client화. 지우는 것: `executionOwnerClient`, `readExecutionOwner`, `readExecutionConfiguration`, `validateExecutionOwner`, `validateExecutionNode`, `validateExecutionRemoval`, `readExecutionAcknowledgement`, `validateMeasurementNode`, `readMeasurementIsolation`의 CLI 사본 | 1 |
-| 6 | `feat(serving): create transition-cost runners on admission` | 2.4절 | 2, 5 |
-| 7 | `test(serving): race measurement admission against prepares` | 5장의 1000 동시 test(`test/integration/serving`, envtest) | 5 |
+| 1 | `feat(serving): admit and hand back measurement nodes in ChillServer` | `kube/admission.go`(`Admit`, 2.2절 표, 2.3절 반환 run과 무효 판정, 재시작), `cmd/chill-server`의 루트 목록과 terminal 판정, loop 연결, catalog와 비용의 `MeasurementInvalid`, RBAC | - |
+| 2 | `feat(profiling): wait for measurement admission` | 네 루트 reconciler의 대기와 거절 terminal, baseline과 curve plan 출처의 무효 건너뛰기 | 1 |
+| 3 | `feat(serving): run operation measurements and manual operations in ChillServer` | 2.5절 route 둘, `ExecuteManual`, witness의 전력 검사, `serving-operation` client화. CLI에서 지우는 것: `executionOwnerClient`, `readExecutionOwner`, `readExecutionConfiguration`, `validateExecutionOwner`, `validateExecutionNode`, `validateExecutionRemoval`, `readExecutionAcknowledgement`, `validateMeasurementNode`, `readMeasurementIsolation` | 1 |
+| 4 | `feat(serving): create transition-cost runners on admission` | 2.4절, result `v1alpha4` | 1, 3 |
+| 5 | `feat(serving): return measured nodes at the lowest mode` | 반환 단계 4 | 1, 3, M2 commit 6 |
 
-각 commit은 자기가 바꾼 문서를 같이 고친다: [3.3절](workload-pools.md#33-측정-pool), `workload-management.md:122-125`,
-`scheduler-operations.md:203-212`와 수동 실행 절, `scheduler-runtime-measurement.md:210-211`, ADR 0022의 M3 문장,
-`MeasurementTaintKey` 주석(`internal/profiling/run/measurement_taint.go:5-6`). 1, 2는 배포 하나, 3, 4는 M2 배포 뒤 하나,
-5, 6, 7은 하나다.
+1-4는 배포 하나다. 1이 운영자 taint를 반환하므로 3(CLI가 taint를 요구하지 않음)과 4(손 runner가 `NodeServing`이 됨)가
+같이 들어가야 한다. 5는 M2 배포 뒤 같이 넣거나 따로 넣는다. 각 commit은 자기가 바꾼 문서를 같이 고친다:
+[3.3절](workload-pools.md#33-측정-pool), `workload-management.md:122-125`, `scheduler-operations.md:203-212`와 수동 실행 절,
+`scheduler-runtime-measurement.md:210-211`, `MeasurementTaintKey` 주석(`internal/profiling/run/measurement_taint.go:5-6`).
 
 ## 5. 검사
 
 | commit | 검사 |
 |---|---|
-| 1 | 빈 노드 승인(taint 값 UID, `Granted`). serving Pod 노드 `Refused: NodeServing`, taint 없음. 외부 Pod만 있는 노드 승인. 두 루트가 한 노드면 먼저 만든 것 승인, 뒤 것 대기. 실행 중 prepare가 있는 노드 대기. terminal과 삭제와 `=true` taint가 반환. merge patch 충돌이 taint를 바꾸지 않음. 같은 주기의 `Tick`이 승인 노드를 후보에서 뺌 |
-| 2 | 루트마다 annotation 없으면 child, Job, NodeActuation 0. `Refused`면 kind별 terminal과 사유 |
-| 3 | `Decide`: taint 노드의 빈 grant, 다른 UID grant, taint 없는 노드의 측정 grant가 `GrantMismatch`. 같은 UID는 적용. 생성 위치 넷의 grant 값 |
-| 4 | 반환 순서가 runner 제거, Ready read-back, taint 제거. read-back 실패면 taint 유지와 사유 |
-| 5 | operation 측정이 ChillServer binding으로 S3에 쓰고 기록이 지금 CLI 결과와 같은 형식. `serving-<hash>` 인스턴스 remove 성공, 공유 인스턴스와 자동제어 Workload와 가중치 남은 대상 거절, route SAR 거절 |
-| 6 | runner Pod owner PMTC, Service selector가 Pod UID, profile 선택 표, 세 거절 사유, 반환 뒤 runner와 Service 0 |
-| 7 | 노드 하나에 goroutine 1000개: 500개는 서로 다른 루트의 승인과 terminal, 500개는 `ExecuteManual` prepare. Node와 Pod watch의 resourceVersion 순서로 taint 구간 안 serving Pod 생성과 serving Pod가 있는 동안의 taint 추가를 센다. 겹침 0, 승인과 prepare 각각 1회 이상, `-race` |
-| 전체 | `make lint test`, `make arch-check`, `make helm-lint helm-template`(default와 `values-profiler.yaml`) |
+| 1 | 빈 노드 승인(taint 값 UID, `Granted <시각>`). serving Pod 노드 `Refused: NodeServing`과 Pod 이름, taint 없음. 외부 Pod 노드 승인과 `ExternalPods` 이름, DaemonSet과 `kube-system`과 Completed Pod 제외. 한 노드의 두 루트는 먼저 만든 것 승인, 뒤 것은 앞 측정의 serving Pod가 있어도 대기. 등록된 run이 있으면 대기. Pending NodeActuation이 있으면 승인과 반환 단계 1 모두 대기. 반환 순서와 serving Pod 0, 단계 실패 때 taint 유지와 다음 주기 재시도, 반환 run 중복 없음. 승인 구간 안 외부 NodeActuation이면 `measurement-invalid`, 루트가 소유한 것은 무효 아님. 재시작: 살아 있는 CR 루트 taint 유지, `=true`와 끊긴 operation ID는 `Interrupted <값>` 기록과 함께 serving Pod 제거, 가장 낮은 모드, taint 제거, 끊긴 PMTC runner 준비는 반환 뒤 다시 대기. 무효 BEO와 PMTC가 `MeasurementInvalid`. merge patch 충돌이 taint를 바꾸지 않음 |
+| 2 | 루트마다 `Granted` 없으면 child, Job, NodeActuation 0. `Refused`면 kind별 terminal과 사유. 무효 MLIB와 ProfilingRun을 출처가 쓰지 않음 |
+| 3 | prepare, idle, remove 순서가 한 번 승인되고 각 기록이 S3에, 응답이 CLI 형식. 바쁜 노드 409. 순서 중 외부 NodeActuation이면 그 기록 `Insufficient`와 `MeasurementInvalid`. `ExecuteManual`: `serving-<hash>` remove 성공, 공유와 자동제어와 가중치 남은 대상 거절, 용량 초과 prepare 거절, taint 노드 거절(`admittedNode`), 실행 중 run을 `Admit`와 `Tick`이 건너뜀. route SAR 거절 |
+| 4 | 세 확인 사유가 taint 전, runner Pod owner PMTC, Service selector, 가장 최근 profile 선택, `runner-profile`과 result `runnerProfileID`, 준비 실패 `RunnerPrepareFailed`와 반환 |
+| 5 | 요청 가능 모드와 가장 낮은 모드가 있으면 그 모드로 Ready read-back 뒤 taint 제거. `Fixed` 노드와 baseline 없는 노드는 전력 단계 없이 반환 |
+| 전체 | `make lint test`, `make manifests generate`(RBAC), `make helm-lint helm-template`(default와 `values-profiler.yaml`) |
+
+배타성은 `tickMu`와 run 등록이 구조로 보장하므로 위 결정적 test로 확인한다. B2 검증의 1000회 동시 test는 두지 않는다(8장 질문 2).
 
 ## 6. 실클러스터 확인
 
@@ -163,28 +181,29 @@ M4 live test와 M2 배포가 끝난 뒤 한다.
 | # | 확인 | 통과 기준 |
 |---|---|---|
 | E-A1 | 가용 노드에 MLIB 하나 | 한 제어 주기 안에 taint(UID)와 `Granted`, `Complete` 뒤 가장 낮은 모드 Ready read-back, taint 제거. 승인과 반환 지연 기록 |
-| E-A2 | 자동제어 Workload가 서빙 중인 노드에 BEO | `Refused: NodeServing`, taint 없음, 그 Workload의 SLO 위반 수가 직전 같은 길이 구간과 같음 |
-| E-A3 | runner 없이 PMTC(jetsonx, 두 모드) | runner와 Service 자동 생성, 방향마다 수용 시도가 목표 수, 반환 뒤 runner와 Service 0 |
-| E-A4 | host에서 `serving-operation --measurement-config`(prepare 비용) | 기록이 S3에 있고 비용 근거로 묶임 |
-| E-A5 | host에서 자동제어 밖 Workload의 `serving-<hash>` remove | Pod 제거, 관측 기록에 manual 동작 |
-| E-A6 | 측정 중 루트 삭제, 측정 중 ChillServer 재시작 | 삭제는 다음 주기에 반환. 재시작 뒤 CR 루트 taint 유지, operation 측정 taint 반환 |
-| E-A7 | 위 전체 동안 NodeActuation 이력과 taint 구간 | taint 구간 안에서 Ready가 된 serving 요청, 반환 뒤 Ready가 된 측정 요청이 모두 0. commit 3 뒤에는 `GrantMismatch` 수도 기록 |
+| E-A2 | 자동제어 Workload가 서빙 중인 노드에 BEO | `Refused: NodeServing`과 Pod 이름, taint 없음, 그 Workload의 SLO 위반 수가 직전 같은 길이 구간과 같음 |
+| E-A3 | 외부 Pod(예: `plan10-serving-jetsono`)가 있는 jetsono에 MLIB | 승인과 `ExternalPods` 이름, 외부 Pod 그대로, 결과 Pod 목록에 그 Pod |
+| E-A4 | runner 없이 PMTC(jetsonx, 두 모드) | runner와 Service 자동 생성, result `runnerProfileID`, 방향마다 수용 시도가 목표 수, 반환 뒤 runner와 Service 0 |
+| E-A5 | host에서 `serving-operation --measurement-config`(prepare, idle, remove) | 승인 한 번, 기록 셋이 S3에 있고 비용 근거로 묶임, 반환 뒤 serving Pod 0 |
+| E-A6 | host에서 자동제어 밖 Workload의 `serving-<hash>` remove | Pod 제거, 관측 기록에 manual 동작 |
+| E-A7 | 측정 중 루트 삭제, operation 측정 중 ChillServer 재시작 | 다음 주기에 반환과 `Interrupted` 기록, 재시작 쪽은 serving Pod 0과 가장 낮은 모드 |
+| E-A8 | 위 전체 동안 `measurement-invalid` 수와 `MeasurementInvalid` 수 | 기록. 0이 아니면 그 NodeActuation 출처를 확인 |
 
 ## 7. 범위 밖
 
 - Measurement CRD 통합과 NodeActuation 삭제는 M5다. 루트 표(2.1절)는 그때 한 kind가 된다.
 - watch 기반 승인. 제어 주기 polling으로 측정 진입이 한 주기 늦어지는 것을 E-A1이 재고, 문제가 되면 더한다.
-- Dashboard 측정 요청 화면의 노드 선택 불가 표시(`DB-FR-34`)는 pools `owner`와 거절 annotation을 읽는 Dashboard 변경이다.
+- pools API의 측정 소유자 표시와 Dashboard 측정 요청 화면의 선택 불가 표시(`DB-FR-34`). 루트 annotation이 상태를 갖고 있어
+  Dashboard 변경 때 함께 더한다.
+- 측정 밖 노드의 미확인 전력 상태(문제 7의 나머지)는 M4 계획기 쪽이다(8장 질문 3).
 
 ## 8. 사용자에게 묻는 것
 
-1. 서빙 중인 노드의 측정을 terminal 거절로 끝낸다. 운영자는 Workload를 옮긴 뒤 다시 제출한다. 자동제어를 끈 Workload와
-   소유자 없는 인스턴스의 노드도 같이 거절한다. 이대로 가는가?
-2. AGENTS.md는 측정 근거 없는 fence를 금한다. commit 3은 05가 채택했고 ChillServer 재시작과 측정 실패 뒤의 늦은 요청을
-   막지만, 늦은 적용이 실제로 일어난 기록은 없다. 승인 순서(commit 1)만으로 ChillServer 안의 구간은 닫힌다. commit 3을
-   지금 넣을까, E-A7이 늦은 적용을 셀 때까지 미룰까?
-3. 반환 때 가장 낮은 모드를 확인한다(2.3절). 측정 밖에서 재부팅한 노드의 미확인 상태가 모든 판단을 `Pending`으로 만드는
-   문제는 계획기가 그 노드만 빼도록 M4 쪽에서 다룰까?
-4. runner profile이 여럿 맞으면(배치 설정이나 artifact가 다른 profile) 가장 최근 측정을 고른다. PMTC에 profile ID를 지정하는
-   필드가 필요한가?
-5. operation 측정 API는 비동기(202와 조회)다. 기록은 ChillServer 재시작에 살아남지 않고 S3 원본만 남는다. 괜찮은가?
+1. 외부 Pod가 있는 노드는 승인하고 이름을 남긴다. `SCH-34`와 `SCH-AC-26`이 이 노드의 측정을 요구하기 때문이다. 거절을
+   원하면 두 요구사항을 바꿔야 한다. 경고로 충분한가?
+2. 1000회 동시 test 대신 결정적 test(run 등록 시 대기, Pending NodeActuation 시 대기, taint 노드의 수동 prepare 거절)로
+   배타성을 확인한다. 괜찮은가?
+3. 측정 밖에서 재부팅한 노드의 미확인 상태가 모든 판단을 `Pending`으로 만드는 문제는 계획기가 그 노드만 빼도록 M4 쪽에서
+   다룰까?
+4. 재시작으로 끊긴 operation 측정 순서에서 이미 저장된 기록은 각자 witness를 통과했으므로 그대로 쓴다. 끊긴 순서 전체를
+   무효로 하길 원하는가?

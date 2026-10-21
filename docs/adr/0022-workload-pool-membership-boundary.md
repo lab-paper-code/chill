@@ -46,10 +46,12 @@ before a Workload prepare or power change. A taint denies by default, so a
 forgotten removal only leaves a Node unused. M3
 ([measurement admission](../design/serving/measurement-admission.md)) makes
 ChillServer the only writer of the same taint: it admits a measurement object
-onto an empty Node with the object's UID as the taint value, refuses a Node that
-runs a CHILL serving instance, uses that UID as the fencing token on power
-changes, creates the transition-cost runner, and removes the taint when the
-object ends or disappears.
+onto a Node without CHILL serving Pods or pending power changes, with the
+object's UID as the taint value, refuses a Node that runs a CHILL serving Pod and
+names it, names other Pods without removing them, creates the transition-cost
+runner, and hands the Node back at its lowest power mode when the object ends or
+disappears. A power change applied inside a measurement window marks that
+measurement invalid; it is counted and not used.
 
 Measured evidence selects itself. Every successfully completed profile, operation
 cost, idle baseline and power-mode transition cost under its fixed location is
