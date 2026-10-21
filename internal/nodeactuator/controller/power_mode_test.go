@@ -22,15 +22,31 @@ type powerModeHost struct {
 	readErr  error
 	applyErr error
 	applied  []int32
+	clock    func() time.Time
 }
 
+// Observe stamps the read with the shared clock, as the Jetson adapter does
+// with its own wall clock while the agent waits on the command.
 func (h *powerModeHost) Observe(context.Context, nodeactuator.Request) (nodeactuator.Observation, error) {
 	if h.readErr != nil {
 		return nodeactuator.Observation{}, h.readErr
 	}
 	return nodeactuator.Observation{Target: nodeactuator.Target{
 		Kind: nodeactuator.ActuatorKindJetsonNVPModel, JetsonNVPModel: &nodeactuator.JetsonNVPModelTarget{ID: h.id},
-	}, ObservedAt: time.Unix(100, 0)}, nil
+	}, ObservedAt: h.clock()}, nil
+}
+
+// classReader fails DeviceClass reads with err while it is set.
+type classReader struct {
+	client.Reader
+	err *error
+}
+
+func (r classReader) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
+	if *r.err != nil {
+		return *r.err
+	}
+	return r.Reader.Get(ctx, key, object, opts...)
 }
 
 func (h *powerModeHost) Apply(_ context.Context, _ nodeactuator.Request, target nodeactuator.Target) error {
@@ -43,10 +59,18 @@ func (h *powerModeHost) Apply(_ context.Context, _ nodeactuator.Request, target 
 }
 
 type powerModeFixture struct {
-	t      *testing.T
-	client client.Client
-	host   *powerModeHost
-	now    time.Time
+	t        *testing.T
+	client   client.Client
+	host     *powerModeHost
+	now      time.Time
+	classErr error
+}
+
+// tick reads the clock, which every read advances by a millisecond.
+func (f *powerModeFixture) tick() time.Time {
+	now := f.now
+	f.now = f.now.Add(time.Millisecond)
+	return now
 }
 
 func newPowerModeFixture(t *testing.T, labels map[string]string) *powerModeFixture {
@@ -74,17 +98,25 @@ func newPowerModeFixture(t *testing.T, labels map[string]string) *powerModeFixtu
 			mode("15W", 0), mode("7W", 1), mode("25W", 2),
 		}},
 	}
-	return &powerModeFixture{
+	f := &powerModeFixture{
 		t:      t,
 		client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node, class).Build(),
 		host:   &powerModeHost{},
 		now:    time.Unix(1_000, 0).UTC(),
 	}
+	f.host.clock = f.tick
+	return f
 }
 
 // reconcile runs one pass of a fresh agent process, as a restart would.
 func (f *powerModeFixture) reconcile() {
 	f.t.Helper()
+	if err := f.reconcileErr(); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *powerModeFixture) reconcileErr() error {
 	policy := func(mode string) nodeactuator.ActuationPolicySpec {
 		return nodeactuator.ActuationPolicySpec{
 			Name: "p", DeviceClass: "jetson-orin-nano", PowerMode: mode, ActuatorKind: nodeactuator.ActuatorKindJetsonNVPModel,
@@ -92,14 +124,13 @@ func (f *powerModeFixture) reconcile() {
 		}
 	}
 	r := &PowerModeReconciler{
-		Client: f.client, Reader: f.client, Host: f.host, Node: "jetson",
+		Client: f.client, Reader: classReader{Reader: f.client, err: &f.classErr}, Host: f.host, Node: "jetson",
 		Policies: []nodeactuator.ActuationPolicySpec{policy("15W"), policy("7W")},
 		Interval: 10 * time.Second, Timeout: time.Second,
-		Now: func() time.Time { return f.now },
+		Now: f.tick,
 	}
-	if _, err := r.Reconcile(context.Background(), ctrl.Request{}); err != nil {
-		f.t.Fatal(err)
-	}
+	_, err := r.Reconcile(context.Background(), ctrl.Request{})
+	return err
 }
 
 func (f *powerModeFixture) node() *corev1.Node {
@@ -140,6 +171,17 @@ func (f *powerModeFixture) expect(state string, generation int64) metadata.Power
 	transition, _, err := metadata.NodePowerModeTransition(node)
 	if err != nil {
 		f.t.Fatal(err)
+	}
+	// ADR 0020 order: fence, read-back, settling start, Ready.
+	var last time.Time
+	for _, at := range []*time.Time{transition.ApplyStartedAt, transition.VerifiedAt, transition.SettlingStartedAt, transition.ReadyAt} {
+		if at == nil {
+			continue
+		}
+		if at.Before(last) {
+			f.t.Fatalf("transition times out of order: %+v", transition)
+		}
+		last = *at
 	}
 	return transition
 }
@@ -279,4 +321,44 @@ func TestPowerModeRebootWithoutTargetFails(t *testing.T) {
 	if _, ok := f.node().Annotations[metadata.PowerActuator]; ok {
 		t.Fatal("unreadable host kept a read-back")
 	}
+}
+
+// A DeviceClass read that fails for a moment requeues; it neither fails the
+// request nor disturbs a settled one.
+func TestPowerModeTransientDeviceClassReadRequeues(t *testing.T) {
+	f := newPowerModeFixture(t, map[string]string{metadata.PowerMode: "15W"})
+	f.reconcile()
+	f.expect(metadata.PowerModeSuccess, 0)
+	f.classErr = errors.New("apiserver unavailable")
+	if err := f.reconcileErr(); err == nil {
+		t.Fatal("transient DeviceClass read did not requeue")
+	}
+	f.expect(metadata.PowerModeSuccess, 0)
+	f.update(func(node *corev1.Node) { node.Labels[metadata.PowerMode] = "7W" })
+	if err := f.reconcileErr(); err == nil {
+		t.Fatal("transient DeviceClass read did not requeue")
+	}
+	if state := f.node().Labels[metadata.PowerModeState]; state == metadata.PowerModeFailed {
+		t.Fatal("transient DeviceClass read failed the request")
+	}
+}
+
+// One failed host read keeps the read-back and counts nothing; a boot seen
+// while the host cannot be read counts once.
+func TestPowerModeFailedReadCountsOnlyABoot(t *testing.T) {
+	f := newPowerModeFixture(t, map[string]string{metadata.PowerMode: "15W"})
+	f.reconcile()
+	readBack := f.node().Annotations[metadata.PowerActuator]
+	f.host.readErr = errors.New("nvpmodel timed out")
+	f.reconcile()
+	f.host.readErr = nil
+	f.reconcile()
+	f.expect(metadata.PowerModeSuccess, 0)
+	if got := f.node().Annotations[metadata.PowerActuator]; got != readBack {
+		t.Fatalf("read-back = %q, want %q", got, readBack)
+	}
+	f.host.readErr = errors.New("nvpmodel timed out")
+	f.reboot()
+	f.reconcile()
+	f.expect(metadata.PowerModeSuccess, 1)
 }

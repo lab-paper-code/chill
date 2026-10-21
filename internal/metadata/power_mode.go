@@ -84,9 +84,9 @@ func NodePowerModeTransition(node *corev1.Node) (PowerModeTransitionRecord, bool
 // RequestPowerMode makes mode the Node's desired power mode and records now
 // as its request time in the same patch. It patches with the resourceVersion
 // the caller read, so a writer whose view of the Node, and with it the
-// measurement grant, is stale gets a conflict. A mode the agent failed gets a
-// new request time, which the agent applies afresh; any other mode already
-// requested is left alone.
+// measurement grant, is stale gets a conflict. A mode the agent failed, and a
+// settled mode the host left since, get a new request time, which the agent
+// serves afresh; any other mode already requested is left alone.
 func RequestPowerMode(ctx context.Context, c client.Client, node *corev1.Node, mode string, now time.Time) error {
 	_, requested := node.Annotations[PowerModeRequestedAt]
 	if node.Labels[PowerMode] == mode && requested {
@@ -94,7 +94,13 @@ func RequestPowerMode(ctx context.Context, c client.Client, node *corev1.Node, m
 		if err != nil {
 			return err
 		}
-		if !ServesRequest(node, transition, mode) || node.Labels[PowerModeState] != PowerModeFailed {
+		generation, _, err := NodePowerModeGeneration(node)
+		if err != nil {
+			return err
+		}
+		state := node.Labels[PowerModeState]
+		left := state == PowerModeSuccess && transition.Generation != generation
+		if !ServesRequest(node, transition, mode) || (state != PowerModeFailed && !left) {
 			return nil
 		}
 	}

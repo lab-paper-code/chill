@@ -102,3 +102,34 @@ func TestPowerModeOutcome(t *testing.T) {
 		})
 	}
 }
+
+// A success the host has left since (a hand change, a reboot) is requested
+// again with a new request time, so a writer can take the Node back to mode.
+func TestRequestPowerModeRetriesASuccessTheHostLeft(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	first := time.Unix(1_000, 0).UTC()
+	ready := first.Add(time.Minute)
+	left := powerModeNode(PowerModeSuccess, 4, PowerModeTransitionRecord{PowerMode: "7W", RequestedAt: stamp(first), Generation: 3, ReadyAt: &ready})
+	held := powerModeNode(PowerModeSuccess, 3, PowerModeTransitionRecord{PowerMode: "7W", RequestedAt: stamp(first), Generation: 3, ReadyAt: &ready})
+	held.Name = "held"
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(left, held).Build()
+	ctx := context.Background()
+	at := time.Unix(2_000, 0).UTC()
+	for _, test := range []struct {
+		name, want string
+	}{{name: "jetson", want: stamp(at)}, {name: "held", want: stamp(first)}} {
+		node := &corev1.Node{}
+		if err := c.Get(ctx, client.ObjectKey{Name: test.name}, node); err != nil {
+			t.Fatal(err)
+		}
+		if err := RequestPowerMode(ctx, c, node, "7W", at); err != nil {
+			t.Fatal(err)
+		}
+		if got := node.Annotations[PowerModeRequestedAt]; got != test.want {
+			t.Fatalf("%s request time = %s, want %s", test.name, got, test.want)
+		}
+	}
+}

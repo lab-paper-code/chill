@@ -15,6 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -62,15 +63,17 @@ func (r *PowerModeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ct
 	if err := r.Client.Get(ctx, client.ObjectKey{Name: r.Node}, node); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	now := r.Now().UTC()
 	// Label and annotation changes for one patch; nil removes a key.
 	labels, annotations := map[string]*string{}, map[string]*string{}
 	observation, observeErr := r.Host.Observe(ctx, nodeactuator.Request{
 		Target: nodeactuator.Target{
 			Kind: nodeactuator.ActuatorKindJetsonNVPModel, JetsonNVPModel: &nodeactuator.JetsonNVPModelTarget{},
 		},
-		Deadline: now.Add(r.Timeout),
+		Deadline: r.Now().Add(r.Timeout),
 	})
+	// Read after the host read, so every time this pass records follows the
+	// read-back (ADR 0020 order).
+	now := r.Now().UTC()
 	if observeErr != nil {
 		ctrl.LoggerFrom(ctx).Error(observeErr, "read back the host power mode", "node", r.Node)
 	}
@@ -94,14 +97,20 @@ func (r *PowerModeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ct
 // publishReadBack records the observed actuator and bootID and counts every
 // change of either since the values on the Node, so a change by hand, a
 // reboot, and an apply all count once, and an agent restart counts none. A
-// host that cannot be read has no read-back. It returns the new generation.
+// failed host read keeps the read-back and counts a new boot only; that boot
+// clears the read-back, which no longer describes the host. It returns the
+// new generation.
 func publishReadBack(
 	node *corev1.Node,
 	observation nodeactuator.Observation,
 	observeErr error,
 	annotations map[string]*string,
 ) (int64, error) {
+	boot := node.Status.NodeInfo.BootID
 	var readBack *string
+	if previous, ok := node.Annotations[metadata.PowerActuator]; ok && node.Annotations[metadata.PowerModeBoot] == boot {
+		readBack = &previous
+	}
 	if observeErr == nil {
 		raw, err := json.Marshal(projectAPITarget(observation.Target))
 		if err != nil {
@@ -110,7 +119,6 @@ func publishReadBack(
 		value := string(raw)
 		readBack = &value
 	}
-	boot := node.Status.NodeInfo.BootID
 	generation, published, err := metadata.NodePowerModeGeneration(node)
 	if err != nil {
 		return 0, err
@@ -169,7 +177,10 @@ func (r *PowerModeReconciler) drive(
 	if state == metadata.PowerModeFailed {
 		return ctrl.Result{}, nil
 	}
-	request, settling, failure := r.resolve(ctx, node, desired, now)
+	request, settling, failure, err := r.resolve(ctx, node, desired, now)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	if failure != "" {
 		r.fail(labels, annotations, metadata.PowerModeTransitionRecord{PowerMode: desired, RequestedAt: requested, Generation: generation}, failure)
 		return ctrl.Result{}, nil
@@ -236,17 +247,22 @@ func (r *PowerModeReconciler) settle(
 	return ctrl.Result{}
 }
 
-// resolve finds the desired mode's actuator target and policy, or a failure.
+// resolve finds the desired mode's actuator target and policy, or a failure
+// the request cannot outlive. A DeviceClass read that fails otherwise is an
+// error, which requeues.
 func (r *PowerModeReconciler) resolve(
 	ctx context.Context,
 	node *corev1.Node,
 	desired string,
 	now time.Time,
-) (nodeactuator.Request, time.Duration, string) {
+) (nodeactuator.Request, time.Duration, string, error) {
 	className := node.Labels[metadata.DeviceClass]
 	class := &edgev1alpha1.DeviceClass{}
 	if err := r.Reader.Get(ctx, client.ObjectKey{Name: className}, class); err != nil {
-		return nodeactuator.Request{}, 0, fmt.Sprintf("get DeviceClass %q: %v", className, err)
+		if apierrors.IsNotFound(err) {
+			return nodeactuator.Request{}, 0, fmt.Sprintf("DeviceClass %q does not exist", className), nil
+		}
+		return nodeactuator.Request{}, 0, "", fmt.Errorf("get DeviceClass %q: %w", className, err)
 	}
 	for _, mode := range class.Spec.PowerModes {
 		if mode.Name != desired {
@@ -258,12 +274,12 @@ func (r *PowerModeReconciler) resolve(
 				return nodeactuator.Request{
 					PowerMode: desired, Target: target,
 					Deadline: now.Add(time.Duration(policy.MaxActuationDurationSeconds) * time.Second),
-				}, time.Duration(policy.SettlingDurationSeconds) * time.Second, ""
+				}, time.Duration(policy.SettlingDurationSeconds) * time.Second, "", nil
 			}
 		}
-		return nodeactuator.Request{}, 0, fmt.Sprintf("no actuation policy authorizes %s mode %s", className, desired)
+		return nodeactuator.Request{}, 0, fmt.Sprintf("no actuation policy authorizes %s mode %s", className, desired), nil
 	}
-	return nodeactuator.Request{}, 0, fmt.Sprintf("DeviceClass %q has no power mode %q", className, desired)
+	return nodeactuator.Request{}, 0, fmt.Sprintf("DeviceClass %q has no power mode %q", className, desired), nil
 }
 
 func (r *PowerModeReconciler) fail(labels, annotations map[string]*string, transition metadata.PowerModeTransitionRecord, failure string) {
