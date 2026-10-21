@@ -67,19 +67,23 @@ def replay(
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
-    """Send records round-robin at an open-loop rate and write one JSON line per request."""
+    """Send records round-robin at an open-loop rate for duration seconds; one JSON line per request."""
 
     schedule = [
         ScheduledRequest(str(index), offset_ns, 1)
         for index, offset_ns in enumerate(arrival_offsets_ns(arrivals, rate, duration, seed))
     ]
     lock = threading.Lock()
+    duration_ns = round(duration * 1_000_000_000)
     start_ns = clock_ns()
 
     def run_worker(requests: Sequence[ScheduledRequest]) -> None:
         client = new_client()
 
         def submit(request: ScheduledRequest, delayed: bool) -> None:
+            # A sender behind schedule stops at the duration instead of draining it.
+            if clock_ns() - start_ns >= duration_ns:
+                return
             record_id, inputs = records[int(request.request_id) % len(records)]
             line: Dict[str, object] = {
                 "workload": workload,

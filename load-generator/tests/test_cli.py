@@ -101,6 +101,25 @@ class ReplayTest(unittest.TestCase):
         self.assertNotIn("status", lines[1])
         self.assertEqual(2, client.closed)  # after the failure and at the end
 
+    def test_stops_sending_when_duration_elapses_behind_schedule(self) -> None:
+        # Each request takes 0.4 s at 10 req/s: the sender falls behind and must
+        # stop at 1 s instead of draining the whole 10-request schedule.
+        now = [0]
+
+        class SlowClient(FakeClient):
+            def infer(self, workload, inputs):
+                now[0] += 400_000_000
+                return super().infer(workload, inputs)
+
+        output = io.StringIO()
+        replay(
+            [("q1", {"image": b"a"})], workload="vqa", rate=10, duration=1, workers=1,
+            new_client=SlowClient, out=output, clock_ns=lambda: now[0],
+            sleep=lambda seconds: now.__setitem__(0, now[0] + round(seconds * 1e9)),
+        )
+
+        self.assertEqual(3, len(output.getvalue().splitlines()))  # sent at 0, 0.4 and 0.8 s
+
     def test_poisson_arrivals_repeat_per_seed_and_average_one_over_rate(self) -> None:
         offsets = arrival_offsets_ns("poisson", 50, 200, 7)
         self.assertEqual(offsets, arrival_offsets_ns("poisson", 50, 200, 7))
