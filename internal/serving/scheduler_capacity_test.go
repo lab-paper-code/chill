@@ -185,6 +185,24 @@ func TestCapacityComparisonPeriodKeepsExpansionOnLoadRise(t *testing.T) {
 	}
 }
 
+// SLO first: at 40 req/s with an empty queue and the r5 κ, keep ends
+// infeasible forever (final 40/25.3 − 1 = 0.58) while adding genesis3 ends
+// feasible with only a transient wait over L − m (0.99). A plan that ends
+// feasible ranks before any plan that does not, so the expansion wins.
+func TestCapacityPlanEndingFeasibleRanksBeforeTransientExceedance(t *testing.T) {
+	s, snap, _, genesis3 := capacityE1Fixture()
+	rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{
+		"profile": 25.288198615188904, snap.Options[1].Instance.Profile.ID: 25.68831509322024, snap.Options[2].Instance.Profile.ID: 70.93509923703007,
+	}))
+	d := capacityDecideForTest(t, s, snap, rows)
+	if d.Status != SchedulerStatusOverload || d.Target == nil || d.Target.Keep || !poolsOn(*d.Target, genesis3) {
+		t.Fatalf("keep outranked an expansion that ends feasible: %s %+v", d.Status, d.Target)
+	}
+	if w := d.Capacity.Workloads[0]; w.FinalExceedance == nil || *w.FinalExceedance > 0 || w.TransitionExceedance == nil || *w.TransitionExceedance <= 0 {
+		t.Fatalf("fixture must end feasible with a transient exceedance: %+v", w)
+	}
+}
+
 // §9 6 판정: a mode change removes the current instances before the route
 // (κ_ret 0); a replacement on free CPUs removes after it (keep κ retained).
 func TestCapacityRetainedKappaFollowsTheChain(t *testing.T) {
@@ -267,10 +285,10 @@ func TestCapacityJudgesEachWorkloadWithItsSLO(t *testing.T) {
 	capacityLoad(s, &snap, relaxed, 150)
 	capacityLoad(s, &snap, tight, 150)
 	rows := capacityRowsForTest(s, snap, nil)
-	// The 10 s route backs up both Workloads, so the current instances (final
-	// 150/100 − 1) win; only their weights take the 1,000 scale.
-	if d := capacityDecideForTest(t, s, snap, rows); d.Status != SchedulerStatusOverload || d.Target == nil || poolsOn(*d.Target, n3) || poolsOn(*d.Target, n4) || math.Abs(d.Target.WorstExceedance-0.5) > 1e-9 {
-		t.Fatalf("current instances must win at worst exceedance 0.5: %+v", d.Target)
+	// The 10 s route backs up both Workloads, but only adding n3 and n4 ends
+	// feasible (keep's final 150/100 − 1 lasts), so it wins over keep's 0.5.
+	if d := capacityDecideForTest(t, s, snap, rows); d.Status != SchedulerStatusOverload || d.Target == nil || !poolsOn(*d.Target, n3) || !poolsOn(*d.Target, n4) || math.Abs(d.Target.WorstExceedance-(2.5/0.9-1)) > 1e-9 {
+		t.Fatalf("the expansion that ends feasible must win: %+v", d.Target)
 	}
 	p := capacityPlannerForTest(t, s, snap, rows)
 	both := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"n3": "profile@n3-fixed/b1/w1", "n4": "profile@n4-fixed/b1/w2"}), 10)

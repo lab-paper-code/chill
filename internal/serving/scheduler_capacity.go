@@ -1141,6 +1141,9 @@ type capacityResult struct {
 	joules   float64
 	worst    float64
 	feasible bool
+	// final marks a plan set whose final (steady-state) judgment holds for
+	// every Workload, route weights within κ included.
+	final bool
 	// weightsExceeded marks a route weight whose share of λ exceeds its κ.
 	weightsExceeded bool
 	judgments       []capacityJudgment
@@ -1174,7 +1177,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 			present[w] = present[w] || len(plan.items[w]) > 0
 		}
 	}
-	res.feasible, res.worst = true, math.Inf(-1)
+	res.feasible, res.final, res.worst = true, true, math.Inf(-1)
 	for w, ws := range p.ws {
 		slices.SortFunc(items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
 		knew, kret, weightSum := 0.0, 0.0, 0.0
@@ -1230,6 +1233,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 			}
 		}
 		res.feasible = res.feasible && j.satisfied
+		res.final = res.final && ok && j.final != nil && *j.final <= 0
 		res.worst = max(res.worst, worst)
 		served, mean := 0.0, 0.0
 		for k, item := range items[w] {
@@ -1283,14 +1287,18 @@ func (p *capacityPlanner) currentWeights(uid string, items []capacityItem, fill 
 	return current, carries
 }
 
-// better orders feasible plan sets first, then the smaller worst exceedance,
-// energy, keep and the logical key.
+// better orders feasible plan sets first; among the rest a plan set that ends
+// feasible (final judgment) before one that does not, then the smaller worst
+// exceedance. Then energy, keep and the logical key.
 func (a capacityResult) better(b *capacityResult) bool {
 	if b == nil {
 		return true
 	}
 	if a.feasible != b.feasible {
 		return a.feasible
+	}
+	if !a.feasible && a.final != b.final {
+		return a.final
 	}
 	if !a.feasible && a.worst != b.worst {
 		return a.worst < b.worst
@@ -1520,16 +1528,19 @@ func (p *capacityPlanner) solve() (capacityResult, error) {
 				if !last.points[index].keep && !p.bounded(vals, true) {
 					continue
 				}
-				feasible, worst := true, math.Inf(-1)
+				feasible, final, worst := true, true, math.Inf(-1)
 				for w, ws := range p.ws {
 					j := capacityJudge(ws, vals[w*width], vals[w*width+1], vals[w*width+2] > 0, r)
 					feasible = feasible && j.satisfied
+					final = final && j.final != nil && *j.final <= 0
 					worst = max(worst, j.worst())
 				}
 				if feasible && state-states != full {
 					continue
 				}
-				if !feasible && (best != nil || overload != nil && worst > overload.worst) {
+				// Route weights can still fail the final judgment, so a point that
+				// ends feasible is only pruned by an overload that also does.
+				if !feasible && (best != nil || overload != nil && (overload.final && !final || overload.final == final && worst > overload.worst)) {
 					continue
 				}
 				choice := make([]int, len(p.plans))
