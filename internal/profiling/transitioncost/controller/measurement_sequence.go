@@ -57,8 +57,10 @@ type measurementProgress struct {
 	stage         measurementStage
 	reason        string
 	evidenceStore string
-	attempts      []FinalizedAttempt
-	table         *transitioncost.DirectedTable
+	// runnerProfileID is the frozen preparation's runner profile, recorded by the terminal result.
+	runnerProfileID string
+	attempts        []FinalizedAttempt
+	table           *transitioncost.DirectedTable
 }
 
 // measurementSequence reconstructs and advances the fixed alternating prefix
@@ -133,7 +135,7 @@ func (s *measurementSequence) advance(
 			case AttemptStageTerminal:
 				return measurementProgress{
 					stage: measurementStageFailed, reason: progress.Reason,
-					evidenceStore: prepared.EvidenceStore, attempts: attempts,
+					evidenceStore: prepared.EvidenceStore, runnerProfileID: prepared.RunnerProfileID, attempts: attempts,
 				}, nil
 			case AttemptStageFinalizationReady:
 				finalized, err = s.finalizer.Finalize(
@@ -201,7 +203,7 @@ func evaluateMeasurement(
 			return measurementProgress{}, false, fmt.Errorf("summarize transition measurement: %w", err)
 		}
 		return measurementProgress{
-			stage: measurementStageComplete, evidenceStore: prepared.EvidenceStore,
+			stage: measurementStageComplete, evidenceStore: prepared.EvidenceStore, runnerProfileID: prepared.RunnerProfileID,
 			attempts: attempts, table: &table,
 		}, true, nil
 	}
@@ -209,7 +211,7 @@ func evaluateMeasurement(
 		accepted[directionIndex] < measurement.Spec.AcceptedCountTarget {
 		return measurementProgress{
 			stage: measurementStageInsufficient, reason: measurementReasonAttemptLimitReached,
-			evidenceStore: prepared.EvidenceStore, attempts: attempts,
+			evidenceStore: prepared.EvidenceStore, runnerProfileID: prepared.RunnerProfileID, attempts: attempts,
 		}, true, nil
 	}
 	return measurementProgress{}, false, nil

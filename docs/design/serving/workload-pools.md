@@ -98,8 +98,8 @@ owner와 binding이 모두 없는 인스턴스는 어느 활성 POOL에도 속�
 
 - 측정 Pod는 이 key의 toleration(`operator: Exists`, `effect: NoSchedule`)을 갖는다: profiling Job(measurement-worker,
   `profiler/controller/execution_job_spec.go:110-136`, idle baseline도 같은 경로), transition attempt Job
-  (`transitioncost/controller/attempt_job.go:123-136`), `serving-operation` 측정 인스턴스. 운영자가 준비하는 전환 비용
-  runner와 Service(`api/v1alpha1/powermodetransitioncost_types.go:30-50`)의 Pod에도 같은 toleration을 둔다.
+  (`transitioncost/controller/attempt_job.go:123-136`), operation 측정 인스턴스, ChillServer가 승인 때 준비하는 전환 비용
+  runner([측정 admission 2.4절](measurement-admission.md#24-전환-비용-runner)).
 - CHILL serving Pod는 `spec.nodeName`으로 만들어 kube-scheduler의 NoSchedule 검사를 거치지 않는다(`kube/operations.go:403`).
   그래서 ChillServer가 직접 뺀다. 스케줄러 capture는 이 노드를 배치, 전력 변경, `Fixed` 내림, 제거 대상에 넣지 않고(3.4절),
   Workload 인스턴스의 prepare와 `ChangePower`(`kube/operations.go:740-769`)는 실행 직전에 Node를 읽어 taint가 있으면

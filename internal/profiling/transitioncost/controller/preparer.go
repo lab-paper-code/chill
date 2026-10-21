@@ -87,6 +87,7 @@ type PreparedMeasurement struct {
 	FactObservationTimeout time.Duration                            `json:"factObservationTimeoutNanoseconds"`
 	Policy                 transitioncost.Policy                    `json:"policy"`
 	Directions             []PreparedDirection                      `json:"directions"`
+	RunnerProfileID        string                                   `json:"runnerProfileID"`
 }
 
 // PreparedDirection is one ordered transition with its target-mode baseline,
@@ -226,7 +227,8 @@ func (p *Preparer) Prepare(
 		ObserverNodeName: p.observerNode, EvidenceStore: p.evidenceStore,
 		DeviceClass: measurement.Spec.DeviceClass, ExecutionPath: measurement.Spec.ExecutionPath,
 		ServingService: measurement.Spec.ServingService, ServingContainer: measurement.Spec.ServingContainer,
-		PowerSource: powerSource, PowerRequest: observation.powerRequest,
+		RunnerProfileID: measurement.Annotations[profilingrun.RunnerProfileAnnotation],
+		PowerSource:     powerSource, PowerRequest: observation.powerRequest,
 		FactPollInterval: observation.factPollInterval, FactObservationTimeout: observation.factObservationTimeout,
 		Policy:     observation.policy,
 		Directions: []PreparedDirection{direction(0, 1), direction(1, 0)},
@@ -266,6 +268,9 @@ func validatePreparationInput(measurement *edgev1alpha1.PowerModeTransitionCost)
 	}
 	if len(measurement.Spec.Modes) != 2 {
 		return errors.New("PowerModeTransitionCost requires exactly two modes")
+	}
+	if !clean(measurement.Annotations[profilingrun.RunnerProfileAnnotation]) {
+		return errors.New("PowerModeTransitionCost runner profile annotation is required")
 	}
 	return nil
 }

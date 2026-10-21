@@ -117,6 +117,7 @@ func TestMeasurementSequenceCompletesExactDirectedTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if progress.stage != measurementStageComplete || progress.evidenceStore != fixture.prepared.EvidenceStore ||
+		progress.runnerProfileID != testRunnerProfile ||
 		progress.table == nil || len(progress.attempts) != 10 ||
 		len(fixture.materializer.calls) != 1 || fixture.materializer.calls[0] != (sequenceCoordinate{1, 5}) {
 		t.Fatalf("progress = %#v", progress)
@@ -167,7 +168,7 @@ func TestMeasurementSequenceStopsOnAttemptTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	if progress.stage != measurementStageFailed || progress.reason != AttemptReasonSourceStateMismatch ||
-		progress.evidenceStore != fixture.prepared.EvidenceStore ||
+		progress.evidenceStore != fixture.prepared.EvidenceStore || progress.runnerProfileID != testRunnerProfile ||
 		len(fixture.finalizer.finalizeCalls) != 0 {
 		t.Fatalf("progress = %#v", progress)
 	}

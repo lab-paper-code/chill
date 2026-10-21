@@ -144,11 +144,17 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 		}
 		root := byUID[holder]
 		if root != nil && !root.terminal {
-			if granted, _, _ := profilingrun.Admission(root.object.GetAnnotations()); !granted {
+			granted, _, _ := profilingrun.Admission(root.object.GetAnnotations())
+			if granted {
+				continue
+			}
+			if _, transition := root.object.(*edge.PowerModeTransitionCost); !transition {
 				// The taint was written and the grant was not: finish the grant.
 				errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(now)))
+				continue
 			}
-			continue
+			// A runner preparation a restart cut off is handed back; the
+			// measurement then waits again.
 		}
 		if root != nil {
 			// The hand-back patches its own copy; this cycle keeps reading the listed one.
@@ -178,9 +184,22 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(refusedNodeServing, strings.Join(serving, ","))))
 			continue
 		}
+		transition, _ := root.object.(*edge.PowerModeTransitionCost)
+		var runner PrepareSpec
+		if transition != nil {
+			var reason string
+			if runner, reason = c.runnerPreparation(transition, node, config); reason != "" {
+				errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(reason, "")))
+				continue
+			}
+		}
 		claimed[node.Name] = true
 		if err := c.setMeasurementTaint(ctx, node, string(root.object.GetUID())); err != nil {
 			errs = append(errs, err)
+			continue
+		}
+		if transition != nil {
+			c.startRunner(node, transition.DeepCopy(), runner, config)
 			continue
 		}
 		errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(now)))
@@ -227,8 +246,12 @@ func servingPodsOn(pods []core.Pod, node string) []string {
 	return names
 }
 
-func (c *SchedulerController) annotate(ctx context.Context, object client.Object, key, value string) error {
-	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]string{key: value}}})
+func (c *SchedulerController) annotate(ctx context.Context, object client.Object, keyValues ...string) error {
+	annotations := map[string]string{}
+	for i := 0; i+1 < len(keyValues); i += 2 {
+		annotations[keyValues[i]] = keyValues[i+1]
+	}
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": annotations}})
 	if err != nil {
 		return err
 	}
@@ -349,6 +372,15 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	}
 	if err := c.operations.clearNode(ctx, node); err != nil {
 		return err
+	}
+	runners, err := c.kube.CoreV1().Services(c.observer.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: runnerNodeLabel + "=" + node.UID})
+	if err != nil {
+		return err
+	}
+	for _, service := range runners.Items {
+		if err = eIfNotFound(c.kube.CoreV1().Services(service.Namespace).Delete(ctx, service.Name, meta.DeleteOptions{})); err != nil {
+			return err
+		}
 	}
 	result.Progress = append(result.Progress, "serving Pods removed")
 	current, err := c.kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})

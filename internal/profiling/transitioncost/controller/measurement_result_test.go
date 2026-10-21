@@ -23,7 +23,7 @@ func TestMeasurementResultWriterStoresCompleteTableAndParityProgress(t *testing.
 		t.Fatal(err)
 	}
 	if store.puts != 1 || stored.record.Outcome != measurementStageComplete ||
-		stored.record.Reason != "" || stored.record.DirectedTable == nil {
+		stored.record.Reason != "" || stored.record.DirectedTable == nil || stored.record.RunnerProfileID != testRunnerProfile {
 		t.Fatalf("stored result = %#v, puts = %d", stored, store.puts)
 	}
 	if stored.reference.Store != progress.evidenceStore ||
@@ -63,7 +63,7 @@ func TestMeasurementResultWriterStoresTerminalOutcomeWithoutInventingTable(t *te
 			name: "insufficient retained attempts",
 			progress: measurementProgress{
 				stage: measurementStageInsufficient, reason: measurementReasonAttemptLimitReached,
-				evidenceStore: complete.evidenceStore, attempts: complete.attempts[:3],
+				evidenceStore: complete.evidenceStore, runnerProfileID: complete.runnerProfileID, attempts: complete.attempts[:3],
 			},
 			wantAccepted: [2]int32{2, 1}, wantReferences: [2]int{2, 1},
 		},
@@ -71,7 +71,7 @@ func TestMeasurementResultWriterStoresTerminalOutcomeWithoutInventingTable(t *te
 			name: "failed before finalized attempt",
 			progress: measurementProgress{
 				stage: measurementStageFailed, reason: AttemptReasonSourceStateMismatch,
-				evidenceStore: complete.evidenceStore,
+				evidenceStore: complete.evidenceStore, runnerProfileID: complete.runnerProfileID,
 			},
 			wantAccepted: [2]int32{}, wantReferences: [2]int{},
 		},
@@ -100,7 +100,7 @@ func TestMeasurementResultWriterStoresTerminalOutcomeWithoutInventingTable(t *te
 
 func TestMeasurementResultWriterLoadsExistingObjectAsAuthority(t *testing.T) {
 	measurement, incoming := completeMeasurementResultFixture(t)
-	winner := measurementProgress{stage: measurementStageFailed, reason: AttemptReasonSourceStateMismatch}
+	winner := measurementProgress{stage: measurementStageFailed, reason: AttemptReasonSourceStateMismatch, runnerProfileID: incoming.runnerProfileID}
 	winnerPayload := measurementResultPayload(t, winner)
 	location, err := measurementResultLocation(measurement, incoming.evidenceStore)
 	if err != nil {
@@ -172,6 +172,14 @@ func TestDecodeMeasurementResultRejectsUntrustedStoredRecord(t *testing.T) {
 			record.DirectedTable.Entries[0].AcceptedCount--
 			return marshalMeasurementResultRecord(t, record)
 		}},
+		{name: "missing runner profile", payload: func() []byte {
+			record, err := decodeMeasurementResult(valid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record.RunnerProfileID = ""
+			return marshalMeasurementResultRecord(t, record)
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -228,7 +236,8 @@ func completeMeasurementResultFixture(
 	}
 	return fixture.measurement, measurementProgress{
 		stage: measurementStageComplete, evidenceStore: fixture.prepared.EvidenceStore,
-		attempts: attempts, table: &table,
+		runnerProfileID: fixture.prepared.RunnerProfileID,
+		attempts:        attempts, table: &table,
 	}
 }
 

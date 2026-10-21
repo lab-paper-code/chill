@@ -180,7 +180,7 @@ func validateStoredPreparation(prepared PreparedMeasurement) error {
 		"DeviceClass": prepared.DeviceClass, "execution path": prepared.ExecutionPath,
 		"serving Service": prepared.ServingService, "serving container": prepared.ServingContainer,
 		"power source kind": prepared.PowerSource.Kind, "power source endpoint": prepared.PowerSource.Endpoint,
-		"power metric": prepared.PowerSource.Metric,
+		"power metric": prepared.PowerSource.Metric, "runner profile ID": prepared.RunnerProfileID,
 	} {
 		if !clean(value) {
 			return fmt.Errorf("transition preparation %s is required without surrounding whitespace", name)

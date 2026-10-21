@@ -20,6 +20,8 @@ import (
 
 const testDeviceType = "device-under-test"
 
+const testRunnerProfile = "runner-profile"
+
 func TestNewPreparerRequiresEveryResolver(t *testing.T) {
 	catalogs := newRecordingDeviceClassReader(validDeviceClass())
 	nodes := validNodeResolver()
@@ -179,7 +181,8 @@ func assertPreparedSelection(
 		prepared.DeviceClass != measurement.Spec.DeviceClass ||
 		prepared.ExecutionPath != measurement.Spec.ExecutionPath ||
 		prepared.ServingService != measurement.Spec.ServingService ||
-		prepared.ServingContainer != measurement.Spec.ServingContainer {
+		prepared.ServingContainer != measurement.Spec.ServingContainer ||
+		prepared.RunnerProfileID != testRunnerProfile {
 		t.Fatalf("prepared operational selection = %#v", prepared)
 	}
 }
@@ -200,6 +203,11 @@ func TestPreparerRejectsOnlyUnusableShapeBeforeResolution(t *testing.T) {
 	invalid.Spec.ObservationPolicy.MinimumCoverage = "not-a-number"
 	if _, err := preparer.Prepare(context.Background(), invalid); err == nil {
 		t.Fatal("unparseable minimum coverage was accepted")
+	}
+	invalid = validTransitionMeasurement()
+	invalid.Annotations = nil
+	if _, err := preparer.Prepare(context.Background(), invalid); err == nil {
+		t.Fatal("measurement without a runner profile was accepted")
 	}
 	if metrics.calls != 0 || len(baselines.calls) != 0 {
 		t.Fatal("unusable input reached an external resolver")
@@ -565,7 +573,10 @@ func validTransitionMetricResolver() *recordingTransitionMetricResolver {
 
 func validTransitionMeasurement() *edgev1alpha1.PowerModeTransitionCost {
 	return &edgev1alpha1.PowerModeTransitionCost{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "measurements"},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:   "measurements",
+			Annotations: map[string]string{profilingrun.RunnerProfileAnnotation: testRunnerProfile},
+		},
 		Spec: edgev1alpha1.PowerModeTransitionCostSpec{
 			TargetNode: "node-under-test", DeviceClass: "class-under-test",
 			ModelSpec: "model-under-test", ExecutionPath: "path-under-test",

@@ -30,11 +30,12 @@ type storedMeasurementResult struct {
 }
 
 type measurementResultRecord struct {
-	SchemaVersion string                              `json:"schemaVersion"`
-	Outcome       measurementStage                    `json:"outcome"`
-	Reason        string                              `json:"reason,omitempty"`
-	Directions    []measurementResultDirection        `json:"directions"`
-	DirectedTable *transitioncost.DirectedTableRecord `json:"directedTable,omitempty"`
+	SchemaVersion   string                              `json:"schemaVersion"`
+	Outcome         measurementStage                    `json:"outcome"`
+	Reason          string                              `json:"reason,omitempty"`
+	Directions      []measurementResultDirection        `json:"directions"`
+	DirectedTable   *transitioncost.DirectedTableRecord `json:"directedTable,omitempty"`
+	RunnerProfileID string                              `json:"runnerProfileID"`
 }
 
 type measurementResultDirection struct {
@@ -151,10 +152,14 @@ func measurementResultLocation(
 
 func buildMeasurementResult(progress measurementProgress) (measurementResultRecord, error) {
 	record := measurementResultRecord{
-		SchemaVersion: transitioncost.MeasurementResultSchemaVersion,
-		Outcome:       progress.stage,
-		Reason:        progress.reason,
-		Directions:    measurementResultDirections(progress.attempts),
+		SchemaVersion:   transitioncost.MeasurementResultSchemaVersion,
+		Outcome:         progress.stage,
+		Reason:          progress.reason,
+		Directions:      measurementResultDirections(progress.attempts),
+		RunnerProfileID: progress.runnerProfileID,
+	}
+	if !cleanMeasurementResultText(record.RunnerProfileID) {
+		return measurementResultRecord{}, errors.New("transition measurement result runner profile ID is required")
 	}
 	switch progress.stage {
 	case measurementStageComplete:
@@ -208,6 +213,9 @@ func decodeMeasurementResult(payload []byte) (measurementResultRecord, error) {
 func validateStoredMeasurementResult(record measurementResultRecord) error {
 	if record.SchemaVersion != transitioncost.MeasurementResultSchemaVersion {
 		return fmt.Errorf("unsupported transition measurement result schema %q", record.SchemaVersion)
+	}
+	if !cleanMeasurementResultText(record.RunnerProfileID) {
+		return errors.New("transition measurement result runner profile ID is required")
 	}
 	if len(record.Directions) != 2 {
 		return errors.New("transition measurement result must contain exactly two directions")

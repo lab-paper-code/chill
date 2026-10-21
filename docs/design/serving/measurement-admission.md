@@ -101,8 +101,9 @@ BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므
 - 승인 전 확인(2.2절 줄 4): `RunnerProfileMissing`(catalog의 준비 가능한 profile 중 대상 Node UID, `spec.modelSpec`,
   `spec.executionPath`, `spec.modes[0].powerMode`가 같은 것이 없음), `RunnerContainerUnsupported`(`spec.servingContainer`가
   `firstfloor`가 아님), `RunnerNamespace`(PMTC namespace가 serving namespace와 다름). 맞는 profile이 여럿이면 가장 최근 측정이다.
-- taint를 붙이고 runner 준비 run을 등록한다. run은 measurement 모드로 runner를 준비하고, Pod owner를 PMTC로 두고,
-  `spec.servingService` 이름의 Service를 만든다. selector는 runner Pod의 `edge.dacs.io/serving-pod-uid`
+- taint를 붙이고 runner 준비 run을 등록한다. run은 measurement 모드로 runner Pod `runner-<PMTC UID hash>`를 준비하고,
+  `spec.servingService` 이름의 Service를 label `chill.dacs.io/measurement-runner: <Node UID>`로 만든다. 반환이 그 Node의
+  serving Pod와 이 label의 Service를 지우므로 PMTC가 삭제되어도 runner가 남지 않는다. selector는 runner Pod의 `edge.dacs.io/serving-pod-uid`
   (`kube/native_service.go:20,39`)다. observer는 PMTC namespace에서 이 Service와 Pod를 읽는다(`transitioncost/kube/observer.go:166-210`).
 - 성공하면 PMTC annotation `chill.dacs.io/runner-profile: <profile ID>`와 `Granted <시각>`을 쓴다. preparer가 profile ID를 준비
   기록에 고정하고 result가 `runnerProfileID`로 싣는다(`transition-cost-measurement-result.v1alpha3`에서 `v1alpha4`,
@@ -175,7 +176,7 @@ BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므
 | 1 | 빈 노드 승인(taint 값 UID, `Granted <시각>`). serving Pod 노드 `Refused: NodeServing`과 Pod 이름, taint 없음. CHILL이 배치하지 않은 Pod만 있는 노드 승인, 그 Pod 그대로. 한 노드의 두 루트는 먼저 만든 것 승인, 뒤 것은 앞 측정의 serving Pod가 있어도 대기. 등록된 run이 있으면 대기. Pending NodeActuation이 있으면 승인과 반환 단계 1 모두 대기. 반환 순서와 serving Pod 0, 단계 실패 때 taint 유지와 다음 주기 재시도, 반환 run 중복 없음. 승인 구간 안 외부 NodeActuation이면 `measurement-invalid`, 루트가 소유한 것은 무효 아님. 재시작: 살아 있는 CR 루트 taint 유지, `=true`와 삭제된 루트와 끊긴 순서 ID는 serving Pod 제거, 가장 낮은 모드, taint 제거, 끊긴 PMTC runner 준비는 반환 뒤 다시 대기. 무효 BEO와 PMTC가 `MeasurementInvalid`. merge patch 충돌이 taint를 바꾸지 않음 |
 | 2 | 루트마다 `Granted` 없으면 child, Job, NodeActuation 0. `Refused`면 kind별 terminal과 사유. 무효 MLIB와 ProfilingRun을 출처가 쓰지 않음 |
 | 3 | prepare, idle, remove 순서가 한 번 승인되고 각 기록이 순서 ID를 가진 key로 S3에, 응답이 CLI 형식, 순서 기록 없음. 바쁜 노드 409. 두 번째 요청 실패와 연결 끊김이 순서 기록(`saved` 1개)과 `SequenceIncomplete`를 만들고 첫 기록은 비용으로 쓰임. 재시작 뒤 반환이 reason `ChillServerRestart` 순서 기록, 진행 중이던 요청은 기록 없음이나 `Insufficient`. 순서 중 외부 NodeActuation이면 그 기록 `Insufficient`와 `MeasurementInvalid`. `ExecuteManual`: `serving-<hash>` remove 성공, 공유와 자동제어와 가중치 남은 대상 거절, 용량 초과 prepare 거절, taint 노드 거절(`admittedNode`), 실행 중 run을 `Admit`와 `Tick`이 건너뜀. route SAR 거절 |
-| 4 | 세 확인 사유가 taint 전, runner Pod owner PMTC, Service selector, 가장 최근 profile 선택, `runner-profile`과 result `runnerProfileID`, 준비 실패 `RunnerPrepareFailed`와 반환 |
+| 4 | 세 확인 사유가 taint 전, 반환 뒤 runner Pod와 Service 0, 가장 최근 profile 선택, `runner-profile`과 result `runnerProfileID`, 준비 실패 `RunnerPrepareFailed`와 반환 |
 | 5 | 요청 가능 모드와 가장 낮은 모드가 있으면 그 모드로 Ready read-back 뒤 taint 제거. `Fixed` 노드와 baseline 없는 노드는 전력 단계 없이 반환 |
 | 전체 | `make lint test`, `make manifests generate`(RBAC), `make helm-lint helm-template`(default와 `values-profiler.yaml`) |
 
