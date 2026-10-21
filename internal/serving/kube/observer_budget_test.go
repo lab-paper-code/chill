@@ -28,7 +28,7 @@ type observerAPI struct {
 	observer *Observer
 	mu       sync.Mutex
 	reads    map[string]int
-	failing  string // path fragment whose reads fail
+	failing  string // suffix of "path?query" whose reads fail
 	slowNode time.Duration
 	hang     chan struct{} // closed when native state reads may answer
 }
@@ -91,7 +91,7 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 			api.reads[r.Method+" "+r.URL.Path]++
 			failing, slow := api.failing, api.slowNode
 			api.mu.Unlock()
-			if failing != "" && strings.Contains(r.URL.Path, failing) {
+			if failing != "" && strings.HasSuffix(r.URL.Path+"?"+r.URL.RawQuery, failing) {
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 				return
 			}
@@ -203,5 +203,33 @@ func TestObserverRefreshBoundsNativeProbe(t *testing.T) {
 	}
 	if took := time.Since(started); took > nativeProbeTimeout+time.Second || api.ready() != 0 {
 		t.Fatalf("hung probe held the refresh %v, ready %d", took, api.ready())
+	}
+}
+
+// d9: per-instance reads that failed in the throttled client published every
+// instance not Ready, so no accepted request was dispatched.
+func TestObserverKeepsVerifiedReadinessWhenAReadFails(t *testing.T) {
+	for _, failing := range []string{"/services?", "/pods?"} {
+		t.Run(failing, func(t *testing.T) {
+			const instances = 6
+			api := newObserverAPI(t, instances)
+			api.refresh(t)
+			if api.ready() != instances {
+				t.Fatalf("ready %d of %d", api.ready(), instances)
+			}
+			api.mu.Lock()
+			api.failing = failing
+			api.mu.Unlock()
+			api.refresh(t)
+			issues := 0
+			for _, issue := range api.observer.Issues() {
+				if strings.HasPrefix(issue.Source, "chill-system/instance-") {
+					issues++
+				}
+			}
+			if api.ready() != instances || issues != instances {
+				t.Fatalf("a failed read changed verified readiness: ready %d of %d, issues %+v", api.ready(), instances, api.observer.Issues())
+			}
+		})
 	}
 }

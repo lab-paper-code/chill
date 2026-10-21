@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
@@ -104,6 +105,10 @@ type Observer struct {
 	removingInstances map[string]bool
 	// refreshed is when the last successful refresh started.
 	refreshed time.Time
+	// verified holds the instances the last refresh published Ready; a failed
+	// Kubernetes read republishes them. The Pod watch and log follow remove an
+	// instance whose executor changes.
+	verified map[string]serving.ReadyInstance
 }
 
 func NewObserver(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, native *firstfloor.Client, config ObserverConfig) (*Observer, error) {
@@ -141,9 +146,13 @@ func (o *Observer) Issues() []ObserverIssue {
 func (o *Observer) issue(source string, err error) {
 	if err == nil {
 		delete(o.issues, source)
-	} else {
-		o.issues[source] = ObserverIssue{Source: source, Reason: err.Error(), At: time.Now().UTC()}
+		return
 	}
+	// Each new reason is logged once; the refresh caller logs its own failure.
+	if previous, seen := o.issues[source]; source != "refresh" && (!seen || previous.Reason != err.Error()) {
+		ctrllog.Log.WithName("observer").Error(err, "native source issue", "source", source)
+	}
+	o.issues[source] = ObserverIssue{Source: source, Reason: err.Error(), At: time.Now().UTC()}
 }
 func physicalID(podUID types.UID, containerID string) string {
 	return string(podUID) + "/" + containerID
@@ -157,8 +166,10 @@ func firstfloorStatus(pod *corev1.Pod) *corev1.ContainerStatus {
 	return nil
 }
 
-// Refresh publishes only the current verified set. List/probe failures close
-// assignment, but do not claim that any accepted backend request has stopped.
+// Refresh publishes only the current verified set. Node or Pod list and probe
+// failures close assignment, but do not claim that any accepted backend request
+// has stopped. A failed Service or post-probe Pod read keeps the last verified
+// readiness of a running executor.
 func (o *Observer) Refresh(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -255,6 +266,12 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 		}
 	}
 	ready = append(ready, o.verifyProbed(ctx, probed, observed)...)
+	o.verified = map[string]serving.ReadyInstance{}
+	for _, instance := range ready {
+		if instance.State.Ready {
+			o.verified[instance.State.ID] = instance
+		}
+	}
 	if err = o.runtime.InstallInstances(ready); err != nil {
 		return err
 	}
@@ -393,34 +410,36 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		}
 		err = probeErr
 	}
+	if servicesErr != nil && errors.Is(err, servicesErr) {
+		return o.sourceReadFailed(pod, node, err)
+	}
 	return o.sourceUnavailable(pod, node, err)
 }
 
 // verifySource publishes a probed instance only if the Pod list read behind
 // the probe shows the same running executor as the only one its Service selects.
 func (o *Observer) verifySource(p probedSource, latest *corev1.PodList, latestErr error) (serving.ReadyInstance, bool) {
-	err := latestErr
+	if latestErr != nil {
+		instance, publish, _ := o.sourceReadFailed(p.pod, p.node, latestErr)
+		return instance, publish
+	}
 	var current *corev1.Pod
-	if err == nil {
-		selected := 0
-		for i := range latest.Items {
-			if latest.Items[i].Labels[instancePodUIDLabel] == string(p.pod.UID) {
-				selected++
-				current = &latest.Items[i]
-			}
+	selected := 0
+	for i := range latest.Items {
+		if latest.Items[i].Labels[instancePodUIDLabel] == string(p.pod.UID) {
+			selected++
+			current = &latest.Items[i]
 		}
-		if selected != 1 {
-			current = nil
-		}
-		// A restart between snapshot and HTTP readiness must not alias executors.
-		switch {
-		case current == nil || current.Name != p.pod.Name || current.Spec.NodeName != p.pod.Spec.NodeName || !sameNativeContainer(p.pod, current):
-			err = errors.New("native Service does not select only the current physical executor")
-		case !sameRunningContainer(p.pod, current):
-			err = errors.New("native container changed during probe")
-		default:
-			err = validateInstanceService(current, p.service)
-		}
+	}
+	var err error
+	// A restart between snapshot and HTTP readiness must not alias executors.
+	switch {
+	case selected != 1 || current.Name != p.pod.Name || current.Spec.NodeName != p.pod.Spec.NodeName || !sameNativeContainer(p.pod, current):
+		err = errors.New("native Service does not select only the current physical executor")
+	case !sameRunningContainer(p.pod, current):
+		err = errors.New("native container changed during probe")
+	default:
+		err = validateInstanceService(current, p.service)
 	}
 	if err == nil {
 		err = o.startLogs(current, p.owner)
@@ -440,8 +459,29 @@ func (o *Observer) sourceUnavailable(pod *corev1.Pod, node *corev1.Node, err err
 	}
 	return serving.ReadyInstance{}, false, nil
 }
+
+// sourceReadFailed keeps the last verified readiness of a still running and
+// ready executor when a Kubernetes read failed: the failure says nothing about
+// the executor, and a changed executor is disabled by the Pod watch.
+func (o *Observer) sourceReadFailed(pod *corev1.Pod, node *corev1.Node, err error) (serving.ReadyInstance, bool, *probedSource) {
+	if status := firstfloorStatus(pod); sameRunningContainer(pod, pod) {
+		if last, ok := o.verified[physicalID(pod.UID, status.ContainerID)]; ok {
+			o.issue(pod.Namespace+"/"+pod.Name, fmt.Errorf("verified readiness kept after a failed read: %w", err))
+			last.State.Stopped = o.removingInstances[last.State.ID]
+			return last, true, nil
+		}
+	}
+	return o.sourceUnavailable(pod, node, err)
+}
+
+func (o *Observer) disable(id, reason string) {
+	delete(o.verified, id)
+	o.runtime.DisableInstance(id, reason)
+}
+
 func (o *Observer) refreshFailure(err error) error {
 	o.issue("refresh", err)
+	o.verified = nil
 	o.runtime.SetMeasurementNodes(nil)
 	_ = o.runtime.InstallInstances(nil)
 	return err
@@ -732,7 +772,7 @@ func (o *Observer) watchPods(w watch.Interface) {
 					status := firstfloorStatus(pod)
 					changed := event.Type == watch.Deleted || status == nil || status.ContainerID != source.containerID || status.State.Running == nil
 					if changed || pod.DeletionTimestamp != nil || !status.Ready || !podReady(pod) {
-						o.runtime.DisableInstance(id, "native Pod readiness/identity unavailable")
+						o.disable(id, "native Pod readiness/identity unavailable")
 					}
 					if changed {
 						source.stopFollow()
@@ -740,6 +780,7 @@ func (o *Observer) watchPods(w watch.Interface) {
 				}
 			} else if event.Type == watch.Error {
 				o.issue("pod-watch", errors.New("native Pod status watch error"))
+				o.verified = nil
 				_ = o.runtime.InstallInstances(nil)
 			}
 			o.mu.Unlock()
@@ -792,7 +833,7 @@ func (o *Observer) followLogs(ctx context.Context, id string, pod *corev1.Pod, o
 	if source := o.sources[id]; source != nil && source.follow == ctx {
 		if ctx.Err() == nil {
 			o.issue("logs/"+id, err)
-			o.runtime.DisableInstance(id, err.Error())
+			o.disable(id, err.Error())
 		}
 		source.stopFollow()
 	}
@@ -1020,7 +1061,7 @@ func (o *Observer) Close() error {
 func (o *Observer) detachNodeLocked(ctx context.Context, uid string) error {
 	for _, instance := range o.runtime.Instances() {
 		if instance.Node.UID == uid {
-			o.runtime.DisableInstance(instance.ID, "NodePowerTransition")
+			o.disable(instance.ID, "NodePowerTransition")
 		}
 	}
 	// The shared Changed channel is only a wake-up hint. Polling here re-reads
