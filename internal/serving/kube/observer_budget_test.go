@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -33,6 +34,7 @@ type observerAPI struct {
 	failing  string // suffix of "path?query" whose reads fail
 	slowNode time.Duration
 	hang     chan struct{} // closed when native state reads may answer
+	owner    types.UID     // Workload that owns every listed Pod
 }
 
 func newObserverAPI(t *testing.T, instances int) *observerAPI {
@@ -91,7 +93,7 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 		} else {
 			api.mu.Lock()
 			api.reads[r.Method+" "+r.URL.Path]++
-			failing, slow := api.failing, api.slowNode
+			failing, slow, owner := api.failing, api.slowNode, api.owner
 			api.mu.Unlock()
 			if failing != "" && strings.HasSuffix(r.URL.Path+"?"+r.URL.RawQuery, failing) {
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
@@ -106,6 +108,9 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 				list := core.PodList{TypeMeta: meta.TypeMeta{Kind: "PodList", APIVersion: "v1"}}
 				selector := strings.TrimPrefix(r.URL.Query().Get("labelSelector"), instancePodUIDLabel+"=")
 				for _, pod := range podList.Items {
+					if owner != "" {
+						pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: "w", UID: owner}}
+					}
 					if r.URL.Query().Get("labelSelector") == "" || string(pod.UID) == selector {
 						list.Items = append(list.Items, pod)
 					}
@@ -231,6 +236,33 @@ func TestObserverKeepsVerifiedReadinessWhenAReadFails(t *testing.T) {
 			}
 			if api.ready() != instances || issues != instances {
 				t.Fatalf("a failed read changed verified readiness: ready %d of %d, issues %+v", api.ready(), instances, api.observer.Issues())
+			}
+		})
+	}
+}
+
+// A kept readiness rests on the last probe; it lasts one refresh, and a
+// changed owner is checked without the Service.
+func TestObserverKeepsVerifiedReadinessForOneRefresh(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		owner types.UID
+		ready []int // after each refresh with a failing Service list
+	}{
+		{"Service list keeps failing", "", []int{1, 0, 0}},
+		{"owner changes", "other-workload", []int{0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newObserverAPI(t, 1)
+			api.refresh(t)
+			api.mu.Lock()
+			api.failing, api.owner = "/services?", tc.owner
+			api.mu.Unlock()
+			for i, want := range tc.ready {
+				api.refresh(t)
+				if api.ready() != want {
+					t.Fatalf("refresh %d with a failing Service list: ready %d, want %d", i+1, api.ready(), want)
+				}
 			}
 		})
 	}

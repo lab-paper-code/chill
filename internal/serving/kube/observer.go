@@ -105,9 +105,9 @@ type Observer struct {
 	removingInstances map[string]bool
 	// refreshed is when the last successful refresh finished.
 	refreshed time.Time
-	// verified holds the instances the last refresh published Ready; a failed
-	// Kubernetes read republishes them. The Pod watch and log follow remove an
-	// instance whose executor changes.
+	// verified holds the instances the last refresh probed Ready; a failed
+	// Kubernetes read republishes them once. The Pod watch and log follow
+	// remove an instance whose executor changes.
 	verified map[string]serving.ReadyInstance
 }
 
@@ -168,8 +168,8 @@ func firstfloorStatus(pod *corev1.Pod) *corev1.ContainerStatus {
 
 // Refresh publishes only the current verified set. Node or Pod list and probe
 // failures close assignment, but do not claim that any accepted backend request
-// has stopped. A failed Service or post-probe Pod read keeps the last verified
-// readiness of a running executor.
+// has stopped. A failed Service or post-probe Pod read keeps the last probed
+// readiness of a running executor for that one refresh.
 func (o *Observer) Refresh(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -191,6 +191,7 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	if o.closed {
 		return errors.New("observer is closed")
 	}
+	started := time.Now()
 	nodes, err := o.kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return o.refreshFailure(err)
@@ -266,9 +267,10 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 		}
 	}
 	ready = append(ready, o.verifyProbed(ctx, probed, observed)...)
+	// A kept readiness is not verified again, so it outlives one refresh only.
 	o.verified = map[string]serving.ReadyInstance{}
 	for _, instance := range ready {
-		if instance.State.Ready {
+		if instance.State.Ready && !instance.State.ObservedAt.Before(started) {
 			o.verified[instance.State.ID] = instance
 		}
 	}
@@ -290,8 +292,12 @@ func (o *Observer) verifyProbed(ctx context.Context, probed []probedSource, obse
 	}
 	var latest *corev1.PodList
 	var latestErr error
+	byName := map[string]*corev1.Pod{}
 	if len(probed) > 0 || missing {
 		latest, latestErr = o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, metav1.ListOptions{})
+		for i := 0; latestErr == nil && i < len(latest.Items); i++ {
+			byName[latest.Items[i].Name] = &latest.Items[i]
+		}
 	}
 	ready := make([]serving.ReadyInstance, 0, len(probed))
 	for _, p := range probed {
@@ -304,7 +310,7 @@ func (o *Observer) verifyProbed(ctx context.Context, probed []probedSource, obse
 		if observed[source.uid] {
 			continue
 		}
-		pod := listedPod(latest, latestErr, source.pod.Name)
+		pod := byName[source.pod.Name]
 		if pod != nil && pod.UID == source.uid {
 			o.observeTermination(pod)
 		} else if !source.stopped {
@@ -322,18 +328,6 @@ type probedSource struct {
 	service  *corev1.Service
 	owner    string
 	instance serving.ReadyInstance
-}
-
-func listedPod(pods *corev1.PodList, err error, name string) *corev1.Pod {
-	if err != nil || pods == nil {
-		return nil
-	}
-	for i := range pods.Items {
-		if pods.Items[i].Name == name {
-			return &pods.Items[i]
-		}
-	}
-	return nil
 }
 
 func (o *Observer) restoreSources(pods []corev1.Pod) {
@@ -384,19 +378,21 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 	if pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
 		return serving.ReadyInstance{}, false, nil
 	}
-	service, err := listedInstanceService(pod, services, servicesErr)
-	var spec firstfloor.Spec
-	if err == nil {
-		var endpoint string
-		if endpoint, err = instanceServiceEndpoint(service); err == nil {
-			spec, err = sourceSpec(pod, node, profile, classes, actuations, endpoint)
-		}
-	}
+	spec, err := sourceSpec(pod, node, profile, classes, actuations, "")
 	if err == nil {
 		err = ownershipErr
 	}
 	if node != nil && o.movingNodes[string(node.UID)] {
 		err = errors.New("NodePowerTransition")
+	}
+	var service *corev1.Service
+	if err == nil {
+		if service, err = listedInstanceService(pod, services, servicesErr); err == nil {
+			spec.Endpoint, err = instanceServiceEndpoint(service)
+		} else if servicesErr != nil {
+			instance, publish := o.sourceReadFailed(pod, node, spec.InstanceID, owner, spec.Profile.ID, err)
+			return instance, publish, nil
+		}
 	}
 	if err == nil {
 		probeCtx, cancel := context.WithTimeout(ctx, nativeProbeTimeout)
@@ -410,18 +406,15 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		}
 		err = probeErr
 	}
-	if servicesErr != nil && errors.Is(err, servicesErr) {
-		return o.sourceReadFailed(pod, node, err)
-	}
-	return o.sourceUnavailable(pod, node, err)
+	instance, publish := o.sourceUnavailable(pod, node, err)
+	return instance, publish, nil
 }
 
 // verifySource publishes a probed instance only if the Pod list read behind
 // the probe shows the same running executor as the only one its Service selects.
 func (o *Observer) verifySource(p probedSource, latest *corev1.PodList, latestErr error) (serving.ReadyInstance, bool) {
 	if latestErr != nil {
-		instance, publish, _ := o.sourceReadFailed(p.pod, p.node, latestErr)
-		return instance, publish
+		return o.sourceReadFailed(p.pod, p.node, p.instance.State.ID, p.owner, p.instance.State.Profile, latestErr)
 	}
 	var current *corev1.Pod
 	selected := 0
@@ -448,28 +441,25 @@ func (o *Observer) verifySource(p probedSource, latest *corev1.PodList, latestEr
 		o.issue(p.pod.Namespace+"/"+p.pod.Name, nil)
 		return p.instance, true
 	}
-	instance, publish, _ := o.sourceUnavailable(p.pod, p.node, err)
-	return instance, publish
+	return o.sourceUnavailable(p.pod, p.node, err)
 }
 
-func (o *Observer) sourceUnavailable(pod *corev1.Pod, node *corev1.Node, err error) (serving.ReadyInstance, bool, *probedSource) {
+func (o *Observer) sourceUnavailable(pod *corev1.Pod, node *corev1.Node, err error) (serving.ReadyInstance, bool) {
 	o.issue(pod.Namespace+"/"+pod.Name, err)
 	if status := firstfloorStatus(pod); status != nil && status.ContainerID != "" && node != nil {
-		return serving.ReadyInstance{State: serving.InstanceState{ID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: pod.Annotations[ServingProfileAnnotation], Reason: err.Error(), ObservedAt: time.Now().UTC()}}, true, nil
+		return serving.ReadyInstance{State: serving.InstanceState{ID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: pod.Annotations[ServingProfileAnnotation], Reason: err.Error(), ObservedAt: time.Now().UTC()}}, true
 	}
-	return serving.ReadyInstance{}, false, nil
+	return serving.ReadyInstance{}, false
 }
 
-// sourceReadFailed keeps the last verified readiness of a still running and
-// ready executor when a Kubernetes read failed: the failure says nothing about
-// the executor, and a changed executor is disabled by the Pod watch.
-func (o *Observer) sourceReadFailed(pod *corev1.Pod, node *corev1.Node, err error) (serving.ReadyInstance, bool, *probedSource) {
-	if status := firstfloorStatus(pod); sameRunningContainer(pod, pod) {
-		if last, ok := o.verified[physicalID(pod.UID, status.ContainerID)]; ok {
-			o.issue(pod.Namespace+"/"+pod.Name, fmt.Errorf("verified readiness kept after a failed read: %w", err))
-			last.State.Stopped = o.removingInstances[last.State.ID]
-			return last, true, nil
-		}
+// sourceReadFailed republishes the last verified readiness of an executor the
+// current snapshot still shows ready, with the same owner and profile, when a
+// Kubernetes read failed: the failure says nothing about the executor.
+func (o *Observer) sourceReadFailed(pod *corev1.Pod, node *corev1.Node, id, owner, profile string, err error) (serving.ReadyInstance, bool) {
+	if last, ok := o.verified[id]; ok && last.OwnerWorkloadUID == owner && last.State.Profile == profile {
+		o.issue(pod.Namespace+"/"+pod.Name, fmt.Errorf("verified readiness kept after a failed read: %w", err))
+		last.State.Stopped = o.removingInstances[id]
+		return last, true
 	}
 	return o.sourceUnavailable(pod, node, err)
 }

@@ -113,10 +113,11 @@ namespace 전체 Pod 목록이다. 마지막 목록이 probe한 executor가 그 
 하나는 2초 안에 끝나므로 느린 executor가 source lock을 refresh 기한까지 쥐지 않는다.
 근거: d9 병렬 단계에서 instance마다 Service와 Pod를 세 번 읽어(instance 6개면 20회) refresh가
 review가 밀린 limiter 안에서 30초 기한을 모두 썼다.
-Service 목록이나 probe 뒤 Pod 목록 읽기가 실패하면 아직 실행 중이고 준비된 executor는 마지막
-refresh에서 확인한 준비 상태를 유지하고, 그 실패를 observer issue와 로그에 남긴다. executor가 바뀌거나
-준비를 잃으면 Pod watch와 log follow가 그 instance를 끈다. Node 목록이나 Pod 목록 읽기가 실패하면
-refresh는 할당을 닫는다.
+Service 목록이나 probe 뒤 Pod 목록 읽기가 실패하면, profile과 소유 검사를 통과하고 owner와 profile이
+그대로인 executor는 직전 refresh에서 probe로 확인한 준비 상태를 그 refresh 한 번 동안 유지하고, 그 실패를
+observer issue와 로그에 남긴다. 다음 refresh도 읽기에 실패하면 instance는 준비되지 않은 상태가 된다.
+executor가 바뀌거나 준비를 잃으면 Pod watch와 log follow가 그 instance를 끈다. Node 목록이나 Pod 목록
+읽기가 실패하면 refresh는 할당을 닫는다.
 
 ### 5.2 용량표와 노드 계획
 
