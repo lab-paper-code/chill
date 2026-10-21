@@ -23,6 +23,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	workloadkube "github.com/lab-paper-code/chill/internal/workloadobserver/kube"
 	core "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -801,7 +802,8 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 		if e := o.store.client.Get(ctx, types.NamespacedName{Namespace: copy.Namespace, Name: copy.Name}, actual); e != nil {
 			return false, e
 		}
-		if !reflect.DeepEqual(actual.Spec, copy.Spec) {
+		// Semantic equality compares the request times as instants, whatever location decoding gave them.
+		if !equality.Semantic.DeepEqual(actual.Spec, copy.Spec) {
 			return false, errors.New("existing NodeActuation target differs")
 		}
 		if actual.Status.Phase == edge.NodeActuationPhaseFailed {

@@ -393,10 +393,43 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	if value, tainted := profilingrun.MeasurementHolder(current); !tainted || value != holder {
 		return nil
 	}
+	if err = c.lowerMeasuredNode(ctx, current, result); err != nil {
+		return err
+	}
+	// The power change read the Node again; patch the current version.
+	if current, err = c.kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{}); err != nil {
+		return err
+	}
 	if err = c.setMeasurementTaint(ctx, current, ""); err != nil {
 		return err
 	}
 	result.Progress = append(result.Progress, "taint removed")
+	return nil
+}
+
+// lowerMeasuredNode sets the Node to its lowest power mode and confirms the
+// independent read-back, so a measurement that rebooted or failed hands back a
+// known mode. A Node without a requestable lowest mode (a Fixed actuator, no
+// unloaded baseline) skips the step.
+func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.Node, result *OperationResult) error {
+	c.mu.Lock()
+	config := c.config
+	c.mu.Unlock()
+	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+	var classes edge.DeviceClassList
+	if err := c.store.client.List(ctx, &classes); err != nil {
+		return err
+	}
+	lowest := serving.SchedulerLowestMode(config.Baselines, ref)
+	spec, ok := nodePowerTargets(node, classes.Items, config.PowerPolicies)[lowest]
+	if lowest == "" || !ok {
+		result.Progress = append(result.Progress, "no requestable lowest mode")
+		return nil
+	}
+	if err := c.measurement.ChangePower(ctx, ref, powerRequest(spec, time.Now())); err != nil {
+		return err
+	}
+	result.Progress = append(result.Progress, "lowest mode "+lowest+" read back")
 	return nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -303,5 +305,60 @@ func TestEvidenceReadersCountInvalidMeasurements(t *testing.T) {
 	costs, err := evidence.Refresh(context.Background(), []string{"chill-system"}, nil, nil)
 	if err != nil || len(costs.Costs) != 0 || len(costs.Issues) != 1 || costs.Issues[0].Code != measurementInvalidCode {
 		t.Fatalf("invalid transition cost used: %+v %v", costs, err)
+	}
+}
+
+const lowMode = "eco"
+
+func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
+	h := newAdmissionHarness(t)
+	actuator := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 2}}
+	class := &edge.DeviceClass{ObjectMeta: meta.ObjectMeta{Name: "cpu"}, Spec: edge.DeviceClassSpec{NodeSelector: map[string]string{"hardware": "cpu"},
+		Architecture: "amd64", PowerModes: []edge.PowerMode{{Name: lowMode, Actuator: actuator}}}}
+	h.create(class)
+	h.controller.mu.Lock()
+	h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: lowMode, DeviceClass: "cpu", PowerMode: lowMode, ActuatorKind: string(actuator.Kind), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60}}
+	h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, PowerMode: lowMode, Watts: 5,
+		Meter: "wall", Scope: measurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
+	h.controller.mu.Unlock()
+	node := h.node.DeepCopy()
+	node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "deleted-uid", Effect: core.TaintEffectNoSchedule}}
+	if _, err := h.kube.CoreV1().Nodes().Update(context.Background(), node, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.controller.Admit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Play the actuator: read the requested mode back once the request exists.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var acts edge.NodeActuationList
+		if err := h.controller.store.client.List(context.Background(), &acts); err != nil {
+			t.Fatal(err)
+		}
+		if len(acts.Items) == 1 {
+			if h.holder() != "deleted-uid" {
+				t.Fatal("taint removed before the lowest mode was read back")
+			}
+			a := &acts.Items[0]
+			if a.Spec.PowerMode != lowMode {
+				t.Fatalf("hand-back requested %q", a.Spec.PowerMode)
+			}
+			ready := meta.NewMicroTime(time.Now())
+			a.Status = edge.NodeActuationStatus{Phase: edge.NodeActuationPhaseReady, ObservedGeneration: a.Generation, ReadyAt: &ready,
+				TargetObservation: &edge.NodeActuationObservation{PowerMode: lowMode, Actuator: actuator}}
+			if err := h.controller.store.client.Update(context.Background(), a); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("hand-back requested no power change: %+v", h.controller.State().Results)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	h.admit()
+	if h.holder() != "" {
+		t.Fatalf("taint kept: %+v", h.controller.State().Results)
 	}
 }
