@@ -71,7 +71,7 @@ privileged는 지금처럼 RKNN host delivery에서만 온다. group 값은 측�
 전력 관측(metric-observer)과 census(workload-observer)는 지금 자리에 둔다. metric-observer는 Shelly gateway
 (`155.230.35.213:18766`)와 monitoring namespace의 `edge-metrics-exporter`를 HTTP로 읽고, workload-observer와 ChillServer
 census(`captureNodePods`)는 Pod LIST/WATCH다. 노드 접근이 필요 없고, 결과는 Run evidence 계약이라 측정이 진행 중일 때 옮기면
-ADR 0019 변경이 생긴다. 1장의 문제 중 이것으로 풀리는 것은 없다. 05 표의 "전력, census 통합"과 범위가 달라 질문 1로 묻는다.
+ADR 0019 변경이 생긴다. 1장의 문제 중 이것으로 풀리는 것은 없다. 그래서 05 표의 "전력, census 통합"은 agent 범위에 넣지 않는다(11장).
 
 ### 2.5 현재 전력모드 read-back
 
@@ -183,11 +183,11 @@ E1이 끝나면 M2 전 기준값으로 채운다.
 - 모드별 online CPU 모델. 후보가 CPU를 끄는 모드로 바꿀 때 그 모드의 CPU 집합을 알아야 하면 M4에서 profile 조건으로 다룬다.
 - metric-observer, workload-observer 이미지를 agent 이미지에 합치는 것은 M5 이미지 정리에서 한다.
 
-## 11. 결정과 남은 질문
+## 11. 결정
 
 - DaemonSet은 권한 경계로 둘이다(2.3절).
 - CPU inventory는 `online`이다(전력모드가 끈 core 제외).
 - GPU inventory는 측정 profile에서 온다. 측정하지 않은 GPU는 후보에 나오지 않는다.
 - meter와 전력 요청은 Profiler facts에서 온다. Profiler를 끈 default Helm profile에는 meter와 전력 요청이 없다.
-- 질문 1: agent는 discovery, CPU inventory, 전력 적용과 read-back만 맡고 전력 관측과 census는 Run Job과 ChillServer에
-  둔다(2.4절). 05 M2 행의 "전력, census 통합"을 이 범위로 줄여도 되는가?
+- agent는 discovery, CPU inventory, 전력 적용과 read-back만 맡는다. 전력 관측과 census는 Run Job과 ChillServer에
+  둔다(2.4절).
