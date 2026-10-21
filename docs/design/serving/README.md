@@ -25,6 +25,7 @@ Workload는 Preprocessor와 Dataset을 참조하고 원시 표본(JPEG, UTF8)을
 | 원시 표본·전처리기와 데이터셋 catalog·여러 모델 파일 산출물·데이터셋 표본 측정 | [이기종 워크로드 구현 설계](heterogeneous-workloads.md) |
 | 워크로드별 활성 POOL, 측정 POOL, 가용 노드, 워크로드별 자동제어와 완료 여유 | [워크로드별 POOL과 자동제어](workload-pools.md) |
 | 측정 노드의 승인, 거절, 반환, 측정 무효 판정, 전환 비용 runner, ChillServer 클라이언트 `serving-operation` | [측정 admission과 단일 writer (M3)](measurement-admission.md) |
+| 측정 CR 큐, 선언형 operation 비용 순서, 디스패치 점유 포화 측정과 계획기의 d 수집, CPU 할당 거절 | [측정 API](measurement-api.md) |
 | 판단 기록 크기 | [판단 기록 다이어트 (M0)](decision-record-diet.md) |
 | 요청 행, 불변 값의 ID 참조, 시간 세그먼트와 로컬 버퍼, 오프라인 표 산출 | [관측 분리 (M1)](observability-split.md) |
 | option별 SLO 용량표, κ 합 판정, 노드 계획과 DP, 비교 기간, 완료 여유 규칙 | [용량표 계획기 (M4)](analytic-planner.md) |
