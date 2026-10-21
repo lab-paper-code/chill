@@ -33,14 +33,13 @@ const (
 	// loadNodeLabel names the measured Node UID on a load Job.
 	loadNodeLabel = "chill.dacs.io/measurement-load"
 
-	refusedBatchUnmeasured           = "BatchUnmeasured"
-	refusedWorkloadMissing           = "WorkloadMissing"
-	refusedWorkloadAutonomous        = "WorkloadAutonomous"
-	refusedWorkloadServing           = "WorkloadServing"
-	refusedLoadGeneratorUnconfigured = "LoadGeneratorUnconfigured"
-	occupancyTooFewBatches           = "TooFewBatches"
-	occupancyNotSaturated            = "NotSaturated"
-	occupancyLoadFailed              = "LoadFailed"
+	refusedBatchUnmeasured    = "BatchUnmeasured"
+	refusedWorkloadMissing    = "WorkloadMissing"
+	refusedWorkloadAutonomous = "WorkloadAutonomous"
+	refusedWorkloadServing    = "WorkloadServing"
+	occupancyTooFewBatches    = "TooFewBatches"
+	occupancyNotSaturated     = "NotSaturated"
+	occupancyLoadFailed       = "LoadFailed"
 )
 
 // LoadGeneratorConfig runs the load Job of a dispatch-occupancy measurement
@@ -84,20 +83,11 @@ type DispatchOccupancyRecord struct {
 	MeasuredAt time.Time             `json:"measuredAt"`
 }
 
-// occupancyWindow is the saturation window of the measured instance's rows.
-type occupancyWindow struct {
-	start, end   time.Time
-	batches      int
-	throughput   float64
-	perRequest   float64
-	idleFraction float64
-}
-
-// measureOccupancy reads the window of the final rows of one fixed-batch
-// instance: X from the batch ID span over the start span of the window
-// batches, d = 1/X - profile mean/B, and the batches after which the instance
-// waited for the next request.
-func measureOccupancy(rows []serving.RequestRow, b int, warmup, duration time.Duration, profileMeanNanos float64) occupancyWindow {
+// measureOccupancy fills the window of record from the final rows of one
+// fixed-batch instance: X from the batch ID span over the start span of the
+// window batches, d = 1/X - profile mean/B, and the fraction of batches after
+// which the instance waited for the next request.
+func measureOccupancy(record *DispatchOccupancyRecord, rows []serving.RequestRow, warmup, duration time.Duration) {
 	type batchRows struct {
 		start, executed, queued time.Time
 	}
@@ -135,22 +125,23 @@ func measureOccupancy(rows []serving.RequestRow, b int, warmup, duration time.Du
 		}
 	}
 	slices.Sort(ids)
-	w := occupancyWindow{start: first.Add(warmup)}
-	w.end = w.start.Add(duration)
+	w := &record.Window
+	w.Start = first.Add(warmup).UTC()
+	w.End = w.Start.Add(duration)
 	var inWindow []uint64
 	for _, id := range ids {
-		if start := batches[id].start; !start.Before(w.start) && !start.After(w.end) {
+		if start := batches[id].start; !start.Before(w.Start) && !start.After(w.End) {
 			inWindow = append(inWindow, id)
 		}
 	}
-	w.batches = len(inWindow)
-	if w.batches < 2 {
-		return w
+	record.Batches = len(inWindow)
+	if record.Batches < 2 {
+		return
 	}
 	low, high := inWindow[0], inWindow[len(inWindow)-1]
 	if span := batches[high].start.Sub(batches[low].start).Seconds(); span > 0 {
-		w.throughput = float64(high-low) * float64(b) / span
-		w.perRequest = 1e9/w.throughput - profileMeanNanos/float64(b)
+		record.Throughput = float64(high-low) * float64(record.Batch) / span
+		record.PerRequestNanos = int64(math.Round(1e9/record.Throughput - record.ProfileMeanNanos/float64(record.Batch)))
 	}
 	idle, pairs := 0, 0
 	for _, id := range inWindow {
@@ -164,23 +155,8 @@ func measureOccupancy(rows []serving.RequestRow, b int, warmup, duration time.Du
 		}
 	}
 	if pairs > 0 {
-		w.idleFraction = float64(idle) / float64(pairs)
+		record.IdleFraction = float64(idle) / float64(pairs)
 	}
-	return w
-}
-
-// profileMeanNanos is the mean measured execution time of batch b.
-func profileMeanNanos(p *serving.Profile, b int) (float64, bool) {
-	for _, batch := range p.Batches {
-		if batch.Batch == b && len(batch.DurationNanos) > 0 {
-			sum := 0.0
-			for _, d := range batch.DurationNanos {
-				sum += d
-			}
-			return sum / float64(len(batch.DurationNanos)), true
-		}
-	}
-	return 0, false
 }
 
 // occupancyPlan is what admission resolved for a granted occupancy measurement.
@@ -202,7 +178,7 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 	if plan.profile, reason, detail, wait = measurementProfile(m.Namespace, m.Spec.BatchEnergyOptimization, m.Spec.Node, in); reason != "" || wait {
 		return plan, reason, detail, wait
 	}
-	if _, ok := profileMeanNanos(plan.profile, int(m.Spec.Batch)); !ok {
+	if _, ok := plan.profile.MeanNanos(int(m.Spec.Batch)); !ok {
 		return plan, refusedBatchUnmeasured, strconv.Itoa(int(m.Spec.Batch)), false
 	}
 	var workload edge.Workload
@@ -228,9 +204,6 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 	plan.dataset = &dataset
 	for _, f := range preprocessor.Spec.Input.Fields {
 		plan.fields = append(plan.fields, f.Name)
-	}
-	if in.config.LoadGenerator.Image == "" {
-		return plan, refusedLoadGeneratorUnconfigured, "", false
 	}
 	mode := plan.profile.Condition.PowerMode
 	plan.powered = readBackMode(node, nodeClass(node, in.classes), in.acts) == mode
@@ -278,11 +251,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 	}); err != nil {
 		return err
 	}
-	fail := func(err error) error {
-		return errors.Join(err, c.patchMeasurementStatus(ctx, m, func() {
-			m.Status.Phase, m.Status.Reason = edge.MeasurementPhaseFailed, firstLine(err.Error())
-		}))
-	}
+	fail := func(err error) error { return errors.Join(err, c.failMeasurement(ctx, m, firstLine(err.Error()))) }
 	if !plan.powered {
 		act := powerRequest(plan.target, time.Now())
 		act.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "DispatchOccupancyMeasurement", Name: m.Name, UID: m.UID}}
@@ -297,7 +266,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 	if err := c.measurement.PrepareInstance(ctx, spec); err != nil {
 		return fail(err)
 	}
-	mean, _ := profileMeanNanos(profile, b)
+	mean, _ := profile.MeanNanos(b)
 	factor, err := strconv.ParseFloat(m.Spec.RateFactor, 64)
 	if err != nil {
 		return fail(err)
@@ -332,12 +301,10 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 		return fail(err)
 	}
 	rows := slices.DeleteFunc(observed.Requests, func(r serving.RequestRow) bool { return r.Node == nil || r.Node.UID != ref.UID })
-	window := measureOccupancy(rows, b, time.Duration(m.Spec.WarmupSeconds)*time.Second, time.Duration(m.Spec.DurationSeconds)*time.Second, mean)
 	record := DispatchOccupancyRecord{SchemaVersion: DispatchOccupancySchema, Node: ref, PowerMode: profile.Condition.PowerMode,
 		RuntimeImage: profile.Condition.RuntimeImage, Model: profile.Condition.LogicalModel, ProfileID: profile.ID, Batch: b,
-		ProfileMeanNanos: mean, OfferedRate: rate, Batches: window.batches, Throughput: window.throughput,
-		PerRequestNanos: int64(math.Round(window.perRequest)), IdleFraction: window.idleFraction, Verdict: measurementAccepted, MeasuredAt: time.Now().UTC()}
-	record.Window.Start, record.Window.End = window.start.UTC(), window.end.UTC()
+		ProfileMeanNanos: mean, OfferedRate: rate, Verdict: measurementAccepted, MeasuredAt: time.Now().UTC()}
+	measureOccupancy(&record, rows, time.Duration(m.Spec.WarmupSeconds)*time.Second, time.Duration(m.Spec.DurationSeconds)*time.Second)
 	record.LoadJob.Name, record.LoadJob.Image = job.Name, config.LoadGenerator.Image
 	maxIdle, _ := strconv.ParseFloat(m.Spec.MaximumIdleFraction, 64)
 	witness, witnessErr := c.measurement.measurementIsolation(ctx, ref, map[string]bool{profile.Condition.LogicalModel: true}, since, "")
@@ -346,10 +313,10 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 	case witnessErr != nil:
 		witness.Error = witnessErr.Error()
 		record.Verdict, record.Reason = measurementInsufficient, powerChangedReason
-	case window.batches < int(m.Spec.MinimumBatches) || window.throughput == 0:
-		record.Verdict, record.Reason = measurementInsufficient, fmt.Sprintf("%s %d", occupancyTooFewBatches, window.batches)
-	case window.idleFraction > maxIdle:
-		record.Verdict, record.Reason = measurementInsufficient, fmt.Sprintf("%s %.4f", occupancyNotSaturated, window.idleFraction)
+	case record.Batches < int(m.Spec.MinimumBatches) || record.Throughput == 0:
+		record.Verdict, record.Reason = measurementInsufficient, fmt.Sprintf("%s %d", occupancyTooFewBatches, record.Batches)
+	case record.IdleFraction > maxIdle:
+		record.Verdict, record.Reason = measurementInsufficient, fmt.Sprintf("%s %.4f", occupancyNotSaturated, record.IdleFraction)
 	}
 	raw, err := json.Marshal(record)
 	if err != nil {
@@ -401,16 +368,13 @@ func loadJob(m *edge.DispatchOccupancyMeasurement, ref serving.NodeReference, pl
 
 // deleteLoadJobs removes the load Jobs of the Node with their Pods.
 func (c *SchedulerController) deleteLoadJobs(ctx context.Context, ref serving.NodeReference, config LoadGeneratorConfig) error {
-	if config.Namespace == "" {
-		return nil
-	}
 	jobs, err := c.kube.BatchV1().Jobs(config.Namespace).List(ctx, meta.ListOptions{LabelSelector: loadNodeLabel + "=" + ref.UID})
 	if err != nil {
 		return err
 	}
 	for _, job := range jobs.Items {
 		// Background propagation removes the Pods; the default orphans them and the load goes on.
-		if err = eIfNotFound(c.kube.BatchV1().Jobs(config.Namespace).Delete(ctx, job.Name,
+		if err = eIfNotFound(c.kube.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name,
 			meta.DeleteOptions{PropagationPolicy: ptr.To(meta.DeletePropagationBackground)})); err != nil {
 			return err
 		}

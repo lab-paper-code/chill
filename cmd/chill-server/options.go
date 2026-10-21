@@ -102,8 +102,7 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 			o.definitions = append(o.definitions, value)
 			return nil
 		})
-	f.StringVar(&o.loadGenerator.Image, "load-generator-image", "",
-		"Image of the dispatch-occupancy load Job; empty refuses those measurements.")
+	f.StringVar(&o.loadGenerator.Image, "load-generator-image", "", "Image of the dispatch-occupancy load Job.")
 	f.StringVar(&o.loadGenerator.ServiceAccount, "load-generator-service-account", "", "ServiceAccount of the load Job.")
 	f.StringVar(&o.loadGenerator.Namespace, "load-generator-namespace", "", "Namespace of the load Job.")
 	f.StringVar(&o.loadGenerator.Endpoint, "load-generator-endpoint", "",

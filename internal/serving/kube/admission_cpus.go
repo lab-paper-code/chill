@@ -6,7 +6,6 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	core "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/cpuset"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -34,18 +33,27 @@ func nodeClass(n *core.Node, classes []edge.DeviceClass) *edge.DeviceClass {
 // readBackMode is the mode the Node reads back now: the target of its latest
 // Ready power change, or the only mode of a Fixed class.
 func readBackMode(n *core.Node, class *edge.DeviceClass, acts []edge.NodeActuation) string {
+	if mode := latestReadyMode(acts, string(n.UID)); mode != "" {
+		return mode
+	}
+	if class != nil && len(class.Spec.PowerModes) == 1 && class.Spec.PowerModes[0].Actuator.Kind == edge.PowerModeActuatorFixed {
+		return class.Spec.PowerModes[0].Name
+	}
+	return ""
+}
+
+// latestReadyMode is the target mode of the Node's latest power change when
+// that change is Ready, otherwise empty.
+func latestReadyMode(acts []edge.NodeActuation, nodeUID string) string {
 	var latest *edge.NodeActuation
 	for i := range acts {
 		a := &acts[i]
-		if a.Spec.Node.UID == string(n.UID) && (latest == nil || a.Spec.StageRequestedAt.After(latest.Spec.StageRequestedAt.Time)) {
+		if a.Spec.Node.UID == nodeUID && (latest == nil || a.Spec.StageRequestedAt.After(latest.Spec.StageRequestedAt.Time)) {
 			latest = a
 		}
 	}
 	if latest != nil && latest.Status.Phase == edge.NodeActuationPhaseReady && latest.Status.TargetObservation != nil {
 		return latest.Status.TargetObservation.PowerMode
-	}
-	if class != nil && len(class.Spec.PowerModes) == 1 && class.Spec.PowerModes[0].Actuator.Kind == edge.PowerModeActuatorFixed {
-		return class.Spec.PowerModes[0].Name
 	}
 	return ""
 }
@@ -77,16 +85,10 @@ func modeOnlineCPUs(n *core.Node, class *edge.DeviceClass, acts []edge.NodeActua
 func cpuRefusal(root client.Object, n *core.Node, classes []edge.DeviceClass, acts []edge.NodeActuation, reserved []int) (string, string) {
 	var mode string
 	var affinity []int32
-	var quota *resource.Quantity
-	switch o := root.(type) {
-	case *edge.BatchEnergyOptimization:
-		mode, affinity, quota = o.Spec.State.Candidate.PowerMode, o.Spec.CPUAffinity, o.Spec.CPUQuota
-	case *edge.ModelLoadedIdleBaseline:
-		mode, affinity, quota = o.Spec.State.Candidate.PowerMode, o.Spec.CPUAffinity, &o.Spec.CPUQuota
-	default:
-		return "", ""
+	if o, ok := root.(*edge.BatchEnergyOptimization); ok {
+		mode, affinity = o.Spec.State.Candidate.PowerMode, o.Spec.CPUAffinity
 	}
-	if len(affinity) == 0 && (quota == nil || quota.IsZero()) {
+	if len(affinity) == 0 {
 		return "", ""
 	}
 	online, known := modeOnlineCPUs(n, nodeClass(n, classes), acts, mode)
@@ -94,18 +96,12 @@ func cpuRefusal(root client.Object, n *core.Node, classes []edge.DeviceClass, ac
 		return refusedOnlineCPUsUnknown, mode
 	}
 	available := online.Difference(cpuset.New(reserved...))
-	if len(affinity) > 0 {
-		wanted := make([]int, len(affinity))
-		for i, cpu := range affinity {
-			wanted[i] = int(cpu)
-		}
-		if set := cpuset.New(wanted...); !set.IsSubsetOf(available) {
-			return refusedCPUsUnavailable, fmt.Sprintf("%s %s available %s", set, mode, available)
-		}
-		return "", ""
+	wanted := make([]int, len(affinity))
+	for i, cpu := range affinity {
+		wanted[i] = int(cpu)
 	}
-	if quota.Value() > int64(available.Size()) {
-		return refusedCPUsUnavailable, fmt.Sprintf("quota %s %s available %s", quota.String(), mode, available)
+	if set := cpuset.New(wanted...); !set.IsSubsetOf(available) {
+		return refusedCPUsUnavailable, fmt.Sprintf("%s %s available %s", set, mode, available)
 	}
 	return "", ""
 }

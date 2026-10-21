@@ -156,6 +156,20 @@ type Profile struct {
 
 // NativeBundle projects this catalog-verified profile for immutable startup
 // delivery. Both the publisher and consumer derive identity from this producer.
+// MeanNanos is the mean measured execution time of batch b.
+func (p *Profile) MeanNanos(b int) (float64, bool) {
+	for _, batch := range p.Batches {
+		if batch.Batch == b && len(batch.DurationNanos) > 0 {
+			sum := 0.0
+			for _, d := range batch.DurationNanos {
+				sum += d
+			}
+			return sum / float64(len(batch.DurationNanos)), true
+		}
+	}
+	return 0, false
+}
+
 func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
 	bundle := firstfloor.ProfileBundle{ProfileID: p.ID, Batches: make([]firstfloor.BatchProfile, len(p.Batches))}
 	for i, batch := range p.Batches {

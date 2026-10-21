@@ -12,7 +12,6 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -420,23 +419,19 @@ func cpuClass() *edge.DeviceClass {
 // reservation is refused before the Node is taken; the option it would
 // measure could never be placed.
 func TestAdmitRefusesCPUsTheModeCannotOffer(t *testing.T) {
-	quota := func(n int64) resource.Quantity { return *resource.NewQuantity(n, resource.DecimalSI) }
 	for _, test := range []struct {
 		name     string
 		mode     string
 		affinity []int32
-		quota    resource.Quantity
 		readBack string
 		want     string
 	}{
 		{name: "declared affinity fits", mode: "max", affinity: []int32{2, 3, 4, 5}, want: "Granted"},
 		{name: "declared affinity offline", mode: "max", affinity: []int32{4, 5, 6}, want: "Refused: CPUsUnavailable 4-6 max available 2-5"},
 		{name: "affinity on a reserved CPU", mode: "max", affinity: []int32{1, 2}, want: "Refused: CPUsUnavailable"},
-		{name: "quota fits", mode: "max", quota: quota(4), want: "Granted"},
-		{name: "quota above the available CPUs", mode: "max", quota: quota(5), want: "Refused: CPUsUnavailable quota 5 max available 2-5"},
-		{name: "undeclared mode not read back", mode: "low", quota: quota(1), want: "Refused: OnlineCPUsUnknown low"},
-		{name: "undeclared mode read back uses the Node", mode: "low", quota: quota(2), readBack: "low", want: "Granted"},
-		{name: "undeclared read-back mode too small", mode: "low", quota: quota(3), readBack: "low", want: "Refused: CPUsUnavailable"},
+		{name: "undeclared mode not read back", mode: "low", affinity: []int32{2}, want: "Refused: OnlineCPUsUnknown low"},
+		{name: "undeclared mode read back uses the Node", mode: "low", affinity: []int32{2, 3}, readBack: "low", want: "Granted"},
+		{name: "undeclared read-back mode too small", mode: "low", affinity: []int32{2, 3, 4}, readBack: "low", want: "Refused: CPUsUnavailable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := newAdmissionHarness(t)
@@ -450,8 +445,8 @@ func TestAdmitRefusesCPUsTheModeCannotOffer(t *testing.T) {
 					Status: edge.NodeActuationStatus{Phase: edge.NodeActuationPhaseReady, TargetObservation: &edge.NodeActuationObservation{PowerMode: test.readBack}}}
 				h.create(ready)
 			}
-			root := baselineRoot("idle", time.Now())
-			root.Spec.State.Candidate.PowerMode, root.Spec.CPUAffinity, root.Spec.CPUQuota = test.mode, test.affinity, test.quota
+			root := beoRoot("beo", "node", "")
+			root.Spec.State.Candidate.PowerMode, root.Spec.CPUAffinity = test.mode, test.affinity
 			h.create(root)
 			h.admit()
 			if got := h.annotation(root, profilingrun.AdmissionAnnotation); !strings.HasPrefix(got, test.want) {
@@ -469,7 +464,7 @@ func TestAdmitRefusesCPUsTheModeCannotOffer(t *testing.T) {
 func TestAdmitRefusalLetsTheNextRootGo(t *testing.T) {
 	h := newAdmissionHarness(t)
 	h.create(cpuClass())
-	first, second := baselineRoot("first", time.Now().Add(-time.Minute)), baselineRoot("second", time.Now())
+	first, second := beoRoot("first", "node", ""), baselineRoot("second", time.Now())
 	first.Spec.State.Candidate.PowerMode, first.Spec.CPUAffinity = "max", []int32{7}
 	h.create(first, second)
 	h.admit()

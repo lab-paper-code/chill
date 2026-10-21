@@ -91,7 +91,7 @@
 
 | kind | 사유 |
 |---|---|
-| BEO, MLIB | `CPUsUnavailable <CPU> <모드>`: `cpuAffinity`가 가용 CPU의 부분집합이 아니거나, affinity가 없으면 `cpuQuota`가 가용 CPU 수보다 큼. `OnlineCPUsUnknown <모드>` |
+| BEO | `CPUsUnavailable <CPU> <모드>`: `cpuAffinity`가 가용 CPU의 부분집합이 아님. `OnlineCPUsUnknown <모드>` |
 | opcost, occupancy | `ProfileMissing <BEO> <사유>`: BEO 없음, terminal이 아님(`NotComplete`, 같은 노드에서 앞 순서면 줄 1이 먼저 기다리게 하므로 여기서는 뒤 순서나 다른 노드의 BEO), `Complete`가 아닌 terminal, catalog의 그 BEO issue 코드(`catalog.go:102-104,115,240,300,420`). catalog에 profile도 issue도 아직 없으면(갱신 지연) 기다린다. `NodeMismatch`: BEO `targetNode` ≠ `spec.node`. `ActuationNamespace`: actuation namespace ≠ CR namespace(owner reference는 같은 namespace만 가리킨다) |
 | opcost | `PowerModeUnknown <모드>`, `MeterUndeclared` |
 | occupancy | `BatchUnmeasured <B>`(profile batches에 없음, `catalog.go:402-403`), `WorkloadMissing`, `WorkloadAutonomous`(`autonomousWorkloads`에 있음), `WorkloadServing <Pod>`(같은 주기에 읽은 serving Pod 중 그 Workload가 owner이거나 route 가중치를 둔 Pod가 있음), `LoadGeneratorUnconfigured` |
@@ -165,7 +165,7 @@ spec:
 | commit | 검사 |
 |---|---|
 | 2 | CEL: kind별 필드 조합, spec 불변, `rateFactor < 1.2` 거절 |
-| 3 | 앞 루트가 catalog 지연으로 대기면 같은 노드 뒤 루트 대기, 다른 노드 승인. 측정 taint 노드의 대기 루트는 측정 인스턴스가 있어도 대기, taint 없는 노드의 계획기 Pod는 `NodeServing`. `cpuAffinity` [2,3,4,5]와 `onlineCPUs` 0-3 거절. affinity 없는 quota 4, 예약 [0,1], online 0-5 승인. `onlineCPUs` 없는 모드는 read-back 모드와 같으면 annotation, 다르면 `OnlineCPUsUnknown` |
+| 3 | 앞 루트가 catalog 지연으로 대기면 같은 노드 뒤 루트 대기, 다른 노드 승인. 측정 taint 노드의 대기 루트는 측정 인스턴스가 있어도 대기, taint 없는 노드의 계획기 Pod는 `NodeServing`. `cpuAffinity` [2,3,4,5]와 `onlineCPUs` 0-3 거절. `onlineCPUs` 없는 모드는 read-back 모드와 같으면 annotation, 다르면 `OnlineCPUsUnknown` |
 | 4 | jetsonx `*_2CORE`(`onlineCPUs` 0-1, 예약 [0,1])로 바꾸는 계획이 CPU 예산에서 빠짐. 필드 없는 다른 모드 계획이 `PlacementInventoryMissing`. 현재 모드 계획은 그대로 |
 | 5 | power, prepare, idle, remove, power 순서가 한 번 승인되고 key가 `<UID>.<n>.<name>`, status 단계 다섯, `Complete`, 단계 NodeActuation owner가 CR이고 반환 뒤 `measurement-invalid` 없음. 둘째 단계 `Insufficient`면 멈춤, 순서 기록, phase `Insufficient`. 재시작 뒤 terminal이 아닌 루트는 `Failed: ChillServerRestart`와 순서 기록, `Complete` 루트는 status 그대로 반환. `ProfileMissing`(없음, `NotComplete`, `Failed`, catalog issue), `NodeMismatch`, `ActuationNamespace`, `PowerModeUnknown` 거절과 다음 루트 승인. route 404 |
 | 7 | fake 행으로 X와 d(rasp5 26.88 req/s, profile 27.79 ms에서 9.41 ms), warmup 제외, 창 배치의 시작 차이로 나눔, batchID 차이 계산이 빠진 행에 무관, 유휴 쌍 판정, `TooFewBatches`, `NotSaturated`, record의 `powerMode`. `BatchUnmeasured` 거절. Workload 요청이 taint 노드의 측정 인스턴스에 도달. Job spec(init, args의 `.svc` endpoint, `tls.crt` item만, `nodeName`, `backoffLimit` 0, deadline, label), Background 삭제 뒤 Pod 0, Job 실패 `LoadFailed`, 반환의 label Job 삭제. ChillServer 노드 루트와 occupancy의 상호 대기, 다른 노드 occupancy 둘 동시 실행 |

@@ -683,16 +683,7 @@ func bindProfileMeters(s *serving.SchedulerSnapshot, meters []MeterDeclaration) 
 	}
 }
 func captureNodePower(sn *serving.SchedulerNode, n *core.Node, acts *edge.NodeActuationList, classes []edge.DeviceClass, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
-	var latest *edge.NodeActuation
-	for j := range acts.Items {
-		a := &acts.Items[j]
-		if a.Spec.Node.UID == string(n.UID) && (latest == nil || a.Spec.StageRequestedAt.After(latest.Spec.StageRequestedAt.Time)) {
-			latest = a
-		}
-	}
-	if latest != nil && latest.Status.Phase == edge.NodeActuationPhaseReady && latest.Status.TargetObservation != nil {
-		sn.PowerMode = latest.Status.TargetObservation.PowerMode
-	}
+	sn.PowerMode = latestReadyMode(acts.Items, string(n.UID))
 	// A fixed mode is accepted only from an actually verified ready profile.
 	for _, state := range physical {
 		if state.Node == sn.Node && state.Ready {

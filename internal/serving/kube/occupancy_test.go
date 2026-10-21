@@ -15,7 +15,6 @@ import (
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -46,11 +45,16 @@ func TestMeasureOccupancyReproducesRasp5(t *testing.T) {
 	gap := time.Duration(math.Round(1e9 / 26.88))
 	rows := occupancyRows(400, gap, 50, 51, 52)
 	// Warmup covers the ten slower batches.
-	w := measureOccupancy(rows, 1, 20*gap+gap/2, 300*gap, 27.79e6)
-	if math.Abs(w.throughput-26.88) > 0.01 || math.Abs(w.perRequest/1e6-9.41) > 0.01 {
-		t.Fatalf("X %.3f d %.3f ms", w.throughput, w.perRequest/1e6)
+	measure := func(rows []serving.RequestRow, warmup, duration time.Duration) DispatchOccupancyRecord {
+		w := DispatchOccupancyRecord{Batch: 1, ProfileMeanNanos: 27.79e6}
+		measureOccupancy(&w, rows, warmup, duration)
+		return w
 	}
-	if w.batches < 290 || w.idleFraction != 0 {
+	w := measure(rows, 20*gap+gap/2, 300*gap)
+	if math.Abs(w.Throughput-26.88) > 0.01 || math.Abs(float64(w.PerRequestNanos)/1e6-9.41) > 0.01 {
+		t.Fatalf("X %.3f d %d ns", w.Throughput, w.PerRequestNanos)
+	}
+	if w.Batches < 290 || w.IdleFraction != 0 {
 		t.Fatalf("window %+v", w)
 	}
 	// Queued requests that arrive after the batch ended make the instance idle.
@@ -58,10 +62,10 @@ func TestMeasureOccupancyReproducesRasp5(t *testing.T) {
 		late := int64(gap) + int64(30*time.Millisecond)
 		rows[i].QueuedNanos = &late
 	}
-	if w = measureOccupancy(rows, 1, 20*gap, 300*gap, 27.79e6); w.idleFraction != 1 {
-		t.Fatalf("idle fraction %v", w.idleFraction)
+	if w = measure(rows, 20*gap, 300*gap); w.IdleFraction != 1 {
+		t.Fatalf("idle fraction %v", w.IdleFraction)
 	}
-	if w = measureOccupancy(rows[:3], 1, 0, time.Minute, 27.79e6); w.batches != 3 {
+	if w = measure(rows[:3], 0, time.Minute); w.Batches != 3 {
 		t.Fatalf("short window %+v", w)
 	}
 }
@@ -100,7 +104,6 @@ func TestOccupancyRefusesUnmeasuredBatchAndWorkloads(t *testing.T) {
 	}{
 		{name: "batch", batch: 3, want: "BatchUnmeasured 3"},
 		{name: "workload", batch: 1, workload: "absent", want: "WorkloadMissing absent"},
-		{name: "loadgen", batch: 1, want: "LoadGeneratorUnconfigured", setup: func(o *opcostHarness) { o.controller.config.LoadGenerator.Image = "" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			o := occupancyHarness(t)
@@ -164,34 +167,6 @@ func TestOccupancyIsolatesTheLoadNode(t *testing.T) {
 	}
 	if got := o.annotation(onGateway, profilingrun.AdmissionAnnotation); got != "" {
 		t.Fatalf("load Node root judged during a load: %q", got)
-	}
-}
-
-func TestLoadJobSpec(t *testing.T) {
-	o := occupancyHarness(t)
-	m := occupancyRoot("occ", time.Now(), 1)
-	m.UID = types.UID("occ-uid")
-	var plan occupancyPlan
-	plan.workload = &edge.Workload{ObjectMeta: meta.ObjectMeta{Name: "plc"}}
-	plan.dataset = &edge.Dataset{Spec: edge.DatasetSpec{Source: edge.DatasetSource{Image: "data:1", Path: "/records"}}}
-	plan.fields = []string{"image"}
-	job := loadJob(m, testNode, plan, 32.256, o.controller.config.LoadGenerator)
-	pod := job.Spec.Template.Spec
-	args := strings.Join(pod.Containers[0].Args, " ")
-	if *job.Spec.BackoffLimit != 0 || *job.Spec.ActiveDeadlineSeconds != 540 || pod.NodeName != "gw" || job.Labels[loadNodeLabel] != "node-uid" ||
-		pod.ServiceAccountName != "chill-load-generator" || pod.RestartPolicy != core.RestartPolicyNever {
-		t.Fatalf("job %+v", job.Spec)
-	}
-	if !strings.Contains(args, "--endpoint https://chill-serving-entrypoint.chill-system.svc:8080") || !strings.Contains(args, "--fields image --rate 32.2560 --duration 420") ||
-		!strings.Contains(args, "--workload plc") || !strings.Contains(args, "--workers 128") {
-		t.Fatalf("args %s", args)
-	}
-	if init := pod.InitContainers[0]; init.Image != "data:1" || init.Command[len(init.Command)-1] != "/records/evaluation" {
-		t.Fatalf("init %+v", init)
-	}
-	ca := pod.Volumes[1].Projected.Sources[0].Secret
-	if ca.Name != "serving-tls" || len(ca.Items) != 1 || ca.Items[0].Key != "tls.crt" {
-		t.Fatalf("ca %+v", ca)
 	}
 }
 

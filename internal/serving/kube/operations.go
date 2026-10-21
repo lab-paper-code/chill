@@ -161,16 +161,7 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 	if err = o.store.client.List(ctx, &acts, client.InNamespace(o.config.ActuationNamespace)); err != nil {
 		return s, err
 	}
-	var latest *edge.NodeActuation
-	for i := range acts.Items {
-		a := &acts.Items[i]
-		if a.Spec.Node.UID == node.UID && (latest == nil || a.Spec.StageRequestedAt.After(latest.Spec.StageRequestedAt.Time)) {
-			latest = a
-		}
-	}
-	if latest != nil && latest.Status.Phase == edge.NodeActuationPhaseReady && latest.Status.TargetObservation != nil {
-		s.PowerMode = latest.Status.TargetObservation.PowerMode
-	}
+	s.PowerMode = latestReadyMode(acts.Items, node.UID)
 	for _, i := range o.runtime.Instances() {
 		if i.Node.UID == node.UID {
 			s.Instances = append(s.Instances, i)

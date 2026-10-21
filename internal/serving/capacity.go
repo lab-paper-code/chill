@@ -116,14 +116,9 @@ func (in CapacityInput) Key() string {
 func capacityThroughput(p *Profile, b int, occupancy time.Duration) float64 {
 	mu := 0.0
 	for _, batch := range p.Batches {
-		if batch.Batch > b || len(batch.DurationNanos) == 0 {
-			continue
+		if mean, ok := p.MeanNanos(batch.Batch); ok && batch.Batch <= b {
+			mu = max(mu, float64(batch.Batch)/(mean+float64(batch.Batch)*float64(occupancy))*1e9)
 		}
-		sum := 0.0
-		for _, d := range batch.DurationNanos {
-			sum += d
-		}
-		mu = max(mu, float64(batch.Batch)/(sum/float64(len(batch.DurationNanos))+float64(batch.Batch)*float64(occupancy))*1e9)
 	}
 	return mu
 }
