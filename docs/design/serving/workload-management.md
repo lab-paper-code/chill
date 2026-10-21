@@ -48,7 +48,7 @@ native 원시 입력·전처리 module·persistent runner의 동일 실행 경�
 
 현재 입력 계약은 Workload가 참조하는 Preprocessor의 원시 입력 필드(`name`, `format`, `maxBytes`)이며
 필드 전체를 하나의 독립 표본으로 검증한다. 모델별 고정 테이블과 shape-only reader는 남기지 않는다.
-`DeviceProfile`을 새 profile DB로 사용하지 않고 선택된 완료 campaign의 메모리 view를 사용한다.
+profile은 선택된 완료 campaign의 메모리 view를 사용한다.
 프로파일링은 firstfloor native 경로로만 측정하고 각 측정은 frozen 실행 조건으로 관리한다.
 
 ## 3. 데이터 모델과 원본
@@ -303,7 +303,7 @@ profile이나 준비 인스턴스가 없다는 이유만으로 유효한 Workloa
 ### 실행 근거 조회 경계
 
 새 catalog는 운영자가 선택한 완료 campaign의 frozen 실행 조건과 결과 및 원시 evidence 참조를 읽어
-현재 사용 가능한 profile을 제공하는 메모리 read model이다. 별도 profile DB나 DeviceProfile controller를 추가하지 않는다.
+현재 사용 가능한 profile을 제공하는 메모리 read model이다.
 기존 campaign 결과 조회와 `profilerevidence.Loader`의 검증된 결과를 재사용하되,
 `VerifiedEvidence` 자체를 SLO 적합 판정이나 scientific admission 결과로 해석하지 않는다.
 

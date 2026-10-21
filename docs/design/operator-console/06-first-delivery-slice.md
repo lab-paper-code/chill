@@ -68,7 +68,7 @@ admission verdict를 다시 계산하지 않는다. 안정적으로 존재한 �
 | 모델 카탈로그 | `ModelSpec`의 artifact digest와 execution path 요구사항 | 운영 승격 profile, 물질화된 compatible-class index |
 | 프로파일 요청 | immutable `ProfilingRun.spec`과 Job-recorded RunConfig | Dashboard·CLI의 공통 생성 요청 표면 |
 | 실행 결과 | owned Job, 실제 Pod·Node identity, 측정창 co-resident, 검증된 evidence reference와 single-Run admission | batch-energy campaign 조정과 운영 profile 승격 |
-| 상위 제어 | 빈 `DeviceProfile`·`ClusterEnergyModel` API scaffold | 전력 곡선, 선택 batch, current/optimal/target 구성, decision과 transition 상태 |
+| 상위 제어 | 없음 | 전력 곡선, 선택 batch, current/optimal/target 구성, decision과 transition 상태 |
 
 `ChillSystem.Ready`는 필요한 CHILL 운영 구성요소의 availability다. Console은 이를
 전체 serving 정상이나 개입 불필요로 번역하지 않는다.
@@ -124,7 +124,7 @@ Requested
 명시한다.
 
 실행 성공, evidence verification과 scientific admission을 하나의 성공 배지로 합치지
-않는다. 단일 Run admission 또한 운영 가능한 `DeviceProfile` 승격과 동일하지 않다.
+않는다. 단일 Run admission 또한 운영 profile 승격과 동일하지 않다.
 
 ## 조회와 변경의 의존성 구조
 
@@ -173,9 +173,8 @@ Scheduler 판단을 새로 계산하지 않는다.
 | Profiling Runs | 어떤 측정이 요청됐고 어디까지 진행됐는가 | 새 Run 요청 |
 | Evidence Passport | 한 Run의 RunConfig·실제 실행·증거·admission 계보가 무엇인가 | 없음 |
 
-빈 `DeviceProfile`과 `ClusterEnergyModel`은 리소스 목록을 채우기 위해 노출하지 않는다.
-실제 생산자와 소비자 계약이 생길 때 Scientific Readiness Matrix와 Decision Microscope의
-입력으로 추가한다.
+상위 제어 API는 실제 생산자와 소비자 계약이 생길 때 Scientific Readiness Matrix와
+Decision Microscope의 입력으로 추가한다.
 
 ## 구현 게이트와 순서
 

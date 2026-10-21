@@ -7,14 +7,13 @@
 | # | 항목 | 판정 | ADR 0019 | commit |
 |---|---|---|---|---|
 | 1 | 측정 kind 여섯(BEO, MLIB, ProfilingRun, PMTC, opcost, occupancy) | 각자 유지(D1) | 없음 | - |
-| 2 | `DeviceProfile`, `ClusterEnergyModel` | 삭제(D1) | object 0개 | 3 |
-| 3 | NodeActuation CRD | Node label과 generation으로 교체(D2) | 기록에 선택 필드, NodeActuation object 삭제 | 5-7 |
-| 4 | Go 바이너리와 runtime image | worker image 분리와 `workerImage` 기록(D4)은 worker를 고칠 때 그 수정 앞에서 한다 | 기록에 선택 필드 | 8 |
-| 5 | routing annotation 없음 fallback, `SharedInstance`, `InstanceShared` | 삭제 | Pod annotation만 바뀐다 | 4 |
-| 6 | Runtime 다중 UID binding, Dashboard 서비스 표시 | 유지 | 없음 | - |
-| 7 | 수동 prepare와 remove, `staticRouting` | 유지(D3). 측정 전용 경로는 측정 API가 지운다 | 없음 | 측정 API 5, 8 |
-| 8 | 재시작 관측 잠금 CrashLoop(D-R7-5) | 잠금을 기다림(D5) | 없음 | 1 |
-| 9 | S3 PutObject 재설정(D-R6-7) | 지난 시간 묶음을 process마다 한 번 올림(D5) | 없음 | 2 |
+| 2 | NodeActuation CRD | Node label과 generation으로 교체(D2) | 기록에 선택 필드, NodeActuation object 삭제 | 5-7 |
+| 3 | Go 바이너리와 runtime image | worker image 분리와 `workerImage` 기록(D4)은 worker를 고칠 때 그 수정 앞에서 한다 | 기록에 선택 필드 | 8 |
+| 4 | routing annotation 없음 fallback, `SharedInstance`, `InstanceShared` | 삭제 | Pod annotation만 바뀐다 | 4 |
+| 5 | Runtime 다중 UID binding, Dashboard 서비스 표시 | 유지 | 없음 | - |
+| 6 | 수동 prepare와 remove, `staticRouting` | 유지(D3). 측정 전용 경로는 측정 API가 지운다 | 없음 | 측정 API 5, 8 |
+| 7 | 재시작 관측 잠금 CrashLoop(D-R7-5) | 잠금을 기다림(D5) | 없음 | 1 |
+| 8 | S3 PutObject 재설정(D-R6-7) | 지난 시간 묶음을 process마다 한 번 올림(D5) | 없음 | 2 |
 
 ## 2. 측정 kind
 
