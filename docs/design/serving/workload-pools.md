@@ -20,7 +20,7 @@
 | 자동제어 스위치는 scheduler 설정 `settings.autonomousWorkloads`(Workload UID 목록) | 결정 기록마다 사용한 설정이 함께 저장되고 기존 설정 API를 그대로 쓴다 |
 | 활성 POOL 소속은 저장하지 않고 CHILL serving 인스턴스에서 도출 | 여러 활성 POOL 소속을 별도 상태 없이 표현하고, 부분 완료도 실제 인스턴스로 드러난다 |
 | M3 전까지 측정 POOL은 운영자가 붙이는 taint `chill.dacs.io/measurement:NoSchedule`이고, ChillServer는 이 노드에 배치, 내림, 전력 변경을 하지 않는다 | taint는 toleration이 없는 Pod를 기본으로 거부한다(cordon과 같은 방식). M3는 같은 taint의 추가와 제거를 자동화한다 |
-| 전체 POOL은 control-plane이 아닌 모든 Kubernetes Node, `cpuInventory`는 배치 가능 조건 | 명세의 전체 워커노드 범위와 가용 노드 전력 집계를 그대로 따른다 |
+| 전체 POOL은 control-plane이 아닌 모든 Kubernetes Node, node agent가 게시한 online CPU 목록은 배치 가능 조건 | 명세의 전체 워커노드 범위와 가용 노드 전력 집계를 그대로 따른다 |
 | 가용 노드는 비용 비교 없이 늘 가장 낮은 전력모드로 내린다. 가장 낮은 모드는 unloaded baseline 중 전력이 가장 작은 모드 | 후보 선택이 아닌 고정 규칙. DeviceClass에는 모드 순서가 없고, 이 baseline은 에너지 계산에 이미 필요하다 |
 | 후보는 상태가 바뀌는 노드의 차이로 비교하고, 전체 POOL 에너지는 실측으로 보고한다 | `SCH-16`의 공통 항 소거. 바뀌지 않는 노드의 baseline이 없어도 판단이 멈추지 않는다 |
 | 후보와 비용 근거는 완료된 측정 전체에서 조건별 최신 성공으로 도출 | 운영자 채택과 `profileCampaigns`, `preparations`, `costReferences`, `powerCostSources` 선언을 없앤다 |
@@ -121,7 +121,7 @@ runner 자동 생성을 더한다.
 
 | 사유 | 조건 | 판단 |
 |---|---|---|
-| `PlacementInventoryMissing` | `cpuInventory`에 없음 | 배치 option에서 빠짐. 전력과 에너지는 계속 다룸 |
+| `PlacementInventoryMissing` | online CPU 목록이 없거나 읽을 수 없음, 측정 GPU가 allocatable보다 많음, 예약이 inventory 밖 | 배치 option에서 빠짐. 전력과 에너지는 계속 다룸 |
 | `PlacementBudgetUnavailable` | CHILL이 배치하지 않은 Pod의 GPU 소유를 확인할 수 없거나 그 CPU 요청이 예약을 넘음 | 같음 |
 | `PowerModeUnavailable` | DeviceClass나 `powerRequests` 항목 없음 | 현재 모드 유지 |
 

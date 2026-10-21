@@ -35,7 +35,6 @@ type powerObservationConfig struct {
 
 type schedulerConfiguration struct {
 	Settings         serving.SchedulerSettings              `json:"settings"`
-	CPUInventory     map[string][]int                       `json:"cpuInventory"`
 	Reserved         map[string]serving.SchedulerAllocation `json:"reserved"`
 	Meters           []servingkube.MeterDeclaration         `json:"meters"`
 	PowerRequests    map[string]*edge.NodeActuation         `json:"powerRequests"`
@@ -136,21 +135,14 @@ func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfigur
 	return config, nil
 }
 
+// validateInventory checks the operator reservation; the live Node inventory
+// it must fall within is checked at capture.
 func (config schedulerConfiguration) validateInventory() error {
-	for node, cpus := range config.CPUInventory {
-		seen := map[int]bool{}
-		for _, cpu := range cpus {
-			if cpu < 0 || seen[cpu] {
-				return fmt.Errorf("Node %s CPU inventory must have unique nonnegative physical IDs", node)
-			}
-			seen[cpu] = true
-		}
-	}
 	for node, reservation := range config.Reserved {
 		seen := map[int]bool{}
 		for _, cpu := range reservation.CPUs {
-			if seen[cpu] || !slices.Contains(config.CPUInventory[node], cpu) {
-				return fmt.Errorf("Node %s reserved CPUs must select its unique physical inventory", node)
+			if cpu < 0 || seen[cpu] {
+				return fmt.Errorf("Node %s reserved CPUs must be unique nonnegative physical IDs", node)
 			}
 			seen[cpu] = true
 		}
@@ -243,7 +235,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	preparations, issues := o.preparations(ctx, config, view.Profiles)
 	view.Insufficiencies = append(view.Insufficiencies, issues...)
 	controllerConfig := servingkube.SchedulerControllerConfig{
-		Settings: config.Settings, CPUInventory: config.CPUInventory,
+		Settings: config.Settings,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
 		CostIssues: costs.Issues, Meters: config.Meters, PowerRequests: config.PowerRequests,
 		StaticRouting: config.StaticRouting != nil,

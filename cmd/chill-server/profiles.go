@@ -61,8 +61,8 @@ func (o *schedulerService) preparations(
 func (o *schedulerService) preparation(
 	ctx context.Context, config schedulerConfiguration, profile serving.Profile,
 ) (servingkube.PrepareSpec, error) {
-	if err := o.checkProfileInventory(config, profile); err != nil {
-		return servingkube.PrepareSpec{}, err
+	if profile.RuntimeMetadata == nil {
+		return servingkube.PrepareSpec{}, errors.New("verified physical allocation unavailable")
 	}
 	spec, err := o.measuredPreparation(ctx, profile, config.Settings.ServingMemoryBytes)
 	if err != nil {
@@ -84,22 +84,6 @@ func (o *schedulerService) preparation(
 	}
 	_, err = o.objects.PutImmutable(ctx, spec.Bundle, bytes.NewReader(raw))
 	return spec, err
-}
-
-func (o *schedulerService) checkProfileInventory(config schedulerConfiguration, p serving.Profile) error {
-	if p.RuntimeMetadata == nil {
-		return fmt.Errorf("verified physical allocation unavailable")
-	}
-	allocation := p.RuntimeMetadata
-	for _, cpu := range allocation.CPUAffinity {
-		if !slices.Contains(config.CPUInventory[p.NodeName], cpu) {
-			return fmt.Errorf("cpuInventory[%s] must allow measured CPU %d", p.NodeName, cpu)
-		}
-		if slices.Contains(config.Reserved[p.NodeName].CPUs, cpu) {
-			return fmt.Errorf("measured CPU %d on %s is reserved", cpu, p.NodeName)
-		}
-	}
-	return nil
 }
 
 // reproducibleRuntimeAccess rejects measured delivery the generated Pod cannot

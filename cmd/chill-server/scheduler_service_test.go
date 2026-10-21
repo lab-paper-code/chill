@@ -36,11 +36,10 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 		name, fields string
 		valid        bool
 	}{
-		{name: "explicit controls-off configuration", fields: `"cpuInventory":{"node":[0,2]},` +
-			`"reserved":{"node":{"cpus":[2]}}`, valid: true},
-		{name: "duplicate physical CPU", fields: `"cpuInventory":{"node":[0,0]}`},
-		{name: "negative physical CPU", fields: `"cpuInventory":{"node":[-1]}`},
-		{name: "unobserved reserved CPU", fields: `"cpuInventory":{"node":[0]},"reserved":{"node":{"cpus":[2]}}`},
+		{name: "explicit controls-off configuration", fields: `"reserved":{"node":{"cpus":[2]}}`, valid: true},
+		{name: "duplicate reserved CPU", fields: `"reserved":{"node":{"cpus":[0,0]}}`},
+		{name: "negative reserved CPU", fields: `"reserved":{"node":{"cpus":[-1]}}`},
+		{name: "retired CPU inventory", fields: `"cpuInventory":{"node":[0]}`},
 		{name: "retired GPU inventory", fields: `"gpuInventory":{"node":["GPU-real"]}`},
 		{name: "fake cost injection", fields: `"costs":[{"id":"fake","trials":[{"joules":0}]}]`},
 		{name: "invalid meter scope", fields: `"meters":[{"id":"wall","node":{"name":"node","uid":"uid"},` +

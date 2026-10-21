@@ -17,12 +17,14 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/utils/cpuset"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -30,7 +32,6 @@ const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 
 type SchedulerControllerConfig struct {
 	Settings      serving.SchedulerSettings
-	CPUInventory  map[string][]int
 	Reserved      map[string]serving.SchedulerAllocation
 	Preparations  map[string]PrepareSpec
 	Costs         []serving.OperationCost
@@ -418,17 +419,13 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		if _, controlPlane := n.Labels[controlPlaneLabel]; controlPlane {
 			continue
 		}
-		sn := serving.SchedulerNode{Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Measurement: profilingrun.InMeasurement(n), CPUs: slices.Clone(config.CPUInventory[n.Name]), GPUUUIDs: measuredGPUs(profiles, string(n.UID)), Reserved: config.Reserved[n.Name], MemoryBytes: uint64(n.Status.Allocatable.Memory().Value()), ObservedAt: nodesObservedAt}
+		sn := serving.SchedulerNode{Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Measurement: profilingrun.InMeasurement(n), Reserved: config.Reserved[n.Name], MemoryBytes: uint64(n.Status.Allocatable.Memory().Value()), ObservedAt: nodesObservedAt}
 		for _, condition := range n.Status.Conditions {
 			if condition.Type == core.NodeReady {
 				sn.Ready = condition.Status == core.ConditionTrue
 			}
 		}
-		gpuQuantity := n.Status.Allocatable["nvidia.com/gpu"]
-		if len(sn.CPUs) == 0 || int64(len(sn.CPUs)) > n.Status.Allocatable.Cpu().Value() || int64(len(sn.GPUUUIDs)) > gpuQuantity.Value() ||
-			sn.Reserved.GPUUUID != "" && !slices.Contains(sn.GPUUUIDs, sn.Reserved.GPUUUID) {
-			sn.Reasons = append(sn.Reasons, serving.NodePlacementInventoryMissing)
-		}
+		captureNodeInventory(&sn, n, profiles)
 		c.captureNodePower(ctx, &sn, n, &acts, physical, profileByID)
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
 		requested := false
@@ -465,6 +462,21 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	}
 	bindProfileMeters(&s, config.Meters)
 	return s, nil
+}
+
+// captureNodeInventory reads the online CPU list the node agent publishes and
+// the GPUs the Node's profiles were measured on. A missing or unreadable list,
+// more devices than allocatable, or a reservation outside them leaves the
+// Node without placement inventory.
+func captureNodeInventory(sn *serving.SchedulerNode, n *core.Node, profiles []serving.Profile) {
+	cpus, err := cpuset.Parse(n.Annotations[chillmeta.OnlineCPUs])
+	sn.CPUs, sn.GPUUUIDs = cpus.List(), measuredGPUs(profiles, sn.Node.UID)
+	gpuQuantity := n.Status.Allocatable["nvidia.com/gpu"]
+	if err != nil || len(sn.CPUs) == 0 || int64(len(sn.CPUs)) > n.Status.Allocatable.Cpu().Value() ||
+		int64(len(sn.GPUUUIDs)) > gpuQuantity.Value() || !cpuset.New(sn.Reserved.CPUs...).IsSubsetOf(cpus) ||
+		sn.Reserved.GPUUUID != "" && !slices.Contains(sn.GPUUUIDs, sn.Reserved.GPUUUID) {
+		sn.Reasons = append(sn.Reasons, serving.NodePlacementInventoryMissing)
+	}
 }
 
 // measuredGPUs is the GPU inventory of one Node: the GPUs its verified

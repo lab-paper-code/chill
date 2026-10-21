@@ -53,23 +53,6 @@ func measuredAdoptionProfile() serving.Profile {
 		},
 	}
 }
-func TestMeasuredAdoptionRequiresExplicitUnreservedPhysicalInventory(t *testing.T) {
-	service := &schedulerService{}
-	profile := measuredAdoptionProfile()
-	config := schedulerConfiguration{CPUInventory: map[string][]int{"node": {0, 1}}}
-	if err := service.checkProfileInventory(config, profile); err == nil ||
-		!strings.Contains(err.Error(), "cpuInventory") {
-		t.Fatalf("missing CPU inventory: %v", err)
-	}
-	config.CPUInventory["node"] = []int{0, 1, 2, 3}
-	if err := service.checkProfileInventory(config, profile); err != nil {
-		t.Fatal(err)
-	}
-	config.Reserved = map[string]serving.SchedulerAllocation{"node": {CPUs: []int{3}}}
-	if err := service.checkProfileInventory(config, profile); err == nil || !strings.Contains(err.Error(), "reserved") {
-		t.Fatalf("reserved CPU admitted: %v", err)
-	}
-}
 func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *testing.T) {
 	service := &schedulerService{
 		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),
@@ -435,8 +418,7 @@ func schedulerTestConfiguration() schedulerConfiguration {
 			MaxInstances: 5, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 			CapacityMinimumRequests: 1, MaxCPUs: 2,
 		},
-		CPUInventory: map[string][]int{"rpi": {0, 1, 2, 3}},
-		Reserved:     map[string]serving.SchedulerAllocation{"rpi": {CPUs: []int{0}}},
+		Reserved: map[string]serving.SchedulerAllocation{"rpi": {CPUs: []int{0}}},
 	}
 }
 

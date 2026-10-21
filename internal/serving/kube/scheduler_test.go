@@ -18,6 +18,7 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -99,8 +100,7 @@ func schedulerCaptureClockController(t *testing.T, slowLive bool) *SchedulerCont
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog,
 		runs: map[string]*actionRun{}, config: SchedulerControllerConfig{
-			Settings:     serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4},
-			CPUInventory: map[string][]int{node.Name: {0, 1, 2, 3}},
+			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4},
 		}}
 }
 
@@ -200,7 +200,6 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 				MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4,
 				Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true,
 					Routing: true, Batching: true, Power: true}},
-			CPUInventory: map[string][]int{node.Name: {0, 1, 2, 3}},
 			Baselines: []serving.NodeBaseline{{ID: "empty-pool-idle", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},
 				PowerMode: "fixed", Watts: 10, Meter: "node-wall", Scope: "node-exclusive-wall", MeasuredAt: time.Now(),
 				Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "empty-pool-idle", Size: 1}}},
@@ -288,19 +287,21 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 	ctx := context.Background()
 	_, base, _, _ := observerSourceFixture()
 	config := controller.config
-	config.CPUInventory = map[string][]int{}
 	config.PowerRequests = map[string]*edge.NodeActuation{}
+	config.Reserved = map[string]serving.SchedulerAllocation{"reserved-out": {CPUs: []int{7}}}
 	want := map[string]struct {
 		reasons     []string
 		measurement bool
 		gpus        []string
 	}{
-		base.Name:   {},
-		"bare":      {reasons: []string{serving.NodePlacementInventoryMissing}},
-		"unpowered": {reasons: []string{serving.NodePowerModeUnavailable}},
-		"measured":  {measurement: true},
-		"gpu":       {gpus: []string{"GPU-a"}},
-		"gpu-over":  {reasons: []string{serving.NodePlacementInventoryMissing}, gpus: []string{"GPU-b", "GPU-c"}},
+		base.Name:      {},
+		"bare":         {reasons: []string{serving.NodePlacementInventoryMissing}},
+		"garbled":      {reasons: []string{serving.NodePlacementInventoryMissing}},
+		"reserved-out": {reasons: []string{serving.NodePlacementInventoryMissing}},
+		"unpowered":    {reasons: []string{serving.NodePowerModeUnavailable}},
+		"measured":     {measurement: true},
+		"gpu":          {gpus: []string{"GPU-a"}},
+		"gpu-over":     {reasons: []string{serving.NodePlacementInventoryMissing}, gpus: []string{"GPU-b", "GPU-c"}},
 	}
 	// GPU inventory is the GPUs the Node's own profiles were measured on.
 	measuredOn := func(id, nodeUID, gpu string) serving.Profile {
@@ -310,12 +311,16 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 		measuredOn("a", "gpu-uid", "GPU-a"), measuredOn("a2", "gpu-uid", "GPU-a"), measuredOn("cpu", "gpu-uid", ""),
 		measuredOn("b", "gpu-over-uid", "GPU-c"), measuredOn("c", "gpu-over-uid", "GPU-b"),
 	})
-	for _, name := range []string{"control-plane", "bare", "unpowered", "measured", "gpu", "gpu-over"} {
+	for _, name := range []string{"control-plane", "bare", "garbled", "reserved-out", "unpowered", "measured", "gpu", "gpu-over"} {
 		node := base.DeepCopy()
 		node.Name, node.UID = name, types.UID(name+"-uid")
 		switch name {
 		case "control-plane":
 			node.Labels[controlPlaneLabel] = ""
+		case "bare":
+			delete(node.Annotations, chillmeta.OnlineCPUs)
+		case "garbled":
+			node.Annotations[chillmeta.OnlineCPUs] = "0-"
 		case "measured":
 			node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Effect: core.TaintEffectNoSchedule}}
 		case "gpu", "gpu-over":
@@ -326,9 +331,6 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 		}
 	}
 	for name := range want {
-		if name != "bare" {
-			config.CPUInventory[name] = []int{0, 1, 2, 3}
-		}
 		if name != "unpowered" { // base Node UID is "node-uid" too
 			config.PowerRequests[name+"-uid/fixed"] = &edge.NodeActuation{}
 		}
