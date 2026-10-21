@@ -587,8 +587,10 @@ func TestCapacityOverloadWeightsDrainTheBacklog(t *testing.T) {
 	}
 }
 
-// §9 6 DP: changing an instance's batch limit is a replacement, remove and prepare.
-func TestCapacityBatchLimitChangeIsReplacement(t *testing.T) {
+// A batch limit change keeps the instance: the Pod initializes every measured
+// batch, so the route applies the new firstfloor policy cap with no remove or
+// prepare (m4 r5 swapped genesis3 q2 b1↔b2 by stop, drain, remove, prepare).
+func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 	s, snap := schedulerFixture()
 	profile := *snap.Instances[0].Profile
 	profile.Batches = append(slices.Clone(profile.Batches), BatchProfile{Batch: 2, DurationNanos: []float64{float64(15 * time.Millisecond)}, EnergyPerInputJoules: 0.8, MemoryBytes: 100})
@@ -596,21 +598,19 @@ func TestCapacityBatchLimitChangeIsReplacement(t *testing.T) {
 	option := snap.Instances[0]
 	option.MaxBatch = 2
 	snap.Options = []SchedulerOption{poolsOption(option)}
-	n1, state := snap.Instances[0].Node, schedulerState(option)
-	remove, prepare := poolsCost(schedulerActionRemove, n1, state, "unloaded", "fixed"), poolsCost(schedulerActionPrepare, n1, "unloaded", state, "fixed")
-	prepare.Trials = []OperationTrial{{Duration: 2 * time.Millisecond, Joules: 0.02}}
-	snap.Costs = []OperationCost{remove, prepare}
+	n1 := snap.Instances[0].Node
+	snap.Costs = nil
 	capacityLoad(s, &snap, snap.Workloads[0], 150)
 	rows := capacityRowsForTest(s, snap, func(o SchedulerOption) float64 { return 100 * float64(o.Instance.MaxBatch) })
 	d := capacityDecideForTest(t, s, snap, rows)
 	plans := poolsPlans(d, n1)
 	i := slices.IndexFunc(plans, func(p SchedulerNodePlan) bool { return p.Key == "profile/b2/w1" })
-	if i < 0 || !plans[i].Eligible || (plans[i].Pre-3*time.Millisecond).Abs() > time.Microsecond || plans[i].KappaRetained["w1"] != 0 {
-		t.Fatalf("b2 plan must remove then prepare before the route: %+v", plans)
+	if i < 0 || !plans[i].Eligible || plans[i].Pre != 0 || plans[i].Post != 0 || plans[i].KappaRetained["w1"] != 100 {
+		t.Fatalf("b2 plan must reuse i1 with no chain: %+v", plans)
 	}
-	if d.Target == nil || !slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Instance == "i1" }) ||
-		!slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionPrepare && a.Instance == "target-w1-profile-2" }) {
-		t.Fatalf("target must replace i1: %+v", d.Target)
+	if d.Target == nil || len(d.Target.Instances) != 1 || d.Target.Instances[0].ID != "i1" || d.Target.Instances[0].MaxBatch != 2 ||
+		slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind != schedulerActionRoute }) {
+		t.Fatalf("target must route i1 with batch 2 only: %+v", d.Target)
 	}
 }
 

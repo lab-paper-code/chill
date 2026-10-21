@@ -69,7 +69,7 @@
 
 **인스턴스와 Workload.** 인스턴스는 Workload 하나에 속하고 κ는 그 Workload와 option의 행이다. 같은 모델의 Workload들은 한 노드를 함께 쓸 수 있지만 각자 인스턴스를 둔다. 계획기가 만드는 분배에서 인스턴스마다 Workload는 하나다. capture는 실제 분배에서 한 인스턴스가 두 Workload 이상에 들어 있으면 판단을 `SharedInstance`로 대기시킨다(6장의 운영 단계가 전환 전에 푼다). 꺼진 Workload의 인스턴스가 있는 노드는 keep뿐이므로 꺼진 Workload의 SLO는 계획 동작의 영향을 받지 않는다(workload-pools 4.4절의 노드 동작 규칙).
 
-**사슬.** `schedulerPlan`의 순서다. 모드 변경은 power, 모든 기존 remove, prepare가 route 전이다. 같은 모드에서는 자원이 함께 들어가지 않을 때만 remove가 prepare 앞이고, 아니면 route 뒤다. 동작마다 측정 trial의 평균 wall J, 평균 시간, 최대 시간을 쓴다. 비용이 없으면 그 계획은 `MissingOperationCost`로 빠진다. 같은 인스턴스의 배치 상한을 바꾸는 계획은 remove와 prepare로 센다(교체).
+**사슬.** `schedulerPlan`의 순서다. 모드 변경은 power, 모든 기존 remove, prepare가 route 전이다. 같은 모드에서는 자원이 함께 들어가지 않을 때만 remove가 prepare 앞이고, 아니면 route 뒤다. 동작마다 측정 trial의 평균 wall J, 평균 시간, 최대 시간을 쓴다. 비용이 없으면 그 계획은 `MissingOperationCost`로 빠진다. 같은 인스턴스의 배치 상한이나 대기 시간을 바꾸는 계획은 그 인스턴스를 그대로 쓰고 route가 firstfloor policy를 바꾼다(사슬 없음). 서빙 Pod는 측정한 모든 배치를 시작할 때 초기화하고(`batchSizes`, m4 r2의 rasp5 q2 config는 1~16), firstfloor `Scheduler.Update`는 초기화되고 측정된 배치 안에서 policy의 `maxBatchSize`와 `maxBatchWaitMS`를 재시작 없이 바꾸며, route의 `applyPolicy`가 그 값의 native ACK를 기다린다.
 
 **비교 기간.** `T = max(comparisonPeriodNanos, 공간의 최장 route 전 사슬 + 최장 route 뒤 remove)`(최대 시간)를 판단마다 하나 정하고 keep과 모든 계획에 쓰며 `decision.capacity.periodNanos`에 남긴다. 모든 사슬이 T 안에 끝난다. 비교 기간을 정하는 방법은 04 명세가 설계에 맡긴다. sample의 `comparisonPeriodNanos`는 사용자 결정으로 10분이다(m4 r5 뒤). T는 에너지 순서만 바꾸고 SLO 판정(3장)은 T와 무관하므로 부하가 오를 때 첫 판단의 확장은 T와 상관없다. m4 r5 기록에서 T를 늘려도 바뀌지 않는 것: 분배되지 않은 genesis3 q2와 orangepi q1은 인스턴스를 띄운 노드 전력(49.80 W, 2.71 W)이 빈 노드(49.97 W, 2.73 W)보다 크지 않아 remove가 어떤 T에서도 이득이 아니다. 배치 상한 교체(genesis3 b1↔b2)와 SLO 때문에 준비한 인스턴스의 remove는 T 152 s에서 이미 이득(79~1,265 J)이었고 이득은 T에 비례해 커진다.
 
@@ -149,7 +149,7 @@
 | 2 | 고정 fixture profile의 κ가 상수와 같음(재생이나 배칭 규칙 변경이 κ를 바꾸면 실패한다). 같은 행을 두 번 계산하면 같은 값. 충족, 미충족, 충족 격자는 `NonMonotone`이고 κ 없음. 창 요청 수가 `λ × capacityWindow` 이상. 19/20 판정 경계. m 139 ms, p99 100 ms에서 κ 0. 시작 때 자동제어 Workload의 행만 계산하고 꺼진 Workload의 행은 없음. 자동제어를 켜거나 SLO, profile, m, 설정이 바뀌면 빠진 행만 계산하고 그 외 변경은 계산하지 않음. 계산 중 판단은 `CapacityPending`. 행마다 `capacity-row-built` 기록. strict decode가 네 필드 누락을 거절 |
 | 3 | 같은 seed의 도착 시각이 같고 평균 간격이 1/rate 근처 |
 | 6 판정 | 3장 표의 40 req/s 두 예. 모드 변경 계획의 `κ_ret` 0. route 뒤 remove 계획은 keep κ를 남김. `W > L − m`인 계획은 에너지가 작아도 선택되지 않음. 모든 계획이 미충족이면 최대 초과량 순. SLO가 다른 Workload 두 개에서 각자 판정. 실제 분배에서 한 인스턴스가 두 Workload에 있으면 `SharedInstance`. 꺼진 Workload 노드는 keep뿐이고 binding 변경으로 판정 대상이 늘지 않음. `StaticRoutingTarget`이 두 UID alias를 거절. 단일 `workloadUID` 기록 왕복과 `OperatingPower` 소속. 공유 fixture(`scheduler_placement_test.go`, `scheduler_test.go`의 교차 UID 대기, `runtime_scheduler_test.go`, `scheduler_transition_test.go`)는 Workload별 인스턴스로 다시 씀 |
-| 6 DP | 무작위 소형 fixture(Workload 1~3개)에서 DP의 충족 판정이 정확한 κ 합 brute force와 같음(예: κ 0.34λ 인스턴스 세 개가 충족). 칸 수를 바꿔도 충족 판정이 같음. 가중치 반올림 뒤 모든 인스턴스가 κ 안(예: κ 99.6과 0.4, λ 100). 배치 상한 변경이 remove와 prepare. 요청 에너지가 route에서 나뉨 |
+| 6 DP | 무작위 소형 fixture(Workload 1~3개)에서 DP의 충족 판정이 정확한 κ 합 brute force와 같음(예: κ 0.34λ 인스턴스 세 개가 충족). 칸 수를 바꿔도 충족 판정이 같음. 가중치 반올림 뒤 모든 인스턴스가 κ 안(예: κ 99.6과 0.4, λ 100). 배치 상한 변경이 같은 인스턴스의 route 하나. 요청 에너지가 route에서 나뉨 |
 | 6 기간과 기록 | 사슬 197 s, horizon 60 s에서 keep과 모든 계획의 T가 같고 trial J 전체 포함, `TransitionExceedsHorizon` 없음. option 40개에서 재진입 계획이 DP에 있음(D-22). 제외된 노드 계획이 사유와 함께 기록됨. 입력 순서를 섞은 두 snapshot의 판단이 `reflect.DeepEqual`. 완전 동률은 keep |
 | 7 | 노드나 runtime image가 다른 항목만 있으면 κ 없음(`MissingDispatchOccupancy`). rasp5 q1 profile 903 표본과 d 9.409 ms, 60 s 창 20/19, m 29 ms의 tight 행이 μ 26.88, 25 ≤ κ ≤ 26.88(값 25.3). d 0인 fixture κ는 상수 그대로 |
 | 전체 | `make lint test`, `make arch-check`, `make helm-lint helm-template`, `make dashboard-check` |
@@ -236,7 +236,7 @@ commit 6에서 모두 지운다.
 - 결정: 디스패치 점유는 노드와 runtime image마다 단일 인스턴스 포화에서 재고 재생 실행시간에 더한다. 행마다 값과 출처를 남기고 runtime image가 바뀔 때만 다시 잰다. 측정이 없는 노드는 κ를 계산하지 않고 그 option을 뺀다. 다른 노드의 값은 빌리지 않는다.
 - 결정: 10장 승인 묶음(①, ①', ④, ⑤)을 반영한다. 공유를 풀 때 tight만 rasp5 인스턴스에 남고 relaxed와 imagenet은 분배하지 않는다.
 - 결정: 용량표는 ChillServer가 시작할 때마다 자동제어 Workload의 행만 다시 계산하고, 행 단위로 병렬 계산한다. 남긴 행은 기록이다. 몇 분 안에 끝나지 않으면 이전 표로 판단하며 뒤에서 다시 계산한다(2장).
-- 질문: firstfloor가 배치 상한을 재준비 없이 바꿀 수 있는지 확인하지 않았다. 지금은 교체(remove와 prepare)로 센다. 바꿀 수 있다면 비용이 없는 동작으로 둘 수 있다.
+- 확인: firstfloor는 배치 상한을 재준비 없이 바꾼다(4장 사슬). m4 r5에서 genesis3 q2 b1↔b2는 stop, drain, remove, prepare였고 이제는 route 하나다.
 
 ## 14. 구현 규칙
 

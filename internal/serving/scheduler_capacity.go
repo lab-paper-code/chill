@@ -584,13 +584,15 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		i := c.option.Instance
 		i.ID, i.WorkloadUID, i.Ready, i.TargetID, i.OwnerWorkloadUID = fmt.Sprintf("target-%s-%s-%d", uid, i.Profile.ID, i.MaxBatch), uid, true, "", ""
 		for _, old := range current {
-			// The same physical executor serves on; a changed batch limit replaces
-			// it. An unrouted one needs its prepared slot or owner as proof.
-			if !used[old.ID] && mode == node.PowerMode && old.FixedBatchSize == 0 && schedulerState(old) == schedulerState(i) && old.MaxBatch == i.MaxBatch &&
-				old.MaxWait == i.MaxWait && old.Capacity == i.Capacity && schedulerOwnerAllows(old.OwnerWorkloadUID, uid) &&
+			// The same physical executor serves on. Its batch limit and wait are
+			// firstfloor policy: the route applies them without a restart, since
+			// the Pod initializes every measured batch. An unrouted one needs its
+			// prepared slot or owner as proof.
+			if !used[old.ID] && mode == node.PowerMode && old.FixedBatchSize == 0 && schedulerState(old) == schedulerState(i) &&
+				old.Capacity == i.Capacity && schedulerOwnerAllows(old.OwnerWorkloadUID, uid) &&
 				(old.WorkloadUID == uid || old.WorkloadUID == "" && old.Ready && !old.Stopped && (old.TargetID != "" || old.OwnerWorkloadUID == uid)) {
 				used[old.ID] = true
-				old.WorkloadUID = uid
+				old.WorkloadUID, old.MaxBatch, old.MaxWait = uid, i.MaxBatch, i.MaxWait
 				i = old
 				break
 			}
