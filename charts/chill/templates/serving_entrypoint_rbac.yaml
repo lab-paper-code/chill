@@ -76,9 +76,10 @@ rules:
   - apiGroups: [""]
     resources: [pods/log]
     verbs: [get]
+  # Hand-back lists the transition-cost runner Services of a measured Node.
   - apiGroups: [""]
     resources: [services]
-    verbs: [get, delete]
+    verbs: [get, list, delete]
   {{- if .Values.servingEntrypoint.scheduler.configMap }}
   - apiGroups: [""]
     resources: [services]
@@ -199,6 +200,10 @@ rules:
   - apiGroups: [edge.dacs.io]
     resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts]
     verbs: [patch]
+  # Admission and hand-back wait for the power changes measurements request here.
+  - apiGroups: [edge.dacs.io]
+    resources: [nodeactuations]
+    verbs: [list]
   # Power mode transition cost preparations are owned ConfigMaps named after the measurement.
   - apiGroups: [""]
     resources: [configmaps]

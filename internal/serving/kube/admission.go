@@ -27,6 +27,9 @@ const (
 	refusedNodeServing  = "NodeServing"
 	powerChangedReason  = "PowerChangedDuringMeasurement"
 	campaignFailedPhase = "Failed"
+	// handBackLabel marks the power change a hand-back requests to lower the Node.
+	handBackLabel    = "chill.dacs.io/measurement-handback"
+	holderLabelValue = "true"
 	// measurementInvalidCode reports a measurement the evidence readers count and do not use.
 	measurementInvalidCode = "MeasurementInvalid"
 )
@@ -118,8 +121,8 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var acts edge.NodeActuationList
-	if err = c.store.client.List(ctx, &acts, client.InNamespace(c.observer.config.ActuationNamespace)); err != nil {
+	acts, err := c.nodeActuations(ctx, config.MeasurementNamespaces)
+	if err != nil {
 		return err
 	}
 	roots, err := c.measurementRoots(ctx, config.MeasurementNamespaces)
@@ -177,7 +180,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(refusedNodeMissing, root.node)))
 			continue
 		}
-		if claimed[node.Name] || profilingrun.InMeasurement(node) || busy[string(node.UID)] || pendingActuation(acts.Items, string(node.UID), now) {
+		if claimed[node.Name] || profilingrun.InMeasurement(node) || busy[string(node.UID)] || pendingActuation(acts, string(node.UID), now) {
 			continue
 		}
 		if serving := servingPodsOn(pods.Items, node.Name); len(serving) > 0 {
@@ -281,9 +284,28 @@ func (c *SchedulerController) setMeasurementTaint(ctx context.Context, node *cor
 func (c *SchedulerController) startHandBack(node *core.Node, holder string, root *measurementRoot, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + holder, Kind: handBackKind, Node: ref}
+	c.mu.Lock()
+	ran := c.sequences[holder]
+	c.mu.Unlock()
 	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
-		return c.handBack(ctx, ref, holder, root, true, result)
+		return c.handBack(ctx, ref, holder, root, !ran, result)
 	})
+}
+
+// nodeActuations lists the power changes of the actuation namespace and of the
+// measurement namespaces, where measurements request their own.
+func (c *SchedulerController) nodeActuations(ctx context.Context, measurementNamespaces []string) ([]edge.NodeActuation, error) {
+	namespaces := append([]string{c.observer.config.ActuationNamespace}, measurementNamespaces...)
+	slices.Sort(namespaces)
+	var acts []edge.NodeActuation
+	for _, namespace := range slices.Compact(namespaces) {
+		var list edge.NodeActuationList
+		if err := c.store.client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
+			return nil, err
+		}
+		acts = append(acts, list.Items...)
+	}
+	return acts, nil
 }
 
 // startNodeRun registers a run on the Node and executes it outside the locks.
@@ -342,12 +364,16 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 // vanished measurement object is recorded as Interrupted and a sequence a
 // restart cut off gets its sequence record.
 func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeReference, holder string, root *measurementRoot, interrupted bool, result *OperationResult) error {
-	var acts edge.NodeActuationList
+	c.mu.Lock()
+	namespaces := c.config.MeasurementNamespaces
+	c.mu.Unlock()
+	var acts []edge.NodeActuation
 	if err := c.operations.wait(ctx, func() (bool, error) {
-		if err := c.store.client.List(ctx, &acts, client.InNamespace(c.observer.config.ActuationNamespace)); err != nil {
+		var err error
+		if acts, err = c.nodeActuations(ctx, namespaces); err != nil {
 			return false, err
 		}
-		return !pendingActuation(acts.Items, node.UID, time.Now()), nil
+		return !pendingActuation(acts, node.UID, time.Now()), nil
 	}); err != nil {
 		return err
 	}
@@ -363,7 +389,7 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 		result.Progress = append(result.Progress, "Interrupted "+holder)
 	} else if root != nil {
 		granted, at, _ := profilingrun.Admission(root.object.GetAnnotations())
-		if foreign := foreignActuations(acts.Items, node.UID, root.object.GetUID(), at, result.StartedAt); granted && len(foreign) > 0 {
+		if foreign := foreignActuations(acts, node.UID, root.object.GetUID(), at, result.StartedAt); granted && len(foreign) > 0 {
 			if err := c.annotate(ctx, root.object, profilingrun.InvalidAnnotation, powerChangedReason+" "+strings.Join(foreign, ",")); err != nil {
 				return err
 			}
@@ -403,6 +429,9 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	if err = c.setMeasurementTaint(ctx, current, ""); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	delete(c.sequences, holder)
+	c.mu.Unlock()
 	result.Progress = append(result.Progress, "taint removed")
 	return nil
 }
@@ -426,7 +455,9 @@ func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.
 		result.Progress = append(result.Progress, "no requestable lowest mode")
 		return nil
 	}
-	if err := c.measurement.ChangePower(ctx, ref, powerRequest(spec, time.Now())); err != nil {
+	request := powerRequest(spec, time.Now())
+	request.Labels = map[string]string{handBackLabel: holderLabelValue}
+	if err := c.measurement.ChangePower(ctx, ref, request); err != nil {
 		return err
 	}
 	result.Progress = append(result.Progress, "lowest mode "+lowest+" read back")
@@ -434,7 +465,8 @@ func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.
 }
 
 // foreignActuations names the power changes of the Node applied between from
-// and to that the measurement did not request.
+// and to that neither the measurement nor a hand-back requested. A retried
+// hand-back finds the lowering of the attempt before it inside the window.
 func foreignActuations(acts []edge.NodeActuation, nodeUID string, measurement types.UID, from, to time.Time) []string {
 	names := make([]string, 0, len(acts))
 	for i := range acts {
@@ -442,7 +474,7 @@ func foreignActuations(acts []edge.NodeActuation, nodeUID string, measurement ty
 		if a.Spec.Node.UID != nodeUID || a.Status.ApplyStartedAt == nil || a.Status.ApplyStartedAt.Time.Before(from) || a.Status.ApplyStartedAt.Time.After(to) {
 			continue
 		}
-		if slices.ContainsFunc(a.OwnerReferences, func(o meta.OwnerReference) bool { return o.UID == measurement }) {
+		if a.Labels[handBackLabel] != "" || slices.ContainsFunc(a.OwnerReferences, func(o meta.OwnerReference) bool { return o.UID == measurement }) {
 			continue
 		}
 		names = append(names, a.Name)

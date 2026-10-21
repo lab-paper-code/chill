@@ -88,11 +88,14 @@ func (c *SchedulerController) admitNodeLocked(ctx context.Context, ref serving.N
 	if err != nil || string(node.UID) != ref.UID {
 		return nil, refused(refusedNodeMissing, fmt.Sprintf("Node %s/%s is not present", ref.Name, ref.UID))
 	}
-	var acts edge.NodeActuationList
-	if err = c.store.client.List(ctx, &acts, client.InNamespace(c.observer.config.ActuationNamespace)); err != nil {
+	c.mu.Lock()
+	namespaces := c.config.MeasurementNamespaces
+	c.mu.Unlock()
+	acts, err := c.nodeActuations(ctx, namespaces)
+	if err != nil {
 		return nil, err
 	}
-	if profilingrun.InMeasurement(node) || c.nodeBusy(node) || pendingActuation(acts.Items, ref.UID, time.Now()) {
+	if profilingrun.InMeasurement(node) || c.nodeBusy(node) || pendingActuation(acts, ref.UID, time.Now()) {
 		return nil, refused("NodeBusy", "Node "+ref.Name+" is held by a measurement, a run or a power change")
 	}
 	if !measurement {
@@ -141,6 +144,9 @@ func (c *SchedulerController) MeasureSequence(ctx context.Context, requests []Me
 		c.tickMu.Unlock()
 		return SequenceResult{}, err
 	}
+	c.mu.Lock()
+	c.sequences[id] = true
+	c.mu.Unlock()
 	sequence := SequenceResult{SequenceID: id, Measurements: []MeasuredOperation{}}
 	done, outcome := c.startNodeRun(Operation{ID: id, Kind: operationSequenceKind, Node: ref}, config, func(runCtx context.Context, result *OperationResult) error {
 		measureCtx, stop := context.WithCancel(runCtx)

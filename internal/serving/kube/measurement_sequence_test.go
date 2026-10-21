@@ -297,6 +297,30 @@ func TestSequenceStopsAtFirstFailureAndRecordsIt(t *testing.T) {
 	}
 }
 
+// A sequence whose own hand-back fails is retried by Admit as a hand-back of
+// this process, never as a sequence a restart cut off.
+func TestRetriedSequenceHandBackKeepsItsSequenceRecord(t *testing.T) {
+	h, _, evidence := sequenceHarness(t)
+	failed := false
+	h.kube.PrependReactor("patch", "nodes", func(action ktesting.Action) (bool, runtime.Object, error) {
+		if !failed && !strings.Contains(string(action.(ktesting.PatchAction).GetPatch()), profilingrun.MeasurementTaintKey) {
+			failed = true
+			return true, nil, errors.New("conflict")
+		}
+		return false, nil, nil
+	})
+	requests := []MeasurementRequest{{Operation: Operation{ID: "idle", Kind: operationIdle, Node: testNode}}}
+	result, err := h.controller.MeasureSequence(context.Background(), requests)
+	if err != nil || h.holder() != result.SequenceID {
+		t.Fatalf("hand-back did not fail once: %+v %v holder %q", result, err, h.holder())
+	}
+	h.admit()
+	sequence := evidence.sequence(t, result.SequenceID)
+	if h.holder() != "" || sequence.Reason == sequenceRestartReason || sequence.Requested != 1 {
+		t.Fatalf("retry rewrote the sequence record: %+v holder %q", sequence, h.holder())
+	}
+}
+
 func TestRestartRecordsCutSequenceWithItsSavedRecords(t *testing.T) {
 	h, _, evidence := sequenceHarness(t)
 	saved := OperationMeasurementPrefix + "node-uid/seq-cut.0.prepare.json"

@@ -341,7 +341,7 @@ func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
 				t.Fatal("taint removed before the lowest mode was read back")
 			}
 			a := &acts.Items[0]
-			if a.Spec.PowerMode != lowMode {
+			if a.Spec.PowerMode != lowMode || a.Labels[handBackLabel] == "" {
 				t.Fatalf("hand-back requested %q", a.Spec.PowerMode)
 			}
 			ready := meta.NewMicroTime(time.Now())
@@ -360,5 +360,47 @@ func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
 	h.admit()
 	if h.holder() != "" {
 		t.Fatalf("taint kept: %+v", h.controller.State().Results)
+	}
+}
+
+// A retried hand-back finds the lowering of the failed attempt before it inside
+// the measurement window; that hand-back power change does not invalidate it.
+func TestForeignActuationsSkipHandBackLowering(t *testing.T) {
+	from := time.Now()
+	applied := meta.NewMicroTime(from.Add(time.Second))
+	act := func(name string, labels map[string]string) edge.NodeActuation {
+		return edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Name: name, Labels: labels},
+			Spec:   edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}},
+			Status: edge.NodeActuationStatus{ApplyStartedAt: &applied}}
+	}
+	acts := []edge.NodeActuation{act("lowering", map[string]string{handBackLabel: holderLabelValue}), act("operator", nil)}
+	if got := foreignActuations(acts, "node-uid", "root-uid", from, from.Add(time.Minute)); len(got) != 1 || got[0] != "operator" {
+		t.Fatalf("foreign = %v", got)
+	}
+}
+
+// Measurements request power changes in their own namespace; admission waits
+// for those too.
+func TestAdmitWaitsForPendingPowerChangeOfAMeasurementNamespace(t *testing.T) {
+	h := newAdmissionHarness(t)
+	h.controller.mu.Lock()
+	h.controller.config.MeasurementNamespaces = []string{"chill-system", "measurements"}
+	h.controller.mu.Unlock()
+	root := baselineRoot("idle", time.Now())
+	h.create(root)
+	pending := &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "measurements", Name: "power"},
+		Spec: edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}, Deadline: meta.NewTime(time.Now().Add(time.Hour))}}
+	h.create(pending)
+	h.admit()
+	if h.holder() != "" {
+		t.Fatal("granted a Node with a pending power change in a measurement namespace")
+	}
+	pending.Status.Phase = edge.NodeActuationPhaseReady
+	if err := h.controller.store.client.Update(context.Background(), pending); err != nil {
+		t.Fatal(err)
+	}
+	h.admit()
+	if h.holder() != string(root.UID) {
+		t.Fatal("not granted after the power change settled")
 	}
 }

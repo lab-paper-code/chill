@@ -144,8 +144,12 @@ test-loadgen: ## Run load-generator tests.
 test-helm-release-flow: ## Verify values-file and explicit image precedence in the Helm release flow.
 	./hack/helm-release-flow-test.sh
 
+.PHONY: test-serving-entrypoint-rbac
+test-serving-entrypoint-rbac: ## Verify the rendered ChillServer grants measurement admission needs.
+	HELM=$(HELM) ./hack/serving-entrypoint-rbac-test.sh
+
 .PHONY: test
-test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow ## Run tests.
+test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow test-serving-entrypoint-rbac ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
