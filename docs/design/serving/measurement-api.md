@@ -61,7 +61,7 @@
 **실행.** 노드 run 하나가 다음을 차례로 한다. 모든 동작은 measurement 모드 `Operations`(taint toleration)다.
 1. 노드가 profile 모드가 아니면 2장의 방법(CR owner NodeActuation)으로 `ChangePower`한다. 비용으로 기록하지 않고, witness 구간은 이 단계 뒤에 시작한다.
 2. preparation을 `Owner = Workload`, `fixedBatchSize = B`로 prepare한다. owner가 있는 준비 Pod는 routing annotation `{<Workload UID>: 1}`을 받아 바로 그 Workload를 서빙한다(`operations.go:836-849`, `scheduler_test.go:421-425`). taint 노드에서도 같다 `[추론]`.
-3. load Job을 만들고 끝날 때까지 기다린다. 끝나면 `ObservationLog.Query(Workload UID, Job 시작, 지금, …)`(`observation_log.go:807`)의 final 행 중 그 인스턴스의 행을 읽고, 인스턴스를 remove하고 Job을 지운 뒤 record와 status를 쓴다. 이어서 기존 반환이 돈다.
+3. load Job을 만들고 끝날 때까지 기다린다. 끝나면 `ObservationLog.Query(Workload UID, Job 시작, 지금, …)`(`observation_log.go:807`)의 final 행 중 그 노드의 행을 읽고, Job을 지운 뒤 record와 status를 쓴다. 이어서 기존 반환이 돈다. 측정 인스턴스는 반환의 `clearNode`가 노드의 다른 serving Pod와 함께 지운다.
 
 **load Job.** release namespace의 `occupancy-<UID hash>`, label `chill.dacs.io/measurement-load: <Node UID>`.
 - `backoffLimit: 0`, `activeDeadlineSeconds` = warmup + duration + 120. run과 반환은 그 label의 Job을 `propagationPolicy: Background`로 지운다. 기본 삭제는 Pod를 남겨 반환 뒤에도 부하가 이어진다 `[추론: Kubernetes 기본값]`.
