@@ -213,13 +213,9 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 	if slices.Contains(in.config.Settings.AutonomousWorkloads, string(workload.UID)) {
 		return plan, refusedWorkloadAutonomous, m.Spec.Workload, false
 	}
-	c.mu.Lock()
-	instances := c.state.Snapshot.Instances
-	c.mu.Unlock()
-	for _, i := range instances {
-		if i.WorkloadUID == string(workload.UID) || i.OwnerWorkloadUID == string(workload.UID) {
-			return plan, refusedWorkloadServing, i.ID, false
-		}
+	// The Pods of this cycle: Admit runs before Tick refreshes the snapshot.
+	if pod := workloadPod(in.pods, string(workload.UID)); pod != "" {
+		return plan, refusedWorkloadServing, pod, false
 	}
 	var dataset edge.Dataset
 	var preprocessor edge.Preprocessor
@@ -244,6 +240,22 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 	}
 	plan.target = target
 	return plan, "", "", false
+}
+
+// workloadPod names a non-terminal serving Pod that the Workload owns or routes to.
+func workloadPod(pods []core.Pod, uid string) string {
+	for i := range pods {
+		p := &pods[i]
+		if p.Status.Phase == core.PodSucceeded || p.Status.Phase == core.PodFailed {
+			continue
+		}
+		var routing map[string]int32
+		_ = json.Unmarshal([]byte(p.Annotations[ServingRoutingAnnotation]), &routing)
+		if workloadOwner(p.OwnerReferences) == uid || routing[uid] > 0 {
+			return p.Namespace + "/" + p.Name
+		}
+	}
+	return ""
 }
 
 // startOccupancy registers the run of a granted occupancy measurement.

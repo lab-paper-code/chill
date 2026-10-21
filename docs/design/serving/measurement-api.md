@@ -94,7 +94,7 @@
 | BEO, MLIB | `CPUsUnavailable <CPU> <모드>`: `cpuAffinity`가 가용 CPU의 부분집합이 아니거나, affinity가 없으면 `cpuQuota`가 가용 CPU 수보다 큼. `OnlineCPUsUnknown <모드>` |
 | opcost, occupancy | `ProfileMissing <BEO> <사유>`: BEO 없음, terminal이 아님(`NotComplete`, 같은 노드에서 앞 순서면 줄 1이 먼저 기다리게 하므로 여기서는 뒤 순서나 다른 노드의 BEO), `Complete`가 아닌 terminal, catalog의 그 BEO issue 코드(`catalog.go:102-104,115,240,300,420`). catalog에 profile도 issue도 아직 없으면(갱신 지연) 기다린다. `NodeMismatch`: BEO `targetNode` ≠ `spec.node`. `ActuationNamespace`: actuation namespace ≠ CR namespace(owner reference는 같은 namespace만 가리킨다) |
 | opcost | `PowerModeUnknown <모드>`, `MeterUndeclared` |
-| occupancy | `BatchUnmeasured <B>`(profile batches에 없음, `catalog.go:402-403`), `WorkloadMissing`, `WorkloadAutonomous`(`autonomousWorkloads`에 있음), `WorkloadServing <인스턴스>`(그 Workload의 인스턴스가 있음), `LoadGeneratorUnconfigured` |
+| occupancy | `BatchUnmeasured <B>`(profile batches에 없음, `catalog.go:402-403`), `WorkloadMissing`, `WorkloadAutonomous`(`autonomousWorkloads`에 있음), `WorkloadServing <Pod>`(같은 주기에 읽은 serving Pod 중 그 Workload가 owner이거나 route 가중치를 둔 Pod가 있음), `LoadGeneratorUnconfigured` |
 
 - 모드는 `spec.state.candidate.powerMode`, 가용 CPU = 그 모드의 online CPU − 설정 `reserved`. 모드의 online CPU는 DeviceClass `powerModes[].onlineCPUs`(새 선택 필드, cpuset 목록)다. 필드가 없으면 그 모드가 지금 read-back 모드일 때만 Node annotation `edge.dacs.io/cpus`를 쓰고(annotation은 현재 모드의 값, `nodeprobe/probe.go:84`), 아니면 `OnlineCPUsUnknown`이다. live Jetson DeviceClass에는 commit 3 배포 때 모드마다 이 필드를 넣는다. CEL은 Node와 ConfigMap을 읽지 못하므로 확인은 admission이 하고, 캠페인 생성기는 걸러 내지 않는다.
 - **승인과 실행.** 두 kind는 taint를 붙이고 `Granted`를 쓴 뒤 같은 잠금 안에서 run을 등록한다. 거절이면 ChillServer가 status도 `Failed`와 사유로 쓴다(다른 reconciler가 없다).

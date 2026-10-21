@@ -16,6 +16,7 @@ import (
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -251,5 +252,44 @@ func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
 	if len(got) != 2 || got["max"].Source != newest || got["max"].PerRequest != 9_410_000 || got["max"].Node != testNode ||
 		got["low"].PerRequest != 0 || got["low"].Source != negative {
 		t.Fatalf("occupancy %+v", view.DispatchOccupancy)
+	}
+}
+
+// Admit runs before Tick, so the snapshot can still hold the instance of the
+// previous occupancy; the serving Pods listed in the same cycle decide.
+func TestOccupancyJudgesWorkloadServingByListedPods(t *testing.T) {
+	o := occupancyHarness(t)
+	var w edge.Workload
+	if err := o.controller.store.client.Get(context.Background(), client.ObjectKey{Name: "plc"}, &w); err != nil {
+		t.Fatal(err)
+	}
+	o.controller.mu.Lock()
+	o.controller.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: "previous/c", Node: testNode, WorkloadUID: string(w.UID)}}
+	o.controller.mu.Unlock()
+	// The Node reads back the profile mode, so the run needs no power change.
+	o.create(&edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "read-back"},
+		Spec:   edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}, PowerMode: "fixed"},
+		Status: edge.NodeActuationStatus{Phase: edge.NodeActuationPhaseReady, TargetObservation: &edge.NodeActuationObservation{PowerMode: "fixed"}}})
+	m := occupancyRoot("occ", time.Now(), 1)
+	o.create(m)
+	if err := o.controller.Admit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := o.annotation(m, profilingrun.AdmissionAnnotation); !strings.HasPrefix(got, "Granted") {
+		t.Fatalf("stale snapshot refused the occupancy: %q", got)
+	}
+	o.controller.wg.Wait()
+
+	pod := servingPod("serving-plc")
+	pod.Spec.NodeName = "gw"
+	pod.Annotations = map[string]string{ServingRoutingAnnotation: `{"` + string(w.UID) + `":1}`}
+	if _, err := o.kube.CoreV1().Pods("chill-system").Create(context.Background(), pod, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	next := occupancyRoot("occ-2", time.Now().Add(time.Second), 1)
+	o.create(next)
+	o.admit()
+	if got := o.annotation(next, profilingrun.AdmissionAnnotation); got != "Refused: WorkloadServing chill-system/serving-plc" {
+		t.Fatalf("serving Pod not refused: %q", got)
 	}
 }
