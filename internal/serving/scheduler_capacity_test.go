@@ -187,6 +187,47 @@ func TestCapacityRateCoversOnlyTheObservedWindow(t *testing.T) {
 	}
 }
 
+// m4 r7 07:00:38 (plan-dc6ebf670833): 19 s after the restart the observed
+// window held λ 20.6 of an offered 40 req/s, because clients were still
+// backing off the outage, and the plan removed a routed rasp5 q1 that the
+// load needed. Until one observation window is observed since the process
+// started, plans only expand: no removal, replacement, unrouting or idle
+// removal. Expansion still runs, and a full window allows the removal.
+func TestCapacityPartialWindowOnlyExpands(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.MaxObservationAge, s.MaxReplicas = time.Minute, 10*time.Second, time.Hour, 3
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "w1")
+	profile := *i2.Profile
+	profile.IdleBaselineWatts = 20 // removing i2 saves 10 W
+	i2.Profile = &profile
+	n3 := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10})
+	i3 := poolsInstance(snap.Instances[0], "i3", n3, "fixed", "w1")
+	snap.Instances = append(snap.Instances, i2)
+	snap.Options = append(snap.Options, poolsOption(i2), poolsOption(i3))
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": 500, "i2": 500}}
+	snap.Costs = []OperationCost{
+		poolsCost(schedulerActionRemove, n2, schedulerState(i2), "unloaded", "fixed"),
+		poolsCost(schedulerActionPrepare, n3, "unloaded", schedulerState(i3), "fixed"),
+	}
+	rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{"profile": 25.69, i2.Profile.ID: 29.30, i3.Profile.ID: 70.94}))
+	observe := func(rate float64, since time.Duration) SchedulerDecision {
+		capacityLoad(s, &snap, snap.Workloads[0], rate)
+		snap.ObservedSince = snap.ObservationEnd.Add(-since)
+		snap.Arrivals = slices.DeleteFunc(snap.Arrivals, func(a SchedulerArrival) bool { return a.At.Before(snap.ObservedSince) })
+		return capacityDecideForTest(t, s, snap, rows)
+	}
+	if d := observe(20.6, 19*time.Second); d.Target == nil || !poolsOn(*d.Target, n2) || len(d.Target.Routing["w1"]) != 2 {
+		t.Fatalf("19 s observed removed or unrouted i2: %s %v %+v", d.Status, d.Reasons, d.Target)
+	}
+	if d := observe(60, 19*time.Second); d.Target == nil || !poolsOn(*d.Target, n3) || !poolsOn(*d.Target, n2) {
+		t.Fatalf("19 s observed did not expand at λ 60: %s %v", d.Status, d.Reasons)
+	}
+	if d := observe(20.6, time.Minute); d.Target == nil || poolsOn(*d.Target, n2) {
+		t.Fatalf("a full window did not remove i2: %s %v", d.Status, d.Reasons)
+	}
+}
+
 // m4 r7 06:53:58 (plan-f95bc856f060): rasp5 q1-lut and q2 (κ 25.69 + 29.30)
 // carried λ 40.35 at weights 467/533. Loaded genesis3 q2 (κ 70.94) draws less
 // than its empty Node (49.80 W against 49.97 W), so preparing it was 1.5 J

@@ -29,7 +29,8 @@ const (
 	schedulerPlanPreparationFailed    = "PreparationFailed"
 	schedulerPlanHeld                 = "HeldAfterOverload"
 	// schedulerPartialObservation waits for one control interval of complete
-	// arrival observation after the process starts.
+	// arrival observation after the process starts; until one observation
+	// window is observed it names the node plans that remove or replace.
 	schedulerPartialObservation = "PartialObservationWindow"
 	// schedulerReplacementUnpaid names a node whose replacement did not repay
 	// its transition at the least load of the observation window.
@@ -158,11 +159,14 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		decision.Target, decision.Status = &target, schedulerStatusKeep
 		return decision, ctx.Err()
 	}
-	// λ needs one control interval of complete observation (after a restart).
-	if covered := decision.Search.WindowEnd.Sub(decision.Search.WindowStart); covered < min(settings.ObservationWindow, settings.ControlInterval) {
+	// λ needs one control interval of complete observation (after a restart),
+	// and until a whole observation window is observed plans only expand.
+	covered := decision.Search.WindowEnd.Sub(decision.Search.WindowStart)
+	if covered < min(settings.ObservationWindow, settings.ControlInterval) {
 		decision.Status, decision.Reasons = schedulerStatusPending, []string{schedulerPartialObservation}
 		return decision, ctx.Err()
 	}
+	planner.partial = covered < settings.ObservationWindow
 	if pending := planner.pendingWorkloads(); len(pending) != 0 {
 		decision.Status, decision.Reasons = CapacityPending, pending
 		return decision, ctx.Err()
@@ -284,6 +288,10 @@ type capacityPlanner struct {
 	// free marks plans whose instance counts cannot pass maxReplicas or maxInstances.
 	free     bool
 	variants map[string]SchedulerOption // capacity variants by profile ID and batch limit
+	// partial marks a window observed for less than its length since the
+	// process started: arrivals there still reflect the restart, so plans
+	// only add instances and keep every route.
+	partial bool
 }
 
 func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, keep SchedulerCandidate, rows []CapacityRow, decision SchedulerDecision) *capacityPlanner {
@@ -368,9 +376,10 @@ func (p *capacityPlanner) held(i SchedulerInstance) bool {
 	return i.HeldUntil != nil && i.HeldUntil.After(p.snapshot.At)
 }
 
-// idle reports an instance unrouted for at least one observation window.
+// idle reports an instance unrouted for at least one observation window once
+// a whole window is observed.
 func (p *capacityPlanner) idle(i SchedulerInstance) bool {
-	return i.UnroutedSince != nil && p.snapshot.At.Sub(*i.UnroutedSince) >= p.settings.ObservationWindow && !p.held(i)
+	return !p.partial && i.UnroutedSince != nil && p.snapshot.At.Sub(*i.UnroutedSince) >= p.settings.ObservationWindow && !p.held(i)
 }
 
 // pendingWorkloads names each controlled Workload with no κ in any row.
@@ -679,6 +688,9 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		return p.held(old) && (!used[old.ID] || changed[old.ID])
 	}) {
 		plan.record.Reason = schedulerPlanHeld
+	}
+	if plan.record.Reason == "" && p.partial && (removed || plan.replaces) {
+		plan.record.Reason = schedulerPartialObservation
 	}
 	if plan.record.Reason != "" {
 		return plan
@@ -1178,12 +1190,13 @@ type capacityResult struct {
 	final bool
 	// weightsExceeded marks a route weight whose share of λ exceeds its κ.
 	weightsExceeded bool
-	// unroutedPrepare marks a new instance its weights leave at 0.
-	unroutedPrepare bool
-	judgments       []capacityJudgment
-	weights         []map[string]int32
-	rows            [][]string
-	sums            [][2]float64
+	// unroutedPrepare marks a new instance its weights leave at 0; unroutes
+	// a routed instance they leave at 0.
+	unroutedPrepare, unroutes bool
+	judgments                 []capacityJudgment
+	weights                   []map[string]int32
+	rows                      [][]string
+	sums                      [][2]float64
 	// unpaid names the Nodes whose replacement payback reverted to keep.
 	unpaid []string
 }
@@ -1245,13 +1258,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		for _, weight := range weights {
 			units += float64(weight)
 		}
-		routes := map[string]int32{}
-		for k, item := range items[w] {
-			if weights[k] > 0 {
-				routes[item.id] = weights[k]
-			}
-			res.unroutedPrepare = res.unroutedPrepare || item.prepare && weights[k] == 0
-		}
+		routes := p.weightRoutes(&res, items[w], weights)
 		worst := j.worst()
 		if !ok {
 			// A weight past its κ fails the final judgment by that excess.
@@ -1292,6 +1299,21 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 	}
 	res.key = strings.Join(keys, "|")
 	return res
+}
+
+// weightRoutes maps each item with a positive weight to that weight and
+// marks the result when the weights leave a new or a routed instance at 0.
+func (p *capacityPlanner) weightRoutes(res *capacityResult, items []capacityItem, weights []int32) map[string]int32 {
+	routes := map[string]int32{}
+	for k, item := range items {
+		if weights[k] > 0 {
+			routes[item.id] = weights[k]
+			continue
+		}
+		res.unroutedPrepare = res.unroutedPrepare || item.prepare
+		res.unroutes = res.unroutes || schedulerInstanceRouted(p.keep.Routing, item.id)
+	}
+	return routes
 }
 
 // currentWeights returns items carrying the Workload's current route weights
@@ -1586,8 +1608,9 @@ func (p *capacityPlanner) solve() (capacityResult, error) {
 					at = point.parent
 				}
 				res := p.evaluate(choice, r)
-				// A new instance at weight 0 would serve nothing until idle removal takes it.
-				if res.unroutedPrepare {
+				// A new instance at weight 0 would serve nothing until idle removal
+				// takes it; a partial window keeps every route.
+				if res.unroutedPrepare || p.partial && res.unroutes {
 					continue
 				}
 				if res.feasible {
@@ -1742,7 +1765,8 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 			decision.Reasons = append(decision.Reasons, schedulerRouteWeightExceeds)
 		}
 	}
-	if best.keep && !removed && p.sameRouting(target.Routing) {
+	// A partial window keeps keep's routes as they are.
+	if best.keep && !removed && (p.sameRouting(target.Routing) || p.partial && best.unroutes) {
 		chosen := decision.Keep
 		chosen.Status = target.Status
 		decision.Target, decision.Status = &chosen, schedulerStatusKeep
