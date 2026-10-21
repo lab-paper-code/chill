@@ -118,7 +118,7 @@ ADR 0020의 구간(fence, read-back, settling 시작, Ready)은 같은 네 시�
 
 ## 6. 재시작 관측 잠금 (D-R7-5)
 
-r7에서 ChillServer Pod를 지우자 새 Pod가 `observation directory already owned`로 두 번 종료했고 약 14 s 더 멈췄다(r6 D-R6-2도 같다). Deployment `Recreate`(`serving_entrypoint.yaml:49-50`)는 rollout에만 적용되고, Pod 삭제에서는 새 Pod가 바로 뜨며 이전 Pod가 grace 150 s 동안 drain하면서 같은 RWO volume의 잠금을 쥔다. commit 1(`bca2da3`)은 잠금을 유지하고, `AcquireObservationOwnership`이 signal context가 끝날 때까지 1 s마다 다시 시도하며 처음 기다릴 때 한 번 기록한다. ChillServer에는 probe가 없어 기다리는 Pod는 잠금을 얻을 때까지 산다.
+r7에서 ChillServer Pod를 지우자 새 Pod가 `observation directory already owned`로 두 번 종료했고 약 14 s 더 멈췄다(r6 D-R6-2도 같다). Deployment `Recreate`(`serving_entrypoint.yaml:49-50`)는 rollout에만 적용되고, Pod 삭제에서는 새 Pod가 바로 뜨며 이전 Pod가 grace 150 s 동안 drain하면서 같은 RWO volume의 잠금을 쥔다. commit 1(`bca2da3`)은 잠금을 유지하고, `AcquireObservationOwnership`은 blocking `flock(LOCK_EX)`으로 이전 Pod가 잠금을 놓을 때까지 기다린다. 기다리는 동안 받은 SIGTERM은 SIGKILL에서 처리된다. ChillServer에는 probe가 없어 기다리는 Pod는 잠금을 얻을 때까지 산다.
 
 ## 7. 수동 동작과 정적 배치
 

@@ -48,9 +48,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	observationOwner, err := serving.AcquireObservationOwnership(ctx, opts.observationDirectory, func() {
-		ctrl.Log.Info("waiting for the previous owner of the observation directory", "directory", opts.observationDirectory)
-	})
+	observationOwner, err := serving.AcquireObservationOwnership(opts.observationDirectory)
 	if err != nil {
 		return err
 	}
