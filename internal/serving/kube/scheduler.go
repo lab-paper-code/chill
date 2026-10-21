@@ -539,6 +539,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			sn.Reasons = append(sn.Reasons, serving.NodeExcluded)
 		}
 		captureNodeInventory(&sn, n, profiles)
+		sn.ModeCPUs = declaredModeCPUs(nodeClass(n, classes.Items))
 		c.captureNodePower(ctx, &sn, n, &acts, physical, profileByID)
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
 		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
@@ -618,6 +619,24 @@ func captureNodeInventory(sn *serving.SchedulerNode, n *core.Node, profiles []se
 		sn.Reserved.GPUUUID != "" && !slices.Contains(sn.GPUUUIDs, sn.Reserved.GPUUUID) {
 		sn.Reasons = append(sn.Reasons, serving.NodePlacementInventoryMissing)
 	}
+}
+
+// declaredModeCPUs holds, by mode, the online CPUs the Node's DeviceClass
+// declares; a plan into another mode places on them.
+func declaredModeCPUs(class *edge.DeviceClass) map[string][]int {
+	if class == nil {
+		return nil
+	}
+	var modes map[string][]int
+	for _, m := range class.Spec.PowerModes {
+		if cpus, err := cpuset.Parse(m.OnlineCPUs); m.OnlineCPUs != "" && err == nil {
+			if modes == nil {
+				modes = map[string][]int{}
+			}
+			modes[m.Name] = cpus.List()
+		}
+	}
+	return modes
 }
 
 // measuredGPUs is the GPU inventory of one Node: the GPUs its verified

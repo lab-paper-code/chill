@@ -277,6 +277,7 @@ func schedulerValidateResources(settings SchedulerSettings, nodes []SchedulerNod
 		seen[n.Node.UID] = true
 		allocations := append([]SchedulerAllocation{n.Reserved}, n.NonServing...)
 		hosted := false
+		mode := n.PowerMode
 		for _, i := range instances {
 			if i.Node != n.Node {
 				continue
@@ -286,11 +287,17 @@ func schedulerValidateResources(settings SchedulerSettings, nodes []SchedulerNod
 				reasons = appendUnique(reasons, "MissingProfile:"+i.ID)
 				continue
 			}
+			mode = i.Profile.Condition.PowerMode
 			reasons = schedulerValidateInstance(settings, n, i, reasons)
 			allocations = append(allocations, i.Allocation)
 		}
 		if hosted {
-			reasons = ValidateNodeBudget(n, allocations, reasons)
+			// The target places on the CPUs its instances' mode leaves online.
+			if at, known := n.AtMode(mode); known {
+				reasons = ValidateNodeBudget(at, allocations, reasons)
+			} else {
+				reasons = appendUnique(reasons, NodePlacementInventoryMissing+":"+n.Node.UID)
+			}
 		}
 	}
 	for _, i := range instances {

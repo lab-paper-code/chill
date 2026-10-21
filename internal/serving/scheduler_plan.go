@@ -628,7 +628,12 @@ func (p *schedulerPlanState) preparationFits(wanted SchedulerInstance) bool {
 			}
 		}
 		allocations = append(allocations, wanted.Allocation)
-		return len(ValidateNodeBudget(node, allocations, nil)) == 0
+		mode := node.PowerMode
+		if wanted.Profile != nil {
+			mode = wanted.Profile.Condition.PowerMode
+		}
+		modeNode, known := node.AtMode(mode)
+		return known && len(ValidateNodeBudget(modeNode, allocations, nil)) == 0
 	}
 	return false
 }

@@ -104,11 +104,14 @@ const (
 // SchedulerNode is one Node of the entire POOL. Measurement marks the
 // measurement POOL; Reasons name configuration the Node lacks.
 type SchedulerNode struct {
-	Node        NodeReference         `json:"node"`
-	PowerMode   string                `json:"powerMode"`
-	Ready       bool                  `json:"ready"`
-	Measurement bool                  `json:"measurement,omitempty"`
-	CPUs        []int                 `json:"cpus"`
+	Node        NodeReference `json:"node"`
+	PowerMode   string        `json:"powerMode"`
+	Ready       bool          `json:"ready"`
+	Measurement bool          `json:"measurement,omitempty"`
+	CPUs        []int         `json:"cpus"`
+	// ModeCPUs holds, by power mode, the CPUs online in that mode where the
+	// DeviceClass declares them; CPUs are the current mode's.
+	ModeCPUs    map[string][]int      `json:"modeCPUs,omitempty"`
 	GPUUUIDs    []string              `json:"gpuUUIDs"`
 	MemoryBytes uint64                `json:"memoryBytes"`
 	Reserved    SchedulerAllocation   `json:"reserved"`
@@ -116,6 +119,22 @@ type SchedulerNode struct {
 	ObservedAt  time.Time             `json:"observedAt"`
 	Reasons     []string              `json:"reasons,omitempty"`
 }
+
+// AtMode is the Node with the CPUs online in mode, and false when they are
+// unknown: the current mode reads its published CPUs, another mode needs its
+// DeviceClass declaration.
+func (n SchedulerNode) AtMode(mode string) (SchedulerNode, bool) {
+	if mode == n.PowerMode {
+		return n, true
+	}
+	cpus, ok := n.ModeCPUs[mode]
+	if !ok {
+		return n, false
+	}
+	n.CPUs = cpus
+	return n, true
+}
+
 type SchedulerInstance struct {
 	ID               string        `json:"id"`
 	TargetID         string        `json:"targetID,omitempty"`

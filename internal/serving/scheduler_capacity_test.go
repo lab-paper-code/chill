@@ -896,6 +896,34 @@ func TestCapacityRecordsExcludedPlans(t *testing.T) {
 	}
 }
 
+// A plan that changes the mode checks its CPUs against the target mode's.
+func TestCapacityModeChangePlansUseTargetModeCPUs(t *testing.T) {
+	s, snap := schedulerFixture()
+	base := snap.Instances[0]
+	add := func(uid, mode string, modeCPUs map[string][]int) NodeReference {
+		node := poolsAddNode(&snap, uid, map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+		snap.Nodes[len(snap.Nodes)-1].ModeCPUs = modeCPUs
+		i := poolsInstance(base, "opt-"+uid, node, mode, "w1")
+		snap.Options = append(snap.Options, poolsOption(i))
+		snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(i), mode))
+		return node
+	}
+	twoCore := add("two-core", schedulerTestEcoMode, map[string][]int{schedulerTestEcoMode: {1}})
+	undeclared := add("undeclared", schedulerTestEcoMode, nil)
+	current := add("current", "fixed", map[string][]int{schedulerTestEcoMode: {1}})
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	for node, reason := range map[NodeReference]string{twoCore: schedulerPlanInfeasibleResources, undeclared: NodePlacementInventoryMissing} {
+		if !slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return !p.Eligible && p.Reason == reason }) {
+			t.Fatalf("%s: no plan excluded with %s: %+v", node.UID, reason, poolsPlans(d, node))
+		}
+	}
+	if slices.ContainsFunc(poolsPlans(d, current), func(p SchedulerNodePlan) bool {
+		return p.Reason == schedulerPlanInfeasibleResources || p.Reason == NodePlacementInventoryMissing
+	}) {
+		t.Fatalf("current-mode plan excluded: %+v", poolsPlans(d, current))
+	}
+}
+
 // §9 6 기간과 기록: the decision does not depend on input order.
 func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 	s, snap, rows, _ := capacityE1Fixture()

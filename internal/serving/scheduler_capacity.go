@@ -574,14 +574,20 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 			for _, o := range next {
 				wanted = append(wanted, o.option.Instance.Allocation)
 			}
-			if len(ValidateNodeBudget(node, wanted, nil)) != 0 {
+			// A plan that changes the mode places on the CPUs that mode leaves online.
+			modeNode, known := node.AtMode(i.Profile.Condition.PowerMode)
+			if !known || len(ValidateNodeBudget(modeNode, wanted, nil)) != 0 {
 				// Adding options never restores the budget, so the walk stops here.
 				instances := make([]SchedulerInstance, len(next))
 				for k, o := range next {
 					instances[k] = o.option.Instance
 					instances[k].WorkloadUID = p.ws[o.w].d.UID
 				}
-				plans = append(plans, &capacityPlan{record: SchedulerNodePlan{Node: node.Node, Key: planKey(instances), Reason: schedulerPlanInfeasibleResources}})
+				reason := schedulerPlanInfeasibleResources
+				if !known {
+					reason = NodePlacementInventoryMissing
+				}
+				plans = append(plans, &capacityPlan{record: SchedulerNodePlan{Node: node.Node, Key: planKey(instances), Reason: reason}})
 				continue
 			}
 			walk(j+1, next)
