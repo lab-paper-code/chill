@@ -283,6 +283,8 @@ metadata:
 rules:
   - nonResourceURLs: ["/chill/api/v1/scheduler/settings"]
     verbs: [put]
+  - nonResourceURLs: ["/chill/api/v1/scheduler/operations", "/chill/api/v1/measurements/operations"]
+    verbs: [post]
 {{- if .Values.servingEntrypoint.scheduler.configMap }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

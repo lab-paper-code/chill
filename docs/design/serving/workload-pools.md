@@ -104,9 +104,8 @@ owner와 binding이 모두 없는 인스턴스는 어느 활성 POOL에도 속�
   그래서 ChillServer가 직접 뺀다. 스케줄러 capture는 이 노드를 배치, 전력 변경, `Fixed` 내림, 제거 대상에 넣지 않고(3.4절),
   Workload 인스턴스의 prepare와 `ChangePower`(`kube/operations.go:740-769`)는 실행 직전에 Node를 읽어 taint가 있으면
   `NodeInMeasurement`로 실패한다. pools API는 이 노드를 측정 POOL로 보인다(5장).
-- `serving-operation --measurement-config`의 전제는 대상 노드의 taint다. `measurement-*` POOL label 조건
-  (`cmd/serving-operation/main.go:127-130,269-294`)을 이것으로 바꾸고, 측정 인스턴스는 taint가 있는 노드에만 준비한다.
-  격리 witness(`main.go:308-332`)는 `MeasurementIsolation.Pool` 대신 측정 끝의 taint 유무(`Tainted`)를 기록한다.
+- operation 측정은 ChillServer가 승인한 노드에서만 측정 인스턴스를 준비하고, 격리 witness는 측정 끝의 taint 유무
+  (`Tainted`)를 기록한다([원자 동작 측정의 격리](scheduler-operations.md#원자-동작-측정의-격리)).
 
 ### 3.4 전체 POOL, 가용 노드와 전력모드
 

@@ -230,6 +230,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
 		CostIssues: costs.Issues, Meters: config.Meters, PowerPolicies: policies,
 		StaticRouting: config.StaticRouting != nil, MeasurementNamespaces: namespaces,
+		Evidence: o.objects, EvidenceStore: o.opts.storeName, MeterSource: metricSource,
 		OnDecision: o.recordDecision, OnAction: o.recordAction,
 	}
 	if o.controller == nil {

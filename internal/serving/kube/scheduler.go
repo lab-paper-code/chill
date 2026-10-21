@@ -45,8 +45,13 @@ type SchedulerControllerConfig struct {
 	StaticRouting bool
 	// MeasurementNamespaces hold the measurement objects Admit grants Nodes to.
 	MeasurementNamespaces []string
-	OnDecision            func(serving.SchedulerDecision) error
-	OnAction              func(OperationResult) error
+	// Evidence stores operation measurements and sequence records in EvidenceStore;
+	// MeterSource reads a configured wall meter.
+	Evidence      measurementEvidence
+	EvidenceStore string
+	MeterSource   func(metricobserver.SourceIdentity) (metricobserver.Source, error)
+	OnDecision    func(serving.SchedulerDecision) error
+	OnAction      func(OperationResult) error
 }
 type SchedulerControllerState struct {
 	Snapshot serving.SchedulerSnapshot `json:"snapshot"`
@@ -63,13 +68,15 @@ type actionRun struct {
 	started time.Time
 }
 type SchedulerController struct {
-	mu             sync.Mutex
-	tickMu         sync.Mutex
-	store          *Store
-	kube           kubernetes.Interface
-	runtime        *serving.Runtime
-	observer       *Observer
-	operations     *Operations
+	mu         sync.Mutex
+	tickMu     sync.Mutex
+	store      *Store
+	kube       kubernetes.Interface
+	runtime    *serving.Runtime
+	observer   *Observer
+	operations *Operations
+	// measurement acts only on measurement POOL Nodes: operation measurements and hand-back.
+	measurement    *Operations
 	observationLog *serving.ObservationLog
 	capacity       *serving.CapacityTable
 	config         SchedulerControllerConfig
@@ -98,7 +105,9 @@ func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *se
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}
+	measurement := *operations
+	measurement.config.Measurement = true
+	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}
 	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
 		return observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: row.Input.WorkloadUID, Kind: serving.CapacityRowBuiltEvent, Phase: row.Status, At: row.BuiltAt, Capacity: &row})
 	}, observationLog.CapacityRecords)

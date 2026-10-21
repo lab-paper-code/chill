@@ -169,7 +169,7 @@ func TestDashboardGatewayCannotReplaceChillServerAuthorization(t *testing.T) {
 	authorizer := &servingkube.Authorizer{}
 	native, err := httpapi.NewHandler(&servingkube.Manager{}, &serving.Runtime{}, authorizer,
 		&serving.ObservationLog{}, &servingkube.Observer{}, httpapi.HandlerConfig{
-			RequestTimeout: time.Second, MaxRequestBytes: 1024, MaxQueryEvents: 10,
+			RequestTimeout: time.Second, OperationTimeout: time.Second, MaxRequestBytes: 1024, MaxQueryEvents: 10,
 		})
 	if err != nil {
 		t.Fatal(err)

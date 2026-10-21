@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"path"
 	"reflect"
 	"slices"
 	"strings"
@@ -33,7 +34,9 @@ func OperationMeasurementKey(operation Operation) string {
 	return OperationMeasurementPrefix + operation.Node.UID + "/" + operation.ID + ".json"
 }
 
-// CostIssue is one measurement that contributes no cost.
+// CostIssue is one measurement that contributes no cost, or, with code
+// SequenceIncomplete, a record of an operation sequence that stopped early;
+// that record keeps its own verdict.
 type CostIssue struct {
 	Source string `json:"source"`
 	Code   string `json:"code"`
@@ -71,6 +74,8 @@ type operationEvidence struct {
 	baseline *serving.NodeBaseline
 	err      error
 	skip     bool // a recorded non-Accepted attempt: valid history, never a cost or issue
+	// invalid is the isolation failure of a record another power change invalidated.
+	invalid string
 }
 
 type powerEvidence struct {
@@ -96,9 +101,16 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 	if err != nil {
 		return CostView{}, err
 	}
+	incomplete, err := e.incompleteSequences(ctx)
+	if err != nil {
+		return CostView{}, err
+	}
 	listed := map[evidencestore.ObjectIdentity]bool{}
 	for _, identity := range identities {
 		listed[identity] = true
+		if id, _, ok := strings.Cut(path.Base(identity.Key), "."); ok && incomplete[id] {
+			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: sequenceIncompleteCode, Reason: "sequence " + id + " stopped before its last request"})
+		}
 		view.Sources = append(view.Sources, fmt.Sprintf("%s/%s/%d", identity.Store, identity.Key, identity.Size))
 		evidence, cached := e.measurements[identity]
 		if !cached {
@@ -111,6 +123,8 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 			e.measurements[identity] = evidence
 		}
 		switch {
+		case evidence.invalid != "":
+			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: measurementInvalidCode, Reason: evidence.invalid})
 		case evidence.skip:
 		case evidence.err != nil:
 			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: evidence.err.Error()})
@@ -180,6 +194,20 @@ func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, me
 	return nil
 }
 
+// incompleteSequences returns the IDs of the operation sequences that stopped
+// before their last request.
+func (e *CostEvidence) incompleteSequences(ctx context.Context) (map[string]bool, error) {
+	identities, err := e.objects.List(ctx, OperationSequencePrefix)
+	if err != nil {
+		return nil, err
+	}
+	ids := map[string]bool{}
+	for _, identity := range identities {
+		ids[strings.TrimSuffix(path.Base(identity.Key), ".json")] = true
+	}
+	return ids, nil
+}
+
 // readOperationEvidence returns an error only when the object cannot be read;
 // a readable record that fails validation is retained with its error.
 func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencestore.ObjectIdentity) (operationEvidence, error) {
@@ -193,6 +221,9 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 		return evidence, nil
 	}
 	if record.Verdict != measurementAccepted {
+		if record.Isolation != nil && strings.HasPrefix(record.Isolation.Error, powerChangedReason) {
+			return operationEvidence{skip: true, invalid: record.Isolation.Error}, nil
+		}
 		return operationEvidence{skip: true}, nil
 	}
 	evidence.meter = record.Request.Meter

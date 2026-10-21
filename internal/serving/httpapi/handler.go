@@ -22,8 +22,10 @@ import (
 const requestTimeoutCode = "RequestTimeout"
 
 type HandlerConfig struct {
-	MaxRequestBytes                                            int64
-	RequestTimeout                                             time.Duration
+	MaxRequestBytes int64
+	RequestTimeout  time.Duration
+	// OperationTimeout bounds an operation measurement sequence or manual operation.
+	OperationTimeout                                           time.Duration
 	MaxQueryEvents                                             int
 	Scheduler                                                  *servingkube.SchedulerController
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
@@ -46,7 +48,7 @@ type Handler struct {
 }
 
 func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authorizer *servingkube.Authorizer, observationLog *serving.ObservationLog, observer *servingkube.Observer, config HandlerConfig) (*Handler, error) {
-	if manager == nil || runtime == nil || authorizer == nil || observationLog == nil || observer == nil || config.MaxRequestBytes <= 0 || config.RequestTimeout <= 0 || config.MaxQueryEvents <= 0 {
+	if manager == nil || runtime == nil || authorizer == nil || observationLog == nil || observer == nil || config.MaxRequestBytes <= 0 || config.RequestTimeout <= 0 || config.OperationTimeout <= 0 || config.MaxQueryEvents <= 0 {
 		return nil, errors.New("concrete management/runtime/auth/observation dependencies and positive HTTP bounds are required")
 	}
 	h := &Handler{manager: manager, runtime: runtime, authorizer: authorizer, observationLog: observationLog, observer: observer, config: config, mux: http.NewServeMux()}
@@ -99,6 +101,8 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("PUT /api/v1/scheduler", h.scheduler)
 	h.mux.HandleFunc("GET /api/v1/scheduler/profiles", h.schedulerProfiles)
 	h.mux.HandleFunc("GET /api/v1/scheduler/capacity", h.schedulerCapacity)
+	h.mux.HandleFunc("POST "+manualOperationsPath, h.operations)
+	h.mux.HandleFunc("POST "+operationMeasurementsPath, h.operations)
 	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
 	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
 	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}", h.measurements)
@@ -108,7 +112,11 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	return h, nil
 }
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), h.config.RequestTimeout)
+	timeout := h.config.RequestTimeout
+	if longOperation(r) {
+		timeout = h.config.OperationTimeout
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 	controller := http.NewResponseController(w)
@@ -584,7 +592,7 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusNotFound
 	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
 		status = http.StatusBadRequest
-	case "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
+	case "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "NodeBusy", "NodeServing", "NodeMissing", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
 		status = http.StatusConflict
 	case "QueueFull":
 		status = http.StatusTooManyRequests

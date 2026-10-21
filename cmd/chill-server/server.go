@@ -106,7 +106,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		execution.EnableSchedulerRouting()
 	}
 	handlerConfig := httpapi.HandlerConfig{
-		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout,
+		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout, OperationTimeout: opts.operationTimeout,
 		MaxQueryEvents: opts.maxQueryEvents,
 	}
 	if scheduler != nil {

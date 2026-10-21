@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,12 +28,14 @@ type costTestObjects struct {
 }
 
 func (o *costTestObjects) List(_ context.Context, prefix string) ([]evidencestore.ObjectIdentity, error) {
-	if prefix != OperationMeasurementPrefix || o.listErr != nil {
-		return nil, errors.Join(o.listErr, errors.New("unexpected prefix "+prefix))
+	if o.listErr != nil {
+		return nil, o.listErr
 	}
 	identities := make([]evidencestore.ObjectIdentity, 0, len(o.objects))
 	for key, raw := range o.objects {
-		identities = append(identities, evidencestore.ObjectIdentity{Store: "store", Key: key, Size: int64(len(raw))})
+		if strings.HasPrefix(key, prefix) {
+			identities = append(identities, evidencestore.ObjectIdentity{Store: "store", Key: key, Size: int64(len(raw))})
+		}
 	}
 	return identities, nil
 }

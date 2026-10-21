@@ -97,8 +97,16 @@ func (c *SchedulerController) measurementRoots(ctx context.Context, namespaces [
 func (c *SchedulerController) Admit(ctx context.Context) error {
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
+	// Read the runs before the Pods: a run that ends after this read has its
+	// Pods in the list below, and no run starts while tickMu is held.
 	c.mu.Lock()
 	config := c.config
+	busy := map[string]bool{}
+	for _, r := range c.runs {
+		if r.action.Status == nativeOperationRunning {
+			busy[r.action.Node.UID] = true
+		}
+	}
 	c.mu.Unlock()
 	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
 	if err != nil {
@@ -142,6 +150,10 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			}
 			continue
 		}
+		if root != nil {
+			// The hand-back patches its own copy; this cycle keeps reading the listed one.
+			root = &measurementRoot{object: root.object.DeepCopyObject().(client.Object), node: root.node, terminal: root.terminal}
+		}
 		c.startHandBack(node, holder, root, config)
 	}
 	waiting := slices.DeleteFunc(slices.Clone(roots), func(r measurementRoot) bool {
@@ -159,7 +171,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(refusedNodeMissing, root.node)))
 			continue
 		}
-		if claimed[node.Name] || profilingrun.InMeasurement(node) || c.nodeBusy(node) || pendingActuation(acts.Items, string(node.UID), now) {
+		if claimed[node.Name] || profilingrun.InMeasurement(node) || busy[string(node.UID)] || pendingActuation(acts.Items, string(node.UID), now) {
 			continue
 		}
 		if serving := servingPodsOn(pods.Items, node.Name); len(serving) > 0 {
@@ -247,13 +259,15 @@ func (c *SchedulerController) startHandBack(node *core.Node, holder string, root
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + holder, Kind: handBackKind, Node: ref}
 	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
-		return c.handBack(ctx, ref, holder, root, result)
+		return c.handBack(ctx, ref, holder, root, true, result)
 	})
 }
 
 // startNodeRun registers a run on the Node and executes it outside the locks.
 // Callers hold tickMu, so Tick and Admit see the run before they look again.
-func (c *SchedulerController) startNodeRun(operation Operation, config SchedulerControllerConfig, body func(context.Context, *OperationResult) error) {
+// The returned result is final once done is closed.
+func (c *SchedulerController) startNodeRun(operation Operation, config SchedulerControllerConfig, body func(context.Context, *OperationResult) error) (<-chan struct{}, *OperationResult) {
+	done := make(chan struct{})
 	started := time.Now()
 	result := OperationResult{Operation: operation, StartedAt: started.UTC(), Status: nativeOperationRunning}
 	runCtx, cancel := context.WithCancel(c.ctx)
@@ -265,12 +279,20 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
+		defer close(done)
 		defer cancel()
 		err := body(runCtx, &result)
-		result.EndedAt = time.Now().UTC()
-		result.Status = nativeOperationComplete
+		if result.EndedAt.IsZero() {
+			result.EndedAt = time.Now().UTC()
+		}
+		if result.Status == nativeOperationRunning {
+			result.Status = nativeOperationComplete
+		}
 		if err != nil {
-			result.Status, result.Error = nativeOperationFailed, err.Error()
+			if result.Status == nativeOperationComplete {
+				result.Status = nativeOperationFailed
+			}
+			result.Error = err.Error()
 		}
 		if config.OnAction != nil {
 			if recordErr := config.OnAction(result); recordErr != nil {
@@ -284,6 +306,7 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 		c.state.Results = append(c.state.Results, result)
 		c.mu.Unlock()
 	}()
+	return done, &result
 }
 
 // handBack returns a measured Node to the available Nodes: it waits for power
@@ -291,7 +314,11 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 // the Node's power inside it, removes the CHILL serving Pods the measurement
 // left, and removes the taint. A failed step keeps the taint; the next cycle
 // starts the hand-back again.
-func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeReference, holder string, root *measurementRoot, result *OperationResult) error {
+//
+// interrupted is set when no run of this process measured on the Node: a
+// vanished measurement object is recorded as Interrupted and a sequence a
+// restart cut off gets its sequence record.
+func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeReference, holder string, root *measurementRoot, interrupted bool, result *OperationResult) error {
 	var acts edge.NodeActuationList
 	if err := c.operations.wait(ctx, func() (bool, error) {
 		if err := c.store.client.List(ctx, &acts, client.InNamespace(c.observer.config.ActuationNamespace)); err != nil {
@@ -301,10 +328,19 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	}); err != nil {
 		return err
 	}
-	if root == nil {
+	if root == nil && interrupted && strings.HasPrefix(holder, sequencePrefix) {
+		c.mu.Lock()
+		config := c.config
+		c.mu.Unlock()
+		if err := c.recordRestartedSequence(ctx, config, node, holder); err != nil {
+			return err
+		}
+		result.Progress = append(result.Progress, "sequence record "+sequenceRestartReason)
+	} else if root == nil && interrupted {
 		result.Progress = append(result.Progress, "Interrupted "+holder)
-	} else if granted, at, _ := profilingrun.Admission(root.object.GetAnnotations()); granted {
-		if foreign := foreignActuations(acts.Items, node.UID, root.object.GetUID(), at, result.StartedAt); len(foreign) > 0 {
+	} else if root != nil {
+		granted, at, _ := profilingrun.Admission(root.object.GetAnnotations())
+		if foreign := foreignActuations(acts.Items, node.UID, root.object.GetUID(), at, result.StartedAt); granted && len(foreign) > 0 {
 			if err := c.annotate(ctx, root.object, profilingrun.InvalidAnnotation, powerChangedReason+" "+strings.Join(foreign, ",")); err != nil {
 				return err
 			}

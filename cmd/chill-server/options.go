@@ -25,6 +25,7 @@ type options struct {
 	maxRequestBytes, maxEvidenceBytes                                                        int64
 	profileConfidenceLevel                                                                   float64
 	requestTimeout, drainTimeout, sourceInterval, profileInterval                            time.Duration
+	operationTimeout                                                                         time.Duration
 	profileNamespaces                                                                        []string
 	definitions, outcomes                                                                    []string
 	materializeProfile                                                                       bool
@@ -78,6 +79,8 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.Int64Var(&o.maxRequestBytes, "max-request-bytes", 8<<20, "Maximum management or inference body bytes.")
 	f.Int64Var(&o.maxEvidenceBytes, "max-evidence-bytes", 64<<20, "Maximum bytes per profiling evidence object.")
 	f.DurationVar(&o.requestTimeout, "request-timeout", 30*time.Second, "Read/operation and delivery bound; not SLO.")
+	f.DurationVar(&o.operationTimeout, "operation-timeout", 30*time.Minute,
+		"Bound of one operation measurement sequence or manual operation.")
 	f.DurationVar(&o.drainTimeout, "drain-timeout", 2*time.Minute, "Management and process shutdown drain bound.")
 	f.DurationVar(&o.sourceInterval, "source-interval", time.Second, "Current instance and management refresh interval.")
 	f.DurationVar(&o.profileInterval, "profile-interval", time.Minute, "Selected profiling evidence refresh interval.")
@@ -136,9 +139,11 @@ func (o options) validate() error {
 	if o.queueLimit <= 0 || o.maxQueryEvents <= 0 || o.maxRequestBytes <= 0 || o.maxEvidenceBytes <= 0 {
 		return errors.New("queue, body, evidence and query bounds must be positive")
 	}
-	if o.requestTimeout <= 0 || o.drainTimeout <= 0 || o.sourceInterval <= 0 ||
-		o.profileInterval <= 0 {
-		return errors.New("request, drain, refresh and observation durations must be positive")
+	durations := []time.Duration{o.requestTimeout, o.operationTimeout, o.drainTimeout, o.sourceInterval, o.profileInterval}
+	for _, d := range durations {
+		if d <= 0 {
+			return errors.New("request, operation, drain, refresh and observation durations must be positive")
+		}
 	}
 	if !(o.profileConfidenceLevel > 0 && o.profileConfidenceLevel < 1) {
 		return errors.New("profile confidence level must be between zero and one")

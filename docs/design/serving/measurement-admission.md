@@ -113,11 +113,11 @@ BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므
 
 | route | 몸체 | 동작 |
 |---|---|---|
-| `POST /api/v1/measurements/operations` | 같은 노드의 순서 있는 `[]MeasurementRequest`(`kube/measurement.go:31-39`), 예: prepare, idle, remove | 동기. `Admit`로 순서 전체를 한 번 승인받고(taint 값은 ChillServer가 만든 ID), 줄 1이면 409 `NodeBusy`, 줄 2, 3이면 409와 거절 사유. 승인되면 run이 관측 PVC 아래 측정 전용 directory와 Runtime으로 지금 `runMeasurement`(`main.go:104-224`)의 몸체를 요청마다 돌리고 반환까지 한다. 응답은 지금 CLI stdout과 같은 `{record, receipt}` 목록 |
+| `POST /api/v1/measurements/operations` | 같은 노드의 순서 있는 `[]MeasurementRequest`(`kube/measurement.go:31-39`), 예: prepare, idle, remove | 동기. `Admit`로 순서 전체를 한 번 승인받고(taint 값은 ChillServer가 만든 ID), 줄 1이면 409 `NodeBusy`, 줄 2, 3이면 409와 거절 사유. 승인되면 run이 ChillServer의 runtime과 observer를 쓰는 measurement 모드 `Operations`로 요청마다 `Measure`를 돌리고 반환까지 한다. 측정 인스턴스는 owner와 route가 없어 serving 요청을 받지 않는다. 응답은 지금 CLI stdout과 같은 `{record, receipt}` 목록 |
 | `POST /api/v1/scheduler/operations` | `{kind: prepare 또는 remove, workloadUID, profileID, node, instance, fixedBatchSize}` | `ExecuteManual`. `tickMu` 안에서 Workload가 자동제어 밖인지, 노드에 run이 없는지, prepare는 `ValidatePreparationCapacity`(`kube/scheduler.go:591-634`)를 마지막 snapshot의 노드와 live Node, Pod로, remove는 `removableBy`(`main.go:507-520`)와 route 가중치 0을 확인하고 run을 등록한 뒤 잠금 밖에서 같은 `Operations`로 실행 |
 
 - S3는 ChillServer binding, 전력원은 M2가 넣은 Profiler facts resolver다. 인증과 권한은 기존 TokenReview와 SAR이다.
-  `server.go:145-148`에 `WriteTimeout`이 없어 긴 요청이 끝까지 간다. CLI는 manifest를 읽어 보내고 응답을 stdout에 쓴다.
+  두 route는 요청 한도 대신 `--operation-timeout`(기본 30분)을 쓴다. CLI는 manifest를 읽어 보내고 응답을 stdout에 쓴다.
 - 순서 ID는 taint 값이다. ChillServer는 각 요청의 `Operation.ID`를 `<순서 ID>.<순번>.<요청 ID>`로 바꿔 저장 key
   (`kube/cost.go:31-33`)와 기록이 순서를 가리키게 한다(`/`만 금지, `kube/measurement.go:172-173`).
 - 요청이 실패하거나 client 연결이 끊기면 순서가 멈추고 반환이 돈다. `Measure`는 진행 중이던 요청의 기록을 `WithoutCancel`로
