@@ -43,6 +43,7 @@ M3는 그 위에 선다.
 | ProfilingRun(BEO, MLIB가 소유하지 않은 것) | `spec.targetNode` | `ExecutionComplete`가 `True` 또는 `False` |
 | PowerModeTransitionCost | `spec.targetNode` | `Complete`, `Failed` |
 | OperationCostMeasurement(2.5절) | `spec.node` | `Complete`, `Insufficient`, `Failed` |
+| DispatchOccupancyMeasurement([measurement-api](measurement-api.md) 3장) | `spec.node` | `Complete`, `Insufficient`, `Failed` |
 
 BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므로 따로 요청하지 않는다.
 

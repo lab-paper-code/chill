@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -33,6 +34,9 @@ type options struct {
 	profileObjectSize                                                                        int64
 	schedulerConfigMap, schedulerConfigKey                                                   string
 	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey                   string
+
+	// loadGenerator runs the load Job of dispatch-occupancy measurements.
+	loadGenerator servingkube.LoadGeneratorConfig
 }
 
 func (o *options) bindFlags(f *flag.FlagSet) {
@@ -80,7 +84,7 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.Int64Var(&o.maxEvidenceBytes, "max-evidence-bytes", 64<<20, "Maximum bytes per profiling evidence object.")
 	f.DurationVar(&o.requestTimeout, "request-timeout", 30*time.Second, "Read/operation and delivery bound; not SLO.")
 	f.DurationVar(&o.operationTimeout, "operation-timeout", 30*time.Minute,
-		"Bound of one operation measurement sequence or manual operation.")
+		"Bound of one manual operation.")
 	f.DurationVar(&o.drainTimeout, "drain-timeout", 2*time.Minute, "Management and process shutdown drain bound.")
 	f.DurationVar(&o.sourceInterval, "source-interval", time.Second, "Current instance and management refresh interval.")
 	f.DurationVar(&o.profileInterval, "profile-interval", time.Minute, "Selected profiling evidence refresh interval.")
@@ -98,6 +102,13 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 			o.definitions = append(o.definitions, value)
 			return nil
 		})
+	f.StringVar(&o.loadGenerator.Image, "load-generator-image", "",
+		"Image of the dispatch-occupancy load Job; empty refuses those measurements.")
+	f.StringVar(&o.loadGenerator.ServiceAccount, "load-generator-service-account", "", "ServiceAccount of the load Job.")
+	f.StringVar(&o.loadGenerator.Namespace, "load-generator-namespace", "", "Namespace of the load Job.")
+	f.StringVar(&o.loadGenerator.Endpoint, "load-generator-endpoint", "",
+		"HTTPS origin of the serving Service by its .svc name.")
+	f.StringVar(&o.loadGenerator.CASecret, "load-generator-ca-secret", "", "Secret whose tls.crt the load Job trusts.")
 	f.Func("observation-outcome", "Default aggregate response-outcome filter; repeatable; empty selects all.",
 		func(value string) error {
 			o.outcomes = append(o.outcomes, value)

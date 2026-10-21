@@ -2,6 +2,12 @@
 
 A dependency-free Python client and open-loop dataset replay CLI for CHILL.
 
+## Image
+
+`make docker-build-load-generator` builds `build/docker/load-generator.Dockerfile`
+(Python 3.12). ChillServer runs it as the load Job of a
+DispatchOccupancyMeasurement.
+
 ## Dataset replay
 
 `chill-loadgen replay` sends a Dataset's `evaluation` subset to one registered

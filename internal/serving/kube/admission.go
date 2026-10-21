@@ -97,6 +97,14 @@ func (c *SchedulerController) measurementRoots(ctx context.Context, namespaces [
 			o := &costs.Items[i]
 			roots = append(roots, measurementRoot{object: o, node: o.Spec.Node, terminal: measurementTerminal(o.Status.Phase)})
 		}
+		var occupancies edge.DispatchOccupancyMeasurementList
+		if err := c.store.client.List(ctx, &occupancies, client.InNamespace(namespace)); err != nil {
+			return nil, err
+		}
+		for i := range occupancies.Items {
+			o := &occupancies.Items[i]
+			roots = append(roots, measurementRoot{object: o, node: o.Spec.Node, terminal: measurementTerminal(o.Status.Phase)})
+		}
 	}
 	return roots, nil
 }
@@ -113,9 +121,12 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 	c.mu.Lock()
 	config := c.config
 	busy := map[string]bool{}
+	// The load of a running occupancy measurement is on the ChillServer Node.
+	loading := false
 	for _, r := range c.runs {
 		if r.action.Status == nativeOperationRunning {
 			busy[r.action.Node.UID] = true
+			loading = loading || r.action.Kind == occupancyKind
 		}
 	}
 	c.mu.Unlock()
@@ -170,11 +181,12 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(refusedNodeMissing, root.node)))
 			continue
 		}
-		if claimed[node.Name] || profilingrun.InMeasurement(node) || busy[string(node.UID)] || pendingActuation(acts, string(node.UID), now) {
+		_, occupancy := root.object.(*edge.DispatchOccupancyMeasurement)
+		if claimed[node.Name] || busy[string(node.UID)] || held(node, occupancy, loading, byName[config.LoadGenerator.NodeName], acts, now) {
 			claimed[node.Name] = true
 			continue
 		}
-		reason, detail, wait := c.rootRefusal(root, node, in)
+		reason, detail, wait, start := c.rootRefusal(ctx, root, node, in)
 		if wait {
 			claimed[node.Name] = true
 			continue
@@ -192,11 +204,6 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 				continue
 			}
 		}
-		cost, _ := root.object.(*edge.OperationCostMeasurement)
-		var profiles map[string]string
-		if cost != nil {
-			profiles, _, _, _ = c.operationCostRefusal(cost, node, in)
-		}
 		claimed[node.Name] = true
 		if err := c.setMeasurementTaint(ctx, node, string(root.object.GetUID())); err != nil {
 			errs = append(errs, err)
@@ -206,13 +213,22 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			c.startRunner(node, transition.DeepCopy(), runner, config)
 			continue
 		}
-		if err := c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(now)); err != nil || cost == nil {
+		if err := c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(now)); err != nil || start == nil {
 			errs = append(errs, err)
 			continue
 		}
-		c.startOperationCost(node, cost.DeepCopy(), profiles, in)
+		start()
+		loading = loading || occupancy
 	}
 	return errors.Join(errs...)
+}
+
+// held reports a Node a waiting root must wait for: a measurement or a power
+// change holds it, it is the load Node while an occupancy load runs, or the
+// root is an occupancy while the load Node is measured.
+func held(node *core.Node, occupancy, loading bool, loadNode *core.Node, acts []edge.NodeActuation, now time.Time) bool {
+	return profilingrun.InMeasurement(node) || pendingActuation(acts, string(node.UID), now) ||
+		loading && node == loadNode || occupancy && loadNode != nil && profilingrun.InMeasurement(loadNode)
 }
 
 // admissionInputs is what one Admit cycle read.
@@ -228,16 +244,30 @@ type admissionInputs struct {
 
 // rootRefusal judges a waiting root on a Node nothing holds: a refusal reason
 // and detail, none to grant it, or wait while its catalog evidence lags.
-func (c *SchedulerController) rootRefusal(root measurementRoot, node *core.Node, in admissionInputs) (reason, detail string, wait bool) {
+// start, when set, runs a granted measurement ChillServer executes itself.
+func (c *SchedulerController) rootRefusal(ctx context.Context, root measurementRoot, node *core.Node, in admissionInputs) (reason, detail string, wait bool, start func()) {
 	if serving := servingPodsOn(in.pods, node.Name); len(serving) > 0 {
-		return refusedNodeServing, strings.Join(serving, ","), false
+		return refusedNodeServing, strings.Join(serving, ","), false, nil
 	}
-	if cost, ok := root.object.(*edge.OperationCostMeasurement); ok {
-		_, reason, detail, wait = c.operationCostRefusal(cost, node, in)
-		return reason, detail, wait
+	switch o := root.object.(type) {
+	case *edge.OperationCostMeasurement:
+		profiles, reason, detail, wait := c.operationCostRefusal(o, node, in)
+		return reason, detail, wait, func() { c.startOperationCost(node, o.DeepCopy(), profiles, in) }
+	case *edge.DispatchOccupancyMeasurement:
+		plan, reason, detail, wait := c.occupancyRefusal(ctx, o, node, in)
+		return reason, detail, wait, func() { c.startOccupancy(node, o.DeepCopy(), plan, in.config) }
 	}
 	reason, detail = cpuRefusal(root.object, node, in.classes, in.acts, in.config.Reserved[node.Name].CPUs)
-	return reason, detail, false
+	return reason, detail, false, nil
+}
+
+// chillServerRun reports a measurement kind ChillServer runs itself.
+func chillServerRun(object client.Object) bool {
+	switch object.(type) {
+	case *edge.OperationCostMeasurement, *edge.DispatchOccupancyMeasurement:
+		return true
+	}
+	return false
 }
 
 // continueHeldNodes finishes the grant a restart cut off and starts the
@@ -253,16 +283,15 @@ func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []cor
 		root := byUID[holder]
 		if root != nil && !root.terminal {
 			granted, _, _ := profilingrun.Admission(root.object.GetAnnotations())
-			cost, _ := root.object.(*edge.OperationCostMeasurement)
-			if granted && cost != nil {
+			if granted && chillServerRun(root.object) {
 				// No run of this process measures it: a restart cut it off.
-				c.restartedOperationCost(node, cost.DeepCopy(), config)
+				c.restartedMeasurement(node, root.object.DeepCopyObject().(client.Object), config)
 				continue
 			}
 			if granted {
 				continue
 			}
-			if _, transition := root.object.(*edge.PowerModeTransitionCost); !transition && cost == nil {
+			if _, transition := root.object.(*edge.PowerModeTransitionCost); !transition && !chillServerRun(root.object) {
 				// The taint was written and the grant was not: finish the grant.
 				errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(now)))
 				continue
@@ -453,7 +482,10 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 			result.Progress = append(result.Progress, "invalid: "+powerChangedReason)
 		}
 	}
-	if err := c.operations.clearNode(ctx, node); err != nil {
+	c.mu.Lock()
+	load := c.config.LoadGenerator
+	c.mu.Unlock()
+	if err := errors.Join(c.deleteLoadJobs(ctx, node, load), c.operations.clearNode(ctx, node)); err != nil {
 		return err
 	}
 	runners, err := c.kube.CoreV1().Services(c.observer.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: runnerNodeLabel + "=" + node.UID})

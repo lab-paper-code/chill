@@ -146,6 +146,36 @@ subjects:
   - kind: ServiceAccount
     name: {{ $name }}
     namespace: {{ .Release.Namespace }}
+{{- $loadRole := printf "%s-load" $name }}
+---
+# Dispatch-occupancy measurements run their load Job here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $loadRole }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $loadRole }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $loadRole }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
 {{- if .Values.profiler.enabled }}
 {{- $factsRole := printf "%s-profiler-facts" $name }}
 ---

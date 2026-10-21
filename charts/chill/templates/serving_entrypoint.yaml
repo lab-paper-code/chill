@@ -128,7 +128,16 @@ spec:
             {{- with .Values.servingEntrypoint.kubeAPI.caFile }}
             - {{ printf "--kube-ca-file=%s" . | quote }}
             {{- end }}
+            - {{ printf "--load-generator-image=%s:%s" .Values.loadGenerator.image.repository (default .Chart.AppVersion .Values.loadGenerator.image.tag) | quote }}
+            - {{ printf "--load-generator-service-account=%s-load-generator" (include "chill.fullname" .) | quote }}
+            - {{ printf "--load-generator-namespace=%s" .Release.Namespace | quote }}
+            - {{ printf "--load-generator-endpoint=https://%s.%s.svc:%v" $name .Release.Namespace .Values.servingEntrypoint.port | quote }}
+            - {{ printf "--load-generator-ca-secret=%s" .Values.servingEntrypoint.tls.secretName | quote }}
           env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
             # Go 1.22 sizes GOMAXPROCS from host cores; κ capacity rows run GOMAXPROCS-parallel.
             - name: GOMAXPROCS
               valueFrom:

@@ -40,6 +40,7 @@ func newOpcostHarness(t *testing.T) *opcostHarness {
 	spec := measuredCPUPreparationFixture()
 	profile := *spec.Instance.Profile
 	profile.ID = "chill-system/beo/" + string(beo.UID)
+	profile.Batches = []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{27.79e6}}}
 	spec.Instance.Profile = &profile
 	h.controller.observer.SetProfiles([]serving.Profile{profile})
 	h.controller.mu.Lock()
@@ -197,13 +198,13 @@ func TestOperationCostRefusalsLetTheNextRootGo(t *testing.T) {
 		{name: "running", step: prepare("running"), want: "ProfileMissing running NotComplete"},
 		{name: "failed", step: prepare("failed"), want: "ProfileMissing failed Failed"},
 		{name: "issue", step: prepare("beo"), issue: true, want: "ProfileMissing beo MeasurementEvidenceMissing"},
-		{name: "other node", step: prepare("elsewhere"), want: "NodeMismatch elsewhere other"},
+		{name: "other node", step: prepare("elsewhere"), want: "NodeMismatch elsewhere far"},
 		{name: "power mode", step: edge.OperationCostStep{Name: "up", Kind: edge.OperationCostStepPower, PowerMode: "turbo"}, want: "PowerModeUnknown turbo"},
 		{name: "namespace", step: prepare("beo"), namespace: "measurements", want: "ActuationNamespace measurements"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			o := newOpcostHarness(t)
-			o.create(beoRoot("running", "other", ""), beoRoot("failed", "node", campaignFailedPhase), beoRoot("elsewhere", "other", catalogCompletePhase))
+			o.create(beoRoot("running", "far", ""), beoRoot("failed", "node", campaignFailedPhase), beoRoot("elsewhere", "far", catalogCompletePhase))
 			o.controller.mu.Lock()
 			if test.issue {
 				o.controller.config.CatalogIssues = []CatalogIssue{{Source: types.NamespacedName{Namespace: "chill-system", Name: "beo"}, Code: "MeasurementEvidenceMissing"}}

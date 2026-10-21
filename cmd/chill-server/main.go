@@ -14,6 +14,8 @@ func main() {
 	zapOptions := zap.Options{Development: true}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
+	// The load Job of a dispatch-occupancy measurement runs on this Pod's Node.
+	opts.loadGenerator.NodeName = os.Getenv("NODE_NAME")
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
 	log := ctrl.Log.WithName("chill-server")
 

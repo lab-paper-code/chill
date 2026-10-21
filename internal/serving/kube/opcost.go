@@ -106,6 +106,8 @@ func (c *SchedulerController) failMeasurement(ctx context.Context, object client
 	switch o := object.(type) {
 	case *edge.OperationCostMeasurement:
 		return c.patchMeasurementStatus(ctx, o, func() { o.Status.Phase, o.Status.Reason = edge.MeasurementPhaseFailed, reason })
+	case *edge.DispatchOccupancyMeasurement:
+		return c.patchMeasurementStatus(ctx, o, func() { o.Status.Phase, o.Status.Reason = edge.MeasurementPhaseFailed, reason })
 	}
 	return nil
 }
@@ -189,21 +191,24 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 	return errors.Join(recordErr, c.patchMeasurementStatus(ctx, m, func() { m.Status.Phase, m.Status.Reason = phase, reason }))
 }
 
-// restartedOperationCost ends an operation-cost measurement a restart cut off:
-// Failed with its sequence record, then the hand-back.
-func (c *SchedulerController) restartedOperationCost(node *core.Node, m *edge.OperationCostMeasurement, config SchedulerControllerConfig) {
+// restartedMeasurement ends a measurement run a restart cut off: Failed, an
+// operation-cost sequence record, then the hand-back.
+func (c *SchedulerController) restartedMeasurement(node *core.Node, object client.Object, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	root := &measurementRoot{object: m, node: node.Name}
-	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + string(m.UID), Kind: handBackKind, Node: ref}
+	root := &measurementRoot{object: object, node: node.Name}
+	uid := string(object.GetUID())
+	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + uid, Kind: handBackKind, Node: ref}
 	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
-		if err := c.recordRestartedSequence(ctx, config, ref, string(m.UID)); err != nil {
+		if _, cost := object.(*edge.OperationCostMeasurement); cost {
+			if err := c.recordRestartedSequence(ctx, config, ref, uid); err != nil {
+				return err
+			}
+			result.Progress = append(result.Progress, "sequence record "+sequenceRestartReason)
+		}
+		if err := c.failMeasurement(ctx, object, sequenceRestartReason); err != nil {
 			return err
 		}
-		if err := c.failMeasurement(ctx, m, sequenceRestartReason); err != nil {
-			return err
-		}
-		result.Progress = append(result.Progress, "sequence record "+sequenceRestartReason)
-		return c.handBack(ctx, ref, string(m.UID), root, false, result)
+		return c.handBack(ctx, ref, uid, root, false, result)
 	})
 }
 
