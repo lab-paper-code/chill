@@ -39,6 +39,8 @@ type SchedulerControllerConfig struct {
 	Costs        []serving.OperationCost
 	Baselines    []serving.NodeBaseline
 	CostIssues   []CostIssue
+	// DispatchOccupancy are the measured dispatch occupancies.
+	DispatchOccupancy []serving.DispatchOccupancy
 	// CatalogIssues are the profiles the catalog or the preparations omit.
 	CatalogIssues []CatalogIssue
 	LoadGenerator LoadGeneratorConfig
@@ -494,7 +496,8 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	if err != nil {
 		return serving.SchedulerSnapshot{}, err
 	}
-	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines}
+	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines,
+		DispatchOccupancy: config.DispatchOccupancy}
 	// Historical reads must finish before refreshing authoritative live sources.
 	if err = c.observer.Refresh(ctx); err != nil {
 		return s, err

@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"slices"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // occupancyRows are the final rows of a B=1 instance whose batches start
@@ -211,5 +213,43 @@ func TestHandBackDeletesLoadJobs(t *testing.T) {
 	jobs, err := o.kube.BatchV1().Jobs("chill-system").List(context.Background(), meta.ListOptions{})
 	if err != nil || len(jobs.Items) != 1 || jobs.Items[0].Name != "unrelated" || o.holder() != "" {
 		t.Fatalf("jobs %+v err %v holder %q", jobs.Items, err, o.holder())
+	}
+}
+
+// The planner reads the latest accepted record per Node, mode, image and
+// model; a negative d counts as 0 and keeps its source key.
+func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
+	at := time.Unix(2000, 0).UTC()
+	objects := &costTestObjects{objects: map[string][]byte{}, opens: map[string]int{}}
+	put := func(name, mode, verdict string, d int64, measuredAt time.Time) string {
+		record := DispatchOccupancyRecord{SchemaVersion: DispatchOccupancySchema, Node: testNode, PowerMode: mode, RuntimeImage: "image", Model: "m",
+			PerRequestNanos: d, Verdict: verdict, MeasuredAt: measuredAt}
+		raw, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := DispatchOccupancyPrefix + "node-uid/" + name + ".json"
+		objects.objects[key] = raw
+		return key
+	}
+	put("old", "max", measurementAccepted, 9_000_000, at)
+	newest := put("new", "max", measurementAccepted, 9_410_000, at.Add(time.Hour))
+	put("later-insufficient", "max", measurementInsufficient, 1, at.Add(2*time.Hour))
+	negative := put("low", "low", measurementAccepted, -5, at)
+	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().Build()}, objects, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := evidence.Refresh(context.Background(), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]serving.DispatchOccupancy{}
+	for _, o := range view.DispatchOccupancy {
+		got[o.PowerMode] = o
+	}
+	if len(got) != 2 || got["max"].Source != newest || got["max"].PerRequest != 9_410_000 || got["max"].Node != testNode ||
+		got["low"].PerRequest != 0 || got["low"].Source != negative {
+		t.Fatalf("occupancy %+v", view.DispatchOccupancy)
 	}
 }

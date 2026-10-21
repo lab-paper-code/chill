@@ -35,8 +35,6 @@ export type SchedulerSettings = {
   maxReplicas:WireInteger; maxInstances:WireInteger; maxCPUs:WireInteger; servingMemoryBytes:WireInteger
   completionMarginMS:number
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger
-  // Measured per Node, runtime image and model; options without one get no capacity row.
-  dispatchOccupancy:{node:string;runtimeImage:string;model:string;perRequestNanos:WireInteger;source:string}[]|null
   autonomousWorkloads:string[]|null
   // Nodes the planner never changes (reason ExcludedNode).
   excludedNodes:string[]|null

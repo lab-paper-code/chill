@@ -34,36 +34,37 @@ type SchedulerSettings struct {
 	// Capacity rows judge CapacityWindows Poisson windows of at least
 	// CapacityWindow and CapacityMinimumRequests arrivals; a rate is met when
 	// CapacityPassingWindows of them meet the SLO.
-	CapacityWindow          time.Duration       `json:"capacityWindowNanos"`
-	CapacityWindows         int                 `json:"capacityWindows"`
-	CapacityPassingWindows  int                 `json:"capacityPassingWindows"`
-	CapacityMinimumRequests int                 `json:"capacityMinimumRequests"`
-	DispatchOccupancy       []DispatchOccupancy `json:"dispatchOccupancy"`
-	Controls                SchedulerControls   `json:"controls"`
+	CapacityWindow          time.Duration     `json:"capacityWindowNanos"`
+	CapacityWindows         int               `json:"capacityWindows"`
+	CapacityPassingWindows  int               `json:"capacityPassingWindows"`
+	CapacityMinimumRequests int               `json:"capacityMinimumRequests"`
+	Controls                SchedulerControls `json:"controls"`
 }
 
 // DispatchOccupancy is the measured time per request that an instance of
-// Model on Node running RuntimeImage stays busy beyond its profile service
-// samples: 1/X − (the profile's mean service at batch b)/b, where X is the
-// sustained completions per second of one saturated instance at batch b.
-// Capacity replay adds it per request to every batch it starts; Source names
-// the measurement.
+// Model on Node in PowerMode running RuntimeImage stays busy beyond its profile
+// service samples: 1/X − (the profile's mean service at batch b)/b, where X is
+// the sustained completions per second of one saturated instance at batch b,
+// and 0 when that is negative. Capacity replay adds it per request to every
+// batch it starts; Source names the measurement record.
 type DispatchOccupancy struct {
-	Node         string        `json:"node"`
+	Node         NodeReference `json:"node"`
+	PowerMode    string        `json:"powerMode"`
 	RuntimeImage string        `json:"runtimeImage"`
 	Model        string        `json:"model"`
 	PerRequest   time.Duration `json:"perRequestNanos"`
 	Source       string        `json:"source"`
 }
 
-// dispatchOccupancy is the measurement for instance i's Node, runtime image
-// and model, or nil when none exists.
-func (s SchedulerSettings) dispatchOccupancy(i SchedulerInstance) *DispatchOccupancy {
+// dispatchOccupancy is the measurement for instance i's Node, power mode,
+// runtime image and model, or nil when none exists.
+func dispatchOccupancy(measured []DispatchOccupancy, i SchedulerInstance) *DispatchOccupancy {
 	if i.Profile == nil {
 		return nil
 	}
-	for _, o := range s.DispatchOccupancy {
-		if o.Node == i.Node.Name && o.RuntimeImage == i.Profile.Condition.RuntimeImage && o.Model == i.Profile.Condition.LogicalModel {
+	for _, o := range measured {
+		if o.Node.UID == i.Node.UID && o.PowerMode == i.Profile.Condition.PowerMode &&
+			o.RuntimeImage == i.Profile.Condition.RuntimeImage && o.Model == i.Profile.Condition.LogicalModel {
 			return &o
 		}
 	}
@@ -256,24 +257,27 @@ type SchedulerSnapshot struct {
 	ObservationEnd time.Time `json:"observationEnd"`
 	// ObservedSince is when arrival observation became complete (the process
 	// start); the observation window starts no earlier.
-	ObservedSince    time.Time                   `json:"observedSince,omitempty"`
-	Workloads        []*Definition               `json:"workloads"`
-	WorkloadIDs      []string                    `json:"workloadIDs,omitempty"` // Stored records reference the catalog.
-	Nodes            []SchedulerNode             `json:"nodes"`
-	Instances        []SchedulerInstance         `json:"instances"`
-	Routing          map[string]map[string]int32 `json:"routing"`
-	RoutingCredits   map[string]map[string]int64 `json:"routingCredits"` // Workload UID, instance ID
-	Outstanding      []SchedulerRequest          `json:"outstanding"`
-	Arrivals         []SchedulerArrival          `json:"arrivals"`
-	Options          []SchedulerOption           `json:"options"`
-	Baselines        []NodeBaseline              `json:"baselines"`
-	BaselineRefs     []string                    `json:"baselineRefs,omitempty"`
-	Costs            []OperationCost             `json:"costs"`
-	CostRefs         []string                    `json:"costRefs,omitempty"`
-	Actions          []Action                    `json:"actions"`
-	Reasons          []string                    `json:"reasons"`
-	References       []string                    `json:"references"`
-	InProgressTarget *SchedulerCandidate         `json:"inProgressTarget,omitempty"`
+	ObservedSince  time.Time                   `json:"observedSince,omitempty"`
+	Workloads      []*Definition               `json:"workloads"`
+	WorkloadIDs    []string                    `json:"workloadIDs,omitempty"` // Stored records reference the catalog.
+	Nodes          []SchedulerNode             `json:"nodes"`
+	Instances      []SchedulerInstance         `json:"instances"`
+	Routing        map[string]map[string]int32 `json:"routing"`
+	RoutingCredits map[string]map[string]int64 `json:"routingCredits"` // Workload UID, instance ID
+	Outstanding    []SchedulerRequest          `json:"outstanding"`
+	Arrivals       []SchedulerArrival          `json:"arrivals"`
+	Options        []SchedulerOption           `json:"options"`
+	Baselines      []NodeBaseline              `json:"baselines"`
+	BaselineRefs   []string                    `json:"baselineRefs,omitempty"`
+	Costs          []OperationCost             `json:"costs"`
+	// DispatchOccupancy holds the latest accepted measurement per Node, power
+	// mode, runtime image and model.
+	DispatchOccupancy []DispatchOccupancy `json:"dispatchOccupancy"`
+	CostRefs          []string            `json:"costRefs,omitempty"`
+	Actions           []Action            `json:"actions"`
+	Reasons           []string            `json:"reasons"`
+	References        []string            `json:"references"`
+	InProgressTarget  *SchedulerCandidate `json:"inProgressTarget,omitempty"`
 }
 type SchedulerEstimate struct {
 	UID                  string         `json:"uid"`
@@ -361,14 +365,6 @@ func (s SchedulerSettings) Validate() error {
 	}
 	if s.CapacityWindow <= 0 || s.CapacityWindows < 1 || s.CapacityPassingWindows < 1 || s.CapacityPassingWindows > s.CapacityWindows || s.CapacityMinimumRequests < 1 {
 		return fmt.Errorf("capacity settings need capacityWindowNanos > 0, capacityWindows >= 1, 1 <= capacityPassingWindows <= capacityWindows and capacityMinimumRequests >= 1")
-	}
-	seen := map[[3]string]bool{}
-	for _, o := range s.DispatchOccupancy {
-		key := [3]string{o.Node, o.RuntimeImage, o.Model}
-		if o.Node == "" || o.RuntimeImage == "" || o.Model == "" || o.Source == "" || o.PerRequest < 0 || seen[key] {
-			return fmt.Errorf("dispatchOccupancy entries need a node, runtimeImage, model and source, perRequestNanos >= 0, and one entry per node, runtimeImage and model")
-		}
-		seen[key] = true
 	}
 	excluded := map[string]bool{}
 	for _, name := range s.ExcludedNodes {

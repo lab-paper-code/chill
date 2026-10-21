@@ -30,7 +30,7 @@ func capacityRowsForTest(s SchedulerSettings, snap SchedulerSnapshot, kappa func
 				continue
 			}
 			for _, v := range CapacityVariants(option) {
-				in := NewCapacityInput(s, v, w)
+				in := NewCapacityInput(s, snap.DispatchOccupancy, v, w)
 				k := kappa(v)
 				rows = append(rows, CapacityRow{Key: in.Key(), Input: in, Status: CapacityBuilt, Kappa: &k})
 			}

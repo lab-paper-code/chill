@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -48,6 +49,9 @@ type CostView struct {
 	Costs     []serving.OperationCost
 	Baselines []serving.NodeBaseline
 	Issues    []CostIssue
+	// DispatchOccupancy is the latest accepted occupancy record per Node,
+	// power mode, runtime image and model.
+	DispatchOccupancy []serving.DispatchOccupancy
 	// Sources names every listed measurement identity.
 	Sources []string
 }
@@ -66,6 +70,7 @@ type CostEvidence struct {
 	maxBytes     int64
 	measurements map[evidencestore.ObjectIdentity]operationEvidence
 	power        map[string]powerEvidence
+	occupancy    map[evidencestore.ObjectIdentity]*DispatchOccupancyRecord
 }
 
 type operationEvidence struct {
@@ -89,7 +94,8 @@ func NewCostEvidence(store *Store, objects costObjects, maxBytes int64) (*CostEv
 		return nil, errors.New("native store and bounded evidence lister required")
 	}
 	return &CostEvidence{store: store, objects: objects, maxBytes: maxBytes,
-		measurements: map[evidencestore.ObjectIdentity]operationEvidence{}, power: map[string]powerEvidence{}}, nil
+		measurements: map[evidencestore.ObjectIdentity]operationEvidence{}, power: map[string]powerEvidence{},
+		occupancy: map[evidencestore.ObjectIdentity]*DispatchOccupancyRecord{}}, nil
 }
 
 // Refresh lists operation measurements under the fixed prefix and Complete
@@ -138,6 +144,9 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 	}
 	maps.DeleteFunc(e.measurements, func(identity evidencestore.ObjectIdentity, _ operationEvidence) bool { return !listed[identity] })
 	if err = e.refreshPower(ctx, namespaces, meters, profiles, &view); err != nil {
+		return CostView{}, err
+	}
+	if err = e.refreshOccupancy(ctx, &view); err != nil {
 		return CostView{}, err
 	}
 	view.Costs = latestCosts(view.Costs)
@@ -191,6 +200,50 @@ func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, me
 		}
 	}
 	maps.DeleteFunc(e.power, func(identity string, _ powerEvidence) bool { return !listed[identity] })
+	return nil
+}
+
+// refreshOccupancy keeps the latest accepted dispatch occupancy record per
+// Node, power mode, runtime image and model; a negative d counts as 0.
+func (e *CostEvidence) refreshOccupancy(ctx context.Context, view *CostView) error {
+	identities, err := e.objects.List(ctx, DispatchOccupancyPrefix)
+	if err != nil {
+		return err
+	}
+	listed := map[evidencestore.ObjectIdentity]bool{}
+	type measured struct {
+		record *DispatchOccupancyRecord
+		key    string
+	}
+	var accepted []measured
+	for _, identity := range identities {
+		listed[identity] = true
+		view.Sources = append(view.Sources, fmt.Sprintf("%s/%s/%d", identity.Store, identity.Key, identity.Size))
+		record, cached := e.occupancy[identity]
+		if !cached {
+			raw, readErr := boundedCostRead(ctx, e.objects, identity, e.maxBytes)
+			record = &DispatchOccupancyRecord{}
+			if readErr == nil {
+				readErr = decodeCostJSON(raw, record)
+			}
+			if readErr != nil {
+				view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: readErr.Error()})
+				continue
+			}
+			e.occupancy[identity] = record
+		}
+		if record.Verdict == measurementAccepted {
+			accepted = append(accepted, measured{record: record, key: identity.Key})
+		}
+	}
+	maps.DeleteFunc(e.occupancy, func(identity evidencestore.ObjectIdentity, _ *DispatchOccupancyRecord) bool { return !listed[identity] })
+	latest := latestBy(accepted, func(m measured) string {
+		return strings.Join([]string{m.record.Node.UID, m.record.PowerMode, m.record.RuntimeImage, m.record.Model}, "\x00")
+	}, func(m measured) (string, int64) { return m.key, m.record.MeasuredAt.UnixNano() })
+	for _, m := range latest {
+		view.DispatchOccupancy = append(view.DispatchOccupancy, serving.DispatchOccupancy{Node: m.record.Node, PowerMode: m.record.PowerMode,
+			RuntimeImage: m.record.RuntimeImage, Model: m.record.Model, PerRequest: time.Duration(max(m.record.PerRequestNanos, 0)), Source: m.key})
+	}
 	return nil
 }
 

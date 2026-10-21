@@ -385,7 +385,7 @@ func (p *capacityPlanner) pendingWorkloads() []string {
 
 // kappa looks up the row of option variant o for Workload w.
 func (p *capacityPlanner) kappa(o SchedulerOption, w int) (float64, string, string) {
-	key := NewCapacityInput(p.settings, o, p.ws[w].d).Key()
+	key := NewCapacityInput(p.settings, p.snapshot.DispatchOccupancy, o, p.ws[w].d).Key()
 	row, ok := p.rows[key]
 	switch {
 	case !ok || row.Status == CapacityPending:

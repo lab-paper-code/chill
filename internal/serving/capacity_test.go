@@ -16,7 +16,7 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 	s.CapacityWindow, s.CapacityWindows, s.CapacityPassingWindows, s.CapacityMinimumRequests = time.Second, 3, 2, 200
 	s.CompletionMarginMS = 0
 	c := snap.Instances[0].Profile.Condition
-	s.DispatchOccupancy = []DispatchOccupancy{{Node: snap.Nodes[0].Node.Name, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel, Source: "fixture"}}
+	snap.DispatchOccupancy = []DispatchOccupancy{{Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel, Source: "fixture"}}
 	p := *snap.Instances[0].Profile
 	p.Batches = []BatchProfile{{Batch: 1, DurationNanos: []float64{8e5, 1e6, 1.2e6}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
 	snap.Instances[0].Profile = &p
@@ -27,7 +27,7 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 
 func capacityBuildForTest(t *testing.T, s SchedulerSettings, snap SchedulerSnapshot) CapacityRow {
 	t.Helper()
-	row, err := BuildCapacityRow(context.Background(), s, snap.Options[0], snap.Workloads[0], snap.Nodes[0], snap.Baselines, snap.At)
+	row, err := BuildCapacityRow(context.Background(), s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], snap.Nodes[0], snap.Baselines, snap.At)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,22 +60,27 @@ func TestCapacityMarginAboveTargetIsZero(t *testing.T) {
 	}
 }
 
-// Without a measurement for the option's Node, runtime image and model the
-// row has no kappa, even when another Node, image or model has one.
+// Without a measurement for the option's Node, power mode, runtime image and
+// model the row has no kappa, even when another Node, mode, image or model has one.
 func TestCapacityRowWithoutOccupancyHasNoKappa(t *testing.T) {
 	s, snap := capacityFixture()
-	s.DispatchOccupancy[0].Node = schedulerTestOther
+	snap.DispatchOccupancy[0].Node.UID = schedulerTestOther
 	row := capacityBuildForTest(t, s, snap)
 	if row.Status != CapacityRejected || row.Reason != CapacityNoOccupancy || row.Kappa != nil || len(row.Grid) != 0 || row.Input.DispatchOccupancy != nil {
 		t.Fatalf("row without occupancy: %+v", row)
 	}
-	s.DispatchOccupancy[0].Node = snap.Nodes[0].Node.Name
-	s.DispatchOccupancy[0].RuntimeImage = "registry/model@sha256:other"
+	snap.DispatchOccupancy[0].Node = snap.Nodes[0].Node
+	snap.DispatchOccupancy[0].PowerMode = schedulerTestEcoMode
+	if row := capacityBuildForTest(t, s, snap); row.Kappa != nil || row.Reason != CapacityNoOccupancy {
+		t.Fatalf("an occupancy measured in another mode gave kappa: %+v", row)
+	}
+	snap.DispatchOccupancy[0].PowerMode = snap.Instances[0].Profile.Condition.PowerMode
+	snap.DispatchOccupancy[0].RuntimeImage = "registry/model@sha256:other"
 	if row := capacityBuildForTest(t, s, snap); row.Kappa != nil {
 		t.Fatalf("an occupancy measured on another runtime image gave kappa: %+v", row)
 	}
-	s.DispatchOccupancy[0].RuntimeImage = snap.Instances[0].Profile.Condition.RuntimeImage
-	s.DispatchOccupancy[0].Model = "other-model"
+	snap.DispatchOccupancy[0].RuntimeImage = snap.Instances[0].Profile.Condition.RuntimeImage
+	snap.DispatchOccupancy[0].Model = "other-model"
 	if row := capacityBuildForTest(t, s, snap); row.Kappa != nil {
 		t.Fatalf("an occupancy measured with another model gave kappa: %+v", row)
 	}
@@ -102,7 +107,7 @@ func TestCapacityRasp5KappaWithMeasuredOccupancy(t *testing.T) {
 	s, snap := capacityFixture()
 	s.CapacityWindow, s.CapacityWindows, s.CapacityPassingWindows, s.CapacityMinimumRequests = time.Minute, 20, 19, 1000
 	s.CompletionMarginMS = 29
-	s.DispatchOccupancy[0].PerRequest = 9409 * time.Microsecond
+	snap.DispatchOccupancy[0].PerRequest = 9409 * time.Microsecond
 	snap.Instances[0].Profile.Batches = []BatchProfile{{Batch: 1, DurationNanos: samples.DurationNanos, EnergyPerInputJoules: 0.07, MemoryBytes: 100}}
 	snap.Options[0].Instance = snap.Instances[0]
 	snap.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: time.Second}
@@ -236,7 +241,7 @@ func TestCapacityTableBuildsAutonomousRowsOnce(t *testing.T) {
 // A recorded row stands in for a row being computed and gives way once built.
 func TestCapacityTableUsesRecordedRowUntilBuilt(t *testing.T) {
 	s, snap := capacityFixture()
-	key := NewCapacityInput(s, snap.Options[0], snap.Workloads[0]).Key()
+	key := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0]).Key()
 	recordedKappa := 1.0
 	table := NewCapacityTable(1, nil, func(_ context.Context, keys []string) (map[string]CapacityRow, error) {
 		if len(keys) != 1 || keys[0] != key {

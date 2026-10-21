@@ -24,14 +24,9 @@
 
 **디스패치 점유.** d는 firstfloor 인스턴스가 요청 하나마다 profile 실행시간 밖에서 더 점유되는 시간이다. 포화한 인스턴스 하나가 배치 b로 낸 지속 처리율 X에서 `d = 1/X − (배치 b의 profile 평균 실행시간)/b`다. d에는 배치 사이 actor 시간(결과 전달, 다음 배치 선택, runner 호출 준비)과 같은 Pod CPU를 쓰는 요청 수신과 응답 처리로 늘어난 runner 실행시간이 함께 들어간다. rasp5 q1(m4 r3 Q2, 15:46~15:51)은 b1로 26.88 req/s, 요청당 37.20 ms였다. Q2 행 전체에서 실측 `serviceMS` 평균은 약 34.5 ms, 실행 기록 사이 간격은 평균 약 3.1 ms다. profile b1 평균은 27.79 ms라 d = 9.41 ms다.
 - 기준은 profile 평균이다. 그래야 재생의 처리율 μ가 실측 X와 같고 κ는 X 아래에 놓인다. rasp5 q1 tight 행은 μ 26.88, κ 25.3(m 29 ms)과 25.1(m 139 ms)이다. 실측 `serviceMS` p50 30.7 ms를 기준으로 잡은 d 6.5 ms는 μ 29.2, κ 27.7로 X를 넘는다.
-- 값은 `dispatchOccupancy` 설정의 항목(노드 이름, runtime image, model, `perRequestNanos`, `source`)이다. model은 ModelSpec 이름이다. 운영자가 m처럼 측정 결과로 넣는다. 행 입력에 그 항목 전체가 들어가므로 행마다 d와 출처가 남고, 항목이 바뀌면 새 키의 행을 다시 계산한다.
-- option의 노드 이름, profile의 `condition.runtimeImage`, `condition.logicalModel`이 모두 같은 항목만 쓴다. d의 요청 수신과 응답 처리 비용은 model의 원시 입력과 출력 크기에 따라 다르므로 model마다 잰다. 같은 노드, runtime image, model의 다른 option(q1-lut, q2, 배치 2)은 같은 d를 쓴다. 다른 노드나 다른 model의 값은 쓰지 않는다. runtime image가 바뀌면 맞는 항목이 없어 그 노드의 행은 κ가 없고, 다시 잴 때까지 계획에서 빠진다.
-- 측정 절차(노드, runtime image, model마다 한 번).
-  1. 그 노드에 그 runtime image와 model의 b1 option 인스턴스 하나만 두고 자동제어를 끈 채 `staticRouting`으로 그 model의 Workload를 그 인스턴스에만 분배한다.
-  2. profile μ의 1.2배 이상(rasp5 40 req/s)을 6분 이상 보내 firstfloor 큐가 내내 차 있게 한다. loadgen 단계 하나가 이 구간이다.
-  3. `fetch.sh`로 그 시간을 받고 `e1.sql`의 포화 표에서 그 단계와 인스턴스의 `ms_per_request`를 읽는다(배치 ID 차이로 실행 수를 세므로 빠진 행에 영향받지 않는다).
-  4. `d = ms_per_request − profile b1 평균`이다. profile 평균은 `/api/v1/scheduler/profiles`의 `batches[batch=1].durationNanos` 평균이다.
-  5. `{node, runtimeImage, model, perRequestNanos, source}`를 설정에 넣는다. source에는 실행, 시각, X, profile ID와 평균을 적는다. 같은 단계의 `e1.sql` 완료 여유 열이 포화 부하의 m이다.
+- 값은 DispatchOccupancyMeasurement가 쓴 record다([measurement-api](measurement-api.md) 3, 4장). `CostEvidence.Refresh`가 `serving/dispatch-occupancy/`에서 `Accepted` record 중 (Node UID, 전력모드, runtime image, model)마다 `measuredAt`이 가장 늦은 것을 골라 snapshot `dispatchOccupancy`(`{node{name, uid}, powerMode, runtimeImage, model, perRequestNanos, source}`)에 싣는다. `perRequestNanos`는 max(d, 0)이고 source는 record key다. 행 입력에 그 항목 전체가 들어가므로 행마다 d와 출처가 남고, 새 측정이 그 행을 다시 계산하게 한다.
+- option의 Node UID, profile의 `condition.powerMode`, `condition.runtimeImage`, `condition.logicalModel`이 모두 같은 항목만 쓴다. d의 요청 수신과 응답 처리 비용은 model의 원시 입력과 출력 크기와 전력모드의 CPU 속도에 따라 다르므로 model과 모드마다 잰다. 같은 노드, 모드, runtime image, model의 다른 option(q1-lut, q2, 배치 2)은 같은 d를 쓴다. 맞는 항목이 없는 option의 행은 `MissingDispatchOccupancy`로 κ가 없고, 잴 때까지 계획에서 빠진다. 용량표 행과 재생은 같은 항목을 쓴다.
+- 측정은 occupancy CR 하나다. ChillServer가 노드를 승인하고 그 option을 고정 배치 B로 준비한 뒤 load Job으로 profile μ의 `rateFactor`배를 보내고, 포화 창의 행에서 `e1.sql` 포화 표와 같은 식으로 X와 d를 계산한다. 같은 창의 `e1.sql` 완료 여유 열이 포화 부하의 m이다.
 
 **검증된 모양.** 이분 탐색에 쓰지 않은 seed 21~40에서 0.9κ는 모든 option이 20/20, 1.0κ는 16~20/20, 1.2κ는 0/20이다. κ는 절벽의 무릎이다. d 없이 profile 실행시간만 재생한 E1 tight(p95 1 s, m 139 ms) κ: rasp5 q1 34.3, jetsonx 18.3, orangepi 8.1, jetsono 48.1~49.7, orin-nano 38.9~41.3 req/s. rasp5 q1은 실측 처리율 26.9 req/s에서 34.3이 과대임이 드러났고, d를 넣은 값은 위 문단의 25.3이다.
 
@@ -125,6 +120,7 @@
 |---|---|
 | 추가(commit 2) | `capacityWindowNanos`(> 0), `capacityWindows`(≥ 1), `capacityPassingWindows`(1 ≤ x ≤ `capacityWindows`), `capacityMinimumRequests`(≥ 1). 설정 decode가 strict(`scheduler_service.go:118`)라 배포 때 `serving-scheduler` ConfigMap과 Dashboard 설정 화면을 같이 바꾼다 |
 | 추가(commit 7) | `dispatchOccupancy`: `{node, runtimeImage, model, perRequestNanos(≥ 0), source}` 목록, 노드, runtime image, model마다 하나. 없거나 비어 있으면 모든 행이 `MissingDispatchOccupancy`다. 배포 전에 ConfigMap에 측정한 노드의 항목을 넣는다(`config/samples/serving-scheduler.json`에 rasp5 mobilenet). Dashboard는 설정 전체를 PUT하므로 항목을 그대로 보존한다 |
+| 삭제([measurement-api](measurement-api.md) commit 8) | `dispatchOccupancy`. 값은 snapshot의 측정 record다. strict decode라 배포 때 ConfigMap의 key를 같이 지운다 |
 | 이름(commit 8) | 비교 기간 하한은 `comparisonPeriodNanos`(> 0)다. strict decode라 배포 때 ConfigMap의 `horizonNanos`를 이 이름으로 바꾼다(sample 10분). 판단 기록의 `settings`도 이 이름이고, Dashboard는 판단마다 실제 T인 `decision.capacity.periodNanos`를 보여 준다 |
 | 삭제(commit 6) | `algorithm`, `replays`, `seed`, `maxCandidates`, `maxReplayRequests`, `controls.sharing`. 같은 방식으로 ConfigMap과 Dashboard를 바꾼다 |
 | 판단 기록 | `v1alpha5`에 `decision.capacity`와 `management`의 `capacity-row-built`가 더해지고 `candidates`, `search.truncated`, `policy`가 빠진다. snapshot 인스턴스는 `workloadUID` 하나이고 `arrivalAgesNanos`가 빠진다. 관측 reader는 없는 필드를 빈 값으로 읽으므로 버전을 올리지 않는다(ADR 0019). 전환 전 시간의 기록은 새 reader에서 인스턴스의 Workload가 비므로 전환 시각을 걸치는 `OperatingPower` 구간은 쓰지 않는다 |

@@ -568,7 +568,7 @@ func (s *schedulerReplayState) initializeInstances() {
 		if i.Profile != nil {
 			x.policy = schedulerPolicy(i)
 		}
-		if o := s.settings.dispatchOccupancy(i); o != nil {
+		if o := dispatchOccupancy(s.snap.DispatchOccupancy, i); o != nil {
 			x.occupancy = float64(o.PerRequest)
 		}
 		s.instances = append(s.instances, x)

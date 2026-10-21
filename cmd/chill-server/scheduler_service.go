@@ -232,8 +232,9 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	controllerConfig := servingkube.SchedulerControllerConfig{
 		Settings: config.Settings,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
-		CostIssues: costs.Issues, CatalogIssues: view.Insufficiencies, LoadGenerator: o.opts.loadGenerator,
-		Meters: config.Meters, PowerPolicies: policies,
+		CostIssues: costs.Issues, DispatchOccupancy: costs.DispatchOccupancy, CatalogIssues: view.Insufficiencies,
+		LoadGenerator: o.opts.loadGenerator,
+		Meters:        config.Meters, PowerPolicies: policies,
 		StaticRouting: config.StaticRouting != nil, MeasurementNamespaces: namespaces,
 		Evidence: o.objects, EvidenceStore: o.opts.storeName, MeterSource: metricSource,
 		OnDecision: o.recordDecision, OnAction: o.recordAction,
