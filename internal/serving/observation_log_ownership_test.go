@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 const restoredRequest = "request"
@@ -87,6 +89,55 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 		t.Fatal("actual container termination proof lost at restart")
 	}
 	checkRestoredDemand(t, confirmedLog, now)
+}
+
+// m4 r6: after a restart under load a restored assignment the native no longer
+// holds is finished by the same absent-native rule as a live call; admission
+// stayed RestartDrain until the instance Pod was deleted.
+func TestRestoredCallTheNativeDoesNotHoldFinishes(t *testing.T) {
+	ctx := context.Background()
+	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}}
+	observationLog, err := NewObservationLog(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, snapshot := schedulerFixture()
+	d, p := snapshot.Workloads[0], snapshot.Instances[0].Profile
+	if err = observationLog.DefinitionRecord(d); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	assignment := &Assignment{Instance: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, DispatchedAt: now}
+	for _, event := range []RequestEvent{
+		{RequestID: restoredRequest, WorkloadUID: d.UID, Definition: d.Identity(), Kind: phaseReceived, At: now, ReceivedAt: now},
+		{RequestID: restoredRequest, WorkloadUID: d.UID, Definition: d.Identity(), Kind: phaseAssigned, At: now, ReceivedAt: now, Assignment: assignment},
+	} {
+		if err = observationLog.RequestEvent(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = observationLog.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	restartedLog, err := NewObservationLog(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = restartedLog.Close(ctx) }()
+	restored, err := NewRuntime(ctx, RuntimeConfig{QueueLimit: 1, ObservationLog: restartedLog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.cancel()
+	restored.SetProfiles([]Profile{*p})
+	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), Native: &native.State{Ready: true}},
+		Profile: p, Weight: 1, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{}, nil }}
+	if err = restored.InstallInstances([]ReadyInstance{instance}); err != nil {
+		t.Fatal(err)
+	}
+	if !restored.Drained(d.UID) {
+		t.Fatal("a restored call the native does not hold kept RestartDrain")
+	}
 }
 
 // The restored final row still counts as accepted, assigned computable demand.
