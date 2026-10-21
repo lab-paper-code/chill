@@ -994,6 +994,34 @@ func TestCapacityIdleInstancesAreRemovedAfterOneWindow(t *testing.T) {
 	}
 }
 
+// m4 r6: the unrouted genesis3 q2 and orangepi q1 serve no Workload (capture
+// workloadUID "") and, prepared before the planner recorded owners, have no
+// owner; only their slot names the Workload. An instance owned by an
+// autonomous Workload, or owned by nobody and routed by nobody, is removed
+// after one unrouted window. One a disabled Workload routes to stays.
+func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
+	s, snap, rows, genesis3, orangepi := capacityR5Fixture()
+	since := snap.At.Add(-time.Minute)
+	for k := 1; k < 3; k++ {
+		snap.Instances[k].WorkloadUID, snap.Instances[k].TargetID, snap.Instances[k].UnroutedSince = "", "target-w1-"+snap.Instances[k].Profile.ID+"-1", &since
+	}
+	snap.Instances[1].OwnerWorkloadUID = "w1" // prepared with the planner's owner
+	removed := func(d SchedulerDecision, node NodeReference) bool {
+		return d.Target != nil && !poolsOn(*d.Target, node) &&
+			slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Node == node })
+	}
+	if d := capacityDecideForTest(t, s, snap, rows); !removed(d, genesis3) || !removed(d, orangepi) {
+		t.Fatalf("unrouted planner instances kept: %s %+v %v", d.Status, d.Target, d.Reasons)
+	}
+	other := poolsAddWorkload(&snap, "w2")
+	other.Model.UID = "m2"
+	snap.Routing["w2"] = map[string]int32{"opi": 1}
+	snap.Instances[2].UnroutedSince = nil
+	if d := capacityDecideForTest(t, s, snap, rows); !removed(d, genesis3) || removed(d, orangepi) {
+		t.Fatalf("an instance a disabled Workload routes to was removed: %+v", d.Target)
+	}
+}
+
 // m4 r5 D-R5-1: genesis2 was prepared at 04:28:48 while keep was in Overload
 // and removed 50 s later. Its hold keeps it for one observation window even
 // when removal saves energy.

@@ -871,7 +871,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			if c.conflictingActionRunning(action) {
 				continue
 			}
-			operation := scheduledOperation(action, &target, config, c.powerTargets, time.Now())
+			operation := scheduledOperation(action, &target, config, c.powerTargets, c.state.Snapshot.Workloads, time.Now())
 			runCtx, cancel := context.WithCancel(c.ctx)
 			action.Status = nativeOperationRunning
 			action.Cancelable = action.Kind == operationPrepare
@@ -947,7 +947,11 @@ func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCa
 	}
 	return false
 }
-func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]edge.NodeActuationSpec, now time.Time) Operation {
+
+// scheduledOperation builds the operation of one planned action. A preparation
+// names the Workload its target instance serves as the Pod's owner, so the
+// instance keeps its Workload while unrouted.
+func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]edge.NodeActuationSpec, workloads []*serving.Definition, now time.Time) Operation {
 	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target}
 	if action.Kind == operationPrepare {
 		for _, i := range target.Instances {
@@ -961,6 +965,11 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 				template.Config.Policy = native.Policy{ProfileID: i.Profile.ID, DecisionID: target.ID,
 					DeadlinePolicy: native.EffectiveDeadlinePolicy(i.Profile.Condition.Firstfloor.DeadlinePolicy),
 					MaxBatchSize:   i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / float64(time.Millisecond), FixedBatchSize: i.FixedBatchSize}
+				for _, d := range workloads {
+					if d != nil && d.UID == i.WorkloadUID {
+						template.Owner = &serving.WorkloadReference{Name: d.Name, UID: d.UID}
+					}
+				}
 				operation.Prepare = &template
 				break
 			}

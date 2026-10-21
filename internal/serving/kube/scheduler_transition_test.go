@@ -298,7 +298,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	goal := serving.SchedulerCandidate{ID: "preparing-target", Instances: []serving.SchedulerInstance{wanted},
 		Routing: map[string]map[string]int32{wanted.WorkloadUID: {slot: 1}}, Actions: []serving.Action{action}}
 	config := SchedulerControllerConfig{Preparations: map[string]PrepareSpec{wanted.Profile.ID: {}}}
-	operation := scheduledOperation(action, &goal, config, nil, time.Now())
+	operation := scheduledOperation(action, &goal, config, nil, nil, time.Now())
 	canceled := false
 	run := &actionRun{action: action, result: &OperationResult{Operation: operation, Status: nativeOperationRunning},
 		cancel: func() { canceled = true }}

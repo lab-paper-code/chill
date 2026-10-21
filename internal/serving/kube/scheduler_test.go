@@ -20,6 +20,7 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -381,8 +382,8 @@ func TestScheduledPowerRequestIsFreshAtSwitchTime(t *testing.T) {
 	power := map[string]edge.NodeActuationSpec{"jetson-uid/eco": spec}
 	action := serving.Action{ID: "lower", Kind: operationPower, Node: node, To: "eco"}
 	first := time.Date(2026, 10, 21, 10, 0, 0, 500, time.UTC)
-	a := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, first).Actuation
-	b := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, first.Add(time.Hour)).Actuation
+	a := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, nil, first).Actuation
+	b := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, nil, first.Add(time.Hour)).Actuation
 	if a == nil || b == nil || a.Name == b.Name {
 		t.Fatalf("repeated switch reused a request: %+v %+v", a, b)
 	}
@@ -391,8 +392,33 @@ func TestScheduledPowerRequestIsFreshAtSwitchTime(t *testing.T) {
 		t.Fatalf("deadline not relative to switch time: %+v", b.Spec)
 	}
 	action.To = "unrequestable"
-	if scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, first).Actuation != nil {
+	if scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, nil, first).Actuation != nil {
 		t.Fatal("mode without a policy got a request")
+	}
+}
+
+// m4 r6: a planner preparation records its Workload as the Pod's owner, so an
+// unrouted instance keeps its Workload. It waits for the planner's route: the
+// Pod's static routing names no weight, as before.
+func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
+	profile := &serving.Profile{ID: "profile", Condition: profilederivation.CurvePlanSpec{Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 8}}}
+	wanted := serving.SchedulerInstance{ID: "target-w1-profile-1", WorkloadUID: "w1", Profile: profile, Weight: 1, MaxBatch: 1}
+	action := serving.Action{ID: "prepare", Kind: operationPrepare, Instance: wanted.ID}
+	config := SchedulerControllerConfig{Preparations: map[string]PrepareSpec{profile.ID: {}}}
+	workloads := []*serving.Definition{{Name: "tight", UID: "w1"}}
+	op := scheduledOperation(action, &serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{wanted}}, config, nil, workloads, time.Now())
+	if op.Prepare == nil || op.Prepare.Owner == nil || *op.Prepare.Owner != (serving.WorkloadReference{Name: "tight", UID: "w1"}) {
+		t.Fatalf("planner preparation lost its Workload owner: %+v", op.Prepare)
+	}
+	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Annotations: map[string]string{}}}
+	(&Operations{}).placeServingPod(pod, op.Prepare.Owner, op.Prepare.Instance)
+	if owner, err := resourceWorkloadOwner(pod, nil); err != nil || owner != "w1" || pod.Annotations[ServingRoutingAnnotation] != "{}" {
+		t.Fatalf("pod owner %q (%v), routing %s", owner, err, pod.Annotations[ServingRoutingAnnotation])
+	}
+	pod = &core.Pod{ObjectMeta: meta.ObjectMeta{Annotations: map[string]string{}}}
+	(&Operations{}).placeServingPod(pod, op.Prepare.Owner, serving.SchedulerInstance{Weight: 3})
+	if pod.Annotations[ServingRoutingAnnotation] != `{"w1":3}` {
+		t.Fatalf("a manual preparation must serve its owner at once: %s", pod.Annotations[ServingRoutingAnnotation])
 	}
 }
 

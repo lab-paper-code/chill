@@ -1719,18 +1719,23 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	return decision
 }
 
-// idleRemovable reports an instance of a controlled Workload unrouted for one
-// observation window that the chosen plan set leaves unrouted, when every
-// judgment the set meets still holds without its κ. The removal is for
-// measurability and the lowest mode of an emptied Node, not energy.
+// idleRemovable reports an instance unrouted for one observation window that
+// the chosen plan set leaves unrouted: owned by or serving a controlled
+// Workload whose judgments still hold without its κ, or owned by nobody. The
+// removal is for measurability and the lowest mode of an emptied Node, not
+// energy.
 func (p *capacityPlanner) idleRemovable(i SchedulerInstance, plan *capacityPlan, best capacityResult, routing map[string]map[string]int32) bool {
+	if !p.idle(i) || schedulerInstanceRouted(routing, i.ID) {
+		return false
+	}
 	uid := i.WorkloadUID
 	if uid == "" {
 		uid = i.OwnerWorkloadUID
 	}
+	// An instance owned by nobody and routed by no Workload serves nobody.
 	w, controlled := p.index[uid]
-	if !controlled || !p.idle(i) || schedulerInstanceRouted(routing, i.ID) {
-		return false
+	if uid == "" || !controlled {
+		return uid == ""
 	}
 	if !best.feasible || i.WorkloadUID == "" {
 		return true
