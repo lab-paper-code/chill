@@ -307,13 +307,17 @@ func TestPowerModeRebootModeStaysPendingAcrossReboot(t *testing.T) {
 	f.expect(metadata.PowerModeSuccess, 1)
 }
 
-// A boot that does not establish the target fails instead of restarting the
-// Node again.
+// A boot that does not establish the target, which the host never reads back,
+// fails once the policy bound since the fence passes, instead of restarting
+// the Node again.
 func TestPowerModeRebootWithoutTargetFails(t *testing.T) {
 	f := newPowerModeFixture(t, map[string]string{metadata.PowerMode: "7W"})
 	f.reconcile()
 	f.host.readErr = errors.New("mode recorded, not established")
 	f.reboot()
+	f.reconcile()
+	f.expect(metadata.PowerModePending, 0)
+	f.now = f.now.Add(15 * time.Minute)
 	f.reconcile()
 	if failed := f.expect(metadata.PowerModeFailed, 1); failed.Failure == "" || len(f.host.applied) != 0 {
 		t.Fatalf("failure = %+v, applied %v", failed, f.host.applied)
@@ -321,6 +325,31 @@ func TestPowerModeRebootWithoutTargetFails(t *testing.T) {
 	if _, ok := f.node().Annotations[metadata.PowerActuator]; ok {
 		t.Fatal("unreadable host kept a read-back")
 	}
+}
+
+// A first read that fails after a reboot-mode reboot keeps the request
+// pending and counts nothing; the next good read counts the boot once and
+// settles the target.
+func TestPowerModeUnreadRebootStaysPending(t *testing.T) {
+	f := newPowerModeFixture(t, map[string]string{metadata.PowerMode: "7W"})
+	f.reconcile()
+	readBack := f.node().Annotations[metadata.PowerActuator]
+	f.host.id = 1
+	f.host.readErr = errors.New("nvpmodel timed out")
+	f.reboot()
+	f.reconcile()
+	f.expect(metadata.PowerModePending, 0)
+	if got := f.node().Annotations[metadata.PowerActuator]; got != readBack || len(f.host.applied) != 0 {
+		t.Fatalf("read-back = %q, want %q; applied %v", got, readBack, f.host.applied)
+	}
+	f.host.readErr = nil
+	f.reconcile()
+	if verified := f.expect(metadata.PowerModePending, 1); verified.VerifiedAt == nil {
+		t.Fatalf("verified = %+v", verified)
+	}
+	f.now = f.now.Add(time.Minute)
+	f.reconcile()
+	f.expect(metadata.PowerModeSuccess, 1)
 }
 
 // A DeviceClass read that fails for a moment requeues; it neither fails the
