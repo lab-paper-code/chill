@@ -62,6 +62,7 @@ type schedulerReplayInstance struct {
 	outstanding  int
 	policy       firstfloor.Policy
 	arrivalTimes map[string][]float64
+	occupancy    float64 // measured dispatch occupancy per request (ns); 0 without a measurement
 }
 type schedulerReplayAction struct {
 	action   Action
@@ -559,6 +560,9 @@ func (s *schedulerReplayState) initializeInstances() {
 		x := &schedulerReplayInstance{config: i, loaded: loaded, ready: loaded && i.Ready, stopped: i.Stopped, finish: math.Inf(1), wake: 0, arrivalTimes: map[string][]float64{}}
 		if i.Profile != nil {
 			x.policy = schedulerPolicy(i)
+		}
+		if o := s.settings.dispatchOccupancy(i); o != nil {
+			x.occupancy = float64(o.PerRequest)
 		}
 		s.instances = append(s.instances, x)
 		s.byID[i.ID] = x
@@ -1435,7 +1439,9 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 				return false
 			}
 			duration := b.DurationNanos[s.rng.IntN(len(b.DurationNanos))]
-			i.finish = s.now + duration
+			// The batch completes, and the instance takes its next batch, after
+			// the service sample plus the occupancy of each request.
+			i.finish = s.now + duration + i.occupancy*float64(len(i.batch))
 			s.addBatchEnergy(i, b, duration)
 			break
 		}

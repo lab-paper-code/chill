@@ -20,6 +20,7 @@ const (
 	CapacityPending       = "CapacityPending"
 	CapacityRejected      = "CapacityRejected"
 	CapacityNonMonotone   = "NonMonotone"
+	CapacityNoOccupancy   = "MissingDispatchOccupancy"
 	CapacityRowBuiltEvent = "capacity-row-built"
 
 	capacityGridSteps      = 20    // grid rates 0.05k mu, k = 1..20
@@ -41,6 +42,9 @@ type CapacityInput struct {
 	Windows            int                 `json:"capacityWindows"`
 	PassingWindows     int                 `json:"capacityPassingWindows"`
 	MinimumRequests    int                 `json:"capacityMinimumRequests"`
+	// DispatchOccupancy is the measurement for the option's Node and runtime
+	// image; without one the row has no kappa.
+	DispatchOccupancy *DispatchOccupancy `json:"dispatchOccupancy,omitempty"`
 }
 
 // CapacityJudgment is one judged Poisson rate: the SLO-percentile latency of
@@ -95,7 +99,7 @@ func NewCapacityInput(settings SchedulerSettings, o SchedulerOption, w *Definiti
 		WorkloadUID: w.UID, SLO: w.SLO, Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, ProfileID: i.Profile.ID,
 		Allocation: i.Allocation, MaxBatch: i.MaxBatch, CompletionMarginMS: settings.CompletionMarginMS,
 		Window: settings.CapacityWindow, Windows: settings.CapacityWindows, PassingWindows: settings.CapacityPassingWindows,
-		MinimumRequests: settings.CapacityMinimumRequests,
+		MinimumRequests: settings.CapacityMinimumRequests, DispatchOccupancy: settings.dispatchOccupancy(o.Instance),
 	}
 }
 
@@ -106,8 +110,9 @@ func (in CapacityInput) Key() string {
 	return hex.EncodeToString(sum[:12])
 }
 
-// capacityThroughput is the largest b/mean service time over batches up to b (req/s).
-func capacityThroughput(p *Profile, b int) float64 {
+// capacityThroughput is the largest b/(mean service time + b × occupancy)
+// over batches up to b (req/s).
+func capacityThroughput(p *Profile, b int, occupancy time.Duration) float64 {
 	mu := 0.0
 	for _, batch := range p.Batches {
 		if batch.Batch > b || len(batch.DurationNanos) == 0 {
@@ -117,7 +122,7 @@ func capacityThroughput(p *Profile, b int) float64 {
 		for _, d := range batch.DurationNanos {
 			sum += d
 		}
-		mu = max(mu, float64(batch.Batch)/(sum/float64(len(batch.DurationNanos)))*1e9)
+		mu = max(mu, float64(batch.Batch)/(sum/float64(len(batch.DurationNanos))+float64(batch.Batch)*float64(occupancy))*1e9)
 	}
 	return mu
 }
@@ -132,10 +137,17 @@ type capacityBuilder struct {
 
 // BuildCapacityRow computes the row of option variant o for Workload w. node
 // is the option's Node and baselines its idle evidence; at anchors the windows.
+// An option whose Node and runtime image lack a dispatch occupancy measurement
+// gets a rejected row without kappa.
 func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, o SchedulerOption, w *Definition, node SchedulerNode, baselines []NodeBaseline, at time.Time) (CapacityRow, error) {
 	began := time.Now()
 	in := NewCapacityInput(settings, o, w)
-	row := CapacityRow{Key: in.Key(), Input: in, Mu: capacityThroughput(o.Instance.Profile, o.Instance.MaxBatch)}
+	row := CapacityRow{Key: in.Key(), Input: in}
+	if in.DispatchOccupancy == nil {
+		row.Status, row.Reason, row.BuiltAt = CapacityRejected, CapacityNoOccupancy, time.Now().UTC()
+		return row, nil
+	}
+	row.Mu = capacityThroughput(o.Instance.Profile, o.Instance.MaxBatch, in.DispatchOccupancy.PerRequest)
 	r := &capacityReplay{settings: settings, node: node, at: at, baselines: baselines, option: o, w: w, gaps: map[[2]int][]float64{}}
 	b := capacityBuilder{settings: settings, percentile: w.SLO.Percentile, replay: r.window}
 	if err := b.build(ctx, &row); err != nil {

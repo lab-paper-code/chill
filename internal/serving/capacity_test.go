@@ -2,7 +2,9 @@ package serving
 
 import (
 	"context"
+	"encoding/json"
 	"math"
+	"os"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -13,6 +15,7 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 	s, snap := schedulerFixture()
 	s.CapacityWindow, s.CapacityWindows, s.CapacityPassingWindows, s.CapacityMinimumRequests = time.Second, 3, 2, 200
 	s.CompletionMarginMS = 0
+	s.DispatchOccupancy = []DispatchOccupancy{{Node: snap.Nodes[0].Node.Name, RuntimeImage: snap.Instances[0].Profile.Condition.RuntimeImage, Source: "fixture"}}
 	p := *snap.Instances[0].Profile
 	p.Batches = []BatchProfile{{Batch: 1, DurationNanos: []float64{8e5, 1e6, 1.2e6}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
 	snap.Instances[0].Profile = &p
@@ -54,6 +57,54 @@ func TestCapacityMarginAboveTargetIsZero(t *testing.T) {
 	if row := capacityBuildForTest(t, s, snap); row.Kappa == nil || *row.Kappa != 0 || len(row.Grid) != capacityGridSteps {
 		t.Fatalf("margin 139 ms, p99 100 ms: %+v", row)
 	}
+}
+
+// Without a measurement for the option's Node and runtime image the row has
+// no kappa, even when another Node has one.
+func TestCapacityRowWithoutOccupancyHasNoKappa(t *testing.T) {
+	s, snap := capacityFixture()
+	s.DispatchOccupancy[0].Node = schedulerTestOther
+	row := capacityBuildForTest(t, s, snap)
+	if row.Status != CapacityRejected || row.Reason != CapacityNoOccupancy || row.Kappa != nil || len(row.Grid) != 0 || row.Input.DispatchOccupancy != nil {
+		t.Fatalf("row without occupancy: %+v", row)
+	}
+	s.DispatchOccupancy[0].Node = snap.Nodes[0].Node.Name
+	s.DispatchOccupancy[0].RuntimeImage = "registry/model@sha256:other"
+	if row := capacityBuildForTest(t, s, snap); row.Kappa != nil {
+		t.Fatalf("an occupancy measured on another runtime image gave kappa: %+v", row)
+	}
+}
+
+// rasp5 q1 at b1 (E1 profile, 903 samples, mean 27.79 ms) sustained 26.88
+// req/s when saturated (m4 r3 Q2), so its occupancy is 37.20 − 27.79 =
+// 9.41 ms. With it the tight row (p95 1 s, m 29 ms, live capacity settings)
+// stays below the measured throughput; without it kappa was 34.3.
+func TestCapacityRasp5KappaWithMeasuredOccupancy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("replays full 60 s windows")
+	}
+	raw, err := os.ReadFile("testdata/rasp5-q1-b1-durations.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var samples struct {
+		DurationNanos []float64 `json:"durationNanos"`
+	}
+	if err := json.Unmarshal(raw, &samples); err != nil {
+		t.Fatal(err)
+	}
+	s, snap := capacityFixture()
+	s.CapacityWindow, s.CapacityWindows, s.CapacityPassingWindows, s.CapacityMinimumRequests = time.Minute, 20, 19, 1000
+	s.CompletionMarginMS = 29
+	s.DispatchOccupancy[0].PerRequest = 9409 * time.Microsecond
+	snap.Instances[0].Profile.Batches = []BatchProfile{{Batch: 1, DurationNanos: samples.DurationNanos, EnergyPerInputJoules: 0.07, MemoryBytes: 100}}
+	snap.Options[0].Instance = snap.Instances[0]
+	snap.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: time.Second}
+	row := capacityBuildForTest(t, s, snap)
+	if row.Status != CapacityBuilt || math.Abs(row.Mu-26.88) > 0.01 || *row.Kappa < 25 || *row.Kappa > 26.88 {
+		t.Fatalf("rasp5 q1 tight row: status %s mu %g kappa %v", row.Status, row.Mu, row.Kappa)
+	}
+	t.Logf("rasp5 q1 tight: mu %.2f kappa %.2f req/s", row.Mu, *row.Kappa)
 }
 
 func TestCapacityWindowPopulation(t *testing.T) {

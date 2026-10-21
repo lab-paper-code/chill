@@ -30,12 +30,41 @@ type SchedulerSettings struct {
 	// Capacity rows judge CapacityWindows Poisson windows of at least
 	// CapacityWindow and CapacityMinimumRequests arrivals; a rate is met when
 	// CapacityPassingWindows of them meet the SLO.
-	CapacityWindow          time.Duration     `json:"capacityWindowNanos"`
-	CapacityWindows         int               `json:"capacityWindows"`
-	CapacityPassingWindows  int               `json:"capacityPassingWindows"`
-	CapacityMinimumRequests int               `json:"capacityMinimumRequests"`
-	Controls                SchedulerControls `json:"controls"`
+	CapacityWindow          time.Duration       `json:"capacityWindowNanos"`
+	CapacityWindows         int                 `json:"capacityWindows"`
+	CapacityPassingWindows  int                 `json:"capacityPassingWindows"`
+	CapacityMinimumRequests int                 `json:"capacityMinimumRequests"`
+	DispatchOccupancy       []DispatchOccupancy `json:"dispatchOccupancy"`
+	Controls                SchedulerControls   `json:"controls"`
 }
+
+// DispatchOccupancy is the measured time per request that an instance on Node
+// running RuntimeImage stays busy beyond its profile service samples:
+// 1/X − (the profile's mean service at batch b)/b, where X is the sustained
+// completions per second of one saturated instance at batch b. Capacity
+// replay adds it per request to every batch it starts; Source names the
+// measurement.
+type DispatchOccupancy struct {
+	Node         string        `json:"node"`
+	RuntimeImage string        `json:"runtimeImage"`
+	PerRequest   time.Duration `json:"perRequestNanos"`
+	Source       string        `json:"source"`
+}
+
+// dispatchOccupancy is the measurement for instance i's Node and runtime
+// image, or nil when none exists.
+func (s SchedulerSettings) dispatchOccupancy(i SchedulerInstance) *DispatchOccupancy {
+	if i.Profile == nil {
+		return nil
+	}
+	for _, o := range s.DispatchOccupancy {
+		if o.Node == i.Node.Name && o.RuntimeImage == i.Profile.Condition.RuntimeImage {
+			return &o
+		}
+	}
+	return nil
+}
+
 type SchedulerControls struct {
 	Placement  bool `json:"placement"`
 	Resources  bool `json:"resources"`
@@ -293,6 +322,14 @@ func (s SchedulerSettings) Validate() error {
 	}
 	if s.CapacityWindow <= 0 || s.CapacityWindows < 1 || s.CapacityPassingWindows < 1 || s.CapacityPassingWindows > s.CapacityWindows || s.CapacityMinimumRequests < 1 {
 		return fmt.Errorf("capacity settings need capacityWindowNanos > 0, capacityWindows >= 1, 1 <= capacityPassingWindows <= capacityWindows and capacityMinimumRequests >= 1")
+	}
+	seen := map[[2]string]bool{}
+	for _, o := range s.DispatchOccupancy {
+		key := [2]string{o.Node, o.RuntimeImage}
+		if o.Node == "" || o.RuntimeImage == "" || o.Source == "" || o.PerRequest < 0 || seen[key] {
+			return fmt.Errorf("dispatchOccupancy entries need a node, runtimeImage and source, perRequestNanos >= 0, and one entry per node and runtimeImage")
+		}
+		seen[key] = true
 	}
 	return nil
 }

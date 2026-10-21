@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
-type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads">
+type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"dispatchOccupancy">
 type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"advanced";unit?:string}
 const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},

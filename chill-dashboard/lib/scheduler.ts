@@ -70,5 +70,5 @@ export function marginMilliseconds(text: string): number {
 export function settingsEqual(a: SchedulerSettings, b: SchedulerSettings): boolean {
   return (Object.keys(a) as (keyof SchedulerSettings)[]).every(key => key === "controls"
     ? (Object.keys(a.controls) as (keyof SchedulerSettings["controls"])[]).every(control => a.controls[control] === b.controls[control])
-    : String(a[key]) === String(b[key]))
+    : stringifySchedulerJSON(a[key]) === stringifySchedulerJSON(b[key]))
 }

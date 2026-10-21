@@ -98,6 +98,29 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 			t.Fatalf("settings without %s accepted", field)
 		}
 	}
+	entry := `{"node":"rasp5","runtimeImage":"image","perRequestNanos":9409000,"source":"m4 r3 Q2"}`
+	for _, tc := range []struct {
+		occupancy string
+		valid     bool
+	}{
+		{`[` + entry + `]`, true},
+		{`[` + entry + `,` + entry + `]`, false},
+		{`[{"node":"rasp5","runtimeImage":"image","perRequestNanos":-1,"source":"m4"}]`, false},
+		{`[{"node":"rasp5","runtimeImage":"image","perRequestNanos":1}]`, false},
+	} {
+		var with map[string]json.RawMessage
+		if err = json.Unmarshal(rawSettings, &with); err != nil {
+			t.Fatal(err)
+		}
+		with["dispatchOccupancy"] = json.RawMessage(tc.occupancy)
+		raw, err := json.Marshal(with)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = decodeSchedulerConfiguration(`{"settings":`+string(raw)+`}`, 1<<20); (err == nil) != tc.valid {
+			t.Fatalf("dispatchOccupancy %s valid=%t error=%v", tc.occupancy, tc.valid, err)
+		}
+	}
 }
 
 func TestStaticRoutingAcknowledgementDoesNotReapply(t *testing.T) {
