@@ -11,6 +11,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -27,6 +28,7 @@ const (
 	batchEnergyOptimizationConditionDone  = "MeasurementComplete"
 	terminalReasonRetryLimitExhausted     = "RetryLimitExhausted"
 	terminalReasonTransitionFailed        = "TransitionFailed"
+	admissionWait                         = 5 * time.Second
 )
 
 // ReconcileCurvePlanSource resolves and records the immutable plan used by one
@@ -101,23 +103,6 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		return ctrl.Result{}, nil
 	}
 
-	curvePlan, curvePlanReference, transitionMaterial, err := r.curvePlans.Resolve(ctx, parent)
-	if err != nil {
-		status := parent.Status
-		status.ObservedGeneration = parent.Generation
-		status.Phase = batchEnergyOptimizationPhaseFailed
-		status.Outcome = "CurvePlanResolutionFailed"
-		condition := metav1.Condition{
-			Type: batchEnergyOptimizationConditionDone, Status: metav1.ConditionFalse,
-			ObservedGeneration: parent.Generation, Reason: status.Outcome, Message: err.Error(),
-		}
-		condition.LastTransitionTime = conditionTransitionTime(parent.Status.Conditions, condition)
-		status.Conditions = []metav1.Condition{condition}
-		if patchErr := r.patchStatus(ctx, parent, status); patchErr != nil {
-			return ctrl.Result{}, errors.Join(err, patchErr)
-		}
-		return ctrl.Result{}, fmt.Errorf("resolve BatchEnergyOptimization curve plan: %w", err)
-	}
 	runs, err := r.listRuns(ctx, parent)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -125,6 +110,18 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	transitions, err := r.listTransitions(ctx, parent)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if result, wait, err := r.awaitAdmission(ctx, parent, len(runs)+len(transitions) > 0); wait {
+		return result, err
+	}
+
+	curvePlan, curvePlanReference, transitionMaterial, err := r.curvePlans.Resolve(ctx, parent)
+	if err != nil {
+		status := failedStatus(parent, "CurvePlanResolutionFailed", err.Error())
+		if patchErr := r.patchStatus(ctx, parent, status); patchErr != nil {
+			return ctrl.Result{}, errors.Join(err, patchErr)
+		}
+		return ctrl.Result{}, fmt.Errorf("resolve BatchEnergyOptimization curve plan: %w", err)
 	}
 	snapshot, err := ProjectSnapshot(
 		parent, runs, transitions, curvePlan.PlannedBatchSizes(), transitionMaterial != nil,
@@ -336,6 +333,37 @@ func deriveStatus(
 		condition.Message = "batch-energy-optimization measurement failed"
 	}
 	condition.LastTransitionTime = conditionTransitionTime(previousConditions, condition)
+	status.Conditions = []metav1.Condition{condition}
+	return status
+}
+
+// awaitAdmission stops a campaign that has not started until ChillServer
+// admits it, before it resolves its plan or creates its first child; a refusal
+// ends the campaign Failed.
+func (r *BatchEnergyOptimizationReconciler) awaitAdmission(
+	ctx context.Context, parent *edgev1alpha1.BatchEnergyOptimization, children bool,
+) (ctrl.Result, bool, error) {
+	if parent.Status.Phase == batchEnergyOptimizationPhaseMeasuring || children {
+		return ctrl.Result{}, false, nil
+	}
+	granted, _, refused := profilingrun.Admission(parent.Annotations)
+	if refused != "" {
+		return ctrl.Result{}, true, r.patchStatus(ctx, parent, failedStatus(parent, refused, "measurement admission refused"))
+	}
+	return ctrl.Result{RequeueAfter: admissionWait}, !granted, nil
+}
+
+// failedStatus is the Failed status of a campaign stopped for reason.
+func failedStatus(parent *edgev1alpha1.BatchEnergyOptimization, reason, message string) edgev1alpha1.BatchEnergyOptimizationStatus {
+	status := parent.Status
+	status.ObservedGeneration = parent.Generation
+	status.Phase = batchEnergyOptimizationPhaseFailed
+	status.Outcome = reason
+	condition := metav1.Condition{
+		Type: batchEnergyOptimizationConditionDone, Status: metav1.ConditionFalse,
+		ObservedGeneration: parent.Generation, Reason: reason, Message: message,
+	}
+	condition.LastTransitionTime = conditionTransitionTime(parent.Status.Conditions, condition)
 	status.Conditions = []metav1.Condition{condition}
 	return status
 }

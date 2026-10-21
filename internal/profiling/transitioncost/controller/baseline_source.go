@@ -11,6 +11,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -108,7 +109,8 @@ func (s *IdleBaselineSource) resolveReference(
 	matches := make([]idlebaseline.StoredObjectReference, 0, 1)
 	for index := range baselines.Items {
 		candidate := &baselines.Items[index]
-		if candidate.DeletionTimestamp != nil || candidate.Status.ObservedGeneration != candidate.Generation ||
+		_, invalid := candidate.Annotations[profilingrun.InvalidAnnotation]
+		if invalid || candidate.DeletionTimestamp != nil || candidate.Status.ObservedGeneration != candidate.Generation ||
 			candidate.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseComplete ||
 			candidate.Status.Result == nil || projectBaselineMeasurementState(candidate.Spec.State) != expected {
 			continue

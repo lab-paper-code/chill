@@ -12,6 +12,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -241,11 +242,13 @@ func TestIdleBaselineSourceRequiresExactlyOneCurrentCompleteExactState(t *testin
 	deleting.Finalizers = []string{"test-finalizer"}
 	otherNamespace := currentBaselineObject("other-namespace", state, reference)
 	otherNamespace.Namespace = "other-namespace"
+	invalid := currentBaselineObject("invalid", state, reference)
+	invalid.Annotations = map[string]string{profilingrun.InvalidAnnotation: "PowerChangedDuringMeasurement actuation"}
 
 	reader := &baselineResultReader{payload: payload}
 	source := newIdleBaselineSource(
 		t, reader, int64(len(payload)), matching, wrongState, noncurrent,
-		incomplete, missingResult, deleting, otherNamespace,
+		incomplete, missingResult, deleting, otherNamespace, invalid,
 	)
 	if _, err := source.Resolve(context.Background(), baselineNamespace, state); err != nil {
 		t.Fatalf("resolve sole current Complete baseline: %v", err)
@@ -255,7 +258,7 @@ func TestIdleBaselineSourceRequiresExactlyOneCurrentCompleteExactState(t *testin
 	}
 
 	for name, objects := range map[string][]*edgev1alpha1.ModelLoadedIdleBaseline{
-		"missing":   {wrongState, noncurrent, incomplete, missingResult, deleting, otherNamespace},
+		"missing":   {wrongState, noncurrent, incomplete, missingResult, deleting, otherNamespace, invalid},
 		"ambiguous": {matching, currentBaselineObject("second-match", state, reference)},
 	} {
 		t.Run(name, func(t *testing.T) {

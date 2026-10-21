@@ -11,6 +11,7 @@ import (
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	batchcontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -334,7 +335,8 @@ func createBatchEnergyOptimization(
 ) *edgev1alpha1.BatchEnergyOptimization {
 	t.Helper()
 	parent := &edgev1alpha1.BatchEnergyOptimization{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: profilerIntegrationNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: profilerIntegrationNamespace,
+			Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Now())}},
 		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{
 			State: edgev1alpha1.MeasurementStateSpec{
 				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{

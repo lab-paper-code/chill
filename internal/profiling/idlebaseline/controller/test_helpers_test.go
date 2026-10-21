@@ -3,10 +3,12 @@ package controller
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -16,6 +18,7 @@ func testBaselineParent() *edgev1alpha1.ModelLoadedIdleBaseline {
 	return &edgev1alpha1.ModelLoadedIdleBaseline{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "idle-baseline", Namespace: "default", UID: types.UID("idle-baseline-uid"), Generation: 1,
+			Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))},
 		},
 		Spec: edgev1alpha1.ModelLoadedIdleBaselineSpec{
 			State: edgev1alpha1.MeasurementStateSpec{

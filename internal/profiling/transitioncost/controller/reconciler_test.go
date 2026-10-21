@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -134,6 +137,37 @@ func TestPowerModeTransitionCostReconcilerReturnsTransientErrorsWithoutStatus(t 
 	}
 }
 
+func TestPowerModeTransitionCostReconcilerWaitsForAdmission(t *testing.T) {
+	for _, test := range []struct {
+		name, admission string
+		requeue         time.Duration
+		phase           edgev1alpha1.PowerModeTransitionCostPhase
+	}{
+		{"not admitted", "", 5 * time.Second, ""},
+		{"refused", profilingrun.RefusedAdmission("RunnerProfileMissing", ""), 0, edgev1alpha1.PowerModeTransitionCostPhaseFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			measurement, _, _ := preparationRecordFixture(t)
+			metav1.SetMetaDataAnnotation(&measurement.ObjectMeta, profilingrun.AdmissionAnnotation, test.admission)
+			fixture := newReconcilerFixtureWithMeasurement(t, measurement, measurementStageAttemptActive)
+			result, err := fixture.reconciler.Reconcile(context.Background(), fixture.request)
+			if err != nil || result.RequeueAfter != test.requeue || fixture.sequence.calls != 0 || fixture.writer.calls != 0 {
+				t.Fatalf("result=%+v err=%v sequence=%d writer=%d", result, err, fixture.sequence.calls, fixture.writer.calls)
+			}
+			current := fixture.current(t)
+			if current.Status.Phase != test.phase || current.Status.Result != nil {
+				t.Fatalf("status = %#v", current.Status)
+			}
+			if _, err := fixture.reconciler.Reconcile(context.Background(), fixture.request); err != nil || fixture.sequence.calls != 0 {
+				t.Fatalf("second reconcile err=%v sequence=%d", err, fixture.sequence.calls)
+			}
+			if test.phase != "" && fixture.kube.patches != 1 {
+				t.Fatalf("refusal status patches = %d, want 1", fixture.kube.patches)
+			}
+		})
+	}
+}
+
 func TestNewPowerModeTransitionCostReconcilerRequiresExactPorts(t *testing.T) {
 	measurement, _, scheme := preparationRecordFixture(t)
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(measurement).Build()
@@ -184,6 +218,9 @@ func newReconcilerFixtureWithMeasurement(
 	t.Helper()
 	_, prepared, scheme := preparationRecordFixture(t)
 	measurement.Generation = 3
+	if _, set := measurement.Annotations[profilingrun.AdmissionAnnotation]; !set {
+		metav1.SetMetaDataAnnotation(&measurement.ObjectMeta, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(time.Unix(0, 0)))
+	}
 	attempts := []FinalizedAttempt{
 		sequenceFinalizedAttempt(t, prepared, 0, transitioncost.VerdictAccepted, "d0-a1"),
 		sequenceFinalizedAttempt(t, prepared, 1, transitioncost.VerdictInvalid, "d1-a1"),

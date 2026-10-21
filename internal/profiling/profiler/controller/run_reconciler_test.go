@@ -13,6 +13,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -99,6 +100,7 @@ func TestRunReconcilerResolvesThenRecordsOneMeasurementJob(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run := testRun()
+	grant(run)
 	prepared := currentPreparedRun(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	resolver := &recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)}
@@ -131,6 +133,7 @@ func TestRunReconcilerEndsWithoutJobWhenRequiredStateIsUnconfirmed(t *testing.T)
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, resolved := testActuatedRunAndResolved(t)
+	grant(run)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
@@ -171,6 +174,7 @@ func TestRunReconcilerUsesNewestSuccessfulTransitionOnly(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, resolved := testActuatedRunAndResolved(t)
+	grant(run)
 	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	matching := completedTransitionForRun(run, resolved, "matching", resolved.Prepared.RunConfig.Actuation.PowerMode, base)
 	different := completedTransitionForRun(run, resolved, "different", "MAXN", base.Add(time.Minute))
@@ -208,6 +212,7 @@ func TestRunReconcilerRecordsConfirmingTransitionBeforeCreatingJob(t *testing.T)
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, resolved := testActuatedRunAndResolved(t)
+	grant(run)
 	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	older := completedTransitionForRun(run, resolved, "older", "MAXN", base)
 	confirming := completedTransitionForRun(
@@ -558,6 +563,7 @@ func TestRunReconcilerReturnsTransitionErrors(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run := testRun()
+	grant(run)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	want := errors.New("unresolved execution facts")
 	reconciler, err := NewRunReconciler(
@@ -586,6 +592,7 @@ func TestRunReconcilerPublishesTerminalResolutionFailureWithoutRequeue(t *testin
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run := testRun()
+	grant(run)
 	run.Generation = 7
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	resolver := &recordingRunConfigResolver{
@@ -713,4 +720,61 @@ func findRunCondition(conditions []metav1.Condition, conditionType string) *meta
 		}
 	}
 	return nil
+}
+
+// grant records ChillServer's admission of a root Run.
+func grant(run *edgev1alpha1.ProfilingRun) {
+	run.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}
+}
+
+func TestRunReconcilerWaitsForAdmissionOfRootRunOnly(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, admission, owner string
+		requeue                time.Duration
+		reason                 string
+		jobs                   int
+	}{
+		{"root not admitted", "", "", 5 * time.Second, "", 0},
+		{"root refused", profilingrun.RefusedAdmission("NodeServing", "serving/a"), "", 0, "NodeServing", 0},
+		{"campaign child", "", "BatchEnergyOptimization", 0, "", 1},
+		{"idle baseline child", "", "ModelLoadedIdleBaseline", 0, "", 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run := testRun()
+			run.Annotations = map[string]string{profilingrun.AdmissionAnnotation: test.admission}
+			if test.owner != "" {
+				run.OwnerReferences = []metav1.OwnerReference{{
+					APIVersion: edgev1alpha1.GroupVersion.String(), Kind: test.owner,
+					Name: "root", UID: "root-uid", Controller: ptr.To(true),
+				}}
+			}
+			kubeClient := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithStatusSubresource(run).WithObjects(run).Build()
+			resolver := &recordingRunConfigResolver{result: resolvedRunForPrepared(t, currentPreparedRun(t))}
+			jobs := &recordingExecutionJobs{}
+			reconciler, err := NewRunReconciler(kubeClient, resolver, jobs, &recordingRunEvidenceFinalizer{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+			result, err := reconciler.Reconcile(context.Background(), request)
+			if err != nil || result.RequeueAfter != test.requeue || jobs.calls != test.jobs {
+				t.Fatalf("result=%#v err=%v jobs=%d", result, err, jobs.calls)
+			}
+			actual := &edgev1alpha1.ProfilingRun{}
+			if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+				t.Fatal(err)
+			}
+			condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
+			if test.reason == "" {
+				if test.jobs == 0 && (condition != nil || resolver.calls != 0) {
+					t.Fatalf("waiting Run progressed: %#v", actual.Status)
+				}
+				return
+			}
+			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != test.reason || jobs.calls != 0 {
+				t.Fatalf("refused Run status = %#v", actual.Status)
+			}
+		})
+	}
 }

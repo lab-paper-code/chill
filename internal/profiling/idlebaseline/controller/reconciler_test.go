@@ -3,11 +3,13 @@ package controller
 import (
 	"context"
 	"testing"
+	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -212,6 +214,40 @@ func TestRunTerminalIgnoresTerminalReasonOnUnrelatedCondition(t *testing.T) {
 		Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed",
 	}}) {
 		t.Fatal("owned execution terminal condition was ignored")
+	}
+}
+
+func TestReconcilerWaitsForAdmission(t *testing.T) {
+	for _, test := range []struct {
+		name, admission string
+		requeue         time.Duration
+		phase           string
+	}{
+		{"not admitted", "", 5 * time.Second, ""},
+		{"refused", profilingrun.RefusedAdmission("NodeServing", "serving/a"), 0, edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parent := testBaselineParent()
+			parent.Annotations = map[string]string{profilingrun.AdmissionAnnotation: test.admission}
+			kube := baselineFakeClient(t, parent)
+			reconciler := newTestReconciler(t, kube, &fakeBaselineDeriver{}, &fakeBaselineResultWriter{})
+			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)})
+			if err != nil || result.RequeueAfter != test.requeue {
+				t.Fatalf("result = %#v, err = %v", result, err)
+			}
+			updated := &edgev1alpha1.ModelLoadedIdleBaseline{}
+			if err := kube.Get(context.Background(), client.ObjectKeyFromObject(parent), updated); err != nil {
+				t.Fatal(err)
+			}
+			actuations := &edgev1alpha1.NodeActuationList{}
+			if err := kube.List(context.Background(), actuations); err != nil {
+				t.Fatal(err)
+			}
+			assertRunCount(t, kube, parent.Namespace, 0)
+			if updated.Status.Phase != test.phase || len(actuations.Items) != 0 {
+				t.Fatalf("phase = %q, NodeActuations = %d", updated.Status.Phase, len(actuations.Items))
+			}
+		})
 	}
 }
 

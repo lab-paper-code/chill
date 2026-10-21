@@ -230,6 +230,20 @@ func TestCurvePlanSourceRecoveryRequiresOwnershipAndFrozenNode(t *testing.T) {
 		preparer.requests[prepared].Measurement.Batch != plan.PlannedBatchSizes()[0] || store.puts != 0 {
 		t.Fatalf("pre-child preparation = %+v, puts %d", preparer.requests[prepared:], store.puts)
 	}
+
+	// An owned valid Run means no transition is needed; a measurement-invalid
+	// Run is not used, so the transition is prepared again.
+	owned := edgev1alpha1.ProfilingRun{ObjectMeta: ownedByCampaign(parent)}
+	modelReader.runs = []edgev1alpha1.ProfilingRun{owned}
+	prepared = len(preparer.requests)
+	if _, _, transition, err := source.Resolve(context.Background(), parent); err != nil || transition != nil || len(preparer.requests) != prepared {
+		t.Fatalf("valid owned Run: transition=%+v err=%v", transition, err)
+	}
+	owned.Annotations = map[string]string{profilingrun.InvalidAnnotation: "PowerChangedDuringMeasurement actuation"}
+	modelReader.runs = []edgev1alpha1.ProfilingRun{owned}
+	if _, _, transition, err := source.Resolve(context.Background(), parent); err != nil || transition == nil || len(preparer.requests) != prepared+1 {
+		t.Fatalf("invalid owned Run: transition=%+v err=%v", transition, err)
+	}
 }
 
 func TestBindTransitionToPlanRejectsNodeUIDMismatch(t *testing.T) {

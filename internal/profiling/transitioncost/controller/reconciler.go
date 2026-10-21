@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+const admissionWait = 5 * time.Second
 
 type measurementAdvancer interface {
 	advance(context.Context, *edgev1alpha1.PowerModeTransitionCost) (measurementProgress, error)
@@ -53,6 +57,22 @@ func (r *powerModeTransitionCostReconciler) Reconcile(
 	}
 	if !measurement.DeletionTimestamp.IsZero() || completeTerminalMeasurementStatus(measurement) {
 		return ctrl.Result{}, nil
+	}
+	// A measurement that has not reported Measuring waits for ChillServer's
+	// admission before its preparation record, Jobs, or NodeActuations.
+	if measurement.Status.Phase != edgev1alpha1.PowerModeTransitionCostPhaseMeasuring {
+		granted, _, refused := profilingrun.Admission(measurement.Annotations)
+		if refused != "" {
+			// The status has no reason field; the reason stays in the admission annotation.
+			status := projectMeasurementStatus(
+				measurement, edgev1alpha1.PowerModeTransitionCostPhaseFailed,
+				make([]measurementResultDirection, 2), nil,
+			)
+			return ctrl.Result{}, r.patchStatus(ctx, measurement, status)
+		}
+		if !granted {
+			return ctrl.Result{RequeueAfter: admissionWait}, nil
+		}
 	}
 
 	progress, err := r.sequence.advance(ctx, measurement)

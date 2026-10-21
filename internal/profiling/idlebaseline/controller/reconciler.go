@@ -15,13 +15,17 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const idleBaselineKind = "ModelLoadedIdleBaseline"
+const (
+	idleBaselineKind = "ModelLoadedIdleBaseline"
+	admissionWait    = 5 * time.Second
+)
 
 type BaselineDeriver interface {
 	Derive(
@@ -94,6 +98,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		CompletedRuns:      int32(len(accepted)),
 	}
 	if len(runs) == 0 {
+		// The baseline has not started until it reported Measuring: wait for
+		// ChillServer's admission before the first NodeActuation or Run.
+		if parent.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseMeasuring {
+			granted, _, refused := profilingrun.Admission(parent.Annotations)
+			if refused != "" {
+				// The status has no reason field; the reason stays in the admission annotation.
+				status.Phase = edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient
+				return ctrl.Result{}, r.patchStatus(ctx, parent, status)
+			}
+			if !granted {
+				return ctrl.Result{RequeueAfter: admissionWait}, nil
+			}
+		}
 		established, failed, stateErr := r.ensureRequiredState(ctx, parent)
 		if stateErr != nil {
 			return ctrl.Result{}, stateErr

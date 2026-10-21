@@ -693,7 +693,8 @@ func resolvedRun(
 
 func validRun() *edgev1alpha1.ProfilingRun {
 	return &edgev1alpha1.ProfilingRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "durable-job-identity", Namespace: profilerIntegrationNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: "durable-job-identity", Namespace: profilerIntegrationNamespace,
+			Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Now())}},
 		Spec: edgev1alpha1.ProfilingRunSpec{
 			MeasurementStateSpec: edgev1alpha1.MeasurementStateSpec{
 				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{

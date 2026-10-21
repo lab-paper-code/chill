@@ -315,12 +315,17 @@ func (s *CurvePlanSource) recoverTransition(
 	if err := s.projector.reader.List(ctx, runs, matching...); err != nil {
 		return nil, fmt.Errorf("list BatchEnergyOptimization ProfilingRuns: %w", err)
 	}
+	valid := 0
 	for index := range runs.Items {
 		if !controlledByParent(parent, &runs.Items[index]) {
 			return nil, fmt.Errorf("ProfilingRun %q is not controller-owned by this BatchEnergyOptimization", runs.Items[index].Name)
 		}
+		// A Run marked measurement-invalid is not evidence.
+		if _, invalid := runs.Items[index].Annotations[profilingrun.InvalidAnnotation]; !invalid {
+			valid++
+		}
 	}
-	if len(runs.Items) > 0 {
+	if valid > 0 {
 		return nil, nil
 	}
 	batches := plan.PlannedBatchSizes()
