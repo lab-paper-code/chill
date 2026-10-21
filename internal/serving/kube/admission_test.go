@@ -15,6 +15,7 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -29,13 +30,20 @@ type admissionHarness struct {
 
 func newAdmissionHarness(t *testing.T, kubeObjects ...client.Object) *admissionHarness {
 	t.Helper()
-	manager, _ := newManagerHarness(t)
 	_, node, _, _ := observerSourceFixture()
 	objects := []runtime.Object{node}
 	for _, o := range kubeObjects {
 		objects = append(objects, o)
 	}
 	kube := kubefake.NewSimpleClientset(objects...)
+	return &admissionHarness{t: t, controller: newAdmissionController(t, kube), kube: kube, node: node}
+}
+
+// newAdmissionController builds a scheduler controller on the fake store and
+// the given Kubernetes client.
+func newAdmissionController(t *testing.T, kube kubernetes.Interface) *SchedulerController {
+	t.Helper()
+	manager, _ := newManagerHarness(t)
 	manager.observer.kube = kube
 	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
@@ -53,7 +61,7 @@ func newAdmissionHarness(t *testing.T, kubeObjects ...client.Object) *admissionH
 		t.Fatal(err)
 	}
 	t.Cleanup(controller.Close)
-	return &admissionHarness{t: t, controller: controller, kube: kube, node: node}
+	return controller
 }
 
 func (h *admissionHarness) create(objects ...client.Object) {

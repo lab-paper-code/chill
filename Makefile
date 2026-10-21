@@ -157,6 +157,7 @@ test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-l
 .PHONY: test-e2e
 test-e2e: ## Run e2e tests; requires the current kube context to be kind-*.
 	go test ./test/e2e/ -v -ginkgo.v
+	go test -tags e2e ./internal/serving/kube/ -run TestE2EKind -v -count=1
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
