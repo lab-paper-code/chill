@@ -78,6 +78,8 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 			response = core.PodList{TypeMeta: meta.TypeMeta{Kind: "PodList", APIVersion: "v1"}, Items: []core.Pod{*pod}}
 		case strings.HasSuffix(r.URL.Path, "/pods/"+pod.Name):
 			response = pod
+		case strings.HasSuffix(r.URL.Path, "/services"):
+			response = core.ServiceList{TypeMeta: meta.TypeMeta{Kind: "ServiceList", APIVersion: "v1"}, Items: []core.Service{*service}}
 		case strings.Contains(r.URL.Path, "/services/"):
 			response = service
 		default:

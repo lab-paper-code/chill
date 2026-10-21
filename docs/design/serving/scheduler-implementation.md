@@ -105,8 +105,13 @@ unknown instance·관측 공백·오래된 자료는 판단의 입력 상태에 
 현재와 목표의 Node UID·단일 POOL 소속·ready/capacity/resource 상태를 함께 캡처한다.
 완료/실패 Pod는 이미 제외하던 자원 예산 캡처와 steady source refresh에서
 Kubernetes field selector로 제외하여 종료된 profiling 이력의 반복 전송·해석을 피한다.
-source refresh의 최초/재시작 watch 복구는 전체 Pod를 읽고, 이후 빠진 retained
-executor는 기존 exact Pod GET과 UID/container 종료 확인을 유지한다.
+source refresh의 최초/재시작 watch 복구는 전체 Pod를 읽는다. source refresh는 instance 수와
+관계없이 공유 client로 네 번 읽는다. Node 목록, Pod 목록, Service 목록, 그리고 native probe 뒤의
+namespace 전체 Pod 목록이다. 마지막 목록이 probe한 executor가 그 Service가 고르는 유일한 실행
+중 container임을 확인하고, 빠진 retained executor의 UID/container 종료도 확인한다. native probe
+하나는 2초 안에 끝나므로 느린 executor가 source lock을 refresh 기한까지 쥐지 않는다.
+근거: d9 병렬 단계에서 instance마다 Service와 Pod를 세 번 읽어(instance 6개면 20회) refresh가
+review가 밀린 limiter 안에서 30초 기한을 모두 썼다.
 
 ### 5.2 용량표와 노드 계획
 

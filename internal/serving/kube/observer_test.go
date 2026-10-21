@@ -429,7 +429,7 @@ func TestObserverRefreshRetainsUnlabelledParentSource(t *testing.T) {
 	observer := newTestObserver(t)
 	observer.sources[id] = &nativeSource{uid: pod.UID, containerID: status.ContainerID}
 	resources := map[types.UID]client.Object{replicaSet.UID: replicaSet, deployment.UID: deployment}
-	if _, publish := observer.refreshSource(context.Background(), pod, nil, nil, nil, nil, resources); publish {
+	if _, publish, probed := observer.probeSource(context.Background(), pod, nil, nil, nil, nil, resources, nil, nil); publish || probed != nil {
 		t.Fatal("unlabelled retained source became eligible")
 	}
 	if source := observer.sources[id]; source.ownerUID != uid || !source.stopped {

@@ -168,6 +168,22 @@ func nativeInstanceService(ctx context.Context, kube kubernetes.Interface, pod *
 	return service, nil
 }
 
+// listedInstanceService finds the Pod's own Service in one namespace list; the
+// caller checks the selected executor against a later Pod list.
+func listedInstanceService(pod *core.Pod, services map[string]*core.Service, listErr error) (*core.Service, error) {
+	if listErr != nil {
+		return nil, listErr
+	}
+	service := services[instanceServicePrefix+string(pod.UID)]
+	if service == nil {
+		return nil, errors.New("native Service unavailable")
+	}
+	if service.DeletionTimestamp != nil {
+		return nil, errors.New("native Service is being removed")
+	}
+	return service, validateInstanceService(pod, service)
+}
+
 func instanceServiceEndpoint(service *core.Service) (string, error) {
 	if net.ParseIP(service.Spec.ClusterIP) == nil {
 		return "", errors.New("native Service ClusterIP unavailable")
