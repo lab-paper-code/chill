@@ -363,9 +363,9 @@ func TestCapacityPlanEndingFeasibleRanksBeforeTransientExceedance(t *testing.T) 
 	}
 }
 
-// §9 6 판정: a mode change stops the routed instance before the route, so its
-// plan is no candidate; a replacement on free CPUs removes after the route
-// and keeps the current κ until then.
+// §9 6 판정: a mode change stops the routed instance before the power action
+// (κ_ret 0); a replacement on free CPUs removes after the route and keeps the
+// current κ until then.
 func TestCapacityRetainedKappaFollowsTheChain(t *testing.T) {
 	s, snap := schedulerFixture()
 	current := snap.Instances[0]
@@ -385,18 +385,41 @@ func TestCapacityRetainedKappaFollowsTheChain(t *testing.T) {
 	}
 	snap.Costs[2].ID += "-fixed"
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 50 }))
-	retained, reasons := map[string]float64{}, map[string]string{}
+	retained := map[string]float64{}
 	for _, plan := range poolsPlans(d, n1) {
 		if plan.Eligible {
 			retained[plan.Key] = plan.KappaRetained["w1"]
 		}
-		reasons[plan.Key] = plan.Reason
 	}
-	if _, ok := retained[eco.Profile.ID+"/b1/w1"]; ok || reasons[eco.Profile.ID+"/b1/w1"] != schedulerRoutedStopsFirst {
-		t.Fatalf("mode change stopping the routed instance first stayed a candidate: %v %v", retained, reasons)
+	if k, ok := retained[eco.Profile.ID+"/b1/w1"]; !ok || k != 0 {
+		t.Fatalf("mode change retained κ: %v", retained)
 	}
 	if k, ok := retained[other.Profile.ID+"/b1/w1"]; !ok || k != 50 {
 		t.Fatalf("replacement removed after the route lost keep κ: %v", retained)
+	}
+}
+
+// A Workload served by one Node can meet its SLO only by changing that Node's
+// mode: the change stops the routed instance before the power action, the
+// chain charges that outage to κ_ret and r, and the plan stays a candidate.
+func TestCapacitySingleNodeRaisesItsMode(t *testing.T) {
+	s, snap := schedulerFixture()
+	current := snap.Instances[0]
+	n1 := current.Node
+	raised := poolsInstance(current, "raised", n1, schedulerTestEcoMode, "w1")
+	snap.Options = append(snap.Options, poolsOption(raised))
+	unloaded := snap.Baselines[0]
+	unloaded.ID, unloaded.PowerMode = "unloaded-n1-eco", schedulerTestEcoMode
+	snap.Baselines = append(snap.Baselines, unloaded)
+	snap.Costs = []OperationCost{
+		poolsCost(schedulerActionPower, n1, "fixed", schedulerTestEcoMode, "", schedulerState(current)),
+		poolsCost(schedulerActionRemove, n1, schedulerState(current), "unloaded", schedulerTestEcoMode),
+		poolsCost(schedulerActionPrepare, n1, "unloaded", schedulerState(raised), schedulerTestEcoMode),
+	}
+	capacityLoad(s, &snap, snap.Workloads[0], 30)
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{current.Profile.ID: 10, raised.Profile.ID: 50})))
+	if d.Target == nil || d.Target.Nodes[0].PowerMode != schedulerTestEcoMode || !slices.ContainsFunc(d.Target.Instances, func(i SchedulerInstance) bool { return i.Profile.ID == raised.Profile.ID }) {
+		t.Fatalf("one Node could not change its mode to meet the SLO: %s %v %+v", d.Status, d.Reasons, poolsPlans(d, n1))
 	}
 }
 

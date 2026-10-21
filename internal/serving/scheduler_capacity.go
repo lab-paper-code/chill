@@ -716,9 +716,11 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		plan.record.Reason = reason
 		return plan
 	}
-	// Make before break: a routed instance stops only after the route has
-	// moved its load to the prepared capacity.
-	if slices.ContainsFunc(current, func(i SchedulerInstance) bool {
+	// Make before break: a replacement on the Node's mode stops a routed
+	// instance only after the route has moved its load to the prepared
+	// capacity. A mode change stops every instance before the power action;
+	// κ_ret and r carry that outage.
+	if mode == node.PowerMode && slices.ContainsFunc(current, func(i SchedulerInstance) bool {
 		return stopped[i.ID] && !i.Stopped && schedulerInstanceRouted(p.keep.Routing, i.ID)
 	}) {
 		plan.record.Reason = schedulerRoutedStopsFirst
@@ -727,7 +729,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	p.annotate(plan, chosenItems)
 	for _, i := range current {
 		w, ok := p.index[i.WorkloadUID]
-		if weight := p.keep.Routing[i.WorkloadUID][i.ID]; ok && i.Ready && !i.Stopped && weight > 0 {
+		if weight := p.keep.Routing[i.WorkloadUID][i.ID]; ok && !stopped[i.ID] && i.Ready && !i.Stopped && weight > 0 {
 			k, row := p.currentKappa(i)
 			plan.retained[w] = append(plan.retained[w], capacityItem{id: i.ID, kappa: k, e: capacityInputEnergy(i), weight: weight, row: row})
 		}
