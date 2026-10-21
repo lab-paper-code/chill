@@ -27,6 +27,8 @@ type cellsOption struct {
 	removeJ              float64
 	node                 string
 	limit                int
+	group                string // the option a batch variant belongs to: one variant per plan
+	mode                 int    // power mode: one mode per plan
 }
 
 // cellsNodes are the five nodes m4 r7 planned on (Jetsons excluded), with the
@@ -35,6 +37,7 @@ func cellsNodes() [][]cellsOption {
 	node := func(name string, unloaded, removeS, removeJ float64, limit int, options ...cellsOption) []cellsOption {
 		for k := range options {
 			options[k].node, options[k].unloaded, options[k].removeS, options[k].removeJ, options[k].limit = name, unloaded, removeS, removeJ, limit
+			options[k].group = options[k].name
 		}
 		return options
 	}
@@ -55,6 +58,38 @@ func cellsNodes() [][]cellsOption {
 			cellsOption{name: "cpu-q1", kappa: 63.596, e: 0.27643, idle: 51.6730, prepareS: 13.110, prepareJ: 712.615, plc: true, vlmCPU: true},
 			cellsOption{name: "cpu-q2", kappa: 69.151, e: 0.32284, idle: 49.7983, prepareS: 10.681, prepareJ: 635.085}),
 	}
+}
+
+// cellsScaled grows cellsNodes toward the E5 space: every option gets a b2
+// variant (κ 1.3×, e 0.9×) when variants is 2, and copies of genesis3, rasp5
+// and lattepanda stand in for jetsono, jetsonx and jetson-nano with modes power
+// modes each (mode m: κ and loaded watts (1 − 0.15m)×, prepare (1 + 0.1m)×).
+func cellsScaled(variants, modes int) [][]cellsOption {
+	nodes := cellsNodes()
+	if modes > 0 {
+		for i, name := range []string{"jetsono", "jetsonx", "jetson-nano"} {
+			k := []int{4, 0, 2}[i]
+			copied := []cellsOption{}
+			for m := range modes {
+				for _, o := range nodes[k] {
+					f := 1 - 0.15*float64(m)
+					o.node, o.mode, o.name = name, m, fmt.Sprint(o.name, "@", m)
+					o.group, o.kappa, o.idle, o.prepareS = o.name, f*o.kappa, o.unloaded+f*(o.idle-o.unloaded), (1+0.1*float64(m))*o.prepareS
+					copied = append(copied, o)
+				}
+			}
+			nodes = append(nodes, copied)
+		}
+	}
+	for n := range nodes {
+		for _, o := range slices.Clone(nodes[n]) {
+			if variants > 1 {
+				o.name, o.kappa, o.e = o.name+"-b2", 1.3*o.kappa, 0.9*o.e
+				nodes[n] = append(nodes[n], o)
+			}
+		}
+	}
+	return nodes
 }
 
 // cellsWorkloads: mobilenet (measured), PLC-like (synthetic: κ 1.5×, e 0.4×
@@ -105,10 +140,11 @@ var cellsCurrent = map[string]bool{
 }
 
 // cellsPlanner builds the node plans the planner would hold for the pairs: per
-// node every set of at most limit instances of one model with at most one
-// CUDA instance (nodePlans holds one model per node plan); plans[n][0] keeps
+// node every set of at most limit instances of one model and one power mode,
+// one variant per option and at most one CUDA instance (nodePlans holds one
+// model per node plan); plans[n][0] keeps
 // the current instances. Removals run after the route.
-func cellsPlanner(rates map[int]float64) *capacityPlanner {
+func cellsPlanner(rates map[int]float64, nodes [][]cellsOption) *capacityPlanner {
 	s := capacityTestSettings
 	s.ComparisonPeriod, s.MaxReplicas, s.MaxInstances = 10*time.Minute, 8, 16
 	p := &capacityPlanner{ctx: context.Background(), settings: s, index: map[string]int{}}
@@ -128,7 +164,7 @@ func cellsPlanner(rates map[int]float64) *capacityPlanner {
 	for uid := range p.index {
 		currents := []cellsPair{}
 		total := 0.0
-		for _, options := range cellsNodes() {
+		for _, options := range nodes {
 			for _, c := range cellsPairs(options) {
 				if cellsCurrent[c.id] && cellsWorkloads[c.w].name == uid {
 					currents, total = append(currents, c), total+c.opt.kappa
@@ -147,7 +183,7 @@ func cellsPlanner(rates map[int]float64) *capacityPlanner {
 	}
 	pre, post := 0.0, 0.0
 	routes := []float64{0}
-	for _, options := range cellsNodes() {
+	for _, options := range nodes {
 		pairs := slices.DeleteFunc(cellsPairs(options), func(c cellsPair) bool { _, ok := index[c.w]; return !ok })
 		current := slices.DeleteFunc(slices.Clone(pairs), func(c cellsPair) bool { return !cellsCurrent[c.id] })
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{Name: options[0].node, UID: options[0].node}})
@@ -192,22 +228,8 @@ func cellsPlanner(rates map[int]float64) *capacityPlanner {
 			return plan
 		}
 		plans := []*capacityPlan{plan(current, true)}
-		for mask := 1; mask < 1<<len(pairs); mask++ {
-			set := []cellsPair{}
-			cuda := 0
-			for k, c := range pairs {
-				if mask&(1<<k) != 0 {
-					set = append(set, c)
-					if c.opt.cuda {
-						cuda++
-					}
-				}
-			}
-			same := len(set) == len(current) && !slices.ContainsFunc(set, func(c cellsPair) bool { return !cellsCurrent[c.id] })
-			mixed := slices.ContainsFunc(set, func(c cellsPair) bool { return c.w != set[0].w })
-			if len(set) <= options[0].limit && cuda <= 1 && !same && !mixed {
-				plans = append(plans, plan(set, false))
-			}
+		for _, set := range cellsSets(pairs, current, options[0].limit) {
+			plans = append(plans, plan(set, false))
 		}
 		if len(current) > 0 {
 			plans = append(plans, plan(nil, false)) // remove every instance
@@ -222,8 +244,46 @@ func cellsPlanner(rates map[int]float64) *capacityPlanner {
 	return p
 }
 
-// cellsSolve runs the DP at the given cell count.
-func cellsSolve(t testing.TB, p *capacityPlanner, cells int) (capacityResult, time.Duration) {
+// cellsSets lists the instance sets of one node plan: one power mode and one
+// Workload per set, at most limit instances, one variant per option, at most
+// one CUDA instance, and the current instances excluded.
+func cellsSets(pairs, current []cellsPair, limit int) [][]cellsPair {
+	groups := map[[2]int][]cellsPair{}
+	keys := [][2]int{}
+	for _, c := range pairs {
+		key := [2]int{c.opt.mode, c.w}
+		if groups[key] == nil {
+			keys = append(keys, key)
+		}
+		groups[key] = append(groups[key], c)
+	}
+	sets := [][]cellsPair{}
+	for _, key := range keys {
+		group := groups[key]
+		for mask := 1; mask < 1<<len(group); mask++ {
+			set := []cellsPair{}
+			cuda, seen, twice := 0, map[string]bool{}, false
+			for k, c := range group {
+				if mask&(1<<k) != 0 {
+					set = append(set, c)
+					twice = twice || seen[c.opt.group]
+					seen[c.opt.group] = true
+					if c.opt.cuda {
+						cuda++
+					}
+				}
+			}
+			same := len(set) == len(current) && !slices.ContainsFunc(set, func(c cellsPair) bool { return !cellsCurrent[c.id] })
+			if len(set) <= limit && cuda <= 1 && !same && !twice {
+				sets = append(sets, set)
+			}
+		}
+	}
+	return sets
+}
+
+// cellsUse sets the DP cell count and the plans' serve tables.
+func cellsUse(p *capacityPlanner, cells int) {
 	p.cells, p.paretoMax = cells, 0
 	for w := range p.ws {
 		p.ws[w].cells, p.ws[w].unit = cells, p.ws[w].rate/float64(cells)
@@ -233,6 +293,11 @@ func cellsSolve(t testing.TB, p *capacityPlanner, cells int) (capacityResult, ti
 			p.serveTable(plan)
 		}
 	}
+}
+
+// cellsSolve runs the DP at the given cell count.
+func cellsSolve(t testing.TB, p *capacityPlanner, cells int) (capacityResult, time.Duration) {
+	cellsUse(p, cells)
 	start := time.Now()
 	best, err := p.solve()
 	if err != nil {
@@ -297,7 +362,7 @@ func TestCapacityCellSizeOverProvisioning(t *testing.T) {
 				names = append(names, fmt.Sprintf("%s=%g", wl.name, rate))
 			}
 		}
-		p := cellsPlanner(j.rates)
+		p := cellsPlanner(j.rates, cellsNodes())
 		start := time.Now()
 		exact := capacityBruteForce(p)
 		brute := time.Since(start)
@@ -342,5 +407,178 @@ func TestCapacityCellSizeOverProvisioning(t *testing.T) {
 	wg.Wait()
 	for _, j := range big {
 		run(j)
+	}
+}
+
+// cellsLocal is a best-improvement search over plan sets from start (keep when
+// nil): each step moves to the best plan set that changes at most k Nodes. It
+// returns the result, the steps taken and the plan sets evaluated.
+func cellsLocal(p *capacityPlanner, k int, start []int) (capacityResult, int, int) {
+	choice := slices.Clone(start)
+	if choice == nil {
+		choice = make([]int, len(p.plans))
+	}
+	best := p.evaluate(slices.Clone(choice), p.routeOf(choice))
+	steps, evals := 0, 0
+	for {
+		var step *capacityResult
+		var walk func(from, left int, c []int)
+		walk = func(from, left int, c []int) {
+			for a := from; a < len(c); a++ {
+				for j := range p.plans[a] {
+					if j == choice[a] {
+						continue
+					}
+					d := slices.Clone(c)
+					d[a] = j
+					evals++
+					if res := p.evaluate(d, p.routeOf(d)); res.better(step) {
+						step = &res
+					}
+					if left > 1 {
+						walk(a+1, left-1, d)
+					}
+				}
+			}
+		}
+		walk(0, k, choice)
+		if step == nil || !step.better(&best) {
+			return best, steps, evals
+		}
+		best, choice, steps = *step, step.choice, steps+1
+	}
+}
+
+// cellsBrute is capacityBruteForce split over the plans of the first Node,
+// eight at a time. The result's choice[0] is 0; key and joules are exact.
+func cellsBrute(p *capacityPlanner) *capacityResult {
+	results := make([]*capacityResult, len(p.plans[0]))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for j := range p.plans[0] {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			q := *p
+			q.plans = slices.Clone(p.plans)
+			q.plans[0] = p.plans[0][j : j+1]
+			results[j] = capacityBruteForce(&q)
+		}()
+	}
+	wg.Wait()
+	var best *capacityResult
+	for _, res := range results {
+		if res != nil && res.better(best) {
+			best = res
+		}
+	}
+	return best
+}
+
+// Plan search at E5 scale. The local search (k = 1, 2 Nodes per step from
+// keep, then k = 3 from the k = 2 result) against the exact minimum on 24 load
+// mixes, over the r7 nodes, the same nodes with b2 variants and 8 Nodes (b1, 2
+// power modes on the Jetson copies). Then the plan counts, local-search time,
+// exact time and DP time at 2 cells as cellsScaled grows the space toward E5
+// (8 Nodes, 3 Workloads, b2 variants, up to 4 power modes on the Jetson
+// copies). A DP past dpLimit is logged as a lower bound and the larger spaces
+// skip it. CHILL_DP_CELLS=1 go test ./internal/serving -run PlanSearch -v -timeout 0
+// (about 26 minutes).
+func TestCapacityPlanSearch(t *testing.T) {
+	if os.Getenv("CHILL_DP_CELLS") == "" {
+		t.Skip("measurement sweep; set CHILL_DP_CELLS=1")
+	}
+	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}} {
+		nodes := cellsScaled(c.variants, c.modes)
+		mixes := 0
+		worst, differs, maxSteps, maxEvals := [4]float64{}, [4]int{}, [4]int{}, [4]int{}
+		for _, mnv2 := range []float64{20, 60, 110} {
+			for _, rates := range []map[int]float64{{0: mnv2, 1: 15}, {0: mnv2, 1: 40}, {0: mnv2, 2: 0.3}, {0: mnv2, 2: 1.2},
+				{0: mnv2, 1: 15, 2: 0.3}, {0: mnv2, 1: 15, 2: 1.2}, {0: mnv2, 1: 40, 2: 0.3}, {0: mnv2, 1: 40, 2: 1.2}} {
+				p := cellsPlanner(rates, nodes)
+				exact := cellsBrute(p)
+				mixes++
+				var prev []int
+				for k := 1; k <= 3; k++ {
+					local, steps, evals := cellsLocal(p, k, prev)
+					if prev = nil; k == 2 {
+						prev = local.choice
+					}
+					maxSteps[k], maxEvals[k] = max(maxSteps[k], steps), max(maxEvals[k], evals)
+					if (exact != nil) != local.feasible {
+						t.Errorf("%+v k %d rates %v: local feasible=%v, exact %v", c, k, rates, local.feasible, exact != nil)
+						continue
+					}
+					if exact == nil {
+						continue
+					}
+					gap := (local.joules - exact.joules) / exact.joules
+					if local.key != exact.key {
+						differs[k]++
+						t.Logf("%+v k=%d %v gapJ=%.1f (%.2f%%)\n  local: %s\n  exact: %s", c, k, rates,
+							local.joules-exact.joules, 100*gap, local.key, exact.key)
+					}
+					worst[k] = max(worst[k], gap)
+				}
+			}
+		}
+		for k := 1; k <= 3; k++ {
+			t.Logf("LOCAL variants=%d modes=%d k=%d mixes=%d differs=%d worstGap=%.3f%% steps<=%d evals<=%d",
+				c.variants, c.modes, k, mixes, differs[k], 100*worst[k], maxSteps[k], maxEvals[k])
+		}
+	}
+	const dpLimit = 5 * time.Minute
+	dpOver := false
+	rates := map[int]float64{0: 60, 1: 40, 2: 1.2}
+	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}, {1, 4}, {2, 1}, {2, 2}, {2, 4}} {
+		p := cellsPlanner(rates, cellsScaled(c.variants, c.modes))
+		cellsUse(p, 2)
+		counts, total, front, sets, pruned := []int{}, 0, 0, 1.0, 1.0
+		for n, plans := range p.plans {
+			f := len(p.frontier(n, p.routes[len(p.routes)-1]))
+			counts, total, front = append(counts, len(plans)), total+len(plans), front+f
+			sets, pruned = sets*float64(len(plans)), pruned*float64(f)
+		}
+		local, prev := [4]string{}, []int(nil)
+		for k := 1; k <= 3; k++ {
+			start := time.Now()
+			res, steps, evals := cellsLocal(p, k, prev)
+			elapsed := time.Since(start)
+			if prev = nil; k == 2 {
+				prev = res.choice
+			}
+			local[k] = fmt.Sprintf("%v %d steps %d evals (%.1f µs each) %.1f J", elapsed.Round(time.Millisecond), steps, evals,
+				float64(elapsed.Microseconds())/float64(evals), res.joules)
+		}
+		exact := "skipped"
+		if sets <= 2e8 {
+			start := time.Now()
+			if res := cellsBrute(p); res != nil {
+				exact = fmt.Sprintf("%v %.1f J", time.Since(start).Round(time.Millisecond), res.joules)
+			}
+		}
+		dp := "skipped"
+		if !dpOver {
+			ctx, cancel := context.WithCancel(context.Background())
+			p.ctx = ctx
+			done := make(chan string, 1)
+			go func() {
+				start := time.Now()
+				res, err := p.solve()
+				if err == nil {
+					done <- fmt.Sprintf("%v %.1f J pareto=%d", time.Since(start).Round(time.Millisecond), res.joules, p.paretoMax)
+				}
+			}()
+			select {
+			case dp = <-done:
+			case <-time.After(dpLimit):
+				dp, dpOver = fmt.Sprintf(">%v", dpLimit), true
+			}
+			cancel() // an unfinished DP stops at its next route time
+		}
+		t.Logf("SCALE variants=%d modes=%d plans=%v sum=%d frontier=%d sets=%.3g frontierSets=%.3g routes=%d\n  dp(2 cells) %s\n  exact %s\n  local k=1 %s\n  local k=2 %s\n  then k=3 %s",
+			c.variants, c.modes, counts, total, front, sets, pruned, len(p.routes), dp, exact, local[1], local[2], local[3])
 	}
 }
