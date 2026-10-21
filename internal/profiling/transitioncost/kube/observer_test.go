@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	transitionkube "github.com/lab-paper-code/chill/internal/profiling/transitioncost/kube"
 	transitionworker "github.com/lab-paper-code/chill/internal/profiling/transitioncost/worker"
@@ -42,10 +43,13 @@ func TestObserverCapturesOneInPlaceTransition(t *testing.T) {
 
 	raw, err := observer.Observe(context.Background(), func() {
 		callbackCount++
-		createActuation(t, kubeClient, successfulActuation(times))
+		setNode(t, kubeClient, transitioned(times))
 	})
 	if err != nil {
 		t.Fatalf("Observe() error = %v", err)
+	}
+	if raw.Generation == nil || *raw.Generation != (transitioncost.PowerModeGeneration{Start: 4, End: 5}) {
+		t.Fatalf("generation = %+v, want 4 to 5", raw.Generation)
 	}
 	if callbackCount != 1 {
 		t.Fatalf("ready callback count = %d, want 1", callbackCount)
@@ -89,12 +93,8 @@ func TestObserverCapturesOneInPlaceTransition(t *testing.T) {
 }
 
 func TestObserverRequiresPreReadyMarkerAbsence(t *testing.T) {
-	kubeClient := newClient(
-		t,
-		service(),
-		readyPod("serving", "containerd://same", 0),
-		successfulActuation(actuationTimes()),
-	)
+	kubeClient := newClient(t, service(), readyPod("serving", "containerd://same", 0))
+	setNode(t, kubeClient, transitioned(actuationTimes()))
 	observer := newObserver(t, kubeClient, testRequest())
 	called := false
 
@@ -115,7 +115,7 @@ func TestObserverRetainsRestartedServingProcess(t *testing.T) {
 	created := make(chan error, 1)
 
 	raw, err := observer.Observe(context.Background(), func() {
-		createActuation(t, kubeClient, successfulActuation(times))
+		setNode(t, kubeClient, transitioned(times))
 		if err := kubeClient.Delete(context.Background(), oldPod.DeepCopy()); err != nil {
 			t.Fatalf("delete old serving Pod: %v", err)
 		}
@@ -139,73 +139,22 @@ func TestObserverRetainsRestartedServingProcess(t *testing.T) {
 
 }
 
-func TestObserverMapsTerminalActuationStages(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		stage     edgev1alpha1.NodeActuationFailureStage
-		actuation bool
-		readBack  bool
-	}{
-		{name: "apply", stage: edgev1alpha1.NodeActuationFailureStageApply, actuation: true},
-		{name: "verify", stage: edgev1alpha1.NodeActuationFailureStageVerify, readBack: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			kubeClient := newClient(t, service(), readyPod("serving", "containerd://same", 0))
-			observer := newObserver(t, kubeClient, testRequest())
-			times := actuationTimes()
-			failed := successfulActuation(times)
-			failed.Status.Phase = edgev1alpha1.NodeActuationPhaseFailed
-			failed.Status.TargetObservation = nil
-			failed.Status.TerminalFailure = &edgev1alpha1.NodeActuationFailure{
-				Stage: test.stage, Reason: "MeasuredFailure", Message: "selected operation failed",
-				OccurredAt: metav1.NewTime(times.target),
-			}
+func TestObserverMapsAgentFailure(t *testing.T) {
+	kubeClient := newClient(t, service(), readyPod("serving", "containerd://same", 0))
+	observer := newObserver(t, kubeClient, testRequest())
 
-			raw, err := observer.Observe(context.Background(), func() {
-				createActuation(t, kubeClient, failed)
-			})
-			if err != nil {
-				t.Fatalf("Observe() error = %v", err)
-			}
-			if (raw.ActuationFailure != nil) != test.actuation ||
-				(raw.TargetReadBackFailure != nil) != test.readBack {
-				t.Fatalf("mapped failures = actuation:%+v read-back:%+v", raw.ActuationFailure, raw.TargetReadBackFailure)
-			}
-			if raw.ObservationEndedAt.IsZero() || !raw.ObservationEndedAt.After(raw.ObservationStartedAt) {
-				t.Fatalf("coverage = %v through %v", raw.ObservationStartedAt, raw.ObservationEndedAt)
-			}
-		})
+	raw, err := observer.Observe(context.Background(), func() {
+		setNode(t, kubeClient, failedTransition(actuationTimes(), false))
+	})
+	if err != nil {
+		t.Fatalf("Observe() error = %v", err)
 	}
-}
-
-func TestObserverDoesNotGeneralizePreApplyFailures(t *testing.T) {
-	for _, stage := range []edgev1alpha1.NodeActuationFailureStage{
-		edgev1alpha1.NodeActuationFailureStageLease,
-		edgev1alpha1.NodeActuationFailureStagePolicy,
-		edgev1alpha1.NodeActuationFailureStageObservePrevious,
-	} {
-		t.Run(string(stage), func(t *testing.T) {
-			kubeClient := newClient(t, service(), readyPod("serving", "containerd://same", 0))
-			observer := newObserver(t, kubeClient, testRequest())
-			failed := successfulActuation(actuationTimes())
-			failed.Status.Phase = edgev1alpha1.NodeActuationPhaseFailed
-			failed.Status.ApplyStartedAt = nil
-			failed.Status.TargetObservation = nil
-			failed.Status.TerminalFailure = &edgev1alpha1.NodeActuationFailure{
-				Stage: stage, Reason: "PreApplyFailure", Message: "pre-apply operation failed",
-				OccurredAt: metav1.Now(),
-			}
-
-			raw, err := observer.Observe(context.Background(), func() {
-				createActuation(t, kubeClient, failed)
-			})
-			if err == nil || !strings.Contains(err.Error(), "unsupported NodeActuation terminal failure stage") {
-				t.Fatalf("Observe() error = %v", err)
-			}
-			if raw.ActuationFailure != nil || raw.TargetReadBackFailure != nil {
-				t.Fatalf("scientific failure slots = %+v/%+v", raw.ActuationFailure, raw.TargetReadBackFailure)
-			}
-		})
+	if raw.ActuationFailure == nil || raw.ActuationFailure.Message != "selected operation failed" ||
+		raw.TargetReadBack != nil || raw.TargetReadBackFailure != nil {
+		t.Fatalf("mapped failures = actuation:%+v read-back:%+v", raw.ActuationFailure, raw.TargetReadBackFailure)
+	}
+	if raw.ObservationEndedAt.IsZero() || !raw.ObservationEndedAt.After(raw.ObservationStartedAt) {
+		t.Fatalf("coverage = %v through %v", raw.ObservationStartedAt, raw.ObservationEndedAt)
 	}
 }
 
@@ -225,15 +174,9 @@ func TestObserverDoesNotUseSettlingFailureAsCompletion(t *testing.T) {
 	})
 	observer := newObserver(t, reader, testRequest())
 	times := actuationTimes()
-	failed := successfulActuation(times)
-	failed.Status.Phase = edgev1alpha1.NodeActuationPhaseFailed
-	failed.Status.TerminalFailure = &edgev1alpha1.NodeActuationFailure{
-		Stage: edgev1alpha1.NodeActuationFailureStageSettle, Reason: "DeadlineExceeded",
-		Message: "operational settling deadline elapsed", OccurredAt: metav1.NewTime(times.target),
-	}
 
 	raw, err := observer.Observe(context.Background(), func() {
-		createActuation(t, kubeClient, failed)
+		setNode(t, kubeClient, failedTransition(times, true))
 		if err := kubeClient.Delete(context.Background(), pod.DeepCopy()); err != nil {
 			t.Fatalf("delete serving Pod: %v", err)
 		}
@@ -315,7 +258,7 @@ func TestObserverDoesNotCloseOnAmbiguousPostReadBackPods(t *testing.T) {
 	observer := newObserver(t, kubeClient, request)
 
 	raw, err := observer.Observe(context.Background(), func() {
-		createActuation(t, kubeClient, successfulActuation(actuationTimes()))
+		setNode(t, kubeClient, transitioned(actuationTimes()))
 		if err := kubeClient.Create(
 			context.Background(), readyPod("serving-b", "containerd://b", 0),
 		); err != nil {
@@ -348,34 +291,62 @@ func TestObserverDoesNotCompleteFromPreTransitionReady(t *testing.T) {
 }
 
 type transitionTimes struct {
-	previous time.Time
-	apply    time.Time
-	target   time.Time
+	apply  time.Time
+	target time.Time
 }
 
 func actuationTimes() transitionTimes {
 	base := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Second)
-	return transitionTimes{
-		previous: base.Add(100 * time.Millisecond),
-		apply:    base.Add(200 * time.Millisecond),
-		target:   base.Add(300 * time.Millisecond),
+	return transitionTimes{apply: base.Add(200 * time.Millisecond), target: base.Add(300 * time.Millisecond)}
+}
+
+const (
+	sourceReadBack = `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":0}}`
+	targetReadBack = `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":1}}`
+)
+
+// transitioned is the Node after the agent verified the target read-back.
+func transitioned(times transitionTimes) func(*corev1.Node) {
+	return func(node *corev1.Node) {
+		setTransition(node, metadata.PowerModePending, targetReadBack, "5", metadata.PowerModeTransitionRecord{
+			PowerMode: "MODE_30W", Generation: 5, ApplyStartedAt: &times.apply, VerifiedAt: &times.target,
+		})
 	}
 }
 
-func successfulActuation(times transitionTimes) *edgev1alpha1.NodeActuation {
-	apply := metav1.NewMicroTime(times.apply)
-	return &edgev1alpha1.NodeActuation{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "measurements", Name: "transition-1"},
-		Status: edgev1alpha1.NodeActuationStatus{
-			Phase: edgev1alpha1.NodeActuationPhaseVerifying,
-			PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: "MAXN", ObservedAt: metav1.NewMicroTime(times.previous),
-			},
-			ApplyStartedAt: &apply,
-			TargetObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: "MODE_30W", ObservedAt: metav1.NewMicroTime(times.target),
-			},
-		},
+// failedTransition is the Node after the agent failed the target, before or
+// after it verified the target read-back.
+func failedTransition(times transitionTimes, verified bool) func(*corev1.Node) {
+	return func(node *corev1.Node) {
+		record := metadata.PowerModeTransitionRecord{
+			PowerMode: "MODE_30W", Generation: 4, ApplyStartedAt: &times.apply, Failure: "selected operation failed",
+		}
+		readBack, generation := sourceReadBack, "4"
+		if verified {
+			record.Generation, record.VerifiedAt, readBack, generation = 5, &times.target, targetReadBack, "5"
+		}
+		setTransition(node, metadata.PowerModeFailed, readBack, generation, record)
+	}
+}
+
+func setTransition(node *corev1.Node, state, readBack, generation string, record metadata.PowerModeTransitionRecord) {
+	raw, _ := json.Marshal(record)
+	node.Labels[metadata.PowerMode] = record.PowerMode
+	node.Labels[metadata.PowerModeState] = state
+	node.Annotations[metadata.PowerActuator] = readBack
+	node.Annotations[metadata.PowerModeGeneration] = generation
+	node.Annotations[metadata.PowerModeTransition] = string(raw)
+}
+
+func setNode(t *testing.T, kubeClient client.Client, mutate func(*corev1.Node)) {
+	t.Helper()
+	node := &corev1.Node{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Name: "jetsono"}, node); err != nil {
+		t.Fatalf("get Node: %v", err)
+	}
+	mutate(node)
+	if err := kubeClient.Update(context.Background(), node); err != nil {
+		t.Fatalf("update Node: %v", err)
 	}
 }
 
@@ -412,7 +383,14 @@ func readyPod(name, containerID string, restartCount int32) *corev1.Pod {
 
 func testRequest() transitionkube.Request {
 	return transitionkube.Request{
-		Namespace: "measurements", NodeActuationName: "transition-1", TargetNode: "jetsono", TargetNodeUID: "node-uid",
+		Namespace: "measurements", TargetNode: "jetsono", TargetNodeUID: "node-uid",
+		SourcePowerMode: "MAXN", TargetPowerMode: "MODE_30W",
+		SourceActuator: edgev1alpha1.PowerModeActuator{
+			Kind: edgev1alpha1.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
+		},
+		TargetActuator: edgev1alpha1.PowerModeActuator{
+			Kind: edgev1alpha1.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 1},
+		},
 		ServingService: "serving", ServingContainer: "firstfloor",
 		DeviceType: "jetson_orin", Model: "mobilenet-v2-050",
 		PollInterval: time.Millisecond, ObservationTimeout: 250 * time.Millisecond,
@@ -453,7 +431,16 @@ func newClient(t *testing.T, objects ...client.Object) client.WithWatch {
 			objects = append(objects, executorService(pod))
 		}
 	}
-	objects = append(objects, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "jetsono", UID: "node-uid"}})
+	sourceAt := time.Now().UTC().Add(-time.Hour)
+	record, _ := json.Marshal(metadata.PowerModeTransitionRecord{PowerMode: "MAXN", Generation: 4, VerifiedAt: &sourceAt, ReadyAt: &sourceAt})
+	objects = append(objects, &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: "jetsono", UID: "node-uid",
+		Labels: map[string]string{metadata.PowerMode: "MAXN", metadata.PowerModeState: metadata.PowerModeSuccess},
+		Annotations: map[string]string{
+			metadata.PowerActuator: sourceReadBack, metadata.PowerModeGeneration: "4",
+			metadata.PowerModeTransition: string(record),
+		},
+	}})
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 }
 
@@ -462,20 +449,6 @@ func executorService(pod *corev1.Pod) *corev1.Service {
 		ObjectMeta: metav1.ObjectMeta{Namespace: pod.Namespace, Name: "chill-executor-" + string(pod.UID)},
 		Spec: corev1.ServiceSpec{ClusterIP: "10.96.0.10", Selector: map[string]string{"edge.dacs.io/serving-pod-uid": string(pod.UID)},
 			Ports: []corev1.ServicePort{{Name: "http", Protocol: corev1.ProtocolTCP, Port: 8080}}},
-	}
-}
-
-func createActuation(t *testing.T, kubeClient client.Client, actuation *edgev1alpha1.NodeActuation) {
-	t.Helper()
-	if err := kubeClient.Create(context.Background(), actuation); err != nil {
-		t.Fatalf("create NodeActuation: %v", err)
-	}
-	current := &edgev1alpha1.NodeActuation{}
-	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(actuation), current); err != nil {
-		t.Fatalf("get created NodeActuation: %v", err)
-	}
-	if current.Status.Phase == "" {
-		t.Fatalf("fake client did not retain NodeActuation status")
 	}
 }
 

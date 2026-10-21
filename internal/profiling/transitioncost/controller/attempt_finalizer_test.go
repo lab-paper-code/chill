@@ -276,18 +276,6 @@ func newAttemptFinalizerFixture(t *testing.T, outcome finalizationOutcome, condi
 	}, Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
 		Type: condition, Status: corev1.ConditionTrue,
 	}}}}
-	readyAt := metav1.NewMicroTime(time.Unix(20, 0))
-	targetAt := metav1.NewMicroTime(time.Unix(19, 0))
-	actuation := &edgev1alpha1.NodeActuation{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: measurement.Namespace, Name: selection.name, UID: "actuation-uid", Generation: 1,
-			OwnerReferences: []metav1.OwnerReference{owner},
-		},
-		Status: edgev1alpha1.NodeActuationStatus{
-			ObservedGeneration: 1, Phase: edgev1alpha1.NodeActuationPhaseReady, ReadyAt: &readyAt,
-			TargetObservation: &edgev1alpha1.NodeActuationObservation{ObservedAt: targetAt},
-		},
-	}
 	rawBytes, err := transitioncost.EncodeRawRecord(transitionRawObservation(prepared, outcome))
 	if err != nil {
 		t.Fatal(err)
@@ -311,14 +299,14 @@ func newAttemptFinalizerFixture(t *testing.T, outcome finalizationOutcome, condi
 	pod.Namespace = measurement.Namespace
 	store := newFinalizationStore()
 	store.objects[rawReference.Location()] = rawBytes
-	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(job, actuation, pod).Build()
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(job, pod).Build()
 	finalizer, err := NewAttemptFinalizer(reader, store, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return attemptFinalizerFixture{
 		measurement: measurement, prepared: prepared, scheme: scheme, store: store, finalizer: finalizer,
-		progress:     AttemptProgress{Stage: AttemptStageFinalizationReady, Job: job, NodeActuation: actuation},
+		progress:     AttemptProgress{Stage: AttemptStageFinalizationReady, Job: job},
 		rawReference: rawReference,
 	}
 }

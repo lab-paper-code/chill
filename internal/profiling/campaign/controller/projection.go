@@ -3,7 +3,6 @@ package controller
 import (
 	"errors"
 	"fmt"
-	"reflect"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
@@ -12,11 +11,11 @@ import (
 
 // ProjectSnapshot verifies ownership and projects each child. Labels select
 // candidate children; projected measurement and attempt values come from the
-// immutable Run spec and name.
+// immutable Run spec and name. transition is the Node's projected power mode.
 func ProjectSnapshot(
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	runs []edgev1alpha1.ProfilingRun,
-	transitions []edgev1alpha1.NodeActuation,
+	transition *batchenergyoptimization.Transition,
 	plannedBatchSizes []int,
 	transitionRequired bool,
 ) (batchenergyoptimization.Snapshot, error) {
@@ -29,19 +28,10 @@ func ProjectSnapshot(
 			DeviceClass: parent.Spec.State.Candidate.DeviceClass,
 			PowerMode:   parent.Spec.State.Candidate.PowerMode,
 		},
+		Transition:         transition,
 		TransitionRequired: transitionRequired,
 		RetryLimit:         int(parent.Spec.RetryLimit),
 		PlannedBatchSizes:  append([]int(nil), plannedBatchSizes...),
-	}
-	if len(transitions) > 1 {
-		return batchenergyoptimization.Snapshot{}, errors.New("a BatchEnergyOptimization cannot own more than one transition")
-	}
-	if len(transitions) == 1 {
-		transition, err := projectOwnedTransition(parent, &transitions[0])
-		if err != nil {
-			return batchenergyoptimization.Snapshot{}, fmt.Errorf("project NodeActuation %q: %w", transitions[0].Name, err)
-		}
-		snapshot.Transition = &transition
 	}
 	for index := range runs {
 		run := &runs[index]
@@ -55,54 +45,6 @@ func ProjectSnapshot(
 		return batchenergyoptimization.Snapshot{}, fmt.Errorf("validate projected snapshot: %w", err)
 	}
 	return snapshot, nil
-}
-
-func projectOwnedTransition(
-	parent *edgev1alpha1.BatchEnergyOptimization,
-	transition *edgev1alpha1.NodeActuation,
-) (batchenergyoptimization.Transition, error) {
-	if !controlledByParent(parent, transition) {
-		return batchenergyoptimization.Transition{}, errors.New("transition is not controller-owned by this BatchEnergyOptimization")
-	}
-	if transition.Name != TransitionName(parent.Name) || transition.Namespace != parent.Namespace ||
-		transition.Spec.Node.Name != parent.Spec.State.TargetNode ||
-		transition.Spec.DeviceClass != parent.Spec.State.Candidate.DeviceClass ||
-		transition.Spec.PowerMode != parent.Spec.State.Candidate.PowerMode {
-		return batchenergyoptimization.Transition{}, errors.New("transition does not match the campaign state")
-	}
-	switch transition.Status.Phase {
-	case "", edgev1alpha1.NodeActuationPhasePending,
-		edgev1alpha1.NodeActuationPhaseAcquiringLease,
-		edgev1alpha1.NodeActuationPhaseObservingPrevious,
-		edgev1alpha1.NodeActuationPhaseApplying,
-		edgev1alpha1.NodeActuationPhaseVerifying,
-		edgev1alpha1.NodeActuationPhaseSettling:
-		return batchenergyoptimization.Transition{Outcome: batchenergyoptimization.TransitionInFlight}, nil
-	case edgev1alpha1.NodeActuationPhaseFailed:
-		if transition.Status.TerminalFailure == nil {
-			return batchenergyoptimization.Transition{}, errors.New("failed transition omitted its terminal failure")
-		}
-		return batchenergyoptimization.Transition{Outcome: batchenergyoptimization.TransitionFailed}, nil
-	case edgev1alpha1.NodeActuationPhaseReady:
-		observation := transition.Status.TargetObservation
-		if transition.Generation < 1 || transition.Status.ObservedGeneration != transition.Generation ||
-			transition.Status.TerminalFailure != nil || observation == nil ||
-			transition.Status.ReadyAt == nil || transition.Status.ReadyAt.IsZero() ||
-			observation.PowerMode != transition.Spec.PowerMode ||
-			!reflect.DeepEqual(observation.Actuator, transition.Spec.Actuator) {
-			return batchenergyoptimization.Transition{}, errors.New("ready transition does not prove its declared target")
-		}
-		state := batchenergyoptimization.State{
-			TargetNode:  transition.Spec.Node.Name,
-			DeviceClass: transition.Spec.DeviceClass,
-			PowerMode:   transition.Spec.PowerMode,
-		}
-		return batchenergyoptimization.Transition{
-			Outcome: batchenergyoptimization.TransitionEstablished, EstablishedState: &state,
-		}, nil
-	default:
-		return batchenergyoptimization.Transition{}, fmt.Errorf("unsupported transition phase %q", transition.Status.Phase)
-	}
 }
 
 func projectOwnedTrial(

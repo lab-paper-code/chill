@@ -27,7 +27,6 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/cpuset"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
@@ -92,9 +91,9 @@ type SchedulerController struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
-	// powerTargets holds, by "<Node UID>/<mode>", the request specs the last
-	// capture derived; a power action builds its NodeActuation when it starts.
-	powerTargets map[string]edge.NodeActuationSpec
+	// powerTargets holds, by "<Node UID>/<mode>", the maximum actuation
+	// duration of each mode the last capture found requestable.
+	powerTargets map[string]time.Duration
 	// measureStep measures one step of an operation-cost measurement.
 	measureStep func(context.Context, SchedulerControllerConfig, MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error)
 	// unrouted holds when each captured instance last lost every route weight.
@@ -513,15 +512,11 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	if err != nil {
 		return s, err
 	}
-	var acts edge.NodeActuationList
-	if err = c.store.client.List(ctx, &acts, client.InNamespace(c.observer.config.ActuationNamespace)); err != nil {
-		return s, err
-	}
 	var classes edge.DeviceClassList
 	if err = c.store.client.List(ctx, &classes); err != nil {
 		return s, err
 	}
-	power := map[string]edge.NodeActuationSpec{}
+	power := map[string]time.Duration{}
 	profileByID := map[string]*serving.Profile{}
 	for i := range profiles {
 		profileByID[profiles[i].ID] = &profiles[i]
@@ -547,14 +542,14 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		}
 		captureNodeInventory(&sn, n, profiles)
 		sn.ModeCPUs = declaredModeCPUs(nodeClass(n, classes.Items))
-		captureNodePower(&sn, n, &acts, classes.Items, physical, profileByID)
+		sn.PowerMode = readBackMode(n, nodeClass(n, classes.Items))
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
 		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
 		if _, ok := targets[lowest]; sn.PowerMode == "" || len(targets) == 0 || lowest != "" && lowest != sn.PowerMode && !ok {
 			sn.Reasons = append(sn.Reasons, serving.NodePowerModeUnavailable)
 		}
-		for mode, spec := range targets {
-			power[sn.Node.UID+"/"+mode] = spec
+		for mode, maxDuration := range targets {
+			power[sn.Node.UID+"/"+mode] = maxDuration
 		}
 		captureNodePods(&s, &sn, n, pods, physical, profileByID)
 		s.Nodes = append(s.Nodes, sn)
@@ -588,25 +583,20 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	return s, nil
 }
 
-// nodePowerTargets returns, by mode, the request spec of each mode the Node
-// can be switched into: the non-Fixed modes of its one DeviceClass that have a
-// configured actuation policy.
-func nodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodeactuator.ActuationPolicySpec) map[string]edge.NodeActuationSpec {
+// nodePowerTargets returns, by mode, the maximum actuation duration of each
+// mode the Node can be switched into: the non-Fixed modes of its one
+// DeviceClass that have a configured actuation policy.
+func nodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodeactuator.ActuationPolicySpec) map[string]time.Duration {
 	class := nodeClass(n, classes)
 	if class == nil {
 		return nil
 	}
-	targets := map[string]edge.NodeActuationSpec{}
+	targets := map[string]time.Duration{}
 	for _, mode := range class.Spec.PowerModes {
 		for _, p := range policies {
 			if mode.Actuator.Kind != edge.PowerModeActuatorFixed && p.DeviceClass == class.Name && p.PowerMode == mode.Name &&
 				p.ActuatorKind == string(mode.Actuator.Kind) {
-				targets[mode.Name] = edge.NodeActuationSpec{
-					Node: edge.ProfilingRunObjectReference{Name: n.Name, UID: string(n.UID)}, DeviceClass: class.Name,
-					PowerMode: mode.Name, Actuator: mode.Actuator, PolicyName: p.Name,
-					SettlingDurationSeconds:     int32(p.SettlingDurationSeconds),
-					MaxActuationDurationSeconds: int32(p.MaxActuationDurationSeconds),
-				}
+				targets[mode.Name] = time.Duration(p.MaxActuationDurationSeconds) * time.Second
 			}
 		}
 	}
@@ -666,22 +656,6 @@ func bindProfileMeters(s *serving.SchedulerSnapshot, meters []MeterDeclaration) 
 	}
 	for index := range s.Options {
 		bindProfileMeter(&s.Options[index].Instance, meters)
-	}
-}
-func captureNodePower(sn *serving.SchedulerNode, n *core.Node, acts *edge.NodeActuationList, classes []edge.DeviceClass, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
-	sn.PowerMode = latestReadyMode(acts.Items, string(n.UID))
-	// A fixed mode is accepted only from an actually verified ready profile.
-	for _, state := range physical {
-		if state.Node == sn.Node && state.Ready {
-			if p := profileByID[state.Profile]; p != nil && sn.PowerMode == "" {
-				sn.PowerMode = p.Condition.PowerMode
-			}
-		}
-	}
-	if sn.PowerMode == "" {
-		if mode, err := classPower(n, classes, acts.Items); err == nil {
-			sn.PowerMode = mode
-		}
 	}
 }
 
@@ -885,7 +859,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			if c.conflictingActionRunning(action) {
 				continue
 			}
-			operation := scheduledOperation(action, &target, config, c.powerTargets, c.state.Snapshot.Workloads, time.Now())
+			operation := scheduledOperation(action, &target, config, c.powerTargets, c.state.Snapshot.Workloads)
 			runCtx, cancel := c.runContext(action, config)
 			action.Status = nativeOperationRunning
 			action.Cancelable = action.Kind == operationPrepare
@@ -977,7 +951,7 @@ func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCa
 // scheduledOperation builds the operation of one planned action. A preparation
 // names the Workload its target instance serves as the Pod's owner, so the
 // instance keeps its Workload while unrouted.
-func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]edge.NodeActuationSpec, workloads []*serving.Definition, now time.Time) Operation {
+func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]time.Duration, workloads []*serving.Definition) Operation {
 	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target}
 	if action.Kind == operationPrepare {
 		for _, i := range target.Instances {
@@ -1002,21 +976,11 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 		}
 	}
 	if action.Kind == operationPower {
-		if spec, ok := power[action.Node.UID+"/"+action.To]; ok {
-			operation.Actuation = powerRequest(spec, now)
+		if maxDuration, ok := power[action.Node.UID+"/"+action.To]; ok {
+			operation.PowerMode, operation.MaxActuationDuration = action.To, maxDuration
 		}
 	}
 	return operation
-}
-
-// powerRequest builds the NodeActuation of a switch that starts now: a fresh
-// name and a deadline relative to now. Times are whole seconds, the precision
-// the API server stores.
-func powerRequest(spec edge.NodeActuationSpec, now time.Time) *edge.NodeActuation {
-	at := now.UTC().Truncate(time.Second)
-	spec.StageRequestedAt = meta.NewTime(at)
-	spec.Deadline = meta.NewTime(at.Add(time.Duration(spec.MaxActuationDurationSeconds) * time.Second))
-	return &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Name: fmt.Sprintf("power-%s-%d", spec.Node.Name, now.UnixNano())}, Spec: spec}
 }
 
 func bindProfileMeter(instance *serving.SchedulerInstance, meters []MeterDeclaration) {

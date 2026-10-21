@@ -275,7 +275,8 @@ func TestE2EKindSCHAC26MeasurementAdmission(t *testing.T) {
 		map[string]string{"app.kubernetes.io/component": servingInstanceComponent})
 	external := kindPod(t, kube, "default", "chill-e2e-external-"+suffix, externalNode.Name, map[string]string{"app": "external"})
 
-	h := &admissionHarness{t: t, controller: newAdmissionController(t, kube)}
+	controller, _ := newAdmissionController(t, kube)
+	h := &admissionHarness{t: t, controller: controller}
 	roots := map[string]*core.Node{"available": available, "serving": servingNode, "external": externalNode}
 	created := time.Now()
 	for name, node := range roots {
@@ -305,7 +306,7 @@ func TestE2EKindSCHAC26MeasurementAdmission(t *testing.T) {
 
 	for _, name := range []string{"available", "external"} {
 		root := baselineRoot(name, created)
-		if granted, _, _ := profilingrun.Admission(map[string]string{profilingrun.AdmissionAnnotation: h.annotation(root, profilingrun.AdmissionAnnotation)}); !granted {
+		if granted, _, _ := profilingrun.Admission(map[string]string{profilingrun.AdmissionAnnotation: h.admission(root)}); !granted {
 			t.Fatalf("%s: measurement not granted", name)
 		}
 		if holder := kindHolder(t, kube, roots[name].Name); holder != string(root.UID) {
@@ -313,7 +314,7 @@ func TestE2EKindSCHAC26MeasurementAdmission(t *testing.T) {
 		}
 	}
 	want := "Refused: NodeServing chill-system/" + servingInstance.Name
-	if got := h.annotation(baselineRoot("serving", created), profilingrun.AdmissionAnnotation); got != want {
+	if got := h.admission(baselineRoot("serving", created)); got != want {
 		t.Fatalf("serving admission = %q, want %q", got, want)
 	}
 	if holder := kindHolder(t, kube, servingNode.Name); holder != "" {
@@ -351,7 +352,7 @@ func TestE2EKindSCHAC26MeasurementAdmission(t *testing.T) {
 // costs and dispatch occupancy are fake wall readings.
 func kindScheduler(t *testing.T, kube kubernetes.Interface, autonomous []string, prepared, others []*serving.Profile, nodes []*core.Node, workloads ...*serving.Definition) *SchedulerController {
 	t.Helper()
-	controller := newAdmissionController(t, kube)
+	controller, _ := newAdmissionController(t, kube)
 	_, _, _, class := observerSourceFixture()
 	eco := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 1}}
 	class.Spec.PowerModes = append(class.Spec.PowerModes, edge.PowerMode{Name: "eco", Actuator: eco})

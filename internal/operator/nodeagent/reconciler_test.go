@@ -31,15 +31,13 @@ func TestStopMigratesLegacyDaemonSetsAndStripsReadBack(t *testing.T) {
 	daemonSet := func(name string) *appsv1.DaemonSet {
 		return &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}}
 	}
-	transition := &edgev1alpha1.NodeActuation{
-		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "switch"},
-		Status:     edgev1alpha1.NodeActuationStatus{Phase: edgev1alpha1.NodeActuationPhaseApplying},
-	}
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "jetson", Annotations: map[string]string{
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "jetson", Labels: map[string]string{
+		chillmeta.PowerModeState: chillmeta.PowerModePending,
+	}, Annotations: map[string]string{
 		chillmeta.PowerActuator: `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":2}}`, "manual": "kept",
 	}}}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(transition).
-		WithObjects(daemonSet(discovery), daemonSet(actuator), transition, node).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(daemonSet(discovery), daemonSet(actuator), node).Build()
 	reconciler := &Reconciler{Client: c, Scheme: scheme}
 	options := Options{SystemName: "chill", Namespace: namespace}.Defaulted()
 	present := func(name string) bool {
@@ -66,8 +64,12 @@ func TestStopMigratesLegacyDaemonSetsAndStripsReadBack(t *testing.T) {
 	if present(discovery) || !present(actuator) || !readBack() {
 		t.Fatalf("while a switch runs: discovery=%v actuator=%v readBack=%v", present(discovery), present(actuator), readBack())
 	}
-	transition.Status.Phase = edgev1alpha1.NodeActuationPhaseFailed
-	if err := c.Status().Update(ctx, transition); err != nil {
+	settled := &corev1.Node{}
+	if err := c.Get(ctx, client.ObjectKey{Name: "jetson"}, settled); err != nil {
+		t.Fatal(err)
+	}
+	settled.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeFailed
+	if err := c.Update(ctx, settled); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reconciler.stop(ctx, options); err != nil {

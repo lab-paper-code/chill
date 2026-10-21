@@ -96,6 +96,8 @@ deps:
       - profiler-controller
       - profiler-evidence
       - profiling-run
+      # Node power-mode label and generation.
+      - platform-core
       - model-catalog
 
   idle-baseline-core:
@@ -114,6 +116,8 @@ deps:
       - profiler-evidence
       # Waits for ChillServer's measurement admission annotation.
       - profiling-run
+      # Node power-mode label and generation.
+      - platform-core
 
   # These small support packages may collaborate within this reviewed group,
   # but cannot reach upward into operators or profiler orchestration.
@@ -232,6 +236,8 @@ deps:
       - firstfloor
       - profiling-run
       - workload-core
+      # Node power-mode transition annotation.
+      - platform-core
       - workload-kube
   transition-cost-worker:
     mayDependOn:

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -74,7 +75,14 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 	}
 	directions := make([]transitioncontroller.PreparedDirection, 2)
 	directions[1].FrozenContract = transitioncost.FrozenContract{
+		SourceState: transitioncost.StateIdentity{DeviceType: "device", Model: "model", PowerMode: "low"},
 		TargetState: transitioncost.StateIdentity{DeviceType: "device", Model: "model", PowerMode: "high"},
+	}
+	for index := range directions {
+		directions[index].Actuator = edgev1alpha1.PowerModeActuator{
+			Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+			JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: int32(index)},
+		}
 	}
 	prepared := transitioncontroller.PreparedMeasurement{
 		Namespace: "measure", TargetNode: edgev1alpha1.ProfilingRunObjectReference{Name: "target", UID: "target-uid"},
@@ -94,8 +102,8 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 	job, err := transitioncontroller.BuildAttemptJob(
 		transitioncontroller.AttemptJobRequest{
 			Measurement: measurement, Prepared: prepared, DirectionIndex: 1,
-			NodeActuationName: "transition-1",
-			RawLocation:       evidencestore.ObjectLocation{Store: "evidence", Key: "transition/raw.json"},
+			Name:        "transition-1",
+			RawLocation: evidencestore.ObjectLocation{Store: "evidence", Key: "transition/raw.json"},
 			StoreBinding: storekube.Binding{
 				Store: "evidence", Endpoint: "http://store", Bucket: "bucket", Region: "region",
 				CredentialsSecretName: "credentials",
@@ -122,7 +130,10 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if contract.facts.NodeActuationName != "transition-1" || contract.facts.DeviceType != "device" ||
+	if contract.facts.SourcePowerMode != "low" || contract.facts.TargetPowerMode != "high" ||
+		!reflect.DeepEqual(contract.facts.SourceActuator, directions[0].Actuator) ||
+		!reflect.DeepEqual(contract.facts.TargetActuator, directions[1].Actuator) ||
+		contract.facts.TargetNodeUID != "target-uid" || contract.facts.DeviceType != "device" ||
 		contract.facts.Model != "model" || contract.rawLocation.Key != "transition/raw.json" ||
 		contract.powerRequest != prepared.PowerRequest {
 		t.Fatalf("decoded Job attempt = %#v", contract)
@@ -141,7 +152,8 @@ func validAttemptWire() attemptWire {
 			RequestTimeoutMilliseconds: 50, MaxEvents: 52,
 		},
 		TransitionFacts: transitionFactsWire{
-			Namespace: "measure", NodeActuationName: "transition-1", TargetNode: "target", TargetNodeUID: "target-uid",
+			Namespace: "measure", SourcePowerMode: "low", TargetPowerMode: "high",
+			TargetNode: "target", TargetNodeUID: "target-uid",
 			DeviceType: "jetson-orin", Model: "model",
 			ServingService: "serving", ServingContainer: "firstfloor",
 			PollIntervalMilliseconds: 50, ObservationTimeoutMilliseconds: 4000,

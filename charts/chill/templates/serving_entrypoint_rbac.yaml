@@ -2,7 +2,6 @@
 {{- $name := include "chill.servingEntrypointName" . -}}
 {{- $servingNamespace := default .Release.Namespace .Values.servingEntrypoint.namespace -}}
 {{- $profileNamespaces := default (list $servingNamespace) .Values.servingEntrypoint.profileNamespaces -}}
-{{- $actuationNamespace := default .Release.Namespace .Values.servingEntrypoint.actuationNamespace -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -117,35 +116,6 @@ subjects:
   - kind: ServiceAccount
     name: {{ $name }}
     namespace: {{ .Release.Namespace }}
----
-{{- $actuationRole := printf "%s-actuation" $name }}
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ $actuationRole }}
-  namespace: {{ $actuationNamespace }}
-  labels:
-    {{- include "chill.labels" . | nindent 4 }}
-rules:
-  - apiGroups: [edge.dacs.io]
-    resources: [nodeactuations]
-    verbs: [get, list, create]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ $actuationRole }}
-  namespace: {{ $actuationNamespace }}
-  labels:
-    {{- include "chill.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ $actuationRole }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ $name }}
-    namespace: {{ .Release.Namespace }}
 {{- $loadRole := printf "%s-load" $name }}
 ---
 # Dispatch-occupancy measurements run their load Job here.
@@ -234,10 +204,6 @@ rules:
   - apiGroups: [edge.dacs.io]
     resources: [operationcostmeasurements/status, dispatchoccupancymeasurements/status]
     verbs: [patch]
-  # Admission and hand-back wait for the power changes measurements request here.
-  - apiGroups: [edge.dacs.io]
-    resources: [nodeactuations]
-    verbs: [list]
   # Power mode transition cost preparations are owned ConfigMaps named after the measurement.
   - apiGroups: [""]
     resources: [configmaps]

@@ -2,14 +2,19 @@ package controller
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/metadata"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -20,114 +25,68 @@ func (r *RunReconciler) reconcileRequiredState(
 	run *edgev1alpha1.ProfilingRun,
 	resolved ResolvedRun,
 ) (bool, error) {
-	transition, unconfirmed, err := r.findConfirmingTransition(ctx, run, resolved.Prepared.RunConfig)
+	unconfirmed, err := r.confirmRequiredState(ctx, resolved.Prepared)
 	if err != nil {
 		return true, err
 	}
-	if transition == nil {
+	if unconfirmed != "" {
 		return true, r.publishExecutionOutcome(
 			ctx, run, metav1.ConditionFalse, requiredStateNotConfirmedReason, unconfirmed,
 		)
 	}
-	if err := r.publishActuationReference(ctx, run, transition); err != nil {
-		return true, fmt.Errorf("publish confirming NodeActuation reference: %w", err)
-	}
 	return false, nil
 }
 
-// findConfirmingTransition returns the transition that confirms the selected
-// required state. A nil transition with a non-empty reason is permanent: the
-// recorded reference and a terminal NodeActuation are both immutable, so no
-// retry can turn one into a confirmation. Only a transient API failure returns
-// an error, which requeues.
-func (r *RunReconciler) findConfirmingTransition(
-	ctx context.Context,
-	run *edgev1alpha1.ProfilingRun,
-	config profilingrun.RunConfig,
-) (*edgev1alpha1.NodeActuation, string, error) {
-	if run.Status.Actuation != nil {
-		transition := &edgev1alpha1.NodeActuation{}
-		key := client.ObjectKey{Namespace: run.Namespace, Name: run.Status.Actuation.Name}
-		if err := r.Get(ctx, key, transition); err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil, "the recorded confirming Node transition no longer exists", nil
-			}
-			return nil, "", fmt.Errorf("get recorded confirming NodeActuation %s: %w", key, err)
+// confirmRequiredState returns why the target Node does not hold the Run's
+// required state: the agent settled the Run's power mode and reads back the
+// selected actuator. A reason is permanent; only a transient API failure
+// returns an error, which requeues.
+func (r *RunReconciler) confirmRequiredState(ctx context.Context, prepared profiler.PreparedRun) (string, error) {
+	config := prepared.RunConfig
+	node := &corev1.Node{}
+	if err := r.Get(ctx, types.NamespacedName{Name: config.TargetNode.Name}, node); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "the target Node no longer exists", nil
 		}
-		if string(transition.UID) != run.Status.Actuation.UID {
-			return nil, "the recorded confirming Node transition was replaced by a different object", nil
-		}
-		if err := validateConfirmingTransition(config, transition); err != nil {
-			return nil, "the recorded Node transition does not confirm the Run's required state", nil
-		}
-		return transition, "", nil
+		return "", fmt.Errorf("get target Node %s: %w", config.TargetNode.Name, err)
 	}
-
-	transitions := &edgev1alpha1.NodeActuationList{}
-	if err := r.List(ctx, transitions, client.InNamespace(run.Namespace)); err != nil {
-		return nil, "", fmt.Errorf("list NodeActuations for state confirmation: %w", err)
+	if string(node.UID) != config.TargetNode.UID {
+		return "the target Node was replaced by a different object", nil
 	}
-	var latest *edgev1alpha1.NodeActuation
-	for index := range transitions.Items {
-		candidate := &transitions.Items[index]
-		if !successfullyCompletedOnNode(candidate, config.TargetNode) {
-			continue
-		}
-		if latest == nil || candidate.Status.ReadyAt.After(latest.Status.ReadyAt.Time) ||
-			(candidate.Status.ReadyAt.Equal(latest.Status.ReadyAt) && candidate.Name > latest.Name) {
-			latest = candidate
-		}
+	maxDuration := time.Duration(prepared.ActuationPolicy.Policy.MaxActuationDurationSeconds) * time.Second
+	done, err := metadata.PowerModeOutcome(node, config.Actuation.PowerMode, time.Time{}, maxDuration, time.Now())
+	if err != nil || !done {
+		return "the target Node has not settled the Run's power mode", nil
 	}
-	if latest == nil || validateConfirmingTransition(config, latest) != nil {
-		return nil, "the most recent successful Node transition does not confirm the Run's required state", nil
+	actuator, err := readBackActuator(node)
+	if err != nil || !reflect.DeepEqual(actuator, config.Actuation.Actuator) {
+		return "the target Node's read-back actuator does not confirm the Run's required state", nil
 	}
-	return latest.DeepCopy(), "", nil
+	return "", nil
 }
 
-func successfullyCompletedOnNode(
-	transition *edgev1alpha1.NodeActuation,
-	target profilingrun.NodeSnapshot,
-) bool {
-	return transition != nil && transition.Namespace != "" && transition.Name != "" && transition.UID != "" &&
-		transition.Generation > 0 && transition.Spec.Node.Name == target.Name &&
-		transition.Spec.Node.UID == target.UID && transition.Status.Phase == edgev1alpha1.NodeActuationPhaseReady &&
-		transition.Status.ObservedGeneration == transition.Generation && transition.Status.TerminalFailure == nil &&
-		transition.Status.TargetObservation != nil && !transition.Status.TargetObservation.ObservedAt.IsZero() &&
-		transition.Status.ReadyAt != nil && !transition.Status.ReadyAt.IsZero() &&
-		!transition.Status.ReadyAt.Before(&transition.Status.TargetObservation.ObservedAt)
+// readBackActuator is the actuator target the Node's agent last read back.
+func readBackActuator(node *corev1.Node) (profilingrun.ActuatorTarget, error) {
+	var actuator profilingrun.ActuatorTarget
+	if err := json.Unmarshal([]byte(node.Annotations[metadata.PowerActuator]), &actuator); err != nil {
+		return profilingrun.ActuatorTarget{}, fmt.Errorf("decode Node %s %s: %w", node.Name, metadata.PowerActuator, err)
+	}
+	return actuator, nil
 }
 
-func validateConfirmingTransition(
-	config profilingrun.RunConfig,
-	transition *edgev1alpha1.NodeActuation,
-) error {
-	if config.Actuation == nil || transition == nil {
-		return errors.New("actuated config and NodeActuation are required")
+// GrantedNode reads the Node a measurement root measures on, the Node whose
+// measurement taint names root, so the root may write its power mode with
+// metadata.RequestPowerMode on this read.
+func GrantedNode(ctx context.Context, reader client.Reader, root types.UID, name, uid string) (*corev1.Node, error) {
+	node := &corev1.Node{}
+	if err := reader.Get(ctx, types.NamespacedName{Name: name}, node); err != nil {
+		return nil, fmt.Errorf("get measurement Node %s: %w", name, err)
 	}
-	if !successfullyCompletedOnNode(transition, config.TargetNode) {
-		return errors.New("NodeActuation is not a successful transition on the target Node")
+	if string(node.UID) != uid {
+		return nil, fmt.Errorf("measurement Node %s UID %s is not %s", name, node.UID, uid)
 	}
-	if transition.Spec.DeviceClass != config.State.DeviceClass ||
-		transition.Spec.PowerMode != config.Actuation.PowerMode ||
-		!reflect.DeepEqual(transition.Spec.Actuator, projectActuatorTarget(config.Actuation.Actuator)) ||
-		transition.Status.TargetObservation.PowerMode != config.Actuation.PowerMode ||
-		!reflect.DeepEqual(transition.Status.TargetObservation.Actuator, projectActuatorTarget(config.Actuation.Actuator)) {
-		return errors.New("NodeActuation does not confirm the selected required state")
+	if holder, tainted := profilingrun.MeasurementHolder(node); !tainted || holder != string(root) {
+		return nil, fmt.Errorf("measurement Node %s is not granted to %s", name, root)
 	}
-	return nil
-}
-
-func projectActuatorTarget(target profilingrun.ActuatorTarget) edgev1alpha1.PowerModeActuator {
-	projected := edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorKind(target.Kind)}
-	if target.JetsonNVPModel != nil {
-		projected.JetsonNVPModel = &edgev1alpha1.JetsonNVPModelTarget{ID: target.JetsonNVPModel.ID}
-	}
-	if target.NvidiaLockedGPUClock != nil {
-		projected.NvidiaLockedGPUClock = &edgev1alpha1.NvidiaLockedGPUClockTarget{
-			MinMHz: target.NvidiaLockedGPUClock.MinMHz,
-			MaxMHz: target.NvidiaLockedGPUClock.MaxMHz,
-			Mode:   target.NvidiaLockedGPUClock.Mode,
-		}
-	}
-	return projected
+	return node, nil
 }

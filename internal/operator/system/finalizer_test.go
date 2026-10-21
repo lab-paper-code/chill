@@ -177,7 +177,7 @@ func TestFinalizeDeletesDeviceClassesAndCleansNodes(t *testing.T) {
 	}
 }
 
-func TestFinalizeRetainsSystemWhileNodeActuationNeedsOperand(t *testing.T) {
+func TestFinalizeRetainsSystemWhilePowerModeIsPending(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
@@ -187,14 +187,16 @@ func TestFinalizeRetainsSystemWhileNodeActuationNeedsOperand(t *testing.T) {
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
 	system := &edgev1alpha1.ChillSystem{
 		ObjectMeta: metav1.ObjectMeta{Name: "chill"},
 		Spec:       edgev1alpha1.ChillSystemSpec{ManagementNamespace: "chill-system"},
 	}
-	handoff := &edgev1alpha1.NodeActuation{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "pending"},
-		Status:     edgev1alpha1.NodeActuationStatus{Phase: edgev1alpha1.NodeActuationPhasePending},
-	}
+	handoff := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "jetson", Labels: map[string]string{
+		chillmeta.PowerModeState: chillmeta.PowerModePending,
+	}}}
 	reconciler := &ChillSystemReconciler{
 		Client:  fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, handoff).Build(),
 		Options: Options{Namespace: "chill-system"},
@@ -204,7 +206,7 @@ func TestFinalizeRetainsSystemWhileNodeActuationNeedsOperand(t *testing.T) {
 		t.Fatal(err)
 	}
 	if done {
-		t.Fatal("finalize completed while a NodeActuation still needed the operand")
+		t.Fatal("finalize completed while a power mode was pending")
 	}
 }
 

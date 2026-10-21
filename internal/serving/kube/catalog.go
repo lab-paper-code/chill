@@ -557,12 +557,11 @@ func validateCatalogExecution(run *edgev1alpha1.ProfilingRun, execution profiler
 		return err
 	}
 	if execution.RunConfig.Actuation == nil {
-		if run.Status.Actuation != nil || execution.Actuation != nil {
+		if execution.Actuation != nil {
 			return errors.New("fixed execution has unexpected actuation evidence")
 		}
-	} else if run.Status.Actuation == nil || execution.Actuation == nil ||
-		execution.Actuation.Run.Namespace != run.Namespace || execution.Actuation.Run.Name != run.Name || execution.Actuation.Run.UID != string(run.UID) ||
-		execution.Actuation.Handoff.Namespace != run.Namespace || execution.Actuation.Handoff.Name != run.Status.Actuation.Name || execution.Actuation.Handoff.UID != run.Status.Actuation.UID {
+	} else if execution.Actuation == nil ||
+		execution.Actuation.Run.Namespace != run.Namespace || execution.Actuation.Run.Name != run.Name || execution.Actuation.Run.UID != string(run.UID) {
 		return errors.New("stored actuation evidence contradicts completed Run")
 	}
 	return nil

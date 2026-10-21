@@ -113,12 +113,4 @@
   - list
   - patch
   - watch
-- apiGroups:
-  - edge.dacs.io
-  resources:
-  - nodeactuations
-  verbs:
-  - get
-  - list
-  - watch
 {{- end -}}

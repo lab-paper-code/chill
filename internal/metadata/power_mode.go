@@ -1,12 +1,15 @@
 package metadata
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Node power-mode metadata. One writer sets the desired mode; the Node's
@@ -69,4 +72,72 @@ func NodePowerModeTransition(node *corev1.Node) (PowerModeTransitionRecord, bool
 		return PowerModeTransitionRecord{}, false, fmt.Errorf("decode Node %s %s: %w", node.Name, PowerModeTransition, err)
 	}
 	return record, true, nil
+}
+
+// RequestPowerMode makes mode the Node's desired power mode. It patches with
+// the resourceVersion the caller read, so a writer whose view of the Node,
+// and with it the measurement grant, is stale gets a conflict. A mode the
+// agent failed is removed and written again, which the agent applies afresh;
+// any other mode already requested is left alone.
+func RequestPowerMode(ctx context.Context, c client.Client, node *corev1.Node, mode string) error {
+	if node.Labels[PowerMode] == mode {
+		transition, _, err := NodePowerModeTransition(node)
+		if err != nil {
+			return err
+		}
+		if node.Labels[PowerModeState] != PowerModeFailed || transition.PowerMode != mode {
+			return nil
+		}
+		if err := patchPowerMode(ctx, c, node, nil); err != nil {
+			return err
+		}
+	}
+	return patchPowerMode(ctx, c, node, &mode)
+}
+
+func patchPowerMode(ctx context.Context, c client.Client, node *corev1.Node, mode *string) error {
+	raw, err := json.Marshal(map[string]any{"metadata": map[string]any{
+		"resourceVersion": node.ResourceVersion,
+		"labels":          map[string]*string{PowerMode: mode},
+	}})
+	if err != nil {
+		return err
+	}
+	if err := c.Patch(ctx, node, client.RawPatch(types.MergePatchType, raw)); err != nil {
+		return fmt.Errorf("request power mode on Node %s: %w", node.Name, err)
+	}
+	return nil
+}
+
+// PowerModeOutcome reports the agent's progress toward mode on node. Done is
+// true once the agent settled mode and the host has not changed since. An
+// error reports a failed apply, or no success within maxDuration of since,
+// the time the writer requested mode; a zero since counts from the agent's
+// fence.
+func PowerModeOutcome(node *corev1.Node, mode string, since time.Time, maxDuration time.Duration, now time.Time) (bool, error) {
+	transition, _, err := NodePowerModeTransition(node)
+	if err != nil {
+		return false, err
+	}
+	generation, _, err := NodePowerModeGeneration(node)
+	if err != nil {
+		return false, err
+	}
+	current := node.Labels[PowerMode] == mode && transition.PowerMode == mode
+	state := node.Labels[PowerModeState]
+	switch {
+	case current && state == PowerModeSuccess && transition.Generation == generation && transition.ReadyAt != nil:
+		return true, nil
+	case current && state == PowerModeSuccess:
+		return false, fmt.Errorf("Node %s left power mode %s at generation %d", node.Name, mode, generation)
+	case current && state == PowerModeFailed:
+		return false, fmt.Errorf("Node %s power mode %s failed: %s", node.Name, mode, transition.Failure)
+	}
+	if since.IsZero() && current && transition.ApplyStartedAt != nil {
+		since = *transition.ApplyStartedAt
+	}
+	if !since.IsZero() && !now.Before(since.Add(maxDuration)) {
+		return false, fmt.Errorf("Node %s did not reach power mode %s within %s", node.Name, mode, maxDuration)
+	}
+	return false, nil
 }

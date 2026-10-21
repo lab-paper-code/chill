@@ -263,23 +263,6 @@ spec:
                 - node
                 - pod
                 type: object
-              actuation:
-                description: |-
-                  Actuation identifies the completed Node transition that confirmed a
-                  non-fixed Run's required state. Fixed Runs leave it absent.
-                properties:
-                  name:
-                    maxLength: 253
-                    minLength: 1
-                    type: string
-                  uid:
-                    maxLength: 128
-                    minLength: 1
-                    type: string
-                required:
-                - name
-                - uid
-                type: object
               conditions:
                 description: Conditions separately report execution and evidence verification.
                 items:

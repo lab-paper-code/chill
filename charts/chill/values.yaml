@@ -441,7 +441,6 @@ servingEntrypoint:
   port: 8080
   # Empty namespaces use the Helm release namespace. Namespaces must already exist.
   namespace: ""
-  actuationNamespace: ""
   # Empty configMap disables the scheduler. The existing ConfigMap must be in
   # namespace above and contain the deployment configuration JSON under key.
   scheduler:

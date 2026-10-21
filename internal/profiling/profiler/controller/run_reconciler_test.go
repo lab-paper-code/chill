@@ -157,29 +157,20 @@ func TestRunReconcilerEndsWithoutJobWhenRequiredStateIsUnconfirmed(t *testing.T)
 		t.Fatal(err)
 	}
 	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
-	if actual.Status.Actuation != nil || condition == nil || condition.Status != metav1.ConditionFalse ||
+	if condition == nil || condition.Status != metav1.ConditionFalse ||
 		condition.Reason != requiredStateNotConfirmedReason {
 		t.Fatalf("unconfirmed state outcome = %#v", actual.Status)
 	}
-	transitions := &edgev1alpha1.NodeActuationList{}
-	if err := kubeClient.List(context.Background(), transitions); err != nil {
-		t.Fatal(err)
-	}
-	if len(transitions.Items) != 0 {
-		t.Fatalf("Run created transitions: %#v", transitions.Items)
-	}
 }
 
-func TestRunReconcilerUsesNewestSuccessfulTransitionOnly(t *testing.T) {
+func TestRunReconcilerRejectsNodeSettledInAnotherMode(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, resolved := testActuatedRunAndResolved(t)
 	grant(run)
-	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	matching := completedTransitionForRun(run, resolved, "matching", resolved.Prepared.RunConfig.Actuation.PowerMode, base)
-	different := completedTransitionForRun(run, resolved, "different", "MAXN", base.Add(time.Minute))
+	node := settledNode(resolved.Prepared.RunConfig, "MAXN", time.Now().Add(-time.Minute), 2)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).
-		WithObjects(run, matching, different).Build()
+		WithObjects(run, node).Build()
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
@@ -202,24 +193,22 @@ func TestRunReconcilerUsesNewestSuccessfulTransitionOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
-	if actual.Status.Actuation != nil || actual.Status.Job != nil || condition == nil ||
+	if actual.Status.Job != nil || condition == nil ||
 		condition.Status != metav1.ConditionFalse || condition.Reason != requiredStateNotConfirmedReason {
 		t.Fatalf("newest different state outcome = %#v", actual.Status)
 	}
 }
 
-func TestRunReconcilerRecordsConfirmingTransitionBeforeCreatingJob(t *testing.T) {
+func TestRunReconcilerCreatesJobOnceNodeSettledRequiredMode(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, resolved := testActuatedRunAndResolved(t)
 	grant(run)
-	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	older := completedTransitionForRun(run, resolved, "older", "MAXN", base)
-	confirming := completedTransitionForRun(
-		run, resolved, "confirming", resolved.Prepared.RunConfig.Actuation.PowerMode, base.Add(time.Minute),
+	node := settledNode(
+		resolved.Prepared.RunConfig, resolved.Prepared.RunConfig.Actuation.PowerMode, time.Now().Add(-time.Minute), 2,
 	)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).
-		WithObjects(run, older, confirming).Build()
+		WithObjects(run, node).Build()
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
@@ -241,17 +230,8 @@ func TestRunReconcilerRecordsConfirmingTransitionBeforeCreatingJob(t *testing.T)
 	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
 		t.Fatal(err)
 	}
-	if actual.Status.Actuation == nil || actual.Status.Actuation.Name != confirming.Name ||
-		actual.Status.Actuation.UID != string(confirming.UID) || actual.Status.Job == nil ||
-		actual.Status.Job.Name != "measurement-job" {
+	if actual.Status.Job == nil || actual.Status.Job.Name != "measurement-job" {
 		t.Fatalf("confirmed Run references = %#v", actual.Status)
-	}
-	transitions := &edgev1alpha1.NodeActuationList{}
-	if err := kubeClient.List(context.Background(), transitions); err != nil {
-		t.Fatal(err)
-	}
-	if len(transitions.Items) != 2 {
-		t.Fatalf("Run changed transition count to %d", len(transitions.Items))
 	}
 }
 
@@ -268,12 +248,7 @@ func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: completedAt,
 		}},
 	})
-	handoff := completedTransitionForRun(
-		run, resolved, "node-actuation", resolved.Prepared.RunConfig.Actuation.PowerMode,
-		time.Date(2026, 8, 6, 11, 59, 0, 0, time.UTC),
-	)
-	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{Name: handoff.Name, UID: string(handoff.UID)}
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job, handoff).Build()
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
 	finalized := FinalizedRunEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Reference: evidencestore.ObjectIdentity{
@@ -323,12 +298,7 @@ func TestRunReconcilerDoesNotRefinalizePermanentTargetMismatch(t *testing.T) {
 			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: completedAt,
 		}},
 	})
-	handoff := completedTransitionForRun(
-		run, resolved, "node-actuation", resolved.Prepared.RunConfig.Actuation.PowerMode,
-		time.Date(2026, 8, 6, 11, 59, 0, 0, time.UTC),
-	)
-	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{Name: handoff.Name, UID: string(handoff.UID)}
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job, handoff).Build()
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
 	finalizeErr := fmt.Errorf(
 		"%w: actuation target observation does not match RunConfig",
 		profilerevidence.ErrPermanentValidation,
@@ -665,51 +635,6 @@ func resolvedRunForPrepared(t *testing.T, prepared profiler.PreparedRun) Resolve
 	return ResolvedRun{
 		Prepared:        prepared,
 		ExecutionPolicy: executionPolicy,
-	}
-}
-
-func completedTransitionForRun(
-	run *edgev1alpha1.ProfilingRun,
-	resolved ResolvedRun,
-	name string,
-	powerMode string,
-	readyAt time.Time,
-) *edgev1alpha1.NodeActuation {
-	config := resolved.Prepared.RunConfig
-	actuator := projectActuatorTarget(config.Actuation.Actuator)
-	if powerMode != config.Actuation.PowerMode && actuator.JetsonNVPModel != nil {
-		actuator.JetsonNVPModel.ID++
-	}
-	requestedAt := readyAt.Add(-2 * time.Minute)
-	targetObservedAt := readyAt.Add(-time.Minute)
-	previousObservedAt := requestedAt.Add(10 * time.Second)
-	ready := metav1.NewMicroTime(readyAt)
-	return &edgev1alpha1.NodeActuation{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: run.Namespace, Name: name, UID: types.UID(name + "-uid"), Generation: 1,
-		},
-		Spec: edgev1alpha1.NodeActuationSpec{
-			Node:                        edgev1alpha1.ProfilingRunObjectReference{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
-			DeviceClass:                 config.State.DeviceClass,
-			PowerMode:                   powerMode,
-			Actuator:                    actuator,
-			PolicyName:                  config.Actuation.PolicyName,
-			SettlingDurationSeconds:     30,
-			MaxActuationDurationSeconds: 300,
-			StageRequestedAt:            metav1.NewTime(requestedAt),
-			Deadline:                    metav1.NewTime(requestedAt.Add(5 * time.Minute)),
-		},
-		Status: edgev1alpha1.NodeActuationStatus{
-			ObservedGeneration: 1,
-			Phase:              edgev1alpha1.NodeActuationPhaseReady,
-			PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: powerMode, Actuator: actuator, ObservedAt: metav1.NewMicroTime(previousObservedAt),
-			},
-			TargetObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: powerMode, Actuator: actuator, ObservedAt: metav1.NewMicroTime(targetObservedAt),
-			},
-			ReadyAt: &ready,
-		},
 	}
 }
 

@@ -1,13 +1,24 @@
 package controller
 
 import (
+	"context"
+	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/metadata"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestProjectTransitionMaterialKeepsTheFixedPathDirect(t *testing.T) {
@@ -20,31 +31,147 @@ func TestProjectTransitionMaterialKeepsTheFixedPathDirect(t *testing.T) {
 	}
 }
 
-func TestBuildTransitionOwnsOneRecordedCampaignOperation(t *testing.T) {
+// campaignNode is the campaign's target Node, its agent at state for powerMode
+// with an apply fenced at applyStartedAt.
+func campaignNode(powerMode, state string, applyStartedAt time.Time, generation int64) *corev1.Node {
+	record := metadata.PowerModeTransitionRecord{PowerMode: powerMode, Generation: generation, ApplyStartedAt: &applyStartedAt}
+	if state == metadata.PowerModeSuccess {
+		readyAt := applyStartedAt.Add(time.Minute)
+		record.VerifiedAt, record.ReadyAt = &applyStartedAt, &readyAt
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		panic(err)
+	}
+	return &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: "jetsono", UID: "node-uid",
+		Labels: map[string]string{metadata.PowerMode: powerMode, metadata.PowerModeState: state},
+		Annotations: map[string]string{
+			metadata.PowerModeGeneration: strconv.FormatInt(generation, 10),
+			metadata.PowerModeTransition: string(raw),
+		},
+	}}
+}
+
+func TestProjectNodeTransitionFollowsTheAgent(t *testing.T) {
 	parent := testParent()
-	prepared := actuatedPreparedRun(parent)
-	material, err := projectTransitionMaterial(prepared)
+	material, err := projectTransitionMaterial(actuatedPreparedRun(parent))
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, time.August, 14, 1, 2, 3, 0, time.UTC)
-	transition, err := BuildTransition(parent, material, now)
-	if err != nil {
-		t.Fatal(err)
+	mode := material.PowerMode
+	for _, test := range []struct {
+		name    string
+		node    *corev1.Node
+		outcome batchenergyoptimization.TransitionOutcome
+	}{
+		{name: "not requested", node: campaignNode("MODE_15W", metadata.PowerModeSuccess, now.Add(-time.Hour), 2)},
+		{name: "applying", node: campaignNode(mode, metadata.PowerModePending, now.Add(-time.Minute), 2),
+			outcome: batchenergyoptimization.TransitionInFlight},
+		{name: "past the policy deadline", node: campaignNode(mode, metadata.PowerModePending, now.Add(-301*time.Second), 2),
+			outcome: batchenergyoptimization.TransitionFailed},
+		{name: "apply failed", node: campaignNode(mode, metadata.PowerModeFailed, now.Add(-time.Minute), 2),
+			outcome: batchenergyoptimization.TransitionFailed},
+		{name: "settled", node: campaignNode(mode, metadata.PowerModeSuccess, now.Add(-2*time.Minute), 3),
+			outcome: batchenergyoptimization.TransitionEstablished},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := projectNodeTransition(test.node, material, now)
+			if test.outcome == "" {
+				if got != nil {
+					t.Fatalf("transition = %#v, want none", got)
+				}
+				return
+			}
+			if got == nil || got.Outcome != test.outcome {
+				t.Fatalf("transition = %#v, want %s", got, test.outcome)
+			}
+			want := batchenergyoptimization.State{
+				TargetNode: parent.Spec.State.TargetNode, DeviceClass: parent.Spec.State.Candidate.DeviceClass,
+				PowerMode: parent.Spec.State.Candidate.PowerMode,
+			}
+			if (got.EstablishedState != nil) != (test.outcome == batchenergyoptimization.TransitionEstablished) ||
+				got.EstablishedState != nil && *got.EstablishedState != want {
+				t.Fatalf("established state = %#v, want %#v", got.EstablishedState, want)
+			}
+		})
 	}
-	owner := metav1.GetControllerOf(transition)
-	if transition.Name != TransitionName(parent.Name) || owner == nil || owner.UID != parent.UID {
-		t.Fatalf("transition identity = %s owner=%#v", transition.Name, owner)
+}
+
+type nodeTransitionPlan struct {
+	*terminalReplayDependencies
+	plan     profilederivation.CurvePlan
+	material *TransitionMaterial
+}
+
+func (d nodeTransitionPlan) Resolve(
+	context.Context, *edgev1alpha1.BatchEnergyOptimization,
+) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, *TransitionMaterial, error) {
+	return d.plan, batchenergyoptimization.StoredObjectReference{}, d.material, nil
+}
+
+// The campaign writes its power mode only on a Node whose measurement taint
+// grants the Node to this campaign.
+func TestCampaignRequestsPowerModeOnlyOnItsGrantedNode(t *testing.T) {
+	parent := testParent()
+	parent.Generation = 1
+	parent.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}
+	reportBytes, report := curvePlanCandidateReport(t, parent)
+	plan, material, err := (&CurvePlanProjector{
+		reader:   &fakeCurvePlanModelReader{model: curvePlanModel(report)},
+		resolver: &fakeCurvePlanCandidateResolver{reportBytes: reportBytes},
+		preparer: &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"},
+	}).Project(context.Background(), parent)
+	if err != nil || material == nil {
+		t.Fatalf("project plan: material=%v err=%v", material, err)
 	}
-	if transition.Spec.Node.Name != parent.Spec.State.TargetNode || transition.Spec.Node.UID != "node-uid" ||
-		transition.Spec.DeviceClass != parent.Spec.State.Candidate.DeviceClass ||
-		transition.Spec.PowerMode != parent.Spec.State.Candidate.PowerMode ||
-		transition.Spec.PolicyName != "jetson-mode-v1" ||
-		transition.Spec.SettlingDurationSeconds != 30 ||
-		transition.Spec.MaxActuationDurationSeconds != 300 ||
-		!transition.Spec.StageRequestedAt.Time.Equal(now) ||
-		!transition.Spec.Deadline.Time.Equal(now.Add(300*time.Second)) {
-		t.Fatalf("transition = %#v", transition)
+	for _, test := range []struct {
+		name    string
+		taints  []corev1.Taint
+		granted bool
+	}{
+		{name: "own grant", granted: true, taints: []corev1.Taint{{
+			Key: profilingrun.MeasurementTaintKey, Value: string(parent.UID), Effect: corev1.TaintEffectNoSchedule,
+		}}},
+		{name: "other root", taints: []corev1.Taint{{
+			Key: profilingrun.MeasurementTaintKey, Value: "other-uid", Effect: corev1.TaintEffectNoSchedule,
+		}}},
+		{name: "untainted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			if err := corev1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: material.Node.Name, UID: types.UID(material.Node.UID)},
+				Spec:       corev1.NodeSpec{Taints: test.taints},
+			}
+			native := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(parent).
+				WithObjects(parent.DeepCopy(), node).Build()
+			dependencies := nodeTransitionPlan{&terminalReplayDependencies{}, plan, material}
+			reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies, dependencies, dependencies)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+				NamespacedName: types.NamespacedName{Namespace: parent.Namespace, Name: parent.Name},
+			})
+			if (err == nil) != test.granted || test.granted && result.RequeueAfter != powerModeWait {
+				t.Fatalf("result=%#v err=%v, want granted %t", result, err, test.granted)
+			}
+			updated := &corev1.Node{}
+			if err := native.Get(context.Background(), types.NamespacedName{Name: node.Name}, updated); err != nil {
+				t.Fatal(err)
+			}
+			if requested := updated.Labels[metadata.PowerMode] == material.PowerMode; requested != test.granted {
+				t.Fatalf("power-mode label = %q, want written %t", updated.Labels[metadata.PowerMode], test.granted)
+			}
+		})
 	}
 }
 

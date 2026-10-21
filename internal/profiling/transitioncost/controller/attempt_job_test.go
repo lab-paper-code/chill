@@ -68,7 +68,7 @@ func assertAttemptJobIdentityAndBounds(
 	request AttemptJobRequest,
 ) {
 	t.Helper()
-	if job.Namespace != request.Measurement.Namespace || job.Name != request.NodeActuationName ||
+	if job.Namespace != request.Measurement.Namespace || job.Name != request.Name ||
 		len(job.OwnerReferences) != 1 || job.OwnerReferences[0].UID != request.Measurement.UID ||
 		job.Annotations[transitionDirectionIndexAnnotation] != "1" {
 		t.Fatalf("Job identity = %#v", job.ObjectMeta)
@@ -117,7 +117,10 @@ func assertAttemptPayload(
 ) {
 	t.Helper()
 	if wire.SchemaVersion != transitionAttemptSchemaVersion ||
-		wire.TransitionFacts.NodeActuationName != request.NodeActuationName ||
+		wire.TransitionFacts.SourcePowerMode != request.Prepared.Directions[0].FrozenContract.TargetState.PowerMode ||
+		wire.TransitionFacts.TargetPowerMode != request.Prepared.Directions[1].FrozenContract.TargetState.PowerMode ||
+		wire.TransitionFacts.SourceActuator.JetsonNVPModel.ID != 0 ||
+		wire.TransitionFacts.TargetActuator.JetsonNVPModel.ID != 1 ||
 		wire.TransitionFacts.DeviceType != "device-b" || wire.TransitionFacts.Model != "model" ||
 		wire.RawLocation != request.RawLocation || wire.PowerObservation.DurationMilliseconds != 5000 {
 		t.Fatalf("attempt payload = %#v", wire)
@@ -137,8 +140,8 @@ func TestBuildAttemptJobRejectsInvalidOperationalSelection(t *testing.T) {
 		{name: "direction index", mutate: func(request *AttemptJobRequest, _ *AttemptJobOptions) {
 			request.DirectionIndex = 2
 		}},
-		{name: "NodeActuation name", mutate: func(request *AttemptJobRequest, _ *AttemptJobOptions) {
-			request.NodeActuationName = "NOT_A_NAME"
+		{name: "Job name", mutate: func(request *AttemptJobRequest, _ *AttemptJobOptions) {
+			request.Name = "NOT_A_NAME"
 		}},
 		{name: "store mismatch", mutate: func(request *AttemptJobRequest, _ *AttemptJobOptions) {
 			request.RawLocation.Store = "other"
@@ -174,7 +177,13 @@ func validAttemptJobInputs(t *testing.T) (AttemptJobRequest, AttemptJobOptions, 
 	}
 	directions := make([]PreparedDirection, 2)
 	directions[0].FrozenContract.TargetState = transitioncost.StateIdentity{DeviceType: "device-a", Model: "model", PowerMode: "low"}
+	directions[1].FrozenContract.SourceState = directions[0].FrozenContract.TargetState
 	directions[1].FrozenContract.TargetState = transitioncost.StateIdentity{DeviceType: "device-b", Model: "model", PowerMode: "high"}
+	for index := range directions {
+		directions[index].Actuator = edgev1alpha1.PowerModeActuator{
+			Kind: edgev1alpha1.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: int32(index)},
+		}
+	}
 	prepared := PreparedMeasurement{
 		Namespace: "measure", TargetNode: edgev1alpha1.ProfilingRunObjectReference{Name: "target", UID: "target-uid"},
 		ObserverNodeName: "observer", EvidenceStore: "evidence",
@@ -193,8 +202,8 @@ func validAttemptJobInputs(t *testing.T) (AttemptJobRequest, AttemptJobOptions, 
 	tolerationSeconds := int64(30)
 	return AttemptJobRequest{
 			Measurement: measurement, Prepared: prepared, DirectionIndex: 1,
-			NodeActuationName: "transition-1",
-			RawLocation:       evidencestore.ObjectLocation{Store: "evidence", Key: "transition/raw.json"},
+			Name:        "transition-1",
+			RawLocation: evidencestore.ObjectLocation{Store: "evidence", Key: "transition/raw.json"},
 			StoreBinding: storekube.Binding{
 				Store: "evidence", Endpoint: "http://store", Bucket: "bucket", Region: "region",
 				CredentialsSecretName: "credentials",

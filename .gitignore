@@ -33,3 +33,4 @@ docs/postmortems/*.md
 *.swo
 *~
 __pycache__/
+/profiler

@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	transitionAttemptSchemaVersion     = "chill.dacs.io/transition-observer-attempt.v1alpha4"
+	transitionAttemptSchemaVersion     = "chill.dacs.io/transition-observer-attempt.v1alpha5"
 	transitionAttemptJSONEnvName       = "CHILL_TRANSITION_ATTEMPT_JSON"
 	transitionObserverBinaryPath       = "/transition-observer"
 	transitionContractMaximumBytesFlag = "--max-contract-bytes="
@@ -38,15 +38,15 @@ const (
 	transitionObserverContainerName    = "transition-observer"
 )
 
-// AttemptJobRequest selects one direction and the future NodeActuation that
-// one attempt-scoped observer Job will watch.
+// AttemptJobRequest selects one direction and the name of the one
+// attempt-scoped observer Job that watches its Node power-mode transition.
 type AttemptJobRequest struct {
-	Measurement       *edgev1alpha1.PowerModeTransitionCost
-	Prepared          PreparedMeasurement
-	DirectionIndex    int
-	NodeActuationName string
-	RawLocation       evidencestore.ObjectLocation
-	StoreBinding      storekube.Binding
+	Measurement    *edgev1alpha1.PowerModeTransitionCost
+	Prepared       PreparedMeasurement
+	DirectionIndex int
+	Name           string
+	RawLocation    evidencestore.ObjectLocation
+	StoreBinding   storekube.Binding
 }
 
 // AttemptJobOptions contains operational Job material supplied by static
@@ -85,20 +85,23 @@ type attemptPowerObservation struct {
 }
 
 type attemptTransitionFacts struct {
-	Namespace                      string `json:"namespace"`
-	NodeActuationName              string `json:"nodeActuationName"`
-	TargetNode                     string `json:"targetNode"`
-	TargetNodeUID                  string `json:"targetNodeUID"`
-	DeviceType                     string `json:"deviceType"`
-	Model                          string `json:"model"`
-	ServingService                 string `json:"servingService"`
-	ServingContainer               string `json:"servingContainer"`
-	PollIntervalMilliseconds       int64  `json:"pollIntervalMilliseconds"`
-	ObservationTimeoutMilliseconds int64  `json:"observationTimeoutMilliseconds"`
+	Namespace                      string                         `json:"namespace"`
+	SourcePowerMode                string                         `json:"sourcePowerMode"`
+	SourceActuator                 edgev1alpha1.PowerModeActuator `json:"sourceActuator"`
+	TargetPowerMode                string                         `json:"targetPowerMode"`
+	TargetActuator                 edgev1alpha1.PowerModeActuator `json:"targetActuator"`
+	TargetNode                     string                         `json:"targetNode"`
+	TargetNodeUID                  string                         `json:"targetNodeUID"`
+	DeviceType                     string                         `json:"deviceType"`
+	Model                          string                         `json:"model"`
+	ServingService                 string                         `json:"servingService"`
+	ServingContainer               string                         `json:"servingContainer"`
+	PollIntervalMilliseconds       int64                          `json:"pollIntervalMilliseconds"`
+	ObservationTimeoutMilliseconds int64                          `json:"observationTimeoutMilliseconds"`
 }
 
 // BuildAttemptJob projects one prepared direction into one immutable native
-// Job. It creates no object and does not create the corresponding NodeActuation.
+// Job. It creates no object and does not request the power mode.
 func BuildAttemptJob(
 	request AttemptJobRequest,
 	options AttemptJobOptions,
@@ -124,7 +127,7 @@ func BuildAttemptJob(
 	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: request.Measurement.Namespace, Name: request.NodeActuationName,
+			Namespace: request.Measurement.Namespace, Name: request.Name,
 			Labels: labels, Annotations: annotations,
 		},
 		Spec: batchv1.JobSpec{
@@ -174,8 +177,8 @@ func validateAttemptJobRequest(
 	if request.DirectionIndex < 0 || request.DirectionIndex >= len(request.Prepared.Directions) {
 		return PreparedDirection{}, errors.New("transition direction index must be zero or one")
 	}
-	if errs := validation.IsDNS1123Subdomain(request.NodeActuationName); len(errs) > 0 {
-		return PreparedDirection{}, fmt.Errorf("NodeActuation name is invalid: %s", strings.Join(errs, "; "))
+	if errs := validation.IsDNS1123Subdomain(request.Name); len(errs) > 0 {
+		return PreparedDirection{}, fmt.Errorf("transition attempt Job name is invalid: %s", strings.Join(errs, "; "))
 	}
 	if err := request.RawLocation.Validate(); err != nil {
 		return PreparedDirection{}, fmt.Errorf("validate raw evidence location: %w", err)
@@ -232,12 +235,16 @@ func encodeAttemptPayload(request AttemptJobRequest, direction PreparedDirection
 			RequestTimeoutMilliseconds: power.RequestTimeout.Milliseconds(), MaxEvents: power.MaxEvents,
 		},
 		TransitionFacts: attemptTransitionFacts{
-			Namespace: request.Prepared.Namespace, NodeActuationName: request.NodeActuationName,
-			TargetNode:     request.Prepared.TargetNode.Name,
-			TargetNodeUID:  request.Prepared.TargetNode.UID,
-			DeviceType:     direction.FrozenContract.TargetState.DeviceType,
-			Model:          direction.FrozenContract.TargetState.Model,
-			ServingService: request.Prepared.ServingService, ServingContainer: request.Prepared.ServingContainer,
+			Namespace:       request.Prepared.Namespace,
+			SourcePowerMode: direction.FrozenContract.SourceState.PowerMode,
+			SourceActuator:  request.Prepared.Directions[1-request.DirectionIndex].Actuator,
+			TargetPowerMode: direction.FrozenContract.TargetState.PowerMode,
+			TargetActuator:  direction.Actuator,
+			TargetNode:      request.Prepared.TargetNode.Name,
+			TargetNodeUID:   request.Prepared.TargetNode.UID,
+			DeviceType:      direction.FrozenContract.TargetState.DeviceType,
+			Model:           direction.FrozenContract.TargetState.Model,
+			ServingService:  request.Prepared.ServingService, ServingContainer: request.Prepared.ServingContainer,
 			PollIntervalMilliseconds:       request.Prepared.FactPollInterval.Milliseconds(),
 			ObservationTimeoutMilliseconds: request.Prepared.FactObservationTimeout.Milliseconds(),
 		},

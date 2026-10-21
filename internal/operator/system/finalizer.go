@@ -19,7 +19,7 @@ import (
 
 func (r *ChillSystemReconciler) finalize(ctx context.Context, system *edgev1alpha1.ChillSystem) (bool, error) {
 	namespace := r.managementNamespace(system)
-	safe, err := nodeagent.SafeToStop(ctx, r.Client, namespace)
+	safe, err := nodeagent.SafeToStop(ctx, r.Client)
 	if err != nil || !safe {
 		return false, err
 	}

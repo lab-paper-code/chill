@@ -32,7 +32,6 @@ type Reconciler struct {
 }
 
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems,verbs=get;list;watch
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=nodeactuations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=list;patch
@@ -101,24 +100,24 @@ func (r *Reconciler) stop(ctx context.Context, options Options) (ctrl.Result, er
 }
 
 // deleteLegacy removes the DaemonSets the node agent replaced. The legacy
-// actuator goes only once no retained transition depends on it.
+// actuator goes only once no Node power mode is pending.
 func (r *Reconciler) deleteLegacy(ctx context.Context, options Options) error {
 	discovery, actuator := component.LegacyNodeDaemonSetNames(options.SystemName)
 	if err := r.deleteDaemonSet(ctx, options.Namespace, discovery); err != nil {
 		return err
 	}
-	safe, err := SafeToStop(ctx, r.Client, options.Namespace)
+	safe, err := SafeToStop(ctx, r.Client)
 	if err != nil || !safe {
 		return err
 	}
 	return r.deleteDaemonSet(ctx, options.Namespace, actuator)
 }
 
-// stopActuation deletes the actuation DaemonSet only once no retained
-// transition depends on it; otherwise the periodic requeue retries. Without
-// an actuation agent no read-back is current, so it is removed from Nodes.
+// stopActuation deletes the actuation DaemonSet only once no Node power mode
+// is pending; otherwise the periodic requeue retries. Without an actuation
+// agent no read-back is current, so it is removed from Nodes.
 func (r *Reconciler) stopActuation(ctx context.Context, options Options) error {
-	safe, err := SafeToStop(ctx, r.Client, options.Namespace)
+	safe, err := SafeToStop(ctx, r.Client)
 	if err != nil || !safe {
 		return err
 	}

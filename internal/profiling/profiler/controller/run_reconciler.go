@@ -113,8 +113,8 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			}
 		} else {
 			// A root Run that has not started waits for ChillServer's admission
-			// before its first NodeActuation or Job.
-			if run.Status.Actuation == nil && !ownedByMeasurementRoot(run) {
+			// before its first Job.
+			if !ownedByMeasurementRoot(run) {
 				granted, _, refused := profilingrun.Admission(run.Annotations)
 				if refused != "" {
 					return ctrl.Result{}, r.publishExecutionOutcome(
@@ -134,7 +134,8 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			}
 		}
 	}
-	if resolved.Prepared.RunConfig.Actuation != nil {
+	// The required state gates only the Job; evidence judges any later change.
+	if job == nil && resolved.Prepared.RunConfig.Actuation != nil {
 		handled, err := r.reconcileRequiredState(ctx, run, resolved)
 		if err != nil || handled {
 			return ctrl.Result{}, err
@@ -241,26 +242,6 @@ func (r *RunReconciler) ensureMeasurementJob(
 		return fmt.Errorf("publish ProfilingRun %s Job reference: %w", request.NamespacedName, err)
 	}
 	return nil
-}
-
-func (r *RunReconciler) publishActuationReference(
-	ctx context.Context,
-	run *edgev1alpha1.ProfilingRun,
-	handoff *edgev1alpha1.NodeActuation,
-) error {
-	if handoff == nil || handoff.Namespace != run.Namespace || handoff.Name == "" || handoff.UID == "" {
-		return errors.New("confirming NodeActuation has incomplete identity")
-	}
-	desiredReference := edgev1alpha1.ProfilingRunObjectReference{Name: handoff.Name, UID: string(handoff.UID)}
-	if run.Status.Actuation != nil {
-		if *run.Status.Actuation != desiredReference {
-			return errors.New("refusing to replace recorded confirming NodeActuation identity")
-		}
-		return nil
-	}
-	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
-		desired.Actuation = &desiredReference
-	})
 }
 
 func (r *RunReconciler) publishJobReference(

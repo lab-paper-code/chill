@@ -89,60 +89,13 @@ func TestCurvePlanSourceRecordsAndRecoversFrozenPlan(t *testing.T) {
 	}
 }
 
-func TestCurvePlanSourceRecoversTransitionFromOwnedNodeActuation(t *testing.T) {
-	parent := testParent()
-	reportBytes, report := curvePlanCandidateReport(t, parent)
-	modelReader := &fakeCurvePlanModelReader{model: curvePlanModel(report)}
-	preparer := &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"}
-	store := newFakeCurvePlanStore()
-	plan, _, err := (&CurvePlanProjector{
-		reader:   modelReader,
-		resolver: &fakeCurvePlanCandidateResolver{reportBytes: reportBytes},
-		preparer: preparer,
-	}).Project(context.Background(), parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, err := plan.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.objects[evidencestore.ObjectLocation{
-		Store: "evidence", Key: "batch-energy-optimizations/parent-uid/curve-plan.json",
-	}] = payload
-	source, err := NewCurvePlanSource(
-		modelReader, &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}, preparer, store,
-		CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	prepared := len(preparer.requests)
-	modelReader.err = errors.New("model reader unavailable")
-	modelReader.transitions = []edgev1alpha1.NodeActuation{{ObjectMeta: ownedByCampaign(parent), Spec: edgev1alpha1.NodeActuationSpec{
-		Node:        edgev1alpha1.ProfilingRunObjectReference{Name: parent.Spec.State.TargetNode, UID: "node-uid"},
-		DeviceClass: parent.Spec.State.Candidate.DeviceClass, PowerMode: parent.Spec.State.Candidate.PowerMode,
-		PolicyName: "policy", SettlingDurationSeconds: 5, MaxActuationDurationSeconds: 60,
-	}}}
-
-	_, _, transition, err := source.Resolve(context.Background(), parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if transition == nil || transition.Node.UID != plan.Shared().NodeUID || transition.PolicyName != "policy" ||
-		transition.SettlingDurationSeconds != 5 || transition.MaxActuationDurationSeconds != 60 ||
-		len(preparer.requests) != prepared || store.puts != 0 {
-		t.Fatalf("recovered transition = %+v, puts %d", transition, store.puts)
-	}
-}
-
 func ownedByCampaign(parent *edgev1alpha1.BatchEnergyOptimization) metav1.ObjectMeta {
 	return metav1.ObjectMeta{OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(
 		parent, edgev1alpha1.GroupVersion.WithKind("BatchEnergyOptimization"),
 	)}}
 }
 
-func TestCurvePlanSourceRecoveryRequiresOwnershipAndFrozenNode(t *testing.T) {
+func TestCurvePlanSourceRecoveryRequiresOwnedRuns(t *testing.T) {
 	parent := testParent()
 	reportBytes, report := curvePlanCandidateReport(t, parent)
 	modelReader := &fakeCurvePlanModelReader{model: curvePlanModel(report)}
@@ -172,54 +125,15 @@ func TestCurvePlanSourceRecoveryRequiresOwnershipAndFrozenNode(t *testing.T) {
 	}
 	foreign := parent.DeepCopy()
 	foreign.UID = "stale-parent-uid"
-	transitionSpec := func(nodeUID string) edgev1alpha1.NodeActuationSpec {
-		return edgev1alpha1.NodeActuationSpec{
-			Node:        edgev1alpha1.ProfilingRunObjectReference{Name: parent.Spec.State.TargetNode, UID: nodeUID},
-			DeviceClass: parent.Spec.State.Candidate.DeviceClass, PowerMode: parent.Spec.State.Candidate.PowerMode,
-			PolicyName: "policy", SettlingDurationSeconds: 5, MaxActuationDurationSeconds: 60,
-		}
-	}
-
-	tests := []struct {
-		name        string
-		transitions []edgev1alpha1.NodeActuation
-		runs        []edgev1alpha1.ProfilingRun
-		want        string
-	}{
-		{
-			name:        "unowned transition",
-			transitions: []edgev1alpha1.NodeActuation{{Spec: transitionSpec(preparer.nodeUID)}},
-			want:        "NodeActuation",
-		},
-		{
-			name:        "transition owned by stale parent UID",
-			transitions: []edgev1alpha1.NodeActuation{{ObjectMeta: ownedByCampaign(foreign), Spec: transitionSpec(preparer.nodeUID)}},
-			want:        "NodeActuation",
-		},
-		{
-			name: "stale predecessor Run",
-			runs: []edgev1alpha1.ProfilingRun{{ObjectMeta: ownedByCampaign(foreign)}},
-			want: "ProfilingRun",
-		},
-		{
-			name:        "owned transition Node UID drift",
-			transitions: []edgev1alpha1.NodeActuation{{ObjectMeta: ownedByCampaign(parent), Spec: transitionSpec("other-node-uid")}},
-			want:        "does not match the frozen curve plan",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			modelReader.transitions, modelReader.runs = test.transitions, test.runs
-			if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
-				!strings.Contains(err.Error(), test.want) {
-				t.Fatalf("Resolve() error = %v, want containing %q", err, test.want)
-			}
-		})
+	modelReader.runs = []edgev1alpha1.ProfilingRun{{ObjectMeta: ownedByCampaign(foreign)}}
+	if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
+		!strings.Contains(err.Error(), "ProfilingRun") {
+		t.Fatalf("Resolve() error = %v, want stale predecessor Run rejection", err)
 	}
 
 	// Before any child exists, only the active transition is prepared for the
 	// frozen plan's first batch; the model is not read and no plan is rewritten.
-	modelReader.transitions, modelReader.runs = nil, nil
+	modelReader.runs = nil
 	modelReader.err = errors.New("model reader unavailable")
 	prepared := len(preparer.requests)
 	if _, _, _, err := source.Resolve(context.Background(), parent); err != nil {
@@ -544,11 +458,10 @@ func curvePlanModel(report profilingrun.CandidateReport) *edgev1alpha1.ModelSpec
 }
 
 type fakeCurvePlanModelReader struct {
-	model       *edgev1alpha1.ModelSpec
-	calls       *[]string
-	err         error
-	transitions []edgev1alpha1.NodeActuation
-	runs        []edgev1alpha1.ProfilingRun
+	model *edgev1alpha1.ModelSpec
+	calls *[]string
+	err   error
+	runs  []edgev1alpha1.ProfilingRun
 }
 
 func (r *fakeCurvePlanModelReader) Get(
@@ -580,8 +493,6 @@ func (r *fakeCurvePlanModelReader) List(
 	_ ...client.ListOption,
 ) error {
 	switch typed := list.(type) {
-	case *edgev1alpha1.NodeActuationList:
-		typed.Items = r.transitions
 	case *edgev1alpha1.ProfilingRunList:
 		typed.Items = r.runs
 	default:

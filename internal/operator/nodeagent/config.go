@@ -62,8 +62,8 @@ type ReadOnlyHostPath struct {
 	MountPath string `json:"mountPath"`
 }
 
-// ActuationConfig is the privileged DaemonSet that applies NodeActuations on
-// Nodes of the DeviceClasses named by its policies.
+// ActuationConfig is the privileged DaemonSet that applies the desired power
+// mode on Nodes of the DeviceClasses named by its policies.
 type ActuationConfig struct {
 	ServiceAccountName   string                             `json:"serviceAccountName"`
 	MetricsBindAddress   string                             `json:"metricsBindAddress"`

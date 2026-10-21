@@ -176,6 +176,10 @@ func cloneActuationFacts(input *ActuationFacts) *ActuationFacts {
 	}
 	copy := *input
 	copy.Target.Actuator = cloneActuatorTarget(copy.Target.Actuator)
+	if input.Generation != nil {
+		generation := *input.Generation
+		copy.Generation = &generation
+	}
 	return &copy
 }
 

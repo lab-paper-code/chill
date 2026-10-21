@@ -100,7 +100,7 @@ func (f *KubernetesExecutionFinalizer) Finalize(
 	if err != nil {
 		return FinalizedRunEvidence{}, err
 	}
-	actuation, err := f.observeActuation(ctx, run, prepared)
+	actuation, err := observeActuation(run, prepared, observation.Node)
 	if err != nil {
 		return FinalizedRunEvidence{}, err
 	}

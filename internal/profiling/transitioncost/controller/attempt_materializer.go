@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -10,14 +11,16 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
+	"github.com/lab-paper-code/chill/internal/metadata"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 const (
@@ -44,41 +47,45 @@ type AttemptStoreBindingResolver interface {
 // AttemptProgress is the narrow handoff from materialization to the following
 // evidence finalizer. It does not decide another direction or attempt.
 type AttemptProgress struct {
-	Stage         AttemptStage
-	Reason        string
-	Job           *batchv1.Job
-	NodeActuation *edgev1alpha1.NodeActuation
+	Stage  AttemptStage
+	Reason string
+	Job    *batchv1.Job
 }
 
 // AttemptMaterializer advances exactly one caller-selected directed attempt
 // within the enclosing PowerModeTransitionCost reconciler.
 type AttemptMaterializer struct {
 	client  client.Client
+	nodes   client.Reader
 	scheme  *runtime.Scheme
 	stores  AttemptStoreBindingResolver
 	options AttemptJobOptions
 	now     func() time.Time
 }
 
+// NewAttemptMaterializer reads the target Node through nodes, uncached, so a
+// power-mode request patches the Node version it checked.
 func NewAttemptMaterializer(
 	kubeClient client.Client,
+	nodes client.Reader,
 	scheme *runtime.Scheme,
 	stores AttemptStoreBindingResolver,
 	options AttemptJobOptions,
 ) (*AttemptMaterializer, error) {
-	if kubeClient == nil || scheme == nil || stores == nil {
-		return nil, errors.New("Kubernetes client, scheme, and Evidence Store resolver are required")
+	if kubeClient == nil || nodes == nil || scheme == nil || stores == nil {
+		return nil, errors.New("Kubernetes client, Node reader, scheme, and Evidence Store resolver are required")
 	}
 	options.Resources = *options.Resources.DeepCopy()
 	options.Tolerations = cloneTolerations(options.Tolerations)
 	return &AttemptMaterializer{
-		client: kubeClient, scheme: scheme, stores: stores, options: options, now: time.Now,
+		client: kubeClient, nodes: nodes, scheme: scheme, stores: stores, options: options, now: time.Now,
 	}, nil
 }
 
-// Advance creates at most one Job and its same-name NodeActuation. Repeated
-// calls reconstruct progress from the immutable preparation and native owned
-// objects; they never select a later attempt.
+// Advance creates at most one observer Job and, once it is Ready, requests the
+// target power mode on the Node. Repeated calls reconstruct progress from the
+// immutable preparation, the owned Job, and the Node; they never select a
+// later attempt.
 func (m *AttemptMaterializer) Advance(
 	ctx context.Context,
 	measurement *edgev1alpha1.PowerModeTransitionCost,
@@ -95,22 +102,12 @@ func (m *AttemptMaterializer) Advance(
 	if err != nil {
 		return AttemptProgress{}, err
 	}
-	actuation, err := m.loadActuation(ctx, measurement, selection)
+	node, err := m.loadNode(ctx, prepared)
 	if err != nil {
 		return AttemptProgress{}, err
 	}
-	if actuation != nil {
-		if job == nil {
-			return AttemptProgress{}, errors.New("transition attempt NodeActuation exists without its observer Job")
-		}
-		return progressForRetainedAttempt(job, actuation), nil
-	}
 	if job == nil {
-		confirmed, reason, err := m.confirmSource(ctx, prepared, directionIndex)
-		if err != nil {
-			return AttemptProgress{}, err
-		}
-		if !confirmed {
+		if confirmed, reason := m.confirmSource(node, prepared, directionIndex); !confirmed {
 			return AttemptProgress{Stage: AttemptStageTerminal, Reason: reason}, nil
 		}
 		job, err = m.createOrRecoverObserverJob(ctx, measurement, prepared, selection)
@@ -118,6 +115,13 @@ func (m *AttemptMaterializer) Advance(
 			return AttemptProgress{}, err
 		}
 		return AttemptProgress{Stage: AttemptStageObserverStarting, Job: job}, nil
+	}
+	// The Job exists only after the source was confirmed, and this attempt
+	// is the Node's only writer, so a target label is this attempt's request.
+	direction := prepared.Directions[directionIndex]
+	target := direction.FrozenContract.TargetState.PowerMode
+	if node.Labels[metadata.PowerMode] == target {
+		return progressForRetainedAttempt(job, node, direction, m.now()), nil
 	}
 
 	if jobFailed(job) {
@@ -130,20 +134,16 @@ func (m *AttemptMaterializer) Advance(
 		return AttemptProgress{Stage: AttemptStageObserverStarting, Job: job}, nil
 	}
 
-	confirmed, reason, err := m.confirmSource(ctx, prepared, directionIndex)
-	if err != nil {
-		return AttemptProgress{}, err
-	}
-	if !confirmed {
+	if confirmed, reason := m.confirmSource(node, prepared, directionIndex); !confirmed {
 		return AttemptProgress{Stage: AttemptStageTerminal, Reason: reason, Job: job}, nil
 	}
-	actuation, err = m.createOrRecoverAttemptActuation(ctx, measurement, prepared, selection)
-	if err != nil {
+	if holder, _ := profilingrun.MeasurementHolder(node); holder != string(measurement.UID) {
+		return AttemptProgress{}, fmt.Errorf("Node %s is not granted to this measurement", node.Name)
+	}
+	if err := metadata.RequestPowerMode(ctx, m.client, node, target); err != nil {
 		return AttemptProgress{}, err
 	}
-	return AttemptProgress{
-		Stage: AttemptStageActuationRunning, Job: job, NodeActuation: actuation,
-	}, nil
+	return AttemptProgress{Stage: AttemptStageActuationRunning, Job: job}, nil
 }
 
 func (m *AttemptMaterializer) createOrRecoverObserverJob(
@@ -158,7 +158,7 @@ func (m *AttemptMaterializer) createOrRecoverObserverJob(
 	}
 	job, err := BuildAttemptJob(AttemptJobRequest{
 		Measurement: measurement, Prepared: prepared, DirectionIndex: selection.directionIndex,
-		NodeActuationName: selection.name, RawLocation: selection.rawLocation,
+		Name: selection.name, RawLocation: selection.rawLocation,
 		StoreBinding: binding,
 	}, m.options, m.scheme)
 	if err != nil {
@@ -171,25 +171,6 @@ func (m *AttemptMaterializer) createOrRecoverObserverJob(
 		return m.loadJob(ctx, measurement, selection)
 	}
 	return job, nil
-}
-
-func (m *AttemptMaterializer) createOrRecoverAttemptActuation(
-	ctx context.Context,
-	measurement *edgev1alpha1.PowerModeTransitionCost,
-	prepared PreparedMeasurement,
-	selection attemptSelection,
-) (*edgev1alpha1.NodeActuation, error) {
-	actuation, err := buildAttemptActuation(measurement, prepared, selection, m.now(), m.scheme)
-	if err != nil {
-		return nil, err
-	}
-	if err := m.client.Create(ctx, actuation); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return nil, fmt.Errorf("create transition attempt NodeActuation %q: %w", selection.name, err)
-		}
-		return m.loadActuation(ctx, measurement, selection)
-	}
-	return actuation, nil
 }
 
 type attemptSelection struct {
@@ -247,66 +228,38 @@ func (m *AttemptMaterializer) loadJob(
 	return job, nil
 }
 
-func (m *AttemptMaterializer) loadActuation(
-	ctx context.Context,
-	measurement *edgev1alpha1.PowerModeTransitionCost,
-	selection attemptSelection,
-) (*edgev1alpha1.NodeActuation, error) {
-	actuation := &edgev1alpha1.NodeActuation{}
-	key := types.NamespacedName{Namespace: measurement.Namespace, Name: selection.name}
-	if err := m.client.Get(ctx, key, actuation); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("get transition attempt NodeActuation %s: %w", key, err)
+func (m *AttemptMaterializer) loadNode(ctx context.Context, prepared PreparedMeasurement) (*corev1.Node, error) {
+	node := &corev1.Node{}
+	if err := m.nodes.Get(ctx, types.NamespacedName{Name: prepared.TargetNode.Name}, node); err != nil {
+		return nil, fmt.Errorf("get transition target Node %s: %w", prepared.TargetNode.Name, err)
 	}
-	if !metav1.IsControlledBy(actuation, measurement) {
-		return nil, errors.New("retained transition attempt NodeActuation has unexpected ownership")
+	if string(node.UID) != prepared.TargetNode.UID {
+		return nil, fmt.Errorf("transition target Node %s identity changed", node.Name)
 	}
-	return actuation, nil
+	return node, nil
 }
 
+// confirmSource reports whether the Node's agent settled the source mode and
+// still reads back the source actuator.
 func (m *AttemptMaterializer) confirmSource(
-	ctx context.Context,
+	node *corev1.Node,
 	prepared PreparedMeasurement,
 	directionIndex int,
-) (bool, string, error) {
-	actuations := &edgev1alpha1.NodeActuationList{}
-	if err := m.client.List(ctx, actuations, client.InNamespace(prepared.Namespace)); err != nil {
-		return false, "", fmt.Errorf("list NodeActuations for transition source confirmation: %w", err)
+) (bool, string) {
+	toSource := prepared.Directions[1-directionIndex]
+	done, err := metadata.PowerModeOutcome(
+		node, prepared.Directions[directionIndex].FrozenContract.SourceState.PowerMode, time.Time{},
+		time.Duration(toSource.ActuationPolicy.Policy.MaxActuationDurationSeconds)*time.Second, m.now(),
+	)
+	if err != nil || !done {
+		return false, AttemptReasonSourceStateUnknown
 	}
-	var latest *edgev1alpha1.NodeActuation
-	var latestAt time.Time
-	for index := range actuations.Items {
-		candidate := &actuations.Items[index]
-		if candidate.Spec.Node != prepared.TargetNode {
-			continue
-		}
-		terminalAt, terminal := actuationTerminalTime(candidate)
-		if !terminal {
-			return false, AttemptReasonSourceStateUnknown, nil
-		}
-		if latest == nil || terminalAt.After(latestAt) {
-			latest, latestAt = candidate, terminalAt
-			continue
-		}
-		if terminalAt.Equal(latestAt) {
-			return false, AttemptReasonSourceStateUnknown, nil
-		}
+	var readBack edgev1alpha1.PowerModeActuator
+	if json.Unmarshal([]byte(node.Annotations[metadata.PowerActuator]), &readBack) != nil ||
+		!samePowerModeActuator(readBack, toSource.Actuator) {
+		return false, AttemptReasonSourceStateMismatch
 	}
-	if latest == nil || latest.Status.Phase != edgev1alpha1.NodeActuationPhaseReady ||
-		latest.Status.TerminalFailure != nil || latest.Status.TargetObservation == nil {
-		return false, AttemptReasonSourceStateUnknown, nil
-	}
-	expectedState := prepared.Directions[directionIndex].FrozenContract.SourceState
-	expectedActuator := prepared.Directions[1-directionIndex].Actuator
-	if latest.Spec.DeviceClass != prepared.DeviceClass || latest.Spec.PowerMode != expectedState.PowerMode ||
-		!samePowerModeActuator(latest.Spec.Actuator, expectedActuator) ||
-		latest.Status.TargetObservation.PowerMode != expectedState.PowerMode ||
-		!samePowerModeActuator(latest.Status.TargetObservation.Actuator, expectedActuator) {
-		return false, AttemptReasonSourceStateMismatch, nil
-	}
-	return true, "", nil
+	return true, ""
 }
 
 func samePowerModeActuator(left, right edgev1alpha1.PowerModeActuator) bool {
@@ -336,76 +289,25 @@ func sameOptionalInt32(left, right *int32) bool {
 	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }
 
-func actuationTerminalTime(actuation *edgev1alpha1.NodeActuation) (time.Time, bool) {
-	if actuation == nil || actuation.Generation < 1 ||
-		actuation.Status.ObservedGeneration != actuation.Generation {
-		return time.Time{}, false
-	}
-	switch actuation.Status.Phase {
-	case edgev1alpha1.NodeActuationPhaseReady:
-		if actuation.Status.ReadyAt == nil || actuation.Status.ReadyAt.IsZero() ||
-			actuation.Status.TargetObservation == nil || actuation.Status.TargetObservation.ObservedAt.IsZero() ||
-			actuation.Status.ReadyAt.Before(&actuation.Status.TargetObservation.ObservedAt) {
-			return time.Time{}, false
-		}
-		return actuation.Status.ReadyAt.Time, true
-	case edgev1alpha1.NodeActuationPhaseFailed:
-		if actuation.Status.TerminalFailure == nil || actuation.Status.TerminalFailure.OccurredAt.IsZero() {
-			return time.Time{}, false
-		}
-		return actuation.Status.TerminalFailure.OccurredAt.Time, true
-	default:
-		return time.Time{}, false
-	}
-}
-
-func buildAttemptActuation(
-	measurement *edgev1alpha1.PowerModeTransitionCost,
-	prepared PreparedMeasurement,
-	selection attemptSelection,
-	now time.Time,
-	scheme *runtime.Scheme,
-) (*edgev1alpha1.NodeActuation, error) {
-	if scheme == nil {
-		return nil, errors.New("Kubernetes scheme is required")
-	}
-	direction := prepared.Directions[selection.directionIndex]
-	policy := direction.ActuationPolicy.Policy
-	requestedAt := metav1.NewTime(now.UTC())
-	actuation := &edgev1alpha1.NodeActuation{
-		ObjectMeta: metav1.ObjectMeta{Namespace: measurement.Namespace, Name: selection.name},
-		Spec: edgev1alpha1.NodeActuationSpec{
-			Node: prepared.TargetNode, DeviceClass: prepared.DeviceClass,
-			PowerMode: direction.FrozenContract.TargetState.PowerMode,
-			Actuator:  *direction.Actuator.DeepCopy(), PolicyName: policy.Name,
-			SettlingDurationSeconds:     int32(policy.SettlingDurationSeconds),
-			MaxActuationDurationSeconds: int32(policy.MaxActuationDurationSeconds),
-			StageRequestedAt:            requestedAt,
-			Deadline: metav1.NewTime(requestedAt.Add(
-				time.Duration(policy.MaxActuationDurationSeconds) * time.Second,
-			)),
-		},
-	}
-	if err := controllerutil.SetControllerReference(measurement, actuation, scheme); err != nil {
-		return nil, fmt.Errorf("set transition attempt NodeActuation owner: %w", err)
-	}
-	return actuation, nil
-}
-
+// progressForRetainedAttempt follows a requested transition until both the
+// observer Job and the Node's agent are done with it.
 func progressForRetainedAttempt(
 	job *batchv1.Job,
-	actuation *edgev1alpha1.NodeActuation,
+	node *corev1.Node,
+	direction PreparedDirection,
+	now time.Time,
 ) AttemptProgress {
-	progress := AttemptProgress{Stage: AttemptStageActuationRunning, Job: job, NodeActuation: actuation}
-	if (jobFailed(job) || jobComplete(job)) &&
-		(actuation.Status.Phase == edgev1alpha1.NodeActuationPhaseReady ||
-			actuation.Status.Phase == edgev1alpha1.NodeActuationPhaseFailed) {
+	progress := AttemptProgress{Stage: AttemptStageActuationRunning, Job: job}
+	done, err := metadata.PowerModeOutcome(
+		node, direction.FrozenContract.TargetState.PowerMode, time.Time{},
+		time.Duration(direction.ActuationPolicy.Policy.MaxActuationDurationSeconds)*time.Second, now,
+	)
+	if (jobFailed(job) || jobComplete(job)) && (done || err != nil) {
 		progress.Stage = AttemptStageFinalizationReady
 		return progress
 	}
 	if jobFailed(job) {
 		progress.Stage, progress.Reason = AttemptStageTerminal, AttemptReasonObserverFailed
-		return progress
 	}
 	return progress
 }

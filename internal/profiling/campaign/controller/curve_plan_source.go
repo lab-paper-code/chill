@@ -202,11 +202,9 @@ func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 // and decoded once and is never compared with current facts. Only when no plan
 // is stored yet is the plan projected once and recorded immutably.
 //
-// The curve plan carries no actuation policy, so transition material comes
-// from the campaign's own frozen state: the owned NodeActuation when one
-// exists, no transition when Runs exist without one (they are only created
-// after the transition), and otherwise, before either exists, the current
-// projection of the one transition the campaign still has to create.
+// The curve plan carries no actuation policy, so transition material is the
+// current projection of the one power mode the campaign establishes before
+// its first Run, and no transition once valid Runs exist.
 func (s *CurvePlanSource) Resolve(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchEnergyOptimization,
@@ -278,41 +276,19 @@ func (s *CurvePlanSource) readStored(
 }
 
 // recoverTransition returns the transition material for a campaign whose plan
-// is already frozen. An owned NodeActuation is the frozen authority; owned Runs
-// without one need no transition. Only before either exists is the one
-// transition prepared from the current policy for the frozen plan's first batch.
-// Every material is bound to the frozen plan's Node UID.
+// is already frozen. Owned Runs need no transition; they are only created
+// after it. Before them the transition is prepared from the current policy for
+// the frozen plan's first batch, bound to the frozen plan's Node UID.
 func (s *CurvePlanSource) recoverTransition(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	plan profilederivation.CurvePlan,
 ) (*TransitionMaterial, error) {
-	matching := []client.ListOption{
+	runs := &edgev1alpha1.ProfilingRunList{}
+	if err := s.projector.reader.List(ctx, runs,
 		client.InNamespace(parent.Namespace),
 		client.MatchingLabels{labelBatchEnergyOptimization: parent.Name},
-	}
-	transitions := &edgev1alpha1.NodeActuationList{}
-	if err := s.projector.reader.List(ctx, transitions, matching...); err != nil {
-		return nil, fmt.Errorf("list BatchEnergyOptimization NodeActuations: %w", err)
-	}
-	if len(transitions.Items) > 1 {
-		return nil, errors.New("a BatchEnergyOptimization cannot own more than one transition")
-	}
-	if len(transitions.Items) == 1 {
-		transition := &transitions.Items[0]
-		if !controlledByParent(parent, transition) {
-			return nil, fmt.Errorf("NodeActuation %q is not controller-owned by this BatchEnergyOptimization", transition.Name)
-		}
-		spec := transition.Spec
-		return bindTransitionToPlan(plan, &TransitionMaterial{
-			Node: spec.Node, DeviceClass: spec.DeviceClass, PowerMode: spec.PowerMode,
-			Actuator: spec.Actuator, PolicyName: spec.PolicyName,
-			SettlingDurationSeconds:     spec.SettlingDurationSeconds,
-			MaxActuationDurationSeconds: spec.MaxActuationDurationSeconds,
-		})
-	}
-	runs := &edgev1alpha1.ProfilingRunList{}
-	if err := s.projector.reader.List(ctx, runs, matching...); err != nil {
+	); err != nil {
 		return nil, fmt.Errorf("list BatchEnergyOptimization ProfilingRuns: %w", err)
 	}
 	valid := 0

@@ -3,63 +3,37 @@ package nodeagent
 import (
 	"context"
 	"testing"
-	"time"
 
-	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 )
 
-func TestSafeToStopBlocksEveryUnfinishedOrLockHoldingTransition(t *testing.T) {
+func TestSafeToStopBlocksOnlyPendingPowerModes(t *testing.T) {
 	t.Parallel()
-	now := metav1.NewMicroTime(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
-	for name, status := range map[string]edgev1alpha1.NodeActuationStatus{
-		"pending": {Phase: edgev1alpha1.NodeActuationPhasePending},
-		"applying": {
-			Phase: edgev1alpha1.NodeActuationPhaseApplying, ApplyStartedAt: &now,
-		},
-		"ready before Lease release": {
-			Phase: edgev1alpha1.NodeActuationPhaseReady,
-			Lease: &edgev1alpha1.ProfilingRunObjectReference{Name: "lease", UID: "lease-uid"},
-		},
+	for state, want := range map[string]bool{
+		chillmeta.PowerModePending: false,
+		chillmeta.PowerModeSuccess: true,
+		chillmeta.PowerModeFailed:  true,
+		"":                         true,
 	} {
-		t.Run(name, func(t *testing.T) {
-			if safe := safeToStopWithStatus(t, status); safe {
-				t.Fatalf("status unexpectedly safe: %#v", status)
+		t.Run(state, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := corev1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "jetson", Labels: map[string]string{}}}
+			if state != "" {
+				node.Labels[chillmeta.PowerModeState] = state
+			}
+			reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
+			safe, err := SafeToStop(context.Background(), reader)
+			if err != nil || safe != want {
+				t.Fatalf("SafeToStop = %v, %v; want %v", safe, err, want)
 			}
 		})
 	}
-}
-
-func TestSafeToStopAllowsTerminalTransitionsAfterLeaseRelease(t *testing.T) {
-	t.Parallel()
-	now := metav1.NewMicroTime(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
-	for name, status := range map[string]edgev1alpha1.NodeActuationStatus{
-		"failed": {Phase: edgev1alpha1.NodeActuationPhaseFailed},
-		"ready":  {Phase: edgev1alpha1.NodeActuationPhaseReady, ReadyAt: &now},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if safe := safeToStopWithStatus(t, status); !safe {
-				t.Fatalf("status unexpectedly unsafe: %#v", status)
-			}
-		})
-	}
-}
-
-func safeToStopWithStatus(t *testing.T, status edgev1alpha1.NodeActuationStatus) bool {
-	t.Helper()
-	scheme := runtime.NewScheme()
-	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
-	}
-	transition := &edgev1alpha1.NodeActuation{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "transition"}, Status: status,
-	}
-	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(transition).Build()
-	safe, err := SafeToStop(context.Background(), reader, "chill-system")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return safe
 }

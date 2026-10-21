@@ -13,6 +13,7 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -188,23 +189,17 @@ func errorCode(err error) string {
 // Node from a measurement; once granted, serving power changes are refused.
 func TestOrderPowerChangeThenAdmission(t *testing.T) {
 	h, _, _ := sequenceHarness(t)
-	pending := &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "power"},
-		Spec: edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}, Deadline: meta.NewTime(time.Now().Add(time.Hour))}}
-	h.create(pending)
+	h.setNode(func(n *core.Node) { pendingNode(n, lowMode, time.Now()) })
 	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != "NodeBusy" {
 		t.Fatalf("manual prepare admitted over a pending power change: %v", err)
 	}
-	pending.Status.Phase = edge.NodeActuationPhaseFailed
-	if err := h.controller.store.client.Update(context.Background(), pending); err != nil {
-		t.Fatal(err)
-	}
+	h.setNode(func(n *core.Node) { n.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeFailed })
 	h.create(baselineRoot("idle", time.Now()))
 	h.admit()
 	if h.holder() == "" {
 		t.Fatal("not granted")
 	}
-	request := &edge.NodeActuation{Spec: edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}}}
-	if err := h.controller.operations.ChangePower(context.Background(), testNode, request); !errors.Is(err, ErrNodeInMeasurement) {
+	if err := h.controller.operations.ChangePower(context.Background(), testNode, lowMode, time.Minute); !errors.Is(err, ErrNodeInMeasurement) {
 		t.Fatalf("serving power change on a measured Node: %v", err)
 	}
 	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != "NodeBusy" {
@@ -245,9 +240,7 @@ func TestOrderMeasurementEndThenPowerChange(t *testing.T) {
 	root := baselineRoot("idle", time.Now())
 	h.create(root)
 	h.admit()
-	pending := &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "power"},
-		Spec: edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}, Deadline: meta.NewTime(time.Now().Add(time.Hour))}}
-	h.create(pending)
+	h.setNode(func(n *core.Node) { pendingNode(n, lowMode, time.Now()) })
 	h.complete(root)
 	if err := h.controller.Admit(context.Background()); err != nil {
 		t.Fatal(err)
@@ -259,10 +252,7 @@ func TestOrderMeasurementEndThenPowerChange(t *testing.T) {
 	if err := h.controller.operations.admittedNode(context.Background(), testNode); !errors.Is(err, ErrNodeInMeasurement) {
 		t.Fatalf("serving power change admitted before the taint was removed: %v", err)
 	}
-	pending.Status.Phase = edge.NodeActuationPhaseReady
-	if err := h.controller.store.client.Update(context.Background(), pending); err != nil {
-		t.Fatal(err)
-	}
+	h.setNode(func(n *core.Node) { n.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeSuccess })
 	h.admit()
 	if h.holder() != "" {
 		t.Fatal("taint kept after the power change settled")

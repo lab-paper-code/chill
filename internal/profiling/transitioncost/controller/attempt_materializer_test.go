@@ -11,6 +11,8 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
+	"github.com/lab-paper-code/chill/internal/metadata"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -24,19 +26,17 @@ import (
 
 func TestAttemptMaterializerProjectsBothDirectionsAndRecovers(t *testing.T) {
 	tests := []struct {
-		name          string
-		direction     int
-		attempt       int32
-		targetMode    string
-		targetModelID int32
-		policy        string
+		name       string
+		direction  int
+		attempt    int32
+		targetMode string
 	}{
-		{name: "low to high", direction: 0, attempt: 1, targetMode: "high", targetModelID: 2, policy: "to-high"},
-		{name: "high to low", direction: 1, attempt: 2, targetMode: "low", targetModelID: 1, policy: "to-low"},
+		{name: "low to high", direction: 0, attempt: 1, targetMode: "high"},
+		{name: "high to low", direction: 1, attempt: 2, targetMode: "low"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newAttemptMaterializerFixture(t, confirmedSourceActuation(t, test.direction, time.Unix(100, 0)))
+			fixture := newAttemptMaterializerFixture(t, test.direction)
 			name := fmt.Sprintf("transition-transition-cost-uid-d%d-a%d", test.direction, test.attempt)
 
 			progress, err := fixture.materializer.Advance(
@@ -63,6 +63,9 @@ func TestAttemptMaterializerProjectsBothDirectionsAndRecovers(t *testing.T) {
 			}
 			requireFinalLocation(t, fixture.measurement, test.direction, test.attempt,
 				strings.TrimSuffix(wantRawKey, "raw.json")+"final.json")
+			if mode := nodePowerMode(t, fixture); mode == test.targetMode {
+				t.Fatal("power mode was requested before the observer was Ready")
+			}
 
 			setJobReady(t, fixture.client, progress.Job)
 			progress, err = fixture.materializer.Advance(
@@ -71,39 +74,27 @@ func TestAttemptMaterializerProjectsBothDirectionsAndRecovers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if progress.Stage != AttemptStageActuationRunning || progress.NodeActuation == nil ||
-				progress.NodeActuation.Name != name || progress.NodeActuation.Spec.PowerMode != test.targetMode ||
-				progress.NodeActuation.Spec.PolicyName != test.policy ||
-				progress.NodeActuation.Spec.Node != fixture.prepared.TargetNode ||
-				progress.NodeActuation.Spec.DeviceClass != fixture.prepared.DeviceClass ||
-				progress.NodeActuation.Spec.Actuator.JetsonNVPModel == nil ||
-				progress.NodeActuation.Spec.Actuator.JetsonNVPModel.ID != test.targetModelID {
+			if progress.Stage != AttemptStageActuationRunning || progress.Job == nil || progress.Job.Name != name {
 				t.Fatalf("actuation progress = %#v", progress)
 			}
-			policy := fixture.prepared.Directions[test.direction].ActuationPolicy.Policy
-			if progress.NodeActuation.Spec.SettlingDurationSeconds != int32(policy.SettlingDurationSeconds) ||
-				progress.NodeActuation.Spec.MaxActuationDurationSeconds != int32(policy.MaxActuationDurationSeconds) ||
-				!progress.NodeActuation.Spec.StageRequestedAt.Time.Equal(time.Unix(150, 0).UTC()) ||
-				!progress.NodeActuation.Spec.Deadline.Time.Equal(time.Unix(150, 0).UTC().Add(
-					time.Duration(policy.MaxActuationDurationSeconds)*time.Second,
-				)) || !metav1.IsControlledBy(progress.NodeActuation, fixture.measurement) {
-				t.Fatalf("actuation policy projection = %#v", progress.NodeActuation)
+			if mode := nodePowerMode(t, fixture); mode != test.targetMode {
+				t.Fatalf("requested power mode = %q, want %q", mode, test.targetMode)
 			}
-			if _, err := fixture.materializer.Advance(
+			progress, err = fixture.materializer.Advance(
 				context.Background(), fixture.measurement, fixture.prepared, test.direction, test.attempt,
-			); err != nil {
+			)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if fixture.stores.calls != 1 ||
-				objectCount(t, fixture.client, fixture.measurement.Namespace, &batchv1.JobList{}) != 1 ||
-				objectCount(t, fixture.client, fixture.measurement.Namespace, &edgev1alpha1.NodeActuationList{}) != 2 {
-				t.Fatalf("recovery duplicated attempt resources; store calls = %d", fixture.stores.calls)
+			if progress.Stage != AttemptStageActuationRunning || fixture.stores.calls != 1 ||
+				objectCount(t, fixture.client, fixture.measurement.Namespace, &batchv1.JobList{}) != 1 {
+				t.Fatalf("recovery = %#v; store calls = %d", progress, fixture.stores.calls)
 			}
 		})
 	}
 }
 
-func TestAttemptMaterializerWaitsForRetainedActuationAfterObserverCompletes(t *testing.T) {
+func TestAttemptMaterializerWaitsForRequestedModeAfterObserverCompletes(t *testing.T) {
 	for _, test := range []struct {
 		condition  batchv1.JobConditionType
 		wantStage  AttemptStage
@@ -113,44 +104,20 @@ func TestAttemptMaterializerWaitsForRetainedActuationAfterObserverCompletes(t *t
 		{condition: batchv1.JobFailed, wantStage: AttemptStageTerminal, wantReason: AttemptReasonObserverFailed},
 	} {
 		t.Run(string(test.condition), func(t *testing.T) {
-			fixture := newAttemptMaterializerFixture(
-				t,
-				confirmedSourceActuation(t, 0, time.Unix(100, 0)),
-			)
+			fixture := newAttemptMaterializerFixture(t, 0)
+			progress := advanceToRequested(t, fixture)
+			setAgentTransition(t, fixture, metadata.PowerModePending, false)
+			setJobCondition(t, fixture.client, progress.Job, test.condition)
+
 			progress, err := fixture.materializer.Advance(
 				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
 			)
 			if err != nil {
 				t.Fatal(err)
 			}
-			setJobReady(t, fixture.client, progress.Job)
-			progress, err = fixture.materializer.Advance(
-				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			actuation := progress.NodeActuation.DeepCopy()
-			actuation.Status = edgev1alpha1.NodeActuationStatus{
-				ObservedGeneration: actuation.Generation,
-				Phase:              edgev1alpha1.NodeActuationPhaseSettling,
-			}
-			if err := fixture.client.Status().Update(context.Background(), actuation); err != nil {
-				t.Fatal(err)
-			}
-			setJobCondition(t, fixture.client, progress.Job, test.condition)
-
-			progress, err = fixture.materializer.Advance(
-				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
 			if progress.Stage != test.wantStage || progress.Reason != test.wantReason ||
-				progress.Job == nil || progress.NodeActuation == nil ||
-				progress.Job.Name != progress.NodeActuation.Name || fixture.stores.calls != 1 ||
-				objectCount(t, fixture.client, fixture.measurement.Namespace, &batchv1.JobList{}) != 1 ||
-				objectCount(t, fixture.client, fixture.measurement.Namespace, &edgev1alpha1.NodeActuationList{}) != 2 {
+				progress.Job == nil || fixture.stores.calls != 1 ||
+				objectCount(t, fixture.client, fixture.measurement.Namespace, &batchv1.JobList{}) != 1 {
 				t.Fatalf("retained attempt progress = %#v, store calls = %d", progress, fixture.stores.calls)
 			}
 		})
@@ -166,10 +133,7 @@ func TestAttemptMaterializerFailsWhenObserverTerminatesBeforeActuation(t *testin
 		{condition: batchv1.JobFailed, reason: AttemptReasonObserverFailed},
 	} {
 		t.Run(string(test.condition), func(t *testing.T) {
-			fixture := newAttemptMaterializerFixture(
-				t,
-				confirmedSourceActuation(t, 0, time.Unix(100, 0)),
-			)
+			fixture := newAttemptMaterializerFixture(t, 0)
 			progress, err := fixture.materializer.Advance(
 				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
 			)
@@ -184,14 +148,8 @@ func TestAttemptMaterializerFailsWhenObserverTerminatesBeforeActuation(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			if progress.Stage != AttemptStageTerminal || progress.Reason != test.reason ||
-				progress.Job == nil || progress.NodeActuation != nil ||
-				objectCount(
-					t,
-					fixture.client,
-					fixture.measurement.Namespace,
-					&edgev1alpha1.NodeActuationList{},
-				) != 1 {
+			if progress.Stage != AttemptStageTerminal || progress.Reason != test.reason || progress.Job == nil ||
+				nodePowerMode(t, fixture) != fixture.prepared.Directions[0].FrozenContract.SourceState.PowerMode {
 				t.Fatalf("terminal-before-actuation progress = %#v", progress)
 			}
 		})
@@ -221,7 +179,7 @@ func TestAttemptMaterializerRejectsInvalidSelectionBeforeMaterialization(t *test
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newAttemptMaterializerFixture(t)
+			fixture := newAttemptMaterializerFixture(t, 0)
 			if _, err := fixture.materializer.Advance(
 				context.Background(), fixture.measurement, fixture.prepared, test.direction, test.attempt,
 			); err == nil {
@@ -237,28 +195,26 @@ func TestAttemptMaterializerRejectsInvalidSelectionBeforeMaterialization(t *test
 func TestAttemptMaterializerFailsClosedOnUnconfirmedSource(t *testing.T) {
 	tests := []struct {
 		name   string
-		source func(*testing.T) *edgev1alpha1.NodeActuation
+		alter  func(*corev1.Node)
 		reason string
 	}{
-		{name: "missing", reason: AttemptReasonSourceStateUnknown},
-		{name: "nonterminal", reason: AttemptReasonSourceStateUnknown, source: func(t *testing.T) *edgev1alpha1.NodeActuation {
-			source := confirmedSourceActuation(t, 0, time.Unix(100, 0))
-			source.Status = edgev1alpha1.NodeActuationStatus{}
-			return source
+		{name: "never requested", reason: AttemptReasonSourceStateUnknown, alter: func(node *corev1.Node) {
+			node.Labels = nil
+			delete(node.Annotations, metadata.PowerModeTransition)
 		}},
-		{name: "wrong power mode", reason: AttemptReasonSourceStateMismatch, source: func(t *testing.T) *edgev1alpha1.NodeActuation {
-			source := confirmedSourceActuation(t, 0, time.Unix(100, 0))
-			source.Status.TargetObservation.PowerMode = "other"
-			return source
+		{name: "pending", reason: AttemptReasonSourceStateUnknown, alter: func(node *corev1.Node) {
+			node.Labels[metadata.PowerModeState] = metadata.PowerModePending
+		}},
+		{name: "changed since", reason: AttemptReasonSourceStateUnknown, alter: func(node *corev1.Node) {
+			node.Annotations[metadata.PowerModeGeneration] = "4"
+		}},
+		{name: "wrong read-back", reason: AttemptReasonSourceStateMismatch, alter: func(node *corev1.Node) {
+			node.Annotations[metadata.PowerActuator] = `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":9}}`
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var objects []client.Object
-			if test.source != nil {
-				objects = append(objects, test.source(t))
-			}
-			fixture := newAttemptMaterializerFixture(t, objects...)
+			fixture := newAttemptMaterializerFixture(t, 0, test.alter)
 			progress, err := fixture.materializer.Advance(
 				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
 			)
@@ -274,7 +230,7 @@ func TestAttemptMaterializerFailsClosedOnUnconfirmedSource(t *testing.T) {
 }
 
 func TestAttemptMaterializerRecoversConcurrentObserverJob(t *testing.T) {
-	fixture := newAttemptMaterializerFixture(t, confirmedSourceActuation(t, 0, time.Unix(100, 0)))
+	fixture := newAttemptMaterializerFixture(t, 0)
 	raceClient := &attemptCreationRaceClient{Client: fixture.client, target: raceObserverJob}
 	fixture.materializer.client = raceClient
 
@@ -302,8 +258,10 @@ func TestAttemptMaterializerRecoversConcurrentObserverJob(t *testing.T) {
 	}
 }
 
-func TestAttemptMaterializerRecoversConcurrentNodeActuation(t *testing.T) {
-	fixture := newAttemptMaterializerFixture(t, confirmedSourceActuation(t, 0, time.Unix(100, 0)))
+func TestAttemptMaterializerRequestsOnlyOnItsOwnGrantedNode(t *testing.T) {
+	fixture := newAttemptMaterializerFixture(t, 0, func(node *corev1.Node) {
+		node.Spec.Taints[0].Value = "other-measurement"
+	})
 	progress, err := fixture.materializer.Advance(
 		context.Background(), fixture.measurement, fixture.prepared, 0, 1,
 	)
@@ -311,35 +269,15 @@ func TestAttemptMaterializerRecoversConcurrentNodeActuation(t *testing.T) {
 		t.Fatal(err)
 	}
 	setJobReady(t, fixture.client, progress.Job)
-	raceClient := &attemptCreationRaceClient{Client: fixture.client, target: raceNodeActuation}
-	fixture.materializer.client = raceClient
 
-	progress, err = fixture.materializer.Advance(
+	_, err = fixture.materializer.Advance(
 		context.Background(), fixture.measurement, fixture.prepared, 0, 1,
 	)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "not granted") {
+		t.Fatalf("Advance() error = %v, want not granted", err)
 	}
-	if progress.Stage != AttemptStageActuationRunning || progress.NodeActuation == nil ||
-		progress.NodeActuation.UID != "concurrent-winner" ||
-		!progress.NodeActuation.Spec.StageRequestedAt.Time.Equal(time.Unix(150, 0).UTC()) ||
-		raceClient.createCalls != 1 || fixture.stores.calls != 1 {
-		t.Fatalf(
-			"concurrent NodeActuation progress = %#v, creates = %d, store calls = %d",
-			progress, raceClient.createCalls, fixture.stores.calls,
-		)
-	}
-
-	if _, err := fixture.materializer.Advance(
-		context.Background(), fixture.measurement, fixture.prepared, 0, 1,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if raceClient.createCalls != 1 || fixture.stores.calls != 1 {
-		t.Fatalf(
-			"retained NodeActuation was recreated: creates = %d, store calls = %d",
-			raceClient.createCalls, fixture.stores.calls,
-		)
+	if mode := nodePowerMode(t, fixture); mode != fixture.prepared.Directions[0].FrozenContract.SourceState.PowerMode {
+		t.Fatalf("power mode = %q written on a Node granted elsewhere", mode)
 	}
 }
 
@@ -356,22 +294,9 @@ func TestAttemptMaterializerPreservesConcurrentWinnerReloadErrors(t *testing.T) 
 			prepare:     func(*testing.T, attemptMaterializerFixture) {},
 			wantContext: "get transition attempt Job",
 		},
-		{
-			name: "NodeActuation", target: raceNodeActuation,
-			prepare: func(t *testing.T, fixture attemptMaterializerFixture) {
-				progress, err := fixture.materializer.Advance(
-					context.Background(), fixture.measurement, fixture.prepared, 0, 1,
-				)
-				if err != nil {
-					t.Fatal(err)
-				}
-				setJobReady(t, fixture.client, progress.Job)
-			},
-			wantContext: "get transition attempt NodeActuation",
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newAttemptMaterializerFixture(t, confirmedSourceActuation(t, 0, time.Unix(100, 0)))
+			fixture := newAttemptMaterializerFixture(t, 0)
 			test.prepare(t, fixture)
 			selection, err := selectAttempt(fixture.measurement, fixture.prepared.EvidenceStore, 0, 1)
 			if err != nil {
@@ -402,53 +327,24 @@ func TestAttemptMaterializerPreservesConcurrentWinnerReloadErrors(t *testing.T) 
 
 func TestAttemptMaterializerReturnsTerminalPairForFinalization(t *testing.T) {
 	for _, conditionType := range []batchv1.JobConditionType{batchv1.JobComplete, batchv1.JobFailed} {
-		t.Run(string(conditionType), func(t *testing.T) {
-			fixture := newAttemptMaterializerFixture(t, confirmedSourceActuation(t, 0, time.Unix(100, 0)))
-			progress, err := fixture.materializer.Advance(
-				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			setJobReady(t, fixture.client, progress.Job)
-			progress, err = fixture.materializer.Advance(
-				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			ready := metav1.NewMicroTime(time.Unix(200, 0))
-			previous := metav1.NewMicroTime(time.Unix(198, 0))
-			target := metav1.NewMicroTime(time.Unix(199, 0))
-			actuation := progress.NodeActuation.DeepCopy()
-			actuation.Status = edgev1alpha1.NodeActuationStatus{
-				ObservedGeneration: actuation.Generation,
-				Phase:              edgev1alpha1.NodeActuationPhaseReady,
-				ReadyAt:            &ready,
-				PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-					PowerMode: fixture.prepared.Directions[0].FrozenContract.SourceState.PowerMode,
-					Actuator:  *fixture.prepared.Directions[1].Actuator.DeepCopy(), ObservedAt: previous,
-				},
-				TargetObservation: &edgev1alpha1.NodeActuationObservation{
-					PowerMode: actuation.Spec.PowerMode, Actuator: *actuation.Spec.Actuator.DeepCopy(), ObservedAt: target,
-				},
-			}
-			if err := fixture.client.Status().Update(context.Background(), actuation); err != nil {
-				t.Fatal(err)
-			}
-			setJobCondition(t, fixture.client, progress.Job, conditionType)
+		for _, state := range []string{metadata.PowerModeSuccess, metadata.PowerModeFailed} {
+			t.Run(string(conditionType)+"/"+state, func(t *testing.T) {
+				fixture := newAttemptMaterializerFixture(t, 0)
+				progress := advanceToRequested(t, fixture)
+				setAgentTransition(t, fixture, state, true)
+				setJobCondition(t, fixture.client, progress.Job, conditionType)
 
-			progress, err = fixture.materializer.Advance(
-				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if progress.Stage != AttemptStageFinalizationReady || progress.Job == nil || progress.NodeActuation == nil ||
-				progress.Job.Name != progress.NodeActuation.Name {
-				t.Fatalf("finalization progress = %#v", progress)
-			}
-		})
+				progress, err := fixture.materializer.Advance(
+					context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if progress.Stage != AttemptStageFinalizationReady || progress.Job == nil {
+					t.Fatalf("finalization progress = %#v", progress)
+				}
+			})
+		}
 	}
 }
 
@@ -462,10 +358,7 @@ type attemptMaterializerFixture struct {
 
 type attemptCreationRaceTarget string
 
-const (
-	raceObserverJob   attemptCreationRaceTarget = "observer-job"
-	raceNodeActuation attemptCreationRaceTarget = "node-actuation"
-)
+const raceObserverJob attemptCreationRaceTarget = "observer-job"
 
 type attemptCreationRaceClient struct {
 	client.Client
@@ -493,11 +386,7 @@ func (c *attemptCreationRaceClient) Create(
 	if err := c.Client.Create(ctx, winner, options...); err != nil {
 		return err
 	}
-	resource := schema.GroupResource{Group: "batch", Resource: "jobs"}
-	if c.target == raceNodeActuation {
-		resource = schema.GroupResource{Group: edgev1alpha1.GroupVersion.Group, Resource: "nodeactuations"}
-	}
-	return apierrors.NewAlreadyExists(resource, object.GetName())
+	return apierrors.NewAlreadyExists(schema.GroupResource{Group: "batch", Resource: "jobs"}, object.GetName())
 }
 
 func (c *attemptCreationRaceClient) Get(
@@ -513,33 +402,32 @@ func (c *attemptCreationRaceClient) Get(
 }
 
 func (c *attemptCreationRaceClient) matches(object client.Object) bool {
-	switch object.(type) {
-	case *batchv1.Job:
-		return c.target == raceObserverJob
-	case *edgev1alpha1.NodeActuation:
-		return c.target == raceNodeActuation
-	default:
-		return false
-	}
+	_, job := object.(*batchv1.Job)
+	return job && c.target == raceObserverJob
 }
 
-func newAttemptMaterializerFixture(t *testing.T, objects ...client.Object) attemptMaterializerFixture {
+// newAttemptMaterializerFixture holds the target Node, granted to the
+// measurement, settled in the source mode of direction.
+func newAttemptMaterializerFixture(t *testing.T, direction int, alter ...func(*corev1.Node)) attemptMaterializerFixture {
 	t.Helper()
 	measurement, prepared, scheme := preparationRecordFixture(t)
 	measurement.Spec.AttemptLimit = 3
 	if err := batchv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
+	node := sourceNode(t, measurement, prepared, direction)
+	for _, change := range alter {
+		change(node)
+	}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&batchv1.Job{}, &edgev1alpha1.NodeActuation{}).
-		WithObjects(objects...).Build()
+		WithStatusSubresource(&batchv1.Job{}).WithObjects(node).Build()
 	stores := &recordingAttemptStoreResolver{binding: storekube.Binding{
 		Store: attemptEvidenceStore, Endpoint: "http://store", Bucket: "bucket", Region: "region",
 		CredentialsSecretName: "credentials",
 	}}
 	_, options, _ := validAttemptJobInputs(t)
 	options.ActiveDeadlineOverhead = 20 * time.Minute
-	materializer, err := NewAttemptMaterializer(kubeClient, scheme, stores, options)
+	materializer, err := NewAttemptMaterializer(kubeClient, kubeClient, scheme, stores, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,29 +438,99 @@ func newAttemptMaterializerFixture(t *testing.T, objects ...client.Object) attem
 	}
 }
 
-func confirmedSourceActuation(t *testing.T, direction int, terminalAt time.Time) *edgev1alpha1.NodeActuation {
+func sourceNode(
+	t *testing.T,
+	measurement *edgev1alpha1.PowerModeTransitionCost,
+	prepared PreparedMeasurement,
+	direction int,
+) *corev1.Node {
 	t.Helper()
-	_, prepared, _ := preparationRecordFixture(t)
-	sourceState := prepared.Directions[direction].FrozenContract.SourceState
-	sourceActuator := prepared.Directions[1-direction].Actuator
-	observedAt := metav1.NewMicroTime(terminalAt.Add(-time.Second))
-	readyAt := metav1.NewMicroTime(terminalAt)
-	return &edgev1alpha1.NodeActuation{
+	mode := prepared.Directions[direction].FrozenContract.SourceState.PowerMode
+	readBack, err := json.Marshal(prepared.Directions[1-direction].Actuator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settledAt := time.Unix(100, 0).UTC()
+	transition, err := json.Marshal(metadata.PowerModeTransitionRecord{
+		PowerMode: mode, Generation: 3, VerifiedAt: &settledAt, ReadyAt: &settledAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: prepared.Namespace, Name: "source-" + strings.ReplaceAll(sourceState.PowerMode, "_", "-"),
-			Generation: 1,
-		},
-		Spec: edgev1alpha1.NodeActuationSpec{
-			Node: prepared.TargetNode, DeviceClass: prepared.DeviceClass,
-			PowerMode: sourceState.PowerMode, Actuator: *sourceActuator.DeepCopy(),
-		},
-		Status: edgev1alpha1.NodeActuationStatus{
-			ObservedGeneration: 1, Phase: edgev1alpha1.NodeActuationPhaseReady, ReadyAt: &readyAt,
-			TargetObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: sourceState.PowerMode, Actuator: *sourceActuator.DeepCopy(), ObservedAt: observedAt,
+			Name: prepared.TargetNode.Name, UID: types.UID(prepared.TargetNode.UID),
+			Labels: map[string]string{metadata.PowerMode: mode, metadata.PowerModeState: metadata.PowerModeSuccess},
+			Annotations: map[string]string{
+				metadata.PowerActuator: string(readBack), metadata.PowerModeGeneration: "3",
+				metadata.PowerModeTransition: string(transition),
 			},
 		},
+		Spec: corev1.NodeSpec{Taints: []corev1.Taint{{
+			Key: profilingrun.MeasurementTaintKey, Value: string(measurement.UID), Effect: corev1.TaintEffectNoSchedule,
+		}}},
 	}
+}
+
+// advanceToRequested creates the d0-a1 observer Job, makes it Ready, and
+// lets the materializer request the target mode.
+func advanceToRequested(t *testing.T, fixture attemptMaterializerFixture) AttemptProgress {
+	t.Helper()
+	progress, err := fixture.materializer.Advance(context.Background(), fixture.measurement, fixture.prepared, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setJobReady(t, fixture.client, progress.Job)
+	progress, err = fixture.materializer.Advance(context.Background(), fixture.measurement, fixture.prepared, 0, 1)
+	if err != nil || progress.Stage != AttemptStageActuationRunning {
+		t.Fatalf("request progress = %#v, error = %v", progress, err)
+	}
+	return progress
+}
+
+// setAgentTransition plays the Node agent on the requested d0 target mode:
+// fenced and pending, settled, or failed.
+func setAgentTransition(t *testing.T, fixture attemptMaterializerFixture, state string, verified bool) {
+	t.Helper()
+	direction := fixture.prepared.Directions[0]
+	node := &corev1.Node{}
+	if err := fixture.client.Get(context.Background(), client.ObjectKey{Name: fixture.prepared.TargetNode.Name}, node); err != nil {
+		t.Fatal(err)
+	}
+	appliedAt, readyAt := time.Unix(140, 0).UTC(), time.Unix(149, 0).UTC()
+	record := metadata.PowerModeTransitionRecord{
+		PowerMode: direction.FrozenContract.TargetState.PowerMode, Generation: 3, ApplyStartedAt: &appliedAt,
+	}
+	switch {
+	case state == metadata.PowerModeFailed:
+		record.Failure = "apply failed"
+	case verified:
+		readBack, err := json.Marshal(direction.Actuator)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record.Generation, record.VerifiedAt, record.SettlingStartedAt, record.ReadyAt = 4, &readyAt, &readyAt, &readyAt
+		node.Annotations[metadata.PowerActuator] = string(readBack)
+		node.Annotations[metadata.PowerModeGeneration] = "4"
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Annotations[metadata.PowerModeTransition] = string(raw)
+	node.Labels[metadata.PowerModeState] = state
+	if err := fixture.client.Update(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func nodePowerMode(t *testing.T, fixture attemptMaterializerFixture) string {
+	t.Helper()
+	node := &corev1.Node{}
+	if err := fixture.client.Get(context.Background(), client.ObjectKey{Name: fixture.prepared.TargetNode.Name}, node); err != nil {
+		t.Fatal(err)
+	}
+	return node.Labels[metadata.PowerMode]
 }
 
 func setJobReady(t *testing.T, kubeClient client.Client, job *batchv1.Job) {
@@ -607,8 +565,6 @@ func objectCount(t *testing.T, kubeClient client.Client, namespace string, objec
 	}
 	switch listed := objects.(type) {
 	case *batchv1.JobList:
-		return len(listed.Items)
-	case *edgev1alpha1.NodeActuationList:
 		return len(listed.Items)
 	default:
 		t.Fatalf("unsupported object list %T", objects)

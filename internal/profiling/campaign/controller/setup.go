@@ -6,12 +6,12 @@ import (
 )
 
 // SetupWithManager registers direct BatchEnergyOptimization events and
-// framework-derived wakeups from its owned transitions and ProfilingRuns.
+// framework-derived wakeups from its owned ProfilingRuns. The Node's power
+// mode is polled with RequeueAfter while it settles.
 func (r *BatchEnergyOptimizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("batchenergyoptimization").
 		For(&edgev1alpha1.BatchEnergyOptimization{}).
-		Owns(&edgev1alpha1.NodeActuation{}).
 		Owns(&edgev1alpha1.ProfilingRun{}).
 		Complete(r)
 }

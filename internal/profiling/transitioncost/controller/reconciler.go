@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// admissionWait is also the poll period of an active attempt's Node.
 const admissionWait = 5 * time.Second
 
 type measurementAdvancer interface {
@@ -59,7 +60,7 @@ func (r *powerModeTransitionCostReconciler) Reconcile(
 		return ctrl.Result{}, nil
 	}
 	// A measurement that has not reported Measuring waits for ChillServer's
-	// admission before its preparation record, Jobs, or NodeActuations.
+	// admission before its preparation record, Jobs, or power-mode requests.
 	if measurement.Status.Phase != edgev1alpha1.PowerModeTransitionCostPhaseMeasuring {
 		granted, _, refused := profilingrun.Admission(measurement.Annotations)
 		if refused != "" {
@@ -90,7 +91,10 @@ func (r *powerModeTransitionCostReconciler) Reconcile(
 		if err := r.patchStatus(ctx, measurement, status); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: progress.stage == measurementStageAttemptFinalized}, nil
+		if progress.stage == measurementStageAttemptFinalized {
+			return ctrl.Result{Requeue: true}, nil
+		}
+		return ctrl.Result{RequeueAfter: admissionWait}, nil
 	case measurementStageComplete, measurementStageInsufficient, measurementStageFailed:
 		stored, err := r.results.write(ctx, measurement, progress)
 		if err != nil {

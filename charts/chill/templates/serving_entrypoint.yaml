@@ -3,7 +3,6 @@
 {{- $labels := include "chill.labels" . -}}
 {{- $servingNamespace := default .Release.Namespace .Values.servingEntrypoint.namespace -}}
 {{- $profileNamespaces := default (list $servingNamespace) .Values.servingEntrypoint.profileNamespaces -}}
-{{- $actuationNamespace := default .Release.Namespace .Values.servingEntrypoint.actuationNamespace -}}
 {{- $storeName := default (printf "%s-evidence-store" (include "chill.systemName" .)) .Values.evidenceStore.connection.name -}}
 {{- $storeEndpoint := default (printf "http://%s-evidence-store.%s.svc.cluster.local:9000" (include "chill.systemName" .) .Release.Namespace) .Values.evidenceStore.connection.endpoint -}}
 {{- $credentialsSecret := default (printf "%s-evidence-store-credentials" (include "chill.systemName" .)) .Values.evidenceStore.credentialsSecret.name -}}
@@ -73,7 +72,6 @@ spec:
           args:
             - {{ printf "--bind-address=:%v" .Values.servingEntrypoint.port | quote }}
             - {{ printf "--serving-namespace=%s" $servingNamespace | quote }}
-            - {{ printf "--actuation-namespace=%s" $actuationNamespace | quote }}
             {{- with .Values.servingEntrypoint.scheduler.configMap }}
             - {{ printf "--serving-scheduler-configmap=%s" . | quote }}
             - {{ printf "--serving-scheduler-config-key=%s" $.Values.servingEntrypoint.scheduler.key | quote }}

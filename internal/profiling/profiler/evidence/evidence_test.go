@@ -217,7 +217,8 @@ func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	if decoded.SchemaVersion != ExecutionEvidenceSchemaVersion || decoded.Actuation == nil ||
-		decoded.Actuation.Handoff.UID != execution.Actuation.Handoff.UID ||
+		decoded.Actuation.Generation == nil || *decoded.Actuation.Generation != *execution.Actuation.Generation ||
+		decoded.Actuation.Handoff != nil ||
 		decoded.Actuation.Target.PowerMode != config.Actuation.PowerMode {
 		t.Fatalf("actuated evidence round trip = %#v", decoded.Actuation)
 	}
@@ -246,6 +247,12 @@ func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 		}, permanent: true},
 		{name: "ready before target read-back", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.ReadyAt = candidate.Actuation.Target.ObservedAt.Add(-time.Second)
+		}, permanent: true},
+		{name: "power-mode generation moved", mutate: func(candidate *ExecutionEvidence) {
+			candidate.Actuation.Generation.End++
+		}, match: "PowerChangedDuringMeasurement", permanent: true},
+		{name: "missing generation", mutate: func(candidate *ExecutionEvidence) {
+			candidate.Actuation.Generation = nil
 		}, permanent: true},
 	}
 	for _, test := range tests {
@@ -279,6 +286,34 @@ func TestFixedExecutionEvidenceRejectsActuationFacts(t *testing.T) {
 		t.Fatal("fixed evidence accepted actuation facts")
 	} else if !errors.Is(err, ErrPermanentValidation) {
 		t.Fatalf("fixed evidence error = %v, want permanent validation", err)
+	}
+}
+
+// A record written before Node power-mode labels names its NodeActuation
+// handoff and has no generation; it still decodes strictly and validates.
+func TestLegacyHandoffExecutionEvidenceStillDecodes(t *testing.T) {
+	t.Parallel()
+	_, raw, execution := validActuatedExecutionEvidence(t)
+	execution.Actuation.Generation = nil
+	execution.Actuation.Handoff = &NamespacedObjectFacts{
+		Namespace: execution.Terminal.Job.Namespace, Name: "run-actuation", UID: "actuation-uid",
+	}
+	payload, err := execution.CanonicalJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"handoff":{"namespace"`) || strings.Contains(string(payload), `"generation"`) {
+		t.Fatalf("legacy payload = %s", payload)
+	}
+	var decoded ExecutionEvidence
+	if err := decodeExact(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoded.Validate(raw); err != nil {
+		t.Fatalf("legacy evidence rejected: %v", err)
+	}
+	if decoded.Actuation.Handoff == nil || decoded.Actuation.Handoff.UID != "actuation-uid" {
+		t.Fatalf("legacy handoff = %#v", decoded.Actuation.Handoff)
 	}
 }
 
@@ -771,9 +806,7 @@ func validActuatedExecutionEvidence(
 		Run: NamespacedObjectFacts{
 			Namespace: execution.Terminal.Job.Namespace, Name: "run", UID: "run-uid",
 		},
-		Handoff: NamespacedObjectFacts{
-			Namespace: execution.Terminal.Job.Namespace, Name: "run-actuation", UID: "actuation-uid",
-		},
+		Generation: &PowerModeGeneration{Start: 7, End: 7},
 		Target: ActuationObservation{
 			PowerMode: config.Actuation.PowerMode, Actuator: target(0), ObservedAt: completed.Add(-90 * time.Second),
 		},
@@ -804,6 +837,10 @@ func cloneActuationFactsForTest(input *ActuationFacts) *ActuationFacts {
 		return cloned
 	}
 	copy.Target.Actuator = cloneTarget(copy.Target.Actuator)
+	if input.Generation != nil {
+		generation := *input.Generation
+		copy.Generation = &generation
+	}
 	return &copy
 }
 

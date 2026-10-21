@@ -17,6 +17,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -584,8 +585,7 @@ func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
 				}
 				if !tc.measurement {
 					// store/observer nil: reaching any effect past admission panics.
-					request := &edge.NodeActuation{Spec: edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: node.Name, UID: string(node.UID)}}}
-					if err = (&Operations{kube: kube}).ChangePower(ctx, spec.Instance.Node, request); !errors.Is(err, ErrNodeInMeasurement) {
+					if err = (&Operations{kube: kube}).ChangePower(ctx, spec.Instance.Node, lowMode, time.Minute); !errors.Is(err, ErrNodeInMeasurement) {
 						t.Fatalf("power change on measurement Node: %v", err)
 					}
 				}
@@ -609,39 +609,21 @@ func TestMeasuredPowerChangeOnEmptyMeasurementNode(t *testing.T) {
 	_, node, _, class := observerSourceFixture()
 	node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Effect: core.TaintEffectNoSchedule}}
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	actuation := func(mode string, at time.Time) *edge.NodeActuation {
-		return &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Name: mode, Namespace: "chill-system"}, Spec: edge.NodeActuationSpec{
-			Node: edge.ProfilingRunObjectReference{Name: node.Name, UID: string(node.UID)}, PowerMode: mode,
-			Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorFixed}, StageRequestedAt: meta.NewTime(at.Truncate(time.Second))}}
+	actuator := func(id int32) edge.PowerModeActuator {
+		return edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: id}}
 	}
-	ready := func(a *edge.NodeActuation) {
-		now := meta.NewMicroTime(time.Now())
-		a.Status = edge.NodeActuationStatus{ObservedGeneration: a.Generation, Phase: edge.NodeActuationPhaseReady, ReadyAt: &now,
-			TargetObservation: &edge.NodeActuationObservation{PowerMode: a.Spec.PowerMode, Actuator: a.Spec.Actuator}}
-	}
-	lowered := actuation("eco", time.Now().Add(-time.Hour))
-	ready(lowered)
-	// The fake actuator confirms every requested mode at once.
-	manager.store.client = fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(&class, lowered).WithInterceptorFuncs(interceptor.Funcs{
-		Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
-			if err := c.Create(ctx, object, opts...); err != nil {
-				return err
-			}
-			if a, ok := object.(*edge.NodeActuation); ok {
-				ready(a)
-				return c.Update(ctx, a)
-			}
-			return nil
-		},
-	}).Build()
+	class.Spec.PowerModes = []edge.PowerMode{{Name: lowMode, Actuator: actuator(0)}, {Name: "boost", Actuator: actuator(1)}}
+	node.Annotations[chillmeta.PowerActuator] = nvpModel0
 	kube := kubefake.NewSimpleClientset(node)
+	// The fake agent settles every requested mode at once.
+	manager.store.client = &nodeAPI{Client: fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(&class).Build(), kube: kube, agent: settleAgent(&class)}
 	manager.observer.kube = kube
 	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := operations.Execute(ctx, Operation{ID: "raise", Kind: operationPower, Node: ref, Actuation: actuation("boost", time.Now())})
+	result, err := operations.Execute(ctx, Operation{ID: "raise", Kind: operationPower, Node: ref, PowerMode: "boost", MaxActuationDuration: time.Minute})
 	if err != nil || result.Status != nativeOperationComplete {
 		t.Fatalf("measured power change on the measurement Node: %v %+v", err, result)
 	}

@@ -15,25 +15,25 @@ import (
 )
 
 type options struct {
-	bindAddress, servingNamespace, actuationNamespace, tlsCert, tlsKey, observationDirectory string
-	storeName, storeEndpoint, storeBucket, storeRegion                                       string
-	consoleURL, dashboardURL                                                                 string
-	storeCredentialsSecret                                                                   string
-	kube                                                                                     kubeconfig.Options
-	kubeAPIQPS                                                                               float64
-	kubeAPIBurst                                                                             int
-	queueLimit, maxQueryEvents                                                               int
-	maxRequestBytes, maxEvidenceBytes                                                        int64
-	profileConfidenceLevel                                                                   float64
-	requestTimeout, drainTimeout, sourceInterval, profileInterval                            time.Duration
-	operationTimeout                                                                         time.Duration
-	profileNamespaces                                                                        []string
-	definitions, outcomes                                                                    []string
-	materializeProfile                                                                       bool
-	profileObjectKey, profileOutput                                                          string
-	profileObjectSize                                                                        int64
-	schedulerConfigMap, schedulerConfigKey                                                   string
-	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey                   string
+	bindAddress, servingNamespace, tlsCert, tlsKey, observationDirectory   string
+	storeName, storeEndpoint, storeBucket, storeRegion                     string
+	consoleURL, dashboardURL                                               string
+	storeCredentialsSecret                                                 string
+	kube                                                                   kubeconfig.Options
+	kubeAPIQPS                                                             float64
+	kubeAPIBurst                                                           int
+	queueLimit, maxQueryEvents                                             int
+	maxRequestBytes, maxEvidenceBytes                                      int64
+	profileConfidenceLevel                                                 float64
+	requestTimeout, drainTimeout, sourceInterval, profileInterval          time.Duration
+	operationTimeout                                                       time.Duration
+	profileNamespaces                                                      []string
+	definitions, outcomes                                                  []string
+	materializeProfile                                                     bool
+	profileObjectKey, profileOutput                                        string
+	profileObjectSize                                                      int64
+	schedulerConfigMap, schedulerConfigKey                                 string
+	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey string
 
 	// loadGenerator runs the load Job of dispatch-occupancy measurements.
 	loadGenerator servingkube.LoadGeneratorConfig
@@ -42,7 +42,6 @@ type options struct {
 func (o *options) bindFlags(f *flag.FlagSet) {
 	f.StringVar(&o.bindAddress, "bind-address", ":8080", "HTTPS listen address.")
 	f.StringVar(&o.servingNamespace, "serving-namespace", "", "Namespace holding native serving instances.")
-	f.StringVar(&o.actuationNamespace, "actuation-namespace", "", "NodeActuation namespace; default: serving namespace.")
 	f.StringVar(&o.tlsCert, "tls-cert", "", "TLS certificate file.")
 	f.StringVar(&o.tlsKey, "tls-key", "", "TLS private key file.")
 	f.StringVar(&o.observationDirectory, "observation-directory", "", "Private persistent observation log directory.")
@@ -129,9 +128,6 @@ func (o options) validate() error {
 	}
 	if len(validation.IsDNS1123Label(o.servingNamespace)) != 0 {
 		return errors.New("valid serving namespace is required")
-	}
-	if o.actuationNamespace != "" && len(validation.IsDNS1123Label(o.actuationNamespace)) != 0 {
-		return errors.New("invalid actuation namespace")
 	}
 	for _, namespace := range o.profileNamespaces {
 		if len(validation.IsDNS1123Label(namespace)) != 0 {

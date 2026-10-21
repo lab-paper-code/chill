@@ -54,7 +54,7 @@ func SetupWithManager(manager ctrl.Manager, options SetupOptions) error {
 		return fmt.Errorf("construct transition preparation records: %w", err)
 	}
 	materializer, err := NewAttemptMaterializer(
-		manager.GetClient(), manager.GetScheme(), options.StoreBindings, options.AttemptJob,
+		manager.GetClient(), manager.GetAPIReader(), manager.GetScheme(), options.StoreBindings, options.AttemptJob,
 	)
 	if err != nil {
 		return fmt.Errorf("construct transition attempt materializer: %w", err)
@@ -84,13 +84,13 @@ func SetupWithManager(manager ctrl.Manager, options SetupOptions) error {
 }
 
 // setupWithManager registers the enclosing measurement and its owned
-// Kubernetes records. Pod receipt reads do not require a Pod watch.
+// Kubernetes records. Pod receipt reads do not require a Pod watch; Node
+// power-mode progress is polled, so Nodes need no watch either.
 func (r *powerModeTransitionCostReconciler) setupWithManager(manager ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(manager).
 		Named("powermodetransitioncost").
 		For(&edgev1alpha1.PowerModeTransitionCost{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&batchv1.Job{}).
-		Owns(&edgev1alpha1.NodeActuation{}).
 		Complete(r)
 }

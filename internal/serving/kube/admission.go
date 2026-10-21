@@ -11,6 +11,7 @@ import (
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -27,9 +28,6 @@ const (
 	refusedNodeServing  = "NodeServing"
 	powerChangedReason  = "PowerChangedDuringMeasurement"
 	campaignFailedPhase = "Failed"
-	// handBackLabel marks the power change a hand-back requests to lower the Node.
-	handBackLabel    = "chill.dacs.io/measurement-handback"
-	holderLabelValue = "true"
 	// measurementInvalidCode reports a measurement the evidence readers count and do not use.
 	measurementInvalidCode = "MeasurementInvalid"
 )
@@ -140,10 +138,6 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	acts, err := c.nodeActuations(ctx, config.MeasurementNamespaces)
-	if err != nil {
-		return err
-	}
 	roots, err := c.measurementRoots(ctx, config.MeasurementNamespaces)
 	if err != nil {
 		return err
@@ -153,7 +147,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 		return err
 	}
 	now := time.Now()
-	in := admissionInputs{config: config, pods: pods.Items, acts: acts, classes: classes.Items, roots: roots, profiles: c.observer.Profiles(), now: now}
+	in := admissionInputs{config: config, pods: pods.Items, classes: classes.Items, roots: roots, profiles: c.observer.Profiles(), now: now}
 	byName := map[string]*core.Node{}
 	byUID := map[string]*measurementRoot{}
 	for i := range nodes.Items {
@@ -182,7 +176,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			continue
 		}
 		_, occupancy := root.object.(*edge.DispatchOccupancyMeasurement)
-		if claimed[node.Name] || busy[string(node.UID)] || held(node, occupancy, loading, byName[config.LoadGenerator.NodeName], acts, now) {
+		if claimed[node.Name] || busy[string(node.UID)] || held(node, occupancy, loading, byName[config.LoadGenerator.NodeName], in) {
 			claimed[node.Name] = true
 			continue
 		}
@@ -226,8 +220,8 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 // held reports a Node a waiting root must wait for: a measurement or a power
 // change holds it, it is the load Node while an occupancy load runs, or the
 // root is an occupancy while the load Node is measured.
-func held(node *core.Node, occupancy, loading bool, loadNode *core.Node, acts []edge.NodeActuation, now time.Time) bool {
-	return profilingrun.InMeasurement(node) || pendingActuation(acts, string(node.UID), now) ||
+func held(node *core.Node, occupancy, loading bool, loadNode *core.Node, in admissionInputs) bool {
+	return profilingrun.InMeasurement(node) || powerModePending(node, in.classes, in.config, in.now) ||
 		loading && node == loadNode || occupancy && loadNode != nil && profilingrun.InMeasurement(loadNode)
 }
 
@@ -235,7 +229,6 @@ func held(node *core.Node, occupancy, loading bool, loadNode *core.Node, acts []
 type admissionInputs struct {
 	config   SchedulerControllerConfig
 	pods     []core.Pod
-	acts     []edge.NodeActuation
 	classes  []edge.DeviceClass
 	roots    []measurementRoot
 	profiles []serving.Profile
@@ -257,7 +250,7 @@ func (c *SchedulerController) rootRefusal(ctx context.Context, root measurementR
 		plan, reason, detail, wait := c.occupancyRefusal(ctx, o, node, in)
 		return reason, detail, wait, func() { c.startOccupancy(node, o.DeepCopy(), plan, in.config) }
 	}
-	reason, detail = cpuRefusal(root.object, node, in.classes, in.acts, in.config.Reserved[node.Name].CPUs)
+	reason, detail = cpuRefusal(root.object, node, in.classes, in.config.Reserved[node.Name].CPUs)
 	return reason, detail, false, nil
 }
 
@@ -321,16 +314,17 @@ func (c *SchedulerController) nodeBusy(node *core.Node) bool {
 	return false
 }
 
-// pendingActuation reports a power change of the Node that is neither Ready
-// nor Failed. Its deadline bounds the wait: the actuator fails it by then.
-func pendingActuation(acts []edge.NodeActuation, nodeUID string, now time.Time) bool {
-	for i := range acts {
-		a := &acts[i]
-		if a.Spec.Node.UID == nodeUID && a.Status.Phase != edge.NodeActuationPhaseReady && a.Status.Phase != edge.NodeActuationPhaseFailed && now.Before(a.Spec.Deadline.Time) {
-			return true
-		}
+// powerModePending reports a Node whose actuation agent applies a requested
+// mode while the deadline, its fence plus the mode's
+// maxActuationDurationSeconds, has not passed. A pending mode without a fence
+// or a policy has no deadline.
+func powerModePending(node *core.Node, classes []edge.DeviceClass, config SchedulerControllerConfig, now time.Time) bool {
+	if node.Labels[chillmeta.PowerModeState] != chillmeta.PowerModePending {
+		return false
 	}
-	return false
+	transition, _, err := chillmeta.NodePowerModeTransition(node)
+	maxDuration, ok := nodePowerTargets(node, classes, config.PowerPolicies)[transition.PowerMode]
+	return err != nil || transition.ApplyStartedAt == nil || !ok || now.Before(transition.ApplyStartedAt.Add(maxDuration))
 }
 
 // servingPodsOn names the non-terminal CHILL serving Pods on the Node.
@@ -387,22 +381,6 @@ func (c *SchedulerController) startHandBack(node *core.Node, holder string, root
 	})
 }
 
-// nodeActuations lists the power changes of the actuation namespace and of the
-// measurement namespaces, where measurements request their own.
-func (c *SchedulerController) nodeActuations(ctx context.Context, measurementNamespaces []string) ([]edge.NodeActuation, error) {
-	namespaces := append([]string{c.observer.config.ActuationNamespace}, measurementNamespaces...)
-	slices.Sort(namespaces)
-	var acts []edge.NodeActuation
-	for _, namespace := range slices.Compact(namespaces) {
-		var list edge.NodeActuationList
-		if err := c.store.client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
-			return nil, err
-		}
-		acts = append(acts, list.Items...)
-	}
-	return acts, nil
-}
-
 // startNodeRun registers a run on the Node and executes it outside the locks.
 // Callers hold tickMu, so Tick and Admit see the run before they look again.
 // The returned result is final once done is closed.
@@ -449,43 +427,35 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 	return done, &result
 }
 
-// handBack returns a measured Node to the available Nodes: it waits for power
-// changes in flight, marks the measurement invalid when another request changed
-// the Node's power inside it, removes the CHILL serving Pods the measurement
-// left, and removes the taint. A failed step keeps the taint; the next cycle
-// starts the hand-back again.
+// handBack returns a measured Node to the available Nodes: it waits for a
+// power change in flight, removes the CHILL serving Pods the measurement left,
+// lowers the Node and removes the taint. Each measurement record judges its
+// own power-mode generation, so the hand-back judges none. A failed step keeps
+// the taint; the next cycle starts the hand-back again.
 //
 // interrupted is set when the measurement object vanished: it is recorded as
 // Interrupted.
 func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeReference, holder string, root *measurementRoot, interrupted bool, result *OperationResult) error {
 	c.mu.Lock()
-	namespaces := c.config.MeasurementNamespaces
+	config := c.config
 	c.mu.Unlock()
-	var acts []edge.NodeActuation
 	if err := c.operations.wait(ctx, func() (bool, error) {
-		var err error
-		if acts, err = c.nodeActuations(ctx, namespaces); err != nil {
+		current, err := c.kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
+		if err != nil {
 			return false, err
 		}
-		return !pendingActuation(acts, node.UID, time.Now()), nil
+		var classes edge.DeviceClassList
+		if err = c.store.client.List(ctx, &classes); err != nil {
+			return false, err
+		}
+		return !powerModePending(current, classes.Items, config, time.Now()), nil
 	}); err != nil {
 		return err
 	}
 	if root == nil && interrupted {
 		result.Progress = append(result.Progress, "Interrupted "+holder)
-	} else if root != nil {
-		granted, at, _ := profilingrun.Admission(root.object.GetAnnotations())
-		if foreign := foreignActuations(acts, node.UID, root.object.GetUID(), at, result.StartedAt); granted && len(foreign) > 0 {
-			if err := c.annotate(ctx, root.object, profilingrun.InvalidAnnotation, powerChangedReason+" "+strings.Join(foreign, ",")); err != nil {
-				return err
-			}
-			result.Progress = append(result.Progress, "invalid: "+powerChangedReason)
-		}
 	}
-	c.mu.Lock()
-	load := c.config.LoadGenerator
-	c.mu.Unlock()
-	if err := errors.Join(c.deleteLoadJobs(ctx, node, load), c.operations.clearNode(ctx, node)); err != nil {
+	if err := errors.Join(c.deleteLoadJobs(ctx, node, config.LoadGenerator), c.operations.clearNode(ctx, node)); err != nil {
 		return err
 	}
 	runners, err := c.kube.CoreV1().Services(c.observer.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: runnerNodeLabel + "=" + node.UID})
@@ -536,37 +506,16 @@ func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.
 		return err
 	}
 	lowest := serving.SchedulerLowestMode(config.Baselines, ref)
-	spec, ok := nodePowerTargets(node, classes.Items, config.PowerPolicies)[lowest]
+	maxDuration, ok := nodePowerTargets(node, classes.Items, config.PowerPolicies)[lowest]
 	if lowest == "" || !ok {
 		result.Progress = append(result.Progress, "no requestable lowest mode")
 		return nil
 	}
-	request := powerRequest(spec, time.Now())
-	request.Labels = map[string]string{handBackLabel: holderLabelValue}
-	if err := c.measurement.ChangePower(ctx, ref, request); err != nil {
+	if err := c.measurement.ChangePower(ctx, ref, lowest, maxDuration); err != nil {
 		return err
 	}
 	result.Progress = append(result.Progress, "lowest mode "+lowest+" read back")
 	return nil
-}
-
-// foreignActuations names the power changes of the Node applied between from
-// and to that neither the measurement nor a hand-back requested. A retried
-// hand-back finds the lowering of the attempt before it inside the window.
-func foreignActuations(acts []edge.NodeActuation, nodeUID string, measurement types.UID, from, to time.Time) []string {
-	names := make([]string, 0, len(acts))
-	for i := range acts {
-		a := &acts[i]
-		if a.Spec.Node.UID != nodeUID || a.Status.ApplyStartedAt == nil || a.Status.ApplyStartedAt.Time.Before(from) || a.Status.ApplyStartedAt.Time.After(to) {
-			continue
-		}
-		if a.Labels[handBackLabel] != "" || slices.ContainsFunc(a.OwnerReferences, func(o meta.OwnerReference) bool { return o.UID == measurement }) {
-			continue
-		}
-		names = append(names, a.Name)
-	}
-	slices.Sort(names)
-	return names
 }
 
 // clearNode removes every CHILL serving Pod on the Node: through the native

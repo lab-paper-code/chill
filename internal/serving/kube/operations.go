@@ -17,13 +17,13 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	workloadkube "github.com/lab-paper-code/chill/internal/workloadobserver/kube"
 	core "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,15 +67,18 @@ type PrepareSpec struct {
 	Owner       *serving.WorkloadReference   `json:"owner,omitempty"`
 }
 type Operation struct {
-	ID             string                      `json:"id"`
-	Kind           string                      `json:"kind"`
-	Node           serving.NodeReference       `json:"node"`
-	Instance       string                      `json:"instance,omitempty"`
-	Prepare        *PrepareSpec                `json:"prepare,omitempty"`
-	Actuation      *edge.NodeActuation         `json:"actuation,omitempty"`
-	Target         *serving.SchedulerCandidate `json:"target,omitempty"`
-	SourceConfigRV string                      `json:"sourceConfigRV,omitempty"`
-	StaticRouting  map[string]map[string]int   `json:"staticRouting,omitempty"`
+	ID       string                `json:"id"`
+	Kind     string                `json:"kind"`
+	Node     serving.NodeReference `json:"node"`
+	Instance string                `json:"instance,omitempty"`
+	Prepare  *PrepareSpec          `json:"prepare,omitempty"`
+	// PowerMode is the DeviceClass mode a power operation requests, within
+	// MaxActuationDuration of its label write (the mode's actuation policy).
+	PowerMode            string                      `json:"powerMode,omitempty"`
+	MaxActuationDuration time.Duration               `json:"maxActuationDurationNanos,omitempty"`
+	Target               *serving.SchedulerCandidate `json:"target,omitempty"`
+	SourceConfigRV       string                      `json:"sourceConfigRV,omitempty"`
+	StaticRouting        map[string]map[string]int   `json:"staticRouting,omitempty"`
 	// SettingsValidatedAt names the settings change that declared StaticRouting.
 	SettingsValidatedAt *time.Time `json:"settingsValidatedAt,omitempty"`
 }
@@ -105,10 +108,9 @@ type OperationResult struct {
 // OperationConfig.Measurement selects measurement operations: they prepare only
 // on a measurement POOL Node and tolerate its taint. Other operations refuse it.
 type OperationConfig struct {
-	Namespace          string
-	ActuationNamespace string
-	PollInterval       time.Duration
-	Measurement        bool
+	Namespace    string
+	PollInterval time.Duration
+	Measurement  bool
 }
 
 // ErrNodeInMeasurement rejects a Workload action on a measurement POOL Node.
@@ -126,9 +128,6 @@ type Operations struct {
 func NewOperations(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, native *sdk.Client, config OperationConfig) (*Operations, error) {
 	if store == nil || kube == nil || runtime == nil || observer == nil || native == nil || config.Namespace == "" || config.PollInterval <= 0 {
 		return nil, errors.New("atomic operations require store, clients, runtime, observer, namespace and positive poll interval")
-	}
-	if config.ActuationNamespace == "" {
-		config.ActuationNamespace = config.Namespace
 	}
 	return &Operations{store: store, kube: kube, runtime: runtime, observer: observer, native: native, config: config}, nil
 }
@@ -159,11 +158,11 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 	if string(current.UID) != node.UID {
 		return s, errors.New("physical Node identity changed")
 	}
-	var acts edge.NodeActuationList
-	if err = o.store.client.List(ctx, &acts, client.InNamespace(o.config.ActuationNamespace)); err != nil {
+	var classes edge.DeviceClassList
+	if err = o.store.client.List(ctx, &classes); err != nil {
 		return s, err
 	}
-	s.PowerMode = latestReadyMode(acts.Items, node.UID)
+	s.PowerMode = readBackMode(current, nodeClass(current, classes.Items))
 	for _, i := range o.runtime.Instances() {
 		if i.Node.UID == node.UID {
 			s.Instances = append(s.Instances, i)
@@ -206,37 +205,9 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 		allocation := serving.SchedulerAllocation{CPUs: state.Metadata.Runtime.CPUAffinity, GPUUUID: state.Metadata.Runtime.GPUUUID, Threads: state.Metadata.Runtime.IntraOpThreads, MemoryBytes: uint64(p.Spec.Containers[0].Resources.Limits.Memory().Value())}
 		s.States = append(s.States, serving.SchedulerInstanceState(serving.SchedulerInstance{Profile: &serving.Profile{ID: state.Metadata.ProfileID}, Allocation: allocation}))
 	}
-	if s.PowerMode == "" {
-		var classes edge.DeviceClassList
-		if err := o.store.client.List(ctx, &classes); err != nil {
-			return s, err
-		}
-		if s.PowerMode, err = classPower(current, classes.Items, acts.Items); err != nil {
-			return s, err
-		}
-	}
 	slices.SortFunc(s.Pods, func(a, b workloadobserver.Pod) int { return strings.Compare(a.UID, b.UID) })
 	slices.Sort(s.States)
 	return s, nil
-}
-
-// classPower finds the Node's mode from its DeviceClass when no Ready
-// NodeActuation names it: a Fixed mode, or the mode whose actuator the
-// actuation agent read back from the host (confirmedPower).
-func classPower(current *core.Node, classes []edge.DeviceClass, acts []edge.NodeActuation) (string, error) {
-	found := ""
-	for i := range classes {
-		class := &classes[i]
-		for _, mode := range class.Spec.PowerModes {
-			if class.Spec.Architecture == current.Status.NodeInfo.Architecture && nodeClassMatches(current, class) && confirmedPower(current, class, mode.Name, acts) == nil {
-				if found != "" && found != mode.Name {
-					return "", errors.New("ambiguous class power mode")
-				}
-				found = mode.Name
-			}
-		}
-	}
-	return found, nil
 }
 func (o *Operations) Execute(ctx context.Context, operation Operation) (OperationResult, error) {
 	result := OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: nativeOperationRunning}
@@ -264,7 +235,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 				result.Progress = append(result.Progress, "stop/drain/termination/removal observed")
 			}
 		case operationPower:
-			err = o.ChangePower(ctx, operation.Node, operation.Actuation)
+			err = o.ChangePower(ctx, operation.Node, operation.PowerMode, operation.MaxActuationDuration)
 		case operationRoute:
 			if operation.Target == nil {
 				err = errors.New("routing target required")
@@ -756,9 +727,12 @@ func eIfNotFound(err error) error {
 	}
 	return err
 }
-func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference, request *edge.NodeActuation) error {
-	if request == nil || request.Spec.Node.Name != node.Name || request.Spec.Node.UID != node.UID {
-		return errors.New("exact NodeActuation target required")
+
+// ChangePower switches the drained Node to mode and confirms that the loaded
+// state did not change. maxDuration is the mode's maxActuationDurationSeconds.
+func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference, mode string, maxDuration time.Duration) error {
+	if mode == "" || maxDuration <= 0 {
+		return errors.New("power mode and maximum actuation duration required")
 	}
 	err := o.admittedNode(ctx, node)
 	if err != nil {
@@ -785,36 +759,7 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 			return errors.New("power transition native source not actually drained/ready")
 		}
 	}
-	copy := request.DeepCopy()
-	copy.Namespace = o.config.ActuationNamespace
-	// ponytail: re-admitted just before the NodeActuation create; the remaining window closes with M3 single-writer fencing.
-	if err = o.admittedNode(ctx, node); err != nil {
-		return err
-	}
-	if err = o.store.client.Create(ctx, copy); err != nil && !apierrors.IsAlreadyExists(err) {
-		return err
-	}
-	err = o.wait(ctx, func() (bool, error) {
-		actual := &edge.NodeActuation{}
-		if e := o.store.client.Get(ctx, types.NamespacedName{Namespace: copy.Namespace, Name: copy.Name}, actual); e != nil {
-			return false, e
-		}
-		// Semantic equality compares the request times as instants, whatever location decoding gave them.
-		if !equality.Semantic.DeepEqual(actual.Spec, copy.Spec) {
-			return false, errors.New("existing NodeActuation target differs")
-		}
-		if actual.Status.Phase == edge.NodeActuationPhaseFailed {
-			return false, fmt.Errorf("NodeActuation failed: %s", actual.Status.Message)
-		}
-		if actual.Status.Phase != edge.NodeActuationPhaseReady {
-			return false, nil
-		}
-		if actual.Status.ObservedGeneration != actual.Generation || actual.Status.TargetObservation == nil || actual.Status.ReadyAt == nil || actual.Status.TargetObservation.PowerMode != copy.Spec.PowerMode || !reflect.DeepEqual(actual.Status.TargetObservation.Actuator, copy.Spec.Actuator) {
-			return false, errors.New("independent power readback unconfirmed")
-		}
-		return true, nil
-	})
-	if err != nil {
+	if err = o.requestPowerMode(ctx, node, mode, maxDuration); err != nil {
 		return err
 	}
 	if err := o.waitPowerState(ctx, node, before); err != nil {
@@ -824,6 +769,35 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 	delete(o.observer.movingNodes, node.UID)
 	o.observer.mu.Unlock()
 	return o.observer.Refresh(ctx)
+}
+
+// requestPowerMode writes the desired mode on the Node read it admits, so a
+// grant that changed since the read fails the write with a conflict, and
+// waits until the actuation agent settles mode within maxDuration of the write.
+func (o *Operations) requestPowerMode(ctx context.Context, ref serving.NodeReference, mode string, maxDuration time.Duration) error {
+	node := &core.Node{}
+	read := func() error {
+		if err := o.store.client.Get(ctx, client.ObjectKey{Name: ref.Name}, node); err != nil {
+			return err
+		}
+		if string(node.UID) != ref.UID {
+			return errors.New("physical Node identity changed")
+		}
+		return o.admitNode(node)
+	}
+	if err := read(); err != nil {
+		return err
+	}
+	requested := time.Now()
+	if err := chillmeta.RequestPowerMode(ctx, o.store.client, node, mode); err != nil {
+		return err
+	}
+	return o.wait(ctx, func() (bool, error) {
+		if err := read(); err != nil {
+			return false, err
+		}
+		return chillmeta.PowerModeOutcome(node, mode, requested, maxDuration, time.Now())
+	})
 }
 
 // placeServingPod lets a measurement instance tolerate the measurement taint

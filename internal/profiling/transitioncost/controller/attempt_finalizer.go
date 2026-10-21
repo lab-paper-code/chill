@@ -165,20 +165,16 @@ func (f *AttemptFinalizer) retainFinalizedAttempt(
 func validateFinalizationProgress(measurement *edgev1alpha1.PowerModeTransitionCost, selection attemptSelection,
 	progress AttemptProgress,
 ) (*batchv1.Job, error) {
-	job, actuation := progress.Job, progress.NodeActuation
-	if progress.Stage != AttemptStageFinalizationReady || job == nil || actuation == nil {
+	job := progress.Job
+	if progress.Stage != AttemptStageFinalizationReady || job == nil {
 		return nil, errors.New("transition attempt is not ready for finalization")
 	}
-	if job.Namespace != measurement.Namespace || actuation.Namespace != measurement.Namespace ||
-		job.Name != selection.name || actuation.Name != selection.name || job.UID == "" || actuation.UID == "" ||
-		!metav1.IsControlledBy(job, measurement) || !metav1.IsControlledBy(actuation, measurement) {
-		return nil, errors.New("transition attempt Job and NodeActuation ownership or names do not match")
+	if job.Namespace != measurement.Namespace || job.Name != selection.name || job.UID == "" ||
+		!metav1.IsControlledBy(job, measurement) {
+		return nil, errors.New("transition attempt Job ownership or name does not match")
 	}
 	if !jobComplete(job) && !jobFailed(job) {
 		return nil, errors.New("transition attempt Job is not terminal")
-	}
-	if _, terminal := actuationTerminalTime(actuation); !terminal {
-		return nil, errors.New("transition attempt NodeActuation is not terminal")
 	}
 	return job, nil
 }

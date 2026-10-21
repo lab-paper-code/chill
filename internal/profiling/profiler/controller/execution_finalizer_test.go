@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
+	"github.com/lab-paper-code/chill/internal/metadata"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -95,44 +95,32 @@ func TestKubernetesExecutionFinalizerLoadsOnlyRequiredCredentials(t *testing.T) 
 	}
 }
 
-func TestKubernetesExecutionFinalizerProjectsOnlyRecordedConfirmingTransition(t *testing.T) {
+func TestObserveActuationRecordsNodeApplyAndGeneration(t *testing.T) {
 	t.Parallel()
 	run, resolved := testActuatedRunAndResolved(t)
-	scheme := runtime.NewScheme()
-	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
-	}
-	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	readyAt := metav1.NewTime(base.Add(30 * time.Second))
-	handoff := completedTransitionForRun(
-		run, resolved, "actuation", resolved.Prepared.RunConfig.Actuation.PowerMode, readyAt.Time,
-	)
-	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{
-		Name: handoff.Name, UID: string(handoff.UID),
-	}
-	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run, handoff).Build()
-	finalizer, err := NewKubernetesExecutionFinalizer(reader, unusedStoreFactory)
+	config := resolved.Prepared.RunConfig
+	readyAt := time.Date(2026, 8, 6, 12, 0, 30, 0, time.UTC)
+	node := settledNode(config, config.Actuation.PowerMode, readyAt, 5)
+	facts, err := observeActuation(run, resolved.Prepared, node)
 	if err != nil {
 		t.Fatal(err)
 	}
-	facts, err := finalizer.observeActuation(context.Background(), run, resolved.Prepared)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if facts == nil || facts.Run.UID != string(run.UID) || facts.Handoff.UID != string(handoff.UID) ||
-		facts.Target.PowerMode != handoff.Spec.PowerMode || !facts.ReadyAt.Equal(readyAt.Time) {
+	if facts == nil || facts.Run.UID != string(run.UID) || facts.Handoff != nil ||
+		facts.Target.PowerMode != config.Actuation.PowerMode || !facts.ReadyAt.Equal(readyAt) ||
+		!facts.Target.ObservedAt.Equal(readyAt.Add(-30*time.Second)) ||
+		facts.Generation == nil || *facts.Generation != (profilerevidence.PowerModeGeneration{Start: 5, End: 5}) {
 		t.Fatalf("actuation facts = %#v", facts)
 	}
 
-	drifted := handoff.DeepCopy()
-	drifted.Status.Phase = edgev1alpha1.NodeActuationPhaseSettling
-	driftReader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run, drifted).Build()
-	driftFinalizer, err := NewKubernetesExecutionFinalizer(driftReader, unusedStoreFactory)
-	if err != nil {
-		t.Fatal(err)
+	node.Annotations[metadata.PowerModeGeneration] = "6"
+	if facts, err := observeActuation(run, resolved.Prepared, node); err != nil ||
+		*facts.Generation != (profilerevidence.PowerModeGeneration{Start: 5, End: 6}) {
+		t.Fatalf("host change facts = %#v, %v", facts, err)
 	}
-	if _, err := driftFinalizer.observeActuation(context.Background(), run, resolved.Prepared); err == nil {
-		t.Fatal("non-ready handoff was accepted for finalization")
+
+	delete(node.Annotations, metadata.PowerModeTransition)
+	if _, err := observeActuation(run, resolved.Prepared, node); err == nil {
+		t.Fatal("Node without a settled apply was accepted for finalization")
 	}
 }
 

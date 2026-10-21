@@ -10,6 +10,7 @@ import (
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -239,13 +240,9 @@ func TestReconcilerWaitsForAdmission(t *testing.T) {
 			if err := kube.Get(context.Background(), client.ObjectKeyFromObject(parent), updated); err != nil {
 				t.Fatal(err)
 			}
-			actuations := &edgev1alpha1.NodeActuationList{}
-			if err := kube.List(context.Background(), actuations); err != nil {
-				t.Fatal(err)
-			}
 			assertRunCount(t, kube, parent.Namespace, 0)
-			if updated.Status.Phase != test.phase || len(actuations.Items) != 0 {
-				t.Fatalf("phase = %q, NodeActuations = %d", updated.Status.Phase, len(actuations.Items))
+			if updated.Status.Phase != test.phase {
+				t.Fatalf("phase = %q", updated.Status.Phase)
 			}
 		})
 	}
@@ -255,6 +252,9 @@ func baselineFakeClient(t *testing.T, objects ...client.Object) client.Client {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	return fake.NewClientBuilder().WithScheme(scheme).

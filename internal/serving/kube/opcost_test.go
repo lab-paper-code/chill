@@ -56,15 +56,6 @@ func newOpcostHarness(t *testing.T) *opcostHarness {
 		o.measured = append(o.measured, request)
 		verdict := o.verdicts[request.Operation.ID[strings.LastIndex(request.Operation.ID, ".")+1:]]
 		o.mu.Unlock()
-		if act := request.Operation.Actuation; act != nil {
-			// Play the applied power change the step requested.
-			applied := meta.NewMicroTime(time.Now())
-			act = act.DeepCopy()
-			act.Namespace, act.Status.Phase, act.Status.ApplyStartedAt = "chill-system", edge.NodeActuationPhaseReady, &applied
-			if err := h.controller.store.client.Create(ctx, act); err != nil {
-				return OperationMeasurement{}, evidencestore.Receipt{}, err
-			}
-		}
 		if verdict == "" {
 			verdict = measurementAccepted
 		}
@@ -118,17 +109,14 @@ func TestOperationCostRunsDeclaredStepsInOrder(t *testing.T) {
 		}
 	}
 	up, prepare, idle, remove := o.measured[0].Operation, o.measured[1].Operation, o.measured[2], o.measured[3].Operation
-	if up.Actuation == nil || len(up.Actuation.OwnerReferences) != 1 || up.Actuation.OwnerReferences[0].UID != m.UID || up.Actuation.Spec.PowerMode != "max" {
-		t.Fatalf("power step actuation %+v", up.Actuation)
+	if up.PowerMode != maxMode || up.MaxActuationDuration != time.Minute {
+		t.Fatalf("power step %+v", up)
 	}
 	if prepare.Prepare == nil || !strings.HasPrefix(prepare.Prepare.Instance.Profile.ID, "chill-system/beo/") || remove.Instance != prepare.Prepare.Name || idle.IdleDuration != 120*time.Second {
 		t.Fatalf("prepare %+v remove %q idle %s", prepare.Prepare, remove.Instance, idle.IdleDuration)
 	}
 	if idle.Sampling.MaxEvents != 902 || idle.Coverage.MinimumCoverage != 0.9 {
 		t.Fatalf("sampling %+v coverage %+v", idle.Sampling, idle.Coverage)
-	}
-	if got := o.annotation(m, profilingrun.InvalidAnnotation); got != "" {
-		t.Fatalf("own power steps marked the measurement invalid: %s", got)
 	}
 }
 
@@ -191,7 +179,6 @@ func TestOperationCostRefusalsLetTheNextRootGo(t *testing.T) {
 	for _, test := range []struct {
 		name, want string
 		step       edge.OperationCostStep
-		namespace  string
 		issue      bool
 	}{
 		{name: "missing", step: prepare("absent"), want: "ProfileMissing absent NotFound"},
@@ -200,7 +187,6 @@ func TestOperationCostRefusalsLetTheNextRootGo(t *testing.T) {
 		{name: "issue", step: prepare("beo"), issue: true, want: "ProfileMissing beo MeasurementEvidenceMissing"},
 		{name: "other node", step: prepare("elsewhere"), want: "NodeMismatch elsewhere far"},
 		{name: "power mode", step: edge.OperationCostStep{Name: "up", Kind: edge.OperationCostStepPower, PowerMode: "turbo"}, want: "PowerModeUnknown turbo"},
-		{name: "namespace", step: prepare("beo"), namespace: "measurements", want: "ActuationNamespace measurements"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			o := newOpcostHarness(t)
@@ -209,18 +195,12 @@ func TestOperationCostRefusalsLetTheNextRootGo(t *testing.T) {
 			if test.issue {
 				o.controller.config.CatalogIssues = []CatalogIssue{{Source: types.NamespacedName{Namespace: "chill-system", Name: "beo"}, Code: "MeasurementEvidenceMissing"}}
 			}
-			if test.namespace != "" {
-				o.controller.config.MeasurementNamespaces = []string{"chill-system", test.namespace}
-			}
 			o.controller.mu.Unlock()
 			refused := opcostRoot("refused", time.Now().Add(-time.Minute), test.step)
-			if test.namespace != "" {
-				refused.Namespace = test.namespace
-			}
 			next := baselineRoot("next", time.Now())
 			o.create(refused, next)
 			o.admit()
-			if got := o.annotation(refused, profilingrun.AdmissionAnnotation); got != "Refused: "+test.want {
+			if got := o.admission(refused); got != "Refused: "+test.want {
 				t.Fatalf("admission %q", got)
 			}
 			if status := o.status(refused); status.Phase != edge.MeasurementPhaseFailed || status.Reason != test.want {
@@ -241,7 +221,7 @@ func TestOperationCostWaitsForTheCatalog(t *testing.T) {
 	next := baselineRoot("next", time.Now())
 	o.create(m, next)
 	o.admit()
-	if o.holder() != "" || o.annotation(m, profilingrun.AdmissionAnnotation) != "" || o.annotation(next, profilingrun.AdmissionAnnotation) != "" {
+	if o.holder() != "" || o.admission(m) != "" || o.admission(next) != "" {
 		t.Fatalf("catalog lag did not hold the queue: holder %q", o.holder())
 	}
 }

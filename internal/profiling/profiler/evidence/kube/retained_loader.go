@@ -168,20 +168,10 @@ func validateRunEvidenceBinding(
 		execution.Terminal.Node.UID != run.Status.ObservedExecution.Node.UID {
 		return errors.New("retained evidence contradicts recorded execution identities")
 	}
-	if execution.RunConfig.Actuation == nil {
-		if run.Status.Actuation != nil || execution.Actuation != nil {
-			return errors.New("fixed retained evidence has unexpected actuation identity")
-		}
-		return nil
-	}
-	if run.Status.Actuation == nil || execution.Actuation == nil ||
-		execution.Actuation.Run.Namespace != run.Namespace ||
+	if execution.Actuation != nil && (execution.Actuation.Run.Namespace != run.Namespace ||
 		execution.Actuation.Run.Name != run.Name ||
-		execution.Actuation.Run.UID != string(run.UID) ||
-		execution.Actuation.Handoff.Namespace != run.Namespace ||
-		execution.Actuation.Handoff.Name != run.Status.Actuation.Name ||
-		execution.Actuation.Handoff.UID != run.Status.Actuation.UID {
-		return errors.New("retained actuation evidence does not match the recorded confirming transition")
+		execution.Actuation.Run.UID != string(run.UID)) {
+		return errors.New("retained actuation evidence does not belong to the recorded Run")
 	}
 	return nil
 }

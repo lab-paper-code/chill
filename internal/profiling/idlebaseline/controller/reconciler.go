@@ -25,6 +25,7 @@ import (
 const (
 	idleBaselineKind = "ModelLoadedIdleBaseline"
 	admissionWait    = 5 * time.Second
+	powerModeWait    = 5 * time.Second
 )
 
 type BaselineDeriver interface {
@@ -99,7 +100,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 	}
 	if len(runs) == 0 {
 		// The baseline has not started until it reported Measuring: wait for
-		// ChillServer's admission before the first NodeActuation or Run.
+		// ChillServer's admission before the first power-mode request or Run.
 		if parent.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseMeasuring {
 			granted, _, refused := profilingrun.Admission(parent.Annotations)
 			if refused != "" {
@@ -120,7 +121,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 			return ctrl.Result{}, r.patchStatus(ctx, parent, status)
 		}
 		if !established {
-			return ctrl.Result{}, r.patchStatus(ctx, parent, status)
+			// ponytail: polls the Node; a Node watch needs a baseline-by-Node
+			// index and fires on every Node heartbeat.
+			return ctrl.Result{RequeueAfter: powerModeWait}, r.patchStatus(ctx, parent, status)
 		}
 		if err := r.patchStatus(ctx, parent, status); err != nil {
 			return ctrl.Result{}, err

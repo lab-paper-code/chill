@@ -1,4 +1,4 @@
-// Package kube observes one NodeActuation and its selected serving Pod through
+// Package kube observes one Node power-mode transition and its selected serving Pod through
 // the Kubernetes API, projecting only factual transition observations into the
 // Kubernetes-independent transitioncost contract.
 package kube
@@ -12,7 +12,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -22,8 +21,12 @@ import (
 // Request contains the operational selection and bounds for one off-target
 // transition-fact observation. Expected state comparison remains Derive's job.
 type Request struct {
-	Namespace          string
-	NodeActuationName  string
+	Namespace string
+	// The source and target modes name the actuators the Node reads back.
+	SourcePowerMode    string
+	SourceActuator     edgev1alpha1.PowerModeActuator
+	TargetPowerMode    string
+	TargetActuator     edgev1alpha1.PowerModeActuator
 	TargetNode         string
 	TargetNodeUID      string
 	ServingService     string
@@ -54,7 +57,7 @@ func New(reader client.Reader, request Request) (*Observer, error) {
 }
 
 // Observe waits for one initial Ready serving process before reporting ready,
-// then retains NodeActuation status facts and closes only on a fresh post-
+// then retains the Node's power-mode transition facts and closes only on a fresh post-
 // read-back Ready serving-process observation.
 func (o *Observer) Observe(
 	ctx context.Context,
@@ -108,17 +111,17 @@ func (o *Observer) Observe(
 			return finish(fmt.Errorf("observe Kubernetes transition facts: %w", err))
 		}
 	}
-	terminal, err := o.observeActuation(observeCtx, &raw)
+	terminal, err := o.observeNode(observeCtx, &raw)
 	if err != nil {
 		return finish(err)
 	}
 	if terminal || raw.TransitionStart != nil || raw.TargetReadBack != nil {
-		return finish(errors.New("NodeActuation markers appeared before the observer was ready"))
+		return finish(errors.New("power-mode transition markers appeared before the observer was ready"))
 	}
 
 	onReady()
 	for {
-		terminal, err := o.observeActuation(observeCtx, &raw)
+		terminal, err := o.observeNode(observeCtx, &raw)
 		if err != nil {
 			return finish(err)
 		}
@@ -126,7 +129,7 @@ func (o *Observer) Observe(
 			return finish(nil)
 		}
 
-		// This LIST occurs after the NodeActuation GET in the same poll. Once
+		// This LIST occurs after the Node GET in the same poll. Once
 		// target read-back is retained, it is therefore a fresh readiness fact.
 		snapshot, err := o.servingSnapshot(observeCtx, selector)
 		if err != nil {
@@ -209,33 +212,25 @@ func (o *Observer) servingSnapshot(
 	return projectServingPod(*selected, o.request.ServingContainer, receivedAt), nil
 }
 
-func (o *Observer) observeActuation(
+func (o *Observer) observeNode(
 	ctx context.Context,
 	raw *transitioncost.RawObservation,
 ) (bool, error) {
-	actuation := &edgev1alpha1.NodeActuation{}
-	key := client.ObjectKey{Namespace: o.request.Namespace, Name: o.request.NodeActuationName}
-	err := o.reader.Get(ctx, key, actuation)
-	receivedAt := o.now().UTC()
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			markAbsent(&raw.MarkerBrackets.ApplyStartedAt, receivedAt)
-			markAbsent(&raw.MarkerBrackets.TargetObservation, receivedAt)
-			return false, nil
-		}
-		return false, fmt.Errorf("get NodeActuation %s: %w", key, err)
+	node := &corev1.Node{}
+	if err := o.reader.Get(ctx, client.ObjectKey{Name: o.request.TargetNode}, node); err != nil {
+		return false, fmt.Errorf("get Node %s: %w", o.request.TargetNode, err)
 	}
-	if err := projectActuation(raw, actuation.Status, o.request.DeviceType, o.request.Model, receivedAt); err != nil {
-		return false, err
+	if string(node.UID) != o.request.TargetNodeUID {
+		return false, errors.New("target Node identity changed")
 	}
-	return actuation.Status.TerminalFailure != nil &&
-		actuation.Status.TerminalFailure.Stage != edgev1alpha1.NodeActuationFailureStageSettle, nil
+	return projectNode(raw, node, o.request, o.now().UTC())
 }
 
 func validateRequest(request Request) error {
 	for name, value := range map[string]string{
-		"namespace": request.Namespace, "NodeActuation name": request.NodeActuationName,
-		"target Node": request.TargetNode, "target Node UID": request.TargetNodeUID, "serving Service": request.ServingService,
+		"namespace": request.Namespace, "source power mode": request.SourcePowerMode,
+		"target power mode": request.TargetPowerMode,
+		"target Node":       request.TargetNode, "target Node UID": request.TargetNodeUID, "serving Service": request.ServingService,
 		"serving container": request.ServingContainer, "device type": request.DeviceType,
 		"model": request.Model,
 	} {

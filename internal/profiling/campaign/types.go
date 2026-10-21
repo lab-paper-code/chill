@@ -41,8 +41,8 @@ type State struct {
 	PowerMode   string
 }
 
-// Transition is one owned NodeActuation projected into the progress rules.
-// EstablishedState is present only after that transition reaches Ready.
+// Transition is the campaign's power mode on its Node projected into the
+// progress rules. EstablishedState is present only after the Node settled it.
 type Transition struct {
 	Outcome          TransitionOutcome
 	EstablishedState *State
@@ -63,8 +63,8 @@ type Trial struct {
 	Verdict     Verdict
 }
 
-// Snapshot is built from the immutable spec and owned NodeActuation and Run
-// objects only. It has no status field, so a decision cannot depend on
+// Snapshot is built from the immutable spec, the owned Runs, and the Node's
+// power mode only. It has no status field, so a decision cannot depend on
 // previously reported progress.
 type Snapshot struct {
 	RequiredState      State

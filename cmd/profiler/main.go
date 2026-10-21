@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -50,8 +51,9 @@ func main() {
 		LeaderElectionID:       opts.leaderElectionID,
 		// Terminal status fences irreversible evidence writers; their reads must
 		// not replay a preterminal informer snapshot after explicit cleanup.
+		// A power-mode writer reads the live Node it patches.
 		Client: client.Options{Cache: &client.CacheOptions{DisableFor: []client.Object{
-			&edgev1alpha1.BatchEnergyOptimization{}, &edgev1alpha1.ProfilingRun{},
+			&edgev1alpha1.BatchEnergyOptimization{}, &edgev1alpha1.ProfilingRun{}, &corev1.Node{},
 		}}},
 		Cache: cache.Options{DefaultNamespaces: map[string]cache.Config{
 			opts.watchNamespace: {},

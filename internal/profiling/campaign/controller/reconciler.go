@@ -9,9 +9,12 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/metadata"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -29,6 +32,7 @@ const (
 	terminalReasonRetryLimitExhausted     = "RetryLimitExhausted"
 	terminalReasonTransitionFailed        = "TransitionFailed"
 	admissionWait                         = 5 * time.Second
+	powerModeWait                         = 5 * time.Second
 )
 
 // ReconcileCurvePlanSource resolves and records the immutable plan used by one
@@ -107,11 +111,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	transitions, err := r.listTransitions(ctx, parent)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if result, wait, err := r.awaitAdmission(ctx, parent, len(runs)+len(transitions) > 0); wait {
+	if result, wait, err := r.awaitAdmission(ctx, parent, len(runs) > 0); wait {
 		return result, err
 	}
 
@@ -123,8 +123,12 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		}
 		return ctrl.Result{}, fmt.Errorf("resolve BatchEnergyOptimization curve plan: %w", err)
 	}
+	node, transition, err := r.observeNode(ctx, parent, transitionMaterial)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	snapshot, err := ProjectSnapshot(
-		parent, runs, transitions, curvePlan.PlannedBatchSizes(), transitionMaterial != nil,
+		parent, runs, transition, curvePlan.PlannedBatchSizes(), transitionMaterial != nil,
 	)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -151,15 +155,8 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	alreadyExists := false
 	switch decision.Action {
 	case batchenergyoptimization.ActionCreateTransition:
-		transition, buildErr := BuildTransition(parent, transitionMaterial, r.now())
-		if buildErr != nil {
-			return ctrl.Result{}, fmt.Errorf("build NodeActuation: %w", buildErr)
-		}
-		if createErr := r.client.Create(ctx, transition); createErr != nil {
-			if !apierrors.IsAlreadyExists(createErr) {
-				return ctrl.Result{}, fmt.Errorf("create NodeActuation %q: %w", transition.Name, createErr)
-			}
-			alreadyExists = true
+		if err := metadata.RequestPowerMode(ctx, r.client, node, transitionMaterial.PowerMode); err != nil {
+			return ctrl.Result{}, err
 		}
 	case batchenergyoptimization.ActionCreateRun:
 		if decision.Run == nil {
@@ -200,26 +197,41 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	if alreadyExists {
 		return ctrl.Result{Requeue: true}, nil
 	}
-	if decision.Action == batchenergyoptimization.ActionWait {
-		return ctrl.Result{RequeueAfter: waitBackstop}, nil
-	}
-	return ctrl.Result{}, nil
+	return requeueFor(decision, transition), nil
 }
 
-func (r *BatchEnergyOptimizationReconciler) listTransitions(
+// requeueFor polls the Node while its power mode settles and backs off other
+// waits.
+// ponytail: polls the Node; a Node watch needs a campaign-by-Node index and
+// fires on every Node heartbeat.
+func requeueFor(decision batchenergyoptimization.Decision, transition *batchenergyoptimization.Transition) ctrl.Result {
+	if decision.Action == batchenergyoptimization.ActionCreateTransition ||
+		decision.Action == batchenergyoptimization.ActionWait && transition != nil &&
+			transition.Outcome == batchenergyoptimization.TransitionInFlight {
+		return ctrl.Result{RequeueAfter: powerModeWait}
+	}
+	if decision.Action == batchenergyoptimization.ActionWait {
+		return ctrl.Result{RequeueAfter: waitBackstop}
+	}
+	return ctrl.Result{}
+}
+
+// observeNode reads the campaign's Node and projects its power mode; the
+// campaign writes the mode only on a read whose measurement taint grants the
+// Node to this campaign. Both are nil when the campaign needs no transition.
+func (r *BatchEnergyOptimizationReconciler) observeNode(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchEnergyOptimization,
-) ([]edgev1alpha1.NodeActuation, error) {
-	list := &edgev1alpha1.NodeActuationList{}
-	if err := r.client.List(
-		ctx,
-		list,
-		client.InNamespace(parent.Namespace),
-		client.MatchingLabels{labelBatchEnergyOptimization: parent.Name},
-	); err != nil {
-		return nil, fmt.Errorf("list BatchEnergyOptimization NodeActuations: %w", err)
+	material *TransitionMaterial,
+) (*corev1.Node, *batchenergyoptimization.Transition, error) {
+	if material == nil {
+		return nil, nil, nil
 	}
-	return list.Items, nil
+	node, err := profilercontroller.GrantedNode(ctx, r.client, parent.UID, material.Node.Name, material.Node.UID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return node, projectNodeTransition(node, material, r.now()), nil
 }
 
 func (r *BatchEnergyOptimizationReconciler) listRuns(

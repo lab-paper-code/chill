@@ -38,8 +38,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-const newTestResourceName = "new"
-
 func observerSourceFixture() (*corev1.Pod, *corev1.Node, serving.Profile, edgev1alpha1.DeviceClass) {
 	image := "registry/native@sha256:" + strings.Repeat("a", 64)
 	profile := serving.Profile{ID: "chill-system/campaign/campaign-uid", NodeName: "node", RuntimeMetadata: &native.RuntimeMetadata{Runtime: "ort-cpu", IntraOpThreads: 1, InterOpThreads: 1, CPUAffinity: []int{0}}, Condition: profilederivation.CurvePlanSpec{NodeUID: "node-uid", DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "CPUExecutionProvider", RuntimeImage: image, PowerMode: "fixed", Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 4}, CPU: profilederivation.CurveCPUContract{Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1}, Artifact: profilederivation.CurveArtifactContract{Image: image, Files: []string{"/artifact/model.onnx"}}, Preprocessor: profilederivation.CurvePreprocessorContract{Image: image, Path: "/preprocessor/pre"}}, Batches: []serving.BatchProfile{{Batch: 1, MemoryBytes: 1024}}}
@@ -59,7 +57,7 @@ func observerServiceFixture(pod *corev1.Pod) *corev1.Service {
 
 func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	pod, node, profile, class := observerSourceFixture()
-	spec, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, nil, "http://10.96.0.10:8080")
+	spec, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,13 +66,13 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	}
 	routed := pod.DeepCopy()
 	routed.Annotations[ServingRoutingAnnotation] = `{"tight":2}`
-	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, nil, "http://10.96.0.10:8080"); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
+	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
 		t.Fatalf("applied routing not restored: %+v %v", spec.Routing, err)
 	}
 	opaque := pod.DeepCopy()
 	opaque.Status.ContainerStatuses[0].ImageID = "opaque-runtime-image"
 	opaque.Status.InitContainerStatuses[0].ImageID = "opaque-artifact-image"
-	if _, err = sourceSpec(opaque, node, &profile, []edgev1alpha1.DeviceClass{class}, nil, "http://10.96.0.10:8080"); err != nil {
+	if _, err = sourceSpec(opaque, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil {
 		t.Fatal("actual ImageID was incorrectly used as a digest admission gate", err)
 	}
 	cases := []struct {
@@ -115,14 +113,14 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p, n, pr, c := observerSourceFixture()
 			tc.change(p, n, &pr)
-			if _, e := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{c}, nil, "http://10.96.0.10:8080"); e == nil {
+			if _, e := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{c}, "http://10.96.0.10:8080"); e == nil {
 				t.Fatal("unconfirmed source became eligible")
 			}
 		})
 	}
 	restarted := pod.DeepCopy()
 	restarted.Status.ContainerStatuses[0].ContainerID = "containerd://replacement"
-	replacement, err := sourceSpec(restarted, node, &profile, []edgev1alpha1.DeviceClass{class}, nil, "http://10.96.0.10:8080")
+	replacement, err := sourceSpec(restarted, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,48 +129,34 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	}
 }
 
-func TestObserverPowerUsesLatestActualReadBack(t *testing.T) {
+func TestObserverPowerUsesActualReadBack(t *testing.T) {
 	_, node, _, class := observerSourceFixture()
 	target := edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 2}}
-	class.Spec.PowerModes = []edgev1alpha1.PowerMode{{Name: "mode", Actuator: target}}
-	now := metav1.NewMicroTime(time.Now().UTC())
-	record := edgev1alpha1.NodeActuation{ObjectMeta: metav1.ObjectMeta{Name: "actuation", Generation: 1}, Spec: edgev1alpha1.NodeActuationSpec{Node: edgev1alpha1.ProfilingRunObjectReference{Name: node.Name, UID: string(node.UID)}, DeviceClass: class.Name, PowerMode: "mode", Actuator: target, StageRequestedAt: metav1.NewTime(now.Time)}, Status: edgev1alpha1.NodeActuationStatus{ObservedGeneration: 1, Phase: edgev1alpha1.NodeActuationPhaseReady, VerifiedAt: &now, ReadyAt: &now, TargetObservation: &edgev1alpha1.NodeActuationObservation{PowerMode: "mode", Actuator: target, ObservedAt: now}}}
-	if err := confirmedPower(node, &class, "mode", nil); err == nil {
+	other := edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0}}
+	class.Spec.PowerModes = []edgev1alpha1.PowerMode{{Name: "mode", Actuator: target}, {Name: "other", Actuator: other}}
+	node.Labels[chillmeta.PowerMode] = "mode"
+	if err := confirmedPower(node, &class, "mode"); err == nil {
 		t.Fatal("desired mode was treated as actual power")
 	}
-	if err := confirmedPower(node, &class, "mode", []edgev1alpha1.NodeActuation{record}); err != nil {
-		t.Fatal(err)
-	}
-	pending := record.DeepCopy()
-	pending.Name = newTestResourceName
-	pending.Spec.StageRequestedAt = metav1.NewTime(now.Add(time.Second))
-	pending.Status.Phase = edgev1alpha1.NodeActuationPhasePending
-	if err := confirmedPower(node, &class, "mode", []edgev1alpha1.NodeActuation{record, *pending}); err == nil {
-		t.Fatal("stale Ready evidence hid a current transition")
-	}
-	record.Status.TargetObservation.PowerMode = "other"
-	if err := confirmedPower(node, &class, "mode", []edgev1alpha1.NodeActuation{record}); err == nil {
-		t.Fatal("desired target hid an actual mode mismatch")
-	}
-	// After a reboot interrupts a switch, the agent's read-back of the host decides.
 	raw, err := json.Marshal(target)
 	if err != nil {
 		t.Fatal(err)
 	}
 	node.Annotations[chillmeta.PowerActuator] = string(raw)
-	failed := record.DeepCopy()
-	failed.Status.Phase = edgev1alpha1.NodeActuationPhaseFailed
-	for name, records := range map[string][]edgev1alpha1.NodeActuation{"no handoff": nil, "failed handoff": {*failed}} {
-		if err := confirmedPower(node, &class, "mode", records); err != nil {
-			t.Fatalf("%s: read-back not used: %v", name, err)
-		}
+	if err := confirmedPower(node, &class, "mode"); err != nil {
+		t.Fatal(err)
 	}
-	if err := confirmedPower(node, &class, "mode", []edgev1alpha1.NodeActuation{*pending}); err == nil {
+	node.Labels[chillmeta.PowerModeState] = chillmeta.PowerModePending
+	if err := confirmedPower(node, &class, "mode"); err == nil {
 		t.Fatal("read-back hid a switch in progress")
 	}
-	node.Annotations[chillmeta.PowerActuator] = `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":0}}`
-	if err := confirmedPower(node, &class, "mode", []edgev1alpha1.NodeActuation{*failed}); err == nil {
+	delete(node.Labels, chillmeta.PowerModeState)
+	node.Annotations[chillmeta.PowerActuator] = nvpModel0
+	if err := confirmedPower(node, &class, "mode"); err == nil {
 		t.Fatal("read-back of another mode confirmed this one")
+	}
+	if err := confirmedPower(node, &class, "other"); err != nil {
+		t.Fatalf("read-back not mapped to its DeviceClass mode: %v", err)
 	}
 }
 
@@ -429,7 +413,7 @@ func TestObserverRefreshRetainsUnlabelledParentSource(t *testing.T) {
 	observer := newTestObserver(t)
 	observer.sources[id] = &nativeSource{uid: pod.UID, containerID: status.ContainerID}
 	resources := map[types.UID]client.Object{replicaSet.UID: replicaSet, deployment.UID: deployment}
-	if _, publish, probed := observer.probeSource(context.Background(), pod, nil, nil, nil, nil, resources, nil, nil); publish || probed != nil {
+	if _, publish, probed := observer.probeSource(context.Background(), pod, nil, nil, nil, resources, nil, nil); publish || probed != nil {
 		t.Fatal("unlabelled retained source became eligible")
 	}
 	if source := observer.sources[id]; source.ownerUID != uid || !source.stopped {

@@ -63,13 +63,13 @@ func TestOperationCostUsesActualSingleStateEffectAndWholeWallWindow(t *testing.T
 func TestPowerCostUsesEmptyNodeModeChange(t *testing.T) {
 	start := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
 	joules := 30.0
-	record := OperationMeasurement{SchemaVersion: OperationMeasurementSchema, Verdict: "Accepted", WallJoules: &joules, Request: MeasurementRequest{Operation: Operation{ID: "raise", Kind: operationPower, Node: serving.NodeReference{Name: "node", UID: "uid"}}, Meter: MeterDeclaration{ID: "meter", Scope: "node-exclusive-wall"}, Coverage: powerwindow.Policy{MaximumBoundaryDistance: time.Millisecond, MinimumCoverage: 1, MaximumGap: time.Second}}, Result: OperationResult{Status: "complete", StartedAt: start, EndedAt: start.Add(2 * time.Second), Before: OperationState{PowerMode: "eco"}, Actual: OperationState{PowerMode: "boost"}}, Power: metricobserver.Result{Samples: []metricobserver.Sample{{ObservedAt: start, Watts: 15}, {ObservedAt: start.Add(time.Second), Watts: 15}, {ObservedAt: start.Add(2 * time.Second), Watts: 15}}}}
+	record := OperationMeasurement{SchemaVersion: OperationMeasurementSchema, Verdict: "Accepted", WallJoules: &joules, Request: MeasurementRequest{Operation: Operation{ID: "raise", Kind: operationPower, Node: serving.NodeReference{Name: "node", UID: "uid"}}, Meter: MeterDeclaration{ID: "meter", Scope: "node-exclusive-wall"}, Coverage: powerwindow.Policy{MaximumBoundaryDistance: time.Millisecond, MinimumCoverage: 1, MaximumGap: time.Second}}, Result: OperationResult{Status: "complete", StartedAt: start, EndedAt: start.Add(2 * time.Second), Before: OperationState{PowerMode: lowMode}, Actual: OperationState{PowerMode: "boost"}}, Power: metricobserver.Result{Samples: []metricobserver.Sample{{ObservedAt: start, Watts: 15}, {ObservedAt: start.Add(time.Second), Watts: 15}, {ObservedAt: start.Add(2 * time.Second), Watts: 15}}}}
 	record.Result.Operation = record.Request.Operation
 	cost, err := measurementCost(record, evidencestore.ObjectIdentity{Store: "store", Key: "raw", Size: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cost.Kind != operationPower || cost.From != "eco" || cost.To != "boost" || len(cost.BeforeState) != 0 || len(cost.TargetState) != 0 || cost.Trials[0].Joules != 30 || cost.Trials[0].Duration != 2*time.Second {
+	if cost.Kind != operationPower || cost.From != lowMode || cost.To != "boost" || len(cost.BeforeState) != 0 || len(cost.TargetState) != 0 || cost.Trials[0].Joules != 30 || cost.Trials[0].Duration != 2*time.Second {
 		t.Fatalf("empty-Node power cost %+v", cost)
 	}
 	judged := record

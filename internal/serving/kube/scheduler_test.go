@@ -406,30 +406,22 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 			t.Fatalf("%s: ready=%v reasons=%v measurement=%v gpus=%v", node.Node.Name, node.Ready, node.Reasons, node.Measurement, node.GPUUUIDs)
 		}
 	}
-	if spec, ok := controller.powerTargets["gpu-uid/eco"]; !ok || spec.PolicyName != "cpu-eco" || spec.Node.Name != "gpu" || len(controller.powerTargets) != 7 {
+	if d, ok := controller.powerTargets["gpu-uid/eco"]; !ok || d != 30*time.Second || len(controller.powerTargets) != 7 {
 		t.Fatalf("power targets = %+v", controller.powerTargets)
 	}
 }
 
-// Each switch builds its own NodeActuation when it starts, so a repeated
-// switch to the same mode never reuses an old object or an expired deadline.
-func TestScheduledPowerRequestIsFreshAtSwitchTime(t *testing.T) {
+// A power action requests its target mode within the mode's policy duration;
+// a mode without a policy gets no request.
+func TestScheduledPowerRequestNamesTheMode(t *testing.T) {
 	node := serving.NodeReference{Name: "jetson", UID: "jetson-uid"}
-	spec := edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: node.Name, UID: node.UID}, PowerMode: "eco", MaxActuationDurationSeconds: 30}
-	power := map[string]edge.NodeActuationSpec{"jetson-uid/eco": spec}
+	power := map[string]time.Duration{"jetson-uid/eco": 30 * time.Second}
 	action := serving.Action{ID: "lower", Kind: operationPower, Node: node, To: "eco"}
-	first := time.Date(2026, 10, 21, 10, 0, 0, 500, time.UTC)
-	a := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, nil, first).Actuation
-	b := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, nil, first.Add(time.Hour)).Actuation
-	if a == nil || b == nil || a.Name == b.Name {
-		t.Fatalf("repeated switch reused a request: %+v %+v", a, b)
-	}
-	if !b.Spec.StageRequestedAt.Time.Equal(first.Add(time.Hour).Truncate(time.Second)) ||
-		!b.Spec.Deadline.Time.Equal(b.Spec.StageRequestedAt.Add(30*time.Second)) {
-		t.Fatalf("deadline not relative to switch time: %+v", b.Spec)
+	if op := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, nil); op.PowerMode != "eco" || op.MaxActuationDuration != 30*time.Second {
+		t.Fatalf("power request %+v", op)
 	}
 	action.To = "unrequestable"
-	if scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, nil, first).Actuation != nil {
+	if op := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, nil); op.PowerMode != "" {
 		t.Fatal("mode without a policy got a request")
 	}
 }
@@ -443,7 +435,7 @@ func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
 	action := serving.Action{ID: "prepare", Kind: operationPrepare, Instance: wanted.ID}
 	config := SchedulerControllerConfig{Preparations: map[string]PrepareSpec{profile.ID: {}}}
 	workloads := []*serving.Definition{{Name: "tight", UID: "w1"}}
-	op := scheduledOperation(action, &serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{wanted}}, config, nil, workloads, time.Now())
+	op := scheduledOperation(action, &serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{wanted}}, config, nil, workloads)
 	if op.Prepare == nil || op.Prepare.Owner == nil || *op.Prepare.Owner != (serving.WorkloadReference{Name: "tight", UID: "w1"}) {
 		t.Fatalf("planner preparation lost its Workload owner: %+v", op.Prepare)
 	}

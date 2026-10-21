@@ -79,7 +79,7 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 	}
 	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{},
 		servingkube.OperationConfig{
-			Namespace: opts.servingNamespace, ActuationNamespace: opts.actuationNamespace,
+			Namespace:    opts.servingNamespace,
 			PollInterval: opts.sourceInterval,
 		})
 	if err != nil {

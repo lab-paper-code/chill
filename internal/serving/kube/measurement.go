@@ -52,12 +52,22 @@ type OperationMeasurement struct {
 
 // MeasurementIsolation witnesses the measured Node at the end: it still carries
 // the measurement POOL taint and no Workload uses the measured models.
+// PowerModeGeneration, empty on a Node without an actuation agent, is the
+// Node's power-mode generation at the window's start and end.
 type MeasurementIsolation struct {
-	Node      serving.NodeReference       `json:"node"`
-	Tainted   bool                        `json:"tainted"`
-	Workloads []serving.WorkloadReference `json:"workloads"`
-	CheckedAt time.Time                   `json:"checkedAt"`
-	Error     string                      `json:"error,omitempty"`
+	Node                serving.NodeReference       `json:"node"`
+	Tainted             bool                        `json:"tainted"`
+	Workloads           []serving.WorkloadReference `json:"workloads"`
+	PowerModeGeneration *PowerModeGeneration        `json:"powerModeGeneration,omitempty"`
+	CheckedAt           time.Time                   `json:"checkedAt"`
+	Error               string                      `json:"error,omitempty"`
+}
+
+// PowerModeGeneration is the Node's power-mode generation at a window's start
+// and end.
+type PowerModeGeneration struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
 }
 
 // Measure surrounds the SAME production operation, beginning only after an

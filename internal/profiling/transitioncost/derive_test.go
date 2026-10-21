@@ -87,6 +87,38 @@ func TestDeriveClassifiesSourceMismatchInvalid(t *testing.T) {
 	assertNoAcceptedObservation(t, result)
 }
 
+func TestDeriveAcceptsTheTransitionsOwnGenerationChange(t *testing.T) {
+	frozen, raw, policy := validInputs()
+	raw.Generation = &transitioncost.PowerModeGeneration{Start: 4, End: 5}
+
+	result, err := transitioncost.Derive(frozen, raw, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOutcome(t, result, transitioncost.VerdictAccepted, transitioncost.ReasonAccepted)
+}
+
+func TestDeriveInvalidatesAnyOtherGenerationChange(t *testing.T) {
+	for name, generation := range map[string]transitioncost.PowerModeGeneration{
+		"none": {Start: 4, End: 4}, "jump": {Start: 4, End: 6},
+	} {
+		t.Run(name, func(t *testing.T) {
+			frozen, raw, policy := validInputs()
+			raw.Generation = &generation
+
+			result, err := transitioncost.Derive(frozen, raw, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertOutcome(t, result, transitioncost.VerdictInvalid, transitioncost.ReasonPowerChangedDuringMeasurement)
+			assertNoAcceptedObservation(t, result)
+			if _, err := transitioncost.RestoreFinalizedObservation(result.Record()); err != nil {
+				t.Fatalf("restore invalidated observation: %v", err)
+			}
+		})
+	}
+}
+
 func TestDeriveClassifiesOperationFailures(t *testing.T) {
 	tests := []struct {
 		name   string

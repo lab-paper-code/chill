@@ -49,6 +49,12 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Finalized
 		return classified(verified, VerdictFailed, ReasonTargetStateMismatch,
 			"independent read-back did not confirm the frozen target state"), nil
 	}
+	if generation := verified.raw.Generation; generation != nil && generation.End-generation.Start != 1 {
+		// Frozen modes are distinct, so the window holds exactly its own change.
+		return classified(verified, VerdictInvalid, ReasonPowerChangedDuringMeasurement, fmt.Sprintf(
+			"Node power-mode generation went from %d to %d, expected one change",
+			generation.Start, generation.End)), nil
+	}
 
 	if verified.raw.PostTransitionProcess == nil {
 		return classified(verified, VerdictFailed, ReasonReadinessNotReached,

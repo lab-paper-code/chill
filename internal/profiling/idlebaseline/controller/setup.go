@@ -6,12 +6,12 @@ import (
 )
 
 // SetupWithManager registers direct baseline events and framework-derived
-// wakeups from its owned state operation and ProfilingRuns.
+// wakeups from its owned ProfilingRuns. The Node's power mode is polled with
+// RequeueAfter while it settles.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("modelloadedidlebaseline").
 		For(&edgev1alpha1.ModelLoadedIdleBaseline{}).
-		Owns(&edgev1alpha1.NodeActuation{}).
 		Owns(&edgev1alpha1.ProfilingRun{}).
 		Complete(r)
 }

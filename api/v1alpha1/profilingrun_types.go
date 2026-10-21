@@ -146,11 +146,6 @@ type ProfilingRunStatus struct {
 	// +optional
 	Job *ProfilingRunObjectReference `json:"job,omitempty"`
 
-	// Actuation identifies the completed Node transition that confirmed a
-	// non-fixed Run's required state. Fixed Runs leave it absent.
-	// +optional
-	Actuation *ProfilingRunObjectReference `json:"actuation,omitempty"`
-
 	// Records the Pod and Node identities observed after the Run was scheduled.
 	// +optional
 	ObservedExecution *ProfilingRunObservedExecutionStatus `json:"actualExecution,omitempty"`

@@ -129,15 +129,11 @@ func TestCampaignWaitsForAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			runs := &api.ProfilingRunList{}
-			transitions := &api.NodeActuationList{}
 			if err := native.List(context.Background(), runs); err != nil {
 				t.Fatal(err)
 			}
-			if err := native.List(context.Background(), transitions); err != nil {
-				t.Fatal(err)
-			}
-			if updated.Status.Phase != test.phase || len(runs.Items)+len(transitions.Items) != 0 {
-				t.Fatalf("status=%#v children=%d", updated.Status, len(runs.Items)+len(transitions.Items))
+			if updated.Status.Phase != test.phase || len(runs.Items) != 0 {
+				t.Fatalf("status=%#v children=%d", updated.Status, len(runs.Items))
 			}
 			if test.phase != "" && (updated.Status.Outcome != "NodeServing" || updated.Status.Conditions[0].Reason != "NodeServing" || updated.Status.Conditions[0].Status != metav1.ConditionFalse) {
 				t.Fatalf("refusal status = %#v", updated.Status)

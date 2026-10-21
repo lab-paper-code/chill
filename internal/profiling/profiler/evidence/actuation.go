@@ -29,11 +29,22 @@ func (a ActuationFacts) validate(
 	if err := validateNamespacedObject(a.Run, "Run"); err != nil {
 		return permanentValidationError(err)
 	}
-	if err := validateNamespacedObject(a.Handoff, "handoff"); err != nil {
-		return permanentValidationError(err)
+	if a.Run.Namespace != terminal.Job.Namespace {
+		return permanentValidationError(errors.New("actuation Run and terminal Job namespaces do not match"))
 	}
-	if a.Run.Namespace != terminal.Job.Namespace || a.Handoff.Namespace != a.Run.Namespace {
-		return permanentValidationError(errors.New("actuation Run, handoff, and terminal Job namespaces do not match"))
+	if a.Handoff != nil {
+		if err := validateNamespacedObject(*a.Handoff, "handoff"); err != nil {
+			return permanentValidationError(err)
+		}
+		if a.Handoff.Namespace != a.Run.Namespace {
+			return permanentValidationError(errors.New("actuation Run and handoff namespaces do not match"))
+		}
+	} else if a.Generation == nil {
+		return permanentValidationError(errors.New("actuation Node power-mode generation is required"))
+	}
+	if a.Generation != nil && a.Generation.End != a.Generation.Start {
+		return permanentValidationf("PowerChangedDuringMeasurement: Node power-mode generation moved from %d to %d",
+			a.Generation.Start, a.Generation.End)
 	}
 	if err := a.Target.validate("target"); err != nil {
 		return permanentValidationError(err)

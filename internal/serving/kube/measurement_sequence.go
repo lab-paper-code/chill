@@ -14,12 +14,12 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -71,13 +71,13 @@ func (c *SchedulerController) admitNodeLocked(ctx context.Context, ref serving.N
 		return nil, refused(refusedNodeMissing, fmt.Sprintf("Node %s/%s is not present", ref.Name, ref.UID))
 	}
 	c.mu.Lock()
-	namespaces := c.config.MeasurementNamespaces
+	config := c.config
 	c.mu.Unlock()
-	acts, err := c.nodeActuations(ctx, namespaces)
-	if err != nil {
+	var classes edge.DeviceClassList
+	if err = c.store.client.List(ctx, &classes); err != nil {
 		return nil, err
 	}
-	if profilingrun.InMeasurement(node) || c.nodeBusy(node) || pendingActuation(acts, ref.UID, time.Now()) {
+	if profilingrun.InMeasurement(node) || c.nodeBusy(node) || powerModePending(node, classes.Items, config, time.Now()) {
 		return nil, refused("NodeBusy", "Node "+ref.Name+" is held by a measurement, a run or a power change")
 	}
 	return node, nil
@@ -113,20 +113,48 @@ func (c *SchedulerController) measureOperation(ctx context.Context, config Sched
 			models[p.Condition.LogicalModel] = true
 		}
 	}
-	own := ""
-	if request.Operation.Actuation != nil {
-		own = request.Operation.Actuation.Name
+	node, generation, err := c.measurement.powerModeStart(ctx, request.Operation.Node)
+	if err != nil {
+		return record, evidencestore.Receipt{}, err
 	}
-	since := time.Now()
+	var classes edge.DeviceClassList
+	if err = c.store.client.List(ctx, &classes); err != nil {
+		return record, evidencestore.Receipt{}, err
+	}
+	changes := expectedPowerModeChanges(request.Operation, readBackMode(node, nodeClass(node, classes.Items)))
 	return c.measurement.Measure(ctx, request, source, config.Evidence, func(checkCtx context.Context) (MeasurementIsolation, error) {
-		return c.measurement.measurementIsolation(checkCtx, request.Operation.Node, models, since, own)
+		return c.measurement.measurementIsolation(checkCtx, request.Operation.Node, models, generation, changes)
 	})
+}
+
+// expectedPowerModeChanges is the number of power-mode changes a measured
+// operation makes itself: one for a power step into another mode, else none.
+func expectedPowerModeChanges(operation Operation, current string) int64 {
+	if operation.Kind == operationPower && operation.PowerMode != current {
+		return 1
+	}
+	return 0
+}
+
+// powerModeStart reads the Node at a measurement window's start and its
+// power-mode generation, nil on a Node without an actuation agent.
+func (o *Operations) powerModeStart(ctx context.Context, ref serving.NodeReference) (*core.Node, *PowerModeGeneration, error) {
+	node, err := o.kube.CoreV1().Nodes().Get(ctx, ref.Name, meta.GetOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	generation, ok, err := chillmeta.NodePowerModeGeneration(node)
+	if err != nil || !ok {
+		return node, nil, err
+	}
+	return node, &PowerModeGeneration{Start: generation}, nil
 }
 
 // measurementIsolation is the final isolation witness: the Node still carries
 // the measurement taint, the Workloads of its measured models are recorded,
-// and no power change the measurement did not request was applied since.
-func (o *Operations) measurementIsolation(ctx context.Context, expected serving.NodeReference, models map[string]bool, since time.Time, own string) (MeasurementIsolation, error) {
+// and the Node's power-mode generation advanced by exactly the changes the
+// measurement made itself since the window's start generation.
+func (o *Operations) measurementIsolation(ctx context.Context, expected serving.NodeReference, models map[string]bool, generation *PowerModeGeneration, changes int64) (MeasurementIsolation, error) {
 	witness := MeasurementIsolation{Workloads: []serving.WorkloadReference{}}
 	node, err := o.kube.CoreV1().Nodes().Get(ctx, expected.Name, meta.GetOptions{})
 	if err != nil {
@@ -143,18 +171,21 @@ func (o *Operations) measurementIsolation(ctx context.Context, expected serving.
 			witness.Workloads = append(witness.Workloads, serving.WorkloadReference{Name: w.Name, UID: string(w.UID)})
 		}
 	}
-	var acts edge.NodeActuationList
-	if err = o.store.client.List(ctx, &acts, client.InNamespace(o.config.ActuationNamespace)); err != nil {
-		return witness, err
-	}
 	witness.CheckedAt = time.Now().UTC()
-	foreign := slices.DeleteFunc(foreignActuations(acts.Items, expected.UID, "", since, witness.CheckedAt), func(name string) bool { return name == own })
 	// The taint keeps ChillServer off this Node, so Workloads of the same model are recorded, not refused.
 	if witness.Node != expected || !witness.Tainted {
 		return witness, errors.New("actual physical Node or taint violates measurement isolation")
 	}
-	if len(foreign) > 0 {
-		return witness, errors.New(powerChangedReason + " " + strings.Join(foreign, ","))
+	if generation == nil {
+		return witness, nil
+	}
+	end, ok, err := chillmeta.NodePowerModeGeneration(node)
+	if err != nil {
+		return witness, err
+	}
+	witness.PowerModeGeneration = &PowerModeGeneration{Start: generation.Start, End: end}
+	if !ok || end-generation.Start != changes {
+		return witness, fmt.Errorf("%s: power-mode generation %d to %d, expected %d changes", powerChangedReason, generation.Start, end, changes)
 	}
 	return witness, nil
 }

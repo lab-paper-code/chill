@@ -20,7 +20,6 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 		Named("node-agent").
 		For(&edgev1alpha1.ChillSystem{}).
 		Watches(&corev1.ConfigMap{}, mapToSystem).
-		Watches(&edgev1alpha1.NodeActuation{}, mapToSystem).
 		Watches(&edgev1alpha1.DeviceClass{}, mapToSystem).
 		Owns(&appsv1.DaemonSet{}).
 		Complete(r)

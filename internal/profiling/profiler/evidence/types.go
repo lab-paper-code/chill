@@ -22,14 +22,24 @@ type ExecutionEvidence struct {
 	FinalizedAt    time.Time                    `json:"finalizedAt"`
 }
 
-// ActuationFacts are Profiler-observed Kubernetes facts from the one-way
-// transition that established the measured state. Worker-owned raw evidence
-// deliberately cannot assert these external host-state observations.
+// ActuationFacts are Profiler-observed Node facts of the power-mode apply
+// that established the measured state. Worker-owned raw evidence deliberately
+// cannot assert these external host-state observations. Handoff names the
+// retired actuation object of records written before Node power-mode labels;
+// new records carry Generation instead.
 type ActuationFacts struct {
-	Run     NamespacedObjectFacts `json:"run"`
-	Handoff NamespacedObjectFacts `json:"handoff"`
-	Target  ActuationObservation  `json:"target"`
-	ReadyAt time.Time             `json:"readyAt"`
+	Run        NamespacedObjectFacts  `json:"run"`
+	Handoff    *NamespacedObjectFacts `json:"handoff,omitempty"`
+	Target     ActuationObservation   `json:"target"`
+	ReadyAt    time.Time              `json:"readyAt"`
+	Generation *PowerModeGeneration   `json:"generation,omitempty"`
+}
+
+// PowerModeGeneration is the Node power-mode generation of the established
+// apply and at finalization; any difference is a host power change.
+type PowerModeGeneration struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
 }
 
 type NamespacedObjectFacts struct {

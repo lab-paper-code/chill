@@ -1992,11 +1992,6 @@ func (in *ProfilingRunStatus) DeepCopyInto(out *ProfilingRunStatus) {
 		*out = new(ProfilingRunObjectReference)
 		**out = **in
 	}
-	if in.Actuation != nil {
-		in, out := &in.Actuation, &out.Actuation
-		*out = new(ProfilingRunObjectReference)
-		**out = **in
-	}
 	if in.ObservedExecution != nil {
 		in, out := &in.ObservedExecution, &out.ObservedExecution
 		*out = new(ProfilingRunObservedExecutionStatus)

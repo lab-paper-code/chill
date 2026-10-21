@@ -105,13 +105,12 @@ func TestNewRetainedLoaderRequiresDependencies(t *testing.T) {
 	}
 }
 
-func TestValidateRunEvidenceBindingBindsActuationHandoff(t *testing.T) {
+func TestValidateRunEvidenceBindingBindsActuationRun(t *testing.T) {
 	t.Parallel()
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			Job:       &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
-			Actuation: &edgev1alpha1.ProfilingRunObjectReference{Name: "handoff", UID: "handoff-uid"},
+			Job: &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
 			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
@@ -135,7 +134,7 @@ func TestValidateRunEvidenceBindingBindsActuationHandoff(t *testing.T) {
 			Run: profilerevidence.NamespacedObjectFacts{
 				Namespace: run.Namespace, Name: run.Name, UID: string(run.UID),
 			},
-			Handoff: profilerevidence.NamespacedObjectFacts{
+			Handoff: &profilerevidence.NamespacedObjectFacts{
 				Namespace: run.Namespace, Name: "handoff", UID: "handoff-uid",
 			},
 		},
@@ -145,41 +144,10 @@ func TestValidateRunEvidenceBindingBindsActuationHandoff(t *testing.T) {
 		t.Fatalf("validateRunEvidenceBinding() error = %v", err)
 	}
 
-	execution.Actuation.Handoff.UID = "replacement-uid"
+	execution.Actuation.Run.UID = "replacement-uid"
 	if err := validateRunEvidenceBinding(run, execution); err == nil ||
-		!strings.Contains(err.Error(), "recorded confirming transition") {
-		t.Fatalf("validateRunEvidenceBinding() error = %v, want transition mismatch", err)
-	}
-}
-
-func TestValidateRunEvidenceBindingRejectsActuationOnFixedRun(t *testing.T) {
-	t.Parallel()
-	run := &edgev1alpha1.ProfilingRun{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
-		Status: edgev1alpha1.ProfilingRunStatus{
-			Job:       &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
-			Actuation: &edgev1alpha1.ProfilingRunObjectReference{Name: "unexpected", UID: "unexpected-uid"},
-			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
-				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
-				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
-			},
-			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
-				SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
-			},
-		},
-	}
-	execution := profilerevidence.ExecutionEvidence{
-		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
-		Terminal: profilerevidence.TerminalFacts{
-			Job:  profilerevidence.JobTerminalFacts{Namespace: run.Namespace, Name: "job", UID: "job-uid"},
-			Pod:  profilerevidence.PodTerminalFacts{Namespace: run.Namespace, Name: "pod", UID: "pod-uid"},
-			Node: profilerevidence.NodeTerminalFacts{Name: "node", UID: "node-uid"},
-		},
-	}
-
-	if err := validateRunEvidenceBinding(run, execution); err == nil ||
-		!strings.Contains(err.Error(), "unexpected actuation identity") {
-		t.Fatalf("validateRunEvidenceBinding() error = %v, want fixed Run rejection", err)
+		!strings.Contains(err.Error(), "does not belong to the recorded Run") {
+		t.Fatalf("validateRunEvidenceBinding() error = %v, want Run mismatch", err)
 	}
 }
 

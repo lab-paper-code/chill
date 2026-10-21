@@ -23,17 +23,18 @@ const (
 type Reason string
 
 const (
-	ReasonAccepted                    Reason = "Accepted"
-	ReasonObservationMalformed        Reason = "ObservationMalformed"
-	ReasonSourceStateMismatch         Reason = "SourceStateMismatch"
-	ReasonActuationFailed             Reason = "ActuationFailed"
-	ReasonTargetReadBackFailed        Reason = "TargetReadBackFailed"
-	ReasonTargetStateMismatch         Reason = "TargetStateMismatch"
-	ReasonReadinessNotReached         Reason = "ReadinessNotReached"
-	ReasonPowerWindowInsufficient     Reason = "PowerWindowInsufficient"
-	ReasonBoundaryUncertaintyExceeded Reason = "BoundaryUncertaintyExceeded"
-	ReasonServingSurvivalUnknown      Reason = "ServingSurvivalUnknown"
-	ReasonNativeStateUnverified       Reason = "NativeStateUnverified"
+	ReasonAccepted                      Reason = "Accepted"
+	ReasonObservationMalformed          Reason = "ObservationMalformed"
+	ReasonSourceStateMismatch           Reason = "SourceStateMismatch"
+	ReasonActuationFailed               Reason = "ActuationFailed"
+	ReasonTargetReadBackFailed          Reason = "TargetReadBackFailed"
+	ReasonTargetStateMismatch           Reason = "TargetStateMismatch"
+	ReasonReadinessNotReached           Reason = "ReadinessNotReached"
+	ReasonPowerWindowInsufficient       Reason = "PowerWindowInsufficient"
+	ReasonBoundaryUncertaintyExceeded   Reason = "BoundaryUncertaintyExceeded"
+	ReasonServingSurvivalUnknown        Reason = "ServingSurvivalUnknown"
+	ReasonNativeStateUnverified         Reason = "NativeStateUnverified"
+	ReasonPowerChangedDuringMeasurement Reason = "PowerChangedDuringMeasurement"
 )
 
 // StateIdentity is one exact Layer-0 device, model, and power-mode state.
@@ -147,8 +148,9 @@ type ProcessObservation struct {
 	Process    ProcessIdentity `json:"process"`
 }
 
-// RawObservation is one factual observation of one NodeActuation. It contains
-// no derived transition boundary, duration, energy, or scientific verdict.
+// RawObservation is one factual observation of one Node power-mode transition.
+// It contains no derived transition boundary, duration, energy, or scientific
+// verdict.
 type RawObservation struct {
 	ObservationStartedAt time.Time `json:"observationStartedAt"`
 	ObservationEndedAt   time.Time `json:"observationEndedAt"`
@@ -159,6 +161,9 @@ type RawObservation struct {
 	TargetReadBack        *TargetStateReadBack     `json:"targetReadBack"`
 	TargetReadBackFailure *Failure                 `json:"targetReadBackFailure"`
 	MarkerBrackets        TransitionMarkerBrackets `json:"markerBrackets"`
+	// Generation is the Node power-mode generation at observer start and
+	// finish; empty on a Node without an actuation agent.
+	Generation *PowerModeGeneration `json:"generation,omitempty"`
 
 	PowerSamples  []PowerSample      `json:"powerSamples"`
 	PowerFailures []PowerReadFailure `json:"powerFailures"`
@@ -172,6 +177,12 @@ type RawObservation struct {
 	NativeObservations    []NativeNodeObservation       `json:"nativeObservations"`
 	NativeFailures        []NativeReadFailure           `json:"nativeFailures"`
 	PowerSource           metricobserver.SourceIdentity `json:"powerSource"`
+}
+
+// PowerModeGeneration is the Node power-mode generation at window start and end.
+type PowerModeGeneration struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
 }
 
 // Observation is an opaque accepted observation. Its values always originate

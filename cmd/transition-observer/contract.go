@@ -8,12 +8,13 @@ import (
 	"io"
 	"time"
 
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	transitionkube "github.com/lab-paper-code/chill/internal/profiling/transitioncost/kube"
 )
 
-const attemptSchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha4"
+const attemptSchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha5"
 
 type attemptContract struct {
 	powerSource  metricobserver.SourceIdentity
@@ -45,16 +46,19 @@ type powerObservationWire struct {
 }
 
 type transitionFactsWire struct {
-	Namespace                      string       `json:"namespace"`
-	NodeActuationName              string       `json:"nodeActuationName"`
-	TargetNode                     string       `json:"targetNode"`
-	TargetNodeUID                  string       `json:"targetNodeUID"`
-	DeviceType                     string       `json:"deviceType"`
-	Model                          string       `json:"model"`
-	ServingService                 string       `json:"servingService"`
-	ServingContainer               string       `json:"servingContainer"`
-	PollIntervalMilliseconds       milliseconds `json:"pollIntervalMilliseconds"`
-	ObservationTimeoutMilliseconds milliseconds `json:"observationTimeoutMilliseconds"`
+	Namespace                      string                         `json:"namespace"`
+	SourcePowerMode                string                         `json:"sourcePowerMode"`
+	SourceActuator                 edgev1alpha1.PowerModeActuator `json:"sourceActuator"`
+	TargetPowerMode                string                         `json:"targetPowerMode"`
+	TargetActuator                 edgev1alpha1.PowerModeActuator `json:"targetActuator"`
+	TargetNode                     string                         `json:"targetNode"`
+	TargetNodeUID                  string                         `json:"targetNodeUID"`
+	DeviceType                     string                         `json:"deviceType"`
+	Model                          string                         `json:"model"`
+	ServingService                 string                         `json:"servingService"`
+	ServingContainer               string                         `json:"servingContainer"`
+	PollIntervalMilliseconds       milliseconds                   `json:"pollIntervalMilliseconds"`
+	ObservationTimeoutMilliseconds milliseconds                   `json:"observationTimeoutMilliseconds"`
 }
 
 type milliseconds time.Duration
@@ -120,7 +124,9 @@ func (w attemptWire) contract() (attemptContract, error) {
 		},
 		powerRequest: powerRequest,
 		facts: transitionkube.Request{
-			Namespace: w.TransitionFacts.Namespace, NodeActuationName: w.TransitionFacts.NodeActuationName,
+			Namespace:       w.TransitionFacts.Namespace,
+			SourcePowerMode: w.TransitionFacts.SourcePowerMode, SourceActuator: w.TransitionFacts.SourceActuator,
+			TargetPowerMode: w.TransitionFacts.TargetPowerMode, TargetActuator: w.TransitionFacts.TargetActuator,
 			TargetNode: w.TransitionFacts.TargetNode, ServingService: w.TransitionFacts.ServingService,
 			TargetNodeUID:    w.TransitionFacts.TargetNodeUID,
 			ServingContainer: w.TransitionFacts.ServingContainer,

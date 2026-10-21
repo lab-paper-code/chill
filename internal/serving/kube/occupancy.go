@@ -170,16 +170,14 @@ type occupancyPlan struct {
 	workload *edge.Workload
 	dataset  *edge.Dataset
 	fields   []string
-	// powered is set when the Node already reads back the profile's mode.
-	powered bool
-	target  edge.NodeActuationSpec
+	// powered is set when the Node already reads back the profile's mode;
+	// otherwise maxActuation bounds the switch into it.
+	powered      bool
+	maxActuation time.Duration
 }
 
 // occupancyRefusal judges a dispatch-occupancy measurement before its grant.
 func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.DispatchOccupancyMeasurement, node *core.Node, in admissionInputs) (plan occupancyPlan, reason, detail string, wait bool) {
-	if m.Namespace != c.observer.config.ActuationNamespace {
-		return plan, refusedActuationNamespace, m.Namespace, false
-	}
 	if plan.profile, reason, detail, wait = measurementProfile(m.Namespace, m.Spec.BatchEnergyOptimization, m.Spec.Node, in); reason != "" || wait {
 		return plan, reason, detail, wait
 	}
@@ -211,12 +209,12 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 		plan.fields = append(plan.fields, f.Name)
 	}
 	mode := plan.profile.Condition.PowerMode
-	plan.powered = readBackMode(node, nodeClass(node, in.classes), in.acts) == mode
-	target, ok := nodePowerTargets(node, in.classes, in.config.PowerPolicies)[mode]
+	plan.powered = readBackMode(node, nodeClass(node, in.classes)) == mode
+	maxActuation, ok := nodePowerTargets(node, in.classes, in.config.PowerPolicies)[mode]
 	if !plan.powered && !ok {
 		return plan, refusedPowerModeUnknown, mode, false
 	}
-	plan.target = target
+	plan.maxActuation = maxActuation
 	return plan, "", "", false
 }
 
@@ -258,13 +256,14 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 	}
 	fail := func(err error) error { return errors.Join(err, c.failMeasurement(ctx, m, firstLine(err.Error()))) }
 	if !plan.powered {
-		act := powerRequest(plan.target, time.Now())
-		act.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "DispatchOccupancyMeasurement", Name: m.Name, UID: m.UID}}
-		if err := c.measurement.ChangePower(ctx, ref, act); err != nil {
+		if err := c.measurement.ChangePower(ctx, ref, profile.Condition.PowerMode, plan.maxActuation); err != nil {
 			return fail(err)
 		}
 	}
-	since := time.Now()
+	_, generation, err := c.measurement.powerModeStart(ctx, ref)
+	if err != nil {
+		return fail(err)
+	}
 	spec := config.Preparations[profile.ID]
 	spec.Owner = &serving.WorkloadReference{Name: plan.workload.Name, UID: string(plan.workload.UID)}
 	spec.Config.Policy.FixedBatchSize, spec.Instance.FixedBatchSize = b, b
@@ -312,7 +311,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 	measureOccupancy(&record, rows, time.Duration(m.Spec.WarmupSeconds)*time.Second, time.Duration(m.Spec.DurationSeconds)*time.Second)
 	record.LoadJob.Name, record.LoadJob.Image = job.Name, config.LoadGenerator.Image
 	maxIdle, _ := strconv.ParseFloat(m.Spec.MaximumIdleFraction, 64)
-	witness, witnessErr := c.measurement.measurementIsolation(ctx, ref, map[string]bool{profile.Condition.LogicalModel: true}, since, "")
+	witness, witnessErr := c.measurement.measurementIsolation(ctx, ref, map[string]bool{profile.Condition.LogicalModel: true}, generation, 0)
 	record.Isolation = &witness
 	switch {
 	case witnessErr != nil:

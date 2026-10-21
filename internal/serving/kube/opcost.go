@@ -14,17 +14,15 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
-	operationCostKind         = "operation-cost-measurement"
-	refusedProfileMissing     = "ProfileMissing"
-	refusedNodeMismatch       = "NodeMismatch"
-	refusedActuationNamespace = "ActuationNamespace"
-	refusedPowerModeUnknown   = "PowerModeUnknown"
+	operationCostKind       = "operation-cost-measurement"
+	refusedProfileMissing   = "ProfileMissing"
+	refusedNodeMismatch     = "NodeMismatch"
+	refusedPowerModeUnknown = "PowerModeUnknown"
 )
 
 // measurementTerminal reports a terminal measurement phase.
@@ -67,9 +65,6 @@ func measurementProfile(namespace, name, node string, in admissionInputs) (profi
 // operationCostRefusal judges an operation-cost measurement before its grant.
 // profiles maps each named BatchEnergyOptimization to its catalog profile ID.
 func (c *SchedulerController) operationCostRefusal(m *edge.OperationCostMeasurement, node *core.Node, in admissionInputs) (profiles map[string]string, reason, detail string, wait bool) {
-	if m.Namespace != c.observer.config.ActuationNamespace {
-		return nil, refusedActuationNamespace, m.Namespace, false
-	}
 	if !slices.ContainsFunc(in.config.Meters, func(meter MeterDeclaration) bool { return meter.Node.UID == string(node.UID) }) {
 		return nil, MeterUndeclared, node.Name, false
 	}
@@ -126,7 +121,7 @@ func (c *SchedulerController) startOperationCost(node *core.Node, m *edge.Operat
 
 // runOperationCost measures the steps in order and writes the status; a
 // sequence that stops early gets its sequence record.
-func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.OperationCostMeasurement, ref serving.NodeReference, targets map[string]edge.NodeActuationSpec, profiles map[string]string, config SchedulerControllerConfig) error {
+func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.OperationCostMeasurement, ref serving.NodeReference, targets map[string]time.Duration, profiles map[string]string, config SchedulerControllerConfig) error {
 	if err := c.patchMeasurementStatus(ctx, m, func() { m.Status.Phase = edge.MeasurementPhaseMeasuring }); err != nil {
 		return err
 	}
@@ -151,9 +146,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		request.Operation = Operation{ID: fmt.Sprintf("%s.%d.%s", m.UID, i, step.Name), Kind: string(step.Kind), Node: ref}
 		switch step.Kind {
 		case edge.OperationCostStepPower:
-			act := powerRequest(targets[step.PowerMode], time.Now())
-			act.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "OperationCostMeasurement", Name: m.Name, UID: m.UID}}
-			request.Operation.Actuation = act
+			request.Operation.PowerMode, request.Operation.MaxActuationDuration = step.PowerMode, targets[step.PowerMode]
 		case edge.OperationCostStepPrepare, edge.OperationCostStepRemove:
 			spec := config.Preparations[profiles[step.BatchEnergyOptimization]]
 			if step.Kind == edge.OperationCostStepPrepare {

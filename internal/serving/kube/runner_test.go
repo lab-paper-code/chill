@@ -7,7 +7,6 @@ import (
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
-	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -51,7 +50,7 @@ func TestRunnerRefusalsComeBeforeTheTaint(t *testing.T) {
 		mutate(root)
 		h.create(root)
 		h.admit()
-		if got := h.annotation(root, profilingrun.AdmissionAnnotation); got != "Refused: "+reason || h.holder() != "" {
+		if got := h.admission(root); got != "Refused: "+reason || h.holder() != "" {
 			t.Fatalf("%s: admission %q holder %q", reason, got, h.holder())
 		}
 	}
@@ -69,7 +68,7 @@ func TestRunnerPreparesNewestProfileAndHandsBackOnFailure(t *testing.T) {
 	root := transitionRoot(firstfloorContainerName)
 	h.create(root)
 	h.admit() // the harness stops a preparation after its Pod is created
-	got := h.annotation(root, profilingrun.AdmissionAnnotation)
+	got := h.admission(root)
 	if !strings.HasPrefix(got, "Refused: "+refusedRunnerPrepareFailed) || h.holder() != "" {
 		t.Fatalf("admission %q holder %q", got, h.holder())
 	}

@@ -2,6 +2,7 @@ package kube
 
 import (
 	"fmt"
+	"reflect"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
@@ -30,39 +31,32 @@ func nodeClass(n *core.Node, classes []edge.DeviceClass) *edge.DeviceClass {
 	return class
 }
 
-// readBackMode is the mode the Node reads back now: the target of its latest
-// Ready power change, or the only mode of a Fixed class.
-func readBackMode(n *core.Node, class *edge.DeviceClass, acts []edge.NodeActuation) string {
-	if mode := latestReadyMode(acts, string(n.UID)); mode != "" {
-		return mode
+// readBackMode is the mode the Node is in now: the mode whose actuator the
+// actuation agent read back from the host, or the Fixed mode of a Node without
+// a read-back. A requested mode still pending, or several matching modes,
+// leave it unknown.
+func readBackMode(n *core.Node, class *edge.DeviceClass) string {
+	if class == nil || n.Labels[chillmeta.PowerModeState] == chillmeta.PowerModePending {
+		return ""
 	}
-	if class != nil && len(class.Spec.PowerModes) == 1 && class.Spec.PowerModes[0].Actuator.Kind == edge.PowerModeActuatorFixed {
-		return class.Spec.PowerModes[0].Name
-	}
-	return ""
-}
-
-// latestReadyMode is the target mode of the Node's latest power change when
-// that change is Ready, otherwise empty.
-func latestReadyMode(acts []edge.NodeActuation, nodeUID string) string {
-	var latest *edge.NodeActuation
-	for i := range acts {
-		a := &acts[i]
-		if a.Spec.Node.UID == nodeUID && (latest == nil || a.Spec.StageRequestedAt.After(latest.Spec.StageRequestedAt.Time)) {
-			latest = a
+	actuator := readBackActuator(n)
+	found := ""
+	for _, m := range class.Spec.PowerModes {
+		if actuator == nil && m.Actuator.Kind == edge.PowerModeActuatorFixed || actuator != nil && reflect.DeepEqual(m.Actuator, *actuator) {
+			if found != "" {
+				return ""
+			}
+			found = m.Name
 		}
 	}
-	if latest != nil && latest.Status.Phase == edge.NodeActuationPhaseReady && latest.Status.TargetObservation != nil {
-		return latest.Status.TargetObservation.PowerMode
-	}
-	return ""
+	return found
 }
 
 // modeOnlineCPUs is the CPU set online in mode: the DeviceClass declaration,
 // otherwise the Node's published online CPUs when mode is the mode it reads
 // back now. The published list is the current mode's, so it says nothing of
 // another mode.
-func modeOnlineCPUs(n *core.Node, class *edge.DeviceClass, acts []edge.NodeActuation, mode string) (cpuset.CPUSet, bool) {
+func modeOnlineCPUs(n *core.Node, class *edge.DeviceClass, mode string) (cpuset.CPUSet, bool) {
 	if class != nil {
 		for _, m := range class.Spec.PowerModes {
 			if m.Name == mode && m.OnlineCPUs != "" {
@@ -71,7 +65,7 @@ func modeOnlineCPUs(n *core.Node, class *edge.DeviceClass, acts []edge.NodeActua
 			}
 		}
 	}
-	if mode == "" || mode != readBackMode(n, class, acts) {
+	if mode == "" || mode != readBackMode(n, class) {
 		return cpuset.CPUSet{}, false
 	}
 	cpus, err := cpuset.Parse(n.Annotations[chillmeta.OnlineCPUs])
@@ -82,7 +76,7 @@ func modeOnlineCPUs(n *core.Node, class *edge.DeviceClass, acts []edge.NodeActua
 // the CPUs its mode leaves outside the serving reservation: the option it
 // measures could never be placed. A measurement without a CPU allocation is
 // not checked.
-func cpuRefusal(root client.Object, n *core.Node, classes []edge.DeviceClass, acts []edge.NodeActuation, reserved []int) (string, string) {
+func cpuRefusal(root client.Object, n *core.Node, classes []edge.DeviceClass, reserved []int) (string, string) {
 	var mode string
 	var affinity []int32
 	if o, ok := root.(*edge.BatchEnergyOptimization); ok {
@@ -91,7 +85,7 @@ func cpuRefusal(root client.Object, n *core.Node, classes []edge.DeviceClass, ac
 	if len(affinity) == 0 {
 		return "", ""
 	}
-	online, known := modeOnlineCPUs(n, nodeClass(n, classes), acts, mode)
+	online, known := modeOnlineCPUs(n, nodeClass(n, classes), mode)
 	if !known {
 		return refusedOnlineCPUsUnknown, mode
 	}

@@ -2,12 +2,16 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -21,11 +25,82 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+// nodeAPI serves the Nodes of the store client from the clientset that holds
+// them. agent, when set, plays the actuation agent on every patched Node.
+type nodeAPI struct {
+	client.Client
+	kube  kubernetes.Interface
+	agent func(*core.Node)
+}
+
+func (c *nodeAPI) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	node, ok := obj.(*core.Node)
+	if !ok {
+		return c.Client.Get(ctx, key, obj, opts...)
+	}
+	current, err := c.kube.CoreV1().Nodes().Get(ctx, key.Name, meta.GetOptions{})
+	if err == nil {
+		current.DeepCopyInto(node)
+	}
+	return err
+}
+
+func (c *nodeAPI) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	node, ok := obj.(*core.Node)
+	if !ok {
+		return c.Client.Patch(ctx, obj, patch, opts...)
+	}
+	raw, err := patch.Data(obj)
+	if err != nil {
+		return err
+	}
+	patched, err := c.kube.CoreV1().Nodes().Patch(ctx, node.Name, patch.Type(), raw, meta.PatchOptions{})
+	if err == nil && c.agent != nil {
+		c.agent(patched)
+		patched, err = c.kube.CoreV1().Nodes().Update(ctx, patched, meta.UpdateOptions{})
+	}
+	if err == nil {
+		patched.DeepCopyInto(node)
+	}
+	return err
+}
+
+// settleAgent applies each requested mode of class at once, as the actuation
+// agent does: read-back, generation + 1, transition record and success.
+func settleAgent(class *edge.DeviceClass) func(*core.Node) {
+	return func(n *core.Node) {
+		mode := n.Labels[chillmeta.PowerMode]
+		i := slices.IndexFunc(class.Spec.PowerModes, func(m edge.PowerMode) bool { return m.Name == mode })
+		if i < 0 {
+			return
+		}
+		generation, _, _ := chillmeta.NodePowerModeGeneration(n)
+		now := time.Now()
+		actuator, _ := json.Marshal(class.Spec.PowerModes[i].Actuator)
+		transition, _ := json.Marshal(chillmeta.PowerModeTransitionRecord{PowerMode: mode, Generation: generation + 1, ApplyStartedAt: &now, VerifiedAt: &now, ReadyAt: &now})
+		if n.Annotations == nil {
+			n.Annotations = map[string]string{}
+		}
+		n.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeSuccess
+		n.Annotations[chillmeta.PowerActuator] = string(actuator)
+		n.Annotations[chillmeta.PowerModeGeneration] = strconv.FormatInt(generation+1, 10)
+		n.Annotations[chillmeta.PowerModeTransition] = string(transition)
+	}
+}
+
+// pendingNode marks the Node as applying mode since applied.
+func pendingNode(n *core.Node, mode string, applied time.Time) {
+	transition, _ := json.Marshal(chillmeta.PowerModeTransitionRecord{PowerMode: mode, ApplyStartedAt: &applied})
+	n.Labels[chillmeta.PowerMode], n.Labels[chillmeta.PowerModeState] = mode, chillmeta.PowerModePending
+	n.Annotations[chillmeta.PowerModeTransition] = string(transition)
+}
+
 type admissionHarness struct {
 	t          *testing.T
 	controller *SchedulerController
 	kube       *kubefake.Clientset
 	node       *core.Node
+	nodes      *nodeAPI
 }
 
 func newAdmissionHarness(t *testing.T, kubeObjects ...client.Object) *admissionHarness {
@@ -36,15 +111,18 @@ func newAdmissionHarness(t *testing.T, kubeObjects ...client.Object) *admissionH
 		objects = append(objects, o)
 	}
 	kube := kubefake.NewSimpleClientset(objects...)
-	return &admissionHarness{t: t, controller: newAdmissionController(t, kube), kube: kube, node: node}
+	controller, nodes := newAdmissionController(t, kube)
+	return &admissionHarness{t: t, controller: controller, kube: kube, node: node, nodes: nodes}
 }
 
 // newAdmissionController builds a scheduler controller on the fake store and
-// the given Kubernetes client.
-func newAdmissionController(t *testing.T, kube kubernetes.Interface) *SchedulerController {
+// the given Kubernetes client, whose Nodes the returned store client serves.
+func newAdmissionController(t *testing.T, kube kubernetes.Interface) (*SchedulerController, *nodeAPI) {
 	t.Helper()
 	manager, _ := newManagerHarness(t)
 	manager.observer.kube = kube
+	nodes := &nodeAPI{Client: manager.store.client, kube: kube}
+	manager.store.client = nodes
 	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
 	if err != nil {
@@ -61,7 +139,7 @@ func newAdmissionController(t *testing.T, kube kubernetes.Interface) *SchedulerC
 		t.Fatal(err)
 	}
 	t.Cleanup(controller.Close)
-	return controller
+	return controller, nodes
 }
 
 func (h *admissionHarness) create(objects ...client.Object) {
@@ -70,6 +148,19 @@ func (h *admissionHarness) create(objects ...client.Object) {
 		if err := h.controller.store.client.Create(context.Background(), o); err != nil {
 			h.t.Fatal(err)
 		}
+	}
+}
+
+// setNode changes the harness Node in the API.
+func (h *admissionHarness) setNode(change func(*core.Node)) {
+	h.t.Helper()
+	node, err := h.kube.CoreV1().Nodes().Get(context.Background(), h.node.Name, meta.GetOptions{})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	change(node)
+	if _, err = h.kube.CoreV1().Nodes().Update(context.Background(), node, meta.UpdateOptions{}); err != nil {
+		h.t.Fatal(err)
 	}
 }
 
@@ -98,12 +189,13 @@ func (h *admissionHarness) holder() string {
 	return value
 }
 
-func (h *admissionHarness) annotation(object client.Object, key string) string {
+// admission reads the admission annotation of object.
+func (h *admissionHarness) admission(object client.Object) string {
 	h.t.Helper()
 	if err := h.controller.store.client.Get(context.Background(), client.ObjectKeyFromObject(object), object); err != nil {
 		h.t.Fatal(err)
 	}
-	return object.GetAnnotations()[key]
+	return object.GetAnnotations()[profilingrun.AdmissionAnnotation]
 }
 
 // complete makes the measurement terminal.
@@ -138,7 +230,7 @@ func TestAdmitGrantsEmptyNodeAndIgnoresPodsCHILLDidNotPlace(t *testing.T) {
 	if h.holder() != string(root.UID) {
 		t.Fatalf("taint holder = %q", h.holder())
 	}
-	if granted, _, _ := profilingrun.Admission(map[string]string{profilingrun.AdmissionAnnotation: h.annotation(root, profilingrun.AdmissionAnnotation)}); !granted {
+	if granted, _, _ := profilingrun.Admission(map[string]string{profilingrun.AdmissionAnnotation: h.admission(root)}); !granted {
 		t.Fatal("measurement not granted")
 	}
 	if _, err := h.kube.CoreV1().Pods("default").Get(context.Background(), external.Name, meta.GetOptions{}); err != nil {
@@ -151,7 +243,7 @@ func TestAdmitRefusesNodeServingAndNamesThePod(t *testing.T) {
 	root := baselineRoot("idle", time.Now())
 	h.create(root)
 	h.admit()
-	if got := h.annotation(root, profilingrun.AdmissionAnnotation); got != "Refused: NodeServing chill-system/serving-a" {
+	if got := h.admission(root); got != "Refused: NodeServing chill-system/serving-a" {
 		t.Fatalf("admission = %q", got)
 	}
 	if h.holder() != "" {
@@ -165,7 +257,7 @@ func TestAdmitRefusesMissingNode(t *testing.T) {
 	root.Spec.State.TargetNode = "gone"
 	h.create(root)
 	h.admit()
-	if got := h.annotation(root, profilingrun.AdmissionAnnotation); got != "Refused: NodeMissing gone" {
+	if got := h.admission(root); got != "Refused: NodeMissing gone" {
 		t.Fatalf("admission = %q", got)
 	}
 }
@@ -175,15 +267,15 @@ func TestAdmitQueuesBehindTheHolderAndItsServingPods(t *testing.T) {
 	first, second := baselineRoot("first", time.Now().Add(-time.Minute)), baselineRoot("second", time.Now())
 	h.create(second, first)
 	h.admit()
-	if h.holder() != string(first.UID) || h.annotation(second, profilingrun.AdmissionAnnotation) != "" {
-		t.Fatalf("holder %q, second %q", h.holder(), h.annotation(second, profilingrun.AdmissionAnnotation))
+	if h.holder() != string(first.UID) || h.admission(second) != "" {
+		t.Fatalf("holder %q, second %q", h.holder(), h.admission(second))
 	}
 	// The holder's own serving Pod does not refuse the queued measurement.
 	if _, err := h.kube.CoreV1().Pods("chill-system").Create(context.Background(), servingPod("runner"), meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	h.admit()
-	if h.annotation(second, profilingrun.AdmissionAnnotation) != "" {
+	if h.admission(second) != "" {
 		t.Fatal("queued measurement refused while the Node is held")
 	}
 	h.complete(first)
@@ -202,6 +294,10 @@ func TestAdmitQueuesBehindTheHolderAndItsServingPods(t *testing.T) {
 
 func TestAdmitWaitsForRunningRunAndPendingPowerChange(t *testing.T) {
 	h := newAdmissionHarness(t)
+	h.create(cpuClass())
+	h.controller.mu.Lock()
+	h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: "low", DeviceClass: "cpu", PowerMode: "low", ActuatorKind: string(edge.PowerModeActuatorJetsonNVPModel), MaxActuationDurationSeconds: 60}}
+	h.controller.mu.Unlock()
 	root := baselineRoot("idle", time.Now())
 	h.create(root)
 	release := make(chan struct{})
@@ -214,43 +310,16 @@ func TestAdmitWaitsForRunningRunAndPendingPowerChange(t *testing.T) {
 		t.Fatal("granted a Node with a running run")
 	}
 	close(release)
-	pending := &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "power"},
-		Spec: edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}, Deadline: meta.NewTime(time.Now().Add(time.Hour))}}
-	h.create(pending)
+	h.setNode(func(n *core.Node) { pendingNode(n, "low", time.Now()) })
 	h.admit()
 	if h.holder() != "" {
 		t.Fatal("granted a Node with a pending power change")
 	}
-	pending.Status.Phase = edge.NodeActuationPhaseReady
-	if err := h.controller.store.client.Update(context.Background(), pending); err != nil {
-		t.Fatal(err)
-	}
+	// Past its fence plus maxActuationDurationSeconds a pending mode no longer holds the Node.
+	h.setNode(func(n *core.Node) { pendingNode(n, "low", time.Now().Add(-time.Minute)) })
 	h.admit()
 	if h.holder() != string(root.UID) {
-		t.Fatal("not granted after the power change settled")
-	}
-}
-
-func TestHandBackMarksForeignPowerChangeInvalid(t *testing.T) {
-	for _, owned := range []bool{false, true} {
-		h := newAdmissionHarness(t)
-		root := baselineRoot("idle", time.Now())
-		h.create(root)
-		h.admit()
-		applied := meta.NewMicroTime(time.Now())
-		act := &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "power"},
-			Spec:   edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}},
-			Status: edge.NodeActuationStatus{Phase: edge.NodeActuationPhaseReady, ApplyStartedAt: &applied}}
-		if owned {
-			act.OwnerReferences = []meta.OwnerReference{{Kind: "ModelLoadedIdleBaseline", Name: "idle", UID: root.UID}}
-		}
-		h.create(act)
-		h.complete(root)
-		h.admit()
-		invalid := h.annotation(root, profilingrun.InvalidAnnotation)
-		if owned != (invalid == "") || !owned && invalid != "PowerChangedDuringMeasurement power" || h.holder() != "" {
-			t.Fatalf("owned=%v invalid=%q holder=%q", owned, invalid, h.holder())
-		}
+		t.Fatal("not granted after the power change deadline")
 	}
 }
 
@@ -316,8 +385,15 @@ func TestEvidenceReadersCountInvalidMeasurements(t *testing.T) {
 	}
 }
 
-const lowMode = "eco"
+const (
+	lowMode = "eco"
+	maxMode = "max"
+	// nvpModel0 is the read-back of JetsonNVPModel ID 0.
+	nvpModel0 = `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":0}}`
+)
 
+// The hand-back requests the lowest mode on the Node it still holds and removes
+// the taint once the agent settled it.
 func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
 	h := newAdmissionHarness(t)
 	actuator := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 2}}
@@ -329,87 +405,22 @@ func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
 	h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, PowerMode: lowMode, Watts: 5,
 		Meter: "wall", Scope: measurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
 	h.controller.mu.Unlock()
-	node := h.node.DeepCopy()
-	node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "deleted-uid", Effect: core.TaintEffectNoSchedule}}
-	if _, err := h.kube.CoreV1().Nodes().Update(context.Background(), node, meta.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.controller.Admit(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	// Play the actuator: read the requested mode back once the request exists.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		var acts edge.NodeActuationList
-		if err := h.controller.store.client.List(context.Background(), &acts); err != nil {
-			t.Fatal(err)
-		}
-		if len(acts.Items) == 1 {
-			if h.holder() != "deleted-uid" {
-				t.Fatal("taint removed before the lowest mode was read back")
-			}
-			a := &acts.Items[0]
-			if a.Spec.PowerMode != lowMode || a.Labels[handBackLabel] == "" {
-				t.Fatalf("hand-back requested %q", a.Spec.PowerMode)
-			}
-			ready := meta.NewMicroTime(time.Now())
-			a.Status = edge.NodeActuationStatus{Phase: edge.NodeActuationPhaseReady, ObservedGeneration: a.Generation, ReadyAt: &ready,
-				TargetObservation: &edge.NodeActuationObservation{PowerMode: lowMode, Actuator: actuator}}
-			if err := h.controller.store.client.Update(context.Background(), a); err != nil {
-				t.Fatal(err)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("hand-back requested no power change: %+v", h.controller.State().Results)
-		}
-		time.Sleep(time.Millisecond)
+	h.setNode(func(n *core.Node) {
+		n.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "deleted-uid", Effect: core.TaintEffectNoSchedule}}
+	})
+	settle := settleAgent(class)
+	holderAtRequest := ""
+	h.nodes.agent = func(n *core.Node) {
+		holderAtRequest, _ = profilingrun.MeasurementHolder(n)
+		settle(n)
 	}
 	h.admit()
-	if h.holder() != "" {
-		t.Fatalf("taint kept: %+v", h.controller.State().Results)
-	}
-}
-
-// A retried hand-back finds the lowering of the failed attempt before it inside
-// the measurement window; that hand-back power change does not invalidate it.
-func TestForeignActuationsSkipHandBackLowering(t *testing.T) {
-	from := time.Now()
-	applied := meta.NewMicroTime(from.Add(time.Second))
-	act := func(name string, labels map[string]string) edge.NodeActuation {
-		return edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Name: name, Labels: labels},
-			Spec:   edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}},
-			Status: edge.NodeActuationStatus{ApplyStartedAt: &applied}}
-	}
-	acts := []edge.NodeActuation{act("lowering", map[string]string{handBackLabel: holderLabelValue}), act("operator", nil)}
-	if got := foreignActuations(acts, "node-uid", "root-uid", from, from.Add(time.Minute)); len(got) != 1 || got[0] != "operator" {
-		t.Fatalf("foreign = %v", got)
-	}
-}
-
-// Measurements request power changes in their own namespace; admission waits
-// for those too.
-func TestAdmitWaitsForPendingPowerChangeOfAMeasurementNamespace(t *testing.T) {
-	h := newAdmissionHarness(t)
-	h.controller.mu.Lock()
-	h.controller.config.MeasurementNamespaces = []string{"chill-system", "measurements"}
-	h.controller.mu.Unlock()
-	root := baselineRoot("idle", time.Now())
-	h.create(root)
-	pending := &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "measurements", Name: "power"},
-		Spec: edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}, Deadline: meta.NewTime(time.Now().Add(time.Hour))}}
-	h.create(pending)
-	h.admit()
-	if h.holder() != "" {
-		t.Fatal("granted a Node with a pending power change in a measurement namespace")
-	}
-	pending.Status.Phase = edge.NodeActuationPhaseReady
-	if err := h.controller.store.client.Update(context.Background(), pending); err != nil {
+	node, err := h.kube.CoreV1().Nodes().Get(context.Background(), "node", meta.GetOptions{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	h.admit()
-	if h.holder() != string(root.UID) {
-		t.Fatal("not granted after the power change settled")
+	if holderAtRequest != "deleted-uid" || node.Labels[chillmeta.PowerMode] != lowMode || h.holder() != "" {
+		t.Fatalf("hand-back requested %q under %q, taint %q: %+v", node.Labels[chillmeta.PowerMode], holderAtRequest, h.holder(), h.controller.State().Results)
 	}
 }
 
@@ -448,16 +459,15 @@ func TestAdmitRefusesCPUsTheModeCannotOffer(t *testing.T) {
 			h.controller.config.Reserved = map[string]serving.SchedulerAllocation{"node": {CPUs: []int{0, 1}}}
 			h.controller.mu.Unlock()
 			if test.readBack != "" {
-				ready := &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "read-back"},
-					Spec:   edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}, PowerMode: test.readBack},
-					Status: edge.NodeActuationStatus{Phase: edge.NodeActuationPhaseReady, TargetObservation: &edge.NodeActuationObservation{PowerMode: test.readBack}}}
-				h.create(ready)
+				h.setNode(func(n *core.Node) {
+					n.Annotations[chillmeta.PowerActuator] = `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":1}}`
+				})
 			}
 			root := beoRoot("beo", "node", "")
 			root.Spec.State.Candidate.PowerMode, root.Spec.CPUAffinity = test.mode, test.affinity
 			h.create(root)
 			h.admit()
-			if got := h.annotation(root, profilingrun.AdmissionAnnotation); !strings.HasPrefix(got, test.want) {
+			if got := h.admission(root); !strings.HasPrefix(got, test.want) {
 				t.Fatalf("admission = %q, want %q", got, test.want)
 			}
 			if granted := strings.HasPrefix(test.want, "Granted"); granted != (h.holder() == string(root.UID)) {
@@ -473,10 +483,10 @@ func TestAdmitRefusalLetsTheNextRootGo(t *testing.T) {
 	h := newAdmissionHarness(t)
 	h.create(cpuClass())
 	first, second := beoRoot("first", "node", ""), baselineRoot("second", time.Now())
-	first.Spec.State.Candidate.PowerMode, first.Spec.CPUAffinity = "max", []int32{7}
+	first.Spec.State.Candidate.PowerMode, first.Spec.CPUAffinity = maxMode, []int32{7}
 	h.create(first, second)
 	h.admit()
-	if got := h.annotation(first, profilingrun.AdmissionAnnotation); !strings.HasPrefix(got, "Refused: CPUsUnavailable") {
+	if got := h.admission(first); !strings.HasPrefix(got, "Refused: CPUsUnavailable") {
 		t.Fatalf("first = %q", got)
 	}
 	if h.holder() != string(second.UID) {

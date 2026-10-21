@@ -10,6 +10,7 @@ import (
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	batch "k8s.io/api/batch/v1"
@@ -137,7 +138,7 @@ func TestOccupancyRefusesUnmeasuredBatchAndWorkloads(t *testing.T) {
 			}
 			o.create(m)
 			o.admit()
-			if got := o.annotation(m, profilingrun.AdmissionAnnotation); got != "Refused: "+test.want {
+			if got := o.admission(m); got != "Refused: "+test.want {
 				t.Fatalf("admission %q", got)
 			}
 			if m.Status.Phase != edge.MeasurementPhaseFailed || m.Status.Reason != test.want {
@@ -169,7 +170,7 @@ func TestOccupancyIsolatesTheLoadNode(t *testing.T) {
 	if err = o.controller.Admit(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if o.holder() != "" || o.annotation(m, profilingrun.AdmissionAnnotation) != "" {
+	if o.holder() != "" || o.admission(m) != "" {
 		t.Fatalf("occupancy granted while the load Node is measured: holder %q", o.holder())
 	}
 	o.controller.startNodeRun(Operation{ID: "load", Kind: occupancyKind, Node: testNode}, SchedulerControllerConfig{},
@@ -184,7 +185,7 @@ func TestOccupancyIsolatesTheLoadNode(t *testing.T) {
 	if err = o.controller.Admit(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := o.annotation(onGateway, profilingrun.AdmissionAnnotation); got != "" {
+	if got := o.admission(onGateway); got != "" {
 		t.Fatalf("load Node root judged during a load: %q", got)
 	}
 }
@@ -261,15 +262,18 @@ func TestOccupancyJudgesWorkloadServingByListedPods(t *testing.T) {
 	o.controller.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: "previous/c", Node: testNode, WorkloadUID: string(w.UID)}}
 	o.controller.mu.Unlock()
 	// The Node reads back the profile mode, so the run needs no power change.
-	o.create(&edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "read-back"},
-		Spec:   edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}, PowerMode: "fixed"},
-		Status: edge.NodeActuationStatus{Phase: edge.NodeActuationPhaseReady, TargetObservation: &edge.NodeActuationObservation{PowerMode: "fixed"}}})
+	profiles := o.controller.observer.Profiles()
+	profiles[0].Condition.PowerMode = maxMode
+	o.controller.observer.SetProfiles(profiles)
+	o.setNode(func(n *core.Node) {
+		n.Annotations[chillmeta.PowerActuator] = nvpModel0
+	})
 	m := occupancyRoot("occ", time.Now(), 1)
 	o.create(m)
 	if err := o.controller.Admit(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := o.annotation(m, profilingrun.AdmissionAnnotation); !strings.HasPrefix(got, "Granted") {
+	if got := o.admission(m); !strings.HasPrefix(got, "Granted") {
 		t.Fatalf("stale snapshot refused the occupancy: %q", got)
 	}
 	o.controller.wg.Wait()
@@ -283,7 +287,7 @@ func TestOccupancyJudgesWorkloadServingByListedPods(t *testing.T) {
 	next := occupancyRoot("occ-2", time.Now().Add(time.Second), 1)
 	o.create(next)
 	o.admit()
-	if got := o.annotation(next, profilingrun.AdmissionAnnotation); got != "Refused: WorkloadServing chill-system/serving-plc" {
+	if got := o.admission(next); got != "Refused: WorkloadServing chill-system/serving-plc" {
 		t.Fatalf("serving Pod not refused: %q", got)
 	}
 }

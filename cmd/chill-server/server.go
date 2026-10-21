@@ -77,7 +77,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	observer, err := servingkube.NewObserver(store, kube, execution, &firstfloor.Client{}, servingkube.ObserverConfig{
-		Namespace: opts.servingNamespace, ActuationNamespace: opts.actuationNamespace,
+		Namespace: opts.servingNamespace,
 	})
 	if err != nil {
 		return err

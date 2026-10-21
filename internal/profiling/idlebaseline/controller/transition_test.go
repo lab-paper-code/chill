@@ -2,67 +2,112 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func TestReconcilerWaitsForStateActuationBeforeFirstRun(t *testing.T) {
+var testNow = time.Unix(10_000, 0)
+
+// grantedNode is the baseline's target Node with its measurement taint naming
+// holder; an empty holder leaves it untainted.
+func grantedNode(parent *edgev1alpha1.ModelLoadedIdleBaseline, holder string) *corev1.Node {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: parent.Spec.State.TargetNode, UID: "node-uid"}}
+	if holder != "" {
+		node.Spec.Taints = []corev1.Taint{{
+			Key: profilingrun.MeasurementTaintKey, Value: holder, Effect: corev1.TaintEffectNoSchedule,
+		}}
+	}
+	return node
+}
+
+// setAgent records the agent at state for the baseline mode, fenced at
+// applyStartedAt.
+func setAgent(node *corev1.Node, mode, state string, applyStartedAt time.Time) {
+	record := metadata.PowerModeTransitionRecord{PowerMode: mode, Generation: 1, ApplyStartedAt: &applyStartedAt}
+	if state == metadata.PowerModeSuccess {
+		readyAt := applyStartedAt.Add(time.Minute)
+		record.VerifiedAt, record.ReadyAt = &applyStartedAt, &readyAt
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		panic(err)
+	}
+	node.Labels = map[string]string{metadata.PowerMode: mode, metadata.PowerModeState: state}
+	node.Annotations = map[string]string{
+		metadata.PowerModeGeneration: strconv.Itoa(1),
+		metadata.PowerModeTransition: string(raw),
+	}
+}
+
+func getNode(t *testing.T, kube client.Client, name string) *corev1.Node {
+	t.Helper()
+	node := &corev1.Node{}
+	if err := kube.Get(context.Background(), client.ObjectKey{Name: name}, node); err != nil {
+		t.Fatal(err)
+	}
+	return node
+}
+
+func TestReconcilerRequestsPowerModeBeforeFirstRun(t *testing.T) {
 	parent := testBaselineParent()
-	kube := baselineFakeClient(t, parent)
-	preparer := &fakeRunPreparer{prepared: testActuatedPreparedRun(parent)}
-	reconciler := testReconcilerWithPreparer(t, kube, preparer)
-	reconciler.now = func() time.Time { return time.Unix(1_000, 0) }
+	kube := baselineFakeClient(t, parent, grantedNode(parent, string(parent.UID)))
+	reconciler := testReconcilerWithPreparer(t, kube, &fakeRunPreparer{prepared: testActuatedPreparedRun(parent)})
 
-	request := requestFor(parent)
-	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+	result, err := reconciler.Reconcile(context.Background(), requestFor(parent))
+	if err != nil || result.RequeueAfter != powerModeWait {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	assertRunCount(t, kube, parent.Namespace, 0)
+	node := getNode(t, kube, parent.Spec.State.TargetNode)
+	if node.Labels[metadata.PowerMode] != parent.Spec.State.Candidate.PowerMode {
+		t.Fatalf("power-mode label = %q", node.Labels[metadata.PowerMode])
+	}
+
+	setAgent(node, parent.Spec.State.Candidate.PowerMode, metadata.PowerModePending, testNow.Add(-time.Minute))
+	if err := kube.Update(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), requestFor(parent)); err != nil {
 		t.Fatal(err)
 	}
 	assertRunCount(t, kube, parent.Namespace, 0)
-	actuation := &edgev1alpha1.NodeActuation{}
-	if err := kube.Get(context.Background(), client.ObjectKey{
-		Namespace: parent.Namespace, Name: stateActuationName(parent.Name),
-	}, actuation); err != nil {
-		t.Fatal(err)
-	}
-	owner := metav1.GetControllerOf(actuation)
-	if owner == nil || owner.UID != parent.UID || actuation.Spec.Node.UID != "node-uid" ||
-		actuation.Spec.PolicyName != "mode-policy" ||
-		actuation.Spec.Actuator.Kind != edgev1alpha1.PowerModeActuatorJetsonNVPModel ||
-		actuation.Spec.Actuator.JetsonNVPModel == nil ||
-		actuation.Spec.Actuator.JetsonNVPModel.ID != 2 ||
-		actuation.Spec.SettlingDurationSeconds != 30 ||
-		actuation.Spec.MaxActuationDurationSeconds != 300 ||
-		!actuation.Spec.Deadline.Time.Equal(actuation.Spec.StageRequestedAt.Add(300*time.Second)) ||
-		preparer.calls != 1 {
-		t.Fatalf("state actuation = %#v, prepare calls = %d", actuation, preparer.calls)
-	}
-	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
-		t.Fatal(err)
-	}
-	assertRunCount(t, kube, parent.Namespace, 0)
-	if preparer.calls != 1 {
-		t.Fatalf("pending state actuation caused %d preparations", preparer.calls)
-	}
 
-	markActuationReady(actuation)
-	if err := kube.Update(context.Background(), actuation); err != nil {
+	node = getNode(t, kube, parent.Spec.State.TargetNode)
+	setAgent(node, parent.Spec.State.Candidate.PowerMode, metadata.PowerModeSuccess, testNow.Add(-2*time.Minute))
+	if err := kube.Update(context.Background(), node); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+	if _, err := reconciler.Reconcile(context.Background(), requestFor(parent)); err != nil {
 		t.Fatal(err)
 	}
 	assertRunCount(t, kube, parent.Namespace, 1)
-	if preparer.calls != 1 {
-		t.Fatalf("stored state actuation caused %d preparations", preparer.calls)
+}
+
+func TestReconcilerRequestsPowerModeOnlyOnItsGrantedNode(t *testing.T) {
+	for name, holder := range map[string]string{"other root": "other-uid", "untainted": ""} {
+		t.Run(name, func(t *testing.T) {
+			parent := testBaselineParent()
+			kube := baselineFakeClient(t, parent, grantedNode(parent, holder))
+			reconciler := testReconcilerWithPreparer(t, kube, &fakeRunPreparer{prepared: testActuatedPreparedRun(parent)})
+			if _, err := reconciler.Reconcile(context.Background(), requestFor(parent)); err == nil {
+				t.Fatal("power mode was requested on a Node not granted to the baseline")
+			}
+			if mode, ok := getNode(t, kube, parent.Spec.State.TargetNode).Labels[metadata.PowerMode]; ok {
+				t.Fatalf("power-mode label = %q, want none", mode)
+			}
+			assertRunCount(t, kube, parent.Namespace, 0)
+		})
 	}
 }
 
@@ -75,125 +120,41 @@ func TestReconcilerCreatesFixedRunDirectly(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRunCount(t, kube, parent.Namespace, 1)
-	actuation := &edgev1alpha1.NodeActuation{}
-	err := kube.Get(context.Background(), client.ObjectKey{
-		Namespace: parent.Namespace, Name: stateActuationName(parent.Name),
-	}, actuation)
-	if !apierrors.IsNotFound(err) || preparer.calls != 1 {
-		t.Fatalf("fixed state actuation err=%v prepare calls=%d", err, preparer.calls)
-	}
-}
-
-func TestReconcilerClosesFailedStateActuationWithoutRun(t *testing.T) {
-	parent := testBaselineParent()
-	actuation := testStateActuation(t, parent)
-	actuation.Status = edgev1alpha1.NodeActuationStatus{
-		Phase: edgev1alpha1.NodeActuationPhaseFailed,
-		TerminalFailure: &edgev1alpha1.NodeActuationFailure{
-			Stage:  edgev1alpha1.NodeActuationFailureStageApply,
-			Reason: "ApplyFailed", Message: "nvpmodel failed", OccurredAt: metav1.Now(),
-		},
-	}
-	kube := baselineFakeClient(t, parent, actuation)
-	preparer := &fakeRunPreparer{err: context.Canceled}
-	reconciler := testReconcilerWithPreparer(t, kube, preparer)
-	if _, err := reconciler.Reconcile(context.Background(), requestFor(parent)); err != nil {
-		t.Fatal(err)
-	}
-	assertRunCount(t, kube, parent.Namespace, 0)
-	updated := &edgev1alpha1.ModelLoadedIdleBaseline{}
-	if err := kube.Get(context.Background(), client.ObjectKeyFromObject(parent), updated); err != nil {
-		t.Fatal(err)
-	}
-	if updated.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient ||
-		updated.Status.AttemptedRuns != 0 || updated.Status.CompletedRuns != 0 ||
-		updated.Status.Result != nil || preparer.calls != 0 {
-		t.Fatalf("failed state status=%#v prepare calls=%d", updated.Status, preparer.calls)
-	}
-}
-
-func TestReconcilerUsesAlreadyExistingActuationWinner(t *testing.T) {
-	parent := testBaselineParent()
-	winner := testStateActuation(t, parent)
-	winner.Spec.PolicyName = "stored-policy"
-	winner.Spec.SettlingDurationSeconds = 10
-	winner.Spec.MaxActuationDurationSeconds = 40
-	markActuationReady(winner)
-	base := baselineFakeClient(t, parent, winner)
-	kube := &actuationCreateRaceClient{Client: base}
-	preparer := &fakeRunPreparer{prepared: testActuatedPreparedRun(parent)}
-	reconciler := testReconcilerWithPreparer(t, kube, preparer)
-
-	if _, err := reconciler.Reconcile(context.Background(), requestFor(parent)); err != nil {
-		t.Fatal(err)
-	}
-	assertRunCount(t, kube, parent.Namespace, 1)
 	if preparer.calls != 1 {
-		t.Fatalf("AlreadyExists race prepared %d times", preparer.calls)
+		t.Fatalf("fixed state prepare calls=%d", preparer.calls)
 	}
 }
 
-func TestProjectStateActuationRejectsWrongOwnerTargetOrReadyProof(t *testing.T) {
-	parent := testBaselineParent()
-	for name, mutate := range map[string]func(*edgev1alpha1.NodeActuation){
-		"owner": func(actual *edgev1alpha1.NodeActuation) {
-			actual.OwnerReferences[0].UID = "another-parent"
-		},
-		"target": func(actual *edgev1alpha1.NodeActuation) {
-			actual.Spec.Node.Name = "another-node"
-		},
-		"generation": func(actual *edgev1alpha1.NodeActuation) {
-			actual.Status.ObservedGeneration--
-		},
-		"read-back": func(actual *edgev1alpha1.NodeActuation) {
-			actual.Status.TargetObservation.PowerMode = "another-mode"
-		},
-		"typed actuator": func(actual *edgev1alpha1.NodeActuation) {
-			actual.Status.TargetObservation.Actuator.JetsonNVPModel.ID++
-		},
+// A failed apply and an apply past the policy's maxActuationDurationSeconds
+// both close the baseline without a Run.
+func TestReconcilerClosesFailedOrLatePowerModeWithoutRun(t *testing.T) {
+	for name, setup := range map[string]struct {
+		state   string
+		fenceAt time.Time
+	}{
+		"failed":               {metadata.PowerModeFailed, testNow.Add(-time.Minute)},
+		"past policy deadline": {metadata.PowerModePending, testNow.Add(-301 * time.Second)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			actual := testStateActuation(t, parent)
-			markActuationReady(actual)
-			mutate(actual)
-			if _, _, err := projectStateActuation(parent, actual); err == nil {
-				t.Fatal("invalid state actuation was accepted")
+			parent := testBaselineParent()
+			node := grantedNode(parent, string(parent.UID))
+			setAgent(node, parent.Spec.State.Candidate.PowerMode, setup.state, setup.fenceAt)
+			kube := baselineFakeClient(t, parent, node)
+			reconciler := testReconcilerWithPreparer(t, kube, &fakeRunPreparer{prepared: testActuatedPreparedRun(parent)})
+			if _, err := reconciler.Reconcile(context.Background(), requestFor(parent)); err != nil {
+				t.Fatal(err)
+			}
+			assertRunCount(t, kube, parent.Namespace, 0)
+			updated := &edgev1alpha1.ModelLoadedIdleBaseline{}
+			if err := kube.Get(context.Background(), client.ObjectKeyFromObject(parent), updated); err != nil {
+				t.Fatal(err)
+			}
+			if updated.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient ||
+				updated.Status.AttemptedRuns != 0 || updated.Status.Result != nil {
+				t.Fatalf("failed state status=%#v", updated.Status)
 			}
 		})
 	}
-}
-
-type actuationCreateRaceClient struct {
-	client.Client
-	hidden bool
-}
-
-func (c *actuationCreateRaceClient) Get(
-	ctx context.Context,
-	key client.ObjectKey,
-	object client.Object,
-	options ...client.GetOption,
-) error {
-	if _, ok := object.(*edgev1alpha1.NodeActuation); ok && !c.hidden {
-		c.hidden = true
-		return apierrors.NewNotFound(schema.GroupResource{
-			Group: edgev1alpha1.GroupVersion.Group, Resource: "nodeactuations",
-		}, key.Name)
-	}
-	return c.Client.Get(ctx, key, object, options...)
-}
-
-func (c *actuationCreateRaceClient) Create(
-	ctx context.Context,
-	object client.Object,
-	options ...client.CreateOption,
-) error {
-	if _, ok := object.(*edgev1alpha1.NodeActuation); ok {
-		return apierrors.NewAlreadyExists(schema.GroupResource{
-			Group: edgev1alpha1.GroupVersion.Group, Resource: "nodeactuations",
-		}, object.GetName())
-	}
-	return c.Client.Create(ctx, object, options...)
 }
 
 func testReconcilerWithPreparer(
@@ -208,6 +169,7 @@ func testReconcilerWithPreparer(
 	if err != nil {
 		t.Fatal(err)
 	}
+	reconciler.now = func() time.Time { return testNow }
 	return reconciler
 }
 
@@ -247,33 +209,6 @@ func testActuatedPreparedRun(parent *edgev1alpha1.ModelLoadedIdleBaseline) profi
 			},
 		},
 		ActuationPolicy: &policy,
-	}
-}
-
-func testStateActuation(
-	t *testing.T,
-	parent *edgev1alpha1.ModelLoadedIdleBaseline,
-) *edgev1alpha1.NodeActuation {
-	t.Helper()
-	actuation, err := buildStateActuation(parent, testActuatedPreparedRun(parent), time.Unix(1_000, 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	actuation.Generation = 1
-	return actuation
-}
-
-func markActuationReady(actuation *edgev1alpha1.NodeActuation) {
-	readyAt := metav1.NewMicroTime(time.Unix(1_100, 0))
-	actuation.Status = edgev1alpha1.NodeActuationStatus{
-		ObservedGeneration: actuation.Generation,
-		Phase:              edgev1alpha1.NodeActuationPhaseReady,
-		TargetObservation: &edgev1alpha1.NodeActuationObservation{
-			PowerMode:  actuation.Spec.PowerMode,
-			Actuator:   *actuation.Spec.Actuator.DeepCopy(),
-			ObservedAt: metav1.NewMicroTime(time.Unix(1_090, 0)),
-		},
-		ReadyAt: &readyAt,
 	}
 }
 

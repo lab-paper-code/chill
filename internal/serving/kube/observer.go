@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -51,8 +50,7 @@ const (
 )
 
 type ObserverConfig struct {
-	Namespace          string
-	ActuationNamespace string
+	Namespace string
 }
 type ObserverIssue struct {
 	Source string    `json:"source"`
@@ -114,9 +112,6 @@ type Observer struct {
 func NewObserver(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, native *firstfloor.Client, config ObserverConfig) (*Observer, error) {
 	if store == nil || store.client == nil || kube == nil || runtime == nil || native == nil || config.Namespace == "" {
 		return nil, errors.New("observer requires direct store, Kubernetes/native clients, runtime and selected namespace")
-	}
-	if config.ActuationNamespace == "" {
-		config.ActuationNamespace = config.Namespace
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Observer{store: store, kube: kube, runtime: runtime, native: native, config: config, sources: map[string]*nativeSource{}, issues: map[string]ObserverIssue{}, movingNodes: map[string]bool{}, removingInstances: map[string]bool{}, ctx: ctx, cancel: cancel}, nil
@@ -214,10 +209,6 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	if err = o.store.client.List(ctx, &classes); err != nil {
 		return o.refreshFailure(err)
 	}
-	var actuations edgev1alpha1.NodeActuationList
-	if err = o.store.client.List(ctx, &actuations, client.InNamespace(o.config.ActuationNamespace)); err != nil {
-		return o.refreshFailure(err)
-	}
 	measurement := []serving.NodeReference{}
 	byName := map[string]*corev1.Node{}
 	for i := range nodes.Items {
@@ -259,7 +250,7 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		observed[pod.UID] = true
-		instance, publish, probe := o.probeSource(ctx, pod, byName[pod.Spec.NodeName], profiles[pod.Annotations[ServingProfileAnnotation]], classes.Items, actuations.Items, resources, servicesByName, servicesErr)
+		instance, publish, probe := o.probeSource(ctx, pod, byName[pod.Spec.NodeName], profiles[pod.Annotations[ServingProfileAnnotation]], classes.Items, resources, servicesByName, servicesErr)
 		if probe != nil {
 			probed = append(probed, *probe)
 		} else if publish {
@@ -361,7 +352,7 @@ func (o *Observer) restoreSources(pods []corev1.Pod) {
 // not hold the source lock for the whole refresh.
 const nativeProbeTimeout = 2 * time.Second
 
-func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation, resources map[types.UID]client.Object, services map[string]*corev1.Service, servicesErr error) (serving.ReadyInstance, bool, *probedSource) {
+func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, resources map[types.UID]client.Object, services map[string]*corev1.Service, servicesErr error) (serving.ReadyInstance, bool, *probedSource) {
 	o.observeTermination(pod)
 	owner, ownershipErr := resourceWorkloadOwner(pod, resources)
 	for _, source := range o.sources {
@@ -378,7 +369,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 	if pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
 		return serving.ReadyInstance{}, false, nil
 	}
-	spec, err := sourceSpec(pod, node, profile, classes, actuations, "")
+	spec, err := sourceSpec(pod, node, profile, classes, "")
 	if err == nil {
 		err = ownershipErr
 	}
@@ -499,9 +490,9 @@ func workloadOwner(owners []metav1.OwnerReference) string {
 	return ""
 }
 
-func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation, endpoint string) (firstfloor.Spec, error) {
+func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, endpoint string) (firstfloor.Spec, error) {
 	var empty firstfloor.Spec
-	if err := validateSourcePlacement(pod, node, profile, classes, actuations); err != nil {
+	if err := validateSourcePlacement(pod, node, profile, classes); err != nil {
 		return empty, err
 	}
 	condition := &profile.Condition
@@ -530,7 +521,7 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 	return firstfloor.Spec{Endpoint: endpoint, ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile, Weight: int32(weight), Routing: routing, Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[ServingPolicyAnnotation]}, nil
 }
 
-func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation) error {
+func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass) error {
 	if pod.UID == "" || node == nil || node.UID == "" || node.DeletionTimestamp != nil {
 		return errors.New("current Node UID unavailable")
 	}
@@ -563,7 +554,7 @@ func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *servin
 	if class == nil || len(class.Spec.NodeSelector) == 0 || !labels.SelectorFromSet(class.Spec.NodeSelector).Matches(labels.Set(node.Labels)) || class.Spec.Architecture != node.Status.NodeInfo.Architecture || node.Labels[corev1.LabelArchStable] != class.Spec.Architecture {
 		return errors.New("current device class/architecture mismatch")
 	}
-	return confirmedPower(node, class, condition.PowerMode, actuations)
+	return confirmedPower(node, class, condition.PowerMode)
 }
 
 // deliveredModelFiles is the sorted set of model files the runner loads: every
@@ -660,45 +651,14 @@ func sharedProjection(pod *corev1.Pod, init, runtime corev1.Container, initPath,
 	return false
 }
 
-// Fixed is an immutable non-actuated class fact. Mutable state comes from the
-// latest NodeActuator handoff's independent read-back. When there is no handoff
-// or the latest one failed (a reboot can interrupt it), the actuation agent's
-// periodic read-back of the host, published on the Node, decides.
-func confirmedPower(node *corev1.Node, class *edgev1alpha1.DeviceClass, name string, records []edgev1alpha1.NodeActuation) error {
-	mode, err := deviceclass.FindPowerMode(class.Spec.PowerModes, name)
-	if err != nil {
+// confirmedPower requires the Node to be in the measured mode now, as
+// readBackMode reads it.
+func confirmedPower(node *corev1.Node, class *edgev1alpha1.DeviceClass, name string) error {
+	if _, err := deviceclass.FindPowerMode(class.Spec.PowerModes, name); err != nil {
 		return err
 	}
-	var latest *edgev1alpha1.NodeActuation
-	for i := range records {
-		r := &records[i]
-		if r.Spec.Node.Name == node.Name && r.Spec.Node.UID == string(node.UID) {
-			if latest != nil && r.Spec.StageRequestedAt.Equal(&latest.Spec.StageRequestedAt) && (r.UID != latest.UID || r.Name != latest.Name) {
-				return errors.New("current power handoff ordering unconfirmed")
-			}
-			if latest == nil || r.Spec.StageRequestedAt.After(latest.Spec.StageRequestedAt.Time) {
-				latest = r
-			}
-		}
-	}
-	if mode.Actuator.Kind == edgev1alpha1.PowerModeActuatorFixed {
-		if latest == nil {
-			return nil
-		}
-		return errors.New("Fixed class has conflicting mutable actuation evidence")
-	}
-	if (latest == nil || latest.Status.Phase == edgev1alpha1.NodeActuationPhaseFailed) && readBackActuator(node) != nil {
-		if !reflect.DeepEqual(*readBackActuator(node), mode.Actuator) {
-			return errors.New("Node read-back power actuator differs from measured condition")
-		}
-		return nil
-	}
-	if latest == nil || latest.Spec.DeviceClass != class.Name || latest.Status.ObservedGeneration != latest.Generation || latest.Status.Phase != edgev1alpha1.NodeActuationPhaseReady || latest.Status.VerifiedAt == nil || latest.Status.ReadyAt == nil || latest.Status.TargetObservation == nil {
-		return errors.New("current power state unconfirmed by NodeActuator")
-	}
-	observation := latest.Status.TargetObservation
-	if observation.ObservedAt.IsZero() || observation.PowerMode != name || !reflect.DeepEqual(observation.Actuator, mode.Actuator) || !reflect.DeepEqual(observation.Actuator, latest.Spec.Actuator) {
-		return errors.New("NodeActuator actual power read-back differs from measured condition")
+	if readBackMode(node, class) != name {
+		return errors.New("Node read-back power mode differs from measured condition")
 	}
 	return nil
 }

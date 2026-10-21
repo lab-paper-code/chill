@@ -20,12 +20,13 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/operator/nodeagent"
 )
 
 var _ = Describe("Node agent operand reconciliation", func() {
-	It("selects actuation Nodes from DeviceClasses and keeps the actuation DaemonSet until handoffs are terminal", func() {
+	It("selects actuation Nodes from DeviceClasses and keeps the actuation DaemonSet while a mode is pending", func() {
 		ctx := context.Background()
 		suffix := time.Now().UnixNano()
 		systemName := fmt.Sprintf("node-agent-it-%d", suffix)
@@ -80,9 +81,12 @@ var _ = Describe("Node agent operand reconciliation", func() {
 				Key: "edge.dacs.io/device-class", Operator: corev1.NodeSelectorOpIn, Values: []string{deviceClass.Name},
 			}}}}))
 
-		handoff := validNodeActuation(uniqueNodeActuationName("agent-stop"))
-		handoff.Namespace = namespaceName
-		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
+		pending := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+			Name:   fmt.Sprintf("agent-stop-%d", suffix),
+			Labels: map[string]string{chillmeta.PowerModeState: chillmeta.PowerModePending},
+		}}
+		Expect(k8sClient.Create(ctx, pending)).To(Succeed())
+		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, pending)).To(Succeed()) })
 
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: systemName}, system)).To(Succeed())
 		system.Spec.NodeAgent.Actuation = false
@@ -92,15 +96,8 @@ var _ = Describe("Node agent operand reconciliation", func() {
 		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 		Expect(k8sClient.Get(ctx, actuationKey, &appsv1.DaemonSet{})).To(Succeed())
 
-		now := metav1.Now()
-		handoff.Status = edgev1alpha1.NodeActuationStatus{
-			ObservedGeneration: handoff.Generation, Phase: edgev1alpha1.NodeActuationPhaseFailed,
-			TerminalFailure: &edgev1alpha1.NodeActuationFailure{
-				Stage: edgev1alpha1.NodeActuationFailureStagePolicy, Reason: "PolicyRejected",
-				Message: "rejected before mutation", OccurredAt: now,
-			},
-		}
-		Expect(k8sClient.Status().Update(ctx, handoff)).To(Succeed())
+		pending.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeFailed
+		Expect(k8sClient.Update(ctx, pending)).To(Succeed())
 		_, err = reconciler.Reconcile(ctx, request)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, actuationKey, &appsv1.DaemonSet{}))).To(BeTrue())

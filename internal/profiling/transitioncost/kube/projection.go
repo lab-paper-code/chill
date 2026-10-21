@@ -1,14 +1,16 @@
 package kube
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
+	"reflect"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 )
 
@@ -50,91 +52,73 @@ func podReady(conditions []corev1.PodCondition) bool {
 	return false
 }
 
-func projectActuation(
-	raw *transitioncost.RawObservation,
-	status edgev1alpha1.NodeActuationStatus,
-	deviceType string,
-	model string,
-	receivedAt time.Time,
-) error {
-	if raw.SourceReadBack.Fact.MappedAt.IsZero() && status.PreviousObservation != nil {
-		readBack, err := projectReadBack(*status.PreviousObservation, deviceType, model, receivedAt)
-		if err != nil {
-			return fmt.Errorf("project previous NodeActuation observation: %w", err)
+// projectNode retains the facts the Node's actuation agent published about
+// the transition to the target mode. It reports whether the agent failed it.
+func projectNode(raw *transitioncost.RawObservation, node *corev1.Node, request Request, receivedAt time.Time) (bool, error) {
+	generation, agent, err := metadata.NodePowerModeGeneration(node)
+	if err != nil {
+		return false, err
+	}
+	if agent {
+		if raw.Generation == nil {
+			raw.Generation = &transitioncost.PowerModeGeneration{Start: generation}
 		}
-		raw.SourceReadBack = readBack
+		raw.Generation.End = generation
+	}
+	if raw.SourceReadBack.Fact.MappedAt.IsZero() {
+		state, err := readBackState(node, request)
+		if err != nil {
+			return false, err
+		}
+		// The read-back annotation carries no host time: its receipt is its time.
+		raw.SourceReadBack = transitioncost.StateReadBack{
+			Fact:  transitioncost.MappedFact{OccurredAt: receivedAt, MappedAt: receivedAt},
+			State: state,
+		}
+	}
+	transition, _, err := metadata.NodePowerModeTransition(node)
+	if err != nil {
+		return false, err
+	}
+	if node.Labels[metadata.PowerMode] != request.TargetPowerMode || transition.PowerMode != request.TargetPowerMode {
+		// The agent has not taken up the target mode yet.
+		transition = metadata.PowerModeTransitionRecord{}
 	}
 	if raw.TransitionStart == nil {
-		if status.ApplyStartedAt == nil {
+		if transition.ApplyStartedAt == nil {
 			markAbsent(&raw.MarkerBrackets.ApplyStartedAt, receivedAt)
 		} else {
-			if status.ApplyStartedAt.IsZero() {
-				return errors.New("NodeActuation apply-start timestamp is zero")
-			}
 			if err := markPresent(&raw.MarkerBrackets.ApplyStartedAt, receivedAt); err != nil {
-				return fmt.Errorf("bracket NodeActuation apply-start: %w", err)
+				return false, fmt.Errorf("bracket Node power-mode apply-start: %w", err)
 			}
-			raw.TransitionStart = &transitioncost.OccurredFact{
-				OccurredAt: status.ApplyStartedAt.Time,
-			}
+			raw.TransitionStart = &transitioncost.OccurredFact{OccurredAt: *transition.ApplyStartedAt}
 		}
 	}
 	if raw.TargetReadBack == nil {
-		if status.TargetObservation == nil {
+		if transition.VerifiedAt == nil {
 			markAbsent(&raw.MarkerBrackets.TargetObservation, receivedAt)
 		} else {
-			readBack, err := projectReadBack(*status.TargetObservation, deviceType, model, receivedAt)
+			state, err := readBackState(node, request)
 			if err != nil {
-				return fmt.Errorf("project target NodeActuation observation: %w", err)
+				return false, err
 			}
 			if err := markPresent(&raw.MarkerBrackets.TargetObservation, receivedAt); err != nil {
-				return fmt.Errorf("bracket NodeActuation target observation: %w", err)
+				return false, fmt.Errorf("bracket Node power-mode target read-back: %w", err)
 			}
 			raw.TargetReadBack = &transitioncost.TargetStateReadBack{
-				Fact: transitioncost.OccurredFact{
-					OccurredAt: readBack.Fact.OccurredAt,
-				},
-				State: readBack.State,
+				Fact: transitioncost.OccurredFact{OccurredAt: *transition.VerifiedAt}, State: state,
 			}
 		}
 	}
-	if status.TerminalFailure == nil {
-		if status.Phase == edgev1alpha1.NodeActuationPhaseFailed {
-			return errors.New("failed NodeActuation has no terminal failure")
-		}
-		return nil
+	// A failure after the target read-back leaves readiness to decide.
+	if node.Labels[metadata.PowerModeState] != metadata.PowerModeFailed || transition.Failure == "" ||
+		raw.TargetReadBack != nil {
+		return false, nil
 	}
-	if status.Phase != edgev1alpha1.NodeActuationPhaseFailed {
-		return errors.New("NodeActuation terminal failure is not in Failed phase")
+	if raw.ActuationFailure == nil {
+		raw.ActuationFailure = &transitioncost.Failure{ObservedAt: receivedAt, Message: transition.Failure}
 	}
-	if status.TerminalFailure.Message == "" ||
-		strings.TrimSpace(status.TerminalFailure.Message) != status.TerminalFailure.Message {
-		return errors.New("NodeActuation terminal failure message is malformed")
-	}
-	failure := &transitioncost.Failure{ObservedAt: receivedAt, Message: status.TerminalFailure.Message}
-	switch status.TerminalFailure.Stage {
-	case edgev1alpha1.NodeActuationFailureStageApply:
-		if raw.TargetReadBack != nil {
-			return errors.New("apply failure contradicts a retained target read-back")
-		}
-		if raw.ActuationFailure == nil {
-			raw.ActuationFailure = failure
-		}
-	case edgev1alpha1.NodeActuationFailureStageVerify:
-		if raw.TargetReadBack != nil {
-			return errors.New("verify failure contradicts a retained target read-back")
-		}
-		if raw.TargetReadBackFailure == nil {
-			raw.TargetReadBackFailure = failure
-		}
-	case edgev1alpha1.NodeActuationFailureStageSettle:
-		if raw.TargetReadBack == nil {
-			return errors.New("settling failure has no retained target read-back")
-		}
-	default:
-		return fmt.Errorf("unsupported NodeActuation terminal failure stage %q", status.TerminalFailure.Stage)
-	}
-	return nil
+	return true, nil
 }
 
 func markAbsent(bracket *transitioncost.ReceiptTimeBracket, receivedAt time.Time) {
@@ -157,25 +141,22 @@ func markPresent(bracket *transitioncost.ReceiptTimeBracket, receivedAt time.Tim
 	return nil
 }
 
-func projectReadBack(
-	observation edgev1alpha1.NodeActuationObservation,
-	deviceType string,
-	model string,
-	receivedAt time.Time,
-) (transitioncost.StateReadBack, error) {
-	if observation.ObservedAt.IsZero() || observation.PowerMode == "" ||
-		strings.TrimSpace(observation.PowerMode) != observation.PowerMode {
-		return transitioncost.StateReadBack{}, errors.New("read-back timestamp or power mode is malformed")
+// readBackState names the mode of the actuator the agent last read back.
+func readBackState(node *corev1.Node, request Request) (transitioncost.StateIdentity, error) {
+	var actuator edgev1alpha1.PowerModeActuator
+	if err := json.Unmarshal([]byte(node.Annotations[metadata.PowerActuator]), &actuator); err != nil {
+		return transitioncost.StateIdentity{}, fmt.Errorf("read Node %s power read-back: %w", node.Name, err)
 	}
-	return transitioncost.StateReadBack{
-		Fact: transitioncost.MappedFact{
-			OccurredAt: observation.ObservedAt.Time,
-			MappedAt:   receivedAt,
-		},
-		State: transitioncost.StateIdentity{
-			DeviceType: deviceType,
-			Model:      model,
-			PowerMode:  observation.PowerMode,
-		},
-	}, nil
+	state := transitioncost.StateIdentity{DeviceType: request.DeviceType, Model: request.Model}
+	switch {
+	case reflect.DeepEqual(actuator, request.SourceActuator):
+		state.PowerMode = request.SourcePowerMode
+	case reflect.DeepEqual(actuator, request.TargetActuator):
+		state.PowerMode = request.TargetPowerMode
+	default:
+		return transitioncost.StateIdentity{}, fmt.Errorf(
+			"Node %s power read-back %s is neither the source nor the target mode",
+			node.Name, node.Annotations[metadata.PowerActuator])
+	}
+	return state, nil
 }

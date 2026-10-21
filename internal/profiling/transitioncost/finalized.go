@@ -82,7 +82,9 @@ func validateFinalizedObservationRecord(record FinalizedObservationRecord) error
 			return errors.New("accepted finalized observation has an invalid reason, detail, or value")
 		}
 	case VerdictInvalid:
-		if record.Reason != ReasonObservationMalformed && record.Reason != ReasonSourceStateMismatch {
+		switch record.Reason {
+		case ReasonObservationMalformed, ReasonSourceStateMismatch, ReasonPowerChangedDuringMeasurement:
+		default:
 			return errors.New("invalid finalized observation has an unsupported reason")
 		}
 	case VerdictFailed:
