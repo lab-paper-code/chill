@@ -455,3 +455,37 @@ func TestOverdueActionAbandonsGoal(t *testing.T) {
 		}
 	}
 }
+
+// A goal dropped at a deadline stays dropped: its still running route (a
+// sibling of the overdue prepare) neither re-adopts the goal nor holds the
+// next decisions at TransitionInProgress, before or after the overdue run
+// ends.
+func TestDroppedGoalIsNotReadoptedBySibling(t *testing.T) {
+	now := time.Now().UTC()
+	prepare := serving.Action{ID: "prepare-rasp5-q1", Kind: operationPrepare, Node: serving.NodeReference{Name: "rasp5", UID: "rasp5-uid"},
+		Instance: "slot", Status: nativeOperationRunning, Cancelable: true}
+	route := serving.Action{ID: "route", Kind: operationRoute, Status: nativeOperationRunning}
+	goal := serving.SchedulerCandidate{ID: "plan-dc6ebf670833", Actions: []serving.Action{prepare, route}}
+	runs := map[string]*actionRun{
+		prepare.ID: {action: prepare, started: now.Add(-3 * time.Minute), cancel: func() {},
+			result: &OperationResult{Operation: Operation{ID: prepare.ID, Kind: prepare.Kind, Target: &goal}, Status: "starting"}},
+		route.ID: {action: route, started: now,
+			result: &OperationResult{Operation: Operation{ID: route.ID, Kind: route.Kind, Target: &goal}, Status: "starting"}},
+	}
+	controller := &SchedulerController{runs: runs, goal: &goal}
+	controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, &goal, now, time.Minute)
+	if controller.goal != nil {
+		t.Fatal("overdue goal kept")
+	}
+	for _, ended := range []bool{false, true} {
+		if ended {
+			// The canceled prepare finishes as failed.
+			runs[prepare.ID].action.Status = nativeOperationFailed
+			runs[prepare.ID].result = &OperationResult{Operation: runs[prepare.ID].result.Operation, Status: nativeOperationFailed, EndedAt: now}
+		}
+		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, nil, now, time.Minute)
+		if controller.goal != nil || snapshot.InProgressTarget != nil {
+			t.Fatalf("prepare ended %v: dropped goal re-adopted: goal %v in progress %v", ended, controller.goal, snapshot.InProgressTarget)
+		}
+	}
+}
