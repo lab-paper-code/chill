@@ -12,6 +12,7 @@ require (
 	github.com/prometheus/client_model v0.6.1
 	github.com/prometheus/common v0.55.0
 	github.com/spf13/pflag v1.0.5
+	golang.org/x/sync v0.7.0
 	gonum.org/v1/gonum v0.15.1
 	k8s.io/api v0.31.0
 	k8s.io/apimachinery v0.31.0

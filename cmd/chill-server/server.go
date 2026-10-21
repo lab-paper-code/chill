@@ -119,7 +119,13 @@ func run(ctx context.Context, opts options) (retErr error) {
 		handlerConfig.OperatingPower = scheduler.operatingPower
 		handlerConfig.Profiles = scheduler.profilesView
 	}
-	authorizer := &servingkube.Authorizer{Client: kube}
+	// HTTP-boundary calls (reviews, settings ConfigMap) take their own client
+	// budget so ingress and control calls never queue behind each other.
+	reviews, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+	authorizer := &servingkube.Authorizer{Client: reviews}
 	measurements, err := newMeasurementService(store.Client(), kube, scheduler, objects, opts)
 	if err != nil {
 		return err

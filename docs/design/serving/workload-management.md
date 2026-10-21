@@ -583,17 +583,24 @@ SAN과 맞는 HTTPS 주소를 사용한다. 스케줄러 후보와 비용은 `pr
 | `kubeAPI.qps:50`, `kubeAPI.burst:100` | 항상 명시하는 `--kube-api-qps`, `--kube-api-burst`; ChillServer 시작 경계에서 양수·유한 float32 범위를 검증 |
 | `terminationGracePeriodSeconds:150` | `drainTimeout`과 HTTP 종료 여유보다 커야 함 |
 
-ChillServer의 Kubernetes API client budget은 `rest.Config`에 두 client 생성 전에 적용한다.
-양수 QPS를 받은 typed clientset은 TokenReview·SAR와 다른 typed API group 사이에
-하나의 limiter를 공유하지만, 별도로 생성한 uncached Store client는 독립된 limiter를
-사용하므로 50 QPS가 ChillServer 전체 API 요청의 합산 상한은 아니다. 기본 50/100은
-후보 운영 budget이며 측정된 최적값이나 API server/APF 처리 용량 보장이 아니다.
+ChillServer의 Kubernetes API client budget은 `rest.Config`에 client 생성 전에 적용한다.
+각 client는 같은 QPS와 burst의 limiter를 따로 가진다. 제어 typed clientset은 observer,
+scheduler와 측정 경로의 typed API group 호출이 하나의 limiter를 공유한다. HTTP 경계 client는
+TokenReview와 SAR, 설정 API의 scheduler ConfigMap 읽기와 쓰기를 보내는 별도 typed clientset이고,
+uncached Store client도 독립된 limiter를 사용한다. 그래서 50 QPS는 ChillServer 전체 API 요청의 합산 상한이 아니다.
+기본 50/100은 후보 운영 budget이며 측정된 최적값이나 API server/APF 처리 용량 보장이 아니다.
 허용된 TokenReview·SAR 결과는 token hash, HTTP 동작과 경로별로 10초 동안 재사용한다.
 kube-apiserver webhook 인증·인가 cache와 같은 방식이며 권한 회수는 10초 안에 반영된다.
+만료된 항목을 동시에 찾는 요청들은 review 하나를 함께 기다리고 각자 자기 기한에 기다림을
+멈춘다. 만료 한 번은 대기 요청 수와 관계없이 API 호출 두 번이다.
 거절과 review 실패는 재사용하지 않고 매번 다시 검사한다.
 M4 24.7 requests/s 실행에서 요청마다 두 review가 50 QPS limiter를 채웠다. 추론 접수는
 약 25 requests/s에 묶였고(`validatedNanos` p95 2,591 ms), 같은 limiter를 쓰는 scheduler
 capture의 각 API 읽기도 약 1.3초씩 기다려 tick이 15–19초가 되었다.
+d9 병렬 단계(약 220 requests/s, 대기 요청 약 1,600개)에서는 항목이 만료될 때 기다리던
+요청이 각자 review를 보냈다. 쌓인 review가 제어 호출과 같은 limiter를 수십 초 채웠고,
+추론 접수와 함께 observer refresh, Workload 진행과 scheduler 호출이 30초 기한을 넘겼다.
+모든 노드의 batch가 약 140초 멈췄다.
 향후 각 실험에는 두 flag를 포함한 실제 실행 인자를 고정·보존한다.
 
 실제 8 requests/s 실행에서 기본 5/10 limiter의 TokenReview 대기가 약 5초에 달해

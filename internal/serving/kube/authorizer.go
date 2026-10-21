@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,8 +19,9 @@ import (
 
 // An allowed review is reused this long, as kube-apiserver's webhook token and
 // authorization caches do; revocation takes effect within it. Each inference
-// otherwise spends two reviews of the Kubernetes client budget it shares with
-// scheduler capture.
+// otherwise spends two reviews of the Kubernetes client budget. Concurrent
+// callers of one expired entry share a single review, so an expiry costs two
+// calls however many requests are outstanding.
 const (
 	allowedReviewTTL     = 10 * time.Second
 	allowedReviewEntries = 1024
@@ -38,6 +40,7 @@ type Authorizer struct {
 
 	allowedOnce sync.Once
 	allowed     *cache.LRUExpireCache
+	inFlight    singleflight.Group
 }
 
 type allowedReview struct {
@@ -80,11 +83,22 @@ func (a *Authorizer) Authorize(ctx context.Context, token, verb, path string) (P
 	if principal, ok := a.allowed.Get(key); ok {
 		return principal.(Principal), nil
 	}
-	principal, err := a.review(ctx, token, verb, path)
-	if err == nil {
-		a.allowed.Add(key, principal, allowedReviewTTL)
+	// The first caller's context bounds the shared review; each caller stops
+	// waiting at its own deadline. ponytail: a canceled first caller fails its
+	// followers once (fail-closed); detach the review context if that shows up.
+	shared := a.inFlight.DoChan(string(key.token[:])+"\x00"+verb+"\x00"+path, func() (any, error) {
+		principal, err := a.review(ctx, token, verb, path)
+		if err == nil {
+			a.allowed.Add(key, principal, allowedReviewTTL)
+		}
+		return principal, err
+	})
+	select {
+	case result := <-shared:
+		return result.Val.(Principal), result.Err
+	case <-ctx.Done():
+		return Principal{}, fmt.Errorf("%w: review wait ended", ErrAuthorizationUnavailable)
 	}
-	return principal, err
 }
 
 func (a *Authorizer) review(ctx context.Context, token, verb, path string) (Principal, error) {

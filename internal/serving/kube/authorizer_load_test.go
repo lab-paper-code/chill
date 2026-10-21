@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -70,6 +71,65 @@ func TestAuthorizerLeavesKubernetesClientBudgetUnderInferenceLoad(t *testing.T) 
 	t.Logf("admitted %.1f req/s, %d reviews, capture Node list %v", rate, reviews.Load(), listWait)
 	if rate < 200 || listWait > 250*time.Millisecond {
 		t.Fatalf("inference authorization spends the shared client budget: %.1f req/s, Node list waited %v", rate, listWait)
+	}
+}
+
+// d9 parallel step: about 1,600 inference requests of five load Jobs were
+// outstanding when their allowed reviews expired. Every caller that missed the
+// cache reviewed on its own, so the shared client queued thousands of reviews
+// and capture waited behind them.
+func TestAuthorizerReviewsOncePerExpiredEntryUnderInferenceLoad(t *testing.T) {
+	var reviews atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body := `{"apiVersion":"v1","kind":"NodeList","items":[]}`
+		switch r.URL.Path {
+		case "/apis/authentication.k8s.io/v1/tokenreviews":
+			reviews.Add(1)
+			time.Sleep(5 * time.Millisecond)
+			body = `{"apiVersion":"authentication.k8s.io/v1","kind":"TokenReview","status":{"authenticated":true,"user":{"username":"client","uid":"client-uid"}}}`
+		case "/apis/authorization.k8s.io/v1/subjectaccessreviews":
+			reviews.Add(1)
+			body = `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","status":{"allowed":true}}`
+		}
+		_, _ = io.WriteString(w, body)
+	}))
+	defer server.Close()
+	kube, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL, QPS: 50, Burst: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An empty cache is the state of every entry right after its TTL.
+	authorizer := &Authorizer{Client: kube}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	const jobs, outstanding = 5, 1600
+	var admitted atomic.Int64
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range outstanding {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			job := strconv.Itoa(i % jobs)
+			if _, err := authorizer.Authorize(ctx, "token-"+job, "POST", "/api/v1/workloads/w"+job+"/infer"); err == nil {
+				admitted.Add(1)
+			}
+		}()
+	}
+	close(start)
+	time.Sleep(50 * time.Millisecond)
+	listCtx, cancelList := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelList()
+	started := time.Now()
+	_, listErr := kube.CoreV1().Nodes().List(listCtx, metav1.ListOptions{})
+	listWait := time.Since(started)
+	wg.Wait()
+	t.Logf("admitted %d of %d, %d reviews, capture Node list %v", admitted.Load(), outstanding, reviews.Load(), listWait)
+	if admitted.Load() != outstanding || reviews.Load() > 2*jobs || listErr != nil || listWait > 250*time.Millisecond {
+		t.Fatalf("expired reviews spend the shared client budget: admitted %d, %d reviews, Node list %v %v",
+			admitted.Load(), reviews.Load(), listWait, listErr)
 	}
 }
 
