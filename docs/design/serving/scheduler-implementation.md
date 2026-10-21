@@ -108,11 +108,12 @@ executor는 기존 exact Pod GET과 UID/container 종료 확인을 유지한다.
 Tick은 요청을 재생하지 않는다. 용량표 worker가 Tick 밖에서 켜진 Workload의 SLO와 측정 option 변형(option과
 배치 상한)마다 SLO를 지키는 최대 요청률 κ를 계산하고, Tick은 이 표의 κ 합으로 판정한다. 행의 키, 포아송 창 판정,
 격자와 이분 탐색, `NonMonotone`, 계산 시점과 이전 행 사용은 [용량표 계획기 2장](analytic-planner.md#2-용량표)이
-원본이고 설정은 `capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests`다.
+원본이고 설정은 `capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests`,
+`dispatchOccupancy`다. 노드와 runtime image의 디스패치 점유 측정이 없는 option 행은 `MissingDispatchOccupancy`로 κ가 없다.
 켜진 Workload에 κ가 있는 행이 하나도 없으면 판단은 `CapacityPending`이고 사유는 `CapacityPending:<Workload UID>`다.
 
 창 하나는 option 인스턴스 하나만 있는 keep snapshot에 seed로 정한 포아송 도착을 넣고 3.3절의 선택 함수로 재생한다.
-실행 시간은 empirical service sample에서 뽑는다. 각 요청의 queue, 실행, 전달과 반환이 반영된 종료 시각에서
+실행 시간은 empirical service sample에 배치 크기 × 디스패치 점유를 더한 값이다. 각 요청의 queue, 실행, 전달과 반환이 반영된 종료 시각에서
 **전체 end-to-end 분포**를 만들고 gonum/stat로 Workload percentile을 계산한다. percentile 지연(완료 여유 포함)이
 SLO 목표 이하이고 timeout과 만료가 0이면 그 창은 충족이다.
 

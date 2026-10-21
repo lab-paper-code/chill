@@ -71,16 +71,17 @@ E1 2 req/s 창의 rasp5 q1 요청 121건을 요청 행의 시각으로 나눴다
 
 | 구간 | p50 (ms) | p95 (ms) |
 |---|---|---|
-| received → validated (ChillServer 검증과 전처리) | 14.7 | 103.2 |
+| received → validated (ChillServer 인증, 본문 decode, 입력 계약 검사. 전처리는 runner의 `serviceMS` 안) | 14.7 | 103.2 |
 | assigned → backend_queued (전달) | 7.2 | 13.7 |
 | backend_running → 첫 backend_finished (native 실행) | 30.9 | **32.8** |
 | backend_running → backend_exchange_finished | 32.0 | **86.8** |
 | 종단 (response_finished) | 55.1 | 209.7 |
 
 - profile b1 실행시간은 p50 27.9 ms, p95 30.9 ms(표본 903개)다. 실측 native 실행 p95 32.8 ms는 profile보다 6% 길다. 86.8 ms는 실행 뒤 응답 교환까지 포함한 구간이다.
-- 같은 부하의 재생 예측 p95는 m 50(E1 설정)에서 85.2 ms, m 139에서 174.2 ms다. 실측 209.7 ms보다 각각 124 ms, 36 ms 낮다. 지연 예측의 낙관은 실행 밖 구간(검증과 전처리 p95 103 ms, 응답 교환)이 m보다 길어서 생긴다.
+- 같은 부하의 재생 예측 p95는 m 50(E1 설정)에서 85.2 ms, m 139에서 174.2 ms다. 실측 209.7 ms보다 각각 124 ms, 36 ms 낮다. 지연 예측의 낙관은 실행 밖 구간(인증과 입력 검사 p95 103 ms, 응답 교환)이 m보다 길어서 생긴다. 구간별 정리는 [용량표 계획기 5장](analytic-planner.md#5-완료-여유-규칙)이다.
 - κ는 m에 둔감하다. tight κ는 m 139에서 34.3, m 179(실측 종단 p95 − profile p95)에서 34.2다. 무릎에서는 큐 대기가 지연을 정하기 때문이다.
 - κ는 인스턴스 점유 시간에 비례해 줄어든다. 실행 6% 차이는 κ를 약 6% 낮춘다 `[INFERENCE]`. 응답 교환 구간까지 인스턴스를 점유한다면(실행시간 × 2.818) tight κ는 10.8, relaxed κ는 11.7로 profile 값의 1/3이 되고, 그 κ도 검증에서 같은 모양(0.9κ 20/20, 1.0κ 17/20, 1.2κ 0/20)이다. 교환 구간 동안 firstfloor가 다음 배치를 시작하는지는 이 자료로 가릴 수 없다 `[INFERENCE: 2 req/s에서 backend_queued → backend_running p95가 0.1 ms라 대기가 없었다]`.
+- m4 r3 Q2에서 포화한 rasp5 q1 인스턴스의 지속 처리율은 26.9 req/s였다(34.3과 10.8 사이). 이 차이는 [용량표 계획기 2장](analytic-planner.md#2-용량표)의 디스패치 점유로 κ에 들어간다.
 
 ## 5. 기록 판단과 비교
 

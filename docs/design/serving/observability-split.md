@@ -97,7 +97,7 @@
 | 파일 | 하는 일 |
 |---|---|
 | `fetch.sh <from시> <to시> <dir>` | evidence store의 S3 endpoint에서 시간 prefix를 `<dir>/obs/<시>/`로 받는다. 전력 경계 표본과 기준 snapshot을 위해 앞뒤 한 시간을 더 받는다. 단계별 load-generator 출력은 실험 스크립트가 `<dir>/loadgen/<단계>.jsonl`로 둔다 |
-| `e1.sql` | `duckdb < hack/observations/e1.sql`. 요청 표와 Tick 표(`decision.evaluationElapsedNanos`) |
+| `e1.sql` | `duckdb < hack/observations/e1.sql`. 요청 표(완료 여유 m 열은 [용량표 계획기 5장](analytic-planner.md#5-완료-여유-규칙)), 포화 표(인스턴스별 요청당 시간, 디스패치 점유 측정), Tick 표(`decision.evaluationElapsedNanos`) |
 | `power/main.go` | `go run ./hack/observations/power --dir <dir>/obs --scheduler-config <file> --from --to`. 전체와 활성 POOL 에너지. meter 집합은 실행 때 수락된 scheduler 설정의 `meters`이고, `[from − 1분, to + 1분]`이 걸친 시간의 segment가 없으면 거절한다 |
 
 E1 단계 표(요청 p95, 1 s 이내 완료, 잔여 지연)의 질의다.
