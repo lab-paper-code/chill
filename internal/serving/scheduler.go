@@ -229,7 +229,10 @@ type SchedulerSnapshot struct {
 	// At is the current request read and decision origin, after capture I/O.
 	At time.Time `json:"at"`
 	// ObservationEnd is the fixed historical arrival cutoff.
-	ObservationEnd   time.Time                   `json:"observationEnd"`
+	ObservationEnd time.Time `json:"observationEnd"`
+	// ObservedSince is when arrival observation became complete (the process
+	// start); the observation window starts no earlier.
+	ObservedSince    time.Time                   `json:"observedSince,omitempty"`
 	Workloads        []*Definition               `json:"workloads"`
 	WorkloadIDs      []string                    `json:"workloadIDs,omitempty"` // Stored records reference the catalog.
 	Nodes            []SchedulerNode             `json:"nodes"`

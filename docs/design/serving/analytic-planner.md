@@ -52,7 +52,7 @@
 
 | 값 | 정의 |
 |---|---|
-| `λ_w` | (관측 창의 계산 도착 수 + 대기 수) / 창 길이. 도착은 재생이 쓰던 `Compute` 또는 `Accepted` 도착 |
+| `λ_w` | (관측한 창의 계산 도착 수 + 대기 수) / 관측한 창 길이. 도착은 재생이 쓰던 `Compute` 또는 `Accepted` 도착. 관측한 창은 관측 창 중 ChillServer가 시작한 뒤의 부분(`snapshot.observedSince`부터, 판단의 `search.windowStart`)이다. 내려가 있던 동안의 도착은 기록되지 않았으므로 창 전체로 나누면 λ가 작게 나온다(m4 r6: 40 req/s에서 재시작 뒤 λ 4.8로 genesis2, lattepanda, rasp5 q1-lut를 지웠다). 관측한 부분이 제어 주기(관측 창이 더 짧으면 관측 창)보다 짧으면 판단은 `Pending`(`PartialObservationWindow`)이다 |
 | `κ_new,w` | c의 w 인스턴스 κ 합 |
 | `κ_ret,w` | route 전까지 남는 지금 인스턴스의 κ 합. 모드를 바꾸는 노드와 자원이 겹쳐 prepare 전에 지우는 인스턴스는 빠진다 |
 | `r` | route 전 사슬의 최대 시간(동작마다 측정 trial 최대 시간) |

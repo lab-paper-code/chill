@@ -156,6 +156,37 @@ func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 	}
 }
 
+// m4 r6: 20 s after a ChillServer restart under 40 req/s the 60 s window held
+// only 20 s of arrivals, λ read 13.3 and the planner removed instances under
+// load. λ is measured over the part of the window observed since the process
+// started; under one control interval of it the decision waits.
+func TestCapacityRateCoversOnlyTheObservedWindow(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.MaxObservationAge = time.Minute, 10*time.Second, time.Hour
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "w1")
+	profile := *i2.Profile
+	profile.IdleBaselineWatts = 20 // removing i2 saves 10 W
+	i2.Profile = &profile
+	snap.Instances = append(snap.Instances, i2)
+	snap.Options = append(snap.Options, poolsOption(i2))
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": 500, "i2": 500}}
+	snap.Costs = []OperationCost{poolsCost(schedulerActionRemove, n2, schedulerState(i2), "unloaded", "fixed")}
+	capacityLoad(s, &snap, snap.Workloads[0], 40)
+	snap.ObservedSince = snap.ObservationEnd.Add(-20 * time.Second)
+	snap.Arrivals = slices.DeleteFunc(snap.Arrivals, func(a SchedulerArrival) bool { return a.At.Before(snap.ObservedSince) })
+	rows := capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 25 })
+	d := capacityDecideForTest(t, s, snap, rows)
+	if d.Target == nil || !poolsOn(*d.Target, n2) || !d.Search.WindowStart.Equal(snap.ObservedSince) ||
+		d.Capacity == nil || math.Abs(d.Capacity.Workloads[0].Rate-40) > 1e-9 {
+		t.Fatalf("partial window read as the whole window: %s %+v %+v", d.Status, d.Search, d.Capacity)
+	}
+	snap.ObservedSince = snap.ObservationEnd.Add(-5 * time.Second)
+	if d = capacityDecideForTest(t, s, snap, rows); d.Status != schedulerStatusPending || !slices.Contains(d.Reasons, schedulerPartialObservation) {
+		t.Fatalf("under one control interval observed: %s %v", d.Status, d.Reasons)
+	}
+}
+
 // m4 r5 04:28:18: the first decision of the 40 req/s phase saw λ 42.5 with 161
 // queued. With the r5 κ (rasp5 q1 25.29, q1-lut 25.69, genesis3 q2 70.94) it
 // expands whatever the comparison period: the SLO judgment orders plans before

@@ -490,7 +490,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	if err != nil {
 		return serving.SchedulerSnapshot{}, err
 	}
-	s := serving.SchedulerSnapshot{ObservationEnd: now, Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines}
+	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines}
 	// Historical reads must finish before refreshing authoritative live sources.
 	if err = c.observer.Refresh(ctx); err != nil {
 		return s, err

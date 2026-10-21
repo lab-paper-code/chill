@@ -677,6 +677,10 @@ func (l *ObservationLog) Close(ctx context.Context) error {
 	return errors.Join(result, l.archive(ctx))
 }
 
+// Started is when this process began observing arrivals; earlier ones may be
+// missing (the entry point was down).
+func (l *ObservationLog) Started() time.Time { return l.started }
+
 func (l *ObservationLog) Health() ObservationLogHealth {
 	l.mu.Lock()
 	defer l.mu.Unlock()

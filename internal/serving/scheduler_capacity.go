@@ -28,6 +28,9 @@ const (
 	schedulerPlanFixedWorkload        = "FixedWorkload"
 	schedulerPlanPreparationFailed    = "PreparationFailed"
 	schedulerPlanHeld                 = "HeldAfterOverload"
+	// schedulerPartialObservation waits for one control interval of complete
+	// arrival observation after the process starts.
+	schedulerPartialObservation = "PartialObservationWindow"
 	// schedulerReplacementUnpaid names a node whose replacement did not repay
 	// its transition at the least load of the observation window.
 	schedulerReplacementUnpaid = "ReplacementUnpaid"
@@ -150,6 +153,11 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		decision.Keep.Status, decision.Keep.ExpectedJoules = schedulerStatusFeasible, &zero
 		target := decision.Keep
 		decision.Target, decision.Status = &target, schedulerStatusKeep
+		return decision, ctx.Err()
+	}
+	// λ needs one control interval of complete observation (after a restart).
+	if covered := decision.Search.WindowEnd.Sub(decision.Search.WindowStart); covered < min(settings.ObservationWindow, settings.ControlInterval) {
+		decision.Status, decision.Reasons = schedulerStatusPending, []string{schedulerPartialObservation}
 		return decision, ctx.Err()
 	}
 	if pending := planner.pendingWorkloads(); len(pending) != 0 {
@@ -298,8 +306,9 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 				w.queued++
 			}
 		}
-		w.rate = (w.rate + float64(w.queued)) / settings.ObservationWindow.Seconds()
-		w.minRate = capacityMinimumRate(settings, snapshot, w.d.UID)
+		covered := decision.Search.WindowEnd.Sub(decision.Search.WindowStart)
+		w.rate = (w.rate + float64(w.queued)) / covered.Seconds()
+		w.minRate = capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID)
 		w.slack = w.d.SLO.TargetLatency.Seconds() - settings.CompletionMarginMS/1e3
 		for _, i := range snapshot.Instances {
 			if i.WorkloadUID == w.d.UID && !i.Stopped {
@@ -333,14 +342,15 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 }
 
 // capacityMinimumRate is the least arrival rate of the Workload over the
-// control intervals that tile the observation window.
-func capacityMinimumRate(settings SchedulerSettings, snapshot SchedulerSnapshot, uid string) float64 {
-	buckets := max(1, int(settings.ObservationWindow/settings.ControlInterval))
-	width := settings.ObservationWindow / time.Duration(buckets)
-	start := snapshot.ObservationEnd.Add(-time.Duration(buckets) * width)
+// control intervals that tile the observed part of the observation window.
+func capacityMinimumRate(settings SchedulerSettings, search SchedulerSearch, arrivals []SchedulerArrival, uid string) float64 {
+	covered := search.WindowEnd.Sub(search.WindowStart)
+	buckets := max(1, int(covered/settings.ControlInterval))
+	width := covered / time.Duration(buckets)
+	start := search.WindowEnd.Add(-time.Duration(buckets) * width)
 	counts := make([]int, buckets)
-	for _, a := range snapshot.Arrivals {
-		if (!a.Compute && !a.Accepted) || a.Definition == nil || a.Definition.UID != uid || a.At.Before(start) || !a.At.Before(snapshot.ObservationEnd) {
+	for _, a := range arrivals {
+		if (!a.Compute && !a.Accepted) || a.Definition == nil || a.Definition.UID != uid || a.At.Before(start) || !a.At.Before(search.WindowEnd) {
 			continue
 		}
 		counts[min(buckets-1, int(a.At.Sub(start)/width))]++

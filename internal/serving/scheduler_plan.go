@@ -99,6 +99,9 @@ func schedulerInstanceRouting(ctx context.Context, workloads []*Definition, inst
 
 func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerSearch {
 	search := SchedulerSearch{Bounds: settings, WindowStart: snapshot.ObservationEnd.Add(-settings.ObservationWindow), WindowEnd: snapshot.ObservationEnd, Population: "received events in [windowStart,windowEnd); validated compute arrivals (including capacity/evidence rejections) replayed; outstanding retained independently"}
+	if snapshot.ObservedSince.After(search.WindowStart) {
+		search.WindowStart = snapshot.ObservedSince
+	}
 	loads := map[string]*SchedulerLoad{}
 	for _, a := range snapshot.Arrivals {
 		if ctx.Err() != nil {
@@ -139,8 +142,8 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 			return search
 		}
 		load := *loads[key]
-		if settings.ObservationWindow > 0 {
-			load.InputsPerSecond = float64(load.ComputeInputs) / settings.ObservationWindow.Seconds()
+		if covered := search.WindowEnd.Sub(search.WindowStart); covered > 0 {
+			load.InputsPerSecond = float64(load.ComputeInputs) / covered.Seconds()
 		}
 		search.Loads = append(search.Loads, load)
 	}

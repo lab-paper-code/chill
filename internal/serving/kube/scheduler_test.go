@@ -126,8 +126,6 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 	controller := schedulerCaptureClockController(t, false)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cutoff := time.Now().Add(-10 * time.Second)
-	from := cutoff.Add(-controller.config.Settings.ObservationWindow)
 	history, err := serving.NewObservationLog(serving.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Writer: managerArchive{t.TempDir()},
 	})
@@ -139,6 +137,11 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 			t.Error(err)
 		}
 	})
+	// The window lies after the log started observing (ObservedSince) and the
+	// cutoff is older than the live sources' maximum age when the Tick runs.
+	from := history.Started().Add(time.Millisecond)
+	cutoff := from.Add(controller.config.Settings.ObservationWindow)
+	time.Sleep(time.Until(cutoff.Add(controller.config.Settings.MaxObservationAge + 100*time.Millisecond)))
 	for index, at := range []time.Time{from.Add(-time.Nanosecond), from, cutoff.Add(-time.Nanosecond), cutoff} {
 		if err = history.RequestEvent(serving.RequestEvent{RequestID: strconv.Itoa(index), WorkloadUID: "clock-history", Kind: "received", At: at, ReceivedAt: at}); err != nil {
 			t.Fatal(err)
