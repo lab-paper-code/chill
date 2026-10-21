@@ -15,7 +15,8 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 	s, snap := schedulerFixture()
 	s.CapacityWindow, s.CapacityWindows, s.CapacityPassingWindows, s.CapacityMinimumRequests = time.Second, 3, 2, 200
 	s.CompletionMarginMS = 0
-	s.DispatchOccupancy = []DispatchOccupancy{{Node: snap.Nodes[0].Node.Name, RuntimeImage: snap.Instances[0].Profile.Condition.RuntimeImage, Source: "fixture"}}
+	c := snap.Instances[0].Profile.Condition
+	s.DispatchOccupancy = []DispatchOccupancy{{Node: snap.Nodes[0].Node.Name, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel, Source: "fixture"}}
 	p := *snap.Instances[0].Profile
 	p.Batches = []BatchProfile{{Batch: 1, DurationNanos: []float64{8e5, 1e6, 1.2e6}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
 	snap.Instances[0].Profile = &p
@@ -59,8 +60,8 @@ func TestCapacityMarginAboveTargetIsZero(t *testing.T) {
 	}
 }
 
-// Without a measurement for the option's Node and runtime image the row has
-// no kappa, even when another Node has one.
+// Without a measurement for the option's Node, runtime image and model the
+// row has no kappa, even when another Node, image or model has one.
 func TestCapacityRowWithoutOccupancyHasNoKappa(t *testing.T) {
 	s, snap := capacityFixture()
 	s.DispatchOccupancy[0].Node = schedulerTestOther
@@ -72,6 +73,11 @@ func TestCapacityRowWithoutOccupancyHasNoKappa(t *testing.T) {
 	s.DispatchOccupancy[0].RuntimeImage = "registry/model@sha256:other"
 	if row := capacityBuildForTest(t, s, snap); row.Kappa != nil {
 		t.Fatalf("an occupancy measured on another runtime image gave kappa: %+v", row)
+	}
+	s.DispatchOccupancy[0].RuntimeImage = snap.Instances[0].Profile.Condition.RuntimeImage
+	s.DispatchOccupancy[0].Model = "other-model"
+	if row := capacityBuildForTest(t, s, snap); row.Kappa != nil {
+		t.Fatalf("an occupancy measured with another model gave kappa: %+v", row)
 	}
 }
 

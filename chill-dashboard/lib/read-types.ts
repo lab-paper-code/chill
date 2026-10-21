@@ -35,8 +35,8 @@ export type SchedulerSettings = {
   maxReplicas:WireInteger; maxInstances:WireInteger; maxCPUs:WireInteger; servingMemoryBytes:WireInteger
   completionMarginMS:number
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger
-  // Measured per Node and runtime image; options without one get no capacity row.
-  dispatchOccupancy:{node:string;runtimeImage:string;perRequestNanos:WireInteger;source:string}[]|null
+  // Measured per Node, runtime image and model; options without one get no capacity row.
+  dispatchOccupancy:{node:string;runtimeImage:string;model:string;perRequestNanos:WireInteger;source:string}[]|null
   autonomousWorkloads:string[]|null
   controls:{placement:boolean;resources:boolean;replicas:boolean;routing:boolean;batching:boolean;power:boolean;membership:boolean}
 }

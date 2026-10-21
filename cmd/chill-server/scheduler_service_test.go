@@ -96,15 +96,19 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 			t.Fatalf("settings without %s accepted", field)
 		}
 	}
-	entry := `{"node":"rasp5","runtimeImage":"image","perRequestNanos":9409000,"source":"m4 r3 Q2"}`
+	entry := `{"node":"rasp5","runtimeImage":"image","model":"mobilenet-v2-050",` +
+		`"perRequestNanos":9409000,"source":"m4 r3 Q2"}`
+	plc := `{"node":"rasp5","runtimeImage":"image","model":"plc-lstm-ae","perRequestNanos":2000000,"source":"m4"}`
 	for _, tc := range []struct {
 		occupancy string
 		valid     bool
 	}{
 		{`[` + entry + `]`, true},
 		{`[` + entry + `,` + entry + `]`, false},
-		{`[{"node":"rasp5","runtimeImage":"image","perRequestNanos":-1,"source":"m4"}]`, false},
-		{`[{"node":"rasp5","runtimeImage":"image","perRequestNanos":1}]`, false},
+		{`[` + entry + `,` + plc + `]`, true},
+		{`[{"node":"rasp5","runtimeImage":"image","model":"mobilenet-v2-050","perRequestNanos":-1,"source":"m4"}]`, false},
+		{`[{"node":"rasp5","runtimeImage":"image","model":"mobilenet-v2-050","perRequestNanos":1}]`, false},
+		{`[{"node":"rasp5","runtimeImage":"image","perRequestNanos":1,"source":"m4"}]`, false},
 	} {
 		var with map[string]json.RawMessage
 		if err = json.Unmarshal(rawSettings, &with); err != nil {

@@ -17,6 +17,7 @@
       {
         "node": "rasp5",
         "runtimeImage": "155.230.35.213:5000/chill/chill-firstfloor@sha256:eef0618b6d64612a23de3e8dbd888e433dbf610ac09ae42058d0a39449080a26",
+        "model": "mobilenet-v2-050",
         "perRequestNanos": 9409000,
         "source": "m4/r3 Q2 2026-10-20T15:46-15:51Z: one rasp5 q1 instance saturated at b1 sustained 26.88 req/s (37.20 ms/request); profile mnv2-rasp5-cpu-q1-ed628c8 b1 mean 27.79 ms"
       }

@@ -24,14 +24,14 @@
 
 **디스패치 점유.** d는 firstfloor 인스턴스가 요청 하나마다 profile 실행시간 밖에서 더 점유되는 시간이다. 포화한 인스턴스 하나가 배치 b로 낸 지속 처리율 X에서 `d = 1/X − (배치 b의 profile 평균 실행시간)/b`다. d에는 배치 사이 actor 시간(결과 전달, 다음 배치 선택, runner 호출 준비)과 같은 Pod CPU를 쓰는 요청 수신과 응답 처리로 늘어난 runner 실행시간이 함께 들어간다. rasp5 q1(m4 r3 Q2, 15:46~15:51)은 b1로 26.88 req/s, 요청당 37.20 ms였다. Q2 행 전체에서 실측 `serviceMS` 평균은 약 34.5 ms, 실행 기록 사이 간격은 평균 약 3.1 ms다. profile b1 평균은 27.79 ms라 d = 9.41 ms다.
 - 기준은 profile 평균이다. 그래야 재생의 처리율 μ가 실측 X와 같고 κ는 X 아래에 놓인다. rasp5 q1 tight 행은 μ 26.88, κ 25.3(m 29 ms)과 25.1(m 139 ms)이다. 실측 `serviceMS` p50 30.7 ms를 기준으로 잡은 d 6.5 ms는 μ 29.2, κ 27.7로 X를 넘는다.
-- 값은 `dispatchOccupancy` 설정의 항목(노드 이름, runtime image, `perRequestNanos`, `source`)이다. 운영자가 m처럼 측정 결과로 넣는다. 행 입력에 그 항목 전체가 들어가므로 행마다 d와 출처가 남고, 항목이 바뀌면 새 키의 행을 다시 계산한다.
-- option의 노드 이름과 profile의 `condition.runtimeImage`가 같은 항목만 쓴다. 같은 노드와 runtime image의 다른 option(q1-lut, q2, 배치 2)은 같은 d를 쓴다. 다른 노드의 값은 쓰지 않는다. runtime image가 바뀌면 맞는 항목이 없어 그 노드의 행은 κ가 없고, 다시 잴 때까지 계획에서 빠진다.
-- 측정 절차(노드와 runtime image마다 한 번).
-  1. 그 노드에 그 runtime image의 b1 option 인스턴스 하나만 두고 자동제어를 끈 채 `staticRouting`으로 한 Workload를 그 인스턴스에만 분배한다.
+- 값은 `dispatchOccupancy` 설정의 항목(노드 이름, runtime image, model, `perRequestNanos`, `source`)이다. model은 ModelSpec 이름이다. 운영자가 m처럼 측정 결과로 넣는다. 행 입력에 그 항목 전체가 들어가므로 행마다 d와 출처가 남고, 항목이 바뀌면 새 키의 행을 다시 계산한다.
+- option의 노드 이름, profile의 `condition.runtimeImage`, `condition.logicalModel`이 모두 같은 항목만 쓴다. d의 요청 수신과 응답 처리 비용은 model의 원시 입력과 출력 크기에 따라 다르므로 model마다 잰다. 같은 노드, runtime image, model의 다른 option(q1-lut, q2, 배치 2)은 같은 d를 쓴다. 다른 노드나 다른 model의 값은 쓰지 않는다. runtime image가 바뀌면 맞는 항목이 없어 그 노드의 행은 κ가 없고, 다시 잴 때까지 계획에서 빠진다.
+- 측정 절차(노드, runtime image, model마다 한 번).
+  1. 그 노드에 그 runtime image와 model의 b1 option 인스턴스 하나만 두고 자동제어를 끈 채 `staticRouting`으로 그 model의 Workload를 그 인스턴스에만 분배한다.
   2. profile μ의 1.2배 이상(rasp5 40 req/s)을 6분 이상 보내 firstfloor 큐가 내내 차 있게 한다. loadgen 단계 하나가 이 구간이다.
   3. `fetch.sh`로 그 시간을 받고 `e1.sql`의 포화 표에서 그 단계와 인스턴스의 `ms_per_request`를 읽는다(배치 ID 차이로 실행 수를 세므로 빠진 행에 영향받지 않는다).
   4. `d = ms_per_request − profile b1 평균`이다. profile 평균은 `/api/v1/scheduler/profiles`의 `batches[batch=1].durationNanos` 평균이다.
-  5. `{node, runtimeImage, perRequestNanos, source}`를 설정에 넣는다. source에는 실행, 시각, X, profile ID와 평균을 적는다. 같은 단계의 `e1.sql` 완료 여유 열이 포화 부하의 m이다.
+  5. `{node, runtimeImage, model, perRequestNanos, source}`를 설정에 넣는다. source에는 실행, 시각, X, profile ID와 평균을 적는다. 같은 단계의 `e1.sql` 완료 여유 열이 포화 부하의 m이다.
 
 **검증된 모양.** 이분 탐색에 쓰지 않은 seed 21~40에서 0.9κ는 모든 option이 20/20, 1.0κ는 16~20/20, 1.2κ는 0/20이다. κ는 절벽의 무릎이다. d 없이 profile 실행시간만 재생한 E1 tight(p95 1 s, m 139 ms) κ: rasp5 q1 34.3, jetsonx 18.3, orangepi 8.1, jetsono 48.1~49.7, orin-nano 38.9~41.3 req/s. rasp5 q1은 실측 처리율 26.9 req/s에서 34.3이 과대임이 드러났고, d를 넣은 값은 위 문단의 25.3이다.
 
@@ -124,7 +124,7 @@
 | 대상 | 변경 |
 |---|---|
 | 추가(commit 2) | `capacityWindowNanos`(> 0), `capacityWindows`(≥ 1), `capacityPassingWindows`(1 ≤ x ≤ `capacityWindows`), `capacityMinimumRequests`(≥ 1). 설정 decode가 strict(`scheduler_service.go:118`)라 배포 때 `serving-scheduler` ConfigMap과 Dashboard 설정 화면을 같이 바꾼다 |
-| 추가(commit 7) | `dispatchOccupancy`: `{node, runtimeImage, perRequestNanos(≥ 0), source}` 목록, 노드와 runtime image마다 하나. 없거나 비어 있으면 모든 행이 `MissingDispatchOccupancy`다. 배포 전에 ConfigMap에 측정한 노드의 항목을 넣는다(`config/samples/serving-scheduler.json`에 rasp5). Dashboard는 설정 전체를 PUT하므로 항목을 그대로 보존한다 |
+| 추가(commit 7) | `dispatchOccupancy`: `{node, runtimeImage, model, perRequestNanos(≥ 0), source}` 목록, 노드, runtime image, model마다 하나. 없거나 비어 있으면 모든 행이 `MissingDispatchOccupancy`다. 배포 전에 ConfigMap에 측정한 노드의 항목을 넣는다(`config/samples/serving-scheduler.json`에 rasp5 mobilenet). Dashboard는 설정 전체를 PUT하므로 항목을 그대로 보존한다 |
 | 이름(commit 8) | 비교 기간 하한은 `comparisonPeriodNanos`(> 0)다. strict decode라 배포 때 ConfigMap의 `horizonNanos`를 이 이름으로 바꾼다(sample 10분). 판단 기록의 `settings`도 이 이름이고, Dashboard는 판단마다 실제 T인 `decision.capacity.periodNanos`를 보여 준다 |
 | 삭제(commit 6) | `algorithm`, `replays`, `seed`, `maxCandidates`, `maxReplayRequests`, `controls.sharing`. 같은 방식으로 ConfigMap과 Dashboard를 바꾼다 |
 | 판단 기록 | `v1alpha5`에 `decision.capacity`와 `management`의 `capacity-row-built`가 더해지고 `candidates`, `search.truncated`, `policy`가 빠진다. snapshot 인스턴스는 `workloadUID` 하나이고 `arrivalAgesNanos`가 빠진다. 관측 reader는 없는 필드를 빈 값으로 읽으므로 버전을 올리지 않는다(ADR 0019). 전환 전 시간의 기록은 새 reader에서 인스턴스의 Workload가 비므로 전환 시각을 걸치는 `OperatingPower` 구간은 쓰지 않는다 |
@@ -152,7 +152,7 @@
 | 6 판정 | 3장 표의 40 req/s 두 예. 모드 변경 계획의 `κ_ret` 0. route 뒤 remove 계획은 keep κ를 남김. `W > L − m`인 계획은 에너지가 작아도 선택되지 않음. 모든 계획이 미충족이면 최대 초과량 순. SLO가 다른 Workload 두 개에서 각자 판정. 실제 분배에서 한 인스턴스가 두 Workload에 있으면 `SharedInstance`. 꺼진 Workload 노드는 keep뿐이고 binding 변경으로 판정 대상이 늘지 않음. `StaticRoutingTarget`이 두 UID alias를 거절. 단일 `workloadUID` 기록 왕복과 `OperatingPower` 소속. 공유 fixture(`scheduler_placement_test.go`, `scheduler_test.go`의 교차 UID 대기, `runtime_scheduler_test.go`, `scheduler_transition_test.go`)는 Workload별 인스턴스로 다시 씀 |
 | 6 DP | 무작위 소형 fixture(Workload 1~3개)에서 DP의 충족 판정이 정확한 κ 합 brute force와 같음(예: κ 0.34λ 인스턴스 세 개가 충족). 칸 수를 바꿔도 충족 판정이 같음. 가중치 반올림 뒤 모든 인스턴스가 κ 안(예: κ 99.6과 0.4, λ 100). 배치 상한 변경이 같은 인스턴스의 route 하나. 요청 에너지가 route에서 나뉨 |
 | 6 기간과 기록 | 사슬 197 s, horizon 60 s에서 keep과 모든 계획의 T가 같고 trial J 전체 포함, `TransitionExceedsHorizon` 없음. option 40개에서 재진입 계획이 DP에 있음(D-22). 제외된 노드 계획이 사유와 함께 기록됨. 입력 순서를 섞은 두 snapshot의 판단이 `reflect.DeepEqual`. 완전 동률은 keep |
-| 7 | 노드나 runtime image가 다른 항목만 있으면 κ 없음(`MissingDispatchOccupancy`). rasp5 q1 profile 903 표본과 d 9.409 ms, 60 s 창 20/19, m 29 ms의 tight 행이 μ 26.88, 25 ≤ κ ≤ 26.88(값 25.3). d 0인 fixture κ는 상수 그대로 |
+| 7 | 노드, runtime image, model 중 하나라도 다른 항목만 있으면 κ 없음(`MissingDispatchOccupancy`). rasp5 q1 profile 903 표본과 d 9.409 ms, 60 s 창 20/19, m 29 ms의 tight 행이 μ 26.88, 25 ≤ κ ≤ 26.88(값 25.3). d 0인 fixture κ는 상수 그대로 |
 | 전체 | `make lint test`, `make arch-check`, `make helm-lint helm-template`, `make dashboard-check` |
 
 ## 10. 명세 변경 (승인 묶음)
@@ -212,7 +212,7 @@
 | 오프라인 비교 | `hack/kappa -mode compare`, E1 기록 판단 498건 | 완료: target이 있는 457건 모두 일치, 에너지 차 0 J. commit 6 뒤 서버 계획기와 `v1alpha5` 세그먼트로 다시 |
 | 에너지 정확도(오프라인) | E1 1시간의 기록 snapshot마다 분석 합을 다시 계산하고, 판단마다 `ExpectedJoules / T`를 다음 판단까지 적분한 합을 실측 비교 집합 495,741 J와 비교 | 차이 ≤ 2%(재생 예측 +0.7%) |
 | 실클러스터 단계 | commit 6 배포 뒤 tight 자동제어, 포아송 0.633, 2, 5 req/s 각 5분, rasp5 κ(d 포함 25.3)를 넘는 40 req/s 5분, soak 2 req/s 1시간 | 40 req/s에서 첫 판단이 추가 인스턴스를 고름. 전환 구간을 포함해 단계마다 SLO 충족. 예측 `B`, `W`, 비우는 시간과 관측 큐 비교 |
-| 디스패치 점유 | 2장 측정 절차, 노드와 runtime image마다 | m4 r3 Q2: rasp5 q1 b1 포화 처리율 26.88 req/s, d 9.41 ms. 다른 노드는 측정 전까지 κ 없음 |
+| 디스패치 점유 | 2장 측정 절차, 노드, runtime image, model마다 | m4 r3 Q2: rasp5 q1 b1 포화 처리율 26.88 req/s, d 9.41 ms. 다른 노드는 측정 전까지 κ 없음 |
 | Tick | `evaluationElapsedNanos`, CPU | 40 req/s에서도 Tick p99 ≤ 100 ms, CPU가 500m 아래, 간격 ≤ 15 s |
 | 에너지(실측) | 판단마다 `ExpectedJoules / T`를 다음 판단까지 적분한 1시간 합과 `OperatingPower` 비교 집합 실측 | 차이 ≤ 2% |
 | 용량표 | 시작 때 worker의 행 수, `NonMonotone` 수, 행별 시간과 전체 표 계산 시간, κ 0.9배와 1.2배 포아송 단계(rasp5) | 0.9κ 충족, 1.2κ 초과, `NonMonotone` 0, 전체 표가 몇 분(5분) 안. 넘으면 2장의 Job 분할과 이전 표 판단을 넣는다 |
@@ -234,7 +234,7 @@ commit 6에서 모두 지운다.
 ## 13. 사용자 결정과 질문
 
 - 결정: κ는 기존 재생, 포아송 도착, 격자와 이분 탐색으로 계산한다. Tick은 κ 합, 노드 계획, Pareto DP이고 재생이 없다. 비교 기간은 `T = max(60 s, 최장 사슬)` 하나다. 전환 중 SLO는 Workload마다 필수 조건이다. 인스턴스 공유는 연구 범위 밖이고 M4는 계획기와 저장 모델의 부담만 지운다(6장). 전환은 shadow 없이 오프라인 비교와 실클러스터 단계로 확인하고 문제가 있으면 이전 image로 되돌린다. 완료 여유는 5장 규칙이다. imagenet은 꺼진 채로 둔다. Workload 여러 개의 칸 크기는 E5 전에 11장 측정으로 다시 검토한다. `projected-work-history`는 전환에서 지운다.
-- 결정: 디스패치 점유는 노드와 runtime image마다 단일 인스턴스 포화에서 재고 재생 실행시간에 더한다. 행마다 값과 출처를 남기고 runtime image가 바뀔 때만 다시 잰다. 측정이 없는 노드는 κ를 계산하지 않고 그 option을 뺀다. 다른 노드의 값은 빌리지 않는다.
+- 결정: 디스패치 점유는 노드, runtime image, model마다 단일 인스턴스 포화에서 재고 재생 실행시간에 더한다. 행마다 값과 출처를 남기고 runtime image가 바뀌거나 model이 더해질 때 다시 잰다. 측정이 없는 노드는 κ를 계산하지 않고 그 option을 뺀다. 다른 노드나 다른 model의 값은 빌리지 않는다.
 - 결정: 10장 승인 묶음(①, ①', ④, ⑤)을 반영한다. 공유를 풀 때 tight만 rasp5 인스턴스에 남고 relaxed와 imagenet은 분배하지 않는다.
 - 결정: 용량표는 ChillServer가 시작할 때마다 자동제어 Workload의 행만 다시 계산하고, 행 단위로 병렬 계산한다. 남긴 행은 기록이다. 몇 분 안에 끝나지 않으면 이전 표로 판단하며 뒤에서 다시 계산한다(2장).
 - 확인: firstfloor는 배치 상한을 재준비 없이 바꾼다(4장 사슬). m4 r5에서 genesis3 q2 b1↔b2는 stop, drain, remove, prepare였고 이제는 route 하나다.

@@ -21,7 +21,7 @@ test("duration conversion preserves nanoseconds and rejects nonpositive or overf
 })
 
 test("review detects control or exact integer changes across numeric representations", () => {
-  const occupancy={node:"rasp5",runtimeImage:"image",perRequestNanos:9409000,source:"m4"}
+  const occupancy={node:"rasp5",runtimeImage:"image",model:"mobilenet-v2-050",perRequestNanos:9409000,source:"m4"}
   const current:SchedulerSettings={observationWindowNanos:1,controlIntervalNanos:1,comparisonPeriodNanos:1,maxObservationAgeNanos:1,servingMemoryBytes:18446744073709551615n,maxReplicas:1,maxInstances:1,maxCPUs:1,completionMarginMS:0,capacityWindowNanos:1,capacityWindows:1,capacityPassingWindows:1,capacityMinimumRequests:1,dispatchOccupancy:[occupancy],autonomousWorkloads:[],controls:{placement:false,resources:false,replicas:false,routing:false,batching:false,power:false,membership:false}}
   assert.equal(settingsEqual(current,{...current,controlIntervalNanos:1n,controls:{...current.controls}}),true)
   assert.equal(settingsEqual(current,{...current,servingMemoryBytes:18446744073709551614n}),false)

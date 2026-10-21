@@ -39,27 +39,28 @@ type SchedulerSettings struct {
 	Controls                SchedulerControls   `json:"controls"`
 }
 
-// DispatchOccupancy is the measured time per request that an instance on Node
-// running RuntimeImage stays busy beyond its profile service samples:
-// 1/X − (the profile's mean service at batch b)/b, where X is the sustained
-// completions per second of one saturated instance at batch b. Capacity
-// replay adds it per request to every batch it starts; Source names the
-// measurement.
+// DispatchOccupancy is the measured time per request that an instance of
+// Model on Node running RuntimeImage stays busy beyond its profile service
+// samples: 1/X − (the profile's mean service at batch b)/b, where X is the
+// sustained completions per second of one saturated instance at batch b.
+// Capacity replay adds it per request to every batch it starts; Source names
+// the measurement.
 type DispatchOccupancy struct {
 	Node         string        `json:"node"`
 	RuntimeImage string        `json:"runtimeImage"`
+	Model        string        `json:"model"`
 	PerRequest   time.Duration `json:"perRequestNanos"`
 	Source       string        `json:"source"`
 }
 
-// dispatchOccupancy is the measurement for instance i's Node and runtime
-// image, or nil when none exists.
+// dispatchOccupancy is the measurement for instance i's Node, runtime image
+// and model, or nil when none exists.
 func (s SchedulerSettings) dispatchOccupancy(i SchedulerInstance) *DispatchOccupancy {
 	if i.Profile == nil {
 		return nil
 	}
 	for _, o := range s.DispatchOccupancy {
-		if o.Node == i.Node.Name && o.RuntimeImage == i.Profile.Condition.RuntimeImage {
+		if o.Node == i.Node.Name && o.RuntimeImage == i.Profile.Condition.RuntimeImage && o.Model == i.Profile.Condition.LogicalModel {
 			return &o
 		}
 	}
@@ -334,11 +335,11 @@ func (s SchedulerSettings) Validate() error {
 	if s.CapacityWindow <= 0 || s.CapacityWindows < 1 || s.CapacityPassingWindows < 1 || s.CapacityPassingWindows > s.CapacityWindows || s.CapacityMinimumRequests < 1 {
 		return fmt.Errorf("capacity settings need capacityWindowNanos > 0, capacityWindows >= 1, 1 <= capacityPassingWindows <= capacityWindows and capacityMinimumRequests >= 1")
 	}
-	seen := map[[2]string]bool{}
+	seen := map[[3]string]bool{}
 	for _, o := range s.DispatchOccupancy {
-		key := [2]string{o.Node, o.RuntimeImage}
-		if o.Node == "" || o.RuntimeImage == "" || o.Source == "" || o.PerRequest < 0 || seen[key] {
-			return fmt.Errorf("dispatchOccupancy entries need a node, runtimeImage and source, perRequestNanos >= 0, and one entry per node and runtimeImage")
+		key := [3]string{o.Node, o.RuntimeImage, o.Model}
+		if o.Node == "" || o.RuntimeImage == "" || o.Model == "" || o.Source == "" || o.PerRequest < 0 || seen[key] {
+			return fmt.Errorf("dispatchOccupancy entries need a node, runtimeImage, model and source, perRequestNanos >= 0, and one entry per node, runtimeImage and model")
 		}
 		seen[key] = true
 	}
