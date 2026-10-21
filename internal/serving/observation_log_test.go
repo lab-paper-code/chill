@@ -25,9 +25,17 @@ type observationArchive struct {
 	failKey   string
 	mu        sync.Mutex
 	outcomes  map[string]evidencestore.CreateOutcome
+	// puts counts every call per key, failed ones included.
+	puts map[string]int
 }
 
 func (a *observationArchive) PutImmutable(_ context.Context, identity evidencestore.ObjectIdentity, source io.Reader) (evidencestore.Receipt, error) {
+	a.mu.Lock()
+	if a.puts == nil {
+		a.puts = map[string]int{}
+	}
+	a.puts[identity.Key]++
+	a.mu.Unlock()
 	if a.fail || a.failKey != "" && strings.Contains(identity.Key, a.failKey) {
 		return evidencestore.Receipt{}, errors.New("archive unavailable")
 	}
@@ -267,9 +275,12 @@ func seedObservationMinutes(t *testing.T, observationLog *ObservationLog, clock 
 	}
 }
 
-func TestObservationArchiveRetriesHourUntilEveryStreamUploads(t *testing.T) {
+// A past hour no longer changes, so each stream is stored once per process and
+// only a failed stream is sent again. Re-sending stored hours every minute
+// drew S3 connection resets (D-R6-7).
+func TestObservationArchiveRetriesOnlyFailedStreams(t *testing.T) {
 	ctx := context.Background()
-	archive := &observationArchive{directory: t.TempDir()}
+	archive := &observationArchive{directory: t.TempDir(), failKey: "scheduler"}
 	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
 	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(10*time.Second), observationTestHour.Add(time.Minute+10*time.Second))
 	hour := filepath.Join(observationLog.root, "20261020T10")
@@ -277,6 +288,11 @@ func TestObservationArchiveRetriesHourUntilEveryStreamUploads(t *testing.T) {
 	if err := observationLog.ManagementEvent(ManagementEvent{WorkloadUID: "uid", Kind: "apply", At: clock.now()}); err != nil {
 		t.Fatal(err)
 	}
+	if err := observationLog.Flush(ctx); err == nil {
+		t.Fatal("failed stream upload was hidden")
+	}
+	archive.failKey = ""
+	clock.set(observationTestHour.Add(time.Hour + 6*time.Minute))
 	if err := observationLog.Flush(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -298,17 +314,6 @@ func TestObservationArchiveRetriesHourUntilEveryStreamUploads(t *testing.T) {
 		t.Fatalf("the previous hour was deleted: %v", err)
 	}
 	clock.set(observationTestHour.Add(2*time.Hour + time.Minute))
-	if err := os.Remove(filepath.Join(archive.directory, observationArchivePrefix+"20261020T10", "scheduler.jsonl.gz")); err != nil {
-		t.Fatal(err)
-	}
-	archive.failKey = "scheduler"
-	if err := observationLog.Flush(ctx); err == nil {
-		t.Fatal("failed stream upload was hidden")
-	}
-	if _, err := os.Stat(hour); err != nil {
-		t.Fatalf("hour deleted after a failed stream: %v", err)
-	}
-	archive.failKey = ""
 	if err := observationLog.Flush(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -318,14 +323,15 @@ func TestObservationArchiveRetriesHourUntilEveryStreamUploads(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(observationLog.root, "20261020T11")); err != nil {
 		t.Fatalf("the previous hour was deleted: %v", err)
 	}
-	keys := map[evidencestore.CreateOutcome]int{}
-	for key, outcome := range archive.outcomes {
-		if strings.Contains(key, "20261020T10") {
-			keys[outcome]++
+	for _, stream := range observationStreams {
+		key := observationArchivePrefix + "20261020T10/" + stream + ".jsonl.gz"
+		want := 1
+		if stream == "scheduler" {
+			want = 2
 		}
-	}
-	if keys[evidencestore.CreateOutcomeCreated] != 1 || keys[evidencestore.CreateOutcomeExisting] != 3 {
-		t.Fatalf("retry did not mix Existing and Created: %+v", archive.outcomes)
+		if archive.puts[key] != want || archive.outcomes[key] != evidencestore.CreateOutcomeCreated {
+			t.Fatalf("%s sent %d times with outcome %q, want %d sends and Created", stream, archive.puts[key], archive.outcomes[key], want)
+		}
 	}
 }
 

@@ -193,9 +193,11 @@ type observationCatalogEntry struct {
 type ObservationLog struct {
 	mu        sync.Mutex
 	publishMu sync.Mutex
-	config    ObservationLogConfig
-	root      string
-	started   time.Time
+	// archived holds the past hour streams this process stored, under publishMu.
+	archived map[string]bool
+	config   ObservationLogConfig
+	root     string
+	started  time.Time
 	// floor is the start of complete local observation; deleting an hour advances it.
 	floor       time.Time
 	now         func() time.Time
@@ -217,6 +219,7 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 		config: config, root: filepath.Join(config.Directory, observationVersion), started: time.Now().UTC(),
 		now: func() time.Time { return time.Now().UTC() }, files: map[string]*os.File{},
 		retained: map[string]*Definition{}, open: map[string]*RequestRow{}, catalog: map[string]observationCatalogEntry{},
+		archived: map[string]bool{},
 	}
 	if err := os.MkdirAll(l.root, 0700); err != nil {
 		return nil, err
@@ -578,13 +581,24 @@ func (l *ObservationLog) archive(ctx context.Context) error {
 		}
 		var failed error
 		for _, stream := range observationStreams {
+			// A past hour no longer changes, so a stored stream is not sent again.
+			key := observationHour(hour) + "/" + stream
+			if l.archived[key] {
+				continue
+			}
 			if err := l.upload(ctx, hour, stream); err != nil {
 				failed = errors.Join(failed, err)
+				continue
 			}
+			l.archived[key] = true
 		}
 		deleting = deleting && failed == nil && !now.Before(hour.Add(2*time.Hour))
 		if deleting {
-			deleting, failed = l.removeHour(hour)
+			if deleting, failed = l.removeHour(hour); deleting {
+				for _, stream := range observationStreams {
+					delete(l.archived, observationHour(hour)+"/"+stream)
+				}
+			}
 		}
 		result = errors.Join(result, failed)
 	}
