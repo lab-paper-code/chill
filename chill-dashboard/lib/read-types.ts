@@ -39,6 +39,8 @@ export type SchedulerSettings = {
   // Nodes the planner never changes (reason ExcludedNode).
   excludedNodes:string[]|null
   controls:{placement:boolean;resources:boolean;replicas:boolean;routing:boolean;batching:boolean;power:boolean;membership:boolean}
+  // Only GET settings carries it: the stored declaration, read from the ConfigMap.
+  staticRouting?:Routing
 }
 export type SchedulerDefinition = {name:string;uid:string;generation:WireInteger;model:{name:string;uid:string;generation:WireInteger;paths:unknown[]|null};slo:{percentile:number;targetLatencyNanos:WireInteger}}
 export type SchedulerAllocation = {cpus:number[]|null;gpuUUID?:string;memoryBytes:WireInteger;threads:number;cpuCount:number;cpuReserved:boolean}

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
-type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"excludedNodes">
+type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"excludedNodes"|"staticRouting">
 type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"advanced";unit?:string}
 const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
@@ -68,9 +68,11 @@ export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
 }
 
 // The one settings write: PUT the full settings, then refresh every scheduler read. Shared with the Workload screen.
-// A routing change replaces the whole staticRouting declaration and carries its selection reason.
+// A routing change replaces the whole staticRouting declaration and carries its selection reason;
+// a settings-only write leaves staticRouting out so the stored declaration stays.
 export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Promise<RelayResponse>,client:QueryClient,settings:SchedulerSettings,routing?:{staticRouting:Routing;reason:string}) {
-  const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON({...settings,...routing})})
+  const body={...settings};delete body.staticRouting
+  const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON({...body,...routing})})
   const applied=parseSchedulerJSON(response.body) as SchedulerSettingsChange
   await client.invalidateQueries({predicate:query=>typeof query.queryKey[1]==="string"&&(query.queryKey[1].startsWith("v1/scheduler")||query.queryKey[1].startsWith("v1/observations/scheduler"))})
   return applied
@@ -91,7 +93,7 @@ function EditRow({label,help,value,changed,initial,unit,range,save,disabled}:{la
 }
 
 // The JSON is the whole declaration: service UID → instance ID → weight. {} removes it.
-// The newest routing record prefills it; without one the field starts empty.
+// The stored declaration from GET settings prefills it; without one the field starts empty.
 function RoutingEdit({initial,disabled,apply}:{initial?:Routing;disabled:boolean;apply:(staticRouting:Routing,reason:string)=>void}) {
   const [open,setOpen]=React.useState(false),[text,setText]=React.useState(""),[reason,setReason]=React.useState(""),[error,setError]=React.useState(""),id=React.useId()
   return <RowDialog label="요청 분배 바꾸기" hint="자동 제어하지 않는 서비스의 인스턴스 비율과 선택 이유" title="요청 분배 바꾸기" description="서비스 UID → 인스턴스 ID → 가중치를 JSON으로 적어요. 적은 내용이 설정한 분배 전체가 되고, 적지 않은 서비스는 지금 분배를 유지해요. {}는 설정한 분배를 지워요." open={open} onOpenChange={state=>{setOpen(state);setText(initial?JSON.stringify(initial,null,2):"");setReason("");setError("")}}>
@@ -224,7 +226,7 @@ export function SchedulerSettingsPage() {
         {routing
           ?<Row href={`/transitions/${encodeURIComponent(routing.operation.id)}?${new URLSearchParams({view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배" hint="가장 최근에 적용한 서비스 → 인스턴스 비율"/>
           :<Row href="/transitions" label="설정한 요청 분배" hint={state.data?"설정 기반 분배 기록이 비어 있어요":state.error?"분배 기록을 불러오지 못했어요":"분배 기록을 확인하고 있어요"}/>}
-        <RoutingEdit initial={routing?.operation.staticRouting} disabled={blocked||count>0} apply={(staticRouting,reason)=>void applyRouting(staticRouting,reason)}/>
+        <RoutingEdit initial={settings.data?.staticRouting} disabled={blocked||count>0} apply={(staticRouting,reason)=>void applyRouting(staticRouting,reason)}/>
         <Row href="/scheduler" label="지금 운영 판단 보기"/>
         {settings.data&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(settings.data),2)}</pre><SourceExport value={settings.data} filename="chill-scheduler-settings.json"/></RowDialog>}
       </Rows>

@@ -47,7 +47,7 @@ revision은 다시 적용하지 않는다. 선언을 바꾼 사람과 선택 이
 | API | 동작 |
 |---|---|
 | `GET /api/v1/scheduler` | settings와 실제 snapshot, decision, actions, results, `costIssues` |
-| `GET /api/v1/scheduler/settings`, `/state` | 운영 설정 또는 현재 판단·적용 상태 |
+| `GET /api/v1/scheduler/settings`, `/state` | 운영 설정 또는 현재 판단·적용 상태. settings 응답은 ConfigMap에 저장된 `staticRouting` 선언도 담는다. 선언을 바꾸는 PUT은 이 값에서 시작한다 |
 | `PUT /api/v1/scheduler` 또는 `/settings` | 직접 `SchedulerSettings`를 검증하고 named ConfigMap에 저장하고 적용. 본문의 OPTIONAL `staticRouting`은 저장된 선언 전체를 바꾸고 `{}`는 선언을 지운다. 생략하면 저장된 선언이 그대로다. 선언이 바뀌면 비어 있지 않은 `reason`(선택 이유)이 필수이고 새 선언은 마지막 snapshot에 대해 `StaticRoutingTarget`으로 검증한다. 오류는 400 `InvalidBody`와 `field`(`reason` 또는 `staticRouting`)다. 응답과 관측 기록의 설정 변경은 actor, `before`/`after` 설정, `beforeStaticRouting`/`afterStaticRouting`, `reason`, `validatedAt`, `affected`, `appliedAt`을 담고, `validatedAt`이 그 변경을 가리킨다 |
 | `GET /api/v1/scheduler/profiles` | 읽기 전용. `configVersion`, 완료 측정에서 도출한 조건별 최신 `profiles`, profile ID별 `preparations`, profile을 만들지 못한 측정의 `insufficiencies[]`(CatalogIssue `source/code/reason`) |
 | `GET /api/v1/scheduler/capacity` | 읽기 전용. 자동제어 Workload에 필요한 용량표 `rows[]`(`key`, `input`, `status`, `reason`, `mu`, `kappa`, 격자와 이분 탐색 판정, `builtAt`, `elapsedNanos`). 계산 중인 행은 `CapacityPending`, 단조가 아닌 행은 `CapacityRejected`와 `NonMonotone`이다. 표는 메모리에만 있고 행마다 `management` stream의 `capacity-row-built` 사건으로 남는다 |

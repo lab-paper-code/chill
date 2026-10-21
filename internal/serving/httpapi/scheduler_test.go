@@ -441,9 +441,22 @@ func TestSchedulerSettingsStaticRoutingChangeNeedsReasonAndRecordsBeforeAfter(t 
 			t.Fatalf("%s: status=%d body=%s updates=%d", rejected.extra, response.Code, response.Body, updates)
 		}
 	}
-	// The same declaration is no staticRouting change, so it needs no reason.
-	if response := put(`,"staticRouting":{"old-uid":{"physical":1}}`); response.Code != http.StatusOK {
-		t.Fatalf("unchanged declaration: status=%d body=%s", response.Code, response.Body)
+	// GET settings shows the stored declaration the routing dialog starts from.
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/settings", nil)
+	request.Header.Set("Authorization", "Bearer reviewed-token")
+	got := httptest.NewRecorder()
+	handler.scheduler(got, request)
+	var shown struct {
+		StaticRouting map[string]map[string]int `json:"staticRouting"`
+	}
+	if err := json.Unmarshal(got.Body.Bytes(), &shown); err != nil || got.Code != http.StatusOK || !reflect.DeepEqual(shown.StaticRouting, declared) {
+		t.Fatalf("GET settings lost the stored declaration: status=%d body=%s", got.Code, got.Body)
+	}
+	// The same declaration is no staticRouting change: it needs no reason and records none.
+	unchanged := put(`,"staticRouting":{"old-uid":{"physical":1}},"reason":"stray"`)
+	var kept serving.SchedulerSettingsChange
+	if err := json.Unmarshal(unchanged.Body.Bytes(), &kept); err != nil || unchanged.Code != http.StatusOK || kept.Reason != "" {
+		t.Fatalf("unchanged declaration: status=%d body=%s", unchanged.Code, unchanged.Body)
 	}
 	response := put(`,"staticRouting":{},"reason":"fixed placement baseline"`)
 	if response.Code != http.StatusOK {

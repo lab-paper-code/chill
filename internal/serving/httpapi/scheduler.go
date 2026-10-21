@@ -53,7 +53,17 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/settings"):
-			sendJSON(w, http.StatusOK, h.config.Scheduler.Settings())
+			// The stored staticRouting is the declaration a routing change starts from.
+			_, config, err := schedulerConfigMap(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
+				h.config.SchedulerConfigMap, h.config.SchedulerConfigKey)
+			if err != nil {
+				sendError(w, err)
+				return
+			}
+			sendJSON(w, http.StatusOK, struct {
+				serving.SchedulerSettings
+				StaticRouting json.RawMessage `json:"staticRouting,omitempty"`
+			}{h.config.Scheduler.Settings(), config["staticRouting"]})
 		case strings.HasSuffix(r.URL.Path, "/state"):
 			sendJSON(w, http.StatusOK, h.config.Scheduler.State())
 		default:
@@ -107,17 +117,16 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	before, after, err := h.staticRoutingChange(config["staticRouting"], input.StaticRouting, input.Reason, settings.AutonomousWorkloads)
+	before, after, reason, err := h.staticRoutingChange(config["staticRouting"], input.StaticRouting, input.Reason, settings.AutonomousWorkloads)
 	if err != nil {
 		sendError(w, err)
 		return
 	}
-	staticChanged := !reflect.DeepEqual(before, after)
 	username, uid := principal.Actor()
 	now := time.Now().UTC()
 	change := serving.SchedulerSettingsChange{
 		ActorUsername: username, ActorUID: uid, Before: h.config.Scheduler.Settings(), After: settings,
-		BeforeStaticRouting: before, AfterStaticRouting: after, Reason: input.Reason,
+		BeforeStaticRouting: before, AfterStaticRouting: after, Reason: reason,
 		ValidatedAt: now, Affected: []serving.NodeReference{},
 	}
 	for _, node := range h.config.Scheduler.State().Snapshot.Nodes {
@@ -128,8 +137,9 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	if staticChanged {
-		// The applied manual-static-routing record names this change by validatedAt.
+	if reason != "" {
+		// A recorded reason marks a staticRouting change; the applied
+		// manual-static-routing record names this change by validatedAt.
 		config["staticRoutingValidatedAt"], _ = json.Marshal(now)
 		delete(config, "staticRouting")
 		if after != nil {
@@ -157,16 +167,17 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, http.StatusOK, change)
 }
 
-// staticRoutingChange returns the stored declaration and the one the PUT
-// leaves; empty is nil. An omitted input keeps the stored declaration and {}
+// staticRoutingChange returns the stored declaration, the one the PUT leaves
+// (empty is nil), and the reason to record, which is non-empty exactly when the
+// declaration changes. An omitted input keeps the stored declaration and {}
 // removes it. A change needs its selection reason, and StaticRoutingTarget
 // must accept a new declaration against the last snapshot.
 func (h *Handler) staticRoutingChange(
 	stored json.RawMessage, input map[string]map[string]int, reason string, autonomous []string,
-) (before, after map[string]map[string]int, err error) {
+) (before, after map[string]map[string]int, recorded string, err error) {
 	if stored != nil {
 		if err = json.Unmarshal(stored, &before); err != nil {
-			return nil, nil, err
+			return nil, nil, "", err
 		}
 	}
 	after = before
@@ -180,17 +191,17 @@ func (h *Handler) staticRoutingChange(
 		after = nil
 	}
 	if reflect.DeepEqual(before, after) {
-		return before, after, nil
+		return before, after, "", nil
 	}
 	if strings.TrimSpace(reason) == "" {
-		return nil, nil, &serving.Error{Code: "InvalidBody", Message: "a staticRouting change requires its selection reason", Field: "reason"}
+		return nil, nil, "", &serving.Error{Code: "InvalidBody", Message: "a staticRouting change requires its selection reason", Field: "reason"}
 	}
 	if after != nil {
 		if _, err = serving.StaticRoutingTarget(h.config.Scheduler.State().Snapshot, after, autonomous, ""); err != nil {
-			return nil, nil, &serving.Error{Code: "InvalidBody", Message: err.Error(), Field: "staticRouting"}
+			return nil, nil, "", &serving.Error{Code: "InvalidBody", Message: err.Error(), Field: "staticRouting"}
 		}
 	}
-	return before, after, nil
+	return before, after, reason, nil
 }
 
 // schedulerConfigMap reads the scheduler ConfigMap and its configuration object.
