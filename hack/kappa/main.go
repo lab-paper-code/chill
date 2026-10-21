@@ -4,21 +4,28 @@
 //	go run ./hack/kappa -mode table   -scheduler scheduler-pre.json [-margin 139] [-workloads image-classification-tight-slo] [-rows rows.json]
 //	go run ./hack/kappa -mode tick    -scheduler scheduler-pre.json -rows rows.json [-margin 139] [-workloads ...] [-rate 40] [-repeat 200]
 //	go run ./hack/kappa -mode compare -scheduler scheduler-pre.json -profiles profiles-pre.json -records records.jsonl -rows rows.json [-margin 139]
+//	go run ./hack/kappa -mode slo     -scheduler scheduler.json -workloads plc-anomaly,smolvlm2-vqa
 //
 // table builds every row the named autonomous Workloads need, the way
 // ChillServer does on start, and writes them to -rows. tick times the planner
 // on the dump's snapshot, optionally with Poisson arrivals at -rate req/s in
 // its observation window. compare replans each recorded decision with the
 // rows and reports agreement with the recorded target and the planner time.
+// slo proposes an SLO target for each named Workload and builds its rows at
+// p95 and p99. The /api/v1/scheduler dump carries the profile bodies and the
+// dispatch occupancy for every Workload; /api/v1/scheduler/capacity holds rows
+// only for autonomous Workloads.
 package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"os"
 	"runtime"
@@ -32,7 +39,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "table", "table, tick or compare")
+	mode := flag.String("mode", "table", "table, tick, compare or slo")
 	schedulerFile := flag.String("scheduler", "", "ChillServer /api/v1/scheduler dump; options carry profile bodies")
 	profilesFile := flag.String("profiles", "", "ChillServer /api/v1/scheduler/profiles dump (compare)")
 	recordsFile := flag.String("records", "", "scheduler record JSONL with decision rows (compare)")
@@ -65,6 +72,8 @@ func main() {
 			err = tick(settings, snapshot, *rowsFile, *rate, *repeat)
 		case "compare":
 			err = compare(settings, *profilesFile, *recordsFile, *rowsFile, *margin)
+		case "slo":
+			err = slo(settings, snapshot)
 		default:
 			err = fmt.Errorf("unknown mode %q", *mode)
 		}
@@ -210,6 +219,130 @@ func quantile(xs []float64, p float64) float64 {
 	sorted := slices.Clone(xs)
 	sort.Float64s(sorted)
 	return stat.Quantile(p, stat.Empirical, sorted, nil)
+}
+
+// slo proposes a target L per autonomous Workload from the p99 b1 latency of
+// each Node (proposeSLO), then builds the Workload's rows at L with p95 and
+// with p99 and prints the largest kappa per Node, the kappa sum, whether the
+// rule holds on kappa, and each table's build time.
+func slo(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot) error {
+	for _, w := range snapshot.Workloads {
+		if !slices.Contains(settings.AutonomousWorkloads, w.UID) {
+			continue
+		}
+		latency := nodeLatencies(snapshot, settings.CompletionMarginMS, w, 0.99)
+		target, err := proposeSLO(latency)
+		if err != nil {
+			return fmt.Errorf("%s: %w", w.Name, err)
+		}
+		nodes := byLatency(latency)
+		kappa := map[float64]map[string]float64{}
+		summary := ""
+		for _, p := range []float64{95, 99} {
+			c := *w
+			c.SLO = serving.SLO{Percentile: p, TargetLatency: time.Duration(target * 1e6)}
+			s, snap := settings, snapshot
+			s.AutonomousWorkloads, snap.Workloads = []string{c.UID}, []*serving.Definition{&c}
+			began := time.Now()
+			t := serving.NewCapacityTable(runtime.GOMAXPROCS(0), nil, nil)
+			t.Ensure(context.Background(), s, snap)
+			t.Wait()
+			elapsed := time.Since(began)
+			rows := t.Rows()
+			kappa[p] = map[string]float64{}
+			for _, row := range rows {
+				if row.Kappa != nil {
+					kappa[p][row.Input.Node.Name] = max(kappa[p][row.Input.Node.Name], *row.Kappa)
+				}
+			}
+			pass, sum := 0, 0.0
+			for _, k := range kappa[p] {
+				sum += k
+				if k > 0 {
+					pass++
+				}
+			}
+			holds := pass >= (len(nodes)+1)/2 && kappa[p][nodes[len(nodes)-1]] == 0 && kappa[p][nodes[len(nodes)-2]] == 0
+			summary += fmt.Sprintf("p%g: %d/%d Nodes kappa > 0, kappa sum %.2f req/s, rule holds %t, %d rows in %.1f s\n", p, pass, len(nodes), sum, holds, len(rows), elapsed.Seconds())
+		}
+		fmt.Printf("\n%s: proposed target %.4g ms (margin %g ms, GOMAXPROCS %d)\n\n| node | b1 p99 + d + margin (ms) | kappa p95 | kappa p99 |\n|---|---|---|---|\n", w.Name, target, settings.CompletionMarginMS, runtime.GOMAXPROCS(0))
+		for _, n := range nodes {
+			fmt.Printf("| %s | %.2f | %s | %s |\n", n, latency[n], kappaCell(kappa[95], n), kappaCell(kappa[99], n))
+		}
+		fmt.Print("\n" + summary)
+	}
+	return nil
+}
+
+// kappaCell is "-" for a Node whose rows all lack kappa (NonMonotone).
+func kappaCell(kappa map[string]float64, node string) string {
+	if k, ok := kappa[node]; ok {
+		return fmt.Sprintf("%.2f", k)
+	}
+	return "-"
+}
+
+// nodeLatencies is the lowest b1 latency (ms) per Node over the options of
+// Workload w that have a dispatch occupancy: the q quantile of the b1
+// execution samples plus d plus the completion margin.
+func nodeLatencies(snapshot serving.SchedulerSnapshot, marginMS float64, w *serving.Definition, q float64) map[string]float64 {
+	out := map[string]float64{}
+	for _, o := range snapshot.Options {
+		if !slices.Contains(o.CompatibleUIDs, w.UID) || o.Instance.Profile == nil {
+			continue
+		}
+		d := serving.NewCapacityInput(serving.SchedulerSettings{}, snapshot.DispatchOccupancy, o, w).DispatchOccupancy
+		for _, b := range o.Instance.Profile.Batches {
+			if b.Batch != 1 || len(b.DurationNanos) == 0 || d == nil {
+				continue
+			}
+			ms := (quantile(b.DurationNanos, q)+float64(d.PerRequest))/1e6 + marginMS
+			if old, ok := out[o.Instance.Node.Name]; !ok || ms < old {
+				out[o.Instance.Node.Name] = ms
+			}
+		}
+	}
+	return out
+}
+
+// proposeSLO picks the target L (ms) that passes k Nodes by b1 latency with
+// k at least half the Nodes and at least two Nodes failing, at the largest
+// latency ratio between the k-th and the next Node. L is their geometric mean,
+// rounded to two significant digits when that stays between them.
+func proposeSLO(latency map[string]float64) (float64, error) {
+	xs := []float64{}
+	for _, node := range byLatency(latency) {
+		xs = append(xs, latency[node])
+	}
+	n, best := len(xs), 0
+	if n < 4 {
+		return 0, fmt.Errorf("%d Nodes with a b1 latency; half passing and two failing need 4", n)
+	}
+	for k := (n + 1) / 2; k <= n-2; k++ {
+		if xs[k] > xs[k-1] && (best == 0 || xs[k]/xs[k-1] > xs[best]/xs[best-1]) {
+			best = k
+		}
+	}
+	if best == 0 {
+		return 0, errors.New("no latency gap between the fastest half and the two slowest Nodes")
+	}
+	lo, hi := xs[best-1], xs[best]
+	l := math.Sqrt(lo * hi)
+	unit := math.Pow(10, math.Floor(math.Log10(l))-1)
+	if r := math.Round(l/unit) * unit; r > lo && r < hi {
+		l = r
+	}
+	return l, nil
+}
+
+// byLatency lists the Nodes from the fastest.
+func byLatency(latency map[string]float64) []string {
+	nodes := make([]string, 0, len(latency))
+	for node := range latency {
+		nodes = append(nodes, node)
+	}
+	slices.SortFunc(nodes, func(a, b string) int { return cmp.Or(cmp.Compare(latency[a], latency[b]), strings.Compare(a, b)) })
+	return nodes
 }
 
 // targetKey names a target by Node, profile and batch limit of each instance.

@@ -448,7 +448,29 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
 | E2 | 꺼진 Workload(수동 인스턴스), 근거 없는 켜진 Workload, 근거 있는 켜진 Workload 공존. 켜진 Workload의 부하를 바꿔 꺼진 Workload 인스턴스가 있는 노드의 전력 변경이 유리한 상황을 만듦 | 꺼진 Workload 인스턴스가 있는 노드는 전력모드와 인스턴스가 그대로이고 결정 기록에 `FixedWorkload`로 남음, `MeasurementEvidenceMissing` 표시, 나머지 판단 계속(`SCH-AC-25`) |
 | E3 | taint를 붙인 노드(외부 Pod 있음)에서 BatchEnergyOptimization 측정과 진행 중 Job 삭제로 실패 유도, 운영자 runner를 둔 노드의 PowerModeTransitionCost 측정, `serving-operation` prepare와 remove 비용 측정 | 측정 중 스케줄러가 그 노드를 쓰지 않음, CHILL 배치 여부가 표시된 외부 Pod 목록, 측정 결과가 다음 refresh에서 후보와 비용 근거로 나타남(`SCH-AC-26`의 외부 Pod 부분). taint 자동화와 서빙 노드 거절은 M3 뒤 M3의 검증([07](../architecture-rethink/07-validation.md))에서 확인한다 |
 | E4 | 활성 POOL 사이 직접 이동이 선택되는 부하 전환 | 한 전환의 DAG와 비용, 단계별 소속(`SCH-AC-22`) |
-| E5 | mobilenet과 SmolVLM 혼합 부하, 두 Workload 자동제어 | Workload별 SLO 달성, 비교 집합 에너지와 실측 전체 POOL 에너지, `completionResidualNanos`와 설정 여유 비교 |
+| E5 | mobilenet tight, PLC, SmolVLM 혼합 부하, 세 Workload 자동제어, Jetson 포함(아래 단계) | Workload별 SLO 달성, 비교 집합 에너지와 실측 전체 POOL 에너지, `completionResidualNanos`와 설정 여유 비교 |
+
+**E5 혼합 부하.** 측정 캠페인이 끝나고 모든 Jetson이 가장 낮은 모드로 돌아온 뒤 세 Workload를 함께 자동제어한다. 사람은 부하만 바꾸고 구성은 판단이 정한다.
+
+- 노드: `excludedNodes`는 빈 목록이다(orin-nano DNS가 고장이면 orin-nano만 둔다). Jetson을 포함한 가용 노드 전체와 측정한 전력모드가 후보다.
+- Workload: `image-classification-tight-slo`(p95 1 s), `plc-anomaly`(`plc-extruder-01-windows`), `smolvlm2-vqa`(VQAv2 `vqav2-val-subset`). 측정 전용 Workload는 지운 뒤이고, 세 Workload 모두 인스턴스 0에서 `autonomousWorkloads`에 들어간다. `completionMarginMS`는 그때 설정값이고 실행 기록에 남는다.
+- PLC와 SmolVLM SLO: 마지막 `/api/v1/scheduler` dump에서 `hack/kappa -mode slo`가 제안하고 사용자가 승인한 값이다. 노드마다 가장 빠른 option의 b1 지연(실행시간 p99 + d + m)을 구하고, κ > 0인 노드가 절반 이상이며 가장 느린 두 노드는 κ 0인 목표 L을 가장 넓은 지연 간격에서 고른다. 그 L에서 p95와 p99 κ 표를 계산해 규칙이 κ로도 성립하는지와 두 백분위의 κ와 계산 시간을 비교한다.
+- 기준 요청률 `R_w`: Workload SLO 행에서 노드별 최대 κ의 합이다(`hack/kappa -mode slo`의 κ 합). GPU 하나는 인스턴스 하나가 쓰므로 세 Workload가 함께 쓰는 용량은 세 `R_w`의 합보다 작다. 단계 요청률은 Workload마다 `R_w`의 비율이고, 같은 비율에서 판단이 `Overload`인지가 결과에 들어간다.
+- 부하: `chill_loadgen replay --arrivals poisson`을 Workload마다 다른 seed로 동시에 보낸다. 세 요청률의 합은 캠페인 기록에서 ChillServer가 CPU limit 아래로 처리한 가장 큰 총 요청률 G 이하다. PLC 몫이 이 상한을 넘으면 G에서 다른 두 몫을 뺀 값으로 두고 그 값을 기록한다. 그래서 한계 단계의 초과는 POOL 용량에서 생긴다.
+
+| 단계 | 시간 | 요청률 (mobilenet, PLC, SmolVLM) | 재는 것 | 채우는 칸 |
+|---|---|---|---|---|
+| E5-0 시작 | 10분 | 모두 0 | Workload마다 측정 근거가 있는 노드의 첫 인스턴스, 나머지 가용 노드의 가장 낮은 모드, 무부하 전체 POOL 전력 | `SCH-AC-24`(세 Workload) |
+| E5-1 일정 | 30분 | 모두 0.3 `R_w` | Workload별 지연 분포와 처리 결과 수(완료, 실패, 거절, 취소, 미완료), 전체 POOL과 활성 POOL 에너지, 창별 예측 백분위와 관측 백분위 | [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가) 일정 부하와 이기종 워크로드 동시 혼합 부하 행, `SCH-AC-23`, [07 검증](../architecture-rethink/07-validation.md) 2번 |
+| E5-2 버스트 | 15분 | SmolVLM만 0.3에서 0.9 `R_w`, 나머지 0.3 `R_w` | 대응 시작까지 시간, GPU 노드(genesis2, genesis3, jetsono)에서 SmolVLM CUDA와 다른 Workload 인스턴스의 교체, Jetson 전력모드 변경이 같은 노드의 다른 Workload에 준 전환 중 지연 | 평가 표 갑작스러운 버스트 행, `SCH-AC-21` |
+| E5-3 증가 | 30분 | 모두 0.5, 0.7, 0.9 `R_w` 각 10분 | 확장 순서, 전환 구간 SLO, 판단의 `κ_new`, `B`, `W`와 관측 큐 | 평가 표 점진적인 증가와 감소 행(증가), `SCH-AC-15` |
+| E5-4 한계 | 15분 | 모두 1.2 `R_w` | `Overload` 판단과 최대 초과량 순서, Workload별 실제 지연과 처리 결과, 노드별 인스턴스와 전력모드 | 평가 표 전체 POOL의 한계를 넘는 부하 행, `SCH-AC-16` |
+| E5-5 급감과 재급증 | 20분 | 모두 0.3 `R_w` 10분, 0.9 `R_w` 10분 | 축소와 유휴 제거, 다시 확장, 반복 전환의 J와 시간 | 평가 표 전환 직후 급감과 재급증 행, 점진적인 증가와 감소 행(감소), `SCH-AC-15` |
+| E5-6 soak | 60분 | 모두 0.3 `R_w` | 1시간 예측 에너지 합과 비교 집합 실측, 전체 POOL 실측, `completionResidualNanos` 분포와 설정 여유 | 위 표 E5 행, [용량표 계획기](analytic-planner.md#11-확인) 에너지(실측) |
+
+- 모든 단계에서 Tick p50과 p99, ChillServer CPU와 RSS, `decision.capacity.cells`, 관측 PVC 증가를 기록한다. 세 Workload의 칸 크기 재검토(용량표 계획기 13장)가 이 값을 쓴다.
+- 평가 표의 분석 값은 Workload별 지연 분포와 처리 결과, 전환 구간을 포함한 전체 POOL 에너지, 활성 POOL 에너지다. 단계 경계와 seed, 단계별 `R_w`와 G, 사용한 profile과 설정이 실행 기록에 남는다.
+- 전체 약 3시간이다. 캠페인 중 비Jetson 노드에서 mobilenet과 PLC로 E5-3, E5-4, soak를 미리 도는 다중 Workload 시험은 E5 준비 근거이고 표 값에는 넣지 않는다.
 
 ### 9.3 검증 기록
 
