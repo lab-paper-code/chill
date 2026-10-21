@@ -122,6 +122,30 @@ automatic scheduler judgment나 power 측정 근거가 아니다.
 보낸다. 응답의 `error`가 있으면 0이 아닌 값으로 끝난다. ChillServer는 이 route를 `--operation-timeout`(기본 30분)까지
 기다린다.
 
+## 정적 배치 사용법
+
+정적 구성 비교와 고정 배치 기준선(`SCH-35`)은 자동제어 밖 Workload를 손으로 배치한다. 대상 Workload는
+`autonomousWorkloads`에 없어야 한다(`GET /api/v1/scheduler/settings`로 확인).
+
+1. prepare: manifest `{"kind": "prepare", "workloadUID": "<UID>", "profileID": "<ID>", "node": {"name": "<Node>",
+   "uid": "<Node UID>"}, "fixedBatchSize": 1}`를 `serving-operation --execute-config prepare.json --chill-server
+   https://<entrypoint> --chill-ca-file ca.crt --chill-token-file token`으로 보낸다. `profileID`는
+   `/api/v1/scheduler/profiles`에서 고르고 `fixedBatchSize`는 고정 배치 기준선에서만 준다. 준비한 instance는 그
+   Workload의 routing annotation을 받는다.
+2. 분배: `serving-scheduler` ConfigMap의 `scheduler.json` 최상위 `staticRouting`에 `{"<Workload UID>": {"<instance ID>":
+   1000}}`을 쓴다. instance ID는 `/api/v1/pools` 또는 `/api/v1/scheduler/state`의 snapshot에서 읽는다.
+   `PUT /api/v1/scheduler/settings` 본문은 `settings`만 받으므로 ConfigMap을 직접 고친다:
+   `kubectl -n chill-system patch cm serving-scheduler --type merge --patch-file cm-static.json`(patch 파일의
+   `data.scheduler.json`은 현재 내용 전체에 `staticRouting`을 더한 값이다). 반영은 `manual-static-routing` 동작의
+   `actual.routing`과 `/api/v1/scheduler/state`의 snapshot routing으로 확인한다([설정 API](scheduler-api.md)).
+3. remove: 그 Workload 항목을 `{}`로 바꿔 routing을 지우고 snapshot routing이 비면 instance마다 `{"kind": "remove",
+   "workloadUID": "<UID>", "node": {...}, "instance": "<instance ID>"}`를 보낸다. 끝나면 같은 patch로 `staticRouting`
+   항목을 지운다.
+
+r7 뒤 남은 계획기 Pod 다섯 개를 이 순서로 지웠다. routing을 `{}`로 바꾸고 약 5 s 뒤 snapshot routing이 비었고,
+remove 다섯 번이 모두 첫 시도에 `complete`로 끝났다. instance ID로 고르므로 계획기가 만든 `serving-<hash>` Pod도
+같은 방법으로 지운다.
+
 ## 원자 동작 측정의 격리
 
 측정 POOL은 taint `chill.dacs.io/measurement:NoSchedule`이 있는 Node다. ChillServer가 측정 객체에 따라

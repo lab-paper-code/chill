@@ -124,10 +124,7 @@ r7에서 ChillServer Pod를 지우자 새 Pod가 `observation directory already 
 
 수동 prepare와 remove, `staticRouting`은 명세의 정적 구성 비교와 고정 배치 기준선의 경로다(spec README 214행, `SCH-32`, `SCH-AC-20`, `SCH-33`, `SCH-35`, `DB-FR-33`). 측정에만 쓰던 경로는 측정 API가 지운다: `serving-operation --measurement-config`와 `POST /api/v1/measurements/operations`(측정 API commit 5), 손으로 하는 d 측정 절차와 `dispatchOccupancy` 설정(commit 8, `analytic-planner.md:29-34`). M5에 따로 지울 것은 없다.
 
-**정적 배치 사용법.** 대상 Workload는 `autonomousWorkloads`에 없어야 한다.
-1. prepare: `serving-operation --execute-config prepare.json --chill-server https://<entrypoint> --chill-ca-file ca.crt --chill-token-file token`, manifest `{"kind": "prepare", "workloadUID": "<UID>", "profileID": "<ID>", "node": {"name": "rasp5", "uid": "<Node UID>"}, "fixedBatchSize": 1}`. `profileID`는 `/api/v1/scheduler/profiles`에서, `fixedBatchSize`는 고정 배치 기준선(`SCH-35`)일 때만 준다. 준비한 인스턴스는 그 Workload의 routing annotation을 받는다.
-2. 분배: `serving-scheduler` ConfigMap의 `staticRouting`에 `{"<Workload UID>": {"<instance ID>": 1000}}`. 인스턴스 ID는 `/api/v1/pools`에서 읽는다. 빈 항목(`{}`)은 그 Workload의 routing을 지운다([설정 API](../serving/scheduler-api.md)).
-3. remove: 가중치를 0으로 바꾸고 처리 중 요청이 끝난 뒤 `{"kind": "remove", "workloadUID": "<UID>", "node": {...}, "instance": "<instance ID>"}`.
+사용법은 [Scheduler 운영 문서의 정적 배치 사용법](../serving/scheduler-operations.md#정적-배치-사용법)에 둔다.
 
 ## 8. S3 PutObject 재설정 (D-R6-7)
 
