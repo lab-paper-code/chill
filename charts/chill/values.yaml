@@ -502,6 +502,12 @@ servingEntrypoint:
       drop:
         - ALL
 
+# Image of the load Job a DispatchOccupancyMeasurement runs.
+loadGenerator:
+  image:
+    repository: daclab/chill-load-generator
+    tag: ""
+
 # Independent web process; the caller's bearer is never a pod credential.
 dashboard:
   enabled: false

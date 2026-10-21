@@ -31,6 +31,7 @@ FIRSTFLOOR_RKNN_PACKAGES ?= rknn-toolkit-lite2==2.3.2
 # --push publishes; --load keeps a single-platform build local.
 FIRSTFLOOR_OUTPUT ?= --push
 DASHBOARD_IMG ?= $(IMAGE_NAMESPACE)/chill-dashboard:$(IMAGE_TAG)
+LOAD_GENERATOR_IMG ?= $(IMAGE_NAMESPACE)/chill-load-generator:$(IMAGE_TAG)
 RKNN_CONVERTER_PYTHON ?= python3
 RKNN_SOURCE_ONNX ?=
 RKNN_TOOL_WHEEL ?=
@@ -440,6 +441,10 @@ docker-buildx-firstfloor-rknn: ## Build and push the arm64 RKNNLite runtime (hos
 docker-build-dashboard: ## Build the independent Dashboard image.
 	$(CONTAINER_TOOL) build -f build/docker/dashboard.Dockerfile -t $(DASHBOARD_IMG) .
 
+.PHONY: docker-build-load-generator
+docker-build-load-generator: ## Build the dispatch-occupancy load generator image.
+	$(CONTAINER_TOOL) build -f build/docker/load-generator.Dockerfile -t $(LOAD_GENERATOR_IMG) .
+
 .PHONY: docker-build-all
 docker-build-all: docker-build-operator docker-build-node-agent docker-build-profiler docker-build-console docker-build-metric-observer ## Build all component images.
 
@@ -465,6 +470,10 @@ docker-push-console: ## Push the Console API image.
 .PHONY: docker-push-dashboard
 docker-push-dashboard: ## Push the independent Dashboard image.
 	$(CONTAINER_TOOL) push $(DASHBOARD_IMG)
+
+.PHONY: docker-push-load-generator
+docker-push-load-generator: ## Push the dispatch-occupancy load generator image.
+	$(CONTAINER_TOOL) push $(LOAD_GENERATOR_IMG)
 
 .PHONY: docker-push-metric-observer
 docker-push-metric-observer: ## Push the MetricObserver image.
