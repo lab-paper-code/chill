@@ -1,11 +1,12 @@
 // Command power integrates whole and active POOL energy from fetched hourly
 // observation segments with the ChillServer OperatingPower reducer.
 //
-//	go run ./hack/observations/power --dir <dir>/obs --scheduler-config <file> --from <RFC3339> --to <RFC3339>
+//	go run ./hack/observations/power --dir <dir>/obs --metric-sources <file> --nodes <file> --from <RFC3339> --to <RFC3339>
 //
-// The scheduler configuration is the accepted ChillServer configuration of
-// the run (the scheduler ConfigMap value); its meters are the meter set the
-// server integrates. Catalog rows only resolve the recorded meter bodies.
+// The meter set is the one ChillServer derives: one wall meter per Profiler
+// metric source of the run (the facts ConfigMap metric-sources value) whose
+// Node exists in --nodes (kubectl get nodes -o json). Catalog rows only
+// resolve the recorded meter bodies.
 package main
 
 import (
@@ -19,19 +20,22 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/metricobserver"
+	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func main() {
 	dir := flag.String("dir", "", "directory of <hour>/<stream>.jsonl.gz segments")
 	from := flag.String("from", "", "interval start, RFC3339")
 	to := flag.String("to", "", "interval end, RFC3339")
-	config := flag.String("scheduler-config", "", "accepted scheduler configuration JSON of the run")
+	sources := flag.String("metric-sources", "", "Profiler metric-sources YAML of the run")
+	nodes := flag.String("nodes", "", "Node list JSON of the run (kubectl get nodes -o json)")
 	flag.Parse()
 	start, err := time.Parse(time.RFC3339Nano, *from)
 	end, endErr := time.Parse(time.RFC3339Nano, *to)
-	meters, metersErr := configuredMeters(*config)
+	meters, metersErr := derivedMeters(*sources, *nodes)
 	if err = errors.Join(err, endErr, metersErr); err == nil {
 		var result serving.OperatingPowerWindow
 		if result, err = run(*dir, meters, start, end); err == nil {
@@ -46,22 +50,38 @@ func main() {
 	}
 }
 
-// configuredMeters reads the meter declarations of a scheduler configuration.
-func configuredMeters(name string) ([]serving.OperatingPowerMeter, error) {
-	data, err := os.ReadFile(name)
+// derivedMeters builds the wall meters ChillServer derives from the Profiler
+// metric sources and the live Node identities.
+func derivedMeters(sourcesFile, nodesFile string) ([]serving.OperatingPowerMeter, error) {
+	raw, err := os.ReadFile(sourcesFile)
 	if err != nil {
 		return nil, err
 	}
-	var config struct {
-		Meters []servingkube.MeterDeclaration `json:"meters"`
-	}
-	if err := json.Unmarshal(data, &config); err != nil {
+	sources, err := profilerkube.DecodeMetricSources(raw)
+	if err != nil {
 		return nil, err
 	}
-	meters := make([]serving.OperatingPowerMeter, len(config.Meters))
-	for index, meter := range config.Meters {
-		meters[index] = serving.OperatingPowerMeter{
-			Node: meter.Node, Meter: meter.ID, Scope: meter.Scope, Source: meter.Source,
+	raw, err = os.ReadFile(nodesFile)
+	if err != nil {
+		return nil, err
+	}
+	var nodes corev1.NodeList
+	if err := json.Unmarshal(raw, &nodes); err != nil {
+		return nil, err
+	}
+	uids := map[string]string{}
+	for _, n := range nodes.Items {
+		uids[n.Name] = string(n.UID)
+	}
+	var meters []serving.OperatingPowerMeter
+	for _, s := range sources {
+		if uid := uids[s.Node]; uid != "" {
+			meters = append(meters, serving.OperatingPowerMeter{
+				Node: serving.NodeReference{Name: s.Node, UID: uid}, Meter: s.MeterID, Scope: "node-exclusive-wall",
+				Source: metricobserver.SourceIdentity{
+					Kind: s.Kind, NodeName: s.Node, Endpoint: s.Endpoint, Metric: s.PowerMetric, MetricLabels: s.MetricLabels,
+				},
+			})
 		}
 	}
 	return meters, nil

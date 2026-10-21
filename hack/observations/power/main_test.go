@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +16,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
 type nopWriter struct{}
@@ -39,7 +38,8 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	from := time.Now().UTC().Add(time.Second)
 	to := from.Add(10 * time.Second)
 	node := serving.NodeReference{Name: "node", UID: "node-uid"}
-	source := metricobserver.SourceIdentity{Kind: "edge-metrics", Endpoint: "http://meter/metrics", Metric: "wall_watts"}
+	source := metricobserver.SourceIdentity{Kind: "edge-metrics", NodeName: "node",
+		Endpoint: "http://meter:18766/prometheus?hostname=node", Metric: "wall_watts", MetricLabels: map[string]string{"hostname": "node"}}
 	instance := serving.SchedulerInstance{ID: "i", Node: node, Ready: true, WorkloadUID: "w"}
 	snapshot := serving.SchedulerSnapshot{At: from.Add(-time.Second), Instances: []serving.SchedulerInstance{instance}}
 	if err := log.SchedulerRecord(serving.SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
@@ -61,18 +61,51 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The accepted scheduler configuration names the meter set.
-	declaration, err := json.Marshal(map[string]any{"meters": []servingkube.MeterDeclaration{
-		{ID: "wall", Node: node, Scope: "node-exclusive-wall", Source: source},
-	}})
-	if err != nil {
+	// The run's Profiler metric sources and Nodes name the meter set.
+	files := t.TempDir()
+	sourcesFile, nodesFile := filepath.Join(files, "metric-sources.yaml"), filepath.Join(files, "nodes.json")
+	if err := os.WriteFile(sourcesFile, []byte(`schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha6
+sources:
+  - node: node
+    meterID: wall
+    kind: edge-metrics
+    endpoint: http://meter:18766/prometheus?hostname=node
+    powerMetric: wall_watts
+    metricLabels:
+      hostname: node
+    thermalEndpoint: http://thermal:9102/metrics
+    thermalMetrics:
+      observationAvailable: t_available
+      active: t_active
+      cpuCoreThrottleEvents: t_core
+      cpuPackageThrottleEvents: t_package
+      latched: t_latched
+      maximumTemperatureCelsius: t_max
+  - node: absent
+    meterID: other
+    kind: edge-metrics
+    endpoint: http://meter:18766/prometheus?hostname=absent
+    powerMetric: wall_watts
+    metricLabels:
+      hostname: absent
+    thermalEndpoint: http://thermal:9102/metrics
+    thermalMetrics:
+      observationAvailable: t_available
+      active: t_active
+      cpuCoreThrottleEvents: t_core
+      cpuPackageThrottleEvents: t_package
+      latched: t_latched
+      maximumTemperatureCelsius: t_max
+`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	configFile := filepath.Join(t.TempDir(), "scheduler.json")
-	if err := os.WriteFile(configFile, declaration, 0600); err != nil {
+	if err := os.WriteFile(nodesFile, []byte(`{"items":[{"metadata":{"name":"node","uid":"node-uid"}}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	meters, err := configuredMeters(configFile)
+	meters, err := derivedMeters(sourcesFile, nodesFile)
+	if err != nil || len(meters) != 1 || meters[0].Meter != "wall" || meters[0].Node != node || !reflect.DeepEqual(meters[0].Source, source) {
+		t.Fatalf("derived meters = %+v, %v", meters, err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
