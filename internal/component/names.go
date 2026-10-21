@@ -28,6 +28,13 @@ func NodeAgentActuationDaemonSetName(systemName string) string {
 	return defaultSystemName(systemName) + "-node-agent-actuation"
 }
 
+// LegacyNodeDaemonSetNames are the DaemonSets the node agent replaced:
+// node discovery, then the node actuator. The operator deletes them, the
+// actuator only once no retained transition depends on it.
+func LegacyNodeDaemonSetNames(systemName string) (discovery, actuator string) {
+	return defaultSystemName(systemName) + "-node-discovery", defaultSystemName(systemName) + "-node-actuator"
+}
+
 func NodeAgentConfigMapName(systemName string) string {
 	return defaultSystemName(systemName) + "-node-agent-config"
 }

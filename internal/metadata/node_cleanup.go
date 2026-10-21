@@ -29,3 +29,8 @@ func DeviceDiscoveryAnnotationKeys() []string {
 		DeviceClassDiscoveryClass,
 	}
 }
+
+// NodeActuationAnnotationKeys returns annotations written by the actuation agent.
+func NodeActuationAnnotationKeys() []string {
+	return []string{PowerActuator}
+}

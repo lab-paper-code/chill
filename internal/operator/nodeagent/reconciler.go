@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -16,6 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/component"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 )
 
 var daemonSetResource = schema.GroupResource{Group: "apps", Resource: "daemonsets"}
@@ -32,6 +35,7 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=nodeactuations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=list;patch
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=create;delete;get;list;patch;update;watch
 
 func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
@@ -59,6 +63,9 @@ func (r *Reconciler) reconcile(ctx context.Context, systemName string) (ctrl.Res
 	if !system.DeletionTimestamp.IsZero() || !spec.Enabled {
 		return r.stop(ctx, options)
 	}
+	if err := r.deleteLegacy(ctx, options); err != nil {
+		return ctrl.Result{}, err
+	}
 	config, err := r.loadConfig(ctx, options, spec.Actuation)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -84,20 +91,63 @@ func (r *Reconciler) reconcile(ctx context.Context, systemName string) (ctrl.Res
 }
 
 func (r *Reconciler) stop(ctx context.Context, options Options) (ctrl.Result, error) {
+	if err := r.deleteLegacy(ctx, options); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := r.deleteDaemonSet(ctx, options.Namespace, options.agentDaemonSetName()); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: options.ReconcileInterval}, r.stopActuation(ctx, options)
 }
 
+// deleteLegacy removes the DaemonSets the node agent replaced. The legacy
+// actuator goes only once no retained transition depends on it.
+func (r *Reconciler) deleteLegacy(ctx context.Context, options Options) error {
+	discovery, actuator := component.LegacyNodeDaemonSetNames(options.SystemName)
+	if err := r.deleteDaemonSet(ctx, options.Namespace, discovery); err != nil {
+		return err
+	}
+	safe, err := SafeToStop(ctx, r.Client, options.Namespace)
+	if err != nil || !safe {
+		return err
+	}
+	return r.deleteDaemonSet(ctx, options.Namespace, actuator)
+}
+
 // stopActuation deletes the actuation DaemonSet only once no retained
-// transition depends on it; otherwise the periodic requeue retries.
+// transition depends on it; otherwise the periodic requeue retries. Without
+// an actuation agent no read-back is current, so it is removed from Nodes.
 func (r *Reconciler) stopActuation(ctx context.Context, options Options) error {
 	safe, err := SafeToStop(ctx, r.Client, options.Namespace)
 	if err != nil || !safe {
 		return err
 	}
-	return r.deleteDaemonSet(ctx, options.Namespace, options.actuationDaemonSetName())
+	if err := r.deleteDaemonSet(ctx, options.Namespace, options.actuationDaemonSetName()); err != nil {
+		return err
+	}
+	return StripReadBack(ctx, r.Client)
+}
+
+// StripReadBack removes the actuation agent's power read-back from every Node.
+func StripReadBack(ctx context.Context, c client.Client) error {
+	nodes := &corev1.NodeList{}
+	if err := c.List(ctx, nodes); err != nil {
+		return fmt.Errorf("list Nodes to remove power read-back: %w", err)
+	}
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		if _, ok := node.Annotations[chillmeta.PowerActuator]; !ok {
+			continue
+		}
+		original := node.DeepCopy()
+		for _, key := range chillmeta.NodeActuationAnnotationKeys() {
+			delete(node.Annotations, key)
+		}
+		if err := c.Patch(ctx, node, client.MergeFrom(original)); err != nil {
+			return fmt.Errorf("remove power read-back from Node %q: %w", node.Name, err)
+		}
+	}
+	return nil
 }
 
 func (r *Reconciler) applyDaemonSet(

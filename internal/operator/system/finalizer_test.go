@@ -6,13 +6,16 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/component"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 )
 
@@ -40,6 +43,7 @@ func TestRemoveManagedNodeMetadata(t *testing.T) {
 				chillmeta.DeviceClassDiscoveryReason: chillmeta.DiscoveryReasonCatalogMatched,
 				chillmeta.DeviceClassDiscoveryClass:  "jetson-orin-nano-8g",
 				chillmeta.System:                     "chill",
+				chillmeta.PowerActuator:              `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":2}}`,
 				"manual.edge.dacs.io/annotation":     manualMetadataValue,
 			},
 		},
@@ -54,7 +58,8 @@ func TestRemoveManagedNodeMetadata(t *testing.T) {
 	if node.Labels["manual"] != manualMetadataValue {
 		t.Fatalf("manual label = %q, want %s", node.Labels["manual"], manualMetadataValue)
 	}
-	if node.Annotations[chillmeta.ManagedBy] != "" || node.Annotations[chillmeta.DeviceClassDiscoveryResult] != "" || node.Annotations[chillmeta.System] != "" {
+	if node.Annotations[chillmeta.ManagedBy] != "" || node.Annotations[chillmeta.DeviceClassDiscoveryResult] != "" || node.Annotations[chillmeta.System] != "" ||
+		node.Annotations[chillmeta.PowerActuator] != "" {
 		t.Fatalf("managed annotations were not removed: %#v", node.Annotations)
 	}
 	if node.Annotations["manual.edge.dacs.io/annotation"] != manualMetadataValue {
@@ -200,5 +205,43 @@ func TestFinalizeRetainsSystemWhileNodeActuationNeedsOperand(t *testing.T) {
 	}
 	if done {
 		t.Fatal("finalize completed while a NodeActuation still needed the operand")
+	}
+}
+
+func TestFinalizeDeletesLegacyNodeDaemonSets(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{appsv1.AddToScheme, corev1.AddToScheme, edgev1alpha1.AddToScheme} {
+		if err := add(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+	system := &edgev1alpha1.ChillSystem{
+		ObjectMeta: metav1.ObjectMeta{Name: "chill"},
+		Spec:       edgev1alpha1.ChillSystemSpec{ManagementNamespace: "chill-system"},
+	}
+	discovery, actuator := component.LegacyNodeDaemonSetNames("chill")
+	objects := []client.Object{system}
+	for _, name := range []string{discovery, actuator} {
+		objects = append(objects, &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: name}})
+	}
+	reconciler := &ChillSystemReconciler{
+		Client:  fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build(),
+		Options: Options{Namespace: "chill-system"},
+	}
+	done := false
+	for range 3 {
+		var err error
+		if done, err = reconciler.finalize(ctx, system); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !done {
+		t.Fatal("finalize did not complete")
+	}
+	for _, name := range []string{discovery, actuator} {
+		if err := reconciler.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: name}, &appsv1.DaemonSet{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("legacy DaemonSet %s remains: %v", name, err)
+		}
 	}
 }

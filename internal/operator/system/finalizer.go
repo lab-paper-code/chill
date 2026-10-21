@@ -23,9 +23,11 @@ func (r *ChillSystemReconciler) finalize(ctx context.Context, system *edgev1alph
 	if err != nil || !safe {
 		return false, err
 	}
+	legacyDiscovery, legacyActuator := component.LegacyNodeDaemonSetNames(system.Name)
 	for _, name := range []string{
 		component.NodeAgentActuationDaemonSetName(system.Name),
 		component.NodeAgentDaemonSetName(system.Name),
+		legacyActuator, legacyDiscovery,
 	} {
 		if done, err := r.deleteDaemonSet(ctx, types.NamespacedName{Namespace: namespace, Name: name}); err != nil || !done {
 			return done, err
@@ -92,6 +94,7 @@ func removeManagedNodeMetadata(node *corev1.Node, systemName string) bool {
 	}
 
 	changed = deleteMapKeys(annotations, chillmeta.DeviceDiscoveryAnnotationKeys()...) || changed
+	changed = deleteMapKeys(annotations, chillmeta.NodeActuationAnnotationKeys()...) || changed
 	changed = deleteMapKeys(annotations, chillmeta.System) || changed
 
 	if len(labels) == 0 && node.Labels != nil {
