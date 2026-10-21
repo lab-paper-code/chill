@@ -44,10 +44,12 @@ measurement Pods tolerate it. Because CHILL creates serving Pods with
 on, lowers, or changes the power of a tainted Node, and checks the taint right
 before a Workload prepare or power change. A taint denies by default, so a
 forgotten removal only leaves a Node unused. M3
-([single-writer node state](../design/architecture-rethink/03-b2-single-writer-node-state.md))
-automates adding and removing the same taint from measurement objects and adds
-refusal of a serving Node, power-change fencing and creation of the
-transition-cost runner.
+([measurement admission](../design/serving/measurement-admission.md)) makes
+ChillServer the only writer of the same taint: it admits a measurement object
+onto an empty Node with the object's UID as the taint value, refuses a Node that
+runs a CHILL serving instance, uses that UID as the fencing token on power
+changes, creates the transition-cost runner, and removes the taint when the
+object ends or disappears.
 
 Measured evidence selects itself. Every successfully completed profile, operation
 cost, idle baseline and power-mode transition cost under its fixed location is
