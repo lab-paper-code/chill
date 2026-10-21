@@ -737,8 +737,9 @@ discovery:
 
 # One node-agent image runs two DaemonSets. The agent on every Node publishes
 # hardware signature and online-CPU metadata without privilege. The actuation
-# agent applies NodeActuations on the Nodes selected by the nodeSelector of
-# each DeviceClass named in powerActuation.policies.
+# agent applies the power mode the chill.dacs.io/power-mode Node label names on
+# the Nodes selected by the nodeSelector of each DeviceClass named in
+# powerActuation.policies.
 nodeAgent:
   enabled: true
   hostNetwork: true
@@ -901,7 +902,6 @@ nodeAgent:
     enabled: false
     metricsBindAddress: "0"
     healthProbePort: 8081
-    leaseDurationSeconds: 30
     updateStrategy:
       type: RollingUpdate
       rollingUpdate:

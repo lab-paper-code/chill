@@ -25,9 +25,6 @@ type options struct {
 	signatureFile    string
 	interval         time.Duration
 	once             bool
-	watchNamespace   string
-	leaseNamespace   string
-	leaseDuration    int
 	allowedPolicies  policyListFlag
 	jetsonCommand    stringListFlag
 	jetsonTimeout    time.Duration
@@ -40,7 +37,7 @@ type options struct {
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.BoolVar(&o.actuate, "actuate", false,
-		"Apply NodeActuations on the assigned Node instead of publishing discovery metadata.")
+		"Apply the desired power mode the assigned Node's label names instead of publishing discovery metadata.")
 	flags.StringVar(&o.nodeName, "node-name", o.nodeName, "Exact assigned Kubernetes Node name.")
 	flags.StringVar(&o.systemName, "system-name", o.systemName, "ChillSystem name that owns this node agent.")
 	flags.StringVar(&o.hostRoot, "host-root", "/host", "Root path containing read-only host mounts.")
@@ -48,9 +45,6 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		"YAML file containing node discovery signatures.")
 	flags.DurationVar(&o.interval, "interval", 10*time.Second, "How often to refresh node discovery metadata.")
 	flags.BoolVar(&o.once, "once", false, "Run one discovery pass and exit.")
-	flags.StringVar(&o.watchNamespace, "watch-namespace", o.watchNamespace, "Namespace containing NodeActuation handoffs.")
-	flags.StringVar(&o.leaseNamespace, "lease-namespace", o.leaseNamespace, "Namespace containing Node-UID Leases.")
-	flags.IntVar(&o.leaseDuration, "lease-duration-seconds", 30, "Node-UID Lease duration in seconds.")
 	flags.Var(
 		&o.allowedPolicies, "allowed-policy",
 		"Authorized actuation-policy JSON object; repeatable.",
@@ -79,8 +73,7 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 
 func (o options) validateActuation() error {
 	for name, value := range map[string]string{
-		"node name": o.nodeName, "watch namespace": o.watchNamespace,
-		"Lease namespace": o.leaseNamespace, "metrics bind address": o.metricsAddr,
+		"node name": o.nodeName, "metrics bind address": o.metricsAddr,
 		"health probe bind address": o.probeAddr, "Kubernetes API token file": o.kubeAPITokenFile,
 		"Kubernetes API CA file": o.kubeAPICAFile,
 	} {
@@ -90,14 +83,6 @@ func (o options) validateActuation() error {
 	}
 	if len(validation.IsDNS1123Subdomain(o.nodeName)) != 0 {
 		return errors.New("node name must be a valid DNS subdomain")
-	}
-	for _, namespace := range []string{o.watchNamespace, o.leaseNamespace} {
-		if len(validation.IsDNS1123Label(namespace)) != 0 {
-			return fmt.Errorf("invalid namespace %q", namespace)
-		}
-	}
-	if o.leaseDuration < 5 || o.leaseDuration > 300 {
-		return errors.New("Lease duration must be between 5 and 300 seconds")
 	}
 	if len(o.allowedPolicies) == 0 {
 		return errors.New("at least one actuation policy is required")

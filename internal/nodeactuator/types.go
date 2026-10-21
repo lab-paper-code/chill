@@ -5,7 +5,6 @@ package nodeactuator
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -13,11 +12,6 @@ const (
 	ActuatorKindJetsonNVPModel       = "JetsonNVPModel"
 	ActuatorKindNvidiaLockedGPUClock = "NvidiaLockedGPUClock"
 )
-
-type ObjectIdentity struct {
-	Name string
-	UID  string
-}
 
 type Target struct {
 	Kind                 string
@@ -35,68 +29,19 @@ type NvidiaLockedGPUClockTarget struct {
 	Mode   *int32
 }
 
-// Request is the verified durable transition presented to the lock and
-// host-adapter state machine. It is not evidence that mutation has occurred.
+// Request is one host read or apply: the mode and its typed target, bounded
+// by Deadline. It is not evidence that mutation has occurred.
 type Request struct {
-	Transition                  ObjectIdentity
-	Generation                  int64
-	Node                        ObjectIdentity
-	DeviceClass                 string
-	PowerMode                   string
-	Target                      Target
-	PolicyName                  string
-	SettlingDurationSeconds     int32
-	MaxActuationDurationSeconds int32
-	Deadline                    time.Time
-	StageRequestedAt            time.Time
+	PowerMode string
+	Target    Target
+	Deadline  time.Time
 }
 
-func (r Request) ValidateForNode(assigned ObjectIdentity) error {
-	for field, identity := range map[string]ObjectIdentity{
-		"transition": r.Transition, "Node": r.Node, "assigned Node": assigned,
-	} {
-		if err := identity.Validate(); err != nil {
-			return fmt.Errorf("validate %s identity: %w", field, err)
-		}
-	}
-	if r.Node != assigned {
-		return errors.New("transition Node identity does not match this NodeActuator instance")
-	}
-	if r.Generation < 1 {
-		return errors.New("transition generation must be positive")
-	}
-	for field, value := range map[string]string{
-		"deviceClass": r.DeviceClass, "powerMode": r.PowerMode,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("transition %s is required without surrounding whitespace", field)
-		}
-	}
-	if err := r.Target.Validate(); err != nil {
-		return fmt.Errorf("validate transition target: %w", err)
-	}
-	if strings.TrimSpace(r.PolicyName) == "" || strings.TrimSpace(r.PolicyName) != r.PolicyName {
-		return errors.New("transition policy identity is required without surrounding whitespace")
-	}
-	if r.SettlingDurationSeconds < 1 || r.SettlingDurationSeconds > 86_400 {
-		return errors.New("transition settling duration must be between 1 second and 24 hours")
-	}
-	if r.MaxActuationDurationSeconds <= r.SettlingDurationSeconds ||
-		r.MaxActuationDurationSeconds > 86_400 {
-		return errors.New("transition maximum duration must exceed settling and be at most 24 hours")
-	}
-	if r.StageRequestedAt.IsZero() || r.Deadline.IsZero() || !r.StageRequestedAt.Before(r.Deadline) {
-		return errors.New("transition stage request and deadline are invalid")
-	}
-	return nil
-}
-
-func (i ObjectIdentity) Validate() error {
-	if strings.TrimSpace(i.Name) == "" || strings.TrimSpace(i.Name) != i.Name ||
-		strings.TrimSpace(i.UID) == "" || strings.TrimSpace(i.UID) != i.UID {
-		return errors.New("name and UID are required without surrounding whitespace")
-	}
-	return nil
+// Observation is one independent host read-back.
+type Observation struct {
+	PowerMode  string
+	Target     Target
+	ObservedAt time.Time
 }
 
 func (t Target) Validate() error {

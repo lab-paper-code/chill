@@ -241,9 +241,9 @@ daclab/chill-node-agent:<chart appVersion>
 
 The node agent runs as two DaemonSets from that image. `chill-node-agent`
 publishes hardware signature and online-CPU metadata on every Node.
-`chill-node-agent-actuation` (`nodeAgent.actuation.enabled`) applies
-NodeActuations on the Nodes selected by the `nodeSelector` of each DeviceClass
-named in `powerActuation.policies`.
+`chill-node-agent-actuation` (`nodeAgent.actuation.enabled`) applies the
+power mode the `chill.dacs.io/power-mode` Node label names on the Nodes selected
+by the `nodeSelector` of each DeviceClass named in `powerActuation.policies`.
 
 Once the system is installed, CHILL publishes a cluster-scoped status object:
 

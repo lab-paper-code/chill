@@ -123,7 +123,6 @@ func nodeAgentIntegrationConfig(deviceClass string) nodeagent.Config {
 		},
 		Actuation: &nodeagent.ActuationConfig{
 			ServiceAccountName: "chill-node-agent-actuation", MetricsBindAddress: "0", HealthProbePort: 8081,
-			LeaseDurationSeconds: 30,
 			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
 				Type:          appsv1.RollingUpdateDaemonSetStrategyType,
 				RollingUpdate: &appsv1.RollingUpdateDaemonSet{MaxUnavailable: &maxUnavailable},

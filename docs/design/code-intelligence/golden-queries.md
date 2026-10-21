@@ -101,10 +101,13 @@ batch-energy optimization reconciler's `SetupWithManager`. Registration in
 `internal/profiling/campaign/controller/setup.go` uses:
 
 ```text
-For(BatchEnergyOptimization) + Owns(NodeActuation) + Owns(ProfilingRun)
+For(BatchEnergyOptimization) + Owns(ProfilingRun)
   -> controller-runtime event delivery
   -> BatchEnergyOptimizationReconciler.Reconcile
 ```
+
+The reconciler polls the target Node's power mode with `RequeueAfter` while it
+settles.
 
 The reconciler lists labeled child Runs and the projection verifies the exact
 controller-owner UID before pure decision logic is called. Required evidence:

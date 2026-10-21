@@ -127,7 +127,6 @@ func TestActuationDaemonSetKeepsActuatorPrivileges(t *testing.T) {
 		!hasArg(container.Args, "--kube-api-server=https://kubernetes.example:6443") ||
 		!hasArg(container.Args, "--kube-api-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token") ||
 		!hasArg(container.Args, "--kube-api-ca-file=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt") ||
-		!hasArg(container.Args, "--watch-namespace=chill-system") ||
 		!hasFieldEnvironment(container.Env, "NODE_NAME", "spec.nodeName") {
 		t.Fatalf("actuation container = %#v", container)
 	}
@@ -305,7 +304,6 @@ func validConfig() Config {
 		},
 		Actuation: &ActuationConfig{
 			ServiceAccountName: "chill-node-agent-actuation", MetricsBindAddress: "0", HealthProbePort: 8081,
-			LeaseDurationSeconds: 30,
 			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
 				Type:          appsv1.RollingUpdateDaemonSetStrategyType,
 				RollingUpdate: &appsv1.RollingUpdateDaemonSet{MaxUnavailable: &maxUnavailable},

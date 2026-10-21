@@ -72,7 +72,7 @@ func buildActuationDaemonSet(
 	if err != nil {
 		return nil, err
 	}
-	args, err := actuationArgs(options, config)
+	args, err := actuationArgs(config)
 	if err != nil {
 		return nil, err
 	}
@@ -206,13 +206,10 @@ func kubeAPIArgs(config Config) []string {
 	)
 }
 
-func actuationArgs(options Options, config Config) ([]string, error) {
+func actuationArgs(config Config) ([]string, error) {
 	actuation := config.Actuation
 	args := []string{
 		"--actuate",
-		"--watch-namespace=" + options.Namespace,
-		"--lease-namespace=" + options.Namespace,
-		fmt.Sprintf("--lease-duration-seconds=%d", actuation.LeaseDurationSeconds),
 		"--metrics-bind-address=" + actuation.MetricsBindAddress,
 		fmt.Sprintf("--health-probe-bind-address=:%d", actuation.HealthProbePort),
 	}

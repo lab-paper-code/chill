@@ -26,12 +26,6 @@ rules:
       - services
     verbs:
       - get
-  - apiGroups:
-      - edge.dacs.io
-    resources:
-      - nodeactuations
-    verbs:
-      - get
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

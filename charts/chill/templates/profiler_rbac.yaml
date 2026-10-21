@@ -70,15 +70,6 @@ rules:
       - get
       - patch
   - apiGroups:
-      - edge.dacs.io
-    resources:
-      - nodeactuations
-    verbs:
-      - create
-      - get
-      - list
-      - watch
-  - apiGroups:
       - ""
     resources:
       - configmaps

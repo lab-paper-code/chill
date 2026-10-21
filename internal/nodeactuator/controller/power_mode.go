@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metadata"
@@ -20,6 +22,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
+
+const maximumStatusMessage = 1024
+
+// HostActuator applies and independently reads back the host power mode.
+type HostActuator interface {
+	Observe(context.Context, nodeactuator.Request) (nodeactuator.Observation, error)
+	Apply(context.Context, nodeactuator.Request, nodeactuator.Target) error
+}
 
 // PowerModeReconciler is the only mutator of its Node's host power state. It
 // applies the mode the Node's desired power-mode label names and publishes
@@ -306,4 +316,28 @@ func projectTarget(actuator edgev1alpha1.PowerModeActuator) nodeactuator.Target 
 		}
 	}
 	return target
+}
+
+func projectAPITarget(target nodeactuator.Target) edgev1alpha1.PowerModeActuator {
+	projected := edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorKind(target.Kind)}
+	if target.JetsonNVPModel != nil {
+		projected.JetsonNVPModel = &edgev1alpha1.JetsonNVPModelTarget{ID: target.JetsonNVPModel.ID}
+	}
+	if target.NvidiaLockedGPUClock != nil {
+		projected.NvidiaLockedGPUClock = &edgev1alpha1.NvidiaLockedGPUClockTarget{
+			MinMHz: target.NvidiaLockedGPUClock.MinMHz,
+			MaxMHz: target.NvidiaLockedGPUClock.MaxMHz,
+			Mode:   target.NvidiaLockedGPUClock.Mode,
+		}
+	}
+	return projected
+}
+
+func truncateStatusMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if utf8.RuneCountInString(message) <= maximumStatusMessage {
+		return message
+	}
+	runes := []rune(message)
+	return string(runes[:maximumStatusMessage])
 }

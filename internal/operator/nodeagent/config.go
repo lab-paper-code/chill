@@ -65,17 +65,16 @@ type ReadOnlyHostPath struct {
 // ActuationConfig is the privileged DaemonSet that applies the desired power
 // mode on Nodes of the DeviceClasses named by its policies.
 type ActuationConfig struct {
-	ServiceAccountName   string                             `json:"serviceAccountName"`
-	MetricsBindAddress   string                             `json:"metricsBindAddress"`
-	HealthProbePort      int32                              `json:"healthProbePort"`
-	LeaseDurationSeconds int32                              `json:"leaseDurationSeconds"`
-	Policies             []actuatorcore.ActuationPolicySpec `json:"policies"`
-	JetsonNVPModel       *JetsonNVPModelConfig              `json:"jetsonNVPModel,omitempty"`
-	Tolerations          []corev1.Toleration                `json:"tolerations,omitempty"`
-	Resources            corev1.ResourceRequirements        `json:"resources,omitempty"`
-	PodSecurityContext   *corev1.PodSecurityContext         `json:"podSecurityContext,omitempty"`
-	SecurityContext      *corev1.SecurityContext            `json:"securityContext,omitempty"`
-	UpdateStrategy       appsv1.DaemonSetUpdateStrategy     `json:"updateStrategy"`
+	ServiceAccountName string                             `json:"serviceAccountName"`
+	MetricsBindAddress string                             `json:"metricsBindAddress"`
+	HealthProbePort    int32                              `json:"healthProbePort"`
+	Policies           []actuatorcore.ActuationPolicySpec `json:"policies"`
+	JetsonNVPModel     *JetsonNVPModelConfig              `json:"jetsonNVPModel,omitempty"`
+	Tolerations        []corev1.Toleration                `json:"tolerations,omitempty"`
+	Resources          corev1.ResourceRequirements        `json:"resources,omitempty"`
+	PodSecurityContext *corev1.PodSecurityContext         `json:"podSecurityContext,omitempty"`
+	SecurityContext    *corev1.SecurityContext            `json:"securityContext,omitempty"`
+	UpdateStrategy     appsv1.DaemonSetUpdateStrategy     `json:"updateStrategy"`
 }
 
 type JetsonNVPModelConfig struct {
@@ -186,9 +185,6 @@ func (c ActuationConfig) problems() []string {
 	}
 	if c.HealthProbePort < 1 || c.HealthProbePort > 65535 {
 		problems = append(problems, "actuation.healthProbePort must be between 1 and 65535")
-	}
-	if c.LeaseDurationSeconds < 5 || c.LeaseDurationSeconds > 300 {
-		problems = append(problems, "actuation.leaseDurationSeconds must be between 5 and 300")
 	}
 	switch c.UpdateStrategy.Type {
 	case appsv1.RollingUpdateDaemonSetStrategyType:

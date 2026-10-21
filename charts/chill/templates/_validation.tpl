@@ -97,9 +97,6 @@
 {{- if or (lt (int $actuation.healthProbePort) 1) (gt (int $actuation.healthProbePort) 65535) -}}
 {{- fail "nodeAgent.actuation.healthProbePort must be between 1 and 65535 when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}
-{{- if or (lt (int $actuation.leaseDurationSeconds) 5) (gt (int $actuation.leaseDurationSeconds) 300) -}}
-{{- fail "nodeAgent.actuation.leaseDurationSeconds must be between 5 and 300 when nodeAgent.actuation.enabled=true" -}}
-{{- end -}}
 {{- if empty $actuation.updateStrategy.type -}}
 {{- fail "nodeAgent.actuation.updateStrategy.type must not be empty when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}

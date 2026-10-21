@@ -11,8 +11,7 @@ import (
 func TestOptionsRequireExactNodeAndPolicyInputs(t *testing.T) {
 	t.Parallel()
 	valid := options{
-		nodeName: "jetsonx", watchNamespace: "chill-system",
-		leaseNamespace: "chill-system", leaseDuration: 30,
+		nodeName: "jetsonx",
 		allowedPolicies: []nodeactuator.ActuationPolicySpec{{
 			Name: "xavier-mode", DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
 			ActuatorKind:            nodeactuator.ActuatorKindJetsonNVPModel,
