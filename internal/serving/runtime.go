@@ -755,6 +755,7 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 				i.outstanding++
 			}
 		}
+		r.finishAbsentLocked(candidate.State)
 	}
 	for id, i := range r.instances {
 		if !seen[id] && i.outstanding == 0 {
@@ -765,6 +766,32 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 	r.dispatchLocked()
 	r.signal()
 	return nil
+}
+
+// finishAbsentLocked finishes the calls whose native exchange ended without
+// any native record (no progress, so the native never queued them) when a
+// native state read after that exchange does not hold them: nothing will
+// execute or report them. A held call waits for its native completion.
+func (r *Runtime) finishAbsentLocked(state InstanceState) {
+	if state.Native == nil {
+		return
+	}
+	held := map[string]bool{}
+	for _, request := range state.Native.Requests {
+		held[request.Context.RequestID] = true
+	}
+	for _, c := range r.calls {
+		if c.assignment == nil || c.assignment.Instance != state.ID || c.backendDone || !c.transportDone || c.progress != nil ||
+			held[c.receipt.ID] || !state.ObservedAt.After(c.exchangeFinishedAt) {
+			continue
+		}
+		c.backendDone = true
+		c.phase = phaseFinished
+		if err := r.event(c, "backend_finished", "error", "NativeRequestAbsent"); err != nil {
+			r.observationError = err
+		}
+		r.releaseLocked(c)
+	}
 }
 
 func profilePath(d *Definition, p *Profile) *ModelPath {

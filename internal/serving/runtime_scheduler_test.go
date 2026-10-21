@@ -390,6 +390,78 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	assertSchedulerTerminationReleasesCall(t, r, second, secondReceipt, canceled, exchanged)
 }
 
+// m4 r6: a call whose native exchange ended in 502 with no native record of it
+// stayed outstanding (phase assigned) and drain waited forever. A native state
+// read after the exchange that does not hold the request finishes it; one
+// that still holds it keeps the call until its native completion.
+func TestErrorExchangeWithoutNativeRecordFinishesForDrain(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	d := snapshot.Workloads[0]
+	p := snapshot.Instances[0].Profile
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := observationLog.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.cancel()
+	r.SetProfiles([]Profile{*p})
+	if err = r.Publish(d); err != nil {
+		t.Fatal(err)
+	}
+	instance := func(held ...string) ReadyInstance {
+		state := &native.State{Ready: true}
+		for _, id := range held {
+			state.Requests = append(state.Requests, native.RequestState{Context: native.RequestContext{RequestID: id}, Phase: "queued"})
+		}
+		return ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), Native: state}, Profile: p, Weight: 1, Capacity: 4,
+			Execute: func(context.Context, Dispatch) (BackendResult, error) {
+				return BackendResult{StatusCode: 502}, failure("BackendUnavailable", "native backend did not complete a valid exchange")
+			}}
+	}
+	if err = r.InstallInstances([]ReadyInstance{instance()}); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := r.Receive(d.Name, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt.Deadline = time.Now().Add(time.Minute)
+	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = call.Wait(context.Background()); err == nil {
+		t.Fatal("502 exchange succeeded")
+	}
+	if err = r.Response(receipt, "error", "BackendUnavailable"); err != nil {
+		t.Fatal(err)
+	}
+	outstanding := func() int { return len(r.SchedulerInputs(time.Now).Outstanding) }
+	if outstanding() != 1 {
+		t.Fatal("a call is finished before any native state after its exchange")
+	}
+	if err = r.InstallInstances([]ReadyInstance{instance(receipt.ID)}); err != nil {
+		t.Fatal(err)
+	}
+	if outstanding() != 1 {
+		t.Fatal("a call the native still holds was finished")
+	}
+	if err = r.InstallInstances([]ReadyInstance{instance()}); err != nil {
+		t.Fatal(err)
+	}
+	if detached, err := r.DetachInstance("i1"); err != nil || !detached || outstanding() != 0 {
+		t.Fatalf("drain still waits for a call the native does not hold: %v %v %d", detached, err, outstanding())
+	}
+}
+
 func assertSchedulerTerminationReleasesCall(t *testing.T, r *Runtime, second *Call, secondReceipt Receipt, canceled context.Context, exchanged <-chan struct{}) {
 	t.Helper()
 	_, err := second.Wait(canceled)

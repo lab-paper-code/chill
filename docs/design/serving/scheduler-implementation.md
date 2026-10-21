@@ -184,6 +184,10 @@ identity/state, route의 실제 분배·대상 조건, stop의 실제 중지·�
 확인하며 효과가 사라졌으면 새로운 실행 가능한 동작을 생성한다. 검증된 run으로 다음
 stop→drain→remove 의존성을 진행하며, 실제 target·소비 수치 변경은 다시 적용한다.
 새 policy 수치 적용 중에도 이미 traffic이 옮겨진 이전 source의 정리는 굶기지 않는다.
+outstanding은 native 완료 기록이 올 때까지 남는다. native 교환이 완료 증거 없이 끝났고(502, 504, 취소)
+그 요청의 native 진행 기록이 하나도 없으면, 교환이 끝난 뒤 시작한 native state 읽기에 그 요청이 없을 때
+`backend_finished`(`NativeRequestAbsent`)로 끝낸다. native가 받지 않은 요청은 완료 기록을 내지 않으므로,
+이 규칙이 없으면 drain이 끝나지 않는다(m4 r6).
 단 gateway routing map 일치만으로 handoff를 인정하지 않는다. 기존 complete route의
 Ready·profile·allocation·native policy ACK와 새 target의 typed completion proof 및
 actual routing이 모두 일치할 때만 기존 handoff로 stop 의존성을 충족한다. 처음
