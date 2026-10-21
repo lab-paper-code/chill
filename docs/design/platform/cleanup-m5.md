@@ -134,7 +134,7 @@ r7에서 ChillServer Pod를 지우자 새 Pod가 `observation directory already 
 - 오류는 `serving/observations.v1alpha5/<시간>/{requests,scheduler}.jsonl.gz`의 PutObject `write: connection reset by peer`, 시도 3번이다(r6 T04 05:42-06:04, r7 T06 07:01:59, 07:02:53).
 - 읽기 전용 store 목록에서 T04 object는 05:00:32-34, T06 object는 07:00:07-10에 이미 있었다. 모든 재설정은 있는 object를 다시 올린 요청이고 잃은 기록은 없다.
 - archive는 1분마다(`server.go:156`) 지우지 않은 지난 시간을 모두 다시 올렸다. 올리기는 `If-None-Match: *`다(`evidencestore/s3/store.go:46-52`). 재설정은 store가 본문 전송 중에 412로 답하고 연결을 닫을 때 생긴다 `[추론]`.
-- commit 2(`bfb4563`)는 이 process가 올린 (시간, stream)을 기억해 다시 올리지 않고, 실패한 stream만 다음 archive에서 다시 올린다. 지난 시간은 더 바뀌지 않는다(쓰기는 지금 시간 이후를 고른다). key와 형식은 그대로이고 재시작 뒤 첫 올리기는 `Existing`이다.
+- commit 2(`bfb4563`)는 이 process가 모든 stream을 올린 시간을 기억해 다시 올리지 않는다. 한 stream이라도 실패한 시간은 다음 archive에서 모든 stream을 다시 올리고, 이미 있는 stream은 `Existing`이다. 지난 시간은 더 바뀌지 않는다(쓰기는 지금 시간 이후를 고른다). key와 형식은 그대로이고 재시작 뒤 첫 올리기는 `Existing`이다.
 
 ## 9. 범위 밖
 

@@ -193,8 +193,8 @@ type observationCatalogEntry struct {
 type ObservationLog struct {
 	mu        sync.Mutex
 	publishMu sync.Mutex
-	// archived holds the past hour streams this process stored, under publishMu.
-	archived map[string]bool
+	// archived holds the past hours whose streams this process stored, under publishMu.
+	archived map[time.Time]bool
 	config   ObservationLogConfig
 	root     string
 	started  time.Time
@@ -219,7 +219,7 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 		config: config, root: filepath.Join(config.Directory, observationVersion), started: time.Now().UTC(),
 		now: func() time.Time { return time.Now().UTC() }, files: map[string]*os.File{},
 		retained: map[string]*Definition{}, open: map[string]*RequestRow{}, catalog: map[string]observationCatalogEntry{},
-		archived: map[string]bool{},
+		archived: map[time.Time]bool{},
 	}
 	if err := os.MkdirAll(l.root, 0700); err != nil {
 		return nil, err
@@ -558,10 +558,12 @@ func (l *ObservationLog) ManagementEvent(event ManagementEvent) error {
 const observationArchivePrefix = "serving/observations." + observationVersion + "/"
 
 // archive uploads each past hour as one gzip object per stream. Equal input
-// makes equal bytes, so a repeated upload is Existing and nothing records
-// upload state. An hour is deleted once every stream succeeds in one pass and
-// the hour ended at least an hour ago. The oldest hour holding the assigned
-// row of an unsettled request, and every later hour, stay for RestartDrain.
+// makes equal bytes, so a repeated upload is Existing. A past hour no longer
+// changes, so an hour whose streams all succeeded is marked and not sent
+// again; after a partial failure every stream of the hour is sent again. An
+// hour is deleted once it is marked and ended at least an hour ago. The oldest
+// hour holding the assigned row of an unsettled request, and every later
+// hour, stay for RestartDrain.
 func (l *ObservationLog) archive(ctx context.Context) error {
 	l.publishMu.Lock()
 	defer l.publishMu.Unlock()
@@ -580,25 +582,15 @@ func (l *ObservationLog) archive(ctx context.Context) error {
 			continue
 		}
 		var failed error
-		for _, stream := range observationStreams {
-			// A past hour no longer changes, so a stored stream is not sent again.
-			key := observationHour(hour) + "/" + stream
-			if l.archived[key] {
-				continue
+		if !l.archived[hour] {
+			for _, stream := range observationStreams {
+				failed = errors.Join(failed, l.upload(ctx, hour, stream))
 			}
-			if err := l.upload(ctx, hour, stream); err != nil {
-				failed = errors.Join(failed, err)
-				continue
-			}
-			l.archived[key] = true
+			l.archived[hour] = failed == nil
 		}
 		deleting = deleting && failed == nil && !now.Before(hour.Add(2*time.Hour))
 		if deleting {
-			if deleting, failed = l.removeHour(hour); deleting {
-				for _, stream := range observationStreams {
-					delete(l.archived, observationHour(hour)+"/"+stream)
-				}
-			}
+			deleting, failed = l.removeHour(hour)
 		}
 		result = errors.Join(result, failed)
 	}

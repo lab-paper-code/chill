@@ -275,10 +275,10 @@ func seedObservationMinutes(t *testing.T, observationLog *ObservationLog, clock 
 	}
 }
 
-// A past hour no longer changes, so each stream is stored once per process and
-// only a failed stream is sent again. Re-sending stored hours every minute
-// drew S3 connection resets (D-R6-7).
-func TestObservationArchiveRetriesOnlyFailedStreams(t *testing.T) {
+// A past hour no longer changes, so an hour is stored once per process and
+// only a failed hour is sent again. Re-sending stored hours every minute drew
+// S3 connection resets (D-R6-7).
+func TestObservationArchiveRetriesFailedHour(t *testing.T) {
 	ctx := context.Background()
 	archive := &observationArchive{directory: t.TempDir(), failKey: "scheduler"}
 	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
@@ -325,12 +325,8 @@ func TestObservationArchiveRetriesOnlyFailedStreams(t *testing.T) {
 	}
 	for _, stream := range observationStreams {
 		key := observationArchivePrefix + "20261020T10/" + stream + ".jsonl.gz"
-		want := 1
-		if stream == "scheduler" {
-			want = 2
-		}
-		if archive.puts[key] != want || archive.outcomes[key] != evidencestore.CreateOutcomeCreated {
-			t.Fatalf("%s sent %d times with outcome %q, want %d sends and Created", stream, archive.puts[key], archive.outcomes[key], want)
+		if archive.puts[key] != 2 {
+			t.Fatalf("%s sent %d times, want 2", stream, archive.puts[key])
 		}
 	}
 }
