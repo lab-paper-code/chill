@@ -262,22 +262,11 @@ func TestAttemptMaterializerRequestsOnlyOnItsOwnGrantedNode(t *testing.T) {
 	fixture := newAttemptMaterializerFixture(t, 0, func(node *corev1.Node) {
 		node.Spec.Taints[0].Value = "other-measurement"
 	})
-	progress, err := fixture.materializer.Advance(
+	_, err := fixture.materializer.Advance(
 		context.Background(), fixture.measurement, fixture.prepared, 0, 1,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	setJobReady(t, fixture.client, progress.Job)
-
-	_, err = fixture.materializer.Advance(
-		context.Background(), fixture.measurement, fixture.prepared, 0, 1,
-	)
-	if err == nil || !strings.Contains(err.Error(), "not granted") {
-		t.Fatalf("Advance() error = %v, want not granted", err)
-	}
-	if mode := nodePowerMode(t, fixture); mode != fixture.prepared.Directions[0].FrozenContract.SourceState.PowerMode {
-		t.Fatalf("power mode = %q written on a Node granted elsewhere", mode)
+	if err == nil || !strings.Contains(err.Error(), "not granted") || fixture.stores.calls != 0 {
+		t.Fatalf("Advance() error = %v, store calls = %d, want not granted", err, fixture.stores.calls)
 	}
 }
 
@@ -451,25 +440,20 @@ func sourceNode(
 		t.Fatal(err)
 	}
 	settledAt := time.Unix(100, 0).UTC()
-	transition, err := json.Marshal(metadata.PowerModeTransitionRecord{
-		PowerMode: mode, Generation: 3, VerifiedAt: &settledAt, ReadyAt: &settledAt,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &corev1.Node{
+	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: prepared.TargetNode.Name, UID: types.UID(prepared.TargetNode.UID),
-			Labels: map[string]string{metadata.PowerMode: mode, metadata.PowerModeState: metadata.PowerModeSuccess},
-			Annotations: map[string]string{
-				metadata.PowerActuator: string(readBack), metadata.PowerModeGeneration: "3",
-				metadata.PowerModeTransition: string(transition),
-			},
+			Annotations: map[string]string{metadata.PowerActuator: string(readBack)},
 		},
 		Spec: corev1.NodeSpec{Taints: []corev1.Taint{{
 			Key: profilingrun.MeasurementTaintKey, Value: string(measurement.UID), Effect: corev1.TaintEffectNoSchedule,
 		}}},
 	}
+	metadata.SetPowerModeTransition(node, metadata.PowerModeSuccess, 3, metadata.PowerModeTransitionRecord{
+		PowerMode: mode, RequestedAt: time.Unix(90, 0).UTC().Format(time.RFC3339Nano),
+		Generation: 3, VerifiedAt: &settledAt, ReadyAt: &settledAt,
+	})
+	return node
 }
 
 // advanceToRequested creates the d0-a1 observer Job, makes it Ready, and
@@ -499,7 +483,8 @@ func setAgentTransition(t *testing.T, fixture attemptMaterializerFixture, state 
 	}
 	appliedAt, readyAt := time.Unix(140, 0).UTC(), time.Unix(149, 0).UTC()
 	record := metadata.PowerModeTransitionRecord{
-		PowerMode: direction.FrozenContract.TargetState.PowerMode, Generation: 3, ApplyStartedAt: &appliedAt,
+		PowerMode: direction.FrozenContract.TargetState.PowerMode, RequestedAt: node.Annotations[metadata.PowerModeRequestedAt],
+		Generation: 3, ApplyStartedAt: &appliedAt,
 	}
 	switch {
 	case state == metadata.PowerModeFailed:
@@ -511,14 +496,8 @@ func setAgentTransition(t *testing.T, fixture attemptMaterializerFixture, state 
 		}
 		record.Generation, record.VerifiedAt, record.SettlingStartedAt, record.ReadyAt = 4, &readyAt, &readyAt, &readyAt
 		node.Annotations[metadata.PowerActuator] = string(readBack)
-		node.Annotations[metadata.PowerModeGeneration] = "4"
 	}
-	raw, err := json.Marshal(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	node.Annotations[metadata.PowerModeTransition] = string(raw)
-	node.Labels[metadata.PowerModeState] = state
+	metadata.SetPowerModeTransition(node, state, record.Generation, record)
 	if err := fixture.client.Update(context.Background(), node); err != nil {
 		t.Fatal(err)
 	}

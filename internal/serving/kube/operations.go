@@ -74,11 +74,14 @@ type Operation struct {
 	Prepare  *PrepareSpec          `json:"prepare,omitempty"`
 	// PowerMode is the DeviceClass mode a power operation requests, within
 	// MaxActuationDuration of its label write (the mode's actuation policy).
-	PowerMode            string                      `json:"powerMode,omitempty"`
-	MaxActuationDuration time.Duration               `json:"maxActuationDurationNanos,omitempty"`
-	Target               *serving.SchedulerCandidate `json:"target,omitempty"`
-	SourceConfigRV       string                      `json:"sourceConfigRV,omitempty"`
-	StaticRouting        map[string]map[string]int   `json:"staticRouting,omitempty"`
+	PowerMode            string        `json:"powerMode,omitempty"`
+	MaxActuationDuration time.Duration `json:"maxActuationDurationNanos,omitempty"`
+	// Holder is the measurement root a measurement power operation acts for;
+	// the Node's measurement taint must name it.
+	Holder         string                      `json:"holder,omitempty"`
+	Target         *serving.SchedulerCandidate `json:"target,omitempty"`
+	SourceConfigRV string                      `json:"sourceConfigRV,omitempty"`
+	StaticRouting  map[string]map[string]int   `json:"staticRouting,omitempty"`
 	// SettingsValidatedAt names the settings change that declared StaticRouting.
 	SettingsValidatedAt *time.Time `json:"settingsValidatedAt,omitempty"`
 }
@@ -235,7 +238,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 				result.Progress = append(result.Progress, "stop/drain/termination/removal observed")
 			}
 		case operationPower:
-			err = o.ChangePower(ctx, operation.Node, operation.PowerMode, operation.MaxActuationDuration)
+			err = o.ChangePower(ctx, operation.Node, operation.Holder, operation.PowerMode, operation.MaxActuationDuration)
 		case operationRoute:
 			if operation.Target == nil {
 				err = errors.New("routing target required")
@@ -389,7 +392,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: slices.Clone(access.SupplementalGroups)}
 	}
 	// ponytail: admitted just before the Pod create; the remaining window closes with M3 single-writer fencing.
-	if err = o.admittedNode(ctx, node); err != nil {
+	if _, err = o.admittedNode(ctx, node); err != nil {
 		return err
 	}
 	if err = o.store.client.Create(ctx, pod); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -730,11 +733,11 @@ func eIfNotFound(err error) error {
 
 // ChangePower switches the drained Node to mode and confirms that the loaded
 // state did not change. maxDuration is the mode's maxActuationDurationSeconds.
-func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference, mode string, maxDuration time.Duration) error {
+func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference, holder, mode string, maxDuration time.Duration) error {
 	if mode == "" || maxDuration <= 0 {
 		return errors.New("power mode and maximum actuation duration required")
 	}
-	err := o.admittedNode(ctx, node)
+	_, err := o.admittedNode(ctx, node)
 	if err != nil {
 		return err
 	}
@@ -759,7 +762,7 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 			return errors.New("power transition native source not actually drained/ready")
 		}
 	}
-	if err = o.requestPowerMode(ctx, node, mode, maxDuration); err != nil {
+	if err = o.requestPowerMode(ctx, node, holder, mode, maxDuration); err != nil {
 		return err
 	}
 	if err := o.waitPowerState(ctx, node, before); err != nil {
@@ -774,29 +777,23 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 // requestPowerMode writes the desired mode on the Node read it admits, so a
 // grant that changed since the read fails the write with a conflict, and
 // waits until the actuation agent settles mode within maxDuration of the write.
-func (o *Operations) requestPowerMode(ctx context.Context, ref serving.NodeReference, mode string, maxDuration time.Duration) error {
-	node := &core.Node{}
-	read := func() error {
-		if err := o.store.client.Get(ctx, client.ObjectKey{Name: ref.Name}, node); err != nil {
-			return err
-		}
-		if string(node.UID) != ref.UID {
-			return errors.New("physical Node identity changed")
-		}
-		return o.admitNode(node)
-	}
-	if err := read(); err != nil {
+// A measurement operation writes only on the Node its holder was granted.
+func (o *Operations) requestPowerMode(ctx context.Context, ref serving.NodeReference, holder, mode string, maxDuration time.Duration) error {
+	node, err := o.admittedNode(ctx, ref)
+	if err != nil {
 		return err
 	}
-	requested := time.Now()
-	if err := chillmeta.RequestPowerMode(ctx, o.store.client, node, mode); err != nil {
+	if granted, _ := profilingrun.MeasurementHolder(node); o.config.Measurement && granted != holder {
+		return fmt.Errorf("Node %s is granted to %q, not %q", node.Name, granted, holder)
+	}
+	if err := chillmeta.RequestPowerMode(ctx, o.store.client, node, mode, time.Now()); err != nil {
 		return err
 	}
 	return o.wait(ctx, func() (bool, error) {
-		if err := read(); err != nil {
+		if node, err = o.admittedNode(ctx, ref); err != nil {
 			return false, err
 		}
-		return chillmeta.PowerModeOutcome(node, mode, requested, maxDuration, time.Now())
+		return chillmeta.PowerModeOutcome(node, mode, maxDuration, time.Now())
 	})
 }
 
@@ -819,16 +816,16 @@ func (o *Operations) placeServingPod(pod *core.Pod, owner *serving.WorkloadRefer
 	pod.Annotations[ServingRoutingAnnotation] = string(raw)
 }
 
-// admittedNode GETs the exact Node and admits it for this operation.
-func (o *Operations) admittedNode(ctx context.Context, ref serving.NodeReference) error {
-	node, err := o.kube.CoreV1().Nodes().Get(ctx, ref.Name, meta.GetOptions{})
-	if err != nil {
-		return err
+// admittedNode reads the exact Node and admits it for this operation.
+func (o *Operations) admittedNode(ctx context.Context, ref serving.NodeReference) (*core.Node, error) {
+	node := &core.Node{}
+	if err := o.store.client.Get(ctx, client.ObjectKey{Name: ref.Name}, node); err != nil {
+		return nil, err
 	}
 	if string(node.UID) != ref.UID {
-		return errors.New("physical Node identity changed")
+		return nil, errors.New("physical Node identity changed")
 	}
-	return o.admitNode(node)
+	return node, o.admitNode(node)
 }
 
 // admitNode lets measurement operations act only on a measurement POOL Node and

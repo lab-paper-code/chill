@@ -147,6 +147,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		switch step.Kind {
 		case edge.OperationCostStepPower:
 			request.Operation.PowerMode, request.Operation.MaxActuationDuration = step.PowerMode, targets[step.PowerMode]
+			request.Operation.Holder = string(m.UID)
 		case edge.OperationCostStepPrepare, edge.OperationCostStepRemove:
 			spec := config.Preparations[profiles[step.BatchEnergyOptimization]]
 			if step.Kind == edge.OperationCostStepPrepare {

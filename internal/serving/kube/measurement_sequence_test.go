@@ -199,7 +199,7 @@ func TestOrderPowerChangeThenAdmission(t *testing.T) {
 	if h.holder() == "" {
 		t.Fatal("not granted")
 	}
-	if err := h.controller.operations.ChangePower(context.Background(), testNode, lowMode, time.Minute); !errors.Is(err, ErrNodeInMeasurement) {
+	if err := h.controller.operations.ChangePower(context.Background(), testNode, "", lowMode, time.Minute); !errors.Is(err, ErrNodeInMeasurement) {
 		t.Fatalf("serving power change on a measured Node: %v", err)
 	}
 	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != "NodeBusy" {
@@ -249,7 +249,7 @@ func TestOrderMeasurementEndThenPowerChange(t *testing.T) {
 	if h.holder() == "" {
 		t.Fatal("hand-back did not wait for the power change in flight")
 	}
-	if err := h.controller.operations.admittedNode(context.Background(), testNode); !errors.Is(err, ErrNodeInMeasurement) {
+	if _, err := h.controller.operations.admittedNode(context.Background(), testNode); !errors.Is(err, ErrNodeInMeasurement) {
 		t.Fatalf("serving power change admitted before the taint was removed: %v", err)
 	}
 	h.setNode(func(n *core.Node) { n.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeSuccess })
@@ -257,7 +257,7 @@ func TestOrderMeasurementEndThenPowerChange(t *testing.T) {
 	if h.holder() != "" {
 		t.Fatal("taint kept after the power change settled")
 	}
-	if err := h.controller.operations.admittedNode(context.Background(), testNode); err != nil {
+	if _, err := h.controller.operations.admittedNode(context.Background(), testNode); err != nil {
 		t.Fatalf("serving power change refused after hand-back: %v", err)
 	}
 }

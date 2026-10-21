@@ -2,7 +2,6 @@ package nodeagent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,9 +13,6 @@ import (
 // SafeToStop reports whether no Node waits on the actuation agent: a Node
 // whose power-mode state is pending would keep it pending forever.
 func SafeToStop(ctx context.Context, reader client.Reader) (bool, error) {
-	if reader == nil {
-		return false, errors.New("Node reader is required")
-	}
 	nodes := &corev1.NodeList{}
 	if err := reader.List(ctx, nodes, client.MatchingLabels{chillmeta.PowerModeState: chillmeta.PowerModePending}); err != nil {
 		return false, fmt.Errorf("list pending power-mode Nodes before stopping operand: %w", err)

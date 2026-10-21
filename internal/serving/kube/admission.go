@@ -315,16 +315,16 @@ func (c *SchedulerController) nodeBusy(node *core.Node) bool {
 }
 
 // powerModePending reports a Node whose actuation agent applies a requested
-// mode while the deadline, its fence plus the mode's
-// maxActuationDurationSeconds, has not passed. A pending mode without a fence
-// or a policy has no deadline.
+// mode before its deadline (request time plus the mode's
+// maxActuationDurationSeconds). A pending mode without a request time or a
+// policy has no deadline.
 func powerModePending(node *core.Node, classes []edge.DeviceClass, config SchedulerControllerConfig, now time.Time) bool {
 	if node.Labels[chillmeta.PowerModeState] != chillmeta.PowerModePending {
 		return false
 	}
-	transition, _, err := chillmeta.NodePowerModeTransition(node)
-	maxDuration, ok := nodePowerTargets(node, classes, config.PowerPolicies)[transition.PowerMode]
-	return err != nil || transition.ApplyStartedAt == nil || !ok || now.Before(transition.ApplyStartedAt.Add(maxDuration))
+	maxDuration, ok := nodePowerTargets(node, classes, config.PowerPolicies)[node.Labels[chillmeta.PowerMode]]
+	deadline, requested := chillmeta.PowerModeDeadline(node, maxDuration)
+	return !ok || !requested || now.Before(deadline)
 }
 
 // servingPodsOn names the non-terminal CHILL serving Pods on the Node.
@@ -478,7 +478,7 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	if value, tainted := profilingrun.MeasurementHolder(current); !tainted || value != holder {
 		return nil
 	}
-	if err = c.lowerMeasuredNode(ctx, current, result); err != nil {
+	if err = c.lowerMeasuredNode(ctx, current, holder, result); err != nil {
 		return err
 	}
 	// The power change read the Node again; patch the current version.
@@ -496,7 +496,7 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 // independent read-back, so a measurement that rebooted or failed hands back a
 // known mode. A Node without a requestable lowest mode (a Fixed actuator, no
 // unloaded baseline) skips the step.
-func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.Node, result *OperationResult) error {
+func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.Node, holder string, result *OperationResult) error {
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
@@ -511,7 +511,7 @@ func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.
 		result.Progress = append(result.Progress, "no requestable lowest mode")
 		return nil
 	}
-	if err := c.measurement.ChangePower(ctx, ref, lowest, maxDuration); err != nil {
+	if err := c.measurement.ChangePower(ctx, ref, holder, lowest, maxDuration); err != nil {
 		return err
 	}
 	result.Progress = append(result.Progress, "lowest mode "+lowest+" read back")

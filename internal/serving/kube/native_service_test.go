@@ -247,7 +247,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		return false, nil, nil
 	})
 	// Share API state between the uncached writer and native observer.
-	manager.store.client = fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(&class).WithInterceptorFuncs(interceptor.Funcs{
+	manager.store.client = fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(&class, node.DeepCopy()).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
 			if pod, ok := object.(*core.Pod); ok {
 				pod.UID = fixture.UID
@@ -364,7 +364,7 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 	kube.PrependReactor("create", "services", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
-	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
 	operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	spec := PrepareSpec{
 		Name: "measured-rknn",
@@ -409,7 +409,7 @@ func TestPreparationSeedsRoutingBeforeRoute(t *testing.T) {
 	kube.PrependReactor("create", "services", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
-	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
 	operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	for _, owner := range []*serving.WorkloadReference{nil, {Name: "owner", UID: "owner-uid"}} {
 		name, want := "scheduler-prepared", `{}`
@@ -467,7 +467,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 	kube.PrependReactor("create", "services", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
-	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
 	operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	spec := PrepareSpec{
 		Name: "measured-rknn",
@@ -573,7 +573,7 @@ func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
 			kube.PrependReactor("create", "services", func(ktesting.Action) (bool, runtime.Object, error) {
 				return true, nil, errors.New("stop after Pod creation")
 			})
-			store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+			store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
 			operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: tc.measurement}}
 			spec := measuredCPUPreparationFixture()
 			err := operations.PrepareInstance(ctx, spec)
@@ -584,8 +584,8 @@ func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
 					t.Fatalf("prepare admitted or created a Pod: err=%v get=%v", err, getErr)
 				}
 				if !tc.measurement {
-					// store/observer nil: reaching any effect past admission panics.
-					if err = (&Operations{kube: kube}).ChangePower(ctx, spec.Instance.Node, lowMode, time.Minute); !errors.Is(err, ErrNodeInMeasurement) {
+					// observer nil: reaching any effect past admission panics.
+					if err = (&Operations{store: store}).ChangePower(ctx, spec.Instance.Node, "", lowMode, time.Minute); !errors.Is(err, ErrNodeInMeasurement) {
 						t.Fatalf("power change on measurement Node: %v", err)
 					}
 				}

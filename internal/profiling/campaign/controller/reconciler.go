@@ -12,7 +12,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/metadata"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
-	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -32,7 +31,6 @@ const (
 	terminalReasonRetryLimitExhausted     = "RetryLimitExhausted"
 	terminalReasonTransitionFailed        = "TransitionFailed"
 	admissionWait                         = 5 * time.Second
-	powerModeWait                         = 5 * time.Second
 )
 
 // ReconcileCurvePlanSource resolves and records the immutable plan used by one
@@ -155,7 +153,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	alreadyExists := false
 	switch decision.Action {
 	case batchenergyoptimization.ActionCreateTransition:
-		if err := metadata.RequestPowerMode(ctx, r.client, node, transitionMaterial.PowerMode); err != nil {
+		if err := metadata.RequestPowerMode(ctx, r.client, node, transitionMaterial.PowerMode, r.now()); err != nil {
 			return ctrl.Result{}, err
 		}
 	case batchenergyoptimization.ActionCreateRun:
@@ -208,7 +206,7 @@ func requeueFor(decision batchenergyoptimization.Decision, transition *batchener
 	if decision.Action == batchenergyoptimization.ActionCreateTransition ||
 		decision.Action == batchenergyoptimization.ActionWait && transition != nil &&
 			transition.Outcome == batchenergyoptimization.TransitionInFlight {
-		return ctrl.Result{RequeueAfter: powerModeWait}
+		return ctrl.Result{RequeueAfter: admissionWait}
 	}
 	if decision.Action == batchenergyoptimization.ActionWait {
 		return ctrl.Result{RequeueAfter: waitBackstop}
@@ -227,7 +225,7 @@ func (r *BatchEnergyOptimizationReconciler) observeNode(
 	if material == nil {
 		return nil, nil, nil
 	}
-	node, err := profilercontroller.GrantedNode(ctx, r.client, parent.UID, material.Node.Name, material.Node.UID)
+	node, err := profilingrun.GrantedNode(ctx, r.client, parent.UID, material.Node.Name, material.Node.UID)
 	if err != nil {
 		return nil, nil, err
 	}

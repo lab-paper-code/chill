@@ -303,13 +303,16 @@ func actuationTimes() transitionTimes {
 const (
 	sourceReadBack = `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":0}}`
 	targetReadBack = `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":1}}`
+	targetRequest  = "2026-01-01T00:00:01Z"
 )
 
 // transitioned is the Node after the agent verified the target read-back.
 func transitioned(times transitionTimes) func(*corev1.Node) {
 	return func(node *corev1.Node) {
-		setTransition(node, metadata.PowerModePending, targetReadBack, "5", metadata.PowerModeTransitionRecord{
-			PowerMode: "MODE_30W", Generation: 5, ApplyStartedAt: &times.apply, VerifiedAt: &times.target,
+		node.Annotations[metadata.PowerActuator] = targetReadBack
+		metadata.SetPowerModeTransition(node, metadata.PowerModePending, 5, metadata.PowerModeTransitionRecord{
+			PowerMode: "MODE_30W", RequestedAt: targetRequest, Generation: 5,
+			ApplyStartedAt: &times.apply, VerifiedAt: &times.target,
 		})
 	}
 }
@@ -319,23 +322,16 @@ func transitioned(times transitionTimes) func(*corev1.Node) {
 func failedTransition(times transitionTimes, verified bool) func(*corev1.Node) {
 	return func(node *corev1.Node) {
 		record := metadata.PowerModeTransitionRecord{
-			PowerMode: "MODE_30W", Generation: 4, ApplyStartedAt: &times.apply, Failure: "selected operation failed",
+			PowerMode: "MODE_30W", RequestedAt: targetRequest, Generation: 4,
+			ApplyStartedAt: &times.apply, Failure: "selected operation failed",
 		}
-		readBack, generation := sourceReadBack, "4"
+		node.Annotations[metadata.PowerActuator] = sourceReadBack
 		if verified {
-			record.Generation, record.VerifiedAt, readBack, generation = 5, &times.target, targetReadBack, "5"
+			record.Generation, record.VerifiedAt = 5, &times.target
+			node.Annotations[metadata.PowerActuator] = targetReadBack
 		}
-		setTransition(node, metadata.PowerModeFailed, readBack, generation, record)
+		metadata.SetPowerModeTransition(node, metadata.PowerModeFailed, record.Generation, record)
 	}
-}
-
-func setTransition(node *corev1.Node, state, readBack, generation string, record metadata.PowerModeTransitionRecord) {
-	raw, _ := json.Marshal(record)
-	node.Labels[metadata.PowerMode] = record.PowerMode
-	node.Labels[metadata.PowerModeState] = state
-	node.Annotations[metadata.PowerActuator] = readBack
-	node.Annotations[metadata.PowerModeGeneration] = generation
-	node.Annotations[metadata.PowerModeTransition] = string(raw)
 }
 
 func setNode(t *testing.T, kubeClient client.Client, mutate func(*corev1.Node)) {
@@ -432,15 +428,13 @@ func newClient(t *testing.T, objects ...client.Object) client.WithWatch {
 		}
 	}
 	sourceAt := time.Now().UTC().Add(-time.Hour)
-	record, _ := json.Marshal(metadata.PowerModeTransitionRecord{PowerMode: "MAXN", Generation: 4, VerifiedAt: &sourceAt, ReadyAt: &sourceAt})
-	objects = append(objects, &corev1.Node{ObjectMeta: metav1.ObjectMeta{
-		Name: "jetsono", UID: "node-uid",
-		Labels: map[string]string{metadata.PowerMode: "MAXN", metadata.PowerModeState: metadata.PowerModeSuccess},
-		Annotations: map[string]string{
-			metadata.PowerActuator: sourceReadBack, metadata.PowerModeGeneration: "4",
-			metadata.PowerModeTransition: string(record),
-		},
-	}})
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: "jetsono", UID: "node-uid", Annotations: map[string]string{metadata.PowerActuator: sourceReadBack},
+	}}
+	metadata.SetPowerModeTransition(node, metadata.PowerModeSuccess, 4, metadata.PowerModeTransitionRecord{
+		PowerMode: "MAXN", RequestedAt: "2026-01-01T00:00:00Z", Generation: 4, VerifiedAt: &sourceAt, ReadyAt: &sourceAt,
+	})
+	objects = append(objects, node)
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 }
 

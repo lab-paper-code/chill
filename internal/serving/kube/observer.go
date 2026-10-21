@@ -17,7 +17,6 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
-	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -661,20 +660,6 @@ func confirmedPower(node *corev1.Node, class *edgev1alpha1.DeviceClass, name str
 		return errors.New("Node read-back power mode differs from measured condition")
 	}
 	return nil
-}
-
-// readBackActuator is the actuator target the actuation agent last read back
-// from the host, or nil when the Node carries none.
-func readBackActuator(node *corev1.Node) *edgev1alpha1.PowerModeActuator {
-	raw, ok := node.Annotations[chillmeta.PowerActuator]
-	if !ok {
-		return nil
-	}
-	var actuator edgev1alpha1.PowerModeActuator
-	if json.Unmarshal([]byte(raw), &actuator) != nil {
-		return nil
-	}
-	return &actuator
 }
 
 func (o *Observer) observeTermination(pod *corev1.Pod) {

@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 	"testing"
 	"time"
 
@@ -20,26 +19,19 @@ import (
 func settledNode(config profilingrun.RunConfig, powerMode string, readyAt time.Time, generation int64) *corev1.Node {
 	verifiedAt := readyAt.Add(-30 * time.Second)
 	applyStartedAt := verifiedAt.Add(-time.Minute)
-	transition, err := json.Marshal(metadata.PowerModeTransitionRecord{
-		PowerMode: powerMode, Generation: generation, ApplyStartedAt: &applyStartedAt,
-		VerifiedAt: &verifiedAt, SettlingStartedAt: &verifiedAt, ReadyAt: &readyAt,
-	})
-	if err != nil {
-		panic(err)
-	}
 	actuator, err := json.Marshal(config.Actuation.Actuator)
 	if err != nil {
 		panic(err)
 	}
-	return &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: config.TargetNode.Name, UID: types.UID(config.TargetNode.UID),
-		Labels: map[string]string{metadata.PowerMode: powerMode, metadata.PowerModeState: metadata.PowerModeSuccess},
-		Annotations: map[string]string{
-			metadata.PowerModeGeneration: strconv.FormatInt(generation, 10),
-			metadata.PowerModeTransition: string(transition),
-			metadata.PowerActuator:       string(actuator),
-		},
+		Annotations: map[string]string{metadata.PowerActuator: string(actuator)},
 	}}
+	metadata.SetPowerModeTransition(node, metadata.PowerModeSuccess, generation, metadata.PowerModeTransitionRecord{
+		PowerMode: powerMode, RequestedAt: applyStartedAt.Format(time.RFC3339Nano), Generation: generation,
+		ApplyStartedAt: &applyStartedAt, VerifiedAt: &verifiedAt, SettlingStartedAt: &verifiedAt, ReadyAt: &readyAt,
+	})
+	return node
 }
 
 // Every unconfirmed Node state is a permanent reason, never a retryable error:
@@ -96,34 +88,6 @@ func TestConfirmRequiredStateReadsTheTargetNode(t *testing.T) {
 			}
 			if (unconfirmed == "") != test.confirmed {
 				t.Fatalf("unconfirmed = %q, want confirmed %t", unconfirmed, test.confirmed)
-			}
-		})
-	}
-}
-
-func TestGrantedNodeRequiresTheRootsMeasurementTaint(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		name, holder string
-		tainted      bool
-		granted      bool
-	}{
-		{name: "own grant", holder: "root-uid", tainted: true, granted: true},
-		{name: "other root", holder: "other-uid", tainted: true},
-		{name: "untainted", holder: "root-uid"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "jetsono", UID: "node-uid"}}
-			if test.tainted {
-				node.Spec.Taints = []corev1.Taint{{
-					Key: profilingrun.MeasurementTaintKey, Value: test.holder, Effect: corev1.TaintEffectNoSchedule,
-				}}
-			}
-			reader := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithObjects(node).Build()
-			got, err := GrantedNode(context.Background(), reader, "root-uid", "jetsono", "node-uid")
-			if (err == nil) != test.granted || (got != nil) != test.granted {
-				t.Fatalf("GrantedNode() = %v, %v, want granted %t", got, err, test.granted)
 			}
 		})
 	}

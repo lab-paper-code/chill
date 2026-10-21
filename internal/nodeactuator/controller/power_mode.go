@@ -57,22 +57,14 @@ func (r *PowerModeReconciler) SetupWithManager(manager ctrl.Manager) error {
 		Complete(r)
 }
 
-// nodePatch collects label and annotation changes; nil removes a key.
-type nodePatch struct {
-	labels      map[string]*string
-	annotations map[string]*string
-}
-
-func (p *nodePatch) label(key string, value *string)      { p.labels[key] = value }
-func (p *nodePatch) annotation(key string, value *string) { p.annotations[key] = value }
-
 func (r *PowerModeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	node := &corev1.Node{}
 	if err := r.Client.Get(ctx, client.ObjectKey{Name: r.Node}, node); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	now := r.Now().UTC()
-	patch := &nodePatch{labels: map[string]*string{}, annotations: map[string]*string{}}
+	// Label and annotation changes for one patch; nil removes a key.
+	labels, annotations := map[string]*string{}, map[string]*string{}
 	observation, observeErr := r.Host.Observe(ctx, nodeactuator.Request{
 		Target: nodeactuator.Target{
 			Kind: nodeactuator.ActuatorKindJetsonNVPModel, JetsonNVPModel: &nodeactuator.JetsonNVPModelTarget{},
@@ -82,12 +74,12 @@ func (r *PowerModeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ct
 	if observeErr != nil {
 		ctrl.LoggerFrom(ctx).Error(observeErr, "read back the host power mode", "node", r.Node)
 	}
-	generation, err := publishReadBack(node, observation, observeErr, patch)
+	generation, err := publishReadBack(node, observation, observeErr, annotations)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	result, err := r.drive(ctx, node, generation, observation, observeErr, now, patch)
-	if patchErr := r.patch(ctx, patch); patchErr != nil {
+	result, err := r.drive(ctx, node, generation, observation, observeErr, now, labels, annotations)
+	if patchErr := r.patch(ctx, labels, annotations); patchErr != nil {
 		return ctrl.Result{}, errors.Join(err, patchErr)
 	}
 	if err != nil {
@@ -107,7 +99,7 @@ func publishReadBack(
 	node *corev1.Node,
 	observation nodeactuator.Observation,
 	observeErr error,
-	patch *nodePatch,
+	annotations map[string]*string,
 ) (int64, error) {
 	var readBack *string
 	if observeErr == nil {
@@ -131,9 +123,9 @@ func publishReadBack(
 		generation++
 	}
 	value := strconv.FormatInt(generation, 10)
-	patch.annotation(metadata.PowerModeGeneration, &value)
-	patch.annotation(metadata.PowerActuator, readBack)
-	patch.annotation(metadata.PowerModeBoot, &boot)
+	annotations[metadata.PowerModeGeneration] = &value
+	annotations[metadata.PowerActuator] = readBack
+	annotations[metadata.PowerModeBoot] = &boot
 	return generation, nil
 }
 
@@ -154,13 +146,13 @@ func (r *PowerModeReconciler) drive(
 	observation nodeactuator.Observation,
 	observeErr error,
 	now time.Time,
-	patch *nodePatch,
+	labels, annotations map[string]*string,
 ) (ctrl.Result, error) {
 	desired := node.Labels[metadata.PowerMode]
 	state, hasState := node.Labels[metadata.PowerModeState]
 	if desired == "" {
 		if hasState {
-			patch.label(metadata.PowerModeState, nil)
+			labels[metadata.PowerModeState] = nil
 		}
 		return ctrl.Result{}, nil
 	}
@@ -168,30 +160,32 @@ func (r *PowerModeReconciler) drive(
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	// The state label describes the transition's mode only.
-	if transition.PowerMode != desired {
+	// The state label describes the record of the current request only; a
+	// new request time starts a new record even for the same mode.
+	if !metadata.ServesRequest(node, transition, desired) {
 		state = ""
 	}
+	requested := node.Annotations[metadata.PowerModeRequestedAt]
 	if state == metadata.PowerModeFailed {
 		return ctrl.Result{}, nil
 	}
 	request, settling, failure := r.resolve(ctx, node, desired, now)
 	if failure != "" {
-		r.fail(patch, metadata.PowerModeTransitionRecord{PowerMode: desired, Generation: generation}, failure)
+		r.fail(labels, annotations, metadata.PowerModeTransitionRecord{PowerMode: desired, RequestedAt: requested, Generation: generation}, failure)
 		return ctrl.Result{}, nil
 	}
 	if observeErr == nil && equality.Semantic.DeepEqual(
 		projectAPITarget(observation.Target), projectAPITarget(request.Target)) {
 		switch state {
 		case metadata.PowerModePending:
-			return r.settle(transition, generation, observation, settling, now, patch), nil
+			return r.settle(transition, generation, observation, settling, now, labels, annotations), nil
 		case "":
 			// Already in the mode: nothing to apply or settle. The record
 			// names the mode, so the state describes it, and the read-back
 			// and Ready times a measurement starts after.
 			verifiedAt := observation.ObservedAt.UTC()
-			r.writeTransition(patch, metadata.PowerModeTransitionRecord{
-				PowerMode: desired, Generation: generation, VerifiedAt: &verifiedAt, ReadyAt: &now,
+			r.writeTransition(labels, annotations, metadata.PowerModeTransitionRecord{
+				PowerMode: desired, RequestedAt: requested, Generation: generation, VerifiedAt: &verifiedAt, ReadyAt: &now,
 			}, metadata.PowerModeSuccess)
 		}
 		return ctrl.Result{}, nil
@@ -201,18 +195,18 @@ func (r *PowerModeReconciler) drive(
 		return ctrl.Result{}, nil
 	case state != metadata.PowerModePending || transition.ApplyStartedAt == nil:
 		// The fence: pending and applyStartedAt are durable before the host changes.
-		r.writeTransition(patch, metadata.PowerModeTransitionRecord{
-			PowerMode: desired, Generation: generation, ApplyStartedAt: &now,
+		r.writeTransition(labels, annotations, metadata.PowerModeTransitionRecord{
+			PowerMode: desired, RequestedAt: requested, Generation: generation, ApplyStartedAt: &now,
 		}, metadata.PowerModePending)
 		return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 	case generation != transition.Generation:
 		// The host changed since the fence, a reboot included, without
 		// reaching the target. Applying again could restart the Node again.
-		r.fail(patch, transition, fmt.Sprintf("host power mode changed to generation %d without reaching %s", generation, desired))
+		r.fail(labels, annotations, transition, fmt.Sprintf("host power mode changed to generation %d without reaching %s", generation, desired))
 		return ctrl.Result{}, nil
 	}
 	if err := r.Host.Apply(ctx, request, request.Target); err != nil {
-		r.fail(patch, transition, err.Error())
+		r.fail(labels, annotations, transition, err.Error())
 		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{RequeueAfter: time.Millisecond}, nil
@@ -225,20 +219,20 @@ func (r *PowerModeReconciler) settle(
 	observation nodeactuator.Observation,
 	settling time.Duration,
 	now time.Time,
-	patch *nodePatch,
+	labels, annotations map[string]*string,
 ) ctrl.Result {
 	switch {
 	case transition.VerifiedAt == nil:
 		verifiedAt := observation.ObservedAt.UTC()
 		transition.Generation, transition.VerifiedAt, transition.SettlingStartedAt = generation, &verifiedAt, &now
-		r.writeTransition(patch, transition, metadata.PowerModePending)
+		r.writeTransition(labels, annotations, transition, metadata.PowerModePending)
 		return ctrl.Result{RequeueAfter: settling}
 	}
 	if remaining := transition.SettlingStartedAt.Add(settling).Sub(now); remaining > 0 {
 		return ctrl.Result{RequeueAfter: remaining}
 	}
 	transition.ReadyAt = &now
-	r.writeTransition(patch, transition, metadata.PowerModeSuccess)
+	r.writeTransition(labels, annotations, transition, metadata.PowerModeSuccess)
 	return ctrl.Result{}
 }
 
@@ -272,27 +266,27 @@ func (r *PowerModeReconciler) resolve(
 	return nodeactuator.Request{}, 0, fmt.Sprintf("DeviceClass %q has no power mode %q", className, desired)
 }
 
-func (r *PowerModeReconciler) fail(patch *nodePatch, transition metadata.PowerModeTransitionRecord, failure string) {
+func (r *PowerModeReconciler) fail(labels, annotations map[string]*string, transition metadata.PowerModeTransitionRecord, failure string) {
 	transition.Failure = truncateStatusMessage(failure)
-	r.writeTransition(patch, transition, metadata.PowerModeFailed)
+	r.writeTransition(labels, annotations, transition, metadata.PowerModeFailed)
 }
 
-func (r *PowerModeReconciler) writeTransition(patch *nodePatch, transition metadata.PowerModeTransitionRecord, state string) {
+func (r *PowerModeReconciler) writeTransition(labels, annotations map[string]*string, transition metadata.PowerModeTransitionRecord, state string) {
 	raw, err := json.Marshal(transition)
 	if err != nil {
 		panic(err) // a struct of strings, integers, and times always encodes
 	}
 	value := string(raw)
-	patch.annotation(metadata.PowerModeTransition, &value)
-	patch.label(metadata.PowerModeState, &state)
+	annotations[metadata.PowerModeTransition] = &value
+	labels[metadata.PowerModeState] = &state
 }
 
-func (r *PowerModeReconciler) patch(ctx context.Context, patch *nodePatch) error {
-	if len(patch.labels) == 0 && len(patch.annotations) == 0 {
+func (r *PowerModeReconciler) patch(ctx context.Context, labels, annotations map[string]*string) error {
+	if len(labels) == 0 && len(annotations) == 0 {
 		return nil
 	}
 	raw, err := json.Marshal(map[string]any{"metadata": map[string]any{
-		"labels": patch.labels, "annotations": patch.annotations,
+		"labels": labels, "annotations": annotations,
 	}})
 	if err != nil {
 		return err

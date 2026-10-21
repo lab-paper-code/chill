@@ -1,7 +1,6 @@
 package kube
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -80,8 +79,8 @@ func projectNode(raw *transitioncost.RawObservation, node *corev1.Node, request 
 	if err != nil {
 		return false, err
 	}
-	if node.Labels[metadata.PowerMode] != request.TargetPowerMode || transition.PowerMode != request.TargetPowerMode {
-		// The agent has not taken up the target mode yet.
+	if !metadata.ServesRequest(node, transition, request.TargetPowerMode) {
+		// The agent has not taken up the target request yet.
 		transition = metadata.PowerModeTransitionRecord{}
 	}
 	if raw.TransitionStart == nil {
@@ -144,8 +143,8 @@ func markPresent(bracket *transitioncost.ReceiptTimeBracket, receivedAt time.Tim
 // readBackState names the mode of the actuator the agent last read back.
 func readBackState(node *corev1.Node, request Request) (transitioncost.StateIdentity, error) {
 	var actuator edgev1alpha1.PowerModeActuator
-	if err := json.Unmarshal([]byte(node.Annotations[metadata.PowerActuator]), &actuator); err != nil {
-		return transitioncost.StateIdentity{}, fmt.Errorf("read Node %s power read-back: %w", node.Name, err)
+	if err := metadata.NodeReadBack(node, &actuator); err != nil {
+		return transitioncost.StateIdentity{}, err
 	}
 	state := transitioncost.StateIdentity{DeviceType: request.DeviceType, Model: request.Model}
 	switch {

@@ -8,6 +8,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -29,8 +30,8 @@ func observeActuation(
 	if !ok || transition.VerifiedAt == nil || transition.ReadyAt == nil {
 		return nil, errors.New("measurement Node has no settled power-mode apply")
 	}
-	actuator, err := readBackActuator(node)
-	if err != nil {
+	var actuator profilingrun.ActuatorTarget
+	if err := metadata.NodeReadBack(node, &actuator); err != nil {
 		return nil, err
 	}
 	facts := &profilerevidence.ActuationFacts{

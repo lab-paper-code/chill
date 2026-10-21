@@ -1,10 +1,14 @@
 package profilingrun
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // MeasurementTaintKey marks a Node of the measurement POOL. ChillServer adds it
@@ -75,4 +79,21 @@ func MeasurementHolder(node *corev1.Node) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// GrantedNode reads the Node a measurement root measures on, the Node whose
+// measurement taint names root, so the root may write its power mode with
+// the Node power-mode request on this read.
+func GrantedNode(ctx context.Context, reader client.Reader, root types.UID, name, uid string) (*corev1.Node, error) {
+	node := &corev1.Node{}
+	if err := reader.Get(ctx, types.NamespacedName{Name: name}, node); err != nil {
+		return nil, fmt.Errorf("get measurement Node %s: %w", name, err)
+	}
+	if string(node.UID) != uid {
+		return nil, fmt.Errorf("measurement Node %s UID %s is not %s", name, node.UID, uid)
+	}
+	if holder, tainted := MeasurementHolder(node); !tainted || holder != string(root) {
+		return nil, fmt.Errorf("measurement Node %s is not granted to %s", name, root)
+	}
+	return node, nil
 }

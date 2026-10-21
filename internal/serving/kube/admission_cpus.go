@@ -39,10 +39,11 @@ func readBackMode(n *core.Node, class *edge.DeviceClass) string {
 	if class == nil || n.Labels[chillmeta.PowerModeState] == chillmeta.PowerModePending {
 		return ""
 	}
-	actuator := readBackActuator(n)
+	var actuator edge.PowerModeActuator
+	readsBack := chillmeta.NodeReadBack(n, &actuator) == nil
 	found := ""
 	for _, m := range class.Spec.PowerModes {
-		if actuator == nil && m.Actuator.Kind == edge.PowerModeActuatorFixed || actuator != nil && reflect.DeepEqual(m.Actuator, *actuator) {
+		if !readsBack && m.Actuator.Kind == edge.PowerModeActuatorFixed || readsBack && reflect.DeepEqual(m.Actuator, actuator) {
 			if found != "" {
 				return ""
 			}

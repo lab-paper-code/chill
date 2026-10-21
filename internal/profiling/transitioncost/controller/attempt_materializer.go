@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -102,7 +101,7 @@ func (m *AttemptMaterializer) Advance(
 	if err != nil {
 		return AttemptProgress{}, err
 	}
-	node, err := m.loadNode(ctx, prepared)
+	node, err := profilingrun.GrantedNode(ctx, m.nodes, measurement.UID, prepared.TargetNode.Name, prepared.TargetNode.UID)
 	if err != nil {
 		return AttemptProgress{}, err
 	}
@@ -137,10 +136,7 @@ func (m *AttemptMaterializer) Advance(
 	if confirmed, reason := m.confirmSource(node, prepared, directionIndex); !confirmed {
 		return AttemptProgress{Stage: AttemptStageTerminal, Reason: reason, Job: job}, nil
 	}
-	if holder, _ := profilingrun.MeasurementHolder(node); holder != string(measurement.UID) {
-		return AttemptProgress{}, fmt.Errorf("Node %s is not granted to this measurement", node.Name)
-	}
-	if err := metadata.RequestPowerMode(ctx, m.client, node, target); err != nil {
+	if err := metadata.RequestPowerMode(ctx, m.client, node, target, m.now()); err != nil {
 		return AttemptProgress{}, err
 	}
 	return AttemptProgress{Stage: AttemptStageActuationRunning, Job: job}, nil
@@ -228,17 +224,6 @@ func (m *AttemptMaterializer) loadJob(
 	return job, nil
 }
 
-func (m *AttemptMaterializer) loadNode(ctx context.Context, prepared PreparedMeasurement) (*corev1.Node, error) {
-	node := &corev1.Node{}
-	if err := m.nodes.Get(ctx, types.NamespacedName{Name: prepared.TargetNode.Name}, node); err != nil {
-		return nil, fmt.Errorf("get transition target Node %s: %w", prepared.TargetNode.Name, err)
-	}
-	if string(node.UID) != prepared.TargetNode.UID {
-		return nil, fmt.Errorf("transition target Node %s identity changed", node.Name)
-	}
-	return node, nil
-}
-
 // confirmSource reports whether the Node's agent settled the source mode and
 // still reads back the source actuator.
 func (m *AttemptMaterializer) confirmSource(
@@ -247,46 +232,17 @@ func (m *AttemptMaterializer) confirmSource(
 	directionIndex int,
 ) (bool, string) {
 	toSource := prepared.Directions[1-directionIndex]
-	done, err := metadata.PowerModeOutcome(
-		node, prepared.Directions[directionIndex].FrozenContract.SourceState.PowerMode, time.Time{},
+	settled, readsBack := metadata.HoldsPowerMode(
+		node, prepared.Directions[directionIndex].FrozenContract.SourceState.PowerMode, toSource.Actuator,
 		time.Duration(toSource.ActuationPolicy.Policy.MaxActuationDurationSeconds)*time.Second, m.now(),
 	)
-	if err != nil || !done {
+	switch {
+	case !settled:
 		return false, AttemptReasonSourceStateUnknown
-	}
-	var readBack edgev1alpha1.PowerModeActuator
-	if json.Unmarshal([]byte(node.Annotations[metadata.PowerActuator]), &readBack) != nil ||
-		!samePowerModeActuator(readBack, toSource.Actuator) {
+	case !readsBack:
 		return false, AttemptReasonSourceStateMismatch
 	}
 	return true, ""
-}
-
-func samePowerModeActuator(left, right edgev1alpha1.PowerModeActuator) bool {
-	if left.Kind != right.Kind {
-		return false
-	}
-	switch left.Kind {
-	case edgev1alpha1.PowerModeActuatorFixed:
-		return left.JetsonNVPModel == nil && right.JetsonNVPModel == nil &&
-			left.NvidiaLockedGPUClock == nil && right.NvidiaLockedGPUClock == nil
-	case edgev1alpha1.PowerModeActuatorJetsonNVPModel:
-		return left.JetsonNVPModel != nil && right.JetsonNVPModel != nil &&
-			left.JetsonNVPModel.ID == right.JetsonNVPModel.ID &&
-			left.NvidiaLockedGPUClock == nil && right.NvidiaLockedGPUClock == nil
-	case edgev1alpha1.PowerModeActuatorNvidiaLockedGPUClock:
-		return left.NvidiaLockedGPUClock != nil && right.NvidiaLockedGPUClock != nil &&
-			left.NvidiaLockedGPUClock.MinMHz == right.NvidiaLockedGPUClock.MinMHz &&
-			left.NvidiaLockedGPUClock.MaxMHz == right.NvidiaLockedGPUClock.MaxMHz &&
-			sameOptionalInt32(left.NvidiaLockedGPUClock.Mode, right.NvidiaLockedGPUClock.Mode) &&
-			left.JetsonNVPModel == nil && right.JetsonNVPModel == nil
-	default:
-		return false
-	}
-}
-
-func sameOptionalInt32(left, right *int32) bool {
-	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }
 
 // progressForRetainedAttempt follows a requested transition until both the
@@ -299,7 +255,7 @@ func progressForRetainedAttempt(
 ) AttemptProgress {
 	progress := AttemptProgress{Stage: AttemptStageActuationRunning, Job: job}
 	done, err := metadata.PowerModeOutcome(
-		node, direction.FrozenContract.TargetState.PowerMode, time.Time{},
+		node, direction.FrozenContract.TargetState.PowerMode,
 		time.Duration(direction.ActuationPolicy.Policy.MaxActuationDurationSeconds)*time.Second, now,
 	)
 	if (jobFailed(job) || jobComplete(job)) && (done || err != nil) {

@@ -9,6 +9,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metadata"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 // ensureRequiredState establishes the parent state before its first Run: it
@@ -42,15 +43,15 @@ func (r *Reconciler) ensureRequiredState(
 		prepared.RunConfig.State.PowerMode != parent.Spec.State.Candidate.PowerMode {
 		return false, false, errors.New("prepared actuation does not match the idle baseline state")
 	}
-	node, err := profilercontroller.GrantedNode(ctx, r.client, parent.UID, target.Name, target.UID)
+	node, err := profilingrun.GrantedNode(ctx, r.client, parent.UID, target.Name, target.UID)
 	if err != nil {
 		return false, false, err
 	}
 	mode := prepared.RunConfig.Actuation.PowerMode
 	if node.Labels[metadata.PowerMode] != mode {
-		return false, false, metadata.RequestPowerMode(ctx, r.client, node, mode)
+		return false, false, metadata.RequestPowerMode(ctx, r.client, node, mode, r.now())
 	}
 	maxDuration := time.Duration(prepared.ActuationPolicy.Policy.MaxActuationDurationSeconds) * time.Second
-	done, outcome := metadata.PowerModeOutcome(node, mode, time.Time{}, maxDuration, r.now())
+	done, outcome := metadata.PowerModeOutcome(node, mode, maxDuration, r.now())
 	return done, outcome != nil, nil
 }

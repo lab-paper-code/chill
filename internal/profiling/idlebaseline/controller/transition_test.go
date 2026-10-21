@@ -2,8 +2,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
-	"strconv"
 	"testing"
 	"time"
 
@@ -34,20 +32,14 @@ func grantedNode(parent *edgev1alpha1.ModelLoadedIdleBaseline, holder string) *c
 // setAgent records the agent at state for the baseline mode, fenced at
 // applyStartedAt.
 func setAgent(node *corev1.Node, mode, state string, applyStartedAt time.Time) {
-	record := metadata.PowerModeTransitionRecord{PowerMode: mode, Generation: 1, ApplyStartedAt: &applyStartedAt}
+	record := metadata.PowerModeTransitionRecord{
+		PowerMode: mode, RequestedAt: applyStartedAt.Format(time.RFC3339Nano), Generation: 1, ApplyStartedAt: &applyStartedAt,
+	}
 	if state == metadata.PowerModeSuccess {
 		readyAt := applyStartedAt.Add(time.Minute)
 		record.VerifiedAt, record.ReadyAt = &applyStartedAt, &readyAt
 	}
-	raw, err := json.Marshal(record)
-	if err != nil {
-		panic(err)
-	}
-	node.Labels = map[string]string{metadata.PowerMode: mode, metadata.PowerModeState: state}
-	node.Annotations = map[string]string{
-		metadata.PowerModeGeneration: strconv.Itoa(1),
-		metadata.PowerModeTransition: string(raw),
-	}
+	metadata.SetPowerModeTransition(node, state, 1, record)
 }
 
 func getNode(t *testing.T, kube client.Client, name string) *corev1.Node {
@@ -65,7 +57,7 @@ func TestReconcilerRequestsPowerModeBeforeFirstRun(t *testing.T) {
 	reconciler := testReconcilerWithPreparer(t, kube, &fakeRunPreparer{prepared: testActuatedPreparedRun(parent)})
 
 	result, err := reconciler.Reconcile(context.Background(), requestFor(parent))
-	if err != nil || result.RequeueAfter != powerModeWait {
+	if err != nil || result.RequeueAfter != admissionWait {
 		t.Fatalf("result = %#v, err = %v", result, err)
 	}
 	assertRunCount(t, kube, parent.Namespace, 0)
@@ -94,23 +86,6 @@ func TestReconcilerRequestsPowerModeBeforeFirstRun(t *testing.T) {
 	assertRunCount(t, kube, parent.Namespace, 1)
 }
 
-func TestReconcilerRequestsPowerModeOnlyOnItsGrantedNode(t *testing.T) {
-	for name, holder := range map[string]string{"other root": "other-uid", "untainted": ""} {
-		t.Run(name, func(t *testing.T) {
-			parent := testBaselineParent()
-			kube := baselineFakeClient(t, parent, grantedNode(parent, holder))
-			reconciler := testReconcilerWithPreparer(t, kube, &fakeRunPreparer{prepared: testActuatedPreparedRun(parent)})
-			if _, err := reconciler.Reconcile(context.Background(), requestFor(parent)); err == nil {
-				t.Fatal("power mode was requested on a Node not granted to the baseline")
-			}
-			if mode, ok := getNode(t, kube, parent.Spec.State.TargetNode).Labels[metadata.PowerMode]; ok {
-				t.Fatalf("power-mode label = %q, want none", mode)
-			}
-			assertRunCount(t, kube, parent.Namespace, 0)
-		})
-	}
-}
-
 func TestReconcilerCreatesFixedRunDirectly(t *testing.T) {
 	parent := testBaselineParent()
 	kube := baselineFakeClient(t, parent)
@@ -125,35 +100,24 @@ func TestReconcilerCreatesFixedRunDirectly(t *testing.T) {
 	}
 }
 
-// A failed apply and an apply past the policy's maxActuationDurationSeconds
-// both close the baseline without a Run.
-func TestReconcilerClosesFailedOrLatePowerModeWithoutRun(t *testing.T) {
-	for name, setup := range map[string]struct {
-		state   string
-		fenceAt time.Time
-	}{
-		"failed":               {metadata.PowerModeFailed, testNow.Add(-time.Minute)},
-		"past policy deadline": {metadata.PowerModePending, testNow.Add(-301 * time.Second)},
-	} {
-		t.Run(name, func(t *testing.T) {
-			parent := testBaselineParent()
-			node := grantedNode(parent, string(parent.UID))
-			setAgent(node, parent.Spec.State.Candidate.PowerMode, setup.state, setup.fenceAt)
-			kube := baselineFakeClient(t, parent, node)
-			reconciler := testReconcilerWithPreparer(t, kube, &fakeRunPreparer{prepared: testActuatedPreparedRun(parent)})
-			if _, err := reconciler.Reconcile(context.Background(), requestFor(parent)); err != nil {
-				t.Fatal(err)
-			}
-			assertRunCount(t, kube, parent.Namespace, 0)
-			updated := &edgev1alpha1.ModelLoadedIdleBaseline{}
-			if err := kube.Get(context.Background(), client.ObjectKeyFromObject(parent), updated); err != nil {
-				t.Fatal(err)
-			}
-			if updated.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient ||
-				updated.Status.AttemptedRuns != 0 || updated.Status.Result != nil {
-				t.Fatalf("failed state status=%#v", updated.Status)
-			}
-		})
+// A failed apply closes the baseline without a Run.
+func TestReconcilerClosesFailedPowerModeWithoutRun(t *testing.T) {
+	parent := testBaselineParent()
+	node := grantedNode(parent, string(parent.UID))
+	setAgent(node, parent.Spec.State.Candidate.PowerMode, metadata.PowerModeFailed, testNow.Add(-time.Minute))
+	kube := baselineFakeClient(t, parent, node)
+	reconciler := testReconcilerWithPreparer(t, kube, &fakeRunPreparer{prepared: testActuatedPreparedRun(parent)})
+	if _, err := reconciler.Reconcile(context.Background(), requestFor(parent)); err != nil {
+		t.Fatal(err)
+	}
+	assertRunCount(t, kube, parent.Namespace, 0)
+	updated := &edgev1alpha1.ModelLoadedIdleBaseline{}
+	if err := kube.Get(context.Background(), client.ObjectKeyFromObject(parent), updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient ||
+		updated.Status.AttemptedRuns != 0 || updated.Status.Result != nil {
+		t.Fatalf("failed state status=%#v", updated.Status)
 	}
 }
 

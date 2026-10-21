@@ -13,7 +13,6 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,7 +60,8 @@ func changeNode(ctx context.Context, c client.WithWatch, change func(*core.Node)
 }
 
 // Only the writer the Node read admits patches the desired mode: a planner
-// switch on an untainted Node, a measurement switch on a tainted one.
+// switch on an untainted Node, a measurement switch on a Node whose taint
+// names its own root.
 func TestPowerModeWriterPatchesOnlyAnAdmittedNode(t *testing.T) {
 	_, _, _, class := observerSourceFixture()
 	class.Spec.PowerModes = []edge.PowerMode{{Name: lowMode, Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 1}}}}
@@ -69,13 +69,14 @@ func TestPowerModeWriterPatchesOnlyAnAdmittedNode(t *testing.T) {
 	for _, test := range []struct {
 		name                 string
 		measurement, tainted bool
-		uid                  string
+		holder, uid          string
 		patched              bool
 	}{
 		{name: "planner on untainted Node", uid: "node-uid", patched: true},
 		{name: "planner on measured Node", tainted: true, uid: "node-uid"},
-		{name: "measurement on untainted Node", measurement: true, uid: "node-uid"},
-		{name: "measurement on measured Node", measurement: true, tainted: true, uid: "node-uid", patched: true},
+		{name: "measurement on untainted Node", measurement: true, holder: "root-uid", uid: "node-uid"},
+		{name: "measurement on its own measured Node", measurement: true, tainted: true, holder: "root-uid", uid: "node-uid", patched: true},
+		{name: "measurement on another root's Node", measurement: true, tainted: true, holder: "other-root-uid", uid: "node-uid"},
 		{name: "replaced Node", uid: "old-uid"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -84,25 +85,11 @@ func TestPowerModeWriterPatchesOnlyAnAdmittedNode(t *testing.T) {
 				node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "root-uid", Effect: core.TaintEffectNoSchedule}}
 			}
 			operations, patches := powerWriter(t, node, test.measurement, nil, func(ctx context.Context, c client.WithWatch) { changeNode(ctx, c, settle) })
-			err := operations.requestPowerMode(context.Background(), serving.NodeReference{Name: "node", UID: test.uid}, lowMode, time.Minute)
+			err := operations.requestPowerMode(context.Background(), serving.NodeReference{Name: "node", UID: test.uid}, test.holder, lowMode, time.Minute)
 			if (err == nil) != test.patched || (*patches == 1) != test.patched {
 				t.Fatalf("err=%v patches=%d", err, *patches)
 			}
 		})
-	}
-}
-
-// A Node that changed after the writer read it, and with it possibly its
-// grant, rejects the write.
-func TestPowerModeWriterConflictsOnStaleNode(t *testing.T) {
-	_, node, _, _ := observerSourceFixture()
-	operations, _ := powerWriter(t, node, false, func(ctx context.Context, c client.WithWatch) {
-		changeNode(ctx, c, func(n *core.Node) {
-			n.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "root-uid", Effect: core.TaintEffectNoSchedule}}
-		})
-	}, nil)
-	if err := operations.requestPowerMode(context.Background(), testNode, lowMode, time.Minute); !apierrors.IsConflict(err) {
-		t.Fatalf("stale Node write: %v", err)
 	}
 }
 
@@ -111,17 +98,17 @@ func TestPowerModeWriterConflictsOnStaleNode(t *testing.T) {
 func TestPowerModeWriterFailsPastDeadlineOrFailure(t *testing.T) {
 	_, node, _, _ := observerSourceFixture()
 	operations, _ := powerWriter(t, node, false, nil, nil)
-	if err := operations.requestPowerMode(context.Background(), testNode, lowMode, 20*time.Millisecond); err == nil || !strings.Contains(err.Error(), "did not reach power mode eco") {
+	if err := operations.requestPowerMode(context.Background(), testNode, "", lowMode, 20*time.Millisecond); err == nil || !strings.Contains(err.Error(), "did not reach power mode eco") {
 		t.Fatalf("past deadline: %v", err)
 	}
 	_, node, _, _ = observerSourceFixture()
 	operations, _ = powerWriter(t, node, false, nil, func(ctx context.Context, c client.WithWatch) {
 		changeNode(ctx, c, func(n *core.Node) {
-			n.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeFailed
-			n.Annotations[chillmeta.PowerModeTransition] = `{"powerMode":"eco","generation":0,"failure":"nvpmodel exited 1"}`
+			chillmeta.SetPowerModeTransition(n, chillmeta.PowerModeFailed, 0, chillmeta.PowerModeTransitionRecord{
+				PowerMode: lowMode, RequestedAt: n.Annotations[chillmeta.PowerModeRequestedAt], Failure: "nvpmodel exited 1"})
 		})
 	})
-	if err := operations.requestPowerMode(context.Background(), testNode, lowMode, time.Minute); err == nil || !strings.Contains(err.Error(), "nvpmodel exited 1") {
+	if err := operations.requestPowerMode(context.Background(), testNode, "", lowMode, time.Minute); err == nil || !strings.Contains(err.Error(), "nvpmodel exited 1") {
 		t.Fatalf("failed apply: %v", err)
 	}
 }

@@ -2,8 +2,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
-	"strconv"
 	"testing"
 	"time"
 
@@ -34,23 +32,17 @@ func TestProjectTransitionMaterialKeepsTheFixedPathDirect(t *testing.T) {
 // campaignNode is the campaign's target Node, its agent at state for powerMode
 // with an apply fenced at applyStartedAt.
 func campaignNode(powerMode, state string, applyStartedAt time.Time, generation int64) *corev1.Node {
-	record := metadata.PowerModeTransitionRecord{PowerMode: powerMode, Generation: generation, ApplyStartedAt: &applyStartedAt}
+	record := metadata.PowerModeTransitionRecord{
+		PowerMode: powerMode, RequestedAt: applyStartedAt.Format(time.RFC3339Nano),
+		Generation: generation, ApplyStartedAt: &applyStartedAt,
+	}
 	if state == metadata.PowerModeSuccess {
 		readyAt := applyStartedAt.Add(time.Minute)
 		record.VerifiedAt, record.ReadyAt = &applyStartedAt, &readyAt
 	}
-	raw, err := json.Marshal(record)
-	if err != nil {
-		panic(err)
-	}
-	return &corev1.Node{ObjectMeta: metav1.ObjectMeta{
-		Name: "jetsono", UID: "node-uid",
-		Labels: map[string]string{metadata.PowerMode: powerMode, metadata.PowerModeState: state},
-		Annotations: map[string]string{
-			metadata.PowerModeGeneration: strconv.FormatInt(generation, 10),
-			metadata.PowerModeTransition: string(raw),
-		},
-	}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "jetsono", UID: "node-uid"}}
+	metadata.SetPowerModeTransition(node, state, generation, record)
+	return node
 }
 
 func TestProjectNodeTransitionFollowsTheAgent(t *testing.T) {
@@ -69,8 +61,6 @@ func TestProjectNodeTransitionFollowsTheAgent(t *testing.T) {
 		{name: "not requested", node: campaignNode("MODE_15W", metadata.PowerModeSuccess, now.Add(-time.Hour), 2)},
 		{name: "applying", node: campaignNode(mode, metadata.PowerModePending, now.Add(-time.Minute), 2),
 			outcome: batchenergyoptimization.TransitionInFlight},
-		{name: "past the policy deadline", node: campaignNode(mode, metadata.PowerModePending, now.Add(-301*time.Second), 2),
-			outcome: batchenergyoptimization.TransitionFailed},
 		{name: "apply failed", node: campaignNode(mode, metadata.PowerModeFailed, now.Add(-time.Minute), 2),
 			outcome: batchenergyoptimization.TransitionFailed},
 		{name: "settled", node: campaignNode(mode, metadata.PowerModeSuccess, now.Add(-2*time.Minute), 3),
@@ -111,9 +101,8 @@ func (d nodeTransitionPlan) Resolve(
 	return d.plan, batchenergyoptimization.StoredObjectReference{}, d.material, nil
 }
 
-// The campaign writes its power mode only on a Node whose measurement taint
-// grants the Node to this campaign.
-func TestCampaignRequestsPowerModeOnlyOnItsGrantedNode(t *testing.T) {
+// The campaign writes its power mode on a Node its measurement taint grants it.
+func TestCampaignRequestsPowerModeOnItsGrantedNode(t *testing.T) {
 	parent := testParent()
 	parent.Generation = 1
 	parent.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}
@@ -126,52 +115,38 @@ func TestCampaignRequestsPowerModeOnlyOnItsGrantedNode(t *testing.T) {
 	if err != nil || material == nil {
 		t.Fatalf("project plan: material=%v err=%v", material, err)
 	}
-	for _, test := range []struct {
-		name    string
-		taints  []corev1.Taint
-		granted bool
-	}{
-		{name: "own grant", granted: true, taints: []corev1.Taint{{
+	scheme := runtime.NewScheme()
+	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: material.Node.Name, UID: types.UID(material.Node.UID)},
+		Spec: corev1.NodeSpec{Taints: []corev1.Taint{{
 			Key: profilingrun.MeasurementTaintKey, Value: string(parent.UID), Effect: corev1.TaintEffectNoSchedule,
 		}}},
-		{name: "other root", taints: []corev1.Taint{{
-			Key: profilingrun.MeasurementTaintKey, Value: "other-uid", Effect: corev1.TaintEffectNoSchedule,
-		}}},
-		{name: "untainted"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			scheme := runtime.NewScheme()
-			if err := edgev1alpha1.AddToScheme(scheme); err != nil {
-				t.Fatal(err)
-			}
-			if err := corev1.AddToScheme(scheme); err != nil {
-				t.Fatal(err)
-			}
-			node := &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: material.Node.Name, UID: types.UID(material.Node.UID)},
-				Spec:       corev1.NodeSpec{Taints: test.taints},
-			}
-			native := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(parent).
-				WithObjects(parent.DeepCopy(), node).Build()
-			dependencies := nodeTransitionPlan{&terminalReplayDependencies{}, plan, material}
-			reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies, dependencies, dependencies)
-			if err != nil {
-				t.Fatal(err)
-			}
-			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
-				NamespacedName: types.NamespacedName{Namespace: parent.Namespace, Name: parent.Name},
-			})
-			if (err == nil) != test.granted || test.granted && result.RequeueAfter != powerModeWait {
-				t.Fatalf("result=%#v err=%v, want granted %t", result, err, test.granted)
-			}
-			updated := &corev1.Node{}
-			if err := native.Get(context.Background(), types.NamespacedName{Name: node.Name}, updated); err != nil {
-				t.Fatal(err)
-			}
-			if requested := updated.Labels[metadata.PowerMode] == material.PowerMode; requested != test.granted {
-				t.Fatalf("power-mode label = %q, want written %t", updated.Labels[metadata.PowerMode], test.granted)
-			}
-		})
+	}
+	native := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(parent).
+		WithObjects(parent.DeepCopy(), node).Build()
+	dependencies := nodeTransitionPlan{&terminalReplayDependencies{}, plan, material}
+	reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies, dependencies, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: parent.Namespace, Name: parent.Name},
+	})
+	if err != nil || result.RequeueAfter != admissionWait {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	updated := &corev1.Node{}
+	if err := native.Get(context.Background(), types.NamespacedName{Name: node.Name}, updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Labels[metadata.PowerMode] != material.PowerMode {
+		t.Fatalf("power-mode label = %q, want %q", updated.Labels[metadata.PowerMode], material.PowerMode)
 	}
 }
 

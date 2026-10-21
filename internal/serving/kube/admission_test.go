@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -77,22 +76,16 @@ func settleAgent(class *edge.DeviceClass) func(*core.Node) {
 		generation, _, _ := chillmeta.NodePowerModeGeneration(n)
 		now := time.Now()
 		actuator, _ := json.Marshal(class.Spec.PowerModes[i].Actuator)
-		transition, _ := json.Marshal(chillmeta.PowerModeTransitionRecord{PowerMode: mode, Generation: generation + 1, ApplyStartedAt: &now, VerifiedAt: &now, ReadyAt: &now})
-		if n.Annotations == nil {
-			n.Annotations = map[string]string{}
-		}
-		n.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeSuccess
+		chillmeta.SetPowerModeTransition(n, chillmeta.PowerModeSuccess, generation+1, chillmeta.PowerModeTransitionRecord{
+			PowerMode: mode, RequestedAt: n.Annotations[chillmeta.PowerModeRequestedAt], Generation: generation + 1, ApplyStartedAt: &now, VerifiedAt: &now, ReadyAt: &now})
 		n.Annotations[chillmeta.PowerActuator] = string(actuator)
-		n.Annotations[chillmeta.PowerModeGeneration] = strconv.FormatInt(generation+1, 10)
-		n.Annotations[chillmeta.PowerModeTransition] = string(transition)
 	}
 }
 
-// pendingNode marks the Node as applying mode since applied.
-func pendingNode(n *core.Node, mode string, applied time.Time) {
-	transition, _ := json.Marshal(chillmeta.PowerModeTransitionRecord{PowerMode: mode, ApplyStartedAt: &applied})
-	n.Labels[chillmeta.PowerMode], n.Labels[chillmeta.PowerModeState] = mode, chillmeta.PowerModePending
-	n.Annotations[chillmeta.PowerModeTransition] = string(transition)
+// pendingNode marks the Node as applying mode requested at requested.
+func pendingNode(n *core.Node, mode string, requested time.Time) {
+	generation, _, _ := chillmeta.NodePowerModeGeneration(n)
+	chillmeta.SetPowerModeTransition(n, chillmeta.PowerModePending, generation, chillmeta.PowerModeTransitionRecord{PowerMode: mode, RequestedAt: requested.Format(time.RFC3339Nano)})
 }
 
 type admissionHarness struct {

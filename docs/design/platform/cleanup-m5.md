@@ -32,19 +32,20 @@ NVIDIA mig-manager([mig-parted](https://github.com/NVIDIA/mig-parted))의 방식
 | Node metadata | writer | 값 |
 |---|---|---|
 | label `chill.dacs.io/power-mode` | 3.2절의 writer 하나 | DeviceClass 모드 이름. 없으면 원하는 모드가 없다 |
+| annotation `chill.dacs.io/power-mode-requested-at` | label과 같은 writer, 같은 patch | 요청 시각(RFC 3339, writer 시계). 기한의 기준이다 |
 | label `chill.dacs.io/power-mode.state` | node agent | `pending`, `success`, `failed` |
 | annotation `chill.dacs.io/power-mode-generation` | node agent | 0부터 세는 정수. 관측한 모드가 바뀔 때마다 1 증가 |
 | annotation `edge.dacs.io/power-actuator` | node agent | 지금처럼 actuator read-back(node-agent 2.5절) |
 | annotation `chill.dacs.io/power-mode-boot` | node agent | 마지막으로 본 `status.nodeInfo.bootID` |
-| annotation `chill.dacs.io/power-mode-transition` | node agent | 마지막 적용의 `{powerMode, generation, applyStartedAt, verifiedAt, settlingStartedAt, readyAt, failure}`(Node 시계) |
+| annotation `chill.dacs.io/power-mode-transition` | node agent | 마지막 적용의 `{powerMode, requestedAt, generation, applyStartedAt, verifiedAt, settlingStartedAt, readyAt, failure}`(Node 시계). `requestedAt`은 이 기록이 처리한 요청 시각이고 state는 지금 요청을 처리한 기록에만 붙는다 |
 
 ### 3.1 node agent
 
-- `chill-node-agent-actuation`이 자기 Node를 watch한다. 원하는 모드가 read-back과 다르고 state가 `failed`가 아니면: `pending`과 `applyStartedAt`을 patch하고(ADR 0020의 변경 전 fence), 기존 adapter로 적용하고, 독립 read-back이 목표면 read-back, generation + 1, `verifiedAt`을 한 patch로 쓴다. DeviceClass 모드의 policy(`powerActuation.policies`, agent 설정에 이미 있음) `settlingDurationSeconds`를 기다린 뒤 `readyAt`과 `success`를 쓴다. 실패는 `failed`와 `failure`다. 원하는 모드가 이미 read-back과 같으면 `success`만 쓴다. label이 지워지면 state를 지운다.
+- `chill-node-agent-actuation`이 자기 Node를 watch한다. 원하는 모드가 read-back과 다르고 state가 `failed`가 아니면: `pending`과 `applyStartedAt`을 patch하고(ADR 0020의 변경 전 fence), 기존 adapter로 적용하고, 독립 read-back이 목표면 read-back, generation + 1, `verifiedAt`을 한 patch로 쓴다. DeviceClass 모드의 policy(`powerActuation.policies`, agent 설정에 이미 있음) `settlingDurationSeconds`를 기다린 뒤 `readyAt`과 `success`를 쓴다. 실패는 `failed`와 `failure`다. 원하는 모드가 이미 read-back과 같으면 적용 없이 `success`와 read-back 시각 `verifiedAt`, `readyAt`을 쓴다. label이 지워지면 state를 지운다.
 - 10초 read-back(node-agent 2.5절)에서 관측한 actuator가 annotation 값과 다르거나 bootID가 `power-mode-boot`와 다르면 두 annotation과 generation + 1을 한 patch로 쓴다. 손으로 바꾼 모드, 재부팅, 적용 중 멈춤이 모두 여기서 센다. agent 재시작은 annotation과 비교하므로 세지 않는다. 비교 기준이 Node annotation이라 agent 메모리에 의존하지 않는다. 10초 안에 바뀌었다 돌아온 모드는 보지 못한다.
 - agent는 원하는 모드를 다시 적용하지 않는다. 손으로 바뀐 모드는 그대로 두고 read-back이 실제 모드다. capture는 지금처럼 read-back으로 판단한다.
 - **재부팅 모드**(orin-nano 7W 진입과 이탈, `values.yaml:280-283`, nvpmodel `Reboot required`): agent가 `pending`과 `applyStartedAt`을 쓴 뒤 `--force`로 기록하고 Node를 재시작한다(`jetson/nvpmodel.go:159-170`). label은 Node object에 있어 재부팅 뒤에도 `pending`이다. 다시 뜬 agent가 read-back이 목표이고 bootID가 바뀐 것을 보고 generation을 한 번 올리고 `verifiedAt`, settling, `success`를 쓴다. 목표 이름이지만 gating mask가 다르면 `failed`다(`holdsTarget`이 반복 재시작을 막는다).
-- **기한.** agent에는 기한이 없다. writer가 label을 쓴 시각부터 policy `maxActuationDurationSeconds`(live 900 s, 재부팅 약 75 s 포함) 안에 `success`와 목표 read-back을 보지 못하면 그 동작을 실패로 판정한다(계획기는 action `failed`, Profiler는 지금의 deadline 실패와 같은 결과). 늦게 끝난 적용도 generation을 올리므로 겹친 측정은 무효가 된다. 같은 모드를 다시 시도하려면 writer가 label을 지운 뒤 다시 쓴다.
+- **기한.** agent에는 기한이 없다. writer는 `power-mode-requested-at`부터 policy `maxActuationDurationSeconds`(live 900 s, 재부팅 약 75 s 포함) 안에 `success`와 목표 read-back을 보지 못하면 그 동작을 실패로 판정한다(계획기는 action `failed`, Profiler는 지금의 deadline 실패와 같은 결과). agent가 적용을 시작하지 않은 노드도 같은 기한에 실패한다. 늦게 끝난 적용도 generation을 올리므로 겹친 측정은 무효가 된다. 같은 모드를 다시 시도하려면 writer가 같은 label에 새 요청 시각을 쓰고, agent는 이를 새 요청으로 처리한다.
 - Lease와 phase 기계는 없다. 노드마다 agent 하나가 유일한 전력 mutator다(ADR 0015). 독립 read-back은 그대로다(ADR 0017).
 
 ### 3.2 desired label의 writer
@@ -55,10 +56,10 @@ writer는 M3 grant가 정한다. 한 시점에 노드마다 writer 하나다. wr
 |---|---|---|
 | 계획기 power 동작(`kube/operations.go:762`) | ChillServer | taint 없는 노드, `tickMu` 안 |
 | 반환의 최저 모드 낮춤(`kube/admission.go:443-465`) | ChillServer | 자기가 반환하는 노드 |
-| opcost `power` 단계, occupancy 모드 단계(측정 API 2, 3장) | ChillServer | 그 루트가 grant를 가진 노드 |
-| BEO 상태 전환(`campaign/controller/transition_builder.go`), ProfilingRun 확인(`profiler/controller/execution_actuation.go`, `state_confirmation.go`), MLIB(`idlebaseline/controller/transition.go`), PMTC 시도(`transitioncost/controller/attempt_materializer.go`) | Profiler | taint가 있고 admission annotation `chill.dacs.io/admission`의 grant가 자기 루트인 노드 |
+| opcost `power` 단계, occupancy 모드 단계(측정 API 2, 3장) | ChillServer | 측정 taint가 그 루트를 가리키는 노드 |
+| BEO 상태 전환(`campaign/controller/transition_builder.go`), ProfilingRun 확인(`profiler/controller/execution_actuation.go`, `state_confirmation.go`), MLIB(`idlebaseline/controller/transition.go`), PMTC 시도(`transitioncost/controller/attempt_materializer.go`) | Profiler | 측정 taint가 자기 루트를 가리키는 노드 |
 
-- admission은 state가 `pending`이고 `applyStartedAt + maxActuationDurationSeconds`가 지나지 않은 노드를 승인하지 않는다(`pendingActuation`, `admission.go:226-236`을 대신한다).
+- admission은 state가 `pending`이고 `power-mode-requested-at + maxActuationDurationSeconds`가 지나지 않은 노드를 승인하지 않는다(`pendingActuation`, `admission.go:226-236`을 대신한다). 반환 대기도 같은 기한을 쓴다.
 - operator의 stop safety(`operator/nodeagent/stop_safety.go`)는 `pending`인 노드에서 agent를 멈추지 않는다.
 
 ### 3.3 측정 무효 판정

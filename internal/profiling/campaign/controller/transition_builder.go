@@ -47,7 +47,7 @@ func projectNodeTransition(
 		return nil
 	}
 	maxDuration := time.Duration(material.MaxActuationDurationSeconds) * time.Second
-	done, err := metadata.PowerModeOutcome(node, material.PowerMode, time.Time{}, maxDuration, now)
+	done, err := metadata.PowerModeOutcome(node, material.PowerMode, maxDuration, now)
 	switch {
 	case err != nil:
 		return &batchenergyoptimization.Transition{Outcome: batchenergyoptimization.TransitionFailed}

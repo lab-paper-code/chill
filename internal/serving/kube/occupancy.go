@@ -256,7 +256,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 	}
 	fail := func(err error) error { return errors.Join(err, c.failMeasurement(ctx, m, firstLine(err.Error()))) }
 	if !plan.powered {
-		if err := c.measurement.ChangePower(ctx, ref, profile.Condition.PowerMode, plan.maxActuation); err != nil {
+		if err := c.measurement.ChangePower(ctx, ref, string(m.UID), profile.Condition.PowerMode, plan.maxActuation); err != nil {
 			return fail(err)
 		}
 	}

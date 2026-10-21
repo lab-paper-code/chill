@@ -182,7 +182,7 @@ func TestPowerModeAlreadyHeldWritesSuccessOnly(t *testing.T) {
 	}
 }
 
-func TestPowerModeApplyFailureIsTerminalUntilRelabelled(t *testing.T) {
+func TestPowerModeApplyFailureIsTerminalUntilRequestedAgain(t *testing.T) {
 	f := newPowerModeFixture(t, map[string]string{metadata.PowerMode: "7W"})
 	f.host.applyErr = errors.New("nvpmodel refused")
 	f.reconcile()
@@ -194,16 +194,21 @@ func TestPowerModeApplyFailureIsTerminalUntilRelabelled(t *testing.T) {
 	f.reconcile()
 	f.expect(metadata.PowerModeFailed, 0)
 
+	// The writer retries with a new request time and the same label, in one
+	// patch the agent may see at once.
+	f.update(func(node *corev1.Node) { node.Annotations[metadata.PowerModeRequestedAt] = "later" })
+	f.reconcile()
+	f.reconcile()
+	f.reconcile()
+	if retried := f.expect(metadata.PowerModePending, 1); retried.RequestedAt != "later" {
+		t.Fatalf("retried = %+v", retried)
+	}
+
 	f.update(func(node *corev1.Node) { delete(node.Labels, metadata.PowerMode) })
 	f.reconcile()
 	if _, ok := f.node().Labels[metadata.PowerModeState]; ok {
 		t.Fatal("state survived the deleted desired label")
 	}
-	f.update(func(node *corev1.Node) { node.Labels[metadata.PowerMode] = "7W" })
-	f.reconcile()
-	f.reconcile()
-	f.reconcile()
-	f.expect(metadata.PowerModePending, 1)
 }
 
 func TestPowerModeUnauthorizedModeFails(t *testing.T) {
