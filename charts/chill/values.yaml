@@ -604,12 +604,16 @@ discovery:
         powerModes:
           - name: MAXN
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 0}}
+            onlineCPUs: "0-11"
           - name: MODE_15W
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 1}}
+            onlineCPUs: "0-3"
           - name: MODE_30W
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 2}}
+            onlineCPUs: "0-7"
           - name: MODE_50W
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 3}}
+            onlineCPUs: "0-11"
       - name: jetson-orin-nano-8g
         matchLabels:
           edge.dacs.io/device-vendor: nvidia
@@ -621,12 +625,16 @@ discovery:
         powerModes:
           - name: 15W
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 0}}
+            onlineCPUs: "0-5"
           - name: 25W
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 1}}
+            onlineCPUs: "0-5"
           - name: MAXN_SUPER
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 2}}
+            onlineCPUs: "0-5"
           - name: 7W
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 3}}
+            onlineCPUs: "0-3"
       - name: jetson-xavier-nx-8g
         matchLabels:
           edge.dacs.io/device-vendor: nvidia
@@ -638,22 +646,31 @@ discovery:
         powerModes:
           - name: MODE_15W_2CORE
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 0}}
+            onlineCPUs: "0-1"
           - name: MODE_15W_4CORE
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 1}}
+            onlineCPUs: "0-3"
           - name: MODE_15W_6CORE
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 2}}
+            onlineCPUs: "0-5"
           - name: MODE_10W_2CORE
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 3}}
+            onlineCPUs: "0-1"
           - name: MODE_10W_4CORE
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 4}}
+            onlineCPUs: "0-3"
           - name: MODE_10W_DESKTOP
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 5}}
+            onlineCPUs: "0-3"
           - name: MODE_20W_2CORE
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 6}}
+            onlineCPUs: "0-1"
           - name: MODE_20W_4CORE
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 7}}
+            onlineCPUs: "0-3"
           - name: MODE_20W_6CORE
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 8}}
+            onlineCPUs: "0-5"
       - name: jetson-nano-4g
         matchLabels:
           edge.dacs.io/device-vendor: nvidia
@@ -665,8 +682,10 @@ discovery:
         powerModes:
           - name: MAXN
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 0}}
+            onlineCPUs: "0-3"
           - name: 5W
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 1}}
+            onlineCPUs: "0-1"
       - name: orangepi-5-plus-16g
         matchLabels:
           edge.dacs.io/device-vendor: xunlong

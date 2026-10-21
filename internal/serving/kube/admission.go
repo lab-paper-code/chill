@@ -129,7 +129,12 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var classes edge.DeviceClassList
+	if err = c.store.client.List(ctx, &classes); err != nil {
+		return err
+	}
 	now := time.Now()
+	in := admissionInputs{config: config, pods: pods.Items, acts: acts, classes: classes.Items, now: now}
 	byName := map[string]*core.Node{}
 	byUID := map[string]*measurementRoot{}
 	for i := range nodes.Items {
@@ -138,9 +143,80 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 	for i := range roots {
 		byUID[string(roots[i].object.GetUID())] = &roots[i]
 	}
-	errs := make([]error, 0, len(nodes.Items)+len(roots))
-	for i := range nodes.Items {
-		node := &nodes.Items[i]
+	errs := c.continueHeldNodes(ctx, nodes.Items, byUID, config, now)
+	waiting := slices.DeleteFunc(slices.Clone(roots), func(r measurementRoot) bool {
+		_, admitted := r.object.GetAnnotations()[profilingrun.AdmissionAnnotation]
+		return admitted || r.terminal
+	})
+	slices.SortFunc(waiting, func(a, b measurementRoot) int {
+		return cmp.Or(a.object.GetCreationTimestamp().Compare(b.object.GetCreationTimestamp().Time),
+			strings.Compare(a.object.GetNamespace()+"/"+a.object.GetName(), b.object.GetNamespace()+"/"+b.object.GetName()))
+	})
+	// A root that waits holds its Node's queue: a later root on that Node is not
+	// granted before it, so creation order is execution order on every Node. A
+	// refusal is terminal and lets the next root go.
+	claimed := map[string]bool{}
+	for _, root := range waiting {
+		node := byName[root.node]
+		if node == nil {
+			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(refusedNodeMissing, root.node)))
+			continue
+		}
+		if claimed[node.Name] || profilingrun.InMeasurement(node) || busy[string(node.UID)] || pendingActuation(acts, string(node.UID), now) {
+			claimed[node.Name] = true
+			continue
+		}
+		reason, detail := c.rootRefusal(root, node, in)
+		if reason != "" {
+			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(reason, detail)))
+			continue
+		}
+		transition, _ := root.object.(*edge.PowerModeTransitionCost)
+		var runner PrepareSpec
+		if transition != nil {
+			if runner, reason = c.runnerPreparation(transition, node, config); reason != "" {
+				errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(reason, "")))
+				continue
+			}
+		}
+		claimed[node.Name] = true
+		if err := c.setMeasurementTaint(ctx, node, string(root.object.GetUID())); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if transition != nil {
+			c.startRunner(node, transition.DeepCopy(), runner, config)
+			continue
+		}
+		errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(now)))
+	}
+	return errors.Join(errs...)
+}
+
+// admissionInputs is what one Admit cycle read.
+type admissionInputs struct {
+	config  SchedulerControllerConfig
+	pods    []core.Pod
+	acts    []edge.NodeActuation
+	classes []edge.DeviceClass
+	now     time.Time
+}
+
+// rootRefusal judges a waiting root on a Node nothing holds: a refusal reason
+// and detail, or none to grant it.
+func (c *SchedulerController) rootRefusal(root measurementRoot, node *core.Node, in admissionInputs) (reason, detail string) {
+	if serving := servingPodsOn(in.pods, node.Name); len(serving) > 0 {
+		return refusedNodeServing, strings.Join(serving, ",")
+	}
+	return cpuRefusal(root.object, node, in.classes, in.acts, in.config.Reserved[node.Name].CPUs)
+}
+
+// continueHeldNodes finishes the grant a restart cut off and starts the
+// hand-back of every tainted Node whose measurement ended or vanished.
+func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []core.Node, byUID map[string]*measurementRoot, config SchedulerControllerConfig, now time.Time) []error {
+	errs := make([]error, 0, len(nodes))
+	for i := range nodes {
+		node := &nodes[i]
 		holder, tainted := profilingrun.MeasurementHolder(node)
 		if !tainted || c.nodeBusy(node) {
 			continue
@@ -165,49 +241,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 		}
 		c.startHandBack(node, holder, root, config)
 	}
-	waiting := slices.DeleteFunc(slices.Clone(roots), func(r measurementRoot) bool {
-		_, admitted := r.object.GetAnnotations()[profilingrun.AdmissionAnnotation]
-		return admitted || r.terminal
-	})
-	slices.SortFunc(waiting, func(a, b measurementRoot) int {
-		return cmp.Or(a.object.GetCreationTimestamp().Compare(b.object.GetCreationTimestamp().Time),
-			strings.Compare(a.object.GetNamespace()+"/"+a.object.GetName(), b.object.GetNamespace()+"/"+b.object.GetName()))
-	})
-	claimed := map[string]bool{}
-	for _, root := range waiting {
-		node := byName[root.node]
-		if node == nil {
-			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(refusedNodeMissing, root.node)))
-			continue
-		}
-		if claimed[node.Name] || profilingrun.InMeasurement(node) || busy[string(node.UID)] || pendingActuation(acts, string(node.UID), now) {
-			continue
-		}
-		if serving := servingPodsOn(pods.Items, node.Name); len(serving) > 0 {
-			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(refusedNodeServing, strings.Join(serving, ","))))
-			continue
-		}
-		transition, _ := root.object.(*edge.PowerModeTransitionCost)
-		var runner PrepareSpec
-		if transition != nil {
-			var reason string
-			if runner, reason = c.runnerPreparation(transition, node, config); reason != "" {
-				errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(reason, "")))
-				continue
-			}
-		}
-		claimed[node.Name] = true
-		if err := c.setMeasurementTaint(ctx, node, string(root.object.GetUID())); err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		if transition != nil {
-			c.startRunner(node, transition.DeepCopy(), runner, config)
-			continue
-		}
-		errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(now)))
-	}
-	return errors.Join(errs...)
+	return errs
 }
 
 // nodeBusy reports a running run on the Node; Tick, Admit and hand-back then

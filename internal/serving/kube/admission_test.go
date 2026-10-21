@@ -12,6 +12,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -402,5 +403,80 @@ func TestAdmitWaitsForPendingPowerChangeOfAMeasurementNamespace(t *testing.T) {
 	h.admit()
 	if h.holder() != string(root.UID) {
 		t.Fatal("not granted after the power change settled")
+	}
+}
+
+// cpuClass is the DeviceClass of the fixture Node: "max" declares its online
+// CPUs and "low" does not.
+func cpuClass() *edge.DeviceClass {
+	actuator := func(id int32) edge.PowerModeActuator {
+		return edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: id}}
+	}
+	return &edge.DeviceClass{ObjectMeta: meta.ObjectMeta{Name: "cpu"}, Spec: edge.DeviceClassSpec{NodeSelector: map[string]string{"hardware": "cpu"},
+		Architecture: "amd64", PowerModes: []edge.PowerMode{{Name: "max", Actuator: actuator(0), OnlineCPUs: "0-5"}, {Name: "low", Actuator: actuator(1)}}}}
+}
+
+// A measurement whose CPUs its mode cannot leave outside the serving
+// reservation is refused before the Node is taken; the option it would
+// measure could never be placed.
+func TestAdmitRefusesCPUsTheModeCannotOffer(t *testing.T) {
+	quota := func(n int64) resource.Quantity { return *resource.NewQuantity(n, resource.DecimalSI) }
+	for _, test := range []struct {
+		name     string
+		mode     string
+		affinity []int32
+		quota    resource.Quantity
+		readBack string
+		want     string
+	}{
+		{name: "declared affinity fits", mode: "max", affinity: []int32{2, 3, 4, 5}, want: "Granted"},
+		{name: "declared affinity offline", mode: "max", affinity: []int32{4, 5, 6}, want: "Refused: CPUsUnavailable 4-6 max available 2-5"},
+		{name: "affinity on a reserved CPU", mode: "max", affinity: []int32{1, 2}, want: "Refused: CPUsUnavailable"},
+		{name: "quota fits", mode: "max", quota: quota(4), want: "Granted"},
+		{name: "quota above the available CPUs", mode: "max", quota: quota(5), want: "Refused: CPUsUnavailable quota 5 max available 2-5"},
+		{name: "undeclared mode not read back", mode: "low", quota: quota(1), want: "Refused: OnlineCPUsUnknown low"},
+		{name: "undeclared mode read back uses the Node", mode: "low", quota: quota(2), readBack: "low", want: "Granted"},
+		{name: "undeclared read-back mode too small", mode: "low", quota: quota(3), readBack: "low", want: "Refused: CPUsUnavailable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newAdmissionHarness(t)
+			h.create(cpuClass())
+			h.controller.mu.Lock()
+			h.controller.config.Reserved = map[string]serving.SchedulerAllocation{"node": {CPUs: []int{0, 1}}}
+			h.controller.mu.Unlock()
+			if test.readBack != "" {
+				ready := &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "read-back"},
+					Spec:   edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: "node", UID: "node-uid"}, PowerMode: test.readBack},
+					Status: edge.NodeActuationStatus{Phase: edge.NodeActuationPhaseReady, TargetObservation: &edge.NodeActuationObservation{PowerMode: test.readBack}}}
+				h.create(ready)
+			}
+			root := baselineRoot("idle", time.Now())
+			root.Spec.State.Candidate.PowerMode, root.Spec.CPUAffinity, root.Spec.CPUQuota = test.mode, test.affinity, test.quota
+			h.create(root)
+			h.admit()
+			if got := h.annotation(root, profilingrun.AdmissionAnnotation); !strings.HasPrefix(got, test.want) {
+				t.Fatalf("admission = %q, want %q", got, test.want)
+			}
+			if granted := strings.HasPrefix(test.want, "Granted"); granted != (h.holder() == string(root.UID)) {
+				t.Fatalf("taint holder %q", h.holder())
+			}
+		})
+	}
+}
+
+// A refusal is terminal and does not hold the Node's queue: the next root on
+// the Node is granted in the same cycle.
+func TestAdmitRefusalLetsTheNextRootGo(t *testing.T) {
+	h := newAdmissionHarness(t)
+	h.create(cpuClass())
+	first, second := baselineRoot("first", time.Now().Add(-time.Minute)), baselineRoot("second", time.Now())
+	first.Spec.State.Candidate.PowerMode, first.Spec.CPUAffinity = "max", []int32{7}
+	h.create(first, second)
+	h.admit()
+	if got := h.annotation(first, profilingrun.AdmissionAnnotation); !strings.HasPrefix(got, "Refused: CPUsUnavailable") {
+		t.Fatalf("first = %q", got)
+	}
+	if h.holder() != string(second.UID) {
+		t.Fatalf("holder %q", h.holder())
 	}
 }

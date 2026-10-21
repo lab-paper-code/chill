@@ -49,15 +49,21 @@ BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므
 ### 2.2 승인과 거절
 
 한 노드에 승인은 하나다. `Admit`는 대기 루트를 `creationTimestamp`, 이름 순으로 보고 위에서부터 처음 맞는 줄을 따른다.
+기다리는 루트는 그 노드의 줄을 잡는다. 같은 노드의 뒤 루트는 앞 루트보다 먼저 승인되지 않으므로 노드마다 만든 순서가 실행
+순서다. 거절은 줄을 잡지 않아 다음 루트가 같은 주기에 판단된다([측정 API](measurement-api.md) 5장).
 
 | # | 상황 | 동작 |
 |---|---|---|
-| 1 | 노드에 taint가 있음, 그 노드의 run이 실행 중, 또는 Ready나 `Failed`가 아닌 NodeActuation이 있음 | 기다린다(다음 주기) |
+| 1 | 노드에 taint가 있음, 그 노드의 run이 실행 중, Ready나 `Failed`가 아닌 NodeActuation이 있음, 또는 그 노드의 앞 루트가 기다림 | 기다린다(다음 주기) |
 | 2 | 노드가 없음 | annotation `chill.dacs.io/admission: Refused: NodeMissing` |
 | 3 | 노드에 CHILL serving Pod가 있음 | `Refused: NodeServing <namespace/name 목록>`. taint는 붙이지 않는다 |
-| 4 | PMTC이고 runner 조건이 맞지 않음(2.4절) | `Refused: <사유>` |
-| 5 | 그 밖 | taint `chill.dacs.io/measurement=<루트 UID>:NoSchedule`, `Granted <RFC3339 시각>`. PMTC는 runner 준비 뒤에 `Granted`(2.4절) |
+| 4 | BEO나 MLIB의 `cpuAffinity`가 그 모드의 online CPU에서 `reserved`를 뺀 집합에 들지 않음, affinity 없이 `cpuQuota`가 그 수보다 큼 | `Refused: CPUsUnavailable <CPU> <모드> available <CPU>`. 모드의 online CPU를 알 수 없으면 `Refused: OnlineCPUsUnknown <모드>` |
+| 5 | PMTC이고 runner 조건이 맞지 않음(2.4절) | `Refused: <사유>` |
+| 6 | 그 밖 | taint `chill.dacs.io/measurement=<루트 UID>:NoSchedule`, `Granted <RFC3339 시각>`. PMTC는 runner 준비 뒤에 `Granted`(2.4절) |
 
+- 줄 4의 모드 online CPU는 DeviceClass `powerModes[].onlineCPUs`다. 필드가 없으면 그 모드가 지금 read-back 모드(최신 Ready
+  NodeActuation의 목표, Fixed class는 그 하나의 모드)일 때만 Node annotation `edge.dacs.io/cpus`를 쓴다. chart 기본 catalog는 Jetson
+  모드마다 호스트 nvpmodel의 `CPU_ONLINE` 값을 갖는다. 줄 4는 계획기가 배치할 수 없는 option을 재지 않게 한다.
 - 줄 1이 먼저라서 다른 측정이 가진 노드의 대기 루트는 그 측정의 serving Pod(runner나 operation 측정 인스턴스) 때문에
   거절되지 않는다. 줄 3은 taint 없는 노드에만 적용된다.
 - 줄 1의 NodeActuation 조건은 문제 3을 닫는다. 대기는 M2의 `deadline = now + maxActuationDurationSeconds`로 끝이 있다.
@@ -98,7 +104,7 @@ BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므
 
 ### 2.4 전환 비용 runner
 
-- 승인 전 확인(2.2절 줄 4): `RunnerProfileMissing`(catalog의 준비 가능한 profile 중 대상 Node UID, `spec.modelSpec`,
+- 승인 전 확인(2.2절 줄 5): `RunnerProfileMissing`(catalog의 준비 가능한 profile 중 대상 Node UID, `spec.modelSpec`,
   `spec.executionPath`, `spec.modes[0].powerMode`가 같은 것이 없음), `RunnerContainerUnsupported`(`spec.servingContainer`가
   `firstfloor`가 아님), `RunnerNamespace`(PMTC namespace가 serving namespace와 다름). 맞는 profile이 여럿이면 가장 최근 측정이다.
 - taint를 붙이고 runner 준비 run을 등록한다. run은 measurement 모드로 runner Pod `runner-<PMTC UID hash>`를 준비하고,

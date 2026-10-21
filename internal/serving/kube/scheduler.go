@@ -584,15 +584,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 // can be switched into: the non-Fixed modes of its one DeviceClass that have a
 // configured actuation policy.
 func nodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodeactuator.ActuationPolicySpec) map[string]edge.NodeActuationSpec {
-	var class *edge.DeviceClass
-	for i := range classes {
-		if classes[i].Spec.Architecture == n.Status.NodeInfo.Architecture && nodeClassMatches(n, &classes[i]) {
-			if class != nil {
-				return nil
-			}
-			class = &classes[i]
-		}
-	}
+	class := nodeClass(n, classes)
 	if class == nil {
 		return nil
 	}

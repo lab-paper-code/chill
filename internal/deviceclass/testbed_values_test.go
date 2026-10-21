@@ -125,6 +125,31 @@ func TestDefaultPowerActuationPoliciesMatchCatalog(t *testing.T) {
 	}
 }
 
+// Measurement admission and the planner read a mode's CPUs from the catalog
+// when the Node is in another mode, so every mode a policy switches into
+// declares them; the values are the hosts' nvpmodel CPU_ONLINE settings.
+func TestDefaultSwitchableModesDeclareOnlineCPUs(t *testing.T) {
+	raw, err := os.ReadFile("../../charts/chill/values.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values struct {
+		Discovery struct {
+			Catalog Catalog `json:"catalog"`
+		} `json:"discovery"`
+	}
+	if err := yaml.Unmarshal(raw, &values); err != nil {
+		t.Fatal(err)
+	}
+	for _, class := range values.Discovery.Catalog.Classes {
+		for _, mode := range class.PowerModes {
+			if mode.Actuator.Kind != edgev1alpha1.PowerModeActuatorFixed && mode.OnlineCPUs == "" {
+				t.Errorf("%s mode %s declares no onlineCPUs", class.Name, mode.Name)
+			}
+		}
+	}
+}
+
 func hasMatchingSignature(selector map[string]string, signatureLabels []map[string]string) bool {
 	for _, labels := range signatureLabels {
 		if matchLabels(labels, selector) {
