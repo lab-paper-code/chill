@@ -7,6 +7,7 @@ import { useChillQuery, useSession } from "@/lib/client"
 import { conditionRows } from "@/features/scheduler-profiles"
 import type { LoadWindow, OperatingPower, SchedulerAllocation, SchedulerCandidate, SchedulerDecision, SchedulerDefinition, SchedulerEstimate, SchedulerInstance, SchedulerNode, SchedulerSnapshot, SchedulerView, WireInteger } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
+import { excludedNodes } from "@/features/scheduler-settings"
 import { safeSource } from "@/lib/source-export"
 import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
 import { DataTable } from "@/components/data-table"
@@ -99,7 +100,7 @@ function ActualControl({view}:{view:SchedulerView}) {
     <Facts items={[["자동 제어 서비스",`${view.settings.autonomousWorkloads?.length??0}개`],...controlKeys.map(key=>[controlLabels[key],controls[key]?"사용":"미사용"] as [string,string])]}/>
     <Link href="/configuration">운영 설정 보기</Link>
     <h3>측정 근거와 판단</h3>
-    <Facts items={[["판단",observed(decision.at)?`${localTime(decision.at)} · ${judgmentLabels[decision.status]??statusLabel(decision.status)}`:"판단 대기"],["입력 관측 구간",`${time(decision.search.windowStart)} ~ ${time(decision.search.windowEnd)}`],["에너지 비교 기간",decision.capacity?ms(decision.capacity.periodNanos):"기록 없음"],["선택 목표",observed(decision.at)?decision.target?.id??"변경 목표 없음":"판단 대기"],["실제 구성 관측",time(snapshot.at)]]}/>
+    <Facts items={[["판단",observed(decision.at)?`${localTime(decision.at)} · ${judgmentLabels[decision.status]??statusLabel(decision.status)}`:"판단 대기"],["입력 관측 구간",`${time(decision.search.windowStart)} ~ ${time(decision.search.windowEnd)}`],["에너지 비교 기간",decision.capacity?ms(decision.capacity.periodNanos):"기록 없음"],["계획에서 뺀 장비",excludedNodes(decision.settings)],["선택 목표",observed(decision.at)?decision.target?.id??"변경 목표 없음":"판단 대기"],["실제 구성 관측",time(snapshot.at)]]}/>
     <p className="text-sm text-muted-foreground">목표 선언은 실제 구성이 아니에요. 판단 시각과 관측 시각은 별개예요.</p>
     <Lines values={decision.reasons}/>
     <ul className="grid gap-1.5">

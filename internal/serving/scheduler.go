@@ -28,6 +28,9 @@ type SchedulerSettings struct {
 	ServingMemoryBytes  uint64        `json:"servingMemoryBytes"`
 	CompletionMarginMS  float64       `json:"completionMarginMS"`
 	AutonomousWorkloads []string      `json:"autonomousWorkloads"`
+	// ExcludedNodes names Nodes the planner keeps as they are, like
+	// measurement Nodes: no placement, removal, power change or lowering.
+	ExcludedNodes []string `json:"excludedNodes"`
 	// Capacity rows judge CapacityWindows Poisson windows of at least
 	// CapacityWindow and CapacityMinimumRequests arrivals; a rate is met when
 	// CapacityPassingWindows of them meet the SLO.
@@ -94,6 +97,8 @@ const (
 	// readable native or profile state. The Node keeps its state; other Nodes
 	// are still planned.
 	NodeInstanceUnavailable = "InstanceUnavailable"
+	// NodeExcluded: settings.excludedNodes names the Node; it is never planned.
+	NodeExcluded = "ExcludedNode"
 )
 
 // SchedulerNode is one Node of the entire POOL. Measurement marks the
@@ -345,6 +350,13 @@ func (s SchedulerSettings) Validate() error {
 			return fmt.Errorf("dispatchOccupancy entries need a node, runtimeImage, model and source, perRequestNanos >= 0, and one entry per node, runtimeImage and model")
 		}
 		seen[key] = true
+	}
+	excluded := map[string]bool{}
+	for _, name := range s.ExcludedNodes {
+		if name == "" || excluded[name] {
+			return fmt.Errorf("excludedNodes entries need unique nonempty Node names")
+		}
+		excluded[name] = true
 	}
 	return nil
 }

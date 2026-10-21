@@ -535,6 +535,9 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 				sn.Ready = condition.Status == core.ConditionTrue
 			}
 		}
+		if slices.Contains(config.Settings.ExcludedNodes, n.Name) {
+			sn.Reasons = append(sn.Reasons, serving.NodeExcluded)
+		}
 		captureNodeInventory(&sn, n, profiles)
 		c.captureNodePower(ctx, &sn, n, &acts, physical, profileByID)
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)

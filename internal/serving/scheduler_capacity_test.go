@@ -811,6 +811,38 @@ func TestCapacityReentryAmongFortyOptions(t *testing.T) {
 	t.Logf("40 options: %d node plans, Tick %v", d.Search.Examined, time.Since(began))
 }
 
+// settings.excludedNodes: an excluded Node is never planned, even when its
+// option is the only way to meet the load, and every decision records it.
+func TestCapacityExcludedNodeIsNeverPlanned(t *testing.T) {
+	s, snap := schedulerFixture()
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 1})
+	n3 := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 1})
+	add := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
+	snap.Options = append(snap.Options, poolsOption(add))
+	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(add), "fixed")}
+	capacityLoad(s, &snap, snap.Workloads[0], 150)
+	rows := capacityRowsForTest(s, snap, nil)
+	if d := capacityDecideForTest(t, s, snap, rows); d.Target == nil || !poolsOn(*d.Target, n2) {
+		t.Fatalf("fixture must plan n2: %+v", d.Target)
+	}
+	snap.Nodes[1].Reasons = []string{NodeExcluded}
+	snap.Nodes[2].Reasons = []string{NodeExcluded}
+	d := capacityDecideForTest(t, s, snap, rows)
+	if d.Target != nil && poolsOn(*d.Target, n2) || d.Status != SchedulerStatusOverload ||
+		slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == n2 || a.Node == n3 }) {
+		t.Fatalf("an excluded Node was planned: %s %+v", d.Status, d.Target)
+	}
+	for _, node := range []NodeReference{n2, n3} {
+		if !slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return p.Reason == NodeExcluded }) {
+			t.Fatalf("%s not recorded as excluded: %+v", node.Name, poolsPlans(d, node))
+		}
+	}
+	s.ExcludedNodes = []string{"node-n2", "node-n2"}
+	if s.Validate() == nil {
+		t.Fatal("duplicate excluded Node accepted")
+	}
+}
+
 // §9 6 기간과 기록: every excluded node plan is recorded with its reason.
 func TestCapacityRecordsExcludedPlans(t *testing.T) {
 	s, snap := schedulerFixture()

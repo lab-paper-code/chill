@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
-type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"dispatchOccupancy">
+type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"dispatchOccupancy"|"excludedNodes">
 type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"advanced";unit?:string}
 const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
@@ -36,6 +36,13 @@ const controls: {key:keyof SchedulerSettings["controls"];label:string}[] = [
 ]
 const onOff = (on:boolean) => on?"사용":"사용 안 함"
 const autonomous = (settings:SchedulerSettings) => `${settings.autonomousWorkloads?.length??0}개`
+// Nodes the planner never changes, like measurement Nodes.
+export const excludedNodes = (settings:SchedulerSettings) => settings.excludedNodes?.length?settings.excludedNodes.join(", "):"없음"
+const nodeList = (text:string) => {
+  const names=text.trim()==="없음"?[]:text.split(",").map(name=>name.trim()).filter(Boolean)
+  if(new Set(names).size!==names.length)throw new Error("같은 장비 이름을 두 번 적었어요.")
+  return names
+}
 const mib = (bytes:WireInteger|string) => `약 ${(Number(bytes)/1048576).toLocaleString("ko-KR",{maximumFractionDigits:3})}MiB`
 const time = (at:string) => new Date(at).toLocaleString("ko-KR")
 function plain(field:Field,value:WireInteger):string {
@@ -47,6 +54,7 @@ function plain(field:Field,value:WireInteger):string {
 function changedRows(before:SchedulerSettings,after:SchedulerSettings) {
   return [
     ...(String(before.autonomousWorkloads)!==String(after.autonomousWorkloads)?[["자동 제어 서비스",`${autonomous(before)} → ${autonomous(after)}`] as [string,string]]:[]),
+    ...(String(before.excludedNodes??[])!==String(after.excludedNodes??[])?[["계획에서 뺀 장비",`${excludedNodes(before)} → ${excludedNodes(after)}`] as [string,string]]:[]),
     ...fields.filter(field=>String(before[field.key])!==String(after[field.key])).map(field=>[field.label,`${plain(field,before[field.key])} → ${plain(field,after[field.key])}`] as [string,string]),
     ...controls.filter(control=>before.controls[control.key]!==after.controls[control.key]).map(control=>[control.label,`${onOff(before.controls[control.key])} → ${onOff(after.controls[control.key])}`] as [string,string]),
   ]
@@ -56,7 +64,7 @@ export function SettingChanges({before,after,stored=false}:{before:SchedulerSett
   return rows.length?<Facts items={rows}/>:<p>{stored?"기록의 전후 설정이 같아요.":"바꾼 값과 현재 설정이 같아요."}</p>
 }
 export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
-  return <Facts items={[["자동 제어 서비스",autonomous(settings)],...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
+  return <Facts items={[["자동 제어 서비스",autonomous(settings)],["계획에서 뺀 장비",excludedNodes(settings)],...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
 }
 
 // The one settings write: PUT the full settings, then refresh every scheduler read. Shared with the Workload screen.
@@ -175,7 +183,10 @@ export function SchedulerSettingsPage() {
     action={count>0&&<Button ref={reviewLauncher} onClick={()=>void inspect()} disabled={blocked}>{reviewing?"현재 값을 확인하고 있어요":`변경 ${count}건 검토`}</Button>}>
     <QueryGate query={settings}>{shown&&<>
       <Rows label="판단 주기와 범위">{group("cycle")}</Rows>
-      <Rows label="자원 한도">{group("limit")}</Rows>
+      <Rows label="자원 한도">{group("limit")}
+        <EditRow label="계획에서 뺀 장비" help="운영 판단이 이 장비에는 서비스를 놓거나 빼거나 전력 모드를 바꾸지 않아요. 측정 중인 장비처럼 그대로 둬요." value={excludedNodes(shown)} changed={!!count&&String(baseline!.excludedNodes??[])!==String(shown.excludedNodes??[])}
+          initial={(shown.excludedNodes??[]).join(", ")||"없음"} range="쉼표로 구분한 장비 이름, 비우려면 없음" save={value=>{const names=nodeList(value as string);edit(base=>({...base,excludedNodes:names}))}} disabled={blocked}/>
+      </Rows>
       <Rows label="자동 조정 항목">{controls.map(control=><EditRow key={control.key} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]}
         initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>)}</Rows>
       <Rows label="고급">{group("advanced")}</Rows>

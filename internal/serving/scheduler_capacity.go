@@ -498,6 +498,8 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 		reason = "NodeUnavailable"
 	case node.Measurement:
 		reason = "MeasurementNode"
+	case slices.Contains(node.Reasons, NodeExcluded):
+		reason = NodeExcluded
 	case slices.Contains(node.Reasons, NodeInstanceUnavailable):
 		reason = NodeInstanceUnavailable
 	case slices.Contains(node.Reasons, NodePlacementInventoryMissing):
@@ -532,7 +534,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 			groups[name] = append(groups[name], c)
 		}
 	}
-	if len(names) == 0 {
+	if len(names) == 0 && reason != NodeExcluded {
 		return plans
 	}
 	if reason != "" {
@@ -1736,6 +1738,12 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 // energy.
 func (p *capacityPlanner) idleRemovable(i SchedulerInstance, plan *capacityPlan, best capacityResult, routing map[string]map[string]int32) bool {
 	if !p.idle(i) || schedulerInstanceRouted(routing, i.ID) {
+		return false
+	}
+	// Measurement and excluded Nodes keep their instances.
+	if slices.ContainsFunc(p.snapshot.Nodes, func(n SchedulerNode) bool {
+		return n.Node == i.Node && (n.Measurement || slices.Contains(n.Reasons, NodeExcluded))
+	}) {
 		return false
 	}
 	uid := i.WorkloadUID

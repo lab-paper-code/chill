@@ -51,10 +51,10 @@ func SchedulerLowestMode(baselines []NodeBaseline, node NodeReference) string {
 	return lowest
 }
 
-// schedulerAvailable reports a Ready Node outside the measurement POOL without
-// a CHILL serving instance whose power mode can change.
+// schedulerAvailable reports a Ready Node outside the measurement POOL and the
+// excluded Nodes without a CHILL serving instance whose power mode can change.
 func schedulerAvailable(snapshot SchedulerSnapshot, n SchedulerNode) bool {
-	return n.Ready && !n.Measurement && !slices.Contains(n.Reasons, NodePowerModeUnavailable) &&
+	return n.Ready && !n.Measurement && !slices.Contains(n.Reasons, NodeExcluded) && !slices.Contains(n.Reasons, NodePowerModeUnavailable) &&
 		!slices.Contains(n.Reasons, NodeInstanceUnavailable) &&
 		!slices.ContainsFunc(snapshot.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node })
 }

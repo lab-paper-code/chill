@@ -38,6 +38,8 @@ export type SchedulerSettings = {
   // Measured per Node, runtime image and model; options without one get no capacity row.
   dispatchOccupancy:{node:string;runtimeImage:string;model:string;perRequestNanos:WireInteger;source:string}[]|null
   autonomousWorkloads:string[]|null
+  // Nodes the planner never changes (reason ExcludedNode).
+  excludedNodes:string[]|null
   controls:{placement:boolean;resources:boolean;replicas:boolean;routing:boolean;batching:boolean;power:boolean;membership:boolean}
 }
 export type SchedulerDefinition = {name:string;uid:string;generation:WireInteger;model:{name:string;uid:string;generation:WireInteger;paths:unknown[]|null};slo:{percentile:number;targetLatencyNanos:WireInteger}}

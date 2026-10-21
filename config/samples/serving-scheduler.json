@@ -23,6 +23,7 @@
       }
     ],
     "autonomousWorkloads": [],
+    "excludedNodes": [],
     "controls": {
       "placement": false,
       "resources": false,

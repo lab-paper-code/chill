@@ -140,6 +140,7 @@ const guides: Record<string, Guide> = {
   PlacementInventoryMissing: ["CPU와 GPU 목록을 아직 확인하지 못했어요.", "배포 설정의 장비 목록을 확인해 주세요."],
   PlacementBudgetUnavailable: ["서비스에 쓸 수 있는 자원 예산을 확인하지 못했어요.", "배포 설정의 예약 자원을 확인해 주세요."],
   PowerModeUnavailable: ["지금 전력 모드를 확인하지 못했어요.", "전력 모드 제어기 상태를 확인해 주세요."],
+  ExcludedNode: ["운영 설정에서 계획에서 뺀 장비예요. 운영 판단이 이 장비를 바꾸지 않아요.", "운영 설정의 '계획에서 뺀 장비'에서 빼면 다시 계획해요."],
 
   // ChillSystem condition reasons that need action: internal/operator/system/status.go
   ComponentsDisabled: ["관리하는 구성요소를 모두 꺼 두었어요.", "필요한 구성요소를 시스템 설정에서 켜 주세요."],
