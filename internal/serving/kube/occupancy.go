@@ -85,8 +85,8 @@ type DispatchOccupancyRecord struct {
 
 // measureOccupancy fills the window of record from the final rows of one
 // fixed-batch instance: X from the batch ID span over the start span of the
-// window batches, d = 1/X - profile mean/B, and the fraction of batches after
-// which the instance waited for the next request.
+// window batches, d = 1/X - profile mean/B, and the fraction of the window
+// the instance waited for its next request after a batch ended.
 func measureOccupancy(record *DispatchOccupancyRecord, rows []serving.RequestRow, warmup, duration time.Duration) {
 	type batchRows struct {
 		start, executed, queued time.Time
@@ -143,20 +143,25 @@ func measureOccupancy(record *DispatchOccupancyRecord, rows []serving.RequestRow
 		record.Throughput = float64(high-low) * float64(record.Batch) / span
 		record.PerRequestNanos = int64(math.Round(1e9/record.Throughput - record.ProfileMeanNanos/float64(record.Batch)))
 	}
-	idle, pairs := 0, 0
+	var idle time.Duration
 	for _, id := range inWindow {
 		this, next := batches[id], batches[id+1]
 		if next == nil || this.executed.IsZero() || next.queued.IsZero() {
 			continue
 		}
-		pairs++
-		if next.queued.After(this.executed) {
-			idle++
+		// The instance waited from its batch's end until the next request arrived.
+		if arrived := minTime(next.queued, w.End); arrived.After(this.executed) {
+			idle += arrived.Sub(this.executed)
 		}
 	}
-	if pairs > 0 {
-		record.IdleFraction = float64(idle) / float64(pairs)
+	record.IdleFraction = idle.Seconds() / duration.Seconds()
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
 	}
+	return b
 }
 
 // occupancyPlan is what admission resolved for a granted occupancy measurement.

@@ -57,16 +57,35 @@ func TestMeasureOccupancyReproducesRasp5(t *testing.T) {
 	if w.Batches < 290 || w.IdleFraction != 0 {
 		t.Fatalf("window %+v", w)
 	}
-	// Queued requests that arrive after the batch ended make the instance idle.
+	// Requests that arrive after the batch ended leave the instance idle.
 	for i := range rows {
-		late := int64(gap) + int64(30*time.Millisecond)
+		late := int64(32790 * time.Microsecond)
 		rows[i].QueuedNanos = &late
 	}
-	if w = measure(rows, 20*gap, 300*gap); w.IdleFraction != 1 {
+	// Each batch then waits 5 ms after it ends for its next request; the
+	// skipped batches 50-52 leave 296 of the 300 pairs.
+	if w = measure(rows, 20*gap, 300*gap); math.Abs(w.IdleFraction-296*5e6/(300*float64(gap))) > 1e-4 {
 		t.Fatalf("idle fraction %v", w.IdleFraction)
 	}
 	if w = measure(rows[:3], 0, time.Minute); w.Batches != 3 {
 		t.Fatalf("short window %+v", w)
+	}
+}
+
+// A 140 s ChillServer stall inside the window (d9 rasp5) is one idle pair
+// among thousands, but 140 s of the 360 s window: the time fraction catches it.
+func TestMeasureOccupancyCountsIdleTime(t *testing.T) {
+	gap := time.Duration(math.Round(1e9 / 29.2))
+	rows := occupancyRows(12000, gap)
+	for i := range rows {
+		if rows[i].BatchID > 5000 {
+			rows[i].ReceivedAt = rows[i].ReceivedAt.Add(140 * time.Second)
+		}
+	}
+	w := DispatchOccupancyRecord{Batch: 1, ProfileMeanNanos: 27.79e6}
+	measureOccupancy(&w, rows, time.Minute, 6*time.Minute)
+	if want := (140*time.Second - 27790*time.Microsecond + time.Millisecond).Seconds() / 360; math.Abs(w.IdleFraction-want) > 1e-6 {
+		t.Fatalf("idle fraction %v, want %v (batches %d)", w.IdleFraction, want, w.Batches)
 	}
 }
 

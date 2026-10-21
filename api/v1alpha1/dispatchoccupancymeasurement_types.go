@@ -43,7 +43,8 @@ type DispatchOccupancyMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=2
 	MinimumBatches int32 `json:"minimumBatches"`
 
-	// MaximumIdleFraction bounds the batches after which the instance waited.
+	// MaximumIdleFraction bounds the fraction of the window the instance waited
+	// for its next request after a batch ended.
 	// +kubebuilder:validation:Pattern=`^(0(\.[0-9]+)?|1(\.0+)?)$`
 	MaximumIdleFraction string `json:"maximumIdleFraction"`
 

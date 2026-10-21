@@ -84,8 +84,9 @@ spec:
                 minimum: 60
                 type: integer
               maximumIdleFraction:
-                description: MaximumIdleFraction bounds the batches after which the
-                  instance waited.
+                description: |-
+                  MaximumIdleFraction bounds the fraction of the window the instance waited
+                  for its next request after a batch ended.
                 pattern: ^(0(\.[0-9]+)?|1(\.0+)?)$
                 type: string
               minimumBatches:

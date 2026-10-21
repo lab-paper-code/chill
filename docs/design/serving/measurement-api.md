@@ -54,7 +54,7 @@
 | `spec.workload` | 요청 경로를 줄 Workload 이름. 그 Dataset의 `evaluation` 부분집합을 보낸다 |
 | `spec.batch` | 고정 배치 크기 B(≥ 1). 인스턴스를 `fixedBatchSize: B`로 준비한다(`SCH-35`) |
 | `spec.rateFactor` | 소수 문자열 ≥ 1.2. 보내는 요청률 = rateFactor × B / (profile 배치 B 평균 실행시간) |
-| `spec.warmupSeconds`, `durationSeconds`, `minimumBatches`, `maximumIdleFraction` | 창 앞에서 뺄 시간, 창 길이(≥ 60), 창 안 배치 수 하한, 유휴 배치 비율 상한(소수 문자열) |
+| `spec.warmupSeconds`, `durationSeconds`, `minimumBatches`, `maximumIdleFraction` | 창 앞에서 뺄 시간, 창 길이(≥ 60), 창 안 배치 수 하한, 유휴 시간 비율 상한(소수 문자열) |
 | `spec.workers` | load generator `--workers`. 큐가 차 있는 동안 열린 요청은 약 `maxQueueSize`개이므로 그 이상 |
 | `status` | `phase`(2장과 같은 넷), `reason`, `powerMode`, `perRequestNanos`, `throughput`(소수 문자열, req/s), `result`(`ProfilingRunEvidenceReference`) |
 
@@ -70,7 +70,7 @@
 - `load`는 `chill-load-generator` image의 `chill-loadgen replay --endpoint https://<fullname>-serving-entrypoint.<release ns>.svc:<port> --token-file <projected token> --ca-file /ca/tls.crt --workload <workload> --dataset-dir /data --fields <Workload Preprocessor의 spec.input.fields> --rate <요청률> --duration <warmup + duration> --arrivals poisson --seed 0 --workers <workers>`다. live 인증서는 자기 서명이고 SAN에 `.svc` 이름이 있으며 짧은 Service 이름은 검증에 실패한다. CA는 `servingEntrypoint.tls.secretName`의 `tls.crt` item만 projected volume으로 넣는다(`tls.key` 없음).
 - ServiceAccount는 `<fullname>-load-generator`, image는 `load-generator/`를 담은 `build/docker/load-generator.Dockerfile`이다. base는 Python 3.12로 고정한다. live 인증서에 Subject와 Authority Key Identifier가 없어 3.13 이상의 기본 strict 검증이 거절할 수 있다 `[추론]`.
 
-**계산.** 배치 시작 = `receivedAt + runningNanos`. 창 배치는 시작이 [첫 배치 시작 + warmup, 그 + duration]인 배치다. `e1.sql` 포화 표(`:26-37`)와 같은 식으로 X = (창 최대 batchID − 창 최소 batchID) × B / (두 배치의 시작 차이), `d = 1/X − mean(profile batches[B].durationNanos)/B`다. 유휴 배치는 다음 배치 행 중 가장 이른 `receivedAt + queuedNanos`가 그 배치 행의 가장 늦은 `receivedAt + executedNanos`보다 뒤인 배치다. 두 시각이 없는 쌍은 세지 않는다.
+**계산.** 배치 시작 = `receivedAt + runningNanos`. 창 배치는 시작이 [첫 배치 시작 + warmup, 그 + duration]인 배치다. `e1.sql` 포화 표(`:26-37`)와 같은 식으로 X = (창 최대 batchID − 창 최소 batchID) × B / (두 배치의 시작 차이), `d = 1/X − mean(profile batches[B].durationNanos)/B`다. 창 배치마다 유휴 간격은 그 배치 행의 가장 늦은 `receivedAt + executedNanos`에서 다음 배치 행 중 가장 이른 `receivedAt + queuedNanos`(창 끝에서 자름)까지이고, 다음 요청이 먼저 왔으면 0이다. 유휴 비율 = 유휴 간격 합 / duration이다. 두 시각이 없는 쌍은 더하지 않는다. 창 안의 긴 멈춤 하나도 그 길이만큼 비율에 들어간다.
 
 결과: 판정을 통과하면 `Complete`이고 d < 0도 그대로 기록한다. 창 배치 수 < `minimumBatches`, 유휴 비율 > `maximumIdleFraction`, witness 오류는 `Insufficient`와 `TooFewBatches <n>`, `NotSaturated <비율>`, `PowerChangedDuringMeasurement`이고 record를 쓴다. gateway가 포화를 막으면 `NotSaturated`로 드러난다. 거절(5장), prepare나 remove 오류, Job 실패나 시간 초과(`LoadFailed <Job 상태>`), ChillServer 재시작은 `Failed`이고 record가 없다.
 
@@ -114,6 +114,7 @@
 | CRD `operationcostmeasurements`, `dispatchoccupancymeasurements`, DeviceClass `powerModes[].onlineCPUs` | 새 kind `v1alpha1`, 선택 필드 | 기존 DeviceClass object 그대로 읽힌다 |
 | operation 측정 `serving-operation-measurement.v1alpha2`, 순서 `serving-operation-sequence.v1alpha1` | 그대로. 순서 ID가 CR UID | 기존 `seq-` 기록도 같은 reader로 읽힌다 |
 | `serving/dispatch-occupancy/<Node UID>/<CR UID>.json` | 새 불변 object `chill.dacs.io/dispatch-occupancy-measurement.v1alpha1`: `{node{name, uid}, powerMode, runtimeImage, model, profileID, batch, profileMeanNanos, offeredRate, window{start, end}, batches, throughput, perRequestNanos, idleFraction, loadJob{name, image}, isolation, verdict, reason, measuredAt}` | `PutImmutable` |
+| record `idleFraction`, spec `maximumIdleFraction` | 유휴 시간 비율(3장 계산) | 버전을 올리지 않는다. 배포 뒤 모든 노드와 모드의 d를 다시 재고, 계획기는 `measuredAt`이 가장 늦은 record를 쓴다 |
 | 설정 `dispatchOccupancy` | 삭제 | decode가 strict(`scheduler_service.go:118`)라 commit 8 배포에서 ConfigMap의 key를 같이 지운다 |
 | 판단 기록 `v1alpha5` | snapshot `dispatchOccupancy` 추가, `settings.dispatchOccupancy` 빠짐, 행 입력 항목에 `powerMode`와 node UID | 관측 reader는 strict가 아니어서 없는 필드를 빈 값으로, 옛 필드를 무시하고 읽으므로 버전을 올리지 않는다(`analytic-planner.md` 7장과 같은 처리) |
 
@@ -168,7 +169,7 @@ spec:
 | 3 | 앞 루트가 catalog 지연으로 대기면 같은 노드 뒤 루트 대기, 다른 노드 승인. 측정 taint 노드의 대기 루트는 측정 인스턴스가 있어도 대기, taint 없는 노드의 계획기 Pod는 `NodeServing`. `cpuAffinity` [2,3,4,5]와 `onlineCPUs` 0-3 거절. `onlineCPUs` 없는 모드는 read-back 모드와 같으면 annotation, 다르면 `OnlineCPUsUnknown` |
 | 4 | jetsonx `*_2CORE`(`onlineCPUs` 0-1, 예약 [0,1])로 바꾸는 계획이 CPU 예산에서 빠짐. 필드 없는 다른 모드 계획이 `PlacementInventoryMissing`. 현재 모드 계획은 그대로 |
 | 5 | power, prepare, idle, remove, power 순서가 한 번 승인되고 key가 `<UID>.<n>.<name>`, status 단계 다섯, `Complete`, 단계 NodeActuation owner가 CR이고 반환 뒤 `measurement-invalid` 없음. 둘째 단계 `Insufficient`면 멈춤, 순서 기록, phase `Insufficient`. 재시작 뒤 terminal이 아닌 루트는 `Failed: ChillServerRestart`와 순서 기록, `Complete` 루트는 status 그대로 반환. `ProfileMissing`(없음, `NotComplete`, `Failed`, catalog issue), `NodeMismatch`, `ActuationNamespace`, `PowerModeUnknown` 거절과 다음 루트 승인. route 404 |
-| 7 | fake 행으로 X와 d(rasp5 26.88 req/s, profile 27.79 ms에서 9.41 ms), warmup 제외, 창 배치의 시작 차이로 나눔, batchID 차이 계산이 빠진 행에 무관, 유휴 쌍 판정, `TooFewBatches`, `NotSaturated`, record의 `powerMode`. `BatchUnmeasured` 거절. Workload 요청이 taint 노드의 측정 인스턴스에 도달. Job spec(init, args의 `.svc` endpoint, `tls.crt` item만, `nodeName`, `backoffLimit` 0, deadline, label), Background 삭제 뒤 Pod 0, Job 실패 `LoadFailed`, 반환의 label Job 삭제. ChillServer 노드 루트와 occupancy의 상호 대기, 다른 노드 occupancy 둘 동시 실행 |
+| 7 | fake 행으로 X와 d(rasp5 26.88 req/s, profile 27.79 ms에서 9.41 ms), warmup 제외, 창 배치의 시작 차이로 나눔, batchID 차이 계산이 빠진 행에 무관, 유휴 시간 비율(창 안 140 s 멈춤 포함), `TooFewBatches`, `NotSaturated`, record의 `powerMode`. `BatchUnmeasured` 거절. Workload 요청이 taint 노드의 측정 인스턴스에 도달. Job spec(init, args의 `.svc` endpoint, `tls.crt` item만, `nodeName`, `backoffLimit` 0, deadline, label), Background 삭제 뒤 Pod 0, Job 실패 `LoadFailed`, 반환의 label Job 삭제. ChillServer 노드 루트와 occupancy의 상호 대기, 다른 노드 occupancy 둘 동시 실행 |
 | 8 | 같은 key의 두 record 중 최신, `Insufficient` 무시, d < 0이면 0과 source key, 다른 모드나 다른 Node UID의 record만 있으면 `MissingDispatchOccupancy`, 재생과 행이 같은 항목을 씀, `dispatchOccupancy` 있는 ConfigMap decode 거절 |
 | 전체 | `make lint test`, `make manifests generate`, `make helm-lint helm-template`(default와 `values-profiler.yaml`), `make dashboard-check`, `make test-loadgen` |
 
