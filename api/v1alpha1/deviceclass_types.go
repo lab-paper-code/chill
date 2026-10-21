@@ -39,6 +39,13 @@ type PowerMode struct {
 
 	// Actuator declares how a node agent applies and verifies this mode.
 	Actuator PowerModeActuator `json:"actuator"`
+
+	// OnlineCPUs is the kernel cpuset list of the CPUs online in this mode,
+	// such as "0-3". Absent, only the mode the Node reads back now is known,
+	// from the Node's published online CPUs.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$`
+	OnlineCPUs string `json:"onlineCPUs,omitempty"`
 }
 
 // PowerModeActuatorKind identifies a supported typed power-mode actuator.

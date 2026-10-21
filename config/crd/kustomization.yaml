@@ -10,4 +10,6 @@ resources:
 - bases/edge.dacs.io_modelloadedidlebaselines.yaml
 - bases/edge.dacs.io_nodeactuations.yaml
 - bases/edge.dacs.io_powermodetransitioncosts.yaml
+- bases/edge.dacs.io_operationcostmeasurements.yaml
+- bases/edge.dacs.io_dispatchoccupancymeasurements.yaml
 # +kubebuilder:scaffold:crdkustomizeresource

@@ -1,0 +1,210 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: operationcostmeasurements.edge.dacs.io
+spec:
+  group: edge.dacs.io
+  names:
+    kind: OperationCostMeasurement
+    listKind: OperationCostMeasurementList
+    plural: operationcostmeasurements
+    shortNames:
+    - opcost
+    singular: operationcostmeasurement
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.node
+      name: Node
+      type: string
+    - jsonPath: .status.reason
+      name: Reason
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          OperationCostMeasurement requests the ordered measurement of atomic
+          operations on one Node through measurement admission.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              OperationCostMeasurementSpec declares the ordered atomic operations measured
+              on one Node; ChillServer measures them in order and records each one.
+            properties:
+              node:
+                description: Node names the Kubernetes Node measured.
+                maxLength: 253
+                minLength: 1
+                type: string
+              observation:
+                description: |-
+                  MeasurementObservationSpec is the wall-power sampling and coverage policy of
+                  every step.
+                properties:
+                  intervalMilliseconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maximumBoundaryDistanceMilliseconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maximumGapMilliseconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maximumOperationSeconds:
+                    description: MaximumOperationSeconds bounds one step and its sampling
+                      window.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  minimumCoverage:
+                    description: MinimumCoverage is a decimal fraction in (0, 1].
+                    pattern: ^(0\.[0-9]*[1-9][0-9]*|1(\.0+)?)$
+                    type: string
+                  requestTimeoutMilliseconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - intervalMilliseconds
+                - maximumBoundaryDistanceMilliseconds
+                - maximumGapMilliseconds
+                - maximumOperationSeconds
+                - minimumCoverage
+                - requestTimeoutMilliseconds
+                type: object
+                x-kubernetes-validations:
+                - message: requestTimeoutMilliseconds must be less than intervalMilliseconds
+                  rule: self.requestTimeoutMilliseconds < self.intervalMilliseconds
+              steps:
+                description: |-
+                  Steps are measured in order; the measurement stops at the first step
+                  that fails or is not Accepted.
+                items:
+                  description: OperationCostStep is one atomic operation; only the
+                    fields of its kind are set.
+                  properties:
+                    batchEnergyOptimization:
+                      description: BatchEnergyOptimization names the measured option
+                        a prepare or remove step uses.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    idleDurationSeconds:
+                      format: int32
+                      minimum: 1
+                      type: integer
+                    kind:
+                      description: OperationCostStepKind is one atomic operation of
+                        an operation-cost measurement.
+                      enum:
+                      - power
+                      - prepare
+                      - idle
+                      - remove
+                      type: string
+                    name:
+                      description: Name is the step identity in its record key.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    powerMode:
+                      description: PowerMode is the mode a power step switches the
+                        empty Node into.
+                      minLength: 1
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  type: object
+                  x-kubernetes-validations:
+                  - message: powerMode is set exactly for power
+                    rule: (self.kind == 'power') == has(self.powerMode)
+                  - message: batchEnergyOptimization is set exactly for prepare and
+                      remove
+                    rule: (self.kind == 'prepare' || self.kind == 'remove') == has(self.batchEnergyOptimization)
+                  - message: idleDurationSeconds is set exactly for idle
+                    rule: (self.kind == 'idle') == has(self.idleDurationSeconds)
+                maxItems: 32
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+            required:
+            - node
+            - observation
+            - steps
+            type: object
+            x-kubernetes-validations:
+            - message: OperationCostMeasurement spec is immutable
+              rule: self == oldSelf
+          status:
+            properties:
+              phase:
+                description: MeasurementPhase is the phase of a measurement ChillServer
+                  runs on one Node.
+                enum:
+                - Measuring
+                - Complete
+                - Insufficient
+                - Failed
+                type: string
+              reason:
+                description: Reason explains a phase other than Measuring and Complete.
+                type: string
+              steps:
+                description: Steps are the saved step records in order.
+                items:
+                  properties:
+                    key:
+                      type: string
+                    name:
+                      type: string
+                    verdict:
+                      type: string
+                  required:
+                  - key
+                  - name
+                  - verdict
+                  type: object
+                maxItems: 32
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

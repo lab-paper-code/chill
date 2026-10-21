@@ -14,7 +14,7 @@ func TestValidatePowerModesAcceptsTypedActuators(t *testing.T) {
 		{Name: "15W", Actuator: edgev1alpha1.PowerModeActuator{
 			Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
 			JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
-		}},
+		}, OnlineCPUs: "0-3,6"},
 		{Name: "gpu-1200mhz", Actuator: edgev1alpha1.PowerModeActuator{
 			Kind: edgev1alpha1.PowerModeActuatorNvidiaLockedGPUClock,
 			NvidiaLockedGPUClock: &edgev1alpha1.NvidiaLockedGPUClockTarget{
@@ -61,6 +61,12 @@ func TestValidatePowerModesRejectsAmbiguousActuators(t *testing.T) {
 					MinMHz: 1200, MaxMHz: 600,
 				},
 			}}},
+		},
+		{
+			name: "unreadable online CPUs",
+			modes: []edgev1alpha1.PowerMode{{Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{
+				Kind: edgev1alpha1.PowerModeActuatorFixed,
+			}, OnlineCPUs: "3-1"}},
 		},
 	}
 

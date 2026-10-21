@@ -14,7 +14,7 @@ rules:
   # Check cross-namespace shared evidence references before destructive cleanup.
   # This owner-only grant never permits mutation outside profileNamespaces.
   - apiGroups: [edge.dacs.io]
-    resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts]
+    resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts, operationcostmeasurements, dispatchoccupancymeasurements]
     verbs: [list]
   - apiGroups: [edge.dacs.io]
     resources: [modelspecs, preprocessors, datasets]
@@ -198,7 +198,11 @@ rules:
     verbs: [get]
   # ChillServer admits measurements by annotating them.
   - apiGroups: [edge.dacs.io]
-    resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts]
+    resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts, operationcostmeasurements, dispatchoccupancymeasurements]
+    verbs: [patch]
+  # ChillServer is the only writer of the measurements it runs.
+  - apiGroups: [edge.dacs.io]
+    resources: [operationcostmeasurements/status, dispatchoccupancymeasurements/status]
     verbs: [patch]
   # Admission and hand-back wait for the power changes measurements request here.
   - apiGroups: [edge.dacs.io]

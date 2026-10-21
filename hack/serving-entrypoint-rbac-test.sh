@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Renders the chart and checks the ChillServer grants measurement admission uses:
 # Service list in the serving namespace (hand-back finds runner Services) and
-# NodeActuation list in every profile namespace (pending power changes).
+# NodeActuation list in every profile namespace (pending power changes), and
+# patch of the measurements ChillServer runs and their status.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,6 +26,9 @@ if not serving or not grants(serving[0], "services", "list"):
 profiles = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint-profiles"]
 if not profiles or not all(grants(r, "nodeactuations", "list") for r in profiles):
     sys.exit("a profile namespace Role lacks nodeactuations list")
+for kind in ("operationcostmeasurements", "dispatchoccupancymeasurements"):
+    if not all(grants(r, kind, "patch") and grants(r, kind + "/status", "patch") for r in profiles):
+        sys.exit("a profile namespace Role lacks " + kind + " and status patch")
 PY
 }
 

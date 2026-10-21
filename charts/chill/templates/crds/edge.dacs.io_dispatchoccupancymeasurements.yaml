@@ -1,0 +1,200 @@
+{{- if .Values.crds.enabled }}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+    helm.sh/resource-policy: keep
+  name: dispatchoccupancymeasurements.edge.dacs.io
+spec:
+  group: edge.dacs.io
+  names:
+    kind: DispatchOccupancyMeasurement
+    listKind: DispatchOccupancyMeasurementList
+    plural: dispatchoccupancymeasurements
+    shortNames:
+    - occupancy
+    singular: dispatchoccupancymeasurement
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.node
+      name: Node
+      type: string
+    - jsonPath: .status.powerMode
+      name: Mode
+      type: string
+    - jsonPath: .status.perRequestNanos
+      name: PerRequest
+      type: integer
+    - jsonPath: .status.reason
+      name: Reason
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          DispatchOccupancyMeasurement requests one dispatch occupancy measurement
+          through measurement admission.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              DispatchOccupancyMeasurementSpec declares one saturation measurement of the
+              time a request occupies an instance outside its batch execution, for the
+              Node, power mode, runtime image and model of one measured option.
+            properties:
+              batch:
+                description: Batch is the fixed batch size B of the measured instance.
+                format: int32
+                minimum: 1
+                type: integer
+              batchEnergyOptimization:
+                description: |-
+                  BatchEnergyOptimization names the measured option; its profile fixes the
+                  power mode, runtime image and model.
+                maxLength: 253
+                minLength: 1
+                type: string
+              durationSeconds:
+                format: int32
+                minimum: 60
+                type: integer
+              maximumIdleFraction:
+                description: MaximumIdleFraction bounds the batches after which the
+                  instance waited.
+                pattern: ^(0(\.[0-9]+)?|1(\.0+)?)$
+                type: string
+              minimumBatches:
+                description: MinimumBatches is the least number of batches the window
+                  must hold.
+                format: int32
+                minimum: 2
+                type: integer
+              node:
+                description: Node names the Kubernetes Node measured.
+                maxLength: 253
+                minLength: 1
+                type: string
+              rateFactor:
+                description: RateFactor multiplies the profile throughput at B into
+                  the offered rate.
+                pattern: ^[0-9]+(\.[0-9]+)?$
+                type: string
+                x-kubernetes-validations:
+                - message: rateFactor must be at least 1.2
+                  rule: double(self) >= 1.2
+              warmupSeconds:
+                description: WarmupSeconds are excluded from the start of the window.
+                format: int32
+                minimum: 0
+                type: integer
+              workers:
+                description: Workers is the number of concurrent load generator senders.
+                format: int32
+                maximum: 4096
+                minimum: 1
+                type: integer
+              workload:
+                description: Workload names the Workload whose requests the load sends.
+                maxLength: 253
+                minLength: 1
+                type: string
+            required:
+            - batch
+            - batchEnergyOptimization
+            - durationSeconds
+            - maximumIdleFraction
+            - minimumBatches
+            - node
+            - rateFactor
+            - warmupSeconds
+            - workers
+            - workload
+            type: object
+            x-kubernetes-validations:
+            - message: DispatchOccupancyMeasurement spec is immutable
+              rule: self == oldSelf
+          status:
+            properties:
+              perRequestNanos:
+                description: PerRequestNanos is the measured dispatch occupancy d.
+                format: int64
+                type: integer
+              phase:
+                description: MeasurementPhase is the phase of a measurement ChillServer
+                  runs on one Node.
+                enum:
+                - Measuring
+                - Complete
+                - Insufficient
+                - Failed
+                type: string
+              powerMode:
+                description: PowerMode is the profile mode the dispatch occupancy
+                  belongs to.
+                type: string
+              reason:
+                type: string
+              result:
+                properties:
+                  key:
+                    description: Key is opaque to API consumers.
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  schemaVersion:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  size:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  store:
+                    description: Store is the logical CHILL-managed store identity,
+                      not an endpoint.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - schemaVersion
+                - size
+                - store
+                type: object
+              throughput:
+                description: Throughput is the sustained completions per second X.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+{{- end }}

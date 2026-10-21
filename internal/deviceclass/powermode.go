@@ -6,6 +6,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/utils/cpuset"
 )
 
 // ValidatePowerModes validates the semantic contract also used by catalog
@@ -23,6 +24,11 @@ func ValidatePowerModes(modes []edgev1alpha1.PowerMode, path *field.Path) field.
 		}
 		seen[mode.Name] = struct{}{}
 		allErrs = append(allErrs, validatePowerModeActuator(mode.Actuator, modePath.Child("actuator"))...)
+		if mode.OnlineCPUs != "" {
+			if cpus, err := cpuset.Parse(mode.OnlineCPUs); err != nil || cpus.IsEmpty() {
+				allErrs = append(allErrs, field.Invalid(modePath.Child("onlineCPUs"), mode.OnlineCPUs, "must be a non-empty kernel cpuset list"))
+			}
+		}
 	}
 	return allErrs
 }
