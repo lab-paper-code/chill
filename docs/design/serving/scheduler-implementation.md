@@ -46,8 +46,9 @@ IPC, deadline policy, 원래 monotonic elapsed와 physical release 조건을 둔
 판단은 고정 historical `observationEnd`와 현재 outstanding의 decision origin `at`를
 구분한다. source 시각을 재표시하지 않고 미래·오래된 물리 관측은 Pending으로 둔다.
 capture는 observer refresh 뒤 observer 상태(profile)를 먼저 읽고 Node 목록을 읽으므로, Node 관측 시각과
-판단 시각 사이에 observer lock을 기다리지 않는다. DeviceClass 모드도 한 번 읽은 목록에서 찾는다. prepare의 준비 대기는 poll 간격 안에 시작한 observer
-refresh(서버의 source refresh)를 다시 쓴다. 근거: m4 r7의 prepare 동안 판단이 11~28 s 걸렸고 모든 Node가
+판단 시각 사이에 observer lock을 기다리지 않는다. DeviceClass 모드도 한 번 읽은 목록에서 찾는다. prepare의 준비 대기는 poll 간격 안에 끝난 observer
+refresh(서버의 source refresh, 또는 lock을 기다리는 동안 끝난 refresh)를 다시 쓴다. operation capture는 대상 Node의
+Pod만 `spec.nodeName` field selector로 읽는다. 근거: m4 r7의 prepare 동안 판단이 11~28 s 걸렸고 모든 Node가
 목록 뒤 약 11.5 s에 `UnknownOrStaleNode`였다. 실행 중인 prepare마다 1 s마다 observer 전체 refresh를 돌렸고,
 capture는 Node 목록 뒤 observer lock을 기다렸다.
 완료 여유는 설정의 `completionMarginMS`를 요청마다 한 번 반영하며 이미 소모한 sender

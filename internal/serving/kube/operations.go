@@ -169,7 +169,7 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 			s.Instances = append(s.Instances, i)
 		}
 	}
-	pods, err := o.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{})
+	pods, err := o.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: "spec.nodeName=" + node.Name})
 	if err != nil {
 		return s, err
 	}

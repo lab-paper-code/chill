@@ -17,7 +17,9 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	ktesting "k8s.io/client-go/testing"
 )
 
 const observerTestRuntime = "test-runtime"
@@ -232,4 +234,47 @@ func TestObserverKeepsVerifiedReadinessWhenAReadFails(t *testing.T) {
 			}
 		})
 	}
+}
+
+// r7: a prepare poll that waited for the observer lock behind a refresh
+// longer than its poll interval started another full refresh right after it.
+func TestObserverPollReusesARefreshThatEndedWhileItWaited(t *testing.T) {
+	api := newObserverAPI(t, 1)
+	api.refresh(t)
+	api.mu.Lock()
+	api.slowNode = 1500 * time.Millisecond
+	clear(api.reads)
+	api.mu.Unlock()
+	done := make(chan error, 1)
+	go func() { done <- api.observer.Refresh(context.Background()) }()
+	time.Sleep(100 * time.Millisecond)
+	if err := api.observer.RefreshWithin(context.Background(), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if nodes := api.reads["GET /api/v1/nodes"]; nodes != 1 {
+		t.Fatalf("the poll started its own refresh: %d Node lists", nodes)
+	}
+}
+
+// Capture read every Pod in the cluster to find those on one Node.
+func TestOperationsCaptureListsOnlyTheNodePods(t *testing.T) {
+	manager, _ := newManagerHarness(t)
+	node := &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}
+	kube := kubefake.NewSimpleClientset(node)
+	operations := &Operations{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, config: OperationConfig{Namespace: "chill-system", ActuationNamespace: "chill-system"}}
+	_, _ = operations.Capture(context.Background(), serving.NodeReference{Name: node.Name, UID: string(node.UID)})
+	for _, action := range kube.Actions() {
+		if list, ok := action.(ktesting.ListAction); ok && action.GetResource().Resource == "pods" {
+			if fields := list.GetListRestrictions().Fields.String(); fields != "spec.nodeName=node" {
+				t.Fatalf("capture listed Pods with field selector %q", fields)
+			}
+			return
+		}
+	}
+	t.Fatal("capture did not list Pods")
 }
