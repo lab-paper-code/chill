@@ -49,7 +49,7 @@
 |---|---|
 | `λ_w` | (관측한 창의 계산 도착 수 + 대기 수) / 관측한 창 길이. 도착은 재생이 쓰던 `Compute` 또는 `Accepted` 도착. 관측한 창은 관측 창 중 ChillServer가 시작한 뒤의 부분(`snapshot.observedSince`부터, 판단의 `search.windowStart`)이다. 내려가 있던 동안의 도착은 기록되지 않았으므로 창 전체로 나누면 λ가 작게 나온다(m4 r6: 40 req/s에서 재시작 뒤 λ 4.8로 genesis2, lattepanda, rasp5 q1-lut를 지웠다). 관측한 부분이 제어 주기(관측 창이 더 짧으면 관측 창)보다 짧으면 판단은 `Pending`(`PartialObservationWindow`)이다 |
 | `κ_new,w` | c의 w 인스턴스 κ 합 |
-| `κ_ret,w` | route 전까지 남는 지금 인스턴스의 κ 합. 모드를 바꾸는 노드와 자원이 겹쳐 prepare 전에 지우는 인스턴스는 빠진다 |
+| `κ_ret,w` | route 전까지 남는 지금 인스턴스의 κ 합. 분배된 인스턴스는 route 뒤에만 멈추므로(14장 만든 뒤 끊기) 지금 분배된 Ready 인스턴스의 κ 합이다 |
 | `r` | route 전 사슬의 최대 시간(동작마다 측정 trial 최대 시간) |
 | `B_w` | `q_w + max(0, λ_w − κ_ret,w) × r`. `q_w`는 지금 대기 수 |
 
@@ -249,6 +249,7 @@ commit 6에서 모두 지운다.
 - **DP 비용.** route 시각마다 같은 노드에서 에너지, κ 합, 칸별 요청 에너지가 모두 같거나 나쁜 계획은 빠지고, 칸은 Workload 하나씩 차례로 배정한다. 두 처리는 충족 판정을 바꾸지 않는다.
 - **유휴 제거.** 관측 창 하나 이상 어느 Workload에서도 가중치가 0인 인스턴스(controller가 가중치를 잃은 시각을 `unroutedSince`로 붙인다)는 고른 해가 그 인스턴스에 가중치를 주지 않으면 target에서 빠지고 stop, drain, remove로 지운다(`IdleInstanceRemoved:<인스턴스>`). 대상은 자동제어 Workload가 소유한 인스턴스(고른 해의 판정이 그 κ 없이도 성립할 때)와 소유 Workload가 없는 인스턴스(아무도 쓰지 않는다)다. 꺼진 Workload가 소유한 인스턴스는 지우지 않는다. 계획기의 prepare는 target 인스턴스의 Workload를 Pod의 owner(`ownerReferences`의 Workload)로 남기므로 분배가 빠져도 인스턴스의 Workload가 남는다. Pod의 정적 routing annotation은 route가 기록할 때까지 비어 있다. 근거: m4 r6에서 genesis3 q2와 orangepi q1은 owner 없이 routing `{}`라 자동제어 Workload의 인스턴스로 보이지 않아 지워지지 않았다. 목적은 에너지가 아니라 측정이다. 서빙 노드는 측정을 받지 않고, 빈 노드는 다음 판단에서 가장 낮은 모드로 내려간다. controller가 다시 시작하면 시각을 처음부터 잰다.
 - **준비한 인스턴스의 분배.** 해가 준비하는 새 인스턴스는 모두 그 해의 가중치를 받는다. 새 인스턴스 하나라도 가중치가 0인 해(지금 가중치를 그대로 쓰는 해 포함)는 후보에서 빠지고 교체 회수의 되돌린 해도 같다. 근거: m4 r7에서 rasp5 q1-lut와 q2(κ 25.69 + 29.30)가 지금 가중치 467/533으로 λ 40.35를 받았고, 적재한 genesis3 q2의 노드 전력(49.80 W)이 빈 노드(49.97 W)보다 작아 그 준비가 T 동안 1.5 J 싸게 나왔다. 그 인스턴스는 가중치 0으로 준비되고 약 80 s 뒤 유휴 제거로 지워졌고, 다음 판단이 다시 준비해 2 req/s와 40 req/s에서 약 100 s 주기로 되풀이했다.
+- **만든 뒤 끊기.** 분배된 인스턴스(어느 Workload에서든 가중치가 0보다 큰 인스턴스)의 stop, drain, remove는 그 노드 계획의 route 뒤에만 온다. 자원이 겹쳐 prepare 전에 지워야 하거나 모드를 바꾸느라 route 전에 멈추는 분배된 인스턴스가 있는 노드 계획은 `RoutedInstanceStopsBeforeRoute`로 빠진다. 그래서 전환 중 분배된 κ는 지금 값에서 줄지 않고, route 뒤에는 최종 판정을 지나는 `κ_new`가 된다. 그 노드의 교체는 다른 해가 부하를 옮겨 그 인스턴스가 분배에서 빠진 뒤(유휴 제거) 열린다. 근거: m4 r7 07:08:31에서 genesis3 q2(κ 70.94, 가중치 532)를 같은 CPU의 q1으로 바꾸는 계획이 q2 stop을 첫 동작으로 두었고, 전환 판정은 rasp5 q1 하나(κ_ret 25.69)로 λ 38.6을 받았다. rasp5 prepare가 68 s 걸리는 동안 SLO는 0%로 떨어졌다. 07:00:38의 rasp5 q1 교체와 06:51:28의 genesis2 교체도 같은 순서였다.
 - **교체 회수.** 지금 인스턴스를 지우고 다른 인스턴스를 들이거나 배치 policy를 바꾸는 노드 계획(교체)은, 그 노드만 keep으로 되돌린 해도 충족하면 관측 창의 최소 부하에서 T 동안의 에너지로 비교한다. 최소 부하는 관측 창을 제어 주기로 나눈 구간마다의 도착률 중 가장 작은 값이다. 교체가 그 부하에서 keep보다 에너지가 크거나 같으면 keep으로 되돌리고 `ReplacementUnpaid:<노드>`를 남긴다.
 - **Overload 준비 유지.** keep이 `Overload`인 판단이 준비한 인스턴스는 Ready가 된 때부터 관측 창 하나 동안(`heldUntil`) 지우거나 교체하는 노드 계획에서 빠지고(`HeldAfterOverload`), 유휴 제거도 받지 않는다. 근거: m4 r5의 40 req/s에서 genesis2를 keep `Overload` 판단(04:28:48)이 준비하고 50 s 뒤 지웠다.
 - **계획에서 뺀 노드.** `settings.excludedNodes`(Node 이름 목록, sample은 빈 목록)의 노드는 측정 POOL 노드와 같은 고정 경로를 탄다. capture가 노드 사유 `ExcludedNode`를 붙이고, 그 노드는 keep뿐이며(배치, 교체, 지우기, 전력 변경 없음) 가용 노드 최저 모드 낮춤과 유휴 제거도 받지 않는다. 판단마다 `decision.capacity.plans`에 그 노드의 `ExcludedNode` 계획이 남고 snapshot 노드 `reasons`에도 남는다. 측정 POOL 노드의 인스턴스도 유휴 제거를 받지 않는다.

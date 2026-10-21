@@ -37,6 +37,9 @@ const (
 	// schedulerIdleInstanceRemoved names an instance unrouted for one
 	// observation window that the target removes.
 	schedulerIdleInstanceRemoved = "IdleInstanceRemoved"
+	// schedulerRoutedStopsFirst names a node plan that stops a routed
+	// instance before its route.
+	schedulerRoutedStopsFirst = "RoutedInstanceStopsBeforeRoute"
 
 	schedulerRouteUnits    = 1000  // route weights of one Workload sum to this
 	schedulerMaxCells      = 50    // load cells per Workload
@@ -701,10 +704,18 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		plan.record.Reason = reason
 		return plan
 	}
+	// Make before break: a routed instance stops only after the route has
+	// moved its load to the prepared capacity.
+	if slices.ContainsFunc(current, func(i SchedulerInstance) bool {
+		return stopped[i.ID] && !i.Stopped && schedulerInstanceRouted(p.keep.Routing, i.ID)
+	}) {
+		plan.record.Reason = schedulerRoutedStopsFirst
+		return plan
+	}
 	p.annotate(plan, chosenItems)
 	for _, i := range current {
 		w, ok := p.index[i.WorkloadUID]
-		if weight := p.keep.Routing[i.WorkloadUID][i.ID]; ok && !stopped[i.ID] && i.Ready && !i.Stopped && weight > 0 {
+		if weight := p.keep.Routing[i.WorkloadUID][i.ID]; ok && i.Ready && !i.Stopped && weight > 0 {
 			k, row := p.currentKappa(i)
 			plan.retained[w] = append(plan.retained[w], capacityItem{id: i.ID, kappa: k, e: capacityInputEnergy(i), weight: weight, row: row})
 		}

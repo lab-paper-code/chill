@@ -227,6 +227,54 @@ func TestCapacityNeverPreparesAnUnroutedInstance(t *testing.T) {
 	}
 }
 
+// m4 r7 07:08:31 (plan-618aad6eb054): genesis3 q2 (κ 70.94) carried 532 of
+// the weights and rasp5 q1 (κ 25.69) 468 at λ 38.6. The plan replaced q2 with
+// q1 on the same CPU, so its first action stopped q2; the transition judged
+// κ_ret 25.69 against the measured chain, the prepare ran 68 s and SLO fell to
+// 0. A routed instance is stopped only after the route, so the replacement
+// plan is no candidate and keep carries the load.
+func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge, s.CompletionMarginMS = time.Minute, 10*time.Second, 10*time.Minute, time.Hour, 29
+	s.MaxReplicas = 3
+	d := snap.Workloads[0]
+	d.SLO = SLO{Percentile: 95, TargetLatency: time.Second}
+	rasp5 := snap.Instances[0]
+	genesis3 := poolsAddNode(&snap, "genesis3", map[string]float64{"fixed": 30})
+	q2 := poolsInstance(rasp5, "g3-q2", genesis3, "fixed", "w1")
+	profile := *q2.Profile
+	profile.IdleBaselineWatts = 60
+	q2.Profile = &profile
+	q1 := poolsInstance(rasp5, "g3-q1", genesis3, "fixed", "w1")
+	cheaper := *q1.Profile
+	cheaper.ID, cheaper.IdleBaselineWatts = "profile-q1@genesis3", 50
+	q1.Profile = &cheaper
+	snap.Instances = append(snap.Instances, q2)
+	snap.Options = append(snap.Options, poolsOption(q1))
+	snap.Routing = map[string]map[string]int32{"w1": {rasp5.ID: 468, q2.ID: 532}}
+	snap.Costs = []OperationCost{
+		poolsCost(schedulerActionRemove, genesis3, schedulerState(q2), "unloaded", "fixed"),
+		poolsCost(schedulerActionPrepare, genesis3, "unloaded", schedulerState(q1), "fixed"),
+	}
+	capacityLoad(s, &snap, d, 38.6)
+	rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{rasp5.Profile.ID: 25.69, q2.Profile.ID: 70.94, q1.Profile.ID: 65.1}))
+	got := capacityDecideForTest(t, s, snap, rows)
+	if got.Target == nil {
+		t.Fatalf("no target: %s %v", got.Status, got.Reasons)
+	}
+	route := slices.IndexFunc(got.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionRoute })
+	for _, a := range got.Target.Actions {
+		if a.Kind == schedulerActionStop && schedulerInstanceRouted(snap.Routing, a.Instance) && (route < 0 || !slices.Contains(a.DependsOn, got.Target.Actions[route].ID)) {
+			t.Fatalf("stopped routed %s before the route: %+v", a.Instance, got.Target.Actions)
+		}
+	}
+	if !slices.ContainsFunc(poolsPlans(got, genesis3), func(p SchedulerNodePlan) bool {
+		return p.Key == q1.Profile.ID+"/b1/w1" && !p.Eligible && p.Reason == schedulerRoutedStopsFirst
+	}) {
+		t.Fatalf("replacement plan not excluded: %+v", poolsPlans(got, genesis3))
+	}
+}
+
 // m4 r5 04:28:18: the first decision of the 40 req/s phase saw λ 42.5 with 161
 // queued. With the r5 κ (rasp5 q1 25.29, q1-lut 25.69, genesis3 q2 70.94) it
 // expands whatever the comparison period: the SLO judgment orders plans before
@@ -274,8 +322,9 @@ func TestCapacityPlanEndingFeasibleRanksBeforeTransientExceedance(t *testing.T) 
 	}
 }
 
-// §9 6 판정: a mode change removes the current instances before the route
-// (κ_ret 0); a replacement on free CPUs removes after it (keep κ retained).
+// §9 6 판정: a mode change stops the routed instance before the route, so its
+// plan is no candidate; a replacement on free CPUs removes after the route
+// and keeps the current κ until then.
 func TestCapacityRetainedKappaFollowsTheChain(t *testing.T) {
 	s, snap := schedulerFixture()
 	current := snap.Instances[0]
@@ -295,14 +344,15 @@ func TestCapacityRetainedKappaFollowsTheChain(t *testing.T) {
 	}
 	snap.Costs[2].ID += "-fixed"
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 50 }))
-	retained := map[string]float64{}
+	retained, reasons := map[string]float64{}, map[string]string{}
 	for _, plan := range poolsPlans(d, n1) {
 		if plan.Eligible {
 			retained[plan.Key] = plan.KappaRetained["w1"]
 		}
+		reasons[plan.Key] = plan.Reason
 	}
-	if k, ok := retained[eco.Profile.ID+"/b1/w1"]; !ok || k != 0 {
-		t.Fatalf("mode change retained κ: %v", retained)
+	if _, ok := retained[eco.Profile.ID+"/b1/w1"]; ok || reasons[eco.Profile.ID+"/b1/w1"] != schedulerRoutedStopsFirst {
+		t.Fatalf("mode change stopping the routed instance first stayed a candidate: %v %v", retained, reasons)
 	}
 	if k, ok := retained[other.Profile.ID+"/b1/w1"]; !ok || k != 50 {
 		t.Fatalf("replacement removed after the route lost keep κ: %v", retained)
@@ -1186,7 +1236,7 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 		i.Profile = &profile
 	}
 	energy(&snap.Instances[0], 3)
-	a, b := poolsInstance(snap.Instances[0], "a", n2, "fixed", "w1"), poolsInstance(snap.Instances[0], "b", n2, "fixed", "w1")
+	a, b := poolsInstance(snap.Instances[0], "a", n2, "fixed", "w1"), schedulerTestCPU(poolsInstance(snap.Instances[0], "b", n2, "fixed", "w1"))
 	energy(&a, 2)
 	energy(&b, 1)
 	b.Profile.ID = "profile-b"
