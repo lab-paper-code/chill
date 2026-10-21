@@ -19,6 +19,8 @@ type Facts struct {
 	Model       string `json:"model,omitempty"`
 	Accelerator string `json:"accelerator,omitempty"`
 	RawModel    string `json:"rawModel,omitempty"`
+	// CPUs is the kernel list of online CPUs, read from the host.
+	CPUs string `json:"-"`
 }
 
 // SignatureCatalog contains data-driven node hardware matching rules.
@@ -78,6 +80,9 @@ func (f Facts) Annotations() map[string]string {
 	if f.RawModel != "" {
 		annotations[chillmeta.DeviceModelRaw] = f.RawModel
 	}
+	if f.CPUs != "" {
+		annotations[chillmeta.OnlineCPUs] = f.CPUs
+	}
 	annotations[chillmeta.DiscoverySource] = chillmeta.SourceNodeDiscovery
 
 	switch {
@@ -116,7 +121,9 @@ func (p filesystemProbe) run() (Facts, error) {
 	haystack := normalizeSearchText(values...)
 	facts := p.catalog.detect(haystack)
 	facts.RawModel = rawModel
-	return facts, nil
+	// Online CPUs exclude cores a power mode switched off.
+	facts.CPUs, err = p.firstExistingText("sys/devices/system/cpu/online")
+	return facts, err
 }
 
 func (p filesystemProbe) readSources() ([]string, error) {

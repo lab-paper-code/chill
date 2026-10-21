@@ -47,7 +47,7 @@ func main() {
 		"/etc/chill/node-discovery/signatures.yaml",
 		"YAML file containing node discovery signatures.",
 	)
-	flag.DurationVar(&interval, "interval", 10*time.Minute, "How often to refresh node discovery metadata.")
+	flag.DurationVar(&interval, "interval", 10*time.Second, "How often to refresh node discovery metadata.")
 	flag.BoolVar(&once, "once", false, "Run one discovery pass and exit.")
 	flag.StringVar(&kubeAPIServer, "kube-api-server", os.Getenv("CHILL_KUBE_API_SERVER"),
 		"Kubernetes API server URL. Leave empty to use standard in-cluster config.")
@@ -142,7 +142,6 @@ func runOnce(
 		return err
 	}
 	if !changed {
-		log.Printf("node %q discovery labels already up to date", nodeName)
 		return nil
 	}
 

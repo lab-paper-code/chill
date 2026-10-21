@@ -17,6 +17,7 @@ func NodeDiscoveryAnnotationKeys() []string {
 		DiscoverySource,
 		NodeDiscoveryResult,
 		NodeDiscoveryReason,
+		OnlineCPUs,
 	}
 }
 

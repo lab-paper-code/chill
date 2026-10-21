@@ -813,7 +813,8 @@ nodeDiscovery:
   enabled: true
   hostNetwork: true
   configMapKey: config.yaml
-  interval: 10m
+  # Online CPUs follow a power mode switch within one interval.
+  interval: 10s
   hostRoot: /host
   signatureFile: /etc/chill/node-discovery/signatures.yaml
   kubernetesClient:

@@ -13,6 +13,8 @@ const (
 	ManagedBy       = Prefix + "/managed-by"
 	DiscoverySource = Prefix + "/discovery-source"
 	DeviceModelRaw  = Prefix + "/device-model-raw"
+	// OnlineCPUs is the kernel cpuset list of the Node's online CPUs.
+	OnlineCPUs = Prefix + "/cpus"
 
 	NodeDiscoveryResult        = Prefix + "/node-discovery-result"
 	NodeDiscoveryReason        = Prefix + "/node-discovery-reason"

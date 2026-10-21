@@ -162,3 +162,21 @@ func writeHostFile(t *testing.T, hostRoot, path, value string) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 }
+
+func TestProbePublishesOnlineCPUs(t *testing.T) {
+	hostRoot := t.TempDir()
+	facts, err := Probe(hostRoot, testSignatureCatalog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := facts.Annotations()[chillmeta.OnlineCPUs]; ok {
+		t.Fatal("missing online file published a CPU annotation")
+	}
+	writeHostFile(t, hostRoot, "sys/devices/system/cpu/online", "0-3,6\n")
+	if facts, err = Probe(hostRoot, testSignatureCatalog()); err != nil {
+		t.Fatal(err)
+	}
+	if got := facts.Annotations()[chillmeta.OnlineCPUs]; got != "0-3,6" {
+		t.Fatalf("online CPUs annotation = %q, want 0-3,6", got)
+	}
+}
