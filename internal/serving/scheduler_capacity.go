@@ -990,6 +990,23 @@ func capacityOperationCost(cost *OperationCost) (float64, float64, float64, bool
 	return mean, longest, joules, true
 }
 
+// ActionDeadlineExceeded marks a running action past its deadline; its goal
+// is abandoned and the next decision re-plans.
+const ActionDeadlineExceeded = "ActionDeadlineExceeded"
+
+// ActionDeadline is how long a running action may take: the longest measured
+// trial of its cost (none for route, stop and drain) plus one observation
+// window.
+func ActionDeadline(window time.Duration, costs []OperationCost, a Action) time.Duration {
+	longest := time.Duration(0)
+	if cost := schedulerCost(costs, a.CostID); cost != nil {
+		for _, t := range cost.Trials {
+			longest = max(longest, t.Duration)
+		}
+	}
+	return longest + window
+}
+
 // serveTable is the DP request energy of y load cells per Workload: the cells
 // fill the cheapest instances up to their κ, and the last instance takes what
 // rounding a plan's ⌈κ/cell⌉ cells adds. ponytail: it charges the whole period

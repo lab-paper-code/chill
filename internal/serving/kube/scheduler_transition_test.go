@@ -301,7 +301,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	operation := scheduledOperation(action, &goal, config, nil, nil, time.Now())
 	canceled := false
 	run := &actionRun{action: action, result: &OperationResult{Operation: operation, Status: nativeOperationRunning},
-		cancel: func() { canceled = true }}
+		cancel: func() { canceled = true }, started: time.Now()}
 	controller.runs = map[string]*actionRun{action.ID: run}
 	controller.goal = &goal
 	observed := acknowledged.Instances[0]
@@ -424,5 +424,34 @@ func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, i
 	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, nil, now.Add(2*time.Minute), time.Minute)
 	if controller.runs[id] != nil {
 		t.Fatal("failed action outlived the observation window")
+	}
+}
+
+// m4 r7: the rasp5 q1 prepare of plan-dc6ebf670833 started at 07:02:05 and
+// still waited at 07:12:30, so every decision kept TransitionInProgress.
+// Its measured prepare takes 22.7 s. Past that plus one observation window
+// the run is canceled and the goal is abandoned, so the next decision
+// re-plans from the actual state.
+func TestOverdueActionAbandonsGoal(t *testing.T) {
+	now := time.Now().UTC()
+	cost := serving.OperationCost{ID: "rasp5-q1-prepare", Trials: []serving.OperationTrial{{Duration: 22696359101}}}
+	prepare := serving.Action{ID: "prepare-rasp5-q1", Kind: operationPrepare, Node: serving.NodeReference{Name: "rasp5", UID: "rasp5-uid"},
+		Instance: "slot", CostID: cost.ID, Status: nativeOperationRunning, Cancelable: true}
+	route := serving.Action{ID: "route", Kind: operationRoute, DependsOn: []string{prepare.ID}, Status: "planned"}
+	goal := serving.SchedulerCandidate{ID: "plan-dc6ebf670833", Actions: []serving.Action{prepare, route}}
+	for _, elapsed := range []time.Duration{time.Minute, 3 * time.Minute} {
+		canceled := false
+		run := &actionRun{action: prepare, started: now.Add(-elapsed), cancel: func() { canceled = true },
+			result: &OperationResult{Operation: Operation{ID: prepare.ID, Kind: prepare.Kind, Target: &goal}, Status: "starting"}}
+		controller := &SchedulerController{runs: map[string]*actionRun{prepare.ID: run}, goal: &goal,
+			config: SchedulerControllerConfig{Costs: []serving.OperationCost{cost}}}
+		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, &goal, now, time.Minute)
+		overdue := elapsed > time.Minute+cost.Trials[0].Duration
+		if overdue != canceled || overdue != (controller.goal == nil) || overdue != (snapshot.InProgressTarget == nil) {
+			t.Fatalf("elapsed %v: canceled %v goal %v in progress %v", elapsed, canceled, controller.goal, snapshot.InProgressTarget)
+		}
+		if overdue && run.action.Reason != serving.ActionDeadlineExceeded {
+			t.Fatalf("overdue run reason %q", run.action.Reason)
+		}
 	}
 }

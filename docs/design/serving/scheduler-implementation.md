@@ -200,6 +200,10 @@ break-before-make에서 routing/bindings가 잠시 비어도 기존 실행의 fr
 사용한다. actual 점유·ownership·Ready는 계속 현재 snapshot에서만 가져온다.
 실행 중인 목표에 Fixed가 아닌 동작이 남아 있으면 판단은 그 목표를 keep으로 이어 가고 상태는 `Keep`, 사유는
 `TransitionInProgress`이며 새 계획을 만들지 않는다. 가용 노드 최저 모드 낮춤만 남은 목표는 계획을 막지 않는다.
+실행 중인 동작마다 기한은 그 동작 cost의 측정 trial 최대 시간에 관측 창 하나를 더한 값이다(측정이 없는 route,
+stop, drain은 관측 창). 기한을 넘긴 동작이 있으면 controller가 그 목표를 버리고 사유 `ActionDeadlineExceeded`를
+남기며, 취소할 수 있는 prepare는 취소해 `failed`로 끝낸다. 다음 판단은 실제 상태에서 다시 계획하고, 그 동작은
+목표로 다시 이어지지 않는다.
 관측된 `TargetID`가 같은 실제 physical slot은 중복 prepare하지 않는다. 새 완료 proof와
 소비 수치는 현재 capture를 사용하고, 원래 실행의 frozen target을 덮어쓰거나 사라진
 proof를 복원하지 않는다.

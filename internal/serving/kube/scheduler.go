@@ -72,6 +72,8 @@ type actionRun struct {
 	result  *OperationResult
 	cancel  context.CancelFunc
 	started time.Time
+	// overdue marks a run past serving.ActionDeadline: its goal is abandoned.
+	overdue bool
 }
 type SchedulerController struct {
 	mu         sync.Mutex
@@ -384,8 +386,9 @@ func (c *SchedulerController) markOverloadPrepares(decision serving.SchedulerDec
 
 // reconcileSnapshot attaches the run status and the goal still in progress. A
 // goal action whose completed effect is gone (its instance died or left Ready)
-// fails, the goal is abandoned and lost returns those failures. Failed runs
-// stay in snapshot.Actions for one observation window.
+// fails, the goal is abandoned and lost returns those failures. A goal whose
+// running action passes its deadline is abandoned too. Failed runs stay in
+// snapshot.Actions for one observation window.
 func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, observationWindow time.Duration) (serving.SchedulerSnapshot, []OperationResult) {
 	c.mu.Lock()
 	snapshot.InProgressTarget = nil
@@ -396,7 +399,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 	var lost []OperationResult
 	if goal != nil {
 		var failed bool
-		if lost, failed = c.failGoalLocked(snapshot, goal, now); failed {
+		if lost, failed = c.failGoalLocked(snapshot, goal, now, observationWindow); failed {
 			goal = nil
 			c.goal = nil
 		}
@@ -453,14 +456,23 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 }
 
 // failGoalLocked marks goal actions whose completed effect is gone as failed,
-// returns them, and reports whether any goal action failed.
+// returns them, and reports whether any goal action failed or a running one
+// passed its deadline. An overdue cancelable run is canceled.
 func (c *SchedulerController) failGoalLocked(
-	snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time,
+	snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, observationWindow time.Duration,
 ) ([]OperationResult, bool) {
 	var lost []OperationResult
 	failed := false
 	for _, desired := range goal.Actions {
 		run := c.runs[desired.ID]
+		if run != nil && run.action.Status == nativeOperationRunning && now.Sub(run.started) > serving.ActionDeadline(observationWindow, c.config.Costs, run.action) {
+			if !run.overdue && run.action.Cancelable && run.cancel != nil {
+				run.cancel()
+			}
+			run.overdue, run.action.Reason = true, serving.ActionDeadlineExceeded
+			failed = true
+			continue
+		}
 		if run == nil || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil {
 			continue
 		}
@@ -479,7 +491,7 @@ func (c *SchedulerController) failGoalLocked(
 func (c *SchedulerController) activeTargetLocked(kind string) *serving.SchedulerCandidate {
 	var active *actionRun
 	for _, run := range c.runs {
-		if run.action.Status != nativeOperationRunning || (kind != "" && run.action.Kind != kind) || run.result == nil || run.result.Operation.Target == nil {
+		if run.action.Status != nativeOperationRunning || run.overdue || (kind != "" && run.action.Kind != kind) || run.result == nil || run.result.Operation.Target == nil {
 			continue
 		}
 		if active == nil || run.started.Before(active.started) {
@@ -933,6 +945,9 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 				if err != nil {
 					run.action.Status = result.Status
 					run.action.Reason = err.Error()
+					if run.overdue {
+						run.action.Status, run.action.Reason = nativeOperationFailed, serving.ActionDeadlineExceeded+": "+run.action.Reason
+					}
 				}
 				run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
 				c.state.Results = append(c.state.Results, result)
