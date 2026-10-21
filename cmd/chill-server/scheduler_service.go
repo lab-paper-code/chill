@@ -42,6 +42,8 @@ type schedulerConfiguration struct {
 	Meters           []servingkube.MeterDeclaration `json:"-"`
 	PowerObservation *powerObservationConfig        `json:"powerObservation,omitempty"`
 	StaticRouting    map[string]map[string]int      `json:"staticRouting,omitempty"`
+	// StaticRoutingValidatedAt names the settings change that wrote StaticRouting.
+	StaticRoutingValidatedAt *time.Time `json:"staticRoutingValidatedAt,omitempty"`
 }
 
 type schedulerService struct {
@@ -322,7 +324,8 @@ func (o *schedulerService) applyStaticRouting(ctx context.Context) {
 	if o.staticAppliedRV == o.resourceVersion {
 		return
 	}
-	if err := o.controller.ApplyStaticRouting(ctx, config.StaticRouting, o.resourceVersion); err != nil {
+	err := o.controller.ApplyStaticRouting(ctx, config.StaticRouting, o.resourceVersion, config.StaticRoutingValidatedAt)
+	if err != nil {
 		ctrl.Log.Error(err, "manual staticRouting remains unapplied", "sourceConfigRV", o.resourceVersion)
 		return
 	}

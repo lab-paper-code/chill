@@ -14,7 +14,8 @@ const manualStaticRoutingOperation = "manual-static-routing"
 
 // ApplyStaticRouting records a manual, configuration-sourced route application
 // for disabled Workloads; every other Workload keeps its current distribution.
-func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing map[string]map[string]int, sourceRV string) (err error) {
+// settingsValidatedAt names the settings change that declared routing.
+func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing map[string]map[string]int, sourceRV string, settingsValidatedAt *time.Time) (err error) {
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
 	c.mu.Lock()
@@ -36,7 +37,7 @@ func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing ma
 	result := OperationResult{
 		Operation: Operation{
 			ID: manualStaticRoutingOperation + ":" + sourceRV, Kind: manualStaticRoutingOperation,
-			SourceConfigRV: sourceRV, StaticRouting: routing,
+			SourceConfigRV: sourceRV, StaticRouting: routing, SettingsValidatedAt: settingsValidatedAt,
 		},
 		StartedAt: time.Now().UTC(), Status: nativeOperationRunning,
 		Progress: []string{"manual staticRouting configuration awaiting actual readiness"},

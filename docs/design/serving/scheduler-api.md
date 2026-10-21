@@ -22,7 +22,8 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 | `settings.autonomousWorkloads` | 자동제어할 Workload UID 목록. decision은 Workload마다 `workloads[]`에 `Disabled`, `MeasurementEvidenceMissing`, `Controlled` 상태와 사유를 남긴다([워크로드별 자동제어](workload-pools.md#31-워크로드별-자동제어)) |
 | `settings.excludedNodes` | 계획에서 뺀 Node 이름 목록(이름마다 하나, 빈 이름 불가, sample은 빈 목록). 그 Node는 측정 POOL Node처럼 그대로 두며 판단의 노드 계획과 snapshot 노드 사유에 `ExcludedNode`로 남는다([용량표 계획기 14장](analytic-planner.md#14-구현-규칙)). Dashboard 운영 설정의 "계획에서 뺀 장비"가 고친다 |
 | `reserved` | Node별 비서빙 전용 예약 CPU IDs와 GPU UUID. quota는 별도 수량 예산. CPU inventory는 node agent가 Node annotation `edge.dacs.io/cpus`에 게시한 online CPU이고, GPU inventory는 그 Node에서 측정한 profile의 GPU UUID다([node agent](../platform/node-agent.md#21-필드별-출처)). inventory 밖의 예약은 Node를 `PlacementInventoryMissing`으로 만든다 |
-| `staticRouting` | OPTIONAL 부분 map: 자동제어하지 않는 현재 Workload UID → physical instance ID → nonnegative int32 weight. positive weight가 없는 항목(빈 map 포함)은 그 UID의 routing을 모두 지운다. 선언하지 않은 UID는 현재 routing을 유지한다. 명시 config revision을 기존 typed ApplyTarget 경로로 적용하고 physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. 현재가 아닌 UID, `autonomousWorkloads`의 UID와 stale target은 오류 |
+| `staticRouting` | OPTIONAL 부분 map: 자동제어하지 않는 현재 Workload UID → physical instance ID → nonnegative int32 weight. positive weight가 없는 항목(빈 map 포함)은 그 UID의 routing을 모두 지운다. 선언하지 않은 UID는 현재 routing을 유지한다. 설정 API(`PUT /api/v1/scheduler/settings`)가 쓴다. 명시 config revision을 기존 typed ApplyTarget 경로로 적용하고 physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. 현재가 아닌 UID, `autonomousWorkloads`의 UID와 stale target은 오류 |
+| `staticRoutingValidatedAt` | `staticRouting`을 마지막으로 바꾼 설정 변경의 `validatedAt`. 설정 API가 쓰고 `manual-static-routing` action의 `operation.settingsValidatedAt`에 남는다 |
 | wall meter | 구성 필드가 없다. Profiler facts `metricSources`(schema `v1alpha6`)의 항목마다 `{id: meterID, node: 그 이름의 live Node와 UID, scope: node-exclusive-wall, source: 전력 부분}`을 만든다. Node가 없는 항목은 meter가 없다 |
 | 전력 요청 | 구성 필드가 없다. Node의 DeviceClass 모드 중 actuator가 `Fixed`가 아니고 Profiler facts의 actuation policy가 있는 모드가 요청 가능 모드다. 전력 동작이 시작할 때 NodeActuation을 새 이름, 그 시각의 `stageRequestedAt`, `maxActuationDurationSeconds` 뒤의 `deadline`으로 만든다([node agent](../platform/node-agent.md#21-필드별-출처)) |
 | `powerObservation` | 기존 sampler의 `Interval/Duration/RequestTimeout/MaxEvents`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap` |
@@ -38,7 +39,8 @@ serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](s
 cadence에서 미적용 revision을 다시 평가한다. 실패는 선언
 원본, `sourceConfigRV`, 실제 routing과 오류를 가진 manual action으로 관측 기록과 scheduler
 state에 남으며 적용 성공으로 표시하지 않는다. 전체 physical read-back이 일치한
-revision은 다시 적용하지 않는다.
+revision은 다시 적용하지 않는다. 선언을 바꾼 사람과 선택 이유는 action의 `operation.settingsValidatedAt`을
+`from`으로 한 `GET /api/v1/observations/scheduler`의 설정 변경 기록에 있다.
 
 ## API와 compact projection
 
@@ -46,7 +48,7 @@ revision은 다시 적용하지 않는다.
 |---|---|
 | `GET /api/v1/scheduler` | settings와 실제 snapshot, decision, actions, results, `costIssues` |
 | `GET /api/v1/scheduler/settings`, `/state` | 운영 설정 또는 현재 판단·적용 상태 |
-| `PUT /api/v1/scheduler` 또는 `/settings` | 직접 `SchedulerSettings`를 검증하고 named ConfigMap에 저장하고 적용 |
+| `PUT /api/v1/scheduler` 또는 `/settings` | 직접 `SchedulerSettings`를 검증하고 named ConfigMap에 저장하고 적용. 본문의 OPTIONAL `staticRouting`은 저장된 선언 전체를 바꾸고 `{}`는 선언을 지운다. 생략하면 저장된 선언이 그대로다. 선언이 바뀌면 비어 있지 않은 `reason`(선택 이유)이 필수이고 새 선언은 마지막 snapshot에 대해 `StaticRoutingTarget`으로 검증한다. 오류는 400 `InvalidBody`와 `field`(`reason` 또는 `staticRouting`)다. 응답과 관측 기록의 설정 변경은 actor, `before`/`after` 설정, `beforeStaticRouting`/`afterStaticRouting`, `reason`, `validatedAt`, `affected`, `appliedAt`을 담고, `validatedAt`이 그 변경을 가리킨다 |
 | `GET /api/v1/scheduler/profiles` | 읽기 전용. `configVersion`, 완료 측정에서 도출한 조건별 최신 `profiles`, profile ID별 `preparations`, profile을 만들지 못한 측정의 `insufficiencies[]`(CatalogIssue `source/code/reason`) |
 | `GET /api/v1/scheduler/capacity` | 읽기 전용. 자동제어 Workload에 필요한 용량표 `rows[]`(`key`, `input`, `status`, `reason`, `mu`, `kappa`, 격자와 이분 탐색 판정, `builtAt`, `elapsedNanos`). 계산 중인 행은 `CapacityPending`, 단조가 아닌 행은 `CapacityRejected`와 `NonMonotone`이다. 표는 메모리에만 있고 행마다 `management` stream의 `capacity-row-built` 사건으로 남는다 |
 | `GET /api/v1/pools` | 실제 CHILL 인스턴스의 owner와 binding에서 도출한 `workloads[]`(`workload`, 활성 POOL `nodes`, `instances`), 측정 taint Node의 `measurement[]`, `available[]`와 `other[]`(`node/ready/powerMode/reasons`), `observedAt`, observer `issues` |

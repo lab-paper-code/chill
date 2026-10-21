@@ -13,15 +13,21 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 )
 
+// SchedulerSettingsChange is one settings PUT; its validatedAt identifies it.
+// The staticRouting pair is the ConfigMap declaration around the change, and
+// Reason is the operator's selection rationale for a staticRouting change.
 type SchedulerSettingsChange struct {
-	ActorUsername string            `json:"actorUsername"`
-	ActorUID      string            `json:"actorUID"`
-	Before        SchedulerSettings `json:"before"`
-	After         SchedulerSettings `json:"after"`
-	ValidatedAt   time.Time         `json:"validatedAt"`
-	AppliedAt     *time.Time        `json:"appliedAt,omitempty"`
-	Affected      []NodeReference   `json:"affected"`
-	Error         string            `json:"error,omitempty"`
+	ActorUsername       string                    `json:"actorUsername"`
+	ActorUID            string                    `json:"actorUID"`
+	Before              SchedulerSettings         `json:"before"`
+	After               SchedulerSettings         `json:"after"`
+	BeforeStaticRouting map[string]map[string]int `json:"beforeStaticRouting,omitempty"`
+	AfterStaticRouting  map[string]map[string]int `json:"afterStaticRouting,omitempty"`
+	Reason              string                    `json:"reason,omitempty"`
+	ValidatedAt         time.Time                 `json:"validatedAt"`
+	AppliedAt           *time.Time                `json:"appliedAt,omitempty"`
+	Affected            []NodeReference           `json:"affected"`
+	Error               string                    `json:"error,omitempty"`
 }
 
 type SchedulerActionObservation struct {

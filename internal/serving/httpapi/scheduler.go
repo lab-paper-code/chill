@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -72,12 +74,17 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	var input serving.SchedulerSettingsInput
+	// Omitted staticRouting keeps the stored declaration; {} removes it.
+	var input struct {
+		serving.SchedulerSettingsInput
+		StaticRouting map[string]map[string]int `json:"staticRouting"`
+		Reason        string                    `json:"reason"`
+	}
 	if err := h.decode(w, r, &input); err != nil {
 		sendError(w, err)
 		return
 	}
-	settings, err := input.Settings()
+	settings, err := input.SchedulerSettingsInput.Settings()
 	if err != nil {
 		sendError(w, &serving.Error{Code: "InvalidBody", Message: err.Error(), Field: "settings"})
 		return
@@ -94,10 +101,23 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 	}
 	h.config.SchedulerLock.Lock()
 	defer h.config.SchedulerLock.Unlock()
+	cm, config, err := schedulerConfigMap(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
+		h.config.SchedulerConfigMap, h.config.SchedulerConfigKey)
+	if err != nil {
+		sendError(w, err)
+		return
+	}
+	before, after, err := h.staticRoutingChange(config["staticRouting"], input.StaticRouting, input.Reason, settings.AutonomousWorkloads)
+	if err != nil {
+		sendError(w, err)
+		return
+	}
+	staticChanged := !reflect.DeepEqual(before, after)
 	username, uid := principal.Actor()
 	now := time.Now().UTC()
 	change := serving.SchedulerSettingsChange{
 		ActorUsername: username, ActorUID: uid, Before: h.config.Scheduler.Settings(), After: settings,
+		BeforeStaticRouting: before, AfterStaticRouting: after, Reason: input.Reason,
 		ValidatedAt: now, Affected: []serving.NodeReference{},
 	}
 	for _, node := range h.config.Scheduler.State().Snapshot.Nodes {
@@ -108,8 +128,15 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	err = persistSchedulerSettings(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
-		h.config.SchedulerConfigMap, h.config.SchedulerConfigKey, settings)
+	if staticChanged {
+		// The applied manual-static-routing record names this change by validatedAt.
+		config["staticRoutingValidatedAt"], _ = json.Marshal(now)
+		delete(config, "staticRouting")
+		if after != nil {
+			config["staticRouting"], _ = json.Marshal(after)
+		}
+	}
+	err = persistSchedulerSettings(r.Context(), h.authorizer.Client, cm, config, h.config.SchedulerConfigKey, settings)
 	if err == nil {
 		// Only the scheduler service's full refresh can accept a configuration. Applying
 		// settings alone could enable a catalog whose selection was removed by
@@ -130,22 +157,68 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, http.StatusOK, change)
 }
 
-func persistSchedulerSettings(
-	ctx context.Context, kube kubernetes.Interface, namespace, name, key string, settings serving.SchedulerSettings,
-) error {
-	if err := settings.Validate(); err != nil {
-		return err
+// staticRoutingChange returns the stored declaration and the one the PUT
+// leaves; empty is nil. An omitted input keeps the stored declaration and {}
+// removes it. A change needs its selection reason, and StaticRoutingTarget
+// must accept a new declaration against the last snapshot.
+func (h *Handler) staticRoutingChange(
+	stored json.RawMessage, input map[string]map[string]int, reason string, autonomous []string,
+) (before, after map[string]map[string]int, err error) {
+	if stored != nil {
+		if err = json.Unmarshal(stored, &before); err != nil {
+			return nil, nil, err
+		}
 	}
+	after = before
+	if input != nil {
+		after = input
+	}
+	if len(before) == 0 {
+		before = nil
+	}
+	if len(after) == 0 {
+		after = nil
+	}
+	if reflect.DeepEqual(before, after) {
+		return before, after, nil
+	}
+	if strings.TrimSpace(reason) == "" {
+		return nil, nil, &serving.Error{Code: "InvalidBody", Message: "a staticRouting change requires its selection reason", Field: "reason"}
+	}
+	if after != nil {
+		if _, err = serving.StaticRoutingTarget(h.config.Scheduler.State().Snapshot, after, autonomous, ""); err != nil {
+			return nil, nil, &serving.Error{Code: "InvalidBody", Message: err.Error(), Field: "staticRouting"}
+		}
+	}
+	return before, after, nil
+}
+
+// schedulerConfigMap reads the scheduler ConfigMap and its configuration object.
+func schedulerConfigMap(
+	ctx context.Context, kube kubernetes.Interface, namespace, name, key string,
+) (*core.ConfigMap, map[string]json.RawMessage, error) {
 	cm, err := kube.CoreV1().ConfigMaps(namespace).Get(ctx, name, meta.GetOptions{})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	var config map[string]json.RawMessage
 	if err = json.Unmarshal([]byte(cm.Data[key]), &config); err != nil {
-		return err
+		return nil, nil, err
 	}
 	if config == nil {
-		return errors.New("scheduler configuration must be an object")
+		return nil, nil, errors.New("scheduler configuration must be an object")
+	}
+	return cm, config, nil
+}
+
+// persistSchedulerSettings writes settings into config and updates the
+// ConfigMap read with it, so a concurrent writer fails the update.
+func persistSchedulerSettings(
+	ctx context.Context, kube kubernetes.Interface, cm *core.ConfigMap, config map[string]json.RawMessage, key string,
+	settings serving.SchedulerSettings,
+) error {
+	if err := settings.Validate(); err != nil {
+		return err
 	}
 	raw, err := json.Marshal(settings)
 	if err != nil {
@@ -157,7 +230,7 @@ func persistSchedulerSettings(
 		return err
 	}
 	cm.Data[key] = string(encoded)
-	_, err = kube.CoreV1().ConfigMaps(namespace).Update(ctx, cm, meta.UpdateOptions{})
+	_, err = kube.CoreV1().ConfigMaps(cm.Namespace).Update(ctx, cm, meta.UpdateOptions{})
 	return err
 }
 

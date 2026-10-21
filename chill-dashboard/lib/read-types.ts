@@ -67,7 +67,7 @@ export type SchedulerCapacity = {periodNanos:WireInteger;routeNanos:WireInteger;
 export type SchedulerDecision = {at:string;status:string;keep:SchedulerCandidate;target:SchedulerCandidate|null;reasons:string[]|null;settings:SchedulerSettings;workloads:SchedulerWorkloadState[]|null;search:{examined:number;bounds:SchedulerSettings;windowStart:string;windowEnd:string;received:number;accepted:number;computeInputs:number;population:string;loads:{uid:string;received:number;accepted:number;computeInputs:number;inputsPerSecond:number}[]|null;comparedNodes:NodeRef[]|null};references:string[]|null;capacity?:SchedulerCapacity;evaluationElapsedNanos?:WireInteger}
 // Weights per workload UID and instance ID; original weights, not probabilities.
 export type Routing = Record<string,Record<string,number>>
-export type SchedulerOperation = {id:string;kind:string;node:NodeRef;instance?:string;prepare?:{name:string;instance:SchedulerInstance;bundle:unknown;store:unknown;config:unknown;memoryBytes:WireInteger};actuation?:unknown;target?:SchedulerCandidate;sourceConfigRV?:string;staticRouting?:Routing}
+export type SchedulerOperation = {id:string;kind:string;node:NodeRef;instance?:string;prepare?:{name:string;instance:SchedulerInstance;bundle:unknown;store:unknown;config:unknown;memoryBytes:WireInteger};actuation?:unknown;target?:SchedulerCandidate;sourceConfigRV?:string;staticRouting?:Routing;settingsValidatedAt?:string}
 // Pods carrying this label were placed by CHILL: internal/profiling/run/workload.go
 export const workloadRoleLabel = "edge.dacs.io/workload-role"
 export type WorkloadPod = {namespace:string;name:string;uid:string;phase:string;images:string[];labels?:Record<string,string>}
@@ -77,7 +77,7 @@ export type OperationResult = {operation:SchedulerOperation;before:OperationStat
 export type CostIssue = {source:string;code:string;reason:string}
 export type SchedulerControllerState = {snapshot:SchedulerSnapshot;decision:SchedulerDecision;actions:SchedulerAction[]|null;results:OperationResult[]|null;costIssues?:CostIssue[]|null}
 export type SchedulerView = {settings:SchedulerSettings;state:SchedulerControllerState}
-export type SchedulerSettingsChange = {actorUsername:string;actorUID:string;before:SchedulerSettings;after:SchedulerSettings;validatedAt:string;appliedAt?:string;affected:NodeRef[]|null;error?:string}
+export type SchedulerSettingsChange = {actorUsername:string;actorUID:string;before:SchedulerSettings;after:SchedulerSettings;beforeStaticRouting?:Routing;afterStaticRouting?:Routing;reason?:string;validatedAt:string;appliedAt?:string;affected:NodeRef[]|null;error?:string}
 export type SchedulerActionObservation = {id:string;kind:string;node:NodeRef;instance?:string;phase:string;startedAt:string;completedAt?:string;expected?:unknown;actual?:unknown;error?:string;evidence?:unknown[]}
 export type PowerSource = {kind:string;nodeName?:string;namespace?:string;podName?:string;endpoint:string;metric:string;metricLabels?:Record<string,string>;thermalEndpoint?:string;thermalMetrics?:unknown}
 export type PowerResult = {source:PowerSource;startedAt:string;endedAt:string;samples:{observedAt:string;watts:number;thermal?:unknown;requestLatencySeconds:number}[]|null;failures:{observedAt:string;requestLatencySeconds:number;reason:string;message:string}[]|null;summary:{attempts:number;successfulSamples:number;failures:number;observationDurationSeconds:number;meanRequestLatencySeconds:number;p95RequestLatencySeconds:number;maximumSampleGapSeconds:number;sourceTimestampAbsent:boolean}}

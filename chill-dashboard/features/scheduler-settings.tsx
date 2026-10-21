@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError, type ChillMutationInput, type RelayResponse } from "@/lib/client"
-import type { OperationResult, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
+import type { OperationResult, Routing, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
 import { millisecondsToNanos, nanosToMilliseconds, wireInteger, marginMilliseconds, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
@@ -68,8 +68,9 @@ export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
 }
 
 // The one settings write: PUT the full settings, then refresh every scheduler read. Shared with the Workload screen.
-export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Promise<RelayResponse>,client:QueryClient,settings:SchedulerSettings) {
-  const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON(settings)})
+// A routing change replaces the whole staticRouting declaration and carries its selection reason.
+export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Promise<RelayResponse>,client:QueryClient,settings:SchedulerSettings,routing?:{staticRouting:Routing;reason:string}) {
+  const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON({...settings,...routing})})
   const applied=parseSchedulerJSON(response.body) as SchedulerSettingsChange
   await client.invalidateQueries({predicate:query=>typeof query.queryKey[1]==="string"&&(query.queryKey[1].startsWith("v1/scheduler")||query.queryKey[1].startsWith("v1/observations/scheduler"))})
   return applied
@@ -85,6 +86,24 @@ function EditRow({label,help,value,changed,initial,unit,range,save,disabled}:{la
         :<div className="grid gap-2"><label htmlFor={id}>{unit?`값 (${unit})`:"값"}</label><Input id={id} autoFocus required inputMode={unit==="ms"?"decimal":"text"} value={next} onChange={event=>{setNext(event.target.value);setError("")}} aria-invalid={!!error} aria-describedby={`${id}-help`}/><span id={`${id}-help`} className="text-sm text-muted-foreground">{range}{unit==="bytes"&&/^\d+$/.test(next)?` · ${mib(next)}`:""}</span></div>}
       {error&&<p role="alert">{error}</p>}
       <Button type="submit" disabled={disabled}>바꾸기</Button>
+    </form>
+  </RowDialog>
+}
+
+// The JSON is the whole declaration: service UID → instance ID → weight. {} removes it.
+// The newest routing record prefills it; without one the field starts empty.
+function RoutingEdit({initial,disabled,apply}:{initial?:Routing;disabled:boolean;apply:(staticRouting:Routing,reason:string)=>void}) {
+  const [open,setOpen]=React.useState(false),[text,setText]=React.useState(""),[reason,setReason]=React.useState(""),[error,setError]=React.useState(""),id=React.useId()
+  return <RowDialog label="요청 분배 바꾸기" hint="자동 제어하지 않는 서비스의 인스턴스 비율과 선택 이유" title="요청 분배 바꾸기" description="서비스 UID → 인스턴스 ID → 가중치를 JSON으로 적어요. 적은 내용이 설정한 분배 전체가 되고, 적지 않은 서비스는 지금 분배를 유지해요. {}는 설정한 분배를 지워요." open={open} onOpenChange={state=>{setOpen(state);setText(initial?JSON.stringify(initial,null,2):"");setReason("");setError("")}}>
+    <form className="grid gap-4" onSubmit={event=>{event.preventDefault();try {
+      const parsed:unknown=JSON.parse(text)
+      if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))throw new Error("JSON 객체로 적어 주세요.")
+      apply(parsed as Routing,reason.trim());setOpen(false)
+    } catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
+      <div className="grid gap-2"><label htmlFor={`${id}-routing`}>분배</label><textarea id={`${id}-routing`} className="min-h-40 rounded-md border p-2 font-mono text-sm" required value={text} onChange={event=>{setText(event.target.value);setError("")}} aria-invalid={!!error}/></div>
+      <div className="grid gap-2"><label htmlFor={`${id}-reason`}>선택 이유</label><Input id={`${id}-reason`} required value={reason} onChange={event=>setReason(event.target.value)}/></div>
+      {error&&<p role="alert">{error}</p>}
+      <Button type="submit" disabled={disabled||!reason.trim()}>분배 적용하기</Button>
     </form>
   </RowDialog>
 }
@@ -130,15 +149,25 @@ export function SchedulerSettingsPage() {
       setReview(draft)
     } finally {setReviewing(false)}
   }
-  async function save() {
-    if(!review||blocked||saving.current)return
-    saving.current=true;setSubmittedAt(new Date().toISOString());setRecoveryStarted(0);setHistoryWindow(null)
-    const selected=review;setReview(null);setReviewOpen(false);setResult(null);setResponseError(null)
+  async function submit(selected:SchedulerSettings,routing?:{staticRouting:Routing;reason:string}) {
+    saving.current=true;setSubmittedAt(new Date().toISOString());setRecoveryStarted(0);setHistoryWindow(null);setResult(null);setResponseError(null)
     try {
-      const applied=await putSchedulerSettings(mutation.mutateAsync,client,selected)
-      setResult(applied);setBaseline(null);setDraft(null)
+      const applied=await putSchedulerSettings(mutation.mutateAsync,client,selected,routing)
+      setResult(applied)
+      if(!routing){setBaseline(null);setDraft(null)}
     } catch(error) {if(!(error instanceof ApiError))setResponseError("적용 응답을 해석하지 못했어요. 현재 설정과 최근 변경 기록을 확인해 주세요.")}
     finally {saving.current=false}
+  }
+  async function save() {
+    if(!review||blocked||saving.current)return
+    const selected=review;setReview(null);setReviewOpen(false)
+    await submit(selected)
+  }
+  // A routing change keeps the settings the server holds right now.
+  async function applyRouting(staticRouting:Routing,reason:string) {
+    if(blocked||saving.current)return
+    const current=await settings.refetch()
+    if(current.data)await submit(current.data,{staticRouting,reason})
   }
   async function recover() {
     const now=Date.now();setRecoveryStarted(now)
@@ -147,13 +176,13 @@ export function SchedulerSettingsPage() {
   }
 
   if(result)return <Screen back={back} title={result.appliedAt?"설정을 적용했어요":"적용 결과를 확인해 주세요"} lede="실제 구성 변경은 따로 진행돼요. 진행 상황은 아래에서 볼 수 있어요." action={<Button onClick={()=>setResult(null)}>확인</Button>}>
-    <Facts items={[["적용 시각",result.appliedAt?time(result.appliedAt):"아직 없어요"],["확인 시각",time(result.validatedAt)],["바꾼 사람",result.actorUsername],["마지막으로 확인한 노드",result.affected?.map(node=>node.name).join(", ")||"없음"],...(result.error?[["오류",result.error] as [string,string]]:[])]}/>
+    <Facts items={[["적용 시각",result.appliedAt?time(result.appliedAt):"아직 없어요"],["확인 시각",time(result.validatedAt)],["바꾼 사람",result.actorUsername],...(result.reason?[["분배 선택 이유",result.reason] as [string,string]]:[]),["마지막으로 확인한 노드",result.affected?.map(node=>node.name).join(", ")||"없음"],...(result.error?[["오류",result.error] as [string,string]]:[])]}/>
     <Rows><Row href="/transitions" label="실제 변경 진행 보기"/><RowDialog label="원본 자료 보기" title="적용 결과 원본"><SourceJSON inline value={result}/></RowDialog></Rows>
   </Screen>
 
   if(mutation.error||responseError) {
     const message=mutation.error?.status===403?"조회 권한과 별도로 설정 변경 권한과 설정 저장소(ConfigMap) 수정 권한이 모두 필요해요.":responseError??serverError?.message??mutation.error?.body
-    const field=serverError?.field&&(fields.find(item=>item.key===serverError.field)?.label??(serverError.field==="settings"?"운영 설정 전체":serverError.field))
+    const field=serverError?.field&&(fields.find(item=>item.key===serverError.field)?.label??({settings:"운영 설정 전체",staticRouting:"요청 분배",reason:"분배 선택 이유"} as Record<string,string>)[serverError.field]??serverError.field)
     if(!unknown)return <Screen back={back} title={mutation.error?.status===403?"설정을 바꿀 권한이 없어요":"설정을 적용하지 못했어요"} lede={`${message??""} 바꾼 값은 그대로 있어요.`} action={<Button onClick={()=>mutation.reset()}>다시 수정하기</Button>}>
       {field&&<Facts items={[["관련 항목",field]]}/>}
     </Screen>
@@ -195,6 +224,7 @@ export function SchedulerSettingsPage() {
         {routing
           ?<Row href={`/transitions/${encodeURIComponent(routing.operation.id)}?${new URLSearchParams({view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배" hint="가장 최근에 적용한 서비스 → 인스턴스 비율"/>
           :<Row href="/transitions" label="설정한 요청 분배" hint={state.data?"설정 기반 분배 기록이 비어 있어요":state.error?"분배 기록을 불러오지 못했어요":"분배 기록을 확인하고 있어요"}/>}
+        <RoutingEdit initial={routing?.operation.staticRouting} disabled={blocked||count>0} apply={(staticRouting,reason)=>void applyRouting(staticRouting,reason)}/>
         <Row href="/scheduler" label="지금 운영 판단 보기"/>
         {settings.data&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(settings.data),2)}</pre><SourceExport value={settings.data} filename="chill-scheduler-settings.json"/></RowDialog>}
       </Rows>

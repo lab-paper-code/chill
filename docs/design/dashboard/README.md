@@ -540,7 +540,7 @@ raw 및 내보내기는 ChillServer의 제한된 page 또는 stream을 사용한
 | DB-FR-15 | `/scheduler`의 판단 결과 제공 여부와 적용 조건(기존 화면 유지) | D0 | 구성과 설정 변경 |
 | DB-FR-16 | `/scheduler`의 판단 근거, 예측과 실측 구분 | 기존 | 구성과 설정 변경, 전환 비용 원본 |
 | DB-FR-17 | `/configuration`의 SchedulerSettings 편집, 예측 영향은 ChillServer 조회 대기 | U4 | 구성과 설정 변경 |
-| DB-FR-18 | `/transitions/[id]`의 `manual-static-routing` 선언(`staticRouting`, `sourceConfigRV`)과 실제(`actual.routing`), 반영 대기와 실패 이유, `/configuration`의 `설정한 요청 분배` 행에서 최신 결과로 이동 | U0, U4 | 설정 기반 요청 분배 |
+| DB-FR-18 | `/transitions/[id]`의 `manual-static-routing` 선언(`staticRouting`, `sourceConfigRV`)과 실제(`actual.routing`), 반영 대기와 실패 이유, `operation.settingsValidatedAt`의 설정 변경 기록에서 읽은 선택 이유와 바꾼 사람, `/configuration`의 `설정한 요청 분배` 행에서 최신 결과로 이동, `요청 분배 바꾸기`의 선언과 선택 이유 입력 | U0, U4 | 설정 기반 요청 분배 |
 | DB-FR-19~21 | `/transitions`의 계획과 의존 동작, before/actual, 상태와 실패, 판단 기록 링크 | 기존 | 전환 일부 실패 |
 | DB-FR-22 | UID 관측 기록과 단계별 요청 항목 | 기존 | 빈 구간과 집계 |
 | DB-FR-23 | `/observations`의 전체 구간 cohort, 표본 0의 0개와 빈 통계 값(기존 화면 유지) | D0 | 빈 구간과 집계 |

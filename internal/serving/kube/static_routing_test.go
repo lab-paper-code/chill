@@ -19,7 +19,7 @@ func TestStaticRoutingRequiresSourceRevision(t *testing.T) {
 	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), config: SchedulerControllerConfig{
 		Settings: serving.SchedulerSettings{},
 	}}
-	if err := controller.ApplyStaticRouting(context.Background(), nil, ""); err == nil {
+	if err := controller.ApplyStaticRouting(context.Background(), nil, "", nil); err == nil {
 		t.Fatal("manual routing reached capture/apply without source revision")
 	}
 }
@@ -125,7 +125,8 @@ func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
 					return true, nil, errors.New("actual snapshot unavailable")
 				})
 			}
-			err := controller.ApplyStaticRouting(ctx, routing, "42")
+			validatedAt := time.Date(2026, 10, 21, 1, 2, 3, 4, time.UTC)
+			err := controller.ApplyStaticRouting(ctx, routing, "42", &validatedAt)
 			if err == nil {
 				t.Fatal("unavailable static target was reported applied")
 			}
@@ -137,7 +138,8 @@ func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
 				t.Fatalf("preflight failure hidden: recorded=%d state=%+v", len(recorded), state.Results)
 			}
 			result := state.Results[0]
-			if result.Status != nativeOperationFailed || result.Error != err.Error() || result.Operation.SourceConfigRV != "42" || result.Operation.Kind != "manual-static-routing" {
+			if result.Status != nativeOperationFailed || result.Error != err.Error() || result.Operation.SourceConfigRV != "42" || result.Operation.Kind != "manual-static-routing" ||
+				result.Operation.SettingsValidatedAt == nil || !result.Operation.SettingsValidatedAt.Equal(validatedAt) {
 				t.Fatalf("manual failure provenance lost: %+v", result)
 			}
 			if !maps.EqualFunc(result.Operation.StaticRouting, routing, func(left, right map[string]int) bool { return maps.Equal(left, right) }) {
@@ -167,7 +169,7 @@ func TestManualStaticRoutingRecordsPendingWithoutOverwritingRunningGlobalRoute(t
 			wanted[uid][id] = int(weight)
 		}
 	}
-	err := controller.ApplyStaticRouting(context.Background(), wanted, "pending-owner-rv")
+	err := controller.ApplyStaticRouting(context.Background(), wanted, "pending-owner-rv", nil)
 	if err == nil || !strings.Contains(err.Error(), "running global route") {
 		t.Fatalf("manual write did not wait for the existing native ACK: %v", err)
 	}

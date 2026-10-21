@@ -76,6 +76,8 @@ type Operation struct {
 	Target         *serving.SchedulerCandidate `json:"target,omitempty"`
 	SourceConfigRV string                      `json:"sourceConfigRV,omitempty"`
 	StaticRouting  map[string]map[string]int   `json:"staticRouting,omitempty"`
+	// SettingsValidatedAt names the settings change that declared StaticRouting.
+	SettingsValidatedAt *time.Time `json:"settingsValidatedAt,omitempty"`
 }
 type OperationState struct {
 	At        time.Time                   `json:"at"`

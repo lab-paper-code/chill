@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -377,6 +378,101 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	}
 	if profile.Batches[0].DurationNanos[0] != 12 || instances[0].Profile != profile {
 		t.Fatal("read projection mutated the raw source")
+	}
+}
+
+func TestSchedulerSettingsStaticRoutingChangeNeedsReasonAndRecordsBeforeAfter(t *testing.T) {
+	settings := schedulerSettingsForTest()
+	settingsRaw, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := map[string]map[string]int{"old-uid": {"physical": 1}}
+	kube := fake.NewSimpleClientset(&core.ConfigMap{
+		ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "1"},
+		Data: map[string]string{"scheduler.json": `{"settings":` + string(settingsRaw) +
+			`,"staticRouting":{"old-uid":{"physical":1}},"staticRoutingValidatedAt":"2026-10-01T00:00:00Z"}`},
+	})
+	kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{
+			Authenticated: true, User: authenticationv1.UserInfo{Username: actorUsername, UID: "actor-uid"},
+		}}, nil
+	})
+	kube.PrependReactor("create", "subjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	})
+	updates := 0
+	kube.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, runtime.Object, error) {
+		updates++
+		return false, nil, nil
+	})
+	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence", Writer: settingsArchive{directory: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := observationLog.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	controller, execution := settingsControllerForTest(t, kube, observationLog, settings)
+	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
+		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
+		SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20, RefreshScheduler: func(context.Context) error { return nil },
+	}}
+	put := func(extra string) *httptest.ResponseRecorder {
+		body := strings.TrimSuffix(string(settingsRaw), "}") + extra + "}"
+		request := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/settings", strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer reviewed-token")
+		response := httptest.NewRecorder()
+		handler.scheduler(response, request)
+		return response
+	}
+	for _, rejected := range []struct{ extra, field string }{
+		{`,"staticRouting":{}`, "reason"},
+		{`,"staticRouting":{},"reason":"  "`, "reason"},
+		{`,"staticRouting":{"absent-uid":{"physical":1}},"reason":"baseline"`, "staticRouting"},
+	} {
+		response := put(rejected.extra)
+		var failure serving.Error
+		if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil || response.Code != http.StatusBadRequest || failure.Field != rejected.field || updates != 0 {
+			t.Fatalf("%s: status=%d body=%s updates=%d", rejected.extra, response.Code, response.Body, updates)
+		}
+	}
+	// The same declaration is no staticRouting change, so it needs no reason.
+	if response := put(`,"staticRouting":{"old-uid":{"physical":1}}`); response.Code != http.StatusOK {
+		t.Fatalf("unchanged declaration: status=%d body=%s", response.Code, response.Body)
+	}
+	response := put(`,"staticRouting":{},"reason":"fixed placement baseline"`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body)
+	}
+	var change serving.SchedulerSettingsChange
+	if err := json.Unmarshal(response.Body.Bytes(), &change); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(change.BeforeStaticRouting, declared) || change.AfterStaticRouting != nil || change.Reason != "fixed placement baseline" {
+		t.Fatalf("staticRouting change record: %+v", change)
+	}
+	persisted, err := kube.CoreV1().ConfigMaps("serving").Get(context.Background(), "scheduler", meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored struct {
+		StaticRouting            map[string]map[string]int `json:"staticRouting"`
+		StaticRoutingValidatedAt *time.Time                `json:"staticRoutingValidatedAt"`
+	}
+	if err := json.Unmarshal([]byte(persisted.Data["scheduler.json"]), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.StaticRouting != nil || stored.StaticRoutingValidatedAt == nil || !stored.StaticRoutingValidatedAt.Equal(change.ValidatedAt) {
+		t.Fatalf("stored staticRouting does not name its settings change: %s", persisted.Data["scheduler.json"])
+	}
+	records, _, _, err := observationLog.SchedulerObservationPage(change.ValidatedAt, change.ValidatedAt.Add(time.Millisecond), 10, 0)
+	if err != nil || len(records) == 0 || records[0].Settings.Reason != change.Reason {
+		t.Fatalf("settings change is not found at its validatedAt: %+v %v", records, err)
 	}
 }
 
