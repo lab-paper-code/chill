@@ -71,7 +71,7 @@
 
 **사슬.** `schedulerPlan`의 순서다. 모드 변경은 power, 모든 기존 remove, prepare가 route 전이다. 같은 모드에서는 자원이 함께 들어가지 않을 때만 remove가 prepare 앞이고, 아니면 route 뒤다. 동작마다 측정 trial의 평균 wall J, 평균 시간, 최대 시간을 쓴다. 비용이 없으면 그 계획은 `MissingOperationCost`로 빠진다. 같은 인스턴스의 배치 상한이나 대기 시간을 바꾸는 계획은 그 인스턴스를 그대로 쓰고 route가 firstfloor policy를 바꾼다(사슬 없음). 서빙 Pod는 측정한 모든 배치를 시작할 때 초기화하고(`batchSizes`, m4 r2의 rasp5 q2 config는 1~16), firstfloor `Scheduler.Update`는 초기화되고 측정된 배치 안에서 policy의 `maxBatchSize`와 `maxBatchWaitMS`를 재시작 없이 바꾸며, route의 `applyPolicy`가 그 값의 native ACK를 기다린다.
 
-**비교 기간.** `T = max(comparisonPeriodNanos, 공간의 최장 route 전 사슬 + 최장 route 뒤 remove)`(최대 시간)를 판단마다 하나 정하고 keep과 모든 계획에 쓰며 `decision.capacity.periodNanos`에 남긴다. 모든 사슬이 T 안에 끝난다. 비교 기간을 정하는 방법은 04 명세가 설계에 맡긴다. sample의 `comparisonPeriodNanos`는 사용자 결정으로 10분이다(m4 r5 뒤). T는 에너지 순서만 바꾸고 SLO 판정(3장)은 T와 무관하므로 부하가 오를 때 첫 판단의 확장은 T와 상관없다. m4 r5 기록에서 T를 늘려도 바뀌지 않는 것: 분배되지 않은 genesis3 q2와 orangepi q1은 인스턴스를 띄운 노드 전력(49.80 W, 2.71 W)이 빈 노드(49.97 W, 2.73 W)보다 크지 않아 remove가 어떤 T에서도 이득이 아니다. 배치 상한 교체(genesis3 b1↔b2)와 SLO 때문에 준비한 인스턴스의 remove는 T 152 s에서 이미 이득(79~1,265 J)이었고 이득은 T에 비례해 커진다.
+**비교 기간.** `T = max(comparisonPeriodNanos, 공간의 최장 route 전 사슬 + 최장 route 뒤 remove)`(최대 시간)를 판단마다 하나 정하고 keep과 모든 계획에 쓰며 `decision.capacity.periodNanos`에 남긴다. 모든 사슬이 T 안에 끝난다. 비교 기간을 정하는 방법은 04 명세가 설계에 맡긴다. sample의 `comparisonPeriodNanos`는 사용자 결정으로 10분이다(m4 r5 뒤). T는 에너지 순서만 바꾸고 SLO 판정(3장)은 T와 무관하므로 부하가 오를 때 첫 판단의 확장은 T와 상관없다. m4 r5 기록에서 T만으로는 풀리지 않는 것: 분배되지 않은 genesis3 q2와 orangepi q1은 인스턴스를 띄운 노드 전력(49.80 W, 2.71 W)이 빈 노드(49.97 W, 2.73 W)보다 크지 않아 remove가 어떤 T에서도 에너지 이득이 아니다. 배치 상한 교체(genesis3 b1↔b2)와 SLO 때문에 준비한 인스턴스의 remove는 T 152 s에서 이미 이득(79~1,265 J)이었고 이득은 T에 비례해 커진다. 그래서 14장의 유휴 제거, 교체 회수, Overload 준비 유지 규칙을 둔다.
 
 **에너지.** 노드 계획 하나의 [0, T] 노드 에너지는 keep이면 `P_before × T`, 아니면 `J_pre + P_mid × (r − t_pre) + J_post + P_after × (T − r − t_post)`(t는 평균 시간)다. P는 `schedulerBaseline`의 적재 상태 전력이다. 요청 에너지는 route에서 나눈다: [0, r]은 지금 routing으로 남는 인스턴스가 κ_ret까지 처리하고(`Σ y⁰_i e_i r`), 넘친 `max(0, λ − κ_ret) × r`건과 [r, T]는 target 배정 y로 처리한다(`Σ y_i e_i (T − r)`와 넘친 건수 × y 가중 평균 e). 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.
 
@@ -128,6 +128,7 @@
 | 이름(commit 8) | 비교 기간 하한은 `comparisonPeriodNanos`(> 0)다. strict decode라 배포 때 ConfigMap의 `horizonNanos`를 이 이름으로 바꾼다(sample 10분). 판단 기록의 `settings`도 이 이름이고, Dashboard는 판단마다 실제 T인 `decision.capacity.periodNanos`를 보여 준다 |
 | 삭제(commit 6) | `algorithm`, `replays`, `seed`, `maxCandidates`, `maxReplayRequests`, `controls.sharing`. 같은 방식으로 ConfigMap과 Dashboard를 바꾼다 |
 | 판단 기록 | `v1alpha5`에 `decision.capacity`와 `management`의 `capacity-row-built`가 더해지고 `candidates`, `search.truncated`, `policy`가 빠진다. snapshot 인스턴스는 `workloadUID` 하나이고 `arrivalAgesNanos`가 빠진다. 관측 reader는 없는 필드를 빈 값으로 읽으므로 버전을 올리지 않는다(ADR 0019). 전환 전 시간의 기록은 새 reader에서 인스턴스의 Workload가 비므로 전환 시각을 걸치는 `OperatingPower` 구간은 쓰지 않는다 |
+| 추가(commit 10) | snapshot 인스턴스의 `unroutedSince`와 `heldUntil`(14장). controller의 메모리 기록이고 없으면 빈 값이다. 판단 사유 `IdleInstanceRemoved`, `ReplacementUnpaid`와 노드 계획 사유 `HeldAfterOverload`가 더해진다 |
 
 ## 8. 커밋 단위
 
@@ -250,3 +251,6 @@ commit 6에서 모두 지운다.
 - **재사용 증거.** 분배되지 않은 준비된 인스턴스는 예약 slot(`targetID`)이나 그 Workload의 소유가 있을 때만 계획이 다시 쓴다.
 - **무한 값.** 용량이 없어 대기, 비우는 시간, 초과량이 정해지지 않으면 기록에서 그 필드가 빠지고 후보의 `worstExceedance`는 float 최댓값이다.
 - **DP 비용.** route 시각마다 같은 노드에서 에너지, κ 합, 칸별 요청 에너지가 모두 같거나 나쁜 계획은 빠지고, 칸은 Workload 하나씩 차례로 배정한다. 두 처리는 충족 판정을 바꾸지 않는다.
+- **유휴 제거.** 관측 창 하나 이상 가중치가 0인 인스턴스(controller가 가중치를 잃은 시각을 `unroutedSince`로 붙인다)는 고른 해가 그 인스턴스에 가중치를 주지 않으면 target에서 빠지고 stop, drain, remove로 지운다(`IdleInstanceRemoved:<인스턴스>`). 고른 해의 판정이 그 κ 없이도 성립할 때만이다. 목적은 에너지가 아니라 측정이다. 서빙 노드는 측정을 받지 않고, 빈 노드는 다음 판단에서 가장 낮은 모드로 내려간다. controller가 다시 시작하면 시각을 처음부터 잰다.
+- **교체 회수.** 지금 인스턴스를 지우고 다른 인스턴스를 들이거나 배치 policy를 바꾸는 노드 계획(교체)은, 그 노드만 keep으로 되돌린 해도 충족하면 관측 창의 최소 부하에서 T 동안의 에너지로 비교한다. 최소 부하는 관측 창을 제어 주기로 나눈 구간마다의 도착률 중 가장 작은 값이다. 교체가 그 부하에서 keep보다 에너지가 크거나 같으면 keep으로 되돌리고 `ReplacementUnpaid:<노드>`를 남긴다.
+- **Overload 준비 유지.** keep이 `Overload`인 판단이 준비한 인스턴스는 Ready가 된 때부터 관측 창 하나 동안(`heldUntil`) 지우거나 교체하는 노드 계획에서 빠지고(`HeldAfterOverload`), 유휴 제거도 받지 않는다. 근거: m4 r5의 40 req/s에서 genesis2를 keep `Overload` 판단(04:28:48)이 준비하고 50 s 뒤 지웠다.

@@ -17,7 +17,7 @@ import (
 const (
 	schedulerStatusPending  = "Pending"
 	schedulerStatusFeasible = "Feasible"
-	schedulerStatusOverload = "Overload"
+	SchedulerStatusOverload = "Overload"
 	schedulerStatusLifetime = "InfeasibleLifetime"
 	schedulerNodeWallScope  = "node-exclusive-wall"
 	schedulerActionPrepare  = "prepare"
@@ -128,11 +128,11 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 		c.SLO = append(c.SLO, e)
 	}
 	if c.WorstExceedance > 0 {
-		c.Status = schedulerStatusOverload
+		c.Status = SchedulerStatusOverload
 	}
 	for _, counts := range r.outcomes {
 		if counts["timeout"] > 0 && c.Status != schedulerStatusLifetime {
-			c.Status = schedulerStatusOverload
+			c.Status = SchedulerStatusOverload
 		}
 		for kind, count := range counts {
 			if strings.HasPrefix(kind, "expired-") && count > 0 {

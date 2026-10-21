@@ -80,6 +80,10 @@ type SchedulerController struct {
 	// powerTargets holds, by "<Node UID>/<mode>", the request specs the last
 	// capture derived; a power action builds its NodeActuation when it starts.
 	powerTargets map[string]edge.NodeActuationSpec
+	// unrouted holds when each captured instance last lost every route weight.
+	// overloaded holds the slots prepared while keep was in Overload: zero
+	// until the instance is Ready, then the end of its hold.
+	unrouted, overloaded map[string]time.Time
 }
 
 // NewSchedulerController configures control without taking ownership of routing.
@@ -241,6 +245,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 			}
 		}
 	}
+	c.annotateHistory(&snapshot, config.Settings.ObservationWindow)
 	c.capacity.Ensure(c.ctx, config.Settings, snapshot)
 	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, c.capacity.Rows())
 	if err != nil {
@@ -254,6 +259,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	}
 	c.state.Snapshot = snapshot
 	c.state.Decision = decision
+	c.markOverloadPrepares(decision)
 	c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
@@ -275,6 +281,85 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		c.launch(keep, config)
 	}
 	return decision, nil
+}
+
+// annotateHistory sets each captured instance's UnroutedSince and HeldUntil
+// from the controller's records and drops records of instances that left.
+// A restart starts the records again, so an instance waits one more window.
+func (c *SchedulerController) annotateHistory(s *serving.SchedulerSnapshot, window time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.unrouted == nil {
+		c.unrouted, c.overloaded = map[string]time.Time{}, map[string]time.Time{}
+	}
+	for key, until := range c.overloaded {
+		if !until.IsZero() && !s.At.Before(until) {
+			delete(c.overloaded, key)
+		}
+	}
+	present := map[string]bool{}
+	for k := range s.Instances {
+		i := &s.Instances[k]
+		present[i.ID] = true
+		routed := false
+		for _, weights := range s.Routing {
+			routed = routed || weights[i.ID] > 0
+		}
+		if _, seen := c.unrouted[i.ID]; routed {
+			delete(c.unrouted, i.ID)
+		} else if !seen {
+			c.unrouted[i.ID] = s.At
+		}
+		if since, ok := c.unrouted[i.ID]; ok {
+			i.UnroutedSince = &since
+		}
+		for _, key := range []string{i.ID, i.TargetID} {
+			until, ok := c.overloaded[key]
+			if key == "" || !ok {
+				continue
+			}
+			if until.IsZero() && i.Ready {
+				until = s.At.Add(window)
+				c.overloaded[key] = until
+			}
+			if !until.IsZero() {
+				i.HeldUntil = &until
+			}
+		}
+	}
+	for id := range c.unrouted {
+		if !present[id] {
+			delete(c.unrouted, id)
+		}
+	}
+	// A mark whose preparation neither runs nor waits in the goal is dropped.
+	for key, until := range c.overloaded {
+		preparing := c.goal != nil && slices.ContainsFunc(c.goal.Actions, func(a serving.Action) bool {
+			return a.Kind == operationPrepare && a.Instance == key
+		})
+		for _, r := range c.runs {
+			preparing = preparing || r.action.Kind == operationPrepare && r.action.Instance == key
+		}
+		if until.IsZero() && !preparing {
+			delete(c.overloaded, key)
+		}
+	}
+}
+
+// markOverloadPrepares records the slots a decision prepares while keep is in
+// Overload; once Ready they are held for one observation window.
+func (c *SchedulerController) markOverloadPrepares(decision serving.SchedulerDecision) {
+	if decision.Target == nil || decision.Keep.Status != serving.SchedulerStatusOverload {
+		return
+	}
+	if c.overloaded == nil {
+		c.unrouted, c.overloaded = map[string]time.Time{}, map[string]time.Time{}
+	}
+	for _, a := range decision.Target.Actions {
+		if _, marked := c.overloaded[a.Instance]; a.Kind == operationPrepare && !marked {
+			c.overloaded[a.Instance] = time.Time{}
+		}
+	}
 }
 
 // reconcileSnapshot attaches the run status and the goal still in progress. A

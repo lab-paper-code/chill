@@ -27,6 +27,13 @@ const (
 	schedulerPlanInfeasibleResources  = "InfeasibleResources"
 	schedulerPlanFixedWorkload        = "FixedWorkload"
 	schedulerPlanPreparationFailed    = "PreparationFailed"
+	schedulerPlanHeld                 = "HeldAfterOverload"
+	// schedulerReplacementUnpaid names a node whose replacement did not repay
+	// its transition at the least load of the observation window.
+	schedulerReplacementUnpaid = "ReplacementUnpaid"
+	// schedulerIdleInstanceRemoved names an instance unrouted for one
+	// observation window that the target removes.
+	schedulerIdleInstanceRemoved = "IdleInstanceRemoved"
 
 	schedulerRouteUnits    = 1000  // route weights of one Workload sum to this
 	schedulerMaxCells      = 50    // load cells per Workload
@@ -156,7 +163,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err != nil {
 		return SchedulerDecision{}, err
 	}
-	return planner.decide(decision, best), ctx.Err()
+	return planner.decide(decision, planner.payback(best)), ctx.Err()
 }
 
 // schedulerCanonical orders the snapshot lists the planner iterates, so the
@@ -200,6 +207,7 @@ func schedulerCanonical(s SchedulerSnapshot) SchedulerSnapshot {
 type capacityWorkload struct {
 	d       *Definition
 	rate    float64 // λ, req/s
+	minRate float64 // the least arrival rate of one control interval in the observation window
 	queued  int     // q
 	current int     // instances serving it now
 	slack   float64 // L − m, seconds
@@ -230,6 +238,9 @@ type capacityPlan struct {
 	preMean, preMax, postMean, postMax float64             // seconds
 	preJ, postJ                        float64
 	before, mid, after                 float64 // watts
+	// replaces marks a plan that changes the batch policy of a current instance,
+	// or removes one while adding another.
+	replaces bool
 }
 
 // energy is the Node's joules over [0, t] when the route lands at r.
@@ -288,6 +299,7 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 			}
 		}
 		w.rate = (w.rate + float64(w.queued)) / settings.ObservationWindow.Seconds()
+		w.minRate = capacityMinimumRate(settings, snapshot, w.d.UID)
 		w.slack = w.d.SLO.TargetLatency.Seconds() - settings.CompletionMarginMS/1e3
 		for _, i := range snapshot.Instances {
 			if i.WorkloadUID == w.d.UID && !i.Stopped {
@@ -318,6 +330,32 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		}
 	}
 	return p
+}
+
+// capacityMinimumRate is the least arrival rate of the Workload over the
+// control intervals that tile the observation window.
+func capacityMinimumRate(settings SchedulerSettings, snapshot SchedulerSnapshot, uid string) float64 {
+	buckets := max(1, int(settings.ObservationWindow/settings.ControlInterval))
+	width := settings.ObservationWindow / time.Duration(buckets)
+	start := snapshot.ObservationEnd.Add(-time.Duration(buckets) * width)
+	counts := make([]int, buckets)
+	for _, a := range snapshot.Arrivals {
+		if (!a.Compute && !a.Accepted) || a.Definition == nil || a.Definition.UID != uid || a.At.Before(start) || !a.At.Before(snapshot.ObservationEnd) {
+			continue
+		}
+		counts[min(buckets-1, int(a.At.Sub(start)/width))]++
+	}
+	return float64(slices.Min(counts)) / width.Seconds()
+}
+
+// held reports an instance prepared under Overload still inside its hold.
+func (p *capacityPlanner) held(i SchedulerInstance) bool {
+	return i.HeldUntil != nil && i.HeldUntil.After(p.snapshot.At)
+}
+
+// idle reports an instance unrouted for at least one observation window.
+func (p *capacityPlanner) idle(i SchedulerInstance) bool {
+	return i.UnroutedSince != nil && p.snapshot.At.Sub(*i.UnroutedSince) >= p.settings.ObservationWindow && !p.held(i)
 }
 
 // pendingWorkloads names each controlled Workload with no κ in any row.
@@ -578,6 +616,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	}
 	plan := &capacityPlan{mode: mode, record: SchedulerNodePlan{Node: node.Node}}
 	used := map[string]bool{}
+	changed, added := map[string]bool{}, false
 	chosenItems := map[string]capacityItem{}
 	for _, c := range chosen {
 		uid := p.ws[c.w].d.UID
@@ -592,11 +631,13 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 				old.Capacity == i.Capacity && schedulerOwnerAllows(old.OwnerWorkloadUID, uid) &&
 				(old.WorkloadUID == uid || old.WorkloadUID == "" && old.Ready && !old.Stopped && (old.TargetID != "" || old.OwnerWorkloadUID == uid)) {
 				used[old.ID] = true
+				changed[old.ID] = old.MaxBatch != i.MaxBatch || old.MaxWait != i.MaxWait
 				old.WorkloadUID, old.MaxBatch, old.MaxWait = uid, i.MaxBatch, i.MaxWait
 				i = old
 				break
 			}
 		}
+		added = added || !used[i.ID]
 		plan.instances = append(plan.instances, i)
 		chosenItems[i.ID] = capacityItem{kappa: c.kappa, row: c.row}
 		if c.reason != "" && plan.record.Reason == "" {
@@ -604,6 +645,18 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		}
 	}
 	plan.record.Key = planKey(plan.instances)
+	removed := slices.ContainsFunc(current, func(old SchedulerInstance) bool { return !used[old.ID] })
+	plan.replaces = removed && added
+	for _, batch := range changed {
+		plan.replaces = plan.replaces || batch
+	}
+	// An instance prepared under Overload is neither removed nor replaced
+	// during its hold.
+	if plan.record.Reason == "" && slices.ContainsFunc(current, func(old SchedulerInstance) bool {
+		return p.held(old) && (!used[old.ID] || changed[old.ID])
+	}) {
+		plan.record.Reason = schedulerPlanHeld
+	}
 	if plan.record.Reason != "" {
 		return plan
 	}
@@ -1094,6 +1147,8 @@ type capacityResult struct {
 	weights         []map[string]int32
 	rows            [][]string
 	sums            [][2]float64
+	// unpaid names the Nodes whose replacement payback reverted to keep.
+	unpaid []string
 }
 
 // evaluate judges the plan set (one plan index per Node) at route r and sums
@@ -1247,6 +1302,55 @@ func (a capacityResult) better(b *capacityResult) bool {
 		return a.keep
 	}
 	return a.key < b.key
+}
+
+// payback reverts each replacing node plan of a feasible result to keep when
+// the result stays feasible without it and, at the least load of the
+// observation window, the replacement does not repay its transition over T.
+func (p *capacityPlanner) payback(best capacityResult) capacityResult {
+	if !best.feasible {
+		return best
+	}
+	for n, j := range best.choice {
+		if !p.plans[n][j].replaces {
+			continue
+		}
+		alt := slices.Clone(best.choice)
+		alt[n] = 0
+		r := p.routeOf(alt)
+		kept := p.evaluate(alt, r)
+		if !kept.feasible || p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route) {
+			continue
+		}
+		kept.unpaid = append(slices.Clone(best.unpaid), p.snapshot.Nodes[n].Node.UID)
+		best = kept
+	}
+	return best
+}
+
+// routeOf is the route time of a plan set: its longest chain before the route.
+func (p *capacityPlanner) routeOf(choice []int) float64 {
+	r := 0.0
+	for n, j := range choice {
+		if plan := p.plans[n][j]; !plan.keep {
+			r = max(r, plan.preMax)
+		}
+	}
+	return r
+}
+
+// leastLoadJoules is the plan set's energy over T with every Workload at its
+// least rate of the observation window.
+func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
+	rates := make([]float64, len(p.ws))
+	for w := range p.ws {
+		rates[w], p.ws[w].rate = p.ws[w].rate, p.ws[w].minRate
+	}
+	joules := p.evaluate(choice, r).joules
+	for w := range p.ws {
+		p.ws[w].rate = rates[w]
+	}
+	return joules
 }
 
 type capacityPoint struct {
@@ -1528,7 +1632,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	keep := &decision.Keep
 	keep.ExpectedJoules, keep.WorstExceedance, keep.Status = &keepResult.joules, capacityWorst(keepResult.worst), schedulerStatusFeasible
 	if !keepResult.feasible {
-		keep.Status = schedulerStatusOverload
+		keep.Status = SchedulerStatusOverload
 	}
 	decision.Search.Examined = p.examined
 	for n, compared := range p.compared {
@@ -1563,26 +1667,37 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 			target.Routing[d.UID] = map[string]int32{}
 		}
 	}
+	removed := false
 	for n, j := range best.choice {
 		plan := p.plans[n][j]
 		if !plan.keep {
 			target.Nodes[n].PowerMode = plan.mode
 		}
-		target.Instances = append(target.Instances, plan.instances...)
+		for _, i := range plan.instances {
+			if p.idleRemovable(i, plan, best, target.Routing) {
+				decision.Reasons = append(decision.Reasons, schedulerIdleInstanceRemoved+":"+i.ID)
+				removed = true
+				continue
+			}
+			target.Instances = append(target.Instances, i)
+		}
+	}
+	for _, node := range best.unpaid {
+		decision.Reasons = append(decision.Reasons, schedulerReplacementUnpaid+":"+node)
 	}
 	if !best.feasible {
-		target.Status = schedulerStatusOverload
+		target.Status = SchedulerStatusOverload
 		decision.Reasons = append(decision.Reasons, schedulerNoPlanMeetsSLO)
 		if best.weightsExceeded {
 			decision.Reasons = append(decision.Reasons, schedulerRouteWeightExceeds)
 		}
 	}
-	if best.keep && p.sameRouting(target.Routing) {
+	if best.keep && !removed && p.sameRouting(target.Routing) {
 		chosen := decision.Keep
 		chosen.Status = target.Status
 		decision.Target, decision.Status = &chosen, schedulerStatusKeep
 		if !best.feasible {
-			decision.Status = schedulerStatusOverload
+			decision.Status = SchedulerStatusOverload
 		}
 		return decision
 	}
@@ -1591,6 +1706,31 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	target.Actions = schedulerPlan(p.snapshot, target)
 	decision.Target, decision.Status = &target, target.Status
 	return decision
+}
+
+// idleRemovable reports an instance of a controlled Workload unrouted for one
+// observation window that the chosen plan set leaves unrouted, when every
+// judgment the set meets still holds without its κ. The removal is for
+// measurability and the lowest mode of an emptied Node, not energy.
+func (p *capacityPlanner) idleRemovable(i SchedulerInstance, plan *capacityPlan, best capacityResult, routing map[string]map[string]int32) bool {
+	uid := i.WorkloadUID
+	if uid == "" {
+		uid = i.OwnerWorkloadUID
+	}
+	w, controlled := p.index[uid]
+	if !controlled || !p.idle(i) || schedulerInstanceRouted(routing, i.ID) {
+		return false
+	}
+	if !best.feasible || i.WorkloadUID == "" {
+		return true
+	}
+	knew := best.sums[w][0]
+	for _, item := range plan.items[w] {
+		if item.id == i.ID {
+			knew -= item.kappa
+		}
+	}
+	return capacityJudge(p.ws[w], knew, best.sums[w][1], knew > 0, best.route).satisfied
 }
 
 // sameRouting reports whether the controlled Workloads keep their current routes.

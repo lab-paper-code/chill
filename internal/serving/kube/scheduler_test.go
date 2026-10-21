@@ -644,3 +644,37 @@ func TestBindProfileMeterUsesWallQuantityIdentity(t *testing.T) {
 		})
 	}
 }
+
+// The controller records when each instance lost its route weight and holds
+// an instance prepared while keep was in Overload for one window after Ready.
+func TestSchedulerControllerAnnotatesUnroutedAndHeldInstances(t *testing.T) {
+	c := &SchedulerController{runs: map[string]*actionRun{}}
+	t0, window := time.Unix(1000, 0).UTC(), time.Minute
+	c.markOverloadPrepares(serving.SchedulerDecision{Keep: serving.SchedulerCandidate{Status: serving.SchedulerStatusOverload},
+		Target: &serving.SchedulerCandidate{Actions: []serving.Action{{Kind: operationPrepare, Instance: "slot-b"}}}})
+	snapshot := func(at time.Time, routed ...string) serving.SchedulerSnapshot {
+		weights := map[string]int32{}
+		for _, id := range routed {
+			weights[id] = 1
+		}
+		return serving.SchedulerSnapshot{At: at, Routing: map[string]map[string]int32{"w": weights}, Instances: []serving.SchedulerInstance{
+			{ID: "a", Ready: true}, {ID: "b", TargetID: "slot-b", Ready: true},
+		}}
+	}
+	s := snapshot(t0, "a")
+	c.annotateHistory(&s, window)
+	a, b := s.Instances[0], s.Instances[1]
+	if a.UnroutedSince != nil || b.UnroutedSince == nil || !b.UnroutedSince.Equal(t0) || b.HeldUntil == nil || !b.HeldUntil.Equal(t0.Add(window)) {
+		t.Fatalf("first capture: a %+v b %+v", a, b)
+	}
+	s = snapshot(t0.Add(window), "a")
+	c.annotateHistory(&s, window)
+	if b = s.Instances[1]; !b.UnroutedSince.Equal(t0) || b.HeldUntil != nil {
+		t.Fatalf("after the window: b %+v", b)
+	}
+	s = snapshot(t0.Add(2*window), "b")
+	c.annotateHistory(&s, window)
+	if s.Instances[1].UnroutedSince != nil || s.Instances[0].UnroutedSince == nil || !s.Instances[0].UnroutedSince.Equal(t0.Add(2*window)) {
+		t.Fatalf("routing change: %+v", s.Instances)
+	}
+}

@@ -398,7 +398,7 @@ func TestLegalOverlappingResourceDAGStillReportsMeasuredOutageOverload(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(evaluated.Reasons) != 0 || evaluated.ExpectedJoules == nil || evaluated.Status != schedulerStatusOverload {
+	if len(evaluated.Reasons) != 0 || evaluated.ExpectedJoules == nil || evaluated.Status != SchedulerStatusOverload {
 		t.Fatalf("legal break must retain measured outage/SLO evaluation, not force feasibility: %+v", evaluated)
 	}
 	if e := schedulerRequireEstimate(t, evaluated, d.UID); e.NormalizedExceedance <= 0 || e.ExpectedNanos == nil ||

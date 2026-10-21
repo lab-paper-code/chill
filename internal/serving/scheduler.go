@@ -131,6 +131,12 @@ type SchedulerInstance struct {
 	ObservedAt     time.Time           `json:"observedAt"`
 	IdleMeter      string              `json:"idleMeter"`
 	IdleScope      string              `json:"idleScope"`
+	// UnroutedSince is when the instance last lost every positive route weight
+	// (nil while routed); after one observation window unrouted it is removed.
+	UnroutedSince *time.Time `json:"unroutedSince,omitempty"`
+	// HeldUntil keeps an instance prepared while keep was in Overload from
+	// removal and replacement for one observation window after it became Ready.
+	HeldUntil *time.Time `json:"heldUntil,omitempty"`
 }
 
 // Options are evidence-bound placements supplied by the catalog, not invented

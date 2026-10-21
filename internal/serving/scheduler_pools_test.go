@@ -233,7 +233,7 @@ func TestSchedulerMinimumInstanceSelectsFirstConfiguration(t *testing.T) {
 	snap.Instances = nil
 	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, option.Node, "unloaded", schedulerState(option), "fixed")}
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-	if d.Keep.Status != schedulerStatusOverload || d.Target == nil || d.Target.Keep || d.Status != schedulerStatusFeasible || !poolsOn(*d.Target, option.Node) {
+	if d.Keep.Status != SchedulerStatusOverload || d.Target == nil || d.Target.Keep || d.Status != schedulerStatusFeasible || !poolsOn(*d.Target, option.Node) {
 		t.Fatalf("first configuration was not the target: %+v", d)
 	}
 }

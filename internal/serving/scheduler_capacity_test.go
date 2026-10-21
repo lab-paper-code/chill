@@ -236,7 +236,7 @@ func TestCapacityOverloadOrdersByWorstExceedance(t *testing.T) {
 	}
 	capacityLoad(s, &snap, snap.Workloads[0], 600)
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{a.Profile.ID: 150, b.Profile.ID: 250})))
-	if d.Status != schedulerStatusOverload || d.Target == nil || !poolsOn(*d.Target, small) || !poolsOn(*d.Target, large) ||
+	if d.Status != SchedulerStatusOverload || d.Target == nil || !poolsOn(*d.Target, small) || !poolsOn(*d.Target, large) ||
 		!slices.Contains(d.Reasons, schedulerNoPlanMeetsSLO) || math.Abs(d.Target.WorstExceedance-0.2) > 1e-9 {
 		t.Fatalf("overload must add every instance (exceedance 600/500 − 1): %+v", d)
 	}
@@ -269,7 +269,7 @@ func TestCapacityJudgesEachWorkloadWithItsSLO(t *testing.T) {
 	rows := capacityRowsForTest(s, snap, nil)
 	// The 10 s route backs up both Workloads, so the current instances (final
 	// 150/100 − 1) win; only their weights take the 1,000 scale.
-	if d := capacityDecideForTest(t, s, snap, rows); d.Status != schedulerStatusOverload || d.Target == nil || poolsOn(*d.Target, n3) || poolsOn(*d.Target, n4) || math.Abs(d.Target.WorstExceedance-0.5) > 1e-9 {
+	if d := capacityDecideForTest(t, s, snap, rows); d.Status != SchedulerStatusOverload || d.Target == nil || poolsOn(*d.Target, n3) || poolsOn(*d.Target, n4) || math.Abs(d.Target.WorstExceedance-0.5) > 1e-9 {
 		t.Fatalf("current instances must win at worst exceedance 0.5: %+v", d.Target)
 	}
 	p := capacityPlannerForTest(t, s, snap, rows)
@@ -920,5 +920,127 @@ func TestCapacityFeasibleWeightsStay(t *testing.T) {
 	// Only the backlog of 52 moves load off rasp5 q1 (0.643 × 40.1 > κ 25.3).
 	if changes != 1 || p.keep.Routing["w"]["g3"] == 0 {
 		t.Fatalf("%d weight changes, last %v", changes, p.keep.Routing["w"])
+	}
+}
+
+// capacityR5Fixture is the m4 r5 low-load state: rasp5 i1 routed at 1,000 and
+// genesis3 q2 and orangepi q1 Ready with weight 0, at λ 2 over a 60 s window.
+func capacityR5Fixture() (SchedulerSettings, SchedulerSnapshot, []CapacityRow, NodeReference, NodeReference) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, 10*time.Minute, time.Hour
+	genesis3 := poolsAddNode(&snap, "genesis3", map[string]float64{"fixed": 49.97})
+	orangepi := poolsAddNode(&snap, "orangepi", map[string]float64{"fixed": 2.73})
+	g3 := poolsInstance(snap.Instances[0], "g3", genesis3, "fixed", "w1")
+	opi := poolsInstance(snap.Instances[0], "opi", orangepi, "fixed", "w1")
+	for _, i := range []*SchedulerInstance{&g3, &opi} {
+		profile := *i.Profile
+		profile.IdleBaselineWatts = map[string]float64{"g3": 49.80, "opi": 2.71}[i.ID]
+		i.Profile = &profile
+	}
+	snap.Instances = append(snap.Instances, g3, opi)
+	snap.Options = append(snap.Options, poolsOption(g3), poolsOption(opi))
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": schedulerRouteUnits}}
+	snap.Costs = []OperationCost{
+		poolsCost(schedulerActionRemove, genesis3, schedulerState(g3), "unloaded", "fixed"),
+		poolsCost(schedulerActionRemove, orangepi, schedulerState(opi), "unloaded", "fixed"),
+	}
+	capacityLoad(s, &snap, snap.Workloads[0], 2)
+	return s, snap, capacityRowsForTest(s, snap, nil), genesis3, orangepi
+}
+
+// m4 r5 D-R5-2: genesis3 q2 and orangepi q1 stayed at weight 0 after P2; their
+// measured idle power is below the empty Node's, so energy never removes them.
+// Unrouted for one observation window, they are removed; not before.
+func TestCapacityIdleInstancesAreRemovedAfterOneWindow(t *testing.T) {
+	s, snap, rows, genesis3, orangepi := capacityR5Fixture()
+	since := snap.At.Add(-30 * time.Second)
+	for k := 1; k < 3; k++ {
+		snap.Instances[k].UnroutedSince = &since
+	}
+	if d := capacityDecideForTest(t, s, snap, rows); d.Status != schedulerStatusKeep || slices.ContainsFunc(d.Reasons, func(r string) bool { return strings.HasPrefix(r, schedulerIdleInstanceRemoved) }) {
+		t.Fatalf("unrouted for 30 s removed: %s %v", d.Status, d.Reasons)
+	}
+	since = snap.At.Add(-time.Minute)
+	d := capacityDecideForTest(t, s, snap, rows)
+	removes := func(node NodeReference) bool {
+		return slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Node == node })
+	}
+	if d.Target == nil || poolsOn(*d.Target, genesis3) || poolsOn(*d.Target, orangepi) || !removes(genesis3) || !removes(orangepi) ||
+		!slices.Contains(d.Reasons, schedulerIdleInstanceRemoved+":g3") || !slices.Contains(d.Reasons, schedulerIdleInstanceRemoved+":opi") {
+		t.Fatalf("idle instances kept: %+v %v", d.Target, d.Reasons)
+	}
+	until := snap.At.Add(time.Minute)
+	snap.Instances[1].HeldUntil = &until
+	if d = capacityDecideForTest(t, s, snap, rows); d.Target == nil || !poolsOn(*d.Target, genesis3) || poolsOn(*d.Target, orangepi) {
+		t.Fatalf("a held instance was removed as idle: %+v", d.Target)
+	}
+}
+
+// m4 r5 D-R5-1: genesis2 was prepared at 04:28:48 while keep was in Overload
+// and removed 50 s later. Its hold keeps it for one observation window even
+// when removal saves energy.
+func TestCapacityHeldInstanceIsNotRemoved(t *testing.T) {
+	s, snap, rows, genesis3, _ := capacityR5Fixture()
+	snap.Instances[1].Profile.IdleBaselineWatts = 60 // removal saves 10 W
+	d := capacityDecideForTest(t, s, snap, rows)
+	if d.Target == nil || poolsOn(*d.Target, genesis3) {
+		t.Fatalf("fixture must remove genesis3 for energy: %+v", d.Target)
+	}
+	until := snap.At.Add(time.Minute)
+	snap.Instances[1].HeldUntil = &until
+	d = capacityDecideForTest(t, s, snap, rows)
+	if d.Target == nil || !poolsOn(*d.Target, genesis3) || !slices.ContainsFunc(poolsPlans(d, genesis3), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanHeld }) {
+		t.Fatalf("held genesis3 removed: %+v %+v", d.Target, poolsPlans(d, genesis3))
+	}
+}
+
+// A replacement repays its transition over T at the least load of the
+// observation window. n2's instance a (e 2) can be replaced by b (e 1) for a
+// 1,000 J chain: at a steady 30 req/s the saving (≈30 W over 60 s) repays it,
+// with the same mean but one 10 s interval at 5 req/s it does not.
+func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+	energy := func(i *SchedulerInstance, e float64) {
+		profile := *i.Profile
+		profile.Batches = slices.Clone(profile.Batches)
+		profile.Batches[0].EnergyPerInputJoules, profile.IdleBaselineWatts = e, 12
+		i.Profile = &profile
+	}
+	energy(&snap.Instances[0], 3)
+	a, b := poolsInstance(snap.Instances[0], "a", n2, "fixed", "w1"), poolsInstance(snap.Instances[0], "b", n2, "fixed", "w1")
+	energy(&a, 2)
+	energy(&b, 1)
+	b.Profile.ID = "profile-b"
+	snap.Instances = append(snap.Instances, a)
+	snap.Options = append(snap.Options, poolsOption(a), poolsOption(b))
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": 400, "a": 600}}
+	prepare := poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(b), "fixed")
+	prepare.Trials = []OperationTrial{{Duration: time.Second, Joules: 1000}}
+	snap.Costs = []OperationCost{poolsCost(schedulerActionRemove, n2, schedulerState(a), "unloaded", "fixed"), prepare}
+	rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{"profile": 100, a.Profile.ID: 50, b.Profile.ID: 50}))
+	load := func(rates ...float64) {
+		d := snap.Workloads[0]
+		snap.Arrivals = nil
+		start := snap.ObservationEnd.Add(-s.ObservationWindow)
+		for k, rate := range rates {
+			n := int(rate * 10)
+			for j := range n {
+				at := start.Add(time.Duration(k)*10*time.Second + time.Duration(j)*10*time.Second/time.Duration(n))
+				snap.Arrivals = append(snap.Arrivals, SchedulerArrival{ID: fmt.Sprint(k, "-", j), At: at, Definition: d, Accepted: true, Compute: true, WorkloadUID: d.UID})
+			}
+		}
+	}
+	replaced := func(d SchedulerDecision) bool {
+		return d.Target != nil && slices.ContainsFunc(d.Target.Actions, func(x Action) bool { return x.Kind == schedulerActionPrepare && x.Node == n2 })
+	}
+	load(30, 30, 30, 30, 30, 30)
+	if d := capacityDecideForTest(t, s, snap, rows); !replaced(d) {
+		t.Fatalf("steady 30 req/s must replace a: %+v %v", d.Target, d.Reasons)
+	}
+	load(35, 35, 35, 35, 35, 5)
+	if d := capacityDecideForTest(t, s, snap, rows); replaced(d) || !slices.Contains(d.Reasons, schedulerReplacementUnpaid+":n2") {
+		t.Fatalf("replacement unpaid at 5 req/s was chosen: %+v %v", d.Target, d.Reasons)
 	}
 }

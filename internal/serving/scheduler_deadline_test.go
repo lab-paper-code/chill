@@ -52,7 +52,7 @@ func TestSchedulerReplayDeadlineModesPreserveTimeoutPopulation(t *testing.T) {
 			snap.Outstanding = []SchedulerRequest{{ID: "infeasible", Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
 			keep := schedulerKeepForTest(t, s, snap)
 			e := schedulerRequireEstimate(t, keep, d.UID)
-			if keep.ExpectedJoules == nil || keep.Status != schedulerStatusOverload {
+			if keep.ExpectedJoules == nil || keep.Status != SchedulerStatusOverload {
 				t.Fatalf("supported mode must be evaluable, not missing evidence or caller expiry: %+v", keep)
 			}
 			if mode == firstfloor.DeadlineDrop {

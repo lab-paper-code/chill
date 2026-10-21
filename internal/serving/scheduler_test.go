@@ -545,7 +545,7 @@ func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T
 	d.SLO.TargetLatency = time.Millisecond
 	unlimited := schedulerKeepForTest(t, s, snap)
 	ue := schedulerRequireEstimate(t, unlimited, d.UID)
-	if unlimited.Status != schedulerStatusOverload || ue.ExpectedNanos == nil || ue.Samples != 1 || ue.PredictedOutcomes["expired-running"] != 0 {
+	if unlimited.Status != SchedulerStatusOverload || ue.ExpectedNanos == nil || ue.Samples != 1 || ue.PredictedOutcomes["expired-running"] != 0 {
 		t.Fatalf("SLO is never a request lifetime: %+v", unlimited)
 	}
 }
