@@ -99,14 +99,6 @@ func (o *schedulerService) checkProfileInventory(config schedulerConfiguration, 
 			return fmt.Errorf("measured CPU %d on %s is reserved", cpu, p.NodeName)
 		}
 	}
-	if allocation.GPUUUID != "" {
-		if !slices.Contains(config.GPUInventory[p.NodeName], allocation.GPUUUID) {
-			return fmt.Errorf("gpuInventory[%s] must allow measured GPU %s", p.NodeName, allocation.GPUUUID)
-		}
-		if config.Reserved[p.NodeName].GPUUUID == allocation.GPUUUID {
-			return fmt.Errorf("measured GPU %s on %s is reserved", allocation.GPUUUID, p.NodeName)
-		}
-	}
 	return nil
 }
 

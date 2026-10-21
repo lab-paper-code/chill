@@ -33,7 +33,6 @@
     }
   },
   "cpuInventory": {},
-  "gpuInventory": {},
   "reserved": {},
   "meters": [],
   "powerRequests": {}

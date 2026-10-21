@@ -19,6 +19,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -292,13 +293,24 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 	want := map[string]struct {
 		reasons     []string
 		measurement bool
+		gpus        []string
 	}{
 		base.Name:   {},
 		"bare":      {reasons: []string{serving.NodePlacementInventoryMissing}},
 		"unpowered": {reasons: []string{serving.NodePowerModeUnavailable}},
 		"measured":  {measurement: true},
+		"gpu":       {gpus: []string{"GPU-a"}},
+		"gpu-over":  {reasons: []string{serving.NodePlacementInventoryMissing}, gpus: []string{"GPU-b", "GPU-c"}},
 	}
-	for _, name := range []string{"control-plane", "bare", "unpowered", "measured"} {
+	// GPU inventory is the GPUs the Node's own profiles were measured on.
+	measuredOn := func(id, nodeUID, gpu string) serving.Profile {
+		return serving.Profile{ID: id, Condition: profilederivation.CurvePlanSpec{NodeUID: nodeUID}, RuntimeMetadata: &native.RuntimeMetadata{GPUUUID: gpu}}
+	}
+	controller.observer.SetProfiles([]serving.Profile{
+		measuredOn("a", "gpu-uid", "GPU-a"), measuredOn("a2", "gpu-uid", "GPU-a"), measuredOn("cpu", "gpu-uid", ""),
+		measuredOn("b", "gpu-over-uid", "GPU-c"), measuredOn("c", "gpu-over-uid", "GPU-b"),
+	})
+	for _, name := range []string{"control-plane", "bare", "unpowered", "measured", "gpu", "gpu-over"} {
 		node := base.DeepCopy()
 		node.Name, node.UID = name, types.UID(name+"-uid")
 		switch name {
@@ -306,6 +318,8 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 			node.Labels[controlPlaneLabel] = ""
 		case "measured":
 			node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Effect: core.TaintEffectNoSchedule}}
+		case "gpu", "gpu-over":
+			node.Status.Allocatable["nvidia.com/gpu"] = resource.MustParse("1")
 		}
 		if _, err := controller.kube.CoreV1().Nodes().Create(ctx, node, meta.CreateOptions{}); err != nil {
 			t.Fatal(err)
@@ -328,8 +342,8 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 	}
 	for _, node := range snapshot.Nodes {
 		expected, ok := want[node.Node.Name]
-		if !ok || !node.Ready || !slices.Equal(node.Reasons, expected.reasons) || node.Measurement != expected.measurement {
-			t.Fatalf("%s: ready=%v reasons=%v measurement=%v", node.Node.Name, node.Ready, node.Reasons, node.Measurement)
+		if !ok || !node.Ready || !slices.Equal(node.Reasons, expected.reasons) || node.Measurement != expected.measurement || !slices.Equal(node.GPUUUIDs, expected.gpus) {
+			t.Fatalf("%s: ready=%v reasons=%v measurement=%v gpus=%v", node.Node.Name, node.Ready, node.Reasons, node.Measurement, node.GPUUUIDs)
 		}
 	}
 }

@@ -20,7 +20,7 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 | `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `139`는 E1(rasp5 CPU, 2 req/s 60분, n=8312)의 `completionResidualNanos` p99 138.23 ms를 올림한 값이다([워크로드별 POOL](workload-pools.md#36-완료-여유)) |
 | `settings.capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests` | 필수. 용량표 행의 창 길이(> 0), 요청률마다 재생하는 창 수(≥ 1), 충족 창 수(1 이상 창 수 이하), 창의 최소 요청 수(≥ 1). sample은 60 s, 20, 19, 1,000이다([용량표 계획기](analytic-planner.md#2-용량표)) |
 | `settings.autonomousWorkloads` | 자동제어할 Workload UID 목록. decision은 Workload마다 `workloads[]`에 `Disabled`, `MeasurementEvidenceMissing`, `Controlled` 상태와 사유를 남긴다([워크로드별 자동제어](workload-pools.md#31-워크로드별-자동제어)) |
-| `cpuInventory`, `gpuInventory`, `reserved` | Node별 실제 CPU IDs·물리 GPU UUIDs와 비서빙 전용 예약. quota는 별도 수량 예산 |
+| `cpuInventory`, `reserved` | Node별 실제 CPU IDs와 비서빙 전용 예약. quota는 별도 수량 예산. GPU inventory는 그 Node에서 측정한 profile의 GPU UUID이고([node agent](../platform/node-agent.md#21-필드별-출처)), 그 밖의 예약 GPU는 Node를 `PlacementInventoryMissing`으로 만든다 |
 | `staticRouting` | OPTIONAL 부분 map: 자동제어하지 않는 현재 Workload UID → physical instance ID → nonnegative int32 weight. positive weight가 없는 항목(빈 map 포함)은 그 UID의 routing을 모두 지운다. 선언하지 않은 UID는 현재 routing을 유지한다. 명시 config revision을 기존 typed ApplyTarget 경로로 적용하고 physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. 현재가 아닌 UID, `autonomousWorkloads`의 UID와 stale target은 오류 |
 | `meters` | 정확한 Node UID·exclusive wall scope·metric series에 연결한 meter 선언 |
 | `powerRequests` | Node UID/power mode별 기존 sole actuator의 NodeActuation 요청 |

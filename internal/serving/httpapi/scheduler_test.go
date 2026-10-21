@@ -158,7 +158,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			configRaw := `{"settings":` + string(beforeRaw) + `,"cpuInventory":{"node":[0]},` +
-				`"gpuInventory":{"node":["GPU-real"]},"reserved":{"node":{"cpus":[0]}}}`
+				`"reserved":{"node":{"cpus":[0]}}}`
 			kube := fake.NewSimpleClientset(&core.ConfigMap{
 				ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "1"},
 				Data:       map[string]string{"scheduler.json": configRaw, "other": "untouched"},
@@ -303,14 +303,12 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 	t.Helper()
 	var saved struct {
 		CPUInventory map[string][]int                       `json:"cpuInventory"`
-		GPUInventory map[string][]string                    `json:"gpuInventory"`
 		Reserved     map[string]serving.SchedulerAllocation `json:"reserved"`
 	}
 	if err := json.Unmarshal([]byte(persisted.Data["scheduler.json"]), &saved); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(saved.CPUInventory, map[string][]int{"node": {0}}) ||
-		!reflect.DeepEqual(saved.GPUInventory, map[string][]string{"node": {"GPU-real"}}) ||
 		!reflect.DeepEqual(saved.Reserved, map[string]serving.SchedulerAllocation{"node": {CPUs: []int{0}}}) {
 		t.Fatal("operator configuration lost")
 	}

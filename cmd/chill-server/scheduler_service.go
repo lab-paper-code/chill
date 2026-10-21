@@ -36,7 +36,6 @@ type powerObservationConfig struct {
 type schedulerConfiguration struct {
 	Settings         serving.SchedulerSettings              `json:"settings"`
 	CPUInventory     map[string][]int                       `json:"cpuInventory"`
-	GPUInventory     map[string][]string                    `json:"gpuInventory"`
 	Reserved         map[string]serving.SchedulerAllocation `json:"reserved"`
 	Meters           []servingkube.MeterDeclaration         `json:"meters"`
 	PowerRequests    map[string]*edge.NodeActuation         `json:"powerRequests"`
@@ -147,15 +146,6 @@ func (config schedulerConfiguration) validateInventory() error {
 			seen[cpu] = true
 		}
 	}
-	for node, gpus := range config.GPUInventory {
-		seen := map[string]bool{}
-		for _, gpu := range gpus {
-			if gpu == "" || seen[gpu] {
-				return fmt.Errorf("Node %s GPU inventory must have unique physical UUIDs", node)
-			}
-			seen[gpu] = true
-		}
-	}
 	for node, reservation := range config.Reserved {
 		seen := map[int]bool{}
 		for _, cpu := range reservation.CPUs {
@@ -163,9 +153,6 @@ func (config schedulerConfiguration) validateInventory() error {
 				return fmt.Errorf("Node %s reserved CPUs must select its unique physical inventory", node)
 			}
 			seen[cpu] = true
-		}
-		if reservation.GPUUUID != "" && !slices.Contains(config.GPUInventory[node], reservation.GPUUUID) {
-			return fmt.Errorf("Node %s reserved GPU is not in its inventory", node)
 		}
 	}
 	return nil
@@ -256,7 +243,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	preparations, issues := o.preparations(ctx, config, view.Profiles)
 	view.Insufficiencies = append(view.Insufficiencies, issues...)
 	controllerConfig := servingkube.SchedulerControllerConfig{
-		Settings: config.Settings, CPUInventory: config.CPUInventory, GPUInventory: config.GPUInventory,
+		Settings: config.Settings, CPUInventory: config.CPUInventory,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
 		CostIssues: costs.Issues, Meters: config.Meters, PowerRequests: config.PowerRequests,
 		StaticRouting: config.StaticRouting != nil,

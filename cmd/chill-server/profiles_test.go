@@ -56,27 +56,18 @@ func measuredAdoptionProfile() serving.Profile {
 func TestMeasuredAdoptionRequiresExplicitUnreservedPhysicalInventory(t *testing.T) {
 	service := &schedulerService{}
 	profile := measuredAdoptionProfile()
-	config := schedulerConfiguration{CPUInventory: map[string][]int{"node": {0, 1, 2, 3}}}
-	before := append([]int(nil), config.CPUInventory["node"]...)
-	if err := service.checkProfileInventory(
-		config, profile,
-	); err == nil || !strings.Contains(err.Error(), "GPU-measured") {
-		t.Fatalf("missing GPU inventory: %v", err)
+	config := schedulerConfiguration{CPUInventory: map[string][]int{"node": {0, 1}}}
+	if err := service.checkProfileInventory(config, profile); err == nil ||
+		!strings.Contains(err.Error(), "cpuInventory") {
+		t.Fatalf("missing CPU inventory: %v", err)
 	}
-	if config.GPUInventory != nil || !reflect.DeepEqual(before, config.CPUInventory["node"]) {
-		t.Fatal("inventory was silently widened")
-	}
-	config.GPUInventory = map[string][]string{"node": {"GPU-measured"}}
+	config.CPUInventory["node"] = []int{0, 1, 2, 3}
 	if err := service.checkProfileInventory(config, profile); err != nil {
 		t.Fatal(err)
 	}
 	config.Reserved = map[string]serving.SchedulerAllocation{"node": {CPUs: []int{3}}}
 	if err := service.checkProfileInventory(config, profile); err == nil || !strings.Contains(err.Error(), "reserved") {
 		t.Fatalf("reserved CPU admitted: %v", err)
-	}
-	config.Reserved["node"] = serving.SchedulerAllocation{GPUUUID: "GPU-measured"}
-	if err := service.checkProfileInventory(config, profile); err == nil || !strings.Contains(err.Error(), "reserved") {
-		t.Fatalf("reserved GPU admitted: %v", err)
 	}
 }
 func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *testing.T) {
@@ -445,7 +436,6 @@ func schedulerTestConfiguration() schedulerConfiguration {
 			CapacityMinimumRequests: 1, MaxCPUs: 2,
 		},
 		CPUInventory: map[string][]int{"rpi": {0, 1, 2, 3}},
-		GPUInventory: map[string][]string{"genesis2": {"GPU-measured"}},
 		Reserved:     map[string]serving.SchedulerAllocation{"rpi": {CPUs: []int{0}}},
 	}
 }

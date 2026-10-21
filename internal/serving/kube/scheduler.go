@@ -31,7 +31,6 @@ const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 type SchedulerControllerConfig struct {
 	Settings      serving.SchedulerSettings
 	CPUInventory  map[string][]int
-	GPUInventory  map[string][]string
 	Reserved      map[string]serving.SchedulerAllocation
 	Preparations  map[string]PrepareSpec
 	Costs         []serving.OperationCost
@@ -419,14 +418,15 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		if _, controlPlane := n.Labels[controlPlaneLabel]; controlPlane {
 			continue
 		}
-		sn := serving.SchedulerNode{Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Measurement: profilingrun.InMeasurement(n), CPUs: slices.Clone(config.CPUInventory[n.Name]), GPUUUIDs: slices.Clone(config.GPUInventory[n.Name]), Reserved: config.Reserved[n.Name], MemoryBytes: uint64(n.Status.Allocatable.Memory().Value()), ObservedAt: nodesObservedAt}
+		sn := serving.SchedulerNode{Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Measurement: profilingrun.InMeasurement(n), CPUs: slices.Clone(config.CPUInventory[n.Name]), GPUUUIDs: measuredGPUs(profiles, string(n.UID)), Reserved: config.Reserved[n.Name], MemoryBytes: uint64(n.Status.Allocatable.Memory().Value()), ObservedAt: nodesObservedAt}
 		for _, condition := range n.Status.Conditions {
 			if condition.Type == core.NodeReady {
 				sn.Ready = condition.Status == core.ConditionTrue
 			}
 		}
 		gpuQuantity := n.Status.Allocatable["nvidia.com/gpu"]
-		if len(sn.CPUs) == 0 || int64(len(sn.CPUs)) > n.Status.Allocatable.Cpu().Value() || int64(len(sn.GPUUUIDs)) > gpuQuantity.Value() {
+		if len(sn.CPUs) == 0 || int64(len(sn.CPUs)) > n.Status.Allocatable.Cpu().Value() || int64(len(sn.GPUUUIDs)) > gpuQuantity.Value() ||
+			sn.Reserved.GPUUUID != "" && !slices.Contains(sn.GPUUUIDs, sn.Reserved.GPUUUID) {
 			sn.Reasons = append(sn.Reasons, serving.NodePlacementInventoryMissing)
 		}
 		c.captureNodePower(ctx, &sn, n, &acts, physical, profileByID)
@@ -465,6 +465,20 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	}
 	bindProfileMeters(&s, config.Meters)
 	return s, nil
+}
+
+// measuredGPUs is the GPU inventory of one Node: the GPUs its verified
+// profiles were measured on.
+func measuredGPUs(profiles []serving.Profile, nodeUID string) []string {
+	var gpus []string
+	for _, p := range profiles {
+		if p.Condition.NodeUID == nodeUID && p.RuntimeMetadata != nil && p.RuntimeMetadata.GPUUUID != "" &&
+			!slices.Contains(gpus, p.RuntimeMetadata.GPUUUID) {
+			gpus = append(gpus, p.RuntimeMetadata.GPUUUID)
+		}
+	}
+	slices.Sort(gpus)
+	return gpus
 }
 
 func bindProfileMeters(s *serving.SchedulerSnapshot, meters []MeterDeclaration) {

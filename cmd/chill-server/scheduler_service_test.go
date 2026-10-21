@@ -37,11 +37,11 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 		valid        bool
 	}{
 		{name: "explicit controls-off configuration", fields: `"cpuInventory":{"node":[0,2]},` +
-			`"gpuInventory":{"node":["GPU-real"]},"reserved":{"node":{"cpus":[2]}}`, valid: true},
+			`"reserved":{"node":{"cpus":[2]}}`, valid: true},
 		{name: "duplicate physical CPU", fields: `"cpuInventory":{"node":[0,0]}`},
 		{name: "negative physical CPU", fields: `"cpuInventory":{"node":[-1]}`},
 		{name: "unobserved reserved CPU", fields: `"cpuInventory":{"node":[0]},"reserved":{"node":{"cpus":[2]}}`},
-		{name: "duplicate GPU identity", fields: `"gpuInventory":{"node":["GPU-real","GPU-real"]}`},
+		{name: "retired GPU inventory", fields: `"gpuInventory":{"node":["GPU-real"]}`},
 		{name: "fake cost injection", fields: `"costs":[{"id":"fake","trials":[{"joules":0}]}]`},
 		{name: "invalid meter scope", fields: `"meters":[{"id":"wall","node":{"name":"node","uid":"uid"},` +
 			`"scope":"inferred","source":{"nodeName":"node"}}]`},
