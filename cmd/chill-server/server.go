@@ -172,9 +172,12 @@ loop:
 		case <-sourceTicker.C:
 			callCtx, cancel := context.WithTimeout(ctx, opts.requestTimeout)
 			sourceErr := observer.Refresh(callCtx)
+			cancel()
 			if sourceErr != nil {
 				ctrl.Log.Error(sourceErr, "refresh current native serving facts")
 			}
+			// A slow refresh does not spend the Workload advance's bound.
+			callCtx, cancel = context.WithTimeout(ctx, opts.requestTimeout)
 			if err := manager.Advance(callCtx); err != nil {
 				ctrl.Log.Error(err, "advance recorded Workload operations")
 			}
