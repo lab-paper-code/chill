@@ -514,6 +514,9 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	if err = c.observer.Refresh(ctx); err != nil {
 		return s, err
 	}
+	// Observer state is read before the Node list: another refresh holding the
+	// observer lock would otherwise age every Node.
+	profiles := c.observer.Profiles()
 	// Request start is a conservative lower bound; slow live I/O still ages it.
 	nodesObservedAt := time.Now().UTC()
 	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
@@ -533,7 +536,6 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		return s, err
 	}
 	power := map[string]edge.NodeActuationSpec{}
-	profiles := c.observer.Profiles()
 	profileByID := map[string]*serving.Profile{}
 	for i := range profiles {
 		profileByID[profiles[i].ID] = &profiles[i]
@@ -559,7 +561,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		}
 		captureNodeInventory(&sn, n, profiles)
 		sn.ModeCPUs = declaredModeCPUs(nodeClass(n, classes.Items))
-		c.captureNodePower(ctx, &sn, n, &acts, physical, profileByID)
+		captureNodePower(&sn, n, &acts, classes.Items, physical, profileByID)
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
 		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
 		if _, ok := targets[lowest]; sn.PowerMode == "" || len(targets) == 0 || lowest != "" && lowest != sn.PowerMode && !ok {
@@ -680,7 +682,7 @@ func bindProfileMeters(s *serving.SchedulerSnapshot, meters []MeterDeclaration) 
 		bindProfileMeter(&s.Options[index].Instance, meters)
 	}
 }
-func (c *SchedulerController) captureNodePower(ctx context.Context, sn *serving.SchedulerNode, n *core.Node, acts *edge.NodeActuationList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
+func captureNodePower(sn *serving.SchedulerNode, n *core.Node, acts *edge.NodeActuationList, classes []edge.DeviceClass, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
 	var latest *edge.NodeActuation
 	for j := range acts.Items {
 		a := &acts.Items[j]
@@ -700,9 +702,8 @@ func (c *SchedulerController) captureNodePower(ctx context.Context, sn *serving.
 		}
 	}
 	if sn.PowerMode == "" {
-		actual := OperationState{Node: sn.Node}
-		if c.operations.captureClassPower(ctx, &actual, n, acts.Items) == nil {
-			sn.PowerMode = actual.PowerMode
+		if mode, err := classPower(n, classes, acts.Items); err == nil {
+			sn.PowerMode = mode
 		}
 	}
 }

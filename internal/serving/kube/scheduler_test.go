@@ -35,7 +35,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func schedulerCaptureClockController(t *testing.T, slowLive bool) *SchedulerController {
+// schedulerCaptureClockController serves one Node and one instance; onLiveNodes
+// runs when capture lists the Nodes, after its observer refresh.
+func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) *SchedulerController {
 	t.Helper()
 	manager, _ := newManagerHarness(t)
 	pod, node, profile, class := observerSourceFixture()
@@ -68,8 +70,8 @@ func schedulerCaptureClockController(t *testing.T, slowLive bool) *SchedulerCont
 				Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
 			}}
 		case r.URL.Path == "/api/v1/nodes":
-			if nodeReads.Add(1) == 2 && slowLive {
-				time.Sleep(2 * maxAge)
+			if nodeReads.Add(1) == 2 && onLiveNodes != nil {
+				onLiveNodes(manager.observer)
 			}
 			response = core.NodeList{TypeMeta: meta.TypeMeta{Kind: "NodeList", APIVersion: "v1"}, Items: []core.Node{*node}}
 		case strings.HasSuffix(r.URL.Path, "/pods"):
@@ -123,7 +125,7 @@ func schedulerCaptureClockState(t *testing.T, controller *SchedulerController) S
 }
 
 func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testing.T) {
-	controller := schedulerCaptureClockController(t, false)
+	controller := schedulerCaptureClockController(t, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	history, err := serving.NewObservationLog(serving.ObservationLogConfig{
@@ -167,7 +169,7 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 }
 
 func TestSchedulerCaptureSlowLiveReadRemainsStale(t *testing.T) {
-	controller := schedulerCaptureClockController(t, true)
+	controller := schedulerCaptureClockController(t, func(*Observer) { time.Sleep(2 * time.Second) })
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := controller.Tick(ctx, time.Now().Add(-10*time.Second)); err != nil {
@@ -183,6 +185,36 @@ func TestSchedulerCaptureSlowLiveReadRemainsStale(t *testing.T) {
 	if decision.Keep.Status != "Pending" || !slices.Contains(decision.Keep.Reasons, "UnknownOrStaleNode:"+node.Node.Name) ||
 		!slices.Contains(decision.Keep.Reasons, "UnknownOrStaleInstance:"+instance.ID) {
 		t.Fatalf("consumer accepted genuinely stale live observations: %+v", decision.Keep)
+	}
+}
+
+// m4 r7: during prepares, decisions took 11-28 s and every Node was
+// UnknownOrStaleNode about 11.5 s after its list. Each running prepare polls
+// a full observer refresh every second, and the server's source ticker
+// refreshes too; capture read the observer's profiles under that lock after
+// listing the Nodes, so it waited behind those refreshes. Capture reads its
+// observer state before the Node list.
+func TestSchedulerCaptureDoesNotAgeNodesBehindObserverRefresh(t *testing.T) {
+	release := make(chan struct{})
+	controller := schedulerCaptureClockController(t, func(o *Observer) {
+		held := make(chan struct{})
+		go func() {
+			o.mu.Lock()
+			close(held)
+			<-release
+			o.mu.Unlock()
+		}()
+		<-held
+		time.AfterFunc(2*time.Second, func() { close(release) })
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := controller.Tick(ctx, time.Now().Add(-10*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	state := controller.State()
+	if slices.ContainsFunc(state.Decision.Keep.Reasons, func(r string) bool { return strings.HasPrefix(r, "UnknownOrStaleNode:") }) {
+		t.Fatalf("a concurrent observer refresh aged the Node list: %v", state.Decision.Keep.Reasons)
 	}
 }
 

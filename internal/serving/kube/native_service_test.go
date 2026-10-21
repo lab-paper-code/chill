@@ -101,6 +101,41 @@ func TestNativeInstanceServiceLifetimeAndUniqueDestination(t *testing.T) {
 	}
 }
 
+// m4 r7: the genesis3 prepare canceled at 07:12:30 was waiting in "client
+// rate limiter Wait". Each running prepare (rasp5, lattepanda, genesis2 and
+// genesis3 at 07:08:31) ran a full observer refresh every poll on top of the
+// server's 1 s source refresh, and each refresh lists the Nodes, Pods,
+// Deployments, ReplicaSets, classes and actuations and reads every serving
+// instance's Service and Pods, all against one 50 QPS client budget. A prepare poll
+// reuses a refresh started within its poll interval.
+func TestPreparePollsReuseRecentObserverRefresh(t *testing.T) {
+	ctx := context.Background()
+	manager, _ := newManagerHarness(t)
+	pod, node, _, _ := observerSourceFixture()
+	kube := kubefake.NewSimpleClientset(node, pod)
+	lists := 0
+	kube.PrependReactor("list", "nodes", func(ktesting.Action) (bool, runtime.Object, error) {
+		lists++
+		return false, nil, nil
+	})
+	manager.observer.kube = kube
+	t.Cleanup(func() { _ = manager.observer.Close() })
+	operations := &Operations{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
+		config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Minute}}
+	if err := manager.observer.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lists = 0
+	for range 4 {
+		if _, err := operations.prepareObserved(ctx, pod); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if lists != 0 {
+		t.Fatalf("4 prepare polls listed the Nodes %d times right after a refresh", lists)
+	}
+}
+
 func TestNativeInstanceServiceRejectsMismatchedExistingResources(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {

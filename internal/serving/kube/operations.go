@@ -214,7 +214,11 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 		s.States = append(s.States, serving.SchedulerInstanceState(serving.SchedulerInstance{Profile: &serving.Profile{ID: state.Metadata.ProfileID}, Allocation: allocation}))
 	}
 	if s.PowerMode == "" {
-		if err := o.captureClassPower(ctx, &s, current, acts.Items); err != nil {
+		var classes edge.DeviceClassList
+		if err := o.store.client.List(ctx, &classes); err != nil {
+			return s, err
+		}
+		if s.PowerMode, err = classPower(current, classes.Items, acts.Items); err != nil {
 			return s, err
 		}
 	}
@@ -223,28 +227,23 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 	return s, nil
 }
 
-// captureClassPower finds the Node's mode from its DeviceClass when no Ready
+// classPower finds the Node's mode from its DeviceClass when no Ready
 // NodeActuation names it: a Fixed mode, or the mode whose actuator the
 // actuation agent read back from the host (confirmedPower).
-func (o *Operations) captureClassPower(ctx context.Context, s *OperationState, current *core.Node, acts []edge.NodeActuation) error {
-	if s.PowerMode == "" {
-		var classes edge.DeviceClassList
-		if err := o.store.client.List(ctx, &classes); err != nil {
-			return err
-		}
-		for i := range classes.Items {
-			class := &classes.Items[i]
-			for _, mode := range class.Spec.PowerModes {
-				if class.Spec.Architecture == current.Status.NodeInfo.Architecture && nodeClassMatches(current, class) && confirmedPower(current, class, mode.Name, acts) == nil {
-					if s.PowerMode != "" && s.PowerMode != mode.Name {
-						return errors.New("ambiguous class power mode")
-					}
-					s.PowerMode = mode.Name
+func classPower(current *core.Node, classes []edge.DeviceClass, acts []edge.NodeActuation) (string, error) {
+	found := ""
+	for i := range classes {
+		class := &classes[i]
+		for _, mode := range class.Spec.PowerModes {
+			if class.Spec.Architecture == current.Status.NodeInfo.Architecture && nodeClassMatches(current, class) && confirmedPower(current, class, mode.Name, acts) == nil {
+				if found != "" && found != mode.Name {
+					return "", errors.New("ambiguous class power mode")
 				}
+				found = mode.Name
 			}
 		}
 	}
-	return nil
+	return found, nil
 }
 func (o *Operations) Execute(ctx context.Context, operation Operation) (OperationResult, error) {
 	result := OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: nativeOperationRunning}
@@ -452,27 +451,32 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 			return err
 		}
 	}
-	return o.wait(ctx, func() (bool, error) {
-		if err := o.observer.Refresh(ctx); err != nil {
-			return false, err
+	return o.wait(ctx, func() (bool, error) { return o.prepareObserved(ctx, pod) })
+}
+
+// prepareObserved reports whether the runtime holds the prepared Pod's
+// executor Ready; a failed Pod ends the preparation. It reuses an observer
+// refresh from within the poll interval (the server's source refresh).
+func (o *Operations) prepareObserved(ctx context.Context, pod *core.Pod) (bool, error) {
+	if err := o.observer.RefreshWithin(ctx, o.config.PollInterval); err != nil {
+		return false, err
+	}
+	current, err := o.kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{})
+	if err != nil {
+		return false, err
+	}
+	if current.UID != pod.UID {
+		return false, errors.New("prepared Pod identity changed")
+	}
+	if current.Status.Phase == core.PodFailed {
+		return false, fmt.Errorf("native preparation Pod failed%s", terminationMessages(current))
+	}
+	for _, i := range o.runtime.Instances() {
+		if strings.HasPrefix(i.ID, string(pod.UID)+"/") && i.Ready {
+			return true, nil
 		}
-		current, e := o.kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{})
-		if e != nil {
-			return false, e
-		}
-		if current.UID != pod.UID {
-			return false, errors.New("prepared Pod identity changed")
-		}
-		if current.Status.Phase == core.PodFailed {
-			return false, fmt.Errorf("native preparation Pod failed%s", terminationMessages(current))
-		}
-		for _, i := range o.runtime.Instances() {
-			if strings.HasPrefix(i.ID, string(pod.UID)+"/") && i.Ready {
-				return true, nil
-			}
-		}
-		return false, nil
-	})
+	}
+	return false, nil
 }
 
 // measuredRuntimeDelivery returns the measured RKNNLite delivery and its host

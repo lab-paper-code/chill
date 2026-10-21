@@ -102,6 +102,8 @@ type Observer struct {
 	closed            bool
 	movingNodes       map[string]bool
 	removingInstances map[string]bool
+	// refreshed is when the last successful refresh started.
+	refreshed time.Time
 }
 
 func NewObserver(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, native *firstfloor.Client, config ObserverConfig) (*Observer, error) {
@@ -162,10 +164,22 @@ func (o *Observer) Refresh(ctx context.Context) error {
 	defer o.mu.Unlock()
 	return o.refreshLocked(ctx)
 }
+
+// RefreshWithin reuses a successful refresh that started less than age ago
+// and refreshes otherwise; pollers share the source refresh this way.
+func (o *Observer) RefreshWithin(ctx context.Context, age time.Duration) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if time.Since(o.refreshed) < age {
+		return nil
+	}
+	return o.refreshLocked(ctx)
+}
 func (o *Observer) refreshLocked(ctx context.Context) error {
 	if o.closed {
 		return errors.New("observer is closed")
 	}
+	started := time.Now()
 	nodes, err := o.kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return o.refreshFailure(err)
@@ -244,6 +258,7 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 		return err
 	}
 	o.issue("refresh", nil)
+	o.refreshed = started
 	return nil
 }
 
