@@ -135,3 +135,21 @@ analytic-planner.md를 다시 쓸 때 바꿀 것:
 | 11 명세 | `SCH-13`은 "후보의 SLO 충족은 실행시간 분포와 firstfloor의 배칭과 큐 선택 규칙을 적용한 인스턴스 재생으로 미리 구한 option별 SLO 용량(κ)과 현재 요청률과 대기량으로 판정한다"로, `SCH-23`은 "actual과 용량 계산 재생"으로. "보수적 지연 상한" 문장은 쓰지 않는다 |
 | 12 설정 | `capacityHeadroom`, `verifiedCandidates`, `exhaustiveConfigurations`를 넣지 않는다. 용량표 창 설정 셋을 넣는다 |
 | 완료 여유 m | κ에는 거의 영향이 없지만 지연 예측에는 그대로 더해진다. E1 실측 실행 밖 구간 p95가 약 177 ms라 m 139도 예측을 36 ms 낮춘다. m을 관측으로 정하는 규칙(실행 밖 구간의 SLO 백분위)을 함께 적는다 |
+
+## 7. DP 부하 칸 크기
+
+[계획기 4장](analytic-planner.md#4-노드-계획과-dp)의 DP는 부하 칸으로 요청 에너지를 배정한다. 칸 크기가 고르는 구성과 에너지를 바꾸는지를 오프라인으로 쟀다. 입력은 m4 r7(2026-10-21)의 mobilenet option 9개(노드 5개, Jetson 제외)의 κ(디스패치 점유 포함, tight, b1), e, 적재 유휴 전력, prepare와 remove 비용이다. PLC형은 각 노드 q1 CPU option의 κ 1.5배와 e 0.4배, SmolVLM형은 CPU int8 κ/120과 e×240, CUDA κ/50과 e×150, prepare 2배인 합성 option이다. 시작 구성은 rasp5 q1, orangepi q1, genesis3 q2(mobilenet), lattepanda q1(PLC), genesis2 CUDA(SmolVLM)이고 T는 10분이다. 부하는 mobilenet 20, 60, 110, PLC 15, 40, SmolVLM 0.3, 1.2 req/s의 조합 50개이고, 같은 노드 계획 공간의 모든 계획 집합(2,800~7,776개)을 정확한 식으로 평가한 최소와 DP 결과를 칸 수마다 비교했다. 도구는 `CHILL_DP_CELLS=1 go test ./internal/serving -run CellSize -v -timeout 0`이다(약 80분).
+
+| Workload 수 | 칸 수 | 비교 행 | 구성이 다른 행 | 에너지 차 | DP 시간 |
+|---|---|---|---|---|---|
+| 2 | 2, 5, 10 | 각 12 | 각 2 | 163.1 J (0.21%) | 73~142 ms, 0.3~1.0 s, 1.4~2.5 s |
+| 2 | 26 | 12 | 0 | 0 | 16~33 s |
+| 2 | 50(현재 값) | 12 | 0 | 0 | 85~200 s |
+| 3 | 2, 5, 10 | 각 12 | 0 | 0 | 1.2~2.0 s, 6.8~14 s, 31~86 s |
+| 3 | 26(현재 값) | 4 | 0 | 0 | 529~1,448 s |
+
+- 모든 행에서 DP의 충족 판정은 전수와 같고 DP 에너지는 최소 이상이다. 칸 크기는 충족을 바꾸지 않는다.
+- 구성이 다른 행은 mobilenet 60 req/s와 PLC가 함께인 두 Workload 부하다(PLC 15와 40, 칸 2, 5, 10). 최소 해는 rasp5 q1 + q2, orangepi q1, lattepanda PLC q1이고 genesis3 q2를 지운다. 거친 칸의 DP는 rasp5 q1-lut + q2와 genesis3 q2를 남겨 인스턴스 하나와 κ 69.6을 더 두고 T 10분에 163.1 J(최소 76,418.8 J의 0.21%)를 더 쓴다. 26칸부터 같은 해다.
+- 같은 공간의 전수 평가는 9~31 ms다(노드 계획 2~9개씩, 계획 집합 7,776개 이하, 집합당 약 4 µs). DP는 칸 상태마다 Pareto 점이 581~849개(두 Workload), 2,594~2,950개(세 Workload)로 커서 현재 칸 수에서 Tick 목표(p99 100 ms)의 850배 이상이 걸린다.
+
+E5 권고: 칸 크기로 생기는 에너지 차는 0.21% 이하이므로 칸 수는 Tick 시간으로 정한다. E5(두 Workload)의 노드 5개 공간은 계획 집합이 수천 개라 전수 평가가 정확하고 30 ms 안이다. 계획 집합 수가 상한(예: 2만, 약 80 ms) 이하일 때 전수 평가로 고르고 넘을 때 DP를 쓴다. DP만 쓰면 두 Workload 칸 2에서도 73~142 ms로 Tick 목표 근처다.

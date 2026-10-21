@@ -604,19 +604,14 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes, cells int) *capacit
 	return p
 }
 
-// capacityBruteForce evaluates every plan set at its own route time.
-func capacityBruteForce(p *capacityPlanner) (bool, float64) {
-	feasible, best := false, math.Inf(1)
+// capacityBruteForce evaluates every plan set at its own route time and
+// returns the cheapest feasible one (nil when none is feasible).
+func capacityBruteForce(p *capacityPlanner) *capacityResult {
+	var best *capacityResult
 	choice := make([]int, len(p.plans))
 	for {
-		r := 0.0
-		for n, j := range choice {
-			if !p.plans[n][j].keep {
-				r = max(r, p.plans[n][j].preMax)
-			}
-		}
-		if res := p.evaluate(slices.Clone(choice), r); res.feasible {
-			feasible, best = true, min(best, res.joules)
+		if res := p.evaluate(slices.Clone(choice), p.routeOf(choice)); res.feasible && res.better(best) {
+			best = &res
 		}
 		n := 0
 		for ; n < len(choice); n++ {
@@ -626,7 +621,7 @@ func capacityBruteForce(p *capacityPlanner) (bool, float64) {
 			choice[n] = 0
 		}
 		if n == len(choice) {
-			return feasible, best
+			return best
 		}
 	}
 }
@@ -646,16 +641,16 @@ func TestCapacityDPMatchesBruteForce(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, cheapest := capacityBruteForce(p)
-			if best.feasible != want {
-				t.Fatalf("trial %d cells %d: DP feasible=%v, brute force %v", trial, cells, best.feasible, want)
+			exact := capacityBruteForce(p)
+			if best.feasible != (exact != nil) {
+				t.Fatalf("trial %d cells %d: DP feasible=%v, brute force %v", trial, cells, best.feasible, exact != nil)
 			}
-			if want {
-				if best.joules < cheapest-1e-6 {
-					t.Fatalf("trial %d: DP energy %g below the exact minimum %g", trial, best.joules, cheapest)
+			if exact != nil {
+				if best.joules < exact.joules-1e-6 {
+					t.Fatalf("trial %d: DP energy %g below the exact minimum %g", trial, best.joules, exact.joules)
 				}
-				if cheapest > 0 {
-					gap = max(gap, (best.joules-cheapest)/cheapest)
+				if exact.joules > 0 {
+					gap = max(gap, (best.joules-exact.joules)/exact.joules)
 				}
 			}
 			pareto = max(pareto, p.paretoMax)
