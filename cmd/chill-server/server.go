@@ -48,7 +48,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	observationOwner, err := serving.AcquireObservationOwnership(opts.observationDirectory)
+	observationOwner, err := serving.AcquireObservationOwnership(opts.observationDirectory, ctrl.Log.Info)
 	if err != nil {
 		return err
 	}

@@ -1,21 +1,31 @@
 package serving
 
 import (
+	"slices"
+	"sync"
 	"testing"
 	"time"
 )
 
 // A replacement Pod starts while the previous one still drains and holds the
-// lock (D-R7-5); it waits for the release instead of exiting.
+// lock (D-R7-5); it waits for the release instead of exiting and logs the wait
+// start and the acquisition.
 func TestObservationOwnershipWaitsForPreviousOwner(t *testing.T) {
 	directory := t.TempDir()
-	first, err := AcquireObservationOwnership(directory)
+	var mu sync.Mutex
+	var logged []string
+	log := func(msg string, _ ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		logged = append(logged, msg)
+	}
+	first, err := AcquireObservationOwnership(directory, log)
 	if err != nil {
 		t.Fatal(err)
 	}
 	acquired := make(chan error, 1)
 	go func() {
-		second, err := AcquireObservationOwnership(directory)
+		second, err := AcquireObservationOwnership(directory, log)
 		if err == nil {
 			err = second.Close()
 		}
@@ -36,5 +46,8 @@ func TestObservationOwnershipWaitsForPreviousOwner(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("second owner still waits after the release")
+	}
+	if want := []string{"waiting for observation lock", "observation lock acquired"}; !slices.Equal(logged, want) {
+		t.Fatalf("logged %q, want %q", logged, want)
 	}
 }
