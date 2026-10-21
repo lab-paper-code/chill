@@ -148,7 +148,7 @@ subjects:
 {{- if .Values.profiler.enabled }}
 {{- $factsRole := printf "%s-profiler-facts" $name }}
 ---
-# Power requests are derived from the Profiler facts.
+# Power requests and wall meters are derived from the Profiler facts.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

@@ -83,6 +83,7 @@ spec:
             - {{ printf "--profiler-facts-namespace=%s" .Release.Namespace | quote }}
             - {{ printf "--profiler-facts-configmap=%s" (include "chill.profilerFactSourceName" .) | quote }}
             - {{ printf "--actuation-policies-key=%s" .Values.profiler.factSource.actuationPoliciesKey | quote }}
+            - {{ printf "--metric-sources-key=%s" .Values.profiler.factSource.metricSourcesKey | quote }}
             {{- end }}
             - "--tls-cert=/etc/chill/tls/tls.crt"
             - "--tls-key=/etc/chill/tls/tls.key"

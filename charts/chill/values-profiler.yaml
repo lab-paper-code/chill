@@ -130,8 +130,10 @@ profiling:
         payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:7b2068cd09e566923fae9738ede57b706db74ac3af2a3ace218061ff4cbd100a","architecture":"arm64","runtime":{"family":"firstfloor","backends":["rknnlite"]},"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"verification":"exact-image-runtime-inspection-v1"}'
       host: {"libraries": [{"name": "librknnrt", "hostPath": "/usr/lib/librknnrt.so", "containerPath": "/usr/lib/librknnrt.so"}], "devices": [{"path": "/dev/dri/card0"}, {"path": "/dev/dri/card1"}, {"path": "/dev/dri/renderD128"}, {"path": "/dev/dri/renderD129"}], "allocation": {"resourceName": "", "exclusivityClaimed": false}, "driver": {"name": "rknpu", "versionPath": "/sys/module/rknpu/version", "version": "0.9.6"}, "platform": {"compatiblePath": "/proc/device-tree/compatible", "compatibleToken": "rockchip,rk3588"}}
       access: {"privileged": true, "supplementalGroups": [44, 110]}
+  # meterID names the Shelly plug wired to the Node; serving binds wall meters to it.
   metricSources:
     - node: rasp5
+      meterID: shellyplugsg3-e4b063ddacc0
       kind: edge-metrics
       endpoint: http://155.230.35.213:18766/prometheus?hostname=raspberrypi-5
       powerMetric: shelly_power_total_watts
@@ -147,6 +149,7 @@ profiling:
         latched: device_thermal_throttle_latched
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: orangepi
+      meterID: shellyplugsg3-d0cf13d81a88
       kind: edge-metrics
       endpoint: http://155.230.35.213:18766/prometheus?hostname=orangepi-5-plus
       powerMetric: shelly_power_total_watts
@@ -162,6 +165,7 @@ profiling:
         latched: device_thermal_throttle_latched
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: jetsono
+      meterID: shellyplugsg3-d0cf13dec03c
       kind: edge-metrics
       endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-orin
       powerMetric: shelly_power_total_watts
@@ -177,6 +181,7 @@ profiling:
         latched: device_thermal_throttle_latched
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: jetsonx
+      meterID: shellyplugsg3-dcb4d9c55150
       kind: edge-metrics
       endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-xavier
       powerMetric: shelly_power_total_watts
@@ -192,6 +197,7 @@ profiling:
         latched: device_thermal_throttle_latched
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: orin-nano
+      meterID: shellyplugsg3-e4b063de2d40
       kind: edge-metrics
       endpoint: http://155.230.35.213:18766/prometheus?hostname=orin-nano
       powerMetric: shelly_power_total_watts
@@ -207,6 +213,7 @@ profiling:
         latched: device_thermal_throttle_latched
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: jetson-nano
+      meterID: shellyplusplugs-80646fd66914
       kind: edge-metrics
       endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-nano
       powerMetric: shelly_power_total_watts
@@ -222,6 +229,7 @@ profiling:
         latched: device_thermal_throttle_latched
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: lattepanda
+      meterID: shellyplugsg3-d0cf13d80400
       kind: edge-metrics
       endpoint: http://155.230.35.213:18766/prometheus?hostname=lattepanda-3-delta
       powerMetric: shelly_power_total_watts
@@ -237,6 +245,7 @@ profiling:
         latched: device_thermal_throttle_latched
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: genesis1
+      meterID: shellyplugsg3-d885ac1fa428
       kind: edge-metrics
       endpoint: http://155.230.35.213:18766/prometheus?hostname=genesis1
       powerMetric: shelly_power_total_watts
@@ -252,6 +261,7 @@ profiling:
         latched: device_thermal_throttle_latched
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: genesis2
+      meterID: shellyplugsg3-e4b063de2674
       kind: edge-metrics
       endpoint: http://155.230.35.213:18766/prometheus?hostname=genesis2
       powerMetric: shelly_power_total_watts
@@ -267,6 +277,7 @@ profiling:
         latched: device_thermal_throttle_latched
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: genesis3
+      meterID: shellyplugsg3-d0cf13debff8
       kind: edge-metrics
       endpoint: http://155.230.35.213:18766/prometheus?hostname=genesis3
       powerMetric: shelly_power_total_watts

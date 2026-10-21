@@ -52,6 +52,7 @@ func TestKubernetesMetricSourceResolverSelectsOnlyRequestedNodeEntry(t *testing.
 
 	unrelated := base.DeepCopy()
 	unrelated.Data["metric-sources.yaml"] += `  - node: jetsonx
+    meterID: shelly-jetsonx
     kind: edge-metrics
     endpoint: http://central-meter.example.test:18766/prometheus?hostname=jetson-xavier
     powerMetric: shelly_power_total_watts
@@ -90,10 +91,28 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
 					config.Data["metric-sources.yaml"], metricSourcesSchema,
-					"chill.dacs.io/profiler-metric-sources.v1alpha4", 1,
+					"chill.dacs.io/profiler-metric-sources.v1alpha5", 1,
 				)
 			},
 			match: "unsupported Profiler metric-sources schema",
+		},
+		{
+			name: "missing meterID",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], "    meterID: shelly-lattepanda\n", "", 1,
+				)
+			},
+			match: "meterID is required",
+		},
+		{
+			name: "duplicate meterID",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] += strings.Replace(strings.SplitN(
+					config.Data["metric-sources.yaml"], "sources:\n", 2,
+				)[1], "node: lattepanda", "node: other", 1)
+			},
+			match: "duplicate metric source meterID",
 		},
 		{
 			name: "retired transitionPower field",
@@ -317,9 +336,10 @@ func validMetricSourceConfigMap() *corev1.ConfigMap {
 			Namespace: "chill-system", Name: "chill-profiler-facts",
 			UID: types.UID("config-uid"), ResourceVersion: "30",
 		},
-		Data: map[string]string{"metric-sources.yaml": `schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha5
+		Data: map[string]string{"metric-sources.yaml": `schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha6
 sources:
   - node: lattepanda
+    meterID: shelly-lattepanda
     kind: edge-metrics
     endpoint: ` + testPowerEndpoint + `
     powerMetric: ` + testPowerMetric + `

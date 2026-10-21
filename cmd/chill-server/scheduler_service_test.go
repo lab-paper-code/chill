@@ -42,8 +42,7 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 		{name: "retired CPU inventory", fields: `"cpuInventory":{"node":[0]}`},
 		{name: "retired GPU inventory", fields: `"gpuInventory":{"node":["GPU-real"]}`},
 		{name: "fake cost injection", fields: `"costs":[{"id":"fake","trials":[{"joules":0}]}]`},
-		{name: "invalid meter scope", fields: `"meters":[{"id":"wall","node":{"name":"node","uid":"uid"},` +
-			`"scope":"inferred","source":{"nodeName":"node"}}]`},
+		{name: "retired meters", fields: `"meters":[]`},
 		{name: "invalid power polling", fields: `"powerObservation":{"sampling":{"Interval":0,` +
 			`"Duration":1000000000,"RequestTimeout":1,"MaxEvents":10},"coverage":` +
 			`{"MaximumBoundaryDistance":1,"MinimumCoverage":1,"MaximumGap":1}}`},

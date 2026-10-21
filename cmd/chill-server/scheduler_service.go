@@ -20,6 +20,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
@@ -35,11 +36,12 @@ type powerObservationConfig struct {
 }
 
 type schedulerConfiguration struct {
-	Settings         serving.SchedulerSettings              `json:"settings"`
-	Reserved         map[string]serving.SchedulerAllocation `json:"reserved"`
-	Meters           []servingkube.MeterDeclaration         `json:"meters"`
-	PowerObservation *powerObservationConfig                `json:"powerObservation,omitempty"`
-	StaticRouting    map[string]map[string]int              `json:"staticRouting,omitempty"`
+	Settings serving.SchedulerSettings              `json:"settings"`
+	Reserved map[string]serving.SchedulerAllocation `json:"reserved"`
+	// Meters are derived from the Profiler metric sources, never configured.
+	Meters           []servingkube.MeterDeclaration `json:"-"`
+	PowerObservation *powerObservationConfig        `json:"powerObservation,omitempty"`
+	StaticRouting    map[string]map[string]int      `json:"staticRouting,omitempty"`
 }
 
 type schedulerService struct {
@@ -151,25 +153,6 @@ func (config schedulerConfiguration) validateInventory() error {
 }
 
 func (config schedulerConfiguration) validatePower() error {
-	meters := map[string]serving.NodeReference{}
-	nodes := map[serving.NodeReference]string{}
-	for _, meter := range config.Meters {
-		if meter.ID == "" || meter.Scope != "node-exclusive-wall" ||
-			meter.Node.Name == "" || meter.Node.UID == "" || meter.Source.NodeName != meter.Node.Name {
-			return errors.New("exact physical Node exclusive wall-meter identity required")
-		}
-		if _, ok := meters[meter.ID]; ok {
-			return errors.New("duplicate wall meter identity")
-		}
-		if _, ok := nodes[meter.Node]; ok {
-			return errors.New("one declared wall meter per physical Node required")
-		}
-		meters[meter.ID] = meter.Node
-		nodes[meter.Node] = meter.ID
-		if _, err := metricSource(meter.Source); err != nil {
-			return err
-		}
-	}
 	if config.PowerObservation != nil {
 		if err := config.PowerObservation.Sampling.Validate(); err != nil {
 			return err
@@ -207,7 +190,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	policies, factsVersion, err := o.powerPolicies(ctx)
+	policies, factsVersion, err := o.profilerFacts(ctx, &config)
 	if err != nil {
 		return err
 	}
@@ -225,6 +208,9 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	}
 	sources := costs.Sources
 	sources = append(sources, "profiler-facts:"+factsVersion)
+	for _, meter := range config.Meters {
+		sources = append(sources, "meter:"+meter.ID+"/"+meter.Node.UID)
+	}
 	for _, p := range view.Profiles {
 		sources = append(sources, p.ID)
 	}
@@ -275,9 +261,13 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	return nil
 }
 
-// powerPolicies reads the configured actuation policies from the Profiler
-// facts. Without the Profiler there are none and no Node takes power requests.
-func (o *schedulerService) powerPolicies(ctx context.Context) ([]nodeactuator.ActuationPolicySpec, string, error) {
+// profilerFacts reads the configured actuation policies and derives the wall
+// meters from the Profiler facts. Without the Profiler there are none: no Node
+// takes power requests and no meter is declared. A meter binds to the live
+// Node of its name; a source whose Node is absent declares no meter.
+func (o *schedulerService) profilerFacts(
+	ctx context.Context, config *schedulerConfiguration,
+) ([]nodeactuator.ActuationPolicySpec, string, error) {
 	if o.opts.factsConfigMap == "" {
 		return nil, "", nil
 	}
@@ -286,7 +276,32 @@ func (o *schedulerService) powerPolicies(ctx context.Context) ([]nodeactuator.Ac
 		return nil, "", err
 	}
 	policies, err := profiler.DecodeActuationPolicyCatalog([]byte(cm.Data[o.opts.actuationPoliciesKey]))
-	return policies, cm.ResourceVersion, err
+	if err != nil {
+		return nil, "", err
+	}
+	sources, err := profilerkube.DecodeMetricSources([]byte(cm.Data[o.opts.metricSourcesKey]))
+	if err != nil {
+		return nil, "", err
+	}
+	nodes, err := o.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
+	if err != nil {
+		return nil, "", err
+	}
+	uids := make(map[string]string, len(nodes.Items))
+	for _, n := range nodes.Items {
+		uids[n.Name] = string(n.UID)
+	}
+	for _, s := range sources {
+		if uid := uids[s.Node]; uid != "" {
+			config.Meters = append(config.Meters, servingkube.MeterDeclaration{
+				ID: s.MeterID, Node: serving.NodeReference{Name: s.Node, UID: uid}, Scope: "node-exclusive-wall",
+				Source: metricobserver.SourceIdentity{
+					Kind: s.Kind, NodeName: s.Node, Endpoint: s.Endpoint, Metric: s.PowerMetric, MetricLabels: s.MetricLabels,
+				},
+			})
+		}
+	}
+	return policies, cm.ResourceVersion, nil
 }
 
 // An acknowledged configuration can await actual physical readiness. The normal

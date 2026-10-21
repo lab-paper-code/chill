@@ -19,7 +19,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const metricSourcesSchema = "chill.dacs.io/profiler-metric-sources.v1alpha5"
+const metricSourcesSchema = "chill.dacs.io/profiler-metric-sources.v1alpha6"
 
 var ErrMetricSourceUnavailable = errors.New("metric source unavailable")
 
@@ -57,11 +57,14 @@ func NewKubernetesMetricSourceResolver(
 
 type metricSourcesDocument struct {
 	SchemaVersion string                    `json:"schemaVersion"`
-	Sources       []metricSourceDeclaration `json:"sources"`
+	Sources       []MetricSourceDeclaration `json:"sources"`
 }
 
-type metricSourceDeclaration struct {
+// MetricSourceDeclaration is one Node's configured wall meter. MeterID names
+// the physical meter; serving binds operation costs to it.
+type MetricSourceDeclaration struct {
 	Node            string                             `json:"node"`
+	MeterID         string                             `json:"meterID"`
 	Kind            string                             `json:"kind"`
 	Endpoint        string                             `json:"endpoint"`
 	PowerMetric     string                             `json:"powerMetric"`
@@ -91,35 +94,14 @@ func (r *KubernetesMetricSourceResolver) ResolveMetricSource(
 			"Profiler metric-source ConfigMap missing key %q", r.options.ConfigMapKey,
 		)
 	}
-	documentBytes, err := readSingleYAMLDocument([]byte(raw))
+	sources, err := DecodeMetricSources([]byte(raw))
 	if err != nil {
-		return profiler.ResolvedMetricSource{}, fmt.Errorf("decode Profiler metric sources: %w", err)
+		return profiler.ResolvedMetricSource{}, err
 	}
-	var document metricSourcesDocument
-	if err := yaml.UnmarshalStrict(documentBytes, &document); err != nil {
-		return profiler.ResolvedMetricSource{}, fmt.Errorf("decode Profiler metric sources: %w", err)
-	}
-	if document.SchemaVersion != metricSourcesSchema {
-		return profiler.ResolvedMetricSource{}, fmt.Errorf("unsupported Profiler metric-sources schema %q", document.SchemaVersion)
-	}
-	if len(document.Sources) == 0 {
-		return profiler.ResolvedMetricSource{}, errors.New("Profiler metric sources require at least one entry")
-	}
-
-	seen := make(map[string]struct{}, len(document.Sources))
-	var selected *metricSourceDeclaration
-	for index := range document.Sources {
-		source := document.Sources[index]
-		if err := validateMetricSourceDeclaration(source); err != nil {
-			return profiler.ResolvedMetricSource{}, fmt.Errorf("validate metric source %d: %w", index, err)
-		}
-		if _, duplicate := seen[source.Node]; duplicate {
-			return profiler.ResolvedMetricSource{}, fmt.Errorf("duplicate metric source for Node %q", source.Node)
-		}
-		seen[source.Node] = struct{}{}
-		if source.Node == nodeName {
-			copy := source
-			selected = &copy
+	var selected *MetricSourceDeclaration
+	for index := range sources {
+		if sources[index].Node == nodeName {
+			selected = &sources[index]
 		}
 	}
 	if selected == nil {
@@ -133,9 +115,44 @@ func (r *KubernetesMetricSourceResolver) ResolveMetricSource(
 	return resolved, nil
 }
 
-func validateMetricSourceDeclaration(source metricSourceDeclaration) error {
+// DecodeMetricSources returns the validated metric-source declarations, one
+// per Node and one per meter.
+func DecodeMetricSources(raw []byte) ([]MetricSourceDeclaration, error) {
+	documentBytes, err := readSingleYAMLDocument(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode Profiler metric sources: %w", err)
+	}
+	var document metricSourcesDocument
+	if err := yaml.UnmarshalStrict(documentBytes, &document); err != nil {
+		return nil, fmt.Errorf("decode Profiler metric sources: %w", err)
+	}
+	if document.SchemaVersion != metricSourcesSchema {
+		return nil, fmt.Errorf("unsupported Profiler metric-sources schema %q", document.SchemaVersion)
+	}
+	if len(document.Sources) == 0 {
+		return nil, errors.New("Profiler metric sources require at least one entry")
+	}
+	nodes := make(map[string]struct{}, len(document.Sources))
+	meters := make(map[string]struct{}, len(document.Sources))
+	for index, source := range document.Sources {
+		if err := validateMetricSourceDeclaration(source); err != nil {
+			return nil, fmt.Errorf("validate metric source %d: %w", index, err)
+		}
+		if _, duplicate := nodes[source.Node]; duplicate {
+			return nil, fmt.Errorf("duplicate metric source for Node %q", source.Node)
+		}
+		if _, duplicate := meters[source.MeterID]; duplicate {
+			return nil, fmt.Errorf("duplicate metric source meterID %q", source.MeterID)
+		}
+		nodes[source.Node], meters[source.MeterID] = struct{}{}, struct{}{}
+	}
+	return document.Sources, nil
+}
+
+func validateMetricSourceDeclaration(source MetricSourceDeclaration) error {
 	for name, value := range map[string]string{
-		"node": source.Node, "kind": source.Kind, "endpoint": source.Endpoint, "powerMetric": source.PowerMetric,
+		"node": source.Node, "meterID": source.MeterID, "kind": source.Kind, "endpoint": source.Endpoint,
+		"powerMetric": source.PowerMetric,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)

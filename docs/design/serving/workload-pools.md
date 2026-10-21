@@ -396,7 +396,7 @@ raw 기록은 구조화한 `Pods`를 계속 담는다(`SCH-34`).
 
 merge 절차: 진행 중 campaign이 끝난 뒤 merge한다. serving 인스턴스 Pod와 instance ConfigMap, NodeActuation 객체,
 PowerModeTransitionCost 객체, serving 관측 window, operation 측정 기록과 transition-cost evidence를 지우고 모든 노드의
-serving-pool label을 제거한다. Helm upgrade 뒤 새 sample로 scheduler ConfigMap을 쓰고 meter를 다시 넣는다.
+serving-pool label을 제거한다. Helm upgrade 뒤 새 sample로 scheduler ConfigMap을 쓴다.
 측정 POOL에서 전체 POOL의 노드마다 모드별 unloaded baseline과 prepare, remove 비용, 전력모드 전환 비용을
 다시 측정한다. 결과는 3.5절의 나열로 바로 비용 근거가 된다. 후보가 상태를 바꾸는 노드에 baseline이 없으면 그 후보는
 평가할 수 없으므로(3.4절), E2E에 쓰는 노드의 이 측정이 선행 조건이다.
