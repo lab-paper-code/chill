@@ -35,8 +35,9 @@ writer의 노드 쪽 준비이기도 하다([B2](../architecture-rethink/03-b2-s
 
 - 어느 Shelly가 어느 노드에 꽂혔는지는 노드에서 발견할 수 없는 유일한 노드별 사실이라 `metricSources`에 한 번 선언한다.
   meter ID와 source 값이 지금 값과 같으므로 기존 비용 근거가 그대로 묶인다(`kube/cost.go:257`).
-- ChillServer는 `serving-operation`이 쓰는 resolver(`profilerkube.MetricSourceResolverOptions`)로 Profiler facts ConfigMap의
-  `metricSources`와 actuation policy를 읽는다. 그 ConfigMap의 resourceVersion을 refresh signature에 넣는다.
+- ChillServer는 Profiler facts ConfigMap(`--profiler-facts-configmap`)의 `metricSources`와 actuation policy를 Profiler와 같은
+  decoder로 읽는다. 그 ConfigMap의 resourceVersion을 refresh signature에 넣는다. serving-kube는 policy 형식 때문에
+  `node-actuator-core`에 의존한다(`.go-arch-lint.yml`).
 - `checkProfileInventory`(`profiles.go:88-111`)는 지운다. Tick의 후보 검사(`ExclusiveCPUInfeasible`,
   `ExclusiveGPUInfeasible`)가 live snapshot으로 같은 조건을 본다.
 - agent는 CPU 파일을 10초마다 읽고 바뀔 때만 patch한다. 전력모드 전환 뒤 settle(60초) 안에 새 값이 올라온다.

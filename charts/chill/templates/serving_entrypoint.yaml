@@ -78,6 +78,12 @@ spec:
             - {{ printf "--serving-scheduler-configmap=%s" . | quote }}
             - {{ printf "--serving-scheduler-config-key=%s" $.Values.servingEntrypoint.scheduler.key | quote }}
             {{- end }}
+            {{- if .Values.profiler.enabled }}
+            # Power requests come from the DeviceClass modes the Profiler has policies for.
+            - {{ printf "--profiler-facts-namespace=%s" .Release.Namespace | quote }}
+            - {{ printf "--profiler-facts-configmap=%s" (include "chill.profilerFactSourceName" .) | quote }}
+            - {{ printf "--actuation-policies-key=%s" .Values.profiler.factSource.actuationPoliciesKey | quote }}
+            {{- end }}
             - "--tls-cert=/etc/chill/tls/tls.crt"
             - "--tls-key=/etc/chill/tls/tls.key"
             - {{ printf "--observation-directory=%s" .Values.servingEntrypoint.observationStorage.directory | quote }}

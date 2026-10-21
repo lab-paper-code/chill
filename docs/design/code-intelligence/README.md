@@ -99,7 +99,7 @@ import evidence. Component permissions live in `.go-arch-lint.yml`.
 | `firstfloor` / `firstfloor` | No CHILL package imports; bounded native executor leaf |
 | `serving/firstfloor` / `serving-firstfloor` | `firstfloor`, `serving` |
 | `profiling/run` / `profiling-run` | `modelcompat`, native `firstfloor` metadata types shared with the measured executor |
-| `serving/kube` / `serving-kube` | API, platform component helpers, device/model/evidence adapters, metric observation, admitted profiling contracts, power-window integration, transition-cost leaf, serving core and native adapter |
+| `serving/kube` / `serving-kube` | API, platform component helpers, device/model/evidence adapters, metric observation, admitted profiling contracts, power-window integration, transition-cost leaf, node actuation policy contract, serving core and native adapter |
 
 ```sh
 go list -f '{{.ImportPath}} {{join .Imports " "}}' \

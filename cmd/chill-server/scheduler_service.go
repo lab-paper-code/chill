@@ -14,11 +14,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
@@ -37,7 +38,6 @@ type schedulerConfiguration struct {
 	Settings         serving.SchedulerSettings              `json:"settings"`
 	Reserved         map[string]serving.SchedulerAllocation `json:"reserved"`
 	Meters           []servingkube.MeterDeclaration         `json:"meters"`
-	PowerRequests    map[string]*edge.NodeActuation         `json:"powerRequests"`
 	PowerObservation *powerObservationConfig                `json:"powerObservation,omitempty"`
 	StaticRouting    map[string]map[string]int              `json:"staticRouting,omitempty"`
 }
@@ -207,6 +207,10 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	policies, factsVersion, err := o.powerPolicies(ctx)
+	if err != nil {
+		return err
+	}
 	namespaces := o.opts.profileNamespaces
 	if len(namespaces) == 0 {
 		namespaces = []string{o.opts.servingNamespace}
@@ -220,6 +224,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		return err
 	}
 	sources := costs.Sources
+	sources = append(sources, "profiler-facts:"+factsVersion)
 	for _, p := range view.Profiles {
 		sources = append(sources, p.ID)
 	}
@@ -237,7 +242,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	controllerConfig := servingkube.SchedulerControllerConfig{
 		Settings: config.Settings,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
-		CostIssues: costs.Issues, Meters: config.Meters, PowerRequests: config.PowerRequests,
+		CostIssues: costs.Issues, Meters: config.Meters, PowerPolicies: policies,
 		StaticRouting: config.StaticRouting != nil,
 		OnDecision:    o.recordDecision, OnAction: o.recordAction,
 	}
@@ -268,6 +273,20 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	o.restartPower(config)
 	o.applyStaticRouting(ctx)
 	return nil
+}
+
+// powerPolicies reads the configured actuation policies from the Profiler
+// facts. Without the Profiler there are none and no Node takes power requests.
+func (o *schedulerService) powerPolicies(ctx context.Context) ([]nodeactuator.ActuationPolicySpec, string, error) {
+	if o.opts.factsConfigMap == "" {
+		return nil, "", nil
+	}
+	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.factsNamespace).Get(ctx, o.opts.factsConfigMap, meta.GetOptions{})
+	if err != nil {
+		return nil, "", err
+	}
+	policies, err := profiler.DecodeActuationPolicyCatalog([]byte(cm.Data[o.opts.actuationPoliciesKey]))
+	return policies, cm.ResourceVersion, err
 }
 
 // An acknowledged configuration can await actual physical readiness. The normal

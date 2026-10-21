@@ -123,7 +123,7 @@ runner 자동 생성을 더한다.
 |---|---|---|
 | `PlacementInventoryMissing` | online CPU 목록이 없거나 읽을 수 없음, 측정 GPU가 allocatable보다 많음, 예약이 inventory 밖 | 배치 option에서 빠짐. 전력과 에너지는 계속 다룸 |
 | `PlacementBudgetUnavailable` | CHILL이 배치하지 않은 Pod의 GPU 소유를 확인할 수 없거나 그 CPU 요청이 예약을 넘음 | 같음 |
-| `PowerModeUnavailable` | DeviceClass나 `powerRequests` 항목 없음 | 현재 모드 유지 |
+| `PowerModeUnavailable` | 현재 모드를 모르거나, 요청 가능 모드(DeviceClass의 비고정 모드 중 actuation policy가 있는 모드)가 없거나, 가장 낮은 모드가 요청 가능 모드가 아님 | 현재 모드 유지 |
 
 현재 CPU inventory 부족은 snapshot 사유가 되어 모든 후보를 평가 대기로 만들고(`kube/scheduler.go:543-546`),
 `captureNodePods`는 CHILL이 배치하지 않은 Pod 때문에 `SchedulerNode.Ready=false`로 바꾼다(`kube/scheduler.go:699-722`).
@@ -396,8 +396,8 @@ raw 기록은 구조화한 `Pods`를 계속 담는다(`SCH-34`).
 
 merge 절차: 진행 중 campaign이 끝난 뒤 merge한다. serving 인스턴스 Pod와 instance ConfigMap, NodeActuation 객체,
 PowerModeTransitionCost 객체, serving 관측 window, operation 측정 기록과 transition-cost evidence를 지우고 모든 노드의
-serving-pool label을 제거한다. Helm upgrade 뒤 새 sample로 scheduler ConfigMap을 쓰고 inventory, meter, powerRequests를
-다시 넣는다. 측정 POOL에서 전체 POOL의 노드마다 모드별 unloaded baseline과 prepare, remove 비용, 전력모드 전환 비용을
+serving-pool label을 제거한다. Helm upgrade 뒤 새 sample로 scheduler ConfigMap을 쓰고 meter를 다시 넣는다.
+측정 POOL에서 전체 POOL의 노드마다 모드별 unloaded baseline과 prepare, remove 비용, 전력모드 전환 비용을
 다시 측정한다. 결과는 3.5절의 나열로 바로 비용 근거가 된다. 후보가 상태를 바꾸는 노드에 baseline이 없으면 그 후보는
 평가할 수 없으므로(3.4절), E2E에 쓰는 노드의 이 측정이 선행 조건이다.
 

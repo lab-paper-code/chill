@@ -322,6 +322,8 @@ deps:
       - metric-edgemetrics
       - transition-cost-core
       - power-window
+      # Configured actuation policies decide which DeviceClass modes are requestable.
+      - node-actuator-core
       - platform-core
       - workload-core
       - workload-kube

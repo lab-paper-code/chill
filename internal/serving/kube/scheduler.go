@@ -19,6 +19,7 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -31,14 +32,16 @@ import (
 const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 
 type SchedulerControllerConfig struct {
-	Settings      serving.SchedulerSettings
-	Reserved      map[string]serving.SchedulerAllocation
-	Preparations  map[string]PrepareSpec
-	Costs         []serving.OperationCost
-	Baselines     []serving.NodeBaseline
-	CostIssues    []CostIssue
-	Meters        []MeterDeclaration
-	PowerRequests map[string]*edge.NodeActuation
+	Settings     serving.SchedulerSettings
+	Reserved     map[string]serving.SchedulerAllocation
+	Preparations map[string]PrepareSpec
+	Costs        []serving.OperationCost
+	Baselines    []serving.NodeBaseline
+	CostIssues   []CostIssue
+	Meters       []MeterDeclaration
+	// PowerPolicies are the configured actuation policies; a non-Fixed
+	// DeviceClass mode with a policy is a mode ChillServer can request.
+	PowerPolicies []nodeactuator.ActuationPolicySpec
 	StaticRouting bool
 	OnDecision    func(serving.SchedulerDecision) error
 	OnAction      func(OperationResult) error
@@ -74,6 +77,9 @@ type SchedulerController struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
+	// powerTargets holds, by "<Node UID>/<mode>", the request specs the last
+	// capture derived; a power action builds its NodeActuation when it starts.
+	powerTargets map[string]edge.NodeActuationSpec
 }
 
 // NewSchedulerController configures control without taking ownership of routing.
@@ -404,6 +410,11 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	if err = c.store.client.List(ctx, &acts, client.InNamespace(c.observer.config.ActuationNamespace)); err != nil {
 		return s, err
 	}
+	var classes edge.DeviceClassList
+	if err = c.store.client.List(ctx, &classes); err != nil {
+		return s, err
+	}
+	power := map[string]edge.NodeActuationSpec{}
 	profiles := c.observer.Profiles()
 	profileByID := map[string]*serving.Profile{}
 	for i := range profiles {
@@ -428,16 +439,19 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		captureNodeInventory(&sn, n, profiles)
 		c.captureNodePower(ctx, &sn, n, &acts, physical, profileByID)
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
-		requested := false
-		for key := range config.PowerRequests {
-			requested = requested || strings.HasPrefix(key, sn.Node.UID+"/")
-		}
-		if sn.PowerMode == "" || !requested || lowest != "" && lowest != sn.PowerMode && config.PowerRequests[sn.Node.UID+"/"+lowest] == nil {
+		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
+		if _, ok := targets[lowest]; sn.PowerMode == "" || len(targets) == 0 || lowest != "" && lowest != sn.PowerMode && !ok {
 			sn.Reasons = append(sn.Reasons, serving.NodePowerModeUnavailable)
+		}
+		for mode, spec := range targets {
+			power[sn.Node.UID+"/"+mode] = spec
 		}
 		captureNodePods(&s, &sn, n, pods, physical, profileByID)
 		s.Nodes = append(s.Nodes, sn)
 	}
+	c.mu.Lock()
+	c.powerTargets = power
+	c.mu.Unlock()
 	current := c.runtime.SchedulerInputs(time.Now)
 	s.At, s.Workloads, s.Outstanding = current.At, current.Workloads, current.Outstanding
 	s.Routing, s.RoutingCredits = current.Routing, current.RoutingCredits
@@ -462,6 +476,39 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	}
 	bindProfileMeters(&s, config.Meters)
 	return s, nil
+}
+
+// nodePowerTargets returns, by mode, the request spec of each mode the Node
+// can be switched into: the non-Fixed modes of its one DeviceClass that have a
+// configured actuation policy.
+func nodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodeactuator.ActuationPolicySpec) map[string]edge.NodeActuationSpec {
+	var class *edge.DeviceClass
+	for i := range classes {
+		if classes[i].Spec.Architecture == n.Status.NodeInfo.Architecture && nodeClassMatches(n, &classes[i]) {
+			if class != nil {
+				return nil
+			}
+			class = &classes[i]
+		}
+	}
+	if class == nil {
+		return nil
+	}
+	targets := map[string]edge.NodeActuationSpec{}
+	for _, mode := range class.Spec.PowerModes {
+		for _, p := range policies {
+			if mode.Actuator.Kind != edge.PowerModeActuatorFixed && p.DeviceClass == class.Name && p.PowerMode == mode.Name &&
+				p.ActuatorKind == string(mode.Actuator.Kind) {
+				targets[mode.Name] = edge.NodeActuationSpec{
+					Node: edge.ProfilingRunObjectReference{Name: n.Name, UID: string(n.UID)}, DeviceClass: class.Name,
+					PowerMode: mode.Name, Actuator: mode.Actuator, PolicyName: p.Name,
+					SettlingDurationSeconds:     int32(p.SettlingDurationSeconds),
+					MaxActuationDurationSeconds: int32(p.MaxActuationDurationSeconds),
+				}
+			}
+		}
+	}
+	return targets
 }
 
 // captureNodeInventory reads the online CPU list the node agent publishes and
@@ -728,7 +775,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			if c.conflictingActionRunning(action) {
 				continue
 			}
-			operation := scheduledOperation(action, &target, config)
+			operation := scheduledOperation(action, &target, config, c.powerTargets, time.Now())
 			runCtx, cancel := context.WithCancel(c.ctx)
 			action.Status = nativeOperationRunning
 			action.Cancelable = action.Kind == operationPrepare
@@ -804,7 +851,7 @@ func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCa
 	}
 	return false
 }
-func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig) Operation {
+func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]edge.NodeActuationSpec, now time.Time) Operation {
 	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target}
 	if action.Kind == operationPrepare {
 		for _, i := range target.Instances {
@@ -824,9 +871,21 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 		}
 	}
 	if action.Kind == operationPower {
-		operation.Actuation = config.PowerRequests[action.Node.UID+"/"+action.To]
+		if spec, ok := power[action.Node.UID+"/"+action.To]; ok {
+			operation.Actuation = powerRequest(spec, now)
+		}
 	}
 	return operation
+}
+
+// powerRequest builds the NodeActuation of a switch that starts now: a fresh
+// name and a deadline relative to now. Times are whole seconds, the precision
+// the API server stores.
+func powerRequest(spec edge.NodeActuationSpec, now time.Time) *edge.NodeActuation {
+	at := now.UTC().Truncate(time.Second)
+	spec.StageRequestedAt = meta.NewTime(at)
+	spec.Deadline = meta.NewTime(at.Add(time.Duration(spec.MaxActuationDurationSeconds) * time.Second))
+	return &edge.NodeActuation{ObjectMeta: meta.ObjectMeta{Name: fmt.Sprintf("power-%s-%d", spec.Node.Name, now.UnixNano())}, Spec: spec}
 }
 
 func bindProfileMeter(instance *serving.SchedulerInstance, meters []MeterDeclaration) {

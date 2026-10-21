@@ -20,6 +20,7 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -30,6 +31,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func schedulerCaptureClockController(t *testing.T, slowLive bool) *SchedulerController {
@@ -287,7 +289,25 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 	ctx := context.Background()
 	_, base, _, _ := observerSourceFixture()
 	config := controller.config
-	config.PowerRequests = map[string]*edge.NodeActuation{}
+	// A non-Fixed mode with a configured policy is requestable; a Node whose
+	// one DeviceClass has only Fixed modes is not.
+	class := &edge.DeviceClass{}
+	if err := controller.store.client.Get(ctx, client.ObjectKey{Name: "cpu"}, class); err != nil {
+		t.Fatal(err)
+	}
+	eco := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 1}}
+	class.Spec.PowerModes = append(class.Spec.PowerModes, edge.PowerMode{Name: "eco", Actuator: eco})
+	if err := controller.store.client.Update(ctx, class); err != nil {
+		t.Fatal(err)
+	}
+	fixedOnly := &edge.DeviceClass{ObjectMeta: meta.ObjectMeta{Name: "fixed-only"}, Spec: edge.DeviceClassSpec{
+		NodeSelector: map[string]string{"hardware": "fixed-only"}, Architecture: "amd64",
+		PowerModes: []edge.PowerMode{{Name: "fixed", Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorFixed}}}}}
+	if err := controller.store.client.Create(ctx, fixedOnly); err != nil {
+		t.Fatal(err)
+	}
+	config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: "cpu-eco", DeviceClass: "cpu", PowerMode: "eco",
+		ActuatorKind: nodeactuator.ActuatorKindJetsonNVPModel, SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 30}}
 	config.Reserved = map[string]serving.SchedulerAllocation{"reserved-out": {CPUs: []int{7}}}
 	want := map[string]struct {
 		reasons     []string
@@ -299,6 +319,7 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 		"garbled":      {reasons: []string{serving.NodePlacementInventoryMissing}},
 		"reserved-out": {reasons: []string{serving.NodePlacementInventoryMissing}},
 		"unpowered":    {reasons: []string{serving.NodePowerModeUnavailable}},
+		"fixed-only":   {reasons: []string{serving.NodePowerModeUnavailable}},
 		"measured":     {measurement: true},
 		"gpu":          {gpus: []string{"GPU-a"}},
 		"gpu-over":     {reasons: []string{serving.NodePlacementInventoryMissing}, gpus: []string{"GPU-b", "GPU-c"}},
@@ -311,7 +332,7 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 		measuredOn("a", "gpu-uid", "GPU-a"), measuredOn("a2", "gpu-uid", "GPU-a"), measuredOn("cpu", "gpu-uid", ""),
 		measuredOn("b", "gpu-over-uid", "GPU-c"), measuredOn("c", "gpu-over-uid", "GPU-b"),
 	})
-	for _, name := range []string{"control-plane", "bare", "garbled", "reserved-out", "unpowered", "measured", "gpu", "gpu-over"} {
+	for _, name := range []string{"control-plane", "bare", "garbled", "reserved-out", "unpowered", "fixed-only", "measured", "gpu", "gpu-over"} {
 		node := base.DeepCopy()
 		node.Name, node.UID = name, types.UID(name+"-uid")
 		switch name {
@@ -321,6 +342,10 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 			delete(node.Annotations, chillmeta.OnlineCPUs)
 		case "garbled":
 			node.Annotations[chillmeta.OnlineCPUs] = "0-"
+		case "unpowered":
+			node.Labels["hardware"] = "none"
+		case "fixed-only":
+			node.Labels["hardware"] = "fixed-only"
 		case "measured":
 			node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Effect: core.TaintEffectNoSchedule}}
 		case "gpu", "gpu-over":
@@ -328,11 +353,6 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 		}
 		if _, err := controller.kube.CoreV1().Nodes().Create(ctx, node, meta.CreateOptions{}); err != nil {
 			t.Fatal(err)
-		}
-	}
-	for name := range want {
-		if name != "unpowered" { // base Node UID is "node-uid" too
-			config.PowerRequests[name+"-uid/fixed"] = &edge.NodeActuation{}
 		}
 	}
 	snapshot, err := controller.capture(ctx, time.Now().UTC(), config)
@@ -347,6 +367,32 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 		if !ok || !node.Ready || !slices.Equal(node.Reasons, expected.reasons) || node.Measurement != expected.measurement || !slices.Equal(node.GPUUUIDs, expected.gpus) {
 			t.Fatalf("%s: ready=%v reasons=%v measurement=%v gpus=%v", node.Node.Name, node.Ready, node.Reasons, node.Measurement, node.GPUUUIDs)
 		}
+	}
+	if spec, ok := controller.powerTargets["gpu-uid/eco"]; !ok || spec.PolicyName != "cpu-eco" || spec.Node.Name != "gpu" || len(controller.powerTargets) != 7 {
+		t.Fatalf("power targets = %+v", controller.powerTargets)
+	}
+}
+
+// Each switch builds its own NodeActuation when it starts, so a repeated
+// switch to the same mode never reuses an old object or an expired deadline.
+func TestScheduledPowerRequestIsFreshAtSwitchTime(t *testing.T) {
+	node := serving.NodeReference{Name: "jetson", UID: "jetson-uid"}
+	spec := edge.NodeActuationSpec{Node: edge.ProfilingRunObjectReference{Name: node.Name, UID: node.UID}, PowerMode: "eco", MaxActuationDurationSeconds: 30}
+	power := map[string]edge.NodeActuationSpec{"jetson-uid/eco": spec}
+	action := serving.Action{ID: "lower", Kind: operationPower, Node: node, To: "eco"}
+	first := time.Date(2026, 10, 21, 10, 0, 0, 500, time.UTC)
+	a := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, first).Actuation
+	b := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, first.Add(time.Hour)).Actuation
+	if a == nil || b == nil || a.Name == b.Name {
+		t.Fatalf("repeated switch reused a request: %+v %+v", a, b)
+	}
+	if !b.Spec.StageRequestedAt.Time.Equal(first.Add(time.Hour).Truncate(time.Second)) ||
+		!b.Spec.Deadline.Time.Equal(b.Spec.StageRequestedAt.Add(30*time.Second)) {
+		t.Fatalf("deadline not relative to switch time: %+v", b.Spec)
+	}
+	action.To = "unrequestable"
+	if scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, first).Actuation != nil {
+		t.Fatal("mode without a policy got a request")
 	}
 }
 

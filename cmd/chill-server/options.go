@@ -31,6 +31,7 @@ type options struct {
 	profileObjectKey, profileOutput                                                          string
 	profileObjectSize                                                                        int64
 	schedulerConfigMap, schedulerConfigKey                                                   string
+	factsNamespace, factsConfigMap, actuationPoliciesKey                                     string
 }
 
 func (o *options) bindFlags(f *flag.FlagSet) {
@@ -59,6 +60,11 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 		"Named scheduler ConfigMap in serving namespace; empty disables scheduler.")
 	f.StringVar(&o.schedulerConfigKey, "serving-scheduler-config-key", "scheduler.json",
 		"Scheduler configuration JSON ConfigMap key.")
+	f.StringVar(&o.factsNamespace, "profiler-facts-namespace", "", "Namespace of the Profiler facts ConfigMap.")
+	f.StringVar(&o.factsConfigMap, "profiler-facts-configmap", "",
+		"Profiler facts ConfigMap; empty leaves the scheduler without power requests.")
+	f.StringVar(&o.actuationPoliciesKey, "actuation-policies-key", "actuation-policies.yaml",
+		"Actuation policy catalog key in the Profiler facts ConfigMap.")
 	f.StringVar(&o.kube.APIServer, "kube-api-server", "", "Explicit Kubernetes API endpoint; otherwise in-cluster.")
 	f.StringVar(&o.kube.TokenFile, "kube-token-file", "", "Kubernetes service-account token file.")
 	f.StringVar(&o.kube.CAFile, "kube-ca-file", "", "Kubernetes API CA file.")
@@ -141,7 +147,19 @@ func (o options) validate() error {
 	if _, err := privateOrigin(o.dashboardURL); err != nil {
 		return err
 	}
+	if err := o.validateFacts(); err != nil {
+		return err
+	}
 	return o.validateKubernetesAPIBudget()
+}
+
+func (o options) validateFacts() error {
+	if o.factsConfigMap != "" && (len(validation.IsDNS1123Label(o.factsNamespace)) != 0 ||
+		len(validation.IsDNS1123Subdomain(o.factsConfigMap)) != 0 ||
+		len(validation.IsConfigMapKey(o.actuationPoliciesKey)) != 0) {
+		return errors.New("valid Profiler facts namespace, ConfigMap name and keys are required")
+	}
+	return nil
 }
 
 func (o options) validateKubernetesAPIBudget() error {
