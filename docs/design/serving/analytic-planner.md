@@ -39,7 +39,7 @@
 
 **계산 시간.** 이전 재생은 사건마다 창의 모든 요청을 훑어 요청 수의 제곱으로 느려졌다(창 2,000 요청 0.19 s, 8,000 요청 2.8 s). 60 s 창은 빠른 option에서 8,700 요청이고 option 하나의 검증에 2,135 s가 들었다. commit 1은 사건마다 도착했고 끝나지 않은 요청만 훑고 다음 도착은 도착 순서 목록의 맨 앞에서 읽으며, `Definition.Identity()`를 도착 원형마다 한 번 만든다. 판단은 같은 값이고 1 ms 간격 창의 재생은 2,000 요청 102 ms에서 3.3 ms, 8,000 요청 1,703 ms에서 16.7 ms가 되었다(`BenchmarkSchedulerReplayWindow`). 격자는 이분 탐색보다 판정 횟수가 많지만 미충족 판정은 실패 창 2개에서 멈춘다 `[추론: 행당 이분 탐색의 약 2.5배]`. E1 tight 38행의 시작 계산은 코어 하나(GOMAXPROCS 1)에서 1,386 s였다(행당 4~118 s, `NonMonotone` 0, `hack/kappa -mode table`). 0.5 CPU limit에서는 그 두 배쯤이다 `[추론]`. 목표 몇 분(5분)을 넘으므로 용량표 worker는 계산 중인 행마다 그 키의 마지막 `capacity-row-built` 기록(로컬 `management` stream, 그다음 보관된 시간 객체를 최근 순으로)을 이전 행으로 읽어 쓰고, 새 행이 계산되면 바꾼다. 이전 행은 `previous`로 표시하고, 기록이 없는 행은 `CapacityPending`이다. 행을 별도 Job으로 나누는 단계는 넣지 않았다.
 
-**imagenet.** imagenet(p99 100 ms)은 모든 option에서 κ 0이다(m 139 ms > 목표 100 ms, `hack/kappa`). 이 Workload는 꺼진 채로 두므로 행을 계산하지 않는다.
+**imagenet.** imagenet(p99 100 ms)은 E1 설정 m 139 ms에서 모든 option의 κ가 0이었다(m > 목표 100 ms, `hack/kappa`). 이 Workload는 꺼진 채로 두므로 행을 계산하지 않는다.
 
 ## 3. 판정과 순서
 
@@ -95,7 +95,7 @@
 | 응답 교환(firstfloor → ChillServer → client) | `exchangeNanos`, `elapsedNanos` | 들어감 | 없음 |
 
 - 재생은 요청 자신의 완료도 `실행시간 + 배치 크기 × d` 뒤로 둔다. 그래서 m은 actor 구간 전체를 뺀다. 남는 차이는 보수 쪽이다. 실행 기록 뒤 다음 배치까지의 actor 시간(포화에서 평균 약 0.5 ms)은 그 요청을 늦추지 않는데 재생은 더하고, 가벼운 부하에서는 늘어난 실행시간(m4 2 req/s 평균 2.7 ms)이 d보다 작다.
-- 값(p95, `stat.Empirical`): E1 2 req/s 177.8 ms, m4 r2 고정 2 req/s 28.5 ms, m4 r3 고정 2 req/s 25.8 ms, m4 r3 포아송 40 req/s 포화 29.2 ms(첫 10,000행). κ가 정해지는 부하는 포화 근처이므로 m4 값으로는 29 ms가 맞다. 설정값 139 ms는 그대로이고 바꾸는 것은 사용자 결정이다.
+- 값(p95, `stat.Empirical`): E1 2 req/s 177.8 ms, m4 r2 고정 2 req/s 28.5 ms, m4 r3 고정 2 req/s 25.8 ms, m4 r3 포아송 40 req/s 포화 29.2 ms(첫 10,000행). κ가 정해지는 부하는 포화 근처이므로 설정값은 29 ms다. 캠페인 뒤 SmolVLM2와 PLC 요청으로 m을 다시 재고, Workload마다 잰 값 중 가장 큰 값으로 정한다.
 - E1과 m4의 차이는 인증이다. E1의 received → validated p95가 103.2 ms였고, 요청마다 TokenReview가 client-go 요청 한도에 걸렸다. c829518(허용된 인증 결과를 10 s 재사용) 뒤 m4에서는 12.6~16.1 ms다. 나머지(firstfloor로 전달, ingress p95 약 9.5 ms, 응답 교환 p95 약 5~6 ms)는 두 실행에서 비슷하다. `queueMS` 전체를 빼는 열(E1 169.0 ms, m4 17.9~22.1 ms)은 firstfloor ingress를 m과 재생 어느 쪽에도 넣지 않는다.
 
 ## 6. 인스턴스 공유 정리

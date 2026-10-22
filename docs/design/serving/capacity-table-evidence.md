@@ -18,7 +18,7 @@ M4 재설계의 두 부품을 E1 입력으로 잰 결과다. 하나는 option과
 - κ: `[0.01μ, μ]`에서 0.5% μ까지 이분 탐색한다. μ는 b 이하 배치 크기의 `b / 평균 실행시간` 최댓값이다. 같은 seed의 도착 간격을 요청률로 나눠 쓰므로(공통 난수) 결과가 결정적이다.
 - 다시 계산하는 때: profile, SLO, m이 바뀔 때.
 
-## 2. 용량표 (m 139 ms, 현재 live 설정)
+## 2. 용량표 (m 139 ms, E1 live 설정)
 
 `GOMAXPROCS=1 go run ./hack/kappa -mode table -scheduler e1/scheduler-pre.json -margin 139`. 38개 변형 × SLO 3개 = 114행, 단일 코어 1,626 s(변형당 22~87 s).
 

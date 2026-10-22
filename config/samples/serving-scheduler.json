@@ -8,7 +8,7 @@
     "maxInstances": 16,
     "maxCPUs": 256,
     "servingMemoryBytes": 134217728,
-    "completionMarginMS": 139,
+    "completionMarginMS": 29,
     "capacityWindowNanos": 60000000000,
     "capacityWindows": 20,
     "capacityPassingWindows": 19,
