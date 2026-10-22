@@ -160,7 +160,7 @@ analytic-planner.md를 다시 쓸 때 바꿀 것:
 
 ### 7.2 E5 계획 공간
 
-E5는 Workload 셋(mobilenet tight, PLC, SmolVLM2)과 노드 여덟(genesis2, genesis3, lattepanda, rasp5, orangepi, jetsono, jetsonx, jetson-nano)이다. 노드 계획 수는 `nodePlans` 규칙으로 셌다. 계획 하나는 전력 모드 하나와 모델 하나를 쓰고, option(profile과 CPU 할당)마다 batch 상한 하나를 고른다. CPU는 겹치지 않고 CUDA 인스턴스는 하나다. keep과 모두 제거를 더한다.
+E5는 Workload 셋(mobilenet tight, PLC, SmolVLM2)과 노드 여덟(genesis2, genesis3, lattepanda, rasp5, orangepi, jetsono, jetsonx, jetson-nano)이다. 노드 계획 수는 `nodePlans` 규칙으로 셌다. 계획 하나는 전력 모드 하나와 모델 하나를 쓰고, Workload마다 option(profile과 CPU 할당) 하나와 그 batch 상한 하나를 고른다. E5의 세 Workload는 모델이 서로 달라 새 계획 하나는 인스턴스 하나다. keep과 모두 제거를 더한다. 괄호 안은 같은 Workload 인스턴스 여럿을 허용하던 규칙(D-R8-1 전, CPU는 겹치지 않고 CUDA 인스턴스 하나)의 수다.
 
 - option: m4 r7 mobilenet option 13개와 캠페인 v2 레인(`campaign/v2/gen.py`)이 재는 option 전부다. CPU 할당 변형을 포함한다.
 - 모드: jetsono 4개, jetsonx 6개(2CORE 모드 셋은 serving 예약 CPU만 남아 레인에 없다), jetson-nano MAXN과 5W, 나머지는 fixed다.
@@ -168,16 +168,18 @@ E5는 Workload 셋(mobilenet tight, PLC, SmolVLM2)과 노드 여덟(genesis2, ge
 
 | 노드 | 전부 | b2까지 | b1 |
 |---|---|---|---|
-| genesis2 | 47 | 24 | 13 |
-| genesis3 | 95 | 44 | 19 |
-| lattepanda | 24 | 14 | 8 |
-| rasp5 | 43 | 28 | 13 |
-| orangepi | 63 | 30 | 14 |
-| jetsono | 118 | 52 | 26 |
-| jetsonx | 123 | 54 | 27 |
-| jetson-nano | 77 | 34 | 17 |
-| 합 | 590 | 280 | 137 |
-| 계획 집합(곱) | 3.2×10¹⁴ | 1.2×10¹² | 4.3×10⁹ |
+| genesis2 | 47 (47) | 24 (24) | 13 (13) |
+| genesis3 | 55 (95) | 28 (44) | 15 (19) |
+| lattepanda | 24 (24) | 14 (14) | 8 (8) |
+| rasp5 | 35 (43) | 20 (28) | 11 (13) |
+| orangepi | 43 (63) | 22 (30) | 12 (14) |
+| jetsono | 108 (118) | 48 (52) | 25 (26) |
+| jetsonx | 113 (123) | 50 (54) | 26 (27) |
+| jetson-nano | 67 (77) | 30 (34) | 16 (17) |
+| 합 | 492 (590) | 236 (280) | 126 (137) |
+| 계획 집합(곱) | 7.6×10¹³ (3.2×10¹⁴) | 3.0×10¹¹ (1.2×10¹²) | 2.1×10⁹ (4.3×10⁹) |
+| k = 2 한 번 훑기 | 99,197 | 22,380 | 6,062 |
+| k = 3 한 번 훑기 | 11,182,263 | 1,220,928 | 173,100 |
 
 ### 7.3 DP와 이웃 탐색 시제품의 시간과 에너지 차
 

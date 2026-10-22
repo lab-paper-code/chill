@@ -112,16 +112,17 @@ func capacityE1Fixture() (SchedulerSettings, SchedulerSnapshot, []CapacityRow, N
 	s.ObservationWindow, s.ComparisonPeriod, s.MaxObservationAge, s.CompletionMarginMS = time.Second, time.Minute, time.Hour, 177
 	d := snap.Workloads[0]
 	d.SLO = SLO{Percentile: 95, TargetLatency: time.Second}
-	rasp5 := snap.Nodes[0].Node
-	lut := schedulerTestCPU(snap.Instances[0])
-	lut.ID = "q1-lut"
+	// E1 placed q1-lut beside q1 on rasp5; with one instance per Workload per
+	// Node (D-R8-1) it stands on a Node of its own with the same κ and chain.
+	lutNode := poolsAddNode(&snap, "lut", map[string]float64{"fixed": 1})
+	lut := poolsInstance(snap.Instances[0], "q1-lut", lutNode, "fixed", "w1")
 	genesis3 := poolsAddNode(&snap, "genesis3", map[string]float64{"fixed": 30})
 	q2 := poolsInstance(snap.Instances[0], "q2", genesis3, "fixed", "w1")
 	profile := *q2.Profile
 	profile.IdleBaselineWatts = 60
 	q2.Profile = &profile
 	snap.Options = append(snap.Options, poolsOption(lut), poolsOption(q2))
-	prepareLUT := poolsCost(schedulerActionPrepare, rasp5, "unloaded", schedulerState(lut), "fixed")
+	prepareLUT := poolsCost(schedulerActionPrepare, lutNode, "unloaded", schedulerState(lut), "fixed")
 	prepareLUT.Trials = []OperationTrial{{Duration: 20200 * time.Millisecond, Joules: 300}}
 	prepareQ2 := poolsCost(schedulerActionPrepare, genesis3, "unloaded", schedulerState(q2), "fixed")
 	prepareQ2.Trials = []OperationTrial{{Duration: 10700 * time.Millisecond, Joules: 300}}
@@ -136,7 +137,7 @@ func capacityE1Fixture() (SchedulerSettings, SchedulerSnapshot, []CapacityRow, N
 func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 	s, snap, rows, genesis3 := capacityE1Fixture()
 	d := capacityDecideForTest(t, s, snap, rows)
-	if d.Status != schedulerStatusFeasible || d.Target == nil || !poolsOn(*d.Target, genesis3) || slices.ContainsFunc(d.Target.Instances, func(i SchedulerInstance) bool { return i.ID == "target-w1-profile-other-cpu-1" }) {
+	if d.Status != schedulerStatusFeasible || d.Target == nil || !poolsOn(*d.Target, genesis3) || poolsOn(*d.Target, NodeReference{Name: "node-lut", UID: "lut"}) {
 		t.Fatalf("genesis3 q2 must be the target: %+v", d)
 	}
 	w := d.Capacity.Workloads[0]
@@ -145,7 +146,7 @@ func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 		t.Fatalf("genesis3 judgment: %+v route %v", w, d.Capacity.Route)
 	}
 	p := capacityPlannerForTest(t, s, snap, rows)
-	slow := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"n1": "profile-other-cpu/b1/w1+profile/b1/w1"}), 20.2)
+	slow := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"lut": "profile@lut-fixed/b1/w1"}), 20.2)
 	fast := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"}), 10.7)
 	j := slow.judgments[0]
 	if slow.feasible || math.Abs(j.backlog-5.7*20.2) > 1e-6 || math.Abs(*j.wait-5.7*20.2/69.2) > 1e-9 || *j.wait <= 1-0.177 {
@@ -1022,15 +1023,16 @@ func TestCapacityRecordsExcludedPlans(t *testing.T) {
 	_, noCost := add("no-cost", "fixed", true)
 	_, pending := add("pending", "fixed", true)
 	_, rejected := add("rejected", "fixed", true)
-	overlap, first := add("overlap", "fixed", true)
+	// One option alone over the Node's CPUs: CPU 7 is not online.
+	offline, first := add("offline-cpu", "fixed", false)
 	second := first
 	profile := *first.Profile
 	profile.ID += "-second"
-	profile.Condition.CPU.AffinityCPUs = []int{0, 1}
+	profile.Condition.CPU.AffinityCPUs = []int{7}
 	metadata := *profile.RuntimeMetadata
-	metadata.CPUAffinity = []int{0, 1}
+	metadata.CPUAffinity = []int{7}
 	profile.RuntimeMetadata = &metadata
-	second.Profile, second.Allocation.CPUs = &profile, []int{0, 1}
+	second.Profile, second.Allocation.CPUs = &profile, []int{7}
 	snap.Options = append(snap.Options, poolsOption(second))
 	fixed, _ := add("fixed-workload", "fixed", true)
 	disabled := poolsInstance(base, "disabled", fixed, "fixed", "w2")
@@ -1038,7 +1040,7 @@ func TestCapacityRecordsExcludedPlans(t *testing.T) {
 	snap.Routing = map[string]map[string]int32{"w1": {"i1": 1}, "w2": {"disabled": 1}}
 	inventory, _ := add("inventory", "fixed", true)
 	snap.Nodes[len(snap.Nodes)-1].Reasons = []string{NodePlacementInventoryMissing}
-	for _, i := range []SchedulerInstance{pending, rejected, first, second} {
+	for _, i := range []SchedulerInstance{pending, rejected, second} {
 		snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, i.Node, "unloaded", schedulerState(i), "fixed"))
 	}
 	rows := capacityRowsForTest(s, snap, nil)
@@ -1051,7 +1053,7 @@ func TestCapacityRecordsExcludedPlans(t *testing.T) {
 	d := capacityDecideForTest(t, s, snap, rows)
 	for node, reason := range map[NodeReference]string{
 		noCost.Node: schedulerPlanMissingOperationCost, pending.Node: CapacityPending, rejected.Node: CapacityRejected,
-		overlap: schedulerPlanInfeasibleResources, fixed: schedulerPlanFixedWorkload, inventory: NodePlacementInventoryMissing,
+		offline: schedulerPlanInfeasibleResources, fixed: schedulerPlanFixedWorkload, inventory: NodePlacementInventoryMissing,
 	} {
 		if !slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return !p.Eligible && p.Reason == reason }) {
 			t.Fatalf("%s: no plan excluded with %s: %+v", node.UID, reason, poolsPlans(d, node))

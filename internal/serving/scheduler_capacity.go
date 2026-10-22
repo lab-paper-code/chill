@@ -558,13 +558,9 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 			if len(chosen) > 0 && (chosen[0].option.Instance.Profile.Condition.PowerMode != i.Profile.Condition.PowerMode || !p.sameModel(chosen[0].w, c.w)) {
 				continue
 			}
-			replicas := 1
-			for _, o := range chosen {
-				if o.w == c.w {
-					replicas++
-				}
-			}
-			if replicas > p.settings.MaxReplicas || len(chosen)+1 > p.settings.MaxInstances {
+			// One instance per Workload on a Node: κ of co-located instances does
+			// not add (m4 r8 D-R8-1); a wider option is the larger instance.
+			if slices.ContainsFunc(chosen, func(o capacityChoice) bool { return o.w == c.w }) || len(chosen)+1 > p.settings.MaxInstances {
 				continue
 			}
 			next := append(slices.Clone(chosen), c)

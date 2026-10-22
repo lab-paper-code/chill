@@ -22,40 +22,35 @@ type e5Option struct {
 	name                 string
 	kappa, e, idle       float64
 	prepareS, prepareJ   float64
-	cuda                 bool
 	plc, vlmCPU, vlmCUDA bool // derives the synthetic PLC / SmolVLM-like options
 	unloaded, removeS    float64
 	removeJ              float64
 	node                 string
-	limit                int
-	group                string // the option a batch variant belongs to: one variant per plan
-	mode                 int    // power mode: one mode per plan
 }
 
 // e5Nodes are the five nodes m4 r7 planned on (Jetsons excluded), with the
 // unloaded node baseline and the measured remove chain of each node.
 func e5Nodes() [][]e5Option {
-	node := func(name string, unloaded, removeS, removeJ float64, limit int, options ...e5Option) []e5Option {
+	node := func(name string, unloaded, removeS, removeJ float64, options ...e5Option) []e5Option {
 		for k := range options {
-			options[k].node, options[k].unloaded, options[k].removeS, options[k].removeJ, options[k].limit = name, unloaded, removeS, removeJ, limit
-			options[k].group = options[k].name
+			options[k].node, options[k].unloaded, options[k].removeS, options[k].removeJ = name, unloaded, removeS, removeJ
 		}
 		return options
 	}
 	return [][]e5Option{
-		node("rasp5", 4.8866, 3.603, 18.092, 2,
+		node("rasp5", 4.8866, 3.603, 18.092,
 			e5Option{name: "q1", kappa: 25.288, e: 0.07068, idle: 4.8985, prepareS: 19.256, prepareJ: 113.906, plc: true, vlmCPU: true},
 			e5Option{name: "q1-lut", kappa: 25.688, e: 0.07453, idle: 4.9041, prepareS: 20.190, prepareJ: 120.089},
 			e5Option{name: "q2", kappa: 29.300, e: 0.09886, idle: 4.8768, prepareS: 15.926, prepareJ: 101.666}),
-		node("orangepi", 2.7264, 3.979, 11.378, 2,
+		node("orangepi", 2.7264, 3.979, 11.378,
 			e5Option{name: "q1", kappa: 7.533, e: 0.09943, idle: 2.7128, prepareS: 36.859, prepareJ: 126.737, plc: true}),
-		node("lattepanda", 9.3047, 3.695, 34.689, 2,
+		node("lattepanda", 9.3047, 3.695, 34.689,
 			e5Option{name: "q1", kappa: 30.067, e: 0.12079, idle: 9.4955, prepareS: 18.278, prepareJ: 202.782, plc: true, vlmCPU: true},
 			e5Option{name: "q2", kappa: 39.079, e: 0.13780, idle: 9.4869, prepareS: 15.764, prepareJ: 177.609}),
-		node("genesis2", 54.0631, 4.361, 232.881, 3,
+		node("genesis2", 54.0631, 4.361, 232.881,
 			e5Option{name: "cpu-q1", kappa: 82.901, e: 0.32292, idle: 54.8725, prepareS: 12.357, prepareJ: 756.903, plc: true, vlmCPU: true},
-			e5Option{name: "cuda-q1", kappa: 104.338, e: 0.26299, idle: 109.6394, prepareS: 13.159, prepareJ: 1164.312, cuda: true, vlmCUDA: true}),
-		node("genesis3", 49.9728, 4.236, 211.444, 3,
+			e5Option{name: "cuda-q1", kappa: 104.338, e: 0.26299, idle: 109.6394, prepareS: 13.159, prepareJ: 1164.312, vlmCUDA: true}),
+		node("genesis3", 49.9728, 4.236, 211.444,
 			e5Option{name: "cpu-q1", kappa: 63.596, e: 0.27643, idle: 51.6730, prepareS: 13.110, prepareJ: 712.615, plc: true, vlmCPU: true},
 			e5Option{name: "cpu-q2", kappa: 69.151, e: 0.32284, idle: 49.7983, prepareS: 10.681, prepareJ: 635.085}),
 	}
@@ -74,8 +69,8 @@ func e5Scaled(variants, modes int) [][]e5Option {
 			for m := range modes {
 				for _, o := range nodes[k] {
 					f := 1 - 0.15*float64(m)
-					o.node, o.mode, o.name = name, m, fmt.Sprint(o.name, "@", m)
-					o.group, o.kappa, o.idle, o.prepareS = o.name, f*o.kappa, o.unloaded+f*(o.idle-o.unloaded), (1+0.1*float64(m))*o.prepareS
+					o.node, o.name = name, fmt.Sprint(o.name, "@", m)
+					o.kappa, o.idle, o.prepareS = f*o.kappa, o.unloaded+f*(o.idle-o.unloaded), (1+0.1*float64(m))*o.prepareS
 					copied = append(copied, o)
 				}
 			}
@@ -141,9 +136,8 @@ var e5Start = map[string]bool{
 }
 
 // e5Planner builds the node plans the planner would hold for the pairs from
-// the current instances: per node every set of at most limit instances of one
-// model and one power mode, one variant per option and at most one CUDA
-// instance (nodePlans holds one model per node plan); plans[n][0] keeps the
+// the current instances: keep, each pair alone (one model and one instance per
+// Workload on a Node) and removing every instance. plans[n][0] keeps the
 // current instances at the routed weights (κ-proportional when routed is nil).
 // Removals run after the route.
 func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]bool, routed map[string]int32) *capacityPlanner {
@@ -233,8 +227,10 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 			return plan
 		}
 		plans := []*capacityPlan{plan(now, true)}
-		for _, set := range e5Sets(pairs, now, current, options[0].limit) {
-			plans = append(plans, plan(set, false))
+		for _, c := range pairs {
+			if len(now) != 1 || now[0].id != c.id {
+				plans = append(plans, plan([]e5Pair{c}, false))
+			}
 		}
 		if len(now) > 0 {
 			plans = append(plans, plan(nil, false)) // remove every instance
@@ -244,44 +240,6 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 	}
 	p.period = max(s.ComparisonPeriod.Seconds(), pre+post)
 	return p
-}
-
-// e5Sets lists the instance sets of one node plan: one power mode and one
-// Workload per set, at most limit instances, one variant per option, at most
-// one CUDA instance, and the current instances excluded.
-func e5Sets(pairs, now []e5Pair, current map[string]bool, limit int) [][]e5Pair {
-	groups := map[[2]int][]e5Pair{}
-	keys := [][2]int{}
-	for _, c := range pairs {
-		key := [2]int{c.opt.mode, c.w}
-		if groups[key] == nil {
-			keys = append(keys, key)
-		}
-		groups[key] = append(groups[key], c)
-	}
-	sets := [][]e5Pair{}
-	for _, key := range keys {
-		group := groups[key]
-		for mask := 1; mask < 1<<len(group); mask++ {
-			set := []e5Pair{}
-			cuda, seen, twice := 0, map[string]bool{}, false
-			for k, c := range group {
-				if mask&(1<<k) != 0 {
-					set = append(set, c)
-					twice = twice || seen[c.opt.group]
-					seen[c.opt.group] = true
-					if c.opt.cuda {
-						cuda++
-					}
-				}
-			}
-			same := len(set) == len(now) && !slices.ContainsFunc(set, func(c e5Pair) bool { return !current[c.id] })
-			if len(set) <= limit && cuda <= 1 && !same && !twice {
-				sets = append(sets, set)
-			}
-		}
-	}
-	return sets
 }
 
 // e5Brute is capacityBruteForce split over the plans of the first Node,

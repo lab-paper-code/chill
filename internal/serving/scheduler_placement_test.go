@@ -31,6 +31,34 @@ func placementFixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 	return s, snap, n2
 }
 
+// D-R8-1 (m4 r8 16:53:29): two rasp5 instances of one Workload served 35–38
+// req/s against their summed κ for 40 req/s. A node plan holds at most one
+// instance per Workload; more capacity on a Node comes from a wider option.
+func TestNodePlanHoldsOneInstancePerWorkload(t *testing.T) {
+	s, snap := schedulerFixture()
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+	cpu0 := poolsInstance(snap.Instances[0], "cpu0", n2, "fixed", "w1")
+	cpu1 := poolsInstance(schedulerTestCPU(snap.Instances[0]), "cpu1", n2, "fixed", "w1")
+	snap.Options = append(snap.Options, poolsOption(cpu0), poolsOption(cpu1))
+	for _, i := range []SchedulerInstance{cpu0, cpu1} {
+		snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(i), "fixed"))
+	}
+	p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	n := slices.IndexFunc(p.snapshot.Nodes, func(node SchedulerNode) bool { return node.Node == n2 })
+	single := 0
+	for _, plan := range p.plans[n] {
+		if len(plan.instances) > 1 {
+			t.Fatalf("node plan with two instances of one Workload: %+v", plan.record)
+		}
+		if plan.record.Eligible && len(plan.instances) == 1 {
+			single++
+		}
+	}
+	if single != 2 {
+		t.Fatalf("each option alone must stay a node plan, got %d", single)
+	}
+}
+
 // The disabled controls gate node plans: placement OFF keeps each Workload on
 // its Nodes, resources OFF keeps its CPU/GPU choice, batching OFF its batch
 // limit, and replicas OFF its total instance count while it moves.
