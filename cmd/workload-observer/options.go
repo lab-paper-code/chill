@@ -17,26 +17,28 @@ const (
 	defaultWindowReadyPath       = "/coordination/workload-window-ready"
 	defaultEndSignalPath         = "/coordination/measurement-end"
 	defaultWorkloadResultPath    = "/coordination/workload-result.json"
+	defaultRuntimeFailedPath     = "/coordination/runtime-failed"
 )
 
 type options struct {
-	runConfig        string
-	readyPath        string
-	windowStartPath  string
-	windowReadyPath  string
-	endPath          string
-	resultPath       string
-	selectorLabelCSV string
-	endWaitTimeout   time.Duration
-	endFenceTimeout  time.Duration
-	maxEvents        int
-	maxResultBytes   int64
-	kubeAPIServer    string
-	kubeAPITokenFile string
-	kubeAPICAFile    string
-	podNamespace     string
-	podName          string
-	podUID           string
+	runConfig         string
+	readyPath         string
+	windowStartPath   string
+	windowReadyPath   string
+	endPath           string
+	resultPath        string
+	runtimeFailedPath string
+	selectorLabelCSV  string
+	endWaitTimeout    time.Duration
+	endFenceTimeout   time.Duration
+	maxEvents         int
+	maxResultBytes    int64
+	kubeAPIServer     string
+	kubeAPITokenFile  string
+	kubeAPICAFile     string
+	podNamespace      string
+	podName           string
+	podUID            string
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
@@ -52,6 +54,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	)
 	set.StringVar(&o.endPath, "end-signal-file", defaultEndSignalPath, "measurement-end signal path")
 	set.StringVar(&o.resultPath, "result-file", defaultWorkloadResultPath, "atomic WorkloadObserver result path")
+	set.StringVar(&o.runtimeFailedPath, "runtime-failed-file", defaultRuntimeFailedPath, "runtime-failed signal path")
 	set.StringVar(&o.selectorLabelCSV, "selector-label-keys", "", "sorted CHILL workload label keys to retain")
 	set.DurationVar(&o.endWaitTimeout, "end-wait-timeout", 0, "Job-derived maximum wait for measurement-end")
 	set.DurationVar(
@@ -94,7 +97,7 @@ func (o options) validate() error {
 	paths := map[string]string{
 		"ready": o.readyPath, "workload-window-start": o.windowStartPath,
 		"workload-window-ready": o.windowReadyPath, "measurement-end": o.endPath,
-		"result": o.resultPath,
+		"result": o.resultPath, "runtime-failed": o.runtimeFailedPath,
 	}
 	seenPaths := make(map[string]struct{}, len(paths))
 	for name, value := range paths {

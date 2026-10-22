@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,6 +37,26 @@ func TestExecuteRequiresMeasurementEndBeforePublishingResult(t *testing.T) {
 	}
 	if _, statErr := os.Stat(options.metricResultPath); !os.IsNotExist(statErr) {
 		t.Fatalf("missing measurement-end produced a metric result: %v", statErr)
+	}
+}
+
+func TestExecuteFailsPromptlyWhenRuntimeFails(t *testing.T) {
+	directory := t.TempDir()
+	writeTestRunConfig(t, directory, "http://127.0.0.1:1/metrics")
+	options := testOptions(directory)
+	options.endWaitTimeout = 10 * time.Minute
+	go func() {
+		time.Sleep(time.Second)
+		_ = worker.PublishSignal(options.runtimeFailedPath)
+	}()
+
+	started := time.Now()
+	err := execute(context.Background(), options, &http.Client{}, 10*time.Minute, time.Millisecond)
+	if !errors.Is(err, worker.ErrRuntimeFailed) {
+		t.Fatalf("execute() error = %v, want runtime failure", err)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("observer ended %s after start, want within seconds of the runtime failure", elapsed)
 	}
 }
 
@@ -134,6 +155,6 @@ func testOptions(directory string) options {
 		readyPath: filepath.Join(directory, "observer-ready"), startPath: filepath.Join(directory, "measurement-start"),
 		endPath:          filepath.Join(directory, "measurement-end"),
 		metricResultPath: filepath.Join(directory, "metric-result.json"), startWaitTimeout: time.Second,
-		endWaitTimeout: time.Second, maxEvents: 100,
+		endWaitTimeout: time.Second, maxEvents: 100, runtimeFailedPath: filepath.Join(directory, "runtime-failed"),
 	}
 }

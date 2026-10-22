@@ -151,10 +151,37 @@ func WaitForSignal(ctx context.Context, path string, timeout, pollInterval time.
 		}
 		select {
 		case <-waitCtx.Done():
-			return fmt.Errorf("wait for signal: %w", waitCtx.Err())
+			return fmt.Errorf("wait for signal: %w", context.Cause(waitCtx))
 		case <-ticker.C:
 		}
 	}
+}
+
+// StopOnRuntimeFailure returns a context that ends with ErrRuntimeFailed once
+// the runtime-failed signal appears, so an observer stops waiting for a
+// measurement that can no longer happen.
+func StopOnRuntimeFailure(
+	ctx context.Context,
+	path string,
+	pollInterval time.Duration,
+) (context.Context, context.CancelFunc) {
+	stopped, cancel := context.WithCancelCause(ctx)
+	go func() {
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+		for {
+			if _, err := os.Lstat(path); err == nil {
+				cancel(ErrRuntimeFailed)
+				return
+			}
+			select {
+			case <-stopped.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return stopped, func() { cancel(context.Canceled) }
 }
 
 func publishFile(path string, payload []byte) error {

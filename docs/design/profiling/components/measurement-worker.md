@@ -238,6 +238,7 @@ measurement-start    runtime completed warm-up and opens the measurement window
 measurement-end      runtime completed its final measured inference
 metric-result.json    complete MetricObserver Result, written by temp-file + rename
 workload-result.json  complete WorkloadObserver Result, written atomically
+runtime-failed       runtime failed and is exiting; observers stop and exit failed
 ```
 
 For `idle-model-loaded`, the same signals retain the same ownership but have
@@ -275,6 +276,10 @@ The runtime sequence is fixed:
     size, and perform one immutable create; and
 11. write the validated Evidence Store receipt to `/dev/termination-log` and
     exit successfully.
+
+On any failure the runtime atomically creates `runtime-failed` before it exits
+with its failure class. Both observers watch for that signal from startup and
+end every wait at once, so a failed attempt releases the Node within seconds.
 
 The MetricObserver sequence is fixed:
 

@@ -74,15 +74,19 @@ the separate measurement-start signal used by MetricObserver and begins
 inference. Pods that disappeared before this second list cannot contaminate the
 measurement window.
 
-The executable uses five atomic Job-local coordination paths:
+The executable uses six atomic Job-local coordination paths:
 
 ```text
 workload-observer-ready  preflight list-watch capability is established
 workload-window-start    warm-up is complete; open the retained observation
 workload-window-ready    retained list-watch continuity is established
 measurement-end          runtime has closed its measurement window
+runtime-failed           runtime failed and is exiting; stop and exit failed
 workload-result.json     validated result after the causal Pod-status end fence
 ```
+
+`runtime-failed` ends every wait and the open watch at once, so the Pod fails
+within seconds of the runtime and releases the Node.
 
 The observer continues consuming the established watch after the runtime end
 signal. MetricObserver cannot exit successfully until it has observed that same

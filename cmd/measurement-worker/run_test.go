@@ -127,6 +127,37 @@ func TestExitCodeMapsWorkerFailureClasses(t *testing.T) {
 	}
 }
 
+func TestExecutePublishesRuntimeFailedOnlyOnFailure(t *testing.T) {
+	opts := validOptions(t)
+	opts.runtimeFailedPath = filepath.Join(t.TempDir(), "runtime-failed")
+	err := execute(context.Background(), opts, io.Discard, io.Discard, successfulDependencies(validReceipt()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(opts.runtimeFailedPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("successful attempt published runtime-failed: %v", err)
+	}
+
+	deps := successfulDependencies(validReceipt())
+	deps.buildCoordinator = func(
+		options,
+		profilingrun.VerifiedRunConfig,
+		io.Writer,
+		io.Writer,
+	) (measurementCoordinator, error) {
+		return &fakeCoordinator{execute: func(worker.Request) (evidencestore.Receipt, error) {
+			return evidencestore.Receipt{}, worker.ErrRuntimeMeasurement
+		}}, nil
+	}
+	err = execute(context.Background(), opts, io.Discard, io.Discard, deps)
+	if !errors.Is(err, worker.ErrRuntimeMeasurement) {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if info, err := os.Stat(opts.runtimeFailedPath); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("failed attempt did not publish runtime-failed: %v", err)
+	}
+}
+
 func validOptions(t *testing.T) options {
 	t.Helper()
 	config, err := validCPUConfig(t).CanonicalJSON()
@@ -140,7 +171,7 @@ func validOptions(t *testing.T) options {
 		workloadWindowStartPath: defaultWorkloadWindowStartPath, measurementStartPath: defaultMeasurementStartPath,
 		workloadWindowReadyPath: defaultWorkloadWindowReadyPath, measurementEndPath: defaultMeasurementEndPath,
 		metricResultPath: defaultMetricResultPath, workloadResultPath: defaultWorkloadResultPath,
-		terminationMessagePath:   defaultTerminationMessagePath,
+		terminationMessagePath: defaultTerminationMessagePath, runtimeFailedPath: defaultRuntimeFailedPath,
 		firstfloorRuntimeCommand: []string{"python3", "/opt/chill/runtime/firstfloor/measurement.py"},
 		attemptTimeout:           10 * time.Minute, observerReadyTimeout: time.Minute,
 		metricResultTimeout: time.Minute, workloadResultTimeout: time.Minute,

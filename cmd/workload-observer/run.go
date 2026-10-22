@@ -34,6 +34,8 @@ func execute(
 	if coreClient == nil {
 		return errors.New("Kubernetes core client is required")
 	}
+	ctx, stop := worker.StopOnRuntimeFailure(ctx, opts.runtimeFailedPath, pollInterval)
+	defer stop()
 	runConfig, err := worker.ParseVerifiedRunConfig(opts.runConfig)
 	if err != nil {
 		return err
@@ -104,7 +106,7 @@ func execute(
 	case <-ctx.Done():
 		stopObservation()
 		<-observed
-		return fmt.Errorf("workload observation interrupted before ready: %w", ctx.Err())
+		return fmt.Errorf("workload observation interrupted before ready: %w", context.Cause(ctx))
 	}
 	if err := worker.PublishSignal(opts.windowReadyPath); err != nil {
 		stopObservation()
@@ -133,6 +135,9 @@ func execute(
 		stopWaiting()
 	}
 	stopObservation()
+	if cause := context.Cause(ctx); cause != nil {
+		return fmt.Errorf("workload observation interrupted: %w", cause)
+	}
 	if outcome.err != nil {
 		return outcome.err
 	}

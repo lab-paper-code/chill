@@ -44,7 +44,16 @@ func execute(
 	opts options,
 	stdout, stderr io.Writer,
 	deps dependencies,
-) error {
+) (err error) {
+	defer func() {
+		if err == nil {
+			return
+		}
+		// Observers stop waiting for a measurement that can no longer happen.
+		if signalErr := worker.PublishSignal(opts.runtimeFailedPath); signalErr != nil {
+			_, _ = fmt.Fprintf(stderr, "publish runtime-failed: %v\n", signalErr)
+		}
+	}()
 	runConfig, err := deps.parseRunConfig(opts.runConfig)
 	if err != nil {
 		return fmt.Errorf("%w: load RunConfig: %w", worker.ErrExecutionContract, err)

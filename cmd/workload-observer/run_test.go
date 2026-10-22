@@ -113,6 +113,34 @@ func TestExecuteRejectsPodOutsideRunConfigNodeBeforeReady(t *testing.T) {
 	}
 }
 
+func TestExecuteFailsPromptlyWhenRuntimeFails(t *testing.T) {
+	directory := t.TempDir()
+	writeWorkloadTestRunConfig(t, directory)
+	opts := workloadTestOptions(directory)
+	opts.endWaitTimeout = 10 * time.Minute
+	pod := workloadTestPod()
+	client := fake.NewSimpleClientset(pod.DeepCopy())
+	other := *workloadTestPod()
+	other.Namespace, other.Name, other.UID, other.OwnerReferences = "default", "other", "other-uid", nil
+	installPodObservationReactors(t, client, *pod, other, make(chan string, 2), watch.NewRaceFreeFake())
+	go func() {
+		time.Sleep(time.Second)
+		_ = worker.PublishSignal(opts.runtimeFailedPath)
+	}()
+
+	started := time.Now()
+	err := execute(context.Background(), opts, client.CoreV1(), time.Millisecond)
+	if !errors.Is(err, worker.ErrRuntimeFailed) {
+		t.Fatalf("execute() error = %v, want runtime failure", err)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("observer ended %s after start, want within seconds of the runtime failure", elapsed)
+	}
+	if _, statErr := os.Stat(opts.resultPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("failed runtime produced a workload result: %v", statErr)
+	}
+}
+
 func TestOptionsRejectNonCanonicalSelectorKeys(t *testing.T) {
 	opts := workloadTestOptions(t.TempDir())
 	opts.selectorLabelCSV = "z,a"
@@ -189,14 +217,15 @@ func workloadTestOptions(directory string) options {
 		payload = []byte(`{}`)
 	}
 	return options{
-		runConfig:        string(payload),
-		readyPath:        filepath.Join(directory, "workload-ready"),
-		windowStartPath:  filepath.Join(directory, "workload-window-start"),
-		windowReadyPath:  filepath.Join(directory, "workload-window-ready"),
-		endPath:          filepath.Join(directory, "measurement-end"),
-		resultPath:       filepath.Join(directory, "workload-result.json"),
-		selectorLabelCSV: "app,component",
-		endWaitTimeout:   time.Second, endFenceTimeout: 3 * time.Second,
+		runConfig:         string(payload),
+		readyPath:         filepath.Join(directory, "workload-ready"),
+		windowStartPath:   filepath.Join(directory, "workload-window-start"),
+		windowReadyPath:   filepath.Join(directory, "workload-window-ready"),
+		endPath:           filepath.Join(directory, "measurement-end"),
+		resultPath:        filepath.Join(directory, "workload-result.json"),
+		runtimeFailedPath: filepath.Join(directory, "runtime-failed"),
+		selectorLabelCSV:  "app,component",
+		endWaitTimeout:    time.Second, endFenceTimeout: 3 * time.Second,
 		maxEvents: 100, maxResultBytes: 1 << 20,
 		podNamespace: "chill-system", podName: "run", podUID: "pod-uid",
 	}

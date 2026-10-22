@@ -27,6 +27,8 @@ func execute(
 	if client == nil {
 		return errors.New("HTTP client is required")
 	}
+	ctx, stop := worker.StopOnRuntimeFailure(ctx, opts.runtimeFailedPath, pollInterval)
+	defer stop()
 	runConfig, err := worker.ParseVerifiedRunConfig(opts.runConfig)
 	if err != nil {
 		return err
@@ -73,11 +75,11 @@ func execute(
 		RequestTimeout: time.Duration(metrics.TimeoutMilliseconds) * time.Millisecond,
 		MaxEvents:      opts.maxEvents,
 	}, func() {})
+	if cause := context.Cause(ctx); cause != nil {
+		return fmt.Errorf("metric observation interrupted: %w", cause)
+	}
 	if err != nil {
 		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("metric observation interrupted: %w", err)
 	}
 	if err := worker.WaitForSignal(ctx, opts.endPath, opts.endWaitTimeout, pollInterval); err != nil {
 		return fmt.Errorf("wait for measurement-end: %w", err)

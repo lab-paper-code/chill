@@ -13,4 +13,6 @@ var (
 	ErrWorkloadObservation = errors.New("workload observation failed")
 	// ErrEvidenceCommit classifies encoding, immutable-write, and receipt failures.
 	ErrEvidenceCommit = errors.New("evidence commit failed")
+	// ErrRuntimeFailed reports that the runtime published runtime-failed and exited.
+	ErrRuntimeFailed = errors.New("runtime container failed")
 )

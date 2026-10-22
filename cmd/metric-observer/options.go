@@ -8,22 +8,24 @@ import (
 )
 
 const (
-	defaultReadyPath              = "/coordination/observer-ready"
-	defaultStartSignalPath        = "/coordination/measurement-start"
-	defaultEndSignalPath          = "/coordination/measurement-end"
-	defaultMetricResultPath       = "/coordination/metric-result.json"
-	maximumResultBytes      int64 = 8 << 20
+	defaultReadyPath               = "/coordination/observer-ready"
+	defaultStartSignalPath         = "/coordination/measurement-start"
+	defaultEndSignalPath           = "/coordination/measurement-end"
+	defaultMetricResultPath        = "/coordination/metric-result.json"
+	defaultRuntimeFailedPath       = "/coordination/runtime-failed"
+	maximumResultBytes       int64 = 8 << 20
 )
 
 type options struct {
-	runConfig        string
-	readyPath        string
-	startPath        string
-	endPath          string
-	metricResultPath string
-	startWaitTimeout time.Duration
-	endWaitTimeout   time.Duration
-	maxEvents        int
+	runConfig         string
+	readyPath         string
+	startPath         string
+	endPath           string
+	metricResultPath  string
+	startWaitTimeout  time.Duration
+	endWaitTimeout    time.Duration
+	maxEvents         int
+	runtimeFailedPath string
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
@@ -32,6 +34,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	set.StringVar(&o.startPath, "start-signal-file", defaultStartSignalPath, "measurement-start signal path")
 	set.StringVar(&o.endPath, "end-signal-file", defaultEndSignalPath, "measurement-end signal path")
 	set.StringVar(&o.metricResultPath, "result-file", defaultMetricResultPath, "atomic MetricObserver result path")
+	set.StringVar(&o.runtimeFailedPath, "runtime-failed-file", defaultRuntimeFailedPath, "runtime-failed signal path")
 	set.DurationVar(&o.startWaitTimeout, "start-wait-timeout", 0, "Job-derived maximum wait for measurement-start")
 	set.DurationVar(&o.endWaitTimeout, "end-wait-timeout", 0, "Job-derived maximum wait for measurement-end")
 	set.IntVar(&o.maxEvents, "max-events", 0, "Job-derived maximum retained sample and failure events")

@@ -22,6 +22,7 @@ const (
 	defaultMetricResultPath          = "/coordination/metric-result.json"
 	defaultWorkloadResultPath        = "/coordination/workload-result.json"
 	defaultTerminationMessagePath    = "/dev/termination-log"
+	defaultRuntimeFailedPath         = "/coordination/runtime-failed"
 	maximumReceiptBytes              = 4 << 10
 	handoffPollInterval              = 100 * time.Millisecond
 )
@@ -39,6 +40,7 @@ type options struct {
 	metricResultPath         string
 	workloadResultPath       string
 	terminationMessagePath   string
+	runtimeFailedPath        string
 	firstfloorRuntimeCommand []string
 	attemptTimeout           time.Duration
 	observerReadyTimeout     time.Duration
@@ -69,6 +71,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.metricResultPath = defaultMetricResultPath
 	o.workloadResultPath = defaultWorkloadResultPath
 	o.terminationMessagePath = defaultTerminationMessagePath
+	o.runtimeFailedPath = defaultRuntimeFailedPath
 	o.firstfloorRuntimeCommand = []string{"python3", "/opt/chill/runtime/firstfloor/measurement.py"}
 	o.podUID = os.Getenv("POD_UID")
 	o.scheduledNodeName = os.Getenv("NODE_NAME")
@@ -119,7 +122,7 @@ func (o options) validate() error {
 		"measurement-start":     o.measurementStartPath, "measurement-end": o.measurementEndPath,
 		"workload-window-ready": o.workloadWindowReadyPath,
 		"metric result":         o.metricResultPath, "workload result": o.workloadResultPath,
-		"termination message": o.terminationMessagePath,
+		"termination message": o.terminationMessagePath, "runtime-failed": o.runtimeFailedPath,
 	} {
 		if !filepath.IsAbs(value) || filepath.Clean(value) != value {
 			return errors.New(name + " path must be a clean absolute path")
