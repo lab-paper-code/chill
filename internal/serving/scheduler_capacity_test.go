@@ -679,6 +679,42 @@ func TestCapacitySearchThreeNodesFindsWhatTwoMiss(t *testing.T) {
 	}
 }
 
+// capacityTwinSwap: a Node serves λ 10 with instance a at 10 W; plan "swap"
+// puts the twin b there and saves gain J over T 60 s. Both profiles carry
+// the m4 rasp5 q1 model-loaded idle half-width (0.282 W at 0.95) and a
+// per-input half-width of 1 mJ.
+func capacityTwinSwap(gain float64) *capacityPlanner {
+	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 10, slack: 1}}
+	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
+	profile := &Profile{IdleBaselineHalfWidthWatts: 0.282, Batches: []BatchProfile{{Batch: 1, EnergyPerInputJoules: 1, EnergyPerInputHalfWidthJoules: 0.001}}}
+	a := SchedulerInstance{ID: "a", WorkloadUID: "w", Profile: profile}
+	b := SchedulerInstance{ID: "b", WorkloadUID: "w", Profile: profile}
+	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{a}, items: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, before: 10}
+	swap := &capacityPlan{instances: []SchedulerInstance{b}, items: [][]capacityItem{{{id: "b", kappa: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, mid: 10, after: 10 - gain/60}
+	keep.record.Eligible, swap.record.Eligible, swap.record.Key = true, true, "swap"
+	p.sum(keep)
+	p.sum(swap)
+	p.plans, p.compared = [][]*capacityPlan{{keep, swap}}, []bool{true}
+	return p
+}
+
+// §9 6 minimum gain: a transition is chosen over keep only when its gain over
+// T exceeds the measurement uncertainty of the two candidates. The identical-
+// node swap of capacity-table-evidence §7.6 (2.7 J) keeps; 100 J moves.
+func TestCapacityTransitionNeedsGainBeyondUncertainty(t *testing.T) {
+	for gain, keeps := range map[float64]bool{2.7: true, 100: false} {
+		p := capacityTwinSwap(gain)
+		best := capacitySearchForTest(t, p)
+		if best.keep || math.Abs(p.evaluate([]int{0}, 0).joules-best.joules-gain) > 1e-6 {
+			t.Fatalf("fixture: the swap must save %g J: %+v", gain, best)
+		}
+		if got := p.minimumGain(best); got.keep != keeps || got.keep != got.withinUncertainty {
+			t.Fatalf("gain %g J: keep=%v withinUncertainty=%v", gain, got.keep, got.withinUncertainty)
+		}
+	}
+}
+
 // §9 6 search: a search past its budget keeps the best plan set it found and
 // records the cut.
 func TestCapacitySearchBudgetCutIsRecorded(t *testing.T) {

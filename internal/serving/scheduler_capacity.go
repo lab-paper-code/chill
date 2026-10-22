@@ -37,6 +37,9 @@ const (
 	// schedulerReplacementUnpaid names a node whose replacement did not repay
 	// its transition at the least load of the observation window.
 	schedulerReplacementUnpaid = "ReplacementUnpaid"
+	// schedulerGainWithinUncertainty keeps the current configuration when the
+	// chosen transition saves no more than the measurement uncertainty.
+	schedulerGainWithinUncertainty = "TransitionGainWithinUncertainty"
 	// schedulerIdleInstanceRemoved names an instance unrouted for one
 	// observation window that the target removes.
 	schedulerIdleInstanceRemoved = "IdleInstanceRemoved"
@@ -191,7 +194,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err != nil {
 		return SchedulerDecision{}, err
 	}
-	return planner.decide(decision, planner.payback(best)), ctx.Err()
+	return planner.decide(decision, planner.minimumGain(planner.payback(best))), ctx.Err()
 }
 
 // schedulerCanonical orders the snapshot lists the planner iterates, so the
@@ -1098,6 +1101,9 @@ type capacityResult struct {
 	sums                      [][2]float64
 	// unpaid names the Nodes whose replacement payback reverted to keep.
 	unpaid []string
+	// withinUncertainty marks keep chosen over a transition whose gain is
+	// within the measurement uncertainty (minimumGain).
+	withinUncertainty bool
 }
 
 // evaluate judges the plan set (one plan index per Node) at route r and sums
@@ -1292,6 +1298,72 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 	return best
 }
 
+// minimumGain keeps the current configuration when a feasible plan set that
+// changes a Node saves no more energy over T than the measurement uncertainty
+// of the two candidates. The uncertainty combines, in quadrature (independent
+// measurements), the confidence half-widths the profiles record: the
+// model-loaded idle power of the instances on each changed Node, before (keep)
+// and during and after the chain, and the per-input energy times the requests
+// each instance gains or loses. Unloaded node baselines (one idle window) and
+// operation costs (one trial each in m4 r7) record no interval and add none.
+func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
+	if !best.feasible || best.keep {
+		return best
+	}
+	keep := p.evaluate(make([]int, len(p.plans)), 0)
+	if !keep.feasible {
+		return best
+	}
+	power := func(instances ...[]SchedulerInstance) float64 {
+		sq := 0.0
+		for _, list := range instances {
+			for _, i := range list {
+				if i.Profile != nil {
+					sq += i.Profile.IdleBaselineHalfWidthWatts * i.Profile.IdleBaselineHalfWidthWatts
+				}
+			}
+		}
+		return math.Sqrt(sq)
+	}
+	t, r, sq := p.period, best.route, 0.0
+	half := map[string]float64{} // per-input half-width by instance ID
+	for n, j := range best.choice {
+		before, plan := p.plans[n][0], p.plans[n][j]
+		for _, i := range append(slices.Clone(before.instances), plan.instances...) {
+			if b := schedulerBatch(i.Profile, 1); b != nil {
+				half[i.ID] = b.EnergyPerInputHalfWidthJoules
+			}
+		}
+		if j == 0 {
+			continue
+		}
+		sq += math.Pow(power(before.instances)*t, 2) + math.Pow(power(before.instances, plan.instances)*(r-plan.preMean), 2) +
+			math.Pow(power(plan.instances)*(t-r-plan.postMean), 2)
+	}
+	requests := func(res capacityResult) map[string]float64 {
+		out := map[string]float64{}
+		for w, weights := range res.weights {
+			units := int32(0)
+			for _, weight := range weights {
+				units += weight
+			}
+			for id, weight := range weights {
+				out[id] += p.ws[w].rate * float64(weight) / float64(units) * t
+			}
+		}
+		return out
+	}
+	gained, lost := requests(best), requests(keep)
+	for id, h := range half {
+		sq += math.Pow(h*(gained[id]-lost[id]), 2)
+	}
+	if keep.joules-best.joules > math.Sqrt(sq) {
+		return best
+	}
+	keep.withinUncertainty = true
+	return keep
+}
+
 // routeOf is the route time of a plan set: its longest chain before the route.
 func (p *capacityPlanner) routeOf(choice []int) float64 {
 	r := 0.0
@@ -1478,6 +1550,9 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	for _, node := range best.unpaid {
 		decision.Reasons = append(decision.Reasons, schedulerReplacementUnpaid+":"+node)
+	}
+	if best.withinUncertainty {
+		decision.Reasons = append(decision.Reasons, schedulerGainWithinUncertainty)
 	}
 	if !best.feasible {
 		target.Status = SchedulerStatusOverload

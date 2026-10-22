@@ -311,9 +311,8 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			return serving.Profile{}, nil, err
 		}
 	}
-	baseline, err := profilederivation.DeriveIdleBaseline(idleTrials, profilederivation.PointPolicy{
-		Version: "energy-objective-point-v1", MinimumTrials: int(campaign.Spec.TrialsPerBatch), ConfidenceLevel: c.confidenceLevel,
-	})
+	policy := profilederivation.PointPolicy{Version: "energy-objective-point-v1", MinimumTrials: int(campaign.Spec.TrialsPerBatch), ConfidenceLevel: c.confidenceLevel}
+	baseline, err := profilederivation.DeriveIdleBaseline(idleTrials, policy)
 	if err != nil {
 		return serving.Profile{}, nil, fmt.Errorf("restore measured idle baseline: %w", err)
 	}
@@ -384,7 +383,8 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	profile := serving.Profile{
 		ID: source.String() + "/" + string(campaign.UID), Reference: resultReference,
 		NodeName: state.TargetNode, Condition: condition, Evidence: evidenceReferences,
-		ConfidenceLevel: c.confidenceLevel, IdleBaselineWatts: baseline.ModelLoadedIdleMeanWallWatts, MeasuredAt: measuredAt,
+		ConfidenceLevel: c.confidenceLevel, IdleBaselineWatts: baseline.ModelLoadedIdleMeanWallWatts, IdleBaselineHalfWidthWatts: baseline.ConfidenceHalfWidth,
+		MeasuredAt:   measuredAt,
 		MetricSource: metricSource,
 	}
 	if runtimeMetadata != nil {
@@ -406,11 +406,15 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			issues = append(issues, CatalogIssue{Source: source, Code: "MemoryEvidenceMissing", Reason: fmt.Sprintf("batch %d has no measured runtime memory bytes for every trial", batchSize)})
 			continue
 		}
-		if batch.trials < int(campaign.Spec.TrialsPerBatch) {
-			issues = append(issues, CatalogIssue{Source: source, Code: "MeasurementEvidenceMissing", Reason: fmt.Sprintf("batch %d has %d completed raw trials; campaign requires %d", batchSize, batch.trials, campaign.Spec.TrialsPerBatch)})
+		if len(batch.energies) < int(campaign.Spec.TrialsPerBatch) {
+			issues = append(issues, CatalogIssue{Source: source, Code: "MeasurementEvidenceMissing", Reason: fmt.Sprintf("batch %d has %d completed raw trials; campaign requires %d", batchSize, len(batch.energies), campaign.Spec.TrialsPerBatch)})
 			continue
 		}
-		batch.profile.EnergyPerInputJoules = batch.energySum / float64(batch.trials)
+		point, err := profilederivation.Aggregate(batch.energies, policy)
+		if err != nil {
+			return serving.Profile{}, nil, fmt.Errorf("aggregate measured energy for batch %d: %w", batchSize, err)
+		}
+		batch.profile.EnergyPerInputJoules, batch.profile.EnergyPerInputHalfWidthJoules = point.MeanIncrementalWorkJoulesPerItem, point.Confidence.HalfWidth
 		profile.Batches = append(profile.Batches, batch.profile)
 	}
 	if len(issues) != 0 {
@@ -457,8 +461,7 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 
 type catalogBatch struct {
 	profile       serving.BatchProfile
-	trials        int
-	energySum     float64
+	energies      []profilederivation.EnergyTrial
 	missingMemory bool
 }
 
@@ -474,11 +477,7 @@ func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivati
 		}
 		b.profile.DurationNanos = append(b.profile.DurationNanos, nanos)
 	}
-	b.trials++
-	b.energySum += energy.IncrementalWorkJoulesPerItem
-	if math.IsNaN(b.energySum) || math.IsInf(b.energySum, 0) {
-		return errors.New("measured energy aggregate is not finite")
-	}
+	b.energies = append(b.energies, energy)
 	b.missingMemory = b.missingMemory || memoryBytes == 0
 	if memoryBytes > b.profile.MemoryBytes {
 		b.profile.MemoryBytes = memoryBytes
