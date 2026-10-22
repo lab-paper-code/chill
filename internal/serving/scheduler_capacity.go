@@ -1389,25 +1389,46 @@ func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
 	return joules
 }
 
-// search walks from keep: each step moves to the best admissible plan set
-// that changes at most k Nodes, first with k = 2 until no step improves, then
-// with k = 3 from there. At deadline the sweep stops; the best plan set found
-// so far stays and p.searched records the cut.
+// search walks from two starts, keep and every Node emptied (its plan without
+// instances, keep when it has none), so a change of many Nodes that each step
+// from keep would refuse is still reached from the other side. From each
+// start a step moves to the best admissible plan set that changes at most k
+// Nodes, first with k = 2 until no step improves, then with k = 3 from there.
+// The better end of the two starts is the result. At deadline the sweep
+// stops; the best plan set found so far stays and p.searched records the cut.
 func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 	start := time.Now()
-	choice := make([]int, len(p.plans))
-	best := p.evaluate(slices.Clone(choice), 0)
+	keep, empty := make([]int, len(p.plans)), make([]int, len(p.plans))
+	for n, plans := range p.plans {
+		empty[n] = max(0, slices.IndexFunc(plans, func(plan *capacityPlan) bool { return plan.record.Eligible && len(plan.instances) == 0 }))
+	}
+	starts := [][]int{keep}
+	if !slices.Equal(empty, keep) {
+		starts = append(starts, empty)
+	}
+	ends := make([]capacityResult, len(starts))
+	for s, choice := range starts {
+		ends[s] = p.evaluate(slices.Clone(choice), p.routeOf(choice))
+	}
 	for k := 2; k <= 3 && !p.searched.BudgetCut; k++ {
 		p.searched.Neighborhood = k
-		for !p.searched.BudgetCut {
-			step, err := p.sweep(choice, k, deadline)
-			if err != nil {
-				return capacityResult{}, err
+		for s := range starts {
+			for !p.searched.BudgetCut {
+				step, err := p.sweep(ends[s].choice, k, deadline)
+				if err != nil {
+					return capacityResult{}, err
+				}
+				if step == nil || !step.better(&ends[s]) {
+					break
+				}
+				ends[s] = *step
 			}
-			if step == nil || !step.better(&best) {
-				break
-			}
-			best, choice = *step, step.choice
+		}
+	}
+	best := ends[0]
+	for _, end := range ends[1:] {
+		if end.better(&best) {
+			best = end
 		}
 	}
 	p.searched.Duration = time.Since(start)

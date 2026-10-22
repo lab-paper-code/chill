@@ -715,6 +715,36 @@ func TestCapacityTransitionNeedsGainBeyondUncertainty(t *testing.T) {
 	}
 }
 
+// §9 6 search: four Nodes serve λ 39.5 with κ 10 each at 10 W; Node 0 can
+// instead hold κ 40 at 35 W. That saves 5 W only with all three others
+// emptied, four changed Nodes, beyond k = 3 from keep. The second start, every
+// Node emptied, reaches it in one step.
+func TestCapacitySearchEmptyStartFindsFourNodeChange(t *testing.T) {
+	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 39.5, slack: 1}}
+	for n := range 4 {
+		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
+		i := SchedulerInstance{ID: fmt.Sprint("i", n), WorkloadUID: "w"}
+		item := capacityItem{id: i.ID, kappa: 10, e: 1}
+		keep := &capacityPlan{keep: true, instances: []SchedulerInstance{i}, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
+		empty := &capacityPlan{items: [][]capacityItem{nil}, retained: [][]capacityItem{{item}}}
+		plans := []*capacityPlan{keep, empty}
+		if n == 0 {
+			big := SchedulerInstance{ID: "big", WorkloadUID: "w"}
+			plans = append(plans, &capacityPlan{instances: []SchedulerInstance{big}, items: [][]capacityItem{{{id: "big", kappa: 40, e: 1}}}, retained: [][]capacityItem{{item}}, after: 35})
+		}
+		for j, plan := range plans {
+			plan.record.Eligible, plan.record.Key = true, fmt.Sprint("plan-", j)
+			p.sum(plan)
+		}
+		p.plans = append(p.plans, plans)
+		p.compared = append(p.compared, true)
+	}
+	if best := capacitySearchForTest(t, p); !best.feasible || !slices.Equal(best.choice, []int{2, 1, 1, 1}) {
+		t.Fatalf("the empty start must reach the four-Node change: %v %v %g", best.feasible, best.choice, best.joules)
+	}
+}
+
 // §9 6 search: a search past its budget keeps the best plan set it found and
 // records the cut.
 func TestCapacitySearchBudgetCutIsRecorded(t *testing.T) {
