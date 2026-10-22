@@ -153,6 +153,11 @@ type ProfilingRunStatus struct {
 	// Evidence identifies independently verified immutable execution evidence.
 	// +optional
 	Evidence *ProfilingRunEvidenceReference `json:"evidence,omitempty"`
+
+	// RuntimeTermination keeps the failed runtime container's exit code and
+	// log tail, so the cause of a failed Job outlives its Pod.
+	// +optional
+	RuntimeTermination *ProfilingRunRuntimeTermination `json:"runtimeTermination,omitempty"`
 }
 
 // ProfilingRunObjectReference is deliberately smaller than corev1.ObjectReference.
@@ -169,6 +174,16 @@ type ProfilingRunObjectReference struct {
 type ProfilingRunObservedExecutionStatus struct {
 	Pod  ProfilingRunObjectReference `json:"pod"`
 	Node ProfilingRunObjectReference `json:"node"`
+}
+
+type ProfilingRunRuntimeTermination struct {
+	ExitCode int32 `json:"exitCode"`
+
+	// LogTail is the runtime termination message, which Kubernetes fills
+	// with the last 80 lines or 2 KiB of the container log on failure.
+	// +kubebuilder:validation:MaxLength=4096
+	// +optional
+	LogTail string `json:"logTail,omitempty"`
 }
 
 type ProfilingRunEvidenceReference struct {

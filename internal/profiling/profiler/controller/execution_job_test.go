@@ -98,6 +98,10 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 		runtimeContainer.Resources.Requests.Cpu().String() != prepared.RunConfig.CPU.Request {
 		t.Fatalf("runtime CPU contract drifted: %#v", runtimeContainer.Resources)
 	}
+	if runtimeContainer.TerminationMessagePolicy != corev1.TerminationMessageFallbackToLogsOnError {
+		t.Fatalf("runtime termination message policy = %q, want the log tail on failure",
+			runtimeContainer.TerminationMessagePolicy)
+	}
 	if !hasSecretEnv(runtimeContainer.Env, "AWS_ACCESS_KEY_ID", binding.CredentialsSecretName, component.EvidenceStoreAccessKeyKey) ||
 		!hasSecretEnv(runtimeContainer.Env, "AWS_SECRET_ACCESS_KEY", binding.CredentialsSecretName, component.EvidenceStoreSecretKeyKey) {
 		t.Fatalf("Evidence Store credentials were not projected by Secret reference: %#v", runtimeContainer.Env)

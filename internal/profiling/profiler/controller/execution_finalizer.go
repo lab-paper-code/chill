@@ -33,6 +33,7 @@ type FinalizedRunEvidence struct {
 
 type RunEvidenceFinalizer interface {
 	Finalize(context.Context, *edgev1alpha1.ProfilingRun, profiler.PreparedRun, *batchv1.Job) (FinalizedRunEvidence, error)
+	RuntimeTermination(context.Context, *edgev1alpha1.ProfilingRun, *batchv1.Job) (*edgev1alpha1.ProfilingRunRuntimeTermination, error)
 }
 
 type EvidenceObjectStoreFactory func(EvidenceStoreBinding, string, string) (profilerevidence.ObjectStore, error)
@@ -133,21 +134,13 @@ func (f *KubernetesExecutionFinalizer) observe(
 	run *edgev1alpha1.ProfilingRun,
 	job *batchv1.Job,
 ) (evidencekube.Observation, error) {
-	pods := &corev1.PodList{}
-	if err := f.reader.List(ctx, pods, client.InNamespace(run.Namespace)); err != nil {
-		return evidencekube.Observation{}, fmt.Errorf("list measurement Pods: %w", err)
+	pod, err := f.jobPod(ctx, run, job)
+	if err != nil {
+		return evidencekube.Observation{}, err
 	}
-	owned := make([]corev1.Pod, 0, 1)
-	for i := range pods.Items {
-		owner := metav1.GetControllerOf(&pods.Items[i])
-		if owner != nil && owner.Kind == "Job" && owner.UID == job.UID {
-			owned = append(owned, *pods.Items[i].DeepCopy())
-		}
+	if pod == nil {
+		return evidencekube.Observation{}, errors.New("expected one Pod owned by measurement Job, found 0")
 	}
-	if len(owned) != 1 {
-		return evidencekube.Observation{}, fmt.Errorf("expected one Pod owned by measurement Job, found %d", len(owned))
-	}
-	pod := &owned[0]
 	if pod.Spec.NodeName == "" {
 		return evidencekube.Observation{}, errors.New("measurement Pod has no bound Node")
 	}
@@ -163,4 +156,53 @@ func (f *KubernetesExecutionFinalizer) observe(
 		Job: job.DeepCopy(), Pod: pod, Node: node,
 		NodePods: nodePods.Items, ObservedAt: f.now().UTC(),
 	}, nil
+}
+
+// RuntimeTermination reads the failed runtime container's exit code and log
+// tail. It returns nil when the Pod is gone or the runtime did not fail.
+func (f *KubernetesExecutionFinalizer) RuntimeTermination(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	job *batchv1.Job,
+) (*edgev1alpha1.ProfilingRunRuntimeTermination, error) {
+	pod, err := f.jobPod(ctx, run, job)
+	if err != nil || pod == nil {
+		return nil, err
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if terminated := status.State.Terminated; status.Name == runtimeContainerName &&
+			terminated != nil && terminated.ExitCode != 0 {
+			return &edgev1alpha1.ProfilingRunRuntimeTermination{
+				ExitCode: terminated.ExitCode, LogTail: terminated.Message,
+			}, nil
+		}
+	}
+	return nil, nil
+}
+
+// jobPod returns the one Pod owned by the measurement Job, or nil when none remains.
+func (f *KubernetesExecutionFinalizer) jobPod(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	job *batchv1.Job,
+) (*corev1.Pod, error) {
+	pods := &corev1.PodList{}
+	if err := f.reader.List(ctx, pods, client.InNamespace(run.Namespace)); err != nil {
+		return nil, fmt.Errorf("list measurement Pods: %w", err)
+	}
+	owned := make([]corev1.Pod, 0, 1)
+	for i := range pods.Items {
+		owner := metav1.GetControllerOf(&pods.Items[i])
+		if owner != nil && owner.Kind == "Job" && owner.UID == job.UID {
+			owned = append(owned, *pods.Items[i].DeepCopy())
+		}
+	}
+	switch len(owned) {
+	case 0:
+		return nil, nil
+	case 1:
+		return &owned[0], nil
+	default:
+		return nil, fmt.Errorf("expected one Pod owned by measurement Job, found %d", len(owned))
+	}
 }

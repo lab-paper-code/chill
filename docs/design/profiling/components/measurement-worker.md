@@ -338,9 +338,22 @@ The first worker uses stable failure classes:
 | 4 | observer readiness, execution, handoff, or result validation failure |
 | 5 | raw evidence encoding, immutable write, or post-write verification failure |
 
-Failures write diagnostics to stderr but never place credentials, raw samples,
-or a success-shaped receipt in the termination message. Kubernetes remains the
-authority for the native container and Job failure state.
+Failures write diagnostics to stderr and leave `/dev/termination-log` empty.
+The runtime container uses `FallbackToLogsOnError`, so Kubernetes fills its
+termination message with the last 80 lines or 2 KiB of the container log. When
+the Job fails, the controller copies the runtime exit code and that message
+once into `ProfilingRun.status.runtimeTermination`, which keeps the failure
+cause after the Pod is deleted. The copy is a diagnostic; the controller never
+parses it. Kubernetes remains the authority for the native container and Job
+failure state.
+
+Observer images belong to the measurement-protocol identity, and the runtime
+image, which carries the worker, belongs to the execution-state identity. A Run
+resolved with a rebuilt observer or worker image therefore receives new
+identities, while profiles derived from earlier evidence keep their recorded
+identities and stay valid. A curve plan pairs active and idle Runs only under
+one runtime image and one protocol each, so a campaign and its idle baseline
+use one image set.
 
 ## Kubernetes execution contract
 

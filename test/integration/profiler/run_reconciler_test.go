@@ -140,6 +140,14 @@ func (f *recordingFinalizer) Finalize(
 	return f.result, f.err
 }
 
+func (f *recordingFinalizer) RuntimeTermination(
+	context.Context,
+	*edgev1alpha1.ProfilingRun,
+	*batchv1.Job,
+) (*edgev1alpha1.ProfilingRunRuntimeTermination, error) {
+	return nil, nil
+}
+
 type reconcilerHarness struct {
 	reconciler *profilercontroller.RunReconciler
 	resolver   *staticRunConfigResolver

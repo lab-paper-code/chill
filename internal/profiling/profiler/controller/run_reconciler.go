@@ -156,7 +156,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	case profiler.ActionWaitForJob:
 		return ctrl.Result{}, r.publishExecutionOutcome(ctx, run, metav1.ConditionUnknown, "JobRunning", "measurement Job has not completed")
 	case profiler.ActionReportExecutionFailure:
-		return ctrl.Result{}, r.publishExecutionOutcome(ctx, run, metav1.ConditionFalse, "JobFailed", "measurement Job failed")
+		return ctrl.Result{}, r.publishJobFailure(ctx, run, job)
 	case profiler.ActionFinalizeEvidence:
 		finalized, finalizeErr := r.finalize.Finalize(ctx, run, resolved.Prepared, job)
 		if finalizeErr != nil {
@@ -279,6 +279,28 @@ func (r *RunReconciler) publishExecutionOutcome(
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
 		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
 			status, reason, message)
+	})
+}
+
+// publishJobFailure keeps the first observed runtime termination; a later
+// reconcile may find the Pod already deleted.
+func (r *RunReconciler) publishJobFailure(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	job *batchv1.Job,
+) error {
+	termination := run.Status.RuntimeTermination
+	if termination == nil {
+		var err error
+		termination, err = r.finalize.RuntimeTermination(ctx, run, job)
+		if err != nil {
+			return fmt.Errorf("read failed runtime termination: %w", err)
+		}
+	}
+	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+		desired.RuntimeTermination = termination
+		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
+			metav1.ConditionFalse, "JobFailed", "measurement Job failed")
 	})
 }
 

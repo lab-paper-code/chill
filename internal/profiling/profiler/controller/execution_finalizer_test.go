@@ -67,6 +67,50 @@ func TestKubernetesExecutionFinalizerObservesExactJobPodAndNodeWorkload(t *testi
 	}
 }
 
+func TestKubernetesExecutionFinalizerReadsFailedRuntimeTermination(t *testing.T) {
+	t.Parallel()
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run-job", UID: "job-uid"}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "chill-system", Name: "run-pod", UID: "pod-uid",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr.To(true),
+			}},
+		},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{
+			{Name: "metric-observer", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 4}}},
+			{Name: runtimeContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				ExitCode: 3, Message: "execute firstfloor measurement: timed out\n",
+			}}},
+		}},
+	}
+	run := testRun()
+	empty, err := NewKubernetesExecutionFinalizer(fake.NewClientBuilder().WithScheme(scheme).Build(), unusedStoreFactory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := empty.RuntimeTermination(context.Background(), run, job); err != nil || got != nil {
+		t.Fatalf("deleted Pod termination = %#v, %v; want nil", got, err)
+	}
+	finalizer, err := NewKubernetesExecutionFinalizer(
+		fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(), unusedStoreFactory,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := finalizer.RuntimeTermination(context.Background(), run, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ExitCode != 3 || got.LogTail != "execute firstfloor measurement: timed out\n" {
+		t.Fatalf("runtime termination = %#v", got)
+	}
+}
+
 func TestKubernetesExecutionFinalizerLoadsOnlyRequiredCredentials(t *testing.T) {
 	t.Parallel()
 	scheme := runtime.NewScheme()

@@ -57,9 +57,10 @@ func (j *recordingExecutionJobs) Find(
 }
 
 type recordingRunEvidenceFinalizer struct {
-	calls  int
-	result FinalizedRunEvidence
-	err    error
+	calls       int
+	result      FinalizedRunEvidence
+	err         error
+	termination *edgev1alpha1.ProfilingRunRuntimeTermination
 }
 
 func (f *recordingRunEvidenceFinalizer) Finalize(
@@ -70,6 +71,14 @@ func (f *recordingRunEvidenceFinalizer) Finalize(
 ) (FinalizedRunEvidence, error) {
 	f.calls++
 	return f.result, f.err
+}
+
+func (f *recordingRunEvidenceFinalizer) RuntimeTermination(
+	context.Context,
+	*edgev1alpha1.ProfilingRun,
+	*batchv1.Job,
+) (*edgev1alpha1.ProfilingRunRuntimeTermination, error) {
+	return f.termination, nil
 }
 
 func (j *recordingExecutionJobs) Ensure(
@@ -472,6 +481,52 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	}
 	if finalizer.calls != 1 {
 		t.Fatalf("terminal Run replay regenerated evidence: finalizer calls=%d", finalizer.calls)
+	}
+}
+
+func TestRunReconcilerRecordsRuntimeTerminationOfFailedJob(t *testing.T) {
+	t.Parallel()
+	scheme := runReconcilerTestScheme(t)
+	run := testRun()
+	prepared := currentPreparedRun(t)
+	recordRunConfigAndJob(run)
+	job := recordedJob(t, run, resolvedRunForPrepared(t, prepared), &batchv1.JobStatus{
+		Failed:     1,
+		Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}},
+	})
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	want := edgev1alpha1.ProfilingRunRuntimeTermination{
+		ExitCode: 3, LogTail: "ERROR [runtime] execute firstfloor measurement: timed out\n",
+	}
+	finalizer := &recordingRunEvidenceFinalizer{termination: &want}
+	reconciler, err := NewRunReconciler(
+		kubeClient,
+		&recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)},
+		&recordingExecutionJobs{},
+		finalizer,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	// The Pod and its termination state may be deleted after the first record.
+	finalizer.termination = nil
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	actual := &edgev1alpha1.ProfilingRun{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status.RuntimeTermination == nil || *actual.Status.RuntimeTermination != want {
+		t.Fatalf("runtime termination = %#v, want %#v", actual.Status.RuntimeTermination, want)
+	}
+	execution := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
+	if execution == nil || execution.Status != metav1.ConditionFalse || execution.Reason != "JobFailed" {
+		t.Fatalf("execution condition = %#v", execution)
 	}
 }
 

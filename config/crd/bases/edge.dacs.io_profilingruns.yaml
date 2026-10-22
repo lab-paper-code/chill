@@ -372,6 +372,23 @@ spec:
                   by the Profiler.
                 format: int64
                 type: integer
+              runtimeTermination:
+                description: |-
+                  RuntimeTermination keeps the failed runtime container's exit code and
+                  log tail, so the cause of a failed Job outlives its Pod.
+                properties:
+                  exitCode:
+                    format: int32
+                    type: integer
+                  logTail:
+                    description: |-
+                      LogTail is the runtime termination message, which Kubernetes fills
+                      with the last 80 lines or 2 KiB of the container log on failure.
+                    maxLength: 4096
+                    type: string
+                required:
+                - exitCode
+                type: object
             type: object
         required:
         - spec

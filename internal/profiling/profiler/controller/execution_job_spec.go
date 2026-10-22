@@ -234,7 +234,7 @@ func runtimeContainer(
 		Resources:                resources,
 		SecurityContext:          projection.SecurityContext,
 		VolumeMounts:             volumeMounts,
-		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}
 }
 
