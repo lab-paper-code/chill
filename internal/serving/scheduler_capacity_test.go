@@ -687,11 +687,13 @@ func capacityTwinSwap(gain float64) *capacityPlanner {
 	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 10, slack: 1}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
-	profile := &Profile{IdleBaselineHalfWidthWatts: 0.282, Batches: []BatchProfile{{Batch: 1, EnergyPerInputJoules: 1, EnergyPerInputHalfWidthJoules: 0.001}}}
-	a := SchedulerInstance{ID: "a", WorkloadUID: "w", Profile: profile}
-	b := SchedulerInstance{ID: "b", WorkloadUID: "w", Profile: profile}
+	profile := func(id string) *Profile {
+		return &Profile{ID: id, IdleBaselineHalfWidthWatts: 0.282, Batches: []BatchProfile{{Batch: 1, EnergyPerInputJoules: 1, EnergyPerInputHalfWidthJoules: 0.001}}}
+	}
+	a := SchedulerInstance{ID: "a", WorkloadUID: "w", Profile: profile("pa")}
+	b := SchedulerInstance{ID: "b", WorkloadUID: "w", Profile: profile("pb")}
 	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{a}, items: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, before: 10}
-	swap := &capacityPlan{instances: []SchedulerInstance{b}, items: [][]capacityItem{{{id: "b", kappa: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, mid: 10, after: 10 - gain/60}
+	swap := &capacityPlan{instances: []SchedulerInstance{b}, midInstances: []SchedulerInstance{a, b}, items: [][]capacityItem{{{id: "b", kappa: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, mid: 10, after: 10 - gain/60}
 	keep.record.Eligible, swap.record.Eligible, swap.record.Key = true, true, "swap"
 	p.sum(keep)
 	p.sum(swap)
@@ -712,6 +714,47 @@ func TestCapacityTransitionNeedsGainBeyondUncertainty(t *testing.T) {
 		if got := p.minimumGain(best); got.keep != keeps || got.keep != got.withinUncertainty {
 			t.Fatalf("gain %g J: keep=%v withinUncertainty=%v", gain, got.keep, got.withinUncertainty)
 		}
+	}
+}
+
+// §9 6 minimum gain: an instance a plan keeps carries the same idle
+// measurement in both candidates, so its error cancels except for the chain
+// time. A Node that keeps a (0.5 W half-width) and adds b (0.01 W) saving 10 J
+// moves: the threshold is b's 0.6 J. Chain instances count once.
+func TestCapacityKeptInstanceAddsNoUncertainty(t *testing.T) {
+	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 10, slack: 1}}
+	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
+	a := SchedulerInstance{ID: "a", WorkloadUID: "w", Profile: &Profile{ID: "pa", IdleBaselineHalfWidthWatts: 0.5}}
+	b := SchedulerInstance{ID: "b", WorkloadUID: "w", Profile: &Profile{ID: "pb", IdleBaselineHalfWidthWatts: 0.01}}
+	item := capacityItem{id: "a", kappa: 50, e: 1, weight: 1000}
+	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{a}, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
+	add := &capacityPlan{instances: []SchedulerInstance{a, b}, midInstances: []SchedulerInstance{a, b}, items: [][]capacityItem{{item, {id: "b", kappa: 50, e: 1}}},
+		retained: [][]capacityItem{{item}}, mid: 10, after: 10 - 10.0/60}
+	keep.record.Eligible, add.record.Eligible, add.record.Key = true, true, "add"
+	p.sum(keep)
+	p.sum(add)
+	p.plans, p.compared = [][]*capacityPlan{{keep, add}}, []bool{true}
+	best := p.evaluate([]int{1}, 0)
+	if !best.feasible || best.keep {
+		t.Fatalf("fixture: %+v", best)
+	}
+	if got := p.minimumGain(best); got.keep {
+		t.Fatalf("a kept instance's idle half-width held back a 10 J gain: %+v", got)
+	}
+}
+
+// §9 6 search: the emptied start obeys the instance bounds like every step.
+// Replicas OFF with κ 0 everywhere leaves every set infeasible without bound;
+// the emptied set is cheapest yet changes w1's count, so it must not win.
+func TestCapacityEmptiedStartObeysReplicasOff(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.Controls.Replicas, s.ComparisonPeriod = false, 10*time.Minute
+	capacityLoad(s, &snap, snap.Workloads[0], 50)
+	snap.Costs = []OperationCost{poolsCost(schedulerActionRemove, snap.Nodes[0].Node, schedulerState(snap.Instances[0]), "unloaded", "fixed")}
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 0 }))
+	if d.Target == nil || !slices.ContainsFunc(d.Target.Instances, func(i SchedulerInstance) bool { return i.ID == "i1" }) {
+		t.Fatalf("replicas OFF removed the Workload's only instance: %+v %v", d.Target, d.Reasons)
 	}
 }
 

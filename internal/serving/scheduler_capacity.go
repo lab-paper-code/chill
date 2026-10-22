@@ -266,7 +266,8 @@ type capacityPlan struct {
 	others                             int                 // instances serving no controlled Workload
 	preMean, preMax, postMean, postMax float64             // seconds
 	preJ, postJ                        float64
-	before, mid, after                 float64 // watts
+	before, mid, after                 float64             // watts
+	midInstances                       []SchedulerInstance // instances during the pre-route chain
 	// replaces marks a plan that changes the batch policy of a current instance,
 	// or removes one while adding another.
 	replaces bool
@@ -725,6 +726,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		}
 	}
 	var midReason, afterReason string
+	plan.midInstances = mid
 	plan.mid, _, _, _, midReason = schedulerBaseline(p.snapshot.Baselines, at, mid, p.snapshot.Options)
 	plan.after, _, _, _, afterReason = schedulerBaseline(p.snapshot.Baselines, at, plan.instances, p.snapshot.Options)
 	if reason := cmp.Or(midReason, afterReason); reason != "" {
@@ -1300,12 +1302,14 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 
 // minimumGain keeps the current configuration when a feasible plan set that
 // changes a Node saves no more energy over T than the measurement uncertainty
-// of the two candidates. The uncertainty combines, in quadrature (independent
-// measurements), the confidence half-widths the profiles record: the
-// model-loaded idle power of the instances on each changed Node, before (keep)
-// and during and after the chain, and the per-input energy times the requests
-// each instance gains or loses. Unloaded node baselines (one idle window) and
-// operation costs (one trial each in m4 r7) record no interval and add none.
+// of the two candidates. The uncertainty combines, in quadrature over distinct
+// measurements, the confidence half-widths the profiles record. A profile's
+// model-loaded idle power counts once, times its idle seconds in keep minus
+// those in the plan set (during and after the chain on each changed Node), so
+// an instance both candidates hold cancels but for the chain time. The
+// per-input energy counts times the requests each instance gains or loses.
+// Unloaded node baselines (one idle window) and operation costs (one trial
+// each in m4 r7) record no interval and add none.
 func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	if !best.feasible || best.keep {
 		return best
@@ -1314,19 +1318,17 @@ func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	if !keep.feasible {
 		return best
 	}
-	power := func(instances ...[]SchedulerInstance) float64 {
-		sq := 0.0
-		for _, list := range instances {
-			for _, i := range list {
-				if i.Profile != nil {
-					sq += i.Profile.IdleBaselineHalfWidthWatts * i.Profile.IdleBaselineHalfWidthWatts
-				}
+	t, r, sq := p.period, best.route, 0.0
+	// per-input half-width by instance ID; idle half-width and idle seconds
+	// (keep minus plan set) by profile ID
+	half, idle, seconds := map[string]float64{}, map[string]float64{}, map[string]float64{}
+	expose := func(instances []SchedulerInstance, s float64) {
+		for _, i := range instances {
+			if i.Profile != nil {
+				idle[i.Profile.ID], seconds[i.Profile.ID] = i.Profile.IdleBaselineHalfWidthWatts, seconds[i.Profile.ID]+s
 			}
 		}
-		return math.Sqrt(sq)
 	}
-	t, r, sq := p.period, best.route, 0.0
-	half := map[string]float64{} // per-input half-width by instance ID
 	for n, j := range best.choice {
 		before, plan := p.plans[n][0], p.plans[n][j]
 		for _, i := range append(slices.Clone(before.instances), plan.instances...) {
@@ -1337,8 +1339,12 @@ func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 		if j == 0 {
 			continue
 		}
-		sq += math.Pow(power(before.instances)*t, 2) + math.Pow(power(before.instances, plan.instances)*(r-plan.preMean), 2) +
-			math.Pow(power(plan.instances)*(t-r-plan.postMean), 2)
+		expose(before.instances, t)
+		expose(plan.midInstances, plan.preMean-r)
+		expose(plan.instances, r+plan.postMean-t)
+	}
+	for id, s := range seconds {
+		sq += math.Pow(idle[id]*s, 2)
 	}
 	requests := func(res capacityResult) map[string]float64 {
 		out := map[string]float64{}
@@ -1427,7 +1433,7 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 	}
 	best := ends[0]
 	for _, end := range ends[1:] {
-		if end.better(&best) {
+		if p.bounded(end.choice) && p.admits(&end) && end.better(&best) {
 			best = end
 		}
 	}
@@ -1482,7 +1488,7 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 				if p.bounded(c) {
 					counts[w]++
 					res := p.evaluate(slices.Clone(c), p.routeOf(c))
-					if !res.unroutedPrepare && (!p.partial || !res.unroutes) && res.better(bests[w]) {
+					if p.admits(&res) && res.better(bests[w]) {
 						bests[w] = &res
 					}
 				}
@@ -1508,6 +1514,12 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 	}
 	p.searched.BudgetCut = cut.Load()
 	return best, nil
+}
+
+// admits reports whether a scored plan set may be chosen: no prepare chain
+// left without a route, and on a partial snapshot no current instance unrouted.
+func (p *capacityPlanner) admits(res *capacityResult) bool {
+	return !res.unroutedPrepare && (!p.partial || !res.unroutes)
 }
 
 // decide turns the chosen plan set into the decision: keep, a route-only

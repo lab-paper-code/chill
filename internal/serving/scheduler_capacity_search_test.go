@@ -212,7 +212,7 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 					mid = append(mid, c)
 				}
 				plan.items[w] = append(plan.items[w], item)
-				plan.instances = append(plan.instances, SchedulerInstance{ID: c.id, Profile: &Profile{IdleBaselineHalfWidthWatts: e5IdleHalfWidth * c.opt.idle}})
+				plan.instances = append(plan.instances, e5Instance(c))
 				ids = append(ids, c.id)
 			}
 			for _, c := range now {
@@ -225,6 +225,9 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 				slices.SortFunc(plan.items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
 			}
 			plan.mid, plan.after = watts(mid), watts(set)
+			for _, c := range mid {
+				plan.midInstances = append(plan.midInstances, e5Instance(c))
+			}
 			plan.replaces = len(mid) > len(now) && plan.postMean > 0
 			plan.record.Eligible, plan.record.Key = true, strings.Join(ids, "+")
 			p.sum(plan)
@@ -278,6 +281,12 @@ func e5Brute(p *capacityPlanner) *capacityResult {
 		}
 	}
 	return best
+}
+
+// e5Instance is the instance of a pair; its profile, one per option, carries
+// the idle half-width.
+func e5Instance(c e5Pair) SchedulerInstance {
+	return SchedulerInstance{ID: c.id, Profile: &Profile{ID: c.id, IdleBaselineHalfWidthWatts: e5IdleHalfWidth * c.opt.idle}}
 }
 
 // e5Search is the planner's search without a time budget.
