@@ -135,6 +135,12 @@ var e5Start = map[string]bool{
 	"lattepanda/plc/q1": true, "genesis2/vlm/cuda-q1-vlm": true,
 }
 
+// e5IdleHalfWidth is the median model-loaded idle half-width relative to the
+// idle watts over the 11 BEO results held locally (rasp5 5, lattepanda 4,
+// genesis2 2; 0.95, three trials each): 0.84–9.95%, median 1.84%. They record
+// no per-input interval, so the fixture's request energy carries none.
+const e5IdleHalfWidth = 0.0184
+
 // e5Planner builds the node plans the planner would hold for the pairs from
 // the current instances: keep, each pair alone (one model and one instance per
 // Workload on a Node) and removing every instance. plans[n][0] keeps the
@@ -206,6 +212,7 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 					mid = append(mid, c)
 				}
 				plan.items[w] = append(plan.items[w], item)
+				plan.instances = append(plan.instances, SchedulerInstance{ID: c.id, Profile: &Profile{IdleBaselineHalfWidthWatts: e5IdleHalfWidth * c.opt.idle}})
 				ids = append(ids, c.id)
 			}
 			for _, c := range now {
@@ -283,11 +290,11 @@ func e5Search(p *capacityPlanner) *capacityResult {
 }
 
 // e5Converge repeats Ticks, each from the configuration and route weights the
-// previous (paid-back) decision chose, until a Tick keeps both or returns to a
-// configuration it left (a cycle), at most 10 Ticks. It returns the first
-// Tick's search result, the energy over T of keeping the last configuration,
-// the Ticks taken (−1 without a fixed point or cycle) and whether it cycled.
-// A nil result keeps.
+// previous decision chose (after payback and minimum gain), until a Tick keeps
+// both or returns to a configuration and weights it left (a cycle), at most
+// 10 Ticks. It returns the first Tick's search result, the energy over T of
+// keeping the last configuration, the Ticks taken (−1 without a fixed point or
+// cycle) and whether it cycled. A nil result keeps.
 func e5Converge(rates map[int]float64, nodes [][]e5Option, solve func(*capacityPlanner) *capacityResult) (*capacityResult, float64, int, bool) {
 	current := e5Start
 	var routed map[string]int32
@@ -296,12 +303,7 @@ func e5Converge(rates map[int]float64, nodes [][]e5Option, solve func(*capacityP
 	for tick := 1; tick <= 10; tick++ {
 		p := e5Planner(rates, nodes, current, routed)
 		keepJ := p.evaluate(make([]int, len(p.plans)), 0).joules
-		ids := []string{}
-		for id := range current {
-			ids = append(ids, id)
-		}
-		slices.Sort(ids)
-		key := strings.Join(ids, "+")
+		key := fmt.Sprint(current, routed) // fmt sorts map keys
 		if seen[key] {
 			return first, keepJ, tick, true
 		}
@@ -311,7 +313,7 @@ func e5Converge(rates map[int]float64, nodes [][]e5Option, solve func(*capacityP
 			first = res
 		}
 		if res != nil {
-			paid := p.payback(*res) // as decide receives it
+			paid := p.minimumGain(p.payback(*res)) // as decide receives it
 			res = &paid
 		}
 		next, now := map[string]int32{}, map[string]int32{}
@@ -348,13 +350,13 @@ var e5Mixes = func() []map[int]float64 {
 }()
 
 // Plan search at E5 scale (capacity-table-evidence §7). Gap: the planner's
-// search (k = 2, then 3; no budget) against the exact minimum on 24 load
-// mixes, for one decision and over repeated Ticks (each from the previous
-// paid-back choice) until a fixed point or a cycle (energy of keeping the last
-// configuration), over the r7 nodes, the same nodes with b2 variants and 8
-// Nodes (b1, 2 power modes on the Jetson copies). Scale: search time with 3
-// workers and the 5 s budget of a 10 s control interval as e5Scaled grows the
-// space toward E5. About an hour:
+// search (keep and emptied starts, k = 2, then 3; no budget) against the
+// exact minimum on 24 load mixes, for one decision and over repeated Ticks
+// (each from the previous choice after payback and minimum gain) until a
+// fixed point or a cycle (energy of keeping the last configuration), over the
+// r7 nodes, the same nodes with b2 variants and 8 Nodes (b1, 2 power modes on
+// the Jetson copies). Scale: search time with 3 workers and the 5 s budget of
+// a 10 s control interval as e5Scaled grows the space toward E5. About five minutes:
 // CHILL_PLAN_SEARCH=1 go test ./internal/serving -run PlanSearchE5 -v -timeout 0.
 func TestCapacityPlanSearchE5(t *testing.T) {
 	if os.Getenv("CHILL_PLAN_SEARCH") == "" {

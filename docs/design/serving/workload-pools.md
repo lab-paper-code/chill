@@ -474,7 +474,7 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
   - Tick CPU: 판단 시작과 끝에 읽은 ChillServer 컨테이너 cgroup `cpu.stat`의 `usage_usec` 차와 `nr_throttled`, `throttled_usec` 차
   - 게이트웨이 지연: 요청 기록의 ChillServer 안 시간(`elapsedNanos`에서 firstfloor `nativeElapsedMS`를 뺀 값) p99를 탐색 구간과 그 밖 구간으로 나눠 단계마다
   - SLO: 1분 구간마다 Workload별 SLO 충족 비율, 그 구간에 탐색이 있었는지
-- 위 기록으로 `planSearchWorkers`(sample 3, ChillServer CPU 한도 4)와 시간 예산이 게이트웨이 지연과 SLO에 주는 영향을 보고 E5 뒤 값을 정한다. `budgetCut` 판단의 수와 그 판단이 고른 구성도 센다.
+- 위 기록으로 `planSearchWorkers`(sample 3, ChillServer CPU 한도 4)와 시간 예산이 게이트웨이 지연과 SLO에 주는 영향을 보고 E5 뒤 값을 정한다. `budgetCut` 판단의 수와 그 판단이 고른 구성, `TransitionGainWithinUncertainty`로 keep한 판단의 수도 센다.
 - 평가 표의 분석 값은 Workload별 지연 분포와 처리 결과, 전환 구간을 포함한 전체 POOL 에너지, 활성 POOL 에너지다. 단계 경계와 seed, 단계별 `R_w`와 G, 사용한 profile과 설정이 실행 기록에 남는다.
 - 전체 약 3시간이다. 캠페인 중 비Jetson 노드에서 mobilenet과 PLC로 E5-3, E5-4, soak를 미리 도는 다중 Workload 시험은 E5 준비 근거이고 표 값에는 넣지 않는다.
 
