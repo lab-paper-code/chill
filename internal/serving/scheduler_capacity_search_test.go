@@ -224,6 +224,7 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 				slices.SortFunc(plan.items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
 			}
 			plan.mid, plan.after = watts(mid), watts(set)
+			plan.replaces = len(mid) > len(now) && plan.postMean > 0
 			plan.record.Eligible, plan.record.Key = true, strings.Join(ids, "+")
 			p.sum(plan)
 			if !keep {
@@ -324,18 +325,36 @@ func e5Search(p *capacityPlanner) *capacityResult {
 }
 
 // e5Converge repeats Ticks, each from the configuration and route weights the
-// previous one chose, until a Tick keeps both (at most 10). It returns the
-// first Tick's result, the energy over T of keeping the final configuration
-// and the Ticks taken (−1 when no fixed point). A nil result keeps.
-func e5Converge(rates map[int]float64, nodes [][]e5Option, solve func(*capacityPlanner) *capacityResult) (*capacityResult, float64, int) {
+// previous (paid-back) decision chose, until a Tick keeps both or returns to a
+// configuration it left (a cycle), at most 10 Ticks. It returns the first
+// Tick's search result, the energy over T of keeping the last configuration,
+// the Ticks taken (−1 without a fixed point or cycle) and whether it cycled.
+// A nil result keeps.
+func e5Converge(rates map[int]float64, nodes [][]e5Option, solve func(*capacityPlanner) *capacityResult) (*capacityResult, float64, int, bool) {
 	current := e5Start
 	var routed map[string]int32
 	var first *capacityResult
+	seen := map[string]bool{}
 	for tick := 1; tick <= 10; tick++ {
 		p := e5Planner(rates, nodes, current, routed)
+		keepJ := p.evaluate(make([]int, len(p.plans)), 0).joules
+		ids := []string{}
+		for id := range current {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		key := strings.Join(ids, "+")
+		if seen[key] {
+			return first, keepJ, tick, true
+		}
+		seen[key] = true
 		res := solve(p)
 		if tick == 1 {
 			first = res
+		}
+		if res != nil {
+			paid := p.payback(*res) // as decide receives it
+			res = &paid
 		}
 		next, now := map[string]int32{}, map[string]int32{}
 		for _, weights := range p.keep.Routing {
@@ -347,7 +366,7 @@ func e5Converge(rates map[int]float64, nodes [][]e5Option, solve func(*capacityP
 			}
 		}
 		if res == nil || res.keep && maps.Equal(next, now) {
-			return first, p.evaluate(make([]int, len(p.plans)), 0).joules, tick
+			return first, keepJ, tick, false
 		}
 		current, routed = map[string]bool{}, next
 		for n, j := range res.choice {
@@ -358,7 +377,7 @@ func e5Converge(rates map[int]float64, nodes [][]e5Option, solve func(*capacityP
 			}
 		}
 	}
-	return first, math.NaN(), -1
+	return first, math.NaN(), -1, false
 }
 
 var e5Mixes = func() []map[int]float64 {
@@ -372,8 +391,8 @@ var e5Mixes = func() []map[int]float64 {
 
 // Plan search at E5 scale (capacity-table-evidence §7). Gap: the planner's
 // search (k = 2, then 3; no budget) against the exact minimum on 24 load
-// mixes, for one decision and after repeated Ticks reach a fixed point (each
-// Tick starts from the previous choice; energy of keeping the final
+// mixes, for one decision and over repeated Ticks (each from the previous
+// paid-back choice) until a fixed point or a cycle (energy of keeping the last
 // configuration), over the r7 nodes, the same nodes with b2 variants and 8
 // Nodes (b1, 2 power modes on the Jetson copies). Scale: search time with 3
 // workers and the 5 s budget of a 10 s control interval as e5Scaled grows the
@@ -385,10 +404,10 @@ func TestCapacityPlanSearchE5(t *testing.T) {
 	}
 	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}} {
 		nodes := e5Scaled(c.variants, c.modes)
-		differs, worst, worstFixed, maxTicks, maxExactTicks := 0, 0.0, 0.0, 0, 0
+		differs, worst, worstFixed, bestFixed, over, cycles, exactCycles, maxTicks, maxExactTicks := 0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0
 		for _, rates := range e5Mixes {
-			got, gotJ, ticks := e5Converge(rates, nodes, e5Search)
-			exact, exactJ, exactTicks := e5Converge(rates, nodes, e5Brute)
+			got, gotJ, ticks, cycled := e5Converge(rates, nodes, e5Search)
+			exact, exactJ, exactTicks, exactCycled := e5Converge(rates, nodes, e5Brute)
 			if exact == nil {
 				if got.feasible {
 					t.Errorf("%+v %v: search feasible, exact infeasible", c, rates)
@@ -404,13 +423,23 @@ func TestCapacityPlanSearchE5(t *testing.T) {
 			if got.key != exact.key {
 				differs++
 			}
-			worst, worstFixed = max(worst, gap), max(worstFixed, fixed)
-			if gap > 0.005 || fixed > 0.005 || ticks < 0 {
-				t.Logf("ROW %+v %v one=%.3f%% fixed=%.3f%% ticks=%d exactTicks=%d\n  search: %s\n  exact:  %s", c, rates, 100*gap, 100*fixed, ticks, exactTicks, got.key, exact.key)
+			if cycled {
+				cycles++
+			}
+			if exactCycled {
+				exactCycles++
+			}
+			if fixed > 0.005 {
+				over++
+			}
+			worst, worstFixed, bestFixed = max(worst, gap), max(worstFixed, fixed), min(bestFixed, fixed)
+			if gap > 0.005 || fixed > 0.005 || fixed < -0.005 || ticks < 0 || cycled || exactCycled {
+				t.Logf("ROW %+v %v one=%.3f%% fixed=%.3f%% ticks=%d cycled=%v exactTicks=%d exactCycled=%v\n  search: %s\n  exact:  %s",
+					c, rates, 100*gap, 100*fixed, ticks, cycled, exactTicks, exactCycled, got.key, exact.key)
 			}
 		}
-		t.Logf("GAP variants=%d modes=%d mixes=%d differs=%d worstOne=%.3f%% worstFixed=%.3f%% ticks<=%d exactTicks<=%d",
-			c.variants, c.modes, len(e5Mixes), differs, 100*worst, 100*worstFixed, maxTicks, maxExactTicks)
+		t.Logf("GAP variants=%d modes=%d mixes=%d differs=%d worstOne=%.3f%% fixed: worst=%.3f%% best=%.3f%% over0.5%%=%d cycles=%d exactCycles=%d ticks<=%d exactTicks<=%d",
+			c.variants, c.modes, len(e5Mixes), differs, 100*worst, 100*worstFixed, 100*bestFixed, over, cycles, exactCycles, maxTicks, maxExactTicks)
 	}
 	rates := map[int]float64{0: 60, 1: 40, 2: 1.2}
 	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}, {1, 4}, {2, 1}, {2, 2}, {2, 4}} {
