@@ -234,5 +234,37 @@ class MeasurementBoundaryTest(unittest.TestCase):
                 measurement.validate_rknn_facts(dict(facts, **{key: None}), delivery)
 
 
+class WaitReadyTest(unittest.TestCase):
+    def test_readiness_probe_timeout_does_not_stay_on_kept_alive_socket(self):
+        import http.server
+        import threading
+        import time
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self):
+                if self.path.endswith("/slow"):
+                    time.sleep(1.5)
+                body = b"{}"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        session = measurement.FirstfloorSession(server.server_address[1],
+                                                {"runConfig": {"state": {"model": "m"}}})
+        measurement.wait_ready(SimpleNamespace(poll=lambda: None), session, 5.0)
+        self.assertEqual(session.json_call("GET", session.path + "/slow"), {})
+        session.connection.close()
+
+
 if __name__ == "__main__":
     unittest.main()

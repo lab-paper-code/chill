@@ -306,6 +306,7 @@ def wait_ready(process: subprocess.Popen, session: FirstfloorSession, timeout: f
             raise common.ContractError(f"serving-worker exited before readiness: {process.returncode}")
         try:
             session.metadata()
+            session.connection.close()  # the probe socket keeps its 1 s connect-time timeout
             session.connection.timeout = None
             return
         except (OSError, http.client.HTTPException, common.ContractError):

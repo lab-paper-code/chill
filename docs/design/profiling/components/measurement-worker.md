@@ -15,6 +15,14 @@ idle admission dispatch are implemented. The earlier active and idle paths were
 live-verified; the current simplified semantic contracts have not yet been
 re-run on the live cluster.
 
+The firstfloor readiness probe connects with a 1-second timeout. Before the
+fix, that timeout stayed on the kept-alive socket, so any measured call slower
+than 1 second failed with a socket timeout. The probe connection now closes
+after readiness so measurement reconnects without a timeout. Every firstfloor
+runtime variant is rebuilt with this fix and the existing mobilenet profiles
+are re-measured: images built before it can't run slow calls, and one image
+set across all variants keeps the profiles comparable.
+
 ## Model-loaded-idle live verification
 
 On 2026-08-03, `idle-model-loaded-live-ad7b84f-v2` completed on Lattepanda and
