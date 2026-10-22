@@ -289,15 +289,6 @@ func e5Instance(c e5Pair) SchedulerInstance {
 	return SchedulerInstance{ID: c.id, Profile: &Profile{ID: c.id, IdleBaselineHalfWidthWatts: e5IdleHalfWidth * c.opt.idle}}
 }
 
-// e5Search is the planner's search without a time budget.
-func e5Search(p *capacityPlanner) *capacityResult {
-	res, err := p.search(time.Now().Add(time.Hour))
-	if err != nil {
-		panic(err)
-	}
-	return &res
-}
-
 // e5Converge repeats Ticks, each from the configuration and route weights the
 // previous decision chose (after payback and minimum gain), until a Tick keeps
 // both or returns to a configuration and weights it left (a cycle), at most
@@ -371,11 +362,12 @@ func TestCapacityPlanSearchE5(t *testing.T) {
 	if os.Getenv("CHILL_PLAN_SEARCH") == "" {
 		t.Skip("measurement sweep; set CHILL_PLAN_SEARCH=1")
 	}
+	search := func(p *capacityPlanner) *capacityResult { r := capacitySearchForTest(t, p); return &r }
 	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}} {
 		nodes := e5Scaled(c.variants, c.modes)
 		differs, worst, worstFixed, bestFixed, over, cycles, exactCycles, maxTicks, maxExactTicks := 0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0
 		for _, rates := range e5Mixes {
-			got, gotJ, ticks, cycled := e5Converge(rates, nodes, e5Search)
+			got, gotJ, ticks, cycled := e5Converge(rates, nodes, search)
 			exact, exactJ, exactTicks, exactCycled := e5Converge(rates, nodes, e5Brute)
 			if exact == nil {
 				if got.feasible {
@@ -423,7 +415,7 @@ func TestCapacityPlanSearchE5(t *testing.T) {
 		}
 		cut := p.searched
 		p.searched = SchedulerPlanSearch{}
-		full := e5Search(p)
+		full := search(p)
 		t.Logf("SCALE variants=%d modes=%d plans=%v sets=%.3g\n  budget 5 s: k=%d evaluated=%d %v cut=%v %.1f J\n  no budget:  k=%d evaluated=%d %v %.1f J",
 			c.variants, c.modes, counts, sets, cut.Neighborhood, cut.Evaluated, cut.Duration.Round(time.Millisecond), cut.BudgetCut, budgeted.joules,
 			p.searched.Neighborhood, p.searched.Evaluated, p.searched.Duration.Round(time.Millisecond), full.joules)

@@ -1455,17 +1455,6 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 			}
 		}
 	}
-	// after[i] is the first move on a later Node than moves[i].
-	after := make([]int, len(moves))
-	for i := len(moves) - 1; i >= 0; i-- {
-		after[i] = len(moves)
-		if i+1 < len(moves) {
-			after[i] = after[i+1]
-			if moves[i+1].n != moves[i].n {
-				after[i] = i + 1
-			}
-		}
-	}
 	workers := p.settings.PlanSearchWorkers
 	bests, counts := make([]*capacityResult, workers), make([]int, workers)
 	var next atomic.Int64
@@ -1492,8 +1481,10 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 						bests[w] = &res
 					}
 				}
-				for i2 := after[i]; left > 1 && i2 < len(moves); i2++ {
-					walk(i2, left-1)
+				for i2 := i + 1; left > 1 && i2 < len(moves); i2++ {
+					if moves[i2].n != m.n {
+						walk(i2, left-1)
+					}
 				}
 			}
 			for i := int(next.Add(1)) - 1; i < len(moves) && p.ctx.Err() == nil && !cut.Load(); i = int(next.Add(1)) - 1 {
