@@ -51,6 +51,7 @@ func main() {
 	workloads := flag.String("workloads", "", "comma-separated Workload names under autonomous control (default all)")
 	rate := flag.Float64("rate", 0, "tick: Poisson arrivals (req/s) in the observation window; 0 keeps the dump's")
 	repeat := flag.Int("repeat", 200, "tick: planner runs")
+	workers := flag.Int("workers", 3, "planSearchWorkers")
 	flag.Parse()
 	snapshot, settings, err := loadScheduler(*schedulerFile)
 	if err == nil {
@@ -59,6 +60,7 @@ func main() {
 		}
 		settings.CapacityWindow = time.Duration(*window * 1e9)
 		settings.CapacityWindows, settings.CapacityPassingWindows, settings.CapacityMinimumRequests = *windows, *passing, 1000
+		settings.PlanSearchWorkers = *workers
 		settings.AutonomousWorkloads = nil
 		for _, w := range snapshot.Workloads {
 			if *workloads == "" || slices.Contains(strings.Split(*workloads, ","), w.Name) {
@@ -191,7 +193,8 @@ func tick(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot
 	plans := 0
 	if decision.Capacity != nil {
 		plans = len(decision.Capacity.Plans)
-		fmt.Printf("T %.1f s, r %.1f s, cells %d\n", decision.Capacity.Period.Seconds(), decision.Capacity.Route.Seconds(), decision.Capacity.Cells)
+		s := decision.Capacity.Search
+		fmt.Printf("T %.1f s, r %.1f s, search k %d, %d plan sets, %v, budget cut %t\n", decision.Capacity.Period.Seconds(), decision.Capacity.Route.Seconds(), s.Neighborhood, s.Evaluated, s.Duration, s.BudgetCut)
 	}
 	fmt.Printf("status %s %v, node plans %d, compared Nodes %d, target %s\n", decision.Status, decision.Reasons, plans, len(decision.Search.ComparedNodes), targetKey(decision.Target))
 	return nil

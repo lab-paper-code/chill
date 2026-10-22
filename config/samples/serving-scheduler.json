@@ -13,6 +13,7 @@
     "capacityWindows": 20,
     "capacityPassingWindows": 19,
     "capacityMinimumRequests": 1000,
+    "planSearchWorkers": 3,
     "autonomousWorkloads": [],
     "excludedNodes": [],
     "controls": {

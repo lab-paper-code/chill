@@ -34,11 +34,14 @@ type SchedulerSettings struct {
 	// Capacity rows judge CapacityWindows Poisson windows of at least
 	// CapacityWindow and CapacityMinimumRequests arrivals; a rate is met when
 	// CapacityPassingWindows of them meet the SLO.
-	CapacityWindow          time.Duration     `json:"capacityWindowNanos"`
-	CapacityWindows         int               `json:"capacityWindows"`
-	CapacityPassingWindows  int               `json:"capacityPassingWindows"`
-	CapacityMinimumRequests int               `json:"capacityMinimumRequests"`
-	Controls                SchedulerControls `json:"controls"`
+	CapacityWindow          time.Duration `json:"capacityWindowNanos"`
+	CapacityWindows         int           `json:"capacityWindows"`
+	CapacityPassingWindows  int           `json:"capacityPassingWindows"`
+	CapacityMinimumRequests int           `json:"capacityMinimumRequests"`
+	// PlanSearchWorkers bounds the goroutines that evaluate plan sets at once;
+	// the search itself ends within half of ControlInterval.
+	PlanSearchWorkers int               `json:"planSearchWorkers"`
+	Controls          SchedulerControls `json:"controls"`
 }
 
 // DispatchOccupancy is the measured time per request that an instance of
@@ -365,6 +368,9 @@ func (s SchedulerSettings) Validate() error {
 	}
 	if s.CapacityWindow <= 0 || s.CapacityWindows < 1 || s.CapacityPassingWindows < 1 || s.CapacityPassingWindows > s.CapacityWindows || s.CapacityMinimumRequests < 1 {
 		return fmt.Errorf("capacity settings need capacityWindowNanos > 0, capacityWindows >= 1, 1 <= capacityPassingWindows <= capacityWindows and capacityMinimumRequests >= 1")
+	}
+	if s.PlanSearchWorkers < 1 {
+		return fmt.Errorf("planSearchWorkers must be at least 1")
 	}
 	excluded := map[string]bool{}
 	for _, name := range s.ExcludedNodes {

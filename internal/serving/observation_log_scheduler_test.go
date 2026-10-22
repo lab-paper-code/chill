@@ -388,7 +388,7 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 	}
 	plans := repeated([]SchedulerNodePlan{{Node: nodes[0].Node, Key: "profile/b4/w1", Eligible: true, Kappa: map[string]float64{"w1": 34.3}, KappaRetained: map[string]float64{"w1": 0}, Pre: 20 * time.Second, Joules: 140}}, 60)
 	wait := 0.42
-	capacity := &SchedulerCapacity{Period: 197 * time.Second, Route: 20 * time.Second, Cells: 50, Plans: plans,
+	capacity := &SchedulerCapacity{Period: 197 * time.Second, Route: 20 * time.Second, Search: &SchedulerPlanSearch{Neighborhood: 3, Evaluated: 25272, Duration: time.Second}, Plans: plans,
 		Workloads: []SchedulerCapacityWorkload{{UID: "w1", Rate: 40, KappaNew: 144, Backlog: 61, WaitSeconds: &wait, Weights: map[string]int32{"i1": 1000}, Rows: []string{"row"}}}}
 	decision := SchedulerDecision{At: at, Status: "target", Keep: candidate, Target: &candidate, Capacity: capacity, EvaluationElapsed: 3 * time.Millisecond}
 	event := SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}

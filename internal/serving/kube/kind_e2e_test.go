@@ -483,25 +483,6 @@ func kindWorkloadState(d serving.SchedulerDecision, uid string) serving.Schedule
 	return serving.SchedulerWorkloadState{}
 }
 
-func kindLog(t *testing.T, d serving.SchedulerDecision) {
-	t.Helper()
-	actions := []string{}
-	if d.Target != nil {
-		for _, a := range d.Target.Actions {
-			actions = append(actions, a.Kind+"@"+a.Node.Name)
-		}
-	}
-	t.Logf("status=%s reasons=%v keep=%s target actions=%v workloads=%+v", d.Status, d.Reasons, d.Keep.Status, actions, d.Workloads)
-	for _, i := range d.Keep.Instances {
-		t.Logf("instance %s node=%s owner=%q", i.ID, i.Node.Name, i.OwnerWorkloadUID)
-	}
-	if d.Capacity != nil {
-		for _, p := range d.Capacity.Plans {
-			t.Logf("plan node=%s key=%s eligible=%v reason=%s", p.Node.Name, p.Key, p.Eligible, p.Reason)
-		}
-	}
-}
-
 // SCH-AC-24: a Workload whose only completed measurement is on a Node that
 // never served it starts on that Node; the other available Node keeps its
 // lowest mode, the configured completion margin is evaluated and the next
@@ -519,7 +500,6 @@ func TestE2EKindSCHAC24FirstConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := kindDecide(t, c)
-	kindLog(t, first)
 	prepares := 0
 	if first.Target != nil {
 		for _, a := range first.Target.Actions {
@@ -542,7 +522,6 @@ func TestE2EKindSCHAC24FirstConfiguration(t *testing.T) {
 	}
 	t.Logf("capacity row %s κ=%v margin=%vms built in %s", rows[0].Status, *rows[0].Kappa, rows[0].Input.CompletionMarginMS, rows[0].Elapsed)
 	next := kindDecide(t, c)
-	kindLog(t, next)
 	if !next.At.After(first.At) || kindWorkloadState(next, "w-on").State != serving.WorkloadControlled {
 		t.Fatalf("next control interval did not decide again: %+v", next.Workloads)
 	}
@@ -634,7 +613,6 @@ func TestE2EKindSCHAC25Coexistence(t *testing.T) {
 		kindDefinition("w-on", "model", profile), kindDefinition("w-noev", "unmeasured-model", profile), disabled)
 	kindInstance(t, kube, c, fixed, off, disabled)
 	d := kindDecide(t, c)
-	kindLog(t, d)
 	for uid, want := range map[string]string{"w-on": serving.WorkloadControlled, "w-noev": serving.WorkloadMeasurementEvidenceMissing, disabled.UID: serving.WorkloadDisabled} {
 		if got := kindWorkloadState(d, uid).State; got != want {
 			t.Fatalf("%s state %q, want %q", uid, got, want)

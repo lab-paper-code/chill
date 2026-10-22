@@ -245,7 +245,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
-		CapacityMinimumRequests: 1, MaxCPUs: 2,
+		CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 2,
 	}
 	// The native store is unreachable, so listing completed measurements fails.
 	rejected := schedulerConfiguration{Settings: settings}
@@ -416,7 +416,7 @@ func schedulerTestConfiguration() schedulerConfiguration {
 			ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Second, MaxReplicas: 1,
 			MaxInstances: 5, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
-			CapacityMinimumRequests: 1, MaxCPUs: 2,
+			CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 2,
 		},
 		Reserved: map[string]serving.SchedulerAllocation{"rpi": {CPUs: []int{0}}},
 	}

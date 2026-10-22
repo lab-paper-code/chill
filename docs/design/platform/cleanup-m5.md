@@ -136,7 +136,7 @@ r7에서 ChillServer Pod를 지우자 새 Pod가 `observation directory already 
 
 ## 9. 범위 밖
 
-점검 기록의 E5 전 재검토 항목(다중 Workload DP 칸 크기, 같은 노드 인스턴스 간섭, 전환 중 SLO)은 E5 재검토가 맡는다. Workload, ModelSpec, Dataset, Preprocessor, DeviceClass, ChillSystem CRD는 그대로다.
+점검 기록의 E5 전 재검토 항목(다중 Workload 계획 탐색 시간과 게이트웨이 간섭, 같은 노드 인스턴스 간섭, 전환 중 SLO)은 E5 재검토가 맡는다. Workload, ModelSpec, Dataset, Preprocessor, DeviceClass, ChillSystem CRD는 그대로다.
 
 ## 10. 커밋 단위
 

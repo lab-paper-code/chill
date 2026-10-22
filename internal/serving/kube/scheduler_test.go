@@ -107,7 +107,7 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog,
 		runs: map[string]*actionRun{}, config: SchedulerControllerConfig{
-			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4},
+			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 4},
 		}}
 }
 
@@ -237,7 +237,7 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{
 			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
-				MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4,
+				MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 4,
 				Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true,
 					Routing: true, Batching: true, Power: true}},
 			Baselines: []serving.NodeBaseline{{ID: "empty-pool-idle", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},

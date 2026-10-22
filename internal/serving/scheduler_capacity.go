@@ -11,6 +11,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,9 +44,7 @@ const (
 	// instance before its route.
 	schedulerRoutedStopsFirst = "RoutedInstanceStopsBeforeRoute"
 
-	schedulerRouteUnits    = 1000  // route weights of one Workload sum to this
-	schedulerMaxCells      = 50    // load cells per Workload
-	schedulerMaxCellStates = 20000 // load-cell states of all Workloads
+	schedulerRouteUnits = 1000 // route weights of one Workload sum to this
 
 	// schedulerTargetBaselineDelta trials subtract a baseline the cost reports.
 	schedulerTargetBaselineDelta = "target-baseline-delta"
@@ -52,14 +52,26 @@ const (
 )
 
 // SchedulerCapacity records the capacity-sum judgment of a decision: the
-// comparison period T, the chosen route time r, each controlled Workload in
-// the chosen plan set and every node plan with its eligibility.
+// comparison period T, the chosen route time r, the plan search, each
+// controlled Workload in the chosen plan set and every node plan with its
+// eligibility.
 type SchedulerCapacity struct {
 	Period    time.Duration               `json:"periodNanos"`
 	Route     time.Duration               `json:"routeNanos"`
-	Cells     int                         `json:"cells"`
+	Search    *SchedulerPlanSearch        `json:"search,omitempty"`
 	Workloads []SchedulerCapacityWorkload `json:"workloads"`
 	Plans     []SchedulerNodePlan         `json:"plans"`
+}
+
+// SchedulerPlanSearch is the scope of one plan search: the most Nodes one step
+// changed in the last neighborhood it searched (k), the plan sets it
+// evaluated, its time, and whether the time budget (half the control
+// interval) ended it before its last step.
+type SchedulerPlanSearch struct {
+	Neighborhood int           `json:"neighborhood"`
+	Evaluated    int           `json:"evaluated"`
+	Duration     time.Duration `json:"durationNanos"`
+	BudgetCut    bool          `json:"budgetCut,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -97,10 +109,11 @@ type SchedulerNodePlan struct {
 }
 
 // EvaluateScheduler plans with capacity sums: node plans, the transient and
-// final SLO rule over exact κ sums, a Pareto DP per route time and analytic
-// energy over one comparison period. capacity holds the rows CapacityTable.Rows
-// returns.
+// final SLO rule over exact κ sums, a neighborhood search over plan sets and
+// analytic energy over one comparison period. capacity holds the rows
+// CapacityTable.Rows returns.
 func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, capacity []CapacityRow) (SchedulerDecision, error) {
+	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return SchedulerDecision{}, err
 	}
@@ -174,7 +187,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err := planner.build(); err != nil {
 		return SchedulerDecision{}, err
 	}
-	best, err := planner.solve()
+	best, err := planner.search(started.Add(settings.ControlInterval / 2))
 	if err != nil {
 		return SchedulerDecision{}, err
 	}
@@ -226,8 +239,6 @@ type capacityWorkload struct {
 	queued  int     // q
 	current int     // instances serving it now
 	slack   float64 // L − m, seconds
-	cells   int
-	unit    float64 // req/s per load cell
 }
 
 // capacityItem is one instance serving a Workload: its κ, per-input energy e
@@ -249,9 +260,7 @@ type capacityPlan struct {
 	instances                          []SchedulerInstance // the Node's instances after the plan
 	items                              [][]capacityItem    // per Workload, by e then ID
 	retained                           [][]capacityItem    // per Workload, current instances serving until the route
-	vals                               []float64           // DP values (width per Workload, then −instances)
 	others                             int                 // instances serving no controlled Workload
-	serve                              [][]float64         // per Workload, request joules over T of y load cells
 	preMean, preMax, postMean, postMax float64             // seconds
 	preJ, postJ                        float64
 	before, mid, after                 float64 // watts
@@ -280,13 +289,8 @@ type capacityPlanner struct {
 	plans    [][]*capacityPlan // per Node; plans[n][0] is keep
 	compared []bool
 	period   float64
-	routes   []float64
-	cells    int
 	examined int
-	// paretoMax is the largest Pareto set of one load-cell state, for tests and measurement.
-	paretoMax int
-	// free marks plans whose instance counts cannot pass maxReplicas or maxInstances.
-	free     bool
+	searched SchedulerPlanSearch
 	variants map[string]SchedulerOption // capacity variants by profile ID and batch limit
 	// partial marks a window observed for less than its length since the
 	// process started: arrivals there still reflect the restart, so plans
@@ -330,16 +334,6 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		}
 		p.index[w.d.UID] = len(p.ws)
 		p.ws = append(p.ws, w)
-	}
-	// The largest cell count whose states over all Workloads stay within the bound.
-	p.cells = schedulerMaxCells
-	for p.cells > 1 && math.Pow(float64(p.cells+1), float64(len(p.ws))) > schedulerMaxCellStates {
-		p.cells--
-	}
-	for i := range p.ws {
-		if p.ws[i].rate > 0 {
-			p.ws[i].cells, p.ws[i].unit = p.cells, p.ws[i].rate/float64(p.cells)
-		}
 	}
 	p.options = schedulerMeasuredOptions(ctx, settings, snapshot)
 	// The capacity table keys rows by the variants of the snapshot options.
@@ -428,13 +422,12 @@ func (p *capacityPlanner) fixed(i SchedulerInstance) bool {
 	return i.FixedBatchSize > 0 || !ownerControlled && current(i.OwnerWorkloadUID) || !servedControlled && current(i.WorkloadUID)
 }
 
-// build lists every Node's plans, the comparison period T and the route times.
+// build lists every Node's plans and the comparison period T.
 func (p *capacityPlanner) build() error {
 	common := p.keep.Nodes
 	p.plans = make([][]*capacityPlan, len(p.snapshot.Nodes))
 	p.compared = make([]bool, len(p.snapshot.Nodes))
 	pre, post := 0.0, 0.0
-	routes := []float64{0}
 	for n := range p.snapshot.Nodes {
 		if err := p.ctx.Err(); err != nil {
 			return err
@@ -444,20 +437,11 @@ func (p *capacityPlanner) build() error {
 			if plan.record.Eligible {
 				p.compared[n] = true
 				pre, post = max(pre, plan.preMax), max(post, plan.postMax)
-				routes = append(routes, plan.preMax)
 			}
 		}
 		p.examined += len(p.plans[n])
 	}
-	p.elideCounts()
 	p.period = max(p.settings.ComparisonPeriod.Seconds(), pre+post)
-	slices.Sort(routes)
-	p.routes = slices.Compact(routes)
-	for _, plans := range p.plans {
-		for _, plan := range plans {
-			p.serveTable(plan)
-		}
-	}
 	return nil
 }
 
@@ -802,104 +786,39 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 	}
 }
 
-// width is the number of DP values per Workload: κ_new, κ_ret, presence and
-// −count, plus +count with replicas OFF so that counts compare by equality.
-// The last value of a point is −(all instances). Every value compares as
-// larger is better.
-func (p *capacityPlanner) width() int {
-	switch {
-	case p.free:
-		return 3
-	case p.settings.Controls.Replicas:
-		return 4
-	}
-	return 5
-}
-
-// elideCounts drops the count values when no plan set can pass maxReplicas
-// or maxInstances (the largest plan of every Node summed stays within them,
-// replicas ON): the counts then never decide a point.
-func (p *capacityPlanner) elideCounts() {
-	if !p.settings.Controls.Replicas {
-		return
-	}
-	width, perWorkload, total := p.width(), make([]float64, len(p.ws)), 0.0
-	for _, plans := range p.plans {
-		most, mostTotal := make([]float64, len(p.ws)), 0.0
-		for _, plan := range plans {
-			if !plan.record.Eligible || plan.vals == nil {
-				continue
-			}
-			for w := range p.ws {
-				most[w] = max(most[w], -plan.vals[w*width+3])
-			}
-			mostTotal = max(mostTotal, -plan.vals[len(plan.vals)-1])
-		}
-		for w := range p.ws {
-			perWorkload[w] += most[w]
-		}
-		total += mostTotal
-	}
-	if total > float64(p.settings.MaxInstances) || slices.ContainsFunc(perWorkload, func(n float64) bool { return n > float64(p.settings.MaxReplicas) }) {
-		return
-	}
-	p.free = true
-	for _, plans := range p.plans {
-		for _, plan := range plans {
-			if plan.vals != nil {
-				p.sum(plan)
-			}
-		}
-	}
-}
-
-// sum sets the plan's DP values and records its κ sums.
+// sum records the plan's κ sums per Workload.
 func (p *capacityPlanner) sum(plan *capacityPlan) {
-	width := p.width()
-	plan.vals = make([]float64, len(p.ws)*width+1)
-	total := plan.others
 	plan.record.Kappa, plan.record.KappaRetained = map[string]float64{}, map[string]float64{}
 	for w, ws := range p.ws {
-		v := plan.vals[w*width : (w+1)*width]
+		knew, kret := 0.0, 0.0
 		for _, item := range plan.items[w] {
-			v[0] += item.kappa
+			knew += item.kappa
 		}
 		for _, item := range plan.retained[w] {
-			v[1] += item.kappa
+			kret += item.kappa
 		}
-		n := len(plan.items[w])
-		if n > 0 {
-			v[2] = 1
-		}
-		if width > 3 {
-			v[3] = -float64(n)
-		}
-		if width == 5 {
-			v[4] = float64(n)
-		}
-		total += n
-		plan.record.Kappa[ws.d.UID], plan.record.KappaRetained[ws.d.UID] = v[0], v[1]
-	}
-	if !p.free {
-		plan.vals[len(plan.vals)-1] = -float64(total)
+		plan.record.Kappa[ws.d.UID], plan.record.KappaRetained[ws.d.UID] = knew, kret
 	}
 }
 
-// bounded reports whether a point respects maxReplicas, maxInstances and,
-// with replicas OFF, each Workload's current instance count (exactly once
-// final); counts only grow, so a point past a bound stays past it.
-func (p *capacityPlanner) bounded(vals []float64, final bool) bool {
-	if p.free {
-		return true
+// bounded reports whether the plan set respects maxReplicas, maxInstances
+// and, with replicas OFF, each Workload's current instance count.
+func (p *capacityPlanner) bounded(choice []int) bool {
+	counts, total := make([]int, len(p.ws)), 0
+	for n, j := range choice {
+		plan := p.plans[n][j]
+		total += plan.others
+		for w := range p.ws {
+			counts[w] += len(plan.items[w])
+			total += len(plan.items[w])
+		}
 	}
-	width := p.width()
 	for w, ws := range p.ws {
-		n := -vals[w*width+3]
-		if n > float64(p.settings.MaxReplicas) || width == 5 && (n > float64(ws.current) || final && n != float64(ws.current)) {
+		if counts[w] > p.settings.MaxReplicas || !p.settings.Controls.Replicas && counts[w] != ws.current {
 			return false
 		}
 	}
-	return -vals[len(vals)-1] <= float64(p.settings.MaxInstances)
+	return total <= p.settings.MaxInstances
 }
 
 // chain plans the Node change with schedulerPlan and sums the measured costs
@@ -1007,41 +926,6 @@ func ActionDeadline(window time.Duration, costs []OperationCost, a Action) time.
 		}
 	}
 	return longest + window
-}
-
-// serveTable is the DP request energy of y load cells per Workload: the cells
-// fill the cheapest instances up to their κ, and the last instance takes what
-// rounding a plan's ⌈κ/cell⌉ cells adds. ponytail: it charges the whole period
-// at the target assignment; ExpectedJoules splits the request energy at the route.
-func (p *capacityPlanner) serveTable(plan *capacityPlan) {
-	if !plan.record.Eligible {
-		return
-	}
-	plan.serve = make([][]float64, len(p.ws))
-	for w, ws := range p.ws {
-		limit := 0
-		if ws.cells > 0 && len(plan.items[w]) > 0 {
-			limit = min(ws.cells, int(math.Ceil(plan.vals[w*p.width()]/ws.unit)))
-		}
-		plan.serve[w] = make([]float64, limit+1)
-		for y := 1; y <= limit; y++ {
-			plan.serve[w][y] = capacityServe(plan.items[w], float64(y)*ws.unit) * p.period
-		}
-	}
-}
-
-// capacityServe is the request power (W) of rate filled onto items by e.
-func capacityServe(items []capacityItem, rate float64) float64 {
-	watts := 0.0
-	for k, item := range items {
-		take := min(rate, item.kappa)
-		if k == len(items)-1 {
-			take = rate
-		}
-		watts += take * item.e
-		rate -= take
-	}
-	return watts
 }
 
 // capacityJudgment is the §3 judgment of one Workload under κ sums and route r.
@@ -1437,283 +1321,104 @@ func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
 	return joules
 }
 
-type capacityPoint struct {
-	energy float64
-	parent int32
-	plan   int32
-	keep   bool
-}
-
-// capacityStage holds the Pareto points of one DP step: per load-cell state
-// the points no other point beats in energy and every κ sum at once.
-type capacityStage struct {
-	points []capacityPoint
-	vals   []float64
-	cells  [][]int32
-	stride int
-}
-
-// reset empties the stage for states load-cell states, keeping its buffers.
-func (s *capacityStage) reset(states, stride int) {
-	s.points, s.vals, s.stride = s.points[:0], s.vals[:0], stride
-	if len(s.cells) != states {
-		s.cells = make([][]int32, states)
-	}
-	for state := range s.cells {
-		s.cells[state] = s.cells[state][:0]
-	}
-}
-
-func (s *capacityStage) values(index int32) []float64 {
-	return s.vals[int(index)*s.stride : int(index+1)*s.stride]
-}
-
-func (s *capacityStage) insert(state int, point capacityPoint, vals []float64) {
-	list, stride := s.cells[state], s.stride
-	// Energy decides first, so the values of most points are never read.
-	for _, index := range list {
-		q := &s.points[index]
-		if q.energy > point.energy {
-			continue
-		}
-		qv := s.vals[int(index)*stride : int(index)*stride+stride]
-		if capacityAtLeast(qv, vals) {
-			return
+// search walks from keep: each step moves to the best admissible plan set
+// that changes at most k Nodes, first with k = 2 until no step improves, then
+// with k = 3 from there. At deadline the sweep stops; the best plan set found
+// so far stays and p.searched records the cut.
+func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
+	start := time.Now()
+	choice := make([]int, len(p.plans))
+	best := p.evaluate(slices.Clone(choice), 0)
+	for k := 2; k <= 3 && !p.searched.BudgetCut; k++ {
+		p.searched.Neighborhood = k
+		for !p.searched.BudgetCut {
+			step, err := p.sweep(choice, k, deadline)
+			if err != nil {
+				return capacityResult{}, err
+			}
+			if step == nil || !step.better(&best) {
+				break
+			}
+			best, choice = *step, step.choice
 		}
 	}
-	kept := list[:0]
-	for _, index := range list {
-		if point.energy > s.points[index].energy || !capacityAtLeast(vals, s.vals[int(index)*stride:int(index)*stride+stride]) {
-			kept = append(kept, index)
-		}
-	}
-	s.points = append(s.points, point)
-	s.vals = append(s.vals, vals...)
-	s.cells[state] = append(kept, int32(len(s.points)-1))
+	p.searched.Duration = time.Since(start)
+	return best, nil
 }
 
-// capacityAtLeast reports a[k] ≥ b[k] for every value.
-func capacityAtLeast(a, b []float64) bool {
-	for k, x := range b {
-		if a[k] < x {
-			return false
-		}
-	}
-	return true
-}
-
-// solve runs the node DP once per route time r and keeps the best plan set.
-// A state is the load cells assigned per Workload and whether some chosen
-// chain ends exactly at r; feasible sets come from the fully assigned state.
-//
-//nolint:gocyclo // One DP pass per route time with its final judgment.
-func (p *capacityPlanner) solve() (capacityResult, error) {
-	k := len(p.ws)
-	radix := make([]int, k)
-	states := 1
-	for w := range p.ws {
-		radix[w] = states
-		states *= p.ws[w].cells + 1
-	}
-	full := 0
-	for w := range p.ws {
-		full += p.ws[w].cells * radix[w]
-	}
-	nodes := []int{}
+// sweep evaluates the admissible plan sets that change 1 to k Nodes of choice
+// and returns the best (nil when there is none). planSearchWorkers goroutines
+// take the first changed Node plan in turn; better is a total order, so the
+// result does not depend on their timing.
+func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capacityResult, error) {
+	type move struct{ n, j int }
+	moves := []move{}
 	for n, plans := range p.plans {
-		if p.compared[n] || slices.ContainsFunc(plans[0].vals, func(v float64) bool { return v != 0 }) {
-			nodes = append(nodes, n)
+		for j, plan := range plans {
+			if j != choice[n] && plan.record.Eligible {
+				moves = append(moves, move{n, j})
+			}
 		}
+	}
+	// after[i] is the first move on a later Node than moves[i].
+	after := make([]int, len(moves))
+	for i := len(moves) - 1; i >= 0; i-- {
+		after[i] = len(moves)
+		if i+1 < len(moves) {
+			after[i] = after[i+1]
+			if moves[i+1].n != moves[i].n {
+				after[i] = i + 1
+			}
+		}
+	}
+	workers := p.settings.PlanSearchWorkers
+	bests, counts := make([]*capacityResult, workers), make([]int, workers)
+	var next atomic.Int64
+	var cut atomic.Bool
+	var wg sync.WaitGroup
+	for w := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c := slices.Clone(choice)
+			var walk func(i, left int)
+			walk = func(i, left int) {
+				m := moves[i]
+				c[m.n] = m.j
+				defer func() { c[m.n] = choice[m.n] }()
+				if cut.Load() || time.Now().After(deadline) {
+					cut.Store(true)
+					return
+				}
+				if p.bounded(c) {
+					counts[w]++
+					res := p.evaluate(slices.Clone(c), p.routeOf(c))
+					if !res.unroutedPrepare && (!p.partial || !res.unroutes) && res.better(bests[w]) {
+						bests[w] = &res
+					}
+				}
+				for i2 := after[i]; left > 1 && i2 < len(moves); i2++ {
+					walk(i2, left-1)
+				}
+			}
+			for i := int(next.Add(1)) - 1; i < len(moves) && p.ctx.Err() == nil && !cut.Load(); i = int(next.Add(1)) - 1 {
+				walk(i, k)
+			}
+		}()
+	}
+	wg.Wait()
+	if err := p.ctx.Err(); err != nil {
+		return nil, err
 	}
 	var best *capacityResult
-	var overload *capacityResult
-	// The stages, the two per-Workload scratch stages and the value buffer are
-	// reused for every route time.
-	stages := make([]*capacityStage, len(nodes)+1)
-	for s := range stages {
-		stages[s] = &capacityStage{}
-	}
-	scratch := [2]*capacityStage{{}, {}}
-	stride, width := len(p.ws)*p.width()+1, p.width()
-	vals := make([]float64, stride)
-	for _, r := range p.routes {
-		if err := p.ctx.Err(); err != nil {
-			return capacityResult{}, err
-		}
-		start := stages[0]
-		start.reset(2*states, stride)
-		hit := 0
-		if r == 0 {
-			hit = 1
-		}
-		start.insert(hit*states, capacityPoint{parent: -1, keep: true}, make([]float64, stride))
-		for s, n := range nodes {
-			prev, next := stages[s], stages[s+1]
-			next.reset(2*states, stride)
-			for _, j := range p.frontier(n, r) {
-				plan := p.plans[n][j]
-				// Load cells spread one Workload at a time: the plan's points of
-				// Workload w feed Workload w+1, and the last ones enter next.
-				target := next
-				if k > 1 {
-					target = scratch[0]
-					target.reset(2*states, stride)
-				}
-				for state, list := range prev.cells {
-					offset := state - state%states
-					if !plan.keep && plan.preMax == r {
-						offset = states
-					}
-					for _, index := range list {
-						point := prev.points[index]
-						energy := point.energy
-						if p.compared[n] {
-							energy += plan.energy(r, p.period)
-						}
-						for v, x := range prev.values(index) {
-							vals[v] = x + plan.vals[v]
-						}
-						point = capacityPoint{parent: index, plan: int32(j), keep: point.keep && plan.keep}
-						if !point.keep && !p.bounded(vals, false) {
-							continue
-						}
-						p.spread(target, plan, 0, offset+state%states, point, energy, vals, radix[0])
-					}
-				}
-				for w := 1; w < k; w++ {
-					source := target
-					if target = next; w < k-1 {
-						target = scratch[w%2]
-						target.reset(2*states, stride)
-					}
-					for state, list := range source.cells {
-						for _, index := range list {
-							p.spread(target, plan, w, state, source.points[index], source.points[index].energy, source.values(index), radix[w])
-						}
-					}
-				}
-			}
-			for _, list := range next.cells {
-				p.paretoMax = max(p.paretoMax, len(list))
-			}
-		}
-		last := stages[len(stages)-1]
-		for state := states; state < 2*states; state++ {
-			for _, index := range last.cells[state] {
-				vals := last.values(index)
-				if !last.points[index].keep && !p.bounded(vals, true) {
-					continue
-				}
-				feasible, final, worst := true, true, math.Inf(-1)
-				for w, ws := range p.ws {
-					j := capacityJudge(ws, vals[w*width], vals[w*width+1], vals[w*width+2] > 0, r)
-					feasible = feasible && j.satisfied
-					final = final && j.final != nil && *j.final <= 0
-					worst = max(worst, j.worst())
-				}
-				if feasible && state-states != full {
-					continue
-				}
-				// Route weights can still fail the final judgment, so a point that
-				// ends feasible is only pruned by an overload that also does.
-				if !feasible && (best != nil || overload != nil && (overload.final && !final || overload.final == final && worst > overload.worst)) {
-					continue
-				}
-				choice := make([]int, len(p.plans))
-				at := index
-				for s := len(stages) - 1; s > 0; s-- {
-					point := stages[s].points[at]
-					choice[nodes[s-1]] = int(point.plan)
-					at = point.parent
-				}
-				res := p.evaluate(choice, r)
-				// A new instance at weight 0 would serve nothing until idle removal
-				// takes it; a partial window keeps every route.
-				if res.unroutedPrepare || p.partial && res.unroutes {
-					continue
-				}
-				if res.feasible {
-					if res.better(best) {
-						best = &res
-					}
-				} else if res.better(overload) {
-					overload = &res
-				}
-			}
+	for w, res := range bests {
+		p.searched.Evaluated += counts[w]
+		if res != nil && res.better(best) {
+			best = res
 		}
 	}
-	// Keep is always a candidate: a plan that only relabels current instances
-	// carries more κ at the same energy, so the Pareto sets can drop keep, and an
-	// exact tie with keep must keep.
-	keep := p.evaluate(make([]int, len(p.plans)), 0)
-	switch {
-	case keep.feasible && keep.better(best):
-		best = &keep
-	case !keep.feasible && best == nil && keep.better(overload):
-		overload = &keep
-	}
-	if best != nil {
-		return *best, nil
-	}
-	return *overload, nil
-}
-
-// spread adds y = 0, 1, … load cells of Workload w (radix of its state digit)
-// to the point's state at the plan's request energy, within the cell count.
-func (p *capacityPlanner) spread(target *capacityStage, plan *capacityPlan, w, state int, point capacityPoint, energy float64, vals []float64, radix int) {
-	used := state / radix % (p.ws[w].cells + 1)
-	for y, joules := range plan.serve[w] {
-		if used+y > p.ws[w].cells {
-			return
-		}
-		point.energy = energy + joules
-		target.insert(state+y*radix, point, vals)
-	}
-}
-
-// frontier lists the plans of Node n eligible at route r that no other one
-// beats: at most its energy, at least its κ sums and load cells at no higher
-// request energy, and a chain ending at r when it has one. Every DP point of a
-// beaten plan is beaten by the same point of the other plan; keep stays.
-func (p *capacityPlanner) frontier(n int, r float64) []int {
-	eligible := []int{}
-	for j, plan := range p.plans[n] {
-		if plan.record.Eligible && plan.preMax <= r {
-			eligible = append(eligible, j)
-		}
-	}
-	hit := func(plan *capacityPlan) bool { return !plan.keep && plan.preMax == r }
-	beats := func(a, b *capacityPlan) bool {
-		if b.keep || hit(b) && !hit(a) || a.energy(r, p.period) > b.energy(r, p.period) {
-			return false
-		}
-		for v := range a.vals {
-			if a.vals[v] < b.vals[v] {
-				return false
-			}
-		}
-		for w := range a.serve {
-			if len(a.serve[w]) < len(b.serve[w]) {
-				return false
-			}
-			for y, joules := range b.serve[w] {
-				if a.serve[w][y] > joules {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	kept := []int{}
-	for _, j := range eligible {
-		if !slices.ContainsFunc(eligible, func(i int) bool {
-			// Of two equal plans the earlier one stays.
-			return i != j && beats(p.plans[n][i], p.plans[n][j]) && (i < j || !beats(p.plans[n][j], p.plans[n][i]))
-		}) {
-			kept = append(kept, j)
-		}
-	}
-	return kept
+	p.searched.BudgetCut = cut.Load()
+	return best, nil
 }
 
 // decide turns the chosen plan set into the decision: keep, a route-only
@@ -1732,7 +1437,8 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 			decision.Search.ComparedNodes = append(decision.Search.ComparedNodes, p.snapshot.Nodes[n].Node)
 		}
 	}
-	record := &SchedulerCapacity{Period: time.Duration(p.period * 1e9), Route: time.Duration(best.route * 1e9), Cells: p.cells}
+	search := p.searched
+	record := &SchedulerCapacity{Period: time.Duration(p.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search}
 	for _, plans := range p.plans {
 		for _, plan := range plans {
 			record.Plans = append(record.Plans, plan.record)

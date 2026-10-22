@@ -36,7 +36,7 @@ const actorUsername = "operator"
 func schedulerSettingsForTest() serving.SchedulerSettings {
 	return serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxObservationAge: time.Second, MaxReplicas: 1,
-		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 1}
+		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 1}
 }
 
 type settingsArchive struct{ directory string }

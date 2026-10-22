@@ -545,23 +545,29 @@ func TestCapacityPendingWithoutRows(t *testing.T) {
 }
 
 // capacityTestSettings bound synthetic planners loosely, replicas ON.
-var capacityTestSettings = SchedulerSettings{ComparisonPeriod: time.Minute, MaxReplicas: 100, MaxInstances: 100, Controls: SchedulerControls{Replicas: true, Routing: true}}
+var capacityTestSettings = SchedulerSettings{ComparisonPeriod: time.Minute, MaxReplicas: 100, MaxInstances: 100, PlanSearchWorkers: 2, Controls: SchedulerControls{Replicas: true, Routing: true}}
+
+// capacitySearchForTest runs the plan search without a time budget.
+func capacitySearchForTest(t testing.TB, p *capacityPlanner) capacityResult {
+	t.Helper()
+	best, err := p.search(time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return best
+}
 
 // capacityRandomPlanner builds a planner over synthetic node plans.
-func capacityRandomPlanner(rng *rand.Rand, workloads, nodes, cells int) *capacityPlanner {
-	p := &capacityPlanner{ctx: context.Background(), cells: cells, settings: capacityTestSettings}
+func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanner {
+	p := &capacityPlanner{ctx: context.Background(), settings: capacityTestSettings}
 	for w := range workloads {
 		rate := 0.0
 		if rng.IntN(4) > 0 {
 			rate = 10 + 90*rng.Float64()
 		}
 		ws := capacityWorkload{d: &Definition{UID: fmt.Sprint("w", w)}, rate: rate, queued: rng.IntN(6), slack: 0.2 + 2*rng.Float64()}
-		if rate > 0 {
-			ws.cells, ws.unit = cells, rate/float64(cells)
-		}
 		p.ws = append(p.ws, ws)
 	}
-	routes := map[float64]bool{0: true}
 	pre, post := 0.0, 0.0
 	for n := range nodes {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
@@ -582,7 +588,6 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes, cells int) *capacit
 				plan.preMax = []float64{0, 5, 20, 197}[rng.IntN(4)]
 				plan.preMean, plan.postMax, plan.postMean = plan.preMax*rng.Float64(), 5*rng.Float64(), 0
 				plan.preJ, plan.postJ, plan.mid, plan.after = 100*rng.Float64(), 10*rng.Float64(), 1+10*rng.Float64(), 1+10*rng.Float64()
-				routes[plan.preMax] = true
 				pre, post = max(pre, plan.preMax), max(post, plan.postMax)
 			}
 			p.sum(plan)
@@ -592,25 +597,17 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes, cells int) *capacit
 		p.compared = append(p.compared, len(plans) > 1)
 	}
 	p.period = max(60, pre+post)
-	for r := range routes {
-		p.routes = append(p.routes, r)
-	}
-	slices.Sort(p.routes)
-	for _, plans := range p.plans {
-		for _, plan := range plans {
-			p.serveTable(plan)
-		}
-	}
 	return p
 }
 
-// capacityBruteForce evaluates every plan set at its own route time and
-// returns the cheapest feasible one (nil when none is feasible).
+// capacityBruteForce evaluates every plan set within the instance bounds that
+// gives no new instance weight 0, at its own route time, and returns the
+// cheapest feasible one (nil when none is feasible).
 func capacityBruteForce(p *capacityPlanner) *capacityResult {
 	var best *capacityResult
 	choice := make([]int, len(p.plans))
 	for {
-		if res := p.evaluate(slices.Clone(choice), p.routeOf(choice)); res.feasible && res.better(best) {
+		if res := p.evaluate(slices.Clone(choice), p.routeOf(choice)); p.bounded(choice) && !res.unroutedPrepare && res.feasible && res.better(best) {
 			best = &res
 		}
 		n := 0
@@ -626,65 +623,84 @@ func capacityBruteForce(p *capacityPlanner) *capacityResult {
 	}
 }
 
-// §9 6 DP: on random small fixtures (1–3 Workloads) the DP judgment equals the
-// exact-κ brute force, for every cell count; the Pareto set sizes are logged.
-func TestCapacityDPMatchesBruteForce(t *testing.T) {
-	pareto, gap := 0, 0.0
-	for trial := range 150 {
-		workloads := 1 + trial%3
-		for _, cells := range []int{2, 7, 50} {
-			if workloads == 3 && cells == 50 {
-				cells = 12 // three Workloads at the largest count take minutes of brute-force DP time
-			}
-			p := capacityRandomPlanner(rand.New(rand.NewPCG(uint64(trial), 7)), workloads, 1+trial%4, cells)
-			best, err := p.solve()
-			if err != nil {
-				t.Fatal(err)
-			}
-			exact := capacityBruteForce(p)
-			if best.feasible != (exact != nil) {
-				t.Fatalf("trial %d cells %d: DP feasible=%v, brute force %v", trial, cells, best.feasible, exact != nil)
-			}
-			if exact != nil {
-				if best.joules < exact.joules-1e-6 {
-					t.Fatalf("trial %d: DP energy %g below the exact minimum %g", trial, best.joules, exact.joules)
-				}
-				if exact.joules > 0 {
-					gap = max(gap, (best.joules-exact.joules)/exact.joules)
-				}
-			}
-			pareto = max(pareto, p.paretoMax)
-		}
-	}
-	t.Logf("largest Pareto set of one load-cell state %d; largest DP energy above the exact minimum %.3g%%", pareto, 100*gap)
-}
-
-// §9 6 DP: three instances of κ 0.34λ meet λ at any cell count.
-func TestCapacityThreeThirdsMeetTheLoad(t *testing.T) {
-	for _, cells := range []int{3, 50} {
-		p := &capacityPlanner{ctx: context.Background(), cells: cells, period: 60, routes: []float64{0}, settings: capacityTestSettings}
-		p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 100, slack: 1, cells: cells, unit: 100 / float64(cells)}}
-		for n := range 3 {
-			p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
-			keep := &capacityPlan{keep: true, items: [][]capacityItem{nil}, retained: [][]capacityItem{nil}, before: 1}
-			item := capacityItem{id: fmt.Sprint("i", n), kappa: 34, e: 1}
-			add := &capacityPlan{items: [][]capacityItem{{item}}, retained: [][]capacityItem{nil}, mid: 2, after: 2}
-			p.sum(keep)
-			p.sum(add)
-			keep.record.Eligible, add.record.Eligible, add.record.Key = true, true, "add"
-			p.plans = append(p.plans, []*capacityPlan{keep, add})
-			p.compared = append(p.compared, true)
-			p.serveTable(keep)
-			p.serveTable(add)
-		}
-		best, err := p.solve()
-		if err != nil || !best.feasible || !slices.Equal(best.choice, []int{1, 1, 1}) {
-			t.Fatalf("cells %d: %+v %v", cells, best, err)
+// §9 6 search: on random fixtures of 1–3 Nodes the k = 3 neighborhood holds
+// every plan set, so the search equals the exact-κ brute force.
+func TestCapacitySearchMatchesBruteForce(t *testing.T) {
+	for trial := range 300 {
+		p := capacityRandomPlanner(rand.New(rand.NewPCG(uint64(trial), 7)), 1+trial%3, 1+trial%3)
+		best := capacitySearchForTest(t, p)
+		exact := capacityBruteForce(p)
+		if best.feasible != (exact != nil) || exact != nil && (best.key != exact.key || best.joules != exact.joules) {
+			t.Fatalf("trial %d: search %v %s %g, brute force %+v", trial, best.feasible, best.key, best.joules, exact)
 		}
 	}
 }
 
-// §9 6 DP: route weights sum to 1,000 and stay within κ after rounding.
+// capacityThreeNodeSwap: three Nodes serve λ 29 with κ 10 each at 10 W. Node 0
+// can serve κ 30 alone at 25 W and Nodes 1 and 2 can empty. Changing one or
+// two Nodes loses κ or costs more; changing all three saves 5 W.
+func capacityThreeNodeSwap() *capacityPlanner {
+	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 29, slack: 1}}
+	for n := range 3 {
+		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
+		item := capacityItem{id: fmt.Sprint("i", n), kappa: 10, e: 1}
+		keep := &capacityPlan{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
+		other := &capacityPlan{items: [][]capacityItem{nil}, retained: [][]capacityItem{{item}}}
+		if n == 0 {
+			other.items, other.after = [][]capacityItem{{{id: "big", kappa: 30, e: 1}}}, 25
+		}
+		keep.record.Eligible, other.record.Eligible, other.record.Key = true, true, "swap"
+		p.sum(keep)
+		p.sum(other)
+		p.plans = append(p.plans, []*capacityPlan{keep, other})
+		p.compared = append(p.compared, true)
+	}
+	return p
+}
+
+// §9 6 search: k = 3 continues from the k = 2 optimum and finds the plan set
+// that changes three Nodes; the record names the neighborhood it reached.
+func TestCapacitySearchThreeNodesFindsWhatTwoMiss(t *testing.T) {
+	p := capacityThreeNodeSwap()
+	keep := p.evaluate([]int{0, 0, 0}, 0)
+	for _, c := range [][]int{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {1, 1, 0}, {1, 0, 1}, {0, 1, 1}} {
+		if res := p.evaluate(c, 0); res.better(&keep) {
+			t.Fatalf("fixture: %v beats keep", c)
+		}
+	}
+	best := capacitySearchForTest(t, p)
+	if !best.feasible || !slices.Equal(best.choice, []int{1, 1, 1}) {
+		t.Fatalf("k = 3 must change all three Nodes: %+v", best)
+	}
+	if s := p.searched; s.Neighborhood != 3 || s.BudgetCut || s.Evaluated == 0 || s.Duration <= 0 {
+		t.Fatalf("search record: %+v", s)
+	}
+}
+
+// §9 6 search: a search past its budget keeps the best plan set it found and
+// records the cut.
+func TestCapacitySearchBudgetCutIsRecorded(t *testing.T) {
+	p := capacityThreeNodeSwap()
+	best, err := p.search(time.Now())
+	if err != nil || !best.keep {
+		t.Fatalf("a spent budget must leave keep: %+v %v", best, err)
+	}
+	if s := p.searched; !s.BudgetCut || s.Neighborhood != 2 {
+		t.Fatalf("search record: %+v", s)
+	}
+}
+
+// §9 6 search: the decision records the search scope with the capacity judgment.
+func TestCapacityDecisionRecordsSearch(t *testing.T) {
+	s, snap, rows, _ := capacityE1Fixture()
+	d := capacityDecideForTest(t, s, snap, rows)
+	if d.Capacity == nil || d.Capacity.Search == nil || d.Capacity.Search.Neighborhood != 3 || d.Capacity.Search.Evaluated == 0 || d.Capacity.Search.BudgetCut {
+		t.Fatalf("decision search record: %+v", d.Capacity)
+	}
+}
+
+// §9 6 weights: route weights sum to 1,000 and stay within κ after rounding.
 func TestCapacityRouteWeightsStayWithinKappa(t *testing.T) {
 	items := func(kappa ...float64) []capacityItem {
 		out := []capacityItem{}
@@ -725,8 +741,8 @@ func TestCapacityRouteWeightsStayWithinKappa(t *testing.T) {
 // W = 160 / 34.3 = 4.66 s, past L − m = 0.861 s, so keep is not feasible and
 // adding genesis3 q2 (κ 109.7, W = 160 / 144 = 1.11 s) wins on exceedance.
 func TestCapacityQueuedBacklogFailsKeep(t *testing.T) {
-	p := &capacityPlanner{ctx: context.Background(), cells: 50, period: 60, routes: []float64{0, 10.7}, settings: capacityTestSettings}
-	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 29.5, queued: 160, slack: 0.861, cells: 50, unit: 29.5 / 50}}
+	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 29.5, queued: 160, slack: 0.861}}
 	rasp5 := capacityItem{id: "q1", kappa: 34.3, e: 1, weight: 1000}
 	keep0 := &capacityPlan{keep: true, items: [][]capacityItem{{rasp5}}, retained: [][]capacityItem{{rasp5}}, before: 1}
 	keep1 := &capacityPlan{keep: true, items: [][]capacityItem{nil}, retained: [][]capacityItem{nil}, before: 1}
@@ -739,15 +755,13 @@ func TestCapacityQueuedBacklogFailsKeep(t *testing.T) {
 	}
 	for _, plan := range []*capacityPlan{keep0, keep1, add} {
 		p.sum(plan)
-		p.serveTable(plan)
 	}
 	keep := p.evaluate([]int{0, 0}, 0)
 	if j := keep.judgments[0]; keep.feasible || j.wait == nil || math.Abs(*j.wait-160/34.3) > 1e-9 || *j.transition <= 0 {
 		t.Fatalf("keep with 160 queued judged feasible: %+v", j)
 	}
-	best, err := p.solve()
-	if err != nil || !slices.Equal(best.choice, []int{0, 1}) {
-		t.Fatalf("the backlog must force expansion: %+v %v", best, err)
+	if best := capacitySearchForTest(t, p); !slices.Equal(best.choice, []int{0, 1}) {
+		t.Fatalf("the backlog must force expansion: %+v", best)
 	}
 }
 
@@ -757,7 +771,7 @@ func TestCapacityQueuedBacklogFailsKeep(t *testing.T) {
 // instances' κ sum, so the weights follow κ and every instance takes load.
 func TestCapacityOverloadWeightsDrainTheBacklog(t *testing.T) {
 	kappa := []float64{42.01676682274319, 48.2933028258133, 114.5538148895834, 144.47154833104395}
-	p := &capacityPlanner{ctx: context.Background(), cells: 50, period: 147, routes: []float64{0}, settings: capacityTestSettings}
+	p := &capacityPlanner{ctx: context.Background(), period: 147, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 12.8, queued: 160, slack: 1 - 0.139}}
 	choice := []int{}
 	for n, k := range kappa {
@@ -858,7 +872,7 @@ func TestCapacityFailedPreparationWaitsOneWindow(t *testing.T) {
 	}
 }
 
-// §9 6 DP: request energy splits at the route: [0, r] by the retained instance
+// §9 6 search: request energy splits at the route: [0, r] by the retained instance
 // up to κ_ret, its overflow and [r, T] by the target fill.
 func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	s, snap := schedulerFixture()
@@ -918,7 +932,7 @@ func TestCapacityPeriodCoversTheLongestChain(t *testing.T) {
 	}
 }
 
-// §9 6 기간과 기록 (D-22): among 40 measured options the re-entry plan is in the DP.
+// §9 6 기간과 기록 (D-22): among 40 measured options the re-entry plan is a candidate.
 func TestCapacityReentryAmongFortyOptions(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.MaxReplicas, s.MaxInstances = 8, 16
@@ -1078,6 +1092,7 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 	s, snap, rows, _ := capacityE1Fixture()
 	poolsAddNode(&snap, "idle", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	want := capacityDecideForTest(t, s, snap, rows)
+	want.Capacity.Search.Duration = 0 // the search time is measured, not decided
 	for seed := range 10 {
 		rng := rand.New(rand.NewPCG(uint64(seed), 3))
 		shuffled := snap
@@ -1094,7 +1109,9 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 		})
 		shuffledRows := slices.Clone(rows)
 		rng.Shuffle(len(shuffledRows), func(i, j int) { shuffledRows[i], shuffledRows[j] = shuffledRows[j], shuffledRows[i] })
-		if got := capacityDecideForTest(t, s, shuffled, shuffledRows); !reflect.DeepEqual(got, want) {
+		got := capacityDecideForTest(t, s, shuffled, shuffledRows)
+		got.Capacity.Search.Duration = 0
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("seed %d: shuffled input changed the decision:\n%+v\n%+v", seed, got.Target, want.Target)
 		}
 	}
@@ -1102,8 +1119,8 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 
 // §9 6 기간과 기록: an exact tie keeps the current configuration.
 func TestCapacityExactTieKeepsCurrent(t *testing.T) {
-	p := &capacityPlanner{ctx: context.Background(), cells: 10, period: 60, routes: []float64{0}, settings: capacityTestSettings}
-	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 50, slack: 1, cells: 10, unit: 5}}
+	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 50, slack: 1}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
 	item := capacityItem{id: "i", kappa: 100, e: 1, weight: 1}
 	keep := &capacityPlan{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
@@ -1114,18 +1131,15 @@ func TestCapacityExactTieKeepsCurrent(t *testing.T) {
 	p.sum(same)
 	keep.record.Eligible, same.record.Eligible, same.record.Key = true, true, "a-same"
 	p.plans, p.compared = [][]*capacityPlan{{keep, same}}, []bool{true}
-	p.serveTable(keep)
-	p.serveTable(same)
-	best, err := p.solve()
-	if err != nil || !best.keep || best.choice[0] != 0 {
-		t.Fatalf("exact tie must keep: %+v %v", best, err)
+	if best := capacitySearchForTest(t, p); !best.keep || best.choice[0] != 0 {
+		t.Fatalf("exact tie must keep: %+v", best)
 	}
 }
 
 // m4 r4 D-R4-4: at 2 req/s genesis3 q2 and orangepi q1 stayed Ready but
 // unrouted. A node plan that takes such an instance back for the Workload is
 // physically keep, with the same energy and routing, yet it carried more κ, so
-// the DP pruned keep and the route-only plan was re-issued 22 times. Keep wins.
+// the node DP pruned keep and the route-only plan was re-issued 22 times. Keep wins.
 func TestCapacityUnroutedTwinKeepsCurrent(t *testing.T) {
 	s, snap := schedulerFixture()
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
@@ -1151,7 +1165,7 @@ func TestCapacityUnroutedTwinKeepsCurrent(t *testing.T) {
 func TestCapacityFeasibleWeightsStay(t *testing.T) {
 	ids := []string{"q1", "lut", "g3", "opi"}
 	kappa := []float64{25.288198615188904, 25.68831509322024, 70.93509923703007, 7.53273799179367}
-	p := &capacityPlanner{ctx: context.Background(), cells: 50, period: 152, routes: []float64{0}, settings: capacityTestSettings}
+	p := &capacityPlanner{ctx: context.Background(), period: 152, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, slack: 1 - 0.029}}
 	p.keep.Routing = map[string]map[string]int32{"w": {"q1": 643, "lut": 357}}
 	for n, id := range ids {

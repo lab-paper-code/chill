@@ -125,7 +125,7 @@ func newAdmissionController(t *testing.T, kube kubernetes.Interface) (*Scheduler
 		SchedulerControllerConfig{
 			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 				MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,
-				CapacityPassingWindows: 1, CapacityMinimumRequests: 1, MaxCPUs: 4},
+				CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 4},
 			MeasurementNamespaces: []string{"chill-system"},
 		})
 	if err != nil {

@@ -148,7 +148,7 @@ coverage 검사를 통과해 `Accepted`이고, 비용에는 목표 모드에서 
 넣는 노드 계획은 `MissingOperationCost`로 비교에서 빠진다.
 
 비교 기간은 판단마다 하나인 `T = max(comparisonPeriodNanos, 최장 route 전 사슬 + 최장 route 뒤 remove)`이고 keep과 모든 계획에
-같다([용량표 계획기 4장](analytic-planner.md#4-노드-계획과-dp)). 사슬은 동작마다 측정 trial의 최대 시간으로 재므로 다시
+같다([용량표 계획기 4장](analytic-planner.md#4-노드-계획과-탐색)). 사슬은 동작마다 측정 trial의 최대 시간으로 재므로 다시
 넣는 계획의 power, prepare, route 사슬도 T 안에 끝나고, 모든 계획은 power와 prepare의 측정 에너지 전체와 다시 넣은 뒤의
 적재 baseline을 같은 T에서 비교한다. E1에서 측정한 빈 노드 전환은 jetsonx 63.5 s, jetsono 134.5 s, orin-nano 197.1 s이고,
 이런 사슬이 있는 판단의 T는 E1의 비교 기간 하한 60 s보다 길었다.
@@ -303,7 +303,7 @@ snapshot의 노드는 3.4절의 전체 POOL이고 측정 POOL 노드(3.3절)는 
 
 ### 4.3 노드 계획 규칙
 
-노드 계획과 판정은 [용량표 계획기 4장](analytic-planner.md#4-노드-계획과-dp)과 [14장](analytic-planner.md#14-구현-규칙)이
+노드 계획과 판정은 [용량표 계획기 4장](analytic-planner.md#4-노드-계획과-탐색)과 [14장](analytic-planner.md#14-구현-규칙)이
 원본이다. Workload별 규칙은 다음과 같다.
 
 - 계획은 `Controlled` Workload의 인스턴스와 분배만 바꾼다. 꺼진 Workload의 분배는 현재 값을 그대로 둔다.
@@ -468,7 +468,13 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
 | E5-5 급감과 재급증 | 20분 | 모두 0.3 `R_w` 10분, 0.9 `R_w` 10분 | 축소와 유휴 제거, 다시 확장, 반복 전환의 J와 시간 | 평가 표 전환 직후 급감과 재급증 행, 점진적인 증가와 감소 행(감소), `SCH-AC-15` |
 | E5-6 soak | 60분 | 모두 0.3 `R_w` | 1시간 예측 에너지 합과 비교 집합 실측, 전체 POOL 실측, `completionResidualNanos` 분포와 설정 여유 | 위 표 E5 행, [용량표 계획기](analytic-planner.md#11-확인) 에너지(실측) |
 
-- 모든 단계에서 Tick p50과 p99, ChillServer CPU와 RSS, `decision.capacity.cells`, 관측 PVC 증가를 기록한다. 세 Workload의 칸 크기 재검토(용량표 계획기 13장)가 이 값을 쓴다.
+- 모든 단계에서 Tick p50과 p99, ChillServer CPU와 RSS, 관측 PVC 증가를 기록한다.
+- 계획 탐색과 게이트웨이의 CPU 나눔(탐색 규모의 오프라인 근거는 [용량표 근거 7장](capacity-table-evidence.md#7-계획-탐색)). 판단마다 다음을 남긴다.
+  - 탐색: `decision.capacity.search`(`neighborhood`, `evaluated`, `durationNanos`, `budgetCut`)와 `evaluationElapsedNanos`
+  - Tick CPU: 판단 시작과 끝에 읽은 ChillServer 컨테이너 cgroup `cpu.stat`의 `usage_usec` 차와 `nr_throttled`, `throttled_usec` 차
+  - 게이트웨이 지연: 요청 기록의 ChillServer 안 시간(`elapsedNanos`에서 firstfloor `nativeElapsedMS`를 뺀 값) p99를 탐색 구간과 그 밖 구간으로 나눠 단계마다
+  - SLO: 1분 구간마다 Workload별 SLO 충족 비율, 그 구간에 탐색이 있었는지
+- 위 기록으로 `planSearchWorkers`(sample 3, ChillServer CPU 한도 4)와 시간 예산이 게이트웨이 지연과 SLO에 주는 영향을 보고 E5 뒤 값을 정한다. `budgetCut` 판단의 수와 그 판단이 고른 구성도 센다.
 - 평가 표의 분석 값은 Workload별 지연 분포와 처리 결과, 전환 구간을 포함한 전체 POOL 에너지, 활성 POOL 에너지다. 단계 경계와 seed, 단계별 `R_w`와 G, 사용한 profile과 설정이 실행 기록에 남는다.
 - 전체 약 3시간이다. 캠페인 중 비Jetson 노드에서 mobilenet과 PLC로 E5-3, E5-4, soak를 미리 도는 다중 Workload 시험은 E5 준비 근거이고 표 값에는 넣지 않는다.
 

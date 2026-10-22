@@ -139,7 +139,7 @@ SLO 목표 이하이고 timeout과 만료가 0이면 그 창은 충족이다.
 route 전후 동작 사슬과 전력을 둔다. 꺼진 Workload의 인스턴스가 있는 노드(`FixedWorkload`), 측정 POOL 노드
 (`MeasurementNode`), 준비되지 않은 노드(`NodeUnavailable`)와 배치 설정이 부족한 노드는 keep뿐이다. 비용, 용량표 행,
 자원이나 기준 전력이 없는 계획은 사유와 함께 기록에 남고 비교에서 빠진다. 노드 계획 규칙과 제외 사유는
-[4장](analytic-planner.md#4-노드-계획과-dp)과 [14장](analytic-planner.md#14-구현-규칙)이 원본이다. 꺼진 제어 축
+[4장](analytic-planner.md#4-노드-계획과-탐색)과 [14장](analytic-planner.md#14-구현-규칙)이 원본이다. 꺼진 제어 축
 (placement, resources, replicas, routing, batching, membership)의 규칙과 `maxReplicas`, `maxInstances`, `maxCPUs`
 상한은 14장의 설정 gate를 따른다.
 
@@ -246,13 +246,14 @@ Workload에 적용한다.
 평균 wall joules로 계산한다. 원자 동작 구간의 wall joules는 그 구간의 baseline 소비를 **대체**하고,
 `target-baseline-delta` 비용은 차감한 전력에 시간을 곱해 더한 wall joules로 쓴다. 요청 에너지는 profile의 입력당
 incremental energy를 route 시각에서 나눠 더한다. 비교 집합(`search.comparedNodes`) 밖의 노드는 모든 계획에 같아
-소거한다. 식은 [용량표 계획기 4장](analytic-planner.md#4-노드-계획과-dp)이 원본이다.
+소거한다. 식은 [용량표 계획기 4장](analytic-planner.md#4-노드-계획과-탐색)이 원본이다.
 
 선택 순서는 [3장](analytic-planner.md#3-판정과-순서)이 정한다. 켜진 Workload마다 최종 충족(`κ_new ≥ λ`)과 전환 중
 충족(`λ ≤ κ_ret` 또는 `W ≤ L − m`)을 정확한 κ 합으로 판정하고, 모든 Workload에서 둘 다 충족하는 해 중 에너지가 작은 것,
 keep, 논리 구성 key 순으로 고른다. 그런 해가 없으면 최대 초과량이 작은 해, 에너지 순으로 고르고 상태는 `Overload`,
-사유는 `NoPlanMeetsSLO`다. 켜진 Workload는 부하가 0이어도 인스턴스가 하나 이상 있어야 최종 충족이다. 해는 route 시각
-r마다 노드 순서 Pareto DP로 찾고, 칸 크기는 충족 판정을 바꾸지 않는다([4장](analytic-planner.md#4-노드-계획과-dp)).
+사유는 `NoPlanMeetsSLO`다. 켜진 Workload는 부하가 0이어도 인스턴스가 하나 이상 있어야 최종 충족이다. 해는 keep에서
+시작해 노드 2개, 이어서 3개 이하의 계획을 바꾸는 이웃 탐색으로 찾는다. 동시 평가 수는 `planSearchWorkers`이고 탐색은
+제어 주기의 절반 안에 끝난다([4장](analytic-planner.md#4-노드-계획과-탐색)).
 snapshot의 목록은 정렬해 쓰므로 판단은 입력 순서와 무관하다.
 
 router 가중치는 고른 해의 인스턴스 κ에 입력당 에너지가 작은 인스턴스부터 λ를 채운 배정을 합 1,000의 정수로 반올림한
@@ -263,7 +264,7 @@ router 가중치는 고른 해의 인스턴스 κ에 입력당 에너지가 작�
 `Pending`(snapshot 검증 사유), `CapacityPending`, `SharedInstance`다. keep과 target은 `expectedJoules`와 `worstExceedance`를
 담는다. `expectedJoules`는 고른 해를 정확한 배정으로 다시 계산한 [0, T]의 분석 에너지이고 비교 집합 노드만 더한다.
 초과량이 정해지지 않으면 `worstExceedance`는 float 최댓값이다. `decision.capacity`는 비교 기간 `periodNanos`, 고른 route
-시각 `routeNanos`, 칸 수 `cells`, Workload별 `workloads[]`(`uid`, `rate`, `queued`, `kappaNew`, `kappaRetained`, `backlog`,
+시각 `routeNanos`, 탐색 범위 `search`(`neighborhood`, `evaluated`, `durationNanos`, `budgetCut`), Workload별 `workloads[]`(`uid`, `rate`, `queued`, `kappaNew`, `kappaRetained`, `backlog`,
 `waitSeconds`, `drainSeconds`, `finalExceedance`, `transitionExceedance`, `weights`, `rows`)와 모든 노드 계획 `plans[]`
 (`node`, `key`, `eligible`, `reason`, `kappa`, `kappaRetained`, `preNanos`, `postNanos`, `joules`)를 담는다. 값이 정해지지
 않는 대기, 비우는 시간, 초과량 필드는 기록에서 빠진다. `search.examined`는 만든 노드 계획 수이고, `search.comparedNodes`는

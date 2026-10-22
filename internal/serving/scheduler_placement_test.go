@@ -74,19 +74,10 @@ func TestDisabledControlsGateNodePlans(t *testing.T) {
 				// Moving i1 to n2 keeps one instance; adding n2 beside i1 does not.
 				p := capacityPlannerForTest(t, s, snap, rows)
 				moved := capacityChoiceForTest(t, p, map[string]string{"n1": "", "n2": "profile@n2-fixed/b2/w1"})
-				vals := make([]float64, len(p.ws)*p.width()+1)
-				for n, j := range moved {
-					for v := range vals {
-						vals[v] += p.plans[n][j].vals[v]
-					}
-				}
-				if !p.bounded(vals, true) {
+				if !p.bounded(moved) {
 					t.Fatal("replicas OFF rejected a move that keeps the instance count")
 				}
-				for v := range vals {
-					vals[v] += p.plans[0][0].vals[v]
-				}
-				if p.bounded(vals, true) {
+				if added := append([]int{0}, moved[1:]...); p.bounded(added) {
 					t.Fatal("replicas OFF accepted an added instance")
 				}
 			}

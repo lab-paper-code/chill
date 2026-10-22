@@ -28,6 +28,7 @@ const fields: Field[] = [
   {key:"capacityWindows",label:"용량 계산 창 수",help:"요청률마다 이만큼의 독립 창을 재생해요.",group:"advanced",unit:"개"},
   {key:"capacityPassingWindows",label:"용량 충족 창 수",help:"이만큼의 창이 SLO를 지키면 그 요청률을 감당한다고 봐요. 창 수 이하로 정해요.",group:"advanced",unit:"개"},
   {key:"capacityMinimumRequests",label:"용량 계산 최소 요청 수",help:"창마다 적어도 이만큼의 요청을 재생해요.",group:"advanced",unit:"건"},
+  {key:"planSearchWorkers",label:"구성 탐색 동시 계산 수",help:"운영 판단이 구성 후보를 동시에 이만큼 계산해요. 탐색은 판단 주기의 절반 안에 끝나요.",group:"advanced",unit:"개"},
 ]
 const controls: {key:keyof SchedulerSettings["controls"];label:string}[] = [
   {key:"placement",label:"배치 위치"},{key:"resources",label:"자원 할당"},

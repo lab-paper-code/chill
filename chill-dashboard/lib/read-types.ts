@@ -35,6 +35,7 @@ export type SchedulerSettings = {
   maxReplicas:WireInteger; maxInstances:WireInteger; maxCPUs:WireInteger; servingMemoryBytes:WireInteger
   completionMarginMS:number
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger
+  planSearchWorkers:WireInteger
   autonomousWorkloads:string[]|null
   // Nodes the planner never changes (reason ExcludedNode).
   excludedNodes:string[]|null
@@ -65,7 +66,9 @@ export type SchedulerWorkloadState = {uid:string;state:string;reason?:string}
 // internal/serving/scheduler_capacity.go SchedulerCapacity; a missing wait, drain or exceedance is unbounded.
 export type SchedulerCapacityWorkload = {uid:string;rate:number;queued:number;kappaNew:number;kappaRetained:number;backlog:number;waitSeconds?:number;drainSeconds?:number;finalExceedance?:number;transitionExceedance?:number;weights:Record<string,number>|null;rows:string[]|null}
 export type SchedulerNodePlan = {node:NodeRef;key:string;eligible:boolean;reason?:string;kappa?:Record<string,number>;kappaRetained?:Record<string,number>;preNanos:WireInteger;postNanos:WireInteger;joules:number}
-export type SchedulerCapacity = {periodNanos:WireInteger;routeNanos:WireInteger;cells:number;workloads:SchedulerCapacityWorkload[]|null;plans:SchedulerNodePlan[]|null}
+// search is the plan search scope: neighborhood k reached, plan sets evaluated, time, and whether the budget cut it.
+export type SchedulerPlanSearch = {neighborhood:number;evaluated:number;durationNanos:WireInteger;budgetCut?:boolean}
+export type SchedulerCapacity = {periodNanos:WireInteger;routeNanos:WireInteger;search?:SchedulerPlanSearch;workloads:SchedulerCapacityWorkload[]|null;plans:SchedulerNodePlan[]|null}
 export type SchedulerDecision = {at:string;status:string;keep:SchedulerCandidate;target:SchedulerCandidate|null;reasons:string[]|null;settings:SchedulerSettings;workloads:SchedulerWorkloadState[]|null;search:{examined:number;bounds:SchedulerSettings;windowStart:string;windowEnd:string;received:number;accepted:number;computeInputs:number;population:string;loads:{uid:string;received:number;accepted:number;computeInputs:number;inputsPerSecond:number}[]|null;comparedNodes:NodeRef[]|null};references:string[]|null;capacity?:SchedulerCapacity;evaluationElapsedNanos?:WireInteger}
 // Weights per workload UID and instance ID; original weights, not probabilities.
 export type Routing = Record<string,Record<string,number>>
