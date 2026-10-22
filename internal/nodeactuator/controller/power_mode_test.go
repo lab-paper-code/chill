@@ -15,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 type powerModeHost struct {
@@ -34,19 +35,6 @@ func (h *powerModeHost) Observe(context.Context, nodeactuator.Request) (nodeactu
 	return nodeactuator.Observation{Target: nodeactuator.Target{
 		Kind: nodeactuator.ActuatorKindJetsonNVPModel, JetsonNVPModel: &nodeactuator.JetsonNVPModelTarget{ID: h.id},
 	}, ObservedAt: h.clock()}, nil
-}
-
-// classReader fails DeviceClass reads with err while it is set.
-type classReader struct {
-	client.Reader
-	err *error
-}
-
-func (r classReader) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
-	if *r.err != nil {
-		return *r.err
-	}
-	return r.Reader.Get(ctx, key, object, opts...)
 }
 
 func (h *powerModeHost) Apply(_ context.Context, _ nodeactuator.Request, target nodeactuator.Target) error {
@@ -98,12 +86,15 @@ func newPowerModeFixture(t *testing.T, labels map[string]string) *powerModeFixtu
 			mode("15W", 0), mode("7W", 1), mode("25W", 2),
 		}},
 	}
-	f := &powerModeFixture{
-		t:      t,
-		client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node, class).Build(),
-		host:   &powerModeHost{},
-		now:    time.Unix(1_000, 0).UTC(),
-	}
+	f := &powerModeFixture{t: t, host: &powerModeHost{}, now: time.Unix(1_000, 0).UTC()}
+	f.client = fake.NewClientBuilder().WithScheme(scheme).WithObjects(node, class).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*edgev1alpha1.DeviceClass); ok && f.classErr != nil {
+				return f.classErr
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}).Build()
 	f.host.clock = f.tick
 	return f
 }
@@ -124,7 +115,7 @@ func (f *powerModeFixture) reconcileErr() error {
 		}
 	}
 	r := &PowerModeReconciler{
-		Client: f.client, Reader: classReader{Reader: f.client, err: &f.classErr}, Host: f.host, Node: "jetson",
+		Client: f.client, Reader: f.client, Host: f.host, Node: "jetson",
 		Policies: []nodeactuator.ActuationPolicySpec{policy("15W"), policy("7W")},
 		Interval: 10 * time.Second, Timeout: time.Second,
 		Now: f.tick,

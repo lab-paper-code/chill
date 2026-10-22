@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,18 +168,8 @@ func StopOnRuntimeFailure(
 ) (context.Context, context.CancelFunc) {
 	stopped, cancel := context.WithCancelCause(ctx)
 	go func() {
-		ticker := time.NewTicker(pollInterval)
-		defer ticker.Stop()
-		for {
-			if _, err := os.Lstat(path); err == nil {
-				cancel(ErrRuntimeFailed)
-				return
-			}
-			select {
-			case <-stopped.Done():
-				return
-			case <-ticker.C:
-			}
+		if WaitForSignal(stopped, path, math.MaxInt64, pollInterval) == nil {
+			cancel(ErrRuntimeFailed)
 		}
 	}()
 	return stopped, func() { cancel(context.Canceled) }

@@ -113,8 +113,7 @@ func (r *PowerModeReconciler) awaitBootRead(
 	now time.Time,
 ) (bool, error) {
 	desired := node.Labels[metadata.PowerMode]
-	boot, published := node.Annotations[metadata.PowerModeBoot]
-	if observeErr == nil || !published || boot == node.Status.NodeInfo.BootID || desired == "" ||
+	if observeErr == nil || node.Annotations[metadata.PowerModeBoot] == node.Status.NodeInfo.BootID ||
 		node.Labels[metadata.PowerModeState] != metadata.PowerModePending {
 		return false, nil
 	}

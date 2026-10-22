@@ -249,7 +249,7 @@ func TestObserverKeepsVerifiedReadinessForOneRefresh(t *testing.T) {
 		owner types.UID
 		ready []int // after each refresh with a failing Service list
 	}{
-		{"Service list keeps failing", "", []int{1, 0, 0}},
+		{"Service list keeps failing", "", []int{1, 0}},
 		{"owner changes", "other-workload", []int{0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

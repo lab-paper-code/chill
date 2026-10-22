@@ -150,18 +150,15 @@ func measureOccupancy(record *DispatchOccupancyRecord, rows []serving.RequestRow
 			continue
 		}
 		// The instance waited from its batch's end until the next request arrived.
-		if arrived := minTime(next.queued, w.End); arrived.After(this.executed) {
+		arrived := next.queued
+		if arrived.After(w.End) {
+			arrived = w.End
+		}
+		if arrived.After(this.executed) {
 			idle += arrived.Sub(this.executed)
 		}
 	}
 	record.IdleFraction = idle.Seconds() / duration.Seconds()
-}
-
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
-		return a
-	}
-	return b
 }
 
 // occupancyPlan is what admission resolved for a granted occupancy measurement.
