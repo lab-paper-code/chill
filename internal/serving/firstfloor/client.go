@@ -186,6 +186,7 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 		request.Inputs[i] = native.Field{Name: field.Name, Data: [][]byte{field.Data}}
 	}
 	raw, err := json.Marshal(request)
+	d.Input = nil // raw carries the sample; d stays live until the completion check.
 	if err != nil {
 		return serving.BackendResult{Finished: true}, err
 	}

@@ -76,6 +76,12 @@ func TestStaticExclusiveBaselineThenSwappedTargetDrainsPhysicalBinding(t *testin
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
+	runtime.mu.Lock()
+	held := call.input != nil
+	runtime.mu.Unlock()
+	if held {
+		t.Fatal("dispatched call still holds its decoded input")
+	}
 	// The swap gives each Workload the other instance; the accepted call stays on i1.
 	swapped, err := StaticRoutingTarget(snapshot, map[string]map[string]int{first.UID: {"i2": 1}, second.UID: {"i1": 1}}, nil, "manual-static-routing:43")
 	if err != nil {

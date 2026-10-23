@@ -377,6 +377,7 @@ func (r *Runtime) dispatchLocked() {
 			i.outstanding++
 			c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
 			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline, CompletionMarginMS: r.completionMargin}
+			c.input = nil // Only this Dispatch reads the sample, and no path requeues the call.
 			go r.execute(c, i.Execute, dispatch)
 		}
 	}
@@ -440,7 +441,6 @@ func (r *Runtime) releaseLocked(c *Call) {
 		c.instance.outstanding--
 		c.instance = nil
 	}
-	c.input = nil
 	if !c.responseRecorded {
 		return
 	}
