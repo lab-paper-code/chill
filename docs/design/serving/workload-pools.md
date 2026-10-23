@@ -452,11 +452,26 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
 
 **E5 혼합 부하.** 측정 캠페인이 끝나고 모든 Jetson이 가장 낮은 모드로 돌아온 뒤 세 Workload를 함께 자동제어한다. 사람은 부하만 바꾸고 구성은 판단이 정한다.
 
-- 노드: `excludedNodes`는 빈 목록이다(orin-nano DNS가 고장이면 orin-nano만 둔다). Jetson을 포함한 가용 노드 전체와 측정한 전력모드가 후보다.
+- 노드: E5 노드 여덟(genesis2, genesis3, lattepanda, rasp5, orangepi, jetsono, jetsonx, jetson-nano)과 측정한 전력모드가 후보다. `excludedNodes`는 `genesis1`(ChillServer와 게이트웨이의 Node)과 `orin-nano`(DNS를 고칠 때까지)다. 노드마다 서빙 인스턴스는 하나다(4.3절).
 - Workload: `image-classification-tight-slo`(p95 1 s), `plc-anomaly`(`plc-extruder-01-windows`), `smolvlm2-vqa`(VQAv2 `vqav2-val-subset`). 측정 전용 Workload는 지운 뒤이고, 세 Workload 모두 인스턴스 0에서 `autonomousWorkloads`에 들어간다. `completionMarginMS`는 그때 설정값이고 실행 기록에 남는다.
 - PLC와 SmolVLM SLO: 마지막 `/api/v1/scheduler` dump에서 `hack/kappa -mode slo`가 제안하고 사용자가 승인한 값이다. 노드마다 가장 빠른 option의 b1 지연(실행시간 p99 + d + m)을 구하고, κ > 0인 노드가 절반 이상이며 가장 느린 두 노드는 κ 0인 목표 L을 가장 넓은 지연 간격에서 고른다. 그 L에서 p95와 p99 κ 표를 계산해 규칙이 κ로도 성립하는지와 두 백분위의 κ와 계산 시간을 비교한다.
-- 기준 요청률 `R_w`: Workload SLO 행에서 노드별 최대 κ의 합이다(`hack/kappa -mode slo`의 κ 합). GPU 하나는 인스턴스 하나가 쓰므로 세 Workload가 함께 쓰는 용량은 세 `R_w`의 합보다 작다. 단계 요청률은 Workload마다 `R_w`의 비율이고, 같은 비율에서 판단이 `Overload`인지가 결과에 들어간다.
-- 부하: `chill_loadgen replay --arrivals poisson`을 Workload마다 다른 seed로 동시에 보낸다. 세 요청률의 합은 캠페인 기록에서 ChillServer가 CPU limit 아래로 처리한 가장 큰 총 요청률 G 이하다. PLC 몫이 이 상한을 넘으면 G에서 다른 두 몫을 뺀 값으로 두고 그 값을 기록한다. 그래서 한계 단계의 초과는 POOL 용량에서 생긴다.
+- 기준 요청률 `R_w`: Workload SLO 행에서 노드별 최대 κ의 합이다(`hack/kappa -mode slo`의 κ 합). 노드마다 서빙 인스턴스가 하나라 세 Workload가 노드를 나눠 쓰므로 함께 쓰는 용량은 세 `R_w`의 합보다 작다. 단계 요청률은 Workload마다 `R_w`의 비율이고, 같은 비율에서 판단이 `Overload`인지가 결과에 들어간다.
+- 부하: `chill_loadgen replay --arrivals poisson`을 Workload마다 다른 seed로 동시에 보낸다. 세 요청률의 합은 배포 2 뒤 잰 게이트웨이 한계 G(아래 E5 준비 6) 이하다. PLC 몫이 이 상한을 넘으면 G에서 다른 두 몫을 뺀 값으로 두고 그 값을 기록한다. 그래서 한계 단계의 초과는 POOL 용량에서 생긴다.
+
+**E5 준비.** 캠페인 레인이 끝나고 측정 객체가 모두 terminal일 때 차례로 한다. 3과 6이 배포 2(`5acaf73`)의 전후 값을 같은 부하로 따로 잰다.
+
+1. 기록: genesis1(cgroup v1)에서 `~/.cache/chill-assets/ops/pools-deploy/campaign/v2/cgmon.sh`를 E5 끝까지 돌린다. ChillServer와 genesis1 `edgemesh-agent` 컨테이너의 CPU, throttle, memory를 1초마다, restartCount를 15초마다 남긴다. GC CPU는 ChillServer stderr의 gctrace 줄에서 읽는다. genesis1 `edgemesh-agent`는 게이트웨이와 firstfloor 사이의 요청과 응답이 모두 지나는 proxy다([인스턴스 전달 경로](scheduler-operations.md#현재-인스턴스-전달-경로)). 그 limit(2 CPU, 1Gi)을 `kubectl -n kubeedge get pod -l kubeedge=edgemesh-agent --field-selector spec.nodeName=genesis1 -o jsonpath='{.items[0].spec.containers[0].resources.limits}'`로 읽어 실행 기록에 남긴다.
+2. κ 표 시간: PLC와 SmolVLM SLO를 적용한 뒤 받은 `/api/v1/scheduler` dump 하나로 `a1b6ea3`과 `5acaf73`의 `hack/kappa -mode table -scheduler dump.json -workloads <세 Workload 이름> -rows rows-<SHA>.json`을 `GOMAXPROCS=6`으로 차례로 돈다(genesis1에서는 측정과 부하가 없을 때 `nice -n 19 flock /tmp/chill-heavy.lock`). 출력 끝의 `table … s`가 전후 값이고 두 rows의 κ는 같다. 배포 뒤 live 값은 E5-0의 `GET /api/v1/scheduler/capacity` 행 `elapsedNanos`다.
+3. 단계 부하(배포 2 전, rev 66 `pools-a1b6ea3`): [정적 배치 사용법](scheduler-operations.md#정적-배치-사용법)으로 mobilenet tight 인스턴스를 E5 노드마다 하나(2의 표에서 κ가 가장 큰 option) 준비하고 κ 비율의 `staticRouting`을 이유와 함께 보낸다. `chill_loadgen replay --arrivals poisson --seed 1 --workers 320`으로 0 req/s부터 50 req/s씩 올려 단계마다 5분 보내고 첫 1분은 뺀다. ChillServer `nr_throttled`가 는 단계, 완료가 아닌 결과가 나온 단계, κ 합에 이른 단계 중 먼저 온 단계에서 멈춘다. 단계마다 다음을 남긴다.
+   - 요청 경로 CPU: (단계 평균 ChillServer core − 0 req/s 단계 평균 core) ÷ 요청률, millicore per req/s
+   - Tick `evaluationElapsedNanos` p50과 p99, ChillServer 안 시간 p99(아래 게이트웨이 지연), ChillServer memory와 GC CPU, edgemesh CPU, memory, throttle, 재시작
+   - 처리 결과 수와 `GatewayOverloaded` 수: `GET /api/v1/observations/workloads/{uid}?from=…&to=…&outcome=rejected`의 `requests[]`를 `nextCursor`로 끝까지 읽어 `error`가 `GatewayOverloaded`인 요청을 센다. 그 응답은 503이므로 부하 생성기 기록의 `status` 503 수와 맞춰 본다(503은 근거 부족 거절에도 쓰인다)
+
+   G는 모든 요청이 완료되고 throttle이 없는 가장 큰 단계 요청률이다. κ 합에서 멈추면 G는 그 값 이상으로 남긴다.
+4. 배포 전 annotation 확인([M5 정리 5장](../platform/cleanup-m5.md#5-인스턴스-공유-정리) 끝 문단): 3의 `staticRouting` 적용이 지금 image에서 모든 인스턴스 Pod의 routing annotation을 다시 썼다. `kubectl get pods -A -l edge.dacs.io/workload-role=serving-instance -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,ROUTING:'.metadata.annotations.edge\.dacs\.io/serving-routing'`에서 모든 Pod에 ROUTING이 있고, 그 JSON의 Workload UID가 하나 이하이며, Node마다 Pod가 하나인지 확인한다. 어긋난 Pod는 정적 배치 사용법으로 분배를 나누거나 지운 뒤 다시 확인한다.
+5. 배포 2: `serving-scheduler` ConfigMap의 settings에 `"planSearchWorkers": 3`을 더하고 바로 chart를 올린다. rev 66은 strict decode로 이 필드를 거절하고 이전 설정을 유지하며, 배포 2는 이 필드를 요구한다. overlay는 `servingEntrypoint.goMemLimit: 3072MiB`, `goDebug: gctrace=1`이고 limits는 chart 기본값(CPU 6, 4Gi)이다. 배포 뒤 Deployment env에 `GOMEMLIMIT`와 `GODEBUG`가 하나씩인지(지금 값은 chart 밖 `kubectl set env`가 넣었다), `GET /api/v1/scheduler/settings`의 `planSearchWorkers`가 3인지, 3의 인스턴스가 `/api/v1/pools`에 남고 `issues`가 비었는지 확인한다.
+6. 단계 부하(배포 2 뒤): 3과 같은 인스턴스, seed, 단계로 다시 보낸다. 요청 경로 CPU, Tick, κ 표 시간(2), `GatewayOverloaded` 수, G를 지표마다 전후로 따로 보고한다. `GatewayOverloaded`는 G 이하 단계에서 0이다. 이 G가 E5 요청률 합의 상한이고 `planSearchWorkers`의 근거다(아래). 게이트웨이 부하가 Tick이나 관측 기록을 늦추면 [과부하 보호](workload-management.md#과부하-보호)의 다음 단계를 검토한다.
+7. 정리: 3의 인스턴스를 정적 배치 사용법 3단계로 지우고 모든 Jetson이 가장 낮은 모드인지 확인한다. E5-0에서 위 `excludedNodes`와 세 UID의 `autonomousWorkloads`를 PUT 하나로 넣는다.
 
 | 단계 | 시간 | 요청률 (mobilenet, PLC, SmolVLM) | 재는 것 | 채우는 칸 |
 |---|---|---|---|---|
@@ -464,19 +479,26 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
 | E5-1 일정 | 30분 | 모두 0.3 `R_w` | Workload별 지연 분포와 처리 결과 수(완료, 실패, 거절, 취소, 미완료), 전체 POOL과 활성 POOL 에너지, 창별 예측 백분위와 관측 백분위 | [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가) 일정 부하와 이기종 워크로드 동시 혼합 부하 행, `SCH-AC-23`, [07 검증](../architecture-rethink/07-validation.md) 2번 |
 | E5-2 버스트 | 15분 | SmolVLM만 0.3에서 0.9 `R_w`, 나머지 0.3 `R_w` | 대응 시작까지 시간, GPU 노드(genesis2, genesis3, jetsono)에서 SmolVLM CUDA와 다른 Workload 인스턴스의 교체, Jetson 전력모드 변경의 전환 중 지연 | 평가 표 갑작스러운 버스트 행, `SCH-AC-21` |
 | E5-3 증가 | 30분 | 모두 0.5, 0.7, 0.9 `R_w` 각 10분 | 확장 순서, 전환 구간 SLO, 판단의 `κ_new`, `B`, `W`와 관측 큐 | 평가 표 점진적인 증가와 감소 행(증가), `SCH-AC-15` |
+| E5-S 정적 기준선 | 170분 | E5-1부터 E5-6까지의 요청률과 seed | E5-1부터 E5-6까지와 같은 항목, 고정 구성의 인스턴스와 전력모드 | [명세](../../spec/README.md#실클러스터-검증과-평가)의 정적 배포 비교, `SCH-AC-20` |
 | E5-4 한계 | 15분 | 모두 1.2 `R_w` | `Overload` 판단과 최대 초과량 순서, Workload별 실제 지연과 처리 결과, 노드별 인스턴스와 전력모드 | 평가 표 전체 POOL의 한계를 넘는 부하 행, `SCH-AC-16` |
 | E5-5 급감과 재급증 | 20분 | 모두 0.3 `R_w` 10분, 0.9 `R_w` 10분 | 축소와 유휴 제거, 다시 확장, 반복 전환의 J와 시간 | 평가 표 전환 직후 급감과 재급증 행, 점진적인 증가와 감소 행(감소), `SCH-AC-15` |
 | E5-6 soak | 60분 | 모두 0.3 `R_w` | 1시간 예측 에너지 합과 비교 집합 실측, 전체 POOL 실측, `completionResidualNanos` 분포와 설정 여유 | 위 표 E5 행, [용량표 계획기](analytic-planner.md#11-확인) 에너지(실측) |
 
-- 모든 단계에서 Tick p50과 p99, ChillServer CPU와 RSS, 관측 PVC 증가를 기록한다.
+**E5-S 정적 기준선.** E5-3 끝에서 구성을 고정해 같은 부하를 다시 보내고, 끝나면 자동제어를 되돌려 E5-4로 간다. 고정 구성은 0.9 `R_w`에서 판단이 고른 구성, 곧 최대 정상 부하에 맞춘 배치다.
+
+1. 고정: `/api/v1/scheduler/state` snapshot에서 세 Workload의 인스턴스와 routing을 읽어, 세 UID를 `autonomousWorkloads`에서 빼고 그 routing을 `staticRouting`으로 담은 PUT 하나를 `reason`(위 선택 이유)과 함께 보낸다([정적 배치 사용법](scheduler-operations.md#정적-배치-사용법) 2단계). 꺼진 Workload의 인스턴스가 있는 노드는 인스턴스와 전력모드를 그대로 둔다(`FixedWorkload`). PUT 응답의 `validatedAt`, ConfigMap 구성의 `staticRoutingValidatedAt`, `manual-static-routing` 동작의 `operation.settingsValidatedAt`이 같은지 실행 기록에 남긴다.
+2. 부하: E5-1부터 E5-6까지의 요청률을 같은 seed로 차례로 보낸다.
+3. 되돌리기: 세 UID를 `autonomousWorkloads`에 다시 넣고 `"staticRouting": {}`(선언 삭제)와 이유를 담은 PUT 하나를 보낸다. 선언 삭제는 동작을 만들지 않으므로 분배는 그대로이고 다음 판단이 이어받는다. 그 구성에서 E5-4를 시작한다.
+
+- 모든 단계에서 Tick p50과 p99, ChillServer CPU, RSS와 GC CPU, 관측 PVC 증가, genesis1 `edgemesh-agent`의 CPU, memory, throttle과 재시작, `GatewayOverloaded` 수(E5 준비 3의 방법, 0이 기대값)를 기록한다. 노드마다 서빙 인스턴스가 하나인지 `/api/v1/pools`로 확인한다.
 - 계획 탐색과 게이트웨이의 CPU 나눔(탐색 규모의 오프라인 근거는 [용량표 근거 7장](capacity-table-evidence.md#7-계획-탐색)). 판단마다 다음을 남긴다.
-  - 탐색: `decision.capacity.search`(`neighborhood`, `evaluated`, `durationNanos`, `budgetCut`)와 `evaluationElapsedNanos`
-  - Tick CPU: 판단 시작과 끝에 읽은 ChillServer 컨테이너 cgroup `cpu.stat`의 `usage_usec` 차와 `nr_throttled`, `throttled_usec` 차
+  - 탐색: `decision.capacity.search`(`neighborhood`, `evaluated`, `durationNanos`, `budgetCut`)와 `evaluationElapsedNanos`. 시간 예산은 `controlIntervalNanos`의 절반(제어 주기 10 s에서 5 s)이다
+  - Tick CPU: 판단 시작과 끝 사이 `cgmon.sh` 표본의 ChillServer CPU(cgroup v1 `cpuacct.usage` 차)와 `cpu.stat`의 `nr_throttled`, `throttled_time` 차
   - 게이트웨이 지연: 요청 기록의 ChillServer 안 시간(`elapsedNanos`에서 firstfloor `nativeElapsedMS`를 뺀 값) p99를 탐색 구간과 그 밖 구간으로 나눠 단계마다
   - SLO: 1분 구간마다 Workload별 SLO 충족 비율, 그 구간에 탐색이 있었는지
-- 위 기록으로 `planSearchWorkers`(sample 3, ChillServer CPU 한도 6에서 탐색 3, G 약 220 req/s의 게이트웨이 약 1.7, Tick 약 0.5 core, 여유 약 0.8 core; [워크로드 관리 7장](workload-management.md#e5의-chillserver-메모리와-cpu-상한))와 시간 예산이 게이트웨이 지연과 SLO에 주는 영향을 보고, E5에서 다시 잰 G로 값을 정한다. `budgetCut` 판단의 수와 그 판단이 고른 구성, `TransitionGainWithinUncertainty`로 keep한 판단의 수도 센다.
+- 위 기록으로 `planSearchWorkers`(sample 3, ChillServer CPU 한도 6에서 탐색 3, G 약 220 req/s의 게이트웨이 약 1.7, Tick 약 0.5 core, 여유 약 0.8 core; [워크로드 관리 7장](workload-management.md#e5의-chillserver-메모리와-cpu-상한))와 시간 예산이 게이트웨이 지연과 SLO에 주는 영향을 보고, E5 준비 6의 G로 값을 정한다. `budgetCut` 판단의 수와 그 판단이 고른 구성, `TransitionGainWithinUncertainty`로 keep한 판단의 수도 센다.
 - 평가 표의 분석 값은 Workload별 지연 분포와 처리 결과, 전환 구간을 포함한 전체 POOL 에너지, 활성 POOL 에너지다. 단계 경계와 seed, 단계별 `R_w`와 G, 사용한 profile과 설정이 실행 기록에 남는다.
-- 전체 약 3시간이다. 캠페인 중 비Jetson 노드에서 mobilenet과 PLC로 E5-3, E5-4, soak를 미리 도는 다중 Workload 시험은 E5 준비 근거이고 표 값에는 넣지 않는다.
+- E5-0부터 E5-6까지 약 3시간, E5-S 약 3시간으로 전체 약 6시간이다. 캠페인 중 비Jetson 노드에서 mobilenet과 PLC로 E5-3, E5-4, soak를 미리 도는 다중 Workload 시험은 E5 준비 근거이고 표 값에는 넣지 않는다.
 
 ### 9.3 검증 기록
 

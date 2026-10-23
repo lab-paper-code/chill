@@ -137,8 +137,8 @@ automatic scheduler judgment나 power 측정 근거가 아니다.
    바꾸기"도 같은 요청이다. `staticRouting`은 선언 전체이고, 선언이 바뀌면 `reason`이 필수다. instance ID는
    `/api/v1/pools` 또는 `/api/v1/scheduler/state`의 snapshot에서 읽는다. 응답의 설정 변경 기록은 바꾼 사람, 전후
    설정과 선언, 선택 이유, `validatedAt`을 담는다. 반영은 `manual-static-routing` 동작의 `actual.routing`과
-   `/api/v1/scheduler/state`의 snapshot routing으로 확인하고, 그 동작의 `operation.settingsValidatedAt`이 이 설정
-   변경의 `validatedAt`이다([설정 API](scheduler-api.md)).
+   `/api/v1/scheduler/state`의 snapshot routing으로 확인하고, 그 동작의 `operation.settingsValidatedAt`과 ConfigMap 구성의
+   `staticRoutingValidatedAt`이 이 설정 변경의 `validatedAt`이다([설정 API](scheduler-api.md)).
 3. remove: 그 Workload 항목을 `{}`로 바꾼 선언을 같은 방법으로 보내 routing을 지우고, snapshot routing이 비면
    instance마다 `{"kind": "remove", "workloadUID": "<UID>", "node": {...}, "instance": "<instance ID>"}`를 보낸다.
    끝나면 그 항목을 뺀 선언을 이유와 함께 보낸다. 남은 항목이 없으면 `"staticRouting": {}`가 선언을 지운다.
