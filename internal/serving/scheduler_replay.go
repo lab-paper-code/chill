@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -480,6 +481,33 @@ type schedulerReplayState struct {
 	now            float64
 	// compared limits energy to these Nodes; nil counts every Node.
 	compared map[NodeReference]bool
+	// chooseBatches scratch, reused across events.
+	entries []schedulerReplayQueued
+	states  []firstfloor.RequestState
+}
+
+type schedulerReplayQueued struct {
+	r   *schedulerReplayRequest
+	slo float64
+}
+
+// compareReplayQueued puts normal requests first by EDF key and keeps deferred
+// FIFO. Plain '<' leaves NaN unordered, as the actor's EDF does.
+func compareReplayQueued(left, right schedulerReplayQueued) int {
+	switch {
+	case left.r.deferred != right.r.deferred:
+		if left.r.deferred {
+			return 1
+		}
+		return -1
+	case left.r.deferred:
+		return 0
+	case left.slo < right.slo:
+		return -1
+	case right.slo < left.slo:
+		return 1
+	}
+	return 0
 }
 
 func (s *schedulerReplayState) counted(node NodeReference) bool {
@@ -1347,42 +1375,27 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 		if !i.loaded || !i.ready || len(i.queue) == 0 {
 			continue
 		}
-		type queued struct {
-			r     *schedulerReplayRequest
-			state firstfloor.RequestState
-			slo   float64
-		}
-		entries := make([]queued, 0, len(i.queue))
-		states := make([]firstfloor.RequestState, 0, len(i.queue)+len(i.batch))
+		entries, states := s.entries[:0], s.states[:0]
 		for len(i.queue) > 0 {
 			if ctx.Err() != nil {
 				return false
 			}
-			// State and EDF key are fixed at s.now: build each once, then sort.
+			// EDF keys are fixed at s.now: compute each once, then sort.
 			entries = entries[:0]
 			for _, r := range i.queue {
-				state := s.nativeRequestState(i, r)
-				entries = append(entries, queued{r: r, state: state, slo: firstfloor.RemainingSLOMS(state)})
+				entries = append(entries, schedulerReplayQueued{r: r, slo: firstfloor.RemainingSLOMS(s.nativeRequestState(i, r))})
 			}
 			// Match the actor's stable EDF normal queue and contiguous deferred FIFO.
-			sort.SliceStable(entries, func(a, b int) bool {
-				left, right := entries[a], entries[b]
-				if left.r.deferred != right.r.deferred {
-					return !left.r.deferred
-				}
-				if left.r.deferred {
-					return false
-				}
-				return left.slo < right.slo
-			})
+			slices.SortStableFunc(entries, compareReplayQueued)
 			states = states[:0]
 			for j, e := range entries {
 				i.queue[j] = e.r
-				states = append(states, e.state)
+				states = append(states, s.nativeRequestState(i, e.r))
 			}
 			for _, r := range i.batch {
 				states = append(states, s.nativeRequestState(i, r))
 			}
+			s.entries, s.states = entries, states
 			choice := firstfloor.ChooseBatch(i.policy, states)
 			if choice.Reason == firstfloor.OutcomeDeadlineDrop || choice.Reason == firstfloor.ReasonDeadlineDefer {
 				index := -1
