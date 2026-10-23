@@ -467,9 +467,6 @@ servingEntrypoint:
   sourceInterval: 1s
   profileInterval: 1m
   profileConfidenceLevel: 0.95
-  # Live-heap fraction of GOMEMLIMIT above which new inference requests get 503
-  # with Retry-After; the guard is off while GOMEMLIMIT is unset.
-  overloadHeapFraction: 0.9
   observationDefinitions: []
   observationOutcomes: []
   maxRequestBytes: 8388608
@@ -493,8 +490,8 @@ servingEntrypoint:
     requests:
       cpu: 10m
       memory: 64Mi
-  # GOMEMLIMIT is this fraction of resources.limits.memory (a whole Mi or Gi quantity).
-  goMemLimitFraction: 0.75
+  # GOMEMLIMIT of ChillServer (Go syntax, e.g. 3GiB), kept at 75% of resources.limits.memory.
+  goMemLimit: 3GiB
   # GODEBUG of ChillServer; "gctrace=1" writes one GC line per cycle to stderr
   # (ChillServer exposes no /metrics). Empty sets no GODEBUG.
   goDebug: ""

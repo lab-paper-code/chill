@@ -1,28 +1,25 @@
 package serving
 
 import (
-	"math"
 	"runtime/debug"
 	"runtime/metrics"
 	"time"
 )
 
-// ponytail: fixed 1 s sampling period; make it a setting only if a heap ramp
-// measured faster than this reaches the memory limit between samples.
-const overloadInterval = time.Second
+// ponytail: fixed 1 s sampling period and 0.9 fraction; make them settings
+// only if a measured heap ramp reaches the memory limit between samples.
+const (
+	overloadInterval     = time.Second
+	overloadHeapFraction = 0.9
+)
 
 // sampleHeap marks the Runtime overloaded while the heap the last GC found
-// live exceeds the configured fraction of the Go memory limit. Without a
-// memory limit (GOMEMLIMIT unset) it never does.
+// live exceeds overloadHeapFraction of the Go memory limit. Without
+// GOMEMLIMIT the limit is math.MaxInt64 and the guard never trips.
 func (r *Runtime) sampleHeap() {
-	limit := debug.SetMemoryLimit(-1)
-	if limit == math.MaxInt64 {
-		r.overloaded.Store(false)
-		return
-	}
 	live := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
 	metrics.Read(live)
-	r.overloaded.Store(float64(live[0].Value.Uint64()) > r.config.OverloadHeapFraction*float64(limit))
+	r.overloaded.Store(float64(live[0].Value.Uint64()) > overloadHeapFraction*float64(debug.SetMemoryLimit(-1)))
 }
 
 func (r *Runtime) watchHeap() {

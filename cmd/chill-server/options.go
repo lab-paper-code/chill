@@ -24,7 +24,7 @@ type options struct {
 	kubeAPIBurst                                                           int
 	queueLimit, maxQueryEvents                                             int
 	maxRequestBytes, maxEvidenceBytes                                      int64
-	profileConfidenceLevel, overloadHeapFraction                           float64
+	profileConfidenceLevel                                                 float64
 	requestTimeout, drainTimeout, sourceInterval, profileInterval          time.Duration
 	operationTimeout                                                       time.Duration
 	profileNamespaces                                                      []string
@@ -88,8 +88,6 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.DurationVar(&o.sourceInterval, "source-interval", time.Second, "Current instance and management refresh interval.")
 	f.DurationVar(&o.profileInterval, "profile-interval", time.Minute, "Selected profiling evidence refresh interval.")
 	f.Float64Var(&o.profileConfidenceLevel, "profile-confidence-level", 0.95, "Measured idle-baseline confidence.")
-	f.Float64Var(&o.overloadHeapFraction, "overload-heap-fraction", 0.9,
-		"Live-heap fraction of GOMEMLIMIT above which new inference requests get 503; off without GOMEMLIMIT.")
 	f.Func("profile-namespace", "Allowed measurement namespace; repeatable; empty uses serving namespace.",
 		func(value string) error {
 			if len(validation.IsDNS1123Label(value)) != 0 {
@@ -153,9 +151,8 @@ func (o options) validate() error {
 			return errors.New("request, operation, drain, refresh and observation durations must be positive")
 		}
 	}
-	if !(o.profileConfidenceLevel > 0 && o.profileConfidenceLevel < 1) ||
-		!(o.overloadHeapFraction > 0 && o.overloadHeapFraction < 1) {
-		return errors.New("profile confidence level and overload heap fraction must be between zero and one")
+	if !(o.profileConfidenceLevel > 0 && o.profileConfidenceLevel < 1) {
+		return errors.New("profile confidence level must be between zero and one")
 	}
 	if _, err := privateOrigin(o.consoleURL); err != nil {
 		return err

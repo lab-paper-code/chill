@@ -15,9 +15,6 @@ import (
 type RuntimeConfig struct {
 	QueueLimit     int
 	ObservationLog *ObservationLog
-	// OverloadHeapFraction of the Go memory limit above which the live heap
-	// rejects new requests; zero turns the guard off.
-	OverloadHeapFraction float64
 }
 
 type Receipt struct {
@@ -101,8 +98,8 @@ type Runtime struct {
 }
 
 func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
-	if config.QueueLimit <= 0 || config.ObservationLog == nil || !(config.OverloadHeapFraction >= 0 && config.OverloadHeapFraction < 1) {
-		return nil, errors.New("positive queue limit, observation log and overload heap fraction in [0, 1) are required")
+	if config.QueueLimit <= 0 || config.ObservationLog == nil {
+		return nil, errors.New("positive queue limit and observation log are required")
 	}
 	backendCtx, cancel := context.WithCancel(ctx)
 	r := &Runtime{config: config, ctx: backendCtx, cancel: cancel, workloads: map[string]*runtimeWorkload{}, names: map[string]string{}, instances: map[string]*runtimeInstance{}, calls: map[string]*Call{}, definitions: map[string]*Definition{}, changed: make(chan struct{}, 1)}
@@ -143,9 +140,7 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		r.calls[c.receipt.ID] = c
 		w.calls[c.receipt.ID] = c
 	}
-	if config.OverloadHeapFraction > 0 {
-		go r.watchHeap()
-	}
+	go r.watchHeap()
 	return r, nil
 }
 

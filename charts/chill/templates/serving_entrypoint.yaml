@@ -103,7 +103,6 @@ spec:
             - {{ printf "--source-interval=%s" .Values.servingEntrypoint.sourceInterval | quote }}
             - {{ printf "--profile-interval=%s" .Values.servingEntrypoint.profileInterval | quote }}
             - {{ printf "--profile-confidence-level=%v" .Values.servingEntrypoint.profileConfidenceLevel | quote }}
-            - {{ printf "--overload-heap-fraction=%v" .Values.servingEntrypoint.overloadHeapFraction | quote }}
             - {{ printf "--max-request-bytes=%s" (.Values.servingEntrypoint.maxRequestBytes | toJson) | quote }}
             - {{ printf "--max-evidence-bytes=%s" (.Values.servingEntrypoint.maxEvidenceBytes | toJson) | quote }}
             {{- range .Values.servingEntrypoint.observationDefinitions }}
@@ -143,20 +142,9 @@ spec:
                 resourceFieldRef:
                   resource: limits.cpu
                   divisor: "1"
-            {{- $memory := toString ((.Values.servingEntrypoint.resources.limits | default dict).memory) }}
-            {{- $limitMiB := 0 }}
-            {{- if hasSuffix "Gi" $memory }}
-            {{- $limitMiB = mul (atoi (trimSuffix "Gi" $memory)) 1024 }}
-            {{- else if hasSuffix "Mi" $memory }}
-            {{- $limitMiB = atoi (trimSuffix "Mi" $memory) }}
-            {{- end }}
-            {{- $fraction := float64 .Values.servingEntrypoint.goMemLimitFraction }}
-            {{- if or (le $limitMiB 0) (le $fraction 0.0) (ge $fraction 1.0) }}
-            {{- fail "servingEntrypoint needs resources.limits.memory as a whole Mi or Gi quantity and 0 < goMemLimitFraction < 1" }}
-            {{- end }}
-            # The Go soft memory limit stays below the container limit; the overload guard compares against it.
+            # Go soft memory limit below resources.limits.memory; the overload guard compares the live heap against it.
             - name: GOMEMLIMIT
-              value: {{ printf "%dMiB" (int (floor (mulf $limitMiB $fraction))) | quote }}
+              value: {{ required "servingEntrypoint.goMemLimit is required" .Values.servingEntrypoint.goMemLimit | quote }}
             {{- with .Values.servingEntrypoint.goDebug }}
             - name: GODEBUG
               value: {{ . | quote }}

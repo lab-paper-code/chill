@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// The guard rejects new requests while the live heap exceeds the configured
-// fraction of the Go memory limit and admits them again below it; without a
-// memory limit it stays off.
+// The guard rejects new requests while the live heap exceeds
+// overloadHeapFraction of the Go memory limit and admits them again below it;
+// without a memory limit it stays off.
 func TestHeapOverloadRejectsNewRequests(t *testing.T) {
 	_, snapshot := schedulerFixture()
 	d, p := snapshot.Workloads[0], snapshot.Instances[0].Profile
@@ -21,7 +21,7 @@ func TestHeapOverloadRejectsNewRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = observationLog.Close(context.Background()) }()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog, OverloadHeapFraction: 1e-9})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,8 @@ func TestHeapOverloadRejectsNewRequests(t *testing.T) {
 		}
 		return ""
 	}
-	defer debug.SetMemoryLimit(debug.SetMemoryLimit(4 << 30))
+	// Any live heap exceeds 0.9 of a one-byte limit.
+	defer debug.SetMemoryLimit(debug.SetMemoryLimit(1))
 	goruntime.GC()
 	r.sampleHeap()
 	if got := code(); got != "GatewayOverloaded" {

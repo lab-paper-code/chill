@@ -434,11 +434,12 @@ CPU limit 6에서 0.8 core가 남는다. SmolVLM2 요청의 게이트웨이 처�
 ### 과부하 보호
 
 ChillServer는 1초마다 `runtime/metrics`의 `/gc/heap/live:bytes`(마지막 GC가 live로 표시한 heap)를 읽어
-`GOMEMLIMIT`(`debug.SetMemoryLimit`의 현재 값)에 `--overload-heap-fraction`(sample 0.9, 0 초과 1 미만)을 곱한 값과 비교하고,
+`GOMEMLIMIT`(`debug.SetMemoryLimit`의 현재 값)의 0.9배(`overload.go`의 상수)와 비교하고,
 결과를 atomic 값 하나에 둔다. 요청 경로는 그 값만 읽는다. 값이 넘은 동안 새 추론 요청은 `Accept`의 `QueueFull` 검사 바로 뒤에서
 `GatewayOverloaded`로 거절되고 응답은 503과 `Retry-After: 1`이다. 기록은 `QueueFull`과 같은 경로다. `validated` 사건이
 계산 수요로 남고, 응답은 `response_finished`(`rejected`, `GatewayOverloaded`)로 남는다. `QueueFull`은 Workload 하나의
-유입 큐 한도를 알리는 429이고 과부하는 프로세스 전체의 상태이므로 이유 코드를 따로 둔다. `GOMEMLIMIT`이 없으면 보호는 꺼진다.
+유입 큐 한도를 알리는 429이고 과부하는 프로세스 전체의 상태이므로 이유 코드를 따로 둔다. `GOMEMLIMIT`이 없으면 한도가
+`math.MaxInt64`라 보호가 걸리지 않는다.
 Envoy Overload Manager의 heap 기준 동작과 같은 모양이다. 비교 대상은 GC가 회수하지 못하는 live heap이다. 전체 사용량은
 GOGC 100의 여유로 정상 부하에서도 한도까지 자라고, GC 폭주는 live heap이 한도에 다가갈 때 시작된다.
 
@@ -621,7 +622,7 @@ SAN과 맞는 HTTPS 주소를 사용한다. 스케줄러 후보와 비용은 `pr
 `GOMEMLIMIT=3072MiB`와 `GODEBUG=gctrace=1`이 있고, helm이 소유하지 않는 필드라 upgrade 뒤에도 남는다.
 lane 뒤 배포는 overlay에 `servingEntrypoint.goDebug: gctrace=1`을 두고, upgrade 직전에
 `kubectl -n chill-system set env deploy/chill-serving-entrypoint GOMEMLIMIT- GODEBUG-`로 둘을 지운다. upgrade 뒤에는
-Pod의 env에 `GOMEMLIMIT=3072MiB`와 `GODEBUG=gctrace=1`이 한 번씩 있는지 확인한다.
+Pod의 env에 `GOMEMLIMIT=3GiB`와 `GODEBUG=gctrace=1`이 한 번씩 있는지 확인한다.
 
 | Helm 값 | 실제 flag 또는 배포 계약 |
 |---|---|
@@ -629,8 +630,7 @@ Pod의 env에 `GOMEMLIMIT=3072MiB`와 `GODEBUG=gctrace=1`이 한 번씩 있는�
 | `namespace`, `actuationNamespace` | `--serving-namespace`, `--actuation-namespace`; 빈 값은 release namespace |
 | `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 목록은 serving namespace. ChillServer에 namespaced BEO `get/list/create/delete`, ProfilingRun `get`만 부여 |
 | `profileConfidenceLevel:0.95` | `--profile-confidence-level`; measured idle baseline confidence |
-| `overloadHeapFraction:0.9` | `--overload-heap-fraction`; live heap이 `GOMEMLIMIT`의 이 비율을 넘으면 새 추론 요청에 503 `GatewayOverloaded`([7장 과부하 보호](#과부하-보호)) |
-| `resources.limits` cpu `6`, memory `4Gi`, `goMemLimitFraction:0.75` | env `GOMAXPROCS`는 `limits.cpu`, env `GOMEMLIMIT`는 `limits.memory` × 이 비율(MiB, 4Gi에서 `3072MiB`)이다. memory는 정수 Mi 또는 Gi 값이고 비율은 0 초과 1 미만이며, 다르면 render가 실패한다 |
+| `resources.limits` cpu `6`, memory `4Gi`, `goMemLimit:3GiB` | env `GOMAXPROCS`는 `limits.cpu`, env `GOMEMLIMIT`는 `goMemLimit`(Go 형식, 필수)이다. `goMemLimit`은 `limits.memory`의 75%로 두고 limit을 바꿀 때 함께 바꾼다 |
 | `goDebug:""` | env `GODEBUG`; 빈 값이면 넣지 않는다. E5의 GC 기록은 `gctrace=1`(GC마다 stderr 한 줄)로 한다 |
 | `queueLimit:1024`, `requestTimeout:30s`, `drainTimeout:2m` | 각각 `--queue-limit`, `--request-timeout`, `--drain-timeout`; SLO timeout 아님 |
 | `sourceInterval:1s`, `profileInterval:1m` | 현재 상태와 profile refresh 주기. 관측 업로드는 1분 주기다 |
