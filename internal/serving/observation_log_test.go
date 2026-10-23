@@ -511,7 +511,13 @@ func TestRequestFinalRowMatchesEventCohort(t *testing.T) {
 // A fast call settled by the exchange before its CHILL_PROGRESS lines arrive
 // keeps the running offset those lines would have folded, and queues at the
 // firstfloor receipt (the queued line comes after body decode, `ingress` later).
+// Lines folded before the call settles keep their values.
 func TestExchangeFinishedRecordDatesStagesLikeProgressLines(t *testing.T) {
+	observationLog, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	d := &Definition{Name: "workload", UID: "uid", Generation: 1, SLO: SLO{Percentile: 95, TargetLatency: time.Second}}
+	if err := observationLog.DefinitionRecord(d); err != nil {
+		t.Fatal(err)
+	}
 	received := observationTestHour.Add(time.Second)
 	nativeReceived := received.Add(2*time.Millisecond + 345*time.Nanosecond) // worker clock
 	ingress := 37_011 * time.Nanosecond
@@ -520,27 +526,57 @@ func TestExchangeFinishedRecordDatesStagesLikeProgressLines(t *testing.T) {
 	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 	record := BackendProgress{Phase: phaseFinished, At: finished, BatchID: 1, BatchSize: 1,
 		QueueMS: ms(started.Sub(nativeReceived)), NativeElapsedMS: ms(finished.Sub(nativeReceived)), ExecutionComplete: true}
-	logged := RequestRow{ReceivedAt: received}
-	for _, e := range []RequestEvent{
-		{Kind: "backend_queued", At: nativeReceived.Add(ingress)},
-		{Kind: "backend_running", At: started},
-		{Kind: "backend_finished", At: finished, NativeProgress: &record},
-	} {
-		logged.fold(&e)
+	assignment := &Assignment{Node: NodeReference{Name: "node", UID: "node-uid"}, Instance: "i1", Profile: "p1", DispatchedAt: received}
+	queuedLine := RequestEvent{Kind: "backend_queued", At: nativeReceived.Add(ingress)}
+	runningLine := RequestEvent{Kind: "backend_running", At: started}
+	exchange := RequestEvent{Kind: "backend_finished", At: received.Add(25 * time.Millisecond),
+		ElapsedNanos: int64(25 * time.Millisecond), NativeProgress: &record, ExecutionComplete: true}
+	unrun := RequestEvent{Kind: "backend_finished", At: received.Add(time.Millisecond), ElapsedNanos: int64(time.Millisecond),
+		NativeProgress: &BackendProgress{Phase: phaseFinished, At: finished, QueueMS: 3, NativeElapsedMS: 3}}
+	send := func(id string, events ...RequestEvent) {
+		for _, e := range events {
+			e.RequestID, e.WorkloadUID, e.Definition, e.ReceivedAt = id, d.UID, d.Identity(), received
+			if err := observationLog.RequestEvent(e); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	exchanged := RequestRow{ReceivedAt: received}
-	exchanged.fold(&RequestEvent{Kind: "backend_finished", At: received.Add(25 * time.Millisecond),
-		ElapsedNanos: int64(25 * time.Millisecond), NativeProgress: &record})
+	runs := map[string][]RequestEvent{
+		"logged":    {queuedLine, runningLine, exchange},
+		"exchanged": {exchange},
+		"lateLines": {exchange, queuedLine, runningLine},
+		"unrun":     {unrun},
+	}
+	for id, events := range runs {
+		send(id, RequestEvent{Kind: phaseReceived, At: received}, RequestEvent{Kind: phaseAssigned, At: received, Assignment: assignment})
+		send(id, events...)
+		if err := observationLog.RequestClosed(id); err != nil {
+			t.Fatal(err)
+		}
+		send(id, queuedLine, runningLine) // after release: no open row
+	}
+	result, err := observationLog.Query(d.UID, received, received.Add(time.Second), nil, nil, 0, "")
+	if err != nil || len(result.Requests) != len(runs) {
+		t.Fatalf("final rows: %+v %v", result, err)
+	}
+	rows := map[string]RequestRow{}
+	for _, row := range result.Requests {
+		rows[row.RequestID] = row
+	}
+	logged, exchanged, late := rows["logged"], rows["exchanged"], rows["lateLines"]
 	if exchanged.QueuedNanos == nil || exchanged.RunningNanos == nil ||
 		*exchanged.QueuedNanos != *logged.QueuedNanos-int64(ingress) || *exchanged.RunningNanos != *logged.RunningNanos {
 		t.Fatalf("exchange-settled stages %v/%v, log %d/%d", exchanged.QueuedNanos, exchanged.RunningNanos, *logged.QueuedNanos, *logged.RunningNanos)
 	}
-	// A request finished without running (no batch) gets no running stage.
-	dropped := RequestRow{ReceivedAt: received}
-	dropped.fold(&RequestEvent{Kind: "backend_finished", At: received, ElapsedNanos: 1,
-		NativeProgress: &BackendProgress{Phase: phaseFinished, At: finished, QueueMS: 3, NativeElapsedMS: 3}})
-	if dropped.RunningNanos != nil {
-		t.Fatal("unrun request got a running stage")
+	if *logged.QueuedNanos != int64(nativeReceived.Add(ingress).Sub(received)) || *logged.RunningNanos != int64(started.Sub(received)) {
+		t.Fatalf("log stages %d/%d", *logged.QueuedNanos, *logged.RunningNanos)
+	}
+	if late.QueuedNanos == nil || late.RunningNanos == nil ||
+		*late.QueuedNanos != *logged.QueuedNanos || *late.RunningNanos != *logged.RunningNanos {
+		t.Fatalf("lines folded after the finished event lost: %v/%v", late.QueuedNanos, late.RunningNanos)
+	}
+	if unrunRow := rows["unrun"]; unrunRow.RunningNanos != nil || unrunRow.QueuedNanos != nil {
+		t.Fatal("unrun request got native stages")
 	}
 }
 
