@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -727,6 +728,11 @@ func (s *schedulerReplayState) initializeOutstanding() {
 	}
 }
 
+// replayRequestID is fmt.Sprintf("replay-%g-%d", cycle, j) without fmt.
+func replayRequestID(cycle float64, j int) string {
+	return "replay-" + strconv.FormatFloat(cycle, 'g', -1, 64) + "-" + strconv.Itoa(j)
+}
+
 func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 	window := float64(s.settings.ObservationWindow)
 	start := s.snap.ObservationEnd.Add(-s.settings.ObservationWindow)
@@ -755,7 +761,7 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 			if at >= s.horizon {
 				continue
 			}
-			r := SchedulerRequest{ID: fmt.Sprintf("replay-%g-%d", cycle, j), Definition: a.Definition, ReceivedAt: s.snap.At.Add(time.Duration(at)), Phase: phasePending}
+			r := SchedulerRequest{ID: replayRequestID(cycle, j), Definition: a.Definition, ReceivedAt: s.snap.At.Add(time.Duration(at)), Phase: phasePending}
 			identity, ok := identities[a.Definition]
 			if !ok {
 				identity = a.Definition.Identity()
