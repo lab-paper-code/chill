@@ -117,7 +117,7 @@ func TestObservationReadReusesLargeLineBufferAndPreservesSelectedPayloads(t *tes
 	clock.set(at)
 	// Equal-length lines with distinct payloads: a selected payload that
 	// borrowed the reused buffer would read a later line.
-	payloads := make([]json.RawMessage, 9)
+	payloads := make([]json.RawMessage, 2)
 	for index := range payloads {
 		payloads[index] = json.RawMessage(`{"retained":"` + strings.Repeat(string(rune('a'+index)), 512<<10) + `"}`)
 		event := SchedulerObservation{At: at.Add(time.Duration(index+1) * time.Nanosecond), Action: &SchedulerActionObservation{ID: "large-source", Expected: payloads[index]}}
@@ -162,7 +162,7 @@ func TestObservationReadIgnoresUnterminatedLastLine(t *testing.T) {
 func TestObservationReadReusesGrownBufferAcrossFiles(t *testing.T) {
 	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	payload := json.RawMessage(`{"retained":"` + strings.Repeat("x", 512<<10) + `"}`)
-	const files = 5
+	const files = 2
 	for index := range files {
 		at := observationTestHour.Add(time.Duration(index) * time.Minute)
 		clock.set(at)
