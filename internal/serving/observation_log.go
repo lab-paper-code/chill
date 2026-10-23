@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -130,6 +131,7 @@ func (r *RequestRow) fold(e *RequestEvent) {
 		if p.DecisionID != "" {
 			r.DecisionID = p.DecisionID
 		}
+		r.foldNativeStages(p)
 	}
 	offset := e.ElapsedNanos
 	if offset == 0 && !r.ReceivedAt.IsZero() {
@@ -162,6 +164,25 @@ func (r *RequestRow) fold(e *RequestEvent) {
 	}
 	if e.Error != "" && (r.Error == "" || e.Kind == eventResponseFinished) {
 		r.Error = e.Error
+	}
+}
+
+// foldNativeStages fills the stages the progress lines missed. The exchange can
+// settle a fast call before its lines arrive; the finished record of a batch
+// that ran dates the same worker-clock instants: firstfloor receipt =
+// At - NativeElapsedMS, running = receipt + QueueMS.
+func (r *RequestRow) foldNativeStages(p *BackendProgress) {
+	if p.Phase != phaseFinished || p.BatchID == 0 || p.At.IsZero() || r.ReceivedAt.IsZero() {
+		return
+	}
+	received := p.At.Add(-time.Duration(math.Round(p.NativeElapsedMS * float64(time.Millisecond))))
+	queued := received.Sub(r.ReceivedAt).Nanoseconds()
+	running := received.Add(time.Duration(math.Round(p.QueueMS * float64(time.Millisecond)))).Sub(r.ReceivedAt).Nanoseconds()
+	if r.QueuedNanos == nil {
+		r.QueuedNanos = &queued
+	}
+	if r.RunningNanos == nil {
+		r.RunningNanos = &running
 	}
 }
 

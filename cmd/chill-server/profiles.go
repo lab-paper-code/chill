@@ -194,7 +194,7 @@ func (o *schedulerService) measuredPreparation(
 				"--intra-op-threads", strconv.Itoa(runtime.IntraOpThreads),
 				"--warmup-iterations", strconv.Itoa(runtime.WarmupIterations),
 			},
-			RunnerTimeoutMS: int(o.opts.requestTimeout / time.Millisecond), MaxQueueRequests: int(settings.MaxQueueSize),
+			RunnerTimeoutMS: int(o.opts.operationTimeout / time.Millisecond), MaxQueueRequests: int(settings.MaxQueueSize),
 			MaxQueueBytes:   int(queueBytes),
 			MaxRequestBytes: int(min(o.opts.maxRequestBytes, int64(native.MaxFrameBytes))),
 			Mode:            "serving", BatchSizes: slices.Clone(runtime.InitializedBatches),
