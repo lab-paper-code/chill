@@ -76,6 +76,8 @@
 
 결과: 판정을 통과하면 `Complete`이고 d < 0도 그대로 기록한다. 창 배치 수 < `minimumBatches`, 유휴 비율 > `maximumIdleFraction`, witness 오류는 `Insufficient`와 `TooFewBatches <n>`, `NotSaturated <비율>`, `PowerChangedDuringMeasurement`이고 record를 쓴다. gateway가 포화를 막으면 `NotSaturated`로 드러난다. 거절(5장), prepare나 remove 오류, Job 실패나 시간 초과(`LoadFailed <Job 상태>`), ChillServer 재시작은 `Failed`이고 record가 없다.
 
+**유효 규칙.** d는 firstfloor 시계의 배치 간격으로 계산한다. 측정 창 동안 firstfloor 큐의 최소 대기(`queueMS`)가 0보다 크면 인스턴스는 계속 포화였고, 그 d는 게이트웨이 버전과 무관하게 유효하다. 게이트웨이는 공급이 끊길 때만 d에 들어온다. 받아들인 d의 감사도 이 규칙을 쓴다.
+
 ## 4. 계획기의 d 수집
 
 - `CostEvidence.Refresh`가 `serving/dispatch-occupancy/`를 같은 방식(prefix 목록, 불변 identity cache)으로 읽는다. `Accepted` record 중 (Node UID, 전력모드, runtime image, model)마다 `measuredAt`이 가장 늦은 것을 쓴다(동률은 key 순, `latestBy`와 같은 규칙).
