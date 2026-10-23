@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	jsoniter "github.com/json-iterator/go"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"gonum.org/v1/gonum/stat"
 )
@@ -931,23 +930,11 @@ type requestEnvelope struct {
 }
 
 // requestRows merges the captured rows by request: final, else the open row,
-// else assigned. Only rows the selector keeps are fully decoded.
+// else assigned.
 func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEnvelope) bool) ([]*RequestRow, error) {
 	rows := map[string]*RequestRow{}
 	err := l.scanStream(read, observationRequestStream, func(raw []byte) error {
-		var envelope requestEnvelope
-		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(raw, &envelope); err != nil {
-			return err
-		}
-		if !keep(&envelope) || envelope.Kind != requestRowFinal && rows[envelope.RequestID] != nil {
-			return observationJSONSyntaxError(raw)
-		}
-		row := &RequestRow{}
-		if err := json.Unmarshal(raw, row); err != nil {
-			return err
-		}
-		rows[row.RequestID] = row
-		return nil
+		return mergeRequestRow(rows, raw, keep)
 	})
 	if err != nil {
 		return nil, err
@@ -963,6 +950,28 @@ func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEn
 		result = append(result, row)
 	}
 	return result, nil
+}
+
+// mergeRequestRow decodes raw once with the standard decoder. A row the
+// selector skips needs only valid syntax, so a decode error counts only when
+// the envelope keeps the row.
+func mergeRequestRow(rows map[string]*RequestRow, raw []byte, keep func(*requestEnvelope) bool) error {
+	row := &RequestRow{}
+	if decodeErr := json.Unmarshal(raw, row); decodeErr != nil {
+		var envelope requestEnvelope
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return err
+		}
+		if !keep(&envelope) || envelope.Kind != requestRowFinal && rows[envelope.RequestID] != nil {
+			return nil
+		}
+		return decodeErr
+	}
+	envelope := requestEnvelope{Kind: row.Kind, RequestID: row.RequestID, WorkloadUID: row.WorkloadUID, ReceivedAt: row.ReceivedAt}
+	if keep(&envelope) && (row.Kind == requestRowFinal || rows[row.RequestID] == nil) {
+		rows[row.RequestID] = row
+	}
+	return nil
 }
 
 // runtimeFacts returns the retained definitions and the assigned requests
