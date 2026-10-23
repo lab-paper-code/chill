@@ -866,3 +866,49 @@ func TestObservationArchiveRecoversAfterStagingFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCatalogReferenceSkipsSamePublishedPointerWithinHour(t *testing.T) {
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	clock.set(observationTestHour.Add(time.Minute))
+	profile := &Profile{ID: "p", NodeName: "node"}
+	catalog := func() []byte {
+		t.Helper()
+		names, err := filepath.Glob(filepath.Join(observationLog.root, "20261020T10", "catalog.*.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var data []byte
+		for _, name := range names {
+			part, err := os.ReadFile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(data, part...)
+		}
+		return data
+	}
+	reference := func(body any) {
+		t.Helper()
+		observationLog.mu.Lock()
+		defer observationLog.mu.Unlock()
+		if err := observationLog.referenceLocked("profile", "p", clock.now(), clock.now(), body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reference(profile)
+	want := catalog()
+	if bytes.Count(want, []byte{'\n'}) != 1 {
+		t.Fatalf("first reference rows: %q", want)
+	}
+	// A published Profile is immutable, so the same pointer skips the marshal.
+	profile.NodeName = "mutated"
+	reference(profile)
+	reference(&Profile{ID: "p", NodeName: "node"})
+	if got := catalog(); !bytes.Equal(got, want) {
+		t.Fatalf("catalog bytes changed:\n%s\nwant\n%s", got, want)
+	}
+	reference(&Profile{ID: "p", NodeName: "changed"})
+	if got := catalog(); bytes.Count(got, []byte{'\n'}) != 2 {
+		t.Fatalf("changed body not written: %q", got)
+	}
+}

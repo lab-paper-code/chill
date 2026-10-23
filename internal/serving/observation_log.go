@@ -184,8 +184,9 @@ type ObservationLogHealth struct {
 }
 
 type observationCatalogEntry struct {
-	hour string
-	body []byte
+	hour   string
+	body   []byte
+	source any // the published *Profile or *Definition that body encodes
 }
 
 // ObservationLog appends minute files under hourly segment directories and
@@ -428,19 +429,32 @@ func appendWhole(file *os.File, data []byte) error {
 
 // referenceLocked writes a catalog row when the hour first references key, or
 // when its body differs from the last body this process wrote for it.
+// Published Profiles and Definitions are immutable, so the same pointer
+// within the hour skips the marshal.
 func (l *ObservationLog) referenceLocked(kind, key string, at, now time.Time, body any) error {
+	var source any
+	switch body.(type) {
+	case *Profile, *Definition:
+		source = body
+	}
+	id, hour := kind+"/"+key, observationHour(now)
+	entry, ok := l.catalog[id]
+	if ok && entry.hour == hour && source != nil && entry.source == source {
+		return nil
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	id, hour := kind+"/"+key, observationHour(now)
-	if entry, ok := l.catalog[id]; ok && entry.hour == hour && bytes.Equal(entry.body, data) {
+	if ok && entry.hour == hour && bytes.Equal(entry.body, data) {
+		entry.source = source
+		l.catalog[id] = entry
 		return nil
 	}
 	if err := l.appendLocked(observationCatalogStream, now, CatalogRow{Kind: kind, Key: key, At: at, Body: data}); err != nil {
 		return err
 	}
-	l.catalog[id] = observationCatalogEntry{hour: hour, body: data}
+	l.catalog[id] = observationCatalogEntry{hour: hour, body: data, source: source}
 	return nil
 }
 
