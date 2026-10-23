@@ -11,8 +11,18 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/ratelimit"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 )
+
+// storeRetryAttempts rides out a cluster DNS loss of tens of seconds: the
+// SDK jitter backoff waits [0,2), [0,4), [0,8), [0,16) s and then 20 s, so
+// eight attempts wait 60 to 90 s between them, beside the attempts themselves.
+const storeRetryAttempts = 8
+
+// retryBackoff is the SDK backoff; tests replace it to skip real waits.
+var retryBackoff retry.BackoffDelayer = retry.NewExponentialJitterBackoff(retry.DefaultMaxBackoff)
 
 type Config struct {
 	LogicalStore    string
@@ -47,6 +57,11 @@ func New(config Config) (*Store, error) {
 	}
 	client := awss3.NewFromConfig(awsConfig, func(options *awss3.Options) {
 		options.UsePathStyle = true
+		// One in-cluster store: a failed write discards a finished measurement,
+		// so retries spend no shared quota that parallel writers could exhaust.
+		options.Retryer = retry.NewStandard(func(retryer *retry.StandardOptions) {
+			retryer.MaxAttempts, retryer.Backoff, retryer.RateLimiter = storeRetryAttempts, retryBackoff, ratelimit.None
+		})
 	})
 	return &Store{
 		client: client, region: config.Region, logicalStore: config.LogicalStore,
