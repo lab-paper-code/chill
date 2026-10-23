@@ -191,7 +191,7 @@ spec:
             claimName: {{ $name }}
         - name: temporary
           emptyDir:
-            sizeLimit: 128Mi
+            sizeLimit: 512Mi
       nodeSelector:
 {{- toYaml .Values.servingEntrypoint.nodeSelector | nindent 8 }}
       {{- with .Values.servingEntrypoint.affinity }}

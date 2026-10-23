@@ -700,9 +700,9 @@ binary는 `--store-name`, `--store-endpoint`, `--store-bucket`, `--store-region`
 `--store-credentials-secret`, `--observation-directory`, `--tls-cert/key`를 받는다.
 RWO PVC를 강제 해제하거나 Pod를 강제 삭제하여 ChillServer/drain 전제를 우회하지 않는다.
 
-ChillServer의 read-only root filesystem은 유지하며 `/tmp`에는 128Mi bounded
+ChillServer의 read-only root filesystem은 유지하며 `/tmp`에는 512Mi bounded
 `emptyDir`를 제공한다. immutable evidence publication의 임시 candidate는 이
-writable scratch를 사용하고, 원시 관측 기록은 retained PVC에 기록한다.
+writable scratch를 사용하고, 시간별 관측 archive의 gzip staging도 여기에 둔다. 원시 관측 기록은 retained PVC에 기록한다.
 
 ### 이전 serving cutover의 검증 기록
 

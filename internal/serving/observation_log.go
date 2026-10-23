@@ -621,8 +621,9 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 	if err != nil || len(files) == 0 {
 		return err
 	}
-	// The compressed hour stays on the log volume, out of process memory.
-	compressed, err := os.CreateTemp(l.config.Directory, ".archive-*")
+	// The compressed hour stages on scratch space, out of process memory and
+	// off the volume the archive drains.
+	compressed, err := os.CreateTemp("", ".archive-*")
 	if err != nil {
 		return err
 	}
