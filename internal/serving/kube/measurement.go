@@ -121,7 +121,8 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 	}
 	identity := evidencestore.ObjectIdentity{Store: request.Store, Key: OperationMeasurementKey(request.Operation), Size: int64(len(raw))}
 	// A cancelled caller must not discard already collected failed/partial facts.
-	writeCtx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	// Six minutes outlast the store retries: 8 attempts, each dial up to 30 s, and 60 to 90 s of backoff.
+	writeCtx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), 6*time.Minute)
 	defer cancelWrite()
 	receipt, writeErr := writer.PutImmutable(writeCtx, identity, bytes.NewReader(raw))
 	if writeErr == nil {
