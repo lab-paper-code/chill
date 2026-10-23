@@ -253,24 +253,40 @@ func TestObserverRequiresReadyPodAndRunningContainer(t *testing.T) {
 
 func TestObserverDoesNotCloseOnAmbiguousPostReadBackPods(t *testing.T) {
 	kubeClient := newClient(t, service(), readyPod("serving-a", "containerd://a", 0))
+	ready, servingLists := false, 0
+	reader := interceptor.NewClient(kubeClient, interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			// Only the serving-Pod LIST selects. The first post-read-back one
+			// sees both Pods; expiring the second ends the observation.
+			if ready && len(opts) > 0 {
+				if servingLists++; servingLists == 2 {
+					return context.DeadlineExceeded
+				}
+			}
+			return c.List(ctx, list, opts...)
+		},
+	})
 	request := testRequest()
-	request.ObservationTimeout = 8 * time.Millisecond
-	observer := newObserver(t, kubeClient, request)
+	request.ObservationTimeout = time.Minute
+	observer := newObserver(t, reader, request)
 
 	raw, err := observer.Observe(context.Background(), func() {
 		setNode(t, kubeClient, transitioned(actuationTimes()))
-		if err := kubeClient.Create(
-			context.Background(), readyPod("serving-b", "containerd://b", 0),
-		); err != nil {
+		// With its executor Service, the native read of either Pod succeeds,
+		// so only the ambiguity keeps the observation open.
+		pod := readyPod("serving-b", "containerd://b", 0)
+		if err := errors.Join(kubeClient.Create(context.Background(), executorService(pod)), kubeClient.Create(context.Background(), pod)); err != nil {
 			t.Fatalf("create ambiguous serving Pod: %v", err)
 		}
+		ready = true
 	})
-	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Observe() error = %v, want deadline", err)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || servingLists != 2 {
+		t.Fatalf("Observe() error = %v after %d serving LISTs, want deadline after 2", err, servingLists)
 	}
-	if raw.TargetReadBack == nil || raw.PostTransitionProcess != nil || !raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt.IsZero() {
-		t.Fatalf("target/post/bracket = %+v/%+v/%+v",
-			raw.TargetReadBack, raw.PostTransitionProcess, raw.MarkerBrackets.ReadyProcessWitness)
+	if raw.TargetReadBack == nil || raw.PostTransitionProcess != nil || len(raw.NativeFailures) != 0 ||
+		!raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt.IsZero() {
+		t.Fatalf("target/post/native failures/bracket = %+v/%+v/%+v/%+v",
+			raw.TargetReadBack, raw.PostTransitionProcess, raw.NativeFailures, raw.MarkerBrackets.ReadyProcessWitness)
 	}
 }
 
