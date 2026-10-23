@@ -110,7 +110,7 @@ func (c *observationClock) set(at time.Time) {
 var observationTestHour = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
 
 // clockedObservationLog writes at clock time; its process started at started.
-func clockedObservationLog(t testing.TB, config ObservationLogConfig, started time.Time) (*ObservationLog, *observationClock) {
+func clockedObservationLog(t *testing.T, config ObservationLogConfig, started time.Time) (*ObservationLog, *observationClock) {
 	t.Helper()
 	if config.Directory == "" {
 		config.Directory = t.TempDir()
@@ -807,25 +807,21 @@ func (a *discardObservationArchive) PutImmutable(_ context.Context, identity evi
 	return evidencestore.Receipt{}, err
 }
 
-// seedLargeObservationHour writes one 8 MiB incompressible minute file.
-func seedLargeObservationHour(t testing.TB, root string) {
-	t.Helper()
-	data := make([]byte, 8<<20)
-	rand.New(rand.NewSource(1)).Read(data)
-	if err := os.MkdirAll(filepath.Join(root, "20261020T10"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "20261020T10", "requests.00.jsonl"), data, 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// The hourly archive streams gzip through a file beside the log, so a large
-// hour never sits in process memory.
+// The hourly archive streams gzip through a scratch file, so a large hour
+// never sits in process memory.
 func TestObservationArchiveStreamsLargeHour(t *testing.T) {
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
 	archive := &discardObservationArchive{}
 	observationLog, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour.Add(3*time.Hour))
-	seedLargeObservationHour(t, observationLog.root)
+	data := make([]byte, 8<<20)
+	rand.New(rand.NewSource(1)).Read(data)
+	if err := os.MkdirAll(filepath.Join(observationLog.root, "20261020T10"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(observationLog.root, "20261020T10", "requests.00.jsonl"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	if err := observationLog.upload(context.Background(), observationTestHour, "requests"); err != nil {
@@ -838,19 +834,35 @@ func TestObservationArchiveStreamsLargeHour(t *testing.T) {
 	if archive.bytes < 1<<20 {
 		t.Fatalf("archive sent only %d bytes", archive.bytes)
 	}
-	if left, _ := filepath.Glob(filepath.Join(observationLog.config.Directory, ".archive-*")); len(left) != 0 {
-		t.Fatalf("archive left files beside the log: %v", left)
+	if left, _ := os.ReadDir(scratch); len(left) != 0 {
+		t.Fatalf("archive left staging files: %v", left)
 	}
 }
 
-func BenchmarkObservationArchiveLargeHour(b *testing.B) {
-	observationLog, _ := clockedObservationLog(b, ObservationLogConfig{Writer: &discardObservationArchive{}}, observationTestHour.Add(3*time.Hour))
-	seedLargeObservationHour(b, observationLog.root)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		if err := observationLog.upload(context.Background(), observationTestHour, "requests"); err != nil {
-			b.Fatal(err)
-		}
+// Full scratch space fails staging: the hour stays local and unmarked, and
+// the next pass archives it once space returns.
+func TestObservationArchiveRecoversAfterStagingFailure(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	archive := &observationArchive{directory: t.TempDir()}
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(10*time.Second), observationTestHour.Add(time.Minute+10*time.Second))
+	hour := filepath.Join(observationLog.root, "20261020T10")
+	clock.set(observationTestHour.Add(2*time.Hour + time.Minute))
+	if err := observationLog.Flush(ctx); err == nil {
+		t.Fatal("staging failure was hidden")
+	}
+	if _, err := os.Stat(hour); err != nil || len(archive.puts) != 0 {
+		t.Fatalf("hour lost or sent without staging: %v %v", err, archive.puts)
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	if err := observationLog.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(hour); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("archived hour was kept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(archive.directory, observationArchivePrefix+"20261020T10", "requests.jsonl.gz")); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -55,9 +55,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, observationOwner.Close()) }()
-	// An upload interrupted by a restart leaves its staging files on the volume.
+	// An upload interrupted by a restart leaves its staging files on scratch space.
 	for _, pattern := range []string{".archive-*", "chill-evidence-*"} {
-		staged, _ := filepath.Glob(filepath.Join(opts.observationDirectory, pattern))
+		staged, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))
 		for _, name := range staged {
 			_ = os.Remove(name)
 		}
