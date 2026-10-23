@@ -922,7 +922,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	return nil
 }
 
-// persistRouting records the runtime's applied distribution on the Pod of instance
+// persistRouting records the runtime's declared distribution on the Pod of instance
 // only, or of every runtime instance when only is empty; a restarted ChillServer
 // restores it. A standalone serving-operation runtime names only the instance it stops.
 func (o *Operations) persistRouting(ctx context.Context, only string) error {
@@ -930,13 +930,7 @@ func (o *Operations) persistRouting(ctx context.Context, only string) error {
 	if err != nil {
 		return err
 	}
-	weights, _ := o.runtime.SchedulerRouting()
-	known := map[string]bool{only: only != ""}
-	if only == "" {
-		for _, instance := range o.runtime.Instances() {
-			known[instance.ID] = true
-		}
-	}
+	declared := o.runtime.InstanceRouting()
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		status := firstfloorStatus(pod)
@@ -944,14 +938,12 @@ func (o *Operations) persistRouting(ctx context.Context, only string) error {
 			continue
 		}
 		id := physicalID(pod.UID, status.ContainerID)
-		if !known[id] {
+		routing, known := declared[id]
+		if (only != "" && id != only) || (only == "" && !known) {
 			continue
 		}
-		routing := map[string]int32{}
-		for uid, route := range weights {
-			if route[id] > 0 {
-				routing[uid] = route[id]
-			}
+		if routing == nil {
+			routing = map[string]int32{}
 		}
 		raw, err := json.Marshal(routing)
 		if err != nil {

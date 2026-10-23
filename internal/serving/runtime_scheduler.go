@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"maps"
 	"sort"
 	"strconv"
 	"time"
@@ -96,8 +97,17 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 	if validateOnly {
 		return nil
 	}
+	// The declared distribution is each instance's static seed, as its Pod records it.
+	for _, instance := range r.instances {
+		instance.Routing = map[string]int32{}
+		for uid, distribution := range targets {
+			if weight := distribution[instance.State.ID]; weight > 0 {
+				instance.Routing[uid] = weight
+			}
+		}
+	}
 	// Accepted calls keep their original execution contract through route changes.
-	// Retain an old route only while the new distribution cannot execute them.
+	// Retain an old route in memory only while the new distribution cannot execute them.
 	r.retainAcceptedRoutesLocked(targets)
 	for _, distribution := range targets {
 		for id, weight := range distribution {
@@ -107,15 +117,6 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 		}
 	}
 	r.routeTargets = targets
-	// The applied distribution is each instance's static seed, as its Pod records it.
-	for _, instance := range r.instances {
-		instance.Routing = map[string]int32{}
-		for uid, distribution := range targets {
-			if weight := distribution[instance.State.ID]; weight > 0 {
-				instance.Routing[uid] = weight
-			}
-		}
-	}
 	r.routingControlled = true
 	r.rebuildLocked()
 	r.dispatchLocked()
@@ -382,6 +383,18 @@ func (r *Runtime) SchedulerRouting() (map[string]map[string]int32, map[string]ma
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.schedulerRoutingLocked()
+}
+
+// InstanceRouting is each instance's declared distribution by Workload UID, the
+// value its Pod records; routes kept for accepted calls are not part of it.
+func (r *Runtime) InstanceRouting() map[string]map[string]int32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	routing := make(map[string]map[string]int32, len(r.instances))
+	for id, instance := range r.instances {
+		routing[id] = maps.Clone(instance.Routing)
+	}
+	return routing
 }
 
 func (r *Runtime) schedulerRoutingLocked() (map[string]map[string]int32, map[string]map[string]int64) {
