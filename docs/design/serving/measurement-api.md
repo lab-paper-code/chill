@@ -72,6 +72,8 @@
 
 **계산.** 배치 시작 = `receivedAt + runningNanos`. 창 배치는 시작이 [첫 배치 시작 + warmup, 그 + duration]인 배치다. `e1.sql` 포화 표(`:26-37`)와 같은 식으로 X = (창 최대 batchID − 창 최소 batchID) × B / (두 배치의 시작 차이), `d = 1/X − mean(profile batches[B].durationNanos)/B`다. 창 배치마다 유휴 간격은 그 배치 행의 가장 늦은 `receivedAt + executedNanos`에서 다음 배치 행 중 가장 이른 `receivedAt + queuedNanos`(창 끝에서 자름)까지이고, 다음 요청이 먼저 왔으면 0이다. 유휴 비율 = 유휴 간격 합 / duration이다. 두 시각이 없는 쌍은 더하지 않는다. 창 안의 긴 멈춤 하나도 그 길이만큼 비율에 들어간다.
 
+**큐 깊이 조건.** d는 인스턴스의 firstfloor 큐가 `maxQueueSize`(prefetch 깊이)까지 찬 상태에서 잰 값이다. 이번 캠페인은 ModelSpec 실행 경로의 값(mobilenet 256, PLC와 SmolVLM2 64)을 그대로 쓰고 `spec.workers`를 그보다 크게 둔다. 준비 Pod의 `maxQueueRequests`와 게이트웨이의 인스턴스 미완료 상한은 모두 profile의 `condition.firstfloor.maxQueueSize`다(`cmd/chill-server/profiles.go:183`, `:197`). 그래서 record의 `profileID`로 ChillServer catalog의 불변 profile을 찾으면 그 `condition.firstfloor.maxQueueSize`가 측정에 쓴 깊이다. profile은 불변이므로 이 join은 ModelSpec이 나중에 바뀌어도 성립한다. 부하 쪽 동시 요청 수 `spec.workers`는 CR에만 있고, record key `serving/dispatch-occupancy/<Node UID>/<CR UID>.json`의 CR UID로 CR을 찾을 수 있는 동안 복원된다. CR을 지운 뒤의 근거는 lane manifest다. record만으로 복원하려면 선택 필드 `loadJob.workers`(int, `omitempty`) 하나면 되고, 캠페인 중에는 ChillServer를 바꾸지 않으므로 lane 뒤 배포에 싣는다.
+
 결과: 판정을 통과하면 `Complete`이고 d < 0도 그대로 기록한다. 창 배치 수 < `minimumBatches`, 유휴 비율 > `maximumIdleFraction`, witness 오류는 `Insufficient`와 `TooFewBatches <n>`, `NotSaturated <비율>`, `PowerChangedDuringMeasurement`이고 record를 쓴다. gateway가 포화를 막으면 `NotSaturated`로 드러난다. 거절(5장), prepare나 remove 오류, Job 실패나 시간 초과(`LoadFailed <Job 상태>`), ChillServer 재시작은 `Failed`이고 record가 없다.
 
 ## 4. 계획기의 d 수집
