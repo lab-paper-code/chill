@@ -467,6 +467,9 @@ servingEntrypoint:
   sourceInterval: 1s
   profileInterval: 1m
   profileConfidenceLevel: 0.95
+  # Live-heap fraction of GOMEMLIMIT above which new inference requests get 503
+  # with Retry-After; the guard is off while GOMEMLIMIT is unset.
+  overloadHeapFraction: 0.9
   observationDefinitions: []
   observationOutcomes: []
   maxRequestBytes: 8388608

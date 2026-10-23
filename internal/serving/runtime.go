@@ -8,12 +8,16 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type RuntimeConfig struct {
 	QueueLimit     int
 	ObservationLog *ObservationLog
+	// OverloadHeapFraction of the Go memory limit above which the live heap
+	// rejects new requests; zero turns the guard off.
+	OverloadHeapFraction float64
 }
 
 type Receipt struct {
@@ -93,11 +97,12 @@ type Runtime struct {
 	changed           chan struct{}
 	observationError  error
 	shuttingDown      bool
+	overloaded        atomic.Bool
 }
 
 func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
-	if config.QueueLimit <= 0 || config.ObservationLog == nil {
-		return nil, errors.New("positive queue limit and observation log are required")
+	if config.QueueLimit <= 0 || config.ObservationLog == nil || !(config.OverloadHeapFraction >= 0 && config.OverloadHeapFraction < 1) {
+		return nil, errors.New("positive queue limit, observation log and overload heap fraction in [0, 1) are required")
 	}
 	backendCtx, cancel := context.WithCancel(ctx)
 	r := &Runtime{config: config, ctx: backendCtx, cancel: cancel, workloads: map[string]*runtimeWorkload{}, names: map[string]string{}, instances: map[string]*runtimeInstance{}, calls: map[string]*Call{}, definitions: map[string]*Definition{}, changed: make(chan struct{}, 1)}
@@ -137,6 +142,9 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		c.responseRecorded = true
 		r.calls[c.receipt.ID] = c
 		w.calls[c.receipt.ID] = c
+	}
+	if config.OverloadHeapFraction > 0 {
+		go r.watchHeap()
 	}
 	return r, nil
 }
@@ -246,6 +254,9 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	}
 	if len(w.queue) >= r.config.QueueLimit {
 		return nil, failure("QueueFull", "workload ingress queue limit reached")
+	}
+	if r.overloaded.Load() {
+		return nil, failure(reasonGatewayOverloaded, "gateway live heap is near its memory limit")
 	}
 	c := &Call{runtime: r, receipt: receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
 	if err := r.event(c, phaseAccepted, "", ""); err != nil {

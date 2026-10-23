@@ -30,6 +30,7 @@ const (
 	outcomeCompleted             = "completed"
 	outcomeIncomplete            = "incomplete"
 	reasonShuttingDown           = "ShuttingDown"
+	reasonGatewayOverloaded      = "GatewayOverloaded"
 )
 
 // Error carries a consumer-visible failure without depending on its transport.

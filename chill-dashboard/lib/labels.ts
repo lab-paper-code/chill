@@ -73,6 +73,7 @@ const guides: Record<string, Guide> = {
   ManagementUnavailable: ["ChillServer가 아직 시작 중이에요.", "잠시 후 다시 시도해 주세요."],
   ServiceUnavailable: ["지금은 요청을 처리할 수 없어요.", "잠시 후 다시 시도해 주세요."],
   QueueFull: ["대기 중인 요청이 너무 많아요.", "잠시 후 다시 보내 주세요."],
+  GatewayOverloaded: ["ChillServer 메모리가 한도에 가까워요.", "잠시 후 다시 보내 주세요."],
   RequestTimeout: ["정한 시간 안에 답을 받지 못했어요.", "잠시 후 다시 보내 주세요."],
   RequestCanceled: ["요청을 취소했어요.", "필요하면 다시 보내 주세요."],
   SLODeadlineDrop: ["응답 목표 시간을 넘길 것이 확실해서 처리하지 않았어요.", "부하가 줄어든 뒤 다시 보내 주세요."],

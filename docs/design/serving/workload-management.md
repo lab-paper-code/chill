@@ -426,10 +426,23 @@ CPU limit 6에서 0.8 core가 남는다. SmolVLM2 요청의 게이트웨이 처�
 크기의 mobilenet 요청과 같고, PLC 요청은 그보다 작다.
 
 이 계산은 E5 설정이 sample 값(`maxQueueSize` 256, 64, 64, `--queue-limit` 1024, `maxReplicas` 8, `maxInstances` 16)과
-같을 때 성립한다. E5는 단계마다 ChillServer working set, GC CPU와 게이트웨이 CPU를 기록한다. working set이 3 GiB에
-닿거나 게이트웨이 CPU가 limit에서 계획 탐색 몫을 뺀 값에 닿으면 두 규칙을 적용한다. 배정 직후 원본을 놓고 firstfloor
-본문을 버퍼 없이 흘려 보내는 규칙은 보유 바이트를 유입 큐 몫(평균 0.30 GiB, 최대 0.58 GiB)으로 줄인다. 처리 중 바이트 합 상한은
-넘는 요청에 `QueueFull` 429와 `Retry-After`를 돌려준다.
+같을 때 성립한다. E5는 단계마다 ChillServer working set, GC CPU와 게이트웨이 CPU를 기록한다.
+
+이번 캠페인과 E5는 firstfloor `maxQueueSize`(인스턴스의 prefetch 깊이, mobilenet 256, 나머지는 ModelSpec 실행 경로의 값)를
+그대로 쓴다. 계획기의 d는 이 큐 깊이에서 잰 값이다([측정 API 3장](measurement-api.md#3-dispatchoccupancymeasurement-occupancy)).
+
+### 과부하 보호
+
+ChillServer는 1초마다 `runtime/metrics`의 `/gc/heap/live:bytes`(마지막 GC가 live로 표시한 heap)를 읽어
+`GOMEMLIMIT`(`debug.SetMemoryLimit`의 현재 값)에 `--overload-heap-fraction`(sample 0.9, 0 초과 1 미만)을 곱한 값과 비교하고,
+결과를 atomic 값 하나에 둔다. 요청 경로는 그 값만 읽는다. 값이 넘은 동안 새 추론 요청은 `Accept`의 `QueueFull` 검사 바로 뒤에서
+`GatewayOverloaded`로 거절되고 응답은 503과 `Retry-After: 1`이다. 기록은 `QueueFull`과 같은 경로다. `validated` 사건이
+계산 수요로 남고, 응답은 `response_finished`(`rejected`, `GatewayOverloaded`)로 남는다. `QueueFull`은 Workload 하나의
+유입 큐 한도를 알리는 429이고 과부하는 프로세스 전체의 상태이므로 이유 코드를 따로 둔다. `GOMEMLIMIT`이 없으면 보호는 꺼진다.
+Envoy Overload Manager의 heap 기준 동작과 같은 모양이다. 비교 대상은 GC가 회수하지 못하는 live heap이다. 전체 사용량은
+GOGC 100의 여유로 정상 부하에서도 한도까지 자라고, GC 폭주는 live heap이 한도에 다가갈 때 시작된다.
+
+다음 단계(조건부): 배포 뒤 G를 다시 잴 때 게이트웨이 부하가 Tick이나 관측 기록을 늦추면 추론 동시 처리 수 상한을 더한다.
 
 ## 8. 수정과 삭제 적용
 
@@ -610,6 +623,7 @@ SAN과 맞는 HTTPS 주소를 사용한다. 스케줄러 후보와 비용은 `pr
 | `namespace`, `actuationNamespace` | `--serving-namespace`, `--actuation-namespace`; 빈 값은 release namespace |
 | `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 목록은 serving namespace. ChillServer에 namespaced BEO `get/list/create/delete`, ProfilingRun `get`만 부여 |
 | `profileConfidenceLevel:0.95` | `--profile-confidence-level`; measured idle baseline confidence |
+| `overloadHeapFraction:0.9` | `--overload-heap-fraction`; live heap이 `GOMEMLIMIT`의 이 비율을 넘으면 새 추론 요청에 503 `GatewayOverloaded`([7장 과부하 보호](#과부하-보호)) |
 | `queueLimit:1024`, `requestTimeout:30s`, `drainTimeout:2m` | 각각 `--queue-limit`, `--request-timeout`, `--drain-timeout`; SLO timeout 아님 |
 | `sourceInterval:1s`, `profileInterval:1m` | 현재 상태와 profile refresh 주기. 관측 업로드는 1분 주기다 |
 | `maxRequestBytes:8388608`, `maxEvidenceBytes:67108864`, `maxQueryEvents:1000` | HTTP body, evidence object와 raw query page 상한 |

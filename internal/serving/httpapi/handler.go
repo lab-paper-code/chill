@@ -603,6 +603,9 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusUnprocessableEntity
 	case "BackendError", "BackendUnavailable", "BackendResponseInvalid", "BackendResponseTooLarge", "BackendContextMismatch":
 		status = http.StatusBadGateway
+	case "GatewayOverloaded":
+		// The heap sample refreshes every second; the default status is 503.
+		w.Header().Set("Retry-After", "1")
 	}
 	result := serving.Error{Code: code, Message: "service could not complete this request"}
 	var domain *serving.Error
