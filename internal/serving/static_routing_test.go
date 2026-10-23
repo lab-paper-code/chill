@@ -37,7 +37,7 @@ func TestStaticExclusiveBaselineThenSwappedTargetDrainsPhysicalBinding(t *testin
 		physical := instance.ID
 		instances = append(instances, ReadyInstance{
 			State:   InstanceState{ID: physical, Node: instance.Node, Profile: instance.Profile.ID, Ready: true},
-			Profile: instance.Profile, Weight: 1, Capacity: 1,
+			Profile: instance.Profile, Capacity: 1,
 			Execute: func(context.Context, Dispatch) (BackendResult, error) {
 				if physical == "i1" {
 					close(started)

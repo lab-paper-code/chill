@@ -726,7 +726,7 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 		if candidate.State.ID == "" || candidate.State.Node.UID == "" {
 			return failure("InvalidDistribution", "actual instance and Node identities are required")
 		}
-		if candidate.State.Ready && (candidate.Profile == nil || candidate.Weight < 0 || candidate.Capacity <= 0 || candidate.Execute == nil) {
+		if candidate.State.Ready && (candidate.Profile == nil || candidate.Capacity <= 0 || candidate.Execute == nil) {
 			return failure("InvalidDistribution", "ready instance needs verified profile, bounds and execution")
 		}
 		if seen[candidate.State.ID] {

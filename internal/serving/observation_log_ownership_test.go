@@ -131,7 +131,7 @@ func TestRestoredCallTheNativeDoesNotHoldFinishes(t *testing.T) {
 	defer restored.cancel()
 	restored.SetProfiles([]Profile{*p})
 	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), Native: &native.State{Ready: true}},
-		Profile: p, Weight: 1, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{}, nil }}
+		Profile: p, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{}, nil }}
 	if err = restored.InstallInstances([]ReadyInstance{instance}); err != nil {
 		t.Fatal(err)
 	}

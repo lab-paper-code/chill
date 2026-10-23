@@ -115,7 +115,7 @@ ADR 0020의 구간(fence, read-back, settling 시작, Ready)은 같은 네 시�
 | Dashboard | `features/resources.tsx:59-60`이 서비스 이름을 이어 붙인다 | 유지. 이름 하나를 보인다 |
 | 설계 문서 | `workload-management.md:357,415,458,688,691,697`, `heterogeneous-workloads.md:28` | 명세 ⑤ 문장(analytic-planner 10장)으로 다시 쓴다 |
 
-commit 4(`e018057`)는 서빙 source가 `edge.dacs.io/serving-routing` annotation을 필수로 읽고 Workload를 둘 이상 가리키면 invalid로 보며(`kube/observer.go`), Runtime은 annotation의 분배만 쓴다(`runtime_scheduler.go`). capture는 인스턴스의 Workload를 그대로 기록하고 판단은 공유 사유 없이 진행한다. 수동 remove는 다른 Workload가 소유하거나 binding한 인스턴스를 거절한다. ADR 0019: 바뀐 것은 Pod annotation을 읽는 규칙과 판단 상태 값 하나다. 저장 계약의 필드는 그대로이고, 이미 저장된 판단 기록의 `SharedInstance` 상태와 사유는 문자열이라 그대로 읽힌다. Dashboard는 이 상태 값을 따로 다루지 않는다. 배포 전에 live serving Pod마다 annotation이 있고 Workload가 하나 이하인지 확인하고, 아닌 Pod는 지금 image에서 다시 prepare한다.
+commit 4(`e018057`)는 서빙 source가 `edge.dacs.io/serving-routing` annotation을 필수로 읽고 Workload를 둘 이상 가리키면 invalid로 보며(`kube/observer.go`), Runtime은 annotation의 분배만 쓴다(`runtime_scheduler.go`). capture는 인스턴스의 Workload를 그대로 기록하고 판단은 공유 사유 없이 진행한다. 수동 remove는 다른 Workload가 소유하거나 binding한 인스턴스를 거절한다. ADR 0019: 바뀐 것은 Pod annotation을 읽는 규칙과 판단 상태 값 하나다. 저장 계약의 필드는 그대로이고, 이미 저장된 판단 기록의 `SharedInstance` 상태와 사유는 문자열이라 그대로 읽힌다. Dashboard는 이 상태 값을 따로 다루지 않는다. 배포 전에 지금 image에서 [용량표 계획기 6장](../serving/analytic-planner.md#6-인스턴스-공유-정리)의 `staticRouting`을 적용하고(적용이 모든 인스턴스 Pod의 annotation을 다시 쓴다, `kube/operations.go` `persistRouting`), live serving Pod마다 annotation이 있고 Workload가 하나 이하인지 확인한다.
 
 ## 6. 재시작 관측 잠금 (D-R7-5)
 

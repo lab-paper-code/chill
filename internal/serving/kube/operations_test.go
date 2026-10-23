@@ -110,7 +110,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 			WorkloadUID: definition.UID, MaxBatch: 1, Capacity: 4, MaxWait: time.Millisecond}
 		target.Instances = append(target.Instances, instance)
 		ready = append(ready, serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: instance.Node, Profile: profile.ID, Ready: true, Native: &state},
-			Profile: &profile, Weight: 1, Routing: map[string]int32{definition.UID: 1}, Capacity: 4,
+			Profile: &profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 4,
 			Execute: func(ctx context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 				return nativeClient.Execute(ctx, spec, dispatch)
 			},

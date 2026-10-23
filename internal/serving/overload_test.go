@@ -30,7 +30,7 @@ func TestHeapOverloadRejectsNewRequests(t *testing.T) {
 	if err = r.Publish(d); err != nil {
 		t.Fatal(err)
 	}
-	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "i", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true}, Profile: p, Weight: 1, Capacity: 4,
+	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "i", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true}, Profile: p, Capacity: 4,
 		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
 		t.Fatal(err)
 	}

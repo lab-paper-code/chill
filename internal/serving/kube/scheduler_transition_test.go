@@ -36,7 +36,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 			ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: wanted.Capacity, MaxBatchSize: wanted.MaxBatch,
 			Policy: native.Policy{ProfileID: profile.ID, MaxBatchSize: wanted.MaxBatch, DeadlinePolicy: "keep"},
 		}}},
-		Profile: &profile, Weight: 1, Capacity: wanted.Capacity,
+		Profile: &profile, Capacity: wanted.Capacity,
 		Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 			return serving.BackendResult{Finished: true}, nil
 		},

@@ -296,7 +296,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 			ID: "physical", Node: serving.NodeReference{Name: "node", UID: "uid"},
 			Profile: profile.ID, Ready: true,
 		},
-		Profile: &profile, Weight: 1, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
+		Profile: &profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 		Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 			t.Error("refresh must not dispatch inference")
 			return serving.BackendResult{}, nil
@@ -366,7 +366,7 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 	instance := serving.ReadyInstance{
 		State: serving.InstanceState{ID: "original-pod/container",
 			Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Profile: profile.ID, Ready: true},
-		Profile: &profile, Weight: 1, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
+		Profile: &profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 		Execute: func(_ context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 			dispatched <- dispatch
 			return serving.BackendResult{StatusCode: http.StatusOK, Finished: true}, nil

@@ -532,7 +532,7 @@ func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run) {
 		t.Fatal("history treated as current prepared effect")
 	}
-	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "pod/container", TargetID: "slot", Node: node, Profile: profile.ID, Ready: true, Native: &native.State{Ready: true}}, Profile: profile, Weight: 1, Capacity: 1, Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
+	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "pod/container", TargetID: "slot", Node: node, Profile: profile.ID, Ready: true, Native: &native.State{Ready: true}}, Profile: profile, Capacity: 1, Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 		panic("regression only observes physical state")
 	}}
 	if err := observer.runtime.InstallInstances([]serving.ReadyInstance{instance}); err != nil {

@@ -36,7 +36,7 @@ func routingRuntime(t *testing.T, seed map[string]int32) (*Runtime, SchedulerIns
 			t.Fatal(err)
 		}
 	}
-	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: i.ID, Node: i.Node, Profile: i.Profile.ID, Ready: true}, Profile: i.Profile, Weight: 1, Routing: seed, Capacity: 1,
+	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: i.ID, Node: i.Node, Profile: i.Profile.ID, Ready: true}, Profile: i.Profile, Routing: seed, Capacity: 1,
 		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 			State: InstanceState{
 				ID: wanted.ID, Node: wanted.Node, Profile: wanted.Profile.ID, Ready: true,
 			},
-			Profile: wanted.Profile, Weight: wanted.Weight, Routing: map[string]int32{d.UID: wanted.Weight}, Capacity: wanted.Capacity,
+			Profile: wanted.Profile, Routing: map[string]int32{d.UID: wanted.Weight}, Capacity: wanted.Capacity,
 			Execute: func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
 				started := time.Now()
 				dispatched <- dispatch
@@ -311,7 +311,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	started := make(chan Dispatch, 2)
 	exchanged := make(chan struct{}, 2)
 	actualAt := time.Now().Add(-time.Second)
-	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: actualAt, Native: &native.State{}}, Profile: p, Weight: 1, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(ctx context.Context, dispatch Dispatch) (BackendResult, error) {
+	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: actualAt, Native: &native.State{}}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(ctx context.Context, dispatch Dispatch) (BackendResult, error) {
 		started <- dispatch
 		<-ctx.Done()
 		exchanged <- struct{}{}
@@ -421,7 +421,7 @@ func TestErrorExchangeWithoutNativeRecordFinishesForDrain(t *testing.T) {
 		for _, id := range held {
 			state.Requests = append(state.Requests, native.RequestState{Context: native.RequestContext{RequestID: id}, Phase: "queued"})
 		}
-		return ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), Native: state}, Profile: p, Weight: 1, Routing: map[string]int32{d.UID: 1}, Capacity: 4,
+		return ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), Native: state}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 4,
 			Execute: func(context.Context, Dispatch) (BackendResult, error) {
 				return BackendResult{StatusCode: 502}, failure("BackendUnavailable", "native backend did not complete a valid exchange")
 			}}
@@ -522,7 +522,7 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.EnableSchedulerRouting()
-	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "new", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true}, Profile: p, Weight: 1, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
+	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "new", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
 		t.Fatal(err)
 	}
 	if state, err := r.State(d.Name); err != nil || state.Reason != "Preparing" {
@@ -559,7 +559,7 @@ func TestControlledRoutingKeepsNewWorkloadQueuedAfterInstanceRediscovery(t *test
 		State: InstanceState{
 			ID: "excluded", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true,
 		},
-		Profile: p, Weight: 1, Capacity: 1,
+		Profile: p, Capacity: 1,
 		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil },
 	}
 	if err = r.InstallInstances([]ReadyInstance{instance}); err != nil {
@@ -684,7 +684,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 		profiles = append(profiles, *wanted.Profile)
 		instances = append(instances, ReadyInstance{
 			State:   InstanceState{ID: "physical-" + wanted.ID, TargetID: wanted.ID, Node: wanted.Node, Profile: wanted.Profile.ID, Ready: true},
-			Profile: wanted.Profile, Weight: wanted.Weight, Capacity: wanted.Capacity,
+			Profile: wanted.Profile, Capacity: wanted.Capacity,
 			Execute: func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
 				return BackendResult{Body: []byte(dispatch.Assignment.Instance), Finished: true}, nil
 			},

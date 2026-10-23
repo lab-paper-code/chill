@@ -337,7 +337,6 @@ type BackendResult struct {
 type ReadyInstance struct {
 	State            InstanceState
 	Profile          *Profile
-	Weight           int32
 	Routing          map[string]int32 // last applied weight per Workload UID, at most one
 	Capacity         int
 	OwnerWorkloadUID string
