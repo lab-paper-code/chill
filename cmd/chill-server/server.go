@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -53,6 +55,13 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, observationOwner.Close()) }()
+	// An upload interrupted by a restart leaves its staging files on the volume.
+	for _, pattern := range []string{".archive-*", "chill-evidence-*"} {
+		staged, _ := filepath.Glob(filepath.Join(opts.observationDirectory, pattern))
+		for _, name := range staged {
+			_ = os.Remove(name)
+		}
+	}
 	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
@@ -161,6 +170,7 @@ func serve(ctx context.Context, opts options, chillServer http.Handler, executio
 	defer profileTicker.Stop()
 	archiveTicker := time.NewTicker(time.Minute)
 	defer archiveTicker.Stop()
+	archiving := make(chan struct{}, 1)
 	var serveError error
 loop:
 	for {
@@ -191,13 +201,10 @@ loop:
 			}
 			cancel()
 		case <-archiveTicker.C:
-			callCtx, cancel := context.WithTimeout(ctx, opts.requestTimeout)
-			if err := observationLog.Flush(callCtx); err != nil {
-				ctrl.Log.Error(err, "archive serving observation hours")
-			}
-			cancel()
+			archiveInBackground(ctx, archiving, opts.requestTimeout, observationLog.Flush)
 		}
 	}
+	archiving <- struct{}{} // The running Flush ends before Close archives.
 	scheduler.Close()
 	// Keep native source watches alive until accepted backend work really drains.
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), opts.drainTimeout)
@@ -207,6 +214,26 @@ loop:
 		serveError = nil
 	}
 	return errors.Join(serveError, shutdownError)
+}
+
+// archiveInBackground starts one Flush unless one still runs, so source
+// refresh and Advance keep their ticks while an hour uploads.
+func archiveInBackground(
+	ctx context.Context, running chan struct{}, timeout time.Duration, flush func(context.Context) error,
+) {
+	select {
+	case running <- struct{}{}:
+	default:
+		return
+	}
+	go func() {
+		defer func() { <-running }()
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		if err := flush(callCtx); err != nil {
+			ctrl.Log.Error(err, "archive serving observation hours")
+		}
+	}()
 }
 
 func shutdown(ctx context.Context, server *http.Server, execution *serving.Runtime) error {

@@ -621,8 +621,13 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 	if err != nil || len(files) == 0 {
 		return err
 	}
-	var compressed bytes.Buffer
-	writer := gzip.NewWriter(&compressed) // Zero header time: equal input, equal bytes.
+	// The compressed hour stays on the log volume, out of process memory.
+	compressed, err := os.CreateTemp(l.config.Directory, ".archive-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = compressed.Close(); _ = os.Remove(compressed.Name()) }()
+	writer := gzip.NewWriter(compressed) // Zero header time: equal input, equal bytes.
 	for _, segment := range files {
 		file, err := os.Open(segment.path)
 		if err != nil {
@@ -636,11 +641,18 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 	if err := writer.Close(); err != nil {
 		return err
 	}
+	size, err := compressed.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+	if _, err := compressed.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
 	object := evidencestore.ObjectIdentity{
 		Store: l.config.Store, Key: observationArchivePrefix + observationHour(hour) + "/" + stream + ".jsonl.gz",
-		Size: int64(compressed.Len()),
+		Size: size,
 	}
-	_, err = l.config.Writer.PutImmutable(ctx, object, &compressed)
+	_, err = l.config.Writer.PutImmutable(ctx, object, compressed)
 	return err
 }
 
