@@ -754,6 +754,10 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 			continue
 		}
 		candidate.State.Stopped = i.State.Stopped
+		// Under control the Runtime owns the declared routing; the Pod may lag it.
+		if r.routingControlled && i.Routing != nil {
+			candidate.Routing = i.Routing
+		}
 		i.ReadyInstance = candidate
 		for _, c := range r.calls {
 			if c.assignment != nil && c.assignment.Instance == candidate.State.ID && c.instance == nil && !c.backendDone {

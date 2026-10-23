@@ -182,14 +182,14 @@ func (r *Runtime) retainAcceptedRoutesLocked(targets map[string]map[string]int32
 			if executable {
 				continue
 			}
-			for _, entry := range workload.route.entries {
+			for index, entry := range workload.route.entries {
 				if !r.instanceServesCallLocked(entry.instance, call) {
 					continue
 				}
 				if targets[uid] == nil {
 					targets[uid] = map[string]int32{}
 				}
-				targets[uid][entry.instance.State.ID] = r.routeWeightLocked(uid, entry.instance)
+				targets[uid][entry.instance.State.ID] = workload.route.weights[index]
 			}
 		}
 	}

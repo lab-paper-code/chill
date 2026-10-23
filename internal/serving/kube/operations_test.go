@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -287,83 +286,95 @@ func TestStopAndDrainPersistWithdrawnRouting(t *testing.T) {
 }
 
 // A staticRouting move of an instance from one Workload to another keeps the old
-// route in memory for its queued request, while the Pod records only the declared
-// Workload, so the instance stays a valid source after a restart.
+// route in memory for its queued request, with or without autonomous control,
+// while the Pod records only the declared Workload, even when a refresh
+// reinstalls the instance from its old annotation before the persist.
 func TestReassignedInstancePersistsOnlyItsDeclaredWorkload(t *testing.T) {
-	ctx := context.Background()
-	m, _ := newManagerHarness(t)
-	createManagerCatalog(t, m)
-	first, err := m.CreateWorkload(ctx, "first", managerWorkloadSpec())
-	if err != nil {
-		t.Fatal(err)
+	for _, controlled := range []bool{true, false} {
+		t.Run(map[bool]string{true: "controlled", false: "static"}[controlled], func(t *testing.T) {
+			ctx := context.Background()
+			m, _ := newManagerHarness(t)
+			createManagerCatalog(t, m)
+			first, err := m.CreateWorkload(ctx, "first", managerWorkloadSpec())
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := m.CreateWorkload(ctx, "second", managerWorkloadSpec())
+			if err != nil {
+				t.Fatal(err)
+			}
+			profile := managerProfile(first.Applied)
+			m.runtime.SetProfiles([]serving.Profile{profile})
+			pod, node, _, _ := observerSourceFixture()
+			pod.Annotations[ServingRoutingAnnotation] = `{"` + first.Applied.UID + `":1}`
+			id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+			started, finish := make(chan serving.Dispatch, 2), make(chan struct{}, 2)
+			instance := serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: ref, Profile: profile.ID, Ready: true}, Profile: &profile, Routing: map[string]int32{first.Applied.UID: 1}, Capacity: 1,
+				Execute: func(_ context.Context, d serving.Dispatch) (serving.BackendResult, error) {
+					started <- d
+					<-finish
+					return serving.BackendResult{StatusCode: 200, Finished: true}, nil
+				}}
+			if err = m.runtime.InstallInstances([]serving.ReadyInstance{instance}); err != nil {
+				t.Fatal(err)
+			}
+			if controlled {
+				m.runtime.EnableSchedulerRouting()
+			}
+			receipts, calls := []serving.Receipt{}, []*serving.Call{}
+			for range 2 {
+				receipt, err := m.runtime.Receive("first", time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				call, err := m.runtime.Accept(receipt, managerSample(t))
+				if err != nil {
+					t.Fatal(err)
+				}
+				receipts, calls = append(receipts, receipt), append(calls, call)
+			}
+			<-started // the second request stays queued behind the capacity of one
+			moved := serving.SchedulerCandidate{ID: "move", Instances: []serving.SchedulerInstance{{ID: id, Node: ref, Profile: &profile, WorkloadUID: second.Applied.UID}},
+				Routing: map[string]map[string]int32{first.Applied.UID: {}, second.Applied.UID: {id: 1}}}
+			if err = m.runtime.ApplySchedulerTarget(moved); err != nil {
+				t.Fatal(err)
+			}
+			// A refresh that listed the Pod before the patch reinstalls the old annotation.
+			if err = m.runtime.InstallInstances([]serving.ReadyInstance{instance}); err != nil {
+				t.Fatal(err)
+			}
+			created := pod.DeepCopy()
+			if err = m.store.client.Create(ctx, created); err != nil {
+				t.Fatal(err)
+			}
+			listed := pod.DeepCopy() // the store keeps no status; the listed Pod carries it
+			listed.ResourceVersion = created.ResourceVersion
+			operations := &Operations{store: m.store, kube: kubefake.NewSimpleClientset(listed), runtime: m.runtime, config: OperationConfig{Namespace: pod.Namespace}}
+			if err = operations.persistRouting(ctx, ""); err != nil {
+				t.Fatal(err)
+			}
+			stored := &core.Pod{}
+			if err = m.store.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, stored); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := stored.Annotations[ServingRoutingAnnotation], `{"`+second.Applied.UID+`":1}`; got != want {
+				t.Fatalf("persisted routing %s, want only the declared Workload %s", got, want)
+			}
+			// The kept route still runs the queued request of the old Workload.
+			finish <- struct{}{}
+			select {
+			case d := <-started:
+				if d.Definition.UID != first.Applied.UID {
+					t.Fatalf("queued request ran for %s", d.Definition.UID)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("queued request of the old Workload lost its route")
+			}
+			finish <- struct{}{}
+			completeManagerResponses(t, m, receipts, calls)
+		})
 	}
-	second, err := m.CreateWorkload(ctx, "second", managerWorkloadSpec())
-	if err != nil {
-		t.Fatal(err)
-	}
-	profile := managerProfile(first.Applied)
-	m.runtime.SetProfiles([]serving.Profile{profile})
-	pod, node, sourceProfile, class := observerSourceFixture()
-	pod.Annotations[ServingRoutingAnnotation] = `{"` + first.Applied.UID + `":1}`
-	id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
-	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	started, finish := make(chan serving.Dispatch, 2), make(chan struct{}, 2)
-	if err = m.runtime.InstallInstances([]serving.ReadyInstance{{State: serving.InstanceState{ID: id, Node: ref, Profile: profile.ID, Ready: true}, Profile: &profile, Routing: map[string]int32{first.Applied.UID: 1}, Capacity: 1,
-		Execute: func(_ context.Context, d serving.Dispatch) (serving.BackendResult, error) {
-			started <- d
-			<-finish
-			return serving.BackendResult{StatusCode: 200, Finished: true}, nil
-		}}}); err != nil {
-		t.Fatal(err)
-	}
-	m.runtime.EnableSchedulerRouting()
-	receipts, calls := []serving.Receipt{}, []*serving.Call{}
-	for range 2 {
-		receipt, err := m.runtime.Receive("first", time.Now())
-		if err != nil {
-			t.Fatal(err)
-		}
-		call, err := m.runtime.Accept(receipt, managerSample(t))
-		if err != nil {
-			t.Fatal(err)
-		}
-		receipts, calls = append(receipts, receipt), append(calls, call)
-	}
-	<-started // the second request stays queued behind the capacity of one
-	moved := serving.SchedulerCandidate{ID: "move", Instances: []serving.SchedulerInstance{{ID: id, Node: ref, Profile: &profile, WorkloadUID: second.Applied.UID}},
-		Routing: map[string]map[string]int32{first.Applied.UID: {}, second.Applied.UID: {id: 1}}}
-	if err = m.runtime.ApplySchedulerTarget(moved); err != nil {
-		t.Fatal(err)
-	}
-	created := pod.DeepCopy()
-	if err = m.store.client.Create(ctx, created); err != nil {
-		t.Fatal(err)
-	}
-	listed := pod.DeepCopy() // the store keeps no status; the listed Pod carries it
-	listed.ResourceVersion = created.ResourceVersion
-	operations := &Operations{store: m.store, kube: kubefake.NewSimpleClientset(listed), runtime: m.runtime, config: OperationConfig{Namespace: pod.Namespace}}
-	if err = operations.persistRouting(ctx, ""); err != nil {
-		t.Fatal(err)
-	}
-	stored := &core.Pod{}
-	if err = m.store.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, stored); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := stored.Annotations[ServingRoutingAnnotation], `{"`+second.Applied.UID+`":1}`; got != want {
-		t.Fatalf("persisted routing %s, want only the declared Workload %s", got, want)
-	}
-	restarted := pod.DeepCopy()
-	restarted.Annotations = stored.Annotations
-	if _, err = sourceSpec(restarted, node, &sourceProfile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil {
-		t.Fatalf("restarted source rejected: %v", err)
-	}
-	// The kept route still runs the queued request of the old Workload.
-	finish <- struct{}{}
-	if d := <-started; d.Definition.UID != first.Applied.UID {
-		t.Fatalf("queued request ran for %s", d.Definition.UID)
-	}
-	finish <- struct{}{}
-	completeManagerResponses(t, m, receipts, calls)
 }
 
 func podRoutingAnnotations(ctx context.Context, t *testing.T, operations *Operations, pods []*core.Pod) []string {

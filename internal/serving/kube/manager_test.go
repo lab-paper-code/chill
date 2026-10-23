@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,12 +36,11 @@ import (
 // Supply only those API-server semantics, not lifecycle/runtime behavior.
 type managerAPI struct {
 	client.Client
-	next int
+	next atomic.Int64
 }
 
 func (c *managerAPI) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	c.next++
-	obj.SetUID(types.UID(fmt.Sprintf("native-%d", c.next)))
+	obj.SetUID(types.UID(fmt.Sprintf("native-%d", c.next.Add(1))))
 	obj.SetGeneration(1)
 	return c.Client.Create(ctx, obj, opts...)
 }
