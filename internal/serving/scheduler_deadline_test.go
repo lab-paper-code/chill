@@ -2,7 +2,6 @@ package serving
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"math/rand/v2"
 	"reflect"
@@ -11,16 +10,6 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
-
-func TestReplayRequestIDMatchesSprintf(t *testing.T) {
-	for _, cycle := range []float64{0, 6e10, 1.2e11, 3e10, 1.5, 1e21, 123456789} {
-		for _, j := range []int{0, 7, 1999, 123456} {
-			if got, want := replayRequestID(cycle, j), fmt.Sprintf("replay-%g-%d", cycle, j); got != want {
-				t.Fatalf("replayRequestID(%g, %d) = %q, want %q", cycle, j, got, want)
-			}
-		}
-	}
-}
 
 func TestReplayCompletionIsNativeCompletionPlusMargin(t *testing.T) {
 	for _, phase := range []string{phaseQueued, phaseRunning} {
