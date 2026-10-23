@@ -68,6 +68,28 @@ func nextCompatible(requests []RequestState, head, previous int) int {
 	}
 	return best
 }
+
+// compatibleCount is the length of head's nextCompatible chain: every normal
+// request of head's queue, or head's contiguous deferred FIFO run.
+func compatibleCount(requests []RequestState, head int) int {
+	r := &requests[head]
+	count := 0
+	for i := range requests {
+		q := &requests[i]
+		if r.Phase == phaseDeferred {
+			if i < head || q.Phase != phaseDeferred {
+				continue
+			}
+			if !sameQueue(*q, *r) {
+				break
+			}
+		} else if !normalRequest(*q) || !sameQueue(*q, *r) {
+			continue
+		}
+		count++
+	}
+	return count
+}
 func batchFeasible(requests []RequestState, head int, b BatchProfile) bool {
 	previous := -1
 	for range b.Size {
@@ -83,7 +105,7 @@ func batchFeasible(requests []RequestState, head int, b BatchProfile) bool {
 // deferred work uses FIFO only after normal work is empty. A lifecycle choice
 // has Size=0 and identifies the single rejected/demoted RequestID. Running work
 // is never preempted; only expired queued drops can be selected while active.
-// ponytail: bounded O(requests²*profiles) scan; index only if measured CPU warrants it.
+// ponytail: bounded O(requests*profiles*b) scan; index only if measured CPU warrants it.
 func ChooseBatch(p Policy, requests []RequestState) BatchChoice {
 	if p.FixedBatchSize > 0 {
 		return chooseFixedBatch(p.FixedBatchSize, requests)
@@ -105,14 +127,7 @@ func ChooseBatch(p Policy, requests []RequestState) BatchChoice {
 	}
 	r := requests[head]
 	choice := BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition}
-	count := 0
-	for previous := -1; ; {
-		previous = nextCompatible(requests, head, previous)
-		if previous < 0 {
-			break
-		}
-		count++
-	}
+	count := compatibleCount(requests, head)
 	var available, fastest BatchProfile
 	fastestCost := math.Inf(1)
 	for _, b := range p.Batches {
