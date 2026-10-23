@@ -394,6 +394,43 @@ Python 모델의 `execute` 반환은 native request release보다 이르므로 �
 이 값을 실제 큐 대기나 실행 수로 바꾸지 않으며 미확인 physical 점유는 계속 유지한다.
 별도 recovery engine, 자동 inference 재실행이나 낙관적인 드레인 완료는 없다.
 
+### E5의 ChillServer 메모리와 CPU 상한
+
+게이트웨이는 요청의 원본 입력을 완료까지 쥐고, 배정된 요청은 firstfloor로 보낼 JSON 본문(base64, 원본의 4/3)도
+완료까지 쥔다. 유입 큐의 요청은 원본만 쥔다. 그래서 보유 요청 수의 상한은 인스턴스마다 `maxQueueSize`(게이트웨이는
+인스턴스의 미완료 요청을 이 값 아래로 둔다)와 Workload마다 `--queue-limit` 1024의 합이다. firstfloor
+`maxQueueBytes`(64 MiB)는 세 Workload 모두 `maxQueueSize` × 원본보다 커서 상한을 바꾸지 않는다.
+
+E5의 계획 공간은 노드 8개, Workload마다 노드당 인스턴스 1개(`maxReplicas` 8), 전체 `maxInstances` 16이다.
+요청 크기는 각 Dataset의 evaluation 레코드 평균이다.
+
+| Workload | 원본 (평균, 최대) | 보유 바이트 (원본 + 본문) | `maxQueueSize` | 최악 인스턴스 수 | 인스턴스 몫 | 유입 큐 몫 |
+|---|---|---|---|---|---|---|
+| mobilenet (`vqav2-val-subset` image) | 147.3 KB, 435.8 KB | 343.6 KB | 256 | 8 | 703.8 MB | 150.8 MB |
+| SmolVLM2 (image와 question) | 147.3 KB, 435.9 KB | 343.7 KB (최대 1,017 KB) | 64 | 8 | 176.0 MB (최대 520.7 MB) | 150.8 MB (최대 446.3 MB) |
+| PLC (`records`) | 21.1 KB, 21.2 KB | 49.3 KB | 64 | 0 | 0 | 21.7 MB |
+
+- 인스턴스 몫이 큰 순서(mobilenet 88 MB, SmolVLM2 22 MB, PLC 3.2 MB)로 16개를 채운 구성이 최악이다. 보유 요청은
+  5,632개이고 보유 바이트는 평균 크기에서 1.20 GB(1.12 GiB), 모든 SmolVLM2 요청이 가장 큰 image일 때 1.84 GB(1.72 GiB)다.
+- 보유 요청당 실측 메모리는 d9 병렬 단계(mobilenet 보유 1,600개, working set 최대 873 MiB, 기본 약 100 MiB)에서
+  507 KB이고 보유 바이트의 1.47배다. GOGC 100의 heap 여유와 디코딩 임시 버퍼가 차이를 만든다.
+- 기본값은 r8 P40(40 req/s)의 working set 최대 488 MiB다. 저부하 P2의 최대는 136 MiB다.
+- 최악 working set은 평균 크기에서 1.12 GiB × 1.47 + 0.48 GiB = 2.13 GiB, 최대 image에서 3.0 GiB다. live heap은
+  각각 1.60 GiB와 2.19 GiB다. live heap이 `GOMEMLIMIT` 3 GiB 아래이므로 GC는 heap을 3 GiB 안에 두고, memory limit
+  4 GiB에는 1 GiB 이상이 남는다. 부하 생성기는 레코드를 순환하므로 E5의 보유 바이트는 평균 크기 쪽이다.
+
+CPU는 게이트웨이 몫과 계획 탐색 몫의 합이다. 게이트웨이는 1 req/s마다 r8 P40과 P2의 차이에서 4.7 millicore,
+d9 병렬 단계의 최대 표본에서 7.6 millicore를 쓴다. E5의 총 요청률은 G 이하이고(9.2절), 지금 기록의 G는 d9의 약 220 req/s이므로
+게이트웨이는 최대 1.7 core다. 계획 탐색 `planSearchWorkers` 3과 Tick의 나머지 작업 약 0.5 core를 더하면 약 5.2 core이고
+CPU limit 6에서 0.8 core가 남는다. SmolVLM2 요청의 게이트웨이 처리(JPEG 머리 검사, base64 해독과 재인코딩)는 같은
+크기의 mobilenet 요청과 같고, PLC 요청은 그보다 작다.
+
+이 계산은 E5 설정이 sample 값(`maxQueueSize` 256, 64, 64, `--queue-limit` 1024, `maxReplicas` 8, `maxInstances` 16)과
+같을 때 성립한다. E5는 단계마다 ChillServer working set, GC CPU와 게이트웨이 CPU를 기록한다. working set이 3 GiB에
+닿거나 게이트웨이 CPU가 limit에서 계획 탐색 몫을 뺀 값에 닿으면 두 규칙을 적용한다. 배정 직후 원본을 놓고 firstfloor
+본문을 버퍼 없이 흘려 보내는 규칙은 보유 바이트를 유입 큐 몫(평균 0.30 GiB, 최대 0.58 GiB)으로 줄인다. 처리 중 바이트 합 상한은
+넘는 요청에 `QueueFull` 429와 `Retry-After`를 돌려준다.
+
 ## 8. 수정과 삭제 적용
 
 ### 8.1 SLO만 변경
