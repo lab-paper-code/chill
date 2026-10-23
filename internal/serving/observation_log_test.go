@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -108,7 +110,7 @@ func (c *observationClock) set(at time.Time) {
 var observationTestHour = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
 
 // clockedObservationLog writes at clock time; its process started at started.
-func clockedObservationLog(t *testing.T, config ObservationLogConfig, started time.Time) (*ObservationLog, *observationClock) {
+func clockedObservationLog(t testing.TB, config ObservationLogConfig, started time.Time) (*ObservationLog, *observationClock) {
 	t.Helper()
 	if config.Directory == "" {
 		config.Directory = t.TempDir()
@@ -791,5 +793,64 @@ func TestObservationStartupIgnoresOtherHistory(t *testing.T) {
 	}
 	if err := observationLog.Close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type discardObservationArchive struct{ bytes int64 }
+
+func (a *discardObservationArchive) PutImmutable(_ context.Context, identity evidencestore.ObjectIdentity, source io.Reader) (evidencestore.Receipt, error) {
+	n, err := io.Copy(io.Discard, source)
+	a.bytes += n
+	if err == nil && n != identity.Size {
+		err = errors.New("incomplete archive write")
+	}
+	return evidencestore.Receipt{}, err
+}
+
+// seedLargeObservationHour writes one 8 MiB incompressible minute file.
+func seedLargeObservationHour(t testing.TB, root string) {
+	t.Helper()
+	data := make([]byte, 8<<20)
+	rand.New(rand.NewSource(1)).Read(data)
+	if err := os.MkdirAll(filepath.Join(root, "20261020T10"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "20261020T10", "requests.00.jsonl"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The hourly archive streams gzip through a file beside the log, so a large
+// hour never sits in process memory.
+func TestObservationArchiveStreamsLargeHour(t *testing.T) {
+	archive := &discardObservationArchive{}
+	observationLog, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour.Add(3*time.Hour))
+	seedLargeObservationHour(t, observationLog.root)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	if err := observationLog.upload(context.Background(), observationTestHour, "requests"); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 4<<20 {
+		t.Fatalf("archive of an 8 MiB hour allocated %d bytes", allocated)
+	}
+	if archive.bytes < 1<<20 {
+		t.Fatalf("archive sent only %d bytes", archive.bytes)
+	}
+	if left, _ := filepath.Glob(filepath.Join(observationLog.config.Directory, ".archive-*")); len(left) != 0 {
+		t.Fatalf("archive left files beside the log: %v", left)
+	}
+}
+
+func BenchmarkObservationArchiveLargeHour(b *testing.B) {
+	observationLog, _ := clockedObservationLog(b, ObservationLogConfig{Writer: &discardObservationArchive{}}, observationTestHour.Add(3*time.Hour))
+	seedLargeObservationHour(b, observationLog.root)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if err := observationLog.upload(context.Background(), observationTestHour, "requests"); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
