@@ -144,6 +144,12 @@ spec:
 
 `Refused`와 `Failed`는 terminal이라 lane이 다음 루트로 넘어간다. 다시 잴 것은 원인을 지운 뒤 새 이름(새 순번)으로 만든다.
 
+For each `remove`, the controller uses the exact Pod UID/container ID observed
+in the accepted `prepare` result for that profile, retaining it across idle and
+power steps. The preparation's `measured-*` name identifies the logical slot.
+Replacement or missing physical sources fail the atomic operation's
+exact-identity validation. Existing immutable records remain unchanged.
+
 ## 9. 커밋 단위, 배포와 삭제
 
 | # | commit | 내용 | 선행 |

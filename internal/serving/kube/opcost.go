@@ -139,6 +139,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 			MaximumBoundaryDistance: time.Duration(observation.MaximumBoundaryDistanceMilliseconds) * time.Millisecond,
 			MaximumGap:              time.Duration(observation.MaximumGapMilliseconds) * time.Millisecond},
 	}
+	prepared := map[string]string{}
 	phase, reason := edge.MeasurementPhaseComplete, ""
 	var saved []string
 	for i, step := range m.Spec.Steps {
@@ -153,7 +154,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 			if step.Kind == edge.OperationCostStepPrepare {
 				request.Operation.Prepare = &spec
 			} else {
-				request.Operation.Instance = spec.Name
+				request.Operation.Instance = prepared[profiles[step.BatchEnergyOptimization]]
 			}
 		case edge.OperationCostStepIdle:
 			request.IdleDuration = time.Duration(*step.IdleDurationSeconds) * time.Second
@@ -174,6 +175,11 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		}
 		if phase != edge.MeasurementPhaseComplete {
 			break
+		}
+		if step.Kind == edge.OperationCostStepPrepare {
+			if actual := schedulerPhysicalState(request.Operation.Prepare.Instance.ID, record.Result.Actual.Instances); actual != nil {
+				prepared[profiles[step.BatchEnergyOptimization]] = actual.ID
+			}
 		}
 	}
 	var recordErr error

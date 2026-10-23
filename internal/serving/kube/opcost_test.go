@@ -60,7 +60,11 @@ func newOpcostHarness(t *testing.T) *opcostHarness {
 			verdict = measurementAccepted
 		}
 		key := OperationMeasurementKey(request.Operation)
-		return OperationMeasurement{Verdict: verdict, Reason: "coverage"}, evidencestore.Receipt{Object: evidencestore.ObjectIdentity{Key: key}}, nil
+		record := OperationMeasurement{Verdict: verdict, Reason: "coverage"}
+		if request.Operation.Prepare != nil {
+			record.Result.Actual.Instances = []serving.InstanceState{{ID: "pod-uid/containerd://prepared", TargetID: request.Operation.Prepare.Instance.ID}}
+		}
+		return record, evidencestore.Receipt{Object: evidencestore.ObjectIdentity{Key: key}}, nil
 	}
 	return o
 }
@@ -112,7 +116,7 @@ func TestOperationCostRunsDeclaredStepsInOrder(t *testing.T) {
 	if up.PowerMode != maxMode || up.MaxActuationDuration != time.Minute {
 		t.Fatalf("power step %+v", up)
 	}
-	if prepare.Prepare == nil || !strings.HasPrefix(prepare.Prepare.Instance.Profile.ID, "chill-system/beo/") || remove.Instance != prepare.Prepare.Name || idle.IdleDuration != 120*time.Second {
+	if prepare.Prepare == nil || !strings.HasPrefix(prepare.Prepare.Instance.Profile.ID, "chill-system/beo/") || remove.Instance != "pod-uid/containerd://prepared" || idle.IdleDuration != 120*time.Second {
 		t.Fatalf("prepare %+v remove %q idle %s", prepare.Prepare, remove.Instance, idle.IdleDuration)
 	}
 	if idle.Sampling.MaxEvents != 902 || idle.Coverage.MinimumCoverage != 0.9 {

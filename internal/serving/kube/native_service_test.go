@@ -247,7 +247,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		return false, nil, nil
 	})
 	// Share API state between the uncached writer and native observer.
-	manager.store.client = fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(&class, node.DeepCopy()).WithInterceptorFuncs(interceptor.Funcs{
+	manager.store.client = fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithStatusSubresource(&edge.OperationCostMeasurement{}).WithObjects(&class, node.DeepCopy()).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
 			if pod, ok := object.(*core.Pod); ok {
 				pod.UID = fixture.UID
@@ -348,6 +348,50 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	if !reflect.DeepEqual(config.Policy, currentPolicy) {
 		t.Fatal("preparation reset the current mutable policy", config.Policy)
 	}
+	t.Run("OperationCostPinsPreparedPhysicalIdentity", func(t *testing.T) {
+		operations.native = manager.observer.native
+		controller := &SchedulerController{store: manager.store}
+		idle := int32(1)
+		m := opcostRoot("physical-cost", time.Now(),
+			edge.OperationCostStep{Name: "prepare", Kind: edge.OperationCostStepPrepare, BatchEnergyOptimization: "beo"},
+			edge.OperationCostStep{Name: "idle", Kind: edge.OperationCostStepIdle, IdleDurationSeconds: &idle},
+			edge.OperationCostStep{Name: "remove", Kind: edge.OperationCostStepRemove, BatchEnergyOptimization: "beo"})
+		if err := manager.store.client.Create(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+		physical := physicalID(fixture.UID, firstfloorStatus(fixture).ContainerID)
+		var removed string
+		controller.measureStep = func(ctx context.Context, _ SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
+			record := OperationMeasurement{Verdict: measurementAccepted}
+			switch request.Operation.Kind {
+			case operationPrepare:
+				result, err := operations.Execute(ctx, request.Operation)
+				if err != nil {
+					t.Fatal(err)
+				}
+				record.Result = result
+				actual := schedulerPhysicalState(spec.Instance.ID, result.Actual.Instances)
+				if actual == nil || actual.ID != physical {
+					t.Fatalf("prepare did not observe physical executor: %+v", result.Actual.Instances)
+				}
+			case operationRemove:
+				removed = request.Operation.Instance
+				// Exercise the production boundary against the prepared Pod, not a
+				// synthetic result or an alias-tolerant removal substitute.
+				if err := operations.validateOperationBinding(ctx, request.Operation); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return record, evidencestore.Receipt{}, nil
+		}
+		config := SchedulerControllerConfig{Preparations: map[string]PrepareSpec{profile.ID: spec}}
+		if err := controller.runOperationCost(ctx, m, spec.Instance.Node, nil, map[string]string{"beo": profile.ID}, config); err != nil {
+			t.Fatal(err)
+		}
+		if removed != physical || m.Status.Phase != edge.MeasurementPhaseComplete {
+			t.Fatalf("remove instance %q, want %q; status %+v", removed, physical, m.Status)
+		}
+	})
 }
 
 func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
