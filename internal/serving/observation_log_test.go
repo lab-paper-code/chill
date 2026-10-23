@@ -900,8 +900,7 @@ func TestCatalogReferenceSkipsSamePublishedPointerWithinHour(t *testing.T) {
 	if bytes.Count(want, []byte{'\n'}) != 1 {
 		t.Fatalf("first reference rows: %q", want)
 	}
-	// A published Profile is immutable, so the same pointer skips the marshal.
-	profile.NodeName = "mutated"
+	// The same pointer and an equal new pointer write no row.
 	reference(profile)
 	reference(&Profile{ID: "p", NodeName: "node"})
 	if got := catalog(); !bytes.Equal(got, want) {

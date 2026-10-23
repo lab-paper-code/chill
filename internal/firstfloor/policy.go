@@ -217,13 +217,7 @@ func chooseFixedBatch(size int, requests []RequestState) BatchChoice {
 		if !normalRequest(r) || best >= 0 && !earlierEDF(requests, i, best) {
 			continue
 		}
-		count := 0
-		for _, q := range requests {
-			if normalRequest(q) && sameQueue(q, r) {
-				count++
-			}
-		}
-		if count >= size {
+		if compatibleCount(requests, i) >= size {
 			best = i
 		}
 	}
