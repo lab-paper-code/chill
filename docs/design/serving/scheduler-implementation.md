@@ -134,8 +134,8 @@ Tick은 요청을 재생하지 않는다. 용량표 worker가 Tick 밖에서 켜
 **전체 end-to-end 분포**를 만들고 gonum/stat로 Workload percentile을 계산한다. percentile 지연(완료 여유 포함)이
 SLO 목표 이하이고 timeout과 만료가 0이면 그 창은 충족이다.
 
-노드마다 keep과, 그 노드에서 측정한 option 변형 집합 중 한 전력모드와 노드 예산(`ValidateNodeBudget`)을 만족하는
-노드 계획을 만든다. 한 노드의 인스턴스는 모두 같은 ModelSpec을 참조한다. 계획마다 Workload별 `κ_new`와 `κ_ret`,
+노드마다 keep과, 그 노드에서 측정한 option 변형 하나 중 그 전력모드에서 노드 예산(`ValidateNodeBudget`)을 만족하는
+노드 계획을 만든다. 노드마다 서빙 인스턴스는 하나다. 계획마다 Workload별 `κ_new`와 `κ_ret`,
 route 전후 동작 사슬과 전력을 둔다. 꺼진 Workload의 인스턴스가 있는 노드(`FixedWorkload`), 측정 POOL 노드
 (`MeasurementNode`), 준비되지 않은 노드(`NodeUnavailable`)와 배치 설정이 부족한 노드는 keep뿐이다. 비용, 용량표 행,
 자원이나 기준 전력이 없는 계획은 사유와 함께 기록에 남고 비교에서 빠진다. 노드 계획 규칙과 제외 사유는
@@ -143,10 +143,9 @@ route 전후 동작 사슬과 전력을 둔다. 꺼진 Workload의 인스턴스�
 (placement, resources, replicas, routing, batching, membership)의 규칙과 `maxReplicas`, `maxInstances`, `maxCPUs`
 상한은 14장의 설정 gate를 따른다.
 
-인스턴스는 Workload 하나를 맡고, snapshot과 기록의 인스턴스는 `workloadUID` 하나를 가진다. 같은 모델의 Workload들은
-한 노드를 함께 쓰되 각자 인스턴스를 둔다. capture가 실제 분배에서 두 Workload 이상에 들어간 인스턴스를 찾으면
-snapshot 사유 `SharedInstance:<instance ID>`를 남기고 판단은 `SharedInstance` 상태로 기다린다. 운영자는
-`staticRouting`으로 분배를 나눈다([6장](analytic-planner.md#6-인스턴스-공유-정리)).
+인스턴스는 Workload 하나를 맡고, snapshot과 기록의 인스턴스는 `workloadUID` 하나를 가진다. capture가 실제 분배에서
+두 Workload 이상에 들어간 인스턴스를 찾으면 snapshot 사유 `SharedInstance:<instance ID>`를 남기고 판단은
+`SharedInstance` 상태로 기다린다. 운영자는 `staticRouting`으로 분배를 나눈다([6장](analytic-planner.md#6-인스턴스-공유-정리)).
 
 ingress Runtime과 replay는 같은 deterministic smooth weighted rule로 요청을 분배한다. 판단의 분배는 켜진 Workload마다
 합 1,000의 정수 가중치이고, 꺼진 Workload의 분배는 현재 값을 그대로 둔다. 적용할 때 active UID마다 분배가 있어야 하고

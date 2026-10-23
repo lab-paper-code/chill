@@ -32,8 +32,8 @@ func placementFixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 }
 
 // D-R8-1 (m4 r8 16:53:29): two rasp5 instances of one Workload served 35–38
-// req/s against their summed κ for 40 req/s. A node plan holds at most one
-// instance per Workload; more capacity on a Node comes from a wider option.
+// req/s against their summed κ for 40 req/s. A node plan holds one instance;
+// more capacity on a Node comes from a wider option.
 func TestNodePlanHoldsOneInstancePerWorkload(t *testing.T) {
 	s, snap := schedulerFixture()
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})

@@ -160,7 +160,7 @@ analytic-planner.md를 다시 쓸 때 바꿀 것:
 
 ### 7.2 E5 계획 공간
 
-E5는 Workload 셋(mobilenet tight, PLC, SmolVLM2)과 노드 여덟(genesis2, genesis3, lattepanda, rasp5, orangepi, jetsono, jetsonx, jetson-nano)이다. 노드 계획 수는 `nodePlans` 규칙으로 셌다. 계획 하나는 전력 모드 하나와 모델 하나를 쓰고, Workload마다 option(profile과 CPU 할당) 하나와 그 batch 상한 하나를 고른다. E5의 세 Workload는 모델이 서로 달라 새 계획 하나는 인스턴스 하나다. keep과 모두 제거를 더한다. 괄호 안은 같은 Workload 인스턴스 여럿을 허용하던 규칙(D-R8-1 전, CPU는 겹치지 않고 CUDA 인스턴스 하나)의 수다.
+E5는 Workload 셋(mobilenet tight, PLC, SmolVLM2)과 노드 여덟(genesis2, genesis3, lattepanda, rasp5, orangepi, jetsono, jetsonx, jetson-nano)이다. 노드 계획 수는 `nodePlans` 규칙으로 셌다. 새 계획 하나는 전력 모드 하나와 인스턴스 하나다. 인스턴스는 Workload 하나의 option(profile과 CPU 할당) 하나와 그 batch 상한 하나다. keep과 모두 제거를 더한다. 괄호 안은 같은 Workload 인스턴스 여럿을 허용하던 규칙(D-R8-1 전, CPU는 겹치지 않고 CUDA 인스턴스 하나)의 수다.
 
 - option: m4 r7 mobilenet option 13개와 캠페인 v2 레인(`campaign/v2/gen.py`)이 재는 option 전부다. CPU 할당 변형을 포함한다.
 - 모드: jetsono 4개, jetsonx 6개(2CORE 모드 셋은 serving 예약 CPU만 남아 레인에 없다), jetson-nano MAXN과 5W, 나머지는 fixed다.
@@ -244,7 +244,7 @@ E5는 Workload 셋(mobilenet tight, PLC, SmolVLM2)과 노드 여덟(genesis2, ge
 
 그 뒤 사용자 결정 셋을 더했다(2026-10-23).
 
-- Workload마다 노드에 인스턴스 하나(commit 410899b, D-R8-1). 노드의 큰 용량은 CPU 할당이 넓은 측정 option이 맡는다. 계획 공간은 7.2절이다.
+- 노드마다 서빙 인스턴스 하나(D-R8-1). 노드의 큰 용량은 CPU 할당이 넓은 측정 option이 맡는다. 계획 공간은 7.2절이다.
 - 최소 이득(commit dc2b2de). 노드를 바꾸는 해는 T 동안 이득이 두 후보의 측정 불확실성(profile 신뢰구간 반폭의 제곱합 제곱근)을 넘을 때만 keep을 이긴다([계획기 14장](analytic-planner.md#14-구현-규칙)).
 - 두 번째 출발점(commit 9fa47cc). 모든 노드를 비운 집합에서도 같은 탐색을 하고 두 끝 중 나은 쪽을 쓴다.
 
@@ -267,7 +267,7 @@ fixture의 profile 반폭: 로컬에 있는 BEO 결과 11개(rasp5 5, lattepanda
 | | 최소 이득 없음 | 2개, 0.057% | 1개(0.548%) | 6, 5 | 4, 5 |
 | | D-R8-1 전, keep 출발, 최소 이득 없음 | 6개, 6.94% | 0개, −0.013~+0.013% | 5, 5 | 3, 3 |
 
-- "지금"은 Workload마다 노드에 인스턴스 하나, 두 출발점, 최소 이득이다. "keep 출발만"과 "최소 이득 없음"은 지금 규칙에서 하나만 끈 일회 실행이다(코드에는 없음). Tick 수는 최대값이다.
+- "지금"은 노드마다 서빙 인스턴스 하나, 두 출발점, 최소 이득이다. "keep 출발만"과 "최소 이득 없음"은 지금 규칙에서 하나만 끈 일회 실행이다(코드에는 없음). Tick 수는 최대값이다.
 - 첫 판단의 충족 판정은 모든 조합에서 전수와 같다.
 - 앞선 5.02%와 5.85% 조합(노드 5개 b2, mobilenet 110, PLC 15와 40, SmolVLM 1.2 req/s)은 지금 규칙에서 차 0으로 끝난다. keep 출발만인 실행과 최소 이득 없는 실행에서도 0이므로, 같은 노드 인스턴스 둘을 지운 규칙(D-R8-1)이 푼 것으로 본다 [추론: 그 규칙만 켠 실행은 하지 않았다].
 - 0.637%와 0.649% 조합(노드 5개 b2 mobilenet 20 + PLC 15 + SmolVLM 0.3, 노드 8개 mobilenet 60 + PLC 40 + SmolVLM 0.3 req/s)은 비운 출발점이 푼다.
@@ -276,7 +276,7 @@ fixture의 profile 반폭: 로컬에 있는 BEO 결과 11개(rasp5 5, lattepanda
 
 ### 7.7 구현의 시간
 
-부하 mobilenet 60, PLC 40, SmolVLM 1.2 req/s, `planSearchWorkers` 3, 시간 예산 5 s(제어 주기 10 s의 절반)에서 7.3절의 공간을 키운 시간이다. 지금 규칙(Workload마다 노드에 인스턴스 하나, 두 출발점)이다. 같은 도구가 잰다.
+부하 mobilenet 60, PLC 40, SmolVLM 1.2 req/s, `planSearchWorkers` 3, 시간 예산 5 s(제어 주기 10 s의 절반)에서 7.3절의 공간을 키운 시간이다. 지금 규칙(노드마다 서빙 인스턴스 하나, 두 출발점)이다. 같은 도구가 잰다.
 
 | 공간 | 노드 계획 합 | 계획 집합 | 예산 5 s: 평가 수, 시간 | 예산 없이: 평가 수, 시간 | keep 출발만(일회 실행): 평가 수, 시간 |
 |---|---|---|---|---|---|

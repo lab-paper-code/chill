@@ -84,7 +84,7 @@ prepare와 remove로 이루어지고, 일부만 완료한 전환은 실제 인�
 `Assignment`(`types.go:185`), `Operation`과 `OperationState`(`operations.go:71,81`), `firstfloor.Spec`(`serving/firstfloor/client.go:31`)에서
 삭제한다. `Assignment.Pool`의 producer와 복원(`runtime.go:128,348`), 후보 비교(`runtime.go:714`), Dashboard 요청 관측 타입도 함께 바꾼다.
 
-한 노드의 모든 CHILL 인스턴스는 같은 ModelSpec(이름과 UID)을 참조한다. 이 조건은 후보 생성에서 확인한다(4.3절).
+노드마다 서빙 인스턴스는 하나다. 이 조건은 후보 생성에서 확인한다(4.3절).
 owner와 binding이 모두 없는 인스턴스는 어느 활성 POOL에도 속하지 않는다. 측정 POOL 밖의 이런 인스턴스는 다음
 판단의 후보가 remove로 정리한다.
 
@@ -309,7 +309,7 @@ snapshot의 노드는 3.4절의 전체 POOL이고 측정 POOL 노드(3.3절)는 
 - 계획은 `Controlled` Workload의 인스턴스와 분배만 바꾼다. 꺼진 Workload의 분배는 현재 값을 그대로 둔다.
 - 꺼진 Workload가 owner이거나 꺼진 Workload를 맡은 인스턴스, strict fixed-size baseline 인스턴스가 있는 노드는
   keep뿐이다(`FixedWorkload`).
-- 한 노드의 인스턴스는 모두 같은 ModelSpec을 참조한다.
+- 노드마다 서빙 인스턴스는 하나다. 같은 ModelSpec을 참조하는 Workload들에도 같다.
 - `Controls.Membership`이 꺼져 있으면 `Controlled` Workload의 option은 그 Workload의 인스턴스가 있는 노드에 한정한다.
 - `Controlled` Workload는 부하가 0이어도 인스턴스가 하나 이상 있어야 최종 충족이다.
 - 3.2절의 연결 없는 인스턴스 정리를 포함한다. 가용 노드를 내리는 동작은 모든 계획의 DAG에 공통 `Fixed` 동작으로
@@ -428,7 +428,7 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
 | replay | 완료 시각이 native 완료 + 여유, 관측 여부와 무관하게 Pending 사유 없음 |
 | 소속 도출 | owner, binding, 둘 다 없는 인스턴스의 노드 분류, 같은 노드의 두 Workload 활성 POOL |
 | 전체 POOL | inventory 없는 노드와 전력모드 수단 없는 노드가 사유와 함께 남음, 비교 집합이 상태가 바뀌는 노드만 담고 모든 후보에 같음, 비교 집합 밖 노드의 baseline이 없어도 판단이 진행됨, 비교 집합 노드의 baseline이 없으면 그 후보만 평가 불가 |
-| 후보 | 꺼진 Workload 인스턴스 고정, 최소 인스턴스, 같은 모델 조건, 직접 이동 DAG, 모든 후보가 가용 노드를 가장 낮은 모드에서 출발한 공통 상태로 계산하고 `Fixed` 내림이 그 노드의 다른 동작보다 앞서며 공통 항으로 비교에서 빠짐, target이 없을 때 유지 후보의 `Fixed` 동작만 실행, 다시 넣는 후보의 power 비용이 빈 노드 전환 비용으로 계산되고 그 비용이 없으면 `MissingOperationCost`, 판정 대상 집합 |
+| 후보 | 꺼진 Workload 인스턴스 고정, 최소 인스턴스, 노드마다 서빙 인스턴스 하나, 직접 이동 DAG, 모든 후보가 가용 노드를 가장 낮은 모드에서 출발한 공통 상태로 계산하고 `Fixed` 내림이 그 노드의 다른 동작보다 앞서며 공통 항으로 비교에서 빠짐, target이 없을 때 유지 후보의 `Fixed` 동작만 실행, 다시 넣는 후보의 power 비용이 빈 노드 전환 비용으로 계산되고 그 비용이 없으면 `MissingOperationCost`, 판정 대상 집합 |
 | 도출 profile과 비용 | 같은 조건의 최신 성공 선택, 한 profile이나 비용 기록의 실패가 나머지를 막지 않음, 고정 prefix 나열과 identity별 한 번 읽기, `Accepted`만 받음, 현재 `meters`와 다른 meter의 operation 기록과 meter 없는 전환 비용의 `MeterUndeclared`, operation 비용은 노드 전력모드까지 같은 조건에서 최신, 전환 비용은 적재 상태가 다른 측정을 섞지 않고 trial 완료 시각으로 최신, planner가 같은 열쇠로 고름, 나열 실패 때 이전 구성 유지 |
 | 수동 변경 | 부분 `staticRouting`, 켜진 Workload 항목 거절, 공유 인스턴스 remove의 `InstanceShared` |
 | 측정 POOL | taint 노드가 배치, 전력 변경, `Fixed` 내림, 제거 대상에서 빠지고 pools API에 측정 POOL로 보임, 판단 뒤 taint가 붙은 노드에서 Workload prepare와 `ChangePower`가 `NodeInMeasurement`로 실패, 그 노드의 측정 인스턴스가 정리되지 않음, profiling과 transition attempt Job에 toleration, `serving-operation` 측정이 taint 없는 노드를 거절 |
@@ -462,7 +462,7 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
 |---|---|---|---|---|
 | E5-0 시작 | 10분 | 모두 0 | Workload마다 측정 근거가 있는 노드의 첫 인스턴스, 나머지 가용 노드의 가장 낮은 모드, 무부하 전체 POOL 전력 | `SCH-AC-24`(세 Workload) |
 | E5-1 일정 | 30분 | 모두 0.3 `R_w` | Workload별 지연 분포와 처리 결과 수(완료, 실패, 거절, 취소, 미완료), 전체 POOL과 활성 POOL 에너지, 창별 예측 백분위와 관측 백분위 | [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가) 일정 부하와 이기종 워크로드 동시 혼합 부하 행, `SCH-AC-23`, [07 검증](../architecture-rethink/07-validation.md) 2번 |
-| E5-2 버스트 | 15분 | SmolVLM만 0.3에서 0.9 `R_w`, 나머지 0.3 `R_w` | 대응 시작까지 시간, GPU 노드(genesis2, genesis3, jetsono)에서 SmolVLM CUDA와 다른 Workload 인스턴스의 교체, Jetson 전력모드 변경이 같은 노드의 다른 Workload에 준 전환 중 지연 | 평가 표 갑작스러운 버스트 행, `SCH-AC-21` |
+| E5-2 버스트 | 15분 | SmolVLM만 0.3에서 0.9 `R_w`, 나머지 0.3 `R_w` | 대응 시작까지 시간, GPU 노드(genesis2, genesis3, jetsono)에서 SmolVLM CUDA와 다른 Workload 인스턴스의 교체, Jetson 전력모드 변경의 전환 중 지연 | 평가 표 갑작스러운 버스트 행, `SCH-AC-21` |
 | E5-3 증가 | 30분 | 모두 0.5, 0.7, 0.9 `R_w` 각 10분 | 확장 순서, 전환 구간 SLO, 판단의 `κ_new`, `B`, `W`와 관측 큐 | 평가 표 점진적인 증가와 감소 행(증가), `SCH-AC-15` |
 | E5-4 한계 | 15분 | 모두 1.2 `R_w` | `Overload` 판단과 최대 초과량 순서, Workload별 실제 지연과 처리 결과, 노드별 인스턴스와 전력모드 | 평가 표 전체 POOL의 한계를 넘는 부하 행, `SCH-AC-16` |
 | E5-5 급감과 재급증 | 20분 | 모두 0.3 `R_w` 10분, 0.9 `R_w` 10분 | 축소와 유휴 제거, 다시 확장, 반복 전환의 J와 시간 | 평가 표 전환 직후 급감과 재급증 행, 점진적인 증가와 감소 행(감소), `SCH-AC-15` |

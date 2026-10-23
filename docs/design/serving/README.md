@@ -56,8 +56,8 @@ flowchart TD
 상자는 별도 서비스·CRD·메시지 브로커를 뜻하지 않는다. 요청 진입은 새 구성 계산이나
 raw evidence 다운로드를 기다리지 않고 현재 준비·physical capacity 안에서 분배한다.
 CHILL이 physical instance를 선택하고 EdgeMesh는 해당 단일 목적지로 운반한다.
-한 Pod는 runner 하나와 순차 실행 하나를 제공하고 Workload 하나를 맡는다. 같은 모델의 Workload들은 한 노드를
-함께 쓰되 각자 인스턴스를 두며, UID, 불변 정의, 개별 SLO, 원래 경과 시간과 물리 점유를 구분한다.
+한 Pod는 runner 하나와 순차 실행 하나를 제공하고 Workload 하나를 맡는다. 노드마다 서빙 인스턴스는 하나이고,
+Workload마다 UID, 불변 정의, 개별 SLO, 원래 경과 시간과 물리 점유를 구분한다.
 
 ## 요구사항과 증거의 권위
 

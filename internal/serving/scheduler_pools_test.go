@@ -238,13 +238,15 @@ func TestSchedulerMinimumInstanceSelectsFirstConfiguration(t *testing.T) {
 	}
 }
 
-// §4: the instances on one Node reference one ModelSpec.
-func TestSchedulerSameNodeRequiresSameModel(t *testing.T) {
-	for _, same := range []bool{true, false} {
+// §4: a Node serves one instance, also for Workloads of one ModelSpec; a plan
+// that keeps i2 adds nothing beside it. A Node that already runs two keeps
+// them only through keep; every other plan holds one.
+func TestSchedulerNodeServesOneInstance(t *testing.T) {
+	for _, c := range []struct{ same, live bool }{{true, false}, {false, false}, {true, true}} {
 		s, snap := schedulerFixture()
 		s.AutonomousWorkloads = []string{"w1", "w2"}
 		other := poolsAddWorkload(&snap, "w2")
-		if !same {
+		if !c.same {
 			other.Model.UID = "m2"
 		}
 		node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
@@ -253,12 +255,13 @@ func TestSchedulerSameNodeRequiresSameModel(t *testing.T) {
 		snap.Routing = map[string]map[string]int32{"w1": {"i1": 1}, "w2": {"i2": 1}}
 		added := poolsInstance(schedulerTestCPU(snap.Instances[0]), "opt", node, "fixed", "w1")
 		snap.Options = append(snap.Options, poolsOption(current), poolsOption(added))
+		if c.live {
+			snap.Instances = append(snap.Instances, added)
+			snap.Routing["w1"]["opt"] = 1
+		}
 		d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-		both := slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool {
-			return strings.Contains(p.Key, "/w1") && strings.Contains(p.Key, "/w2")
-		})
-		if both != same {
-			t.Fatalf("same model=%v planned both Workloads on one Node=%v", same, both)
+		if slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return strings.Contains(p.Key, "+") }) {
+			t.Fatalf("%+v planned two instances on one Node: %+v", c, poolsPlans(d, node))
 		}
 	}
 }
