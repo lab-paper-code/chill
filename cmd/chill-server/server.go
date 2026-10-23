@@ -85,7 +85,13 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	observer, err := servingkube.NewObserver(store, kube, execution, &firstfloor.Client{}, servingkube.ObserverConfig{
+	// One idle connection per in-flight request of an instance (e1 maxQueueSize
+	// 256) keeps batch completions on keep-alive; 30 s closes before the
+	// serving-worker's 60 s IdleTimeout.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns, transport.MaxIdleConnsPerHost, transport.IdleConnTimeout = 0, 256, 30*time.Second
+	native := &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}}
+	observer, err := servingkube.NewObserver(store, kube, execution, native, servingkube.ObserverConfig{
 		Namespace: opts.servingNamespace,
 	})
 	if err != nil {
