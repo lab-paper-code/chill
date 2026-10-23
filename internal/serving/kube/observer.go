@@ -84,14 +84,17 @@ func (s *nativeSource) stopFollow() {
 // ponytail: one source lock serializes refresh/cleanup for this single owner;
 // split locks only if observed cluster size makes refresh contention material.
 type Observer struct {
-	mu                sync.Mutex
-	store             *Store
-	kube              kubernetes.Interface
-	runtime           *serving.Runtime
-	native            *firstfloor.Client
-	config            ObserverConfig
-	profiles          []serving.Profile
-	sources           map[string]*nativeSource
+	mu       sync.Mutex
+	store    *Store
+	kube     kubernetes.Interface
+	runtime  *serving.Runtime
+	native   *firstfloor.Client
+	config   ObserverConfig
+	profiles []serving.Profile
+	sources  map[string]*nativeSource
+	// issueMu guards issues, so log followers record progress and its issues
+	// while a refresh holds mu.
+	issueMu           sync.Mutex
 	issues            map[string]ObserverIssue
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -128,8 +131,8 @@ func (o *Observer) Profiles() []serving.Profile {
 	return slices.Clone(o.profiles)
 }
 func (o *Observer) Issues() []ObserverIssue {
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	o.issueMu.Lock()
+	defer o.issueMu.Unlock()
 	result := make([]ObserverIssue, 0, len(o.issues))
 	for _, issue := range o.issues {
 		result = append(result, issue)
@@ -138,6 +141,8 @@ func (o *Observer) Issues() []ObserverIssue {
 	return result
 }
 func (o *Observer) issue(source string, err error) {
+	o.issueMu.Lock()
+	defer o.issueMu.Unlock()
 	if err == nil {
 		delete(o.issues, source)
 		return
@@ -781,12 +786,10 @@ func (o *Observer) scanLogs(id string, stream io.ReadCloser) error {
 		if errors.Is(err, firstfloor.ErrNotProgress) {
 			continue
 		}
-		o.mu.Lock()
 		if err == nil {
 			err = o.runtime.ObserveBackend(id, progress)
 		}
 		o.issue("logs/"+id, err)
-		o.mu.Unlock()
 	}
 	return errors.Join(scanner.Err(), stream.Close())
 }

@@ -561,6 +561,32 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	}
 }
 
+// A refresh holds o.mu across API lists and native probes; progress lines
+// reach the runtime meanwhile, and the issue they raise is visible.
+func TestObserverScannerProgressDoesNotWaitForRefresh(t *testing.T) {
+	manager, _ := newManagerHarness(t)
+	observer := manager.observer
+	stream := io.NopCloser(strings.NewReader(`CHILL_PROGRESS {"requestID":"request-1","phase":"fake"}` + "\n"))
+	scanned := make(chan error, 1)
+	observer.mu.Lock()
+	go func() { scanned <- observer.scanLogs("pod-uid/containerd://actual", stream) }()
+	var err error
+	select {
+	case err = <-scanned:
+		observer.mu.Unlock()
+	case <-time.After(5 * time.Second):
+		observer.mu.Unlock()
+		<-scanned
+		t.Fatal("progress waited for the refresh lock")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issues := observer.Issues(); len(issues) != 1 || issues[0].Source != "logs/pod-uid/containerd://actual" {
+		t.Fatalf("invalid progress issue not recorded: %+v", issues)
+	}
+}
+
 func TestObserverTerminalPreparationDoesNotInventAStartedExecutor(t *testing.T) {
 	pod, _, _, _ := observerSourceFixture()
 	pod.Status.Phase = corev1.PodFailed
