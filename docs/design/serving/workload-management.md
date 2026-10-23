@@ -617,6 +617,12 @@ SAN과 맞는 HTTPS 주소를 사용한다. 스케줄러 후보와 비용은 `pr
 `profileNamespaces`는 측정 조회·제출·객체 삭제와 프로파일 산출을 허용할 namespace 범위이며,
 빈 목록은 serving namespace를 사용한다. ChillServer chart는 capacity나 측정 작업을 자동 생성하지 않는다.
 
+`GOMAXPROCS`, `GOMEMLIMIT`, `GODEBUG`는 chart가 소유한다. live Deployment에는 `kubectl set env`로 넣은
+`GOMEMLIMIT=3072MiB`와 `GODEBUG=gctrace=1`이 있고, helm이 소유하지 않는 필드라 upgrade 뒤에도 남는다.
+lane 뒤 배포는 overlay에 `servingEntrypoint.goDebug: gctrace=1`을 두고, upgrade 직전에
+`kubectl -n chill-system set env deploy/chill-serving-entrypoint GOMEMLIMIT- GODEBUG-`로 둘을 지운다. upgrade 뒤에는
+Pod의 env에 `GOMEMLIMIT=3072MiB`와 `GODEBUG=gctrace=1`이 한 번씩 있는지 확인한다.
+
 | Helm 값 | 실제 flag 또는 배포 계약 |
 |---|---|
 | `enabled`, `tls.secretName`, `port:8080` | HTTPS ChillServer 활성화, `/etc/chill/tls/tls.crt`와 `tls.key`, `--bind-address` |
@@ -624,6 +630,8 @@ SAN과 맞는 HTTPS 주소를 사용한다. 스케줄러 후보와 비용은 `pr
 | `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 목록은 serving namespace. ChillServer에 namespaced BEO `get/list/create/delete`, ProfilingRun `get`만 부여 |
 | `profileConfidenceLevel:0.95` | `--profile-confidence-level`; measured idle baseline confidence |
 | `overloadHeapFraction:0.9` | `--overload-heap-fraction`; live heap이 `GOMEMLIMIT`의 이 비율을 넘으면 새 추론 요청에 503 `GatewayOverloaded`([7장 과부하 보호](#과부하-보호)) |
+| `resources.limits` cpu `6`, memory `4Gi`, `goMemLimitFraction:0.75` | env `GOMAXPROCS`는 `limits.cpu`, env `GOMEMLIMIT`는 `limits.memory` × 이 비율(MiB, 4Gi에서 `3072MiB`)이다. memory는 정수 Mi 또는 Gi 값이고 비율은 0 초과 1 미만이며, 다르면 render가 실패한다 |
+| `goDebug:""` | env `GODEBUG`; 빈 값이면 넣지 않는다. E5의 GC 기록은 `gctrace=1`(GC마다 stderr 한 줄)로 한다 |
 | `queueLimit:1024`, `requestTimeout:30s`, `drainTimeout:2m` | 각각 `--queue-limit`, `--request-timeout`, `--drain-timeout`; SLO timeout 아님 |
 | `sourceInterval:1s`, `profileInterval:1m` | 현재 상태와 profile refresh 주기. 관측 업로드는 1분 주기다 |
 | `maxRequestBytes:8388608`, `maxEvidenceBytes:67108864`, `maxQueryEvents:1000` | HTTP body, evidence object와 raw query page 상한 |
