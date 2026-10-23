@@ -87,6 +87,8 @@ type RequestRow struct {
 	Units             int            `json:"units,omitempty"`
 	NativeElapsedMS   *float64       `json:"nativeElapsedMS,omitempty"`
 	profile           *Profile
+	// finished is the latest native finished record; closing fills missing stages from it.
+	finished *BackendProgress
 	// assignedHour holds this request's assigned row; it stays local until the final row.
 	assignedHour time.Time
 	// closing marks a settled request whose final row still awaits a successful append.
@@ -125,14 +127,7 @@ func (r *RequestRow) fold(e *RequestEvent) {
 	}
 	r.ExecutionComplete = r.ExecutionComplete || e.ExecutionComplete
 	if p := e.NativeProgress; p != nil {
-		r.BatchID, r.BatchSize, r.QueueMS, r.ServiceMS, r.BackendMS = p.BatchID, p.BatchSize, p.QueueMS, p.ServiceMS, p.BackendMS
-		r.PreprocessMS, r.PostprocessMS, r.FirstTokenMS, r.Units = p.PreprocessMS, p.PostprocessMS, p.FirstTokenMS, p.Units
-		native := p.NativeElapsedMS
-		r.NativeElapsedMS = &native
-		if p.DecisionID != "" {
-			r.DecisionID = p.DecisionID
-		}
-		r.foldNativeStages(p)
+		r.foldNative(p)
 	}
 	offset := e.ElapsedNanos
 	if offset == 0 && !r.ReceivedAt.IsZero() {
@@ -168,12 +163,26 @@ func (r *RequestRow) fold(e *RequestEvent) {
 	}
 }
 
-// foldNativeStages fills the stages the progress lines missed. The exchange can
-// settle a fast call before its lines arrive; the finished record of a batch
-// that ran dates the same worker-clock instants: firstfloor receipt =
-// At - NativeElapsedMS, running = receipt + QueueMS.
-func (r *RequestRow) foldNativeStages(p *BackendProgress) {
-	if p.Phase != phaseFinished || p.BatchID == 0 || p.At.IsZero() || r.ReceivedAt.IsZero() {
+func (r *RequestRow) foldNative(p *BackendProgress) {
+	r.BatchID, r.BatchSize, r.QueueMS, r.ServiceMS, r.BackendMS = p.BatchID, p.BatchSize, p.QueueMS, p.ServiceMS, p.BackendMS
+	r.PreprocessMS, r.PostprocessMS, r.FirstTokenMS, r.Units = p.PreprocessMS, p.PostprocessMS, p.FirstTokenMS, p.Units
+	native := p.NativeElapsedMS
+	r.NativeElapsedMS = &native
+	if p.DecisionID != "" {
+		r.DecisionID = p.DecisionID
+	}
+	if p.Phase == phaseFinished {
+		r.finished = p
+	}
+}
+
+// fillNativeStages fills the stages no progress line folded before the call
+// settled. The exchange can settle a fast call before its lines arrive; the
+// finished record of a batch that ran dates the same worker-clock instants:
+// firstfloor receipt = At - NativeElapsedMS, running = receipt + QueueMS.
+func (r *RequestRow) fillNativeStages() {
+	p := r.finished
+	if p == nil || p.BatchID == 0 || p.At.IsZero() || r.ReceivedAt.IsZero() {
 		return
 	}
 	received := p.At.Add(-time.Duration(math.Round(p.NativeElapsedMS * float64(time.Millisecond))))
@@ -543,6 +552,7 @@ func (l *ObservationLog) closeRowLocked(id string, row *RequestRow) error {
 	row.closing = true
 	final := *row
 	final.Kind, final.DispatchedAt = requestRowFinal, nil
+	final.fillNativeStages()
 	if _, err := l.appendRowLocked(&final); err != nil {
 		return err
 	}
