@@ -330,6 +330,9 @@ def postprocess(outputs: object) -> list[dict[str, bytes]]: ...
 - 초기화 시 runner는 initialized batch마다 `WARMUP_SAMPLE`을 batch 크기만큼 복제해 설정된 횟수만큼
   전체 실행 단위를 수행한다(`runner.py:285-290`의 위치). serving과 profiling은 같은 warmup을 수행하며
   횟수는 지금처럼 프로파일의 활성 프로토콜과 비교한다(`internal/serving/firstfloor/client.go:144`).
+- ChillServer 준비 Pod의 `runnerTimeoutMS`는 `--operation-timeout`(기본 30분)이다(`cmd/chill-server/profiles.go`).
+  serving-worker는 이 값 하나로 runner 시작(load와 warmup)과 배치 실행 하나를 함께 제한한다(`ipc.go` `StartRunner`,
+  `infer`). profiling은 `observerReadyTimeoutMilliseconds`를 쓴다(`measurement.py`).
 - 코드가 사용하는 라이브러리는 runtime image가 제공한다. import 실패나 필수 이름 누락은 ready 전의
   runner 시작 오류다. serving `firstfloor` container에 `terminationMessagePolicy: FallbackToLogsOnError`를
   두고, `PrepareInstance`의 Pod 실패 오류(`operations.go:394`)에 종료 메시지를 담아 실행 준비 오류와

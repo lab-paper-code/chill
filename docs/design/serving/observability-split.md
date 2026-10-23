@@ -36,7 +36,7 @@
 |---|---|
 | 식별 | `requestID`, `workloadUID`, `definitionID`, `node`, `instance`, `profileID`, `decisionID` |
 | 결과 | `outcome`, `error`, `executionComplete`, `clientSpanNanos` |
-| 시각 | `receivedAt`, `lifetimeNanos`, `elapsedNanos`(응답 종료), 단계 오프셋 `validatedNanos`, `acceptedNanos`, `dispatchedNanos`, `queuedNanos`, `runningNanos`, `executedNanos`, `exchangeNanos`. 오프셋은 `receivedAt` 기준이고 도달하지 않은 단계는 비어 있다. 같은 단계를 두 경로가 알리면(교환 결과와 firstfloor 로그의 `backend_finished`) 먼저 접은 시각을 쓰고, 응답 종료만 마지막 값을 쓴다 |
+| 시각 | `receivedAt`, `lifetimeNanos`, `elapsedNanos`(응답 종료), 단계 오프셋 `validatedNanos`, `acceptedNanos`, `dispatchedNanos`, `queuedNanos`, `runningNanos`, `executedNanos`, `exchangeNanos`. 오프셋은 `receivedAt` 기준이고 도달하지 않은 단계는 비어 있다. 같은 단계를 두 경로가 알리면(교환 결과와 firstfloor 로그의 `backend_finished`) 먼저 접은 시각을 쓰고, 응답 종료만 마지막 값을 쓴다. `queuedNanos`와 `runningNanos`는 firstfloor 로그의 `backend_queued`, `backend_running` 줄에서 온다. 교환이 그 줄보다 먼저 호출을 끝내면 교환 결과에 담긴 실행한 배치의 `finished` 기록에서 같은 worker 시계로 채운다. 실행 시작은 로그 줄과 같은 `At − nativeElapsedMS + queueMS`다. 큐 진입은 firstfloor 수신 시각 `At − nativeElapsedMS`라 로그 줄보다 본문 읽기와 decode만큼 이르고, 그 행의 `queueMS − (runningNanos − queuedNanos)`는 0이다 |
 | 배치 | 마지막 backend 진행의 `batchID`, `batchSize`, `queueMS`, `serviceMS`, `backendMS`, `preprocessMS`, `postprocessMS`, `firstTokenMS`, `units`, `nativeElapsedMS` |
 
 - profile 본문(근거 참조, confidence, 측정 조건의 artifact와 실행 경로)은 `profileID`로, SLO와 워크로드 이름은 `definitionID`로 같은 시간의 `catalog`에서 찾는다(4장, `WM-27`).

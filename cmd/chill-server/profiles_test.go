@@ -58,7 +58,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),
 		opts: options{
 			storeName: "store", storeEndpoint: "http://store", storeBucket: "bucket", storeRegion: "region",
-			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second,
+			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second, operationTimeout: time.Hour,
 			maxEvidenceBytes: 64 << 20, maxRequestBytes: 8 << 20,
 		},
 	}
@@ -85,6 +85,10 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		!reflect.DeepEqual(spec.Config.Outputs, []string{"label"}) || spec.Config.MaxNewTokens != 16 {
 		t.Fatalf("native raw contract differs from the frozen preprocessor: %+v", spec.Config)
 	}
+	// Runner warmup (SmolVLM2 79 s on rasp5) is bounded by the operation, not by one HTTP request.
+	if spec.Config.RunnerTimeoutMS != int(time.Hour/time.Millisecond) {
+		t.Fatalf("runner timeout %d ms, want the operation timeout", spec.Config.RunnerTimeoutMS)
+	}
 	bundle := profile.NativeBundle()
 	if !reflect.DeepEqual(bundle.Batches[0].ServiceSamplesMS, []float64{1, 2}) ||
 		profile.Batches[0].DurationNanos[0] != 2e6 {
@@ -103,7 +107,7 @@ func TestMeasuredPreparationReservesQueueMemoryAboveMeasuredPeak(t *testing.T) {
 		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),
 		opts: options{
 			storeName: "store", storeEndpoint: "http://store", storeBucket: "bucket", storeRegion: "region",
-			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second,
+			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second, operationTimeout: time.Hour,
 			maxEvidenceBytes: 64 << 20, maxRequestBytes: 8 << 20,
 		},
 	}
@@ -138,7 +142,7 @@ func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
 		kube: fake.NewSimpleClientset(node),
 		opts: options{
 			storeName: "store", storeEndpoint: "http://store", storeBucket: "bucket", storeRegion: "region",
-			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second,
+			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second, operationTimeout: time.Hour,
 			maxEvidenceBytes: 64 << 20, maxRequestBytes: 8 << 20,
 		},
 	}

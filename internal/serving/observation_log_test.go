@@ -508,6 +508,42 @@ func TestRequestFinalRowMatchesEventCohort(t *testing.T) {
 	}
 }
 
+// A fast call settled by the exchange before its CHILL_PROGRESS lines arrive
+// keeps the running offset those lines would have folded, and queues at the
+// firstfloor receipt (the queued line comes after body decode, `ingress` later).
+func TestExchangeFinishedRecordDatesStagesLikeProgressLines(t *testing.T) {
+	received := observationTestHour.Add(time.Second)
+	nativeReceived := received.Add(2*time.Millisecond + 345*time.Nanosecond) // worker clock
+	ingress := 37_011 * time.Nanosecond
+	started := nativeReceived.Add(1_190_123 * time.Nanosecond)
+	finished := started.Add(2_370_456 * time.Nanosecond)
+	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+	record := BackendProgress{Phase: phaseFinished, At: finished, BatchID: 1, BatchSize: 1,
+		QueueMS: ms(started.Sub(nativeReceived)), NativeElapsedMS: ms(finished.Sub(nativeReceived)), ExecutionComplete: true}
+	logged := RequestRow{ReceivedAt: received}
+	for _, e := range []RequestEvent{
+		{Kind: "backend_queued", At: nativeReceived.Add(ingress)},
+		{Kind: "backend_running", At: started},
+		{Kind: "backend_finished", At: finished, NativeProgress: &record},
+	} {
+		logged.fold(&e)
+	}
+	exchanged := RequestRow{ReceivedAt: received}
+	exchanged.fold(&RequestEvent{Kind: "backend_finished", At: received.Add(25 * time.Millisecond),
+		ElapsedNanos: int64(25 * time.Millisecond), NativeProgress: &record})
+	if exchanged.QueuedNanos == nil || exchanged.RunningNanos == nil ||
+		*exchanged.QueuedNanos != *logged.QueuedNanos-int64(ingress) || *exchanged.RunningNanos != *logged.RunningNanos {
+		t.Fatalf("exchange-settled stages %v/%v, log %d/%d", exchanged.QueuedNanos, exchanged.RunningNanos, *logged.QueuedNanos, *logged.RunningNanos)
+	}
+	// A request finished without running (no batch) gets no running stage.
+	dropped := RequestRow{ReceivedAt: received}
+	dropped.fold(&RequestEvent{Kind: "backend_finished", At: received, ElapsedNanos: 1,
+		NativeProgress: &BackendProgress{Phase: phaseFinished, At: finished, QueueMS: 3, NativeElapsedMS: 3}})
+	if dropped.RunningNanos != nil {
+		t.Fatal("unrun request got a running stage")
+	}
+}
+
 func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 	ctx := context.Background()
 	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}}
