@@ -45,6 +45,7 @@ func observerSourceFixture() (*corev1.Pod, *corev1.Node, serving.Profile, edgev1
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid", Labels: map[string]string{"hardware": "cpu", corev1.LabelArchStable: "amd64"}, Annotations: map[string]string{chillmeta.OnlineCPUs: "0-3"}}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{Architecture: "amd64"}, Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi"), corev1.ResourceCPU: resource.MustParse("4")}}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "instance", Namespace: "chill-system", UID: "pod-uid", Annotations: map[string]string{ServingProfileAnnotation: profile.ID, ServingWeightAnnotation: "1"}, Labels: map[string]string{"app.kubernetes.io/component": "serving-instance"}}, Spec: corev1.PodSpec{NodeName: node.Name, Volumes: []corev1.Volume{{Name: "artifact", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}, InitContainers: []corev1.Container{{Name: "artifact", Image: image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$@" /chill-artifact/`, "--", "/artifact/model.onnx"}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}}, {Name: "preprocessor", Image: image, Command: []string{"sh", "-ec"}, Args: []string{`cp -R "$1"/. /chill-preprocessor/`, "--", "/preprocessor/pre"}, VolumeMounts: []corev1.VolumeMount{{Name: "preprocessor", MountPath: "/chill-preprocessor"}}}, {Name: "profile", Image: image}}, Containers: []corev1.Container{{Name: "firstfloor", Image: image, Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1024")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1024")}}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "preprocessor", MountPath: "/preprocessor", ReadOnly: true}}}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}, ContainerStatuses: []corev1.ContainerStatus{{Name: "firstfloor", ImageID: image, ContainerID: "containerd://running", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}, InitContainerStatuses: []corev1.ContainerStatus{{Name: "artifact", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}, {Name: "preprocessor", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}, {Name: "profile", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}}}}
 	pod.Labels[instancePodUIDLabel] = string(pod.UID)
+	pod.Annotations[ServingRoutingAnnotation] = "{}"
 	pod.Spec.RestartPolicy = corev1.RestartPolicyNever
 	return pod, node, profile, class
 }
@@ -61,7 +62,7 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.InstanceID != "pod-uid/containerd://running" || spec.Endpoint != "http://10.96.0.10:8080" || spec.Capacity != 4 || spec.Routing != nil {
+	if spec.InstanceID != "pod-uid/containerd://running" || spec.Endpoint != "http://10.96.0.10:8080" || spec.Capacity != 4 || spec.Routing == nil || len(spec.Routing) != 0 {
 		t.Fatalf("wrong physical source: %+v", spec)
 	}
 	routed := pod.DeepCopy()
@@ -86,6 +87,12 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		}},
 		{"applied routing", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
 			p.Annotations[ServingRoutingAnnotation] = "null"
+		}},
+		{"applied routing absent", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
+			delete(p.Annotations, ServingRoutingAnnotation)
+		}},
+		{"applied routing names two Workloads", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
+			p.Annotations[ServingRoutingAnnotation] = `{"tight":1,"relaxed":1}`
 		}},
 		{"image evidence missing", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) { p.Status.ContainerStatuses[0].ImageID = "" }},
 		{"configured image mismatch", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) { p.Spec.Containers[0].Image = "other-image" }},

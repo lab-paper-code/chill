@@ -43,8 +43,8 @@ func routingRuntime(t *testing.T, seed map[string]int32) (*Runtime, SchedulerIns
 	return r, i, map[string]map[string]int32{controlled.UID: {i.ID: 1}, disabled.UID: {}}
 }
 
-// E1: after a ChillServer restart the instance bound only to the tight-SLO
-// Workload served every compatible Workload, including disabled ones.
+// E1: a ChillServer restart restores the persisted routing, so the instance
+// keeps serving only the tight-SLO Workload.
 func TestRuntimeRestartKeepsPersistedRouting(t *testing.T) {
 	r, _, want := routingRuntime(t, map[string]int32{"w1": 1})
 	for _, phase := range []string{"restored", "autonomy enabled"} {
@@ -59,7 +59,7 @@ func TestRuntimeRestartKeepsPersistedRouting(t *testing.T) {
 
 // Disabling autonomy keeps the applied distribution, not the seed observed before it.
 func TestDisableSchedulerRoutingKeepsAppliedDistribution(t *testing.T) {
-	r, i, want := routingRuntime(t, nil)
+	r, i, want := routingRuntime(t, map[string]int32{})
 	r.EnableSchedulerRouting()
 	i.WorkloadUID = "w1"
 	if err := r.ApplySchedulerTarget(SchedulerCandidate{ID: "applied", Instances: []SchedulerInstance{i}, Routing: want}); err != nil {
@@ -140,7 +140,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 			State: InstanceState{
 				ID: wanted.ID, Node: wanted.Node, Profile: wanted.Profile.ID, Ready: true,
 			},
-			Profile: wanted.Profile, Weight: wanted.Weight, Capacity: wanted.Capacity,
+			Profile: wanted.Profile, Weight: wanted.Weight, Routing: map[string]int32{d.UID: wanted.Weight}, Capacity: wanted.Capacity,
 			Execute: func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
 				started := time.Now()
 				dispatched <- dispatch
@@ -311,7 +311,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	started := make(chan Dispatch, 2)
 	exchanged := make(chan struct{}, 2)
 	actualAt := time.Now().Add(-time.Second)
-	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: actualAt, Native: &native.State{}}, Profile: p, Weight: 1, Capacity: 1, Execute: func(ctx context.Context, dispatch Dispatch) (BackendResult, error) {
+	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: actualAt, Native: &native.State{}}, Profile: p, Weight: 1, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(ctx context.Context, dispatch Dispatch) (BackendResult, error) {
 		started <- dispatch
 		<-ctx.Done()
 		exchanged <- struct{}{}
@@ -421,7 +421,7 @@ func TestErrorExchangeWithoutNativeRecordFinishesForDrain(t *testing.T) {
 		for _, id := range held {
 			state.Requests = append(state.Requests, native.RequestState{Context: native.RequestContext{RequestID: id}, Phase: "queued"})
 		}
-		return ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), Native: state}, Profile: p, Weight: 1, Capacity: 4,
+		return ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), Native: state}, Profile: p, Weight: 1, Routing: map[string]int32{d.UID: 1}, Capacity: 4,
 			Execute: func(context.Context, Dispatch) (BackendResult, error) {
 				return BackendResult{StatusCode: 502}, failure("BackendUnavailable", "native backend did not complete a valid exchange")
 			}}
@@ -522,7 +522,7 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.EnableSchedulerRouting()
-	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "new", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true}, Profile: p, Weight: 1, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
+	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "new", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true}, Profile: p, Weight: 1, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
 		t.Fatal(err)
 	}
 	if state, err := r.State(d.Name); err != nil || state.Reason != "Preparing" {

@@ -108,7 +108,7 @@ POST 권한을 가진다. ChillServer는 `tickMu` 안에서 다음을 확인하�
   fresh Node와 모든 Pod 요청을 `ValidatePreparationCapacity`가 마지막 snapshot의 inventory와 예약으로 확인하며,
   설정된 serving namespace의 기존 serving Pod, 미확인 GPU 소유권, CPU 예약 부족, memory 초과와 MemoryPressure는
   거절한다.
-- remove: 대상이 snapshot의 instance이고 다른 Workload가 소유하거나 binding하지 않는다(`InstanceShared`). 어느
+- remove: 대상이 snapshot의 instance이고 다른 Workload가 소유하거나 binding하지 않는다. 어느
   Workload의 route 가중치도 0이고 그 instance가 맡은 처리 중 요청이 없다. 분배는 먼저 `staticRouting`으로 바꾼다.
 
 instance는 snapshot의 ID로 고르므로 계획기가 만든 `serving-<hash>` Pod도 대상이 된다. 이는 manual execution 근거이며

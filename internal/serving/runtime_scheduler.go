@@ -40,10 +40,7 @@ func (r *Runtime) routeWeightLocked(uid string, instance *runtimeInstance) int32
 	if r.routingControlled {
 		return r.routeTargets[uid][instance.State.ID]
 	}
-	if instance.Routing != nil {
-		return instance.Routing[uid]
-	}
-	return instance.Weight
+	return instance.Routing[uid]
 }
 
 // ApplySchedulerTarget is an atomic distribution change after actual readiness.

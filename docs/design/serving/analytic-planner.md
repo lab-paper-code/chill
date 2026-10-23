@@ -62,7 +62,7 @@
 
 **노드 계획.** 노드마다 keep, 그리고 배치 가능한 노드에서 측정 option 변형 하나로 만든 계획 중 그 모드에서 `ValidateNodeBudget`을 만족하는 것. 노드마다 서빙 인스턴스는 하나다. 같은 노드에 인스턴스 둘을 두면 κ가 더해지지 않으므로(m4 r8 D-R8-1: rasp5 q1과 q1-lut의 κ 합이 40 req/s를 덮는다고 판정했지만 둘이 35~38 req/s만 처리했고 SLO가 25.5%로 떨어졌다), 노드에서 더 큰 용량은 CPU 할당이 넓은 측정 option(q2, q4)이 맡는다. 다른 Workload의 인스턴스와 함께 둔 κ와 전력도 재지 않았으므로 이 규칙은 모든 Workload에 같다. 모드를 바꾸는 계획은 목표 모드에서 온라인인 CPU로 예산을 확인한다. 현재 모드는 노드 annotation의 CPU를, 다른 모드는 DeviceClass `powerModes[].onlineCPUs`를 쓰고, 그 필드가 없는 모드의 계획은 `PlacementInventoryMissing`으로 뺀다. 꺼진 Workload의 인스턴스가 있는 노드는 keep뿐이다. 계획마다 Workload별 `κ_new`와 `κ_ret`, 사슬, 전력을 둔다.
 
-**인스턴스와 Workload.** 인스턴스는 Workload 하나에 속하고 κ는 그 Workload와 option의 행이다. 노드마다 서빙 인스턴스는 하나이므로 같은 모델의 Workload들도 노드를 따로 쓴다. 실제 상태에서 인스턴스 둘 이상이 있는 노드는 keep이 그대로 두고, 그 노드의 다른 계획은 인스턴스 하나를 남긴다. 계획기가 만드는 분배에서 인스턴스마다 Workload는 하나다. capture는 실제 분배에서 한 인스턴스가 두 Workload 이상에 들어 있으면 판단을 `SharedInstance`로 대기시킨다(6장의 운영 단계가 전환 전에 푼다). 꺼진 Workload의 인스턴스가 있는 노드는 keep뿐이므로 꺼진 Workload의 SLO는 계획 동작의 영향을 받지 않는다(workload-pools 4.4절의 노드 동작 규칙).
+**인스턴스와 Workload.** 인스턴스는 Workload 하나에 속하고 κ는 그 Workload와 option의 행이다. 노드마다 서빙 인스턴스는 하나이므로 같은 모델의 Workload들도 노드를 따로 쓴다. 실제 상태에서 인스턴스 둘 이상이 있는 노드는 keep이 그대로 두고, 그 노드의 다른 계획은 인스턴스 하나를 남긴다. 계획기가 만드는 분배에서 인스턴스마다 Workload는 하나다. 서빙 source는 routing annotation이 Workload를 하나 이하로 가리키는 Pod이므로 실제 분배에서도 인스턴스마다 Workload는 하나 이하다. 꺼진 Workload의 인스턴스가 있는 노드는 keep뿐이므로 꺼진 Workload의 SLO는 계획 동작의 영향을 받지 않는다(workload-pools 4.4절의 노드 동작 규칙).
 
 **사슬.** `schedulerPlan`의 순서다. 모드 변경은 power, 모든 기존 remove, prepare가 route 전이다. 같은 모드에서는 자원이 함께 들어가지 않을 때만 remove가 prepare 앞이고, 아니면 route 뒤다. 동작마다 측정 trial의 평균 wall J, 평균 시간, 최대 시간을 쓴다. 비용이 없으면 그 계획은 `MissingOperationCost`로 빠진다. 같은 인스턴스의 배치 상한이나 대기 시간을 바꾸는 계획은 그 인스턴스를 그대로 쓰고 route가 firstfloor policy를 바꾼다(사슬 없음). 서빙 Pod는 측정한 모든 배치를 시작할 때 초기화하고(`batchSizes`, m4 r2의 rasp5 q2 config는 1~16), firstfloor `Scheduler.Update`는 초기화되고 측정된 배치 안에서 policy의 `maxBatchSize`와 `maxBatchWaitMS`를 재시작 없이 바꾸며, route의 `applyPolicy`가 그 값의 native ACK를 기다린다.
 
@@ -110,7 +110,7 @@
 3. relaxed와 imagenet은 `staticRouting`에 빈 항목(`{}`)을 주어 분배에서 뺀다. positive weight가 없는 항목은 그 Workload의 routing을 모두 지운다([설정 API](scheduler-api.md)).
 4. pools와 annotation에서 모든 인스턴스가 Workload 하나인지 확인한다. 되돌리기는 이전 `staticRouting`이다.
 
-**M5 정리 후보(M4에서는 그대로).** Runtime의 인스턴스별 다중 binding과 route 복원(`runtime.go`, `runtime_scheduler.go`, `InstanceState.Workloads[]`와 UID별 카운터), `staticRouting`의 다중 UID alias(`static_routing.go`, `kube/static_routing.go`), `serving-operation`의 `InstanceShared` 거절(`cmd/serving-operation/main.go:489-518`), `edge.dacs.io/serving-routing` annotation의 reader와 writer와 annotation이 없을 때의 fallback(`kube/observer.go`, `kube/operations.go`), Dashboard의 인스턴스별 여러 서비스 표시(`resources.tsx`, `read-types.ts`), 설계 문서(workload-management, heterogeneous-workloads, scheduler-runtime-measurement)의 공유 문단. 같은 노드 공동 사용, 프로파일 재사용, Bundle은 유지한다.
+**M5 정리.** [M5 정리 5장](../platform/cleanup-m5.md#5-인스턴스-공유-정리)이 후보마다 판정한다. 같은 노드 공동 사용, 프로파일 재사용, Bundle은 유지한다.
 
 **그대로 남는 것.** 재생 코드(용량표 계산과 오프라인 검증), `schedulerPlan`, `schedulerMeasuredOptions`, `schedulerBaseline`, 전환 실행기, 가용 노드 최저 모드 규칙, 비교 집합, firstfloor batcher.
 

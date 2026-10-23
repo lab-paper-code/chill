@@ -701,14 +701,10 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			if e == nil {
 				instance.Weight = int32(weight)
 			}
-			// An instance serves one Workload; a shared one makes the decision wait.
 			for _, w := range state.Workloads {
 				if instance.WorkloadUID == "" || w.UID < instance.WorkloadUID {
 					instance.WorkloadUID = w.UID
 				}
-			}
-			if len(state.Workloads) > 1 {
-				s.Reasons = append(s.Reasons, serving.SchedulerSharedInstance+":"+instance.ID)
 			}
 			s.Instances = append(s.Instances, instance)
 			continue

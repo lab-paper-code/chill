@@ -488,16 +488,6 @@ func TestCapacityJudgesEachWorkloadWithItsSLO(t *testing.T) {
 	}
 }
 
-// §9 6 판정: an instance captured in two Workloads makes the decision wait.
-func TestCapacitySharedInstanceWaits(t *testing.T) {
-	s, snap := schedulerFixture()
-	snap.Reasons = []string{SchedulerSharedInstance + ":i1"}
-	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-	if d.Status != SchedulerSharedInstance || d.Target != nil || d.Capacity != nil || !slices.Equal(d.Reasons, snap.Reasons) {
-		t.Fatalf("shared instance must wait: %+v", d)
-	}
-}
-
 // §4: a non-Fixed action of the running goal holds planning; keep continues it.
 func TestCapacityTransitionInProgressContinuesGoal(t *testing.T) {
 	s, snap := schedulerFixture()

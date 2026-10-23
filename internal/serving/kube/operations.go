@@ -924,8 +924,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 
 // persistRouting records the runtime's applied distribution on the Pod of instance
 // only, or of every runtime instance when only is empty; a restarted ChillServer
-// restores it instead of binding every compatible Workload. A standalone
-// serving-operation runtime names only the instance it stops.
+// restores it. A standalone serving-operation runtime names only the instance it stops.
 func (o *Operations) persistRouting(ctx context.Context, only string) error {
 	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {

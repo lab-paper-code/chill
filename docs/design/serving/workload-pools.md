@@ -246,7 +246,7 @@ firstfloor 경과(`NativeProgress.NativeElapsedMS`)를 뺀 값이며(`types.go:2
   Workload의 분배에서 인스턴스를 빼면 그 Workload의 binding만 풀린다(`static_routing.go:39-50`).
 - `serving-operation --execute-config`의 manifest는 꺼진 Workload 하나의 `workloadUID`를 받는다. prepare는 준비한
   인스턴스의 owner로 그 Workload를 기록한다. remove는 그 Workload가 인스턴스의 유일한 owner이자 binding일 때만
-  허용하고, 다른 Workload가 쓰는 인스턴스는 `InstanceShared`로 거절한다. 그 경우 위 `staticRouting`으로 그
+  허용하고, 다른 Workload가 쓰는 인스턴스는 거절한다. 그 경우 위 `staticRouting`으로 그
   Workload의 분배와 binding만 뺀다. 전체 controls OFF 조건(`cmd/serving-operation/main.go:450-462`)과 membership 동작은
   삭제한다(3.2절). 진행 중 action 조건(`:463-467`)과 staticRouting ACK 확인(`:468-483`)은 유지한다.
 
@@ -430,7 +430,7 @@ commit은 각 merge 뒤 `make manifests generate`를 다시 실행한다.
 | 전체 POOL | inventory 없는 노드와 전력모드 수단 없는 노드가 사유와 함께 남음, 비교 집합이 상태가 바뀌는 노드만 담고 모든 후보에 같음, 비교 집합 밖 노드의 baseline이 없어도 판단이 진행됨, 비교 집합 노드의 baseline이 없으면 그 후보만 평가 불가 |
 | 후보 | 꺼진 Workload 인스턴스 고정, 최소 인스턴스, 노드마다 서빙 인스턴스 하나, 직접 이동 DAG, 모든 후보가 가용 노드를 가장 낮은 모드에서 출발한 공통 상태로 계산하고 `Fixed` 내림이 그 노드의 다른 동작보다 앞서며 공통 항으로 비교에서 빠짐, target이 없을 때 유지 후보의 `Fixed` 동작만 실행, 다시 넣는 후보의 power 비용이 빈 노드 전환 비용으로 계산되고 그 비용이 없으면 `MissingOperationCost`, 판정 대상 집합 |
 | 도출 profile과 비용 | 같은 조건의 최신 성공 선택, 한 profile이나 비용 기록의 실패가 나머지를 막지 않음, 고정 prefix 나열과 identity별 한 번 읽기, `Accepted`만 받음, 현재 `meters`와 다른 meter의 operation 기록과 meter 없는 전환 비용의 `MeterUndeclared`, operation 비용은 노드 전력모드까지 같은 조건에서 최신, 전환 비용은 적재 상태가 다른 측정을 섞지 않고 trial 완료 시각으로 최신, planner가 같은 열쇠로 고름, 나열 실패 때 이전 구성 유지 |
-| 수동 변경 | 부분 `staticRouting`, 켜진 Workload 항목 거절, 공유 인스턴스 remove의 `InstanceShared` |
+| 수동 변경 | 부분 `staticRouting`, 켜진 Workload 항목 거절, 다른 Workload 인스턴스의 remove 거절 |
 | 측정 POOL | taint 노드가 배치, 전력 변경, `Fixed` 내림, 제거 대상에서 빠지고 pools API에 측정 POOL로 보임, 판단 뒤 taint가 붙은 노드에서 Workload prepare와 `ChangePower`가 `NodeInMeasurement`로 실패, 그 노드의 측정 인스턴스가 정리되지 않음, profiling과 transition attempt Job에 toleration, `serving-operation` 측정이 taint 없는 노드를 거절 |
 | Pod 기록 | `edge.dacs.io/workload-role` 유무로 분류, 표의 생성 경로마다 label, transition-cost와 operation 측정의 구조화한 `Pods` |
 | NodeActuator | 외부 Pod가 있어도 Ready까지 진행 |

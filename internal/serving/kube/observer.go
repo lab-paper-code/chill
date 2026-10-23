@@ -505,10 +505,8 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 		return empty, errors.New("explicit positive serving weight required")
 	}
 	var routing map[string]int32
-	if raw, routed := pod.Annotations[ServingRoutingAnnotation]; routed {
-		if e = json.Unmarshal([]byte(raw), &routing); e != nil || routing == nil {
-			return empty, errors.New("invalid applied serving routing")
-		}
+	if e = json.Unmarshal([]byte(pod.Annotations[ServingRoutingAnnotation]), &routing); e != nil || routing == nil || len(routing) > 1 {
+		return empty, errors.New("applied serving routing must name at most one Workload")
 	}
 	if err := validateSourceContainers(pod, condition); err != nil {
 		return empty, err

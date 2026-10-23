@@ -207,7 +207,15 @@ func startManagerCalls(t *testing.T, m *Manager, profile serving.Profile, names 
 	m.runtime.SetProfiles([]serving.Profile{profile})
 	started := make(chan serving.Dispatch, len(names))
 	finish := make(chan struct{}, len(names))
-	if err := m.runtime.InstallInstances([]serving.ReadyInstance{{State: serving.InstanceState{ID: "pod/container", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Profile: profile.ID, Ready: true}, Profile: &profile, Weight: 10000, Capacity: 2,
+	routing := map[string]int32{}
+	for _, name := range names {
+		state, err := m.runtime.State(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		routing[state.Applied.UID] = 10000
+	}
+	if err := m.runtime.InstallInstances([]serving.ReadyInstance{{State: serving.InstanceState{ID: "pod/container", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Profile: profile.ID, Ready: true}, Profile: &profile, Weight: 10000, Routing: routing, Capacity: 2,
 		Execute: func(_ context.Context, d serving.Dispatch) (serving.BackendResult, error) {
 			started <- d
 			<-finish

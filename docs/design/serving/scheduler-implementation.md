@@ -143,9 +143,7 @@ route 전후 동작 사슬과 전력을 둔다. 꺼진 Workload의 인스턴스�
 (placement, resources, replicas, routing, batching, membership)의 규칙과 `maxReplicas`, `maxInstances`, `maxCPUs`
 상한은 14장의 설정 gate를 따른다.
 
-인스턴스는 Workload 하나를 맡고, snapshot과 기록의 인스턴스는 `workloadUID` 하나를 가진다. capture가 실제 분배에서
-두 Workload 이상에 들어간 인스턴스를 찾으면 snapshot 사유 `SharedInstance:<instance ID>`를 남기고 판단은
-`SharedInstance` 상태로 기다린다. 운영자는 `staticRouting`으로 분배를 나눈다([6장](analytic-planner.md#6-인스턴스-공유-정리)).
+인스턴스는 Workload 하나를 맡고, snapshot과 기록의 인스턴스는 `workloadUID` 하나를 가진다.
 
 ingress Runtime과 replay는 같은 deterministic smooth weighted rule로 요청을 분배한다. 판단의 분배는 켜진 Workload마다
 합 1,000의 정수 가중치이고, 꺼진 Workload의 분배는 현재 값을 그대로 둔다. 적용할 때 active UID마다 분배가 있어야 하고
@@ -236,8 +234,7 @@ Workload UID별 가중치로 기록한다. prepare는 스케줄러 Pod를 `{}`�
 owner UID의 가중치로 만든다. route는 모든 인스턴스의 값을, stop과 drain은 해당 인스턴스의 값을
 갱신한다. 자율 제어 중 적용된 routing은 인스턴스의 정적 분배가 되어 자율 제어를 끈 뒤에도 유지된다.
 ChillServer 재시작은 이 값을 다시 읽어 마지막 분배를 그대로 복구하므로 꺼진 Workload도 마지막
-구성을 유지한다. 이 annotation이 없는 Pod는 `edge.dacs.io/serving-weight`를 호환되는 모든
-Workload에 적용한다.
+구성을 유지한다. 서빙 source는 이 annotation이 있고 Workload를 하나 이하로 가리키는 Pod다.
 
 비교 기간은 판단마다 하나인 `T = max(comparisonPeriodNanos, 최장 route 전 사슬 + 최장 route 뒤 remove)`이고 keep과 모든 계획에
 같다. 사슬은 동작마다 측정 trial의 최대 시간으로 재므로 모든 계획 동작이 T 안에 끝나고, 비교는 동작 에너지 전체와
@@ -261,7 +258,7 @@ router 가중치는 고른 해의 인스턴스 κ에 입력당 에너지가 작�
 붙는다. keep도 같은 규칙으로 가중치를 다시 정하고, 분배만 바뀌면 target은 route 동작 하나다.
 
 판단 상태는 `Feasible`, `Overload`, `Keep`(지금 구성과 분배를 그대로 두는 충족 판단과 진행 중 전환을 이어 가는 판단),
-`Pending`(snapshot 검증 사유), `CapacityPending`, `SharedInstance`다. keep과 target은 `expectedJoules`와 `worstExceedance`를
+`Pending`(snapshot 검증 사유), `CapacityPending`이다. keep과 target은 `expectedJoules`와 `worstExceedance`를
 담는다. `expectedJoules`는 고른 해를 정확한 배정으로 다시 계산한 [0, T]의 분석 에너지이고 비교 집합 노드만 더한다.
 초과량이 정해지지 않으면 `worstExceedance`는 float 최댓값이다. `decision.capacity`는 비교 기간 `periodNanos`, 고른 route
 시각 `routeNanos`, 탐색 범위 `search`(`neighborhood`, `evaluated`, `durationNanos`, `budgetCut`), Workload별 `workloads[]`(`uid`, `rate`, `queued`, `kappaNew`, `kappaRetained`, `backlog`,

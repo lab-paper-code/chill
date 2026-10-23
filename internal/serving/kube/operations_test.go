@@ -110,7 +110,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 			WorkloadUID: definition.UID, MaxBatch: 1, Capacity: 4, MaxWait: time.Millisecond}
 		target.Instances = append(target.Instances, instance)
 		ready = append(ready, serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: instance.Node, Profile: profile.ID, Ready: true, Native: &state},
-			Profile: &profile, Weight: 1, Capacity: 4,
+			Profile: &profile, Weight: 1, Routing: map[string]int32{definition.UID: 1}, Capacity: 4,
 			Execute: func(ctx context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 				return nativeClient.Execute(ctx, spec, dispatch)
 			},
@@ -241,7 +241,7 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 }
 
 // A route records the applied distribution on every runtime instance's Pod; the
-// restarted observer reads it back instead of binding every compatible Workload.
+// restarted observer reads it back.
 func TestRoutePersistsAppliedDistributionOnPods(t *testing.T) {
 	operations, target, pods := routeAcknowledgmentFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

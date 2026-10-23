@@ -18,10 +18,7 @@ import (
 
 // Decision statuses and reasons of the capacity planner (analytic-planner §3, §4).
 const (
-	schedulerStatusKeep = "Keep"
-	// SchedulerSharedInstance marks a captured instance routed to two or more
-	// Workloads; the decision waits until the operator unshares it.
-	SchedulerSharedInstance           = "SharedInstance"
+	schedulerStatusKeep               = "Keep"
 	schedulerTransitionInProgress     = "TransitionInProgress"
 	schedulerRouteWeightExceeds       = "RouteWeightExceedsCapacity"
 	schedulerNoPlanMeetsSLO           = "NoPlanMeetsSLO"
@@ -150,10 +147,6 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	}
 	keep.Status = schedulerStatusPending
 	decision.Keep = keep
-	if shared := slices.DeleteFunc(slices.Clone(snapshot.Reasons), func(r string) bool { return !strings.HasPrefix(r, SchedulerSharedInstance) }); len(shared) != 0 {
-		decision.Status, decision.Reasons = SchedulerSharedInstance, shared
-		return decision, ctx.Err()
-	}
 	reasons := append(slices.Clone(snapshot.Reasons), schedulerValidateSnapshot(settings, snapshot)...)
 	reasons = appendUnique(reasons, schedulerValidateResources(settings, snapshot.Nodes, snapshot.Instances)...)
 	if len(reasons) != 0 {

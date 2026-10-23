@@ -673,7 +673,7 @@ func TestLoadWindowCountsAssignedAndFinalRequestOnce(t *testing.T) {
 }
 
 func TestAssignmentAppendFailureRevertsAssignment(t *testing.T) {
-	r, i, _ := routingRuntime(t, nil)
+	r, i, _ := routingRuntime(t, map[string]int32{"w1": 1})
 	observationLog := r.config.ObservationLog
 	// A file where the hour directory belongs makes every append fail.
 	observationLog.now = func() time.Time { return observationTestHour }
