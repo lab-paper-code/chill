@@ -10,3 +10,5 @@
 | 4 | **M0 전후**: 결정 기록 크기, ChillServer RSS, PVC 증가율, Tick p99([M0 설계 5장](../serving/decision-record-diet.md#5-e1에서-확인할-값)) | M0 | 기록 ≤100KB, RSS가 limit 아래이고 OOM 없음, PVC 시간당 증가로 M1 전까지의 `observationStorage` 크기를 정함, Tick p99 기록 | 다이어트 항목 추가 |
 | 5 | **B2 경쟁 test**: envtest에서 측정 요청과 prepare를 같은 노드에 1000회 동시, agent kill, 측정 객체 삭제 후 자동 반환 | B2 | 겹침 0, 자동 반환 | 설계 재검토 |
 | 6 | **B3 기준선 비교**: 버스트·급감 시나리오의 진동 횟수와 에너지 | B3 vs B1 | (B1 기여 입증용) | - |
+
+최종 검증의 절차, 증거, 기준 출처와 사용자 결정은 [08](08-final-verification.md)이다.

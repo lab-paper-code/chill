@@ -73,4 +73,5 @@ native fence + 측정 admission)를 함께 채택하고, B3(완전 분산 autosc
 | [05-recommendation-migration.md](05-recommendation-migration.md) | 권고, 단계적 이행 M0–M5, 남는 코드, workload-pools commit과의 관계 |
 | [06-spec-change-proposals.md](06-spec-change-proposals.md) | 바꿀 명세 문장(현재 문장 원문 → 제안), 바꾸지 않는 문장 |
 | [07-validation.md](07-validation.md) | 제안을 확정·기각할 측정 |
+| [08-final-verification.md](08-final-verification.md) | 07 항목, `SCH-AC-24`~`26` kind E2E, E5 SLO와 에너지 판정의 최종 검증 절차 |
 | [references.md](references.md) | 외부 출처 목록과 원문 확인 여부 |
