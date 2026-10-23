@@ -115,7 +115,7 @@ ADR 0020의 구간(fence, read-back, settling 시작, Ready)은 같은 네 시�
 | Dashboard | `features/resources.tsx:59-60`이 서비스 이름을 이어 붙인다 | 유지. 이름 하나를 보인다 |
 | 설계 문서 | `workload-management.md:357,415,458,688,691,697`, `heterogeneous-workloads.md:28` | 명세 ⑤ 문장(analytic-planner 10장)으로 다시 쓴다 |
 
-commit 4는 서빙 source가 `edge.dacs.io/serving-routing` annotation을 필수로 읽고 Workload를 둘 이상 가리키면 invalid로 보며(`kube/observer.go`), Runtime은 annotation의 분배만 쓴다(`runtime_scheduler.go`). capture는 인스턴스의 Workload를 그대로 기록하고 판단은 공유 사유 없이 진행한다. 수동 remove는 다른 Workload가 소유하거나 binding한 인스턴스를 거절한다. ADR 0019: 바뀐 것은 Pod annotation을 읽는 규칙과 판단 상태 값 하나다. 저장 계약의 필드는 그대로이고, 이미 저장된 판단 기록의 `SharedInstance` 상태와 사유는 문자열이라 그대로 읽힌다. Dashboard는 이 상태 값을 따로 다루지 않는다. 배포 전에 live serving Pod마다 annotation이 있고 Workload가 하나 이하인지 확인하고, 아닌 Pod는 지금 image에서 다시 prepare한다.
+commit 4(`e018057`)는 서빙 source가 `edge.dacs.io/serving-routing` annotation을 필수로 읽고 Workload를 둘 이상 가리키면 invalid로 보며(`kube/observer.go`), Runtime은 annotation의 분배만 쓴다(`runtime_scheduler.go`). capture는 인스턴스의 Workload를 그대로 기록하고 판단은 공유 사유 없이 진행한다. 수동 remove는 다른 Workload가 소유하거나 binding한 인스턴스를 거절한다. ADR 0019: 바뀐 것은 Pod annotation을 읽는 규칙과 판단 상태 값 하나다. 저장 계약의 필드는 그대로이고, 이미 저장된 판단 기록의 `SharedInstance` 상태와 사유는 문자열이라 그대로 읽힌다. Dashboard는 이 상태 값을 따로 다루지 않는다. 배포 전에 live serving Pod마다 annotation이 있고 Workload가 하나 이하인지 확인하고, 아닌 Pod는 지금 image에서 다시 prepare한다.
 
 ## 6. 재시작 관측 잠금 (D-R7-5)
 
@@ -145,7 +145,7 @@ r7에서 ChillServer Pod를 지우자 새 Pod가 `observation directory already 
 | 1 | `fix(serving): wait for the observation lock after a restart` | 6장, `bca2da3` | - | 잠금 대기와 context 종료 test. 다음 배포에서 Pod 삭제 한 번에 CrashLoop 0 |
 | 2 | `fix(serving): archive each observation hour once per process` | 8장, `bfb4563` | - | 실패한 stream만 다시 올림 test. 배포 뒤 한 시간 동안 PutObject 오류 0 |
 | 3 | `refactor(api): delete unused DeviceProfile and ClusterEnergyModel kinds` | 2장 삭제 목록, `make manifests generate` | - | 생성물 drift, `make helm-lint helm-template` |
-| 4 | `refactor(serving): require one Workload per routing annotation` | 5장의 삭제 셋, 공유 fixture 정리 | 계획기 전환 작업 | annotation 없음과 두 UID가 invalid source, 한 UID와 빈 annotation은 정상 |
+| 4 | `refactor(serving): require one Workload per routing annotation` | 5장의 삭제 셋, 공유 fixture 정리, `e018057` | 계획기 전환 작업 | annotation 없음과 두 UID가 invalid source, 한 UID와 빈 annotation은 정상 |
 | 5 | `feat(nodeagent): apply power modes from Node labels` | 3.1절: label watch, state, generation, bootID, transition annotation | - | 적용 성공과 실패, 같은 모드 `success`만, read-back 변화와 bootID 변화가 generation + 1, agent 재시작은 0, 재부팅 모드가 재시작 뒤 한 번 + 1, label 삭제 |
 | 6 | `feat(serving): request power modes through Node labels` | 3.2, 3.3절: ChillServer와 Profiler writer, admission 대기, stop safety, 기록의 generation, PMTC marker 출처 | 5, 측정 API 8 | writer 표마다 조건 밖 patch 없음, conflict, 기한 실패, 표의 기대 차이와 `PowerChangedDuringMeasurement`, 기존 evidence fixture decode |
 | 7 | `refactor(api): delete NodeActuation` | 3.5절 삭제, `make manifests generate`, chart | 6 | `make arch-check`, default와 Profiler render |
