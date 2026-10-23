@@ -168,11 +168,19 @@ func (config schedulerConfiguration) validatePower() error {
 	return nil
 }
 
+// meterClient keeps one idle connection per concurrently polled meter, so
+// meters behind one power server (shelly_server) reuse their connections.
+var meterClient = func() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = 64
+	return &http.Client{Transport: transport}
+}()
+
 func metricSource(identity metricobserver.SourceIdentity) (metricobserver.Source, error) {
 	if identity.ThermalMetrics != nil {
-		return edgemetrics.New(identity, &http.Client{})
+		return edgemetrics.New(identity, meterClient)
 	}
-	return edgemetrics.NewPowerSeries(identity, &http.Client{})
+	return edgemetrics.NewPowerSeries(identity, meterClient)
 }
 
 func (o *schedulerService) refresh(ctx context.Context) (err error) {
