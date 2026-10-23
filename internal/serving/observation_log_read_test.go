@@ -80,64 +80,62 @@ func TestObservationReadAllowsIngressAndSchedulerAppendWhilePaused(t *testing.T)
 	}
 }
 
+// scanLargeLines requires every captured scheduler line to arrive in the one
+// buffer the first line grew. Buffer identity shows reuse; AllocsPerRun would
+// also count allocations the runtime makes on other goroutines.
+func scanLargeLines(t *testing.T, observationLog *ObservationLog, bounds [2]time.Time) int {
+	t.Helper()
+	read, err := observationLog.capture(map[string][2]time.Time{observationSchedulerStream: bounds})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.close()
+	var buffer *byte
+	count := 0
+	err = observationLog.scanStream(read, observationSchedulerStream, func(raw []byte) error {
+		count++
+		if len(raw) <= 512<<10 {
+			t.Fatal("large raw record was truncated")
+		}
+		if buffer == nil {
+			buffer = &raw[0]
+		}
+		if &raw[0] != buffer {
+			t.Fatalf("line %d grew a new buffer", count)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
 func TestObservationReadReusesLargeLineBufferAndPreservesSelectedPayloads(t *testing.T) {
 	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	at := observationTestHour.Add(time.Second)
 	clock.set(at)
-	payload := json.RawMessage(`{"retained":"` + strings.Repeat("x", 512<<10) + `"}`)
-	event := SchedulerObservation{At: at, Action: &SchedulerActionObservation{ID: "large-source", Expected: payload}}
-	const records = 9
-	allocations := func(expected int) float64 {
-		t.Helper()
-		read, err := observationLog.capture(map[string][2]time.Time{observationSchedulerStream: {}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer read.close()
-		count := 0
-		var scanErr error
-		allocated := testing.AllocsPerRun(1, func() {
-			count = 0
-			for _, file := range read.files[observationSchedulerStream] {
-				if _, err := file.file.Seek(0, 0); err != nil {
-					t.Fatal(err)
-				}
-			}
-			scanErr = observationLog.scanStream(read, observationSchedulerStream, func(raw []byte) error {
-				count++
-				if len(raw) <= 512<<10 {
-					t.Fatal("large raw record was truncated")
-				}
-				return nil
-			})
-		})
-		if scanErr != nil || count != expected {
-			t.Fatalf("captured prefix changed: count=%d expected=%d error=%v", count, expected, scanErr)
-		}
-		return allocated
-	}
-	for index := range records {
-		event.At = at.Add(time.Duration(index) * time.Nanosecond)
+	// Equal-length lines with distinct payloads: a selected payload that
+	// borrowed the reused buffer would read a later line.
+	payloads := make([]json.RawMessage, 9)
+	for index := range payloads {
+		payloads[index] = json.RawMessage(`{"retained":"` + strings.Repeat(string(rune('a'+index)), 512<<10) + `"}`)
+		event := SchedulerObservation{At: at.Add(time.Duration(index+1) * time.Nanosecond), Action: &SchedulerActionObservation{ID: "large-source", Expected: payloads[index]}}
 		if err := observationLog.SchedulerRecord(event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	many := allocations(records)
-	// The same scan over one record allocates the same buffers.
-	single, singleClock := clockedObservationLog(t, ObservationLogConfig{}, at)
-	singleClock.set(at)
-	event.At = at
-	if err := single.SchedulerRecord(event); err != nil {
-		t.Fatal(err)
+	if count := scanLargeLines(t, observationLog, [2]time.Time{}); count != len(payloads) {
+		t.Fatalf("captured prefix changed: count=%d expected=%d", count, len(payloads))
 	}
-	observationLog = single
-	one := allocations(1)
-	if many > one {
-		t.Fatalf("line allocations grew with record count: one=%g many=%g", one, many)
+	page, next, _, err := observationLog.SchedulerObservationPage(at, at.Add(time.Second), len(payloads), 0)
+	if err != nil || len(page) != len(payloads) || next != -1 {
+		t.Fatalf("large selected page lost records: count=%d next=%d error=%v", len(page), next, err)
 	}
-	page, next, _, err := observationLog.SchedulerObservationPage(at.Add(-time.Nanosecond), at.Add(time.Second), records, 0)
-	if err != nil || len(page) != 1 || next != -1 || !bytes.Equal(page[0].Action.Expected, payload) {
-		t.Fatalf("large selected page lost its payload: count=%d next=%d error=%v", len(page), next, err)
+	for index, record := range page {
+		if !bytes.Equal(record.Action.Expected, payloads[index]) {
+			t.Fatalf("selected record %d lost its payload", index)
+		}
 	}
 }
 
@@ -172,36 +170,7 @@ func TestObservationReadReusesGrownBufferAcrossFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	allocations := func(to time.Time, expected int) float64 {
-		t.Helper()
-		read, err := observationLog.capture(map[string][2]time.Time{observationSchedulerStream: {observationTestHour, to}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer read.close()
-		count := 0
-		var scanErr error
-		allocated := testing.AllocsPerRun(1, func() {
-			count = 0
-			for _, file := range read.files[observationSchedulerStream] {
-				if _, err := file.file.Seek(0, 0); err != nil {
-					t.Fatal(err)
-				}
-			}
-			scanErr = observationLog.scanStream(read, observationSchedulerStream, func([]byte) error {
-				count++
-				return nil
-			})
-		})
-		if scanErr != nil || count != expected {
-			t.Fatalf("cross-file scan changed: count=%d expected=%d error=%v", count, expected, scanErr)
-		}
-		return allocated
-	}
-	one := allocations(observationTestHour, 1)
-	many := allocations(observationTestHour.Add(time.Hour), files)
-	// Per-file limit readers remain; the large line buffer grows once.
-	if many > one+2*(files-1) {
-		t.Fatalf("large buffer growth repeated per file: one=%g many=%g", one, many)
+	if count := scanLargeLines(t, observationLog, [2]time.Time{observationTestHour, observationTestHour.Add(time.Hour)}); count != files {
+		t.Fatalf("cross-file scan changed: count=%d expected=%d", count, files)
 	}
 }
