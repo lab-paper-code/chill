@@ -218,7 +218,7 @@ firstfloor 처리 완료에 이 값을 더한 시각이다.
   `CompletionOverhead` 대신 설정 값을 쓴다.
 - firstfloor: `RequestContext`(`internal/firstfloor/types.go:54-62`)에 `completionMarginMS`를 더하고 ChillServer가
   dispatch 때 현재 설정 값을 넣는다(`internal/serving/firstfloor/client.go:178`). `requestSlack`은
-  `RemainingSLOMS - completionMarginMS - serviceCost`이고(`internal/firstfloor/policy.go:22-27`), lifetime 수락도
+  `RemainingSLOMS - completionMarginMS - serviceCost`이고(`internal/firstfloor/policy.go:21-23`), lifetime 수락도
   같은 값을 뺀다(`internal/firstfloor/server.go:215-220`). 여유는 sender 경과로 줄이지 않는다.
 - `Policy.CompletionOverheadMS`, `Policy.EnvelopeSource`(`types.go:92-93`)는 삭제한다. 정책 ACK 비교
   (`kube/scheduler.go:1091-1121`)에서도 빠진다.

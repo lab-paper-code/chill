@@ -1,16 +1,15 @@
 package firstfloor
 
-import (
-	"math"
-
-	"gonum.org/v1/gonum/stat"
-)
+import "math"
 
 func serviceCost(b BatchProfile, percentile float64) float64 {
 	if len(b.ServiceSamplesMS) == 0 {
 		return math.Inf(1)
 	}
-	return stat.Quantile(percentile/100, stat.Empirical, b.ServiceSamplesMS, nil)
+	// stat.Quantile Empirical on sorted NaN-free samples (validatePolicy and
+	// the replay sort them): the first i with i+1 >= p*n.
+	x := b.ServiceSamplesMS
+	return x[max(0, int(math.Ceil(percentile/100*float64(len(x))))-1)]
 }
 
 // RemainingSLOMS uses frozen sender and native elapsed spans, never remote UTC.
