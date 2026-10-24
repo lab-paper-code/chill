@@ -156,5 +156,6 @@ func testOptions(directory string) options {
 		endPath:          filepath.Join(directory, "measurement-end"),
 		metricResultPath: filepath.Join(directory, "metric-result.json"), startWaitTimeout: time.Second,
 		endWaitTimeout: time.Second, maxEvents: 100, runtimeFailedPath: filepath.Join(directory, "runtime-failed"),
+		maxResultBytes: 8 << 20,
 	}
 }

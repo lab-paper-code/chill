@@ -69,6 +69,17 @@ test("fixed-chill-server relay enforces path, origin, body and credential bounda
   }
 })
 
+test("approved long inference lifetime keeps delivery without enlarging metadata budgets", () => {
+  const config = serverConfig({
+    CHILL_BASE_URL: "https://chill.example", CHILL_NAMESPACE: "research", CHILL_SYSTEM_NAME: "chill",
+    CHILL_INFER_TIMEOUT_MS: "129000",
+  })
+  assert.equal(config.inferTimeoutMs, 129000)
+  assert.equal(relayPlan("POST", ["v1", "workloads", "smol", "infer"], "", config).timeoutMs, 139000)
+  assert.equal(relayPlan("GET", ["v1", "models"], "", config).timeoutMs, 10000)
+  assert.equal(relayPlan("PUT", ["v1", "models", "smol"], "", config).timeoutMs, 60000)
+})
+
 test("scheduler consumer routes enforce exact methods and bounded observation queries", () => {
   const config = serverConfig({
     CHILL_BASE_URL: "https://chill.example", CHILL_NAMESPACE: "research", CHILL_SYSTEM_NAME: "chill",

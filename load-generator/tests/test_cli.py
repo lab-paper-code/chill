@@ -120,6 +120,27 @@ class ReplayTest(unittest.TestCase):
 
         self.assertEqual(3, len(output.getvalue().splitlines()))  # sent at 0, 0.4 and 0.8 s
 
+    def test_closed_loop_refills_until_duration_and_keeps_final_response(self) -> None:
+        now = [0]
+
+        class SlowClient(FakeClient):
+            def infer(self, workload, inputs):
+                now[0] += 400_000_000
+                return super().infer(workload, inputs)
+
+        output = io.StringIO()
+        replay(
+            [("q1", {"image": b"a"}), ("q2", {"image": b"b"})],
+            workload="vqa", rate=None, duration=1, workers=1, arrivals="closed-loop",
+            new_client=SlowClient, out=output, clock_ns=lambda: now[0],
+            sleep=lambda _: self.fail("closed-loop must not wait for an arrival schedule"),
+        )
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(["q1", "q2", "q1"], [row["record"] for row in rows])
+        self.assertEqual([0, 400_000_000, 800_000_000], [row["scheduledOffsetNs"] for row in rows])
+        self.assertTrue(all(row["status"] == 200 for row in rows))
+        self.assertEqual(1_200_000_000, now[0])
+
     def test_poisson_arrivals_repeat_per_seed_and_average_one_over_rate(self) -> None:
         offsets = arrival_offsets_ns("poisson", 50, 200, 7)
         self.assertEqual(offsets, arrival_offsets_ns("poisson", 50, 200, 7))
@@ -151,3 +172,37 @@ class MainTest(unittest.TestCase):
                 ])
 
         self.assertEqual(3, run.call_args.kwargs["workers"])
+
+    def test_closed_loop_derives_socket_budget_and_forwards_lifetime(self) -> None:
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "q1").mkdir()
+            (root / "q1" / "image").write_bytes(b"jpeg")
+            token = root / "token"
+            token.write_text("secret")
+            args = [
+                "replay", "--endpoint", "https://chill.example", "--token-file", str(token),
+                "--workload", "smol", "--dataset-dir", str(root), "--fields", "image",
+                "--arrivals", "closed-loop", "--workers", "2", "--duration", "420",
+                "--request-lifetime", "129",
+            ]
+            with patch("chill_loadgen.cli.WorkloadHTTPClient") as client, patch("chill_loadgen.cli.replay") as run:
+                self.assertEqual(0, main(args))
+                self.assertEqual(129.01, client.call_args.kwargs["timeout_seconds"])
+                self.assertEqual(129, client.call_args.kwargs["request_lifetime_seconds"])
+                self.assertIsNone(run.call_args.kwargs["rate"])
+                self.assertEqual("closed-loop", run.call_args.kwargs["arrivals"])
+            for extra in (["--timeout", "129"], ["--rate", "10"]):
+                with self.subTest(extra=extra), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    main(args + extra)
+
+    def test_open_loop_requires_rate_and_rejects_nonfinite_values(self) -> None:
+        for extra in ([], ["--rate", "inf"], ["--rate", "1", "--duration", "nan"]):
+            with self.subTest(extra=extra), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main([
+                    "replay", "--endpoint", "https://chill.example", "--token-file", "/unused",
+                    "--workload", "vqa", "--dataset-dir", "/unused", "--fields", "image",
+                    "--duration", "1",
+                ] + extra)

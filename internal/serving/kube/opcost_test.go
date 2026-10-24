@@ -78,7 +78,8 @@ func beoRoot(name, node, phase string) *edge.BatchEnergyOptimization {
 func opcostRoot(name string, created time.Time, steps ...edge.OperationCostStep) *edge.OperationCostMeasurement {
 	return &edge.OperationCostMeasurement{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: name, UID: types.UID(name + "-uid"), CreationTimestamp: meta.NewTime(created)},
 		Spec: edge.OperationCostMeasurementSpec{Node: "node", Steps: steps, Observation: edge.MeasurementObservationSpec{IntervalMilliseconds: 1000, RequestTimeoutMilliseconds: 800,
-			MaximumOperationSeconds: 900, MaximumBoundaryDistanceMilliseconds: 1500, MinimumCoverage: "0.9", MaximumGapMilliseconds: 3000}}}
+			MaximumOperationSeconds: 900, MaximumBoundaryDistanceMilliseconds: 1500, MinimumCoverage: "0.9", MaximumGapMilliseconds: 3000,
+			Timing: &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1.0339932335", MaximumRequestSeconds: "0.248723980", MaximumReceiptGapSeconds: "0.325263383", Source: "completed 120s empirical observation"}}}}
 }
 
 func lane() []edge.OperationCostStep {
@@ -119,8 +120,8 @@ func TestOperationCostRunsDeclaredStepsInOrder(t *testing.T) {
 	if prepare.Prepare == nil || !strings.HasPrefix(prepare.Prepare.Instance.Profile.ID, "chill-system/beo/") || remove.Instance != "pod-uid/containerd://prepared" || idle.IdleDuration != 120*time.Second {
 		t.Fatalf("prepare %+v remove %q idle %s", prepare.Prepare, remove.Instance, idle.IdleDuration)
 	}
-	if idle.Sampling.MaxEvents != 902 || idle.Coverage.MinimumCoverage != 0.9 {
-		t.Fatalf("sampling %+v coverage %+v", idle.Sampling, idle.Coverage)
+	if idle.OperationBudget != 900*time.Second || idle.Sampling.Duration != 906015961194*time.Nanosecond || idle.Sampling.MaxEvents != 909 || idle.Timing == nil || idle.Timing.ChangeIntervalP95Seconds != "1.0339932335" || idle.Coverage.MinimumCoverage != 0.9 {
+		t.Fatalf("sampling %+v coverage %+v timing %+v budget %s", idle.Sampling, idle.Coverage, idle.Timing, idle.OperationBudget)
 	}
 }
 
@@ -227,5 +228,58 @@ func TestOperationCostWaitsForTheCatalog(t *testing.T) {
 	o.admit()
 	if o.holder() != "" || o.admission(m) != "" || o.admission(next) != "" {
 		t.Fatalf("catalog lag did not hold the queue: holder %q", o.holder())
+	}
+}
+
+func TestOperationCostContinuesAcceptedHighUncertaintySteps(t *testing.T) {
+	o := newOpcostHarness(t)
+	measure := o.controller.measureStep
+	o.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
+		record, receipt, err := measure(ctx, config, request)
+		nominal, uncertainty := 1.0, 100.0
+		record.WallJoules, record.EnergyUncertaintyJoules = &nominal, &uncertainty
+		return record, receipt, err
+	}
+	m := opcostRoot("uncertain", time.Now(), lane()...)
+	// New requests need neither a coverage fraction nor a boundary-distance veto.
+	m.Spec.Observation.MinimumCoverage = ""
+	m.Spec.Observation.MaximumBoundaryDistanceMilliseconds = 0
+	o.create(m)
+	o.admit()
+	if status := o.status(m); status.Phase != edge.MeasurementPhaseComplete || len(status.Steps) != len(lane()) || len(o.measured) != len(lane()) {
+		t.Fatalf("valid high-relative-error step stopped the sequence: %+v", status)
+	}
+	if o.measured[3].Operation.Instance != "pod-uid/containerd://prepared" {
+		t.Fatal("uncertain accepted prepare lost its actual physical remove target")
+	}
+}
+
+func TestOperationCostMissingTimingFailsBeforePhysicalSteps(t *testing.T) {
+	o := newOpcostHarness(t)
+	m := opcostRoot("missing-timing", time.Now(), lane()...)
+	m.Spec.Observation.Timing = nil
+	o.create(m)
+	o.admit()
+	if status := o.status(m); status.Phase != edge.MeasurementPhaseFailed || len(o.measured) != 0 || o.holder() != "" {
+		t.Fatalf("missing timing left an active or fabricated measurement: %+v", status)
+	}
+}
+
+func TestOperationCostStopsOnActualOperationFailure(t *testing.T) {
+	o := newOpcostHarness(t)
+	measure := o.controller.measureStep
+	o.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
+		record, receipt, err := measure(ctx, config, request)
+		if request.Operation.Kind == operationPrepare {
+			record.Verdict = operationFailed
+			err = fmt.Errorf("physical preparation failed")
+		}
+		return record, receipt, err
+	}
+	m := opcostRoot("physical-failure", time.Now(), lane()...)
+	o.create(m)
+	o.admit()
+	if status := o.status(m); status.Phase != edge.MeasurementPhaseFailed || len(status.Steps) != 2 || len(o.measured) != 2 {
+		t.Fatalf("actual failure did not terminate sequence: %+v", status)
 	}
 }

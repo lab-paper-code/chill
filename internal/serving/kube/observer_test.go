@@ -520,9 +520,12 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	requestID := "request-1"
+	id := "pod-uid/containerd://actual"
 	for _, event := range []serving.RequestEvent{
 		{RequestID: requestID, WorkloadName: definition.Name, WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: "received", At: now, ReceivedAt: now},
 		{RequestID: requestID, WorkloadName: definition.Name, WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: "accepted", At: now, ReceivedAt: now},
+		{RequestID: requestID, WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: "assigned", At: now, ReceivedAt: now,
+			Assignment: &serving.Assignment{Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Instance: id, DispatchedAt: now}},
 		{RequestID: requestID, WorkloadName: definition.Name, WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: "response_finished", At: now.Add(time.Millisecond), ReceivedAt: now, ElapsedNanos: int64(time.Millisecond), Outcome: "completed"},
 	} {
 		if err := manager.observationLog.RequestEvent(event); err != nil {
@@ -538,7 +541,6 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 		lines = append(lines, "CHILL_PROGRESS "+string(data))
 	}
 	lines = append(lines, `CHILL_PROGRESS {"requestID":"request-1","phase":"fake"}`)
-	id := "pod-uid/containerd://actual"
 	stream := io.NopCloser(strings.NewReader(strings.Join(lines, "\n") + "\n"))
 	observer := manager.observer
 	observer.mu.Lock()
@@ -551,13 +553,36 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(result.Requests) != 1 {
+		t.Fatalf("native replay duplicated the HTTP request: %+v", result.Requests)
+	}
 	for _, row := range result.Requests {
-		if row.QueuedNanos != nil || row.RunningNanos != nil || row.ExecutedNanos != nil {
+		if row.QueuedNanos != nil || row.RunningNanos != nil || row.ExecutedNanos != nil ||
+			row.NativeQueuedAt != nil || row.NativeRunningAt != nil || row.NativeFinishedAt != nil || row.NativeExecutionComplete {
 			t.Fatalf("settled request gained replayed progress: %+v", row)
 		}
 	}
 	if result.Outcomes["completed"] != 1 {
 		t.Fatalf("response outcome changed: %+v", result)
+	}
+	// The runtime no longer owns the Call, but the response row is still open.
+	// Preserve all physical evidence separately without fabricating HTTP stages.
+	nativeRows := 0
+	_, err = manager.observationLog.ScanOccupancyRows(definition.UID, "node-uid", now.Add(-time.Second), now.Add(time.Second), func(row serving.RequestRow) {
+		if row.Kind != serving.RequestRowNative {
+			return
+		}
+		nativeRows++
+		if row.RequestID != requestID || row.Instance != id || row.QueuedNanos != nil ||
+			row.RunningNanos != nil || row.ExecutedNanos != nil || !row.ReceivedAt.IsZero() {
+			t.Fatalf("native supplement invented legacy HTTP evidence: %+v", row)
+		}
+		if row.NativeQueuedAt == nil && row.NativeRunningAt == nil && row.NativeFinishedAt == nil {
+			t.Fatalf("native supplement lost direct physical evidence: %+v", row)
+		}
+	})
+	if err != nil || nativeRows != 3 {
+		t.Fatalf("unknown-runtime physical evidence lost: rows=%d err=%v", nativeRows, err)
 	}
 }
 

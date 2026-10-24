@@ -103,6 +103,27 @@ class WorkloadHTTPClientTest(unittest.TestCase):
         connection_type.assert_not_called()
 
     @patch("chill_loadgen.http_client.HTTPSConnection")
+    def test_request_lifetime_header_and_independent_socket_budget(self, connection_type: Mock) -> None:
+        connection = connection_type.return_value
+        connection.sock = None
+        client = WorkloadHTTPClient(
+            "https://chill.example", bearer_token="token",
+            timeout_seconds=129.01, request_lifetime_seconds=129,
+        )
+        client.infer("smol", {"question": b"what?"})
+        self.assertEqual(
+            "129.000000000s",
+            connection.request.call_args.kwargs["headers"]["X-Chill-Request-Timeout"],
+        )
+        self.assertEqual(129.01, connection_type.call_args.kwargs["timeout"])
+        for lifetime in (0, -1, float("nan"), float("inf"), True, 130, 1e-10):
+            with self.subTest(lifetime=lifetime), self.assertRaisesRegex(ValueError, "request_lifetime_seconds"):
+                WorkloadHTTPClient(
+                    "https://chill.example", bearer_token="token",
+                    timeout_seconds=130, request_lifetime_seconds=lifetime,
+                )
+
+    @patch("chill_loadgen.http_client.HTTPSConnection")
     def test_rejects_unsafe_identity_and_non_sample_input_before_sending(
         self, connection_type: Mock
     ) -> None:

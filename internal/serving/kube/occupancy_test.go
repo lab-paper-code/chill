@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
-	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,10 +21,10 @@ import (
 )
 
 // occupancyRows are the final rows of a B=1 instance whose batches start
-// every gap after a warmup of slower batches; skip drops the rows of batch IDs.
-func occupancyRows(n int, gap time.Duration, skip ...uint64) []serving.RequestRow {
+// every gap after a warmup of slower batches.
+func occupancyRows(n int, gap time.Duration) []serving.RequestRow {
 	at := time.Unix(1000, 0)
-	var rows []serving.RequestRow
+	rows := make([]serving.RequestRow, 0, n)
 	start := at
 	for id := uint64(1); id <= uint64(n); id++ {
 		step := gap
@@ -32,19 +32,21 @@ func occupancyRows(n int, gap time.Duration, skip ...uint64) []serving.RequestRo
 			step = 2 * gap // warmup
 		}
 		start = start.Add(step)
-		if slices.Contains(skip, id) {
-			continue
-		}
 		received := start.Add(-gap)
 		running, queued, executed := int64(gap), int64(time.Millisecond), int64(gap)+int64(27790*time.Microsecond)
-		rows = append(rows, serving.RequestRow{Outcome: "completed", BatchID: id, ReceivedAt: received, RunningNanos: &running, QueuedNanos: &queued, ExecutedNanos: &executed})
+		ready, finished := received.Add(time.Duration(queued)), received.Add(time.Duration(executed))
+		runningAt := start
+		rows = append(rows, serving.RequestRow{Kind: "final", RequestID: strconv.FormatUint(id, 10), Instance: "pod/container",
+			Outcome: "completed", BatchID: id, BatchSize: 1, ExecutionComplete: true, ReceivedAt: received,
+			RunningNanos: &running, QueuedNanos: &queued, ExecutedNanos: &executed,
+			NativeQueuedAt: &ready, NativeRunningAt: &runningAt, NativeFinishedAt: &finished, NativeExecutionComplete: true, NativeOutcome: "completed"})
 	}
 	return rows
 }
 
 func TestMeasureOccupancyReproducesRasp5(t *testing.T) {
 	gap := time.Duration(math.Round(1e9 / 26.88))
-	rows := occupancyRows(400, gap, 50, 51, 52)
+	rows := occupancyRows(400, gap)
 	// Warmup covers the ten slower batches.
 	measure := func(rows []serving.RequestRow, warmup, duration time.Duration) DispatchOccupancyRecord {
 		w := DispatchOccupancyRecord{Batch: 1, ProfileMeanNanos: 27.79e6}
@@ -62,10 +64,11 @@ func TestMeasureOccupancyReproducesRasp5(t *testing.T) {
 	for i := range rows {
 		late := int64(32790 * time.Microsecond)
 		rows[i].QueuedNanos = &late
+		at := rows[i].ReceivedAt.Add(time.Duration(late))
+		rows[i].NativeQueuedAt = &at
 	}
-	// Each batch then waits 5 ms after it ends for its next request; the
-	// skipped batches 50-52 leave 296 of the 300 pairs.
-	if w = measure(rows, 20*gap, 300*gap); math.Abs(w.IdleFraction-296*5e6/(300*float64(gap))) > 1e-4 {
+	// Each batch then waits 5 ms after it ends for its next request.
+	if w = measure(rows, 20*gap, 300*gap); math.Abs(w.IdleFraction-300*5e6/(300*float64(gap))) > 1e-4 {
 		t.Fatalf("idle fraction %v", w.IdleFraction)
 	}
 	if w = measure(rows[:3], 0, time.Minute); w.Batches != 3 {
@@ -81,6 +84,8 @@ func TestMeasureOccupancyCountsIdleTime(t *testing.T) {
 	for i := range rows {
 		if rows[i].BatchID > 5000 {
 			rows[i].ReceivedAt = rows[i].ReceivedAt.Add(140 * time.Second)
+			q, r, f := rows[i].NativeQueuedAt.Add(140*time.Second), rows[i].NativeRunningAt.Add(140*time.Second), rows[i].NativeFinishedAt.Add(140*time.Second)
+			rows[i].NativeQueuedAt, rows[i].NativeRunningAt, rows[i].NativeFinishedAt = &q, &r, &f
 		}
 	}
 	w := DispatchOccupancyRecord{Batch: 1, ProfileMeanNanos: 27.79e6}

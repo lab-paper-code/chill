@@ -10,6 +10,7 @@ func TestOptionsValidateRequiredBindings(t *testing.T) {
 	valid := options{
 		runConfig:        `{}`,
 		startWaitTimeout: time.Minute, endWaitTimeout: time.Minute, maxEvents: 100,
+		maxResultBytes: 8 << 20,
 	}
 	if err := valid.validate(); err != nil {
 		t.Fatal(err)
@@ -27,5 +28,12 @@ func TestOptionsValidateRequiredBindings(t *testing.T) {
 	valid.maxEvents = 0
 	if err := valid.validate(); err == nil || !strings.Contains(err.Error(), "supplied by the Job") {
 		t.Fatalf("expected missing event budget rejection, got %v", err)
+	}
+}
+
+func TestOptionsRequireFrozenResultCapacity(t *testing.T) {
+	opts := options{runConfig: `{}`, startWaitTimeout: time.Second, endWaitTimeout: time.Second, maxEvents: 100}
+	if err := opts.validate(); err == nil || !strings.Contains(err.Error(), "maximum result bytes") {
+		t.Fatalf("missing result capacity accepted: %v", err)
 	}
 }

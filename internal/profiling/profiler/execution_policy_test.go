@@ -1,9 +1,11 @@
 package profiler
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"sigs.k8s.io/yaml"
 )
@@ -20,8 +22,8 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	if plan.Policy != testConfiguredActivePolicy || plan.PolicyVersion != testConfiguredActivePolicy {
 		t.Fatalf("unexpected policy identity: %#v", plan)
 	}
-	if plan.MaxMetricEvents != 33 {
-		t.Fatalf("MaxMetricEvents = %d, want 33", plan.MaxMetricEvents)
+	if plan.MaxMetricEvents != 34 {
+		t.Fatalf("MaxMetricEvents = %d, want 34", plan.MaxMetricEvents)
 	}
 	if plan.ActiveDeadline != 211*time.Second || plan.AttemptTimeout != 181*time.Second {
 		t.Fatalf("unexpected timing envelope: %#v", plan)
@@ -147,4 +149,54 @@ func addWorkloadObservation(config *profilingrun.RunConfig) {
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" +
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	config.Workload = profilingrun.CurrentWorkloadContract()
+}
+
+func TestCaptureWatchdogAlignsEventsResultAndOuterEnvelopes(t *testing.T) {
+	config := currentExecutionPolicyTestRunConfig(t)
+	config.Measurement.DurationSeconds = 600
+	// 1160s is the explicit frozen-runtime batch envelope when the search can
+	// reach a batch size with no completed empirical tail yet; not a measured tail.
+	config.Metrics.DurationSeconds = 600 + 1160 + 2 // final-read/coordination allowance
+	config.Metrics.IntervalMilliseconds = 1000
+	config.Metrics.TimeoutMilliseconds = 500
+	frozen, err := FreezeConfiguredExecutionPolicy(executionPolicyCatalogFixture(t), config, validExecutionPolicySource())
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen.Policy.ObserverReadyTimeoutSeconds = 1160
+	frozen.Policy.ObserverStartOverheadSeconds = 1160
+	frozen.Policy.AttemptTimeoutOverheadSeconds = 1235
+	frozen.Policy.ActiveDeadlineOverheadSeconds = 1265
+	plan, err := DeriveExecutionPlan(config, frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.MetricObservationTimeout != 1762*time.Second || plan.MaxMetricEvents != 1765 ||
+		plan.AttemptTimeout != 2997*time.Second || plan.ActiveDeadline != 3027*time.Second ||
+		plan.MetricResultTimeout != 1192*time.Second {
+		t.Fatalf("misaligned capture envelope: %+v", plan)
+	}
+	// Serialized capacity evidence uses a representative fully typed sample at
+	// every admitted event. Source errors remain bounded by the result writer;
+	// this calculation is not a worst-case bound on arbitrary error strings/RSS.
+	available, active, latched := true, false, false
+	counter, temperature := uint64(1234), 80.5
+	start := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC)
+	result := metricobserver.Result{Source: metricobserver.SourceIdentity{Kind: config.Metrics.SourceKind, Endpoint: config.Metrics.Endpoint, Metric: config.Metrics.PowerMetric}, StartedAt: start}
+	result.Samples = make([]metricobserver.Sample, plan.MaxMetricEvents)
+	for i := range result.Samples {
+		result.Samples[i] = metricobserver.Sample{ObservedAt: start.Add(time.Duration(i) * time.Second), Watts: 123.456, RequestLatencySeconds: .248723980,
+			Thermal: &metricobserver.ThermalReading{ObservationAvailable: &available, Active: &active, Latched: &latched, CPUCoreThrottleEvents: &counter, CPUPackageThrottleEvents: &counter, MaximumTemperatureCelsius: &temperature}}
+	}
+	result.EndedAt = result.Samples[len(result.Samples)-1].ObservedAt.Add(time.Millisecond)
+	result.Summary = metricobserver.Summarize(result)
+	payload, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(payload)) > plan.MaxMetricResultBytes {
+		t.Fatalf("representative %d-event result=%d exceeds %d", plan.MaxMetricEvents, len(payload), plan.MaxMetricResultBytes)
+	}
+	t.Logf("watchdog=%s events=%d/%d representativeJSON=%d/%d observerMemoryLimit=%d attempt=%s Job=%s",
+		plan.MetricObservationTimeout, plan.MaxMetricEvents, frozen.Policy.MaxMetricEvents, len(payload), plan.MaxMetricResultBytes, plan.ObserverMemoryLimitBytes, plan.AttemptTimeout, plan.ActiveDeadline)
 }

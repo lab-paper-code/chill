@@ -87,7 +87,7 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 		return fmt.Errorf("construct execution evidence finalizer: %w", err)
 	}
 	reconciler, err := profilercontroller.NewRunReconciler(
-		mgr.GetClient(), resolver, jobs, finalizer,
+		mgr.GetClient(), shared.reader, resolver, jobs, finalizer,
 	)
 	if err != nil {
 		return fmt.Errorf("construct ProfilingRun reconciler: %w", err)

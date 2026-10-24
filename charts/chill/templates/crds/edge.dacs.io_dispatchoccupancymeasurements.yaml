@@ -79,9 +79,43 @@ spec:
                 maxLength: 253
                 minLength: 1
                 type: string
+              collectionSeconds:
+                format: int32
+                minimum: 0
+                type: integer
+              conditions:
+                description: Conditions freezes the calculation inputs, coefficients
+                  and identities.
+                properties:
+                  inputsJSON:
+                    type: string
+                  maximumIdleNanosPerRequest:
+                    format: int64
+                    type: integer
+                  minimumCycles:
+                    format: int32
+                    type: integer
+                  profileID:
+                    type: string
+                  waitingBatches:
+                    format: int32
+                    type: integer
+                type: object
+              deliveryMarginMillis:
+                format: int32
+                minimum: 0
+                type: integer
+              drainSeconds:
+                format: int32
+                minimum: 1
+                type: integer
               durationSeconds:
                 format: int32
                 minimum: 60
+                type: integer
+              jobSetupSeconds:
+                format: int32
+                minimum: 0
                 type: integer
               maximumIdleFraction:
                 description: |-
@@ -100,14 +134,33 @@ spec:
                 maxLength: 253
                 minLength: 1
                 type: string
+              plannedElapsedSeconds:
+                format: int32
+                maximum: 3600
+                minimum: 1
+                type: integer
+              preparationSeconds:
+                format: int32
+                minimum: 1
+                type: integer
               rateFactor:
-                description: RateFactor multiplies the profile throughput at B into
-                  the offered rate.
+                description: RateFactor applies only to legacy open-loop measurements.
                 pattern: ^[0-9]+(\.[0-9]+)?$
                 type: string
                 x-kubernetes-validations:
                 - message: rateFactor must be at least 1.2
                   rule: double(self) >= 1.2
+              requestLifetimeSeconds:
+                format: int32
+                minimum: 1
+                type: integer
+              supplyMode:
+                description: SupplyMode selects fixed outstanding supply without changing
+                  E5 arrivals.
+                enum:
+                - closed-loop
+                - poisson
+                type: string
               warmupSeconds:
                 description: WarmupSeconds are excluded from the start of the window.
                 format: int32
@@ -131,7 +184,6 @@ spec:
             - maximumIdleFraction
             - minimumBatches
             - node
-            - rateFactor
             - warmupSeconds
             - workers
             - workload

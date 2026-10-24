@@ -158,6 +158,59 @@ func TestCostEvidenceIgnoresNonAcceptedAttempts(t *testing.T) {
 	}
 }
 
+func TestCostEvidenceProjectsUncertainAcceptedEnergyWithoutPrecisionRejection(t *testing.T) {
+	at := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC)
+	objects := &costTestObjects{objects: map[string][]byte{}, opens: map[string]int{}}
+	for _, kind := range []string{operationPrepare, operationIdle} {
+		_, raw := costTestRecord(t, kind, "fixed", at)
+		var record OperationMeasurement
+		if err := json.Unmarshal(raw, &record); err != nil {
+			t.Fatal(err)
+		}
+		record.Request.Operation.Kind, record.Result.Operation.Kind = kind, kind
+		record.Request.Timing = &edgev1alpha1.MeasurementTimingSpec{
+			ChangeIntervalP95Seconds: "0.5", MaximumRequestSeconds: "0.25", MaximumReceiptGapSeconds: "0.25", Source: "approved-observation",
+		}
+		// New measurements have real expanded support, not a precision or
+		// nominal-coverage admission threshold. This slope gives 15 +/- 10 J.
+		record.Request.Coverage = powerwindow.Policy{MaximumGap: time.Second}
+		start := record.Result.StartedAt
+		record.Power.Samples = []metricobserver.Sample{
+			{ObservedAt: start.Add(-time.Second), Watts: 0},
+			{ObservedAt: start, Watts: 10},
+			{ObservedAt: at, Watts: 20},
+			{ObservedAt: at.Add(time.Second), Watts: 30},
+		}
+		joules, bound, gap := 15.0, 10.0, 0.0
+		record.WallJoules, record.EnergyUncertaintyJoules = &joules, &bound
+		record.PhaseSensitivityJoules, record.MissingGapJoules = &bound, &gap
+		if kind == operationIdle {
+			record.MeanWatts = &joules
+			record.Result.Before = record.Result.Actual
+			record.StateObservations = []OperationState{record.Result.Before, record.Result.Actual}
+		}
+		raw, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		objects.objects[OperationMeasurementKey(record.Request.Operation)] = raw
+	}
+	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().Build()}, objects, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := evidence.Refresh(context.Background(), nil, []MeterDeclaration{costTestMeter}, nil)
+	if err != nil || len(view.Issues) != 0 || len(view.Costs) != 1 || len(view.Baselines) != 1 {
+		t.Fatalf("physically valid high-B records were rejected: %+v %v", view, err)
+	}
+	if cost := view.Costs[0]; cost.Trials[0].Joules != 15 || cost.Trials[0].EnergyUncertaintyJoules != 10 {
+		t.Fatalf("projection changed nominal or lost B: %+v", cost)
+	}
+	if baseline := view.Baselines[0]; baseline.Watts != 15 || baseline.WattsUncertainty != 10 {
+		t.Fatalf("idle B/window did not survive projection: %+v", baseline)
+	}
+}
+
 func TestCostEvidencePowerCostNeedsConfiguredMeterAndKeepsLoadedStatesApart(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {

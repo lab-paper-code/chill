@@ -15,13 +15,14 @@ type ExecutionPlan struct {
 	Policy        string
 	PolicyVersion string
 
-	ActiveDeadline          time.Duration
-	AttemptTimeout          time.Duration
-	ObserverReadyTimeout    time.Duration
-	ObserverStartTimeout    time.Duration
-	MetricResultTimeout     time.Duration
-	WorkloadEndFenceTimeout time.Duration
-	WorkloadResultTimeout   time.Duration
+	ActiveDeadline           time.Duration
+	AttemptTimeout           time.Duration
+	ObserverReadyTimeout     time.Duration
+	ObserverStartTimeout     time.Duration
+	MetricObservationTimeout time.Duration
+	MetricResultTimeout      time.Duration
+	WorkloadEndFenceTimeout  time.Duration
+	WorkloadResultTimeout    time.Duration
 
 	MaxLatencySamples      int
 	MaxInputBytes          int64
@@ -70,7 +71,7 @@ func DeriveExecutionPlan(
 	metricDuration := time.Duration(config.Metrics.DurationSeconds) * time.Second
 	settlingDuration := time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second
 	interval := time.Duration(config.Metrics.IntervalMilliseconds) * time.Millisecond
-	maxEvents64 := int64(metricDuration/interval) + 2
+	maxEvents64 := int64(metricDuration/interval) + 3 // immediate, deadline race, final read
 	if maxEvents64 < 1 || maxEvents64 > int64(policy.MaxMetricEvents) || maxEvents64 > int64(^uint(0)>>1) {
 		return ExecutionPlan{}, errors.New("metric observation schedule exceeds worker event capacity")
 	}
@@ -86,6 +87,7 @@ func DeriveExecutionPlan(
 		ObserverReadyTimeout: time.Duration(policy.ObserverReadyTimeoutSeconds) * time.Second,
 		ObserverStartTimeout: settlingDuration +
 			time.Duration(policy.ObserverStartOverheadSeconds)*time.Second,
+		MetricObservationTimeout: metricDuration,
 		MetricResultTimeout: metricDuration - time.Duration(config.Measurement.DurationSeconds)*time.Second +
 			time.Duration(policy.MetricResultOverheadSeconds)*time.Second,
 		WorkloadEndFenceTimeout: time.Duration(policy.WorkloadEndFenceTimeoutSeconds) * time.Second,

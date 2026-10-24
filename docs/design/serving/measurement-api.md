@@ -1,6 +1,6 @@
 # 선언형 operation 비용 측정과 디스패치 점유 측정
 
-캠페인은 CHILL 측정 API만으로 돈다. 측정마다 CR 하나를 만들고, [M3 admission](measurement-admission.md)이 노드마다 만든 순서대로 승인하며, ChillServer가 노드별 run으로 실행한다. host driver는 없다. 코드 근거는 `c539e14`, live 근거는 2026-10-21 snapshot이다. 실행으로 확인하지 않은 판단은 `[추론]`으로 표시한다.
+캠페인은 CHILL 측정 API를 사용한다. 노드별 승인과반환은 `/home/genesis1/ETRI/chill-pools/docs/design/serving/measurement-admission.md`를따른다. 사용자label2026-10-24의승인계약은 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/implementation-contract-20261024.txt`와통합제안이다. 아래계약의실제구현/단일배포/대표검증상태는 `/home/genesis1/ETRI/chill-pools/docs/handoff.md`의근거로확인한다. firstfloor runtime digest는고정하며원본raw/값/판정은보존한다.
 
 ## 0. 명세 변경 제안 (승인 묶음)
 
@@ -33,7 +33,7 @@
 
 | 필드 | 형식 |
 |---|---|
-| `spec.observation` | `intervalMilliseconds`, `requestTimeoutMilliseconds`(< interval), `maximumOperationSeconds`, `maximumBoundaryDistanceMilliseconds`, `minimumCoverage`(소수 문자열, (0, 1]), `maximumGapMilliseconds`. `MeasurementRequest`의 `sampling`(`MaxEvents = Duration/Interval + 2`, `metricobserver/observer.go:52`)과 `coverage`가 된다 |
+| `spec.observation` | `intervalMilliseconds`,`requestTimeoutMilliseconds`,`maximumOperationSeconds`,`maximumGapMilliseconds`와새실행에필수인 `timing`이다. timing은문자열 `changeIntervalP95Seconds`,`maximumRequestSeconds`,`maximumReceiptGapSeconds`,`source`로실측입력을고정한다. `minimumCoverage`,`maximumBoundaryDistanceMilliseconds`는기존기록원계약재현에사용한다. 새timing실행의gap은원구간보정근거다 |
 | `spec.steps[]` | 1-32개, `listType=map` key `name`. `name`(DNS label), `kind`(`power`, `prepare`, `idle`, `remove`). `power`는 `powerMode`, `prepare`와 `remove`는 `batchEnergyOptimization`(같은 namespace의 BEO 이름), `idle`은 `idleDurationSeconds`(≥ 1)만 갖는다(CEL) |
 | `status` | `phase`(`Measuring`, `Complete`, `Insufficient`, `Failed`), `reason`, `steps[]{name, key, verdict}` |
 
@@ -42,7 +42,21 @@
 2. 기존 `Measure`를 차례로 부른다. 기록 key, 형식, witness는 그대로다(`cost.go:33-35`). 단계가 끝날 때마다 `status.steps`에 key와 verdict를 더한다.
 3. 실패나 `Accepted`가 아닌 단계에서 멈추고 기존 순서 기록(`serving/operation-sequences/<UID>.json`)을 쓴다. 이어서 기존 반환이 돈다.
 
-결과: 모든 단계 `Accepted`면 `Complete`. 저장된 단계 기록이 `Accepted`가 아니면(coverage, `PowerChangedDuringMeasurement`) `Insufficient`와 그 기록의 reason. 거절(5장), 단계 실행 오류, ChillServer 재시작은 `Failed`와 거절 사유, 오류 첫 줄, `ChillServerRestart`다. 비용 수집(`CostEvidence.Refresh`)은 같은 prefix를 읽으므로 그대로이고, 끝나지 않은 순서의 기록은 `SequenceIncomplete`와 함께 쓰인다.
+결과: 실제operation/effect/격리/zero-serving-inference/원시구조/실제양bracket/확장support를통과한에너지는 `Accepted`다. 정밀도비율은보고전용이며step중단또는Insufficient gate로사용하지않는다. 동작실패/격리오류/실제boundary누락/invalidrecord와기존Failed수명주기는사유와부분근거를보존한다. 실제단계의유효에너지를기존cost흐름으로수집하며원래값/상태를별도계획상한으로대체하지않는다.
+
+### 2.1 전력 곡선과 민감도
+
+실제동작창[a,b]와기록된piecewise-linear전력곡선q에대해측정값은 `Ehat=∫[a,b]q(t)dt`다. `A=p95(전력값변화간격)+최대요청지연+최대유효수신gap`을원십진문자열로고정하며실행시간변환은합을nanosecond로올림한다. Gen3원합1.6079805965s/Plus원합4.518180026700001s다.6미측정Gen3의계열전이를명시하고동일값유지길이/추가1.25배수는사용하지않는다.
+
+새관측은[a−A,b+A]의실제표본을확보한다. `S=maxδ∈[−A,A]|∫[a,b]q(t+δ)dt−Ehat|`를모든knot/구간stationary극값에서정확계산한다. 상수전력S=0,상수offset을더해도S는같다. 실제실패/missed요청을포함하거나명시적maximumGap을넘은valid-to-valid원gap중확장support와교차한구간을선택해**원래전체구간폭**의합집합을한번계산한다. `G=이번record최대관측W×min(b−a,union길이)`, `B=S+G`다. gap폭clipping과gap별A재확장은없다. G는미관측전력이이번관측최대안에있다는경험적조건을명시한다.
+
+기록의선택수치 `energyUncertaintyJoules`,`phaseSensitivityJoules`,`missingGapJoules`는각B/S/G다. `energyUncertaintyRatio`는B/abs(Ehat)보고값이며Ehat=0또는nonfinite비율은생략/undefined로표시한다. `request.timing`과 `operationBudgetNanos`에조건을보존한다. B없는과거기록은원계약적분으로재현한다.10%indicator는상태판정에영향이없고민감도는센서교정/물리95%보장과구분한다.
+
+### 2.2 계획기 불확실성
+
+`OperationTrial.energyUncertaintyJoules`와 `NodeBaseline.wattsUncertainty=B/실제측정초`를기존costprojection에전달한다. nominal평균은유지한다. `SchedulerNodePlan.energyUncertaintyJoules`는chain민감도, `SchedulerCapacity.gainUncertaintyJoules`는실제minimumGain측정오차hurdle을표시한다.
+
+동일immutable reference+trial index의B/N은발생횟수와부호를누적하고keep−best에서동일근거를먼저상쇄한다. 서로다른결정론적evidence의잔여절대값은합산한다. payback뒤B전용minimumGain gate가같은상쇄계약으로측정오차hurdle과thresholdreason을판정한다. unloaded+Σ(loaded−unloaded)는unloaded계수1−instanceCount,정확loadedbaseline은계수1이다. target-baseline-delta복원은같은subtractednominal을한번더하고B는이미wall민감도이므로baselinebound를다시더하지않는다. minimumGain판정과nominal평균유지를함께검증한다.
 
 ## 3. DispatchOccupancyMeasurement (`occupancy`)
 
@@ -53,26 +67,37 @@
 | `spec.batchEnergyOptimization` | 잴 option의 BEO. 전력모드, runtime image, model은 그 profile의 `condition.powerMode`, `runtimeImage`, `logicalModel`이다 |
 | `spec.workload` | 요청 경로를 줄 Workload 이름. 그 Dataset의 `evaluation` 부분집합을 보낸다 |
 | `spec.batch` | 고정 배치 크기 B(≥ 1). 인스턴스를 `fixedBatchSize: B`로 준비한다(`SCH-35`) |
-| `spec.rateFactor` | 소수 문자열 ≥ 1.2. 보내는 요청률 = rateFactor × B / (profile 배치 B 평균 실행시간) |
-| `spec.warmupSeconds`, `durationSeconds`, `minimumBatches`, `maximumIdleFraction` | 창 앞에서 뺄 시간, 창 길이(≥ 60), 창 안 배치 수 하한, 유휴 시간 비율 상한(소수 문자열) |
-| `spec.workers` | load generator `--workers`. 큐가 차 있는 동안 열린 요청은 약 `maxQueueSize`개이므로 그 이상 |
+| `spec.supplyMode` | `closed-loop`고정outstanding공급과 `poisson`을구분한다. 승인d는closed-loop,기존E5 Poisson은유지한다. `workers=K`,waitingBatches=q이며계산입력은conditions에고정한다 |
+| `spec.warmupSeconds`,`durationSeconds`,`minimumBatches`,`maximumIdleFraction` | 계산부하준비W_load,본창T,표본N과idle계획비율f_plan이다. 하한60s/360s,계획cap3600s를사용한다 |
+| `spec.requestLifetimeSeconds`,`deliveryMarginMillis`,`drainSeconds`,`preparationSeconds`,`jobSetupSeconds`,`collectionSeconds`,`plannedElapsedSeconds` | profile/SLO/실제준비/batchtail/전달/수집예산에서계산하며plannedElapsedSeconds≤3600이다. lifetime L≥SLO와native count/decodedbytes공동조건을만족한다 |
+| `spec.conditions` | `profileID`,`inputsJSON`,`waitingBatches`,`maximumIdleNanosPerRequest`,`minimumCycles`로정확profile/모든입력/승인계수/계산q/idle1ms/필수cycle을불변고정한다 |
 | `status` | `phase`(2장과 같은 넷), `reason`, `powerMode`, `perRequestNanos`, `throughput`(소수 문자열, req/s), `result`(`ProfilingRunEvidenceReference`) |
 
 **실행.** 노드 run 하나가 다음을 차례로 한다. 모든 동작은 measurement 모드 `Operations`(taint toleration)다.
 1. 노드가 profile 모드가 아니면 2장의 방법(CR owner NodeActuation)으로 `ChangePower`한다. 비용으로 기록하지 않고, witness 구간은 이 단계 뒤에 시작한다.
 2. preparation을 `Owner = Workload`, `fixedBatchSize = B`로 prepare한다. owner가 있는 준비 Pod는 routing annotation `{<Workload UID>: 1}`을 받아 바로 그 Workload를 서빙한다(`operations.go:836-849`, `scheduler_test.go:421-425`). taint 노드에서도 같다 `[추론]`.
-3. load Job을 만들고 끝날 때까지 기다린다. 끝나면 `ObservationLog.Query(Workload UID, Job 시작, 지금, …)`(`observation_log.go:807`)의 final 행 중 그 노드의 행을 읽고, Job을 지운 뒤 record와 status를 쓴다. 이어서 기존 반환이 돈다. 측정 인스턴스는 반환의 `clearNode`가 노드의 다른 serving Pod와 함께 지운다.
+3. 계산된공급/수명/준비/본창/drain/수집예산으로loadJob을실행한다. 완료된nativebatch원장을기존JSONL/scanner의d전용집계로읽으며전체cohort배열/전체Query를만들지않는다. Job을정리하고전체조건/모든과학판정사유를record와status에기록한뒤기존반환을수행한다.
 
 **load Job.** release namespace의 `occupancy-<UID hash>`, label `chill.dacs.io/measurement-load: <Node UID>`.
-- `backoffLimit: 0`, `activeDeadlineSeconds` = warmup + duration + 120. run과 반환은 그 label의 Job을 `propagationPolicy: Background`로 지운다. 기본 삭제는 Pod를 남겨 반환 뒤에도 부하가 이어진다 `[추론: Kubernetes 기본값]`.
+- `backoffLimit:0`과명시Job유한예산을유지한다. deadline은jobSetup/warmup/window/physicaldrain/delivery/collection을함께포함한다. native실행은HTTP만료뒤계속될수있어미완료evidence를unknown으로보존한다. 반환은해당label의Job을Background삭제해부하Pod를정리한다.
 - `nodeName`은 ChillServer Pod의 노드(downward API `spec.nodeName`, env `NODE_NAME`)다. `nodeName`은 scheduler를 거치지 않아 NoSchedule taint를 보지 않는다. 그 노드는 gateway가 있는 노드라 부하가 다른 측정 노드의 전력에 섞이지 않는다.
 - init `dataset`은 Dataset image에서 `sh -ec 'cp -R "$1"/. /data/' -- <path>/evaluation`(preprocessor 전달과 같은 형태, `operations.go:411`)이다.
-- `load`는 `chill-load-generator` image의 `chill-loadgen replay --endpoint https://<fullname>-serving-entrypoint.<release ns>.svc:<port> --token-file <projected token> --ca-file /ca/tls.crt --workload <workload> --dataset-dir /data --fields <Workload Preprocessor의 spec.input.fields> --rate <요청률> --duration <warmup + duration> --arrivals poisson --seed 0 --workers <workers>`다. live 인증서는 자기 서명이고 SAN에 `.svc` 이름이 있으며 짧은 Service 이름은 검증에 실패한다. CA는 `servingEntrypoint.tls.secretName`의 `tls.crt` item만 projected volume으로 넣는다(`tls.key` 없음).
+- load는Workload/Dataset원시입력을공통TLSgateway로공급한다. 승인d는closed-loop K고정outstanding과L header/socket여유를사용하고E5 Poisson모드는유지한다. 실제FQDN/CA/projectedtoken과기존release SA를사용한다.
 - ServiceAccount는 `<fullname>-load-generator`, image는 `load-generator/`를 담은 `build/docker/load-generator.Dockerfile`이다. base는 Python 3.12로 고정한다. live 인증서에 Subject와 Authority Key Identifier가 없어 3.13 이상의 기본 strict 검증이 거절할 수 있다 `[추론]`.
 
-**계산.** 배치 시작 = `receivedAt + runningNanos`. 창 배치는 시작이 [첫 배치 시작 + warmup, 그 + duration]인 배치다. `e1.sql` 포화 표(`:26-37`)와 같은 식으로 X = (창 최대 batchID − 창 최소 batchID) × B / (두 배치의 시작 차이), `d = 1/X − mean(profile batches[B].durationNanos)/B`다. 창 배치마다 유휴 간격은 그 배치 행의 가장 늦은 `receivedAt + executedNanos`에서 다음 배치 행 중 가장 이른 `receivedAt + queuedNanos`(창 끝에서 자름)까지이고, 다음 요청이 먼저 왔으면 0이다. 유휴 비율 = 유휴 간격 합 / duration이다. 두 시각이 없는 쌍은 더하지 않는다. 창 안의 긴 멈춤 하나도 그 길이만큼 비율에 들어간다. `runningNanos`와 `queuedNanos`는 firstfloor 진행 로그가 늦게 와도 교환 결과의 `finished` 기록으로 채워지므로 PLC처럼 실행이 ms 단위인 요청도 배치로 센다([관측 분리 3.1절](observability-split.md#31-행)).
+**계산.** `d=연속native batch시작span/(physical cycles×B)−profileMean/B`의full d를유지한다. 물리batch는Node/Pod/container/BatchID와member를연결한다. readiness는B member의queued시각최대,actor대기는 `runningNanos−queuedNanos`다. 직접native timestamp와legacyoffset은별도로보존한다. HTTP실패를이유로이미실행한batch를제거하지않고compute gap전체를idle로빼지않는다.
 
-결과: 판정을 통과하면 `Complete`이고 d < 0도 그대로 기록한다. 창 배치 수 < `minimumBatches`, 유휴 비율 > `maximumIdleFraction`, witness 오류는 `Insufficient`와 `TooFewBatches <n>`, `NotSaturated <비율>`, `PowerChangedDuringMeasurement`이고 record를 쓴다. gateway가 포화를 막으면 `NotSaturated`로 드러난다. 거절(5장), prepare나 remove 오류, Job 실패나 시간 초과(`LoadFailed <Job 상태>`), ChillServer 재시작은 `Failed`이고 record가 없다.
+**공급과근거.** approved 상대계획정밀도1%,양측95%,여유1.25,idle기여1ms/요청을실측profile분산/SLO/준비aggregate에서N/K/L/창으로도출한다. physicalfinished→다음ready의보수idle상한과끝단/hole/누락native를함께평가한다. 필요한원근거가없으면unknown/Insufficient와모든관련사유를보존한다. native waitingcount/decodedbytes/lifetime의공동조건아래K를계산하며전체queue를채우는고정worker수는사용하지않는다.
+
+record.conditions는전체불변Spec이며reasons[]는해당사유전체를보존한다. `idleIdentified=false`일때 `idleUpperNanos`는알려진pair의부분보수합이며전체idle상한으로해석하지않는다. `idleNanosPerRequest`는동일physicalcycle/endpoints를사용한다. `cycleMeanNanos`,`cycleSDNanos`,`cycleRelativeHalfWidth`,`precisionTargetMet`는stationary-iid t근사보고정보다. 실제CI를새거절gate로쓰거나자동N변경을하지않고minimumN/물리완전성/unknown/idle과학gate를유지한다.
+
+RequestRow의 `nativeQueuedAt`,`nativeRunningAt`,`nativeFinishedAt`,`nativeExecutionComplete`,`nativeOutcome`,`nativeError`는직접actor근거이며legacyoffset/genericexecutionComplete와구분한다. HTTP완료뒤늦게받은native는 `kind:native` raw보충으로보존하고HTTP완료를추가하거나member를중복계수하지않는다. 전용scanner는missing identity/physicalbatch만compact집계하며전체finalQuery/cohort배열을생성하지않는다.
+
+결과: 판정통과는 `Complete`이며음수d도record에보존한다. minimumBatches/idle/물리근거/unknown/witness의모든해당사유는 `Insufficient`와record에남긴다. 거절/prepare/remove/Job/watchdog/재시작실패는기존 `Failed`수명주기다. 초기Measuring patch실패와load전power/prepare/Job생성/watchdog실패의terminal status는취소된run과분리한최대30s publication context로저장한다. 실제handback은parent context로수행하고상태저장예산이측정창/조건을확대하지않는다.
+
+**유효 근거와 기존 결과.** d는 firstfloor 시계의 배치 간격으로 계산한다. 큐 상태의 근거는 firstfloor actor 대기(`runningNanos − queuedNanos`)와 물리 batch 연속성이다. native `queueMS`는 ingress가 겹쳐 포함된 지표로 해석한다. 최신 mobilenet d 8개(`genesis2-941`, `genesis3-941`, `jetson-nano-941`, `jetsono-941`, `jetsonx-942`, `lattepanda-941`, `orangepi-942`, `rasp5-941`)는 물리 batch 재계산에서 틈 0과 저장 d와의 차이 0.0006ms 이내를 확인하여 유지한다. 과거의 다른 기록은 연구 표에 사용할 때 같은 방법으로 검증한다. `rasp5-944`는 진단 전용으로 보존하며 d 채택 대상에서 제외한다.
+
+**승인된 실행.** 조건계수1%/95%/1.25/idle1ms/360+60s/cap3600과d/lifetime/창구현/단일배포/대표검증은승인되었다. 최신mobilenetCPU8개를유지하고D01대표대조/SmolD20검증후(a)를진행한다. PLC d는배포2뒤,rasp5-944는진단전용이다. 실제실행은통합gates와CampaignOps fresh안전확인을따른다.
 
 ## 4. 계획기의 d 수집
 
@@ -80,6 +105,17 @@
 - 결과는 `serving.DispatchOccupancy{node{name, uid}, powerMode, runtimeImage, model, perRequestNanos, source}` 목록이고 source는 record key다. `perRequestNanos`는 max(d, 0)이다(사용자 결정 A7). 음수 d는 record와 그 key로 보인다.
 - 목록은 `config.Costs`, `config.Baselines`처럼 controller 설정을 거쳐 snapshot `dispatchOccupancy`에 실린다(`kube/scheduler.go:493`). `dispatchOccupancy(i)`는 snapshot으로 옮기고 `i.Node.UID`, `i.Profile.Condition.PowerMode`, runtime image, model이 모두 같은 항목을 찾는다. 두 소비자 `NewCapacityInput`(`capacity.go:102`)과 재생(`scheduler_replay.go:564`)이 이것을 쓴다. 행 key가 항목을 담으므로 새 측정이 그 행을 다시 계산하게 한다.
 - 잰 적 없는 모드의 option은 `MissingDispatchOccupancy`다. 같은 노드, 모드, runtime image, model의 option끼리 d를 함께 쓴다(`analytic-planner.md:28`을 이렇게 고친다).
+
+### 4.1 observer와 coherent replacement
+
+`Observer.ObserveUntil(ctx,Request,end,onFirstSample)`는producer실제end까지수집한뒤real finalread를남긴다. Duration은유한watchdog,최대표본예산은floor(watchdog/interval)+3이다. standalone `--end-wait-timeout`은RunConfig.Metrics.DurationSeconds, `--max-result-bytes`는frozenpolicy.MaxMetricResultBytes를사용한다. 기존Observe를유지하며fixed nominal창끝과actualproducerend를구분한다.
+
+profiler의recorded Job존재는별도로주입한 `mgr.GetAPIReader`로조회한다. 실제API NotFound는ExecutionLost,transport오류는retry이며cache의일시NotFound로replacement를생성하지않는다. 새BEO annotation `chill.dacs.io/replaces-batch-energy-optimization`은같은namespace의원본이름을가리킨다. replacement가pending인동안에도원본의catalog사용을제외하며원본raw/status는보존한다. 대체는정상verifiedComplete와동일state/CPU/batch/exacttrial계약을충족한다.
+
+012/017는coherent새BEO를사용하고원trial임의선택/len≥3완화/status patch는없다. gate는actualend가nominal보다늦은local HTTP source와실제standalone실행파일을사용해tail/finalsample/event/resultbytes를확인한다. 이는통합검증담당이실행할check이며현재문서기록만으로PASS를주장하지않는다.
+
+017원본의Granted/Measuring은actualJob0에서도측정taint를보유한다. replacementannotation은catalog선택이며taint정리는첫새orangepi작업인 **stage3 D20직전** 수행한다. CampaignOps가fresh execution0/servingPod0/powerPending0/정확NodeUID/RV/holder와orphan-runtime안전정리뒤oldUID의stale `chill.dacs.io/measurement:NoSchedule`taint만제거한다. root/status/Runs/retainedJobs/raw/admission을보존하고stage4replacement는정상admission으로진입한다. 고정orangepi모드는유지하고자동release/recovery는없다.
+
 
 ## 5. M3 admission 변경
 
@@ -112,28 +148,32 @@
 | 대상 | 변경 | 처리 |
 |---|---|---|
 | CRD `operationcostmeasurements`, `dispatchoccupancymeasurements`, DeviceClass `powerModes[].onlineCPUs` | 새 kind `v1alpha1`, 선택 필드 | 기존 DeviceClass object 그대로 읽힌다 |
-| operation 측정 `serving-operation-measurement.v1alpha2`, 순서 `serving-operation-sequence.v1alpha1` | 그대로. 순서 ID가 CR UID | 기존 `seq-` 기록도 같은 reader로 읽힌다 |
-| `serving/dispatch-occupancy/<Node UID>/<CR UID>.json` | 새 불변 object `chill.dacs.io/dispatch-occupancy-measurement.v1alpha1`: `{node{name, uid}, powerMode, runtimeImage, model, profileID, batch, profileMeanNanos, offeredRate, window{start, end}, batches, throughput, perRequestNanos, idleFraction, loadJob{name, image}, isolation, verdict, reason, measuredAt}` | `PutImmutable` |
-| record `idleFraction`, spec `maximumIdleFraction` | 유휴 시간 비율(3장 계산) | 버전을 올리지 않는다. 배포 뒤 모든 노드와 모드의 d를 다시 재고, 계획기는 `measuredAt`이 가장 늦은 record를 쓴다 |
+| operation `serving-operation-measurement.v1alpha2`,순서 `serving-operation-sequence.v1alpha1` | 원형/원판정유지,새timing/별도B/S/G/보고비율선택필드 | timing없는과거Accepted는원적분재현,Insufficient소급승격없음 |
+| `serving/dispatch-occupancy/<Node UID>/<CR UID>.json` | 기존불변record에전체공급/시간/계수/identity조건과native과학판정사유보존 | PutImmutable,rawnative/legacy원천분리 |
+| record `idleFraction`,spec `maximumIdleFraction` | 물리batch/actor준비근거와idle기여상한,missing/holes/끝단unknown | 승인CPU8개보존과대표D01검증,모든모드일괄재측정없음 |
 | 설정 `dispatchOccupancy` | 삭제 | decode가 strict(`scheduler_service.go:118`)라 commit 8 배포에서 ConfigMap의 key를 같이 지운다 |
 | 판단 기록 `v1alpha5` | snapshot `dispatchOccupancy` 추가, `settings.dispatchOccupancy` 빠짐, 행 입력 항목에 `powerMode`와 node UID | 관측 reader는 strict가 아니어서 없는 필드를 빈 값으로, 옛 필드를 무시하고 읽으므로 버전을 올리지 않는다(`analytic-planner.md` 7장과 같은 처리) |
 
 ## 8. 캠페인 manifest
 
-캠페인은 lane 파일마다 `kubectl apply -f` 한 번이다. 노드끼리는 ChillServer의 노드 run이 동시에 돈다. 대기 순서는 `creationTimestamp`(1 s 해상도), 이름 순이므로 이름을 `<노드>-<세 자리 순번>-<내용>`으로 붙인다. 감시는 `kubectl get beo,idlebase,opcost,occupancy -w`와 annotation `chill.dacs.io/admission`이다. 아래는 `jetsono-010-plc-cuda-maxn` BEO(지금 BEO spec 그대로) 뒤에 같은 파일에 이어지는 두 루트다. d는 모드마다 재므로 다른 모드 단계에도 occupancy를 둔다.
+캠페인조건은 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/gen.py`가계산하고승인산출물은 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/phase-a/measurement-generalization-20261024/approved/`에둔다. d의N/K/L/준비/창/setup/collection과conditions.inputsJSON을함께고정하고cost는아래timing조건을사용한다. 실제apply는대표검증순서와CampaignOps번호/UTC통지및fresh안전확인을따른다. 아래는Gen3비용조건의형식예시다.
 
 ```yaml
-apiVersion: edge.dacs.io/v1alpha1
-kind: DispatchOccupancyMeasurement
-metadata: {name: jetsono-020-plc-occupancy-maxn, namespace: chill-system}
-spec: {node: jetsono, batchEnergyOptimization: jetsono-010-plc-cuda-maxn, workload: plc, batch: 1, rateFactor: "1.2", warmupSeconds: 60, durationSeconds: 360, minimumBatches: 120, maximumIdleFraction: "0.01", workers: 128}
----
 apiVersion: edge.dacs.io/v1alpha1
 kind: OperationCostMeasurement
 metadata: {name: jetsono-030-plc-cost-maxn, namespace: chill-system}
 spec:
   node: jetsono
-  observation: {intervalMilliseconds: 1000, requestTimeoutMilliseconds: 800, maximumOperationSeconds: 900, maximumBoundaryDistanceMilliseconds: 1500, minimumCoverage: "0.9", maximumGapMilliseconds: 3000}
+  observation:
+    intervalMilliseconds: 1000
+    requestTimeoutMilliseconds: 800
+    maximumOperationSeconds: 2250
+    maximumGapMilliseconds: 3000
+    timing:
+      changeIntervalP95Seconds: "1.0339932335"
+      maximumRequestSeconds: "0.24872398"
+      maximumReceiptGapSeconds: "0.325263383"
+      source: "/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/phase-a/measurement-generalization-20261024/meter-cadence/summary.json#nodes.genesis2; empirical Gen3 transfer"
   steps:
   - {name: up, kind: power, powerMode: MAXN}
   - {name: prepare, kind: prepare, batchEnergyOptimization: jetsono-010-plc-cuda-maxn}
@@ -177,10 +217,11 @@ exact-identity validation. Existing immutable records remain unchanged.
 | 5 | power, prepare, idle, remove, power 순서가 한 번 승인되고 key가 `<UID>.<n>.<name>`, status 단계 다섯, `Complete`, 단계 NodeActuation owner가 CR이고 반환 뒤 `measurement-invalid` 없음. 둘째 단계 `Insufficient`면 멈춤, 순서 기록, phase `Insufficient`. 재시작 뒤 terminal이 아닌 루트는 `Failed: ChillServerRestart`와 순서 기록, `Complete` 루트는 status 그대로 반환. `ProfileMissing`(없음, `NotComplete`, `Failed`, catalog issue), `NodeMismatch`, `ActuationNamespace`, `PowerModeUnknown` 거절과 다음 루트 승인. route 404 |
 | 7 | fake 행으로 X와 d(rasp5 26.88 req/s, profile 27.79 ms에서 9.41 ms), warmup 제외, 창 배치의 시작 차이로 나눔, batchID 차이 계산이 빠진 행에 무관, 유휴 시간 비율(창 안 140 s 멈춤 포함), `TooFewBatches`, `NotSaturated`, record의 `powerMode`. `BatchUnmeasured` 거절. Workload 요청이 taint 노드의 측정 인스턴스에 도달. Job spec(init, args의 `.svc` endpoint, `tls.crt` item만, `nodeName`, `backoffLimit` 0, deadline, label), Background 삭제 뒤 Pod 0, Job 실패 `LoadFailed`, 반환의 label Job 삭제. ChillServer 노드 루트와 occupancy의 상호 대기, 다른 노드 occupancy 둘 동시 실행 |
 | 8 | 같은 key의 두 record 중 최신, `Insufficient` 무시, d < 0이면 0과 source key, 다른 모드나 다른 Node UID의 record만 있으면 `MissingDispatchOccupancy`, 재생과 행이 같은 항목을 씀, `dispatchOccupancy` 있는 ConfigMap decode 거절 |
+| 승인bundle | 상수S=0/offset불변/내부stationary극값/원gapunion와cap/지원구간누락거절/zero비율undefined/10%초과validAccepted/oldAccepted재현,baseline상쇄와nominal불변, `TestCapacityOperationUncertaintyChangesMinimumGain`,실제lateproducerstandalone tail/finalsample/serializedbytes,recordedJob authoritativeNotFound/transport오류를통합검증 |
 | 전체 | `make lint test`, `make manifests generate`, `make helm-lint helm-template`(default와 `values-profiler.yaml`), `make dashboard-check`, `make test-loadgen` |
 
-실클러스터: rasp5 mobilenet q1 occupancy가 m4 r3의 d 9.41 ms와 κ 25.3을 재현하고, load Pod가 `.svc` 이름으로 TLS 검증을 통과한다. 이어서 live d 9개 occupancy를 동시에 돌린다. 그 뒤 lane 셋을 동시에 apply하고 노드별 순서, `NodeServing` 0, 재시작 한 번의 `ChillServerRestart`와 다음 루트 진행을 기록한다.
+실클러스터대표검증은승인된MNV D01의X/full d/runner/물리coverage와유지값대조,실제비용전체sequence의nominal/S/G/B/relative보고/identity/격리/minimumGain연결,SmolD20의공급과unknown판정이다. 이후(a)잔여를재개하며PLC d는배포2뒤다. 실제runtime digest고정과수집tail/physicalinstance정리및감시를함께확인한다. source/gates/live의완료는담당실제근거를기록한다.
 
-## 11. 사용자에게 묻는 것
+## 11. 캠페인 범위
 
-1. d를 모드마다 재면 Jetson의 occupancy가 모드 수만큼 는다(jetsono 4, jetsonx는 CPU 할당 가능한 6, jetson-nano 2 모드 × 노드의 runtime image와 model 수, 하나에 약 8분) `[추론]`. 모든 모드에서 잴까, 계획에 쓸 모드만 잴까? 재지 않은 모드의 option은 `MissingDispatchOccupancy`로 계획에서 빠진다.
+E5전(a)는Node당기준모드의필수profile/d/비용이다. (b)전력모드확장은E5완료뒤수행한다. 측정이없는모드의option은 `MissingDispatchOccupancy`로제외한다. firstfloor runtime digest는고정하고012/017원본보존/coherentreplacement와단일측정조건배포를유지한다. 사용자추가승인대기는없으며새실제경계가발생하면그부분의근거를보고한다.

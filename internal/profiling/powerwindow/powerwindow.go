@@ -74,8 +74,7 @@ func Integrate(window Window, policy Policy) (float64, error) {
 		if duration > policy.MaximumGap {
 			return 0, errors.New("maximum sample gap exceeds policy")
 		}
-		averageWatts := points[index-1].Watts/2 + points[index].Watts/2
-		segmentJoules := averageWatts * duration.Seconds()
+		segmentJoules := trapezoidJoules(points[index-1].Watts, points[index].Watts, duration.Seconds())
 		if math.IsNaN(segmentJoules) || math.IsInf(segmentJoules, 0) {
 			return 0, errors.New("power integral segment is non-finite")
 		}
@@ -85,4 +84,8 @@ func Integrate(window Window, policy Policy) (float64, error) {
 		}
 	}
 	return joules, nil
+}
+
+func trapezoidJoules(left, right, seconds float64) float64 {
+	return (left/2 + right/2) * seconds
 }

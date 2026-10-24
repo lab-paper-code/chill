@@ -1,11 +1,15 @@
 package kube
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
@@ -153,6 +157,175 @@ func TestIsolationRejectsUntaintedWitness(t *testing.T) {
 		err := record.applyIsolation(MeasurementIsolation{Node: node, Tainted: tainted, CheckedAt: time.Unix(11, 0)}, nil)
 		if (err == nil) != tainted || (record.WallJoules == nil) != !tainted {
 			t.Fatalf("tainted=%v: err=%v joules=%v", tainted, err, record.WallJoules)
+		}
+	}
+}
+
+func timingMeasurementFixture() OperationMeasurement {
+	start := time.Unix(100, 0).UTC()
+	operation := Operation{ID: "remove", Kind: operationRemove, Node: testNode}
+	record := OperationMeasurement{
+		SchemaVersion: OperationMeasurementSchema, Verdict: measurementInsufficient,
+		Request: MeasurementRequest{Operation: operation, Meter: MeterDeclaration{ID: "meter", Scope: measurementWallScope},
+			Timing:   &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "empirical fixture"},
+			Coverage: powerwindow.Policy{MinimumCoverage: 1, MaximumGap: 3 * time.Second}},
+		Result: OperationResult{Operation: operation, Status: nativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
+			Before: OperationState{PowerMode: "fixed", States: []string{"old"}}, Actual: OperationState{PowerMode: "fixed"}},
+	}
+	for i, watts := range []float64{0, 2, 0, 2} {
+		record.Power.Samples = append(record.Power.Samples, metricobserver.Sample{ObservedAt: start.Add(time.Duration(i-1) * time.Second), Watts: watts})
+	}
+	return record
+}
+
+func TestTimingMeasurementAcceptsHighUncertaintyAndProjectsSeparateB(t *testing.T) {
+	record := timingMeasurementFixture()
+	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != 1 || record.EnergyUncertaintyJoules == nil || *record.EnergyUncertaintyJoules != 0.5 || record.EnergyUncertaintyRatio == nil || *record.EnergyUncertaintyRatio != 0.5 {
+		t.Fatalf("50%% uncertainty must remain a valid measurement: %+v, %v", record, err)
+	}
+	cost, err := measurementCost(record, evidencestore.ObjectIdentity{Store: "evidence", Key: "raw", Size: 1})
+	if err != nil || cost.Trials[0].Joules != 1 || cost.Trials[0].EnergyUncertaintyJoules != 0.5 {
+		t.Fatalf("nominal/B projection: %+v, %v", cost, err)
+	}
+	*record.EnergyUncertaintyJoules = 0
+	if _, err := measurementCost(record, cost.Reference); err == nil {
+		t.Fatal("tampered stored uncertainty was not reproduced from raw")
+	}
+}
+
+func TestTimingMeasurementZeroConstantIsAcceptedWithUndefinedRatio(t *testing.T) {
+	record := timingMeasurementFixture()
+	for i := range record.Power.Samples {
+		record.Power.Samples[i].Watts = 0
+	}
+	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != 0 || record.EnergyUncertaintyJoules == nil || *record.EnergyUncertaintyJoules != 0 || record.EnergyUncertaintyRatio != nil {
+		t.Fatalf("zero constant trace: %+v, %v", record, err)
+	}
+}
+
+func TestTimingMeasurementCorrectsFailuresAndLongGapsWithoutCoverageVeto(t *testing.T) {
+	for _, failed := range []bool{true, false} {
+		record := timingMeasurementFixture()
+		if failed {
+			record.Power.Failures = []metricobserver.Failure{{ObservedAt: record.Result.StartedAt.Add(time.Second / 2), Reason: metricobserver.FailureReasonTimeout}}
+		} else {
+			record.Request.Coverage.MaximumGap = time.Second / 2
+		}
+		if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.MissingGapJoules == nil || *record.MissingGapJoules != 2 || *record.EnergyUncertaintyJoules != 2.5 {
+			t.Fatalf("failed=%v: %+v, %v", failed, record, err)
+		}
+	}
+}
+
+func TestTimingMeasurementRejectsMissingRealSupportButKeepsPhysicalFailure(t *testing.T) {
+	record := timingMeasurementFixture()
+	record.Power.Samples = record.Power.Samples[1:]
+	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementInsufficient || record.WallJoules != nil || record.Reason == "" {
+		t.Fatalf("missing actual support: %+v, %v", record, err)
+	}
+	record = timingMeasurementFixture()
+	record.Power.Failures = []metricobserver.Failure{{ObservedAt: record.Power.Samples[1].ObservedAt, Reason: metricobserver.FailureReasonTimeout}}
+	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementInsufficient || record.WallJoules != nil {
+		t.Fatalf("conflicting raw attempt timestamps accepted: %+v, %v", record, err)
+	}
+	record = timingMeasurementFixture()
+	physical := errors.New("physical removal failed")
+	if err := record.judge(physical, nil); !errors.Is(err, physical) || record.Verdict != operationFailed {
+		t.Fatalf("actual operation failure changed lifecycle: %+v, %v", record, err)
+	}
+}
+
+func TestOldAcceptedMeasurementRetainsEndpointHoldReproduction(t *testing.T) {
+	record := timingMeasurementFixture()
+	record.Request.Timing = nil
+	record.Result.EndedAt = record.Result.StartedAt.Add(10 * time.Second)
+	record.Request.Coverage = powerwindow.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: 0.8, MaximumGap: 4 * time.Second}
+	record.Power.Samples = nil
+	for i, seconds := range []int{-1, 1, 5, 9, 11} {
+		record.Power.Samples = append(record.Power.Samples, metricobserver.Sample{ObservedAt: record.Result.StartedAt.Add(time.Duration(seconds) * time.Second), Watts: []float64{99, 10, 20, 30, 99}[i]})
+	}
+	joules := 200.0
+	record.Verdict, record.WallJoules = measurementAccepted, &joules
+	measurement, err := record.energyMeasurement()
+	if err != nil || measurement.Joules != joules || measurement.UncertaintyJoules != 0 || record.EnergyUncertaintyJoules != nil {
+		t.Fatalf("legacy Accepted record changed: %+v, %v", measurement, err)
+	}
+	record.Verdict = measurementInsufficient
+	if _, err := measurementCost(record, evidencestore.ObjectIdentity{}); err == nil {
+		t.Fatal("legacy insufficient record was retroactively promoted")
+	}
+}
+
+func TestTimingAllowancePreservesFractionalNanosecondInputs(t *testing.T) {
+	timing := &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1.0339932335", MaximumRequestSeconds: "0.248723980", MaximumReceiptGapSeconds: "0.325263383", Source: "completed 120s observation; empirical Gen3 transfer"}
+	allowance, err := measurementTimingAllowance(timing)
+	if err != nil || allowance != 1607980597*time.Nanosecond || timing.ChangeIntervalP95Seconds != "1.0339932335" {
+		t.Fatalf("frozen quantile/sum: %s %+v, %v", allowance, timing, err)
+	}
+	for _, raw := range []string{"NaN", "Inf", "-1", "1/2", ""} {
+		timing.ChangeIntervalP95Seconds = raw
+		if _, err := measurementTimingAllowance(timing); err == nil {
+			t.Fatalf("invalid timing %q accepted", raw)
+		}
+	}
+}
+
+type measurementTestSource struct {
+	identity       metricobserver.SourceIdentity
+	failAfterFirst bool
+	reads          int
+}
+
+func (source *measurementTestSource) Identity() metricobserver.SourceIdentity { return source.identity }
+func (source *measurementTestSource) ReadMetrics(context.Context) (metricobserver.Reading, error) {
+	source.reads++
+	if source.failAfterFirst && source.reads > 1 {
+		return metricobserver.Reading{}, errors.New("actual meter read failed")
+	}
+	return metricobserver.Reading{Watts: 0}, nil
+}
+
+func TestMeasureCollectsActualExpandedSupportAndRetainsRealBracketFailure(t *testing.T) {
+	for _, mode := range []string{"valid", "read failure", "operation timeout"} {
+		fail := mode == "read failure"
+		h := newAdmissionHarness(t)
+		_, _, _, class := observerSourceFixture()
+		h.create(&class)
+		source := &measurementTestSource{identity: metricobserver.SourceIdentity{Kind: "fixture", NodeName: testNode.Name, Endpoint: "http://meter", Metric: "power"}, failAfterFirst: fail}
+		writer := managerArchive{directory: t.TempDir()}
+		request := MeasurementRequest{Operation: Operation{ID: "idle", Kind: operationIdle, Node: testNode},
+			Meter: MeterDeclaration{ID: "meter", Node: testNode, Scope: measurementWallScope, Source: source.Identity()}, Store: "evidence",
+			Timing:          &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "0.005", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "empirical fixture"},
+			Sampling:        metricobserver.Request{Interval: 2 * time.Millisecond, RequestTimeout: time.Millisecond, Duration: time.Second, MaxEvents: 503},
+			OperationBudget: 500 * time.Millisecond, IdleDuration: 20 * time.Millisecond, Coverage: powerwindow.Policy{MaximumGap: 10 * time.Millisecond}}
+		if mode == "operation timeout" {
+			request.OperationBudget = 10 * time.Millisecond
+			request.IdleDuration = 500 * time.Millisecond
+		}
+		record, receipt, err := h.controller.measurement.Measure(context.Background(), request, source, writer, nil)
+		raw, readErr := os.ReadFile(filepath.Join(writer.directory, receipt.Object.Key))
+		var retained OperationMeasurement
+		if receipt.Object.Key == "" || readErr != nil || json.Unmarshal(raw, &retained) != nil || retained.Request.Operation.ID != request.Operation.ID || retained.Verdict != record.Verdict {
+			t.Fatalf("physical action/raw evidence lost: %+v receipt %+v, read %v, measure %v", record, receipt, readErr, err)
+		}
+		if mode == "operation timeout" {
+			if !errors.Is(err, context.DeadlineExceeded) || record.Result.Status != nativeOperationFailed || record.Verdict != operationFailed {
+				t.Fatalf("finite physical operation budget not enforced: %+v, %v", record, err)
+			}
+			continue
+		}
+		if record.Result.Status != nativeOperationComplete {
+			t.Fatalf("physical idle failed: %+v, %v", record, err)
+		}
+		if fail {
+			if err == nil || record.Verdict != measurementInsufficient || record.WallJoules != nil || len(record.Power.Failures) == 0 {
+				t.Fatalf("real bracket failure fabricated an accepted endpoint: %+v, %v", record, err)
+			}
+			continue
+		}
+		first, last := record.Power.Samples[0].ObservedAt, record.Power.Samples[len(record.Power.Samples)-1].ObservedAt
+		if err != nil || record.Verdict != measurementAccepted || first.After(record.Result.StartedAt.Add(-5*time.Millisecond)) || last.Before(record.Result.EndedAt.Add(5*time.Millisecond)) || record.EnergyUncertaintyJoules == nil || *record.EnergyUncertaintyJoules != 0 {
+			t.Fatalf("real expanded support missing: %+v, %v", record, err)
 		}
 	}
 }
