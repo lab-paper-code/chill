@@ -35,13 +35,13 @@ Smol d는 2026-10-24T11:42:19.448243Z 반환 확인을 포함한 `smol-d-followt
 - d는 승인된 1%, 양측 95%, 여유 1.25, 요청당 idle 1ms, 본창 360초와 준비 60초 하한, 3600초 상한을 유지한다. signed 원시 값과 Accepted 판정, `max(d,0)` 투영을 보존한다. D04/D09/D14/D23/D33의 systematic profile-serving bias는 E5에 기록하며 새 정책은 M5 후보로 관리한다.
 - 원본012의 Complete, raw와 LocalMinimum, 원본017의 16개 raw와 Measuring 상태를 보존한다. coherent 대체 2개의 실제 소비자 참조와 recordedJob 예방 규칙을 유지한다.
 - fresh empty 10개와 승인된 ranking9 대체를 연결한다. 동일한 승인 조건의 legacy 또는 결측 대체, 대체 확인, 검증 백업과 옛 기록 삭제는 연속 실행한다. Timing 없는 소비 기록 0건 뒤 reader를 완결하고 첫 BEFORE 전에 공통 입력을 동결한다. fresh10 밖 baseline의 실제 소비는 보고 대상이며 native8 보존 실패 시 paired 비교를 중단한다.
-- runtime7, 기존 자원 한도, evidence store와 나머지 hold를 유지한다. 진단 제어 rollout은 최대 1회, 최종 D2 rollout은 최대 1회다. 정량 SLO, m, G, κ, R, N은 D2 뒤 실측 제안으로 정한다.
+- runtime7, 기존 자원 한도, evidence store와 나머지 hold를 유지한다. 알려진 세 원인의 수리 뒤 fresh D2 실행 승인을 한 번 받고 최종 D2 rollout을 최대 1회 수행한다. 같은 부하의 AFTER tail/G로 PLC SLO를 판정하며 잔여 tail이 PLC SLO를 막을 때만 준비된 유한 진단을 최대 1회 사용한다. 정량 SLO, m, G, κ, R, N은 D2 뒤 실측 제안으로 정한다.
 
 ## 다음 실행
 
 1. rev72의 8 roots, 38 steps 원시 기록과 실제 소비자 연결을 보존하며 승인된 G2 대체, 검증 백업과 정확한 참조 정리를 완료한다. 원본012/017, Smol d와 runtime7을 보존한다.
 2. 자율 BEFORE와 고정 native8 BEFORE를 수집한다. 배포 전 관측과 실제 Pod 및 container 보존 근거를 확보한다.
-3. 유한 진단, D2, paired 및 자율 AFTER를 수행한다. 관측한 원인과 수정 효과, 미관측 한계를 구분한다.
+3. Runtime 잠금 convoy, 요청별 profile 직렬화와 관측 file I/O의 기존 수리를 재사용하고 남은 수리를 완결한다. 새 D2 실행 승인 한 번 뒤 paired 및 자율 AFTER를 같은 부하로 수행하며 관측한 수정 효과와 미관측 한계를 구분한다. 진단은 PLC SLO를 막는 잔여 tail의 조건부 단계다.
 4. d25와 G, m을 측정하고 정량 조건을 제안한 뒤 E5, M5를 수행한다.
 5. P11에서 main과 로컬 명세를 이관하고 main 제어 이미지를 빌드한다. runtime을 유지한 최종 배포 뒤 P10을 수행한다.
 

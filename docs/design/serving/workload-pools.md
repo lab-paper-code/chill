@@ -350,10 +350,16 @@ Timing 없는 소비 기록 0건 뒤 strict reader를 완결하고 첫 BEFORE �
 | source 검증 | original architecture 경계를 보수하고 production mapping과 negative fixture를 보존한다. repo-local kind의 SCH-AC24/25/26은 조율된 검증 범위다 |
 | 저장 비용 | G2 실제 소비 legacy 목록과 단일 계약 정리는 7절을 따른다 |
 
+Runtime은 물리 인스턴스의 capacity를 예약한 뒤 소유권 잠금 밖에서 assignment를 저장하고 native 실행을 시작한다.
+final row도 같은 호출자의 잠금 밖에서 저장하며 shutdown은 진행 중인 final 저장의 종료를 기다린다.
+요청 행의 메모리 fold는 디스크 writer 잠금과 분리한다. 완전한 행의 rollback과 저장 실패의 fail-closed 처리를 유지한다.
+동일한 불변 profile pointer의 시간별 catalog 직렬화 생략을 재사용한다.
+
 runtime 7종, 기존 자원과 evidence store를 유지한다.
-유한 진단 제어 rollout은 최대 1회, 최종 D2 rollout은 최대 1회다.
-진단은 같은 PRIMARY native8과 실제 조건으로 420 s 한 번, 수정 뒤 같은 조건 420 s 한 번을 사용한다.
-유한 ring/trace 예산과 drop 수를 보존하며 원인 근거가 부족하면 inconclusive로 남긴다.
+알려진 원인의 수리를 완료한 뒤 fresh D2 실행 승인을 한 번 받고 최종 D2 rollout을 최대 1회 수행한다.
+같은 부하의 AFTER tail/G가 PLC SLO를 충족하면 진단은 0회다.
+잔여 tail이 PLC SLO를 막을 때만 준비된 유한 진단 제어 rollout을 최대 1회 사용한다.
+진단은 같은 PRIMARY native8과 실제 조건의 420 s 창, 유한 ring/trace 예산과 drop 수를 보존하며 근거 부족은 inconclusive로 남긴다.
 
 진단은 제어 프로세스의 `--diagnostic-directory`에 새 절대 경로를 명시해 한 번 활성화한다.
 Helm은 `servingEntrypoint.diagnostic.directory/startDelay/traceOffset`을 같은 세 flag에 연결한다.
@@ -364,7 +370,7 @@ Helm은 `servingEntrypoint.diagnostic.directory/startDelay/traceOffset`을 같�
 실행 manifest는 실제 mounted private 디렉터리, listener/readiness와 부하 경계, 두 offset을 연결한다.
 numeric ring은16 MiB/64-byte 고정 이벤트, Go trace 저장 버퍼는32 MiB/30 s다.
 native 반환, mutex의 attempt/acquire/release와 owner/request, reply/Wait/Write/Flush/Response 및
-관측 marshal/write/Sync/query/archive 경계를 기존 잠금 범위에서 기록한다.
+관측 marshal/write/Sync/query/archive 경계를 실제 잠금 범위에서 기록한다.
 두 캡처가 끝난 뒤 잠금 밖에서0700 디렉터리의0600 `events.bin`, `runtime.trace`, `metadata.json`을 저장하고 버퍼를 해제한다.
 metadata는 overwrite/drop, 원래 offset 범위, trace cap/중단/절단과 실제 파일 오류를 보존한다.
 창 경계와 유실로 연결되지 않은 edge는 inconclusive이며 trace 관측 오버헤드를 원인이나 수정 효과로 단정하지 않는다.
@@ -475,7 +481,7 @@ keep infeasible 회복은 유지한다. 자연스러운 swap witness가 없으�
    0부터 50 req/s씩 300 s 단계를 관측한다. 마지막은 `min(next50,Σκ)`이며 첫 60 s를 제외한다.
    throttle, 미완료 요청 또는 frozen κ 합에 닿으면 단계를 멈추고 부분 근거를 보존한다.
 4. producer, HTTP/native outstanding, pending, measurement, action과 handback 0을 확인한다.
-   사전 고정한 Ready IDLE native8만 rollout 예외로 보존한다. 유한 진단 뒤 최종 D2를 진행한다.
+   사전 고정한 Ready IDLE native8만 rollout 예외로 보존한다. 수리와 새 실행 승인을 확인한 뒤 최종 D2를 진행한다.
 5. startup re-adoption과 route ACK, 실제 PodUID/containerID/profile/mode/allocation/route의 동일성을 확인하고 PRIMARY paired AFTER를 수행한다.
    보존 실패는 physical-match unknown/mismatch로 보고하고 paired 주장을 중단한다.
    과거 all-instances0 배포는 이 물리 보존의 실증으로 사용하지 않는다.
