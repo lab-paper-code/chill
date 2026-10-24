@@ -43,7 +43,7 @@ func TestOperationCostUsesActualSingleStateEffectAndWholeWallWindow(t *testing.T
 	start := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
 	joules := 20.0
 	record := OperationMeasurement{
-		SchemaVersion: OperationMeasurementSchema, Verdict: measurementAccepted, WallJoules: &joules,
+		SchemaVersion: OperationMeasurementSchema, Verdict: measurementInsufficient,
 		Request: MeasurementRequest{
 			Operation: Operation{ID: "prepare", Kind: operationPrepare, Node: serving.NodeReference{Name: "node", UID: "uid"}},
 			Meter:     MeterDeclaration{ID: "meter", Scope: measurementWallScope},
@@ -60,6 +60,9 @@ func TestOperationCostUsesActualSingleStateEffectAndWholeWallWindow(t *testing.T
 	record.Result.Operation = record.Request.Operation
 	record.Result.Before.PowerMode = "fixed"
 	record.Result.Actual.PowerMode = "fixed"
+	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != joules {
+		t.Fatalf("invalid current-contract operation fixture: %+v, %v", record, err)
+	}
 	cost, err := measurementCost(record, evidencestore.ObjectIdentity{Store: "store", Key: "raw", Size: 100})
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +85,7 @@ func TestPowerCostUsesEmptyNodeModeChange(t *testing.T) {
 	start := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
 	joules := 30.0
 	record := OperationMeasurement{
-		SchemaVersion: OperationMeasurementSchema, Verdict: measurementAccepted, WallJoules: &joules,
+		SchemaVersion: OperationMeasurementSchema, Verdict: measurementInsufficient,
 		Request: MeasurementRequest{
 			Operation: Operation{ID: "raise", Kind: operationPower, Node: serving.NodeReference{Name: "node", UID: "uid"}},
 			Meter:     MeterDeclaration{ID: "meter", Scope: measurementWallScope},
@@ -98,6 +101,9 @@ func TestPowerCostUsesEmptyNodeModeChange(t *testing.T) {
 		}},
 	}
 	record.Result.Operation = record.Request.Operation
+	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != joules {
+		t.Fatalf("invalid current-contract power fixture: %+v, %v", record, err)
+	}
 	cost, err := measurementCost(record, evidencestore.ObjectIdentity{Store: "store", Key: "raw", Size: 100})
 	if err != nil {
 		t.Fatal(err)

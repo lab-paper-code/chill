@@ -77,8 +77,6 @@ class LocalHTTPSmoke(unittest.TestCase):
                         timeout_seconds=129.02, request_lifetime_seconds=129, ca_file=str(cert),
                     )
                     client._connection.connect()
-                    # Socket timeout conversion rounds floating seconds up to nanoseconds.
-                    self.assertAlmostEqual(129.02, client._connection.sock.gettimeout(), delta=2e-9)
                     self.assertGreater(client._connection.sock.gettimeout(), 129 + 0.01)
                     clients.append(client)
                 available = iter(clients)

@@ -54,7 +54,7 @@ func costTestRecord(t *testing.T, id, mode string, end time.Time) (string, []byt
 	joules := 20.0
 	operation := Operation{ID: id, Kind: operationPrepare, Node: costTestMeter.Node}
 	record := OperationMeasurement{
-		SchemaVersion: OperationMeasurementSchema, Verdict: measurementAccepted, WallJoules: &joules,
+		SchemaVersion: OperationMeasurementSchema, Verdict: measurementInsufficient,
 		Request: MeasurementRequest{Operation: operation, Meter: costTestMeter, Store: "store",
 			Sampling:        metricobserver.Request{Interval: time.Second, Duration: 5*time.Second + time.Millisecond, RequestTimeout: time.Millisecond, MaxEvents: 8},
 			Timing:          &edgev1alpha1.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
@@ -104,7 +104,7 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 		for _, cost := range view.Costs {
 			ids[cost.ID] = cost.MeasuredAt
 			if cost.Trials[0].Joules != 20 || cost.Trials[0].EnergyUncertaintyJoules != 0 {
-				t.Fatalf("legacy Accepted nominal/absent-interval semantics changed: %+v", cost)
+				t.Fatalf("accepted nominal and measured uncertainty changed: %+v", cost)
 			}
 		}
 		// Each Node power mode keeps its latest cost; the invalid record does not block the others.
