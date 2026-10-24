@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -130,13 +129,6 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 	if err != nil {
 		return errors.Join(err, c.failMeasurement(ctx, m, firstLine(err.Error())))
 	}
-	var coverage float64
-	if observation.MinimumCoverage != "" {
-		coverage, err = strconv.ParseFloat(observation.MinimumCoverage, 64)
-		if err != nil {
-			return err
-		}
-	}
 	interval := time.Duration(observation.IntervalMilliseconds) * time.Millisecond
 	duration := time.Duration(observation.MaximumOperationSeconds) * time.Second
 	timeout := time.Duration(observation.RequestTimeoutMilliseconds) * time.Millisecond
@@ -151,9 +143,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		Timing: observation.Timing, OperationBudget: duration,
 		Sampling: metricobserver.Request{Interval: interval, Duration: watchdog,
 			RequestTimeout: timeout, MaxEvents: int(watchdog/interval) + 3},
-		Coverage: powerwindow.Policy{MinimumCoverage: coverage,
-			MaximumBoundaryDistance: time.Duration(observation.MaximumBoundaryDistanceMilliseconds) * time.Millisecond,
-			MaximumGap:              time.Duration(observation.MaximumGapMilliseconds) * time.Millisecond},
+		Coverage: powerwindow.Policy{MaximumGap: time.Duration(observation.MaximumGapMilliseconds) * time.Millisecond},
 	}
 	phase, reason := edge.MeasurementPhaseComplete, ""
 	var saved []string

@@ -45,7 +45,7 @@ type OperationCostMeasurementSpec struct {
 }
 
 // MeasurementObservationSpec freezes wall-power sampling and empirical timing
-// inputs for every step. Legacy coverage fields reproduce old records only.
+// inputs for every step.
 // +kubebuilder:validation:XValidation:rule="self.requestTimeoutMilliseconds < self.intervalMilliseconds",message="requestTimeoutMilliseconds must be less than intervalMilliseconds"
 type MeasurementObservationSpec struct {
 	// +kubebuilder:validation:Minimum=1
@@ -55,16 +55,8 @@ type MeasurementObservationSpec struct {
 	// MaximumOperationSeconds bounds the physical action, excluding pre/post capture.
 	// +kubebuilder:validation:Minimum=1
 	MaximumOperationSeconds int32 `json:"maximumOperationSeconds"`
-	// Timing is required for new execution; absent only on legacy records.
-	// +optional
-	Timing *MeasurementTimingSpec `json:"timing,omitempty"`
-	// Legacy boundary/coverage declarations do not veto new timing measurements.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaximumBoundaryDistanceMilliseconds int32 `json:"maximumBoundaryDistanceMilliseconds,omitempty"`
-	// +optional
-	// +kubebuilder:validation:Pattern=`^(0\.[0-9]*[1-9][0-9]*|1(\.0+)?)$`
-	MinimumCoverage string `json:"minimumCoverage,omitempty"`
+	// Timing freezes the required empirical observation inputs.
+	Timing *MeasurementTimingSpec `json:"timing"`
 	// MaximumGapMilliseconds flags full original long gaps for missing correction,
 	// rather than rejecting their coverage.
 	// +kubebuilder:validation:Minimum=1

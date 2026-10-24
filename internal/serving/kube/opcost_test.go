@@ -78,7 +78,7 @@ func beoRoot(name, node, phase string) *edge.BatchEnergyOptimization {
 func opcostRoot(name string, created time.Time, steps ...edge.OperationCostStep) *edge.OperationCostMeasurement {
 	return &edge.OperationCostMeasurement{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: name, UID: types.UID(name + "-uid"), CreationTimestamp: meta.NewTime(created)},
 		Spec: edge.OperationCostMeasurementSpec{Node: "node", Steps: steps, Observation: edge.MeasurementObservationSpec{IntervalMilliseconds: 1000, RequestTimeoutMilliseconds: 800,
-			MaximumOperationSeconds: 900, MaximumBoundaryDistanceMilliseconds: 1500, MinimumCoverage: "0.9", MaximumGapMilliseconds: 3000,
+			MaximumOperationSeconds: 900, MaximumGapMilliseconds: 3000,
 			Timing: &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1.0339932335", MaximumRequestSeconds: "0.248723980", MaximumReceiptGapSeconds: "0.325263383", Source: "completed 120s empirical observation"}}}}
 }
 
@@ -120,7 +120,7 @@ func TestOperationCostRunsDeclaredStepsInOrder(t *testing.T) {
 	if prepare.Prepare == nil || !strings.HasPrefix(prepare.Prepare.Instance.Profile.ID, "chill-system/beo/") || remove.Instance != "pod-uid/containerd://prepared" || idle.IdleDuration != 120*time.Second {
 		t.Fatalf("prepare %+v remove %q idle %s", prepare.Prepare, remove.Instance, idle.IdleDuration)
 	}
-	if idle.OperationBudget != 900*time.Second || idle.Sampling.Duration != 906015961194*time.Nanosecond || idle.Sampling.MaxEvents != 909 || idle.Timing == nil || idle.Timing.ChangeIntervalP95Seconds != "1.0339932335" || idle.Coverage.MinimumCoverage != 0.9 {
+	if idle.OperationBudget != 900*time.Second || idle.Sampling.Duration != 906015961194*time.Nanosecond || idle.Sampling.MaxEvents != 909 || idle.Timing == nil || idle.Timing.ChangeIntervalP95Seconds != "1.0339932335" || idle.Coverage.MaximumGap != 3*time.Second {
 		t.Fatalf("sampling %+v coverage %+v timing %+v budget %s", idle.Sampling, idle.Coverage, idle.Timing, idle.OperationBudget)
 	}
 }
@@ -241,9 +241,6 @@ func TestOperationCostContinuesAcceptedHighUncertaintySteps(t *testing.T) {
 		return record, receipt, err
 	}
 	m := opcostRoot("uncertain", time.Now(), lane()...)
-	// New requests need neither a coverage fraction nor a boundary-distance veto.
-	m.Spec.Observation.MinimumCoverage = ""
-	m.Spec.Observation.MaximumBoundaryDistanceMilliseconds = 0
 	o.create(m)
 	o.admit()
 	if status := o.status(m); status.Phase != edge.MeasurementPhaseComplete || len(status.Steps) != len(lane()) || len(o.measured) != len(lane()) {

@@ -42,8 +42,7 @@ func boundedCostRead(ctx context.Context, reader evidencestore.Reader, ref evide
 	return raw, nil
 }
 
-// decodeCostJSON decodes stored evidence structurally; unknown fields from older or newer
-// writers are ignored and callers validate the semantics they rely on.
+// decodeCostJSON reads one stored evidence object; consumers validate their required fields.
 func decodeCostJSON(raw []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	if err := decoder.Decode(target); err != nil {

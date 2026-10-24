@@ -346,7 +346,7 @@ func validateRetainedMeasurement(record OperationMeasurement, ref evidencestore.
 	if err := record.Request.Sampling.Validate(); err != nil {
 		return err
 	}
-	if err := record.Request.validatePowerPolicy(); err != nil {
+	if _, err := record.Request.powerTimingAllowance(); err != nil {
 		return err
 	}
 	meter := record.Request.Meter

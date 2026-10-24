@@ -35,7 +35,7 @@ type MeasurementRequest struct {
 	Meter           MeterDeclaration            `json:"meter"`
 	Sampling        metricobserver.Request      `json:"sampling"`
 	Coverage        powerwindow.Policy          `json:"coverage"`
-	Timing          *edge.MeasurementTimingSpec `json:"timing,omitempty"`
+	Timing          *edge.MeasurementTimingSpec `json:"timing"`
 	OperationBudget time.Duration               `json:"operationBudgetNanos,omitempty"`
 	// Store is the logical store; the key is OperationMeasurementKey.
 	Store        string        `json:"store"`
@@ -183,12 +183,10 @@ func (record *OperationMeasurement) judge(operationErr, observeErr error) error 
 			record.Verdict = measurementAccepted
 			joules := measurement.Joules
 			record.WallJoules = &joules
-			if record.Request.Timing != nil {
-				record.EnergyUncertaintyJoules = &measurement.UncertaintyJoules
-				record.PhaseSensitivityJoules = &measurement.SensitivityJoules
-				record.MissingGapJoules = &measurement.MissingGapJoules
-				record.EnergyUncertaintyRatio = powerwindow.RelativeUncertainty(joules, measurement.UncertaintyJoules)
-			}
+			record.EnergyUncertaintyJoules = &measurement.UncertaintyJoules
+			record.PhaseSensitivityJoules = &measurement.SensitivityJoules
+			record.MissingGapJoules = &measurement.MissingGapJoules
+			record.EnergyUncertaintyRatio = powerwindow.RelativeUncertainty(joules, measurement.UncertaintyJoules)
 			if record.Request.Operation.Kind == operationIdle {
 				watts := joules / record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds()
 				record.MeanWatts = &watts
@@ -213,13 +211,13 @@ func validateMeasurementRequest(request MeasurementRequest, source metricobserve
 	if request.Meter.ID == "" || request.Meter.Scope != measurementWallScope || request.Meter.Node != request.Operation.Node || !reflect.DeepEqual(request.Meter.Source, source.Identity()) || source.Identity().NodeName != request.Operation.Node.Name {
 		return errors.New("exact node-exclusive wall meter declaration required")
 	}
-	if err := request.validatePowerPolicy(); err != nil {
+	allowance, err := request.powerTimingAllowance()
+	if err != nil {
 		return err
 	}
-	if request.Timing == nil || request.OperationBudget <= 0 {
-		return errors.New("empirical timing inputs and finite physical operation budget required")
+	if request.OperationBudget <= 0 {
+		return errors.New("finite physical operation budget required")
 	}
-	allowance, _ := measurementTimingAllowance(request.Timing)
 	if request.OperationBudget > request.Sampling.Duration || allowance > (request.Sampling.Duration-request.OperationBudget)/2 {
 		return errors.New("observation watchdog cannot cover operation and expanded support")
 	}
@@ -263,24 +261,18 @@ func measurementTimingAllowance(timing *edge.MeasurementTimingSpec) (time.Durati
 	return time.Duration(nanos.Int64()), nil
 }
 
-func (request MeasurementRequest) validatePowerPolicy() error {
+func (request MeasurementRequest) powerTimingAllowance() (time.Duration, error) {
 	if request.Coverage.MaximumGap <= 0 {
-		return errors.New("explicit abnormal power-gap allowance required")
+		return 0, errors.New("explicit abnormal power-gap allowance required")
 	}
-	if request.Timing != nil {
-		_, err := measurementTimingAllowance(request.Timing)
-		return err
-	}
-	if request.Coverage.MaximumBoundaryDistance <= 0 || math.IsNaN(request.Coverage.MinimumCoverage) || request.Coverage.MinimumCoverage <= 0 || request.Coverage.MinimumCoverage > 1 {
-		return errors.New("valid legacy power coverage policy required")
-	}
-	return nil
+	return measurementTimingAllowance(request.Timing)
 }
 
-// energyMeasurement reproduces old Accepted integrals without changing their
-// stored verdict. New evidence uses actual expanded support and B=S+G.
+// energyMeasurement derives actual expanded support and B=S+G from the
+// required empirical timing inputs.
 func (record OperationMeasurement) energyMeasurement() (powerwindow.Measurement, error) {
-	if err := record.Request.validatePowerPolicy(); err != nil {
+	allowance, err := record.Request.powerTimingAllowance()
+	if err != nil {
 		return powerwindow.Measurement{}, err
 	}
 	samples := make([]powerwindow.Sample, len(record.Power.Samples))
@@ -288,14 +280,6 @@ func (record OperationMeasurement) energyMeasurement() (powerwindow.Measurement,
 		samples[i] = powerwindow.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
 	}
 	window := powerwindow.Window{Start: record.Result.StartedAt, End: record.Result.EndedAt, Samples: samples}
-	if record.Request.Timing == nil {
-		joules, err := powerwindow.Integrate(window, record.Request.Coverage)
-		return powerwindow.Measurement{Joules: joules}, err
-	}
-	allowance, err := measurementTimingAllowance(record.Request.Timing)
-	if err != nil {
-		return powerwindow.Measurement{}, err
-	}
 	gaps, err := originalPowerGaps(record.Power.Samples, record.Power.Failures, record.Request.Coverage.MaximumGap)
 	if err != nil {
 		return powerwindow.Measurement{}, err

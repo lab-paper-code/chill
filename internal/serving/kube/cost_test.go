@@ -56,12 +56,16 @@ func costTestRecord(t *testing.T, id, mode string, end time.Time) (string, []byt
 	record := OperationMeasurement{
 		SchemaVersion: OperationMeasurementSchema, Verdict: measurementAccepted, WallJoules: &joules,
 		Request: MeasurementRequest{Operation: operation, Meter: costTestMeter, Store: "store",
-			Sampling: metricobserver.Request{Interval: time.Second, Duration: time.Second, RequestTimeout: time.Millisecond, MaxEvents: 10},
-			Coverage: powerwindow.Policy{MaximumBoundaryDistance: time.Millisecond, MinimumCoverage: 1, MaximumGap: time.Second}},
+			Sampling: metricobserver.Request{Interval: time.Second, Duration: 5*time.Second + time.Millisecond, RequestTimeout: time.Millisecond, MaxEvents: 8},
+			Timing: &edgev1alpha1.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
+			OperationBudget: time.Second, Coverage: powerwindow.Policy{MaximumGap: time.Second}},
 		Result: OperationResult{Operation: operation, Status: nativeOperationComplete, StartedAt: start, EndedAt: end,
 			Before: OperationState{PowerMode: mode}, Actual: OperationState{PowerMode: mode, States: []string{"profile:[0]::1024:1"}}},
 		Power: metricobserver.Result{Source: costTestMeter.Source,
-			Samples: []metricobserver.Sample{{ObservedAt: start, Watts: 20}, {ObservedAt: end, Watts: 20}}},
+			Samples: []metricobserver.Sample{{ObservedAt: start.Add(-time.Second), Watts: 20}, {ObservedAt: start, Watts: 20}, {ObservedAt: end, Watts: 20}, {ObservedAt: end.Add(time.Second), Watts: 20}}},
+	}
+	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != joules {
+		t.Fatalf("invalid current-contract cost fixture: %+v, %v", record, err)
 	}
 	raw, err := json.Marshal(record)
 	if err != nil {

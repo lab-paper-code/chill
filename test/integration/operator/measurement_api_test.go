@@ -45,7 +45,7 @@ var _ = Describe("OperationCostMeasurement API", func() {
 		Entry("request timeout not below interval", func(r *edgev1alpha1.OperationCostMeasurement) {
 			r.Spec.Observation.RequestTimeoutMilliseconds = 1000
 		}),
-		Entry("coverage above one", func(r *edgev1alpha1.OperationCostMeasurement) { r.Spec.Observation.MinimumCoverage = "1.5" }),
+		Entry("missing empirical timing", func(r *edgev1alpha1.OperationCostMeasurement) { r.Spec.Observation.Timing = nil }),
 	)
 
 	It("rejects changing an existing request", func() {
@@ -104,8 +104,13 @@ func validOperationCostMeasurement(name string) *edgev1alpha1.OperationCostMeasu
 		Spec: edgev1alpha1.OperationCostMeasurementSpec{
 			Node: "jetsono",
 			Observation: edgev1alpha1.MeasurementObservationSpec{
-				IntervalMilliseconds: 1000, RequestTimeoutMilliseconds: 800, MaximumOperationSeconds: 900,
-				MaximumBoundaryDistanceMilliseconds: 1500, MinimumCoverage: "0.9", MaximumGapMilliseconds: 3000,
+				IntervalMilliseconds: 1000, RequestTimeoutMilliseconds: 800, MaximumOperationSeconds: 2250,
+				MaximumGapMilliseconds: 3000,
+				// Synthetic request uses the existing Accepted055 empirical timing pattern.
+				Timing: &edgev1alpha1.MeasurementTimingSpec{
+					ChangeIntervalP95Seconds: "1.0339932335", MaximumRequestSeconds: "0.24872398",
+					MaximumReceiptGapSeconds: "0.325263383", Source: "synthetic API fixture using completed 120s observation inputs",
+				},
 			},
 			Steps: []edgev1alpha1.OperationCostStep{
 				{Name: "up", Kind: edgev1alpha1.OperationCostStepPower, PowerMode: "MAXN"},
