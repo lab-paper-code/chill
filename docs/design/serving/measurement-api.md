@@ -253,7 +253,8 @@ G2 승인 범위는 ranking baseline 9개의 idle과 reach-power를 수집하는
 old ranking 9개는 raw 80개에 포함된다.
 동일한 승인 조건의 legacy 또는 결측 대체, 대체 확인, 검증 백업과 옛 기록 삭제는 연속 실행한다.
 새 조건, 판정, 범위 확대와 배포는 별도 승인 경계를 따른다.
-정리 뒤 Timing 없는 소비 기록 0건을 확인하고 legacy reader와 전용 obsolete 필드 및 비교 테스트를 같은 영구 변경에서 제거한다.
+strict reader와 전용 obsolete 필드 및 비교 테스트의 제거는 수집과 병렬로 같은 영구 소스 변경에서 완결한다.
+새 소스의 검증과 적용은 대체 확인, 검증 백업, 정확한 정리 및 Timing 없는 소비 기록 0건의 실제 근거 뒤에 진행한다.
 공통 catalog, d, profile, runtime, lowest와 settings 입력을 동결한 뒤 첫 BEFORE 부하를 시작한다.
 원본012/017, Smol d, 새 38단계 기록과 runtime7을 보존하며 재측정, 삭제와 reader 제거 실적은 실제 근거로 기록한다.
 

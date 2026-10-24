@@ -34,7 +34,7 @@ Smol d는 2026-10-24T11:42:19.448243Z 반환 확인을 포함한 `smol-d-followt
 - B-only는 nominal 값, 동일 근거 상쇄, 전환 chain과 keep-infeasible을 보존한다. 13개 BEO idle fallback의 통계 CI 미포괄과 전역 95% 미보장 한계를 명시한다.
 - d는 승인된 1%, 양측 95%, 여유 1.25, 요청당 idle 1ms, 본창 360초와 준비 60초 하한, 3600초 상한을 유지한다. signed 원시 값과 Accepted 판정, `max(d,0)` 투영을 보존한다. D04/D09/D14/D23/D33의 systematic profile-serving bias는 E5에 기록하며 새 정책은 M5 후보로 관리한다.
 - 원본012의 Complete, raw와 LocalMinimum, 원본017의 16개 raw와 Measuring 상태를 보존한다. coherent 대체 2개의 실제 소비자 참조와 recordedJob 예방 규칙을 유지한다.
-- fresh empty 10개와 승인된 ranking9 대체를 연결한다. 동일한 승인 조건의 legacy 또는 결측 대체, 대체 확인, 검증 백업과 옛 기록 삭제는 연속 실행한다. Timing 없는 소비 기록 0건 뒤 reader를 완결하고 첫 BEFORE 전에 공통 입력을 동결한다. fresh10 밖 baseline의 실제 소비는 보고 대상이며 native8 보존 실패 시 paired 비교를 중단한다.
+- fresh empty 10개와 승인된 ranking9 대체를 연결한다. 동일한 승인 조건의 legacy 또는 결측 대체, 대체 확인, 검증 백업과 옛 기록 삭제는 연속 실행한다. strict reader의 로컬 소스 변경은 수집과 병렬로 완결하며 새 소스의 검증과 적용은 실제 대체, 검증 백업, 정확한 정리와 Timing 없는 소비 기록 0건 뒤에 진행한다. 첫 BEFORE 전에 공통 입력을 동결한다. fresh10 밖 baseline의 실제 소비는 보고 대상이며 native8 보존 실패 시 paired 비교를 중단한다.
 - runtime7, 기존 자원 한도, evidence store와 나머지 hold를 유지한다. 알려진 세 원인의 수리 뒤 fresh D2 실행 승인을 한 번 받고 최종 D2 rollout을 최대 1회 수행한다. 같은 부하의 AFTER tail/G로 PLC SLO를 판정하며 잔여 tail이 PLC SLO를 막을 때만 준비된 유한 진단을 최대 1회 사용한다. 정량 SLO, m, G, κ, R, N은 D2 뒤 실측 제안으로 정한다.
 
 ## 다음 실행

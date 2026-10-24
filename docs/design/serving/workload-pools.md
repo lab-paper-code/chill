@@ -334,7 +334,7 @@ G2의 ranking9 재측정은 2 roots, 18 steps로 승인됐으며 실제 최저�
 각 root의 raw, 계획기 소비와 정상 반환을 확인한 뒤 다음 root로 진행한다.
 9개 대체 확인과 검증된 외부 백업의 실제 절대경로 및 개수 대조 보고 뒤 raw 80개 키와 terminal OCM 6개를 정리한다.
 old ranking9는 80개에 포함되며 같은 승인 조건의 대체와 옛 기록 정리는 연속 실행한다.
-Timing 없는 소비 기록 0건 뒤 strict reader를 완결하고 첫 BEFORE 전에 공통 입력을 동결한다.
+strict reader의 로컬 소스 cutover는 수집과 병렬로 완결한다. 새 소스의 검증과 적용은 대체 확인, 검증 백업과 정리 및 Timing 없는 소비 기록 0건 뒤에 진행하고 첫 BEFORE 전에 공통 입력을 동결한다.
 삭제와 reader 제거 완료, 원 raw/status 보존은 [측정 API 저장 계약](measurement-api.md#7-저장-계약-adr-0019)의 실제 근거로 기록한다.
 
 ## 8. 최소 D2 범위
