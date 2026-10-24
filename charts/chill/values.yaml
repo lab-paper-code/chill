@@ -119,10 +119,12 @@ profiling:
   executionDeclarations: []
   metricSources: []
   executionPolicyDefaults:
-    activeDeadlineOverheadSeconds: 180
-    attemptTimeoutOverheadSeconds: 150
-    observerReadyTimeoutSeconds: 30
-    observerStartOverheadSeconds: 120
+    # Preserve the captured readiness envelope (including frozen-runtime warmup).
+    # Attempts additionally cover result/fence collection; Jobs add 30s cleanup.
+    activeDeadlineOverheadSeconds: 1265
+    attemptTimeoutOverheadSeconds: 1235
+    observerReadyTimeoutSeconds: 1160
+    observerStartOverheadSeconds: 1160
     metricResultOverheadSeconds: 30
     workloadEndFenceTimeoutSeconds: 15
     workloadResultTimeoutSeconds: 30
@@ -460,10 +462,11 @@ servingEntrypoint:
     # null uses the cluster default; "" explicitly requests no StorageClass.
     storageClassName: null
   queueLimit: 1024
-  requestTimeout: 30s
-  drainTimeout: 2m
+  # Approved all-profile lifetime/drain maxima; 30s remains for HTTP shutdown.
+  requestTimeout: 129s
+  drainTimeout: 164s
   # Must exceed drainTimeout plus HTTP shutdown overhead.
-  terminationGracePeriodSeconds: 150
+  terminationGracePeriodSeconds: 194
   sourceInterval: 1s
   profileInterval: 1m
   profileConfidenceLevel: 0.95
@@ -530,7 +533,7 @@ dashboard:
   caSecretKey: ca.crt
   queryTimeoutMilliseconds: 10000
   mutationTimeoutMilliseconds: 60000
-  inferTimeoutMilliseconds: 30000
+  inferTimeoutMilliseconds: 129000
   maxRequestBytes: 8388608
   pageSize: 50
   maxPageSize: 200

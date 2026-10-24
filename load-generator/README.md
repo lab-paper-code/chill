@@ -1,6 +1,6 @@
 # CHILL Load Generator
 
-A dependency-free Python client and open-loop dataset replay CLI for CHILL.
+A dependency-free Python client and open-loop or fixed-outstanding dataset replay CLI for CHILL.
 
 ## Image
 
@@ -29,6 +29,61 @@ chill-loadgen replay \
   --dataset-dir vqav2/evaluation --fields image,question \
   --rate 5 --duration 60 > vqa.jsonl
 ```
+
+### Fixed outstanding measurement supply and lifetime
+
+For dispatch-occupancy measurements, `--arrivals closed-loop --workers K` keeps
+one sequential request per connection and immediately replaces each completed
+response, including HTTP rejections or transport failures. There is no arrival
+schedule, rate or seed in this mode; `--rate` is rejected. The ordinary fixed
+and Poisson paths retain their existing scheduling and defaults.
+
+```sh
+chill-loadgen replay \
+  --endpoint https://chill.example:8443 --token-file "$CHILL_TOKEN_FILE" \
+  --ca-file "$CHILL_CA_FILE" --workload smol-service \
+  --dataset-dir smol/evaluation --fields image,question \
+  --arrivals closed-loop --workers 2 --duration 420 \
+  --request-lifetime 75 --delivery-margin .01 > smol-d.jsonl
+```
+
+`--duration` bounds new sends, not the last response: all outstanding requests
+are joined after sending stops. Closed-loop `scheduledOffsetNs` is its actual
+refill offset and `delayed` is false. This is a supply shape, not proof of native
+saturation or physical completion; rejected requests and missing native evidence
+remain visible to the measurement controller.
+
+`--request-lifetime L` (seconds, optional) sends the existing
+`X-Chill-Request-Timeout` Go-duration header on every request.
+`--delivery-margin` defaults to 0.01 seconds. Without `--timeout`, the socket
+budget is `L + delivery-margin`; an explicit timeout must cover that sum.
+Without a lifetime the existing 30-second socket default and absent header are
+unchanged. The Python API exposes the same header as
+`request_lifetime_seconds`; `timeout_seconds` must exceed it.
+
+The DispatchOccupancyMeasurement controller consumes the frozen CR conditions:
+`workers=K`, `warmupSeconds=W_load`, `durationSeconds=T`,
+`requestLifetimeSeconds=L`, `deliveryMarginMillis`, `drainSeconds=D`,
+`preparationSeconds=ceil(P)`, `jobSetupSeconds` and `collectionSeconds`.
+It sends for `W_load + T` after preparation/readiness, records only the
+measurement interval after priming, and gives the Job the finite sum
+`setup + preparation + W_load + T + D + collection`. The profile/SLO calculation
+and empirical tail assumptions belong to the immutable CR/evidence, not a
+second calculation in this CLI. A socket or lifetime expiry is not an
+interruption of an already running native physical batch.
+
+Existing serving consumers need configuration alignment, not a wire change:
+ChillServer's `--request-timeout` caps the explicit header and its outer HTTP
+context; the existing native adapter already forwards the selected lifetime,
+sender elapsed time, margin and separate SLO. `--drain-timeout` bounds manager
+and process shutdown drain; Pod termination grace must exceed it. For the
+approved largest scenario, cap 129s and drain at least 164s must be reflected in
+the serving chart. The dashboard's existing `CHILL_INFER_TIMEOUT_MS` accepts
+129000ms; its relay adds the unchanged query budget for delivery and the browser
+has no independent 30/60-second inference cap. Metadata query and asynchronous
+management-mutation budgets remain independent. No firstfloor/runtime change
+or rebuild is required.
+
 
 Each request prints one JSON line on stdout:
 
@@ -102,4 +157,14 @@ Run the dependency-free test suite from the repository root with:
 
 ```sh
 make test-loadgen
+```
+
+The real-local-HTTP smoke uses an ephemeral trusted TLS certificate generated
+by `openssl` and a stdlib HTTPS server. It checks three concurrent outstanding
+requests, prompt refill, the 129s header/socket contract and completion of the
+last response beyond the send window. It needs no cluster or image build:
+
+```sh
+PYTHONPATH=load-generator/src python3 -m unittest discover \
+  -s load-generator/tests -p test_local_http.py
 ```

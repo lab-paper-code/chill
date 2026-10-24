@@ -42,6 +42,7 @@ class WorkloadHTTPClient:
         bearer_token: str,
         timeout_seconds: float,
         ca_file: Optional[str] = None,
+        request_lifetime_seconds: Optional[float] = None,
     ) -> None:
         if (
             not isinstance(endpoint, str)
@@ -86,6 +87,18 @@ class WorkloadHTTPClient:
             or timeout_seconds <= 0
         ):
             raise ValueError("timeout_seconds must be finite and positive")
+        if request_lifetime_seconds is not None:
+            if (
+                isinstance(request_lifetime_seconds, bool)
+                or not isinstance(request_lifetime_seconds, (int, float))
+                or not math.isfinite(request_lifetime_seconds)
+                or request_lifetime_seconds < 1e-9
+                or timeout_seconds <= request_lifetime_seconds
+            ):
+                raise ValueError("request_lifetime_seconds must be finite, positive and below the socket timeout")
+        self._request_lifetime = (
+            f"{request_lifetime_seconds:.9f}s" if request_lifetime_seconds is not None else None
+        )
 
         self._authorization = "Bearer " + bearer_token
         self._connection = HTTPSConnection(
@@ -115,14 +128,17 @@ class WorkloadHTTPClient:
         sock = self._connection.sock
         if sock is not None and select.select([sock], [], [], 0)[0]:
             self._connection.close()
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": self._authorization,
+        }
+        if self._request_lifetime is not None:
+            headers["X-Chill-Request-Timeout"] = self._request_lifetime
         self._connection.request(
             "POST",
             f"/api/v1/workloads/{workload_id}/infer",
             body=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": self._authorization,
-            },
+            headers=headers,
         )
         response = self._connection.getresponse()
         return InferenceResponse(

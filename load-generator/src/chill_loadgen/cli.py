@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import sys
 import threading
@@ -57,7 +58,7 @@ def replay(
     records: Sequence[Record],
     *,
     workload: str,
-    rate: float,
+    rate: Optional[float],
     duration: float,
     workers: int,
     new_client: Callable[[], WorkloadHTTPClient],
@@ -67,9 +68,11 @@ def replay(
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
-    """Send records round-robin at an open-loop rate for duration seconds; one JSON line per request."""
+    """Send open-loop arrivals or refill a fixed outstanding population, then drain its tail."""
 
-    schedule = [
+    if arrivals != "closed-loop" and rate is None:
+        raise ValueError("rate is required for open-loop arrivals")
+    schedule = [] if arrivals == "closed-loop" else [
         ScheduledRequest(str(index), offset_ns, 1)
         for index, offset_ns in enumerate(arrival_offsets_ns(arrivals, rate, duration, seed))
     ]
@@ -77,7 +80,7 @@ def replay(
     duration_ns = round(duration * 1_000_000_000)
     start_ns = clock_ns()
 
-    def run_worker(requests: Sequence[ScheduledRequest]) -> None:
+    def run_worker(requests: Sequence[ScheduledRequest], worker: int = 0) -> None:
         client = new_client()
 
         def submit(request: ScheduledRequest, delayed: bool) -> None:
@@ -108,22 +111,32 @@ def replay(
                 out.flush()
 
         try:
-            run_schedule(
-                requests,
-                submit,
-                start_ns=start_ns,
-                delay_tolerance_ns=DELAY_TOLERANCE_NS,
-                clock_ns=clock_ns,
-                sleep=sleep,
-            )
+            if arrivals == "closed-loop":
+                index = worker
+                while clock_ns() - start_ns < duration_ns:
+                    submit(ScheduledRequest(str(index), clock_ns() - start_ns, 1), False)
+                    index += workers
+            else:
+                run_schedule(
+                    requests,
+                    submit,
+                    start_ns=start_ns,
+                    delay_tolerance_ns=DELAY_TOLERANCE_NS,
+                    clock_ns=clock_ns,
+                    sleep=sleep,
+                )
         finally:
             client.close()
 
-    threads = [
-        threading.Thread(target=run_worker, args=(requests,))
-        for requests in partition_schedule(schedule, workers)
-        if requests
-    ]
+    threads = (
+        [threading.Thread(target=run_worker, args=((), worker)) for worker in range(workers)]
+        if arrivals == "closed-loop"
+        else [
+            threading.Thread(target=run_worker, args=(requests,))
+            for requests in partition_schedule(schedule, workers)
+            if requests
+        ]
+    )
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -133,7 +146,7 @@ def replay(
 def _positive(kind: Callable[[str], float]) -> Callable[[str], float]:
     def parse(value: str) -> float:
         parsed = kind(value)
-        if not parsed > 0:
+        if not math.isfinite(parsed) or not parsed > 0:
             raise argparse.ArgumentTypeError("must be positive")
         return parsed
 
@@ -143,7 +156,7 @@ def _positive(kind: Callable[[str], float]) -> Callable[[str], float]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="chill-loadgen",
-        description="Generate an external open-loop inference workload.",
+        description="Generate an external open-loop inference workload or fixed outstanding load.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command")
@@ -151,7 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
         "replay",
         help="replay a Dataset evaluation directory to one Workload",
         description="Replay <dataset-dir>/<recordID>/<field> records as raw samples "
-        "at a fixed open-loop rate; print one JSON line per request.",
+        "at an open-loop rate or with fixed outstanding connections; print one JSON line per request.",
     )
     replay_parser.add_argument("--endpoint", required=True, help="gateway HTTPS origin")
     replay_parser.add_argument("--token-file", required=True, type=Path, help="file holding the bearer token")
@@ -159,14 +172,17 @@ def build_parser() -> argparse.ArgumentParser:
     replay_parser.add_argument("--workload", required=True, help="registered Workload ID")
     replay_parser.add_argument("--dataset-dir", required=True, type=Path, help="the Dataset's evaluation directory")
     replay_parser.add_argument("--fields", required=True, help="comma-separated preprocessor input fields")
-    replay_parser.add_argument("--rate", required=True, type=_positive(float), help="requests per second")
+    replay_parser.add_argument("--rate", type=_positive(float), help="requests per second (required for fixed/poisson)")
     replay_parser.add_argument("--duration", required=True, type=_positive(float), help="seconds")
     replay_parser.add_argument(
-        "--arrivals", choices=("fixed", "poisson"), default="fixed", help="send times (default fixed)"
+        "--arrivals", choices=("fixed", "poisson", "closed-loop"), default="fixed",
+        help="send times; closed-loop immediately refills --workers outstanding requests (default fixed)",
     )
     replay_parser.add_argument("--seed", type=int, default=0, help="Poisson arrival seed (default 0)")
     replay_parser.add_argument("--workers", type=_positive(int), default=8, help="concurrent connections (default 8)")
-    replay_parser.add_argument("--timeout", type=_positive(float), default=30, help="per-request seconds (default 30)")
+    replay_parser.add_argument("--timeout", type=_positive(float), help="socket seconds (default lifetime + delivery, otherwise 30)")
+    replay_parser.add_argument("--request-lifetime", type=_positive(float), help="native request lifetime seconds; sends X-Chill-Request-Timeout")
+    replay_parser.add_argument("--delivery-margin", type=_positive(float), default=0.01, help="socket delivery seconds beyond lifetime (default .01)")
     return parser
 
 
@@ -179,6 +195,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     fields = [field for field in args.fields.split(",") if field]
     try:
+        if args.arrivals != "closed-loop" and args.rate is None:
+            raise ValueError("--rate is required for fixed/poisson arrivals")
+        if args.arrivals == "closed-loop" and args.rate is not None:
+            raise ValueError("--rate does not apply to closed-loop arrivals")
+        required_timeout = (
+            args.request_lifetime + args.delivery_margin if args.request_lifetime is not None else 30
+        )
+        timeout = args.timeout if args.timeout is not None else required_timeout
+        if args.request_lifetime is not None and timeout < required_timeout:
+            raise ValueError("--timeout must cover --request-lifetime + --delivery-margin")
         if not _valid_identifier(args.workload):
             raise ValueError("--workload must be a Kubernetes DNS subdomain name")
         if not fields:
@@ -186,7 +212,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         records = load_records(args.dataset_dir, fields)
         token = args.token_file.read_text().strip()
         # Validate endpoint and token before any traffic.
-        WorkloadHTTPClient(args.endpoint, bearer_token=token, timeout_seconds=args.timeout, ca_file=args.ca_file).close()
+        WorkloadHTTPClient(
+            args.endpoint, bearer_token=token, timeout_seconds=timeout, ca_file=args.ca_file,
+            request_lifetime_seconds=args.request_lifetime,
+        ).close()
     except (OSError, ValueError) as error:
         parser.error(str(error))
     replay(
@@ -198,7 +227,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         seed=args.seed,
         workers=args.workers,
         new_client=lambda: WorkloadHTTPClient(
-            args.endpoint, bearer_token=token, timeout_seconds=args.timeout, ca_file=args.ca_file
+            args.endpoint, bearer_token=token, timeout_seconds=timeout, ca_file=args.ca_file,
+            request_lifetime_seconds=args.request_lifetime,
         ),
         out=sys.stdout,
     )

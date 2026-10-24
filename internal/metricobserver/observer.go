@@ -83,6 +83,62 @@ func (o *Observer) Observe(
 	return o.observe(observationCtx, request.RequestTimeout, request.MaxEvents, ticker.C, onFirstSample)
 }
 
+// ObserveUntil samples through the producer's end signal and then performs a
+// real final read. Duration is a finite watchdog, not the nominal action window.
+// Callers keep ctx live while collecting pre/post support around their action.
+func (o *Observer) ObserveUntil(
+	ctx context.Context,
+	request Request,
+	end <-chan struct{},
+	onFirstSample func(),
+) (Result, error) {
+	if end == nil || onFirstSample == nil {
+		return Result{}, errors.New("end signal and first sample callback are required")
+	}
+	if err := request.Validate(); err != nil {
+		return Result{}, fmt.Errorf("validate observation request: %w", err)
+	}
+	if uint64(request.Duration/request.Interval)+3 > uint64(request.MaxEvents) {
+		return Result{}, errors.New("maximum retained events cannot cover the final read")
+	}
+	observationCtx, cancel := context.WithTimeout(ctx, request.Duration)
+	defer cancel()
+	ticker := time.NewTicker(request.Interval)
+	defer ticker.Stop()
+	result := Result{Source: o.source.Identity(), StartedAt: o.now()}
+	reported := false
+	sample := func() error {
+		err := o.sample(observationCtx, request.RequestTimeout, request.MaxEvents, &result)
+		if !reported && len(result.Samples) > 0 {
+			reported = true
+			onFirstSample()
+		}
+		return err
+	}
+	if err := sample(); err != nil {
+		return o.finish(result), err
+	}
+	for {
+		select {
+		case <-observationCtx.Done():
+			return o.finish(result), fmt.Errorf("observation ended before producer completion: %w", observationCtx.Err())
+		case <-end:
+			before := len(result.Samples)
+			if err := sample(); err != nil {
+				return o.finish(result), err
+			}
+			if len(result.Samples) == before {
+				return o.finish(result), errors.New("final metric read did not produce a sample")
+			}
+			return o.finish(result), nil
+		case <-ticker.C:
+			if err := sample(); err != nil {
+				return o.finish(result), err
+			}
+		}
+	}
+}
+
 func (o *Observer) observe(
 	ctx context.Context,
 	requestTimeout time.Duration,

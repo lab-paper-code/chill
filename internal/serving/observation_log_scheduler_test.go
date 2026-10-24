@@ -360,6 +360,7 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 		snapshot.Options[i].Instance = instance
 	}
 	baseline := snapshot.Baselines[0]
+	baseline.WattsUncertainty = 0.75
 	snapshot.Baselines = make([]NodeBaseline, 43)
 	for i := range snapshot.Baselines {
 		snapshot.Baselines[i] = baseline
@@ -371,7 +372,7 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 		subtracted := 3.5
 		snapshot.Costs[i] = OperationCost{
 			ID: fmt.Sprintf("cost-%02d", i), Node: nodes[0].Node, Kind: "prepare", From: "absent", To: "ready",
-			Trials:      repeated([]OperationTrial{{Duration: 1234567890, Joules: 12.345678}}, 5),
+			Trials:      repeated([]OperationTrial{{Duration: 1234567890, Joules: 12.345678, EnergyUncertaintyJoules: 4.5}}, 5),
 			EnergyScope: "target-baseline-delta", SubtractedWatts: &subtracted, Meter: "wall", Scope: "node-exclusive-wall",
 			Reference:   evidencestore.ObjectIdentity{Store: "evidence", Key: fmt.Sprintf("profiling/costs/node-a/%02d.json", i), Size: 8192},
 			BeforeState: []string{"profile-a/cpu-0-3"}, TargetState: []string{"profile-a/cpu-0-3", "profile-b/cpu-4-7"}, MeasuredAt: at,
@@ -386,9 +387,9 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 		Status: "evaluated", Reasons: []string{"reason"}, ExpectedJoules: &joules, WorstExceedance: 0.25,
 		SLO: []SchedulerEstimate{{UID: "w1", Definition: definition.Identity(), Samples: 100, Percentile: 95}}, Assumptions: []string{"assumption"}, Sources: []string{"source"},
 	}
-	plans := repeated([]SchedulerNodePlan{{Node: nodes[0].Node, Key: "profile/b4/w1", Eligible: true, Kappa: map[string]float64{"w1": 34.3}, KappaRetained: map[string]float64{"w1": 0}, Pre: 20 * time.Second, Joules: 140}}, 60)
+	plans := repeated([]SchedulerNodePlan{{Node: nodes[0].Node, Key: "profile/b4/w1", Eligible: true, Kappa: map[string]float64{"w1": 34.3}, KappaRetained: map[string]float64{"w1": 0}, Pre: 20 * time.Second, Joules: 140, EnergyUncertaintyJoules: 7}}, 60)
 	wait := 0.42
-	capacity := &SchedulerCapacity{Period: 197 * time.Second, Route: 20 * time.Second, Search: &SchedulerPlanSearch{Neighborhood: 3, Evaluated: 25272, Duration: time.Second}, Plans: plans,
+	capacity := &SchedulerCapacity{Period: 197 * time.Second, Route: 20 * time.Second, Search: &SchedulerPlanSearch{Neighborhood: 3, Evaluated: 25272, Duration: time.Second}, Plans: plans, GainUncertaintyJoules: 12,
 		Workloads: []SchedulerCapacityWorkload{{UID: "w1", Rate: 40, KappaNew: 144, Backlog: 61, WaitSeconds: &wait, Weights: map[string]int32{"i1": 1000}, Rows: []string{"row"}}}}
 	decision := SchedulerDecision{At: at, Status: "target", Keep: candidate, Target: &candidate, Capacity: capacity, EvaluationElapsed: 3 * time.Millisecond}
 	event := SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}

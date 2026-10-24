@@ -1145,7 +1145,7 @@ func (s *schedulerReplayState) operationCost(a *schedulerReplayAction) *Operatio
 func (s *schedulerReplayState) sampleOperation(a *schedulerReplayAction, cost *OperationCost) bool {
 	trialOptions := []OperationTrial{}
 	for _, t := range cost.Trials {
-		if t.Duration <= 0 || !schedulerFinite(t.Joules) || (cost.EnergyScope == "whole-wall" && t.Joules < 0) {
+		if t.Duration <= 0 || !schedulerFinite(t.Joules) || !schedulerValidHalfWidth(t.EnergyUncertaintyJoules) || (cost.EnergyScope == "whole-wall" && t.Joules < 0) {
 			continue
 		}
 		if a.action.Status == phaseRunning && t.Duration <= a.action.Elapsed {
@@ -1603,6 +1603,10 @@ func schedulerCost(costs []OperationCost, id string) *OperationCost {
 	}
 	return nil
 }
+func schedulerValidHalfWidth(value float64) bool {
+	return schedulerFinite(value) && value >= 0
+}
+
 func schedulerBaseline(baselines []NodeBaseline, node SchedulerNode, instances []SchedulerInstance, options []SchedulerOption) (float64, string, []string, []string, string) {
 	state := []string{}
 	for _, i := range instances {
@@ -1612,7 +1616,7 @@ func schedulerBaseline(baselines []NodeBaseline, node SchedulerNode, instances [
 	var matched, unloaded *NodeBaseline
 	for j := range baselines {
 		b := &baselines[j]
-		if b.Node != node.Node || b.PowerMode != node.PowerMode || b.Scope != schedulerNodeWallScope || b.Meter == "" || !schedulerFinite(b.Watts) || b.Watts < 0 || b.ID == "" || b.Reference.Validate() != nil {
+		if b.Node != node.Node || b.PowerMode != node.PowerMode || b.Scope != schedulerNodeWallScope || b.Meter == "" || !schedulerFinite(b.Watts) || b.Watts < 0 || !schedulerValidHalfWidth(b.WattsUncertainty) || b.ID == "" || b.Reference.Validate() != nil {
 			continue
 		}
 		bs := append([]string(nil), b.State...)

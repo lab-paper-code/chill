@@ -65,41 +65,67 @@ spec:
                 type: string
               observation:
                 description: |-
-                  MeasurementObservationSpec is the wall-power sampling and coverage policy of
-                  every step.
+                  MeasurementObservationSpec freezes wall-power sampling and empirical timing
+                  inputs for every step. Legacy coverage fields reproduce old records only.
                 properties:
                   intervalMilliseconds:
                     format: int32
                     minimum: 1
                     type: integer
                   maximumBoundaryDistanceMilliseconds:
+                    description: Legacy boundary/coverage declarations do not veto
+                      new timing measurements.
                     format: int32
                     minimum: 1
                     type: integer
                   maximumGapMilliseconds:
+                    description: |-
+                      MaximumGapMilliseconds flags full original long gaps for missing correction,
+                      rather than rejecting their coverage.
                     format: int32
                     minimum: 1
                     type: integer
                   maximumOperationSeconds:
-                    description: MaximumOperationSeconds bounds one step and its sampling
-                      window.
+                    description: MaximumOperationSeconds bounds the physical action,
+                      excluding pre/post capture.
                     format: int32
                     minimum: 1
                     type: integer
                   minimumCoverage:
-                    description: MinimumCoverage is a decimal fraction in (0, 1].
                     pattern: ^(0\.[0-9]*[1-9][0-9]*|1(\.0+)?)$
                     type: string
                   requestTimeoutMilliseconds:
                     format: int32
                     minimum: 1
                     type: integer
+                  timing:
+                    description: Timing is required for new execution; absent only
+                      on legacy records.
+                    properties:
+                      changeIntervalP95Seconds:
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        type: string
+                      maximumReceiptGapSeconds:
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        type: string
+                      maximumRequestSeconds:
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        type: string
+                      source:
+                        description: Source identifies the completed observation and
+                          any device transfer.
+                        minLength: 1
+                        type: string
+                    required:
+                    - changeIntervalP95Seconds
+                    - maximumReceiptGapSeconds
+                    - maximumRequestSeconds
+                    - source
+                    type: object
                 required:
                 - intervalMilliseconds
-                - maximumBoundaryDistanceMilliseconds
                 - maximumGapMilliseconds
                 - maximumOperationSeconds
-                - minimumCoverage
                 - requestTimeoutMilliseconds
                 type: object
                 x-kubernetes-validations:

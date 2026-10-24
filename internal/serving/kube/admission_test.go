@@ -205,17 +205,17 @@ func (h *admissionHarness) complete(root *edge.ModelLoadedIdleBaseline) {
 
 func baselineRoot(name string, created time.Time) *edge.ModelLoadedIdleBaseline {
 	o := &edge.ModelLoadedIdleBaseline{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: name, UID: types.UID(name + "-uid"), CreationTimestamp: meta.NewTime(created)}}
-	o.Spec.State.TargetNode = "node"
+	o.Spec.State.TargetNode = testNode.Name
 	return o
 }
 
 func servingPod(name string) *core.Pod {
 	return &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: name, UID: types.UID(name + "-uid"),
-		Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}}, Spec: core.PodSpec{NodeName: "node"}}
+		Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}}, Spec: core.PodSpec{NodeName: testNode.Name}}
 }
 
 func TestAdmitGrantsEmptyNodeAndIgnoresPodsCHILLDidNotPlace(t *testing.T) {
-	external := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: "default", Name: "plan10-serving-jetsono"}, Spec: core.PodSpec{NodeName: "node"}}
+	external := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: "default", Name: "plan10-serving-jetsono"}, Spec: core.PodSpec{NodeName: testNode.Name}}
 	h := newAdmissionHarness(t, external)
 	root := baselineRoot("idle", time.Now())
 	h.create(root)

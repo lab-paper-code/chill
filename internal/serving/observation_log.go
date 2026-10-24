@@ -76,16 +76,24 @@ type RequestRow struct {
 	ExecutedNanos     *int64         `json:"executedNanos,omitempty"`
 	ExchangeNanos     *int64         `json:"exchangeNanos,omitempty"`
 	BatchID           uint64         `json:"batchID,omitempty"`
-	BatchSize         int            `json:"batchSize,omitempty"`
-	QueueMS           float64        `json:"queueMS,omitempty"`
-	ServiceMS         float64        `json:"serviceMS,omitempty"`
-	BackendMS         float64        `json:"backendMS,omitempty"`
-	PreprocessMS      float64        `json:"preprocessMS,omitempty"`
-	PostprocessMS     float64        `json:"postprocessMS,omitempty"`
-	FirstTokenMS      float64        `json:"firstTokenMS,omitempty"`
-	Units             int            `json:"units,omitempty"`
-	NativeElapsedMS   *float64       `json:"nativeElapsedMS,omitempty"`
-	profile           *Profile
+	// Native timestamps are direct worker-clock progress, never reconstructed
+	// from QueueMS (which also includes ingress and is not actor queue wait).
+	NativeQueuedAt          *time.Time `json:"nativeQueuedAt,omitempty"`
+	NativeRunningAt         *time.Time `json:"nativeRunningAt,omitempty"`
+	NativeFinishedAt        *time.Time `json:"nativeFinishedAt,omitempty"`
+	NativeExecutionComplete bool       `json:"nativeExecutionComplete,omitempty"`
+	NativeOutcome           string     `json:"nativeOutcome,omitempty"`
+	NativeError             string     `json:"nativeError,omitempty"`
+	BatchSize               int        `json:"batchSize,omitempty"`
+	QueueMS                 float64    `json:"queueMS,omitempty"`
+	ServiceMS               float64    `json:"serviceMS,omitempty"`
+	BackendMS               float64    `json:"backendMS,omitempty"`
+	PreprocessMS            float64    `json:"preprocessMS,omitempty"`
+	PostprocessMS           float64    `json:"postprocessMS,omitempty"`
+	FirstTokenMS            float64    `json:"firstTokenMS,omitempty"`
+	Units                   int        `json:"units,omitempty"`
+	NativeElapsedMS         *float64   `json:"nativeElapsedMS,omitempty"`
+	profile                 *Profile
 	// finished is the latest native finished record; closing fills missing stages from it.
 	finished *BackendProgress
 	// assignedHour holds this request's assigned row; it stays local until the final row.
@@ -97,6 +105,8 @@ type RequestRow struct {
 const (
 	requestRowAssigned = "assigned"
 	requestRowFinal    = "final"
+	// RequestRowNative supplements a settled HTTP row with late direct evidence.
+	RequestRowNative = "native"
 )
 
 func (r *RequestRow) fold(e *RequestEvent) {
@@ -123,6 +133,9 @@ func (r *RequestRow) fold(e *RequestEvent) {
 	}
 	if e.ClientSpanNanos != 0 {
 		r.ClientSpanNanos = e.ClientSpanNanos
+	}
+	if e.NativeInstance != "" {
+		r.Instance = e.NativeInstance
 	}
 	r.ExecutionComplete = r.ExecutionComplete || e.ExecutionComplete
 	if p := e.NativeProgress; p != nil {
@@ -163,6 +176,17 @@ func (r *RequestRow) fold(e *RequestEvent) {
 }
 
 func (r *RequestRow) foldNative(p *BackendProgress) {
+	if !p.At.IsZero() {
+		at := p.At
+		switch p.Phase {
+		case phaseQueued:
+			r.NativeQueuedAt = &at
+		case phaseRunning:
+			r.NativeRunningAt = &at
+		case phaseFinished:
+			r.NativeFinishedAt = &at
+		}
+	}
 	r.BatchID, r.BatchSize, r.QueueMS, r.ServiceMS, r.BackendMS = p.BatchID, p.BatchSize, p.QueueMS, p.ServiceMS, p.BackendMS
 	r.PreprocessMS, r.PostprocessMS, r.FirstTokenMS, r.Units = p.PreprocessMS, p.PostprocessMS, p.FirstTokenMS, p.Units
 	native := p.NativeElapsedMS
@@ -171,6 +195,8 @@ func (r *RequestRow) foldNative(p *BackendProgress) {
 		r.DecisionID = p.DecisionID
 	}
 	if p.Phase == phaseFinished {
+		r.NativeExecutionComplete = p.ExecutionComplete
+		r.NativeOutcome, r.NativeError = p.Outcome, p.Error
 		r.finished = p
 	}
 }
@@ -323,6 +349,9 @@ func (l *ObservationLog) restore(hours []time.Time) error {
 				var row RequestRow
 				if err := json.Unmarshal(raw, &row); err != nil {
 					return err
+				}
+				if row.Kind == RequestRowNative {
+					return nil // Physical supplements cannot replace HTTP assignments.
 				}
 				if row.Kind == requestRowFinal || rows[row.RequestID].Kind != requestRowFinal {
 					row.assignedHour = hour
@@ -514,8 +543,8 @@ func (l *ObservationLog) DefinitionRecord(definition *Definition) error {
 	return nil
 }
 
-// RequestEvent folds one event into the request's open row. Only assignment
-// appends; an event without an open row is dropped.
+// RequestEvent folds one event into the request's open row. Assignment appends
+// its identity; native evidence without an open row appends a supplement.
 func (l *ObservationLog) RequestEvent(event RequestEvent) error {
 	if event.RequestID == "" || event.At.IsZero() {
 		return errors.New("request identity and event time are required")
@@ -528,7 +557,10 @@ func (l *ObservationLog) RequestEvent(event RequestEvent) error {
 	row := l.open[event.RequestID]
 	if row == nil {
 		if strings.HasPrefix(event.Kind, "backend_") {
-			return nil // Already settled, or read again from a native log.
+			if event.NativeProgress == nil || event.NativeInstance == "" {
+				return nil
+			}
+			return l.appendNativeSupplementLocked(event)
 		}
 		row = &RequestRow{RequestID: event.RequestID}
 	}
@@ -546,6 +578,30 @@ func (l *ObservationLog) RequestEvent(event RequestEvent) error {
 	}
 	l.open[event.RequestID] = &next
 	return nil
+}
+
+// RecordNativeSupplement retains progress for a request absent from Runtime.
+// It never mutates an HTTP row, even if that row still awaits final append.
+func (l *ObservationLog) RecordNativeSupplement(event RequestEvent) error {
+	if event.RequestID == "" || event.At.IsZero() || event.NativeProgress == nil || event.NativeInstance == "" {
+		return errors.New("native request identity, time, instance and progress are required")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return errors.New("observation log is closed")
+	}
+	return l.appendNativeSupplementLocked(event)
+}
+
+func (l *ObservationLog) appendNativeSupplementLocked(event RequestEvent) error {
+	// The original HTTP receipt and its legacy stage offsets are not known.
+	// Keep only direct native timestamps/completion and the physical identity.
+	late := RequestRow{Kind: RequestRowNative, RequestID: event.RequestID, WorkloadUID: event.WorkloadUID,
+		DefinitionID: event.Definition, Instance: event.NativeInstance}
+	late.foldNative(event.NativeProgress)
+	_, err := l.appendRowLocked(&late)
+	return err
 }
 
 // RequestClosed appends the final row of a request the Runtime has settled.
@@ -997,6 +1053,9 @@ func mergeRequestRow(rows map[string]*RequestRow, raw []byte, keep func(*request
 			return nil
 		}
 		return decodeErr
+	}
+	if row.Kind == RequestRowNative {
+		return nil // Supplemental physical evidence is not an HTTP request row.
 	}
 	envelope := requestEnvelope{Kind: row.Kind, RequestID: row.RequestID, WorkloadUID: row.WorkloadUID, ReceivedAt: row.ReceivedAt}
 	if keep(&envelope) && (row.Kind == requestRowFinal || rows[row.RequestID] == nil) {

@@ -44,24 +44,46 @@ type OperationCostMeasurementSpec struct {
 	Steps []OperationCostStep `json:"steps"`
 }
 
-// MeasurementObservationSpec is the wall-power sampling and coverage policy of
-// every step.
+// MeasurementObservationSpec freezes wall-power sampling and empirical timing
+// inputs for every step. Legacy coverage fields reproduce old records only.
 // +kubebuilder:validation:XValidation:rule="self.requestTimeoutMilliseconds < self.intervalMilliseconds",message="requestTimeoutMilliseconds must be less than intervalMilliseconds"
 type MeasurementObservationSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	IntervalMilliseconds int32 `json:"intervalMilliseconds"`
 	// +kubebuilder:validation:Minimum=1
 	RequestTimeoutMilliseconds int32 `json:"requestTimeoutMilliseconds"`
-	// MaximumOperationSeconds bounds one step and its sampling window.
+	// MaximumOperationSeconds bounds the physical action, excluding pre/post capture.
 	// +kubebuilder:validation:Minimum=1
 	MaximumOperationSeconds int32 `json:"maximumOperationSeconds"`
+	// Timing is required for new execution; absent only on legacy records.
+	// +optional
+	Timing *MeasurementTimingSpec `json:"timing,omitempty"`
+	// Legacy boundary/coverage declarations do not veto new timing measurements.
+	// +optional
 	// +kubebuilder:validation:Minimum=1
-	MaximumBoundaryDistanceMilliseconds int32 `json:"maximumBoundaryDistanceMilliseconds"`
-	// MinimumCoverage is a decimal fraction in (0, 1].
+	MaximumBoundaryDistanceMilliseconds int32 `json:"maximumBoundaryDistanceMilliseconds,omitempty"`
+	// +optional
 	// +kubebuilder:validation:Pattern=`^(0\.[0-9]*[1-9][0-9]*|1(\.0+)?)$`
-	MinimumCoverage string `json:"minimumCoverage"`
+	MinimumCoverage string `json:"minimumCoverage,omitempty"`
+	// MaximumGapMilliseconds flags full original long gaps for missing correction,
+	// rather than rejecting their coverage.
 	// +kubebuilder:validation:Minimum=1
 	MaximumGapMilliseconds int32 `json:"maximumGapMilliseconds"`
+}
+
+// MeasurementTimingSpec retains the unrounded empirical observation inputs.
+// A is their sum, rounded upward only when represented as runtime nanoseconds.
+// Unchanged dwell is deliberately not an input.
+type MeasurementTimingSpec struct {
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	ChangeIntervalP95Seconds string `json:"changeIntervalP95Seconds"`
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	MaximumRequestSeconds string `json:"maximumRequestSeconds"`
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	MaximumReceiptGapSeconds string `json:"maximumReceiptGapSeconds"`
+	// Source identifies the completed observation and any device transfer.
+	// +kubebuilder:validation:MinLength=1
+	Source string `json:"source"`
 }
 
 // OperationCostStep is one atomic operation; only the fields of its kind are set.

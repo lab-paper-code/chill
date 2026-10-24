@@ -248,8 +248,9 @@ func metricObserverContainer(
 		Args: []string{
 			"--run-config=" + runConfig,
 			"--start-wait-timeout=" + plan.ObserverStartTimeout.String(),
-			"--end-wait-timeout=" + plan.AttemptTimeout.String(),
+			"--end-wait-timeout=" + plan.MetricObservationTimeout.String(),
 			"--max-events=" + strconv.Itoa(plan.MaxMetricEvents),
+			"--max-result-bytes=" + strconv.FormatInt(plan.MaxMetricResultBytes, 10),
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{

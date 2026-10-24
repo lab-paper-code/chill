@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
 // Decision statuses and reasons of the capacity planner (analytic-planner §3, §4).
@@ -61,6 +63,8 @@ type SchedulerCapacity struct {
 	Search    *SchedulerPlanSearch        `json:"search,omitempty"`
 	Workloads []SchedulerCapacityWorkload `json:"workloads"`
 	Plans     []SchedulerNodePlan         `json:"plans"`
+	// GainUncertaintyJoules is the minimum-gain threshold, separate from nominal energy.
+	GainUncertaintyJoules float64 `json:"gainUncertaintyJoules,omitempty"`
 }
 
 // SchedulerPlanSearch is the scope of one plan search: the most Nodes one step
@@ -97,15 +101,16 @@ type SchedulerCapacityWorkload struct {
 // are the longest chains before and after the route; Joules is the mean chain
 // energy.
 type SchedulerNodePlan struct {
-	Node          NodeReference      `json:"node"`
-	Key           string             `json:"key"`
-	Eligible      bool               `json:"eligible"`
-	Reason        string             `json:"reason,omitempty"`
-	Kappa         map[string]float64 `json:"kappa,omitempty"`
-	KappaRetained map[string]float64 `json:"kappaRetained,omitempty"`
-	Pre           time.Duration      `json:"preNanos"`
-	Post          time.Duration      `json:"postNanos"`
-	Joules        float64            `json:"joules"`
+	Node                    NodeReference      `json:"node"`
+	Key                     string             `json:"key"`
+	Eligible                bool               `json:"eligible"`
+	Reason                  string             `json:"reason,omitempty"`
+	Kappa                   map[string]float64 `json:"kappa,omitempty"`
+	KappaRetained           map[string]float64 `json:"kappaRetained,omitempty"`
+	Pre                     time.Duration      `json:"preNanos"`
+	Post                    time.Duration      `json:"postNanos"`
+	Joules                  float64            `json:"joules"`
+	EnergyUncertaintyJoules float64            `json:"energyUncertaintyJoules,omitempty"`
 }
 
 // EvaluateScheduler plans with capacity sums: node plans, the transient and
@@ -261,6 +266,8 @@ type capacityPlan struct {
 	preJ, postJ                        float64
 	before, mid, after                 float64             // watts
 	midInstances                       []SchedulerInstance // instances during the pre-route chain
+	operationBounds                    schedulerEnergyBounds
+	beforeBound, midBound, afterBound  schedulerBaselineBound
 	// replaces marks a plan that changes the batch policy of a current instance,
 	// or removes one while adding another.
 	replaces bool
@@ -272,6 +279,62 @@ func (p *capacityPlan) energy(r, t float64) float64 {
 		return p.before * t
 	}
 	return p.preJ + p.mid*(r-p.preMean) + p.postJ + p.after*(t-r-p.postMean)
+}
+
+// A trial's shift/gap error is deterministic: repeated uses add, shared uses
+// cancel with their sign before distinct evidence bounds are summed.
+type schedulerBoundSource struct {
+	reference evidencestore.ObjectIdentity
+	trial     int
+}
+
+type schedulerEnergyBounds map[schedulerBoundSource]float64
+
+func (bounds schedulerEnergyBounds) halfWidth() float64 {
+	total := 0.0
+	for _, value := range bounds {
+		total += math.Abs(value)
+	}
+	return total
+}
+
+type schedulerBaselineBound struct {
+	reference evidencestore.ObjectIdentity
+	watts     float64 // signed coefficient of the exact baseline reconstruction
+}
+
+func schedulerBaselineUncertainty(baselines []NodeBaseline, sources []string, instances int) schedulerBaselineBound {
+	if len(sources) == 0 {
+		return schedulerBaselineBound{}
+	}
+	for _, b := range baselines {
+		if b.ID == sources[0] {
+			coefficient := 1.0
+			if len(b.State) == 0 {
+				// unloaded + sum(loaded idle - unloaded), not n independent errors
+				coefficient -= float64(instances)
+			}
+			return schedulerBaselineBound{reference: b.Reference, watts: coefficient * b.WattsUncertainty}
+		}
+	}
+	return schedulerBaselineBound{}
+}
+
+func (plan *capacityPlan) addBounds(bounds schedulerEnergyBounds, r, t, sign float64) {
+	add := func(b schedulerBaselineBound, seconds float64) {
+		if b.watts != 0 {
+			bounds[schedulerBoundSource{reference: b.reference, trial: -1}] += sign * seconds * b.watts
+		}
+	}
+	if plan.keep {
+		add(plan.beforeBound, t)
+		return
+	}
+	for source, value := range plan.operationBounds {
+		bounds[source] += sign * value
+	}
+	add(plan.midBound, r-plan.preMean)
+	add(plan.afterBound, t-r-plan.postMean)
 }
 
 type capacityPlanner struct {
@@ -484,8 +547,9 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	p.sum(keep)
 	at := node
 	at.PowerMode = m0
-	before, _, _, _, beforeReason := schedulerBaseline(p.snapshot.Baselines, at, current, p.snapshot.Options)
+	before, _, beforeSources, _, beforeReason := schedulerBaseline(p.snapshot.Baselines, at, current, p.snapshot.Options)
 	keep.before = before
+	keep.beforeBound = schedulerBaselineUncertainty(p.snapshot.Baselines, beforeSources, len(current))
 	plans := []*capacityPlan{keep}
 	reason := ""
 	switch {
@@ -710,8 +774,11 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	}
 	var midReason, afterReason string
 	plan.midInstances = mid
-	plan.mid, _, _, _, midReason = schedulerBaseline(p.snapshot.Baselines, at, mid, p.snapshot.Options)
-	plan.after, _, _, _, afterReason = schedulerBaseline(p.snapshot.Baselines, at, plan.instances, p.snapshot.Options)
+	var midSources, afterSources []string
+	plan.mid, _, midSources, _, midReason = schedulerBaseline(p.snapshot.Baselines, at, mid, p.snapshot.Options)
+	plan.after, _, afterSources, _, afterReason = schedulerBaseline(p.snapshot.Baselines, at, plan.instances, p.snapshot.Options)
+	plan.midBound = schedulerBaselineUncertainty(p.snapshot.Baselines, midSources, len(mid))
+	plan.afterBound = schedulerBaselineUncertainty(p.snapshot.Baselines, afterSources, len(plan.instances))
 	if reason := cmp.Or(midReason, afterReason); reason != "" {
 		plan.record.Reason = reason
 		return plan
@@ -854,9 +921,19 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 		default:
 			continue
 		}
-		mean, longest, joules, ok := capacityOperationCost(schedulerCost(p.snapshot.Costs, a.CostID))
+		cost := schedulerCost(p.snapshot.Costs, a.CostID)
+		mean, longest, joules, ok := capacityOperationCost(cost)
 		if !ok {
 			return nil, nil, schedulerPlanMissingOperationCost
+		}
+		for trial, measured := range cost.Trials {
+			if measured.EnergyUncertaintyJoules != 0 {
+				if plan.operationBounds == nil {
+					plan.operationBounds = schedulerEnergyBounds{}
+				}
+				source := schedulerBoundSource{reference: cost.Reference, trial: trial}
+				plan.operationBounds[source] += measured.EnergyUncertaintyJoules / float64(len(cost.Trials))
+			}
 		}
 		if before[a.ID] {
 			plan.preMean, plan.preMax, plan.preJ = plan.preMean+mean, plan.preMax+longest, plan.preJ+joules
@@ -866,6 +943,7 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 	}
 	plan.record.Pre, plan.record.Post = time.Duration(plan.preMax*1e9), time.Duration(plan.postMax*1e9)
 	plan.record.Joules = plan.preJ + plan.postJ
+	plan.record.EnergyUncertaintyJoules = plan.operationBounds.halfWidth()
 	return stopped, removed, ""
 }
 
@@ -881,7 +959,7 @@ func capacityOperationCost(cost *OperationCost) (float64, float64, float64, bool
 	var mean, longest, joules float64
 	for _, t := range cost.Trials {
 		d := t.Duration.Seconds()
-		if d <= 0 || !schedulerFinite(t.Joules) {
+		if d <= 0 || !schedulerFinite(t.Joules) || !schedulerValidHalfWidth(t.EnergyUncertaintyJoules) {
 			return 0, 0, 0, false
 		}
 		j := t.Joules
@@ -1089,6 +1167,7 @@ type capacityResult struct {
 	// withinUncertainty marks keep chosen over a transition whose gain is
 	// within the measurement uncertainty (minimumGain).
 	withinUncertainty bool
+	gainUncertainty   float64
 }
 
 // evaluate judges the plan set (one plan index per Node) at route r and sums
@@ -1285,14 +1364,11 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 
 // minimumGain keeps the current configuration when a feasible plan set that
 // changes a Node saves no more energy over T than the measurement uncertainty
-// of the two candidates. The uncertainty combines, in quadrature over distinct
-// measurements, the confidence half-widths the profiles record. A profile's
-// model-loaded idle power counts once, times its idle seconds in keep minus
-// those in the plan set (during and after the chain on each changed Node), so
-// an instance both candidates hold cancels but for the chain time. The
-// per-input energy counts times the requests each instance gains or loses.
-// Unloaded node baselines (one idle window) and operation costs (one trial
-// each in m4 r7) record no interval and add none.
+// of the two candidates. Profile statistical confidence half-widths retain
+// their existing quadrature rule. Operation shift/gap bounds and unloaded or
+// loaded node baseline bounds are deterministic: compose signed exposures by
+// immutable evidence, cancel shared evidence, then sum absolute bounds and add
+// that conservative half-width to the profile confidence half-width.
 func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	if !best.feasible || best.keep {
 		return best
@@ -1346,10 +1422,19 @@ func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	for id, h := range half {
 		sq += math.Pow(h*(gained[id]-lost[id]), 2)
 	}
-	if keep.joules-best.joules > math.Sqrt(sq) {
+	bounds := schedulerEnergyBounds{}
+	for n, j := range best.choice {
+		if p.compared[n] {
+			p.plans[n][0].addBounds(bounds, 0, t, 1)
+			p.plans[n][j].addBounds(bounds, r, t, -1)
+		}
+	}
+	best.gainUncertainty = math.Sqrt(sq) + bounds.halfWidth()
+	if keep.joules-best.joules > best.gainUncertainty {
 		return best
 	}
 	keep.withinUncertainty = true
+	keep.gainUncertainty = best.gainUncertainty
 	return keep
 }
 
@@ -1513,7 +1598,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 		}
 	}
 	search := p.searched
-	record := &SchedulerCapacity{Period: time.Duration(p.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search}
+	record := &SchedulerCapacity{Period: time.Duration(p.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search, GainUncertaintyJoules: best.gainUncertainty}
 	for _, plans := range p.plans {
 		for _, plan := range plans {
 			record.Plans = append(record.Plans, plan.record)

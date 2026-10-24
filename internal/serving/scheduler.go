@@ -204,19 +204,24 @@ type SchedulerArrival struct {
 	Outcome     string        `json:"outcome,omitempty"`
 }
 type NodeBaseline struct {
-	ID         string                       `json:"id"`
-	Node       NodeReference                `json:"node"`
-	PowerMode  string                       `json:"powerMode"`
-	State      []string                     `json:"state"` // sorted profile ID + allocation identity, once per physical instance
-	Watts      float64                      `json:"watts"`
-	Meter      string                       `json:"meter"`
-	Scope      string                       `json:"scope"` // node-exclusive-wall
-	MeasuredAt time.Time                    `json:"measuredAt"`
-	Reference  evidencestore.ObjectIdentity `json:"reference"`
+	ID        string        `json:"id"`
+	Node      NodeReference `json:"node"`
+	PowerMode string        `json:"powerMode"`
+	State     []string      `json:"state"` // sorted profile ID + allocation identity, once per physical instance
+	Watts     float64       `json:"watts"`
+	// WattsUncertainty is the deterministic shift/gap half-width, not a confidence interval.
+	WattsUncertainty float64                      `json:"wattsUncertainty,omitempty"`
+	Meter            string                       `json:"meter"`
+	Scope            string                       `json:"scope"` // node-exclusive-wall
+	MeasuredAt       time.Time                    `json:"measuredAt"`
+	Reference        evidencestore.ObjectIdentity `json:"reference"`
 }
 type OperationTrial struct {
 	Duration time.Duration `json:"durationNanos"`
 	Joules   float64       `json:"joules"`
+	// EnergyUncertaintyJoules bounds wall energy even when Joules stores a signed
+	// baseline delta: reconstructing that same baseline does not add it again.
+	EnergyUncertaintyJoules float64 `json:"energyUncertaintyJoules,omitempty"`
 }
 type OperationCost struct {
 	ID                  string                       `json:"id"`

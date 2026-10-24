@@ -15,7 +15,6 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -338,13 +337,16 @@ func validateRetainedMeasurement(record OperationMeasurement, ref evidencestore.
 	if ref.Key != OperationMeasurementKey(record.Request.Operation) {
 		return errors.New("record is not at its fixed operation measurement key")
 	}
-	if record.Result.Operation.ID != record.Request.Operation.ID || record.Result.Operation.Node != record.Request.Operation.Node || record.Result.Operation.Kind != record.Request.Operation.Kind || record.Request.Coverage.MaximumBoundaryDistance <= 0 || record.Request.Coverage.MaximumGap <= 0 || record.Request.Coverage.MinimumCoverage <= 0 || record.Request.Coverage.MinimumCoverage > 1 || !record.Result.EndedAt.After(record.Result.StartedAt) {
+	if record.Result.Operation.ID != record.Request.Operation.ID || record.Result.Operation.Node != record.Request.Operation.Node || record.Result.Operation.Kind != record.Request.Operation.Kind || !record.Result.EndedAt.After(record.Result.StartedAt) {
 		return errors.New("raw operation conditions/window mismatch")
 	}
 	if record.Isolation != nil && (record.Isolation.Error != "" || record.Isolation.Node != record.Request.Operation.Node || record.Isolation.CheckedAt.Before(record.Result.EndedAt)) {
 		return errors.New("operation isolation boundary failed")
 	}
 	if err := record.Request.Sampling.Validate(); err != nil {
+		return err
+	}
+	if err := record.Request.validatePowerPolicy(); err != nil {
 		return err
 	}
 	meter := record.Request.Meter
@@ -362,19 +364,16 @@ func idleMeasurementBaseline(record OperationMeasurement, ref evidencestore.Obje
 			return serving.NodeBaseline{}, err
 		}
 	}
-	samples := make([]powerwindow.Sample, len(record.Power.Samples))
-	for i, s := range record.Power.Samples {
-		samples[i] = powerwindow.Sample{ObservedAt: s.ObservedAt, Watts: s.Watts}
-	}
-	joules, err := powerwindow.Integrate(powerwindow.Window{Start: record.Result.StartedAt, End: record.Result.EndedAt, Samples: samples}, record.Request.Coverage)
+	measurement, err := record.energyMeasurement()
 	if err != nil {
 		return serving.NodeBaseline{}, err
 	}
+	joules := measurement.Joules
 	if record.WallJoules == nil || joules != *record.WallJoules || joules/record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds() != *record.MeanWatts || record.Result.Status != nativeOperationComplete {
 		return serving.NodeBaseline{}, errors.New("idle aggregate differs from retained raw integral/window")
 	}
 	keys := stateProfileKeys(record.Result.Actual)
 	slices.Sort(keys)
 	meter := record.Request.Meter
-	return serving.NodeBaseline{ID: record.Request.Operation.ID, Node: meter.Node, PowerMode: record.Result.Actual.PowerMode, State: keys, Watts: *record.MeanWatts, Meter: meter.ID, Scope: meter.Scope, MeasuredAt: record.Result.EndedAt, Reference: ref}, nil
+	return serving.NodeBaseline{ID: record.Request.Operation.ID, Node: meter.Node, PowerMode: record.Result.Actual.PowerMode, State: keys, Watts: *record.MeanWatts, WattsUncertainty: measurement.UncertaintyJoules / record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds(), Meter: meter.ID, Scope: meter.Scope, MeasuredAt: record.Result.EndedAt, Reference: ref}, nil
 }

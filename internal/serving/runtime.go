@@ -468,14 +468,14 @@ func (r *Runtime) ProgressSince(instance string, since time.Time) time.Time {
 func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	c := r.calls[progress.RequestID]
-	if c == nil {
-		// Unknown requests are already settled or belong to an earlier process.
-		return nil
-	}
 	e := RequestEvent{RequestID: progress.RequestID, WorkloadUID: progress.WorkloadUID, Definition: progress.Definition, Kind: "backend_" + progress.Phase, At: progress.At, NativeInstance: instance, Outcome: progress.Outcome, Error: progress.Error}
 	e.NativeProgress = &progress
 	e.ExecutionComplete = progress.ExecutionComplete
+	c := r.calls[progress.RequestID]
+	if c == nil {
+		// Preserve late direct progress even after the HTTP call settled.
+		return r.config.ObservationLog.RecordNativeSupplement(e)
+	}
 	if d := r.definitions[progress.Definition]; d != nil {
 		e.WorkloadName = d.Name
 		e.SLO = &d.SLO

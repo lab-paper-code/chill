@@ -69,22 +69,36 @@ func execute(
 		return fmt.Errorf("wait for measurement-start: %w", err)
 	}
 
-	result, err := observer.Observe(ctx, metricobserver.Request{
+	observationCtx, cancelObservation := context.WithCancel(ctx)
+	defer cancelObservation()
+	end := make(chan struct{})
+	endResult := make(chan error, 1)
+	go func() {
+		err := worker.WaitForSignal(observationCtx, opts.endPath, opts.endWaitTimeout, pollInterval)
+		endResult <- err
+		if err == nil {
+			close(end)
+		} else {
+			cancelObservation()
+		}
+	}()
+	result, err := observer.ObserveUntil(observationCtx, metricobserver.Request{
 		Interval:       time.Duration(metrics.IntervalMilliseconds) * time.Millisecond,
-		Duration:       time.Duration(metrics.DurationSeconds) * time.Second,
+		Duration:       opts.endWaitTimeout,
 		RequestTimeout: time.Duration(metrics.TimeoutMilliseconds) * time.Millisecond,
 		MaxEvents:      opts.maxEvents,
-	}, func() {})
+	}, end, func() {})
 	if cause := context.Cause(ctx); cause != nil {
 		return fmt.Errorf("metric observation interrupted: %w", cause)
+	}
+	cancelObservation()
+	if endErr := <-endResult; endErr != nil {
+		return fmt.Errorf("wait for measurement-end: %w", endErr)
 	}
 	if err != nil {
 		return err
 	}
-	if err := worker.WaitForSignal(ctx, opts.endPath, opts.endWaitTimeout, pollInterval); err != nil {
-		return fmt.Errorf("wait for measurement-end: %w", err)
-	}
-	if err := worker.PublishMetricResult(opts.metricResultPath, maximumResultBytes, result); err != nil {
+	if err := worker.PublishMetricResult(opts.metricResultPath, opts.maxResultBytes, result); err != nil {
 		return err
 	}
 	thermal := summarizeThermal(result)

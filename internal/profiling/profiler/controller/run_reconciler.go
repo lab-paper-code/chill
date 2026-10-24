@@ -48,22 +48,24 @@ type RunExecutionJobs interface {
 // the owned Job is both the executable projection and its recoverable record.
 type RunReconciler struct {
 	client.Client
-	resolver RunConfigurationResolver
-	jobs     RunExecutionJobs
-	finalize RunEvidenceFinalizer
+	jobReader client.Reader
+	resolver  RunConfigurationResolver
+	jobs      RunExecutionJobs
+	finalize  RunEvidenceFinalizer
 }
 
 func NewRunReconciler(
 	kubeClient client.Client,
+	jobReader client.Reader,
 	resolver RunConfigurationResolver,
 	jobs RunExecutionJobs,
 	finalize RunEvidenceFinalizer,
 ) (*RunReconciler, error) {
-	if kubeClient == nil || resolver == nil || jobs == nil || finalize == nil {
-		return nil, errors.New("Kubernetes client, RunConfig resolver, execution Jobs, evidence finalizer are required")
+	if kubeClient == nil || jobReader == nil || resolver == nil || jobs == nil || finalize == nil {
+		return nil, errors.New("Kubernetes client, authoritative Job reader, RunConfig resolver, execution Jobs, evidence finalizer are required")
 	}
 	return &RunReconciler{
-		Client: kubeClient, resolver: resolver,
+		Client: kubeClient, jobReader: jobReader, resolver: resolver,
 		jobs: jobs, finalize: finalize,
 	}, nil
 }
@@ -213,7 +215,7 @@ func (r *RunReconciler) loadRecordedJob(
 	}
 	job := &batchv1.Job{}
 	key := types.NamespacedName{Namespace: run.Namespace, Name: run.Status.Job.Name}
-	if err := r.Get(ctx, key, job); err != nil {
+	if err := r.jobReader.Get(ctx, key, job); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, nil
 		}

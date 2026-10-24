@@ -126,21 +126,38 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		return err
 	}
 	observation := m.Spec.Observation
-	coverage, err := strconv.ParseFloat(observation.MinimumCoverage, 64)
+	allowance, err := measurementTimingAllowance(observation.Timing)
 	if err != nil {
-		return err
+		return errors.Join(err, c.failMeasurement(ctx, m, firstLine(err.Error())))
+	}
+	var coverage float64
+	if observation.MinimumCoverage != "" {
+		coverage, err = strconv.ParseFloat(observation.MinimumCoverage, 64)
+		if err != nil {
+			return err
+		}
 	}
 	interval := time.Duration(observation.IntervalMilliseconds) * time.Millisecond
 	duration := time.Duration(observation.MaximumOperationSeconds) * time.Second
+	timeout := time.Duration(observation.RequestTimeoutMilliseconds) * time.Millisecond
+	// One finite watchdog covers pre-support, the unchanged action, post-support
+	// and two polling/transport deliveries. The action gets its own full budget.
+	if interval <= 0 || duration <= 0 || timeout <= 0 || allowance > (time.Duration(1<<63-1)-duration-2*interval-timeout)/2 {
+		err := errors.New("invalid or overflowing operation measurement budget")
+		return errors.Join(err, c.failMeasurement(ctx, m, err.Error()))
+	}
+	watchdog := duration + 2*allowance + 2*interval + timeout
 	base := MeasurementRequest{
-		Sampling: metricobserver.Request{Interval: interval, Duration: duration,
-			RequestTimeout: time.Duration(observation.RequestTimeoutMilliseconds) * time.Millisecond, MaxEvents: int(duration/interval) + 2},
+		Timing: observation.Timing, OperationBudget: duration,
+		Sampling: metricobserver.Request{Interval: interval, Duration: watchdog,
+			RequestTimeout: timeout, MaxEvents: int(watchdog/interval) + 3},
 		Coverage: powerwindow.Policy{MinimumCoverage: coverage,
 			MaximumBoundaryDistance: time.Duration(observation.MaximumBoundaryDistanceMilliseconds) * time.Millisecond,
 			MaximumGap:              time.Duration(observation.MaximumGapMilliseconds) * time.Millisecond},
 	}
 	phase, reason := edge.MeasurementPhaseComplete, ""
 	var saved []string
+	prepared := map[string]string{}
 	for i, step := range m.Spec.Steps {
 		request := base
 		request.Operation = Operation{ID: fmt.Sprintf("%s.%d.%s", m.UID, i, step.Name), Kind: string(step.Kind), Node: ref}
@@ -153,7 +170,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 			if step.Kind == edge.OperationCostStepPrepare {
 				request.Operation.Prepare = &spec
 			} else {
-				request.Operation.Instance = spec.Name
+				request.Operation.Instance = prepared[profiles[step.BatchEnergyOptimization]]
 			}
 		case edge.OperationCostStepIdle:
 			request.IdleDuration = time.Duration(*step.IdleDurationSeconds) * time.Second
@@ -174,6 +191,11 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		}
 		if phase != edge.MeasurementPhaseComplete {
 			break
+		}
+		if step.Kind == edge.OperationCostStepPrepare {
+			if actual := schedulerPhysicalState(request.Operation.Prepare.Instance.ID, record.Result.Actual.Instances); actual != nil {
+				prepared[profiles[step.BatchEnergyOptimization]] = actual.ID
+			}
 		}
 	}
 	var recordErr error
