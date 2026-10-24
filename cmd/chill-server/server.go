@@ -69,7 +69,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	defer func() { retErr = errors.Join(retErr, diagnostics.Close()) }()
 	var recorder *serving.Diagnostics
-	if diagnostics != nil { recorder = diagnostics.recorder }
+	if diagnostics != nil {
+		recorder = diagnostics.recorder
+	}
 	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
@@ -179,7 +181,9 @@ func serve(ctx context.Context, opts options, chillServer http.Handler, executio
 	}
 	serverErrors := make(chan error, 1)
 	listener, err := net.Listen("tcp", opts.bindAddress)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer func() { _ = listener.Close() }()
 	go func() { serverErrors <- server.ServeTLS(listener, opts.tlsCert, opts.tlsKey) }()
 	diagnostics.listenerBound()

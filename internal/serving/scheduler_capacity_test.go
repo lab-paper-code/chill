@@ -718,7 +718,6 @@ func TestCapacityMinimumGainDoesNotBlockRecoveryFromInfeasibleKeep(t *testing.T)
 	}
 }
 
-
 // The real immutable-cost -> node chain -> minimumGain flow must not turn B
 // into nominal energy or pretend its deterministic error is a statistical CI.
 func TestCapacityOperationUncertaintyChangesMinimumGain(t *testing.T) {

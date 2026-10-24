@@ -248,7 +248,7 @@ type observationCatalogEntry struct {
 // ObservationLog appends minute files under hourly segment directories and
 // keeps only the open request rows and the definitions in memory.
 type ObservationLog struct {
-	mu        diagnosticMutex
+	mu diagnosticMutex
 	// requestMu protects open rows; it never covers filesystem work.
 	// The disk writer may take requestMu while holding mu, never the reverse.
 	requestMu sync.Mutex
@@ -259,9 +259,9 @@ type ObservationLog struct {
 	root     string
 	started  time.Time
 	// floor is the start of complete local observation; deleting an hour advances it.
-	floor       time.Time
-	now         func() time.Time
-	files       map[string]*os.File
+	floor time.Time
+	now   func() time.Time
+	files map[string]*os.File
 	// offsets retain the last complete append boundary of this exclusive writer.
 	offsets     map[*os.File]int64
 	definitions *os.File

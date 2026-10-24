@@ -23,7 +23,7 @@ const maxControlBytes = 4 << 20
 const phaseFinished = "finished"
 
 type Client struct {
-	HTTPClient *http.Client
+	HTTPClient  *http.Client
 	Diagnostics *serving.Diagnostics
 }
 type Spec struct {

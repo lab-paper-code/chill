@@ -45,7 +45,7 @@ type SchedulerControllerConfig struct {
 	LoadGenerator LoadGeneratorConfig
 	// GatewayRequestTimeout is the actual HTTP handler lifetime cap.
 	GatewayRequestTimeout time.Duration
-	Meters        []MeterDeclaration
+	Meters                []MeterDeclaration
 	// PowerPolicies are the configured actuation policies; a non-Fixed
 	// DeviceClass mode with a policy is a mode ChillServer can request.
 	PowerPolicies []nodeactuator.ActuationPolicySpec

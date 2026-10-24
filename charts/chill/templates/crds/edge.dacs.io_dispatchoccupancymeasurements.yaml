@@ -192,7 +192,8 @@ spec:
             - message: DispatchOccupancyMeasurement spec is immutable
               rule: self == oldSelf
             - message: open-loop occupancy duration must be at least 60 seconds
-              rule: (has(self.supplyMode) && self.supplyMode == 'closed-loop') || self.durationSeconds >= 60
+              rule: (has(self.supplyMode) && self.supplyMode == 'closed-loop') ||
+                self.durationSeconds >= 60
           status:
             properties:
               perRequestNanos:

@@ -68,15 +68,9 @@ spec:
               observation:
                 description: |-
                   MeasurementObservationSpec freezes wall-power sampling and empirical timing
-                  inputs for every step. Legacy coverage fields reproduce old records only.
+                  inputs for every step.
                 properties:
                   intervalMilliseconds:
-                    format: int32
-                    minimum: 1
-                    type: integer
-                  maximumBoundaryDistanceMilliseconds:
-                    description: Legacy boundary/coverage declarations do not veto
-                      new timing measurements.
                     format: int32
                     minimum: 1
                     type: integer
@@ -93,16 +87,13 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
-                  minimumCoverage:
-                    pattern: ^(0\.[0-9]*[1-9][0-9]*|1(\.0+)?)$
-                    type: string
                   requestTimeoutMilliseconds:
                     format: int32
                     minimum: 1
                     type: integer
                   timing:
-                    description: Timing is required for new execution; absent only
-                      on legacy records.
+                    description: Timing freezes the required empirical observation
+                      inputs.
                     properties:
                       changeIntervalP95Seconds:
                         pattern: ^[0-9]+(\.[0-9]+)?$
@@ -129,6 +120,7 @@ spec:
                 - maximumGapMilliseconds
                 - maximumOperationSeconds
                 - requestTimeoutMilliseconds
+                - timing
                 type: object
                 x-kubernetes-validations:
                 - message: requestTimeoutMilliseconds must be less than intervalMilliseconds

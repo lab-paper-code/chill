@@ -34,7 +34,9 @@ func TestDiagnosticMutexCorrelatesEveryOwnerAndRequest(t *testing.T) {
 	if unsafe.Sizeof(diagnosticEvent{}) != diagnosticEventBytes || len(d.events)*diagnosticEventBytes != DiagnosticBufferBytes {
 		t.Fatal("numeric ring exceeds its fixed byte budget")
 	}
-	if !d.Start() || d.Start() { t.Fatal("capture activation is not one-shot") }
+	if !d.Start() || d.Start() {
+		t.Fatal("capture activation is not one-shot")
+	}
 	runtimeLock := diagnosticMutex{recorder: d, id: 1}
 	observationLock := diagnosticMutex{recorder: d, id: 2}
 	runtimeLock.LockRequest(diagnosticTestRequest)
@@ -51,7 +53,7 @@ func TestDiagnosticMutexCorrelatesEveryOwnerAndRequest(t *testing.T) {
 	owners := map[uint64]uint8{}
 	request := diagnosticRequest(diagnosticTestRequest)
 	for event := range int(meta.Retained) {
-		raw := output.Bytes()[event*diagnosticEventBytes:(event+1)*diagnosticEventBytes]
+		raw := output.Bytes()[event*diagnosticEventBytes : (event+1)*diagnosticEventBytes]
 		if !bytes.Equal(raw[32:48], request[:]) || binary.LittleEndian.Uint64(raw[8:16]) == 0 {
 			t.Fatal("request or owner correlation was lost")
 		}
@@ -68,14 +70,18 @@ func TestDiagnosticMutexCorrelatesEveryOwnerAndRequest(t *testing.T) {
 			t.Fatalf("owner lacks attempt/acquire/release: %b", phases)
 		}
 	}
-	if d.Start() || d.Active() { t.Fatal("export rearmed the capture") }
+	if d.Start() || d.Active() {
+		t.Fatal("export rearmed the capture")
+	}
 }
 
 func TestDiagnosticLossAndDeadlineRemainExplicit(t *testing.T) {
 	d := NewDiagnostics()
 	d.events = d.events[:2]
 	d.Start()
-	for range 3 { d.Mark(DiagnosticReply, DiagnosticBegin, diagnosticTestRequest, 0) }
+	for range 3 {
+		d.Mark(DiagnosticReply, DiagnosticBegin, diagnosticTestRequest, 0)
+	}
 	d.mu.Lock()
 	d.Mark(DiagnosticReply, DiagnosticEnd, diagnosticTestRequest, 0)
 	d.mu.Unlock()
@@ -87,14 +93,19 @@ func TestDiagnosticLossAndDeadlineRemainExplicit(t *testing.T) {
 	expired.Start()
 	expired.origin = expired.origin.Add(-DiagnosticWindow)
 	expired.Mark(DiagnosticReply, DiagnosticBegin, diagnosticTestRequest, 0)
-	if expired.Active() || expired.written != 0 { t.Fatal("event escaped the fixed 420-second window") }
+	if expired.Active() || expired.written != 0 {
+		t.Fatal("event escaped the fixed 420-second window")
+	}
 	expired.Stop()
 	closed := NewDiagnostics()
 	closed.Stop()
-	if closed.Start() { t.Fatal("stopped recorder activated later") }
+	if closed.Start() {
+		t.Fatal("stopped recorder activated later")
+	}
 }
 
 type shortDiagnosticWriter struct{}
+
 func (shortDiagnosticWriter) Write([]byte) (int, error) { return 0, nil }
 func TestDiagnosticShortExportReportsFailureAndReleasesBuffer(t *testing.T) {
 	d := NewDiagnostics()

@@ -34,8 +34,8 @@ type options struct {
 	profileObjectSize                                                      int64
 	schedulerConfigMap, schedulerConfigKey                                 string
 	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey string
-	diagnosticDirectory string
-	diagnosticStartDelay, diagnosticTraceOffset time.Duration
+	diagnosticDirectory                                                    string
+	diagnosticStartDelay, diagnosticTraceOffset                            time.Duration
 
 	// loadGenerator runs the load Job of dispatch-occupancy measurements.
 	loadGenerator servingkube.LoadGeneratorConfig

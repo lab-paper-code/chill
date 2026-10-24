@@ -198,8 +198,8 @@ func TestNativeDispatchPreservesOriginalLifetimeSenderElapsedAndMargin(t *testin
 		Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
 		serving.Dispatch{
 			RequestID: "request", Definition: &serving.Definition{UID: "uid", SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}},
-			Input: &serving.InferenceInput{}, ReceivedAt: received, Deadline: received.Add(2*time.Second),
-			Elapsed: 250*time.Millisecond, CompletionMarginMS: 29,
+			Input: &serving.InferenceInput{}, ReceivedAt: received, Deadline: received.Add(2 * time.Second),
+			Elapsed: 250 * time.Millisecond, CompletionMarginMS: 29,
 		})
 	request := <-seen
 	if request.Context.LifetimeMS != 2000 || request.Context.SenderElapsedMS != 250 ||

@@ -526,24 +526,32 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 type diagnosticInferenceWriter struct {
 	http.ResponseWriter
 	diagnostics *serving.Diagnostics
-	requestID string
+	requestID   string
 }
+
 func (w *diagnosticInferenceWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 func (w *diagnosticInferenceWriter) WriteHeader(status int) {
-	if !w.diagnostics.Active() { w.ResponseWriter.WriteHeader(status); return }
+	if !w.diagnostics.Active() {
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
 	w.diagnostics.Mark(serving.DiagnosticWriteHeader, serving.DiagnosticBegin, w.requestID, int64(status))
 	w.ResponseWriter.WriteHeader(status)
 	w.diagnostics.Mark(serving.DiagnosticWriteHeader, serving.DiagnosticEnd, w.requestID, int64(status))
 }
 func (w *diagnosticInferenceWriter) Write(data []byte) (int, error) {
-	if !w.diagnostics.Active() { return w.ResponseWriter.Write(data) }
+	if !w.diagnostics.Active() {
+		return w.ResponseWriter.Write(data)
+	}
 	w.diagnostics.Mark(serving.DiagnosticWrite, serving.DiagnosticBegin, w.requestID, int64(len(data)))
 	n, err := w.ResponseWriter.Write(data)
 	w.diagnostics.Mark(serving.DiagnosticWrite, serving.DiagnosticEnd, w.requestID, int64(n))
 	return n, err
 }
 func flushInference(controller *http.ResponseController, d *serving.Diagnostics, id string) error {
-	if !d.Active() { return controller.Flush() }
+	if !d.Active() {
+		return controller.Flush()
+	}
 	d.Mark(serving.DiagnosticFlush, serving.DiagnosticBegin, id, 0)
 	err := controller.Flush()
 	d.Mark(serving.DiagnosticFlush, serving.DiagnosticEnd, id, 0)

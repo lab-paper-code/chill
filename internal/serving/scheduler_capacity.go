@@ -265,7 +265,7 @@ type capacityPlan struct {
 	others                             int                 // instances serving no controlled Workload
 	preMean, preMax, postMean, postMax float64             // seconds
 	preJ, postJ                        float64
-	before, mid, after                 float64             // watts
+	before, mid, after                 float64 // watts
 	operationBounds                    schedulerEnergyBounds
 	beforeBound, midBound, afterBound  schedulerBaselineBound
 	// replaces marks a plan that changes the batch policy of a current instance,

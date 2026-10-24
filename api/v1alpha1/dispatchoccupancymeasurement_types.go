@@ -143,7 +143,7 @@ func (s DispatchOccupancyMeasurementSpec) validateSupplyBounds() error {
 	c := s.Conditions
 	var formula struct {
 		Coefficients OccupancyPlanningFloors `json:"coefficients"`
-		Computed struct {
+		Computed     struct {
 			TailBatchSeconds               float64 `json:"tailBatchSeconds"`
 			FastBatchSeconds               float64 `json:"fastBatchSeconds"`
 			PrefixSeconds                  float64 `json:"prefixSeconds"`

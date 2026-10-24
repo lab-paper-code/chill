@@ -46,15 +46,15 @@ func TestOperationCostUsesActualSingleStateEffectAndWholeWallWindow(t *testing.T
 		SchemaVersion: OperationMeasurementSchema, Verdict: measurementAccepted, WallJoules: &joules,
 		Request: MeasurementRequest{
 			Operation: Operation{ID: "prepare", Kind: operationPrepare, Node: serving.NodeReference{Name: "node", UID: "uid"}},
-			Meter: MeterDeclaration{ID: "meter", Scope: measurementWallScope},
-			Timing: &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
-			Coverage: powerwindow.Policy{MaximumGap: time.Second},
+			Meter:     MeterDeclaration{ID: "meter", Scope: measurementWallScope},
+			Timing:    &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
+			Coverage:  powerwindow.Policy{MaximumGap: time.Second},
 		},
 		Result: OperationResult{Status: nativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
 			Before: OperationState{States: []string{"other"}}, Actual: OperationState{States: []string{"other", "new:[0]::1024:1"}}},
 		Power: metricobserver.Result{Samples: []metricobserver.Sample{
 			{ObservedAt: start.Add(-time.Second), Watts: 20}, {ObservedAt: start, Watts: 20},
-			{ObservedAt: start.Add(time.Second), Watts: 20}, {ObservedAt: start.Add(2*time.Second), Watts: 20},
+			{ObservedAt: start.Add(time.Second), Watts: 20}, {ObservedAt: start.Add(2 * time.Second), Watts: 20},
 		}},
 	}
 	record.Result.Operation = record.Request.Operation
@@ -85,16 +85,16 @@ func TestPowerCostUsesEmptyNodeModeChange(t *testing.T) {
 		SchemaVersion: OperationMeasurementSchema, Verdict: measurementAccepted, WallJoules: &joules,
 		Request: MeasurementRequest{
 			Operation: Operation{ID: "raise", Kind: operationPower, Node: serving.NodeReference{Name: "node", UID: "uid"}},
-			Meter: MeterDeclaration{ID: "meter", Scope: measurementWallScope},
-			Timing: &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
-			Coverage: powerwindow.Policy{MaximumGap: time.Second},
+			Meter:     MeterDeclaration{ID: "meter", Scope: measurementWallScope},
+			Timing:    &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
+			Coverage:  powerwindow.Policy{MaximumGap: time.Second},
 		},
-		Result: OperationResult{Status: nativeOperationComplete, StartedAt: start, EndedAt: start.Add(2*time.Second),
+		Result: OperationResult{Status: nativeOperationComplete, StartedAt: start, EndedAt: start.Add(2 * time.Second),
 			Before: OperationState{PowerMode: lowMode}, Actual: OperationState{PowerMode: "boost"}},
 		Power: metricobserver.Result{Samples: []metricobserver.Sample{
 			{ObservedAt: start.Add(-time.Second), Watts: 15}, {ObservedAt: start, Watts: 15},
-			{ObservedAt: start.Add(time.Second), Watts: 15}, {ObservedAt: start.Add(2*time.Second), Watts: 15},
-			{ObservedAt: start.Add(3*time.Second), Watts: 15},
+			{ObservedAt: start.Add(time.Second), Watts: 15}, {ObservedAt: start.Add(2 * time.Second), Watts: 15},
+			{ObservedAt: start.Add(3 * time.Second), Watts: 15},
 		}},
 	}
 	record.Result.Operation = record.Request.Operation
@@ -145,13 +145,13 @@ func TestMeasuredOperationNeedsProvenStateEffect(t *testing.T) {
 		record := OperationMeasurement{
 			Verdict: measurementInsufficient,
 			Request: MeasurementRequest{Operation: Operation{ID: "remove", Kind: operationRemove},
-				Timing: &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
+				Timing:   &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
 				Coverage: powerwindow.Policy{MaximumGap: time.Second}},
 			Result: OperationResult{Status: nativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
 				Before: OperationState{States: before}, Actual: OperationState{States: actual}},
 			Power: metricobserver.Result{Samples: []metricobserver.Sample{
 				{ObservedAt: start.Add(-time.Second), Watts: 20}, {ObservedAt: start, Watts: 20},
-				{ObservedAt: start.Add(time.Second), Watts: 20}, {ObservedAt: start.Add(2*time.Second), Watts: 20},
+				{ObservedAt: start.Add(time.Second), Watts: 20}, {ObservedAt: start.Add(2 * time.Second), Watts: 20},
 			}},
 		}
 		record.Result.Operation = record.Request.Operation

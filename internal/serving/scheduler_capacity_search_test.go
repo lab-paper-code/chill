@@ -274,7 +274,6 @@ func e5Brute(p *capacityPlanner) *capacityResult {
 	return best
 }
 
-
 // e5Converge repeats Ticks, each from the configuration and route weights the
 // previous decision chose (after payback and minimum gain), until a Tick keeps
 // both or returns to a configuration and weights it left (a cycle), at most
