@@ -119,7 +119,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout, OperationTimeout: opts.operationTimeout,
 		MaxQueryEvents: opts.maxQueryEvents,
 	}
-	scheduler, err := newSchedulerService(ctx, store, kube, execution, observer, objects, observationLog, opts, handlerConfig.RequestTimeout)
+	scheduler, err := newSchedulerService(
+		ctx, store, kube, execution, observer, objects, observationLog, opts, handlerConfig.RequestTimeout,
+	)
 	if err != nil {
 		return fmt.Errorf("initialize scheduler service: %w", err)
 	}

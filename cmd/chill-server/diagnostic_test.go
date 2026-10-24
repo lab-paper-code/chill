@@ -19,12 +19,22 @@ func TestDiagnosticOptionsRequireExplicitFiniteServingCapture(t *testing.T) {
 		valid bool
 	}{
 		{"disabled", options{}, true},
-		{"finite", options{diagnosticDirectory: "/private/capture", diagnosticStartDelay: time.Second, diagnosticTraceOffset: 60 * time.Second}, true},
-		{"last allowed trace", options{diagnosticDirectory: "/private/capture", diagnosticTraceOffset: 390 * time.Second}, true},
+		{"finite", options{
+			diagnosticDirectory:   "/private/capture",
+			diagnosticStartDelay:  time.Second,
+			diagnosticTraceOffset: 60 * time.Second,
+		}, true},
+		{"last allowed trace", options{
+			diagnosticDirectory:   "/private/capture",
+			diagnosticTraceOffset: 390 * time.Second,
+		}, true},
 		{"timing without directory", options{diagnosticTraceOffset: time.Second}, false},
 		{"relative directory", options{diagnosticDirectory: "capture"}, false},
 		{"negative delay", options{diagnosticDirectory: "/private/capture", diagnosticStartDelay: -time.Second}, false},
-		{"trace past window", options{diagnosticDirectory: "/private/capture", diagnosticTraceOffset: 391 * time.Second}, false},
+		{"trace past window", options{
+			diagnosticDirectory:   "/private/capture",
+			diagnosticTraceOffset: 391 * time.Second,
+		}, false},
 		{"materializer", options{diagnosticDirectory: "/private/capture", materializeProfile: true}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,7 +53,8 @@ func TestDiagnosticTraceWriterNeverExceedsItsCap(t *testing.T) {
 		}
 	}
 	if writer.used != 8 || writer.attempted != 13 || !writer.truncated || !bytes.Equal(writer.data, []byte("abcdefgh")) {
-		t.Fatalf("trace loss/cap hidden: used=%d attempted=%d truncated=%t data=%q", writer.used, writer.attempted, writer.truncated, writer.data)
+		t.Fatalf("trace loss/cap hidden: used=%d attempted=%d truncated=%t data=%q",
+			writer.used, writer.attempted, writer.truncated, writer.data)
 	}
 	select {
 	case <-writer.limit:

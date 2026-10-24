@@ -461,7 +461,10 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		}
 	}
 	r.mu.LockRequest(c.receipt.ID)
-	defer r.unlock()
+	defer func() {
+		// unlock retains async final-write failures in observationError and signals its owner.
+		_ = r.unlock()
+	}()
 	if persistErr != nil {
 		r.observationError = persistErr
 		c.assignment = nil
@@ -534,9 +537,9 @@ func (r *Runtime) ProgressSince(instance string, since time.Time) time.Time {
 	return since
 }
 
-func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) error {
+func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) (err error) {
 	r.mu.Lock()
-	defer r.unlock()
+	defer func() { err = errors.Join(err, r.unlock()) }()
 	e := RequestEvent{RequestID: progress.RequestID, WorkloadUID: progress.WorkloadUID, Definition: progress.Definition, Kind: "backend_" + progress.Phase, At: progress.At, NativeInstance: instance, Outcome: progress.Outcome, Error: progress.Error}
 	e.NativeProgress = &progress
 	e.ExecutionComplete = progress.ExecutionComplete
@@ -582,9 +585,9 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) erro
 
 // ConfirmInstanceStopped requires kubelet-reported container termination, not a
 // failed readiness probe, deleted desired resource, or disconnected transport.
-func (r *Runtime) ConfirmInstanceStopped(instance string) error {
+func (r *Runtime) ConfirmInstanceStopped(instance string) (err error) {
 	r.mu.Lock()
-	defer r.unlock()
+	defer func() { err = errors.Join(err, r.unlock()) }()
 	if i := r.instances[instance]; i != nil {
 		i.State.Ready = false
 		i.State.Reason = "InstanceStopped"
@@ -643,9 +646,9 @@ func (r *Runtime) PublishClosed(d *Definition, reason string) error {
 	return r.publish(d, true, reason)
 }
 
-func (r *Runtime) publish(d *Definition, stopped bool, reason string) error {
+func (r *Runtime) publish(d *Definition, stopped bool, reason string) (err error) {
 	r.mu.Lock()
-	err := r.validatePublicationLocked(d)
+	err = r.validatePublicationLocked(d)
 	r.mu.Unlock()
 	if err != nil {
 		return err
@@ -655,7 +658,7 @@ func (r *Runtime) publish(d *Definition, stopped bool, reason string) error {
 	}
 	identity := d.Identity()
 	r.mu.Lock()
-	defer r.unlock()
+	defer func() { err = errors.Join(err, r.unlock()) }()
 	if err := r.validatePublicationLocked(d); err != nil {
 		return err
 	}
@@ -804,9 +807,9 @@ func (r *Runtime) SetCompletionMargin(ms float64) {
 	r.completionMargin = ms
 }
 
-func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
+func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 	r.mu.Lock()
-	defer r.unlock()
+	defer func() { err = errors.Join(err, r.unlock()) }()
 	seen := map[string]bool{}
 	for _, candidate := range instances {
 		if candidate.State.ID == "" || candidate.State.Node.UID == "" {

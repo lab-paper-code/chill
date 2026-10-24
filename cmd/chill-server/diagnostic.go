@@ -31,7 +31,8 @@ func (o options) validateDiagnostics() error {
 		filepath.Clean(o.diagnosticDirectory) != o.diagnosticDirectory ||
 		o.diagnosticStartDelay < 0 || o.diagnosticTraceOffset < 0 ||
 		o.diagnosticTraceOffset > serving.DiagnosticWindow-diagnosticTraceDuration {
-		return errors.New("diagnostics require a fresh absolute private directory, nonnegative delay and trace offset in [0,390s], in serving mode")
+		return errors.New("diagnostics require a fresh absolute private directory, nonnegative delay " +
+			"and trace offset in [0,390s], in serving mode")
 	}
 	return nil
 }
@@ -133,7 +134,11 @@ func (s *diagnosticSession) run(ctx context.Context, o options) {
 	defer close(s.done)
 	var boundAt time.Time
 	reason := "canceled_before_listener"
-	traceMeta := diagnosticTraceMetadata{CapacityBytes: diagnosticTraceBytes, DurationLimitNanos: int64(diagnosticTraceDuration), StopReason: "not_started"}
+	traceMeta := diagnosticTraceMetadata{
+		CapacityBytes:      diagnosticTraceBytes,
+		DurationLimitNanos: int64(diagnosticTraceDuration),
+		StopReason:         "not_started",
+	}
 	select {
 	case boundAt = <-s.ready:
 	case <-ctx.Done():
@@ -238,7 +243,15 @@ func (s *diagnosticSession) persist(o options, boundAt time.Time, reason string,
 		Trace            diagnosticTraceMetadata    `json:"trace"`
 		EventFileBytes   int64                      `json:"eventFileBytes"`
 		PersistenceError string                     `json:"persistenceError,omitempty"`
-	}{ListenerBound: boundAt.UTC(), StartDelayNanos: int64(o.diagnosticStartDelay), TraceOffsetNanos: int64(o.diagnosticTraceOffset), StopReason: reason, Numeric: numeric, Trace: traceMeta, EventFileBytes: eventBytes}
+	}{
+		ListenerBound:    boundAt.UTC(),
+		StartDelayNanos:  int64(o.diagnosticStartDelay),
+		TraceOffsetNanos: int64(o.diagnosticTraceOffset),
+		StopReason:       reason,
+		Numeric:          numeric,
+		Trace:            traceMeta,
+		EventFileBytes:   eventBytes,
+	}
 	if err := errors.Join(eventErr, traceErr); err != nil {
 		meta.PersistenceError = err.Error()
 	}

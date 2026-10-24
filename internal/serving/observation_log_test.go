@@ -764,8 +764,67 @@ func TestAssignmentAppendFailureRevertsAssignment(t *testing.T) {
 	}
 	_, err = call.Wait(context.Background())
 	var domain *Error
-	if !errors.As(err, &domain) || domain.Code != "ObservationUnavailable" || call.assignment != nil || r.instances[i.ID].outstanding != 0 {
+	if !errors.As(err, &domain) || domain.Code != "ObservationUnavailable" || call.assignment != nil ||
+		r.instances[i.ID].outstanding != 0 || r.observationError == nil {
 		t.Fatalf("failed assigned row kept the assignment: %v %+v", err, call.assignment)
+	}
+}
+
+func TestSynchronousTransitionsReturnFinalWriteFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		run     func(*Runtime) error
+		primary string
+	}{
+		{"observe", func(r *Runtime) error {
+			r.calls["progress"] = &Call{}
+			return r.ObserveBackend("missing", BackendProgress{RequestID: "progress"})
+		}, "BackendContextMismatch"},
+		{"stopped", func(r *Runtime) error {
+			return r.ConfirmInstanceStopped("missing")
+		}, ""},
+		{"publish", func(r *Runtime) error {
+			_, snapshot := schedulerFixture()
+			return r.Publish(snapshot.Workloads[0])
+		}, ""},
+		{"install", func(r *Runtime) error {
+			return r.InstallInstances([]ReadyInstance{{}})
+		}, "InvalidDistribution"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _, _ := routingRuntime(t, map[string]int32{"w1": 1})
+			log := r.config.ObservationLog
+			log.now = func() time.Time { return observationTestHour }
+			blocked := log.segment(observationRequestStream, observationTestHour)
+			if err := os.MkdirAll(blocked, 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Remove(blocked); err != nil {
+					t.Error(err)
+				}
+			})
+			if err := log.RequestEvent(RequestEvent{
+				RequestID: "closed", WorkloadUID: "w1", Kind: phaseReceived, At: observationTestHour,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			r.mu.Lock()
+			r.closeLocked(&Call{receipt: Receipt{ID: "closed"}})
+			r.mu.Unlock()
+			err := tc.run(r)
+			var pathError *os.PathError
+			if !errors.As(err, &pathError) || r.observationError == nil ||
+				!errors.Is(err, r.observationError) || log.open["closed"] == nil || r.finalizing != 0 {
+				t.Fatalf("final-write failure lost or not retained for retry: %v, sticky=%v", err, r.observationError)
+			}
+			if tc.primary != "" {
+				var domain *Error
+				if !errors.As(err, &domain) || domain.Code != tc.primary {
+					t.Fatalf("primary failure lost while joining final-write error: %v", err)
+				}
+			}
+		})
 	}
 }
 

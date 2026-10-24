@@ -47,9 +47,12 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.StringVar(&o.tlsCert, "tls-cert", "", "TLS certificate file.")
 	f.StringVar(&o.tlsKey, "tls-key", "", "TLS private key file.")
 	f.StringVar(&o.observationDirectory, "observation-directory", "", "Private persistent observation log directory.")
-	f.StringVar(&o.diagnosticDirectory, "diagnostic-directory", "", "Fresh absolute private directory for one finite control-only capture; empty disables.")
-	f.DurationVar(&o.diagnosticStartDelay, "diagnostic-start-delay", 0, "Delay from listener bind to the one 420s numeric window.")
-	f.DurationVar(&o.diagnosticTraceOffset, "diagnostic-trace-offset", 0, "Offset within the numeric window for at most 30s/32MiB of Go trace; maximum 390s.")
+	f.StringVar(&o.diagnosticDirectory, "diagnostic-directory", "",
+		"Fresh absolute private directory for one finite control-only capture; empty disables.")
+	f.DurationVar(&o.diagnosticStartDelay, "diagnostic-start-delay", 0,
+		"Delay from listener bind to the one 420s numeric window.")
+	f.DurationVar(&o.diagnosticTraceOffset, "diagnostic-trace-offset", 0,
+		"Offset within the numeric window for at most 30s/32MiB of Go trace; maximum 390s.")
 	f.StringVar(&o.consoleURL, "console-url", "",
 		"Optional fixed private Console HTTP(S) origin; query and evidence routes require it.")
 	f.StringVar(&o.dashboardURL, "dashboard-url", "",
