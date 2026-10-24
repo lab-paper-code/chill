@@ -65,6 +65,7 @@ remain separate from code-intelligence checks.
 ## Package architecture contract
 
 - Every in-scope production package maps to exactly one reviewed component.
+- Repository-local `bin/` tool outputs and nested deployment worktrees stay outside the architecture scan; `api/`, `cmd/` and `internal/` retain full production mapping and the negative fixture remains enforced.
 - Plain domain packages remain independent of APIs, Kubernetes clients,
   controller-runtime, and higher-level runtime packages.
 - Adapter packages may import their core contracts; core contracts may not

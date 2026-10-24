@@ -250,8 +250,9 @@ incremental energy를 route 시각에서 나눠 더한다. 비교 집합(`search
 keep, 논리 구성 key 순으로 고른다. 그런 해가 없으면 최대 초과량이 작은 해, 에너지 순으로 고르고 상태는 `Overload`,
 사유는 `NoPlanMeetsSLO`다. 켜진 Workload는 부하가 0이어도 인스턴스가 하나 이상 있어야 최종 충족이다. 해는 keep과 모든
 노드를 비운 집합 두 출발점에서 노드 2개, 이어서 3개 이하의 계획을 바꾸는 이웃 탐색으로 찾는다. 동시 평가 수는
-`planSearchWorkers`이고 탐색은 제어 주기의 절반 안에 끝난다. 고른 해의 에너지 이득이 profile 신뢰구간으로 정한 측정
-불확실성 안이면 keep이다([4장](analytic-planner.md#4-노드-계획과-탐색), [14장](analytic-planner.md#14-구현-규칙)).
+`planSearchWorkers`이고 탐색은 제어 주기의 절반 안에 끝난다. 고른 해의 nominal 이득이 operation/선택 baseline의
+조건부 B 민감도 문턱 이하이면 keep이다. 공유 immutable 근거는 부호 상쇄하며 profile 통계오차와 BEO idle fallback CI는
+이 문턱 밖에 남는다([4장](analytic-planner.md#4-노드-계획과-탐색), [14장](analytic-planner.md#14-구현-규칙)).
 snapshot의 목록은 정렬해 쓰므로 판단은 입력 순서와 무관하다.
 
 router 가중치는 고른 해의 인스턴스 κ에 입력당 에너지가 작은 인스턴스부터 λ를 채운 배정을 합 1,000의 정수로 반올림한

@@ -84,6 +84,36 @@ has no independent 30/60-second inference cap. Metadata query and asynchronous
 management-mutation budgets remain independent. No firstfloor/runtime change
 or rebuild is required.
 
+### Workload-bound E5 Poisson replay
+
+E5 uses the same executable with explicit frozen Workload SLO, request
+lifetime, gateway cap and socket delivery budget. The paired
+`--workload-slo` and `--gateway-timeout` options require an explicit
+`--request-lifetime`. Before loading records or sending traffic the CLI checks
+`L >= SLO`, `cap >= L` and `socket > L + delivery-margin`. When omitted, the
+E5 socket default is `L + 2*delivery-margin`. Measurement replay retains its
+frozen `L + delivery-margin` default.
+
+```sh
+chill-loadgen replay \
+  --endpoint https://chill.example:8443 --token-file "$CHILL_TOKEN_FILE" \
+  --ca-file "$CHILL_CA_FILE" --workload image-classification-tight-slo \
+  --dataset-dir vqav2/evaluation --fields image --arrivals poisson \
+  --rate 50 --duration 300 --workers 320 --seed 101 \
+  --workload-slo 1 --request-lifetime 2 --gateway-timeout 129 \
+  --delivery-margin .01 --timeout 2.02
+```
+
+The campaign freezes these declared values against the actual Workload
+UID/generation and deployed gateway settings. The CLI validates their
+relationship; it does not fetch or infer server configuration. Every full,
+static and control-element comparison reuses the same bound lifetime tuple.
+PLC/Smol values come from their approved E5 inputs. Generic replay without the
+E5 options keeps its existing defaults. Native delivery forwards original L,
+sender elapsed, separate SLO and m; remaining lifetime subtracts sender elapsed
+and m once.
+
+
 
 Each request prints one JSON line on stdout:
 

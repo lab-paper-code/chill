@@ -14,7 +14,7 @@ Smol d는 2026-10-24T11:42:19.448243Z 반환 확인을 포함한 `smol-d-followt
 
 ## 승인과 소유권
 
-현재 승인 원문은 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/deployment2-e5-proposal-20261024.md`이며, 실행 계약은 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/state-audit-execution-contract-20261024.txt`다. 사용자 12:20Z 결정으로 여섯 권고와 §10 방향이 승인됐다. #055의 실제 시각 12:27:17.194Z는 정확한 8 roots, 38 steps 범위에서 #054를 대체하고 나머지 hold를 보존한다.
+현재 계약은 저장소의 `measurement-api.md`, `analytic-planner.md`, `workload-pools.md` 본문이 정의하며 정확한 경로는 아래 정본 진입점에 연결한다. `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/deployment2-e5-proposal-20261024.md`는 승인 원문, `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/state-audit-execution-contract-20261024.txt`는 실행 근거로 보존한다. 사용자 12:20Z 결정으로 여섯 권고와 §10 방향이 승인됐다. #055의 실제 시각 12:27:17.194Z는 정확한 8 roots, 38 steps 범위에서 #054를 대체하고 나머지 hold를 보존한다.
 
 | 담당 | 현재 소유권 |
 |---|---|
