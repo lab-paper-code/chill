@@ -351,6 +351,21 @@ runtime 7종, 기존 자원과 evidence store를 유지한다.
 유한 진단 제어 rollout은 최대 1회, 최종 D2 rollout은 최대 1회다.
 진단은 같은 PRIMARY native8과 실제 조건으로 420 s 한 번, 수정 뒤 같은 조건 420 s 한 번을 사용한다.
 유한 ring/trace 예산과 drop 수를 보존하며 원인 근거가 부족하면 inconclusive로 남긴다.
+
+진단은 제어 프로세스의 `--diagnostic-directory`에 새 절대 경로를 명시해 한 번 활성화한다.
+Helm은 `servingEntrypoint.diagnostic.directory/startDelay/traceOffset`을 같은 세 flag에 연결한다.
+기존 `/data` writable mount를 재사용하며 기본 directory는 빈 값이다.
+빈 값은 비활성 경로이며 요청별 clock, ID 변환과 버퍼 할당을 수행하지 않는다.
+`--diagnostic-start-delay`는 listener bind부터 420 s numeric 창까지의 지연이고,
+`--diagnostic-trace-offset`은 그 창 안의 Go trace 시작 위치(0부터390 s)다.
+실행 manifest는 실제 mounted private 디렉터리, listener/readiness와 부하 경계, 두 offset을 연결한다.
+numeric ring은16 MiB/64-byte 고정 이벤트, Go trace 저장 버퍼는32 MiB/30 s다.
+native 반환, mutex의 attempt/acquire/release와 owner/request, reply/Wait/Write/Flush/Response 및
+관측 marshal/write/Sync/query/archive 경계를 기존 잠금 범위에서 기록한다.
+두 캡처가 끝난 뒤 잠금 밖에서0700 디렉터리의0600 `events.bin`, `runtime.trace`, `metadata.json`을 저장하고 버퍼를 해제한다.
+metadata는 overwrite/drop, 원래 offset 범위, trace cap/중단/절단과 실제 파일 오류를 보존한다.
+창 경계와 유실로 연결되지 않은 edge는 inconclusive이며 trace 관측 오버헤드를 원인이나 수정 효과로 단정하지 않는다.
+Go runtime 자체의 trace 버퍼와 캡처 오버헤드는 위 저장 버퍼 예산과 별도로 보고한다.
 source 변경의 검증, kind, build와 offline κ는 측정/load와 겹치지 않게 조율한다.
 통합 source, 검증된 source와 live 배포는 각 실제 SHA와 결과로 구분한다.
 
