@@ -1,5 +1,10 @@
 # CHILL workload-pools 인수인계
 
+다음 세션은 세 원문을 먼저 읽는다.
+- `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/north-star.md`
+- `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/user-intent.md`
+- `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/checkpoints.md`
+
 ## 현재 상태
 
 목표는 mobilenet, SmolVLM2 VQAv2, PLC anomaly의 혼합 부하에서 워크로드별 SLO와 처리 결과를 확인하고, 전환을 포함한 전체 POOL 에너지를 정적 구성 및 제어요소별 결과와 비교하는 것이다. 현재 위치는 P7b(a)의 정확 비용 입력 보수와 rev72 BEFORE 수집이다.
@@ -50,7 +55,7 @@ P11은 세 파일의 보존본과 현재 원본 해시를 확인하고, 대상 �
 
 ## 정본 진입점과 선별 근거
 
-현재 계약은 저장소 설계 본문에서 읽고 외부 승인 및 원시 자료는 근거로 연결한다. 시간순 결정, 사고 조사와 상세 운영 이력은 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/checkpoints.md`에 보존한다. 문체와 점검 기준은 같은 디렉터리의 `north-star.md`, `user-intent.md`다.
+현재 계약은 저장소 설계 본문에서 읽고 외부 승인 및 원시 자료는 근거로 연결한다.
 
 | 목적 | 정본 또는 선별 근거 경로 |
 |---|---|
