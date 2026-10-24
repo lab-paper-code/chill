@@ -148,7 +148,10 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
 G2의 [소비자 목록](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/g2-current-consumer-inventory.json)은
 catalog legacy 49개와 그중 E5 노드의 ranking baseline 9개를 확인했다.
 동결된 E5 후보 에너지 입력의 legacy 0개는 전체 reader 정리의 완료와 구분한다.
-ranking9 재측정의 추가 승인과 정확한 미사용 참조 정리는 [측정 API 저장 계약](measurement-api.md#7-저장-계약-adr-0019)을 따른다.
+승인된 ranking9 재측정은 2 roots, 18 steps이며 실제 최저선정의 조건부 직접 전환을 포함한 상한은 4 roots, 22 steps다.
+대체 확인과 검증된 외부 백업 뒤 raw 80개 키와 terminal OCM 6개를 정리하며, old ranking9는 80개에 포함된다.
+같은 승인 조건의 대체와 옛 기록 정리는 연속 실행한다.
+각 root의 실제 소비, 정상 반환과 첫 BEFORE 전 공통 입력 동결은 [측정 API 저장 계약](measurement-api.md#7-저장-계약-adr-0019)을 따른다.
 원 raw/status와 외부 과학 증거는 보존하며 재측정, 삭제와 reader 제거 완료는 실제 근거로 기록한다.
 
 ## 8. 측정 입력의 영향 범위

@@ -15,7 +15,7 @@ Smol d는 2026-10-24T11:42:19.448243Z 반환 확인을 포함한 `smol-d-followt
 - 운영 묶음의 비용 14개 요청과 172개 Accepted 기록, 새 프로파일 7개와 96개 trial은 확보됐다. 후보별 정확 비용 커버리지는 위의 69개 분모로 관리한다.
 - Smol9는 모두 새 규칙 Accepted이며, 승인된 추가 8개는 과학 판정, 실제 소비자 선택, 실물 반환까지 완료됐다. 전체 d34는 새 규칙 9개, legacy 10개, 결측 15개다. D2 뒤 재측정 25개는 CPU8, GPU5, PLC12이며 legacy와 결측에 중첩된다.
 - 배포는 rev72, 소스 `e18ac391d4353e5abba03558b163312f2a7b629b`다. 기존 검증 소스는 `a33e4fad057241ac7e341c952b6bdf4e05001ac6`, 승인 시점 문서 HEAD는 `ef2a45c73bec8e6f1f4c0b718ce7aa543e3d1385`다. 새 소스 편집은 검증 전이며 기존 검증의 실패, skip, 경고는 원 보고서에 보존한다.
-- 38단계 수집 뒤 실제 소비 비용과 baseline의 legacy Timing 분류를 확인한다. legacy 잔여 목록과 재측정 승인 경계를 보고하며 정확 비용 커버리지와 E5 입구 충족을 각각 판정한다.
+- G2 실제 소비자 분류 뒤 ranking9 재측정 2 roots, 18 steps와 실제 최저선정의 조건부 직접 전환을 포함한 상한 4 roots, 22 steps가 승인됐다. 각 root의 raw, 계획기 소비와 정상 반환을 확인한다. 9개 대체 확인과 검증된 외부 백업의 실제 절대경로, 개수 및 목록 대조 보고 뒤 raw 80개 키와 terminal OCM 6개를 정리한다. old ranking9는 80개에 포함된다.
 
 ## 승인과 소유권
 
@@ -34,12 +34,12 @@ Smol d는 2026-10-24T11:42:19.448243Z 반환 확인을 포함한 `smol-d-followt
 - B-only는 nominal 값, 동일 근거 상쇄, 전환 chain과 keep-infeasible을 보존한다. 13개 BEO idle fallback의 통계 CI 미포괄과 전역 95% 미보장 한계를 명시한다.
 - d는 승인된 1%, 양측 95%, 여유 1.25, 요청당 idle 1ms, 본창 360초와 준비 60초 하한, 3600초 상한을 유지한다. signed 원시 값과 Accepted 판정, `max(d,0)` 투영을 보존한다. D04/D09/D14/D23/D33의 systematic profile-serving bias는 E5에 기록하며 새 정책은 M5 후보로 관리한다.
 - 원본012의 Complete, raw와 LocalMinimum, 원본017의 16개 raw와 Measuring 상태를 보존한다. coherent 대체 2개의 실제 소비자 참조와 recordedJob 예방 규칙을 유지한다.
-- fresh empty 10개와 legacy ranking 9개의 승인 조건을 적용한다. fresh10 밖 baseline의 실제 소비는 보고 대상이다. native8 보존 실패 시 paired 비교를 중단한다.
+- fresh empty 10개와 승인된 ranking9 대체를 연결한다. 동일한 승인 조건의 legacy 또는 결측 대체, 대체 확인, 검증 백업과 옛 기록 삭제는 연속 실행한다. Timing 없는 소비 기록 0건 뒤 reader를 완결하고 첫 BEFORE 전에 공통 입력을 동결한다. fresh10 밖 baseline의 실제 소비는 보고 대상이며 native8 보존 실패 시 paired 비교를 중단한다.
 - runtime7, 기존 자원 한도, evidence store와 나머지 hold를 유지한다. 진단 제어 rollout은 최대 1회, 최종 D2 rollout은 최대 1회다. 정량 SLO, m, G, κ, R, N은 D2 뒤 실측 제안으로 정한다.
 
 ## 다음 실행
 
-1. rev72의 8 roots, 38 steps 입력 보수에 대한 원시 기록과 실제 소비자 연결을 닫는다.
+1. rev72의 8 roots, 38 steps 원시 기록과 실제 소비자 연결을 보존하며 승인된 G2 대체, 검증 백업과 정확한 참조 정리를 완료한다. 원본012/017, Smol d와 runtime7을 보존한다.
 2. 자율 BEFORE와 고정 native8 BEFORE를 수집한다. 배포 전 관측과 실제 Pod 및 container 보존 근거를 확보한다.
 3. 유한 진단, D2, paired 및 자율 AFTER를 수행한다. 관측한 원인과 수정 효과, 미관측 한계를 구분한다.
 4. d25와 G, m을 측정하고 정량 조건을 제안한 뒤 E5, M5를 수행한다.

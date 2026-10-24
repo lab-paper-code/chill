@@ -246,12 +246,16 @@ B=0 값만으로 계약 세대를 판별하지 않는다.
 이는 실행된 E5 선택이나 전체 저장 prefix의 계약 정리 완료를 뜻하지 않는다.
 reader는 최신 선택 전에 객체를 읽으므로 known superseded 참조와 terminal CR 참조도 정확한 정리 목록에 포함한다.
 
-single-contract cutover는 남은 ranking baseline 9개의 재측정 승인과 정확한 미사용 객체 정리를 전제로 한다.
-이 추가 측정은 승인 대기이며 현재 문서가 실행 권한을 부여하지 않는다.
-legacy9의 실험 한계 수용과 G2 저장 계약 정리는 별도 조건이다.
-목록이 0건인 범위는 legacy reader 분기와 stranded 객체를 정리하고,
-남은 기록의 재측정 목록에만 추가 승인을 받는다.
-원 raw/status는 보존하며 재측정, 삭제와 reader 제거의 실적은 실제 근거로 기록한다.
+G2 승인 범위는 ranking baseline 9개의 idle과 reach-power를 수집하는 2 roots, 18 steps다.
+실제 최저선정에 필요한 조건부 직접 전환을 포함한 상한은 4 roots, 22 steps다.
+각 root는 raw, 계획기 소비와 정상 반환을 확인한 뒤 다음 root로 진행한다.
+9개 대체를 확인한 뒤 검증된 외부 백업의 실제 절대경로와 raw 80개 키, terminal OCM 6개의 개수 및 목록 대조를 보고하고 작업 저장소의 해당 참조를 정리한다.
+old ranking 9개는 raw 80개에 포함된다.
+동일한 승인 조건의 legacy 또는 결측 대체, 대체 확인, 검증 백업과 옛 기록 삭제는 연속 실행한다.
+새 조건, 판정, 범위 확대와 배포는 별도 승인 경계를 따른다.
+정리 뒤 Timing 없는 소비 기록 0건을 확인하고 legacy reader와 전용 obsolete 필드 및 비교 테스트를 같은 영구 변경에서 제거한다.
+공통 catalog, d, profile, runtime, lowest와 settings 입력을 동결한 뒤 첫 BEFORE 부하를 시작한다.
+원본012/017, Smol d, 새 38단계 기록과 runtime7을 보존하며 재측정, 삭제와 reader 제거 실적은 실제 근거로 기록한다.
 
 ## 8. 캠페인 manifest
 

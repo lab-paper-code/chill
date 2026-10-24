@@ -330,9 +330,12 @@ G2의 [실제 소비자 목록](/home/genesis1/.cache/chill-assets/ops/pools-dep
 catalog legacy 49개(비용 35, baseline 14)와 E5 노드의 ranking baseline 9개를 확인했다.
 동결된 E5 후보 에너지 입력은 legacy 0개이며 전체 저장 prefix 정리는 별도다.
 ranking9의 불확실성 unknown과 fresh10 입구 조건은 유지한다.
-G2 single-contract cutover는 ranking9 재측정의 추가 승인과 정확한 미사용 참조 정리를 전제로 한다.
-재측정 승인은 대기 중이며 삭제나 reader 제거의 실제 완료는 기록되지 않았다.
-세부 처리와 원 raw/status 보존은 [측정 API 저장 계약](measurement-api.md#7-저장-계약-adr-0019)을 따른다.
+G2의 ranking9 재측정은 2 roots, 18 steps로 승인됐으며 실제 최저선정의 조건부 직접 전환을 포함한 상한은 4 roots, 22 steps다.
+각 root의 raw, 계획기 소비와 정상 반환을 확인한 뒤 다음 root로 진행한다.
+9개 대체 확인과 검증된 외부 백업의 실제 절대경로 및 개수 대조 보고 뒤 raw 80개 키와 terminal OCM 6개를 정리한다.
+old ranking9는 80개에 포함되며 같은 승인 조건의 대체와 옛 기록 정리는 연속 실행한다.
+Timing 없는 소비 기록 0건 뒤 strict reader를 완결하고 첫 BEFORE 전에 공통 입력을 동결한다.
+삭제와 reader 제거 완료, 원 raw/status 보존은 [측정 API 저장 계약](measurement-api.md#7-저장-계약-adr-0019)의 실제 근거로 기록한다.
 
 ## 8. 최소 D2 범위
 
