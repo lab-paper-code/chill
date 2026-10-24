@@ -249,6 +249,9 @@ type observationCatalogEntry struct {
 // keeps only the open request rows and the definitions in memory.
 type ObservationLog struct {
 	mu        diagnosticMutex
+	// requestMu protects open rows; it never covers filesystem work.
+	// The disk writer may take requestMu while holding mu, never the reverse.
+	requestMu sync.Mutex
 	publishMu sync.Mutex
 	// archived holds the past hours whose streams this process stored, under publishMu.
 	archived map[time.Time]bool
@@ -259,6 +262,8 @@ type ObservationLog struct {
 	floor       time.Time
 	now         func() time.Time
 	files       map[string]*os.File
+	// offsets retain the last complete append boundary of this exclusive writer.
+	offsets     map[*os.File]int64
 	definitions *os.File
 	retained    map[string]*Definition
 	open        map[string]*RequestRow
@@ -274,7 +279,7 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	}
 	l := &ObservationLog{
 		config: config, root: filepath.Join(config.Directory, observationVersion), started: time.Now().UTC(),
-		now: func() time.Time { return time.Now().UTC() }, files: map[string]*os.File{},
+		now: func() time.Time { return time.Now().UTC() }, files: map[string]*os.File{}, offsets: map[*os.File]int64{},
 		retained: map[string]*Definition{}, open: map[string]*RequestRow{}, catalog: map[string]observationCatalogEntry{},
 		archived: map[time.Time]bool{},
 	}
@@ -482,21 +487,27 @@ func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) 
 // appendWholeLocked appends data or nothing: a short or failed write, such as
 // ENOSPC while S3 is down, is cut back so the next line starts on a boundary.
 func (l *ObservationLog) appendWholeLocked(file *os.File, data []byte) error {
-	l.mu.mark(DiagnosticFileStat, DiagnosticBegin)
-	info, err := file.Stat()
-	l.mu.mark(DiagnosticFileStat, DiagnosticEnd)
-	if err != nil {
-		return err
+	size, known := l.offsets[file]
+	if !known {
+		l.mu.mark(DiagnosticFileStat, DiagnosticBegin)
+		info, err := file.Stat()
+		l.mu.mark(DiagnosticFileStat, DiagnosticEnd)
+		if err != nil {
+			return err
+		}
+		size = info.Size()
+		l.offsets[file] = size
 	}
 	l.mu.mark(DiagnosticFileWrite, DiagnosticBegin)
-	_, err = file.Write(data)
+	n, err := file.Write(data)
 	l.mu.mark(DiagnosticFileWrite, DiagnosticEnd)
 	if err != nil {
 		l.mu.mark(DiagnosticFileTruncate, DiagnosticBegin)
-		truncateErr := file.Truncate(info.Size())
+		truncateErr := file.Truncate(size)
 		l.mu.mark(DiagnosticFileTruncate, DiagnosticEnd)
 		return errors.Join(err, truncateErr)
 	}
+	l.offsets[file] = size + int64(n)
 	return nil
 }
 
@@ -571,34 +582,42 @@ func (l *ObservationLog) RequestEvent(event RequestEvent) error {
 	if event.RequestID == "" || event.At.IsZero() {
 		return errors.New("request identity and event time are required")
 	}
-	l.mu.LockRequest(event.RequestID)
-	defer l.mu.Unlock()
+	l.requestMu.Lock()
 	if l.closed {
+		l.requestMu.Unlock()
 		return errors.New("observation log is closed")
 	}
 	row := l.open[event.RequestID]
 	if row == nil {
 		if strings.HasPrefix(event.Kind, "backend_") {
+			l.requestMu.Unlock()
 			if event.NativeProgress == nil || event.NativeInstance == "" {
 				return nil
 			}
-			return l.appendNativeSupplementLocked(event)
+			return l.RecordNativeSupplement(event)
 		}
 		row = &RequestRow{RequestID: event.RequestID}
 	}
 	next := *row
 	next.fold(&event)
+	l.open[event.RequestID] = &next
+	l.requestMu.Unlock()
 	if event.Kind == phaseAssigned {
 		assigned := next
 		assigned.Kind = requestRowAssigned
 		assigned.AcceptedNanos, assigned.ValidatedNanos, assigned.DispatchedNanos = nil, nil, nil
+		l.mu.LockRequest(event.RequestID)
+		defer l.mu.Unlock()
 		hour, err := l.appendRowLocked(&assigned)
 		if err != nil {
 			return err
 		}
-		next.assignedHour = hour
+		l.requestMu.Lock()
+		if current := l.open[event.RequestID]; current != nil {
+			current.assignedHour = hour
+		}
+		l.requestMu.Unlock()
 	}
-	l.open[event.RequestID] = &next
 	return nil
 }
 
@@ -630,24 +649,31 @@ func (l *ObservationLog) appendNativeSupplementLocked(event RequestEvent) error 
 func (l *ObservationLog) RequestClosed(id string) error {
 	l.mu.LockRequest(id)
 	defer l.mu.Unlock()
-	row := l.open[id]
-	if row == nil {
-		return nil
-	}
-	return l.closeRowLocked(id, row)
+	return l.closeRowLocked(id)
 }
 
 // closeRowLocked keeps the open row until its final row is stored; Flush
 // retries a failed one.
-func (l *ObservationLog) closeRowLocked(id string, row *RequestRow) error {
+func (l *ObservationLog) closeRowLocked(id string) error {
+	l.requestMu.Lock()
+	row := l.open[id]
+	if row == nil {
+		l.requestMu.Unlock()
+		return nil
+	}
 	row.closing = true
 	final := *row
+	l.requestMu.Unlock()
 	final.Kind, final.DispatchedAt = requestRowFinal, nil
 	final.fillNativeStages()
 	if _, err := l.appendRowLocked(&final); err != nil {
 		return err
 	}
-	delete(l.open, id)
+	l.requestMu.Lock()
+	if l.open[id] == row {
+		delete(l.open, id)
+	}
+	l.requestMu.Unlock()
 	return nil
 }
 
@@ -724,11 +750,14 @@ func (l *ObservationLog) archive(ctx context.Context) error {
 func (l *ObservationLog) removeHour(hour time.Time) (bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.requestMu.Lock()
 	for _, row := range l.open {
 		if !row.assignedHour.IsZero() && !row.assignedHour.After(hour) {
+			l.requestMu.Unlock()
 			return false, nil
 		}
 	}
+	l.requestMu.Unlock()
 	l.mu.mark(DiagnosticRemove, DiagnosticBegin)
 	err := os.RemoveAll(filepath.Join(l.root, observationHour(hour)))
 	l.mu.mark(DiagnosticRemove, DiagnosticEnd)
@@ -793,10 +822,16 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 func (l *ObservationLog) Flush(ctx context.Context) error {
 	l.mu.Lock()
 	var result error
+	l.requestMu.Lock()
+	var closing []string
 	for id, row := range l.open {
 		if row.closing && !l.closed {
-			result = errors.Join(result, l.closeRowLocked(id, row))
+			closing = append(closing, id)
 		}
+	}
+	l.requestMu.Unlock()
+	for _, id := range closing {
+		result = errors.Join(result, l.closeRowLocked(id))
 	}
 	for _, file := range l.files {
 		result = errors.Join(result, l.syncFileLocked(file))
@@ -820,7 +855,9 @@ func (l *ObservationLog) Close(ctx context.Context) error {
 			delete(l.files, stream)
 		}
 		result = errors.Join(result, l.syncFileLocked(l.definitions), l.closeFileLocked(l.definitions))
+		l.requestMu.Lock()
 		l.closed = true
+		l.requestMu.Unlock()
 	}
 	if result != nil {
 		l.lastError = result
@@ -1153,10 +1190,12 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 		defer l.mu.mark(DiagnosticCapture, DiagnosticEnd)
 	}
 	read := &observationRead{files: map[string][]observationOpenFile{}, open: map[string]*RequestRow{}, definitions: map[string]*Definition{}, start: l.floor}
+	l.requestMu.Lock()
 	for id, row := range l.open {
 		copied := *row
 		read.open[id] = &copied
 	}
+	l.requestMu.Unlock()
 	for id, d := range l.retained {
 		read.definitions[id] = d
 	}
@@ -1302,5 +1341,6 @@ func (l *ObservationLog) closeFileLocked(file *os.File) error {
 	l.mu.mark(DiagnosticFileClose, DiagnosticBegin)
 	err := file.Close()
 	l.mu.mark(DiagnosticFileClose, DiagnosticEnd)
+	delete(l.offsets, file)
 	return err
 }

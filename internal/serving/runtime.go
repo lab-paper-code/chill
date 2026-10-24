@@ -42,6 +42,7 @@ type Call struct {
 	backendContext                               context.Context
 	cancelBackend                                context.CancelFunc
 	transportDone, backendDone, responseRecorded bool
+	closeNext                                    *Call
 }
 
 type runtimeInstance struct {
@@ -74,8 +75,8 @@ type runtimeWorkload struct {
 	calls      map[string]*Call
 }
 
-// ponytail: one owner and one lock for the research cluster. Use per-Workload
-// locks only if measured contention, not a distributed queue or lock service.
+// The owner lock protects routing and physical ownership, never observation
+// filesystem work. An assigned call reserves capacity while its row is stored.
 type Runtime struct {
 	mu                diagnosticMutex
 	config            RuntimeConfig
@@ -93,6 +94,8 @@ type Runtime struct {
 	definitions       map[string]*Definition
 	changed           chan struct{}
 	observationError  error
+	closing           *Call
+	finalizing        int
 	shuttingDown      bool
 	overloaded        atomic.Bool
 }
@@ -165,6 +168,14 @@ func (r *Runtime) event(c *Call, kind, outcome, code string) error {
 	return r.eventAt(c, kind, outcome, code, time.Now())
 }
 func (r *Runtime) eventAt(c *Call, kind, outcome, code string, now time.Time) error {
+	if err := r.config.ObservationLog.RequestEvent(requestEvent(c, kind, outcome, code, now)); err != nil {
+		r.observationError = err
+		return err
+	}
+	return nil
+}
+
+func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEvent {
 	e := RequestEvent{RequestID: c.receipt.ID, WorkloadName: c.receipt.Name, WorkloadUID: c.receipt.UID, Definition: c.identity, Kind: kind, At: now.UTC(), ReceivedAt: c.receipt.ReceivedAt, ElapsedNanos: now.Sub(c.receipt.ReceivedAt).Nanoseconds(), Assignment: c.assignment, Outcome: outcome, Error: code}
 	if !c.receipt.Deadline.IsZero() {
 		e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
@@ -175,11 +186,7 @@ func (r *Runtime) eventAt(c *Call, kind, outcome, code string, now time.Time) er
 	if c.definition != nil {
 		e.SLO = &c.definition.SLO
 	}
-	if err := r.config.ObservationLog.RequestEvent(e); err != nil {
-		r.observationError = err
-		return err
-	}
-	return nil
+	return e
 }
 
 func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
@@ -292,14 +299,14 @@ func (c *Call) Wait(ctx context.Context) (BackendResult, error) {
 	}
 }
 
-func (r *Runtime) Response(receipt Receipt, outcome, code string) error {
+func (r *Runtime) Response(receipt Receipt, outcome, code string) (err error) {
 	finishedAt := time.Now()
 	r.config.Diagnostics.Mark(DiagnosticResponse, DiagnosticBegin, receipt.ID, 0)
 	if r.config.Diagnostics.Active() {
 		defer r.config.Diagnostics.Mark(DiagnosticResponse, DiagnosticEnd, receipt.ID, 0)
 	}
 	r.mu.LockRequest(receipt.ID)
-	defer r.mu.Unlock()
+	defer func() { err = errors.Join(err, r.unlock()) }()
 	c := r.calls[receipt.ID]
 	live := c != nil
 	if !live {
@@ -314,7 +321,8 @@ func (r *Runtime) Response(receipt Receipt, outcome, code string) error {
 	c.responseRecorded = true
 	if !live {
 		// A request rejected before acceptance closes with its response.
-		return r.closeLocked(c)
+		r.closeLocked(c)
+		return nil
 	}
 	r.releaseLocked(c)
 	r.dispatchLocked()
@@ -322,12 +330,34 @@ func (r *Runtime) Response(receipt Receipt, outcome, code string) error {
 	return nil
 }
 
-func (r *Runtime) closeLocked(c *Call) error {
-	if err := r.config.ObservationLog.RequestClosed(c.receipt.ID); err != nil {
-		r.observationError = err
-		return err
+func (r *Runtime) closeLocked(c *Call) {
+	r.finalizing++
+	c.closeNext = r.closing
+	r.closing = c
+}
+
+// unlock finishes this transition's final rows in the same caller, outside the
+// owner lock. Failed rows stay in ObservationLog for its existing Flush retry.
+func (r *Runtime) unlock() error {
+	closing := r.closing
+	r.closing = nil
+	r.mu.Unlock()
+	var result error
+	for c := closing; c != nil; {
+		next := c.closeNext
+		c.closeNext = nil
+		err := r.config.ObservationLog.RequestClosed(c.receipt.ID)
+		r.mu.Lock()
+		r.finalizing--
+		if err != nil {
+			r.observationError = err
+			result = errors.Join(result, err)
+		}
+		r.signal()
+		r.mu.Unlock()
+		c = next
 	}
-	return nil
+	return result
 }
 
 func (r *Runtime) removeQueuedLocked(c *Call) {
@@ -381,16 +411,8 @@ func (r *Runtime) dispatchLocked() {
 			i := entry.instance
 			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: time.Now().UTC()}
 			c.assignment.ProfileBody = i.Profile
-			if err := r.event(c, phaseAssigned, "", ""); err != nil {
-				c.assignment = nil
-				r.removeQueuedLocked(c)
-				c.backendDone = true
-				c.transportDone = true
-				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticBegin, c.receipt.ID, 0)
-				c.reply <- callResult{err: failure("ObservationUnavailable", "cannot persist assignment")}
-				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticEnd, c.receipt.ID, 0)
-				continue
-			}
+			// Reserve the physical owner before releasing the lock; the executor
+			// stores its assignment before it can contact this native instance.
 			r.removeQueuedLocked(c)
 			c.instance = i
 			c.phase = phaseAssigned
@@ -398,13 +420,29 @@ func (r *Runtime) dispatchLocked() {
 			c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
 			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline, CompletionMarginMS: r.completionMargin}
 			c.input = nil // Only this Dispatch reads the sample, and no path requeues the call.
-			go r.execute(c, i.Execute, dispatch)
+			assigned := requestEvent(c, phaseAssigned, "", "", c.assignment.DispatchedAt)
+			go r.execute(c, i.Execute, dispatch, assigned)
 		}
 	}
 }
 
-func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (BackendResult, error), dispatch Dispatch) {
-	result, err := execute(c.backendContext, dispatch)
+func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (BackendResult, error), dispatch Dispatch, assigned RequestEvent) {
+	var result BackendResult
+	persistErr := r.config.ObservationLog.RequestEvent(assigned)
+	var err error
+	if persistErr != nil {
+		result.Finished = true // No native exchange began or can still execute.
+		err = failure("ObservationUnavailable", "cannot persist assignment")
+	} else if c.backendContext.Err() != nil {
+		result.Finished = true
+		err = failure("RequestCanceled", "caller canceled before native dispatch")
+	} else if !dispatch.Deadline.IsZero() && !time.Now().Before(dispatch.Deadline) {
+		result.Finished = true
+		err = failure("RequestTimeout", "request lifetime expired before native dispatch")
+	} else {
+		dispatch.Elapsed = time.Since(dispatch.ReceivedAt)
+		result, err = execute(c.backendContext, dispatch)
+	}
 	finishedAt := time.Now()
 	r.config.Diagnostics.Mark(DiagnosticBackendReturn, DiagnosticEnd, c.receipt.ID, 0)
 	outcome, code := outcomeCompleted, ""
@@ -423,7 +461,11 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		}
 	}
 	r.mu.LockRequest(c.receipt.ID)
-	defer r.mu.Unlock()
+	defer r.unlock()
+	if persistErr != nil {
+		r.observationError = persistErr
+		c.assignment = nil
+	}
 	c.transportDone = true
 	if c.cancelBackend != nil {
 		c.cancelBackend()
@@ -443,12 +485,12 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 	if eventErr := r.eventAt(c, eventBackendExchangeFinished, outcome, code, finishedAt); eventErr != nil {
 		err = failure("ObservationUnavailable", "cannot persist backend exchange outcome")
 	}
+	r.releaseLocked(c)
 	if c.reply != nil {
 		r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticBegin, c.receipt.ID, 0)
 		c.reply <- callResult{result: result, err: err}
 		r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticEnd, c.receipt.ID, 0)
 	}
-	r.releaseLocked(c)
 	r.dispatchLocked()
 	r.signal()
 }
@@ -475,7 +517,7 @@ func (r *Runtime) releaseLocked(c *Call) {
 	if w := r.workloads[c.receipt.UID]; w != nil {
 		delete(w.calls, c.receipt.ID)
 	}
-	_ = r.closeLocked(c) // The Runtime refuses new work while observation fails.
+	r.closeLocked(c)
 }
 
 // ProgressSince bounds a native log follow: progress older than since is
@@ -494,14 +536,17 @@ func (r *Runtime) ProgressSince(instance string, since time.Time) time.Time {
 
 func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer r.unlock()
 	e := RequestEvent{RequestID: progress.RequestID, WorkloadUID: progress.WorkloadUID, Definition: progress.Definition, Kind: "backend_" + progress.Phase, At: progress.At, NativeInstance: instance, Outcome: progress.Outcome, Error: progress.Error}
 	e.NativeProgress = &progress
 	e.ExecutionComplete = progress.ExecutionComplete
 	c := r.calls[progress.RequestID]
 	if c == nil {
 		// Preserve late direct progress even after the HTTP call settled.
-		return r.config.ObservationLog.RecordNativeSupplement(e)
+		r.mu.Unlock()
+		err := r.config.ObservationLog.RecordNativeSupplement(e)
+		r.mu.Lock()
+		return err
 	}
 	if d := r.definitions[progress.Definition]; d != nil {
 		e.WorkloadName = d.Name
@@ -539,7 +584,7 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) erro
 // failed readiness probe, deleted desired resource, or disconnected transport.
 func (r *Runtime) ConfirmInstanceStopped(instance string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer r.unlock()
 	if i := r.instances[instance]; i != nil {
 		i.State.Ready = false
 		i.State.Reason = "InstanceStopped"
@@ -600,26 +645,27 @@ func (r *Runtime) PublishClosed(d *Definition, reason string) error {
 
 func (r *Runtime) publish(d *Definition, stopped bool, reason string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.shuttingDown {
-		return failure(reasonShuttingDown, "entry point is shutting down")
-	}
-	w := r.workloads[d.UID]
-	if other := r.names[d.Name]; other != "" && other != d.UID {
-		return failure("RegistrationConflict", "old registration is still attached")
-	}
-	if w != nil && !w.definition.SameExecution(d) && !r.drainedLocked(w) {
-		return failure("DrainIncomplete", "old model or preprocessing requests remain")
+	err := r.validatePublicationLocked(d)
+	r.mu.Unlock()
+	if err != nil {
+		return err
 	}
 	if err := r.config.ObservationLog.DefinitionRecord(d); err != nil {
 		return err
 	}
+	identity := d.Identity()
+	r.mu.Lock()
+	defer r.unlock()
+	if err := r.validatePublicationLocked(d); err != nil {
+		return err
+	}
+	w := r.workloads[d.UID]
 	if w == nil {
 		w = &runtimeWorkload{calls: map[string]*Call{}}
 		r.workloads[d.UID] = w
 	}
 	w.definition = d
-	w.identity = d.Identity()
+	w.identity = identity
 	w.stopped = stopped
 	w.detached = false
 	w.reason = reason
@@ -628,6 +674,19 @@ func (r *Runtime) publish(d *Definition, stopped bool, reason string) error {
 	r.rebuildLocked()
 	r.dispatchLocked()
 	r.signal()
+	return nil
+}
+
+func (r *Runtime) validatePublicationLocked(d *Definition) error {
+	if r.shuttingDown {
+		return failure(reasonShuttingDown, "entry point is shutting down")
+	}
+	if other := r.names[d.Name]; other != "" && other != d.UID {
+		return failure("RegistrationConflict", "old registration is still attached")
+	}
+	if w := r.workloads[d.UID]; w != nil && !w.definition.SameExecution(d) && !r.drainedLocked(w) {
+		return failure("DrainIncomplete", "old model or preprocessing requests remain")
+	}
 	return nil
 }
 
@@ -747,7 +806,7 @@ func (r *Runtime) SetCompletionMargin(ms float64) {
 
 func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer r.unlock()
 	seen := map[string]bool{}
 	for _, candidate := range instances {
 		if candidate.State.ID == "" || candidate.State.Node.UID == "" {
@@ -1088,7 +1147,7 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 	r.mu.Unlock()
 	for {
 		r.mu.Lock()
-		done := true
+		done := r.finalizing == 0
 		for _, w := range r.workloads {
 			done = done && r.drainedLocked(w)
 		}

@@ -255,7 +255,7 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	defer r.cancel()
 	received := time.Now().Add(-10 * time.Millisecond)
 	deadline := received.Add(time.Second)
-	call := &Call{receipt: Receipt{ID: "early-sdk", UID: d.UID, ReceivedAt: received, Deadline: deadline}, definition: d, identity: d.Identity(), assignment: &Assignment{Instance: "i1"}, backendContext: context.Background()}
+	call := &Call{receipt: Receipt{ID: "early-sdk", UID: d.UID, ReceivedAt: received, Deadline: deadline}, definition: d, identity: d.Identity(), assignment: &Assignment{Instance: "i1", DispatchedAt: time.Now().UTC()}, backendContext: context.Background()}
 	r.calls[call.receipt.ID] = call
 	progress := BackendProgress{RequestID: call.receipt.ID, WorkloadUID: d.UID, Definition: d.Identity(), Phase: "finished", At: time.Now(), ExecutionComplete: true, NativeElapsedMS: 6}
 	r.execute(call, func(context.Context, Dispatch) (BackendResult, error) {
@@ -270,7 +270,7 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 		// The SDK callback can precede HTTP completion by a material return leg.
 		time.Sleep(20 * time.Millisecond)
 		return BackendResult{Finished: true, Progress: &progress, ClientSpan: time.Since(started)}, nil
-	}, Dispatch{})
+	}, Dispatch{ReceivedAt: received, Deadline: deadline}, requestEvent(call, phaseAssigned, "", "", call.assignment.DispatchedAt))
 	snapshot.At = call.exchangeFinishedAt.Add(2 * time.Millisecond)
 	snapshot.ObservationEnd = snapshot.At
 	snapshot.Nodes[0].ObservedAt = snapshot.At
