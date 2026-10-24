@@ -74,10 +74,11 @@ class LocalHTTPSmoke(unittest.TestCase):
                 for _ in range(3):
                     client = WorkloadHTTPClient(
                         f"https://127.0.0.1:{server.server_port}", bearer_token="local",
-                        timeout_seconds=129.01, request_lifetime_seconds=129, ca_file=str(cert),
+                        timeout_seconds=129.02, request_lifetime_seconds=129, ca_file=str(cert),
                     )
                     client._connection.connect()
-                    self.assertEqual(129.01, client._connection.sock.gettimeout())
+                    self.assertEqual(129.02, client._connection.sock.gettimeout())
+                    self.assertGreater(client._connection.sock.gettimeout(), 129 + 0.01)
                     clients.append(client)
                 available = iter(clients)
                 output = io.StringIO()

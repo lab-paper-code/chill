@@ -22,7 +22,10 @@ import (
 const maxControlBytes = 4 << 20
 const phaseFinished = "finished"
 
-type Client struct{ HTTPClient *http.Client }
+type Client struct {
+	HTTPClient *http.Client
+	Diagnostics *serving.Diagnostics
+}
 type Spec struct {
 	Endpoint   string
 	ModelName  string
@@ -185,16 +188,24 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	for i, field := range d.Input.Inputs {
 		request.Inputs[i] = native.Field{Name: field.Name, Data: [][]byte{field.Data}}
 	}
+	c.Diagnostics.Mark(serving.DiagnosticClientMarshal, serving.DiagnosticBegin, d.RequestID, 0)
 	raw, err := json.Marshal(request)
+	c.Diagnostics.Mark(serving.DiagnosticClientMarshal, serving.DiagnosticEnd, d.RequestID, 0)
 	d.Input = nil // raw carries the sample; d stays live until the completion check.
 	if err != nil {
 		return serving.BackendResult{Finished: true}, err
 	}
+	c.Diagnostics.Mark(serving.DiagnosticClientExchange, serving.DiagnosticBegin, d.RequestID, 0)
 	started := time.Now()
 	body, status, err := c.request(ctx, http.MethodPost, modelURL(spec, "infer"), raw, native.MaxFrameBytes)
 	result := serving.BackendResult{Body: body, ContentType: "application/json", StatusCode: status, ClientSpan: time.Since(started)}
+	c.Diagnostics.Mark(serving.DiagnosticClientExchange, serving.DiagnosticEnd, d.RequestID, int64(result.ClientSpan))
 	if err != nil {
 		return result, err
+	}
+	if c.Diagnostics.Active() {
+		c.Diagnostics.Mark(serving.DiagnosticClientDecode, serving.DiagnosticBegin, d.RequestID, 0)
+		defer c.Diagnostics.Mark(serving.DiagnosticClientDecode, serving.DiagnosticEnd, d.RequestID, 0)
 	}
 	if status != http.StatusOK {
 		var failure native.ErrorResponse

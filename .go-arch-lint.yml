@@ -14,6 +14,8 @@ allow:
 # hack/ contains the negative-test fixture. Test imports are still measured by
 # hack/architecture-coverage.sh.
 exclude:
+  # Local tool outputs and nested deployment worktrees are outside production source.
+  - bin
   - test
   - hack
   # Independent Node application; installed npm packages may contain Go examples.

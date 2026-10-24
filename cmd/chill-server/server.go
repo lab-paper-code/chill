@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -62,9 +63,17 @@ func run(ctx context.Context, opts options) (retErr error) {
 			_ = os.Remove(name)
 		}
 	}
+	diagnostics, err := newDiagnosticSession(ctx, opts)
+	if err != nil {
+		return fmt.Errorf("initialize finite diagnostics: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, diagnostics.Close()) }()
+	var recorder *serving.Diagnostics
+	if diagnostics != nil { recorder = diagnostics.recorder }
 	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
+		Diagnostics: recorder,
 	})
 	if err != nil {
 		return err
@@ -81,6 +90,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	defer cancelBackend()
 	execution, err := serving.NewRuntime(backendCtx, serving.RuntimeConfig{
 		QueueLimit: opts.queueLimit, ObservationLog: observationLog,
+		Diagnostics: recorder,
 	})
 	if err != nil {
 		return err
@@ -90,7 +100,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	// serving-worker's 60 s IdleTimeout.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns, transport.MaxIdleConnsPerHost, transport.IdleConnTimeout = 0, 256, 30*time.Second
-	native := &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}}
+	native := &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}, Diagnostics: recorder}
 	observer, err := servingkube.NewObserver(store, kube, execution, native, servingkube.ObserverConfig{
 		Namespace: opts.servingNamespace,
 	})
@@ -103,7 +113,11 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	scheduler, err := newSchedulerService(ctx, store, kube, execution, observer, objects, observationLog, opts)
+	handlerConfig := httpapi.HandlerConfig{
+		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout, OperationTimeout: opts.operationTimeout,
+		MaxQueryEvents: opts.maxQueryEvents,
+	}
+	scheduler, err := newSchedulerService(ctx, store, kube, execution, observer, objects, observationLog, opts, handlerConfig.RequestTimeout)
 	if err != nil {
 		return fmt.Errorf("initialize scheduler service: %w", err)
 	}
@@ -119,10 +133,6 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	if scheduler != nil && len(scheduler.controller.Settings().AutonomousWorkloads) > 0 {
 		execution.EnableSchedulerRouting()
-	}
-	handlerConfig := httpapi.HandlerConfig{
-		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout, OperationTimeout: opts.operationTimeout,
-		MaxQueryEvents: opts.maxQueryEvents,
 	}
 	if scheduler != nil {
 		handlerConfig.Scheduler = scheduler.controller
@@ -156,19 +166,23 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	return serve(ctx, opts, chillServer, execution, observer, manager, observationLog, scheduler)
+	return serve(ctx, opts, chillServer, execution, observer, manager, observationLog, scheduler, diagnostics)
 }
 
 func serve(ctx context.Context, opts options, chillServer http.Handler, execution *serving.Runtime,
 	observer *servingkube.Observer, manager *servingkube.Manager,
-	observationLog *serving.ObservationLog, scheduler *schedulerService,
+	observationLog *serving.ObservationLog, scheduler *schedulerService, diagnostics *diagnosticSession,
 ) error {
 	server := &http.Server{
 		Addr: opts.bindAddress, Handler: chillServer,
 		ReadHeaderTimeout: opts.requestTimeout, IdleTimeout: opts.requestTimeout,
 	}
 	serverErrors := make(chan error, 1)
-	go func() { serverErrors <- server.ListenAndServeTLS(opts.tlsCert, opts.tlsKey) }()
+	listener, err := net.Listen("tcp", opts.bindAddress)
+	if err != nil { return err }
+	defer func() { _ = listener.Close() }()
+	go func() { serverErrors <- server.ServeTLS(listener, opts.tlsCert, opts.tlsKey) }()
+	diagnostics.listenerBound()
 	scheduler.Start()
 	sourceTicker := time.NewTicker(opts.sourceInterval)
 	defer sourceTicker.Stop()

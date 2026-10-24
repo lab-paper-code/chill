@@ -130,10 +130,6 @@ type BatchProfile struct {
 	Batch                int       `json:"batch"`
 	DurationNanos        []float64 `json:"durationNanos"`
 	EnergyPerInputJoules float64   `json:"energyPerInputJoules"`
-	// EnergyPerInputHalfWidthJoules is the confidence half-width of
-	// EnergyPerInputJoules at the profile's ConfidenceLevel (Student t,
-	// Welch–Satterthwaite with the idle baseline variance).
-	EnergyPerInputHalfWidthJoules float64 `json:"energyPerInputHalfWidthJoules,omitempty"`
 	MemoryBytes                   uint64  `json:"memoryBytes"`
 }
 
@@ -150,9 +146,6 @@ type Profile struct {
 	// IdleBaselineWatts is the exact baseline subtracted by the incremental
 	// estimator. Whole-node prediction adds it back according to its scope.
 	IdleBaselineWatts float64 `json:"idleBaselineWatts"`
-	// IdleBaselineHalfWidthWatts is its confidence half-width at ConfidenceLevel
-	// (Student t over the model-loaded idle trials).
-	IdleBaselineHalfWidthWatts float64                       `json:"idleBaselineHalfWidthWatts,omitempty"`
 	MeasuredAt                 time.Time                     `json:"measuredAt"`
 	RuntimeMetadata            *firstfloor.RuntimeMetadata   `json:"runtimeMetadata,omitempty"`
 	MetricSource               metricobserver.SourceIdentity `json:"metricSource"`

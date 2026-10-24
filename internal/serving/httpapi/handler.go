@@ -402,6 +402,12 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	if receipt.ID != "" {
 		w.Header().Set("X-Chill-Request-ID", receipt.ID)
 	}
+	diagnostics := h.runtime.Diagnostics()
+	var captureWriter *diagnosticInferenceWriter
+	if diagnostics.Active() {
+		captureWriter = &diagnosticInferenceWriter{ResponseWriter: w, diagnostics: diagnostics, requestID: receipt.ID}
+		w = captureWriter
+	}
 	controller := http.NewResponseController(w)
 	finish := func(outcome, code string) {
 		if err := h.runtime.Response(receipt, outcome, code); err != nil {
@@ -417,11 +423,14 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 			finish(outcome, errorCode(err))
 			return
 		}
+		diagnostics.Mark(serving.DiagnosticResponseEncode, serving.DiagnosticBegin, receipt.ID, 0)
 		if writeErr := writeError(w, err); writeErr != nil {
+			diagnostics.Mark(serving.DiagnosticResponseEncode, serving.DiagnosticEnd, receipt.ID, 0)
 			finish("delivery_failed", "ResponseDeliveryFailed")
 			return
 		}
-		if flushErr := controller.Flush(); flushErr != nil {
+		diagnostics.Mark(serving.DiagnosticResponseEncode, serving.DiagnosticEnd, receipt.ID, 0)
+		if flushErr := flushInference(controller, diagnostics, receipt.ID); flushErr != nil {
 			finish("delivery_failed", "ResponseDeliveryFailed")
 			return
 		}
@@ -457,8 +466,15 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input serving.InferenceInput
-	if err := h.decode(w, r, &input); err != nil {
-		completeError(err, "rejected")
+	var decodeErr error
+	if captureWriter == nil {
+		decodeErr = h.decode(w, r, &input)
+	} else {
+		// MaxBytesReader needs the original writer's private oversized-body hook.
+		decodeErr = h.decode(captureWriter.ResponseWriter, r, &input)
+	}
+	if decodeErr != nil {
+		completeError(decodeErr, "rejected")
 		return
 	}
 	if ctx.Err() != nil {
@@ -496,13 +512,42 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 	_, writeErr := w.Write(result.Body)
 	if writeErr == nil {
-		writeErr = controller.Flush()
+		writeErr = flushInference(controller, diagnostics, receipt.ID)
 	}
 	if writeErr != nil || r.Context().Err() != nil {
 		finish("delivery_failed", "ResponseDeliveryFailed")
 		return
 	}
 	finish("completed", "")
+}
+
+// Only requests received during an active capture acquire this adapter.
+// Unwrap preserves ResponseController deadline/flush behavior.
+type diagnosticInferenceWriter struct {
+	http.ResponseWriter
+	diagnostics *serving.Diagnostics
+	requestID string
+}
+func (w *diagnosticInferenceWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *diagnosticInferenceWriter) WriteHeader(status int) {
+	if !w.diagnostics.Active() { w.ResponseWriter.WriteHeader(status); return }
+	w.diagnostics.Mark(serving.DiagnosticWriteHeader, serving.DiagnosticBegin, w.requestID, int64(status))
+	w.ResponseWriter.WriteHeader(status)
+	w.diagnostics.Mark(serving.DiagnosticWriteHeader, serving.DiagnosticEnd, w.requestID, int64(status))
+}
+func (w *diagnosticInferenceWriter) Write(data []byte) (int, error) {
+	if !w.diagnostics.Active() { return w.ResponseWriter.Write(data) }
+	w.diagnostics.Mark(serving.DiagnosticWrite, serving.DiagnosticBegin, w.requestID, int64(len(data)))
+	n, err := w.ResponseWriter.Write(data)
+	w.diagnostics.Mark(serving.DiagnosticWrite, serving.DiagnosticEnd, w.requestID, int64(n))
+	return n, err
+}
+func flushInference(controller *http.ResponseController, d *serving.Diagnostics, id string) error {
+	if !d.Active() { return controller.Flush() }
+	d.Mark(serving.DiagnosticFlush, serving.DiagnosticBegin, id, 0)
+	err := controller.Flush()
+	d.Mark(serving.DiagnosticFlush, serving.DiagnosticEnd, id, 0)
+	return err
 }
 func contextOutcome(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {

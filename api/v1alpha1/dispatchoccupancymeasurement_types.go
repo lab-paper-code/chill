@@ -13,6 +13,7 @@ import (
 // time a request occupies an instance outside its batch execution, for the
 // Node, power mode, runtime image and model of one measured option.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="DispatchOccupancyMeasurement spec is immutable"
+// +kubebuilder:validation:XValidation:rule="(has(self.supplyMode) && self.supplyMode == 'closed-loop') || self.durationSeconds >= 60",message="open-loop occupancy duration must be at least 60 seconds"
 type DispatchOccupancyMeasurementSpec struct {
 	// Node names the Kubernetes Node measured.
 	// +kubebuilder:validation:MinLength=1
@@ -44,7 +45,7 @@ type DispatchOccupancyMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	WarmupSeconds int32 `json:"warmupSeconds"`
 
-	// +kubebuilder:validation:Minimum=60
+	// +kubebuilder:validation:Minimum=1
 	DurationSeconds int32 `json:"durationSeconds"`
 
 	// MinimumBatches is the least number of batches the window must hold.
@@ -85,7 +86,7 @@ type DispatchOccupancyMeasurementSpec struct {
 	CollectionSeconds int32 `json:"collectionSeconds,omitempty"`
 	// +optional
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=3600
+	// The elapsed cap is frozen in Conditions.InputsJSON coefficients.
 	PlannedElapsedSeconds int32 `json:"plannedElapsedSeconds,omitempty"`
 	// Conditions freezes the calculation inputs, coefficients and identities.
 	// +optional
@@ -103,14 +104,26 @@ type DispatchOccupancyConditions struct {
 	MinimumCycles              int32  `json:"minimumCycles,omitempty"`
 }
 
+// OccupancyPlanningFloors projects the configured floors retained in the
+// immutable derivation JSON. These are planning inputs, not CRD defaults.
+type OccupancyPlanningFloors struct {
+	WindowFloorSeconds          float64 `json:"windowFloorSeconds"`
+	LoadPreparationFloorSeconds float64 `json:"loadPreparationFloorSeconds"`
+	PlannedElapsedCapSeconds    float64 `json:"plannedElapsedCapSeconds"`
+}
+
 // ValidateConditions checks the frozen measurement contract at admission.
 func (s DispatchOccupancyMeasurementSpec) ValidateConditions() error {
 	idle, err := strconv.ParseFloat(s.MaximumIdleFraction, 64)
 	if err != nil || math.IsNaN(idle) || math.IsInf(idle, 0) || idle < 0 || idle > 1 ||
-		s.Batch < 1 || s.Workers < 1 || s.Workers > 4096 || s.MinimumBatches < 2 || s.DurationSeconds < 60 || s.WarmupSeconds < 0 {
+		s.Batch < 1 || s.Workers < 1 || s.Workers > 4096 || s.MinimumBatches < 2 || s.DurationSeconds < 1 || s.WarmupSeconds < 0 {
 		return fmt.Errorf("invalid occupancy window, population or idle bound")
 	}
 	if s.SupplyMode != "closed-loop" {
+		// Legacy open-loop windows retain their independent structural floor.
+		if s.DurationSeconds < 60 {
+			return fmt.Errorf("legacy open-loop occupancy duration must be at least 60 seconds")
+		}
 		factor, err := strconv.ParseFloat(s.RateFactor, 64)
 		if s.SupplyMode != "" && s.SupplyMode != "poisson" || err != nil || math.IsNaN(factor) || math.IsInf(factor, 0) || factor < 1.2 {
 			return fmt.Errorf("invalid open-loop supply")
@@ -129,6 +142,7 @@ func (s DispatchOccupancyMeasurementSpec) ValidateConditions() error {
 func (s DispatchOccupancyMeasurementSpec) validateSupplyBounds() error {
 	c := s.Conditions
 	var formula struct {
+		Coefficients OccupancyPlanningFloors `json:"coefficients"`
 		Computed struct {
 			TailBatchSeconds               float64 `json:"tailBatchSeconds"`
 			FastBatchSeconds               float64 `json:"fastBatchSeconds"`
@@ -144,6 +158,12 @@ func (s DispatchOccupancyMeasurementSpec) validateSupplyBounds() error {
 		return fmt.Errorf("invalid frozen numeric inputs: %w", err)
 	}
 	f := formula.Computed
+	floors := formula.Coefficients
+	for _, value := range []float64{floors.WindowFloorSeconds, floors.LoadPreparationFloorSeconds, floors.PlannedElapsedCapSeconds} {
+		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return fmt.Errorf("invalid frozen planning floors")
+		}
+	}
 	for _, value := range []float64{f.TailBatchSeconds, f.FastBatchSeconds, f.PrefixSeconds, f.RefillSeconds} {
 		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
 			return fmt.Errorf("invalid frozen supply timing")
@@ -155,18 +175,19 @@ func (s DispatchOccupancyMeasurementSpec) validateSupplyBounds() error {
 		f.QueueRequestCap < waiting || f.QueueBytesCap/f.FramedDecodedRequestUpperBytes < waiting ||
 		q > f.QUpper || float64(q) != math.Max(1, math.Ceil(f.RefillSeconds/f.FastBatchSeconds)) ||
 		(float64(q)+2)*f.TailBatchSeconds+f.PrefixSeconds >= float64(s.RequestLifetimeSeconds) ||
-		float64(s.WarmupSeconds) < math.Ceil(math.Max(60, (float64(q)+1)*f.TailBatchSeconds+f.RefillSeconds)) ||
+		float64(s.WarmupSeconds) < math.Ceil(math.Max(floors.LoadPreparationFloorSeconds, (float64(q)+1)*f.TailBatchSeconds+f.RefillSeconds)) ||
 		float64(s.DrainSeconds) < math.Ceil(float64(s.RequestLifetimeSeconds)+f.TailBatchSeconds+float64(s.DeliveryMarginMillis)/1000) {
 		return fmt.Errorf("fixed outstanding supply violates frozen count, bytes, lifetime or drain bounds")
 	}
-	return s.validateElapsedBudget()
+	return s.validateElapsedBudget(floors)
 }
 
-func (s DispatchOccupancyMeasurementSpec) validateElapsedBudget() error {
+func (s DispatchOccupancyMeasurementSpec) validateElapsedBudget(floors OccupancyPlanningFloors) error {
 	budget := int64(s.PreparationSeconds) + int64(s.JobSetupSeconds) + int64(s.CollectionSeconds) + int64(s.WarmupSeconds) + int64(s.DurationSeconds) + int64(s.DrainSeconds)
 	if s.RequestLifetimeSeconds < 1 || s.DeliveryMarginMillis <= 0 || s.DrainSeconds < s.RequestLifetimeSeconds ||
-		s.PreparationSeconds < 1 || s.JobSetupSeconds < 0 || s.CollectionSeconds < 0 || s.WarmupSeconds < 60 || s.DurationSeconds < 360 ||
-		s.PlannedElapsedSeconds < 1 || s.PlannedElapsedSeconds > 3600 || budget > int64(s.PlannedElapsedSeconds) {
+		s.PreparationSeconds < 1 || s.JobSetupSeconds < 0 || s.CollectionSeconds < 0 ||
+		float64(s.WarmupSeconds) < math.Ceil(floors.LoadPreparationFloorSeconds) || float64(s.DurationSeconds) < math.Ceil(floors.WindowFloorSeconds) ||
+		s.PlannedElapsedSeconds < 1 || float64(s.PlannedElapsedSeconds) > floors.PlannedElapsedCapSeconds || budget > int64(s.PlannedElapsedSeconds) {
 		return fmt.Errorf("invalid occupancy lifetime or elapsed budget")
 	}
 	return nil

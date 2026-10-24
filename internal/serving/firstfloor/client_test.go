@@ -182,6 +182,36 @@ func TestMismatchedNativeCompletionRemainsUnknown(t *testing.T) {
 	}
 }
 
+func TestNativeDispatchPreservesOriginalLifetimeSenderElapsedAndMargin(t *testing.T) {
+	seen := make(chan native.Request, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request native.Request
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		seen <- request
+		http.Error(w, "execution not started", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	received := time.Now().Add(-250 * time.Millisecond)
+	result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(),
+		Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
+		serving.Dispatch{
+			RequestID: "request", Definition: &serving.Definition{UID: "uid", SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}},
+			Input: &serving.InferenceInput{}, ReceivedAt: received, Deadline: received.Add(2*time.Second),
+			Elapsed: 250*time.Millisecond, CompletionMarginMS: 29,
+		})
+	request := <-seen
+	if request.Context.LifetimeMS != 2000 || request.Context.SenderElapsedMS != 250 ||
+		request.Context.CompletionMarginMS != 29 || request.Context.SLO.TargetMS != 1000 ||
+		request.Context.RequestID != "request" || request.Context.WorkloadUID != "uid" {
+		t.Fatalf("native transport rebased or mixed lifetime/SLO/m: %+v", request.Context)
+	}
+	if err == nil || result.Finished {
+		t.Fatal("unexecuted transport failure completed native ownership")
+	}
+}
+
 func TestNativeInitializationMatchesRecordedRuntimeNotMeasuredCurve(t *testing.T) {
 	profile := &serving.Profile{
 		Batches:         []serving.BatchProfile{{Batch: 1}},

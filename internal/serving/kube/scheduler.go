@@ -43,6 +43,8 @@ type SchedulerControllerConfig struct {
 	// CatalogIssues are the profiles the catalog or the preparations omit.
 	CatalogIssues []CatalogIssue
 	LoadGenerator LoadGeneratorConfig
+	// GatewayRequestTimeout is the actual HTTP handler lifetime cap.
+	GatewayRequestTimeout time.Duration
 	Meters        []MeterDeclaration
 	// PowerPolicies are the configured actuation policies; a non-Fixed
 	// DeviceClass mode with a policy is a mode ChillServer can request.

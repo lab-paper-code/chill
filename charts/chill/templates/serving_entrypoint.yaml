@@ -86,6 +86,13 @@ spec:
             - "--tls-cert=/etc/chill/tls/tls.crt"
             - "--tls-key=/etc/chill/tls/tls.key"
             - {{ printf "--observation-directory=%s" .Values.servingEntrypoint.observationStorage.directory | quote }}
+            {{- with .Values.servingEntrypoint.diagnostic }}
+            {{- if .directory }}
+            - {{ printf "--diagnostic-directory=%s" .directory | quote }}
+            - {{ printf "--diagnostic-start-delay=%s" .startDelay | quote }}
+            - {{ printf "--diagnostic-trace-offset=%s" .traceOffset | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.console.enabled }}
             - {{ printf "--console-url=http://%s.%s.svc.cluster.local:%v" (include "chill.consoleName" .) .Release.Namespace .Values.console.port | quote }}
             {{- end }}

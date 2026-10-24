@@ -671,21 +671,17 @@ func TestCapacitySearchThreeNodesFindsWhatTwoMiss(t *testing.T) {
 	}
 }
 
-// capacityTwinSwap: a Node serves λ 10 with instance a at 10 W; plan "swap"
-// puts the twin b there and saves gain J over T 60 s. Both profiles carry
-// the m4 rasp5 q1 model-loaded idle half-width (0.282 W at 0.95) and a
-// per-input half-width of 1 mJ.
-func capacityTwinSwap(gain float64) *capacityPlanner {
+// capacityTwinSwap saves gain J over T=60s and carries a deterministic
+// operation bound. Profiles supply nominal energy only.
+func capacityTwinSwap(gain, bound float64) *capacityPlanner {
 	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 10, slack: 1}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
-	profile := func(id string) *Profile {
-		return &Profile{ID: id, IdleBaselineHalfWidthWatts: 0.282, Batches: []BatchProfile{{Batch: 1, EnergyPerInputJoules: 1, EnergyPerInputHalfWidthJoules: 0.001}}}
-	}
-	a := SchedulerInstance{ID: "a", WorkloadUID: "w", Profile: profile("pa")}
-	b := SchedulerInstance{ID: "b", WorkloadUID: "w", Profile: profile("pb")}
+	a, b := SchedulerInstance{ID: "a"}, SchedulerInstance{ID: "b"}
 	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{a}, items: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, before: 10}
-	swap := &capacityPlan{instances: []SchedulerInstance{b}, midInstances: []SchedulerInstance{a, b}, items: [][]capacityItem{{{id: "b", kappa: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, mid: 10, after: 10 - gain/60}
+	swap := &capacityPlan{instances: []SchedulerInstance{b}, items: [][]capacityItem{{{id: "b", kappa: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", kappa: 50, e: 1}}}, mid: 10, after: 10 - gain/60}
+	source := schedulerBoundSource{reference: evidencestore.ObjectIdentity{Store: "raw", Key: "swap", Size: 1}, trial: 0}
+	swap.operationBounds = schedulerEnergyBounds{source: bound}
 	keep.record.Eligible, swap.record.Eligible, swap.record.Key = true, true, "swap"
 	p.sum(keep)
 	p.sum(swap)
@@ -693,48 +689,35 @@ func capacityTwinSwap(gain float64) *capacityPlanner {
 	return p
 }
 
-// §9 6 minimum gain: a transition is chosen over keep only when its gain over
-// T exceeds the measurement uncertainty of the two candidates. The identical-
-// node swap of capacity-table-evidence §7.6 (2.7 J) keeps; 100 J moves.
-func TestCapacityTransitionNeedsGainBeyondUncertainty(t *testing.T) {
-	for gain, keeps := range map[float64]bool{2.7: true, 100: false} {
-		p := capacityTwinSwap(gain)
+func TestCapacityTransitionNeedsGainBeyondDeterministicBound(t *testing.T) {
+	for _, tc := range []struct {
+		gain, bound float64
+		keeps       bool
+	}{{2.7, 0, false}, {2.7, 3, true}, {100, 100, true}, {100, 99, false}} {
+		p := capacityTwinSwap(tc.gain, tc.bound)
 		best := capacitySearchForTest(t, p)
-		if best.keep || math.Abs(p.evaluate([]int{0}, 0).joules-best.joules-gain) > 1e-6 {
-			t.Fatalf("fixture: the swap must save %g J: %+v", gain, best)
+		if best.keep || math.Abs(p.evaluate([]int{0}, 0).joules-best.joules-tc.gain) > 1e-6 {
+			t.Fatalf("fixture must save %g J: %+v", tc.gain, best)
 		}
-		if got := p.minimumGain(best); got.keep != keeps || got.keep != got.withinUncertainty {
-			t.Fatalf("gain %g J: keep=%v withinUncertainty=%v", gain, got.keep, got.withinUncertainty)
+		got := p.minimumGain(best)
+		if got.keep != tc.keeps || got.withinUncertainty != tc.keeps || got.gainUncertainty != tc.bound {
+			t.Fatalf("gain %g bound %g: %+v", tc.gain, tc.bound, got)
 		}
 	}
 }
 
-// §9 6 minimum gain: an instance a plan keeps carries the same idle
-// measurement in both candidates, so its error cancels except for the chain
-// time. A Node that keeps a (0.5 W half-width) and adds b (0.01 W) saving 10 J
-// moves: the threshold is b's 0.6 J. Chain instances count once.
-func TestCapacityKeptInstanceAddsNoUncertainty(t *testing.T) {
-	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
-	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 10, slack: 1}}
-	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
-	a := SchedulerInstance{ID: "a", WorkloadUID: "w", Profile: &Profile{ID: "pa", IdleBaselineHalfWidthWatts: 0.5}}
-	b := SchedulerInstance{ID: "b", WorkloadUID: "w", Profile: &Profile{ID: "pb", IdleBaselineHalfWidthWatts: 0.01}}
-	item := capacityItem{id: "a", kappa: 50, e: 1, weight: 1000}
-	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{a}, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
-	add := &capacityPlan{instances: []SchedulerInstance{a, b}, midInstances: []SchedulerInstance{a, b}, items: [][]capacityItem{{item, {id: "b", kappa: 50, e: 1}}},
-		retained: [][]capacityItem{{item}}, mid: 10, after: 10 - 10.0/60}
-	keep.record.Eligible, add.record.Eligible, add.record.Key = true, true, "add"
-	p.sum(keep)
-	p.sum(add)
-	p.plans, p.compared = [][]*capacityPlan{{keep, add}}, []bool{true}
+func TestCapacityMinimumGainDoesNotBlockRecoveryFromInfeasibleKeep(t *testing.T) {
+	p := capacityTwinSwap(2.7, 1e6)
+	p.plans[0][0].items[0][0].kappa = 0
 	best := p.evaluate([]int{1}, 0)
-	if !best.feasible || best.keep {
-		t.Fatalf("fixture: %+v", best)
+	if !best.feasible || p.evaluate([]int{0}, 0).feasible {
+		t.Fatal("fixture requires feasible target and infeasible keep")
 	}
-	if got := p.minimumGain(best); got.keep {
-		t.Fatalf("a kept instance's idle half-width held back a 10 J gain: %+v", got)
+	if got := p.minimumGain(best); got.keep || !got.feasible || got.withinUncertainty || got.gainUncertainty != 0 {
+		t.Fatalf("deterministic bound blocked capacity recovery: %+v", got)
 	}
 }
+
 
 // The real immutable-cost -> node chain -> minimumGain flow must not turn B
 // into nominal energy or pretend its deterministic error is a statistical CI.
@@ -772,6 +755,50 @@ func TestCapacityOperationUncertaintyChangesMinimumGain(t *testing.T) {
 		got := p.minimumGain(best)
 		if got.keep != (bound > 0) || got.withinUncertainty != (bound > 0) || got.gainUncertainty != bound {
 			t.Fatalf("same nominal, B=%g: keep=%v threshold=%g", bound, got.keep, got.gainUncertainty)
+		}
+	}
+}
+
+func TestCapacityMinimumGainExactBaselineIgnoresProfileCI(t *testing.T) {
+	s, snap, rows, node, _ := capacityR5Fixture()
+	baseline := slices.IndexFunc(snap.Baselines, func(b NodeBaseline) bool { return b.Node == node })
+	if baseline < 0 {
+		t.Fatal("missing unloaded baseline")
+	}
+	loaded := snap.Baselines[baseline]
+	loaded.ID, loaded.State = "exact-loaded", []string{schedulerState(snap.Instances[1])}
+	loaded.Watts, loaded.WattsUncertainty = 60, 0.001
+	loaded.Reference = evidencestore.ObjectIdentity{Store: "raw", Key: "exact-loaded", Size: 1}
+	snap.Baselines = append(snap.Baselines, loaded)
+	var nominalKeep, nominalBest, threshold float64
+	for trial, confidence := range []float64{0.5, 0.999999} {
+		// Profile CI confidence and its unselected fallback mean are irrelevant
+		// when the exact loaded-state measurement supplies nominal idle power.
+		snap.Instances[1].Profile.ConfidenceLevel = confidence
+		snap.Instances[1].Profile.IdleBaselineWatts = 1 + float64(trial)*1e6
+		p := capacityPlannerForTest(t, s, snap, rows)
+		n := slices.IndexFunc(p.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == node })
+		watts, _, sources, _, reason := schedulerBaseline(p.snapshot.Baselines, p.snapshot.Nodes[n], []SchedulerInstance{snap.Instances[1]}, p.snapshot.Options)
+		if reason != "" || watts != loaded.Watts || !slices.Contains(sources, loaded.ID) {
+			t.Fatalf("fixture did not select exact loaded evidence: %g %v %s", watts, sources, reason)
+		}
+		choice := make([]int, len(p.plans))
+		choice[n] = slices.IndexFunc(p.plans[n], func(plan *capacityPlan) bool {
+			return !plan.keep && plan.record.Eligible && len(plan.instances) == 0
+		})
+		if choice[n] < 0 {
+			t.Fatal("missing measured removal plan")
+		}
+		best := p.evaluate(choice, p.routeOf(choice))
+		keep := p.evaluate(make([]int, len(p.plans)), 0)
+		got := p.minimumGain(best)
+		if !best.feasible || got.keep || got.withinUncertainty {
+			t.Fatalf("unselected profile statistics blocked measured gain: %+v", got)
+		}
+		if trial == 0 {
+			nominalKeep, nominalBest, threshold = keep.joules, best.joules, got.gainUncertainty
+		} else if keep.joules != nominalKeep || best.joules != nominalBest || got.gainUncertainty != threshold {
+			t.Fatalf("unselected profile CI changed nominal energy or B: keep=%g best=%g B=%g", keep.joules, best.joules, got.gainUncertainty)
 		}
 	}
 }

@@ -135,12 +135,6 @@ var e5Start = map[string]bool{
 	"lattepanda/plc/q1": true, "genesis2/vlm/cuda-q1-vlm": true,
 }
 
-// e5IdleHalfWidth is the median model-loaded idle half-width relative to the
-// idle watts over the 11 BEO results held locally (rasp5 5, lattepanda 4,
-// genesis2 2; 0.95, three trials each): 0.84–9.95%, median 1.84%. They record
-// no per-input interval, so the fixture's request energy carries none.
-const e5IdleHalfWidth = 0.0184
-
 // e5Planner builds the node plans the planner would hold for the pairs from
 // the current instances: keep, each pair alone (one model and one instance per
 // Workload on a Node) and removing every instance. plans[n][0] keeps the
@@ -212,7 +206,7 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 					mid = append(mid, c)
 				}
 				plan.items[w] = append(plan.items[w], item)
-				plan.instances = append(plan.instances, e5Instance(c))
+				plan.instances = append(plan.instances, SchedulerInstance{ID: c.id})
 				ids = append(ids, c.id)
 			}
 			for _, c := range now {
@@ -225,9 +219,6 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 				slices.SortFunc(plan.items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
 			}
 			plan.mid, plan.after = watts(mid), watts(set)
-			for _, c := range mid {
-				plan.midInstances = append(plan.midInstances, e5Instance(c))
-			}
 			plan.replaces = len(mid) > len(now) && plan.postMean > 0
 			plan.record.Eligible, plan.record.Key = true, strings.Join(ids, "+")
 			p.sum(plan)
@@ -283,11 +274,6 @@ func e5Brute(p *capacityPlanner) *capacityResult {
 	return best
 }
 
-// e5Instance is the instance of a pair; its profile, one per option, carries
-// the idle half-width.
-func e5Instance(c e5Pair) SchedulerInstance {
-	return SchedulerInstance{ID: c.id, Profile: &Profile{ID: c.id, IdleBaselineHalfWidthWatts: e5IdleHalfWidth * c.opt.idle}}
-}
 
 // e5Converge repeats Ticks, each from the configuration and route weights the
 // previous decision chose (after payback and minimum gain), until a Tick keeps

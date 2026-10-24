@@ -7,7 +7,6 @@ import (
 	"errors"
 	"slices"
 	"sort"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -15,6 +14,7 @@ import (
 type RuntimeConfig struct {
 	QueueLimit     int
 	ObservationLog *ObservationLog
+	Diagnostics    *Diagnostics
 }
 
 type Receipt struct {
@@ -77,7 +77,7 @@ type runtimeWorkload struct {
 // ponytail: one owner and one lock for the research cluster. Use per-Workload
 // locks only if measured contention, not a distributed queue or lock service.
 type Runtime struct {
-	mu                sync.Mutex
+	mu                diagnosticMutex
 	config            RuntimeConfig
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -103,6 +103,7 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	}
 	backendCtx, cancel := context.WithCancel(ctx)
 	r := &Runtime{config: config, ctx: backendCtx, cancel: cancel, workloads: map[string]*runtimeWorkload{}, names: map[string]string{}, instances: map[string]*runtimeInstance{}, calls: map[string]*Call{}, definitions: map[string]*Definition{}, changed: make(chan struct{}, 1)}
+	r.mu.recorder, r.mu.id = config.Diagnostics, 1
 	definitions, pending := config.ObservationLog.runtimeFacts()
 	r.definitions = definitions
 	// Assigned rows without a final row are observed to completion, never
@@ -200,7 +201,7 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 }
 
 func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) {
-	r.mu.Lock()
+	r.mu.LockRequest(receipt.ID)
 	if !receipt.Deadline.IsZero() && !time.Now().Before(receipt.Deadline) {
 		r.mu.Unlock()
 		return nil, failure("RequestTimeout", "request lifetime expired before acceptance")
@@ -223,7 +224,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	if err := r.config.ObservationLog.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: validatedAt.UTC(), ReceivedAt: receipt.ReceivedAt, ElapsedNanos: validatedAt.Sub(receipt.ReceivedAt).Nanoseconds(), SLO: &d.SLO, LifetimeNanos: lifetime}); err != nil {
 		return nil, failure("ObservationUnavailable", "cannot persist validated compute demand")
 	}
-	r.mu.Lock()
+	r.mu.LockRequest(receipt.ID)
 	defer r.mu.Unlock()
 	if r.shuttingDown {
 		return nil, failure(reasonShuttingDown, "entry point no longer accepts requests")
@@ -266,11 +267,14 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 }
 
 func (c *Call) Wait(ctx context.Context) (BackendResult, error) {
+	c.runtime.config.Diagnostics.Mark(DiagnosticWait, DiagnosticBegin, c.receipt.ID, 0)
 	select {
 	case result := <-c.reply:
+		c.runtime.config.Diagnostics.Mark(DiagnosticWait, DiagnosticReceived, c.receipt.ID, 0)
 		return result.result, result.err
 	case <-ctx.Done():
-		c.runtime.mu.Lock()
+		c.runtime.config.Diagnostics.Mark(DiagnosticWait, DiagnosticCanceled, c.receipt.ID, 0)
+		c.runtime.mu.LockRequest(c.receipt.ID)
 		if c.assignment == nil {
 			c.runtime.removeQueuedLocked(c)
 			c.backendDone = true
@@ -290,7 +294,11 @@ func (c *Call) Wait(ctx context.Context) (BackendResult, error) {
 
 func (r *Runtime) Response(receipt Receipt, outcome, code string) error {
 	finishedAt := time.Now()
-	r.mu.Lock()
+	r.config.Diagnostics.Mark(DiagnosticResponse, DiagnosticBegin, receipt.ID, 0)
+	if r.config.Diagnostics.Active() {
+		defer r.config.Diagnostics.Mark(DiagnosticResponse, DiagnosticEnd, receipt.ID, 0)
+	}
+	r.mu.LockRequest(receipt.ID)
 	defer r.mu.Unlock()
 	c := r.calls[receipt.ID]
 	live := c != nil
@@ -333,6 +341,10 @@ func (r *Runtime) removeQueuedLocked(c *Call) {
 }
 
 func (r *Runtime) chooseLocked(route inputRoute) *routeEntry {
+	if r.mu.recorder.Active() {
+		r.mu.mark(DiagnosticChoose, DiagnosticBegin)
+		defer r.mu.mark(DiagnosticChoose, DiagnosticEnd)
+	}
 	for index, entry := range route.entries {
 		route.available[index] = entry.instance.State.Ready && !entry.instance.State.Stopped && entry.instance.outstanding < entry.instance.Capacity
 	}
@@ -344,6 +356,10 @@ func (r *Runtime) chooseLocked(route inputRoute) *routeEntry {
 }
 
 func (r *Runtime) dispatchLocked() {
+	if r.mu.recorder.Active() {
+		r.mu.mark(DiagnosticDispatch, DiagnosticBegin)
+		defer r.mu.mark(DiagnosticDispatch, DiagnosticEnd)
+	}
 	// The ingress owner promptly distributes accepted samples to ready capacity.
 	// The firstfloor actor owns actual compatible batching and additional wait.
 	for _, w := range r.workloads {
@@ -353,7 +369,9 @@ func (r *Runtime) dispatchLocked() {
 				r.removeQueuedLocked(c)
 				c.backendDone = true
 				c.transportDone = true
+				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticBegin, c.receipt.ID, 0)
 				c.reply <- callResult{err: failure("RequestTimeout", "request lifetime expired in ingress queue")}
+				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticEnd, c.receipt.ID, 0)
 				continue
 			}
 			entry := r.chooseLocked(w.route)
@@ -368,7 +386,9 @@ func (r *Runtime) dispatchLocked() {
 				r.removeQueuedLocked(c)
 				c.backendDone = true
 				c.transportDone = true
+				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticBegin, c.receipt.ID, 0)
 				c.reply <- callResult{err: failure("ObservationUnavailable", "cannot persist assignment")}
+				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticEnd, c.receipt.ID, 0)
 				continue
 			}
 			r.removeQueuedLocked(c)
@@ -386,6 +406,7 @@ func (r *Runtime) dispatchLocked() {
 func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (BackendResult, error), dispatch Dispatch) {
 	result, err := execute(c.backendContext, dispatch)
 	finishedAt := time.Now()
+	r.config.Diagnostics.Mark(DiagnosticBackendReturn, DiagnosticEnd, c.receipt.ID, 0)
 	outcome, code := outcomeCompleted, ""
 	if err != nil {
 		var domain *Error
@@ -401,7 +422,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 			outcome = "preprocess_failed"
 		}
 	}
-	r.mu.Lock()
+	r.mu.LockRequest(c.receipt.ID)
 	defer r.mu.Unlock()
 	c.transportDone = true
 	if c.cancelBackend != nil {
@@ -423,7 +444,9 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		err = failure("ObservationUnavailable", "cannot persist backend exchange outcome")
 	}
 	if c.reply != nil {
+		r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticBegin, c.receipt.ID, 0)
 		c.reply <- callResult{result: result, err: err}
+		r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticEnd, c.receipt.ID, 0)
 	}
 	r.releaseLocked(c)
 	r.dispatchLocked()
@@ -431,6 +454,10 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 }
 
 func (r *Runtime) releaseLocked(c *Call) {
+	if r.mu.recorder.Active() {
+		r.mu.mark(DiagnosticRelease, DiagnosticBegin)
+		defer r.mu.mark(DiagnosticRelease, DiagnosticEnd)
+	}
 	if c.backendDone {
 		r.pruneInstanceBindingsLocked()
 	}
@@ -783,6 +810,10 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 // native state read after that exchange does not hold them: nothing will
 // execute or report them. A held call waits for its native completion.
 func (r *Runtime) finishAbsentLocked(state InstanceState) {
+	if r.mu.recorder.Active() {
+		r.mu.mark(DiagnosticAbsent, DiagnosticBegin)
+		defer r.mu.mark(DiagnosticAbsent, DiagnosticEnd)
+	}
 	if state.Native == nil {
 		return
 	}
@@ -835,6 +866,10 @@ func (r *Runtime) rebuildLocked() {
 }
 
 func (r *Runtime) pruneInstanceBindingsLocked() {
+	if r.mu.recorder.Active() {
+		r.mu.mark(DiagnosticPrune, DiagnosticBegin)
+		defer r.mu.mark(DiagnosticPrune, DiagnosticEnd)
+	}
 	for _, i := range r.instances {
 		for uid := range i.bindings {
 			w := r.workloads[uid]
@@ -855,6 +890,10 @@ func (r *Runtime) pruneInstanceBindingsLocked() {
 }
 
 func (r *Runtime) rebuildWorkloadRoutesLocked() {
+	if r.mu.recorder.Active() {
+		r.mu.mark(DiagnosticRebuild, DiagnosticBegin)
+		defer r.mu.mark(DiagnosticRebuild, DiagnosticEnd)
+	}
 	for uid, w := range r.workloads {
 		previous := w.route
 		w.route = inputRoute{}
@@ -1066,3 +1105,6 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 		}
 	}
 }
+
+// Diagnostics exposes the optional control-only capture to the HTTP boundary.
+func (r *Runtime) Diagnostics() *Diagnostics { return r.config.Diagnostics }

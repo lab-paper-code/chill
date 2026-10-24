@@ -57,6 +57,7 @@ type schedulerService struct {
 	objects                  *stores3.Store
 	observationLog           *serving.ObservationLog
 	opts                     options
+	gatewayRequestTimeout    time.Duration
 	catalog                  *servingkube.Catalog
 	costs                    *servingkube.CostEvidence
 	resourceVersion, sources string
@@ -72,7 +73,7 @@ type schedulerService struct {
 
 func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kubernetes.Interface,
 	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
-	observationLog *serving.ObservationLog, opts options,
+	observationLog *serving.ObservationLog, opts options, gatewayRequestTimeout time.Duration,
 ) (*schedulerService, error) {
 	if opts.schedulerConfigMap == "" {
 		return nil, nil
@@ -89,6 +90,7 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 	service := &schedulerService{
 		operations: operations, store: store, kube: kube, execution: execution, observer: observer,
 		objects: objects, observationLog: observationLog, opts: opts, ctx: serviceCtx, cancel: cancel,
+		gatewayRequestTimeout: gatewayRequestTimeout,
 	}
 	service.catalog, err = servingkube.NewCatalog(store, objects, opts.maxEvidenceBytes, opts.profileConfidenceLevel)
 	if err == nil {
@@ -244,6 +246,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
 		CostIssues: costs.Issues, DispatchOccupancy: costs.DispatchOccupancy, CatalogIssues: view.Insufficiencies,
 		LoadGenerator: o.opts.loadGenerator,
+		GatewayRequestTimeout: o.gatewayRequestTimeout,
 		Meters:        config.Meters, PowerPolicies: policies,
 		StaticRouting: config.StaticRouting != nil, MeasurementNamespaces: namespaces,
 		Evidence: o.objects, EvidenceStore: o.opts.storeName, MeterSource: metricSource,

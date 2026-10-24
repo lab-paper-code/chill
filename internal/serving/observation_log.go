@@ -41,6 +41,7 @@ type ObservationLogConfig struct {
 	Writer      evidencestore.ImmutableWriter
 	Definitions []string
 	Outcomes    []string
+	Diagnostics *Diagnostics
 }
 
 type DefinitionObservation struct {
@@ -247,7 +248,7 @@ type observationCatalogEntry struct {
 // ObservationLog appends minute files under hourly segment directories and
 // keeps only the open request rows and the definitions in memory.
 type ObservationLog struct {
-	mu        sync.Mutex
+	mu        diagnosticMutex
 	publishMu sync.Mutex
 	// archived holds the past hours whose streams this process stored, under publishMu.
 	archived map[time.Time]bool
@@ -277,6 +278,7 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 		retained: map[string]*Definition{}, open: map[string]*RequestRow{}, catalog: map[string]observationCatalogEntry{},
 		archived: map[time.Time]bool{},
 	}
+	l.mu.recorder, l.mu.id = config.Diagnostics, 2
 	if err := os.MkdirAll(l.root, 0700); err != nil {
 		return nil, err
 	}
@@ -440,7 +442,9 @@ func (l *ObservationLog) appendLocked(stream string, now time.Time, value any) e
 	if l.closed {
 		return errors.New("observation log is closed")
 	}
+	l.mu.mark(DiagnosticMarshal, DiagnosticBegin)
 	data, err := json.Marshal(value)
+	l.mu.mark(DiagnosticMarshal, DiagnosticEnd)
 	if err == nil {
 		err = l.writeLocked(stream, now, append(data, '\n'))
 	}
@@ -456,7 +460,7 @@ func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) 
 	if file == nil || file.Name() != name {
 		if file != nil {
 			delete(l.files, stream)
-			if err := file.Close(); err != nil {
+			if err := l.closeFileLocked(file); err != nil {
 				return err
 			}
 		}
@@ -464,23 +468,34 @@ func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) 
 			return err
 		}
 		var err error
-		if file, err = os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600); err != nil {
+		l.mu.mark(DiagnosticFileOpen, DiagnosticBegin)
+		file, err = os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		l.mu.mark(DiagnosticFileOpen, DiagnosticEnd)
+		if err != nil {
 			return err
 		}
 		l.files[stream] = file
 	}
-	return appendWhole(file, data)
+	return l.appendWholeLocked(file, data)
 }
 
-// appendWhole appends data or nothing: a short or failed write, such as
+// appendWholeLocked appends data or nothing: a short or failed write, such as
 // ENOSPC while S3 is down, is cut back so the next line starts on a boundary.
-func appendWhole(file *os.File, data []byte) error {
+func (l *ObservationLog) appendWholeLocked(file *os.File, data []byte) error {
+	l.mu.mark(DiagnosticFileStat, DiagnosticBegin)
 	info, err := file.Stat()
+	l.mu.mark(DiagnosticFileStat, DiagnosticEnd)
 	if err != nil {
 		return err
 	}
-	if _, err := file.Write(data); err != nil {
-		return errors.Join(err, file.Truncate(info.Size()))
+	l.mu.mark(DiagnosticFileWrite, DiagnosticBegin)
+	_, err = file.Write(data)
+	l.mu.mark(DiagnosticFileWrite, DiagnosticEnd)
+	if err != nil {
+		l.mu.mark(DiagnosticFileTruncate, DiagnosticBegin)
+		truncateErr := file.Truncate(info.Size())
+		l.mu.mark(DiagnosticFileTruncate, DiagnosticEnd)
+		return errors.Join(err, truncateErr)
 	}
 	return nil
 }
@@ -500,7 +515,9 @@ func (l *ObservationLog) referenceLocked(kind, key string, at, now time.Time, bo
 	if ok && entry.hour == hour && source != nil && entry.source == source {
 		return nil
 	}
+	l.mu.mark(DiagnosticMarshal, DiagnosticBegin)
 	data, err := json.Marshal(body)
+	l.mu.mark(DiagnosticMarshal, DiagnosticEnd)
 	if err != nil {
 		return err
 	}
@@ -520,7 +537,9 @@ func (l *ObservationLog) DefinitionRecord(definition *Definition) error {
 	if definition == nil {
 		return errors.New("definition is required")
 	}
+	l.config.Diagnostics.Mark(DiagnosticMarshal, DiagnosticBegin, "", 0)
 	data, err := json.Marshal(DefinitionObservation{Identity: definition.Identity(), Definition: definition})
+	l.config.Diagnostics.Mark(DiagnosticMarshal, DiagnosticEnd, "", 0)
 	if err != nil {
 		return err
 	}
@@ -531,11 +550,14 @@ func (l *ObservationLog) DefinitionRecord(definition *Definition) error {
 	}
 	// A restart publishes every Workload again; the root file keeps each body once.
 	if retained := l.retained[definition.Identity()]; retained != nil {
-		if stored, err := json.Marshal(DefinitionObservation{Identity: definition.Identity(), Definition: retained}); err == nil && bytes.Equal(stored, data) {
+		l.mu.mark(DiagnosticMarshal, DiagnosticBegin)
+		stored, err := json.Marshal(DefinitionObservation{Identity: definition.Identity(), Definition: retained})
+		l.mu.mark(DiagnosticMarshal, DiagnosticEnd)
+		if err == nil && bytes.Equal(stored, data) {
 			return nil
 		}
 	}
-	if err := appendWhole(l.definitions, append(data, '\n')); err != nil {
+	if err := l.appendWholeLocked(l.definitions, append(data, '\n')); err != nil {
 		l.lastError = err
 		return err
 	}
@@ -549,7 +571,7 @@ func (l *ObservationLog) RequestEvent(event RequestEvent) error {
 	if event.RequestID == "" || event.At.IsZero() {
 		return errors.New("request identity and event time are required")
 	}
-	l.mu.Lock()
+	l.mu.LockRequest(event.RequestID)
 	defer l.mu.Unlock()
 	if l.closed {
 		return errors.New("observation log is closed")
@@ -586,7 +608,7 @@ func (l *ObservationLog) RecordNativeSupplement(event RequestEvent) error {
 	if event.RequestID == "" || event.At.IsZero() || event.NativeProgress == nil || event.NativeInstance == "" {
 		return errors.New("native request identity, time, instance and progress are required")
 	}
-	l.mu.Lock()
+	l.mu.LockRequest(event.RequestID)
 	defer l.mu.Unlock()
 	if l.closed {
 		return errors.New("observation log is closed")
@@ -606,7 +628,7 @@ func (l *ObservationLog) appendNativeSupplementLocked(event RequestEvent) error 
 
 // RequestClosed appends the final row of a request the Runtime has settled.
 func (l *ObservationLog) RequestClosed(id string) error {
-	l.mu.Lock()
+	l.mu.LockRequest(id)
 	defer l.mu.Unlock()
 	row := l.open[id]
 	if row == nil {
@@ -707,7 +729,10 @@ func (l *ObservationLog) removeHour(hour time.Time) (bool, error) {
 			return false, nil
 		}
 	}
-	if err := os.RemoveAll(filepath.Join(l.root, observationHour(hour))); err != nil {
+	l.mu.mark(DiagnosticRemove, DiagnosticBegin)
+	err := os.RemoveAll(filepath.Join(l.root, observationHour(hour)))
+	l.mu.mark(DiagnosticRemove, DiagnosticEnd)
+	if err != nil {
 		return false, err
 	}
 	if end := hour.Add(time.Hour); end.After(l.floor) {
@@ -717,6 +742,10 @@ func (l *ObservationLog) removeHour(hour time.Time) (bool, error) {
 }
 
 func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream string) error {
+	if l.config.Diagnostics.Active() {
+		l.config.Diagnostics.Mark(DiagnosticArchive, DiagnosticBegin, "", 0)
+		defer l.config.Diagnostics.Mark(DiagnosticArchive, DiagnosticEnd, "", 0)
+	}
 	files, err := l.hourFiles(hour, stream)
 	if err != nil || len(files) == 0 {
 		return err
@@ -728,6 +757,7 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 		return err
 	}
 	defer func() { _ = compressed.Close(); _ = os.Remove(compressed.Name()) }()
+	l.config.Diagnostics.Mark(DiagnosticCompress, DiagnosticBegin, "", 0)
 	writer := gzip.NewWriter(compressed) // Zero header time: equal input, equal bytes.
 	for _, segment := range files {
 		file, err := os.Open(segment.path)
@@ -742,6 +772,7 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 	if err := writer.Close(); err != nil {
 		return err
 	}
+	l.config.Diagnostics.Mark(DiagnosticCompress, DiagnosticEnd, "", 0)
 	size, err := compressed.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
@@ -753,7 +784,9 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 		Store: l.config.Store, Key: observationArchivePrefix + observationHour(hour) + "/" + stream + ".jsonl.gz",
 		Size: size,
 	}
+	l.config.Diagnostics.Mark(DiagnosticUpload, DiagnosticBegin, "", 0)
 	_, err = l.config.Writer.PutImmutable(ctx, object, compressed)
+	l.config.Diagnostics.Mark(DiagnosticUpload, DiagnosticEnd, "", 0)
 	return err
 }
 
@@ -766,10 +799,10 @@ func (l *ObservationLog) Flush(ctx context.Context) error {
 		}
 	}
 	for _, file := range l.files {
-		result = errors.Join(result, file.Sync())
+		result = errors.Join(result, l.syncFileLocked(file))
 	}
 	if !l.closed {
-		result = errors.Join(result, l.definitions.Sync())
+		result = errors.Join(result, l.syncFileLocked(l.definitions))
 	}
 	if result != nil {
 		l.lastError = result
@@ -783,10 +816,10 @@ func (l *ObservationLog) Close(ctx context.Context) error {
 	var result error
 	if !l.closed {
 		for stream, file := range l.files {
-			result = errors.Join(result, file.Sync(), file.Close())
+			result = errors.Join(result, l.syncFileLocked(file), l.closeFileLocked(file))
 			delete(l.files, stream)
 		}
-		result = errors.Join(result, l.definitions.Sync(), l.definitions.Close())
+		result = errors.Join(result, l.syncFileLocked(l.definitions), l.closeFileLocked(l.definitions))
 		l.closed = true
 	}
 	if result != nil {
@@ -1115,6 +1148,10 @@ func (r *observationRead) gap(from time.Time) *time.Time {
 func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRead, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.mu.recorder.Active() {
+		l.mu.mark(DiagnosticCapture, DiagnosticBegin)
+		defer l.mu.mark(DiagnosticCapture, DiagnosticEnd)
+	}
 	read := &observationRead{files: map[string][]observationOpenFile{}, open: map[string]*RequestRow{}, definitions: map[string]*Definition{}, start: l.floor}
 	for id, row := range l.open {
 		copied := *row
@@ -1141,7 +1178,7 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 				if !wanted || segment.at.Before(bounds[0].Truncate(time.Minute)) || !bounds[1].IsZero() && segment.at.After(bounds[1]) {
 					continue
 				}
-				if err := read.openFile(stream, segment); err != nil {
+				if err := l.openReadFile(read, stream, segment); err != nil {
 					read.close()
 					l.lastError = err
 					return nil, err
@@ -1152,14 +1189,18 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 	return read, nil
 }
 
-func (r *observationRead) openFile(stream string, segment observationSegment) error {
+func (l *ObservationLog) openReadFile(r *observationRead, stream string, segment observationSegment) error {
+	l.mu.mark(DiagnosticFileOpen, DiagnosticBegin)
 	file, err := os.Open(segment.path)
+	l.mu.mark(DiagnosticFileOpen, DiagnosticEnd)
 	if err != nil {
 		return err
 	}
+	l.mu.mark(DiagnosticFileStat, DiagnosticBegin)
 	info, err := file.Stat()
+	l.mu.mark(DiagnosticFileStat, DiagnosticEnd)
 	if err != nil {
-		return errors.Join(err, file.Close())
+		return errors.Join(err, l.closeFileLocked(file))
 	}
 	r.files[stream] = append(r.files[stream], observationOpenFile{file: file, at: segment.at, size: info.Size()})
 	return nil
@@ -1169,6 +1210,10 @@ func (r *observationRead) openFile(stream string, segment observationSegment) er
 var errObservationStop = errors.New("observation scan stopped")
 
 func (l *ObservationLog) scanStream(read *observationRead, stream string, visit func([]byte) error) error {
+	if l.config.Diagnostics.Active() {
+		l.config.Diagnostics.Mark(DiagnosticQuery, DiagnosticBegin, "", 0)
+		defer l.config.Diagnostics.Mark(DiagnosticQuery, DiagnosticEnd, "", 0)
+	}
 	var scanner observationScanner
 	for _, file := range read.files[stream] {
 		err := scanner.scan(file.file, file.size, visit)
@@ -1245,4 +1290,17 @@ func observationJSONSyntaxError(raw []byte) error {
 	}
 	var invalid json.RawMessage
 	return json.Unmarshal(raw, &invalid)
+}
+
+func (l *ObservationLog) syncFileLocked(file *os.File) error {
+	l.mu.mark(DiagnosticFileSync, DiagnosticBegin)
+	err := file.Sync()
+	l.mu.mark(DiagnosticFileSync, DiagnosticEnd)
+	return err
+}
+func (l *ObservationLog) closeFileLocked(file *os.File) error {
+	l.mu.mark(DiagnosticFileClose, DiagnosticBegin)
+	err := file.Close()
+	l.mu.mark(DiagnosticFileClose, DiagnosticEnd)
+	return err
 }

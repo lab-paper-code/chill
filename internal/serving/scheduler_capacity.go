@@ -37,7 +37,7 @@ const (
 	// its transition at the least load of the observation window.
 	schedulerReplacementUnpaid = "ReplacementUnpaid"
 	// schedulerGainWithinUncertainty keeps the current configuration when the
-	// chosen transition saves no more than the measurement uncertainty.
+	// chosen transition saves no more than the selected evidence's conditional B.
 	schedulerGainWithinUncertainty = "TransitionGainWithinUncertainty"
 	// schedulerIdleInstanceRemoved names an instance unrouted for one
 	// observation window that the target removes.
@@ -63,7 +63,8 @@ type SchedulerCapacity struct {
 	Search    *SchedulerPlanSearch        `json:"search,omitempty"`
 	Workloads []SchedulerCapacityWorkload `json:"workloads"`
 	Plans     []SchedulerNodePlan         `json:"plans"`
-	// GainUncertaintyJoules is the minimum-gain threshold, separate from nominal energy.
+	// GainUncertaintyJoules is the selected-evidence conditional B threshold.
+	// It excludes profile statistical uncertainty and leaves nominal energy unchanged.
 	GainUncertaintyJoules float64 `json:"gainUncertaintyJoules,omitempty"`
 }
 
@@ -265,7 +266,6 @@ type capacityPlan struct {
 	preMean, preMax, postMean, postMax float64             // seconds
 	preJ, postJ                        float64
 	before, mid, after                 float64             // watts
-	midInstances                       []SchedulerInstance // instances during the pre-route chain
 	operationBounds                    schedulerEnergyBounds
 	beforeBound, midBound, afterBound  schedulerBaselineBound
 	// replaces marks a plan that changes the batch policy of a current instance,
@@ -773,7 +773,6 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		}
 	}
 	var midReason, afterReason string
-	plan.midInstances = mid
 	var midSources, afterSources []string
 	plan.mid, _, midSources, _, midReason = schedulerBaseline(p.snapshot.Baselines, at, mid, p.snapshot.Options)
 	plan.after, _, afterSources, _, afterReason = schedulerBaseline(p.snapshot.Baselines, at, plan.instances, p.snapshot.Options)
@@ -1362,13 +1361,11 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 	return best
 }
 
-// minimumGain keeps the current configuration when a feasible plan set that
-// changes a Node saves no more energy over T than the measurement uncertainty
-// of the two candidates. Profile statistical confidence half-widths retain
-// their existing quadrature rule. Operation shift/gap bounds and unloaded or
-// loaded node baseline bounds are deterministic: compose signed exposures by
-// immutable evidence, cancel shared evidence, then sum absolute bounds and add
-// that conservative half-width to the profile confidence half-width.
+// minimumGain requires nominal gain over T to exceed the deterministic
+// operation and selected-baseline sensitivity bounds. Signed exposures to
+// identical immutable evidence cancel before distinct residuals are summed.
+// Profile statistical uncertainty, including BEO idle fallback, is outside
+// this hurdle; it is not a joint confidence interval for predicted gain.
 func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	if !best.feasible || best.keep {
 		return best
@@ -1377,59 +1374,14 @@ func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	if !keep.feasible {
 		return best
 	}
-	t, r, sq := p.period, best.route, 0.0
-	// per-input half-width by instance ID; idle half-width and idle seconds
-	// (keep minus plan set) by profile ID
-	half, idle, seconds := map[string]float64{}, map[string]float64{}, map[string]float64{}
-	expose := func(instances []SchedulerInstance, s float64) {
-		for _, i := range instances {
-			if i.Profile != nil {
-				idle[i.Profile.ID], seconds[i.Profile.ID] = i.Profile.IdleBaselineHalfWidthWatts, seconds[i.Profile.ID]+s
-			}
-		}
-	}
-	for n, j := range best.choice {
-		before, plan := p.plans[n][0], p.plans[n][j]
-		for _, i := range append(slices.Clone(before.instances), plan.instances...) {
-			if b := schedulerBatch(i.Profile, 1); b != nil {
-				half[i.ID] = b.EnergyPerInputHalfWidthJoules
-			}
-		}
-		if j == 0 {
-			continue
-		}
-		expose(before.instances, t)
-		expose(plan.midInstances, plan.preMean-r)
-		expose(plan.instances, r+plan.postMean-t)
-	}
-	for id, s := range seconds {
-		sq += math.Pow(idle[id]*s, 2)
-	}
-	requests := func(res capacityResult) map[string]float64 {
-		out := map[string]float64{}
-		for w, weights := range res.weights {
-			units := int32(0)
-			for _, weight := range weights {
-				units += weight
-			}
-			for id, weight := range weights {
-				out[id] += p.ws[w].rate * float64(weight) / float64(units) * t
-			}
-		}
-		return out
-	}
-	gained, lost := requests(best), requests(keep)
-	for id, h := range half {
-		sq += math.Pow(h*(gained[id]-lost[id]), 2)
-	}
 	bounds := schedulerEnergyBounds{}
 	for n, j := range best.choice {
 		if p.compared[n] {
-			p.plans[n][0].addBounds(bounds, 0, t, 1)
-			p.plans[n][j].addBounds(bounds, r, t, -1)
+			p.plans[n][0].addBounds(bounds, 0, p.period, 1)
+			p.plans[n][j].addBounds(bounds, best.route, p.period, -1)
 		}
 	}
-	best.gainUncertainty = math.Sqrt(sq) + bounds.halfWidth()
+	best.gainUncertainty = bounds.halfWidth()
 	if keep.joules-best.joules > best.gainUncertainty {
 		return best
 	}

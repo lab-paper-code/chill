@@ -120,6 +120,7 @@ type occupancyInputs struct {
 		FramedDecodedRequestUpperBytes int64 `json:"framedDecodedRequestUpperBytes"`
 	} `json:"computed"`
 	Coefficients struct {
+		edge.OccupancyPlanningFloors
 		TimeMargin        float64 `json:"timeMargin"`
 		RelativePrecision float64 `json:"relativeXPlanningPrecision"`
 		Confidence        float64 `json:"planningConfidence"`
@@ -147,7 +148,7 @@ func validateOccupancyProfile(s edge.DispatchOccupancyMeasurementSpec, profile *
 		return err
 	}
 	p, c := inputs.Profile, inputs.Coefficients
-	for _, v := range []float64{c.TimeMargin, c.RelativePrecision, c.Confidence, c.IdleBase, c.IdleErrorSeconds} {
+	for _, v := range []float64{c.TimeMargin, c.RelativePrecision, c.Confidence, c.IdleBase, c.IdleErrorSeconds, c.WindowFloorSeconds} {
 		if v <= 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 			return errors.New("invalid frozen planning coefficients")
 		}
@@ -166,7 +167,7 @@ func validateOccupancyProfile(s edge.DispatchOccupancyMeasurementSpec, profile *
 	mean, _ := profile.MeanNanos(int(s.Batch))
 	idle, _ := strconv.ParseFloat(s.MaximumIdleFraction, 64)
 	idleBound := math.Min(c.IdleBase, c.IdleErrorSeconds/(c.TimeMargin*mean/1e9/float64(s.Batch)+c.IdleErrorSeconds))
-	if float64(s.DurationSeconds) < math.Ceil(math.Max(360, c.TimeMargin*float64(s.MinimumBatches)*mean/1e9)) ||
+	if float64(s.DurationSeconds) < math.Ceil(math.Max(c.WindowFloorSeconds, c.TimeMargin*float64(s.MinimumBatches)*mean/1e9)) ||
 		idle > idleBound+1e-12 || float64(s.Conditions.MaximumIdleNanosPerRequest)/1e9 > c.IdleErrorSeconds {
 		return errors.New("measurement window or idle bound violates frozen profile calculation")
 	}
@@ -455,6 +456,10 @@ type occupancyPlan struct {
 func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.DispatchOccupancyMeasurement, node *core.Node, in admissionInputs) (plan occupancyPlan, reason, detail string, wait bool) {
 	if err := m.Spec.ValidateConditions(); err != nil {
 		return plan, occupancyConditionsInfeasible, err.Error(), false
+	}
+	if m.Spec.SupplyMode == occupancyClosedLoop &&
+		(in.config.GatewayRequestTimeout <= 0 || time.Duration(m.Spec.RequestLifetimeSeconds)*time.Second > in.config.GatewayRequestTimeout) {
+		return plan, occupancyConditionsInfeasible, "request lifetime exceeds the configured gateway cap", false
 	}
 	if plan.profile, reason, detail, wait = measurementProfile(m.Namespace, m.Spec.BatchEnergyOptimization, m.Spec.Node, in); reason != "" || wait {
 		return plan, reason, detail, wait

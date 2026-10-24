@@ -198,6 +198,39 @@ class MainTest(unittest.TestCase):
                 with self.subTest(extra=extra), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     main(args + extra)
 
+    def test_e5_poisson_binds_slo_lifetime_gateway_cap_and_socket(self) -> None:
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "q1").mkdir()
+            (root / "q1" / "image").write_bytes(b"jpeg")
+            token = root / "token"
+            token.write_text("secret")
+            args = [
+                "replay", "--endpoint", "https://chill.example", "--token-file", str(token),
+                "--workload", "mnv", "--dataset-dir", str(root), "--fields", "image",
+                "--arrivals", "poisson", "--rate", "50", "--duration", "300",
+                "--workload-slo", "1", "--request-lifetime", "2", "--gateway-timeout", "129",
+            ]
+            with patch("chill_loadgen.cli.WorkloadHTTPClient") as client, patch("chill_loadgen.cli.replay") as run:
+                self.assertEqual(0, main(args))
+                timeout = client.call_args.kwargs["timeout_seconds"]
+                self.assertGreater(timeout, 2.01)
+                run.call_args.kwargs["new_client"]()
+                self.assertEqual(timeout, client.call_args.kwargs["timeout_seconds"])
+                self.assertEqual(2, client.call_args.kwargs["request_lifetime_seconds"])
+                self.assertEqual("poisson", run.call_args.kwargs["arrivals"])
+            for extra in (
+                ["--timeout", "2.01"], ["--request-lifetime", "0.5"],
+                ["--gateway-timeout", "1.5"],
+            ):
+                with self.subTest(extra=extra), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    main(args + extra)
+            missing_cap = args[:-2]
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main(missing_cap)
+
     def test_open_loop_requires_rate_and_rejects_nonfinite_values(self) -> None:
         for extra in ([], ["--rate", "inf"], ["--rate", "1", "--duration", "nan"]):
             with self.subTest(extra=extra), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

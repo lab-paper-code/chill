@@ -109,7 +109,7 @@ spec:
                 type: integer
               durationSeconds:
                 format: int32
-                minimum: 60
+                minimum: 1
                 type: integer
               jobSetupSeconds:
                 format: int32
@@ -133,8 +133,8 @@ spec:
                 minLength: 1
                 type: string
               plannedElapsedSeconds:
+                description: The elapsed cap is frozen in Conditions.InputsJSON coefficients.
                 format: int32
-                maximum: 3600
                 minimum: 1
                 type: integer
               preparationSeconds:
@@ -189,6 +189,8 @@ spec:
             x-kubernetes-validations:
             - message: DispatchOccupancyMeasurement spec is immutable
               rule: self == oldSelf
+            - message: open-loop occupancy duration must be at least 60 seconds
+              rule: (has(self.supplyMode) && self.supplyMode == 'closed-loop') || self.durationSeconds >= 60
           status:
             properties:
               perRequestNanos:

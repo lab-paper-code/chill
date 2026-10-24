@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"slices"
@@ -109,10 +110,24 @@ func TestOccupancyFrozenConditionsAndClosedLoopJob(t *testing.T) {
 	m.Spec.JobSetupSeconds = 30
 	m.Spec.CollectionSeconds = 30
 	m.Spec.PlannedElapsedSeconds = 543
-	m.Spec.Conditions = edge.DispatchOccupancyConditions{ProfileID: "profile", InputsJSON: `{"computed":{"tailBatchSeconds":0.1,"fastBatchSeconds":0.02,"refillSeconds":0.1,"prefixSeconds":0.1,"framedDecodedRequestUpperBytes":32,"queueRequestCap":256,"queueBytesCap":67108864,"qUpper":256},"coefficients":{"relativeXPlanningPrecision":0.01,"planningConfidence":0.95,"timeMargin":1.25,"maximumIdleBaseFraction":0.01,"idleDErrorSecondsPerRequest":0.001},"profile":{"profileID":"profile","runtimeImage":"image","workload":{"name":"workload","uid":"workload-uid","generation":1,"slo":{"percentile":99,"targetLatencyNanos":1000000000}}}}`, WaitingBatches: 5, MinimumCycles: 119, MaximumIdleNanosPerRequest: 1000000}
+	m.Spec.Conditions = edge.DispatchOccupancyConditions{ProfileID: "profile", InputsJSON: `{"computed":{"tailBatchSeconds":0.1,"fastBatchSeconds":0.02,"refillSeconds":0.1,"prefixSeconds":0.1,"framedDecodedRequestUpperBytes":32,"queueRequestCap":256,"queueBytesCap":67108864,"qUpper":256},"coefficients":{"relativeXPlanningPrecision":0.01,"planningConfidence":0.95,"timeMargin":1.25,"maximumIdleBaseFraction":0.01,"idleDErrorSecondsPerRequest":0.001,"windowFloorSeconds":360,"loadPreparationFloorSeconds":60,"plannedElapsedCapSeconds":3600},"profile":{"profileID":"profile","runtimeImage":"image","workload":{"name":"workload","uid":"workload-uid","generation":1,"slo":{"percentile":99,"targetLatencyNanos":1000000000}}}}`, WaitingBatches: 5, MinimumCycles: 119, MaximumIdleNanosPerRequest: 1000000}
 	if err := m.Spec.ValidateConditions(); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("gateway cap rejected before grant", func(t *testing.T) {
+		exceedsCap := m.DeepCopy()
+		exceedsCap.Spec.RequestLifetimeSeconds, exceedsCap.Spec.DrainSeconds = 130, 131
+		exceedsCap.Spec.WarmupSeconds, exceedsCap.Spec.PlannedElapsedSeconds = 164, 775
+		if err := exceedsCap.Spec.ValidateConditions(); err != nil {
+			t.Fatalf("fixture must satisfy the frozen conditions before gateway admission: %v", err)
+		}
+		controller := &SchedulerController{}
+		_, reason, detail, wait := controller.occupancyRefusal(context.Background(), exceedsCap, nil,
+			admissionInputs{config: SchedulerControllerConfig{GatewayRequestTimeout: 129 * time.Second}})
+		if reason != occupancyConditionsInfeasible || wait || !strings.Contains(detail, "gateway cap") {
+			t.Fatalf("impossible lifetime reached grant prerequisites: reason=%s detail=%s wait=%t", reason, detail, wait)
+		}
+	})
 	raw, err := json.Marshal(m.Spec)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +145,35 @@ func TestOccupancyFrozenConditionsAndClosedLoopJob(t *testing.T) {
 	prep.Config.MaxQueueRequests, prep.Config.MaxQueueBytes = 256, 64<<20
 	if err := validateOccupancyProfile(spec, profile, w, prep); err != nil {
 		t.Fatal(err)
+	}
+	// The frozen configuration is authoritative; these values are a fixture,
+	// not an alternate measurement condition emitted to the campaign.
+	configured := spec
+	configured.WarmupSeconds, configured.DurationSeconds, configured.PlannedElapsedSeconds = 30, 30, 4500
+	configured.Conditions.InputsJSON = strings.NewReplacer(
+		`"windowFloorSeconds":360`, `"windowFloorSeconds":30`,
+		`"loadPreparationFloorSeconds":60`, `"loadPreparationFloorSeconds":30`,
+		`"plannedElapsedCapSeconds":3600`, `"plannedElapsedCapSeconds":5000`,
+	).Replace(spec.Conditions.InputsJSON)
+	if err := configured.ValidateConditions(); err != nil {
+		t.Fatalf("configured planning floors: %v", err)
+	}
+	if err := validateOccupancyProfile(configured, profile, w, prep); err != nil {
+		t.Fatalf("controller ignored configured window floor: %v", err)
+	}
+	legacy := configured
+	legacy.SupplyMode, legacy.RateFactor = "poisson", "1.5"
+	if legacy.ValidateConditions() == nil {
+		t.Fatal("legacy open-loop duration lost its independent 60-second floor")
+	}
+	legacy.DurationSeconds = 60
+	if err := legacy.ValidateConditions(); err != nil {
+		t.Fatalf("legacy open-loop contract changed: %v", err)
+	}
+	higherFloor := spec
+	higherFloor.Conditions.InputsJSON = strings.Replace(spec.Conditions.InputsJSON, `"windowFloorSeconds":360`, `"windowFloorSeconds":480`, 1)
+	if higherFloor.ValidateConditions() == nil || validateOccupancyProfile(higherFloor, profile, w, prep) == nil {
+		t.Fatal("API or controller ignored the frozen higher window floor")
 	}
 	w.Generation++
 	if validateOccupancyProfile(spec, profile, w, prep) == nil {
@@ -149,6 +193,12 @@ func TestOccupancyFrozenConditionsAndClosedLoopJob(t *testing.T) {
 	for _, mutate := range []func(*edge.DispatchOccupancyMeasurementSpec){
 		func(s *edge.DispatchOccupancyMeasurementSpec) { s.Workers = 5 },
 		func(s *edge.DispatchOccupancyMeasurementSpec) { s.Conditions.InputsJSON = `[]` },
+		func(s *edge.DispatchOccupancyMeasurementSpec) {
+			s.Conditions.InputsJSON = strings.Replace(s.Conditions.InputsJSON, `"loadPreparationFloorSeconds":60`, `"loadPreparationFloorSeconds":90`, 1)
+		},
+		func(s *edge.DispatchOccupancyMeasurementSpec) {
+			s.Conditions.InputsJSON = strings.Replace(s.Conditions.InputsJSON, `"plannedElapsedCapSeconds":3600`, `"plannedElapsedCapSeconds":0`, 1)
+		},
 		func(s *edge.DispatchOccupancyMeasurementSpec) { s.PlannedElapsedSeconds = 3601 },
 		func(s *edge.DispatchOccupancyMeasurementSpec) { s.DeliveryMarginMillis = 0 },
 		func(s *edge.DispatchOccupancyMeasurementSpec) { s.DrainSeconds = 1 },

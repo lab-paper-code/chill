@@ -475,6 +475,11 @@ servingEntrypoint:
   maxRequestBytes: 8388608
   maxEvidenceBytes: 67108864
   maxQueryEvents: 1000
+  # One finite capture in a fresh private child of the existing writable mount.
+  diagnostic:
+    directory: ""
+    startDelay: 0s
+    traceOffset: 0s
   kubeAPI:
     apiServer: ""
     tokenFile: ""
