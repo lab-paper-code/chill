@@ -108,6 +108,9 @@ POST 권한을 가진다. ChillServer는 `tickMu` 안에서 다음을 확인하�
   fresh Node와 모든 Pod 요청을 `ValidatePreparationCapacity`가 마지막 snapshot의 inventory와 예약으로 확인하며,
   설정된 serving namespace의 기존 serving Pod, 미확인 GPU 소유권, CPU 예약 부족, memory 초과와 MemoryPressure는
   거절한다.
+  적용된 분배에 UID가 있는 Workload는 그 분배를 따른다. 빈 분배와 nil 값도 요청 분배 0을 유지한다.
+  적용된 분배에 UID가 없는 Workload는 Pod의 owner별 routing annotation을 따른다. 수동 준비와 측정 준비는
+  Ready, 소유권, native 설정 ACK를 확인한 인스턴스의 seed를 사용한다. planner 준비의 seed는 빈 분배다.
 - remove: 대상이 snapshot의 instance이고 다른 Workload가 소유하거나 binding하지 않는다. 어느
   Workload의 route 가중치도 0이고 그 instance가 맡은 처리 중 요청이 없다. 분배는 먼저 `staticRouting`으로 바꾼다.
 
@@ -131,7 +134,7 @@ automatic scheduler judgment나 power 측정 근거가 아니다.
    "uid": "<Node UID>"}, "fixedBatchSize": 1}`를 `serving-operation --execute-config prepare.json --chill-server
    https://<entrypoint> --chill-ca-file ca.crt --chill-token-file token`으로 보낸다. `profileID`는
    `/api/v1/scheduler/profiles`에서 고르고 `fixedBatchSize`는 고정 배치 기준선에서만 준다. 준비한 instance는 그
-   Workload의 routing annotation을 받는다.
+   Workload의 routing annotation을 받고 적용된 분배에 UID가 없으면 그 seed로 요청을 처리한다.
 2. 분배: `GET /api/v1/scheduler/settings` 응답에 `"staticRouting": {"<Workload UID>": {"<instance ID>": 1000}}`과
    `"reason": "<선택 이유>"`를 더해 `PUT /api/v1/scheduler/settings`로 보낸다. Dashboard 운영 설정의 "요청 분배
    바꾸기"도 같은 요청이다. `staticRouting`은 선언 전체이고, 선언이 바뀌면 `reason`이 필수다. instance ID는

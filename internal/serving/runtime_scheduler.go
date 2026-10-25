@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// EnableSchedulerRouting freezes the current distribution before preparation.
-// Discovery of a ready target does not make it part of the applied distribution.
+// EnableSchedulerRouting freezes the current Workloads' distributions.
+// Discovery of a ready target leaves those applied distributions unchanged.
 func (r *Runtime) EnableSchedulerRouting() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -38,8 +38,8 @@ func (r *Runtime) DisableSchedulerRouting() {
 }
 
 func (r *Runtime) routeWeightLocked(uid string, instance *runtimeInstance) int32 {
-	if r.routingControlled {
-		return r.routeTargets[uid][instance.State.ID]
+	if targets, controlled := r.routeTargets[uid]; r.routingControlled && controlled {
+		return targets[instance.State.ID]
 	}
 	return instance.Routing[uid]
 }
@@ -65,6 +65,9 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 	targets := make(map[string]map[string]int32, len(r.workloads))
 	if err := r.validateSchedulerRoutingLocked(candidate); err != nil {
 		return err
+	}
+	for uid := range candidate.Routing {
+		targets[uid] = nil
 	}
 	for _, wanted := range candidate.Instances {
 		uid := wanted.WorkloadUID

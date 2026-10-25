@@ -843,8 +843,21 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 			continue
 		}
 		candidate.State.Stopped = i.State.Stopped
-		// Under control the Runtime owns the declared routing; the Pod may lag it.
+		// Controlled UIDs retain the Runtime's declaration while Pod patches lag.
+		// Other UIDs follow the current Pod seed, including removed seed entries.
 		if r.routingControlled && i.Routing != nil {
+			for uid := range i.Routing {
+				if _, controlled := r.routeTargets[uid]; !controlled {
+					if _, present := candidate.Routing[uid]; !present {
+						delete(i.Routing, uid)
+					}
+				}
+			}
+			for uid, weight := range candidate.Routing {
+				if _, controlled := r.routeTargets[uid]; !controlled {
+					i.Routing[uid] = weight
+				}
+			}
 			candidate.Routing = i.Routing
 		}
 		i.ReadyInstance = candidate
@@ -944,7 +957,7 @@ func (r *Runtime) pruneInstanceBindingsLocked() {
 					}
 				}
 			}
-			if !live && (!i.State.Ready || w == nil || w.detached || profilePath(w.definition, i.Profile) == nil || (r.routingControlled && r.routeTargets[uid][i.State.ID] == 0)) {
+			if !live && (!i.State.Ready || w == nil || w.detached || profilePath(w.definition, i.Profile) == nil || (r.routingControlled && r.routeWeightLocked(uid, i) == 0)) {
 				delete(i.bindings, uid)
 			}
 		}

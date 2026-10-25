@@ -231,10 +231,72 @@ func TestExistingPreparationMatchesQuantityValues(t *testing.T) {
 }
 
 func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testing.T) {
+	testPreparedRouting(t, "")
+}
+
+func TestControlledPreparationUsesOnlyUncontrolledOwnerSeeds(t *testing.T) {
+	for _, mode := range []string{"manual", "measurement", "planner", "zero", "unacknowledged", "explicit-empty", "explicit-nil", "cleanup"} {
+		t.Run(mode, func(t *testing.T) { testPreparedRouting(t, mode) })
+	}
+}
+
+func testPreparedRouting(t *testing.T, mode string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	manager, _ := newManagerHarness(t)
 	fixture, node, profile, class := observerSourceFixture()
+	var owner *serving.WorkloadReference
+	if mode != "" {
+		if err := manager.runtime.ApplySchedulerTarget(serving.SchedulerCandidate{Routing: map[string]map[string]int32{}}); err != nil {
+			t.Fatal(err)
+		}
+		createManagerCatalog(t, manager)
+		workload, err := manager.CreateWorkload(ctx, "prepared-owner", managerWorkloadSpec())
+		if err != nil {
+			t.Fatal(err)
+		}
+		owner = &serving.WorkloadReference{Name: workload.Applied.Name, UID: workload.Applied.UID}
+		compatible := managerProfile(workload.Applied)
+		profile.Condition.LogicalModel = compatible.Condition.LogicalModel
+		profile.Condition.Artifact = compatible.Condition.Artifact
+		profile.Condition.Preprocessor = compatible.Condition.Preprocessor
+		profile.Condition.ActiveProtocol = compatible.Condition.ActiveProtocol
+		profile.Condition.RuntimeFamily = compatible.Condition.RuntimeFamily
+		profile.Condition.Backend = compatible.Condition.Backend
+		profile.Condition.Firstfloor = compatible.Condition.Firstfloor
+		if mode == "explicit-empty" || mode == "explicit-nil" || mode == "cleanup" {
+			distribution := map[string]int32{}
+			if mode == "explicit-nil" {
+				distribution = nil
+			}
+			if err := manager.runtime.ApplySchedulerTarget(serving.SchedulerCandidate{
+				Routing: map[string]map[string]int32{owner.UID: distribution},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "cleanup" {
+				if len(manager.runtime.Instances()) != 0 || len(manager.runtime.SchedulerInputs(time.Now).Outstanding) != 0 {
+					t.Fatal("cleanup configuration requires an idle empty physical pool")
+				}
+				controller := &SchedulerController{runtime: manager.runtime, config: SchedulerControllerConfig{
+					StaticRouting: true,
+					Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second,
+						ComparisonPeriod: time.Second, MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1,
+						CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
+						CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 4},
+				}}
+				cleared := controller.config
+				cleared.StaticRouting = false
+				if err := controller.SetConfiguration(cleared); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	if mode == "measurement" {
+		node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Effect: core.TaintEffectNoSchedule}}
+	}
 	profile.RuntimeMetadata.RuntimeVersion = "test-runtime"
 	profile.RuntimeMetadata.Inputs = profile.Condition.Preprocessor.Inputs
 	profile.RuntimeMetadata.Outputs = profile.Condition.Preprocessor.Outputs
@@ -275,12 +337,28 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	currentPolicy := native.Policy{DecisionID: "manual-static-routing:current", ProfileID: profile.ID, MaxBatchSize: 1, MaxBatchWaitMS: 17}
 	actualRuntime := *profile.RuntimeMetadata
 	actualRuntime.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
+	executions := make(chan native.Request, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/infer") {
+			var request native.Request
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			executions <- request
+			_ = json.NewEncoder(w).Encode(native.Response{ID: request.ID, ModelName: "chill_model",
+				Outputs: []native.Field{{Name: "label", Data: [][]byte{[]byte("ok")}}}, ExecutionComplete: true,
+				Progress: native.Progress{RequestID: request.ID, WorkloadUID: request.Context.WorkloadUID,
+					Definition: request.Context.Definition, ProfileID: profile.ID, Phase: "finished", At: time.Now(),
+					BatchID: 1, BatchSize: 1, Units: 1, ExecutionComplete: true}})
+			return
+		}
 		// Native state reports the mounted policy, never the Pod annotation.
-		_ = json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{
+		_ = json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: mode != "unacknowledged", Metadata: native.Metadata{
 			Model: "chill_model", Mode: "serving", ProfileID: profile.ID, DecisionID: currentPolicy.DecisionID,
 			Policy: currentPolicy, AppliedAt: time.Now().UTC(), Runtime: actualRuntime,
-			MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
+			MaxQueueRequests: int(profile.Condition.Firstfloor.MaxQueueSize), MaxBatchSize: 1, ModelInstanceCount: 1,
 		}})
 	}))
 	defer server.Close()
@@ -293,14 +371,20 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		Proxy: http.ProxyURL(proxy),
 	}}
 	operations := &Operations{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
-		config: OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond}}
-	spec := PrepareSpec{Name: fixture.Name, MemoryBytes: 1024,
+		config: OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond, Measurement: mode == "measurement"}}
+	spec := PrepareSpec{Name: fixture.Name, MemoryBytes: 1024, Owner: owner,
 		Instance: serving.SchedulerInstance{ID: "slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 1,
 			Allocation: serving.SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1024}},
 		Store:  storekube.Binding{Store: "evidence", Endpoint: "http://evidence", Bucket: "bucket", Region: "region", CredentialsSecretName: "credentials"},
 		Bundle: evidencestore.ObjectIdentity{Store: "evidence", Key: "bundle", Size: 1},
 		Config: native.Config{Mode: "serving", Model: "chill_model", ProfilePath: "/profile/bundle.json",
 			Policy: native.Policy{DecisionID: "bootstrap", ProfileID: profile.ID, MaxBatchSize: 1}},
+	}
+	if mode == "planner" {
+		spec.Instance.WorkloadUID = owner.UID
+	}
+	if mode == "zero" {
+		spec.Instance.Weight = 0
 	}
 	persisted := spec
 	persisted.Config.Policy = currentPolicy
@@ -309,6 +393,17 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}
 	if _, err := operations.ensurePreparationConfig(ctx, persisted, nil); err != nil {
 		t.Fatal(err)
+	}
+	if mode == "unacknowledged" || mode == "zero" {
+		prepareCtx, stop := context.WithTimeout(ctx, 30*time.Millisecond)
+		defer stop()
+		if err := operations.PrepareInstance(prepareCtx, spec); err == nil {
+			t.Fatalf("%s preparation unexpectedly became ready", mode)
+		}
+		if routing, _ := manager.runtime.SchedulerRouting(); len(routing[owner.UID]) != 0 {
+			t.Fatalf("%s preparation installed a route: %v", mode, routing)
+		}
+		return
 	}
 	// Recreate after routing has changed the retained ConfigMap's mutable policy.
 	if err := operations.PrepareInstance(ctx, spec); err != nil {
@@ -347,6 +442,56 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}
 	if !reflect.DeepEqual(config.Policy, currentPolicy) {
 		t.Fatal("preparation reset the current mutable policy", config.Policy)
+	}
+	if owner != nil {
+		physical := physicalID(fixture.UID, firstfloorStatus(fixture).ContainerID)
+		routing, _ := manager.runtime.SchedulerRouting()
+		if mode == "planner" || mode == "zero" || mode == "explicit-empty" || mode == "explicit-nil" {
+			receipt, err := manager.runtime.Receive(owner.Name, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			call, err := manager.runtime.Accept(receipt, managerSample(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending := manager.runtime.SchedulerInputs(time.Now).Outstanding
+			if len(routing[owner.UID]) != 0 || len(pending) != 1 || pending[0].Instance != "" || len(executions) != 0 {
+				t.Fatalf("%s preparation joined routing: %v %+v", mode, routing, pending)
+			}
+			canceled, stop := context.WithCancel(ctx)
+			stop()
+			_, _ = call.Wait(canceled)
+			if err := manager.runtime.Response(receipt, "canceled", "RequestCanceled"); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		if !reflect.DeepEqual(routing[owner.UID], map[string]int32{physical: 1}) {
+			t.Fatalf("prepared route did not name exact physical executor: %v", routing)
+		}
+		if err := manager.observer.Refresh(ctx); err != nil {
+			t.Fatal(err)
+		}
+		receipt, err := manager.runtime.Receive(owner.Name, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		call, err := manager.runtime.Accept(receipt, managerSample(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := call.Wait(ctx)
+		if err != nil || !result.Finished || result.StatusCode != http.StatusOK {
+			t.Fatalf("prepared request did not execute through native client: %+v %v", result, err)
+		}
+		if len(executions) != 1 {
+			t.Fatalf("native executions = %d, want 1", len(executions))
+		}
+		if err := manager.runtime.Response(receipt, "ok", ""); err != nil {
+			t.Fatal(err)
+		}
+		return
 	}
 	t.Run("OperationCostPinsPreparedPhysicalIdentity", func(t *testing.T) {
 		operations.native = manager.observer.native

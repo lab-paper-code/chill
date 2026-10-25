@@ -71,6 +71,85 @@ func TestDisableSchedulerRoutingKeepsAppliedDistribution(t *testing.T) {
 	}
 }
 
+func TestControlledRoutingRefreshesOnlyAbsentWorkloadSeeds(t *testing.T) {
+	r, original, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	first := r.instances[original.ID].ReadyInstance
+	r.EnableSchedulerRouting()
+	next := *r.workloads["w1"].definition
+	next.Name, next.UID = "prepared", "prepared-uid"
+	if err := r.Publish(&next); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan Dispatch, 1)
+	prepared := first
+	prepared.State.ID, prepared.OwnerWorkloadUID = "prepared-physical", next.UID
+	prepared.Routing = map[string]int32{next.UID: 3}
+	prepared.Execute = func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
+		started <- dispatch
+		return BackendResult{StatusCode: 200, Finished: true}, nil
+	}
+	install := func(weight int32, owner string, ready bool) {
+		t.Helper()
+		first.Routing = map[string]int32{"w1": 99, "w2": 99}
+		prepared.Routing = map[string]int32{}
+		if weight > 0 {
+			prepared.Routing[next.UID] = weight
+		}
+		prepared.OwnerWorkloadUID, prepared.State.Ready = owner, ready
+		if err := r.InstallInstances([]ReadyInstance{first, prepared}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := map[string]map[string]int32{"w1": {original.ID: 1}, "w2": {}, next.UID: {}}
+	for _, weight := range []int32{3, 4, 0} {
+		install(weight, next.UID, true)
+		want[next.UID] = map[string]int32{}
+		if weight > 0 {
+			want[next.UID][prepared.State.ID] = weight
+		}
+		if actual, _ := r.SchedulerRouting(); !reflect.DeepEqual(actual, want) {
+			t.Fatalf("seed weight %d: routing %v, want %v", weight, actual, want)
+		}
+	}
+	if r.instances[prepared.State.ID].bindings[next.UID] {
+		t.Fatal("removed seed retained an idle workload binding")
+	}
+	for _, tc := range []struct {
+		owner string
+		ready bool
+	}{{"w2", true}, {next.UID, false}} {
+		install(3, tc.owner, tc.ready)
+		if actual, _ := r.SchedulerRouting(); len(actual[next.UID]) != 0 {
+			t.Fatalf("unready or foreign-owned seed routed: %v", actual)
+		}
+	}
+	install(3, next.UID, true)
+	receipt, err := r.Receive(next.Name, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if result, err := call.Wait(ctx); err != nil || !result.Finished {
+		t.Fatalf("absent UID seed did not execute: %+v %v", result, err)
+	}
+	if dispatch := <-started; dispatch.Definition.UID != next.UID {
+		t.Fatalf("dispatch owner = %s", dispatch.Definition.UID)
+	}
+	if err := r.Response(receipt, "ok", ""); err != nil {
+		t.Fatal(err)
+	}
+	want[next.UID] = map[string]int32{prepared.State.ID: 3}
+	r.DisableSchedulerRouting()
+	if actual, _ := r.SchedulerRouting(); !reflect.DeepEqual(actual, want) {
+		t.Fatalf("control stopped: routing %v, want %v", actual, want)
+	}
+}
+
 func TestSchedulerOutstandingUsesCurrentReadTimeAfterCaptureIO(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	settings.AutonomousWorkloads = nil
@@ -534,7 +613,7 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 	}
 }
 
-func TestControlledRoutingKeepsNewWorkloadQueuedAfterInstanceRediscovery(t *testing.T) {
+func TestControlledRoutingKeepsExplicitlyUnroutedWorkloadQueuedAfterInstanceRediscovery(t *testing.T) {
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]
 	p := snapshot.Instances[0].Profile
@@ -573,6 +652,10 @@ func TestControlledRoutingKeepsNewWorkloadQueuedAfterInstanceRediscovery(t *test
 	if err = r.Publish(&next); err != nil {
 		t.Fatal(err)
 	}
+	if err = r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}, next.UID: nil}}); err != nil {
+		t.Fatal(err)
+	}
+	instance.Routing = map[string]int32{d.UID: 1, next.UID: 1}
 	if err = r.InstallInstances([]ReadyInstance{instance}); err != nil {
 		t.Fatal(err)
 	}
