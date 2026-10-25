@@ -843,22 +843,8 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 			continue
 		}
 		candidate.State.Stopped = i.State.Stopped
-		// Controlled UIDs retain the Runtime's declaration while Pod patches lag.
-		// Other UIDs follow the current Pod seed, including removed seed entries.
 		if r.routingControlled && i.Routing != nil {
-			for uid := range i.Routing {
-				if _, controlled := r.routeTargets[uid]; !controlled {
-					if _, present := candidate.Routing[uid]; !present {
-						delete(i.Routing, uid)
-					}
-				}
-			}
-			for uid, weight := range candidate.Routing {
-				if _, controlled := r.routeTargets[uid]; !controlled {
-					i.Routing[uid] = weight
-				}
-			}
-			candidate.Routing = i.Routing
+			candidate.Routing = r.mergeControlledRoutingLocked(i.Routing, candidate.Routing)
 		}
 		i.ReadyInstance = candidate
 		for _, c := range r.calls {
@@ -1183,3 +1169,22 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 
 // Diagnostics exposes the optional control-only capture to the HTTP boundary.
 func (r *Runtime) Diagnostics() *Diagnostics { return r.config.Diagnostics }
+
+// mergeControlledRoutingLocked keeps the Runtime's declaration for controlled
+// UIDs while Pod patches lag and follows the current Pod seed for the rest,
+// including removed seed entries.
+func (r *Runtime) mergeControlledRoutingLocked(current, seed map[string]int32) map[string]int32 {
+	for uid := range current {
+		if _, controlled := r.routeTargets[uid]; !controlled {
+			if _, present := seed[uid]; !present {
+				delete(current, uid)
+			}
+		}
+	}
+	for uid, weight := range seed {
+		if _, controlled := r.routeTargets[uid]; !controlled {
+			current[uid] = weight
+		}
+	}
+	return current
+}
