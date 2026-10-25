@@ -273,8 +273,8 @@ class Conductor:
     def settings(self):
         return self.api('GET','/api/v1/scheduler/settings')
 
-    def put(self, settings, reason):
-        body=copy.deepcopy(settings);body.pop('staticRouting',None);body.pop('staticRoutingValidatedAt',None);body['reason']=reason
+    def put(self, settings):
+        body=copy.deepcopy(settings);body.pop('staticRouting',None);body.pop('staticRoutingValidatedAt',None)
         save(self.out/(self.a.command+'-settings-request.json'),body)
         response=self.api('PUT','/api/v1/scheduler/settings',body)
         with (self.out/'settings-write-receipts.jsonl').open('a') as receipts:
@@ -749,7 +749,7 @@ class Conductor:
         else:
             if any(u!=UID for u in settings.get('autonomousWorkloads',[])): raise RuntimeError('Unexpected other autonomous owner')
             settings['autonomousWorkloads']=[]
-        self.put(settings,'Approved finite MNV-only D2 real-Tick probe '+('enable' if enabled else 'disable')+'; not full3 E5')
+        self.put(settings)
 
     def pages(self, folder, path, start, end):
         folder.mkdir(parents=True,exist_ok=True);cursor=None
@@ -1114,7 +1114,7 @@ class Conductor:
                     members=[u for u in current.get('autonomousWorkloads',[]) if u!=UID]
                     if UID in settings.get('autonomousWorkloads',[]):members.append(UID)
                     restore['autonomousWorkloads']=members;restore['excludedNodes']=settings.get('excludedNodes',[])
-                    response=self.put(restore,'Failed-start safety: restore prior owned autonomy/exclusions before cleanup; do not recreate missing physical topology')
+                    response=self.put(restore)
                     actual_restore=self.settings()
                     save(phase_dir/'failed-start-autonomy-restore.json',dict(at=now(),prior=settings,requested=restore,response=response,actual=actual_restore,topologyRestored=False,instruction='Preserve actual topology; logical8 reset requires separately approved existing path, never assume old8 survived'))
                     if actual_restore.get('autonomousWorkloads')!=members or actual_restore.get('excludedNodes',[])!=settings.get('excludedNodes',[]):
@@ -1146,7 +1146,7 @@ class Conductor:
         result=self.operation(dict(kind='reset',workloadUIDs=[UID],reason='Approved D2 owned campaign cleanup'),'cleanup-reset')
         original=copy.deepcopy(life['originalSettings'])
         original['autonomousWorkloads']=[uid for uid in original.get('autonomousWorkloads',[]) if uid!=UID]
-        save(self.out/'cleanup-original-settings-ack.json',self.put(original,'Restore D2 input settings after successful server reset'))
+        save(self.out/'cleanup-original-settings-ack.json',self.put(original))
         save(self.out/'cleanup-state.json',self.state())
         save(self.out/'cleanup-complete.json',dict(at=now(),physicalInstances=0,resetStatus=result['status'],powerReturn='Server reset minimum supported idle mode'))
 

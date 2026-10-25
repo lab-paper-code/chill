@@ -82,9 +82,9 @@ with tempfile.TemporaryDirectory(prefix='d2-producer-pipe-') as temporary:
             actions.append('raw-page')
             return {'events':[],'nextCursor':None}
         assert method=='PUT' and path=='/api/v1/scheduler/settings'
-        assert 'staticRouting' not in body and 'staticRoutingValidatedAt' not in body
+        assert 'staticRouting' not in body and 'staticRoutingValidatedAt' not in body and 'reason' not in body
         actions.append('restore-prior-flags')
-        current.update({key:copy.deepcopy(value) for key,value in body.items() if key!='reason'})
+        current.update(copy.deepcopy(body))
         return {'actualFixtureWrite':True}
     driver.api=api
     def cleanup(*args):actions.append('cleanup-job');raise RuntimeError('secondary-cleanup-error')

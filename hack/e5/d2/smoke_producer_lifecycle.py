@@ -69,7 +69,7 @@ try:
                 lane.source='fixture-source';lane.pending_node_boots=[]
                 current_settings={'autonomousWorkloads':[],'staticRouting':{},'excludedNodes':[]}
                 lane.settings=lambda:copy.deepcopy(current_settings)
-                def put(settings,reason):
+                def put(settings):
                     events.append('settings');current_settings.update(copy.deepcopy(settings));return {}
                 lane.put=put;lane.boundary=lambda *args:None
                 lane.assert_policy_idle=lambda:copy.deepcopy(empty)
@@ -154,9 +154,9 @@ try:
                                 'endedAt':m.now(),'actual':{'routing':copy.deepcopy(current['staticRouting'])}}
                     assert method=='PUT' and path=='/api/v1/scheduler/settings'
                     assert events==['reset'] and not failed
-                    assert 'staticRouting' not in body and 'staticRoutingValidatedAt' not in body
+                    assert 'staticRouting' not in body and 'staticRoutingValidatedAt' not in body and 'reason' not in body
                     events.append('settings');writes.append(copy.deepcopy(body))
-                    current.update({key:value for key,value in body.items() if key!='reason'})
+                    current.update(body)
                     return {'validatedAt':m.now()}
                 lane.api=api
                 lane.state=lambda:{'snapshot':{'instances':[],'nodes':[],'routing':copy.deepcopy(current['staticRouting'])}}

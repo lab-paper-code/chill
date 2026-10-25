@@ -329,8 +329,8 @@ class CPO:
     def api(self, method, path, body=None): return self.io.api(method,path,body,timeout=self.tb['apiSeconds'])
     def state(self): return self.api('GET','/api/v1/scheduler/state')
     def settings(self): return self.api('GET','/api/v1/scheduler/settings')
-    def put(self, settings, reason):
-        settings = copy.deepcopy(settings); settings.pop('staticRouting',None); settings.pop('staticRoutingValidatedAt',None); settings['reason'] = reason
+    def put(self, settings):
+        settings = copy.deepcopy(settings); settings.pop('staticRouting',None); settings.pop('staticRoutingValidatedAt',None)
         return self.api('PUT','/api/v1/scheduler/settings',settings)
     def idle(self):
         end = time.monotonic()+self.tb['drainSeconds']
@@ -388,7 +388,7 @@ class CPO:
         self.release_routing('start-release', 'Release owned routing before automatic campaign start')
         settings['autonomousWorkloads']=self.uids; settings['excludedNodes']=E5['excludedNodes']
         self.authorize_native_modes()
-        save(self.out/'start-ack.json',self.put(settings,'Approved E5 canonical three start from zero instances; measured candidates and automatic selection'))
+        save(self.out/'start-ack.json',self.put(settings))
     def freeze(self, at_boundary=False):
         if not at_boundary: raise RuntimeError('D9 freeze is executed inside the released full E5-3 command at actual window-end; late baseline selection is forbidden')
         if (self.out/'static-selection.json').exists(): raise RuntimeError('Static selection already frozen')
@@ -410,7 +410,7 @@ class CPO:
             self.operation({'kind':'release','workloadUID':uid,'reason':reason},prefix+'-'+uid)
     def route_ack(self,chosen,settings,prefix,reason):
         settings['autonomousWorkloads']=[uid for uid in settings.get('autonomousWorkloads',[]) if uid not in self.uids]
-        save(self.out/(prefix+'-autonomy-ack.json'),self.put(settings,reason))
+        save(self.out/(prefix+'-autonomy-ack.json'),self.put(settings))
         for uid in self.uids:
             weights=chosen['routing'].get(uid) or {}
             body={'kind':'route' if any(weights.values()) else 'unroute','workloadUID':uid,'reason':reason}
@@ -436,7 +436,7 @@ class CPO:
         self.release_routing('restore-release','Release static replay routing before automatic restoration')
         settings=self.settings(); settings['autonomousWorkloads']=self.uids
         self.authorize_native_modes()
-        save(self.out/'restore-ack.json',self.put(settings,'D9 static replay complete; remove declaration and resume automatic control from actual frozen configuration'))
+        save(self.out/'restore-ack.json',self.put(settings))
     def monitor(self,offset,folder):
         path=CAMPAIGN/'control-alerts.jsonl'
         with path.open() as stream:stream.seek(offset);text=stream.read();new_offset=stream.tell()
@@ -610,7 +610,7 @@ class CPO:
                 prior=load(self.out/'initial.json')['settings'];current=self.settings();restore=copy.deepcopy(current)
                 members=[uid for uid in current.get('autonomousWorkloads',[]) if uid not in self.uids]+[uid for uid in prior.get('autonomousWorkloads',[]) if uid in self.uids]
                 restore['autonomousWorkloads']=members;restore['excludedNodes']=prior['excludedNodes']
-                response=self.put(restore,'Failed E5 safety: restore prior owned autonomy/exclusions; preserve actual physical topology')
+                response=self.put(restore)
                 observed=self.settings()
                 save(folder/'failed-owned-control-restore.json',{'at':now(),'prior':prior,'requested':restore,'response':response,'actual':observed,'topologyRestored':False,'instruction':'Do not recreate missing static/native IDs; preserve actual topology for CPO/Main'})
                 if sorted(observed.get('autonomousWorkloads',[]))!=sorted(members) or sorted(observed['excludedNodes'])!=sorted(prior['excludedNodes']):raise RuntimeError('Prior owned autonomy/exclusions did not restore')
@@ -714,7 +714,7 @@ class CPO:
         self.release_routing('factor-'+f['name']+'-'+self.a.stage+'-release','Release paired baseline routing before autonomous factor')
         settings=self.settings(); settings['controls']=f['controls']; settings['autonomousWorkloads']=self.uids
         self.authorize_native_modes()
-        save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-ack.json'),self.put(settings,'Approved independent source control-factor '+f['name']+'; preserve all other controls'))
+        save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-ack.json'),self.put(settings))
     def clear_owned(self,prefix):
         return self.operation({'kind':'reset','workloadUIDs':self.uids,'reason':'Approved campaign owned reset: '+prefix},prefix+'-reset')
     def native_mode(self,node,target,prefix):
@@ -732,13 +732,13 @@ class CPO:
             if actual['metadata']['uid']!=uid: raise RuntimeError('Owned producer UID changed')
             self.io.remove_job(name,uid)
     def factor_restore(self):
-        self.idle(); settings=self.settings(); initial=load(self.c['inputs']['scheduler'])['settings']; settings['controls']=initial['controls']; save(self.out/'factor-restored.json',self.put(settings,'Restore bound full controls after witnessed paired factor block'))
+        self.idle(); settings=self.settings(); initial=load(self.c['inputs']['scheduler'])['settings']; settings['controls']=initial['controls']; save(self.out/'factor-restored.json',self.put(settings))
     def finish(self):
         initial=load(self.out/'initial.json')
         result=self.clear_owned('finish')
         settings=copy.deepcopy(initial['settings'])
         settings['autonomousWorkloads']=[uid for uid in settings.get('autonomousWorkloads',[]) if uid not in self.uids]
-        save(self.out/'finish-settings-ack.json',self.put(settings,'Restore pre-campaign input settings after successful server reset'))
+        save(self.out/'finish-settings-ack.json',self.put(settings))
         save(self.out/'finish-state.json',self.state())
         save(self.out/'finish-complete.json',{'at':now(),'canonicalInstances':0,'originalSettingsRestored':True,'resetStatus':result['status'],'powerReturn':'Server reset minimum supported idle mode; original physical modes are not recreated'})
     def campaign(self):

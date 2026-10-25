@@ -46,6 +46,9 @@ serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](s
 작업 입력은 HTTP와 CLI의 공유 typed strict decoder에서 중첩 `node`의 미선언 필드까지
 거절한다. 종류별 허용 필드 검사는 값이 `null`이나 0이어도 필드의 존재를 기준으로 적용한다(`SCH-39`).
 Dashboard의 `scheduler-settings.tsx`도 설정 PUT에서 두 읽기 전용 필드를 제외한다.
+`hack/e5`의 E5/demo/D2 설정 쓰기도 같은 입력 계약을 따른다. `reason`은
+operations POST 전용이며 settings PUT에는 넣지 않는다. 설정 PUT의 미선언
+`reason` 필드는 strict decode에서 400 `InvalidBody`(`field=body`)로 거절한다.
 배분 편집은 바뀐 UID만 route/unroute/release POST로 순서대로 보내고,
 실패/부분 적용에서 멈추며 서버의 실제 `OperationResult`를 보여준다. UI 재시도나 되돌림은 없다.
 

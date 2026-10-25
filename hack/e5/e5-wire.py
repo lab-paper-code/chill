@@ -173,7 +173,7 @@ class Prepare:
     def run(self):
         self.safety(); snapshot=self.canonical(); settings=snapshot['settings']
         if settings.get('autonomousWorkloads'):raise RuntimeError('Canonical registration must not enable autonomous control')
-        settings.pop('staticRouting',None);settings.pop('staticRoutingValidatedAt',None);settings['completionMarginMS']=self.n['mSeconds']*1000;settings['excludedNodes']=e5.E5['excludedNodes'];settings['reason']='Approved phase6 measured margin and E5 candidate exclusions; canonical autonomy remains disabled'
+        settings.pop('staticRouting',None);settings.pop('staticRoutingValidatedAt',None);settings['completionMarginMS']=self.n['mSeconds']*1000;settings['excludedNodes']=e5.E5['excludedNodes']
         self.api('PUT','/api/v1/scheduler/settings',settings)
         deadline=time.monotonic()+self.tb['settleSeconds']
         while time.monotonic()<deadline:

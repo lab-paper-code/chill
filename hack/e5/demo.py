@@ -332,7 +332,7 @@ def resume(e5, cpo):
     cpo.io.a.command, cpo.io.a.phase = 'resume', 'e5-demo-resume'
     cpo.native_evidence = state.get('results') or []
     cpo.authorize_native_modes()
-    e5.save(folder / 'resume-ack.json', cpo.put(settings, 'Approved demo resume from owned current topology; preserve original initial/start evidence'))
+    e5.save(folder / 'resume-ack.json', cpo.put(settings))
     if not cpo.state()['snapshot']['instances']:
         bootstrap = copy.deepcopy(cpo.b['schedule'][0])
         bootstrap['id'] = 'E0-' + folder.name
@@ -540,7 +540,7 @@ def self_check():
         cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': copy.deepcopy(scheduler_actions), 'results': None}
         cpo.idle = cpo.state
         cpo.settings = lambda: copy.deepcopy(settings)
-        cpo.put = lambda value, reason: settings.update(copy.deepcopy(value)) or {'validatedAt': e5.now()}
+        cpo.put = lambda value: settings.update(copy.deepcopy(value)) or {'validatedAt': e5.now()}
         cpo.api = lambda *args: {'pending': 0, 'assigned': 0}
         cpo.authorize_native_modes = lambda: None
         cpo.monitor = lambda offset, folder: offset
