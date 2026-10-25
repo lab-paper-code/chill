@@ -535,6 +535,28 @@ native ACK·actual routing 기록과 stopped 대상 제외는 보존한다.
 `TransitionInProgress` 유지 근거로 쓰지 않는다. 기존 비율 재정규화의 κ/SLO 한계는
 여전하며 이를 새 안전 용량 보장으로 부르지 않는다. 그 판단 규칙 개선은 ④와 별도 승인 대상이다.
 
+#### ④ 빈 출발 κ 대기 — SCH-54, AC-41
+
+실물 `snapshot.instances`와 예약이 모두 없는 출발에서만, 첫 판단 시각을
+`bootstrapStartedAt`으로 유지한다. controller 설정 갱신·재시작은 새 출발이다.
+결정의 `bootstrap`에는 시작, 기한, 아직 pending인 row key와
+`timedOut`을 기록한다. `settings.bootstrapCapacityWaitNanos`는 기본 10분,
+허용 범위 0~1시간이다. 0은 대기를 끄며, 10분은 이번 원시 행 완료 간격
+(첫 Smol 20:07:12 → 첫 MNV 20:09:24)과 뒤의 후보 계산을 함께 기다리기
+위한 운영 기본값이지 완료 보장이 아니다. 설정은 결정의 settings에 그대로 고정한다.
+
+`CapacityTable.Ensure`가 사용하는 compatible option/batch 행 중 실제 선택 가능한
+Node·자원·측정 option의 행이 모두 terminal(Built 또는 rejected)이면 함께 배치한다.
+rejected 행의 κ를 기다리지 않으며, 누락/CapacityPending 행만 대기한다.
+기한 전에는 새 목표·절전·예약을 발행하지 않는다. 기한부터 현재 근거로 평가하고
+남은 pending 행과 timeout 사실을 기록한다. 실물 또는 예약이 생기면 이 출발 상태는
+끝나며 SCH-52의 예약 밖 진행을 그대로 따른다.
+
+**알려진 한계(A안).** 기한 뒤에도 κ 대기 Workload의 유일 Node를 먼저
+예약할 수 있다. 정상 운전에서 pending Workload가 사용할 수 있는 Node의
+선점을 막는 B안은 구현하지 않는다. 사전식 비교는 이때 다른 Workload의 개선을
+보존하지만 해당 Node를 회수하거나 기존 frozen DAG를 바꾸지 않는다.
+
 #### 삭제·흡수 대상과 작은 구현 커밋
 
 | 없앨 코드/관례 | 대체·보존 경계 |
