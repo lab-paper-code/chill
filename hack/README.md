@@ -258,6 +258,23 @@ owned Job deletion, including failures before log attachment.
 Final producer cleanup skips a retained creation record only when its phase
 already records `stopped: true` for that exact Job name and UID. Missing or
 mismatched deletion ACKs retain the existing exact-UID fail-closed behavior.
+Demo stage boundaries and resume wait only for zero scheduler outstanding
+requests and zero per-Workload pending requests. They retain
+`demoRequestDrain.inProgressTarget/actions` and `request-drain-state.json`
+without waiting for the planner to become idle. Resume additionally requires
+owned Ready instances and positive routes. Normative E5 and final owned
+cleanup retain their original global-idle waits.
+
+For an otherwise completed producer window stopped only by the former
+planner-idle timeout, `collect --stage A` can collect without replay. It requires
+all original start/drained/end-counter and terminal Complete proofs. Original
+`phase.json` (including STOP), client logs and offered start/end stay unchanged;
+a separate `collected-phase.json` records the original failure and the actual
+late request-drain observation, with `recovery-post-*` boundaries. Only a
+successful collection makes this derived phase eligible for the next stage.
+Reports explicitly label recovery and the longer drain-inclusive energy
+interval. After collection, use `resume --stage B` if failure restored autonomy
+off, then stage B/C, summary and finish; do not replay A.
 
 After an explicitly released stage failure, CampaignOps preserves the failed
 stage directory and explicitly re-freezes changed harness source references;

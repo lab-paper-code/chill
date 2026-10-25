@@ -234,11 +234,16 @@ def stage_folder(out, stage):
     return out / ('smoke-' + stage['id'])
 
 
+def phase_path(folder):
+    recovered = folder / 'collected-phase.json'
+    return recovered if recovered.exists() and (folder / 'collected.json').exists() else folder / 'phase.json'
+
+
 def run_stage(cpo, stage):
     index = cpo.b['schedule'].index(stage)
     if index:
         previous = stage_folder(cpo.out, cpo.b['schedule'][index - 1])
-        if not (previous / 'collected.json').exists() or cpo.b['schedule'][index - 1]['id'] != cpo.d.load(previous / 'phase.json')['stage']['id'] or cpo.d.load(previous / 'phase.json')['status'] != 'DRAINED_NOT_EVALUATED':
+        if not (previous / 'collected.json').exists() or cpo.b['schedule'][index - 1]['id'] != cpo.d.load(phase_path(previous))['stage']['id'] or cpo.d.load(phase_path(previous))['status'] != 'DRAINED_NOT_EVALUATED':
             raise RuntimeError('Previous stage must have drained and collected successfully')
         if not any(cpo.b['schedule'][index - 1]['rates'].values()):
             state = cpo.state()
@@ -262,6 +267,35 @@ def run_stage(cpo, stage):
             path.write_text('')
 
 
+def collect_stage(e5, cpo, stage):
+    folder = stage_folder(cpo.out, stage)
+    if (folder / 'collected.json').exists():
+        return
+    phase = e5.load(folder / 'phase.json')
+    if phase['status'] == 'STOP':
+        if phase.get('error') != 'Drain/terminal timebox exceeded; preserve partial evidence, stop' or not phase.get('startUTC') or not phase.get('endUTC'):
+            raise RuntimeError('Only an otherwise completed producer window stopped by planner-idle timeout can be collected without replay')
+        active = {name for name, rate in stage['rates'].items() if rate}
+        for field in ('starts', 'producerDrained', 'clientEndCounterRelease'):
+            if not active <= set(phase.get(field) or {}):
+                raise RuntimeError('Completed producer evidence missing: ' + field)
+        for name in active:
+            terminal = e5.load(folder / ('terminal-' + name + '.json'))
+            if not any(row.get('type') == 'Complete' and row.get('status') == 'True' for row in terminal.get('status', {}).get('conditions', [])):
+                raise RuntimeError('Producer completion proof missing: ' + name)
+        derived = folder / 'collected-phase.json'
+        if derived.exists():
+            raise RuntimeError('Partial recovery already retained; no implicit recovery overwrite')
+        phase['collectionRecovery'] = {'originalPhase': str(folder / 'phase.json'), 'originalStatus': phase['status'], 'originalError': phase['error'], 'meaning': 'No replay; original STOP/client/start/end retained. Drain and post-boundary are late recovery observations; drain-inclusive energy includes this interval.'}
+        phase['drainedUTC'] = cpo.request_drain(folder, phase)
+        cpo.boundary(folder, 'recovery-post')
+        phase['postBoundaryPrefix'], phase['status'] = 'recovery-post', 'DRAINED_NOT_EVALUATED'
+        e5.save(derived, phase)
+        cpo.collect(folder, phase=phase)
+    else:
+        cpo.collect(folder)
+
+
 def resume(e5, cpo):
     """Explicitly re-enable owned autonomy; never overwrite original start evidence."""
     if not (cpo.out / 'initial.json').exists() or not (cpo.out / 'start-ack.json').exists():
@@ -274,7 +308,7 @@ def resume(e5, cpo):
     jobs = cpo.io.k(['get', 'jobs', '-o', 'json'])['items']
     if any(not job.get('spec', {}).get('suspend') and not any(row.get('type') in ('Complete', 'Failed') and row.get('status') == 'True' for row in job.get('status', {}).get('conditions', [])) for job in jobs):
         raise RuntimeError('Resume requires no nonterminal producer/measurement Jobs')
-    state, settings = cpo.idle(), cpo.settings()
+    state, settings = cpo.state(), cpo.settings()
     if any(i.get('ownerWorkloadUID') not in cpo.uids for i in state['snapshot']['instances'] or []):
         raise RuntimeError('Foreign physical ownership; no demo resume')
     if any(uid not in cpo.uids for uid in settings.get('autonomousWorkloads', [])) or any(uid not in cpo.uids for uid in settings.get('staticRouting') or {}):
@@ -283,6 +317,12 @@ def resume(e5, cpo):
     folder.mkdir()
     e5.save(folder / 'pre-state.json', state)
     e5.save(folder / 'pre-settings.json', settings)
+    request_phase = {}
+    cpo.request_drain(folder, request_phase)
+    e5.save(folder / 'request-drain.json', request_phase)
+    state = e5.load(folder / 'request-drain-state.json')['state']
+    if any(i.get('ownerWorkloadUID') not in cpo.uids for i in state['snapshot']['instances'] or []):
+        raise RuntimeError('Foreign physical ownership appeared during request drain')
     marker = cpo.out / 'native-mode-authorization.json'
     if marker.exists():
         e5.save(folder / 'prior-native-mode-authorization.json', e5.load(marker))
@@ -309,7 +349,7 @@ def resume(e5, cpo):
         for uid in cpo.uids:
             owned = {i['id'] for i in current['snapshot']['instances'] or [] if i.get('ownerWorkloadUID') == uid and i.get('workloadUID') == uid and i.get('ready')}
             ready = ready and any(weight > 0 and identifier in owned for identifier, weight in current['snapshot'].get('routing', {}).get(uid, {}).items())
-        if ready and not current['snapshot'].get('inProgressTarget') and not any(action.get('status') in ('running', 'cancel') for action in current.get('actions') or []):
+        if ready:
             e5.save(folder / 'ready.json', current)
             print('Resumed owned autonomous topology: ' + str(folder))
             return
@@ -336,7 +376,7 @@ def summarize(e5, binding, out):
         folder = stage_folder(out, stage)
         if not (folder / 'phase.json').exists():
             continue
-        phase = e5.load(folder / 'phase.json')
+        phase = e5.load(phase_path(folder))
         if not phase.get('startUTC') or not phase.get('endUTC'):
             stage_summaries.append({'stage': stage['id'], 'status': phase['status'], 'error': phase.get('error'), 'metricsAvailable': False})
             continue
@@ -345,13 +385,14 @@ def summarize(e5, binding, out):
         events, provenance = raw.scheduler_events(folder)
         pre = e5.load(folder / 'pre-state.json')['snapshot']
         baseline = previous_snapshot or pre
-        post = e5.load(folder / 'post-state.json')['snapshot'] if (folder / 'post-state.json').exists() else None
+        post_path = folder / (phase.get('postBoundaryPrefix', 'post') + '-state.json')
+        post = e5.load(post_path)['snapshot'] if post_path.exists() else None
         lower, upper = epoch(baseline['at']), epoch(post['at'] if post else phase.get('drainedUTC') or phase['endUTC'])
         events = [e for e in events if epoch(e.get('at')) is not None and lower <= epoch(e['at']) <= upper]
         snapshots = [(epoch(pre['at']), pre['at'], pre, 'pre-state.json')]
         snapshots += [(epoch(e['at']), e['at'], e['snapshot'], e.get('_rawRefs')) for e in events if e.get('snapshot')]
         if post:
-            snapshots.append((epoch(post['at']), post['at'], post, 'post-state.json'))
+            snapshots.append((epoch(post['at']), post['at'], post, post_path.name))
         previous_snapshot = post or pre
         snapshots.sort(key=lambda item: item[0])
         changes, windows = [], []
@@ -377,6 +418,8 @@ def summarize(e5, binding, out):
         drain_power_path = folder / 'power-drain-inclusive.json'
         drain_power = e5.load(drain_power_path) if drain_power_path.exists() else {}
         summary = {'stage': stage['id'], 'status': phase['status'], 'startUTC': phase['startUTC'], 'endUTC': phase['endUTC'], 'drainedUTC': phase.get('drainedUTC'), 'gapFromPreviousOfferedWindowSeconds': gap, 'gapMeaning': 'No offered demo requests during per-stage drain/collection/setup; failures in this gap are not measurable by these producers', 'placementChanges': changes, 'actions': actions, 'transitionWindowsEpoch': windows, 'schedulerCapture': provenance, 'energyJ': power.get('wholePoolJoules') if power.get('complete') else None, 'activeEnergyJ': power.get('activePoolJoules') if power.get('complete') else None, 'drainInclusiveEnergyJ': drain_power.get('wholePoolJoules') if drain_power.get('complete') else None, 'energyScope': 'Shared whole/active pool; never attributed to individual workloads', 'workloads': {}}
+        summary['collectionRecovery'] = phase.get('collectionRecovery')
+        summary['demoRequestDrain'] = phase.get('demoRequestDrain')
         for w in binding['config']['workloads']:
             name = w['name']
             client_path = folder / (name + '-client.jsonl')
@@ -409,6 +452,8 @@ def summarize(e5, binding, out):
         table.append('| ' + ' | '.join(map(str, [s['stage'], name, fmt(m['rate']), f"{m['httpSuccess']}/{m['offered']}", fmt(None if m['successFraction'] is None else m['successFraction'] * 100), fmt(m['latencyMS']['p95']), fmt(m['latencyMS']['p99']), f"p{m['sloPercentile']}/{fmt(m['sloMS'])}", fmt(None if m['withinSLOFraction'] is None else m['withinSLOFraction'] * 100), fmt(s['energyJ']), fmt(s['activeEnergyJ']), fmt(s['drainInclusiveEnergyJ']), len(s['placementChanges']), fmt(m['transitionFailures']), fmt(s['gapFromPreviousOfferedWindowSeconds'])])) + ' |')
     for s in stage_summaries:
         table += ['', '## ' + s['stage'], '']
+        if s.get('collectionRecovery'):
+            table.append('Original phase STOP preserved; collected without load replay. Request drain/post-state were observed during recovery, so drain-inclusive energy contains the late interval. See collectionRecovery in summary.json.')
         if not s.get('metricsAvailable', True):
             table.append('No completed offered window: ' + str(s.get('error', s['status'])))
             continue
@@ -452,7 +497,8 @@ def self_check():
         cpo.d = d
         settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': []}
         snapshot = {'at': e5.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'inProgressTarget': None}
-        cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': [], 'results': None}
+        scheduler_actions = []
+        cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': copy.deepcopy(scheduler_actions), 'results': None}
         cpo.idle = cpo.state
         cpo.settings = lambda: copy.deepcopy(settings)
         cpo.put = lambda value, reason: settings.update(copy.deepcopy(value)) or {'validatedAt': e5.now()}
@@ -535,7 +581,7 @@ def self_check():
             (folder / 'fixture-cgroup.jsonl').write_text('\n'.join(map(json.dumps, rows)) + '\n')
             return []
         cpo.sampler = sampler
-        def collect(folder):
+        def collect(folder, phase=None):
             e5.save(folder / 'collected.json', {'status': 'CAPTURED_NOT_EVALUATED'})
             e5.save(folder / 'power.json', {'complete': True, 'wholePoolJoules': 10, 'activePoolJoules': 5})
             e5.save(folder / 'power-drain-inclusive.json', {'complete': True, 'wholePoolJoules': 11})
@@ -552,10 +598,57 @@ def self_check():
         (root / 'control-alerts.jsonl').write_text('')
         with patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'client_end_counter', lambda *args: {'fixtureCounter': True}):
             cpo.start()
-            for stage in stages:
-                run_stage(cpo, stage)
+            snapshot['inProgressTarget'] = {'id': 'fixture-transition'}
+            scheduler_actions.append({'id': 'fixture-action', 'status': 'running'})
+            with patch.object(cpo, 'idle', side_effect=AssertionError('Demo stage must not await planner idle')):
+                for stage in stages:
+                    run_stage(cpo, stage)
             summaries = summarize(e5, cpo.b, cpo.out)
         assert len(summaries) == 4
+        drained = e5.load(cpo.out / 'smoke-A/phase.json')['demoRequestDrain']
+        assert drained['inProgressTarget']['id'] == 'fixture-transition' and drained['actions'][0]['status'] == 'running'
+        source_folder = cpo.out / 'smoke-A'
+        recovery_out = root / 'collection-recovery'
+        recovery_folder = stage_folder(recovery_out, stages[1])
+        recovery_folder.mkdir(parents=True)
+        prior = e5.load(source_folder / 'phase.json')
+        prior.update(status='STOP', error='Drain/terminal timebox exceeded; preserve partial evidence, stop', drainedUTC=None)
+        prior.pop('demoRequestDrain')
+        e5.save(recovery_folder / 'phase.json', prior)
+        for path in source_folder.iterdir():
+            if path.is_file() and (path.name == 'pre-state.json' or path.name.endswith('-client.jsonl') or path.name.startswith('terminal-')):
+                (recovery_folder / path.name).write_bytes(path.read_bytes())
+        (recovery_out / 'start-ack.json').write_bytes((cpo.out / 'start-ack.json').read_bytes())
+        original_phase = (recovery_folder / 'phase.json').read_bytes()
+        original_clients = {path.name: path.read_bytes() for path in recovery_folder.glob('*-client.jsonl')}
+        with patch.object(cpo, 'out', recovery_out), patch.object(cpo, 'idle', side_effect=AssertionError('Collection must not await planner idle')), patch.object(cpo, 'run', side_effect=AssertionError('Collection must not replay load')):
+            collect_stage(e5, cpo, stages[1])
+            recovered = e5.load(phase_path(recovery_folder))
+            assert recovered['status'] == 'DRAINED_NOT_EVALUATED' and recovered['collectionRecovery']['originalStatus'] == 'STOP'
+            assert (recovered['startUTC'], recovered['endUTC']) == (prior['startUTC'], prior['endUTC'])
+            assert summarize(e5, cpo.b, recovery_out)[0]['collectionRecovery']['originalStatus'] == 'STOP'
+            with patch.object(cpo, 'run', return_value=None) as next_stage:
+                run_stage(cpo, stages[2])
+                assert next_stage.call_count == 1
+        assert (recovery_folder / 'phase.json').read_bytes() == original_phase
+        assert all((recovery_folder / name).read_bytes() == content for name, content in original_clients.items())
+        for outstanding, pending in [([{'id': 'unfinished'}], 0), ([], 1)]:
+            snapshot['outstanding'] = outstanding
+            with patch.object(cpo, 'api', return_value={'pending': pending}), patch.object(e5.time, 'monotonic', side_effect=[0, 0, 4]), patch.object(e5.time, 'sleep', return_value=None):
+                try:
+                    cpo.request_drain(root, {})
+                except RuntimeError as error:
+                    assert str(error).startswith('Request drain timebox exceeded')
+                else:
+                    raise AssertionError('Unfinished requests were ignored')
+        snapshot['outstanding'] = []
+        with patch.object(e5.time, 'monotonic', side_effect=[0, 0, 4]), patch.object(e5.time, 'sleep', return_value=None):
+            try:
+                e5.CPO.idle(cpo)
+            except RuntimeError as error:
+                assert str(error).startswith('Drain/terminal timebox exceeded')
+            else:
+                raise AssertionError('Global/finish idle stopped waiting for scheduler transitions')
         assert summaries[1]['gapFromPreviousOfferedWindowSeconds'] >= 0
         for summary in summaries[1:]:
             assert summary['placementChanges'] and summary['energyJ'] == 10
@@ -702,7 +795,7 @@ def self_check():
         assert sum(method == 'DELETE' for method, _ in management_calls) == 3 and not registered
         assert all(w['workers'] == 320 and w['lifetimeSeconds'] >= w['slo']['targetLatencyNanos'] / 1e9 for w in assembled['workloads'])
         assert (root / 'assembly/register-plc-anomaly.json').exists() and (cpo.out / 'finish-definitions-complete.json').exists()
-        print('PASS demo: canonical registration/cleanup, E0/A/B/C real CPO loop, immutable CLI AST option intersection, owned/empty resume preserving start, producer logs before deletion, gap/energy/placement/failure summaries; mocked API/kubectl only')
+        print('PASS demo: request-only stage/resume drain with active planner, no-replay collection preserving STOP/client/window, unchanged global/finish idle, canonical registration/cleanup, CLI AST compatibility and producer logs before deletion; mocked API/kubectl only')
 
 
 def main():
@@ -750,7 +843,7 @@ def main():
             parser.error('stage requires a configured --stage')
         for stage in selected:
             folder = stage_folder(args.out, stage)
-            if args.command == 'run' and (folder / 'collected.json').exists() and e5.load(folder / 'phase.json')['status'] == 'DRAINED_NOT_EVALUATED':
+            if args.command == 'run' and (folder / 'collected.json').exists() and e5.load(phase_path(folder))['status'] == 'DRAINED_NOT_EVALUATED':
                 continue
             try:
                 run_stage(cpo, stage)
@@ -761,8 +854,7 @@ def main():
         if selected is None:
             parser.error('collect requires a configured --stage')
         folder = stage_folder(args.out, selected)
-        if not (folder / 'collected.json').exists():
-            cpo.collect(folder)
+        collect_stage(e5, cpo, selected)
         print('Collected evidence: ' + str(folder / 'collected.json'))
     elif args.command == 'finish':
         cpo.finish()

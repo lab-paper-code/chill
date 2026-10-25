@@ -330,6 +330,17 @@ class CPO:
                 if all(v.get('pending')==0 and v.get('assigned')==0 for v in views): return s
             time.sleep(1)
         raise RuntimeError('Drain/terminal timebox exceeded; preserve partial evidence, stop')
+    def request_drain(self,folder,phase):
+        end=time.monotonic()+self.tb['drainSeconds']
+        while time.monotonic()<end:
+            state=self.state();views={name:self.api('GET','/api/v1/workloads/'+name) for name in self.ws}
+            if not state['snapshot'].get('outstanding') and all(view.get('pending')==0 for view in views.values()):
+                at=now()
+                phase['demoRequestDrain']={'observedUTC':at,'inProgressTarget':state['snapshot'].get('inProgressTarget'),'actions':state.get('actions'),'pending':{name:view.get('pending') for name,view in views.items()},'meaning':'Requests drained; scheduler transitions recorded, not awaited'}
+                save(folder/'request-drain-state.json',{'at':at,'state':state,'workloads':views})
+                return at
+            time.sleep(1)
+        raise RuntimeError('Request drain timebox exceeded; preserve partial evidence, stop')
     def boundary(self, folder, prefix):
         for label,path in [('state','/api/v1/scheduler/state'),('pools','/api/v1/pools'),('settings','/api/v1/scheduler/settings')]: save(folder/(prefix+'-'+label+'.json'),self.api('GET',path))
         snapshot=load(folder/(prefix+'-state.json'))['snapshot'];actual_workloads=snapshot['workloads'];by_id={i['id']:i for i in instance_rows(snapshot['instances'])}
@@ -584,7 +595,9 @@ class CPO:
                 if len(phase['starts'])!=len(jobs): raise RuntimeError('Missing actual producer start')
                 phase['startUTC']=min(x['at'] for x in phase['starts'].values()); phase['endUTC']=max((dt.datetime.fromisoformat(x['at'])+dt.timedelta(seconds=st['seconds'])).isoformat() for x in phase['starts'].values())
             else: phase['endUTC']=now()
-            self.idle(); phase['drainedUTC']=now(); self.boundary(folder,'post'); phase['status']='DRAINED_NOT_EVALUATED'; save(folder/'phase.json',phase)
+            if self.b.get('schema')=='demo-e5-binding.v1':phase['drainedUTC']=self.request_drain(folder,phase)
+            else:self.idle();phase['drainedUTC']=now()
+            self.boundary(folder,'post'); phase['status']='DRAINED_NOT_EVALUATED'; save(folder/'phase.json',phase)
             collector_status=[]
             for sampler,output,error in children:
                 intentional=sampler.poll() is None
@@ -646,8 +659,8 @@ class CPO:
                 save(folder/'secondary-cleanup-errors.json',{'at':now(),'primaryError':phase.get('error'),'cleanupErrors':cleanup_errors})
                 if not preserving_primary:raise RuntimeError('Cleanup failed: '+str(cleanup_errors))
             # Failure stops only exact-UID owned producers; retained raw/native ownership remains for CPO drain/cleanup.
-    def collect(self, folder):
-        phase=load(folder/'phase.json'); start,end=phase['startUTC'],phase['endUTC']
+    def collect(self, folder, phase=None):
+        phase=load(folder/'phase.json') if phase is None else phase; start,end=phase['startUTC'],phase['endUTC']
         if not start or not end: raise RuntimeError('Actual interval required')
         collector=module('e5archive',HERE/'e5-archive.py')
         captured=collector.collect(folder,phase,self.c['collection'],self.io,self.tb['collectSeconds'])
