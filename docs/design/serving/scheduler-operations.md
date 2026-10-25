@@ -102,6 +102,20 @@ Pod Ready나 Service 생성만으로 추론 준비를 완료하지 않는다.
 prepare는 저장된 현재 정책을 유지하며 오래된 Pod 정책 annotation을 고친다.
 annotation 수정 자체를 native acknowledgment로 간주하지 않는다.
 
+### 정책 반영 대기 표시 — SCH-48, AC-34~35
+
+desired/native DecisionID만 다르면 probe는 오류 대신 `PolicyAckPending` 상태를
+반환한다. 이번에 검증한 물리 ID·Node·profile·할당·소유·slot·native readiness와
+정책·요청 목록을 그대로 유지하며 동일 Pod/container와 단일 executor Service 검증도
+생략하지 않는다. scheduler 원본·compact·summary와 관측 기록에는 instance의
+`reasons`로, POOL에는 `InstanceState.reason`으로 노출한다. POOL 화면의 **반영 대기**는
+새 정책 적용 확인을 기다린다는 뜻이지 인스턴스 부재나 준비 실패가 아니다.
+소유/바인딩된 서비스 POOL과 활성 POOL에 계속 남고, 다음 정상 probe의 ACK가
+일치하면 표시가 사라진다. 현재 실제 정책을 desired 값으로 덮지 않으며 route
+완료에는 기존 native 정책 ACK가 여전히 필요하다. 실제 읽기·metadata·Pod/Service
+검증 실패는 기존 관측 실패 경로를 따른다.
+
+
 제거는 native drain과 실제 container 종료 증거를 확인한 뒤 자기 Pod 소유의 Service를
 resourceVersion/UID precondition으로 삭제하고 Pod finalizer 및 config를 해제한다.
 이때는 namespace·이름·Pod owner identity만 확인한다. 자기 Service의 selector나 proxy

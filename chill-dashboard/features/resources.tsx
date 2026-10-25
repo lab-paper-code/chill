@@ -56,8 +56,8 @@ function NodeRows({label,rows}:{label:string;rows:PoolNode[]}) {
   return <Rows label={label}>{rows.map(row=><Row key={row.node.uid} label={row.node.name} hint={[row.powerMode&&`전력모드 ${row.powerMode}`,...(row.reasons??[]).map(reason=>explain(reason)[0])].filter(Boolean).join(" ")||undefined} value={<StatusBadge tone={row.ready?"ok":"warn"}>{row.ready?"준비됨":"준비 중"}</StatusBadge>}/>)}</Rows>
 }
 function InstanceRows({label,rows}:{label:string;rows:InstanceState[]}) {
-  return <Rows label={label}>{rows.map(row=><RowDialog key={row.id} label={row.node.name} hint={(row.workloads??[]).map(workload=>workload.name).join(", ")||"연결된 서비스 없음"} value={<StatusBadge tone={row.ready?"ok":"warn"}>{row.ready?"준비됨":"준비 중"}</StatusBadge>} title={`${row.node.name} 인스턴스`}>
-    <Facts items={[["인스턴스",row.id],["노드",row.node.name],["상태",row.ready?"준비됨":row.reason?explain(row.reason)[0]:"준비 중"],["서비스",(row.workloads??[]).map(workload=>workload.name).join(", ")||"없음"]]}/>
+  return <Rows label={label}>{rows.map(row=><RowDialog key={row.id} label={row.node.name} hint={(row.workloads??[]).map(workload=>workload.name).join(", ")||"연결된 서비스 없음"} value={<StatusBadge tone={row.ready?"ok":"warn"}>{row.reason==="PolicyAckPending"?"반영 대기":row.ready?"준비됨":"준비 중"}</StatusBadge>} title={`${row.node.name} 인스턴스`}>
+    <Facts items={[["인스턴스",row.id],["노드",row.node.name],["상태",row.reason?explain(row.reason)[0]:row.ready?"준비됨":"준비 중"],["서비스",(row.workloads??[]).map(workload=>workload.name).join(", ")||"없음"]]}/>
     <SourceJSON inline value={row}/>
   </RowDialog>)}</Rows>
 }

@@ -18,6 +18,7 @@ const guides: Record<string, Guide> = {
   MissingDataset: ["측정에 쓸 데이터셋이 지정되지 않았어요.", "서비스 설정에서 데이터셋을 골라 주세요."],
   MissingRuntime: ["실행 환경이 준비되지 않았어요.", "모델의 실행 방식을 확인해 주세요."],
   NativeNotReady: ["실행기가 아직 준비 중이에요.", "잠시 후 다시 확인해 주세요."],
+  PolicyAckPending: ["반영 대기", "현재 실행 상태는 유지되며, 새 정책의 적용 확인을 기다려요."],
   ObservationUnavailable: ["요청 기록을 저장할 수 없어서 새 요청을 받지 않아요.", "ChillServer의 기록 저장소 상태를 확인해 주세요."],
   RestartDrain: ["ChillServer가 다시 시작해서, 이전 요청을 마무리할 때까지 새 요청을 멈췄어요.", "마무리될 때까지 기다려 주세요."],
   RestartUnconfirmed: ["ChillServer가 다시 시작한 뒤 이 실행기 상태를 아직 확인하지 못했어요.", "잠시 후 다시 확인해 주세요."],

@@ -119,9 +119,6 @@ func validateMetadata(spec Spec, actual native.Metadata) error {
 	if b := actual.Policy.FixedBatchSize; b < 0 || b > 0 && !slices.ContainsFunc(spec.Profile.Batches, func(p serving.BatchProfile) bool { return p.Batch == b }) {
 		return errors.New("native fixed batch size has no measured profile")
 	}
-	if spec.DecisionID != "" && actual.DecisionID != spec.DecisionID {
-		return errors.New("native policy acknowledgment pending")
-	}
 	if actual.Runtime.IntraOpThreads != condition.CPU.ORTIntraOpThreads || actual.Runtime.InterOpThreads != condition.CPU.ORTInterOpThreads || len(actual.Runtime.CPUAffinity) < condition.CPU.ORTIntraOpThreads {
 		return errors.New("native thread/affinity condition differs from profile")
 	}
@@ -167,6 +164,9 @@ func (c *Client) Probe(ctx context.Context, spec Spec) (serving.ReadyInstance, e
 		return serving.ReadyInstance{}, err
 	}
 	result := serving.ReadyInstance{State: serving.InstanceState{ID: spec.InstanceID, Node: spec.Node, Profile: spec.Profile.ID, Ready: true, ObservedAt: observedAt, Native: &state}, Profile: spec.Profile, Routing: spec.Routing, Capacity: spec.Capacity}
+	if spec.DecisionID != "" && state.Metadata.DecisionID != spec.DecisionID {
+		result.State.Reason = "PolicyAckPending"
+	}
 	result.Execute = func(ctx context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 		return c.Execute(ctx, spec, dispatch)
 	}
