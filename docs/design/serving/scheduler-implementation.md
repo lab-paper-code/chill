@@ -500,6 +500,8 @@ reset 첫 disable-autonomy의 ConfigMap conflict/확정 거절과 쓰기 전 실
 준비 중 용량을 현재 가용 κ로 더하거나, 고정된 Workload의 관측 실패를 새 여유 자원으로
 계산하지 않는다. 전체 자원 상한/공유 Node 비용과 SLO·에너지 선택 규칙은 유지한다.
 확정된 CPU 독점 위반 등 기존 실제 공통 안전 검증을 이번 변경으로 면제하지 않는다.
+`InstanceUnavailable` Node의 미준비 실물에는 실행 후보의 queue/batch/profile 관측 검증을
+요구하지 않는다. Capacity/MaxBatch가 아직 0이어도 할당은 공통 Node 예산 검증에 남긴다.
 
 | 파일:함수 | 새 판단·실행 계약 |
 |---|---|

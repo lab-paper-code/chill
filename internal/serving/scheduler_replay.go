@@ -287,6 +287,12 @@ func schedulerValidateResources(settings SchedulerSettings, nodes []SchedulerNod
 				continue
 			}
 			hosted = true
+			// Retained occupancy is not an executable candidate. Its missing
+			// native evidence fixes this Node, but must not reject other Nodes.
+			if !i.Ready && schedulerHas(n.Reasons, NodeInstanceUnavailable) {
+				allocations = append(allocations, i.Allocation)
+				continue
+			}
 			if i.Profile == nil {
 				reasons = appendUnique(reasons, "MissingProfile:"+i.ID)
 				continue

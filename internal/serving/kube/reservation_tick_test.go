@@ -27,7 +27,7 @@ import (
 
 //nolint:gocyclo // One end-to-end fixture proves Tick, prepare, route and native completion for each blocked-owner variant.
 func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testing.T) {
-	for _, variant := range []string{"slow-power", "unconfirmed-source", "pending-kappa"} {
+	for _, variant := range []string{"slow-power", "unconfirmed-source", "pending-kappa", "preparing-source"} {
 		t.Run(variant, func(t *testing.T) {
 			var unconfirmed atomic.Bool
 			c, ready := tickReadySubsetController(t, func(index int, state *native.State) {
@@ -178,12 +178,32 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			if variant == "unconfirmed-source" {
 				unconfirmed.Store(true)
 			}
+			if variant == "preparing-source" {
+				pending := old.DeepCopy()
+				pending.Name, pending.UID, pending.ResourceVersion = "preparing-w1", "preparing-w1-uid", ""
+				pending.Spec.NodeName = slow.Name
+				pending.Status = core.PodStatus{Phase: core.PodPending}
+				pending.Labels[instancePodUIDLabel] = string(pending.UID)
+				pending.Annotations[ServingSlotAnnotation] = waiting.ID
+				pending.OwnerReferences = []meta.OwnerReference{{APIVersion: object.APIVersion, Kind: "Workload", Name: object.Name, UID: object.UID}}
+				if _, err = c.kube.CoreV1().Pods(pending.Namespace).Create(ctx, pending, meta.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
 			// A new demand is evaluated by Tick while the actual power wait remains live.
 			settings.MinimumDemand[w2.UID] = 2
 			time.Sleep(2 * time.Millisecond)
 			decision, err := c.Tick(ctx, time.Now())
 			if err != nil {
 				t.Fatal(err)
+			}
+			if variant == "preparing-source" {
+				captured := c.State().Snapshot
+				if !slices.ContainsFunc(captured.Instances, func(i serving.SchedulerInstance) bool {
+					return i.PodUID == "preparing-w1-uid" && !i.Ready && i.Capacity == 0 && i.MaxBatch == 0
+				}) {
+					t.Fatal("preparing occupancy was lost or assigned invented native evidence")
+				}
 			}
 			var pod *core.Pod
 			select {
