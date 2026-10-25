@@ -1,5 +1,24 @@
 {
-  "e5Config": "/absolute/path/to/existing/e5-config.json",
+  "controlSourceSHA": "3dff4e7",
+  "timeboxes": {
+    "setupSeconds": 194,
+    "barrierSeconds": 300,
+    "drainSeconds": 194,
+    "flushSeconds": 15,
+    "collectSeconds": 240,
+    "apiSeconds": 129,
+    "settleSeconds": 194
+  },
+  "measurementSLO": {
+    "mobilenet": {"percentile": 95, "targetLatencyNanos": 1000000000},
+    "smolvlm2": {"percentile": 99, "targetLatencyNanos": 60000000000},
+    "plc": {"percentile": 95, "targetLatencyNanos": 50000000}
+  },
+  "requestTiming": {
+    "mobilenet": {"workers": 320, "lifetimeSeconds": 2, "deliverySeconds": 0.01, "socketSeconds": 2.02},
+    "smolvlm2": {"workers": 320, "lifetimeSeconds": 75, "deliverySeconds": 0.01, "socketSeconds": 75.02},
+    "plc": {"workers": 320, "lifetimeSeconds": 1, "deliverySeconds": 0.01, "socketSeconds": 1.02}
+  },
   "stages": [
     {
       "id": "E0",
@@ -9,17 +28,17 @@
     {
       "id": "A",
       "seconds": 300,
-      "rates": {"mobilenet": 1, "smolvlm2": 0.05, "plc": 2}
+      "rates": {"mobilenet": 20, "smolvlm2": 0.3, "plc": 40}
     },
     {
       "id": "B",
       "seconds": 360,
-      "rates": {"mobilenet": 12, "smolvlm2": 0.05, "plc": 2}
+      "rates": {"mobilenet": 100, "smolvlm2": 0.3, "plc": 40}
     },
     {
       "id": "C",
       "seconds": 360,
-      "rates": {"mobilenet": 1, "smolvlm2": 0.05, "plc": 2}
+      "rates": {"mobilenet": 20, "smolvlm2": 0.3, "plc": 40}
     }
   ]
 }
