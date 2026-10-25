@@ -166,7 +166,7 @@ func seedOperatingPower(t *testing.T, observationLog *ObservationLog, from time.
 
 func assertMeasuredOperatingPower(t *testing.T, got OperatingPowerWindow, scenario operatingPowerScenario) {
 	t.Helper()
-	wantWhole, wantActive := 700.0, 185.0 // A active [0,3), B [3,10).
+	wantWhole, wantActive := 700.0, 700.0 // Stopped B and preparing A still occupy their Nodes.
 	if scenario.zero {
 		wantWhole, wantActive = 0, 0
 	}

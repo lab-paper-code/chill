@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -832,5 +833,54 @@ func assertResetComplete(t *testing.T, result OperationResult, err error) {
 	t.Helper()
 	if err != nil || result.Status != nativeOperationComplete {
 		t.Fatalf("reset failed: status=%s error=%s err=%v", result.Status, result.Error, err)
+	}
+}
+
+func TestResetRemovesInitFailedPodByUIDAC37(t *testing.T) {
+	for _, terminal := range []bool{false, true} {
+		t.Run(fmt.Sprint(terminal), func(t *testing.T) {
+			h := newResetHarness(t)
+			ctx := context.Background()
+			pod := &core.Pod{}
+			if err := h.api.Get(ctx, client.ObjectKeyFromObject(h.owned), pod); err != nil {
+				t.Fatal(err)
+			}
+			pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: firstfloorContainerName,
+				State: core.ContainerState{Waiting: &core.ContainerStateWaiting{Reason: "PodInitializing"}}}}
+			pod.Status.InitContainerStatuses = []core.ContainerStatus{{Name: "artifact",
+				State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 1}}}}
+			pod.Status.Phase = core.PodPending
+			if terminal {
+				pod.Status.Phase = core.PodFailed
+			}
+			if err := h.api.Status().Update(ctx, pod); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.api.syncPod(ctx, pod); err != nil {
+				t.Fatal(err)
+			}
+			h.controller.observer.mu.Lock()
+			h.controller.observer.restoreSources([]core.Pod{*pod})
+			if err := h.controller.observer.publishLedger(nil); err != nil {
+				t.Fatal(err)
+			}
+			h.controller.observer.mu.Unlock()
+			result, err := h.controller.ExecuteManual(ctx, h.request())
+			if !terminal {
+				if err == nil || h.api.deleteCalls != 0 {
+					t.Fatalf("nonterminal Pod without executor was removed: %+v %v", result, err)
+				}
+				return
+			}
+			assertResetComplete(t, result, err)
+			if err := h.api.Get(ctx, client.ObjectKeyFromObject(pod), &core.Pod{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("init-failed Pod still exists: %v", err)
+			}
+			for _, state := range h.controller.runtime.Instances() {
+				if state.PodUID == string(pod.UID) {
+					t.Fatalf("removed init-failed Pod retained inventory: %+v", state)
+				}
+			}
+		})
 	}
 }

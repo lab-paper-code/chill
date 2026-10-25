@@ -68,6 +68,7 @@ type nativeSource struct {
 	ownerUID    types.UID
 	stopped     bool
 	instance    serving.ReadyInstance
+	previous    map[string]serving.ReadyInstance
 	podState    *corev1.Pod
 	terminated  map[string]bool
 	deleted     bool
@@ -347,7 +348,26 @@ func (o *Observer) restoreSources(pods []corev1.Pod) {
 			o.sources[key] = source
 		}
 		source.podState = pod.DeepCopy()
+		if source.terminated == nil {
+			source.terminated = map[string]bool{}
+		}
+		if source.containerID != "" {
+			if _, known := source.terminated[source.containerID]; !known {
+				source.terminated[source.containerID] = source.stopped
+			}
+		}
 		if status := firstfloorStatus(pod); status != nil && status.ContainerID != "" {
+			if source.containerID != "" && source.containerID != status.ContainerID {
+				if source.previous == nil {
+					source.previous = map[string]serving.ReadyInstance{}
+				}
+				source.previous[source.containerID] = source.instance
+				source.instance = serving.ReadyInstance{State: serving.InstanceState{Node: source.instance.State.Node}}
+				source.stopped = false
+			}
+			if _, known := source.terminated[status.ContainerID]; !known {
+				source.terminated[status.ContainerID] = false
+			}
 			source.containerID = status.ContainerID
 		}
 		if owner := workloadOwner(pod.OwnerReferences); owner != "" {
@@ -363,7 +383,7 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 	for _, instance := range probed {
 		uid, _, _ := strings.Cut(instance.State.ID, "/")
 		source := o.sources[uid]
-		if source == nil || source.deleted || source.stopped {
+		if source == nil || source.deleted || source.stopped || instance.State.ID != physicalID(source.uid, source.containerID) {
 			continue
 		}
 		instance.State.PodUID = uid
@@ -410,6 +430,14 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 		}
 		source.instance = instance
 		instances = append(instances, instance)
+		for containerID, previous := range source.previous {
+			if previous.State.ID == "" {
+				continue
+			}
+			previous.State.Ready = false
+			previous.State.Stopped = source.terminated[containerID]
+			instances = append(instances, previous)
+		}
 	}
 	return o.runtime.InstallInstances(instances)
 }
@@ -459,7 +487,10 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		instance, probeErr := o.native.Probe(probeCtx, spec)
 		cancel()
 		o.mu.Lock()
-		if probeErr == nil {
+		if probeErr == nil || instance.State.Native != nil {
+			if probeErr != nil {
+				instance.State.Reason = probeErr.Error()
+			}
 			instance.OwnerWorkloadUID = owner
 			instance.State.TargetID = pod.Annotations[ServingSlotAnnotation]
 			instance.State.Stopped = o.removingInstances[spec.InstanceID]
@@ -750,6 +781,9 @@ func (o *Observer) observeTermination(pod *corev1.Pod) {
 			source.terminated[terminal.ContainerID] = true
 			if source.containerID == terminal.ContainerID {
 				source.stopped = true
+				for _, ended := range source.terminated {
+					source.stopped = source.stopped && ended
+				}
 				source.stopFollow()
 			}
 		}
@@ -776,6 +810,18 @@ func (o *Observer) watchPods(w watch.Interface) {
 			}
 			o.mu.Lock()
 			if pod, ok := event.Object.(*corev1.Pod); ok {
+				if o.sources[string(pod.UID)] == nil {
+					if event.Type == watch.Deleted {
+						o.mu.Unlock()
+						continue
+					}
+					current, err := o.kube.CoreV1().Pods(pod.Namespace).Get(o.ctx, pod.Name, metav1.GetOptions{})
+					if err != nil || current.UID != pod.UID {
+						o.mu.Unlock()
+						continue
+					}
+					pod = current
+				}
 				o.restoreSources([]corev1.Pod{*pod})
 				for _, source := range o.sources {
 					if source.uid != pod.UID {
@@ -935,10 +981,27 @@ func (o *Observer) CleanupWorkload(ctx context.Context, uid types.UID) (bool, er
 	if len(objects) > 0 {
 		return false, nil
 	}
+	return o.retireWorkloadSources(uid)
+}
+
+func (o *Observer) retireWorkloadSources(uid types.UID) (bool, error) {
 	for id, source := range o.sources {
 		if source.ownerUID == uid && !source.stopped {
 			return false, fmt.Errorf("physical executor %s termination unconfirmed", id)
 		}
+	}
+	if err := o.publishLedger(nil); err != nil {
+		return false, err
+	}
+	for key, source := range o.sources {
+		if source.ownerUID != uid {
+			continue
+		}
+		if err := o.runtime.RetirePod(string(source.uid)); err != nil {
+			return false, err
+		}
+		source.stopFollow()
+		delete(o.sources, key)
 	}
 	return true, nil
 }

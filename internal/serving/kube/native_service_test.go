@@ -410,7 +410,7 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-	operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	spec := PrepareSpec{
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
@@ -455,7 +455,7 @@ func TestPreparationSeedsRoutingBeforeRoute(t *testing.T) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-	operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	for _, owner := range []*serving.WorkloadReference{nil, {Name: "owner", UID: "owner-uid"}} {
 		name, want := "scheduler-prepared", `{}`
 		if owner != nil {
@@ -513,7 +513,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-	operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	spec := PrepareSpec{
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
@@ -619,7 +619,7 @@ func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
 				return true, nil, errors.New("stop after Pod creation")
 			})
 			store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-			operations := &Operations{store: store, kube: kube, config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: tc.measurement}}
+			operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: tc.measurement}}
 			spec := measuredCPUPreparationFixture()
 			err := operations.PrepareInstance(ctx, spec)
 			pod := &core.Pod{}

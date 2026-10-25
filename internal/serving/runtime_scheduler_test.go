@@ -119,8 +119,10 @@ func TestControlledRoutingRefreshesOnlyAbsentWorkloadSeeds(t *testing.T) {
 		ready bool
 	}{{"w2", true}, {next.UID, false}} {
 		install(3, tc.owner, tc.ready)
-		if actual, _ := r.SchedulerRouting(); len(actual[next.UID]) != 0 {
-			t.Fatalf("unready or foreign-owned seed routed: %v", actual)
+		actual, _ := r.SchedulerRouting()
+		if tc.owner != next.UID && len(actual[next.UID]) != 0 || tc.owner == next.UID && actual[next.UID][prepared.State.ID] != 3 ||
+			len(r.workloads[next.UID].route.entries) != 0 {
+			t.Fatalf("ownership or retained unready declaration changed: %v", actual)
 		}
 	}
 	install(3, next.UID, true)

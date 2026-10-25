@@ -436,7 +436,7 @@ slot 해석이 필요한 prepare 완료에서 한 번 정확 신분으로 해결
 
 | 파일:함수 | 장부 방식의 기준 |
 |---|---|
-| `kube/observer.go:refreshLocked`, `restoreSources`, `probeSource`, `verifyProbed`, `watchPods`, `refreshFailure`, `observeTermination` | Pod 수명 갱신과 관측 갱신을 분리한다. 실패 때 `InstallInstances(nil)`로 재고를 비우지 않는다. 완료한 source 결과를 identity 확인 후 짧게 게시하고 느린 probe I/O가 다른 source 게시/장부 복사를 붙들지 않게 한다. |
+| `kube/observer.go:refreshLocked`, `restoreSources`, `probeSource`, `reconcileSources`, `watchPods`, `refreshFailure`, `observeTermination` | Pod 수명 갱신과 관측 갱신을 분리한다. 실패 때 `InstallInstances(nil)`로 재고를 비우지 않는다. 완료한 source 결과를 identity 확인 후 짧게 게시하고 느린 probe I/O가 다른 source 게시/장부 복사를 붙들지 않게 한다. 성공한 native 읽기는 Ready/metadata 검증 실패도 실제 state와 원래 조회 시작 시각을 남긴다. |
 | `runtime.go:InstallInstances`, `Instances`, `BuildPools` | 전체 장부 투영을 한 집계자가 설치한다. 누락된 Ready 응답을 삭제로 해석하는 `!seen && outstanding==0` 제거를 없앤다. 요청/route 상태는 runtime 소유 그대로이며, 실행원 없는 Pod도 POOL 점유 투영에서 빠지지 않는다. |
 | `kube/scheduler.go:capture`, `captureNodePods` | runtime의 `Native != nil` 분기로 서빙 실물 포함 여부를 정하지 않고 장부 항목 전부를 복사한다. Pod별 관측 실패를 이유로 붙여 해당 Node만 고정한다. CHILL 항목과 non-serving request를 UID로 구별해 중복 합산하지 않는다. non-serving 실제 예산 및 Node UID 검증은 유지한다. |
 | `scheduler_plan.go:prepareTargets`, `runningPreparation`, `schedulerSamePhysicalTarget` | 동일 slot/할당의 준비 중·관측 불명·종료 미확인 Pod와 예약을 먼저 찾는다. 관측이 안 된 기존 항목은 “없어서 prepare”가 아니라 보류다. 여러 실물을 하나로 축약하지 않는다. |
@@ -459,7 +459,9 @@ Pod별 관측 메모와 run 예약은 같은 장부 snapshot에서 합쳐 보되
 `tickMu` 안에서 현재 장부/runtime/Node identity를 읽고 **영향집합 산정 → 전체 충돌 검사
 → 한 번에 예약 등록 → 현재 안전 조건 재확인 → 실행 시작**을 수행한다.
 실패하면 아무 키도 부분 예약하지 않거나 물리 효과 전 등록을 되돌린다.
-`c.mu`/observer/runtime 잠금은 짧은 게시·조건 전이에만 사용하고 외부 I/O 동안 잡지 않는다.
+`c.mu`/runtime 잠금은 짧은 게시·조건 전이에만 사용한다. observer의 기존 Kubernetes
+수명·finalizer 직렬화는 유지하며 신규 watch UID는 현재 Pod GET과 게시를 직렬화해 늦은
+사건의 퇴역 UID 복원을 막는다. 병렬 native probe I/O는 observer 잠금 밖에서 실행한다.
 runtime route/outstanding 조건은 실제 변경 직전 runtime 잠금 안에서도 검사하고,
 Pod mutation은 정확 UID/기존 optimistic-lock 조건을 쓴다. 저장된
 `c.state.Snapshot`의 과거 허가를 파괴적 동작에 재사용하지 않는다.
@@ -546,6 +548,9 @@ native ACK·actual routing 기록과 stopped 대상 제외는 보존한다.
 2. **장부 소비자 cutover:** prepare/budget/power/remove/effect/instance 수/active 에너지
    소비자를 위 표대로 바꾸고 확인 불능을 effect-lost와 분리한다. AC-37 및 AC-34~36의
    기존 동작이 이 단계의 회귀다. 장부로 대체된 6120aaa7 guard만 이때 제거한다.
+   실제 Tick의 native 읽기 실패·ACK 대기와 UID 기반 init 실패 reset 회귀를 포함한다.
+   `SchedulerRouting`은 Ready dispatch 목록 대신 보존된 선언을 읽으며, dispatch 자격은
+   runtime의 Ready 검사로 별도 닫힌다. active 에너지는 stop/prepare의 미반환 점유를 센다.
 3. **공통 범위 예약 cutover:** `c.runs` 범위와 공통 허가·해제를 만들면서 자동/수동/
    reset/측정/hand-back의 모든 진입점을 같은 커밋에서 이관한다. reset 전용 run과
    종류별 충돌 검사를 제거한다. 전역 목표 장벽은 아직 유지하고 AC-38을 통과시킨다.

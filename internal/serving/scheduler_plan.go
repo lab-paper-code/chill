@@ -450,22 +450,12 @@ func (p *schedulerPlanState) addRunningPrerequisites(action *Action) {
 	}
 }
 
-func (p *schedulerPlanState) instanceUnavailable(node NodeReference) bool {
-	return slices.ContainsFunc(p.snap.Nodes, func(actual SchedulerNode) bool {
-		return actual.Node == node && slices.Contains(actual.Reasons, NodeInstanceUnavailable)
-	})
-}
-
-func (p *schedulerPlanState) deferNode(node NodeReference) {
-	p.reasons = appendUnique(p.reasons, fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, node.Name, node.UID))
-}
-
 func (p *schedulerPlanState) completedEffectPresent(action Action) bool {
 	switch action.Kind {
 	case schedulerActionPrepare:
 		return slices.ContainsFunc(p.snap.Instances, func(instance SchedulerInstance) bool {
 			return instance.ID == action.Instance && instance.Node == action.Node &&
-				instance.Ready && !instance.Stopped && schedulerState(instance) == action.To
+				!instance.Stopped && schedulerState(instance) == action.To
 		})
 	case schedulerActionRoute:
 		return p.routeEffectPresent()
@@ -481,10 +471,7 @@ func (p *schedulerPlanState) completedEffectPresent(action Action) bool {
 		return action.Kind == schedulerActionStop ||
 			!slices.ContainsFunc(p.snap.Outstanding, func(request SchedulerRequest) bool { return request.Instance == action.Instance })
 	case schedulerActionRemove:
-		if p.instanceUnavailable(action.Node) {
-			return false
-		}
-		return !slices.ContainsFunc(p.snap.Instances, func(instance SchedulerInstance) bool { return instance.ID == action.Instance }) &&
+		return action.Status == schedulerActionComplete && !slices.ContainsFunc(p.snap.Instances, func(instance SchedulerInstance) bool { return instance.ID == action.Instance }) &&
 			!slices.ContainsFunc(p.snap.Outstanding, func(request SchedulerRequest) bool { return request.Instance == action.Instance }) &&
 			!schedulerInstanceRouted(p.snap.Routing, action.Instance)
 	case schedulerActionPower:
@@ -501,7 +488,8 @@ func (p *schedulerPlanState) routeEffectPresent() bool {
 	}
 	for _, wanted := range p.target.Instances {
 		if !slices.ContainsFunc(p.snap.Instances, func(actual SchedulerInstance) bool {
-			return schedulerSnapshotTargetMatches(actual, wanted)
+			return schedulerSnapshotTargetMatches(actual, wanted) ||
+				!actual.Ready && !actual.Stopped && schedulerSamePhysicalTarget(actual, wanted)
 		}) {
 			return false
 		}
@@ -538,8 +526,10 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 			if n.Node != oldNode.Node || n.PowerMode == oldNode.PowerMode {
 				continue
 			}
-			if p.instanceUnavailable(n.Node) {
-				p.deferNode(n.Node)
+			if slices.ContainsFunc(p.snap.Instances, func(i SchedulerInstance) bool {
+				return i.Node == n.Node && !i.Ready && !i.Stopped
+			}) {
+				p.reasons = appendUnique(p.reasons, fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, n.Node.Name, n.Node.UID))
 				continue
 			}
 			from := oldNode.PowerMode
@@ -592,8 +582,10 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 
 func (p *schedulerPlanState) prepareTargets(c SchedulerCandidate) {
 	for _, wanted := range c.Instances {
-		if p.instanceUnavailable(wanted.Node) {
-			p.deferNode(wanted.Node)
+		if slices.ContainsFunc(p.snap.Instances, func(actual SchedulerInstance) bool {
+			return actual.Node == wanted.Node && !actual.Ready && !actual.Stopped
+		}) {
+			p.reasons = appendUnique(p.reasons, fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, wanted.Node.Name, wanted.Node.UID))
 			continue
 		}
 		if running := p.runningPreparation(wanted); running != "" {
@@ -668,12 +660,12 @@ func (p *schedulerPlanState) preparationFits(wanted SchedulerInstance) bool {
 		if node.Node != wanted.Node {
 			continue
 		}
-		if slices.Contains(node.Reasons, NodeInstanceUnavailable) {
-			return false
-		}
 		allocations := append([]SchedulerAllocation{node.Reserved}, node.NonServing...)
 		for _, actual := range p.snap.Instances {
-			if actual.Node == wanted.Node && p.stops[actual.ID] == "" {
+			removedBeforePrepare := slices.ContainsFunc(p.actions, func(action Action) bool {
+				return action.Kind == schedulerActionRemove && action.Instance == actual.ID && action.Node == actual.Node
+			})
+			if actual.Node == wanted.Node && !removedBeforePrepare {
 				allocations = append(allocations, actual.Allocation)
 			}
 		}

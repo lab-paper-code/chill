@@ -856,6 +856,9 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 		if i.outstanding > 0 && !candidate.State.Ready {
 			i.State.Ready = false
 			i.State.Reason = candidate.State.Reason
+			i.State.AttemptedAt = candidate.State.AttemptedAt
+			i.State.ObservedAt, i.State.Native = candidate.State.ObservedAt, candidate.State.Native
+			i.State.Allocation = candidate.State.Allocation
 			continue
 		}
 		if i.outstanding > 0 && candidate.Profile != nil && (i.State.Profile != candidate.Profile.ID || i.State.Node != candidate.State.Node) {
@@ -986,7 +989,7 @@ func (r *Runtime) pruneInstanceBindingsLocked() {
 					}
 				}
 			}
-			if !live && (!i.State.Ready || w == nil || w.detached || profilePath(w.definition, i.Profile) == nil || (r.routingControlled && r.routeWeightLocked(uid, i) == 0)) {
+			if !live && (w == nil || w.detached || profilePath(w.definition, i.Profile) == nil || (r.routingControlled && r.routeWeightLocked(uid, i) == 0)) {
 				delete(i.bindings, uid)
 			}
 		}

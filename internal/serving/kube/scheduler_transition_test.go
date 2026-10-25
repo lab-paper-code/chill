@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -900,8 +901,8 @@ func TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34(t *testing.T)
 	}
 	for range 3 {
 		decision, err := controller.Tick(ctx, time.Now())
-		if err != nil || decision.Target == nil || !slices.Contains(decision.Reasons, "TransitionInProgress") {
-			t.Fatalf("pending route lost transition: %+v %v", decision, err)
+		if err != nil || controller.runs["held-policy-route"].action.Status != nativeOperationRunning {
+			t.Fatalf("pending route lost its run: %+v %v", decision, err)
 		}
 		assertPendingPhysicalCapture(t, controller, a, original, uid)
 	}
@@ -909,7 +910,7 @@ func TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34(t *testing.T)
 		t.Fatalf("pending caused duplicate operations: prepare=%d route=%d", prepareStarts.Load(), routeStarts.Load())
 	}
 	for _, action := range controller.kube.(*kubefake.Clientset).Actions() {
-		if action.GetVerb() == "create" && action.GetResource().Resource == "pods" {
+		if action.GetVerb() == "create" && action.GetResource().Resource == string(core.ResourcePods) {
 			t.Fatal("ACK waiting created another physical Pod")
 		}
 	}
@@ -1185,6 +1186,8 @@ func TestInstanceUnavailableBlocksContinuedNodeActions(t *testing.T) {
 	controller, target, _ := acknowledgedHandoffFixture(t)
 	node := target.Instances[0].Node
 	controller.state.Snapshot.Nodes = []serving.SchedulerNode{{Node: node, Reasons: []string{serving.NodeInstanceUnavailable}}}
+	controller.state.Snapshot.Instances = slices.Clone(target.Instances)
+	controller.state.Snapshot.Instances[0].Ready = false
 	for _, kind := range []string{operationPrepare, operationPower, operationRemove} {
 		action := serving.Action{Kind: kind, Node: node}
 		if controller.dependenciesReady(action, target) {
@@ -1198,5 +1201,58 @@ func TestInstanceUnavailableBlocksContinuedNodeActions(t *testing.T) {
 	route := serving.Action{Kind: operationRoute, Reason: serving.NodeInstanceUnavailable + ":" + node.Name + ":" + node.UID}
 	if controller.dependenciesReady(route, target) {
 		t.Fatal("blocked route executed after its missing prepare/power was suppressed")
+	}
+}
+
+func TestTickRetainsFailedNativeInventoryAC37(t *testing.T) {
+	var fail atomic.Bool
+	controller, _ := tickReadySubsetController(t, func(index int, state *native.State) {
+		if index == 0 && fail.Load() {
+			state.At = time.Time{}
+		}
+	})
+	ctx := context.Background()
+	before, err := controller.capture(ctx, time.Now(), controller.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := before.Instances[0]
+	last := schedulerPhysicalState(a.ID, controller.runtime.Instances())
+	if last == nil || last.Native == nil || !last.Ready {
+		t.Fatal("fixture lacks a successful physical observation")
+	}
+	var prepareStarts atomic.Int32
+	controller.config.OnAction = func(result OperationResult) error {
+		if result.Status == starting && result.Operation.Kind == operationPrepare {
+			prepareStarts.Add(1)
+		}
+		return nil
+	}
+	fail.Store(true)
+	for range 3 {
+		if _, err := controller.Tick(ctx, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		state := schedulerPhysicalState(a.ID, controller.runtime.Instances())
+		if state == nil || state.Ready || state.PodUID != last.PodUID || state.OwnerWorkloadUID != last.OwnerWorkloadUID ||
+			!state.ObservedAt.Equal(last.ObservedAt) || !reflect.DeepEqual(state.Allocation, last.Allocation) ||
+			state.Native.Metadata.DecisionID != last.Native.Metadata.DecisionID || !state.AttemptedAt.After(last.AttemptedAt) {
+			t.Fatalf("failed probe erased or refreshed successful inventory: before %+v after %+v", last, state)
+		}
+		if actual, _ := controller.runtime.SchedulerRouting(); actual[last.OwnerWorkloadUID][a.ID] != 1000 {
+			t.Fatalf("failed probe erased current distribution: %v", actual)
+		}
+		pools := controller.runtime.Pools(controller.State().Snapshot.Nodes)
+		if len(pools.Workloads) != 1 || len(pools.Workloads[0].Instances) != 2 || len(pools.Available) != 1 {
+			t.Fatalf("failed probe returned physical occupancy: %+v", pools)
+		}
+	}
+	if prepareStarts.Load() != 0 {
+		t.Fatal("failed observation created replacement capacity")
+	}
+	for _, action := range controller.kube.(*kubefake.Clientset).Actions() {
+		if action.GetVerb() == "create" && action.GetResource().Resource == string(core.ResourcePods) {
+			t.Fatal("failed observation created a Pod")
+		}
 	}
 }

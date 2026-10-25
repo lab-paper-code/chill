@@ -307,7 +307,7 @@ func TestOperationsCaptureListsOnlyTheNodePods(t *testing.T) {
 	operations := &Operations{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, config: OperationConfig{Namespace: "chill-system"}}
 	_, _ = operations.Capture(context.Background(), serving.NodeReference{Name: node.Name, UID: string(node.UID)})
 	for _, action := range kube.Actions() {
-		if list, ok := action.(ktesting.ListAction); ok && action.GetResource().Resource == "pods" {
+		if list, ok := action.(ktesting.ListAction); ok && action.GetResource().Resource == string(core.ResourcePods) {
 			if fields := list.GetListRestrictions().Fields.String(); fields != "spec.nodeName=node" {
 				t.Fatalf("capture listed Pods with field selector %q", fields)
 			}

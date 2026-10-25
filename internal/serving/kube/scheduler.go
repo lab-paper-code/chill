@@ -477,7 +477,7 @@ func (c *SchedulerController) failGoalLocked(snapshot serving.SchedulerSnapshot,
 			continue
 		}
 		// Fixed lowering is undone by the goal's own raise of the same Node.
-		if !desired.Fixed && run.result.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, run) {
+		if !desired.Fixed && run.result.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, run) && !c.actionEffectUnknown(snapshot, run) {
 			result := *run.result
 			result.Status, result.Error, result.EndedAt = nativeOperationFailed, "completed effect lost", now
 			run.result, run.action.Status, run.action.Reason = &result, nativeOperationFailed, result.Error
@@ -1019,14 +1019,19 @@ func (c *SchedulerController) runContext(action serving.Action, config Scheduler
 }
 
 func (c *SchedulerController) dependenciesReady(action serving.Action, target serving.SchedulerCandidate) bool {
-	if action.Status != nativeOperationRunning && strings.HasPrefix(action.Reason, serving.NodeInstanceUnavailable+":") {
+	if action.Node.UID != "" && slices.ContainsFunc(c.state.Snapshot.Instances, func(instance serving.SchedulerInstance) bool {
+		return instance.Node == action.Node && !instance.Ready && !instance.Stopped
+	}) {
 		return false
 	}
-	if (action.Kind == operationPrepare || action.Kind == operationPower || action.Kind == operationRemove) &&
-		slices.ContainsFunc(c.state.Snapshot.Nodes, func(node serving.SchedulerNode) bool {
-			return node.Node == action.Node && slices.Contains(node.Reasons, serving.NodeInstanceUnavailable)
-		}) {
-		return false
+	if action.Kind == operationRoute {
+		for _, wanted := range target.Instances {
+			if slices.ContainsFunc(c.state.Snapshot.Instances, func(actual serving.SchedulerInstance) bool {
+				return (actual.ID == wanted.ID || actual.TargetID == wanted.ID) && !actual.Ready && !actual.Stopped
+			}) {
+				return false
+			}
+		}
 	}
 	for _, dep := range action.DependsOn {
 		if run := c.runs[dep]; run != nil && run.action.Status == nativeOperationComplete {
@@ -1158,6 +1163,35 @@ func (c *SchedulerController) actionEffectPresent(snapshot serving.SchedulerSnap
 		}
 	case operationRoute:
 		return c.routingTargetPresent(run.result.Operation.Target, snapshot, physical, true)
+	}
+	return false
+}
+
+// A failed observation is neither an effect proof nor a counterexample. Keep
+// the completed receipt and its ownership until the same source is observable.
+func (c *SchedulerController) actionEffectUnknown(snapshot serving.SchedulerSnapshot, run *actionRun) bool {
+	if run.result == nil {
+		return false
+	}
+	if run.action.Kind == operationPower {
+		return slices.ContainsFunc(snapshot.Nodes, func(node serving.SchedulerNode) bool {
+			return node.Node == run.action.Node && node.PowerMode == ""
+		})
+	}
+	physical := c.runtime.Instances()
+	if run.action.Kind == operationPrepare {
+		return slices.ContainsFunc(physical, func(instance serving.InstanceState) bool {
+			return (instance.ID == run.action.Instance || instance.TargetID == run.action.Instance) &&
+				instance.Node == run.action.Node && !instance.Stopped && !instance.Ready
+		})
+	}
+	if run.action.Kind == operationRoute && run.result.Operation.Target != nil {
+		for _, wanted := range run.result.Operation.Target.Instances {
+			if state := schedulerPhysicalState(wanted.ID, physical); state != nil && !state.Stopped &&
+				(!state.Ready || state.Reason == "PolicyAckPending") {
+				return true
+			}
+		}
 	}
 	return false
 }

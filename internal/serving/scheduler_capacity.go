@@ -413,7 +413,7 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		w.minRate = max(capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID), settings.MinimumDemand[w.d.UID])
 		w.slack = w.d.SLO.TargetLatency.Seconds() - settings.CompletionMarginMS/1e3
 		for _, i := range snapshot.Instances {
-			if i.WorkloadUID == w.d.UID && !i.Stopped {
+			if i.WorkloadUID == w.d.UID || i.OwnerWorkloadUID == w.d.UID {
 				w.current++
 			}
 		}

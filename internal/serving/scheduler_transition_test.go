@@ -475,6 +475,7 @@ func TestInstanceUnavailableDefersOnlyMatchingNodeAC34(t *testing.T) {
 	settings, snapshot, n2 := placementFixture()
 	bad := snapshot.Nodes[0].Node
 	snapshot.Nodes[0].Reasons = append(snapshot.Nodes[0].Reasons, NodeInstanceUnavailable)
+	snapshot.Instances[0].Ready = false
 	wanted := snapshot.Instances[0]
 	wanted.ID = "replacement-on-unknown-node"
 	healthy := preparedSlot(snapshot, n2)
@@ -487,7 +488,7 @@ func TestInstanceUnavailableDefersOnlyMatchingNodeAC34(t *testing.T) {
 	if p.preparationFits(wanted) || p.completedEffectPresent(Action{Kind: schedulerActionRemove, Node: bad, Instance: "missing"}) {
 		t.Fatal("unknown occupancy was treated as empty capacity/removal proof")
 	}
-	if !p.completedEffectPresent(Action{Kind: schedulerActionRemove, Node: NodeReference{Name: bad.Name, UID: "other-uid"}, Instance: "missing"}) {
+	if !p.completedEffectPresent(Action{Kind: schedulerActionRemove, Node: NodeReference{Name: bad.Name, UID: "other-uid"}, Instance: "missing", Status: schedulerActionComplete}) {
 		t.Fatal("unavailability leaked across Node UID")
 	}
 	target.Actions = schedulerPlan(snapshot, target)
@@ -512,6 +513,7 @@ func TestInstanceUnavailableDefersOnlyMatchingNodeAC34(t *testing.T) {
 		t.Fatalf("deferred target was silently executable: %+v", decision)
 	}
 	snapshot.Nodes[0].Reasons = nil
+	snapshot.Instances[0].Ready = true
 	snapshot.Actions = target.Actions
 	recovered := requireTransitionAction(t, schedulerPlan(snapshot, target), schedulerActionRoute)
 	if recovered.Reason != "" {
@@ -566,6 +568,7 @@ func TestPowerChangeDrainsPendingAndNormalInstancesAC35(t *testing.T) {
 		}
 	}
 	snapshot.Nodes[0].Reasons = []string{NodeInstanceUnavailable}
+	snapshot.Instances[0].Ready = false
 	if slices.ContainsFunc(schedulerPlan(snapshot, target), func(a Action) bool { return a.Kind == schedulerActionPower }) {
 		t.Fatal("actual read failure still planned power")
 	}

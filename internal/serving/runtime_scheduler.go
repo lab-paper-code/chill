@@ -484,8 +484,14 @@ func (r *Runtime) schedulerRoutingLocked() (map[string]map[string]int32, map[str
 	for uid, workload := range r.workloads {
 		weights[uid] = map[string]int32{}
 		credits[uid] = map[string]int64{}
+		if !workload.detached {
+			for _, instance := range r.instances {
+				if weight := r.routeWeightLocked(uid, instance); weight > 0 && schedulerOwnerAllows(instance.OwnerWorkloadUID, uid) {
+					weights[uid][instance.State.ID] = weight
+				}
+			}
+		}
 		for index, entry := range workload.route.entries {
-			weights[uid][entry.instance.State.ID] = workload.route.weights[index]
 			credits[uid][entry.instance.State.ID] = workload.route.current[index]
 		}
 	}

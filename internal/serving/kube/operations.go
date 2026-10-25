@@ -451,6 +451,16 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		}
 		pod = existing
 	}
+	o.observer.mu.Lock()
+	o.observer.restoreSources([]core.Pod{*pod})
+	if source := o.observer.sources[string(pod.UID)]; source != nil {
+		source.instance.State.Node = spec.Instance.Node
+	}
+	err = o.observer.publishLedger(nil)
+	o.observer.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if err = o.ensureInstanceService(ctx, pod); err != nil {
 		return err
 	}

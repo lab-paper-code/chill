@@ -157,13 +157,14 @@ func (c *Client) Probe(ctx context.Context, spec Spec) (serving.ReadyInstance, e
 	if err != nil {
 		return serving.ReadyInstance{}, err
 	}
+	result := serving.ReadyInstance{State: serving.InstanceState{ID: spec.InstanceID, Node: spec.Node, Profile: spec.Profile.ID, ObservedAt: observedAt, Native: &state}, Profile: spec.Profile, Routing: spec.Routing, Capacity: spec.Capacity}
 	if !state.Ready {
-		return serving.ReadyInstance{}, errors.New("native runner is not ready")
+		return result, errors.New("native runner is not ready")
 	}
 	if err = validateMetadata(spec, state.Metadata); err != nil {
-		return serving.ReadyInstance{}, err
+		return result, err
 	}
-	result := serving.ReadyInstance{State: serving.InstanceState{ID: spec.InstanceID, Node: spec.Node, Profile: spec.Profile.ID, Ready: true, ObservedAt: observedAt, Native: &state}, Profile: spec.Profile, Routing: spec.Routing, Capacity: spec.Capacity}
+	result.State.Ready = true
 	if spec.DecisionID != "" && state.Metadata.DecisionID != spec.DecisionID {
 		result.State.Reason = "PolicyAckPending"
 	}
