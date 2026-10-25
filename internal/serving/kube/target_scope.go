@@ -31,7 +31,8 @@ func changedWorkloads(target serving.SchedulerCandidate, snapshot serving.Schedu
 			for _, actual := range snapshot.Instances {
 				if actual.ID == wanted.ID || actual.TargetID == wanted.ID {
 					found = true
-					if serving.SchedulerInstanceState(actual) != serving.SchedulerInstanceState(wanted) {
+					if serving.SchedulerInstanceState(actual) != serving.SchedulerInstanceState(wanted) ||
+						actual.MaxBatch != wanted.MaxBatch || actual.MaxWait != wanted.MaxWait {
 						policyChanged = true
 					}
 					break

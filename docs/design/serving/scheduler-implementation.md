@@ -480,6 +480,8 @@ Node/Workload/실물 중 **하나라도 다른 owner와 겹치면** 거절/대�
 하나씩 더 잡으며 진행하지 않고 effect 전에 재승인한다. 같은 이름의 새 Node/Pod는
 옛 UID 예약을 물려받지 않는다. 정확한 독립 범위를 증명하지 못하면 관련 범위를 넓히되
 “한 route이므로 모든 Workload”라는 전역 충돌 규칙으로 되돌리지 않는다.
+물리 identity·route weight가 같아도 MaxBatch/MaxWait가 바뀐 Workload는 변경 UID에 포함해
+동일 예약·UID 한정 적용 경로에서 native policy ACK와 runtime 반영까지 수행한다.
 
 **해제는 goroutine 종료와 같지 않다.** effect 전 거절은 즉시 멱등 해제한다.
 reset 첫 disable-autonomy의 ConfigMap conflict/확정 거절과 쓰기 전 실패는 이에 포함한다.

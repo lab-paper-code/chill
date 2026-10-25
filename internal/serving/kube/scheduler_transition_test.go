@@ -1256,3 +1256,53 @@ func TestTickRetainsFailedNativeInventoryAC37(t *testing.T) {
 		}
 	}
 }
+
+func TestPolicyOnlyTargetOwnsUIDAndAppliesNativePolicyAC38(t *testing.T) {
+	for _, field := range []string{"maxBatch", "maxWait"} {
+		t.Run(field, func(t *testing.T) {
+			c, prepared := tickReadySubsetController(t, func(_ int, state *native.State) {
+				state.Metadata.MaxBatchSize = 4
+			})
+			prepared.Store(true)
+			profiles := c.observer.Profiles()
+			for i := range profiles {
+				profiles[i].Condition.Firstfloor.MaxBatchSize = 4
+				profiles[i].RuntimeMetadata.InitializedBatches = []int{1, 2, 4}
+			}
+			c.observer.SetProfiles(profiles)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			snapshot, err := c.capture(ctx, time.Now(), c.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			instance := snapshot.Instances[slices.IndexFunc(snapshot.Instances, func(i serving.SchedulerInstance) bool { return i.Node.Name == "a" })]
+			switch field {
+			case "maxBatch":
+				instance.MaxBatch = 2
+			case "maxWait":
+				instance.MaxWait = 2 * time.Millisecond
+			}
+			target := serving.SchedulerCandidate{ID: "policy-only-" + field, Instances: []serving.SchedulerInstance{instance}, Routing: snapshot.Routing}
+			uids := changedWorkloads(target, snapshot)
+			if !slices.Equal(uids, []string{instance.WorkloadUID}) {
+				t.Fatalf("policy-only target lost ownership: %v", uids)
+			}
+			operation := Operation{ID: target.ID, Kind: operationRoute, Target: &target, WorkloadUIDs: uids}
+			result := OperationResult{Operation: operation}
+			if err := c.operations.ApplyTarget(ctx, *controlledTarget(operation), &result); err != nil {
+				t.Fatal(err)
+			}
+			actual := c.runtime.Instances()
+			index := slices.IndexFunc(actual, func(i serving.InstanceState) bool { return i.ID == instance.ID })
+			if index < 0 || actual[index].Native == nil {
+				t.Fatal("applied policy lost physical source")
+			}
+			policy := actual[index].Native.Metadata.Policy
+			if policy.DecisionID != target.ID || policy.MaxBatchSize != instance.MaxBatch ||
+				policy.MaxBatchWaitMS != float64(instance.MaxWait)/float64(time.Millisecond) || policy.FixedBatchSize != instance.FixedBatchSize {
+				t.Fatalf("native did not apply policy-only target: %+v", policy)
+			}
+		})
+	}
+}
