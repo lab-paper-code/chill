@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"slices"
 	"sort"
 	"sync/atomic"
@@ -49,6 +50,7 @@ type Call struct {
 
 type runtimeInstance struct {
 	ReadyInstance
+	podRouting  map[string]int32
 	outstanding int
 	bindings    map[string]bool
 }
@@ -854,6 +856,7 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 			i.State.Reason = "ConditionChangedBeforeDrain"
 			continue
 		}
+		i.podRouting = maps.Clone(candidate.Routing)
 		candidate.State.Stopped = i.State.Stopped
 		if r.routingControlled && i.Routing != nil {
 			candidate.Routing = r.mergeControlledRoutingLocked(i.Routing, candidate.Routing)
@@ -1053,6 +1056,15 @@ func (r *Runtime) instancesLocked() []InstanceState {
 		state.Waiting = map[string]int{}
 		state.Running = map[string]int{}
 		state.AssignedUnknown = map[string]int{}
+		state.Routable = make(map[string]bool, len(r.workloads))
+		for uid, workload := range r.workloads {
+			if workload.detached {
+				continue
+			}
+			state.Routable[uid] = state.Ready && !state.Stopped && i.Routing[uid] > 0 && r.routeWeightLocked(uid, i) > 0 &&
+				(i.OwnerWorkloadUID == "" || i.OwnerWorkloadUID == uid) &&
+				profilePath(workload.definition, i.Profile) != nil
+		}
 		for uid := range i.bindings {
 			if w := r.workloads[uid]; w != nil {
 				state.Workloads = append(state.Workloads, WorkloadReference{Name: w.definition.Name, UID: uid})

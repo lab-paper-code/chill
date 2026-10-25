@@ -698,6 +698,10 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			instance := serving.SchedulerInstance{ID: state.ID, Node: state.Node, Profile: profile, Allocation: allocation, Ready: state.Ready && state.Native.Ready, Capacity: m.MaxQueueRequests, Weight: 1, MaxBatch: m.MaxBatchSize, ObservedAt: state.ObservedAt, MaxWait: time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))}
 			instance.TargetID, instance.OwnerWorkloadUID = state.TargetID, state.OwnerWorkloadUID
 			instance.Stopped, instance.FixedBatchSize = state.Stopped, m.Policy.FixedBatchSize
+			instance.Routable = state.Routable
+			if state.Reason != "" {
+				instance.Reasons = []string{state.Reason}
+			}
 			if m.Policy.MaxBatchSize > 0 {
 				instance.MaxBatch = m.Policy.MaxBatchSize
 			}

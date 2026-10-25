@@ -37,6 +37,31 @@ func (r *Runtime) DisableSchedulerRouting() {
 	r.signal()
 }
 
+// ReleaseSchedulerRouting removes only this Workload's override and resumes its
+// current and future observed Pod seeds, without releasing other Workloads.
+func (r *Runtime) ReleaseSchedulerRouting(uid string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	workload := r.workloads[uid]
+	if workload == nil || workload.detached {
+		return failure("DefinitionChanged", "workload %q is not current", uid)
+	}
+	delete(r.routeTargets, uid)
+	for _, instance := range r.instances {
+		delete(instance.Routing, uid)
+		if weight := instance.podRouting[uid]; weight > 0 {
+			if instance.Routing == nil {
+				instance.Routing = map[string]int32{}
+			}
+			instance.Routing[uid] = weight
+		}
+	}
+	r.rebuildLocked()
+	r.dispatchLocked()
+	r.signal()
+	return nil
+}
+
 func (r *Runtime) routeWeightLocked(uid string, instance *runtimeInstance) int32 {
 	if targets, controlled := r.routeTargets[uid]; r.routingControlled && controlled {
 		return targets[instance.State.ID]
@@ -50,7 +75,18 @@ func (r *Runtime) routeWeightLocked(uid string, instance *runtimeInstance) int32
 func (r *Runtime) ApplySchedulerTarget(candidate SchedulerCandidate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.applySchedulerTargetLocked(candidate, false)
+	return r.applySchedulerTargetLocked(candidate, false, "")
+}
+
+// ApplyManualSchedulerTarget changes only uid, preserving other override keys,
+// including their absence after release.
+func (r *Runtime) ApplyManualSchedulerTarget(candidate SchedulerCandidate, uid string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if uid == "" || r.workloads[uid] == nil || r.workloads[uid].detached {
+		return failure("DefinitionChanged", "workload %q is not current", uid)
+	}
+	return r.applySchedulerTargetLocked(candidate, false, uid)
 }
 
 // ValidateSchedulerTarget checks the same current UID, ownership and readiness
@@ -58,10 +94,10 @@ func (r *Runtime) ApplySchedulerTarget(candidate SchedulerCandidate) error {
 func (r *Runtime) ValidateSchedulerTarget(candidate SchedulerCandidate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.applySchedulerTargetLocked(candidate, true)
+	return r.applySchedulerTargetLocked(candidate, true, "")
 }
 
-func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, validateOnly bool) error {
+func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, validateOnly bool, onlyUID string) error {
 	targets := make(map[string]map[string]int32, len(r.workloads))
 	if err := r.validateSchedulerRoutingLocked(candidate); err != nil {
 		return err
@@ -102,6 +138,16 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 	}
 	// The declared distribution is each instance's static seed, as its Pod records it.
 	for _, instance := range r.instances {
+		if onlyUID != "" {
+			delete(instance.Routing, onlyUID)
+			if weight := targets[onlyUID][instance.State.ID]; weight > 0 {
+				if instance.Routing == nil {
+					instance.Routing = map[string]int32{}
+				}
+				instance.Routing[onlyUID] = weight
+			}
+			continue
+		}
 		instance.Routing = map[string]int32{}
 		for uid, distribution := range targets {
 			if weight := distribution[instance.State.ID]; weight > 0 {
@@ -112,14 +158,24 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 	// Accepted calls keep their original execution contract through route changes.
 	// Retain an old route in memory only while the new distribution cannot execute them.
 	r.retainAcceptedRoutesLocked(targets)
-	for _, distribution := range targets {
+	for uid, distribution := range targets {
+		if onlyUID != "" && uid != onlyUID {
+			continue
+		}
 		for id, weight := range distribution {
 			if weight > 0 {
 				r.instances[id].State.Stopped = false
 			}
 		}
 	}
-	r.routeTargets = targets
+	if onlyUID == "" {
+		r.routeTargets = targets
+	} else {
+		if r.routeTargets == nil {
+			r.routeTargets = map[string]map[string]int32{}
+		}
+		r.routeTargets[onlyUID] = targets[onlyUID]
+	}
 	r.routingControlled = true
 	r.rebuildLocked()
 	r.dispatchLocked()

@@ -245,9 +245,14 @@ Node를 가장 낮은 모드에서 profile 모드로 올린 기록이 가용 노
 - `internal/serving/kube/operations.go:Operations.Execute`, `StopInstance`,
   `removeInstance`, `ChangePower`, `Capture`: reset의 단계 실행·native drain·종료·전력
   readback을 재사용하고 단계별 결과를 누적한다.
-- `internal/serving/runtime_scheduler.go:Runtime.routeWeightLocked`,
-  `applySchedulerTargetLocked`, `schedulerRoutingLocked`: 빈 override와 UID 삭제를 구별하고
-  새 요청의 routable을 유효 분배에서 노출한다. release가 다른 UID를 해제하지 않게 한다.
+- `internal/serving/runtime_scheduler.go:Runtime.ReleaseSchedulerRouting`는
+  빈 override와 UID 삭제를 구별한다. release는 해당 UID key만 지우고 최근
+  실제 Pod에서 읽은 seed로 돌아가며, 이후 Ready 인스턴스의 seed도 따른다.
+  다른 UID의 override는 보존한다. runtime이 계산한 `InstanceState.routable`을
+  snapshot/POOL이 공유하고, 새 요청에 대한 선언과 Ready/Stopped·소유권·모델
+  필터를 모두 적용한다. 이미 접수한 요청만을 위한 보존 route는 제외한다.
+  `TestReleaseSchedulerRoutingFollowsNewReadySeed`는 release 뒤 새 Ready
+  인스턴스로 실제 새 요청이 dispatch되고 다른 UID가 유지됨을 검사한다(`SCH-AC-32`).
 - 삭제 대상: `hack/e5/e5.py:CPO.clear_owned`, `CPO.finish`의 클라이언트
   unroute/drain/remove/Pod 대기/선언 해제/전력 복귀 조립을 reset 호출·결과 보존으로 바꾼다.
   `CPO.route_ack`의 ConfigMap timestamp/manual-static-routing 추적은 명시적 작업 ACK로,

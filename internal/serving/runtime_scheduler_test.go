@@ -422,6 +422,9 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	if err = r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}}}); err != nil {
 		t.Fatal(err)
 	}
+	if r.Instances()[0].Routable[d.UID] {
+		t.Fatal("accepted-only drain route advertised new-request eligibility")
+	}
 	if stopped, err := r.StopSchedulerInstance("i1"); err != nil || stopped {
 		t.Fatalf("accepted ingress stranded: %v %v", stopped, err)
 	}
