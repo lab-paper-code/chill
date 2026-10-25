@@ -224,6 +224,13 @@ Serving 평가에서 검증한다.
 | [전환 실행·실패·피드백](../05_transition_control.md) | SCH-08, SCH-15, SCH-19, SCH-20, SCH-24, SCH-25, SCH-26, SCH-27, SCH-30 |
 | [워크로드 관리 SRS](../workloads/SRS.md) — WM-03, WM-08~11, WM-14~16, WM-19~22, WM-25, WM-28~32 | SCH-03, SCH-05, SCH-09, SCH-20, SCH-23, SCH-28, SCH-29, SCH-31 |
 | [Dashboard SRS](../dashboard/SRS.md) — DB-FR-15~24, DB-FR-33~34 | SCH-08, SCH-19, SCH-24, SCH-26, SCH-30, SCH-31, SCH-32, SCH-33, SCH-34 |
+| [라우팅·배칭·요청 관측](../03_routing.md) — 요청 분배의 준비·배분 가능 상태와 명시적 배분·정리 작업 | SCH-36, SCH-39, SCH-41 |
+| [구성 선택·비용·시간과 실행 가능성](../04_configuration_selection.md) — 워크로드별 최소 수요 하한 | SCH-38 |
+| [전환 실행·실패·피드백](../05_transition_control.md) — 준비된 부분집합 배분과 동작별 관측 | SCH-40, SCH-47 |
+| [프로파일링과 Evidence](../00_measurement.md) — 관측 보존과 근거 저장소 투명 조회 | SCH-42 |
+| [워크로드 관리 SRS](../workloads/SRS.md) — WM-22, WM-28의 삭제·이전 등록 정의 보존 | SCH-43 |
+| API 확장 제안(2026-10-25) — B1 측정 CR 조회, B2 실험 결과 조회, B3 축약 상태, B5 작업 예상 시간 | SCH-44, SCH-45, SCH-46, SCH-47 |
+| 이 문서 2.3 — T5는 기존 관측·작업 결과의 전달 방식이므로 별도 시스템 spec 생략 | SCH-37 |
 
 ## 6. 고수준 요구사항과 구현 설계의 구분
 
