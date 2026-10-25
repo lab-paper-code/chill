@@ -503,6 +503,30 @@ type capacityChoice struct {
 	reason string
 }
 
+// Uncreated targets consume the shared instance limit, not current capacity or
+// energy. Once their Pod/slot appears, physical occupancy already counts it.
+func schedulerUncreatedReservations(snapshot SchedulerSnapshot, node NodeReference) int {
+	seen := map[string]bool{}
+	for _, reservation := range snapshot.Reservations {
+		if reservation.Target == nil || !slices.Contains(reservation.Nodes, node) {
+			continue
+		}
+		for _, wanted := range reservation.Target.Instances {
+			if wanted.Node != node || seen[wanted.ID] {
+				continue
+			}
+			if slices.ContainsFunc(snapshot.Instances, func(actual SchedulerInstance) bool {
+				return actual.Node == node && (actual.ID == wanted.ID || actual.TargetID != "" && actual.TargetID == wanted.ID ||
+					wanted.PodUID != "" && actual.PodUID == wanted.PodUID)
+			}) {
+				continue
+			}
+			seen[wanted.ID] = true
+		}
+	}
+	return len(seen)
+}
+
 //nolint:gocyclo // One ordered pass applies the node rules, the control gates and the plan walk.
 func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPlan {
 	node := p.snapshot.Nodes[n]
@@ -530,6 +554,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	reason := ""
 	switch {
 	case schedulerReservedNode(p.snapshot, node.Node):
+		keep.others += schedulerUncreatedReservations(p.snapshot, node.Node)
 		reason = "ReservedNode"
 	case !node.Ready:
 		reason = "NodeUnavailable"

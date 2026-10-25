@@ -662,6 +662,51 @@ func TestCapacityReservationKeepsScopeWithoutGlobalBarrier(t *testing.T) {
 	}
 }
 
+func TestCapacityUncreatedReservationConsumesGlobalLimitAC39(t *testing.T) {
+	for _, physical := range []string{"absent", "exact", "slot", "pod UID"} {
+		t.Run(physical, func(t *testing.T) {
+			s, snap := schedulerFixture()
+			wanted := snap.Instances[0]
+			wanted.PodUID = "reserved-pod"
+			goal := SchedulerCandidate{ID: "reserved-goal", Instances: []SchedulerInstance{wanted},
+				Routing: map[string]map[string]int32{wanted.WorkloadUID: {wanted.ID: 1000}}}
+			snap.Instances, snap.Routing = nil, nil
+			reserveTargetForTest(&snap, &goal)
+			// Repeated views of an owner's frozen intent must not count twice.
+			snap.Reservations = append(snap.Reservations, snap.Reservations[0])
+			if physical != "absent" {
+				actual := wanted
+				switch physical {
+				case "slot":
+					actual.ID, actual.TargetID, actual.PodUID = "reserved-pod/container", wanted.ID, ""
+				case "pod UID":
+					actual.ID = "reserved-pod/container"
+				}
+				snap.Instances = []SchedulerInstance{actual}
+			}
+			w2 := *snap.Workloads[0]
+			w2.Name, w2.UID = "independent", "w2"
+			snap.Workloads = append(snap.Workloads, &w2)
+			s.AutonomousWorkloads = append(s.AutonomousWorkloads, w2.UID)
+			s.MinimumDemand = map[string]float64{w2.UID: 10}
+			node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+			next := poolsInstance(wanted, "independent-slot", node, "fixed", w2.UID)
+			next.PodUID = ""
+			snap.Options = append(snap.Options, poolsOption(next))
+			snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(next), "fixed"))
+			rows := capacityRowsForTest(s, snap, nil)
+			for _, limit := range []int{1, 2} {
+				s.MaxInstances = limit
+				decision := capacityDecideForTest(t, s, snap, rows)
+				expanded := decision.Target != nil && poolsOn(*decision.Target, node)
+				if expanded != (limit == 2) {
+					t.Fatalf("%s limit=%d expanded=%v reasons=%v target=%+v", physical, limit, expanded, decision.Reasons, decision.Target)
+				}
+			}
+		})
+	}
+}
+
 // Routing control off keeps current weights and judges each instance's κ against them.
 func TestCapacityRoutingOffKeepsWeightsAndChecksKappa(t *testing.T) {
 	items := []capacityItem{{id: "a", kappa: 30, weight: 1}, {id: "b", kappa: 100, weight: 3}}

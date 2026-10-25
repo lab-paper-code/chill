@@ -506,6 +506,8 @@ reset 첫 disable-autonomy의 ConfigMap conflict/확정 거절과 쓰기 전 실
 확정된 CPU 독점 위반 등 기존 실제 공통 안전 검증을 이번 변경으로 면제하지 않는다.
 `InstanceUnavailable` Node의 미준비 실물에는 실행 후보의 queue/batch/profile 관측 검증을
 요구하지 않는다. Capacity/MaxBatch가 아직 0이어도 할당은 공통 Node 예산 검증에 남긴다.
+예약 Node의 frozen target 중 아직 실물이 없는 항목도 keep 계획의 전체 instance 수에 더한다.
+물리 ID·slot·Pod UID로 이미 관측된 항목과 중복을 제거하며, 생성 전 의도에 κ/에너지를 부여하지 않는다.
 
 | 파일:함수 | 새 판단·실행 계약 |
 |---|---|
