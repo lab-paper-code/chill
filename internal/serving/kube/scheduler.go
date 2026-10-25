@@ -412,12 +412,12 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 			delete(c.runs, id)
 		}
 	}
-	actions := slices.DeleteFunc(c.actionsLocked(now), func(a serving.Action) bool { return a.From == readySubsetRoute })
+	actions := c.actionsLocked(now)
 	snapshot.Actions = actions
 	if goal != nil {
 		pending := false
 		for _, desired := range goal.Actions {
-			if desired.Status == nativeOperationCancel {
+			if desired.Status == nativeOperationCancel || desired.From == readySubsetRoute {
 				continue
 			}
 			run := c.runs[desired.ID]
@@ -432,7 +432,8 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 			c.goal = nil
 		}
 	}
-	if routing := c.activeTargetLocked(operationRoute); routing != nil {
+	if routing := c.activeTargetLocked(operationRoute); routing != nil &&
+		(goal == nil || len(routing.Actions) != 1 || routing.Actions[0].From != readySubsetRoute) {
 		snapshot.InProgressTarget = routing
 	}
 	cutoff := now.Add(-observationWindow)
@@ -464,6 +465,9 @@ func (c *SchedulerController) failGoalLocked(snapshot serving.SchedulerSnapshot,
 	var lost []OperationResult
 	failed := false
 	for _, desired := range goal.Actions {
+		if desired.From == readySubsetRoute {
+			continue
+		}
 		run := c.runs[desired.ID]
 		if run == nil || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil {
 			continue
@@ -483,7 +487,7 @@ func (c *SchedulerController) failGoalLocked(snapshot serving.SchedulerSnapshot,
 func (c *SchedulerController) activeTargetLocked(kind string) *serving.SchedulerCandidate {
 	var active *actionRun
 	for _, run := range c.runs {
-		if run.action.From == readySubsetRoute || run.action.Status != nativeOperationRunning || (kind != "" && run.action.Kind != kind) || run.result == nil || run.result.Operation.Target == nil {
+		if run.action.Status != nativeOperationRunning || (kind != "" && run.action.Kind != kind) || run.result == nil || run.result.Operation.Target == nil {
 			continue
 		}
 		if active == nil || run.started.Before(active.started) {
@@ -805,7 +809,8 @@ func (c *SchedulerController) conflictingActionRunning(action serving.Action) bo
 	// Global policy writes share one ConfigMap/ACK path. Independent Node
 	// preparations remain concurrent; one mutation per Node stays serialized.
 	for _, r := range c.runs {
-		if r.action.Status == nativeOperationRunning && ((action.Node.UID != "" && r.action.Node == action.Node) || (action.Kind == operationRoute && r.action.Kind == operationRoute)) {
+		if r.action.Status == nativeOperationRunning && ((action.Node.UID != "" && r.action.Node == action.Node) ||
+			((action.Kind == operationRoute || action.Kind == operationStop) && r.action.Kind == operationRoute)) {
 			return true
 		}
 	}
@@ -938,9 +943,11 @@ func (c *SchedulerController) intermediateActions(
 	if partial == nil {
 		return target.Actions, nil
 	}
-	actions := append(slices.Clone(target.Actions), serving.Action{
-		ID: partial.ID, Kind: operationRoute, From: readySubsetRoute, To: partial.ID,
-	})
+	route := serving.Action{ID: partial.ID, Kind: operationRoute, From: readySubsetRoute, To: partial.ID}
+	// Recovery must retain the running route's own frozen target even when the
+	// full goal fails. Only final-goal completion ignores this intermediate action.
+	partial.Actions = []serving.Action{route}
+	actions := append(slices.Clone(target.Actions), route)
 	return actions, partial
 }
 

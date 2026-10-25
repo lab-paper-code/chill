@@ -2,17 +2,35 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	kubefake "k8s.io/client-go/kubernetes/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-const starting = "starting"
+const (
+	starting           = "starting"
+	slowPowerActionID  = "slow-power"
+	finalRouteActionID = "final-route"
+	slowNodeName       = "slow"
+	raisedPowerMode    = "max"
+)
 
 func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.SchedulerCandidate, serving.ReadyInstance) {
 	t.Helper()
@@ -224,6 +242,15 @@ func TestIndependentPreparationRecordsFrozenTargetBeforeCompletionDuringGlobalRo
 }
 
 func TestFailedGoalCleanupRetainsRunningRouteFrozenTargetAndAgedPrerequisite(t *testing.T) {
+	for _, from := range []string{"", readySubsetRoute} {
+		t.Run("from="+from, func(t *testing.T) {
+			assertFailedGoalRetainsRunningRoute(t, from)
+		})
+	}
+}
+
+func assertFailedGoalRetainsRunningRoute(t *testing.T, from string) {
+	t.Helper()
 	controller, failedGoal, _ := acknowledgedHandoffFixture(t)
 	now := time.Now().UTC()
 	var frozen *serving.SchedulerCandidate
@@ -236,6 +263,7 @@ func TestFailedGoalCleanupRetainsRunningRouteFrozenTargetAndAgedPrerequisite(t *
 	}
 	routing := serving.Action{
 		ID: "still-running-frozen-route", Kind: operationRoute, Status: nativeOperationRunning,
+		From:      from,
 		DependsOn: []string{removed.ID},
 	}
 	failed := serving.Action{
@@ -277,6 +305,12 @@ func TestFailedGoalCleanupRetainsRunningRouteFrozenTargetAndAgedPrerequisite(t *
 	}
 	if controller.runs[removed.ID] == nil || controller.runs[routing.ID].action.Status != nativeOperationRunning {
 		t.Fatal("terminal cleanup discarded the live route's aged prerequisite or completed its running operation")
+	}
+	if !slices.ContainsFunc(snapshot.Actions, func(a serving.Action) bool { return a.ID == routing.ID }) {
+		t.Fatal("running route disappeared from planning prerequisites")
+	}
+	if !controller.conflictingActionRunning(serving.Action{Kind: operationStop, Instance: frozen.Instances[0].ID}) {
+		t.Fatal("a new stop could race the running route and be undone by its final apply")
 	}
 }
 
@@ -507,14 +541,14 @@ func TestReadySubsetRoutesBeforeIndependentPreparationsAndPowerFinish(t *testing
 		target.Actions = append(target.Actions, action)
 		controller.runs[action.ID] = &actionRun{action: action}
 	}
-	power := serving.Action{ID: "slow-power", Kind: operationPower, Node: target.Instances[4].Node, Status: nativeOperationRunning}
+	power := serving.Action{ID: slowPowerActionID, Kind: operationPower, Node: target.Instances[4].Node, Status: nativeOperationRunning}
 	target.Actions = append(target.Actions, power)
 	controller.runs[power.ID] = &actionRun{action: power}
 	deps := []string{}
 	for _, action := range target.Actions {
 		deps = append(deps, action.ID)
 	}
-	target.Actions = append(target.Actions, serving.Action{ID: "final-route", Kind: operationRoute, DependsOn: deps})
+	target.Actions = append(target.Actions, serving.Action{ID: finalRouteActionID, Kind: operationRoute, DependsOn: deps})
 	var recorded []OperationResult
 	controller.launch(target, SchedulerControllerConfig{OnAction: func(result OperationResult) error {
 		recorded = append(recorded, result)
@@ -541,10 +575,240 @@ func TestReadySubsetRoutesBeforeIndependentPreparationsAndPowerFinish(t *testing
 		if controller.goal.ID != target.ID || len(controller.goal.Instances) != 5 || controller.activeTargetLocked(operationRoute) != nil {
 			t.Fatal("intermediate route replaced the frozen full goal")
 		}
-		if _, launched := controller.runs["final-route"]; launched || controller.runs[power.ID].action.Status != nativeOperationRunning {
+		if _, launched := controller.runs[finalRouteActionID]; launched || controller.runs[power.ID].action.Status != nativeOperationRunning {
 			t.Fatal("intermediate route waited for or completed the slow final prerequisites")
 		}
 		return
 	}
 	t.Fatalf("no intermediate route scheduled: %+v", recorded)
+}
+
+// The fake native HTTP boundary acknowledges the policy mounted in its actual
+// ConfigMap. Tick, source capture, route execution and runtime application are real.
+func tickReadySubsetController(t *testing.T) (*SchedulerController, *atomic.Bool) {
+	t.Helper()
+	ctx := context.Background()
+	manager, _ := newManagerHarness(t)
+	createManagerCatalog(t, manager)
+	if _, err := manager.CreateWorkload(ctx, "workload", managerWorkloadSpec()); err != nil {
+		t.Fatal(err)
+	}
+	d := *manager.runtime.SchedulerInputs(time.Now).Workloads[0]
+	pod, node, profile, class := observerSourceFixture()
+	measured := managerProfile(&d)
+	profile.Condition.LogicalModel = d.Model.Name
+	profile.Condition.ActiveProtocol.Dataset = measured.Condition.ActiveProtocol.Dataset
+	profile.Condition.Preprocessor.Name = measured.Condition.Preprocessor.Name
+	profile.Condition.Preprocessor.Inputs = measured.Condition.Preprocessor.Inputs
+	profile.Condition.Preprocessor.Outputs = measured.Condition.Preprocessor.Outputs
+	profile.Condition.Preprocessor.MaxNewTokens = measured.Condition.Preprocessor.MaxNewTokens
+	profile.Condition.Artifact.ExecutionPath = d.Model.Paths[0].Name
+	profile.Condition.Artifact.Name = d.Model.Paths[0].Artifact
+	path := d.Model.Paths[0]
+	path.Image, path.Files, path.Firstfloor = profile.Condition.Artifact.Image, profile.Condition.Artifact.Files, profile.Condition.Firstfloor
+	path.RuntimeFamily, path.Backend = profile.Condition.RuntimeFamily, profile.Condition.Backend
+	path.Preprocessor = serving.PreprocessorArtifact{Image: profile.Condition.Preprocessor.Image, Path: profile.Condition.Preprocessor.Path}
+	d.Model.Paths, d.Generation = []serving.ModelPath{path}, d.Generation+1
+	if err := manager.runtime.Publish(&d); err != nil {
+		t.Fatal(err)
+	}
+	profile.RuntimeMetadata.RuntimeVersion = observerTestRuntime
+	profile.RuntimeMetadata.Inputs = profile.Condition.Preprocessor.Inputs
+	profile.RuntimeMetadata.Outputs = profile.Condition.Preprocessor.Outputs
+	profile.RuntimeMetadata.InitializedBatches = []int{1}
+	profile.Evidence = []evidencestore.ObjectIdentity{{Store: "raw", Key: "tick-profile", Size: 1}}
+	profile.Batches[0].DurationNanos = []float64{float64(time.Millisecond)}
+	prepared := &atomic.Bool{}
+	kube := kubefake.NewSimpleClientset()
+	profiles := []serving.Profile{}
+	objects := []client.Object{&class}
+	hosts := map[string]int{}
+	for index, name := range []string{"a", "b"} {
+		n, p, source := node.DeepCopy(), pod.DeepCopy(), profile
+		n.Name, n.UID = name, types.UID(name+"-node")
+		p.Name, p.UID, p.Spec.NodeName = name, types.UID(name+"-pod"), name
+		p.ResourceVersion = "1"
+		p.Labels[instancePodUIDLabel] = string(p.UID)
+		source.ID, source.NodeName, source.Condition.NodeUID = name+"-profile", name, string(n.UID)
+		p.Annotations[ServingProfileAnnotation] = source.ID
+		// Progress transport is outside this test. Retain a subscribed source so
+		// client-go's empty fake Pod log does not falsely terminate the executor.
+		follow, cancel := context.WithCancel(manager.observer.ctx)
+		status := firstfloorStatus(p)
+		manager.observer.sources[physicalID(p.UID, status.ContainerID)] = &nativeSource{
+			pod: types.NamespacedName{Namespace: p.Namespace, Name: p.Name}, uid: p.UID,
+			containerID: status.ContainerID, follow: follow, cancel: cancel,
+		}
+		if index == 0 {
+			raw, _ := json.Marshal(map[string]int32{d.UID: 1000})
+			p.Annotations[ServingRoutingAnnotation] = string(raw)
+		}
+		profiles = append(profiles, source)
+		service := observerServiceFixture(p)
+		service.Spec.ClusterIP = []string{"10.96.0.10", "10.96.0.11"}[index]
+		hosts[service.Spec.ClusterIP+":8080"] = index
+		for _, object := range []struct {
+			resource string
+			object   client.Object
+		}{{"nodes", n}, {"pods", p}, {"services", service}} {
+			if err := kube.Tracker().Create(core.SchemeGroupVersion.WithResource(object.resource), object.object, object.object.GetNamespace()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cfg := native.Config{Model: "chill_model", Policy: native.Policy{ProfileID: source.ID, MaxBatchSize: 1, DeadlinePolicy: "keep"}}
+		raw, _ := json.Marshal(cfg)
+		objects = append(objects, p, &core.ConfigMap{
+			ObjectMeta: meta.ObjectMeta{Name: p.Name, Namespace: p.Namespace}, Data: map[string]string{"config.json": string(raw)},
+		})
+	}
+	slow := node.DeepCopy()
+	slow.Name, slow.UID = slowNodeName, slowNodeName
+	if _, err := kube.CoreV1().Nodes().Create(ctx, slow, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	manager.store.client = fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, object client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			if err := c.Patch(ctx, object, patch, opts...); err != nil {
+				return err
+			}
+			if p, ok := object.(*core.Pod); ok {
+				return kube.Tracker().Update(core.SchemeGroupVersion.WithResource("pods"), p.DeepCopy(), p.Namespace)
+			}
+			return nil
+		},
+	}).Build()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		index := hosts[r.URL.Host]
+		p := profiles[index]
+		cm := &core.ConfigMap{}
+		if err := manager.store.client.Get(r.Context(), client.ObjectKey{Namespace: pod.Namespace, Name: p.NodeName}, cm); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var cfg native.Config
+		if err := json.Unmarshal([]byte(cm.Data["config.json"]), &cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		actual := *p.RuntimeMetadata
+		actual.ModelFiles = deliveredModelFiles(p.Condition.Artifact.Files)
+		state := native.State{At: time.Now().UTC(), Ready: index == 0 || prepared.Load(), Metadata: native.Metadata{
+			Model: cfg.Model, Mode: "serving", ProfileID: p.ID, AppliedAt: time.Now().UTC(),
+			Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
+			DecisionID: cfg.Policy.DecisionID, Policy: cfg.Policy,
+		}}
+		if err := json.NewEncoder(w).Encode(state); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(func() {
+		_ = manager.observer.Close()
+		server.CloseClientConnections()
+		server.Close()
+	})
+	proxy, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
+	manager.observer.kube = kube
+	manager.observer.SetProfiles(profiles)
+	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &SchedulerController{
+		ctx: ctx, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
+		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), runs: map[string]*actionRun{},
+		config: SchedulerControllerConfig{Settings: serving.SchedulerSettings{
+			ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+			MaxObservationAge: time.Minute, MaxReplicas: 3, MaxInstances: 3, MaxCPUs: 4,
+			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
+			AutonomousWorkloads: []string{d.UID},
+		}},
+	}
+	return controller, prepared
+}
+
+func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
+	controller, prepared := tickReadySubsetController(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	snapshot, err := controller.capture(ctx, time.Now(), controller.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Instances) != 1 || !snapshot.Instances[0].Ready {
+		t.Fatalf("initial capture must contain only a Ready source: %+v; issues=%+v", snapshot.Instances, controller.observer.Issues())
+	}
+	a := snapshot.Instances[0]
+	b := a
+	b.ID, b.Ready = "b-pod/containerd://running", false
+	for _, profile := range controller.observer.Profiles() {
+		if profile.NodeName == "b" {
+			b.Profile, b.Node = &profile, serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID}
+		}
+	}
+	uid := snapshot.Workloads[0].UID
+	a.WorkloadUID, b.WorkloadUID = uid, uid
+	slow := a
+	slow.ID, slow.Ready, slow.Node = "slow-slot", false, serving.NodeReference{Name: slowNodeName, UID: slowNodeName}
+	slowProfile := *a.Profile
+	slowProfile.Condition.NodeUID, slowProfile.Condition.PowerMode = slow.Node.UID, raisedPowerMode
+	slow.Profile = &slowProfile
+	for index := range snapshot.Nodes {
+		if snapshot.Nodes[index].Node == slow.Node {
+			snapshot.Nodes[index].PowerMode = raisedPowerMode
+		}
+	}
+	goal := serving.SchedulerCandidate{ID: "tick-expand", Instances: []serving.SchedulerInstance{a, b, slow}, Nodes: snapshot.Nodes,
+		Routing: map[string]map[string]int32{uid: {a.ID: 400, b.ID: 400, slow.ID: 200}}, Actions: []serving.Action{
+			{ID: "prepare-b", Kind: operationPrepare, Instance: b.ID, Node: b.Node},
+			{ID: slowPowerActionID, Kind: operationPower, Node: slow.Node, From: "fixed", To: raisedPowerMode},
+			{ID: "prepare-slow", Kind: operationPrepare, Instance: slow.ID, Node: slow.Node, DependsOn: []string{slowPowerActionID}},
+			{ID: finalRouteActionID, Kind: operationRoute, DependsOn: []string{"prepare-b", "prepare-slow"}},
+		}}
+	controller.runtime.EnableSchedulerRouting()
+	prepared.Store(true)
+	controller.goal = &goal
+	for index, action := range goal.Actions[:2] {
+		result := &OperationResult{Operation: Operation{ID: action.ID, Kind: action.Kind, Target: &goal}, Status: nativeOperationRunning}
+		action.Status = nativeOperationRunning
+		if index == 0 {
+			action.Status, result.Status = nativeOperationComplete, nativeOperationComplete
+			result.Operation.Prepare = &PrepareSpec{Instance: b}
+			result.EndedAt = time.Now()
+		}
+		controller.runs[action.ID] = &actionRun{action: action, result: result, started: time.Now()}
+	}
+	var recorded []OperationResult
+	controller.config.OnAction = func(result OperationResult) error {
+		recorded = append(recorded, result)
+		return nil
+	}
+	decision, err := controller.Tick(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.wg.Wait()
+	routing, _ := controller.runtime.SchedulerRouting()
+	if decision.Target == nil || decision.Target.ID != goal.ID || !slices.Contains(decision.Reasons, "TransitionInProgress") ||
+		routing[uid][a.ID] != 500 || routing[uid][b.ID] != 500 {
+		t.Fatalf("first tick after preparation did not route Ready capacity: status=%s reasons=%v routing=%v", decision.Status, decision.Reasons, routing)
+	}
+	if _, launched := controller.runs[finalRouteActionID]; launched || controller.runs[slowPowerActionID].action.Status != nativeOperationRunning {
+		t.Fatal("intermediate route completed or waited for slow final prerequisites")
+	}
+	if len(recorded) != 2 || recorded[1].Status != nativeOperationComplete || recorded[1].Actual.Routing[uid][b.ID] != 500 {
+		t.Fatalf("real route operation was not applied/recorded: %+v", recorded)
+	}
+	decision, err = controller.Tick(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.wg.Wait()
+	if decision.Target == nil || decision.Target.ID != goal.ID || len(recorded) != 2 {
+		t.Fatal("the completed intermediate route displaced the full goal or was needlessly reapplied")
+	}
 }
