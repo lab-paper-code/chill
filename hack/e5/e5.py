@@ -724,7 +724,10 @@ class CPO:
         if run.returncode: raise RuntimeError('Existing finite native mode realization failed; no host power fallback')
     def cleanup_jobs(self):
         for p in self.out.glob('*/created-*.json'):
-            j=load(p); name=j['metadata']['name']; uid=j['metadata']['uid']; actual=self.io.k(['get','job',name,'-o','json'])
+            j=load(p); name=j['metadata']['name']; uid=j['metadata']['uid']; phase=p.parent/'phase.json'
+            stops=(load(phase).get('ownedProducerStops') or []) if phase.exists() else []
+            if any(stop.get('name')==name and stop.get('uid')==uid and stop.get('stopped') is True for stop in stops):continue
+            actual=self.io.k(['get','job',name,'-o','json'])
             if actual['metadata']['uid']!=uid: raise RuntimeError('Owned producer UID changed')
             self.io.remove_job(name,uid)
     def factor_restore(self):

@@ -255,6 +255,9 @@ generated demo options with immutable e18ac/4fb CLI parser option sets using
 AST, without running an image. On producer failure, exact Job-owned Pod logs,
 stderr and identity receipts are saved under `startup-<workload>/` before
 owned Job deletion, including failures before log attachment.
+Final producer cleanup skips a retained creation record only when its phase
+already records `stopped: true` for that exact Job name and UID. Missing or
+mismatched deletion ACKs retain the existing exact-UID fail-closed behavior.
 
 After an explicitly released stage failure, CampaignOps preserves the failed
 stage directory and explicitly re-freezes changed harness source references;

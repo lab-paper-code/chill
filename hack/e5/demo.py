@@ -615,6 +615,23 @@ def self_check():
             else:
                 raise AssertionError('Producer startup failure was swallowed')
         assert len(captured_before_delete) == 3
+        cleanup_calls, removed = len(calls), []
+        cpo.io.remove_job = lambda name, uid: removed.append((name, uid))
+        cpo.cleanup_jobs()
+        assert len(removed) == 9 and not any('fail' in argv[2] for argv in calls[cleanup_calls:] if argv[:2] == ['get', 'job'])
+        unknown = object.__new__(e5.CPO)
+        unknown.out = root / 'unknown-cleanup'
+        record = unknown.out / 'phase'
+        record.mkdir(parents=True)
+        e5.save(record / 'created-fixture.json', {'metadata': {'name': 'fixture', 'uid': 'owned'}})
+        e5.save(record / 'phase.json', {'ownedProducerStops': [{'name': 'fixture', 'uid': 'different', 'stopped': True}]})
+        unknown.io = SimpleNamespace(k=lambda *args: {'metadata': {'uid': 'foreign'}}, remove_job=lambda *args: (_ for _ in ()).throw(AssertionError('Foreign Job deletion')))
+        try:
+            unknown.cleanup_jobs()
+        except RuntimeError as error:
+            assert str(error) == 'Owned producer UID changed'
+        else:
+            raise AssertionError('Mismatched deletion ACK bypassed exact-UID cleanup')
         fixture_env = json.loads(environment.read_text())
         fixture_env['e5'].update(plan=temp, producerNode='fixture', powerExecutable=temp, powerReceipt=temp)
         fixture_env['d2']['producerImage'] = 'fixture@sha256:fixture'
