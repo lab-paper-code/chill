@@ -345,6 +345,10 @@ func (p *schedulerPlanState) selectCosts() {
 	}
 	for index := range p.actions {
 		a := &p.actions[index]
+		if a.Status == schedulerActionPlanned || a.Status == "" {
+			a.CostID = ""
+			a.ExpectedSeconds, a.ExpectedSource = nil, nil
+		}
 		mode := modes[a.Node]
 		matches := func(cost OperationCost) bool { return cost.PowerMode == mode }
 		switch a.Kind {
@@ -367,7 +371,22 @@ func (p *schedulerPlanState) selectCosts() {
 				a.CostID = cost.ID
 			}
 		}
+		if a.Status == schedulerActionPlanned || a.Status == "" {
+			a.ExpectedSeconds, a.ExpectedSource = nil, nil
+			cost := schedulerCost(p.snap.Costs, a.CostID)
+			if mean, _, _, ok := capacityOperationCost(cost); ok {
+				a.ExpectedSeconds = &mean
+				a.ExpectedSource = &ActionExpectedSource{CostID: cost.ID, Reference: cost.Reference, Statistic: "mean", TrialCount: len(cost.Trials)}
+			}
+		}
 	}
+}
+
+// EstimateAction selects a duration using the same measured conditions as planning.
+func EstimateAction(snapshot SchedulerSnapshot, action Action) Action {
+	p := schedulerPlanState{snap: snapshot, actions: []Action{action}}
+	p.selectCosts()
+	return p.actions[0]
 }
 
 type schedulerPlanState struct {
@@ -397,6 +416,7 @@ func (p *schedulerPlanState) add(kind string, node NodeReference, id, from, to s
 			a.Elapsed = old.Elapsed
 			a.Cancelable = old.Cancelable
 			a.Reason = old.Reason
+			a.ExpectedSeconds, a.ExpectedSource = old.ExpectedSeconds, old.ExpectedSource
 			if old.CostID != "" {
 				a.CostID = old.CostID
 			}

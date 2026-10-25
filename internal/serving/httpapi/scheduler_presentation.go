@@ -141,8 +141,11 @@ func schedulerCompactQuery(r *http.Request) (bool, error) {
 	if len(views) == 0 {
 		return false, nil
 	}
+	if len(views) == 1 && views[0] == "summary" && r.URL.Path == "/api/v1/scheduler/state" {
+		return false, nil
+	}
 	if len(views) == 1 && views[0] == "compact" {
 		return true, nil
 	}
-	return false, &serving.Error{Code: "InvalidQuery", Message: "scheduler view must be compact or omitted"}
+	return false, &serving.Error{Code: "InvalidQuery", Message: "scheduler view must be compact, summary (state only), or omitted"}
 }

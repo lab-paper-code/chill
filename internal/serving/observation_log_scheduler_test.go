@@ -54,7 +54,7 @@ func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
 	appendEvent("bad", "uid", "response_finished", "malformed", from.Add(time.Millisecond))
 	appendEvent("missing", "", "received", "", from.Add(2*time.Millisecond))
 	appendEvent("at-end", "uid", "received", "", to)
-	window, err := observationLog.LoadWindow(from, to)
+	window, err := observationLog.LoadWindow(context.Background(), from, to)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
 	if window.Arrivals[1].Compute || window.Arrivals[1].Outcome != "malformed" || window.Arrivals[2].Compute {
 		t.Fatalf("non-compute demand included: %+v", window.Arrivals)
 	}
-	empty, err := observationLog.LoadWindow(to.Add(time.Second), to.Add(2*time.Second))
+	empty, err := observationLog.LoadWindow(context.Background(), to.Add(time.Second), to.Add(2*time.Second))
 	if err != nil || len(empty.Arrivals) != 0 || len(empty.Workloads) != 0 {
 		t.Fatalf("empty event window: %+v %v", empty, err)
 	}
@@ -121,19 +121,19 @@ func TestSchedulerRawCursorBoundsAppendOrder(t *testing.T) {
 	}
 	check := func(observationLog *ObservationLog) {
 		t.Helper()
-		first, next, _, err := observationLog.SchedulerObservationPage(from, to, 1, 0)
+		first, next, _, _, err := observationLog.SchedulerObservationPage(context.Background(), from, to, 1, 0)
 		if err != nil || len(first) != 1 || first[0].Action.ID != "first" || next != 1 {
 			t.Fatalf("first bounded append page: %+v %d %v", first, next, err)
 		}
-		second, next, _, err := observationLog.SchedulerObservationPage(from, to, 1, next)
+		second, next, _, _, err := observationLog.SchedulerObservationPage(context.Background(), from, to, 1, next)
 		if err != nil || len(second) != 1 || second[0].Action.ID != laterActionID || next != -1 {
 			t.Fatalf("raw cursor reordered/backfilled events: %+v %d %v", second, next, err)
 		}
-		end, next, _, err := observationLog.SchedulerObservationPage(from, to, 1, 2)
+		end, next, _, _, err := observationLog.SchedulerObservationPage(context.Background(), from, to, 1, 2)
 		if err != nil || len(end) != 0 || next != -1 {
 			t.Fatalf("cursor at selected count must return an empty terminal page: %+v %d %v", end, next, err)
 		}
-		if _, _, _, err = observationLog.SchedulerObservationPage(from, to, 1, 3); err == nil {
+		if _, _, _, _, err = observationLog.SchedulerObservationPage(context.Background(), from, to, 1, 3); err == nil {
 			t.Fatal("out-of-range cursor accepted")
 		}
 	}
@@ -191,7 +191,7 @@ func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 	appendSentinel(from.Add(2 * time.Millisecond))
 	// A bounded page must stop after its lookahead, not scan the remaining file.
 	appendObservationLine(t, observationLog, clock, "{not-json}")
-	page, next, _, err := observationLog.SchedulerObservationPage(from, to, 1, 1)
+	page, next, _, _, err := observationLog.SchedulerObservationPage(context.Background(), from, to, 1, 1)
 	if err != nil || len(page) != 1 || next != 2 {
 		t.Fatalf("unselected payload was fully decoded or scan was not bounded: %+v %d %v", page, next, err)
 	}
@@ -218,11 +218,11 @@ func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 		t.Fatalf("selected raw details lost:\n got %s\nwant %s", got, want)
 	}
 	for _, offset := range []int{0, next} {
-		if _, _, _, err := observationLog.SchedulerObservationPage(from, to, 1, offset); err == nil {
+		if _, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), from, to, 1, offset); err == nil {
 			t.Fatalf("selected type-invalid payload accepted at offset %d", offset)
 		}
 	}
-	if _, _, _, err := observationLog.SchedulerObservationPage(from, to, 1, 3); err == nil {
+	if _, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), from, to, 1, 3); err == nil {
 		t.Fatal("syntax error after skipped payloads was ignored")
 	}
 }
@@ -237,11 +237,11 @@ func TestSchedulerRawPageRejectsInvalidUnselectedLines(t *testing.T) {
 			if err := observationLog.SchedulerRecord(SchedulerObservation{At: from}); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, _, err := observationLog.SchedulerObservationPage(from, from.Add(time.Minute), 1, 0); err == nil {
+			if _, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), from, from.Add(time.Minute), 1, 0); err == nil {
 				t.Fatal("unselected invalid record was ignored")
 			}
-			if observationLog.Health().Healthy {
-				t.Fatal("read error was not published to observation log health")
+			if !observationLog.Health().Healthy {
+				t.Fatal("read-only corruption changed append health")
 			}
 		})
 	}
@@ -254,7 +254,7 @@ func TestSchedulerRawPagePreservesReorderedEscapedEnvelope(t *testing.T) {
 	appendObservationLine(t, observationLog, clock, fmt.Sprintf(
 		`{"unknown":{"number":9007199254740993,"text":"at"},"snapshot":{"at":%q,"instances":[]},"action":{"id":"reordered-source"},"\u0061t":%q}`,
 		at.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano)))
-	page, next, _, err := observationLog.SchedulerObservationPage(at.Add(-time.Nanosecond), at.Add(time.Nanosecond), 1, 0)
+	page, next, _, _, err := observationLog.SchedulerObservationPage(context.Background(), at.Add(-time.Nanosecond), at.Add(time.Nanosecond), 1, 0)
 	if err != nil || len(page) != 1 || next != -1 {
 		t.Fatalf("reordered envelope rejected: %+v %d %v", page, next, err)
 	}
@@ -315,7 +315,7 @@ func TestWorkloadObservationReadsOnlyRequestedRange(t *testing.T) {
 			}
 		}
 	}
-	result, err := observationLog.Query(d.UID, from, to, nil, nil, 0, "")
+	result, err := observationLog.Query(context.Background(), d.UID, from, to, nil, nil, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,7 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 		t.Fatalf("snapshot stored bodies instead of references: %+v", line.Snapshot)
 	}
 	// The Dashboard history route reads this page with every body filled in.
-	page, _, _, err := observationLog.SchedulerObservationPage(at, at.Add(time.Second), 1, 0)
+	page, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), at, at.Add(time.Second), 1, 0)
 	if err != nil || len(page) != 1 {
 		t.Fatalf("stored decision not readable: %+v %v", page, err)
 	}
@@ -478,7 +478,7 @@ func TestSchedulerCatalogFollowsMeterChangeRestartAndHour(t *testing.T) {
 	record(observationLog, second, 2*time.Second) // The meter configuration changed.
 	page := func(observationLog *ObservationLog) []SchedulerObservation {
 		t.Helper()
-		records, _, _, err := observationLog.SchedulerObservationPage(observationTestHour, observationTestHour.Add(time.Hour), 10, 0)
+		records, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), observationTestHour, observationTestHour.Add(time.Hour), 10, 0)
 		if err != nil || len(records) < 4 {
 			t.Fatalf("page: %+v %v", records, err)
 		}
@@ -552,7 +552,7 @@ func TestOperatingPowerAcrossMinuteBoundaryKeepsJoules(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		result, err := observationLog.OperatingPower(from, to, meters, 100)
+		result, err := observationLog.OperatingPower(context.Background(), from, to, meters, 100)
 		if err != nil || result.WholePoolJoules == nil {
 			t.Fatalf("power: %+v %v", result, err)
 		}

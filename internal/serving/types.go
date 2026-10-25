@@ -216,6 +216,7 @@ type InstanceState struct {
 	Profile          string              `json:"profile"`
 	Ready            bool                `json:"ready"`
 	Stopped          bool                `json:"stopped"`
+	Routable         map[string]bool     `json:"routable"`
 	Reason           string              `json:"reason,omitempty"`
 	Workloads        []WorkloadReference `json:"workloads"`
 	Waiting          map[string]int      `json:"waiting"`

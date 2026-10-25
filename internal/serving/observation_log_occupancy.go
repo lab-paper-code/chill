@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"time"
@@ -11,11 +12,11 @@ import (
 // caller's physical-batch summary remain resident. Raw rows stay in the log.
 // Supplemental late native evidence follows the final rows; it is not another
 // HTTP completion or batch member.
-func (l *ObservationLog) ScanOccupancyRows(uid, node string, from, to time.Time, visit func(RequestRow)) (*time.Time, error) {
+func (l *ObservationLog) ScanOccupancyRows(ctx context.Context, uid, node string, from, to time.Time, visit func(RequestRow)) (*time.Time, error) {
 	if uid == "" || node == "" || !from.Before(to) {
 		return nil, failure("InvalidQuery", "invalid occupancy observation interval")
 	}
-	read, err := l.capture(map[string][2]time.Time{observationRequestStream: {from, {}}})
+	read, err := l.prepare(ctx, map[string][2]time.Time{observationRequestStream: {from, {}}})
 	if err != nil {
 		return nil, err
 	}
@@ -94,5 +95,6 @@ func (l *ObservationLog) ScanOccupancyRows(uid, node string, from, to time.Time,
 		}
 		return nil
 	})
-	return read.gap(from), err
+	coverage := read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}})
+	return coverage.gapUntil(from), err
 }

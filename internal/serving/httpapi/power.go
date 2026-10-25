@@ -23,7 +23,7 @@ func (h *Handler) operatingPower(w http.ResponseWriter, r *http.Request) {
 		sendError(w, &serving.Error{Code: "SchedulerUnavailable", Message: "scheduler meter configuration is not enabled"})
 		return
 	}
-	result, err := h.config.OperatingPower(from, to, h.config.MaxQueryEvents)
+	result, err := h.config.OperatingPower(r.Context(), from, to, h.config.MaxQueryEvents)
 	if err != nil {
 		sendError(w, err)
 		return

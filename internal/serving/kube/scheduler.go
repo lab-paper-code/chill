@@ -500,7 +500,7 @@ func (c *SchedulerController) activeTargetLocked(kind string) *serving.Scheduler
 	return active.result.Operation.Target
 }
 func (c *SchedulerController) capture(ctx context.Context, now time.Time, config SchedulerControllerConfig) (serving.SchedulerSnapshot, error) {
-	arrivals, err := c.observationLog.SchedulerArrivals(now.Add(-config.Settings.ObservationWindow), now)
+	arrivals, err := c.observationLog.SchedulerArrivals(ctx, now.Add(-config.Settings.ObservationWindow), now)
 	if err != nil {
 		return serving.SchedulerSnapshot{}, err
 	}
@@ -1047,7 +1047,8 @@ func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCa
 // names the Workload its target instance serves as the Pod's owner, so the
 // instance keeps its Workload while unrouted.
 func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]time.Duration, workloads []*serving.Definition) Operation {
-	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target}
+	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target,
+		ExpectedSeconds: action.ExpectedSeconds, ExpectedSource: action.ExpectedSource}
 	if action.Kind == operationPrepare {
 		for _, i := range target.Instances {
 			if i.ID == action.Instance && i.Profile != nil && i.Profile.Condition.Firstfloor != nil {

@@ -56,7 +56,7 @@ func TestScanOccupancyRowsKeepsErrorsOpenAndLateNative(t *testing.T) {
 	}
 	kinds := map[string]int{}
 	var lateRunning *time.Time
-	gap, err := l.ScanOccupancyRows("uid", "node-uid", at, at.Add(time.Second), func(r RequestRow) {
+	gap, err := l.ScanOccupancyRows(context.Background(), "uid", "node-uid", at, at.Add(time.Second), func(r RequestRow) {
 		kinds[r.Kind]++
 		if r.Kind == RequestRowNative && r.NativeRunningAt != nil {
 			lateRunning = r.NativeRunningAt
@@ -68,7 +68,7 @@ func TestScanOccupancyRowsKeepsErrorsOpenAndLateNative(t *testing.T) {
 	if len(l.open) != 1 {
 		t.Fatalf("late evidence reopened HTTP request: %d", len(l.open))
 	}
-	result, err := l.Query("uid", at, at.Add(time.Second), nil, nil, 0, "")
+	result, err := l.Query(context.Background(), "uid", at, at.Add(time.Second), nil, nil, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestNativeSupplementsPreserveRestartDrainAssignment(t *testing.T) {
 		t.Fatalf("native phases without completion released ownership: detached=%v err=%v", detached, err)
 	}
 	nativeRows := 0
-	_, err = reopened.ScanOccupancyRows(d.UID, assignment.Node.UID, at.Add(-time.Second), at.Add(time.Second), func(row RequestRow) {
+	_, err = reopened.ScanOccupancyRows(context.Background(), d.UID, assignment.Node.UID, at.Add(-time.Second), at.Add(time.Second), func(row RequestRow) {
 		if row.Kind == RequestRowNative {
 			nativeRows++
 		}
@@ -149,7 +149,7 @@ func TestNativeSupplementsPreserveRestartDrainAssignment(t *testing.T) {
 	if err != nil || nativeRows != 2 {
 		t.Fatalf("restart lost raw physical supplements: native=%d err=%v", nativeRows, err)
 	}
-	result, err := reopened.Query(d.UID, at.Add(-time.Second), at.Add(time.Second), nil, nil, 0, "")
+	result, err := reopened.Query(context.Background(), d.UID, at.Add(-time.Second), at.Add(time.Second), nil, nil, 0, "")
 	if err != nil || len(result.Requests) != 1 {
 		t.Fatalf("restart duplicated or lost HTTP assignment: %+v err=%v", result.Requests, err)
 	}

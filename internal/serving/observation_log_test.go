@@ -192,7 +192,7 @@ func TestObservationLogUploadAllowsRuntimeIngressAndConcurrentClose(t *testing.T
 	readDone := make(chan error, 1)
 	go func() {
 		var err error
-		observations, err = observationLog.Query(definition.UID, time.Time{}, time.Time{}, nil, nil, 0, "")
+		observations, err = observationLog.Query(context.Background(), definition.UID, time.Time{}, time.Time{}, nil, nil, 0, "")
 		readDone <- err
 	}()
 	awaitObservationLogOperation(t, readDone)
@@ -370,7 +370,7 @@ func TestObservationStartTruncatesTornLines(t *testing.T) {
 	if err := restored.ManagementEvent(ManagementEvent{WorkloadUID: "uid", Kind: "apply", At: observationTestHour}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := restored.Query("uid", time.Time{}, time.Time{}, nil, nil, 0, "")
+	result, err := restored.Query(context.Background(), "uid", time.Time{}, time.Time{}, nil, nil, 0, "")
 	if err != nil || len(result.Management) != 2 || result.Total != 1 || len(result.Definitions) != 1 {
 		t.Fatalf("repaired files lost records: %+v %v", result, err)
 	}
@@ -387,16 +387,16 @@ func TestObservationQueriesOpenOnlyTheirRange(t *testing.T) {
 		}
 	}
 	to := from.Add(2 * time.Second)
-	if result, err := observationLog.Query("uid", from, to, nil, nil, 0, ""); err != nil || result.Total != 1 || len(result.Management) != 1 {
+	if result, err := observationLog.Query(context.Background(), "uid", from, to, nil, nil, 0, ""); err != nil || result.Total != 1 || len(result.Management) != 1 {
 		t.Fatalf("workload query: %+v %v", result, err)
 	}
-	if load, err := observationLog.LoadWindow(from, to); err != nil || len(load.Arrivals) != 1 {
+	if load, err := observationLog.LoadWindow(context.Background(), from, to); err != nil || len(load.Arrivals) != 1 {
 		t.Fatalf("load window: %+v %v", load, err)
 	}
-	if page, _, _, err := observationLog.SchedulerObservationPage(from, to, 10, 0); err != nil || len(page) != 1 {
+	if page, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), from, to, 10, 0); err != nil || len(page) != 1 {
 		t.Fatalf("scheduler page: %+v %v", page, err)
 	}
-	if power, err := observationLog.OperatingPower(from, to, nil, 10); err != nil || power.GapUntil != nil {
+	if power, err := observationLog.OperatingPower(context.Background(), from, to, nil, 10); err != nil || power.GapUntil != nil {
 		t.Fatalf("operating power: %+v %v", power, err)
 	}
 	if !observationLog.Health().Healthy {
@@ -408,19 +408,19 @@ func TestObservationGapBeforeLocalRetention(t *testing.T) {
 	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour.Add(5*time.Minute))
 	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(10*time.Minute))
 	early, start := observationTestHour, observationTestHour.Add(5*time.Minute)
-	result, err := observationLog.Query("uid", early, early.Add(time.Hour), nil, nil, 0, "")
+	result, err := observationLog.Query(context.Background(), "uid", early, early.Add(time.Hour), nil, nil, 0, "")
 	if err != nil || result.GapUntil == nil || !result.GapUntil.Equal(start) || result.Total != 1 {
 		t.Fatalf("workload gap: %+v %v", result, err)
 	}
-	load, err := observationLog.LoadWindow(early, early.Add(time.Hour))
+	load, err := observationLog.LoadWindow(context.Background(), early, early.Add(time.Hour))
 	if err != nil || load.GapUntil == nil || !load.GapUntil.Equal(start) {
 		t.Fatalf("load gap: %+v %v", load, err)
 	}
-	power, err := observationLog.OperatingPower(early, early.Add(time.Hour), nil, 10)
-	if err != nil || power.GapUntil == nil || power.Complete || !strings.Contains(strings.Join(power.Reasons, " "), "retained locally only") {
+	power, err := observationLog.OperatingPower(context.Background(), early, early.Add(time.Hour), nil, 10)
+	if err != nil || power.GapUntil == nil || power.Complete || !strings.Contains(strings.Join(power.Reasons, " "), "stream unavailable") {
 		t.Fatalf("power gap: %+v %v", power, err)
 	}
-	if fresh, err := observationLog.Query("uid", start, start.Add(time.Hour), nil, nil, 0, ""); err != nil || fresh.GapUntil != nil {
+	if fresh, err := observationLog.Query(context.Background(), "uid", start, start.Add(time.Hour), nil, nil, 0, ""); err != nil || fresh.GapUntil != nil {
 		t.Fatalf("retained interval reported a gap: %+v %v", fresh, err)
 	}
 }
@@ -429,11 +429,11 @@ func TestObservationQueryDuringDeletionKeepsResult(t *testing.T) {
 	ctx := context.Background()
 	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(time.Second), observationTestHour.Add(time.Minute))
-	want, err := observationLog.Query("uid", time.Time{}, time.Time{}, nil, nil, 0, "")
+	want, err := observationLog.Query(context.Background(), "uid", time.Time{}, time.Time{}, nil, nil, 0, "")
 	if err != nil || want.Total != 2 {
 		t.Fatalf("seeded rows: %+v %v", want, err)
 	}
-	read, err := observationLog.capture(map[string][2]time.Time{observationRequestStream: {}})
+	read, err := observationLog.prepare(ctx, map[string][2]time.Time{observationRequestStream: {}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func TestObservationQueryDuringDeletionKeepsResult(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- observationLog.Flush(ctx) }()
 	for range 20 {
-		if _, err := observationLog.Query("uid", time.Time{}, time.Time{}, nil, nil, 0, ""); err != nil {
+		if _, err := observationLog.Query(context.Background(), "uid", time.Time{}, time.Time{}, nil, nil, 0, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -492,7 +492,7 @@ func TestRequestFinalRowMatchesEventCohort(t *testing.T) {
 	if err := observationLog.RequestClosed(restoredRequest); err != nil {
 		t.Fatal(err)
 	}
-	result, err := observationLog.Query(d.UID, received, received.Add(time.Second), nil, nil, 0, "")
+	result, err := observationLog.Query(context.Background(), d.UID, received, received.Add(time.Second), nil, nil, 0, "")
 	if err != nil || len(result.Requests) != 1 || len(result.Cohorts) != 1 {
 		t.Fatalf("final row: %+v %v", result, err)
 	}
@@ -558,7 +558,7 @@ func TestExchangeFinishedRecordDatesStagesLikeProgressLines(t *testing.T) {
 		}
 		send(id, queuedLine, runningLine) // after release: no open row
 	}
-	result, err := observationLog.Query(d.UID, received, received.Add(time.Second), nil, nil, 0, "")
+	result, err := observationLog.Query(context.Background(), d.UID, received, received.Add(time.Second), nil, nil, 0, "")
 	if err != nil || len(result.Requests) != len(runs) {
 		t.Fatalf("final rows: %+v %v", result, err)
 	}
@@ -633,18 +633,18 @@ func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err := restored.Query(first.UID, now, now.Add(time.Second), []string{changed.Identity()}, []string{outcomeIncomplete}, 0, "")
+	selected, err := restored.Query(context.Background(), first.UID, now, now.Add(time.Second), []string{changed.Identity()}, []string{outcomeIncomplete}, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if selected.Total != 1 || selected.Selected != 1 || len(selected.Management) != 1 || selected.Cohorts[0].QuantileNanos != nil {
 		t.Fatalf("restart/filter changed facts: %+v", selected)
 	}
-	newUID, err := restored.Query(replacement.UID, now, now.Add(time.Second), nil, nil, 0, "")
+	newUID, err := restored.Query(context.Background(), replacement.UID, now, now.Add(time.Second), nil, nil, 0, "")
 	if err != nil || newUID.Total != 1 {
 		t.Fatalf("registration mixed UID: %+v %v", newUID, err)
 	}
-	empty, err := restored.Query(first.UID, now.Add(time.Second), now.Add(2*time.Second), nil, nil, 0, "")
+	empty, err := restored.Query(context.Background(), first.UID, now.Add(time.Second), now.Add(2*time.Second), nil, nil, 0, "")
 	if err != nil || empty.Total != 0 {
 		t.Fatalf("empty interval: %+v %v", empty, err)
 	}
@@ -657,7 +657,7 @@ func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defaultSelection, err := configured.Query(first.UID, now, now.Add(time.Second), nil, nil, 0, "")
+	defaultSelection, err := configured.Query(context.Background(), first.UID, now, now.Add(time.Second), nil, nil, 0, "")
 	if err != nil || defaultSelection.Total != 3 || defaultSelection.Selected != 1 || len(defaultSelection.Cohorts) != 1 || defaultSelection.Cohorts[0].SampleCount != 1 || defaultSelection.Cohorts[0].QuantileNanos == nil || *defaultSelection.Cohorts[0].QuantileNanos != 100 {
 		t.Fatalf("configured population ignored or invalid outcomes entered latency: %+v %v", defaultSelection, err)
 	}
@@ -668,7 +668,7 @@ func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 
 func checkObservationLogCohortPopulation(t *testing.T, observationLog *ObservationLog, first, changed *Definition, now time.Time) {
 	t.Helper()
-	before, err := observationLog.Query(first.UID, now, now.Add(time.Second), nil, nil, 1, "")
+	before, err := observationLog.Query(context.Background(), first.UID, now, now.Add(time.Second), nil, nil, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -708,7 +708,7 @@ func TestRequestFinalAfterTwoMinutesIsFoundByQuery(t *testing.T) {
 	if err := observationLog.RequestClosed("late"); err != nil {
 		t.Fatal(err)
 	}
-	result, err := observationLog.Query("uid", received, received.Add(time.Second), nil, nil, 0, "")
+	result, err := observationLog.Query(context.Background(), "uid", received, received.Add(time.Second), nil, nil, 0, "")
 	if err != nil || len(result.Requests) != 1 || result.Requests[0].Kind != requestRowFinal || result.Outcomes[outcomeCompleted] != 1 {
 		t.Fatalf("late final row missed: %+v %v", result, err)
 	}
@@ -736,12 +736,12 @@ func TestLoadWindowCountsAssignedAndFinalRequestOnce(t *testing.T) {
 	if rows := readRequestRows(t, observationLog.config.Directory); len(rows) != 2 {
 		t.Fatalf("assigned and final rows: %+v", rows)
 	}
-	load, err := observationLog.LoadWindow(received, received.Add(time.Second))
+	load, err := observationLog.LoadWindow(context.Background(), received, received.Add(time.Second))
 	if err != nil || len(load.Arrivals) != 1 || len(load.Workloads) != 1 || load.Workloads[0].Received != 1 ||
 		load.Workloads[0].Accepted != 1 || load.Workloads[0].Assigned != 1 || load.Workloads[0].Completed != 1 || load.Workloads[0].Instances["i1"] != 1 {
 		t.Fatalf("load counted a request twice: %+v %v", load, err)
 	}
-	arrivals, err := observationLog.SchedulerArrivals(received, received.Add(time.Second))
+	arrivals, err := observationLog.SchedulerArrivals(context.Background(), received, received.Add(time.Second))
 	if err != nil || len(arrivals) != 1 || !arrivals[0].Accepted || !arrivals[0].Compute || arrivals[0].Outcome != outcomeCompleted {
 		t.Fatalf("arrivals: %+v %v", arrivals, err)
 	}

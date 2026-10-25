@@ -86,6 +86,60 @@ func (o *measurementService) list(ctx context.Context, namespace string) (api.Ba
 	return result, nil
 }
 
+func (o *measurementService) listOperationCosts(ctx context.Context, namespace string) (httpapi.MeasurementProjectionList, error) {
+	result := httpapi.MeasurementProjectionList{Items: []httpapi.MeasurementProjection{}}
+	if err := o.namespace(namespace); err != nil {
+		return result, err
+	}
+	var list api.OperationCostMeasurementList
+	if err := o.client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
+		return result, err
+	}
+	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
+	for _, cr := range list.Items {
+		result.Items = append(result.Items, httpapi.ProjectOperationCostMeasurement(cr, o.opts.storeName))
+	}
+	return result, nil
+}
+
+func (o *measurementService) getOperationCost(ctx context.Context, namespace, name string) (httpapi.MeasurementProjection, error) {
+	if err := o.namespace(namespace); err != nil {
+		return httpapi.MeasurementProjection{}, err
+	}
+	var cr api.OperationCostMeasurement
+	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr); err != nil {
+		return httpapi.MeasurementProjection{}, err
+	}
+	return httpapi.ProjectOperationCostMeasurement(cr, o.opts.storeName), nil
+}
+
+func (o *measurementService) listDispatchOccupancies(ctx context.Context, namespace string) (httpapi.MeasurementProjectionList, error) {
+	result := httpapi.MeasurementProjectionList{Items: []httpapi.MeasurementProjection{}}
+	if err := o.namespace(namespace); err != nil {
+		return result, err
+	}
+	var list api.DispatchOccupancyMeasurementList
+	if err := o.client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
+		return result, err
+	}
+	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
+	for _, cr := range list.Items {
+		result.Items = append(result.Items, httpapi.ProjectDispatchOccupancyMeasurement(cr))
+	}
+	return result, nil
+}
+
+func (o *measurementService) getDispatchOccupancy(ctx context.Context, namespace, name string) (httpapi.MeasurementProjection, error) {
+	if err := o.namespace(namespace); err != nil {
+		return httpapi.MeasurementProjection{}, err
+	}
+	var cr api.DispatchOccupancyMeasurement
+	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr); err != nil {
+		return httpapi.MeasurementProjection{}, err
+	}
+	return httpapi.ProjectDispatchOccupancyMeasurement(cr), nil
+}
+
 func (o *measurementService) preflight(ctx context.Context, task *api.BatchEnergyOptimization) error {
 	unavailable := &serving.Error{
 		Code: "MeasurementPreflightUnavailable", Message: "production Console preflight is unavailable",

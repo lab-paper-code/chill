@@ -213,7 +213,7 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 		}
 		done := make(chan response, 1)
 		go func() {
-			result, err := service.operatingPower(from, to, 10)
+			result, err := service.operatingPower(context.Background(), from, to, 10)
 			done <- response{result: result, err: err}
 		}()
 		select {

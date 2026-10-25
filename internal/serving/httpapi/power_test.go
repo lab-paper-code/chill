@@ -68,9 +68,9 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 				t.Fatal(err)
 			}
 			calls := 0
-			handler := &Handler{authorizer: &servingkube.Authorizer{Client: client}, config: HandlerConfig{MaxQueryEvents: 10, OperatingPower: func(from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {
+			handler := &Handler{authorizer: &servingkube.Authorizer{Client: client}, config: HandlerConfig{MaxQueryEvents: 10, OperatingPower: func(ctx context.Context, from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {
 				calls++
-				return observationLog.OperatingPower(from, to, []serving.OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: source}}, limit)
+				return observationLog.OperatingPower(ctx, from, to, []serving.OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: source}}, limit)
 			}}}
 			query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {to.Format(time.RFC3339Nano)}}
 			if scenario.name == "missing-from" {

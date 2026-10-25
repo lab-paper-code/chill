@@ -121,20 +121,20 @@ func TestArchiveDeletionReportsGap(t *testing.T) {
 	if err := observationLog.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	from, floor := observationTestHour, observationTestHour.Add(time.Hour)
-	result, err := observationLog.Query("uid", from, from.Add(3*time.Hour), nil, nil, 0, "")
+	from, floor := observationTestHour, observationTestHour.Add(2*time.Hour)
+	result, err := observationLog.Query(context.Background(), "uid", from, from.Add(3*time.Hour), nil, nil, 0, "")
 	if err != nil || result.GapUntil == nil || !result.GapUntil.Equal(floor) || result.Total != 0 {
 		t.Fatalf("workload query after deletion: %+v %v", result, err)
 	}
-	load, err := observationLog.LoadWindow(from, from.Add(3*time.Hour))
+	load, err := observationLog.LoadWindow(context.Background(), from, from.Add(3*time.Hour))
 	if err != nil || load.GapUntil == nil || !load.GapUntil.Equal(floor) {
 		t.Fatalf("load after deletion: %+v %v", load, err)
 	}
-	power, err := observationLog.OperatingPower(from, from.Add(time.Minute), nil, 10)
+	power, err := observationLog.OperatingPower(context.Background(), from, from.Add(time.Minute), nil, 10)
 	if err != nil || power.GapUntil == nil || power.Complete {
 		t.Fatalf("power after deletion: %+v %v", power, err)
 	}
-	if _, _, gap, err := observationLog.SchedulerObservationPage(from, from.Add(time.Hour), 10, 0); err != nil || gap == nil {
+	if _, _, gap, _, err := observationLog.SchedulerObservationPage(context.Background(), from, from.Add(time.Hour), 10, 0); err != nil || gap == nil {
 		t.Fatalf("scheduler page after deletion: %v %v", gap, err)
 	}
 }
@@ -151,12 +151,12 @@ func TestCaptureSeesWholeHourOrGap(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- observationLog.Flush(context.Background()) }()
 	for range 200 {
-		result, err := observationLog.Query("uid", observationTestHour, time.Time{}, nil, nil, 0, "")
+		result, err := observationLog.Query(context.Background(), "uid", observationTestHour, time.Time{}, nil, nil, 0, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		whole := result.Total == len(minutes) && result.GapUntil == nil
-		gone := result.Total == 0 && result.GapUntil != nil && result.GapUntil.Equal(observationTestHour.Add(time.Hour))
+		gone := result.Total == 0 && result.GapUntil != nil && result.GapUntil.Equal(observationTestHour.Add(2*time.Hour))
 		if !whole && !gone {
 			t.Fatalf("capture saw part of a deleted hour: total %d gap %v", result.Total, result.GapUntil)
 		}
@@ -175,8 +175,8 @@ func TestOperatingPowerReportsGapForMissingBaseline(t *testing.T) {
 	if err := observationLog.SchedulerRecord(SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
 		t.Fatal(err)
 	}
-	power, err := observationLog.OperatingPower(from, from.Add(time.Minute), nil, 10)
-	if err != nil || power.GapUntil == nil || !power.GapUntil.Equal(observationTestHour) || power.Complete {
+	power, err := observationLog.OperatingPower(context.Background(), from, from.Add(time.Minute), nil, 10)
+	if err != nil || power.GapUntil != nil || power.Complete {
 		t.Fatalf("missing baseline before local observation: %+v %v", power, err)
 	}
 	baseline := snapshot
@@ -184,7 +184,7 @@ func TestOperatingPowerReportsGapForMissingBaseline(t *testing.T) {
 	if err := observationLog.SchedulerRecord(SchedulerObservation{At: baseline.At, Snapshot: &baseline}); err != nil {
 		t.Fatal(err)
 	}
-	if power, err = observationLog.OperatingPower(from, from.Add(time.Minute), nil, 10); err != nil || power.GapUntil != nil {
+	if power, err = observationLog.OperatingPower(context.Background(), from, from.Add(time.Minute), nil, 10); err != nil || power.GapUntil != nil {
 		t.Fatalf("retained baseline reported a gap: %+v %v", power, err)
 	}
 }

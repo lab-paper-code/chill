@@ -35,7 +35,13 @@ type HandlerConfig struct {
 	ListMeasurements                                           func(context.Context, string) (api.BatchEnergyOptimizationList, error)
 	SubmitMeasurement                                          func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
 	DeleteMeasurement                                          func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
-	OperatingPower                                             func(time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
+	OperatingPower                                             func(context.Context, time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
+	ListExperiments                                            func(context.Context) (ExperimentList, error)
+	GetExperiment                                              func(context.Context, string) (ExperimentSummary, error)
+	ListOperationCostMeasurements                              func(context.Context, string) (MeasurementProjectionList, error)
+	GetOperationCostMeasurement                                func(context.Context, string, string) (MeasurementProjection, error)
+	ListDispatchOccupancyMeasurements                          func(context.Context, string) (MeasurementProjectionList, error)
+	GetDispatchOccupancyMeasurement                            func(context.Context, string, string) (MeasurementProjection, error)
 }
 type Handler struct {
 	manager        *servingkube.Manager
@@ -108,6 +114,12 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/scheduler", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/power", h.operatingPower)
+	h.mux.HandleFunc("GET /api/v1/experiments", h.experiments)
+	h.mux.HandleFunc("GET /api/v1/experiments/{id}", h.experiments)
+	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/operation-cost-measurements", h.operationCostMeasurements)
+	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/operation-cost-measurements/{name}", h.operationCostMeasurements)
+	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements", h.dispatchOccupancyMeasurements)
+	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements/{name}", h.dispatchOccupancyMeasurements)
 	return h, nil
 }
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -613,7 +625,7 @@ func (h *Handler) observations(w http.ResponseWriter, r *http.Request) {
 		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "valid RFC3339 interval and bounded positive event limit are required"})
 		return
 	}
-	result, err := h.observationLog.Query(r.PathValue("uid"), from, to, query["definition"], query["outcome"], limit, query.Get("cursor"))
+	result, err := h.observationLog.Query(r.Context(), r.PathValue("uid"), from, to, query["definition"], query["outcome"], limit, query.Get("cursor"))
 	if err != nil {
 		var domain *serving.Error
 		if !errors.As(err, &domain) {

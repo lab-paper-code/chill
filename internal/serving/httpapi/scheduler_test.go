@@ -287,8 +287,8 @@ func assertSchedulerSettingsRefreshFailed(
 	if refreshes != 1 || len(controller.Settings().AutonomousWorkloads) != 0 {
 		t.Fatal("post-persistence refresh failure enabled the previously accepted catalog")
 	}
-	records, _, _, err := observationLog.SchedulerObservationPage(
-		time.Now().Add(-time.Minute), time.Now().Add(time.Second), 10, 0)
+	records, _, _, _, err := observationLog.SchedulerObservationPage(
+		context.Background(), time.Now().Add(-time.Minute), time.Now().Add(time.Second), 10, 0)
 	if err != nil || len(records) != 2 || records[1].Settings.AppliedAt != nil || records[1].Settings.Error == "" {
 		t.Fatalf("refresh failure audit claimed application: %+v %v", records, err)
 	}
@@ -315,8 +315,8 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 		!reflect.DeepEqual(applied.Before, before) || !reflect.DeepEqual(applied.After, after) || applied.AppliedAt == nil {
 		t.Fatalf("missing actual audit result: %+v", applied)
 	}
-	records, _, _, err := observationLog.SchedulerObservationPage(
-		applied.ValidatedAt.Add(-time.Second), time.Now().Add(time.Second), 10, 0)
+	records, _, _, _, err := observationLog.SchedulerObservationPage(
+		context.Background(), applied.ValidatedAt.Add(-time.Second), time.Now().Add(time.Second), 10, 0)
 	if err != nil || len(records) != 2 || records[0].Settings.AppliedAt != nil || records[1].Settings.AppliedAt == nil {
 		t.Fatalf("intent/application ledger=%+v error=%v", records, err)
 	}
@@ -478,7 +478,7 @@ func TestSchedulerSettingsStaticRoutingChangeNeedsReasonAndRecordsBeforeAfter(t 
 	if stored.StaticRouting != nil || stored.StaticRoutingValidatedAt == nil || !stored.StaticRoutingValidatedAt.Equal(change.ValidatedAt) {
 		t.Fatalf("stored staticRouting does not name its settings change: %s", persisted.Data["scheduler.json"])
 	}
-	records, _, _, err := observationLog.SchedulerObservationPage(change.ValidatedAt, change.ValidatedAt.Add(time.Millisecond), 10, 0)
+	records, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), change.ValidatedAt, change.ValidatedAt.Add(time.Millisecond), 10, 0)
 	if err != nil || len(records) == 0 || records[0].Settings.Reason != change.Reason {
 		t.Fatalf("settings change is not found at its validatedAt: %+v %v", records, err)
 	}

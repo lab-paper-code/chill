@@ -913,6 +913,7 @@ type ObservationResult struct {
 	QuantileMethod   string                  `json:"quantileMethod"`
 	SamplePopulation string                  `json:"samplePopulation"`
 	GapUntil         *time.Time              `json:"gapUntil,omitempty"`
+	Coverage         ObservationCoverage      `json:"coverage"`
 }
 
 func observationIncludes(filter []string, value string) bool {
@@ -937,7 +938,7 @@ func requestOutcome(row *RequestRow) string {
 }
 
 // Aggregate the whole selected population before projecting any row page.
-func (result *ObservationResult) aggregate(definitions map[string]*Definition, rows []*RequestRow) []RequestRow {
+func (result *ObservationResult) aggregate(ctx context.Context, definitions map[string]*Definition, rows []*RequestRow) ([]RequestRow, error) {
 	cohorts := make(map[string]*ObservationCohort)
 	for id, d := range definitions {
 		p := d.SLO.Percentile
@@ -949,6 +950,9 @@ func (result *ObservationResult) aggregate(definitions map[string]*Definition, r
 	}
 	selected := []RequestRow{}
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !observationInInterval(row.ReceivedAt, result.From, result.To) ||
 			!observationIncludes(result.DefinitionFilter, row.DefinitionID) {
 			continue
@@ -983,6 +987,9 @@ func (result *ObservationResult) aggregate(definitions map[string]*Definition, r
 		}
 	}
 	for _, c := range cohorts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		sort.Float64s(c.LatencyNanos)
 		sort.Float64s(c.CompletionResidualNanos)
 		c.SampleCount = len(c.LatencyNanos)
@@ -994,10 +1001,10 @@ func (result *ObservationResult) aggregate(definitions map[string]*Definition, r
 	}
 	sort.Slice(result.Cohorts, func(a, b int) bool { return result.Cohorts[a].Definition < result.Cohorts[b].Definition })
 	sort.Slice(result.Definitions, func(a, b int) bool { return result.Definitions[a].Identity < result.Definitions[b].Identity })
-	return selected
+	return selected, ctx.Err()
 }
 
-func (l *ObservationLog) Query(uid string, from, to time.Time, definitions, outcomes []string, limit int, cursor string) (ObservationResult, error) {
+func (l *ObservationLog) Query(ctx context.Context, uid string, from, to time.Time, definitions, outcomes []string, limit int, cursor string) (ObservationResult, error) {
 	if len(definitions) == 0 {
 		definitions = l.config.Definitions
 	}
@@ -1022,14 +1029,18 @@ func (l *ObservationLog) Query(uid string, from, to time.Time, definitions, outc
 		offset = n
 	}
 	// Rows follow receipt, and a final row can come at any later time.
-	read, err := l.capture(map[string][2]time.Time{
+	read, err := l.prepare(ctx, map[string][2]time.Time{
 		observationRequestStream: {from, {}}, observationManagementStream: {from, to},
 	})
 	if err != nil {
 		return result, err
 	}
 	defer read.close()
-	result.GapUntil = read.gap(from)
+	result.Coverage = read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}, observationManagementStream: {from, to}})
+	result.GapUntil = result.Coverage.gapUntil(from)
+	if err := l.readCatalogs(read); err != nil {
+		return result, err
+	}
 	byID := map[string]*Definition{}
 	for id, d := range read.definitions {
 		if d.UID == uid && observationIncludes(result.DefinitionFilter, id) {
@@ -1042,7 +1053,10 @@ func (l *ObservationLog) Query(uid string, from, to time.Time, definitions, outc
 	if err != nil {
 		return result, err
 	}
-	selected := result.aggregate(byID, rows)
+	selected, err := result.aggregate(ctx, byID, rows)
+	if err != nil {
+		return result, err
+	}
 	sort.SliceStable(selected, func(a, b int) bool {
 		if selected[a].ReceivedAt.Equal(selected[b].ReceivedAt) {
 			return selected[a].RequestID < selected[b].RequestID
@@ -1093,14 +1107,20 @@ type requestEnvelope struct {
 // requestRows merges the captured rows by request: final, else the open row,
 // else assigned.
 func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEnvelope) bool) ([]*RequestRow, error) {
+	if err := l.readCatalogs(read); err != nil {
+		return nil, err
+	}
 	rows := map[string]*RequestRow{}
 	err := l.scanStream(read, observationRequestStream, func(raw []byte) error {
-		return mergeRequestRow(rows, raw, keep)
+		return mergeRequestRow(rows, raw, keep, read.catalog())
 	})
 	if err != nil {
 		return nil, err
 	}
 	for id, row := range read.open {
+		if err := read.ctx.Err(); err != nil {
+			return nil, err
+		}
 		if (rows[id] == nil || rows[id].Kind != requestRowFinal) &&
 			keep(&requestEnvelope{RequestID: id, WorkloadUID: row.WorkloadUID, ReceivedAt: row.ReceivedAt}) {
 			rows[id] = row
@@ -1108,6 +1128,9 @@ func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEn
 	}
 	result := make([]*RequestRow, 0, len(rows))
 	for _, row := range rows {
+		if err := read.ctx.Err(); err != nil {
+			return nil, err
+		}
 		result = append(result, row)
 	}
 	return result, nil
@@ -1116,7 +1139,7 @@ func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEn
 // mergeRequestRow decodes raw once with the standard decoder. A row the
 // selector skips needs only valid syntax, so a decode error counts only when
 // the envelope keeps the row.
-func mergeRequestRow(rows map[string]*RequestRow, raw []byte, keep func(*requestEnvelope) bool) error {
+func mergeRequestRow(rows map[string]*RequestRow, raw []byte, keep func(*requestEnvelope) bool, catalog *ObservationCatalog) error {
 	row := &RequestRow{}
 	if decodeErr := json.Unmarshal(raw, row); decodeErr != nil {
 		var envelope requestEnvelope
@@ -1133,6 +1156,9 @@ func mergeRequestRow(rows map[string]*RequestRow, raw []byte, keep func(*request
 	}
 	envelope := requestEnvelope{Kind: row.Kind, RequestID: row.RequestID, WorkloadUID: row.WorkloadUID, ReceivedAt: row.ReceivedAt}
 	if keep(&envelope) && (row.Kind == requestRowFinal || rows[row.RequestID] == nil) {
+		if catalog != nil && row.DefinitionID != "" && len(catalog.rows["definition/"+row.DefinitionID]) == 0 {
+			return failure("IncompleteObservation", "catalog has no definition %s", row.DefinitionID)
+		}
 		rows[row.RequestID] = row
 	}
 	return nil
@@ -1159,6 +1185,13 @@ type observationRead struct {
 	open        map[string]*RequestRow
 	definitions map[string]*Definition
 	start       time.Time
+	ctx          context.Context
+	now          time.Time
+	localHours   map[time.Time]bool
+	sources      map[string][]observationSource
+	archive      ObservationArchive
+	catalogs     map[time.Time]*ObservationCatalog
+	scanningHour time.Time
 }
 
 type observationOpenFile struct {
@@ -1175,14 +1208,6 @@ func (r *observationRead) close() {
 	}
 }
 
-// gap reports the start of local observation when the query begins before it.
-func (r *observationRead) gap(from time.Time) *time.Time {
-	if from.Before(r.start) {
-		start := r.start
-		return &start
-	}
-	return nil
-}
 
 // capture opens each stream's minute files whose minute lies in [from, to];
 // a zero to reads through the latest file.
@@ -1193,7 +1218,10 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 		l.mu.mark(DiagnosticCapture, DiagnosticBegin)
 		defer l.mu.mark(DiagnosticCapture, DiagnosticEnd)
 	}
-	read := &observationRead{files: map[string][]observationOpenFile{}, open: map[string]*RequestRow{}, definitions: map[string]*Definition{}, start: l.floor}
+	read := &observationRead{
+		files: map[string][]observationOpenFile{}, open: map[string]*RequestRow{}, definitions: map[string]*Definition{},
+		start: l.floor, now: l.now(), ctx: context.Background(), localHours: map[time.Time]bool{},
+	}
 	l.requestMu.Lock()
 	for id, row := range l.open {
 		copied := *row
@@ -1205,25 +1233,34 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 	}
 	hours, err := l.hours()
 	if err != nil {
-		l.lastError = err
+		read.close()
 		return nil, err
 	}
+	read.localHours[read.now.Truncate(time.Hour)] = true
 	for _, hour := range hours {
+		read.localHours[hour] = true
+		catalogWanted := false
+		for stream, bounds := range ranges {
+			if stream != observationCatalogStream && observationHourWanted(hour, bounds) {
+				catalogWanted = true
+			}
+		}
 		for _, stream := range observationStreams {
 			files, err := l.hourFiles(hour, stream)
 			if err != nil {
 				read.close()
-				l.lastError = err
 				return nil, err
 			}
 			bounds, wanted := ranges[stream]
+			if stream == observationCatalogStream && catalogWanted {
+				bounds, wanted = [2]time.Time{hour, hour.Add(time.Hour)}, true
+			}
 			for _, segment := range files {
 				if !wanted || segment.at.Before(bounds[0].Truncate(time.Minute)) || !bounds[1].IsZero() && segment.at.After(bounds[1]) {
 					continue
 				}
 				if err := l.openReadFile(read, stream, segment); err != nil {
 					read.close()
-					l.lastError = err
 					return nil, err
 				}
 			}
@@ -1258,19 +1295,22 @@ func (l *ObservationLog) scanStream(read *observationRead, stream string, visit 
 		defer l.config.Diagnostics.Mark(DiagnosticQuery, DiagnosticEnd, "", 0)
 	}
 	var scanner observationScanner
-	for _, file := range read.files[stream] {
-		err := scanner.scan(file.file, file.size, visit)
-		if errors.Is(err, errObservationStop) {
-			return nil
+	if read.sources != nil {
+		for _, source := range read.sources[stream] {
+			if err := read.scanSource(stream, source, &scanner, visit); err != nil {
+				return observationScanError(err)
+			}
 		}
+		return read.ctx.Err()
+	}
+	for _, file := range read.files[stream] {
+		read.scanningHour = file.at.Truncate(time.Hour)
+		err := scanner.scan(observationContextReader{ctx: read.ctx, source: file.file}, file.size, visit)
 		if err != nil {
-			l.mu.Lock()
-			l.lastError = err
-			l.mu.Unlock()
-			return fmt.Errorf("read %s: %w", file.file.Name(), err)
+			return observationScanError(fmt.Errorf("read %s: %w", file.file.Name(), err))
 		}
 	}
-	return nil
+	return read.ctx.Err()
 }
 
 func scanObservationFile(name string, size int64, visit func([]byte) error) (result error) {
@@ -1287,6 +1327,7 @@ func scanObservationFile(name string, size int64, visit func([]byte) error) (res
 type observationScanner struct {
 	reader *bufio.Reader
 	long   []byte
+	requireNewline bool
 }
 
 // scan visits newline-terminated lines of a captured prefix; a negative size
@@ -1312,6 +1353,9 @@ func (s *observationScanner) scan(source io.Reader, size int64, visit func([]byt
 			line = s.long
 		}
 		if err == io.EOF {
+			if s.requireNewline && len(line) != 0 {
+				return io.ErrUnexpectedEOF
+			}
 			return nil
 		}
 		if err != nil {

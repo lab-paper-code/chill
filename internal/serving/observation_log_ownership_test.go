@@ -143,7 +143,7 @@ func TestRestoredCallTheNativeDoesNotHoldFinishes(t *testing.T) {
 // The restored final row still counts as accepted, assigned computable demand.
 func checkRestoredDemand(t *testing.T, observationLog *ObservationLog, now time.Time) {
 	t.Helper()
-	load, err := observationLog.LoadWindow(now.Add(-time.Second), now.Add(time.Second))
+	load, err := observationLog.LoadWindow(context.Background(), now.Add(-time.Second), now.Add(time.Second))
 	if err != nil || len(load.Arrivals) != 1 || !load.Arrivals[0].Accepted || !load.Arrivals[0].Compute ||
 		len(load.Workloads) != 1 || load.Workloads[0].Accepted != 1 || load.Workloads[0].Assigned != 1 {
 		t.Fatalf("restored request lost its dispatch: %+v %v", load, err)

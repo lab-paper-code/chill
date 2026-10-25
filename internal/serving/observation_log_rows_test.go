@@ -72,10 +72,10 @@ func TestMergeRequestRowMatchesTwoPass(t *testing.T) {
 			want, got := map[string]*RequestRow{}, map[string]*RequestRow{}
 			for _, row := range corpus[:i] {
 				_ = mergeRequestRowTwoPass(want, row, keep)
-				_ = mergeRequestRow(got, row, keep)
+				_ = mergeRequestRow(got, row, keep, nil)
 			}
 			wantErr := mergeRequestRowTwoPass(want, raw, keep)
-			gotErr := mergeRequestRow(got, raw, keep)
+			gotErr := mergeRequestRow(got, raw, keep, nil)
 			if fmt.Sprint(wantErr) != fmt.Sprint(gotErr) || !reflect.DeepEqual(want, got) {
 				t.Fatalf("%s %q: error %v want %v, rows %+v want %+v", name, raw, gotErr, wantErr, got, want)
 			}

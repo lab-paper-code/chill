@@ -1,6 +1,6 @@
 # 관측 분리 (M1)
 
-[채택한 이행 단계](../architecture-rethink/05-recommendation-migration.md)의 M1 설계와 2026-10-25 T4 조회 확장 설계다. ChillServer는 관측을 기록하고 로컬 버퍼 또는 evidence store의 시간 세그먼트에서 조회에 답한다. 측정 표의 오프라인 산출도 같은 세그먼트를 쓴다(spec README "SLO 관측과 집계"). [M0](decision-record-diet.md)를 전제로 하며, T4의 요구사항 원본은 [scheduler SRS](../../spec/scheduler/SRS.md)의 `SCH-42~47`이다. 아래에서 **기존 구현**과 **변경 설계**를 구분한다. T4는 설계 단계이며 코드·배포 완료를 뜻하지 않는다.
+[채택한 이행 단계](../architecture-rethink/05-recommendation-migration.md)의 M1 설계와 2026-10-25 T4 조회 확장 설계다. ChillServer는 관측을 기록하고 로컬 버퍼 또는 evidence store의 시간 세그먼트에서 조회에 답한다. 측정 표의 오프라인 산출도 같은 세그먼트를 쓴다(spec README "SLO 관측과 집계"). [M0](decision-record-diet.md)를 전제로 하며, T4의 요구사항 원본은 [scheduler SRS](../../spec/scheduler/SRS.md)의 `SCH-42~47`이다. 6장의 조회 확장은 코드에 반영하며, 배포·클러스터 검증 완료를 뜻하지 않는다.
 
 ## 1. 측정한 문제
 
@@ -85,7 +85,7 @@
 
 ### 6.1 범위와 기존 reducer
 
-현재 일반 관측 조회는 로컬 분 파일만 연다. T4는 아래의 모집단·집계 규칙은 유지하고, 파일 선택과 stream 읽기에 6.2절의 archive 경로를 합친다. 파일 이름이 시간 색인이며, 줄은 envelope를 먼저 decode해 선택한 본문만 읽는다. scheduler·power 참조는 기록이 속한 시간의 `catalog`로 푼다.
+일반 관측 조회는 로컬 분 파일과 로컬에 없는 시간의 archive를 함께 읽는다. 아래 모집단·집계 규칙은 유지하고 파일 선택과 stream 읽기는 6.2절의 공통 경로를 쓴다. 파일 이름이 시간 색인이며, 줄은 envelope를 먼저 decode해 선택한 본문만 읽는다. scheduler·power 참조는 기록이 속한 시간의 `catalog`로 푼다.
 
 | 조회 | 읽는 범위 | 규칙 |
 |---|---|---|
@@ -104,7 +104,7 @@
 - **중복·페이지:** source 시간 선택 외에도 `requestRows`/`mergeRequestRow`의 `requestID`별 `final > open > assigned` 병합을 유지한다. archive의 assigned와 로컬의 늦은 final은 요청 하나다. scheduler·management·power는 같은 시간을 두 소스에서 읽지 않아 중복 가산하지 않는다. scheduler page는 source가 아니라 합친 시간순 append 순서에 기존 offset/limit을 적용하며 `errObservationStop`을 archive scanner에서도 정상 종료로 처리한다.
 - **응답 모양:** 네 경로의 기존 본문·필터·`nextCursor`를 유지하고 `coverage: {from,to,sources:[{from,to,stream,source}],gaps:[{from,to,stream,reason}]}`를 더한다. 시각은 RFC3339Nano, `source`는 `local|archive`이고 archive 항목에는 `store,key`를 싣는다. coverage의 from/to는 확보된 범위의 외곽(전부 없으면 null), 내부 공백은 gaps로 드러낸다. 로컬 floor만으로 공백을 만들지 않는다. 기존 `gapUntil`은 실제 선두 공백이 있을 때만 남기고 중간 공백은 gaps에 둔다.
 - **없는 자료와 실패:** 현재 `upload`는 빈 stream의 객체를 만들지 않는다. 따라서 archive에 필요한 stream·시간이 없으면 관측 0건이라고 단정하지 않고 `StreamUnavailable` 공백으로 표시한다(빈 시간과 유실을 구분할 새 manifest는 만들지 않는다). catalog 참조 누락·잘린 gzip·JSON 오류·store List/Open 실패는 조회 오류이며 성공한 빈 응답으로 숨기지 않는다. power의 경계 표본 또는 기준 snapshot이 없으면 기존 reducer의 `complete=false`와 이유를 유지한다. 읽기 실패는 append 실패가 아니므로 읽기 전용 실패만으로 쓰기 `readyz`를 내리지 않는다.
-- **시간 제한:** `Query`, `LoadWindow`, `SchedulerArrivals`, `SchedulerObservationPage`, `OperatingPower`에 `context.Context`를 전달하는 형태로 모든 호출부를 함께 이관한다. HTTP는 `ServeHTTP`의 RequestTimeout·취소를 List/Open/scan에 전달하고 내부 호출은 controller capture의 ctx를 쓴다. 네트워크 읽기는 `mu` 밖이며 기존 `limit`은 유지한다. 최근 도착 창이 로컬에 모두 있으면 archive List/Open 없이 기존 경로로 끝낸다.
+- **시간 제한:** `Query`, `LoadWindow`, `SchedulerArrivals`, `SchedulerObservationPage`, `OperatingPower`, `ScanOccupancyRows`는 첫 인자로 `context.Context`를 받는다. HTTP는 `ServeHTTP`의 RequestTimeout·취소를 List/Open/scan에 전달하고 내부 호출은 controller capture의 ctx를 쓴다. 네트워크 읽기는 `mu` 밖이며 기존 `limit`은 유지한다. 최근 도착 창이 로컬에 모두 있으면 archive List/Open 없이 기존 경로로 끝낸다.
 
 | 대상 API·변경 위치(조사 시점 행) | 변경할 데이터 흐름 |
 |---|---|
@@ -128,12 +128,14 @@
 - `GET /api/v1/experiments`는 `{items:[summary]}`(from 내림차순·id 순), `GET /api/v1/experiments/{id}`는 summary 하나다. summary는 `{schemaVersion:"serving-experiment.v1alpha1",id,from,to,status,stages:[{id,from,to,kpis}],sources:[{store,key}]}`다. 단계 KPI는 기존 E5 판정의 요청 수·결과별 수·성공/SLO 분자와 분모·지연 분위수·전체/활성 POOL J를 해당 모집단 설명과 함께 보존한다. 미측정은 null과 이유이며 통과로 바꾸지 않는다. 단계 구간은 `[from,to)`, 출처는 허용된 evidence store의 객체 위치이며 클라이언트가 임의 URL/호스트 파일 경로를 열게 하지 않는다.
 - **위치·흐름:** `hack/e5/e5.py:summarize`는 지금 `e5-summary.json`을 로컬에만 쓴다. 실행 종료 시 이 결과와 실제 `phase.json` 경계·KPI·출처를 위 요약으로 투영해 기존 evidence store `PutImmutable` 계약으로 `serving/experiments.v1alpha1/{id}/summary.json`에 올리는 출판 단계를 붙인다. 관측·loadgen 등 원자료를 먼저 보존하고 최종 요약을 마지막에 한 번 올린다. 같은 ID를 수정하지 않고 정정 실행은 새 ID다. `PRIVATE_OPERATIONAL_ONLY`, 미측정·실패·한계 해석은 그대로 남긴다.
 - `httpapi/handler.go:NewHandler`에 읽기 경로 등록, `HandlerConfig`와 `cmd/chill-server/server.go:run`의 기존 objects Reader/Lister 주입으로 목록·상세를 제공한다. 서버는 요약을 읽을 뿐 E5를 실행하거나 KPI를 재계산하지 않는다. 기존 `evidencestore/store.go:Reader`/`Lister`를 재사용하고 새 DB·캠페인 관리 API는 만들지 않는다. id는 단일 안전 경로 요소로 검증하고 prefix 밖 접근은 거절한다. 두 경로 모두 기존 `authorize`의 해당 non-resource GET 권한과 HTTP ctx를 따른다.
+- **출판 도구:** `go run ./hack/e5/publish --config <private-store.json> --manifest <private-manifest.json>`은 기존 S3 `PutImmutable`로 manifest의 `objects`를 먼저 올리고 `summary`를 마지막에 올린다. 설정은 `logicalStore,bucket,endpoint,region,accessKeyID,secretAccessKey`(선택 `sessionToken,tempDir`)이며 외부 공개 응답에 넣지 않는다. manifest 항목은 `{store,key,localPath}`이고 동일 실험 prefix의 원자료와 요약만 허용한다. 이미 존재하는 요약은 덮어쓰지 않고 실패한다.
 - 검사: 출판 후 목록/상세의 동일 ID·단계 경계·출처, 같은 ID 덮어쓰기 거절, 요약 없는 실행이 완료 목록에 나타나지 않음, 미측정/실패 보존, 404와 store 실패 구분, 권한 거절·경로 이탈 거절.
 
 ### 6.5 축약 상태 조회 (API B3, `SCH-46`)
 
 - `GET /api/v1/scheduler/state?view=summary` → `{at,nodes,instances,routing,decision:{id,at,status,reasons,targetID},actions}`. 노드는 식별·전력모드·가용/준비 상태, 인스턴스는 식별·node·소유/배분 UID·profileID·ready/routable·이유만, actions는 planned/running 작업의 ID·종류·상태·의존·elapsedNanos·예상 시간만 투영한다. `routable`은 T2의 서버 readback을 쓰며 UI가 ready에서 추론하지 않는다.
 - **기존 compact와 다름:** `httpapi/scheduler_presentation.go:schedulerReadState`는 원본 struct를 embed하고 큰 profile만 참조화하므로 κ 입력·options·costs 등이 여전히 있다. summary는 그 struct를 재사용하지 않고 명시적 whitelist DTO로 만든다. `schedulerCompactQuery`의 view 파싱을 `scheduler.go:Handler.scheduler`와 함께 확장하되 summary는 `/state`에서만 허용하고 기존 full/compact 의미는 유지한다. `kube/scheduler.go:SchedulerController.State`에서 얻은 같은 상태 한 벌을 투영하며 전체 상태 JSON을 만든 뒤 지우지 않는다. 프로파일 본문·κ 표·후보 목록·과거 results·raw 증거는 제외한다.
+- **구현 식별:** `httpapi/scheduler_summary.go`는 독립 whitelist DTO를 사용한다. `decision.id`는 기존 판단 시각의 UTC RFC3339Nano 표현이며 새 판단 ID를 만들지 않는다. `instances[].routable`은 workload UID별 서버 readback map이다. 노드는 `ready`, `measurement`, `reasons`를 그대로 표시하고 별도 가용성을 추정하지 않는다. BFF는 summary를 `/state`에서만 전달하고 기존 기본 compact를 유지한다.
 - 검사: 같은 상태의 full/summary에서 ID·노드·배분·진행 작업이 일치, profile/κ/중첩 원본 필드 미노출, 대규모 options를 넣어도 summary 크기가 옵션 수에 비례하지 않음, 잘못된/중복 view 거절, 기존 조회 권한 유지.
 
 ### 6.6 작업 예상 시간 (API B5, `SCH-47`)

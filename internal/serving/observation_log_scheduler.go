@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 	"sort"
@@ -42,6 +43,8 @@ type SchedulerActionObservation struct {
 	Actual      json.RawMessage                `json:"actual,omitempty"`
 	Error       string                         `json:"error,omitempty"`
 	Evidence    []evidencestore.ObjectIdentity `json:"evidence,omitempty"`
+	ExpectedSeconds *float64              `json:"expectedSeconds"`
+	ExpectedSource  *ActionExpectedSource `json:"expectedSource"`
 }
 
 type SchedulerObservation struct {
@@ -221,6 +224,11 @@ func (c *ObservationCatalog) body(kind, key string, at time.Time, value any) err
 	}
 	found := rows[0]
 	for _, row := range rows {
+		if row.At.Before(found.At) {
+			found = row
+		}
+	}
+	for _, row := range rows {
 		if !row.At.After(at) && !row.At.Before(found.At) {
 			found = row
 		}
@@ -290,31 +298,6 @@ func resolvePower(event *SchedulerObservation, line *schedulerLine, catalog *Obs
 	return nil
 }
 
-// catalogFor reads the catalog rows of every hour the captured files touch.
-func (l *ObservationLog) catalogFor(read *observationRead, stream string) (*ObservationCatalog, error) {
-	catalog := &ObservationCatalog{}
-	hours := map[time.Time]bool{}
-	var scanner observationScanner
-	for _, file := range read.files[stream] {
-		hours[file.at.Truncate(time.Hour)] = true
-	}
-	for _, file := range read.files[observationCatalogStream] {
-		if !hours[file.at.Truncate(time.Hour)] {
-			continue
-		}
-		if err := scanner.scan(file.file, file.size, func(raw []byte) error {
-			var row CatalogRow
-			if err := json.Unmarshal(raw, &row); err != nil {
-				return err
-			}
-			catalog.Add(row)
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-	}
-	return catalog, nil
-}
 
 type WorkloadLoad struct {
 	UID            string         `json:"uid"`
@@ -337,21 +320,23 @@ type LoadWindow struct {
 	Workloads  []WorkloadLoad     `json:"workloads"`
 	Arrivals   []SchedulerArrival `json:"arrivals"`
 	GapUntil   *time.Time         `json:"gapUntil,omitempty"`
+	Coverage   ObservationCoverage `json:"coverage"`
 }
 
 // LoadWindow counts each stage whose time, receipt plus stage offset, lies in
 // [from,to), independently of result cohort filters.
-func (l *ObservationLog) LoadWindow(from, to time.Time) (LoadWindow, error) {
+func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (LoadWindow, error) {
 	result := LoadWindow{From: from, To: to, Duration: to.Sub(from), Population: "all ingress receipts; computable demand separately marked after authorization and input validation; stage time [from,to); one request = one input"}
 	if from.IsZero() || !from.Before(to) {
 		return result, failure("InvalidQuery", "positive explicit load window is required")
 	}
-	read, err := l.capture(map[string][2]time.Time{observationRequestStream: {from, {}}})
+	read, err := l.prepare(ctx, map[string][2]time.Time{observationRequestStream: {from, {}}})
 	if err != nil {
 		return result, err
 	}
 	defer read.close()
-	result.GapUntil = read.gap(from)
+	result.Coverage = read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}})
+	result.GapUntil = result.Coverage.gapUntil(from)
 	rows, err := l.requestRows(read, func(*requestEnvelope) bool { return true })
 	if err != nil {
 		return result, err
@@ -361,6 +346,9 @@ func (l *ObservationLog) LoadWindow(from, to time.Time) (LoadWindow, error) {
 		return offset != nil && observationInInterval(row.ReceivedAt.Add(time.Duration(*offset)), from, to)
 	}
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		received := observationInInterval(row.ReceivedAt, from, to)
 		accepted := row.accepted() && (row.AcceptedNanos == nil && received || in(row, row.AcceptedNanos))
 		assigned := row.DispatchedAt != nil && observationInInterval(*row.DispatchedAt, from, to) || in(row, row.DispatchedNanos)
@@ -416,27 +404,23 @@ func requestArrival(row *RequestRow, definitions map[string]*Definition) Schedul
 	}
 }
 
-func (l *ObservationLog) SchedulerArrivals(from, to time.Time) ([]SchedulerArrival, error) {
-	window, err := l.LoadWindow(from, to)
+func (l *ObservationLog) SchedulerArrivals(ctx context.Context, from, to time.Time) ([]SchedulerArrival, error) {
+	window, err := l.LoadWindow(ctx, from, to)
 	return window.Arrivals, err
 }
 
 // SchedulerObservationPage decodes full payloads only for page entries and
 // stops at the next matching event. Cursor offsets apply to the selected
 // records in append order.
-func (l *ObservationLog) SchedulerObservationPage(from, to time.Time, limit, offset int) ([]SchedulerObservation, int, *time.Time, error) {
+func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to time.Time, limit, offset int) ([]SchedulerObservation, int, *time.Time, ObservationCoverage, error) {
 	if from.IsZero() || !from.Before(to) || limit <= 0 || offset < 0 {
-		return nil, -1, nil, failure("InvalidQuery", "positive window, bounded limit and nonnegative cursor are required")
+		return nil, -1, nil, ObservationCoverage{}, failure("InvalidQuery", "positive window, bounded limit and nonnegative cursor are required")
 	}
-	read, err := l.capture(map[string][2]time.Time{observationSchedulerStream: {from, to}, observationCatalogStream: {from.Add(-time.Hour), to}})
+	read, err := l.prepare(ctx, map[string][2]time.Time{observationSchedulerStream: {from, to}})
 	if err != nil {
-		return nil, -1, nil, err
+		return nil, -1, nil, ObservationCoverage{}, err
 	}
 	defer read.close()
-	catalog, err := l.catalogFor(read, observationSchedulerStream)
-	if err != nil {
-		return nil, -1, nil, err
-	}
 	records := make([]SchedulerObservation, 0, limit)
 	matched, next := 0, -1
 	err = l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
@@ -460,7 +444,10 @@ func (l *ObservationLog) SchedulerObservationPage(from, to time.Time, limit, off
 			}
 			return errObservationStop
 		}
-		record, err := DecodeSchedulerLine(raw, catalog)
+		if err := l.readCatalog(read, read.scanningHour); err != nil {
+			return err
+		}
+		record, err := DecodeSchedulerLine(raw, read.catalog())
 		if err != nil {
 			return err
 		}
@@ -468,10 +455,11 @@ func (l *ObservationLog) SchedulerObservationPage(from, to time.Time, limit, off
 		return nil
 	})
 	if err != nil {
-		return nil, -1, nil, err
+		return nil, -1, nil, ObservationCoverage{}, err
 	}
 	if offset > matched {
-		return nil, -1, nil, failure("InvalidQuery", "cursor exceeds selected observation count")
+		return nil, -1, nil, ObservationCoverage{}, failure("InvalidQuery", "cursor exceeds selected observation count")
 	}
-	return records, next, read.gap(from), nil
+	coverage := read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}})
+	return records, next, coverage.gapUntil(from), coverage, nil
 }

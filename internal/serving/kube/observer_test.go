@@ -556,7 +556,7 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	if err := observer.scanLogs(id, stream); err != nil {
 		t.Fatal(err)
 	}
-	result, err := manager.observationLog.Query(definition.UID, now.Add(-time.Second), now.Add(time.Second), nil, nil, 0, "")
+	result, err := manager.observationLog.Query(context.Background(), definition.UID, now.Add(-time.Second), now.Add(time.Second), nil, nil, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,7 +575,7 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	// The runtime no longer owns the Call, but the response row is still open.
 	// Preserve all physical evidence separately without fabricating HTTP stages.
 	nativeRows := 0
-	_, err = manager.observationLog.ScanOccupancyRows(definition.UID, "node-uid", now.Add(-time.Second), now.Add(time.Second), func(row serving.RequestRow) {
+	_, err = manager.observationLog.ScanOccupancyRows(context.Background(), definition.UID, "node-uid", now.Add(-time.Second), now.Add(time.Second), func(row serving.RequestRow) {
 		if row.Kind != serving.RequestRowNative {
 			return
 		}

@@ -196,6 +196,9 @@ rules:
   - apiGroups: [edge.dacs.io]
     resources: [profilingruns]
     verbs: [get]
+  - apiGroups: [edge.dacs.io]
+    resources: [operationcostmeasurements, dispatchoccupancymeasurements]
+    verbs: [get, list]
   # ChillServer admits measurements by annotating them.
   - apiGroups: [edge.dacs.io]
     resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts, operationcostmeasurements, dispatchoccupancymeasurements]

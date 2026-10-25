@@ -109,7 +109,7 @@ sources:
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := log.OperatingPower(from, to, meters, 1000)
+	want, err := log.OperatingPower(context.Background(), from, to, meters, 1000)
 	if err != nil || want.WholePoolJoules == nil || want.ActivePoolJoules == nil {
 		t.Fatalf("server: %+v %v", want, err)
 	}

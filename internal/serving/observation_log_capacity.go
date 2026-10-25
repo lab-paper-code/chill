@@ -46,6 +46,7 @@ func (l *ObservationLog) CapacityRecords(ctx context.Context, keys []string) (ma
 	if err != nil {
 		return nil, err
 	}
+	read.ctx = ctx
 	err = l.scanStream(read, observationManagementStream, visit(found))
 	read.close()
 	archive, reads := l.config.Writer.(ObservationArchive)
@@ -58,6 +59,12 @@ func (l *ObservationLog) CapacityRecords(ctx context.Context, keys []string) (ma
 	}
 	slices.SortFunc(objects, func(a, b evidencestore.ObjectIdentity) int { return strings.Compare(b.Key, a.Key) })
 	for _, object := range objects {
+		if err := ctx.Err(); err != nil {
+			return found, err
+		}
+		if hour, _, valid := observationObjectHour(object); !valid || read.localHours[hour] {
+			continue
+		}
 		if !strings.HasSuffix(object.Key, "/"+observationManagementStream+".jsonl.gz") {
 			continue
 		}
@@ -78,15 +85,30 @@ func (l *ObservationLog) CapacityRecords(ctx context.Context, keys []string) (ma
 }
 
 func readArchivedStream(ctx context.Context, archive evidencestore.Reader, object evidencestore.ObjectIdentity, visit func([]byte) error) (result error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	body, err := archive.Open(ctx, object)
 	if err != nil {
 		return err
 	}
 	defer func() { result = errors.Join(result, body.Close()) }()
-	unzipped, err := gzip.NewReader(body)
+	stop := context.AfterFunc(ctx, func() { _ = body.Close() })
+	defer stop()
+	unzipped, err := gzip.NewReader(observationContextReader{ctx: ctx, source: body})
 	if err != nil {
 		return err
 	}
-	var scanner observationScanner
-	return scanner.scan(unzipped, -1, visit)
+	defer func() { result = errors.Join(result, unzipped.Close()) }()
+	scanner := observationScanner{requireNewline: true}
+	err = scanner.scan(unzipped, -1, func(raw []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return visit(raw)
+	})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return observationScanError(err)
 }

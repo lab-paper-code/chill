@@ -55,7 +55,7 @@ func TestOperatingPowerSameIntervalAndActualMembership(t *testing.T) {
 			if scenario.boundedQuery {
 				limit = 1
 			}
-			got, err := observationLog.OperatingPower(from, to, meters, limit)
+			got, err := observationLog.OperatingPower(context.Background(), from, to, meters, limit)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -232,7 +232,7 @@ func TestOperatingPowerInterpolatesRealBoundarySupport(t *testing.T) {
 				}
 			}
 			from, to := base.Add(scenario.from), base.Add(scenario.to)
-			got, err := observationLog.OperatingPower(from, to, []OperatingPowerMeter{{Node: node, Meter: "ramp-wall", Scope: "node-exclusive-wall", Source: operatingTestSource}}, 10)
+			got, err := observationLog.OperatingPower(context.Background(), from, to, []OperatingPowerMeter{{Node: node, Meter: "ramp-wall", Scope: "node-exclusive-wall", Source: operatingTestSource}}, 10)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -281,7 +281,7 @@ func TestOperatingPowerClosedWindowRejectsRealGapsNotCollectorChunkVerdicts(t *t
 			appendClosedPowerSeries(t, observationLog, node, base, policy, scenario.gap, scenario.failure)
 			from := base.Add(scenario.fromOffset)
 			to := from.Add(60 * time.Second)
-			got, err := observationLog.OperatingPower(from, to, meters, 100)
+			got, err := observationLog.OperatingPower(context.Background(), from, to, meters, 100)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -358,7 +358,7 @@ func TestOperatingPowerProjectsLargeUnrelatedPayload(t *testing.T) {
 	from := time.Now().UTC().Add(time.Second)
 	to := from.Add(10 * time.Second)
 	meters := seedOperatingPower(t, observationLog, from, operatingPowerScenario{})
-	want, err := observationLog.OperatingPower(from, to, meters, 20)
+	want, err := observationLog.OperatingPower(context.Background(), from, to, meters, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +412,7 @@ func TestOperatingPowerProjectsLargeUnrelatedPayload(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := observationLog.OperatingPower(from, to, meters, 20)
+	got, err := observationLog.OperatingPower(context.Background(), from, to, meters, 20)
 	if err != nil {
 		t.Fatal(err)
 	}

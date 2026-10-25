@@ -609,7 +609,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 	loadErr := errors.Join(err, c.deleteLoadJobs(ctx, ref, config.LoadGenerator))
 	drainState, drainErr := c.waitOccupancyDrain(ctx, string(plan.workload.UID), ref, time.Duration(m.Spec.DrainSeconds)*time.Second)
 	var aggregate occupancyAccumulator
-	gap, scanErr := c.observationLog.ScanOccupancyRows(string(plan.workload.UID), ref.UID, started, time.Now(), aggregate.add)
+	gap, scanErr := c.observationLog.ScanOccupancyRows(ctx, string(plan.workload.UID), ref.UID, started, time.Now(), aggregate.add)
 	if scanErr != nil {
 		return fail(scanErr)
 	}

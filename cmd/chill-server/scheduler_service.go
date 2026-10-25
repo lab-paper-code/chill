@@ -343,7 +343,7 @@ func (o *schedulerService) applyStaticRouting(ctx context.Context) {
 	o.staticAppliedRV = o.resourceVersion
 }
 
-func (o *schedulerService) operatingPower(from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {
+func (o *schedulerService) operatingPower(ctx context.Context, from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {
 	// Capture one accepted configuration without waiting behind refresh or Tick.
 	config := o.configuration.Load()
 	meters := make([]serving.OperatingPowerMeter, len(config.Meters))
@@ -352,7 +352,7 @@ func (o *schedulerService) operatingPower(from, to time.Time, limit int) (servin
 			Node: meter.Node, Meter: meter.ID, Scope: meter.Scope, Source: meter.Source,
 		}
 	}
-	return o.observationLog.OperatingPower(from, to, meters, limit)
+	return o.observationLog.OperatingPower(ctx, from, to, meters, limit)
 }
 
 func (o *schedulerService) recordDecision(decision serving.SchedulerDecision) error {
@@ -374,6 +374,7 @@ func (o *schedulerService) recordAction(result servingkube.OperationResult) erro
 		ID: result.Operation.ID, Kind: result.Operation.Kind, Node: result.Operation.Node,
 		Instance: result.Operation.Instance, Phase: result.Status, StartedAt: result.StartedAt,
 		Expected: expected, Actual: actual, Error: result.Error,
+		ExpectedSeconds: result.Operation.ExpectedSeconds, ExpectedSource: result.Operation.ExpectedSource,
 	}
 	if !result.EndedAt.IsZero() {
 		event.CompletedAt = &result.EndedAt

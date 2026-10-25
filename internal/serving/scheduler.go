@@ -154,6 +154,8 @@ type SchedulerInstance struct {
 	Allocation     SchedulerAllocation `json:"allocation"`
 	Ready          bool                `json:"ready"`
 	Stopped        bool                `json:"stopped"`
+	Routable       map[string]bool     `json:"routable"`
+	Reasons        []string            `json:"reasons,omitempty"`
 	Capacity       int                 `json:"capacity"`
 	Weight         int32               `json:"weight"`
 	MaxBatch       int                 `json:"maxBatch"`
@@ -244,15 +246,24 @@ type OperationCost struct {
 	// MeasuredAt selects the latest cost per condition.
 	MeasuredAt time.Time `json:"measuredAt"`
 }
+// ActionExpectedSource identifies the measured trials behind an action duration.
+type ActionExpectedSource struct {
+	CostID     string                       `json:"costID"`
+	Reference  evidencestore.ObjectIdentity `json:"reference"`
+	Statistic  string                       `json:"statistic"`
+	TrialCount int                          `json:"trialCount"`
+}
 type Action struct {
-	ID        string        `json:"id"`
-	Kind      string        `json:"kind"` // prepare, route, stop, drain, remove, power
-	Node      NodeReference `json:"node"`
-	Instance  string        `json:"instance,omitempty"`
-	From      string        `json:"from,omitempty"`
-	To        string        `json:"to,omitempty"`
-	DependsOn []string      `json:"dependsOn"`
-	CostID    string        `json:"costID,omitempty"`
+	ID              string                `json:"id"`
+	Kind            string                `json:"kind"` // prepare, route, stop, drain, remove, power
+	Node            NodeReference         `json:"node"`
+	Instance        string                `json:"instance,omitempty"`
+	From            string                `json:"from,omitempty"`
+	To              string                `json:"to,omitempty"`
+	DependsOn       []string              `json:"dependsOn"`
+	CostID          string                `json:"costID,omitempty"`
+	ExpectedSeconds *float64              `json:"expectedSeconds"`
+	ExpectedSource  *ActionExpectedSource `json:"expectedSource"`
 	// Fixed lowers an available Node to its lowest power mode; every candidate shares it.
 	Fixed      bool          `json:"fixed,omitempty"`
 	Status     string        `json:"status"` // planned, running, complete, failed, cancel
