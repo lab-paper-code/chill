@@ -440,6 +440,11 @@ slot 해석이 필요한 prepare 완료에서 한 번 정확 신분으로 해결
 4. 관측 실패 시 항목·owner·할당·마지막 성공 상태는 보존하지만 현재 dispatch 자격은
    별도 freshness/identity 검사를 통과해야 한다. 늦은 probe는 먼저 확인한 종료/UID 변경을
    되돌리지 못한다. 전역 snapshot 시각으로 각 source의 성공 시각을 새로 찍지 않는다.
+   source 생성은 `restoreSources`의 Pod 수명 관측 경로만 소유한다. `startLogs`는 기존
+   source의 UID/container 일치와 !stopped/!deleted를 요구하고 source를 만들지 않는다.
+   `verifySource`도 지연 LIST 결과를 게시하기 전에 같은 퇴역/identity 경계를 검사한다.
+   `clearNode`의 미관측 Pod fallback도 `removeInstance`의 종료 proof/finalizer 경로를
+   사용한다. 실행 중인데 runtime에 없는 Pod는 부재로 간주하거나 finalizer를 벗기지 않는다.
 5. 재시작은 기존 Pod/finalizer/owner/정책 annotation에서 장부를 복원한 뒤 새 변경을
    허가한다. `c.runs`의 메모리 수명이 원격 작업의 취소/부재를 보장한다고 주장하지 않는다.
    복원할 identity/효과가 불명인 범위는 재관측까지 고정한다.
@@ -467,6 +472,11 @@ Workload UID 집합, 정확한 Pod UID/물리 ID 집합**을 기록한다. 보�
 예약하며 CPU별 세밀 락은 만들지 않는다. create 전에는 Node·Workload·slot과 예정
 할당을 예약하고, Pod 생성 뒤 그 UID/물리 ID를 같은 owner에 결속한다.
 Pod별 관측 메모와 run 예약은 같은 장부 snapshot에서 합쳐 보되 예약용 별도 저장소는 없다.
+Workload 삭제는 `reserveDeletion`에서 `reserveRun`을 사용하여 같은 장부에 등록한다.
+삭제 API 호출 전에 Workload UID·소유 Pod UID/physical ID·Node를 묶어 확보하고, snapshot에서
+이미 빠진 reset/remove 대상은 현재 소유 Pod 목록으로 보강한다. 삭제 실패/정리 대기 동안은
+예약을 유지하며, finalizer 제거만으로 해제하지 않고 `confirmDeletion`의 정확 UID 부재
+확인과 runtime Forget 이후 해제한다. 신규 저장소나 별도 충돌 체계는 만들지 않는다.
 
 공통 허가·충돌·등록·해제 책임은 기존 `kube/admission.go`에 모은다.
 `tickMu` 안에서 현재 장부/runtime/Node identity를 읽고 **영향집합 산정 → 전체 충돌 검사

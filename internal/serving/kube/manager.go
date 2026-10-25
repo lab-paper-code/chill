@@ -611,8 +611,16 @@ func (m *Manager) DeleteWorkload(ctx context.Context, name, resourceVersion stri
 	if err := m.checkOperation(w); err != nil {
 		return m.view(w), err
 	}
+	if m.observer.scheduler != nil {
+		if err := m.observer.scheduler.reserveDeletion(ctx, w.UID); err != nil {
+			return m.view(w), err
+		}
+	}
 	before := m.applied(w)
 	if err := m.stop(w, "Deleting"); err != nil {
+		if m.observer.scheduler != nil {
+			m.observer.scheduler.releaseDeletion(w.UID)
+		}
 		return m.view(w), err
 	}
 	if err := m.store.DeleteWorkload(ctx, w); err != nil {
@@ -705,6 +713,11 @@ func (m *Manager) apply(ctx context.Context, w *api.Workload, d *serving.Definit
 
 func (m *Manager) advanceWorkload(ctx context.Context, w *api.Workload) error {
 	op := m.status(w).Operation
+	if op.Kind == operationDelete && m.observer.scheduler != nil {
+		if err := m.observer.scheduler.reserveDeletion(ctx, w.UID); err != nil {
+			return err
+		}
+	}
 	if op.Phase == "Stopping" || op.Phase == "Draining" {
 		done, err := m.drain(w)
 		if err != nil || !done {
@@ -763,6 +776,9 @@ func (m *Manager) confirmDeletion(ctx context.Context, w *api.Workload) error {
 	before := m.applied(w)
 	if err := m.runtime.Forget(string(w.UID)); err != nil {
 		return err
+	}
+	if m.observer.scheduler != nil {
+		m.observer.scheduler.releaseDeletion(w.UID)
 	}
 	delete(m.deletionChecks, w.UID)
 	delete(m.failed, w.UID)

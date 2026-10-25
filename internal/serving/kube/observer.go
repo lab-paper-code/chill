@@ -98,6 +98,7 @@ type Observer struct {
 	config    ObserverConfig
 	profiles  []serving.Profile
 	sources   map[string]*nativeSource
+	scheduler *SchedulerController
 	// issueMu guards issues, so log followers record progress and its issues
 	// while a refresh holds mu.
 	issueMu           sync.Mutex
@@ -481,6 +482,10 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		instance, probeErr := o.native.Probe(probeCtx, spec)
 		cancel()
 		o.mu.Lock()
+		source := o.sources[string(pod.UID)]
+		if source == nil || source.stopped || source.deleted || physicalID(source.uid, source.containerID) != spec.InstanceID {
+			return serving.ReadyInstance{}, false, nil
+		}
 		if probeErr == nil || instance.State.Native != nil {
 			if probeErr != nil {
 				instance.State.Reason = probeErr.Error()
@@ -512,6 +517,11 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 // verifySource publishes a probed instance only if the Pod list read behind
 // the probe shows the same running executor as the only one its Service selects.
 func (o *Observer) verifySource(p probedSource, latest *corev1.PodList, latestErr error) (serving.ReadyInstance, bool) {
+	source := o.sources[string(p.pod.UID)]
+	status := firstfloorStatus(p.pod)
+	if source == nil || source.stopped || source.deleted || status == nil || source.containerID != status.ContainerID {
+		return serving.ReadyInstance{}, false
+	}
 	if latestErr != nil {
 		return o.sourceUnavailable(p.pod, latestErr)
 	}
@@ -854,15 +864,12 @@ func (o *Observer) watchPods(w watch.Interface) {
 // requests without it.
 func (o *Observer) startLogs(pod *corev1.Pod, owner string) error {
 	status := firstfloorStatus(pod)
-	id := physicalID(pod.UID, status.ContainerID)
 	source := o.sources[string(pod.UID)]
-	if source != nil && source.stopped {
-		return errors.New("terminated physical executor cannot become current")
+	if source == nil || source.stopped || source.deleted || status == nil || status.ContainerID == "" || source.containerID != status.ContainerID {
+		return errors.New("physical executor is no longer current")
 	}
-	if source == nil {
-		source = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: status.ContainerID, ownerUID: types.UID(owner)}
-		o.sources[string(pod.UID)] = source
-	} else if owner != "" {
+	id := physicalID(pod.UID, status.ContainerID)
+	if owner != "" {
 		source.ownerUID = types.UID(owner)
 	}
 	if source.cancel != nil {

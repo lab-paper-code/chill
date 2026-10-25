@@ -585,21 +585,9 @@ func (o *Operations) clearNode(ctx context.Context, node serving.NodeReference) 
 			}
 			continue
 		}
-		patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": pod.UID, "$deleteFromPrimitiveList/finalizers": []string{sourceFinalizer}}})
-		if err != nil {
-			return err
-		}
-		pods := o.kube.CoreV1().Pods(pod.Namespace)
-		if _, err = pods.Patch(ctx, pod.Name, types.StrategicMergePatchType, patch, meta.PatchOptions{}); eIfNotFound(err) != nil {
-			return err
-		}
-		if err = eIfNotFound(pods.Delete(ctx, pod.Name, meta.DeleteOptions{Preconditions: &meta.Preconditions{UID: &pod.UID}})); err != nil {
-			return err
-		}
-		if err = deleteInstanceService(ctx, o.kube, pod); err != nil {
-			return err
-		}
-		if err = eIfNotFound(o.kube.CoreV1().ConfigMaps(pod.Namespace).Delete(ctx, pod.Name, meta.DeleteOptions{})); err != nil {
+		// Unobserved executors still need the same retained termination proof.
+		// Without a known runtime instance only an already terminal Pod is removable.
+		if err = o.removeInstance(ctx, node, string(pod.UID), "", nil); err != nil {
 			return err
 		}
 	}

@@ -129,6 +129,7 @@ func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *se
 	measurement := *operations
 	measurement.config.Measurement = true
 	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}
+	observer.scheduler = c
 	c.measureStep = c.measureOperation
 	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
 		return observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: row.Input.WorkloadUID, Kind: serving.CapacityRowBuiltEvent, Phase: row.Status, At: row.BuiltAt, Capacity: &row})
@@ -236,7 +237,7 @@ func (c *SchedulerController) Capacity() []serving.CapacityRow { return c.capaci
 func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {
 	result := make([]serving.Action, 0, len(c.runs))
 	for _, r := range c.runs {
-		if r.action.Kind == transitionRunKind || r.action.Kind == measurementLeaseKind {
+		if r.action.Kind == transitionRunKind || r.action.Kind == measurementLeaseKind || r.action.Kind == workloadDeletionKind {
 			continue
 		}
 		a := r.action

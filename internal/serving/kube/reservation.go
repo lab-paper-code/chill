@@ -2,16 +2,20 @@ package kube
 
 import (
 	"cmp"
+	"context"
 	"slices"
 	"time"
 
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const transitionRunKind = "transition"
 const measurementLeaseKind = "measurement-lease"
+const workloadDeletionKind = "workload-deletion"
 
 // resourceScope is acquired atomically before an operation can have effects.
 // A completed execution can still own its scope until observation proves return.
@@ -93,6 +97,9 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 		return false
 	}
 	scope := c.operationScope(operation)
+	// Live owned physical resources may no longer appear in the last snapshot.
+	scope.Pods = append(scope.Pods, run.scope.Pods...)
+	scope.Instances = append(scope.Instances, run.scope.Instances...)
 	if run.owner == "" {
 		run.owner = id
 	}
@@ -215,4 +222,54 @@ func (c *SchedulerController) nodeExecuting(node *core.Node) bool {
 		}
 	}
 	return false
+}
+
+// reserveDeletion shares the operation ledger from acceptance through confirmed
+// native deletion. Live owned Pods supplement snapshots after reset/removal.
+func (c *SchedulerController) reserveDeletion(ctx context.Context, uid types.UID) error {
+	c.tickMu.Lock()
+	defer c.tickMu.Unlock()
+	id := workloadDeletionKind + "/" + string(uid)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if run := c.runs[id]; run != nil && run.reserved {
+		return nil
+	}
+	objects, err := c.observer.ownedResources(ctx, uid)
+	if err != nil {
+		return err
+	}
+	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
+	if err != nil {
+		return err
+	}
+	operation := Operation{ID: id, Kind: workloadDeletionKind, WorkloadUID: string(uid)}
+	for _, object := range objects {
+		if pod, ok := object.(*core.Pod); ok {
+			for _, node := range nodes.Items {
+				if node.Name == pod.Spec.NodeName {
+					operation.Nodes = append(operation.Nodes, serving.NodeReference{Name: node.Name, UID: string(node.UID)})
+				}
+			}
+		}
+	}
+	run := &actionRun{owner: id, action: serving.Action{ID: id, Kind: workloadDeletionKind, Status: nativeOperationRunning}}
+	for _, object := range objects {
+		if pod, ok := object.(*core.Pod); ok {
+			run.scope.Pods = append(run.scope.Pods, string(pod.UID))
+			if status := firstfloorStatus(pod); status != nil && status.ContainerID != "" {
+				run.scope.Instances = append(run.scope.Instances, physicalID(pod.UID, status.ContainerID))
+			}
+		}
+	}
+	if !c.reserveRun(id, run, operation) {
+		return refused("OperationConflict", "Workload deletion resources are reserved")
+	}
+	return nil
+}
+
+func (c *SchedulerController) releaseDeletion(uid types.UID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.runs, workloadDeletionKind+"/"+string(uid))
 }
