@@ -681,6 +681,80 @@ func TestControlledRoutingKeepsExplicitlyUnroutedWorkloadQueuedAfterInstanceRedi
 	}
 }
 
+// A measurement or manual preparation registers its instance through the Pod
+// seed only. While another Workload is under control, the seeded Workload is
+// absent from the applied distribution and must still execute its requests.
+func TestControlledRoutingExecutesSeededWorkloadAbsentFromAppliedDistribution(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	d := snapshot.Workloads[0]
+	p := snapshot.Instances[0].Profile
+	observationLog, err := NewObservationLog(ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence",
+		Writer: &observationArchive{directory: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = observationLog.Close(context.Background()) }()
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.cancel()
+	r.SetProfiles([]Profile{*p})
+	if err = r.Publish(d); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}}}); err != nil {
+		t.Fatal(err)
+	}
+	measured := *d
+	measured.Name, measured.UID = "measured-workload", "measured-uid"
+	if err = r.Publish(&measured); err != nil {
+		t.Fatal(err)
+	}
+	executed := make(chan string, 1)
+	instance := ReadyInstance{
+		State: InstanceState{
+			ID: "seeded", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true,
+		},
+		Profile: p, Capacity: 1,
+		Routing: map[string]int32{measured.UID: 1},
+		Execute: func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
+			executed <- dispatch.Assignment.Instance
+			return BackendResult{Finished: true}, nil
+		},
+	}
+	if err = r.InstallInstances([]ReadyInstance{instance}); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := r.Receive(measured.Name, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}}
+	call, err := r.Accept(receipt, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err = call.Wait(ctx); err != nil {
+		t.Fatalf("seeded workload absent from the applied distribution did not execute: %v", err)
+	}
+	select {
+	case id := <-executed:
+		if id != instance.State.ID {
+			t.Fatalf("executed on %q, want %q", id, instance.State.ID)
+		}
+	default:
+		t.Fatal("backend never executed the seeded workload's request")
+	}
+	if err = r.Response(receipt, "ok", ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // The replay routes each Workload's requests over its own instances exactly
 // as the runtime does, for keep, a re-weighted target, prepared physical
 // identities and retained or reset route credits.
