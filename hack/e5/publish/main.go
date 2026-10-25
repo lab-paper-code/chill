@@ -136,8 +136,12 @@ func publish(ctx context.Context, writer evidencestore.ImmutableWriter, store st
 		}
 	}
 	for _, object := range manifest.Objects {
-		if _, err := putPublicationObject(ctx, writer, object); err != nil {
+		receipt, err := putPublicationObject(ctx, writer, object)
+		if err != nil {
 			return evidencestore.Receipt{}, err
+		}
+		if receipt.Outcome != evidencestore.CreateOutcomeCreated {
+			return evidencestore.Receipt{}, fmt.Errorf("%w: experiment raw evidence already exists; publication requires a new id", evidencestore.ErrPrecondition)
 		}
 	}
 	receipt, err := putPublicationObject(ctx, writer, manifest.Summary)

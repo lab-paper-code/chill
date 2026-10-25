@@ -90,6 +90,38 @@ func TestPublishRawBeforeSummaryAndRefuseSameID(t *testing.T) {
 	}
 }
 
+func TestPublishPartialFailureRequiresNewID(t *testing.T) {
+	manifest := publicationFixture(t)
+	second := publicationObject{
+		Store:     manifest.Objects[0].Store,
+		Key:       httpapi.ExperimentPrefix + "run-1/raw/second.json",
+		LocalPath: filepath.Join(t.TempDir(), "second.json"),
+	}
+	if err := os.WriteFile(second.LocalPath, []byte(`{"trial":2}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Objects = append(manifest.Objects, second)
+	store := &publicationMemoryStore{fail: second.Key}
+	if _, err := publish(context.Background(), store, "evidence", manifest); !errors.Is(err, evidencestore.ErrTransport) {
+		t.Fatalf("expected partial publication failure: %v", err)
+	}
+	if !store.stored[manifest.Objects[0].Key] || store.stored[manifest.Summary.Key] {
+		t.Fatal("partial publication must preserve the first raw object but not publish the summary")
+	}
+	// A new run cannot attach its summary to the first run's immutable evidence.
+	if err := os.WriteFile(manifest.Objects[0].LocalPath, []byte(`{"differentRun":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store.fail = ""
+	store.keys = nil
+	if _, err := publish(context.Background(), store, "evidence", manifest); !errors.Is(err, evidencestore.ErrPrecondition) {
+		t.Fatalf("republication must require a new experiment ID: %v", err)
+	}
+	if len(store.keys) != 1 || store.keys[0] != manifest.Objects[0].Key || store.stored[manifest.Summary.Key] {
+		t.Fatalf("collision must stop before new evidence or summary writes: %v", store.keys)
+	}
+}
+
 func TestPublishNeverCompletesWithoutRawEvidence(t *testing.T) {
 	for _, name := range []string{"raw store failure", "raw file missing", "unpublished source", "summary raw key", "other experiment", "other store", "canceled"} {
 		t.Run(name, func(t *testing.T) {

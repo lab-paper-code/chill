@@ -129,6 +129,7 @@
 - **위치·흐름:** `hack/e5/e5.py:summarize`는 지금 `e5-summary.json`을 로컬에만 쓴다. 실행 종료 시 이 결과와 실제 `phase.json` 경계·KPI·출처를 위 요약으로 투영해 기존 evidence store `PutImmutable` 계약으로 `serving/experiments.v1alpha1/{id}/summary.json`에 올리는 출판 단계를 붙인다. 관측·loadgen 등 원자료를 먼저 보존하고 최종 요약을 마지막에 한 번 올린다. 같은 ID를 수정하지 않고 정정 실행은 새 ID다. `PRIVATE_OPERATIONAL_ONLY`, 미측정·실패·한계 해석은 그대로 남긴다.
 - `httpapi/handler.go:NewHandler`에 읽기 경로 등록, `HandlerConfig`와 `cmd/chill-server/server.go:run`의 기존 objects Reader/Lister 주입으로 목록·상세를 제공한다. 서버는 요약을 읽을 뿐 E5를 실행하거나 KPI를 재계산하지 않는다. 기존 `evidencestore/store.go:Reader`/`Lister`를 재사용하고 새 DB·캠페인 관리 API는 만들지 않는다. id는 단일 안전 경로 요소로 검증하고 prefix 밖 접근은 거절한다. 두 경로 모두 기존 `authorize`의 해당 non-resource GET 권한과 HTTP ctx를 따른다.
 - **출판 도구:** `go run ./hack/e5/publish --config <private-store.json> --manifest <private-manifest.json>`은 기존 S3 `PutImmutable`로 manifest의 `objects`를 먼저 올리고 `summary`를 마지막에 올린다. 설정은 `logicalStore,bucket,endpoint,region,accessKeyID,secretAccessKey`(선택 `sessionToken,tempDir`)이며 외부 공개 응답에 넣지 않는다. manifest 항목은 `{store,key,localPath}`이고 동일 실험 prefix의 원자료와 요약만 허용한다. 이미 존재하는 요약은 덮어쓰지 않고 실패한다.
+- **부분 출판 충돌:** 원자료도 `CreateOutcomeCreated`만 허용한다. 원자료 일부가 저장된 뒤 중단되었으면 같은 ID 재출판은 `Existing`에서 즉시 충돌로 거절하고 새 ID를 요구한다. 원자료나 요약의 digest·내용 비교로 같은 실행임을 추정하지 않는다.
 - 검사: 출판 후 목록/상세의 동일 ID·단계 경계·출처, 같은 ID 덮어쓰기 거절, 요약 없는 실행이 완료 목록에 나타나지 않음, 미측정/실패 보존, 404와 store 실패 구분, 권한 거절·경로 이탈 거절.
 
 ### 6.5 축약 상태 조회 (API B3, `SCH-46`)
