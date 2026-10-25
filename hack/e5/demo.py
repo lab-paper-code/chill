@@ -467,6 +467,22 @@ def summarize(e5, binding, out):
     return stage_summaries
 
 
+def finish_ack(e5, out, path):
+    """Select the real completed OperationResult bound to the original PUT/CM."""
+    ack = e5.load(out / 'finish-unroute-put-ack.json')
+    cm = e5.load(out / 'finish-unroute-configmap.json')
+    document = e5.load(path)
+    e5.need(document, [], 'Native ACK input')
+    entries = [((event.get('action') or {}).get('actual') or {}, event.get('at')) for event in document['events']] if 'events' in document else [(document, None)]
+    matching = [(result, at) for result, at in entries if result.get('operation', {}).get('kind') == 'manual-static-routing' and result['operation'].get('settingsValidatedAt') == ack['validatedAt'] and result['operation'].get('sourceConfigRV') == cm['metadata']['resourceVersion'] and result.get('status') == 'complete' and not result.get('error')]
+    if len(matching) != 1:
+        raise RuntimeError('Exactly one original completed unroute ACK required; no current-state or repeated-PUT substitution')
+    result, at = matching[0]
+    e5.save(out / 'finish-unroute-imported-native-ack.json', result)
+    e5.save(out / 'finish-unroute-imported-native-ack-source.json', {'sourcePath': str(path), 'sourceEventAt': at, 'originalValidatedAt': ack['validatedAt'], 'originalConfigRV': cm['metadata']['resourceVersion']})
+    return result
+
+
 def self_check():
     """Run the real CPO stage loop against local pipes and mocked API/kubectl."""
     import tempfile
@@ -795,16 +811,123 @@ def self_check():
         assert sum(method == 'DELETE' for method, _ in management_calls) == 3 and not registered
         assert all(w['workers'] == 320 and w['lifetimeSeconds'] >= w['slo']['targetLatencyNanos'] / 1e9 for w in assembled['workloads'])
         assert (root / 'assembly/register-plc-anomaly.json').exists() and (cpo.out / 'finish-definitions-complete.json').exists()
-        print('PASS demo: request-only stage/resume drain with active planner, no-replay collection preserving STOP/client/window, unchanged global/finish idle, canonical registration/cleanup, CLI AST compatibility and producer logs before deletion; mocked API/kubectl only')
+        lane = object.__new__(e5.CPO)
+        lane.out = root / 'finish-routing'
+        lane.out.mkdir()
+        lane.uids, lane.c, lane.tb, lane.d = ['u'], {'collection': {'schedulerConfigMap': 'scheduler'}}, {'settleSeconds': 194}, d
+        physical = {'id': 'i', 'node': {'name': 'fixture', 'uid': 'node'}, 'profile': {'id': 'p'}, 'allocation': {}, 'maxBatch': 1, 'maxWaitNanos': 0, 'ownerWorkloadUID': 'u', 'workloadUID': '', 'ready': True}
+        publication = {'snapshot': {'at': '2026-10-25T00:00:10Z', 'instances': [physical], 'nodes': [], 'routing': {'u': {}, 'other': {}}, 'outstanding': [], 'inProgressTarget': None}, 'actions': [], 'results': []}
+        current = copy.deepcopy(publication)
+        current['snapshot']['at'] = '2026-10-25T00:04:00Z'
+        chosen = e5.owned_target(current['snapshot'], lane.uids, {'u': {}})
+        ack = {'validatedAt': '2026-10-25T00:00:00Z', 'appliedAt': '2026-10-25T00:00:06Z'}
+        cm = {'metadata': {'resourceVersion': 'rv1'}, 'data': {'scheduler.json': json.dumps({'staticRoutingValidatedAt': ack['validatedAt'], 'staticRouting': {'u': None}})}}
+        result = {'status': 'complete', 'endedAt': '2026-10-25T00:00:05Z', 'operation': {'kind': 'manual-static-routing', 'sourceConfigRV': 'rv1', 'settingsValidatedAt': ack['validatedAt'], 'target': {'id': 'manual-static-routing:rv1', 'instances': None, 'routing': {'u': None, 'other': {}}}}, 'actual': {'routing': {'u': {}, 'other': None}, 'native': None}}
+        e5.save(lane.out / 'finish-unroute-put-ack.json', ack)
+        e5.save(lane.out / 'finish-unroute-configmap.json', cm)
+        page = lane.out / 'scheduler-page.json'
+        e5.save(page, {'events': [{'at': '2026-10-25T00:00:05Z', 'action': {'actual': result}}, {'at': ack['validatedAt'], 'action': None}]})
+        imported = finish_ack(e5, lane.out, page)
+        assert imported == result
+        lane.io = object.__new__(d.Conductor)
+        lane.io.k = lambda *args, **kwargs: copy.deepcopy(cm)
+        deadline = d.epoch(ack['appliedAt']) + 194
+        def original_deadline(value, seconds):
+            assert value == ack and seconds == 194
+            return -1, deadline
+        lane.io.publication_end = original_deadline
+        lane.state = lambda: copy.deepcopy(current)
+        lane.put = lambda *args: (_ for _ in ()).throw(AssertionError('Original unroute PUT repeated'))
+        def resume_route(native=imported, recorded=publication):
+            return lane.route_ack(chosen, {}, 'finish-unroute', 'before', {}, 'fixture', reuse=True, native_ack=native, publication_state=recorded)
+        assert resume_route()['snapshot']['instances'][0]['id'] == 'i'
+        assert e5.load(lane.out / 'finish-unroute-publication-proof.json')['reusedOriginalACK'] is True
+        invalid_native = copy.deepcopy(imported)
+        invalid_native['actual']['native'] = {'i': {}}
+        foreign_route = copy.deepcopy(imported)
+        foreign_route['actual']['routing']['foreign'] = {'foreign-instance': 1}
+        for invalid in (invalid_native, foreign_route):
+            try:
+                resume_route(native=invalid)
+            except RuntimeError as error:
+                assert 'conflicts' in str(error)
+            else:
+                raise AssertionError('Conflicting native ACK/foreign route was accepted')
+        try:
+            resume_route(recorded=None)
+        except RuntimeError as error:
+            assert 'timely publication proof required' in str(error)
+        else:
+            raise AssertionError('Original publication deadline was restarted')
+        changed = copy.deepcopy(cm)
+        changed['metadata']['resourceVersion'] = 'different'
+        with patch.object(lane.io, 'k', return_value=changed):
+            try:
+                resume_route()
+            except RuntimeError as error:
+                assert 'ConfigMap changed' in str(error)
+            else:
+                raise AssertionError('Stale ConfigMap ACK was accepted')
+        replaced = copy.deepcopy(current)
+        replaced['snapshot']['instances'][0]['id'] = 'replacement'
+        with patch.object(lane, 'state', return_value=replaced):
+            try:
+                resume_route()
+            except RuntimeError as error:
+                assert 'Physical instance identity changed' in str(error)
+            else:
+                raise AssertionError('Current physical ID replacement escaped the fresh guard')
+        fresh = object.__new__(e5.CPO)
+        fresh.out = root / 'fresh-finish'
+        fresh.out.mkdir()
+        fresh.b, fresh.uids, fresh.tb = {'schema': 'demo-e5-binding.v1'}, ['u'], {'settleSeconds': 194}
+        controls, order = {'autonomousWorkloads': ['u'], 'staticRouting': {}}, []
+        fresh.settings = lambda: copy.deepcopy(controls)
+        def disable(value, reason):
+            assert value['autonomousWorkloads'] == []
+            controls.update(value)
+            order.append('off')
+            return ack
+        fresh.put = disable
+        def terminal_actions():
+            assert controls['autonomousWorkloads'] == []
+            order.append('terminal-actions')
+            return copy.deepcopy(publication)
+        fresh.idle = terminal_actions
+        def unroute(target, settings, prefix, *args, **kwargs):
+            assert order == ['off', 'terminal-actions']
+            order.append('unroute')
+            controls['staticRouting'] = target['routing']
+            e5.save(fresh.out / (prefix + '-put-ack.json'), ack)
+            return copy.deepcopy(publication)
+        fresh.route_ack = unroute
+        def remove(method, path, body, **kwargs):
+            assert order[-1] == 'unroute' and controls['staticRouting'] == {'u': {}}
+            assert body['kind'] == 'remove' and body['instance'] == 'i'
+            order.append('remove')
+            return {'status': 'complete'}
+        fresh.io = SimpleNamespace(api=remove)
+        fresh.wait_empty_publication = lambda *args: order.append('empty-publication')
+        fresh.clear_owned('finish')
+        assert order == ['off', 'terminal-actions', 'unroute', 'remove', 'empty-publication']
+        try:
+            fresh.clear_owned('finish')
+        except RuntimeError as error:
+            assert 'Unroute ACK already exists' in str(error)
+        else:
+            raise AssertionError('Fresh finish repeated the original unroute declaration')
+        print('PASS demo: empty/nil routing/native ACK populations, original-deadline finish resume without PUT, fresh physical/RV guards, autonomy-off/action-drain/unroute order, request-only stages and preserved no-replay collection; mocked API/kubectl only')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=['prepare', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'finish'], nargs='?')
+    parser.add_argument('command', choices=['prepare', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'finish', 'finish-resume'], nargs='?')
     parser.add_argument('--config', type=Path, help='Demo JSON; required for prepare')
     parser.add_argument('--out', type=Path, help='Fresh absolute external campaign directory; binding.json is stored here')
     parser.add_argument('--release', type=Path, help='Existing CPO release: executor CampaignOps, command e5-execute, bindingPath, sourceSHA, mainInstructionUTC')
     parser.add_argument('--stage', help='Configured stage ID; required for stage/collect')
+    parser.add_argument('--native-ack', type=Path, help='finish-resume: original completed OperationResult or scheduler-page JSON')
+    parser.add_argument('--publication-state', type=Path, help='finish-resume: retained state proving publication inside the original deadline')
     parser.add_argument('--self-check', action='store_true', help='Run one local mocked API/kubectl lifecycle smoke, without cluster access')
     args = parser.parse_args()
     if args.self_check:
@@ -856,8 +979,16 @@ def main():
         folder = stage_folder(args.out, selected)
         collect_stage(e5, cpo, selected)
         print('Collected evidence: ' + str(folder / 'collected.json'))
-    elif args.command == 'finish':
-        cpo.finish()
+    elif args.command in ('finish', 'finish-resume'):
+        if args.command == 'finish-resume':
+            if args.native_ack is None or args.publication_state is None:
+                parser.error('finish-resume requires --native-ack and --publication-state; never repeat the original PUT')
+            result = finish_ack(e5, args.out, args.native_ack)
+            publication = e5.load(args.publication_state)
+            e5.save(args.out / 'finish-resume-inputs.json', {'nativeACKPath': str(args.native_ack), 'originalPublicationStatePath': str(args.publication_state), 'originalPublicationObservedAt': publication.get('snapshot', {}).get('at')})
+            cpo.finish(reuse=True, native_ack=result, publication_state=publication)
+        else:
+            cpo.finish()
         cpo.cleanup_jobs()
         finish_definitions(e5, cpo)
 

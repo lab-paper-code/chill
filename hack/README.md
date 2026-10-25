@@ -287,6 +287,34 @@ configured zero-load E0 through CPO.run in a fresh `smoke-E0-resume-*/` folder
 (180 seconds in the example), preserving original E0 results. Then execute
 `stage --stage A`, B, C, collect, summary and finish with the same out/release.
 
+Fresh demo finish first disables owned autonomy, waits for request/planner
+actions to terminate, then submits the empty routing declaration. Native ACK
+keys correspond to `operation.target.instances` (positive policy targets),
+not all retained physical instances: an empty unroute has no native policy
+ACKs while owned unrouted instances remain for removal. Empty/nil unrelated
+UID route maps are equivalent; positive foreign routes and physical identity
+changes remain errors. Raw matching results/state are retained before checks.
+
+After an unroute PUT already exists, do not rerun `finish` or submit that PUT
+again. CampaignOps explicitly resumes with the original completed operation
+and original timely publication state, after re-freezing changed source refs:
+
+```sh
+python3 "$DEMO" finish-resume --out "$OUT" --release "$RELEASE" \
+  --native-ack "$OUT/finish-unroute-scheduler-pages/00000.json" \
+  --publication-state "$OUT/finish-failure-state.json"
+```
+
+`--native-ack` accepts an OperationResult or original scheduler page; exactly
+one complete result must join the original validatedAt and ConfigMap RV.
+Resume requires that RV still match, autonomy already off, the recorded
+publication fall between native completion and the original deadline, and
+fresh exact owner/profile/physical-ID checks. It never resets the old deadline
+or repeats the unroute PUT. After owned removal, the existing final settings
+restoration releases stop declarations, returns modes and deletes canonical
+definitions. No original ACK, CM, phase, client or offered-window record is
+overwritten.
+
 `python3 hack/e5/demo.py --help` and `--self-check` work without environment
 configuration. The latter runs the real CPO producer stage loop against local
 pipes and mocked API/kubectl, with no cluster access, image builds or full tests.

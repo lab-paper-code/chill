@@ -137,6 +137,15 @@ def instance_rows(value):
     return () if value is None else value
 
 
+def routing_weights(routing):
+    """Go nil/empty UID maps and zero weights carry no active distribution."""
+    result={}
+    for uid,weights in (routing or {}).items():
+        active={identifier:weight for identifier,weight in (weights or {}).items() if weight!=0}
+        if active:result[uid]=active
+    return result
+
+
 def fingerprint(snapshot, uids):
     return {'instances': sorted([{'id': i['id'], 'node': i['node'], 'profileID': i['profile']['id'], 'allocation': i['allocation'], 'maxBatch': i['maxBatch'], 'maxWaitNanos': i['maxWaitNanos'], 'workloadUID': i['workloadUID']} for i in instance_rows(snapshot['instances']) if i.get('workloadUID') in uids], key=lambda i: i['id']), 'routing': {u: snapshot.get('routing', {}).get(u, {}) for u in uids}, 'modes': {n['node']['name']: n['powerMode'] for n in snapshot['nodes'] if n['node']['name'] in NODES}}
 
@@ -404,32 +413,56 @@ class CPO:
             remaining=end-time.monotonic()
             if remaining<=0:raise RuntimeError('Original approved publication budget exhausted; no timeout restart or repeated PUT')
             time.sleep(min(1,remaining))
-    def route_ack(self,chosen,settings,prefix,previous_at,previous_routing,reason):
-        settings['autonomousWorkloads']=[];settings['staticRouting']=chosen['routing'];ack=self.put(settings,reason)
-        save(self.out/(prefix+'-put-ack.json'),ack)
-        cm=self.io.k(['get','configmap',self.c['collection']['schedulerConfigMap'],'-o','json']);save(self.out/(prefix+'-configmap.json'),cm);stored=json.loads(cm['data']['scheduler.json'])
-        if stored.get('staticRoutingValidatedAt')!=ack['validatedAt'] or stored.get('staticRouting')!=chosen['routing']:raise RuntimeError('Formal staticRouting ConfigMap timestamp/declaration mismatch')
+    def route_ack(self,chosen,settings,prefix,previous_at,previous_routing,reason,*,reuse=False,native_ack=None,publication_state=None):
+        ack_path=self.out/(prefix+'-put-ack.json');cm_path=self.out/(prefix+'-configmap.json')
+        if reuse:
+            ack=load(ack_path);cm=load(cm_path)
+            current=self.io.k(['get','configmap',self.c['collection']['schedulerConfigMap'],'-o','json'])
+            save(self.out/(prefix+'-resume-configmap.json'),current)
+            if current['metadata']['resourceVersion']!=cm['metadata']['resourceVersion']:raise RuntimeError('Original unroute ConfigMap changed; no repeated PUT or stale ACK substitution')
+            previous_at=ack['validatedAt']
+        else:
+            settings['autonomousWorkloads']=[];settings['staticRouting']=chosen['routing'];ack=self.put(settings,reason)
+            save(ack_path,ack)
+            cm=self.io.k(['get','configmap',self.c['collection']['schedulerConfigMap'],'-o','json']);save(cm_path,cm)
+        stored=json.loads(cm['data']['scheduler.json'])
+        declared={uid:weights or {} for uid,weights in (stored.get('staticRouting') or {}).items()}
+        if stored.get('staticRoutingValidatedAt')!=ack['validatedAt'] or declared!={uid:weights or {} for uid,weights in chosen['routing'].items()}:raise RuntimeError('Formal staticRouting ConfigMap timestamp/declaration mismatch')
+        def matches(result):
+            return result.get('operation',{}).get('kind')=='manual-static-routing' and result['operation'].get('settingsValidatedAt')==ack['validatedAt'] and result['operation'].get('sourceConfigRV')==cm['metadata']['resourceVersion'] and result.get('status')=='complete' and not result.get('error')
+        if native_ack is not None and (not reuse or not matches(native_ack)):raise RuntimeError('Provided native ACK does not match original completed unroute operation')
         end,publication_deadline=self.io.publication_end(ack,seconds=self.tb['settleSeconds'])
         while True:
-            state=self.state()
-            matches=[r for r in (state.get('results') or []) if r.get('operation',{}).get('kind')=='manual-static-routing' and r['operation'].get('settingsValidatedAt')==ack['validatedAt'] and r['operation'].get('sourceConfigRV')==cm['metadata']['resourceVersion'] and r.get('status')=='complete' and not r.get('error')]
-            for result in matches:
-                actual=result['actual']
-                if actual.get('routing')!=chosen['routing'] or set(actual.get('native',{}))!={i['id'] for i in chosen['instances']}:raise RuntimeError('Completed native routing conflicts with exact requested routing/physical IDs')
-                target_id=result['operation']['target']['id']
-                if any(v.get('metadata',{}).get('policy',{}).get('decisionID')!=target_id for v in actual['native'].values()):raise RuntimeError('Native full ACK DecisionID differs from actual target')
+            state=self.state();save(self.out/(prefix+'-last-state.json'),state)
+            results=[result for result in (state.get('results') or []) if matches(result)]
+            if native_ack is not None:results.append(native_ack)
+            for result in results:
+                save(self.out/(prefix+'-native-result.json'),result)
+                actual=result['actual'];target=result['operation']['target'];native=actual.get('native') or {}
+                need(actual,['routing'],'Actual completed routing');need(target,['id','routing'],'Completed routing target')
+                expected_native={instance['id'] for instance in instance_rows(target.get('instances'))}
+                if routing_weights(actual['routing'])!=routing_weights(target['routing']) or routing_weights(target['routing'])!=routing_weights(chosen['routing']) or set(native)!=expected_native:raise RuntimeError('Completed native routing conflicts with exact declared target/native policy IDs')
+                if expected_native!={identifier for weights in (target['routing'] or {}).values() for identifier,weight in (weights or {}).items() if weight>0}:raise RuntimeError('Completed target instances differ from positive physical routes')
+                if any(value.get('metadata',{}).get('policy',{}).get('decisionID')!=target['id'] for value in native.values()):raise RuntimeError('Native full ACK DecisionID differs from actual target')
                 save(self.out/(prefix+'-native-ack.json'),result)
-                observed={i['id']:i for i in instance_rows(state['snapshot']['instances'])}
-                if set(observed)!={i['id'] for i in chosen['instances']}:raise RuntimeError('Physical instance identity changed during route publication')
+                observed={instance['id']:instance for instance in instance_rows(state['snapshot']['instances'])}
+                if set(observed)!={instance['id'] for instance in chosen['instances']}:raise RuntimeError('Physical instance identity changed during route publication')
                 for wanted in chosen['instances']:
                     instance=observed[wanted['id']]
                     if instance.get('ownerWorkloadUID')!=wanted['workloadUID'] or instance.get('workloadUID') not in (None,'',wanted['workloadUID']) or instance.get('profile',{}).get('id')!=wanted['profileID'] or any(instance.get(key)!=wanted[key] for key in ('node','allocation','maxBatch','maxWaitNanos')):raise RuntimeError('Hard UID/profile/cap/wait/allocation mismatch after full native ACK')
-                modes={n['node']['name']:n['powerMode'] for n in state['snapshot']['nodes'] if n['node']['name'] in NODES}
+                modes={node['node']['name']:node['powerMode'] for node in state['snapshot']['nodes'] if node['node']['name'] in NODES}
                 if modes!=chosen['modes']:raise RuntimeError('Selected physical modes changed during route publication')
-                ready=self.publication_ready(state,chosen['routing'],previous_routing)
-                if ready and state['snapshot']['at']!=previous_at:
+                if reuse and publication_state is not None:
+                    observed_at=self.d.epoch(publication_state.get('snapshot',{}).get('at'));completed_at=self.d.epoch(result.get('endedAt'))
+                    if observed_at is None or completed_at is None or not completed_at<=observed_at<=publication_deadline:raise RuntimeError('Recorded publication state is outside the original completed-operation/deadline interval')
+                    historical={instance['id']:instance.get('ownerWorkloadUID') for instance in instance_rows(publication_state['snapshot'].get('instances'))}
+                    if historical!={instance['id']:instance['workloadUID'] for instance in chosen['instances']} or not self.publication_ready(publication_state,chosen['routing'],previous_routing):raise RuntimeError('Recorded publication proof differs from current exact owned unrouted physical IDs')
+                    if publication_state['snapshot'].get('outstanding') or publication_state['snapshot'].get('inProgressTarget') or any(action.get('status') in ('running','cancel') for action in publication_state.get('actions') or []):raise RuntimeError('Recorded publication proof was not request/action idle')
+                    save(self.out/(prefix+'-original-publication-state.json'),publication_state)
+                elif reuse and time.time()>publication_deadline:raise RuntimeError('Original timely publication proof required after deadline; no timeout reset or PUT retry')
+                if self.publication_ready(state,chosen['routing'],previous_routing) and state['snapshot']['at']!=previous_at:
                     save(self.out/(prefix+'-ready.json'),state)
-                    save(self.out/(prefix+'-publication-proof.json'),{'at':now(),'originalCompletion':ack,'nativeOperationResult':result,'deadlineUTC':dt.datetime.fromtimestamp(publication_deadline,dt.timezone.utc).isoformat(),'currentAlreadyReadyAfterDeadline':time.time()>publication_deadline})
+                    save(self.out/(prefix+'-publication-proof.json'),{'at':now(),'originalCompletion':ack,'nativeOperationResult':result,'deadlineUTC':dt.datetime.fromtimestamp(publication_deadline,dt.timezone.utc).isoformat(),'currentAlreadyReadyAfterDeadline':time.time()>publication_deadline,'reusedOriginalACK':reuse})
                     return state
             remaining=end-time.monotonic()
             if remaining<=0:raise RuntimeError('Original approved native ACK/publication budget exhausted; no timeout reset or PUT retry')
@@ -715,9 +748,20 @@ class CPO:
         settings=self.settings(); settings['controls']=f['controls']; settings['autonomousWorkloads']=self.uids; settings['staticRouting']={}
         self.authorize_native_modes()
         save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-ack.json'),self.put(settings,'Approved independent source control-factor '+f['name']+'; preserve all other controls'))
-    def clear_owned(self,prefix):
+    def clear_owned(self,prefix,*,reuse=False,native_ack=None,publication_state=None):
+        settings=self.settings()
+        if reuse:
+            if set(settings.get('autonomousWorkloads') or []) & set(self.uids):raise RuntimeError('Finish resume requires owned autonomy already off; no settings PUT repeated')
+        elif self.b.get('schema')=='demo-e5-binding.v1':
+            if (self.out/(prefix+'-unroute-put-ack.json')).exists():raise RuntimeError('Unroute ACK already exists; use explicit finish-resume, never repeat the PUT')
+            if set(settings.get('autonomousWorkloads') or [])-set(self.uids):raise RuntimeError('Foreign autonomy declaration; no owned finish')
+            if set(settings.get('autonomousWorkloads') or []) & set(self.uids):
+                settings['autonomousWorkloads']=[]
+                save(self.out/(prefix+'-autonomy-off-ack.json'),self.put(settings,'Disable canonical autonomy before awaiting terminal actions and owned unroute'))
+                if set(self.settings().get('autonomousWorkloads') or []) & set(self.uids):raise RuntimeError('Owned autonomy did not turn off before unroute')
         before=self.idle();chosen=owned_target(before['snapshot'],self.uids,{uid:{} for uid in self.uids})
-        state=self.route_ack(chosen,self.settings(),prefix+'-unroute',before['snapshot']['at'],before['snapshot'].get('routing',{}),'Drain and unroute exact owned canonical instances before removal')
+        save(self.out/(prefix+'-resume-owned-target.json' if reuse else prefix+'-owned-target.json'),{'at':now(),'state':before,'target':chosen,'meaning':'Current exact owned physical removal set; original unroute ACK is retained' if reuse else 'Owned physical set after autonomy-off and terminal action drain'})
+        state=self.route_ack(chosen,self.settings(),prefix+'-unroute',before['snapshot']['at'],before['snapshot'].get('routing',{}),'Drain and unroute exact owned canonical instances before removal',reuse=reuse,native_ack=native_ack,publication_state=publication_state)
         completion=load(self.out/(prefix+'-unroute-put-ack.json'))
         save(self.out/(prefix+'-unrouted-state.json'),state)
         for instance in instance_rows(state['snapshot']['instances']):
@@ -745,10 +789,10 @@ class CPO:
             self.io.remove_job(name,uid)
     def factor_restore(self):
         self.idle(); settings=self.settings(); initial=load(self.c['inputs']['scheduler'])['settings']; settings['controls']=initial['controls']; save(self.out/'factor-restored.json',self.put(settings,'Restore bound full controls after witnessed paired factor block'))
-    def finish(self):
+    def finish(self,*,reuse=False,native_ack=None,publication_state=None):
         initial=load(self.out/'initial.json')
         if any(weight>0 for route in initial['settings'].get('staticRouting',{}).values() for weight in route.values()):raise RuntimeError('Original positive static target IDs cannot be restored after removal; no stale-ID recreation')
-        removed=self.clear_owned('finish')
+        removed=self.clear_owned('finish',reuse=True,native_ack=native_ack,publication_state=publication_state) if reuse else self.clear_owned('finish')
         owned_pods={i['id'].split('/',1)[0] for i in instance_rows(removed['snapshot']['instances'])}
         pods=self.io.k(['get','pods','-o','json']);save(self.out/'finish-pods.json',pods)
         if any(p['metadata']['uid'] in owned_pods for p in pods['items']):raise RuntimeError('Owned physical Pod remains after removal; retain routing stop')
