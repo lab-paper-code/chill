@@ -413,9 +413,17 @@ slot 해석이 필요한 prepare 완료에서 한 번 정확 신분으로 해결
    terminal/terminating Pod를 steady Ready 목록에서 제외해도 장부에서는 제외하지 않는다.
    relabel·owner 해석 실패·native/Service/LIST/log 실패·ACK pending은 항목 삭제 사유가 아니다.
 3. 동일 UID/container의 실제 종료를 확인하고, 기존 finalizer/제거 절차의 필요한 정리와
-   해당 UID의 삭제를 확인한 뒤에만 항목을 퇴역시킨다. `DeletionTimestamp`, 실패한 GET,
+   해당 UID의 삭제를 확인한 뒤에만 항목을 퇴역시킨다. 실행원이 한 번도 생기지 않은
+   init 실패 Pod는 `kube/observer.go:podTerminated`의 기존 판정(terminal Pod이며
+   init/main container에 실행 중·종료 불명 실행원이 없음)을 종료 증거로 사용한다.
+   container ID 부재만으로 종료를 추정하지 않는다. `DeletionTimestamp`, 실패한 GET,
    필터 목록 누락이나 강제 삭제 사건 하나는 실제 종료 proof가 아니다.
    먼저 종료를 확인한 뒤 watch 삭제 사건을 놓친 경우는 정확 UID의 성공한 재조회로 수렴한다.
+   이를 위해 `kube/manual_reset.go:resetOwnedTargets`의 container 미생성 거절(:158-160)과
+   `kube/operations.go:removeInstance`의 physical ID 필수 경계(:638-642)를 함께 이관한다.
+   reset/remove의 내부 대상은 Pod UID와 선택적 physical ID를 운반하며, 실행원이 있으면
+   기존 exact container 종료·drain 검사를, 없으면 같은 UID의 `podTerminated` 검사를 쓴다.
+   fake container ID나 slot fallback을 만들지 않고 기존 finalizer/정리 순서를 유지한다.
 4. 관측 실패 시 항목·owner·할당·마지막 성공 상태는 보존하지만 현재 dispatch 자격은
    별도 freshness/identity 검사를 통과해야 한다. 늦은 probe는 먼저 확인한 종료/UID 변경을
    되돌리지 못한다. 전역 snapshot 시각으로 각 source의 성공 시각을 새로 찍지 않는다.
@@ -557,12 +565,18 @@ native HTTP fixture와 production 함수 경로를 재사용하며 별도 장부
   `kube/observer_test.go`, `kube/scheduler_transition_test.go`, `scheduler_transition_test.go`,
   `scheduler_pools_test.go`, `observation_log_power_test.go`에서 동일 Pod A/slot S/CPU를
   정상 관측한 뒤 ACK 지연·native 실패·Service/LIST 실패·watch 재연결을 표로 주입한다.
-  UID/물리 ID/owner/할당과 마지막 성공 시각은 불변이고 실패 시도/이유만 갱신되어야 한다.
+  UID/물리 ID/owner/할당은 보존되어야 한다. 실제 읽기 실패 때만 마지막 성공 관측 시각을
+  그대로 두고 실패 시도/이유를 갱신한다. ACK 지연은 성공한 native 관측이므로 이번 실제
+  state와 원래 조회 시각으로 성공 관측 시각을 갱신하되 identity/할당을 보존하고,
+  `PolicyAckPending`을 새 정책 적용 완료 proof로 사용하지 않아야 한다.
   prepare/Pod Create 0, fits의 점유 보존, 모든 실물의 power 선행 stop/drain,
   unknown remove/effect 완료 0·재전송 0, 수 상한·POOL 귀속·meter 구간 보존을 확인한다.
   stale 상태로 새 dispatch/κ를 허용해서는 안 된다. container 없는 init 실패 Pod와
-  같은 slot 두 Pod도 각각 남겨 reset으로 제거한다. 실제 종료→finalizer→삭제/정리
-  proof 뒤에만 항목/예약이 퇴역하며, 늦은 probe가 삭제를 되살리거나 새 UID를 대리하지 못한다.
+  같은 slot 두 Pod도 각각 남겨 reset으로 제거한다. init 실패 Pod는 정확 UID에 대해
+  `podTerminated`의 terminal·실행원 미생성 증거를 확인하며 physical ID를 요구하지 않는다.
+  실행원이 있는 Pod의 실제 종료 또는 미생성 Pod의 이 증거와 finalizer·삭제/정리 proof
+  뒤에만 항목/예약이 퇴역해야 한다. nonterminal/종료 불명 Pod는 거절되고, 늦은 probe가
+  삭제를 되살리거나 새 UID를 대리하지 못해야 한다.
 - **AC-38 / SCH-51 — 모든 작업이 같은 범위를 소유.**
   `kube/admission_test.go`, `kube/static_routing_test.go`, `kube/measurement_sequence_test.go`,
   `kube/reset_test.go`, `kube/occupancy_test.go`에서 수동/자동 route ACK를 멈춘다.
@@ -578,6 +592,9 @@ native HTTP fixture와 production 함수 경로를 재사용하며 별도 장부
   `kube/scheduler_transition_test.go`, `runtime_scheduler_test.go`에서 W1/N1의
   power→prepare/ACK를 여러 tick 미완료로 둔다. W2 수요를 늘리고 독립 N2/N3를 제공하면
   capacity 탐색·새 decision·prepare·W2 한정 route가 W1 완료 전에 실제 실행되어야 한다.
+  W2 목적지의 실제 Ready를 관측한 tick을 기준으로 늦어도 다음 제어 주기 안에 분배에
+  편입하고, W1이 아직 미완료인 동안 W2 요청이 그 정확한 physical ID에 assignment되어
+  실제 native 실행되는지 요청·native 증거로 확인한다. route 선언/ACK만으로 통과하지 않는다.
   W2의 결정/적용이 W1의 frozen target/ID·점유·route·outstanding을 덮지 않고,
   중복 prepare/동작 취소가 없어야 한다. W1 자체의 정상 진행은 자기 owner의 DAG만 따른다.
   W1의 probe 불명/κ pending도 같은 형태로 반복하고, 보존 W1 readiness 불명이 W2의
