@@ -11,6 +11,8 @@ import (
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -389,6 +391,144 @@ func TestResetExecutionFailureStopsWithoutRetryOrRollback(t *testing.T) {
 				if weights, ok := routing[h.selectedUID]; !ok || len(weights) != 0 {
 					t.Errorf("failure rolled back unroute or executed release: %v", routing)
 				}
+			}
+		})
+	}
+}
+
+func (h *resetHarness) powerReturnCandidate(t *testing.T) *edge.DeviceClass {
+	t.Helper()
+	ctx := context.Background()
+	class := &edge.DeviceClass{}
+	if err := h.api.Get(ctx, client.ObjectKey{Name: "cpu"}, class); err != nil {
+		t.Fatal(err)
+	}
+	class.Spec.PowerModes = append(class.Spec.PowerModes, edge.PowerMode{Name: lowMode,
+		Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 1}}})
+	if err := h.api.Update(ctx, class); err != nil {
+		t.Fatal(err)
+	}
+	workloads := h.controller.runtime.SchedulerInputs(time.Now).Workloads
+	index := slices.IndexFunc(workloads, func(d *serving.Definition) bool { return d.UID == h.selectedUID })
+	profile := managerProfile(workloads[index])
+	profile.NodeName, profile.Condition.NodeUID, profile.Condition.PowerMode = testNode.Name, testNode.UID, class.Spec.PowerModes[0].Name
+	h.controller.observer.SetProfiles([]serving.Profile{profile})
+	h.controller.mu.Lock()
+	h.controller.config.Preparations = map[string]PrepareSpec{profile.ID: {Instance: serving.SchedulerInstance{Node: testNode, Profile: &profile}}}
+	h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: lowMode, DeviceClass: class.Name, PowerMode: lowMode,
+		ActuatorKind: string(edge.PowerModeActuatorJetsonNVPModel), MaxActuationDurationSeconds: 1}}
+	h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: testNode, PowerMode: lowMode, Watts: 5,
+		Meter: "wall", Scope: measurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
+	h.controller.mu.Unlock()
+	return class
+}
+
+func TestResetRetriesPowerReturnAfterPodsDisappearAC33(t *testing.T) {
+	for _, phase := range []string{operationRelease, "lower-power"} {
+		t.Run(phase, func(t *testing.T) {
+			h := newResetHarness(t)
+			class := h.powerReturnCandidate(t)
+			h.api.Client.(*nodeAPI).agent = settleAgent(class)
+			if phase == operationRelease {
+				h.failUpdate = 3
+			}
+			refusePower, powerRequests := true, 0
+			h.kube.PrependReactor("patch", "nodes", func(ktesting.Action) (bool, runtime.Object, error) {
+				powerRequests++
+				if refusePower {
+					return true, nil, errors.New("power request refused")
+				}
+				return false, nil, nil
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			first, err := h.controller.ExecuteManual(ctx, h.request())
+			if err != nil || first.Status != nativeOperationPartial || first.Error == "" ||
+				first.Steps[len(first.Steps)-1].Name != phase {
+				t.Fatalf("initial %s failure lost partial evidence: %+v err=%v", phase, first, err)
+			}
+			if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).Get(ctx, h.owned.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("remove did not finish before %s failure: %v", phase, err)
+			}
+			beforeRetry := powerRequests
+			retry, err := h.controller.ExecuteManual(ctx, h.request())
+			if err != nil || retry.Status != nativeOperationPartial || retry.Error == "" || powerRequests != beforeRetry+1 ||
+				retry.Steps[len(retry.Steps)-1].Name != "lower-power" || retry.Before.Node != testNode {
+				t.Fatalf("retry forgot empty Node or falsely completed: %+v requests=%d err=%v", retry, powerRequests, err)
+			}
+			refusePower = false
+			completed, err := h.controller.ExecuteManual(ctx, h.request())
+			if err != nil || completed.Status != nativeOperationComplete || completed.Error != "" || completed.Actual.PowerMode != lowMode {
+				t.Fatalf("retry did not verify actual lowest mode: %+v err=%v", completed, err)
+			}
+			node, err := h.kube.CoreV1().Nodes().Get(ctx, testNode.Name, meta.GetOptions{})
+			if err != nil || readBackMode(node, class) != lowMode || !slices.ContainsFunc(node.Status.Conditions, func(condition core.NodeCondition) bool {
+				return condition.Type == core.NodeReady && condition.Status == core.ConditionTrue
+			}) {
+				t.Fatalf("completed reset lacks lowest-mode Ready readback: %+v err=%v", node, err)
+			}
+			readyIndex := slices.IndexFunc(node.Status.Conditions, func(condition core.NodeCondition) bool { return condition.Type == core.NodeReady })
+			node.Status.Conditions[readyIndex].Status = core.ConditionFalse
+			if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			notReady, err := h.controller.ExecuteManual(ctx, h.request())
+			if err != nil || notReady.Status != nativeOperationPartial || notReady.Error == "" ||
+				notReady.Steps[len(notReady.Steps)-1].Name != "lower-power" {
+				t.Fatalf("lowest mode without Ready falsely completed: %+v err=%v", notReady, err)
+			}
+			node.Status.Conditions[readyIndex].Status = core.ConditionTrue
+			if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			cm, _ := h.configuration(t)
+			h.assertAlreadyClean(t, ctx, cm)
+		})
+	}
+}
+
+func TestResetPendingPowerTargetsRespectCurrentScopeAndOwnership(t *testing.T) {
+	for _, exclude := range []string{"workload", "node UID", "excluded", "measurement", "foreign Pod"} {
+		t.Run(exclude, func(t *testing.T) {
+			h := newResetHarness(t)
+			h.powerReturnCandidate(t)
+			h.failUpdate = 3
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			result, err := h.controller.ExecuteManual(ctx, h.request())
+			if err != nil || result.Status != nativeOperationPartial || result.Steps[len(result.Steps)-1].Name != operationRelease {
+				t.Fatalf("could not leave pending power return: %+v err=%v", result, err)
+			}
+			node, err := h.kube.CoreV1().Nodes().Get(ctx, testNode.Name, meta.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch exclude {
+			case "workload":
+				profiles := h.controller.observer.Profiles()
+				profiles[0].Condition.LogicalModel = "outside-scope"
+				h.controller.observer.SetProfiles(profiles)
+			case "node UID":
+				node.UID = "reset-replacement"
+			case "excluded":
+				h.controller.mu.Lock()
+				h.controller.config.Settings.ExcludedNodes = []string{testNode.Name}
+				h.controller.mu.Unlock()
+			case "measurement":
+				node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "measurement", Effect: core.TaintEffectNoSchedule}}
+			case "foreign Pod":
+				pod := h.foreign.DeepCopy()
+				pod.Spec.NodeName = testNode.Name
+				if _, err := h.kube.CoreV1().Pods(pod.Namespace).Update(ctx, pod, meta.UpdateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := h.controller.planManualResetLocked(ctx, Operation{WorkloadUIDs: []string{h.selectedUID}})
+			if err != nil || len(plan.nodes) != 0 {
+				t.Fatalf("pending power return crossed %s boundary: %+v err=%v", exclude, plan, err)
 			}
 		})
 	}

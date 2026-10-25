@@ -66,6 +66,15 @@ func (c *SchedulerController) planManualResetLocked(ctx context.Context, operati
 			plan.nodes = append(plan.nodes, instance.Node)
 		}
 	}
+	pending, err := c.resetPendingPowerNodes(ctx, operation.WorkloadUIDs)
+	if err != nil {
+		return plan, err
+	}
+	for _, node := range pending {
+		if !slices.Contains(plan.nodes, node) {
+			plan.nodes = append(plan.nodes, node)
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, run := range c.runs {
@@ -82,6 +91,42 @@ func (c *SchedulerController) planManualResetLocked(ctx context.Context, operati
 		}
 	}
 	return plan, nil
+}
+
+// Removal can succeed before release or power return fails. Rediscover empty
+// candidate Nodes from current state rather than losing them with their Pods.
+func (c *SchedulerController) resetPendingPowerNodes(ctx context.Context, uids []string) ([]serving.NodeReference, error) {
+	c.mu.Lock()
+	config := c.config
+	c.mu.Unlock()
+	snapshot, err := c.capture(ctx, time.Now(), config)
+	if err != nil {
+		return nil, err
+	}
+	pods, err := c.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var nodes []serving.NodeReference
+	for _, node := range snapshot.Nodes {
+		lowest := serving.SchedulerLowestMode(config.Baselines, node.Node)
+		if node.Measurement || slices.Contains(node.Reasons, serving.NodeExcluded) ||
+			lowest == "" || node.PowerMode == lowest && node.Ready {
+			continue
+		}
+		if slices.ContainsFunc(pods.Items, func(p core.Pod) bool {
+			return p.Spec.NodeName == node.Node.Name && p.Labels["app.kubernetes.io/component"] == servingInstanceComponent
+		}) {
+			continue
+		}
+		if slices.ContainsFunc(snapshot.Options, func(option serving.SchedulerOption) bool {
+			return option.Instance.Node == node.Node && option.Instance.Profile != nil && option.Instance.Profile.Condition.NodeUID == node.Node.UID &&
+				slices.ContainsFunc(option.CompatibleUIDs, func(uid string) bool { return slices.Contains(uids, uid) })
+		}) {
+			nodes = append(nodes, node.Node)
+		}
+	}
+	return nodes, nil
 }
 
 func (c *SchedulerController) resetOwnedTargets(ctx context.Context, uids []string) ([]serving.SchedulerInstance, error) {
