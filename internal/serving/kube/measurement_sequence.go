@@ -350,8 +350,6 @@ func (c *SchedulerController) manualOperationLocked(ctx context.Context, request
 	switch request.Kind {
 	case operationRoute, operationUnroute, operationRelease:
 		return c.manualRoutingOperationLocked(ctx, request, config, snapshot)
-	case operationReset:
-		return c.manualResetOperationLocked(request, config, snapshot)
 	case operationPrepare, operationRemove:
 	default:
 		return Operation{}, refused("InvalidInput", "unsupported manual operation kind")

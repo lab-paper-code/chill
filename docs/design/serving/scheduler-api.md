@@ -40,6 +40,8 @@ serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](s
 `ApplyTarget`의 준비·소유권·native policy ACK와 전체 physical readback을 재사용하고,
 다른 UID의 선언과 실제 분배는 보존한다. 실패 또는 부분 적용은 성공으로 표시하지 않으며
 작업의 actor, reason, 전후 선언, `sourceConfigRV`, 시작·완료 시각과 실제 상태를 남긴다.
+수동 단일 UID와 자동제어 UID 목록 모두 `ApplySchedulerWorkloadsTarget`을 사용한다.
+선언의 전후 기록은 바깥 map만 분리하며 기존 내부 weight map은 수정하지 않는다.
 설정 refresh는 이 선언을 실행하거나 실패한 수동 작업을 자동 재시도하지 않는다.
 작업 입력은 HTTP와 CLI의 공유 typed strict decoder에서 중첩 `node`의 미선언 필드까지
 거절한다. 종류별 허용 필드 검사는 값이 `null`이나 0이어도 필드의 존재를 기준으로 적용한다(`SCH-39`).

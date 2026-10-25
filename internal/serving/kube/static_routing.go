@@ -159,7 +159,7 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 			return err
 		}
 	}
-	operation.BeforeStaticRouting = cloneStaticRouting(routing)
+	operation.BeforeStaticRouting = maps.Clone(routing)
 	changed := false
 	switch operation.Kind {
 	case operationRoute, operationUnroute, operationRelease:
@@ -217,7 +217,7 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 		}
 	}
 	operation.SourceConfigRV = committed.ResourceVersion
-	operation.StaticRouting = cloneStaticRouting(routing)
+	operation.StaticRouting = routing
 	c.mu.Lock()
 	if operation.Kind == operationReset {
 		c.config.Settings.AutonomousWorkloads = slices.DeleteFunc(slices.Clone(c.config.Settings.AutonomousWorkloads),
@@ -226,17 +226,6 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 	c.config.StaticRouting = len(routing) > 0
 	c.mu.Unlock()
 	return nil
-}
-
-func cloneStaticRouting(routing map[string]map[string]int) map[string]map[string]int {
-	if routing == nil {
-		return nil
-	}
-	cloned := make(map[string]map[string]int, len(routing))
-	for uid, weights := range routing {
-		cloned[uid] = maps.Clone(weights)
-	}
-	return cloned
 }
 
 // executeManualRouting uses the caller's run and observation-log ownership.

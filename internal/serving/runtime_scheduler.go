@@ -79,14 +79,8 @@ func (r *Runtime) ApplySchedulerTarget(candidate SchedulerCandidate) error {
 	return r.applySchedulerTargetLocked(candidate, false, nil)
 }
 
-// ApplyManualSchedulerTarget changes only uid, preserving other override keys,
-// including their absence after release.
-func (r *Runtime) ApplyManualSchedulerTarget(candidate SchedulerCandidate, uid string) error {
-	return r.ApplySchedulerWorkloadsTarget(candidate, []string{uid})
-}
-
 // ApplySchedulerWorkloadsTarget leaves every other UID's override (including
-// release/absence) untouched when the autonomous planner applies a global plan.
+// release/absence) untouched for both manual and autonomous distribution changes.
 func (r *Runtime) ApplySchedulerWorkloadsTarget(candidate SchedulerCandidate, uids []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

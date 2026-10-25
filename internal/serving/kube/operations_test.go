@@ -271,7 +271,7 @@ func TestScopedRouteDoesNotPersistManualPodDefaults(t *testing.T) {
 	}
 	stopped := target
 	stopped.Routing = map[string]map[string]int32{uid: {}}
-	if err := operations.runtime.ApplyManualSchedulerTarget(stopped, uid); err != nil {
+	if err := operations.runtime.ApplySchedulerWorkloadsTarget(stopped, []string{uid}); err != nil {
 		t.Fatal(err)
 	}
 	// An explicitly empty scope is not the legacy all-UID scope.

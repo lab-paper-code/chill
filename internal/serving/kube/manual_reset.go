@@ -340,14 +340,13 @@ func (c *SchedulerController) resetRouting(ctx context.Context, root Operation, 
 		if err != nil {
 			return err
 		}
-		request := ManualOperation{Kind: kind, WorkloadUID: uid, Reason: root.Reason, ActorUsername: root.ActorUsername, ActorUID: root.ActorUID}
 		// Admission already reserved these resources; do not conflict with this
 		// reset's own route/Node reservations when composing its internal steps.
 		target, err := serving.StaticRoutingTarget(snapshot, map[string]map[string]int{uid: {}}, config.Settings.AutonomousWorkloads, root.ID+"/"+kind+"/"+uid)
 		if err != nil {
 			return err
 		}
-		operation := Operation{ID: target.ID, Kind: request.Kind, WorkloadUID: uid, Reason: request.Reason, ActorUsername: request.ActorUsername, ActorUID: request.ActorUID, Target: &target}
+		operation := Operation{ID: target.ID, Kind: kind, WorkloadUID: uid, Reason: root.Reason, ActorUsername: root.ActorUsername, ActorUID: root.ActorUID, Target: &target}
 		outcome, err := c.executeManualRouting(ctx, operation)
 		result.Operation.SourceConfigRV, result.Operation.StaticRouting = outcome.Operation.SourceConfigRV, outcome.Operation.StaticRouting
 		result.Progress = append(result.Progress, outcome.Progress...)

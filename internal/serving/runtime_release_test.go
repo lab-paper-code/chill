@@ -90,7 +90,7 @@ func TestManualRoutingPreservesReleasedUID(t *testing.T) {
 	}
 	instance.WorkloadUID = "w2"
 	target := SchedulerCandidate{Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{"w1": {}, "w2": {instance.ID: 7}}}
-	if err := r.ApplyManualSchedulerTarget(target, "w2"); err != nil {
+	if err := r.ApplySchedulerWorkloadsTarget(target, []string{"w2"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, controlled := r.routeTargets["w1"]; controlled {
@@ -99,7 +99,7 @@ func TestManualRoutingPreservesReleasedUID(t *testing.T) {
 	if got, _ := r.SchedulerRouting(); got["w1"][instance.ID] != 2 || got["w2"][instance.ID] != 7 {
 		t.Fatalf("manual routing changed an unrelated distribution: %v", got)
 	}
-	if err := r.ApplyManualSchedulerTarget(target, ""); err == nil {
+	if err := r.ApplySchedulerWorkloadsTarget(target, []string{""}); err == nil {
 		t.Fatal("empty manual routing UID accepted")
 	}
 }
