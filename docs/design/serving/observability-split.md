@@ -1,6 +1,6 @@
 # 관측 분리 (M1)
 
-[채택한 이행 단계](../architecture-rethink/05-recommendation-migration.md)의 M1 설계다. 명세 변경은 없다. ChillServer는 관측을 기록하고 설정한 로컬 보존 기간(기본 2시간)의 조회에만 답한다. 영구 보존은 S3의 시간 세그먼트가 맡고, 측정 표는 그 세그먼트로 오프라인에서 만든다(spec README "SLO 관측과 집계"). [M0](decision-record-diet.md)를 전제로 한다.
+[채택한 이행 단계](../architecture-rethink/05-recommendation-migration.md)의 M1 설계와 2026-10-25 T4 조회 확장 설계다. ChillServer는 관측을 기록하고 로컬 버퍼 또는 evidence store의 시간 세그먼트에서 조회에 답한다. 측정 표의 오프라인 산출도 같은 세그먼트를 쓴다(spec README "SLO 관측과 집계"). [M0](decision-record-diet.md)를 전제로 하며, T4의 요구사항 원본은 [scheduler SRS](../../spec/scheduler/SRS.md)의 `SCH-42~47`이다. 아래에서 **기존 구현**과 **변경 설계**를 구분한다. T4는 설계 단계이며 코드·배포 완료를 뜻하지 않는다.
 
 ## 1. 측정한 문제
 
@@ -12,13 +12,13 @@
 | 요청당 27.9 KB | 요청 하나가 사건 약 10줄이다. 줄마다 `assignment`(62%)를 반복하고, 그 안의 `profileEvidence` 참조 19개가 stream의 49%다. `nativeProgress`가 13%다. 표가 쓰는 사실을 요청당 한 행으로 모으면 989 B(gzip 138 B)다 |
 | 판단 기록 185 KB | `candidates` 97 KB, snapshot 70 KB(costs 27.7, options 13.6, baselines 12, workloads 11.3), keep 7.7 KB, target 7.7 KB. target이 keep이면 같은 본문이 두 번 있다. 연속 snapshot의 costs, baselines, workloads는 100% 같다 |
 | 부하 0에서도 45 MB/h | 판단 87 KB × 360과 전력. 연속 판단은 시각 필드만 다르다. 전력 줄 1.9 KB 중 표본은 763 B이고 나머지는 줄마다 같은 source와 summary다 |
-| 로컬 사본을 지우지 않는다 | 닫힌 창을 S3에 올린 뒤에도 PVC에 남는다. S3 사본을 읽는 코드는 없다 |
+| 로컬 사본을 지우지 않는다(당시) | M1 이전에는 S3 업로드 뒤에도 PVC에 남았다. 현재 M1은 업로드 완료 후 로컬을 지우며, `CapacityRecords`에는 이미 S3 읽기가 있다. T4는 이를 일반 관측 조회로 확장한다 |
 | 기동과 조회가 누적 이력에 비례한다 | `NewObservationLog`가 모든 창의 모든 줄을 decode해 census를 만든다(기동 27~31 s `[추론]`). `runtimeFacts`는 이력의 모든 배정 사건을 보유한다. 워크로드 조회는 OOMKill 2회(D-11) 뒤 접수 구간과 겹치는 창만 읽는다(b68570c). `LoadWindow`와 `OperatingPower`는 census로 창을 고른다 |
 | 재시작이 기록을 되풀이한다 | firstfloor 로그를 처음부터 다시 읽어 재시작마다 11~12 MB를 다시 썼다. 커밋 `fix(serving): stop re-recording firstfloor progress after restart`가 고친다 |
 
 ## 2. 범위
 
-- M1: 요청 1행(3장), 불변 값의 ID 참조(4장), 시간 세그먼트의 S3 보존과 로컬 버퍼(5장), 범위 읽기(6장), 오프라인 표 산출(7장).
+- M1: 요청 1행(3장), 불변 값의 ID 참조(4장), 시간 세그먼트의 S3 보존과 로컬 버퍼(5장), 범위 읽기(6장), 오프라인 표 산출(7장). T4: 보존 위치에 투명한 조회, 삭제된 정의 해석, B1~B5 읽기 projection과 예상 시간(6장, `SCH-42~47`).
 - M1 밖: Prometheus, native histogram, ServiceMonitor와 PodMonitor, PromQL relay, Dashboard PromQL. 어느 측정 표도 TSDB 값을 원자료로 쓰지 않는다. Dashboard는 ChillServer 조회 API를 그대로 읽는다.
 
 ## 3. 요청 기록
@@ -50,6 +50,9 @@
 - 배정된 요청은 RestartDrain이 그대로 맡는다. 시작할 때 `runtimeFacts`가 로컬 `requests` 파일에서 `final`이 없는 `assigned` 행을 골라 지금처럼 호출을 복원하고 수신을 닫는다. 복원한 행의 `dispatchedNanos`는 `dispatchedAt − receivedAt`이라 최종 행도 접수와 배정으로 셈한다. 복원한 호출은 backend 완료를 관측한 뒤 `final`(`incomplete`, `EntrypointRestarted`)을 쓴다.
 - firstfloor 로그 follow는 인스턴스의 복원한 배정 중 가장 이른 `dispatchedAt`부터 읽는다(없으면 프로세스 시작). 그 사이 다시 읽는 줄 중 열린 행이 없는 요청의 줄은 버려진다.
 - `RetainedDefinition`은 지우지 않는 루트 `definitions.jsonl`(정의 수에 비례, KB 단위)에서 읽는다. 재시작 때 다시 게시하는 정의는 같은 identity의 같은 본문이 이미 있으면 쓰지 않는다.
+- **기존 구현 — 삭제된 정의(`SCH-43`, API B4):** `observation_log.go:DefinitionRecord`가 이름·모델·적용 정의를 `definitions.jsonl`에 남기고 `NewObservationLog`가 다시 읽는다. `runtimeFacts` → `runtime.go:NewRuntime`/`RetainedDefinition`은 기동 시 적용 snapshot을 복원한다. 시간 세그먼트에는 `appendRowLocked` → `referenceLocked`가 `definitionID` 본문을 `catalog`에 남긴다. 삭제나 로컬 시간 디렉터리 정리는 루트 정의를 지우지 않으므로 새 보존 장치를 만들지 않는다.
+- **Dashboard 해석 — 이미 반영된 `7a1d78cb`:** `chill-dashboard/lib/workload-identity.ts:resolveWorkloadIdentities`는 UID별 현재 등록 → 관측 `definitions` → scheduler snapshot → UID를 포함한 이름 미확인 표시 순으로 해석한다. 같은 이름의 새 UID를 옛 UID에 연결하지 않는다. 요청 행의 모델은 UID의 최신 모델이 아니라 그 행의 정확한 `definitionID`에서 읽는다(`features/observations.tsx`). 근거 저장소 조회도 archive의 해당 시간 `catalog`를 풀어 같은 `definitions` 응답에 합친다. `RetainedDefinition`을 이름 검색 API로 바꾸지 않는다.
+- 검사(`SCH-43`): 삭제·재시작·로컬 시간 삭제 뒤에도 원래 UID의 이름·모델·정의가 남고, 같은 이름으로 재등록한 새 UID와 섞이지 않는다. 같은 UID에서 모델을 바꾼 뒤에도 이전 요청은 그 요청의 `definitionID` 모델을 표시한다.
 
 ## 4. 불변 값의 ID 참조
 
@@ -76,20 +79,67 @@
 - 로컬 삭제: 한 archive pass에서 그 시간의 모든 stream이 `Created` 또는 `Existing`을 받고, 시간 디렉터리의 시작부터 설정한 보존 기간이 지났으면 디렉터리를 지운다. `servingEntrypoint.observationStorage.retention` → `--observation-retention` → `ObservationLogConfig.Retention`은 양수 Go duration이며 기본 `2h`로 기존 동작(현재 시간과 직전 시간)을 유지한다. 업로드 주기는 그대로 1분이다. 하나라도 실패하면 그 시간과 이후 시간은 남고, 다음 pass가 처음부터 다시 올린다. 아직 `final`이 없는 요청의 `assigned` 행이 있는 시간과 그 이후 시간도 남아 RestartDrain이 읽는다. 삭제는 `mu` 아래에서 하므로 조회는 한 시간을 통째로 열거나 지워진 것으로 본다. PVC는 설정 기간의 원문과 S3가 멈춘 동안의 미업로드분을 담는 버퍼다. S3가 멈추면 PVC가 차고 append 실패가 `readyz`를 503으로 만든다. 실패한 append는 쓰기 전 크기로 잘라 다음 줄이 개행 경계에서 시작하고(루트 `definitions.jsonl` 포함), 실패한 `final`은 열린 행에 남아 다음 `Flush`가 다시 쓴다.
 - 시작: 각 stream의 마지막 분 파일과 루트 `definitions.jsonl`을 마지막 개행까지 자른다(crash 때 쓰다 만 줄). 그 밖에 시작 때 읽는 것은 루트 definitions와 로컬 `requests`뿐이다.
 - 읽기는 대상 파일을 `mu` 아래에서 열고 잠금 밖에서 읽는다. 삭제는 열린 fd에 영향이 없다. 쓰는 중인 마지막 줄(개행 없음)은 무시한다.
+- **D2 결정(`SCH-42`):** 실험 구간은 사후 재생이 가능한 동안 evidence store에 보존한다. 로컬 삭제는 영구 삭제가 아니며 6.2절의 투명 조회가 이를 따른다. `7ad977d1`의 `--observation-retention`(기본 `2h`, 시연 `24h`)은 PVC 버퍼 크기를 조절하는 **임시 운영 수단**이지 과거 조회 보장의 해결책이 아니다. 보존 기간을 늘리는 것만으로 T4를 완료했다고 판정하지 않는다.
 
 ## 6. 조회
 
-조회는 아래 범위의 분 파일 중 로컬에 있는 것만 연다. 파일 이름이 시간 색인이라 목록 조회도 필요 없다. 줄은 b68570c처럼 envelope만 먼저 decode하고 선택된 줄만 전체 decode한다. 참조는 그 시간의 `catalog` 파일(시간당 수백 KB 이하)로 푼다.
+### 6.1 범위와 기존 reducer
+
+현재 일반 관측 조회는 로컬 분 파일만 연다. T4는 아래의 모집단·집계 규칙은 유지하고, 파일 선택과 stream 읽기에 6.2절의 archive 경로를 합친다. 파일 이름이 시간 색인이며, 줄은 envelope를 먼저 decode해 선택한 본문만 읽는다. scheduler·power 참조는 기록이 속한 시간의 `catalog`로 푼다.
 
 | 조회 | 읽는 범위 | 규칙 |
 |---|---|---|
 | `Query`(`/observations/workloads/{uid}`) | `requests`: `from`의 분부터 가장 최근 파일까지, `management`: `[from, to]`, 열린 행 | 행은 접수 뒤에 쓰이므로 `from` 앞은 필요 없고, `final`은 언제든 늦게 쓰일 수 있어 끝까지 읽는다. 모집단은 `[from,to)`에 접수된 요청이다 |
-| `LoadWindow`, `SchedulerArrivals`, `SchedulerHistoryWindow` | `requests`: `from`의 분부터 가장 최근 파일까지, 열린 행 | 단계 수는 `receivedAt`과 오프셋의 합이 구간 안인 단계로 센다. 열린 행으로 처리 중 요청도 도착에 들어간다 |
+| `LoadWindow`, `SchedulerArrivals` | `requests`: `from`의 분부터 가장 최근 파일까지, 열린 행 | 단계 수는 `receivedAt`과 오프셋의 합이 구간 안인 단계로 센다. 열린 행으로 처리 중 요청도 도착에 들어간다 |
 | `OperatingPower` | `scheduler`: `[from − 1분, to + 1분]`, 기준 snapshot은 `from`부터 거꾸로 첫 snapshot이 있는 분 파일까지 | 경계 표본 거리는 설정 검사에서 `maximumBoundaryDistance ≤ 1분`으로 묶는다. meter는 catalog의 coverage 정책을 쓴다 |
 | `SchedulerObservationPage` | `scheduler`: `[from, to]` | 지금처럼 limit에서 멈춘다 |
 
-- 관측 공백: 로컬 관측의 시작은 기동 때 가장 오래된 로컬 분 파일(없으면 프로세스 시작)이고, 시간을 지울 때마다 그 시간의 끝으로 옮긴다. `from`이 그보다 앞이면 결과에 `gapUntil`(그 시작)을 싣고 남은 구간만 집계한다. `OperatingPower`는 `complete=false`와 이유를 싣는다. `from` 시점의 소속을 정하는 snapshot이 로컬 관측의 시작보다 앞에 있어 로컬에 없을 때도 `OperatingPower`는 그 시작을 `gapUntil`로 싣는다. `SchedulerHistoryWindow`는 `from`이 그 시작이나 프로세스 시작보다 앞이면 `ObservationGap`을 낸다(지금의 incomplete 창과 같은 오류 경로, `SCH-08` 공백 표시). 서버는 S3를 읽지 않는다. 로컬 보존 범위보다 오래된 구간은 7장의 오프라인 경로다.
+- **기존 한계:** `observationRead.gap`은 로컬 시작보다 이른 `from`에 `gapUntil`을 싣고, `OperatingPower`는 `complete=false`로 만든다. T4에서는 archive를 읽은 **뒤에도 실제 없는 구간**만 공백이다(6.2절). 과거 설계의 `SchedulerHistoryWindow`는 현재 소스에 없으며, 도착 조회 경로는 `SchedulerArrivals` → `LoadWindow`다.
 - 비용: Tick의 `SchedulerArrivals(now − 60s, now)`는 분 파일 1~2개, 5 req/s에서 1 MB 이하를 읽는다(지금은 창 1~2개, 3.3~6.7 MB). 조회 메모리는 선택된 요청 수에 비례한다. 기본 보존 2시간 기준 5 req/s의 요청 행은 36k개(약 47 MB)이며 보존 기간을 늘리면 조회 가능한 행 수도 비례해 늘어난다.
+
+### 6.2 투명한 로컬·archive 읽기 (`SCH-42`)
+
+- **재사용 경계:** `observation_log_capacity.go:ObservationArchive`는 `evidencestore.Reader`+`Lister`이고, `CapacityRecords`는 `config.Writer`에서 이를 얻어 `List`와 `readArchivedStream(ctx, archive, object, visit)`를 이미 쓴다. 같은 인터페이스와 gzip scanner를 재사용한다. 대상은 `serving/observations.v1alpha5/YYYYMMDDTHH/{requests,management,scheduler,catalog}.jsonl.gz`이며 새 저장 형식·TSDB·옛 버전 reader는 없다. `cmd/chill-server/server.go:run`이 넘기는 `objects`를 그대로 읽는다.
+- **선택·데이터 흐름:** `capture`가 `mu` 아래에서 필요한 로컬 시간 디렉터리와 fd·크기를 한 번 잡는다 → 잠금 밖에서 기존 prefix의 객체를 `List`해 필요한 UTC 시간만 고른다 → 시간 오름차순으로 stream을 scan한다. **시간 디렉터리 단위로 로컬이 우선**이며, 잡힌 로컬 시간이면 이미 업로드된 같은 시간의 객체는 읽지 않는다. 없는 시간만 archive로 읽고 그 시간의 catalog도 함께 푼다. 파일이 열린 뒤 삭제돼도 fd를 계속 쓰므로 조회 중 로컬 삭제가 중복이나 누락을 만들지 않는다. stream 파일이 없다는 이유로 같은 로컬 시간의 archive를 추가하지 않는다.
+- **중복·페이지:** source 시간 선택 외에도 `requestRows`/`mergeRequestRow`의 `requestID`별 `final > open > assigned` 병합을 유지한다. archive의 assigned와 로컬의 늦은 final은 요청 하나다. scheduler·management·power는 같은 시간을 두 소스에서 읽지 않아 중복 가산하지 않는다. scheduler page는 source가 아니라 합친 시간순 append 순서에 기존 offset/limit을 적용하며 `errObservationStop`을 archive scanner에서도 정상 종료로 처리한다.
+- **응답 모양:** 네 경로의 기존 본문·필터·`nextCursor`를 유지하고 `coverage: {from,to,sources:[{from,to,stream,source}],gaps:[{from,to,stream,reason}]}`를 더한다. 시각은 RFC3339Nano, `source`는 `local|archive`이고 archive 항목에는 `store,key`를 싣는다. coverage의 from/to는 확보된 범위의 외곽(전부 없으면 null), 내부 공백은 gaps로 드러낸다. 로컬 floor만으로 공백을 만들지 않는다. 기존 `gapUntil`은 실제 선두 공백이 있을 때만 남기고 중간 공백은 gaps에 둔다.
+- **없는 자료와 실패:** 현재 `upload`는 빈 stream의 객체를 만들지 않는다. 따라서 archive에 필요한 stream·시간이 없으면 관측 0건이라고 단정하지 않고 `StreamUnavailable` 공백으로 표시한다(빈 시간과 유실을 구분할 새 manifest는 만들지 않는다). catalog 참조 누락·잘린 gzip·JSON 오류·store List/Open 실패는 조회 오류이며 성공한 빈 응답으로 숨기지 않는다. power의 경계 표본 또는 기준 snapshot이 없으면 기존 reducer의 `complete=false`와 이유를 유지한다. 읽기 실패는 append 실패가 아니므로 읽기 전용 실패만으로 쓰기 `readyz`를 내리지 않는다.
+- **시간 제한:** `Query`, `LoadWindow`, `SchedulerArrivals`, `SchedulerObservationPage`, `OperatingPower`에 `context.Context`를 전달하는 형태로 모든 호출부를 함께 이관한다. HTTP는 `ServeHTTP`의 RequestTimeout·취소를 List/Open/scan에 전달하고 내부 호출은 controller capture의 ctx를 쓴다. 네트워크 읽기는 `mu` 밖이며 기존 `limit`은 유지한다. 최근 도착 창이 로컬에 모두 있으면 archive List/Open 없이 기존 경로로 끝낸다.
+
+| 대상 API·변경 위치(조사 시점 행) | 변경할 데이터 흐름 |
+|---|---|
+| `GET /api/v1/observations/workloads/{uid}` — `observation_log.go:Query`(996~1058 부근, 현재 1000~1061), `capture`/`observationRead`(1174~1228 부근), `requestRows`, `scanStream` | requests는 from부터 최신까지, management는 요청 구간을 로컬/archive에서 읽고 definitions를 archive catalog와 합친 뒤 기존 aggregate·페이지 적용. `httpapi/handler.go:observations`에서 ctx·coverage 전달 |
+| `GET /api/v1/observations/load` — `observation_log_scheduler.go:LoadWindow`/`SchedulerArrivals`(344~422) | 같은 병합 요청 행으로 기존 단계 시각별 집계. `httpapi/scheduler.go:schedulerObservations`와 `kube/scheduler.go:SchedulerController.capture`의 호출도 함께 이관 |
+| `GET /api/v1/observations/scheduler` — `observation_log_scheduler.go:SchedulerObservationPage`(427~477), `catalogFor`/`DecodeSchedulerLine` | 각 source 시간의 catalog를 먼저 읽고 판단·작업·snapshot 참조를 복원. `httpapi/scheduler.go:schedulerObservations`의 full·compact 양쪽 응답에 같은 coverage 전달 |
+| `GET /api/v1/observations/power` — `observation_log_power.go:OperatingPower`(121~175), `openOlder` | `[from−1분,to+1분]`을 source별로 합치고 기준 snapshot이 나올 때까지 앞선 로컬/archive 시간을 역탐색한다. 앞선 archive snapshot의 catalog도 복원하고 `ReduceOperatingPower`는 그대로 사용. `httpapi/power.go:operatingPower` → `HandlerConfig.OperatingPower` → `cmd/chill-server/scheduler_service.go:operatingPower`에 ctx 전달 |
+
+검사: 같은 시간에 로컬·archive가 모두 있어도 요청 수·단계 수·판단 페이지·J가 한 소스와 같다. 로컬 삭제 전후 같은 실험 구간의 네 응답과 출처를 비교하고, archive assigned/로컬 late-final을 한 번만 센다. 페이지 경계, archive catalog만 남은 삭제 UID, power 앞뒤 표본·더 오래된 기준 snapshot, 내부 누락 시간, store 오류·취소, 조회 중 삭제를 각각 검사한다. 현재 scanner의 취소 확인과 gzip 종료 오류 전달도 `readArchivedStream` 확장 시 검사한다.
+
+### 6.3 측정 CR 두 종류의 읽기 projection (API B1, `SCH-44`)
+
+- `GET /api/v1/namespaces/{namespace}/operation-cost-measurements[/{name}]`, `.../dispatch-occupancy-measurements[/{name}]`를 추가한다. 목록은 `{items:[projection]}`(이름순, 빈 목록 `[]`), 상세는 projection 하나이며 없으면 404다. projection은 `{kind,metadata:{namespace,name,uid,resourceVersion,creationTimestamp},node,status}`만 내보낸다. operation-cost의 status는 기존 `{phase,reason,steps:[{name,key,verdict}]}`, occupancy는 `{phase,reason,powerMode,perRequestNanos,throughput,result}`다. 불완전·실패·결과 없음도 원래 상태로 내보내며 0으로 채우지 않는다.
+- **위치·흐름:** `httpapi/handler.go:NewHandler`에 GET 등록 → `httpapi/measurements.go:measurements`의 bearer·namespace/name 검증과 `AuthorizeResource` 패턴 재사용 → `cmd/chill-server/measurement_service.go:namespace` 및 `list` 패턴으로 CR을 `List`/`Get` → `api/v1alpha1/{operationcostmeasurement,dispatchoccupancymeasurement}_types.go`의 status를 명시적 DTO로 복사한다. `HandlerConfig`/`cmd/chill-server/server.go:run`에 두 종류 읽기 callback을 연결한다. 전체 spec·conditions.inputsJSON·raw 증거를 응답에 끼워 넣지 않는다.
+- 두 리소스 각각 caller의 namespace 범위 `list`/`get` SAR가 필요하다(서버 ServiceAccount 권한으로 대체하지 않음). POST/PUT/DELETE는 추가하지 않고 기존 CR 쓰기 경계를 유지한다. 검사: 두 종류 목록·상세, namespace 거절·list만/get만 허가, 404, Measuring/Failed/Insufficient·결과 미확보, spec/raw 비노출.
+
+### 6.4 실험 불변 요약 조회 (API B2, `SCH-45`)
+
+- `GET /api/v1/experiments`는 `{items:[summary]}`(from 내림차순·id 순), `GET /api/v1/experiments/{id}`는 summary 하나다. summary는 `{schemaVersion:"serving-experiment.v1alpha1",id,from,to,status,stages:[{id,from,to,kpis}],sources:[{store,key}]}`다. 단계 KPI는 기존 E5 판정의 요청 수·결과별 수·성공/SLO 분자와 분모·지연 분위수·전체/활성 POOL J를 해당 모집단 설명과 함께 보존한다. 미측정은 null과 이유이며 통과로 바꾸지 않는다. 단계 구간은 `[from,to)`, 출처는 허용된 evidence store의 객체 위치이며 클라이언트가 임의 URL/호스트 파일 경로를 열게 하지 않는다.
+- **위치·흐름:** `hack/e5/e5.py:summarize`는 지금 `e5-summary.json`을 로컬에만 쓴다. 실행 종료 시 이 결과와 실제 `phase.json` 경계·KPI·출처를 위 요약으로 투영해 기존 evidence store `PutImmutable` 계약으로 `serving/experiments.v1alpha1/{id}/summary.json`에 올리는 출판 단계를 붙인다. 관측·loadgen 등 원자료를 먼저 보존하고 최종 요약을 마지막에 한 번 올린다. 같은 ID를 수정하지 않고 정정 실행은 새 ID다. `PRIVATE_OPERATIONAL_ONLY`, 미측정·실패·한계 해석은 그대로 남긴다.
+- `httpapi/handler.go:NewHandler`에 읽기 경로 등록, `HandlerConfig`와 `cmd/chill-server/server.go:run`의 기존 objects Reader/Lister 주입으로 목록·상세를 제공한다. 서버는 요약을 읽을 뿐 E5를 실행하거나 KPI를 재계산하지 않는다. 기존 `evidencestore/store.go:Reader`/`Lister`를 재사용하고 새 DB·캠페인 관리 API는 만들지 않는다. id는 단일 안전 경로 요소로 검증하고 prefix 밖 접근은 거절한다. 두 경로 모두 기존 `authorize`의 해당 non-resource GET 권한과 HTTP ctx를 따른다.
+- 검사: 출판 후 목록/상세의 동일 ID·단계 경계·출처, 같은 ID 덮어쓰기 거절, 요약 없는 실행이 완료 목록에 나타나지 않음, 미측정/실패 보존, 404와 store 실패 구분, 권한 거절·경로 이탈 거절.
+
+### 6.5 축약 상태 조회 (API B3, `SCH-46`)
+
+- `GET /api/v1/scheduler/state?view=summary` → `{at,nodes,instances,routing,decision:{id,at,status,reasons,targetID},actions}`. 노드는 식별·전력모드·가용/준비 상태, 인스턴스는 식별·node·소유/배분 UID·profileID·ready/routable·이유만, actions는 planned/running 작업의 ID·종류·상태·의존·elapsedNanos·예상 시간만 투영한다. `routable`은 T2의 서버 readback을 쓰며 UI가 ready에서 추론하지 않는다.
+- **기존 compact와 다름:** `httpapi/scheduler_presentation.go:schedulerReadState`는 원본 struct를 embed하고 큰 profile만 참조화하므로 κ 입력·options·costs 등이 여전히 있다. summary는 그 struct를 재사용하지 않고 명시적 whitelist DTO로 만든다. `schedulerCompactQuery`의 view 파싱을 `scheduler.go:Handler.scheduler`와 함께 확장하되 summary는 `/state`에서만 허용하고 기존 full/compact 의미는 유지한다. `kube/scheduler.go:SchedulerController.State`에서 얻은 같은 상태 한 벌을 투영하며 전체 상태 JSON을 만든 뒤 지우지 않는다. 프로파일 본문·κ 표·후보 목록·과거 results·raw 증거는 제외한다.
+- 검사: 같은 상태의 full/summary에서 ID·노드·배분·진행 작업이 일치, profile/κ/중첩 원본 필드 미노출, 대규모 options를 넣어도 summary 크기가 옵션 수에 비례하지 않음, 잘못된/중복 view 거절, 기존 조회 권한 유지.
+
+### 6.6 작업 예상 시간 (API B5, `SCH-47`)
+
+- 기존 action에 `expectedSeconds:number|null`, `expectedSource:{costID,reference,statistic:"mean",trialCount}|null`을 더한다. 선택된 동일 조건 cost의 유효 실측 trial `durationNanos` 산술평균을 초로 변환한다. 근거 없는 route/stop/drain 또는 조건에 맞는 측정이 없는 작업은 둘 다 null(예상 시간 미확보)이며 임의 상수·0을 주지 않는다. 이는 action 자체의 예상 실행 시간이지 DAG 전체 ETA·timeout·실제 경과가 아니다. `elapsedNanos`, `startedAt`, `completedAt`은 기존 실제 진행/완료 필드로 따로 표시한다.
+- **위치·흐름:** `scheduler.go:Action` → `scheduler_plan.go:schedulerPlanState.selectCosts`가 고른 `CostID`의 `OperationCost.Trials`/`Reference`로 한 번 산출한다(`scheduler_capacity.go:capacityOperationCost`의 유효 실측·평균 규칙 재사용). 실행 중에는 시작 시의 근거를 고정하고 새 비용으로 남은 시간을 덮어쓰지 않는다. `kube/scheduler.go:actionsLocked`/`scheduledOperation`, `kube/operations.go:Operation`에 같은 필드를 전달하고 `cmd/chill-server/scheduler_service.go:recordAction` → `observation_log_scheduler.go:SchedulerActionObservation`에도 보존한다. 수동 작업은 기존 비용 선택의 동일 조건에 맞는 경우만 채우며 없으면 null이다.
+- full/compact/summary 상태, 저장된 scheduler action과 라이브 action은 같은 값을 전달한다(라이브 전송은 Dashboard 설계 소관). 이전 관측의 필드 부재는 null로 해석하고 과거 cost를 새로 대입하지 않는다. 검사: 조건 일치 cost만 선택, 복수 trial 평균·출처·개수, 근거 없음 null, 실행 중 비용 갱신에도 불변, 예상값과 실측 elapsed/완료 시간이 섞이지 않음.
+
 
 ## 7. 측정 표 산출
 
@@ -140,7 +190,7 @@ FROM j GROUP BY stage ORDER BY stage;
 - catalog: 시간마다 비용과 baseline 약 40 KB, 정의 수 KB, profile 약 16 KB × 사용 중인 수.
 - gzip: 요청 행 138 B(실측)와 배정 행 약 40 B, scheduler stream은 실측 비율 12.6배(부하)와 9.5배(부하 0)로 계산했다. 중복을 지운 뒤라 비율이 낮아질 수 있어 E 확인에서 잰다.
 - PVC는 2시간 원문, 5 req/s에서 약 155 MB를 담는다. 32Gi는 S3가 멈춘 동안 약 17일을 버틴다. S3는 5 req/s 연속에서 하루 약 180 MB이고 32Gi evidence store로 약 180일이다.
-- 시연용 `values-operating.yaml`은 32Gi PVC에 `retention: 24h`를 선택한다. 위 5 req/s 추정의 155 MB/2h를 선형 적용하면 약 1.86 GB/24h(기본보다 +1.705 GB, 32Gi의 약 5.4%)이며 실측 용량 보장은 아니다. 시간 디렉터리 단위로 삭제하므로 24시간 조회를 항상 보장하지는 않는다.
+- 시연용 `values-operating.yaml`은 32Gi PVC에 `retention: 24h`를 임시로 선택한다(`7ad977d1`). 위 5 req/s 추정의 155 MB/2h를 선형 적용하면 약 1.86 GB/24h(기본보다 +1.705 GB, 32Gi의 약 5.4%)이며 실측 용량 보장은 아니다. 시간 디렉터리 단위 삭제와 무관하게 과거 조회의 영구 경로는 evidence store다(6.2절).
 
 ## 9. 계약과 버전
 
@@ -185,12 +235,14 @@ FROM j GROUP BY stage ORDER BY stage;
 | commit | 검사 |
 |---|---|
 | 1 | 1분을 넘는 `maximumBoundaryDistance` 설정 거절 |
-| 2 세그먼트 | 쓰는 시각의 분이 파일을 고름. 지난 시간의 gz를 풀면 분 파일을 이은 줄과 같음. stream 하나의 업로드가 실패하면 그 시간 디렉터리를 지우지 않고, 다음 pass가 `Existing`과 `Created`를 섞어 마친 뒤 지움. 직전 시간은 지우지 않음. 마지막 줄이 잘린 분 파일과 루트 `definitions.jsonl`을 시작이 개행까지 자름. 조회가 6장 범위 밖 파일을 열지 않음. 로컬보다 앞선 `from`에 `gapUntil`. 조회 중 삭제에서 같은 결과, `-race` |
+| 2 세그먼트 | 쓰는 시각의 분이 파일을 고름. 지난 시간의 gz를 풀면 분 파일을 이은 줄과 같음. stream 하나의 업로드가 실패하면 그 시간 디렉터리를 지우지 않고, 다음 pass가 `Existing`과 `Created`를 섞어 마친 뒤 지움. 직전 시간은 지우지 않음. 마지막 줄이 잘린 분 파일과 루트 `definitions.jsonl`을 시작이 개행까지 자름. 조회가 6장 범위 밖 파일을 열지 않음. T4에서는 로컬보다 앞선 from도 archive가 있으면 공백 없이 조회하고, 없으면 실제 공백·출처를 표시(6.2절). 조회 중 삭제에서 같은 결과, `-race` |
 | 2 요청 | `final` 행 필드와 잔여 지연이 사건 기반 cohort test와 같은 값. 접수 2분 뒤 닫힌 요청의 `final`을 `Query`가 찾음. `assigned`와 `final`이 함께 있는 완료 요청을 `LoadWindow`와 `SchedulerArrivals`가 한 번만 셈. 배정 append 실패가 배정을 되돌림. 모르는 요청의 backend 진행은 줄을 쓰지 않음. 재시작 뒤 `final` 없는 `assigned`가 RestartDrain으로 복원되고 완료 뒤 `incomplete` 행 하나. evidence 참조 19개 규모에서 요청당 1.5 KB 이하 |
 | 2 참조 | target이 keep이면 stub 저장. page가 workloads, costs, baselines, target, meter source를 원래 본문으로 돌려줌. 시간 안에서 meter 설정이 바뀌면 이후 기록이 새 본문을 씀. 재시작 뒤 catalog 재기록이 결과를 바꾸지 않음. 각 시간 디렉터리의 catalog만으로 그 시간의 참조가 모두 풀림. 분 경계를 걸친 `OperatingPower`가 같은 J. E1 규모 판단 기록 135 KB 이하 |
 | 2 Dashboard | `make dashboard-check` |
 | 3 | `power` test가 같은 기록에서 서버 `OperatingPower`와 같은 J |
 | 전체 | `make lint test`, `make helm-lint helm-template` |
+
+T4 구현 시에는 3.2절·6.2~6.6절의 `SCH-42~47`별 검사와 HTTP 인증·projection 검사를 추가한다. 이 문서 변경에서는 테스트·빌드·실클러스터 검사를 실행하지 않았으며 기존 M1 검사 통과를 T4 통과로 재사용하지 않는다.
 
 ## 13. E 확인
 
@@ -211,5 +263,5 @@ E1 soak(2 req/s, 1시간)과 부하 0 한 시간을 다시 돌린다.
 ## 14. 사용자 결정과 질문
 
 - 결정: Prometheus, native histogram, monitor, PromQL은 M1에서 뺀다(2장). crash 때 배정 전 요청의 행 손실을 받아들인다(3.2절). RestartDrain은 유지하고 배정 행이 요청당 약 300 B를 더한다(3.1절). 압축은 stdlib gzip이다(5장).
-- 로컬 보존: 기본 2시간, 시연은 24시간을 설정한다(5장). 남아 있지 않은 구간은 Dashboard에서 관측 공백으로 보인다.
+- 로컬 보존(D2): 기본 2시간, 시연 24시간은 임시 운영 설정이다(`7ad977d1`). 과거 실험 조회는 근거 저장소를 투명하게 읽고, 실제 없는 기록만 관측 공백으로 보인다(`SCH-42`, 6.2절).
 - 질문 2: commit 1은 `maximumBoundaryDistance`를 1분 이하로 묶는다. testbed scheduler ConfigMap의 값이 이 안에 있는지 배포 전에 확인한다(이 문서는 클러스터를 읽지 않았다).
