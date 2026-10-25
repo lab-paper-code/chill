@@ -177,18 +177,23 @@ collector and prebuilt power reducer. It does not call the R/G/10800-second
 scientific binding/judgment gates. The example
 `hack/e5/demo-config.example.json` selects E0/A/B/C and explicit request timing.
 With no `e5Config`, `prepare` reads the existing environment's operational
-recipe and captures scheduler state, Workload UID/generation/SLO, nodes, pods,
-Ready serving-image digest and gateway cap using GETs only. It reuses
-`e5-wire.template()` plus the existing D2 producer arguments and explicit
-`requestTiming` overrides, saving `demo-e5-config.json` and `binding.json`.
+recipe and captures scheduler state, nodes, pods, Ready serving-image digest
+and gateway cap. It reuses `e5-wire.Prepare.canonical()` to create missing
+canonical Workloads from the recipe's exact model/preprocessor/dataset
+references and configured SLO, preserving existing definitions/SLOs without
+PUTs. Registration ACKs and applied UID/generation/SLO are retained before
+binding. It reuses `e5-wire.template()` plus existing D2 producer arguments and
+explicit `requestTiming` overrides, saving `demo-e5-config.json` and
+`binding.json`. This registration is CampaignOps-only, under Main's release.
 `controlSourceSHA` is Main's helm-revision source claim, resolved in git and
 kept distinct from the observed image digest; it is not inferred from image
 bytes. `demoSkipped` names every bypassed scientific gate. An optional
 `e5Config` can still name an already assembled raw E5 config.
 Copy the example outside the repository if changing its inputs. Rates and
 reporting-only `measurementSLO` are demonstration choices, not capacity claims.
-The scheduler's actual SLOs are captured and never changed; lifetime/socket
-cover those actual SLOs within the live gateway cap. No image builds occur.
+Existing scheduler SLOs are captured and never changed; new canonical
+definitions use configured SLOs. Lifetime/socket cover the actual applied
+SLOs within the live gateway cap. No image builds occur.
 
 CampaignOps alone executes live commands, with the existing safety monitor
 running and all instances/autonomy/static routes initially empty:
@@ -221,7 +226,10 @@ offered window includes drain, collection and setup. No requests are offered in
 that gap, so the demo cannot measure its request failures. STOP stages retain
 partial evidence; there is no implicit retry. `finish` restores original
 settings/modes using the existing owned-unroute/remove/publication contract,
-then deletes exact owned producer Jobs.
+then deletes exact owned producer Jobs. Only after that cleanup completes,
+it deletes the three captured canonical definitions using exact UID/generation
+checks and `If-Match` resource versions, retaining ACKs and waiting for actual
+definition disappearance.
 
 Each `smoke-<stage>/` contains pre/post state, per-Workload `*-client.jsonl`,
 producer lifecycle evidence, raw collection, `power*.json` and `summary.json`.
