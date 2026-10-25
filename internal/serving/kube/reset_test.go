@@ -1,0 +1,555 @@
+package kube
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/internal/serving"
+	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	kubefake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+func TestDecodeManualOperationStrictKindFields(t *testing.T) {
+	for _, raw := range []string{
+		`{"kind":"prepare","workloadUID":"w","profileID":"p","node":{"name":"n","uid":"u"},"reason":"prepare"}`,
+		`{"kind":"remove","workloadUID":"w","node":{"name":"n","uid":"u"},"instance":"p/c","reason":"remove"}`,
+		`{"kind":"route","workloadUID":"w","weights":{"p/c":1},"reason":"route"}`,
+		`{"kind":"unroute","workloadUID":"w","reason":"unroute"}`,
+		`{"kind":"release","workloadUID":"w","reason":"release"}`,
+		`{"kind":"reset","workloadUIDs":["w"],"reason":"reset"}`,
+		`{"kind":"reset","scope":"all-non-autonomous","reason":"reset"}`,
+	} {
+		if _, err := DecodeManualOperation(json.RawMessage(raw)); err != nil {
+			t.Errorf("valid request refused: %s: %v", raw, err)
+		}
+	}
+	for _, tc := range []struct{ name, raw, field string }{
+		{"prepare weights null", `{"kind":"prepare","reason":"test","weights":null}`, "weights"},
+		{"prepare scope empty", `{"kind":"prepare","reason":"test","scope":""}`, "scope"},
+		{"remove profile empty", `{"kind":"remove","reason":"test","profileID":""}`, "profileID"},
+		{"remove batch zero", `{"kind":"remove","reason":"test","fixedBatchSize":0}`, "fixedBatchSize"},
+		{"route node empty", `{"kind":"route","reason":"test","node":{}}`, "node"},
+		{"route node null", `{"kind":"route","reason":"test","node":null}`, "node"},
+		{"unroute weights empty", `{"kind":"unroute","reason":"test","weights":{}}`, "weights"},
+		{"release instance empty", `{"kind":"release","reason":"test","instance":""}`, "instance"},
+		{"reset UID empty", `{"kind":"reset","reason":"test","workloadUID":""}`, "workloadUID"},
+		{"reset node null", `{"kind":"reset","reason":"test","node":null}`, "node"},
+		{"caller actor", `{"kind":"reset","reason":"test","actorUsername":"operator"}`, "actorUsername"},
+		{"unknown field", `{"kind":"reset","reason":"test","unexpected":null}`, "unexpected"},
+		{"missing kind", `{"reason":"test"}`, "kind"},
+		{"null kind", `{"kind":null,"reason":"test"}`, "kind"},
+		{"unknown kind", `{"kind":"power","reason":"test"}`, "kind"},
+		{"numeric kind", `{"kind":1,"reason":"test"}`, ""},
+		{"missing reason", `{"kind":"reset"}`, "reason"},
+		{"null reason", `{"kind":"reset","reason":null}`, "reason"},
+		{"blank reason", `{"kind":"reset","reason":" \t\n"}`, "reason"},
+		{"numeric reason", `{"kind":"reset","reason":1}`, ""},
+		{"array", `[]`, ""},
+		{"null", `null`, "kind"},
+		{"trailing JSON", `{"kind":"reset","reason":"test"} {}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := DecodeManualOperation(json.RawMessage(tc.raw))
+			var domain *serving.Error
+			if !errors.As(err, &domain) || domain.Code != "InvalidBody" || tc.field != "" && domain.Field != tc.field {
+				t.Fatalf("request did not fail structurally: %s: %v", tc.raw, err)
+			}
+		})
+	}
+}
+
+// resetAPI supplies API-server visibility between the native-object fake and
+// clientset, including disappearance after the real source finalizer is removed.
+// It does not manufacture drain or executor termination evidence.
+type resetAPI struct {
+	client.Client
+	kube         *kubefake.Clientset
+	podWrites    int
+	deleteCalls  int
+	refuseDelete bool
+}
+
+func (c *resetAPI) syncPod(ctx context.Context, pod *core.Pod) error {
+	current := &core.Pod{}
+	err := c.Client.Get(ctx, client.ObjectKeyFromObject(pod), current)
+	resource := core.SchemeGroupVersion.WithResource("pods")
+	if apierrors.IsNotFound(err) {
+		return c.kube.Tracker().Delete(resource, pod.Namespace, pod.Name)
+	}
+	if err != nil {
+		return err
+	}
+	return c.kube.Tracker().Update(resource, current, current.Namespace)
+}
+
+func (c *resetAPI) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	if _, ok := obj.(*core.Pod); ok {
+		c.podWrites++
+	}
+	return c.Client.Create(ctx, obj, opts...)
+}
+
+func (c *resetAPI) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	if err := c.Client.Patch(ctx, obj, patch, opts...); err != nil {
+		return err
+	}
+	if pod, ok := obj.(*core.Pod); ok {
+		c.podWrites++
+		return c.syncPod(ctx, pod)
+	}
+	return nil
+}
+
+func (c *resetAPI) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	pod, isPod := obj.(*core.Pod)
+	if isPod {
+		c.deleteCalls++
+		if c.refuseDelete {
+			return errors.New("owned Pod deletion refused")
+		}
+	}
+	if err := c.Client.Delete(ctx, obj, opts...); err != nil {
+		return err
+	}
+	if isPod {
+		c.podWrites++
+		return c.syncPod(ctx, pod)
+	}
+	return nil
+}
+
+type resetHarness struct {
+	controller              *SchedulerController
+	api                     *resetAPI
+	kube                    *kubefake.Clientset
+	owned, foreign          *core.Pod
+	selectedUID, foreignUID string
+	updates                 int
+	failUpdate              int
+}
+
+func newResetHarness(t *testing.T) *resetHarness {
+	t.Helper()
+	ctx := context.Background()
+	manager, _ := newManagerHarness(t)
+	createManagerCatalog(t, manager)
+	selected, err := manager.CreateWorkload(ctx, "selected", managerWorkloadSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := manager.CreateWorkload(ctx, "foreign", managerWorkloadSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, node, _, class := observerSourceFixture()
+	owned.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: "selected", UID: types.UID(selected.Applied.UID)}}
+	owned.Status.Phase = core.PodSucceeded
+	status := firstfloorStatus(owned)
+	status.Ready = false
+	status.State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ContainerID: status.ContainerID, ExitCode: 0}}
+	other := owned.DeepCopy()
+	other.Name, other.UID = "foreign-instance", "foreign-pod-uid"
+	other.Labels[instancePodUIDLabel] = string(other.UID)
+	other.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: "foreign", UID: types.UID(foreign.Applied.UID)}}
+	other.Spec.NodeName = "foreign-node"
+	otherNode := node.DeepCopy()
+	otherNode.Name, otherNode.UID = other.Spec.NodeName, "foreign-node-uid"
+	for _, obj := range []client.Object{owned, other, &class, &core.ConfigMap{ObjectMeta: meta.ObjectMeta{Name: owned.Name, Namespace: owned.Namespace}, Data: map[string]string{"config.json": "{}"}}} {
+		// Keep the fixture's physical UID, rather than managerAPI's registration UID.
+		if err := manager.store.client.(*managerAPI).Client.Create(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kube := kubefake.NewSimpleClientset(node, otherNode, owned.DeepCopy(), other.DeepCopy(), observerServiceFixture(owned), observerServiceFixture(other))
+	api := &resetAPI{Client: &nodeAPI{Client: manager.store.client, kube: kube}, kube: kube}
+	manager.store.client, manager.observer.kube = api, kube
+	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		OperationConfig{Namespace: owned.Namespace, PollInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+		MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,
+		CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 4,
+		AutonomousWorkloads: []string{selected.Applied.UID, foreign.Applied.UID}}
+	document, err := json.Marshal(map[string]any{"settings": settings, "staticRouting": map[string]map[string]int{foreign.Applied.UID: {}}, "reserved": map[string]any{"node": map[string]any{"cpus": []int{3}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kube.CoreV1().ConfigMaps(owned.Namespace).Create(ctx, &core.ConfigMap{
+		ObjectMeta: meta.ObjectMeta{Name: "scheduler", Namespace: owned.Namespace, ResourceVersion: "1"},
+		Data:       map[string]string{"scheduler.json": string(document), "other": "preserved"},
+	}, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
+		SchedulerControllerConfig{Settings: settings, ConfigurationName: "scheduler", ConfigurationKey: "scheduler.json", StaticRouting: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(controller.Close)
+	h := &resetHarness{controller: controller, api: api, kube: kube, owned: owned, foreign: other,
+		selectedUID: selected.Applied.UID, foreignUID: foreign.Applied.UID}
+	kube.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, runtime.Object, error) {
+		h.updates++
+		if h.failUpdate > 0 && h.updates == h.failUpdate {
+			return true, nil, errors.New("scheduler configuration write refused")
+		}
+		return false, nil, nil
+	})
+	return h
+}
+
+func (h *resetHarness) request() ManualOperation {
+	return ManualOperation{Kind: operationReset, WorkloadUIDs: []string{h.selectedUID}, Reason: "finish measured trial", ActorUsername: "operator", ActorUID: "operator-uid"}
+}
+
+func (h *resetHarness) configuration(t *testing.T) (*core.ConfigMap, map[string]json.RawMessage) {
+	t.Helper()
+	cm, err := h.kube.CoreV1().ConfigMaps(h.owned.Namespace).Get(context.Background(), "scheduler", meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(cm.Data["scheduler.json"]), &document); err != nil {
+		t.Fatal(err)
+	}
+	return cm, document
+}
+
+func assertResetSteps(t *testing.T, result OperationResult, names ...string) {
+	t.Helper()
+	got := make([]string, len(result.Steps))
+	for i, step := range result.Steps {
+		got[i] = step.Name
+		if step.StartedAt.IsZero() || step.EndedAt.Before(step.StartedAt) || step.Before.At.IsZero() || step.Actual.At.IsZero() {
+			t.Errorf("step lacks timing or partial readback evidence: %+v", step)
+		}
+	}
+	if !slices.Equal(got, names) {
+		t.Fatalf("reset phases = %v, want %v", got, names)
+	}
+	if result.Operation.ID == "" || result.Operation.Kind != operationReset || result.StartedAt.IsZero() ||
+		result.EndedAt.Before(result.StartedAt) || result.Before.At.IsZero() || result.Actual.At.IsZero() {
+		t.Errorf("reset lost root operation envelope: %+v", result)
+	}
+}
+
+func TestResetTwiceCleansOnlyOwnedPhysicalInstancesAC33(t *testing.T) {
+	h := newResetHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, beforeDocument := h.configuration(t)
+	first, err := h.controller.ExecuteManual(ctx, h.request())
+	if err != nil || first.Status != nativeOperationComplete || first.Error != "" {
+		t.Fatalf("first reset failed: %+v err=%v", first, err)
+	}
+	assertResetSteps(t, first, "disable-autonomy", "unroute", "drain", "remove", "release", "lower-power")
+	for _, step := range first.Steps {
+		if step.Status != nativeOperationComplete || step.Error != "" {
+			t.Errorf("successful reset has unsuccessful phase: %+v", step)
+		}
+	}
+	if !slices.Equal(first.Operation.WorkloadUIDs, []string{h.selectedUID}) || first.Operation.Reason != h.request().Reason ||
+		first.Operation.ActorUsername != "operator" || first.Operation.ActorUID != "operator-uid" {
+		t.Errorf("reset lost accepted scope or caller: %+v", first.Operation)
+	}
+	for _, get := range []func() error{
+		func() error {
+			_, err := h.kube.CoreV1().Pods(h.owned.Namespace).Get(ctx, h.owned.Name, meta.GetOptions{})
+			return err
+		},
+		func() error { return h.api.Get(ctx, client.ObjectKeyFromObject(h.owned), &core.Pod{}) },
+		func() error {
+			_, err := h.kube.CoreV1().Services(h.owned.Namespace).Get(ctx, instanceService(h.owned).Name, meta.GetOptions{})
+			return err
+		},
+		func() error { return h.api.Get(ctx, client.ObjectKeyFromObject(h.owned), &core.ConfigMap{}) },
+	} {
+		if err := get(); !apierrors.IsNotFound(err) {
+			t.Errorf("owned executor resource survives reset: %v", err)
+		}
+	}
+	foreign, err := h.kube.CoreV1().Pods(h.foreign.Namespace).Get(ctx, h.foreign.Name, meta.GetOptions{})
+	if err != nil || !reflect.DeepEqual(foreign.OwnerReferences, h.foreign.OwnerReferences) {
+		t.Fatalf("foreign ownership changed: %+v %v", foreign, err)
+	}
+	if _, err := h.kube.CoreV1().Services(h.foreign.Namespace).Get(ctx, instanceService(h.foreign).Name, meta.GetOptions{}); err != nil {
+		t.Fatal("reset removed foreign executor Service", err)
+	}
+	cm, document := h.configuration(t)
+	var settings serving.SchedulerSettings
+	var routing map[string]map[string]int
+	if err := json.Unmarshal(document["settings"], &settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(document["staticRouting"], &routing); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(settings.AutonomousWorkloads, []string{h.foreignUID}) || !slices.Equal(h.controller.Settings().AutonomousWorkloads, []string{h.foreignUID}) {
+		t.Fatalf("reset disabled another Workload or did not apply settings: %+v", settings)
+	}
+	if _, ok := routing[h.selectedUID]; ok {
+		t.Fatal("selected declaration remains after release")
+	}
+	if _, ok := routing[h.foreignUID]; !ok || cm.Data["other"] != "preserved" || !reflect.DeepEqual(document["reserved"], beforeDocument["reserved"]) {
+		t.Fatalf("reset changed foreign declaration or unrelated configuration: %+v", cm.Data)
+	}
+	effective, _ := h.controller.runtime.SchedulerRouting()
+	if len(effective[h.selectedUID]) != 0 || len(first.Actual.Routing[h.selectedUID]) != 0 ||
+		len(first.Steps[1].Actual.Routing[h.selectedUID]) != 0 {
+		t.Errorf("reset ACK still routes new requests: runtime=%v actual=%v unroute=%v", effective, first.Actual.Routing, first.Steps[1].Actual.Routing)
+	}
+	h.assertAlreadyClean(t, ctx, cm)
+}
+
+func (h *resetHarness) assertAlreadyClean(t *testing.T, ctx context.Context, cm *core.ConfigMap) {
+	t.Helper()
+	updates, podWrites := h.updates, h.api.podWrites
+	actionStart := len(h.kube.Actions())
+	second, err := h.controller.ExecuteManual(ctx, h.request())
+	if err != nil || second.Status != nativeOperationComplete || second.Error != "" {
+		t.Fatalf("already-clean reset failed: %+v err=%v", second, err)
+	}
+	assertResetSteps(t, second, "disable-autonomy", "unroute", "drain", "remove", "release", "lower-power")
+	after, _ := h.configuration(t)
+	if h.updates != updates || h.api.podWrites != podWrites || !reflect.DeepEqual(after.Data, cm.Data) {
+		t.Errorf("second reset mutated declaration or Pod: config writes %d->%d Pod writes %d->%d", updates, h.updates, podWrites, h.api.podWrites)
+	}
+	for _, action := range h.kube.Actions()[actionStart:] {
+		if action.GetVerb() == getVerb || action.GetVerb() == "list" {
+			continue
+		}
+		t.Errorf("second reset issued a new physical/configuration request: %s %s", action.GetVerb(), action.GetResource().Resource)
+	}
+}
+
+func TestResetExecutionFailureStopsWithoutRetryOrRollback(t *testing.T) {
+	phases := []string{"disable-autonomy", "unroute", "drain", "remove", "release", "lower-power"}
+	for _, tc := range []struct {
+		phase        string
+		failUpdate   int
+		refuseDelete bool
+	}{
+		{phase: "disable-autonomy", failUpdate: 1},
+		{phase: "unroute", failUpdate: 2},
+		{phase: "remove", refuseDelete: true},
+		{phase: "release", failUpdate: 3},
+	} {
+		t.Run(tc.phase, func(t *testing.T) {
+			h := newResetHarness(t)
+			h.failUpdate, h.api.refuseDelete = tc.failUpdate, tc.refuseDelete
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			result, err := h.controller.ExecuteManual(ctx, h.request())
+			if err != nil || result.Error == "" || result.Status != nativeOperationFailed && result.Status != nativeOperationPartial {
+				t.Fatalf("physical failure did not return failed root result: %+v err=%v", result, err)
+			}
+			index := slices.Index(phases, tc.phase)
+			assertResetSteps(t, result, phases[:index+1]...)
+			for i, step := range result.Steps {
+				if i < index && (step.Status != nativeOperationComplete || step.Error != "") {
+					t.Errorf("earlier successful phase was changed: %+v", step)
+				}
+				if i == index && (step.Status == nativeOperationComplete || step.Error == "") {
+					t.Errorf("failure phase lacks failure evidence: %+v", step)
+				}
+			}
+			if tc.failUpdate > 0 && h.updates != tc.failUpdate || tc.refuseDelete && h.api.deleteCalls != 1 {
+				t.Errorf("failed phase retried or later declaration ran: updates=%d deletes=%d", h.updates, h.api.deleteCalls)
+			}
+			if tc.phase != "release" {
+				if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).Get(ctx, h.owned.Name, meta.GetOptions{}); err != nil {
+					t.Errorf("owned Pod disappeared after an earlier phase failed: %v", err)
+				}
+			}
+			if _, err := h.kube.CoreV1().Pods(h.foreign.Namespace).Get(ctx, h.foreign.Name, meta.GetOptions{}); err != nil {
+				t.Errorf("foreign Pod was changed by failed reset: %v", err)
+			}
+			if tc.phase == "remove" {
+				_, document := h.configuration(t)
+				var routing map[string]map[string]int
+				if err := json.Unmarshal(document["staticRouting"], &routing); err != nil {
+					t.Fatal(err)
+				}
+				if weights, ok := routing[h.selectedUID]; !ok || len(weights) != 0 {
+					t.Errorf("failure rolled back unroute or executed release: %v", routing)
+				}
+			}
+		})
+	}
+}
+
+func TestManualRoutingBarrierIsNotAnAutonomousGoalEffect(t *testing.T) {
+	for _, kind := range []string{operationRoute, operationUnroute, operationRelease, operationReset} {
+		t.Run(kind, func(t *testing.T) {
+			controller := &SchedulerController{ctx: context.Background(), runs: map[string]*actionRun{}}
+			release := make(chan struct{})
+			operation := Operation{ID: "manual-" + kind, Kind: kind}
+			done, result := controller.startNodeRun(operation, SchedulerControllerConfig{}, func(context.Context, *OperationResult) error {
+				<-release
+				return nil
+			})
+			goal := &serving.SchedulerCandidate{Actions: []serving.Action{controller.runs[operation.ID].action}}
+			close(release)
+			<-done
+			lost, failed := controller.failGoalLocked(serving.SchedulerSnapshot{}, goal, time.Now())
+			if failed || len(lost) != 0 || result.Status != nativeOperationComplete {
+				t.Fatalf("planner relabeled a completed manual operation: lost=%+v failed=%v result=%+v", lost, failed, result)
+			}
+		})
+	}
+}
+
+func TestResetScopeResolvesCurrentNonAutonomousWorkloads(t *testing.T) {
+	h := newResetHarness(t)
+	cm, document := h.configuration(t)
+	settings := h.controller.Settings()
+	settings.AutonomousWorkloads = []string{h.foreignUID}
+	var err error
+	document["settings"], err = json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm.Data["scheduler.json"] = string(raw)
+	if _, err := h.kube.CoreV1().ConfigMaps(cm.Namespace).Update(context.Background(), cm, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	h.controller.mu.Lock()
+	h.controller.config.Settings = settings
+	// Acceptance must capture current runtime Workloads, not resolve an old snapshot.
+	h.controller.state.Snapshot.Workloads = []*serving.Definition{{UID: "stale-workload"}}
+	h.controller.mu.Unlock()
+	request := h.request()
+	request.WorkloadUIDs, request.Scope = nil, nonAutonomousResetScope
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := h.controller.ExecuteManual(ctx, request)
+	if err != nil || result.Status != nativeOperationComplete || !slices.Equal(result.Operation.WorkloadUIDs, []string{h.selectedUID}) {
+		t.Fatalf("scope was not frozen from current non-autonomous Workloads: %+v err=%v", result, err)
+	}
+	if _, err := h.kube.CoreV1().Pods(h.foreign.Namespace).Get(ctx, h.foreign.Name, meta.GetOptions{}); err != nil {
+		t.Fatal("scope included an autonomous foreign owner", err)
+	}
+}
+
+func TestResetRefusesInvalidScopeBeforeAnyMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		alter func(*ManualOperation)
+	}{
+		{"missing scope", func(r *ManualOperation) { r.WorkloadUIDs = nil }},
+		{"empty list", func(r *ManualOperation) { r.WorkloadUIDs = []string{} }},
+		{"both selectors", func(r *ManualOperation) { r.Scope = nonAutonomousResetScope }},
+		{"unknown scope", func(r *ManualOperation) { r.WorkloadUIDs = nil; r.Scope = "all" }},
+		{"unknown UID", func(r *ManualOperation) { r.WorkloadUIDs = []string{"absent"} }},
+		{"empty UID", func(r *ManualOperation) { r.WorkloadUIDs = []string{""} }},
+		{"duplicate UID", func(r *ManualOperation) { r.WorkloadUIDs = append(r.WorkloadUIDs, r.WorkloadUIDs[0]) }},
+		{"missing reason", func(r *ManualOperation) { r.Reason = " \t" }},
+		{"single UID field", func(r *ManualOperation) { r.WorkloadUID = r.WorkloadUIDs[0] }},
+		{"node field", func(r *ManualOperation) { r.Node = testNode }},
+		{"weights field", func(r *ManualOperation) { r.Weights = map[string]int32{"p/c": 1} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newResetHarness(t)
+			request := h.request()
+			tc.alter(&request)
+			start := len(h.kube.Actions())
+			result, err := h.controller.ExecuteManual(context.Background(), request)
+			if errorCode(err) != "InvalidInput" || result.Operation.ID != "" {
+				t.Fatalf("malformed reset did not return request refusal: %+v err=%v", result, err)
+			}
+			if h.api.podWrites != 0 || h.updates != 0 {
+				t.Errorf("refused request mutated Pod/configuration: %d/%d", h.api.podWrites, h.updates)
+			}
+			for _, action := range h.kube.Actions()[start:] {
+				if action.GetVerb() != getVerb && action.GetVerb() != "list" {
+					t.Errorf("refused request made physical mutation: %s %s", action.GetVerb(), action.GetResource().Resource)
+				}
+			}
+		})
+	}
+}
+
+func TestResetRefusesConcurrentResetBeforeMutation(t *testing.T) {
+	h := newResetHarness(t)
+	release := make(chan struct{})
+	operation := Operation{ID: "in-flight-reset", Kind: operationReset, WorkloadUIDs: []string{h.selectedUID}}
+	done, _ := h.controller.startNodeRun(operation, h.controller.config, func(context.Context, *OperationResult) error {
+		<-release
+		return nil
+	})
+	defer func() { close(release); <-done }()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, err := h.controller.ExecuteManual(ctx, h.request())
+	if err == nil || !slices.Contains([]string{testNodeBusy, testOperationConflict}, errorCode(err)) || result.Operation.ID != "" {
+		t.Fatalf("reset admitted while another reset owns its scope: %+v err=%v", result, err)
+	}
+	if h.api.podWrites != 0 || h.updates != 0 {
+		t.Errorf("busy refusal mutated scope: writes=%d updates=%d", h.api.podWrites, h.updates)
+	}
+}
+
+func TestResetRefusesMeasurementOwnedNodeBeforeMutation(t *testing.T) {
+	h := newResetHarness(t)
+	node, err := h.kube.CoreV1().Nodes().Get(context.Background(), testNode.Name, meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "foreign-measurement", Effect: core.TaintEffectNoSchedule}}
+	if _, err := h.kube.CoreV1().Nodes().Update(context.Background(), node, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := h.controller.ExecuteManual(context.Background(), h.request())
+	if errorCode(err) != testNodeBusy || result.Operation.ID != "" {
+		t.Fatalf("reset did not refuse external measurement ownership: %+v err=%v", result, err)
+	}
+	if h.api.podWrites != 0 || h.updates != 0 {
+		t.Errorf("measurement refusal mutated scope: writes=%d updates=%d", h.api.podWrites, h.updates)
+	}
+}
+
+func TestResetDoesNotTreatForeignBindingAsOwnership(t *testing.T) {
+	h := newResetHarness(t)
+	current := &core.Pod{}
+	if err := h.api.Get(context.Background(), client.ObjectKeyFromObject(h.foreign), current); err != nil {
+		t.Fatal(err)
+	}
+	before := current.DeepCopy()
+	current.Annotations[ServingRoutingAnnotation] = `{"` + h.selectedUID + `":1}`
+	if err := h.api.Patch(context.Background(), current, client.MergeFrom(before)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := h.controller.ExecuteManual(ctx, h.request())
+	if err != nil && errorCode(err) != testOperationConflict {
+		t.Fatalf("foreign ownership produced a non-domain refusal: %+v err=%v", result, err)
+	}
+	stored, getErr := h.kube.CoreV1().Pods(h.foreign.Namespace).Get(ctx, h.foreign.Name, meta.GetOptions{})
+	if getErr != nil || !reflect.DeepEqual(stored.OwnerReferences, h.foreign.OwnerReferences) {
+		t.Fatalf("binding was treated as ownership: %+v err=%v result=%+v", stored, getErr, result)
+	}
+	if err == nil && (result.Status == nativeOperationComplete || result.Error == "" || !strings.Contains(strings.ToLower(result.Error), "owner")) {
+		t.Errorf("foreign ownership conflict did not fail with evidence: %+v", result)
+	}
+}

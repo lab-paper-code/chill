@@ -112,29 +112,27 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 	}
 }
 
-func TestStaticRoutingAcknowledgementDoesNotReapply(t *testing.T) {
-	for _, test := range []struct {
-		name          string
-		declared      bool
-		appliedRV     string
-		wantAppliedRV string
-	}{
-		{name: "completed revision is not reapplied", declared: true, appliedRV: "42", wantAppliedRV: "42"},
-		{name: "declaration removal clears acknowledgement", appliedRV: "41"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			service := &schedulerService{resourceVersion: "42", staticAppliedRV: test.appliedRV}
-			config := &schedulerConfiguration{}
-			if test.declared {
-				config.StaticRouting = map[string]map[string]int{"current": {"physical": 1}}
-			}
-			service.configuration.Store(config)
-			// No controller is installed: these cases must not attempt application.
-			service.applyStaticRouting(context.Background())
-			if service.staticAppliedRV != test.wantAppliedRV {
-				t.Fatalf("static application acknowledgement = %q, want %q", service.staticAppliedRV, test.wantAppliedRV)
-			}
-		})
+func TestStaticRoutingRemainsReadableWithoutPhysicalApplication(t *testing.T) {
+	config := schedulerTestConfiguration()
+	config.StaticRouting = map[string]map[string]int{"current": {"unavailable-physical": 1}, "unrouted": {}}
+	raw, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeSchedulerConfiguration(string(raw), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := schedulerTestService(t, decoded)
+	for range 2 {
+		// A stored declaration is a GET projection, not an application/retry request.
+		if service.configuration.Load().StaticRouting["current"]["unavailable-physical"] != 1 {
+			t.Fatal("stored declaration lost")
+		}
+		routing, _ := service.execution.SchedulerRouting()
+		if len(routing) != 0 || len(service.controller.State().Results) != 0 {
+			t.Fatal("stored declaration fabricated physical routing or an operation")
+		}
 	}
 }
 

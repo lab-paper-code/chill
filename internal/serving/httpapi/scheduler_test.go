@@ -378,7 +378,7 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	}
 }
 
-func TestSchedulerSettingsStaticRoutingChangeNeedsReasonAndRecordsBeforeAfter(t *testing.T) {
+func TestSchedulerSettingsStaticRoutingIsReadOnly(t *testing.T) {
 	settings := schedulerSettingsForTest()
 	settingsRaw, err := json.Marshal(settings)
 	if err != nil {
@@ -426,9 +426,11 @@ func TestSchedulerSettingsStaticRoutingChangeNeedsReasonAndRecordsBeforeAfter(t 
 		return response
 	}
 	for _, rejected := range []struct{ extra, field string }{
-		{`,"staticRouting":{}`, "reason"},
-		{`,"staticRouting":{},"reason":"  "`, "reason"},
-		{`,"staticRouting":{"absent-uid":{"physical":1}},"reason":"baseline"`, "staticRouting"},
+		{`,"staticRouting":{}`, "staticRouting"},
+		{`,"staticRouting":null`, "staticRouting"},
+		{`,"staticRouting":{"old-uid":{"physical":1}}`, "staticRouting"},
+		{`,"staticRoutingValidatedAt":null`, "staticRoutingValidatedAt"},
+		{`,"staticRoutingValidatedAt":"2026-10-01T00:00:00Z"`, "staticRoutingValidatedAt"},
 	} {
 		response := put(rejected.extra)
 		var failure serving.Error
@@ -436,7 +438,7 @@ func TestSchedulerSettingsStaticRoutingChangeNeedsReasonAndRecordsBeforeAfter(t 
 			t.Fatalf("%s: status=%d body=%s updates=%d", rejected.extra, response.Code, response.Body, updates)
 		}
 	}
-	// GET settings shows the stored declaration the routing dialog starts from.
+	// GET settings still exposes the stored read-only declaration.
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/settings", nil)
 	request.Header.Set("Authorization", "Bearer reviewed-token")
 	got := httptest.NewRecorder()
@@ -447,22 +449,9 @@ func TestSchedulerSettingsStaticRoutingChangeNeedsReasonAndRecordsBeforeAfter(t 
 	if err := json.Unmarshal(got.Body.Bytes(), &shown); err != nil || got.Code != http.StatusOK || !reflect.DeepEqual(shown.StaticRouting, declared) {
 		t.Fatalf("GET settings lost the stored declaration: status=%d body=%s", got.Code, got.Body)
 	}
-	// The same declaration is no staticRouting change: it needs no reason and records none.
-	unchanged := put(`,"staticRouting":{"old-uid":{"physical":1}},"reason":"stray"`)
-	var kept serving.SchedulerSettingsChange
-	if err := json.Unmarshal(unchanged.Body.Bytes(), &kept); err != nil || unchanged.Code != http.StatusOK || kept.Reason != "" {
-		t.Fatalf("unchanged declaration: status=%d body=%s", unchanged.Code, unchanged.Body)
-	}
-	response := put(`,"staticRouting":{},"reason":"fixed placement baseline"`)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", response.Code, response.Body)
-	}
-	var change serving.SchedulerSettingsChange
-	if err := json.Unmarshal(response.Body.Bytes(), &change); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(change.BeforeStaticRouting, declared) || change.AfterStaticRouting != nil || change.Reason != "fixed placement baseline" {
-		t.Fatalf("staticRouting change record: %+v", change)
+	response := put("")
+	if response.Code != http.StatusOK || updates != 1 {
+		t.Fatalf("settings-only update: status=%d body=%s updates=%d", response.Code, response.Body, updates)
 	}
 	persisted, err := kube.CoreV1().ConfigMaps("serving").Get(context.Background(), "scheduler", meta.GetOptions{})
 	if err != nil {
@@ -475,12 +464,9 @@ func TestSchedulerSettingsStaticRoutingChangeNeedsReasonAndRecordsBeforeAfter(t 
 	if err := json.Unmarshal([]byte(persisted.Data["scheduler.json"]), &stored); err != nil {
 		t.Fatal(err)
 	}
-	if stored.StaticRouting != nil || stored.StaticRoutingValidatedAt == nil || !stored.StaticRoutingValidatedAt.Equal(change.ValidatedAt) {
-		t.Fatalf("stored staticRouting does not name its settings change: %s", persisted.Data["scheduler.json"])
-	}
-	records, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), change.ValidatedAt, change.ValidatedAt.Add(time.Millisecond), 10, 0)
-	if err != nil || len(records) == 0 || records[0].Settings.Reason != change.Reason {
-		t.Fatalf("settings change is not found at its validatedAt: %+v %v", records, err)
+	if !reflect.DeepEqual(stored.StaticRouting, declared) || stored.StaticRoutingValidatedAt == nil ||
+		stored.StaticRoutingValidatedAt.Format(time.RFC3339) != "2026-10-01T00:00:00Z" {
+		t.Fatalf("settings update changed routing intent: %s", persisted.Data["scheduler.json"])
 	}
 }
 

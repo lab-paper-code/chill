@@ -318,7 +318,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	}
 	service := &schedulerService{
 		kube: kube, observer: observer, objects: objects, catalog: catalog, resourceVersion: acceptedVersion,
-		sources: profile.ID, staticAppliedRV: acceptedVersion,
+		sources: profile.ID,
 		opts: options{servingNamespace: "serving", schedulerConfigMap: "scheduler",
 			schedulerConfigKey: "scheduler.json", maxRequestBytes: 1 << 20, maxEvidenceBytes: 1024},
 	}
@@ -333,7 +333,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	}
 	if !reflect.DeepEqual(observer.Profiles(), []serving.Profile{profile}) ||
 		service.configuration.Load() != accepted ||
-		service.resourceVersion != acceptedVersion || service.staticAppliedRV != acceptedVersion {
+		service.resourceVersion != acceptedVersion {
 		t.Fatal("failed refresh published partial profile/configuration state")
 	}
 }

@@ -36,13 +36,17 @@ const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 // goal: later ready subsets supersede their routing effects.
 const readySubsetRoute = "ready-subset"
 
+const externalActionSource = "external-operation"
+
 type SchedulerControllerConfig struct {
-	Settings     serving.SchedulerSettings
-	Reserved     map[string]serving.SchedulerAllocation
-	Preparations map[string]PrepareSpec
-	Costs        []serving.OperationCost
-	Baselines    []serving.NodeBaseline
-	CostIssues   []CostIssue
+	Settings          serving.SchedulerSettings
+	ConfigurationName string
+	ConfigurationKey  string
+	Reserved          map[string]serving.SchedulerAllocation
+	Preparations      map[string]PrepareSpec
+	Costs             []serving.OperationCost
+	Baselines         []serving.NodeBaseline
+	CostIssues        []CostIssue
 	// DispatchOccupancy are the measured dispatch occupancies.
 	DispatchOccupancy []serving.DispatchOccupancy
 	// CatalogIssues are the profiles the catalog or the preparations omit.
@@ -417,7 +421,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 	if goal != nil {
 		pending := false
 		for _, desired := range goal.Actions {
-			if desired.Status == nativeOperationCancel || desired.From == readySubsetRoute {
+			if desired.Status == nativeOperationCancel || desired.From == readySubsetRoute || desired.From == externalActionSource {
 				continue
 			}
 			run := c.runs[desired.ID]
@@ -465,7 +469,7 @@ func (c *SchedulerController) failGoalLocked(snapshot serving.SchedulerSnapshot,
 	var lost []OperationResult
 	failed := false
 	for _, desired := range goal.Actions {
-		if desired.From == readySubsetRoute {
+		if desired.From == readySubsetRoute || desired.From == externalActionSource {
 			continue
 		}
 		run := c.runs[desired.ID]
@@ -1037,6 +1041,9 @@ func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCa
 func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]time.Duration, workloads []*serving.Definition) Operation {
 	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target,
 		ExpectedSeconds: action.ExpectedSeconds, ExpectedSource: action.ExpectedSource}
+	if action.Kind == operationRoute {
+		operation.WorkloadUIDs = slices.Clone(config.Settings.AutonomousWorkloads)
+	}
 	if action.Kind == operationPrepare {
 		for _, i := range target.Instances {
 			if i.ID == action.Instance && i.Profile != nil && i.Profile.Condition.Firstfloor != nil {

@@ -46,6 +46,9 @@ const (
 	operationDrain           = "drain"
 	operationResize          = "resize"
 	operationRoute           = "route"
+	operationUnroute         = "unroute"
+	operationRelease         = "release"
+	operationReset           = "reset"
 	nativeOperationComplete  = "complete"
 	nativeOperationRunning   = "running"
 	nativeOperationCancel    = "cancel"
@@ -54,6 +57,17 @@ const (
 	measurementWallScope     = "node-exclusive-wall"
 	servingInstanceComponent = "serving-instance"
 )
+
+func isRoutingOperation(kind string) bool {
+	return kind == operationRoute || kind == operationUnroute || kind == operationRelease
+}
+
+func (operation Operation) controlsWorkload(uid string) bool {
+	if operation.WorkloadUID != "" {
+		return operation.WorkloadUID == uid
+	}
+	return operation.WorkloadUIDs == nil || slices.Contains(operation.WorkloadUIDs, uid)
+}
 
 // PrepareSpec freezes one measured execution and immutable profile delivery.
 // Owner, when set, makes the prepared instance serve only that Workload.
@@ -78,12 +92,18 @@ type Operation struct {
 	MaxActuationDuration time.Duration `json:"maxActuationDurationNanos,omitempty"`
 	// Holder is the measurement root a measurement power operation acts for;
 	// the Node's measurement taint must name it.
-	Holder          string                        `json:"holder,omitempty"`
-	Target          *serving.SchedulerCandidate   `json:"target,omitempty"`
-	SourceConfigRV  string                        `json:"sourceConfigRV,omitempty"`
-	StaticRouting   map[string]map[string]int     `json:"staticRouting,omitempty"`
-	ExpectedSeconds *float64                      `json:"expectedSeconds"`
-	ExpectedSource  *serving.ActionExpectedSource `json:"expectedSource"`
+	Holder              string                        `json:"holder,omitempty"`
+	Target              *serving.SchedulerCandidate   `json:"target,omitempty"`
+	SourceConfigRV      string                        `json:"sourceConfigRV,omitempty"`
+	StaticRouting       map[string]map[string]int     `json:"staticRouting,omitempty"`
+	WorkloadUID         string                        `json:"workloadUID,omitempty"`
+	WorkloadUIDs        []string                      `json:"workloadUIDs"`
+	Reason              string                        `json:"reason,omitempty"`
+	ActorUsername       string                        `json:"actorUsername,omitempty"`
+	ActorUID            string                        `json:"actorUID,omitempty"`
+	BeforeStaticRouting map[string]map[string]int     `json:"beforeStaticRouting,omitempty"`
+	ExpectedSeconds     *float64                      `json:"expectedSeconds"`
+	ExpectedSource      *serving.ActionExpectedSource `json:"expectedSource"`
 	// SettingsValidatedAt names the settings change that declared StaticRouting.
 	SettingsValidatedAt *time.Time `json:"settingsValidatedAt,omitempty"`
 }
@@ -98,6 +118,15 @@ type OperationState struct {
 	Reasons   []string                    `json:"reasons,omitempty"`
 	Routing   map[string]map[string]int32 `json:"routing,omitempty"`
 }
+type OperationStep struct {
+	Name      string         `json:"name"`
+	StartedAt time.Time      `json:"startedAt"`
+	EndedAt   time.Time      `json:"endedAt"`
+	Status    string         `json:"status"`
+	Before    OperationState `json:"before"`
+	Actual    OperationState `json:"actual"`
+	Error     string         `json:"error,omitempty"`
+}
 type OperationResult struct {
 	Operation   Operation               `json:"operation"`
 	Before      OperationState          `json:"before"`
@@ -108,6 +137,7 @@ type OperationResult struct {
 	Error       string                  `json:"error,omitempty"`
 	Progress    []string                `json:"progress"`
 	DrainNative map[string]native.State `json:"drainNative,omitempty"`
+	Steps       []OperationStep         `json:"steps,omitempty"`
 }
 
 // OperationConfig.Measurement selects measurement operations: they prepare only
@@ -218,7 +248,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 	result := OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: nativeOperationRunning}
 	before := OperationState{At: result.StartedAt}
 	err := o.validateOperationBinding(ctx, operation)
-	if err == nil && operation.Kind != operationRoute {
+	if err == nil && !isRoutingOperation(operation.Kind) {
 		before, err = o.Capture(ctx, operation.Node)
 	}
 	result.Before = before
@@ -241,12 +271,22 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 			}
 		case operationPower:
 			err = o.ChangePower(ctx, operation.Node, operation.Holder, operation.PowerMode, operation.MaxActuationDuration)
-		case operationRoute:
+		case operationRoute, operationUnroute:
 			if operation.Target == nil {
 				err = errors.New("routing target required")
 			} else {
 				err = o.ApplyTarget(ctx, *operation.Target, &result)
 			}
+		case operationRelease:
+			result.Before.Routing, _ = o.runtime.SchedulerRouting()
+			result.Before.Instances = o.runtime.Instances()
+			err = o.observer.Refresh(ctx)
+			if err == nil {
+				err = o.runtime.ReleaseSchedulerRouting(operation.WorkloadUID)
+			}
+			result.Actual.At = time.Now().UTC()
+			result.Actual.Routing, _ = o.runtime.SchedulerRouting()
+			result.Actual.Instances = o.runtime.Instances()
 		case operationStop:
 			err = o.StopInstance(ctx, operation.Instance)
 		case operationDrain:
@@ -273,7 +313,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 	actual := result.Actual
 	actual.At = time.Now().UTC()
 	var captureErr error
-	if operation.Kind != operationRoute {
+	if !isRoutingOperation(operation.Kind) {
 		actual, captureErr = o.Capture(ctx, operation.Node)
 		for id, state := range result.Actual.Native {
 			if _, observed := actual.Native[id]; !observed {
@@ -891,6 +931,9 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		result.Actual.Routing, _ = o.runtime.SchedulerRouting()
 	}()
 	for _, instance := range target.Instances {
+		if !result.Operation.controlsWorkload(instance.WorkloadUID) {
+			continue
+		}
 		if instance.Profile == nil || instance.Profile.Condition.Firstfloor == nil {
 			return errors.New("route target missing measured profile")
 		}
@@ -904,12 +947,23 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	if err := o.observer.Refresh(ctx); err != nil {
 		return err
 	}
-	if err := o.runtime.ApplySchedulerTarget(target); err != nil {
-		return err
+	var applyErr error
+	if result.Operation.WorkloadUID != "" {
+		applyErr = o.runtime.ApplyManualSchedulerTarget(target, result.Operation.WorkloadUID)
+	} else if result.Operation.WorkloadUIDs != nil {
+		applyErr = o.runtime.ApplySchedulerWorkloadsTarget(target, result.Operation.WorkloadUIDs)
+	} else {
+		applyErr = o.runtime.ApplySchedulerTarget(target)
+	}
+	if applyErr != nil {
+		return applyErr
 	}
 	weights, _ := o.runtime.SchedulerRouting()
 	o.observer.mu.Lock()
-	for _, route := range weights {
+	for uid, route := range weights {
+		if !result.Operation.controlsWorkload(uid) {
+			continue
+		}
 		for id, weight := range route {
 			if weight > 0 {
 				delete(o.observer.removingInstances, id)
@@ -917,8 +971,11 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		}
 	}
 	o.observer.mu.Unlock()
-	if err := o.persistRouting(ctx, ""); err != nil {
-		return err
+	// Explicit manual declarations must not overwrite the Pod defaults release restores.
+	if result.Operation.WorkloadUID == "" {
+		if err := o.persistRouting(ctx, ""); err != nil {
+			return err
+		}
 	}
 	result.Progress = append(result.Progress, "routing applied and read back")
 	return nil
@@ -1069,7 +1126,7 @@ func samePreparedContainer(actual, desired core.Container) bool {
 		reflect.DeepEqual(actual.VolumeMounts, desired.VolumeMounts) && privilegedContainer(actual) == privilegedContainer(desired)
 }
 func (o *Operations) validateOperationBinding(ctx context.Context, operation Operation) error {
-	if operation.Kind == operationRoute {
+	if isRoutingOperation(operation.Kind) {
 		return nil
 	}
 	actual, err := o.kube.CoreV1().Nodes().Get(ctx, operation.Node.Name, meta.GetOptions{})

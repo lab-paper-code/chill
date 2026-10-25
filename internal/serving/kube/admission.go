@@ -390,7 +390,12 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 	result := OperationResult{Operation: operation, StartedAt: started.UTC(), Status: nativeOperationRunning}
 	runCtx, cancel := context.WithCancel(c.ctx)
 	initial := result
-	run := &actionRun{action: serving.Action{ID: operation.ID, Kind: operation.Kind, Node: operation.Node, Status: nativeOperationRunning}, result: &initial, cancel: cancel, started: started}
+	kind := operation.Kind
+	switch kind {
+	case operationUnroute, operationRelease, operationReset:
+		kind = operationRoute
+	}
+	run := &actionRun{action: serving.Action{ID: operation.ID, Kind: kind, Node: operation.Node, From: externalActionSource, Status: nativeOperationRunning}, result: &initial, cancel: cancel, started: started}
 	c.mu.Lock()
 	c.runs[operation.ID] = run
 	c.mu.Unlock()
@@ -415,6 +420,9 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 		if config.OnAction != nil {
 			if recordErr := config.OnAction(result); recordErr != nil {
 				result.Error = errors.Join(err, fmt.Errorf("record operation outcome: %w", recordErr)).Error()
+				if result.Status == nativeOperationComplete {
+					result.Status = nativeOperationPartial
+				}
 			}
 		}
 		c.mu.Lock()

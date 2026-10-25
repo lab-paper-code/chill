@@ -181,6 +181,9 @@ automatic scheduler judgment나 power 측정 근거가 아니다.
 다시 호출하면 현재 상태에서 이미 충족된 단계를 변경 없이 완료 처리한다. 정리된 범위의
 두 번째 reset은 Pod·선언·전력 요청을 새로 만들지 않고 성공한다(`SCH-AC-33`).
 멱등성은 실제 상태 확인으로 얻으며 별도 재개 상태기계나 숨은 client 재시도는 두지 않는다.
+기존 전역 분배 작업 또는 대상 Node의 작업이 진행 중이면 설정을 바꾸기 전에 거절한다.
+수락 후에는 전역 분배와 대상 Node를 예약하여 다른 작업이 단계 사이에 끼어들지 못하게 한다.
+각 단계의 시작과 완료/실패를 기존 action 관측 기록에 남긴다.
 
 ## serving-operation CLI
 
@@ -196,7 +199,7 @@ automatic scheduler judgment나 power 측정 근거가 아니다.
 `autonomousWorkloads`에 없어야 한다(`GET /api/v1/scheduler/settings`로 확인).
 
 1. prepare: manifest `{"kind": "prepare", "workloadUID": "<UID>", "profileID": "<ID>", "node": {"name": "<Node>",
-   "uid": "<Node UID>"}, "fixedBatchSize": 1}`를 `serving-operation --execute-config prepare.json --chill-server
+   "uid": "<Node UID>"}, "fixedBatchSize": 1, "reason": "<준비 이유>"}`를 `serving-operation --execute-config prepare.json --chill-server
    https://<entrypoint> --chill-ca-file ca.crt --chill-token-file token`으로 보낸다. `profileID`는
    `/api/v1/scheduler/profiles`에서 고르고 `fixedBatchSize`는 고정 배치 기준선에서만 준다. 준비한 instance는 그
    Workload의 routing annotation을 받고 적용된 분배에 UID가 없으면 그 seed로 요청을 처리한다.
@@ -207,6 +210,9 @@ automatic scheduler judgment나 power 측정 근거가 아니다.
 3. 배분만 멈추려면 `unroute`, Pod 기본 표시로 되돌리려면 `release`를 보낸다.
    완전 정리는 `{"kind":"reset","workloadUIDs":["<UID>"],"reason":"<정리 이유>"}`를 보낸다.
    설정 PUT으로 `staticRouting`을 수정하거나 클라이언트가 drain/remove/power 순서를 조립하지 않는다.
+
+수동 분배는 프로세스 재시작 시 유지되지 않으며 운영자가 재명시해야 한다.
+저장된 선언은 관측 근거이며 서버 재시작이나 설정 refresh가 실행을 재시도하지 않는다.
 
 ## 원자 동작 측정의 격리
 
@@ -236,20 +242,21 @@ Node를 가장 낮은 모드에서 profile 모드로 올린 기록이 가용 노
 
 ## 구현 위치와 검사
 
-- `internal/serving/httpapi/scheduler.go:Handler.scheduler`, `Handler.staticRoutingChange`:
-  설정 PUT의 배분 선언 쓰기를 제거한다. operations의 strict 요청 분기와 권한은 기존 경로에 확장한다.
-- `internal/serving/kube/static_routing.go:SchedulerController.ApplyStaticRouting`,
-  `finishStaticRouting`: route/unroute/release의 UID별 선언·ACK/readback 경로로 전환한다.
-  현재 수동 admission인 `internal/serving/kube/measurement_sequence.go:ExecuteManual`,
-  `manualOperationLocked`에 새 종류와 reset 범위 검증을 확장한다.
+- `internal/serving/httpapi/scheduler.go:Handler.scheduler`는 설정 PUT의 읽기 전용 배분 필드를 거절한다.
+  `httpapi/operations.go`와 `kube/measurement_sequence.go:DecodeManualOperation`은 종류별 strict 입력과 권한을 확인한다.
+- `internal/serving/kube/static_routing.go:manualRoutingOperationLocked`,
+  `persistManualConfiguration`, `executeManualRouting`은 UID별 선언·ACK/readback을 실행한다.
+  `measurement_sequence.go:ExecuteManual`은 admission과 작업 예약을 담당하고,
+  `manual_reset.go:executeManualReset`은 순서·부분 실패·멱등 상태 확인을 담당한다.
 - `internal/serving/kube/operations.go:Operations.Execute`, `StopInstance`,
   `removeInstance`, `ChangePower`, `Capture`: reset의 단계 실행·native drain·종료·전력
   readback을 재사용하고 단계별 결과를 누적한다.
 - `internal/serving/runtime_scheduler.go:Runtime.ReleaseSchedulerRouting`는
   빈 override와 UID 삭제를 구별한다. release는 해당 UID key만 지우고 최근
   실제 Pod에서 읽은 seed로 돌아가며, 이후 Ready 인스턴스의 seed도 따른다.
-  다른 UID의 override는 보존한다. runtime이 계산한 `InstanceState.routable`을
-  snapshot/POOL이 공유하고, 새 요청에 대한 선언과 Ready/Stopped·소유권·모델
+  다른 UID의 override는 보존한다.
+  자율 목표 적용도 현재 자율제어 UID만 갱신하여 release한 비자율 UID의 override를 재생성하지 않는다.
+  runtime이 계산한 `InstanceState.routable`을 snapshot/POOL이 공유하고, 새 요청에 대한 선언과 Ready/Stopped·소유권·모델
   필터를 모두 적용한다. 이미 접수한 요청만을 위한 보존 route는 제외한다.
   `TestReleaseSchedulerRoutingFollowsNewReadySeed`는 release 뒤 새 Ready
   인스턴스로 실제 새 요청이 dispatch되고 다른 UID가 유지됨을 검사한다(`SCH-AC-32`).

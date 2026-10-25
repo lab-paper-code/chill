@@ -61,7 +61,6 @@ type schedulerService struct {
 	catalog                  *servingkube.Catalog
 	costs                    *servingkube.CostEvidence
 	resourceVersion, sources string
-	staticAppliedRV          string
 	configuration            atomic.Pointer[schedulerConfiguration]
 	profiles                 atomic.Pointer[httpapi.ProfilesView]
 	ctx                      context.Context
@@ -236,19 +235,19 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	slices.Sort(sources)
 	signature := strings.Join(sources, "\x00")
 	if o.controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources {
-		o.applyStaticRouting(ctx)
 		return nil
 	}
 	preparations, issues := o.preparations(ctx, config, view.Profiles)
 	view.Insufficiencies = append(view.Insufficiencies, issues...)
 	controllerConfig := servingkube.SchedulerControllerConfig{
-		Settings: config.Settings,
+		Settings:          config.Settings,
+		ConfigurationName: o.opts.schedulerConfigMap, ConfigurationKey: o.opts.schedulerConfigKey,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
 		CostIssues: costs.Issues, DispatchOccupancy: costs.DispatchOccupancy, CatalogIssues: view.Insufficiencies,
 		LoadGenerator:         o.opts.loadGenerator,
 		GatewayRequestTimeout: o.gatewayRequestTimeout,
 		Meters:                config.Meters, PowerPolicies: policies,
-		StaticRouting: config.StaticRouting != nil, MeasurementNamespaces: namespaces,
+		StaticRouting: len(config.StaticRouting) > 0, MeasurementNamespaces: namespaces,
 		Evidence: o.objects, EvidenceStore: o.opts.storeName, MeterSource: metricSource,
 		OnDecision: o.recordDecision, OnAction: o.recordAction,
 	}
@@ -277,7 +276,6 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	o.resourceVersion = cm.ResourceVersion
 	o.sources = signature
 	o.restartPower(config)
-	o.applyStaticRouting(ctx)
 	return nil
 }
 
@@ -322,25 +320,6 @@ func (o *schedulerService) profilerFacts(
 		}
 	}
 	return policies, cm.ResourceVersion, nil
-}
-
-// An acknowledged configuration can await actual physical readiness. The normal
-// refresh cadence applies its manual distribution for disabled Workloads once.
-func (o *schedulerService) applyStaticRouting(ctx context.Context) {
-	config := o.configuration.Load()
-	if config.StaticRouting == nil {
-		o.staticAppliedRV = ""
-		return
-	}
-	if o.staticAppliedRV == o.resourceVersion {
-		return
-	}
-	err := o.controller.ApplyStaticRouting(ctx, config.StaticRouting, o.resourceVersion, config.StaticRoutingValidatedAt)
-	if err != nil {
-		ctrl.Log.Error(err, "manual staticRouting remains unapplied", "sourceConfigRV", o.resourceVersion)
-		return
-	}
-	o.staticAppliedRV = o.resourceVersion
 }
 
 func (o *schedulerService) operatingPower(

@@ -27,6 +27,8 @@ const (
 	allowedReviewEntries = 1024
 )
 
+const getVerb = "get"
+
 var (
 	ErrUnauthenticated          = errors.New("unauthenticated")
 	ErrForbidden                = errors.New("forbidden")
@@ -119,7 +121,7 @@ func (a *Authorizer) review(ctx context.Context, token, verb, path string) (Prin
 	}
 	verb = strings.ToLower(verb)
 	switch verb {
-	case "get", "post", "put", "delete", "patch", "head", "options":
+	case getVerb, "post", "put", "delete", "patch", "head", "options":
 	default:
 		return Principal{}, ErrForbidden
 	}

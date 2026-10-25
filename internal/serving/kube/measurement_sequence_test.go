@@ -25,6 +25,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	testOperationConflict = "OperationConflict"
+	testNodeBusy          = "NodeBusy"
+)
+
 // memEvidence is an in-memory evidence store.
 type memEvidence struct {
 	mu      sync.Mutex
@@ -174,7 +179,7 @@ func sequenceHarness(t *testing.T) (*admissionHarness, *writeLog, *memEvidence) 
 var testNode = serving.NodeReference{Name: "node", UID: "node-uid"}
 
 func manualPrepare() ManualOperation {
-	return ManualOperation{Kind: operationPrepare, WorkloadUID: "w-uid", ProfileID: measuredCPUPreparationFixture().Instance.Profile.ID, Node: testNode}
+	return ManualOperation{Kind: operationPrepare, WorkloadUID: "w-uid", ProfileID: measuredCPUPreparationFixture().Instance.Profile.ID, Node: testNode, Reason: "exercise manual preparation"}
 }
 
 func errorCode(err error) string {
@@ -190,7 +195,7 @@ func errorCode(err error) string {
 func TestOrderPowerChangeThenAdmission(t *testing.T) {
 	h, _, _ := sequenceHarness(t)
 	h.setNode(func(n *core.Node) { pendingNode(n, lowMode, time.Now()) })
-	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != "NodeBusy" {
+	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != testNodeBusy {
 		t.Fatalf("manual prepare admitted over a pending power change: %v", err)
 	}
 	h.setNode(func(n *core.Node) { n.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeFailed })
@@ -202,7 +207,7 @@ func TestOrderPowerChangeThenAdmission(t *testing.T) {
 	if err := h.controller.operations.ChangePower(context.Background(), testNode, "", lowMode, time.Minute); !errors.Is(err, ErrNodeInMeasurement) {
 		t.Fatalf("serving power change on a measured Node: %v", err)
 	}
-	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != "NodeBusy" {
+	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != testNodeBusy {
 		t.Fatalf("manual prepare on a measured Node: %v", err)
 	}
 }
@@ -265,18 +270,22 @@ func TestOrderMeasurementEndThenPowerChange(t *testing.T) {
 func TestManualOperationGuards(t *testing.T) {
 	h, _, _ := sequenceHarness(t)
 	h.controller.mu.Lock()
+	h.controller.state.Snapshot.Workloads = append(h.controller.state.Snapshot.Workloads, &serving.Definition{Name: "auto", UID: "auto"})
 	h.controller.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: "p/c", Node: testNode, WorkloadUID: "foreign-workload"}, {ID: "q/c", Node: testNode}}
 	h.controller.state.Snapshot.Routing = map[string]map[string]int32{"w-uid": {"q/c": 1}}
 	h.controller.config.Settings.AutonomousWorkloads = []string{"auto"}
 	h.controller.mu.Unlock()
-	for name, request := range map[string]ManualOperation{
-		"shared":     {Kind: operationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "p/c"},
-		"routed":     {Kind: operationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "q/c"},
-		"autonomous": {Kind: operationRemove, WorkloadUID: "auto", Node: testNode, Instance: "q/c"},
-		"unknown":    {Kind: operationPrepare, WorkloadUID: "w-uid", ProfileID: "missing", Node: testNode},
+	for name, tc := range map[string]struct {
+		request ManualOperation
+		code    string
+	}{
+		"shared":     {ManualOperation{Kind: operationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "p/c", Reason: "refuse foreign owner"}, testOperationConflict},
+		"routed":     {ManualOperation{Kind: operationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "q/c", Reason: "refuse routed removal"}, testOperationConflict},
+		"autonomous": {ManualOperation{Kind: operationRemove, WorkloadUID: "auto", Node: testNode, Instance: "q/c", Reason: "refuse autonomous workload"}, testOperationConflict},
+		"unknown":    {ManualOperation{Kind: operationPrepare, WorkloadUID: "w-uid", ProfileID: "missing", Node: testNode, Reason: "refuse unknown profile"}, "InvalidInput"},
 	} {
-		if _, err := h.controller.ExecuteManual(context.Background(), request); err == nil {
-			t.Fatalf("%s accepted", name)
+		if _, err := h.controller.ExecuteManual(context.Background(), tc.request); errorCode(err) != tc.code {
+			t.Fatalf("%s refused for wrong reason: got %v, want %s", name, err, tc.code)
 		}
 	}
 	result, err := h.controller.ExecuteManual(context.Background(), manualPrepare())
@@ -287,7 +296,7 @@ func TestManualOperationGuards(t *testing.T) {
 	if err != nil || len(pod.OwnerReferences) != 1 || pod.OwnerReferences[0].UID != "w-uid" {
 		t.Fatalf("prepared Pod %+v %v", pod, err)
 	}
-	if _, err = h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != "OperationConflict" {
+	if _, err = h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != testOperationConflict {
 		t.Fatalf("second prepare on an occupied Node: %v", err)
 	}
 }

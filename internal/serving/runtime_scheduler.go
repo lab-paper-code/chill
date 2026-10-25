@@ -2,6 +2,7 @@ package serving
 
 import (
 	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -75,18 +76,29 @@ func (r *Runtime) routeWeightLocked(uid string, instance *runtimeInstance) int32
 func (r *Runtime) ApplySchedulerTarget(candidate SchedulerCandidate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.applySchedulerTargetLocked(candidate, false, "")
+	return r.applySchedulerTargetLocked(candidate, false, nil)
 }
 
 // ApplyManualSchedulerTarget changes only uid, preserving other override keys,
 // including their absence after release.
 func (r *Runtime) ApplyManualSchedulerTarget(candidate SchedulerCandidate, uid string) error {
+	return r.ApplySchedulerWorkloadsTarget(candidate, []string{uid})
+}
+
+// ApplySchedulerWorkloadsTarget leaves every other UID's override (including
+// release/absence) untouched when the autonomous planner applies a global plan.
+func (r *Runtime) ApplySchedulerWorkloadsTarget(candidate SchedulerCandidate, uids []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if uid == "" || r.workloads[uid] == nil || r.workloads[uid].detached {
-		return failure("DefinitionChanged", "workload %q is not current", uid)
+	for _, uid := range uids {
+		if uid == "" || r.workloads[uid] == nil || r.workloads[uid].detached {
+			return failure("DefinitionChanged", "workload %q is not current", uid)
+		}
 	}
-	return r.applySchedulerTargetLocked(candidate, false, uid)
+	if len(uids) == 0 {
+		return nil
+	}
+	return r.applySchedulerTargetLocked(candidate, false, uids)
 }
 
 // ValidateSchedulerTarget checks the same current UID, ownership and readiness
@@ -94,10 +106,10 @@ func (r *Runtime) ApplyManualSchedulerTarget(candidate SchedulerCandidate, uid s
 func (r *Runtime) ValidateSchedulerTarget(candidate SchedulerCandidate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.applySchedulerTargetLocked(candidate, true, "")
+	return r.applySchedulerTargetLocked(candidate, true, nil)
 }
 
-func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, validateOnly bool, onlyUID string) error {
+func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, validateOnly bool, uids []string) error {
 	targets, err := r.resolveSchedulerRoutingLocked(candidate)
 	if err != nil {
 		return err
@@ -107,28 +119,30 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 	}
 	// The declared distribution is each instance's static seed, as its Pod records it.
 	for _, instance := range r.instances {
-		if onlyUID != "" {
-			delete(instance.Routing, onlyUID)
-			if weight := targets[onlyUID][instance.State.ID]; weight > 0 {
+		if uids == nil {
+			instance.Routing = map[string]int32{}
+		} else {
+			for _, uid := range uids {
+				delete(instance.Routing, uid)
+			}
+		}
+		for uid, distribution := range targets {
+			if uids != nil && !slices.Contains(uids, uid) {
+				continue
+			}
+			if weight := distribution[instance.State.ID]; weight > 0 {
 				if instance.Routing == nil {
 					instance.Routing = map[string]int32{}
 				}
-				instance.Routing[onlyUID] = weight
-			}
-			continue
-		}
-		instance.Routing = map[string]int32{}
-		for uid, distribution := range targets {
-			if weight := distribution[instance.State.ID]; weight > 0 {
 				instance.Routing[uid] = weight
 			}
 		}
 	}
 	// Accepted calls keep their original execution contract through route changes.
 	// Retain an old route in memory only while the new distribution cannot execute them.
-	r.retainAcceptedRoutesLocked(targets)
+	r.retainAcceptedRoutesLocked(targets, uids)
 	for uid, distribution := range targets {
-		if onlyUID != "" && uid != onlyUID {
+		if uids != nil && !slices.Contains(uids, uid) {
 			continue
 		}
 		for id, weight := range distribution {
@@ -137,13 +151,15 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 			}
 		}
 	}
-	if onlyUID == "" {
+	if uids == nil {
 		r.routeTargets = targets
 	} else {
 		if r.routeTargets == nil {
 			r.routeTargets = map[string]map[string]int32{}
 		}
-		r.routeTargets[onlyUID] = targets[onlyUID]
+		for _, uid := range uids {
+			r.routeTargets[uid] = targets[uid]
+		}
 	}
 	r.routingControlled = true
 	r.rebuildLocked()
@@ -234,8 +250,11 @@ func (r *Runtime) schedulerSlotLocked(id string) (*runtimeInstance, error) {
 	return actual, nil
 }
 
-func (r *Runtime) retainAcceptedRoutesLocked(targets map[string]map[string]int32) {
+func (r *Runtime) retainAcceptedRoutesLocked(targets map[string]map[string]int32, uids []string) {
 	for uid, workload := range r.workloads {
+		if uids != nil && !slices.Contains(uids, uid) {
+			continue
+		}
 		for _, call := range workload.queue {
 			executable := false
 			for id, weight := range targets[uid] {

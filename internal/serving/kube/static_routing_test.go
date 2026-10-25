@@ -2,227 +2,168 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"maps"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
-	kruntime "k8s.io/apimachinery/pkg/runtime"
+	core "k8s.io/api/core/v1"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 )
 
-func TestStaticRoutingRequiresSourceRevision(t *testing.T) {
-	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), config: SchedulerControllerConfig{
-		Settings: serving.SchedulerSettings{},
-	}}
-	if err := controller.ApplyStaticRouting(context.Background(), nil, "", nil); err == nil {
-		t.Fatal("manual routing reached capture/apply without source revision")
+func manualConfigurationFixture(t *testing.T) (*SchedulerController, *kubefake.Clientset) {
+	t.Helper()
+	settings := serving.SchedulerSettings{
+		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
+		MaxReplicas: 1, MaxInstances: 1, MaxCPUs: 1, CapacityWindow: time.Second, CapacityWindows: 1,
+		CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, AutonomousWorkloads: []string{"auto", "keep-auto"},
 	}
+	raw, err := json.Marshal(map[string]any{
+		"settings": settings, "staticRouting": map[string]map[string]int{"w": {"old": 3}, "other": {"physical": 7}},
+		"reserved": map[string]any{"node": map[string]any{"cpus": []int{2}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kube := kubefake.NewSimpleClientset(&core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "42"}, Data: map[string]string{
+		"other-key": "untouched", "scheduler.json": string(raw),
+	}})
+	return &SchedulerController{kube: kube, operations: &Operations{config: OperationConfig{Namespace: "serving"}}, config: SchedulerControllerConfig{Settings: settings, ConfigurationName: "scheduler", ConfigurationKey: "scheduler.json"}}, kube
 }
 
-func TestStaticRoutingCompletionRequiresCompleteReadbackAndAppearsInState(t *testing.T) {
-	wanted := map[string]map[string]int32{"w1": {"physical-a": 1}, "w2": {"physical-b": 2}}
-	for _, test := range []struct {
-		name      string
-		actual    map[string]map[string]int32
-		wantError bool
-	}{
-		{name: "exact", actual: map[string]map[string]int32{"w2": {"physical-b": 2}, "w1": {"physical-a": 1}}},
-		{name: "accepted drain retains extra route", actual: map[string]map[string]int32{"w1": {"physical-a": 1, "draining-old": 1}, "w2": {"physical-b": 2}}, wantError: true},
-		{name: "extra UID", actual: map[string]map[string]int32{"w1": {"physical-a": 1}, "w2": {"physical-b": 2}, "stale": {}}, wantError: true},
-		{name: "missing UID", actual: map[string]map[string]int32{"w1": {"physical-a": 1}}, wantError: true},
-		{name: "missing target", actual: map[string]map[string]int32{"w1": {}, "w2": {"physical-b": 2}}, wantError: true},
-		{name: "wrong weight", actual: map[string]map[string]int32{"w1": {"physical-a": 3}, "w2": {"physical-b": 2}}, wantError: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil)}
-			result := OperationResult{Operation: Operation{
-				ID: "manual-static-routing:42", Kind: manualStaticRoutingOperation, SourceConfigRV: "42",
-				Target: &serving.SchedulerCandidate{Routing: wanted},
-			}}
-			var recorded OperationResult
-			err := controller.finishStaticRouting(result, test.actual, nil, func(result OperationResult) error {
-				recorded = result
-				return nil
-			})
-			if (err != nil) != test.wantError {
-				t.Fatalf("complete readback error = %v, want error %v", err, test.wantError)
+func TestManualRoutingPersistencePreservesOtherUIDsAndConfiguration(t *testing.T) {
+	for _, kind := range []string{operationRoute, operationUnroute, operationRelease, operationReset} {
+		t.Run(kind, func(t *testing.T) {
+			controller, kube := manualConfigurationFixture(t)
+			operation := Operation{Kind: kind, WorkloadUID: "w", WorkloadUIDs: []string{"auto"}, Reason: "operator choice", ActorUsername: "alice", ActorUID: "actor", Target: &serving.SchedulerCandidate{Routing: map[string]map[string]int32{"w": {"new": 11}}}}
+			if kind == operationUnroute {
+				operation.Target.Routing["w"] = map[string]int32{}
 			}
-			state := controller.State()
-			if len(state.Results) != 1 {
-				t.Fatalf("manual result missing from scheduler state: %+v", state.Results)
-			}
-			actual := state.Results[0]
-			if actual.Operation.Kind != manualStaticRoutingOperation || actual.Operation.SourceConfigRV != "42" || actual.Operation.Target != result.Operation.Target {
-				t.Fatalf("manual provenance/expected target lost: %+v", actual.Operation)
-			}
-			if !maps.EqualFunc(actual.Actual.Routing, test.actual, func(left, right map[string]int32) bool { return maps.Equal(left, right) }) {
-				t.Fatalf("physical actual readback lost: %v", actual.Actual.Routing)
-			}
-			wantStatus := nativeOperationComplete
-			if test.wantError {
-				wantStatus = nativeOperationFailed
-			}
-			if actual.Status != wantStatus || recorded.Status != wantStatus || actual.EndedAt.IsZero() {
-				t.Fatalf("observation log/state completion disagree: state=%+v recorded=%+v", actual, recorded)
-			}
-			controller.reconcileSnapshot(serving.SchedulerSnapshot{}, nil, actual.EndedAt.Add(2*time.Second), time.Second)
-			if len(controller.State().Results) != 0 {
-				t.Fatal("manual result bypassed existing observation-window expiry")
-			}
-		})
-	}
-}
-
-func TestStaticRoutingObservationLogFailureRemainsVisibleAsPartial(t *testing.T) {
-	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil)}
-	routing := map[string]map[string]int32{"w": {"physical": 1}}
-	recordError := errors.New("observation log unavailable")
-	err := controller.finishStaticRouting(OperationResult{
-		Operation: Operation{Kind: manualStaticRoutingOperation, SourceConfigRV: "42", Target: &serving.SchedulerCandidate{Routing: routing}},
-	}, routing, nil, func(OperationResult) error { return recordError })
-	if !errors.Is(err, recordError) {
-		t.Fatalf("observation log failure lost: %v", err)
-	}
-	state := controller.State()
-	if len(state.Results) != 1 || state.Results[0].Status != nativeOperationPartial || state.Results[0].Error == "" {
-		t.Fatalf("observation log failure incorrectly completed or hidden: %+v", state.Results)
-	}
-}
-
-func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
-	for _, captureFailure := range []bool{false, true} {
-		t.Run(map[bool]string{false: "physical source unavailable", true: "snapshot capture failure"}[captureFailure], func(t *testing.T) {
-			ctx := context.Background()
-			manager, _ := newManagerHarness(t)
-			createManagerCatalog(t, manager)
-			if _, err := manager.CreateWorkload(ctx, "workload", managerWorkloadSpec()); err != nil {
+			if err := controller.persistManualConfiguration(context.Background(), &operation); err != nil {
 				t.Fatal(err)
 			}
-			definitions := manager.runtime.SchedulerInputs(time.Now).Workloads
-			if len(definitions) != 1 {
-				t.Fatalf("expected one current Workload, got %v", definitions)
+			cm, err := kube.CoreV1().ConfigMaps("serving").Get(context.Background(), "scheduler", meta.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
 			}
-			routing := map[string]map[string]int{definitions[0].UID: {"unavailable-physical-source": 1}}
-			var recorded []OperationResult
-			controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil),
-				store: manager.store, kube: manager.observer.kube, runtime: manager.runtime,
-				observer: manager.observer, observationLog: manager.observationLog,
-				config: SchedulerControllerConfig{
-					Settings: serving.SchedulerSettings{ObservationWindow: time.Minute},
-					OnAction: func(result OperationResult) error {
-						recorded = append(recorded, result)
-						return nil
-					},
-				},
+			var document map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(cm.Data["scheduler.json"]), &document); err != nil {
+				t.Fatal(err)
 			}
-			if captureFailure {
-				controller.kube.(*kubefake.Clientset).PrependReactor("list", "nodes", func(ktesting.Action) (bool, kruntime.Object, error) {
-					return true, nil, errors.New("actual snapshot unavailable")
-				})
+			if cm.Data["other-key"] != "untouched" || string(document["reserved"]) != `{"node":{"cpus":[2]}}` {
+				t.Fatalf("unrelated configuration changed: %v", cm.Data)
 			}
-			validatedAt := time.Date(2026, 10, 21, 1, 2, 3, 4, time.UTC)
-			err := controller.ApplyStaticRouting(ctx, routing, "42", &validatedAt)
-			if err == nil {
-				t.Fatal("unavailable static target was reported applied")
+			if operation.SourceConfigRV != cm.ResourceVersion || operation.Reason != "operator choice" || operation.ActorUsername != "alice" || operation.ActorUID != "actor" {
+				t.Fatalf("provenance lost: %+v", operation)
 			}
-			if !captureFailure && !strings.Contains(err.Error(), "not currently ready") {
-				t.Fatalf("expected actual readiness failure, got %v", err)
+			if !maps.Equal(operation.BeforeStaticRouting["w"], map[string]int{"old": 3}) || !maps.Equal(operation.StaticRouting["other"], map[string]int{"physical": 7}) {
+				t.Fatalf("before/other declarations lost: %+v", operation)
 			}
-			state := controller.State()
-			if len(recorded) != 1 || len(state.Results) != 1 {
-				t.Fatalf("preflight failure hidden: recorded=%d state=%+v", len(recorded), state.Results)
-			}
-			result := state.Results[0]
-			if result.Status != nativeOperationFailed || result.Error != err.Error() || result.Operation.SourceConfigRV != "42" || result.Operation.Kind != "manual-static-routing" ||
-				result.Operation.SettingsValidatedAt == nil || !result.Operation.SettingsValidatedAt.Equal(validatedAt) {
-				t.Fatalf("manual failure provenance lost: %+v", result)
-			}
-			if !maps.EqualFunc(result.Operation.StaticRouting, routing, func(left, right map[string]int) bool { return maps.Equal(left, right) }) {
-				t.Fatalf("unapplied declaration lost: %v", result.Operation.StaticRouting)
-			}
-			if result.Actual.Routing[definitions[0].UID]["unavailable-physical-source"] != 0 {
-				t.Fatal("failed declaration fabricated actual routing")
-			}
-		})
-	}
-}
-
-func TestManualStaticRoutingRecordsPendingWithoutOverwritingRunningGlobalRoute(t *testing.T) {
-	controller, target, _ := acknowledgedHandoffFixture(t)
-	for _, run := range controller.runs {
-		run.action.Status = nativeOperationRunning
-	}
-	var recorded []OperationResult
-	controller.config.OnAction = func(result OperationResult) error {
-		recorded = append(recorded, result)
-		return nil
-	}
-	wanted := map[string]map[string]int{}
-	for uid, weights := range target.Routing {
-		wanted[uid] = map[string]int{}
-		for id, weight := range weights {
-			wanted[uid][id] = int(weight)
-		}
-	}
-	err := controller.ApplyStaticRouting(context.Background(), wanted, "pending-owner-rv", nil)
-	if err == nil || !strings.Contains(err.Error(), "running global route") {
-		t.Fatalf("manual write did not wait for the existing native ACK: %v", err)
-	}
-	if len(recorded) != 1 || recorded[0].Status != nativeOperationFailed ||
-		recorded[0].Operation.SourceConfigRV != "pending-owner-rv" || len(recorded[0].Actual.Routing) == 0 {
-		t.Fatalf("pending manual configuration lost its actual readback/provenance: %+v", recorded)
-	}
-	for _, run := range controller.runs {
-		if run.action.Status != nativeOperationRunning {
-			t.Fatal("manual pending configuration canceled or completed the existing route")
-		}
-	}
-}
-
-func TestStaticRoutingPartialFailureClassification(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		persisted  bool
-		nativeACK  bool
-		wantStatus string
-	}{
-		{name: "no physical or desired effect", wantStatus: nativeOperationFailed},
-		{name: "desired persisted without native ACK", persisted: true, wantStatus: nativeOperationPartial},
-		{name: "native ACK before later failure", nativeACK: true, wantStatus: nativeOperationPartial},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil)}
-			routing := map[string]map[string]int32{"w": {"physical": 1}}
-			result := OperationResult{
-				Operation: Operation{Kind: manualStaticRoutingOperation, Target: &serving.SchedulerCandidate{Routing: routing}},
-			}
-			if test.persisted {
-				result.Status = nativeOperationPartial
-				result.Progress = []string{"physical: desired policy configuration persisted"}
-			}
-			if test.nativeACK {
-				result.Actual.Native = map[string]firstfloor.State{
-					"physical": {Ready: true, At: time.Now().UTC(), Metadata: firstfloor.Metadata{DecisionID: "route"}},
+			switch kind {
+			case operationRoute:
+				if !maps.Equal(operation.StaticRouting["w"], map[string]int{"new": 11}) {
+					t.Fatal(operation.StaticRouting)
+				}
+			case operationUnroute:
+				if weights, ok := operation.StaticRouting["w"]; !ok || len(weights) != 0 {
+					t.Fatal("unroute must retain an explicit empty declaration")
+				}
+			case operationRelease:
+				if _, ok := operation.StaticRouting["w"]; ok {
+					t.Fatal("release retained UID declaration")
+				}
+			case operationReset:
+				if !maps.Equal(operation.StaticRouting["w"], map[string]int{"old": 3}) {
+					t.Fatal("reset step1 changed routing")
+				}
+				if got := controller.Settings().AutonomousWorkloads; len(got) != 1 || got[0] != "keep-auto" {
+					t.Fatalf("reset changed other autonomy: %v", got)
 				}
 			}
-			applyErr := errors.New("later native state unavailable")
-			var recorded OperationResult
-			err := controller.finishStaticRouting(result, routing, applyErr, func(result OperationResult) error {
-				recorded = result
-				return nil
-			})
-			if !errors.Is(err, applyErr) {
-				t.Fatalf("physical failure lost: %v", err)
+		})
+	}
+}
+
+func TestManualRoutingPersistenceConflictDoesNotRetryOrAccept(t *testing.T) {
+	controller, kube := manualConfigurationFixture(t)
+	failure := errors.New("resourceVersion conflict")
+	updates := 0
+	kube.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, runtime.Object, error) { updates++; return true, nil, failure })
+	operation := Operation{Kind: operationRelease, WorkloadUID: "w"}
+	if err := controller.persistManualConfiguration(context.Background(), &operation); !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	if updates != 1 || operation.SourceConfigRV != "" || controller.config.StaticRouting {
+		t.Fatalf("failed declaration accepted/retried: %+v updates=%d", operation, updates)
+	}
+}
+
+func TestManualRoutingAdmissionRefusesBeforeMutation(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		request    ManualOperation
+		autonomous bool
+		running    bool
+	}{
+		{name: "missing reason", request: ManualOperation{Kind: operationUnroute, WorkloadUID: "w"}},
+		{name: "stale UID", request: ManualOperation{Kind: operationUnroute, WorkloadUID: "stale", Reason: "reason"}},
+		{name: "autonomous", request: ManualOperation{Kind: operationUnroute, WorkloadUID: "w", Reason: "reason"}, autonomous: true},
+		{name: "global route", request: ManualOperation{Kind: operationRelease, WorkloadUID: "w", Reason: "reason"}, running: true},
+		{name: "zero route", request: ManualOperation{Kind: operationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"physical": 0}}},
+		{name: "negative route", request: ManualOperation{Kind: operationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"physical": -1}}},
+		{name: "unroute weights", request: ManualOperation{Kind: operationUnroute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{}}},
+		{name: "release weights", request: ManualOperation{Kind: operationRelease, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{}}},
+		{name: "missing target", request: ManualOperation{Kind: operationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"missing": 1}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			controller := &SchedulerController{runs: map[string]*actionRun{}}
+			config := SchedulerControllerConfig{}
+			if test.autonomous {
+				config.Settings.AutonomousWorkloads = []string{"w"}
 			}
-			actual := controller.State().Results[0]
-			if actual.Status != test.wantStatus || recorded.Status != test.wantStatus {
-				t.Fatalf("physical effect classification lost: state=%s recorded=%s", actual.Status, recorded.Status)
+			if test.running {
+				controller.runs["route"] = &actionRun{action: serving.Action{Kind: operationRoute, Status: nativeOperationRunning}}
+			}
+			_, err := controller.manualRoutingOperationLocked(context.Background(), test.request, config, serving.SchedulerSnapshot{Workloads: []*serving.Definition{{UID: "w"}}})
+			if err == nil {
+				t.Fatal("unsafe operation admitted")
 			}
 		})
+	}
+}
+
+func TestManualRoutingDeclarationIsNotPhysicalSuccess(t *testing.T) {
+	controller, kube := manualConfigurationFixture(t)
+	manager, _ := newManagerHarness(t)
+	controller.runtime = manager.runtime
+	controller.operations.runtime = manager.runtime
+	operation := Operation{
+		Kind: operationRoute, WorkloadUID: "w", Reason: "operator choice",
+		Target: &serving.SchedulerCandidate{
+			Routing:   map[string]map[string]int32{"w": {"missing": 1}},
+			Instances: []serving.SchedulerInstance{{ID: "missing", WorkloadUID: "w"}},
+		},
+	}
+	result, err := controller.executeManualRouting(context.Background(), operation)
+	if err == nil || result.Status != nativeOperationPartial || result.Error == "" {
+		t.Fatalf("declaration was treated as success: %+v %v", result, err)
+	}
+	cm, err := kube.CoreV1().ConfigMaps("serving").Get(context.Background(), "scheduler", meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		StaticRouting map[string]map[string]int `json:"staticRouting"`
+	}
+	if err := json.Unmarshal([]byte(cm.Data["scheduler.json"]), &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.StaticRouting["w"]["missing"] != 1 || result.Actual.Routing["w"]["missing"] != 0 {
+		t.Fatalf("declaration and actual routing conflated: %+v %+v", document, result)
 	}
 }

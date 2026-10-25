@@ -42,6 +42,11 @@ func TestReleaseSchedulerRoutingFollowsNewReadySeed(t *testing.T) {
 	if err := r.InstallInstances([]ReadyInstance{first, prepared}); err != nil {
 		t.Fatal(err)
 	}
+	// A later autonomous route for another UID must not recapture the released
+	// UID's empty snapshot entry and block future/current Pod defaults.
+	if err := r.ApplySchedulerWorkloadsTarget(blocked, []string{"w2"}); err != nil {
+		t.Fatal(err)
+	}
 	weights, _ := r.SchedulerRouting()
 	if !reflect.DeepEqual(weights["w2"], map[string]int32{original.ID: 7}) || !reflect.DeepEqual(weights["w1"], map[string]int32{prepared.State.ID: 5}) {
 		t.Fatalf("release changed another UID or lost the future seed: %v", weights)

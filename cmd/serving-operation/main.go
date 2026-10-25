@@ -1,5 +1,5 @@
-// serving-operation sends a manual prepare/remove to ChillServer and prints
-// ChillServer's result.
+// serving-operation sends one explicit manual operation to ChillServer and prints
+// its acknowledged result.
 package main
 
 import (
@@ -42,7 +42,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	var executeFile, server, caFile, tokenFile string
 	var timeout time.Duration
 	flags.StringVar(&executeFile, "execute-config", "",
-		"JSON manual prepare or remove of one Workload outside autonomous control")
+		"JSON manual prepare/remove/route/unroute/release/reset operation")
 	flags.StringVar(&server, "chill-server", "", "ChillServer HTTPS origin")
 	flags.StringVar(&caFile, "chill-ca-file", "", "ChillServer CA certificate path")
 	flags.StringVar(&tokenFile, "chill-token-file", "", "caller bearer token path")
@@ -59,8 +59,11 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	var operation servingkube.ManualOperation
+	var operation json.RawMessage
 	if err = readManifest(executeFile, &operation); err != nil {
+		return err
+	}
+	if _, err = servingkube.DecodeManualOperation(operation); err != nil {
 		return err
 	}
 	var result servingkube.OperationResult

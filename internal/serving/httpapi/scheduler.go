@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,6 +30,11 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		compact, err := schedulerCompactQuery(r)
 		if err != nil {
 			sendError(w, err)
+			return
+		}
+		if r.URL.Query().Get("view") == "summary" {
+			state := h.config.Scheduler.State()
+			sendJSON(w, http.StatusOK, summarizeScheduler(&state))
 			return
 		}
 		if compact && !strings.HasSuffix(r.URL.Path, "/settings") {
@@ -84,15 +88,24 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	// Omitted staticRouting keeps the stored declaration; {} removes it.
+	// Routing declarations are read-only here; explicit operations own mutations.
 	var input struct {
 		serving.SchedulerSettingsInput
-		StaticRouting map[string]map[string]int `json:"staticRouting"`
-		Reason        string                    `json:"reason"`
+		StaticRouting            json.RawMessage `json:"staticRouting"`
+		StaticRoutingValidatedAt json.RawMessage `json:"staticRoutingValidatedAt"`
 	}
 	if err := h.decode(w, r, &input); err != nil {
 		sendError(w, err)
 		return
+	}
+	for _, field := range [...]struct {
+		name  string
+		value json.RawMessage
+	}{{"staticRouting", input.StaticRouting}, {"staticRoutingValidatedAt", input.StaticRoutingValidatedAt}} {
+		if field.value != nil {
+			sendError(w, &serving.Error{Code: "InvalidBody", Message: field.name + " is read-only; use scheduler operations", Field: field.name})
+			return
+		}
 	}
 	settings, err := input.SchedulerSettingsInput.Settings()
 	if err != nil {
@@ -117,16 +130,10 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	before, after, reason, err := h.staticRoutingChange(config["staticRouting"], input.StaticRouting, input.Reason, settings.AutonomousWorkloads)
-	if err != nil {
-		sendError(w, err)
-		return
-	}
 	username, uid := principal.Actor()
 	now := time.Now().UTC()
 	change := serving.SchedulerSettingsChange{
 		ActorUsername: username, ActorUID: uid, Before: h.config.Scheduler.Settings(), After: settings,
-		BeforeStaticRouting: before, AfterStaticRouting: after, Reason: reason,
 		ValidatedAt: now, Affected: []serving.NodeReference{},
 	}
 	for _, node := range h.config.Scheduler.State().Snapshot.Nodes {
@@ -136,15 +143,6 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: now, Settings: &change}); err != nil {
 		sendError(w, err)
 		return
-	}
-	if reason != "" {
-		// A recorded reason marks a staticRouting change; the applied
-		// manual-static-routing record names this change by validatedAt.
-		config["staticRoutingValidatedAt"], _ = json.Marshal(now)
-		delete(config, "staticRouting")
-		if after != nil {
-			config["staticRouting"], _ = json.Marshal(after)
-		}
 	}
 	err = persistSchedulerSettings(r.Context(), h.authorizer.Client, cm, config, h.config.SchedulerConfigKey, settings)
 	if err == nil {
@@ -165,43 +163,6 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sendJSON(w, http.StatusOK, change)
-}
-
-// staticRoutingChange returns the stored declaration, the one the PUT leaves
-// (empty is nil), and the reason to record, which is non-empty exactly when the
-// declaration changes. An omitted input keeps the stored declaration and {}
-// removes it. A change needs its selection reason, and StaticRoutingTarget
-// must accept a new declaration against the last snapshot.
-func (h *Handler) staticRoutingChange(
-	stored json.RawMessage, input map[string]map[string]int, reason string, autonomous []string,
-) (before, after map[string]map[string]int, recorded string, err error) {
-	if stored != nil {
-		if err = json.Unmarshal(stored, &before); err != nil {
-			return nil, nil, "", err
-		}
-	}
-	after = before
-	if input != nil {
-		after = input
-	}
-	if len(before) == 0 {
-		before = nil
-	}
-	if len(after) == 0 {
-		after = nil
-	}
-	if reflect.DeepEqual(before, after) {
-		return before, after, "", nil
-	}
-	if strings.TrimSpace(reason) == "" {
-		return nil, nil, "", &serving.Error{Code: "InvalidBody", Message: "a staticRouting change requires its selection reason", Field: "reason"}
-	}
-	if after != nil {
-		if _, err = serving.StaticRoutingTarget(h.config.Scheduler.State().Snapshot, after, autonomous, ""); err != nil {
-			return nil, nil, "", &serving.Error{Code: "InvalidBody", Message: err.Error(), Field: "staticRouting"}
-		}
-	}
-	return before, after, reason, nil
 }
 
 // schedulerConfigMap reads the scheduler ConfigMap and its configuration object.

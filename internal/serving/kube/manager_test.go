@@ -635,7 +635,7 @@ func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
 	if err != nil || view.Admission || view.Operation.Kind != operationPreprocessorUpdate || view.Operation.TargetCatalogUID != pre.UID {
 		t.Fatalf("preprocessor barrier = %+v, %v", view, err)
 	}
-	if _, err := m.CreateWorkload(ctx, "during-barrier", managerWorkloadSpec()); managerCode(err) != "OperationConflict" {
+	if _, err := m.CreateWorkload(ctx, "during-barrier", managerWorkloadSpec()); managerCode(err) != testOperationConflict {
 		t.Fatalf("registration joined an active preprocessor barrier: %v", err)
 	}
 	if err := m.Advance(ctx); err != nil {

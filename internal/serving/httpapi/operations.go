@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -32,11 +33,17 @@ func (h *Handler) operations(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	var request servingkube.ManualOperation
-	if err := h.decode(w, r, &request); err != nil {
+	var raw json.RawMessage
+	if err := h.decode(w, r, &raw); err != nil {
 		sendError(w, err)
 		return
 	}
+	request, err := servingkube.DecodeManualOperation(raw)
+	if err != nil {
+		sendError(w, err)
+		return
+	}
+	request.ActorUsername, request.ActorUID = principal.Actor()
 	result, err := h.config.Scheduler.ExecuteManual(r.Context(), request)
 	if err != nil {
 		sendError(w, err)
