@@ -450,22 +450,11 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		}
 		finish(outcome, errorCode(err))
 	}
-	timeout := h.config.RequestTimeout
-	if receipt.RequestLifetime > 0 {
-		timeout = receipt.RequestLifetime
+	timeout, err := inferenceTimeout(r.Header.Get("X-Chill-Request-Timeout"), receipt.RequestLifetime, h.config.RequestTimeout)
+	if err != nil {
+		completeError(err, "rejected")
+		return
 	}
-	if requested := r.Header.Get("X-Chill-Request-Timeout"); requested != "" {
-		duration, err := time.ParseDuration(requested)
-		if err != nil || duration <= 0 || duration > 129*time.Second {
-			completeError(&serving.Error{Code: "InvalidRequestTimeout", Message: "explicit timeout must be positive and at most 129s", Field: "X-Chill-Request-Timeout"}, "rejected")
-			return
-		}
-		timeout = duration
-		if receipt.RequestLifetime > 0 {
-			timeout = min(timeout, receipt.RequestLifetime)
-		}
-	}
-	timeout = min(timeout, 129*time.Second)
 	w.Header().Set("X-Chill-Request-Lifetime", timeout.String())
 	deadline := received.Add(timeout)
 	receipt.Deadline = deadline
@@ -545,6 +534,24 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	finish("completed", "")
+}
+
+func inferenceTimeout(requested string, lifetime, fallback time.Duration) (time.Duration, error) {
+	timeout := fallback
+	if lifetime > 0 {
+		timeout = lifetime
+	}
+	if requested != "" {
+		duration, err := time.ParseDuration(requested)
+		if err != nil || duration <= 0 || duration > 129*time.Second {
+			return 0, &serving.Error{Code: "InvalidRequestTimeout", Message: "explicit timeout must be positive and at most 129s", Field: "X-Chill-Request-Timeout"}
+		}
+		timeout = duration
+		if lifetime > 0 {
+			timeout = min(timeout, lifetime)
+		}
+	}
+	return min(timeout, 129*time.Second), nil
 }
 
 // Only requests received during an active capture acquire this adapter.

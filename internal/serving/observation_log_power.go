@@ -136,47 +136,40 @@ func (l *ObservationLog) OperatingPower(ctx context.Context, from, to time.Time,
 	result, err := ReduceOperatingPower(from, to, meters, limit, func(yield func(*SchedulerObservation) error) error {
 		var scanner observationScanner
 		visit := func(raw []byte) error {
-			if err := ctx.Err(); err != nil { return err }
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			record, err := OperatingPowerRecord(raw, read.catalog())
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 			baseline = baseline || record.Snapshot != nil && !record.Snapshot.At.After(from)
 			return yield(record)
 		}
 		sources := read.sources[observationSchedulerStream]
 		for _, source := range sources {
 			if source.hour.Add(time.Hour).After(start) && !source.hour.After(end) {
-				if err := l.readCatalog(read, source.hour); err != nil { return err }
+				if err := l.readCatalog(read, source.hour); err != nil {
+					return err
+				}
 				if source.object != nil {
-					if err := read.scanSource(observationSchedulerStream, source, &scanner, visit); err != nil { return err }
+					if err := read.scanSource(observationSchedulerStream, source, &scanner, visit); err != nil {
+						return err
+					}
 				} else {
 					read.scanningHour = source.hour
 					for _, file := range read.files[observationSchedulerStream] {
-						if !file.at.Truncate(time.Hour).Equal(source.hour) || file.at.Before(start.Truncate(time.Minute)) || file.at.After(end) { continue }
-						if err := scanner.scan(observationContextReader{ctx: ctx, source: file.file}, file.size, visit); err != nil { return err }
+						if !file.at.Truncate(time.Hour).Equal(source.hour) || file.at.Before(start.Truncate(time.Minute)) || file.at.After(end) {
+							continue
+						}
+						if err := scanner.scan(observationContextReader{ctx: ctx, source: file.file}, file.size, visit); err != nil {
+							return err
+						}
 					}
 				}
 			}
 		}
-		for index := len(sources)-1; index >= 0 && !baseline; index-- {
-			source := sources[index]
-			if !source.hour.Before(start) { continue }
-			if err := l.readCatalog(read, source.hour); err != nil { return err }
-			if source.object != nil {
-				// The boundary scan already read the entire archived hour.
-				if source.hour.Add(time.Hour).After(start) { continue }
-				if source.hour.Before(coverageFrom) { coverageFrom = source.hour }
-				if err := read.scanSource(observationSchedulerStream, source, &scanner, visit); err != nil { return err }
-			} else {
-				read.scanningHour = source.hour
-				files := read.files[observationSchedulerStream]
-				for file := len(files)-1; file >= 0 && !baseline; file-- {
-					if !files[file].at.Truncate(time.Hour).Equal(source.hour) || !files[file].at.Before(start.Truncate(time.Minute)) { continue }
-					if files[file].at.Before(coverageFrom) { coverageFrom = files[file].at }
-					if err := scanner.scan(observationContextReader{ctx: ctx, source: files[file].file}, files[file].size, visit); err != nil { return err }
-				}
-			}
-		}
-		return ctx.Err()
+		return l.scanOlderPowerSources(read, start, &coverageFrom, &baseline, &scanner, visit)
 	})
 	result.Coverage = read.coverage(map[string][2]time.Time{observationSchedulerStream: {coverageFrom, end}})
 	result.GapUntil = result.Coverage.gapUntil(from)
@@ -185,6 +178,46 @@ func (l *ObservationLog) OperatingPower(ctx context.Context, from, to time.Time,
 		result.Reasons = append(result.Reasons, "scheduler stream unavailable in observation coverage")
 	}
 	return result, err
+}
+
+func (l *ObservationLog) scanOlderPowerSources(read *observationRead, start time.Time, coverageFrom *time.Time, baseline *bool, scanner *observationScanner, visit func([]byte) error) error {
+	sources := read.sources[observationSchedulerStream]
+	for index := len(sources) - 1; index >= 0 && !*baseline; index-- {
+		source := sources[index]
+		if !source.hour.Before(start) {
+			continue
+		}
+		if err := l.readCatalog(read, source.hour); err != nil {
+			return err
+		}
+		if source.object != nil {
+			// The boundary scan already read the entire archived hour.
+			if source.hour.Add(time.Hour).After(start) {
+				continue
+			}
+			if source.hour.Before(*coverageFrom) {
+				*coverageFrom = source.hour
+			}
+			if err := read.scanSource(observationSchedulerStream, source, scanner, visit); err != nil {
+				return err
+			}
+			continue
+		}
+		read.scanningHour = source.hour
+		files := read.files[observationSchedulerStream]
+		for file := len(files) - 1; file >= 0 && !*baseline; file-- {
+			if !files[file].at.Truncate(time.Hour).Equal(source.hour) || !files[file].at.Before(start.Truncate(time.Minute)) {
+				continue
+			}
+			if files[file].at.Before(*coverageFrom) {
+				*coverageFrom = files[file].at
+			}
+			if err := scanner.scan(observationContextReader{ctx: read.ctx, source: files[file].file}, files[file].size, visit); err != nil {
+				return err
+			}
+		}
+	}
+	return read.ctx.Err()
 }
 
 // ReduceOperatingPower integrates the whole and active POOL energy of

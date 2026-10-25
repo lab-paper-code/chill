@@ -58,7 +58,7 @@ func publicationFixture(t *testing.T) publicationManifest {
 	from := time.Date(2026, 10, 24, 1, 0, 0, 0, time.UTC)
 	summary := httpapi.ExperimentSummary{
 		SchemaVersion: httpapi.ExperimentSchemaVersion, ID: "run-1", From: from, To: from.Add(time.Minute), Status: "NOT_READY",
-		Stages: []httpapi.ExperimentStage{{ID: "E5-2", From: from, To: from.Add(time.Minute), KPIs: json.RawMessage(`{"status":"FAIL","visibility":"PRIVATE_OPERATIONAL_ONLY","wholePoolJoules":null,"reasons":["unmeasured"]}`)}},
+		Stages:  []httpapi.ExperimentStage{{ID: "E5-2", From: from, To: from.Add(time.Minute), KPIs: json.RawMessage(`{"status":"FAIL","visibility":"PRIVATE_OPERATIONAL_ONLY","wholePoolJoules":null,"reasons":["unmeasured"]}`)}},
 		Sources: []httpapi.ExperimentSource{{Store: raw.Store, Key: raw.Key}},
 	}
 	manifest := publicationManifest{Objects: []publicationObject{raw}, Summary: publicationObject{Store: "evidence", Key: prefix + "summary.json", LocalPath: filepath.Join(directory, "summary.json")}}

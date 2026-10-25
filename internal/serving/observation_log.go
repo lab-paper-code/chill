@@ -913,7 +913,7 @@ type ObservationResult struct {
 	QuantileMethod   string                  `json:"quantileMethod"`
 	SamplePopulation string                  `json:"samplePopulation"`
 	GapUntil         *time.Time              `json:"gapUntil,omitempty"`
-	Coverage         ObservationCoverage      `json:"coverage"`
+	Coverage         ObservationCoverage     `json:"coverage"`
 }
 
 func observationIncludes(filter []string, value string) bool {
@@ -1181,10 +1181,10 @@ func (l *ObservationLog) runtimeFacts() (map[string]*Definition, []RequestRow) {
 // observationRead holds files opened under the writer lock; reads and
 // decoding run outside it. Deleting an hour does not affect an open file.
 type observationRead struct {
-	files       map[string][]observationOpenFile
-	open        map[string]*RequestRow
-	definitions map[string]*Definition
-	start       time.Time
+	files        map[string][]observationOpenFile
+	open         map[string]*RequestRow
+	definitions  map[string]*Definition
+	start        time.Time
 	ctx          context.Context
 	now          time.Time
 	localHours   map[time.Time]bool
@@ -1207,7 +1207,6 @@ func (r *observationRead) close() {
 		}
 	}
 }
-
 
 // capture opens each stream's minute files whose minute lies in [from, to];
 // a zero to reads through the latest file.
@@ -1325,8 +1324,8 @@ func scanObservationFile(name string, size int64, visit func([]byte) error) (res
 
 // observationScanner keeps its read and long-line buffers across files.
 type observationScanner struct {
-	reader *bufio.Reader
-	long   []byte
+	reader         *bufio.Reader
+	long           []byte
 	requireNewline bool
 }
 

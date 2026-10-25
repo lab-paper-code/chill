@@ -26,7 +26,7 @@ func experimentHandler(t *testing.T, allowed bool, config HandlerConfig) *Handle
 	kube.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 		review := action.(ktesting.CreateAction).GetObject().(*authorization.SubjectAccessReview)
 		if review.Spec.ResourceAttributes != nil || review.Spec.User != "experiment-reader" ||
-			review.Spec.NonResourceAttributes.Verb != "get" ||
+			review.Spec.NonResourceAttributes.Verb != measurementGetVerb ||
 			(review.Spec.NonResourceAttributes.Path != "/chill/api/v1/experiments" && review.Spec.NonResourceAttributes.Path != "/chill/api/v1/experiments/run-1") {
 			t.Fatalf("incorrect experiment non-resource authorization: %+v", review.Spec)
 		}

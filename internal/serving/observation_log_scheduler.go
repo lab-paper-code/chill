@@ -32,19 +32,19 @@ type SchedulerSettingsChange struct {
 }
 
 type SchedulerActionObservation struct {
-	ID          string                         `json:"id"`
-	Kind        string                         `json:"kind"`
-	Node        NodeReference                  `json:"node"`
-	Instance    string                         `json:"instance,omitempty"`
-	Phase       string                         `json:"phase"`
-	StartedAt   time.Time                      `json:"startedAt"`
-	CompletedAt *time.Time                     `json:"completedAt,omitempty"`
-	Expected    json.RawMessage                `json:"expected,omitempty"`
-	Actual      json.RawMessage                `json:"actual,omitempty"`
-	Error       string                         `json:"error,omitempty"`
-	Evidence    []evidencestore.ObjectIdentity `json:"evidence,omitempty"`
-	ExpectedSeconds *float64              `json:"expectedSeconds"`
-	ExpectedSource  *ActionExpectedSource `json:"expectedSource"`
+	ID              string                         `json:"id"`
+	Kind            string                         `json:"kind"`
+	Node            NodeReference                  `json:"node"`
+	Instance        string                         `json:"instance,omitempty"`
+	Phase           string                         `json:"phase"`
+	StartedAt       time.Time                      `json:"startedAt"`
+	CompletedAt     *time.Time                     `json:"completedAt,omitempty"`
+	Expected        json.RawMessage                `json:"expected,omitempty"`
+	Actual          json.RawMessage                `json:"actual,omitempty"`
+	Error           string                         `json:"error,omitempty"`
+	Evidence        []evidencestore.ObjectIdentity `json:"evidence,omitempty"`
+	ExpectedSeconds *float64                       `json:"expectedSeconds"`
+	ExpectedSource  *ActionExpectedSource          `json:"expectedSource"`
 }
 
 type SchedulerObservation struct {
@@ -298,7 +298,6 @@ func resolvePower(event *SchedulerObservation, line *schedulerLine, catalog *Obs
 	return nil
 }
 
-
 type WorkloadLoad struct {
 	UID            string         `json:"uid"`
 	Received       int            `json:"received"`
@@ -313,13 +312,13 @@ type WorkloadLoad struct {
 }
 
 type LoadWindow struct {
-	From       time.Time          `json:"from"`
-	To         time.Time          `json:"to"`
-	Duration   time.Duration      `json:"durationNanos"`
-	Population string             `json:"population"`
-	Workloads  []WorkloadLoad     `json:"workloads"`
-	Arrivals   []SchedulerArrival `json:"arrivals"`
-	GapUntil   *time.Time         `json:"gapUntil,omitempty"`
+	From       time.Time           `json:"from"`
+	To         time.Time           `json:"to"`
+	Duration   time.Duration       `json:"durationNanos"`
+	Population string              `json:"population"`
+	Workloads  []WorkloadLoad      `json:"workloads"`
+	Arrivals   []SchedulerArrival  `json:"arrivals"`
+	GapUntil   *time.Time          `json:"gapUntil,omitempty"`
 	Coverage   ObservationCoverage `json:"coverage"`
 }
 

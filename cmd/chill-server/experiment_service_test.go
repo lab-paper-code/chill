@@ -78,7 +78,17 @@ func (s *experimentMemoryStore) add(t *testing.T, summary httpapi.ExperimentSumm
 func experimentFixture(id string, from time.Time) httpapi.ExperimentSummary {
 	return httpapi.ExperimentSummary{
 		SchemaVersion: httpapi.ExperimentSchemaVersion, ID: id, From: from, To: from.Add(time.Minute), Status: "NOT_READY",
-		Stages: []httpapi.ExperimentStage{{ID: "full-E5-2", From: from, To: from.Add(time.Minute), KPIs: json.RawMessage(`{"visibility":"PRIVATE_OPERATIONAL_ONLY","status":"FAIL","requests":{"offered":5,"outcomes":{"completed":3,"rejected":2},"success":{"numerator":3,"denominator":5},"slo":{"numerator":2,"denominator":5},"completedLatencyNS":{"p95":17}},"wholePoolJoules":null,"activePoolJoules":null,"reasons":["power missing"],"population":"offered requests in [from,to); pool energy shared across workloads"}`)}},
+		Stages: []httpapi.ExperimentStage{{
+			ID: "full-E5-2", From: from, To: from.Add(time.Minute),
+			KPIs: json.RawMessage(`{
+				"visibility":"PRIVATE_OPERATIONAL_ONLY","status":"FAIL",
+				"requests":{"offered":5,"outcomes":{"completed":3,"rejected":2},
+					"success":{"numerator":3,"denominator":5},"slo":{"numerator":2,"denominator":5},
+					"completedLatencyNS":{"p95":17}},
+				"wholePoolJoules":null,"activePoolJoules":null,"reasons":["power missing"],
+				"population":"offered requests in [from,to); pool energy shared across workloads"
+			}`),
+		}},
 		Sources: []httpapi.ExperimentSource{{Store: "evidence", Key: "serving/observations/hour/requests.jsonl.gz"}},
 	}
 }
@@ -101,7 +111,8 @@ func TestExperimentSummaryReadPreservesPublishedEvidenceAndSorts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Items) != 3 || list.Items[0].ID != "a" || list.Items[1].ID != "z" || list.Items[2].ID != "older" || len(store.opened) != 3 {
+	if len(list.Items) != 3 || list.Items[0].ID != "a" || list.Items[1].ID != "z" ||
+		list.Items[2].ID != "older" || len(store.opened) != 3 {
 		t.Fatalf("summaries not filtered and sorted: %+v opened=%v", list, store.opened)
 	}
 	detail, err := service.get(ctx, "a")
@@ -116,11 +127,13 @@ func TestExperimentSummaryReadPreservesPublishedEvidenceAndSorts(t *testing.T) {
 	if err := json.Unmarshal(detail.Stages[0].KPIs, &kpis); err != nil {
 		t.Fatal(err)
 	}
-	if kpis["wholePoolJoules"] != nil || kpis["activePoolJoules"] != nil || kpis["status"] != "FAIL" || kpis["visibility"] != "PRIVATE_OPERATIONAL_ONLY" || len(kpis["reasons"].([]any)) != 1 {
+	if kpis["wholePoolJoules"] != nil || kpis["activePoolJoules"] != nil || kpis["status"] != "FAIL" ||
+		kpis["visibility"] != "PRIVATE_OPERATIONAL_ONLY" || len(kpis["reasons"].([]any)) != 1 {
 		t.Fatalf("missing/failed/private interpretations changed: %v", kpis)
 	}
 	requests := kpis["requests"].(map[string]any)
-	if requests["offered"] != float64(5) || requests["slo"].(map[string]any)["numerator"] != float64(2) || requests["slo"].(map[string]any)["denominator"] != float64(5) {
+	if requests["offered"] != float64(5) || requests["slo"].(map[string]any)["numerator"] != float64(2) ||
+		requests["slo"].(map[string]any)["denominator"] != float64(5) {
 		t.Fatalf("KPI populations changed: %v", requests)
 	}
 }
@@ -171,7 +184,10 @@ func TestExperimentSummaryMissingIsNotStoreFailure(t *testing.T) {
 }
 
 func TestExperimentSummaryValidatesStoredBoundaryAndDoesNotReadRaw(t *testing.T) {
-	for _, name := range []string{"identity", "stage interval", "schema", "source store", "source traversal", "source URL", "source absolute", "KPI null", "unknown raw field", "trailing JSON", "oversize", "actual oversize"} {
+	for _, name := range []string{
+		"identity", "stage interval", "schema", "source store", "source traversal", "source URL",
+		"source absolute", "KPI null", "unknown raw field", "trailing JSON", "oversize", "actual oversize",
+	} {
 		t.Run(name, func(t *testing.T) {
 			summary := experimentFixture("run", time.Now().UTC())
 			switch name {

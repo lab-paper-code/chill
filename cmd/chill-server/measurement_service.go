@@ -86,7 +86,9 @@ func (o *measurementService) list(ctx context.Context, namespace string) (api.Ba
 	return result, nil
 }
 
-func (o *measurementService) listOperationCosts(ctx context.Context, namespace string) (httpapi.MeasurementProjectionList, error) {
+func (o *measurementService) listOperationCosts(
+	ctx context.Context, namespace string,
+) (httpapi.MeasurementProjectionList, error) {
 	result := httpapi.MeasurementProjectionList{Items: []httpapi.MeasurementProjection{}}
 	if err := o.namespace(namespace); err != nil {
 		return result, err
@@ -102,7 +104,9 @@ func (o *measurementService) listOperationCosts(ctx context.Context, namespace s
 	return result, nil
 }
 
-func (o *measurementService) getOperationCost(ctx context.Context, namespace, name string) (httpapi.MeasurementProjection, error) {
+func (o *measurementService) getOperationCost(
+	ctx context.Context, namespace, name string,
+) (httpapi.MeasurementProjection, error) {
 	if err := o.namespace(namespace); err != nil {
 		return httpapi.MeasurementProjection{}, err
 	}
@@ -113,7 +117,9 @@ func (o *measurementService) getOperationCost(ctx context.Context, namespace, na
 	return httpapi.ProjectOperationCostMeasurement(cr, o.opts.storeName), nil
 }
 
-func (o *measurementService) listDispatchOccupancies(ctx context.Context, namespace string) (httpapi.MeasurementProjectionList, error) {
+func (o *measurementService) listDispatchOccupancies(
+	ctx context.Context, namespace string,
+) (httpapi.MeasurementProjectionList, error) {
 	result := httpapi.MeasurementProjectionList{Items: []httpapi.MeasurementProjection{}}
 	if err := o.namespace(namespace); err != nil {
 		return result, err
@@ -129,7 +135,9 @@ func (o *measurementService) listDispatchOccupancies(ctx context.Context, namesp
 	return result, nil
 }
 
-func (o *measurementService) getDispatchOccupancy(ctx context.Context, namespace, name string) (httpapi.MeasurementProjection, error) {
+func (o *measurementService) getDispatchOccupancy(
+	ctx context.Context, namespace, name string,
+) (httpapi.MeasurementProjection, error) {
 	if err := o.namespace(namespace); err != nil {
 		return httpapi.MeasurementProjection{}, err
 	}

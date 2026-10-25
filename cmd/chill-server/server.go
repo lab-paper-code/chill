@@ -167,7 +167,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 	handlerConfig.GetOperationCostMeasurement = measurements.getOperationCost
 	handlerConfig.ListDispatchOccupancyMeasurements = measurements.listDispatchOccupancies
 	handlerConfig.GetDispatchOccupancyMeasurement = measurements.getDispatchOccupancy
-	experiments := &experimentService{reader: objects, lister: objects, store: opts.storeName, maxBytes: opts.maxRequestBytes}
+	experiments := &experimentService{
+		reader: objects, lister: objects, store: opts.storeName, maxBytes: opts.maxRequestBytes,
+	}
 	handlerConfig.ListExperiments = experiments.list
 	handlerConfig.GetExperiment = experiments.get
 	handler, err := httpapi.NewHandler(manager, execution, authorizer, observationLog, observer, handlerConfig)

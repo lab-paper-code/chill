@@ -51,7 +51,9 @@ func (s *experimentService) list(ctx context.Context) (httpapi.ExperimentList, e
 
 func (s *experimentService) get(ctx context.Context, id string) (httpapi.ExperimentSummary, error) {
 	if !httpapi.ValidExperimentID(id) {
-		return httpapi.ExperimentSummary{}, &serving.Error{Code: "InvalidInput", Message: "experiment id must be one safe path element", Field: "id"}
+		return httpapi.ExperimentSummary{}, &serving.Error{
+			Code: "InvalidInput", Message: "experiment id must be one safe path element", Field: "id",
+		}
 	}
 	key := httpapi.ExperimentPrefix + id + "/summary.json"
 	objects, err := s.lister.List(ctx, key)
@@ -84,7 +86,9 @@ func experimentObjectID(key string) (string, bool) {
 	return id, ok && httpapi.ValidExperimentID(id)
 }
 
-func (s *experimentService) read(ctx context.Context, object evidencestore.ObjectIdentity, id string) (summary httpapi.ExperimentSummary, err error) {
+func (s *experimentService) read(
+	ctx context.Context, object evidencestore.ObjectIdentity, id string,
+) (summary httpapi.ExperimentSummary, err error) {
 	if err := ctx.Err(); err != nil {
 		return summary, err
 	}
@@ -117,4 +121,3 @@ func (s *experimentService) read(ctx context.Context, object evidencestore.Objec
 	}
 	return summary, nil
 }
-
