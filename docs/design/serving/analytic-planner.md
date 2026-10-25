@@ -103,6 +103,19 @@ target이 사용하는 노드의 `Fixed` 내림, 전력 올리기, remove와 pre
 route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 기존 요청 인계를 유지한다.
 공통 절전의 실제 소비와 시간은 전체 POOL 측정에 계속 포함한다.
 
+**실행 중 중간 분배.** 최종 route의 DAG와 분석의 r은 위 전체 준비 사슬을
+유지하지만 실제 실행은 그 시각까지 Ready 목적지를 놀리지 않는다. controller는
+매 tick에 같은 목표의 실제 Ready 부분집합으로 목표 가중치를 합계 1000으로
+재정규화하고, 준비된 목적지가 없는 워크로드의 현재 Ready 분배는 유지하여
+한 번의 원자적 route로 적용한다. stop 가능한 인스턴스는 제외한다.
+독립 prepare, power, drain 등 어떤 느린 동작도 이 중간 분배의 선행 조건이
+아니다. 새 계획 탐색이나 중간 용량의 SLO 충족 보장은 추가하지 않으며,
+요청별 측정 지연·수명 admission과 기존 요청 보호는 그대로다.
+분석의 B·에너지 예측은 최종 route 시각을 쓰는 기존 식이고, 중간 분배의
+실제 효과는 action의 frozen target·before/actual routing 관측으로 구분한다.
+구체적인 기록과 실행 계약은 [중간 배분](scheduler-implementation.md#중간-배분)이다.
+
+
 **비교 기간.** `T = max(comparisonPeriodNanos, 공간의 최장 route 전 사슬 + 최장 route 뒤 remove)`(최대 시간)를 판단마다 하나 정하고 keep과 모든 계획에 쓰며 `decision.capacity.periodNanos`에 남긴다. 모든 사슬이 T 안에 끝난다. 비교 기간을 정하는 방법은 04 명세가 설계에 맡긴다. sample의 `comparisonPeriodNanos`는 사용자 결정으로 10분이다(m4 r5 뒤). T는 에너지 순서만 바꾸고 SLO 판정(3장)은 T와 무관하므로 부하가 오를 때 첫 판단의 확장은 T와 상관없다. m4 r5 기록에서 T만으로는 풀리지 않는 것: 분배되지 않은 genesis3 q2와 orangepi q1은 인스턴스를 띄운 노드 전력(49.80 W, 2.71 W)이 빈 노드(49.97 W, 2.73 W)보다 크지 않아 remove가 어떤 T에서도 에너지 이득이 아니다. 배치 상한 교체(genesis3 b1↔b2)와 SLO 때문에 준비한 인스턴스의 remove는 T 152 s에서 이미 이득(79~1,265 J)이었고 이득은 T에 비례해 커진다. 그래서 14장의 유휴 제거, 교체 회수, Overload 준비 유지 규칙을 둔다.
 
 **에너지.** 노드 계획 하나의 [0, T] 노드 에너지는 keep이면 `P_before × T`, 아니면 `J_pre + P_mid × (r − t_pre) + J_post + P_after × (T − r − t_post)`(t는 평균 시간)다. P는 `schedulerBaseline`의 적재 상태 전력이다. 요청 에너지는 route에서 나눈다: [0, r]은 지금 routing으로 남는 인스턴스가 κ_ret까지 처리하고(`Σ y⁰_i e_i r`), 넘친 `max(0, λ − κ_ret) × r`건과 [r, T]는 target 배정 y로 처리한다(`Σ y_i e_i (T − r)`와 넘친 건수 × y 가중 평균 e). 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.

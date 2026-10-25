@@ -220,6 +220,27 @@ prepare는 cost의 측정 trial 최대 시간에 관측 창 하나를 더한 tim
 소비 수치는 현재 capture를 사용하고, 원래 실행의 frozen target을 덮어쓰거나 사라진
 proof를 복원하지 않는다.
 
+#### 중간 배분
+
+`SchedulerController.intermediateActions`는 최종 route의 의존성이 남아 있으면
+`readySubset`으로 같은 목표의 양수 가중치 중 실제 snapshot과 native 상태가
+모두 Ready인 목적지만 고른다. 목표 가중치 비율을 워크로드별 합계 1000으로
+재정규화하며, 아직 목적지가 없는 워크로드는 현재 Ready 분배를 유지한다.
+Stopped이거나 이번 tick에 stop할 수 있는 인스턴스에는 새 가중치를 주지 않는다.
+이 route는 다른 prepare, power, drain의 완료와 무관하게 기존 global route
+직렬화·native policy ACK·원자적 `Runtime.ApplySchedulerTarget` 경로로 실행한다.
+
+중간 분배는 `<goal>-ready-<subset hash>` ID와 `Action.from=ready-subset`으로
+구분하며, 기존 OnAction 기록의 시작/완료와 frozen `operation.target`,
+`before.routing`/`actual.routing`을 보존한다. 부분집합은 최종 목표를 덮거나
+최종 DAG 완료 조건에 들어가지 않는다. 후속 부분집합으로 이전 분배가
+대체되어도 완료 효과 소실로 목표를 실패시키지 않으며, 전체 목표는 계속
+`TransitionInProgress`로 유지한다. 기존 요청의 실행 계약·drain과 요청별
+지연/SLO admission은 유지한다. 실제 반영은 Ready를 캡처한 제어 tick이며
+이 경로가 전체 부하의 중간 용량 충족을 보장하지는 않는다.
+
+#### 분배 적용 증거
+
 global route는 같은 policy ConfigMap/ACK 경로를 쓰므로 기존 running run을 통해
 직렬화한다. source release는 이전 global route 완료를 기다리되 독립 Node의 합법적
 준비를 전역 lock으로 막지 않는다. 진행 중 route는 자신의 frozen target으로 표시하며, native ACK를 관측할 때까지

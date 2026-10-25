@@ -16,6 +16,30 @@ The [transition specification](../../spec/05_transition_control.md) requires
 planning request handling while a node changes state. Routing can move traffic
 to other ready nodes when the changing node cannot continue serving.
 
+### 목표 전환 중 Ready 부분집합 분배
+
+최종 route의 prepare/power/drain 의존성은 유지한다. 다만 매 제어 tick에
+controller는 같은 목표에서 실제 snapshot과 native 상태 모두 Ready인 목적지를
+고르고, 워크로드별 목표 가중치를 그 부분집합에 합계 1000으로 재정규화해
+별도 route 동작으로 적용한다. 다른 prepare뿐 아니라 전력 전환, 드레인 등
+독립적인 느린 동작을 기다리지 않는다. 아직 Ready 목적지가 없는 워크로드는
+현재 Ready 분배를 유지하며, 이미 Stopped이거나 이번 tick에 stop 가능한
+인스턴스는 중간 분배로 되살리지 않는다.
+
+이 동작도 `Operations.ApplyTarget`의 측정 profile/native policy ACK, 소유권과
+현재 Workload 검증, 원자적 runtime 분배를 거친다. 기존에 수락한 요청은
+원래 실행 계약과 drain 보호를 유지한다. 준비된 일부 용량만으로 전체 부하의
+SLO를 보장한다는 뜻은 아니며, 요청별 측정 지연·수명 admission은 그대로다.
+전환 중 목표를 새로 탐색하지 않고 최종 handoff 및 제거 조건도 바꾸지 않는다.
+
+중간 동작의 ID는 `<목표 ID>-ready-<부분집합 hash>`이고 `Action.from`은
+`ready-subset`이다. 기존 action/operation 관측 기록에 시작과 완료,
+`operation.target`의 동결된 분배, `before.routing`과 `actual.routing`을 남긴다.
+후속 부분집합이 이전 분배를 대체하므로 중간 route는 최종 목표 DAG의
+완료 조건이나 `TransitionInProgress` 목표 자체가 아니다. 캠페인은 이
+scheduler 관측 원본을 Run 기록에 함께 보존한다.
+
+
 ## Where a request branches
 
 EdgeMesh's proxy is a DaemonSet. It intercepts through the iptables rules of the

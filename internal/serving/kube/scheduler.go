@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -30,6 +31,10 @@ import (
 )
 
 const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
+
+// Intermediate routes are observed operations, not prerequisites of the frozen
+// goal: later ready subsets supersede their routing effects.
+const readySubsetRoute = "ready-subset"
 
 type SchedulerControllerConfig struct {
 	Settings     serving.SchedulerSettings
@@ -407,7 +412,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 			delete(c.runs, id)
 		}
 	}
-	actions := c.actionsLocked(now)
+	actions := slices.DeleteFunc(c.actionsLocked(now), func(a serving.Action) bool { return a.From == readySubsetRoute })
 	snapshot.Actions = actions
 	if goal != nil {
 		pending := false
@@ -478,7 +483,7 @@ func (c *SchedulerController) failGoalLocked(snapshot serving.SchedulerSnapshot,
 func (c *SchedulerController) activeTargetLocked(kind string) *serving.SchedulerCandidate {
 	var active *actionRun
 	for _, run := range c.runs {
-		if run.action.Status != nativeOperationRunning || (kind != "" && run.action.Kind != kind) || run.result == nil || run.result.Operation.Target == nil {
+		if run.action.From == readySubsetRoute || run.action.Status != nativeOperationRunning || (kind != "" && run.action.Kind != kind) || run.result == nil || run.result.Operation.Target == nil {
 			continue
 		}
 		if active == nil || run.started.Before(active.started) {
@@ -817,10 +822,11 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	if !target.Keep || slices.ContainsFunc(target.Actions, func(a serving.Action) bool { return !a.Fixed }) {
 		c.goal = &target
 	}
+	actions, intermediate := c.intermediateActions(target)
 	// Decide eligible old-source stops before starting policy refreshes that can
 	// supersede the existing acknowledged handoff proof in this same tick.
 	for phase := range 2 {
-		for _, action := range target.Actions {
+		for _, action := range actions {
 			if (action.Kind == operationStop) != (phase == 0) {
 				continue
 			}
@@ -858,6 +864,9 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 				continue
 			}
 			operation := scheduledOperation(action, &target, config, c.powerTargets, c.state.Snapshot.Workloads)
+			if action.From == readySubsetRoute {
+				operation.Target = intermediate
+			}
 			runCtx, cancel := c.runContext(action, config)
 			action.Status = nativeOperationRunning
 			action.Cancelable = action.Kind == operationPrepare
@@ -905,6 +914,80 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			}(operation, run)
 		}
 	}
+}
+
+func (c *SchedulerController) intermediateActions(
+	target serving.SchedulerCandidate,
+) ([]serving.Action, *serving.SchedulerCandidate) {
+	// The final handoff still waits for its DAG. Independent Ready destinations
+	// can receive traffic meanwhile through the same acknowledged route path.
+	pendingRoute := slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
+		return a.Kind == operationRoute && !c.dependenciesReady(a, target)
+	})
+	if !pendingRoute {
+		return target.Actions, nil
+	}
+	partial := c.readySubset(target)
+	if partial == nil {
+		return target.Actions, nil
+	}
+	actions := append(slices.Clone(target.Actions), serving.Action{
+		ID: partial.ID, Kind: operationRoute, From: readySubsetRoute, To: partial.ID,
+	})
+	return actions, partial
+}
+
+// readySubset preserves the goal's relative weights among matching Ready slots.
+// Workloads without a Ready destination retain their current Ready distribution.
+// Runtime admission still enforces each request's measured execution/SLO contract.
+func (c *SchedulerController) readySubset(target serving.SchedulerCandidate) *serving.SchedulerCandidate {
+	snapshot, physical := c.state.Snapshot, c.runtime.Instances()
+	partial := serving.SchedulerCandidate{Routing: map[string]map[string]int32{}}
+	retiring := map[string]bool{}
+	for _, action := range target.Actions {
+		if action.Kind == operationStop && c.dependenciesReady(action, target) {
+			retiring[action.Instance] = true
+		}
+	}
+	for uid, weights := range target.Routing {
+		selected := []serving.SchedulerInstance{}
+		for _, wanted := range target.Instances {
+			if wanted.WorkloadUID == uid && weights[wanted.ID] > 0 && !retiring[wanted.ID] && schedulerTargetReady(wanted, snapshot, physical, false) {
+				selected = append(selected, wanted)
+			}
+		}
+		// Do not withdraw another workload's still-serving route while all its
+		// new destinations prepare. Never resurrect a stopped/draining runner.
+		if len(selected) == 0 && len(weights) != 0 {
+			weights = snapshot.Routing[uid]
+			for _, actual := range snapshot.Instances {
+				if actual.WorkloadUID == uid && weights[actual.ID] > 0 && !retiring[actual.ID] && schedulerTargetReady(actual, snapshot, physical, false) {
+					selected = append(selected, actual)
+				}
+			}
+		}
+		partial.Routing[uid] = map[string]int32{}
+		var total, cumulative, assigned int64
+		for _, wanted := range selected {
+			total += int64(weights[wanted.ID])
+		}
+		for _, wanted := range selected {
+			cumulative += int64(weights[wanted.ID])
+			normalized := cumulative * 1000 / total
+			partial.Routing[uid][wanted.ID] = int32(normalized - assigned)
+			assigned = normalized
+			partial.Instances = append(partial.Instances, wanted)
+		}
+	}
+	if len(partial.Instances) == 0 || c.routingTargetPresent(&partial, snapshot, physical, true) {
+		return nil
+	}
+	// JSON map keys are sorted; physical identities and weights identify this
+	// immutable subset independently of slow action completion order.
+	raw, _ := json.Marshal(partial.Routing)
+	sum := sha256.Sum256(raw)
+	partial.ID = target.ID + "-ready-" + hex.EncodeToString(sum[:10])
+	return &partial
 }
 
 // runContext bounds a prepare run by serving.ActionDeadline.

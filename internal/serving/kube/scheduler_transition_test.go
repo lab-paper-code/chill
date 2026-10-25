@@ -463,3 +463,87 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 		}
 	}
 }
+
+func TestReadySubsetRoutesBeforeIndependentPreparationsAndPowerFinish(t *testing.T) {
+	controller, target, physical := acknowledgedHandoffFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	target.ID = "expand-with-slow-power"
+	uid := target.Instances[0].WorkloadUID
+	a := target.Instances[0]
+	b := a
+	b.ID = "fast-preparation-physical"
+	other := physical
+	other.State.ID = b.ID
+	if err := controller.runtime.InstallInstances([]serving.ReadyInstance{physical, other}); err != nil {
+		t.Fatal(err)
+	}
+	target.Instances = append(target.Instances, b)
+	target.Actions = nil
+	target.Routing[uid] = map[string]int32{a.ID: 200, b.ID: 200}
+	for _, id := range []string{"c", "d", "power-destination"} {
+		wanted := a
+		wanted.ID = id
+		wanted.Node = serving.NodeReference{Name: id, UID: id + "-uid"}
+		target.Instances = append(target.Instances, wanted)
+		target.Routing[uid][id] = 200
+	}
+	controller.ctx, controller.runs = ctx, map[string]*actionRun{}
+	controller.state.Snapshot.Instances = []serving.SchedulerInstance{a, b}
+	controller.state.Snapshot.Workloads = controller.runtime.SchedulerInputs(time.Now).Workloads
+	controller.state.Snapshot.Routing = map[string]map[string]int32{uid: {a.ID: 1000}}
+	seed := serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{a}, Routing: controller.state.Snapshot.Routing}
+	if err := controller.runtime.ApplySchedulerTarget(seed); err != nil {
+		t.Fatal(err)
+	}
+	// b has just completed preparation; c/d and the independent power change
+	// remain in progress. No fake completion of those slow actions is required.
+	for _, instance := range target.Instances[1:4] {
+		action := serving.Action{ID: "prepare-" + instance.ID, Kind: operationPrepare, Instance: instance.ID, Node: instance.Node, Status: nativeOperationRunning}
+		if instance.ID == b.ID {
+			action.Status = nativeOperationComplete
+		}
+		target.Actions = append(target.Actions, action)
+		controller.runs[action.ID] = &actionRun{action: action}
+	}
+	power := serving.Action{ID: "slow-power", Kind: operationPower, Node: target.Instances[4].Node, Status: nativeOperationRunning}
+	target.Actions = append(target.Actions, power)
+	controller.runs[power.ID] = &actionRun{action: power}
+	deps := []string{}
+	for _, action := range target.Actions {
+		deps = append(deps, action.ID)
+	}
+	target.Actions = append(target.Actions, serving.Action{ID: "final-route", Kind: operationRoute, DependsOn: deps})
+	var recorded []OperationResult
+	controller.launch(target, SchedulerControllerConfig{OnAction: func(result OperationResult) error {
+		recorded = append(recorded, result)
+		// Keep this controller/runtime test independent of Kubernetes/native
+		// policy transport (covered by operations_test.go). Freeze the actual
+		// scheduled operation, then exercise its atomic runtime route below.
+		return context.Canceled
+	}})
+	controller.wg.Wait()
+	for _, result := range recorded {
+		if result.Status != "starting" {
+			continue
+		}
+		if result.Operation.Target == nil || len(result.Operation.Target.Instances) != 2 {
+			t.Fatalf("intermediate operation lacks its frozen Ready subset: %+v", result)
+		}
+		if err := controller.runtime.ApplySchedulerTarget(*result.Operation.Target); err != nil {
+			t.Fatal(err)
+		}
+		routing, _ := controller.runtime.SchedulerRouting()
+		if routing[uid][a.ID] != 500 || routing[uid][b.ID] != 500 || len(routing[uid]) != 2 {
+			t.Fatalf("Ready destination did not receive the normalized intermediate route: %v", routing)
+		}
+		if controller.goal.ID != target.ID || len(controller.goal.Instances) != 5 || controller.activeTargetLocked(operationRoute) != nil {
+			t.Fatal("intermediate route replaced the frozen full goal")
+		}
+		if _, launched := controller.runs["final-route"]; launched || controller.runs[power.ID].action.Status != nativeOperationRunning {
+			t.Fatal("intermediate route waited for or completed the slow final prerequisites")
+		}
+		return
+	}
+	t.Fatalf("no intermediate route scheduled: %+v", recorded)
+}
