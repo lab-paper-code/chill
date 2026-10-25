@@ -256,7 +256,6 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 		pod := &pods.Items[i]
 		observed[pod.UID] = true
 		if source := o.sources[string(pod.UID)]; source != nil {
-			source.instance.State.Ready = false
 			if node := byName[pod.Spec.NodeName]; node != nil && source.instance.State.Node.UID == "" {
 				source.instance.State.Node = serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 			}
@@ -460,7 +459,8 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		}
 	}
 	if pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
-		return serving.ReadyInstance{}, false, nil
+		instance, publish := o.sourceUnavailable(pod, errors.New("Pod is not labelled as a serving instance"))
+		return instance, publish, nil
 	}
 	spec, err := sourceSpec(pod, node, profile, classes, "")
 	if err == nil {

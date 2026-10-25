@@ -386,6 +386,12 @@ Research의 권고 전체를 이번 범위로 가져오지 않는다. 증거 저
 한 판단에 복사한 장부 투영이다. 셋을 독립 writer/registry로 두지 않는다.
 Pod별 소유권·watch·정리 조회는 UID 키를 직접 사용한다. 별도 `o.verified`나
 전달 전용 disable 래퍼 없이 장부의 dispatch 자격과 runtime 비활성화를 갱신한다.
+refresh 시작은 관측 실패가 아니다. 진행 중인 probe 때문에 기존 장부의 Ready를
+초기화하지 않으며, 다른 source의 완료 게시나 동시 Tick capture도 마지막 확인 상태를
+유지한다. 실제 native/Service/LIST 오류와 serving label 불일치는 unavailable로
+dispatch를 닫고, Pod watch의 unready/삭제 무효화는 즉시 반영한다. Pod Ready
+이벤트만으로 자격을 복구하지 않으며 다음 성공 native probe와 Pod 재검증으로만 복구한다.
+
 
 | 장부 항목 | 의미와 권위 |
 |---|---|
