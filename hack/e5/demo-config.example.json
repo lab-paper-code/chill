@@ -1,0 +1,25 @@
+{
+  "e5Config": "/absolute/path/to/existing/e5-config.json",
+  "stages": [
+    {
+      "id": "E0",
+      "seconds": 180,
+      "rates": {"mobilenet": 0, "smolvlm2": 0, "plc": 0}
+    },
+    {
+      "id": "A",
+      "seconds": 300,
+      "rates": {"mobilenet": 1, "smolvlm2": 0.05, "plc": 2}
+    },
+    {
+      "id": "B",
+      "seconds": 360,
+      "rates": {"mobilenet": 12, "smolvlm2": 0.05, "plc": 2}
+    },
+    {
+      "id": "C",
+      "seconds": 360,
+      "rates": {"mobilenet": 1, "smolvlm2": 0.05, "plc": 2}
+    }
+  ]
+}
