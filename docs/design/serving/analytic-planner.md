@@ -65,11 +65,21 @@ m4/r7의 합성 d 114행 표는 GOMAXPROCS 12에서 132 s, CPU 804 s였다.
 
 ## 3. 판정과 순서
 
+**A — 명시적 최소 수요.** `settings.minimumDemand`는 Workload UID별 최소 요청률(req/s)이다.
+키는 비어 있지 않아야 하고 값은 유한한 0 이상의 수이며, 생략한 UID의 하한은 0이다.
+아래 관측식의 결과를 `λ_observed,w`라 하면 실제 계획률은
+`λ_w = max(λ_observed,w, minimumDemand[w])`다.
+용량, 전환 대기, 분배와 요청 에너지는 모두 이 유효 요청률을 사용한다.
+유휴 제거와 교체 회수의 최소 요청률(`minRate`)에도 같은 하한을 적용한다.
+따라서 도착과 대기가 0이어도 하한을 처리하지 못하는 저전력 구성을 고르지 않는다.
+이는 예측이나 자동 증가량이 아니라 사용자가 선택한 용량 예약이며 관측 창 보호 규칙을 대체하지 않는다.
+
 구성 c와 route 시각 r에서 켜진 Workload w마다 아래 값을 정확한 κ 합으로 계산한다.
 
 | 값 | 정의 |
 |---|---|
-| `λ_w` | `max(장기 계산 도착률, 최근 계산 도착률) + q_w / 장기 관측 길이`. 장기는 `observationWindowNanos`, 최근은 `controlIntervalNanos`이며 두 구간의 끝은 `snapshot.observationEnd`다. 장기의 시작은 `max(observationEnd−observationWindow, observedSince)`, 최근의 시작은 `max(장기 시작, observationEnd−controlInterval)`이다. 각 반열린 구간의 `Compute` 또는 `Accepted` 도착 중 불변 정의가 있는 수를 해당 실제 관측 길이로 나눈다. 실패와 취소도 이 도착 정의를 따른다. 미완료 기여는 장기 관측 길이로 한 번 더한다. 용량, 전환 지연, 분배와 요청 에너지가 이 λ를 함께 쓴다. 장기 관측 길이가 `min(observationWindow, controlInterval)`보다 짧으면 `Pending`(`PartialObservationWindow`)이고, 장기 관측 창이 덜 찬 동안 계획은 확장만 한다 |
+| `λ_observed,w` | `max(장기 계산 도착률, 최근 계산 도착률) + q_w / 장기 관측 길이`. 장기는 `observationWindowNanos`, 최근은 `controlIntervalNanos`이며 두 구간의 끝은 `snapshot.observationEnd`다. 장기의 시작은 `max(observationEnd−observationWindow, observedSince)`, 최근의 시작은 `max(장기 시작, observationEnd−controlInterval)`이다. 각 반열린 구간의 `Compute` 또는 `Accepted` 도착 중 불변 정의가 있는 수를 해당 실제 관측 길이로 나눈다. 실패와 취소도 이 도착 정의를 따른다. 미완료 기여는 장기 관측 길이로 한 번 더한다. 장기 관측 길이가 `min(observationWindow, controlInterval)`보다 짧으면 `Pending`(`PartialObservationWindow`)이고, 장기 관측 창이 덜 찬 동안 계획은 확장만 한다 |
+| `λ_w` | `max(λ_observed,w, settings.minimumDemand[w])`, 단위 req/s. 이하 용량, 전환 지연, 분배와 요청 에너지가 함께 쓰는 유효 수요다 |
 | `κ_new,w` | c의 w 인스턴스 κ 합 |
 | `κ_ret,w` | route 전까지 남는 지금 인스턴스의 κ 합. 모드를 바꾸는 노드는 power 동작 전에 인스턴스를 모두 멈추므로 그 인스턴스는 빠진다. 같은 모드의 노드 계획은 분배된 인스턴스를 route 뒤에만 멈춘다(14장 만든 뒤 끊기) |
 | `r` | route 전 사슬의 최대 시간(동작마다 측정 trial 최대 시간) |
@@ -100,6 +110,9 @@ route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 �
 **탐색.** 계획 집합(노드마다 계획 하나)은 두 출발점에서 시작하는 이웃 탐색으로 고른다. 출발점은 keep과, 모든 노드를 비운 집합(인스턴스가 없는 계획, 그런 계획이 없는 노드는 keep)이다. 한 걸음은 지금 집합에서 노드 k개 이하의 계획을 바꾼 집합을 모두 평가하고, 순서(충족, 최종 충족, 최대 초과량, 에너지, keep, 계획 key)로 가장 좋은 집합으로 옮긴다. 출발점마다 k = 2에서 더 좋은 이웃이 없으면 그 자리에서 k = 3으로 이어 가고, k = 3에서도 없으면 멈춘다. 두 끝 중 순서가 앞선 집합이 해다. 비운 출발점은 keep에서 한 걸음마다 손해라 막히는, 노드 여럿을 한꺼번에 바꾸는 해에 반대쪽에서 닿는다. 평가는 3장 판정과 위 에너지 식을 정확한 κ 합으로 쓰고, route 시각은 그 집합에서 가장 긴 route 전 사슬이다. 후보에서 빠지는 집합은 셋이다: `maxReplicas`나 `maxInstances`를 넘는 집합(replicas가 꺼져 있으면 Workload별 인스턴스 수가 지금과 다른 집합), 새 인스턴스에 가중치 0을 주는 집합(14장), 관측 창이 덜 찬 동안 분배된 인스턴스를 빼는 집합. 걸음 없이 끝난 비운 출발점도 이 셋을 거친 뒤에만 해가 된다. 순서에서 keep이 앞서므로 완전 동률은 keep이다. 고른 해는 14장의 교체 회수와 최소 이득을 거친다. 한 걸음의 이웃은 `planSearchWorkers`개 goroutine이 첫 번째로 바꾸는 노드 계획을 차례로 나눠 평가한다. 순서가 전순서라 결과는 goroutine 실행 순서와 무관하다. 탐색은 판단 시작부터 `controlIntervalNanos`의 절반 안에 끝난다(k = 2를 두 출발점에서 먼저 마치고 k = 3으로 간다). 그 시각을 넘으면 그때까지 찾은 가장 좋은 집합을 쓰고 기록에 `budgetCut`을 남긴다. 두 출발점 어느 쪽에서도 닿지 않는 해는 놓칠 수 있다. 크기와 근거는 [용량표 근거 7장](capacity-table-evidence.md#7-계획-탐색)이다.
 
 **router 가중치.** 지금 가중치는 그 해의 인스턴스 κ 안에 들면 그대로 둔다. 지금 분배된 인스턴스가 모두 해에 있고, 합이 1,000이며, 모든 인스턴스에서 `(λ_w + B_w / (L_w − m)) × weight / 1,000 ≤ κ_i`이면 그 가중치(새 인스턴스는 0)를 쓴다. 아니면 고른 해의 인스턴스 κ로 e가 작은 인스턴스부터 κ까지 채울 양은 λ이고, 대기가 있는 Workload(`B_w > 0`)에서는 λ에 밀린 요청을 `L − m` 안에 비우는 `B_w / (L_w − m)`을 더한다. 그 양을 채운 몫이나, 양이 κ 합을 넘으면 κ에 비례한 몫을 합 1,000의 정수로 최대 나머지 반올림한다. 반올림 뒤 모든 인스턴스에서 `λ_w × weight / 1,000 ≤ κ_i`를 확인하고, 넘치면 그 인스턴스의 한 단위를 여유가 가장 큰 인스턴스로 옮긴다. 옮길 곳이 없으면 그 해는 `RouteWeightExceedsCapacity`로 최종 미충족이다. 배정 0인 인스턴스는 가중치 0이고, 채울 양이 0이면 같은 가중치다. 요청 에너지의 y는 λ를 가중치대로 나눈 값이다. keep의 가중치가 바뀌면 사슬 없이 route 동작 하나다. 근거: m4 r2의 포아송 40 req/s에서 λ 12.8(관측 창 지연), 대기 160, 남는 인스턴스 없음, 새 인스턴스 넷(κ 42.0, 48.3, 114.6, 144.5)이었고, λ만 채우면 rasp5 q2가 1,000을 받아 대기를 홀로 받았다. B 363.9, `L − m` 0.861 s에서 채울 양 435 req/s가 κ 합 349를 넘으므로 가중치는 120, 138, 328, 414다. m4 r4의 40 req/s에서 판단마다 가중치를 다시 정하면 대기가 있을 때의 비우는 모양과 대기가 없을 때 rasp5 q1을 κ 25.3에 채우는 에너지 모양이 번갈아 75분에 route 동작 181번이었고 rasp5 q1의 1 s 안 응답은 47%였다.
+
+`decision.capacity.workloads[].minimumDemand`는 해당 판단의 명시적 하한이고,
+`rate`는 그 하한과 관측 수요 중 큰 값이다. 미설정 하한도 기록에서는 0으로 남긴다.
 
 **판단 기록.** `ExpectedJoules`는 고른 해를 정확한 y로 다시 계산한 위 분석 합이다. `decision.capacity`는 T, Workload별 λ, `κ_new`, `κ_ret`, B, W, 두 초과량, 고른 r, 가중치, 사용한 용량표 행 키, 탐색 범위 `search`(마지막 이웃 크기 `neighborhood`, 평가한 계획 집합 수 `evaluated`, 탐색 시간 `durationNanos`, 시간 예산으로 끝났으면 `budgetCut`), 그리고 노드 계획마다 key, 적격 여부, 제외 사유(`MissingOperationCost`, `CapacityPending`, `CapacityRejected`, `InfeasibleResources`, `FixedWorkload`, `PlacementInventoryMissing`), κ, 사슬 시간, J를 담는다(`SCH-30`). 평가한 계획 집합의 목록은 기록하지 않는다.
 
@@ -148,6 +161,7 @@ snapshot 인스턴스의 `WorkloadUID`와 Pod owner/routing 참조는 같은 소
 
 | 대상 | 계약 |
 |---|---|
+| 최소 수요 | `minimumDemand`는 Workload UID→유한한 비음수 req/s map이다. 빈 UID는 거절하고 미설정 UID는 0이다. `decision.settings`와 `decision.search.bounds`에 선택값을 동결하며 캠페인의 binding/settings 캡처와 summary에 연결한다([저장 경로](measurement-api.md#71-최소-수요와-재현-설정)) |
 | 용량표 설정 | `capacityWindowNanos`>0, `capacityWindows`≥1, `capacityPassingWindows`는 1부터 전체 창 수까지, `capacityMinimumRequests`≥1이다 |
 | 비교 기간 | `comparisonPeriodNanos`>0이며 sample 하한은 10분이다. 판단은 실제 T를 `decision.capacity.periodNanos`에 남긴다 |
 | 디스패치 점유 | snapshot의 `dispatchOccupancy`는 immutable 측정 record에서 도출한다. 행 입력에 Node UID, mode, runtime/model, 값과 source를 포함한다 |

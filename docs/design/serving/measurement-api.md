@@ -240,6 +240,40 @@ reader는 한 형태를 엄격히 소비한다. Timing이 없는 기록의 미�
 | `serving/dispatch-occupancy/<Node UID>/<CR UID>.json` | 전체 공급, 시간, 계수와 identity 조건, native 원천과 모든 과학 판정 사유를 PutImmutable로 보존한다 |
 | d 소비 | snapshot `dispatchOccupancy`가 측정 record를 가리킨다. 수동 설정의 d 목록은 사용하지 않는다 |
 | 판단 기록 | 행 입력의 Node UID, 전력모드, runtime/model, d source와 실제 비교 기간 T를 보존한다 |
+| 실행과 결과의 scheduler 설정 | 선택한 `SchedulerSettings`와 `minimumDemand`를 `decision.settings` 및 `decision.search.bounds`에 동결하고 scheduler 관측 기록에 보존한다. 캠페인 실행은 binding의 scheduler 입력 참조와 settings 캡처를 결과에 연결한다 |
+
+### 7.1 최소 수요와 재현 설정
+
+별도 Run API나 Run 저장소를 추가하지 않는다. 여기서 실행 기록은 기존 캠페인 binding/summary와 scheduler 판단 및 관측 기록이다.
+
+`minimumDemand`는 Workload **UID**별 최소 요청률(req/s) map이다. 이름이나 모델 ID를 키로 쓰지 않는다.
+빈 UID, 음수, NaN과 무한대는 거절한다. 선택 항목이며 map 또는 UID를 생략하면 하한은 0이다.
+계획기의 유효 수요는 `max(관측 수요, minimumDemand[UID])`이고,
+관측 수요는 장기/최근 도착률과 미완료 요청 기여를 포함한다([계획기 3장](analytic-planner.md#3-판정과-순서)).
+유휴 제거와 교체 회수의 최소 요청률에도 이 하한을 적용한다.
+무부하에서도 선택 구성은 명시한 하한을 처리할 용량을 유지해야 한다.
+
+다음 JSON은 전체 설정 문서가 아니라 scheduler 캡처와 판단에 보존하는 settings 부분의 예다.
+`workload-uid-123`은 실제 대상 UID로 정한다.
+
+```json
+{
+  "settings": {
+    "minimumDemand": {
+      "workload-uid-123": 40
+    }
+  }
+}
+```
+
+판단은 고른 설정을 `decision.settings`와 `decision.search.bounds`에 동결하므로,
+이후 controller 설정 변경이 과거 판단의 하한을 바꾸지 않는다. scheduler 관측 기록은 그 판단을 보존한다.
+`hack/e5/e5.py`의 binding은 `config.inputs.scheduler`와 `sources`로 scheduler 입력을 연결하고,
+실행의 `initial.json`, 경계별 `pre-settings.json`/`post-settings.json`, `static-selection.json`은 실제 설정을 저장한다.
+`e5-summary.json`의 `staticSelection`은 그 선택과 settings를 담은 `static-selection.json`을 가리킨다.
+결과 해석에는 이 동결 입력과 당시 판단을 사용하며 현재 controller 설정으로 대체하지 않는다.
+판단의 `decision.capacity.workloads[]`에는 `minimumDemand`(미설정이면 명시적 0)와
+`rate`(하한을 적용한 최종 req/s)가 함께 남는다. 관측 도착률 자체를 하한으로 덮어쓰지는 않는다.
 
 G2는 계획기가 읽는 비용과 baseline의 immutable 참조와 Timing 유무를 조사한다.
 B=0 값만으로 계약 세대를 판별하지 않는다.

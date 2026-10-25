@@ -88,6 +88,7 @@ type SchedulerPlanSearch struct {
 type SchedulerCapacityWorkload struct {
 	UID                  string           `json:"uid"`
 	Rate                 float64          `json:"rate"`
+	MinimumDemand        float64          `json:"minimumDemand"`
 	Queued               int              `json:"queued"`
 	KappaNew             float64          `json:"kappaNew"`
 	KappaRetained        float64          `json:"kappaRetained"`
@@ -126,6 +127,9 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err := ctx.Err(); err != nil {
 		return SchedulerDecision{}, err
 	}
+	settings.AutonomousWorkloads = slices.Clone(settings.AutonomousWorkloads)
+	settings.ExcludedNodes = slices.Clone(settings.ExcludedNodes)
+	settings.MinimumDemand = maps.Clone(settings.MinimumDemand)
 	snapshot = schedulerCanonical(snapshot)
 	decision := SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
@@ -392,7 +396,8 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		if covered > 0 {
 			w.rate += float64(w.queued) / covered.Seconds()
 		}
-		w.minRate = capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID)
+		w.rate = max(w.rate, settings.MinimumDemand[w.d.UID])
+		w.minRate = max(capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID), settings.MinimumDemand[w.d.UID])
 		w.slack = w.d.SLO.TargetLatency.Seconds() - settings.CompletionMarginMS/1e3
 		for _, i := range snapshot.Instances {
 			if i.WorkloadUID == w.d.UID && !i.Stopped {
@@ -1573,7 +1578,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	for w, ws := range p.ws {
 		j := best.judgments[w]
 		record.Workloads = append(record.Workloads, SchedulerCapacityWorkload{
-			UID: ws.d.UID, Rate: ws.rate, Queued: ws.queued, KappaNew: best.sums[w][0], KappaRetained: best.sums[w][1], Backlog: j.backlog,
+			UID: ws.d.UID, Rate: ws.rate, MinimumDemand: p.settings.MinimumDemand[ws.d.UID], Queued: ws.queued, KappaNew: best.sums[w][0], KappaRetained: best.sums[w][1], Backlog: j.backlog,
 			WaitSeconds: j.wait, DrainSeconds: j.drain, FinalExceedance: j.final, TransitionExceedance: j.transition, Weights: best.weights[w], Rows: best.rows[w],
 		})
 	}

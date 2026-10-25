@@ -159,6 +159,62 @@ func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 	}
 }
 
+func TestCapacityMinimumDemandPreservesCapacityAtNoLoad(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+	snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "w1")
+	profile := *i2.Profile
+	profile.IdleBaselineWatts = 20 // removing i2 saves 10 W
+	i2.Profile = &profile
+	snap.Instances = append(snap.Instances, i2)
+	snap.Options = append(snap.Options, poolsOption(i2))
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": 500, "i2": 500}}
+	snap.Costs = []OperationCost{poolsCost(schedulerActionRemove, n2, schedulerState(i2), "unloaded", "fixed")}
+	rows := capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 25 })
+
+	cheap := capacityDecideForTest(t, s, snap, rows)
+	if cheap.Target == nil || poolsOn(*cheap.Target, n2) || cheap.Capacity == nil ||
+		cheap.Capacity.Workloads[0].Rate != 0 || cheap.Capacity.Workloads[0].KappaNew != 25 {
+		t.Fatalf("without demand the cheaper 25 req/s configuration must win: %+v", cheap)
+	}
+	s.MinimumDemand = map[string]float64{"w1": 40}
+	floored := capacityDecideForTest(t, s, snap, rows)
+	if floored.Target == nil || !poolsOn(*floored.Target, n2) || floored.Capacity == nil {
+		t.Fatalf("minimum demand must retain the second instance at no load: %+v", floored)
+	}
+	w := floored.Capacity.Workloads[0]
+	if w.MinimumDemand != 40 || w.Rate != 40 || w.KappaNew < w.Rate {
+		t.Fatalf("effective demand and selected capacity must cover the floor: %+v", w)
+	}
+}
+
+func TestSchedulerMinimumDemandValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		demand map[string]float64
+		valid  bool
+	}{
+		{name: "unset", valid: true},
+		{name: "zero", demand: map[string]float64{"w1": 0}, valid: true},
+		{name: "positive", demand: map[string]float64{"w1": 40}, valid: true},
+		{name: "empty UID", demand: map[string]float64{"": 40}},
+		{name: "negative", demand: map[string]float64{"w1": -1}},
+		{name: "NaN", demand: map[string]float64{"w1": math.NaN()}},
+		{name: "positive infinity", demand: map[string]float64{"w1": math.Inf(1)}},
+		{name: "negative infinity", demand: map[string]float64{"w1": math.Inf(-1)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := schedulerFixture()
+			s.MinimumDemand = tc.demand
+			if err := s.Validate(); (err == nil) != tc.valid {
+				t.Fatalf("Validate() = %v, valid = %t", err, tc.valid)
+			}
+		})
+	}
+}
+
 // m4 r6: 20 s after a ChillServer restart under 40 req/s the 60 s window held
 // only 20 s of arrivals, λ read 13.3 and the planner removed instances under
 // load. λ is measured over the part of the window observed since the process

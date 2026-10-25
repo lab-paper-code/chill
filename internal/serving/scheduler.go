@@ -28,6 +28,8 @@ type SchedulerSettings struct {
 	ServingMemoryBytes  uint64        `json:"servingMemoryBytes"`
 	CompletionMarginMS  float64       `json:"completionMarginMS"`
 	AutonomousWorkloads []string      `json:"autonomousWorkloads"`
+	// MinimumDemand floors planning demand in requests/second by Workload UID.
+	MinimumDemand map[string]float64 `json:"minimumDemand,omitempty"`
 	// ExcludedNodes names Nodes the planner keeps as they are, like
 	// measurement Nodes: no placement, removal, power change or lowering.
 	ExcludedNodes []string `json:"excludedNodes"`
@@ -373,6 +375,11 @@ func (s SchedulerSettings) Validate() error {
 	}
 	if math.IsNaN(s.CompletionMarginMS) || math.IsInf(s.CompletionMarginMS, 0) || s.CompletionMarginMS < 0 {
 		return fmt.Errorf("completionMarginMS must be finite and nonnegative")
+	}
+	for uid, rate := range s.MinimumDemand {
+		if uid == "" || !schedulerFinite(rate) || rate < 0 {
+			return fmt.Errorf("minimumDemand entries need nonempty Workload UIDs and finite nonnegative rates")
+		}
 	}
 	if s.CapacityWindow <= 0 || s.CapacityWindows < 1 || s.CapacityPassingWindows < 1 || s.CapacityPassingWindows > s.CapacityWindows || s.CapacityMinimumRequests < 1 {
 		return fmt.Errorf("capacity settings need capacityWindowNanos > 0, capacityWindows >= 1, 1 <= capacityPassingWindows <= capacityWindows and capacityMinimumRequests >= 1")

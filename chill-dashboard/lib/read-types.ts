@@ -38,6 +38,7 @@ export type SchedulerSettings = {
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger
   planSearchWorkers:WireInteger
   autonomousWorkloads:string[]|null
+  minimumDemand?:Record<string,number>
   // Nodes the planner never changes (reason ExcludedNode).
   excludedNodes:string[]|null
   controls:{placement:boolean;resources:boolean;replicas:boolean;routing:boolean;batching:boolean;power:boolean;membership:boolean}
@@ -65,7 +66,7 @@ export type SchedulerSnapshot = {at:string;workloads:(SchedulerDefinition|null)[
 // state: Disabled, MeasurementEvidenceMissing, or Controlled.
 export type SchedulerWorkloadState = {uid:string;state:string;reason?:string}
 // internal/serving/scheduler_capacity.go SchedulerCapacity; a missing wait, drain or exceedance is unbounded.
-export type SchedulerCapacityWorkload = {uid:string;rate:number;queued:number;kappaNew:number;kappaRetained:number;backlog:number;waitSeconds?:number;drainSeconds?:number;finalExceedance?:number;transitionExceedance?:number;weights:Record<string,number>|null;rows:string[]|null}
+export type SchedulerCapacityWorkload = {uid:string;rate:number;minimumDemand:number;queued:number;kappaNew:number;kappaRetained:number;backlog:number;waitSeconds?:number;drainSeconds?:number;finalExceedance?:number;transitionExceedance?:number;weights:Record<string,number>|null;rows:string[]|null}
 export type SchedulerNodePlan = {node:NodeRef;key:string;eligible:boolean;reason?:string;kappa?:Record<string,number>;kappaRetained?:Record<string,number>;preNanos:WireInteger;postNanos:WireInteger;joules:number;energyUncertaintyJoules?:number}
 // search is the plan search scope: neighborhood k reached, plan sets evaluated, time, and whether the budget cut it.
 export type SchedulerPlanSearch = {neighborhood:number;evaluated:number;durationNanos:WireInteger;budgetCut?:boolean}
