@@ -2,7 +2,7 @@
 
 ## 1. 기준과 적용 범위
 
-[스케줄러 SRS](../../spec/scheduler/SRS.md)의 SCH-01~32와
+[스케줄러 SRS](../../spec/scheduler/SRS.md)의 SCH-01~32, SCH-48~49와
 [요구사항·구현 대조](scheduler-srs-audit.md)에 대응하는 현재 판단·제어 구조다.
 요구사항과 수용 기준의 원본은 `docs/spec/`이며 이 문서는 구현 책임과 불변식을 정리한다.
 
@@ -118,6 +118,75 @@ Service 목록이나 probe 뒤 Pod 목록 읽기가 실패하면, profile과 소
 observer issue와 로그에 남긴다. 다음 refresh도 읽기에 실패하면 instance는 준비되지 않은 상태가 된다.
 executor가 바뀌거나 준비를 잃으면 Pod watch와 log follow가 그 instance를 끈다. Node 목록이나 Pod 목록
 읽기가 실패하면 refresh는 할당을 닫는다.
+
+#### 정책 ACK 대기와 실제 관측 실패의 분리 — SCH-48~49
+
+2026-10-26 확정 설계다. 아래 C·A·B는 **한 배포에서 함께 적용할 변경 계약**이며,
+이 문서 수정은 구현·회귀 통과를 뜻하지 않는다. ACK 대기로 물리 점유가 사라지는
+원인을 C로 없애고, 진짜 읽기 실패는 A로 막으며, 이미 생긴 중복 실물은 B로 정리한다.
+`ExclusiveCPUInfeasible` 등 현재 전체 자원 검증 실패의 **전역 `Pending`은 유지**한다.
+Node 하나의 `InstanceUnavailable`을 새 전역 중지 사유로 확대하지 않는다.
+
+**C — ACK pending은 오류가 아닌 반영 대기 상태다(SCH-48, AC-34~35).**
+
+- 현재 `internal/serving/firstfloor/client.go:105-132`의 `validateMetadata`는
+  `:122-123`에서 desired/actual `DecisionID` 불일치를 오류로 반환하고,
+  `Probe(:156-173)`가 정상 native state까지 버린다. 이 불일치만 검증 오류에서 빼고,
+  나머지 profile·runtime/provider/device/affinity·입출력·준비 상태 검증은 모두 수행한다.
+  모든 검증이 통과한 `ReadyInstance.State.Reason`에 `PolicyAckPending`을 넣어
+  `(ReadyInstance, nil)`로 반환한다. 새 pending bool·캐시·오류 sentinel은 만들지 않는다.
+- 마지막으로 **실제로 확인한** physical ID·Node·profile·allocation·owner·TargetID,
+  native readiness·정책·요청 목록을 보존한다. 성공한 이번 state read가 있으면 그 실제
+  값과 원래 관측 시각을 사용한다. desired 정책으로 Native를 덮거나, ACK 대기만으로
+  `Ready=false`/`Stopped=true`/`Native=nil`로 바꾸지 않는다. 읽기 실패 때 오래된 상태를
+  무기한 되살리는 계약이 아니며, 교체된 executor/profile의 상태를 재사용하지 않는다.
+- `kube/observer.go:394-405`는 이 반환을 성공 probe로 받아 `verifySource(:410-439)`의
+  동일 Pod UID/container·Service 단일 executor 검증을 거친다. pending은
+  `sourceUnavailable(:442-447)`나 실패 fallback `sourceReadFailed(:453-459)`로
+  보내지 않는다. 진짜 HTTP/디코딩/metadata/Pod·Service 검증 실패는 기존 오류 경로다.
+- `Runtime.InstallInstances`는 정상 instance로 유지한다. `kube/scheduler.go:695-708`의
+  `captureNodePods`에서 `Native != nil`이므로 실제 allocation을 snapshot에 포함하고,
+  `State.Reason`을 `SchedulerInstance.Reasons=["PolicyAckPending"]`로 전달한다.
+  pending만으로 Node에 `InstanceUnavailable`을 붙이지 않는다.
+- scheduler 원본·compact·summary와 관측 기록은 instance의 기존 `reasons`에
+  `PolicyAckPending`을 노출한다(`httpapi/scheduler_summary.go:26-35,74-79` 포함).
+  POOL은 `BuildPools(runtime.go:1109-1163)`의 기존 `InstanceState.reason`을 그대로
+  내보내고 소비자는 **“반영 대기”**로 표시한다. 소유/바인딩된 Workload POOL에서
+  사라지거나 available POOL로 이동하지 않으며, ACK 확인 뒤 다음 정상 probe에서 표시가 지워진다.
+- 물리 존재/현재 readiness와 **새 정책 적용 완료**는 별개다. `operations.go:1109-1137`의
+  native `DecisionID`·정책 ACK 확인, `scheduler.go:1186-1214`의 실제 target/policy 확인은
+  유지한다. pending을 route 완료 증거로 쓰거나 `Actual.Native`에 목표 ACK를 만들어 넣지 않는다.
+  진행 중 route는 frozen target·직렬화·`TransitionInProgress`를 유지한다.
+
+**A — 실제 `InstanceUnavailable` Node의 부재 추론을 금지한다(SCH-49, AC-34~35).**
+
+`SchedulerNode.Reasons`에서 기존 `NodeInstanceUnavailable`을 **NodeReference(Name, UID)가
+일치하는 Node별로** 검사한다. 이미 있는 `schedulerAvailable(:56-59)`와
+`capacityPlanner.nodePlans(scheduler_capacity.go:566-575)`의 keep-only gate만으로는
+진행 중 목표의 `schedulerPlan` 재구성이 보호되지 않으므로 다음 네 위치에도 적용한다.
+
+| `internal/serving/scheduler_plan.go` 위치 | 검사 시점과 거절 결과 |
+|---|---|
+| `prepareTargets:568-585` | wanted Node를 고른 즉시, `runningPreparation`·존재 비교·`freePreparationResources`·새 prepare 추가 전에 검사한다. 해당 Node의 새 prepare를 거절하고 이유 `InstanceUnavailable`을 기록한다. |
+| `preparationFits:637-664` | 같은 Node를 찾은 직후, allocation 조립/`ValidateNodeBudget` 전에 `false`다. “빈 Node여서 fits”가 아니다. 앞선 prepare gate가 막으므로 이 false를 근거로 blocker stop/remove를 생성하지 않는다. |
+| `changeNodes:513-558` | oldNode와 target Node가 일치한 뒤, Fixed lowering 재사용이나 stop/drain/power/remove 사슬을 추가하기 전에 검사한다. 해당 Node의 새 전력 변경을 거절하고 이유 `InstanceUnavailable`을 기록한다. |
+| `completedEffectPresent:465-468` remove 분기 | action Node를 먼저 검사하여 `false`를 반환한다. snapshot에 instance가 없다는 이유로 remove 완료를 재사용하거나 후속 prepare/power 의존성을 해제하지 않는다. |
+
+거절은 기존 Node 계획의 `reason=InstanceUnavailable`, snapshot Node 이유와 해당
+후보/동작의 이유에 연결하고 Node identity를 함께 남긴다. **prepare/power만 조용히
+생략하고 target을 실행 가능하다고 반환해서는 안 된다.** 해당 Node 변경이 필요한
+후보/진행 중 목표의 후속 동작은 보류하고 이유를 전달한다. 이미 실행 중인 물리 동작을
+실패·취소·완료로 조작하거나 같은 동작을 재전송하지 않는다. 정상 Node의 독립 계획은
+기존 전역 검증을 통과하는 한 계속 가능하다. unknown과 실제 제거/종료 proof를 구분한다.
+
+**C 뒤 확인할 기존 소비자(별도 의미 변경 없음).**
+
+| 소비자 | 확인 내용 |
+|---|---|
+| `scheduler_plan.go:475-489` `routeEffectPresent` | 동일 physical ID/분배/소비 policy 수치가 실제로 유지되면 ACK 표시만으로 완료 효과가 소실되거나 route가 재전송되지 않는다. 실제 분배·batch/wait/capacity 변경은 여전히 효과 불일치다. running route의 신규 ACK 대기는 완료로 단축하지 않는다. |
+| `scheduler_capacity.go:402-405` `w.current` | pending 전후 같은 Workload의 `!Stopped` instance 수가 그대로다. snapshot 누락 때문에 0으로 세거나 replica 보충을 계획하지 않는다. |
+| `observation_log_power.go:587-591` active membership | `Ready && !Stopped && WorkloadUID != ""`인 같은 instance가 ACK 대기에도 남아 active POOL 구간이 끊기지 않는다. 실제 stop/remove 때만 기존 membership 판정대로 빠진다. raw 전력 coverage·whole-POOL 합산 규칙은 바꾸지 않는다. |
+
 
 ### 5.2 용량표와 노드 계획
 
@@ -318,6 +387,30 @@ running/cancel보다 우선한다. physical identity로 갱신된 목표에서 �
 구성·실행하지 않는다. 실제 effect가 소실되면 기존 reconciliation이 기록을 퇴역시키고
 새 판단의 새 action identity로 준비하므로 logical slot을 영구 차단하는 규칙은 아니다.
 
+### 중복 slot의 수동 reset — AC-36
+
+`kube/manual_reset.go:132-179`의 `resetOwnedTargets`는 이미 Pod 목록에서 선택
+Workload 소유의 **모든 정확한 `Pod UID/container ID`**를 모은다. 이 목록을 slot별
+하나로 축약하지 않는다. `planManualResetLocked(:57-93)`의 Node 예약과
+`executeManualReset(:223-282)`의 disable-autonomy→unroute→drain→remove→release→lower-power
+순서를 그대로 쓰고, remove 직전 재열거(`:260-278`)로 소유 실물을 각각 제거한다.
+
+현재 unroute가 호출하는 runtime 해석기는 exact ID와 TargetID alias를 한 번에
+비교한다(`runtime_scheduler.go:233-244`). 따라서 `ID=A, TargetID=S`인 원본과
+`ID=B, TargetID=A`인 중복 실물이 있으면 정확한 물리 A도 다중 slot 오류가 된다.
+이를 **exact physical ID 우선, exact가 없을 때만 유일한 TargetID alias**로 해석하도록
+바꾼다. 실제로 여러 실물이 같은 논리 alias를 가지면 계속 명시적으로 거절한다.
+같은 선택 규칙을 `kube/scheduler.go:1173-1184`의 `schedulerPhysicalState`와
+`kube/operations.go:1056-1068`의 `applyPolicy`에도 적용해 목록 순서에 따른 첫 Pod 선택을 없앤다.
+정확한 A 선택은 B를 숨기는 중복 제거가 아니며 reset은 A와 B 모두 처리해야 한다.
+
+소유는 routing 비어 있음/slot 일치로 추정하지 않고 기존 Workload owner와 바인딩 검사를
+유지한다. 다른 소유분·measurement Node·다른 Node UID는 기존 보호를 따른다.
+각 실물은 native outstanding/drain과 실제 container 종료·Pod/Service/config 제거 proof를
+기존 원자 remove(`operations.go:638-746`)로 확인한다. 삭제 후 release/power에서 실패하면
+다음 명시적 reset이 현 상태를 다시 열거하며, 완료 후 재호출은 성공하고 불필요한 Pod 쓰기가 없다.
+
+
 ### 초기화와 판단 발행 경계
 
 시작 시 profile catalog와 scheduler 설정을 Observer에 제공하지만 생성자는 routing을
@@ -366,6 +459,45 @@ ObservationLog는 request/management와 더불어 decision/settings/action/power
 | SCH-20~23 | Runtime routing + firstfloor actor | ready 즉시 전달·원래 elapsed·UID compatible batch·energy-gain wait·명시적 수명 |
 | SCH-24~27, 30 | kube atomic actions + operation ledger | prepare-route-drain-remove·actual effect·partial failure·in-progress reuse·appliedAt |
 | SCH-32 | authenticated settings + per-Workload autonomy + frozen record | 권한·변경 결과/영향/적용·동일 조건의 static 비교 |
+| SCH-48, AC-34~35 | firstfloor Probe → observer → snapshot/POOL → 기존 route ACK | pending 표시·물리 점유/현재 상태 보존·중복 준비 없음·전력 전 stop/drain 의무 |
+| SCH-49, AC-34~35 | schedulerPlan의 Node별 guard + 기존 자원 검증 | 읽기 실패 Node의 준비/전력/부재 기반 제거 완료 금지·기존 전역 Pending 유지 |
+| AC-36 | exact/alias 해석 + manual reset의 소유 실물 전체 열거 | 같은 slot의 소유 실물 전체 제거·타 소유분 보존·재호출 멱등 |
+
+### ACK 관측·불확실 Node·reset 회귀 설계
+
+아래는 **구현 시 추가할 세 회귀 시나리오**이며 실행 결과가 아니다. 기존
+`firstfloor/client_test.go`, `kube/observer_test.go`, `kube/scheduler_transition_test.go`,
+`scheduler_transition_test.go`, `scheduler_pools_test.go`, `observation_log_power_test.go`,
+`kube/reset_test.go`의 fixture/가짜 client와 실제 production 경로를 재사용한다.
+
+1. **AC-34 — route ACK 지연 중 중복 준비 방지 및 읽기 실패 방어.**
+   정상 물리 A/CPU `[2]`를 probe한 뒤 desired annotation의 DecisionID만 바꾸고
+   native는 이전 ACK를 반환한다. `Probe→Refresh→capture→진행 중 목표 재계획`을
+   여러 tick 진행해 nil error·Native/ID/TargetID/owner/allocation/Ready 유지,
+   snapshot `PolicyAckPending`·POOL “반영 대기”, 같은 slot prepare 0·Pod Create 0을
+   확인한다. ACK 후 같은 container로 표시가 지워져야 한다. 효과 확인/route 재전송,
+   `w.current`, active membership 및 동일 meter 구간 joules가 pending 때문에 변하지
+   않는지도 확인한다. 하위 경우로 실제 native 읽기 실패를 주어 Node에
+   `InstanceUnavailable`이 남게 하고 네 guard의 준비/전력 거절·fits=false·remove
+   완료=false를 확인한다. 정상 다른 Node의 계획과 기존 `ExclusiveCPUInfeasible`
+   전역 Pending은 각각 보존되어야 한다.
+2. **AC-35 — pending instance도 전력 변경 전 실제 stop/drain.**
+   한 Node의 A는 ACK pending이고 요청이 queued/running, B는 정상인 snapshot에서
+   전력 변경을 계획한다. A/B 모두 stop→drain이 power의 선행 조건이어야 하며
+   outstanding이 남아 있는 동안 실제 power 호출은 0회다. native 요청 완료/빈 요청 목록과
+   실제 분배 차단을 확인한 뒤에만 power를 실행한다. pending을 완료 proof로 쓰지 않고,
+   진짜 읽기 실패로 바꾸면 해당 Node power를 시작하지 않아야 한다.
+3. **AC-36 — 동일 slot 다중 실물 reset.**
+   같은 선택 Workload 소유인 `A→S`, `B→A` 두 Pod와 다른 Workload의 C를 넣는다.
+   A만 실제 routed여도 unroute가 ambiguity로 중단하지 않고 A/B 모두 drain/remove하고,
+   각각의 Pod·Service·config가 없어지며 C의 소유·분배·자원은 불변이어야 한다.
+   두 번째 reset은 성공·추가 Pod 쓰기 0회다. 목록 순서를 바꿔 exact A가 항상 A로
+   해석되는지, exact가 없는 진짜 다중 alias는 여전히 오류인지 함께 확인한다.
+
+위 변경 위치와 호출 관계는 2026-10-26 저장소의 pinned `gopls` references/definition과
+반환된 실제 소스를 대조했다. line 번호는 변경 전 소스 기준의 탐색 앵커이며,
+구현 후 이 세 시나리오의 focused test 및 해당 패키지 검증은 별도로 실행해야 한다.
+
 
 ### Ponytail 검수 반영
 
