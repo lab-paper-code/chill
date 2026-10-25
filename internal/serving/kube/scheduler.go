@@ -500,7 +500,11 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	}
 	physical := map[string]serving.InstanceState{}
 	for _, state := range c.runtime.Instances() {
-		physical[state.ID] = state
+		key := state.ID
+		if key == "" {
+			key = state.PodUID
+		}
+		physical[key] = state
 	}
 	// The entire POOL is every Node without the control-plane role.
 	for i := range nodes.Items {

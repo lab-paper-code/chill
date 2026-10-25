@@ -399,6 +399,8 @@ Research의 권고 전체를 이번 범위로 가져오지 않는다. 증거 저
 필드는 개념 계약이다. 기존 `nativeSource`, `InstanceState`, `SchedulerInstance`에 필요한
 정보만 더하고 중복된 관측 enum/정책 DSL/새 영속 이력 저장소를 만들지 않는다.
 Pod UID와 물리 ID를 별도로 운반하므로 init 실패 Pod도 장부에서 사라지지 않는다.
+snapshot 중간 inventory도 물리 ID가 비어 있으면 Pod UID를 키로 써 여러 pending/init 실패
+Pod의 owner·slot·할당을 각각 보존한다. 빈 물리 ID 하나로 합치지 않는다.
 `RestartPolicyNever` 및 정확 physical ID 우선/유일 alias 해석은 보존한다.
 slot 해석이 필요한 prepare 완료에서 한 번 정확 신분으로 해결한 뒤 mutation은 그 신분에
 고정한다. 예전 UID의 허가를 같은 이름·slot으로 재생성한 Pod에 넘기지 않는다.

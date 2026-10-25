@@ -1306,3 +1306,47 @@ func TestPolicyOnlyTargetOwnsUIDAndAppliesNativePolicyAC38(t *testing.T) {
 		})
 	}
 }
+
+func TestCapturePreservesEveryExecutorlessPodUIDAC37(t *testing.T) {
+	c, _ := tickReadySubsetController(t, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	base, err := c.kube.CoreV1().Pods("chill-system").Get(ctx, "a", meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pending-one", "pending-two", "init-failed"} {
+		pod := base.DeepCopy()
+		pod.Name, pod.UID, pod.ResourceVersion = name, types.UID(name+"-uid"), ""
+		pod.Status = core.PodStatus{Phase: core.PodPending}
+		if name == "init-failed" {
+			pod.Status.Phase = core.PodFailed
+			pod.Status.InitContainerStatuses = []core.ContainerStatus{{Name: "artifact", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 1}}}}
+		}
+		pod.Labels[instancePodUIDLabel] = string(pod.UID)
+		pod.Annotations[ServingSlotAnnotation] = name + "-slot"
+		if _, err := c.kube.CoreV1().Pods(pod.Namespace).Create(ctx, pod, meta.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := c.capture(ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pending-one", "pending-two", "init-failed"} {
+		index := slices.IndexFunc(snapshot.Instances, func(i serving.SchedulerInstance) bool { return i.PodUID == name+"-uid" })
+		if index < 0 {
+			t.Fatalf("executorless Pod %s disappeared from snapshot: %+v", name, snapshot.Instances)
+		}
+		instance := snapshot.Instances[index]
+		if instance.ID != "" || instance.TargetID != name+"-slot" || instance.OwnerWorkloadUID == "" ||
+			instance.Node.Name != "a" || instance.Allocation.CPUCount != 1 || instance.Ready {
+			t.Fatalf("executorless physical facts changed: %+v", instance)
+		}
+	}
+	for _, node := range snapshot.Nodes {
+		if node.Node.Name == "a" && len(node.NonServing) != 0 {
+			t.Fatal("serving Pod UID was counted again as anonymous non-serving occupancy")
+		}
+	}
+}
