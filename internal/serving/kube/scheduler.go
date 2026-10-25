@@ -78,10 +78,13 @@ type SchedulerControllerState struct {
 	CostIssues []CostIssue `json:"costIssues"`
 }
 type actionRun struct {
-	action  serving.Action
-	result  *OperationResult
-	cancel  context.CancelFunc
-	started time.Time
+	action   serving.Action
+	result   *OperationResult
+	cancel   context.CancelFunc
+	started  time.Time
+	scope    resourceScope
+	owner    string
+	reserved bool
 }
 type SchedulerController struct {
 	mu         sync.Mutex
@@ -412,7 +415,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 		}
 	}
 	for id, run := range c.runs {
-		if run.action.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, run) {
+		if !run.reserved && run.action.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, run) {
 			delete(c.runs, id)
 		}
 	}
@@ -433,6 +436,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 		if pending {
 			snapshot.InProgressTarget = goal
 		} else {
+			c.releaseOwnerLocked(goal.ID)
 			c.goal = nil
 		}
 	}
@@ -443,7 +447,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 	cutoff := now.Add(-observationWindow)
 	c.state.Results = slices.DeleteFunc(c.state.Results, func(r OperationResult) bool { return r.EndedAt.Before(cutoff) })
 	for id, run := range c.runs {
-		if run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil || !run.result.EndedAt.Before(cutoff) {
+		if run.reserved || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil || !run.result.EndedAt.Before(cutoff) {
 			continue
 		}
 		needed := false
@@ -598,6 +602,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		}
 	}
 	bindProfileMeters(&s, config.Meters)
+	c.releaseEmptyScopes(nodes.Items, pods.Items, now)
 	return s, nil
 }
 
@@ -826,18 +831,6 @@ func slotName(slot string) string {
 	return "serving-" + hex.EncodeToString(sum[:10])
 }
 
-func (c *SchedulerController) conflictingActionRunning(action serving.Action) bool {
-	// Global policy writes share one ConfigMap/ACK path. Independent Node
-	// preparations remain concurrent; one mutation per Node stays serialized.
-	for _, r := range c.runs {
-		if r.action.Status == nativeOperationRunning && ((action.Node.UID != "" && r.action.Node == action.Node) ||
-			((action.Kind == operationRoute || action.Kind == operationStop) && r.action.Kind == operationRoute)) {
-			return true
-		}
-	}
-	return false
-}
-
 func (c *SchedulerController) launch(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -876,21 +869,21 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			if !ready {
 				continue
 			}
-			if c.conflictingActionRunning(action) {
-				continue
-			}
 			selectedTarget := &target
 			if action.From == readySubsetRoute {
 				selectedTarget = intermediate
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
-			runCtx, cancel := c.runContext(action, config)
 			action.Status = nativeOperationRunning
 			action.Cancelable = action.Kind == operationPrepare
 			started := time.Now()
 			initial := OperationResult{Operation: operation, StartedAt: started.UTC(), Status: "starting"}
-			run := &actionRun{action: action, result: &initial, cancel: cancel, started: started}
-			c.runs[action.ID] = run
+			run := &actionRun{action: action, result: &initial, started: started, owner: target.ID}
+			if !c.reserveRun(action.ID, run, operation) {
+				continue
+			}
+			runCtx, cancel := c.runContext(action, config)
+			run.cancel = cancel
 			c.wg.Add(1)
 			go func(operation Operation, run *actionRun) {
 				defer c.wg.Done()

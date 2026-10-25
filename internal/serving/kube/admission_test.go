@@ -164,7 +164,16 @@ func (h *admissionHarness) admit() {
 		h.t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for h.controller.nodeBusy(h.node) {
+	for {
+		h.controller.mu.Lock()
+		running := false
+		for _, run := range h.controller.runs {
+			running = running || run.action.Status == nativeOperationRunning
+		}
+		h.controller.mu.Unlock()
+		if !running {
+			break
+		}
 		if time.Now().After(deadline) {
 			h.t.Fatal("run did not finish")
 		}

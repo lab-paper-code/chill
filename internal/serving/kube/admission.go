@@ -114,20 +114,10 @@ func (c *SchedulerController) measurementRoots(ctx context.Context, namespaces [
 func (c *SchedulerController) Admit(ctx context.Context) error {
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
-	// Read the runs before the Pods: a run that ends after this read has its
-	// Pods in the list below, and no run starts while tickMu is held.
 	c.mu.Lock()
 	config := c.config
-	busy := map[string]bool{}
-	// The load of a running occupancy measurement is on the ChillServer Node.
-	loading := false
-	for _, r := range c.runs {
-		if r.action.Status == nativeOperationRunning {
-			busy[r.action.Node.UID] = true
-			loading = loading || r.action.Kind == occupancyKind
-		}
-	}
 	c.mu.Unlock()
+	observedAt := time.Now()
 	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err
@@ -138,6 +128,19 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	c.releaseEmptyScopes(nodes.Items, pods.Items, observedAt)
+	c.mu.Lock()
+	busy := map[string]bool{}
+	loading := false
+	for _, run := range c.runs {
+		if run.reserved {
+			for _, node := range run.scope.Nodes {
+				busy[node.UID] = true
+			}
+			loading = loading || run.action.Kind == occupancyKind
+		}
+	}
+	c.mu.Unlock()
 	roots, err := c.measurementRoots(ctx, config.MeasurementNamespaces)
 	if err != nil {
 		return err
@@ -307,7 +310,7 @@ func (c *SchedulerController) nodeBusy(node *core.Node) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, r := range c.runs {
-		if r.action.Status == nativeOperationRunning && r.action.Node.UID == string(node.UID) {
+		if r.reserved && slices.Contains(r.scope.Nodes, serving.NodeReference{Name: node.Name, UID: string(node.UID)}) {
 			return true
 		}
 	}
@@ -397,7 +400,14 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 	}
 	run := &actionRun{action: serving.Action{ID: operation.ID, Kind: kind, Node: operation.Node, From: externalActionSource, Status: nativeOperationRunning}, result: &initial, cancel: cancel, started: started}
 	c.mu.Lock()
-	c.runs[operation.ID] = run
+	if !c.reserveRun(operation.ID, run, operation) {
+		c.mu.Unlock()
+		cancel()
+		result.Status, result.Error = nativeOperationFailed, "OperationConflict: resources are reserved"
+		result.EndedAt = time.Now().UTC()
+		close(done)
+		return done, &result
+	}
 	c.mu.Unlock()
 	c.wg.Add(1)
 	go func() {
@@ -428,6 +438,9 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 		c.mu.Lock()
 		run.result = &result
 		run.action.Status, run.action.Reason = result.Status, result.Error
+		if err == nil && result.Status == nativeOperationComplete {
+			run.reserved = false
+		}
 		run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
 		c.state.Results = append(c.state.Results, result)
 		c.mu.Unlock()

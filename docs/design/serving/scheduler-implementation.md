@@ -554,6 +554,10 @@ native ACK·actual routing 기록과 stopped 대상 제외는 보존한다.
 3. **공통 범위 예약 cutover:** `c.runs` 범위와 공통 허가·해제를 만들면서 자동/수동/
    reset/측정/hand-back의 모든 진입점을 같은 커밋에서 이관한다. reset 전용 run과
    종류별 충돌 검사를 제거한다. 전역 목표 장벽은 아직 유지하고 AC-38을 통과시킨다.
+   공통 예약은 `actionRun`에 Node UID/Workload UID/Pod UID/physical ID 집합과 owner를
+   보관한다. 실행 상태와 예약 반환은 분리하며, 종료 후 Pod 부재·해당 Node의 전력
+   비대기 재관측은 빈 범위의 반환 proof로 사용한다. reset은 부모 run 하나가 모든
+   Node를 원자 예약하며 자식 remove는 그 부모 안에서 실행한다.
 4. **UID 한정 적용·DAG 준비:** runtime 전체/선택적 검증을 하나의 경로에서 구분하고
    `scheduledOperation`·policy·persist/readback을 실제 변경 UID에 한정한다. 중간 route도
    같은 owner 예약의 자식으로 이관한다. 아직 장벽은 유지하므로 안전하게 독립 검증한다.

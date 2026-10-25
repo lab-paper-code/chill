@@ -180,6 +180,7 @@ func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(
 	existing.started = time.Now()
 	frozen := existing.result.Operation.Target
 	frozen.Actions = []serving.Action{existing.action}
+	existing.scope, existing.reserved, existing.owner = controller.operationScope(existing.result.Operation), true, frozen.ID
 	target.Actions[0].To = "different-route-effect"
 	controller.goal = frozen
 	controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true}, SchedulerControllerConfig{})
@@ -313,8 +314,9 @@ func assertFailedGoalRetainsRunningRoute(t *testing.T, from string) {
 	if !slices.ContainsFunc(snapshot.Actions, func(a serving.Action) bool { return a.ID == routing.ID }) {
 		t.Fatal("running route disappeared from planning prerequisites")
 	}
-	if !controller.conflictingActionRunning(serving.Action{Kind: operationStop, Instance: frozen.Instances[0].ID}) {
-		t.Fatal("a new stop could race the running route and be undone by its final apply")
+	scope := controller.operationScope(Operation{Kind: operationStop, Instance: frozen.Instances[0].ID})
+	if !scope.overlaps(controller.operationScope(controller.runs[routing.ID].result.Operation)) {
+		t.Fatal("stop does not overlap its route reservation")
 	}
 }
 

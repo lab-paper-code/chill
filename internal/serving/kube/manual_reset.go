@@ -75,20 +75,9 @@ func (c *SchedulerController) planManualResetLocked(ctx context.Context, operati
 			plan.nodes = append(plan.nodes, node)
 		}
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, run := range c.runs {
-		if run.action.Status == nativeOperationRunning && (isRoutingOperation(run.action.Kind) || run.action.Kind == operationReset || slices.Contains(plan.nodes, run.action.Node)) {
-			return plan, refused("OperationConflict", "a running route or affected Node operation owns reset resources")
-		}
-	}
-	if c.goal != nil && slices.ContainsFunc(c.goal.Instances, func(i serving.SchedulerInstance) bool { return slices.Contains(operation.WorkloadUIDs, i.WorkloadUID) }) {
-		for _, action := range c.goal.Actions {
-			run := c.runs[action.ID]
-			if !action.Fixed && action.From != readySubsetRoute && (run == nil || run.action.Status != nativeOperationComplete) {
-				return plan, refused("OperationConflict", "the autonomous transition must complete before reset")
-			}
-		}
+	operation.Nodes = plan.nodes
+	if err := c.authorize(operation); err != nil {
+		return plan, err
 	}
 	return plan, nil
 }
@@ -179,26 +168,6 @@ func (c *SchedulerController) resetOwnedTargets(ctx context.Context, uids []stri
 	}
 	slices.SortFunc(owned, func(a, b serving.SchedulerInstance) int { return strings.Compare(a.ID, b.ID) })
 	return owned, nil
-}
-
-func (c *SchedulerController) reserveResetNodes(operation Operation, plan manualResetPlan) []string {
-	ids := make([]string, 0, len(plan.nodes))
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, node := range plan.nodes {
-		id := operation.ID + "/node/" + node.UID
-		ids = append(ids, id)
-		c.runs[id] = &actionRun{action: serving.Action{ID: id, Kind: operationReset, Node: node, From: externalActionSource, Status: nativeOperationRunning}, started: time.Now()}
-	}
-	return ids
-}
-
-func (c *SchedulerController) releaseResetNodes(ids []string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, id := range ids {
-		delete(c.runs, id)
-	}
 }
 
 func (c *SchedulerController) resetState(ctx context.Context, plan manualResetPlan) (OperationState, error) {

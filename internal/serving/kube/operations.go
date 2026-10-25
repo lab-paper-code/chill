@@ -81,12 +81,13 @@ type PrepareSpec struct {
 	Owner       *serving.WorkloadReference   `json:"owner,omitempty"`
 }
 type Operation struct {
-	ID       string                `json:"id"`
-	Kind     string                `json:"kind"`
-	Node     serving.NodeReference `json:"node"`
-	Instance string                `json:"instance,omitempty"`
-	PodUID   string                `json:"podUID,omitempty"`
-	Prepare  *PrepareSpec          `json:"prepare,omitempty"`
+	ID       string                  `json:"id"`
+	Kind     string                  `json:"kind"`
+	Node     serving.NodeReference   `json:"node"`
+	Nodes    []serving.NodeReference `json:"nodes,omitempty"`
+	Instance string                  `json:"instance,omitempty"`
+	PodUID   string                  `json:"podUID,omitempty"`
+	Prepare  *PrepareSpec            `json:"prepare,omitempty"`
 	// PowerMode is the DeviceClass mode a power operation requests, within
 	// MaxActuationDuration of its label write (the mode's actuation policy).
 	PowerMode            string        `json:"powerMode,omitempty"`
@@ -1200,6 +1201,19 @@ func samePreparedContainer(actual, desired core.Container) bool {
 func (o *Operations) validateOperationBinding(ctx context.Context, operation Operation) error {
 	if isRoutingOperation(operation.Kind) {
 		return nil
+	}
+	if operation.Kind == operationRemove && operation.WorkloadUID != "" {
+		current := o.runtime.SchedulerInputs(time.Now)
+		for _, route := range current.Routing {
+			if route[operation.Instance] > 0 {
+				return refused("OperationConflict", "current routing still owns the removal target")
+			}
+		}
+		for _, request := range current.Outstanding {
+			if request.Instance == operation.Instance {
+				return refused("OperationConflict", "current outstanding request still owns the removal target")
+			}
+		}
 	}
 	actual, err := o.kube.CoreV1().Nodes().Get(ctx, operation.Node.Name, meta.GetOptions{})
 	if err != nil {

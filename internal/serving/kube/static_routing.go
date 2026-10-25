@@ -27,14 +27,9 @@ func (c *SchedulerController) manualRoutingOperationLocked(ctx context.Context, 
 	if slices.Contains(config.Settings.AutonomousWorkloads, request.WorkloadUID) {
 		return Operation{}, refused("OperationConflict", "the Workload is under autonomous control")
 	}
-	c.mu.Lock()
-	for _, run := range c.runs {
-		if run.action.Status == nativeOperationRunning && (isRoutingOperation(run.action.Kind) || run.action.Kind == operationReset) {
-			c.mu.Unlock()
-			return Operation{}, refused("OperationConflict", "a running global route or reset owns routing")
-		}
+	if err := c.authorize(Operation{WorkloadUID: request.WorkloadUID}); err != nil {
+		return Operation{}, err
 	}
-	c.mu.Unlock()
 	weights := map[string]int{}
 	positive := false
 	for id, weight := range request.Weights {

@@ -472,6 +472,9 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 		return plan, refusedWorkloadMissing, m.Spec.Workload, false
 	}
 	plan.workload = &workload
+	if err := c.authorize(Operation{WorkloadUID: string(workload.UID)}); err != nil {
+		return plan, "", "", true
+	}
 	if m.Spec.SupplyMode == occupancyClosedLoop && (m.Spec.Conditions.ProfileID != plan.profile.ID ||
 		time.Duration(m.Spec.RequestLifetimeSeconds)*time.Second < workload.Spec.SLO.TargetLatency.Duration) {
 		return plan, occupancyConditionsInfeasible, "profile identity or Workload lifetime mismatch", false
@@ -530,7 +533,7 @@ func workloadPod(pods []core.Pod, uid string) string {
 func (c *SchedulerController) startOccupancy(node *core.Node, m *edge.DispatchOccupancyMeasurement, plan occupancyPlan, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	root := &measurementRoot{object: m, node: node.Name}
-	operation := Operation{ID: occupancyKind + ":" + node.Name + ":" + string(m.UID), Kind: occupancyKind, Node: ref}
+	operation := Operation{ID: occupancyKind + ":" + node.Name + ":" + string(m.UID), Kind: occupancyKind, Node: ref, WorkloadUID: string(plan.workload.UID)}
 	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
 		err := c.runOccupancy(ctx, m, ref, plan, config)
 		return errors.Join(err, c.handBack(ctx, ref, string(m.UID), root, false, result))

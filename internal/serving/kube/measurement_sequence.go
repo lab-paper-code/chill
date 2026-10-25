@@ -122,7 +122,10 @@ func (c *SchedulerController) admitNodeLocked(ctx context.Context, ref serving.N
 	if err = c.store.client.List(ctx, &classes); err != nil {
 		return nil, err
 	}
-	if profilingrun.InMeasurement(node) || c.nodeBusy(node) || powerModePending(node, classes.Items, config, time.Now()) {
+	if c.nodeBusy(node) {
+		return nil, refused("OperationConflict", "Node resources are reserved")
+	}
+	if profilingrun.InMeasurement(node) || powerModePending(node, classes.Items, config, time.Now()) {
 		return nil, refused("NodeBusy", "Node "+ref.Name+" is held by a measurement, a run or a power change")
 	}
 	return node, nil
@@ -294,7 +297,6 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualO
 		return OperationResult{}, err
 	}
 	plan := manualResetPlan{}
-	var reserved []string
 	if operation.Kind == operationReset {
 		plan, err = c.planManualResetLocked(ctx, operation)
 		for _, node := range plan.nodes {
@@ -307,10 +309,9 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualO
 			c.tickMu.Unlock()
 			return OperationResult{}, err
 		}
-		reserved = c.reserveResetNodes(operation, plan)
+		operation.Nodes = slices.Clone(plan.nodes)
 	}
 	done, outcome := c.startNodeRun(operation, config, func(runCtx context.Context, result *OperationResult) error {
-		defer c.releaseResetNodes(reserved)
 		workCtx, cancel := context.WithCancel(runCtx)
 		stop := context.AfterFunc(ctx, cancel)
 		defer stop()
@@ -325,6 +326,9 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualO
 	c.tickMu.Unlock()
 	select {
 	case <-done:
+		if outcome.Error == "OperationConflict: resources are reserved" {
+			return *outcome, refused("OperationConflict", outcome.Error)
+		}
 		return *outcome, nil
 	case <-ctx.Done():
 		return OperationResult{}, ctx.Err()
@@ -363,15 +367,9 @@ func (c *SchedulerController) manualOperationLocked(ctx context.Context, request
 	if slices.Contains(config.Settings.AutonomousWorkloads, request.WorkloadUID) {
 		return Operation{}, refused("OperationConflict", "the Workload is under autonomous control")
 	}
-	c.mu.Lock()
-	for _, run := range c.runs {
-		if run.action.Status == nativeOperationRunning && run.result != nil &&
-			run.result.Operation.Kind == operationReset && slices.Contains(run.result.Operation.WorkloadUIDs, request.WorkloadUID) {
-			c.mu.Unlock()
-			return Operation{}, refused("OperationConflict", "the Workload has an active reset")
-		}
+	if err := c.authorize(Operation{Node: request.Node, WorkloadUID: request.WorkloadUID, Instance: request.Instance}); err != nil {
+		return Operation{}, err
 	}
-	c.mu.Unlock()
 	node, err := c.admitNodeLocked(ctx, request.Node)
 	if err != nil {
 		return Operation{}, err

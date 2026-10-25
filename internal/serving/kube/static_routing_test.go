@@ -113,7 +113,7 @@ func TestManualRoutingAdmissionRefusesBeforeMutation(t *testing.T) {
 		{name: "missing reason", request: ManualOperation{Kind: operationUnroute, WorkloadUID: "w"}},
 		{name: "stale UID", request: ManualOperation{Kind: operationUnroute, WorkloadUID: "stale", Reason: "reason"}},
 		{name: "autonomous", request: ManualOperation{Kind: operationUnroute, WorkloadUID: "w", Reason: "reason"}, autonomous: true},
-		{name: "global route", request: ManualOperation{Kind: operationRelease, WorkloadUID: "w", Reason: "reason"}, running: true},
+		{name: "reserved workload", request: ManualOperation{Kind: operationRelease, WorkloadUID: "w", Reason: "reason"}, running: true},
 		{name: "zero route", request: ManualOperation{Kind: operationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"physical": 0}}},
 		{name: "negative route", request: ManualOperation{Kind: operationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"physical": -1}}},
 		{name: "unroute weights", request: ManualOperation{Kind: operationUnroute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{}}},
@@ -127,7 +127,7 @@ func TestManualRoutingAdmissionRefusesBeforeMutation(t *testing.T) {
 				config.Settings.AutonomousWorkloads = []string{"w"}
 			}
 			if test.running {
-				controller.runs["route"] = &actionRun{action: serving.Action{Kind: operationRoute, Status: nativeOperationRunning}}
+				controller.runs["route"] = &actionRun{action: serving.Action{Kind: operationRoute, Status: nativeOperationRunning}, reserved: true, owner: "route", scope: resourceScope{Workloads: []string{"w"}}}
 			}
 			_, err := controller.manualRoutingOperationLocked(context.Background(), test.request, config, serving.SchedulerSnapshot{Workloads: []*serving.Definition{{UID: "w"}}})
 			if err == nil {
