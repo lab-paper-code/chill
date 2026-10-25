@@ -2,20 +2,25 @@
 
 ## 1. 구현 경계와 결정
 
-[Dashboard SRS](../../spec/dashboard/SRS.md)의 56개 요구사항을 구현 기준으로 사용한다.
+[Dashboard SRS](../../spec/dashboard/SRS.md)를 구현 기준으로 사용한다.
 제어와 측정 의미는 [시스템 명세](../../spec/README.md)를 따른다.
 이 문서는 웹 구현 구조, ChillServer 조회의 재사용과 ChillServer가 추가로 제공할 조회, 전체 수용 검증을 정한다.
 
 - 템플릿은 공식 `shadcn-ui/ui`의 `templates/next-app`과 `dashboard-01` 블록을 사용한다.
 - 웹 모듈은 저장소 루트의 `chill-dashboard/`에 두고 독립적으로 빌드하고 배포한다.
 - Next.js App Router, React, TypeScript, Tailwind CSS와 shadcn/ui를 사용한다.
-- 화면은 컴포넌트 조합으로 구성한다. 서버는 Next.js Route Handler로 고정 ChillServer API를 중계한다.
+- 화면은 컴포넌트 조합으로 구성한다. HTTP는 Next.js Route Handler가, 라이브 WebSocket은 standalone 앞단의 Node `ws` 중계가 고정 ChillServer API로 전달한다(3, 4절).
 - 인증, 검증, 변경 선언, 작업 진행, 판단, 통계와 Evidence는 ChillServer와 그 뒤의 CHILL 구성요소가 결정한다. Dashboard는 그 결과를 표시한다.
 - Dashboard는 모든 워크로드와 모델에 같은 화면 규칙을 적용한다. 입력과 결과 화면은 전처리기 계약의 필드 이름, 형식과 크기로 구성한다.
-- 자동 제어는 꺼진 상태를 유지한다. 프로파일의 `loaded`는 운영 판단 반영으로 표시한다.
-- 전체 기능의 완료 기준은 SRS와 27개 수용 시나리오다.
+- 자동제어는 서버의 워크로드별 현재 설정을 표시한다. 꺼짐을 절감이나 SLO 충족으로 표현하지 않는다. 프로파일의 `loaded`는 운영 판단 반영으로 표시한다.
+- 전체 기능의 완료 기준은 SRS의 전체 요구사항과 수용 시나리오다.
 
 ### 1.1 현재 개발 범위
+
+2026-10-25 T5/T6 설계 기준은 **4.3~4.5절(라이브 계약 v1), 6.1절(정보 구조),
+7.1~7.2절(상태와 재생), 10.1절의 T5/T6 검사**다. 아래 기존 API 연결 현황과
+9.2절의 U/G 작업 이력은 구현 증거이며, 새 라이브 기능이 구현됐다는 뜻은 아니다.
+SCH-37, DB-INT-07~08, DB-NFR-07, DB-FR-35~49를 이 절들에서 추적한다.
 
 | ChillServer 준비 상태 | 웹 개발 범위 |
 |---|---|
@@ -27,16 +32,16 @@
 | 측정 요청 제공 | 측정 목록, 단계형 측정 요청, 프로파일 채택과 해제, 측정 삭제를 연결한다. |
 | ChillServer 조회 대기 | 측정 결과의 실제 backend와 실행 장치, DeviceClass별 측정 가능 여부, 전환 비용 원본은 5.3절의 셸 설계로 둔다. 허용 자원과 유지보수, 실험 실행, 영역 간 변경 feed, 동작별 에너지 귀속과 수동 취소 및 재시도는 5.4절의 계약으로 둔다. |
 
-연결 준비 영역은 기능 설명과 `연결 준비 중` 상태를 표시한다. 실제 데이터 표와 그래프는
-API 응답으로 채우고, 제출 및 제어 버튼은 해당 API와 권한 검사가 연결되면 활성화한다.
-화면 틀의 개발 상태와 CHILL의 실제 운영 상태를 구분한다.
+지원하지 않는 측정 종류의 일반 `연결 준비 중` 페이지는 제거한다(DB-FR-49).
+지원하는 API만 명시적으로 연결하고, 데이터 없음과 기능 미지원은 해당 영역에서 구분한다.
+화면의 개발 상태를 CHILL의 실제 운영 상태로 표시하지 않는다.
 전체 SRS의 기능 수용은 각 ChillServer 조회를 연결한 뒤 실제 흐름으로 검증한다.
 
-운영 판단은 `/scheduler`, 후보 비교는 `/scheduler/candidates`, 실제 부하는
-`/scheduler/load`에서 조회한다. 상세는 열 때의 응답을 유지하며 새 관측 시각을
-안내한다. load 응답의 arrivals는 ChillServer가 생략하므로 UID와 원래 구간으로 전체
-적용 정의의 요청 관측에 연결한다. 후보가 제공한 정의 identity는 그대로 전달한다.
-요청 상세는 CHILL 배정과 nativeProgress의 실제 실행 관측을 구분한다.
+기존 `/scheduler`, `/scheduler/candidates`, `/scheduler/load`의 판단, 후보와 부하 표시는
+라이브 무대와 선택 근거 패널로 합친다(6.1절). 상세는 선택한 사건의 응답을 고정하고,
+새 판단이 들어와도 현재 `scheduler/state`로 덮지 않는다.
+load 응답의 arrivals는 ChillServer가 생략하므로 UID와 원래 구간으로 전체 적용 정의의
+요청 관측에 연결한다. 요청 상세는 CHILL 배정과 nativeProgress의 실제 실행 관측을 구분한다.
 `/configuration`은 duration 네 필드, Serving 메모리, 반복 비교와 탐색 상한,
 seed 및 제어요소 boolean 아홉 필드를 편집한다. 정밀 정수는 문자열로 유지하며
 ms를 정확한 ns로 변환한다. 저장 검토는 현재 설정을 재조회하고 입력을 유지한 채
@@ -116,6 +121,7 @@ pnpm은 [원본 toolchain](https://github.com/shadcn-ui/ui/blob/e8c3143b1cd19128
 | 서버 상태 | [TanStack Query 5.104.1](https://registry.npmjs.org/@tanstack%2Freact-query/latest), native `fetch` | cache, 제한된 polling, 요청 취소와 변경 중 상태를 사용한다. |
 | 폼과 로컬 상태 | native HTML, React `useState`, URL search parameters | 업무 입력과 서버 필드 오류를 연결한다. 도메인 검증은 ChillServer에서 수행한다. |
 | 날짜와 시간 | `Intl.DateTimeFormat`, `Date`, 원본 RFC3339Nano 문자열 | 표시와 조회 구간 변환을 수행하고 원본 정밀도를 보존한다. |
+| WebSocket | Go `github.com/coder/websocket`, Node `ws`, 브라우저 native `WebSocket` | 현재 직접 의존성에는 없다(`go.mod:5-23`, `chill-dashboard/package.json:15-40`). 구현 시 Go/Node 호환 버전을 확인해 `go.sum`과 `pnpm-lock.yaml`에 고정한다. 프로토콜 프레이밍을 직접 구현하지 않는다. |
 
 의존성은 `next-app`과 복사한 UI의 실제 import를 기준으로 설치한다.
 표는 API의 구체적인 TypeScript 타입을 사용하고, 목록의 각 행은 상세와 작업으로 바로 이동한다.
@@ -157,6 +163,23 @@ Console의 기존 Evidence Store binding, retained loader 및 production preflig
 중계한다. 공개 HTTPS ChillServer → Dashboard BFF → HTTPS ChillServer `/api/v1`의 경로는 서로 분리된다.
 Standalone Console과 CLI는 기존 query 및 검증 계약을 유지한다. ingress controller가
 없는 클러스터에서도 ChillServer의 HTTPS NodePort로 Dashboard에 접근할 수 있다.
+
+T5 실행 구조는 HTTP 경로를 유지하고 다음 한 경로만 추가한다.
+
+```text
+브라우저 WSS /api/live --첫 auth--> Node ws 앞단(공개 :3000)
+  --Authorization: Bearer--> 고정 HTTPS ChillServer GET /api/v1/live
+Node 앞단 --일반 HTTP--> 수정하지 않은 .next/standalone/server.js(127.0.0.1:3001)
+```
+
+`next.config.ts`의 standalone 출력을 그대로 쓴다. 새 `server/live-proxy.mjs`가 내부
+`server.js`를 자식으로 실행하며 Next를 직접 import하는 custom server는 만들지 않는다.
+`build/docker/dashboard.Dockerfile:10-19`의 현재 `node server.js`를 앞단 실행으로 바꾸고
+standalone 추적에 포함되지 않는 앞단 파일과 `ws` runtime도 복사한다. 외부 Service는
+3000만 노출하고 내부 3001은 loopback에만 bind한다. 시작 실패와 SIGTERM은 두 프로세스를
+함께 종료한다. Node 24.21.0/pnpm 10.33.4를 유지하고 `engines`도 Node 24로 맞춘다.
+공개 ChillServer를 경유할 때 `cmd/chill-server/http_routes.go:composeChillServer`의
+Dashboard reverse proxy가 `/api/live` Upgrade와 원래 Origin/Host를 보존해야 한다.
 
 패키지 허용 범위는 [아키텍처 규칙](../../../.go-arch-lint.yml)을 따른다.
 Serving과 Console의 handler 연결은 `cmd/**`의 조립 권한을 사용한다.
@@ -211,6 +234,161 @@ JSON.rawJSON으로 정확하게 유지한다. 지원 브라우저에서만 설�
 설정 PUT은 unbound scheduler-editor ClusterRole과 serving namespace의 같은 이름
 Role을 관리자가 선택한 계정에 각각 binding한다. Role은 설정된 ConfigMap 하나의
 update만 허용한다. 사용자 변경 권한은 관리자가 binding한 계정에만 부여된다.
+
+### 4.3 라이브 채널 메시지 계약 v1
+
+**최종본은 이 절이다.** 운영 계획의 2절 초안을 아래 의미로 고정한다.
+대상: SCH-37, DB-INT-07~08, DB-NFR-07. 브라우저 endpoint는 `/api/live`,
+상류는 `GET /api/v1/live`다. JSON 텍스트 프레임만 사용한다.
+
+서버 메시지 공통 필드는 `{type,seq,at}`다. `seq`는 0 이상의 JS safe integer,
+`at`은 원본 RFC3339Nano UTC다. `hello`/`snapshot`은 현재 head의 checkpoint를
+알리는 제어 메시지이고 새 순번을 만들지 않는다. `delta`/`event`/`metrics`/`heartbeat`는
+한 hub에서 전역 순번을 1씩 증가시킨다. `hello.at`은 송신 시각이고, `snapshot.at`은
+해당 head의 원본 발행 시각이다(0일 때 hub 생성 시각). 원본 관측 시각은 DTO에 별도로 둔다.
+
+| type | 공통 필드 외 payload | 발행 |
+|---|---|---|
+| `hello` | `protocol:"chill-live/1"`, `serverAt`, `retainFrom`(재개 가능한 최소 seq, 빈 버퍼면 head+1) | 상류 인증 성공 후 한 번 |
+| `snapshot` | `workloads`, `nodes`, `instances`, `routing`, `decision`, `actions` 전체 | 최초 접속, 재동기화 |
+| `delta` | snapshot 키의 부분집합; `removed?:{instances?:[id],actions?:[actionKey]}` | 상태 변화 |
+| `event` | `kind:"decision"`와 `decision`, 또는 `kind:"action"`와 `action` | 판단과 작업 시작·종결 |
+| `metrics` | `bucketAt`(UTC 초 시작), `workloads:{uid:Metric}`, `nodes:{uid:{watts:number|null,observedAt:string|null}}`, `pool:{wholeWatts:number|null,activeWatts:number|null}`, `gaps?:[{from,to,scope,reason}]` | 매초, 같은 버킷 수정 시 전체 대체 |
+| `heartbeat` | `serverAt` | 5초 |
+
+snapshot의 작은 DTO는 다음과 같다. 아래 `?`는 생략 가능, `null`은 확인할 값 없음이다.
+
+- `workloads[]:{uid,name,model,definitionID:string|null,slo:{percentile,targetLatencyNanos},autonomous,admission,readiness:{ready,reason,observedAt}}`.
+  적용 정의가 있으면 그 이름/모델/SLO를, 아직 없으면 등록 정의를 표시하고 definitionID는
+  null, admission/readiness.ready는 false다. 동일 이름의 새 UID와 합치지 않는다.
+- `nodes[]:{uid,name,powerMode,targetPowerMode?,watts:number|null,observedAt}`.
+- `instances[]:{id,node:{uid,name},workloadUID,ownerWorkloadUID,profileID,ready,stopped,state,routable:{uid:boolean},running:{uid:number},observedAt}`.
+  `state`는 `preparing|serving|draining|removing`이다. `serving`은 수명주기 상태이지 실제
+  실행 증거가 아니다. `routable`은 SCH-36의 유효 배분, `running`은 native 실행 단계 관측이다.
+- `routing:{workloadUID:{instanceID:weight}}`는 실제 배분이다. 선언과 목표는 근거 REST에서
+  별도로 읽는다. `decision:null|{id,at,state,reason,inProgressTarget?}`에서 큰 후보·프로파일은 제외한다.
+- `actions[]:{id,kind,node:{uid,name},workloadUID,status,startedAt,completedAt?,expectedSeconds:number|null,expectedSource:{costID,reference,statistic:"mean",trialCount}|null}`.
+  identity인 `actionKey`는 JSON 튜플 `[id,node.uid,startedAt]`이다. 이벤트의 `action`에는
+  `phase:"started|completed|failed"`와 작은 `result?:{status,error?}`가 추가된다.
+  `starting/running`만 진행 중이며 `complete/failed/partial/canceled`는 종결이다.
+  `partial/canceled`는 `phase:"failed"`로 보내되 원본 status를 유지한다. 예상 시간·출처는
+  [T4 관측 설계](../serving/observability-split.md)를 따른다.
+- `Metric:{received,completed,failed,withinSLO,latencySamples,p50ms:number|null,p95ms:number|null,p99ms:number|null}`.
+  모든 count는 0 이상의 정수다. 관측 가능한 각 UID는 무유입 초에도 0 count로 보내고,
+  계측 불가 구간은 0을 만들지 않고 `gaps`로 보낸다. 의미와 분모는 4.4절을 따른다.
+
+`delta.instances/actions`는 identity별 **행 전체 upsert** 후 `removed`를 적용한다.
+`workloads/nodes/routing`은 키가 있으면 해당 컬렉션 **전체 대체**이며 생략은 유지,
+빈 배열/맵은 비우기다. `decision:null`은 판단 제거다. 삭제된 정의는 현재 목록에서
+사라져도 시간축의 정의 사전에는 남긴다. `event`는 사건 이력이며 현재 상태의 권위는
+snapshot/delta다. 생산자는 관련 delta 뒤 event를 발행한다.
+
+클라이언트 메시지는 아래 둘뿐이다. auth에는 seq가 없다.
+
+```json
+{"type":"auth","token":"<bearer>"}
+{"type":"resume","from":123,"at":"2026-10-25T12:00:00.123456789Z"}
+```
+
+`auth`는 브라우저→앞단에서만 소비하며 상류로 그대로 보내지 않는다.
+`resume.from=0`은 새 baseline 요청이고 `at`을 생략한다. 나머지는 마지막 적용한
+checkpoint의 원본 `at`을 함께 보낸다. seq가 서버 재시작 후 우연히 같아도 다른 이력을
+재개하지 않도록 보관된 `(seq,at)`가 일치할 때만 재개한다. 초안의 `from` 단독 메시지는
+최종 v1에서는 `from=0` 외에 허용하지 않는다. 별도 epoch나 영속 seq 저장소는 만들지 않는다.
+
+#### D3 인증과 연결 수명
+
+1. 앞단은 정확한 `/api/live` Upgrade, 동일 Origin을 확인한다. 기준은 배포한 공개
+   `CHILL_PUBLIC_ORIGIN`이며 미설정 시 검증한 HTTPS Host다. 임의 forwarded 헤더는
+   신뢰하지 않는다. query(토큰 포함), subprotocol, 누락·다른 Origin은 거부한다.
+2. Upgrade 뒤 5초 안에 16 KiB 이하 첫 텍스트 `auth`를 받는다. 기존
+   `lib/relay.ts:174-179`의 bounded Bearer 형식을 재사용한다. 토큰은 탭/연결 메모리만
+   사용하며 URL, cookie, 영속 저장소, 오류 본문과 로그에 넣지 않는다.
+3. 그 뒤에만 TLS/hostname/CA를 검증하는 고정 `CHILL_BASE_URL`의 `/api/v1/live`로
+   연결하며 `Authorization: Bearer <token>`으로 변환한다. redirect와 임의 origin,
+   cookie 및 전달된 신원 헤더는 허용하지 않는다.
+4. ChillServer는 Upgrade **전에** 기존 TokenReview와 `get /chill/api/v1/live` SAR를
+   모두 통과시킨다. 통과 전에는 hello를 포함해 **데이터 프레임 0개**다. 실패는
+   HTTP 401/403/503이고 앞단은 각각 4401/4403/1013으로 즉시 닫는다. 대기 초과·잘못된
+   첫 메시지는 4401, 인증 뒤 잘못된 계약은 1002다. 4401/4403은 자동 재시도하지 않는다.
+5. 앞단은 auth 뒤 일찍 온 resume 한 건만 상류 handshake 동안 보관한다. 상류 성공 후
+   hello→resume 처리→snapshot 또는 재개 메시지 순서로 보내며 snapshot 앞에 delta가
+   끼지 않도록 hub의 head 캡처와 구독 등록을 한 잠금에서 한다.
+6. `internal/serving/httpapi/handler.go:ServeHTTP`의 일반 요청 timeout과
+   ResponseController deadline 설정(현재 :113-136)에 들어가기 **전** 정확한 live
+   경로만 분기한다. 인증/handshake는 10초, 연결 후 소켓별 write는 5초로 제한하되
+   일반 HTTP 요청 제한으로 연결 전체를 종료하지 않는다. 기존 HTTP 경로는 그대로다.
+   양 끝 종료, 사용자 변경, 로그아웃과 서버 shutdown에서 구독·타이머·두 소켓을 해제한다.
+
+RBAC는 `charts/chill/templates/serving_entrypoint_rbac.yaml:243-250`의 caller grant에
+정확한 `nonResourceURLs:["/chill/api/v1/live"], verbs:[get]`을 추가한다.
+전역 feed는 전체 scheduler/workload 관측을 보는 권한이다. 제한된 단일 workload 권한을
+전역 feed 권한으로 넓히거나 서버 ServiceAccount로 사용자를 대체하지 않는다.
+
+### 4.4 발행 지점과 1초 집계
+
+현재 소스 위치는 2026-10-25 조사 및 pinned gopls `v0.23.0`/직접 소스 기준이다.
+새 파일·함수는 **예정**이며 보존 WIP가 현재 구현으로 합쳐졌다는 뜻은 아니다.
+
+| 데이터 흐름 | 읽은 현재 코드 위치 | 구현 연결점 |
+|---|---|---|
+| 판단·실제 snapshot | `internal/serving/kube/scheduler.go:SchedulerController.Tick`(:286-295), `cmd/chill-server/scheduler_service.go:recordDecision`(:358-362), config 연결 :253 | 기존 OnDecision을 재사용해 판단과 **같은 capture의 snapshot**을 기록한 뒤 작은 delta/event를 발행한다. 콜백 인자로 snapshot을 함께 넘겨 State 재조회와 시점 혼합을 없앤다. |
+| 작업 시작·종결 | `kube/scheduler.go:SchedulerController.launch`(:874-916), `scheduler_service.go:recordAction`(:364-381) | OnAction의 OperationResult를 그대로 projection한다. 완료 콜백은 state.Results 갱신보다 앞이므로 그 안에서 State를 다시 읽지 않는다. 실제 준비·배분은 결과 actual과 runtime 관측으로 갱신한다. |
+| 수신·응답 종결·실행 단계 | `internal/serving/observation_log.go:ObservationLog.RequestEvent`(:585-625), `RequestClosed/closeRowLocked`(:653-681), `runtime.go:Instances/instancesLocked`(:1028-1066) | RequestEvent 반영 성공 뒤 집계 callback을 호출한다. 재시도 가능한 final append나 native supplement를 새 요청 완료로 세지 않는다. native running 상태는 같은 callback에서 작은 상태에 반영하고 초당 delta로 묶는다. |
+| 전력 표본 도착 | `internal/metricobserver/observer.go:Observer.sample`(:193-218), `scheduler_service.go:restartPower`(:398-428) | 기존 ReadMetrics 성공 결과를 감싸는 Source adapter에서 node UID와 collector 수신 시각으로 집계한다. 기존 Observe 완료까지 기다리거나 새 수집 루프를 만들지 않는다. 실패 표본은 값 없음으로 전달한다. |
+
+조립은 `cmd/chill-server/server.go:run`과 `scheduler_service.go`에 두며 예정된
+`internal/serving/live` hub/집계기와 `httpapi/live.go`를 연결한다. callback은 짧은
+메모리 갱신만 하고 소켓·REST·S3를 기다리지 않는다. 기록 오류 처리와 물리 작업의 기존
+실패 계약은 유지한다. 주기 작업은 집계 flush/heartbeat뿐이고 서버 REST polling은 없다.
+
+- 버킷은 UTC `[bucketAt,bucketAt+1s)`다. `received`는 `receivedAt` 사건률이고,
+  나머지는 **response_finished.At(응답 종결 시각)**으로 선택한 같은 요청 집단이다.
+  `completed`는 outcome=`completed`인 성공 수, `failed`는 timeout·취소·거절·오류·전달
+  실패 등 나머지 종결 수다. native `finished`나 `ExecutionComplete`만으로 성공을 만들지 않는다.
+- `N=completed+failed`, 성공률=`completed/N`, SLO 안=`withinSLO/N`,
+  SLO 밖=`(completed-withinSLO)/N`, 실패=`failed/N`다. `received`로 나누지 않는다.
+  `withinSLO`는 각 요청에 적용된 SLO와 종단 지연으로 판정한다. 미완료는 종결 집단에
+  넣지 않고 대기 상태로 구분한다. `N=0`이면 비율·분위수는 null이지 0%가 아니다.
+- p50/p95/p99는 같은 종결 집단의 유효 종단 지연(실패 포함)을 서버에서 계산한다.
+  지연 없음은 제외하고 `latencySamples`와 상세의 포함 조건을 표시한다. 요청별 SLO/정의
+  변경은 definitionID를 보존한다. 단계/장기 cohort 성공률은 별도 T4 REST 결과이며
+  이 초별 종결 집단과 섞지 않는다.
+- 완료된 초를 매초 발행하고 늦은 callback은 최근 10초까지만 원 버킷에 누적 보정한
+  **전체 버킷**을 재발행한다. 같은 bucketAt 수신은 더하지 않고 대체한다. 그보다 늦으면
+  `gaps`에 원 구간·scope·보정 불가 이유를 표시하고 보존된 REST 관측으로 채운다.
+  원시 요청은 채널에 싣지 않는다.
+- 노드 W는 해당 초에 도착한 실제 표본의 산술평균이며 이전 W를 복사하지 않는다.
+  전체/활성 POOL은 각각 전체 meter 노드/실제 활성 소속 노드를 UID별 한 번씩 합친다.
+  해당 범위의 필수 표본이 하나라도 없거나 소속을 모르면 합계는 null이다. J와 단계
+  에너지는 서버의 coverage 검증 적분 REST를 사용하며 W 표본을 브라우저에서 합산하지 않는다.
+
+### 4.5 seq 버퍼, 재동기화와 느린 수신자
+
+- 초기 상한은 hub 최근 **600메시지/8 MiB 중 먼저 도달한 것**, 연결당 큐
+  **602메시지/2 MiB**, 단일 프레임 **1 MiB**다. 600메시지는 10분 보장과 다르다.
+  상한 밖 snapshot은 성공으로 잘라 보내지 않고 1009로 닫아 크기 초과를 알린다.
+- auth 직후 브라우저는 resume을 보낸다. 첫 접속/from=0, `(from,at)` 불일치,
+  보관 범위 밖 또는 미래 seq이면 현재 snapshot을 보낸다. 유효하면 `seq>from`을
+  순서대로 재전송하고 이어서 새 발행을 받는다. 재개 결정 전 데이터는 보내지 않는다.
+- 브라우저는 hello.seq를 마지막 적용 seq로 올리지 않는다. baseline 이후 중복
+  seq는 버리고 `last+1`을 넘는 메시지는 적용하지 않은 채 재동기화한다. snapshot은
+  새 baseline으로 받아들이되 잃은 시간 구간을 보존한다. heartbeat는 연결 생존이지
+  새로운 요청·전력 관측이 아니다.
+- 큐 초과는 오래된 metrics부터 버린다. **빠진 seq 이후의 delta/event보다 앞에**
+  head snapshot barrier를 넣고, 누락 지표·사건 시간은 공백 처리한다. 상태 메시지도
+  공간이 없으면 pending 큐를 snapshot 하나로 바꾼다. socket write가 계속 막히거나
+  Node `bufferedAmount`가 2 MiB를 넘으면 1013으로 닫고 재연결/resume한다.
+  어떤 경우에도 scheduler/서빙 producer를 느린 브라우저가 막지 않는다.
+- 재연결은 0.5초부터 최대 30초 지수 backoff+jitter다. baseline 수신 후만 정상
+  연결로 전환한다. 401/403 계열은 자동 재연결 대신 신원/권한 수정을 요구한다.
+
+보존 WIP는 저장소 밖 `preserved-work-20261025/live-server/{tracked.patch,untracked.tgz}`와
+`live-stage/{tracked.patch,untracked.tgz}`다(ops/pools-deploy 아래). hub·metrics의
+비차단 발행, 완료 시각 집계/10초 보정, `live-proxy.mjs`의 별도 앞단, Query reducer만
+재사용 근거로 삼는다. 즉시 snapshot 후 resume의 경합, 컬렉션 대체/upsert 혼용,
+불완전 노드 합계, ready를 처리로 읽는 표시 및 gap을 숨기는 부분은 최종 계약에 맞춰 바꾼다.
+
 
 
 ## 5. ChillServer 조회와 추가 계약
@@ -280,7 +458,7 @@ SRS 8절의 "ChillServer가 제공할 조회"는 아래 셋이다. 각 기능은
 |---|---|---|---|
 | DB-FR-13 | 측정 결과마다 실제 backend와 실행 장치. 기존 Evidence Passport의 `EvidencePassportRuntime`(`internal/operatorconsole/evidence_passport_view.go:66-83`)에 검증된 `RuntimeResult.Backend`(`internal/profiling/run/evidence.go:35`)와 firstfloor 장치 필드를 함께 투영한다. 장치 근거 값은 firstfloor `RuntimeMetadata`의 `device`, `providers`, `gpuUUID`, `rknn`이다(`internal/firstfloor/types.go:136-155`). | `/measurements/profiling-runs/[namespace]/[name]`의 `실행 backend`와 `실행 장치` 행. 응답의 backend, provider, device를 직접 쉬운 말(예: CPU에서 ONNX 실행, CUDA GPU, NPU)로 표시하고 원본은 원본 보기에 둔다. | backend나 장치 기록이 빈 측정은 "이 측정에는 실행 backend와 장치 기록이 비어 있어요"를 보인다. |
 | DB-FR-30 | 실행 경로 × DeviceClass 호환 판정 `Compatible`, `Incompatible`, `Unknown`과 사유 코드(`internal/modelcompat/types.go:10-37`). 현재 Inventory는 선언만 반환하고 판정은 `internal/modelcompat` 내부에 있다(`internal/operatorconsole/inventory_view.go:70-72`). | `/workloads/[name]/coverage`: 실행 경로별 DeviceClass 측정 가능 여부와 사유. 서비스 화면의 `측정 가능 범위` 행에서 들어간다. 측정 요청의 장비 단계는 고를 수 없는 장비에 같은 사유를 표시한다. | 판정이 빈 서비스는 "아직 판정한 장비가 없어요"를 보인다. |
-| DB-FR-32 | PowerModeTransitionCost 원본: 출발과 도착 전력모드, 방향별 반복의 소요 시간과 J, 관측 구간, 측정 상태, 반복별 검증 판정과 사유, 경계 불확실성, 전환 중 Serving 지속 여부, 원본 참조 | `/measurements/transition-costs` 목록과 `/measurements/transition-costs/[namespace]/[name]` 상세. `/records` 목차의 `전환 비용 원본` 행과 후보 상세의 전환 비용 행(`OperationCost.reference`)에서 들어간다. | 기록이 빈 목록은 "아직 잰 전환 비용이 없어요. 판단에 쓴 전환 비용은 후보 상세에서 볼 수 있어요"를 보인다. |
+| DB-FR-32 | PowerModeTransitionCost 원본: 출발과 도착 전력모드, 방향별 반복의 소요 시간과 J, 관측 구간, 측정 상태, 반복별 검증 판정과 사유, 경계 불확실성, 전환 중 Serving 지속 여부, 원본 참조 | 운영자 `측정 근거`의 `/measurements/transition-costs` 목록과 `/measurements/transition-costs/[namespace]/[name]` 상세. 근거 패널의 `OperationCost.reference`에서 진입한다. | 기록이 빈 목록은 "아직 잰 전환 비용이 없어요. 판단에 쓴 전환 비용은 후보 상세에서 볼 수 있어요"를 보인다. |
 
 route, 진입 행과 빈 상태는 해당 G 단위가 한 commit에서 추가한다. 조회가 생기기 전까지 Dashboard 코드는 그대로다.
 
@@ -335,56 +513,71 @@ desired 및 applied version은 ChillServer의 계약을 사용하고 전환은 �
 
 ## 6. 핵심 화면과 변경 흐름
 
-### 6.1 route와 화면
+### 6.1 라이브 무대와 정보 구조 (T6)
 
-한 화면은 한 기능만 한다. 질문 하나에 답하거나 동작 하나를 끝내는 화면이며, 결론 문장 하나, 핵심 값
-하나, 주 동작 하나로 구성한다. 딸린 정보는 `›` 행으로 다음 화면에 두거나 Dialog로 연다. 여러 값을
-받는 입력은 한 단계에 질문 하나인 단계형으로 만들고, 고를 수 있는 원본 목록이 있으면 선택으로 받는다.
-본문은 가운데 좁은 한 열이다. 목록의 각 행은 상세나 작업 화면으로 바로 이동하고, 목록 위에는
-CHILL 대상, namespace와 시간 구간 등 실제 조회 범위를 한 문장으로 적는다(DB-UX-03).
+DB-FR-35~49의 기본 탐색은 **라이브 무대 → 선택 근거 → 실험 재생 → 운영자**다.
+첫 화면은 좁은 개요 한 열이 아니라 같은 시간/대상을 공유하는 무대다.
 
-`변경 SRS` 열은 SRS `25f7edd`로 바뀌는 화면이다. `(조회 대기)` 행은 5.3절의 셸 설계이며 G 단위에서 구현한다.
+| 영역 | 내용과 원본 |
+|---|---|
+| 맨 위 띠 | 실시간/기록 재생, 시나리오 단계(실험 기록이 없으면 미지정), 워크로드별 자동제어 켜짐, 마지막 수신·관측과 경과 초, UTC/KST 병기. 꺼짐은 “자동제어 꺼짐 · 마지막 구성 유지”다. |
+| 워크로드 카드 3개 | 시나리오에 고정된 **UID 세 개**의 수신 req/s, `completed/N` 성공률과 분모, p95/p99 및 해당 SLO, SLO 안/밖/실패 막대. 임의 목록 첫 세 개나 모델 이름으로 합치지 않는다. 선택 시 정의/근거/배치/운영/변경과 직접 요청 탭을 연다. |
+| 배치 지도 | 노드 열 × 워크로드 행, 노드 머리글에 실제/목표 모드와 현재 W. 준비/처리/드레인/제거, 실제 routing 비율을 표시한다. ready라도 routable=false/weight=0이면 “준비됨 · 미분배”, running=0이면 “처리 대기”다. 목표 배치를 실제처럼 채우지 않는다. |
+| 시간축 4레인 | 최근 10분 같은 x축의 ① 수신 부하 ② 성공률·지연/SLO ③ 전체·활성 POOL W ④ 판단·prepare/route/unroute/release/reset/drain/stop/remove/power 사건. 일시정지/되감기는 표시 cursor만 바꾸며 수신은 계속한다. live 복귀는 최신 baseline을 사용한다. |
+| 오른쪽 근거 패널 | 이벤트 선택 때만 연다. 선택 decision.id/at의 긴 창·최근 수요와 최소 수요, κ, d, 예상 에너지, 전환 비용·B, 대기 이유를 문장으로 표시한다. 원본 JSON은 접는다. 현재 state를 과거 사건 근거로 대체하지 않는다. |
 
-| 웹 route | 한 가지 기능 | 변경 SRS |
+`CapacityPending`은 “용량 측정 근거를 기다리고 있어요”, `TransitionInProgress`는
+“목표로 전환 중이에요 · 남은 작업 …”로 구분한다. 작업 예상은 T4의 expectedSeconds와
+출처가 있을 때만 보이고 없으면 “예상 시간 없음”이다. 완료·실패·partial을 진행 중에 세지 않는다.
+단위는 ms 정수, W 소수 1자리, 에너지 kJ로 표시하되 원본 값과 시각은 보존한다.
+어두운 중립 무대에 상태 문구·모양·색을 함께 쓰며 reduced-motion, 키보드 사건 선택,
+패널 focus 복원과 좁은 화면의 카드→지도→레인→패널 세로 배치를 유지한다.
+
+#### 상태 문구 네 단계 (DB-FR-36)
+
+네 사실은 일방향 승급 상태가 아니다. 카드의 주 문구는 아래에서 성립한 가장 높은
+단계를 쓰고, 접수 가능 여부·요청 유입·실행 준비는 독립 보조 표시로 남긴다.
+
+| 문구 | 필요한 실제 데이터 | 이것만으로는 판정하지 않는 것 |
 |---|---|---|
-| `/` | 지금 CHILL 상태. 기준 구간은 최근 5분이며(ChillServer 전력 집계가 15분 구간에 약 11초 걸려 조회 제한 10초를 넘는다) 화면 위에 실제 from과 to를 적는다. 아래 요약 행은 각각 독립 조회이고, 한 조회의 실패는 그 행에만 오류와 마지막 관측 시각으로 보이며, 각 행은 기존 상세 화면으로 이동한다. 지금 있는 조회만 사용한다. (1) 시스템 상태(`GET /systems`): 결론은 `Ready` condition의 status와 reason 문장이고, `Ready=True`의 `ComponentsDisabled`는 "관리 구성요소를 모두 꺼 둔 상태예요"라는 별도 문장이다. True를 포함한 모든 구성요소 condition을 상태, 이유 문장과 시각의 행으로 보이고 원본 condition은 원본 보기에 둔다. (2) 서비스(`GET /workloads`, 서비스별 같은 구간의 `GET /observations/workloads/{uid}?limit=1`): 서비스마다 접수 상태, SLO 백분위와 목표 시간, 적용 정의 cohort의 실제 백분위 지연과 목표 충족 여부, outcome별 요청 수를 보이고 `/workloads/[name]/operation`으로 이동한다. (3) 부하와 큐(같은 구간의 `GET /observations/load`, `GET /scheduler`의 `snapshot.outstanding`과 관측 시각): 서비스별 수신, 접수, 완료 사건 수와 현재 대기 요청 수를 보이고 `/scheduler/load`로 이동한다. (4) 전력과 에너지(같은 구간의 `GET /observations/power`): 전체와 활성 POOL의 J와 평균 W, 집계 구간, `complete`와 관측 공백(`reasons`, `gapUntil`)을 보이고 `/scheduler/power`로 이동한다. (5) 진행 작업(`GET /scheduler`의 actions와 results, `GET /workloads`의 operation, 측정 목록의 `Measuring`): 진행 중이거나 실패한 변경과 측정을 심각한 순서로 보이고 `/transitions`, `/workloads/[name]/definition`, 측정 상세로 이동한다. | DB-FR-03, DB-INT-05 |
-| `/workloads`, `/models` | 서비스와 모델 목록. 주 동작은 추가다. | |
-| `/workloads/[name]` | 서비스 상태의 결론과 다음 할 일 하나. 결론은 준비 상태와 사유의 문장(6.4절)이며 다음 할 일은 같은 표의 다음 행동이다. 지금의 사유별 분기(`features/management.tsx:411-412`)는 이 표 조회로 바꾼다. 원본 상태와 사유 코드는 원본 보기에 둔다. 정의와 적용, 측정 근거, 배치, 최근 운영, 변경 기록은 행으로 각 화면에 연결한다. | DB-FR-06 |
-| `/workloads/[name]/{definition,evidence,placement,operation,changes}` | 서비스의 한 측면. 배치는 `v1/pools`와 운영 판단의 요청 분배, 운영과 변경은 표시한 최근 구간의 ChillServer 관측에서 읽는다. | |
-| `/workloads/[name]/coverage` (조회 대기) | 이 서비스를 실행 경로별로 어느 DeviceClass에서 잴 수 있는지와 그 사유. | DB-FR-30 |
-| `/models/[name]`, `/models/[name]/{files,services}` | 모델 요약, 파일과 실행 방식, 연결된 서비스와 삭제 영향. 실행 방식은 "CPU에서 ONNX 실행", "NVIDIA GPU(CUDA)에서 ONNX 실행", "Rockchip NPU에서 RKNN 실행"처럼 사용자 용어로 쓰고 원본 family와 backend는 원본 보기에 둔다. | DB-FR-04 |
-| `/preprocessors`, `/datasets`, `/{preprocessors,datasets}/[name]`, `/…/new`, `/…/[name]/edit` | 전처리기와 데이터셋 목록, 하나의 계약(받는 입력과 돌려주는 출력, 레코드 필드)을 결론 문장으로 보여주는 상세, 단계형 등록과 수정. 결론 문장의 필드는 계약의 이름을 그대로 쓰고 형식만 쉬운 말(JPEG는 사진, UTF8은 글)로 쓴다. 쓰는 서비스가 있으면 삭제를 막고 서비스로 이동하게 하며, ChillServer의 409 `PreprocessorReferenced`, `DatasetReferenced`, `ModelReferenced`, `ModelArtifactReferenced`는 메시지의 이름 목록으로 서비스와 전처리기 행을 보여준다. 서비스 편집은 ChillServer 규칙(대상 모델 파일과 실행 방식, 필드 이름, 형식과 크기 상한)에 맞는 전처리기와 데이터셋을 고르게 하고 규칙 밖의 항목은 이유와 함께 비활성화한다. 새 서비스는 첫 호환 데이터셋을 미리 고른다. 최종 검증은 ChillServer가 한다. | DB-FR-28 |
-| `/workloads/new`, `/models/new`, `/…/[name]/edit` | 단계형 등록과 수정, 전후 검토. 모델의 실행 방식 단계는 runtime 계열 `firstfloor`를 고정 값으로 보이고, backend는 고른 모델 파일 형식에 맞는 값에서 고른다(6.2절). 버전 사전 조건, 충돌 시 최신 값 채택, 결과 미확인 처리를 유지한다. | DB-FR-04 |
-| `/workloads/[name]/infer` | 추론 한 건. 입력 단계는 적용된 전처리기의 `input.fields` 순서대로 필드마다 입력 하나를 둔다: 제목은 계약의 필드 이름, JPEG는 미리보기가 있는 사진 선택과 형식 및 크기 사전 확인, UTF8은 바이트 수를 보여주는 글 입력이다. 결과 화면의 제목은 공통 문장("추론이 끝났어요")이고, 출력 개수와 형식에 관계없이 모든 `output.fields`를 계약 순서대로 `필드 이름 / 쉬운 형식 / 값` 행으로 보인다. 대기, 전처리, 추론(생성), 후처리 단계 시간, 첫 토큰과 처리 단위를 보여준다. 응답 목표가 화면 최대 대기 시간(`CHILL_INFER_TIMEOUT_MS`)보다 길면 미리 알린다. 실행 batch는 firstfloor가 구성한다. 실패는 6.4절의 오류 의미와 다음 행동으로 보인다. | DB-FR-08, DB-FR-29, DB-OP-05 |
-| `/scheduler` | 지금 판단. 판단 결과가 있으면 현재 구성과 선택 후보의 예상 에너지와 이유를, 첫 판단 전이면 "첫 판단을 기다리고 있어요"와 적용 조건을 보인다. 예상 J와 SLO는 예측으로 표시한다. | DB-FR-15 |
-| `/scheduler/candidates`, `/scheduler/estimates` | 후보 목록과 서비스별 응답 목표 예상. 상세는 고른 시점의 응답을 유지하는 Dialog다. 후보 인스턴스의 프로파일은 측정 조건 네 행(모델 파일, 실행 방식, 전처리기, 데이터셋)을 보인다. | DB-FR-14 |
-| `/scheduler/profiles` | 운영 판단이 쓰는 측정 프로파일 목록. 행마다 서비스와 측정 조건 요약을 두고, 같은 서비스에서 모델 파일, 실행 방식, 전처리기나 데이터셋이 다른 프로파일은 다른 행으로 구분한다. 상세 Dialog는 조건 네 행과 원본 보기를 둔다. 채택(`POST /api/v1/scheduler/profiles`)과 해제(`DELETE /api/v1/scheduler/profiles/{ns}/{name}`, `If-Match: configVersion`)는 측정 화면에서 확인 창을 거친다. 채택 완료는 `Persisted`일 때, 해제 완료는 `Removed`이면서 `loaded=false`일 때다. HTTP 200의 `Pending`과 `ProfileUnloadFailed`는 반영 대기, 409 `ProfileInUse`와 `ProfileControlsEnabled`는 거절로 표시한다. `loaded`는 운영 판단 반영만 뜻한다. | DB-FR-14 |
-| `/scheduler/load` | 명시한 구간의 사건 시각 부하. 조건은 Dialog에서 고르고 원래 nano 구간을 URL에 보존한다. | |
-| `/transitions`, `/transitions/[id]` | 현재 변경 동작 목록과 동작 하나의 상세. 노드와 시작 identity로 읽고 계획, before/actual, 실패와 부분 적용을 표시한다. 취소와 재시도는 관측 정보다. `manual-static-routing` 동작의 상세는 설정한 분배와 실제 반영 결과를 나란히 두는 화면이다: 결론은 "설정한 분배가 반영됐어요" 또는 반영 대기와 실패이고, 실패 이유와 출처 설정 revision(`sourceConfigRV`)은 원본 보기에 둔다. 표는 서비스별 인스턴스 비율의 선언(`operation.staticRouting`)과 실제(`actual.routing`)다. 진행 기록과 오류 원문은 원본 보기에 둔다. | DB-FR-18 |
-| `/resources`, `/pools`, `/pools/[id]` | 장비 목록, 실행 그룹 목록, 그룹 하나. 장비 하나의 Dialog는 선언된 사양과 전력모드를 보인다. 전력모드마다 제어 방식과 목표를 쉬운 말로 쓴다: `Fixed`는 "장비 기본 상태 그대로 써요", `JetsonNVPModel`은 "Jetson 전력 모드 N번으로 바꿔요", `NvidiaLockedGPUClock`은 "GPU 클럭을 a~b MHz로 고정해요". 장비 사양은 선언값이며 실행 적합성은 측정 근거와 DB-FR-30 조회로 판단한다. | DB-FR-02 |
-| `/records`, `/settings` | 기록과 설정의 목차. | |
-| `/observations`, `/changes` | 고른 서비스의 요청 목록과 변경 목록. 서비스는 목록에서 고르고, 조회 조건과 구간 통계, 개별 기록은 Dialog다. 표본 수가 0인 구간은 0개와 빈 통계 값으로 표시한다. | DB-FR-23 |
-| `/scheduler/history`, `/changes?scope=scheduler`, `/transitions?view=history` | 판단, 운영 설정, 변경 동작 기록 목록. local 종류 필터, 원래 nano 구간과 append offset을 보존하고 A/B 선택은 비교 화면으로 이어진다. | |
-| `/scheduler/power` | 노드와 계측 범위별 전력 기록. 전체와 활성 POOL 합계는 `GET /observations/power`의 ChillServer 집계를 그대로 표시한다. | |
-| `/scheduler/compare` | 두 판단의 조건 일치 여부와 비교. 기록된 판단의 조건과 결과를 나란히 두며, 실험 실행과 인과 귀속은 `/experiments` 범위다. | |
-| `/measurements` | 측정(BatchEnergyOptimization) 목록. `GET /api/v1/namespaces/{ns}/batch-energy-optimizations`를 진행 중, 끝내지 못한 측정, 끝난 측정 순으로 나누고, 진행 중이 있으면 자동 갱신한다. 목록 응답은 진행 상태까지 담으므로 결론은 상세에서 보인다. | |
-| `/measurements/new` | 단계형 측정 요청. 모델, 장비와 실행 방식은 `v1/models`와 `v1/inventory`에서 고르고, 측정 방식은 같은 조건의 직전 측정에서 가져온다. 전력모드 단계는 `/resources`와 같은 제어 방식 문장을 보인다. 검토 단계는 같은 요청 본문으로 ChillServer preflight를 호출해 결론 문장(측정할 수 있어요, 또는 `reason`의 이유)과 "이렇게 측정해요" 계획 요약(batch 크기, 반복 수, 측정 구간)을 보인다. `resolves=true`이고 `?dryRun=All`이 통과하면 제출하며, 202 접수 뒤 측정 화면으로 간다. 이름 충돌과 결과 미확인은 사용자가 명시적으로 다시 제출한다. 장비 단계의 측정 가능 사유는 DB-FR-30 조회 이후 G1에서 추가한다. | DB-FR-02, DB-FR-12 |
-| `/measurements/batch-energy-optimizations/[namespace]/[name]` | 측정 하나. 진행 중이면 회차 수, 실패면 실패 이유의 문장과 다음 행동(같은 조건 재요청 등), 완료면 결과 문장과 결과 `detail`의 가장 효율적인 크기와 크기별 증분 에너지, 채택과 채택 해제. 결과와 실패 문장은 6.4절의 표에서 오고 원본 outcome은 원본 보기에 둔다. 영구 삭제는 진행 중이거나 채택 중이면 막고, `?uid=`와 `If-Match: resourceVersion`으로 요청한다. | DB-FR-13 |
-| `/measurements/runs`, `/measurements/group`, `/measurements/profiling-runs/[namespace]/[name]` | 개별 측정 회차 목록과 상세. 상세의 `측정한 실행 환경` 행은 Passport가 지금 제공하는 runtime family, version, provider와 architecture를 쉬운 말로 보이고 원본은 원본 보기에 둔다. `실행 backend`와 `실행 장치` 행은 G2에서 추가한다. | DB-FR-13 |
-| `/measurements/check` | 계획 파일의 읽기 전용 사전 확인. 결과는 `/measurements/new` 검토 단계와 같은 결론 문장과 계획 요약이다. 원본 `plan`은 원본 보기에 둔다. | DB-FR-12 |
-| `/measurements/transition-costs`, `/measurements/transition-costs/[namespace]/[name]` (조회 대기) | 전력모드 전환 비용 원본 목록과 하나의 상세. 상세는 출발과 도착 전력모드, 방향별 반복의 시간과 에너지, 반복별 검증 판정과 사유, 경계 불확실성, 전환 중 Serving 지속 여부와 판단에 쓴 전환 비용 연결이다. | DB-FR-32 |
-| `/configuration` | 운영 설정. 행마다 값 하나를 Dialog에서 고치고, 모은 변경을 검토해 전체 SchedulerSettings를 한 번에 적용한다. 최신 값 재조회, 권한 오류와 결과 불명확 시 재조회를 유지한다. `설정한 요청 분배` 행은 `GET /scheduler/state`의 `results` 중 가장 최근 `manual-static-routing` 결과의 `/transitions/[id]` 상세로 이동한다. 해당 결과가 비어 있으면 행은 "설정 기반 분배 기록이 비어 있어요"를 보인다. | DB-FR-17, DB-FR-18 |
-| `/experiments` | 실험 API 준비 상태와 판단 비교 링크. | |
+| 등록됨 | 현재 workload UID와 desired/applied 정의가 있음 | admission=true나 목록 존재만으로 요청 유입/실행을 추정하지 않는다. |
+| 요청 받음 | 해당 UID의 마지막 완료 1초 버킷 `received>0` | 성공·배정·실행을 뜻하지 않는다. 무유입 초에는 이전 요청 시각만 남긴다. |
+| 실행 준비됨 | 현재 instance.ready=true && !stopped, 해당 UID의 적용 정의와 binding 일치 | routing=0이어도 준비됨이다. routable/분배 여부는 별도다. |
+| 실제 처리 중 | 신선한 native `running[uid]>0` 관측 | ready, weight>0, HTTP pending/assigned 또는 과거 성공만으로 처리 중이라 하지 않는다. |
 
-목록 및 상세의 참조는 kind, namespace, 이름과 UID 또는 원본 evidence identity를 보존한다.
-Workload 관측과 과거 변경은 등록 UID를 사용한다. 상세 URL에 기대 UID를 보존해
-같은 이름의 재등록을 별도 대상으로 표시한다. UID, 내부 코드, nano 값과 원본 JSON은
-`원본 자료 보기` Dialog에 둔다. 6.4절의 표에 없는 코드도 본문에는 공통 안내를 표시하고 원본 보기에 코드를 둔다.
-메뉴는 홈, 서비스, 운영, 측정, 기록, 설정 여섯 개다.
-로그아웃 상태는 접속 폼만, 접속 뒤 신원 변경과 로그아웃은 `접속 관리` 모달만 사용한다.
+원본 running은 `internal/serving/runtime.go:instancesLocked`(:1049-1059)의
+phaseRunning과 일치시킨다. `assignedUnknown`은 실행 증거가 아니다. 오래된 관측은
+주 문구에 “마지막 관측”을 붙이고 현재 처리 중으로 강조하지 않는다.
 
-화면의 색은 의미를 가진다. 서리색 바탕 위에 동작과 초점은 냉각수 파랑, 에너지와 주의는
-열 주황으로 표시하며, 상태는 색, 아이콘과 문구를 함께 쓴다.
+#### 지움·합침과 유지 (DB-FR-43, DB-FR-45~49)
+
+| 기존 화면/기능 | 새 위치 또는 제거 |
+|---|---|
+| 홈 `/`, 서비스 상세 5개 하위 면 | `/` 라이브 무대와 UID 선택 패널 탭으로 합침 |
+| `/pools`, `/resources` | 지도와 노드 패널; 선언 인벤토리 고급 조회는 운영자 |
+| `/scheduler`, candidates/estimates/load, `/transitions` | 현재 판단 띠, 근거 패널, 시간축 작업 레인으로 합침 |
+| 판단 history/compare/power, observations/changes | 시간축, 재생 비교, 요청 상세 및 운영자 원본 기록으로 합침 |
+| scheduler/profiles와 측정 목록/회차 | 운영자 `측정 근거` 한 화면; BEO, 전환 비용, 분배 점유시간(d)은 지원 종류를 명시 |
+| 모델/전처리기/데이터셋, workload 등록·편집 | 운영자 카탈로그에 유지; 원래 권한·충돌·참조 보호·UID 검사 유지 |
+| `/configuration`, 측정 요청 | 운영자에 유지; `/measurements/check`는 요청 검토의 고급 사전 확인으로 합침 |
+| `/workloads/[name]/infer` | 워크로드 패널의 “직접 요청해 보기”; 원래 infer API와 수명 계약 유지 |
+| `/records`, `/settings` 링크 모음 | route·메뉴·import와 호출자를 삭제; 실제 조회/설정 기능은 위 새 위치에 유지 |
+| `/experiments` 준비 중 | 준비 중 구현을 삭제하고 같은 경로에 단계 재생·결과/비교 제공(7.2절) |
+| `/measurements/:kind/...` 일반 준비 중 분기 | 삭제. 지원 종류별 명시 route만 유지하고 나머지는 notFound |
+
+기존 코드 위치는 `chill-dashboard/app/page.tsx:Page`(OverviewPage),
+`app/[...route]/page.tsx:Page`(:35-70, catch-all), `features/management.tsx`,
+`features/scheduler-history.tsx:RecordDetails`(:72-97), `lib/relay.ts:relayPlan`(:41-64)다.
+구현 위치는 예정된 `features/live-stage.tsx:LiveStage`, `lib/live.ts`의 DTO/검증/reducer,
+기존 shell/sidebar와 catch-all이다. 화면을 합친 뒤 obsolete route와 import는 남기지 않는다.
+
+근거의 작은 live DTO에는 κ/d/B 원문을 넣지 않는다. 기존 `schedulerRecordRef`,
+`readSchedulerRecord`(`lib/scheduler-history.ts`)의 고정 구간/append offset/사건 identity로
+`GET observations/scheduler`에서 선택 판단을 복원하고 decision.id가 일치하는지 확인한다.
+`GET scheduler/capacity`는 원래 후보 identity/조건을 보존해 보조 근거를 읽는다.
+`relayPlan`에 이 정확한 GET/허용 query를 추가한다. 기록을 못 찾으면 근거 없음이지 최신
+판단으로의 fallback이 아니다. 이름/모델은 해당 records의 definitions/snapshot.workloads,
+요청별 모델은 exact definitionID로 해석한다. 못 찾으면 UID를 병기한다(DB-FR-43).
 
 ### 6.2 안내형 입력
 
@@ -449,8 +642,8 @@ export const explain = (code: string) => codeText[code] ?? ["새 상태의 설�
 
 [Query 기본값](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults)을 다음과 같이 설정한다.
 조회와 mutation은 `retry: false`, focus와 reconnect refetch는 `false`로 설정한다.
-갱신은 화면이 보이는 동안 설정된 주기를 사용한다. 401과 403 이후에는 해당 인증 또는
-권한 문제를 해결한 뒤 조회한다.
+운영자 REST 조회의 갱신만 화면이 보이는 동안 설정된 주기를 사용한다. 라이브 무대는
+4절의 push와 재동기화를 쓰며 큰 state를 주기 조회하지 않는다. 401/403은 신원·권한을 고친 뒤 조회한다.
 권한이 거부된 조회의 payload는 숨기고 마지막 관측 시각과 오류를 표시한다.
 Query key는 대상, namespace, UID, 기간과 필터로 구성한다.
 [AbortSignal](https://tanstack.com/query/latest/docs/framework/react/guides/query-cancellation)을
@@ -473,6 +666,57 @@ CHILL 종단 시간은 실제 요청 관측 기록을 사용한다. 각 경계�
 키보드 이동과 복원을 유지하고 상태에는 텍스트, 제출 진행에는 `aria-live`를 제공한다.
 외부 문자열은 안전한 텍스트로 표시하고 인증정보는 진단자료에서 제거한다.
 
+### 7.1 라이브 상태 저장과 신선도
+
+기존 `chill-dashboard/lib/client.tsx:SessionProvider/changeIdentity`(:30-68)의
+탭별 QueryClient를 재사용한다. 새 전역 store나 polling cache를 만들지 않는다.
+예정된 `lib/live.ts:parseLiveMessage/applyLiveMessage/connectLive`에서 경계 검증을 한 번
+수행하고 `setQueryData(["chill-live"], state => reducer(state,message))`로 반영한다.
+state는 `{checkpoint,snapshot,metricsByBucket,events,gaps,lastReceivedAt,lastObservedAt}`다.
+snapshot 전체 교체, delta의 대체/upsert 규칙, metrics 버킷 교체, event identity 중복 제거를
+한 순수 reducer에 둔다. hello는 checkpoint를 전진시키지 않는다.
+
+시간축은 최근 600개 초 버킷과 1000개 사건으로 제한하고 사건 한도에 걸린 구간은
+생략을 표시한다. 되감기 배치 재구성을 위해 구간 시작 baseline과 bounded delta를 함께
+보존한다. 상한 때문에 재구성할 수 없는 시점은 REST 보관 기록을 읽거나 공백으로 표시한다.
+일시정지 cursor/선택 패널/폼은 React 로컬 상태, UID·실험·단계·조회 구간은 URL에 둔다.
+로그아웃/신원 변경은 기존 cancelQueries/clear/QueryClient 교체에 socket·재연결 timer
+종료를 먼저 추가한다. 이전 연결의 늦은 callback은 이전 QueryClient에서만 끝난다.
+
+DB-NFR-07의 초기 표시 기준은 연결과 baseline이 있고 최근 관측이 **5초 이내**일 때만
+“실시간”이다. 5초 초과는 “관측 오래됨”, socket 종료는 “끊김/재연결 중”이다.
+heartbeat만 와도 lastReceivedAt은 바뀌지만 lastObservedAt은 바뀌지 않는다.
+요청이 0인 정상 초 버킷은 관측이며, 전력 누락은 그 전력 레인만 공백이다.
+관측 영역별 신선도와 마지막 원본 시각을 표시하고 gap은 빗금으로 남긴다.
+재개 범위 밖 snapshot은 현재 상태만 복원하므로 유실된 시간축을 직선이나 0으로 채우지 않는다.
+
+### 7.2 실험 재생과 고정 fixture
+
+DB-FR-40~45의 제품 재생은 [T4 관측 설계](../serving/observability-split.md)의
+`GET /api/v1/experiments`와 `/{id}`에서 불변 실행·단계·sources를 읽는다.
+목록은 `{items:[summary]}`, 단건은
+`summary:{schemaVersion:"serving-experiment.v1alpha1",id,from,to,status,stages:[{id,from,to,kpis}],sources:[{store,key}]}`다.
+같은 UID/원본 시각의 관측은 local 우선, 없는 시간대는 archive로 읽는다.
+`coverage:{from,to,sources:[{from,to,stream,source,store?,key?}],gaps:[{from,to,stream,reason}]}`
+(`source=local|archive`)를 유지한다. 브라우저가 S3나 ops 디렉터리를 직접 읽지 않는다.
+재생 adapter가 같은 v1 메시지/reducer와 LiveStage에 데이터를 넣고 라이브 socket은 열지 않는다.
+단계 이동/되감기는 선택 시각 전 baseline부터 다시 적용해 결정론적으로 복원한다.
+
+단계 표에는 보낸 수·성공률(부하 생성기), 받은 수·성공률(서버의 같은 수신 cohort),
+SLO 안 비율·지연·배치 변경·단계 J를 각 분자/분모/출처와 함께 표시한다.
+실시간 종결 버킷의 성공률을 수신 cohort의 성공률로 이름만 바꾸지 않는다.
+두 실행/단계 비교는 같은 범위·단위로 나란히 두고 반복 표시한 공유 POOL J는
+**“공유 에너지 · 행 합산 금지”**로 표시한다. 원본 없는 구간은 공백이다.
+
+브라우저 검사용 고정 fixture는 `campaign/v2/demo-20261025-2`에서 비밀정보를 제거해
+예정된 `public/replay/demo-20261025-2.json`에 고정한 `{source,frames:[{at,label,messages}]}`다.
+source에는 실험 ID, 단계 경계, 원본 참조와 실제/검사용 변형 여부를 기록한다.
+서버가 허용한 `CHILL_DEMO_REPLAY=1`에서만 fixture 모드를 열고 항상
+“기록 재생 · 고정 fixture”를 표시한다. URL flag만으로 운영 인증을 우회하지 않는다.
+fixture 모드는 token 없이 격리 실행할 수 있지만 upstream 연결·REST 변경·추론은 모두 막는다.
+실제 실행 기록에 없는 빈 상태 등은 명시한 검사용 변형으로만 보충하고 실측 근거로 주장하지 않는다.
+
+
 ## 8. 독립 배포와 웹 설정
 
 [Next standalone 출력](https://nextjs.org/docs/app/api-reference/config/next-config-js/output)을
@@ -480,6 +724,11 @@ CHILL 종단 시간은 실제 요청 관측 기록을 사용한다. 각 경계�
 웹은 별도 Deployment와 ClusterIP Service를 가지며 공통 ChillServer의 HTTPS gateway 또는
 명시적으로 설정한 TLS Ingress로 공개한다. chart 기본 Service 유형은 ClusterIP다.
 테스트용 NodePort는 해당 release의 `servingEntrypoint.service.type=NodePort`에서만 선택한다.
+
+라이브 배포는 3절의 앞단을 image entrypoint로 사용한다. `CHILL_PUBLIC_ORIGIN`과
+5초 auth/10초 handshake/소켓 큐 한도를 앞단과 서버에서 맞춘다. HTTP의 8 MiB
+body/10초 query 제한을 WebSocket 프레임/연결 수명에 재사용하지 않는다.
+ChillServer 이미지, Dashboard 이미지 및 `/chill/api/v1/live` RBAC를 함께 반영해야 한다.
 
 | 설정 | 주입과 사용 |
 |---|---|
@@ -516,7 +765,7 @@ raw 및 내보내기는 ChillServer의 제한된 page 또는 stream을 사용한
 | DB-INT-01~02 | 2, 3, 8절의 고정 Git, 독립 모듈과 배포 | 기존 | 독립 모듈과 템플릿 |
 | DB-INT-03 | 4, 5절의 ChillServer 원본 DTO와 원본 식별자 보존 | U6 | 데이터와 API 공백 |
 | DB-INT-04 | 4, 6절의 도메인 writer와 If-Match | 기존 | POOL과 유지보수 |
-| DB-INT-05 | 5.2, 5.3절의 조회 현황과 ChillServer가 제공할 조회, 7절의 영역별 독립 Query, 개요의 독립 요약 행 | D0, U5, G1~G3 | 데이터와 API 공백, 시스템 개요 |
+| DB-INT-05 | 5.2, 5.3절 조회 현황, 7절 독립 Query와 6.1절 무대의 영역별 미지원/공백 표시 | D0, T6, G1~G3 | 데이터와 API 공백, 시스템 개요 |
 | DB-INT-06 | 7절의 영역별 상태와 마지막 관측 시각 | 기존 | 데이터와 API 공백 |
 | DB-UX-01~02, DB-UX-04 | 6.2, 6.3절의 단계형 폼, 필드 오류, preview와 원본 identity | 기존 | 안내형 등록, 충돌과 연결 단절 |
 | DB-UX-03 | 6.1절의 목록 행 직접 이동과 조회 범위 문장 | D0 | 안내형 등록, 데이터와 API 공백 |
@@ -537,11 +786,11 @@ raw 및 내보내기는 ChillServer의 제한된 page 또는 stream을 사용한
 | DB-FR-14 | `/scheduler/profiles`와 후보 상세의 측정 조건 네 행, 조건이 다른 프로파일 구분 | U0, U4 | 프로파일 조건 |
 | DB-FR-30 | `/workloads/[name]/coverage`, 측정 요청 장비 단계의 사유 | G1 | 측정 가능 범위 |
 | DB-FR-32 | `/measurements/transition-costs`와 상세, 후보 전환 비용 연결 | G3 | 전환 비용 원본 |
-| DB-FR-15 | `/scheduler`의 판단 결과 제공 여부와 적용 조건(기존 화면 유지) | D0 | 구성과 설정 변경 |
-| DB-FR-16 | `/scheduler`의 판단 근거, 예측과 실측 구분 | 기존 | 구성과 설정 변경, 전환 비용 원본 |
+| DB-FR-15 | 6.1절 현재 판단 띠와 실제/목표/후보 구분 | T6 | 구성과 설정 변경 |
+| DB-FR-16 | 6.1절 선택 당시 근거와 예측/실측 구분 | T6 | 구성과 설정 변경, 전환 비용 원본 |
 | DB-FR-17 | `/configuration`의 SchedulerSettings 편집, 예측 영향은 ChillServer 조회 대기 | U4 | 구성과 설정 변경 |
-| DB-FR-18 | `/transitions/[id]`의 `manual-static-routing` 선언(`staticRouting`, `sourceConfigRV`)과 실제(`actual.routing`), 반영 대기와 실패 이유, `operation.settingsValidatedAt`의 설정 변경 기록에서 읽은 선택 이유와 바꾼 사람, `/configuration`의 `설정한 요청 분배` 행에서 최신 결과로 이동, `요청 분배 바꾸기`의 선언과 선택 이유 입력 | U0, U4 | 설정 기반 요청 분배 |
-| DB-FR-19~21 | `/transitions`의 계획과 의존 동작, before/actual, 상태와 실패, 판단 기록 링크 | 기존 | 전환 일부 실패 |
+| DB-FR-18 | 6.1절 근거의 선언/실제 분배, T2 scheduler-api의 route/unroute/release/reset 기록. 예전 `manual-static-routing` 이력은 원본 보기로 유지하며 새 설정 쓰기로 재사용하지 않는다. | T2/T6 | 설정 기반 요청 분배 |
+| DB-FR-19~21 | 6.1절 시간축의 계획/실제 작업, 의존관계·실패·부분 적용과 선택 근거 | T6 | 전환 일부 실패 |
 | DB-FR-22 | UID 관측 기록과 단계별 요청 항목 | 기존 | 빈 구간과 집계 |
 | DB-FR-23 | `/observations`의 전체 구간 cohort, 표본 0의 0개와 빈 통계 값(기존 화면 유지) | D0 | 빈 구간과 집계 |
 | DB-FR-24 | `/scheduler/power`의 개별 기록과 `GET /observations/power` 전체 및 활성 POOL 집계. 증분 에너지는 ChillServer 조회 대기 | 기존 | 에너지와 실험 |
@@ -550,8 +799,17 @@ raw 및 내보내기는 ChillServer의 제한된 page 또는 stream을 사용한
 | DB-OP-01~04 | 4, 6절의 영향 확인, If-Match, 원본 작업 조회, 제출 잠금과 명시적 재제출 | 기존 | 처리 중 수정과 삭제, 공유 모델 변경, 충돌과 연결 단절 |
 | DB-OP-05 | 6.4절 표, 공통 오류 영역, 관리 변경과 추론 오류의 의미와 다음 행동 | U1, U2 | 오류 안내, 권한과 만료 |
 | DB-NFR-01~06 | 2, 4, 6, 7, 8, 10절의 접근성, 값 보존, bounded 조회, 성능 예산, 독립 배포와 안전한 렌더링 | 기존 | 접근성과 화면 안전, 조회 부하와 재시작 |
+| SCH-37, DB-INT-07~08 | 3절, 4.3~4.5절의 first auth→Bearer, producer, snapshot/delta/seq/집계 | T5 | 라이브 인증과 재동기화 |
+| DB-NFR-07 | 4.5절, 7.1절의 gap/마지막 수신·관측/신선도 | T5/T6 | 라이브 인증과 재동기화 |
+| DB-FR-35~39 | 6.1절 띠·카드·지도·4레인·선택 당시 근거 | T6 | 라이브 무대의 연속 흐름 |
+| DB-FR-40~44 | 7.2절 재생·분모·비교·정의·불변 결과와 archive | T4/T6 | 재생 결과의 모집단과 에너지 |
+| DB-FR-45~49 | 6.1절 운영자 측정 근거와 폐기 route | T4/T6 | 운영자 조회와 폐기 화면 |
 
 ### 9.2 구현 순서와 작업 단위
+
+2026-10-25의 추가 순서는 **T5 계약/서버·중계 → T6 무대 → 선택 근거 → T4 결과 API를
+쓰는 재생 → 운영자 통합**이다. 각 구현 commit은 이 문서 절과 SRS ID를 적는다.
+아래 U/G 표는 기존 구현 작업 이력이며 새 폐기 route나 좁은 개요를 다시 만드는 지시가 아니다.
 
 각 단위는 독립적으로 리뷰할 수 있는 commit 하나다. 파일 경로는 `chill-dashboard/` 기준이다.
 U0을 먼저 commit한 뒤 U1을 commit하고, U2부터 U6은 서로 다른 파일만 고치므로 병렬로 진행한다.
@@ -582,10 +840,34 @@ ChillServer 조회가 생긴 뒤의 단위다. 각 단위는 Phase 1 단위가 m
 
 ### 10.1 이번 변경의 검증 계획
 
-[SRS 9절](../../spec/dashboard/SRS.md#9-수용-검증-시나리오)의 27개 시나리오는 API가 준비된 영역별로 실제 API와 브라우저에서 실행한다.
+[SRS 9절](../../spec/dashboard/SRS.md#9-수용-검증-시나리오)의 전체 시나리오는 API가 준비된 영역별로 실제 API와 브라우저에서 실행한다.
 각 실행에는 template commit, lockfile, CHILL source, release와 namespace, 사용자 권한,
 원본 UID, 선택 구간과 웹 설정 및 결과를 기록한다. 조회 대기 기능의 시나리오(측정 가능 범위, 전환 비용 원본,
 실제 backend와 실행 장치)는 해당 G 단위에서 실행하고 그 전까지 `연결 준비 중`으로 기록한다.
+
+**T5/T6 추가 검사(구현 후 main agent가 한 번 실행, 이 설계 변경에서 실행하지 않음):**
+
+- 서버/중계: auth 전 프레임 0, 첫 auth 누락·실패 즉시 종료, Origin/query/token 누출 차단,
+  401/403/503 구분, CA/hostname 검증, 정확한 live SAR와 기존 REST 권한 유지.
+  일반 HTTP timeout보다 긴 연결/heartbeat 및 종료 때 구독·자식 프로세스 해제를 검사한다.
+- hub/reducer: hello→resume→snapshot→delta 순서, 같은 seq 중복, 빠진 seq, from=0,
+  보관 안/밖·미래·재시작 checkpoint 불일치, metrics 누적 보정의 대체, upsert/삭제와
+  느린 수신자의 metrics 드롭→snapshot barrier→1013을 검사한다. producer는 멈추지 않는다.
+- 집계: 수신 초와 완료 초가 다른 요청, 실패/timeout/전달 실패, N=0, native 완료 중복,
+  10초 보정 경계, 일부 노드 전력 누락과 공유 노드 중복을 검사한다. 성공률은 completed/N,
+  받은 수는 독립 사건률이고 전체/활성 W는 해당 범위가 완전할 때만 값이 있다.
+- **브라우저 재생 검사 한 개**: 고정 fixture로 빈 상태→등록/유입→첫 준비/분배→급증 확장
+  (준비됐지만 미분배 포함)→축소를 같은 `/` 무대에서 재생한다. 3개 UID 카드·네 문구,
+  지도 routing/실제 running, 공통 4레인과 선택 당시 κ/d/B 패널, pause/seek/live 복귀,
+  UTC/KST, 신선도/재연결/gap을 확인한다. 두 단계 분모·공유 에너지 합산 금지·삭제 UID
+  이름 보존도 같은 fixture의 명시한 장면으로 확인한다. 화면 이동 없이 원인→판단→변경→성과가 보인다.
+- 같은 브라우저 실행에서 1440px/390px, 키보드 이벤트 선택·패널 focus 복원,
+  reduced-motion, 폐기 메뉴/route 부재, 미지원 측정 notFound, fixture 중 상류 요청 0과
+  변경 버튼 비활성, logout/신원 변경 뒤 이전 live payload 부재를 확인한다.
+- Node 24.21.0/pnpm 10.33.4에서 `make dashboard-check`와 위 브라우저 검사를 실행한다.
+  서버 구현은 focused Go live/집계 검사 후 `make lint test arch-check`, 경로 의미 변경은
+  `make gopls-check`, RBAC/포트 변경은 기본·Profiler `make helm-lint helm-template
+  deployment-graph-check`를 적용한다. fixture 결과와 실제 클러스터/물리 계측 증거는 분리한다.
 
 1. 실제 응답 수집(읽기 전용). `kubectl -n chill-system port-forward svc/chill-serving-entrypoint 18443:8080`으로
    ChillServer에 연결하고 사용자 읽기 token과 ChillServer CA로 GET만 보낸다. 수집 대상은 `/api/v1/workloads`, `/models`,
