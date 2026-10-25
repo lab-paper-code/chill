@@ -168,6 +168,13 @@ takes `--output-dir` and supports `--check` and `--refresh-timing`.
 `meter-cadence/analyze.py` helper takes `--input-dir` for retained telemetry
 and `--output-dir` for its external tables.
 
+`hack/measure/smoke/smoke.py NODE OUTDIR WL=PROFILE:DATASET` retains prepare,
+route and cleanup-reset requests/results in an external output directory.
+A failed or partial reset propagates as an error and triggers no further
+mutations; read-only workload observations (`observations-WL.json`) and
+`scheduler-actions.json` are still collected. The offline regression is
+`python3 -m unittest discover -s hack/measure/smoke -p 'test_smoke.py'`.
+
 Record the repository harness commit alongside the actual control-image
 source and immutable image identities in operational execution metadata.
 CampaignOps switches active callers after the current conductor exits and

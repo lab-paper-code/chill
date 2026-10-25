@@ -64,11 +64,13 @@ try:
         L('requests', it['wl'], f'{good}/{len(lines)} HTTP 200', json.dumps(lines[0].get('body'))[:300] if lines else '')
         ok &= good == len(lines) and len(lines) == N
 finally:
-    if attempted_uids:
-        operation({'kind': 'reset', 'workloadUIDs': attempted_uids, 'reason': f'End serving smoke on {node}: reset owned workload scope'}, 'cleanup-reset')
-    t1 = now()
-    for it in items:
-        _, b = api('GET', f"/api/v1/observations/workloads/{it['uid']}?from={t0}&to={t1}&limit=1000"); open(f"{out}/observations-{it['wl']}.json", 'w').write(b)
-    _, b = api('GET', f'/api/v1/observations/scheduler?from={t0}&to={t1}&limit=1000'); open(f'{out}/scheduler-actions.json', 'w').write(b)
-    L('done', 'OK' if ok else 'FAIL')
+    try:
+        if attempted_uids:
+            operation({'kind': 'reset', 'workloadUIDs': attempted_uids, 'reason': f'End serving smoke on {node}: reset owned workload scope'}, 'cleanup-reset')
+    finally:
+        t1 = now()
+        for it in items:
+            _, b = api('GET', f"/api/v1/observations/workloads/{it['uid']}?from={t0}&to={t1}&limit=1000"); open(f"{out}/observations-{it['wl']}.json", 'w').write(b)
+        _, b = api('GET', f'/api/v1/observations/scheduler?from={t0}&to={t1}&limit=1000'); open(f'{out}/scheduler-actions.json', 'w').write(b)
+        L('done', 'OK' if ok else 'FAIL')
 sys.exit(0 if ok else 1)
