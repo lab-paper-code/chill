@@ -115,7 +115,7 @@ class Prepare:
         return json.loads(r.stdout) if r.stdout.strip() else None
     def safety(self):
         s,_=self.api('GET','/api/v1/scheduler/state'); snap=s['snapshot']
-        if snap.get('instances') or snap.get('outstanding') or snap.get('inProgressTarget') or any(x.get('status') in ('running','cancel') for x in s.get('actions',[])):raise RuntimeError('Fresh global serving/action drain required before canonical registration/binding')
+        if snap.get('instances') or snap.get('outstanding') or snap.get('reservations') or any(x.get('status') in ('running','cancel') for x in s.get('actions',[])):raise RuntimeError('Fresh global serving/action drain required before canonical registration/binding')
         jobs=self.kubectl(['get','jobs','-o','json'])['items']
         if any(not j.get('spec',{}).get('suspend') and not any(c.get('type') in ('Complete','Failed') and c.get('status')=='True' for c in j.get('status',{}).get('conditions',[])) for j in jobs):raise RuntimeError('Measurement/producer still active; no binding calculation or smoke')
         actual_pods=self.kubectl(['get','pods','-A','-o','json'])['items']

@@ -337,7 +337,7 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	}
 	candidate := serving.SchedulerCandidate{ID: "selected", Instances: instances}
 	decision := serving.SchedulerDecision{Keep: candidate, Target: &candidate}
-	snapshot := serving.SchedulerSnapshot{Instances: instances, Options: []serving.SchedulerOption{{Instance: instances[0]}}, InProgressTarget: &candidate}
+	snapshot := serving.SchedulerSnapshot{Instances: instances, Options: []serving.SchedulerOption{{Instance: instances[0]}}, Reservations: []serving.SchedulerReservation{{Owner: candidate.ID, Target: &candidate}}}
 	event := serving.SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}
 	evidence := newSchedulerReadEvidence()
 	projected := evidence.observations([]serving.SchedulerObservation{event})
@@ -361,7 +361,7 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 		}
 	}
 	if projected[0].Snapshot.Options[0].Instance.Profile.Ref != got[0].Profile.Ref ||
-		projected[0].Snapshot.InProgressTarget.Instances[0].Profile.Ref != got[0].Profile.Ref {
+		projected[0].Snapshot.Reservations[0].Target.Instances[0].Profile.Ref != got[0].Profile.Ref {
 		t.Fatal("snapshot evidence did not use the same response dictionaries")
 	}
 	raw, err := json.Marshal(got[0])

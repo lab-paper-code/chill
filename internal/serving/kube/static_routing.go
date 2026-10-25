@@ -66,7 +66,7 @@ func (c *SchedulerController) manualRoutingOperationLocked(ctx context.Context, 
 		if err = c.operations.validateRoutingPolicies(ctx, target, request.WorkloadUID); err != nil {
 			return Operation{}, refused("OperationConflict", err.Error())
 		}
-		operation.Target = &target
+		operation.Target = controlledTarget(Operation{Target: &target, WorkloadUID: request.WorkloadUID})
 	}
 	return operation, nil
 }
@@ -259,14 +259,21 @@ func (c *SchedulerController) executeManualRouting(ctx context.Context, operatio
 				expected[id][operation.WorkloadUID] = weight
 			}
 		}
-		actual := c.runtime.InstanceRouting()
-		if operation.Kind == operationRelease {
-			for _, weights := range actual {
-				delete(weights, operation.WorkloadUID)
+		if operation.Kind != operationRelease {
+			want, got := map[string]int32{}, map[string]int32{}
+			for id, weights := range expected {
+				if weights[operation.WorkloadUID] > 0 {
+					want[id] = weights[operation.WorkloadUID]
+				}
 			}
-		}
-		if !maps.EqualFunc(expected, actual, func(a, b map[string]int32) bool { return maps.Equal(a, b) }) {
-			err = errors.New("complete physical declaration readback differs from requested routing")
+			for id, weights := range c.runtime.InstanceRouting() {
+				if weights[operation.WorkloadUID] > 0 {
+					got[id] = weights[operation.WorkloadUID]
+				}
+			}
+			if !maps.Equal(want, got) {
+				err = errors.New("selected UID physical declaration readback differs from requested routing")
+			}
 		}
 	}
 	if err != nil {

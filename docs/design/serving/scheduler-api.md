@@ -85,7 +85,7 @@ drain용 보존 route는 새 요청의 routable로 세지 않는다.
 `view=compact`를 받는다. 생략하면 기존 full raw 응답이며 저장 관측 기록, archive와
 page/cursor 선택은 바꾸지 않는다. 다른 `view` 값은 `InvalidQuery`로 거절한다.
 compact 응답은 같은 envelope에 `profiles` dictionary를 추가하고, snapshot의 instances/options/
-inProgressTarget 및 decision의 keep/target 안 인스턴스의 `profile`만
+reservations[].target 및 decision의 keep/target 안 인스턴스의 `profile`만
 `{"$ref":"응답 내 key"}`로 치환한다. nil은 그대로다. dictionary에는 원본 profile 객체를
 보존한다. profile ID가 key의 기준이며 같은 ID의 다른 보존 값은 별도 suffix key로 남긴다.
 같은 값의 반복만 공유하며 equality는 admission/validation gate가 아니다. 소비자는 이
@@ -93,6 +93,11 @@ inProgressTarget 및 decision의 keep/target 안 인스턴스의 `profile`만
 물리/선택 인스턴스 신원, 사유, 출처와 action acknowledgement 원본은 바꾸지 않는다.
 응답 한 page의 얕은 DTO만 만들며 별도 history scan, raw evidence 복사, decoded cache
 또는 fallback reader는 없다.
+
+snapshot의 `reservations`는 `{owner,nodes,workloadUIDs,podUIDs,instances,target?,reason?}` 목록이다.
+`target`은 owner의 frozen target이며 실제 상태는 snapshot의 instances/routing에서 읽는다.
+전역 `inProgressTarget` 필드는 제거되었고 호환 alias는 없다. 실행 종료 뒤에도 원격 효과가
+미확인이면 예약이 남는다. 예약 밖 판단은 계속되므로 예약 존재 자체를 전역 대기로 해석하지 않는다.
 
 power 조회는 controller가 수락한 ChillServer configuration 하나를 atomic하게 읽어 meter
 구성을 고정한다. 긴 refresh·control Tick의 scheduler mutex를 기다리지 않으며, 새 설정은

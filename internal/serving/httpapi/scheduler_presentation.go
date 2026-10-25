@@ -93,16 +93,28 @@ type schedulerReadOption struct {
 
 type schedulerReadSnapshot struct {
 	*serving.SchedulerSnapshot
-	Instances        []schedulerReadInstance `json:"instances"`
-	Options          []schedulerReadOption   `json:"options"`
-	InProgressTarget *schedulerReadCandidate `json:"inProgressTarget,omitempty"`
+	Instances    []schedulerReadInstance    `json:"instances"`
+	Options      []schedulerReadOption      `json:"options"`
+	Reservations []schedulerReadReservation `json:"reservations,omitempty"`
+}
+
+type schedulerReadReservation struct {
+	*serving.SchedulerReservation
+	Target *schedulerReadCandidate `json:"target,omitempty"`
 }
 
 func (e *schedulerReadEvidence) snapshot(snapshot *serving.SchedulerSnapshot) *schedulerReadSnapshot {
 	if snapshot == nil {
 		return nil
 	}
-	result := &schedulerReadSnapshot{SchedulerSnapshot: snapshot, Instances: e.instances(snapshot.Instances), InProgressTarget: e.candidate(snapshot.InProgressTarget)}
+	result := &schedulerReadSnapshot{SchedulerSnapshot: snapshot, Instances: e.instances(snapshot.Instances)}
+	if snapshot.Reservations != nil {
+		result.Reservations = make([]schedulerReadReservation, len(snapshot.Reservations))
+		for i := range snapshot.Reservations {
+			reservation := &snapshot.Reservations[i]
+			result.Reservations[i] = schedulerReadReservation{reservation, e.candidate(reservation.Target)}
+		}
+	}
 	if snapshot.Options != nil {
 		result.Options = make([]schedulerReadOption, len(snapshot.Options))
 		for i := range snapshot.Options {

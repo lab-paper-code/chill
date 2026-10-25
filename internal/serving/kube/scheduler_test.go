@@ -292,13 +292,13 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 	if _, err := controller.Tick(context.Background(), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	controller.goal = &serving.SchedulerCandidate{ID: "unfinished-route", Nodes: controller.State().Snapshot.Nodes,
-		Routing: map[string]map[string]int32{}, Actions: []serving.Action{{ID: "unfinished-route", Kind: operationRoute, Status: "planned"}}}
+	installTestTransition(controller, &serving.SchedulerCandidate{ID: "unfinished-route", Nodes: controller.State().Snapshot.Nodes,
+		Routing: map[string]map[string]int32{}, Actions: []serving.Action{{ID: "unfinished-route", Kind: operationRoute, Status: "planned"}}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var publishedAt time.Time
 	controller.config.OnDecision = func(decision serving.SchedulerDecision) error {
-		if decision.Target == nil || len(decision.Target.Actions) == 0 {
+		if fixtureTarget(controller) == nil || len(fixtureTarget(controller).Actions) == 0 {
 			t.Fatal("fixture did not produce an actionable ON continuation")
 		}
 		snapshot := controller.State().Snapshot
@@ -449,15 +449,15 @@ func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
 	}
 }
 
-func TestSchedulerLaunchTracksGoalOnlyForNonFixedActions(t *testing.T) {
+func TestSchedulerLaunchReservesFixedAndNonFixedDAGs(t *testing.T) {
 	for _, fixed := range []bool{true, false} {
 		controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), runs: map[string]*actionRun{}}
 		// Completed actions are skipped, so launch starts no operation.
 		controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true, Actions: []serving.Action{
 			{ID: "lower", Kind: operationPower, Fixed: fixed, Status: nativeOperationComplete},
 		}}, SchedulerControllerConfig{})
-		if (controller.goal == nil) != fixed {
-			t.Fatalf("fixed=%v: goal=%+v", fixed, controller.goal)
+		if fixtureTarget(controller) == nil {
+			t.Fatalf("fixed=%v: missing owner reservation", fixed)
 		}
 	}
 }
@@ -742,28 +742,24 @@ func TestSchedulerRouteIgnoresUnusedCommonLowering(t *testing.T) {
 	at := time.Unix(1000, 0).UTC()
 	used := serving.NodeReference{Name: "used", UID: "used"}
 	idle := serving.NodeReference{Name: "idle", UID: "idle"}
-	settings := serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: 10 * time.Second,
-		ComparisonPeriod: time.Minute, MaxObservationAge: time.Hour, MaxReplicas: 1, MaxInstances: 2, MaxCPUs: 4,
-		CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
-		Controls: serving.SchedulerControls{Power: true}}
 	instance := serving.SchedulerInstance{ID: "slot", Node: used, WorkloadUID: "w",
 		Profile: &serving.Profile{ID: "profile", Condition: profilederivation.CurvePlanSpec{PowerMode: "fixed"}}}
 	goal := serving.SchedulerCandidate{ID: "goal",
 		Nodes:     []serving.SchedulerNode{{Node: used, PowerMode: "fixed"}, {Node: idle, PowerMode: "eco"}},
 		Instances: []serving.SchedulerInstance{instance}, Routing: map[string]map[string]int32{"w": {"slot": 1000}},
 		Actions: []serving.Action{{ID: "route-goal", Kind: operationRoute, Status: "planned"}}}
-	snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at, InProgressTarget: &goal,
+	snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at, Reservations: []serving.SchedulerReservation{{Owner: goal.ID, Nodes: []serving.NodeReference{used}, WorkloadUIDs: []string{"w"}, Target: &goal}},
 		Nodes:     []serving.SchedulerNode{{Node: used, Ready: true, ObservedAt: at}, {Node: idle, Ready: true, ObservedAt: at}},
 		Baselines: []serving.NodeBaseline{{Node: used, PowerMode: "eco", Watts: 1}, {Node: idle, PowerMode: "eco", Watts: 1}},
 		Actions: []serving.Action{
 			{ID: "used-lowering", Node: used, Kind: operationPower, From: "boost", To: "eco", Fixed: true, Status: nativeOperationRunning},
 			{ID: "idle-lowering", Node: idle, Kind: operationPower, From: "boost", To: "eco", Fixed: true, Status: nativeOperationRunning},
 		}}
-	decision, err := serving.EvaluateScheduler(context.Background(), settings, snapshot, nil)
-	if err != nil || decision.Target == nil {
-		t.Fatalf("resume goal: %v %+v", err, decision)
-	}
-	target := *decision.Target
+	target := goal
+	target.Actions = append(slices.Clone(snapshot.Actions),
+		serving.Action{ID: "raise", Kind: operationPower, Node: used, DependsOn: []string{"used-lowering"}},
+		serving.Action{ID: "prepare", Kind: operationPrepare, Node: used, Instance: "slot", DependsOn: []string{"raise"}},
+		serving.Action{ID: "route", Kind: operationRoute, DependsOn: []string{"prepare"}})
 	controller := &SchedulerController{runs: map[string]*actionRun{}}
 	var raise, prepare, route serving.Action
 	for _, a := range target.Actions {

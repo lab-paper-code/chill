@@ -234,6 +234,9 @@ func schedulerValidateObservationTimes(snapshot *SchedulerSnapshot, maxAge time.
 		}
 	}
 	for _, i := range snapshot.Instances {
+		if schedulerFixedReason(*snapshot, i.WorkloadUID) != "" || schedulerFixedReason(*snapshot, i.OwnerWorkloadUID) != "" {
+			continue
+		}
 		if i.ObservedAt.IsZero() || i.ObservedAt.After(snapshot.At) || snapshot.At.Sub(i.ObservedAt) > maxAge {
 			reasons = appendUnique(reasons, "UnknownOrStaleInstance:"+i.ID)
 		}
@@ -528,7 +531,7 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 		return s.out, ctx.Err()
 	}
 	s.routeCredits = map[string][]int64{}
-	s.routingApplied = c.Keep && snap.InProgressTarget == nil
+	s.routingApplied = c.Keep
 	s.weights = make([]int32, len(s.instances))
 	s.available = make([]bool, len(s.instances))
 	for steps := 1; ; steps++ {
@@ -588,9 +591,6 @@ func (s *schedulerReplayState) initializeInstances() {
 	s.byID = map[string]*schedulerReplayInstance{}
 	s.nodes = append([]SchedulerNode(nil), s.snap.Nodes...)
 	s.goal = s.c
-	if s.c.Keep && s.snap.InProgressTarget != nil {
-		s.goal = *s.snap.InProgressTarget
-	}
 	addInstance := func(i SchedulerInstance, loaded bool) {
 		x := &schedulerReplayInstance{config: i, loaded: loaded, ready: loaded && i.Ready, stopped: i.Stopped, finish: math.Inf(1), wake: 0, arrivalTimes: map[string][]float64{}}
 		if i.Profile != nil {

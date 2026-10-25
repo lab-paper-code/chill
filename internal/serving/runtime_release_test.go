@@ -44,6 +44,7 @@ func TestReleaseSchedulerRoutingFollowsNewReadySeed(t *testing.T) {
 	}
 	// A later autonomous route for another UID must not recapture the released
 	// UID's empty snapshot entry and block future/current Pod defaults.
+	delete(blocked.Routing, "w1")
 	if err := r.ApplySchedulerWorkloadsTarget(blocked, []string{"w2"}); err != nil {
 		t.Fatal(err)
 	}

@@ -341,11 +341,11 @@ func TestSchedulerKeepWithRunningFixedLoweringNeedsNoPowerCost(t *testing.T) {
 	lowering := keep.Actions[slices.IndexFunc(keep.Actions, func(a Action) bool { return a.Node == idle && a.Fixed })]
 	lowering.Status = phaseRunning
 	snap.Actions = []Action{lowering}
-	snap.InProgressTarget = &keep
+	snap.Reservations = []SchedulerReservation{{Owner: "lowering", Nodes: []NodeReference{idle}, Target: &keep}}
 	snap.Nodes[1].PowerMode = ""
 	snap.Nodes[1].Reasons = []string{NodePowerModeUnavailable}
 	d := capacityDecideForTest(t, s, snap, rows)
-	if slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == idle && !a.Fixed }) || slices.Contains(d.Reasons, schedulerTransitionInProgress) || d.Capacity == nil {
+	if slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == idle && !a.Fixed }) || d.Capacity == nil {
 		t.Fatalf("running Fixed lowering held planning or became a compared power change: %+v", d)
 	}
 }

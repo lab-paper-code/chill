@@ -68,3 +68,24 @@ func controlledTarget(operation Operation) *serving.SchedulerCandidate {
 	}
 	return &target
 }
+
+func (c *SchedulerController) targetWorkloadsLocked(target serving.SchedulerCandidate) []string {
+	if parent := c.runs[transitionRunKind+"/"+target.ID]; parent != nil {
+		return parent.result.Operation.WorkloadUIDs
+	}
+	return changedWorkloads(target, c.state.Snapshot)
+}
+
+// Routes inside one owner form a chain; a partial ACK never races its final
+// route. Preparations of that owner's other Nodes still proceed independently.
+func (c *SchedulerController) orderRouteChild(action serving.Action, owner string) serving.Action {
+	if action.Kind != operationRoute {
+		return action
+	}
+	for _, run := range c.runs {
+		if run.owner == owner && run.action.Kind == operationRoute && run.action.Status == nativeOperationRunning && run.action.ID != action.ID {
+			action.DependsOn = append(slices.Clone(action.DependsOn), run.action.ID)
+		}
+	}
+	return action
+}

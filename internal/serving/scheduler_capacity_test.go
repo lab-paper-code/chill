@@ -648,21 +648,17 @@ func TestCapacityJudgesEachWorkloadWithItsSLO(t *testing.T) {
 	}
 }
 
-// §4: a non-Fixed action of the running goal holds planning; keep continues it.
-func TestCapacityTransitionInProgressContinuesGoal(t *testing.T) {
+// A reservation fixes its own scope, not the capacity planner.
+func TestCapacityReservationKeepsScopeWithoutGlobalBarrier(t *testing.T) {
 	s, snap := schedulerFixture()
-	goal := SchedulerCandidate{ID: "goal", Nodes: snap.Nodes, Instances: snap.Instances, Routing: map[string]map[string]int32{"w1": {"i1": 2}},
-		Actions: []Action{{ID: "route", Kind: schedulerActionRoute, Status: schedulerActionPlanned}}}
-	snap.InProgressTarget = &goal
-	snap.Actions = []Action{{ID: "route", Kind: schedulerActionRoute, Status: phaseRunning}}
+	goal := SchedulerCandidate{ID: "goal", Nodes: snap.Nodes, Instances: snap.Instances, Routing: map[string]map[string]int32{"w1": {"i1": 1}}}
+	reserveTargetForTest(&snap, &goal)
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-	if d.Status != schedulerStatusKeep || d.Target == nil || d.Target.ID != "goal" || !d.Target.Keep || !slices.Contains(d.Reasons, schedulerTransitionInProgress) || d.Capacity != nil {
-		t.Fatalf("in-progress goal must continue: %+v", d)
+	if d.Target == nil || !d.Target.Keep || d.Target.ID == goal.ID || len(d.Workloads) == 0 || d.Workloads[0].State != "Fixed" {
+		t.Fatalf("reservation became a global continuation: %+v", d)
 	}
-	// The goal's copies stay planned; once the run reports the route complete, planning resumes.
-	snap.Actions[0].Status = schedulerActionComplete
-	if d = capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil)); slices.Contains(d.Reasons, schedulerTransitionInProgress) {
-		t.Fatalf("a finished transition must not hold planning: %+v", d)
+	if d.Target.ExpectedJoules != nil {
+		t.Fatal("fixed scope was presented as a verified whole estimate")
 	}
 }
 
@@ -686,11 +682,11 @@ func TestCapacityRoutingOffKeepsWeightsAndChecksKappa(t *testing.T) {
 	}
 }
 
-// §2: a controlled Workload without any κ makes the decision CapacityPending.
+// A UID without κ is fixed rather than blocking independent Workloads.
 func TestCapacityPendingWithoutRows(t *testing.T) {
 	s, snap := schedulerFixture()
 	d := capacityDecideForTest(t, s, snap, nil)
-	if d.Status != CapacityPending || d.Target != nil || !slices.Contains(d.Reasons, CapacityPending+":w1") {
+	if d.Status != schedulerStatusKeep || d.Target == nil || !slices.Contains(d.Reasons, CapacityPending+":w1") || d.Target.ExpectedJoules != nil {
 		t.Fatalf("no rows: %+v", d)
 	}
 }
@@ -1251,7 +1247,7 @@ func TestCapacityFailedPreparationWaitsOneWindow(t *testing.T) {
 	snap.Actions = []Action{{ID: "prepare-lost", Kind: schedulerActionPrepare, Node: n2, Instance: "target-w1-" + add.Profile.ID + "-1",
 		From: "unloaded", To: schedulerState(add), Status: schedulerActionFailed, Reason: "completed effect lost"}}
 	d := capacityDecideForTest(t, s, snap, rows)
-	if d.Target == nil || poolsOn(*d.Target, n2) || slices.Contains(d.Reasons, schedulerTransitionInProgress) {
+	if d.Target == nil || poolsOn(*d.Target, n2) {
 		t.Fatalf("failed preparation planned again: %+v", d.Target)
 	}
 	if !slices.ContainsFunc(poolsPlans(d, n2), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanPreparationFailed }) {

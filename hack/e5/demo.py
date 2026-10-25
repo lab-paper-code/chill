@@ -535,7 +535,7 @@ def self_check():
         cpo.d = d
         settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': [], 'minimumDemand': {cpo.uids[0]: .3}}
         cpo.b['schedulerSettings'] = copy.deepcopy(settings)
-        snapshot = {'at': e5.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'inProgressTarget': None}
+        snapshot = {'at': e5.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'reservations': []}
         scheduler_actions = []
         cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': copy.deepcopy(scheduler_actions), 'results': None}
         cpo.idle = cpo.state
@@ -646,7 +646,7 @@ def self_check():
         (root / 'control-alerts.jsonl').write_text('')
         with patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'client_end_counter', lambda *args: {'fixtureCounter': True}):
             cpo.start()
-            snapshot['inProgressTarget'] = {'id': 'fixture-transition'}
+            snapshot['reservations'] = [{'owner': 'fixture-transition'}]
             scheduler_actions.append({'id': 'fixture-action', 'status': 'running'})
             with patch.object(cpo, 'idle', side_effect=AssertionError('Demo stage must not await planner idle')):
                 for stage in stages:
@@ -658,7 +658,7 @@ def self_check():
         summarize(e5, cpo.b, cpo.out)
         assert e5.load(cpo.out / 'summary.json')['schedulerSettings'] == frozen_settings
         drained = e5.load(cpo.out / 'smoke-A/phase.json')['demoRequestDrain']
-        assert drained['inProgressTarget']['id'] == 'fixture-transition' and drained['actions'][0]['status'] == 'running'
+        assert drained['reservations'][0]['owner'] == 'fixture-transition' and drained['actions'][0]['status'] == 'running'
         source_folder = cpo.out / 'smoke-A'
         recovery_out = root / 'collection-recovery'
         recovery_folder = stage_folder(recovery_out, stages[1])

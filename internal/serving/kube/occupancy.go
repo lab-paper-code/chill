@@ -533,7 +533,7 @@ func workloadPod(pods []core.Pod, uid string) string {
 func (c *SchedulerController) startOccupancy(node *core.Node, m *edge.DispatchOccupancyMeasurement, plan occupancyPlan, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	root := &measurementRoot{object: m, node: node.Name}
-	operation := Operation{ID: occupancyKind + ":" + node.Name + ":" + string(m.UID), Kind: occupancyKind, Node: ref, WorkloadUID: string(plan.workload.UID)}
+	operation := Operation{ID: occupancyKind + ":" + node.Name + ":" + string(m.UID), Kind: occupancyKind, Node: ref, WorkloadUID: string(plan.workload.UID), Holder: string(m.UID)}
 	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
 		err := c.runOccupancy(ctx, m, ref, plan, config)
 		return errors.Join(err, c.handBack(ctx, ref, string(m.UID), root, false, result))

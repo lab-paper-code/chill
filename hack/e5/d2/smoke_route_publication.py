@@ -30,7 +30,7 @@ try:
     with tempfile.TemporaryDirectory(prefix='d2-route-publication-') as temporary:
         driver=object.__new__(m.Conductor);driver.out=Path(temporary);writes=[]
         driver.put=lambda *args,**kwargs:writes.append('FORBIDDEN PUT')
-        driver.idle=lambda value:not value['snapshot'].get('outstanding') and not value['snapshot'].get('inProgressTarget') and not any(a.get('status') in ('running','cancel') for a in value.get('actions',[]))
+        driver.idle=lambda value:not value['snapshot'].get('outstanding') and not value['snapshot'].get('reservations') and not any(a.get('status') in ('running','cancel') for a in value.get('actions',[]))
         reads=iter([before,after]);driver.state=lambda:next(reads)
         result=driver.wait_routing_publication({},previous,ack,'same-original')
         assert result is after and clock[0]==5 and writes==[]

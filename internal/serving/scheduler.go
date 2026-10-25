@@ -295,12 +295,24 @@ type SchedulerSnapshot struct {
 	Costs          []OperationCost             `json:"costs"`
 	// DispatchOccupancy holds the latest accepted measurement per Node, power
 	// mode, runtime image and model.
-	DispatchOccupancy []DispatchOccupancy `json:"dispatchOccupancy"`
-	CostRefs          []string            `json:"costRefs,omitempty"`
-	Actions           []Action            `json:"actions"`
-	Reasons           []string            `json:"reasons"`
-	References        []string            `json:"references"`
-	InProgressTarget  *SchedulerCandidate `json:"inProgressTarget,omitempty"`
+	DispatchOccupancy []DispatchOccupancy    `json:"dispatchOccupancy"`
+	CostRefs          []string               `json:"costRefs,omitempty"`
+	Actions           []Action               `json:"actions"`
+	Reasons           []string               `json:"reasons"`
+	References        []string               `json:"references"`
+	Reservations      []SchedulerReservation `json:"reservations,omitempty"`
+}
+
+// SchedulerReservation fixes physical ownership while an operation or its DAG
+// still owns effects. Target belongs to this owner, never to the whole scheduler.
+type SchedulerReservation struct {
+	Owner        string              `json:"owner"`
+	Nodes        []NodeReference     `json:"nodes"`
+	WorkloadUIDs []string            `json:"workloadUIDs"`
+	PodUIDs      []string            `json:"podUIDs"`
+	Instances    []string            `json:"instances"`
+	Target       *SchedulerCandidate `json:"target,omitempty"`
+	Reason       string              `json:"reason,omitempty"`
 }
 type SchedulerEstimate struct {
 	UID                  string         `json:"uid"`

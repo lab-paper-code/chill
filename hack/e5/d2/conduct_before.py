@@ -338,7 +338,7 @@ class Conductor:
 
     def idle(self, state):
         if state['snapshot'].get('outstanding'): return False
-        if state['snapshot'].get('inProgressTarget') is not None: return False
+        if state['snapshot'].get('reservations'): return False
         if any(a.get('status') in ('running','cancel') for a in state.get('actions',[])): return False
         view=self.api('GET','/api/v1/workloads/'+NAME)
         if view.get('pending')!=0 or view.get('assigned')!=0: return False

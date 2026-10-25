@@ -336,7 +336,7 @@ class CPO:
         end = time.monotonic()+self.tb['drainSeconds']
         while time.monotonic()<end:
             s=self.state(); snap=s['snapshot']
-            if not snap.get('outstanding') and not snap.get('inProgressTarget') and not any(x.get('status') in ('running','cancel') for x in s.get('actions',[])):
+            if not snap.get('outstanding') and not snap.get('reservations') and not any(x.get('status') in ('running','cancel') for x in s.get('actions',[])):
                 views=[self.api('GET','/api/v1/workloads/'+n) for n in WORKLOADS]
                 if all(v.get('pending')==0 and v.get('assigned')==0 for v in views): return s
             time.sleep(1)
@@ -347,7 +347,7 @@ class CPO:
             state=self.state();views={name:self.api('GET','/api/v1/workloads/'+name) for name in self.ws}
             if not state['snapshot'].get('outstanding') and all(view.get('pending')==0 for view in views.values()):
                 at=now()
-                phase['demoRequestDrain']={'observedUTC':at,'inProgressTarget':state['snapshot'].get('inProgressTarget'),'actions':state.get('actions'),'pending':{name:view.get('pending') for name,view in views.items()},'meaning':'Requests drained; scheduler transitions recorded, not awaited'}
+                phase['demoRequestDrain']={'observedUTC':at,'reservations':state['snapshot'].get('reservations'),'actions':state.get('actions'),'pending':{name:view.get('pending') for name,view in views.items()},'meaning':'Requests drained; scheduler reservations recorded, not awaited'}
                 save(folder/'request-drain-state.json',{'at':at,'state':state,'workloads':views})
                 return at
             time.sleep(1)
@@ -393,7 +393,7 @@ class CPO:
         if not at_boundary: raise RuntimeError('D9 freeze is executed inside the released full E5-3 command at actual window-end; late baseline selection is forbidden')
         if (self.out/'static-selection.json').exists(): raise RuntimeError('Static selection already frozen')
         s=self.state(); chosen=fingerprint(s['snapshot'],self.uids); settings=self.settings()
-        if s['snapshot'].get('inProgressTarget') or any(a.get('status') in ('running','cancel') for a in s.get('actions',[])): raise RuntimeError('E5-3 boundary configuration is transitioning; do not invent a weaker static selection')
+        if s['snapshot'].get('reservations') or any(a.get('status') in ('running','cancel') for a in s.get('actions',[])): raise RuntimeError('E5-3 boundary configuration is transitioning; do not invent a weaker static selection')
         if set(settings['autonomousWorkloads']) != set(self.uids): raise RuntimeError('Actual full-control E5-3 configuration required')
         if any(not chosen['routing'][u] for u in self.uids): raise RuntimeError('Selected canonical route missing')
         save(self.out/'static-selection.json',{'at':now(),'state':s,'fingerprint':chosen,'settings':settings,'selection':'Actual final E5-3 0.9Rw scheduler choice; no weak baseline selection'})
@@ -571,7 +571,7 @@ class CPO:
                     if deferred_restore:
                         self.restore()
                         frame=self.state();chosen=load(self.out/'static-selection.json')['fingerprint']
-                        if fingerprint(frame['snapshot'],self.uids)!=chosen or frame['snapshot'].get('inProgressTarget'):raise RuntimeError('Selected static configuration was not retained at actual E5-4 producer release')
+                        if fingerprint(frame['snapshot'],self.uids)!=chosen or frame['snapshot'].get('reservations'):raise RuntimeError('Selected static configuration was not retained at actual E5-4 producer release')
                         save(folder/'actual-start-configuration.json',frame)
                     # Same barrier file protocol as existing CPO producer; actual UTC start per producer is retained, not claimed identical.
                     for name,pod in pods.items():
@@ -1107,7 +1107,7 @@ def check_recorded(source_sha):
         if receipt.get('sourceSHA')!=source_sha or receipt.get('executable')!=binary['path'] or receipt.get('sha256')!=binary['sha256'] or receipt.get('buildExitCode')!=0:raise ValueError('Actual same-final-SHA existing power binary/receipt required; no build fallback')
         phase_dir=Path(cfg['phaseDirectory']);phase=load(phase_dir/'phase.json');before=load(cfg['beforeBinding']);post=load(phase_dir/'post-state.json')
         need(phase,['startUTC','endUTC','drainedUTC','offeredRequests','sourceSha'],'Actual terminal BEFORE phase')
-        if phase.get('error') or phase['sourceSha']!=before['beforeSha'] or not positive(phase['offeredRequests']) or post['snapshot'].get('outstanding') or post['snapshot'].get('inProgressTarget') or any(a.get('status') in ('running','cancel') for a in post.get('actions',[])):raise ValueError('Actual completed nonempty BEFORE input and recorded terminal drain required; no made-up interval')
+        if phase.get('error') or phase['sourceSha']!=before['beforeSha'] or not positive(phase['offeredRequests']) or post['snapshot'].get('outstanding') or post['snapshot'].get('reservations') or any(a.get('status') in ('running','cancel') for a in post.get('actions',[])):raise ValueError('Actual completed nonempty BEFORE input and recorded terminal drain required; no made-up interval')
         for name in ('e5.py','e5-wire.py','e5-producer.py'):ast.parse((HERE/name).read_text(),filename=name)
         receipt_copy=out/('power-receipt.consumer-retry.json' if reuse else 'power-receipt.json');receipt_copy.write_bytes(receipt_bytes)
         result['inputs']={'beforePhase':ref(phase_dir/'phase.json'),'beforePostState':ref(phase_dir/'post-state.json'),'beforeBinding':ref(cfg['beforeBinding']),'powerReceipt':ref(receipt_copy),'powerExecutable':binary}

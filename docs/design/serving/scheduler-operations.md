@@ -31,13 +31,13 @@ controller는 같은 목표에서 실제 snapshot과 native 상태 모두 Ready�
 현재 Workload 검증, 원자적 runtime 분배를 거친다. 기존에 수락한 요청은
 원래 실행 계약과 drain 보호를 유지한다. 준비된 일부 용량만으로 전체 부하의
 SLO를 보장한다는 뜻은 아니며, 요청별 측정 지연·수명 admission은 그대로다.
-전환 중 목표를 새로 탐색하지 않고 최종 handoff 및 제거 조건도 바꾸지 않는다.
+예약 owner의 최종 목표와 handoff·제거 조건은 유지하며 예약 밖에서는 새 목표를 계속 탐색한다.
 
 중간 동작의 ID는 `<목표 ID>-ready-<부분집합 hash>`이고 `Action.from`은
 `ready-subset`이다. 기존 action/operation 관측 기록에 시작과 완료,
 `operation.target`의 동결된 분배, `before.routing`과 `actual.routing`을 남긴다.
 후속 부분집합이 이전 분배를 대체하므로 중간 route는 최종 목표 DAG의
-완료 조건이나 `TransitionInProgress` 목표 자체가 아니다. 캠페인은 이
+완료 조건이나 전역 판단 대기 근거가 아니다. 캠페인은 이
 scheduler 관측 원본을 Run 기록에 함께 보존한다.
 
 
@@ -121,15 +121,16 @@ desired/native DecisionID만 다르면 probe는 오류 대신 `PolicyAckPending`
 대기한다. 이미 실행 중인 동작의 실제 상태는 바꾸지 않으며 정상 다른 Node의
 독립 prepare·전력 동작은 계속 가능하다. 기존 전체 자원 검증의 전역 Pending은 유지한다.
 
-**자원 장부 이관 후 표시(SCH-50~52, AC-37~39; 아직 구현 결과 아님):**
+**자원 장부와 예약 표시(SCH-50~52, AC-37~39):**
 같은 Pod UID 항목에 물리 ID/slot·할당·owner와 최근 성공 관측 시각·최근 실패 사유를
 함께 표시하고, “실물 점유”, “현재 관측 불명”, “정책 반영 대기”, “작업 예약/결과 확인 대기”를
 서로 대용하지 않는다. 준비/종료 미확인 실물은 Ready가 아니어도 소유 POOL에 남는다.
 예약 owner와 Node·Workload·실물 범위, 고정 이유를 기존 action/operation 관측에 연결한다.
 새 요청 가능 여부와 실제 정책 완료는 계속 별도로 확인하며, 관측 불명·timeout으로 실물이나
-예약을 비우지 않는다. 위의 전역 `TransitionInProgress`와 “전환 중 새 탐색 없음”은 이관 전
-동작이고, 이관 후에는 예약 밖 판단이 계속된다. 기존 중간 Ready 부분집합 분배는 같은
-전환 예약 안의 실행 동작으로 남는다. 상세 수명·해제·검사 계약은
+예약을 비우지 않는다. timeout/취소는 실행 종료일 뿐이며, 이후 실제 효과 확인 또는 reset의
+정리 완료(Pod 부재·전력 비대기 재관측) 후에만 예약을 반환한다. 전역 목표 장벽은 없고
+예약 밖 판단은 계속된다. 중간 Ready 부분집합 분배는 같은 owner 예약 안에서 실행한다.
+상세 수명·해제·검사 계약은
 [자원 장부 설계](scheduler-implementation.md#54-자원-장부--sch-5052-ac-3739)를 따른다.
 
 

@@ -21,7 +21,6 @@ import (
 // Decision statuses and reasons of the capacity planner (analytic-planner §3, §4).
 const (
 	schedulerStatusKeep               = "Keep"
-	schedulerTransitionInProgress     = "TransitionInProgress"
 	schedulerRouteWeightExceeds       = "RouteWeightExceedsCapacity"
 	schedulerNoPlanMeetsSLO           = "NoPlanMeetsSLO"
 	schedulerPlanMissingOperationCost = "MissingOperationCost"
@@ -132,6 +131,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	settings.MinimumDemand = maps.Clone(settings.MinimumDemand)
 	snapshot = schedulerCanonical(snapshot)
 	decision := SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
+	fixSchedulerWorkloads(&decision, snapshot, capacity)
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
 	for uid, routing := range snapshot.Routing {
 		keep.Routing[uid] = routing
@@ -142,22 +142,9 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	}
 	// Lowering available Nodes is a fixed rule every plan, keep included, shares.
 	keep.Nodes = schedulerCommonNodes(settings, snapshot)
-	// Run status lives in snapshot.Actions; the goal keeps its planned copies,
-	// so a goal action is finished only when its run reports it complete.
-	transition := snapshot.InProgressTarget != nil && slices.ContainsFunc(snapshot.InProgressTarget.Actions, func(a Action) bool {
-		return !a.Fixed && a.Status != schedulerActionCancel && a.Status != schedulerActionComplete && !slices.ContainsFunc(snapshot.Actions, func(run Action) bool {
-			return run.ID == a.ID && run.Status == schedulerActionComplete
-		})
-	})
-	var goal SchedulerCandidate
-	if transition {
-		goal = schedulerCurrentTarget(snapshot, *snapshot.InProgressTarget)
-		keep.Actions = schedulerPlan(snapshot, goal)
-	} else {
-		p := schedulerPlanState{snap: snapshot, target: &keep, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
-		p.changeNodes(keep)
-		keep.Actions = p.actions
-	}
+	p := schedulerPlanState{snap: snapshot, target: &keep, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
+	p.changeNodes(keep)
+	keep.Actions = p.actions
 	keep.Status = schedulerStatusPending
 	decision.Keep = keep
 	reasons := append(slices.Clone(snapshot.Reasons), schedulerValidateSnapshot(settings, snapshot)...)
@@ -166,32 +153,13 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		decision.Keep.Reasons, decision.Reasons = reasons, reasons
 		return decision, ctx.Err()
 	}
-	if transition {
-		// A plan assumes every chain starts now; the running transition ends first.
-		target := keep
-		target.ID, target.Nodes, target.Instances, target.Routing = goal.ID, goal.Nodes, goal.Instances, goal.Routing
-		decision.Target, decision.Status, decision.Reasons = &target, schedulerStatusKeep, []string{schedulerTransitionInProgress}
-		for _, node := range snapshot.Nodes {
-			if !slices.Contains(node.Reasons, NodeInstanceUnavailable) {
-				continue
-			}
-			needed := slices.ContainsFunc(goal.Instances, func(i SchedulerInstance) bool { return i.Node == node.Node }) ||
-				slices.ContainsFunc(goal.Nodes, func(n SchedulerNode) bool { return n.Node == node.Node && n.PowerMode != node.PowerMode })
-			if needed {
-				reason := fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, node.Node.Name, node.Node.UID)
-				target.Status = schedulerStatusPending
-				target.Reasons = appendUnique(target.Reasons, reason)
-				decision.Reasons = appendUnique(decision.Reasons, reason)
-			}
-		}
-		return decision, ctx.Err()
-	}
 	planner := newCapacityPlanner(ctx, settings, snapshot, keep, capacity, decision)
 	if len(planner.ws) == 0 {
 		zero := 0.0
 		decision.Keep.Status, decision.Keep.ExpectedJoules = schedulerStatusFeasible, &zero
 		target := decision.Keep
 		decision.Target, decision.Status = &target, schedulerStatusKeep
+		markFixedEstimates(&decision)
 		return decision, ctx.Err()
 	}
 	// λ needs one control interval of complete observation (after a restart),
@@ -202,10 +170,6 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		return decision, ctx.Err()
 	}
 	planner.partial = covered < settings.ObservationWindow
-	if pending := planner.pendingWorkloads(); len(pending) != 0 {
-		decision.Status, decision.Reasons = CapacityPending, pending
-		return decision, ctx.Err()
-	}
 	if err := planner.build(); err != nil {
 		return SchedulerDecision{}, err
 	}
@@ -213,7 +177,9 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err != nil {
 		return SchedulerDecision{}, err
 	}
-	return planner.decide(decision, planner.minimumGain(planner.payback(best))), ctx.Err()
+	decision = planner.decide(decision, planner.minimumGain(planner.payback(best)))
+	markFixedEstimates(&decision)
+	return decision, ctx.Err()
 }
 
 // schedulerCanonical orders the snapshot lists the planner iterates, so the
@@ -461,21 +427,6 @@ func (p *capacityPlanner) idle(i SchedulerInstance) bool {
 	return !p.partial && i.UnroutedSince != nil && p.snapshot.At.Sub(*i.UnroutedSince) >= p.settings.ObservationWindow && !p.held(i)
 }
 
-// pendingWorkloads names each controlled Workload with no κ in any row.
-func (p *capacityPlanner) pendingWorkloads() []string {
-	built := map[string]bool{}
-	for _, row := range p.rows {
-		built[row.Input.WorkloadUID] = built[row.Input.WorkloadUID] || row.Kappa != nil
-	}
-	pending := []string{}
-	for _, w := range p.ws {
-		if !built[w.d.UID] {
-			pending = append(pending, CapacityPending+":"+w.d.UID)
-		}
-	}
-	return pending
-}
-
 // kappa looks up the row of option variant o for Workload w.
 func (p *capacityPlanner) kappa(o SchedulerOption, w int) (float64, string, string) {
 	key := NewCapacityInput(p.settings, p.snapshot.DispatchOccupancy, o, p.ws[w].d).Key()
@@ -578,6 +529,8 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	plans := []*capacityPlan{keep}
 	reason := ""
 	switch {
+	case schedulerReservedNode(p.snapshot, node.Node):
+		reason = "ReservedNode"
 	case !node.Ready:
 		reason = "NodeUnavailable"
 	case node.Measurement:

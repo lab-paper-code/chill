@@ -55,7 +55,7 @@ func SchedulerLowestMode(baselines []NodeBaseline, node NodeReference) string {
 // schedulerAvailable reports a Ready Node outside the measurement POOL and the
 // excluded Nodes without a CHILL serving instance whose power mode can change.
 func schedulerAvailable(snapshot SchedulerSnapshot, n SchedulerNode) bool {
-	return n.Ready && !n.Measurement && !slices.Contains(n.Reasons, NodeExcluded) && !slices.Contains(n.Reasons, NodePowerModeUnavailable) &&
+	return n.Ready && !schedulerReservedNode(snapshot, n.Node) && !n.Measurement && !slices.Contains(n.Reasons, NodeExcluded) && !slices.Contains(n.Reasons, NodePowerModeUnavailable) &&
 		!slices.Contains(n.Reasons, NodeInstanceUnavailable) &&
 		!slices.ContainsFunc(snapshot.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node })
 }
@@ -288,39 +288,6 @@ func schedulerProfileMatches(d *Definition, p *Profile) bool {
 	return d != nil && profilePath(d, p) != nil
 }
 
-// Refresh forecast facts without mutating an executing operation's frozen target.
-// Only a known ready slot supplies physical identity; missing proof stays missing.
-func schedulerCurrentTarget(snapshot SchedulerSnapshot, target SchedulerCandidate) SchedulerCandidate {
-	target.Instances = append([]SchedulerInstance(nil), target.Instances...)
-	target.Routing = maps.Clone(target.Routing)
-	for index, wanted := range target.Instances {
-		current := wanted
-		for _, actual := range snapshot.Instances {
-			if !actual.Ready || actual.Stopped || !schedulerSamePhysicalTarget(actual, wanted) {
-				continue
-			}
-			if !schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUID) {
-				continue
-			}
-			current.ID, current.TargetID, current.OwnerWorkloadUID = actual.ID, actual.TargetID, actual.OwnerWorkloadUID
-			current.Ready = true
-			if current.ID != wanted.ID {
-				if uid := wanted.WorkloadUID; uid != "" {
-					weights := maps.Clone(target.Routing[uid])
-					if weight, ok := weights[wanted.ID]; ok {
-						delete(weights, wanted.ID)
-						weights[current.ID] = weight
-						target.Routing[uid] = weights
-					}
-				}
-			}
-			break
-		}
-		target.Instances[index] = current
-	}
-	return target
-}
-
 func schedulerPlan(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
 	p := schedulerPlanState{snap: snap, target: &c, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
 	p.changeNodes(c)
@@ -334,7 +301,6 @@ func schedulerPlan(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
 	if len(p.reasons) == 0 {
 		p.retireOld(c, route)
 	}
-	p.continueActions()
 	p.selectCosts()
 	return p.actions
 }
@@ -443,8 +409,7 @@ func (p *schedulerPlanState) addRunningPrerequisites(action *Action) {
 			continue
 		}
 		sameNode := action.Node.UID != "" && old.Node == action.Node
-		routing := old.Kind == schedulerActionRoute && (action.Kind == schedulerActionRoute || action.Kind == schedulerActionStop)
-		if (sameNode || routing) && !schedulerHas(action.DependsOn, old.ID) {
+		if sameNode && !schedulerHas(action.DependsOn, old.ID) {
 			action.DependsOn = append(action.DependsOn, old.ID)
 		}
 	}
@@ -522,6 +487,9 @@ func schedulerInstanceRouted(routing map[string]map[string]int32, id string) boo
 func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 	// Power affects every runner on the node, never only one UID.
 	for _, n := range c.Nodes {
+		if schedulerReservedNode(p.snap, n.Node) {
+			continue
+		}
 		for _, oldNode := range p.snap.Nodes {
 			if n.Node != oldNode.Node || n.PowerMode == oldNode.PowerMode {
 				continue
@@ -582,6 +550,9 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 
 func (p *schedulerPlanState) prepareTargets(c SchedulerCandidate) {
 	for _, wanted := range c.Instances {
+		if schedulerReservedNode(p.snap, wanted.Node) {
+			continue
+		}
 		if slices.ContainsFunc(p.snap.Instances, func(actual SchedulerInstance) bool {
 			return actual.Node == wanted.Node && !actual.Ready && !actual.Stopped
 		}) {
@@ -706,6 +677,9 @@ func (p *schedulerPlanState) retirePreparationBlocker(actual SchedulerInstance) 
 
 func (p *schedulerPlanState) retireOld(c SchedulerCandidate, route string) {
 	for _, i := range p.snap.Instances {
+		if schedulerReservedNode(p.snap, i.Node) {
+			continue
+		}
 		exists := false
 		for _, target := range c.Instances {
 			if schedulerSamePhysicalTarget(i, target) {
@@ -720,24 +694,55 @@ func (p *schedulerPlanState) retireOld(c SchedulerCandidate, route string) {
 	}
 }
 
-func (p *schedulerPlanState) continueActions() {
-	for _, old := range p.snap.Actions {
-		found := false
-		for _, a := range p.actions {
-			if a.ID == old.ID {
-				found = true
-			}
+// Costs for route/stop/drain are represented by the native queue and observed
+// completion timeline. They are not assigned fictitious wall-energy zero trials.
+
+func schedulerReservedNode(snapshot SchedulerSnapshot, node NodeReference) bool {
+	return slices.ContainsFunc(snapshot.Reservations, func(reservation SchedulerReservation) bool {
+		return slices.Contains(reservation.Nodes, node)
+	})
+}
+
+func schedulerFixedReason(snapshot SchedulerSnapshot, uid string) string {
+	for _, reservation := range snapshot.Reservations {
+		if slices.Contains(reservation.WorkloadUIDs, uid) {
+			return "ReservedScope:" + reservation.Owner
 		}
-		if !found && old.Status != schedulerActionComplete && old.Status != schedulerActionFailed {
-			if old.Cancelable && old.Status == schedulerActionPlanned {
-				old.Status = schedulerActionCancel
-				p.actions = append(p.actions, old)
-			} else {
-				p.actions = append(p.actions, old)
-			}
+	}
+	for _, instance := range snapshot.Instances {
+		if (instance.WorkloadUID == uid || instance.OwnerWorkloadUID == uid) && !instance.Ready && !instance.Stopped {
+			return "UnconfirmedInstance:" + instance.ID
+		}
+	}
+	return ""
+}
+
+func fixSchedulerWorkloads(decision *SchedulerDecision, snapshot SchedulerSnapshot, rows []CapacityRow) {
+	for index, state := range decision.Workloads {
+		if state.State != WorkloadControlled {
+			continue
+		}
+		reason := schedulerFixedReason(snapshot, state.UID)
+		if reason == "" && !slices.ContainsFunc(rows, func(row CapacityRow) bool { return row.Input.WorkloadUID == state.UID && row.Kappa != nil }) {
+			reason = CapacityPending + ":" + state.UID
+		}
+		if reason != "" {
+			decision.Workloads[index].State, decision.Workloads[index].Reason = schedulerWorkloadFixed, reason
+			decision.Reasons = appendUnique(decision.Reasons, reason)
 		}
 	}
 }
 
-// Costs for route/stop/drain are represented by the native queue and observed
-// completion timeline. They are not assigned fictitious wall-energy zero trials.
+const schedulerWorkloadFixed = "Fixed"
+
+func markFixedEstimates(decision *SchedulerDecision) {
+	if !slices.ContainsFunc(decision.Workloads, func(state SchedulerWorkloadState) bool { return state.State == schedulerWorkloadFixed }) {
+		return
+	}
+	decision.Keep.ExpectedJoules = nil
+	decision.Keep.Assumptions = appendUnique(decision.Keep.Assumptions, "FixedScopeUnverified: overall SLO and energy are unknown; only independent changes are compared")
+	if decision.Target != nil {
+		decision.Target.ExpectedJoules = nil
+		decision.Target.Assumptions = appendUnique(decision.Target.Assumptions, "FixedScopeUnverified: overall SLO and energy are unknown; only independent changes are compared")
+	}
+}

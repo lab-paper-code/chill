@@ -151,9 +151,12 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 		for i := range recorded.Options {
 			recorded.Options[i].Instance = refs.instance(recorded.Options[i].Instance)
 		}
-		if s.InProgressTarget != nil {
-			target := refs.candidate(*s.InProgressTarget)
-			recorded.InProgressTarget = &target
+		recorded.Reservations = slices.Clone(s.Reservations)
+		for i, reservation := range s.Reservations {
+			if reservation.Target != nil {
+				target := refs.candidate(*reservation.Target)
+				recorded.Reservations[i].Target = &target
+			}
 		}
 		line.Snapshot = &recorded
 	}

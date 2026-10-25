@@ -131,13 +131,11 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 	c.releaseEmptyScopes(nodes.Items, pods.Items, observedAt)
 	c.mu.Lock()
 	busy := map[string]bool{}
-	loading := false
 	for _, run := range c.runs {
 		if run.reserved {
 			for _, node := range run.scope.Nodes {
 				busy[node.UID] = true
 			}
-			loading = loading || run.action.Kind == occupancyKind
 		}
 	}
 	c.mu.Unlock()
@@ -178,8 +176,11 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(refusedNodeMissing, root.node)))
 			continue
 		}
-		_, occupancy := root.object.(*edge.DispatchOccupancyMeasurement)
-		if claimed[node.Name] || busy[string(node.UID)] || held(node, occupancy, loading, byName[config.LoadGenerator.NodeName], in) {
+		if c.authorize(c.measurementRootOperation(root, node, byName, config)) != nil {
+			claimed[node.Name] = true
+			continue
+		}
+		if claimed[node.Name] || busy[string(node.UID)] || held(node, in) {
 			claimed[node.Name] = true
 			continue
 		}
@@ -202,8 +203,16 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			}
 		}
 		claimed[node.Name] = true
+		if !c.reserveMeasurementRoot(root, node, byName, config) {
+			continue
+		}
 		if err := c.setMeasurementTaint(ctx, node, string(root.object.GetUID())); err != nil {
 			errs = append(errs, err)
+			c.mu.Lock()
+			lease := c.runs[measurementLeaseKind+"/"+string(root.object.GetUID())]
+			lease.action.Status = nativeOperationFailed
+			lease.result.EndedAt, lease.result.Error = time.Now(), err.Error()
+			c.mu.Unlock()
 			continue
 		}
 		if transition != nil {
@@ -215,17 +224,13 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			continue
 		}
 		start()
-		loading = loading || occupancy
 	}
 	return errors.Join(errs...)
 }
 
-// held reports a Node a waiting root must wait for: a measurement or a power
-// change holds it, it is the load Node while an occupancy load runs, or the
-// root is an occupancy while the load Node is measured.
-func held(node *core.Node, occupancy, loading bool, loadNode *core.Node, in admissionInputs) bool {
-	return profilingrun.InMeasurement(node) || powerModePending(node, in.classes, in.config, in.now) ||
-		loading && node == loadNode || occupancy && loadNode != nil && profilingrun.InMeasurement(loadNode)
+// held reports physical taint and power proof; resource conflicts use reservations.
+func held(node *core.Node, in admissionInputs) bool {
+	return profilingrun.InMeasurement(node) || powerModePending(node, in.classes, in.config, in.now)
 }
 
 // admissionInputs is what one Admit cycle read.
@@ -273,7 +278,7 @@ func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []cor
 	for i := range nodes {
 		node := &nodes[i]
 		holder, tainted := profilingrun.MeasurementHolder(node)
-		if !tainted || c.nodeBusy(node) {
+		if !tainted || c.nodeExecuting(node) {
 			continue
 		}
 		root := byUID[holder]
@@ -285,6 +290,11 @@ func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []cor
 				continue
 			}
 			if granted {
+				byName := map[string]*core.Node{}
+				for i := range nodes {
+					byName[nodes[i].Name] = &nodes[i]
+				}
+				c.reserveMeasurementRoot(*root, node, byName, config)
 				continue
 			}
 			if _, transition := root.object.(*edge.PowerModeTransitionCost); !transition && !chillServerRun(root.object) {
@@ -378,7 +388,7 @@ func (c *SchedulerController) setMeasurementTaint(ctx context.Context, node *cor
 // startHandBack registers the hand-back of the Node as its run.
 func (c *SchedulerController) startHandBack(node *core.Node, holder string, root *measurementRoot, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + holder, Kind: handBackKind, Node: ref}
+	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + holder, Kind: handBackKind, Node: ref, Holder: holder}
 	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
 		return c.handBack(ctx, ref, holder, root, root == nil, result)
 	})
@@ -399,6 +409,9 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 		kind = operationRoute
 	}
 	run := &actionRun{action: serving.Action{ID: operation.ID, Kind: kind, Node: operation.Node, From: externalActionSource, Status: nativeOperationRunning}, result: &initial, cancel: cancel, started: started}
+	if operation.Holder != "" {
+		run.owner = operation.Holder
+	}
 	c.mu.Lock()
 	if !c.reserveRun(operation.ID, run, operation) {
 		c.mu.Unlock()
@@ -440,6 +453,9 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 		run.action.Status, run.action.Reason = result.Status, result.Error
 		if err == nil && result.Status == nativeOperationComplete {
 			run.reserved = false
+			if operation.Kind != runnerKind {
+				c.releaseOwnerLocked(run.owner)
+			}
 		}
 		run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
 		c.state.Results = append(c.state.Results, result)
@@ -497,6 +513,9 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 		return errors.New("physical Node identity changed")
 	}
 	if value, tainted := profilingrun.MeasurementHolder(current); !tainted || value != holder {
+		c.mu.Lock()
+		c.releaseOwnerLocked(holder)
+		c.mu.Unlock()
 		return nil
 	}
 	if err = c.lowerMeasuredNode(ctx, current, holder, result); err != nil {
@@ -510,6 +529,9 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 		return err
 	}
 	result.Progress = append(result.Progress, "taint removed")
+	c.mu.Lock()
+	c.releaseOwnerLocked(holder)
+	c.mu.Unlock()
 	return nil
 }
 
@@ -582,4 +604,32 @@ func (o *Operations) clearNode(ctx context.Context, node serving.NodeReference) 
 		}
 	}
 	return nil
+}
+
+func (c *SchedulerController) measurementRootOperation(root measurementRoot, node *core.Node, nodes map[string]*core.Node, config SchedulerControllerConfig) Operation {
+	holder := string(root.object.GetUID())
+	operation := Operation{ID: measurementLeaseKind + "/" + holder, Kind: measurementLeaseKind, Holder: holder, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
+	if occupancy, ok := root.object.(*edge.DispatchOccupancyMeasurement); ok {
+		for _, definition := range c.runtime.SchedulerInputs(time.Now).Workloads {
+			if definition.Name == occupancy.Spec.Workload {
+				operation.WorkloadUID = definition.UID
+			}
+		}
+		if load := nodes[config.LoadGenerator.NodeName]; load != nil {
+			operation.Nodes = append(operation.Nodes, serving.NodeReference{Name: load.Name, UID: string(load.UID)})
+		}
+	}
+	return operation
+}
+
+func (c *SchedulerController) reserveMeasurementRoot(root measurementRoot, node *core.Node, nodes map[string]*core.Node, config SchedulerControllerConfig) bool {
+	operation := c.measurementRootOperation(root, node, nodes, config)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if run := c.runs[operation.ID]; run != nil && run.reserved {
+		return true
+	}
+	now := time.Now()
+	run := &actionRun{owner: operation.Holder, action: serving.Action{ID: operation.ID, Kind: measurementLeaseKind, Node: operation.Node, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, StartedAt: now, Status: nativeOperationRunning}, started: now}
+	return c.reserveRun(operation.ID, run, operation)
 }

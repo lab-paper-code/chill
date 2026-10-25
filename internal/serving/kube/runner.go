@@ -62,7 +62,7 @@ func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransi
 // and hands the Node back in the same run.
 func (c *SchedulerController) startRunner(node *core.Node, transition *edge.PowerModeTransitionCost, spec PrepareSpec, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	operation := Operation{ID: runnerKind + ":" + node.Name + ":" + string(transition.UID), Kind: runnerKind, Node: ref, Prepare: &spec}
+	operation := Operation{ID: runnerKind + ":" + node.Name + ":" + string(transition.UID), Kind: runnerKind, Node: ref, Prepare: &spec, Holder: string(transition.UID)}
 	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
 		err := c.prepareRunner(ctx, transition, ref, spec)
 		if err == nil {

@@ -424,8 +424,10 @@ func compare(base serving.SchedulerSettings, profilesFile, recordsFile, rowsFile
 		for j := range s.Options {
 			s.Options[j].Instance.Profile = profiles[s.Options[j].Instance.ProfileID]
 		}
-		if s.InProgressTarget != nil {
-			hydrate(s.InProgressTarget.Instances)
+		for _, reservation := range s.Reservations {
+			if reservation.Target != nil {
+				hydrate(reservation.Target.Instances)
+			}
 		}
 		settings := base
 		recorded := r.Decision.Settings

@@ -182,23 +182,18 @@ func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(
 	frozen.Actions = []serving.Action{existing.action}
 	existing.scope, existing.reserved, existing.owner = controller.operationScope(existing.result.Operation), true, frozen.ID
 	target.Actions[0].To = "different-route-effect"
-	controller.goal = frozen
+	installTestTransition(controller, frozen)
 	controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true}, SchedulerControllerConfig{})
-	if controller.goal != frozen {
+	if fixtureTarget(controller) != frozen {
 		t.Fatal("Keep erased the unfinished operation target")
 	}
 	controller.launch(target, SchedulerControllerConfig{})
 	if _, launched := controller.runs[target.Actions[0].ID]; launched {
 		t.Fatal("a different global route overwrote the policy path before the existing native ACK")
 	}
-	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, controller.goal, time.Now(), time.Minute)
-	if snapshot.InProgressTarget != frozen || snapshot.InProgressTarget.ID == target.ID {
-		t.Fatalf("actual running route was relabeled as the newly selected goal: %+v", snapshot.InProgressTarget)
-	}
-	controller.goal = nil
-	snapshot, _ = controller.reconcileSnapshot(controller.state.Snapshot, nil, time.Now(), time.Minute)
-	if snapshot.InProgressTarget != frozen {
-		t.Fatal("available frozen operation target was lost when the selected goal was absent")
+	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, time.Now(), time.Minute)
+	if len(snapshot.Reservations) == 0 || snapshot.Reservations[0].Target != frozen {
+		t.Fatalf("running owner lost its frozen target: %+v", snapshot.Reservations)
 	}
 }
 
@@ -279,7 +274,6 @@ func assertFailedGoalRetainsRunningRoute(t *testing.T, from string) {
 	failedGoal.Actions = []serving.Action{failed}
 	frozen.Actions[1].Status = "planned"
 	failedGoal.Actions[0].Status = "planned"
-	controller.goal = &failedGoal
 	controller.runs = map[string]*actionRun{
 		removed.ID: {
 			action: removed, started: now.Add(-3 * time.Minute),
@@ -304,9 +298,10 @@ func assertFailedGoalRetainsRunningRoute(t *testing.T, from string) {
 			},
 		},
 	}
-	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, controller.goal, now, time.Minute)
-	if controller.goal != nil || snapshot.InProgressTarget != frozen {
-		t.Fatalf("failed selected goal erased or relabeled the actual running route: %+v", snapshot.InProgressTarget)
+	installTestTransition(controller, &failedGoal)
+	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, now, time.Minute)
+	if fixtureTarget(controller) != nil || controller.runs[routing.ID].result.Operation.Target != frozen {
+		t.Fatalf("failed owner erased another run's frozen target: %+v", snapshot.Reservations)
 	}
 	if controller.runs[removed.ID] == nil || controller.runs[routing.ID].action.Status != nativeOperationRunning {
 		t.Fatal("terminal cleanup discarded the live route's aged prerequisite or completed its running operation")
@@ -346,12 +341,12 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	run := &actionRun{action: action, result: &OperationResult{Operation: operation, Status: nativeOperationRunning},
 		cancel: func() { canceled = true }, started: time.Now()}
 	controller.runs = map[string]*actionRun{action.ID: run}
-	controller.goal = &goal
+	installTestTransition(controller, &goal)
 	observed := acknowledged.Instances[0]
 	observed.TargetID = slot
 	snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{
 		At: time.Now().UTC(), Instances: []serving.SchedulerInstance{observed},
-	}, &goal, time.Now().UTC(), time.Minute)
+	}, time.Now().UTC(), time.Minute)
 	// The planner continues a running goal as keep with the goal's instances,
 	// each resolved to its captured physical identity.
 	continued := goal
@@ -461,13 +456,16 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, id string) {
 	t.Helper()
 	now := time.Now().UTC()
-	snapshot, lost := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, controller.goal, now, time.Minute)
-	if controller.goal != nil || snapshot.InProgressTarget != nil || controller.runs[id].action.Status != nativeOperationFailed ||
+	snapshot, lost := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute)
+	if fixtureTarget(controller) != nil || controller.runs[id].action.Status != nativeOperationFailed ||
 		len(lost) != 1 || lost[0].Operation.ID != id || lost[0].Status != nativeOperationFailed ||
 		!slices.ContainsFunc(snapshot.Actions, func(a serving.Action) bool { return a.ID == id && a.Status == nativeOperationFailed }) {
-		t.Fatalf("lost prepared effect kept the goal: goal %v lost %+v actions %+v", controller.goal, lost, snapshot.Actions)
+		t.Fatalf("lost prepared effect kept its owner running: target %v lost %+v actions %+v", fixtureTarget(controller), lost, snapshot.Actions)
 	}
-	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, nil, now.Add(2*time.Minute), time.Minute)
+	// Execution failure alone retains ownership. An authoritative empty LIST
+	// after retirement supplies the missing physical-return proof.
+	controller.releaseEmptyScopes(nil, nil, now.Add(time.Minute))
+	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, now.Add(2*time.Minute), time.Minute)
 	if controller.runs[id] != nil {
 		t.Fatal("failed action outlived the observation window")
 	}
@@ -501,10 +499,10 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 		t.Fatalf("timed out prepare: status %q reason %q", run.action.Status, run.action.Reason)
 	}
 	now := time.Now()
-	for _, selected := range []*serving.SchedulerCandidate{&goal, nil} {
-		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, selected, now, time.Minute)
-		if controller.goal != nil || snapshot.InProgressTarget != nil {
-			t.Fatalf("goal kept after prepare timeout: goal %v in progress %v", controller.goal, snapshot.InProgressTarget)
+	for range 2 {
+		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute)
+		if fixtureTarget(controller) != nil {
+			t.Fatalf("owner kept executing after prepare timeout: reservations %v", snapshot.Reservations)
 		}
 	}
 }
@@ -582,7 +580,7 @@ func TestReadySubsetRoutesBeforeIndependentPreparationsAndPowerFinish(t *testing
 		if routing[uid][a.ID] != 500 || routing[uid][b.ID] != 500 || len(routing[uid]) != 2 {
 			t.Fatalf("Ready destination did not receive the normalized intermediate route: %v", routing)
 		}
-		if controller.goal.ID != target.ID || len(controller.goal.Instances) != 5 || controller.activeTargetLocked(operationRoute) != nil {
+		if fixtureTarget(controller).ID != target.ID || len(fixtureTarget(controller).Instances) != 5 || slices.ContainsFunc(controller.actionsLocked(time.Now()), func(a serving.Action) bool { return a.Kind == operationRoute && a.Status == nativeOperationRunning }) {
 			t.Fatal("intermediate route replaced the frozen full goal")
 		}
 		if _, launched := controller.runs[finalRouteActionID]; launched || controller.runs[power.ID].action.Status != nativeOperationRunning {
@@ -802,7 +800,7 @@ func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
 		}}
 	controller.runtime.EnableSchedulerRouting()
 	prepared.Store(true)
-	controller.goal = &goal
+	installTestTransition(controller, &goal)
 	for index, action := range goal.Actions[:2] {
 		result := &OperationResult{Operation: Operation{ID: action.ID, Kind: action.Kind, Target: &goal}, Status: nativeOperationRunning}
 		action.Status = nativeOperationRunning
@@ -824,7 +822,7 @@ func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
 	}
 	controller.wg.Wait()
 	routing, _ := controller.runtime.SchedulerRouting()
-	if decision.Target == nil || decision.Target.ID != goal.ID || !slices.Contains(decision.Reasons, "TransitionInProgress") ||
+	if decision.Target == nil || fixtureTarget(controller) != &goal ||
 		routing[uid][a.ID] != 500 || routing[uid][b.ID] != 500 {
 		t.Fatalf("first tick after preparation did not route Ready capacity: status=%s reasons=%v routing=%v", decision.Status, decision.Reasons, routing)
 	}
@@ -839,7 +837,7 @@ func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller.wg.Wait()
-	if decision.Target == nil || decision.Target.ID != goal.ID || len(recorded) != 2 {
+	if decision.Target == nil || fixtureTarget(controller) != &goal || len(recorded) != 2 {
 		t.Fatal("the completed intermediate route displaced the full goal or was needlessly reapplied")
 	}
 }

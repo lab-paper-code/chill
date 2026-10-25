@@ -9,6 +9,9 @@ import (
 	core "k8s.io/api/core/v1"
 )
 
+const transitionRunKind = "transition"
+const measurementLeaseKind = "measurement-lease"
+
 // resourceScope is acquired atomically before an operation can have effects.
 // A completed execution can still own its scope until observation proves return.
 type resourceScope struct {
@@ -148,6 +151,73 @@ func (c *SchedulerController) releaseOwnerLocked(owner string) {
 	for _, run := range c.runs {
 		if run.owner == owner {
 			run.reserved = false
+			if run.action.Kind == measurementLeaseKind {
+				run.action.Status = nativeOperationComplete
+				run.result.Status, run.result.EndedAt = nativeOperationComplete, time.Now()
+			}
 		}
 	}
+}
+
+func (c *SchedulerController) reservationsLocked() []serving.SchedulerReservation {
+	byOwner := map[string]*serving.SchedulerReservation{}
+	for _, run := range c.runs {
+		if !run.reserved {
+			continue
+		}
+		reservation := byOwner[run.owner]
+		if reservation == nil {
+			reservation = &serving.SchedulerReservation{Owner: run.owner}
+			byOwner[run.owner] = reservation
+		}
+		reservation.Nodes = append(reservation.Nodes, run.scope.Nodes...)
+		reservation.WorkloadUIDs = append(reservation.WorkloadUIDs, run.scope.Workloads...)
+		reservation.PodUIDs = append(reservation.PodUIDs, run.scope.Pods...)
+		reservation.Instances = append(reservation.Instances, run.scope.Instances...)
+		if run.result != nil && (reservation.Target == nil || run.action.Kind == transitionRunKind) {
+			reservation.Target = run.result.Operation.Target
+		}
+		if run.action.Reason != "" {
+			reservation.Reason = run.action.Reason
+		}
+	}
+	reservations := make([]serving.SchedulerReservation, 0, len(byOwner))
+	for _, reservation := range byOwner {
+		reservations = append(reservations, *reservation)
+	}
+	slices.SortFunc(reservations, func(a, b serving.SchedulerReservation) int {
+		if a.Owner < b.Owner {
+			return -1
+		}
+		if a.Owner > b.Owner {
+			return 1
+		}
+		return 0
+	})
+	return reservations
+}
+
+func (c *SchedulerController) runReferencedLocked(id string) bool {
+	for _, run := range c.runs {
+		if (!run.reserved && run.action.Status != nativeOperationRunning) || run.result == nil || run.result.Operation.Target == nil {
+			continue
+		}
+		for _, action := range run.result.Operation.Target.Actions {
+			if action.ID == id || slices.Contains(action.DependsOn, id) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c *SchedulerController) nodeExecuting(node *core.Node) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, run := range c.runs {
+		if run.action.Kind != measurementLeaseKind && run.action.Status == nativeOperationRunning && slices.Contains(run.scope.Nodes, serving.NodeReference{Name: node.Name, UID: string(node.UID)}) {
+			return true
+		}
+	}
+	return false
 }

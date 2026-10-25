@@ -201,11 +201,6 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 			if err := c.persistManualConfiguration(ctx, &result.Operation); err != nil {
 				return err
 			}
-			c.mu.Lock()
-			if c.goal != nil && slices.ContainsFunc(c.goal.Instances, func(i serving.SchedulerInstance) bool { return slices.Contains(operation.WorkloadUIDs, i.WorkloadUID) }) {
-				c.goal = nil
-			}
-			c.mu.Unlock()
 			return nil
 		}},
 		{"unroute", func() error { return c.resetRouting(ctx, operation, operationUnroute, result) }},

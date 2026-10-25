@@ -156,7 +156,7 @@ Node 하나의 `InstanceUnavailable`을 새 전역 중지 사유로 확대하지
 - 물리 존재/현재 readiness와 **새 정책 적용 완료**는 별개다. `operations.go:1109-1137`의
   native `DecisionID`·정책 ACK 확인, `scheduler.go:1186-1214`의 실제 target/policy 확인은
   유지한다. pending을 route 완료 증거로 쓰거나 `Actual.Native`에 목표 ACK를 만들어 넣지 않는다.
-  진행 중 route는 frozen target·직렬화·`TransitionInProgress`를 유지한다.
+  진행 중 route는 owner의 예약 안에서 frozen target과 native ACK 대기를 유지하며 예약 밖 판단을 막지 않는다.
 
 **A — 실제 `InstanceUnavailable` Node의 부재 추론을 금지한다(SCH-49, AC-34~35).**
 
@@ -280,11 +280,11 @@ handoff와 대상 변경은 원래 route 완료를 기다리고 accepted-context
 break-before-make에서 routing/bindings가 잠시 비어도 기존 실행의 frozen
 `Operation.Target`이 가진 UID cohort·replica 수·UID별 weight를 전환 의도의 근거로
 사용한다. actual 점유·ownership·Ready는 계속 현재 snapshot에서만 가져온다.
-실행 중인 목표에 Fixed가 아닌 동작이 남아 있으면 판단은 그 목표를 keep으로 이어 가고 상태는 `Keep`, 사유는
-`TransitionInProgress`이며 새 계획을 만들지 않는다. 가용 노드 최저 모드 낮춤만 남은 목표는 계획을 막지 않는다.
-prepare는 cost의 측정 trial 최대 시간에 관측 창 하나를 더한 timeout으로 실행된다. timeout을 넘긴 prepare는
-`failed`와 사유 `ActionDeadlineExceeded`로 끝나고, 실패한 동작처럼 controller가 그 목표를 버린다. 다음 판단은
-실제 상태에서 다시 계획한다. 다른 동작은 끝날 때까지 돈다.
+실행 중 owner가 예약한 Node·Workload·Pod·physical 범위만 고정한다. 전역 계획기는
+예약 밖의 현재 부하·상태로 새 후보를 평가하고 독립 DAG를 실행한다.
+prepare는 cost의 측정 trial 최대 시간에 관측 창 하나를 더한 timeout으로 실행된다.
+timeout은 `failed`/`ActionDeadlineExceeded`로 실행을 끝내지만 원격 효과가 미확인이면
+예약은 유지한다. 이후 효과 확인 또는 reset의 실제 정리 proof 뒤에만 반환한다.
 관측된 `TargetID`가 같은 실제 physical slot은 중복 prepare하지 않는다. 새 완료 proof와
 소비 수치는 현재 capture를 사용하고, 원래 실행의 frozen target을 덮어쓰거나 사라진
 proof를 복원하지 않는다.
@@ -296,25 +296,24 @@ proof를 복원하지 않는다.
 모두 Ready인 목적지만 고른다. 목표 가중치 비율을 워크로드별 합계 1000으로
 재정규화하며, 아직 목적지가 없는 워크로드는 현재 Ready 분배를 유지한다.
 Stopped이거나 이번 tick에 stop할 수 있는 인스턴스에는 새 가중치를 주지 않는다.
-이 route는 다른 prepare, power, drain의 완료와 무관하게 기존 global route
-직렬화·native policy ACK·원자적 `Runtime.ApplySchedulerTarget` 경로로 실행한다.
+이 route는 다른 prepare, power, drain의 완료와 무관하게 같은 owner의 예약 안에서
+native policy ACK와 UID 한정 `Runtime.ApplySchedulerWorkloadsTarget` 경로로 실행한다.
 
 중간 분배는 `<goal>-ready-<subset hash>` ID와 `Action.from=ready-subset`으로
 구분하며, 기존 OnAction 기록의 시작/완료와 frozen `operation.target`,
 `before.routing`/`actual.routing`을 보존한다. 부분집합은 최종 목표를 덮거나
 최종 DAG 완료 조건에 들어가지 않는다. 후속 부분집합으로 이전 분배가
-대체되어도 완료 효과 소실로 목표를 실패시키지 않으며, 전체 목표는 계속
-`TransitionInProgress`로 유지한다. 기존 요청의 실행 계약·drain과 요청별
-지연/SLO admission은 유지한다. 실제 반영은 Ready를 캡처한 제어 tick이며
+대체되어도 완료 효과 소실로 목표를 실패시키지 않는다. 최종 DAG와 예약의 수명은
+owner별로 유지하며 다른 Workload의 새 판단을 막지 않는다.
+기존 요청의 실행 계약·drain과 요청별 지연/SLO admission은 유지한다. 실제 반영은 Ready를 캡처한 제어 tick이며
 이 경로가 전체 부하의 중간 용량 충족을 보장하지는 않는다.
 
 #### 분배 적용 증거
 
-global route는 같은 policy ConfigMap/ACK 경로를 쓰므로 기존 running run을 통해
-직렬화한다. source release는 이전 global route 완료를 기다리되 독립 Node의 합법적
-준비를 전역 lock으로 막지 않는다. 진행 중 route는 자신의 frozen target으로 표시하며, native ACK를 관측할 때까지
-판단은 `TransitionInProgress`로 그 목표를 이어 간다. running/native noncancelable 작업은 끝날 때까지 둔다.
-자율 제어 대상이 아닌 Workload의 `staticRouting`도 기존 running route가 있으면 덮어쓰지 않고
+route와 source release는 공통 Node·Workload·실물 예약으로 충돌을 검사한다.
+같은 owner의 의존성은 native ACK까지 유지하지만 독립 범위는 동시에 진행한다.
+진행 중 route는 자신의 frozen target을 표시하고 running/native noncancelable 작업은 끝날 때까지 둔다.
+자율 제어 대상이 아닌 Workload의 `staticRouting`도 같은 공통 예약 검사를 사용하며
 같은 관측 기록에 sourceConfigRV·대기 이유·actual readback을 남긴다.
 route의 ConfigMap·annotation 저장은 desired 진행으로, `Actual.Native`에는 정확한
 native ACK만 남긴다. 뒤 인스턴스의 적용이 실패하면 이미 받은 ACK와 실제 routing을
@@ -366,8 +365,8 @@ keep 밖의 적격 계획이 있는 노드다.
 
 **2026-10-26 설계 및 구현 경계.** Pod UID 장부와 runtime/snapshot 투영은 구현되었다.
 ① 실물 장부 → ② 영향 범위 예약 → ③ 예약 밖 재계획 순서로 한 묶음을 적용한다.
-앞 절의 `InProgressTarget`/`TransitionInProgress`, Node 단위 guard와 global route
-대기는 **이관 전 동작**이다. 이 절이 이관 후 계약이며, ③만 먼저 적용하지 않는다.
+전역 `InProgressTarget`/`TransitionInProgress`, Node 단위 guard와 global route
+대기는 제거되었다. 현재 구현과 API는 아래 장부·owner별 예약 계약을 사용한다.
 전역 계획기는 하나를 유지한다. 새 서비스·저장소·CRD·범용 workflow 엔진은 없다.
 ④ 두 박자 제어(안정화·예비 용량·고정 H)는 승인 질문만 남기며 여기서 구현하지 않는다.
 ⑤ 정책 ConfigMap 단일화와 finalizer로 뒤처리 책임을 옮기는 작업은 E5 뒤다.
@@ -568,6 +567,11 @@ native ACK·actual routing 기록과 stopped 대상 제외는 보존한다.
 5. **예약 밖 계획 활성화:** capacity 진입/고정 후보/κ pending 격리와 목표·DAG·launch를
    함께 바꿔 global `InProgressTarget`/`c.goal` 장벽을 삭제한다. 해당 API/기록/문서·테스트
    소비자도 동시에 이관한다. AC-39 및 앞 단계 전체 회귀 뒤 시연 3회차 진입 조건을 판정한다.
+
+5번 cutover는 owner별 부모 DAG·UID 한정 적용, 예약/관측 불명/κ 대기 Workload 고정,
+API·compact·기록·dashboard·자동화 소비자의 `reservations` 전환을 포함한다.
+AC-38은 timeout/취소 실행 종료 후 예약 보존 및 Pod 부재·전력 비대기 재관측 후 반환을 검사한다.
+AC-39는 slow-power/unconfirmed-source/pending-kappa 동안 독립 Workload의 Tick→prepare→route→native 요청 완료를 검사한다.
 
 #### 회귀 설계와 검사 항목 — AC-37~39
 

@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -71,9 +72,6 @@ func schedulerKeepForTest(t testing.TB, settings SchedulerSettings, snapshot Sch
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: schedulerInstanceRouting(context.Background(), snapshot.Workloads, snapshot.Instances)}
 	for uid, routing := range snapshot.Routing {
 		keep.Routing[uid] = routing
-	}
-	if snapshot.InProgressTarget != nil {
-		keep.Actions = schedulerPlan(snapshot, schedulerCurrentTarget(snapshot, *snapshot.InProgressTarget))
 	}
 	keep, err := schedulerReplayEstimate(context.Background(), settings, snapshot, keep, schedulerTestSeed, nil)
 	if err != nil {
@@ -618,21 +616,17 @@ func TestSchedulerTerminalPrepareDoesNotReuseAbsentEffect(t *testing.T) {
 			t.Fatalf("failed prepare must not poison retry: %+v", retry)
 		}
 	}
-	old.Status = phaseRunning
-	old.Elapsed = time.Millisecond
+	old.Status, old.Elapsed = phaseRunning, time.Millisecond
 	snap.Actions = []Action{old}
-	continued := schedulerPlan(snap, c)
-	found := false
-	for _, a := range continued {
-		if a.Kind == schedulerActionPrepare {
-			found = true
-			if a.ID != old.ID || a.Elapsed != old.Elapsed || a.Status != phaseRunning {
-				t.Fatalf("actual active action must retain identity/progress: %+v", continued)
-			}
-		}
+	c.Routing = map[string]map[string]int32{"w1": {target.ID: 1}}
+	c.Actions = initial
+	reserveTargetForTest(&snap, &c)
+	independent := schedulerPlan(snap, c)
+	if slices.ContainsFunc(independent, func(a Action) bool { return a.Kind == schedulerActionPrepare }) {
+		t.Fatalf("new plan duplicated the owner's preparation: %+v", independent)
 	}
-	if !found {
-		t.Fatal("missing continuation")
+	if snap.Actions[0].ID != old.ID || snap.Actions[0].Elapsed != old.Elapsed || snap.Actions[0].Status != phaseRunning {
+		t.Fatal("independent planning changed the actual running receipt")
 	}
 }
 
@@ -729,4 +723,23 @@ func TestSchedulerCanceledComputationReturnsContextError(t *testing.T) {
 	if decision, err := EvaluateScheduler(ctx, settings, snapshot, nil); !errors.Is(err, context.Canceled) || decision.Target != nil {
 		t.Fatalf("canceled evaluation returned decision=%+v err=%v", decision, err)
 	}
+}
+
+func reserveTargetForTest(snapshot *SchedulerSnapshot, target *SchedulerCandidate) {
+	reservation := SchedulerReservation{Owner: target.ID, Target: target}
+	for uid := range target.Routing {
+		reservation.WorkloadUIDs = append(reservation.WorkloadUIDs, uid)
+	}
+	for _, instance := range append(slices.Clone(snapshot.Instances), target.Instances...) {
+		if slices.Contains(reservation.WorkloadUIDs, instance.WorkloadUID) || slices.Contains(reservation.WorkloadUIDs, instance.OwnerWorkloadUID) {
+			reservation.Nodes = append(reservation.Nodes, instance.Node)
+			reservation.Instances = append(reservation.Instances, instance.ID)
+		}
+	}
+	for _, action := range target.Actions {
+		if action.Node.UID != "" {
+			reservation.Nodes = append(reservation.Nodes, action.Node)
+		}
+	}
+	snapshot.Reservations = append(snapshot.Reservations, reservation)
 }

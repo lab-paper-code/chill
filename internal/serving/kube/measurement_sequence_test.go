@@ -207,7 +207,7 @@ func TestOrderPowerChangeThenAdmission(t *testing.T) {
 	if err := h.controller.operations.ChangePower(context.Background(), testNode, "", lowMode, time.Minute); !errors.Is(err, ErrNodeInMeasurement) {
 		t.Fatalf("serving power change on a measured Node: %v", err)
 	}
-	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != testNodeBusy {
+	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != testOperationConflict {
 		t.Fatalf("manual prepare on a measured Node: %v", err)
 	}
 }

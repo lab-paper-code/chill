@@ -407,67 +407,36 @@ func TestLegalOverlappingResourceDAGStillReportsMeasuredOutageOverload(t *testin
 	}
 }
 
-// While the goal's non-Fixed actions run the planner continues it; a ready
-// prepared slot becomes its physical identity without a second preparation.
-func TestResourceTransitionResumesAcrossActualZeroBindingInterval(t *testing.T) {
+// The owner retains its intent across an actual empty interval, but the planner
+// never promotes that preparing capacity to current κ or duplicates its DAG.
+func TestResourceReservationSurvivesActualZeroBindingInterval(t *testing.T) {
 	settings, snapshot, target := overlappingResourceFixture(t)
-	snapshot.InProgressTarget = &target
+	reserveTargetForTest(&snapshot, &target)
 	snapshot.Instances = nil
 	snapshot.Routing = map[string]map[string]int32{"w1": {}}
-	for _, action := range target.Actions {
-		if action.Kind == schedulerActionStop || action.Kind == schedulerActionDrain || action.Kind == schedulerActionRemove {
-			action.Status = schedulerActionComplete
-			snapshot.Actions = append(snapshot.Actions, action)
-		}
+	decision := capacityDecideForTest(t, settings, snapshot, capacityRowsForTest(settings, snapshot, nil))
+	if decision.Target == nil || !decision.Target.Keep || len(decision.Target.Instances) != 0 ||
+		len(snapshot.Reservations[0].Target.Instances) != 1 {
+		t.Fatalf("empty physical interval changed the reserved intent: %+v", decision)
 	}
-	rows := capacityRowsForTest(settings, snapshot, nil)
-	decision := capacityDecideForTest(t, settings, snapshot, rows)
-	if decision.Target == nil || !decision.Target.Keep || len(decision.Keep.Instances) != 0 || !slices.Contains(decision.Reasons, schedulerTransitionInProgress) {
-		t.Fatalf("actual empty interval lost its existing measured continuation: %+v", decision)
+	if slices.ContainsFunc(decision.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionPrepare }) {
+		t.Fatal("planner duplicated the reserved preparation")
 	}
-	if len(decision.Target.Instances) != 1 || decision.Target.Instances[0].WorkloadUID != "w1" {
-		t.Fatalf("zero bindings changed the original Workload: %+v", decision.Target)
-	}
-	requireTransitionAction(t, decision.Target.Actions, schedulerActionPrepare)
-	prepared := target.Instances[0]
-	prepared.TargetID, prepared.ID, prepared.WorkloadUID, prepared.Ready = prepared.ID, preparedPhysicalID, "", true
-	snapshot.Instances = []SchedulerInstance{prepared}
-	prepare := requireTransitionAction(t, target.Actions, schedulerActionPrepare)
-	prepare.Status = schedulerActionComplete
-	snapshot.Actions = append(snapshot.Actions, prepare)
-	decision = capacityDecideForTest(t, settings, snapshot, rows)
-	if decision.Target == nil || len(decision.Target.Instances) != 1 || decision.Target.Instances[0].ID != prepared.ID {
-		t.Fatalf("ready physical slot did not continue the existing target: %+v", decision)
-	}
-	if slices.ContainsFunc(decision.Target.Actions, func(action Action) bool {
-		return action.Kind == schedulerActionPrepare || action.Kind == schedulerActionRemove
-	}) {
-		t.Fatalf("continuation duplicated preparation or removed its own ready actor: %+v", decision.Target.Actions)
-	}
-	if len(decision.Target.Routing["w1"]) != 1 || decision.Target.Routing["w1"][prepared.ID] != 3 || len(decision.Keep.Routing["w1"]) != 0 {
-		t.Fatalf("actual readback or declared weight changed: keep=%v target=%v", decision.Keep.Routing, decision.Target.Routing)
-	}
-	if target.Instances[0].ID == prepared.ID || target.Routing["w1"][prepared.ID] != 0 {
-		t.Fatal("continuation mutated the executing operation's frozen target")
+	if target.Instances[0].WorkloadUID != "w1" {
+		t.Fatal("owner identity changed")
 	}
 }
 
-func TestRunningGlobalRouteIsNotReplayedAsInstantAcknowledgementOfNewGoal(t *testing.T) {
-	settings, snapshot, target := overlappingResourceFixture(t)
-	current := SchedulerCandidate{ID: "in-progress-current", Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
-	running := Action{ID: "in-progress-global-route", Kind: schedulerActionRoute, Status: phaseRunning, To: schedulerConfigKey(current), Elapsed: time.Second}
+func TestRunningRouteFixesOnlyItsOwnerScope(t *testing.T) {
+	settings, snapshot, _ := overlappingResourceFixture(t)
+	current := SchedulerCandidate{ID: "running-owner", Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
+	running := Action{ID: "running-route", Kind: schedulerActionRoute, Status: phaseRunning, To: schedulerConfigKey(current), Elapsed: time.Second}
 	current.Actions = []Action{running}
-	snapshot.InProgressTarget, snapshot.Actions = &current, []Action{running}
-	target.Actions = schedulerPlan(snapshot, target)
-	stop := requireTransitionAction(t, target.Actions, schedulerActionStop)
-	route := requireTransitionAction(t, target.Actions, schedulerActionRoute)
-	if !slices.Contains(stop.DependsOn, running.ID) || !slices.Contains(route.DependsOn, running.ID) {
-		t.Fatalf("new routing/source release bypassed the actual running global mutation: %+v", target.Actions)
-	}
-	schedulerRequireReason(t, schedulerReplayForTest(settings, snapshot, target).reasons, "InProgressRoutingAcknowledgementUnobserved")
+	snapshot.Actions = []Action{running}
+	reserveTargetForTest(&snapshot, &current)
 	decision := capacityDecideForTest(t, settings, snapshot, capacityRowsForTest(settings, snapshot, nil))
-	if decision.Target == nil || decision.Target.ID != current.ID || !slices.Contains(decision.Reasons, schedulerTransitionInProgress) {
-		t.Fatalf("a new goal was planned while the running route is unacknowledged: %+v", decision)
+	if decision.Target == nil || decision.Target.ID == current.ID || len(decision.Target.Actions) != 0 {
+		t.Fatalf("planner adopted the owner's pending route: %+v", decision)
 	}
 }
 
@@ -506,12 +475,12 @@ func TestInstanceUnavailableDefersOnlyMatchingNodeAC34(t *testing.T) {
 	if route.Reason != reason {
 		t.Fatalf("deferred target lost reason/Node identity: %+v", route)
 	}
-	snapshot.InProgressTarget = &target
+	reserveTargetForTest(&snapshot, &target)
 	decision := capacityDecideForTest(t, settings, snapshot, nil)
-	if decision.Target == nil || decision.Target.Status != schedulerStatusPending ||
-		!slices.Contains(decision.Target.Reasons, reason) || !slices.Contains(decision.Reasons, reason) {
-		t.Fatalf("deferred target was silently executable: %+v", decision)
+	if decision.Target == nil || len(decision.Target.Actions) != 0 || len(decision.Workloads) == 0 || decision.Workloads[0].State != "Fixed" {
+		t.Fatalf("unknown reserved scope became executable: %+v", decision)
 	}
+	snapshot.Reservations = nil
 	snapshot.Nodes[0].Reasons = nil
 	snapshot.Instances[0].Ready = true
 	snapshot.Actions = target.Actions

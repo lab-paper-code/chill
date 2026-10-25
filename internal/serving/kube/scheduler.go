@@ -101,7 +101,6 @@ type SchedulerController struct {
 	config         SchedulerControllerConfig
 	state          SchedulerControllerState
 	runs           map[string]*actionRun
-	goal           *serving.SchedulerCandidate
 	ctx            context.Context
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
@@ -235,6 +234,9 @@ func (c *SchedulerController) Capacity() []serving.CapacityRow { return c.capaci
 func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {
 	result := make([]serving.Action, 0, len(c.runs))
 	for _, r := range c.runs {
+		if r.action.Kind == transitionRunKind || r.action.Kind == measurementLeaseKind {
+			continue
+		}
 		a := r.action
 		if a.Status == nativeOperationRunning {
 			a.Elapsed = now.Sub(r.started)
@@ -260,7 +262,6 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	}
 	c.mu.Lock()
 	config := c.config
-	goal := c.goal
 	c.mu.Unlock()
 	started := time.Now()
 	snapshot, err := c.capture(ctx, now, config)
@@ -270,7 +271,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	snapshot, lost := c.reconcileSnapshot(snapshot, goal, snapshot.At, config.Settings.ObservationWindow)
+	snapshot, lost := c.reconcileSnapshot(snapshot, snapshot.At, config.Settings.ObservationWindow)
 	for _, result := range lost {
 		if config.OnAction != nil {
 			if err := config.OnAction(result); err != nil {
@@ -365,11 +366,9 @@ func (c *SchedulerController) annotateHistory(s *serving.SchedulerSnapshot, wind
 			delete(c.unrouted, id)
 		}
 	}
-	// A mark whose preparation neither runs nor waits in the goal is dropped.
+	// Marks remain while any owner still holds the corresponding preparation.
 	for key, until := range c.overloaded {
-		preparing := c.goal != nil && slices.ContainsFunc(c.goal.Actions, func(a serving.Action) bool {
-			return a.Kind == operationPrepare && a.Instance == key
-		})
+		preparing := false
 		for _, r := range c.runs {
 			preparing = preparing || r.action.Kind == operationPrepare && r.action.Instance == key
 		}
@@ -395,81 +394,55 @@ func (c *SchedulerController) markOverloadPrepares(decision serving.SchedulerDec
 	}
 }
 
-// reconcileSnapshot attaches the run status and the goal still in progress. A
-// goal action whose completed effect is gone (its instance died or left Ready)
-// fails, the goal is abandoned and lost returns those failures. Failed runs
-// stay in snapshot.Actions for one observation window.
-func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, observationWindow time.Duration) (serving.SchedulerSnapshot, []OperationResult) {
+// reconcileSnapshot preserves each owner's frozen DAG and reservation independently.
+func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, now time.Time, observationWindow time.Duration) (serving.SchedulerSnapshot, []OperationResult) {
 	c.mu.Lock()
-	snapshot.InProgressTarget = nil
-	if goal == nil {
-		goal = c.activeTargetLocked("")
-		c.goal = goal
-	}
+	defer c.mu.Unlock()
 	var lost []OperationResult
-	if goal != nil {
-		var failed bool
-		if lost, failed = c.failGoalLocked(snapshot, goal, now); failed {
-			goal = nil
-			c.goal = nil
+	for _, parent := range c.runs {
+		if parent.action.Kind != transitionRunKind || parent.result == nil || parent.action.Status != nativeOperationRunning {
+			continue
 		}
-	}
-	for id, run := range c.runs {
-		if !run.reserved && run.action.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, run) {
-			delete(c.runs, id)
+		target := parent.result.Operation.Target
+		failedEffects, failed := c.failTargetLocked(snapshot, target, now)
+		lost = append(lost, failedEffects...)
+		if failed {
+			parent.action.Status = nativeOperationFailed
+			parent.result.Status, parent.result.EndedAt = nativeOperationFailed, now
+			continue
 		}
-	}
-	actions := c.actionsLocked(now)
-	snapshot.Actions = actions
-	if goal != nil {
-		pending := false
-		for _, desired := range goal.Actions {
-			if desired.Status == nativeOperationCancel || desired.From == readySubsetRoute || desired.From == externalActionSource {
-				continue
-			}
-			run := c.runs[desired.ID]
-			if run == nil || run.action.Status != nativeOperationComplete {
-				pending = true
-				break
+		complete := true
+		for _, action := range target.Actions {
+			run := c.runs[action.ID]
+			if action.Status != nativeOperationCancel && (run == nil || run.action.Status != nativeOperationComplete) {
+				complete = false
 			}
 		}
-		if pending {
-			snapshot.InProgressTarget = goal
-		} else {
-			c.releaseOwnerLocked(goal.ID)
-			c.goal = nil
+		for _, child := range c.runs {
+			if child != parent && child.owner == parent.owner && child.action.Status == nativeOperationRunning {
+				complete = false
+			}
 		}
-	}
-	if routing := c.activeTargetLocked(operationRoute); routing != nil &&
-		(goal == nil || len(routing.Actions) != 1 || routing.Actions[0].From != readySubsetRoute) {
-		snapshot.InProgressTarget = routing
+		if complete {
+			parent.action.Status = nativeOperationComplete
+			parent.result.Status, parent.result.EndedAt = nativeOperationComplete, now
+			c.releaseOwnerLocked(parent.owner)
+		}
 	}
 	cutoff := now.Add(-observationWindow)
 	c.state.Results = slices.DeleteFunc(c.state.Results, func(r OperationResult) bool { return r.EndedAt.Before(cutoff) })
 	for id, run := range c.runs {
-		if run.reserved || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil || !run.result.EndedAt.Before(cutoff) {
-			continue
-		}
-		needed := false
-		if snapshot.InProgressTarget != nil {
-			for _, a := range snapshot.InProgressTarget.Actions {
-				if a.ID == id {
-					needed = true
-					break
-				}
-			}
-		}
-		if !needed {
+		if !run.reserved && run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel && run.result != nil && run.result.EndedAt.Before(cutoff) && !c.runReferencedLocked(id) {
 			delete(c.runs, id)
 		}
 	}
-	c.mu.Unlock()
+	snapshot.Actions = c.actionsLocked(now)
+	snapshot.Reservations = c.reservationsLocked()
 	return snapshot, lost
 }
 
-// failGoalLocked marks goal actions whose completed effect is gone as failed,
-// returns them, and reports whether any goal action failed.
-func (c *SchedulerController) failGoalLocked(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time) ([]OperationResult, bool) {
+// failTargetLocked checks only this owner's DAG; terminal receipts beat stale plans.
+func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time) ([]OperationResult, bool) {
 	var lost []OperationResult
 	failed := false
 	for _, desired := range goal.Actions {
@@ -492,21 +465,6 @@ func (c *SchedulerController) failGoalLocked(snapshot serving.SchedulerSnapshot,
 	return lost, failed
 }
 
-func (c *SchedulerController) activeTargetLocked(kind string) *serving.SchedulerCandidate {
-	var active *actionRun
-	for _, run := range c.runs {
-		if run.action.Status != nativeOperationRunning || (kind != "" && run.action.Kind != kind) || run.result == nil || run.result.Operation.Target == nil {
-			continue
-		}
-		if active == nil || run.started.Before(active.started) {
-			active = run
-		}
-	}
-	if active == nil {
-		return nil
-	}
-	return active.result.Operation.Target
-}
 func (c *SchedulerController) capture(ctx context.Context, now time.Time, config SchedulerControllerConfig) (serving.SchedulerSnapshot, error) {
 	arrivals, err := c.observationLog.SchedulerArrivals(ctx, now.Add(-config.Settings.ObservationWindow), now)
 	if err != nil {
@@ -834,13 +792,38 @@ func slotName(slot string) string {
 func (c *SchedulerController) launch(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	parents := []*actionRun{}
+	for _, run := range c.runs {
+		if run.action.Kind == transitionRunKind && run.action.Status == nativeOperationRunning {
+			parents = append(parents, run)
+		}
+	}
+	slices.SortFunc(parents, func(a, b *actionRun) int { return strings.Compare(a.owner, b.owner) })
+	for _, parent := range parents {
+		c.launchTargetLocked(*parent.result.Operation.Target, config)
+	}
 	if len(target.Actions) == 0 {
 		return
 	}
-	// Fixed lowering alone is no transition to track.
-	if !target.Keep || slices.ContainsFunc(target.Actions, func(a serving.Action) bool { return !a.Fixed }) {
-		c.goal = &target
+	id := transitionRunKind + "/" + target.ID
+	if c.runs[id] != nil {
+		return
 	}
+	operation := Operation{ID: id, Kind: transitionRunKind, Target: &target, WorkloadUIDs: changedWorkloads(target, c.state.Snapshot)}
+	for _, action := range target.Actions {
+		if action.Node.UID != "" {
+			operation.Nodes = append(operation.Nodes, action.Node)
+		}
+	}
+	started := time.Now()
+	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Status: nativeOperationRunning, StartedAt: started}, started: started}
+	if !c.reserveRun(id, parent, operation) {
+		return
+	}
+	c.launchTargetLocked(target, config)
+}
+
+func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
 	actions, intermediate := c.intermediateActions(target)
 	// Decide eligible old-source stops before starting policy refreshes that can
 	// supersede the existing acknowledged handoff proof in this same tick.
@@ -875,7 +858,8 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
 			if action.Kind == operationRoute {
-				operation.WorkloadUIDs = changedWorkloads(*selectedTarget, c.state.Snapshot)
+				operation.WorkloadUIDs = c.targetWorkloadsLocked(target)
+				operation.Target = controlledTarget(operation)
 			}
 			action.Status = nativeOperationRunning
 			action.Cancelable = action.Kind == operationPrepare
@@ -895,6 +879,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 				if config.OnAction != nil {
 					err = config.OnAction(result)
 				}
+				effectStarted := err == nil
 				if err == nil {
 					result, err = c.operations.Execute(runCtx, operation)
 				} else {
@@ -913,6 +898,9 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 				}
 				c.mu.Lock()
 				run.result = &result
+				if !effectStarted {
+					run.reserved = false
+				}
 				run.action.Status = nativeOperationComplete
 				if err != nil {
 					run.action.Status = result.Status
@@ -932,6 +920,10 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 func (c *SchedulerController) intermediateActions(
 	target serving.SchedulerCandidate,
 ) ([]serving.Action, *serving.SchedulerCandidate) {
+	target.Actions = slices.Clone(target.Actions)
+	for i := range target.Actions {
+		target.Actions[i] = c.orderRouteChild(target.Actions[i], target.ID)
+	}
 	// The final handoff still waits for its DAG. Independent Ready destinations
 	// can receive traffic meanwhile through the same acknowledged route path.
 	pendingRoute := slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
@@ -945,6 +937,7 @@ func (c *SchedulerController) intermediateActions(
 		return target.Actions, nil
 	}
 	route := serving.Action{ID: partial.ID, Kind: operationRoute, From: readySubsetRoute, To: partial.ID}
+	route = c.orderRouteChild(route, target.ID)
 	// Recovery must retain the running route's own frozen target even when the
 	// full goal fails. Only final-goal completion ignores this intermediate action.
 	partial.Actions = []serving.Action{route}
@@ -1021,7 +1014,7 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 		return false
 	}
 	if action.Kind == operationRoute {
-		uids := changedWorkloads(target, c.state.Snapshot)
+		uids := c.targetWorkloadsLocked(target)
 		for _, wanted := range target.Instances {
 			if !slices.Contains(uids, wanted.WorkloadUID) {
 				continue
@@ -1049,7 +1042,8 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 
 func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCandidate) bool {
 	physical := c.runtime.Instances()
-	if !c.routingTargetPresent(&target, c.state.Snapshot, physical, false) {
+	selected := controlledTarget(Operation{Target: &target, WorkloadUIDs: c.targetWorkloadsLocked(target)})
+	if !c.routingTargetPresent(selected, c.state.Snapshot, physical, false) {
 		return false
 	}
 	for _, run := range c.runs {
@@ -1076,6 +1070,9 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 					continue
 				}
 				template.Instance = i
+				// Inventory's positive serving weight is not an applied route.
+				// Planned Pods remain unrouted through their empty routing seed.
+				template.Instance.Weight = max(1, i.Weight)
 				template.Name = slotName(i.ID)
 				template.Config.Policy = native.Policy{ProfileID: i.Profile.ID, DecisionID: target.ID,
 					DeadlinePolicy: native.EffectiveDeadlinePolicy(i.Profile.Condition.Firstfloor.DeadlinePolicy),

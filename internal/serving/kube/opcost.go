@@ -111,7 +111,7 @@ func (c *SchedulerController) startOperationCost(node *core.Node, m *edge.Operat
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	targets := nodePowerTargets(node, in.classes, in.config.PowerPolicies)
 	root := &measurementRoot{object: m, node: node.Name}
-	operation := Operation{ID: operationCostKind + ":" + node.Name + ":" + string(m.UID), Kind: operationCostKind, Node: ref}
+	operation := Operation{ID: operationCostKind + ":" + node.Name + ":" + string(m.UID), Kind: operationCostKind, Node: ref, Holder: string(m.UID)}
 	c.startNodeRun(operation, in.config, func(ctx context.Context, result *OperationResult) error {
 		err := c.runOperationCost(ctx, m, ref, targets, profiles, in.config)
 		return errors.Join(err, c.handBack(ctx, ref, string(m.UID), root, false, result))
@@ -203,7 +203,7 @@ func (c *SchedulerController) restartedMeasurement(node *core.Node, object clien
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	root := &measurementRoot{object: object, node: node.Name}
 	uid := string(object.GetUID())
-	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + uid, Kind: handBackKind, Node: ref}
+	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + uid, Kind: handBackKind, Node: ref, Holder: uid}
 	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
 		if _, cost := object.(*edge.OperationCostMeasurement); cost {
 			if err := c.recordRestartedSequence(ctx, config, ref, uid); err != nil {

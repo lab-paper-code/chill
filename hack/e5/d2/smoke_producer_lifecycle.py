@@ -46,7 +46,7 @@ try:
         else:raise AssertionError('Foreign Job UID deletion allowed')
         assert len(calls)==1 and calls[0][0]=='get'
         # Exercise the real empty-start wait, producer release and failure cleanup.
-        ready={'snapshot':{'at':'2026-10-25T12:00:00Z','nodes':[],'instances':[{'id':'native/0','ownerWorkloadUID':m.UID,'workloadUID':m.UID,'ready':True}],'routing':{m.UID:{'native/0':1}},'outstanding':0,'inProgressTarget':None},'actions':[]}
+        ready={'snapshot':{'at':'2026-10-25T12:00:00Z','nodes':[],'instances':[{'id':'native/0','ownerWorkloadUID':m.UID,'workloadUID':m.UID,'ready':True}],'routing':{m.UID:{'native/0':1}},'outstanding':0,'reservations':[]},'actions':[]}
         empty=copy.deepcopy(ready);empty['snapshot'].update(instances=[],routing={})
         unready=copy.deepcopy(ready);unready['snapshot']['instances'][0]['ready']=False
         busy=copy.deepcopy(ready);busy['actions']=[{'status':'running'}]

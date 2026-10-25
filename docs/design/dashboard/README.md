@@ -266,7 +266,7 @@ snapshot의 작은 DTO는 다음과 같다. 아래 `?`는 생략 가능, `null`�
   `state`는 `preparing|serving|draining|removing`이다. `serving`은 수명주기 상태이지 실제
   실행 증거가 아니다. `routable`은 SCH-36의 유효 배분, `running`은 native 실행 단계 관측이다.
 - `routing:{workloadUID:{instanceID:weight}}`는 실제 배분이다. 선언과 목표는 근거 REST에서
-  별도로 읽는다. `decision:null|{at,recordRef:null|{from,to,offset,kind:"decision",at,id},state,reason,inProgressTarget?}`에서
+  별도로 읽는다. `decision:null|{at,recordRef:null|{from,to,offset,kind:"decision",at,id},state,reason}`에서
   큰 후보·프로파일은 제외한다. 판단 identity는 원본 RFC3339Nano `decision.at`이다.
   `SchedulerDecision`에 없는 id 필드를 새 원본 식별자로 가정하지 않는다. `recordRef`는
   기록 완료 후 서버가 발행하는 T4 SchedulerObservationPage의 조회 구간/append offset이며,
