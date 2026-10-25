@@ -253,18 +253,22 @@ curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
 이는 `example`이 이 전처리기를 참조할 때의 예이며 detector의 입력을 대신하지 않는다.
 응답은 해당 backend 결과이고 `X-Chill-Request-ID`, 확인된 경우 `X-Chill-Workload-UID`를 제공한다.
 `WM-33`의 수명 결정은 아래와 같다. `H`는 선택 `X-Chill-Request-Timeout`, `W`는 현재 적용
-정의의 선택 `requestLifetime`, `D`는 기존 `HandlerConfig.RequestTimeout` 기본값이다.
+정의의 선택 `requestLifetime`, `D`는 기존 `HandlerConfig.RequestTimeout` 기본값이며,
+`C=129s`는 게이트웨이 상한이다. 실제 적용 수명은 모든 경로에서 `L=min(결정값, C)`다.
 
 | 지정 값 | 실제 적용 수명 L |
 |---|---|
-| H와 W | `min(H, W)` — 헤더가 Workload 상한을 늘리지 못함 |
-| H만 | H |
-| W만 | W |
-| 둘 다 없음 | D |
+| H와 W | `min(H, W, C)` — 헤더가 Workload 상한을 늘리지 못함 |
+| H만 | `min(H, C)` |
+| W만 | `min(W, C)` |
+| 둘 다 없음 | `min(D, C)` |
 
 헤더는 명시적 단위의 양수 duration이며 게이트웨이 상한 129초 이하여야 한다.
 헤더가 있으면 먼저 검증하고, 잘못된 헤더를 W나 D로 대체하지 않는다(`InvalidRequestTimeout`, HTTP 400).
 SLO 이상 제약은 Workload 필드 검증에만 적용하며, 요청자가 더 짧은 H를 지정하는 것은 허용한다.
+`cmd/chill-server/options.go:options.validate`의 기존 양수 검증에 D의 상한 검증을 추가한다.
+시작 시 `0 < --request-timeout ≤ 129s` 범위를 요구하며, D가 129초를 넘으면 설정 오류로
+시작을 거부한다. 허용 범위 내 값은 모두 지원하고 기본 30초는 유지한다.
 응답 헤더 `X-Chill-Request-Lifetime`에 실제 L을 Go duration 문자열로 제공하고,
 동일한 값을 기존 요청 관측의 `lifetimeNanos`에 나노초 정수로 남긴다. 응답과 관측에서
 요청 헤더 값이나 선언값을 실제 적용값으로 대신 표시하지 않는다.
@@ -773,6 +777,8 @@ writable scratch를 사용하고, 시간별 관측 archive의 gzip staging도 �
 - 게이트웨이: H/W 모두 없음, 각각만 있음, H<W·H=W·H>W의 실제 L과 응답
   `X-Chill-Request-Lifetime`/관측 `lifetimeNanos` 일치, 잘못된 H 거부를 검사한다.
   D=30s, SLO=60s, W=120s인 헤더 없는 요청이 30초에서 잘리지 않고 120초를 적용하는지 확인한다.
+  H/W가 없을 때도 D=30s와 D=129s의 fallback 및 최종 129초 cap을 검사한다.
+  시작 옵션에서 D=0·음수·130s는 거부하고 D=30s·129s는 수락하는지 확인한다.
 - 변경/실행: 수명만 변경 시 무드레인 `200`, 수명 제거 시 fallback, 수신과 수락 사이 변경,
   기존 수락 요청의 deadline 유지, 재시작 applied snapshot 복원과 native 전달의 원래 수명을 확인한다.
 - 부하 생성기: `request_lifetime_seconds=None`의 헤더 부재 및 명시 H 전송을 확인하고,
