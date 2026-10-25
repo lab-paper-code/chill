@@ -43,6 +43,24 @@ make helm-lint helm-template
 
 `make manifests` also syncs generated CRDs into the Helm chart.
 
+`make helm-template` and Helm install validate the rendered ChillServer scheduler
+configuration with the locally built `bin/chill-server`. Fast deploy runs this
+gate before uninstall. Release, namespace, values and `HELM_SET` overrides select
+the rendered process arguments and its ConfigMap name, namespace and data key.
+For an external scheduler ConfigMap, set `CHILL_SCHEDULER_CONFIGMAP_FILE` to a
+private manifest containing only that selected ConfigMap and scheduler data key.
+Keep this file outside the repository. The gate uses the startup JSON decoder
+and settings validator and requires every configured field.
+Install and fast-deploy preflight also read that selected live ConfigMap and
+validate its actual data before any release mutation. External ConfigMap edits
+remain the operator's responsibility during deployment.
+
+Run `make test-deployment-config` for the actual binary valid-settings and
+missing-`planSearchWorkers` regression. To check a selected current configuration,
+run `python3 hack/deployment-config-test.py --configmap /private/selected-cm.json`
+after `make build-chill-server`. This gate applies to the next deployment;
+runtime7 and the currently deployed source remain unchanged.
+
 Do not run e2e tests against the testbed kubeconfig. E2E tests require a `kind-*` context.
 
 ```sh

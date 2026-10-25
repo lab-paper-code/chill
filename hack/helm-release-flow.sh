@@ -28,7 +28,8 @@ usage() {
 Usage: $0 <command>
 
 Commands:
-  preflight             Validate chart rendering and CRD ownership.
+  render                Validate chart rendering and offline ChillServer configuration.
+  preflight             Validate chart rendering, offline configuration and CRD ownership.
   install               Install or upgrade CHILL.
   uninstall             Delete CHILL runtime root, then uninstall Helm release while keeping CRDs.
   purge-crds            Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=${release}.
@@ -46,7 +47,8 @@ Environment:
   CONSOLE_IMG            Optional Console API image repository:tag.
   SERVING_ENTRYPOINT_IMG Optional serving entrypoint image repository:tag.
   DASHBOARD_IMG          Optional Dashboard image repository:tag.
-  HELM_SKIP_PREFLIGHT    Skip helm lint/template/kubeconform and CRD ownership check during install. Default: false.
+  CHILL_SCHEDULER_CONFIGMAP_FILE Selected external scheduler ConfigMap manifest, kept outside the repository.
+  HELM_SKIP_PREFLIGHT    Skip CRD ownership check during install; render/config validation remains required.
 EOF
 }
 
@@ -100,6 +102,17 @@ render_validate() {
 		"${args[@]}" \
 		"${extra_args[@]}" \
 		>"${out}"
+	make --no-print-directory build-chill-server
+	"${LOCALBIN:-$(pwd)/bin}/chill-server" --check-deployment-config="${out}" \
+		--scheduler-configmap-file="${CHILL_SCHEDULER_CONFIGMAP_FILE:-}"
+	if [[ "${1:-offline}" == "live" && -n "${CHILL_SCHEDULER_CONFIGMAP_FILE:-}" ]]; then
+		local live_config
+		live_config="$(mktemp --suffix=.yaml)"
+		trap "rm -f '${out}' '${live_config}'" EXIT
+		"${kubectl_bin}" get -f "${CHILL_SCHEDULER_CONFIGMAP_FILE}" -o yaml >"${live_config}"
+		"${LOCALBIN:-$(pwd)/bin}/chill-server" --check-deployment-config="${out}" \
+			--scheduler-configmap-file="${live_config}"
+	fi
 	if [[ -x "${kubeconform_bin}" ]]; then
 		"${kubeconform_bin}" ${kubeconform_flags} "${out}"
 	else
@@ -116,13 +129,14 @@ crd_check() {
 }
 
 preflight() {
-	render_validate
+	render_validate live
 	crd_check
 }
 
 install_release() {
 	if [[ "${skip_preflight}" == "1" || "${skip_preflight}" == "true" ]]; then
 		echo "==> skip-preflight"
+		render_validate live
 	else
 		preflight
 	fi
@@ -229,6 +243,9 @@ purge_crds() {
 }
 
 case "${command}" in
+render)
+	render_validate
+	;;
 preflight)
 	preflight
 	;;

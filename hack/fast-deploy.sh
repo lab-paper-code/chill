@@ -737,6 +737,8 @@ if ! is_true "${skip_deploy}"; then
 		"SERVING_ENTRYPOINT_IMG=${serving_entrypoint_image}"
 		"DASHBOARD_IMG=${dashboard_image}"
 	)
+	echo "==> preflight before uninstall"
+	run env "${flow_env[@]}" ./hack/helm-release-flow.sh preflight
 
 	echo "==> uninstall"
 	run env "${flow_env[@]}" ./hack/helm-release-flow.sh uninstall

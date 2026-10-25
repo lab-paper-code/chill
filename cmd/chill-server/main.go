@@ -14,6 +14,13 @@ func main() {
 	zapOptions := zap.Options{Development: true}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
+	if opts.checkDeploymentManifest != "" {
+		if err := checkDeploymentConfig(opts.checkDeploymentManifest, opts.schedulerConfigMapFile); err != nil {
+			_, _ = os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		return
+	}
 	// The load Job of a dispatch-occupancy measurement runs on this Pod's Node.
 	opts.loadGenerator.NodeName = os.Getenv("NODE_NAME")
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))

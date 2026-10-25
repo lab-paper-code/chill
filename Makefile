@@ -69,7 +69,7 @@ HELM_FLOW = ./hack/helm-release-flow.sh
 HELM_FLOW_IMAGE_VARIABLES = OPERATOR_IMG NODE_AGENT_IMG PROFILER_IMG CONSOLE_IMG SERVING_ENTRYPOINT_IMG DASHBOARD_IMG
 helm_flow_image_assignment = $(if $(and $(strip $(HELM_VALUES)),$(filter file,$(origin $(1)))),,$(1)="$($(1))")
 HELM_FLOW_IMAGE_ENV = $(foreach variable,$(HELM_FLOW_IMAGE_VARIABLES),$(call helm_flow_image_assignment,$(variable)))
-HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" $(HELM_FLOW_IMAGE_ENV)
+HELM_FLOW_ENV = LOCALBIN="$(LOCALBIN)" CHILL_SCHEDULER_CONFIGMAP_FILE="$(CHILL_SCHEDULER_CONFIGMAP_FILE)" HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" $(HELM_FLOW_IMAGE_ENV)
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -150,7 +150,7 @@ test-serving-entrypoint-rbac: ## Verify the rendered ChillServer grants measurem
 	HELM=$(HELM) ./hack/serving-entrypoint-rbac-test.sh
 
 .PHONY: test
-test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow test-serving-entrypoint-rbac ## Run tests.
+test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow test-serving-entrypoint-rbac test-deployment-config ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
@@ -266,13 +266,8 @@ helm-lint: helm-version-check ## Run Helm chart lint.
 	$(HELM) lint $(HELM_CHART) "$${system_values_args[@]}"
 
 .PHONY: helm-template
-helm-template: kubeconform ## Render and validate Helm chart.
-	system_values_args=(); \
-	if [ -n "$(HELM_VALUES)" ]; then system_values_args+=("-f" "$(HELM_VALUES)"); fi; \
-	out="$$(mktemp --suffix=.yaml)"; \
-	trap 'rm -f "$$out"' EXIT; \
-	$(HELM) template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) "$${system_values_args[@]}" >"$$out"; \
-	$(KUBECONFORM) $(KUBECONFORM_FLAGS) "$$out"
+helm-template: kubeconform ## Render and validate Helm chart and ChillServer scheduler configuration.
+	@$(HELM_FLOW_ENV) $(HELM_FLOW) render
 
 .PHONY: helm-crd-check
 helm-crd-check: ## Check whether live CRDs can be managed by the Helm release.
@@ -334,6 +329,14 @@ rknn-convert-artifact: ## Build one RKNN artifact covering every declared batch 
 		$(foreach declared_batch_size,$(RKNN_DECLARED_BATCH_SIZES),--declared-batch-size "$(declared_batch_size)") \
 		--output "$(RKNN_OUTPUT)" \
 		--record "$(RKNN_CONVERSION_RECORD)"
+
+.PHONY: build-chill-server
+build-chill-server: | $(LOCALBIN) ## Build the actual ChillServer binary for offline configuration validation.
+	go build -buildvcs=false -o $(LOCALBIN)/chill-server ./cmd/chill-server
+
+.PHONY: test-deployment-config
+test-deployment-config: build-chill-server ## Exercise rendered configuration through the actual binary offline.
+	HELM=$(HELM) python3 hack/deployment-config-test.py --binary "$(LOCALBIN)/chill-server"
 
 .PHONY: build
 build: manifests generate fmt vet ## Build CHILL component binaries.

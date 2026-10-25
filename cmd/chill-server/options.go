@@ -35,6 +35,7 @@ type options struct {
 	schedulerConfigMap, schedulerConfigKey                                 string
 	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey string
 	diagnosticDirectory                                                    string
+	checkDeploymentManifest, schedulerConfigMapFile                        string
 	diagnosticStartDelay, diagnosticTraceOffset                            time.Duration
 
 	// loadGenerator runs the load Job of dispatch-occupancy measurements.
@@ -42,6 +43,10 @@ type options struct {
 }
 
 func (o *options) bindFlags(f *flag.FlagSet) {
+	f.StringVar(&o.checkDeploymentManifest, "check-deployment-config", "",
+		"Validate rendered deployment scheduler ConfigMaps offline and exit.")
+	f.StringVar(&o.schedulerConfigMapFile, "scheduler-configmap-file", "",
+		"Optional selected external scheduler ConfigMap manifest for offline validation.")
 	f.StringVar(&o.bindAddress, "bind-address", ":8080", "HTTPS listen address.")
 	f.StringVar(&o.servingNamespace, "serving-namespace", "", "Namespace holding native serving instances.")
 	f.StringVar(&o.tlsCert, "tls-cert", "", "TLS certificate file.")
