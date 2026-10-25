@@ -384,7 +384,8 @@ Research의 권고 전체를 이번 범위로 가져오지 않는다. 증거 저
 현재 physical ID 키의 종료 추적 자료를 **Pod UID 키**로 이관한다. Runtime의
 `instances`는 요청 실행·바인딩·배분을 위한 투영, `SchedulerSnapshot.Instances`는
 한 판단에 복사한 장부 투영이다. 셋을 독립 writer/registry로 두지 않는다.
-기존 `o.verified`는 짧은 readiness 검증 보조값일 뿐 존재·할당의 권위가 아니다.
+Pod별 소유권·watch·정리 조회는 UID 키를 직접 사용한다. 별도 `o.verified`나
+전달 전용 disable 래퍼 없이 장부의 dispatch 자격과 runtime 비활성화를 갱신한다.
 
 | 장부 항목 | 의미와 권위 |
 |---|---|

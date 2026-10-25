@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"cmp"
 	"slices"
 	"time"
 
@@ -186,13 +187,7 @@ func (c *SchedulerController) reservationsLocked() []serving.SchedulerReservatio
 		reservations = append(reservations, *reservation)
 	}
 	slices.SortFunc(reservations, func(a, b serving.SchedulerReservation) int {
-		if a.Owner < b.Owner {
-			return -1
-		}
-		if a.Owner > b.Owner {
-			return 1
-		}
-		return 0
+		return cmp.Compare(a.Owner, b.Owner)
 	})
 	return reservations
 }

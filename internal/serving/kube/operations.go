@@ -987,10 +987,8 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		return err
 	}
 	var applyErr error
-	if result.Operation.WorkloadUID != "" {
-		applyErr = o.runtime.ApplySchedulerWorkloadsTarget(target, []string{result.Operation.WorkloadUID})
-	} else if result.Operation.WorkloadUIDs != nil {
-		applyErr = o.runtime.ApplySchedulerWorkloadsTarget(target, result.Operation.WorkloadUIDs)
+	if uids != nil {
+		applyErr = o.runtime.ApplySchedulerWorkloadsTarget(target, uids)
 	} else {
 		applyErr = o.runtime.ApplySchedulerTarget(target)
 	}

@@ -329,7 +329,6 @@ func (o *Observer) reconcileSources(ctx context.Context, observed map[types.UID]
 // after the Pod list taken behind the probe confirms the same executor.
 type probedSource struct {
 	pod      *corev1.Pod
-	node     *corev1.Node
 	service  *corev1.Service
 	owner    string
 	instance serving.ReadyInstance
@@ -451,10 +450,8 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 	defer o.mu.Unlock()
 	o.observeTermination(pod)
 	owner, ownershipErr := resourceWorkloadOwner(pod, resources)
-	for _, source := range o.sources {
-		if source.uid == pod.UID && ownershipErr == nil {
-			source.ownerUID = types.UID(owner)
-		}
+	if source := o.sources[string(pod.UID)]; source != nil && ownershipErr == nil {
+		source.ownerUID = types.UID(owner)
 	}
 	if status := firstfloorStatus(pod); status != nil && status.State.Running != nil && status.ContainerID != "" {
 		id := physicalID(pod.UID, status.ContainerID)
@@ -476,9 +473,6 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 	if err == nil {
 		if service, err = listedInstanceService(pod, services, servicesErr); err == nil {
 			spec.Endpoint, err = instanceServiceEndpoint(service)
-		} else if servicesErr != nil {
-			instance, publish := o.sourceUnavailable(pod, err)
-			return instance, publish, nil
 		}
 	}
 	if err == nil {
@@ -494,7 +488,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 			instance.OwnerWorkloadUID = owner
 			instance.State.TargetID = pod.Annotations[ServingSlotAnnotation]
 			instance.State.Stopped = o.removingInstances[spec.InstanceID]
-			return serving.ReadyInstance{}, false, &probedSource{pod: pod, node: node, service: service, owner: owner, instance: instance}
+			return serving.ReadyInstance{}, false, &probedSource{pod: pod, service: service, owner: owner, instance: instance}
 		}
 		err = probeErr
 	}
@@ -544,10 +538,6 @@ func (o *Observer) sourceUnavailable(pod *corev1.Pod, err error) (serving.ReadyI
 		source.instance.State.AttemptedAt = time.Now().UTC()
 	}
 	return serving.ReadyInstance{}, false
-}
-
-func (o *Observer) disable(id, reason string) {
-	o.runtime.DisableInstance(id, reason)
 }
 
 func (o *Observer) refreshFailure(err error) error {
@@ -823,15 +813,12 @@ func (o *Observer) watchPods(w watch.Interface) {
 					pod = current
 				}
 				o.restoreSources([]corev1.Pod{*pod})
-				for _, source := range o.sources {
-					if source.uid != pod.UID {
-						continue
-					}
+				if source := o.sources[string(pod.UID)]; source != nil {
 					status := firstfloorStatus(pod)
 					changed := event.Type == watch.Deleted || status == nil || status.ContainerID != source.containerID || status.State.Running == nil
 					if changed || pod.DeletionTimestamp != nil || !status.Ready || !podReady(pod) {
 						source.instance.State.Ready = false
-						o.disable(physicalID(source.uid, source.containerID), "native Pod readiness/identity unavailable")
+						o.runtime.DisableInstance(physicalID(source.uid, source.containerID), "native Pod readiness/identity unavailable")
 					}
 					if changed {
 						source.stopFollow()
@@ -892,7 +879,7 @@ func (o *Observer) followLogs(ctx context.Context, id string, pod *corev1.Pod, o
 	if source := o.sources[strings.SplitN(id, "/", 2)[0]]; source != nil && source.follow == ctx {
 		if ctx.Err() == nil {
 			o.issue("logs/"+id, err)
-			o.disable(id, err.Error())
+			o.runtime.DisableInstance(id, err.Error())
 		}
 		source.stopFollow()
 	}
@@ -1021,10 +1008,8 @@ func (o *Observer) bindCleanupSources(uid types.UID, objects []client.Object) er
 				}
 			}
 		}
-		for _, source := range o.sources {
-			if source.uid == pod.UID {
-				source.ownerUID = uid
-			}
+		if source := o.sources[string(pod.UID)]; source != nil {
+			source.ownerUID = uid
 		}
 	}
 	return nil
@@ -1135,7 +1120,7 @@ func (o *Observer) Close() error {
 func (o *Observer) detachNodeLocked(ctx context.Context, uid string) error {
 	for _, instance := range o.runtime.Instances() {
 		if instance.Node.UID == uid {
-			o.disable(instance.ID, "NodePowerTransition")
+			o.runtime.DisableInstance(instance.ID, "NodePowerTransition")
 		}
 	}
 	// The shared Changed channel is only a wake-up hint. Polling here re-reads
