@@ -2,7 +2,7 @@
 
 ## 1. 목적과 설계 범위
 
-[워크로드 관리 SRS](../../spec/workloads/SRS.md)의 `WM-01`부터 `WM-32`까지에 대응하는 구현 계약이다.
+[워크로드 관리 SRS](../../spec/workloads/SRS.md)의 `WM-01`부터 `WM-34`까지에 대응하는 구현 계약이다.
 요구사항의 원본은 SRS이며, 아래에는 현재 리소스 표현, 책임과 적용 순서를 기록한다.
 실제 검증 범위와 남은 실행 증거는 12장에서 구분한다.
 
@@ -16,7 +16,7 @@ native 원시 입력·전처리 module·persistent runner의 동일 실행 경�
 | 결정 | 이유 |
 |---|---|
 | Workload는 cluster-scoped CRD로 저장 | 기존 cluster-scoped ModelSpec과 동일한 연구 클러스터 관리 범위를 사용하고, 등록 건은 Kubernetes UID로 구분 |
-| Workload 정의에는 모델 참조와 SLO만 저장 | 서비스 식별자는 객체 이름으로 표현. 정적 POOL 참조나 산출물 복사본을 선언에 추가하지 않음 |
+| Workload 정의에는 모델·전처리·선택 Dataset 참조, SLO와 선택 요청 수명을 저장 | 서비스 식별자는 객체 이름으로 표현. 정적 POOL 참조나 산출물 복사본을 선언에 추가하지 않음 |
 | POOL은 현재 구성의 운영 상태로 제공 | 활성 POOL은 CHILL 서빙 인스턴스에서 산출하고, 측정 POOL은 Node taint로 표시. Workload 정의와 분리하며 별도 Pool CRD는 추가하지 않음 |
 | 관리 API와 요청 접수 제어는 기존 ChillServer에 배치 | 신규 접수 중지와 큐 상태를 실제로 소유하는 경로에서 변경을 적용. 별도 관리 서버와 WorkloadController를 만들지 않음 |
 | 정의 변경 writer는 하나로 제한 | 워크로드 생성과 모델 삭제의 경쟁, 모델 변경과 신규 접수 사이의 경쟁을 같은 관리 경계에서 처리 |
@@ -74,6 +74,7 @@ spec:
   slo:
     percentile: 99.5
     targetLatency: 100ms
+  requestLifetime: 120s # 선택; targetLatency 이상, 129초 이하
 ```
 
 - `metadata.name`은 외부 서비스 식별자다. Kubernetes 객체 이름의 형식과 길이 제한을 API에 명시한다.
@@ -83,13 +84,17 @@ spec:
   Workload spec에 넣지 않는다.
 - `percentile`은 `0 < p ≤ 100`이며 유한해야 한다. `targetLatency`는 명시적 단위를 가진 양수 duration이다.
   Go `time.Duration`이 표현하지 못하는 값은 오류로 반환하고, 잘라내거나 근사하지 않는다.
+- `spec.requestLifetime`은 선택 `metav1.Duration`(`*metav1.Duration`, JSON `requestLifetime,omitempty`)이다.
+  생략은 기본값 사용이며 0과 구분한다. 지정하면 `slo.targetLatency ≤ requestLifetime ≤ 129s`여야 한다(`WM-33`, `WM-34`).
+  CRD에는 영구 기본값을 채우지 않는다. SLO 변경 시에도 함께 검증하며, SLO가 129초보다 크면
+  수명을 지정할 수 없다. duration 파싱 오류, 0·음수, SLO 미만과 상한 초과는 항목별 사유로 거부한다.
 - 이름 변경은 지원하지 않는다. 다른 식별자가 필요하면 별도 등록 건으로 생성한다.
 
 상태는 다음 정보만 보유한다. 큐 길이나 요청마다 변하는 측정값은 status에 쓰지 않는다.
 
 | 상태 정보 | 의미 |
 |---|---|
-| `appliedDefinition` | 진입 경로가 실제 적용한 모델 참조와 모델 UID 및 generation, SLO, Workload generation |
+| `appliedDefinition` | 진입 경로가 실제 적용한 모델 참조와 모델 UID 및 generation, SLO, 선택 요청 수명, Workload generation |
 | `admission` | 실제 신규 접수 가능 여부, 제한 이유와 확인 시각 |
 | `operation` | 현재 변경 또는 삭제의 종류, 대상 generation, 진행 단계, 수락 시각과 실패 원인 |
 
@@ -103,6 +108,18 @@ spec:
 
 현재 적용 정의와 변경 대상 한 건만 운영 상태에 둔다. 이미 수락한 요청이 보유한 불변 문맥과
 보존용 정의 기록은 별도이며, 다중 버전 워크로드 조회기나 호환 reader를 만들지 않는다.
+
+`WM-33`/`WM-34` 구현 변경 위치는 다음과 같다. 아래는 구현할 계약이며 현재 필드가 존재한다는 뜻이 아니다.
+
+| 위치(파일:타입·함수) | 변경 계약 |
+|---|---|
+| `api/v1alpha1/workload_types.go:WorkloadSpec`, `WorkloadAppliedDefinition` | 선택 `RequestLifetime` 필드를 선언하고 status에도 실제 적용 값을 제공. WorkloadSpec CEL은 필드 존재 시 SLO 이상·129초 이하를 검증 |
+| `api/v1alpha1/workload_types.go:ValidateWorkload` | 기존 `field.ErrorList`에 `spec.requestLifetime` 범위 오류를 추가. malformed duration은 기존 JSON 디코딩에서 거부 |
+| `internal/serving/kube/manager.go:validatedReferences`, `CreateWorkload`, `UpdateWorkload` | 공통 `ValidateWorkload` 경계에서 저장 전에 검증. 기존 `InvalidWorkload`/HTTP 400과 `field`·사유를 반환하고 실패한 PUT은 desired/applied·generation을 바꾸지 않음 |
+| `internal/serving/kube/manager.go:snapshot`, `appliedStatus`, `restoreDefinition` 및 `internal/serving/types.go:Definition` | API duration을 core의 선택 duration으로 옮겨 불변 적용·보존 snapshot과 status에 유지. 재시작도 retained definition을 사용하며 새 desired 값으로 기존 요청을 바꾸지 않음 |
+
+API 타입과 CEL marker 변경 후 `make manifests generate`로 CRD schema와 deepcopy를 함께 재생성한다.
+생성 파일을 수작업으로 고치거나 별도 검증 경로를 추가하지 않는다.
 
 ### 3.2 POOL의 운영 상태
 
@@ -186,7 +203,7 @@ ChillServer의 HTTPS 경로는 다음과 같다. Workload 조회는 선언과 �
 | `GET /api/v1/workloads` | 모든 생존 등록 건의 목록과 접수 상태. 변경 중과 삭제 중인 객체 포함 |
 | `GET /api/v1/workloads/{id}` | 원하는 정의, 현재 적용 정의, 지원 입력, 접수 상태와 관리 진행 |
 | `POST /api/v1/workloads` | 등록 검증 후 생성. `201`, 근거 부족이어도 등록 가능 |
-| `PUT /api/v1/workloads/{id}` | 모델과 SLO의 전체 목표 정의 수정. SLO만 실제 적용하면 `200`, 드레인이 필요한 변경은 `202` |
+| `PUT /api/v1/workloads/{id}` | 모델·전처리·Dataset·SLO·선택 요청 수명의 전체 목표 정의 수정. 실행 경로가 같으면 `200`, 드레인이 필요한 변경은 `202` |
 | `DELETE /api/v1/workloads/{id}` | 신규 접수 중지와 삭제 의도를 저장한 뒤 `202`. 실제 삭제 완료는 조회에서 확인 |
 | `POST /api/v1/workloads/{id}/infer` | 독립 입력 한 건의 추론. backend의 해당 요청 결과 반환 |
 | `GET /api/v1/pools` 및 `GET /api/v1/pools/{id}` | 현재 노드와 서빙 워크로드 참조, 인스턴스와 전환 관측. 운영자 조회 |
@@ -235,7 +252,29 @@ curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
 
 이는 `example`이 이 전처리기를 참조할 때의 예이며 detector의 입력을 대신하지 않는다.
 응답은 해당 backend 결과이고 `X-Chill-Request-ID`, 확인된 경우 `X-Chill-Workload-UID`를 제공한다.
-명시적 요청 timeout은 양수이며 설정된 `requestTimeout` 이하이고 SLO와 별개다.
+`WM-33`의 수명 결정은 아래와 같다. `H`는 선택 `X-Chill-Request-Timeout`, `W`는 현재 적용
+정의의 선택 `requestLifetime`, `D`는 기존 `HandlerConfig.RequestTimeout` 기본값이다.
+
+| 지정 값 | 실제 적용 수명 L |
+|---|---|
+| H와 W | `min(H, W)` — 헤더가 Workload 상한을 늘리지 못함 |
+| H만 | H |
+| W만 | W |
+| 둘 다 없음 | D |
+
+헤더는 명시적 단위의 양수 duration이며 게이트웨이 상한 129초 이하여야 한다.
+헤더가 있으면 먼저 검증하고, 잘못된 헤더를 W나 D로 대체하지 않는다(`InvalidRequestTimeout`, HTTP 400).
+SLO 이상 제약은 Workload 필드 검증에만 적용하며, 요청자가 더 짧은 H를 지정하는 것은 허용한다.
+응답 헤더 `X-Chill-Request-Lifetime`에 실제 L을 Go duration 문자열로 제공하고,
+동일한 값을 기존 요청 관측의 `lifetimeNanos`에 나노초 정수로 남긴다. 응답과 관측에서
+요청 헤더 값이나 선언값을 실제 적용값으로 대신 표시하지 않는다.
+
+부하 생성기는 헤더를 생략할 수 있다. 기존
+`load-generator/src/chill_loadgen/http_client.py:WorkloadHTTPClient.__init__`, `infer`의
+`request_lifetime_seconds=None` 경로와 CLI의 선택 `--request-lifetime`을 그대로 재사용한다.
+W=120s인 헤더 생략 실행은 `--timeout`을 120초와 응답 전달 여유보다 크게 지정한다.
+기존 헤더 생략 시 socket 기본 30초를 게이트웨이 수명으로 오인하거나 새 자동 조회로 바꾸지 않는다.
+조건이 고정된 측정의 명시적 lifetime 헤더 경로는 그대로 둔다.
 
 ```sh
 curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
@@ -351,6 +390,21 @@ API, campaign frozen 조건, worker와 evidence는 같은 계약을 사용한다
 모델 변경이 gate를 닫고 큐가 비었다고 판단한 직후 새 요청이 들어오는 경쟁을 허용하지 않는다.
 이 경계 안에서는 네트워크나 인스턴스 준비를 기다리지 않는다.
 
+`WM-33`의 실제 수명 결정부는 `internal/serving/httpapi/handler.go:Handler.infer`다.
+현재는 D 또는 H만으로 `Receipt.Deadline`과 context를 만든다. 여기에 W를 연결하되 별도 Kubernetes
+조회를 하지 않는다. `internal/serving/runtime.go:Runtime.Receive`에서 현재 적용 정의의 수명과
+identity를 Receipt에 담고, `infer`가 위 표로 L 및 `receivedAt + L`을 한 번 계산한다.
+`Runtime.Accept`에서 정의가 바뀌었다면 수명 판단과 수락 정의가 섞이지 않도록 확인하고,
+수명 변경을 가로지른 미수락 요청은 `DefinitionChanged`로 거부한다. 이미 수락된 요청은
+기존 deadline을 유지하며 큐·분배·native 전달에서 시간을 다시 시작하지 않는다.
+기존 `Runtime.Accept`/`requestEvent`의 `LifetimeNanos`와
+`internal/serving/observation_log.go:RequestRow.LifetimeNanos`를 재사용한다.
+
+`handler.go:Handler.ServeHTTP`는 현재 infer 이전에 D로 parent context와 read/write deadline을
+설정한다. W=120s가 D=30s에 잘리지 않도록 추론의 외곽 처리 상한은 129초로 두고,
+`infer`가 실제 L로 context·read deadline 및 유한 delivery deadline을 조인다.
+관리 API와 장시간 operation의 기존 timeout 계약은 바꾸지 않는다.
+
 수용 가능한 준비 인스턴스가 있으면 즉시 분배한다.
 미배정 큐는 워크로드별 bounded FIFO로 두며 실행 배치를 모으기 위한 대기를 추가하지 않는다.
 취소와 명시적 timeout은 큐에서 요청을 종료하고 실제 결과를 남긴다.
@@ -447,9 +501,9 @@ GOGC 100의 여유로 정상 부하에서도 한도까지 자라고, GC 폭주�
 
 ## 8. 수정과 삭제 적용
 
-### 8.1 SLO만 변경
+### 8.1 SLO 또는 요청 수명만 변경
 
-1. 새 SLO와 수정 precondition을 검증한다. 진행 중 관리 작업이 있으면 거부한다.
+1. 새 SLO·선택 요청 수명 조합과 수정 precondition을 검증한다. 진행 중 관리 작업이 있으면 거부한다.
 2. 원하는 정의를 저장한다.
 3. 워크로드별 수락 경계에서 새 적용 snapshot으로 교체한다.
 4. 적용과 관측 정의를 상태 및 관측 기록에 남긴 뒤 완료 응답을 반환한다.
@@ -457,6 +511,8 @@ GOGC 100의 여유로 정상 부하에서도 한도까지 자라고, GC 폭주�
 기존 요청은 이전 snapshot을 유지한다. 새로 수락하는 요청은 새 SLO를 사용한다.
 진입 경로의 SLO 적용 완료와 POOL 재구성 완료를 동일한 사건으로 보고하지 않는다.
 저장이나 실제 적용이 실패하면 확인한 적용 정의와 실패 원인을 반환한다.
+요청 수명만 바뀌어도 `manager.go:UpdateWorkload`의 `Definition.SameExecution` 경로로
+드레인 없이 `200`을 반환한다. 수명을 PUT에서 생략하면 새 요청에는 기본 fallback을 적용한다(`WM-33`, `WM-34`).
 
 ### 8.2 모델 또는 모델과 SLO 변경
 
@@ -690,9 +746,11 @@ Job이 없음을 조회로 확인한다. caller에는 Job/Pod 권한을 추가�
 현재 terminal BEO의 재실행 방지와 BEO·Run의 uncached typed 조회가 반영되어야 삭제 직후
 stale-cache reconcile이 근거를 다시 쓰는 창을 닫을 수 있다.
 
-`requestTimeout`은 요청 처리와 body 읽기의 상한이다. 처리가 만료된 뒤 오류 응답을 전달할 수 있도록
-같은 길이의 유한한 delivery 구간을 별도로 예약한다. body drain과 최종 flush 전에 connection deadline을
-지우지 않으며, 실제 응답 완료 지연은 이 전달 구간을 포함해 관측한다.
+`requestTimeout`은 관리 요청 처리와 body 읽기의 상한이며, 추론에서는 H와 W가 모두 없을 때의
+기존 기본 수명 D다. 추론의 실제 처리·body 읽기 상한은 5.1절의 L이고 129초를 넘지 않는다.
+처리 만료 뒤 오류 응답을 전달할 수 있도록 기존 `requestTimeout` 길이의 유한 delivery 구간을
+별도로 예약한다. body drain과 최종 flush 전에 connection deadline을 지우지 않으며,
+실제 응답 완료 지연은 이 전달 구간을 포함해 관측한다.
 
 
 배포는 `replicas:1`, `strategy:Recreate`, 전용 SA와 ClusterIP HTTPS Service다.
@@ -704,6 +762,23 @@ RWO PVC를 강제 해제하거나 Pod를 강제 삭제하여 ChillServer/drain �
 ChillServer의 read-only root filesystem은 유지하며 `/tmp`에는 512Mi bounded
 `emptyDir`를 제공한다. immutable evidence publication의 임시 candidate는 이
 writable scratch를 사용하고, 시간별 관측 archive의 gzip staging도 여기에 둔다. 원시 관측 기록은 retained PVC에 기록한다.
+
+### 요청 수명 구현 후 검사 항목 (`WM-33`, `WM-34`)
+
+다음은 구현 시 수행할 검사이며 이 문서 변경에서 실행한 검증 결과가 아니다.
+
+- API/CRD: 생략, SLO와 같은 값, 129s는 수락; malformed·0·음수·SLO 미만·130s는 거부.
+  SLO=60s/L=59s의 POST와 PUT, L=130s의 POST와 PUT에서 항목·사유를 확인하고
+  PUT 실패 시 기존 desired/applied·resourceVersion·generation·진행 작업이 유지됨을 확인한다.
+- 게이트웨이: H/W 모두 없음, 각각만 있음, H<W·H=W·H>W의 실제 L과 응답
+  `X-Chill-Request-Lifetime`/관측 `lifetimeNanos` 일치, 잘못된 H 거부를 검사한다.
+  D=30s, SLO=60s, W=120s인 헤더 없는 요청이 30초에서 잘리지 않고 120초를 적용하는지 확인한다.
+- 변경/실행: 수명만 변경 시 무드레인 `200`, 수명 제거 시 fallback, 수신과 수락 사이 변경,
+  기존 수락 요청의 deadline 유지, 재시작 applied snapshot 복원과 native 전달의 원래 수명을 확인한다.
+- 부하 생성기: `request_lifetime_seconds=None`의 헤더 부재 및 명시 H 전송을 확인하고,
+  120초보다 긴 socket budget으로 헤더 생략 요청의 응답/관측을 대조한다.
+- 구현 후 `make manifests generate`, API·manager·HTTP·runtime 및 load-generator의 관련 focused tests,
+  `make lint test`를 수행한다. 이 단계는 설계 문서만 변경하며 코드·생성물·실클러스터를 변경하지 않는다.
 
 ### 이전 serving cutover의 검증 기록
 
@@ -764,3 +839,5 @@ e2e와 위의 미검증 실행 경계는 최종 gate 통과와 구분한다. Go-
 | WM-30 | 7장과 10장 및 11장, 공유 인스턴스에서도 Workload별 부하와 실행 상태 제공 |
 | WM-31 | 8장과 11장, 변경 전후 정의와 실제 수락 및 적용 시각 및 결과 보존 |
 | WM-32 | 11장, 구간과 표본 선택이 명시된 원시 기록 기반 통계 |
+| WM-33 | 3.1절, 5.1절, 7장, 8.1절과 12장, 선택 수명의 적용 snapshot·H/W 최소값·기본 fallback·응답/관측·헤더 생략 부하 |
+| WM-34 | 3.1절과 12장, CRD 및 등록/수정 경계의 SLO 이상·129초 이하 검증과 실패 시 정의 유지 |
