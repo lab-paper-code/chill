@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
-import type { ObservationResult, RequestRow, WireInteger } from "@/lib/read-types"
+import type { ObservationResult, RequestRow, SchedulerDefinition, WireInteger } from "@/lib/read-types"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge, statusLabel } from "@/components/read-region"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { ChartAreaInteractive } from "@/components/chart-area-interactive"
@@ -13,8 +13,9 @@ import { parseSchedulerJSON } from "@/lib/scheduler"
 import { StageBreakdown, duration } from "@/components/stage-breakdown"
 import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
 import { when, actorName } from "@/features/scheduler-history"
+import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload-identity"
 
-type UIDChoice={desired:{metadata:{name:string;uid:string}}}
+type UIDChoice=IdentityWorkload
 const outcomeLabels:Record<string,string>={completed:"완료",error:"오류",rejected:"접수 거부",timeout:"시간 초과",canceled:"취소",incomplete:"미완료",delivery_failed:"전달 실패",preprocess_failed:"전처리 실패"}
 const outcomes=Object.keys(outcomeLabels)
 const presets:[key:string,label:string,hours:number][]=[["15m","최근 15분",.25],["1h","최근 1시간",1],["24h","최근 24시간",24]]
@@ -33,7 +34,7 @@ function PickService({changes}:{changes:boolean}) {
   const router=useRouter(),path=changes?"/changes":"/observations"
   const workloads=useChillQuery<UIDChoice[]>("v1/workloads")
   const [uid,setUID]=React.useState("")
-  return <Screen back={["/records","기록"]} title={changes?"어떤 서비스의 변경 이력을 볼까요?":"어떤 서비스의 요청 기록을 볼까요?"} lede="서비스를 고르면 최근 1시간 기록부터 보여드려요.">
+  return <Screen back={["/","라이브 무대"]} title={changes?"어떤 서비스의 변경 이력을 볼까요?":"어떤 서비스의 요청 기록을 볼까요?"} lede="서비스를 고르면 최근 1시간 기록부터 보여드려요.">
     <QueryGate query={workloads}>{workloads.data?.length?<Rows label="서비스">{workloads.data.map(row=><Row key={row.desired.metadata.uid} href={`${path}?uid=${encodeURIComponent(row.desired.metadata.uid)}`} label={row.desired.metadata.name}/>)}</Rows>:<Empty title="아직 등록된 서비스가 없어요"/>}</QueryGate>
     <Rows>
       <RowDialog label="이전 등록 서비스 찾기" hint="삭제된 서비스의 기록을 볼 때" title="이전 등록 서비스 찾기" description="삭제된 서비스의 원본 참조를 알고 있을 때 사용하세요. 이름이 같아도 새로 등록한 서비스와 기록이 달라요.">
@@ -59,7 +60,7 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
   for(const key of ["from","to","limit","cursor","definition","outcome"])params.getAll(key).forEach(value=>queryText.append(key,value))
   const query=useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(uid)}?${queryText}`,{enabled:!!from&&!!to,poll,decoder:changes?undefined:parseSchedulerJSON})
   const workloads=useChillQuery<UIDChoice[]>("v1/workloads")
-  const name=workloads.data?workloads.data.find(row=>row.desired.metadata.uid===uid)?.desired.metadata.name??"이전 등록 서비스":"서비스"
+  const name=resolveWorkloadIdentities(workloads.data,query.data?.definitions,[],[uid]).get(uid)!.name
   function page(cursor?:string) {
     // A page belongs to the exact submitted window, never the unsaved form.
     const next=new URLSearchParams(params.toString());if(cursor)next.set("cursor",cursor);else next.delete("cursor");router.replace(`${path}?${next}`)
@@ -89,7 +90,7 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
       {changes?(data.management?.length?<Rows label="변경">{data.management.map((row,index)=><RowDialog key={index} label={statusLabel(row.kind)} hint={`${when(row.at)} · ${actorName(row.actorUsername)}`} value={statusLabel(row.phase)} title="변경 자세히" description="변경 전후와 처리 결과예요.">
         <Facts items={[["시각",when(row.at)],["변경",statusLabel(row.kind)],["상태",statusLabel(row.phase)],["담당자",actorName(row.actorUsername)]]}/>{row.error&&<p role="alert">{row.error}</p>}<SourceJSON inline title="변경 전후 원본 보기" value={row}/>
       </RowDialog>)}</Rows>:<Empty title="이 기간에는 변경이 없어요"/>)
-      :data.requests?.length?<Rows label="요청">{data.requests.map((row,index)=><RowDialog key={index} label={rowLabel(row)} hint={`${when(row.receivedAt)}${row.firstTokenMS!==undefined?` · 첫 토큰 ${duration(row.firstTokenMS)}`:""}${params.get("requestID")===row.requestID?" · 선택한 요청":""}`} value={ms(row.elapsedNanos)} title="요청 자세히" description="결과와 단계별 시간을 확인해요."><RequestDetails row={row} target={data.cohorts?.find(cohort=>cohort.definition===row.definitionID)?.targetLatencyNanos}/></RowDialog>)}</Rows>:<Empty title="이 조건에 맞는 요청이 없어요"/>}
+      :data.requests?.length?<Rows label="요청">{data.requests.map((row,index)=><RowDialog key={index} label={rowLabel(row)} hint={`${when(row.receivedAt)}${row.firstTokenMS!==undefined?` · 첫 토큰 ${duration(row.firstTokenMS)}`:""}${params.get("requestID")===row.requestID?" · 선택한 요청":""}`} value={ms(row.elapsedNanos)} title="요청 자세히" description="결과와 단계별 시간을 확인해요."><RequestDetails row={row} service={name} definition={definitions.find(item=>item.identity===row.definitionID)?.definition} target={data.cohorts?.find(cohort=>cohort.definition===row.definitionID)?.targetLatencyNanos}/></RowDialog>)}</Rows>:<Empty title="이 조건에 맞는 요청이 없어요"/>}
       {more&&<div className="flex gap-2"><Button variant="outline" disabled={!params.has("cursor")} onClick={()=>page()}>처음으로</Button><Button variant="outline" disabled={!data.nextCursor} onClick={()=>page(data.nextCursor)}>다음 기록 보기</Button></div>}
     </>}</QueryGate>
   </Screen>
@@ -146,12 +147,12 @@ function ConditionsForm({changes,path,definitions,poll,setPoll,done}:{changes:bo
 }
 
 // Plain summary first; identities and placement stay under 실행 자세히.
-function RequestDetails({row,target}:{row:RequestRow;target?:WireInteger}) {
+function RequestDetails({row,target,service,definition}:{row:RequestRow;target?:WireInteger;service:string;definition?:SchedulerDefinition}) {
   const stages=rowStages(row),info=(value?:string|number|WireInteger)=>value===undefined||value===""?"정보 없음":String(value)
   const offsets:[string,WireInteger|undefined][]=[["입력 검사",row.validatedNanos],["접수",row.acceptedNanos],["배정",row.dispatchedNanos],["실행 대기 시작",row.queuedNanos],["실행 시작",row.runningNanos],["실행 끝",row.executedNanos],["실행 응답 수신",row.exchangeNanos],["응답 완료",row.elapsedNanos]]
   const reached=offsets.filter(([,value])=>value!=null).map(([label,value]):[string,string]=>[label,ms(value)])
   return <div className="space-y-4">
-    <Facts items={[["결과",rowLabel(row)],["걸린 시간",target!=null&&row.elapsedNanos!=null?`응답 목표 ${ms(target)} 중 ${ms(row.elapsedNanos)}`:ms(row.elapsedNanos)]]}/>
+    <Facts items={[["서비스",definition?.name??service],["모델",definition?.model.name??"모델 미확인"],["결과",rowLabel(row)],["걸린 시간",target!=null&&row.elapsedNanos!=null?`응답 목표 ${ms(target)} 중 ${ms(row.elapsedNanos)}`:ms(row.elapsedNanos)]]}/>
     {stages?<StageBreakdown progress={stages}/>:<p className="text-sm text-muted-foreground">실행 기록이 들어오면 단계별 시간을 보여드려요.</p>}
     {row.error&&<p role="alert">{row.error}</p>}
     <h3 className="font-semibold">수신 후 단계별 시점</h3>

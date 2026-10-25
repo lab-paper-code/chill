@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { useChillQuery, useSession } from "@/lib/client"
+import { useChillQuery, useSession, useWorkloadDefinitions } from "@/lib/client"
 import { conditionRows } from "@/features/scheduler-profiles"
 import type { LoadWindow, OperatingPower, SchedulerAllocation, SchedulerCandidate, SchedulerDecision, SchedulerDefinition, SchedulerEstimate, SchedulerInstance, SchedulerNode, SchedulerSnapshot, SchedulerView, WireInteger } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
@@ -14,6 +14,7 @@ import { DataTable } from "@/components/data-table"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge, statusLabel, type Tone } from "@/components/read-region"
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
+import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload-identity"
 
 export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"목표 충족",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
 export const judgmentTones:Record<string,Tone>={Keep:"ok",Feasible:"ok",Pending:"idle",Overload:"warn",InfeasibleLifetime:"warn",InfeasibleResources:"warn",InfeasibleTransition:"warn",ExecutionError:"fail"}
@@ -38,7 +39,7 @@ function ObservationLink({uid,definition,from,to,children}:{uid:string;definitio
   const query=new URLSearchParams({uid,from,to});if(definition)query.set("definition",definition)
   return <Link href={`/observations?${query}`}>{children}</Link>
 }
-function ServiceName({uid,snapshot}:{uid:string;snapshot:SchedulerSnapshot}) {return <span>{snapshot.workloads?.find(item=>item?.uid===uid)?.name??"이전 등록 서비스"} <small className="break-all">({uid})</small></span>}
+function ServiceName({uid,snapshot}:{uid:string;snapshot:SchedulerSnapshot}) {return <span>{resolveWorkloadIdentities([],[],snapshot.workloads,[uid]).get(uid)!.name} <small className="break-all">({uid})</small></span>}
 function SLOs({candidate,decision,snapshot}:{candidate:SchedulerCandidate;decision:SchedulerDecision;snapshot:SchedulerSnapshot}) {
   return <><p>예상 에너지 {energy(candidate.expectedJoules)}. 예상 지연은 반복 비교 결과이며 실측과 구분합니다.</p>{candidate.expectedJoules==null&&<Lines values={candidate.reasons}/>}<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스</th><th>예상 지연</th><th>목표</th><th>표본 수</th><th>목표 초과 비율</th><th>예상 결과</th></tr></thead><tbody>{candidate.slo?.map((row,index)=><tr key={index}><td><ObservationLink uid={row.uid} definition={row.definition} from={decision.search.windowStart} to={decision.search.windowEnd}><ServiceName uid={row.uid} snapshot={snapshot}/></ObservationLink><small className="block break-all">{row.definition}</small></td><td>{row.expectedNanos==null?"계산값 없음":`${Number(row.expectedNanos) / 1e6} ms`} ({row.percentile}% 기준)</td><td>{ms(row.targetNanos)}</td><td>{row.samples}</td><td>{row.normalizedExceedance}</td><td>{Object.entries(row.predictedOutcomes??{}).map(([key,value])=>`${key}: ${value}`).join(", ")||"제공 없음"}</td></tr>)}</tbody></table></div>{!candidate.slo?.length&&<p>서비스별 예상값 제공 없음</p>}</>
 }
@@ -199,7 +200,7 @@ export function SchedulerEstimatesPage() {
   </Screen>
 }
 
-type WorkloadChoice={desired:{metadata:{name:string;uid:string}}}
+type WorkloadChoice=IdentityWorkload
 const path="/scheduler/load"
 const shortTime=(at:string)=>{const date=new Date(at);return Number.isFinite(date.getTime())?date.toLocaleString("ko-KR",{dateStyle:"short",timeStyle:"short"}):"시각 없음"}
 // Event-time load for an explicit window. The window lives in the URL with its exact (nanosecond) text; only edited times are re-encoded.
@@ -213,9 +214,11 @@ export function SchedulerLoadPage() {
   React.useEffect(()=>{if(!params.has("from")||!params.has("to")){const next=new URLSearchParams(params.toString());if(!next.has("from"))next.set("from",entry.from);if(!next.has("to"))next.set("to",entry.to);router.replace(`${path}?${next}`,{scroll:false})}},[params,entry,router])
   const selectedUID=params.get("uid")??""
   const query=useChillQuery<LoadWindow>(`v1/observations/load?${new URLSearchParams(submitted)}`,{decoder:parseSchedulerJSON}),workloads=useChillQuery<WorkloadChoice[]>("v1/workloads"),data=query.data
-  const choices=new Map((workloads.data??[]).map(row=>[row.desired.metadata.uid,row.desired.metadata.name]))
-  for(const recordUID of [...(data?.workloads?.map(row=>row.uid)??[]),uid,selectedUID])if(recordUID&&!choices.has(recordUID))choices.set(recordUID,"이전 등록 서비스")
-  const name=(recordUID:string)=>choices.get(recordUID)??"알 수 없는 서비스"
+  const recordUIDs=[...(data?.workloads?.map(row=>row.uid)??[]),uid,selectedUID].filter(Boolean)
+  const definitions=useWorkloadDefinitions(recordUIDs,submitted)
+  const identities=resolveWorkloadIdentities(workloads.data,definitions,[],recordUIDs)
+  const choices=new Map([...identities].map(([recordUID,identity])=>[recordUID,identity.name]))
+  const name=(recordUID:string)=>identities.get(recordUID)!.name
   const rows=(data?.workloads??[]).filter(row=>!selectedUID||row.uid===selectedUID),total=rows.reduce((sum,row)=>sum+row.received,0)
   function apply() {
     const from=Date.parse(draft.from),to=Date.parse(draft.to)

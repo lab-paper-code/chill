@@ -12,6 +12,7 @@ import { QueryGate, SourceExport, SourceJSON, StatusBadge, statusLabel } from "@
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { HistoryControls, HistoryPaging, useSchedulerHistory, type SchedulerHistoryRow } from "@/features/scheduler-history"
 import { actionNodeName, actionKinds as kinds, actionStatuses as statuses, actionTones } from "@/features/scheduler"
+import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload-identity"
 
 const time=(value?:string)=>!value||value.startsWith("0001-")?"제공된 시각 없음":value
 const when=(value?:string)=>{const date=new Date(value??"");return !value||value.startsWith("0001-")||!Number.isFinite(date.getTime())?"시각 없음":date.toLocaleString("ko-KR",{dateStyle:"short",timeStyle:"medium"})}
@@ -76,8 +77,9 @@ function routingConclusion(result:OperationResult):[title:string,lede:string] {
 // Declared split (operation.staticRouting) next to the read-back split (actual.routing), as each service's share per instance.
 function RoutingSplit({result}:{result:OperationResult}) {
   const state=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
+  const workloads=useChillQuery<IdentityWorkload[]>("v1/workloads")
   const declared=result.operation.staticRouting??{},actual=result.actual.routing
-  const services=new Map((state.data?.snapshot.workloads??[]).flatMap(item=>item?[[item.uid,item.name] as const]:[]))
+  const services=resolveWorkloadIdentities(workloads.data,[],state.data?.snapshot.workloads,Object.keys({...declared,...actual}))
   const nodes=new Map((result.operation.target?.instances??[]).map(instance=>[instance.id,instance.node.name]))
   const ids=[...new Set([declared,actual??{}].flatMap(routing=>Object.values(routing).flatMap(weights=>Object.keys(weights))))].sort()
   const instanceName=(id:string)=>{const node=nodes.get(id)??"이전";const same=ids.filter(other=>(nodes.get(other)??"이전")===node);return `${node} 실행기${same.length>1?` ${same.indexOf(id)+1}`:""}`}
@@ -88,7 +90,7 @@ function RoutingSplit({result}:{result:OperationResult}) {
   }
   const uids=[...new Set([...Object.keys(declared),...Object.keys(actual??{})])]
   return <section className="rows-group" aria-label="서비스 → 인스턴스 비율"><h2 className="rows-label">서비스 → 인스턴스 비율</h2><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스 → 인스턴스</th><th>설정한 비율</th><th>실제 비율</th></tr></thead><tbody>
-    {uids.flatMap(uid=>[...new Set([...Object.keys(declared[uid]??{}),...Object.keys(actual?.[uid]??{})])].map(id=><tr key={`${uid}/${id}`}><td>{services.get(uid)??"이전 등록 서비스"} → {instanceName(id)}</td><td>{share(declared,uid,id)}</td><td>{share(actual,uid,id)}</td></tr>))}
+    {uids.flatMap(uid=>[...new Set([...Object.keys(declared[uid]??{}),...Object.keys(actual?.[uid]??{})])].map(id=><tr key={`${uid}/${id}`}><td>{services.get(uid)!.name} → {instanceName(id)}</td><td>{share(declared,uid,id)}</td><td>{share(actual,uid,id)}</td></tr>))}
   </tbody></table></div>{!uids.length&&<p>설정한 분배가 기록되지 않았어요.</p>}{result.operation.settingsValidatedAt&&<RoutingReason at={result.operation.settingsValidatedAt} declared={result.operation.staticRouting}/>}</section>
 }
 // The settings change that declared the split is the one validated at settingsValidatedAt.

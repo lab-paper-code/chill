@@ -98,6 +98,12 @@ independently of the draft. ChillServer omits arrivals from load responses, so l
 links query all definitions for the original UID/window; candidate SLO links
 include the provided immutable definition. Request details separately display
 CHILL dispatch and native progress, including exact uint64 batch identity.
+Service labels share a UID resolver across observations, load, overview and routing.
+Deleted registrations use retained observation definitions or scheduler snapshot
+workloads; unresolved labels show `이름 미확인` with the first eight UID characters.
+Load reads definitions with the existing per-workload observation API (one request
+row per UID, no server change). Each request's model comes only from its exact
+`definitionID`; a changed current model never rewrites historical request details.
 `/configuration` edits every ChillServer-supported setting from the current baseline.
 Duration fields use exact ns conversion from ms, memory and seed retain integer
 strings, and advanced search fields remain available. Review re-reads settings,

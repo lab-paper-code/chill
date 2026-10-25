@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query"
+import { QueryClient, QueryClientProvider, useMutation, useQueries, useQuery } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import type { PublicConfig } from "@/lib/server-config"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { BrandMark, FinField } from "@/components/brand"
 import { KeyRound } from "lucide-react"
+import type { ObservationResult } from "@/lib/read-types"
+import { parseSchedulerJSON } from "@/lib/scheduler"
 
 export type RelayResponse = { status: number; body: string; data: unknown; requestID: string | null; workloadUID: string | null; relayTiming: string | null; browserRTT: number }
 export class ApiError extends Error {
@@ -137,6 +139,18 @@ export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boo
     catch (error) { throw new ApiError(0,error instanceof Error ? error.message : "응답 해석 실패", {code:"DashboardPrecisionUnsupported",message:error instanceof Error ? error.message : "응답 해석 실패"}) }
   },retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => options.poll && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
   return {...query,data:query.error && [401,403].includes(query.error.status) ? undefined : query.data}
+}
+
+// Load summaries omit definitions: read the retained catalog through the existing per-UID API.
+export function useWorkloadDefinitions(uids:readonly string[],range:{from:string;to:string}) {
+  const {token} = useSession()
+  return useQueries({queries:[...new Set(uids)].filter(Boolean).map(uid => {
+    const path = `v1/observations/workloads/${encodeURIComponent(uid)}?${new URLSearchParams({...range,limit:"1"})}`
+    return {queryKey:["chill",path],enabled:!!token,queryFn:async ({signal}:{signal:AbortSignal}) => {
+      const response = await relay(path,token,signal)
+      return parseSchedulerJSON(response.body) as ObservationResult
+    }}
+  })}).flatMap(query => query.error instanceof ApiError && [401,403].includes(query.error.status) ? [] : query.data?.definitions ?? [])
 }
 export type ChillMutationInput = {path:string;method:"POST"|"PUT"|"DELETE";body?:unknown;version?:string;timeout?:string}
 export function useChillMutation() {
