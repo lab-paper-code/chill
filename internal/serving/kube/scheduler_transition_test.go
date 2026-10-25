@@ -12,6 +12,8 @@ import (
 	core "k8s.io/api/core/v1"
 )
 
+const starting = "starting"
+
 func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.SchedulerCandidate, serving.ReadyInstance) {
 	t.Helper()
 	ctx := context.Background()
@@ -192,7 +194,7 @@ func TestIndependentPreparationRecordsFrozenTargetBeforeCompletionDuringGlobalRo
 	started := make(chan OperationResult, 1)
 	release := make(chan struct{})
 	config := SchedulerControllerConfig{OnAction: func(result OperationResult) error {
-		if result.Status == "starting" {
+		if result.Status == starting {
 			started <- result
 			<-release
 			return context.Canceled // Exercise the real pre-execution observation log failure path.
@@ -211,7 +213,7 @@ func TestIndependentPreparationRecordsFrozenTargetBeforeCompletionDuringGlobalRo
 	controller.mu.Lock()
 	run := controller.runs[preparation.ID]
 	frozen := run.result.Operation.Target
-	recorded := run.result.Status == "starting" && frozen != nil && frozen.ID == target.ID &&
+	recorded := run.result.Status == starting && frozen != nil && frozen.ID == target.ID &&
 		initial.Operation.Target == frozen && run.action.Status == nativeOperationRunning
 	controller.mu.Unlock()
 	close(release)
@@ -257,7 +259,7 @@ func TestFailedGoalCleanupRetainsRunningRouteFrozenTargetAndAgedPrerequisite(t *
 			action: routing, started: now.Add(-10 * time.Second),
 			result: &OperationResult{
 				Operation: Operation{ID: routing.ID, Kind: routing.Kind, Target: frozen},
-				Status:    "starting", StartedAt: now.Add(-10 * time.Second),
+				Status:    starting, StartedAt: now.Add(-10 * time.Second),
 			},
 		},
 		failed.ID: {
@@ -284,9 +286,8 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	controller.ctx, controller.cancel = ctx, cancel
 	t.Cleanup(controller.Close)
 	const (
-		slot     = "prepared-slot"
-		planned  = "planned"
-		starting = "starting"
+		slot    = "prepared-slot"
+		planned = "planned"
 	)
 	physical.State.TargetID = slot
 	if err := controller.runtime.InstallInstances([]serving.ReadyInstance{physical}); err != nil {
@@ -524,7 +525,7 @@ func TestReadySubsetRoutesBeforeIndependentPreparationsAndPowerFinish(t *testing
 	}})
 	controller.wg.Wait()
 	for _, result := range recorded {
-		if result.Status != "starting" {
+		if result.Status != starting {
 			continue
 		}
 		if result.Operation.Target == nil || len(result.Operation.Target.Instances) != 2 {

@@ -863,10 +863,8 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			if c.conflictingActionRunning(action) {
 				continue
 			}
-			operation := scheduledOperation(action, &target, config, c.powerTargets, c.state.Snapshot.Workloads)
-			if action.From == readySubsetRoute {
-				operation.Target = intermediate
-			}
+			selectedTarget := schedulerOperationTarget(action, &target, intermediate)
+			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
 			runCtx, cancel := c.runContext(action, config)
 			action.Status = nativeOperationRunning
 			action.Cancelable = action.Kind == operationPrepare
@@ -914,6 +912,15 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			}(operation, run)
 		}
 	}
+}
+
+func schedulerOperationTarget(
+	action serving.Action, target, intermediate *serving.SchedulerCandidate,
+) *serving.SchedulerCandidate {
+	if action.From == readySubsetRoute {
+		return intermediate
+	}
+	return target
 }
 
 func (c *SchedulerController) intermediateActions(
