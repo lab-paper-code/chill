@@ -470,3 +470,103 @@ func TestRunningGlobalRouteIsNotReplayedAsInstantAcknowledgementOfNewGoal(t *tes
 		t.Fatalf("a new goal was planned while the running route is unacknowledged: %+v", decision)
 	}
 }
+
+func TestInstanceUnavailableDefersOnlyMatchingNodeAC34(t *testing.T) {
+	settings, snapshot, n2 := placementFixture()
+	bad := snapshot.Nodes[0].Node
+	snapshot.Nodes[0].Reasons = append(snapshot.Nodes[0].Reasons, NodeInstanceUnavailable)
+	wanted := snapshot.Instances[0]
+	wanted.ID = "replacement-on-unknown-node"
+	healthy := preparedSlot(snapshot, n2)
+	healthy.ID, healthy.WorkloadUID = "healthy-prepare", "w1"
+	nodes := slices.Clone(snapshot.Nodes)
+	nodes[0].PowerMode = "another-mode"
+	target := SchedulerCandidate{ID: "uncertain-transition", Nodes: nodes, Instances: []SchedulerInstance{wanted, healthy},
+		Routing: map[string]map[string]int32{"w1": {wanted.ID: 1, healthy.ID: 1}}}
+	p := schedulerPlanState{snap: snapshot}
+	if p.preparationFits(wanted) || p.completedEffectPresent(Action{Kind: schedulerActionRemove, Node: bad, Instance: "missing"}) {
+		t.Fatal("unknown occupancy was treated as empty capacity/removal proof")
+	}
+	if !p.completedEffectPresent(Action{Kind: schedulerActionRemove, Node: NodeReference{Name: bad.Name, UID: "other-uid"}, Instance: "missing"}) {
+		t.Fatal("unavailability leaked across Node UID")
+	}
+	target.Actions = schedulerPlan(snapshot, target)
+	for _, action := range target.Actions {
+		if action.Node == bad {
+			t.Fatalf("uncertain Node produced a new action: %+v", action)
+		}
+	}
+	prepare := requireTransitionAction(t, target.Actions, schedulerActionPrepare)
+	if prepare.Node != n2 {
+		t.Fatalf("healthy independent Node was blocked: %+v", prepare)
+	}
+	route := requireTransitionAction(t, target.Actions, schedulerActionRoute)
+	reason := fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, bad.Name, bad.UID)
+	if route.Reason != reason {
+		t.Fatalf("deferred target lost reason/Node identity: %+v", route)
+	}
+	snapshot.InProgressTarget = &target
+	decision := capacityDecideForTest(t, settings, snapshot, nil)
+	if decision.Target == nil || decision.Target.Status != schedulerStatusPending ||
+		!slices.Contains(decision.Target.Reasons, reason) || !slices.Contains(decision.Reasons, reason) {
+		t.Fatalf("deferred target was silently executable: %+v", decision)
+	}
+	snapshot.Nodes[0].Reasons = nil
+	snapshot.Actions = target.Actions
+	recovered := requireTransitionAction(t, schedulerPlan(snapshot, target), schedulerActionRoute)
+	if recovered.Reason != "" {
+		t.Fatalf("restored observation retained a stale block: %+v", recovered)
+	}
+}
+
+func TestPolicyAckPendingRetainsRouteEffectAndReplicaCountAC34(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	target := SchedulerCandidate{ID: "same-effect", Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances),
+		Routing: map[string]map[string]int32{"w1": {snapshot.Instances[0].ID: 1}}}
+	snapshot.Routing = target.Routing
+	route := requireTransitionAction(t, schedulerPlan(snapshot, target), schedulerActionRoute)
+	route.Status = schedulerActionComplete
+	snapshot.Actions = []Action{route}
+	snapshot.Instances[0].Reasons = []string{"PolicyAckPending"}
+	reused := requireTransitionAction(t, schedulerPlan(snapshot, target), schedulerActionRoute)
+	if reused.ID != route.ID || reused.Status != schedulerActionComplete {
+		t.Fatalf("ACK marker caused distribution effect retransmission: %+v", reused)
+	}
+	decision := SchedulerDecision{Workloads: schedulerWorkloadStates(settings, snapshot), Search: schedulerSearchPopulation(context.Background(), settings, snapshot)}
+	planner := newCapacityPlanner(context.Background(), settings, snapshot, target, nil, decision)
+	if len(planner.ws) != 1 || planner.ws[0].current != 1 {
+		t.Fatalf("ACK wait changed existing replica count: %+v", planner.ws)
+	}
+	route.Status = phaseRunning
+	snapshot.Actions = []Action{route}
+	running := requireTransitionAction(t, schedulerPlan(snapshot, target), schedulerActionRoute)
+	if running.ID != route.ID || running.Status != phaseRunning {
+		t.Fatalf("unacknowledged running route became completed: %+v", running)
+	}
+}
+
+func TestPowerChangeDrainsPendingAndNormalInstancesAC35(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	a := snapshot.Instances[0]
+	a.Reasons = []string{"PolicyAckPending"}
+	b := a
+	b.ID, b.Reasons = "normal-peer", nil
+	snapshot.Instances = []SchedulerInstance{a, b}
+	nodes := slices.Clone(snapshot.Nodes)
+	nodes[0].PowerMode = schedulerTestEcoMode
+	target := SchedulerCandidate{Nodes: nodes, Instances: []SchedulerInstance{a, b}}
+	actions := schedulerPlan(snapshot, target)
+	power := requireTransitionAction(t, actions, schedulerActionPower)
+	for _, instance := range []SchedulerInstance{a, b} {
+		stopIndex := slices.IndexFunc(actions, func(action Action) bool { return action.Kind == schedulerActionStop && action.Instance == instance.ID })
+		drainIndex := slices.IndexFunc(actions, func(action Action) bool { return action.Kind == schedulerActionDrain && action.Instance == instance.ID })
+		if stopIndex < 0 || drainIndex < 0 || !slices.Contains(actions[drainIndex].DependsOn, actions[stopIndex].ID) ||
+			!slices.Contains(power.DependsOn, actions[drainIndex].ID) {
+			t.Fatalf("power bypassed pending/normal instance stop→drain: %+v", actions)
+		}
+	}
+	snapshot.Nodes[0].Reasons = []string{NodeInstanceUnavailable}
+	if slices.ContainsFunc(schedulerPlan(snapshot, target), func(a Action) bool { return a.Kind == schedulerActionPower }) {
+		t.Fatal("actual read failure still planned power")
+	}
+}

@@ -304,3 +304,21 @@ Node를 가장 낮은 모드에서 profile 모드로 올린 기록이 가용 노
   자동제어 충돌 거절, release 뒤 새 측정 인스턴스 실제 요청 수신(`SCH-AC-32`),
   reset 순서·요청 0·소유 Pod 소멸·빈 Node 모드 Ready, 각 단계 실패 시 후속 미실행,
   성공한 reset 두 번 호출에서 두 번째 무변경 성공(`SCH-AC-33`)을 확인한다.
+
+ACK 대기/관측 실패 회귀는 다음 production 경로를 검사한다.
+
+- AC-34: `TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34`가 실제
+  `Probe→Refresh→capture→Tick` 동안 배분 변경의 native ACK를 지연시키고,
+  동일 실물·할당·owner/slot·Ready·POOL과 진행 중 목표, prepare/Pod Create 0회를 확인한다.
+  `TestPolicyAckPendingRetainsRouteEffectAndReplicaCountAC34` 및 운영 전력의
+  `policy-ack-pending-active-pool-AC34`는 완료 효과·현재 replica 수와 같은 meter 구간의
+  whole/active joules 불변을 검사한다. compact/summary도 기존 이유를 보존한다.
+- SCH-49: `TestInstanceUnavailableDefersOnlyMatchingNodeAC34`는 네 Node guard,
+  보류 이유·Node identity·관측 복귀 후 해제와 정상 다른 Node의 독립 준비를 검사한다.
+- AC-35: `TestPowerChangeDrainsPendingAndNormalInstancesAC35`는 두 실물의 DAG를,
+  `TestPendingNativeRequestsBlockActualPowerUntilStopAndDrainAC35`는 실제 stop·분배 차단,
+  native queued/running 동안 전력 요청 0회 및 빈 native 목록·drain 뒤 전력 요청 1회를 검사한다.
+- AC-36: `TestResetCleansAllDuplicateSlotExecutorsAC36`는 A만 routed인 `A→S`, `B→A`
+  전체 정리, 각각의 native drain·UID/container 종료·Pod/Service/config 소멸,
+  타 소유분 보존과 재호출 Pod 쓰기 0회를 검사한다. runtime/scheduler/policy 해석기는
+  목록 순서에 관계없는 exact 우선 및 exact 없는 다중 alias 거절도 검사한다.

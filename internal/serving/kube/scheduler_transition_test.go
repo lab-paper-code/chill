@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,11 +27,12 @@ import (
 )
 
 const (
-	starting           = "starting"
-	slowPowerActionID  = "slow-power"
-	finalRouteActionID = "final-route"
-	slowNodeName       = "slow"
-	raisedPowerMode    = "max"
+	starting               = "starting"
+	slowPowerActionID      = "slow-power"
+	finalRouteActionID     = "final-route"
+	slowNodeName           = "slow"
+	raisedPowerMode        = "max"
+	policyAckPendingReason = "PolicyAckPending"
 )
 
 func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.SchedulerCandidate, serving.ReadyInstance) {
@@ -585,7 +588,7 @@ func TestReadySubsetRoutesBeforeIndependentPreparationsAndPowerFinish(t *testing
 
 // The fake native HTTP boundary acknowledges the policy mounted in its actual
 // ConfigMap. Tick, source capture, route execution and runtime application are real.
-func tickReadySubsetController(t *testing.T) (*SchedulerController, *atomic.Bool) {
+func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (*SchedulerController, *atomic.Bool) {
 	t.Helper()
 	ctx := context.Background()
 	manager, _ := newManagerHarness(t)
@@ -594,6 +597,10 @@ func tickReadySubsetController(t *testing.T) (*SchedulerController, *atomic.Bool
 		t.Fatal(err)
 	}
 	d := *manager.runtime.SchedulerInputs(time.Now).Workloads[0]
+	workload, err := manager.store.GetWorkload(ctx, "workload")
+	if err != nil {
+		t.Fatal(err)
+	}
 	pod, node, profile, class := observerSourceFixture()
 	measured := managerProfile(&d)
 	profile.Condition.LogicalModel = d.Model.Name
@@ -621,8 +628,7 @@ func tickReadySubsetController(t *testing.T) (*SchedulerController, *atomic.Bool
 	prepared := &atomic.Bool{}
 	kube := kubefake.NewSimpleClientset()
 	profiles := []serving.Profile{}
-	objects := []client.Object{&class}
-	hosts := map[string]int{}
+	objects := []client.Object{&class, workload}
 	for index, name := range []string{"a", "b"} {
 		n, p, source := node.DeepCopy(), pod.DeepCopy(), profile
 		n.Name, n.UID = name, types.UID(name+"-node")
@@ -631,6 +637,7 @@ func tickReadySubsetController(t *testing.T) (*SchedulerController, *atomic.Bool
 		p.Labels[instancePodUIDLabel] = string(p.UID)
 		source.ID, source.NodeName, source.Condition.NodeUID = name+"-profile", name, string(n.UID)
 		p.Annotations[ServingProfileAnnotation] = source.ID
+		p.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: workload.Name, UID: workload.UID}}
 		// Progress transport is outside this test. Retain a subscribed source so
 		// client-go's empty fake Pod log does not falsely terminate the executor.
 		follow, cancel := context.WithCancel(manager.observer.ctx)
@@ -646,7 +653,6 @@ func tickReadySubsetController(t *testing.T) (*SchedulerController, *atomic.Bool
 		profiles = append(profiles, source)
 		service := observerServiceFixture(p)
 		service.Spec.ClusterIP = []string{"10.96.0.10", "10.96.0.11"}[index]
-		hosts[service.Spec.ClusterIP+":8080"] = index
 		for _, object := range []struct {
 			resource string
 			object   client.Object
@@ -678,10 +684,19 @@ func tickReadySubsetController(t *testing.T) (*SchedulerController, *atomic.Bool
 		},
 	}).Build()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		index := hosts[r.URL.Host]
-		p := profiles[index]
+		services, err := kube.CoreV1().Services(pod.Namespace).List(r.Context(), meta.ListOptions{})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		name := ""
+		for _, service := range services.Items {
+			if service.Spec.ClusterIP+":8080" == r.URL.Host {
+				name = service.OwnerReferences[0].Name
+			}
+		}
 		cm := &core.ConfigMap{}
-		if err := manager.store.client.Get(r.Context(), client.ObjectKey{Namespace: pod.Namespace, Name: p.NodeName}, cm); err != nil {
+		if err := manager.store.client.Get(r.Context(), client.ObjectKey{Namespace: pod.Namespace, Name: name}, cm); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -690,6 +705,12 @@ func tickReadySubsetController(t *testing.T) (*SchedulerController, *atomic.Bool
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		index := slices.IndexFunc(profiles, func(p serving.Profile) bool { return p.ID == cfg.Policy.ProfileID })
+		if index < 0 {
+			http.Error(w, "unknown native profile", http.StatusInternalServerError)
+			return
+		}
+		p := profiles[index]
 		actual := *p.RuntimeMetadata
 		actual.ModelFiles = deliveredModelFiles(p.Condition.Artifact.Files)
 		state := native.State{At: time.Now().UTC(), Ready: index == 0 || prepared.Load(), Metadata: native.Metadata{
@@ -697,6 +718,9 @@ func tickReadySubsetController(t *testing.T) (*SchedulerController, *atomic.Bool
 			Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
 			DecisionID: cfg.Policy.DecisionID, Policy: cfg.Policy,
 		}}
+		if observe != nil {
+			observe(index, &state)
+		}
 		if err := json.NewEncoder(w).Encode(state); err != nil {
 			t.Error(err)
 		}
@@ -732,7 +756,7 @@ func tickReadySubsetController(t *testing.T) (*SchedulerController, *atomic.Bool
 }
 
 func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
-	controller, prepared := tickReadySubsetController(t)
+	controller, prepared := tickReadySubsetController(t, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	snapshot, err := controller.capture(ctx, time.Now(), controller.config)
@@ -810,5 +834,365 @@ func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
 	controller.wg.Wait()
 	if decision.Target == nil || decision.Target.ID != goal.ID || len(recorded) != 2 {
 		t.Fatal("the completed intermediate route displaced the full goal or was needlessly reapplied")
+	}
+}
+
+func TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34(t *testing.T) {
+	var held atomic.Bool
+	held.Store(true)
+	waiting := make(chan struct{}, 1)
+	controller, _ := tickReadySubsetController(t, func(_ int, state *native.State) {
+		if held.Load() && state.Metadata.DecisionID != "" {
+			state.Metadata.DecisionID, state.Metadata.Policy.DecisionID = "", ""
+			select {
+			case waiting <- struct{}{}:
+			default:
+			}
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	defer func() { held.Store(false); controller.wg.Wait() }()
+	pod := &core.Pod{}
+	key := client.ObjectKey{Namespace: "chill-system", Name: "a"}
+	if err := controller.store.client.Get(ctx, key, pod); err != nil {
+		t.Fatal(err)
+	}
+	before := pod.DeepCopy()
+	pod.Annotations[ServingSlotAnnotation] = "logical-slot-a"
+	if err := controller.store.client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := controller.capture(ctx, time.Now(), controller.config)
+	if err != nil || len(snapshot.Instances) != 1 {
+		t.Fatalf("initial physical capture: %+v %v", snapshot.Instances, err)
+	}
+	a := snapshot.Instances[0]
+	uid := snapshot.Workloads[0].UID
+	a.WorkloadUID = uid
+	original := controller.runtime.Instances()[0]
+	controller.runtime.EnableSchedulerRouting()
+	goal := serving.SchedulerCandidate{ID: "distribution-change", Nodes: snapshot.Nodes, Instances: []serving.SchedulerInstance{a},
+		Routing: map[string]map[string]int32{uid: {a.ID: 500}},
+		Actions: []serving.Action{{ID: "held-policy-route", Kind: operationRoute}}}
+	var routeStarts, prepareStarts atomic.Int32
+	controller.config.OnAction = func(result OperationResult) error {
+		if result.Status == starting {
+			switch result.Operation.Kind {
+			case operationRoute:
+				routeStarts.Add(1)
+			case operationPrepare:
+				prepareStarts.Add(1)
+			}
+		}
+		return nil
+	}
+	controller.state.Snapshot = snapshot
+	controller.launch(goal, controller.config)
+	select {
+	case <-waiting:
+	case <-ctx.Done():
+		t.Fatal("route did not reach actual native ACK wait")
+	}
+	for range 3 {
+		decision, err := controller.Tick(ctx, time.Now())
+		if err != nil || decision.Target == nil || !slices.Contains(decision.Reasons, "TransitionInProgress") {
+			t.Fatalf("pending route lost transition: %+v %v", decision, err)
+		}
+		assertPendingPhysicalCapture(t, controller, a, original, uid)
+	}
+	if prepareStarts.Load() != 0 || routeStarts.Load() != 1 {
+		t.Fatalf("pending caused duplicate operations: prepare=%d route=%d", prepareStarts.Load(), routeStarts.Load())
+	}
+	for _, action := range controller.kube.(*kubefake.Clientset).Actions() {
+		if action.GetVerb() == "create" && action.GetResource().Resource == "pods" {
+			t.Fatal("ACK waiting created another physical Pod")
+		}
+	}
+	held.Store(false)
+	controller.wg.Wait()
+	after, err := controller.capture(ctx, time.Now(), controller.config)
+	if err != nil || len(after.Instances) != 1 || after.Instances[0].ID != a.ID || len(after.Instances[0].Reasons) != 0 {
+		t.Fatalf("ACK did not clear pending on the same executor: %+v %v", after.Instances, err)
+	}
+	if actual, _ := controller.runtime.SchedulerRouting(); actual[uid][a.ID] != 500 {
+		t.Fatalf("actual acknowledged distribution not applied: %v", actual)
+	}
+}
+
+func assertPendingPhysicalCapture(t *testing.T, controller *SchedulerController, a serving.SchedulerInstance, original serving.InstanceState, uid string) {
+	t.Helper()
+	state := controller.State()
+	if len(state.Snapshot.Instances) != 1 {
+		t.Fatalf("ACK wait erased the physical allocation: %+v", state.Snapshot)
+	}
+	actual := state.Snapshot.Instances[0]
+	if actual.ID != a.ID || actual.TargetID != a.TargetID || actual.OwnerWorkloadUID != uid ||
+		actual.Node != a.Node || !actual.Ready || actual.Stopped || !slices.Equal(actual.Allocation.CPUs, a.Allocation.CPUs) ||
+		!slices.Equal(actual.Reasons, []string{policyAckPendingReason}) {
+		t.Fatalf("pending instance changed physical facts: %+v", actual)
+	}
+	for _, node := range state.Snapshot.Nodes {
+		if node.Node == a.Node && slices.Contains(node.Reasons, serving.NodeInstanceUnavailable) {
+			t.Fatalf("ACK pending became source unavailable: %+v", node)
+		}
+	}
+	physical := schedulerPhysicalState(a.ID, controller.runtime.Instances())
+	if physical == nil || physical.Native == nil || physical.Native.Metadata.DecisionID != "" ||
+		physical.Native.At.Before(original.Native.At) || !physical.Ready || physical.Reason != policyAckPendingReason {
+		t.Fatalf("actual previous ACK/state was replaced or dropped: %+v", physical)
+	}
+	pools := controller.runtime.Pools(state.Snapshot.Nodes)
+	if len(pools.Workloads) != 1 || len(pools.Workloads[0].Instances) != 1 ||
+		pools.Workloads[0].Instances[0].Reason != policyAckPendingReason ||
+		slices.ContainsFunc(pools.Available, func(n serving.PoolNode) bool { return n.Node == a.Node }) {
+		t.Fatalf("pending instance left its owned/bound POOL: %+v", pools)
+	}
+}
+
+func TestPolicyAckPendingDoesNotMaskNativeReadOrMetadataFailure(t *testing.T) {
+	for _, cause := range []string{"metadata", "read"} {
+		t.Run(cause, func(t *testing.T) {
+			var failed atomic.Bool
+			controller, _ := tickReadySubsetController(t, func(_ int, state *native.State) {
+				if !failed.Load() {
+					return
+				}
+				if cause == "metadata" {
+					state.Metadata.Runtime.RuntimeVersion = ""
+				} else {
+					state.At = time.Time{}
+				}
+			})
+			ctx := context.Background()
+			if snapshot, err := controller.capture(ctx, time.Now(), controller.config); err != nil || len(snapshot.Instances) != 1 {
+				t.Fatalf("initial verified physical state missing: %+v %v", snapshot.Instances, err)
+			}
+			pod := &core.Pod{}
+			if err := controller.store.client.Get(ctx, client.ObjectKey{Namespace: "chill-system", Name: "a"}, pod); err != nil {
+				t.Fatal(err)
+			}
+			before := pod.DeepCopy()
+			pod.Annotations[ServingPolicyAnnotation] = "unacknowledged"
+			if err := controller.store.client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
+				t.Fatal(err)
+			}
+			failed.Store(true)
+			snapshot, err := controller.capture(ctx, time.Now(), controller.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Instances) != 0 || !slices.ContainsFunc(snapshot.Nodes, func(n serving.SchedulerNode) bool {
+				return n.Node.Name == "a" && slices.Contains(n.Reasons, serving.NodeInstanceUnavailable)
+			}) {
+				t.Fatalf("failed native source revived old state merely because ACK was pending: %+v", snapshot)
+			}
+		})
+	}
+}
+
+func pendingPowerController(t *testing.T, ctx context.Context) (*SchedulerController, serving.SchedulerSnapshot, *atomic.Bool, *atomic.Int32) {
+	t.Helper()
+	var outstanding atomic.Bool
+	outstanding.Store(true)
+	appliedAt := time.Now().UTC()
+	controller, prepared := tickReadySubsetController(t, func(index int, state *native.State) {
+		state.Metadata.AppliedAt = appliedAt
+		if index == 0 && outstanding.Load() {
+			state.Requests = []native.RequestState{
+				{Context: native.RequestContext{RequestID: "queued"}, Phase: "queued"},
+				{Context: native.RequestContext{RequestID: "running"}, Phase: "running", BatchID: 1, BatchSize: 1},
+			}
+		}
+	})
+	prepared.Store(true)
+	kube := controller.kube.(*kubefake.Clientset)
+	profiles := controller.observer.Profiles()
+	for index := range profiles {
+		if profiles[index].NodeName == "b" {
+			profiles[index].NodeName, profiles[index].Condition.NodeUID = "a", "a-node"
+		}
+	}
+	controller.observer.SetProfiles(profiles)
+	for _, name := range []string{"a", "b"} {
+		pod := &core.Pod{}
+		if err := controller.store.client.Get(ctx, client.ObjectKey{Namespace: "chill-system", Name: name}, pod); err != nil {
+			t.Fatal(err)
+		}
+		before := pod.DeepCopy()
+		pod.Spec.NodeName = "a"
+		if name == "a" {
+			pod.Annotations[ServingPolicyAnnotation] = "desired-but-not-acknowledged"
+		}
+		if err := controller.store.client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := controller.capture(ctx, time.Now(), controller.config)
+	if err != nil || len(snapshot.Instances) != 2 {
+		t.Fatalf("pending A and normal B disappeared: %+v %v", snapshot.Instances, err)
+	}
+	a := snapshot.Instances[0]
+	if !slices.Contains(a.Reasons, policyAckPendingReason) || len(snapshot.Instances[1].Reasons) != 0 {
+		t.Fatalf("fixture lacks distinct pending/normal observations: %+v", snapshot.Instances)
+	}
+	physical := schedulerPhysicalState(a.ID, controller.runtime.Instances())
+	if physical == nil || physical.Native == nil || len(physical.Native.Requests) != 2 {
+		t.Fatalf("ACK pending erased native queued/running requests: %+v", physical)
+	}
+	class := &edge.DeviceClass{}
+	if err := controller.store.client.Get(ctx, client.ObjectKey{Name: "cpu"}, class); err != nil {
+		t.Fatal(err)
+	}
+	class.Spec.PowerModes = append(class.Spec.PowerModes, edge.PowerMode{Name: lowMode,
+		Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 1}}})
+	if err := controller.store.client.Update(ctx, class); err != nil {
+		t.Fatal(err)
+	}
+	settle := settleAgent(class)
+	node, err := kube.CoreV1().Nodes().Get(ctx, a.Node.Name, meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Labels[chillmeta.PowerMode] = a.Profile.Condition.PowerMode
+	settle(node)
+	if _, err := kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var powerWrites atomic.Int32
+	controller.store.client = &nodeAPI{Client: controller.store.client, kube: kube, agent: func(node *core.Node) {
+		powerWrites.Add(1)
+		settle(node)
+	}}
+	return controller, snapshot, &outstanding, &powerWrites
+}
+
+func TestPendingNativeRequestsBlockActualPowerUntilStopAndDrainAC35(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	controller, snapshot, outstanding, powerWrites := pendingPowerController(t, ctx)
+	a := snapshot.Instances[0]
+	power := serving.Action{ID: "actual-power", Kind: operationPower, Node: a.Node, To: lowMode}
+	target := serving.SchedulerCandidate{}
+	for _, instance := range snapshot.Instances {
+		if err := controller.operations.StopInstance(ctx, instance.ID); err != nil {
+			t.Fatal(err)
+		}
+		power.DependsOn = append(power.DependsOn, "drain-"+instance.ID)
+	}
+	routing, _ := controller.runtime.SchedulerRouting()
+	for _, weights := range routing {
+		for _, instance := range snapshot.Instances {
+			if weights[instance.ID] > 0 {
+				t.Fatalf("stop left a native destination routed: %v", routing)
+			}
+		}
+	}
+	if controller.dependenciesReady(power, target) {
+		t.Fatal("power dependencies released before both drains")
+	}
+	if err := controller.operations.ChangePower(ctx, a.Node, "", lowMode, time.Second); err == nil || powerWrites.Load() != 0 {
+		t.Fatalf("power changed with native queued/running requests: writes=%d err=%v", powerWrites.Load(), err)
+	}
+	outstanding.Store(false)
+	state, err := controller.operations.Capture(ctx, a.Node)
+	if err != nil || len(state.Native) != 2 {
+		t.Fatalf("missing actual empty native state: %+v %v", state, err)
+	}
+	for _, actual := range state.Native {
+		if len(actual.Requests) != 0 {
+			t.Fatal("native completion did not clear outstanding requests")
+		}
+	}
+	for _, instance := range snapshot.Instances {
+		id := "drain-" + instance.ID
+		result, err := controller.operations.Execute(ctx, Operation{ID: id, Kind: operationDrain, Node: a.Node, Instance: instance.ID})
+		if err != nil || result.Status != nativeOperationComplete {
+			t.Fatalf("actual drain failed: %+v %v", result, err)
+		}
+		controller.runs[id] = &actionRun{action: serving.Action{ID: id, Kind: operationDrain, Status: nativeOperationComplete}}
+	}
+	if !controller.dependenciesReady(power, target) {
+		t.Fatal("empty native sources and both actual drains did not release power")
+	}
+	if err := controller.operations.ChangePower(ctx, a.Node, "", lowMode, time.Second); err != nil || powerWrites.Load() != 1 {
+		t.Fatalf("drained Node did not execute exactly one real power request: writes=%d err=%v", powerWrites.Load(), err)
+	}
+}
+
+func TestPhysicalLookupAndPolicyPreferExactExecutorAC36(t *testing.T) {
+	controller, prepared := tickReadySubsetController(t, nil)
+	prepared.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	snapshot, err := controller.capture(ctx, time.Now(), controller.config)
+	if err != nil || len(snapshot.Instances) != 2 {
+		t.Fatalf("physical fixture: %+v %v", snapshot.Instances, err)
+	}
+	a, b := snapshot.Instances[0], snapshot.Instances[1]
+	physical := controller.runtime.Instances()
+	physical[0].TargetID = b.ID
+	for _, order := range [][]serving.InstanceState{physical, {physical[1], physical[0]}} {
+		if actual := schedulerPhysicalState(b.ID, order); actual == nil || actual.ID != b.ID {
+			t.Fatalf("list order/alias shadowed exact executor: %+v", actual)
+		}
+	}
+	physical[0].TargetID, physical[1].TargetID = "ambiguous", "ambiguous"
+	if schedulerPhysicalState("ambiguous", physical) != nil {
+		t.Fatal("genuinely ambiguous logical alias was selected")
+	}
+	updateSlot := func(name, slot string) {
+		t.Helper()
+		pod := &core.Pod{}
+		if err := controller.store.client.Get(ctx, client.ObjectKey{Namespace: "chill-system", Name: name}, pod); err != nil {
+			t.Fatal(err)
+		}
+		before := pod.DeepCopy()
+		pod.Annotations[ServingSlotAnnotation] = slot
+		if err := controller.store.client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	updateSlot("a", b.ID)
+	policy := native.Policy{DecisionID: "exact-b-policy", ProfileID: b.Profile.ID, MaxBatchSize: b.MaxBatch, DeadlinePolicy: "keep"}
+	result := OperationResult{}
+	if err := controller.operations.applyPolicy(ctx, b.ID, policy, &result); err != nil {
+		t.Fatal("earlier alias Pod shadowed exact policy target", err)
+	}
+	if _, ok := result.Actual.Native[b.ID]; !ok {
+		t.Fatalf("policy ACK lacks exact physical target: %+v", result.Actual.Native)
+	}
+	cm := &core.ConfigMap{}
+	if err := controller.store.client.Get(ctx, client.ObjectKey{Namespace: "chill-system", Name: "a"}, cm); err != nil {
+		t.Fatal(err)
+	}
+	var config native.Config
+	if err := json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil || config.Policy.ProfileID != a.Profile.ID || config.Policy.DecisionID != "" {
+		t.Fatalf("policy changed alias Pod instead of exact target: %+v %v", config, err)
+	}
+	updateSlot("a", "ambiguous")
+	updateSlot("b", "ambiguous")
+	if err := controller.operations.applyPolicy(ctx, "ambiguous", policy, &OperationResult{}); err == nil || !strings.Contains(err.Error(), "multiple") {
+		t.Fatalf("ambiguous policy alias silently chose the first Pod: %v", err)
+	}
+}
+
+func TestInstanceUnavailableBlocksContinuedNodeActions(t *testing.T) {
+	controller, target, _ := acknowledgedHandoffFixture(t)
+	node := target.Instances[0].Node
+	controller.state.Snapshot.Nodes = []serving.SchedulerNode{{Node: node, Reasons: []string{serving.NodeInstanceUnavailable}}}
+	for _, kind := range []string{operationPrepare, operationPower, operationRemove} {
+		action := serving.Action{Kind: kind, Node: node}
+		if controller.dependenciesReady(action, target) {
+			t.Fatalf("retained %s released on unknown Node", kind)
+		}
+		action.Node.UID = "healthy-other-uid"
+		if !controller.dependenciesReady(action, target) {
+			t.Fatalf("unknown Node blocked independent healthy %s", kind)
+		}
+	}
+	route := serving.Action{Kind: operationRoute, Reason: serving.NodeInstanceUnavailable + ":" + node.Name + ":" + node.UID}
+	if controller.dependenciesReady(route, target) {
+		t.Fatal("blocked route executed after its missing prepare/power was suppressed")
 	}
 }

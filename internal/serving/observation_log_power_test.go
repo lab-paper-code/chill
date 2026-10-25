@@ -24,11 +24,13 @@ type operatingPowerScenario struct {
 	missingInactive, zero, missingMembership, coverageGap bool
 	duplicateMeter, conflictingSample                     bool
 	boundedQuery, measured                                bool
+	policyPending                                         bool
 }
 
 func TestOperatingPowerSameIntervalAndActualMembership(t *testing.T) {
 	scenarios := []operatingPowerScenario{
 		{name: "complete", measured: true},
+		{name: "policy-ack-pending-active-pool-AC34", policyPending: true, measured: true},
 		{name: "missing-inactive-node", missingInactive: true},
 		{name: "zero", zero: true, measured: true},
 		{name: "no-membership", missingMembership: true, measured: true},
@@ -115,6 +117,15 @@ func seedOperatingPower(t *testing.T, observationLog *ObservationLog, from time.
 			{ID: "b-stopped", Node: b, Ready: true, Stopped: true, WorkloadUID: "w"},
 		}}
 		appendRecord(SchedulerObservation{At: initial.At, Snapshot: &initial})
+		if scenario.policyPending {
+			initial.At = from.Add(time.Second)
+			initial.Instances[0].Reasons = []string{"PolicyAckPending"}
+			initial.Instances[1].Reasons = []string{"PolicyAckPending"}
+			appendRecord(SchedulerObservation{At: initial.At, Snapshot: &initial})
+			initial.At = from.Add(2 * time.Second)
+			initial.Instances[0].Reasons, initial.Instances[1].Reasons = nil, nil
+			appendRecord(SchedulerObservation{At: initial.At, Snapshot: &initial})
+		}
 		transition := SchedulerSnapshot{At: from.Add(3 * time.Second), Instances: []SchedulerInstance{
 			{ID: "a-preparing", Node: a, Ready: false, WorkloadUID: "w"},
 			{ID: "a-unassigned", Node: a, Ready: true},

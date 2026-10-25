@@ -329,14 +329,15 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	if err := manager.observer.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, instance := range manager.runtime.Instances() {
-		if instance.Ready {
-			t.Fatal("stale bootstrap annotation incorrectly acknowledged the current native policy")
-		}
-	}
+	id := physicalID(fixture.UID, firstfloorStatus(fixture).ContainerID)
+	assertCurrentPolicyObservation(t, manager.runtime.Instances(), id, policyAckPendingReason, currentPolicy)
 	if err := operations.PrepareInstance(ctx, spec); err != nil {
 		t.Fatal("idempotent prepare did not repair a previous partial acknowledgment", err)
 	}
+	if err := manager.observer.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertCurrentPolicyObservation(t, manager.runtime.Instances(), id, "", currentPolicy)
 	cm := &core.ConfigMap{}
 	if err := manager.store.client.Get(ctx, key, cm); err != nil {
 		t.Fatal(err)
@@ -674,5 +675,17 @@ func TestMeasuredPowerChangeOnEmptyMeasurementNode(t *testing.T) {
 	from, to, err := operationCostKeys(result)
 	if err != nil || from != "eco" || to != "boost" || len(result.Before.States) != 0 {
 		t.Fatalf("empty-Node transition keys %q->%q %v %+v", from, to, err, result.Before)
+	}
+}
+
+func assertCurrentPolicyObservation(t *testing.T, instances []serving.InstanceState, id, reason string, policy native.Policy) {
+	t.Helper()
+	if len(instances) != 1 {
+		t.Fatalf("expected one actual executor, got %+v", instances)
+	}
+	instance := instances[0]
+	if instance.ID != id || !instance.Ready || instance.Reason != reason || instance.Native == nil ||
+		instance.Native.Metadata.DecisionID != policy.DecisionID || !reflect.DeepEqual(instance.Native.Metadata.Policy, policy) {
+		t.Fatalf("annotation discarded readiness or fabricated native ACK: %+v", instance)
 	}
 }

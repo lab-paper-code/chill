@@ -938,3 +938,37 @@ func schedulerPrimeReplayCredits(t *testing.T, ctx context.Context, r *Runtime, 
 		}
 	}
 }
+
+func TestSchedulerSlotsPreferExactIDAndRejectAmbiguousAliasesAC36(t *testing.T) {
+	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	a := r.instances[instance.ID].ReadyInstance
+	a.State.TargetID = "shared-slot"
+	b := a
+	b.State.ID, b.State.TargetID, b.Routing = "duplicate-physical", a.State.ID, map[string]int32{}
+	for _, ready := range [][]ReadyInstance{{a, b}, {b, a}} {
+		if err := r.InstallInstances(ready); err != nil {
+			t.Fatal(err)
+		}
+		r.mu.Lock()
+		actual, err := r.schedulerSlotLocked(a.State.ID)
+		r.mu.Unlock()
+		if err != nil || actual == nil || actual.State.ID != a.State.ID {
+			t.Fatalf("alias shadowed an exact physical ID: %+v %v", actual, err)
+		}
+		target := SchedulerCandidate{Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{"w1": {instance.ID: 1}, "w2": {}}}
+		target.Instances[0].WorkloadUID = "w1"
+		if err := r.ApplySchedulerTarget(target); err != nil {
+			t.Fatalf("actual exact-ID route refused duplicate alias: %v", err)
+		}
+	}
+	b.State.TargetID = a.State.TargetID
+	if err := r.InstallInstances([]ReadyInstance{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	_, err := r.schedulerSlotLocked(a.State.TargetID)
+	r.mu.Unlock()
+	if err == nil {
+		t.Fatal("multiple logical aliases without exact ID were silently selected")
+	}
+}

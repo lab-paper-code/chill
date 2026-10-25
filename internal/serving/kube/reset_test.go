@@ -79,10 +79,11 @@ func TestDecodeManualOperationStrictKindFields(t *testing.T) {
 // It does not manufacture drain or executor termination evidence.
 type resetAPI struct {
 	client.Client
-	kube         *kubefake.Clientset
-	podWrites    int
-	deleteCalls  int
-	refuseDelete bool
+	kube              *kubefake.Clientset
+	podWrites         int
+	deleteCalls       int
+	refuseDelete      bool
+	terminateOnDelete bool
 }
 
 func (c *resetAPI) syncPod(ctx context.Context, pod *core.Pod) error {
@@ -126,6 +127,19 @@ func (c *resetAPI) Delete(ctx context.Context, obj client.Object, opts ...client
 	}
 	if err := c.Client.Delete(ctx, obj, opts...); err != nil {
 		return err
+	}
+	if isPod && c.terminateOnDelete {
+		current := &core.Pod{}
+		if err := c.Client.Get(ctx, client.ObjectKeyFromObject(pod), current); err != nil {
+			return err
+		}
+		status := firstfloorStatus(current)
+		status.Ready = false
+		status.State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ContainerID: status.ContainerID, ExitCode: 0}}
+		current.Status.Phase = core.PodSucceeded
+		if err := c.Client.Status().Update(ctx, current); err != nil {
+			return err
+		}
 	}
 	if isPod {
 		c.podWrites++
@@ -691,5 +705,132 @@ func TestResetDoesNotTreatForeignBindingAsOwnership(t *testing.T) {
 	}
 	if err == nil && (result.Status == nativeOperationComplete || result.Error == "" || !strings.Contains(strings.ToLower(result.Error), "owner")) {
 		t.Errorf("foreign ownership conflict did not fail with evidence: %+v", result)
+	}
+}
+
+func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
+	controller, prepared := tickReadySubsetController(t, nil)
+	prepared.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	kube := controller.kube.(*kubefake.Clientset)
+	api := &resetAPI{Client: &nodeAPI{Client: controller.store.client, kube: kube}, kube: kube, terminateOnDelete: true}
+	controller.store.client = api
+	selected := controller.runtime.SchedulerInputs(time.Now).Workloads[0]
+	foreign := *selected
+	foreign.Name, foreign.UID = "foreign", "foreign-workload"
+	if err := controller.runtime.Publish(&foreign); err != nil {
+		t.Fatal(err)
+	}
+	workload := &edge.Workload{ObjectMeta: meta.ObjectMeta{Name: foreign.Name, UID: types.UID(foreign.UID)}}
+	if err := api.Create(ctx, workload); err != nil {
+		t.Fatal(err)
+	}
+	pods := []*core.Pod{}
+	for _, name := range []string{"a", "b"} {
+		pod := &core.Pod{}
+		if err := api.Get(ctx, client.ObjectKey{Namespace: "chill-system", Name: name}, pod); err != nil {
+			t.Fatal(err)
+		}
+		before := pod.DeepCopy()
+		pod.Annotations[ServingSlotAnnotation] = "shared-slot"
+		if name == "b" {
+			pod.Annotations[ServingSlotAnnotation] = physicalID(pods[0].UID, firstfloorStatus(pods[0]).ContainerID)
+		}
+		if err := api.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
+			t.Fatal(err)
+		}
+		pods = append(pods, pod)
+	}
+	other := pods[0].DeepCopy()
+	other.Name, other.UID, other.ResourceVersion = "c", "foreign-pod", ""
+	other.Labels[instancePodUIDLabel] = string(other.UID)
+	other.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: foreign.Name, UID: workload.UID}}
+	other.Annotations[ServingRoutingAnnotation] = `{"` + foreign.UID + `":1000}`
+	if err := api.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := kube.Tracker().Create(core.SchemeGroupVersion.WithResource("pods"), other.DeepCopy(), other.Namespace); err != nil {
+		t.Fatal(err)
+	}
+	service := observerServiceFixture(other)
+	service.Spec.ClusterIP = "10.96.0.12"
+	if _, err := kube.CoreV1().Services(other.Namespace).Create(ctx, service, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	cm := &core.ConfigMap{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(pods[0]), cm); err != nil {
+		t.Fatal(err)
+	}
+	cm.Name, cm.UID, cm.ResourceVersion = other.Name, "", ""
+	if err := api.Create(ctx, cm); err != nil {
+		t.Fatal(err)
+	}
+	id := physicalID(other.UID, firstfloorStatus(other).ContainerID)
+	follow, stop := context.WithCancel(controller.observer.ctx)
+	defer stop()
+	controller.observer.sources[id] = &nativeSource{pod: types.NamespacedName{Namespace: other.Namespace, Name: other.Name},
+		uid: other.UID, containerID: firstfloorStatus(other).ContainerID, follow: follow, cancel: stop}
+	controller.config.StaticRouting = true
+	controller.config.ConfigurationName, controller.config.ConfigurationKey = "duplicate-reset-config", "scheduler.json"
+	controller.config.Settings.AutonomousWorkloads = []string{selected.UID, foreign.UID}
+	raw, err := json.Marshal(map[string]any{"settings": controller.config.Settings,
+		"staticRouting": map[string]map[string]int{foreign.UID: {id: 1000}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kube.CoreV1().ConfigMaps("chill-system").Create(ctx, &core.ConfigMap{
+		ObjectMeta: meta.ObjectMeta{Name: controller.config.ConfigurationName, Namespace: "chill-system"},
+		Data:       map[string]string{controller.config.ConfigurationKey: string(raw)},
+	}, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := controller.capture(ctx, time.Now(), controller.config)
+	if err != nil || len(snapshot.Instances) != 3 {
+		t.Fatalf("duplicate physical sources not visible: %+v %v", snapshot.Instances, err)
+	}
+	controller.state.Snapshot = snapshot
+	aID := physicalID(pods[0].UID, firstfloorStatus(pods[0]).ContainerID)
+	actual, _ := controller.runtime.SchedulerRouting()
+	if actual[selected.UID][aID] != 1000 || actual[foreign.UID][id] != 1000 {
+		t.Fatalf("fixture did not actually route A and foreign C: %v", actual)
+	}
+	foreignBefore := other.DeepCopy()
+	request := ManualOperation{Kind: operationReset, WorkloadUIDs: []string{selected.UID}, Reason: "clean duplicate slot"}
+	first, err := controller.ExecuteManual(ctx, request)
+	assertResetComplete(t, first, err)
+	if len(first.DrainNative) != 2 {
+		t.Fatalf("reset did not read native drain proof for both physical executors: %+v", first.DrainNative)
+	}
+	for _, pod := range pods {
+		for _, object := range []client.Object{&core.Pod{}, &core.ConfigMap{}} {
+			if err := api.Get(ctx, client.ObjectKeyFromObject(pod), object); !apierrors.IsNotFound(err) {
+				t.Fatalf("owned resource remains (%T): %v", object, err)
+			}
+		}
+		if _, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, instanceService(pod).Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("duplicate executor Service survives reset: %v", err)
+		}
+	}
+	foreignAfter, err := kube.CoreV1().Pods(other.Namespace).Get(ctx, other.Name, meta.GetOptions{})
+	if err != nil || !reflect.DeepEqual(foreignBefore, foreignAfter) {
+		t.Fatalf("foreign physical ownership/allocation/routing was modified: %+v %v", foreignAfter, err)
+	}
+	actual, _ = controller.runtime.SchedulerRouting()
+	if actual[foreign.UID][id] != 1000 {
+		t.Fatalf("foreign distribution changed: %v", actual)
+	}
+	writes := api.podWrites
+	second, err := controller.ExecuteManual(ctx, request)
+	assertResetComplete(t, second, err)
+	if api.podWrites != writes {
+		t.Fatalf("second reset wrote Pods: %d→%d", writes, api.podWrites)
+	}
+}
+
+func assertResetComplete(t *testing.T, result OperationResult, err error) {
+	t.Helper()
+	if err != nil || result.Status != nativeOperationComplete {
+		t.Fatalf("reset failed: status=%s error=%s err=%v", result.Status, result.Error, err)
 	}
 }

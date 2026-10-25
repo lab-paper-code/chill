@@ -63,6 +63,10 @@ func TestSchedulerMeasuredWideAffinityRetainsResourceGuards(t *testing.T) {
 			s.Instances = append(s.Instances, other)
 		}, "ExclusiveCPUInfeasible"},
 		{"reserved CPU", func(s *SchedulerSnapshot) { s.Nodes[0].Reserved.CPUs = []int{3} }, "ExclusiveCPUInfeasible"},
+		{"unavailable Node retains global exclusive guard AC34", func(s *SchedulerSnapshot) {
+			s.Nodes[0].Reasons = []string{NodeInstanceUnavailable}
+			s.Nodes[0].Reserved.CPUs = []int{3}
+		}, "ExclusiveCPUInfeasible"},
 		{"request exceeds mask", func(s *SchedulerSnapshot) { s.Instances[0].Allocation.CPUCount = 5 }, "UnknownExclusiveCPUAffinity"},
 		{"request exceeds budget", func(s *SchedulerSnapshot) { s.Instances[0].Allocation.CPUCount = 5 }, "CPUBudgetInfeasible"},
 		{"reserved quota oversubscribed", func(s *SchedulerSnapshot) {
@@ -79,6 +83,9 @@ func TestSchedulerMeasuredWideAffinityRetainsResourceGuards(t *testing.T) {
 				t.Fatal(err)
 			}
 			schedulerRequireReason(t, decision.Keep.Reasons, tc.reason)
+			if decision.Status != schedulerStatusPending || decision.Target != nil {
+				t.Fatalf("invalid global resource budget became executable: %+v", decision)
+			}
 		})
 	}
 }

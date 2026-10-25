@@ -330,7 +330,7 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	differentProfile := *profile
 	differentProfile.Batches = []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{56}}}
 	instances := []serving.SchedulerInstance{
-		{ID: "physical", TargetID: "selected-slot", Node: serving.NodeReference{UID: "node-uid"}, Profile: profile},
+		{ID: "physical", TargetID: "selected-slot", Node: serving.NodeReference{UID: "node-uid"}, Profile: profile, Reasons: []string{"PolicyAckPending"}},
 		{ID: "equal", Profile: &equalProfile},
 		{ID: "different", Profile: &differentProfile},
 		{ID: "missing"},
@@ -342,6 +342,10 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	evidence := newSchedulerReadEvidence()
 	projected := evidence.observations([]serving.SchedulerObservation{event})
 	got := projected[0].Decision.Target.Instances
+	if !reflect.DeepEqual(got[0].Reasons, instances[0].Reasons) ||
+		!reflect.DeepEqual(projected[0].Snapshot.Instances[0].Reasons, instances[0].Reasons) {
+		t.Fatal("compact observation/snapshot hid policy ACK waiting")
+	}
 	if len(evidence.Profiles) != 2 || got[0].Profile.Ref != got[1].Profile.Ref || got[0].Profile.Ref == got[2].Profile.Ref {
 		t.Fatal("equal evidence was not shared, or differing same-identity evidence was discarded")
 	}

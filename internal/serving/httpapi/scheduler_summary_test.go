@@ -15,7 +15,7 @@ func TestSchedulerSummaryWhitelist(t *testing.T) {
 	at := time.Date(2026, 10, 25, 1, 2, 3, 4, time.UTC)
 	seconds := 2.5
 	state := servingkube.SchedulerControllerState{
-		Snapshot: serving.SchedulerSnapshot{At: at, Instances: []serving.SchedulerInstance{{ID: "i", OwnerWorkloadUID: "owner", WorkloadUID: "allocated", ProfileID: "profile", Ready: true, Routable: map[string]bool{"allocated": false}}}},
+		Snapshot: serving.SchedulerSnapshot{At: at, Instances: []serving.SchedulerInstance{{ID: "i", OwnerWorkloadUID: "owner", WorkloadUID: "allocated", ProfileID: "profile", Ready: true, Routable: map[string]bool{"allocated": false}, Reasons: []string{"PolicyAckPending"}}}},
 		Decision: serving.SchedulerDecision{At: at, Status: "Selected", Target: &serving.SchedulerCandidate{ID: "target"}},
 		Actions:  []serving.Action{{ID: "running", Kind: "prepare", Status: "running", Elapsed: time.Second, ExpectedSeconds: &seconds, ExpectedSource: &serving.ActionExpectedSource{CostID: "cost", Statistic: "mean", TrialCount: 2}}, {ID: "old", Status: "complete"}},
 	}
@@ -46,6 +46,9 @@ func TestSchedulerSummaryWhitelist(t *testing.T) {
 	summary := summarizeScheduler(&state)
 	if summary.Decision.ID != at.Format(time.RFC3339Nano) || summary.Decision.TargetID != "target" || len(summary.Actions) != 1 || summary.Actions[0].ExpectedSeconds == nil || *summary.Actions[0].ExpectedSeconds != 2.5 || summary.Instances[0].Routable["allocated"] {
 		t.Fatalf("projection lost authoritative fields: %+v", summary)
+	}
+	if len(summary.Instances[0].Reasons) != 1 || summary.Instances[0].Reasons[0] != "PolicyAckPending" {
+		t.Fatalf("summary hid policy ACK waiting: %+v", summary.Instances[0])
 	}
 }
 
