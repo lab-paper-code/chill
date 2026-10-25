@@ -625,7 +625,7 @@ func (o *Operations) StopInstance(ctx context.Context, id string) error {
 	o.observer.mu.Lock()
 	o.observer.removingInstances[id] = true
 	o.observer.mu.Unlock()
-	return o.persistRouting(ctx, id)
+	return o.persistRouting(ctx, id, nil)
 }
 
 // detachInstance waits for the drain proof and records the withdrawn routes.
@@ -633,7 +633,7 @@ func (o *Operations) detachInstance(ctx context.Context, id string) error {
 	if err := o.wait(ctx, func() (bool, error) { return o.runtime.DetachInstance(id) }); err != nil {
 		return err
 	}
-	return o.persistRouting(ctx, id)
+	return o.persistRouting(ctx, id, nil)
 }
 func (o *Operations) removeInstance(ctx context.Context, node serving.NodeReference, id string, proof map[string]native.State) error {
 	uid, containerID, ok := strings.Cut(id, "/")
@@ -973,7 +973,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	o.observer.mu.Unlock()
 	// Explicit manual declarations must not overwrite the Pod defaults release restores.
 	if result.Operation.WorkloadUID == "" {
-		if err := o.persistRouting(ctx, ""); err != nil {
+		if err := o.persistRouting(ctx, "", result.Operation.WorkloadUIDs); err != nil {
 			return err
 		}
 	}
@@ -981,10 +981,12 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	return nil
 }
 
-// persistRouting records the runtime's declared distribution on the Pod of instance
-// only, or of every runtime instance when only is empty; a restarted ChillServer
-// restores it. A standalone serving-operation runtime names only the instance it stops.
-func (o *Operations) persistRouting(ctx context.Context, only string) error {
+// persistRouting records declared routes on the selected instance, or all known
+// instances when only is empty. A non-nil UID scope preserves every other Pod seed.
+func (o *Operations) persistRouting(ctx context.Context, only string, uids []string) error {
+	if uids != nil && len(uids) == 0 {
+		return nil
+	}
 	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err
@@ -1000,6 +1002,35 @@ func (o *Operations) persistRouting(ctx context.Context, only string) error {
 		routing, known := declared[id]
 		if (only != "" && id != only) || (only == "" && !known) {
 			continue
+		}
+		if uids != nil {
+			var seeds map[string]int32
+			if raw := pod.Annotations[ServingRoutingAnnotation]; raw != "" {
+				if err := json.Unmarshal([]byte(raw), &seeds); err != nil {
+					return err
+				}
+			}
+			changed := false
+			for _, uid := range uids {
+				weight, present := routing[uid]
+				before, existed := seeds[uid]
+				if present == existed && (!present || weight == before) {
+					continue
+				}
+				changed = true
+				if present {
+					if seeds == nil {
+						seeds = map[string]int32{}
+					}
+					seeds[uid] = weight
+				} else {
+					delete(seeds, uid)
+				}
+			}
+			if !changed {
+				continue
+			}
+			routing = seeds
 		}
 		if routing == nil {
 			routing = map[string]int32{}

@@ -256,6 +256,7 @@ Node를 가장 낮은 모드에서 profile 모드로 올린 기록이 가용 노
   실제 Pod에서 읽은 seed로 돌아가며, 이후 Ready 인스턴스의 seed도 따른다.
   다른 UID의 override는 보존한다.
   자율 목표 적용도 현재 자율제어 UID만 갱신하여 release한 비자율 UID의 override를 재생성하지 않는다.
+  Pod 기본 seed 영속화도 같은 UID 범위만 갱신하여 다른 UID의 수동 override가 기본값으로 굳어지지 않게 한다.
   runtime이 계산한 `InstanceState.routable`을 snapshot/POOL이 공유하고, 새 요청에 대한 선언과 Ready/Stopped·소유권·모델
   필터를 모두 적용한다. 이미 접수한 요청만을 위한 보존 route는 제외한다.
   `TestReleaseSchedulerRoutingFollowsNewReadySeed`는 release 뒤 새 Ready

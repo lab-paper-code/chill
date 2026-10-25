@@ -247,7 +247,7 @@ func TestRoutePersistsAppliedDistributionOnPods(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	routed := `{"` + target.Instances[0].WorkloadUID + `":1}`
-	if err := operations.persistRouting(ctx, ""); err != nil {
+	if err := operations.persistRouting(ctx, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{routed, routed}) {
@@ -261,6 +261,42 @@ func TestRoutePersistsAppliedDistributionOnPods(t *testing.T) {
 	}
 }
 
+func TestScopedRouteDoesNotPersistManualPodDefaults(t *testing.T) {
+	operations, target, pods := routeAcknowledgmentFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	uid := target.Instances[0].WorkloadUID
+	if err := operations.persistRouting(ctx, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	stopped := target
+	stopped.Routing = map[string]map[string]int32{uid: {}}
+	if err := operations.runtime.ApplyManualSchedulerTarget(stopped, uid); err != nil {
+		t.Fatal(err)
+	}
+	// An explicitly empty scope is not the legacy all-UID scope.
+	result := OperationResult{Operation: Operation{ID: target.ID, Kind: operationRoute, Target: &target, WorkloadUIDs: []string{}}}
+	if err := operations.ApplyTarget(ctx, target, &result); err != nil {
+		t.Fatal(err)
+	}
+	routed := `{"` + uid + `":1}`
+	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{routed, routed}) {
+		t.Fatalf("autonomous routing persisted a manual unroute over Pod defaults: %v", got)
+	}
+	if err := operations.persistRouting(ctx, "", []string{"another-autonomous-uid"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{routed, routed}) {
+		t.Fatalf("another UID's persistence overwrote manual Pod defaults: %v", got)
+	}
+	if err := operations.runtime.ReleaseSchedulerRouting(uid); err != nil {
+		t.Fatal(err)
+	}
+	if err := operations.persistRouting(ctx, "", []string{uid}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Stop and drain withdraw an instance's routes without a route action; the Pod
 // records it so a restart does not resume traffic to a retiring instance.
 func TestStopAndDrainPersistWithdrawnRouting(t *testing.T) {
@@ -268,7 +304,7 @@ func TestStopAndDrainPersistWithdrawnRouting(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	routed := `{"` + target.Instances[0].WorkloadUID + `":1}`
-	if err := operations.persistRouting(ctx, ""); err != nil {
+	if err := operations.persistRouting(ctx, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := operations.StopInstance(ctx, target.Instances[0].ID); err != nil {
@@ -351,7 +387,7 @@ func TestReassignedInstancePersistsOnlyItsDeclaredWorkload(t *testing.T) {
 			listed := pod.DeepCopy() // the store keeps no status; the listed Pod carries it
 			listed.ResourceVersion = created.ResourceVersion
 			operations := &Operations{store: m.store, kube: kubefake.NewSimpleClientset(listed), runtime: m.runtime, config: OperationConfig{Namespace: pod.Namespace}}
-			if err = operations.persistRouting(ctx, ""); err != nil {
+			if err = operations.persistRouting(ctx, "", nil); err != nil {
 				t.Fatal(err)
 			}
 			stored := &core.Pod{}
