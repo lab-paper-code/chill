@@ -450,7 +450,7 @@ docker-build-load-generator: ## Build the dispatch-occupancy load generator imag
 	$(CONTAINER_TOOL) build -f build/docker/load-generator.Dockerfile -t $(LOAD_GENERATOR_IMG) .
 
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-agent docker-build-profiler docker-build-console docker-build-metric-observer ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-agent docker-build-profiler docker-build-console docker-build-metric-observer docker-build-chill-server docker-build-dashboard docker-build-load-generator ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.

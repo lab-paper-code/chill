@@ -153,6 +153,9 @@ Build its standalone image from the repository root:
 docker build -f build/docker/dashboard.Dockerfile -t "$DASHBOARD_IMAGE" .
 ```
 
+`make docker-build-all`에도 ChillServer(`chill-serving-entrypoint`), Dashboard,
+load-generator 이미지가 포함되며, `.github/workflows/images.yaml`에서도 세 이미지를 빌드합니다.
+
 Enable `dashboard.enabled` together with TLS-enabled ChillServer. Supply the Dashboard
 image and a `dashboard.caSecretName` containing `ca.crt` for ChillServer.
 The chart keeps the web Service private. ChillServer serves the web application

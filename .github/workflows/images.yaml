@@ -30,6 +30,15 @@ jobs:
           - component: profiler
             dockerfile: build/docker/profiler.Dockerfile
             image: chill-profiler
+          - component: chill-server
+            dockerfile: build/docker/chill-server.Dockerfile
+            image: chill-serving-entrypoint
+          - component: dashboard
+            dockerfile: build/docker/dashboard.Dockerfile
+            image: chill-dashboard
+          - component: load-generator
+            dockerfile: build/docker/load-generator.Dockerfile
+            image: chill-load-generator
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
