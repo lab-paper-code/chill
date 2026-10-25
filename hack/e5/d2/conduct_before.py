@@ -1167,7 +1167,7 @@ class Conductor:
         exact_ids={i['id'] for i in life['instances']}
         if (self.out/'cleanup-unroute-settings-ack.json').exists():
             raise RuntimeError('Original cleanup unroute already issued; continue its saved receipt, never repeat the PUT')
-        original=life['originalSettings']
+        original=copy.deepcopy(life['originalSettings'])
         if any(weight>0 for weight in (original.get('staticRouting') or {}).get(UID,{}).values()):
             raise RuntimeError('Original restore contains physical target routes; do not reintroduce deleted IDs')
         self.wait_idle();self.autonomy(False)
@@ -1177,6 +1177,8 @@ class Conductor:
         save(self.out/'cleanup-unroute-settings-ack.json',unroute_ack)
         save(self.out/'cleanup-unroute-operation-state.json',self.state())
         state=self.wait_routing_publication({},previous,unroute_ack,'cleanup-unroute')
+        completion=unroute_ack
+        owned_uids={i['id'].split('/',1)[0] for i in life['instances']}
         for i in state['snapshot'].get('instances',[]):
             if setup_only and i['id'] not in exact_ids:
                 raise RuntimeError('Setup cleanup found an instance outside its exact owned physical set')
@@ -1185,15 +1187,23 @@ class Conductor:
             result=self.api('POST','/api/v1/scheduler/operations',dict(kind='remove',workloadUID=UID,node=i['node'],instance=i['id']),timeout=1800)
             save(self.out/('remove-'+i['node']['name']+'-'+i['id'].split('/')[0]+'.json'),result)
             if result.get('status')!='complete':raise RuntimeError('Owned removal not complete')
-        restore_ack=self.put(original,'Approved D2 cleanup restore original settings/declarations; retain empty target route when declaration was originally absent')
-        save(self.out/'cleanup-original-settings-ack.json',restore_ack)
-        final=self.wait_routing_publication({}, {},restore_ack,'cleanup-original-restore',empty_instances=True);save(self.out/'cleanup-state.json',final)
-        if final['snapshot'].get('instances'):raise RuntimeError('Cleanup has remaining physical instances')
+            completion=result
+            owned_uids.add(i['id'].split('/',1)[0])
+        self.wait_routing_publication({}, {},completion,'cleanup-removed',empty_instances=True)
+        self.wait_idle()
         remaining=self.k(['get','pods','-o','json'])
         save(self.out/'cleanup-pods.json',remaining)
-        owned_uids={i['id'].split('/',1)[0] for i in life['instances']}
         if any(p['metadata']['uid'] in owned_uids for p in remaining['items']):
             raise RuntimeError('Exact owned physical Pod remains despite empty scheduler snapshot; retain cleanup blocker')
+        routes=original.get('staticRouting') or {}
+        routes.pop(UID,None)
+        original['staticRouting']=routes
+        restore_ack=self.put(original,'Approved D2 cleanup restore settings after owned physical removal and release owned routing declaration')
+        save(self.out/'cleanup-original-settings-ack.json',restore_ack)
+        actual=self.settings();save(self.out/'cleanup-restored-settings.json',actual)
+        if (actual.get('staticRouting') or {})!=routes:raise RuntimeError('Final owned routing release did not match retained declarations')
+        final=self.wait_routing_publication({}, {},restore_ack,'cleanup-original-restore',empty_instances=True);save(self.out/'cleanup-state.json',final)
+        if final['snapshot'].get('instances'):raise RuntimeError('Cleanup has remaining physical instances')
         before=load(self.out/'lifecycle.json')['originalNodes']
         modes={n['node']['uid']:n['powerMode'] for n in before}
         changed=[n for n in final['snapshot']['nodes'] if n['node']['uid'] in modes and n['powerMode']!=modes[n['node']['uid']]]

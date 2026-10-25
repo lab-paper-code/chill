@@ -698,6 +698,7 @@ class CPO:
             if result.get('status')!='complete': raise RuntimeError('Owned native removal incomplete')
             completion=result
         self.wait_empty_publication(completion,{uid:{} for uid in self.uids},prefix+'-removed')
+        return state
     def native_mode(self,node,target,prefix):
         folder=self.out/(prefix+'-'+node['name']+'-mode'); request=folder/'release.json'
         save(request,{'executor':'CampaignOps','command':'node-native-mode','mainInstructionUTC':self.release['mainInstructionUTC'],'node':node,'targetMode':target,'maxActuationSeconds':900,'parentFrozenE5Release':str(self.a.release)})
@@ -714,8 +715,16 @@ class CPO:
     def finish(self):
         initial=load(self.out/'initial.json')
         if any(weight>0 for route in initial['settings'].get('staticRouting',{}).values() for weight in route.values()):raise RuntimeError('Original positive static target IDs cannot be restored after removal; no stale-ID recreation')
-        self.clear_owned('finish')
-        restore_ack=self.put(initial['settings'],'Restore exact pre-E5 settings after canonical-three removal');save(self.out/'finish-settings-ack.json',restore_ack)
+        removed=self.clear_owned('finish')
+        owned_pods={i['id'].split('/',1)[0] for i in instance_rows(removed['snapshot']['instances'])}
+        pods=self.io.k(['get','pods','-o','json']);save(self.out/'finish-pods.json',pods)
+        if any(p['metadata']['uid'] in owned_pods for p in pods['items']):raise RuntimeError('Owned physical Pod remains after removal; retain routing stop')
+        settings=copy.deepcopy(initial['settings']);routes=settings.get('staticRouting') or {}
+        for uid in self.uids:routes.pop(uid,None)
+        settings['staticRouting']=routes
+        restore_ack=self.put(settings,'Restore pre-E5 settings and release owned routing after canonical-three removal');save(self.out/'finish-settings-ack.json',restore_ack)
+        actual=self.settings();save(self.out/'finish-restored-settings.json',actual)
+        if (actual.get('staticRouting') or {})!=routes:raise RuntimeError('Final canonical routing release did not match retained declarations')
         final=self.wait_empty_publication(restore_ack,{uid:{} for uid in self.uids},'finish-restored');save(self.out/'finish-state.json',final)
         before={n['node']['uid']:n['powerMode'] for n in initial['state']['snapshot']['nodes'] if n['node']['name'] in NODES}
         changed=[n for n in final['snapshot']['nodes'] if n['node']['uid'] in before and n['powerMode']!=before[n['node']['uid']]]

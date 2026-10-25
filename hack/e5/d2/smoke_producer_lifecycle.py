@@ -120,6 +120,80 @@ try:
                 assert (lane.phase_out/'diagnostic/request-pages/00000.json').exists()
         finally:
             m.OPS=original_ops;m.subprocess.Popen=original_popen;m.subprocess.run=original_run
+        for name,initial_routes,expected_routes,lingering in [
+                ('absent',None,None,False),('owned-empty',{m.UID:{}},None,False),
+                ('foreign-route',{m.UID:{},'other':{'other-native':1}},{'other':{'other-native':1}},False),
+                ('foreign-stop',{m.UID:{},'other':{}},{'other':{}},False),
+                ('pod-remains',{m.UID:{}},None,True)]:
+            lane=object.__new__(m.Conductor);lane.out=folder/('cleanup-'+name);lane.out.mkdir()
+            current={'autonomousWorkloads':[]}
+            if initial_routes is not None:current['staticRouting']=copy.deepcopy(initial_routes)
+            instance={'id':'owned-pod/0','node':{'name':'fixture','uid':'node-uid'},'ownerWorkloadUID':m.UID,'workloadUID':''}
+            m.save(lane.out/'lifecycle.json',{'stage':'READY_BOUND','instances':[instance],'originalSettings':copy.deepcopy(current),'originalNodes':[]})
+            current.setdefault('staticRouting',{})[m.UID]={}
+            removed=[False];events=[];writes=[]
+            lane.settings=lambda:copy.deepcopy(current)
+            def state():
+                return {'snapshot':{'at':m.now(),'instances':[] if removed[0] else [instance],'nodes':[],'routing':{m.UID:{}},'outstanding':0,'inProgressTarget':None},'actions':[]}
+            lane.state=state
+            def put(settings,reason):
+                if m.UID not in (settings.get('staticRouting') or {}):
+                    assert removed[0] and 'pods-absent' in events
+                    events.append('release')
+                writes.append(copy.deepcopy(settings));current.clear();current.update(copy.deepcopy(settings))
+                return {'status':'complete','endedAt':m.now()}
+            lane.put=put
+            def api(method,path,body=None,**kwargs):
+                if method=='GET':return {'pending':0,'assigned':0}
+                assert method=='POST' and body['kind']=='remove'
+                assert current['staticRouting'][m.UID]=={}
+                removed[0]=True;events.append('remove')
+                return {'status':'complete','endedAt':m.now()}
+            lane.api=api
+            def k(argv,**kwargs):
+                assert argv==['get','pods','-o','json'] and removed[0]
+                if lingering:return {'items':[{'metadata':{'uid':'owned-pod'}}]}
+                events.append('pods-absent');return {'items':[]}
+            lane.k=k
+            try:lane.cleanup()
+            except RuntimeError as error:
+                assert lingering and 'physical Pod remains' in str(error)
+                assert 'release' not in events and current['staticRouting'][m.UID]=={}
+            else:
+                assert not lingering
+                assert events.index('remove')<events.index('pods-absent')<events.index('release')
+                if expected_routes is None:assert writes[-1]['staticRouting']=={}
+                else:assert writes[-1]['staticRouting']==expected_routes
+                assert m.UID not in writes[-1].get('staticRouting',{})
+        e5spec=importlib.util.spec_from_file_location('e5_cleanup_check',ROOT.parent/'e5.py')
+        e5=importlib.util.module_from_spec(e5spec);e5spec.loader.exec_module(e5);e5.OPS=folder
+        for name,routes,expected,lingering in [
+                ('absent',None,{},False),('owned',{'a':{},'b':{},'c':{}},{},False),
+                ('other-stop',{'a':{},'other':{}},{'other':{}},False),
+                ('pod-remains',None,{},True)]:
+            lane=object.__new__(e5.CPO);lane.out=folder/('e5-'+name);lane.out.mkdir();lane.uids=['a','b','c']
+            initial={'autonomousWorkloads':[]}
+            if routes is not None:initial['staticRouting']=routes
+            e5.save(lane.out/'initial.json',{'settings':initial,'state':{'snapshot':{'nodes':[]}}})
+            events=[];writes=[]
+            def clear_owned(prefix):
+                events.append('removed');return {'snapshot':{'instances':[{'id':'owned-pod/0'}]}}
+            lane.clear_owned=clear_owned
+            def pods(argv):
+                assert events==['removed']
+                if lingering:return {'items':[{'metadata':{'uid':'owned-pod'}}]}
+                events.append('pods-absent');return {'items':[]}
+            lane.io=SimpleNamespace(k=pods)
+            def put(settings,reason):
+                assert events==['removed','pods-absent'];writes.append(settings);return {}
+            lane.put=put
+            final={'snapshot':{'instances':[],'nodes':[]}}
+            lane.settings=lambda:copy.deepcopy(writes[-1])
+            lane.wait_empty_publication=lambda *args:final;lane.idle=lambda:final
+            try:lane.finish()
+            except RuntimeError as error:assert lingering and 'Pod remains' in str(error) and not writes
+            else:
+                assert not lingering and writes[-1]['staticRouting']==expected
 finally:
     m.time.monotonic=original_monotonic;m.time.sleep=original_sleep
-print('producer lifecycle check PASS: init/terminal publication; UID+RV deletion; empty/unready/foreign blocked; Ready+idle release; failure raw/log before deletion; API/load/build=0')
+print('producer lifecycle check PASS: init/terminal publication; UID+RV deletion; empty/unready/foreign blocked; Ready+idle release; failure raw/log before deletion; cleanup releases owned routing after Pod removal; foreign route/stop preserved; API/load/build=0')

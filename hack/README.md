@@ -133,8 +133,13 @@ rate, 660-second replay and producer release barrier. Its release names
 `command=autonomous-empty-start` and the actual deployed control `sourceSha`;
 execution metadata records the repository harness commit separately.
 Both commands retain diagnostic raw records before owned Job deletion.
-The existing cleanup command consumes the recorded lifecycle. Native mode
-return uses the separately approved native-mode release and its 900-second bound.
+The D2 cleanup and E5 finish commands consume the recorded lifecycle. Their
+empty owned routing declarations hold draining instances through removal,
+empty publication and owned Pod disappearance. Final settings restoration
+releases owned routing keys and submits an explicit `staticRouting: {}` when
+the remaining declaration is empty. Other Workload routing and explicit empty
+stop declarations retain their values. Native mode return
+uses the separately approved native-mode release and its 900-second bound.
 `native_mode_request.py` consumes the explicit native-mode `--release` and
 `--out`. `sample_cgroups.py` consumes an external host inventory plus
 `--duration`, `--phase` and `--out`. The `smoke_*.py` scripts exercise retained
