@@ -57,13 +57,89 @@ def schedule(config, e5):
     return stages
 
 
+def assemble(e5, args, spec):
+    """CPO-only read-only capture; no registration, SLO update or scientific bind."""
+    if args.out.exists() and any(args.out.iterdir()):
+        raise RuntimeError('Live preparation requires a fresh output directory; retain partial captures')
+    recipe_path = Path(spec.get('operationalRecipe', e5.OPERATIONAL_RECIPE)).resolve()
+    op = e5.load(recipe_path)
+    e5.need(spec, ['controlSourceSHA', 'timeboxes', 'measurementSLO'], 'demo config')
+    e5.need(spec['timeboxes'], e5.REQUIRED['timeboxes'], 'timeboxes')
+    if any(not e5.positive(v) for v in spec['timeboxes'].values()):
+        raise ValueError('Finite positive demo timeboxes required')
+    if set(spec['measurementSLO']) != set(ALIASES):
+        raise ValueError('Measurement SLO required for each workload alias')
+    for slo in spec['measurementSLO'].values():
+        if not e5.positive(slo['targetLatencyNanos']) or not 0 < slo['percentile'] <= 100:
+            raise ValueError('Positive measurement SLO latency and percentile in (0,100] required')
+    source = e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'rev-parse', '--verify', spec['controlSourceSHA'] + '^{commit}'], text=True).strip()
+    args.out.mkdir(parents=True)
+    d = e5.module('demo_capture', HERE / 'd2/conduct_before.py')
+    d.BASE, d.CA, d.TOKEN = op['endpoint'], Path(op['caFile']), Path(op['tokenFile'])
+    d.K = e5.ENVIRONMENT['d2']['kubectl'] + ['-n', 'chill-system']
+    io = object.__new__(d.Conductor)
+    io.a = argparse.Namespace(command='demo-prepare', phase='demo-prepare')
+    io.out = io.phase_out = args.out
+    io.source, io.journal, io.journal_lock = source, args.out / 'prepare-commands.jsonl', e5.threading.Lock()
+    io.ctx = e5.ssl.create_default_context(cafile=op['caFile'])
+    io.http = e5.urllib.request.build_opener(d.NoRedirect(), e5.urllib.request.HTTPSHandler(context=io.ctx))
+    timeout = spec['timeboxes']['apiSeconds']
+    scheduler = io.api('GET', '/api/v1/scheduler', timeout=timeout)
+    nodes = io.k(['get', 'nodes', '-o', 'json'], timeout=timeout)
+    pods = io.k(['get', 'pods', '-A', '-o', 'json'], timeout=timeout)
+    for name, value in [('scheduler', scheduler), ('nodes', nodes), ('pods', pods)]:
+        e5.save(args.out / (name + '.json'), value)
+    servers = [p for p in pods['items'] if p['metadata'].get('namespace') == 'chill-system' and p['metadata'].get('labels', {}).get('app.kubernetes.io/component') == 'serving-entrypoint']
+    if len(servers) != 1:
+        raise RuntimeError('Actual serving-entrypoint Pod is ambiguous')
+    container = next(c for c in servers[0]['spec']['containers'] if c['name'] == op['collection']['serverContainer'])
+    status = next(c for c in servers[0]['status']['containerStatuses'] if c['name'] == container['name'])
+    if not status.get('ready') or 'sha256:' not in status.get('imageID', ''):
+        raise RuntimeError('Actual Ready serving image digest required')
+    flags = dict(arg.split('=', 1) for arg in container['args'] if arg.startswith('--') and '=' in arg)
+    cap = flags['--request-timeout']
+    if not cap.endswith('s') or not e5.positive(float(cap[:-1])):
+        raise ValueError('Actual positive server request-timeout in seconds required')
+    prototype = io.job('demo-timing', 0, 1)['spec']['template']['spec']['containers'][0]['args']
+    timing = {flag: prototype[prototype.index(flag) + 1] for flag in ('--workers', '--request-lifetime', '--delivery-margin', '--timeout')}
+    wire = e5.module('demo_templates', HERE / 'e5-wire.py')
+    collection = {**op['collection'], 'powerExecutable': e5.E5['powerExecutable'], 'powerReceipt': e5.E5['powerReceipt']}
+    for key, flag in [('observationDirectory', '--observation-directory'), ('schedulerConfigMap', '--serving-scheduler-configmap'), ('metricSourcesConfigMap', '--profiler-facts-configmap'), ('metricSourcesKey', '--metric-sources-key')]:
+        collection[key] = flags.get(flag, collection[key])
+    archive_path = args.out / 'required-raw-refs.json'
+    e5.save(archive_path, [{'key': 'demo-live-' + name, 'localPath': str(args.out / (name + '.json'))} for name in ('scheduler', 'nodes', 'pods')])
+    collection['archiveRefs'] = str(archive_path)
+    c = {key: op[key] for key in ('endpoint', 'caFile', 'tokenFile', 'kubeContext')}
+    c.update(approval={'sourceSHA': source, 'controlImageDigest': status['imageID']}, inputs={'nodes': str(args.out / 'nodes.json'), 'scheduler': str(args.out / 'scheduler.json')}, timeboxes=spec['timeboxes'], collection=collection, workloads=[])
+    for name in e5.WORKLOADS:
+        actual = [w for w in scheduler['state']['snapshot']['workloads'] if w['name'] == name]
+        if len(actual) != 1:
+            raise RuntimeError('Canonical workload must already exist; prepare never registers or changes SLO: ' + name)
+        actual, recipe = actual[0], op['workloads'][name]
+        template = args.out / ('producer-template-' + name + '.json')
+        e5.save(template, wire.template(op, name, e5.ENVIRONMENT['d2']['producerImage']))
+        alias = next(alias for alias, canonical in ALIASES.items() if canonical == name)
+        requested = {'workers': int(timing['--workers']), 'lifetimeSeconds': float(timing['--request-lifetime']), 'deliverySeconds': float(timing['--delivery-margin']), 'socketSeconds': float(timing['--timeout'])}
+        requested.update(spec.get('requestTiming', {}).get(alias, {}))
+        if any(not e5.positive(requested[key]) for key in ('workers', 'lifetimeSeconds', 'deliverySeconds', 'socketSeconds')) or type(requested['workers']) is not int:
+            raise ValueError('Positive configured request timings and integer workers required')
+        lifetime = max(requested['lifetimeSeconds'], actual['slo']['targetLatencyNanos'] / 1e9)
+        delivery = requested['deliverySeconds']
+        c['workloads'].append({**{key: actual[key] for key in ('name', 'uid', 'generation', 'slo')}, 'datasetDir': recipe['datasetDir'], 'fields': recipe['fields'], 'jobTemplate': str(template), 'producerEndpoint': op['producer']['endpoint'], 'producerTokenFile': op['producer']['tokenFile'], 'producerCAFile': op['producer']['caFile'], 'producerDatasetDir': op['producer']['datasetDir'], 'workers': requested['workers'], 'lifetimeSeconds': lifetime, 'deliverySeconds': delivery, 'socketSeconds': max(requested['socketSeconds'], lifetime + 2 * delivery), 'gatewayCapSeconds': float(cap[:-1])})
+    c['demoSkipped'] = ['E5 R/kappa capacity binding and G clipping', '10800-second normative schedule and factor baselines', 'phase6 scientific approvals/D1/D6/D9 judgment gates', 'image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused', 'scheduler SLO mutation: measurementSLO is reporting-only; actual scheduler SLO remains captured']
+    c['demoProvenance'] = {'recipe': str(recipe_path), 'controlSourceSHA': 'Main-provided helm-revision source claim resolved in git, not inferred from image bytes', 'controlImageDigest': 'Live Ready Pod containerStatus.imageID', 'requestTiming': 'D2 Conductor.job baseline plus explicit requestTiming overrides; lifetime/socket extended only to cover actual scheduler SLO', 'measurementSLO': spec['measurementSLO']}
+    config_path = args.out / 'demo-e5-config.json'
+    e5.save(config_path, c)
+    return config_path
+
+
 def prepare(e5, args):
     target = args.out / 'binding.json'
     if target.exists():
         raise RuntimeError('No implicit preparation overwrite; use a fresh output directory')
     args.config = args.config.resolve()
     spec = e5.load(args.config)
-    config_path = Path(spec['e5Config']).resolve()
+    config_path = Path(spec['e5Config']).resolve() if spec.get('e5Config') else assemble(e5, args, spec)
     c = e5.load(config_path)
     e5.need(c, ['approval', 'inputs', 'timeboxes', 'workloads', 'collection', 'endpoint', 'caFile', 'tokenFile'], 'e5Config')
     e5.need(c['approval'], ['sourceSHA', 'controlImageDigest'], 'approval')
@@ -215,8 +291,10 @@ def summarize(e5, binding, out):
                     end = epoch(start['at']) + (row['finishedMonotonicNS'] - start['monotonicNS']) / 1e9
                     if id(row) not in good and any(sent <= hi and end >= lo for lo, hi in windows):
                         transition_failures += 1
-            slo_ms = w['slo']['targetLatencyNanos'] / 1e6
+            measurement = binding.get('demoConfig', {}).get('measurementSLO', {}).get(next(alias for alias, canonical in ALIASES.items() if canonical == name), w['slo'])
+            slo_ms = measurement['targetLatencyNanos'] / 1e6
             metric = {'rate': stage['rates'][name], 'offered': offered, 'clientRows': len(clients), 'missingClientRows': max(0, offered - len(clients)), 'httpSuccess': len(successful), 'successFraction': len(successful) / offered if offered else None, 'latencyMS': analysis.stats([r['latencyMs'] for r in successful]), 'latencyScope': 'Client HTTP round trip of successful responses, not server execution latency', 'sloMS': slo_ms, 'sloPercentile': w['slo']['percentile'], 'withinSLOFraction': sum(r['latencyMs'] <= slo_ms for r in successful) / offered if offered else None, 'transitionFailures': transition_failures if provenance.get('complete') and len(clients) == offered and (start or not offered) else None, 'transitionFailureMeaning': 'Failed/unsent client requests overlapping observed placement-change brackets or elapsed scheduler actions; null if scheduler/client coverage incomplete', 'errors': [r for r in clients if id(r) not in good]}
+            metric.update(sloPercentile=measurement['percentile'], schedulerSLO=w['slo'], measurementSLO=measurement)
             summary['workloads'][name] = metric
             rows.append((summary, name, metric))
         e5.save(folder / 'summary.json', summary)
@@ -224,7 +302,7 @@ def summarize(e5, binding, out):
     e5.save(out / 'summary.json', {'schema': 'e5-demo-summary.v1', 'stages': stage_summaries})
     def fmt(value):
         return '—' if value is None else f'{value:.3f}' if isinstance(value, float) else str(value)
-    table = ['# Autonomous workload-pool demo', '', 'Client latency is successful HTTP round trip; SLO is frozen workload configuration. Energy is shared pool energy, repeated per workload (do not sum rows). Missing evidence is —, not zero.', '', '| Stage | Workload | Rate/s | Success/offered | Success % | p95 ms | p99 ms | SLO p/ms | Within SLO % | Pool J | Active J | Drain pool J | Placement changes | Transition failures | Gap s |', '|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|']
+    table = ['# Autonomous workload-pool demo', '', 'Client latency is successful HTTP round trip. SLO is the configured reporting-only measurementSLO, or captured scheduler SLO when omitted; scheduler SLO is never changed. Energy is shared pool energy, repeated per workload (do not sum rows). Missing evidence is —, not zero.', '', '| Stage | Workload | Rate/s | Success/offered | Success % | p95 ms | p99 ms | SLO p/ms | Within SLO % | Pool J | Active J | Drain pool J | Placement changes | Transition failures | Gap s |', '|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|']
     for s, name, m in rows:
         table.append('| ' + ' | '.join(map(str, [s['stage'], name, fmt(m['rate']), f"{m['httpSuccess']}/{m['offered']}", fmt(None if m['successFraction'] is None else m['successFraction'] * 100), fmt(m['latencyMS']['p95']), fmt(m['latencyMS']['p99']), f"p{m['sloPercentile']}/{fmt(m['sloMS'])}", fmt(None if m['withinSLOFraction'] is None else m['withinSLOFraction'] * 100), fmt(s['energyJ']), fmt(s['activeEnergyJ']), fmt(s['drainInclusiveEnergyJ']), len(s['placementChanges']), fmt(m['transitionFailures']), fmt(s['gapFromPreviousOfferedWindowSeconds'])])) + ' |')
     for s in stage_summaries:
@@ -382,6 +460,27 @@ def self_check():
         assert 'p95 ms' in (cpo.out / 'summary.md').read_text()
         assert sum(call[0] == 'create' for call in calls) == 9
         assert sum(call[0] == 'exec' for call in calls) == 18
+        fixture_env = json.loads(environment.read_text())
+        fixture_env['e5'].update(plan=temp, producerNode='fixture', powerExecutable=temp, powerReceipt=temp)
+        fixture_env['d2']['producerImage'] = 'fixture@sha256:fixture'
+        environment.write_text(json.dumps(fixture_env))
+        e5.E5.update(fixture_env['e5'])
+        e5.ENVIRONMENT['d2'].update(fixture_env['d2'])
+        op = {'endpoint': 'https://fixture.invalid', 'caFile': temp, 'tokenFile': temp, 'kubeContext': 'fixture', 'collection': {'serverContainer': 'serving-entrypoint', 'observationDirectory': '/fixture', 'schedulerConfigMap': 'fixture', 'metricSourcesConfigMap': 'fixture', 'metricSourcesKey': 'fixture'}, 'producer': {'endpoint': 'https://fixture.invalid', 'tokenFile': temp, 'caFile': temp, 'datasetDir': '/data'}, 'workloads': {w['name']: {'datasetDir': temp, 'fields': ['input'], 'datasetImage': 'fixture@sha256:fixture', 'datasetImagePath': '/fixture'} for w in workloads}}
+        recipe = root / 'recipe.json'
+        recipe.write_text(json.dumps(op))
+        source_spec = {'operationalRecipe': str(recipe), 'controlSourceSHA': 'HEAD', 'timeboxes': cpo.tb, 'measurementSLO': {alias: {'percentile': 99, 'targetLatencyNanos': 60000000000} for alias in ALIASES}}
+        server = {'metadata': {'namespace': 'chill-system', 'labels': {'app.kubernetes.io/component': 'serving-entrypoint'}}, 'spec': {'containers': [{'name': 'serving-entrypoint', 'args': ['--request-timeout=70s']}]}, 'status': {'containerStatuses': [{'name': 'serving-entrypoint', 'ready': True, 'imageID': 'fixture@sha256:fixture'}]}}
+        def api_fixture(self, method, path, **kwargs):
+            assert method == 'GET' and path == '/api/v1/scheduler'
+            return {'state': {'snapshot': copy.deepcopy(snapshot)}, 'settings': settings}
+        def modules_for_assembly(name, path):
+            return d if name == 'demo_capture' else original_module(name, path)
+        with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}), patch.object(e5, 'module', modules_for_assembly), patch.object(e5.ssl, 'create_default_context', return_value=None), patch.object(d.Conductor, 'api', api_fixture), patch.object(d.Conductor, 'k', lambda self, argv, **kw: {'items': [] if argv[1] == 'nodes' else [server]}), patch.object(d.Conductor, 'job', return_value={'spec': {'template': {'spec': {'containers': [{'args': ['--workers', '320', '--request-lifetime', '2', '--delivery-margin', '.010', '--timeout', '2.02']}]}}}}):
+            assembled = e5.load(assemble(e5, SimpleNamespace(out=root / 'assembly'), source_spec))
+        assert assembled['demoSkipped'] and assembled['approval']['controlImageDigest'] == 'fixture@sha256:fixture'
+        assert len(assembled['workloads']) == 3 and all(w['slo']['targetLatencyNanos'] == 1000000000 for w in assembled['workloads'])
+        assert all(w['workers'] == 320 and w['lifetimeSeconds'] == 2 for w in assembled['workloads'])
         print('PASS demo lifecycle: zero -> autonomy -> E0/A/B/C, real CPO Job/barrier/drain loop, gap/energy/placement/failure summaries; mocked API/kubectl only')
 
 
@@ -438,7 +537,10 @@ def main():
         selected = next((s for s in binding['schedule'] if s['id'] == args.stage), None)
         if selected is None:
             parser.error('collect requires a configured --stage')
-        cpo.collect(stage_folder(args.out, selected))
+        folder = stage_folder(args.out, selected)
+        if not (folder / 'collected.json').exists():
+            cpo.collect(folder)
+        print('Collected evidence: ' + str(folder / 'collected.json'))
     elif args.command == 'finish':
         cpo.finish()
         cpo.cleanup_jobs()

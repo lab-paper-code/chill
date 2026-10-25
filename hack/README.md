@@ -175,11 +175,20 @@ smoke from scientific results before full E5.
 Job template, Poisson arrival generator/seeds, authenticated API, raw archive
 collector and prebuilt power reducer. It does not call the R/G/10800-second
 scientific binding/judgment gates. The example
-`hack/e5/demo-config.example.json` points to an existing raw E5 config for all
-Workload UIDs/SLOs, endpoints, datasets, templates, timeboxes and collection.
-Copy it outside the repository, set `e5Config` to that existing absolute path,
-and choose actual offered rates (example values are illustrative, not a
-capacity claim). Do not rebuild images.
+`hack/e5/demo-config.example.json` selects E0/A/B/C and explicit request timing.
+With no `e5Config`, `prepare` reads the existing environment's operational
+recipe and captures scheduler state, Workload UID/generation/SLO, nodes, pods,
+Ready serving-image digest and gateway cap using GETs only. It reuses
+`e5-wire.template()` plus the existing D2 producer arguments and explicit
+`requestTiming` overrides, saving `demo-e5-config.json` and `binding.json`.
+`controlSourceSHA` is Main's helm-revision source claim, resolved in git and
+kept distinct from the observed image digest; it is not inferred from image
+bytes. `demoSkipped` names every bypassed scientific gate. An optional
+`e5Config` can still name an already assembled raw E5 config.
+Copy the example outside the repository if changing its inputs. Rates and
+reporting-only `measurementSLO` are demonstration choices, not capacity claims.
+The scheduler's actual SLOs are captured and never changed; lifetime/socket
+cover those actual SLOs within the live gateway cap. No image builds occur.
 
 CampaignOps alone executes live commands, with the existing safety monitor
 running and all instances/autonomy/static routes initially empty:
@@ -192,14 +201,14 @@ RELEASE=/absolute/path/to/external/demo-release.json
 python3 "$DEMO" prepare --config "$CONFIG" --out "$OUT"
 # Main issues the existing CPO release JSON:
 # {"executor":"CampaignOps","command":"e5-execute",
-#  "bindingPath":"<OUT>/binding.json","sourceSHA":"<existing config approval.sourceSHA>",
+#  "bindingPath":"<OUT>/binding.json","sourceSHA":"<binding config approval.sourceSHA>",
 #  "mainInstructionUTC":"<actual authorization UTC>"}
 python3 "$DEMO" start --out "$OUT" --release "$RELEASE"
 python3 "$DEMO" run --out "$OUT" --release "$RELEASE"
 # Alternatively execute one configured stage at a time:
 # python3 "$DEMO" stage --stage E0 --out "$OUT" --release "$RELEASE"
 # then A, B, C. Every stage already collects before advancing.
-# Explicit collection of retained completed intervals, if needed:
+# Show already collected evidence, or collect a drained, not-yet-captured stage:
 python3 "$DEMO" collect --stage C --out "$OUT" --release "$RELEASE"
 python3 "$DEMO" summary --out "$OUT"
 python3 "$DEMO" finish --out "$OUT" --release "$RELEASE"
@@ -218,7 +227,9 @@ Each `smoke-<stage>/` contains pre/post state, per-Workload `*-client.jsonl`,
 producer lifecycle evidence, raw collection, `power*.json` and `summary.json`.
 Top-level `summary.json` and `summary.md` combine stages. HTTP success is
 status 200 / frozen offered count; p95/p99 are nearest-rank successful-client
-round-trip latency, compared with the frozen SLO (not server execution latency).
+round-trip latency, compared with configured `measurementSLO` (or captured
+scheduler SLO when omitted), not server execution latency. Both criteria and
+the unchanged scheduler SLO are retained in each workload summary.
 Pool/active/drain energy comes from existing complete power integrals and is
 shared, never attributed to workloads. Placement events compare raw scheduler
 snapshots and boundary snapshots (instance creation/deletion/node/profile/
