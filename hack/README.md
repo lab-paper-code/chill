@@ -168,3 +168,66 @@ and raw records retain their original provenance. At the approved E5 pilot
 stage, run the existing `smokeSeconds` lifecycle through cleanup with the
 repository controller, retain its logs and handback proof, and exclude that
 smoke from scientific results before full E5.
+
+### Short autonomous demo (not the normative E5 study)
+
+`hack/e5/demo.py` reuses `CPO.start/run/collect/finish`, the existing producer
+Job template, Poisson arrival generator/seeds, authenticated API, raw archive
+collector and prebuilt power reducer. It does not call the R/G/10800-second
+scientific binding/judgment gates. The example
+`hack/e5/demo-config.example.json` points to an existing raw E5 config for all
+Workload UIDs/SLOs, endpoints, datasets, templates, timeboxes and collection.
+Copy it outside the repository, set `e5Config` to that existing absolute path,
+and choose actual offered rates (example values are illustrative, not a
+capacity claim). Do not rebuild images.
+
+CampaignOps alone executes live commands, with the existing safety monitor
+running and all instances/autonomy/static routes initially empty:
+
+```sh
+DEMO=/absolute/path/to/checkout/hack/e5/demo.py
+CONFIG=/absolute/path/to/external/demo-config.json
+OUT=/absolute/path/below/paths.campaign/demo-run
+RELEASE=/absolute/path/to/external/demo-release.json
+python3 "$DEMO" prepare --config "$CONFIG" --out "$OUT"
+# Main issues the existing CPO release JSON:
+# {"executor":"CampaignOps","command":"e5-execute",
+#  "bindingPath":"<OUT>/binding.json","sourceSHA":"<existing config approval.sourceSHA>",
+#  "mainInstructionUTC":"<actual authorization UTC>"}
+python3 "$DEMO" start --out "$OUT" --release "$RELEASE"
+python3 "$DEMO" run --out "$OUT" --release "$RELEASE"
+# Alternatively execute one configured stage at a time:
+# python3 "$DEMO" stage --stage E0 --out "$OUT" --release "$RELEASE"
+# then A, B, C. Every stage already collects before advancing.
+# Explicit collection of retained completed intervals, if needed:
+python3 "$DEMO" collect --stage C --out "$OUT" --release "$RELEASE"
+python3 "$DEMO" summary --out "$OUT"
+python3 "$DEMO" finish --out "$OUT" --release "$RELEASE"
+```
+
+E0 runs without producers after autonomy is enabled. Before the first loaded
+stage the driver requires each canonical Workload's owned Ready positive route.
+Each loaded stage gets new producer Jobs; the measured gap from the previous
+offered window includes drain, collection and setup. No requests are offered in
+that gap, so the demo cannot measure its request failures. STOP stages retain
+partial evidence; there is no implicit retry. `finish` restores original
+settings/modes using the existing owned-unroute/remove/publication contract,
+then deletes exact owned producer Jobs.
+
+Each `smoke-<stage>/` contains pre/post state, per-Workload `*-client.jsonl`,
+producer lifecycle evidence, raw collection, `power*.json` and `summary.json`.
+Top-level `summary.json` and `summary.md` combine stages. HTTP success is
+status 200 / frozen offered count; p95/p99 are nearest-rank successful-client
+round-trip latency, compared with the frozen SLO (not server execution latency).
+Pool/active/drain energy comes from existing complete power integrals and is
+shared, never attributed to workloads. Placement events compare raw scheduler
+snapshots and boundary snapshots (instance creation/deletion/node/profile/
+allocation, node modes and routing); event times are observed timestamps with
+the preceding observation retained, not exact native creation times.
+Transition failures count failed/unsent client requests overlapping those
+observation brackets or raw action `startedAt..completedAt` intervals.
+Incomplete scheduler/client evidence is unknown, not zero.
+
+`python3 hack/e5/demo.py --help` and `--self-check` work without environment
+configuration. The latter runs the real CPO producer stage loop against local
+pipes and mocked API/kubectl, with no cluster access, image builds or full tests.
