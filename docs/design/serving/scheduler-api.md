@@ -41,6 +41,8 @@ serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](s
 다른 UID의 선언과 실제 분배는 보존한다. 실패 또는 부분 적용은 성공으로 표시하지 않으며
 작업의 actor, reason, 전후 선언, `sourceConfigRV`, 시작·완료 시각과 실제 상태를 남긴다.
 설정 refresh는 이 선언을 실행하거나 실패한 수동 작업을 자동 재시도하지 않는다.
+작업 입력은 HTTP와 CLI의 공유 typed strict decoder에서 중첩 `node`의 미선언 필드까지
+거절한다. 종류별 허용 필드 검사는 값이 `null`이나 0이어도 필드의 존재를 기준으로 적용한다(`SCH-39`).
 Dashboard의 `scheduler-settings.tsx`도 설정 PUT에서 두 읽기 전용 필드를 제외한다.
 배분 편집은 바뀐 UID만 route/unroute/release POST로 순서대로 보내고,
 실패/부분 적용에서 멈추며 서버의 실제 `OperationResult`를 보여준다. UI 재시도나 되돌림은 없다.

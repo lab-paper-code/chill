@@ -70,9 +70,9 @@ type ManualOperation struct {
 // even when their supplied value is zero. HTTP and the CLI share this boundary.
 func DecodeManualOperation(raw json.RawMessage) (ManualOperation, error) {
 	var request ManualOperation
-	if err := json.Unmarshal(raw, &request); err != nil {
-		return request, &serving.Error{Code: "InvalidBody", Message: err.Error()}
-	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	decodeErr := decoder.Decode(&request)
 	fields := map[string]json.RawMessage{}
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return request, &serving.Error{Code: "InvalidBody", Message: err.Error()}
@@ -95,6 +95,9 @@ func DecodeManualOperation(raw json.RawMessage) (ManualOperation, error) {
 		if !slices.Contains(allowed, field) {
 			return request, &serving.Error{Code: "InvalidBody", Message: field + " is not valid for " + request.Kind, Field: field}
 		}
+	}
+	if decodeErr != nil {
+		return request, &serving.Error{Code: "InvalidBody", Message: decodeErr.Error()}
 	}
 	if strings.TrimSpace(request.Reason) == "" {
 		return request, &serving.Error{Code: "InvalidBody", Message: "reason is required", Field: "reason"}

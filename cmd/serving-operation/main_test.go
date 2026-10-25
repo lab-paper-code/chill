@@ -36,12 +36,23 @@ func clientArgs(kind, manifest, url, ca, token string) []string {
 }
 
 func TestManifestRejectsUnknownFieldsBeforeSending(t *testing.T) {
-	calls := 0
-	url, ca, token := chillServerFixture(t, func(http.ResponseWriter, *http.Request) { calls++ })
-	manifest := writeFile(t, "m.json", `{"kind":"prepare","reason":"guard unknown fields","journalDirectory":"/tmp"}`)
-	err := run(context.Background(), clientArgs("--execute-config", manifest, url, ca, token), &bytes.Buffer{})
-	if err == nil || calls != 0 {
-		t.Fatalf("unknown field accepted: %v calls=%d", err, calls)
+	for _, body := range []string{
+		`{"kind":"prepare","reason":"guard unknown fields","journalDirectory":"/tmp"}`,
+		`{"kind":"prepare","workloadUID":"w","profileID":"p",` +
+			`"node":{"name":"n","uid":"u","unexpected":true},"reason":"guard nested fields"}`,
+		`{"kind":"remove","workloadUID":"w","node":{"name":"n","uid":"u","unexpected":true},` +
+			`"instance":"p/c","reason":"guard nested fields"}`,
+		`{"kind":"route","workloadUID":"w","weights":{},"node":null,"reason":"guard kind-specific presence"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			calls := 0
+			url, ca, token := chillServerFixture(t, func(http.ResponseWriter, *http.Request) { calls++ })
+			manifest := writeFile(t, "m.json", body)
+			err := run(context.Background(), clientArgs("--execute-config", manifest, url, ca, token), &bytes.Buffer{})
+			if err == nil || calls != 0 {
+				t.Fatalf("unknown or inapplicable field accepted: %v calls=%d", err, calls)
+			}
+		})
 	}
 }
 
