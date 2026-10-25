@@ -196,6 +196,13 @@ automatic scheduler judgment나 power 측정 근거가 아니다.
    실제 모드 readback과 Ready를 확인한다. 변경 불필요/지원하지 않는 고정 모드는
    현재 상태와 skip 사유를 기록한다.
 
+동일 slot에 선택 Workload 소유의 Pod가 여러 개 있어도 정확한 Pod UID/container ID를
+모두 열거하고 remove 직전에 다시 읽어 각각 drain/remove한다(AC-36).
+runtime 분배·scheduler 상태 조회·native policy 적용은 exact physical ID를 우선하고,
+exact가 없을 때만 유일한 TargetID alias를 허용한다. `A→S`, `B→A`에서 A는 항상
+실물 A이며 B도 별도로 정리한다. exact 없는 다중 alias는 여전히 오류다.
+타 Workload 소유·바인딩과 measurement Node/다른 Node UID 보호는 유지한다.
+
 오류·timeout·관측 실패는 해당 단계와 실제 부분 상태를 기록하고 즉시 멈춘다.
 자동 재시도·되돌림·이후 단계 실행은 없고, 실패한 선언을 refresh가 자동 적용하지 않도록 한다.
 다시 호출하면 현재 상태에서 이미 충족된 단계를 변경 없이 완료 처리한다. remove 뒤

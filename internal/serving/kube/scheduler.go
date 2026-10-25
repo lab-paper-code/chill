@@ -1180,9 +1180,14 @@ func (c *SchedulerController) routingTargetPresent(target *serving.SchedulerCand
 }
 
 func schedulerPhysicalState(id string, physical []serving.InstanceState) *serving.InstanceState {
+	for index := range physical {
+		if physical[index].ID == id {
+			return &physical[index]
+		}
+	}
 	var state *serving.InstanceState
 	for index := range physical {
-		if physical[index].ID == id || physical[index].TargetID == id {
+		if physical[index].TargetID == id {
 			if state != nil {
 				return nil
 			}

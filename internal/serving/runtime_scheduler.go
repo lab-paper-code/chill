@@ -231,9 +231,12 @@ func (r *Runtime) validateSchedulerRoutingLocked(candidate SchedulerCandidate) e
 }
 
 func (r *Runtime) schedulerSlotLocked(id string) (*runtimeInstance, error) {
+	if actual := r.instances[id]; actual != nil {
+		return actual, nil
+	}
 	var actual *runtimeInstance
 	for _, instance := range r.instances {
-		if instance.State.ID != id && instance.State.TargetID != id {
+		if instance.State.TargetID != id {
 			continue
 		}
 		if actual != nil {

@@ -159,6 +159,8 @@ func (c *SchedulerController) resetOwnedTargets(ctx context.Context, uids []stri
 		if status == nil || status.ContainerID == "" {
 			return nil, refused("OperationConflict", "owned Pod lacks exact native container identity")
 		}
+		// Enumerate every owned executor, including duplicates of one logical slot.
+		// Unroute and removal resolve these exact IDs before any slot aliases.
 		id := physicalID(pod.UID, status.ContainerID)
 		for _, instance := range physical {
 			if instance.ID != id {

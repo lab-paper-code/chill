@@ -1062,9 +1062,21 @@ func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy 
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		status := firstfloorStatus(p)
-		if p.Annotations[ServingSlotAnnotation] == instanceID || (status != nil && physicalID(p.UID, status.ContainerID) == instanceID) {
+		if status != nil && physicalID(p.UID, status.ContainerID) == instanceID {
 			selected = p
 			break
+		}
+	}
+	if selected == nil {
+		for i := range pods.Items {
+			p := &pods.Items[i]
+			if p.Annotations[ServingSlotAnnotation] != instanceID {
+				continue
+			}
+			if selected != nil {
+				return errors.New("policy target slot has multiple physical instances")
+			}
+			selected = p
 		}
 	}
 	if selected == nil {
