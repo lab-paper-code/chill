@@ -685,13 +685,9 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 		return errors.New("physical source disappeared without retained termination proof")
 	}
 	status := firstfloorStatus(pod)
-	if id != "" && (status == nil || status.ContainerID != containerID) || id == "" && !podTerminated(pod) {
-		return errors.New("physical source changed before removal")
+	if err := o.observer.restoreRemovalSource(pod, id, containerID); err != nil {
+		return err
 	}
-	o.observer.mu.Lock()
-	o.observer.restoreSources([]core.Pod{*pod})
-	o.observer.observeTermination(pod)
-	o.observer.mu.Unlock()
 	if id != "" && status.State.Terminated == nil {
 		if err = o.wait(ctx, func() (bool, error) {
 			endpoint, e := nativeInstanceEndpoint(ctx, o.kube, pod)
@@ -776,6 +772,20 @@ func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod) e
 		delete(o.observer.sources, string(pod.UID))
 		return true, nil
 	})
+}
+
+func (o *Observer) restoreRemovalSource(pod *core.Pod, id, containerID string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	status := firstfloorStatus(pod)
+	if id != "" && (status == nil || status.ContainerID != containerID) || id == "" && !podTerminated(pod) && !podAwaitingExecutor(pod) {
+		return errors.New("physical source changed before removal")
+	}
+	if source := o.sources[string(pod.UID)]; id == "" && source != nil && source.containerID != "" && !source.stopped {
+		return errors.New("retained physical executor requires exact removal identity")
+	}
+	o.restoreSources([]core.Pod{*pod})
+	return nil
 }
 
 // patchSourceFinalizer changes only our primitive-list member. The API server
@@ -1271,7 +1281,7 @@ func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operat
 		status := firstfloorStatus(&pod)
 		if pod.Spec.NodeName != actual.Name || pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent ||
 			operation.Instance != "" && (status == nil || status.ContainerID != containerID) ||
-			operation.Instance == "" && !podTerminated(&pod) {
+			operation.Instance == "" && !podTerminated(&pod) && !podAwaitingExecutor(&pod) {
 			return errors.New("operation instance belongs to different physical Node/source")
 		}
 		for _, i := range o.runtime.Instances() {

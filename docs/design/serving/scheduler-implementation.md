@@ -445,6 +445,10 @@ slot 해석이 필요한 prepare 완료에서 한 번 정확 신분으로 해결
    `verifySource`도 지연 LIST 결과를 게시하기 전에 같은 퇴역/identity 경계를 검사한다.
    `clearNode`의 미관측 Pod fallback도 `removeInstance`의 종료 proof/finalizer 경로를
    사용한다. 실행 중인데 runtime에 없는 Pod는 부재로 간주하거나 finalizer를 벗기지 않는다.
+   실행기 생성 전 Pending 준비 Pod는 `podAwaitingExecutor`로 **DELETE 요청만** 허용한다.
+   container ID·실행/과거 종료 흔적이 없고 기존 장부에도 미확인 실행기가 없어야 하며,
+   source finalizer와 예약·taint는 유지한다. 이후 kubelet의 `podTerminated`와 정확 UID의
+   실제 삭제를 확인해야만 퇴역·hand-back이 끝난다. container ID 부재는 stopped 증명이 아니다.
 5. 재시작은 기존 Pod/finalizer/owner/정책 annotation에서 장부를 복원한 뒤 새 변경을
    허가한다. `c.runs`의 메모리 수명이 원격 작업의 취소/부재를 보장한다고 주장하지 않는다.
    복원할 identity/효과가 불명인 범위는 재관측까지 고정한다.

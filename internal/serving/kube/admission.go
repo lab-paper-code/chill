@@ -586,7 +586,8 @@ func (o *Operations) clearNode(ctx context.Context, node serving.NodeReference) 
 			continue
 		}
 		// Unobserved executors still need the same retained termination proof.
-		// Without a known runtime instance only an already terminal Pod is removable.
+		// A preparation without an executor may request DELETE, but still waits
+		// for terminal Pod status before releasing its source finalizer.
 		if err = o.removeInstance(ctx, node, string(pod.UID), "", nil); err != nil {
 			return err
 		}

@@ -1034,6 +1034,15 @@ func (o *Observer) bindCleanupSources(uid types.UID, objects []client.Object) er
 	}
 	return nil
 }
+
+// podAwaitingExecutor permits requesting deletion, never declaring termination.
+// The retained finalizer still requires podTerminated before retirement.
+func podAwaitingExecutor(pod *corev1.Pod) bool {
+	status := firstfloorStatus(pod)
+	return (pod.Status.Phase == "" || pod.Status.Phase == corev1.PodPending) &&
+		(status == nil || status.ContainerID == "" && status.State.Running == nil &&
+			status.State.Terminated == nil && status.LastTerminationState.Terminated == nil)
+}
 func podTerminated(pod *corev1.Pod) bool {
 	if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
 		return false
