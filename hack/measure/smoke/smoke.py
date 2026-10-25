@@ -1,6 +1,6 @@
 # smoke.py NODE OUTDIR WL1=PROFILE1[:DATASET] [WL2=PROFILE2[:DATASET]]: end-to-end serving smoke through the gateway on one free Node.
-# manual prepare (CHILL API) per Workload -> staticRouting via settings PUT (reason) -> N requests each -> records -> cleanup
-# (staticRouting {} with reason, manual remove). Exits nonzero if any step fails; cleanup always runs.
+# manual prepare and route operations per Workload -> N requests each -> records -> one server reset.
+# Operation requests/results retain native ACKs and reset steps. Any failed operation exits nonzero.
 import json, os, subprocess, sys, time, datetime as dt
 import os
 from pathlib import Path
@@ -29,11 +29,18 @@ items = []
 for arg in sys.argv[3:]:
     wl, rest = arg.split('=', 1); prof, ds = rest.split(':', 1)
     items.append(dict(wl=wl, uid=kj('-n', ENV['namespace'], 'get', 'workload', wl)['metadata']['uid'], profile=prof, ds=ds))
-t0 = now(); instances = {}; ok = True
-def settings_put(routing, reason):
-    _, s = api('GET', '/api/v1/scheduler/settings'); s = json.loads(s); s.pop('staticRoutingValidatedAt', None)
-    s['staticRouting'] = routing; s['reason'] = reason
-    code, body = api('PUT', '/api/v1/scheduler/settings', s); L('settings PUT', code, json.dumps(routing)[:200]); return code
+t0 = now(); instances = {}; attempted_uids = []
+def operation(body, prefix):
+    global ok
+    Path(out, prefix + '-request.json').write_text(json.dumps(body, indent=2) + '\n')
+    code, raw = api('POST', '/api/v1/scheduler/operations', body)
+    Path(out, prefix + '-result.json').write_text(raw)
+    result = json.loads(raw)
+    L(body['kind'], code, result.get('status'))
+    if code != 200 or result.get('status') != 'complete' or result.get('error'):
+        ok = False
+        raise RuntimeError(body['kind'] + ' failed; retain operation evidence and stop')
+    return result
 ok = False
 try:
     ok = True
@@ -41,18 +48,15 @@ try:
     if 'chill.dacs.io/measurement' in taints: raise SystemExit(f'{node} is held by a measurement')
     for it in items:
         _, before = api('GET', '/api/v1/scheduler/state'); before_ids = {i['id'] for i in (json.loads(before)['snapshot'].get('instances') or [])}
-        code, body = api('POST', '/api/v1/scheduler/operations', {'kind': 'prepare', 'workloadUID': it['uid'], 'profileID': it['profile'], 'node': ref})
-        open(f"{out}/prepare-{it['wl']}.json", 'w').write(body)
-        st = json.loads(body).get('status') if body.startswith('{') else body[:300]
-        L('prepare', it['wl'], code, st)
-        if code != 200 or st != 'complete': ok = False; raise SystemExit('prepare failed')
+        attempted_uids.append(it['uid'])
+        operation({'kind': 'prepare', 'workloadUID': it['uid'], 'profileID': it['profile'], 'node': ref, 'reason': f'Prepare serving smoke on {node}'}, 'prepare-' + it['wl'])
         for _ in range(30):
             _, snap = api('GET', '/api/v1/scheduler/state'); new = [i for i in (json.loads(snap)['snapshot'].get('instances') or []) if i['id'] not in before_ids and i['node']['name'] == node]
             if new: break
             time.sleep(5)
         instances[it['wl']] = new[0]['id']; L('instance', it['wl'], new[0]['id'])
-    if settings_put({it['uid']: {instances[it['wl']]: 1000} for it in items}, f'serving smoke on {node}') != 200: ok = False; raise SystemExit('staticRouting failed')
-    time.sleep(15)
+    for it in items:
+        operation({'kind': 'route', 'workloadUID': it['uid'], 'weights': {instances[it['wl']]: 1000}, 'reason': f'Serving smoke on {node}'}, 'route-' + it['wl'])
     for it in items:
         r = subprocess.run(['python3', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'send.py'), it['wl'], it['ds'], str(N), f"{out}/requests-{it['wl']}.jsonl"], capture_output=True, text=True)
         lines = [json.loads(l) for l in open(f"{out}/requests-{it['wl']}.jsonl")]
@@ -60,12 +64,8 @@ try:
         L('requests', it['wl'], f'{good}/{len(lines)} HTTP 200', json.dumps(lines[0].get('body'))[:300] if lines else '')
         ok &= good == len(lines) and len(lines) == N
 finally:
-    if instances: settings_put({it['uid']: {} for it in items}, f'end serving smoke on {node}: unroute'); time.sleep(10)
-    for wl, inst in instances.items():
-        it = next(i for i in items if i['wl'] == wl)
-        code, body = api('POST', '/api/v1/scheduler/operations', {'kind': 'remove', 'workloadUID': it['uid'], 'node': ref, 'instance': inst})
-        open(f'{out}/remove-{wl}.json', 'w').write(body); L('remove', wl, code, json.loads(body).get('status') if body.startswith('{') else body[:200])
-    if instances: settings_put({}, f'end serving smoke on {node}: drop declaration')
+    if attempted_uids:
+        operation({'kind': 'reset', 'workloadUIDs': attempted_uids, 'reason': f'End serving smoke on {node}: reset owned workload scope'}, 'cleanup-reset')
     t1 = now()
     for it in items:
         _, b = api('GET', f"/api/v1/observations/workloads/{it['uid']}?from={t0}&to={t1}&limit=1000"); open(f"{out}/observations-{it['wl']}.json", 'w').write(b)

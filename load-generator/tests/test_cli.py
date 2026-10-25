@@ -230,6 +230,14 @@ class MainTest(unittest.TestCase):
             missing_cap = args[:-2]
             with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 main(missing_cap)
+            lifetime_flag = args.index("--request-lifetime")
+            optional = args[:lifetime_flag] + args[lifetime_flag + 2:]
+            with patch("chill_loadgen.cli.WorkloadHTTPClient") as client, patch("chill_loadgen.cli.replay") as run:
+                self.assertEqual(0, main(optional))
+                self.assertIsNone(client.call_args.kwargs["request_lifetime_seconds"])
+                self.assertEqual(30, client.call_args.kwargs["timeout_seconds"])
+                run.call_args.kwargs["new_client"]()
+                self.assertIsNone(client.call_args.kwargs["request_lifetime_seconds"])
 
     def test_open_loop_requires_rate_and_rejects_nonfinite_values(self) -> None:
         for extra in ([], ["--rate", "inf"], ["--rate", "1", "--duration", "nan"]):

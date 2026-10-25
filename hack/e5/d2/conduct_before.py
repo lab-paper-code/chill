@@ -274,12 +274,20 @@ class Conductor:
         return self.api('GET','/api/v1/scheduler/settings')
 
     def put(self, settings, reason):
-        body=copy.deepcopy(settings);body.pop('staticRoutingValidatedAt',None);body['reason']=reason
+        body=copy.deepcopy(settings);body.pop('staticRouting',None);body.pop('staticRoutingValidatedAt',None);body['reason']=reason
         save(self.out/(self.a.command+'-settings-request.json'),body)
         response=self.api('PUT','/api/v1/scheduler/settings',body)
         with (self.out/'settings-write-receipts.jsonl').open('a') as receipts:
             receipts.write(json.dumps(dict(at=now(),phase=self.a.phase,command=self.a.command,sourceSha=self.source,request=body,response=response))+'\n')
         return response
+
+    def operation(self, body, prefix):
+        save(self.out/(prefix+'-request.json'),body)
+        result=self.api('POST','/api/v1/scheduler/operations',body,timeout=1800)
+        save(self.out/(prefix+'-result.json'),result)
+        if result.get('status')!='complete' or result.get('error'):
+            raise RuntimeError('Scheduler '+body['kind']+' failed; retain step/ACK evidence and stop')
+        return result
 
     def routing_publication_ready(self, state, wanted, previous, *, workload_uid=None, allowed_owner_uids=None):
         uid=UID if workload_uid is None else workload_uid
@@ -382,9 +390,7 @@ class Conductor:
         life=dict(startUTC=now(),originalSettings=self.settings(),originalNodes=state['snapshot']['nodes'],instances=[],stage='PREPARING')
         life['preparationResults']=[]
         save(self.out/'lifecycle.json',life)
-        settings=self.settings();routes=copy.deepcopy(settings.get('staticRouting') or {});routes[UID]={};settings['staticRouting']=routes
-        prepare_ack=self.put(settings,'Approved unloaded native setup: preserve unrelated declarations and keep target routing empty until exact-cap binding')
-        save(self.out/'prepare-empty-route-settings-ack.json',prepare_ack)
+        prepare_ack=self.operation(dict(kind='unroute',workloadUID=UID,reason='Approved unloaded native setup before exact-cap binding'),'prepare-empty-route')
         self.wait_routing_publication({},state['snapshot'].get('routing',{}).get(UID,{}),prepare_ack,'prepare-empty-route')
         self.prepare_public_batch(state,life)
 
@@ -395,15 +401,12 @@ class Conductor:
             raise RuntimeError('Only exact PREPARING with native batch never started can continue')
         if any((self.out/('prepare-'+choice['node']['name']+'-'+suffix+'.json')).exists() for choice in self.b['selected'] for suffix in ('request','result','error')):
             raise RuntimeError('Native RPC/request evidence already exists; do not repeat any preparation')
-        ack=load(self.out/'prepare-empty-route-settings-ack.json')
-        receipts=[json.loads(line) for line in (self.out/'settings-write-receipts.jsonl').read_text().splitlines() if line.strip()]
-        if len(receipts)!=1 or receipts[0].get('command')!='prepare-defaults' or receipts[0].get('response')!=ack:
-            raise RuntimeError('Exact original single preparation declaration receipt is missing/conflicting')
-        current=self.settings();declared=copy.deepcopy(current);routes=declared.pop('staticRouting',{})
-        declared.pop('staticRoutingValidatedAt',None)
-        if declared!=ack.get('after') or routes!=ack.get('afterStaticRouting') or routes.get(UID)!={}:
-            raise RuntimeError('Current settings differ from the exact completed original empty declaration')
-        state=self.wait_routing_publication({},ack.get('beforeStaticRouting',{}).get(UID,{}),ack,'continue-original-empty-route')
+        ack=load(self.out/'prepare-empty-route-result.json')
+        if ack.get('status')!='complete' or ack.get('error') or ack.get('operation',{}).get('kind')!='unroute':
+            raise RuntimeError('Original completed unroute ACK required before first preparation batch')
+        if (self.settings().get('staticRouting') or {}).get(UID)!= {}:
+            raise RuntimeError('Original empty route declaration changed')
+        state=self.wait_routing_publication({},(ack.get('before',{}).get('routing') or {}).get(UID,{}),ack,'continue-original-empty-route')
         self.assert_initial_empty(state)
         save(self.out/'original-empty-declaration-adopted-before-first-batch.json',dict(at=now(),originalACK=ack,snapshotAt=state['snapshot']['at'],nativeRPCPreviouslyStarted=False,newSettingsPUTs=0))
         self.prepare_public_batch(state,life)
@@ -417,7 +420,7 @@ class Conductor:
                 raise RuntimeError('Native mode preparation path not bound; no manual power fallback')
         life['batchStartedUTC']=now();save(self.out/'lifecycle.json',life)
         def prepare_one(choice):
-            body=dict(kind='prepare',workloadUID=UID,profileID=choice['profileID'],node=choice['node'])
+            body=dict(kind='prepare',workloadUID=UID,profileID=choice['profileID'],node=choice['node'],reason='Approved D2 frozen native preparation')
             save(self.out/('prepare-'+choice['node']['name']+'-request.json'),body)
             result=self.api('POST','/api/v1/scheduler/operations',body,timeout=1800)
             save(self.out/('prepare-'+choice['node']['name']+'-result.json'),result)
@@ -633,61 +636,33 @@ class Conductor:
             owned=next(i for i in life['instances'] if i['id']==frame['instanceID']);owned['maxBatch']=choice['maxBatch']
             save(self.out/'lifecycle.json',life)
         life['stage']='POLICIES_ACKED_ROUTE_PENDING';save(self.out/'lifecycle.json',life)
-        save(self.out/'native-policy-complete.json',dict(at=now(),loadReady=False,instruction='Next Main-released bind-routing must use existing staticRouting PUT and final route/native ACK; patch DecisionID need not survive.'))
+        save(self.out/'native-policy-complete.json',dict(at=now(),loadReady=False,instruction='Next Main-released bind-routing uses explicit route operation and native ACK; patch DecisionID need not survive.'))
 
     def bind_routing(self):
         life=load(self.out/'lifecycle.json')
         if life.get('stage')!='POLICIES_ACKED_ROUTE_PENDING': raise RuntimeError('Exact policy stage is not ready for normal routing')
-        if (self.out/'routing-settings-ack.json').exists() or (self.out/'routing-attempt.json').exists():
-            raise RuntimeError('Route attempt already recorded; use explicit read-only accept-routing, never repeat the PUT')
+        if (self.out/'routing-result.json').exists() or (self.out/'routing-attempt.json').exists():
+            raise RuntimeError('Route attempt already recorded; use explicit read-only accept-routing, never repeat the operation')
         self.assert_policy_idle()
         for owned in life['instances']:
             if owned['maxBatch']!=owned['desiredMaxBatch']: raise RuntimeError('Temporary default policy is not load-ready')
         before=self.state()['snapshot']['at'];routes={i['id']:i['weight'] for i in life['instances']}
-        settings=self.settings();declaration=copy.deepcopy(settings.get('staticRouting') or {});declaration[UID]=routes;settings['staticRouting']=declaration
-        save(self.out/'routing-attempt.json',dict(at=now(),beforeSnapshotAt=before,staticRouting=declaration,bindingPath=str(self.a.binding)))
-        settings_ack=self.put(settings,'Approved D2 strict-max initial8 normal staticRouting synchronization; preserve same physical instances')
-        save(self.out/'routing-settings-ack.json',settings_ack)
-        # Operation completion/native ACK and cached snapshot publication are
-        # separate. Preserve the original result before any convergence guard.
-        save(self.out/'routing-operation-state.json',self.state())
-        routing_config=self.k(['get','configmap','serving-scheduler','-o','json'])
-        save(self.out/'routing-source-configmap.json',routing_config)
-        stored=json.loads(routing_config['data']['scheduler.json'])
-        if stored.get('staticRouting')!=declaration or stored.get('staticRoutingValidatedAt')!=settings_ack['validatedAt']:
-            raise RuntimeError('Source routing ConfigMap does not name the exact settings PUT')
+        save(self.out/'routing-attempt.json',dict(at=now(),beforeSnapshotAt=before,weights=routes,bindingPath=str(self.a.binding)))
+        self.operation(dict(kind='route',workloadUID=UID,weights=routes,reason='Approved D2 strict-max initial8 exact physical binding'),'routing')
         self.accept_routing()
 
     def accept_routing(self):
-        """Finish the same original route using actual receipt+fresh reads, no PUT."""
+        """Finish the same original route using actual ACK and fresh reads, no mutation."""
         life=load(self.out/'lifecycle.json')
         if life.get('stage')!='POLICIES_ACKED_ROUTE_PENDING':
             raise RuntimeError('Read-only routing continuation requires same strict-policy stage')
         self.assert_policy_idle()
         routes={i['id']:i['weight'] for i in life['instances']}
-        settings_ack=load(self.out/'routing-settings-ack.json')
-        routing_config=load(self.out/'routing-source-configmap.json')
-        stored=json.loads(routing_config['data']['scheduler.json']);declaration=stored.get('staticRouting')
-        if not isinstance(declaration,dict) or declaration.get(UID)!=routes or stored.get('staticRoutingValidatedAt')!=settings_ack['validatedAt']:
-            raise RuntimeError('Original routing source/validatedAt differs from exact bound weights')
-        current_config=self.k(['get','configmap','serving-scheduler','-o','json'])
-        save(self.out/'routing-readonly-current-source-configmap.json',current_config)
-        if current_config['metadata']['uid']!=routing_config['metadata']['uid'] or current_config['metadata']['resourceVersion']!=routing_config['metadata']['resourceVersion'] or current_config['data']['scheduler.json']!=routing_config['data']['scheduler.json']:
-            raise RuntimeError('Routing source changed after original PUT; do not adopt another operation')
-        historical=self.out/'normal-route-complete-eight-ack.json'
-        if historical.exists():
-            candidates=[load(historical)];proof_source=str(historical)
-        elif self.release.get('routeResultPath'):
-            proof_path=Path(self.release['routeResultPath'])
-            if not proof_path.is_absolute():raise RuntimeError('Original route receipt path must be absolute')
-            document=load(proof_path);candidates=[document.get('fullOperationResult',document)];proof_source=str(proof_path)
-        else:
-            proof_path=self.out/'routing-operation-state.json'
-            candidates=load(proof_path).get('results') or [];proof_source=str(proof_path)
-        save(self.out/'original-route-operation-evidence.json',dict(source=proof_source,candidates=candidates))
-        results=[r for r in candidates if r.get('operation',{}).get('kind')=='manual-static-routing' and r['operation'].get('sourceConfigRV')==routing_config['metadata']['resourceVersion'] and r['operation'].get('staticRouting')==declaration and r['operation'].get('settingsValidatedAt')==settings_ack['validatedAt'] and r.get('status')=='complete' and not r.get('error')]
-        if len(results)!=1: raise RuntimeError('Exact original complete route OperationResult missing/ambiguous; actual durable receipt required, never fabricate historical ACK')
-        route_result=results[-1];route_id=route_result['operation']['target']['id'];actual=route_result['actual']
+        route_result=load(self.out/'routing-result.json')
+        if route_result.get('status')!='complete' or route_result.get('error') or route_result.get('operation',{}).get('kind')!='route':
+            raise RuntimeError('Original complete route ACK required')
+        settings_ack=route_result
+        route_id=route_result['operation']['target']['id'];actual=route_result['actual']
         if actual.get('routing')!=route_result['operation']['target']['routing'] or actual['routing'].get(UID)!=routes or set(actual.get('native',{}))!={i['id'] for i in life['instances']}:
             raise RuntimeError('Normal routing result lacks exact eight-native/full-route ACK')
         for choice in self.b['selected']:
@@ -706,7 +681,7 @@ class Conductor:
             save(self.out/('final-route-policy-'+choice['node']['name']+'.json'),frame)
         save(self.out/'final-routing-state.json',self.verify(life,staging=True,completion=settings_ack))
         final_settings=self.settings();save(self.out/'final-routing-settings.json',final_settings)
-        if final_settings.get('autonomousWorkloads') or (final_settings.get('staticRouting') or {})!=declaration:
+        if UID in (final_settings.get('autonomousWorkloads') or []) or (final_settings.get('staticRouting') or {}).get(UID)!=routes:
             raise RuntimeError('Final declared routing/autonomy differs from approved exact settings')
         save(self.out/'final-routing-pools.json',self.api('GET','/api/v1/pools'))
         life['stage']='READY_BOUND';save(self.out/'lifecycle.json',life)
@@ -770,7 +745,7 @@ class Conductor:
             else:self.verify()
             settings['autonomousWorkloads']=[UID]
             settings['excludedNodes']=list(D2['excludedNodes'])
-            route=copy.deepcopy(settings.get('staticRouting') or {});route.pop(UID,None);settings['staticRouting']=route
+            self.operation(dict(kind='release',workloadUID=UID,reason='Release D2 manual route before autonomous control'),'autonomy-release')
         else:
             if any(u!=UID for u in settings.get('autonomousWorkloads',[])): raise RuntimeError('Unexpected other autonomous owner')
             settings['autonomousWorkloads']=[]
@@ -795,7 +770,12 @@ class Conductor:
         spec['template']['metadata']={'labels':{'chill.dacs.io/d2-before':self.a.phase}}
         pod=spec['template']['spec'];container=pod['containers'][0]
         container['command']=['python3','-u','-c',LOAD_WRAPPER]
-        container['args']=['replay','--endpoint',D2['producerEndpoint'],'--token-file','/var/run/secrets/kubernetes.io/serviceaccount/token','--ca-file','/ca/tls.crt','--workload',NAME,'--dataset-dir','/data','--fields','image','--arrivals','poisson','--seed','1','--workers','320','--duration',str(duration),'--rate',str(rate),'--request-lifetime','2','--delivery-margin','0.010','--timeout','2.02']
+        container['args']=['replay','--endpoint',D2['producerEndpoint'],'--token-file','/var/run/secrets/kubernetes.io/serviceaccount/token','--ca-file','/ca/tls.crt','--workload',NAME,'--dataset-dir','/data','--fields','image','--arrivals','poisson','--seed','1','--workers','320','--duration',str(duration),'--rate',str(rate),'--delivery-margin','0.010','--timeout','30']
+        lifetime=D2.get('requestLifetimeSeconds')
+        if lifetime is not None:
+            if type(lifetime) not in (int,float) or not math.isfinite(lifetime) or lifetime<=0:raise ValueError('Explicit requestLifetimeSeconds must be positive')
+            container['args']+=['--request-lifetime',str(lifetime)]
+            container['args'][container['args'].index('--timeout')+1]=str(max(30,lifetime+.02))
         if container['resources']!={} or pod['nodeName']!=D2['producerNode']:raise RuntimeError('Historical client resource/node contract differs')
         if container['image']!=D2['producerImage']:
             raise RuntimeError('Load image differs from frozen deployed e18ac client')
@@ -1163,54 +1143,12 @@ class Conductor:
 
     def cleanup(self):
         life=load(self.out/'lifecycle.json')
-        setup_only=life.get('stage')!='READY_BOUND' and not life.get('emptyStart')
-        exact_ids={i['id'] for i in life['instances']}
-        if (self.out/'cleanup-unroute-settings-ack.json').exists():
-            raise RuntimeError('Original cleanup unroute already issued; continue its saved receipt, never repeat the PUT')
+        result=self.operation(dict(kind='reset',workloadUIDs=[UID],reason='Approved D2 owned campaign cleanup'),'cleanup-reset')
         original=copy.deepcopy(life['originalSettings'])
-        if any(weight>0 for weight in (original.get('staticRouting') or {}).get(UID,{}).values()):
-            raise RuntimeError('Original restore contains physical target routes; do not reintroduce deleted IDs')
-        self.wait_idle();self.autonomy(False)
-        settings=self.settings();route=copy.deepcopy(settings.get('staticRouting') or {});route[UID]={};settings['staticRouting']=route
-        previous=self.state()['snapshot'].get('routing',{}).get(UID,{})
-        unroute_ack=self.put(settings,'Approved D2 owned cleanup: unroute target only')
-        save(self.out/'cleanup-unroute-settings-ack.json',unroute_ack)
-        save(self.out/'cleanup-unroute-operation-state.json',self.state())
-        state=self.wait_routing_publication({},previous,unroute_ack,'cleanup-unroute')
-        completion=unroute_ack
-        owned_uids={i['id'].split('/',1)[0] for i in life['instances']}
-        for i in state['snapshot'].get('instances',[]):
-            if setup_only and i['id'] not in exact_ids:
-                raise RuntimeError('Setup cleanup found an instance outside its exact owned physical set')
-            if i.get('workloadUID') not in ('',None) or i.get('ownerWorkloadUID')!=UID:
-                raise RuntimeError('Unexpected non-owned or still-routed native instance after explicit unroute; no broad removal')
-            result=self.api('POST','/api/v1/scheduler/operations',dict(kind='remove',workloadUID=UID,node=i['node'],instance=i['id']),timeout=1800)
-            save(self.out/('remove-'+i['node']['name']+'-'+i['id'].split('/')[0]+'.json'),result)
-            if result.get('status')!='complete':raise RuntimeError('Owned removal not complete')
-            completion=result
-            owned_uids.add(i['id'].split('/',1)[0])
-        self.wait_routing_publication({}, {},completion,'cleanup-removed',empty_instances=True)
-        self.wait_idle()
-        remaining=self.k(['get','pods','-o','json'])
-        save(self.out/'cleanup-pods.json',remaining)
-        if any(p['metadata']['uid'] in owned_uids for p in remaining['items']):
-            raise RuntimeError('Exact owned physical Pod remains despite empty scheduler snapshot; retain cleanup blocker')
-        routes=original.get('staticRouting') or {}
-        routes.pop(UID,None)
-        original['staticRouting']=routes
-        restore_ack=self.put(original,'Approved D2 cleanup restore settings after owned physical removal and release owned routing declaration')
-        save(self.out/'cleanup-original-settings-ack.json',restore_ack)
-        actual=self.settings();save(self.out/'cleanup-restored-settings.json',actual)
-        if (actual.get('staticRouting') or {})!=routes:raise RuntimeError('Final owned routing release did not match retained declarations')
-        final=self.wait_routing_publication({}, {},restore_ack,'cleanup-original-restore',empty_instances=True);save(self.out/'cleanup-state.json',final)
-        if final['snapshot'].get('instances'):raise RuntimeError('Cleanup has remaining physical instances')
-        before=load(self.out/'lifecycle.json')['originalNodes']
-        modes={n['node']['uid']:n['powerMode'] for n in before}
-        changed=[n for n in final['snapshot']['nodes'] if n['node']['uid'] in modes and n['powerMode']!=modes[n['node']['uid']]]
-        if changed:
-            save(self.out/'mode-restoration-pending.json',changed)
-            raise RuntimeError('Native mode restoration needs separately bound existing path; no manual power fallback')
-        save(self.out/'cleanup-complete.json',dict(at=now(),physicalInstances=0,modeRestored=True))
+        original['autonomousWorkloads']=[uid for uid in original.get('autonomousWorkloads',[]) if uid!=UID]
+        save(self.out/'cleanup-original-settings-ack.json',self.put(original,'Restore D2 input settings after successful server reset'))
+        save(self.out/'cleanup-state.json',self.state())
+        save(self.out/'cleanup-complete.json',dict(at=now(),physicalInstances=0,resetStatus=result['status'],powerReturn='Server reset minimum supported idle mode'))
 
     def execute(self):
         command=self.a.command

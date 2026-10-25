@@ -59,10 +59,11 @@ class Prepare:
         if type(self.n['N']) is not int or not 1<=self.n['N']<=len(self.op['factorOrder']):raise ValueError('N must select the frozen source-witnessed factor menu prefix; no guessed count or phantom factor')
         self.factor_names=self.op['factorOrder'][:self.n['N']]
         for name in e5.WORKLOADS:
-            values=self.n['workloads'][name];e5.need(values,['slo','R','lifetimeSeconds','deliverySeconds','socketSeconds','workers'],name)
+            values=self.n['workloads'][name];e5.need(values,['slo','R','deliverySeconds','socketSeconds','workers'],name)
             if name==e5.WORKLOADS[0] and values['slo']!={'percentile':95,'targetLatencyNanos':1000000000}:raise ValueError('Canonical tight MNV remains p95 1s')
-            if not 0<values['slo']['percentile']<=100 or not e5.positive(values['slo']['targetLatencyNanos']) or not all(e5.positive(values[k]) for k in ('R','lifetimeSeconds','deliverySeconds','socketSeconds','workers')) or type(values['workers']) is not int:raise ValueError('Invalid approved Workload numerical bindings')
-            if values['lifetimeSeconds']<values['slo']['targetLatencyNanos']/1e9 or values['socketSeconds']<=values['lifetimeSeconds']+values['deliverySeconds']:raise ValueError('Invalid approved lifetime/SLO/socket tuple')
+            if not 0<values['slo']['percentile']<=100 or not e5.positive(values['slo']['targetLatencyNanos']) or not all(e5.positive(values[k]) for k in ('R','deliverySeconds','socketSeconds','workers')) or type(values['workers']) is not int:raise ValueError('Invalid approved Workload numerical bindings')
+            lifetime=values.get('lifetimeSeconds')
+            if lifetime is not None and (not e5.positive(lifetime) or lifetime<values['slo']['targetLatencyNanos']/1e9 or values['socketSeconds']<=lifetime+values['deliverySeconds']):raise ValueError('Invalid explicit lifetime/SLO/socket tuple')
         self.sha=self.release['sourceSHA']; self.out.mkdir(parents=True,exist_ok=True)
         plan=e5.load(PLAN)
         if plan['sourcePair']['after'].get('sha')!=self.sha: raise ValueError('Actual final D2 SHA not sealed in existing plan; no old-source fallback')
@@ -125,7 +126,7 @@ class Prepare:
         if 'sha256:'+status['imageID'].rsplit('sha256:',1)[-1] not in allowed or not status['ready']:raise RuntimeError('Actual deployed controller is not the sealed final source publication')
         control=next(c for c in servers[0]['spec']['containers'] if c['name']=='serving-entrypoint')
         cap=next(x.split('=',1)[1] for x in control['args'] if x.startswith('--request-timeout='))
-        if not cap.endswith('s') or any(self.n['workloads'][name]['lifetimeSeconds']>float(cap[:-1]) for name in e5.WORKLOADS):raise ValueError('Approved lifetime exceeds actual HandlerConfig cap')
+        if not cap.endswith('s') or any(self.n['workloads'][name].get('lifetimeSeconds') is not None and self.n['workloads'][name]['lifetimeSeconds']>float(cap[:-1]) for name in e5.WORKLOADS):raise ValueError('Approved explicit lifetime exceeds actual HandlerConfig cap')
         if any(any(c.get('name')=='firstfloor' and c.get('state',{}).get('running') for c in p.get('status',{}).get('containerStatuses',[])) for p in actual_pods):raise RuntimeError('Actual native process still running despite empty scheduler snapshot')
         e5.d25_gate(self.pub['d25'],snap)
         return s
@@ -172,7 +173,7 @@ class Prepare:
     def run(self):
         self.safety(); snapshot=self.canonical(); settings=snapshot['settings']
         if settings.get('autonomousWorkloads'):raise RuntimeError('Canonical registration must not enable autonomous control')
-        settings.pop('staticRoutingValidatedAt',None);settings['completionMarginMS']=self.n['mSeconds']*1000;settings['excludedNodes']=e5.E5['excludedNodes'];settings['reason']='Approved phase6 measured margin and E5 candidate exclusions; canonical autonomy remains disabled'
+        settings.pop('staticRouting',None);settings.pop('staticRoutingValidatedAt',None);settings['completionMarginMS']=self.n['mSeconds']*1000;settings['excludedNodes']=e5.E5['excludedNodes'];settings['reason']='Approved phase6 measured margin and E5 candidate exclusions; canonical autonomy remains disabled'
         self.api('PUT','/api/v1/scheduler/settings',settings)
         deadline=time.monotonic()+self.tb['settleSeconds']
         while time.monotonic()<deadline:
@@ -236,7 +237,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['schema','prepare','execute']);p.add_argument('--numbers',type=Path);p.add_argument('--release',type=Path);p.add_argument('--out',type=Path);a=p.parse_args()
     try:
         if a.command=='schema':
-            print(json.dumps({'numbers':['G','mSeconds','N','burstLowSeconds','smokeSeconds','kappaSeconds','timeboxes','workloads','approval'],'workloadNumbers':['slo.percentile','slo.targetLatencyNanos','R','lifetimeSeconds','deliverySeconds','socketSeconds','workers'],'timeboxes':e5.REQUIRED['timeboxes'],'approval':['phase6ApprovalUTC','e5StartApprovalUTC','D1','D6','D9'],'factorSelection':'N selects the frozen operational recipe factorOrder prefix; source/reset witnesses are already bound there, observed effect remains unmeasured','release':['executor=CampaignOps','command=e5-execute','mainInstructionUTC','sourceSHA','numbersPath','bindingPath'],'autoInputs':str(PLAN)+'.e5InputPublication','operationalRecipe':str(e5.OPERATIONAL_RECIPE),'scientificResults':'UNMEASURED'},indent=2));return 0
+            print(json.dumps({'numbers':['G','mSeconds','N','burstLowSeconds','smokeSeconds','kappaSeconds','timeboxes','workloads','approval'],'workloadNumbers':['slo.percentile','slo.targetLatencyNanos','R','deliverySeconds','socketSeconds','workers'],'optionalWorkloadNumbers':['lifetimeSeconds'],'timeboxes':e5.REQUIRED['timeboxes'],'approval':['phase6ApprovalUTC','e5StartApprovalUTC','D1','D6','D9'],'factorSelection':'N selects the frozen operational recipe factorOrder prefix; source/reset witnesses are already bound there, observed effect remains unmeasured','release':['executor=CampaignOps','command=e5-execute','mainInstructionUTC','sourceSHA','numbersPath','bindingPath'],'autoInputs':str(PLAN)+'.e5InputPublication','operationalRecipe':str(e5.OPERATIONAL_RECIPE),'scientificResults':'UNMEASURED'},indent=2));return 0
         if any(x is None for x in (a.numbers,a.release,a.out)):raise ValueError('--numbers, --release and --out required for CPO preparation/execution')
         if any(not x.is_absolute() for x in (a.numbers,a.release,a.out)):raise ValueError('Absolute paths required')
         prepared=Prepare(a);binding=prepared.run()

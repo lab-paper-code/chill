@@ -133,13 +133,21 @@ rate, 660-second replay and producer release barrier. Its release names
 `command=autonomous-empty-start` and the actual deployed control `sourceSha`;
 execution metadata records the repository harness commit separately.
 Both commands retain diagnostic raw records before owned Job deletion.
-The D2 cleanup and E5 finish commands consume the recorded lifecycle. Their
-empty owned routing declarations hold draining instances through removal,
-empty publication and owned Pod disappearance. Final settings restoration
-releases owned routing keys and submits an explicit `staticRouting: {}` when
-the remaining declaration is empty. Other Workload routing and explicit empty
-stop declarations retain their values. Native mode return
-uses the separately approved native-mode release and its 900-second bound.
+The D2 cleanup, E5 finish and demo resume commands submit one explicit scheduler
+`reset` with their captured Workload UIDs and a required reason, retain the returned
+step/native ACK evidence, and stop on failure without a client retry or resume
+state machine. The server owns autonomy removal, unroute/drain/removal, release,
+and minimum supported idle-power readback. Cleanup does not recreate original
+physical modes. Subsequent input-settings restoration excludes the read-only
+`staticRouting` and `staticRoutingValidatedAt` fields; static selections use
+`route`/`unroute`/`release` operations and preserve unrelated UID declarations.
+Request lifetime is optional: an unset value omits `--request-lifetime`, rather
+than synthesizing zero or a client deadline. Socket budgets remain explicit.
+E5 and demo `publish --experiment-id ID --store-config /private/store.json`
+upload private raw evidence first through the existing PutImmutable bridge, then
+the final `serving/experiments.v1alpha1/ID/summary.json`. Existing IDs cannot be
+overwritten; corrections require a new ID. `native_mode_request.py` remains the
+separately approved baseline-preparation path, not cleanup sequencing.
 `native_mode_request.py` consumes the explicit native-mode `--release` and
 `--out`. `sample_cgroups.py` consumes an external host inventory plus
 `--duration`, `--phase` and `--out`. The `smoke_*.py` scripts exercise retained
@@ -287,33 +295,18 @@ configured zero-load E0 through CPO.run in a fresh `smoke-E0-resume-*/` folder
 (180 seconds in the example), preserving original E0 results. Then execute
 `stage --stage A`, B, C, collect, summary and finish with the same out/release.
 
-Fresh demo finish first disables owned autonomy, waits for request/planner
-actions to terminate, then submits the empty routing declaration. Native ACK
-keys correspond to `operation.target.instances` (positive policy targets),
-not all retained physical instances: an empty unroute has no native policy
-ACKs while owned unrouted instances remain for removal. Empty/nil unrelated
-UID route maps are equivalent; positive foreign routes and physical identity
-changes remain errors. Raw matching results/state are retained before checks.
+Fresh demo `finish` submits one server `reset` for the owned Workload UIDs and
+retains its full ordered step/result evidence before restoring input settings
+or deleting definitions. Active global routing or affected-Node operations
+are refused before mutation; the client does not assemble cleanup, retry,
+rollback, or resume an old unroute acknowledgment. A failed reset stops later
+steps and preserves the observed partial state. A later explicit reset reads
+current state and skips already-satisfied changes.
 
-After an unroute PUT already exists, do not rerun `finish` or submit that PUT
-again. CampaignOps explicitly resumes with the original completed operation
-and original timely publication state, after re-freezing changed source refs:
-
-```sh
-python3 "$DEMO" finish-resume --out "$OUT" --release "$RELEASE" \
-  --native-ack "$OUT/finish-unroute-scheduler-pages/00000.json" \
-  --publication-state "$OUT/finish-failure-state.json"
-```
-
-`--native-ack` accepts an OperationResult or original scheduler page; exactly
-one complete result must join the original validatedAt and ConfigMap RV.
-Resume requires that RV still match, autonomy already off, the recorded
-publication fall between native completion and the original deadline, and
-fresh exact owner/profile/physical-ID checks. It never resets the old deadline
-or repeats the unroute PUT. After owned removal, the existing final settings
-restoration releases stop declarations, returns modes and deletes canonical
-definitions. No original ACK, CM, phase, client or offered-window record is
-overwritten.
+New campaign/demo bindings freeze the full `schedulerSettings`, including
+per-UID `minimumDemand`. JSON summaries and immutable published stage KPIs
+retain that frozen input, not current settings. Older bindings without it show
+null and an explicit missing reason; their immutable records are not rewritten.
 
 `python3 hack/e5/demo.py --help` and `--self-check` work without environment
 configuration. The latter runs the real CPO producer stage loop against local

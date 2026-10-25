@@ -183,7 +183,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay_parser.add_argument("--timeout", type=_positive(float), help="socket seconds (E5 default lifetime + 2*delivery; otherwise lifetime + delivery or 30)")
     replay_parser.add_argument("--request-lifetime", type=_positive(float), help="native request lifetime seconds; sends X-Chill-Request-Timeout")
     replay_parser.add_argument("--delivery-margin", type=_positive(float), default=0.01, help="socket delivery seconds beyond lifetime (default .01)")
-    replay_parser.add_argument("--workload-slo", type=_positive(float), help="frozen E5 Workload SLO seconds; requires lifetime and gateway timeout")
+    replay_parser.add_argument("--workload-slo", type=_positive(float), help="frozen E5 Workload SLO seconds; paired with gateway timeout")
     replay_parser.add_argument("--gateway-timeout", type=_positive(float), help="frozen E5 gateway lifetime cap seconds; paired with workload SLO")
     return parser
 
@@ -203,16 +203,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             raise ValueError("--rate does not apply to closed-loop arrivals")
         e5_contract = args.workload_slo is not None or args.gateway_timeout is not None
         if e5_contract:
-            if args.workload_slo is None or args.gateway_timeout is None or args.request_lifetime is None:
-                raise ValueError("E5 replay requires --workload-slo, --gateway-timeout and --request-lifetime")
-            if args.request_lifetime < args.workload_slo:
-                raise ValueError("--request-lifetime must cover --workload-slo")
-            if args.request_lifetime > args.gateway_timeout:
-                raise ValueError("--gateway-timeout must cover --request-lifetime")
+            if args.workload_slo is None or args.gateway_timeout is None:
+                raise ValueError("E5 replay requires --workload-slo and --gateway-timeout")
+            if args.request_lifetime is not None:
+                if args.request_lifetime < args.workload_slo:
+                    raise ValueError("--request-lifetime must cover --workload-slo")
+                if args.request_lifetime > args.gateway_timeout:
+                    raise ValueError("--gateway-timeout must cover --request-lifetime")
         required_timeout = (
             args.request_lifetime + args.delivery_margin if args.request_lifetime is not None else 30
         )
-        default_timeout = required_timeout + args.delivery_margin if e5_contract else required_timeout
+        default_timeout = required_timeout + args.delivery_margin if e5_contract and args.request_lifetime is not None else required_timeout
         timeout = args.timeout if args.timeout is not None else default_timeout
         if args.request_lifetime is not None and (
             timeout < required_timeout or e5_contract and timeout <= required_timeout

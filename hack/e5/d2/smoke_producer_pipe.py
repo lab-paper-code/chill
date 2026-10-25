@@ -57,8 +57,8 @@ with tempfile.TemporaryDirectory(prefix='d2-producer-pipe-') as temporary:
     m.subprocess.Popen=lambda *args,**kwargs:next(processes)
     m.OPS=root/'ops';alert=m.OPS/'campaign/v2/control-alerts.jsonl';alert.parent.mkdir(parents=True);alert.write_text('')
     driver.phase_out=root/'phase';driver.phase_out.mkdir();driver.out=root/'physical';driver.out.mkdir()
-    driver.a=SimpleNamespace(hosts=root/'hosts.json',phase='fixture');driver.source='fixture-source'
-    prior={'autonomousWorkloads':[],'excludedNodes':['original-held'],'staticRouting':{'old-native-id':1}}
+    driver.a=SimpleNamespace(hosts=root/'hosts.json',phase='fixture',command='autonomous');driver.source='fixture-source'
+    prior={'autonomousWorkloads':[],'excludedNodes':['original-held'],'staticRouting':{m.UID:{},'other':{'old-native-id':1}},'staticRoutingValidatedAt':ready['at']}
     current=copy.deepcopy(prior)
     driver.boundary=lambda *args:None;driver.verify=lambda *args,**kwargs:None
     driver.settings=lambda:copy.deepcopy(current)
@@ -74,11 +74,19 @@ with tempfile.TemporaryDirectory(prefix='d2-producer-pipe-') as temporary:
         raise AssertionError('Unexpected fixture command '+str(argv))
     driver.k=kube
     def autonomy(enabled):
-        actions.append('autonomy-on');current['autonomousWorkloads']=[m.UID];current['excludedNodes']=['probe'];current['staticRouting']={}
+        actions.append('autonomy-on');current['autonomousWorkloads']=[m.UID];current['excludedNodes']=['probe'];current['staticRouting'].pop(m.UID,None)
     driver.autonomy=autonomy
-    def put(value,reason):
-        actions.append('restore-prior-flags');current.clear();current.update(copy.deepcopy(value));return {'actualFixtureWrite':True}
-    driver.put=put
+    def api(method,path,body=None,**kwargs):
+        if method=='GET':
+            assert path.startswith('/api/v1/observations/')
+            actions.append('raw-page')
+            return {'events':[],'nextCursor':None}
+        assert method=='PUT' and path=='/api/v1/scheduler/settings'
+        assert 'staticRouting' not in body and 'staticRoutingValidatedAt' not in body
+        actions.append('restore-prior-flags')
+        current.update({key:copy.deepcopy(value) for key,value in body.items() if key!='reason'})
+        return {'actualFixtureWrite':True}
+    driver.api=api
     def cleanup(*args):actions.append('cleanup-job');raise RuntimeError('secondary-cleanup-error')
     driver.remove_job=cleanup
     try:
@@ -86,7 +94,8 @@ with tempfile.TemporaryDirectory(prefix='d2-producer-pipe-') as temporary:
         except RuntimeError as error:assert str(error)=='original-go-error',str(error)
         else:raise AssertionError('Original failure was suppressed')
         assert actions.index('restore-prior-flags')<actions.index('cleanup-job')
-        assert current['autonomousWorkloads']==[] and current['excludedNodes']==['original-held'] and current['staticRouting']=={}
+        assert actions.count('raw-page')==2 and actions.index('raw-page')<actions.index('cleanup-job')
+        assert current['autonomousWorkloads']==[] and current['excludedNodes']==['original-held'] and current['staticRouting']=={'other':{'old-native-id':1}}
         phase=json.loads((driver.phase_out/'fixture-run/phase.json').read_text())
         assert phase['error']=='original-go-error' and 'secondary-cleanup-error' in phase['cleanupErrors'][0]
     finally:m.subprocess.Popen=original_popen;m.OPS=original_ops;pipe.close()

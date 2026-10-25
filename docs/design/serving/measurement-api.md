@@ -268,10 +268,14 @@ reader는 한 형태를 엄격히 소비한다. Timing이 없는 기록의 미�
 
 판단은 고른 설정을 `decision.settings`와 `decision.search.bounds`에 동결하므로,
 이후 controller 설정 변경이 과거 판단의 하한을 바꾸지 않는다. scheduler 관측 기록은 그 판단을 보존한다.
-`hack/e5/e5.py`의 binding은 `config.inputs.scheduler`와 `sources`로 scheduler 입력을 연결하고,
-실행의 `initial.json`, 경계별 `pre-settings.json`/`post-settings.json`, `static-selection.json`은 실제 설정을 저장한다.
-`e5-summary.json`의 `staticSelection`은 그 선택과 settings를 담은 `static-selection.json`을 가리킨다.
-결과 해석에는 이 동결 입력과 당시 판단을 사용하며 현재 controller 설정으로 대체하지 않는다.
+`hack/e5/e5.py`와 `demo.py`의 새 binding은 scheduler 입력 참조와 함께
+`schedulerSettings`에 `minimumDemand`를 포함한 설정 전체를 동결한다.
+`e5-summary.json`/demo `summary.json`과 immutable 발행 결과의 단계별
+`kpis.schedulerSettings`도 같은 동결값을 담는다. 과거 binding에 값이 없으면
+null과 누락 사유를 남기고 현재 설정이나 가짜 0으로 채우지 않는다.
+실행의 `initial.json`, 경계별 `pre-settings.json`/`post-settings.json`,
+`static-selection.json` 및 `decision.settings`는 실제 실행 중 설정을 저장한다.
+binding의 값은 입력 동결 시점이며, 이후 변경은 당시 판단과 경계 기록으로 확인한다.
 판단의 `decision.capacity.workloads[]`에는 `minimumDemand`(미설정이면 명시적 0)와
 `rate`(하한을 적용한 최종 req/s)가 함께 남는다. 관측 도착률 자체를 하한으로 덮어쓰지는 않는다.
 

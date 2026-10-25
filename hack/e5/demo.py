@@ -2,9 +2,10 @@
 """Short CPO demo: prepare -> start -> stage/run -> collect -> summary -> finish.
 
 Reuses E5's authenticated API, producer/barrier/counter lifecycle, raw collection
-and owned cleanup, but not its normative R/G/10800-second scientific gates.
-All outputs are PRIVATE operational evidence below paths.campaign. --help and
---self-check need no experiment environment, cluster, images, or credentials.
+and server-owned reset cleanup, but not its normative R/G/10800-second scientific gates.
+Outputs are PRIVATE operational evidence. publish --experiment-id ID --store-config
+/private/store.json uploads raw inputs before a final immutable summary; corrections
+require a new ID. --help and --self-check need no live experiment environment.
 """
 import argparse
 import copy
@@ -102,7 +103,7 @@ def assemble(e5, args, spec):
     if not cap.endswith('s') or not e5.positive(float(cap[:-1])):
         raise ValueError('Actual positive server request-timeout in seconds required')
     prototype = io.job('demo-timing', 0, 1)['spec']['template']['spec']['containers'][0]['args']
-    timing = {flag: prototype[prototype.index(flag) + 1] for flag in ('--workers', '--request-lifetime', '--delivery-margin', '--timeout')}
+    timing = {flag: prototype[prototype.index(flag) + 1] for flag in ('--workers', '--delivery-margin', '--timeout')}
     wire = e5.module('demo_templates', HERE / 'e5-wire.py')
     registration = object.__new__(wire.Prepare)
     registration.op, registration.out, registration.tb, registration.http = op, args.out, spec['timeboxes'], io.http
@@ -136,15 +137,16 @@ def assemble(e5, args, spec):
         template = args.out / ('producer-template-' + name + '.json')
         e5.save(template, wire.template(op, name, e5.ENVIRONMENT['d2']['producerImage']))
         alias = next(alias for alias, canonical in ALIASES.items() if canonical == name)
-        requested = {'workers': int(timing['--workers']), 'lifetimeSeconds': float(timing['--request-lifetime']), 'deliverySeconds': float(timing['--delivery-margin']), 'socketSeconds': float(timing['--timeout'])}
+        requested = {'workers': int(timing['--workers']), 'deliverySeconds': float(timing['--delivery-margin']), 'socketSeconds': float(timing['--timeout'])}
         requested.update(spec.get('requestTiming', {}).get(alias, {}))
-        if any(not e5.positive(requested[key]) for key in ('workers', 'lifetimeSeconds', 'deliverySeconds', 'socketSeconds')) or type(requested['workers']) is not int:
+        if any(not e5.positive(requested[key]) for key in ('workers', 'deliverySeconds', 'socketSeconds')) or type(requested['workers']) is not int:
             raise ValueError('Positive configured request timings and integer workers required')
-        lifetime = max(requested['lifetimeSeconds'], actual['slo']['targetLatencyNanos'] / 1e9)
-        delivery = requested['deliverySeconds']
-        c['workloads'].append({**{key: actual[key] for key in ('name', 'uid', 'generation', 'slo')}, 'datasetDir': recipe['datasetDir'], 'fields': recipe['fields'], 'jobTemplate': str(template), 'producerEndpoint': op['producer']['endpoint'], 'producerTokenFile': op['producer']['tokenFile'], 'producerCAFile': op['producer']['caFile'], 'producerDatasetDir': op['producer']['datasetDir'], 'workers': requested['workers'], 'lifetimeSeconds': lifetime, 'deliverySeconds': delivery, 'socketSeconds': max(requested['socketSeconds'], lifetime + 2 * delivery), 'gatewayCapSeconds': float(cap[:-1])})
+        lifetime = requested.get('lifetimeSeconds')
+        if lifetime is not None and (not e5.positive(lifetime) or lifetime < actual['slo']['targetLatencyNanos'] / 1e9 or lifetime > float(cap[:-1]) or requested['socketSeconds'] <= lifetime + requested['deliverySeconds']):
+            raise ValueError('Explicit lifetime must cover SLO, fit gateway cap and socket budget')
+        c['workloads'].append({**{key: actual[key] for key in ('name', 'uid', 'generation', 'slo')}, 'datasetDir': recipe['datasetDir'], 'fields': recipe['fields'], 'jobTemplate': str(template), 'producerEndpoint': op['producer']['endpoint'], 'producerTokenFile': op['producer']['tokenFile'], 'producerCAFile': op['producer']['caFile'], 'producerDatasetDir': op['producer']['datasetDir'], **requested, 'gatewayCapSeconds': float(cap[:-1])})
     c['demoSkipped'] = ['E5 R/kappa capacity binding and G clipping', '10800-second normative schedule and factor baselines', 'phase6 scientific approvals/D1/D6/D9 judgment gates', 'image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused', 'existing scheduler SLO mutation: existing definitions retained; missing canonical definitions created from recipe plus configured SLO']
-    c['demoProvenance'] = {'recipe': str(recipe_path), 'controlSourceSHA': 'Main-provided helm-revision source claim resolved in git, not inferred from image bytes', 'controlImageDigest': 'Live Ready Pod containerStatus.imageID', 'requestTiming': 'D2 Conductor.job baseline plus explicit requestTiming overrides; lifetime/socket extended only to cover actual scheduler SLO', 'measurementSLO': spec['measurementSLO']}
+    c['demoProvenance'] = {'recipe': str(recipe_path), 'controlSourceSHA': 'Main-provided helm-revision source claim resolved in git, not inferred from image bytes', 'controlImageDigest': 'Live Ready Pod containerStatus.imageID', 'requestTiming': 'D2 Conductor.job socket/worker baseline plus explicit requestTiming overrides; absent lifetime omits client deadline header', 'measurementSLO': spec['measurementSLO']}
     config_path = args.out / 'demo-e5-config.json'
     e5.save(config_path, c)
     return config_path
@@ -202,16 +204,19 @@ def prepare(e5, args):
     producer = module('demo_producer', HERE / 'e5-producer.py')
     payload = {}
     sources = {'demoConfig': e5.ref(args.config), 'e5Config': e5.ref(config_path), 'environment': e5.ref(e5.ENVIRONMENT_PATH)}
+    sources['scheduler'] = e5.ref(c['inputs']['scheduler'])
+    scheduler_settings = e5.load(c['inputs']['scheduler'])['settings']
     for filename in ('demo.py', 'e5.py', 'e5-wire.py', 'e5-producer.py', 'e5-archive.py', 'e5-raw.py'):
         sources[filename] = e5.ref(HERE / filename)
     for w in c['workloads']:
         e5.need(w, [k for k in e5.REQUIRED['workload'] if k not in ('R', 'profilingRecordIDs')], w['name'])
-        if any(not e5.positive(w[k]) for k in ('workers', 'lifetimeSeconds', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds')) or type(w['workers']) is not int:
+        if any(not e5.positive(w[k]) for k in ('workers', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds')) or type(w['workers']) is not int:
             raise ValueError('Positive workload timing and integer workers required')
         if not e5.positive(w['slo']['targetLatencyNanos']) or not 0 < w['slo']['percentile'] <= 100:
             raise ValueError('Valid frozen workload SLO required')
-        if w['lifetimeSeconds'] < w['slo']['targetLatencyNanos'] / 1e9 or w['gatewayCapSeconds'] < w['lifetimeSeconds'] or w['socketSeconds'] <= w['lifetimeSeconds'] + w['deliverySeconds']:
-            raise ValueError('Require lifetime>=SLO, gateway>=lifetime, socket>lifetime+delivery')
+        lifetime = w.get('lifetimeSeconds')
+        if lifetime is not None and (not e5.positive(lifetime) or lifetime < w['slo']['targetLatencyNanos'] / 1e9 or w['gatewayCapSeconds'] < lifetime or w['socketSeconds'] <= lifetime + w['deliverySeconds']):
+            raise ValueError('Explicit lifetime requires lifetime>=SLO, gateway>=lifetime, socket>lifetime+delivery')
         records = cli.load_records(Path(w['datasetDir']), w['fields'])
         if not records:
             raise ValueError('Nonempty existing evaluation dataset required')
@@ -225,7 +230,7 @@ def prepare(e5, args):
         sources['job-' + w['name']] = e5.ref(w['jobTemplate'])
     c['smoke'] = stages[0]
     c['harnessRepositoryCommit'] = e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'rev-parse', 'HEAD'], text=True).strip()
-    binding = {'schema': 'demo-e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': e5.now(), 'config': c, 'sources': sources, 'payload': payload, 'schedule': stages, 'demoConfig': spec}
+    binding = {'schema': 'demo-e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': e5.now(), 'schedulerSettings': scheduler_settings, 'config': c, 'sources': sources, 'payload': payload, 'schedule': stages, 'demoConfig': spec}
     e5.save(target, binding)
     print(str(target))
 
@@ -297,7 +302,7 @@ def collect_stage(e5, cpo, stage):
 
 
 def resume(e5, cpo):
-    """Explicitly re-enable owned autonomy; never overwrite original start evidence."""
+    """Reset the owned scope once, then re-enable autonomy with original evidence retained."""
     if not (cpo.out / 'initial.json').exists() or not (cpo.out / 'start-ack.json').exists():
         raise RuntimeError('Resume requires the original initial/start evidence; use start for a new run')
     for frozen in cpo.b['sources'].values():
@@ -317,22 +322,18 @@ def resume(e5, cpo):
     folder.mkdir()
     e5.save(folder / 'pre-state.json', state)
     e5.save(folder / 'pre-settings.json', settings)
-    request_phase = {}
-    cpo.request_drain(folder, request_phase)
-    e5.save(folder / 'request-drain.json', request_phase)
-    state = e5.load(folder / 'request-drain-state.json')['state']
-    if any(i.get('ownerWorkloadUID') not in cpo.uids for i in state['snapshot']['instances'] or []):
-        raise RuntimeError('Foreign physical ownership appeared during request drain')
     marker = cpo.out / 'native-mode-authorization.json'
     if marker.exists():
         e5.save(folder / 'prior-native-mode-authorization.json', e5.load(marker))
-    settings['autonomousWorkloads'], settings['staticRouting'] = cpo.uids, {}
+    cpo.clear_owned(folder.name)
+    settings = cpo.settings()
+    settings['autonomousWorkloads'] = cpo.uids
     settings['excludedNodes'] = e5.E5['excludedNodes']
     cpo.io.a.command, cpo.io.a.phase = 'resume', 'e5-demo-resume'
     cpo.native_evidence = state.get('results') or []
     cpo.authorize_native_modes()
     e5.save(folder / 'resume-ack.json', cpo.put(settings, 'Approved demo resume from owned current topology; preserve original initial/start evidence'))
-    if not state['snapshot']['instances']:
+    if not cpo.state()['snapshot']['instances']:
         bootstrap = copy.deepcopy(cpo.b['schedule'][0])
         bootstrap['id'] = 'E0-' + folder.name
         cpo.c['smoke'], cpo.a.stage, cpo.a.command = bootstrap, bootstrap['id'], 'smoke'
@@ -438,13 +439,15 @@ def summarize(e5, binding, out):
                         transition_failures += 1
             measurement = binding.get('demoConfig', {}).get('measurementSLO', {}).get(next(alias for alias, canonical in ALIASES.items() if canonical == name), w['slo'])
             slo_ms = measurement['targetLatencyNanos'] / 1e6
-            metric = {'rate': stage['rates'][name], 'offered': offered, 'clientRows': len(clients), 'missingClientRows': max(0, offered - len(clients)), 'httpSuccess': len(successful), 'successFraction': len(successful) / offered if offered else None, 'latencyMS': analysis.stats([r['latencyMs'] for r in successful]), 'latencyScope': 'Client HTTP round trip of successful responses, not server execution latency', 'sloMS': slo_ms, 'sloPercentile': w['slo']['percentile'], 'withinSLOFraction': sum(r['latencyMs'] <= slo_ms for r in successful) / offered if offered else None, 'transitionFailures': transition_failures if provenance.get('complete') and len(clients) == offered and (start or not offered) else None, 'transitionFailureMeaning': 'Failed/unsent client requests overlapping observed placement-change brackets or elapsed scheduler actions; null if scheduler/client coverage incomplete', 'errors': [r for r in clients if id(r) not in good]}
+            within = sum(r['latencyMs'] <= slo_ms for r in successful)
+            metric = {'rate': stage['rates'][name], 'offered': offered, 'clientRows': len(clients), 'missingClientRows': max(0, offered - len(clients)), 'httpSuccess': len(successful), 'successFraction': len(successful) / offered if offered else None, 'successNumerator': len(successful), 'successDenominator': offered, 'withinSLONumerator': within, 'withinSLODenominator': offered, 'latencyMS': analysis.stats([r['latencyMs'] for r in successful]), 'latencyScope': 'Client HTTP round trip of successful responses, not server execution latency', 'sloMS': slo_ms, 'sloPercentile': w['slo']['percentile'], 'withinSLOFraction': within / offered if offered else None, 'transitionFailures': transition_failures if provenance.get('complete') and len(clients) == offered and (start or not offered) else None, 'transitionFailureMeaning': 'Failed/unsent client requests overlapping observed placement-change brackets or elapsed scheduler actions; null if scheduler/client coverage incomplete', 'errors': [r for r in clients if id(r) not in good]}
             metric.update(sloPercentile=measurement['percentile'], schedulerSLO=w['slo'], measurementSLO=measurement)
             summary['workloads'][name] = metric
             rows.append((summary, name, metric))
         e5.save(folder / 'summary.json', summary)
         stage_summaries.append(summary)
-    e5.save(out / 'summary.json', {'schema': 'e5-demo-summary.v1', 'stages': stage_summaries})
+    scheduler_settings = binding.get('schedulerSettings')
+    e5.save(out / 'summary.json', {'schema': 'e5-demo-summary.v1', 'schedulerSettings': scheduler_settings, 'missingReasons': {'schedulerSettings': None if scheduler_settings is not None else 'Binding does not contain frozen scheduler settings; current settings are not substituted'}, 'stages': stage_summaries})
     def fmt(value):
         return '—' if value is None else f'{value:.3f}' if isinstance(value, float) else str(value)
     table = ['# Autonomous workload-pool demo', '', 'Client latency is successful HTTP round trip. SLO is the configured reporting-only measurementSLO, or captured scheduler SLO when omitted; scheduler SLO is never changed. Energy is shared pool energy, repeated per workload (do not sum rows). Missing evidence is —, not zero.', '', '| Stage | Workload | Rate/s | Success/offered | Success % | p95 ms | p99 ms | SLO p/ms | Within SLO % | Pool J | Active J | Drain pool J | Placement changes | Transition failures | Gap s |', '|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|']
@@ -467,20 +470,39 @@ def summarize(e5, binding, out):
     return stage_summaries
 
 
-def finish_ack(e5, out, path):
-    """Select the real completed OperationResult bound to the original PUT/CM."""
-    ack = e5.load(out / 'finish-unroute-put-ack.json')
-    cm = e5.load(out / 'finish-unroute-configmap.json')
-    document = e5.load(path)
-    e5.need(document, [], 'Native ACK input')
-    entries = [((event.get('action') or {}).get('actual') or {}, event.get('at')) for event in document['events']] if 'events' in document else [(document, None)]
-    matching = [(result, at) for result, at in entries if result.get('operation', {}).get('kind') == 'manual-static-routing' and result['operation'].get('settingsValidatedAt') == ack['validatedAt'] and result['operation'].get('sourceConfigRV') == cm['metadata']['resourceVersion'] and result.get('status') == 'complete' and not result.get('error')]
-    if len(matching) != 1:
-        raise RuntimeError('Exactly one original completed unroute ACK required; no current-state or repeated-PUT substitution')
-    result, at = matching[0]
-    e5.save(out / 'finish-unroute-imported-native-ack.json', result)
-    e5.save(out / 'finish-unroute-imported-native-ack-source.json', {'sourcePath': str(path), 'sourceEventAt': at, 'originalValidatedAt': ack['validatedAt'], 'originalConfigRV': cm['metadata']['resourceVersion']})
-    return result
+def publish(e5, binding, out, identifier, store_config):
+    """Upload raw evidence, then immutable summary; corrections require a new ID."""
+    summaries = summarize(e5, binding, out)
+    stages = []
+    for summary in summaries:
+        if not summary.get('startUTC') or not summary.get('endUTC'):
+            raise RuntimeError('Cannot publish a final record without actual stage window bounds')
+        workloads = {}
+        for name, metric in summary['workloads'].items():
+            workloads[name] = {key: value for key, value in metric.items() if key != 'errors'}
+            workloads[name]['population'] = 'Frozen offered arrivals; latency is successful client HTTP round trips only'
+            workloads[name]['missingReasons'] = {
+                'successFraction': 'No offered requests' if not metric['offered'] else None,
+                'withinSLOFraction': 'No offered requests' if not metric['offered'] else None,
+                'latencyMS': 'No successful client responses' if not metric['httpSuccess'] else None,
+                'transitionFailures': 'Scheduler/client coverage incomplete' if metric['transitionFailures'] is None else None,
+            }
+        kpis = {'status': summary['status'], 'visibility': 'PRIVATE_OPERATIONAL_ONLY', 'workloads': workloads,
+                'judgmentCounts': {summary['status']: 1}, 'wholePoolJoules': summary['energyJ'], 'activePoolJoules': summary['activeEnergyJ'],
+                'drainInclusiveWholePoolJoules': summary['drainInclusiveEnergyJ'], 'energyPopulation': summary['energyScope'],
+                'gapFromPreviousOfferedWindowSeconds': summary['gapFromPreviousOfferedWindowSeconds'],
+                'missingReasons': {'energy': 'Actual whole/active power coverage incomplete' if summary['energyJ'] is None or summary['activeEnergyJ'] is None else None,
+                                  'drainInclusiveEnergy': 'Actual drain-inclusive power coverage incomplete' if summary['drainInclusiveEnergyJ'] is None else None,
+                                  'gap': 'First offered window' if summary['gapFromPreviousOfferedWindowSeconds'] is None else None},
+                'limitations': [summary['gapMeaning'], 'Operational demo only; no E5 scientific PASS or workload-attributed energy', *binding['config'].get('demoSkipped', [])]}
+        kpis['schedulerSettings'] = binding.get('schedulerSettings')
+        kpis['missingReasons']['schedulerSettings'] = None if kpis['schedulerSettings'] is not None else 'Binding does not contain frozen scheduler settings'
+        stage = next(row for row in binding['schedule'] if row['id'] == summary['stage'])
+        stages.append({'id': summary['stage'], 'from': summary['startUTC'], 'to': summary['endUTC'], 'kpis': kpis, '_folder': stage_folder(out, stage)})
+    status = 'OPERATIONAL_DEMO_COMPLETE' if len(stages) == len(binding['schedule']) and all(stage['kpis']['status'] == 'DRAINED_NOT_EVALUATED' for stage in stages) else 'PARTIAL'
+    return e5.publish_experiment(out, identifier, store_config, stages, status)
+
+
 
 
 def self_check():
@@ -511,7 +533,8 @@ def self_check():
         cpo.ws = {w['name']: w for w in workloads}
         cpo.uids = [w['uid'] for w in workloads]
         cpo.d = d
-        settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': []}
+        settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': [], 'minimumDemand': {cpo.uids[0]: .3}}
+        cpo.b['schedulerSettings'] = copy.deepcopy(settings)
         snapshot = {'at': e5.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'inProgressTarget': None}
         scheduler_actions = []
         cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': copy.deepcopy(scheduler_actions), 'results': None}
@@ -524,6 +547,15 @@ def self_check():
         cpo.native_evidence = []
         cpo.bound_nodes = []
         cpo.io = SimpleNamespace(a=SimpleNamespace(), phase_out=cpo.out)
+        def operation_fixture(method, path, body, **kwargs):
+            assert method == 'POST' and path == '/api/v1/scheduler/operations'
+            if body['kind'] == 'reset':
+                settings['autonomousWorkloads'] = []
+                snapshot['instances'], snapshot['routing'] = [], {}
+            elif body['kind'] != 'release':
+                raise AssertionError(body)
+            return {'operation': body, 'status': 'complete', 'steps': [], 'endedAt': e5.now()}
+        cpo.io.api = operation_fixture
         pods, followers, calls = {}, {}, []
         class Process:
             def __init__(self, name):
@@ -621,6 +653,10 @@ def self_check():
                     run_stage(cpo, stage)
             summaries = summarize(e5, cpo.b, cpo.out)
         assert len(summaries) == 4
+        frozen_settings = copy.deepcopy(cpo.b['schedulerSettings'])
+        settings['minimumDemand'][cpo.uids[0]] = 9
+        summarize(e5, cpo.b, cpo.out)
+        assert e5.load(cpo.out / 'summary.json')['schedulerSettings'] == frozen_settings
         drained = e5.load(cpo.out / 'smoke-A/phase.json')['demoRequestDrain']
         assert drained['inProgressTarget']['id'] == 'fixture-transition' and drained['actions'][0]['status'] == 'running'
         source_folder = cpo.out / 'smoke-A'
@@ -685,26 +721,15 @@ def self_check():
             exports = {alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module == 'chill_loadgen.schedule' for alias in node.names}
             assert {'ScheduledRequest', 'partition_schedule', 'run_schedule'} <= exports
         assert not requested & {'--workload-slo', '--gateway-timeout'}
-        original_initial = (cpo.out / 'initial.json').read_bytes()
-        original_start = (cpo.out / 'start-ack.json').read_bytes()
-        resume(e5, cpo)
-        ready_snapshot = copy.deepcopy(snapshot)
-        snapshot['instances'], snapshot['routing'] = [], {}
-        bootstraps = []
-        def bootstrap_fixture():
-            assert not any(cpo.c['smoke']['rates'].values()) and cpo.c['smoke']['seconds'] == stages[0]['seconds']
-            bootstraps.append(cpo.a.stage)
-            snapshot.update(copy.deepcopy(ready_snapshot))
-        with patch.object(cpo, 'run', side_effect=bootstrap_fixture):
-            resume(e5, cpo)
-        assert len(bootstraps) == 1 and bootstraps[0].startswith('E0-resume-')
-        assert (cpo.out / 'initial.json').read_bytes() == original_initial and (cpo.out / 'start-ack.json').read_bytes() == original_start
-        assert (cpo.out / 'smoke-E0/phase.json').exists() and len(list(cpo.out.glob('resume-*/resume-ack.json'))) == 2
+        assert (cpo.out / 'smoke-E0/phase.json').exists()
         normative = root / 'normative-job'
         normative.mkdir()
         cpo.b['schema'] = 'e5-binding.v1'
         scientific_job = cpo.job(workloads[0]['name'], stages[1], normative)
         assert {'--workload-slo', '--gateway-timeout'} <= set(scientific_job['spec']['template']['spec']['containers'][0]['args'])
+        workloads[0].pop('lifetimeSeconds')
+        optional_job = cpo.job(workloads[0]['name'], stages[1], normative)
+        assert '--request-lifetime' not in optional_job['spec']['template']['spec']['containers'][0]['args']
         cpo.b['schema'] = 'demo-e5-binding.v1'
         failed_stage = copy.deepcopy(stages[1])
         failed_stage['id'] = cpo.a.stage = 'FAIL'
@@ -809,125 +834,111 @@ def self_check():
         assert assembled['workloads'][0]['uid'] == workloads[0]['uid'] and assembled['workloads'][0]['slo'] == workloads[0]['slo']
         assert sum(method == 'POST' for method, _ in management_calls) == 2
         assert sum(method == 'DELETE' for method, _ in management_calls) == 3 and not registered
-        assert all(w['workers'] == 320 and w['lifetimeSeconds'] >= w['slo']['targetLatencyNanos'] / 1e9 for w in assembled['workloads'])
+        assert all(w['workers'] == 320 and 'lifetimeSeconds' not in w for w in assembled['workloads'])
         assert (root / 'assembly/register-plc-anomaly.json').exists() and (cpo.out / 'finish-definitions-complete.json').exists()
-        lane = object.__new__(e5.CPO)
-        lane.out = root / 'finish-routing'
-        lane.out.mkdir()
-        lane.uids, lane.c, lane.tb, lane.d = ['u'], {'collection': {'schedulerConfigMap': 'scheduler'}}, {'settleSeconds': 194}, d
-        physical = {'id': 'i', 'node': {'name': 'fixture', 'uid': 'node'}, 'profile': {'id': 'p'}, 'allocation': {}, 'maxBatch': 1, 'maxWaitNanos': 0, 'ownerWorkloadUID': 'u', 'workloadUID': '', 'ready': True}
-        publication = {'snapshot': {'at': '2026-10-25T00:00:10Z', 'instances': [physical], 'nodes': [], 'routing': {'u': {}, 'other': {}}, 'outstanding': [], 'inProgressTarget': None}, 'actions': [], 'results': []}
-        current = copy.deepcopy(publication)
-        current['snapshot']['at'] = '2026-10-25T00:04:00Z'
-        chosen = e5.owned_target(current['snapshot'], lane.uids, {'u': {}})
-        ack = {'validatedAt': '2026-10-25T00:00:00Z', 'appliedAt': '2026-10-25T00:00:06Z'}
-        cm = {'metadata': {'resourceVersion': 'rv1'}, 'data': {'scheduler.json': json.dumps({'staticRoutingValidatedAt': ack['validatedAt'], 'staticRouting': {'u': None}})}}
-        result = {'status': 'complete', 'endedAt': '2026-10-25T00:00:05Z', 'operation': {'kind': 'manual-static-routing', 'sourceConfigRV': 'rv1', 'settingsValidatedAt': ack['validatedAt'], 'target': {'id': 'manual-static-routing:rv1', 'instances': None, 'routing': {'u': None, 'other': {}}}}, 'actual': {'routing': {'u': {}, 'other': None}, 'native': None}}
-        e5.save(lane.out / 'finish-unroute-put-ack.json', ack)
-        e5.save(lane.out / 'finish-unroute-configmap.json', cm)
-        page = lane.out / 'scheduler-page.json'
-        e5.save(page, {'events': [{'at': '2026-10-25T00:00:05Z', 'action': {'actual': result}}, {'at': ack['validatedAt'], 'action': None}]})
-        imported = finish_ack(e5, lane.out, page)
-        assert imported == result
-        lane.io = object.__new__(d.Conductor)
-        lane.io.k = lambda *args, **kwargs: copy.deepcopy(cm)
-        deadline = d.epoch(ack['appliedAt']) + 194
-        def original_deadline(value, seconds):
-            assert value == ack and seconds == 194
-            return -1, deadline
-        lane.io.publication_end = original_deadline
-        lane.state = lambda: copy.deepcopy(current)
-        lane.put = lambda *args: (_ for _ in ()).throw(AssertionError('Original unroute PUT repeated'))
-        def resume_route(native=imported, recorded=publication):
-            return lane.route_ack(chosen, {}, 'finish-unroute', 'before', {}, 'fixture', reuse=True, native_ack=native, publication_state=recorded)
-        assert resume_route()['snapshot']['instances'][0]['id'] == 'i'
-        assert e5.load(lane.out / 'finish-unroute-publication-proof.json')['reusedOriginalACK'] is True
-        invalid_native = copy.deepcopy(imported)
-        invalid_native['actual']['native'] = {'i': {}}
-        foreign_route = copy.deepcopy(imported)
-        foreign_route['actual']['routing']['foreign'] = {'foreign-instance': 1}
-        for invalid in (invalid_native, foreign_route):
-            try:
-                resume_route(native=invalid)
-            except RuntimeError as error:
-                assert 'conflicts' in str(error)
-            else:
-                raise AssertionError('Conflicting native ACK/foreign route was accepted')
+        reset = object.__new__(e5.CPO)
+        reset.out = root / 'reset'
+        reset.out.mkdir()
+        reset.uids, reset.tb = ['owned'], {'settleSeconds': 194}
+        failure = {'status': 'failed', 'error': 'native drain failed', 'steps': [{'name': 'drain', 'status': 'failed'}]}
+        requests = []
+        def failed_reset(method, path, body, **kwargs):
+            requests.append(body)
+            return failure
+        reset.io = SimpleNamespace(api=failed_reset)
+        reset.put = lambda *args: (_ for _ in ()).throw(AssertionError('Settings advanced after failed reset'))
+        e5.save(reset.out / 'initial.json', {'settings': {}})
         try:
-            resume_route(recorded=None)
+            reset.finish()
         except RuntimeError as error:
-            assert 'timely publication proof required' in str(error)
+            assert 'reset failed' in str(error)
         else:
-            raise AssertionError('Original publication deadline was restarted')
-        changed = copy.deepcopy(cm)
-        changed['metadata']['resourceVersion'] = 'different'
-        with patch.object(lane.io, 'k', return_value=changed):
-            try:
-                resume_route()
-            except RuntimeError as error:
-                assert 'ConfigMap changed' in str(error)
-            else:
-                raise AssertionError('Stale ConfigMap ACK was accepted')
-        replaced = copy.deepcopy(current)
-        replaced['snapshot']['instances'][0]['id'] = 'replacement'
-        with patch.object(lane, 'state', return_value=replaced):
-            try:
-                resume_route()
-            except RuntimeError as error:
-                assert 'Physical instance identity changed' in str(error)
-            else:
-                raise AssertionError('Current physical ID replacement escaped the fresh guard')
-        fresh = object.__new__(e5.CPO)
-        fresh.out = root / 'fresh-finish'
-        fresh.out.mkdir()
-        fresh.b, fresh.uids, fresh.tb = {'schema': 'demo-e5-binding.v1'}, ['u'], {'settleSeconds': 194}
-        controls, order = {'autonomousWorkloads': ['u'], 'staticRouting': {}}, []
-        fresh.settings = lambda: copy.deepcopy(controls)
-        def disable(value, reason):
-            assert value['autonomousWorkloads'] == []
-            controls.update(value)
-            order.append('off')
-            return ack
-        fresh.put = disable
-        def terminal_actions():
-            assert controls['autonomousWorkloads'] == []
-            order.append('terminal-actions')
-            return copy.deepcopy(publication)
-        fresh.idle = terminal_actions
-        def unroute(target, settings, prefix, *args, **kwargs):
-            assert order == ['off', 'terminal-actions']
-            order.append('unroute')
-            controls['staticRouting'] = target['routing']
-            e5.save(fresh.out / (prefix + '-put-ack.json'), ack)
-            return copy.deepcopy(publication)
-        fresh.route_ack = unroute
-        def remove(method, path, body, **kwargs):
-            assert order[-1] == 'unroute' and controls['staticRouting'] == {'u': {}}
-            assert body['kind'] == 'remove' and body['instance'] == 'i'
-            order.append('remove')
-            return {'status': 'complete'}
-        fresh.io = SimpleNamespace(api=remove)
-        fresh.wait_empty_publication = lambda *args: order.append('empty-publication')
-        fresh.clear_owned('finish')
-        assert order == ['off', 'terminal-actions', 'unroute', 'remove', 'empty-publication']
+            raise AssertionError('Failed reset was accepted')
+        assert requests == [{'kind': 'reset', 'workloadUIDs': ['owned'], 'reason': 'Approved campaign owned reset: finish'}]
+        assert e5.load(reset.out / 'finish-reset-result.json') == failure
+        assert not (reset.out / 'finish-complete.json').exists()
+        conductor = object.__new__(d.Conductor)
+        conductor.out = root / 'conductor-reset'
+        conductor.out.mkdir()
+        conductor.api = failed_reset
+        conductor.put = lambda *args: (_ for _ in ()).throw(AssertionError('D2 advanced after failed reset'))
+        e5.save(conductor.out / 'lifecycle.json', {'originalSettings': {}})
         try:
-            fresh.clear_owned('finish')
+            conductor.cleanup()
         except RuntimeError as error:
-            assert 'Unroute ACK already exists' in str(error)
+            assert 'reset failed' in str(error)
         else:
-            raise AssertionError('Fresh finish repeated the original unroute declaration')
-        print('PASS demo: empty/nil routing/native ACK populations, original-deadline finish resume without PUT, fresh physical/RV guards, autonomy-off/action-drain/unroute order, request-only stages and preserved no-replay collection; mocked API/kubectl only')
+            raise AssertionError('D2 accepted failed reset')
+        assert e5.load(conductor.out / 'cleanup-reset-result.json') == failure
+        assert not (conductor.out / 'cleanup-complete.json').exists()
+        publication_root = root / 'publication-test'
+        evidence = publication_root / 'stage'
+        evidence.mkdir(parents=True)
+        (evidence / 'phase.json').write_text('{"actual":"raw"}')
+        (evidence / 'zero-client.jsonl').write_text('')
+        store_config = root / 'store.json'
+        store_config.write_text(json.dumps({'logicalStore': 'private-evidence'}))
+        record = {'id': 'stage', 'from': '2026-10-25T00:00:00Z', 'to': '2026-10-25T00:01:00Z', 'kpis': {'status': 'observed', 'visibility': 'PRIVATE_OPERATIONAL_ONLY', 'wholePoolJoules': None, 'reason': 'Missing meter evidence'}, '_folder': evidence}
+        def upload_fixture(argv, **kwargs):
+            assert argv[:3] == ['go', 'run', './hack/e5/publish']
+            manifest = e5.load(argv[argv.index('--manifest') + 1])
+            summary = e5.load(manifest['summary']['localPath'])
+            assert summary['schemaVersion'] == 'serving-experiment.v1alpha1'
+            assert summary['stages'][0]['kpis']['wholePoolJoules'] is None
+            assert summary['sources'] == [{key: obj[key] for key in ('store', 'key')} for obj in manifest['objects']]
+            assert all(Path(obj['localPath']).stat().st_size > 0 for obj in manifest['objects'])
+            assert all(source['key'].startswith('serving/experiments.v1alpha1/campaign-1/raw/') for source in summary['sources'])
+            assert e5.load(manifest['objects'][-1]['localPath'])['emptyFiles'] == ['stage/zero-client.jsonl']
+            return SimpleNamespace(returncode=0, stdout='{"outcome":"Created"}', stderr='')
+        with patch.object(e5.subprocess, 'run', side_effect=upload_fixture):
+            assert e5.publish_experiment(publication_root, 'campaign-1', store_config, [record], 'PARTIAL')['outcome'] == 'Created'
+        with patch.object(e5.subprocess, 'run') as upload:
+            try:
+                e5.publish_experiment(publication_root, 'campaign-1', store_config, [record], 'PARTIAL')
+            except RuntimeError as error:
+                assert 'new ID' in str(error)
+            else:
+                raise AssertionError('Existing publication attempt was overwritten')
+            upload.assert_not_called()
+        with patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stdout='', stderr='immutable collision')):
+            try:
+                e5.publish_experiment(publication_root, 'collision', store_config, [record], 'PARTIAL')
+            except RuntimeError as error:
+                assert 'new ID' in str(error)
+            else:
+                raise AssertionError('Remote immutable collision was ignored')
+        for invalid in ('../escape', 'bad/name', '.hidden', '비ASCII'):
+            with patch.object(e5.subprocess, 'run') as upload:
+                try:
+                    e5.publish_experiment(publication_root, invalid, store_config, [record], 'PARTIAL')
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError('Unsafe publication ID accepted')
+                upload.assert_not_called()
+        frozen_root = root / 'frozen-settings'
+        frozen_root.mkdir()
+        frozen_binding = {'config': {'factors': []}, 'schedulerSettings': frozen_settings, 'schedule': [{'id': 'E5-' + str(i)} for i in range(7)], 'limitations': [], 'accounting': {'d': 'fixture', 'exactCost': 'fixture'}}
+        frozen_path = root / 'frozen-binding.json'
+        e5.save(frozen_path, frozen_binding)
+        assert e5.summarize(frozen_path, frozen_root)['schedulerSettings'] == frozen_settings
+        del frozen_binding['schedulerSettings']
+        historical_path = root / 'historical-binding.json'
+        e5.save(historical_path, frozen_binding)
+        historical = e5.summarize(historical_path, frozen_root)
+        assert historical['schedulerSettings'] is None and any('frozen scheduler settings' in row['reason'] for row in historical['missing'])
+        print('PASS demo: campaign lifecycle, optional lifetime, server reset evidence and failure stop; mocked API/kubectl only')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=['prepare', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'finish', 'finish-resume'], nargs='?')
+    parser.add_argument('command', choices=['prepare', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'publish', 'finish'], nargs='?')
     parser.add_argument('--config', type=Path, help='Demo JSON; required for prepare')
     parser.add_argument('--out', type=Path, help='Fresh absolute external campaign directory; binding.json is stored here')
     parser.add_argument('--release', type=Path, help='Existing CPO release: executor CampaignOps, command e5-execute, bindingPath, sourceSHA, mainInstructionUTC')
     parser.add_argument('--stage', help='Configured stage ID; required for stage/collect')
-    parser.add_argument('--native-ack', type=Path, help='finish-resume: original completed OperationResult or scheduler-page JSON')
-    parser.add_argument('--publication-state', type=Path, help='finish-resume: retained state proving publication inside the original deadline')
+    parser.add_argument('--experiment-id', help='publish: immutable ASCII ID; corrections require a new ID')
+    parser.add_argument('--store-config', type=Path, help='publish: private logicalStore/S3 config for existing PutImmutable bridge')
     parser.add_argument('--self-check', action='store_true', help='Run one local mocked API/kubectl lifecycle smoke, without cluster access')
     args = parser.parse_args()
     if args.self_check:
@@ -951,6 +962,11 @@ def main():
         raise ValueError('Prepared demo binding required')
     if args.command == 'summary':
         summarize(e5, binding, args.out)
+        return
+    if args.command == 'publish':
+        if not args.experiment_id or not args.store_config:
+            parser.error('publish requires --experiment-id and --store-config; raw inputs upload before final immutable summary')
+        publish(e5, binding, args.out, args.experiment_id, args.store_config)
         return
     if args.release is None:
         parser.error('Live CPO commands require --release')
@@ -979,16 +995,8 @@ def main():
         folder = stage_folder(args.out, selected)
         collect_stage(e5, cpo, selected)
         print('Collected evidence: ' + str(folder / 'collected.json'))
-    elif args.command in ('finish', 'finish-resume'):
-        if args.command == 'finish-resume':
-            if args.native_ack is None or args.publication_state is None:
-                parser.error('finish-resume requires --native-ack and --publication-state; never repeat the original PUT')
-            result = finish_ack(e5, args.out, args.native_ack)
-            publication = e5.load(args.publication_state)
-            e5.save(args.out / 'finish-resume-inputs.json', {'nativeACKPath': str(args.native_ack), 'originalPublicationStatePath': str(args.publication_state), 'originalPublicationObservedAt': publication.get('snapshot', {}).get('at')})
-            cpo.finish(reuse=True, native_ack=result, publication_state=publication)
-        else:
-            cpo.finish()
+    elif args.command == 'finish':
+        cpo.finish()
         cpo.cleanup_jobs()
         finish_definitions(e5, cpo)
 

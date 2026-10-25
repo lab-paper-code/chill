@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Offline bind/check/judge; explicitly released CPO-only start/stage/freeze/restore/collect.
+"""Offline bind/check/judge and immutable private publication; released CPO campaign control.
+Cleanup is one server reset with retained steps/ACKs; no client cleanup assembly.
 No implicit phase advance, retry, runtime build, fault injection, or guessed phase6 values.
 """
 import argparse
@@ -43,7 +44,7 @@ REQUIRED = {
  'approval': ['phase6ApprovalUTC', 'e5StartApprovalUTC', 'sourceSHA', 'controlImageDigest', 'runtimeDigests', 'D1', 'D6', 'D9'],
  'inputs': ['scheduler', 'capacity', 'nodes', 'pods', 'after', 'd25', 'gMeasurement', 'mMeasurement', 'ranking', 'costs', 'bias', 'gateway', 'producer'],
  'numerical': ['G', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds'],
- 'workload': ['name', 'uid', 'generation', 'slo', 'R', 'lifetimeSeconds', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'datasetDir', 'fields', 'profilingRecordIDs', 'jobTemplate', 'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'producerDatasetDir'],
+ 'workload': ['name', 'uid', 'generation', 'slo', 'R', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'datasetDir', 'fields', 'profilingRecordIDs', 'jobTemplate', 'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'producerDatasetDir'],
  'collection': ['hosts', 'archiveRefs', 'observationDirectory', 'serverContainer', 'schedulerConfigMap', 'serverHostReadArgv', 'metricSourcesConfigMap', 'metricSourcesKey', 'powerExecutable', 'powerReceipt'],
  'factor': ['name', 'controls', 'witness'],
  'timeboxes': ['setupSeconds', 'barrierSeconds', 'drainSeconds', 'flushSeconds', 'collectSeconds', 'apiSeconds', 'settleSeconds'],
@@ -196,11 +197,12 @@ def bind(path):
     payload = {}; kappa = {}
     for w in c['workloads']:
         need(w, REQUIRED['workload'], w.get('name', 'workload'))
-        if not all(positive(w[k]) for k in ('R', 'lifetimeSeconds', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers')): raise ValueError('Actual positive workload numeric bindings required')
+        if not all(positive(w[k]) for k in ('R', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers')): raise ValueError('Actual positive workload numeric bindings required')
         if type(w['workers']) is not int: raise ValueError('Integer workers required')
         need(w['slo'], ['percentile', 'targetLatencyNanos'], 'SLO')
         if not 0 < w['slo']['percentile'] <= 100 or not positive(w['slo']['targetLatencyNanos']): raise ValueError('Invalid SLO')
-        if w['lifetimeSeconds'] < w['slo']['targetLatencyNanos']/1e9 or w['gatewayCapSeconds'] < w['lifetimeSeconds'] or w['socketSeconds'] <= w['lifetimeSeconds']+w['deliverySeconds']: raise ValueError('Require L>=SLO, cap>=L, socket>L+delivery')
+        lifetime=w.get('lifetimeSeconds')
+        if lifetime is not None and (not positive(lifetime) or lifetime < w['slo']['targetLatencyNanos']/1e9 or w['gatewayCapSeconds'] < lifetime or w['socketSeconds'] <= lifetime+w['deliverySeconds']): raise ValueError('Explicit lifetime requires L>=SLO, cap>=L, socket>L+delivery')
         if w['gatewayCapSeconds'] != gateway['requestTimeoutSeconds']: raise ValueError('Workload cap differs from actual captured HandlerConfig.RequestTimeout')
         actual = [x for x in snap['workloads'] if x['uid'] == w['uid']]
         if len(actual) != 1 or any(actual[0].get(k) != w[k] for k in ('name', 'generation', 'slo')): raise ValueError('Actual Workload UID/generation/SLO mismatch: '+w['name'])
@@ -296,7 +298,7 @@ def bind(path):
         if not offsets: raise ValueError('Approved smokeSeconds must produce at least one real recorded request per canonical Workload with frozen seed; do not invent extra arrivals')
     c['smoke'] = smoke
     c['harnessRepositoryCommit']=subprocess.check_output(['git','-C',str(REPO),'rev-parse','HEAD'],text=True).strip()
-    return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6'], 'fullSeconds': 10800, 'staticSeconds': 10200, 'factorSeconds': 2100*c['N'], 'accounting': {'d': '9/34 last verified; phase6 raw supersedes only by actual evidence', 'exactCost': '69/69', 'evaluation': '0/7', 'planRows': '0/8', 'failureScenario': 'UNEXERCISED; no fault injection authorized'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
+    return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6'], 'fullSeconds': 10800, 'staticSeconds': 10200, 'factorSeconds': 2100*c['N'], 'accounting': {'d': '9/34 last verified; phase6 raw supersedes only by actual evidence', 'exactCost': '69/69', 'evaluation': '0/7', 'planRows': '0/8', 'failureScenario': 'UNEXERCISED; no fault injection authorized'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
 
 
 class CPO:
@@ -328,7 +330,7 @@ class CPO:
     def state(self): return self.api('GET','/api/v1/scheduler/state')
     def settings(self): return self.api('GET','/api/v1/scheduler/settings')
     def put(self, settings, reason):
-        settings = copy.deepcopy(settings); settings.pop('staticRoutingValidatedAt',None); settings['reason'] = reason
+        settings = copy.deepcopy(settings); settings.pop('staticRouting',None); settings.pop('staticRoutingValidatedAt',None); settings['reason'] = reason
         return self.api('PUT','/api/v1/scheduler/settings',settings)
     def idle(self):
         end = time.monotonic()+self.tb['drainSeconds']
@@ -383,7 +385,8 @@ class CPO:
             if any(bound.get(k)!=w[k] for k in ('name','generation','slo')): raise RuntimeError('Fresh actual Workload generation/SLO changed')
             actual=self.api('GET','/api/v1/workloads/'+w['name']); save(self.out/('workload-'+w['name']+'.json'),actual)
         save(self.out/'initial.json',{'state':s,'settings':settings,'at':now()})
-        settings['autonomousWorkloads']=self.uids; settings['excludedNodes']=E5['excludedNodes']; settings['staticRouting']={}
+        self.release_routing('start-release', 'Release owned routing before automatic campaign start')
+        settings['autonomousWorkloads']=self.uids; settings['excludedNodes']=E5['excludedNodes']
         self.authorize_native_modes()
         save(self.out/'start-ack.json',self.put(settings,'Approved E5 canonical three start from zero instances; measured candidates and automatic selection'))
     def freeze(self, at_boundary=False):
@@ -394,84 +397,44 @@ class CPO:
         if set(settings['autonomousWorkloads']) != set(self.uids): raise RuntimeError('Actual full-control E5-3 configuration required')
         if any(not chosen['routing'][u] for u in self.uids): raise RuntimeError('Selected canonical route missing')
         save(self.out/'static-selection.json',{'at':now(),'state':s,'fingerprint':chosen,'settings':settings,'selection':'Actual final E5-3 0.9Rw scheduler choice; no weak baseline selection'})
-        self.route_ack(chosen,settings,'static',s['snapshot']['at'],s['snapshot'].get('routing',{}),'D9 actual E5-3 maximum normal 0.9Rw selected configuration, same instances/modes/routes')
-    def publication_ready(self,state,wanted,previous):
-        if any(i.get('ownerWorkloadUID') not in self.uids for i in instance_rows(state['snapshot']['instances'])):raise RuntimeError('Foreign physical ownership during owned route publication')
-        if any(weight>0 for uid,route in state['snapshot'].get('routing',{}).items() if uid not in self.uids for weight in route.values()):raise RuntimeError('Foreign positive routing outside canonical-three scope')
-        ready=True
+        self.route_ack(chosen,settings,'static','D9 actual E5-3 maximum normal 0.9Rw selected configuration, same instances/modes/routes')
+    def operation(self, body, prefix):
+        save(self.out/(prefix+'-request.json'),body)
+        result=self.io.api('POST','/api/v1/scheduler/operations',body,timeout=self.tb['settleSeconds'])
+        save(self.out/(prefix+'-result.json'),result)
+        if result.get('status')!='complete' or result.get('error'):
+            raise RuntimeError('Scheduler '+body['kind']+' failed; retained step/ACK evidence, no subsequent operation')
+        return result
+    def release_routing(self, prefix, reason):
         for uid in self.uids:
-            published=self.io.routing_publication_ready(state,wanted.get(uid,{}),previous.get(uid,{}),workload_uid=uid,allowed_owner_uids=self.uids)
-            ready=published and ready
-        return ready
-    def wait_empty_publication(self,completion,previous,prefix):
-        end,deadline=self.io.publication_end(completion,seconds=self.tb['settleSeconds'])
+            self.operation({'kind':'release','workloadUID':uid,'reason':reason},prefix+'-'+uid)
+    def route_ack(self,chosen,settings,prefix,reason):
+        settings['autonomousWorkloads']=[uid for uid in settings.get('autonomousWorkloads',[]) if uid not in self.uids]
+        save(self.out/(prefix+'-autonomy-ack.json'),self.put(settings,reason))
+        for uid in self.uids:
+            weights=chosen['routing'].get(uid) or {}
+            body={'kind':'route' if any(weights.values()) else 'unroute','workloadUID':uid,'reason':reason}
+            if body['kind']=='route':body['weights']=weights
+            result=self.operation(body,prefix+'-'+uid)
+            if routing_weights(result.get('actual',{}).get('routing')).get(uid,{})!=routing_weights({uid:weights}).get(uid,{}):
+                raise RuntimeError('Completed route ACK differs from selected weights')
+        end,_=self.io.publication_end(result,seconds=self.tb['settleSeconds'])
         while True:
-            state=self.state();save(self.out/(prefix+'-last-state.json'),state)
-            if self.publication_ready(state,{uid:{} for uid in self.uids},previous) and not state['snapshot']['instances'] and self.io.idle(state):
-                save(self.out/(prefix+'-publication-proof.json'),{'at':now(),'originalCompletion':completion,'deadlineUTC':dt.datetime.fromtimestamp(deadline,dt.timezone.utc).isoformat(),'currentAlreadyReadyAfterDeadline':time.time()>deadline,'state':state})
+            state=self.state()
+            save(self.out/(prefix+'-last-state.json'),state)
+            if fingerprint(state['snapshot'],self.uids)==chosen and self.io.idle(state):
+                save(self.out/(prefix+'-native-ack.json'),result)
+                save(self.out/(prefix+'-ready.json'),state)
                 return state
             remaining=end-time.monotonic()
-            if remaining<=0:raise RuntimeError('Original approved publication budget exhausted; no timeout restart or repeated PUT')
-            time.sleep(min(1,remaining))
-    def route_ack(self,chosen,settings,prefix,previous_at,previous_routing,reason,*,reuse=False,native_ack=None,publication_state=None):
-        ack_path=self.out/(prefix+'-put-ack.json');cm_path=self.out/(prefix+'-configmap.json')
-        if reuse:
-            ack=load(ack_path);cm=load(cm_path)
-            current=self.io.k(['get','configmap',self.c['collection']['schedulerConfigMap'],'-o','json'])
-            save(self.out/(prefix+'-resume-configmap.json'),current)
-            if current['metadata']['resourceVersion']!=cm['metadata']['resourceVersion']:raise RuntimeError('Original unroute ConfigMap changed; no repeated PUT or stale ACK substitution')
-            previous_at=ack['validatedAt']
-        else:
-            settings['autonomousWorkloads']=[];settings['staticRouting']=chosen['routing'];ack=self.put(settings,reason)
-            save(ack_path,ack)
-            cm=self.io.k(['get','configmap',self.c['collection']['schedulerConfigMap'],'-o','json']);save(cm_path,cm)
-        stored=json.loads(cm['data']['scheduler.json'])
-        declared={uid:weights or {} for uid,weights in (stored.get('staticRouting') or {}).items()}
-        if stored.get('staticRoutingValidatedAt')!=ack['validatedAt'] or declared!={uid:weights or {} for uid,weights in chosen['routing'].items()}:raise RuntimeError('Formal staticRouting ConfigMap timestamp/declaration mismatch')
-        def matches(result):
-            return result.get('operation',{}).get('kind')=='manual-static-routing' and result['operation'].get('settingsValidatedAt')==ack['validatedAt'] and result['operation'].get('sourceConfigRV')==cm['metadata']['resourceVersion'] and result.get('status')=='complete' and not result.get('error')
-        if native_ack is not None and (not reuse or not matches(native_ack)):raise RuntimeError('Provided native ACK does not match original completed unroute operation')
-        end,publication_deadline=self.io.publication_end(ack,seconds=self.tb['settleSeconds'])
-        while True:
-            state=self.state();save(self.out/(prefix+'-last-state.json'),state)
-            results=[result for result in (state.get('results') or []) if matches(result)]
-            if native_ack is not None:results.append(native_ack)
-            for result in results:
-                save(self.out/(prefix+'-native-result.json'),result)
-                actual=result['actual'];target=result['operation']['target'];native=actual.get('native') or {}
-                need(actual,['routing'],'Actual completed routing');need(target,['id','routing'],'Completed routing target')
-                expected_native={instance['id'] for instance in instance_rows(target.get('instances'))}
-                if routing_weights(actual['routing'])!=routing_weights(target['routing']) or routing_weights(target['routing'])!=routing_weights(chosen['routing']) or set(native)!=expected_native:raise RuntimeError('Completed native routing conflicts with exact declared target/native policy IDs')
-                if expected_native!={identifier for weights in (target['routing'] or {}).values() for identifier,weight in (weights or {}).items() if weight>0}:raise RuntimeError('Completed target instances differ from positive physical routes')
-                if any(value.get('metadata',{}).get('policy',{}).get('decisionID')!=target['id'] for value in native.values()):raise RuntimeError('Native full ACK DecisionID differs from actual target')
-                save(self.out/(prefix+'-native-ack.json'),result)
-                observed={instance['id']:instance for instance in instance_rows(state['snapshot']['instances'])}
-                if set(observed)!={instance['id'] for instance in chosen['instances']}:raise RuntimeError('Physical instance identity changed during route publication')
-                for wanted in chosen['instances']:
-                    instance=observed[wanted['id']]
-                    if instance.get('ownerWorkloadUID')!=wanted['workloadUID'] or instance.get('workloadUID') not in (None,'',wanted['workloadUID']) or instance.get('profile',{}).get('id')!=wanted['profileID'] or any(instance.get(key)!=wanted[key] for key in ('node','allocation','maxBatch','maxWaitNanos')):raise RuntimeError('Hard UID/profile/cap/wait/allocation mismatch after full native ACK')
-                modes={node['node']['name']:node['powerMode'] for node in state['snapshot']['nodes'] if node['node']['name'] in NODES}
-                if modes!=chosen['modes']:raise RuntimeError('Selected physical modes changed during route publication')
-                if reuse and publication_state is not None:
-                    observed_at=self.d.epoch(publication_state.get('snapshot',{}).get('at'));completed_at=self.d.epoch(result.get('endedAt'))
-                    if observed_at is None or completed_at is None or not completed_at<=observed_at<=publication_deadline:raise RuntimeError('Recorded publication state is outside the original completed-operation/deadline interval')
-                    historical={instance['id']:instance.get('ownerWorkloadUID') for instance in instance_rows(publication_state['snapshot'].get('instances'))}
-                    if historical!={instance['id']:instance['workloadUID'] for instance in chosen['instances']} or not self.publication_ready(publication_state,chosen['routing'],previous_routing):raise RuntimeError('Recorded publication proof differs from current exact owned unrouted physical IDs')
-                    if publication_state['snapshot'].get('outstanding') or publication_state['snapshot'].get('inProgressTarget') or any(action.get('status') in ('running','cancel') for action in publication_state.get('actions') or []):raise RuntimeError('Recorded publication proof was not request/action idle')
-                    save(self.out/(prefix+'-original-publication-state.json'),publication_state)
-                elif reuse and time.time()>publication_deadline:raise RuntimeError('Original timely publication proof required after deadline; no timeout reset or PUT retry')
-                if self.publication_ready(state,chosen['routing'],previous_routing) and state['snapshot']['at']!=previous_at:
-                    save(self.out/(prefix+'-ready.json'),state)
-                    save(self.out/(prefix+'-publication-proof.json'),{'at':now(),'originalCompletion':ack,'nativeOperationResult':result,'deadlineUTC':dt.datetime.fromtimestamp(publication_deadline,dt.timezone.utc).isoformat(),'currentAlreadyReadyAfterDeadline':time.time()>publication_deadline,'reusedOriginalACK':reuse})
-                    return state
-            remaining=end-time.monotonic()
-            if remaining<=0:raise RuntimeError('Original approved native ACK/publication budget exhausted; no timeout reset or PUT retry')
+            if remaining<=0:raise RuntimeError('Selected physical configuration did not publish after route ACK')
             time.sleep(min(1,remaining))
     def restore(self):
         if not (self.out/'static-E5-6'/'collected.json').exists(): raise RuntimeError('Complete actual 170-minute static replay required before restoration')
         chosen=load(self.out/'static-selection.json')['fingerprint']
         if fingerprint(self.idle()['snapshot'],self.uids)!=chosen: raise RuntimeError('Actual selected static configuration changed before automatic restoration')
-        settings=self.settings(); settings['autonomousWorkloads']=self.uids; settings['staticRouting']={}
+        self.release_routing('restore-release','Release static replay routing before automatic restoration')
+        settings=self.settings(); settings['autonomousWorkloads']=self.uids
         self.authorize_native_modes()
         save(self.out/'restore-ack.json',self.put(settings,'D9 static replay complete; remove declaration and resume automatic control from actual frozen configuration'))
     def monitor(self,offset,folder):
@@ -504,7 +467,8 @@ class CPO:
         container['command']=['python3','-u','-c',(HERE/'e5-producer.py').read_text()]
         encoded=base64.b64encode(zlib.compress(json.dumps(policy,separators=(',',':'),allow_nan=False).encode())).decode('ascii')
         if len(encoded)>120000: raise RuntimeError('Full frozen payload identity exceeds safe exec argument size; no payload subset is silently dropped')
-        container['args']=[encoded,'replay','--endpoint',w['producerEndpoint'],'--token-file',w['producerTokenFile'],'--ca-file',w['producerCAFile'],'--workload',name,'--dataset-dir',w['producerDatasetDir'],'--fields',','.join(w['fields']),'--arrivals','poisson','--seed',str(SEEDS[name]),'--workers',str(w['workers']),'--duration',str(stage['seconds']),'--rate',str(stage['rates'][name]),'--workload-slo',str(w['slo']['targetLatencyNanos']/1e9),'--gateway-timeout',str(w['gatewayCapSeconds']),'--request-lifetime',str(w['lifetimeSeconds']),'--delivery-margin',str(w['deliverySeconds']),'--timeout',str(w['socketSeconds'])]
+        container['args']=[encoded,'replay','--endpoint',w['producerEndpoint'],'--token-file',w['producerTokenFile'],'--ca-file',w['producerCAFile'],'--workload',name,'--dataset-dir',w['producerDatasetDir'],'--fields',','.join(w['fields']),'--arrivals','poisson','--seed',str(SEEDS[name]),'--workers',str(w['workers']),'--duration',str(stage['seconds']),'--rate',str(stage['rates'][name]),'--workload-slo',str(w['slo']['targetLatencyNanos']/1e9),'--gateway-timeout',str(w['gatewayCapSeconds']),'--delivery-margin',str(w['deliverySeconds']),'--timeout',str(w['socketSeconds'])]
+        if w.get('lifetimeSeconds') is not None:container['args']+=['--request-lifetime',str(w['lifetimeSeconds'])]
         if self.b.get('schema')=='demo-e5-binding.v1':
             # The pinned D2 producer predates these flags; demo prepare checks the same budgets on the host.
             for flag in ('--workload-slo','--gateway-timeout'):
@@ -721,9 +685,11 @@ class CPO:
         current=self.idle()
         for node in current['snapshot']['nodes']:
             if node['node']['name'] in desired['modes'] and node['powerMode']!=desired['modes'][node['node']['name']]: self.native_mode(node['node'],desired['modes'][node['node']['name']],'factor-'+f['name']+'-'+self.a.stage)
+        for uid in self.uids:
+            self.operation({'kind':'unroute','workloadUID':uid,'reason':'Keep paired factor preparations unloaded until exact baseline route ACK'},'factor-'+f['name']+'-'+self.a.stage+'-unroute-'+uid)
         mapping={}
         for target in desired['instances']:
-            result=self.io.api('POST','/api/v1/scheduler/operations',{'kind':'prepare','workloadUID':target['workloadUID'],'profileID':target['profileID'],'node':target['node']},timeout=self.tb['settleSeconds'])
+            result=self.io.api('POST','/api/v1/scheduler/operations',{'kind':'prepare','workloadUID':target['workloadUID'],'profileID':target['profileID'],'node':target['node'],'reason':'Restore actual paired factor baseline'},timeout=self.tb['settleSeconds'])
             if result.get('status')!='complete': raise RuntimeError('Source-supported factor preparation incomplete')
             save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-prepare-'+target['node']['name']+'.json'),result)
             created=[i for i in result['actual']['instances'] if i.get('node')==target['node'] and i.get('ownerWorkloadUID')==target['workloadUID'] and i.get('profile')==target['profileID']]
@@ -744,35 +710,13 @@ class CPO:
         # This is a declared target, not a claim that unrouted prepared instances already serve a UID.
         chosen=owned_target(actual,self.uids,{uid:{mapping[old]:weight for old,weight in route.items()} for uid,route in desired['routing'].items()})
         save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-prepared-target.json'),{'status':'PREPARED_UNROUTED_NOT_LOAD_READY','actualState':prepared,'intendedTargetBinding':chosen})
-        before=self.state();self.route_ack(chosen,self.settings(),'factor-'+f['name']+'-'+self.a.stage,before['snapshot']['at'],before['snapshot'].get('routing',{}),'Actual paired initial block restored through source public prepare/remove and normal staticRouting')
-        settings=self.settings(); settings['controls']=f['controls']; settings['autonomousWorkloads']=self.uids; settings['staticRouting']={}
+        self.route_ack(chosen,self.settings(),'factor-'+f['name']+'-'+self.a.stage,'Restore actual paired initial block through public prepare and route operations')
+        self.release_routing('factor-'+f['name']+'-'+self.a.stage+'-release','Release paired baseline routing before autonomous factor')
+        settings=self.settings(); settings['controls']=f['controls']; settings['autonomousWorkloads']=self.uids
         self.authorize_native_modes()
         save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-ack.json'),self.put(settings,'Approved independent source control-factor '+f['name']+'; preserve all other controls'))
-    def clear_owned(self,prefix,*,reuse=False,native_ack=None,publication_state=None):
-        settings=self.settings()
-        if reuse:
-            if set(settings.get('autonomousWorkloads') or []) & set(self.uids):raise RuntimeError('Finish resume requires owned autonomy already off; no settings PUT repeated')
-        elif self.b.get('schema')=='demo-e5-binding.v1':
-            if (self.out/(prefix+'-unroute-put-ack.json')).exists():raise RuntimeError('Unroute ACK already exists; use explicit finish-resume, never repeat the PUT')
-            if set(settings.get('autonomousWorkloads') or [])-set(self.uids):raise RuntimeError('Foreign autonomy declaration; no owned finish')
-            if set(settings.get('autonomousWorkloads') or []) & set(self.uids):
-                settings['autonomousWorkloads']=[]
-                save(self.out/(prefix+'-autonomy-off-ack.json'),self.put(settings,'Disable canonical autonomy before awaiting terminal actions and owned unroute'))
-                if set(self.settings().get('autonomousWorkloads') or []) & set(self.uids):raise RuntimeError('Owned autonomy did not turn off before unroute')
-        before=self.idle();chosen=owned_target(before['snapshot'],self.uids,{uid:{} for uid in self.uids})
-        save(self.out/(prefix+'-resume-owned-target.json' if reuse else prefix+'-owned-target.json'),{'at':now(),'state':before,'target':chosen,'meaning':'Current exact owned physical removal set; original unroute ACK is retained' if reuse else 'Owned physical set after autonomy-off and terminal action drain'})
-        state=self.route_ack(chosen,self.settings(),prefix+'-unroute',before['snapshot']['at'],before['snapshot'].get('routing',{}),'Drain and unroute exact owned canonical instances before removal',reuse=reuse,native_ack=native_ack,publication_state=publication_state)
-        completion=load(self.out/(prefix+'-unroute-put-ack.json'))
-        save(self.out/(prefix+'-unrouted-state.json'),state)
-        for instance in instance_rows(state['snapshot']['instances']):
-            uid=instance.get('ownerWorkloadUID')
-            if uid not in self.uids or instance.get('workloadUID'): raise RuntimeError('Removal requires exact canonical owner and verified unrouted servedUID empty; preserve foreign/bound instances')
-            result=self.io.api('POST','/api/v1/scheduler/operations',{'kind':'remove','workloadUID':uid,'node':instance['node'],'instance':instance['id']},timeout=self.tb['settleSeconds'])
-            save(self.out/(prefix+'-remove-'+instance['id'].split('/')[0]+'.json'),result)
-            if result.get('status')!='complete': raise RuntimeError('Owned native removal incomplete')
-            completion=result
-        self.wait_empty_publication(completion,{uid:{} for uid in self.uids},prefix+'-removed')
-        return state
+    def clear_owned(self,prefix):
+        return self.operation({'kind':'reset','workloadUIDs':self.uids,'reason':'Approved campaign owned reset: '+prefix},prefix+'-reset')
     def native_mode(self,node,target,prefix):
         folder=self.out/(prefix+'-'+node['name']+'-mode'); request=folder/'release.json'
         save(request,{'executor':'CampaignOps','command':'node-native-mode','mainInstructionUTC':self.release['mainInstructionUTC'],'node':node,'targetMode':target,'maxActuationSeconds':900,'parentFrozenE5Release':str(self.a.release)})
@@ -789,26 +733,14 @@ class CPO:
             self.io.remove_job(name,uid)
     def factor_restore(self):
         self.idle(); settings=self.settings(); initial=load(self.c['inputs']['scheduler'])['settings']; settings['controls']=initial['controls']; save(self.out/'factor-restored.json',self.put(settings,'Restore bound full controls after witnessed paired factor block'))
-    def finish(self,*,reuse=False,native_ack=None,publication_state=None):
+    def finish(self):
         initial=load(self.out/'initial.json')
-        if any(weight>0 for route in initial['settings'].get('staticRouting',{}).values() for weight in route.values()):raise RuntimeError('Original positive static target IDs cannot be restored after removal; no stale-ID recreation')
-        removed=self.clear_owned('finish',reuse=True,native_ack=native_ack,publication_state=publication_state) if reuse else self.clear_owned('finish')
-        owned_pods={i['id'].split('/',1)[0] for i in instance_rows(removed['snapshot']['instances'])}
-        pods=self.io.k(['get','pods','-o','json']);save(self.out/'finish-pods.json',pods)
-        if any(p['metadata']['uid'] in owned_pods for p in pods['items']):raise RuntimeError('Owned physical Pod remains after removal; retain routing stop')
-        settings=copy.deepcopy(initial['settings']);routes=settings.get('staticRouting') or {}
-        for uid in self.uids:routes.pop(uid,None)
-        settings['staticRouting']=routes
-        restore_ack=self.put(settings,'Restore pre-E5 settings and release owned routing after canonical-three removal');save(self.out/'finish-settings-ack.json',restore_ack)
-        actual=self.settings();save(self.out/'finish-restored-settings.json',actual)
-        if (actual.get('staticRouting') or {})!=routes:raise RuntimeError('Final canonical routing release did not match retained declarations')
-        final=self.wait_empty_publication(restore_ack,{uid:{} for uid in self.uids},'finish-restored');save(self.out/'finish-state.json',final)
-        before={n['node']['uid']:n['powerMode'] for n in initial['state']['snapshot']['nodes'] if n['node']['name'] in NODES}
-        changed=[n for n in final['snapshot']['nodes'] if n['node']['uid'] in before and n['powerMode']!=before[n['node']['uid']]]
-        for node in changed: self.native_mode(node['node'],before[node['node']['uid']],'finish-return')
-        final=self.idle(); save(self.out/'finish-return-state.json',final)
-        if any(n['node']['uid'] in before and n['powerMode']!=before[n['node']['uid']] for n in final['snapshot']['nodes']): raise RuntimeError('Actual original mode return still incomplete')
-        save(self.out/'finish-complete.json',{'at':now(),'canonicalInstances':0,'originalSettingsRestored':True,'originalModesObserved':True})
+        result=self.clear_owned('finish')
+        settings=copy.deepcopy(initial['settings'])
+        settings['autonomousWorkloads']=[uid for uid in settings.get('autonomousWorkloads',[]) if uid not in self.uids]
+        save(self.out/'finish-settings-ack.json',self.put(settings,'Restore pre-campaign input settings after successful server reset'))
+        save(self.out/'finish-state.json',self.state())
+        save(self.out/'finish-complete.json',{'at':now(),'canonicalInstances':0,'originalSettingsRestored':True,'resetStatus':result['status'],'powerReturn':'Server reset minimum supported idle mode; original physical modes are not recreated'})
     def campaign(self):
         self.start()
         def row(mode, name):
@@ -1041,14 +973,86 @@ def summarize(binding, root):
     scenario['node-serving-control-failure']='UNEXERCISED'
     factor_results={f['name']:{row:stages.get((f['name'],row)) for row in ('E5-2','E5-5')} for f in b['config']['factors']}
     result={'schema':'e5-summary.v1','at':now(),'status':'NOT_READY' if missing else 'MEASURED_DESCRIPTIVE','missing':missing,'planRows':plan_rows,'planResultLinks':str(sum(x=='MEASURED' for x in plan_rows.values()))+'/8','specScenarios':scenario,'specResultLinks':str(sum(x=='MEASURED' for x in scenario.values()))+'/7','failureScope':'No fault injection. Failure scenario remains uncompleted.','pairedComparisons':comparisons,'fullMatched170minWholePOOLJ':sum(x['fullWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'static170minWholePOOLJ':sum(x['staticWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'controlFactors':factor_results,'limitations':b['limitations'],'staticSelection':str(root/'static-selection.json'),'accounting':{'d':b['accounting']['d'],'exactCost':b['accounting']['exactCost'],'evaluation':str(sum(x=='MEASURED' for x in scenario.values()))+'/7'}}
+    result['schedulerSettings']=b.get('schedulerSettings')
+    if result['schedulerSettings'] is None:
+        result['status']='NOT_READY';result['missing'].append({'reason':'Binding does not contain frozen scheduler settings; current settings are not substituted'})
     result['visibility']='PRIVATE_OPERATIONAL_ONLY; original raw/configuration and their paths excluded from public evidence indexes'
     result['rowJudgmentCounts']=dict(Counter(value['status'] for value in stages.values()))
     result['measurementMeaning']='Measured result links are not criterion PASS; negative D1/source overload findings remain visible.'
     restored=load(root/'finish-complete.json') if (root/'finish-complete.json').exists() else None
     result['physicalRestoration']=restored
-    if not restored or restored.get('originalSettingsRestored') is not True or restored.get('originalModesObserved') is not True:
-        result['status']='NOT_READY';result['missing'].append({'reason':'Actual original physical modes/settings restoration incomplete'})
+    if not restored or restored.get('originalSettingsRestored') is not True or restored.get('resetStatus')!='complete':
+        result['status']='NOT_READY';result['missing'].append({'reason':'Server reset and input settings restoration incomplete'})
     save(root/'e5-summary.json',result); return result
+
+
+def publish_experiment(root, identifier, store_config, stages, status):
+    """Publish PRIVATE raw inputs first, then one immutable serving summary.
+
+    CLI: publish --experiment-id ID --store-config /private/store.json.
+    Existing IDs are never corrected in place: choose a new experiment ID.
+    """
+    if not isinstance(identifier,str) or not re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9._-]*',identifier):
+        raise ValueError('Safe ASCII experiment ID required')
+    config=load(store_config);store=config['logicalStore']
+    if not isinstance(store,str) or not store.strip():raise ValueError('Configured logical store required')
+    if not stages:raise ValueError('Actual completed stage windows required for publication')
+    for stage in stages:
+        lower,upper=dt.datetime.fromisoformat(stage['from'].replace('Z','+00:00')),dt.datetime.fromisoformat(stage['to'].replace('Z','+00:00'))
+        if lower.tzinfo is None or upper.tzinfo is None or lower>=upper:raise ValueError('Real timezone-qualified [from,to) stage windows required')
+    destination=root/('publication-'+identifier)
+    if destination.exists():raise RuntimeError('Publication ID already attempted locally; retain evidence and choose a new ID')
+    destination.mkdir()
+    prefix='serving/experiments.v1alpha1/'+identifier+'/'
+    objects=[];empty=[]
+    folders=sorted({stage['_folder'] for stage in stages})
+    for folder in folders:
+        for path in sorted(folder.rglob('*')):
+            if not path.is_file():continue
+            if path.resolve()==Path(store_config).resolve():raise ValueError('Private store configuration cannot be inside raw evidence')
+            if path.is_symlink():raise ValueError('Symlink evidence is not published')
+            relative=path.relative_to(root).as_posix()
+            if any(c in relative for c in '\\:%?#\x00\r\n\t') or relative.strip()!=relative:raise ValueError('Raw evidence requires clean relative object keys')
+            ref(path,allow_empty=True)
+            if not path.stat().st_size:
+                empty.append(relative)
+                continue
+            objects.append({'store':store,'key':prefix+'raw/'+relative,'localPath':str(path)})
+    inventory=destination/'raw-inventory.json'
+    save(inventory,{'schemaVersion':'serving-experiment-raw-inventory.v1alpha1','emptyFiles':empty,'objects':[{'store':row['store'],'key':row['key']} for row in objects]})
+    objects.append({'store':store,'key':prefix+'raw/inventory.json','localPath':str(inventory)})
+    summary={'schemaVersion':'serving-experiment.v1alpha1','id':identifier,'from':min((stage['from'] for stage in stages),key=lambda value:dt.datetime.fromisoformat(value.replace('Z','+00:00'))),'to':max((stage['to'] for stage in stages),key=lambda value:dt.datetime.fromisoformat(value.replace('Z','+00:00'))),'status':status,'stages':[{key:value for key,value in stage.items() if key!='_folder'} for stage in stages],'sources':[{'store':row['store'],'key':row['key']} for row in objects]}
+    summary_path=destination/'summary.json';save(summary_path,summary)
+    manifest=destination/'manifest.json'
+    save(manifest,{'objects':objects,'summary':{'store':store,'key':prefix+'summary.json','localPath':str(summary_path)}})
+    result=subprocess.run(['go','run','./hack/e5/publish','--config',str(store_config),'--manifest',str(manifest)],cwd=REPO,capture_output=True,text=True)
+    save(destination/'upload-result.json',{'exitCode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
+    if result.returncode:raise RuntimeError('Immutable publication failed; retain evidence and choose a new ID for corrections')
+    receipt=json.loads(result.stdout);save(destination/'receipt.json',receipt)
+    return receipt
+
+
+def publish_campaign(binding, root, identifier, store_config):
+    result=summarize(binding,root);stages=[]
+    for folder in sorted(root.iterdir()):
+        if not folder.is_dir() or not (folder/'phase.json').exists():continue
+        phase=load(folder/'phase.json');judgment=load(folder/'judgment.json')
+        requests={}
+        fields=('offered','clientRows','unfinishedOrUnsent','outcomes','completedLatencyNS','completionResidualNS','gatewayTailNS','deadlineSuccess','deadlineSuccessFraction','requiredSuccessfulRank','D1','unsentAtWindowEnd','actualGatewayIdentities','gatewayFinalOutcomes','offeredGatewayFinalOutcomes','selectedResidualPercentile')
+        for name,value in judgment['requests'].items():
+            requests[name]={key:value[key] for key in fields if key in value}
+            requests[name].update(successNumerator=value['deadlineSuccess'],successDenominator=value['offered'],population='Frozen offered arrivals; final outcome and successful execution populations remain separate')
+            population_fields=('rawRows','populationUniqueRows','duplicateRows','kinds','uniqueRequests','uniqueFinalRows','outcomes','executionComplete','completed','withoutUnambiguousHTTPFinal','nativeSupplementRows','nativeOutcomes','complete')
+            for key in ('rawPopulation','offeredResponsePopulation'):
+                population=value.get(key) or {}
+                requests[name][key]={field:population[field] for field in population_fields if field in population}
+            requests[name]['missingReasons']={'deadlineSuccessFraction':'No offered arrivals' if not value['offered'] else None,'completedLatencyNS':'No successful execution-complete responses' if not value.get('completedLatencyNS',{}).get('samples') else None,'completionResidualNS':'No complete native/dispatched residual observations' if not value.get('completionResidualNS',{}).get('samples') else None}
+        power=judgment.get('power') or {}
+        kpis={'status':judgment['status'],'visibility':'PRIVATE_OPERATIONAL_ONLY','requests':requests,'judgmentCounts':dict(Counter(value['D1'] for value in judgment['requests'].values())),'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,'activePoolJoules':power.get('activePoolJoules') if power.get('complete') else None,'energyPopulation':'Whole/active shared pool during offered [from,to); not attributed per workload','limitations':result['limitations'],'missingReasons':{'energy':None if power.get('complete') else 'Actual whole/active power coverage incomplete','judgment':None if judgment['status']!='NOT_READY' else 'Required evidence incomplete; actual reasons retained in raw judgment'}}
+        kpis['schedulerSettings']=result['schedulerSettings']
+        kpis['missingReasons']['schedulerSettings']=None if result['schedulerSettings'] is not None else 'Binding does not contain frozen scheduler settings'
+        stages.append({'id':folder.name,'from':phase['startUTC'],'to':phase['endUTC'],'kpis':kpis,'_folder':folder})
+    return publish_experiment(root,identifier,store_config,stages,result['status'])
 
 
 def check_preparation():
@@ -1175,7 +1179,7 @@ def check_recorded(source_sha):
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument('command',choices=['schema','check-preparation','check-recorded','bind','check','judge','summarize','campaign','start','stage','smoke','restore','collect','factor','factor-restore','cleanup-jobs','finish']); p.add_argument('--config',type=Path); p.add_argument('--binding',type=Path); p.add_argument('--out',type=Path); p.add_argument('--release',type=Path);p.add_argument('--source-sha'); p.add_argument('--stage',default=''); p.add_argument('--mode',default='full'); a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument('command',choices=['schema','check-preparation','check-recorded','bind','check','judge','summarize','publish','campaign','start','stage','smoke','restore','collect','factor','factor-restore','cleanup-jobs','finish']); p.add_argument('--config',type=Path); p.add_argument('--binding',type=Path); p.add_argument('--out',type=Path); p.add_argument('--release',type=Path);p.add_argument('--source-sha'); p.add_argument('--stage',default=''); p.add_argument('--mode',default='full'); p.add_argument('--experiment-id'); p.add_argument('--store-config',type=Path); a=p.parse_args()
     try:
         for value in (a.config,a.binding,a.out,a.release):
             if value is not None and not value.is_absolute(): raise ValueError('All paths must be absolute')
@@ -1205,6 +1209,9 @@ def main():
         if not a.out: raise ValueError('--out absolute run or stage directory required')
         if a.command=='judge': return 2 if judge(a.binding,a.out)['status'] in ('NOT_READY','FAIL') else 0
         if a.command=='summarize': return 2 if summarize(a.binding,a.out)['status']=='NOT_READY' else 0
+        if a.command=='publish':
+            if not a.experiment_id or not a.store_config:raise ValueError('publish requires --experiment-id and --store-config; summary is final immutable record')
+            publish_campaign(a.binding,a.out,a.experiment_id,a.store_config);return 0
         if not a.release: raise ValueError('CPO command requires --release')
         obj=CPO(a)
         if a.command in ('stage','smoke'): obj.run()

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Bounded local lifecycle fixtures; no Kubernetes or producer execution."""
 import copy
+import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -76,7 +77,7 @@ try:
                 def state():
                     value=next(snapshots,last[0]);events.append('state');return copy.deepcopy(value)
                 lane.state=state;lane.wait_idle=lambda:copy.deepcopy(empty)
-                lane.api=lambda method,path,**kwargs:{'pending':0,'assigned':0}
+                lane.api=lambda method,path,body=None,**kwargs:({'operation':body,'status':'complete','endedAt':m.now()} if method=='POST' else {'pending':0,'assigned':0})
                 lane.control_alerts=lambda offset:offset
                 lane.telemetry_ready=lambda *args:events.append('telemetry')
                 lane.payload_release=lambda *args:None
@@ -120,80 +121,80 @@ try:
                 assert (lane.phase_out/'diagnostic/request-pages/00000.json').exists()
         finally:
             m.OPS=original_ops;m.subprocess.Popen=original_popen;m.subprocess.run=original_run
-        for name,initial_routes,expected_routes,lingering in [
-                ('absent',None,None,False),('owned-empty',{m.UID:{}},None,False),
-                ('foreign-route',{m.UID:{},'other':{'other-native':1}},{'other':{'other-native':1}},False),
-                ('foreign-stop',{m.UID:{},'other':{}},{'other':{}},False),
-                ('pod-remains',{m.UID:{}},None,True)]:
-            lane=object.__new__(m.Conductor);lane.out=folder/('cleanup-'+name);lane.out.mkdir()
-            current={'autonomousWorkloads':[]}
-            if initial_routes is not None:current['staticRouting']=copy.deepcopy(initial_routes)
-            instance={'id':'owned-pod/0','node':{'name':'fixture','uid':'node-uid'},'ownerWorkloadUID':m.UID,'workloadUID':''}
-            m.save(lane.out/'lifecycle.json',{'stage':'READY_BOUND','instances':[instance],'originalSettings':copy.deepcopy(current),'originalNodes':[]})
-            current.setdefault('staticRouting',{})[m.UID]={}
-            removed=[False];events=[];writes=[]
-            lane.settings=lambda:copy.deepcopy(current)
-            def state():
-                return {'snapshot':{'at':m.now(),'instances':[] if removed[0] else [instance],'nodes':[],'routing':{m.UID:{}},'outstanding':0,'inProgressTarget':None},'actions':[]}
-            lane.state=state
-            def put(settings,reason):
-                if m.UID not in (settings.get('staticRouting') or {}):
-                    assert removed[0] and 'pods-absent' in events
-                    events.append('release')
-                writes.append(copy.deepcopy(settings));current.clear();current.update(copy.deepcopy(settings))
-                return {'status':'complete','endedAt':m.now()}
-            lane.put=put
-            def api(method,path,body=None,**kwargs):
-                if method=='GET':return {'pending':0,'assigned':0}
-                assert method=='POST' and body['kind']=='remove'
-                assert current['staticRouting'][m.UID]=={}
-                removed[0]=True;events.append('remove')
-                return {'status':'complete','endedAt':m.now()}
-            lane.api=api
-            def k(argv,**kwargs):
-                assert argv==['get','pods','-o','json'] and removed[0]
-                if lingering:return {'items':[{'metadata':{'uid':'owned-pod'}}]}
-                events.append('pods-absent');return {'items':[]}
-            lane.k=k
-            try:lane.cleanup()
-            except RuntimeError as error:
-                assert lingering and 'physical Pod remains' in str(error)
-                assert 'release' not in events and current['staticRouting'][m.UID]=={}
-            else:
-                assert not lingering
-                assert events.index('remove')<events.index('pods-absent')<events.index('release')
-                if expected_routes is None:assert writes[-1]['staticRouting']=={}
-                else:assert writes[-1]['staticRouting']==expected_routes
-                assert m.UID not in writes[-1].get('staticRouting',{})
         e5spec=importlib.util.spec_from_file_location('e5_cleanup_check',ROOT.parent/'e5.py')
         e5=importlib.util.module_from_spec(e5spec);e5spec.loader.exec_module(e5);e5.OPS=folder
-        for name,routes,expected,lingering in [
-                ('absent',None,{},False),('owned',{'a':{},'b':{},'c':{}},{},False),
-                ('other-stop',{'a':{},'other':{}},{'other':{}},False),
-                ('pod-remains',None,{},True)]:
-            lane=object.__new__(e5.CPO);lane.out=folder/('e5-'+name);lane.out.mkdir();lane.uids=['a','b','c']
-            initial={'autonomousWorkloads':[]}
-            if routes is not None:initial['staticRouting']=routes
-            e5.save(lane.out/'initial.json',{'settings':initial,'state':{'snapshot':{'nodes':[]}}})
-            events=[];writes=[]
-            def clear_owned(prefix):
-                events.append('removed');return {'snapshot':{'instances':[{'id':'owned-pod/0'}]}}
-            lane.clear_owned=clear_owned
-            def pods(argv):
-                assert events==['removed']
-                if lingering:return {'items':[{'metadata':{'uid':'owned-pod'}}]}
-                events.append('pods-absent');return {'items':[]}
-            lane.io=SimpleNamespace(k=pods)
-            def put(settings,reason):
-                assert events==['removed','pods-absent'];writes.append(settings);return {}
-            lane.put=put
-            final={'snapshot':{'instances':[],'nodes':[]}}
-            lane.settings=lambda:copy.deepcopy(writes[-1])
-            lane.wait_empty_publication=lambda *args:final;lane.idle=lambda:final
-            try:lane.finish()
-            except RuntimeError as error:assert lingering and 'Pod remains' in str(error) and not writes
-            else:
-                assert not lingering and writes[-1]['staticRouting']==expected
+        for harness,uids in [('d2',[m.UID]),('e5',['a','b','c'])]:
+            for name,foreign,failed in [
+                    ('empty',{},False),('foreign-route',{'other':{'other-native':1}},False),
+                    ('foreign-stop',{'other':{}},False),('failed-drain',{'other':{}},True)]:
+                lane=object.__new__(m.Conductor if harness=='d2' else e5.CPO)
+                lane.out=folder/(harness+'-reset-'+name);lane.out.mkdir()
+                lane.a=SimpleNamespace(command='cleanup' if harness=='d2' else 'finish',phase='fixture-reset');lane.source='fixture-source'
+                initial={'autonomousWorkloads':uids+['other-auto'],'excludedNodes':['held'],
+                         'staticRouting':{**{uid:{} for uid in uids},**copy.deepcopy(foreign)},
+                         'staticRoutingValidatedAt':'2026-10-25T12:00:00Z'}
+                current=copy.deepcopy(initial);events=[];writes=[]
+                if harness=='d2':m.save(lane.out/'lifecycle.json',{'originalSettings':initial})
+                else:
+                    lane.uids=uids;lane.tb={'settleSeconds':194}
+                    e5.save(lane.out/'initial.json',{'settings':initial})
+                def api(method,path,body=None,**kwargs):
+                    if method=='POST':
+                        assert path=='/api/v1/scheduler/operations'
+                        assert body['kind']=='reset' and body['workloadUIDs']==uids and body['reason']
+                        events.append('reset')
+                        current['autonomousWorkloads']=[uid for uid in current['autonomousWorkloads'] if uid not in uids]
+                        for uid in uids:
+                            if failed:current['staticRouting'][uid]={}
+                            else:current['staticRouting'].pop(uid,None)
+                        return {'operation':copy.deepcopy(body),'status':'failed' if failed else 'complete',
+                                'error':'native drain failed' if failed else '',
+                                'steps':[{'name':'disable-autonomy','status':'complete'},
+                                         {'name':'drain','status':'failed' if failed else 'complete'}],
+                                'endedAt':m.now(),'actual':{'routing':copy.deepcopy(current['staticRouting'])}}
+                    assert method=='PUT' and path=='/api/v1/scheduler/settings'
+                    assert events==['reset'] and not failed
+                    assert 'staticRouting' not in body and 'staticRoutingValidatedAt' not in body
+                    events.append('settings');writes.append(copy.deepcopy(body))
+                    current.update({key:value for key,value in body.items() if key!='reason'})
+                    return {'validatedAt':m.now()}
+                lane.api=api
+                lane.state=lambda:{'snapshot':{'instances':[],'nodes':[],'routing':copy.deepcopy(current['staticRouting'])}}
+                if harness=='e5':lane.io=SimpleNamespace(api=api)
+                complete=lane.out/('cleanup-complete.json' if harness=='d2' else 'finish-complete.json')
+                try:
+                    if harness=='d2':lane.cleanup()
+                    else:lane.finish()
+                except RuntimeError as error:
+                    assert failed and 'reset failed' in str(error)
+                    assert events==['reset'] and not writes and not complete.exists()
+                else:
+                    assert not failed and events==['reset','settings'] and complete.exists()
+                    assert current['staticRouting']==foreign
+                    assert current['autonomousWorkloads']==['other-auto']
+                result_path=lane.out/('cleanup-reset-result.json' if harness=='d2' else 'finish-reset-result.json')
+                result=m.load(result_path)
+                assert result['steps'][1]['status']==('failed' if failed else 'complete')
+        # Exercise the measurement smoke's real operation boundary without its CLI/live setup.
+        smoke_source=ROOT.parents[1]/'measure/smoke/smoke.py'
+        operation=next(node for node in ast.parse(smoke_source.read_text()).body if isinstance(node,ast.FunctionDef) and node.name=='operation')
+        output=folder/'measurement-operation';output.mkdir()
+        response=[{'status':'complete','steps':[]}]
+        requests=[]
+        def smoke_api(method,path,body):
+            assert method=='POST' and path=='/api/v1/scheduler/operations'
+            requests.append(copy.deepcopy(body));return 200,json.dumps(response[0])
+        scope={'Path':Path,'json':json,'api':smoke_api,'L':lambda *args:None,'out':str(output),'ok':True}
+        exec(compile(ast.Module(body=[operation],type_ignores=[]),str(smoke_source),'exec'),scope)
+        route={'kind':'route','workloadUID':'smoke','weights':{'native':1000},'reason':'Local route fixture'}
+        reset={'kind':'reset','workloadUIDs':['smoke'],'reason':'Local reset fixture'}
+        scope['operation'](route,'route')
+        response[0]={'status':'failed','error':'drain failed','steps':[{'name':'drain','status':'failed'}]}
+        try:scope['operation'](reset,'reset')
+        except RuntimeError as error:assert 'reset failed' in str(error)
+        else:raise AssertionError('Measurement smoke continued after failed reset')
+        assert requests==[route,reset] and scope['ok'] is False
+        assert m.load(output/'reset-result.json')==response[0]
 finally:
     m.time.monotonic=original_monotonic;m.time.sleep=original_sleep
-print('producer lifecycle check PASS: init/terminal publication; UID+RV deletion; empty/unready/foreign blocked; Ready+idle release; failure raw/log before deletion; cleanup releases owned routing after Pod removal; foreign route/stop preserved; API/load/build=0')
+print('producer lifecycle check PASS: init/terminal publication; UID+RV deletion; empty/unready/foreign blocked; Ready+idle release; failure raw/log before deletion; one server reset with retained steps; reset failure stops settings; readonly routing omitted and foreign routes/stops preserved; API/load/build=0')
