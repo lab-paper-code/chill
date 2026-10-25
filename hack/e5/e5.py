@@ -474,6 +474,12 @@ class CPO:
             for flag in ('--workload-slo','--gateway-timeout'):
                 index=container['args'].index(flag);del container['args'][index:index+2]
         save(folder/('job-'+name+'.json'),job); return job
+    def missing_ready_routes(self, state):
+        missing=[]
+        for uid in self.uids:
+            owned={i['id'] for i in state['snapshot'].get('instances') or [] if i.get('ownerWorkloadUID')==uid and i.get('workloadUID')==uid and i.get('ready')}
+            if not any(weight>0 and identifier in owned for identifier,weight in (state['snapshot'].get('routing',{}).get(uid) or {}).items()):missing.append(uid)
+        return missing
     def run(self):
         st=self.c['smoke'] if self.a.command=='smoke' else next(x for x in self.b['schedule'] if x['id']==self.a.stage); folder=self.out/(self.a.mode+'-'+st['id'])
         if folder.exists(): raise RuntimeError('No implicit stage retry/overwrite')
@@ -516,10 +522,26 @@ class CPO:
                 p=subprocess.Popen(self.d.K+['logs','-f','pod/'+pod['metadata']['name'],'-c','load'],stdout=subprocess.PIPE,stderr=err,bufsize=0);os.set_blocking(p.stdout.fileno(),False);streams.append((p,log,err));buffers[name]=b'';sel.register(p.stdout,selectors.EVENT_READ,(name,log))
             ready=set();window_ended=set();drained=set();counter_released=set();released=not jobs
             if released: phase['startUTC']=now(); end=time.monotonic()+st['seconds']
+            ready_gate=self.b.get('schema')=='demo-e5-binding.v1' and st.get('readyGate') is True
+            if ready_gate:
+                if jobs:raise RuntimeError('Ready gate requires a zero-load stage')
+                phase['readyGate']={'maximumSeconds':st['seconds'],'observedUTC':None,'timedOut':False,'missingWorkloadUIDs':list(self.uids)}
+                save(folder/'phase.json',phase)
             while True:
                 alert_offset=self.monitor(alert_offset,folder)
+                if ready_gate:
+                    state=self.state(); observed=now()
+                    missing=self.missing_ready_routes(state)
+                    phase['readyGate']['missingWorkloadUIDs']=missing
+                    phase['readyGate']['timedOut']=time.monotonic()>=end
+                    if not missing and not phase['readyGate']['timedOut']:
+                        phase['readyGate']['observedUTC']=observed
+                    if phase['readyGate']['observedUTC'] or phase['readyGate']['timedOut']:
+                        save(folder/'ready-gate-state.json',{'observedUTC':observed,'state':state})
+                        save(folder/'phase.json',phase)
+                        break
                 if not released and time.monotonic()>deadline: raise RuntimeError('Producer setup timebox exceeded')
-                for key,_ in sel.select(timeout=.2):
+                for key,_ in sel.select(timeout=min(.2,max(0,end-time.monotonic())) if ready_gate else .2):
                     name,log=key.data;lines,buffers[name],eof=self.d.read_stream_lines(key.fileobj,buffers[name])
                     if eof:sel.unregister(key.fileobj)
                     for line in lines:
@@ -579,7 +601,7 @@ class CPO:
                         self.io.assert_producer_startable(folder/('startup-'+name),current,pod,barrier_seconds=self.tb['barrierSeconds'])
                         self.io.k(['exec',pod['metadata']['name'],'-c','load','--','python3','-c',"from pathlib import Path; Path('/tmp/e5-start').touch()"],timeout=self.tb['apiSeconds'])
                     phase['startUTC']=now(); end=time.monotonic()+st['seconds']+self.tb['drainSeconds']; released=True; save(folder/'phase.json',phase)
-                if released and time.monotonic()>end:
+                if released and not ready_gate and time.monotonic()>end:
                     if jobs and (sel.get_map() or any(p.poll() is None for p,l,e in streams)): raise RuntimeError('Producer drain watchdog exceeded')
                     break
                 if released and jobs and not sel.get_map() and all(p.poll() is not None for p,l,e in streams): break

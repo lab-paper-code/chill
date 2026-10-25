@@ -6,6 +6,12 @@ and server-owned reset cleanup, but not its normative R/G/10800-second scientifi
 Outputs are PRIVATE operational evidence. publish --experiment-id ID --store-config
 /private/store.json uploads raw inputs before a final immutable summary; corrections
 require a new ID. --help and --self-check need no live experiment environment.
+
+E0 may set "readyGate": true: seconds becomes the maximum zero-load window,
+ending early only when all three owned canonical workloads are Ready with positive
+routing. Omit it (or false) for unchanged fixed-duration stages. phase.json and
+summary.json retain readyGate.observedUTC (null on timeout), timedOut and the
+last missingWorkloadUIDs; ready-gate-state.json retains the actual observation.
 """
 import argparse
 import copy
@@ -47,7 +53,13 @@ def schedule(config, e5):
             raise ValueError('Positive seconds and mobilenet/smolvlm2/plc rates required')
         if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in rates.values()):
             raise ValueError('Rates must be finite nonnegative requests/second')
+        if 'readyGate' in row and type(row['readyGate']) is not bool:
+            raise ValueError('readyGate must be a boolean')
+        if row.get('readyGate') and (stages or any(rates.values())):
+            raise ValueError('readyGate is only supported on the first zero-load stage')
         stage = {'id': label, 'seconds': seconds, 'rates': {ALIASES[k]: v for k, v in rates.items()}, 'traces': {}}
+        if row.get('readyGate'):
+            stage['readyGate'] = True
         stage['parts'] = [{'id': label, 'seconds': seconds, 'rates': stage['rates']}]
         for name, rate in stage['rates'].items():
             offsets = cli.arrival_offsets_ns('poisson', rate, seconds, e5.SEEDS[name]) if rate else []
@@ -252,11 +264,7 @@ def run_stage(cpo, stage):
             raise RuntimeError('Previous stage must have drained and collected successfully')
         if not any(cpo.b['schedule'][index - 1]['rates'].values()):
             state = cpo.state()
-            missing = []
-            for uid in cpo.uids:
-                owned = {i['id'] for i in state['snapshot']['instances'] or [] if i.get('ownerWorkloadUID') == uid and i.get('workloadUID') == uid and i.get('ready')}
-                if not any(weight > 0 and identifier in owned for identifier, weight in state['snapshot'].get('routing', {}).get(uid, {}).items()):
-                    missing.append(uid)
+            missing = cpo.missing_ready_routes(state)
             if missing:
                 raise RuntimeError('Bootstrap has no owned Ready positive route: ' + ', '.join(missing))
     if not (cpo.out / 'start-ack.json').exists():
@@ -380,6 +388,8 @@ def summarize(e5, binding, out):
         phase = e5.load(phase_path(folder))
         if not phase.get('startUTC') or not phase.get('endUTC'):
             stage_summaries.append({'stage': stage['id'], 'status': phase['status'], 'error': phase.get('error'), 'metricsAvailable': False})
+            if 'readyGate' in phase:
+                stage_summaries[-1]['readyGate'] = phase['readyGate']
             continue
         gap = None if previous_end is None else epoch(phase['startUTC']) - epoch(previous_end)
         previous_end = phase['endUTC']
@@ -421,6 +431,8 @@ def summarize(e5, binding, out):
         summary = {'stage': stage['id'], 'status': phase['status'], 'startUTC': phase['startUTC'], 'endUTC': phase['endUTC'], 'drainedUTC': phase.get('drainedUTC'), 'gapFromPreviousOfferedWindowSeconds': gap, 'gapMeaning': 'No offered demo requests during per-stage drain/collection/setup; failures in this gap are not measurable by these producers', 'placementChanges': changes, 'actions': actions, 'transitionWindowsEpoch': windows, 'schedulerCapture': provenance, 'energyJ': power.get('wholePoolJoules') if power.get('complete') else None, 'activeEnergyJ': power.get('activePoolJoules') if power.get('complete') else None, 'drainInclusiveEnergyJ': drain_power.get('wholePoolJoules') if drain_power.get('complete') else None, 'energyScope': 'Shared whole/active pool; never attributed to individual workloads', 'workloads': {}}
         summary['collectionRecovery'] = phase.get('collectionRecovery')
         summary['demoRequestDrain'] = phase.get('demoRequestDrain')
+        if 'readyGate' in phase:
+            summary['readyGate'] = phase['readyGate']
         for w in binding['config']['workloads']:
             name = w['name']
             client_path = folder / (name + '-client.jsonl')
@@ -496,6 +508,8 @@ def publish(e5, binding, out, identifier, store_config):
                                   'gap': 'First offered window' if summary['gapFromPreviousOfferedWindowSeconds'] is None else None},
                 'limitations': [summary['gapMeaning'], 'Operational demo only; no E5 scientific PASS or workload-attributed energy', *binding['config'].get('demoSkipped', [])]}
         kpis['schedulerSettings'] = binding.get('schedulerSettings')
+        if 'readyGate' in summary:
+            kpis['readyGate'] = summary['readyGate']
         kpis['missingReasons']['schedulerSettings'] = None if kpis['schedulerSettings'] is not None else 'Binding does not contain frozen scheduler settings'
         stage = next(row for row in binding['schedule'] if row['id'] == summary['stage'])
         stages.append({'id': summary['stage'], 'from': summary['startUTC'], 'to': summary['endUTC'], 'kpis': kpis, '_folder': stage_folder(out, stage)})
@@ -653,6 +667,41 @@ def self_check():
                     run_stage(cpo, stage)
             summaries = summarize(e5, cpo.b, cpo.out)
         assert len(summaries) == 4
+        # Exercise the optional gate through the real zero-load loop, including timeout.
+        for gate_ready in (True, False):
+            gated = schedule({'stages': [dict(config['stages'][0], seconds=1 if gate_ready else .01, readyGate=True)]}, e5)[0]
+            gate_out = root / ('ready-gate' if gate_ready else 'ready-gate-timeout')
+            gate_out.mkdir()
+            (gate_out / 'start-ack.json').write_bytes((cpo.out / 'start-ack.json').read_bytes())
+            ready_state = cpo.state()
+            missing_state = copy.deepcopy(ready_state)
+            missing_state['snapshot']['routing'][cpo.uids[-1]] = {'native/' + cpo.uids[-1]: 0}
+            observations = []
+            def gate_state():
+                observations.append(True)
+                return copy.deepcopy(ready_state if gate_ready and len(observations) >= 3 else missing_state)
+            with patch.object(cpo, 'out', gate_out), patch.object(cpo, 'state', gate_state), patch.dict(cpo.b, {'schedule': [gated]}):
+                run_stage(cpo, gated)
+                gate_phase = e5.load(gate_out / 'smoke-E0/phase.json')
+                gate_summary = summarize(e5, cpo.b, gate_out)[0]
+            evidence = gate_phase['readyGate']
+            assert evidence == gate_summary['readyGate']
+            assert evidence['timedOut'] is not gate_ready
+            assert bool(evidence['observedUTC']) is gate_ready
+            assert (gate_out / 'smoke-E0/ready-gate-state.json').exists()
+            if gate_ready:
+                assert not evidence['missingWorkloadUIDs'] and len(observations) >= 3
+                assert epoch(gate_phase['endUTC']) - epoch(gate_phase['startUTC']) < gated['seconds']
+            else:
+                assert evidence['missingWorkloadUIDs'] == [cpo.uids[-1]]
+        assert 'readyGate' not in e5.load(cpo.out / 'smoke-E0/phase.json')
+        for invalid in (dict(config['stages'][0], readyGate='true'), dict(config['stages'][1], readyGate=True)):
+            try:
+                schedule({'stages': [invalid]}, e5)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid ready gate accepted')
         frozen_settings = copy.deepcopy(cpo.b['schedulerSettings'])
         settings['minimumDemand'][cpo.uids[0]] = 9
         summarize(e5, cpo.b, cpo.out)
@@ -927,7 +976,7 @@ def self_check():
         e5.save(historical_path, frozen_binding)
         historical = e5.summarize(historical_path, frozen_root)
         assert historical['schedulerSettings'] is None and any('frozen scheduler settings' in row['reason'] for row in historical['missing'])
-        print('PASS demo: campaign lifecycle, optional lifetime, server reset evidence and failure stop; mocked API/kubectl only')
+        print('PASS demo: campaign lifecycle, Ready gate early exit/timeout, optional lifetime, server reset evidence and failure stop; mocked API/kubectl only')
 
 
 def main():
