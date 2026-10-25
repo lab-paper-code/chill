@@ -561,6 +561,10 @@ native ACK·actual routing 기록과 stopped 대상 제외는 보존한다.
 4. **UID 한정 적용·DAG 준비:** runtime 전체/선택적 검증을 하나의 경로에서 구분하고
    `scheduledOperation`·policy·persist/readback을 실제 변경 UID에 한정한다. 중간 route도
    같은 owner 예약의 자식으로 이관한다. 아직 장벽은 유지하므로 안전하게 독립 검증한다.
+   선택적 runtime 검증은 변경 UID만 Ready/현재 owner와 대조하고, 입력에 함께 실린
+   보존 UID는 현재 physical 분배와 동일한지만 검사한다. 보존 UID의 override·accepted
+   request 문맥은 쓰지 않는다. 자동 route는 등록 때 실제 route/실행 설정 차이의 UID를
+   고정하고 policy/Pod annotation/readback과 예약 proof에 같은 UID 집합을 쓴다.
 5. **예약 밖 계획 활성화:** capacity 진입/고정 후보/κ pending 격리와 목표·DAG·launch를
    함께 바꿔 global `InProgressTarget`/`c.goal` 장벽을 삭제한다. 해당 API/기록/문서·테스트
    소비자도 동시에 이관한다. AC-39 및 앞 단계 전체 회귀 뒤 시연 3회차 진입 조건을 판정한다.

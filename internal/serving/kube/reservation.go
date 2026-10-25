@@ -44,7 +44,14 @@ func (c *SchedulerController) operationScope(operation Operation) resourceScope 
 	}
 	if operation.Target != nil {
 		for uid := range operation.Target.Routing {
-			scope.Workloads = append(scope.Workloads, uid)
+			if isRoutingOperation(operation.Kind) && operation.controlsWorkload(uid) {
+				scope.Workloads = append(scope.Workloads, uid)
+			}
+		}
+		for _, instance := range operation.Target.Instances {
+			if !isRoutingOperation(operation.Kind) && (instance.ID == operation.Instance || instance.Node == operation.Node) && instance.WorkloadUID != "" {
+				scope.Workloads = append(scope.Workloads, instance.WorkloadUID)
+			}
 		}
 	}
 	for _, instance := range c.state.Snapshot.Instances {

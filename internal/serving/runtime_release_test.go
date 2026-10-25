@@ -89,7 +89,7 @@ func TestManualRoutingPreservesReleasedUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	instance.WorkloadUID = "w2"
-	target := SchedulerCandidate{Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{"w1": {}, "w2": {instance.ID: 7}}}
+	target := SchedulerCandidate{Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{"w2": {instance.ID: 7}}}
 	if err := r.ApplySchedulerWorkloadsTarget(target, []string{"w2"}); err != nil {
 		t.Fatal(err)
 	}

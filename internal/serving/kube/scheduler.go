@@ -874,6 +874,9 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 				selectedTarget = intermediate
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
+			if action.Kind == operationRoute {
+				operation.WorkloadUIDs = changedWorkloads(*selectedTarget, c.state.Snapshot)
+			}
 			action.Status = nativeOperationRunning
 			action.Cancelable = action.Kind == operationPrepare
 			started := time.Now()
@@ -1018,7 +1021,11 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 		return false
 	}
 	if action.Kind == operationRoute {
+		uids := changedWorkloads(target, c.state.Snapshot)
 		for _, wanted := range target.Instances {
+			if !slices.Contains(uids, wanted.WorkloadUID) {
+				continue
+			}
 			if slices.ContainsFunc(c.state.Snapshot.Instances, func(actual serving.SchedulerInstance) bool {
 				return (actual.ID == wanted.ID || actual.TargetID == wanted.ID) && !actual.Ready && !actual.Stopped
 			}) {
@@ -1061,9 +1068,6 @@ func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCa
 func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]time.Duration, workloads []*serving.Definition) Operation {
 	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target,
 		ExpectedSeconds: action.ExpectedSeconds, ExpectedSource: action.ExpectedSource}
-	if action.Kind == operationRoute {
-		operation.WorkloadUIDs = slices.Clone(config.Settings.AutonomousWorkloads)
-	}
 	if action.Kind == operationPrepare {
 		for _, i := range target.Instances {
 			if i.ID == action.Instance && i.Profile != nil && i.Profile.Condition.Firstfloor != nil {
@@ -1155,7 +1159,7 @@ func (c *SchedulerController) actionEffectPresent(snapshot serving.SchedulerSnap
 			}
 		}
 	case operationRoute:
-		return c.routingTargetPresent(run.result.Operation.Target, snapshot, physical, true)
+		return c.routingTargetPresent(controlledTarget(run.result.Operation), snapshot, physical, true)
 	}
 	return false
 }
@@ -1180,6 +1184,9 @@ func (c *SchedulerController) actionEffectUnknown(snapshot serving.SchedulerSnap
 	}
 	if run.action.Kind == operationRoute && run.result.Operation.Target != nil {
 		for _, wanted := range run.result.Operation.Target.Instances {
+			if !run.result.Operation.controlsWorkload(wanted.WorkloadUID) {
+				continue
+			}
 			if state := schedulerPhysicalState(wanted.ID, physical); state != nil && !state.Stopped &&
 				(!state.Ready || state.Reason == "PolicyAckPending") {
 				return true
@@ -1193,9 +1200,6 @@ func (c *SchedulerController) routingTargetPresent(target *serving.SchedulerCand
 		return false
 	}
 	actual, _ := c.runtime.SchedulerRouting()
-	if len(actual) != len(target.Routing) {
-		return false
-	}
 	for uid, weights := range target.Routing {
 		if len(actual[uid]) != len(weights) {
 			return false

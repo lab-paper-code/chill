@@ -103,8 +103,16 @@ func (r *Runtime) ValidateSchedulerTarget(candidate SchedulerCandidate) error {
 	return r.applySchedulerTargetLocked(candidate, true, nil)
 }
 
+// ValidateSchedulerWorkloadsTarget validates only mutations in uids; declarations
+// supplied for other UIDs must equal their currently applied distributions.
+func (r *Runtime) ValidateSchedulerWorkloadsTarget(candidate SchedulerCandidate, uids []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.applySchedulerTargetLocked(candidate, true, uids)
+}
+
 func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, validateOnly bool, uids []string) error {
-	targets, err := r.resolveSchedulerRoutingLocked(candidate)
+	targets, err := r.resolveSchedulerRoutingLocked(candidate, uids)
 	if err != nil {
 		return err
 	}
@@ -163,8 +171,8 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 }
 
 // Resolve logical slots once for both validation and actual application.
-func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate) (map[string]map[string]int32, error) {
-	if err := r.validateSchedulerRoutingLocked(candidate); err != nil {
+func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate, uids []string) (map[string]map[string]int32, error) {
+	if err := r.validateSchedulerRoutingLocked(candidate, uids); err != nil {
 		return nil, err
 	}
 	targets := make(map[string]map[string]int32, len(candidate.Routing))
@@ -181,6 +189,16 @@ func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate) (m
 		if err != nil {
 			return nil, err
 		}
+		if uids != nil && !slices.Contains(uids, uid) {
+			if actual == nil {
+				return nil, failure("InvalidDistribution", "preserved target %q lost its physical identity", wanted.ID)
+			}
+			if targets[uid] == nil {
+				targets[uid] = map[string]int32{}
+			}
+			targets[uid][actual.State.ID] = weight
+			continue
+		}
 		if actual == nil || !actual.State.Ready || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node {
 			return nil, failure("TargetNotReady", "target %q lacks matching actual readiness", wanted.ID)
 		}
@@ -196,13 +214,21 @@ func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate) (m
 		}
 		targets[uid][actual.State.ID] = weight
 	}
+	if uids != nil {
+		current, _ := r.schedulerRoutingLocked()
+		for uid, distribution := range targets {
+			if !slices.Contains(uids, uid) && !maps.Equal(distribution, current[uid]) {
+				return nil, failure("InvalidDistribution", "preserved distribution changed for workload %q", uid)
+			}
+		}
+	}
 	return targets, nil
 }
 
 // Validate logical route declarations before resolving their physical runners.
-func (r *Runtime) validateSchedulerRoutingLocked(candidate SchedulerCandidate) error {
+func (r *Runtime) validateSchedulerRoutingLocked(candidate SchedulerCandidate, uids []string) error {
 	for uid, workload := range r.workloads {
-		if _, present := candidate.Routing[uid]; !workload.detached && !present {
+		if _, present := candidate.Routing[uid]; !workload.detached && !present && (uids == nil || slices.Contains(uids, uid)) {
 			return failure("InvalidDistribution", "target lacks distribution for workload %q", uid)
 		}
 	}

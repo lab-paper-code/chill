@@ -945,6 +945,13 @@ func (o *Operations) waitPowerState(ctx context.Context, node serving.NodeRefere
 func port8080() intstr.IntOrString { return intstr.FromInt32(8080) }
 
 func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCandidate, result *OperationResult) error {
+	uids := result.Operation.WorkloadUIDs
+	if result.Operation.WorkloadUID != "" {
+		uids = []string{result.Operation.WorkloadUID}
+	}
+	if err := o.runtime.ValidateSchedulerWorkloadsTarget(target, uids); err != nil {
+		return err
+	}
 	result.Before.Routing, _ = o.runtime.SchedulerRouting()
 	if result.Before.Native == nil {
 		result.Before.Native = map[string]native.State{}

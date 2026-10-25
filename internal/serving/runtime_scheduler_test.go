@@ -974,3 +974,31 @@ func TestSchedulerSlotsPreferExactIDAndRejectAmbiguousAliasesAC36(t *testing.T) 
 		t.Fatal("multiple logical aliases without exact ID were silently selected")
 	}
 }
+
+func TestSelectiveTargetPreservesUnreadyWorkloadAC39(t *testing.T) {
+	r, first, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	r.EnableSchedulerRouting()
+	old := r.instances[first.ID].ReadyInstance
+	old.State.Ready, old.State.Reason = false, "PolicyAckPending"
+	next := old
+	next.State.ID, next.State.Ready, next.State.Reason = "independent", true, ""
+	next.Routing = map[string]int32{}
+	if err := r.InstallInstances([]ReadyInstance{old, next}); err != nil {
+		t.Fatal(err)
+	}
+	first.WorkloadUID = "w1"
+	second := first
+	second.ID, second.WorkloadUID = next.State.ID, "w2"
+	target := SchedulerCandidate{ID: "w2-only", Instances: []SchedulerInstance{first, second}, Routing: map[string]map[string]int32{"w1": {first.ID: 1}, "w2": {second.ID: 1}}}
+	if err := r.ApplySchedulerWorkloadsTarget(target, []string{"w2"}); err != nil {
+		t.Fatal(err)
+	}
+	actual, _ := r.SchedulerRouting()
+	if actual["w1"][first.ID] != 1 || actual["w2"][second.ID] != 1 {
+		t.Fatalf("selective application lost a distribution: %v", actual)
+	}
+	target.Routing["w1"] = map[string]int32{}
+	if err := r.ApplySchedulerWorkloadsTarget(target, []string{"w2"}); err == nil {
+		t.Fatal("changed preserved UID was accepted")
+	}
+}
