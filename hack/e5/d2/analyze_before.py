@@ -19,7 +19,6 @@ import os
 from pathlib import Path
 import re
 
-WORKLOAD_NAME = json.loads(Path(os.environ['CHILL_EXPERIMENT_CONFIG']).read_text())['d2']['workloadName']
 
 
 def number(value):
@@ -322,6 +321,7 @@ def telemetry(inputs, start, end):
 
 
 def main():
+    workload_name = json.loads(Path(os.environ['CHILL_EXPERIMENT_CONFIG']).read_text())['d2']['workloadName']
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--phase-dir', required=True, type=Path)
     parser.add_argument('--out', required=True, type=Path)
@@ -354,7 +354,7 @@ def main():
     boundaries = {name: inputs.json(inputs.root / name) for name in
         ('pre-state.json', 'post-state.json', 'pre-pools.json', 'post-pools.json')}
     workloads = [[w for w in (boundaries.get(name) or {}).get('snapshot', {}).get('workloads', [])
-                  if w.get('name') == WORKLOAD_NAME]
+                  if w.get('name') == workload_name]
                  for name in ('pre-state.json', 'post-state.json')]
     slo = workloads[0][0].get('slo', {}) if len(workloads[0]) == 1 else {}
     target_ns = number(slo.get('targetLatencyNanos'))
