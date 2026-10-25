@@ -10,6 +10,12 @@ E5 혼합 부하의 SLO와 에너지 판정을 한 번의 최종 검증으로 �
 
 ## 1. 순서와 선행 조건
 
+최종 통합의 순서는 **E5 → M5 정리 → main 병합 → main 소스 빌드 → 최종 배포 → P10**이다.
+E5는 병합 전 측정 근거이고 P10 완료를 뜻하지 않는다. M5 변경을 마친 뒤 main에 병합하고,
+병합된 main commit에서 image를 빌드해 최종 배포한다. 마지막 P10은 그 배포의 source commit,
+image와 release revision을 고정해 아래 증거를 판정한다. 병합 전 branch image의 결과만으로
+main 최종 배포 검증을 대신하지 않는다.
+
 | 단계 | 내용 | 선행 | 산출 |
 |---|---|---|---|
 | S1 캠페인 종료 | 레인의 측정(BEO, DispatchOccupancyMeasurement, operation 비용)이 모두 terminal, Jetson이 가장 낮은 모드, 측정 전용 Workload 삭제 | 레인 | 프로파일, d, 비용 근거 |
@@ -22,7 +28,11 @@ E5 혼합 부하의 SLO와 에너지 판정을 한 번의 최종 검증으로 �
 | S8 M3 실클러스터 | [측정 admission 6장](../serving/measurement-admission.md#6-실클러스터-확인) E-A1~E-A8. 측정이 노드를 측정 POOL로 옮기므로 E5가 끝난 뒤 한다 | S7 | 항목 5, `SCH-AC-26`의 실클러스터 증거 |
 | S9 기준선 | 항목 6(D9로 정한 형태) | S7 | 기준선 실행 기록 |
 | S10 오프라인 | 항목 1, 2의 에너지 비교, 3의 분석 | S7 | 표 |
-| S11 마무리 | M5 나머지 배포가 있으면 그 뒤 항목 4의 기록 크기와 RSS를 한 번 더 확인, 결과를 6장 형식으로 기록하고 main 병합 | S8~S10 | 검증 기록 |
+| S11 M5 정리 | E5 뒤 남은 M5 문서·설정·구조 정리를 마치고 6장 형식의 사전 검증 기록을 정리 | S8~S10 | 병합할 M5 commit |
+| S12 main 병합 | E5 근거와 M5 변경을 main에 병합 | S11 | main commit |
+| S13 main 빌드 | 병합된 main commit의 소스로 최종 image를 빌드 | S12 | source commit과 image 참조 |
+| S14 최종 배포 | S13 image로 최종 배포하며 외부 EdgeMesh의 고정 image·2 CPU/1Gi·OnDelete 선언은 보존 | S13 | 최종 release revision과 image |
+| S15 P10 | 최종 배포에서 항목 4의 기록 크기와 RSS를 다시 확인하고, 나머지 항목의 근거·통과 여부 및 적용 source를 대조해 6장 최종 기록을 완성 | S14 | P10 최종 검증 기록 |
 
 genesis1에서 하는 무거운 작업(빌드, `make test`, kind E2E, `-count`가 큰 테스트)은 `flock /tmp/chill-heavy.lock nice -n 19`로
 돌리고, 시작 전에 측정이 진행 중이지 않은지 읽기 전용으로 확인한다.
