@@ -164,7 +164,7 @@ func (a schedulerPowerArchive) PutImmutable(
 
 func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T) {
 	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence",
+		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {

@@ -16,7 +16,7 @@ import (
 func TestHeapOverloadRejectsNewRequests(t *testing.T) {
 	_, snapshot := schedulerFixture()
 	d, p := snapshot.Workloads[0], snapshot.Instances[0].Profile
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}

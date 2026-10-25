@@ -186,10 +186,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				}
 				return false, nil, nil
 			})
-			observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
-				Directory: t.TempDir(), Store: "evidence",
-				Writer: settingsArchive{directory: t.TempDir()},
-			})
+			observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -406,9 +403,7 @@ func TestSchedulerSettingsStaticRoutingChangeNeedsReasonAndRecordsBeforeAfter(t 
 		updates++
 		return false, nil, nil
 	})
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Writer: settingsArchive{directory: t.TempDir()},
-	})
+	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,9 +493,7 @@ func TestSchedulerCompactQueryRejectsAmbiguousViews(t *testing.T) {
 }
 
 func TestPoolsShowMeasurementNodeAndWorkloadActivePool(t *testing.T) {
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Writer: settingsArchive{directory: t.TempDir()},
-	})
+	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}

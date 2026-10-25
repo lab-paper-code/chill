@@ -86,6 +86,7 @@ spec:
             - "--tls-cert=/etc/chill/tls/tls.crt"
             - "--tls-key=/etc/chill/tls/tls.key"
             - {{ printf "--observation-directory=%s" .Values.servingEntrypoint.observationStorage.directory | quote }}
+            - {{ printf "--observation-retention=%s" .Values.servingEntrypoint.observationStorage.retention | quote }}
             {{- with .Values.servingEntrypoint.diagnostic }}
             {{- if .directory }}
             - {{ printf "--diagnostic-directory=%s" .directory | quote }}

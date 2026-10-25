@@ -138,10 +138,7 @@ func TestMeasurementObservationLogPreservesReviewedActorAndActualMutationPhase(t
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			started := time.Now().UTC().Add(-time.Second)
-			observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
-				Directory: t.TempDir(), Store: "evidence",
-				Writer: settingsArchive{directory: t.TempDir()},
-			})
+			observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 			if err != nil {
 				t.Fatal(err)
 			}

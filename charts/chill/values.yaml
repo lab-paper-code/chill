@@ -458,6 +458,8 @@ servingEntrypoint:
   observationStorage:
     # ObservationLog path inside the retained PVC; select a fresh path for a stored-contract cutover.
     directory: /data
+    # Positive Go duration, measured from the start of each hourly segment.
+    retention: 2h
     size: 1Gi
     # null uses the cluster default; "" explicitly requests no StorageClass.
     storageClassName: null

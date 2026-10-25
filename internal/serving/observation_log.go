@@ -41,6 +41,7 @@ type ObservationLogConfig struct {
 	Writer      evidencestore.ImmutableWriter
 	Definitions []string
 	Outcomes    []string
+	Retention   time.Duration
 	Diagnostics *Diagnostics
 }
 
@@ -276,6 +277,9 @@ type ObservationLog struct {
 func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	if config.Directory == "" || config.Store == "" || config.Writer == nil {
 		return nil, errors.New("observation directory, store and immutable writer are required")
+	}
+	if config.Retention <= 0 {
+		return nil, errors.New("observation retention must be positive")
 	}
 	l := &ObservationLog{
 		config: config, root: filepath.Join(config.Directory, observationVersion), started: time.Now().UTC(),
@@ -709,8 +713,8 @@ const observationArchivePrefix = "serving/observations." + observationVersion + 
 // makes equal bytes, so a repeated upload is Existing. A past hour no longer
 // changes, so an hour whose streams all succeeded is marked and not sent
 // again; after a partial failure every stream of the hour is sent again. An
-// hour is deleted once it is marked and ended at least an hour ago. The oldest
-// hour holding the assigned row of an unsettled request, and every later
+// hour is deleted once it is marked and its start is past the retention period.
+// The oldest hour holding the assigned row of an unsettled request, and every later
 // hour, stay for RestartDrain.
 func (l *ObservationLog) archive(ctx context.Context) error {
 	l.publishMu.Lock()
@@ -736,7 +740,7 @@ func (l *ObservationLog) archive(ctx context.Context) error {
 			}
 			l.archived[hour] = failed == nil
 		}
-		deleting = deleting && failed == nil && !now.Before(hour.Add(2*time.Hour))
+		deleting = deleting && failed == nil && !now.Before(hour.Add(l.config.Retention))
 		if deleting {
 			deleting, failed = l.removeHour(hour)
 		}

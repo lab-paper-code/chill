@@ -76,6 +76,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
 		Diagnostics: recorder,
+		Retention:   opts.observationRetention,
 	})
 	if err != nil {
 		return err

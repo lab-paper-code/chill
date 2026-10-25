@@ -15,7 +15,7 @@ func TestStaticExclusiveBaselineThenSwappedTargetDrainsPhysicalBinding(t *testin
 	other := snapshot.Instances[0]
 	other.ID = "i2"
 	snapshot.Instances = append(snapshot.Instances, other)
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}

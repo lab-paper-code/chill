@@ -112,6 +112,9 @@ var observationTestHour = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
 // clockedObservationLog writes at clock time; its process started at started.
 func clockedObservationLog(t *testing.T, config ObservationLogConfig, started time.Time) (*ObservationLog, *observationClock) {
 	t.Helper()
+	if config.Retention == 0 {
+		config.Retention = 2 * time.Hour
+	}
 	if config.Directory == "" {
 		config.Directory = t.TempDir()
 	}
@@ -582,7 +585,7 @@ func TestExchangeFinishedRecordDatesStagesLikeProgressLines(t *testing.T) {
 
 func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 	ctx := context.Background()
-	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}}
+	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
 	observationLog, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
@@ -918,7 +921,7 @@ func TestObservationStartupIgnoresOtherHistory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: directory, Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: directory, Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}

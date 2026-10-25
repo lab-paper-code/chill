@@ -29,7 +29,7 @@ func (nopWriter) PutImmutable(
 // The tool and the ChillServer integrate the same records to the same joules.
 func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	directory := t.TempDir()
-	config := serving.ObservationLogConfig{Directory: directory, Store: "evidence", Writer: nopWriter{}}
+	config := serving.ObservationLogConfig{Directory: directory, Store: "evidence", Retention: 2 * time.Hour, Writer: nopWriter{}}
 	log, err := serving.NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)

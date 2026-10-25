@@ -565,6 +565,7 @@ servingEntrypoint:
     kubernetes.io/hostname: genesis1
   observationStorage:
     directory: /data/pools-61c6eb8
+    retention: 24h
     size: 32Gi
     storageClassName: rook-cephfs
   scheduler:

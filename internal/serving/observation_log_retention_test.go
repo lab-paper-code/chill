@@ -21,6 +21,33 @@ func assignObservationRequest(t *testing.T, observationLog *ObservationLog, id s
 	}
 }
 
+func TestObservationConfiguredRetention(t *testing.T) {
+	const retention = 24*time.Hour + 30*time.Minute
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Retention: retention}, observationTestHour)
+	seedObservationMinutes(t, log, clock, observationTestHour.Add(time.Second))
+	hour := filepath.Join(log.root, observationHour(observationTestHour))
+	for _, elapsed := range []time.Duration{retention - time.Nanosecond, retention + time.Nanosecond} {
+		clock.set(observationTestHour.Add(elapsed))
+		if err := log.Flush(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		_, err := os.Stat(hour)
+		if elapsed < retention && err != nil {
+			t.Fatalf("deleted before retention: %v", err)
+		}
+		if elapsed > retention && !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("not deleted after retention: %v", err)
+		}
+	}
+	for _, retention := range []time.Duration{0, -time.Second} {
+		config := log.config
+		config.Retention = retention
+		if _, err := NewObservationLog(config); err == nil {
+			t.Fatalf("accepted nonpositive retention %s", retention)
+		}
+	}
+}
+
 // A failed final append keeps the open row; the next Flush stores it.
 func TestRequestClosedKeepsRowUntilFinalIsStored(t *testing.T) {
 	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)

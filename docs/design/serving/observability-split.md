@@ -1,6 +1,6 @@
 # 관측 분리 (M1)
 
-[채택한 이행 단계](../architecture-rethink/05-recommendation-migration.md)의 M1 설계다. 명세 변경은 없다. ChillServer는 관측을 기록하고 최근 2시간의 조회에만 답한다. 영구 보존은 S3의 시간 세그먼트가 맡고, 측정 표는 그 세그먼트로 오프라인에서 만든다(spec README "SLO 관측과 집계"). [M0](decision-record-diet.md)를 전제로 한다.
+[채택한 이행 단계](../architecture-rethink/05-recommendation-migration.md)의 M1 설계다. 명세 변경은 없다. ChillServer는 관측을 기록하고 설정한 로컬 보존 기간(기본 2시간)의 조회에만 답한다. 영구 보존은 S3의 시간 세그먼트가 맡고, 측정 표는 그 세그먼트로 오프라인에서 만든다(spec README "SLO 관측과 집계"). [M0](decision-record-diet.md)를 전제로 한다.
 
 ## 1. 측정한 문제
 
@@ -73,7 +73,7 @@
 - 파일: `<directory>/v1alpha5/<YYYYMMDDTHH>/<stream>.<MM>.jsonl`. stream은 `requests`, `scheduler`, `management`, `catalog`이고, 쓰는 시각(UTC)의 분이 파일을 고른다. `DefinitionRecord`는 루트 `<directory>/v1alpha5/definitions.jsonl`에 append한다. 버전은 경로가 담으므로 줄에는 `schemaVersion`과 `window`가 없다.
 - 업로드: 1분 archive ticker가 지난 시간 디렉터리마다 stream별로 분 파일을 순서대로 이어 gzip한(`compress/gzip`, 헤더 시각 0) 파일을 `serving/observations.v1alpha5/<YYYYMMDDTHH>/<stream>.jsonl.gz`에 `PutImmutable`로 올린다. 같은 입력의 gzip은 같은 바이트이므로 재시작 뒤 다시 올리면 `CreateOutcomeExisting`이다. process는 모든 stream이 성공한 시간을 메모리에 기억하고 그 시간을 다시 올리지 않는다.
 - 업로드 자원: gzip은 scratch emptyDir(`/tmp`, 512Mi)의 `.archive-*` 파일로 흘려 쓰고, S3 store의 staging 파일(`chill-evidence-*`)도 같은 `/tmp`에 둔다. 한 업로드는 압축한 stream-시간 하나를 두 벌 놓으므로 `/tmp`는 가장 큰 압축 stream-시간의 2배 이상이다. staging은 archive가 비우는 PVC 밖에 있어서, S3가 멈춰 PVC가 차도 다음 업로드가 시작된다. 압축한 시간은 메모리에 올라오지 않는다(압축 안 되는 8 MiB 시간 업로드의 할당 21.8 MB → 0.86 MB). 시작할 때 재시작으로 남은 두 staging 파일을 지운다. Flush는 serve loop 밖의 goroutine 하나에서 돌고, 앞선 Flush가 도는 동안의 tick은 건너뛴다. source refresh와 `Advance`는 업로드를 기다리지 않는다. 종료는 돌던 Flush가 끝난 뒤 `Close`의 마지막 archive로 간다.
-- 로컬 삭제: 한 archive pass에서 그 시간의 모든 stream이 `Created` 또는 `Existing`을 받고, 그 시간이 끝난 지 1시간이 지났으면 디렉터리를 지운다. 하나라도 실패하면 그 시간과 이후 시간은 남고, 다음 pass가 처음부터 다시 올린다. 아직 `final`이 없는 요청의 `assigned` 행이 있는 시간과 그 이후 시간도 남아 RestartDrain이 읽는다. 삭제는 `mu` 아래에서 하므로 조회는 한 시간을 통째로 열거나 지워진 것으로 본다. 로컬에는 보통 현재 시간과 직전 시간이 남는다. PVC는 이 2시간과 S3가 멈춘 동안의 미업로드분을 담는 버퍼다. S3가 멈추면 PVC가 차고 append 실패가 `readyz`를 503으로 만든다. 실패한 append는 쓰기 전 크기로 잘라 다음 줄이 개행 경계에서 시작하고(루트 `definitions.jsonl` 포함), 실패한 `final`은 열린 행에 남아 다음 `Flush`가 다시 쓴다.
+- 로컬 삭제: 한 archive pass에서 그 시간의 모든 stream이 `Created` 또는 `Existing`을 받고, 시간 디렉터리의 시작부터 설정한 보존 기간이 지났으면 디렉터리를 지운다. `servingEntrypoint.observationStorage.retention` → `--observation-retention` → `ObservationLogConfig.Retention`은 양수 Go duration이며 기본 `2h`로 기존 동작(현재 시간과 직전 시간)을 유지한다. 업로드 주기는 그대로 1분이다. 하나라도 실패하면 그 시간과 이후 시간은 남고, 다음 pass가 처음부터 다시 올린다. 아직 `final`이 없는 요청의 `assigned` 행이 있는 시간과 그 이후 시간도 남아 RestartDrain이 읽는다. 삭제는 `mu` 아래에서 하므로 조회는 한 시간을 통째로 열거나 지워진 것으로 본다. PVC는 설정 기간의 원문과 S3가 멈춘 동안의 미업로드분을 담는 버퍼다. S3가 멈추면 PVC가 차고 append 실패가 `readyz`를 503으로 만든다. 실패한 append는 쓰기 전 크기로 잘라 다음 줄이 개행 경계에서 시작하고(루트 `definitions.jsonl` 포함), 실패한 `final`은 열린 행에 남아 다음 `Flush`가 다시 쓴다.
 - 시작: 각 stream의 마지막 분 파일과 루트 `definitions.jsonl`을 마지막 개행까지 자른다(crash 때 쓰다 만 줄). 그 밖에 시작 때 읽는 것은 루트 definitions와 로컬 `requests`뿐이다.
 - 읽기는 대상 파일을 `mu` 아래에서 열고 잠금 밖에서 읽는다. 삭제는 열린 fd에 영향이 없다. 쓰는 중인 마지막 줄(개행 없음)은 무시한다.
 
@@ -88,8 +88,8 @@
 | `OperatingPower` | `scheduler`: `[from − 1분, to + 1분]`, 기준 snapshot은 `from`부터 거꾸로 첫 snapshot이 있는 분 파일까지 | 경계 표본 거리는 설정 검사에서 `maximumBoundaryDistance ≤ 1분`으로 묶는다. meter는 catalog의 coverage 정책을 쓴다 |
 | `SchedulerObservationPage` | `scheduler`: `[from, to]` | 지금처럼 limit에서 멈춘다 |
 
-- 관측 공백: 로컬 관측의 시작은 기동 때 가장 오래된 로컬 분 파일(없으면 프로세스 시작)이고, 시간을 지울 때마다 그 시간의 끝으로 옮긴다. `from`이 그보다 앞이면 결과에 `gapUntil`(그 시작)을 싣고 남은 구간만 집계한다. `OperatingPower`는 `complete=false`와 이유를 싣는다. `from` 시점의 소속을 정하는 snapshot이 로컬 관측의 시작보다 앞에 있어 로컬에 없을 때도 `OperatingPower`는 그 시작을 `gapUntil`로 싣는다. `SchedulerHistoryWindow`는 `from`이 그 시작이나 프로세스 시작보다 앞이면 `ObservationGap`을 낸다(지금의 incomplete 창과 같은 오류 경로, `SCH-08` 공백 표시). 서버는 S3를 읽지 않는다. 2시간보다 오래된 구간은 7장의 오프라인 경로다.
-- 비용: Tick의 `SchedulerArrivals(now − 60s, now)`는 분 파일 1~2개, 5 req/s에서 1 MB 이하를 읽는다(지금은 창 1~2개, 3.3~6.7 MB). 조회 메모리는 선택된 요청 수에 비례하고, 읽는 양의 최대치는 5 req/s 2시간의 행 36k개(약 47 MB)다.
+- 관측 공백: 로컬 관측의 시작은 기동 때 가장 오래된 로컬 분 파일(없으면 프로세스 시작)이고, 시간을 지울 때마다 그 시간의 끝으로 옮긴다. `from`이 그보다 앞이면 결과에 `gapUntil`(그 시작)을 싣고 남은 구간만 집계한다. `OperatingPower`는 `complete=false`와 이유를 싣는다. `from` 시점의 소속을 정하는 snapshot이 로컬 관측의 시작보다 앞에 있어 로컬에 없을 때도 `OperatingPower`는 그 시작을 `gapUntil`로 싣는다. `SchedulerHistoryWindow`는 `from`이 그 시작이나 프로세스 시작보다 앞이면 `ObservationGap`을 낸다(지금의 incomplete 창과 같은 오류 경로, `SCH-08` 공백 표시). 서버는 S3를 읽지 않는다. 로컬 보존 범위보다 오래된 구간은 7장의 오프라인 경로다.
+- 비용: Tick의 `SchedulerArrivals(now − 60s, now)`는 분 파일 1~2개, 5 req/s에서 1 MB 이하를 읽는다(지금은 창 1~2개, 3.3~6.7 MB). 조회 메모리는 선택된 요청 수에 비례한다. 기본 보존 2시간 기준 5 req/s의 요청 행은 36k개(약 47 MB)이며 보존 기간을 늘리면 조회 가능한 행 수도 비례해 늘어난다.
 
 ## 7. 측정 표 산출
 
@@ -140,6 +140,7 @@ FROM j GROUP BY stage ORDER BY stage;
 - catalog: 시간마다 비용과 baseline 약 40 KB, 정의 수 KB, profile 약 16 KB × 사용 중인 수.
 - gzip: 요청 행 138 B(실측)와 배정 행 약 40 B, scheduler stream은 실측 비율 12.6배(부하)와 9.5배(부하 0)로 계산했다. 중복을 지운 뒤라 비율이 낮아질 수 있어 E 확인에서 잰다.
 - PVC는 2시간 원문, 5 req/s에서 약 155 MB를 담는다. 32Gi는 S3가 멈춘 동안 약 17일을 버틴다. S3는 5 req/s 연속에서 하루 약 180 MB이고 32Gi evidence store로 약 180일이다.
+- 시연용 `values-operating.yaml`은 32Gi PVC에 `retention: 24h`를 선택한다. 위 5 req/s 추정의 155 MB/2h를 선형 적용하면 약 1.86 GB/24h(기본보다 +1.705 GB, 32Gi의 약 5.4%)이며 실측 용량 보장은 아니다. 시간 디렉터리 단위로 삭제하므로 24시간 조회를 항상 보장하지는 않는다.
 
 ## 9. 계약과 버전
 
@@ -210,5 +211,5 @@ E1 soak(2 req/s, 1시간)과 부하 0 한 시간을 다시 돌린다.
 ## 14. 사용자 결정과 질문
 
 - 결정: Prometheus, native histogram, monitor, PromQL은 M1에서 뺀다(2장). crash 때 배정 전 요청의 행 손실을 받아들인다(3.2절). RestartDrain은 유지하고 배정 행이 요청당 약 300 B를 더한다(3.1절). 압축은 stdlib gzip이다(5장).
-- 질문 1: 로컬 보존이 2시간이라 Dashboard에서 그보다 앞선 구간은 관측 공백으로 보인다. 이 길이로 충분한가.
+- 로컬 보존: 기본 2시간, 시연은 24시간을 설정한다(5장). 남아 있지 않은 구간은 Dashboard에서 관측 공백으로 보인다.
 - 질문 2: commit 1은 `maximumBoundaryDistance`를 1분 이하로 묶는다. testbed scheduler ConfigMap의 값이 이 안에 있는지 배포 전에 확인한다(이 문서는 클러스터를 읽지 않았다).

@@ -130,9 +130,7 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 	controller := schedulerCaptureClockController(t, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	history, err := serving.NewObservationLog(serving.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Writer: managerArchive{t.TempDir()},
-	})
+	history, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}

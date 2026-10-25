@@ -569,8 +569,8 @@ immutable 보존 수단으로 원시 근거를 제공한다.
 
 형식과 보존은 [관측 분리](observability-split.md)가 정한다. private persistent directory의
 `v1alpha5/<시>/<stream>.<분>.jsonl`에 append하고, 지난 시간은 stream마다 gzip 하나로
-`serving/observations.v1alpha5/<시>/`에 immutable S3 object로 보존한다. 로컬은 현재 시간과
-직전 시간을 남긴다. Workload 삭제는 이 기록을 삭제하지 않는다. 업로드는 요청 writer 잠금 밖에서
+`serving/observations.v1alpha5/<시>/`에 immutable S3 object로 보존한다. 로컬은
+`observationStorage.retention`(양수 Go duration, 기본 `2h`)을 시간 디렉터리 시작부터 적용하며 기본은 현재 시간과 직전 시간을 남긴다. Workload 삭제는 이 기록을 삭제하지 않는다. 업로드는 요청 writer 잠금 밖에서
 수행하고, 업로드 중에도 새 append와 조회가 진행된다. `Flush`와 `Close`는 같은 업로드 경계를 사용한다.
 요청별 Kubernetes 객체나 요청마다 갱신하는 status는 만들지 않는다.
 
@@ -638,6 +638,7 @@ Pod의 env에 `GOMEMLIMIT=3GiB`와 `GODEBUG=gctrace=1`이 한 번씩 있는지 �
 | `observationDefinitions:[]`, `observationOutcomes:[]` | 반복 `--observation-definition`, `--observation-outcome` 기본 집계 필터 |
 | `observationStorage.size:1Gi`, `storageClassName:null` | `/data`의 유지되는 private RWO PVC; null은 cluster default, 빈 문자열은 no StorageClass |
 | `observationStorage.directory:/data` | `--observation-directory`; stored-contract cutover는 같은 PVC의 새 경로를 선택하고 이전 raw 기록은 보존 |
+| `observationStorage.retention:2h` | `--observation-retention`; 시간 디렉터리 시작부터 적용하는 양수 Go duration. 업로드 성공과 미완료 요청 보호 조건은 유지 |
 | `kubeAPI.apiServer/tokenFile/caFile` | 명시적 `--kube-api-server`, `--kube-token-file`, `--kube-ca-file`; 기본 in-cluster |
 | `kubeAPI.qps:50`, `kubeAPI.burst:100` | 항상 명시하는 `--kube-api-qps`, `--kube-api-burst`; ChillServer 시작 경계에서 양수·유한 float32 범위를 검증 |
 | `terminationGracePeriodSeconds:150` | `drainTimeout`과 HTTP 종료 여유보다 커야 함 |

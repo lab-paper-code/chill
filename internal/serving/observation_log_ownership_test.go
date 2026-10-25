@@ -17,7 +17,7 @@ const restoredRequest = "request"
 // it under RestartDrain and writes one incomplete final row after completion.
 func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 	ctx := context.Background()
-	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}}
+	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
 	observationLog, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 // stayed RestartDrain until the instance Pod was deleted.
 func TestRestoredCallTheNativeDoesNotHoldFinishes(t *testing.T) {
 	ctx := context.Background()
-	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Writer: &observationArchive{directory: t.TempDir()}}
+	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
 	observationLog, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)

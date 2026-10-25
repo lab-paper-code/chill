@@ -27,6 +27,7 @@ type options struct {
 	profileConfidenceLevel                                                 float64
 	requestTimeout, drainTimeout, sourceInterval, profileInterval          time.Duration
 	operationTimeout                                                       time.Duration
+	observationRetention                                                   time.Duration
 	profileNamespaces                                                      []string
 	definitions, outcomes                                                  []string
 	materializeProfile                                                     bool
@@ -52,6 +53,8 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.StringVar(&o.tlsCert, "tls-cert", "", "TLS certificate file.")
 	f.StringVar(&o.tlsKey, "tls-key", "", "TLS private key file.")
 	f.StringVar(&o.observationDirectory, "observation-directory", "", "Private persistent observation log directory.")
+	f.DurationVar(&o.observationRetention, "observation-retention", 2*time.Hour,
+		"Positive local observation retention measured from each hour's start.")
 	f.StringVar(&o.diagnosticDirectory, "diagnostic-directory", "",
 		"Fresh absolute private directory for one finite control-only capture; empty disables.")
 	f.DurationVar(&o.diagnosticStartDelay, "diagnostic-start-delay", 0,
@@ -161,7 +164,8 @@ func (o options) validate() error {
 	if o.queueLimit <= 0 || o.maxQueryEvents <= 0 || o.maxRequestBytes <= 0 || o.maxEvidenceBytes <= 0 {
 		return errors.New("queue, body, evidence and query bounds must be positive")
 	}
-	durations := []time.Duration{o.requestTimeout, o.operationTimeout, o.drainTimeout, o.sourceInterval, o.profileInterval}
+	durations := []time.Duration{o.requestTimeout, o.operationTimeout, o.drainTimeout,
+		o.sourceInterval, o.profileInterval, o.observationRetention}
 	for _, d := range durations {
 		if d <= 0 {
 			return errors.New("request, operation, drain, refresh and observation durations must be positive")
