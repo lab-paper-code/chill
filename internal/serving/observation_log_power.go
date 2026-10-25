@@ -173,9 +173,15 @@ func (l *ObservationLog) OperatingPower(ctx context.Context, from, to time.Time,
 	})
 	result.Coverage = read.coverage(map[string][2]time.Time{observationSchedulerStream: {coverageFrom, end}})
 	result.GapUntil = result.Coverage.gapUntil(from)
-	if len(result.Coverage.Gaps) != 0 {
-		result.Complete = false
-		result.Reasons = append(result.Reasons, "scheduler stream unavailable in observation coverage")
+	// Coverage includes the wider boundary/baseline search. Missing history
+	// outside the requested interval is not missing energy: the reducer checks
+	// the actual boundary samples and membership needed by [from,to].
+	for _, gap := range result.Coverage.Gaps {
+		if gap.From.Before(to) && gap.To.After(from) {
+			result.Complete = false
+			result.Reasons = append(result.Reasons, "scheduler stream unavailable in observation coverage")
+			break
+		}
 	}
 	return result, err
 }
