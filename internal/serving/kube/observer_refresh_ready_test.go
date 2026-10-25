@@ -12,8 +12,11 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
+	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes"
+	typedcore "k8s.io/client-go/kubernetes/typed/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
@@ -269,5 +272,128 @@ func TestObserverRelabelledSourceClosesDispatch(t *testing.T) {
 	state := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
 	if state == nil || state.Ready || !strings.Contains(state.Reason, "not labelled") {
 		t.Fatalf("label mismatch did not fail closed: %+v", state)
+	}
+}
+
+type gatedObserverKube struct {
+	kubernetes.Interface
+	core typedcore.CoreV1Interface
+}
+
+func (k gatedObserverKube) CoreV1() typedcore.CoreV1Interface { return k.core }
+
+type gatedObserverCore struct {
+	typedcore.CoreV1Interface
+	gate func(context.Context) error
+}
+
+func (c gatedObserverCore) Pods(namespace string) typedcore.PodInterface {
+	return gatedObserverPods{PodInterface: c.CoreV1Interface.Pods(namespace), gate: c.gate}
+}
+
+type gatedObserverPods struct {
+	typedcore.PodInterface
+	gate func(context.Context) error
+}
+
+func (p gatedObserverPods) List(ctx context.Context, opts meta.ListOptions) (*core.PodList, error) {
+	if err := p.gate(ctx); err != nil {
+		return nil, err
+	}
+	return p.PodInterface.List(ctx, opts)
+}
+
+func TestObserverNativeFailureClosesDispatchBeforePodVerification(t *testing.T) {
+	for _, failure := range []string{"not ready", "metadata mismatch"} {
+		t.Run(failure, func(t *testing.T) {
+			var armed, gateNext atomic.Bool
+			releaseA, releaseList, blocked := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			defer close(releaseA)
+			defer close(releaseList)
+			c, prepared := tickReadySubsetController(t, func(index int, state *native.State) {
+				if !armed.Load() {
+					return
+				}
+				if index == 0 {
+					<-releaseA
+					return
+				}
+				if failure == "not ready" {
+					state.Ready = false
+				} else {
+					state.Metadata.ProfileID = "wrong-profile"
+				}
+				gateNext.Store(true)
+			})
+			prepared.Store(true)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := c.observer.Refresh(ctx); err != nil {
+				t.Fatal(err)
+			}
+			before := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
+			if before == nil {
+				t.Fatal("fixture lacks A")
+			}
+			kube := c.observer.kube
+			c.observer.kube = gatedObserverKube{Interface: kube, core: gatedObserverCore{
+				CoreV1Interface: kube.CoreV1(),
+				gate: func(ctx context.Context) error {
+					if gateNext.CompareAndSwap(true, false) {
+						close(blocked)
+						select {
+						case <-releaseList:
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					}
+					return nil
+				},
+			}}
+			armed.Store(true)
+			done := make(chan error, 1)
+			go func() { done <- c.observer.Refresh(ctx) }()
+			select {
+			case <-blocked:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			// B's HTTP outcome is already known, but identity verification is
+			// deliberately outstanding. Dispatch must already be closed.
+			b := schedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
+			if b == nil || b.Ready {
+				t.Fatalf("native failure left dispatch enabled: %+v", b)
+			}
+			releaseA <- struct{}{}
+			for {
+				a := schedulerPhysicalState(before.ID, c.runtime.Instances())
+				if a != nil && a.AttemptedAt.After(before.AttemptedAt) {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				default:
+					runtime.Gosched()
+				}
+			}
+			b = schedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
+			if b == nil || b.Ready {
+				t.Fatalf("A publication re-enabled failed B: %+v", b)
+			}
+			releaseList <- struct{}{}
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			b = schedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
+			if b == nil || b.Ready || b.Native == nil {
+				t.Fatalf("verified failure lost native evidence: %+v", b)
+			}
+		})
 	}
 }

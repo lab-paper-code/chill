@@ -391,6 +391,9 @@ refresh 시작은 관측 실패가 아니다. 진행 중인 probe 때문에 기�
 유지한다. 실제 native/Service/LIST 오류와 serving label 불일치는 unavailable로
 dispatch를 닫고, Pod watch의 unready/삭제 무효화는 즉시 반영한다. Pod Ready
 이벤트만으로 자격을 복구하지 않으며 다음 성공 native probe와 Pod 재검증으로만 복구한다.
+native 응답의 not-ready 또는 metadata 검증 실패는 후속 Pod LIST를 기다리지 않고
+즉시 장부 Ready와 runtime dispatch를 닫는다. 응답의 native state 보존은 그 뒤
+동일 executor의 Pod identity 검증을 마친 뒤 게시한다.
 
 
 | 장부 항목 | 의미와 권위 |

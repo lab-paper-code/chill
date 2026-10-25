@@ -485,6 +485,19 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 			if probeErr != nil {
 				instance.State.Reason = probeErr.Error()
 			}
+			if !instance.State.Ready || probeErr != nil {
+				instance.State.Ready = false
+				reason := instance.State.Reason
+				if reason == "" {
+					reason = "native instance is not ready"
+				}
+				if source := o.sources[string(pod.UID)]; source != nil {
+					source.instance.State.Ready = false
+					source.instance.State.Reason = reason
+					source.instance.State.AttemptedAt = time.Now().UTC()
+					o.runtime.DisableInstance(physicalID(source.uid, source.containerID), reason)
+				}
+			}
 			instance.OwnerWorkloadUID = owner
 			instance.State.TargetID = pod.Annotations[ServingSlotAnnotation]
 			instance.State.Stopped = o.removingInstances[spec.InstanceID]
