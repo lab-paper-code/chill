@@ -1,7 +1,8 @@
 # Scheduler 설정과 관측 API
 
-현재 설정·권한·조회 및 관측 기록 처리 계약이다. 판단·제어 불변식은
-[스케줄러 구현 설계](scheduler-implementation.md), 실행기와 측정의
+설정·권한·조회 및 관측 기록 처리 계약이다. 2026-10-25 배분 작업 개정은 구현 목표이며,
+아래 코드 위치는 변경할 현재 구현을 가리킨다(`SCH-36`, `SCH-39`, `SCH-41`).
+판단·제어 불변식은 [스케줄러 구현 설계](scheduler-implementation.md), 실행기와 측정의
 해석은 [실행기와 측정 계약](scheduler-runtime-measurement.md#시간과-수명)을 따른다.
 외부 Workload HTTP·인증·리소스 변경은 [Workload 관리](workload-management.md#5-api와-권한),
 기본 JSONL/S3 보존·집계 모집단은 [관측과 보존](workload-management.md#11-관측과-보존)이 원본이다.
@@ -23,8 +24,8 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 | `settings.autonomousWorkloads` | 자동제어할 Workload UID 목록. decision은 Workload마다 `workloads[]`에 `Disabled`, `MeasurementEvidenceMissing`, `Controlled` 상태와 사유를 남긴다([워크로드별 자동제어](workload-pools.md#31-워크로드별-자동제어)) |
 | `settings.excludedNodes` | 계획에서 뺀 Node 이름 목록(이름마다 하나, 빈 이름 불가, sample은 빈 목록). 그 Node는 측정 POOL Node처럼 그대로 두며 판단의 노드 계획과 snapshot 노드 사유에 `ExcludedNode`로 남는다([용량표 계획기 14장](analytic-planner.md#14-구현-규칙)). Dashboard 운영 설정의 "계획에서 뺀 장비"가 고친다 |
 | `reserved` | Node별 비서빙 전용 예약 CPU IDs와 GPU UUID. quota는 별도 수량 예산. CPU inventory는 node agent가 Node annotation `edge.dacs.io/cpus`에 게시한 online CPU이고, GPU inventory는 그 Node에서 측정한 profile의 GPU UUID다([node agent](../platform/node-agent.md#21-필드별-출처)). inventory 밖의 예약은 Node를 `PlacementInventoryMissing`으로 만든다 |
-| `staticRouting` | OPTIONAL 부분 map: 자동제어하지 않는 현재 Workload UID → physical instance ID → nonnegative int32 weight. positive weight가 없는 항목(빈 map 포함)은 그 UID의 routing을 모두 지운다. 선언하지 않은 UID는 현재 routing을 유지한다. 설정 API(`PUT /api/v1/scheduler/settings`)가 쓴다. 명시 config revision을 기존 typed ApplyTarget 경로로 적용하고 physical read-back하며 `manual-static-routing` action의 `sourceConfigRV`에 남김. 현재가 아닌 UID, `autonomousWorkloads`의 UID와 stale target은 오류 |
-| `staticRoutingValidatedAt` | `staticRouting`을 마지막으로 바꾼 설정 변경의 `validatedAt`. 선언을 바꾼 `PUT /api/v1/scheduler/settings`가 ConfigMap 구성의 `staticRouting` 옆에 쓰고, scheduler가 `manual-static-routing` action의 `operation.settingsValidatedAt`으로 옮긴다. 읽을 때는 그 action의 값을 쓴다. 선언을 지운 PUT(`{}`)이 쓴 값은 scheduler가 action을 만들지 않아 ConfigMap에만 남는다 |
+| `staticRouting` | 읽기 전용 projection: Workload UID → physical instance ID → nonnegative int32 weight. UID의 빈 map은 명시적 배분 해제이고 UID 부재는 Pod 기본 표시를 따르는 상태다. 선언 변경은 `route`/`unroute`/`release` 작업만 받으며 설정 PUT은 이 필드를 받지 않는다(`SCH-39`) |
+| `staticRoutingValidatedAt` | 읽기 전용 선언 변경 출처. 설정 PUT이 아니라 배분 작업의 검증 시각과 연결한다. 실제 성공 여부는 작업의 ACK와 `actual.routing` readback으로 확인한다 |
 | wall meter | 구성 필드가 없다. Profiler facts `metricSources`(schema `v1alpha6`)의 항목마다 `{id: meterID, node: 그 이름의 live Node와 UID, scope: node-exclusive-wall, source: 전력 부분}`을 만든다. Node가 없는 항목은 meter가 없다 |
 | 전력 요청 | 구성 필드가 없다. Node의 DeviceClass 모드 중 actuator가 `Fixed`가 아니고 Profiler facts의 actuation policy가 있는 모드가 요청 가능 모드다. 전력 동작이 시작할 때 NodeActuation을 새 이름, 그 시각의 `stageRequestedAt`, `maxActuationDurationSeconds` 뒤의 `deadline`으로 만든다([node agent](../platform/node-agent.md#21-필드별-출처)) |
 | `powerObservation` | 기존 sampler의 `Interval/Duration/RequestTimeout/MaxEvents`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap` |
@@ -35,21 +36,20 @@ profile 후보, profile ID별 `PrepareSpec`, 원자 동작 비용과 power mode 
 `Policy.fixedBatchSize`의 0 또는 생략은 dynamic이고 양수 B는 비교 기준 strict fixed-size
 serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](scheduler-runtime-measurement.md#strict-fixed-size-baseline-serving)).
 
-`staticRouting`의 configuration 수신과 실제 적용은 별개다. 물리 source readiness가
-아직 없거나 UID/target 검증이 실패하면 ChillServer listener를 막지 않고 기존 refresh
-cadence에서 미적용 revision을 다시 평가한다. 실패는 선언
-원본, `sourceConfigRV`, 실제 routing과 오류를 가진 manual action으로 관측 기록과 scheduler
-state에 남으며 적용 성공으로 표시하지 않는다. 전체 physical read-back이 일치한
-revision은 다시 적용하지 않는다. 선언을 바꾼 사람과 선택 이유는 action의 `operation.settingsValidatedAt`을
-`from`으로 한 `GET /api/v1/observations/scheduler`의 설정 변경 기록에 있다.
+배분 작업은 ConfigMap 선언 저장과 물리 적용을 구분하여 기록한다. 기존 typed
+`ApplyTarget`의 준비·소유권·native policy ACK와 전체 physical readback을 재사용하고,
+다른 UID의 선언과 실제 분배는 보존한다. 실패 또는 부분 적용은 성공으로 표시하지 않으며
+작업의 actor, reason, 전후 선언, `sourceConfigRV`, 시작·완료 시각과 실제 상태를 남긴다.
+기존 refresh가 선언을 재평가하더라도 실패한 수동 작업을 자동 재시도하지 않는다.
 
 ## API와 compact projection
 
 | API | 동작 |
 |---|---|
 | `GET /api/v1/scheduler` | settings와 실제 snapshot, decision, actions, results, `costIssues` |
-| `GET /api/v1/scheduler/settings`, `/state` | 운영 설정 또는 현재 판단·적용 상태. settings 응답은 ConfigMap에 저장된 `staticRouting` 선언도 담는다. 선언을 바꾸는 PUT은 이 값에서 시작한다 |
-| `PUT /api/v1/scheduler` 또는 `/settings` | 직접 `SchedulerSettings`를 검증하고 named ConfigMap에 저장하고 적용. 본문의 OPTIONAL `staticRouting`은 저장된 선언 전체를 바꾸고 `{}`는 선언을 지운다. 생략하면 저장된 선언이 그대로다. 선언이 바뀌면 비어 있지 않은 `reason`(선택 이유)이 필수이고 새 선언은 마지막 snapshot에 대해 `StaticRoutingTarget`으로 검증한다. 오류는 400 `InvalidBody`와 `field`(`reason` 또는 `staticRouting`)다. 응답과 관측 기록의 설정 변경은 actor, `before`/`after` 설정, `beforeStaticRouting`/`afterStaticRouting`, `reason`, `validatedAt`, `affected`, `appliedAt`을 담고, `validatedAt`이 그 변경을 가리킨다 |
+| `GET /api/v1/scheduler/settings`, `/state` | 운영 설정 또는 현재 판단·적용 상태. settings 응답의 `staticRouting`은 읽기 전용 선언이다 |
+| `PUT /api/v1/scheduler` 또는 `/settings` | `SchedulerSettings`만 검증·저장·적용한다. `staticRouting`/`staticRoutingValidatedAt` 입력은 400 `InvalidBody`와 해당 `field`로 거절하며, 생략된 기존 선언은 변경하지 않는다. 설정 변경 기록은 actor, before/after, validatedAt, affected, appliedAt을 유지한다 |
+| `POST /api/v1/scheduler/operations` | 기존 prepare/remove와 명시적 route/unroute/release/reset. 본문·ACK·실패·멱등 계약은 [수동 원자 실행](scheduler-operations.md#수동-원자-실행-계약)을 따른다 |
 | `GET /api/v1/scheduler/profiles` | 읽기 전용. `configVersion`, 완료 측정에서 도출한 조건별 최신 `profiles`, profile ID별 `preparations`, profile을 만들지 못한 측정의 `insufficiencies[]`(CatalogIssue `source/code/reason`) |
 | `GET /api/v1/scheduler/capacity` | 읽기 전용. 자동제어 Workload에 필요한 용량표 `rows[]`(`key`, `input`, `status`, `reason`, `mu`, `kappa`, 격자와 이분 탐색 판정, `builtAt`, `elapsedNanos`). 계산 중인 행은 `CapacityPending`, 단조가 아닌 행은 `CapacityRejected`와 `NonMonotone`이다. 표는 메모리에만 있고 행마다 `management` stream의 `capacity-row-built` 사건으로 남는다 |
 | `GET /api/v1/pools` | 실제 CHILL 인스턴스의 owner와 binding에서 도출한 `workloads[]`(`workload`, 활성 POOL `nodes`, `instances`), 측정 taint Node의 `measurement[]`, `available[]`와 `other[]`(`node/ready/powerMode/reasons`), `observedAt`, observer `issues` |
@@ -64,6 +64,12 @@ revision은 다시 적용하지 않는다. 선언을 바꾼 사람과 선택 이
 가중치, 사용한 용량표 행, 모든 노드 계획과 제외 사유다([스케줄러 구현 설계 5.3절](scheduler-implementation.md#53-전환에너지선택)).
 `comparedNodes`는 keep 밖의 적격 노드 계획이 있는 Node이며 `expectedJoules`는 이 Node만 합산한다.
 관측 기록의 인스턴스는 profile을 `profileID`로, Workload를 `workloadUID` 하나로 보존한다.
+
+인스턴스 출력은 `routable: {"<workloadUID>": true|false}`를 Ready와 별도로 제공한다
+(`SCH-36`). snapshot·POOL의 같은 physical instance는 같은 서버 계산값을 쓴다.
+현재 Workload별 새 요청 유효 분배에 포함되고 가중치가 양수일 때만 참이며,
+Ready/Stopped·소유권·모델 적격성은 기존 runtime 분배 필터를 따른다. 과거 접수 요청의
+drain용 보존 route는 새 요청의 routable로 세지 않는다.
 
 현재 `/scheduler`, `/scheduler/state`와 scheduler history는 선택적으로
 `view=compact`를 받는다. 생략하면 기존 full raw 응답이며 저장 관측 기록, archive와
@@ -81,6 +87,8 @@ inProgressTarget 및 decision의 keep/target 안 인스턴스의 `profile`만
 power 조회는 controller가 수락한 ChillServer configuration 하나를 atomic하게 읽어 meter
 구성을 고정한다. 긴 refresh·control Tick의 scheduler mutex를 기다리지 않으며, 새 설정은
 controller 적용 성공 뒤에만 게시한다. 거절된 refresh는 이전 설정을 그대로 유지한다.
+
+라이브 채널 메시지 계약 v1은 [Dashboard 설계 §4.3](../dashboard/README.md#43-라이브-채널-메시지-계약-v1)을 따른다.
 
 ## 관측 조회의 일관성·모집단·제외 규칙
 
@@ -135,3 +143,19 @@ boundary 거리 안에서만 보조하며, 합친 표본의 원래 gap·값·met
 설정 변경은 검증된 identity의 groups/extra까지 사용하여 해당 namespace/name의
 `configmaps/update` Resource SAR를 추가 확인한다. decision과 snapshot을 관측 기록에
 보존한 뒤 physical action을 시작하고, 실제 시작·완료·실패와 부분 상태를 별도로 기록한다.
+
+## 구현 위치와 검사
+
+- `internal/serving/httpapi/scheduler.go:Handler.scheduler`, `Handler.staticRoutingChange`,
+  `persistSchedulerSettings`: 설정 PUT의 선언 쓰기/검증 분기를 제거하고 읽기 전용 GET은 유지한다.
+- `internal/serving/kube/static_routing.go:SchedulerController.ApplyStaticRouting`,
+  `finishStaticRouting`: revision 기반 refresh 적용을 명시적 작업과 ACK/readback 경로로 전환한다.
+- `internal/serving/runtime_scheduler.go:Runtime.routeWeightLocked`,
+  `applySchedulerTargetLocked`, `schedulerRoutingLocked`: UID의 빈 선언과 부재를 구별한다.
+  release는 전역 `DisableSchedulerRouting`이 아니라 해당 UID만 제어 map에서 제거하고
+  Pod 기본 표시를 다시 읽어 rebuild/dispatch한다. 현재 ApplyTarget이 덮어쓰는
+  `instance.Routing`과 기본 표시를 혼동하지 않도록 현재 Pod annotation을 원본으로 삼는다.
+- 검사: 설정 PUT 선언 입력 거절·다른 UID 보존, route/unroute/release 각각의 ACK와
+  전체 readback, Ready지만 unroute인 인스턴스의 routable=false,
+  release 뒤 새 측정 인스턴스의 routable=true와 실제 요청 처리를 확인한다
+  (`SCH-36`, `SCH-39`, `SCH-AC-32`).

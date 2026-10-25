@@ -1,6 +1,7 @@
 # Scheduler 인스턴스 전달과 수동 원자 실행
 
-현재 physical instance transport와 수동 실행 계약이다. 자동 판단과 DAG는
+physical instance transport와 수동 실행 계약이다. 2026-10-25 배분·reset 개정은
+구현 목표이며 코드 위치는 변경할 현재 구현을 가리킨다. 자동 판단과 DAG는
 [스케줄러 구현 설계](scheduler-implementation.md), 측정 적격성은
 [실행기와 측정 계약](scheduler-runtime-measurement.md#baseline과-실제-원자-동작-측정),
 과거 네트워크·배포 관측은 [실행 이력](scheduler-execution-history.md)에 둔다.
@@ -118,11 +119,27 @@ scheduler/native operation 경로가 켜진 경우 CREATE를 추가한다.
 
 ## 수동 원자 실행 계약
 
-`POST /api/v1/scheduler/operations`는 측정과 별개의 수동 원자 실행이며 `autonomousWorkloads`에 없는
-Workload 하나를 대상으로 한다. 몸체는 `{kind, workloadUID, profileID, node, instance, fixedBatchSize}`이고,
-`kind`는 `prepare` 또는 `remove`다. 호출자는 scheduler ConfigMap update 권한과 `/chill/api/v1/scheduler/operations`
-POST 권한을 가진다. ChillServer는 `tickMu` 안에서 다음을 확인하고 그 Node의 run을 등록한 뒤 잠금 밖에서 scheduler와
-같은 `Operations`로 실행하며, 응답은 완전한 `OperationResult`다.
+`POST /api/v1/scheduler/operations`는 측정과 별개의 서버 수동 실행이다.
+prepare/remove/route/unroute/release는 `autonomousWorkloads` 밖의 Workload 하나를 대상으로 하며,
+reset은 명시한 UID들의 자동제어를 먼저 해제한다(`SCH-39`, `SCH-41`).
+기존 prepare/remove 본문 `{kind, workloadUID, profileID, node, instance, fixedBatchSize}`를 유지하고
+추가 본문은 다음과 같다. 종류별 필드만 strict decode하며 선택 이유 `reason`은 필수다.
+
+| kind | 본문 | 선언과 실제 적용 |
+|---|---|---|
+| `route` | `{kind:"route", workloadUID, weights:{"<physical instance ID>":1000}, reason}` | 해당 UID 선언만 교체. weight는 nonnegative int32이고 양수 대상이 하나 이상이어야 한다. 현재 UID·Ready·소유권·모델·native policy ACK를 검증한다 |
+| `unroute` | `{kind:"unroute", workloadUID, reason}` | 해당 UID를 빈 map으로 유지하여 새 요청 배분을 막는다. 이미 접수한 요청은 기존 수명·drain 보호를 유지한다 |
+| `release` | `{kind:"release", workloadUID, reason}` | 해당 UID 선언과 runtime override를 삭제하고 현재 및 이후 Pod 기본 표시를 따른다. 다른 UID는 유지한다 |
+| `reset` | `{kind:"reset", workloadUIDs:["<UID>"], reason}` 또는 `{kind:"reset", scope:"all-non-autonomous", reason}` | UID 목록과 scope 중 정확히 하나. scope는 수락 시점 비자율 UID 목록으로 고정한다 |
+
+호출자는 scheduler ConfigMap update 권한과 `/chill/api/v1/scheduler/operations` POST 권한을 가진다.
+ChillServer는 `tickMu` 안에서 대상과 실행 충돌을 확인하고 run을 등록한 뒤 잠금 밖에서
+기존 `Operations`로 실행한다. UID 범위 reset은 노드별 run과 전역 route 충돌도 차단하며,
+자율 해제 후 이미 실행 중인 관련 동작이 있으면 안전 완료를 확인하기 전 다음 단계로 가지 않는다.
+응답은 기존 `OperationResult` envelope와 실제 ACK/readback을 사용하고, 배분 작업은 전후 선언과
+`actual.routing`을 포함한다. 선언 저장만으로 complete를 반환하지 않는다.
+
+기존 prepare/remove의 사전 조건은 다음과 같다(reset의 자율 해제는 위 별도 계약을 따른다).
 
 - Workload가 마지막 snapshot의 현재 Workload이고 자동제어 밖이다.
 - Node가 있고 측정 taint, 실행 중인 run, 진행 중인 Node label 전력 요청이 없다(`NodeBusy`).
@@ -136,10 +153,34 @@ POST 권한을 가진다. ChillServer는 `tickMu` 안에서 다음을 확인하�
   적용된 분배에 UID가 없는 Workload는 Pod의 owner별 routing annotation을 따른다. 수동 준비와 측정 준비는
   Ready, 소유권, native 설정 ACK를 확인한 인스턴스의 seed를 사용한다. planner 준비의 seed는 빈 분배다.
 - remove: 대상이 snapshot의 instance이고 다른 Workload가 소유하거나 binding하지 않는다. 어느
-  Workload의 route 가중치도 0이고 그 instance가 맡은 처리 중 요청이 없다. 분배는 먼저 `staticRouting`으로 바꾼다.
+  Workload의 route 가중치도 0이고 그 instance가 맡은 처리 중 요청이 없다. 먼저 `unroute`의 ACK를 확인한다.
 
 instance는 snapshot의 ID로 고르므로 계획기가 만든 `serving-<hash>` Pod도 대상이 된다. 이는 manual execution 근거이며
 automatic scheduler judgment나 power 측정 근거가 아니다.
+
+### reset 순서·실패·멱등
+
+`SCH-41`의 reset은 다음 순서를 하나의 서버 작업으로 실행한다. 응답의
+`steps[]`는 `{name, startedAt, endedAt, status, before, actual, error}`이며 기존
+`OperationResult`의 `startedAt`/`endedAt`, `status`, `error`와 전체 전후 상태도 유지한다.
+
+1. 대상 UID만 `autonomousWorkloads`에서 제거하고 설정 적용 readback을 확인한다.
+2. 대상 UID마다 unroute를 적용하여 새 요청 분배 0의 ACK/readback을 확인한다.
+3. 해당 UID의 미완료 요청이 0이 될 때까지 기존 native drain 증거와 함께 기다린다.
+4. 해당 UID가 **소유**한 physical instance만 stop/remove한다. 단순 binding을 소유권으로
+   간주하지 않으며 타 UID binding/소유권 충돌은 실패다. UID/container 종료 증거,
+   자기 executor Service 해제와 실제 Pod 소멸을 확인한다.
+5. 대상 UID의 배분 선언과 runtime override만 release하고 삭제 readback을 확인한다.
+6. 제거로 비게 된 Node만 DeviceClass/actuation policy가 제공하는 최저 전력모드로
+   `ChangePower`한다. 측정 taint·다른 owner·요청이 남은 Node를 변경하지 않고,
+   실제 모드 readback과 Ready를 확인한다. 변경 불필요/지원하지 않는 고정 모드는
+   현재 상태와 skip 사유를 기록한다.
+
+오류·timeout·관측 실패는 해당 단계와 실제 부분 상태를 기록하고 즉시 멈춘다.
+자동 재시도·되돌림·이후 단계 실행은 없고, 실패한 선언을 refresh가 자동 적용하지 않도록 한다.
+다시 호출하면 현재 상태에서 이미 충족된 단계를 변경 없이 완료 처리한다. 정리된 범위의
+두 번째 reset은 Pod·선언·전력 요청을 새로 만들지 않고 성공한다(`SCH-AC-33`).
+멱등성은 실제 상태 확인으로 얻으며 별도 재개 상태기계나 숨은 client 재시도는 두지 않는다.
 
 ## serving-operation CLI
 
@@ -159,20 +200,13 @@ automatic scheduler judgment나 power 측정 근거가 아니다.
    https://<entrypoint> --chill-ca-file ca.crt --chill-token-file token`으로 보낸다. `profileID`는
    `/api/v1/scheduler/profiles`에서 고르고 `fixedBatchSize`는 고정 배치 기준선에서만 준다. 준비한 instance는 그
    Workload의 routing annotation을 받고 적용된 분배에 UID가 없으면 그 seed로 요청을 처리한다.
-2. 분배: `GET /api/v1/scheduler/settings` 응답에 `"staticRouting": {"<Workload UID>": {"<instance ID>": 1000}}`과
-   `"reason": "<선택 이유>"`를 더해 `PUT /api/v1/scheduler/settings`로 보낸다. Dashboard 운영 설정의 "요청 분배
-   바꾸기"도 같은 요청이다. `staticRouting`은 선언 전체이고, 선언이 바뀌면 `reason`이 필수다. instance ID는
-   `/api/v1/pools` 또는 `/api/v1/scheduler/state`의 snapshot에서 읽는다. 응답의 설정 변경 기록은 바꾼 사람, 전후
-   설정과 선언, 선택 이유, `validatedAt`을 담는다. 반영은 `manual-static-routing` 동작의 `actual.routing`과
-   `/api/v1/scheduler/state`의 snapshot routing으로 확인하고, 그 동작의 `operation.settingsValidatedAt`과 ConfigMap 구성의
-   `staticRoutingValidatedAt`이 이 설정 변경의 `validatedAt`이다([설정 API](scheduler-api.md)).
-3. remove: 그 Workload 항목을 `{}`로 바꾼 선언을 같은 방법으로 보내 routing을 지우고, snapshot routing이 비면
-   instance마다 `{"kind": "remove", "workloadUID": "<UID>", "node": {...}, "instance": "<instance ID>"}`를 보낸다.
-   끝나면 그 항목을 뺀 선언을 이유와 함께 보낸다. 남은 항목이 없으면 `"staticRouting": {}`가 선언을 지운다.
-
-r7 뒤 남은 계획기 Pod 다섯 개를 이 순서로 지웠다. routing을 `{}`로 바꾸고 약 5 s 뒤 snapshot routing이 비었고,
-remove 다섯 번이 모두 첫 시도에 `complete`로 끝났다. instance ID로 고르므로 계획기가 만든 `serving-<hash>` Pod도
-같은 방법으로 지운다.
+2. 분배: `{"kind":"route","workloadUID":"<UID>","weights":{"<instance ID>":1000},"reason":"<선택 이유>"}`
+   를 같은 operations endpoint로 보낸다. instance ID는 `/api/v1/pools` 또는
+   `/api/v1/scheduler/state` snapshot에서 읽고, 응답 ACK와 `actual.routing`,
+   해당 인스턴스의 `routable`로 반영을 확인한다(`SCH-36`, `SCH-39`).
+3. 배분만 멈추려면 `unroute`, Pod 기본 표시로 되돌리려면 `release`를 보낸다.
+   완전 정리는 `{"kind":"reset","workloadUIDs":["<UID>"],"reason":"<정리 이유>"}`를 보낸다.
+   설정 PUT으로 `staticRouting`을 수정하거나 클라이언트가 drain/remove/power 순서를 조립하지 않는다.
 
 ## 원자 동작 측정의 격리
 
@@ -199,3 +233,30 @@ Node를 가장 낮은 모드에서 profile 모드로 올린 기록이 가용 노
 (`settlingDurationSeconds`)을 더한 구간이고, 비용에는 목표 모드의 settling 에너지가 들어간다. 그래서 적용이 meter 표본
 간격보다 짧은 전환(jetsonx 약 1.5 s)도 E1의 60 s settling으로 coverage 검사를 통과한다. 측정 구간 전체가 meter 표본
 간격보다 짧으면 coverage 검사가 기록을 `Insufficient`로 남긴다.
+
+## 구현 위치와 검사
+
+- `internal/serving/httpapi/scheduler.go:Handler.scheduler`, `Handler.staticRoutingChange`:
+  설정 PUT의 배분 선언 쓰기를 제거한다. operations의 strict 요청 분기와 권한은 기존 경로에 확장한다.
+- `internal/serving/kube/static_routing.go:SchedulerController.ApplyStaticRouting`,
+  `finishStaticRouting`: route/unroute/release의 UID별 선언·ACK/readback 경로로 전환한다.
+  현재 수동 admission인 `internal/serving/kube/measurement_sequence.go:ExecuteManual`,
+  `manualOperationLocked`에 새 종류와 reset 범위 검증을 확장한다.
+- `internal/serving/kube/operations.go:Operations.Execute`, `StopInstance`,
+  `removeInstance`, `ChangePower`, `Capture`: reset의 단계 실행·native drain·종료·전력
+  readback을 재사용하고 단계별 결과를 누적한다.
+- `internal/serving/runtime_scheduler.go:Runtime.routeWeightLocked`,
+  `applySchedulerTargetLocked`, `schedulerRoutingLocked`: 빈 override와 UID 삭제를 구별하고
+  새 요청의 routable을 유효 분배에서 노출한다. release가 다른 UID를 해제하지 않게 한다.
+- 삭제 대상: `hack/e5/e5.py:CPO.clear_owned`, `CPO.finish`의 클라이언트
+  unroute/drain/remove/Pod 대기/선언 해제/전력 복귀 조립을 reset 호출·결과 보존으로 바꾼다.
+  `CPO.route_ack`의 ConfigMap timestamp/manual-static-routing 추적은 명시적 작업 ACK로,
+  `CPO.start`, `CPO.restore`, `CPO.factor`와 `hack/e5/demo.py:resume`의
+  `staticRouting={}` 재개 조작은 release ACK 후 기존 자율 설정 적용으로 바꾼다.
+  `CPO.put`과 `hack/e5/e5-wire.py:Prepare`의 설정 GET→PUT도 읽기 전용
+  `staticRouting`/`staticRoutingValidatedAt`을 제외해 새 설정 입력 계약에 맞춘다.
+  실험 부하·관측 수집·입력 설정 복원은 유지하며 Workload 정의 삭제는 reset에 넣지 않는다.
+- 검사: route/unroute/release 각각의 선언·실제 readback·타 UID 보존, 잘못된 UID/target·
+  자동제어 충돌 거절, release 뒤 새 측정 인스턴스 실제 요청 수신(`SCH-AC-32`),
+  reset 순서·요청 0·소유 Pod 소멸·빈 Node 모드 Ready, 각 단계 실패 시 후속 미실행,
+  성공한 reset 두 번 호출에서 두 번째 무변경 성공(`SCH-AC-33`)을 확인한다.
