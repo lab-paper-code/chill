@@ -419,18 +419,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}}}); err != nil {
-		t.Fatal(err)
-	}
-	if r.Instances()[0].Routable[d.UID] {
-		t.Fatal("accepted-only drain route advertised new-request eligibility")
-	}
-	if stopped, err := r.StopSchedulerInstance("i1"); err != nil || stopped {
-		t.Fatalf("accepted ingress stranded: %v %v", stopped, err)
-	}
-	if state := r.Instances()[0]; !state.Ready || !state.ObservedAt.Equal(actualAt) {
-		t.Fatalf("retirement or source freshness changed: %+v", state)
-	}
+	assertSchedulerRetainedIngress(t, r, d.UID, actualAt)
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err = first.Wait(canceled); err == nil {
@@ -467,6 +456,22 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 		t.Fatalf("draining could not start: %v %v", stopped, err)
 	}
 	assertSchedulerTerminationReleasesCall(t, r, second, secondReceipt, canceled, exchanged)
+}
+
+func assertSchedulerRetainedIngress(t *testing.T, r *Runtime, uid string, observedAt time.Time) {
+	t.Helper()
+	if err := r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{uid: {}}}); err != nil {
+		t.Fatal(err)
+	}
+	if r.Instances()[0].Routable[uid] {
+		t.Fatal("accepted-only drain route advertised new-request eligibility")
+	}
+	if stopped, err := r.StopSchedulerInstance("i1"); err != nil || stopped {
+		t.Fatalf("accepted ingress stranded: %v %v", stopped, err)
+	}
+	if state := r.Instances()[0]; !state.Ready || !state.ObservedAt.Equal(observedAt) {
+		t.Fatalf("retirement or source freshness changed: %+v", state)
+	}
 }
 
 // m4 r6: a call whose native exchange ended in 502 with no native record of it

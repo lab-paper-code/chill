@@ -311,12 +311,12 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		evidence := newSchedulerReadEvidence()
 		events := evidence.observations(records)
 		sendJSON(w, http.StatusOK, struct {
-			From       time.Time                  `json:"from"`
-			To         time.Time                  `json:"to"`
-			Events     []schedulerReadObservation `json:"events"`
-			NextCursor string                     `json:"nextCursor,omitempty"`
-			GapUntil   *time.Time                 `json:"gapUntil,omitempty"`
-			Coverage serving.ObservationCoverage `json:"coverage"`
+			From       time.Time                   `json:"from"`
+			To         time.Time                   `json:"to"`
+			Events     []schedulerReadObservation  `json:"events"`
+			NextCursor string                      `json:"nextCursor,omitempty"`
+			GapUntil   *time.Time                  `json:"gapUntil,omitempty"`
+			Coverage   serving.ObservationCoverage `json:"coverage"`
 			schedulerReadEvidence
 		}{from, to, events, next, gapUntil, coverage, evidence})
 		return
@@ -327,6 +327,6 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		Events     []serving.SchedulerObservation `json:"events"`
 		NextCursor string                         `json:"nextCursor,omitempty"`
 		GapUntil   *time.Time                     `json:"gapUntil,omitempty"`
-		Coverage serving.ObservationCoverage `json:"coverage"`
+		Coverage   serving.ObservationCoverage    `json:"coverage"`
 	}{from, to, records, next, gapUntil, coverage})
 }

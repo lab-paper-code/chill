@@ -15,12 +15,20 @@ func TestAppliedRequestLifetime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer log.Close(context.Background())
+	defer func() {
+		if err := log.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
 	runtime, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{QueueLimit: 8, ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer runtime.Shutdown(context.Background())
+	defer func() {
+		if err := runtime.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
 	lifetime := 120 * time.Second
 	definition := &serving.Definition{Name: "workload", UID: "uid", Generation: 1, RequestLifetime: &lifetime}
 	if err := runtime.PublishClosed(definition, "test"); err != nil {

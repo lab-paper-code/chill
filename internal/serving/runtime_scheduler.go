@@ -98,40 +98,9 @@ func (r *Runtime) ValidateSchedulerTarget(candidate SchedulerCandidate) error {
 }
 
 func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, validateOnly bool, onlyUID string) error {
-	targets := make(map[string]map[string]int32, len(r.workloads))
-	if err := r.validateSchedulerRoutingLocked(candidate); err != nil {
+	targets, err := r.resolveSchedulerRoutingLocked(candidate)
+	if err != nil {
 		return err
-	}
-	for uid := range candidate.Routing {
-		targets[uid] = nil
-	}
-	for _, wanted := range candidate.Instances {
-		uid := wanted.WorkloadUID
-		weight := candidate.Routing[uid][wanted.ID]
-		if weight < 0 {
-			return failure("InvalidDistribution", "negative target weight")
-		}
-		if uid == "" || weight == 0 {
-			continue
-		}
-		actual, err := r.schedulerSlotLocked(wanted.ID)
-		if err != nil {
-			return err
-		}
-		if actual == nil || !actual.State.Ready || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node {
-			return failure("TargetNotReady", "target %q lacks matching actual readiness", wanted.ID)
-		}
-		workload := r.workloads[uid]
-		if workload == nil || workload.detached || profilePath(workload.definition, actual.Profile) == nil || (actual.OwnerWorkloadUID != "" && actual.OwnerWorkloadUID != uid) {
-			return failure("DefinitionChanged", "target %q does not match current workload %q", wanted.ID, uid)
-		}
-		if targets[uid] == nil {
-			targets[uid] = map[string]int32{}
-		}
-		if _, duplicate := targets[uid][actual.State.ID]; duplicate {
-			return failure("InvalidDistribution", "duplicate physical target for workload")
-		}
-		targets[uid][actual.State.ID] = weight
 	}
 	if validateOnly {
 		return nil
@@ -181,6 +150,43 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 	r.dispatchLocked()
 	r.signal()
 	return nil
+}
+
+// Resolve logical slots once for both validation and actual application.
+func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate) (map[string]map[string]int32, error) {
+	if err := r.validateSchedulerRoutingLocked(candidate); err != nil {
+		return nil, err
+	}
+	targets := make(map[string]map[string]int32, len(candidate.Routing))
+	for uid := range candidate.Routing {
+		targets[uid] = nil
+	}
+	for _, wanted := range candidate.Instances {
+		uid := wanted.WorkloadUID
+		weight := candidate.Routing[uid][wanted.ID]
+		if uid == "" || weight == 0 {
+			continue
+		}
+		actual, err := r.schedulerSlotLocked(wanted.ID)
+		if err != nil {
+			return nil, err
+		}
+		if actual == nil || !actual.State.Ready || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node {
+			return nil, failure("TargetNotReady", "target %q lacks matching actual readiness", wanted.ID)
+		}
+		workload := r.workloads[uid]
+		if workload == nil || workload.detached || profilePath(workload.definition, actual.Profile) == nil || (actual.OwnerWorkloadUID != "" && actual.OwnerWorkloadUID != uid) {
+			return nil, failure("DefinitionChanged", "target %q does not match current workload %q", wanted.ID, uid)
+		}
+		if targets[uid] == nil {
+			targets[uid] = map[string]int32{}
+		}
+		if _, duplicate := targets[uid][actual.State.ID]; duplicate {
+			return nil, failure("InvalidDistribution", "duplicate physical target for workload")
+		}
+		targets[uid][actual.State.ID] = weight
+	}
+	return targets, nil
 }
 
 // Validate logical route declarations before resolving their physical runners.

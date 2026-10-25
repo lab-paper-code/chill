@@ -27,7 +27,7 @@ func TestValidateInputChecksRawContract(t *testing.T) {
 		field string
 	}{
 		"missing field":   {&InferenceInput{Inputs: []RawInput{{Name: "image", Datatype: "BYTES", Data: picture.Bytes()}}}, "inputs"},
-		"unknown field":   {&InferenceInput{Inputs: []RawInput{{Name: "image", Datatype: "BYTES", Data: picture.Bytes()}, {Name: "other", Datatype: "BYTES", Data: []byte("a")}}}, "inputs"},
+		"unknown field":   {&InferenceInput{Inputs: []RawInput{{Name: "image", Datatype: "BYTES", Data: picture.Bytes()}, {Name: schedulerTestOther, Datatype: "BYTES", Data: []byte("a")}}}, "inputs"},
 		"duplicate field": {&InferenceInput{Inputs: []RawInput{{Name: "image", Datatype: "BYTES", Data: picture.Bytes()}, {Name: "image", Datatype: "BYTES", Data: picture.Bytes()}}}, "inputs"},
 		"not BYTES":       {&InferenceInput{Inputs: []RawInput{{Name: "question", Datatype: "FP32", Data: []byte("a")}, {Name: "image", Datatype: "BYTES", Data: picture.Bytes()}}}, "inputs[0].datatype"},
 		"empty":           {sample(picture.Bytes(), nil), "inputs[0].data"},
@@ -51,11 +51,11 @@ func TestProfilePathRequiresAppliedPreprocessorAndDataset(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*Definition, *Profile){
 		"preprocessor image": func(_ *Definition, p *Profile) { p.Condition.Preprocessor.Image = "other@sha256:1" },
-		"preprocessor name":  func(d *Definition, _ *Profile) { d.Preprocessor.Name = "other" },
+		"preprocessor name":  func(d *Definition, _ *Profile) { d.Preprocessor.Name = schedulerTestOther },
 		"output fields":      func(d *Definition, _ *Profile) { d.Preprocessor.Output = []RawField{{Name: "z"}} },
 		"max new tokens":     func(d *Definition, _ *Profile) { d.Preprocessor.MaxNewTokens = 8 },
 		"dataset UID": func(_ *Definition, p *Profile) {
-			p.Condition.ActiveProtocol.Dataset = &derivation.CurveDatasetContract{Name: "data", UID: "other"}
+			p.Condition.ActiveProtocol.Dataset = &derivation.CurveDatasetContract{Name: "data", UID: schedulerTestOther}
 		},
 		"no applied dataset":  func(d *Definition, _ *Profile) { d.Dataset = nil },
 		"no measured dataset": func(_ *Definition, p *Profile) { p.Condition.ActiveProtocol.Dataset = nil },

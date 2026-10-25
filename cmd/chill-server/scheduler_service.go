@@ -343,7 +343,9 @@ func (o *schedulerService) applyStaticRouting(ctx context.Context) {
 	o.staticAppliedRV = o.resourceVersion
 }
 
-func (o *schedulerService) operatingPower(ctx context.Context, from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {
+func (o *schedulerService) operatingPower(
+	ctx context.Context, from, to time.Time, limit int,
+) (serving.OperatingPowerWindow, error) {
 	// Capture one accepted configuration without waiting behind refresh or Tick.
 	config := o.configuration.Load()
 	meters := make([]serving.OperatingPowerMeter, len(config.Meters))

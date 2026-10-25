@@ -78,12 +78,12 @@ type Operation struct {
 	MaxActuationDuration time.Duration `json:"maxActuationDurationNanos,omitempty"`
 	// Holder is the measurement root a measurement power operation acts for;
 	// the Node's measurement taint must name it.
-	Holder         string                      `json:"holder,omitempty"`
-	Target         *serving.SchedulerCandidate `json:"target,omitempty"`
-	SourceConfigRV string                      `json:"sourceConfigRV,omitempty"`
-	StaticRouting  map[string]map[string]int   `json:"staticRouting,omitempty"`
-	ExpectedSeconds *float64 `json:"expectedSeconds"`
-	ExpectedSource *serving.ActionExpectedSource `json:"expectedSource"`
+	Holder          string                        `json:"holder,omitempty"`
+	Target          *serving.SchedulerCandidate   `json:"target,omitempty"`
+	SourceConfigRV  string                        `json:"sourceConfigRV,omitempty"`
+	StaticRouting   map[string]map[string]int     `json:"staticRouting,omitempty"`
+	ExpectedSeconds *float64                      `json:"expectedSeconds"`
+	ExpectedSource  *serving.ActionExpectedSource `json:"expectedSource"`
 	// SettingsValidatedAt names the settings change that declared StaticRouting.
 	SettingsValidatedAt *time.Time `json:"settingsValidatedAt,omitempty"`
 }

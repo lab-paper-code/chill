@@ -372,7 +372,6 @@ func (p *schedulerPlanState) selectCosts() {
 			}
 		}
 		if a.Status == schedulerActionPlanned || a.Status == "" {
-			a.ExpectedSeconds, a.ExpectedSource = nil, nil
 			cost := schedulerCost(p.snap.Costs, a.CostID)
 			if mean, _, _, ok := capacityOperationCost(cost); ok {
 				a.ExpectedSeconds = &mean

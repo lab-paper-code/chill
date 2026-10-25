@@ -246,6 +246,7 @@ type OperationCost struct {
 	// MeasuredAt selects the latest cost per condition.
 	MeasuredAt time.Time `json:"measuredAt"`
 }
+
 // ActionExpectedSource identifies the measured trials behind an action duration.
 type ActionExpectedSource struct {
 	CostID     string                       `json:"costID"`
