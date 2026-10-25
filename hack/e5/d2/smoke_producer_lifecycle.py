@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Main070 bounded local fixtures/structure only; no Kubernetes or producer execution."""
-import ast
+"""Bounded local lifecycle fixtures; no Kubernetes or producer execution."""
 import copy
 import importlib.util
-import inspect
 import json
 from pathlib import Path
 import tempfile
-import textwrap
+import os
+from types import SimpleNamespace
 ROOT=Path(__file__).resolve().parent
 spec=importlib.util.spec_from_file_location('d2_producer_lifecycle_check',ROOT/'conduct_before.py')
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
@@ -45,11 +44,82 @@ try:
         except RuntimeError as error:assert 'UID changed' in str(error)
         else:raise AssertionError('Foreign Job UID deletion allowed')
         assert len(calls)==1 and calls[0][0]=='get'
+        # Exercise the real empty-start wait, producer release and failure cleanup.
+        ready={'snapshot':{'at':'2026-10-25T12:00:00Z','nodes':[],'instances':[{'id':'native/0','ownerWorkloadUID':m.UID,'workloadUID':m.UID,'ready':True}],'routing':{m.UID:{'native/0':1}},'outstanding':0,'inProgressTarget':None},'actions':[]}
+        empty=copy.deepcopy(ready);empty['snapshot'].update(instances=[],routing={})
+        unready=copy.deepcopy(ready);unready['snapshot']['instances'][0]['ready']=False
+        busy=copy.deepcopy(ready);busy['actions']=[{'status':'running'}]
+        foreign=copy.deepcopy(ready);foreign['snapshot']['instances'][0]['ownerWorkloadUID']='other'
+        original_ops=m.OPS;original_popen=m.subprocess.Popen;original_run=m.subprocess.run
+        m.OPS=folder/'ops';(m.OPS/'campaign/v2').mkdir(parents=True)
+        (m.OPS/'campaign/v2/control-alerts.jsonl').write_text('')
+        class Process:
+            def __init__(self,stream=None):self.stdout=stream;self.done=False
+            def poll(self):return 0 if self.done else None
+            def terminate(self):self.done=True
+            def wait(self,timeout=None):self.done=True;return 0
+        try:
+            for name,states,expect_release in [
+                    ('empty',[empty],False),('foreign',[foreign],False),
+                    ('unready',[unready],False),('ready',[empty,unready,busy,ready],True)]:
+                events=[];clock[0]=0
+                lane=object.__new__(m.Conductor);lane.out=folder/name;lane.out.mkdir()
+                lane.phase_out=lane.out/'phase';lane.a=SimpleNamespace(hosts=folder/'hosts')
+                lane.source='fixture-source';lane.pending_node_boots=[]
+                current_settings={'autonomousWorkloads':[],'staticRouting':{},'excludedNodes':[]}
+                lane.settings=lambda:copy.deepcopy(current_settings)
+                def put(settings,reason):
+                    events.append('settings');current_settings.update(copy.deepcopy(settings));return {}
+                lane.put=put;lane.boundary=lambda *args:None
+                lane.assert_policy_idle=lambda:copy.deepcopy(empty)
+                snapshots=iter(states);last=[states[-1]]
+                def state():
+                    value=next(snapshots,last[0]);events.append('state');return copy.deepcopy(value)
+                lane.state=state;lane.wait_idle=lambda:copy.deepcopy(empty)
+                lane.api=lambda method,path,**kwargs:{'pending':0,'assigned':0}
+                lane.control_alerts=lambda offset:offset
+                lane.telemetry_ready=lambda *args:events.append('telemetry')
+                lane.payload_release=lambda *args:None
+                lane.assert_producer_startable=lambda *args:None
+                def job(*args):
+                    assert m.load(lane.out/'lifecycle.json')['instances']
+                    events.append('job');return {}
+                lane.job=job
+                producer={'metadata':{'name':'load','uid':'load-uid','ownerReferences':[{'uid':'job-uid'}]},'spec':{'nodeName':m.D2['producerNode'],'containers':[{'name':'load','resources':{}}]}}
+                lane.wait_load_container=lambda *args:producer
+                def k(argv,**kwargs):
+                    if argv[0]=='create':return {'metadata':{'name':'job','uid':'job-uid'}}
+                    if argv[0]=='exec':events.append('release');raise RuntimeError('fixture release stop')
+                    if argv[:2]==['get','pods']:return {'items':[producer]}
+                    if argv[:2]==['get','pod']:return producer
+                    raise AssertionError(argv)
+                lane.k=k
+                lane.remove_job=lambda *args:events.append('delete')
+                def pages(target,path,start,end):
+                    events.append('raw');m.save(target/'00000.json',{'items':[]})
+                lane.pages=pages
+                def popen(argv,**kwargs):
+                    if 'sample_cgroups.py' in str(argv):return Process()
+                    read_fd,write_fd=os.pipe()
+                    os.write(write_fd,(json.dumps({'d2Event':'ready-for-release','at':m.now()})+'\n').encode());os.close(write_fd)
+                    return Process(os.fdopen(read_fd,'rb'))
+                m.subprocess.Popen=popen
+                def capture_logs(argv,**kwargs):
+                    events.append('producer-log')
+                    return SimpleNamespace(stdout='retained producer log\n',stderr='',returncode=0)
+                m.subprocess.run=capture_logs
+                try:lane.run('diagnostic',50,660,True,empty_start=True)
+                except RuntimeError:pass
+                else:raise AssertionError('Fixture failure was swallowed')
+                assert ('release' in events)==expect_release,(name,events)
+                if expect_release:
+                    assert events.index('job')<events.index('telemetry')<events.index('release')
+                    assert events.index('raw')<events.index('producer-log')<events.index('delete')
+                    assert (lane.phase_out/'diagnostic/failed-producer-load-uid.log').read_text()=='retained producer log\n'
+                else:assert 'job' not in events and 'delete' not in events
+                assert (lane.phase_out/'diagnostic/request-pages/00000.json').exists()
+        finally:
+            m.OPS=original_ops;m.subprocess.Popen=original_popen;m.subprocess.run=original_run
 finally:
     m.time.monotonic=original_monotonic;m.time.sleep=original_sleep
-source=textwrap.dedent(inspect.getsource(m.Conductor.run))
-assert source.index('self.wait_load_container')<source.index('logs=subprocess.Popen')
-handler=next(h for node in ast.walk(ast.parse(source)) if isinstance(node,ast.Try) for h in node.handlers if h.name=='e')
-assert isinstance(handler.body[-1],ast.Raise) and handler.body[-1].exc is None
-assert 'secondary-cleanup-errors.json' in source
-print('producer lifecycle check PASS: actual-running-before-logs structure; init/terminal publication fixtures; raw DELETE UID+RV; foreign UID refusal; original exception rethrow; API/load/build=0')
+print('producer lifecycle check PASS: init/terminal publication; UID+RV deletion; empty/unready/foreign blocked; Ready+idle release; failure raw/log before deletion; API/load/build=0')

@@ -737,10 +737,37 @@ class Conductor:
             if remaining<=0:raise RuntimeError('Static routing ACK did not reach bound weights within194s')
             time.sleep(min(5,remaining))
 
-    def autonomy(self, enabled):
+    def autonomous_ready(self, state):
+        instances=state['snapshot'].get('instances') or []
+        routes=state['snapshot'].get('routing',{}).get(UID,{})
+        if any(i.get('ownerWorkloadUID')!=UID or i.get('workloadUID') not in ('',None,UID) for i in instances):
+            raise RuntimeError('Autonomous physical ownership/served Workload conflicts')
+        positive={key:value for key,value in routes.items() if value>0}
+        if not instances or not positive or not self.idle(state):return False
+        by_id={i['id']:i for i in instances}
+        return (len(by_id)==len(instances) and set(positive)<=set(by_id)
+                and all(i.get('ready') for i in instances)
+                and all(by_id[key].get('workloadUID')==UID for key in positive))
+
+    def wait_autonomous_ready(self, folder):
+        end=time.monotonic()+194
+        while True:
+            state=self.state();save(folder/'unloaded-autonomous-last-state.json',state)
+            if self.autonomous_ready(state):
+                life=load(self.out/'lifecycle.json')
+                life.update(instances=state['snapshot']['instances'],stage='READY_BOUND')
+                save(self.out/'lifecycle.json',life)
+                save(folder/'unloaded-autonomous-ready.json',dict(at=now(),state=state))
+                return state
+            remaining=end-time.monotonic()
+            if remaining<=0:raise RuntimeError('Unloaded autonomous Ready/positive routing/idle unavailable within194s; producer remains blocked')
+            time.sleep(min(5,remaining))
+
+    def autonomy(self, enabled, *, empty_start=False):
         self.wait_idle();settings=self.settings()
         if enabled:
-            self.verify()
+            if empty_start:self.assert_initial_empty(self.assert_policy_idle())
+            else:self.verify()
             settings['autonomousWorkloads']=[UID]
             settings['excludedNodes']=list(D2['excludedNodes'])
             route=copy.deepcopy(settings.get('staticRouting') or {});route.pop(UID,None);settings['staticRouting']=route
@@ -931,7 +958,26 @@ class Conductor:
                     self.pending_node_boots.append(row)
         return new_offset
 
-    def run(self, label, rate, duration, autonomous):
+    def collect_phase(self, folder, start):
+        for suffix in ('cgmon.log','control-alerts.jsonl'):
+            path=OPS/'campaign/v2'/suffix
+            if path.exists():(folder/suffix).write_bytes(path.read_bytes())
+        errors=[]
+        for suffix,path in [('request-pages','/api/v1/observations/workloads/'+UID),('scheduler-pages','/api/v1/observations/scheduler')]:
+            try:self.pages(folder/suffix,path,start,now())
+            except Exception as error:errors.append(suffix+': '+str(error))
+        try:
+            pods=self.k(['get','pods','-o','json']);save(folder/'pods-post.json',pods)
+            serving=[p for p in pods['items'] if p['metadata'].get('labels',{}).get('app.kubernetes.io/component')=='serving-entrypoint']
+            if len(serving)==1:
+                name=serving[0]['metadata']['name']
+                result=subprocess.run(K+['logs',name,'-c','serving-entrypoint','--since-time='+start,'--timestamps=true'],text=True,capture_output=True,env=ENV,timeout=129)
+                (folder/'server.log').write_text(result.stdout);(folder/'server.stderr').write_text(result.stderr)
+                if result.returncode:errors.append('server logs exit '+str(result.returncode))
+        except Exception as error:errors.append('server logs: '+str(error))
+        if errors:raise RuntimeError('Raw collection incomplete: '+str(errors))
+
+    def run(self, label, rate, duration, autonomous, *, empty_start=False):
         phase_dir=self.phase_out/label
         if phase_dir.exists(): raise RuntimeError('Phase directory exists; no implicit rerun')
         self.pending_node_boots=[]
@@ -939,18 +985,29 @@ class Conductor:
         phase_dir.mkdir(parents=True);self.boundary(phase_dir,'pre')
         settings=self.settings()
         if settings.get('autonomousWorkloads')!=[]:raise RuntimeError('Initial autonomy must be off until producer start barrier')
-        self.verify()
+        if empty_start:
+            if not autonomous:raise RuntimeError('Empty start requires autonomous diagnostic')
+            if (self.out/'lifecycle.json').exists():raise RuntimeError('Empty start requires fresh lifecycle evidence')
+            state=self.assert_policy_idle();self.assert_initial_empty(state)
+            save(self.out/'lifecycle.json',dict(startUTC=now(),originalSettings=settings,originalNodes=state['snapshot']['nodes'],instances=[],stage='EMPTY_START',emptyStart=True))
+        else:self.verify()
         hosts=self.a.hosts
         if hosts is None:raise RuntimeError('Exact bound telemetry host inventory required before load')
         alerts=OPS/'campaign/v2/control-alerts.jsonl'
         if not alerts.exists():raise RuntimeError('CPO existing control-alert monitor is not bound')
         alert_offset=alerts.stat().st_size
         sampler=subprocess.Popen([sys.executable,str(ROOT/'sample_cgroups.py'),'--hosts',str(hosts),'--duration','3780','--phase',label,'--out',str(phase_dir)],env=ENV)
-        phase=dict(phase=label,kind='autonomous' if autonomous else 'static-staircase',sourceSha=self.source,rate=rate,warmupSeconds=60,durationSeconds=duration,startUTC=None,endUTC=None,offeredRequests=0 if rate==0 else None,autonomous=autonomous,static=not autonomous)
+        phase=dict(phase=label,kind='autonomous' if autonomous else 'static-staircase',sourceSha=self.source,rate=rate,warmupSeconds=60,durationSeconds=duration,startUTC=None,endUTC=None,offeredRequests=0 if rate==0 else None,autonomous=autonomous,static=not autonomous,emptyStart=empty_start,setupStartUTC=now())
         save(phase_dir/'phase.json',phase)
         jobref=None;logs=None
         autonomy_attempted=False
         try:
+            if empty_start:
+                autonomy_attempted=True
+                self.native_mode_authorized_since=now();phase['nativeModeAuthorizedSinceUTC']=self.native_mode_authorized_since
+                self.autonomy(True,empty_start=True)
+                self.wait_autonomous_ready(phase_dir)
+                save(phase_dir/'phase.json',phase)
             if rate==0:
                 (phase_dir/'client.jsonl').write_text('')
                 self.telemetry_ready(phase_dir)
@@ -996,10 +1053,15 @@ class Conductor:
                                     self.telemetry_ready(phase_dir,pod['metadata']['name'])
                                     self.payload_release(phase_dir,pod)
                                     self.assert_producer_startable(phase_dir,self.k(['get','pod',pod['metadata']['name'],'-o','json']),log_pod)
-                                    if autonomous:
+                                    if autonomous and not empty_start:
                                         autonomy_attempted=True
                                         self.native_mode_authorized_since=now();phase['nativeModeAuthorizedSinceUTC']=self.native_mode_authorized_since
                                         self.autonomy(True)
+                                    if empty_start:
+                                        state=self.state()
+                                        if not self.autonomous_ready(state):raise RuntimeError('Unloaded autonomous readiness changed before producer release')
+                                        expected={i['id'] for i in load(self.out/'lifecycle.json')['instances']}
+                                        if {i['id'] for i in state['snapshot']['instances']}!=expected:raise RuntimeError('Autonomous physical set changed after telemetry binding')
                                     self.assert_producer_startable(phase_dir,self.k(['get','pod',pod['metadata']['name'],'-o','json']),log_pod)
                                     self.k(['exec',pod['metadata']['name'],'-c','load','--','python3','-c',"from pathlib import Path; Path('/tmp/d2-start').touch()"],timeout=30)
                                 elif r.get('d2Event')=='replay-start':
@@ -1024,17 +1086,7 @@ class Conductor:
             time.sleep(2)
             # End sampling only after drain. SIGTERM stops read-only children; no native process is signalled.
             sampler.terminate();sampler.wait(timeout=15)
-            for suffix in ('cgmon.log','control-alerts.jsonl'):
-                path=OPS/'campaign/v2'/suffix
-                if path.exists(): (phase_dir/suffix).write_bytes(path.read_bytes())
-            self.pages(phase_dir/'request-pages','/api/v1/observations/workloads/'+UID,phase['startUTC'],now())
-            self.pages(phase_dir/'scheduler-pages','/api/v1/observations/scheduler',phase['startUTC'],now())
-            pods=self.k(['get','pods','-o','json']);save(phase_dir/'pods-post.json',pods)
-            serving=[p for p in pods['items'] if p['metadata'].get('labels',{}).get('app.kubernetes.io/component')=='serving-entrypoint']
-            if len(serving)==1:
-                name=serving[0]['metadata']['name']
-                r=subprocess.run(K+['logs',name,'-c','serving-entrypoint','--since-time='+phase['startUTC'],'--timestamps=true'],text=True,capture_output=True,env=ENV,timeout=129)
-                (phase_dir/'server.log').write_text(r.stdout);(phase_dir/'server.stderr').write_text(r.stderr)
+            self.collect_phase(phase_dir,phase['startUTC'])
             if jobref:self.remove_job(*jobref);jobref=None
             if self.pending_node_boots:
                 post_state_path=phase_dir/'post-state.json'
@@ -1061,6 +1113,21 @@ class Conductor:
         finally:
             preserving_primary=sys.exc_info()[0] is not None
             cleanup_errors=[]
+            if preserving_primary:
+                try:
+                    self.collect_phase(phase_dir,phase.get('startUTC') or phase['setupStartUTC'])
+                except Exception as cleanup_error:cleanup_errors.append('raw-preservation: '+str(cleanup_error))
+                try:
+                    if jobref:
+                        pods=self.k(['get','pods','-l','job-name='+jobref[0],'-o','json'])
+                        save(phase_dir/'failed-producer-pods.json',pods)
+                        for pod in pods['items']:
+                            if not any(owner.get('uid')==jobref[1] for owner in pod['metadata'].get('ownerReferences',[])):continue
+                            result=subprocess.run(K+['logs',pod['metadata']['name'],'-c','load','--timestamps=true'],text=True,capture_output=True,env=ENV,timeout=129)
+                            (phase_dir/('failed-producer-'+pod['metadata']['uid']+'.log')).write_text(result.stdout)
+                            (phase_dir/('failed-producer-'+pod['metadata']['uid']+'.stderr')).write_text(result.stderr)
+                            if result.returncode:raise RuntimeError('Failed producer log collection exit '+str(result.returncode))
+                except Exception as cleanup_error:cleanup_errors.append('producer-log-preservation: '+str(cleanup_error))
             if preserving_primary and autonomy_attempted:
                 try:
                     current=self.settings();restore=copy.deepcopy(current)
@@ -1096,7 +1163,7 @@ class Conductor:
 
     def cleanup(self):
         life=load(self.out/'lifecycle.json')
-        setup_only=life.get('stage')!='READY_BOUND'
+        setup_only=life.get('stage')!='READY_BOUND' and not life.get('emptyStart')
         exact_ids={i['id'] for i in life['instances']}
         if (self.out/'cleanup-unroute-settings-ack.json').exists():
             raise RuntimeError('Original cleanup unroute already issued; continue its saved receipt, never repeat the PUT')
@@ -1149,6 +1216,7 @@ class Conductor:
         elif command=='autonomy-on':self.autonomy(True)
         elif command=='autonomy-off':self.autonomy(False)
         elif command=='autonomous':self.run('autonomous-'+self.a.phase,self.b['autonomousRate'],660,True)
+        elif command=='autonomous-empty-start':self.run('autonomous-empty-start-'+self.a.phase,self.b['autonomousRate'],660,True,empty_start=True)
         elif command=='cleanup':self.cleanup()
         elif command=='staircase':
             results=[]
@@ -1167,7 +1235,7 @@ class Conductor:
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--command',required=True,choices=['capture','prepare-defaults','continue-unstarted-prepare','accept-prepared-defaults','capture-policy','native-policy','bind-routing','accept-routing','verify-idle8','autonomy-on','autonomy-off','autonomous','cleanup','staircase'])
+    p.add_argument('--command',required=True,choices=['capture','prepare-defaults','continue-unstarted-prepare','accept-prepared-defaults','capture-policy','native-policy','bind-routing','accept-routing','verify-idle8','autonomy-on','autonomy-off','autonomous','autonomous-empty-start','cleanup','staircase'])
     p.add_argument('--binding',required=True,type=Path);p.add_argument('--release',required=True,type=Path)
     p.add_argument('--out',required=True,type=Path);p.add_argument('--phase',required=True)
     p.add_argument('--hosts',type=Path)

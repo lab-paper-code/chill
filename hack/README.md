@@ -124,6 +124,17 @@ python3 /path/to/checkout/hack/e5/d2/bind_before.py \
 
 `conduct_before.py` takes the exact approved `--command`, `--binding`,
 `--release`, `--out`, `--phase` and, for collection, `--hosts` inputs.
+The `autonomous` command starts from the prepared eight-instance binding.
+The `autonomous-empty-start` command records a fresh empty lifecycle, enables
+the target Workload, and waits within the existing 194-second preparation bound
+for owned Ready instances, positive target routing and the existing global
+idle conditions before creating the producer Job. It uses the same autonomous
+rate, 660-second replay and producer release barrier. Its release names
+`command=autonomous-empty-start` and the actual deployed control `sourceSha`;
+execution metadata records the repository harness commit separately.
+Both commands retain diagnostic raw records before owned Job deletion.
+The existing cleanup command consumes the recorded lifecycle. Native mode
+return uses the separately approved native-mode release and its 900-second bound.
 `native_mode_request.py` consumes the explicit native-mode `--release` and
 `--out`. `sample_cgroups.py` consumes an external host inventory plus
 `--duration`, `--phase` and `--out`. The `smoke_*.py` scripts exercise retained
