@@ -33,6 +33,7 @@ export type CampaignResult = {apiVersion:string;kind:string;readAt:string;campai
 export type WireInteger = number | bigint
 export type SchedulerSettings = {
   observationWindowNanos:WireInteger; controlIntervalNanos:WireInteger; comparisonPeriodNanos:WireInteger; maxObservationAgeNanos:WireInteger
+  bootstrapCapacityWaitNanos:WireInteger
   maxReplicas:WireInteger; maxInstances:WireInteger; maxCPUs:WireInteger; servingMemoryBytes:WireInteger
   completionMarginMS:number
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger

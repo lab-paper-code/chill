@@ -123,6 +123,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			profiles := c.observer.Profiles()
 			settings := &c.config.Settings
 			settings.ObservationWindow = 100 * time.Millisecond
+			settings.BootstrapCapacityWait = 10 * time.Minute
 			settings.Controls = serving.SchedulerControls{Placement: true, Resources: true, Membership: true, Replicas: true, Routing: true, Batching: true}
 			settings.AutonomousWorkloads = []string{w1.UID, w2.UID}
 			settings.MinimumDemand = map[string]float64{w2.UID: 0}
