@@ -266,7 +266,11 @@ snapshot의 작은 DTO는 다음과 같다. 아래 `?`는 생략 가능, `null`�
   `state`는 `preparing|serving|draining|removing`이다. `serving`은 수명주기 상태이지 실제
   실행 증거가 아니다. `routable`은 SCH-36의 유효 배분, `running`은 native 실행 단계 관측이다.
 - `routing:{workloadUID:{instanceID:weight}}`는 실제 배분이다. 선언과 목표는 근거 REST에서
-  별도로 읽는다. `decision:null|{id,at,state,reason,inProgressTarget?}`에서 큰 후보·프로파일은 제외한다.
+  별도로 읽는다. `decision:null|{at,recordRef:null|{from,to,offset,kind:"decision",at,id},state,reason,inProgressTarget?}`에서
+  큰 후보·프로파일은 제외한다. 판단 identity는 원본 RFC3339Nano `decision.at`이다.
+  `SchedulerDecision`에 없는 id 필드를 새 원본 식별자로 가정하지 않는다. `recordRef`는
+  기록 완료 후 서버가 발행하는 T4 SchedulerObservationPage의 조회 구간/append offset이며,
+  기존 SchedulerRecordRef 형식의 `id` 값은 decision.at이다(독립 decision ID가 아니다).
 - `actions[]:{id,kind,node:{uid,name},workloadUID,status,startedAt,completedAt?,expectedSeconds:number|null,expectedSource:{costID,reference,statistic:"mean",trialCount}|null}`.
   identity인 `actionKey`는 JSON 튜플 `[id,node.uid,startedAt]`이다. 이벤트의 `action`에는
   `phase:"started|completed|failed"`와 작은 `result?:{status,error?}`가 추가된다.
@@ -524,7 +528,7 @@ DB-FR-35~49의 기본 탐색은 **라이브 무대 → 선택 근거 → 실험 
 | 워크로드 카드 3개 | 시나리오에 고정된 **UID 세 개**의 수신 req/s, `completed/N` 성공률과 분모, p95/p99 및 해당 SLO, SLO 안/밖/실패 막대. 임의 목록 첫 세 개나 모델 이름으로 합치지 않는다. 선택 시 정의/근거/배치/운영/변경과 직접 요청 탭을 연다. |
 | 배치 지도 | 노드 열 × 워크로드 행, 노드 머리글에 실제/목표 모드와 현재 W. 준비/처리/드레인/제거, 실제 routing 비율을 표시한다. ready라도 routable=false/weight=0이면 “준비됨 · 미분배”, running=0이면 “처리 대기”다. 목표 배치를 실제처럼 채우지 않는다. |
 | 시간축 4레인 | 최근 10분 같은 x축의 ① 수신 부하 ② 성공률·지연/SLO ③ 전체·활성 POOL W ④ 판단·prepare/route/unroute/release/reset/drain/stop/remove/power 사건. 일시정지/되감기는 표시 cursor만 바꾸며 수신은 계속한다. live 복귀는 최신 baseline을 사용한다. |
-| 오른쪽 근거 패널 | 이벤트 선택 때만 연다. 선택 decision.id/at의 긴 창·최근 수요와 최소 수요, κ, d, 예상 에너지, 전환 비용·B, 대기 이유를 문장으로 표시한다. 원본 JSON은 접는다. 현재 state를 과거 사건 근거로 대체하지 않는다. |
+| 오른쪽 근거 패널 | 이벤트 선택 때만 연다. 선택 decision.at/보존 기록 참조의 긴 창·최근 수요와 최소 수요, κ, d, 예상 에너지, 전환 비용·B, 대기 이유를 문장으로 표시한다. 원본 JSON은 접는다. 현재 state를 과거 사건 근거로 대체하지 않는다. |
 
 `CapacityPending`은 “용량 측정 근거를 기다리고 있어요”, `TransitionInProgress`는
 “목표로 전환 중이에요 · 남은 작업 …”로 구분한다. 작업 예상은 T4의 expectedSeconds와
@@ -571,13 +575,19 @@ phaseRunning과 일치시킨다. `assignedUnknown`은 실행 증거가 아니다
 구현 위치는 예정된 `features/live-stage.tsx:LiveStage`, `lib/live.ts`의 DTO/검증/reducer,
 기존 shell/sidebar와 catch-all이다. 화면을 합친 뒤 obsolete route와 import는 남기지 않는다.
 
-근거의 작은 live DTO에는 κ/d/B 원문을 넣지 않는다. 기존 `schedulerRecordRef`,
-`readSchedulerRecord`(`lib/scheduler-history.ts`)의 고정 구간/append offset/사건 identity로
-`GET observations/scheduler`에서 선택 판단을 복원하고 decision.id가 일치하는지 확인한다.
+근거의 작은 live DTO에는 κ/d/B 원문을 넣지 않는다. 서버는 판단을 보존한 뒤 그
+`decision.at`과 같은 행의 `recordRef`(원래 조회 from/to, append offset과 사건 identity)를
+함께 발행한다. 앞단/브라우저가 현재 페이지의 행 번호로 offset을 다시 만들지 않는다.
+패널은 `readSchedulerRecord`로 참조를 읽고 `schedulerRecordPath`의
+`GET observations/scheduler?from=…&to=…&limit=1&cursor=…`를 호출한 뒤
+`schedulerRecordMatches`와 응답 decision.at의 원본 시각 일치로 선택 사건을 확인한다.
+참조가 없는 과거 행은 해당 at을 포함하는 고정 조회 구간을 페이지 끝까지 읽고 decision.at이
+일치하는 판단을 찾는다. 매칭되지 않으면 근거 없음이지 최신 state로의 fallback이 아니다.
+이 방식은 `chill-dashboard/lib/scheduler-history.ts:schedulerRecordRef/readSchedulerRecord/
+schedulerRecordPath/schedulerRecordMatches`(:3-31)의 at 기반 identity를 그대로 사용한다.
 `GET scheduler/capacity`는 원래 후보 identity/조건을 보존해 보조 근거를 읽는다.
-`relayPlan`에 이 정확한 GET/허용 query를 추가한다. 기록을 못 찾으면 근거 없음이지 최신
-판단으로의 fallback이 아니다. 이름/모델은 해당 records의 definitions/snapshot.workloads,
-요청별 모델은 exact definitionID로 해석한다. 못 찾으면 UID를 병기한다(DB-FR-43).
+`relayPlan`에 이 정확한 GET/허용 query를 추가한다. 이름/모델은 해당 records의
+definitions/snapshot.workloads, 요청별 모델은 exact definitionID로 해석하며 못 찾으면 UID를 병기한다(DB-FR-43).
 
 ### 6.2 안내형 입력
 
@@ -699,8 +709,29 @@ DB-FR-40~45의 제품 재생은 [T4 관측 설계](../serving/observability-spli
 같은 UID/원본 시각의 관측은 local 우선, 없는 시간대는 archive로 읽는다.
 `coverage:{from,to,sources:[{from,to,stream,source,store?,key?}],gaps:[{from,to,stream,reason}]}`
 (`source=local|archive`)를 유지한다. 브라우저가 S3나 ops 디렉터리를 직접 읽지 않는다.
-재생 adapter가 같은 v1 메시지/reducer와 LiveStage에 데이터를 넣고 라이브 socket은 열지 않는다.
-단계 이동/되감기는 선택 시각 전 baseline부터 다시 적용해 결정론적으로 복원한다.
+재생 adapter는 다음 조회 결과를 v1 메시지/reducer와 LiveStage에 투영하며 라이브 socket은 열지 않는다.
+
+| 입력 endpoint | 페이지 진행과 재생 투영 |
+|---|---|
+| `GET /api/v1/experiments[/{id}]` | T4 summary에서 실행/단계 경계·KPI·출처를 고정한다. 단계 KPI를 초별 metrics로 보간하지 않는다. |
+| `GET /api/v1/observations/scheduler?from=…&to=…&limit=…&cursor=…` | 같은 from/to를 유지해 nextCursor가 없을 때까지 읽는다. 각 행의 원래 append offset/ref를 보존한 채 at 오름차순, 동시각은 원래 append 순서로 정렬한다. 단계 pre-state는 경계 시각 이하의 마지막 보존 snapshot에 경계 전 실제 변경을 반영한 상태다. 그 snapshot을 찾는 데 필요한 앞선 구간도 같은 API로 읽는다. pre-state에서 baseline snapshot을 만들고 decision/snapshot 행의 실제 상태 차이를 delta로, decision/action 행을 event로 투영한다. 목표·expected가 아니라 actual만 상태에 반영한다. baseline이나 실제 결과가 없으면 해당 구간은 공백으로 남긴다. |
+| `GET /api/v1/observations/workloads/{uid}?from=…&to=…&limit=…&cursor=…` | UID별 **수신 cohort**의 raw requests를 nextCursor가 없을 때까지 모은다. 실행 전체 수신 구간과 pre-state에 남은 요청의 가장 이른 receivedAt까지 포함해 앞선 단계에서 넘어온 요청을 포함한다. `(workloadUID,requestID)`로 중복을 제거하고 final 행을 우선한다. `kind=final`이며 응답 elapsedNanos가 있는 행의 `receivedAt+elapsedNanos`를 응답 종결 시각으로 복원해 초별로 묶는다. received는 원래 수신 초에 센다. |
+
+서버의 1초 metrics 재생 API는 현재 없다. 따라서 **재생 모드에서만** 위 raw 요청 행을
+클라이언트가 초별 재집계한다. 성공/실패(취소·timeout·전달 실패 포함), N과 SLO 안/밖,
+유효 지연의 p50/p95/p99 및 latencySamples는 4.4절과 같은 규칙이며 SLO는 exact
+definitionID의 정의를 쓴다. REST의 cohort 통계는 지연 표본 제외 조건이 다르므로
+그 분위수를 초별 값으로 복사하지 않는다. `receivedAt+elapsedNanos`는 원본 ns 정밀도로
+계산하고 종결 시각/정의가 없는 행이나 조회 밖 요청은 미확인·공백으로 남긴다.
+화면에는 **“기록 재생 · 수신 cohort 원시 행을 응답 종결 시각으로 클라이언트 재집계”**와
+실제 수신 조회 구간을 표시해 서버 push 완료 버킷과 출처·경계 차이를 알린다.
+
+전력 레인은 scheduler 페이지의 실제 power.Samples를 collector ObservedAt 초로 묶어
+4.4절의 노드 평균/완전한 범위 합계 규칙을 적용한다. 단계 J는 summary의 서버 KPI나
+`GET /api/v1/observations/power?from=…&to=…`의 coverage 검증 적분값을 사용한다.
+합쳐진 snapshot/delta/event/metrics는 원본 시각 오름차순, 같은 시각에서는 baseline→
+delta→event→metrics의 고정 순서로 adapter 내부 seq를 부여한다. 단계 이동/되감기는
+그 단계 pre-state baseline부터 선택 시각까지 다시 적용해 결정론적으로 복원한다.
 
 단계 표에는 보낸 수·성공률(부하 생성기), 받은 수·성공률(서버의 같은 수신 cohort),
 SLO 안 비율·지연·배치 변경·단계 J를 각 분자/분모/출처와 함께 표시한다.
