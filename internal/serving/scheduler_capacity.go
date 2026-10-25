@@ -1158,6 +1158,7 @@ type capacityResult struct {
 	key      string
 	joules   float64
 	worst    float64
+	excesses []float64 // per-Workload worst exceedances, descending
 	feasible bool
 	// final marks a plan set whose final (steady-state) judgment holds for
 	// every Workload, route weights within κ included.
@@ -1203,6 +1204,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		}
 	}
 	res.feasible, res.final, res.worst = true, true, math.Inf(-1)
+	res.excesses = make([]float64, len(p.ws))
 	for w, ws := range p.ws {
 		slices.SortFunc(items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
 		knew, kret, weightSum := 0.0, 0.0, 0.0
@@ -1255,6 +1257,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		res.feasible = res.feasible && j.satisfied
 		res.final = res.final && ok && j.final != nil && *j.final <= 0
 		res.worst = max(res.worst, worst)
+		res.excesses[w] = worst
 		served, mean := 0.0, 0.0
 		for k, item := range items[w] {
 			served += y[k]
@@ -1275,6 +1278,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		res.rows = append(res.rows, rows)
 		res.sums = append(res.sums, [2]float64{knew, kret})
 	}
+	slices.SortFunc(res.excesses, func(a, b float64) int { return cmp.Compare(b, a) })
 	res.key = strings.Join(keys, "|")
 	return res
 }
@@ -1322,9 +1326,9 @@ func (p *capacityPlanner) currentWeights(uid string, items []capacityItem, fill 
 	return current, carries
 }
 
-// better orders feasible plan sets first; among the rest a plan set that ends
-// feasible (final judgment) before one that does not, then the smaller worst
-// exceedance. Then energy, keep and the logical key.
+// better orders feasible plan sets first; among the rest final-feasible first,
+// then lexicographically smaller descending per-Workload exceedances.
+// Only a complete tie reaches energy, keep and the logical key.
 func (a capacityResult) better(b *capacityResult) bool {
 	if b == nil {
 		return true
@@ -1335,8 +1339,10 @@ func (a capacityResult) better(b *capacityResult) bool {
 	if !a.feasible && a.final != b.final {
 		return a.final
 	}
-	if !a.feasible && a.worst != b.worst {
-		return a.worst < b.worst
+	if !a.feasible {
+		if order := slices.Compare(a.excesses, b.excesses); order != 0 {
+			return order < 0
+		}
 	}
 	if a.joules != b.joules {
 		return a.joules < b.joules
