@@ -206,6 +206,43 @@ func TestObserverTerminationRequiresExactContainerEvidence(t *testing.T) {
 	}
 }
 
+func TestObserverWatchInvalidationSurvivesLedgerPublicationAC37(t *testing.T) {
+	for _, condition := range []string{"container unready", "pod unready", "deleting"} {
+		t.Run(condition, func(t *testing.T) {
+			pod, _, _, _ := observerSourceFixture()
+			observer := newTestObserver(t)
+			observer.restoreSources([]corev1.Pod{*pod})
+			source := observer.sources[string(pod.UID)]
+			source.instance.State.Ready = true
+			switch condition {
+			case "container unready":
+				pod.Status.ContainerStatuses[0].Ready = false
+			case "pod unready":
+				pod.Status.Conditions = nil
+			case "deleting":
+				now := metav1.Now()
+				pod.DeletionTimestamp = &now
+			}
+			w := watch.NewRaceFreeFake()
+			w.Modify(pod)
+			w.Stop()
+			observer.wg.Add(1)
+			observer.watchPods(w)
+			if source.instance.State.Ready || source.stopped {
+				t.Fatal("watch must close dispatch eligibility without inventing termination")
+			}
+			if err := observer.publishLedger(nil); err != nil {
+				t.Fatal(err)
+			}
+			for _, instance := range observer.runtime.Instances() {
+				if instance.Ready {
+					t.Fatal("ledger publication reactivated an invalidated source")
+				}
+			}
+		})
+	}
+}
+
 func TestSourceFinalizerDeltaSurvivesStatusRace(t *testing.T) {
 	for _, present := range []bool{true, false} {
 		for _, replacement := range []bool{false, true} {

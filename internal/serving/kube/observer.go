@@ -830,11 +830,11 @@ func (o *Observer) watchPods(w watch.Interface) {
 					status := firstfloorStatus(pod)
 					changed := event.Type == watch.Deleted || status == nil || status.ContainerID != source.containerID || status.State.Running == nil
 					if changed || pod.DeletionTimestamp != nil || !status.Ready || !podReady(pod) {
+						source.instance.State.Ready = false
 						o.disable(physicalID(source.uid, source.containerID), "native Pod readiness/identity unavailable")
 					}
 					if changed {
 						source.stopFollow()
-						source.instance.State.Ready = false
 						source.deleted = event.Type == watch.Deleted
 					}
 				}

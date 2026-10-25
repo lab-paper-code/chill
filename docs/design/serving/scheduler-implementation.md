@@ -411,6 +411,8 @@ slot 해석이 필요한 prepare 완료에서 한 번 정확 신분으로 해결
 2. Pod watch와 기존 controller-runtime 재조정이 수명·종료 상태를 갱신한다.
    terminal/terminating Pod를 steady Ready 목록에서 제외해도 장부에서는 제외하지 않는다.
    relabel·owner 해석 실패·native/Service/LIST/log 실패·ACK pending은 항목 삭제 사유가 아니다.
+   watch가 Ready 해제나 삭제 시작을 확인하면 runtime뿐 아니라 장부의 dispatch 자격도
+   닫는다. 다른 source의 완료 게시가 성공 재검증 없이 해당 항목을 다시 Ready로 만들지 않는다.
 3. 동일 UID/container의 실제 종료를 확인하고, 기존 finalizer/제거 절차의 필요한 정리와
    해당 UID의 삭제를 확인한 뒤에만 항목을 퇴역시킨다. 실행원이 한 번도 생기지 않은
    init 실패 Pod는 `kube/observer.go:podTerminated`의 기존 판정(terminal Pod이며
