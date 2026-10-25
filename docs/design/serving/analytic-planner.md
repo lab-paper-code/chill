@@ -69,7 +69,7 @@ m4/r7의 합성 d 114행 표는 GOMAXPROCS 12에서 132 s, CPU 804 s였다.
 
 | 값 | 정의 |
 |---|---|
-| `λ_w` | (관측한 창의 계산 도착 수 + 대기 수) / 관측한 창 길이. 도착은 재생이 쓰던 `Compute` 또는 `Accepted` 도착. 관측한 창은 관측 창 중 ChillServer가 시작한 뒤의 부분(`snapshot.observedSince`부터, 판단의 `search.windowStart`)이다. 내려가 있던 동안의 도착은 기록되지 않았으므로 창 전체로 나누면 λ가 작게 나온다(m4 r6: 40 req/s에서 재시작 뒤 λ 4.8로 genesis2, lattepanda, rasp5 q1-lut를 지웠다). 관측한 부분이 제어 주기(관측 창이 더 짧으면 관측 창)보다 짧으면 판단은 `Pending`(`PartialObservationWindow`)이고, 관측 창보다 짧은 동안 계획은 확장만 한다(14장 부분 관측 창) |
+| `λ_w` | `max(장기 계산 도착률, 최근 계산 도착률) + q_w / 장기 관측 길이`. 장기는 `observationWindowNanos`, 최근은 `controlIntervalNanos`이며 두 구간의 끝은 `snapshot.observationEnd`다. 장기의 시작은 `max(observationEnd−observationWindow, observedSince)`, 최근의 시작은 `max(장기 시작, observationEnd−controlInterval)`이다. 각 반열린 구간의 `Compute` 또는 `Accepted` 도착 중 불변 정의가 있는 수를 해당 실제 관측 길이로 나눈다. 실패와 취소도 이 도착 정의를 따른다. 미완료 기여는 장기 관측 길이로 한 번 더한다. 용량, 전환 지연, 분배와 요청 에너지가 이 λ를 함께 쓴다. 장기 관측 길이가 `min(observationWindow, controlInterval)`보다 짧으면 `Pending`(`PartialObservationWindow`)이고, 장기 관측 창이 덜 찬 동안 계획은 확장만 한다 |
 | `κ_new,w` | c의 w 인스턴스 κ 합 |
 | `κ_ret,w` | route 전까지 남는 지금 인스턴스의 κ 합. 모드를 바꾸는 노드는 power 동작 전에 인스턴스를 모두 멈추므로 그 인스턴스는 빠진다. 같은 모드의 노드 계획은 분배된 인스턴스를 route 뒤에만 멈춘다(14장 만든 뒤 끊기) |
 | `r` | route 전 사슬의 최대 시간(동작마다 측정 trial 최대 시간) |
@@ -88,6 +88,11 @@ m4/r7의 합성 d 114행 표는 GOMAXPROCS 12에서 132 s, CPU 804 s였다.
 
 **사슬.** `schedulerPlan`의 순서다. 모드 변경은 power, 모든 기존 remove, prepare가 route 전이다. 같은 모드에서는 자원이 함께 들어가지 않을 때만 remove가 prepare 앞이고, 아니면 route 뒤다. 동작마다 측정 trial의 평균 wall J, 평균 시간, 최대 시간을 쓴다. 비용이 없으면 그 계획은 `MissingOperationCost`로 빠진다. 같은 인스턴스의 배치 상한이나 대기 시간을 바꾸는 계획은 그 인스턴스를 그대로 쓰고 route가 firstfloor policy를 바꾼다(사슬 없음). 서빙 Pod는 측정한 모든 배치를 시작할 때 초기화하고(`batchSizes`, m4 r2의 rasp5 q2 config는 1~16), firstfloor `Scheduler.Update`는 초기화되고 측정된 배치 안에서 policy의 `maxBatchSize`와 `maxBatchWaitMS`를 재시작 없이 바꾸며, route의 `applyPolicy`가 그 값의 native ACK를 기다린다.
 
+target에 인스턴스가 없고 실제로도 빈 노드의 공통 `Fixed` 절전은 다른 노드의 route와 병렬로 계속한다.
+target이 사용하는 노드의 `Fixed` 내림, 전력 올리기, remove와 prepare는 같은 노드의 순서를 유지한다.
+route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 기존 요청 인계를 유지한다.
+공통 절전의 실제 소비와 시간은 전체 POOL 측정에 계속 포함한다.
+
 **비교 기간.** `T = max(comparisonPeriodNanos, 공간의 최장 route 전 사슬 + 최장 route 뒤 remove)`(최대 시간)를 판단마다 하나 정하고 keep과 모든 계획에 쓰며 `decision.capacity.periodNanos`에 남긴다. 모든 사슬이 T 안에 끝난다. 비교 기간을 정하는 방법은 04 명세가 설계에 맡긴다. sample의 `comparisonPeriodNanos`는 사용자 결정으로 10분이다(m4 r5 뒤). T는 에너지 순서만 바꾸고 SLO 판정(3장)은 T와 무관하므로 부하가 오를 때 첫 판단의 확장은 T와 상관없다. m4 r5 기록에서 T만으로는 풀리지 않는 것: 분배되지 않은 genesis3 q2와 orangepi q1은 인스턴스를 띄운 노드 전력(49.80 W, 2.71 W)이 빈 노드(49.97 W, 2.73 W)보다 크지 않아 remove가 어떤 T에서도 에너지 이득이 아니다. 배치 상한 교체(genesis3 b1↔b2)와 SLO 때문에 준비한 인스턴스의 remove는 T 152 s에서 이미 이득(79~1,265 J)이었고 이득은 T에 비례해 커진다. 그래서 14장의 유휴 제거, 교체 회수, Overload 준비 유지 규칙을 둔다.
 
 **에너지.** 노드 계획 하나의 [0, T] 노드 에너지는 keep이면 `P_before × T`, 아니면 `J_pre + P_mid × (r − t_pre) + J_post + P_after × (T − r − t_post)`(t는 평균 시간)다. P는 `schedulerBaseline`의 적재 상태 전력이다. 요청 에너지는 route에서 나눈다: [0, r]은 지금 routing으로 남는 인스턴스가 κ_ret까지 처리하고(`Σ y⁰_i e_i r`), 넘친 `max(0, λ − κ_ret) × r`건과 [r, T]는 target 배정 y로 처리한다(`Σ y_i e_i (T − r)`와 넘친 건수 × y 가중 평균 e). 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.
@@ -97,6 +102,15 @@ m4/r7의 합성 d 114행 표는 GOMAXPROCS 12에서 132 s, CPU 804 s였다.
 **router 가중치.** 지금 가중치는 그 해의 인스턴스 κ 안에 들면 그대로 둔다. 지금 분배된 인스턴스가 모두 해에 있고, 합이 1,000이며, 모든 인스턴스에서 `(λ_w + B_w / (L_w − m)) × weight / 1,000 ≤ κ_i`이면 그 가중치(새 인스턴스는 0)를 쓴다. 아니면 고른 해의 인스턴스 κ로 e가 작은 인스턴스부터 κ까지 채울 양은 λ이고, 대기가 있는 Workload(`B_w > 0`)에서는 λ에 밀린 요청을 `L − m` 안에 비우는 `B_w / (L_w − m)`을 더한다. 그 양을 채운 몫이나, 양이 κ 합을 넘으면 κ에 비례한 몫을 합 1,000의 정수로 최대 나머지 반올림한다. 반올림 뒤 모든 인스턴스에서 `λ_w × weight / 1,000 ≤ κ_i`를 확인하고, 넘치면 그 인스턴스의 한 단위를 여유가 가장 큰 인스턴스로 옮긴다. 옮길 곳이 없으면 그 해는 `RouteWeightExceedsCapacity`로 최종 미충족이다. 배정 0인 인스턴스는 가중치 0이고, 채울 양이 0이면 같은 가중치다. 요청 에너지의 y는 λ를 가중치대로 나눈 값이다. keep의 가중치가 바뀌면 사슬 없이 route 동작 하나다. 근거: m4 r2의 포아송 40 req/s에서 λ 12.8(관측 창 지연), 대기 160, 남는 인스턴스 없음, 새 인스턴스 넷(κ 42.0, 48.3, 114.6, 144.5)이었고, λ만 채우면 rasp5 q2가 1,000을 받아 대기를 홀로 받았다. B 363.9, `L − m` 0.861 s에서 채울 양 435 req/s가 κ 합 349를 넘으므로 가중치는 120, 138, 328, 414다. m4 r4의 40 req/s에서 판단마다 가중치를 다시 정하면 대기가 있을 때의 비우는 모양과 대기가 없을 때 rasp5 q1을 κ 25.3에 채우는 에너지 모양이 번갈아 75분에 route 동작 181번이었고 rasp5 q1의 1 s 안 응답은 47%였다.
 
 **판단 기록.** `ExpectedJoules`는 고른 해를 정확한 y로 다시 계산한 위 분석 합이다. `decision.capacity`는 T, Workload별 λ, `κ_new`, `κ_ret`, B, W, 두 초과량, 고른 r, 가중치, 사용한 용량표 행 키, 탐색 범위 `search`(마지막 이웃 크기 `neighborhood`, 평가한 계획 집합 수 `evaluated`, 탐색 시간 `durationNanos`, 시간 예산으로 끝났으면 `budgetCut`), 그리고 노드 계획마다 key, 적격 여부, 제외 사유(`MissingOperationCost`, `CapacityPending`, `CapacityRejected`, `InfeasibleResources`, `FixedWorkload`, `PlacementInventoryMissing`), κ, 사슬 시간, J를 담는다(`SCH-30`). 평가한 계획 집합의 목록은 기록하지 않는다.
+
+`decision.search`의 `windowStart`, `windowEnd`, `recentWindowStart`는 두 구간을 나타낸다.
+Workload별 `loads`의 `computeInputs`와 `inputsPerSecond`는 장기 관측값을 유지하고,
+`recentComputeInputs`와 `recentInputsPerSecond`는 최근 구간의 계산 도착 수와 요청률이다.
+`decision.capacity.workloads`의 `queued`와 `rate`로 미완료 기여를 포함한 최종 λ를 확인한다.
+최근 관측률이 장기 관측률보다 큰 Workload의 이미 서빙하던 인스턴스를 지우거나 교체하는 노드 계획은
+`DemandIncreasing`으로 빠지고 그 Workload의 분배된 인스턴스는 양수 가중치를 유지한다.
+그 Workload의 확장과 다른 Workload의 축소, 교체와 분배 판단은 계속한다.
+기존 진행 중 목표의 유지 규칙과 장기 관측 창을 쓰는 유휴 제거, 교체 회수는 유지한다.
 
 **비용.** 한 걸음의 평가 수는 노드 계획 수의 쌍곱(k = 2)과 세 쌍곱(k = 3)에 비례하고 요청 수와 무관하다. 평가 하나는 약 5 µs다. E5 규모의 노드 계획 수, 걸음 수, 탐색 시간과 정확한 최소 대비 에너지 차는 [용량표 근거 7장](capacity-table-evidence.md#7-계획-탐색)이다.
 
@@ -166,6 +180,14 @@ mobilenet CPU 8개와 GPU 2개는 새 규칙 미재인증 legacy로 소비한다
 D2 뒤 재측정 범위는 CPU 8개, GPU 5개, PLC 12개다.
 Smol D04/D09의 새 record는 소비 source를 대체하며 옛 CPU 2개의 raw/status는 보존한다.
 모드나 identity가 맞는 d가 없으면 `MissingDispatchOccupancy`, 정확 비용이 없으면 `MissingOperationCost`로 남긴다.
+
+수요 판단과 전환 사슬의 영향 측정은 E1의 무부하에서 유부하 전환, E4의 이동 사슬,
+E5-0의 첫 구성과 공통 절전, E5-1의 첫 유입, E5-2와 E5-3의 증가,
+E5-4의 과부하, E5-5의 재증가, E5-6의 유지 전력과 E5-S의 선택 구성 비교다.
+각 구간은 두 관측률과 최종 λ, 보호된 용량, 실제 route 적용 시각,
+준비와 전력 사슬, 모든 유효 offered 결과와 전환 포함 전체 POOL 에너지를 연결한다.
+runtime 7종 digest, profile, d, 완료 여유, 비용과 baseline 입력 및 판정은 유지한다.
+요청 에너지의 기존 λ 채움 모델과 실제 가중치의 차이는 같은 추정 한계로 보존한다.
 
 ## 9. 검사 계약
 

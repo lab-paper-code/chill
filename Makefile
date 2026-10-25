@@ -638,7 +638,7 @@ $(ENVTEST): $(LOCALBIN)
 
 .PHONY: kubeconform
 kubeconform: $(KUBECONFORM) ## Download kubeconform locally if necessary.
-$(KUBECONFORM): $(LOCALBIN)
+$(KUBECONFORM): | $(LOCALBIN)
 	$(call go-install-tool,$(KUBECONFORM),github.com/yannh/kubeconform/cmd/kubeconform,$(KUBECONFORM_VERSION))
 
 .PHONY: golangci-lint

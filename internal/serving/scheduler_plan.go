@@ -102,6 +102,7 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 	if snapshot.ObservedSince.After(search.WindowStart) {
 		search.WindowStart = snapshot.ObservedSince
 	}
+	search.RecentWindowStart = maxTime(search.WindowStart, search.WindowEnd.Add(-settings.ControlInterval))
 	loads := map[string]*SchedulerLoad{}
 	for _, a := range snapshot.Arrivals {
 		if ctx.Err() != nil {
@@ -127,6 +128,9 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 		if (a.Compute || a.Accepted) && a.Definition != nil {
 			search.ComputeInputs++
 			load.ComputeInputs++
+			if !a.At.Before(search.RecentWindowStart) {
+				load.RecentComputeInputs++
+			}
 		}
 	}
 	keys := []string{}
@@ -144,6 +148,9 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 		load := *loads[key]
 		if covered := search.WindowEnd.Sub(search.WindowStart); covered > 0 {
 			load.InputsPerSecond = float64(load.ComputeInputs) / covered.Seconds()
+		}
+		if covered := search.WindowEnd.Sub(search.RecentWindowStart); covered > 0 {
+			load.RecentInputsPerSecond = float64(load.RecentComputeInputs) / covered.Seconds()
 		}
 		search.Loads = append(search.Loads, load)
 	}
@@ -530,7 +537,9 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 					p.add(schedulerActionRemove, n.Node, i.ID, schedulerState(i), "unloaded", deps)
 				}
 			}
-			if tail := p.nodeTail[n.Node.UID]; tail != "" {
+			// Empty common lowering runs independently of the target's route.
+			needed := slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node })
+			if tail := p.nodeTail[n.Node.UID]; tail != "" && (needed || len(drains) != 0 || !p.actions[len(p.actions)-1].Fixed) {
 				p.prepares = append(p.prepares, tail)
 			}
 		}

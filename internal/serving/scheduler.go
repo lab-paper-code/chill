@@ -314,24 +314,27 @@ type SchedulerCandidate struct {
 }
 type SchedulerSearch struct {
 	// Examined counts the node plans built for the decision.
-	Examined      int               `json:"examined"`
-	Bounds        SchedulerSettings `json:"bounds"`
-	WindowStart   time.Time         `json:"windowStart"`
-	WindowEnd     time.Time         `json:"windowEnd"`
-	Received      int               `json:"received"`
-	Accepted      int               `json:"accepted"`
-	ComputeInputs int               `json:"computeInputs"`
-	Population    string            `json:"population"`
-	Loads         []SchedulerLoad   `json:"loads"`
+	Examined          int               `json:"examined"`
+	Bounds            SchedulerSettings `json:"bounds"`
+	WindowStart       time.Time         `json:"windowStart"`
+	WindowEnd         time.Time         `json:"windowEnd"`
+	RecentWindowStart time.Time         `json:"recentWindowStart"`
+	Received          int               `json:"received"`
+	Accepted          int               `json:"accepted"`
+	ComputeInputs     int               `json:"computeInputs"`
+	Population        string            `json:"population"`
+	Loads             []SchedulerLoad   `json:"loads"`
 	// ComparedNodes are the Nodes with an eligible plan other than keep; ExpectedJoules sums only them.
 	ComparedNodes []NodeReference `json:"comparedNodes"`
 }
 type SchedulerLoad struct {
-	UID             string  `json:"uid"`
-	Received        int     `json:"received"`
-	Accepted        int     `json:"accepted"`
-	ComputeInputs   int     `json:"computeInputs"`
-	InputsPerSecond float64 `json:"inputsPerSecond"`
+	UID                   string  `json:"uid"`
+	Received              int     `json:"received"`
+	Accepted              int     `json:"accepted"`
+	ComputeInputs         int     `json:"computeInputs"`
+	InputsPerSecond       float64 `json:"inputsPerSecond"`
+	RecentComputeInputs   int     `json:"recentComputeInputs"`
+	RecentInputsPerSecond float64 `json:"recentInputsPerSecond"`
 }
 
 // Workload decision states.

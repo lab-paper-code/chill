@@ -231,6 +231,108 @@ func TestCapacityPartialWindowOnlyExpands(t *testing.T) {
 	}
 }
 
+// A mature observation process still sees a new step through its recent window.
+// The same λ reaches capacity, transient delay, route shares and request energy.
+func TestCapacityRecentDemandExpandsWithOutstandingOnce(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+	snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
+	d := snap.Workloads[0]
+	d.SLO.TargetLatency = time.Second
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", d.UID)
+	snap.Options = append(snap.Options, poolsOption(i2))
+	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(i2), "fixed")}
+	capacityLoad(s, &snap, d, 50)
+	recent := snap.ObservationEnd.Add(-s.ControlInterval)
+	snap.Arrivals = slices.DeleteFunc(snap.Arrivals, func(a SchedulerArrival) bool { return a.At.Before(recent) })
+	for j := range 6 {
+		snap.Outstanding = append(snap.Outstanding, SchedulerRequest{ID: fmt.Sprint("q", j), Definition: d, ReceivedAt: snap.At, Phase: phasePending})
+	}
+	rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{"profile": 25, i2.Profile.ID: 100}))
+	got := capacityDecideForTest(t, s, snap, rows)
+	if got.Target == nil || !poolsOn(*got.Target, n2) || got.Capacity == nil {
+		t.Fatalf("recent demand must expand: %s %v %+v", got.Status, got.Reasons, got.Target)
+	}
+	load, w := got.Search.Loads[0], got.Capacity.Workloads[0]
+	rate := 50.1 // 500/10 + 6/60, rather than (500+6)/60
+	if !got.Search.RecentWindowStart.Equal(recent) || load.RecentComputeInputs != 500 ||
+		math.Abs(load.InputsPerSecond-500.0/60) > 1e-9 || load.RecentInputsPerSecond != 50 ||
+		math.Abs(w.Rate-rate) > 1e-9 || w.Queued != 6 {
+		t.Fatalf("demand inputs: %+v %+v %+v", got.Search, load, w)
+	}
+	if math.Abs(w.Backlog-(6+(rate-25)*got.Capacity.Route.Seconds())) > 1e-9 ||
+		w.WaitSeconds == nil || math.Abs(*w.WaitSeconds-w.Backlog/w.KappaNew) > 1e-9 {
+		t.Fatalf("transient demand differs: %+v", w)
+	}
+	for id, weight := range w.Weights {
+		kappa := 100.0
+		if id == "i1" {
+			kappa = 25
+		}
+		if rate*float64(weight)/schedulerRouteUnits > kappa*(1+1e-12) {
+			t.Fatalf("route overload %s at λ %g: %+v", id, rate, w)
+		}
+	}
+	p := capacityPlannerForTest(t, s, snap, rows)
+	choice := capacityChoiceForTest(t, p, map[string]string{"n2": "profile@n2-fixed/b1/w1"})
+	res := p.evaluate(choice, got.Capacity.Route.Seconds())
+	background := 0.0
+	for n, j := range choice {
+		if p.compared[n] {
+			background += p.plans[n][j].energy(res.route, p.period)
+		}
+	}
+	// Both instances share batch-1 energy, so every λT input has that cost.
+	want := rate * p.period * capacityInputEnergy(snap.Instances[0])
+	if math.Abs(res.joules-background-want) > 1e-8 {
+		t.Fatalf("energy used another rate: request J %g want %g", res.joules-background, want)
+	}
+}
+
+func TestCapacityIncreasingWorkloadProtectsOnlyItsServingCapacity(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+	snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
+	w1, w2 := snap.Workloads[0], poolsAddWorkload(&snap, "w2")
+	s.AutonomousWorkloads = append(s.AutonomousWorkloads, w2.UID)
+	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
+	n3 := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10})
+	n4 := poolsAddNode(&snap, "n4", map[string]float64{"fixed": 10})
+	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", w1.UID)
+	i3 := poolsInstance(snap.Instances[0], "i3", n3, "fixed", w2.UID)
+	i4 := poolsInstance(snap.Instances[0], "i4", n4, "fixed", w2.UID)
+	for _, i := range []SchedulerInstance{i2, i3, i4} {
+		snap.Instances = append(snap.Instances, i)
+		snap.Options = append(snap.Options, poolsOption(i))
+		snap.Costs = append(snap.Costs, poolsCost(schedulerActionRemove, i.Node, schedulerState(i), "unloaded", "fixed"))
+	}
+	snap.Costs = append(snap.Costs, poolsCost(schedulerActionRemove, snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", "fixed"))
+	snap.Routing = map[string]map[string]int32{w1.UID: {"i1": 500, "i2": 500}, w2.UID: {"i3": 500, "i4": 500}}
+	capacityLoad(s, &snap, w1, 20)
+	capacityLoad(s, &snap, w2, 10)
+	recent := snap.ObservationEnd.Add(-s.ControlInterval)
+	snap.Arrivals = slices.DeleteFunc(snap.Arrivals, func(a SchedulerArrival) bool { return a.WorkloadUID == w1.UID && a.At.Before(recent) })
+	rows := capacityRowsForTest(s, snap, nil)
+	got := capacityDecideForTest(t, s, snap, rows)
+	if got.Target == nil || len(got.Target.Routing[w1.UID]) != 2 ||
+		!poolsOn(*got.Target, snap.Nodes[0].Node) || !poolsOn(*got.Target, n2) ||
+		len(got.Target.Routing[w2.UID]) != 1 {
+		t.Fatalf("growth must protect w1 and allow w2 to shrink: %s %+v", got.Status, got.Target)
+	}
+	for _, node := range []NodeReference{snap.Nodes[0].Node, n2} {
+		if !slices.ContainsFunc(poolsPlans(got, node), func(p SchedulerNodePlan) bool { return p.Reason == schedulerDemandIncreasing }) {
+			t.Fatalf("missing growth protection on %s: %+v", node.Name, poolsPlans(got, node))
+		}
+	}
+	// Once both rates agree, the same existing capacity can shrink.
+	capacityLoad(s, &snap, w1, 20)
+	got = capacityDecideForTest(t, s, snap, rows)
+	if got.Target == nil || len(got.Target.Routing[w1.UID]) != 1 {
+		t.Fatalf("steady demand remained frozen: %s %+v", got.Status, got.Target)
+	}
+}
+
 // m4 r7 06:53:58 (plan-f95bc856f060): rasp5 q1-lut and q2 (κ 25.69 + 29.30)
 // carried λ 40.35 at weights 467/533. Loaded genesis3 q2 (κ 70.94) draws less
 // than its empty Node (49.80 W against 49.97 W), so preparing it was 1.5 J

@@ -733,3 +733,64 @@ func TestSchedulerControllerAnnotatesUnroutedAndHeldInstances(t *testing.T) {
 		t.Fatalf("routing change: %+v", s.Instances)
 	}
 }
+
+// Exercise the controller's actual dependency consumer with a resumed goal.
+// The unused Node lowers in parallel; the used Node retains its whole chain.
+func TestSchedulerRouteIgnoresUnusedCommonLowering(t *testing.T) {
+	at := time.Unix(1000, 0).UTC()
+	used := serving.NodeReference{Name: "used", UID: "used"}
+	idle := serving.NodeReference{Name: "idle", UID: "idle"}
+	settings := serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: 10 * time.Second,
+		ComparisonPeriod: time.Minute, MaxObservationAge: time.Hour, MaxReplicas: 1, MaxInstances: 2, MaxCPUs: 4,
+		CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
+		Controls: serving.SchedulerControls{Power: true}}
+	instance := serving.SchedulerInstance{ID: "slot", Node: used, WorkloadUID: "w",
+		Profile: &serving.Profile{ID: "profile", Condition: profilederivation.CurvePlanSpec{PowerMode: "fixed"}}}
+	goal := serving.SchedulerCandidate{ID: "goal",
+		Nodes:     []serving.SchedulerNode{{Node: used, PowerMode: "fixed"}, {Node: idle, PowerMode: "eco"}},
+		Instances: []serving.SchedulerInstance{instance}, Routing: map[string]map[string]int32{"w": {"slot": 1000}},
+		Actions: []serving.Action{{ID: "route-goal", Kind: operationRoute, Status: "planned"}}}
+	snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at, InProgressTarget: &goal,
+		Nodes:     []serving.SchedulerNode{{Node: used, Ready: true, ObservedAt: at}, {Node: idle, Ready: true, ObservedAt: at}},
+		Baselines: []serving.NodeBaseline{{Node: used, PowerMode: "eco", Watts: 1}, {Node: idle, PowerMode: "eco", Watts: 1}},
+		Actions: []serving.Action{
+			{ID: "used-lowering", Node: used, Kind: operationPower, From: "boost", To: "eco", Fixed: true, Status: nativeOperationRunning},
+			{ID: "idle-lowering", Node: idle, Kind: operationPower, From: "boost", To: "eco", Fixed: true, Status: nativeOperationRunning},
+		}}
+	decision, err := serving.EvaluateScheduler(context.Background(), settings, snapshot, nil)
+	if err != nil || decision.Target == nil {
+		t.Fatalf("resume goal: %v %+v", err, decision)
+	}
+	target := *decision.Target
+	controller := &SchedulerController{runs: map[string]*actionRun{}}
+	var raise, prepare, route serving.Action
+	for _, a := range target.Actions {
+		controller.runs[a.ID] = &actionRun{action: a}
+		switch {
+		case a.Kind == operationPower && !a.Fixed && a.Node == used:
+			raise = a
+		case a.Kind == operationPrepare:
+			prepare = a
+		case a.Kind == operationRoute:
+			route = a
+		}
+	}
+	if raise.ID == "" || prepare.ID == "" || route.ID == "" || controller.runs["idle-lowering"] == nil {
+		t.Fatalf("missing continuing power/prepare/route actions: %+v", target.Actions)
+	}
+	if controller.dependenciesReady(raise, target) || controller.dependenciesReady(prepare, target) || controller.dependenciesReady(route, target) {
+		t.Fatal("used Node's unfinished lowering/raise/prepare chain was bypassed")
+	}
+	controller.runs["used-lowering"].action.Status = nativeOperationComplete
+	if !controller.dependenciesReady(raise, target) || controller.dependenciesReady(prepare, target) || controller.dependenciesReady(route, target) {
+		t.Fatal("lowering must unlock only the used Node's raise")
+	}
+	controller.runs[raise.ID].action.Status = nativeOperationComplete
+	if !controller.dependenciesReady(prepare, target) || controller.dependenciesReady(route, target) {
+		t.Fatal("raise must unlock preparation, not routing")
+	}
+	controller.runs[prepare.ID].action.Status = nativeOperationComplete
+	if !controller.dependenciesReady(route, target) || controller.runs["idle-lowering"].action.Status != nativeOperationRunning {
+		t.Fatal("unused lowering blocked a prepared target's route or stopped running")
+	}
+}

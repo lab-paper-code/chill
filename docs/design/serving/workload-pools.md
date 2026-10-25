@@ -118,6 +118,10 @@ owner와 binding이 모두 없는 인스턴스는 어느 활성 POOL에도 속�
 에너지는 가장 낮은 모드의 unloaded baseline이다. 현재 모드가 다르면 DAG는 그 노드의 맨 앞에 power 동작을 두고
 `Action.Fixed=true`로 표시한다. 이 동작은 모든 계획에 같으므로 그 시간과 에너지는 공통 항으로 비교에서 빠진다. 판단에
 target이 없으면 controller는 keep의 `Fixed` 동작만 실행한다. 빈 노드 전환 비용 측정은 이 규칙에 필요하지 않다.
+target이 사용하지 않고 실제 인스턴스도 없는 빈 노드의 공통 절전은 다른 노드의 route와 독립적으로 실행한다.
+실제 사용할 노드에서는 `Fixed` 내림부터 전력 변경과 prepare까지 같은 노드의 순서를 지키고,
+실제 Ready, 소유권, policy ACK와 기존 요청의 인계를 확인한 뒤 분배한다.
+공통 절전의 소비와 전환 중 결과는 전체 POOL 측정에 포함한다.
 
 가용 노드를 활성 POOL로 다시 넣는 노드 계획은 그 전환 비용을 비교에 포함한다. 노드 단위 순서(`schedulerPlan`)에 따라
 `Fixed` 내림 뒤에 power 동작(가장 낮은 모드에서 profile 모드로)과 prepare가 온다. 그 노드는 가장 낮은 모드에서
@@ -268,6 +272,11 @@ snapshot의 노드는 3.4절의 전체 POOL이고 측정 POOL 노드(3.3절)는 
   membership 동작 없이 유지하고, 비용은 각 동작 비용의 합이다.
 - 첫 구성은 현재 인스턴스가 0인 `Controlled` Workload에 대해 option의 배치를 그대로 만든다. 설정 gate에 따라
   placement, resources, batching, membership control이 켜져 있어야 한다.
+- 수요 λ는 기존 장기 관측과 최근 한 제어 주기의 계산 도착률 중 큰 값에 기존 미완료 기여를 한 번 더한다.
+  두 구간은 실제 관측 범위로 한정하고 용량, 지연, 분배와 요청 에너지가 같은 λ를 쓴다.
+  최근 관측률이 더 큰 Workload는 이미 서빙하는 인스턴스의 제거, 교체와 분배 0을 보호한다.
+  해당 Workload의 확장과 다른 Workload의 변경은 계속하며 진행 중 목표의 유지 규칙을 따른다.
+  두 구간과 관측값, 최종 λ는 [용량표 계획기의 판단 기록](analytic-planner.md#4-노드-계획과-탐색)에서 확인한다.
 
 ### 4.4 SLO 판정 대상과 에너지
 
@@ -414,6 +423,11 @@ CRD 통합, NodeActuation 정리, 일반 이미지 분리, 추가 planner/판정
 | E3 | 측정 taint 노드의 BatchEnergyOptimization, 전환 비용과 operation 측정 | 서빙 격리, CHILL 배치 여부를 포함한 Pod 목록, 측정 결과의 후보/비용 연결과 자연 반환을 확인한다(`SCH-AC-26`) |
 | E4 | 활성 POOL 사이 직접 이동이 선택되는 부하 전환 | 한 전환의 DAG와 비용, 단계별 소속(`SCH-AC-22`) |
 | E5 | mobilenet tight, PLC, SmolVLM 혼합 부하, 세 Workload 자동제어, Jetson 포함(아래 단계) | Workload별 SLO 달성, 비교 집합 에너지와 실측 전체 POOL 에너지, `completionResidualNanos`와 설정 여유 비교 |
+
+빠른 수요와 빈 노드 공통 절전의 영향 측정은 E1의 첫 유입, E4의 이동,
+E5-0부터 E5-6 및 E5-S의 구간별 두 관측률, 최종 λ, 보호 용량, 실제 분배 시각과 전력 사슬을 연결한다.
+모든 유효 offered 결과와 전환 포함 전체 POOL 에너지를 유지한다.
+runtime 7종 digest, profile, 측정 입력과 판정 기준은 고정한다.
 
 **E5 혼합 부하.** 측정 캠페인이 끝나고 모든 Jetson이 가장 낮은 모드로 돌아온 뒤 세 Workload를 함께 자동제어한다. 사람은 부하만 바꾸고 구성은 판단이 정한다.
 

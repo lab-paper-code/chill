@@ -33,6 +33,9 @@ const (
 	// arrival observation after the process starts; until one observation
 	// window is observed it names the node plans that remove or replace.
 	schedulerPartialObservation = "PartialObservationWindow"
+	// schedulerDemandIncreasing protects serving capacity while recent arrivals
+	// exceed the long-window rate.
+	schedulerDemandIncreasing = "DemandIncreasing"
 	// schedulerReplacementUnpaid names a node whose replacement did not repay
 	// its transition at the least load of the observation window.
 	schedulerReplacementUnpaid = "ReplacementUnpaid"
@@ -241,6 +244,7 @@ type capacityWorkload struct {
 	queued  int     // q
 	current int     // instances serving it now
 	slack   float64 // L − m, seconds
+	growing bool    // recent observed rate exceeds the long-window rate
 }
 
 // capacityItem is one instance serving a Workload: its κ, per-input energy e
@@ -375,7 +379,8 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		}
 		for _, load := range decision.Search.Loads {
 			if load.UID == state.UID {
-				w.rate = float64(load.ComputeInputs)
+				w.rate = max(load.InputsPerSecond, load.RecentInputsPerSecond)
+				w.growing = load.RecentInputsPerSecond > load.InputsPerSecond
 			}
 		}
 		for _, r := range snapshot.Outstanding {
@@ -384,7 +389,9 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 			}
 		}
 		covered := decision.Search.WindowEnd.Sub(decision.Search.WindowStart)
-		w.rate = (w.rate + float64(w.queued)) / covered.Seconds()
+		if covered > 0 {
+			w.rate += float64(w.queued) / covered.Seconds()
+		}
 		w.minRate = capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID)
 		w.slack = w.d.SLO.TargetLatency.Seconds() - settings.CompletionMarginMS/1e3
 		for _, i := range snapshot.Instances {
@@ -722,6 +729,13 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	}
 	if plan.record.Reason == "" && p.partial && (removed || plan.replaces) {
 		plan.record.Reason = schedulerPartialObservation
+	}
+	if plan.record.Reason == "" && slices.ContainsFunc(current, func(old SchedulerInstance) bool {
+		w, controlled := p.index[old.WorkloadUID]
+		return controlled && p.ws[w].growing && old.Ready && !old.Stopped && schedulerInstanceRouted(p.keep.Routing, old.ID) &&
+			(!used[old.ID] || changed[old.ID])
+	}) {
+		plan.record.Reason = schedulerDemandIncreasing
 	}
 	if plan.record.Reason != "" {
 		return plan
@@ -1155,7 +1169,7 @@ type capacityResult struct {
 	// weightsExceeded marks a route weight whose share of λ exceeds its κ.
 	weightsExceeded bool
 	// unroutedPrepare marks a new instance its weights leave at 0; unroutes
-	// a routed instance they leave at 0.
+	// a protected routed instance they leave at 0.
 	unroutedPrepare, unroutes bool
 	judgments                 []capacityJudgment
 	weights                   []map[string]int32
@@ -1226,7 +1240,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		for _, weight := range weights {
 			units += float64(weight)
 		}
-		routes := p.weightRoutes(&res, items[w], weights)
+		routes := p.weightRoutes(&res, ws, items[w], weights)
 		worst := j.worst()
 		if !ok {
 			// A weight past its κ fails the final judgment by that excess.
@@ -1270,8 +1284,8 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 }
 
 // weightRoutes maps each item with a positive weight to that weight and
-// marks the result when the weights leave a new or a routed instance at 0.
-func (p *capacityPlanner) weightRoutes(res *capacityResult, items []capacityItem, weights []int32) map[string]int32 {
+// marks the result when the weights leave a new or protected routed instance at 0.
+func (p *capacityPlanner) weightRoutes(res *capacityResult, w capacityWorkload, items []capacityItem, weights []int32) map[string]int32 {
 	routes := map[string]int32{}
 	for k, item := range items {
 		if weights[k] > 0 {
@@ -1279,7 +1293,7 @@ func (p *capacityPlanner) weightRoutes(res *capacityResult, items []capacityItem
 			continue
 		}
 		res.unroutedPrepare = res.unroutedPrepare || item.prepare
-		res.unroutes = res.unroutes || schedulerInstanceRouted(p.keep.Routing, item.id)
+		res.unroutes = res.unroutes || (p.partial || w.growing) && schedulerInstanceRouted(p.keep.Routing, item.id)
 	}
 	return routes
 }
@@ -1527,10 +1541,10 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 	return best, nil
 }
 
-// admits reports whether a scored plan set may be chosen: no prepare chain
-// left without a route, and on a partial snapshot no current instance unrouted.
+// admits reports whether a scored plan set may be chosen: every new instance
+// routed, and every protected serving instance still routed.
 func (p *capacityPlanner) admits(res *capacityResult) bool {
-	return !res.unroutedPrepare && (!p.partial || !res.unroutes)
+	return !res.unroutedPrepare && !res.unroutes
 }
 
 // decide turns the chosen plan set into the decision: keep, a route-only
@@ -1605,8 +1619,8 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 			decision.Reasons = append(decision.Reasons, schedulerRouteWeightExceeds)
 		}
 	}
-	// A partial window keeps keep's routes as they are.
-	if best.keep && !removed && (p.sameRouting(target.Routing) || p.partial && best.unroutes) {
+	// A protected Workload keeps its serving routes when keep is the fallback.
+	if best.keep && !removed && (p.sameRouting(target.Routing) || best.unroutes) {
 		chosen := decision.Keep
 		chosen.Status = target.Status
 		decision.Target, decision.Status = &chosen, schedulerStatusKeep
