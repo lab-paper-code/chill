@@ -176,9 +176,9 @@ func (a *observerAPI) ready() int {
 	return ready
 }
 
-// d9: each source refresh read the Service and the Pods of every instance
-// through the shared client, so its cost grew with the instance count.
-func TestObserverRefreshReadsAFixedNumberOfObjects(t *testing.T) {
+// Independent source publication verifies each completed probe without waiting
+// for another executor's native HTTP response.
+func TestObserverRefreshVerifiesEachCompletedSource(t *testing.T) {
 	const instances = 6
 	api := newObserverAPI(t, instances)
 	api.refresh(t) // the first refresh also opens the Pod watch and log follows
@@ -188,7 +188,7 @@ func TestObserverRefreshReadsAFixedNumberOfObjects(t *testing.T) {
 	if api.ready() != instances {
 		t.Fatalf("ready %d of %d: %+v", api.ready(), instances, api.observer.Issues())
 	}
-	if reads > 4 {
+	if reads > instances+3 {
 		t.Fatalf("one refresh made %d shared-client reads for %d instances", reads, instances)
 	}
 }
@@ -213,14 +213,14 @@ func TestObserverRefreshBoundsNativeProbe(t *testing.T) {
 	}
 }
 
-// d9: per-instance reads that failed in the throttled client published every
-// instance not Ready, so no accepted request was dispatched.
-func TestObserverKeepsVerifiedReadinessWhenAReadFails(t *testing.T) {
+// SCH-50: failed reads close dispatch but retain the physical inventory.
+func TestObserverPreservesInventoryWhenAReadFails(t *testing.T) {
 	for _, failing := range []string{"/services?", "/pods?"} {
 		t.Run(failing, func(t *testing.T) {
 			const instances = 6
 			api := newObserverAPI(t, instances)
 			api.refresh(t)
+			before := api.observer.runtime.Instances()
 			if api.ready() != instances {
 				t.Fatalf("ready %d of %d", api.ready(), instances)
 			}
@@ -234,22 +234,28 @@ func TestObserverKeepsVerifiedReadinessWhenAReadFails(t *testing.T) {
 					issues++
 				}
 			}
-			if api.ready() != instances || issues != instances {
-				t.Fatalf("a failed read changed verified readiness: ready %d of %d, issues %+v", api.ready(), instances, api.observer.Issues())
+			after := api.observer.runtime.Instances()
+			if api.ready() != 0 || len(after) != instances || issues != instances {
+				t.Fatalf("failed read changed inventory or allowed dispatch: ready %d, instances %d, issues %+v", api.ready(), len(after), api.observer.Issues())
+			}
+			for i, state := range after {
+				if state.ID != before[i].ID || state.PodUID != before[i].PodUID || state.OwnerWorkloadUID != before[i].OwnerWorkloadUID ||
+					!state.ObservedAt.Equal(before[i].ObservedAt) || state.AttemptedAt.Before(before[i].AttemptedAt) {
+					t.Fatalf("failed read rewrote identity/owner/success time: before %+v after %+v", before[i], state)
+				}
 			}
 		})
 	}
 }
 
-// A kept readiness rests on the last probe; it lasts one refresh, and a
-// changed owner is checked without the Service.
-func TestObserverKeepsVerifiedReadinessForOneRefresh(t *testing.T) {
+// Read failures never retain dispatch eligibility, even on the first failure.
+func TestObserverClosesDispatchAfterReadFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		owner types.UID
 		ready []int // after each refresh with a failing Service list
 	}{
-		{"Service list keeps failing", "", []int{1, 0}},
+		{"Service list keeps failing", "", []int{0, 0}},
 		{"owner changes", "other-workload", []int{0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

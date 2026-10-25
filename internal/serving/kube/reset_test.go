@@ -769,7 +769,7 @@ func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
 	id := physicalID(other.UID, firstfloorStatus(other).ContainerID)
 	follow, stop := context.WithCancel(controller.observer.ctx)
 	defer stop()
-	controller.observer.sources[id] = &nativeSource{pod: types.NamespacedName{Namespace: other.Namespace, Name: other.Name},
+	controller.observer.sources[string(other.UID)] = &nativeSource{pod: types.NamespacedName{Namespace: other.Namespace, Name: other.Name},
 		uid: other.UID, containerID: firstfloorStatus(other).ContainerID, follow: follow, cancel: stop}
 	controller.config.StaticRouting = true
 	controller.config.ConfigurationName, controller.config.ConfigurationKey = "duplicate-reset-config", "scheduler.json"

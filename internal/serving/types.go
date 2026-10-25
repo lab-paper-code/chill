@@ -210,6 +210,9 @@ type Assignment struct {
 
 type InstanceState struct {
 	ID               string              `json:"id"`
+	PodUID           string              `json:"podUID,omitempty"`
+	Allocation       SchedulerAllocation `json:"allocation"`
+	AttemptedAt      time.Time           `json:"attemptedAt"`
 	TargetID         string              `json:"targetID,omitempty"`
 	OwnerWorkloadUID string              `json:"ownerWorkloadUID,omitempty"`
 	Node             NodeReference       `json:"node"`

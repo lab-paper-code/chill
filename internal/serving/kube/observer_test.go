@@ -176,7 +176,8 @@ func newTestObserver(t *testing.T, objects ...client.Object) *Observer {
 		}
 	}
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&corev1.Pod{}).WithObjects(objects...).Build()}
-	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), &serving.Runtime{}, &firstfloor.Client{}, ObserverConfig{Namespace: "chill-system"})
+	manager, _ := newManagerHarness(t)
+	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), manager.runtime, &firstfloor.Client{}, ObserverConfig{Namespace: "chill-system"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,21 +188,20 @@ func newTestObserver(t *testing.T, objects ...client.Object) *Observer {
 func TestObserverTerminationRequiresExactContainerEvidence(t *testing.T) {
 	pod, _, _, _ := observerSourceFixture()
 	observer := newTestObserver(t)
-	id := physicalID(pod.UID, "containerd://old")
-	observer.sources[id] = &nativeSource{uid: pod.UID, containerID: "containerd://old"}
+	observer.sources[string(pod.UID)] = &nativeSource{uid: pod.UID, containerID: "containerd://old"}
 	pod.Status.ContainerStatuses[0].Ready = false
 	observer.observeTermination(pod)
-	if observer.sources[id].stopped {
+	if observer.sources[string(pod.UID)].stopped {
 		t.Fatal("readiness loss became stop proof")
 	}
 	pod.Status.ContainerStatuses[0].LastTerminationState.Terminated = &corev1.ContainerStateTerminated{ContainerID: "containerd://unrelated"}
 	observer.observeTermination(pod)
-	if observer.sources[id].stopped {
+	if observer.sources[string(pod.UID)].stopped {
 		t.Fatal("different container stopped retained executor")
 	}
 	pod.Status.ContainerStatuses[0].LastTerminationState.Terminated.ContainerID = "containerd://old"
 	observer.observeTermination(pod)
-	if !observer.sources[id].stopped {
+	if !observer.sources[string(pod.UID)].stopped {
 		t.Fatal("native previous-container termination was lost")
 	}
 }
@@ -416,14 +416,13 @@ func TestObserverRefreshRetainsUnlabelledParentSource(t *testing.T) {
 	pod.Labels = nil
 	status := &pod.Status.ContainerStatuses[0]
 	status.State = corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: status.ContainerID}}
-	id := physicalID(pod.UID, status.ContainerID)
 	observer := newTestObserver(t)
-	observer.sources[id] = &nativeSource{uid: pod.UID, containerID: status.ContainerID}
+	observer.sources[string(pod.UID)] = &nativeSource{uid: pod.UID, containerID: status.ContainerID}
 	resources := map[types.UID]client.Object{replicaSet.UID: replicaSet, deployment.UID: deployment}
 	if _, publish, probed := observer.probeSource(context.Background(), pod, nil, nil, nil, resources, nil, nil); publish || probed != nil {
 		t.Fatal("unlabelled retained source became eligible")
 	}
-	if source := observer.sources[id]; source.ownerUID != uid || !source.stopped {
+	if source := observer.sources[string(pod.UID)]; source.ownerUID != uid || !source.stopped {
 		t.Fatal("serving label filter hid parent ownership or exact termination evidence")
 	}
 }
@@ -433,7 +432,6 @@ func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) 
 		for _, proof := range []string{"exact", "replacement Pod", "other container"} {
 			t.Run(fmt.Sprintf("watching=%v/%s", watching, proof), func(t *testing.T) {
 				pod, _, _, _ := observerSourceFixture()
-				id := physicalID(pod.UID, pod.Status.ContainerStatuses[0].ContainerID)
 				source := &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: pod.Status.ContainerStatuses[0].ContainerID}
 				pod.Labels = nil
 				pod.Status.Phase = corev1.PodSucceeded
@@ -446,7 +444,7 @@ func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) 
 					status.State.Terminated.ContainerID = "containerd://other"
 				}
 				observer := newTestObserver(t)
-				observer.sources[id] = source
+				observer.sources[string(source.uid)] = source
 				kube := kubefake.NewSimpleClientset(pod)
 				// The client-go fake otherwise ignores server-side field selection.
 				kube.PrependReactor("list", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
@@ -475,9 +473,8 @@ func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) 
 func TestObserverRefreshDoesNotWaitForBlockedLogStream(t *testing.T) {
 	pod, _, _, _ := observerSourceFixture()
 	containerID := pod.Status.ContainerStatuses[0].ContainerID
-	id := physicalID(pod.UID, containerID)
 	observer := newTestObserver(t)
-	observer.sources[id] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: containerID}
+	observer.sources[string(pod.UID)] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: containerID}
 	kube := kubefake.NewSimpleClientset(pod)
 	opened := make(chan *corev1.PodLogOptions, 1)
 	// A kubelet that never answers the log request until the observer closes.
@@ -508,7 +505,7 @@ func TestObserverRefreshDoesNotWaitForBlockedLogStream(t *testing.T) {
 	if !observer.mu.TryLock() {
 		t.Fatal("opening log stream holds the observer lock")
 	}
-	source := observer.sources[id]
+	source := observer.sources[string(pod.UID)]
 	following := source.follow != nil
 	observer.mu.Unlock()
 	if !following {
@@ -551,7 +548,7 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	stream := io.NopCloser(strings.NewReader(strings.Join(lines, "\n") + "\n"))
 	observer := manager.observer
 	observer.mu.Lock()
-	observer.sources[id] = &nativeSource{}
+	observer.sources[strings.SplitN(id, "/", 2)[0]] = &nativeSource{}
 	observer.mu.Unlock()
 	if err := observer.scanLogs(id, stream); err != nil {
 		t.Fatal(err)

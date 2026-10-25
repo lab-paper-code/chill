@@ -85,6 +85,7 @@ type Operation struct {
 	Kind     string                `json:"kind"`
 	Node     serving.NodeReference `json:"node"`
 	Instance string                `json:"instance,omitempty"`
+	PodUID   string                `json:"podUID,omitempty"`
 	Prepare  *PrepareSpec          `json:"prepare,omitempty"`
 	// PowerMode is the DeviceClass mode a power operation requests, within
 	// MaxActuationDuration of its label write (the mode's actuation policy).
@@ -265,7 +266,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 			}
 		case operationRemove:
 			result.DrainNative = map[string]native.State{}
-			err = o.removeInstance(ctx, operation.Node, operation.Instance, result.DrainNative)
+			err = o.removeInstance(ctx, operation.Node, operation.PodUID, operation.Instance, result.DrainNative)
 			if err == nil {
 				result.Progress = append(result.Progress, "stop/drain/termination/removal observed")
 			}
@@ -303,7 +304,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 				if err == nil {
 					result.Progress = append(result.Progress, "routing applied")
 					result.DrainNative = map[string]native.State{}
-					err = o.removeInstance(ctx, operation.Node, operation.Instance, result.DrainNative)
+					err = o.removeInstance(ctx, operation.Node, operation.PodUID, operation.Instance, result.DrainNative)
 				}
 			}
 		default:
@@ -616,7 +617,7 @@ func secretEnvOperation(name, secret, key string) core.EnvVar {
 	return core.EnvVar{Name: name, ValueFrom: &core.EnvVarSource{SecretKeyRef: &core.SecretKeySelector{LocalObjectReference: core.LocalObjectReference{Name: secret}, Key: key}}}
 }
 func (o *Operations) RemoveInstance(ctx context.Context, node serving.NodeReference, id string) error {
-	return o.removeInstance(ctx, node, id, nil)
+	return o.removeInstance(ctx, node, "", id, nil)
 }
 func (o *Operations) StopInstance(ctx context.Context, id string) error {
 	if err := o.wait(ctx, func() (bool, error) { return o.runtime.StopSchedulerInstance(id) }); err != nil {
@@ -635,19 +636,27 @@ func (o *Operations) detachInstance(ctx context.Context, id string) error {
 	}
 	return o.persistRouting(ctx, id, nil)
 }
-func (o *Operations) removeInstance(ctx context.Context, node serving.NodeReference, id string, proof map[string]native.State) error {
-	uid, containerID, ok := strings.Cut(id, "/")
-	if !ok || containerID == "" {
-		return errors.New("exact physical instance required")
+func (o *Operations) removeInstance(ctx context.Context, node serving.NodeReference, podUID, id string, proof map[string]native.State) error {
+	uid, containerID, _ := strings.Cut(id, "/")
+	if podUID != "" {
+		if uid != "" && uid != podUID {
+			return errors.New("Pod UID differs from physical executor")
+		}
+		uid = podUID
 	}
-	if err := o.validateOperationBinding(ctx, Operation{Kind: operationRemove, Node: node, Instance: id}); err != nil {
+	if uid == "" || id != "" && containerID == "" {
+		return errors.New("exact Pod UID and optional physical executor required")
+	}
+	if err := o.validateOperationBinding(ctx, Operation{Kind: operationRemove, Node: node, PodUID: uid, Instance: id}); err != nil {
 		return err
 	}
-	if err := o.StopInstance(ctx, id); err != nil {
-		return err
-	}
-	if err := o.detachInstance(ctx, id); err != nil {
-		return err
+	if id != "" {
+		if err := o.StopInstance(ctx, id); err != nil {
+			return err
+		}
+		if err := o.detachInstance(ctx, id); err != nil {
+			return err
+		}
 	}
 	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
@@ -663,16 +672,14 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 		return errors.New("physical source disappeared without retained termination proof")
 	}
 	status := firstfloorStatus(pod)
-	if status == nil || status.ContainerID != containerID {
+	if id != "" && (status == nil || status.ContainerID != containerID) || id == "" && !podTerminated(pod) {
 		return errors.New("physical source changed before removal")
 	}
 	o.observer.mu.Lock()
-	if o.observer.sources[id] == nil {
-		o.observer.sources[id] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: containerID, ownerUID: types.UID(workloadOwner(pod.OwnerReferences))}
-	}
+	o.observer.restoreSources([]core.Pod{*pod})
 	o.observer.observeTermination(pod)
 	o.observer.mu.Unlock()
-	if status.State.Terminated == nil {
+	if id != "" && status.State.Terminated == nil {
 		if err = o.wait(ctx, func() (bool, error) {
 			endpoint, e := nativeInstanceEndpoint(ctx, o.kube, pod)
 			if e != nil {
@@ -703,9 +710,9 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 			return err
 		}
 	}
-	return o.finishInstanceRemoval(ctx, pod, id)
+	return o.finishInstanceRemoval(ctx, pod)
 }
-func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod, id string) error {
+func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod) error {
 	return o.wait(ctx, func() (bool, error) {
 		current := &core.Pod{}
 		e := o.store.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, current)
@@ -720,7 +727,7 @@ func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod, i
 		}
 		o.observer.mu.Lock()
 		o.observer.observeTermination(current)
-		source := o.observer.sources[id]
+		source := o.observer.sources[string(pod.UID)]
 		stopped := source != nil && source.stopped
 		o.observer.mu.Unlock()
 		if !stopped || !podTerminated(current) {
@@ -742,6 +749,18 @@ func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod, i
 		if e = o.store.client.Delete(ctx, cm); e != nil && !apierrors.IsNotFound(e) {
 			return false, e
 		}
+		o.observer.mu.Lock()
+		defer o.observer.mu.Unlock()
+		if source := o.observer.sources[string(pod.UID)]; source != nil {
+			source.instance.State.Stopped = true
+		}
+		if e = o.observer.publishLedger(nil); e != nil {
+			return false, e
+		}
+		if e = o.runtime.RetirePod(string(pod.UID)); e != nil {
+			return false, e
+		}
+		delete(o.observer.sources, string(pod.UID))
 		return true, nil
 	})
 }
@@ -1205,8 +1224,10 @@ func (o *Operations) validateOperationBinding(ctx context.Context, operation Ope
 }
 func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operation Operation, actual *core.Node) error {
 	uid, containerID, ok := strings.Cut(operation.Instance, "/")
-	if !ok || containerID == "" {
-		return errors.New("exact operation physical instance required")
+	if operation.Instance == "" && operation.Kind == operationRemove && operation.PodUID != "" {
+		uid = operation.PodUID
+	} else if !ok || containerID == "" || operation.PodUID != "" && operation.PodUID != uid {
+		return errors.New("exact operation Pod/executor identity required")
 	}
 	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
@@ -1217,7 +1238,9 @@ func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operat
 			continue
 		}
 		status := firstfloorStatus(&pod)
-		if pod.Spec.NodeName != actual.Name || status == nil || status.ContainerID != containerID || pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
+		if pod.Spec.NodeName != actual.Name || pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent ||
+			operation.Instance != "" && (status == nil || status.ContainerID != containerID) ||
+			operation.Instance == "" && !podTerminated(&pod) {
 			return errors.New("operation instance belongs to different physical Node/source")
 		}
 		for _, i := range o.runtime.Instances() {

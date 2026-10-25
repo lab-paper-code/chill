@@ -364,7 +364,7 @@ keep 밖의 적격 계획이 있는 노드다.
 
 ### 5.4 자원 장부 — SCH-50~52, AC-37~39
 
-**2026-10-26 확정 설계, 아직 구현·검증 결과가 아니다.** 시연 3회차 전에
+**2026-10-26 설계 및 구현 경계.** Pod UID 장부와 runtime/snapshot 투영은 구현되었다.
 ① 실물 장부 → ② 영향 범위 예약 → ③ 예약 밖 재계획 순서로 한 묶음을 적용한다.
 앞 절의 `InProgressTarget`/`TransitionInProgress`, Node 단위 guard와 global route
 대기는 **이관 전 동작**이다. 이 절이 이관 후 계약이며, ③만 먼저 적용하지 않는다.
@@ -535,10 +535,10 @@ native ACK·actual routing 기록과 stopped 대상 제외는 보존한다.
 | Ready 응답 누락을 runtime 삭제·remove/stop 성공·effect lost로 바꾸는 분기 | Pod/finalizer 수명 + 관측 불명 판정. `6545c800`의 ACK pending/실제 관측 보존은 장부 관측 계약으로 흡수하고 native ACK 검사는 유지한다. |
 | slot별 단일 실물 가정 | `dc9c90bf`/`73f1ec79`의 exact 우선·중복 reset을 장부 전체 열거로 유지한다. 여러 Pod가 보이면 숨기지 않는다. |
 
-**아래는 앞으로의 코드 커밋 분할안**이다. 이번 산출물은 문서 커밋 하나이며
-코드 변경/실행 증거가 아니다. 각 구현 커밋은 해당 회귀와 `go build ./...`,
-`go vet ./...`가 통과 가능한 완결 경계로 나눈다. 선언만 추가하거나 호출자를
-절반 이관한 상태를 커밋 완료로 삼지 않는다.
+**구현 커밋 경계**는 다음과 같다. 각 구현 커밋은 해당 회귀와 `go build ./...`,
+`go vet ./...`, `make lint`가 통과 가능한 완결 경계로 나눈다. 선언만 추가하거나 호출자를
+절반 이관한 상태를 커밋 완료로 삼지 않는다. source별 완료 게시를 위해 native probe는
+병렬로 실행하고 각 완료 결과를 별도 Pod LIST로 검증한다. 느린 probe 동안 장부 잠금은 풀린다.
 
 1. **Pod 장부 수명 cutover:** `o.sources` UID 키·항목과 watch/LIST/finalizer 경계를
    연결하고 기존 physical lookup 호출자·runtime 설치·snapshot/POOL 투영을 함께 이관한다.

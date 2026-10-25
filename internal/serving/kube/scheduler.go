@@ -569,6 +569,9 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		captureNodePods(&s, &sn, n, pods, physical, profileByID)
 		s.Nodes = append(s.Nodes, sn)
 	}
+	slices.SortFunc(s.Instances, func(a, b serving.SchedulerInstance) int {
+		return strings.Compare(a.ID+a.PodUID, b.ID+b.PodUID)
+	})
 	c.mu.Lock()
 	c.powerTargets = power
 	c.mu.Unlock()
@@ -680,52 +683,62 @@ func bindProfileMeters(s *serving.SchedulerSnapshot, meters []MeterDeclaration) 
 func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n *core.Node, pods *core.PodList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
 	var nonServingMilliCPU int64
 	var nonServingMemory uint64
-	for j := range pods.Items {
-		p := &pods.Items[j]
-		if p.Spec.NodeName != n.Name || p.Status.Phase == core.PodSucceeded || p.Status.Phase == core.PodFailed {
+	servingUIDs := map[string]bool{}
+	for _, state := range physical {
+		if state.Node.UID != sn.Node.UID {
 			continue
 		}
-		status := firstfloorStatus(p)
-		id := ""
-		if status != nil {
-			id = physicalID(p.UID, status.ContainerID)
+		uid := state.PodUID
+		if uid == "" {
+			uid, _, _ = strings.Cut(state.ID, "/")
 		}
-		state, isServing := physical[id]
-		if isServing && p.Labels["app.kubernetes.io/component"] == servingInstanceComponent {
-			profile := profileByID[state.Profile]
-			if profile == nil || state.Native == nil {
-				sn.Reasons = appendReason(sn.Reasons, serving.NodeInstanceUnavailable)
-				continue
-			}
+		servingUIDs[uid] = true
+		instance := serving.SchedulerInstance{ID: state.ID, TargetID: state.TargetID, OwnerWorkloadUID: state.OwnerWorkloadUID,
+			Node: state.Node, Profile: profileByID[state.Profile], Allocation: state.Allocation, Ready: state.Ready,
+			Stopped: state.Stopped, ObservedAt: state.ObservedAt, Routable: state.Routable, Weight: 1}
+		instance.PodUID = state.PodUID
+		if state.Reason != "" {
+			instance.Reasons = []string{state.Reason}
+		}
+		if state.Native == nil || !state.Ready {
+			sn.Reasons = appendReason(sn.Reasons, serving.NodeInstanceUnavailable)
+			instance.Ready = false
+		}
+		if state.Native != nil {
 			m := state.Native.Metadata
-			allocation := serving.SchedulerAllocation{CPUs: slices.Clone(m.Runtime.CPUAffinity), GPUUUID: m.Runtime.GPUUUID, Threads: m.Runtime.IntraOpThreads, MemoryBytes: uint64(p.Spec.Containers[0].Resources.Limits.Memory().Value())}
-			instance := serving.SchedulerInstance{ID: state.ID, Node: state.Node, Profile: profile, Allocation: allocation, Ready: state.Ready && state.Native.Ready, Capacity: m.MaxQueueRequests, Weight: 1, MaxBatch: m.MaxBatchSize, ObservedAt: state.ObservedAt, MaxWait: time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))}
-			instance.TargetID, instance.OwnerWorkloadUID = state.TargetID, state.OwnerWorkloadUID
-			instance.Stopped, instance.FixedBatchSize = state.Stopped, m.Policy.FixedBatchSize
-			instance.Routable = state.Routable
-			if state.Reason != "" {
-				instance.Reasons = []string{state.Reason}
-			}
+			instance.Allocation.CPUs = slices.Clone(m.Runtime.CPUAffinity)
+			instance.Allocation.GPUUUID, instance.Allocation.Threads = m.Runtime.GPUUUID, m.Runtime.IntraOpThreads
+			instance.Ready = instance.Ready && state.Native.Ready
+			instance.Capacity, instance.MaxBatch, instance.FixedBatchSize = m.MaxQueueRequests, m.MaxBatchSize, m.Policy.FixedBatchSize
+			instance.MaxWait = time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))
 			if m.Policy.MaxBatchSize > 0 {
 				instance.MaxBatch = m.Policy.MaxBatchSize
 			}
-			for _, container := range p.Spec.Containers {
+		}
+		for _, pod := range pods.Items {
+			if string(pod.UID) != uid {
+				continue
+			}
+			for _, container := range pod.Spec.Containers {
 				if container.Name == firstfloorContainerName {
-					// Kubernetes request budget is independent of native affinity
-					// width and ORT threads; retain all three observed quantities.
 					instance.Allocation.CPUCount = int(container.Resources.Requests.Cpu().Value())
+					instance.Allocation.MemoryBytes = uint64(container.Resources.Limits.Memory().Value())
 				}
 			}
-			weight, e := strconv.Atoi(p.Annotations[ServingWeightAnnotation])
-			if e == nil {
+			if weight, err := strconv.Atoi(pod.Annotations[ServingWeightAnnotation]); err == nil {
 				instance.Weight = int32(weight)
 			}
-			for _, w := range state.Workloads {
-				if instance.WorkloadUID == "" || w.UID < instance.WorkloadUID {
-					instance.WorkloadUID = w.UID
-				}
+		}
+		for _, workload := range state.Workloads {
+			if instance.WorkloadUID == "" || workload.UID < instance.WorkloadUID {
+				instance.WorkloadUID = workload.UID
 			}
-			s.Instances = append(s.Instances, instance)
+		}
+		s.Instances = append(s.Instances, instance)
+	}
+	for j := range pods.Items {
+		p := &pods.Items[j]
+		if p.Spec.NodeName != n.Name || servingUIDs[string(p.UID)] || p.Status.Phase == core.PodSucceeded || p.Status.Phase == core.PodFailed {
 			continue
 		}
 		milliCPU, memory, gpu := podBudget(p)

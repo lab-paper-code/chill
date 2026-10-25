@@ -143,6 +143,7 @@ func (n SchedulerNode) AtMode(mode string) (SchedulerNode, bool) {
 
 type SchedulerInstance struct {
 	ID               string        `json:"id"`
+	PodUID           string        `json:"podUID,omitempty"`
 	TargetID         string        `json:"targetID,omitempty"`
 	OwnerWorkloadUID string        `json:"ownerWorkloadUID,omitempty"`
 	Node             NodeReference `json:"node"`

@@ -327,6 +327,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 		planned = "planned"
 	)
 	physical.State.TargetID = slot
+	physical.State.PodUID, _, _ = strings.Cut(physical.State.ID, "/")
 	if err := controller.runtime.InstallInstances([]serving.ReadyInstance{physical}); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +408,10 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	if !controller.actionEffectPresent(snapshot, run) {
 		t.Fatal("stale continuation changed the completed physical effect")
 	}
-	if err := controller.runtime.InstallInstances(nil); err != nil {
+	if err := controller.runtime.ConfirmInstanceStopped(physical.State.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.runtime.RetirePod(physical.State.PodUID); err != nil {
 		t.Fatal(err)
 	}
 	requireLostEffectFailsGoal(t, controller, action.ID)
@@ -642,7 +646,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 		// client-go's empty fake Pod log does not falsely terminate the executor.
 		follow, cancel := context.WithCancel(manager.observer.ctx)
 		status := firstfloorStatus(p)
-		manager.observer.sources[physicalID(p.UID, status.ContainerID)] = &nativeSource{
+		manager.observer.sources[string(p.UID)] = &nativeSource{
 			pod: types.NamespacedName{Namespace: p.Namespace, Name: p.Name}, uid: p.UID,
 			containerID: status.ContainerID, follow: follow, cancel: cancel,
 		}
@@ -763,8 +767,8 @@ func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Instances) != 1 || !snapshot.Instances[0].Ready {
-		t.Fatalf("initial capture must contain only a Ready source: %+v; issues=%+v", snapshot.Instances, controller.observer.Issues())
+	if len(snapshot.Instances) != 2 || !snapshot.Instances[0].Ready || snapshot.Instances[1].Ready {
+		t.Fatalf("initial ledger must contain Ready A and preparing B: %+v; issues=%+v", snapshot.Instances, controller.observer.Issues())
 	}
 	a := snapshot.Instances[0]
 	b := a
@@ -864,7 +868,7 @@ func TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34(t *testing.T)
 		t.Fatal(err)
 	}
 	snapshot, err := controller.capture(ctx, time.Now(), controller.config)
-	if err != nil || len(snapshot.Instances) != 1 {
+	if err != nil || len(snapshot.Instances) != 2 {
 		t.Fatalf("initial physical capture: %+v %v", snapshot.Instances, err)
 	}
 	a := snapshot.Instances[0]
@@ -912,7 +916,7 @@ func TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34(t *testing.T)
 	held.Store(false)
 	controller.wg.Wait()
 	after, err := controller.capture(ctx, time.Now(), controller.config)
-	if err != nil || len(after.Instances) != 1 || after.Instances[0].ID != a.ID || len(after.Instances[0].Reasons) != 0 {
+	if err != nil || len(after.Instances) != 2 || after.Instances[0].ID != a.ID || len(after.Instances[0].Reasons) != 0 {
 		t.Fatalf("ACK did not clear pending on the same executor: %+v %v", after.Instances, err)
 	}
 	if actual, _ := controller.runtime.SchedulerRouting(); actual[uid][a.ID] != 500 {
@@ -923,7 +927,7 @@ func TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34(t *testing.T)
 func assertPendingPhysicalCapture(t *testing.T, controller *SchedulerController, a serving.SchedulerInstance, original serving.InstanceState, uid string) {
 	t.Helper()
 	state := controller.State()
-	if len(state.Snapshot.Instances) != 1 {
+	if len(state.Snapshot.Instances) != 2 {
 		t.Fatalf("ACK wait erased the physical allocation: %+v", state.Snapshot)
 	}
 	actual := state.Snapshot.Instances[0]
@@ -943,7 +947,7 @@ func assertPendingPhysicalCapture(t *testing.T, controller *SchedulerController,
 		t.Fatalf("actual previous ACK/state was replaced or dropped: %+v", physical)
 	}
 	pools := controller.runtime.Pools(state.Snapshot.Nodes)
-	if len(pools.Workloads) != 1 || len(pools.Workloads[0].Instances) != 1 ||
+	if len(pools.Workloads) != 1 || len(pools.Workloads[0].Instances) != 2 ||
 		pools.Workloads[0].Instances[0].Reason != policyAckPendingReason ||
 		slices.ContainsFunc(pools.Available, func(n serving.PoolNode) bool { return n.Node == a.Node }) {
 		t.Fatalf("pending instance left its owned/bound POOL: %+v", pools)
@@ -965,7 +969,7 @@ func TestPolicyAckPendingDoesNotMaskNativeReadOrMetadataFailure(t *testing.T) {
 				}
 			})
 			ctx := context.Background()
-			if snapshot, err := controller.capture(ctx, time.Now(), controller.config); err != nil || len(snapshot.Instances) != 1 {
+			if snapshot, err := controller.capture(ctx, time.Now(), controller.config); err != nil || len(snapshot.Instances) != 2 {
 				t.Fatalf("initial verified physical state missing: %+v %v", snapshot.Instances, err)
 			}
 			pod := &core.Pod{}
@@ -982,7 +986,7 @@ func TestPolicyAckPendingDoesNotMaskNativeReadOrMetadataFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(snapshot.Instances) != 0 || !slices.ContainsFunc(snapshot.Nodes, func(n serving.SchedulerNode) bool {
+			if len(snapshot.Instances) != 2 || snapshot.Instances[0].Ready || !slices.ContainsFunc(snapshot.Nodes, func(n serving.SchedulerNode) bool {
 				return n.Node.Name == "a" && slices.Contains(n.Reasons, serving.NodeInstanceUnavailable)
 			}) {
 				t.Fatalf("failed native source revived old state merely because ACK was pending: %+v", snapshot)

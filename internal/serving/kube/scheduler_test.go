@@ -533,13 +533,17 @@ func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "pod/container", TargetID: "slot", Node: node, Profile: profile.ID, Ready: true, Native: &native.State{Ready: true}}, Profile: profile, Capacity: 1, Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 		panic("regression only observes physical state")
 	}}
+	instance.State.PodUID = "pod"
 	if err := observer.runtime.InstallInstances([]serving.ReadyInstance{instance}); err != nil {
 		t.Fatal(err)
 	}
 	if !controller.actionEffectPresent(serving.SchedulerSnapshot{}, run) {
 		t.Fatal("actual prepared slot not recognized")
 	}
-	if err := observer.runtime.InstallInstances(nil); err != nil {
+	if err := observer.runtime.ConfirmInstanceStopped(instance.State.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := observer.runtime.RetirePod("pod"); err != nil {
 		t.Fatal(err)
 	}
 	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run) {

@@ -156,12 +156,12 @@ func (c *SchedulerController) resetOwnedTargets(ctx context.Context, uids []stri
 			continue
 		}
 		status := firstfloorStatus(&pod)
-		if status == nil || status.ContainerID == "" {
-			return nil, refused("OperationConflict", "owned Pod lacks exact native container identity")
+		id := ""
+		if status != nil && status.ContainerID != "" {
+			id = physicalID(pod.UID, status.ContainerID)
+		} else if !podTerminated(&pod) {
+			return nil, refused("OperationConflict", "owned Pod executor termination is unconfirmed")
 		}
-		// Enumerate every owned executor, including duplicates of one logical slot.
-		// Unroute and removal resolve these exact IDs before any slot aliases.
-		id := physicalID(pod.UID, status.ContainerID)
 		for _, instance := range physical {
 			if instance.ID != id {
 				continue
@@ -175,7 +175,7 @@ func (c *SchedulerController) resetOwnedTargets(ctx context.Context, uids []stri
 		if err != nil {
 			return nil, err
 		}
-		owned = append(owned, serving.SchedulerInstance{ID: id, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, OwnerWorkloadUID: owner})
+		owned = append(owned, serving.SchedulerInstance{ID: id, PodUID: string(pod.UID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, OwnerWorkloadUID: owner})
 	}
 	slices.SortFunc(owned, func(a, b serving.SchedulerInstance) int { return strings.Compare(a.ID, b.ID) })
 	return owned, nil
@@ -268,7 +268,7 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 				if !slices.Contains(plan.nodes, instance.Node) {
 					return refused("OperationConflict", "reset ownership moved outside the admitted Nodes")
 				}
-				outcome, err := c.operations.Execute(ctx, Operation{ID: operation.ID + "/remove/" + instance.ID, Kind: operationRemove, Node: instance.Node, Instance: instance.ID})
+				outcome, err := c.operations.Execute(ctx, Operation{ID: operation.ID + "/remove/" + instance.PodUID, Kind: operationRemove, Node: instance.Node, PodUID: instance.PodUID, Instance: instance.ID})
 				if result.DrainNative == nil {
 					result.DrainNative = map[string]native.State{}
 				}

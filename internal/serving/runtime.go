@@ -604,6 +604,7 @@ func (r *Runtime) ConfirmInstanceStopped(instance string) (err error) {
 	defer func() { err = errors.Join(err, r.unlock()) }()
 	if i := r.instances[instance]; i != nil {
 		i.State.Ready = false
+		i.State.Stopped = true
 		i.State.Reason = "InstanceStopped"
 	}
 	for _, c := range r.calls {
@@ -826,38 +827,43 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 	defer func() { err = errors.Join(err, r.unlock()) }()
 	seen := map[string]bool{}
 	for _, candidate := range instances {
-		if candidate.State.ID == "" || candidate.State.Node.UID == "" {
-			return failure("InvalidDistribution", "actual instance and Node identities are required")
+		if candidate.State.ID == "" && candidate.State.PodUID == "" || candidate.State.Ready && candidate.State.Node.UID == "" {
+			return failure("InvalidDistribution", "actual Pod or executor identity is required")
 		}
 		if candidate.State.Ready && (candidate.Profile == nil || candidate.Capacity <= 0 || candidate.Execute == nil) {
 			return failure("InvalidDistribution", "ready instance needs verified profile, bounds and execution")
 		}
-		if seen[candidate.State.ID] {
+		key := instanceInventoryKey(candidate.State)
+		if seen[key] {
 			return failure("InvalidDistribution", "instance appears twice")
 		}
-		seen[candidate.State.ID] = true
+		seen[key] = true
 	}
 	for _, i := range r.instances {
 		i.State.Ready = false
 		i.State.Reason = "NoCurrentReadiness"
 	}
 	for _, candidate := range instances {
-		i := r.instances[candidate.State.ID]
+		key := instanceInventoryKey(candidate.State)
+		if candidate.State.ID != "" && candidate.State.PodUID != "" {
+			delete(r.instances, candidate.State.PodUID)
+		}
+		i := r.instances[key]
 		if i == nil {
 			i = &runtimeInstance{bindings: map[string]bool{}}
-			r.instances[candidate.State.ID] = i
+			r.instances[key] = i
 		}
 		if i.outstanding > 0 && !candidate.State.Ready {
 			i.State.Ready = false
 			i.State.Reason = candidate.State.Reason
 			continue
 		}
-		if i.outstanding > 0 && (i.State.Profile != candidate.Profile.ID || i.State.Node != candidate.State.Node) {
+		if i.outstanding > 0 && candidate.Profile != nil && (i.State.Profile != candidate.Profile.ID || i.State.Node != candidate.State.Node) {
 			i.State.Reason = "ConditionChangedBeforeDrain"
 			continue
 		}
 		i.podRouting = maps.Clone(candidate.Routing)
-		candidate.State.Stopped = i.State.Stopped
+		candidate.State.Stopped = candidate.State.Stopped || i.State.Stopped
 		if r.routingControlled && i.Routing != nil {
 			candidate.Routing = r.mergeControlledRoutingLocked(i.Routing, candidate.Routing)
 		}
@@ -870,13 +876,35 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 		}
 		r.finishAbsentLocked(candidate.State)
 	}
-	for id, i := range r.instances {
-		if !seen[id] && i.outstanding == 0 {
-			delete(r.instances, id)
+	r.rebuildLocked()
+	r.dispatchLocked()
+	r.signal()
+	return nil
+}
+
+func instanceInventoryKey(state InstanceState) string {
+	if state.ID != "" {
+		return state.ID
+	}
+	return state.PodUID
+}
+
+// RetirePod removes only a terminated, drained Pod after the observer has
+// confirmed its API deletion and completed its finalizer cleanup.
+func (r *Runtime) RetirePod(uid string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, instance := range r.instances {
+		if instance.State.PodUID == uid && (!instance.State.Stopped || instance.outstanding != 0) {
+			return failure("TerminationUnconfirmed", "Pod executor is not stopped and drained")
+		}
+	}
+	for key, instance := range r.instances {
+		if instance.State.PodUID == uid {
+			delete(r.instances, key)
 		}
 	}
 	r.rebuildLocked()
-	r.dispatchLocked()
 	r.signal()
 	return nil
 }
