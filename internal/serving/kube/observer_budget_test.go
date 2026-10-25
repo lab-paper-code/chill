@@ -28,13 +28,17 @@ const observerTestRuntime = "test-runtime"
 // observerAPI serves S ready native instances on one Node and counts the
 // Kubernetes reads one observer refresh makes through the shared clientset.
 type observerAPI struct {
-	observer *Observer
-	mu       sync.Mutex
-	reads    map[string]int
-	failing  string // suffix of "path?query" whose reads fail
-	slowNode time.Duration
-	hang     chan struct{} // closed when native state reads may answer
-	owner    types.UID     // Workload that owns every listed Pod
+	observer     *Observer
+	mu           sync.Mutex
+	reads        map[string]int
+	failing      string // suffix of "path?query" whose reads fail
+	slowNode     time.Duration
+	hang         chan struct{} // closed when native state reads may answer
+	owner        types.UID     // Workload that owns every listed Pod
+	verifiedList chan struct{}
+	releaseList  chan struct{}
+	logFollows   int
+	logOpened    chan struct{}
 }
 
 func newObserverAPI(t *testing.T, instances int) *observerAPI {
@@ -67,6 +71,15 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("watch") == "true" || strings.HasSuffix(r.URL.Path, "/log") {
+			if strings.HasSuffix(r.URL.Path, "/log") {
+				api.mu.Lock()
+				api.logFollows++
+				select {
+				case api.logOpened <- struct{}{}:
+				default:
+				}
+				api.mu.Unlock()
+			}
 			w.WriteHeader(http.StatusOK)
 			w.(http.Flusher).Flush()
 			<-r.Context().Done()
@@ -116,6 +129,18 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 					}
 				}
 				response = list
+				api.mu.Lock()
+				ready, release := api.verifiedList, api.releaseList
+				block := ready != nil && api.reads[r.Method+" "+r.URL.Path] == 2
+				api.mu.Unlock()
+				if block {
+					close(ready)
+					select {
+					case <-release:
+					case <-r.Context().Done():
+						return
+					}
+				}
 			case strings.HasSuffix(r.URL.Path, "/services"):
 				response = core.ServiceList{TypeMeta: meta.TypeMeta{Kind: "ServiceList", APIVersion: "v1"}, Items: serviceList.Items}
 			case pods[name] != nil && strings.Contains(r.URL.Path, "/pods/"):

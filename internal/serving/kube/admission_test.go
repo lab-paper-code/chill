@@ -281,10 +281,19 @@ func TestAdmitQueuesBehindTheHolderAndItsServingPods(t *testing.T) {
 		t.Fatal("queued measurement refused while the Node is held")
 	}
 	h.complete(first)
-	h.admit() // hand-back removes the measurement's serving Pod and the taint
-	if pods, _ := h.kube.CoreV1().Pods("chill-system").List(context.Background(), meta.ListOptions{}); len(pods.Items) != 0 {
-		t.Fatalf("hand-back left serving Pods: %d", len(pods.Items))
+	h.admit() // No status is not termination proof, even for the old holder.
+	if pods, _ := h.kube.CoreV1().Pods("chill-system").List(context.Background(), meta.ListOptions{}); len(pods.Items) != 1 {
+		t.Fatalf("hand-back discarded unconfirmed serving Pod: %d", len(pods.Items))
 	}
+	if h.holder() != string(first.UID) {
+		t.Fatal("hand-back released the Node before termination proof")
+	}
+	// The holder's worker has now actually removed its Pod; the next hand-back
+	// observes the empty Node rather than stripping an unknown source finalizer.
+	if err := h.kube.CoreV1().Pods("chill-system").Delete(context.Background(), "runner", meta.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	h.admit()
 	if h.holder() != "" {
 		t.Fatalf("taint kept by %q", h.holder())
 	}

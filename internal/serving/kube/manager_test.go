@@ -25,9 +25,11 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -672,5 +674,86 @@ func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
 	}
 	if view, err = m.GetWorkload(ctx, "first"); err != nil || view.Operation.Phase != operationCompleted || view.Operation.Kind != operationPreprocessorUpdate {
 		t.Fatalf("dataset update started an operation: %+v, %v", view.Operation, err)
+	}
+}
+
+func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newManagerHarness(t)
+	createManagerCatalog(t, m)
+	w, err := m.CreateWorkload(ctx, "removed", managerWorkloadSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod, node, _, _ := observerSourceFixture()
+	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: "Workload", Name: w.Desired.Name, UID: w.Desired.UID}}
+	pod.Finalizers = []string{sourceFinalizer}
+	c := m.store.client.(*managerAPI).Client
+	if err := c.Create(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	o := m.observer
+	o.restoreSources([]corev1.Pod{*pod})
+	o.sources[string(pod.UID)].instance.State.Node = serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+	if err := o.publishLedger(nil); err != nil {
+		t.Fatal(err)
+	}
+	pod.Status.Phase = corev1.PodSucceeded
+	status := &pod.Status.ContainerStatuses[0]
+	status.State = corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: status.ContainerID}}
+	if err := c.Status().Update(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil {
+		t.Fatal(err)
+	}
+	kube := kubefake.NewSimpleClientset(node, pod, observerServiceFixture(pod))
+	kube.PrependReactor("get", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+		current := &corev1.Pod{}
+		err := c.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: action.(ktesting.GetAction).GetName()}, current)
+		return true, current, err
+	})
+	operations := &Operations{store: m.store, kube: kube, runtime: m.runtime, observer: o,
+		config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
+	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+	if err := operations.RemoveInstance(ctx, ref, physicalID(pod.UID, status.ContainerID)); err != nil {
+		t.Fatal(err)
+	}
+	if len(o.sources) != 0 || len(m.runtime.Instances()) != 0 {
+		t.Fatal("completed remove retained physical executor")
+	}
+	controller := &SchedulerController{store: m.store, kube: kube, runtime: m.runtime, observer: o, runs: map[string]*actionRun{}}
+	o.scheduler = controller
+	// A prior operation on this Workload conflicts even after all Pods vanished.
+	controller.mu.Lock()
+	held := controller.reserveRun("held", &actionRun{action: serving.Action{Status: nativeOperationRunning}}, Operation{WorkloadUID: string(w.Desired.UID)})
+	controller.mu.Unlock()
+	if !held {
+		t.Fatal("failed to reserve test operation")
+	}
+	if _, err := m.DeleteWorkload(ctx, w.Desired.Name, w.Desired.ResourceVersion); err == nil {
+		t.Fatal("deletion bypassed common reservation")
+	}
+	controller.mu.Lock()
+	delete(controller.runs, "held")
+	controller.mu.Unlock()
+	if _, err := m.DeleteWorkload(ctx, w.Desired.Name, w.Desired.ResourceVersion); err != nil {
+		t.Fatal(err)
+	}
+	current, err := m.store.GetWorkload(ctx, w.Desired.Name)
+	if err != nil || current.DeletionTimestamp == nil || len(current.Finalizers) == 0 {
+		t.Fatalf("DELETE did not retain finalizer: %v, %v", current, err)
+	}
+	if err := controller.authorize(Operation{WorkloadUID: string(w.Desired.UID)}); err == nil {
+		t.Fatal("deletion released scope before finalizer and 404")
+	}
+	if err := m.Advance(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.GetWorkload(ctx, w.Desired.Name); !apierrors.IsNotFound(err) {
+		t.Fatalf("deleted Workload = %v", err)
+	}
+	if err := controller.authorize(Operation{WorkloadUID: string(w.Desired.UID)}); err != nil {
+		t.Fatal("404 retained deletion reservation", err)
 	}
 }
