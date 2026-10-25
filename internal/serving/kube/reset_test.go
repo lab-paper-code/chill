@@ -224,7 +224,7 @@ func newResetHarness(t *testing.T) *resetHarness {
 	kube.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, runtime.Object, error) {
 		h.updates++
 		if h.failUpdate > 0 && h.updates == h.failUpdate {
-			return true, nil, errors.New("scheduler configuration write refused")
+			return true, nil, apierrors.NewConflict(core.Resource("configmaps"), "scheduler", errors.New("scheduler configuration write refused"))
 		}
 		return false, nil, nil
 	})
@@ -406,6 +406,40 @@ func TestResetExecutionFailureStopsWithoutRetryOrRollback(t *testing.T) {
 				if weights, ok := routing[h.selectedUID]; !ok || len(weights) != 0 {
 					t.Errorf("failure rolled back unroute or executed release: %v", routing)
 				}
+			}
+		})
+	}
+}
+
+func TestResetPreEffectRejectionReturnsReservationAC38(t *testing.T) {
+	for _, uncertain := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unknown=%v", uncertain), func(t *testing.T) {
+			h := newResetHarness(t)
+			firstUpdate := true
+			h.kube.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, runtime.Object, error) {
+				if !firstUpdate {
+					return false, nil, nil
+				}
+				firstUpdate = false
+				if uncertain {
+					return true, nil, context.DeadlineExceeded
+				}
+				return true, nil, apierrors.NewConflict(core.Resource("configmaps"), "scheduler", errors.New("rejected"))
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			first, err := h.controller.ExecuteManual(ctx, h.request())
+			if err != nil || first.Status != nativeOperationFailed {
+				t.Fatalf("first reset: %+v %v", first, err)
+			}
+			assertResetSteps(t, first, "disable-autonomy")
+			retry, err := h.controller.ExecuteManual(ctx, h.request())
+			if uncertain {
+				if err == nil {
+					t.Fatal("unknown configuration effect returned its reservation")
+				}
+			} else if err != nil || retry.Status != nativeOperationComplete {
+				t.Fatalf("confirmed pre-effect rejection blocked reset retry: %+v %v", retry, err)
 			}
 		})
 	}

@@ -261,8 +261,11 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 		if err == nil {
 			err = ctx.Err()
 		}
+		result.effectsNotStarted = index == 0
 		if err == nil {
 			err = phase.run()
+			var rejected *configurationNotApplied
+			result.effectsNotStarted = index == 0 && errors.As(err, &rejected)
 		}
 		step.EndedAt = time.Now().UTC()
 		var observeErr error

@@ -12,6 +12,7 @@ import (
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 )
@@ -121,9 +122,26 @@ func manualWorkloadConflict(instance serving.SchedulerInstance, uid string) bool
 		instance.WorkloadUID != "" && instance.WorkloadUID != uid
 }
 
+// configurationNotApplied distinguishes a confirmed rejection from an unknown
+// Update outcome. It is only safe to release a run before any earlier effect.
+type configurationNotApplied struct{ error }
+
+func (e *configurationNotApplied) Unwrap() error { return e.error }
+
+func configurationUpdateRejected(err error) bool {
+	return apierrors.IsConflict(err) || apierrors.IsInvalid(err) || apierrors.IsForbidden(err) ||
+		apierrors.IsUnauthorized(err) || apierrors.IsNotFound(err)
+}
+
 // persistManualConfiguration updates only the selected declaration/settings field
 // using the ConfigMap's resourceVersion. A conflict is returned, never retried.
-func (c *SchedulerController) persistManualConfiguration(ctx context.Context, operation *Operation) error {
+func (c *SchedulerController) persistManualConfiguration(ctx context.Context, operation *Operation) (err error) {
+	updateAttempted := false
+	defer func() {
+		if err != nil && (!updateAttempted || configurationUpdateRejected(err)) {
+			err = &configurationNotApplied{err}
+		}
+	}()
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
@@ -206,6 +224,7 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 			return marshalErr
 		}
 		cm.Data[config.ConfigurationKey] = string(raw)
+		updateAttempted = true
 		committed, err = c.kube.CoreV1().ConfigMaps(cm.Namespace).Update(ctx, cm, meta.UpdateOptions{})
 		if err != nil {
 			return err
@@ -230,6 +249,8 @@ func (c *SchedulerController) executeManualRouting(ctx context.Context, operatio
 	result.Before.Routing, _ = c.runtime.SchedulerRouting()
 	beforeDeclared := c.runtime.InstanceRouting()
 	err := c.persistManualConfiguration(ctx, &result.Operation)
+	var rejected *configurationNotApplied
+	result.effectsNotStarted = errors.As(err, &rejected)
 	if err == nil {
 		result.Progress = append(result.Progress, "manual declaration persisted; physical acknowledgement pending")
 		physical, executeErr := c.operations.Execute(ctx, result.Operation)

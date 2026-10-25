@@ -140,6 +140,8 @@ type OperationResult struct {
 	Progress    []string                `json:"progress"`
 	DrainNative map[string]native.State `json:"drainNative,omitempty"`
 	Steps       []OperationStep         `json:"steps,omitempty"`
+	// Only a confirmed pre-effect failure permits immediate reservation return.
+	effectsNotStarted bool
 }
 
 // OperationConfig.Measurement selects measurement operations: they prepare only

@@ -318,6 +318,7 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualO
 		defer cancel()
 		if config.OnAction != nil {
 			if err := config.OnAction(*result); err != nil {
+				result.effectsNotStarted = true
 				return fmt.Errorf("record manual operation before physical effect: %w", err)
 			}
 		}
