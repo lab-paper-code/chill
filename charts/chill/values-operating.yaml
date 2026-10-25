@@ -565,6 +565,7 @@ servingEntrypoint:
     kubernetes.io/hostname: genesis1
   observationStorage:
     directory: /data/pools-61c6eb8
+    # 임시값: 시연 2회차용. SCH-42(근거 저장소 투명 조회) 검증 뒤 기본값(2h)으로 되돌린다.
     retention: 24h
     size: 32Gi
     storageClassName: rook-cephfs
