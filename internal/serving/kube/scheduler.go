@@ -95,15 +95,16 @@ type SchedulerController struct {
 	observer   *Observer
 	operations *Operations
 	// measurement acts only on measurement POOL Nodes: operation measurements and hand-back.
-	measurement    *Operations
-	observationLog *serving.ObservationLog
-	capacity       *serving.CapacityTable
-	config         SchedulerControllerConfig
-	state          SchedulerControllerState
-	runs           map[string]*actionRun
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
+	measurement        *Operations
+	observationLog     *serving.ObservationLog
+	capacity           *serving.CapacityTable
+	config             SchedulerControllerConfig
+	state              SchedulerControllerState
+	bootstrapStartedAt time.Time
+	runs               map[string]*actionRun
+	ctx                context.Context
+	cancel             context.CancelFunc
+	wg                 sync.WaitGroup
 	// powerTargets holds, by "<Node UID>/<mode>", the maximum actuation
 	// duration of each mode the last capture found requestable.
 	powerTargets map[string]time.Duration
@@ -149,6 +150,7 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	before := len(c.config.Settings.AutonomousWorkloads) > 0
 	previousStatic := c.config.StaticRouting
 	c.config = config
+	c.bootstrapStartedAt = time.Time{}
 	c.mu.Unlock()
 	after := len(config.Settings.AutonomousWorkloads) > 0
 	c.setRoutingControl(before, after)
@@ -280,6 +282,14 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		}
 	}
 	c.annotateHistory(&snapshot, config.Settings.ObservationWindow)
+	if len(snapshot.Instances) == 0 && len(snapshot.Reservations) == 0 && len(config.Settings.AutonomousWorkloads) > 0 {
+		if c.bootstrapStartedAt.IsZero() {
+			c.bootstrapStartedAt = snapshot.At
+		}
+		snapshot.BootstrapStartedAt = c.bootstrapStartedAt
+	} else {
+		c.bootstrapStartedAt = time.Time{}
+	}
 	c.capacity.Ensure(c.ctx, config.Settings, snapshot)
 	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, c.capacity.Rows())
 	if err != nil {

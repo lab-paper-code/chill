@@ -18,16 +18,17 @@ import (
 // MaxReplicas instances of one Workload and MaxInstances instances in total,
 // each with at most MaxCPUs CPUs.
 type SchedulerSettings struct {
-	ObservationWindow   time.Duration `json:"observationWindowNanos"`
-	ControlInterval     time.Duration `json:"controlIntervalNanos"`
-	ComparisonPeriod    time.Duration `json:"comparisonPeriodNanos"`
-	MaxObservationAge   time.Duration `json:"maxObservationAgeNanos"`
-	MaxReplicas         int           `json:"maxReplicas"`
-	MaxInstances        int           `json:"maxInstances"`
-	MaxCPUs             int           `json:"maxCPUs"`
-	ServingMemoryBytes  uint64        `json:"servingMemoryBytes"`
-	CompletionMarginMS  float64       `json:"completionMarginMS"`
-	AutonomousWorkloads []string      `json:"autonomousWorkloads"`
+	ObservationWindow     time.Duration `json:"observationWindowNanos"`
+	ControlInterval       time.Duration `json:"controlIntervalNanos"`
+	ComparisonPeriod      time.Duration `json:"comparisonPeriodNanos"`
+	MaxObservationAge     time.Duration `json:"maxObservationAgeNanos"`
+	BootstrapCapacityWait time.Duration `json:"bootstrapCapacityWaitNanos"`
+	MaxReplicas           int           `json:"maxReplicas"`
+	MaxInstances          int           `json:"maxInstances"`
+	MaxCPUs               int           `json:"maxCPUs"`
+	ServingMemoryBytes    uint64        `json:"servingMemoryBytes"`
+	CompletionMarginMS    float64       `json:"completionMarginMS"`
+	AutonomousWorkloads   []string      `json:"autonomousWorkloads"`
 	// MinimumDemand floors planning demand in requests/second by Workload UID.
 	MinimumDemand map[string]float64 `json:"minimumDemand,omitempty"`
 	// ExcludedNodes names Nodes the planner keeps as they are, like
@@ -275,7 +276,8 @@ type Action struct {
 }
 type SchedulerSnapshot struct {
 	// At is the current request read and decision origin, after capture I/O.
-	At time.Time `json:"at"`
+	At                 time.Time `json:"at"`
+	BootstrapStartedAt time.Time `json:"bootstrapStartedAt,omitempty"`
 	// ObservationEnd is the fixed historical arrival cutoff.
 	ObservationEnd time.Time `json:"observationEnd"`
 	// ObservedSince is when arrival observation became complete (the process
@@ -376,6 +378,15 @@ type SchedulerWorkloadState struct {
 	State  string `json:"state"`
 	Reason string `json:"reason,omitempty"`
 }
+
+// SchedulerBootstrap records the bounded empty-pool capacity barrier.
+type SchedulerBootstrap struct {
+	StartedAt   time.Time `json:"startedAt"`
+	Deadline    time.Time `json:"deadline"`
+	PendingRows []string  `json:"pendingRows"`
+	TimedOut    bool      `json:"timedOut"`
+}
+
 type SchedulerDecision struct {
 	At         time.Time                `json:"at"`
 	Status     string                   `json:"status"`
@@ -387,6 +398,7 @@ type SchedulerDecision struct {
 	Workloads  []SchedulerWorkloadState `json:"workloads"`
 	References []string                 `json:"references"`
 	Capacity   *SchedulerCapacity       `json:"capacity,omitempty"`
+	Bootstrap  *SchedulerBootstrap      `json:"bootstrap,omitempty"`
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
 }
@@ -394,6 +406,9 @@ type SchedulerDecision struct {
 func (s SchedulerSettings) Validate() error {
 	if s.ObservationWindow <= 0 || s.ControlInterval <= 0 || s.ComparisonPeriod <= 0 || s.MaxObservationAge <= 0 {
 		return fmt.Errorf("scheduler time intervals must be positive")
+	}
+	if s.BootstrapCapacityWait < 0 || s.BootstrapCapacityWait > time.Hour {
+		return fmt.Errorf("bootstrapCapacityWaitNanos must be between 0 and one hour")
 	}
 	if s.MaxReplicas < 1 || s.MaxInstances < 1 || s.MaxCPUs < 1 {
 		return fmt.Errorf("maxReplicas, maxInstances and maxCPUs must be positive")
@@ -426,7 +441,8 @@ func (s SchedulerSettings) Validate() error {
 // completionMarginMS apart from zero.
 type SchedulerSettingsInput struct {
 	SchedulerSettings
-	CompletionMarginMS *float64 `json:"completionMarginMS"`
+	CompletionMarginMS    *float64       `json:"completionMarginMS"`
+	BootstrapCapacityWait *time.Duration `json:"bootstrapCapacityWaitNanos"`
 }
 
 // Settings returns validated settings carrying the supplied margin.
@@ -436,6 +452,10 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 	}
 	settings := in.SchedulerSettings
 	settings.CompletionMarginMS = *in.CompletionMarginMS
+	settings.BootstrapCapacityWait = 10 * time.Minute
+	if in.BootstrapCapacityWait != nil {
+		settings.BootstrapCapacityWait = *in.BootstrapCapacityWait
+	}
 	return settings, settings.Validate()
 }
 
