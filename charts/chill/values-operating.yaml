@@ -1,0 +1,578 @@
+# Operating profile captured from chill-system/chill revision 74 (2026-10-25).
+# Source: helm -n chill-system get values chill --revision 74 -o json
+# Cross-check: ops/pools-deploy/deployB/control-b5711f1-141-20261025/overlay-3dff4e789c3e.yaml
+# Apply alone after chart defaults: -f charts/chill/values-operating.yaml
+# Secret values are NOT included. Provision referenced Secrets, evidence store,
+# serving-scheduler ConfigMap and existing observation PVC before deployment.
+# Image tags/digests reproduce revision 74, not a claim that they are main builds.
+console:
+  enabled: true
+  image:
+    repository: 155.230.35.213:5000/chill/chill-console
+    tag: pools-e96b075
+  nodeSelector:
+    kubernetes.io/hostname: genesis1
+dashboard:
+  caSecretName: chill-dashboard-ca
+  enabled: true
+  image:
+    repository: 155.230.35.213:5000/chill/chill-dashboard
+    tag: pools-adf57cc
+  nodeSelector:
+    kubernetes.io/hostname: genesis1
+discovery:
+  catalog:
+    classes:
+    - accelerator: nvidia-jetson-agx-orin
+      architecture: arm64
+      matchLabels:
+        edge.dacs.io/device-family: jetson
+        edge.dacs.io/device-model: agx-orin
+        edge.dacs.io/device-vendor: nvidia
+      memory: 64Gi
+      name: jetson-agx-orin-64g
+      powerModes:
+      - actuator:
+          jetsonNVPModel:
+            id: 0
+          kind: JetsonNVPModel
+        name: MAXN
+        onlineCPUs: 0-11
+      - actuator:
+          jetsonNVPModel:
+            id: 1
+          kind: JetsonNVPModel
+        name: MODE_15W
+        onlineCPUs: 0-3
+      - actuator:
+          jetsonNVPModel:
+            id: 2
+          kind: JetsonNVPModel
+        name: MODE_30W
+        onlineCPUs: 0-7
+      - actuator:
+          jetsonNVPModel:
+            id: 3
+          kind: JetsonNVPModel
+        name: MODE_50W
+        onlineCPUs: 0-11
+    - accelerator: nvidia-jetson-orin-nano
+      architecture: arm64
+      matchLabels:
+        edge.dacs.io/device-family: jetson
+        edge.dacs.io/device-model: orin-nano
+        edge.dacs.io/device-vendor: nvidia
+      memory: 8Gi
+      name: jetson-orin-nano-8g
+      powerModes:
+      - actuator:
+          jetsonNVPModel:
+            id: 0
+          kind: JetsonNVPModel
+        name: 15W
+        onlineCPUs: 0-5
+      - actuator:
+          jetsonNVPModel:
+            id: 1
+          kind: JetsonNVPModel
+        name: 25W
+        onlineCPUs: 0-5
+      - actuator:
+          jetsonNVPModel:
+            id: 2
+          kind: JetsonNVPModel
+        name: MAXN_SUPER
+        onlineCPUs: 0-5
+      - actuator:
+          jetsonNVPModel:
+            id: 3
+          kind: JetsonNVPModel
+        name: 7W
+        onlineCPUs: 0-3
+    - accelerator: nvidia-jetson-xavier-nx
+      architecture: arm64
+      matchLabels:
+        edge.dacs.io/device-family: jetson
+        edge.dacs.io/device-model: xavier-nx
+        edge.dacs.io/device-vendor: nvidia
+      memory: 8Gi
+      name: jetson-xavier-nx-8g
+      powerModes:
+      - actuator:
+          jetsonNVPModel:
+            id: 0
+          kind: JetsonNVPModel
+        name: MODE_15W_2CORE
+        onlineCPUs: 0-1
+      - actuator:
+          jetsonNVPModel:
+            id: 1
+          kind: JetsonNVPModel
+        name: MODE_15W_4CORE
+        onlineCPUs: 0-3
+      - actuator:
+          jetsonNVPModel:
+            id: 2
+          kind: JetsonNVPModel
+        name: MODE_15W_6CORE
+        onlineCPUs: 0-5
+      - actuator:
+          jetsonNVPModel:
+            id: 3
+          kind: JetsonNVPModel
+        name: MODE_10W_2CORE
+        onlineCPUs: 0-1
+      - actuator:
+          jetsonNVPModel:
+            id: 4
+          kind: JetsonNVPModel
+        name: MODE_10W_4CORE
+        onlineCPUs: 0-3
+      - actuator:
+          jetsonNVPModel:
+            id: 5
+          kind: JetsonNVPModel
+        name: MODE_10W_DESKTOP
+        onlineCPUs: 0-3
+      - actuator:
+          jetsonNVPModel:
+            id: 6
+          kind: JetsonNVPModel
+        name: MODE_20W_2CORE
+        onlineCPUs: 0-1
+      - actuator:
+          jetsonNVPModel:
+            id: 7
+          kind: JetsonNVPModel
+        name: MODE_20W_4CORE
+        onlineCPUs: 0-3
+      - actuator:
+          jetsonNVPModel:
+            id: 8
+          kind: JetsonNVPModel
+        name: MODE_20W_6CORE
+        onlineCPUs: 0-5
+    - accelerator: nvidia-jetson-nano
+      architecture: arm64
+      matchLabels:
+        edge.dacs.io/device-family: jetson
+        edge.dacs.io/device-model: jetson-nano
+        edge.dacs.io/device-vendor: nvidia
+      memory: 4Gi
+      name: jetson-nano-4g
+      powerModes:
+      - actuator:
+          jetsonNVPModel:
+            id: 0
+          kind: JetsonNVPModel
+        name: MAXN
+        onlineCPUs: 0-3
+      - actuator:
+          jetsonNVPModel:
+            id: 1
+          kind: JetsonNVPModel
+        name: 5W
+        onlineCPUs: 0-1
+    - accelerator: rk3588-npu
+      architecture: arm64
+      matchLabels:
+        edge.dacs.io/device-family: orangepi
+        edge.dacs.io/device-model: orange-pi-5-plus
+        edge.dacs.io/device-vendor: xunlong
+      memory: 16Gi
+      name: orangepi-5-plus-16g
+      powerModes:
+      - actuator:
+          kind: Fixed
+        name: fixed
+        onlineCPUs: 0-7
+    - accelerator: none
+      architecture: arm64
+      matchLabels:
+        edge.dacs.io/device-family: raspberry-pi
+        edge.dacs.io/device-model: raspberry-pi-5
+        edge.dacs.io/device-vendor: raspberrypi
+      memory: 8Gi
+      name: raspberry-pi-5-8g
+      powerModes:
+      - actuator:
+          kind: Fixed
+        name: fixed
+        onlineCPUs: 0-3
+    - accelerator: none
+      architecture: amd64
+      matchLabels:
+        edge.dacs.io/device-family: lattepanda
+        edge.dacs.io/device-model: lattepanda-3-delta
+        edge.dacs.io/device-vendor: lattepanda
+      memory: 8Gi
+      name: lattepanda-3-delta-8g
+      powerModes:
+      - actuator:
+          kind: Fixed
+        name: fixed
+        onlineCPUs: 0-3
+    - accelerator: nvidia-geforce-rtx-2080-ti
+      architecture: amd64
+      matchLabels:
+        edge.dacs.io/accelerator: nvidia-geforce-rtx-2080-ti
+        edge.dacs.io/device-family: edge-server
+      memory: 64Gi
+      name: edge-server-rtx-2080-ti-64g
+      powerModes:
+      - actuator:
+          kind: Fixed
+        name: fixed
+evidenceStore:
+  configRef:
+    name: chill-evidence-store-config
+  connection:
+    bucket: chill-profiling-evidence
+    endpoint: http://chill-evidence-store.chill-system.svc.cluster.local.:9000
+    name: chill-evidence-store
+  credentialsSecret:
+    name: chill-evidence-store-credentials
+  enabled: true
+loadGenerator:
+  image:
+    repository: 155.230.35.213:5000/chill/chill-load-generator
+    tag: pools-d2-4fb9bf8b0f81
+nodeAgent:
+  actuation:
+    enabled: true
+  image:
+    pullPolicy: Always
+    repository: 155.230.35.213:5000/chill/chill-node-agent
+    tag: pools-e96b075
+  kubernetesClient:
+    apiServer: https://155.230.35.213:6443
+    discoverFromDefaultEndpoint: false
+operator:
+  image:
+    repository: 155.230.35.213:5000/chill/chill-operator
+    tag: pools-e96b075
+  nodeSelector:
+    kubernetes.io/hostname: genesis1
+  resources:
+    limits:
+      memory: 256Mi
+profiler:
+  enabled: true
+  image:
+    repository: 155.230.35.213:5000/chill/chill-profiler
+    tag: pools-d2-4fb9bf8b0f81
+  nodeSelector:
+    kubernetes.io/hostname: genesis1
+  resources:
+    limits:
+      memory: 512Mi
+  transitionObserver:
+    observerNodeName: genesis1
+  workloadObserver:
+    kubernetesClient:
+      apiServer: https://155.230.35.213:6443
+      discoverFromDefaultEndpoint: false
+profiling:
+  executionDeclarations:
+  - deviceClass: raspberry-pi-5-8g
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:256280cce20dee6ea4ba2b840b1e4cc8b6da24d86b0d4d49a48daf5d5defd5e6","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - deviceClass: orangepi-5-plus-16g
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:256280cce20dee6ea4ba2b840b1e4cc8b6da24d86b0d4d49a48daf5d5defd5e6","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - deviceClass: jetson-nano-4g
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:256280cce20dee6ea4ba2b840b1e4cc8b6da24d86b0d4d49a48daf5d5defd5e6","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - access:
+      gpuUUID: GPU-a220528a-4ef6-34d2-ac51-72ebc267ecf9
+      privileged: false
+      resources:
+        nvidia.com/gpu: '1'
+      supplementalGroups:
+      - 44
+    deviceClass: jetson-nano-4g
+    node: jetson-nano
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:b649fa0baae5390936ea870a284ae83d837356db500a12ad12b73ce610d3727d","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.11.0"},{"name":"numpy","version":"1.24.4"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - deviceClass: jetson-agx-orin-64g
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:256280cce20dee6ea4ba2b840b1e4cc8b6da24d86b0d4d49a48daf5d5defd5e6","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - access:
+      gpuUUID: GPU-752f23d0-949d-5de7-bedd-14b75a5eb458
+      privileged: false
+      resources:
+        nvidia.com/gpu: '1'
+      supplementalGroups:
+      - 44
+    deviceClass: jetson-agx-orin-64g
+    node: jetsono
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:2e0a7e8fd11f2c88eddaf680ac2f541940c2ad4406b5420a1c0e8b0e609fe7b8","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.18.0"},{"name":"numpy","version":"1.26.4"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - deviceClass: jetson-xavier-nx-8g
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:256280cce20dee6ea4ba2b840b1e4cc8b6da24d86b0d4d49a48daf5d5defd5e6","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - access:
+      gpuUUID: GPU-eb9f176d-1c12-53c1-9f4e-30591e940814
+      privileged: false
+      resources:
+        nvidia.com/gpu: '1'
+      supplementalGroups:
+      - 44
+    deviceClass: jetson-xavier-nx-8g
+    node: jetsonx
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:2e0a7e8fd11f2c88eddaf680ac2f541940c2ad4406b5420a1c0e8b0e609fe7b8","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.18.0"},{"name":"numpy","version":"1.26.4"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - deviceClass: jetson-orin-nano-8g
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:256280cce20dee6ea4ba2b840b1e4cc8b6da24d86b0d4d49a48daf5d5defd5e6","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - access:
+      gpuUUID: GPU-31ec0c91-d383-5ca3-8772-28981cf737aa
+      privileged: false
+      resources:
+        nvidia.com/gpu: '1'
+      supplementalGroups:
+      - 44
+    deviceClass: jetson-orin-nano-8g
+    node: orin-nano
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:cb680f7d5ef9bdcf6810a894a9fafd9527b66aa68f925dc7603d0dd958455973","architecture":"arm64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.24.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - deviceClass: lattepanda-3-delta-8g
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:92afb0692b12920e5a96157e443d044c8274ead7ac0bd94e6d4e1051863dd020","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - deviceClass: edge-server-rtx-2080-ti-64g
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:92afb0692b12920e5a96157e443d044c8274ead7ac0bd94e6d4e1051863dd020","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"packages":[{"name":"onnxruntime","version":"1.27.0"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - access:
+      gpuUUID: GPU-7ba62428-ecac-9bd9-a546-40e2a748daed
+      privileged: false
+      resources:
+        nvidia.com/gpu: '1'
+    deviceClass: edge-server-rtx-2080-ti-64g
+    node: genesis2
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:f508c89babf8a556fd6bdfb4248773968f685b696c6aa7cbec731107f17f7c8b","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.23.2"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - access:
+      gpuUUID: GPU-24ddd1e2-68a6-ca12-34d6-448c2697f325
+      privileged: false
+      resources:
+        nvidia.com/gpu: '1'
+    deviceClass: edge-server-rtx-2080-ti-64g
+    node: genesis3
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:f508c89babf8a556fd6bdfb4248773968f685b696c6aa7cbec731107f17f7c8b","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cuda"]},"packages":[{"name":"onnxruntime-gpu","version":"1.23.2"},{"name":"numpy","version":"2.2.6"}],"verification":"exact-image-runtime-inspection-v1"}'
+  - access:
+      privileged: true
+      supplementalGroups:
+      - 44
+      - 110
+    deviceClass: orangepi-5-plus-16g
+    host:
+      allocation:
+        exclusivityClaimed: false
+        resourceName: ''
+      devices:
+      - path: /dev/dri/card0
+      - path: /dev/dri/card1
+      - path: /dev/dri/renderD128
+      - path: /dev/dri/renderD129
+      driver:
+        name: rknpu
+        version: 0.9.6
+        versionPath: /sys/module/rknpu/version
+      libraries:
+      - containerPath: /usr/lib/librknnrt.so
+        hostPath: /usr/lib/librknnrt.so
+        name: librknnrt
+      platform:
+        compatiblePath: /proc/device-tree/compatible
+        compatibleToken: rockchip,rk3588
+    runtime:
+      payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:aca7d8518d342f4999434a84e9dd89beaca0b5826daa9f8baa90479f1913fe20","architecture":"arm64","runtime":{"family":"firstfloor","backends":["rknnlite"]},"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"verification":"exact-image-runtime-inspection-v1"}'
+  executionPolicyDefaults: {}
+  metricObserverImage: 155.230.35.213:5000/chill/chill-metric-observer@sha256:51bbb09666bb407d10bc05436aeedf260bc0f4babb00432e9053bfd690ef82ce
+  metricSources:
+  - endpoint: http://155.230.35.213:18766/prometheus?hostname=raspberrypi-5
+    kind: edge-metrics
+    meterID: shellyplugsg3-e4b063ddacc0
+    metricLabels:
+      device_type: raspberry_pi
+      hostname: raspberrypi-5
+    node: rasp5
+    powerMetric: shelly_power_total_watts
+    thermalEndpoint: http://155.230.34.243:9102/metrics
+    thermalMetrics:
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
+      observationAvailable: device_thermal_throttle_observation_available
+  - endpoint: http://155.230.35.213:18766/prometheus?hostname=orangepi-5-plus
+    kind: edge-metrics
+    meterID: shellyplugsg3-d0cf13d81a88
+    metricLabels:
+      device_type: orange_pi
+      hostname: orangepi-5-plus
+    node: orangepi
+    powerMetric: shelly_power_total_watts
+    thermalEndpoint: http://155.230.34.143:9102/metrics
+    thermalMetrics:
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
+      observationAvailable: device_thermal_throttle_observation_available
+  - endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-orin
+    kind: edge-metrics
+    meterID: shellyplugsg3-d0cf13dec03c
+    metricLabels:
+      device_type: jetson_orin
+      hostname: jetson-orin
+    node: jetsono
+    powerMetric: shelly_power_total_watts
+    thermalEndpoint: http://155.230.34.203:9102/metrics
+    thermalMetrics:
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
+      observationAvailable: device_thermal_throttle_observation_available
+  - endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-xavier
+    kind: edge-metrics
+    meterID: shellyplugsg3-dcb4d9c55150
+    metricLabels:
+      device_type: jetson_xavier
+      hostname: jetson-xavier
+    node: jetsonx
+    powerMetric: shelly_power_total_watts
+    thermalEndpoint: http://155.230.34.179:9102/metrics
+    thermalMetrics:
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
+      observationAvailable: device_thermal_throttle_observation_available
+  - endpoint: http://155.230.35.213:18766/prometheus?hostname=orin-nano
+    kind: edge-metrics
+    meterID: shellyplugsg3-e4b063de2d40
+    metricLabels:
+      device_type: jetson_orin_nano
+      hostname: orin-nano
+    node: orin-nano
+    powerMetric: shelly_power_total_watts
+    thermalEndpoint: http://155.230.35.207:9102/metrics
+    thermalMetrics:
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
+      observationAvailable: device_thermal_throttle_observation_available
+  - endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-nano
+    kind: edge-metrics
+    meterID: shellyplusplugs-80646fd66914
+    metricLabels:
+      device_type: jetson_nano
+      hostname: jetson-nano
+    node: jetson-nano
+    powerMetric: shelly_power_total_watts
+    thermalEndpoint: http://155.230.35.199:9102/metrics
+    thermalMetrics:
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
+      observationAvailable: device_thermal_throttle_observation_available
+  - endpoint: http://155.230.35.213:18766/prometheus?hostname=lattepanda-3-delta
+    kind: edge-metrics
+    meterID: shellyplugsg3-d0cf13d80400
+    metricLabels:
+      device_type: lattepanda
+      hostname: lattepanda-3-delta
+    node: lattepanda
+    powerMetric: shelly_power_total_watts
+    thermalEndpoint: http://155.230.34.144:9102/metrics
+    thermalMetrics:
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
+      observationAvailable: device_thermal_throttle_observation_available
+  - endpoint: http://155.230.35.213:18766/prometheus?hostname=genesis1
+    kind: edge-metrics
+    meterID: shellyplugsg3-d885ac1fa428
+    metricLabels:
+      device_type: edge_server
+      hostname: genesis1
+    node: genesis1
+    powerMetric: shelly_power_total_watts
+    thermalEndpoint: http://155.230.35.213:9102/metrics
+    thermalMetrics:
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
+      observationAvailable: device_thermal_throttle_observation_available
+  - endpoint: http://155.230.35.213:18766/prometheus?hostname=genesis2
+    kind: edge-metrics
+    meterID: shellyplugsg3-e4b063de2674
+    metricLabels:
+      device_type: edge_server
+      hostname: genesis2
+    node: genesis2
+    powerMetric: shelly_power_total_watts
+    thermalEndpoint: http://155.230.35.200:9102/metrics
+    thermalMetrics:
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
+      observationAvailable: device_thermal_throttle_observation_available
+  - endpoint: http://155.230.35.213:18766/prometheus?hostname=genesis3
+    kind: edge-metrics
+    meterID: shellyplugsg3-d0cf13debff8
+    metricLabels:
+      device_type: edge_server
+      hostname: genesis3
+    node: genesis3
+    powerMetric: shelly_power_total_watts
+    thermalEndpoint: http://155.230.35.215:9102/metrics
+    thermalMetrics:
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
+      observationAvailable: device_thermal_throttle_observation_available
+  workloadObserverImage: 155.230.35.213:5000/chill/chill-workload-observer@sha256:5570b3b15c67ade51d8d6d35435a801d0d310b2d4eff5f588d923fba8710b40e
+servingEntrypoint:
+  enabled: true
+  goDebug: gctrace=1
+  goMemLimit: 3072MiB
+  image:
+    repository: 155.230.35.213:5000/chill/chill-serving-entrypoint
+    tag: pools-d2-3dff4e789c3e
+  kubeAPI: {}
+  maxQueryEvents: 10000
+  nodeSelector:
+    kubernetes.io/hostname: genesis1
+  observationStorage:
+    directory: /data/pools-61c6eb8
+    size: 32Gi
+    storageClassName: rook-cephfs
+  scheduler:
+    configMap: serving-scheduler
+  service:
+    type: NodePort
+  sourceInterval: 2s
+  tls:
+    secretName: chill-dashboard-tls
+system:
+  name: chill
