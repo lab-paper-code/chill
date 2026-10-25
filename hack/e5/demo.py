@@ -262,6 +262,62 @@ def run_stage(cpo, stage):
             path.write_text('')
 
 
+def resume(e5, cpo):
+    """Explicitly re-enable owned autonomy; never overwrite original start evidence."""
+    if not (cpo.out / 'initial.json').exists() or not (cpo.out / 'start-ack.json').exists():
+        raise RuntimeError('Resume requires the original initial/start evidence; use start for a new run')
+    for frozen in cpo.b['sources'].values():
+        if e5.ref(frozen['path']) != frozen:
+            raise RuntimeError('Resume requires explicitly re-frozen inputs; no automatic source refresh')
+    alerts = e5.CAMPAIGN / 'control-alerts.jsonl'
+    alert_offset = alerts.stat().st_size
+    jobs = cpo.io.k(['get', 'jobs', '-o', 'json'])['items']
+    if any(not job.get('spec', {}).get('suspend') and not any(row.get('type') in ('Complete', 'Failed') and row.get('status') == 'True' for row in job.get('status', {}).get('conditions', [])) for job in jobs):
+        raise RuntimeError('Resume requires no nonterminal producer/measurement Jobs')
+    state, settings = cpo.idle(), cpo.settings()
+    if any(i.get('ownerWorkloadUID') not in cpo.uids for i in state['snapshot']['instances'] or []):
+        raise RuntimeError('Foreign physical ownership; no demo resume')
+    if any(uid not in cpo.uids for uid in settings.get('autonomousWorkloads', [])) or any(uid not in cpo.uids for uid in settings.get('staticRouting') or {}):
+        raise RuntimeError('Foreign control declarations; no demo resume')
+    folder = cpo.out / ('resume-' + re.sub('[^A-Za-z0-9]', '', e5.now()))
+    folder.mkdir()
+    e5.save(folder / 'pre-state.json', state)
+    e5.save(folder / 'pre-settings.json', settings)
+    marker = cpo.out / 'native-mode-authorization.json'
+    if marker.exists():
+        e5.save(folder / 'prior-native-mode-authorization.json', e5.load(marker))
+    settings['autonomousWorkloads'], settings['staticRouting'] = cpo.uids, {}
+    settings['excludedNodes'] = e5.E5['excludedNodes']
+    cpo.io.a.command, cpo.io.a.phase = 'resume', 'e5-demo-resume'
+    cpo.native_evidence = state.get('results') or []
+    cpo.authorize_native_modes()
+    e5.save(folder / 'resume-ack.json', cpo.put(settings, 'Approved demo resume from owned current topology; preserve original initial/start evidence'))
+    if not state['snapshot']['instances']:
+        bootstrap = copy.deepcopy(cpo.b['schedule'][0])
+        bootstrap['id'] = 'E0-' + folder.name
+        cpo.c['smoke'], cpo.a.stage, cpo.a.command = bootstrap, bootstrap['id'], 'smoke'
+        cpo.run()
+        e5.save(folder / 'bootstrap.json', {'stage': bootstrap, 'phaseFolder': str(stage_folder(cpo.out, bootstrap)), 'meaning': 'Fresh zero-load bootstrap; original E0 evidence retained'})
+    deadline = e5.time.monotonic() + cpo.tb['settleSeconds']
+    while True:
+        alert_offset = cpo.monitor(alert_offset, folder)
+        current = cpo.state()
+        e5.save(folder / 'last-state.json', current)
+        if any(i.get('ownerWorkloadUID') not in cpo.uids for i in current['snapshot']['instances'] or []):
+            raise RuntimeError('Foreign physical ownership appeared during demo resume')
+        ready = True
+        for uid in cpo.uids:
+            owned = {i['id'] for i in current['snapshot']['instances'] or [] if i.get('ownerWorkloadUID') == uid and i.get('workloadUID') == uid and i.get('ready')}
+            ready = ready and any(weight > 0 and identifier in owned for identifier, weight in current['snapshot'].get('routing', {}).get(uid, {}).items())
+        if ready and not current['snapshot'].get('inProgressTarget') and not any(action.get('status') in ('running', 'cancel') for action in current.get('actions') or []):
+            e5.save(folder / 'ready.json', current)
+            print('Resumed owned autonomous topology: ' + str(folder))
+            return
+        if e5.time.monotonic() >= deadline:
+            raise RuntimeError('Resume Ready/positive routing did not converge within existing settle timebox')
+        e5.time.sleep(1)
+
+
 def placement(snapshot, uids):
     return {
         'instances': {i['id']: {**{key: i.get(key) for key in ('node', 'ownerWorkloadUID', 'workloadUID', 'allocation', 'maxBatch', 'maxWaitNanos')}, 'profileID': i.get('profileID') or (i.get('profile') or {}).get('id')} for i in snapshot.get('instances') or [] if i.get('ownerWorkloadUID') in uids or i.get('workloadUID') in uids},
@@ -388,7 +444,7 @@ def self_check():
         cpo.out.mkdir()
         cpo.a = SimpleNamespace(mode='smoke', command='smoke', stage='E0')
         cpo.c = {'workloads': workloads, 'smoke': stages[0]}
-        cpo.b = {'config': cpo.c, 'schedule': stages, 'sources': {}, 'payload': {w['name']: [] for w in workloads}}
+        cpo.b = {'schema': 'demo-e5-binding.v1', 'config': cpo.c, 'schedule': stages, 'sources': {}, 'payload': {w['name']: [] for w in workloads}}
         cpo.tb = dict.fromkeys(('setupSeconds', 'barrierSeconds', 'drainSeconds', 'apiSeconds', 'settleSeconds', 'collectSeconds'), 3)
         cpo.tb['flushSeconds'] = .001
         cpo.ws = {w['name']: w for w in workloads}
@@ -433,6 +489,9 @@ def self_check():
             calls.append(argv)
             if argv[:2] == ['get', 'jobs']:
                 return {'items': []}
+            if argv[:2] == ['get', 'job']:
+                name = next(n for n in pods if argv[2].endswith('-' + str(e5.SEEDS[n])))
+                return {'metadata': {'name': argv[2], 'uid': 'job-' + name}}
             if argv[0] == 'create':
                 job = json.loads(stdin)
                 args = job['spec']['template']['spec']['containers'][0]['args']
@@ -507,6 +566,55 @@ def self_check():
         assert sum(call[0] == 'create' for call in calls) == 9
         assert sum(call[0] == 'exec' for call in calls) == 18
         assert e5.load(cpo.out / 'smoke-E0/pre-state.json')['results'] is None and cpo.native_evidence == []
+        import ast
+        requested = {arg for arg in e5.load(cpo.out / 'smoke-A/job-image-classification-tight-slo.json')['spec']['template']['spec']['containers'][0]['args'] if arg.startswith('--')}
+        for source_sha in ('e18ac391d4353e5abba03558b163312f2a7b629b', '4fb9bf8b0f8112549cf8d939b911c19ddfc9c54e'):
+            source = e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'show', source_sha + ':load-generator/src/chill_loadgen/cli.py'], text=True)
+            tree = ast.parse(source)
+            supported = {arg.value for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'add_argument' for arg in node.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value.startswith('--')}
+            assert requested & supported == requested, (source_sha, sorted(requested - supported))
+            exports = {alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module == 'chill_loadgen.schedule' for alias in node.names}
+            assert {'ScheduledRequest', 'partition_schedule', 'run_schedule'} <= exports
+        assert not requested & {'--workload-slo', '--gateway-timeout'}
+        original_initial = (cpo.out / 'initial.json').read_bytes()
+        original_start = (cpo.out / 'start-ack.json').read_bytes()
+        resume(e5, cpo)
+        ready_snapshot = copy.deepcopy(snapshot)
+        snapshot['instances'], snapshot['routing'] = [], {}
+        bootstraps = []
+        def bootstrap_fixture():
+            assert not any(cpo.c['smoke']['rates'].values()) and cpo.c['smoke']['seconds'] == stages[0]['seconds']
+            bootstraps.append(cpo.a.stage)
+            snapshot.update(copy.deepcopy(ready_snapshot))
+        with patch.object(cpo, 'run', side_effect=bootstrap_fixture):
+            resume(e5, cpo)
+        assert len(bootstraps) == 1 and bootstraps[0].startswith('E0-resume-')
+        assert (cpo.out / 'initial.json').read_bytes() == original_initial and (cpo.out / 'start-ack.json').read_bytes() == original_start
+        assert (cpo.out / 'smoke-E0/phase.json').exists() and len(list(cpo.out.glob('resume-*/resume-ack.json'))) == 2
+        normative = root / 'normative-job'
+        normative.mkdir()
+        cpo.b['schema'] = 'e5-binding.v1'
+        scientific_job = cpo.job(workloads[0]['name'], stages[1], normative)
+        assert {'--workload-slo', '--gateway-timeout'} <= set(scientific_job['spec']['template']['spec']['containers'][0]['args'])
+        cpo.b['schema'] = 'demo-e5-binding.v1'
+        failed_stage = copy.deepcopy(stages[1])
+        failed_stage['id'] = cpo.a.stage = 'FAIL'
+        cpo.c['smoke'] = failed_stage
+        captured_before_delete = []
+        def remove_fixture(job, uid):
+            name = next(n for n in pods if job.endswith('-' + str(e5.SEEDS[n])))
+            path = cpo.out / 'smoke-FAIL' / ('startup-' + name) / ('failed-producer-' + pods[name]['metadata']['uid'] + '.log')
+            assert path.read_text() == 'fixture producer log\\n'
+            captured_before_delete.append(uid)
+        cpo.io.remove_job = remove_fixture
+        with patch.object(cpo.io, 'wait_load_container', side_effect=RuntimeError('fixture startup terminated')), patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(stdout='fixture producer log\\n', stderr='fixture parser stderr\\n', returncode=0)):
+            try:
+                cpo.run()
+            except RuntimeError as error:
+                assert str(error) == 'fixture startup terminated'
+            else:
+                raise AssertionError('Producer startup failure was swallowed')
+        assert len(captured_before_delete) == 3
         fixture_env = json.loads(environment.read_text())
         fixture_env['e5'].update(plan=temp, producerNode='fixture', powerExecutable=temp, powerReceipt=temp)
         fixture_env['d2']['producerImage'] = 'fixture@sha256:fixture'
@@ -577,12 +685,12 @@ def self_check():
         assert sum(method == 'DELETE' for method, _ in management_calls) == 3 and not registered
         assert all(w['workers'] == 320 and w['lifetimeSeconds'] >= w['slo']['targetLatencyNanos'] / 1e9 for w in assembled['workloads'])
         assert (root / 'assembly/register-plc-anomaly.json').exists() and (cpo.out / 'finish-definitions-complete.json').exists()
-        print('PASS demo lifecycle: register missing 2/preserve existing -> E0/A/B/C -> native cleanup before exact-UID definition deletion; real CPO Job/barrier/drain loop and gap/energy/placement/failure summaries; mocked API/kubectl only')
+        print('PASS demo: canonical registration/cleanup, E0/A/B/C real CPO loop, immutable CLI AST option intersection, owned/empty resume preserving start, producer logs before deletion, gap/energy/placement/failure summaries; mocked API/kubectl only')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=['prepare', 'start', 'stage', 'run', 'collect', 'summary', 'finish'], nargs='?')
+    parser.add_argument('command', choices=['prepare', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'finish'], nargs='?')
     parser.add_argument('--config', type=Path, help='Demo JSON; required for prepare')
     parser.add_argument('--out', type=Path, help='Fresh absolute external campaign directory; binding.json is stored here')
     parser.add_argument('--release', type=Path, help='Existing CPO release: executor CampaignOps, command e5-execute, bindingPath, sourceSHA, mainInstructionUTC')
@@ -617,6 +725,8 @@ def main():
     cpo = e5.CPO(cpo_args)
     if args.command == 'start':
         cpo.start()
+    elif args.command == 'resume':
+        resume(e5, cpo)
     elif args.command in ('stage', 'run'):
         selected = [s for s in binding['schedule'] if s['id'] == args.stage] if args.command == 'stage' else binding['schedule']
         if not selected:

@@ -248,6 +248,24 @@ observation brackets or raw action `startedAt..completedAt` intervals.
 Incomplete scheduler/client evidence is unknown, not zero.
 The scheduler's explicit JSON `results: null` is an empty Go result slice for
 consumer iteration/concatenation; retained raw state keeps the original null.
+Demo Jobs omit `--workload-slo` and `--gateway-timeout`, which the pinned D2
+producer predates; prepare still checks actual SLO/lifetime/gateway/socket
+budgets on the host. Normative E5 Jobs retain their flags. Self-check compares
+generated demo options with immutable e18ac/4fb CLI parser option sets using
+AST, without running an image. On producer failure, exact Job-owned Pod logs,
+stderr and identity receipts are saved under `startup-<workload>/` before
+owned Job deletion, including failures before log attachment.
+
+After an explicitly released stage failure, CampaignOps preserves the failed
+stage directory and explicitly re-freezes changed harness source references;
+there is no automatic retry or source refresh. `demo.py resume --out "$OUT"
+--release "$RELEASE"` reuses the existing settings PUT to enable canonical
+autonomy, adopts only owned current instances and waits for Ready positive
+routes. It preserves original `initial.json` and `start-ack.json`, recording a
+new `resume-*/resume-ack.json`. If no instances remain, it first reuses the
+configured zero-load E0 through CPO.run in a fresh `smoke-E0-resume-*/` folder
+(180 seconds in the example), preserving original E0 results. Then execute
+`stage --stage A`, B, C, collect, summary and finish with the same out/release.
 
 `python3 hack/e5/demo.py --help` and `--self-check` work without environment
 configuration. The latter runs the real CPO producer stage loop against local

@@ -461,6 +461,10 @@ class CPO:
         encoded=base64.b64encode(zlib.compress(json.dumps(policy,separators=(',',':'),allow_nan=False).encode())).decode('ascii')
         if len(encoded)>120000: raise RuntimeError('Full frozen payload identity exceeds safe exec argument size; no payload subset is silently dropped')
         container['args']=[encoded,'replay','--endpoint',w['producerEndpoint'],'--token-file',w['producerTokenFile'],'--ca-file',w['producerCAFile'],'--workload',name,'--dataset-dir',w['producerDatasetDir'],'--fields',','.join(w['fields']),'--arrivals','poisson','--seed',str(SEEDS[name]),'--workers',str(w['workers']),'--duration',str(stage['seconds']),'--rate',str(stage['rates'][name]),'--workload-slo',str(w['slo']['targetLatencyNanos']/1e9),'--gateway-timeout',str(w['gatewayCapSeconds']),'--request-lifetime',str(w['lifetimeSeconds']),'--delivery-margin',str(w['deliverySeconds']),'--timeout',str(w['socketSeconds'])]
+        if self.b.get('schema')=='demo-e5-binding.v1':
+            # The pinned D2 producer predates these flags; demo prepare checks the same budgets on the host.
+            for flag in ('--workload-slo','--gateway-timeout'):
+                index=container['args'].index(flag);del container['args'][index:index+2]
         save(folder/('job-'+name+'.json'),job); return job
     def run(self):
         st=self.c['smoke'] if self.a.command=='smoke' else next(x for x in self.b['schedule'] if x['id']==self.a.stage); folder=self.out/(self.a.mode+'-'+st['id'])
@@ -604,6 +608,19 @@ class CPO:
             for name,job,uid in jobs:
                 try:
                     terminal=self.io.k(['get','job',job,'-o','json']); save(folder/('stop-job-'+name+'.json'),terminal)
+                    if terminal['metadata']['uid']!=uid:raise RuntimeError('Owned producer Job UID changed before failure-log capture')
+                    try:
+                        startup=folder/('startup-'+name);startup.mkdir(exist_ok=True)
+                        found=self.io.k(['get','pods','-l','job-name='+job,'-o','json'])['items']
+                        for pod in found:
+                            if not any(owner.get('kind')=='Job' and owner.get('uid')==uid for owner in pod['metadata'].get('ownerReferences',[])):continue
+                            prefix='failed-producer-'+pod['metadata']['uid']
+                            captured=subprocess.run(self.d.K+['logs',pod['metadata']['name'],'-c','load','--timestamps=true'],capture_output=True,text=True,timeout=self.tb['apiSeconds'])
+                            (startup/(prefix+'.log')).write_text(captured.stdout)
+                            (startup/(prefix+'.stderr')).write_text(captured.stderr)
+                            save(startup/(prefix+'.json'),{'at':now(),'jobUID':uid,'pod':pod,'exitCode':captured.returncode,'stdoutPath':str(startup/(prefix+'.log')),'stderrPath':str(startup/(prefix+'.stderr'))})
+                            if captured.returncode:phase.setdefault('cleanupErrors',[]).append('producer-log-capture '+name+': exit '+str(captured.returncode))
+                    except Exception as capture_error:phase.setdefault('cleanupErrors',[]).append('producer-log-capture '+name+': '+str(capture_error))
                     self.io.remove_job(job,uid); phase['ownedProducerStops'].append({'name':job,'uid':uid,'stopped':True})
                 except Exception as stop_error:
                     phase['ownedProducerStops'].append({'name':job,'uid':uid,'stopped':False,'error':str(stop_error)})
