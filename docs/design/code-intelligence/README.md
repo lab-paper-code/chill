@@ -111,8 +111,9 @@ go list -f '{{.ImportPath}} {{join .Imports " "}}' \
 The native executor leaf never imports Serving, profiling or Kubernetes. Serving
 reuses its batching policy directly for scheduler replay; the SDK adapter joins
 actual native readiness/state to admitted profiles. The Kubernetes adapter owns
-Pod preparation and removal, immutable bundle materialization and existing
-NodeActuation submission. The transition-cost core may consume firstfloor
+Pod preparation and removal, immutable bundle materialization and Node-label
+power-mode requests (`internal/serving/kube/operations.go`, `requestPowerMode`).
+The transition-cost core may consume firstfloor
 metadata and plain metric observations, not Serving or its Kubernetes adapter.
 Composition roots assemble these owners. No architecture-gate pass is implied
 by this boundary description.
@@ -277,6 +278,9 @@ Profiles and costs come from completed measurements in
 `servingEntrypoint.profileNamespaces`; the chart grants ConfigMap read there for
 power mode transition cost preparations.
 Raw service samples remain in immutable evidence bundles, not ConfigMaps.
-ChillServer creates/removes native Pods and their small config/credential objects;
-NodeActuation remains the sole power actuator and pool membership uses the
-existing Node label ownership.
+ChillServer creates/removes native Pods and their small config/credential objects.
+Power-mode requests use Node labels; `PowerModeReconciler` in
+`internal/nodeactuator/controller/power_mode.go` is the sole host power mutator
+and publishes independent read-back, generation and transition markers on the Node.
+There is no NodeActuation CRD or actuation Lease. Pool membership uses Node metadata
+and the measurement admission taint.

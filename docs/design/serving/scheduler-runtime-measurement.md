@@ -78,7 +78,7 @@ Node `ObservedAt`는 실제 `Nodes.List` 요청 직전의 local 시각(보수적
 Observer가 native probe 응답에서 기록한 local receipt 시각은 그대로 보존한다.
 어느 source도 historical cutoff나 최종 `at`로 재표시하지 않으며, live HTTP 자체가 느리면
 그 시간은 source age에 남아 기존 freshness gate에서 Pending이 된다.
-고정 전력모드 fallback은 이미 읽은 Node·NodeActuation과 기존 fixed-mode resolver를 재사용한다.
+고정 전력모드 fallback은 이미 읽은 Node의 전력 read-back과 기존 fixed-mode resolver를 재사용한다.
 모드 문자열 하나를 얻기 위해 노드마다 전체 operation snapshot·Pod 목록을 다시 읽지 않는다.
 
 SLO 위반은 모델의 `deadlinePolicy`(drop/keep/defer, 기본 keep)에 따른다. drop은
@@ -223,7 +223,7 @@ metric source·구간·설정·raw identity를 보존한다. powerwindow로 wall
 일치해야 zero-inference wall cost로 인정하며, 삭제나 빈 queue만으로 추론 부재를
 증명하지 않는다. resize cost는 기존 prepare/remove primitive 측정의 조합이다.
 
-현재 NodeActuation와 transition-cost의 독립 read-back·raw directed trial은 그대로
+현재 Node 기반 전력 제어와 transition-cost의 독립 read-back·raw directed trial은 그대로
 재사용한다. 준비·제거·idle state 측정은 해당 실제 동작/상태를 측정하는 별도 raw
 record다. delta eta와 whole wall joules의 범위, 같은 노드·구간의 중복을 구별한다.
 원자 동작 자체는 측정 campaign이나 control loop의 내부 lifecycle에 묶지 않는다.

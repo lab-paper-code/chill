@@ -10,6 +10,14 @@ stored-result versions. The historical experiment descriptions below retain
 the terminology and outcomes recorded at the time.
 
 
+현재 전력 제어는 Node label 요청과 generation, agent의 독립 read-back 및 전환 annotation을 쓴다.
+`NodeActuation` CRD와 actuation Lease는 삭제됐다. 근거는
+`internal/nodeactuator/controller/power_mode.go`의 `PowerModeReconciler`,
+`internal/serving/kube/operations.go`의 `requestPowerMode`, 외부 배포 기록
+`/home/genesis1/.cache/chill-assets/ops/pools-deploy/deploy-log.md`의 rev 55다.
+아래 Plan 9·10의 NodeActuation 소유·Ready·Lease 설명과 연결된 과거 plan은 당시 구현 기록이며,
+현재 구조의 계약이 아니다. 현재 요청·관측 계약은 [M5 정리 3장](../platform/cleanup-m5.md#3-노드-전력모드-node-label과-generation)을 따른다.
+
 Roadmap for the implemented `ProfilingRun` path through durable
 execution-evidence verification and measurement derivation. Execution evidence
 uses `chill.dacs.io/profiling-execution-evidence.v1alpha15`; actuated evidence

@@ -129,7 +129,7 @@ target이 사용하지 않고 실제 인스턴스도 없는 빈 노드의 공통
 합이다. `schedulerPlan`의 비용 선택은 power 동작에 그 시점의 적재 상태, 곧 빈 상태를 `BeforeState`로 가진 전환 비용(3.5절)을,
 prepare에 노드 전력모드가 같은 비용을 고른다. 빈 노드 전환은
 측정 POOL에서 `serving-operation`의 power 동작으로 측정하고([원자 동작 측정의 격리](scheduler-operations.md#원자-동작-측정의-격리)),
-모드 변경이 노드를 재부팅하는 장비(jetsono)도 같다. 측정 구간은 NodeActuation의 적용과 확인에 settling
+모드 변경이 노드를 재부팅하는 장비(jetsono)도 같다. 측정 구간은 Node annotation의 적용과 독립 read-back 확인에 settling
 (`settlingDurationSeconds`, E1에서 60 s)을 더한 구간이다. 그래서 적용이 약 1.5 s인 jetsonx 전환도 63.5 s 구간으로
 coverage 검사를 통과해 `Accepted`이고, 비용에는 목표 모드에서 보낸 settling 에너지가 들어간다. 그 비용이 없으면 다시
 넣는 노드 계획은 `MissingOperationCost`로 비교에서 빠진다.

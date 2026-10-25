@@ -7,6 +7,11 @@ writer의 노드 쪽 준비이기도 하다([B2](../architecture-rethink/03-b2-s
 코드 근거는 `e3867f5`(workload-pools, M0, M1, M4 κ 계획기)이다. live 근거는 2026-10-19 15:00 UTC에 `kubectl get`으로
 읽은 snapshot("snapshot")과 M4 live 시험에서 본 사실("M4 live")이다. 실행으로 확인하지 않은 판단은 `[추론]`으로 표시한다.
 
+이 문서의 NodeActuation·Lease·phase 설명은 M2 당시 이행 기록이다. 이후 M5 D2에서
+Node label 요청과 generation, 독립 read-back annotation으로 교체했고 CRD와 actuation Lease를 삭제했다.
+현재 계약은 [M5 정리 3장](cleanup-m5.md#3-노드-전력모드-node-label과-generation)과
+`internal/nodeactuator/controller/power_mode.go`의 `PowerModeReconciler`를 따른다.
+
 ## 1. 측정한 문제
 
 | # | 문제 | 근거 | 영향 |

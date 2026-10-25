@@ -101,7 +101,7 @@ POST 권한을 가진다. ChillServer는 `tickMu` 안에서 다음을 확인하�
 같은 `Operations`로 실행하며, 응답은 완전한 `OperationResult`다.
 
 - Workload가 마지막 snapshot의 현재 Workload이고 자동제어 밖이다.
-- Node가 있고 측정 taint, 실행 중인 run, Ready나 `Failed`가 아닌 NodeActuation이 없다(`NodeBusy`).
+- Node가 있고 측정 taint, 실행 중인 run, 진행 중인 Node label 전력 요청이 없다(`NodeBusy`).
 - prepare: `profileID`가 그 Node의 도출된 preparation이다. 대상 Workload가 instance owner다. 양수
   `fixedBatchSize` B는 preparation의 firstfloor `Policy.fixedBatchSize`와 instance에 함께 기록하고 native config
   검증이 B가 측정되고 초기화된 batch인지 확인한다([strict fixed-size baseline](scheduler-runtime-measurement.md#strict-fixed-size-baseline-serving)).
@@ -167,11 +167,11 @@ catalog 검증 profile에 연결한다. 측정 instance는 taint의 toleration�
 단계가 실패하거나 `Accepted`가 아니면 순서가 멈추고, 끝나지 않은 순서는 `serving/operation-sequences/<CR UID>.json`에
 기록된다. CR status는 단계마다 `{name, key, verdict}`와 phase(`Complete`, `Insufficient`, `Failed`)다.
 
-`power` 단계는 DeviceClass와 actuation policy로 만든 NodeActuation(owner는 CR)으로 scheduler와 같은 `ChangePower`를 실행한다.
+`power` 단계는 DeviceClass와 actuation policy에 따라 Node의 desired power-mode label을 쓰는 scheduler와 같은 `ChangePower`를 실행한다.
 측정 실행은 taint가 있는 Node에서만 동작을 허용하므로 power도 측정 prepare와 같은 경로로 진행한다. runner가 없는 빈
 Node를 가장 낮은 모드에서 profile 모드로 올린 기록이 가용 노드를 다시 넣는 power 비용이 된다. 기록의 측정 전후 모드가
 비용의 from과 to이고 비용의 적재 상태는 빈 상태다. power 기록은 측정 전후 State가 모두 비어 있을 때 `Accepted`이며, runner를
-적재한 전환은 PowerModeTransitionCost가 측정한다. power 측정 구간은 NodeActuation의 적용과 확인에 settling
+적재한 전환은 PowerModeTransitionCost가 측정한다. power 측정 구간은 Node annotation에 기록된 적용과 독립 read-back 확인에 settling
 (`settlingDurationSeconds`)을 더한 구간이고, 비용에는 목표 모드의 settling 에너지가 들어간다. 그래서 적용이 meter 표본
 간격보다 짧은 전환(jetsonx 약 1.5 s)도 E1의 60 s settling으로 coverage 검사를 통과한다. 측정 구간 전체가 meter 표본
 간격보다 짧으면 coverage 검사가 기록을 `Insufficient`로 남긴다.
