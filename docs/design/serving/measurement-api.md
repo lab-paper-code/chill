@@ -99,6 +99,10 @@ profile 통계오차, BEO idle fallback CI, 시점 drift와 global95% gain 보�
 **load Job.** release namespace의 `occupancy-<UID hash>`, label `chill.dacs.io/measurement-load: <Node UID>`.
 - `backoffLimit:0`과 명시한 유한 Job 예산을 사용한다.
   deadline은 setup, warmup, 본창, physical drain, delivery와 collection을 포함한다.
+  closed-loop 공급 시간은 `warmupSeconds + durationSeconds + requestLifetimeSeconds + deliveryMarginMillis/1000`이며,
+  generator 시작과 첫 물리 batch 사이의 전달 지연만큼 창 끝 공급이 끊기지 않게 한다.
+  Job deadline은 이 공급 시간을 초 단위로 올림한 뒤 setup, drain, collection을 더한다.
+  물리 batch 기준 warmup/본창 계산과 Poisson 공급 시간은 바꾸지 않는다.
   HTTP 만료 뒤 계속되는 native 실행의 미완료 근거는 unknown으로 보존한다.
   반환은 해당 label의 Job을 Background 삭제해 부하 Pod를 정리한다.
 - `nodeName`은 ChillServer Pod의 노드(downward API `spec.nodeName`, env `NODE_NAME`)다. `nodeName`은 scheduler를 거치지 않아 NoSchedule taint를 보지 않는다. 그 노드는 gateway가 있는 노드라 부하가 다른 측정 노드의 전력에 섞이지 않는다.

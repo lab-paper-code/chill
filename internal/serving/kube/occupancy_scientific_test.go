@@ -187,7 +187,7 @@ func TestOccupancyFrozenConditionsAndClosedLoopJob(t *testing.T) {
 	plan := occupancyPlan{workload: &edge.Workload{}, dataset: &edge.Dataset{}, fields: []string{"x"}}
 	job := loadJob(m, testNode, plan, 0, LoadGeneratorConfig{})
 	args := strings.Join(job.Spec.Template.Spec.Containers[0].Args, " ")
-	if !strings.Contains(args, "--arrivals closed-loop") || !strings.Contains(args, "--request-lifetime 2") || !strings.Contains(args, "--delivery-margin 0.010") || strings.Contains(args, "--rate") || *job.Spec.ActiveDeadlineSeconds != 483 {
+	if !strings.Contains(args, "--arrivals closed-loop") || !strings.Contains(args, "--request-lifetime 2") || !strings.Contains(args, "--delivery-margin 0.010") || strings.Contains(args, "--rate") || *job.Spec.ActiveDeadlineSeconds != 486 {
 		t.Fatalf("closed loop Job: %s deadline=%d", args, *job.Spec.ActiveDeadlineSeconds)
 	}
 	for _, mutate := range []func(*edge.DispatchOccupancyMeasurementSpec){
@@ -208,5 +208,23 @@ func TestOccupancyFrozenConditionsAndClosedLoopJob(t *testing.T) {
 		if bad.ValidateConditions() == nil {
 			t.Fatalf("accepted infeasible conditions: %+v", bad)
 		}
+	}
+}
+
+func TestOccupancyLoadSupplyCoversPhysicalWindow(t *testing.T) {
+	m := occupancyRoot("supply-window", time.Now(), 1)
+	m.Spec.SupplyMode = occupancyClosedLoop
+	m.Spec.WarmupSeconds, m.Spec.DurationSeconds = 60, 360
+	m.Spec.RequestLifetimeSeconds, m.Spec.DeliveryMarginMillis = 2, 10
+	plan := occupancyPlan{workload: &edge.Workload{}, dataset: &edge.Dataset{}}
+	job := loadJob(m, testNode, plan, 0, LoadGeneratorConfig{})
+	args := job.Spec.Template.Spec.Containers[0].Args
+	at := slices.Index(args, "--duration")
+	if at < 0 || args[at+1] != "422.010" {
+		t.Fatalf("supply must exceed warmup+window by lifetime+delivery: %v", args)
+	}
+	wantDeadline := int64(m.Spec.JobSetupSeconds) + 423 + int64(m.Spec.DrainSeconds) + int64(m.Spec.CollectionSeconds)
+	if *job.Spec.ActiveDeadlineSeconds != wantDeadline {
+		t.Fatalf("deadline=%d, want %d", *job.Spec.ActiveDeadlineSeconds, wantDeadline)
 	}
 }

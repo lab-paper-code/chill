@@ -698,16 +698,20 @@ func (c *SchedulerController) waitOccupancyDrain(ctx context.Context, workloadUI
 // loadJob is the load generator Job of one occupancy measurement.
 func loadJob(m *edge.DispatchOccupancyMeasurement, ref serving.NodeReference, plan occupancyPlan, rate float64, config LoadGeneratorConfig) *batch.Job {
 	sum := sha256.Sum256([]byte(m.UID))
-	seconds := m.Spec.WarmupSeconds + m.Spec.DurationSeconds
+	seconds := float64(m.Spec.WarmupSeconds) + float64(m.Spec.DurationSeconds)
+	if m.Spec.SupplyMode == occupancyClosedLoop {
+		// The physical window starts after generator startup and first-request delivery.
+		seconds += float64(m.Spec.RequestLifetimeSeconds) + float64(m.Spec.DeliveryMarginMillis)/1000
+	}
 	data := core.VolumeMount{Name: "data", MountPath: "/data"}
 	deadline := int64(seconds) + 120
 	args := []string{"replay", "--endpoint", config.Endpoint, "--token-file", "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		"--ca-file", "/ca/tls.crt", "--workload", plan.workload.Name, "--dataset-dir", "/data", "--fields", strings.Join(plan.fields, ","),
-		"--duration", strconv.Itoa(int(seconds)), "--seed", "0", "--workers", strconv.Itoa(int(m.Spec.Workers))}
+		"--duration", strconv.FormatFloat(seconds, 'f', 3, 64), "--seed", "0", "--workers", strconv.Itoa(int(m.Spec.Workers))}
 	if m.Spec.SupplyMode == occupancyClosedLoop {
 		args = append(args, "--arrivals", occupancyClosedLoop, "--request-lifetime", strconv.Itoa(int(m.Spec.RequestLifetimeSeconds)),
 			"--delivery-margin", strconv.FormatFloat(float64(m.Spec.DeliveryMarginMillis)/1000, 'f', 3, 64))
-		deadline = int64(m.Spec.JobSetupSeconds) + int64(seconds) + int64(m.Spec.DrainSeconds) + int64(m.Spec.CollectionSeconds)
+		deadline = int64(m.Spec.JobSetupSeconds) + int64(math.Ceil(seconds)) + int64(m.Spec.DrainSeconds) + int64(m.Spec.CollectionSeconds)
 	} else {
 		args = append(args, "--rate", strconv.FormatFloat(rate, 'f', 4, 64), "--arrivals", "poisson")
 	}
