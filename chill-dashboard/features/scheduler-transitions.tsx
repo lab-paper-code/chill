@@ -90,7 +90,7 @@ function RoutingSplit({result}:{result:OperationResult}) {
   }
   const uids=[...new Set([...Object.keys(declared),...Object.keys(actual??{})])]
   return <section className="rows-group" aria-label="서비스 → 인스턴스 비율"><h2 className="rows-label">서비스 → 인스턴스 비율</h2><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스 → 인스턴스</th><th>설정한 비율</th><th>실제 비율</th></tr></thead><tbody>
-    {uids.flatMap(uid=>[...new Set([...Object.keys(declared[uid]??{}),...Object.keys(actual?.[uid]??{})])].map(id=><tr key={`${uid}/${id}`}><td>{services.get(uid)!.name} → {instanceName(id)}</td><td>{share(declared,uid,id)}</td><td>{share(actual,uid,id)}</td></tr>))}
+    {uids.flatMap(uid=>[...new Set([...Object.keys(declared[uid]??{}),...Object.keys(actual?.[uid]??{})])].map(id=><tr key={`${uid}/${id}`}><td>{services.get(uid)!} → {instanceName(id)}</td><td>{share(declared,uid,id)}</td><td>{share(actual,uid,id)}</td></tr>))}
   </tbody></table></div>{!uids.length&&<p>설정한 분배가 기록되지 않았어요.</p>}{result.operation.settingsValidatedAt&&<RoutingReason at={result.operation.settingsValidatedAt} declared={result.operation.staticRouting}/>}</section>
 }
 // The settings change that declared the split is the one validated at settingsValidatedAt.

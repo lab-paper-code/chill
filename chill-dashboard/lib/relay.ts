@@ -52,6 +52,9 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/observations/load") { methods = ["GET"]; query = "load" }
   else if (route === "v1/observations/power") { methods = ["GET"]; query = "load" }
   else if (route === "v1/observations/scheduler") { methods = ["GET"]; query = "schedulerHistory" }
+  else if (route === "v1/scheduler/capacity") methods = ["GET"]
+  else if (/^v1\/experiments(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
+  else if (/^v1\/namespaces\/[^/]+\/(operation-cost-measurements|dispatch-occupancy-measurements)(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
   else if (route === "v1/scheduler" || route === "v1/scheduler/state") methods = ["GET"]
   else if (route === "v1/scheduler/settings") methods = ["GET", "PUT"]
   else if (route === "v1/scheduler/profiles") methods = ["GET"]
@@ -82,7 +85,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
       } else if (key === "condition") {
         if (Buffer.byteLength(value) > 128 || !/^[^=]+=(True|False|Unknown)$/.test(value)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "view") {
-        if (value !== "compact") throw new RelayFailure("DashboardQueryInvalid", 400)
+        if (value !== "compact" && !(value === "summary" && route === "v1/scheduler/state")) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "dryRun") {
         if (value !== "All") throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (Buffer.byteLength(value) > (key === "outcome" ? 64 : 256) || (key !== "q" && !value)) throw new RelayFailure("DashboardQueryInvalid", 400)
@@ -96,7 +99,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
     const window = timestampNanos(to) - timestampNanos(from)
     if (window <= 0n || window > BigInt(config.maxWindowHours * 3600000) * 1000000n) throw new RelayFailure("DashboardQueryInvalid", 400)
   }
-  if (compact) params.set("view", "compact")
+  if (compact && !params.has("view")) params.set("view", "compact")
   const suffix = params.toString()
   // Native inference may consume its entire cap; keep a bounded delivery margin.
   return { path: `/api/${route}${suffix ? `?${suffix}` : ""}`, kind, timeoutMs: kind === "infer" ? config.inferTimeoutMs + config.queryTimeoutMs : kind === "mutation" ? config.mutationTimeoutMs : config.queryTimeoutMs, bodyAllowed: method === "POST" || method === "PUT" }

@@ -60,7 +60,7 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
   for(const key of ["from","to","limit","cursor","definition","outcome"])params.getAll(key).forEach(value=>queryText.append(key,value))
   const query=useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(uid)}?${queryText}`,{enabled:!!from&&!!to,poll,decoder:changes?undefined:parseSchedulerJSON})
   const workloads=useChillQuery<UIDChoice[]>("v1/workloads")
-  const name=resolveWorkloadIdentities(workloads.data,query.data?.definitions,[],[uid]).get(uid)!.name
+  const name=resolveWorkloadIdentities(workloads.data,query.data?.definitions,[],[uid]).get(uid)!
   function page(cursor?:string) {
     // A page belongs to the exact submitted window, never the unsaved form.
     const next=new URLSearchParams(params.toString());if(cursor)next.set("cursor",cursor);else next.delete("cursor");router.replace(`${path}?${next}`)

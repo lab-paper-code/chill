@@ -39,7 +39,7 @@ function attention(workloads?:WorkloadView[], scheduler?:SchedulerView):Attentio
     if (decision.at && !decision.at.startsWith("0001-")) {
       const chosen = decision.target && decision.target.id !== decision.keep.id ? decision.target : decision.keep
       for (const estimate of chosen.slo ?? []) if (estimate.normalizedExceedance > 0) {
-        const name = resolveWorkloadIdentities(workloads,[],snapshot.workloads,[estimate.uid]).get(estimate.uid)!.name
+        const name = resolveWorkloadIdentities(workloads,[],snapshot.workloads,[estimate.uid]).get(estimate.uid)!
         items.push({key:`slo/${estimate.uid}`,tone:"warn",badge:"목표 초과 예상",title:`${name}의 응답 목표 초과가 예상돼요`,hint:chosen.keep ? "지금 구성을 유지할 때의 예상" : "고른 변경 후보를 따를 때의 예상",href:"/scheduler/estimates"})
       }
     }
@@ -119,7 +119,7 @@ export function OverviewPage() {
       {workloads.data && !workloads.data.length && <Row href="/workloads" label="등록된 서비스가 없어요" />}
     </Section>
     <Section label="부하" query={load}>
-      {(load.data?.workloads ?? []).map(row => <Row key={row.uid} href="/scheduler/load" label={names.get(row.uid)!.name} hint={`수신 ${row.received} · 접수 ${row.accepted} · 완료 ${row.completed}`} />)}
+      {(load.data?.workloads ?? []).map(row => <Row key={row.uid} href="/scheduler/load" label={names.get(row.uid)!} hint={`수신 ${row.received} · 접수 ${row.accepted} · 완료 ${row.completed}`} />)}
       {load.data && !load.data.workloads?.length && <Row href="/scheduler/load" label="이 구간에 들어온 요청이 없어요" />}
       {load.data?.gapUntil && <Row href="/scheduler/load" label="관측 공백이 있어요" hint={gapNotice(load.data.gapUntil)} value={<StatusBadge tone="warn">관측 공백</StatusBadge>} />}
     </Section>

@@ -39,7 +39,7 @@ function ObservationLink({uid,definition,from,to,children}:{uid:string;definitio
   const query=new URLSearchParams({uid,from,to});if(definition)query.set("definition",definition)
   return <Link href={`/observations?${query}`}>{children}</Link>
 }
-function ServiceName({uid,snapshot}:{uid:string;snapshot:SchedulerSnapshot}) {return <span>{resolveWorkloadIdentities([],[],snapshot.workloads,[uid]).get(uid)!.name} <small className="break-all">({uid})</small></span>}
+function ServiceName({uid,snapshot}:{uid:string;snapshot:SchedulerSnapshot}) {return <span>{resolveWorkloadIdentities([],[],snapshot.workloads,[uid]).get(uid)!} <small className="break-all">({uid})</small></span>}
 function SLOs({candidate,decision,snapshot}:{candidate:SchedulerCandidate;decision:SchedulerDecision;snapshot:SchedulerSnapshot}) {
   return <><p>예상 에너지 {energy(candidate.expectedJoules)}. 예상 지연은 반복 비교 결과이며 실측과 구분합니다.</p>{candidate.expectedJoules==null&&<Lines values={candidate.reasons}/>}<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스</th><th>예상 지연</th><th>목표</th><th>표본 수</th><th>목표 초과 비율</th><th>예상 결과</th></tr></thead><tbody>{candidate.slo?.map((row,index)=><tr key={index}><td><ObservationLink uid={row.uid} definition={row.definition} from={decision.search.windowStart} to={decision.search.windowEnd}><ServiceName uid={row.uid} snapshot={snapshot}/></ObservationLink><small className="block break-all">{row.definition}</small></td><td>{row.expectedNanos==null?"계산값 없음":`${Number(row.expectedNanos) / 1e6} ms`} ({row.percentile}% 기준)</td><td>{ms(row.targetNanos)}</td><td>{row.samples}</td><td>{row.normalizedExceedance}</td><td>{Object.entries(row.predictedOutcomes??{}).map(([key,value])=>`${key}: ${value}`).join(", ")||"제공 없음"}</td></tr>)}</tbody></table></div>{!candidate.slo?.length&&<p>서비스별 예상값 제공 없음</p>}</>
 }
@@ -216,9 +216,8 @@ export function SchedulerLoadPage() {
   const query=useChillQuery<LoadWindow>(`v1/observations/load?${new URLSearchParams(submitted)}`,{decoder:parseSchedulerJSON}),workloads=useChillQuery<WorkloadChoice[]>("v1/workloads"),data=query.data
   const recordUIDs=[...(data?.workloads?.map(row=>row.uid)??[]),uid,selectedUID].filter(Boolean)
   const definitions=useWorkloadDefinitions(recordUIDs,submitted)
-  const identities=resolveWorkloadIdentities(workloads.data,definitions,[],recordUIDs)
-  const choices=new Map([...identities].map(([recordUID,identity])=>[recordUID,identity.name]))
-  const name=(recordUID:string)=>identities.get(recordUID)!.name
+  const choices=resolveWorkloadIdentities(workloads.data,definitions,[],recordUIDs)
+  const name=(recordUID:string)=>choices.get(recordUID)!
   const rows=(data?.workloads??[]).filter(row=>!selectedUID||row.uid===selectedUID),total=rows.reduce((sum,row)=>sum+row.received,0)
   function apply() {
     const from=Date.parse(draft.from),to=Date.parse(draft.to)
