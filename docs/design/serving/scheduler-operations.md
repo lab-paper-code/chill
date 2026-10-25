@@ -121,6 +121,17 @@ desired/native DecisionID만 다르면 probe는 오류 대신 `PolicyAckPending`
 대기한다. 이미 실행 중인 동작의 실제 상태는 바꾸지 않으며 정상 다른 Node의
 독립 prepare·전력 동작은 계속 가능하다. 기존 전체 자원 검증의 전역 Pending은 유지한다.
 
+**자원 장부 이관 후 표시(SCH-50~52, AC-37~39; 아직 구현 결과 아님):**
+같은 Pod UID 항목에 물리 ID/slot·할당·owner와 최근 성공 관측 시각·최근 실패 사유를
+함께 표시하고, “실물 점유”, “현재 관측 불명”, “정책 반영 대기”, “작업 예약/결과 확인 대기”를
+서로 대용하지 않는다. 준비/종료 미확인 실물은 Ready가 아니어도 소유 POOL에 남는다.
+예약 owner와 Node·Workload·실물 범위, 고정 이유를 기존 action/operation 관측에 연결한다.
+새 요청 가능 여부와 실제 정책 완료는 계속 별도로 확인하며, 관측 불명·timeout으로 실물이나
+예약을 비우지 않는다. 위의 전역 `TransitionInProgress`와 “전환 중 새 탐색 없음”은 이관 전
+동작이고, 이관 후에는 예약 밖 판단이 계속된다. 기존 중간 Ready 부분집합 분배는 같은
+전환 예약 안의 실행 동작으로 남는다. 상세 수명·해제·검사 계약은
+[자원 장부 설계](scheduler-implementation.md#54-자원-장부--sch-5052-ac-3739)를 따른다.
+
 
 제거는 native drain과 실제 container 종료 증거를 확인한 뒤 자기 Pod 소유의 Service를
 resourceVersion/UID precondition으로 삭제하고 Pod finalizer 및 config를 해제한다.

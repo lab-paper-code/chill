@@ -2,8 +2,8 @@
 
 ## 1. 기준과 적용 범위
 
-[스케줄러 SRS](../../spec/scheduler/SRS.md)의 SCH-01~32, SCH-48~49와
-[요구사항·구현 대조](scheduler-srs-audit.md)에 대응하는 현재 판단·제어 구조다.
+[스케줄러 SRS](../../spec/scheduler/SRS.md)의 SCH-01~32, SCH-48~52와
+[요구사항·구현 대조](scheduler-srs-audit.md)에 대응하는 현재 구조와 확정 변경 설계다.
 요구사항과 수용 기준의 원본은 `docs/spec/`이며 이 문서는 구현 책임과 불변식을 정리한다.
 
 firstfloor의 Go 큐·배처·persistent Python IPC runner를 `internal/firstfloor`,
@@ -362,6 +362,238 @@ keep 밖의 적격 계획이 있는 노드다.
 실제 요청 완료와 whole-POOL 전력 기록을 같은 관측 구간, UID, decision에 연결하여 분석자가 예측과 실측 차이를 계산한다.
 자율 제어는 `settings.autonomousWorkloads`에 나열한 Workload UID에만 적용한다.
 
+### 5.4 자원 장부 — SCH-50~52, AC-37~39
+
+**2026-10-26 확정 설계, 아직 구현·검증 결과가 아니다.** 시연 3회차 전에
+① 실물 장부 → ② 영향 범위 예약 → ③ 예약 밖 재계획 순서로 한 묶음을 적용한다.
+앞 절의 `InProgressTarget`/`TransitionInProgress`, Node 단위 guard와 global route
+대기는 **이관 전 동작**이다. 이 절이 이관 후 계약이며, ③만 먼저 적용하지 않는다.
+전역 계획기는 하나를 유지한다. 새 서비스·저장소·CRD·범용 workflow 엔진은 없다.
+④ 두 박자 제어(안정화·예비 용량·고정 H)는 승인 질문만 남기며 여기서 구현하지 않는다.
+⑤ 정책 ConfigMap 단일화와 finalizer로 뒤처리 책임을 옮기는 작업은 E5 뒤다.
+
+근거는 운영 자산의 `intent/structure-redesign-20261026.md` 안 **나**와
+`audit-20261024/structure-20261026/`의 `StructTruth.md`, `StructFailure.md`,
+`StructControl.md`, `StructActions2.md`, `clusters.md` K1~K5 및 `Research-K1~K5.md`다.
+운영 자산 루트는 `/home/genesis1/.cache/chill-assets/ops/pools-deploy`다.
+Research의 권고 전체를 이번 범위로 가져오지 않는다. 증거 저장소 복구, 전력 관측 프로토콜,
+부하/κ 수식 변경은 이 세 요구사항의 완료 조건으로 섞지 않는다.
+
+#### ① 실물 장부와 관측의 분리 — SCH-50
+
+**`kube/observer.go`의 기존 `o.sources`를 유일한 실물 장부로 승격한다.**
+현재 physical ID 키의 종료 추적 자료를 **Pod UID 키**로 이관한다. Runtime의
+`instances`는 요청 실행·바인딩·배분을 위한 투영, `SchedulerSnapshot.Instances`는
+한 판단에 복사한 장부 투영이다. 셋을 독립 writer/registry로 두지 않는다.
+기존 `o.verified`는 짧은 readiness 검증 보조값일 뿐 존재·할당의 권위가 아니다.
+
+| 장부 항목 | 의미와 권위 |
+|---|---|
+| Pod identity | namespace/name + 불변 Pod UID. 컨테이너가 아직 없어도 항목을 만든다. Node는 Name과 UID를 함께 고정한다. |
+| 물리 ID | 컨테이너가 생긴 뒤 기존 `Pod UID/container ID`. 생성 전에는 비어 있다. 이전 컨테이너의 종료 추적도 같은 Pod 항목 안에 보존하고 다른 executor의 성공 관측으로 덮지 않는다. |
+| slot | 기존 `ServingSlotAnnotation`/`TargetID`. 생성·계획 주소이지 실행원 신분이나 유일성 proof가 아니다. 같은 slot의 여러 Pod는 모두 남긴다. |
+| 할당 | Pod의 실제 request/limit, 준비 계약의 CPU affinity/GPU·threads·profile binding 및 마지막 검증한 실제 native 할당. 준비 중에도 예약된 할당을 점유로 센다. 둘의 불일치/미확인은 해당 Node의 변경 자격을 닫지, 점유를 0으로 만들지 않는다. |
+| owner·배분 | 기존 owner reference를 해석한 Workload UID와 runtime의 현재 binding/routing을 구별한다. route가 비었다고 owner를 지우지 않는다. |
+| 최근 관측 | 마지막 성공 native state·실제 applied DecisionID·Ready/Stopped·요청 목록, 그 조회 시작 시각/마지막 성공 확인 시각, 최근 시도 시각과 실패 사유. 실패는 성공값과 성공 시각을 갱신하지 않는다. |
+| 수명 증거 | Pod 생성/삭제 표식, 정확한 컨테이너 종료 확인, 기존 source finalizer 및 제거 결과. 실행 종료·자원 반환·API 삭제/뒤처리 완료를 서로 대용하지 않는다. |
+
+필드는 개념 계약이다. 기존 `nativeSource`, `InstanceState`, `SchedulerInstance`에 필요한
+정보만 더하고 중복된 관측 enum/정책 DSL/새 영속 이력 저장소를 만들지 않는다.
+Pod UID와 물리 ID를 별도로 운반하므로 init 실패 Pod도 장부에서 사라지지 않는다.
+`RestartPolicyNever` 및 정확 physical ID 우선/유일 alias 해석은 보존한다.
+slot 해석이 필요한 prepare 완료에서 한 번 정확 신분으로 해결한 뒤 mutation은 그 신분에
+고정한다. 예전 UID의 허가를 같은 이름·slot으로 재생성한 Pod에 넘기지 않는다.
+
+**생성·삭제는 Pod 수명과 기존 finalizer 경계만 따른다.**
+
+1. Create 반환/Pod Added·Modified 사건과 최초·watch 복구의 성공한 전체 Pod LIST로
+   UID 항목을 발견·복구한다. native probe/profile/Service 검증 전에도 기록한다.
+   create 전 의도는 ②의 예약이지 존재하는 Pod를 가장한 장부 항목이 아니다.
+2. Pod watch와 기존 controller-runtime 재조정이 수명·종료 상태를 갱신한다.
+   terminal/terminating Pod를 steady Ready 목록에서 제외해도 장부에서는 제외하지 않는다.
+   relabel·owner 해석 실패·native/Service/LIST/log 실패·ACK pending은 항목 삭제 사유가 아니다.
+3. 동일 UID/container의 실제 종료를 확인하고, 기존 finalizer/제거 절차의 필요한 정리와
+   해당 UID의 삭제를 확인한 뒤에만 항목을 퇴역시킨다. `DeletionTimestamp`, 실패한 GET,
+   필터 목록 누락이나 강제 삭제 사건 하나는 실제 종료 proof가 아니다.
+   먼저 종료를 확인한 뒤 watch 삭제 사건을 놓친 경우는 정확 UID의 성공한 재조회로 수렴한다.
+4. 관측 실패 시 항목·owner·할당·마지막 성공 상태는 보존하지만 현재 dispatch 자격은
+   별도 freshness/identity 검사를 통과해야 한다. 늦은 probe는 먼저 확인한 종료/UID 변경을
+   되돌리지 못한다. 전역 snapshot 시각으로 각 source의 성공 시각을 새로 찍지 않는다.
+5. 재시작은 기존 Pod/finalizer/owner/정책 annotation에서 장부를 복원한 뒤 새 변경을
+   허가한다. `c.runs`의 메모리 수명이 원격 작업의 취소/부재를 보장한다고 주장하지 않는다.
+   복원할 identity/효과가 불명인 범위는 재관측까지 고정한다.
+
+**소비자 전환표 — 아래는 모두 이관 대상이며 Ready 목록 fallback을 남기지 않는다.**
+파일 경로는 별도 표시가 없으면 `internal/serving/` 아래다.
+
+| 파일:함수 | 장부 방식의 기준 |
+|---|---|
+| `kube/observer.go:refreshLocked`, `restoreSources`, `probeSource`, `verifyProbed`, `watchPods`, `refreshFailure`, `observeTermination` | Pod 수명 갱신과 관측 갱신을 분리한다. 실패 때 `InstallInstances(nil)`로 재고를 비우지 않는다. 완료한 source 결과를 identity 확인 후 짧게 게시하고 느린 probe I/O가 다른 source 게시/장부 복사를 붙들지 않게 한다. |
+| `runtime.go:InstallInstances`, `Instances`, `BuildPools` | 전체 장부 투영을 한 집계자가 설치한다. 누락된 Ready 응답을 삭제로 해석하는 `!seen && outstanding==0` 제거를 없앤다. 요청/route 상태는 runtime 소유 그대로이며, 실행원 없는 Pod도 POOL 점유 투영에서 빠지지 않는다. |
+| `kube/scheduler.go:capture`, `captureNodePods` | runtime의 `Native != nil` 분기로 서빙 실물 포함 여부를 정하지 않고 장부 항목 전부를 복사한다. Pod별 관측 실패를 이유로 붙여 해당 Node만 고정한다. CHILL 항목과 non-serving request를 UID로 구별해 중복 합산하지 않는다. non-serving 실제 예산 및 Node UID 검증은 유지한다. |
+| `scheduler_plan.go:prepareTargets`, `runningPreparation`, `schedulerSamePhysicalTarget` | 동일 slot/할당의 준비 중·관측 불명·종료 미확인 Pod와 예약을 먼저 찾는다. 관측이 안 된 기존 항목은 “없어서 prepare”가 아니라 보류다. 여러 실물을 하나로 축약하지 않는다. |
+| `scheduler_plan.go:preparationFits`, `freePreparationResources`, `retirePreparationBlocker` | 기존 실물+준비 예약의 전체 할당과 non-serving/system 예약을 센다. 중복 반영은 UID/예약 owner로 제거한다. stop을 계획했다는 이유로 이미 CPU가 반환됐다고 보지 않고 실제 remove/반환을 새 prepare의 의존성으로 둔다. |
+| `scheduler_plan.go:changeNodes`, `retireOld`; `kube/observer.go:detachNodeLocked` | Node의 모든 미종료 실물·준비 잔재를 대상으로 stop/drain/remove 또는 기존 종료 proof를 요구한다. 상태 불명 대상은 power 선행 조건을 충족하지 못한다. |
+| `scheduler_plan.go:completedEffectPresent`; `kube/scheduler.go:actionEffectPresent`, `failGoalLocked`, `reconcileSnapshot` | remove/stop 완료는 목록 부재가 아니라 정확 UID/container 종료·route 차단·outstanding 부재와 기존 제거 결과로 확인한다. 항목 퇴역 뒤에도 필요한 증거는 기존 `OperationResult`에서 읽고 별도 tombstone 저장소는 만들지 않는다. |
+| `scheduler_plan.go:routeEffectPresent`, `schedulerSnapshotTargetMatches`; `kube/scheduler.go:routingTargetPresent`, `schedulerTargetReady`, `completedHandoffPresent` | 효과 확인을 확인됨/확정 반증/현재 확인 불능으로 구별한다. 확인 불능은 기존 run/예약을 유지하며 재관측하고 effect-lost/route 재전송을 만들지 않는다. pending은 존재 proof일 수 있으나 새 정책 ACK proof는 아니다. |
+| `scheduler_capacity.go:newCapacityPlanner`의 `w.current`, `nodePlans`, `fixed` | 실물 수(종료 미확인·준비 중 포함), 실제 서빙 가능 수/κ, 전환 의도 수를 구별한다. replica/전체 instance 상한과 점유는 장부+create 전 예약을 중복 없이 세며 stale Ready에 κ를 부여하지 않는다. 관측 실패로 current가 0이 되어 보충 prepare를 만들지 않는다. |
+| `observation_log_power.go:operatingMembership`, `operatingActiveJoules`; `runtime.go:BuildPools` | active POOL 귀속을 `Ready` 필터가 아니라 장부의 미반환 물리 점유·owner/현재 배분으로 판정한다. 준비·drain/정리 중 에너지도 귀속하고 단순 관측 실패로 구간을 끊지 않는다. 귀속 자체가 불명하면 이유와 미확인 구간을 남겨 active 합계를 완전하다고 하지 않는다. whole-POOL raw meter coverage·적분 규칙은 유지하며 stale 관측을 0 W로 만들지 않는다. |
+
+#### ② 범위 예약과 단일 허가 경로 — SCH-51
+
+기존 `c.runs`/`actionRun`에 **예약 owner(기존 operation ID/DecisionID), Node 집합,
+Workload UID 집합, 정확한 Pod UID/물리 ID 집합**을 기록한다. 보수적으로 Node 전체를
+예약하며 CPU별 세밀 락은 만들지 않는다. create 전에는 Node·Workload·slot과 예정
+할당을 예약하고, Pod 생성 뒤 그 UID/물리 ID를 같은 owner에 결속한다.
+Pod별 관측 메모와 run 예약은 같은 장부 snapshot에서 합쳐 보되 예약용 별도 저장소는 없다.
+
+공통 허가·충돌·등록·해제 책임은 기존 `kube/admission.go`에 모은다.
+`tickMu` 안에서 현재 장부/runtime/Node identity를 읽고 **영향집합 산정 → 전체 충돌 검사
+→ 한 번에 예약 등록 → 현재 안전 조건 재확인 → 실행 시작**을 수행한다.
+실패하면 아무 키도 부분 예약하지 않거나 물리 효과 전 등록을 되돌린다.
+`c.mu`/observer/runtime 잠금은 짧은 게시·조건 전이에만 사용하고 외부 I/O 동안 잡지 않는다.
+runtime route/outstanding 조건은 실제 변경 직전 runtime 잠금 안에서도 검사하고,
+Pod mutation은 정확 UID/기존 optimistic-lock 조건을 쓴다. 저장된
+`c.state.Snapshot`의 과거 허가를 파괴적 동작에 재사용하지 않는다.
+
+| 작업/현재 진입점 | 예약해야 하는 범위와 이관 |
+|---|---|
+| 자동 `kube/scheduler.go:launch`, `scheduledOperation` | 새 변경 DAG의 실제 영향 Node·Workload·실물 전체를 첫 effect 전에 확보한다. `Operation.WorkloadUIDs`에 모든 autonomous UID를 넣지 말고 실제 바꾸는 UID만 전달한다. |
+| 수동 `measurement_sequence.go:ExecuteManual`, `manualOperationLocked`, `admitNodeLocked`, `manualRemovalAllowed` | prepare/remove도 같은 허가 경로를 쓴다. remove는 현재 양수 route/outstanding/소유·UID를 재검사하며, 상위 허가 없이 원자 실행기를 우회 호출하지 않는다. |
+| 배분 `static_routing.go:manualRoutingOperationLocked`, `validateManualRoutingNodes`, `executeManualRouting`; `operations.go:ApplyTarget`, `persistRouting` | 철회 source와 새 destination의 Node/실물 **합집합**과 변경 Workload를 잡는다. 정책 ACK·runtime 적용·분배 readback까지 유지한다. 공유 설정 쓰기는 기존 resourceVersion 조건으로 직렬 승인하고 타 UID 선언을 보존한다. |
+| reset `manual_reset.go:planManualResetLocked`, `reserveResetNodes`, `releaseResetNodes`, `executeManualReset` | reset 전용 Node별 가짜 run을 공통 집합 예약 하나로 흡수한다. 선택 Workload의 같은 slot 모든 실물과 반환할 Node를 잡고 disable→unroute→drain→remove→release→power 전 구간을 같은 owner로 실행한다. 자식 원자 동작은 자기 예약과 충돌하지 않는다. |
+| 측정 `admission.go:Admit`, `rootRefusal`, `startNodeRun`, `startHandBack`; `occupancy.go:occupancyRefusal`, `startOccupancy` | measurement Node뿐 아니라 대상 Workload·실물, 실제 사용하는 load Node/공유 endpoint 범위도 잡는다. 같은 Workload의 다른 Node 측정도 같은 승인 주기부터 충돌한다. 외부 측정 root의 기존 taint/holder를 같은 예약 근거로 복원하며 종료·load Job 제거·hand-back까지 소유한다. |
+
+Node/Workload/실물 중 **하나라도 다른 owner와 겹치면** 거절/대기한다.
+같은 owner의 DAG 단계만 내부 의존성 순서로 실행한다. 승인 뒤 범위가 넓어지면 키를
+하나씩 더 잡으며 진행하지 않고 effect 전에 재승인한다. 같은 이름의 새 Node/Pod는
+옛 UID 예약을 물려받지 않는다. 정확한 독립 범위를 증명하지 못하면 관련 범위를 넓히되
+“한 route이므로 모든 Workload”라는 전역 충돌 규칙으로 되돌리지 않는다.
+
+**해제는 goroutine 종료와 같지 않다.** effect 전 거절은 즉시 멱등 해제한다.
+시작 뒤 성공은 필요한 실제 효과/후속 정리 proof를 확인한 범위만 해제하며, DAG의
+다음 단계가 쓸 자원은 단계 사이에도 계속 예약한다. 실패·취소·timeout·기록 실패 뒤
+원격 효과가 불명하면 run의 실행 상태만 종료하고 해당 예약은 확인 대기로 남긴다.
+기존 Pod/finalizer/Node 상태를 재관측해 실제 현재 상태와 남은 책임을 확인한 뒤 해제한다.
+관측 결과 불명이라는 이유로 자원을 비우거나 전역 모든 작업을 멈추지 않는다.
+이는 기존 뒤처리의 소유 범위를 명시하는 것이지 ⑤의 finalizer 책임 이동을 선행하는 것이 아니다.
+
+#### ③ 예약 범위만 고정한 단일 계획기 — SCH-52
+
+`scheduler_capacity.go:EvaluateScheduler`의 `transition` 조기 반환을 제거한다.
+진입 시 장부+예약을 먼저 복사하고, 예약 Node의 실물·할당·기존 배분과 해당 owner의
+진행 중 변경 의도를 **고정 제약**으로 둔 채 같은 전역 capacity planner를 실행한다.
+불확실/계산 대기 Workload도 점유·현재 route를 고정하고 독립 후보를 평가한다.
+준비 중 용량을 현재 가용 κ로 더하거나, 고정된 Workload의 관측 실패를 새 여유 자원으로
+계산하지 않는다. 전체 자원 상한/공유 Node 비용과 SLO·에너지 선택 규칙은 유지한다.
+확정된 CPU 독점 위반 등 기존 실제 공통 안전 검증을 이번 변경으로 면제하지 않는다.
+
+| 파일:함수 | 새 판단·실행 계약 |
+|---|---|
+| `scheduler_capacity.go:EvaluateScheduler`, `newCapacityPlanner`, `pendingWorkloads`, `fixed`, `nodePlans` | 예약된 Node에는 고정 계획만 두고 나머지는 원래 후보를 만든다. κ가 없는 UID는 이유를 가진 고정 대상으로 보존하며 다른 UID의 판정을 막지 않는다. 고정 영역의 κ/에너지가 불명이면 전체 충족·전체 에너지도 미확인으로 표시하고 독립 변경의 증명과 구별한다. |
+| `scheduler_plan.go:schedulerCurrentTarget`, `schedulerPlan`, `add`, `addRunningPrerequisites`, `prepareTargets`, `changeNodes`, `retireOld` | 새 완전 목표에는 고정 부분도 포함한다. 실행 중 run의 frozen target/ID·미완료 DAG는 변경하지 않고 새 독립 변경 DAG만 붙인다. 완료 action 재사용은 ①의 실제 효과 판정으로 한다. 같은 Node 및 route/stop의 전역 종류 비교를 ②의 owner/영향집합 의존성으로 교체한다. |
+| `kube/scheduler.go:reconcileSnapshot`, `failGoalLocked`, `activeTargetLocked`, `launch`, `conflictingActionRunning`, `dependenciesReady` | 가장 오래된 global goal 하나를 전체 진실로 고르지 않는다. 각 run의 기존 frozen target과 예약을 재조정하고 실패/효과 불명도 그 범위에만 반영한다. `launch`는 공통 허가 경로로 비충돌 DAG를 등록하며 다른 목표 발행이 실행 중 run을 취소·덮어쓰지 않는다. |
+| `kube/operations.go:ApplyTarget`, `persistRouting`; `runtime_scheduler.go:ApplySchedulerWorkloadsTarget`, `applySchedulerTargetLocked`, `resolveSchedulerRoutingLocked`, `validateSchedulerRoutingLocked` | 변경 UID만 policy/route/annotation에 적용하고 타 UID override·accepted context를 보존한다. 현재 선택적 적용도 내부에서 전체 target readiness를 검사하므로 UID 인자만 좁히면 끝난 것이 아니다. 보존 UID는 현재 분배와 동일함을, 변경 UID는 현재 identity/Ready/owner/정책을 검증하도록 같은 경로를 고친다. 공유 ConfigMap optimistic lock은 유지한다. |
+
+새 snapshot/decision에는 고정 Node·Workload·실물 집합, 예약 owner와 대기 이유를
+기존 action/operation 관측과 연결한다. `Keep`는 “새 변경 없음”이지 “누군가 끝날 때까지
+전역 판단 생략”이 아니다. 공통 설정 무효·전체 API/journal 장애 등 실제 전역 차단은
+그 원인으로 남기며 `TransitionInProgress`로 뭉개지 않는다.
+예약 밖에도 후보가 없으면 정상 keep이며, 긴 run은 독립 판단의 생략 사유가 아니다.
+
+**`34b9a40d` 중간 분배는 필요한 실행 동작으로 유지한다.**
+그 커밋의 `intermediateActions`/`readySubset`은 한 목표 내부에서 일부 Ready 목적지에
+먼저 traffic을 보내는 기능이다. ③은 다른 예약 범위의 새 판단을 여는 기능이므로
+서로 대체하지 않는다. 같은 Workload의 예약은 계속 고정되어 있어, 전역 장벽만 없애고
+중간 분배까지 삭제하면 해당 전환의 부분 Ready 활용을 잃는다.
+따라서 중간 route를 **그 전환 owner의 같은 예약 안의 자식 동작**으로 실행하고
+최종 DAG 완료/다른 Workload의 재계획과 분리한다. `<goal>-ready-<hash>`·frozen subset·
+native ACK·actual routing 기록과 stopped 대상 제외는 보존한다.
+최종 목표를 덮거나 다른 owner의 예약에 끼어들 수 없으며, 중간 route 완료를 전역
+`TransitionInProgress` 유지 근거로 쓰지 않는다. 기존 비율 재정규화의 κ/SLO 한계는
+여전하며 이를 새 안전 용량 보장으로 부르지 않는다. 그 판단 규칙 개선은 ④와 별도 승인 대상이다.
+
+#### 삭제·흡수 대상과 작은 구현 커밋
+
+| 없앨 코드/관례 | 대체·보존 경계 |
+|---|---|
+| `scheduler.go:SchedulerSnapshot.InProgressTarget`, `scheduler_capacity.go:schedulerTransitionInProgress` 및 transition 조기 반환 | 장부/예약 고정 입력. API·compact·로그·fixture의 해당 필드/사유 소비자도 함께 이관하고 호환 alias를 남기지 않는다. 과거 원시 기록은 다시 쓰지 않는다. |
+| `scheduler_replay.go:schedulerReplay`, `schedulerReplayState.initializeInstances`의 global 목표/배분 적용 분기 | 같은 장부·예약 고정 입력을 replay에 전달한다. production만 장벽을 없애고 replay/test helper는 전역 목표를 재현하는 이중 의미를 남기지 않는다. |
+| `observation_log_scheduler.go` snapshot의 목표 dictionary projection, `httpapi/scheduler_presentation.go:schedulerReadSnapshot`/`schedulerReadEvidence.snapshot`, 관련 scheduler·POOL·HTTP fixture | `inProgressTarget` 대신 예약 범위/owner와 run별 frozen target을 투영한다. 구현 cutover 때 `analytic-planner.md`의 진행 중 전환 규칙과 API/관측 설명도 함께 갱신한다. |
+| `kube/scheduler.go:SchedulerController.goal`, `activeTargetLocked`의 global 선택, `reconcileSnapshot`/`failGoalLocked`의 전체 목표 폐기·전역 대기 | 각 기존 run의 frozen `Operation.Target`과 영향 범위 단위 재조정. 필요한 effect 검사와 terminal 우선 규칙은 유지한다. |
+| `Operation.Node` 한 개를 작업의 전체 소유권으로 해석하는 규칙, `nodeBusy`/`conflictingActionRunning`의 별도 충돌 검사 | 공통 예약 집합. 단일 Node 원자 동작의 **명령 목적지** `Operation.Node`/`Action.Node`는 유지하되 권한·busy 판정의 대용으로 쓰지 않는다. |
+| `manual_reset.go:reserveResetNodes`/`releaseResetNodes` 특례, 수동 route/reset/occupancy의 종류별 전역 상호배제 | 같은 집합을 승인·등록·해제하는 경로. Node taint, measurement holder 및 원래 reset 단계는 유지한다. |
+| `6120aaa7`의 `instanceUnavailable`/`deferNode`, `prepareTargets`/`preparationFits`/`changeNodes`/remove-effect 및 `dependenciesReady`의 중복 임시 guard, transition 전용 이유 전파 | 장부의 점유/관측 품질과 공통 예약·실제 proof 검사로 흡수한 뒤 삭제한다. 준비/전력/제거 완료를 안전하게 막는 **행동**과 `InstanceUnavailable` 진단은 유지하며 guard만 먼저 지우지 않는다. |
+| Ready 응답 누락을 runtime 삭제·remove/stop 성공·effect lost로 바꾸는 분기 | Pod/finalizer 수명 + 관측 불명 판정. `6545c800`의 ACK pending/실제 관측 보존은 장부 관측 계약으로 흡수하고 native ACK 검사는 유지한다. |
+| slot별 단일 실물 가정 | `dc9c90bf`/`73f1ec79`의 exact 우선·중복 reset을 장부 전체 열거로 유지한다. 여러 Pod가 보이면 숨기지 않는다. |
+
+**아래는 앞으로의 코드 커밋 분할안**이다. 이번 산출물은 문서 커밋 하나이며
+코드 변경/실행 증거가 아니다. 각 구현 커밋은 해당 회귀와 `go build ./...`,
+`go vet ./...`가 통과 가능한 완결 경계로 나눈다. 선언만 추가하거나 호출자를
+절반 이관한 상태를 커밋 완료로 삼지 않는다.
+
+1. **Pod 장부 수명 cutover:** `o.sources` UID 키·항목과 watch/LIST/finalizer 경계를
+   연결하고 기존 physical lookup 호출자·runtime 설치·snapshot/POOL 투영을 함께 이관한다.
+   이 커밋부터 native 실패로 항목이 사라지지 않는다. 기존 전역 장벽은 아직 유지한다.
+2. **장부 소비자 cutover:** prepare/budget/power/remove/effect/instance 수/active 에너지
+   소비자를 위 표대로 바꾸고 확인 불능을 effect-lost와 분리한다. AC-37 및 AC-34~36의
+   기존 동작이 이 단계의 회귀다. 장부로 대체된 6120aaa7 guard만 이때 제거한다.
+3. **공통 범위 예약 cutover:** `c.runs` 범위와 공통 허가·해제를 만들면서 자동/수동/
+   reset/측정/hand-back의 모든 진입점을 같은 커밋에서 이관한다. reset 전용 run과
+   종류별 충돌 검사를 제거한다. 전역 목표 장벽은 아직 유지하고 AC-38을 통과시킨다.
+4. **UID 한정 적용·DAG 준비:** runtime 전체/선택적 검증을 하나의 경로에서 구분하고
+   `scheduledOperation`·policy·persist/readback을 실제 변경 UID에 한정한다. 중간 route도
+   같은 owner 예약의 자식으로 이관한다. 아직 장벽은 유지하므로 안전하게 독립 검증한다.
+5. **예약 밖 계획 활성화:** capacity 진입/고정 후보/κ pending 격리와 목표·DAG·launch를
+   함께 바꿔 global `InProgressTarget`/`c.goal` 장벽을 삭제한다. 해당 API/기록/문서·테스트
+   소비자도 동시에 이관한다. AC-39 및 앞 단계 전체 회귀 뒤 시연 3회차 진입 조건을 판정한다.
+
+#### 회귀 설계와 검사 항목 — AC-37~39
+
+아래는 **추가할 검사 설계이지 실행 결과가 아니다.** 기존 fake Kubernetes client,
+native HTTP fixture와 production 함수 경로를 재사용하며 별도 장부 모형만 검증하지 않는다.
+
+- **AC-37 / SCH-50 — 관측 실패가 실물을 지우지 않음.**
+  `kube/observer_test.go`, `kube/scheduler_transition_test.go`, `scheduler_transition_test.go`,
+  `scheduler_pools_test.go`, `observation_log_power_test.go`에서 동일 Pod A/slot S/CPU를
+  정상 관측한 뒤 ACK 지연·native 실패·Service/LIST 실패·watch 재연결을 표로 주입한다.
+  UID/물리 ID/owner/할당과 마지막 성공 시각은 불변이고 실패 시도/이유만 갱신되어야 한다.
+  prepare/Pod Create 0, fits의 점유 보존, 모든 실물의 power 선행 stop/drain,
+  unknown remove/effect 완료 0·재전송 0, 수 상한·POOL 귀속·meter 구간 보존을 확인한다.
+  stale 상태로 새 dispatch/κ를 허용해서는 안 된다. container 없는 init 실패 Pod와
+  같은 slot 두 Pod도 각각 남겨 reset으로 제거한다. 실제 종료→finalizer→삭제/정리
+  proof 뒤에만 항목/예약이 퇴역하며, 늦은 probe가 삭제를 되살리거나 새 UID를 대리하지 못한다.
+- **AC-38 / SCH-51 — 모든 작업이 같은 범위를 소유.**
+  `kube/admission_test.go`, `kube/static_routing_test.go`, `kube/measurement_sequence_test.go`,
+  `kube/reset_test.go`, `kube/occupancy_test.go`에서 수동/자동 route ACK를 멈춘다.
+  옛 source와 새 destination 양쪽 Node의 remove/power/reset은 충돌하고, Node가 달라도
+  같은 Workload의 occupancy는 한 승인 주기에서 하나만 시작해야 한다.
+  Node·Workload·실물이 모두 다른 작업은 실제로 시작되어야 한다.
+  예약 일부만 잡힌 실패 0, effect 전 거절의 멱등 해제, effect 후 timeout/취소의 불명
+  예약 유지와 재관측 후 해제, reset 자식의 자기 충돌 없음/모든 중복 실물 정리를 확인한다.
+  snapshot 이후 새 양수 route/outstanding을 넣은 수동 remove는 현재 경계에서 거절되어야 한다.
+  같은 이름의 새 UID는 예전 승인으로 변경/삭제되지 않아야 한다.
+- **AC-39 / SCH-52 — 긴 전환 중 비충돌 영역의 실제 진행.**
+  `scheduler_capacity_test.go`, `scheduler_transition_test.go`,
+  `kube/scheduler_transition_test.go`, `runtime_scheduler_test.go`에서 W1/N1의
+  power→prepare/ACK를 여러 tick 미완료로 둔다. W2 수요를 늘리고 독립 N2/N3를 제공하면
+  capacity 탐색·새 decision·prepare·W2 한정 route가 W1 완료 전에 실제 실행되어야 한다.
+  W2의 결정/적용이 W1의 frozen target/ID·점유·route·outstanding을 덮지 않고,
+  중복 prepare/동작 취소가 없어야 한다. W1 자체의 정상 진행은 자기 owner의 DAG만 따른다.
+  W1의 probe 불명/κ pending도 같은 형태로 반복하고, 보존 W1 readiness 불명이 W2의
+  선택적 runtime 검증을 막지 않는지 확인한다. 같은 Node/Workload를 건드리는 후보는 거절된다.
+  W1 내부에서는 기존 중간 Ready subset route가 자기 예약으로 실행되고 최종 DAG 완료로
+  오인되지 않아야 한다. 실패/완료가 교차해도 terminal run이 stale snapshot보다 우선한다.
+
+검수자는 AC-34~39와 함께 다음을 확인한다: Pod UID 없는 가짜 실물 없음;
+물리 ID/slot·owner/routing·관측/존재의 혼동 없음; 미확인=0 용량/0 W/제거 성공 처리 없음;
+모든 생산 mutation 진입점의 공통 예약 참여; 예약 owner와 반환 proof의 일치;
+고정 영역을 뺀 것처럼 전체 SLO/에너지를 완전하다고 보고하지 않음;
+전역 대기 필드/상수/consumer/문서의 clean cutover; 실제 전역 안전 gate 보존.
+빌드·vet·focused 회귀 및 시연의 OnDecision/OnAction·Pod CRUD·native ACK·실제 routing
+근거는 구현 담당자가 별도로 남긴다. 이 문서 갱신만으로 어느 AC도 통과 처리하지 않는다.
+
+
 ## 6. 실제 적용과 관리 연동
 
 `serving/kube` 제어 구현이 measured target별 worker profile bundle과 작은 mutable policy config를
@@ -462,6 +694,9 @@ ObservationLog는 request/management와 더불어 decision/settings/action/power
 | SCH-48, AC-34~35 | firstfloor Probe → observer → snapshot/POOL → 기존 route ACK | pending 표시·물리 점유/현재 상태 보존·중복 준비 없음·전력 전 stop/drain 의무 |
 | SCH-49, AC-34~35 | schedulerPlan의 Node별 guard + 기존 자원 검증 | 읽기 실패 Node의 준비/전력/부재 기반 제거 완료 금지·기존 전역 Pending 유지 |
 | AC-36 | exact/alias 해석 + manual reset의 소유 실물 전체 열거 | 같은 slot의 소유 실물 전체 제거·타 소유분 보존·재호출 멱등 |
+| SCH-50, AC-37 | observer Pod UID 장부 → runtime/snapshot 투영 → 모든 점유/효과/POOL 소비자 | 관측 실패에도 실물·할당·소유 보존, 정확한 종료·삭제 proof로만 퇴역 |
+| SCH-51, AC-38 | admission 공통 허가 + `c.runs` 영향집합 예약 | 수동/자동/reset/측정의 Node·Workload·실물 충돌과 멱등 해제 |
+| SCH-52, AC-39 | 단일 capacity planner + 예약 고정 입력 + UID 한정 DAG/적용 | 긴 전환/관측 불명 동안 독립 대상 재판단·실제 실행, 전역 목표 장벽 없음 |
 
 ### ACK 관측·불확실 Node·reset 회귀 설계
 
