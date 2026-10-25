@@ -109,8 +109,9 @@ type Definition struct {
 	Model        Model        `json:"model"`
 	Preprocessor Preprocessor `json:"preprocessor"`
 	// Dataset is absent until the Workload names one; admission waits with MissingDataset.
-	Dataset *DatasetReference `json:"dataset,omitempty"`
-	SLO     SLO               `json:"slo"`
+	Dataset         *DatasetReference `json:"dataset,omitempty"`
+	SLO             SLO               `json:"slo"`
+	RequestLifetime *time.Duration    `json:"requestLifetime,omitempty"`
 }
 
 // Identity names the accepted model and preprocessing definition. SLO and

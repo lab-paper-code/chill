@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	"math"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -11,6 +12,7 @@ import (
 
 // WorkloadSpec declares the desired logical model, its preprocessing, the
 // measurement dataset and the request SLO.
+// +kubebuilder:validation:XValidation:rule="!has(self.requestLifetime) || duration(self.requestLifetime) >= duration(self.slo.targetLatency)",message="requestLifetime must be at least targetLatency"
 type WorkloadSpec struct {
 	ModelRef        CatalogReference `json:"modelRef"`
 	PreprocessorRef CatalogReference `json:"preprocessorRef"`
@@ -19,6 +21,10 @@ type WorkloadSpec struct {
 	// +optional
 	DatasetRef *CatalogReference `json:"datasetRef,omitempty"`
 	SLO        WorkloadSLO       `json:"slo"`
+	// RequestLifetime bounds a request independently of its SLO.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s') && duration(self) <= duration('129s')",message="requestLifetime must be positive and at most 129s"
+	RequestLifetime *metav1.Duration `json:"requestLifetime,omitempty"`
 }
 
 // CatalogReference names one cluster-scoped catalog object.
@@ -57,6 +63,8 @@ type WorkloadAppliedDefinition struct {
 	// +optional
 	DatasetRef *WorkloadAppliedDatasetReference `json:"datasetRef,omitempty"`
 	SLO        WorkloadSLO                      `json:"slo"`
+	// +optional
+	RequestLifetime *metav1.Duration `json:"requestLifetime,omitempty"`
 }
 
 type WorkloadAdmission struct {
@@ -150,6 +158,17 @@ func ValidateWorkload(name string, spec WorkloadSpec) error {
 	}
 	if spec.SLO.TargetLatency.Duration <= 0 {
 		errs = append(errs, field.Invalid(field.NewPath("spec", "slo", "targetLatency"), spec.SLO.TargetLatency.String(), "must be a positive duration"))
+	}
+	if lifetime := spec.RequestLifetime; lifetime != nil {
+		path := field.NewPath("spec", "requestLifetime")
+		if lifetime.Duration <= 0 {
+			errs = append(errs, field.Invalid(path, lifetime.String(), "must be a positive duration"))
+		} else if lifetime.Duration < spec.SLO.TargetLatency.Duration {
+			errs = append(errs, field.Invalid(path, lifetime.String(), "must be at least slo.targetLatency"))
+		}
+		if lifetime.Duration > 129*time.Second {
+			errs = append(errs, field.Invalid(path, lifetime.String(), "must be at most 129s"))
+		}
 	}
 	return errs.ToAggregate()
 }

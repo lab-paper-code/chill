@@ -272,6 +272,9 @@ SLO 이상 제약은 Workload 필드 검증에만 적용하며, 요청자가 더
 응답 헤더 `X-Chill-Request-Lifetime`에 실제 L을 Go duration 문자열로 제공하고,
 동일한 값을 기존 요청 관측의 `lifetimeNanos`에 나노초 정수로 남긴다. 응답과 관측에서
 요청 헤더 값이나 선언값을 실제 적용값으로 대신 표시하지 않는다.
+구현은 `Runtime.Receive`에서 적용 정의 identity와 선택 수명을 Receipt에 고정하고,
+`Handler.infer`에서 위 표로 결정한다. `Runtime.Accept`는 입력 검증 전후에 동일한
+적용 identity인지 검사하여 검증 중 정의 교체도 거부한다.
 
 부하 생성기는 헤더를 생략할 수 있다. 기존
 `load-generator/src/chill_loadgen/http_client.py:WorkloadHTTPClient.__init__`, `infer`의

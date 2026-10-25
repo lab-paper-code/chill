@@ -17,6 +17,20 @@ func TestValidateWorkload(t *testing.T) {
 		PreprocessorRef: edgev1alpha1.CatalogReference{Name: "imagenet"},
 		SLO:             edgev1alpha1.WorkloadSLO{Percentile: 99, TargetLatency: metav1.Duration{Duration: 100 * time.Millisecond}},
 	}
+	for _, lifetime := range []time.Duration{0, -time.Second, 99 * time.Millisecond, 130 * time.Second} {
+		spec := valid
+		spec.RequestLifetime = &metav1.Duration{Duration: lifetime}
+		if err := edgev1alpha1.ValidateWorkload("detector-fast", spec); err == nil || !strings.Contains(err.Error(), "spec.requestLifetime") {
+			t.Fatalf("requestLifetime %s: %v", lifetime, err)
+		}
+	}
+	for _, lifetime := range []time.Duration{100 * time.Millisecond, 129 * time.Second} {
+		spec := valid
+		spec.RequestLifetime = &metav1.Duration{Duration: lifetime}
+		if err := edgev1alpha1.ValidateWorkload("detector-fast", spec); err != nil {
+			t.Fatalf("requestLifetime %s: %v", lifetime, err)
+		}
+	}
 	for name, spec := range map[string]edgev1alpha1.WorkloadSpec{
 		"missing preprocessor": {ModelRef: valid.ModelRef, SLO: valid.SLO},
 		"invalid dataset":      {ModelRef: valid.ModelRef, PreprocessorRef: valid.PreprocessorRef, DatasetRef: &edgev1alpha1.CatalogReference{Name: "VQA"}, SLO: valid.SLO},

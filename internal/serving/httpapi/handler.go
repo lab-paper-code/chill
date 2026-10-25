@@ -114,6 +114,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	timeout := h.config.RequestTimeout
 	if longOperation(r) {
 		timeout = h.config.OperationTimeout
+	} else if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/infer") {
+		timeout = 129 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
@@ -437,19 +439,31 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		finish(outcome, errorCode(err))
 	}
 	timeout := h.config.RequestTimeout
+	if receipt.RequestLifetime > 0 {
+		timeout = receipt.RequestLifetime
+	}
 	if requested := r.Header.Get("X-Chill-Request-Timeout"); requested != "" {
 		duration, err := time.ParseDuration(requested)
-		if err != nil || duration <= 0 || duration > timeout {
-			completeError(&serving.Error{Code: "InvalidRequestTimeout", Message: "explicit timeout must be positive and at most the configured request lifetime", Field: "X-Chill-Request-Timeout"}, "rejected")
+		if err != nil || duration <= 0 || duration > 129*time.Second {
+			completeError(&serving.Error{Code: "InvalidRequestTimeout", Message: "explicit timeout must be positive and at most 129s", Field: "X-Chill-Request-Timeout"}, "rejected")
 			return
 		}
 		timeout = duration
+		if receipt.RequestLifetime > 0 {
+			timeout = min(timeout, receipt.RequestLifetime)
+		}
 	}
+	timeout = min(timeout, 129*time.Second)
+	w.Header().Set("X-Chill-Request-Lifetime", timeout.String())
 	deadline := received.Add(timeout)
 	receipt.Deadline = deadline
 	ctx, cancel := context.WithDeadline(r.Context(), deadline)
 	defer cancel()
 	r = r.WithContext(ctx)
+	if err := controller.SetWriteDeadline(deadline.Add(h.config.RequestTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		completeError(err, "error")
+		return
+	}
 	if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		completeError(err, "error")
 		return

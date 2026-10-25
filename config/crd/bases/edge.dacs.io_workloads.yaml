@@ -76,6 +76,13 @@ spec:
                 required:
                 - name
                 type: object
+              requestLifetime:
+                description: RequestLifetime bounds a request independently of its
+                  SLO.
+                type: string
+                x-kubernetes-validations:
+                - message: requestLifetime must be positive and at most 129s
+                  rule: duration(self) > duration('0s') && duration(self) <= duration('129s')
               slo:
                 properties:
                   percentile:
@@ -99,6 +106,10 @@ spec:
             - preprocessorRef
             - slo
             type: object
+            x-kubernetes-validations:
+            - message: requestLifetime must be at least targetLatency
+              rule: '!has(self.requestLifetime) || duration(self.requestLifetime)
+                >= duration(self.slo.targetLatency)'
           status:
             properties:
               admission:
@@ -166,6 +177,8 @@ spec:
                     - name
                     - uid
                     type: object
+                  requestLifetime:
+                    type: string
                   slo:
                     properties:
                       percentile:

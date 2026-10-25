@@ -134,6 +134,9 @@ func (o options) validate() error {
 	if err := o.validateDiagnostics(); err != nil {
 		return err
 	}
+	if o.requestTimeout <= 0 || o.requestTimeout > 129*time.Second {
+		return errors.New("request-timeout must be positive and at most 129s")
+	}
 	if o.materializeProfile {
 		return o.validateMaterialization()
 	}

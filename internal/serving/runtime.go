@@ -20,6 +20,8 @@ type RuntimeConfig struct {
 type Receipt struct {
 	ID, Name, UID        string
 	ReceivedAt, Deadline time.Time
+	DefinitionID         string
+	RequestLifetime      time.Duration
 }
 type callResult struct {
 	result BackendResult
@@ -197,6 +199,12 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	receipt := Receipt{ID: hex.EncodeToString(random[:]), Name: name, UID: r.names[name], ReceivedAt: at}
+	if workload := r.workloads[receipt.UID]; workload != nil {
+		receipt.DefinitionID = workload.definition.Identity()
+		if workload.definition.RequestLifetime != nil {
+			receipt.RequestLifetime = *workload.definition.RequestLifetime
+		}
+	}
 	c := &Call{receipt: receipt}
 	if err := r.event(c, phaseReceived, "", ""); err != nil {
 		return receipt, failure("ObservationUnavailable", "cannot persist request receipt")
@@ -219,6 +227,10 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 		return nil, failure("WorkloadChanged", "registration changed before acceptance")
 	}
 	d := w.definition
+	if receipt.DefinitionID != "" && receipt.DefinitionID != d.Identity() {
+		r.mu.Unlock()
+		return nil, failure("DefinitionChanged", "applied definition changed before acceptance")
+	}
 	r.mu.Unlock()
 	if err := validateInput(input, d.Preprocessor.Input); err != nil {
 		return nil, err
@@ -246,8 +258,8 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	if r.observationError != nil {
 		return nil, failure("ObservationUnavailable", "request observation log is unavailable")
 	}
-	if !w.definition.SameExecution(d) {
-		return nil, failure("DefinitionChanged", "model or preprocessing changed before acceptance")
+	if w.definition.Identity() != d.Identity() {
+		return nil, failure("DefinitionChanged", "applied definition changed before acceptance")
 	}
 	if w.definition.Dataset == nil {
 		return nil, failure("MissingDataset", "workload names no dataset for its measurement")

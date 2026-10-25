@@ -104,6 +104,9 @@ func appliedStatus(d *serving.Definition) *api.WorkloadAppliedDefinition {
 		PreprocessorRef:    api.WorkloadAppliedCatalogReference{Name: d.Preprocessor.Name, UID: types.UID(d.Preprocessor.UID), Generation: d.Preprocessor.Generation},
 		SLO:                api.WorkloadSLO{Percentile: d.SLO.Percentile, TargetLatency: metav1.Duration{Duration: d.SLO.TargetLatency}},
 	}
+	if d.RequestLifetime != nil {
+		status.RequestLifetime = &metav1.Duration{Duration: *d.RequestLifetime}
+	}
 	if d.Dataset != nil {
 		status.DatasetRef = &api.WorkloadAppliedDatasetReference{Name: d.Dataset.Name, UID: types.UID(d.Dataset.UID)}
 	}
@@ -259,6 +262,10 @@ func snapshot(w *api.Workload, refs catalogRefs) (*serving.Definition, error) {
 		Model:        serving.Model{Name: model.Name, UID: string(model.UID), Generation: model.Generation},
 		Preprocessor: serving.Preprocessor{Name: p.Name, UID: string(p.UID), Generation: p.Generation},
 		SLO:          serving.SLO{Percentile: w.Spec.SLO.Percentile, TargetLatency: w.Spec.SLO.TargetLatency.Duration}}
+	if w.Spec.RequestLifetime != nil {
+		lifetime := w.Spec.RequestLifetime.Duration
+		d.RequestLifetime = &lifetime
+	}
 	for _, field := range p.Spec.Input.Fields {
 		d.Preprocessor.Input = append(d.Preprocessor.Input, serving.RawField{Name: field.Name, Format: field.Format, MaxBytes: field.MaxBytes})
 	}
