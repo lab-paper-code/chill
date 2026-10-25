@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
-type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"excludedNodes"|"minimumDemand"|"staticRouting">
+type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"excludedNodes"|"minimumDemand"|"staticRouting"|"staticRoutingValidatedAt">
 type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"advanced";unit?:string}
 const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
@@ -68,12 +68,10 @@ export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
   return <Facts items={[["자동 제어 서비스",autonomous(settings)],["계획에서 뺀 장비",excludedNodes(settings)],...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
 }
 
-// The one settings write: PUT the full settings, then refresh every scheduler read. Shared with the Workload screen.
-// A routing change replaces the whole staticRouting declaration and carries its selection reason;
-// a settings-only write leaves staticRouting out so the stored declaration stays.
-export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Promise<RelayResponse>,client:QueryClient,settings:SchedulerSettings,routing?:{staticRouting:Routing;reason:string}) {
-  const body={...settings};delete body.staticRouting
-  const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON({...body,...routing})})
+// The one settings write: routing projections are read-only. Shared with the Workload screen.
+export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Promise<RelayResponse>,client:QueryClient,settings:SchedulerSettings) {
+  const body:SchedulerSettings&{staticRoutingValidatedAt?:string}={...settings};delete body.staticRouting;delete body.staticRoutingValidatedAt
+  const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON(body)})
   const applied=parseSchedulerJSON(response.body) as SchedulerSettingsChange
   await client.invalidateQueries({predicate:query=>typeof query.queryKey[1]==="string"&&(query.queryKey[1].startsWith("v1/scheduler")||query.queryKey[1].startsWith("v1/observations/scheduler"))})
   return applied
@@ -93,15 +91,20 @@ function EditRow({label,help,value,changed,initial,unit,range,save,disabled}:{la
   </RowDialog>
 }
 
-// The JSON is the whole declaration: service UID → instance ID → weight. {} removes it.
-// The stored declaration from GET settings prefills it; without one the field starts empty.
-function RoutingEdit({initial,disabled,apply}:{initial?:Routing;disabled:boolean;apply:(staticRouting:Routing,reason:string)=>void}) {
-  const [open,setOpen]=React.useState(false),[text,setText]=React.useState(""),[reason,setReason]=React.useState(""),[error,setError]=React.useState(""),id=React.useId()
-  return <RowDialog label="요청 분배 바꾸기" hint="자동 제어하지 않는 서비스의 인스턴스 비율과 선택 이유" title="요청 분배 바꾸기" description="서비스 UID → 인스턴스 ID → 가중치를 JSON으로 적어요. 적은 내용이 설정한 분배 전체가 되고, 적지 않은 서비스는 지금 분배를 유지해요. {}는 설정한 분배를 지워요." open={open} onOpenChange={state=>{setOpen(state);setText(initial?JSON.stringify(initial,null,2):"");setReason("");setError("")}}>
+// Diff the declaration shown when the dialog opened, so unrelated UID changes stay untouched.
+function RoutingEdit({initial,disabled,apply}:{initial?:Routing;disabled:boolean;apply:(before:Routing,after:Routing,reason:string)=>void}) {
+  const [open,setOpen]=React.useState(false),[text,setText]=React.useState(""),[reason,setReason]=React.useState(""),[error,setError]=React.useState(""),[before,setBefore]=React.useState<Routing>({}),id=React.useId()
+  return <RowDialog label="요청 분배 바꾸기" hint="자동 제어하지 않는 서비스의 인스턴스 비율과 선택 이유" title="요청 분배 바꾸기" description="서비스 UID → 인스턴스 ID → 가중치를 JSON으로 적어요. 바꾼 서비스만 순서대로 적용해요. 서비스의 빈 객체는 새 요청을 막고, 기존 서비스를 생략하면 기본 분배로 돌려요. 실패하면 나머지는 적용하지 않고 이미 적용한 내용은 유지해요." open={open} onOpenChange={state=>{setOpen(state);setBefore(initial??{});setText(JSON.stringify(initial??{},null,2));setReason("");setError("")}}>
     <form className="grid gap-4" onSubmit={event=>{event.preventDefault();try {
       const parsed:unknown=JSON.parse(text)
       if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))throw new Error("JSON 객체로 적어 주세요.")
-      apply(parsed as Routing,reason.trim());setOpen(false)
+      for(const [uid,weights] of Object.entries(parsed)) {
+        if(!uid.trim()||!weights||typeof weights!=="object"||Array.isArray(weights))throw new Error("서비스 UID마다 가중치 객체를 적어 주세요.")
+        const entries=Object.entries(weights)
+        if(entries.some(([instance,weight])=>!instance.trim()||typeof weight!=="number"||!Number.isInteger(weight)||weight<0||weight>2147483647)||entries.length&&!entries.some(([,weight])=>typeof weight==="number"&&weight>0))throw new Error("가중치는 0 이상 int32 정수이고, 빈 객체가 아니면 양수 대상이 하나 이상이어야 해요.")
+      }
+      if(!reason.trim())throw new Error("선택 이유를 적어 주세요.")
+      apply(before,parsed as Routing,reason.trim());setOpen(false)
     } catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
       <div className="grid gap-2"><label htmlFor={`${id}-routing`}>분배</label><textarea id={`${id}-routing`} className="min-h-40 rounded-md border p-2 font-mono text-sm" required value={text} onChange={event=>{setText(event.target.value);setError("")}} aria-invalid={!!error}/></div>
       <div className="grid gap-2"><label htmlFor={`${id}-reason`}>선택 이유</label><Input id={`${id}-reason`} required value={reason} onChange={event=>setReason(event.target.value)}/></div>
@@ -120,6 +123,7 @@ export function SchedulerSettingsPage() {
   const [review,setReview]=React.useState<SchedulerSettings|null>(null),[latest,setLatest]=React.useState<SchedulerSettings|null>(null)
   const [reviewing,setReviewing]=React.useState(false),[result,setResult]=React.useState<SchedulerSettingsChange|null>(null)
   const [responseError,setResponseError]=React.useState<string|null>(null)
+  const [routingResults,setRoutingResults]=React.useState<OperationResult[]|null>(null),[routingError,setRoutingError]=React.useState(""),[routingPending,setRoutingPending]=React.useState(false)
   const [submittedAt,setSubmittedAt]=React.useState("")
   const [historyWindow,setHistoryWindow]=React.useState<{from:string;to:string}|null>(null)
   const [recoveryStarted,setRecoveryStarted]=React.useState(0)
@@ -129,12 +133,12 @@ export function SchedulerSettingsPage() {
   const precise=preciseJSONSupported()
   const unknown=!!responseError||(mutation.error?.unknownOutcome??false)
   const recovered=recoveryStarted>0&&settings.dataUpdatedAt>=recoveryStarted&&!settings.isFetching&&history.isSuccess&&!history.isFetching
-  const blocked=mutation.isPending||reviewing||(unknown&&!recovered)||!precise||[401,403].includes(settings.error?.status??0)
+  const blocked=routingPending||mutation.isPending||reviewing||(unknown&&!recovered)||!precise||[401,403].includes(settings.error?.status??0)
   const serverError=mutation.error?.data&&typeof mutation.error.data==="object"?mutation.error.data as {field?:string;message?:string;code?:string}:undefined
   const count=baseline&&draft?changedRows(baseline,draft).length:0
   const shown=count?draft:settings.data
-  // The newest configuration-sourced routing result opens in its /transitions detail (same identity as the transitions list).
-  const routing=state.data?.results?.filter(item=>item.operation.kind==="manual-static-routing").reduce<OperationResult|undefined>((latest,item)=>!latest||Date.parse(item.startedAt)>Date.parse(latest.startedAt)?item:latest,undefined)
+  // Explicit routing operations open in the same detail view as the transitions list.
+  const routing=state.data?.results?.filter(item=>["route","unroute","release"].includes(item.operation.kind)).reduce<OperationResult|undefined>((latest,item)=>!latest||Date.parse(item.startedAt)>Date.parse(latest.startedAt)?item:latest,undefined)
   const back:[string,string]=["/settings","설정"]
 
   // Edits accumulate on the draft; the first edit pins the baseline used for the concurrency check.
@@ -152,12 +156,12 @@ export function SchedulerSettingsPage() {
       setReview(draft)
     } finally {setReviewing(false)}
   }
-  async function submit(selected:SchedulerSettings,routing?:{staticRouting:Routing;reason:string}) {
+  async function submit(selected:SchedulerSettings) {
     saving.current=true;setSubmittedAt(new Date().toISOString());setRecoveryStarted(0);setHistoryWindow(null);setResult(null);setResponseError(null)
     try {
-      const applied=await putSchedulerSettings(mutation.mutateAsync,client,selected,routing)
+      const applied=await putSchedulerSettings(mutation.mutateAsync,client,selected)
       setResult(applied)
-      if(!routing){setBaseline(null);setDraft(null)}
+      setBaseline(null);setDraft(null)
     } catch(error) {if(!(error instanceof ApiError))setResponseError("적용 응답을 해석하지 못했어요. 현재 설정과 최근 변경 기록을 확인해 주세요.")}
     finally {saving.current=false}
   }
@@ -166,11 +170,32 @@ export function SchedulerSettingsPage() {
     const selected=review;setReview(null);setReviewOpen(false)
     await submit(selected)
   }
-  // A routing change keeps the settings the server holds right now.
-  async function applyRouting(staticRouting:Routing,reason:string) {
+  async function applyRouting(before:Routing,after:Routing,reason:string) {
     if(blocked||saving.current)return
-    const current=await settings.refetch()
-    if(current.data)await submit(current.data,{staticRouting,reason})
+    saving.current=true;setRoutingPending(true);setRoutingResults([]);setRoutingError("");mutation.reset()
+    try {
+      for(const uid of new Set([...Object.keys(before),...Object.keys(after)])) {
+        const previous=before[uid],weights=after[uid]
+        if(Object.hasOwn(before,uid)&&Object.hasOwn(after,uid)&&Object.keys(previous).length===Object.keys(weights).length&&Object.entries(previous).every(([id,weight])=>Object.hasOwn(weights,id)&&weights[id]===weight))continue
+        const kind=!Object.hasOwn(after,uid)?"release":Object.keys(weights).length?"route":"unroute"
+        let applied:OperationResult
+        try {
+          const response=await mutation.mutateAsync({path:"v1/scheduler/operations",method:"POST",body:JSON.stringify({kind,workloadUID:uid,...(kind==="route"?{weights}:{}),reason})})
+          applied=parseSchedulerJSON(response.body) as OperationResult
+        } catch(error) {
+          if(!(error instanceof ApiError)||!error.data||typeof error.data!=="object"||!("operation" in error.data))throw error
+          applied=error.data as OperationResult
+        }
+        if(!applied.operation?.id||!applied.operation.node||typeof applied.status!=="string"||!applied.before||!applied.actual)throw new Error("작업 결과 응답을 해석하지 못했어요.")
+        setRoutingResults(results=>[...(results??[]),applied])
+        if(applied.status!=="complete"||applied.error)break
+      }
+    } catch(error) {
+      setRoutingError(error instanceof ApiError?(error.unknownOutcome?"응답을 받지 못해 결과를 확인해야 해요.":error.body):error instanceof Error?error.message:"작업 결과를 확인하지 못했어요.")
+    } finally {
+      saving.current=false;setRoutingPending(false)
+      await client.invalidateQueries({predicate:query=>typeof query.queryKey[1]==="string"&&(query.queryKey[1].startsWith("v1/scheduler")||query.queryKey[1].startsWith("v1/observations/scheduler"))})
+    }
   }
   async function recover() {
     const now=Date.now();setRecoveryStarted(now)
@@ -178,6 +203,17 @@ export function SchedulerSettingsPage() {
     await settings.refetch()
   }
 
+  if(routingResults) {
+    const failed=routingResults.some(item=>item.status!=="complete"||item.error)
+    return <Screen back={back} title={routingPending?"요청 분배를 적용하고 있어요":routingError||failed?"요청 분배 결과를 확인해 주세요":routingResults.length?"요청 분배를 적용했어요":"바뀐 요청 분배가 없어요"} lede="서버가 반환한 실제 작업 결과예요. 실패하면 나머지는 보내지 않고, 재시도하거나 되돌리지 않아요." action={<Button disabled={routingPending} onClick={()=>{setRoutingResults(null);setRoutingError("");mutation.reset()}}>확인</Button>}>
+      {routingError&&<p role="alert">{routingError}</p>}
+      {routingResults.map(item=><React.Fragment key={item.operation.id}>
+        <Facts items={[["작업",item.operation.kind],["결과",item.status],["시작",time(item.startedAt)],["종료",time(item.endedAt)],...(item.error?[["오류",item.error] as [string,string]]:[])]}/>
+        <Rows><Row href={`/transitions/${encodeURIComponent(item.operation.id)}?${new URLSearchParams({view:"current",stage:"result",node:item.operation.node.uid,startedAt:item.startedAt})}`} label="실제 변경 진행 보기"/><RowDialog label="원본 자료 보기" title="작업 결과 원본"><SourceJSON inline value={item}/></RowDialog></Rows>
+      </React.Fragment>)}
+      {routingError&&<Rows><Row href="/transitions" label="실제 변경 진행 보기"/></Rows>}
+    </Screen>
+  }
   if(result)return <Screen back={back} title={result.appliedAt?"설정을 적용했어요":"적용 결과를 확인해 주세요"} lede="실제 구성 변경은 따로 진행돼요. 진행 상황은 아래에서 볼 수 있어요." action={<Button onClick={()=>setResult(null)}>확인</Button>}>
     <Facts items={[["적용 시각",result.appliedAt?time(result.appliedAt):"아직 없어요"],["확인 시각",time(result.validatedAt)],["바꾼 사람",result.actorUsername],...(result.reason?[["분배 선택 이유",result.reason] as [string,string]]:[]),["마지막으로 확인한 노드",result.affected?.map(node=>node.name).join(", ")||"없음"],...(result.error?[["오류",result.error] as [string,string]]:[])]}/>
     <Rows><Row href="/transitions" label="실제 변경 진행 보기"/><RowDialog label="원본 자료 보기" title="적용 결과 원본"><SourceJSON inline value={result}/></RowDialog></Rows>
@@ -226,8 +262,8 @@ export function SchedulerSettingsPage() {
         <Row href="/changes?scope=scheduler" label="최근 변경 기록" hint="누가 언제 운영 설정을 바꿨는지"/>
         {routing
           ?<Row href={`/transitions/${encodeURIComponent(routing.operation.id)}?${new URLSearchParams({view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배" hint="가장 최근에 적용한 서비스 → 인스턴스 비율"/>
-          :<Row href="/transitions" label="설정한 요청 분배" hint={state.data?"설정 기반 분배 기록이 비어 있어요":state.error?"분배 기록을 불러오지 못했어요":"분배 기록을 확인하고 있어요"}/>}
-        <RoutingEdit initial={settings.data?.staticRouting} disabled={blocked||count>0} apply={(staticRouting,reason)=>void applyRouting(staticRouting,reason)}/>
+          :<Row href="/transitions" label="설정한 요청 분배" hint={state.data?"분배 작업 기록이 비어 있어요":state.error?"분배 기록을 불러오지 못했어요":"분배 기록을 확인하고 있어요"}/>}
+        <RoutingEdit initial={settings.data?.staticRouting} disabled={blocked||count>0} apply={(before,after,reason)=>void applyRouting(before,after,reason)}/>
         <Row href="/scheduler" label="지금 운영 판단 보기"/>
         {settings.data&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(settings.data),2)}</pre><SourceExport value={settings.data} filename="chill-scheduler-settings.json"/></RowDialog>}
       </Rows>

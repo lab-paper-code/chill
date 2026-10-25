@@ -40,7 +40,10 @@ serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](s
 `ApplyTarget`의 준비·소유권·native policy ACK와 전체 physical readback을 재사용하고,
 다른 UID의 선언과 실제 분배는 보존한다. 실패 또는 부분 적용은 성공으로 표시하지 않으며
 작업의 actor, reason, 전후 선언, `sourceConfigRV`, 시작·완료 시각과 실제 상태를 남긴다.
-기존 refresh가 선언을 재평가하더라도 실패한 수동 작업을 자동 재시도하지 않는다.
+설정 refresh는 이 선언을 실행하거나 실패한 수동 작업을 자동 재시도하지 않는다.
+Dashboard의 `scheduler-settings.tsx`도 설정 PUT에서 두 읽기 전용 필드를 제외한다.
+배분 편집은 바뀐 UID만 route/unroute/release POST로 순서대로 보내고,
+실패/부분 적용에서 멈추며 서버의 실제 `OperationResult`를 보여준다. UI 재시도나 되돌림은 없다.
 
 ## API와 compact projection
 
@@ -146,10 +149,10 @@ boundary 거리 안에서만 보조하며, 합친 표본의 원래 gap·값·met
 
 ## 구현 위치와 검사
 
-- `internal/serving/httpapi/scheduler.go:Handler.scheduler`, `Handler.staticRoutingChange`,
-  `persistSchedulerSettings`: 설정 PUT의 선언 쓰기/검증 분기를 제거하고 읽기 전용 GET은 유지한다.
-- `internal/serving/kube/static_routing.go:SchedulerController.ApplyStaticRouting`,
-  `finishStaticRouting`: revision 기반 refresh 적용을 명시적 작업과 ACK/readback 경로로 전환한다.
+- `internal/serving/httpapi/scheduler.go:Handler.scheduler`, `persistSchedulerSettings`:
+  설정 PUT의 선언 입력을 거절하고 읽기 전용 GET은 유지한다.
+- `internal/serving/kube/static_routing.go:manualRoutingOperationLocked`,
+  `persistManualConfiguration`, `executeManualRouting`: 명시적 작업의 선언·ACK/readback을 실행한다.
 - `internal/serving/runtime_scheduler.go:Runtime.routeWeightLocked`,
   `applySchedulerTargetLocked`, `schedulerRoutingLocked`: UID의 빈 선언과 부재를 구별한다.
   release는 전역 `DisableSchedulerRouting`이 아니라 해당 UID만 제어 map에서 제거하고
