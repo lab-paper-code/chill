@@ -401,7 +401,7 @@ class CPO:
         end,publication_deadline=self.io.publication_end(ack,seconds=self.tb['settleSeconds'])
         while True:
             state=self.state()
-            matches=[r for r in state.get('results',[]) if r.get('operation',{}).get('kind')=='manual-static-routing' and r['operation'].get('settingsValidatedAt')==ack['validatedAt'] and r['operation'].get('sourceConfigRV')==cm['metadata']['resourceVersion'] and r.get('status')=='complete' and not r.get('error')]
+            matches=[r for r in (state.get('results') or []) if r.get('operation',{}).get('kind')=='manual-static-routing' and r['operation'].get('settingsValidatedAt')==ack['validatedAt'] and r['operation'].get('sourceConfigRV')==cm['metadata']['resourceVersion'] and r.get('status')=='complete' and not r.get('error')]
             for result in matches:
                 actual=result['actual']
                 if actual.get('routing')!=chosen['routing'] or set(actual.get('native',{}))!={i['id'] for i in chosen['instances']}:raise RuntimeError('Completed native routing conflicts with exact requested routing/physical IDs')
@@ -491,7 +491,7 @@ class CPO:
         alert_offset=alert_path.stat().st_size
         folder.mkdir(); self.io.a.phase='e5-'+self.a.mode+'-'+st['id']; self.io.a.command=self.a.command; self.io.phase_out=folder
         self.boundary(folder,'pre'); children=self.sampler(folder,self.tb['setupSeconds']+st['seconds']+self.tb['drainSeconds']+self.tb['flushSeconds']); jobs=[]; streams=[]; phase={'stage':st,'mode':self.a.mode,'status':'RUNNING','startUTC':None,'endUTC':None,'starts':{}}
-        self.native_evidence=load(folder/'pre-state.json').get('results',[])+[load(path) for root in (self.out,self.out.parent/'smoke-run') for path in root.glob('*-mode/result.json')]
+        self.native_evidence=(load(folder/'pre-state.json').get('results') or [])+[load(path) for root in (self.out,self.out.parent/'smoke-run') for path in root.glob('*-mode/result.json')]
         save(folder/'phase.json',phase); sel=selectors.DefaultSelector(); buffers={};pods={};deadline=time.monotonic()+self.tb['setupSeconds']
         try:
             for name,rate in st['rates'].items():

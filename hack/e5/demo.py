@@ -396,7 +396,7 @@ def self_check():
         cpo.d = d
         settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': []}
         snapshot = {'at': e5.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'inProgressTarget': None}
-        cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': []}
+        cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': [], 'results': None}
         cpo.idle = cpo.state
         cpo.settings = lambda: copy.deepcopy(settings)
         cpo.put = lambda value, reason: settings.update(copy.deepcopy(value)) or {'validatedAt': e5.now()}
@@ -506,6 +506,7 @@ def self_check():
         assert 'p95 ms' in (cpo.out / 'summary.md').read_text()
         assert sum(call[0] == 'create' for call in calls) == 9
         assert sum(call[0] == 'exec' for call in calls) == 18
+        assert e5.load(cpo.out / 'smoke-E0/pre-state.json')['results'] is None and cpo.native_evidence == []
         fixture_env = json.loads(environment.read_text())
         fixture_env['e5'].update(plan=temp, producerNode='fixture', powerExecutable=temp, powerReceipt=temp)
         fixture_env['d2']['producerImage'] = 'fixture@sha256:fixture'

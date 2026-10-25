@@ -246,6 +246,8 @@ the preceding observation retained, not exact native creation times.
 Transition failures count failed/unsent client requests overlapping those
 observation brackets or raw action `startedAt..completedAt` intervals.
 Incomplete scheduler/client evidence is unknown, not zero.
+The scheduler's explicit JSON `results: null` is an empty Go result slice for
+consumer iteration/concatenation; retained raw state keeps the original null.
 
 `python3 hack/e5/demo.py --help` and `--self-check` work without environment
 configuration. The latter runs the real CPO producer stage loop against local
