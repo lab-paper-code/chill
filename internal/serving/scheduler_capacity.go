@@ -171,6 +171,19 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		target := keep
 		target.ID, target.Nodes, target.Instances, target.Routing = goal.ID, goal.Nodes, goal.Instances, goal.Routing
 		decision.Target, decision.Status, decision.Reasons = &target, schedulerStatusKeep, []string{schedulerTransitionInProgress}
+		for _, node := range snapshot.Nodes {
+			if !slices.Contains(node.Reasons, NodeInstanceUnavailable) {
+				continue
+			}
+			needed := slices.ContainsFunc(goal.Instances, func(i SchedulerInstance) bool { return i.Node == node.Node }) ||
+				slices.ContainsFunc(goal.Nodes, func(n SchedulerNode) bool { return n.Node == node.Node && n.PowerMode != node.PowerMode })
+			if needed {
+				reason := fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, node.Node.Name, node.Node.UID)
+				target.Status = schedulerStatusPending
+				target.Reasons = appendUnique(target.Reasons, reason)
+				decision.Reasons = appendUnique(decision.Reasons, reason)
+			}
+		}
 		return decision, ctx.Err()
 	}
 	planner := newCapacityPlanner(ctx, settings, snapshot, keep, capacity, decision)

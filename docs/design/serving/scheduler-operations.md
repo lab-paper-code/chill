@@ -115,6 +115,12 @@ desired/native DecisionID만 다르면 probe는 오류 대신 `PolicyAckPending`
 완료에는 기존 native 정책 ACK가 여전히 필요하다. 실제 읽기·metadata·Pod/Service
 검증 실패는 기존 관측 실패 경로를 따른다.
 
+실제 읽기 실패로 `InstanceUnavailable`인 Node에서는 같은 Name·UID의 새 prepare와
+전력 변경을 보류하고, snapshot 부재를 remove 완료 증거로 사용하지 않는다(SCH-49).
+해당 Node의 이유와 identity는 보류된 route/후보 사유에 남고 후속 route·제거도
+대기한다. 이미 실행 중인 동작의 실제 상태는 바꾸지 않으며 정상 다른 Node의
+독립 prepare·전력 동작은 계속 가능하다. 기존 전체 자원 검증의 전역 Pending은 유지한다.
+
 
 제거는 native drain과 실제 container 종료 증거를 확인한 뒤 자기 Pod 소유의 Service를
 resourceVersion/UID precondition으로 삭제하고 Pod finalizer 및 config를 해제한다.

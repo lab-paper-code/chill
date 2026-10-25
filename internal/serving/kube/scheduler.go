@@ -1006,6 +1006,15 @@ func (c *SchedulerController) runContext(action serving.Action, config Scheduler
 }
 
 func (c *SchedulerController) dependenciesReady(action serving.Action, target serving.SchedulerCandidate) bool {
+	if action.Status != nativeOperationRunning && strings.HasPrefix(action.Reason, serving.NodeInstanceUnavailable+":") {
+		return false
+	}
+	if (action.Kind == operationPrepare || action.Kind == operationPower || action.Kind == operationRemove) &&
+		slices.ContainsFunc(c.state.Snapshot.Nodes, func(node serving.SchedulerNode) bool {
+			return node.Node == action.Node && slices.Contains(node.Reasons, serving.NodeInstanceUnavailable)
+		}) {
+		return false
+	}
 	for _, dep := range action.DependsOn {
 		if run := c.runs[dep]; run != nil && run.action.Status == nativeOperationComplete {
 			continue

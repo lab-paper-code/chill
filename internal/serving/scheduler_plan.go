@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 )
 
 // schedulerWorkloadStates classifies every current Workload for this decision.
@@ -326,7 +327,13 @@ func schedulerPlan(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
 	p.prepareTargets(c)
 	// Candidate ordinals and rolling witness text are not operation identity.
 	route := p.add(schedulerActionRoute, NodeReference{}, "", "", schedulerConfigKey(c), p.prepares)
-	p.retireOld(c, route)
+	if action := &p.actions[len(p.actions)-1]; action.Status == schedulerActionPlanned &&
+		(len(p.reasons) != 0 || strings.HasPrefix(action.Reason, NodeInstanceUnavailable+":")) {
+		action.Reason = strings.Join(p.reasons, ";")
+	}
+	if len(p.reasons) == 0 {
+		p.retireOld(c, route)
+	}
 	p.continueActions()
 	p.selectCosts()
 	return p.actions
@@ -395,6 +402,7 @@ type schedulerPlanState struct {
 	nodeTail map[string]string
 	prepares []string
 	stops    map[string]string
+	reasons  []string
 }
 
 func (p *schedulerPlanState) add(kind string, node NodeReference, id, from, to string, deps []string) string {
@@ -442,6 +450,16 @@ func (p *schedulerPlanState) addRunningPrerequisites(action *Action) {
 	}
 }
 
+func (p *schedulerPlanState) instanceUnavailable(node NodeReference) bool {
+	return slices.ContainsFunc(p.snap.Nodes, func(actual SchedulerNode) bool {
+		return actual.Node == node && slices.Contains(actual.Reasons, NodeInstanceUnavailable)
+	})
+}
+
+func (p *schedulerPlanState) deferNode(node NodeReference) {
+	p.reasons = appendUnique(p.reasons, fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, node.Name, node.UID))
+}
+
 func (p *schedulerPlanState) completedEffectPresent(action Action) bool {
 	switch action.Kind {
 	case schedulerActionPrepare:
@@ -463,6 +481,9 @@ func (p *schedulerPlanState) completedEffectPresent(action Action) bool {
 		return action.Kind == schedulerActionStop ||
 			!slices.ContainsFunc(p.snap.Outstanding, func(request SchedulerRequest) bool { return request.Instance == action.Instance })
 	case schedulerActionRemove:
+		if p.instanceUnavailable(action.Node) {
+			return false
+		}
 		return !slices.ContainsFunc(p.snap.Instances, func(instance SchedulerInstance) bool { return instance.ID == action.Instance }) &&
 			!slices.ContainsFunc(p.snap.Outstanding, func(request SchedulerRequest) bool { return request.Instance == action.Instance }) &&
 			!schedulerInstanceRouted(p.snap.Routing, action.Instance)
@@ -517,6 +538,10 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 			if n.Node != oldNode.Node || n.PowerMode == oldNode.PowerMode {
 				continue
 			}
+			if p.instanceUnavailable(n.Node) {
+				p.deferNode(n.Node)
+				continue
+			}
 			from := oldNode.PowerMode
 			// An available Node first drops to its lowest mode, the same in every
 			// candidate; re-entering it raises the mode from there. While that
@@ -567,6 +592,10 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 
 func (p *schedulerPlanState) prepareTargets(c SchedulerCandidate) {
 	for _, wanted := range c.Instances {
+		if p.instanceUnavailable(wanted.Node) {
+			p.deferNode(wanted.Node)
+			continue
+		}
 		if running := p.runningPreparation(wanted); running != "" {
 			p.prepares = append(p.prepares, running)
 			continue
@@ -638,6 +667,9 @@ func (p *schedulerPlanState) preparationFits(wanted SchedulerInstance) bool {
 	for _, node := range p.snap.Nodes {
 		if node.Node != wanted.Node {
 			continue
+		}
+		if slices.Contains(node.Reasons, NodeInstanceUnavailable) {
+			return false
 		}
 		allocations := append([]SchedulerAllocation{node.Reserved}, node.NonServing...)
 		for _, actual := range p.snap.Instances {
