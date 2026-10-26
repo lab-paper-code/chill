@@ -36,6 +36,11 @@ and Helm value `profiler.failedJobRetentionSeconds` select this retention in
 seconds (default `86400`, inclusive range `1..604800`), passed to the Profiler
 as `--failed-job-retention-seconds`. Retained execution evidence remains
 independent of Job cleanup.
+Transition-observer attempts follow the same rule after immutable attempt
+finalization: accepted successful Jobs are removed in the background, while
+failed Jobs and non-accepted observations receive diagnostic retention.
+Restart reconciliation retries leftover Job cleanup even after the enclosing
+transition-cost measurement has recorded its terminal result.
 Repeated active and idle trials, exact-state curve derivation, and the
 `BatchEnergyOptimization` Quick-search control path are implemented. The
 recorded Orange Pi RKNN campaign

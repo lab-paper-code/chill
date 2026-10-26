@@ -281,7 +281,8 @@ func setupTransitionCostController(
 			CoordinationBytes:      opts.transitionMaximumObjectBytes,
 			WorkspaceBytes:         opts.transitionMaximumObjectBytes,
 		},
-		MaximumObjectBytes: opts.transitionMaximumObjectBytes,
+		MaximumObjectBytes:        opts.transitionMaximumObjectBytes,
+		FailedJobRetentionSeconds: int32(opts.failedJobRetentionSeconds),
 	})
 	if err != nil {
 		return fmt.Errorf("set up PowerModeTransitionCost controller: %w", err)

@@ -33,18 +33,20 @@ type powerModeTransitionCostReconciler struct {
 	client   client.Client
 	sequence measurementAdvancer
 	results  measurementResultRecorder
+	cleanup  *attemptJobCleanup
 }
 
 func newPowerModeTransitionCostReconciler(
 	kubeClient client.Client,
 	sequence measurementAdvancer,
 	results measurementResultRecorder,
+	cleanup *attemptJobCleanup,
 ) (*powerModeTransitionCostReconciler, error) {
-	if kubeClient == nil || sequence == nil || results == nil {
-		return nil, errors.New("Kubernetes client, transition sequence, and result recorder are required")
+	if kubeClient == nil || sequence == nil || results == nil || cleanup == nil {
+		return nil, errors.New("Kubernetes client, transition sequence, result recorder, and Job cleanup are required")
 	}
 	return &powerModeTransitionCostReconciler{
-		client: kubeClient, sequence: sequence, results: results,
+		client: kubeClient, sequence: sequence, results: results, cleanup: cleanup,
 	}, nil
 }
 
@@ -56,8 +58,11 @@ func (r *powerModeTransitionCostReconciler) Reconcile(
 	if err := r.client.Get(ctx, request.NamespacedName, measurement); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if !measurement.DeletionTimestamp.IsZero() || completeTerminalMeasurementStatus(measurement) {
+	if !measurement.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
+	}
+	if completeTerminalMeasurementStatus(measurement) {
+		return r.cleanupJobs(ctx, measurement, measurement.Status.Result.Store), nil
 	}
 	// A measurement that has not reported Measuring waits for ChillServer's
 	// admission before its preparation record, Jobs, or power-mode requests.
@@ -91,6 +96,10 @@ func (r *powerModeTransitionCostReconciler) Reconcile(
 		if err := r.patchStatus(ctx, measurement, status); err != nil {
 			return ctrl.Result{}, err
 		}
+		cleanup := r.cleanupJobs(ctx, measurement, progress.evidenceStore)
+		if cleanup.RequeueAfter != 0 {
+			return cleanup, nil
+		}
 		if progress.stage == measurementStageAttemptFinalized {
 			return ctrl.Result{Requeue: true}, nil
 		}
@@ -110,10 +119,28 @@ func (r *powerModeTransitionCostReconciler) Reconcile(
 		if err := r.patchStatus(ctx, measurement, status); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
+		measurement.Status = status
+		return r.cleanupJobs(ctx, measurement, stored.reference.Store), nil
 	default:
 		return ctrl.Result{}, fmt.Errorf("unsupported transition measurement stage %q", progress.stage)
 	}
+}
+
+// Cleanup is operational work: it may request another reconciliation, but must
+// never undo a verified measurement or prevent publishing its successful result.
+func (r *powerModeTransitionCostReconciler) cleanupJobs(
+	ctx context.Context,
+	measurement *edgev1alpha1.PowerModeTransitionCost,
+	evidenceStore string,
+) ctrl.Result {
+	pending, err := r.cleanup.cleanup(ctx, measurement, evidenceStore)
+	if err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "Retrying transition attempt Job cleanup")
+	}
+	if pending {
+		return ctrl.Result{RequeueAfter: admissionWait}
+	}
+	return ctrl.Result{}
 }
 
 func projectMeasurementStatus(

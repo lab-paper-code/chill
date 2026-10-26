@@ -24,10 +24,11 @@ type SetupOptions struct {
 		evidencestore.LocationReader
 		evidencestore.ImmutableWriter
 	}
-	EvidenceStore      string
-	ObserverNodeName   string
-	AttemptJob         AttemptJobOptions
-	MaximumObjectBytes int64
+	EvidenceStore             string
+	ObserverNodeName          string
+	AttemptJob                AttemptJobOptions
+	MaximumObjectBytes        int64
+	FailedJobRetentionSeconds int32
 }
 
 // SetupWithManager constructs and registers the complete transition-cost
@@ -35,6 +36,9 @@ type SetupOptions struct {
 func SetupWithManager(manager ctrl.Manager, options SetupOptions) error {
 	if manager == nil {
 		return errors.New("controller manager is required")
+	}
+	if options.FailedJobRetentionSeconds < 1 || options.FailedJobRetentionSeconds > 604800 {
+		return errors.New("failed transition Job retention must be between 1 and 604800 seconds")
 	}
 	baselines, err := NewIdleBaselineSource(
 		manager.GetAPIReader(), options.Evidence, options.MaximumObjectBytes,
@@ -73,7 +77,11 @@ func SetupWithManager(manager ctrl.Manager, options SetupOptions) error {
 	if err != nil {
 		return fmt.Errorf("construct transition result writer: %w", err)
 	}
-	reconciler, err := newPowerModeTransitionCostReconciler(manager.GetClient(), sequence, results)
+	cleanup := &attemptJobCleanup{
+		client: manager.GetClient(), finalizer: finalizer,
+		failedJobRetentionSeconds: options.FailedJobRetentionSeconds,
+	}
+	reconciler, err := newPowerModeTransitionCostReconciler(manager.GetClient(), sequence, results, cleanup)
 	if err != nil {
 		return fmt.Errorf("construct PowerModeTransitionCost reconciler: %w", err)
 	}

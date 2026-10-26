@@ -10,6 +10,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -78,7 +79,7 @@ func TestPowerModeTransitionCostReconcilerProjectsEveryMeasurementStage(t *testi
 	}
 }
 
-func TestPowerModeTransitionCostReconcilerSkipsCompleteTerminalStatus(t *testing.T) {
+func TestPowerModeTransitionCostReconcilerSkipsTerminalSequenceButRetriesCleanup(t *testing.T) {
 	fixture := newReconcilerFixture(t, measurementStageComplete)
 	stored := fixture.writer.result
 	measurement := fixture.measurement.DeepCopy()
@@ -173,17 +174,22 @@ func TestNewPowerModeTransitionCostReconcilerRequiresExactPorts(t *testing.T) {
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(measurement).Build()
 	sequence := &reconcileSequence{}
 	writer := &reconcileResultWriter{}
+	cleanup := &attemptJobCleanup{}
 	for name, build := range map[string]func() error{
 		"client": func() error {
-			_, err := newPowerModeTransitionCostReconciler(nil, sequence, writer)
+			_, err := newPowerModeTransitionCostReconciler(nil, sequence, writer, cleanup)
 			return err
 		},
 		"sequence": func() error {
-			_, err := newPowerModeTransitionCostReconciler(kube, nil, writer)
+			_, err := newPowerModeTransitionCostReconciler(kube, nil, writer, cleanup)
 			return err
 		},
 		"writer": func() error {
-			_, err := newPowerModeTransitionCostReconciler(kube, sequence, nil)
+			_, err := newPowerModeTransitionCostReconciler(kube, sequence, nil, cleanup)
+			return err
+		},
+		"cleanup": func() error {
+			_, err := newPowerModeTransitionCostReconciler(kube, sequence, writer, nil)
 			return err
 		},
 	} {
@@ -207,6 +213,7 @@ type reconcilerFixture struct {
 func newReconcilerFixture(t *testing.T, stage measurementStage) reconcilerFixture {
 	t.Helper()
 	measurement, _, _ := preparationRecordFixture(t)
+	measurement.Spec.AttemptLimit = 5
 	return newReconcilerFixtureWithMeasurement(t, measurement, stage)
 }
 
@@ -217,6 +224,9 @@ func newReconcilerFixtureWithMeasurement(
 ) reconcilerFixture {
 	t.Helper()
 	_, prepared, scheme := preparationRecordFixture(t)
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
 	measurement.Generation = 3
 	if _, set := measurement.Annotations[profilingrun.AdmissionAnnotation]; !set {
 		metav1.SetMetaDataAnnotation(&measurement.ObjectMeta, profilingrun.AdmissionAnnotation, profilingrun.GrantedAdmission(time.Unix(0, 0)))
@@ -234,7 +244,12 @@ func newReconcilerFixtureWithMeasurement(
 	kube := &trackingStatusClient{Client: base}
 	sequence := &reconcileSequence{progress: measurementProgress{stage: stage, attempts: attempts}}
 	writer := &reconcileResultWriter{result: reconcilerStoredResult(stage)}
-	reconciler, err := newPowerModeTransitionCostReconciler(kube, sequence, writer)
+	finalizer, err := NewAttemptFinalizer(kube, newFinalizationStore(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup := &attemptJobCleanup{client: kube, finalizer: finalizer, failedJobRetentionSeconds: 86400}
+	reconciler, err := newPowerModeTransitionCostReconciler(kube, sequence, writer, cleanup)
 	if err != nil {
 		t.Fatal(err)
 	}

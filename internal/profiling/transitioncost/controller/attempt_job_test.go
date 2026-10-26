@@ -32,6 +32,9 @@ func TestBuildAttemptJobProjectsOneOffTargetAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertAttemptJobIdentityAndBounds(t, job, request)
+	if job.Spec.TTLSecondsAfterFinished != nil {
+		t.Fatalf("new attempt Job must retain its receipt until finalization, got TTL %d", *job.Spec.TTLSecondsAfterFinished)
+	}
 	if job.Spec.Template.Labels[profilingrun.MeasurementWorkloadLabelKey] != profilingrun.TransitionObserverRole {
 		t.Fatalf("Pod labels = %#v", job.Spec.Template.Labels)
 	}
