@@ -352,6 +352,32 @@ spec:
                 - size
                 - store
                 type: object
+              evidenceStore:
+                description: EvidenceStore retains the frozen delivery binding after
+                  native Job cleanup.
+                properties:
+                  bucket:
+                    minLength: 1
+                    type: string
+                  credentialsSecretName:
+                    minLength: 1
+                    type: string
+                  endpoint:
+                    minLength: 1
+                    type: string
+                  region:
+                    minLength: 1
+                    type: string
+                  store:
+                    minLength: 1
+                    type: string
+                required:
+                - bucket
+                - credentialsSecretName
+                - endpoint
+                - region
+                - store
+                type: object
               job:
                 description: Job identifies the one owned native Job after creation.
                 properties:
@@ -367,6 +393,13 @@ spec:
                 - name
                 - uid
                 type: object
+              jobCleanup:
+                description: JobCleanup records whether terminal native Job cleanup
+                  remains pending.
+                enum:
+                - Pending
+                - Done
+                type: string
               observedGeneration:
                 description: ObservedGeneration is the latest spec generation processed
                   by the Profiler.

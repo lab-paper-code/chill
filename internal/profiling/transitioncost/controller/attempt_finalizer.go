@@ -33,6 +33,7 @@ type FinalizedAttempt struct {
 	RawReference   evidencestore.ObjectIdentity
 	FinalReference evidencestore.ObjectIdentity
 	Observation    transitioncost.FinalizedObservation
+	cleanupPending bool
 }
 
 type AttemptFinalizer struct {
@@ -159,7 +160,7 @@ func (f *AttemptFinalizer) retainFinalizedAttempt(
 		return winner, nil
 	}
 	return FinalizedAttempt{
-		RawReference: rawReference, FinalReference: finalReference, Observation: observation,
+		RawReference: rawReference, FinalReference: finalReference, Observation: observation, cleanupPending: true,
 	}, nil
 }
 func validateFinalizationProgress(measurement *edgev1alpha1.PowerModeTransitionCost, selection attemptSelection,
@@ -202,9 +203,10 @@ func (f *AttemptFinalizer) ownedAttemptPod(
 }
 
 type finalizedTransitionWire struct {
-	SchemaVersion string                                    `json:"schemaVersion"`
-	RawEvidence   evidencestore.ObjectIdentity              `json:"rawEvidence"`
-	Observation   transitioncost.FinalizedObservationRecord `json:"observation"`
+	SchemaVersion  string                                    `json:"schemaVersion"`
+	RawEvidence    evidencestore.ObjectIdentity              `json:"rawEvidence"`
+	Observation    transitioncost.FinalizedObservationRecord `json:"observation"`
+	CleanupPending bool                                      `json:"cleanupPending,omitempty"`
 }
 
 func encodeFinalizedTransition(rawReference evidencestore.ObjectIdentity,
@@ -216,41 +218,37 @@ func encodeFinalizedTransition(rawReference evidencestore.ObjectIdentity,
 	payload, err := json.Marshal(finalizedTransitionWire{
 		SchemaVersion: transitioncost.FinalizedRecordSchemaVersion,
 		RawEvidence:   rawReference, Observation: observation.Record(),
+		CleanupPending: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode finalized transition evidence: %w", err)
 	}
 	return payload, nil
 }
-func decodeFinalizedTransition(
-	payload []byte,
-) (evidencestore.ObjectIdentity, transitioncost.FinalizedObservation, error) {
+func decodeFinalizedTransition(payload []byte) (FinalizedAttempt, error) {
 	var wire finalizedTransitionWire
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
-		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
-			fmt.Errorf("decode finalized transition evidence: %w", err)
+		return FinalizedAttempt{}, fmt.Errorf("decode finalized transition evidence: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
-			errors.New("finalized transition evidence contains a trailing JSON value")
+		return FinalizedAttempt{}, errors.New("finalized transition evidence contains a trailing JSON value")
 	}
 	if wire.SchemaVersion != transitioncost.FinalizedRecordSchemaVersion {
-		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
-			fmt.Errorf("unsupported finalized transition schema %q", wire.SchemaVersion)
+		return FinalizedAttempt{}, fmt.Errorf("unsupported finalized transition schema %q", wire.SchemaVersion)
 	}
 	if err := wire.RawEvidence.Validate(); err != nil {
-		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
-			fmt.Errorf("validate finalized raw reference: %w", err)
+		return FinalizedAttempt{}, fmt.Errorf("validate finalized raw reference: %w", err)
 	}
 	observation, err := transitioncost.RestoreFinalizedObservation(wire.Observation)
 	if err != nil {
-		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
-			fmt.Errorf("restore finalized transition observation: %w", err)
+		return FinalizedAttempt{}, fmt.Errorf("restore finalized transition observation: %w", err)
 	}
-	return wire.RawEvidence, observation, nil
+	return FinalizedAttempt{
+		RawReference: wire.RawEvidence, Observation: observation, cleanupPending: wire.CleanupPending,
+	}, nil
 }
 func (f *AttemptFinalizer) load(
 	ctx context.Context,
@@ -263,15 +261,14 @@ func (f *AttemptFinalizer) load(
 	if err != nil {
 		return FinalizedAttempt{}, false, fmt.Errorf("read finalized transition evidence: %w", err)
 	}
-	rawReference, observation, err := decodeFinalizedTransition(payload)
+	finalized, err := decodeFinalizedTransition(payload)
 	if err != nil {
 		return FinalizedAttempt{}, false, err
 	}
-	return FinalizedAttempt{
-		RawReference:   rawReference,
-		FinalReference: evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: int64(len(payload))},
-		Observation:    observation,
-	}, true, nil
+	finalized.FinalReference = evidencestore.ObjectIdentity{
+		Store: location.Store, Key: location.Key, Size: int64(len(payload)),
+	}
+	return finalized, true, nil
 }
 
 func transitionTerminationReceipt(pod *corev1.Pod) (evidencestore.Receipt, error) {

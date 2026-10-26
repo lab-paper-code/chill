@@ -27,6 +27,7 @@ const (
 type FinalizedRunEvidence struct {
 	Reference     evidencestore.ObjectIdentity
 	SchemaVersion string
+	Binding       *edgev1alpha1.ProfilingRunEvidenceStoreBinding
 	Pod           edgev1alpha1.ProfilingRunObjectReference
 	Node          edgev1alpha1.ProfilingRunObjectReference
 }
@@ -120,6 +121,10 @@ func (f *KubernetesExecutionFinalizer) Finalize(
 	}
 	return FinalizedRunEvidence{
 		Reference: result.Reference, SchemaVersion: result.SchemaVersion,
+		Binding: &edgev1alpha1.ProfilingRunEvidenceStoreBinding{
+			Store: binding.Store, Endpoint: binding.Endpoint, Bucket: binding.Bucket,
+			Region: binding.Region, CredentialsSecretName: binding.CredentialsSecretName,
+		},
 		Pod: edgev1alpha1.ProfilingRunObjectReference{
 			Name: observation.Pod.Name, UID: string(observation.Pod.UID),
 		},

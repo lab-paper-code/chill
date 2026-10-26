@@ -22,9 +22,9 @@ type RetainedStoreFactory func(
 	storekube.Credentials,
 ) (evidencestore.LocationReader, error)
 
-// RetainedLoader reconstructs the Evidence Store connection recorded in one
-// Run's owned Job, then independently verifies the referenced immutable
-// evidence. It never resolves the current store configuration as a substitute.
+// RetainedLoader uses the frozen Evidence Store connection recorded in Run
+// status, falling back to the exact owned Job for older Runs. It never resolves
+// the current store configuration as a substitute.
 type RetainedLoader struct {
 	reader         client.Reader
 	stores         RetainedStoreFactory
@@ -120,20 +120,32 @@ func (l *RetainedLoader) loaderFor(
 	if run == nil || run.Namespace == "" || run.Status.Job == nil {
 		return nil, errors.New("ProfilingRun with a recorded Job is required")
 	}
-	job := &batchv1.Job{}
-	key := types.NamespacedName{Namespace: run.Namespace, Name: run.Status.Job.Name}
-	if err := l.reader.Get(ctx, key, job); err != nil {
-		return nil, fmt.Errorf("get recorded measurement Job %s: %w", key, err)
-	}
-	if string(job.UID) != run.Status.Job.UID || !metav1.IsControlledBy(job, run) {
-		return nil, errors.New("measurement Job does not match the recorded Run execution")
-	}
-	binding, err := storekube.BindingFromJob(job, "runtime")
-	if err != nil {
-		return nil, err
+	var binding storekube.Binding
+	if retained := run.Status.EvidenceStore; retained != nil {
+		binding = storekube.Binding{
+			Store: retained.Store, Endpoint: retained.Endpoint, Bucket: retained.Bucket,
+			Region: retained.Region, CredentialsSecretName: retained.CredentialsSecretName,
+		}
+		if err := binding.Validate(); err != nil {
+			return nil, err
+		}
+	} else {
+		job := &batchv1.Job{}
+		key := types.NamespacedName{Namespace: run.Namespace, Name: run.Status.Job.Name}
+		if err := l.reader.Get(ctx, key, job); err != nil {
+			return nil, fmt.Errorf("get recorded measurement Job %s: %w", key, err)
+		}
+		if string(job.UID) != run.Status.Job.UID || !metav1.IsControlledBy(job, run) {
+			return nil, errors.New("measurement Job does not match the recorded Run execution")
+		}
+		var err error
+		binding, err = storekube.BindingFromJob(job, "runtime")
+		if err != nil {
+			return nil, err
+		}
 	}
 	if reference.Store != binding.Store {
-		return nil, errors.New("evidence reference store does not match the retained Job binding")
+		return nil, errors.New("evidence reference store does not match the retained Evidence Store binding")
 	}
 	credentials, err := storekube.LoadCredentials(ctx, l.reader, run.Namespace, binding.CredentialsSecretName)
 	if err != nil {

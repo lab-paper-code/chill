@@ -27,6 +27,9 @@ func (c *attemptJobCleanup) cleanup(
 	measurement *edgev1alpha1.PowerModeTransitionCost,
 	evidenceStore string,
 ) (bool, error) {
+	if completeTerminalMeasurementStatus(measurement) && !measurement.Status.CleanupPending {
+		return false, nil
+	}
 	jobs := &batchv1.JobList{}
 	if err := c.client.List(ctx, jobs, client.InNamespace(measurement.Namespace)); err != nil {
 		return true, fmt.Errorf("list transition attempt Jobs for cleanup: %w", err)
@@ -82,8 +85,12 @@ func (c *attemptJobCleanup) cleanupJob(
 	if err != nil {
 		return err
 	}
-	if !found && !(completeTerminalMeasurementStatus(measurement) &&
-		measurement.Status.Phase == edgev1alpha1.PowerModeTransitionCostPhaseFailed) {
+	if found {
+		if !finalized.cleanupPending {
+			return nil
+		}
+	} else if !completeTerminalMeasurementStatus(measurement) || !measurement.Status.CleanupPending ||
+		measurement.Status.Phase != edgev1alpha1.PowerModeTransitionCostPhaseFailed {
 		// The active attempt still needs its Pod receipt; no cleanup is safe yet.
 		return nil
 	}

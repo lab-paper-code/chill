@@ -30,6 +30,11 @@ that outcome or clear the recorded Job, Pod, and Node identities used by the
 catalogue.
 Successful Jobs are deleted with Kubernetes `Background` propagation only after
 verified evidence and its reference have been recorded in the final outcome.
+The same status update freezes the non-secret Evidence Store connection binding
+and records `jobCleanup: Pending`; deletion records `Done`. Retained active/idle
+evidence readers use that Run binding, so curve derivation and passport reads do
+not depend on the deleted Job. Older Runs without a binding still recover it
+from their recorded owned Job.
 Failed Jobs are retained for diagnosis: their TTL is patched only after the
 final outcome is recorded, never at Job creation. The operator configuration
 and Helm value `profiler.failedJobRetentionSeconds` select this retention in
@@ -41,6 +46,12 @@ finalization: accepted successful Jobs are removed in the background, while
 failed Jobs and non-accepted observations receive diagnostic retention.
 Restart reconciliation retries leftover Job cleanup even after the enclosing
 transition-cost measurement has recorded its terminal result.
+Cleanup is opt-in at new finalization, not a deployment-time sweep. Existing
+markerless completed or failed Runs, finalized transition attempts, and terminal
+transition measurements keep their Jobs untouched, including no new diagnostic
+TTL. Any cleanup of those existing objects requires a separate approved manual
+operation. Newly finalized transition evidence and terminal results retain their
+cleanup eligibility so restart recovery cannot promote old markerless evidence.
 Repeated active and idle trials, exact-state curve derivation, and the
 `BatchEnergyOptimization` Quick-search control path are implemented. The
 recorded Orange Pi RKNN campaign

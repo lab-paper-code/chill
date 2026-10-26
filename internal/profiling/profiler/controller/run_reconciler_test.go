@@ -242,6 +242,7 @@ func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 	})
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
 	finalized := FinalizedRunEvidence{
+		Binding:       testFinalizedStoreBinding(),
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Reference: evidencestore.ObjectIdentity{
 			Store: "chill-evidence-store", Key: "runs/run-uid/execution.json",
@@ -396,6 +397,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 		Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
 	})
 	finalized := FinalizedRunEvidence{
+		Binding:       testFinalizedStoreBinding(),
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Reference: evidencestore.ObjectIdentity{
 			Store: "chill-evidence-store", Key: "runs/run-uid/execution.json",
@@ -423,6 +425,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	}
 	if actual.Status.Evidence == nil || actual.Status.Evidence.Key != finalized.Reference.Key ||
 		actual.Status.Evidence.SchemaVersion != profilerevidence.ExecutionEvidenceSchemaVersion ||
+		actual.Status.JobCleanup != runJobCleanupDone || !reflect.DeepEqual(actual.Status.EvidenceStore, finalized.Binding) ||
 		actual.Status.ObservedExecution == nil || actual.Status.ObservedExecution.Pod != finalized.Pod ||
 		actual.Status.ObservedExecution.Node != finalized.Node {
 		t.Fatalf("finalized status = %#v", actual.Status)
@@ -708,5 +711,12 @@ func TestRunReconcilerWaitsForAdmissionOfRootRunOnly(t *testing.T) {
 				t.Fatalf("refused Run status = %#v", actual.Status)
 			}
 		})
+	}
+}
+
+func testFinalizedStoreBinding() *edgev1alpha1.ProfilingRunEvidenceStoreBinding {
+	return &edgev1alpha1.ProfilingRunEvidenceStoreBinding{
+		Store: "chill-evidence-store", Endpoint: "http://evidence-store", Bucket: "chill",
+		Region: "us-east-1", CredentialsSecretName: "evidence-credentials",
 	}
 }

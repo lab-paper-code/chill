@@ -199,6 +199,10 @@ spec:
               rule: self.attemptLimit >= self.acceptedCountTarget
           status:
             properties:
+              cleanupPending:
+                description: CleanupPending marks terminal native Job cleanup still
+                  owned by this object.
+                type: boolean
               observedGeneration:
                 format: int64
                 type: integer

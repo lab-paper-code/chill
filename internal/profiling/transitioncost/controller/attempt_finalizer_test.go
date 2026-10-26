@@ -60,7 +60,7 @@ func TestAttemptFinalizerRetainsEveryVerdictFromCompleteOrFailedJob(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if finalized.Observation.Verdict() != test.verdict ||
+			if !finalized.cleanupPending || finalized.Observation.Verdict() != test.verdict ||
 				finalized.RawReference != fixture.rawReference || finalized.FinalReference.Size < 1 || fixture.store.puts != 1 {
 				t.Fatalf("finalization = %#v, puts = %d", finalized, fixture.store.puts)
 			}
@@ -77,7 +77,7 @@ func TestAttemptFinalizerRetainsEveryVerdictFromCompleteOrFailedJob(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if recovered.Observation.Verdict() != test.verdict || fixture.store.puts != 1 || fixture.store.opens != 3 {
+			if !recovered.cleanupPending || recovered.Observation.Verdict() != test.verdict || fixture.store.puts != 1 || fixture.store.opens != 3 {
 				t.Fatalf(
 					"recovered finalization = %#v, puts = %d, opens = %d",
 					recovered, fixture.store.puts, fixture.store.opens,
@@ -96,9 +96,11 @@ func TestAttemptFinalizerUsesImmutableWinnerWithoutComparison(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture.store.winnerOnPut, err = encodeFinalizedTransition(
-		evidencestore.ObjectIdentity{Store: attemptEvidenceStore, Key: "winner/raw.json", Size: 1}, winner,
-	)
+	fixture.store.winnerOnPut, err = json.Marshal(finalizedTransitionWire{
+		SchemaVersion: transitioncost.FinalizedRecordSchemaVersion,
+		RawEvidence:   evidencestore.ObjectIdentity{Store: attemptEvidenceStore, Key: "winner/raw.json", Size: 1},
+		Observation:   winner.Record(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +110,7 @@ func TestAttemptFinalizerUsesImmutableWinnerWithoutComparison(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if finalized.Observation.Verdict() != transitioncost.VerdictInvalid ||
+	if finalized.cleanupPending || finalized.Observation.Verdict() != transitioncost.VerdictInvalid ||
 		fixture.store.puts != 1 || fixture.store.opens != 3 {
 		t.Fatalf("winner finalization = %#v, puts = %d, opens = %d", finalized, fixture.store.puts, fixture.store.opens)
 	}
@@ -151,7 +153,7 @@ func TestFinalizedTransitionCodecRejectsMalformedCurrentRecord(t *testing.T) {
 	}
 	for name, malformed := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := decodeFinalizedTransition(malformed); err == nil {
+			if _, err := decodeFinalizedTransition(malformed); err == nil {
 				t.Fatal("malformed finalized transition was accepted")
 			}
 		})

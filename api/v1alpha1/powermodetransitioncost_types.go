@@ -121,6 +121,10 @@ type PowerModeTransitionCostStatus struct {
 
 	// +optional
 	Result *ProfilingRunEvidenceReference `json:"result,omitempty"`
+
+	// CleanupPending marks terminal native Job cleanup still owned by this object.
+	// +optional
+	CleanupPending bool `json:"cleanupPending,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="self.acceptedCount <= self.attemptCount",message="acceptedCount must not exceed attemptCount"

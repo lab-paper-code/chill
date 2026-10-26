@@ -116,6 +116,7 @@ func (r *powerModeTransitionCostReconciler) Reconcile(
 		status := projectMeasurementStatus(
 			measurement, phase, stored.record.Directions, &stored.reference,
 		)
+		status.CleanupPending = stored.record.CleanupPending
 		if err := r.patchStatus(ctx, measurement, status); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -201,7 +202,7 @@ func sameMeasurementStatus(
 	right edgev1alpha1.PowerModeTransitionCostStatus,
 ) bool {
 	if left.ObservedGeneration != right.ObservedGeneration || left.Phase != right.Phase ||
-		len(left.Progress) != 2 || len(right.Progress) != 2 {
+		left.CleanupPending != right.CleanupPending || len(left.Progress) != 2 || len(right.Progress) != 2 {
 		return false
 	}
 	for index := 0; index < 2; index++ {

@@ -154,6 +154,15 @@ type ProfilingRunStatus struct {
 	// +optional
 	Evidence *ProfilingRunEvidenceReference `json:"evidence,omitempty"`
 
+	// EvidenceStore retains the frozen delivery binding after native Job cleanup.
+	// +optional
+	EvidenceStore *ProfilingRunEvidenceStoreBinding `json:"evidenceStore,omitempty"`
+
+	// JobCleanup records whether terminal native Job cleanup remains pending.
+	// +optional
+	// +kubebuilder:validation:Enum=Pending;Done
+	JobCleanup string `json:"jobCleanup,omitempty"`
+
 	// RuntimeTermination keeps the failed runtime container's exit code and
 	// log tail, so the cause of a failed Job outlives its Pod.
 	// +optional
@@ -203,6 +212,24 @@ type ProfilingRunEvidenceReference struct {
 
 	// +kubebuilder:validation:Minimum=1
 	Size int64 `json:"size"`
+}
+
+// ProfilingRunEvidenceStoreBinding contains no credentials, only their Secret name.
+type ProfilingRunEvidenceStoreBinding struct {
+	// +kubebuilder:validation:MinLength=1
+	Store string `json:"store"`
+
+	// +kubebuilder:validation:MinLength=1
+	Endpoint string `json:"endpoint"`
+
+	// +kubebuilder:validation:MinLength=1
+	Bucket string `json:"bucket"`
+
+	// +kubebuilder:validation:MinLength=1
+	Region string `json:"region"`
+
+	// +kubebuilder:validation:MinLength=1
+	CredentialsSecretName string `json:"credentialsSecretName"`
 }
 
 // +kubebuilder:object:root=true

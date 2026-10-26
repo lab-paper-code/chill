@@ -25,6 +25,8 @@ const (
 	evidenceReasonInvalid            = "EvidenceInvalid"
 	evidenceReasonVerificationFailed = "EvidenceVerificationFailed"
 	admissionWait                    = 5 * time.Second
+	runJobCleanupPending             = "Pending"
+	runJobCleanupDone                = "Done"
 )
 
 // ownedByMeasurementRoot reports whether a campaign or idle baseline controls
@@ -303,6 +305,7 @@ func (r *RunReconciler) publishJobFailure(
 		}
 	}
 	if err := r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+		desired.JobCleanup = runJobCleanupPending
 		desired.RuntimeTermination = termination
 		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
 			metav1.ConditionFalse, "JobFailed", "measurement Job failed")
@@ -331,6 +334,9 @@ func (r *RunReconciler) publishEvidenceFailure(
 	message string,
 ) error {
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+		if reason == evidenceReasonInvalid {
+			desired.JobCleanup = runJobCleanupPending
+		}
 		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
 			metav1.ConditionTrue, "JobSucceeded", "measurement Job completed successfully")
 		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionEvidenceVerified,
@@ -352,7 +358,12 @@ func (r *RunReconciler) publishFinalizedEvidence(
 	if finalized.Pod.Name == "" || finalized.Pod.UID == "" || finalized.Node.Name == "" || finalized.Node.UID == "" {
 		return errors.New("finalized execution identities are incomplete")
 	}
+	if finalized.Binding == nil {
+		return errors.New("finalized evidence store binding is required before Job cleanup")
+	}
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+		desired.EvidenceStore = finalized.Binding
+		desired.JobCleanup = runJobCleanupPending
 		desired.ObservedExecution = &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 			Pod: finalized.Pod, Node: finalized.Node,
 		}
@@ -440,7 +451,7 @@ func (r *RunReconciler) reconcileTerminalRun(ctx context.Context, run *edgev1alp
 }
 
 func (r *RunReconciler) deleteVerifiedJob(ctx context.Context, run *edgev1alpha1.ProfilingRun) (ctrl.Result, error) {
-	if run.Status.Job == nil {
+	if run.Status.Job == nil || run.Status.JobCleanup != runJobCleanupPending {
 		return ctrl.Result{}, nil
 	}
 	uid := types.UID(run.Status.Job.UID)
@@ -453,19 +464,38 @@ func (r *RunReconciler) deleteVerifiedJob(ctx context.Context, run *edgev1alpha1
 		ctrl.LoggerFrom(ctx).Error(err, "remove verified measurement Job", "job", client.ObjectKeyFromObject(job))
 		return ctrl.Result{RequeueAfter: admissionWait}, nil
 	}
+	if err := r.finishJobCleanup(ctx, run); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "record measurement Job cleanup")
+		return ctrl.Result{RequeueAfter: admissionWait}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
 func (r *RunReconciler) retainFailedJob(ctx context.Context, run *edgev1alpha1.ProfilingRun) error {
+	if run.Status.JobCleanup != runJobCleanupPending {
+		return nil
+	}
 	job, err := r.loadRecordedJob(ctx, run)
-	if err != nil || job == nil {
+	if err != nil {
 		return err
 	}
+	if job == nil {
+		return r.finishJobCleanup(ctx, run)
+	}
 	if job.Spec.TTLSecondsAfterFinished != nil && *job.Spec.TTLSecondsAfterFinished == r.FailedJobRetentionSeconds {
-		return nil
+		return r.finishJobCleanup(ctx, run)
 	}
 	base := job.DeepCopy()
 	retention := r.FailedJobRetentionSeconds
 	job.Spec.TTLSecondsAfterFinished = &retention
-	return client.IgnoreNotFound(r.Patch(ctx, job, client.MergeFrom(base)))
+	if err := client.IgnoreNotFound(r.Patch(ctx, job, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))); err != nil {
+		return err
+	}
+	return r.finishJobCleanup(ctx, run)
+}
+
+func (r *RunReconciler) finishJobCleanup(ctx context.Context, run *edgev1alpha1.ProfilingRun) error {
+	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+		desired.JobCleanup = runJobCleanupDone
+	})
 }

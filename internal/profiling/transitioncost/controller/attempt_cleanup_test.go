@@ -2,11 +2,14 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -160,6 +163,136 @@ func TestAttemptJobCleanupRetainsFinalizedDiagnostics(t *testing.T) {
 	}
 }
 
+func TestAttemptJobCleanupLeavesLegacyFinalizedAttemptsUntouched(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		outcome   finalizationOutcome
+		condition batchv1.JobConditionType
+	}{
+		{"accepted", acceptedAttempt, batchv1.JobComplete},
+		{"failed", invalidAttempt, batchv1.JobFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			fixture := newAttemptFinalizerFixture(t, test.outcome, test.condition)
+			job := fixture.progress.Job
+			metav1.SetMetaDataAnnotation(&job.ObjectMeta, transitionDirectionIndexAnnotation, "0")
+			kube := fixture.finalizer.reader.(client.Client)
+			if err := kube.Update(ctx, job); err != nil {
+				t.Fatal(err)
+			}
+			finalized, err := fixture.finalizer.Finalize(ctx, fixture.measurement, fixture.prepared, 0, 1, fixture.progress)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := json.Marshal(finalizedTransitionWire{
+				SchemaVersion: transitioncost.FinalizedRecordSchemaVersion,
+				RawEvidence:   finalized.RawReference,
+				Observation:   finalized.Observation.Record(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture.store.objects[finalized.FinalReference.Location()] = payload
+			recovered, err := fixture.finalizer.Finalize(ctx, fixture.measurement, fixture.prepared, 0, 1, AttemptProgress{})
+			if err != nil || recovered.cleanupPending || fixture.store.puts != 1 {
+				t.Fatalf("legacy finalization changed eligibility: finalized=%+v err=%v puts=%d", recovered, err, fixture.store.puts)
+			}
+			tracking := &cleanupTrackingClient{Client: kube}
+			cleanup := &attemptJobCleanup{client: tracking, finalizer: fixture.finalizer, failedJobRetentionSeconds: 123}
+			for _, terminal := range []bool{false, true} {
+				if terminal {
+					stored := reconcilerStoredResult(measurementStageFailed)
+					fixture.measurement.Status = projectMeasurementStatus(fixture.measurement,
+						edgev1alpha1.PowerModeTransitionCostPhaseFailed, stored.record.Directions, &stored.reference)
+					fixture.measurement.Status.CleanupPending = true
+				}
+				if pending, err := cleanup.cleanup(ctx, fixture.measurement, fixture.prepared.EvidenceStore); pending || err != nil {
+					t.Fatalf("legacy cleanup pending=%v err=%v", pending, err)
+				}
+				current := &batchv1.Job{}
+				if err := kube.Get(ctx, client.ObjectKeyFromObject(job), current); err != nil ||
+					current.Spec.TTLSecondsAfterFinished != nil || tracking.deletes != 0 || tracking.patches != 0 {
+					t.Fatalf("legacy Job changed: job=%+v err=%v deletes=%d patches=%d", current, err, tracking.deletes, tracking.patches)
+				}
+			}
+		})
+	}
+}
+
+func TestAttemptJobCleanupLeavesLegacyTerminalMeasurementsUntouched(t *testing.T) {
+	for _, withFinalEvidence := range []bool{false, true} {
+		t.Run(strconv.FormatBool(withFinalEvidence), func(t *testing.T) {
+			ctx := context.Background()
+			attempt := newAttemptFinalizerFixture(t, acceptedAttempt, batchv1.JobComplete)
+			if withFinalEvidence {
+				if _, err := attempt.finalizer.Finalize(ctx, attempt.measurement, attempt.prepared, 0, 1, attempt.progress); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stored := reconcilerStoredResult(measurementStageFailed)
+			measurement := attempt.measurement.DeepCopy()
+			measurement.Generation = 3
+			measurement.Status = projectMeasurementStatus(measurement,
+				edgev1alpha1.PowerModeTransitionCostPhaseFailed, stored.record.Directions, &stored.reference)
+			fixture := newReconcilerFixtureWithMeasurement(t, measurement, measurementStageFailed)
+			job := attempt.progress.Job.DeepCopy()
+			job.ResourceVersion = ""
+			metav1.SetMetaDataAnnotation(&job.ObjectMeta, transitionDirectionIndexAnnotation, "0")
+			if err := fixture.kube.Create(ctx, job); err != nil {
+				t.Fatal(err)
+			}
+			tracking := &cleanupTrackingClient{Client: fixture.kube}
+			fixture.reconciler.cleanup = &attemptJobCleanup{
+				client: tracking, finalizer: attempt.finalizer, failedJobRetentionSeconds: 123,
+			}
+			status := fixture.current(t).Status.DeepCopy()
+			if result, err := fixture.reconciler.Reconcile(ctx, fixture.request); err != nil || result.Requeue || result.RequeueAfter != 0 {
+				t.Fatalf("legacy terminal reconciliation result=%+v err=%v", result, err)
+			}
+			current := &batchv1.Job{}
+			if err := fixture.kube.Get(ctx, client.ObjectKeyFromObject(job), current); err != nil ||
+				current.Spec.TTLSecondsAfterFinished != nil || tracking.deletes != 0 || tracking.patches != 0 {
+				t.Fatalf("legacy terminal Job changed: job=%+v err=%v deletes=%d patches=%d", current, err, tracking.deletes, tracking.patches)
+			}
+			if fixture.sequence.calls != 0 || fixture.writer.calls != 0 || !reflect.DeepEqual(*status, fixture.current(t).Status) {
+				t.Fatal("legacy terminal measurement was replayed or changed")
+			}
+		})
+	}
+}
+
+func TestTerminalMeasurementFailureRequiresDurableResultAndStatusBeforeCleanup(t *testing.T) {
+	for _, boundary := range []string{"result", "status"} {
+		t.Run(boundary, func(t *testing.T) {
+			ctx := context.Background()
+			attempt := newAttemptFinalizerFixture(t, invalidAttempt, batchv1.JobFailed)
+			fixture := newReconcilerFixture(t, measurementStageFailed)
+			job := attempt.progress.Job.DeepCopy()
+			job.ResourceVersion = ""
+			metav1.SetMetaDataAnnotation(&job.ObjectMeta, transitionDirectionIndexAnnotation, "0")
+			if err := fixture.kube.Create(ctx, job); err != nil {
+				t.Fatal(err)
+			}
+			tracking := &cleanupTrackingClient{Client: fixture.kube}
+			fixture.reconciler.cleanup.client = tracking
+			if boundary == "result" {
+				fixture.writer.err = errors.New("result unavailable")
+			} else {
+				fixture.kube.patchErr = errors.New("status unavailable")
+			}
+			if _, err := fixture.reconciler.Reconcile(ctx, fixture.request); err == nil {
+				t.Fatal("persistence failure was ignored")
+			}
+			if current := fixture.current(t); current.Status.CleanupPending || current.Status.Result != nil ||
+				tracking.patches != 0 || tracking.deletes != 0 {
+				t.Fatalf("cleanup crossed failed %s boundary: status=%+v patches=%d deletes=%d",
+					boundary, current.Status, tracking.patches, tracking.deletes)
+			}
+		})
+	}
+}
+
 func TestTerminalMeasurementFailureRetriesRetentionWithoutAttemptReceipt(t *testing.T) {
 	ctx := context.Background()
 	fixture := newReconcilerFixture(t, measurementStageFailed)
@@ -208,6 +341,7 @@ type cleanupTrackingClient struct {
 	deleteErr error
 	patchErr  error
 	deletes   int
+	patches   int
 	options   client.DeleteOptions
 }
 
@@ -224,6 +358,7 @@ func (c *cleanupTrackingClient) Delete(ctx context.Context, object client.Object
 }
 
 func (c *cleanupTrackingClient) Patch(ctx context.Context, object client.Object, patch client.Patch, options ...client.PatchOption) error {
+	c.patches++
 	if c.patchErr != nil {
 		return c.patchErr
 	}

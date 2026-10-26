@@ -22,7 +22,7 @@ func TestMeasurementResultWriterStoresCompleteTableAndParityProgress(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.puts != 1 || stored.record.Outcome != measurementStageComplete ||
+	if !stored.record.CleanupPending || store.puts != 1 || stored.record.Outcome != measurementStageComplete ||
 		stored.record.Reason != "" || stored.record.DirectedTable == nil || stored.record.RunnerProfileID != testRunnerProfile {
 		t.Fatalf("stored result = %#v, puts = %d", stored, store.puts)
 	}
@@ -84,7 +84,7 @@ func TestMeasurementResultWriterStoresTerminalOutcomeWithoutInventingTable(t *te
 			if err != nil {
 				t.Fatal(err)
 			}
-			if stored.record.DirectedTable != nil || stored.record.Reason != test.progress.reason {
+			if !stored.record.CleanupPending || stored.record.DirectedTable != nil || stored.record.Reason != test.progress.reason {
 				t.Fatalf("stored terminal result = %#v", stored.record)
 			}
 			for index, direction := range stored.record.Directions {
@@ -101,7 +101,12 @@ func TestMeasurementResultWriterStoresTerminalOutcomeWithoutInventingTable(t *te
 func TestMeasurementResultWriterLoadsExistingObjectAsAuthority(t *testing.T) {
 	measurement, incoming := completeMeasurementResultFixture(t)
 	winner := measurementProgress{stage: measurementStageFailed, reason: AttemptReasonSourceStateMismatch, runnerProfileID: incoming.runnerProfileID}
-	winnerPayload := measurementResultPayload(t, winner)
+	winnerRecord, err := buildMeasurementResult(winner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	winnerRecord.CleanupPending = false
+	winnerPayload := marshalMeasurementResultRecord(t, winnerRecord)
 	location, err := measurementResultLocation(measurement, incoming.evidenceStore)
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +120,7 @@ func TestMeasurementResultWriterLoadsExistingObjectAsAuthority(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stored.record.Outcome != measurementStageFailed || store.puts != 0 || store.opens != 1 {
+		if stored.record.CleanupPending || stored.record.Outcome != measurementStageFailed || store.puts != 0 || store.opens != 1 {
 			t.Fatalf("stored result = %#v, opens = %d, puts = %d", stored.record, store.opens, store.puts)
 		}
 	})
@@ -128,7 +133,7 @@ func TestMeasurementResultWriterLoadsExistingObjectAsAuthority(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stored.record.Outcome != measurementStageFailed || store.puts != 1 || store.opens != 2 {
+		if stored.record.CleanupPending || stored.record.Outcome != measurementStageFailed || store.puts != 1 || store.opens != 2 {
 			t.Fatalf("stored result = %#v, opens = %d, puts = %d", stored.record, store.opens, store.puts)
 		}
 	})

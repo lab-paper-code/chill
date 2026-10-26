@@ -36,6 +36,7 @@ type measurementResultRecord struct {
 	Directions      []measurementResultDirection        `json:"directions"`
 	DirectedTable   *transitioncost.DirectedTableRecord `json:"directedTable,omitempty"`
 	RunnerProfileID string                              `json:"runnerProfileID"`
+	CleanupPending  bool                                `json:"cleanupPending,omitempty"`
 }
 
 type measurementResultDirection struct {
@@ -157,6 +158,7 @@ func buildMeasurementResult(progress measurementProgress) (measurementResultReco
 		Reason:          progress.reason,
 		Directions:      measurementResultDirections(progress.attempts),
 		RunnerProfileID: progress.runnerProfileID,
+		CleanupPending:  true,
 	}
 	if !cleanMeasurementResultText(record.RunnerProfileID) {
 		return measurementResultRecord{}, errors.New("transition measurement result runner profile ID is required")

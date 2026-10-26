@@ -54,6 +54,9 @@ func TestPowerModeTransitionCostReconcilerProjectsEveryMeasurementStage(t *testi
 				len(current.Status.Progress) != 2 {
 				t.Fatalf("status = %#v", current.Status)
 			}
+			if current.Status.CleanupPending != test.terminal {
+				t.Fatalf("status = %#v", current.Status)
+			}
 			assertReconcilerProgress(t, current, test.terminal)
 			if test.terminal {
 				want := fixture.writer.result.reference
@@ -106,6 +109,23 @@ func TestPowerModeTransitionCostReconcilerSkipsTerminalSequenceButRetriesCleanup
 	if fixture.sequence.calls != 1 || fixture.kube.patches != 1 ||
 		fixture.current(t).Status.Phase != edgev1alpha1.PowerModeTransitionCostPhaseMeasuring {
 		t.Fatal("incomplete terminal status was trusted")
+	}
+}
+
+func TestPowerModeTransitionCostReconcilerDoesNotPromoteLegacyResultCleanup(t *testing.T) {
+	fixture := newReconcilerFixture(t, measurementStageFailed)
+	fixture.writer.result.record.CleanupPending = false
+	if _, err := fixture.reconciler.Reconcile(context.Background(), fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	current := fixture.current(t)
+	if current.Status.Result == nil || current.Status.CleanupPending {
+		t.Fatalf("legacy result cleanup eligibility changed: %+v", current.Status)
+	}
+	eligible := current.Status
+	eligible.CleanupPending = true
+	if sameMeasurementStatus(current.Status, eligible) {
+		t.Fatal("status comparison ignored cleanup eligibility")
 	}
 }
 
@@ -270,7 +290,8 @@ func reconcilerStoredResult(stage measurementStage) storedMeasurementResult {
 			SchemaVersion: transitioncost.MeasurementResultSchemaVersion, Size: 10,
 		},
 		record: measurementResultRecord{
-			Outcome: stage,
+			Outcome:        stage,
+			CleanupPending: true,
 			Directions: []measurementResultDirection{
 				{AcceptedCount: 2, FinalEvidence: reconcilerEvidence(3, "d0")},
 				{AcceptedCount: 1, FinalEvidence: reconcilerEvidence(2, "d1")},

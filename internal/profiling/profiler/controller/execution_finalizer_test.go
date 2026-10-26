@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -177,5 +178,42 @@ func TestFinalizedEvidenceObjectKeyIsRunScoped(t *testing.T) {
 	want := "profiling-runs/run-uid/execution.json"
 	if got := finalizedEvidenceObjectKey(types.UID("run-uid")); got != want {
 		t.Fatalf("key = %q, want %q", got, want)
+	}
+}
+
+func TestKubernetesExecutionFinalizerUsesFrozenJobStoreBinding(t *testing.T) {
+	t.Parallel()
+	run := testRun()
+	prepared := currentPreparedRun(t)
+	recordRunConfigAndJob(run)
+	binding := testEvidenceStoreBinding()
+	job, err := buildExecutionJob(run, resolvedRunForPrepared(t, prepared), binding, testExecutionJobOptions(), executionJobTestScheme(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.UID = types.UID(run.Status.Job.UID)
+	run.Status.Job.Name = job.Name
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: run.Namespace, Name: binding.CredentialsSecretName},
+		Data: map[string][]byte{
+			component.EvidenceStoreAccessKeyKey: []byte("access"),
+			component.EvidenceStoreSecretKeyKey: []byte("secret"),
+		},
+	}
+	want := errors.New("stop before observing native objects")
+	finalizer, err := NewKubernetesExecutionFinalizer(
+		fake.NewClientBuilder().WithScheme(executionJobTestScheme(t)).WithObjects(secret).Build(),
+		func(got EvidenceStoreBinding, access, key string) (profilerevidence.ObjectStore, error) {
+			if got != binding || access != "access" || key != "secret" {
+				t.Fatalf("frozen binding/credentials = %#v, %q, %q", got, access, key)
+			}
+			return nil, want
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finalizer.Finalize(context.Background(), run, prepared, job); !errors.Is(err, want) {
+		t.Fatalf("Finalize() error = %v", err)
 	}
 }
