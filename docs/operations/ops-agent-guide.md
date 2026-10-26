@@ -31,6 +31,7 @@ E5보다 먼저 **최대 25분 사전 점검(Ready 대기 포함)**을 새 출�
 2. Capacity API는 자율 Workload의 행만 제공하므로 자율 off인 prepare 뒤에는 capacity 행을 기다리지 않는다. start에서 자율 on 뒤 E0 `readyGate`가 최대 720초 동안 canonical 3 Workload의 Ready + 양수 route를 기다린다. capacity 행 존재만으로 Built/Ready 성공을 판정하지 않는다.
 3. 입력은 빈 출발(instances 0·예약 0), E0 Ready gate 최대 720초(세 canonical Workload 모두 Ready + 양수 route일 때 조기 종료), MIX 60초(모바일넷 20/s·Smol .3/s·PLC 40/s)다. `minimumDemand`도 20/.3/40으로 UID 재바인딩한다. 혼합 부하의 성공률은 성공 HTTP 200/전체 offered이며 SLO 충족률과 별개다.
 4. Main의 기존 release JSON(`executor=CampaignOps`, `command=e5-execute`, `bindingPath=<OUT>/binding.json`, 실제 `sourceSHA`, `mainInstructionUTC`)과 새 OUT을 지정해 한 줄로 실행한다. prepare → start(자율 on) → E0 Ready gate → MIX(각 수집 포함) → finish → 소유 producer/정의 정리 → summary → 기존 `demo.py report` 경로가 연결된다. 새 빌드·실행 프레임워크는 없다.
+사전 점검은 Ready → 부하 → 정리 연속성만 확인하므로 MIX에는 `startBarrier`를 두지 않으며, E0 이후 자율 재배치의 예약·전환 해제를 기다리지 않는다.
 
 ```sh
 CHILL_EXPERIMENT_CONFIG="$ENV" python3 hack/e5/demo.py preflight --config "$CONFIG" --out "$OUT" --release "$RELEASE"

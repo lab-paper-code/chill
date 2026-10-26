@@ -34,8 +34,10 @@ def main():
         spec = e5.load(HERE / 'preflight-config.example.json')
         schedule = demo.schedule(spec, e5)
         assert schedule[0]['readyGate'] and schedule[0]['seconds'] == 720 and schedule[1]['seconds'] == 60
+        assert schedule[0]['startBarrier'] == {'reservations': 0, 'transitions': 0}
+        assert 'startBarrier' not in schedule[1]
         assert spec['timeboxes']['collectSeconds'] == 120
-        assert auth.lifetime_budget(schedule, spec['timeboxes'], spec['tokenSafetyMarginSeconds']) == 1380
+        assert auth.lifetime_budget(schedule, spec['timeboxes'], spec['tokenSafetyMarginSeconds']) == 1380 <= 1500
         token = root / 'token'
         def jwt(seconds):
             return 'e30.' + base64.urlsafe_b64encode(json.dumps({'exp': time.time() + seconds}).encode()).decode().rstrip('=') + '.signature'
