@@ -283,6 +283,49 @@ Node를 가장 낮은 모드에서 profile 모드로 올린 기록이 가용 노
 간격보다 짧은 전환(jetsonx 약 1.5 s)도 E1의 60 s settling으로 coverage 검사를 통과한다. 측정 구간 전체가 meter 표본
 간격보다 짧으면 coverage 검사가 기록을 `Insufficient`로 남긴다.
 
+## 운영: ChillServer pprof 수집
+
+기본값은 비활성이다. 재현 창에만 Helm values를
+`servingEntrypoint.pprofAddress: "127.0.0.1:6060"`,
+`servingEntrypoint.pprofMutexFraction: 100`,
+`servingEntrypoint.pprofBlockRate: "1us"`로 설정한다.
+각각 `--pprof-address`, `--pprof-mutex-fraction`,
+`--pprof-block-rate`로 전달된다. 주소는 명시적인 loopback IP와 port여야 한다
+(`[::1]:6060`도 가능); wildcard, 호스트명, port 단독은 거절한다.
+주소 `""`와 sampling `0`이 기본이며, 주소 없이 sampling만 켜는 설정도 거절한다.
+별도 HTTP listener이므로 기존 HTTPS API 포트에는 pprof가 없다.
+Service/Ingress/containerPort를 추가하지 말고 권한 있는 운영자만 대상 Pod에
+port-forward한다. 프로파일에는 민감한 실행 정보가 포함될 수 있다.
+
+```sh
+# NS/POD는 재현 부하를 받는 ChillServer Pod로 지정한다.
+kubectl -n "$NS" port-forward --address 127.0.0.1 "pod/$POD" 6060:6060
+```
+
+다른 터미널에서 같은 140 req/s 재현 창 동안 수집한다. CPU는 30초,
+heap은 현재 live heap, allocs는 누적 할당이다. mutex/block도 프로세스 시작 후
+sampling된 누적 데이터이므로 비교 시 동일한 경과 시간과 부하 창을 맞춘다.
+sampling 오버헤드도 있으므로 비교하는 양쪽에 같은 값을 사용한다.
+
+```sh
+O=/home/genesis1/.cache/chill-assets/ops/pools-deploy
+capture="$O/perf/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$capture"
+chmod 700 "$capture"
+curl --fail --silent --show-error --max-time 40 \
+  'http://127.0.0.1:6060/debug/pprof/profile?seconds=30' -o "$capture/cpu.pb.gz"
+for profile in heap allocs mutex block; do
+  curl --fail --silent --show-error --max-time 30 \
+    "http://127.0.0.1:6060/debug/pprof/$profile" -o "$capture/$profile.pb.gz"
+done
+go tool pprof -top "$capture/cpu.pb.gz"
+go tool pprof -sample_index=alloc_space -top "$capture/allocs.pb.gz"
+```
+
+이미지 digest, Pod UID, 부하 시작·종료 시각과 req/s, CPU/메모리 관측치를 같은
+capture 디렉터리에 보관한다. 수집 후 port-forward를 종료하고 주소를 `""`,
+mutex fraction/block rate를 `0`/`0s`로 되돌려 재배포한다.
+
 ## 구현 위치와 검사
 
 - `internal/serving/httpapi/scheduler.go:Handler.scheduler`는 설정 PUT의 읽기 전용 배분 필드를 거절한다.

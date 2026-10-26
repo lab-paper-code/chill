@@ -191,12 +191,17 @@ func serve(ctx context.Context, opts options, chillServer http.Handler, executio
 		Addr: opts.bindAddress, Handler: chillServer,
 		ReadHeaderTimeout: opts.requestTimeout, IdleTimeout: opts.requestTimeout,
 	}
-	serverErrors := make(chan error, 1)
+	serverErrors := make(chan error, 2)
 	listener, err := net.Listen("tcp", opts.bindAddress)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = listener.Close() }()
+	closePprof, err := startPprof(opts, serverErrors)
+	if err != nil {
+		return err
+	}
+	defer closePprof()
 	go func() { serverErrors <- server.ServeTLS(listener, opts.tlsCert, opts.tlsKey) }()
 	diagnostics.listenerBound()
 	scheduler.Start()

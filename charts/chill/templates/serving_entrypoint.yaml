@@ -71,6 +71,9 @@ spec:
           imagePullPolicy: {{ .Values.servingEntrypoint.image.pullPolicy }}
           args:
             - {{ printf "--bind-address=:%v" .Values.servingEntrypoint.port | quote }}
+            - {{ printf "--pprof-address=%s" .Values.servingEntrypoint.pprofAddress | quote }}
+            - {{ printf "--pprof-mutex-fraction=%v" .Values.servingEntrypoint.pprofMutexFraction | quote }}
+            - {{ printf "--pprof-block-rate=%s" .Values.servingEntrypoint.pprofBlockRate | quote }}
             - {{ printf "--serving-namespace=%s" $servingNamespace | quote }}
             {{- with .Values.servingEntrypoint.scheduler.configMap }}
             - {{ printf "--serving-scheduler-configmap=%s" . | quote }}

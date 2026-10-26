@@ -38,6 +38,9 @@ type options struct {
 	diagnosticDirectory                                                    string
 	checkDeploymentManifest, schedulerConfigMapFile                        string
 	diagnosticStartDelay, diagnosticTraceOffset                            time.Duration
+	pprofAddress                                                           string
+	pprofMutexFraction                                                     int
+	pprofBlockRate                                                         time.Duration
 
 	// loadGenerator runs the load Job of dispatch-occupancy measurements.
 	loadGenerator servingkube.LoadGeneratorConfig
@@ -49,6 +52,11 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.StringVar(&o.schedulerConfigMapFile, "scheduler-configmap-file", "",
 		"Optional selected external scheduler ConfigMap manifest for offline validation.")
 	f.StringVar(&o.bindAddress, "bind-address", ":8080", "HTTPS listen address.")
+	f.StringVar(&o.pprofAddress, "pprof-address", "", "Separate loopback HTTP profiling host:port; empty disables.")
+	f.IntVar(&o.pprofMutexFraction, "pprof-mutex-fraction", 0,
+		"Mutex contention sampling fraction; 0 disables; requires pprof-address.")
+	f.DurationVar(&o.pprofBlockRate, "pprof-block-rate", 0,
+		"Blocking profile sampling interval (e.g. 1us); 0 disables; requires pprof-address.")
 	f.StringVar(&o.servingNamespace, "serving-namespace", "", "Namespace holding native serving instances.")
 	f.StringVar(&o.tlsCert, "tls-cert", "", "TLS certificate file.")
 	f.StringVar(&o.tlsKey, "tls-key", "", "TLS private key file.")
@@ -131,6 +139,9 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 }
 
 func (o options) validate() error {
+	if err := o.validatePprof(); err != nil {
+		return err
+	}
 	if err := o.validateDiagnostics(); err != nil {
 		return err
 	}

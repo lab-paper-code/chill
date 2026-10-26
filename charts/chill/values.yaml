@@ -441,6 +441,10 @@ servingEntrypoint:
     tag: ""
     pullPolicy: IfNotPresent
   port: 8080
+  # Separate loopback-only HTTP listener; collect with kubectl port-forward, never a Service.
+  pprofAddress: ""
+  pprofMutexFraction: 0
+  pprofBlockRate: 0s
   # Empty namespaces use the Helm release namespace. Namespaces must already exist.
   namespace: ""
   # Empty configMap disables the scheduler. The existing ConfigMap must be in
