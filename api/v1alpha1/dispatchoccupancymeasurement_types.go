@@ -95,7 +95,9 @@ type DispatchOccupancyMeasurementSpec struct {
 
 // DispatchOccupancyConditions records the approved empirical planning inputs.
 // InputsJSON is an object containing the original profile populations and
-// source identities, not a claim of achieved precision or saturation.
+// source identities, not a claim of achieved precision or saturation. Optional
+// computed.supplySizing freezes the throughput, producer outside-time p99,
+// margin and provenance used to increase supply above the legacy refill floor.
 type DispatchOccupancyConditions struct {
 	ProfileID                  string `json:"profileID,omitempty"`
 	InputsJSON                 string `json:"inputsJSON,omitempty"`
@@ -139,19 +141,52 @@ func (s DispatchOccupancyMeasurementSpec) ValidateConditions() error {
 	return s.validateSupplyBounds()
 }
 
+type occupancySupplySizing struct {
+	PreviousWorkers                    int64   `json:"previousWorkers"`
+	ProfileThroughputRequestsPerSecond float64 `json:"profileThroughputRequestsPerSecond"`
+	Batch                              int32   `json:"batch"`
+	ProducerOutsideTime                struct {
+		P99Seconds     float64           `json:"p99Seconds"`
+		Sources        []json.RawMessage `json:"sources"`
+		Fallback       bool              `json:"fallback"`
+		FallbackReason string            `json:"fallbackReason"`
+	} `json:"producerOutsideTime"`
+	Margin            float64 `json:"margin"`
+	MinimumWorkers    int64   `json:"minimumWorkers"`
+	WholeBatchWorkers int64   `json:"wholeBatchWorkers"`
+}
+
+func (sizing occupancySupplySizing) workers(batch int32, previousWorkers float64) (float64, error) {
+	rate, outside := sizing.ProfileThroughputRequestsPerSecond, sizing.ProducerOutsideTime
+	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) ||
+		outside.P99Seconds <= 0 || math.IsNaN(outside.P99Seconds) || math.IsInf(outside.P99Seconds, 0) ||
+		sizing.Margin != 1.25 || sizing.Batch != batch ||
+		len(outside.Sources) == 0 && (!outside.Fallback || outside.FallbackReason == "") {
+		return 0, fmt.Errorf("invalid frozen supply sizing inputs or provenance")
+	}
+	minimumWorkers := math.Ceil(rate*outside.P99Seconds*sizing.Margin) + float64(batch)
+	workers := float64(batch) * math.Ceil(math.Max(previousWorkers, minimumWorkers)/float64(batch))
+	if float64(sizing.PreviousWorkers) != previousWorkers || float64(sizing.MinimumWorkers) != minimumWorkers ||
+		float64(sizing.WholeBatchWorkers) != workers {
+		return 0, fmt.Errorf("fixed outstanding supply disagrees with frozen supply sizing formula")
+	}
+	return workers, nil
+}
+
 func (s DispatchOccupancyMeasurementSpec) validateSupplyBounds() error {
 	c := s.Conditions
 	var formula struct {
 		Coefficients OccupancyPlanningFloors `json:"coefficients"`
 		Computed     struct {
-			TailBatchSeconds               float64 `json:"tailBatchSeconds"`
-			FastBatchSeconds               float64 `json:"fastBatchSeconds"`
-			PrefixSeconds                  float64 `json:"prefixSeconds"`
-			RefillSeconds                  float64 `json:"refillSeconds"`
-			FramedDecodedRequestUpperBytes int64   `json:"framedDecodedRequestUpperBytes"`
-			QueueRequestCap                int64   `json:"queueRequestCap"`
-			QueueBytesCap                  int64   `json:"queueBytesCap"`
-			QUpper                         int64   `json:"qUpper"`
+			TailBatchSeconds               float64                `json:"tailBatchSeconds"`
+			FastBatchSeconds               float64                `json:"fastBatchSeconds"`
+			PrefixSeconds                  float64                `json:"prefixSeconds"`
+			RefillSeconds                  float64                `json:"refillSeconds"`
+			FramedDecodedRequestUpperBytes int64                  `json:"framedDecodedRequestUpperBytes"`
+			QueueRequestCap                int64                  `json:"queueRequestCap"`
+			QueueBytesCap                  int64                  `json:"queueBytesCap"`
+			QUpper                         int64                  `json:"qUpper"`
+			SupplySizing                   *occupancySupplySizing `json:"supplySizing"`
 		} `json:"computed"`
 	}
 	if err := json.Unmarshal([]byte(c.InputsJSON), &formula); err != nil {
@@ -171,9 +206,20 @@ func (s DispatchOccupancyMeasurementSpec) validateSupplyBounds() error {
 	}
 	q := int64(c.WaitingBatches)
 	waiting := int64(s.Batch) * q
+	expectedQ := math.Max(1, math.Ceil(f.RefillSeconds/f.FastBatchSeconds))
+	if sizing := f.SupplySizing; sizing != nil {
+		workers, err := sizing.workers(s.Batch, float64(s.Batch)*(1+expectedQ))
+		if err != nil {
+			return err
+		}
+		if float64(s.Workers) != workers {
+			return fmt.Errorf("fixed outstanding supply disagrees with frozen supply sizing formula")
+		}
+		expectedQ = workers/float64(s.Batch) - 1
+	}
 	if f.TailBatchSeconds <= 0 || f.FastBatchSeconds <= 0 || f.FramedDecodedRequestUpperBytes <= 0 ||
 		f.QueueRequestCap < waiting || f.QueueBytesCap/f.FramedDecodedRequestUpperBytes < waiting ||
-		q > f.QUpper || float64(q) != math.Max(1, math.Ceil(f.RefillSeconds/f.FastBatchSeconds)) ||
+		q > f.QUpper || float64(q) != expectedQ ||
 		(float64(q)+2)*f.TailBatchSeconds+f.PrefixSeconds >= float64(s.RequestLifetimeSeconds) ||
 		float64(s.WarmupSeconds) < math.Ceil(math.Max(floors.LoadPreparationFloorSeconds, (float64(q)+1)*f.TailBatchSeconds+f.RefillSeconds)) ||
 		float64(s.DrainSeconds) < math.Ceil(float64(s.RequestLifetimeSeconds)+f.TailBatchSeconds+float64(s.DeliveryMarginMillis)/1000) {

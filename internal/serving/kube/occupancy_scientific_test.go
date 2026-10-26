@@ -249,6 +249,10 @@ func TestOccupancyLoadSupplyCoversPhysicalWindow(t *testing.T) {
 	if at < 0 || args[at+1] != "422.010" {
 		t.Fatalf("supply must exceed warmup+window by lifetime+delivery: %v", args)
 	}
+	at = slices.Index(args, "--timeout")
+	if at < 0 || args[at+1] != "2.011" {
+		t.Fatalf("socket timeout must exceed lifetime+delivery by 1ms: %v", args)
+	}
 	wantDeadline := int64(m.Spec.JobSetupSeconds) + 423 + int64(m.Spec.DrainSeconds) + int64(m.Spec.CollectionSeconds)
 	if *job.Spec.ActiveDeadlineSeconds != wantDeadline {
 		t.Fatalf("deadline=%d, want %d", *job.Spec.ActiveDeadlineSeconds, wantDeadline)
