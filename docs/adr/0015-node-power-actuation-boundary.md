@@ -75,10 +75,28 @@ timeout, and normal completion also request the same idempotent restoration
 path. Restoration failure remains visible as a terminal actuation condition,
 retains the Node from new CHILL actuation, and requires operator attention.
 
-The first adapter is Jetson NVPModel with explicit `Observe()` and `Apply(ID)`
-operations. NVIDIA locked GPU clocks remain a separate adapter and privilege
-contract. No composite actuator is added until a measured experiment requires
-atomic composition.
+The Jetson NVPModel and discrete NVIDIA clock adapters share the explicit
+`Observe()` / `Apply(target)` port, but not host tooling or privileges.
+The NVIDIA adapter selects one GPU (index 0, rejecting multiple query rows),
+uses `nvidia-smi -lgc` for exact MHz targets and `-rgc` for default-policy
+cleanup, and independently queries current graphics and SM clocks. Driver
+555.58.02 on the two genesis hosts exposes no locked-range getter and reports
+application clocks as N/A: current MHz is an observable operating point, **not
+proof of a lock register**. Exact targets only (min=max, mode 0) are admitted;
+N/A, mismatched SM/graphics, and unsupported targets fail closed.
+
+On apply/read-back failure the adapter restores the previously observed
+declared clock mode, or requests driver defaults when the previous point was
+not a declared mode. Cleanup errors remain joined to the original failure;
+reset command exit never proves an unlocked policy. Returning to an earlier
+successful mode uses a new desired-mode request under ADR 0020, not a hidden
+per-Run restoration lifecycle. Agent restart observes without resetting;
+host reboot resets the non-persistent NVIDIA lock to driver defaults and the
+new bootID/read-back invalidates old operating-state evidence. No startup
+reapply or host systemd service is installed. See
+[PA-NV-01–05](../spec/platform/SRS.md) and the
+[GPU-clock procedure](../design/profiling/plans/06-execution-support-expansion.md#gpu-clock).
+No composite actuator is added.
 
 The NodeActuator also owns the host boot-ordering prerequisite of Jetson
 power modes. A mode that sets GPU power-gating masks applies at boot only when
