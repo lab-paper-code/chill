@@ -11,6 +11,7 @@ Optional additional cgroup JSONL records in cgmon.log or *cgroup*.jsonl:
 phase.offeredRequests must be the actual generated schedule count, never rate*time.
 """
 import argparse
+import bisect
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import json
@@ -50,6 +51,37 @@ def stats(values):
     return {'samples': len(values), 'mean': sum(values) / len(values) if values else None,
             **{name: values[max(0, math.ceil(q * len(values)) - 1)] if values else None
                for name, q in [('p50', .50), ('p95', .95), ('p99', .99), ('max', 1)]}}
+
+
+def issuance_fidelity(client, offsets, start_ns, duration_ns, stats):
+    """Describe send-call timing, not stdout flush timing or wire arrival."""
+    threshold = 50_000_000
+    issued = [row for row in client if row.get('error') != 'UnsentAtWindowEnd']
+    missing = sum(type(row.get('sentMonotonicNS')) is not int for row in issued)
+    result = {'thresholdNS': threshold, 'offered': len(offsets), 'issued': len(issued), 'missingSendTimestamps': missing,
+              'meaning': 'Per-producer monotonic infer-call timestamps, sorted across workers; boundaries included. Planned Poisson/zero-load gaps are not automatically stalls. No wall-clock or gateway causality claim.'}
+    if len(client) != len(offsets) or any(type(row.get('requestIndex')) is not int or not 0 <= row['requestIndex'] < len(offsets) or row.get('scheduledOffsetNs') != offsets[row['requestIndex']] for row in client) or len({row['requestIndex'] for row in client}) != len(offsets):
+        return dict(result, status='UNKNOWN', reason='Offered client-row population incomplete or conflicting')
+    if not offsets:
+        return dict(result, status='NOT_OFFERED', reason='Frozen trace contains no arrivals')
+    if type(start_ns) is not int or missing:
+        return dict(result, status='UNKNOWN', reason='Actual monotonic start/send timestamp missing')
+    sent = sorted(row['sentMonotonicNS'] - start_ns for row in issued)
+    if any(at < 0 or at >= duration_ns for at in sent):
+        return dict(result, status='UNKNOWN', reason='Send timestamp outside actual offered window')
+    edges = [0] + sent + [duration_ns]
+    planned = [0] + offsets + [duration_ns]
+    gaps = [right-left for left, right in zip(edges, edges[1:])]
+    long_gaps = [{'fromOffsetNS': left, 'toOffsetNS': right, 'gapNS': right-left,
+                  'plannedArrivalsInside': bisect.bisect_left(offsets, right)-bisect.bisect_right(offsets, left)}
+                 for left, right in zip(edges, edges[1:]) if right-left > threshold]
+    late = [row['sentMonotonicNS']-start_ns-row['scheduledOffsetNs'] for row in issued]
+    result.update(status='OBSERVED', actualGapNS=stats(gaps),
+                  plannedGapNS=stats([right-left for left, right in zip(planned, planned[1:])]),
+                  gapsOver50MS=len(long_gaps), gapsOver50MSFraction=len(long_gaps)/len(gaps),
+                  gapIntervalsOver50MS=long_gaps, sendLatenessNS=stats(late),
+                  sendsLateOver50MS=sum(value > threshold for value in late))
+    return result
 
 
 def counts(rows, key):

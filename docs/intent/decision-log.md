@@ -337,3 +337,8 @@
 - 결정: CLI·E5 주입 producer의 JSON 직렬화만 공유 stdout lock 밖으로 옮기고 완전한 한 줄 write+flush는 보호한다. 별도 writer thread/queue를 추가하거나 이 작은 변경이 공백을 해결했다고 주장하지 않는다. CLI send/finish 단조 시각과 E5 `issuanceFidelity`에 실제/계획 gap, >50ms 빈도·구간, lateness를 남기며 예정된 Poisson/0부하 공백과 결손을 구분한다. 기존 SLO offered 분모는 유지한다.
 - 배포: CLI 변경은 **load-generator 이미지** 재빌드·digest/receipt 갱신이 필요하다. U6는 runtime 7 재빌드 대상이 아니다. ObservationLog writer 개선은 Main의 별도 담당 영역이며 이번에는 immutable snapshot marshal→writer lock 아래 reference/append·hour·실패 재시도/최신 row 보존 경계만 설계하고 구현하지 않는다.
 - 근거/연결: [관측 설계 §16](../design/serving/observability-split.md#16-u6-부하-발행-공백과-trace-충실도), 기존 `SCH-31·45`, 외부 `O/campaign/v2/d-20261027/u6-issuance-gaps.json`, `raw-19/{receipt.json,u6-gateway-residual.json,analyze-u6.py}`. 원격쓰기·클러스터 변경0이며 새 이미지 배포·재측정 성능 검증은 수행하지 않았다.
+
+### U5/U6 리뷰 보완 — 실제 E5 결과 경로와 READY 실패 차단
+
+- `demo.py run`의 summarize/publish에도 단일 발행 충실도 계산을 연결한다. 기존 함수를 환경 비의존 `d2/analyze_before.py`로 이동해 e5/demo가 재사용하며, 단계·전체 JSON/Markdown·출판 KPI에 실측/계획 gap과 >50ms 빈도·lateness를 보존한다. 누락은 UNKNOWN과 사유로 남긴다.
+- 초기 follow는 process 객체 생성만으로 준비됐다고 보지 않는다. READY 직전 `poll()`로 이미 종료된 follow도 거절하며, 실패 증거는 manifest/원본 stderr로 유지한다. 이 확인이 READY 이후 스트림 생존이나 원문 완전성을 보장하지는 않는다.

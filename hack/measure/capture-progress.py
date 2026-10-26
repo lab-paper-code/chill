@@ -191,7 +191,7 @@ class Capture:
         if not ok or pods is None:
             raise RuntimeError("initial native Pod discovery failed; capture is not armed")
         self.pods([p for p in pods["items"] if firstfloor(p, self.a.node)], "firstfloor", "firstfloor")
-        if any(s["process"] is None for s in self.states.values()):
+        if any(s["process"] is None or s["process"].poll() is not None for s in self.states.values()):
             raise RuntimeError("initial native log follow failed; capture is not armed")
         print("READY: capture armed; create measurement separately", flush=True)
         terminal = None
@@ -258,6 +258,7 @@ class Capture:
         self.save()
 
 def self_check():
+    from types import SimpleNamespace
     p = {"metadata": {"uid": "pod", "name": "p", "namespace": "ns", "labels": {"app.kubernetes.io/component": "serving-instance"},
                       "ownerReferences": [{"kind": "Job", "uid": "job", "controller": True}]},
          "spec": {"nodeName": "target", "containers": [{"name": "firstfloor"}]},
@@ -283,7 +284,7 @@ def self_check():
         events, cr_reads = [], 0
         c.a.namespace = c.a.runtime_namespace = c.a.load_namespace = "ns"
         c.a.measurement, c.a.capture_load = "measurement", True
-        c.states = {"known": {"process": object()}}
+        c.states = {"known": {"process": SimpleNamespace(poll=lambda: None)}}
         def read_fixture(ns, resource, *args):
             nonlocal cr_reads
             if resource == RESOURCE:
@@ -307,6 +308,16 @@ def self_check():
             else:
                 raise AssertionError("terminal fixture did not reach loader discovery")
         assert events.index("follow") < events.index("ready") < events.index("trigger")
+        cr_reads, events = 0, []
+        c.states["known"]["process"] = SimpleNamespace(poll=lambda: 1)
+        with patch("builtins.print", side_effect=lambda *args, **kwargs: events.append("ready")):
+            try:
+                c.run()
+            except RuntimeError as error:
+                assert "not armed" in str(error)
+            else:
+                raise AssertionError("exited initial follow was declared READY")
+        assert "ready" not in events
     print("capture-progress offline self-check passed")
 
 def main():

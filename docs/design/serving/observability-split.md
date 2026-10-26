@@ -297,6 +297,8 @@ python3 hack/measure/capture-progress.py \
 
 `READY` 출력 뒤 운영 담당이 같은 이름의 CR을 생성한다. 기본 kubectl context/`KUBECONFIG`를 사용하며 필요한 경우 `--kubectl 'kubectl --context CONTEXT --kubeconfig /path/to/config'`로 명시한다. 산출물은 새 외부 디렉터리의 `manifest.json`과 실물별 `follow.log`, `follow.stderr`, 별도 `snapshot.log`다. follow/snapshot은 겹치는 원문이므로 서로 이어 붙여 사건을 이중 계산하지 않는다. 서버 로그는 기존 캠페인 수집 경로로 함께 보존한다.
 
+READY 전에 최초 Pod 조회와 알려진 컨테이너의 follow 시작·현재 프로세스 생존을 확인한다. follow가 생성되지 않았거나 이미 종료됐으면 실패로 끝내며 READY를 내보내지 않는다. READY 뒤 연결 종료 가능성까지 보장하는 것은 아니므로 stderr/종료 코드와 보존 범위 확인은 그대로 필요하다.
+
 1. Pod JSON(UID, containerID, imageID, restartCount, Node), follow 원문/오류, 종료 직후 snapshot, 측정 CR·load Job 신원과 서버 로그를 같은 외부 run 디렉터리에 보존한다. 원문은 민감 운영 자료로 git/public index에 넣지 않는다.
 2. 누락 requestID/phase를 exact container 원문과 요청 archive에서 대조한다. 원문에 완전한 행이 있으면 emission 이후 수집·거절·지속화 구간으로 좁힌다. malformed/partial 행 또는 `write native progress`는 출력/framing 경계의 증거다. 서버 parse/context/supplement 오류와 동일 ID·phase·physicalID로 대조한다.
 3. 원문도 없으면 먼저 회전·삭제·follow 실패·보존 시작/끝 공백을 확인한다. `--previous`는 삭제된 Pod나 모든 회전 로그 복구가 아니다. 필요하면 운영 담당이 실제 kubelet/edged 설정과 해당 Node의 CRI 원문/회전 파일을 읽기 전용으로 회수한다. 파일 부재만으로 미출력을 단정하지 않는다.
@@ -335,6 +337,7 @@ python3 hack/measure/capture-progress.py \
 - CLI `replay`와 주입 E5 producer 모두 **JSON 직렬화만 stdout 공유 lock 밖**으로 옮긴다. 완전한 한 줄의 write+flush는 기존 lock으로 보호해 interleaving을 막는다. worker는 여전히 flush 뒤에 다음 요청을 보낸다. 이 변경은 알려진 불필요 critical-section 연산을 줄이는 것이지 위 공백의 원인 확정·해결 증명이 아니다. writer thread/queue와 실패·drain 수명주기는 이 증거로 추가하지 않는다.
 - 일반 CLI 행에 `sentMonotonicNS`, `finishedMonotonicNS`를 기록한다. 각각 `infer` 호출 직전과 응답/transport 오류 처리 직후이며 같은 프로세스의 단조 시각이다. stdout 시간·패킷 발행·gateway 수신 시각이라고 부르지 않는다.
 - E5 `issuanceFidelity`는 실제 producer start와 send 시각을 써 worker 완료/로그 순서가 아닌 실제 발행 순서로 정렬한다. 시작·끝 경계 포함 gap의 p50/p95/p99/max, **>50ms 개수·비율·구간(offset와 안의 planned arrival 수)**, 같은 frozen trace의 planned gap 분포, 실제 send lateness 분포·>50ms 요청 수를 `judgment.json`, `e5-summary.json`과 출판 KPI에 넣는다. Poisson의 자연 공백·0부하 구간은 자동 정지/실패로 판정하지 않는다. 미발행/시간 결손을 0으로 채우지 않는다(관측 timestamp 없음=`UNKNOWN`/NotReady, offered0=`NOT_OFFERED`). 기존 10ms `delayed` 표식과 50ms 보고 기준은 별개다.
+- `demo.py run`을 사용하는 E5-0~7도 같은 계산을 쓴다. 환경 설정 없이 재판정하는 경로를 유지하기 위해 기존 함수를 `d2/analyze_before.py`로 옮기고 `e5.py judge`와 `demo.py summarize`가 함께 호출한다. demo의 단계/전체 `summary.json`, `summary.md` 한 줄과 publish의 workload KPI에도 그대로 보존한다. 결손은 `UNKNOWN`과 사유로 전달하며 관측하지 못한 공백을 0으로 채우지 않는다.
 - 다음 측정은 §15의 timestamp 포함 load Pod 로그도 함께 보존한다. 다음 E5는 기존 producer start/monotonic anchor·client/server/edgemesh cgroup과 서버 GC 기록을 함께 보존한다. 바뀐 CLI를 쓰려면 **load-generator 이미지 재빌드·새 digest/receipt가 필요**하다. 주입 producer 코드만의 변경은 주입 파일로 전달되지만 CLI 변경을 새 이미지 없이 적용됐다고 주장하지 않는다. **U6 때문에 runtime 7 재빌드는 필요 없다.**
 
 ### 16.3 별도 writer 개선의 설계 경계(미구현)

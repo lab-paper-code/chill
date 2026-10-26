@@ -708,8 +708,9 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
             successful = [r for r in clients if r.get('status') == 200 and not r.get('error')]
             good = {id(r) for r in successful}
             start = phase['starts'].get(name)
-            transition_failures = 0
-            if start:
+            fidelity = analysis.issuance_fidelity(clients, stage['traces'][name]['offsetsNS'], (start or {}).get('monotonicNS'), round(stage['seconds'] * 1e9), analysis.stats)
+            transition_failures = None if fidelity['status'] == 'UNKNOWN' else 0
+            if start and transition_failures is not None:
                 for row in clients:
                     sent = epoch(start['at']) + (row['sentMonotonicNS'] - start['monotonicNS']) / 1e9
                     end = epoch(start['at']) + (row['finishedMonotonicNS'] - start['monotonicNS']) / 1e9
@@ -720,6 +721,7 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
             within = sum(r['latencyMs'] <= slo_ms for r in successful)
             metric = {'rate': stage['rates'][name], 'offered': offered, 'clientRows': len(clients), 'missingClientRows': max(0, offered - len(clients)), 'httpSuccess': len(successful), 'successFraction': len(successful) / offered if offered else None, 'successNumerator': len(successful), 'successDenominator': offered, 'withinSLONumerator': within, 'withinSLODenominator': offered, 'latencyMS': analysis.stats([r['latencyMs'] for r in successful]), 'latencyScope': 'Client HTTP round trip of successful responses, not server execution latency', 'sloMS': slo_ms, 'sloPercentile': w['slo']['percentile'], 'withinSLOFraction': within / offered if offered else None, 'transitionFailures': transition_failures if provenance.get('complete') and len(clients) == offered and (start or not offered) else None, 'transitionFailureMeaning': 'Failed/unsent client requests overlapping observed placement-change brackets or elapsed scheduler actions; null if scheduler/client coverage incomplete', 'errors': [r for r in clients if id(r) not in good]}
             metric.update(sloPercentile=measurement['percentile'], schedulerSLO=w['slo'], measurementSLO=measurement)
+            metric['issuanceFidelity'] = fidelity
             summary['workloads'][name] = metric
             rows.append((summary, name, metric))
             for part_summary, part in zip(summary.get('parts', []), stage['parts']):
@@ -748,6 +750,10 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
                       *[key + ': ' + value for key, value in result['preflight']['checks'].items()], '']
     for s, name, m in rows:
         table.append('| ' + ' | '.join(map(str, [s['stage'], name, fmt(m['rate']), f"{m['httpSuccess']}/{m['offered']}", fmt(None if m['successFraction'] is None else m['successFraction'] * 100), fmt(m['latencyMS']['p95']), fmt(m['latencyMS']['p99']), f"p{m['sloPercentile']}/{fmt(m['sloMS'])}", fmt(None if m['withinSLOFraction'] is None else m['withinSLOFraction'] * 100), fmt(s['energyJ']), fmt(s['activeEnergyJ']), fmt(s['drainInclusiveEnergyJ']), len(s['placementChanges']), fmt(m['transitionFailures']), fmt(s['gapFromPreviousOfferedWindowSeconds'])])) + ' |')
+    table += ['', '## Issuance fidelity', '']
+    for s, name, m in rows:
+        fidelity = m['issuanceFidelity']
+        table.append(f"Issuance {s['stage']}/{name}: {fidelity['status']}; gaps >50ms={fmt(fidelity.get('gapsOver50MS'))}, sends late >50ms={fmt(fidelity.get('sendsLateOver50MS'))}.")
     for s in stage_summaries:
         table += ['', '## ' + s['stage'], '']
         if s.get('missingArchives'):
@@ -789,6 +795,7 @@ def publish(e5, binding, out, identifier, store_config):
                 'withinSLOFraction': 'No offered requests' if not metric['offered'] else None,
                 'latencyMS': 'No successful client responses' if not metric['httpSuccess'] else None,
                 'transitionFailures': 'Scheduler/client coverage incomplete' if metric['transitionFailures'] is None else None,
+                'issuanceFidelity': metric['issuanceFidelity'].get('reason'),
             }
         kpis = {'status': summary['status'], 'visibility': 'PRIVATE_OPERATIONAL_ONLY', 'workloads': workloads,
                 'judgmentCounts': {summary['status']: 1}, 'wholePoolJoules': summary['energyJ'], 'activePoolJoules': summary['activeEnergyJ'],
@@ -1126,6 +1133,31 @@ def self_check():
                     run_stage(cpo, stage)
             summaries = summarize(e5, cpo.b, cpo.out)
         assert len(summaries) == 4
+        for summary in summaries:
+            for metric in summary['workloads'].values():
+                fidelity = metric['issuanceFidelity']
+                assert fidelity['status'] == ('OBSERVED' if metric['offered'] else 'NOT_OFFERED')
+                assert fidelity['issued'] == metric['clientRows']
+                if metric['offered']:
+                    assert fidelity['gapsOver50MS'] == fidelity['sendsLateOver50MS'] == 0
+        with patch.object(e5, 'publish_experiment', return_value={'outcome': 'fixture'}) as publication:
+            assert publish(e5, cpo.b, cpo.out, 'fixture-fidelity', root / 'store.json')['outcome'] == 'fixture'
+        published_stages = publication.call_args.args[3]
+        for name, metric in summaries[-1]['workloads'].items():
+            published = published_stages[-1]['kpis']['workloads'][name]
+            assert published['issuanceFidelity'] == metric['issuanceFidelity']
+            assert published['missingReasons']['issuanceFidelity'] is None
+        assert '## Issuance fidelity' in (cpo.out / 'summary.md').read_text()
+        client_path = stage_folder(cpo.out, stages[1]) / (workloads[0]['name'] + '-client.jsonl')
+        original_client = client_path.read_text()
+        records = [json.loads(line) for line in original_client.splitlines()]
+        next(row for row in records if 'scheduledOffsetNs' in row).pop('sentMonotonicNS')
+        client_path.write_text('\n'.join(json.dumps(row) for row in records) + '\n')
+        try:
+            unknown = summarize(e5, cpo.b, cpo.out)[1]['workloads'][workloads[0]['name']]
+            assert unknown['issuanceFidelity']['status'] == 'UNKNOWN' and unknown['transitionFailures'] is None
+        finally:
+            client_path.write_text(original_client)
         high, low = summaries[-1]['parts']
         assert (high['id'], low['id']) == ('high', 'low')
         assert high['endOffsetNS'] == low['startOffsetNS'] == 1000000
