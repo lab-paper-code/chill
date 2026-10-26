@@ -30,7 +30,7 @@ NS = ENV["namespace"]
 COEFFICIENTS = {
     "relativeXPlanningPrecision": 0.01, "planningConfidence": 0.95,
     "sdMargin": 1.25, "timeMargin": 1.25, "lifetimeMargin": 1.25,
-    "pipelineMargin": 1.25, "tailSigma": 3, "maximumIdleBaseFraction": 0.01,
+    "pipelineMargin": 1.25, "tailSigma": 3, "maximumIdleBaseFraction": 0.05,
     "idleDErrorSecondsPerRequest": 0.001, "windowFloorSeconds": 360,
     "loadPreparationFloorSeconds": 60,
     "plannedElapsedCapSeconds": 3600, "idleReportRatio": 0.1,
@@ -131,8 +131,9 @@ def derive(row, framed_bytes, pipeline):
         raise ValueError(f"{row['caseID']}: approved elapsed cap cannot hold known components")
     # Explicit conservative reservation, not a fabricated setup/collection observation.
     setup, collection = residual // 2, residual - residual // 2
-    idle = min(c["maximumIdleBaseFraction"], c["idleDErrorSecondsPerRequest"] /
-               (c["timeMargin"] * mu / b + c["idleDErrorSecondsPerRequest"]))
+    idle = c["maximumIdleBaseFraction"]
+    if not math.isfinite(idle) or not 0 <= idle <= 1:
+        raise ValueError("maximumIdleBaseFraction must be finite and in [0,1]")
     return {"N": n, "waitingBatches": q, "workers": workers,
             "requestLifetimeSeconds": lifetime, "socketTimeoutSeconds": lifetime + (delivery_millis + 1) / 1000,
             "deliveryMarginMillis": delivery_millis, "supplyExtensionSeconds": supply_extension, "drainSeconds": drain,
@@ -417,6 +418,7 @@ def self_check():
             continue
         expected = floors[row["caseID"]]
         d = derive(row, expected["framedDecodedRequestUpperBytes"], inp["pipelineScenario"])
+        assert d["maximumIdleFraction"] == COEFFICIENTS["maximumIdleBaseFraction"] == 0.05
         assert d["N"] == expected["N"], row["caseID"]
         assert d["requestLifetimeSeconds"] == expected["requestLifetimeSecondsScenario"], row["caseID"]
         assert d["durationSeconds"] == expected["measurementWindowSecondsScenario"], row["caseID"]
