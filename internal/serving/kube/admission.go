@@ -451,7 +451,7 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 		c.mu.Lock()
 		run.result = &result
 		run.action.Status, run.action.Reason = result.Status, result.Error
-		if err == nil && result.Status == nativeOperationComplete || result.effectsNotStarted {
+		if err == nil && result.Status == nativeOperationComplete || result.effectsNotStarted && !run.inheritedReservation {
 			run.reserved = false
 			if operation.Kind != runnerKind {
 				c.releaseOwnerLocked(run.owner)

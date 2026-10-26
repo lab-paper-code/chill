@@ -76,10 +76,42 @@ func (c *SchedulerController) planManualResetLocked(ctx context.Context, operati
 		}
 	}
 	operation.Nodes = plan.nodes
-	if err := c.authorize(operation); err != nil {
+	c.mu.Lock()
+	_, err = c.resetReservationOwnersLocked(c.operationScope(operation))
+	c.mu.Unlock()
+	if err != nil {
 		return plan, err
 	}
 	return plan, nil
+}
+
+// Called both while planning and under mu at acquisition: no ownership changes
+// until every conflicting owner's runs have passed the same containment check.
+func (c *SchedulerController) resetReservationOwnersLocked(scope resourceScope) ([]string, error) {
+	var owners []string
+	for _, run := range c.runs {
+		if run.reserved && scope.overlaps(run.scope) && !slices.Contains(owners, run.owner) {
+			owners = append(owners, run.owner)
+		}
+	}
+	for _, run := range c.runs {
+		if !slices.Contains(owners, run.owner) {
+			continue
+		}
+		if run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel {
+			return nil, refused("OperationConflict", "resources are reserved by active owner "+run.owner)
+		}
+		if !run.reserved {
+			continue
+		}
+		if run.action.Kind == measurementLeaseKind || run.result == nil || run.result.EndedAt.IsZero() || run.result.Operation.Holder != "" ||
+			len(run.scope.Workloads) == 0 ||
+			slices.ContainsFunc(run.scope.Workloads, func(uid string) bool { return !slices.Contains(scope.Workloads, uid) }) ||
+			slices.ContainsFunc(run.scope.Nodes, func(node serving.NodeReference) bool { return !slices.Contains(scope.Nodes, node) }) {
+			return nil, refused("OperationConflict", "reset cannot inherit reservation outside its cleanup scope: "+run.owner)
+		}
+	}
+	return owners, nil
 }
 
 // Removal can succeed before release or power return fails. Rediscover empty

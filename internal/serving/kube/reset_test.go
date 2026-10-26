@@ -334,6 +334,105 @@ func TestResetTwiceCleansOnlyOwnedPhysicalInstancesAC33(t *testing.T) {
 	h.assertAlreadyClean(t, ctx, cm)
 }
 
+//nolint:gocyclo // One real reset fixture covers atomic inheritance, all refusal boundaries and pre-effect responsibility.
+func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
+	const preEffectRefusal = "pre-effect-refusal"
+	for _, owner := range []string{nativeOperationFailed, nativeOperationPartial, nativeOperationRunning, nativeOperationCancel, "measurement", "outside-workload", "outside-node", "active-sibling", preEffectRefusal} {
+		t.Run(owner, func(t *testing.T) {
+			h := newResetHarness(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			// Keep the Pod visible to capture until reset actually removes it;
+			// its terminated container is not a Ready/policy confirmation.
+			h.owned.Status.Phase = core.PodRunning
+			if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).UpdateStatus(ctx, h.owned, meta.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.api.Status().Update(ctx, h.owned); err != nil {
+				t.Fatal(err)
+			}
+			node, err := h.kube.CoreV1().Nodes().Get(ctx, h.owned.Spec.NodeName, meta.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+			oldID := "manual-route:retained-reset"
+			old := &actionRun{owner: oldID, reserved: true,
+				action: serving.Action{Kind: operationRoute, Status: nativeOperationFailed},
+				scope: resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{h.selectedUID}, Pods: []string{string(h.owned.UID)},
+					Instances: []string{physicalID(h.owned.UID, firstfloorStatus(h.owned).ContainerID)}},
+				result: &OperationResult{Operation: Operation{Kind: operationRoute, WorkloadUID: h.selectedUID}, EndedAt: time.Now().Add(-time.Second), Status: nativeOperationFailed}}
+			switch owner {
+			case nativeOperationPartial:
+				old.action.Status, old.result.Status = nativeOperationPartial, nativeOperationPartial
+			case nativeOperationRunning, nativeOperationCancel:
+				old.action.Status = owner
+			case "measurement":
+				old.action.Kind = measurementLeaseKind
+			case "outside-workload":
+				old.scope.Workloads = append(old.scope.Workloads, h.foreignUID)
+			case "outside-node":
+				old.scope.Nodes = append(old.scope.Nodes, serving.NodeReference{Name: "outside-reset", UID: "outside-reset-uid"})
+			case "active-sibling":
+				h.controller.runs["active-reset-sibling"] = &actionRun{owner: oldID, action: serving.Action{Status: nativeOperationRunning}}
+			}
+			h.controller.runs[oldID] = old
+			admitted := owner == nativeOperationFailed || owner == nativeOperationPartial || owner == preEffectRefusal
+			seen := false
+			h.controller.config.OnAction = func(result OperationResult) error {
+				if result.Status != nativeOperationRunning || seen {
+					return nil
+				}
+				seen = true
+				h.controller.mu.Lock()
+				current := h.controller.runs[result.Operation.ID]
+				transferred := !old.reserved && current != nil && current.reserved && current.inheritedReservation &&
+					slices.Contains(current.scope.Pods, string(h.owned.UID))
+				h.controller.mu.Unlock()
+				if !transferred || h.controller.authorize(Operation{WorkloadUID: h.selectedUID}) == nil {
+					t.Error("reset did not atomically inherit and retain the complete reservation")
+				}
+				if owner == preEffectRefusal {
+					return errors.New("reset audit record refused")
+				}
+				// Kubelet publishes the already-terminated container's final Pod
+				// phase after admission; reset must still delete the actual Pod.
+				h.owned.Status.Phase = core.PodSucceeded
+				if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).UpdateStatus(ctx, h.owned, meta.UpdateOptions{}); err != nil {
+					return err
+				}
+				if err := h.api.Status().Update(ctx, h.owned); err != nil {
+					return err
+				}
+				return nil
+			}
+			result, err := h.controller.ExecuteManual(ctx, h.request())
+			if !admitted {
+				var conflict *serving.Error
+				if !errors.As(err, &conflict) || conflict.Code != "OperationConflict" || !old.reserved || seen || h.updates != 0 {
+					t.Fatalf("ineligible owner changed during reset: result=%+v err=%v held=%t", result, err, old.reserved)
+				}
+				return
+			}
+			if err != nil || !seen {
+				t.Fatalf("terminal reservation blocked reset: %+v err=%v", result, err)
+			}
+			if owner == preEffectRefusal {
+				if result.Status != nativeOperationFailed || h.controller.authorize(Operation{WorkloadUID: h.selectedUID}) == nil || h.updates != 0 {
+					t.Fatalf("pre-effect reset refusal lost inherited responsibility: %+v", result)
+				}
+				return
+			}
+			if result.Status != nativeOperationComplete || h.controller.authorize(Operation{WorkloadUID: h.selectedUID}) != nil {
+				t.Fatalf("completed reset did not return inherited reservation: %+v", result)
+			}
+			if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).Get(ctx, h.owned.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("reservation released without actual Pod cleanup: %v", err)
+			}
+		})
+	}
+}
+
 func (h *resetHarness) assertAlreadyClean(t *testing.T, ctx context.Context, cm *core.ConfigMap) {
 	t.Helper()
 	updates, podWrites := h.updates, h.api.podWrites
@@ -411,7 +510,7 @@ func TestResetExecutionFailureStopsWithoutRetryOrRollback(t *testing.T) {
 	}
 }
 
-func TestResetPreEffectRejectionReturnsReservationAC38(t *testing.T) {
+func TestResetPreEffectRejectionReturnsOrRetainsReservationAC38(t *testing.T) {
 	for _, uncertain := range []bool{false, true} {
 		t.Run(fmt.Sprintf("unknown=%v", uncertain), func(t *testing.T) {
 			h := newResetHarness(t)
@@ -433,13 +532,15 @@ func TestResetPreEffectRejectionReturnsReservationAC38(t *testing.T) {
 				t.Fatalf("first reset: %+v %v", first, err)
 			}
 			assertResetSteps(t, first, "disable-autonomy")
+			held := h.controller.authorize(Operation{WorkloadUID: h.selectedUID}) != nil
+			if held != uncertain {
+				t.Fatalf("pre-effect certainty=%t: reservation held=%t", !uncertain, held)
+			}
+			// An unknown first write still owns its scope, but a new reset may
+			// atomically inherit it and prove actual cleanup rather than deadlock.
 			retry, err := h.controller.ExecuteManual(ctx, h.request())
-			if uncertain {
-				if err == nil {
-					t.Fatal("unknown configuration effect returned its reservation")
-				}
-			} else if err != nil || retry.Status != nativeOperationComplete {
-				t.Fatalf("confirmed pre-effect rejection blocked reset retry: %+v %v", retry, err)
+			if err != nil || retry.Status != nativeOperationComplete {
+				t.Fatalf("reset could not finish retained cleanup: %+v %v", retry, err)
 			}
 		})
 	}

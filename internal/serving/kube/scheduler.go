@@ -78,13 +78,14 @@ type SchedulerControllerState struct {
 	CostIssues []CostIssue `json:"costIssues"`
 }
 type actionRun struct {
-	action   serving.Action
-	result   *OperationResult
-	cancel   context.CancelFunc
-	started  time.Time
-	scope    resourceScope
-	owner    string
-	reserved bool
+	action               serving.Action
+	result               *OperationResult
+	cancel               context.CancelFunc
+	started              time.Time
+	scope                resourceScope
+	owner                string
+	reserved             bool
+	inheritedReservation bool
 }
 type SchedulerController struct {
 	mu         sync.Mutex

@@ -92,7 +92,8 @@ func (c *SchedulerController) operationScope(operation Operation) resourceScope 
 	return scope
 }
 
-// Callers hold mu. No partial acquisition and no kind-specific exemptions.
+// Callers hold mu. No partial acquisition; reset may inherit only terminal owners
+// whose entire responsibility lies inside its admitted cleanup scope.
 func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Operation) bool {
 	if existing := c.runs[id]; existing != nil && (existing.action.Status == nativeOperationRunning || existing.action.Status == nativeOperationCancel) {
 		return false
@@ -104,11 +105,27 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 	if run.owner == "" {
 		run.owner = id
 	}
-	for otherID, other := range c.runs {
-		if otherID != id && other.reserved && other.owner != run.owner && scope.overlaps(other.scope) {
+	var inherited []string
+	if operation.Kind == operationReset {
+		var err error
+		inherited, err = c.resetReservationOwnersLocked(scope)
+		if err != nil {
 			return false
 		}
 	}
+	for otherID, other := range c.runs {
+		if otherID != id && other.reserved && other.owner != run.owner && !slices.Contains(inherited, other.owner) && scope.overlaps(other.scope) {
+			return false
+		}
+	}
+	for _, other := range c.runs {
+		if other.reserved && slices.Contains(inherited, other.owner) {
+			scope.Pods = append(scope.Pods, other.scope.Pods...)
+			scope.Instances = append(scope.Instances, other.scope.Instances...)
+			other.reserved = false
+		}
+	}
+	run.inheritedReservation = len(inherited) > 0
 	run.scope, run.reserved = scope, true
 	c.runs[id] = run
 	return true

@@ -111,6 +111,19 @@ func refused(code, message string) error { return &serving.Error{Code: code, Mes
 // measurement holds it, and no run or power change is in flight. Callers hold
 // tickMu, so no run starts meanwhile.
 func (c *SchedulerController) admitNodeLocked(ctx context.Context, ref serving.NodeReference) (*core.Node, error) {
+	node, err := c.admitNodeStateLocked(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	if c.nodeBusy(node) {
+		return nil, refused("OperationConflict", "Node resources are reserved")
+	}
+	return node, nil
+}
+
+// Reset checks reservation ownership separately, then applies the same physical
+// Node/measurement/power guard without rejecting the terminal owner it inherits.
+func (c *SchedulerController) admitNodeStateLocked(ctx context.Context, ref serving.NodeReference) (*core.Node, error) {
 	node, err := c.kube.CoreV1().Nodes().Get(ctx, ref.Name, meta.GetOptions{})
 	if err != nil || string(node.UID) != ref.UID {
 		return nil, refused(refusedNodeMissing, fmt.Sprintf("Node %s/%s is not present", ref.Name, ref.UID))
@@ -121,9 +134,6 @@ func (c *SchedulerController) admitNodeLocked(ctx context.Context, ref serving.N
 	var classes edge.DeviceClassList
 	if err = c.store.client.List(ctx, &classes); err != nil {
 		return nil, err
-	}
-	if c.nodeBusy(node) {
-		return nil, refused("OperationConflict", "Node resources are reserved")
 	}
 	if profilingrun.InMeasurement(node) || powerModePending(node, classes.Items, config, time.Now()) {
 		return nil, refused("NodeBusy", "Node "+ref.Name+" is held by a measurement, a run or a power change")
@@ -303,7 +313,7 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualO
 			if err != nil {
 				break
 			}
-			_, err = c.admitNodeLocked(ctx, node)
+			_, err = c.admitNodeStateLocked(ctx, node)
 		}
 		if err != nil {
 			c.tickMu.Unlock()
