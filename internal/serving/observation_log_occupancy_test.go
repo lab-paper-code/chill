@@ -160,7 +160,7 @@ func TestNativeSupplementsPreserveRestartDrainAssignment(t *testing.T) {
 }
 
 func TestScanOccupancyRowsAcceptsLocalNowBounds(t *testing.T) {
-	now := time.Now()
+	now := observationTestHour.Add(2 * time.Minute).In(time.Local)
 	from := now.Add(-time.Minute)
 	log, clock := clockedObservationLog(t, ObservationLogConfig{}, from.UTC())
 	at := from.Add(time.Second).UTC()
