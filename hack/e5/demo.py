@@ -13,7 +13,8 @@ routing. Omit it (or false) for unchanged fixed-duration stages. phase.json and
 summary.json retain readyGate.observedUTC (null on timeout), timedOut and the
 last missingWorkloadUIDs; ready-gate-state.json retains the actual observation.
 
-Top-level or stage-level "tolerateArchive": ["power", "power-drain-inclusive"]
+Diagnostic-only (진단 전용, E5 금지): top-level or stage-level
+"tolerateArchive": ["power", "power-drain-inclusive"] in demo.py
 allows only those power archive failures to advance after a completed request
 window. A stage list overrides the top-level list ([] restores strict capture).
 Original NOT_READY evidence remains; collected.json and summary.json record
@@ -665,6 +666,23 @@ def self_check():
                 pass
             else:
                 raise AssertionError('Invalid tolerateArchive accepted')
+        strict_config = {'approval': {}}
+        e5.require_strict_archives(strict_config)
+        for value in ([], ['power'], None, False):
+            for forbidden in ({'tolerateArchive': value}, {'smoke': {'tolerateArchive': value}}, {'stages': [{'tolerateArchive': value}]}):
+                config_path = root / 'forbidden-e5.json'
+                config_path.write_text(json.dumps(dict(strict_config, **forbidden)))
+                binding_path = root / 'forbidden-binding.json'
+                binding_path.write_text(json.dumps({'schema': 'e5-binding.v1', 'config': forbidden}))
+                for check, path in ((e5.bind, config_path), (e5.load_binding, binding_path)):
+                    try:
+                        check(path)
+                    except ValueError as exc:
+                        assert str(exc) == 'tolerateArchive is diagnostic-only in demo.py; forbidden in normative E5 configuration'
+                    else:
+                        raise AssertionError('Normative E5 accepted tolerateArchive')
+        binding_path.write_text(json.dumps({'schema': 'demo-e5-binding.v1', 'config': {'smoke': {'tolerateArchive': ['power']}}}))
+        assert e5.load_binding(binding_path)['config']['smoke']['tolerateArchive'] == ['power']
         from chill_loadgen import cli
         assert stages[-1]['seconds'] == .002
         for name in ALIASES.values():

@@ -71,6 +71,22 @@ def module(name, path):
 def load(path):
     return json.loads(Path(path).read_text(), parse_constant=lambda x: (_ for _ in ()).throw(ValueError('Nonfinite JSON: '+x)))
 
+def require_strict_archives(config):
+    """Reject diagnostic archive tolerance anywhere in normative E5 inputs."""
+    if isinstance(config, dict):
+        if 'tolerateArchive' in config:
+            raise ValueError('tolerateArchive is diagnostic-only in demo.py; forbidden in normative E5 configuration')
+        for value in config.values(): require_strict_archives(value)
+    elif isinstance(config, list):
+        for value in config: require_strict_archives(value)
+
+
+def load_binding(path):
+    binding = load(path)
+    if binding.get('schema') != 'demo-e5-binding.v1': require_strict_archives(binding)
+    return binding
+
+
 
 def save(path, obj):
     path = Path(path)
@@ -158,7 +174,8 @@ def owned_target(snapshot,uids,routing):
 
 
 def bind(path):
-    c = load(path); need(c, ['approval', 'inputs', 'G', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
+    c = load(path); require_strict_archives(c)
+    need(c, ['approval', 'inputs', 'G', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
     need(c['approval'], REQUIRED['approval'], 'approval'); need(c['inputs'], REQUIRED['inputs'], 'inputs'); need(c['collection'], REQUIRED['collection'], 'collection'); need(c['timeboxes'], REQUIRED['timeboxes'], 'timeboxes')
     if not all(positive(c[k]) for k in ('G', 'smokeSeconds')) or type(c['mSeconds']) not in (int,float) or not math.isfinite(c['mSeconds']) or c['mSeconds']<0 or not 0 < c['burstLowSeconds'] < 900: raise ValueError('Actual G/m/smoke and 0<burstLowSeconds<900 required')
     if any(not positive(v) for v in c['timeboxes'].values()) or c['timeboxes']['setupSeconds']+3600+c['timeboxes']['drainSeconds']+c['timeboxes']['flushSeconds'] > 4200: raise ValueError('Finite collector-compatible timeboxes required (sum<=4200s)')
@@ -303,7 +320,7 @@ def bind(path):
 
 class CPO:
     def __init__(self, a):
-        self.a = a; self.b = load(a.binding); self.c = self.b['config']; self.out = a.out
+        self.a = a; self.b = load_binding(a.binding); self.c = self.b['config']; self.out = a.out
         if self.b['status'] != 'BOUND_NOT_MEASURED': raise ValueError('Binding not ready')
         release = load(a.release)
         self.release = release
@@ -844,7 +861,7 @@ class CPO:
 
 
 def judge(binding, folder):
-    b=load(binding); c=b['config']; phase=load(folder/'phase.json'); st=phase['stage']; d=module('d2analyze',D2/'analyze_before.py'); inp=d.Inputs(folder); unknown=[]; results={}
+    b=load_binding(binding); c=b['config']; phase=load(folder/'phase.json'); st=phase['stage']; d=module('d2analyze',D2/'analyze_before.py'); inp=d.Inputs(folder); unknown=[]; results={}
     raw=module('e5raw',HERE/'e5-raw.py'); events,paging=raw.scheduler_events(folder)
     if not paging.get('complete'): unknown.extend(paging.get('errors') or ['Scheduler raw capture incomplete'])
     events=[e for e in events if d.epoch(e.get('at')) is not None and d.epoch(phase['startUTC'])<=d.epoch(e['at'])<=d.epoch(phase['drainedUTC'])]
@@ -1029,7 +1046,7 @@ def judge(binding, folder):
 
 
 def summarize(binding, root):
-    b=load(binding); stages={}; missing=[]
+    b=load_binding(binding); stages={}; missing=[]
     modes={'full':[x['id'] for x in b['schedule']], 'static':[x['id'] for x in b['schedule'] if x['id']!='E5-0']}
     modes.update({f['name']:['E5-2','E5-5'] for f in b['config']['factors']})
     for mode, ids in modes.items():
@@ -1281,7 +1298,7 @@ def main():
             result=bind(a.config); save(a.out,result); return 0
         if not a.binding: raise ValueError('--binding required')
         if a.command=='check':
-            b=load(a.binding)
+            b=load_binding(a.binding)
             for x in b['sources'].values():
                 if ref(x['path'])!=x: raise ValueError('Frozen input/package identity changed')
             assert sum(x['seconds'] for x in b['schedule'])==10800

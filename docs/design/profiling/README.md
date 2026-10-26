@@ -591,3 +591,14 @@ state in process memory.
 
 Those decisions belong to the plan whose concrete input and consumer require
 them.
+
+## E5 archive completeness boundary
+
+For scheduler SRS `SCH-08`, `SCH-31` and `SCH-42`, normative E5 configuration
+binding and every binding consumer reject `tolerateArchive` anywhere in the
+input, regardless of its value. Required archive capture remains fail-closed.
+Only `demo.py` diagnostic trials (`demo-e5-binding.v1`) may tolerate explicitly
+named power archives: **진단 전용, E5 금지**. They preserve missing-archive
+provenance and null energy rather than supplying scientific E5 results.
+`python3 hack/e5/demo.py --self-check` covers rejection at config bind and
+binding consumption, as well as the diagnostic-only exception, offline.

@@ -314,6 +314,14 @@ without waiting for the planner to become idle. Resume additionally requires
 owned Ready instances and positive routes. Normative E5 and final owned
 cleanup retain their original global-idle waits.
 
+`tolerateArchive` is **diagnostic-only (진단 전용, E5 금지)** in `demo.py`.
+Its top-level or stage-level list may name only `power` and
+`power-drain-inclusive`; a stage list overrides the top-level list (`[]`
+restores strict capture). Missing archives retain original NOT_READY evidence,
+explicit `missingArchives` and null energy, never a successful energy result.
+Normative `e5.py` rejects the key anywhere in its config or binding, including
+empty/false/null values, rather than silently ignoring it.
+
 For an otherwise completed producer window stopped only by the former
 planner-idle timeout, `collect --stage A` can collect without replay. It requires
 all original start/drained/end-counter and terminal Complete proofs. Original
