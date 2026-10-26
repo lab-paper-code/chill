@@ -184,6 +184,14 @@
 - 근거: 수요 회복과 절전을 같은 속도로 제어하면 느린 전환 중 왕복과 용량 손실이 생긴다. 모든 수치는 설정, 범위 검사와 실행 기록으로 고정한다.
 - 연결: [ADR 0025](../adr/0025-two-tempo-control.md).
 
+### 하강 최대 수요 창과 빈 Node Fixed 본전 통일
+
+- 결정(2026-10-26): SCH-56은 Kubernetes HPA scale-down stabilization window 방식으로 재정의한다. 기존 `scaleDownStabilizationNanos` 동안 관측한 UID별 유효 수요의 최대값을 하강 판정 수요로 사용하고, 완전한 관측 창 및 현재 실제 가용 공급보다 낮은 수요를 요구한다. 후보도 그 수요를 감당한다. 기준률·`downSince`·`globalSince`를 폐기하며 Workload 축소와 빈 Node 새 절전은 같은 창을 사용한다. 빈 Node는 모든 UID의 최대 수요≤공급 및 하나 이상의 엄격한 여유를 요구하고 UID 간 합계 상쇄는 금지한다. 새 단일값·별도 절전 설정은 없다.
+- 본전(SCH-59): 빈 Node Fixed 예외를 삭제하여 기존 일반 교체의 동일 H 안 양수 이득·minimumGain·payback을 그대로 적용한다. 별도 계산기를 추가하거나 keep에도 절전을 선반영하여 비용을 소거하지 않는다. H=600초의 jetsono MAXN→15W 이득 −699J·손익분기 약 52분은 미실행이다.
+- 근거: 4회차 B 일정 100 req/s에서 09:00:49에 시작된 기준률 timer가 실제 하강 39초 만에 축소를 허용했다. 국소 고점 미만 유지는 지속 하강의 증거가 아니다. `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/demo-20261027-4/report.md` §C, `DemoPowerDown27`·`TempoTestCause27` 조사에 따른 사용자 결정이다.
+- 기록/수용: `decision.capacity.workloads[].scaleDown`을 timer 필드에서 창·최대 수요·현재 공급·완전성·허가/사유로 교체한다. 일정 부하+잡음에서 축소·절전 없음, 실제 하강 뒤 설정 기간 경과 시 적격 후보 허용, 손해 절전 미실행, 빈 출발/증설 불변의 4건을 회귀 수용 조건으로 둔다. 이 항목은 문서 결정이며 구현·검증 완료가 아니다.
+- 연결: [SRS SCH-56·59 / AC-42·44](../spec/scheduler/SRS.md), [계획기 §15](../design/serving/analytic-planner.md#15-두-박자-후보-허가와-고정-h--sch-5558), [구현 설계](../design/serving/scheduler-implementation.md), [ADR 0025](../adr/0025-two-tempo-control.md).
+
 ### 에너지 비교 기간 600초 고정
 
 - 결정: `comparisonPeriodNanos`는 후보와 무관한 600초로 둔다. 후보별 전환 길이에 따라 비교 기간을 늘리던 방식은 대체됐다.
