@@ -120,9 +120,18 @@ socket timeout은 `L+delivery`보다 엄격히 크게 최소 1 ms를 더한다.
 기존 유한 drain과 전체 3600 s 예산(`e8e018e2`), 공급 연장 `ceil(L+delivery)` 예약을
 유지하며 예산을 만족할 수 없으면 실행 전에 보고한다.
 
-idle≤1%는 공급이 충분한 d 측정의 조건이며 signed d의 정의·보존은 바꾸지 않는다.
-idle>1%이면 producer 또는 요청 경로의 한계로 보고하고 K, L, margin이나 cap을 튜닝하거나
+유휴는 연속성·실행 근거가 완전하여 식별된 경우에만 허용한다. unknown, hole,
+누락 native와 불완전 실행은 기존대로 불충분이며, 알려진 pair의 부분 합으로 통과시키지 않는다.
+유휴 비율은 동결된 `maximumIdleFraction` 이하, 요청당 유휴는 기존 1 ms 이하이어야 한다.
+`maximumIdleFraction`은 [0,1] 범위 검사하는 설정값이지 고정값 검증이 아니다.
+승인값은 0.05로 계획 여유 25%(1.25−1)의 1/5이며, profile에서 더 엄격한 비율을 역산하지 않는다.
+초과하면 producer 또는 요청 경로의 한계로 보고하고 K, L, margin이나 cap을 튜닝하거나
 자동 재측정하여 통과시키지 않는다.
+signed d는 유휴를 빼지 않은 보수적 원 측정값으로 보존한다. 식별된 유휴는 d를 키워
+용량 κ를 낮추는 방향이므로 결과에 나노초 단위 `dRange=[d−idleNanosPerRequest,d]`와
+`kappaErrorBound=idleFraction`(κ 상대 오차 상한)을 함께 보고한다.
+유휴 미식별이면 이 범위와 상한을 보고하지 않으며 부분 유휴로 보정하지 않는다.
+[ADR-0028](../adr/0028-identified-idle-acceptance.md)에 판단 근거를 남긴다.
 새 K는 Accepted10의 K와 다를 수 있으며 동일성은 불변량이 아니다.
 기존 Accepted와 동결 입력은 불변이고 기존 측정을 묵시적으로 재실행하지 않는다.
 보고서의 기존·새 결과 비교는 실제 근거로 수행하며 공급 변경 후 비교가 불변이라고 전제하지 않는다.

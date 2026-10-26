@@ -94,7 +94,7 @@ profile 통계오차, BEO idle fallback CI, 시점 drift와 global95% gain 보�
 | `spec.workload` | 요청 경로를 줄 Workload 이름. 그 Dataset의 `evaluation` 부분집합을 보낸다 |
 | `spec.batch` | 고정 배치 크기 B(≥ 1). 인스턴스를 `fixedBatchSize: B`로 준비한다(`SCH-35`) |
 | `spec.supplyMode` | `closed-loop` 고정 outstanding 공급과 `poisson`을 구분한다. d는 closed-loop, E5 부하는 Poisson을 사용한다. `workers=K`, 대기 batch 수 q와 계산 입력을 conditions에 고정한다 |
-| `spec.warmupSeconds`, `durationSeconds`, `minimumBatches`, `maximumIdleFraction` | profile에서 계산한 부하 warmup W_load, 본창 T, 표본 N과 idle 계획 비율이다. closed-loop의 `loadPreparationFloorSeconds`, `windowFloorSeconds`, `plannedElapsedCapSeconds`는 `conditions.inputsJSON.coefficients`에서 한 번 동결해 소비하며 승인값은 60/360/3600 s다. preparation 예산은 별도다. legacy Poisson의 duration 60 s는 독립 구조 계약으로 유지한다 |
+| `spec.warmupSeconds`, `durationSeconds`, `minimumBatches`, `maximumIdleFraction` | profile에서 계산한 부하 warmup W_load, 본창 T, 표본 N과 식별된 idle의 허용 비율이다. `maximumIdleFraction`은 [0,1] 범위 검사하는 설정값이며 승인값은 0.05다(고정값 검증 아님). 동결 계수 `maximumIdleBaseFraction`의 승인 상한도 0.05이며 profile로 더 엄격한 idle 비율을 역산하지 않는다. closed-loop의 `loadPreparationFloorSeconds`, `windowFloorSeconds`, `plannedElapsedCapSeconds`는 `conditions.inputsJSON.coefficients`에서 한 번 동결해 소비하며 승인값은 60/360/3600 s다. preparation 예산은 별도다. legacy Poisson의 duration 60 s는 독립 구조 계약으로 유지한다 |
 | `spec.requestLifetimeSeconds`, `deliveryMarginMillis`, `drainSeconds`, `preparationSeconds`, `jobSetupSeconds`, `collectionSeconds`, `plannedElapsedSeconds` | profile, SLO, 실제 준비, batch tail, 전달과 수집 예산에서 계산한다. L≥SLO, gateway cap≥L과 native count/decoded bytes의 공동 조건을 만족한다. socket은 d와 E5 모두 L+delivery보다 엄격히 커야 하며 최소 1 ms를 더한다 |
 | `spec.conditions` | `profileID`, `inputsJSON`, `waitingBatches`, `maximumIdleNanosPerRequest`, `minimumCycles`에 정확한 profile, 모든 입력, 승인 계수, 계산 q, idle 1 ms/요청과 필수 cycle을 불변 고정한다. warmup과 본창 하한, 전체 cap의 설정 원천도 같은 입력에 동결한다 |
 | `status` | `phase`(2장과 같은 넷), `reason`, `powerMode`, `perRequestNanos`, `throughput`(소수 문자열, req/s), `result`(`ProfilingRunEvidenceReference`) |
@@ -169,14 +169,21 @@ gateway는 원래 L과 sender 경과를 전달하고 native는 `L−senderElapse
 예산을 맞출 수 없으면 명시적으로 보고하며 공급 연장을 줄이거나 cap을 넘겨 실행하지 않는다.
 기존 Accepted record와 동결 입력은 불변이며 기존 측정을 묵시적으로 재실행하지 않는다.
 새 K는 Accepted10의 K와 같아야 하는 불변량이 아니다. 기존·새 결과 비교는 실제 근거로 수행한다.
-idle≤1%는 공급이 충분한 d 측정의 조건이며 signed d의 정의·보존은 바꾸지 않는다.
-idle>1%이면 producer 또는 요청 경로의 한계로 보고한다. K, L, margin이나 cap을 튜닝하거나
+유휴 비율은 설정된 `maximumIdleFraction` 이하이어야 한다. 승인값 0.05는
+계획 여유 25%(1.25−1)의 1/5이며 signed d의 정의·보존은 바꾸지 않는다.
+상한 초과면 producer 또는 요청 경로의 한계로 보고한다. K, L, margin이나 cap을 튜닝하거나
 자동 재측정하여 통과시키지 않는다.
 
 **판정.** physical finished에서 다음 ready까지의 보수 idle 상한과 창 끝단, hole, 누락 native를 함께 평가한다.
 필요한 원근거가 없으면 unknown과 모든 관련 사유를 남긴다.
-`idleIdentified=false`일 때 `idleUpperNanos`는 알려진 pair의 부분 합이다.
-`idleNanosPerRequest`는 같은 physical cycle과 endpoints를 사용한다.
+`idleIdentified=true`는 physical batch 연속성과 실행 근거가 완전함을 요구한다.
+`idleIdentified=false`일 때 `idleUpperNanos`는 알려진 pair의 부분 합이며 통과 근거가 아니다.
+unknown, hole, 누락 native와 불완전 실행은 기존대로 탈락한다.
+`idleNanosPerRequest`는 같은 physical cycle과 endpoints를 사용하며 기존 1 ms/요청 상한을 유지한다.
+식별된 유휴에 대해서만 `dRange=[perRequestNanos−idleNanosPerRequest,perRequestNanos]`를
+나노초 단위로, `kappaErrorBound=idleFraction`을 κ 상대 오차 상한으로 기록한다.
+미식별이면 두 필드는 생략한다. d에서 유휴를 차감하지 않는다. 원 d는 유휴로 커지고
+κ는 작아지는 보수적 방향이며, 범위와 상한은 95% CI나 전체 모델 오차 보장이 아니다.
 `cycleMeanNanos`, `cycleSDNanos`, `cycleRelativeHalfWidth`, `precisionTargetMet`는 stationary-iid t 근사의 보고 정보다.
 N과 창은 시작 전에 고정한다. 실제 CI로 새 거절 gate를 만들거나 N을 자동 변경하지 않는다.
 minimum N, 물리 완전성, unknown과 idle 상한을 판정하고 해당 이유 전체를 `reasons[]`에 보존한다.
@@ -392,7 +399,7 @@ spec:
 | operation | prepare/idle/remove/power의 실제 identity, effect와 격리, 부분 실패, sequence 출처와 자연 반환 |
 | 비용 민감도 | 상수 S=0, offset 불변, 내부 극값, 원 gap 합집합과 cap, 실제 support/bracket, undefined 비율, 10% 초과 유효 에너지의 Accepted |
 | 최소 이득 | nominal 불변, 선택 evidence의 signed 상쇄와 사슬 합성, 이득=B에서 keep, 이득>B에서 전환, keep infeasible 회복. exact baseline을 사용할 때 무관한 profile CI가 문턱을 바꾸지 않음 |
-| d | 물리 batch/member/연속성, HTTP 실패 뒤 실행, late native 보충, 끝단과 누락 unknown, 모든 판정 사유, signed raw와 max0 소비 |
+| d | 물리 batch/member/연속성, HTTP 실패 뒤 실행, late native 보충, 끝단과 누락 unknown, 설정 idle 비율 경계와 1 ms/요청, 식별된 idle의 nanos dRange/κ 상한과 미식별 생략, 모든 판정 사유, signed raw와 max0 소비 |
 | lifetime | L≥SLO, cap≥L, L과 delivery를 포함하는 socket(E5는 socket>L+delivery 명시), sender 경과와 m의 단일 차감 |
 | observer | 실제 producer end 뒤 final read, 동결된 event/result byte 예산, authoritative Job 조회의 NotFound와 transport 오류 구분 |
 | 소비자 | 최신 Accepted의 정확한 NodeUID/mode/runtime/model 일치, 결측 사유, 실제 source 교체와 반환 |
