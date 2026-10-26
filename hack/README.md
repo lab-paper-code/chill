@@ -122,6 +122,30 @@ python3 /path/to/checkout/hack/e5/d2/bind_before.py \
   --out /path/to/external/binding.json
 ```
 
+`hack/measure/soak_ledger.py` is a CampaignOps-only manual ledger soak. Disable
+all autonomous workloads and manually prepare 2–3 Ready instances owned by one
+Workload before running:
+
+```sh
+python3 hack/measure/soak_ledger.py --self-check
+CHILL_EXPERIMENT_CONFIG=/absolute/environment.json \
+  python3 hack/measure/soak_ledger.py --workload-uid WORKLOAD_UID \
+  --instances INSTANCE_ID_1 INSTANCE_ID_2 --out /external/soak-evidence \
+  --duration 1800 --interval 20
+```
+
+The runner reuses the D2 conductor's authenticated API and kubectl helpers
+(`d2` endpoint, CA/token and kubectl configuration; `measure.namespace` for
+serving Pods). It cycles route/unroute/release, removes and re-prepares one
+instance halfway through, and leaves the manually prepared instances in place.
+It compares all scheduler instance Pod UIDs with the serving-label Pod list;
+each mismatching UID must persist into the next cycle before it is reported.
+Ready flicker and removed-ID reappearance in state or POOL are immediate
+violations. Operation request/ACK files, raw violation snapshots and
+`summary.json` remain outside the checkout; violations do not stop the soak.
+Exit status is nonzero if any violation or incomplete replacement was recorded.
+
+
 `conduct_before.py` takes the exact approved `--command`, `--binding`,
 `--release`, `--out`, `--phase` and, for collection, `--hosts` inputs.
 The `autonomous` command starts from the prepared eight-instance binding.
