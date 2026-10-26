@@ -116,7 +116,7 @@ route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 �
 구체적인 기록과 실행 계약은 [중간 배분](scheduler-implementation.md#중간-배분)이다.
 
 
-**비교 기간.** `T = max(comparisonPeriodNanos, 공간의 최장 route 전 사슬 + 최장 route 뒤 remove)`(최대 시간)를 판단마다 하나 정하고 keep과 모든 계획에 쓰며 `decision.capacity.periodNanos`에 남긴다. 모든 사슬이 T 안에 끝난다. 비교 기간을 정하는 방법은 04 명세가 설계에 맡긴다. sample의 `comparisonPeriodNanos`는 사용자 결정으로 10분이다(m4 r5 뒤). T는 에너지 순서만 바꾸고 SLO 판정(3장)은 T와 무관하므로 부하가 오를 때 첫 판단의 확장은 T와 상관없다. m4 r5 기록에서 T만으로는 풀리지 않는 것: 분배되지 않은 genesis3 q2와 orangepi q1은 인스턴스를 띄운 노드 전력(49.80 W, 2.71 W)이 빈 노드(49.97 W, 2.73 W)보다 크지 않아 remove가 어떤 T에서도 에너지 이득이 아니다. 배치 상한 교체(genesis3 b1↔b2)와 SLO 때문에 준비한 인스턴스의 remove는 T 152 s에서 이미 이득(79~1,265 J)이었고 이득은 T에 비례해 커진다. 그래서 14장의 유휴 제거, 교체 회수, Overload 준비 유지 규칙을 둔다.
+**비교 기간 — SCH-58 확정 변경 설계(미구현).** 기존 후보 집합의 최장 사슬로 T를 늘리는 규칙을 폐기하고 `H = settings.comparisonPeriodNanos` 하나를 keep과 모든 후보에 고정한다. 기존 이름이 이미 시간 단위·설정 API에 있으므로 `energyHorizonNanos` 별칭/중복 필드를 만들지 않는다. 아래 에너지 식의 T는 H다. route 전후 전체 사슬의 최대 시간이 H를 넘는 후보는 `TransitionExceedsHorizon`으로 제외하고 H를 늘리거나 음수 Serving 시간을 계산하지 않는다. 이는 후보별 기간이 아니라 공통 기간 내 전체 전환을 비교하는 계약이다. H를 바꾸면 새 설정 revision으로 다음 판단부터 적용하며 진행 작업의 frozen 설정은 유지한다. H는 SLO 시간·용량표 창·동작 timeout과 별개다. 제안값과 실측 근거는 15장이다.
 
 **에너지.** 노드 계획 하나의 [0, T] 노드 에너지는 keep이면 `P_before × T`, 아니면 `J_pre + P_mid × (r − t_pre) + J_post + P_after × (T − r − t_post)`(t는 평균 시간)다. P는 `schedulerBaseline`의 적재 상태 전력이다. 요청 에너지는 route에서 나눈다: [0, r]은 지금 routing으로 남는 인스턴스가 κ_ret까지 처리하고(`Σ y⁰_i e_i r`), 넘친 `max(0, λ − κ_ret) × r`건과 [r, T]는 target 배정 y로 처리한다(`Σ y_i e_i (T − r)`와 넘친 건수 × y 가중 평균 e). 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.
 
@@ -176,12 +176,13 @@ snapshot 인스턴스의 `WorkloadUID`와 Pod owner/routing 참조는 같은 소
 |---|---|
 | 최소 수요 | `minimumDemand`는 Workload UID→유한한 비음수 req/s map이다. 빈 UID는 거절하고 미설정 UID는 0이다. `decision.settings`와 `decision.search.bounds`에 선택값을 동결하며 캠페인의 binding/settings 캡처와 summary에 연결한다([저장 경로](measurement-api.md#71-최소-수요와-재현-설정)) |
 | 용량표 설정 | `capacityWindowNanos`>0, `capacityWindows`≥1, `capacityPassingWindows`는 1부터 전체 창 수까지, `capacityMinimumRequests`≥1이다 |
-| 비교 기간 | `comparisonPeriodNanos`>0이며 sample 하한은 10분이다. 판단은 실제 T를 `decision.capacity.periodNanos`에 남긴다 |
+| 비교 기간 | `comparisonPeriodNanos`>0인 정수 ns; H의 유일한 필드다. 제안 600초. 후보 집합과 무관하며 실제 H를 `decision.capacity.periodNanos`에 남긴다 |
 | 디스패치 점유 | snapshot의 `dispatchOccupancy`는 immutable 측정 record에서 도출한다. 행 입력에 Node UID, mode, runtime/model, 값과 source를 포함한다 |
 | 탐색 병렬 | `planSearchWorkers`≥1이다. sample은 3이고, 실제 CPU 한도와 gateway/Tick 관측으로 평가한다 |
 | 판단 기록 | `decision.capacity`는 구성의 판정, 에너지, 사슬과 `search`를 기록한다. `management`의 `capacity-row-built`는 행과 계산시간을 기록한다 |
 | 인스턴스 시간 | `unroutedSince`와 `heldUntil`은 controller의 메모리 상태이며 유휴 제거와 Overload 준비 유지에 사용한다 |
 | 최소 이득 | `OperationTrial.energyUncertaintyJoules`와 실제 선택한 `NodeBaseline.wattsUncertainty`를 signed 노출량으로 전파한다. `gainUncertaintyJoules`는 B-only 문턱이다 |
+| 두 박자 | `scaleDownStabilizationNanos`≥0인 정수 ns(기본 300초, 시연 120초, 0이면 지속 대기 없음). `transitionReserveFraction`은 유한한 [0,1](기본 0)이며 NaN/±Inf/범위 밖은 거절한다. 값은 코드의 정책 상수가 아니라 scheduler 설정 기본값·sample/binding에서 제공한다 |
 
 설정 decode는 strict하다. API, ConfigMap과 Dashboard는 같은 설정 계약을 사용한다.
 저장 형태는 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)의 single-version reader를 따른다.
@@ -301,3 +302,84 @@ runtime 7종의 digest와 기존 자원, evidence store를 유지한다.
 - **부분 관측 창.** ChillServer가 시작한 뒤 관측 창 하나를 다 관측할 때까지 계획은 인스턴스를 더하기만 한다. 지금 인스턴스를 지우거나(그 노드 계획에 남지 않는 인스턴스) 배치 policy를 바꾸는 노드 계획은 `PartialObservationWindow`로 빠진다. 계획은 지금 인스턴스를 노드의 지금 모드에서만 다시 쓰므로, 인스턴스가 있는 노드의 모드 변경은 그 인스턴스를 지우는 계획으로 같이 빠지고 빈 노드의 모드 변경은 확장으로 남는다. 분배된 인스턴스의 가중치를 0으로 만드는 해는 후보에서 빠지며, keep의 가중치가 분배된 인스턴스를 빼면 지금 가중치를 그대로 둔다. 유휴 제거도 쉰다. 근거: m4 r7 07:00:38에서 재시작 19 s 뒤의 관측한 창은 λ 20.6이었다. 부하는 40 req/s였지만 클라이언트가 중단 동안 물러나 있어 ingress가 9.0 req/s(07:00:00~20)와 23.4 req/s(07:00:20~40)만 받았다. 계획은 그 λ로 분배된 rasp5 q1 하나를 지웠다.
 - **Overload 준비 유지.** keep이 `Overload`인 판단이 준비한 인스턴스는 Ready가 된 때부터 관측 창 하나 동안(`heldUntil`) 지우거나 교체하는 노드 계획에서 빠지고(`HeldAfterOverload`), 유휴 제거도 받지 않는다. 근거: m4 r5의 40 req/s에서 genesis2를 keep `Overload` 판단(04:28:48)이 준비하고 50 s 뒤 지웠다.
 - **계획에서 뺀 노드.** `settings.excludedNodes`(Node 이름 목록, sample은 빈 목록)의 노드는 측정 POOL 노드와 같은 고정 경로를 탄다. capture가 노드 사유 `ExcludedNode`를 붙이고, 그 노드는 keep뿐이며(배치, 교체, 지우기, 전력 변경 없음) 가용 노드 최저 모드 낮춤과 유휴 제거도 받지 않는다. 판단마다 `decision.capacity.plans`에 그 노드의 `ExcludedNode` 계획이 남고 snapshot 노드 `reasons`에도 남는다. 측정 POOL 노드의 인스턴스도 유휴 제거를 받지 않는다.
+
+## 15. 두 박자 후보 허가와 고정 H — SCH-55~58
+
+2026-10-26 사용자 결정 ④ 1-A/2-A/3-A/4-B의 요구사항 다음 단계 설계다.
+이번 변경은 문서만이며 현재 source가 아래 정책을 구현했다는 뜻이 아니다.
+근거는 로컬 `intent/two-tempo-questions-20261026.md`, `intent/checkpoints.md` 1949행,
+`intent/structure-redesign-20261026.md` §5와 `audit-20261024/structure-20261026/Research-K4.md`다
+(모두 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/` 아래).
+
+### 후보 허가와 지속 하강
+
+- 빠른 박자는 별도 제어 루프가 아니라 매 Tick의 후보 제한이다. 현재 Ready 집합의 중간 분배와 keep/분배 변경/안전한 순증설 후보만 허용한다. 기존 serving 용량의 제거·축소나 에너지 목적 교체를 증설에 섞어 우회하지 않는다. 수용 한계에서는 허용된 증설 후보 사이에서도 기존 전체 충족→최종 충족→leximin→에너지 순서를 그대로 적용한다.
+- 느린 박자는 같은 Tick에서 해당 하강 안정화 조건이 열린 범위의 전체 후보를 추가하는 것이다. 후보를 허용한 뒤의 κ/대기/가중치/SLO·leximin·minimumGain·교체 회수 순서는 바꾸지 않는다. 후보에 축소/교체가 포함된 모든 Workload가 조건을 만족해야 하며 다른 Workload의 준비 완료나 하강을 기다리는 전역 장벽은 없다.
+- Workload UID별로 마지막 확장/선택 시 계획 수요를 하강 기준률로 기억한다. 현재 유효 수요 λ가 그 기준보다 작아진 첫 정상 관측의 decision `at`를 `downSince`로 둔다. 이후 λ가 직전 정상 판단보다 증가하거나 기준 이상으로 돌아오면 지속 하강을 끊고, 여전히 기준 미만인 증가는 그 시각부터 새 구간을 시작한다. 동일하거나 더 낮은 λ는 구간을 유지한다. 최초 관측·관측 공백·설정 변경·UID 교체·controller 재시작은 구간을 초기화하고 새 정상 관측부터 잰다. 하강 뒤 선택·확정된 구성에는 당시 λ를 새 기준으로 삼는다. 수요가 없어진 상태도 최소 수요 하한과 인스턴스 하나 유지 규칙을 지킨다.
+- `at − downSince ≥ scaleDownStabilizationNanos`일 때만 하강 허가다. 축소와 에너지 교체에 각각 timer를 두지 않는다. 아직 전체 관측 창이 차지 않았거나 `DemandIncreasing`이면 기존 보호 규칙도 함께 통과해야 한다. 유휴 제거·빈 노드 절전·배치/자원 축소·교체 회수 후처리 역시 이 허가를 거쳐, 탐색 뒤 우회 축소하지 않는다.
+- 실행 중 owner 예약과 frozen target은 박자와 무관하게 보존한다. 이미 허가된 DAG의 후속 drain/remove는 그 작업의 의무이며 매 Tick 새 축소로 취급하지 않는다. 중간 배분은 느린 판단을 기다리지 않고 기존 실제 Ready/ACK·stop 제외·원자적 UID별 route 계약으로 진행한다.
+
+### 전환 예비
+
+`f = transitionReserveFraction`이고 영향받는 Workload마다 전환의 각 용량 변경 구간에서
+실제 사용 가능한 Ready/ACK κ 합이 `λ_w × (1+f)` 이상이어야 한다(f>0).
+아직 준비 중인 target, stopped/draining 또는 전력 변경 중인 공급은 세지 않는다.
+이는 요청 수요를 부풀리는 설정이 아니라 전환 허가 제약이며 λ·요청 에너지의 분모를
+바꾸지 않는다. 예비를 예약한 두 작업이 같은 용량을 중복 담보로 쓰지 않도록 공통 범위
+예약에서 검사한다. 확보 못하면 `TransitionReserveInsufficient`로 해당 후보만 보류하고
+유지·안전한 증설은 계속한다. f=0은 추가 예비 검사만 끄고 기존 B/W·SLO 검사를 유지한다.
+예비의 실제 적재 baseline, prepare/remove와 전력 사슬을 동일 H 에너지에 한 번 포함하고
+E5 실측은 실제 전환 전체와 전체 POOL(예비 노드 포함)을 집계한다. 예비 비율만으로
+실제 SLO를 보장했다고 주장하지 않고 AC-43에서 요청 결과로 확인한다.
+
+### 기록과 설정 고정
+
+strict scheduler 설정 decode/검증·설정 API·ConfigMap·Dashboard·sample·Run 캡처는
+7장의 같은 계약으로 함께 이행한다. `comparisonPeriodNanos`의 기존 단일 필드를
+재사용하고 단일 허용값 enum/하드코딩된 선택지로 제한하지 않는다.
+`decision.settings`와 `decision.search.bounds`에 세 설정값을 고정하고,
+`decision.capacity.periodNanos`는 사용한 H와 일치시킨다.
+`decision.capacity.workloads[]`에는 기준률·이전률·`downSince`·경과 ns·허가 여부·
+초기화/보류 이유를 남기고, 노드 계획에는 축소/교체 분류와 gate 제외 이유를 남긴다.
+예비 평가는 Workload별 수요·필요 κ·구간별 가용 κ·부족 이유를 같은 결정에 연결한다.
+Run 시작의 `binding.schedulerSettings`, 설정 캡처와 summary는 같은 값을 보존하며
+시연 120초와 운영 기본 300초 결과를 같은 설정의 실험으로 합치지 않는다.
+
+### H 제안과 실제 전환 근거
+
+**제안 H=600초 (`comparisonPeriodNanos=600000000000`)**.
+아래는 `campaign/v2/demo-*/summary.json`의 `stages[].actions[].action`에서
+`phase=complete`, `kind=prepare/power`의 `completedAt − startedAt`를 초로 계산한 값이다.
+실패/미완료는 성공 소요시간 표본에서 제외하며 준비 시작부터 전체 route까지의 시간과
+혼동하지 않는다. 원본은 위 로컬 ops 디렉터리 아래이며 단계·노드·profile로 재조회할 수 있다.
+
+| Run / 단계 | 동작·대상 | 완료 소요(초) | 해석 |
+|---|---|---:|---|
+| demo-20261025-2 / B | jetsono power → MAXN | 150.939 | 느린 전력 변경; 뒤 MNV prepare 12.011초는 별도 동작 |
+| demo-20261026-2 / B | jetsono power → MAXN | 148.854 | 뒤 MNV prepare 13.693초와 직렬이면 약 163초 |
+| demo-20261025-2 / C | lattepanda Smol int8 q2 prepare | 268.867 | 긴 모델 준비 |
+| demo-20261025-2 / E0 | genesis3 Smol fp32 q4 prepare | 292.163 | 이 집계의 최장 성공 prepare; 285초로 반올림/대체하지 않음 |
+| demo-20261025-2 / C | jetson-nano Smol int8 q3 prepare | 223.339 | 전력 비용과 별도 집계 |
+| demo-20261026-2 / B | genesis3 / lattepanda / jetson-nano MNV prepare | 9.873 / 12.717 / 26.745 | 동작 완료 기준; 중간 배분 지연과 다름 |
+| demo-20261026-2 / C | rasp5 MNV q1-lut / q1 prepare | 17.796 / 16.518 | 빠른 준비가 느린 목표 때문에 묶이면 안 됨 |
+| demo-20261025-2 / C; demo-20261026-2 / C | jetsono power (하강) | 196.180 / 168.016 | 상승 전환만으로 H를 정하지 않음 |
+
+600초는 관측된 약 292초 준비와 약 196초 전력 변경이 직렬인 보수적 조합 약 488초도
+포함하고 Serving 비교 여유를 남기며 기존 sample의 10분과도 같다. 이는 관측 최대의
+상한 보장이나 에너지 최적 기간의 통계적 추정은 아니라 **정책 제안**이다.
+사용자 언급 Smol 285초 및 MNV 15~32초 Ready 관측은 이 action 완료 집계와 사건 정의가
+다를 수 있으므로 수치로 섞지 않는다. 3회차 B의 G/L Ready 15~18초, N 32초 대기 뒤
+중간 route 관측은 분배 반응성의 근거이지 H 산출 표본이 아니다.
+H보다 긴 미래 사슬은 명시적 제외로 드러내고, 필요하면 근거를 기록한 설정 변경으로
+H를 바꾸며 미선택 후보 때문에 자동 연장하지 않는다.
+
+### 회귀와 구현 커밋 분할 제안
+
+1. **설정·기록 계약**: `scaleDownStabilizationNanos`, `transitionReserveFraction` 추가와 기존 `comparisonPeriodNanos` 의미 전환을 strict decode/검증·API·sample·binding·결정 기록에 함께 반영. 음수/0/양수 ns, 정수 overflow, f=0/1 및 범위 밖·NaN/Inf, H=0 거절과 설정 readback/Run 동결 회귀를 포함한다. alias나 병행 reader를 두지 않는다.
+2. **두 박자 후보 gate**: UID별 하강 상태와 fast/full 후보 분류를 기존 계획기에 연결. fake clock으로 경계 직전/정확히 경계, 순간 하강·재증가·관측 공백·restart·설정 변경, 여러 UID 독립성, 유휴 제거 우회 금지, 과부하 무한값 leximin과 증설 지속을 검증한다(AC-42).
+3. **예비·고정 H 에너지**: 구간별 실제 공급과 예약 중복 담보 검사, H 초과 명시적 제외, 모든 후보/keep의 공통 H를 반영. f=0 기존 SLO 보존, f>0 부족/충족·미준비 공급 제외·E5 예비 소비 포함(AC-43), 긴 미선택 후보 추가/삭제 시 공통 후보 비용·순위 불변(AC-44)을 검사한다.
+4. **통합 회귀/시연 설계**: 느린 jetsono power와 G/L/N 준비를 함께 둔 controller 시계 회귀에서 준비 직후 다음 주기 중간 배분·예약 밖 확장을 확인하고 owner target/ACK/drain 의무를 보존한다. 승인된 후속 캠페인에서는 동일 binding/H·부하로 300초 운영 설정과 별도 120초 시연을 구분하고 요청 SLO·축소 시각·전환 전체 POOL joules를 보고한다. 이번 단계에서는 테스트·클러스터 실행을 하지 않는다.
+
+## 변경 이력
+
+- 2026-10-26: SCH-55~58/AC-42~44에 맞춰 두 박자 후보 gate, 예비·고정 H와 600초 제안 근거 및 후속 구현·회귀 경계를 설계했다. 코드 변경 없음.
