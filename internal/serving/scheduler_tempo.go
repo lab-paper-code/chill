@@ -59,16 +59,13 @@ func (t *SchedulerTempo) Observe(settings SchedulerSettings, s *SchedulerSnapsho
 			state.Reason = "ScaleDownObservationGap"
 			state.ResetReason = schedulerObservationGap
 		default:
-			if reset || gap || w.rate > old.Rate {
+			if reset || gap {
 				state.DownSince = nil
 				state.Reason = "ScaleDownRestarted"
-				switch {
-				case gap:
+				if gap {
 					state.ResetReason = schedulerObservationGap
-				case reset:
+				} else {
 					state.ResetReason = "SettingsChanged"
-				default:
-					state.ResetReason = "DemandIncreased"
 				}
 			}
 			if w.rate >= old.Baseline {

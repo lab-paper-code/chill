@@ -70,11 +70,17 @@ func TestSchedulerTempoContinuousDecline(t *testing.T) {
 	if got := observe(4, 5); !got.Allowed || !snap.EmptyNodeScaleDownAllowed {
 		t.Fatalf("boundary: %+v", got)
 	}
-	if got := observe(5, 6); got.Allowed || got.Elapsed != 0 {
-		t.Fatalf("rise below baseline: %+v", got)
+	if got := observe(5, 6); !got.Allowed || got.Elapsed != 4*time.Second || snap.EmptyNodeScaleDownAllowed {
+		t.Fatalf("rise below baseline interrupted UID decline or opened vector gate: %+v", got)
 	}
-	if got := observe(8, 6); !got.Allowed {
-		t.Fatalf("new boundary: %+v", got)
+	if got := observe(6, 10); got.Allowed || got.DownSince != nil || got.Baseline != 10 {
+		t.Fatalf("return to baseline: %+v", got)
+	}
+	if got := observe(7, 12); got.Allowed || got.DownSince != nil || got.Baseline != 12 {
+		t.Fatalf("rise above baseline: %+v", got)
+	}
+	if got := observe(8, 6); got.Allowed || got.Elapsed != 0 || got.DownSince == nil {
+		t.Fatalf("new decline: %+v", got)
 	}
 	if got := observe(30, 5); got.Allowed || got.Elapsed != 0 || got.ResetReason != "ObservationGap" {
 		t.Fatalf("gap: %+v", got)
@@ -87,6 +93,41 @@ func TestSchedulerTempoContinuousDecline(t *testing.T) {
 	tempo = SchedulerTempo{}
 	if got := observe(33, 3); got.Allowed || got.DownSince != nil {
 		t.Fatalf("restart: %+v", got)
+	}
+}
+
+func TestSchedulerTempoDeclineSurvivesLowRateJitter(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval = time.Second, time.Second
+	s.MaxObservationAge = 10 * time.Second
+	s.ScaleDownStabilization = 120 * time.Second
+	snap.Outstanding = nil
+	start := snap.At
+	var tempo SchedulerTempo
+	observe := func(second int, rate float64) SchedulerDownState {
+		snap.At = start.Add(time.Duration(second) * time.Second)
+		snap.ObservationEnd, snap.ObservedSince = snap.At, start.Add(-time.Hour)
+		snap.Arrivals = nil
+		capacityLoad(s, &snap, snap.Workloads[0], rate)
+		tempo.Observe(s, &snap)
+		return snap.ScaleDown["w1"]
+	}
+	observe(0, 100)
+	downSince := start.Add(time.Second)
+	rates := []float64{20, 18, 22, 19, 21}
+	for second := 1; second <= 301; second++ {
+		got := observe(second, rates[(second-1)%len(rates)])
+		elapsed := time.Duration(second-1) * time.Second
+		if got.Baseline != 100 || got.DownSince == nil || !got.DownSince.Equal(downSince) ||
+			got.Elapsed != elapsed || got.Allowed != (elapsed >= s.ScaleDownStabilization) || got.ResetReason != "" {
+			t.Fatalf("t=%ds: low-rate jitter restarted decline: %+v", second, got)
+		}
+	}
+	if got := observe(302, 100); got.Allowed || got.DownSince != nil || got.Reason != "DemandNotDecreasing" {
+		t.Fatalf("baseline return did not cancel stabilized decline: %+v", got)
+	}
+	if got := observe(303, 20); got.Allowed || got.DownSince == nil || got.Elapsed != 0 {
+		t.Fatalf("new decline did not restart after baseline return: %+v", got)
 	}
 }
 
