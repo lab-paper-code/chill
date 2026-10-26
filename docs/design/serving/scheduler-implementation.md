@@ -835,11 +835,11 @@ ObservationLog는 request/management와 더불어 decision/settings/action/power
 |---|---|
 | scheduler 설정과 strict decode | `scaleDownStabilizationNanos`(정수 ns≥0, 기본 300초/시연 120초), `transitionReserveFraction`(유한 [0,1], 기본 0), 기존 `comparisonPeriodNanos`(정수 ns>0, H 제안 600초). `energyHorizonNanos` 별칭이나 고정 단일값 필드를 추가하지 않고 API·ConfigMap·Dashboard·sample·캡처를 같은 검증 계약으로 이행한다. ns는 표현형 범위를 넘으면 거절한다 |
 | `SchedulerController` 현재 상태 | Workload UID별 기준률·직전 정상 λ·`downSince`만 기존 상태에 추가한다. 계획기의 λ(최소 수요 포함)를 사용하며 증가·공백·재시작·설정 변경은 안정화 구간을 초기화한다. 영속 timer 서비스/CRD나 별도 planner를 만들지 않는다 |
-| `scheduler_capacity.go` 후보 생성·탐색 | 매 Tick fast 집합(keep/분배/안전한 순증설)을 만들고 안정화된 영향 범위에만 full 집합(축소·에너지 교체 포함)을 연다. 현 순서인 전체 충족→최종 충족→leximin→에너지/keep/key를 두 집합 모두에 동일 적용한다. 자원·κ·관측 창·`DemandIncreasing`·최소 이득 검사는 유지한다 |
-| 계획 후처리 | 유휴 제거·빈 노드 절전과 자원/배치 축소도 같은 안정화 gate를 거친다. 이미 허가된 owner DAG의 후속 제거는 frozen 작업 의무로 진행하고 새 축소 허가와 혼동하지 않는다 |
+| `scheduler_capacity.go` 후보 생성·탐색 | 매 Tick fast 집합은 keep/분배 변경/안전한 순증설/물리 제거·정지 없이 κ가 증가하는 정책 변경(용량 회복)이다. slow는 실물 제거·정지, 에너지 절감만을 위한 교체(κ 비증가·joules 감소), 추가+제거 혼합 후보이며 겹치면 slow가 우선한다. 안정화된 영향 범위에만 full 집합을 연다. 현 전체 충족→최종 충족→leximin→에너지/keep/key 순서와 자원·κ·관측 창·`DemandIncreasing`·최소 이득 검사는 유지한다 |
+| 축소와 Fixed 절전 전체 경로 | 유휴 제거·빈 노드 절전·자원/배치 축소 후처리뿐 아니라 `EvaluateScheduler → schedulerCommonNodes → changeNodes`(`scheduler_capacity.go:147-151`, `scheduler_plan.go:65-76,515-517`) 및 target 없는 `Keep.Actions` 실행(`kube/scheduler.go:333-341`)의 새 절전도 같은 gate를 거친다. Workload UID가 없는 빈 노드는 계획기 15장의 전체 수요 하강 상태 허가를 사용한다. 이미 실행 중 Fixed와 허가된 owner DAG의 후속 제거는 계속하며 새 절전만 gate한다. 위치는 변경 전 탐색 앵커다 |
 | `scheduler_plan.go`와 공통 예약 | 예약 충돌과 불확실 Node 제약을 먼저 유지하고 예약 밖 fast/full 후보를 계속 평가한다. f>0이면 전환 구간별 영향 Workload의 실제 Ready/ACK κ≥λ(1+f)를 검사하고 같은 공급의 중복 예비 담보를 막는다. 부족은 해당 후보 `TransitionReserveInsufficient`이며 전역 대기가 아니다 |
 | `intermediateActions`/`readySubset` | 느린 박자나 전체 준비 완료를 기다리지 않는다. 다음 Tick에 실제 Ready 부분집합을 기존 원자적 UID route로 편입하고 stop/drain/power 대상·native ACK·요청 인계 검사를 유지한다 |
-| 분석 에너지 | 모든 keep/후보가 H=`comparisonPeriodNanos`를 사용한다. 미선택 후보의 길이로 H를 확장하지 않는다. 전체 사슬이 H를 넘으면 `TransitionExceedsHorizon`으로 명시적 제외한다. 예비 prepare/적재/Serving/remove도 한 번 집계하며 f는 요청률이나 요청 에너지 분모를 바꾸지 않는다 |
+| 분석 에너지 | `scheduler_capacity.go:524-543`의 `p.period` 확장 규칙을 폐기하고 설정 H=`comparisonPeriodNanos`로 고정한다. 후보 조합의 공통 route 시간+선택 노드 최장 post 사슬이 H를 넘으면 `TransitionExceedsHorizon`으로 제외하고 정확히 H이면 허용한다. keep/payback/minimumGain/`decision.capacity.periodNanos` 모두 같은 H를 쓴다. 예비 prepare/적재/Serving/remove도 한 번 집계하며 f는 요청률이나 요청 에너지 분모를 바꾸지 않는다 |
 | 결정·Run 기록 | `decision.settings`, `decision.search.bounds`에 세 설정을 고정하고 `decision.capacity.periodNanos=H`를 남긴다. Workload별 기준/이전 수요·하강 시작/경과·허가·초기화 이유, 후보별 slow 분류/제외 이유와 구간별 예비 κ 판정을 연결한다. Run의 `binding.schedulerSettings`·settings 캡처·summary를 동일 값으로 고정한다 |
 
 H=600초 제안의 재현 원본은 로컬
@@ -856,6 +856,11 @@ jetsono 하강 power 196.180초를 포함한다. 600초는 보수적 직렬 조�
 (4) controller 통합 회귀 순서로 나눈다. 각 커밋은 관련 caller와 테스트를 함께 옮기고
 구 설정 의미를 유지하는 shim이나 두 번째 horizon 필드를 남기지 않는다.
 
+커밋별 추가 수용 조건은 다음과 같다.
+- (2) 후보 분류: κ 증가·물리 제거 없는 정책 변경은 fast, 에너지 전용 교체와 추가+제거 혼합은 slow다. 절전 우회: 후처리/공통 노드/`changeNodes`/target 없는 `Keep.Actions` 어느 경로에서도 새 Fixed 절전이 전체 수요 안정화 gate를 우회하지 않고 기존 Fixed는 계속한다.
+- (3) H 조합 경계: 각 노드 사슬은 H 이하여도 공통 route+최장 post가 H를 넘는 조합은 제외하고 정확히 H는 허용한다. 미선택 후보 추가/삭제, keep/payback/minimumGain 및 기록의 H는 불변이다.
+- (4) 빈 출발 유지: SCH-54 κ 완료/상한 대기는 유지하고 하강 timer는 첫 증설을 막지 않는다. Workload별 최소 인스턴스 하나와 예약 밖 진행도 보존한다.
+
 **회귀 설계**: AC-42는 fake clock으로 짧은 하강/재증가·경계 직전/정확한 경계·공백·
 설정 변경·restart·UID 독립성 및 gate를 우회하는 유휴 제거가 없음을 확인한다.
 AC-43은 f=0의 기존 SLO 검사 보존과 f>0의 미준비/중복 공급 거절·충분한 예비 허가,
@@ -869,6 +874,7 @@ AC-44는 긴 미선택 후보의 추가/삭제에도 공통 후보 H/에너지�
 
 변경 이력: 2026-10-26 SCH-55~58/AC-42~44의 설정·상태·후보 허가·에너지·기록 책임과
 후속 커밋/회귀 설계를 추가했다. 구현·회귀 통과의 선언은 아니다.
+리뷰 보완(2026-10-26): fast/slow 판별식, 빈 노드 Fixed 절전의 모든 실행 경로와 전체 수요 gate, `p.period` 고정 및 조합별 H 경계, 커밋별 추가 회귀 수용 조건을 명시했다.
 
 
 ### Ponytail 검수 반영

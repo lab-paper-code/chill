@@ -313,11 +313,19 @@ runtime 7종의 digest와 기존 자원, evidence store를 유지한다.
 
 ### 후보 허가와 지속 하강
 
-- 빠른 박자는 별도 제어 루프가 아니라 매 Tick의 후보 제한이다. 현재 Ready 집합의 중간 분배와 keep/분배 변경/안전한 순증설 후보만 허용한다. 기존 serving 용량의 제거·축소나 에너지 목적 교체를 증설에 섞어 우회하지 않는다. 수용 한계에서는 허용된 증설 후보 사이에서도 기존 전체 충족→최종 충족→leximin→에너지 순서를 그대로 적용한다.
-- 느린 박자는 같은 Tick에서 해당 하강 안정화 조건이 열린 범위의 전체 후보를 추가하는 것이다. 후보를 허용한 뒤의 κ/대기/가중치/SLO·leximin·minimumGain·교체 회수 순서는 바꾸지 않는다. 후보에 축소/교체가 포함된 모든 Workload가 조건을 만족해야 하며 다른 Workload의 준비 완료나 하강을 기다리는 전역 장벽은 없다.
+- 빠른 박자는 별도 제어 루프가 아니라 매 Tick의 후보 제한이다. fast는 keep、분배 변경、안전한 순증설、물리 제거·정지 없이 κ가 증가하는 정책 변경(용량 회복)이다. 현재 Ready 집합의 중간 분배도 매 주기 계속한다. 수용 한계에서는 허용된 후보 사이에서도 기존 전체 충족→최종 충족→leximin→에너지 순서를 그대로 적용한다.
+- slow는 실물 제거·정지、에너지 절감만을 위한 교체(κ 비증가·joules 감소)、추가+제거 혼합 후보이며 하강 안정화가 필요하다. 분류가 겹치면 slow를 우선하여 증설에 제거를 섞어 우회하지 않는다. 느린 박자는 같은 Tick에서 하강 안정화 조건이 열린 범위의 전체 후보를 추가하는 것이다. 후보 허가 뒤 κ/대기/가중치/SLO·leximin·minimumGain·교체 회수 순서는 바꾸지 않는다. 축소/교체에 포함된 모든 Workload가 조건을 만족해야 하며 다른 Workload의 준비 완료나 하강을 기다리는 전역 장벽은 없다.
 - Workload UID별로 마지막 확장/선택 시 계획 수요를 하강 기준률로 기억한다. 현재 유효 수요 λ가 그 기준보다 작아진 첫 정상 관측의 decision `at`를 `downSince`로 둔다. 이후 λ가 직전 정상 판단보다 증가하거나 기준 이상으로 돌아오면 지속 하강을 끊고, 여전히 기준 미만인 증가는 그 시각부터 새 구간을 시작한다. 동일하거나 더 낮은 λ는 구간을 유지한다. 최초 관측·관측 공백·설정 변경·UID 교체·controller 재시작은 구간을 초기화하고 새 정상 관측부터 잰다. 하강 뒤 선택·확정된 구성에는 당시 λ를 새 기준으로 삼는다. 수요가 없어진 상태도 최소 수요 하한과 인스턴스 하나 유지 규칙을 지킨다.
 - `at − downSince ≥ scaleDownStabilizationNanos`일 때만 하강 허가다. 축소와 에너지 교체에 각각 timer를 두지 않는다. 아직 전체 관측 창이 차지 않았거나 `DemandIncreasing`이면 기존 보호 규칙도 함께 통과해야 한다. 유휴 제거·빈 노드 절전·배치/자원 축소·교체 회수 후처리 역시 이 허가를 거쳐, 탐색 뒤 우회 축소하지 않는다.
 - 실행 중 owner 예약과 frozen target은 박자와 무관하게 보존한다. 이미 허가된 DAG의 후속 drain/remove는 그 작업의 의무이며 매 Tick 새 축소로 취급하지 않는다. 중간 배분은 느린 판단을 기다리지 않고 기존 실제 Ready/ACK·stop 제외·원자적 UID별 route 계약으로 진행한다.
+- Workload UID가 없는 빈 노드의 새 Fixed 절전은 전체 수요 하강 상태로 허가한다. 전체 수요는 자동제어 Workload별 λ의 벡터로 유지하여 서로 다른 Workload의 증감을 합계로 상쇄하지 않는다. 어느 Workload도 증가하지 않고 하나 이상 기준보다 하강한 상태가 공통 안정화 기간 지속되어야 하며, UID 집합 변경·관측 공백·재시작은 초기화한다. 이미 실행 중인 Fixed 작업은 계속하고 새 절전만 gate한다. 탐색 후처리뿐 아니라 `EvaluateScheduler → schedulerCommonNodes → changeNodes`와 target 없는 `Keep.Actions` 실행에도 같은 허가를 적용한다.
+
+고정 H의 구현 연결점은 `scheduler_capacity.go:524-543`의 `p.period` 확장 규칙이다.
+이를 폐기하고 `p.period = settings.comparisonPeriodNanos`로 고정한다.
+후보 조합별로 `공통 route 시간 + 선택된 노드의 최장 post 사슬 시간 ≤ H`를 확인한다.
+개별 노드 사슬이 H 이하여도 조합에서 넘으면 `TransitionExceedsHorizon`으로 제외하며,
+정확히 H인 경계는 허용한다. keep 비용·교체 payback·minimumGain과
+`decision.capacity.periodNanos` 모두 같은 H를 사용한다. 코드 위치는 변경 전 탐색 앵커다.
 
 ### 전환 예비
 
@@ -376,10 +384,11 @@ H를 바꾸며 미선택 후보 때문에 자동 연장하지 않는다.
 ### 회귀와 구현 커밋 분할 제안
 
 1. **설정·기록 계약**: `scaleDownStabilizationNanos`, `transitionReserveFraction` 추가와 기존 `comparisonPeriodNanos` 의미 전환을 strict decode/검증·API·sample·binding·결정 기록에 함께 반영. 음수/0/양수 ns, 정수 overflow, f=0/1 및 범위 밖·NaN/Inf, H=0 거절과 설정 readback/Run 동결 회귀를 포함한다. alias나 병행 reader를 두지 않는다.
-2. **두 박자 후보 gate**: UID별 하강 상태와 fast/full 후보 분류를 기존 계획기에 연결. fake clock으로 경계 직전/정확히 경계, 순간 하강·재증가·관측 공백·restart·설정 변경, 여러 UID 독립성, 유휴 제거 우회 금지, 과부하 무한값 leximin과 증설 지속을 검증한다(AC-42).
-3. **예비·고정 H 에너지**: 구간별 실제 공급과 예약 중복 담보 검사, H 초과 명시적 제외, 모든 후보/keep의 공통 H를 반영. f=0 기존 SLO 보존, f>0 부족/충족·미준비 공급 제외·E5 예비 소비 포함(AC-43), 긴 미선택 후보 추가/삭제 시 공통 후보 비용·순위 불변(AC-44)을 검사한다.
-4. **통합 회귀/시연 설계**: 느린 jetsono power와 G/L/N 준비를 함께 둔 controller 시계 회귀에서 준비 직후 다음 주기 중간 배분·예약 밖 확장을 확인하고 owner target/ACK/drain 의무를 보존한다. 승인된 후속 캠페인에서는 동일 binding/H·부하로 300초 운영 설정과 별도 120초 시연을 구분하고 요청 SLO·축소 시각·전환 전체 POOL joules를 보고한다. 이번 단계에서는 테스트·클러스터 실행을 하지 않는다.
+2. **두 박자 후보 gate**: UID별 하강 상태와 fast/full 후보 분류를 기존 계획기에 연결. fake clock으로 경계 직전/정확히 경계, 순간 하강·재증가·관측 공백·restart·설정 변경, 여러 UID 독립성, 과부하 무한값 leximin과 증설 지속을 검증한다(AC-42). 수용 조건으로 κ 증가 정책 변경은 fast, κ 비증가·joules 감소 교체와 추가+제거 혼합은 slow인지 확인한다. 유휴 제거 후처리뿐 아니라 `schedulerCommonNodes`/`changeNodes` 및 target 없는 `Keep.Actions`의 새 Fixed 절전도 안정화 전에는 실행되지 않고, 기존 Fixed 실행은 계속되는지 검사한다.
+3. **예비·고정 H 에너지**: 구간별 실제 공급과 예약 중복 담보 검사, H 초과 명시적 제외, 모든 후보/keep의 공통 H를 반영. f=0 기존 SLO 보존, f>0 부족/충족·미준비 공급 제외·E5 예비 소비 포함(AC-43), 긴 미선택 후보 추가/삭제 시 공통 후보 비용·순위 불변(AC-44)을 검사한다. 수용 조건에 개별 사슬은 H 이하지만 조합의 route+최장 post가 H를 넘는 경우 제외, 정확히 H이면 허용, keep/payback/minimumGain/기록 H 일치를 포함한다.
+4. **통합 회귀/시연 설계**: 느린 jetsono power와 G/L/N 준비를 함께 둔 controller 시계 회귀에서 준비 직후 다음 주기 중간 배분·예약 밖 확장을 확인하고 owner target/ACK/drain 의무를 보존한다. 빈 출발에서는 SCH-54 κ 완료/상한 대기는 유지하되 하강 timer가 첫 증설을 막지 않고 Workload별 인스턴스 하나 유지 규칙도 보존하는 것을 수용 조건으로 둔다. 승인된 후속 캠페인에서는 동일 binding/H·부하로 300초 운영 설정과 별도 120초 시연을 구분하고 요청 SLO·축소 시각·전환 전체 POOL joules를 보고한다. 이번 단계에서는 테스트·클러스터 실행을 하지 않는다.
 
 ## 변경 이력
 
+- 2026-10-26: 리뷰 P2 반영 — fast/slow 판별식, 빈 노드 Fixed 절전의 전체 경로 gate, 조합별 H 경계와 후보 분류·절전 우회·빈 출발 회귀 수용 조건을 명시했다.
 - 2026-10-26: SCH-55~58/AC-42~44에 맞춰 두 박자 후보 gate, 예비·고정 H와 600초 제안 근거 및 후속 구현·회귀 경계를 설계했다. 코드 변경 없음.
