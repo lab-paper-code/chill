@@ -8,13 +8,14 @@ cd "${repo_root}"
 if [[ "${1:-}" == upgrade ]]; then
 	shift
 	exec python3 - "$@" <<'PY'
-import argparse, copy, datetime, difflib, fcntl, hashlib, json, os, pathlib, re, shlex, subprocess, sys, time
+import argparse, copy, datetime, difflib, fcntl, hashlib, json, os, pathlib, re, shlex, subprocess, sys, tempfile, time, urllib.parse
 
 p = argparse.ArgumentParser(description="Upgrade control images only; never reset the release or build runtime images.")
 p.add_argument("--source", required=True)
 p.add_argument("--control", required=True)
 p.add_argument("--images", default="auto")
 p.add_argument("--dry-run", action="store_true")
+p.add_argument("--self-check", action="store_true", help="Run local selection/deadline regression checks only")
 a = p.parse_args()
 if not re.fullmatch(r"[0-9]+", a.control):
     p.error("--control must contain digits")
@@ -29,16 +30,58 @@ base = pathlib.Path("/home/genesis1/.cache/chill-assets/ops/pools-deploy")
 out = base / "deployB" / ("control-" + a.control + "-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d"))
 helm = ["/usr/local/bin/helm", "--kubeconfig", "/home/genesis1/.kube/config", "--kube-context", "kubernetes-admin@kubernetes", "-n", "chill-system"]
 kube = ["/usr/bin/kubectl", "--kubeconfig", "/home/genesis1/.kube/config", "--context", "kubernetes-admin@kubernetes", "-n", "chill-system"]
+def build_inputs(src, role):
+    dockerfile = "build/docker/" + dockerfiles[role] + ".Dockerfile"
+    if role == "dashboard":
+        return {"dockerfile": dockerfile, "targets": [], "directories": ["chill-dashboard"], "files": [dockerfile]}
+    targets = re.findall(r"go build[^\n]* (\./cmd/[\w-]+)", (src / dockerfile).read_text())
+    if not targets:
+        raise RuntimeError("no Go build targets found in " + dockerfile)
+    env = dict(os.environ, CGO_ENABLED="0", GOOS="linux", GOARCH="amd64", GOWORK="off", GOFLAGS="", GOENV="off")
+    dirs = subprocess.check_output(["go", "list", "-mod=readonly", "-deps", "-f", "{{.Dir}}", *targets], cwd=src, env=env, text=True, timeout=120).splitlines()
+    local = sorted({str(pathlib.Path(d).relative_to(src)) for d in dirs if d.startswith(str(src) + os.sep)})
+    return {"dockerfile": dockerfile, "targets": targets, "directories": local, "files": [dockerfile, "go.mod", "go.sum"]}
+def affected(paths, inputs):
+    return [x for x in paths if x in inputs["files"] or (
+        (any(x.startswith(d + "/") for d in inputs["directories"]) if not inputs["targets"]
+         else str(pathlib.PurePosixPath(x).parent) in inputs["directories"] and not x.endswith("_test.go")))]
+def readiness_result(checks, application, remaining):
+    return remaining > 0 and all(checks.values()) and application.get("status") == 200 and application.get("exitCode") == 0
+if a.self_check:
+    server = {"files": ["go.mod", "go.sum", "build/docker/chill-server.Dockerfile"], "targets": ["./cmd/chill-server"], "directories": ["cmd/chill-server", "internal/serving"]}
+    profiler = {"files": ["go.mod", "go.sum", "build/docker/profiler.Dockerfile"], "targets": ["./cmd/profiler", "./cmd/transition-observer"], "directories": ["cmd/profiler", "cmd/transition-observer", "internal/profiling"]}
+    paths = ["internal/serving/reset.go", "internal/serving/reset_test.go", "cmd/console/main.go"]
+    assert affected(paths, server) == [paths[0]] and affected(paths, profiler) == []
+    assert affected(["cmd/transition-observer/main.go"], profiler)
+    assert not affected(["internal/serving/unrelated/other.go"], server)
+    assert affected(["go.mod"], server) and affected(["go.mod"], profiler)
+    assert affected(["chill-dashboard/app/page.tsx"], {"files": [], "targets": [], "directories": ["chill-dashboard"]})
+    assert not readiness_result({"server": True}, {"status": 0, "exitCode": 7}, 10)
+    assert not readiness_result({"server": True}, {"status": 503, "exitCode": 0}, 10)
+    assert not readiness_result({"server": True}, {"status": 200, "exitCode": 28}, 10)
+    assert not readiness_result({"server": True}, {"status": 200, "exitCode": 0}, 0)
+    assert not readiness_result({"profiler": False}, {"status": 200, "exitCode": 0}, 10)
+    assert readiness_result({"server": True}, {"status": 200, "exitCode": 0}, 10)
+    print("selection/deadline regression checks passed")
+    sys.exit(0)
 if a.dry_run:
     print("LOCAL PLAN ONLY: no cluster, registry, image build, lock or evidence mutation.")
     print("source:", sha, "\nevidence:", out)
+    with tempfile.TemporaryDirectory(prefix="chill-upgrade-plan-") as temp:
+        src = pathlib.Path(temp) / "source"
+        src.mkdir()
+        archive = pathlib.Path(temp) / "source.tar"
+        subprocess.run(["git", "archive", "--format=tar", "--output=" + str(archive), sha], check=True, timeout=120)
+        subprocess.run(["tar", "-xf", str(archive), "-C", str(src)], check=True, timeout=120)
+        print("build inputs:", json.dumps({r: build_inputs(src, r) for r in roles}, indent=2))
     print("git archive", sha, "→ clean source archive")
-    print("helm get values chill -o json → live-values.json; auto: resolve each live image source commit and git diff paths")
+    print("helm get values chill -o json → live-values.json; auto: compare live source diff with these per-image dependency directories; source-diff.json includes matching paths and inputs")
     print("allowed builds:", a.images, "; runtime builds: FORBIDDEN (7 runtime images)")
     print("flock /tmp/chill-heavy.lock; buildx chill-builder linux/amd64 → HTTP registry.insecure=true publication and HTTP digest verification")
     print("helm template old/new → render-diff + exact image-only object gate → kubectl apply --dry-run=server")
     print("helm upgrade --reset-values -f live-values.json -f overlay.json --wait --timeout 8m")
-    print("Ready + restartCount=0 + registry index/platform digest gate (480s total, bounded queries); readiness.json; deploy-log.md")
+    print("Pod Ready + restartCount=0 + registry index/platform digest gate AND authenticated GET /api/v1/scheduler/state HTTP 200 (480s total, all queries bounded by remaining deadline); readiness.json; deploy-log.md")
+    print("API: CHILL_EXPERIMENT_CONFIG d2.apiBase/caFile/tokenFile, verified TLS + Bearer, no redirects; profiler/dashboard: Pod Ready")
     sys.exit(0)
 import yaml
 lock = open("/tmp/chill-heavy.lock", "a")
@@ -77,6 +120,18 @@ def source(ref):
         raise RuntimeError("image source commit cannot be resolved: " + ref)
     return git("rev-parse", "--verify", match[1] + "^{commit}")
 try:
+    # Reuse CampaignOps' actual public API origin, CA and caller token contract.
+    environment = json.loads(pathlib.Path(os.environ["CHILL_EXPERIMENT_CONFIG"]).read_text())
+    api_config = environment["d2"]
+    origin = api_config["apiBase"].rstrip("/")
+    parsed = urllib.parse.urlsplit(origin)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+        raise RuntimeError("d2.apiBase must be an HTTPS origin without credentials")
+    ca_file = pathlib.Path(api_config["caFile"])
+    token_file = pathlib.Path(api_config["tokenFile"])
+    if not ca_file.is_file() or not token_file.is_file():
+        raise RuntimeError("CampaignOps CA/token file is missing")
+    api_url = origin + "/api/v1/scheduler/state"
     live = json.loads(run(helm + ["get", "values", "chill", "-o", "json"], "live-values.json"))
     run(helm + ["get", "hooks", "chill"], "live-hooks.yaml")
     run(helm + ["get", "manifest", "chill"], "live-manifest.yaml")
@@ -90,8 +145,8 @@ try:
     for role in roles:
         old = source(image(live, role))
         paths = git("diff", "--name-only", old, sha).splitlines()
-        prefixes = ("chill-dashboard/", "build/docker/dashboard.Dockerfile") if role == "dashboard" else ("cmd/", "internal/", "api/", "go.mod", "go.sum", "build/docker/" + dockerfiles[role] + ".Dockerfile")
-        changed[role] = {"from": old, "paths": [x for x in paths if x.startswith(prefixes)]}
+        inputs = build_inputs(src, role)
+        changed[role] = {"from": old, "buildInputs": inputs, "paths": affected(paths, inputs)}
     selected = [r for r in (roles if a.images == "auto" else selected) if changed[r]["paths"]]
     save("source-diff.json", changed)
     if not selected:
@@ -146,22 +201,42 @@ try:
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise RuntimeError("readiness/digest/restart gate timed out")
+            raise RuntimeError("readiness/digest/restart/application HTTP 200 gate timed out")
         pods = json.loads(run(kube + ["get", "pods", "-o", "json"], "pods.json", min(120, remaining)))
         checks = {}
         for role, exp in expected.items():
             containers = [(pod, status) for pod in pods["items"] if not pod["metadata"].get("deletionTimestamp") for status in pod.get("status", {}).get("containerStatuses", []) if status["image"] == exp["image"]]
-            checks[role] = bool(containers) and all(s.get("ready") and s.get("restartCount") == 0 and s.get("imageID", "").endswith((exp["digest"], exp["platformDigest"])) and all(c["status"] == "True" for c in pod.get("status", {}).get("conditions", []) if c["type"] == "Ready") for pod, s in containers)
+            checks[role] = bool(containers) and all(s.get("ready") and s.get("restartCount") == 0 and s.get("imageID", "").endswith((exp["digest"], exp["platformDigest"])) and any(c["type"] == "Ready" and c["status"] == "True" for c in pod.get("status", {}).get("conditions", [])) for pod, s in containers)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise RuntimeError("readiness/digest/restart gate timed out")
-        save("readiness.json", {"sourceSHA": sha, "checks": checks, "ready": all(checks.values()), "runtimeBuilds": 0})
+            raise RuntimeError("readiness/digest/restart/application HTTP 200 gate timed out")
+        application = {"method": "GET", "url": api_url, "status": 0, "attempted": False}
         if all(checks.values()):
+            token = token_file.read_text().strip()
+            if not token or any(c in token for c in '\r\n"\\'):
+                raise RuntimeError("invalid CampaignOps bearer token")
+            limit = min(10, remaining)
+            # Pass credentials on stdin, never argv or commands.log; curl enforces a total request deadline.
+            cmd = ["/usr/bin/curl", "--silent", "--show-error", "--max-time", str(limit), "--cacert", str(ca_file), "--config", "-", "--output", os.devnull, "--write-out", "%{http_code}", api_url]
+            log.write("+ " + shlex.join(cmd) + " [Bearer header via private stdin]\n")
+            try:
+                response = subprocess.run(cmd, input='header = "Authorization: Bearer ' + token + '"\n', text=True, capture_output=True, timeout=min(remaining, limit + 1))
+                application.update(attempted=True, status=int(response.stdout) if response.stdout.isdigit() else 0, exitCode=response.returncode, error=response.stderr)
+            except subprocess.TimeoutExpired:
+                application.update(attempted=True, error="request deadline exceeded")
+        remaining = deadline - time.monotonic()
+        ready = readiness_result(checks, application, remaining)
+        save("readiness.json", {"sourceSHA": sha, "checks": checks, "application": application, "ready": ready, "runtimeBuilds": 0})
+        with open(out / "application-readiness.jsonl", "a") as stream:
+            stream.write(json.dumps(application) + "\n")
+        if ready:
             break
+        if remaining <= 0:
+            raise RuntimeError("readiness/digest/restart/application HTTP 200 gate timed out")
         time.sleep(min(5, remaining))
     run(helm + ["get", "values", "chill", "-o", "json"], "post-values.json")
     with open(base / "deploy-log.md", "a") as stream:
-        stream.write("\n- control-" + a.control + " source " + sha + ": upgrade Ready/restarts0/digests verified; runtime builds0; evidence `" + str(out) + "`.\n")
+        stream.write("\n- control-" + a.control + " source " + sha + ": upgrade Pod Ready/restarts0/digests + authenticated scheduler state HTTP200 verified; runtime builds0; evidence `" + str(out) + "`.\n")
     print("READY:", out)
 except Exception as error:
     save("failure.json", {"error": str(error), "evidence": str(out)})
