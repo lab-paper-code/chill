@@ -306,3 +306,11 @@
 - E5-7은 15분 0.3R, 180초 인스턴스 강제 종료·360초 Node 하나 cordon+서빙 Pod 삭제·600초 uncordon 권고값이다. 운영 담당이 기존 kubectl만 사용하고 실패 시 복원한다. cordon은 실제 네트워크 단절이 아니며 배치 차단·서빙 소실 대리 실험으로 한정한다.
 - 제어요소 비교는 N=2(membership-off, replicas-off), full195+static170+비교70=435분(부대 시간 별도). U2 최소 Jetson 두 모드의 Accepted 근거 5종을 E5-5에 연결한다. 점진 감소·다른 모델 버스트·독립 반복·모든 제어요소 독립 기여는 미평가임을 공개한다.
 - 근거: [연속 진행 §5](../plans/2026-10-27-pre-e5-workflow.md#5-사용자-수정2026-10-26-203xz-대기-없이-연속-진행), [E5 계획](../plans/2026-10-26-e5-evaluation.md), [설계 §9](../design/serving/workload-pools.md#9-검증-계획), scheduler `SCH-AC-45`. spec 평가 7행은 이미 실패 격리·대체·복구를 요구하므로 변경하지 않는다. 최종 E5 숫자 승인은 별도 1회이며 실행 완료나 장애 실증을 뜻하지 않는다.
+
+## 2026-10-27 — U3 NVIDIA 클럭 단계·관측·권한 권고안
+
+- 결정: genesis 공통 지원 목록에 있는 GPU_1500(기준), GPU_1200(중간), GPU_900(낮음), min=max·mode 0만 구현한다. 기존 fixed는 드라이버 기본 정책 그대로 별도 유지한다. 코어 동적 전력 감소는 기대일 뿐 실측 절감량이 아니며 memory clock/power limit/runtime 7 digest는 변경하지 않는다.
+- 근거: SSH read-only에서 양쪽 driver 555.58.02, 지원 MHz·-lgc/-rgc 도움말·sudo 권한 확인. genesis2는 max2100MHz/default250W, genesis3는 max2175MHz/default300W라 기본 상태의 동등성은 가정하지 않는다(U4 통보).
+- 관측 한계: application clocks=N/A, locked-range getter 없음. graphics와 SM 현재 MHz가 모두 정확한 요청값일 때만 기존 settling 후 성공으로 본다. 이는 잠금 레지스터 증명이 아니다. 실패하면 이전 선언 모드 복원·재조회 또는 -rgc 기본 정책 cleanup; reset 종료만으로 unlocked 검증 성공을 주장하지 않는다. 재시작은 조회만, 재부팅 뒤 기본 정책/새 bootID는 새 요청 전까지 재적용하지 않는다.
+- 배포: Jetson과 분리한 NVIDIA operand, root+SYS_ADMIN·RuntimeClass nvidia/utility·read-only 호스트 도구/라이브러리, hostPID/privileged/SYS_BOOT 없음. 초기 genesis2 한 대. node-agent와 operator 이미지만 새로 빌드; runtime 7 아님.
+- 연결: [PA-NV-01–05](../spec/platform/SRS.md), [Plan 6 GPU clock](../design/profiling/plans/06-execution-support-expansion.md#gpu-clock). 실제 변경·배포·GPU_1500↔GPU_900 비용 CR(방향당 Accepted 5회)은 CampaignOps 직렬 소유. 이 항목은 클럭 변경이나 실증 완료를 뜻하지 않는다.

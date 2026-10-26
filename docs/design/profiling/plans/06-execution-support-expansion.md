@@ -328,11 +328,116 @@ other Node, mode, or runtime inherits that result.
 
 ### GPU clock
 
-- [ ] Probe apply/read-back feasibility before adding support.
-- [ ] Keep Jetson and discrete NVIDIA tooling, permissions, and read-back
-  contracts separate.
-- [ ] Add no composite actuator until an experiment proves NVPModel and clock
-  must be one combined knob.
+Contract: [PA-NV-01–05](../../../spec/platform/SRS.md), ADR 0015 and ADR 0020.
+ADR 0020 supersedes the archival per-Run/Lease protocol above: the Node's
+desired-mode label plus requested-at annotation is the durable request;
+returning to an earlier mode is a separate request.
+
+#### Read-only host inspection (2026-10-27)
+
+SSH probes ran only `hostname`, `id`, `nvidia-smi -q -d CLOCK,SUPPORTED_CLOCKS`,
+`nvidia-smi -q -x`, query/help, `stat`, and `sudo -n -l`; no mutation ran.
+
+| Host | GPU UUID | Driver | max graphics/SM | default / min / max power |
+|---|---|---|---|---|
+| genesis2 | GPU-7ba62428-ecac-9bd9-a546-40e2a748daed | 555.58.02 | 2100 MHz | 250 / 100 / 280 W |
+| genesis3 | GPU-24ddd1e2-68a6-ca12-34d6-448c2697f325 | 555.58.02 | 2175 MHz | 300 / 100 / 360 W |
+
+Both are single RTX 2080 Ti / Turing, max memory 7000 MHz. Both supported-clock
+lists include 1500, 1200, 900 MHz (15 MHz steps); idle graphics=SM=300 MHz.
+Application/default application clocks return N/A. `--help` exposes
+`-lgc min,max`, optional `-m 0|1`, and `-rgc`; host users have passwordless
+sudo, and `/dev/nvidia0`/`nvidiactl` are 0666. This proves tooling/permission
+availability, **not successful mutation**. RuntimeClass `nvidia` is installed.
+
+Recommended exact operating points: `GPU_1500` (reference), `GPU_1200`
+(middle), `GPU_900` (low). These common supported points are below both board
+maxima. Lowering core MHz is expected to reduce core dynamic power, but watts
+and energy/request remain unmeasured and require CUDA-load measurements.
+Memory clocks and power limits remain unchanged. Existing `fixed` means
+uncontrolled driver defaults, not 1500 MHz, and remains unactuated.
+Different board power ceilings mean U4 profile sharing still requires
+confirmation; UUID and measured board envelope remain Node-specific.
+
+#### Implementation and deployment boundary
+
+`internal/nodeactuator/nvidia` uses the existing Observe/Apply port: bounded
+argv (no shell), exactly one GPU, declared exact MHz/default algorithm,
+`-i 0 -lgc MHz,MHz`, independent graphics+SM query, then a separate controller
+read before settling. Current graphics=SM is the limited read-back contract;
+`clocks.max.sm` is a board ceiling, **not the lock**. No intent/cached command
+value is an observation. Driver 555.58.02 has no locked-range getter.
+
+Apply failure/read-back mismatch restores a previously observed declared
+point and verifies it, or uses `-rgc` when the previous point is undeclared.
+Cleanup has a fresh bounded context even after timeout/cancellation; cleanup
+errors remain joined to the original failure. Cleanup never publishes success.
+Default reset cannot prove an unlocked policy with this driver: retain raw
+operating clocks and the limitation. Agent restart only observes; reboot loses
+the non-persistent lock, changes bootID/actual clocks, and does not reapply old
+intent. No host startup/systemd hook is installed.
+
+The Operator creates `chill-node-agent-actuation-nvidia` separately from the
+unchanged Jetson operand. Initial operating values restrict it to `genesis2`;
+expansion is an explicit installation change after proof. Both operands
+participate in stop/finalization and aggregate readiness. NVIDIA uses root,
+`SYS_ADMIN` only, no escalation, no hostPID, read-only rootfs, RuntimeClass
+`nvidia`, `NVIDIA_VISIBLE_DEVICES=all`, driver capability `utility`, and no GPU
+resource request (so the measurement can allocate the GPU). The runtime grants
+device/cgroup access. Host mounts are read-only binary, x86 loader and
+driver/runtime libraries; no Jetson sysfs/state/systemd mounts. Runtime denial
+is failure, not permission to use privileged mode.
+
+Rebuild/publish **chill-node-agent** (`build/docker/node-agent.Dockerfile`,
+amd64+arm64) and **chill-operator**. No profiler or firstfloor/runtime-7 rebuild
+is required; preserve runtime 7's digest. Checked-in image tags stay unchanged
+until CampaignOps deploys reviewed immutable references. Mode declarations do
+not themselves establish live support or measurement evidence.
+
+#### CampaignOps-only live proof
+
+1. Wait until ongoing measurements release genesis2. Snapshot current Helm
+   values, Node JSON/bootID, DeviceClass, Pods, UUID and query output in
+   `O/u3-nvidia/`. Confirm no co-tenant GPU workload. Retain
+   `nvidia-smi -q -d CLOCK,SUPPORTED_CLOCKS` and
+   `--query-gpu=uuid,clocks.current.graphics,clocks.current.sm,clocks.max.sm,clocks.applications.graphics,power.limit --format=csv`.
+2. Build/publish the two reviewed images and record digests. Deploy the existing
+   release using its **current complete retained values**, adding the NVIDIA
+   catalog/config/policies from `charts/chill/values-operating.yaml` and changing
+   only nodeAgent/operator image references. Do not overwrite unrelated live
+   values with that historical snapshot. Inspect render: Jetson unchanged,
+   NVIDIA affinity genesis2 only, SYS_ADMIN without SYS_BOOT, RuntimeClass
+   nvidia. Wait for both operands and ChillSystem readiness; retain agent logs.
+3. Submit **one atomic Node metadata patch** for `GPU_1500`: desired label
+   `chill.dacs.io/power-mode` and fresh UTC RFC3339Nano annotation
+   `chill.dacs.io/power-mode-requested-at`. Example (replace timestamp):
+   `kubectl patch node genesis2 --type=merge -p '{"metadata":{"labels":{"chill.dacs.io/power-mode":"GPU_1500"},"annotations":{"chill.dacs.io/power-mode-requested-at":"<fresh UTC timestamp>"}}}'`.
+   Require state `success`, host graphics=SM=1500, verifiedAt/readyAt, stable
+   bootID and no failure. Retain Node JSON and host query. Repeat `GPU_900`,
+   then **fresh** `GPU_1500` and verify restoration. Stop on any failure.
+4. Keep the real native CUDA serving process on genesis2 with its existing
+   Service/model artifact/runtime-7 digest. Submit
+   `config/samples/profiling/edge_v1alpha1_powermodetransitioncost_nvidia.yaml`,
+   replacing servingService with that process's actual Service. One CR measures
+   `GPU_1500 ↔ GPU_900`: acceptedCountTarget=5, attemptLimit=8 means five Accepted
+   trials **per direction**, not a shell-command-duration sample. Preserve
+   coverage/boundary policy. Retain CR/directions, observer Jobs/raw evidence,
+   measured seconds/joules. Never force Complete or allow missing witnesses.
+5. Once the CR is terminal, request/verify `GPU_1500` again. To recover the
+   original driver-default policy, atomically remove desired label and
+   requested-at (agent then only observes), run the CampaignOps-only host
+   `sudo nvidia-smi -i 0 -rgc` once, and retain command result, query and Node
+   JSON. Record **default-policy cleanup, not exact lock-register proof**.
+   Do not label it successful GPU_1500 or reuse locked-mode profiles afterward.
+   Compare original power limit/UUID/bootID; no unrelated setting may change.
+6. Restart only the NVIDIA Pod while holding a clock mode: the new process must
+   query, not apply. Reboot is separately disruptive: only CampaignOps in an
+   idle window may test new bootID/default clocks and stale-state rejection,
+   then submit a fresh desired request. Never reboot during measurements.
+
+The live gate remains open until CampaignOps records deployment digests,
+apply/read-back/return evidence and Accepted direction costs. Local tests and
+read-only inspection do not close it.
 
 ## Remaining vertical slices
 
@@ -426,7 +531,10 @@ Entry condition: P4 reaches L3.
 
 ### P6: RTX server execution paths
 
-Entry condition: Node-wide GPU clock transition ownership is proven.
+Entry condition: fixed-mode paths retain their existing support. Each new
+GPU-clock CUDA row additionally requires the GPU-clock live gate above,
+per-mode active/idle/d/preparation/removal evidence and Accepted pair costs
+before planner admission.
 
 - Keep ORT CPU, ORT CUDA, and ORT TensorRT as separate paths with exact GPU,
   device-plugin, runtime, wall-source, and contamination-observer facts.
