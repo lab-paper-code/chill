@@ -67,7 +67,8 @@ type SchedulerCapacity struct {
 	Plans     []SchedulerNodePlan         `json:"plans"`
 	// GainUncertaintyJoules is the selected-evidence conditional B threshold.
 	// It excludes profile statistical uncertainty and leaves nominal energy unchanged.
-	GainUncertaintyJoules float64 `json:"gainUncertaintyJoules,omitempty"`
+	GainUncertaintyJoules float64                      `json:"gainUncertaintyJoules,omitempty"`
+	TransitionReserves    []SchedulerTransitionReserve `json:"transitionReserves,omitempty"`
 }
 
 // SchedulerPlanSearch is the scope of one plan search: the most Nodes one step
@@ -75,10 +76,11 @@ type SchedulerCapacity struct {
 // evaluated, its time, and whether the time budget (half the control
 // interval) ended it before its last step.
 type SchedulerPlanSearch struct {
-	Neighborhood int           `json:"neighborhood"`
-	Evaluated    int           `json:"evaluated"`
-	Duration     time.Duration `json:"durationNanos"`
-	BudgetCut    bool          `json:"budgetCut,omitempty"`
+	Neighborhood int            `json:"neighborhood"`
+	Evaluated    int            `json:"evaluated"`
+	Duration     time.Duration  `json:"durationNanos"`
+	BudgetCut    bool           `json:"budgetCut,omitempty"`
+	Excluded     map[string]int `json:"excluded,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -534,7 +536,7 @@ func (p *capacityPlanner) build() error {
 	common := p.keep.Nodes
 	p.plans = make([][]*capacityPlan, len(p.snapshot.Nodes))
 	p.compared = make([]bool, len(p.snapshot.Nodes))
-	pre, post := 0.0, 0.0
+	p.period = p.settings.ComparisonPeriod.Seconds()
 	for n := range p.snapshot.Nodes {
 		if err := p.ctx.Err(); err != nil {
 			return err
@@ -542,13 +544,15 @@ func (p *capacityPlanner) build() error {
 		p.plans[n] = p.nodePlans(n, common)
 		for _, plan := range p.plans[n][1:] {
 			if plan.record.Eligible {
+				if plan.preMax+plan.postMax > p.period {
+					plan.record.Eligible, plan.record.Reason = false, schedulerTransitionHorizon
+					continue
+				}
 				p.compared[n] = true
-				pre, post = max(pre, plan.preMax), max(post, plan.postMax)
 			}
 		}
 		p.examined += len(p.plans[n])
 	}
-	p.period = max(p.settings.ComparisonPeriod.Seconds(), pre+post)
 	return nil
 }
 
@@ -1282,6 +1286,8 @@ type capacityResult struct {
 	// within the measurement uncertainty (minimumGain).
 	withinUncertainty bool
 	gainUncertainty   float64
+	exclusion         string
+	reserves          []SchedulerTransitionReserve
 }
 
 // evaluate judges the plan set (one plan index per Node) at route r and sums
@@ -1382,6 +1388,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		res.rows = append(res.rows, rows)
 		res.sums = append(res.sums, [2]float64{knew, kret})
 	}
+	res.exclusion, res.reserves = p.transitionConstraints(choice, r)
 	slices.SortFunc(res.excesses, func(a, b float64) int { return cmp.Compare(b, a) })
 	res.key = strings.Join(keys, "|")
 	return res
@@ -1597,6 +1604,10 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 	}
 	workers := p.settings.PlanSearchWorkers
 	bests, counts := make([]*capacityResult, workers), make([]int, workers)
+	excluded := make([]map[string]int, workers)
+	for w := range excluded {
+		excluded[w] = map[string]int{}
+	}
 	var next atomic.Int64
 	var cut atomic.Bool
 	var wg sync.WaitGroup
@@ -1617,6 +1628,9 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 				if p.bounded(c) {
 					counts[w]++
 					res := p.evaluate(slices.Clone(c), p.routeOf(c))
+					if res.exclusion != "" {
+						excluded[w][res.exclusion]++
+					}
 					if p.admits(&res) && res.better(bests[w]) {
 						bests[w] = &res
 					}
@@ -1636,6 +1650,14 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 	if err := p.ctx.Err(); err != nil {
 		return nil, err
 	}
+	if p.searched.Excluded == nil {
+		p.searched.Excluded = map[string]int{}
+	}
+	for _, counts := range excluded {
+		for reason, count := range counts {
+			p.searched.Excluded[reason] += count
+		}
+	}
 	var best *capacityResult
 	for w, res := range bests {
 		p.searched.Evaluated += counts[w]
@@ -1650,7 +1672,7 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 // admits reports whether a scored plan set may be chosen: every new instance
 // routed, and every protected serving instance still routed.
 func (p *capacityPlanner) admits(res *capacityResult) bool {
-	return !res.unroutedPrepare && !res.unroutes
+	return res.exclusion == "" && !res.unroutedPrepare && !res.unroutes
 }
 
 // decide turns the chosen plan set into the decision: keep, a route-only
@@ -1671,6 +1693,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	search := p.searched
 	record := &SchedulerCapacity{Period: time.Duration(p.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search, GainUncertaintyJoules: best.gainUncertainty}
+	record.TransitionReserves = best.reserves
 	for _, plans := range p.plans {
 		for _, plan := range plans {
 			record.Plans = append(record.Plans, plan.record)
@@ -1700,6 +1723,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 		}
 	}
 	removed := false
+	idleRemoved := map[string]bool{}
 	for n, j := range best.choice {
 		plan := p.plans[n][j]
 		if !plan.keep {
@@ -1707,6 +1731,15 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 		}
 		for _, i := range plan.instances {
 			if p.idleRemovable(i, plan, best, target.Routing) {
+				idleRemoved[i.ID] = true
+				reason, reserves := p.idleTransition(best, idleRemoved)
+				record.TransitionReserves = append(record.TransitionReserves, reserves...)
+				if reason != "" {
+					delete(idleRemoved, i.ID)
+					target.Instances = append(target.Instances, i)
+					decision.Reasons = appendUnique(decision.Reasons, reason)
+					continue
+				}
 				decision.Reasons = append(decision.Reasons, schedulerIdleInstanceRemoved+":"+i.ID)
 				removed = true
 				continue

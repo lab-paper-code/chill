@@ -1327,9 +1327,8 @@ func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	}
 }
 
-// §9 6 기간과 기록: a 197 s chain with a 60 s horizon sets one T for keep and
-// every plan, and the plan pays its whole trial energy.
-func TestCapacityPeriodCoversTheLongestChain(t *testing.T) {
+// SCH-58: a long unselected chain cannot extend keep or any common candidate.
+func TestCapacityPeriodExcludesTheLongestChain(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ComparisonPeriod = time.Minute
 	reentry := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
@@ -1343,20 +1342,26 @@ func TestCapacityPeriodCoversTheLongestChain(t *testing.T) {
 	snap.Costs = []OperationCost{power, prepare}
 	rows := capacityRowsForTest(s, snap, nil)
 	d := capacityDecideForTest(t, s, snap, rows)
-	if (d.Capacity.Period - 197100*time.Millisecond).Abs() > time.Microsecond {
-		t.Fatalf("T %v, want 197.1 s", d.Capacity.Period)
+	if d.Capacity.Period != s.ComparisonPeriod {
+		t.Fatalf("H %v, want %v", d.Capacity.Period, s.ComparisonPeriod)
 	}
+	excluded := false
 	for _, plan := range d.Capacity.Plans {
-		if strings.Contains(plan.Reason, "Horizon") {
-			t.Fatalf("plan excluded by the horizon: %+v", plan)
+		if plan.Node == reentry && plan.Reason == "TransitionExceedsHorizon" {
+			excluded = true
+			if plan.Eligible {
+				t.Fatal("long transition eligible")
+			}
 		}
 	}
-	p := capacityPlannerForTest(t, s, snap, rows)
-	keep := p.evaluate(make([]int, len(p.plans)), 0)
-	plan := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"n3": option.Profile.ID + "/b1/w1"}), 197.1)
-	// The chain fills T: the plan costs its trial joules where keep idles at eco (6 W).
-	if want := 1968.96 + 600 - 6*197.1; math.Abs(plan.joules-keep.joules-want) > 1e-6 {
-		t.Fatalf("re-entry over keep %g J, want %g J", plan.joules-keep.joules, want)
+	if !excluded {
+		t.Fatal("missing explicit horizon exclusion")
+	}
+	without := snap
+	without.Options = slices.DeleteFunc(slices.Clone(snap.Options), func(o SchedulerOption) bool { return o.Instance.Node == reentry })
+	common := capacityDecideForTest(t, s, without, capacityRowsForTest(s, without, nil))
+	if common.Capacity.Period != d.Capacity.Period || *common.Keep.ExpectedJoules != *d.Keep.ExpectedJoules {
+		t.Fatalf("unselected long candidate changed common cost: %v/%v", common.Keep.ExpectedJoules, d.Keep.ExpectedJoules)
 	}
 }
 

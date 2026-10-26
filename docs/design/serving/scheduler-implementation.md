@@ -326,9 +326,9 @@ owner UID의 가중치로 만든다. route는 모든 인스턴스의 값을, sto
 ChillServer 재시작은 이 값을 다시 읽어 마지막 분배를 그대로 복구하므로 꺼진 Workload도 마지막
 구성을 유지한다. 서빙 source는 이 annotation이 있고 Workload를 하나 이하로 가리키는 Pod다.
 
-비교 기간은 판단마다 하나인 `T = max(comparisonPeriodNanos, 최장 route 전 사슬 + 최장 route 뒤 remove)`이고 keep과 모든 계획에
-같다. 사슬은 동작마다 측정 trial의 최대 시간으로 재므로 모든 계획 동작이 T 안에 끝나고, 비교는 동작 에너지 전체와
-전환 뒤 구성을 함께 담는다. 노드 계획의 [0, T] 노드 에너지는 `schedulerBaseline`의 적재 상태 전력과 원자 동작의
+비교 기간은 판단마다 하나인 `H = comparisonPeriodNanos`이고 keep과 모든 계획에 같다.
+각 사슬은 동작마다 측정 trial의 최대 시간으로 재며, 조합의 route + 최장 post가 H를 넘으면
+`TransitionExceedsHorizon`으로 제외한다(정확히 H는 허용). 노드 계획의 [0, H] 노드 에너지는 `schedulerBaseline`의 적재 상태 전력과 원자 동작의
 평균 wall joules로 계산한다. 원자 동작 구간의 wall joules는 그 구간의 baseline 소비를 **대체**하고,
 `target-baseline-delta` 비용은 차감한 전력에 시간을 곱해 더한 wall joules로 쓴다. 요청 에너지는 profile의 입력당
 incremental energy를 route 시각에서 나눠 더한다. 비교 집합(`search.comparedNodes`) 밖의 노드는 모든 계획에 같아
