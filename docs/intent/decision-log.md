@@ -322,3 +322,10 @@
 - 실행 권고: 신규 profile11조합→d 최대17조합→부족 loaded 비용14조합·빈 idle1모드·전환2쌍4방향 순으로 기존 BEO/DispatchOccupancyMeasurement/OperationCostMeasurement를 사용한다. 모델 제거 뒤 빈 Node 모드 전환 범위이며 loaded 직접 전환은 별도 근거 전까지 제외한다. 전역1건, CampaignOps만 변경한다.
 - 시간: [INFERENCE] 최소 잔여 약13.2–34.9시간(793–2091분), U1이 완료한 exact d는 차감하며 재시도·U3/U4 대기는 별도다. 중간/전체는 계획만 공개하고 E5를 전체안 완료까지 기다리게 하지 않는다. E5 숫자·κ/R는 최소 범위 근거 수용과 최종 SLO/m 재계산 뒤 사용자1회 승인 대상이다.
 - 연결: catalog `PC-01..03`, [커버리지 계획 §§2–5](../plans/2026-10-27-power-mode-coverage.md). 이 기록은 실측 완료·클러스터 변경·E5 시작 승인이 아니다.
+
+## 2026-10-27 — U5 native 결손 진단과 사전 원본 보존
+
+- 결정: 기존 `SCH-31·42`/측정의 native 누락=Insufficient를 유지하며 emitter marshal/4096-byte/stdout 실패에 requestID·phase를, observer parse/runtime/supplement 거절에 requestID·phase·정확한 physicalID를 기록한다. decode가 안 된 식별자는 빈 값이며 hostname 등으로 꾸미지 않는다. native 자체의 physicalID는 Pod/container 보존 manifest로 연결한다.
+- 보존: `hack/measure/capture-progress.py`를 다음 CR 생성 전에 read-only로 시작한다. load Job terminal 직후 자동 삭제되므로 그때 처음 logs를 열지 않고 미리 firstfloor follow를 저장하며, terminal/disappearance에서 timestamp 포함 snapshot을 시도한다. 삭제·회전·identity 확인 실패는 manifest에 남기고 완전 보존으로 표시하지 않는다. 원문 미회수 시 queued/running 추정이나 합격 완화 없이 Insufficient·재측정이다.
+- 배포 경계: observer는 서버 재빌드, emitter는 native 실행 파일 재빌드 대상이다. runtime 7 digest 동결을 깨지 않으며 이번 소스 수정이 현재 실행기에 배포됐다고 주장하지 않는다. 다음 측정의 원인 확정·3회 무재발도 아직 운영 근거가 아니다.
+- 연결: [관측 설계 §15](../design/serving/observability-split.md#15-u5-직접-native-진행-기록-결손-진단-sch-31-sch-42). `ProgressLoss27`·`ContinuityReplay27`의 D05/D10은 requests archive의 직접 phase 결손이며 정확한 소실 단계는 미확정이다.

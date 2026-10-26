@@ -915,6 +915,9 @@ func (o *Observer) scanLogs(id string, stream io.ReadCloser) error {
 		if err == nil {
 			err = o.runtime.ObserveBackend(id, progress)
 		}
+		if err != nil {
+			err = fmt.Errorf("native progress rejected requestID=%q phase=%q physicalID=%q: %w", progress.RequestID, progress.Phase, id, err)
+		}
 		o.issue("logs/"+id, err)
 	}
 	return errors.Join(scanner.Err(), stream.Close())

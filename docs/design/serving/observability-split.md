@@ -270,3 +270,36 @@ E1 soak(2 req/s, 1시간)과 부하 0 한 시간을 다시 돌린다.
 - 결정: Prometheus, native histogram, monitor, PromQL은 M1에서 뺀다(2장). crash 때 배정 전 요청의 행 손실을 받아들인다(3.2절). RestartDrain은 유지하고 배정 행이 요청당 약 300 B를 더한다(3.1절). 압축은 stdlib gzip이다(5장).
 - 로컬 보존(D2): 기본 2시간, 시연 24시간은 임시 운영 설정이다(`7ad977d1`). 과거 실험 조회는 근거 저장소를 투명하게 읽고, 실제 없는 기록만 관측 공백으로 보인다(`SCH-42`, 6.2절).
 - 질문 2: commit 1은 `maximumBoundaryDistance`를 1분 이하로 묶는다. testbed scheduler ConfigMap의 값이 이 안에 있는지 배포 전에 확인한다(이 문서는 클러스터를 읽지 않았다).
+
+## 15. U5: 직접 native 진행 기록 결손 진단 (`SCH-31`, `SCH-42`)
+
+명세의 관측 완전성과 `00_measurement.md`의 native 누락=Insufficient 규칙을 그대로 쓴다. 새 합격 조건·타임스탬프 추정·진행 재시도는 추가하지 않는다. `ProgressLoss27`·`ContinuityReplay27` 조사에서 D05(batch 92866)의 running, D10(batch 63056)의 queued 직접 stamp가 보존된 requests archive에도 없었다. 닫힌 요청은 supplement로 기록하고 finished 선도착도 다른 phase를 버리지 않으므로, 현재 근거로 생성·stdout/CRI 전달·follow/parse·지속화 중 한 단계를 확정할 수 없다.
+
+### 15.1 실패 진단
+
+- `internal/firstfloor/scheduler.go:emitProgress`는 marshal 오류, 4096-byte 한도 초과, stdout 쓰기 오류마다 `requestID`, `phase`, 오류(길이 초과는 실제 bytes/limit)를 남긴다. 정상 progress를 별도 로그로 복제하지 않는다.
+- `ParseProgress`는 거절하더라도 decode된 식별자를 진단용으로 반환한다. `Observer.scanLogs`는 parse 및 `ObserveBackend`의 runtime/context·late-supplement 실패를 기존 `native source issue`에 `requestID`, `phase`, 정확한 `physicalID=PodUID/containerID`와 함께 기록한다. 오류가 있는 반환값은 runtime으로 전달하지 않는다. 깨진 JSON 등 decode가 불가능한 경우 requestID/phase는 빈 문자열로 드러낸다.
+- native 실행기 자체에는 Pod UID/containerID 입력이 없으므로 물리 식별자를 hostname 등으로 꾸미지 않는다. native 오류는 아래 exact Pod/container 보존 manifest와 join하고, observer 오류에는 실물 식별자를 직접 남긴다. 현재 issue는 다음 정상 행에서 지워지므로 `/pools`의 빈 issue가 과거 오류 부재를 뜻하지 않는다. 반드시 서버 원문 로그를 보존한다.
+- 배포 경계: observer 진단은 ChillServer 재빌드 대상이다. emitter 진단은 firstfloor 실행 파일에 포함되므로 새 runtime 이미지가 필요하며, **현재 runtime 7 digest 동결을 깨서 배포하지 않는다**. 기존 runtime으로도 아래 read-only 원본 보존은 가능하다. 이 변경만으로 기존 D05/D10 소실 원인 확정이나 3회 무재발을 주장하지 않는다.
+
+### 15.2 원본 보존과 판정
+
+`occupancy.go`는 load Job의 Complete/Failed를 본 즉시 `deleteLoadJobs`를 호출한 뒤 drain·관측 집계·결과 보존으로 간다. 따라서 CR의 최종 Complete/Insufficient나 `pods-return.json`을 기다렸다가 `kubectl logs`를 시작하면 늦다. native Pod finalizer는 종료 증거용이지 stdout archive 보장용이 아니다.
+
+`hack/measure/capture-progress.py`를 **운영 담당이 다음 측정 CR 생성 전에** 시작한다. 기존 측정 조건·TTL·finalizer·정리 순서는 바꾸지 않는다. 시작부터 해당 Node의 firstfloor stdout을 `kubectl logs --timestamps --follow`로 외부 결과 디렉터리에 흘리고, exact CR UID의 hashed load Job/Pod도 보존한다. Job 종료 직후에는 해당 실물의 timestamp 포함 전체 로그 snapshot을 추가로 시도한다. 이미 빠르게 삭제됐다면 사전 follow를 보존하고 snapshot 실패/identity 불확실을 명시하며 완전 보존으로 표시하지 않는다. 실제 명령·산출물은 스크립트의 `--help`와 manifest를 따른다.
+
+```sh
+python3 hack/measure/capture-progress.py \
+  --node genesis3 --measurement genesis3-next-occ-plc-cpu \
+  --namespace chill-system --output-dir /tmp/genesis3-next-progress \
+  --capture-load --timeout 1800
+```
+
+`READY` 출력 뒤 운영 담당이 같은 이름의 CR을 생성한다. 기본 kubectl context/`KUBECONFIG`를 사용하며 필요한 경우 `--kubectl 'kubectl --context CONTEXT --kubeconfig /path/to/config'`로 명시한다. 산출물은 새 외부 디렉터리의 `manifest.json`과 실물별 `follow.log`, `follow.stderr`, 별도 `snapshot.log`다. follow/snapshot은 겹치는 원문이므로 서로 이어 붙여 사건을 이중 계산하지 않는다. 서버 로그는 기존 캠페인 수집 경로로 함께 보존한다.
+
+1. Pod JSON(UID, containerID, imageID, restartCount, Node), follow 원문/오류, 종료 직후 snapshot, 측정 CR·load Job 신원과 서버 로그를 같은 외부 run 디렉터리에 보존한다. 원문은 민감 운영 자료로 git/public index에 넣지 않는다.
+2. 누락 requestID/phase를 exact container 원문과 요청 archive에서 대조한다. 원문에 완전한 행이 있으면 emission 이후 수집·거절·지속화 구간으로 좁힌다. malformed/partial 행 또는 `write native progress`는 출력/framing 경계의 증거다. 서버 parse/context/supplement 오류와 동일 ID·phase·physicalID로 대조한다.
+3. 원문도 없으면 먼저 회전·삭제·follow 실패·보존 시작/끝 공백을 확인한다. `--previous`는 삭제된 Pod나 모든 회전 로그 복구가 아니다. 필요하면 운영 담당이 실제 kubelet/edged 설정과 해당 Node의 CRI 원문/회전 파일을 읽기 전용으로 회수한다. 파일 부재만으로 미출력을 단정하지 않는다.
+4. direct stamp가 확보된 경우만 원래 physical identity로 재생·재판정한다. queued/running을 legacy offset이나 QueueMS로 합성하지 않는다. 회수 불가면 Insufficient 유지·재측정이며 runtime의 닫힘/finished 처리나 occupancy 판정을 완화하지 않는다.
+
+검사: emitter 세 실패의 식별자 보존, parser의 거절 시 진단 식별자, observer issue의 세 키를 회귀 검사한다. 보존 스크립트의 offline self-check는 cluster를 변경하지 않는다. 실제 다음 측정의 보존·원인 확정·3회 무재발은 별도 운영 근거다.

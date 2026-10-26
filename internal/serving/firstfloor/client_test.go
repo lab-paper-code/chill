@@ -82,6 +82,19 @@ func TestProgressUsesDirectIdentityAndExplicitFinish(t *testing.T) {
 		t.Fatal("startup was parsed as native progress")
 	}
 }
+
+func TestRejectedProgressRetainsDiagnosticIdentity(t *testing.T) {
+	for _, raw := range []string{
+		`{"requestID":"rejected","phase":"running"}`,
+		`{"requestID":"rejected","phase":"running","unknown":true}`,
+		`{"requestID":"rejected","phase":"running","workloadUID":"uid","definition":"def","at":"2026-10-27T00:00:00Z","backendMS":2,"serviceMS":1}`,
+	} {
+		p, err := ParseProgress([]byte("CHILL_PROGRESS " + raw))
+		if err == nil || p.RequestID != "rejected" || p.Phase != "running" {
+			t.Fatalf("rejection lost its diagnostic identity: %+v / %v", p, err)
+		}
+	}
+}
 func TestDeferredProgressRemainsQueuedWithoutCompletion(t *testing.T) {
 	p := native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: "uid/1/model/1",
 		Phase: "deferred", At: time.Now().UTC(), QueueMS: 25, NativeElapsedMS: 25}

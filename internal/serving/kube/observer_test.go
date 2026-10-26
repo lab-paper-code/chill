@@ -590,6 +590,15 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	if err := observer.scanLogs(id, stream); err != nil {
 		t.Fatal(err)
 	}
+	issues := observer.Issues()
+	if len(issues) != 1 {
+		t.Fatalf("expected rejected progress diagnostic: %+v", issues)
+	}
+	for _, want := range []string{`requestID="request-1"`, `phase="fake"`, fmt.Sprintf("physicalID=%q", id)} {
+		if !strings.Contains(issues[0].Reason, want) {
+			t.Fatalf("rejection lost %s: %+v", want, issues)
+		}
+	}
 	result, err := manager.observationLog.Query(context.Background(), definition.UID, now.Add(-time.Second), now.Add(time.Second), nil, nil, 0, "")
 	if err != nil {
 		t.Fatal(err)

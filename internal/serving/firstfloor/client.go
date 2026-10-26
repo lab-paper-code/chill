@@ -267,6 +267,8 @@ func correlated(p *native.Progress, d *serving.Dispatch, profileID string) bool 
 
 var ErrNotProgress = errors.New("not a firstfloor progress record")
 
+// ParseProgress returns decoded identity on rejection for diagnostics only.
+// Callers must not observe the returned progress unless err is nil.
 func ParseProgress(line []byte) (serving.BackendProgress, error) {
 	marker := []byte("CHILL_PROGRESS ")
 	index := bytes.Index(line, marker)
@@ -275,13 +277,13 @@ func ParseProgress(line []byte) (serving.BackendProgress, error) {
 	}
 	var p native.Progress
 	if err := decode(line[index+len(marker):], &p); err != nil {
-		return serving.BackendProgress{}, err
+		return progress(p), err
 	}
 	if p.RequestID == "" || p.WorkloadUID == "" || p.Definition == "" || p.At.IsZero() || (p.Phase != "queued" && p.Phase != "deferred" && p.Phase != "running" && p.Phase != phaseFinished) || (p.Phase == phaseFinished && !p.ExecutionComplete) {
-		return serving.BackendProgress{}, errors.New("invalid actual firstfloor progress")
+		return progress(p), errors.New("invalid actual firstfloor progress")
 	}
 	if !validNativeSpans(p) {
-		return serving.BackendProgress{}, errors.New("native progress contains invalid actual monotonic spans")
+		return progress(p), errors.New("native progress contains invalid actual monotonic spans")
 	}
 	return progress(p), nil
 }

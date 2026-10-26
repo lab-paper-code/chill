@@ -158,13 +158,19 @@ var progressMu sync.Mutex
 
 func emitProgress(p Progress) {
 	b, e := json.Marshal(p)
-	if e == nil && len(b)+len("CHILL_PROGRESS ") <= MaxProgressBytes {
-		progressMu.Lock()
-		_, err := fmt.Fprintf(os.Stdout, "CHILL_PROGRESS %s\n", b)
-		progressMu.Unlock()
-		if err != nil {
-			slog.Warn("write native progress", "error", err)
-		}
+	if e != nil {
+		slog.Warn("marshal native progress", "requestID", p.RequestID, "phase", p.Phase, "error", e)
+		return
+	}
+	if size := len(b) + len("CHILL_PROGRESS "); size > MaxProgressBytes {
+		slog.Warn("native progress exceeds byte limit", "requestID", p.RequestID, "phase", p.Phase, "bytes", size, "limit", MaxProgressBytes)
+		return
+	}
+	progressMu.Lock()
+	_, err := fmt.Fprintf(os.Stdout, "CHILL_PROGRESS %s\n", b)
+	progressMu.Unlock()
+	if err != nil {
+		slog.Warn("write native progress", "requestID", p.RequestID, "phase", p.Phase, "error", err)
 	}
 }
 func milliseconds(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
