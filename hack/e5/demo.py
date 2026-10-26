@@ -12,6 +12,15 @@ ending early only when all three owned canonical workloads are Ready with positi
 routing. Omit it (or false) for unchanged fixed-duration stages. phase.json and
 summary.json retain readyGate.observedUTC (null on timeout), timedOut and the
 last missingWorkloadUIDs; ready-gate-state.json retains the actual observation.
+
+A stage may instead use "parts": [{"id": "high", "seconds": 180, "rates":
+{"mobilenet": 100, "smolvlm2": 0.3, "plc": 40}}, {"id": "low", "seconds":
+300, "rates": {"mobilenet": 20, "smolvlm2": 0.3, "plc": 40}}].
+Omit stage-level seconds/rates when using parts. Parts share one producer window,
+with no drain/collection/setup between rates; stage seconds is their sum and
+stage rates are their maxima (not averages). Multipart summary.json includes
+part-level success/p95 and observed placement/batch changes; summary.md shows
+part rows. Request attribution uses scheduled offsets, not completion times.
 """
 import argparse
 import copy
@@ -46,23 +55,45 @@ def schedule(config, e5):
     if not isinstance(config.get('stages'), list) or not config['stages']:
         raise ValueError('A nonempty stages list is required')
     for row in config['stages']:
-        label, seconds, rates = row['id'], row['seconds'], row['rates']
+        label = row['id']
         if not isinstance(label, str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9-]{0,39}', label) or any(s['id'].lower() == label.lower() for s in stages):
             raise ValueError('Unique short Kubernetes-safe stage IDs required')
-        if not e5.positive(seconds) or set(rates) != set(ALIASES):
-            raise ValueError('Positive seconds and mobilenet/smolvlm2/plc rates required')
-        if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in rates.values()):
-            raise ValueError('Rates must be finite nonnegative requests/second')
+        if 'parts' in row and ('seconds' in row or 'rates' in row):
+            raise ValueError('Use either stage seconds/rates or parts, not both')
+        inputs = row.get('parts', [row])
+        if not isinstance(inputs, list) or not inputs:
+            raise ValueError('A nonempty parts list is required')
+        parts = []
+        for part in inputs:
+            if not isinstance(part, dict):
+                raise ValueError('Each part must be an object')
+            part_id, seconds, rates = part.get('id'), part.get('seconds'), part.get('rates')
+            if not isinstance(part_id, str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9-]{0,39}', part_id) or any(p['id'].lower() == part_id.lower() for p in parts):
+                raise ValueError('Unique short Kubernetes-safe part IDs required within each stage')
+            if not e5.positive(seconds) or not isinstance(rates, dict) or set(rates) != set(ALIASES):
+                raise ValueError('Positive seconds and mobilenet/smolvlm2/plc rates required')
+            if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in rates.values()):
+                raise ValueError('Rates must be finite nonnegative requests/second')
+            if part is not row and ('readyGate' in part or 'parts' in part):
+                raise ValueError('readyGate and nested parts are not supported within parts')
+            parts.append({'id': part_id, 'seconds': seconds, 'rates': {ALIASES[k]: v for k, v in rates.items()}})
+        seconds = sum(p['seconds'] for p in parts)
+        rates = {name: max(p['rates'][name] for p in parts) for name in ALIASES.values()}
         if 'readyGate' in row and type(row['readyGate']) is not bool:
             raise ValueError('readyGate must be a boolean')
         if row.get('readyGate') and (stages or any(rates.values())):
             raise ValueError('readyGate is only supported on the first zero-load stage')
-        stage = {'id': label, 'seconds': seconds, 'rates': {ALIASES[k]: v for k, v in rates.items()}, 'traces': {}}
+        stage = {'id': label, 'seconds': seconds, 'rates': rates, 'traces': {}}
         if row.get('readyGate'):
             stage['readyGate'] = True
-        stage['parts'] = [{'id': label, 'seconds': seconds, 'rates': stage['rates']}]
-        for name, rate in stage['rates'].items():
-            offsets = cli.arrival_offsets_ns('poisson', rate, seconds, e5.SEEDS[name]) if rate else []
+        stage['parts'] = parts
+        for name in stage['rates']:
+            offsets, base = [], 0
+            for part in parts:
+                rate = part['rates'][name]
+                if rate:
+                    offsets.extend(base + x for x in cli.arrival_offsets_ns('poisson', rate, part['seconds'], e5.SEEDS[name]))
+                base += round(part['seconds'] * 1e9)
             stage['traces'][name] = {'seed': e5.SEEDS[name], 'offsetsNS': offsets, 'offered': len(offsets), 'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest()}
         stages.append(stage)
     if any(stages[0]['rates'].values()):
@@ -429,6 +460,16 @@ def summarize(e5, binding, out):
         summary['demoRequestDrain'] = phase.get('demoRequestDrain')
         if 'readyGate' in phase:
             summary['readyGate'] = phase['readyGate']
+        if len(stage['parts']) > 1:
+            summary['parts'] = []
+            base = 0
+            for part in stage['parts']:
+                stop = base + round(part['seconds'] * 1e9)
+                lo, hi = epoch(phase['startUTC']) + base / 1e9, epoch(phase['startUTC']) + stop / 1e9
+                observed = [c for c in changes if lo <= epoch(c['observedAtUTC']) < hi]
+                batch = [c for c in observed if c['kind'] == 'instances' and c['before'] is not None and c['after'] is not None and any(c['before'].get(k) != c['after'].get(k) for k in ('maxBatch', 'maxWaitNanos'))]
+                summary['parts'].append({'id': part['id'], 'seconds': part['seconds'], 'startOffsetNS': base, 'endOffsetNS': stop, 'windowEpoch': [lo, hi], 'placementChanges': observed, 'batchChanges': batch, 'changeAttribution': 'Observed UTC relative to earliest producer start; not causal attribution. Changes first observed after the offered window remain stage-only.', 'schedulerCapture': provenance, 'workloads': {}})
+                base = stop
         for w in binding['config']['workloads']:
             name = w['name']
             client_path = folder / (name + '-client.jsonl')
@@ -452,6 +493,15 @@ def summarize(e5, binding, out):
             metric.update(sloPercentile=measurement['percentile'], schedulerSLO=w['slo'], measurementSLO=measurement)
             summary['workloads'][name] = metric
             rows.append((summary, name, metric))
+            for part_summary, part in zip(summary.get('parts', []), stage['parts']):
+                lo, hi = part_summary['startOffsetNS'], part_summary['endOffsetNS']
+                selected = [r for r in clients if lo <= r['scheduledOffsetNs'] < hi]
+                successes = [r for r in selected if r.get('status') == 200 and not r.get('error')]
+                count = sum(lo <= offset < hi for offset in stage['traces'][name]['offsetsNS'])
+                part_summary['workloads'][name] = {'rate': part['rates'][name], 'offered': count, 'clientRows': len(selected), 'missingClientRows': max(0, count - len(selected)), 'httpSuccess': len(successes), 'successNumerator': len(successes), 'successDenominator': count, 'successFraction': len(successes) / count if count else None, 'latencyMS': analysis.stats([r['latencyMs'] for r in successes]), 'latencyScope': metric['latencyScope'], 'producerWindowEpoch': [epoch(start['at']) + lo / 1e9, epoch(start['at']) + hi / 1e9] if start else None}
+                bounds = part_summary['workloads'][name]['producerWindowEpoch']
+                part_summary['workloads'][name]['producerWindowUTC'] = [e5.dt.datetime.fromtimestamp(t, e5.dt.timezone.utc).isoformat() for t in bounds] if bounds else None
+                part_summary['workloads'][name]['windowMeaning'] = 'Frozen scheduled rate interval anchored to actual producer start; not an independently observed boundary event'
         e5.save(folder / 'summary.json', summary)
         stage_summaries.append(summary)
     scheduler_settings = binding.get('schedulerSettings')
@@ -468,6 +518,12 @@ def summarize(e5, binding, out):
         if not s.get('metricsAvailable', True):
             table.append('No completed offered window: ' + str(s.get('error', s['status'])))
             continue
+        if s.get('parts'):
+            table += ['Parts share one producer window; requests belong to their scheduled part. Batch/placement counts use observation time, not causal attribution; incomplete scheduler capture means counts are only observed changes.', '', '| Part | Workload | Rate/s | Success/offered | Success % | p95 ms | Placement changes | Batch changes |', '|---|---|---:|---|---:|---:|---:|---:|']
+            for part in s['parts']:
+                for name, metric in part['workloads'].items():
+                    table.append('| ' + ' | '.join(map(str, [part['id'], name, fmt(metric['rate']), f"{metric['httpSuccess']}/{metric['offered']}", fmt(None if metric['successFraction'] is None else metric['successFraction'] * 100), fmt(metric['latencyMS']['p95']), len(part['placementChanges']), len(part['batchChanges'])])) + ' |')
+            table.append('')
         table += ['| Observed UTC (previous observation) | Change | Before → after |', '|---|---|---|']
         for change in s['placementChanges']:
             detail = json.dumps(change['before'], ensure_ascii=False) + ' → ' + json.dumps(change['after'], ensure_ascii=False)
@@ -506,6 +562,8 @@ def publish(e5, binding, out, identifier, store_config):
         kpis['schedulerSettings'] = binding.get('schedulerSettings')
         if 'readyGate' in summary:
             kpis['readyGate'] = summary['readyGate']
+        if 'parts' in summary:
+            kpis['parts'] = summary['parts']
         kpis['missingReasons']['schedulerSettings'] = None if kpis['schedulerSettings'] is not None else 'Binding does not contain frozen scheduler settings'
         stage = next(row for row in binding['schedule'] if row['id'] == summary['stage'])
         stages.append({'id': summary['stage'], 'from': summary['startUTC'], 'to': summary['endUTC'], 'kpis': kpis, '_folder': stage_folder(out, stage)})
@@ -531,7 +589,29 @@ def self_check():
         template.write_text(json.dumps({'spec': {'template': {'spec': {'restartPolicy': 'Never', 'containers': [{'name': 'load', 'image': 'fixture@sha256:fixture'}]}}}}))
         workloads = [{'name': name, 'uid': name, 'generation': 1, 'slo': {'percentile': 95, 'targetLatencyNanos': 1000000000}, 'jobTemplate': str(template), 'producerEndpoint': 'https://fixture.invalid', 'producerTokenFile': '/fixture/token', 'producerCAFile': '/fixture/ca', 'producerDatasetDir': '/fixture/data', 'fields': ['input'], 'workers': 1, 'gatewayCapSeconds': 2, 'lifetimeSeconds': 1, 'deliverySeconds': .1, 'socketSeconds': 3} for name in ALIASES.values()]
         config = {'stages': [{'id': 'E0', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 0)}, {'id': 'A', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}, {'id': 'B', 'seconds': .001, 'rates': {'mobilenet': 20000, 'smolvlm2': 10000, 'plc': 10000}}, {'id': 'C', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}]}
+        config['stages'][-1] = {'id': 'C', 'parts': [{'id': 'high', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 20000)}, {'id': 'low', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}]}
         stages = schedule(config, e5)
+        from chill_loadgen import cli
+        assert stages[-1]['seconds'] == .002
+        for name in ALIASES.values():
+            expected = cli.arrival_offsets_ns('poisson', 20000, .001, e5.SEEDS[name])
+            expected += [1000000 + x for x in cli.arrival_offsets_ns('poisson', 10000, .001, e5.SEEDS[name])]
+            assert stages[-1]['traces'][name]['offsetsNS'] == expected
+            single = cli.arrival_offsets_ns('poisson', 10000, .001, e5.SEEDS[name])
+            assert stages[1]['traces'][name]['offsetsNS'] == single
+        for invalid in ([], [None], [dict(config['stages'][0], seconds=0)], [dict(config['stages'][0], rates={'mobilenet': 1})], [config['stages'][0], config['stages'][0]], [dict(config['stages'][0], readyGate=True)]):
+            try:
+                schedule({'stages': [{'id': 'bad', 'parts': invalid}]}, e5)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid parts accepted')
+        try:
+            schedule({'stages': [dict(config['stages'][0], parts=[config['stages'][0]])]}, e5)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Ambiguous stage accepted')
         cpo = object.__new__(e5.CPO)
         cpo.out = root / 'run'
         cpo.out.mkdir()
@@ -649,7 +729,15 @@ def self_check():
             if name == 'demo_raw':
                 def events(folder):
                     phase = e5.load(folder / 'phase.json')
-                    return [{'at': phase['endUTC'], 'action': {'kind': 'route', 'phase': 'complete', 'startedAt': phase['startUTC'], 'completedAt': phase['endUTC']}}], {'complete': True, 'errors': []}
+                    captured = [{'at': phase['endUTC'], 'action': {'kind': 'route', 'phase': 'complete', 'startedAt': phase['startUTC'], 'completedAt': phase['endUTC']}}]
+                    if folder.name == 'smoke-C':
+                        state = copy.deepcopy(e5.load(folder / 'pre-state.json')['snapshot'])
+                        at = (e5.dt.datetime.fromisoformat(phase['startUTC']) + e5.dt.timedelta(seconds=.001)).isoformat()
+                        state['at'] = at
+                        for instance in state['instances']:
+                            instance['maxBatch'] = 88
+                        captured.append({'at': at, 'snapshot': state})
+                    return captured, {'complete': True, 'errors': []}
                 return SimpleNamespace(scheduler_events=events)
             return original_module(name, path)
         e5.module = modules
@@ -663,6 +751,24 @@ def self_check():
                     run_stage(cpo, stage)
             summaries = summarize(e5, cpo.b, cpo.out)
         assert len(summaries) == 4
+        high, low = summaries[-1]['parts']
+        assert (high['id'], low['id']) == ('high', 'low')
+        assert high['endOffsetNS'] == low['startOffsetNS'] == 1000000
+        assert low['batchChanges'] and all(c['after']['maxBatch'] == 88 for c in low['batchChanges'])
+        for name in ALIASES.values():
+            total = summaries[-1]['workloads'][name]
+            assert sum(p['workloads'][name]['offered'] for p in (high, low)) == total['offered']
+            assert sum(p['workloads'][name]['httpSuccess'] for p in (high, low)) == total['httpSuccess']
+            assert high['workloads'][name]['successFraction'] < 1 and low['workloads'][name]['successFraction'] == 1
+            assert low['workloads'][name]['latencyMS']['p95'] == .001
+            assert high['workloads'][name]['producerWindowUTC'][1] == low['workloads'][name]['producerWindowUTC'][0]
+            import base64
+            import zlib
+            args = e5.load(cpo.out / 'smoke-C' / ('job-' + name + '.json'))['spec']['template']['spec']['containers'][0]['args']
+            policy = json.loads(zlib.decompress(base64.b64decode(args[0])))
+            assert policy['segments'] == [{'rate': 20000, 'seconds': .001}, {'rate': 10000, 'seconds': .001}]
+            assert policy['arrivalSHA256'] == stages[-1]['traces'][name]['arrivalSHA256']
+        assert '| low |' in (cpo.out / 'summary.md').read_text()
         # Exercise the optional gate through the real zero-load loop, including timeout.
         for gate_ready in (True, False):
             gated = schedule({'stages': [dict(config['stages'][0], seconds=1 if gate_ready else .01, readyGate=True)]}, e5)[0]
@@ -975,7 +1081,7 @@ def self_check():
         e5.save(historical_path, frozen_binding)
         historical = e5.summarize(historical_path, frozen_root)
         assert historical['schedulerSettings'] is None and any('frozen scheduler settings' in row['reason'] for row in historical['missing'])
-        print('PASS demo: campaign lifecycle, Ready gate early exit/timeout, optional lifetime, server reset evidence and failure stop; mocked API/kubectl only')
+        print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, optional lifetime, server reset evidence and failure stop; mocked API/kubectl only')
 
 
 def main():
