@@ -35,6 +35,8 @@ and records `jobCleanup: Pending`; deletion records `Done`. Retained active/idle
 evidence readers use that Run binding, so curve derivation and passport reads do
 not depend on the deleted Job. Older Runs without a binding still recover it
 from their recorded owned Job.
+The envtest restart regression checks that binding and `Done` survive native Job
+removal and that repeated completed reconciliation does not rewrite Run status.
 Failed Jobs are retained for diagnosis: their TTL is patched only after the
 final outcome is recorded, never at Job creation. The operator configuration
 and Helm value `profiler.failedJobRetentionSeconds` select this retention in

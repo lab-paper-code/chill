@@ -207,6 +207,10 @@ func TestRunReconcilerIsCompleteAfterFinalizationRestart(t *testing.T) {
 	finalizing.finalizer.err = nil
 	finalizing.finalizer.result = profilercontroller.FinalizedRunEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
+		Binding: &edgev1alpha1.ProfilingRunEvidenceStoreBinding{
+			Store: "chill-evidence-store", Endpoint: "http://evidence-store", Bucket: "chill",
+			Region: "us-east-1", CredentialsSecretName: "evidence-credentials",
+		},
 		Reference: evidencestore.ObjectIdentity{
 			Store: "chill-evidence-store", Key: "runs/durable-job-identity/execution.json",
 			Size: 1024,
@@ -218,6 +222,10 @@ func TestRunReconcilerIsCompleteAfterFinalizationRestart(t *testing.T) {
 	reconcile(t, ctx, finalizing.reconciler, request)
 	afterFinalization := getRun(t, ctx, kube, request.NamespacedName)
 	assertFinalizedEvidence(t, afterFinalization, finalizing.finalizer.result)
+	jobKey := client.ObjectKey{Namespace: run.Namespace, Name: recordedJob.Name}
+	if err := kube.Get(ctx, jobKey, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("finalized measurement Job still exists: %v", err)
+	}
 	if finalizing.finalizer.calls != 1 {
 		t.Fatalf("finalization calls: %d", finalizing.finalizer.calls)
 	}
@@ -617,6 +625,8 @@ func assertFinalizedEvidence(
 ) {
 	t.Helper()
 	if run.Status.Evidence == nil || run.Status.Evidence.Key != finalized.Reference.Key ||
+		run.Status.JobCleanup != "Done" || run.Status.EvidenceStore == nil ||
+		*run.Status.EvidenceStore != *finalized.Binding ||
 		run.Status.ObservedExecution == nil || run.Status.ObservedExecution.Pod != finalized.Pod ||
 		run.Status.ObservedExecution.Node != finalized.Node {
 		t.Fatalf("finalized evidence status is incomplete: %#v", run.Status)
