@@ -265,3 +265,7 @@
 - MNV p95 1s 유지; PLC/Smol은 p95안 비교(후보 PLC≈32ms, Smol≈7.03s; κ 재취득 후 확정). 공통 m=29ms 임시 유지(실측 residual p95 최대 15.46ms, p99 195ms 후보는 채택 안 함). L=MNV2s/PLC1s/Smol75s, delivery 10ms, socket L+20ms, cap 129s 유지. 정적 기준선=E5-3 끝 0.9R 실제 구성. 제어요소 N=2 후보(membership-off, replicas-off).
 - 완전 R 미확정(PLC κ>0 1/8, Smol 6/8, MNV 7/8 legacy)이므로 E5 전에 d 24 측정: PLC 11 → MNV GPU 5 → MNV CPU 8(옛 규칙 값 사용 중; 시간 부족 시 결과에 '옛 규칙' 명시). 시작 전 조건표·예상 시간·창 경계 수정(a74a595) 범위 보고, 묶음마다 preflight.
 - 근거: `O/intent/e5-numbers-20261027.md`, docs/plans/2026-10-26-e5-evaluation.md.
+
+## 2026-10-26 15:4xZ — d 24 측정 A안 승인
+
+- 기존 승인 조건, 전역 직렬 1개, 새 규칙. B(workers 변경) 하지 않음. 순서: 예산 수정(a74a595 후속) → 리뷰·검사 → ChillServer 배포 → 묶음① PLC 11 → 보고 → 묶음② MNV GPU 5 → 보고하고 멈춤; 묶음③ MNV CPU 8은 ②까지의 실제 소요·실패율 보고 후 결정(C안 유지). 묶음마다 preflight; 불충분이면 조건 확대 없이 중단·보고. 근거 `O/intent/d-campaign-proposal-20261027.md`.
