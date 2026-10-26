@@ -99,7 +99,8 @@ func TestNvidiaMatchingClockStillAppliesAndSettlesNewRequests(t *testing.T) {
 	if err := c.Update(context.Background(), current); err != nil {
 		t.Fatal(err)
 	}
-	reconcile() // A fresh same-mode request fences and applies again.
+	reconcile()    // A fresh same-mode request fences and applies again.
+	host.mhz = 300 // Drift after the 900 MHz fence, then restore in this pass.
 	reconcile()
 	if host.applies != 2 {
 		t.Fatalf("fresh matching-clock request applied %d times, want 2 total", host.applies)
@@ -108,6 +109,13 @@ func TestNvidiaMatchingClockStillAppliesAndSettlesNewRequests(t *testing.T) {
 	current = reconcile()
 	if current.Labels[metadata.PowerModeState] != metadata.PowerModeSuccess {
 		t.Fatalf("fresh request did not settle: %v", current.Labels)
+	}
+	settled, readsBack := metadata.HoldsPowerMode(current, "GPU_900", class.Spec.PowerModes[0].Actuator,
+		time.Minute, host.now)
+	generation, _, err := metadata.NodePowerModeGeneration(current)
+	if err != nil || !settled || !readsBack || generation != 2 {
+		t.Fatalf("restored mode lost cumulative read-back: settled=%v readsBack=%v generation=%d err=%v",
+			settled, readsBack, generation, err)
 	}
 	host.mhz = 300
 	const nextBoot = "gpu-boot-2"

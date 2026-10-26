@@ -376,6 +376,8 @@ and settles even when instantaneous MHz already matches; only an already
 successful request is left unchanged after restart. GPU-only modes preserve
 the Node's published CPU set for admission/planning (genesis2 `0-5`, genesis3
 `0-11`), rather than declaring one class-wide `onlineCPUs` mask.
+Pre/post-apply observations accumulate on one local Node snapshot before
+patching, so the final read-back and settling record share the final generation.
 
 Apply failure/read-back mismatch restores a previously observed declared
 point and verifies it, or uses `-rgc` when the previous point is undeclared.

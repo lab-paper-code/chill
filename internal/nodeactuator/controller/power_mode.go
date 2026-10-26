@@ -138,8 +138,8 @@ func (r *PowerModeReconciler) awaitBootRead(
 // change of either since the values on the Node, so a change by hand, a
 // reboot, and an apply all count once, and an agent restart counts none. A
 // failed host read keeps the read-back and counts a new boot only; that boot
-// clears the read-back, which no longer describes the host. It returns the
-// new generation.
+// clears the read-back, which no longer describes the host. The local Node is
+// updated with the staged patch so a later read in this pass counts from it.
 func publishReadBack(
 	node *corev1.Node,
 	observation nodeactuator.Observation,
@@ -174,6 +174,16 @@ func publishReadBack(
 	annotations[metadata.PowerModeGeneration] = &value
 	annotations[metadata.PowerActuator] = readBack
 	annotations[metadata.PowerModeBoot] = &boot
+	if node.Annotations == nil {
+		node.Annotations = make(map[string]string, 3)
+	}
+	node.Annotations[metadata.PowerModeGeneration] = value
+	node.Annotations[metadata.PowerModeBoot] = boot
+	if readBack == nil {
+		delete(node.Annotations, metadata.PowerActuator)
+	} else {
+		node.Annotations[metadata.PowerActuator] = *readBack
+	}
 	return generation, nil
 }
 
