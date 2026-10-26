@@ -79,8 +79,9 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 | κ/R·계산시간 | 요청서 §2·3: 새규칙d10/34·미인증24(현재소비legacy MNV CPU8+CUDA2 명시). 실제Built107행, 기록계산시간합1478.446초(병렬wall 아님). 알려진Node 부분합K MNV334.605496/PLC187.046050/Smol3.083102req/s; 완전R·최종SLO/m κ는미확정 |
 | 전환 witness | 요청서 §7: 실제 초기/확장/축소/물리교체의λ/q/κ_ret/κ_new/r/B/W 보존. 초기MNV W4.353초·확장5.490초로현SLO초과; 최종E5 혼합률·Workload간GPU소유권swap witness와구별 |
 | 에너지 선택 | 요청서 §7: minimumGain 고정%설정없음; 후보별signed상쇄B, gain>B/equality KEEP. 실제교체gain6398.966J/B441.823J, 축소857.547J/B18.151J; H600초/reserve0 유지 |
-| 교체·N·기타 threshold | 요청서 §8: 정적기준선은full E5-3끝0.9R 실제구성; N후보2(membership-off/replicas-off), 해당률효과확인전미확정. 기본stabilization300초(최근시연120초); 예시5%/2%/100ms 승인값아님 |
+| 교체·N·기타 threshold | 요청서 §8: 정적기준선은full E5-3끝0.9R 실제구성; N=2 권고 적용(membership-off/replicas-off), 해당률 효과 witness는 실행 전 보존하며 없으면 no-effect. 기본stabilization300초(최근시연120초); 예시5%/2%/100ms 승인값아님 |
 
 leximin 변경은 유한 초과량의 선택도 바꿀 수 있으므로 과거 최악값 하나 비교 결과와 섞지 않는다. 최종 실행 설정(두 박자 기본300초/시연120초, reserve비율0, 비교기간600초 포함)은 binding과 decision.settings에 고정한다.
+설정 예시의 source SHA·`measurementSLO`·request timing은 기존 도구 입력 형태를 보여주는 값이며 최종 E5 승인값이 아니다. 운영 담당은 최종 승인 숫자 묶음으로 이 필드들과 `capacityR`, 실제 digest/근거 binding을 함께 고정한다. 미확정 R은 예시에서 null로 두어 prepare가 거절하며 부분합이나 가상 R로 실행하지 않는다.
 
 원시 근거: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 `deployment2-e5-proposal-20261024.md` §9–10, `e5-numbers-proposal-20261025.md`, `north-star.md`, `d-measurement-decision.md`, `checkpoints.md` 1953–2001행. 원시 capacity·CSV·JSON·측정 캠페인은 옮기지 않았다.
