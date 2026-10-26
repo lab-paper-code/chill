@@ -27,7 +27,8 @@ func TestMeasuredReusePreparationKeepsTargetIdentity(t *testing.T) {
 		},
 	}
 	profile := measuredAdoptionProfile()
-	profile.ID, profile.NodeName, profile.Condition.NodeUID = "measurements/confirmation/uid/reuse", "genesis3", "target-uid"
+	profile.ID = "measurements/confirmation/uid/reuse"
+	profile.NodeName, profile.Condition.NodeUID = "genesis3", "target-uid"
 	profile.RuntimeMetadata.GPUUUID = "GPU-target"
 	profile.Reuse = &serving.ProfileReuseCheck{
 		SourceProfileID: "measurements/original/uid", ConfirmationProfileID: "measurements/confirmation/uid",
@@ -78,7 +79,9 @@ func TestProfileReuseRetainsAcceptedAndRejectedResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := &schedulerService{objects: objects, opts: options{storeName: "evidence", maxEvidenceBytes: 1 << 20}}
-	accepted := serving.ProfileReuseCheck{SourceProfileID: "ns/source/uid", ConfirmationProfileID: "ns/accepted/uid", Outcome: "Accepted"}
+	accepted := serving.ProfileReuseCheck{
+		SourceProfileID: "ns/source/uid", ConfirmationProfileID: "ns/accepted/uid", Outcome: "Accepted",
+	}
 	rejected := serving.ProfileReuseCheck{SourceProfileID: "ns/source/uid", ConfirmationProfileID: "ns/rejected/uid",
 		Outcome: "Rejected", Reason: "wall power difference"}
 	view := servingkube.CatalogView{Profiles: []serving.Profile{{ID: "target/reuse-hash", Reuse: &accepted}},
@@ -92,7 +95,8 @@ func TestProfileReuseRetainsAcceptedAndRejectedResults(t *testing.T) {
 			SchemaVersion string                    `json:"schemaVersion"`
 			Check         serving.ProfileReuseCheck `json:"check"`
 		}
-		if err := json.Unmarshal(item.body, &record); err != nil || record.SchemaVersion != "chill.dacs.io/profile-reuse-check.v1alpha1" ||
+		if err := json.Unmarshal(item.body, &record); err != nil ||
+			record.SchemaVersion != "chill.dacs.io/profile-reuse-check.v1alpha1" ||
 			record.Check.Outcome != view.ReuseChecks[index].Outcome || record.Check.Record != nil ||
 			view.ReuseChecks[index].Record == nil || item.path != "/bucket/"+view.ReuseChecks[index].Record.Key {
 			t.Fatalf("comparison result was not durably linked: %s %v", item.body, err)

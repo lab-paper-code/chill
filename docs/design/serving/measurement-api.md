@@ -494,6 +494,7 @@ CPU affinity는 기종이 같아도 임의 재배치하지 않고 동일 실측 
 | kube/runner.go runnerPreparation | 대상 UID·mode·model의 최신 준비 행 선택; source UID로 fallback 금지 |
 | kube/cost_power.go validatePowerNativeProfiles | 대상 UID·실제 UUID/image 검증 유지 |
 | kube/scheduler.go measuredGPUs, manual_reset/measurement_sequence | 대상 행 metadata만 inventory/측정 후보에 포함; source UUID 오염 금지 |
+| kube/opcost.go measurementProfile (operation cost·occupancy 공통) | BEO UID의 직접 profile ID 또는 `reuse.ConfirmationProfileID`가 같은 수락 행으로 해석하고, 실제 파생 profile ID로 preparation을 조회한다. 원본 BEO ID를 대상 측정의 alias로 사용하지 않는다 |
 | cost/d/idle 연결 | d와 prepare/remove/power 비용은 기존 대상 Node/profile ID별 별도 측정; source 비용 복제 금지 |
 
 ### 11.3 CampaignOps: genesis2→genesis3 한 건 실증 절차
@@ -535,4 +536,5 @@ CPU affinity는 기종이 같아도 임의 재배치하지 않고 동일 실측 
    짧은 확인을 독립 전체 측정 한 건 절감과 구분해 소요 시간을 보고한다.
 
 회귀는 허용 경계/설정 변경, 계열·image·자원 불일치, source 무효화/최신 선택,
-확인 배치/전력 결측과 대상 UUID 보존, source/target 독립성, planner option 연결을 검사한다.
+확인 배치/전력 결측과 대상 UUID 보존, source/target 독립성, planner option 연결,
+확인 BEO를 가리키는 operation cost·occupancy의 파생 행 해석과 실제 preparation 연결을 검사한다.

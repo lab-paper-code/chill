@@ -54,8 +54,13 @@ func measurementProfile(namespace, name, node string, in admissionInputs) (profi
 		return nil, refusedProfileMissing, name + " " + in.config.CatalogIssues[i].Code, false
 	}
 	id := source.String() + "/" + string(beo.UID)
-	i := slices.IndexFunc(in.profiles, func(p serving.Profile) bool { return p.ID == id })
-	if _, prepared := in.config.Preparations[id]; i < 0 || !prepared {
+	i := slices.IndexFunc(in.profiles, func(p serving.Profile) bool {
+		return p.ID == id || p.Reuse != nil && p.Reuse.Outcome == measurementAccepted && p.Reuse.ConfirmationProfileID == id
+	})
+	if i < 0 {
+		return nil, "", "", true
+	}
+	if _, prepared := in.config.Preparations[in.profiles[i].ID]; !prepared {
 		return nil, "", "", true
 	}
 	return &in.profiles[i], "", "", false

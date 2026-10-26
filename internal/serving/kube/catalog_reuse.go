@@ -17,6 +17,7 @@ import (
 )
 
 const profileReuseAnnotation = "chill.dacs.io/profile-reuse"
+const profileReuseRejected = "Rejected"
 
 type profileReuseRequest struct {
 	SourceProfileID           string  `json:"sourceProfileID"`
@@ -62,7 +63,7 @@ func applyProfileReuse(view CatalogView, requests map[string]string) (CatalogVie
 			ConfirmationIdleSeconds:    target.Condition.IdleProtocol.DurationSeconds,
 			ConfirmationTrialsPerBatch: target.TrialsPerBatch,
 			SourceIdleWatts:            source.IdleBaselineWatts, TargetIdleWatts: target.IdleBaselineWatts,
-			Outcome: "Rejected",
+			Outcome: profileReuseRejected,
 		}
 		switch {
 		case parseErr != nil:
@@ -73,12 +74,12 @@ func applyProfileReuse(view CatalogView, requests map[string]string) (CatalogVie
 			if err := compareReuseProfiles(source, target, &check); err != nil {
 				check.Reason = err.Error()
 			} else {
-				check.Outcome = "Accepted"
+				check.Outcome = measurementAccepted
 				view.Profiles = append(view.Profiles, reusedProfile(source, target, check))
 			}
 		}
 		view.ReuseChecks = append(view.ReuseChecks, check)
-		if check.Outcome != "Accepted" {
+		if check.Outcome != measurementAccepted {
 			namespace, nameUID, _ := strings.Cut(target.ID, "/")
 			name, _, _ := strings.Cut(nameUID, "/")
 			view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{

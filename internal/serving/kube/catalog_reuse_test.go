@@ -17,6 +17,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+const reuseTargetGPU = "GPU-target"
+
 func reuseProfilesFixture(t *testing.T) (serving.Profile, serving.Profile) {
 	t.Helper()
 	catalog, key, _, _ := catalogEvidenceFixture(t, 4096)
@@ -40,7 +42,7 @@ func reuseProfilesFixture(t *testing.T) (serving.Profile, serving.Profile) {
 	target.Condition.Name = "confirmation-plan"
 	target.Condition.MetricSource.NodeName, target.MetricSource.NodeName = target.NodeName, target.NodeName
 	target.Condition.MetricSource.Endpoint = "http://target-meter"
-	target.RuntimeMetadata.GPUUUID, target.Condition.RuntimeAccess.GPUUUID = "GPU-target", "GPU-target"
+	target.RuntimeMetadata.GPUUUID, target.Condition.RuntimeAccess.GPUUUID = reuseTargetGPU, reuseTargetGPU
 	target.RuntimeDelivery = json.RawMessage(`{"gpuUUID":"GPU-target"}`)
 	target.MeasuredAt = target.MeasuredAt.Add(time.Minute)
 	return source, target
@@ -70,13 +72,13 @@ func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing
 	}
 	target.IdleBaselineWatts *= 1.04
 	view := reuseView(t, source, target, .05)
-	if len(view.Profiles) != 2 || len(view.ReuseChecks) != 1 || view.ReuseChecks[0].Outcome != "Accepted" || len(view.Insufficiencies) != 0 {
+	if len(view.Profiles) != 2 || len(view.ReuseChecks) != 1 || view.ReuseChecks[0].Outcome != measurementAccepted || len(view.Insufficiencies) != 0 {
 		t.Fatalf("equivalent confirmation rejected: %+v", view)
 	}
 	profile := view.Profiles[1]
 	if !strings.HasPrefix(profile.ID, target.ID+"/reuse-") || profile.Condition.NodeUID != target.Condition.NodeUID ||
-		profile.NodeName != target.NodeName || profile.RuntimeMetadata.GPUUUID != "GPU-target" ||
-		profile.Condition.RuntimeAccess.GPUUUID != "GPU-target" || string(profile.RuntimeDelivery) != string(target.RuntimeDelivery) ||
+		profile.NodeName != target.NodeName || profile.RuntimeMetadata.GPUUUID != reuseTargetGPU ||
+		profile.Condition.RuntimeAccess.GPUUUID != reuseTargetGPU || string(profile.RuntimeDelivery) != string(target.RuntimeDelivery) ||
 		!reflect.DeepEqual(profile.MetricSource, target.MetricSource) || profile.IdleBaselineWatts != target.IdleBaselineWatts ||
 		!reflect.DeepEqual(profile.Batches[0].DurationNanos, source.Batches[0].DurationNanos) ||
 		profile.Batches[0].EnergyPerInputJoules != source.Batches[0].EnergyPerInputJoules ||
@@ -87,7 +89,7 @@ func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing
 	profile.Batches[0].DurationNanos[0] = -1
 	profile.RuntimeMetadata.GPUUUID = "mutated"
 	profile.Reuse.Batches[0].ServiceRelativeDifference = 9
-	if source.Batches[0].DurationNanos[0] <= 0 || target.RuntimeMetadata.GPUUUID != "GPU-target" || view.ReuseChecks[0].Batches[0].ServiceRelativeDifference > .05 {
+	if source.Batches[0].DurationNanos[0] <= 0 || target.RuntimeMetadata.GPUUUID != reuseTargetGPU || view.ReuseChecks[0].Batches[0].ServiceRelativeDifference > .05 {
 		t.Fatal("mutable reused view aliases original or confirmation check")
 	}
 }
@@ -129,7 +131,7 @@ func TestProfileReuseRejectsUnconfirmedConditionsAndDifferences(t *testing.T) {
 			test.mutate(&source, &target)
 			view := reuseView(t, source, target, .05)
 			if len(view.Profiles) != 1 || view.Profiles[0].ID != source.ID || len(view.ReuseChecks) != 1 ||
-				view.ReuseChecks[0].Outcome != "Rejected" || len(view.Insufficiencies) != 1 ||
+				view.ReuseChecks[0].Outcome != profileReuseRejected || len(view.Insufficiencies) != 1 ||
 				!strings.Contains(view.Insufficiencies[0].Reason, "independent target measurement required") {
 				t.Fatalf("failed confirmation became independent/reused row: %+v", view)
 			}
@@ -152,10 +154,10 @@ func TestProfileReuseToleranceIsConfiguredAndInclusive(t *testing.T) {
 	}
 	source, target := reuseProfilesFixture(t)
 	source.IdleBaselineWatts, target.IdleBaselineWatts = 100, 105
-	if view := reuseView(t, source, target, .05); view.ReuseChecks[0].Outcome != "Accepted" {
+	if view := reuseView(t, source, target, .05); view.ReuseChecks[0].Outcome != measurementAccepted {
 		t.Fatalf("inclusive configured boundary rejected: %+v", view.ReuseChecks)
 	}
-	if view := reuseView(t, source, target, .03); view.ReuseChecks[0].Outcome != "Rejected" {
+	if view := reuseView(t, source, target, .03); view.ReuseChecks[0].Outcome != profileReuseRejected {
 		t.Fatalf("tighter configured threshold ignored: %+v", view.ReuseChecks)
 	}
 	for _, value := range []float64{0, -1, math.NaN(), math.Inf(1)} {
@@ -180,7 +182,7 @@ func TestProfileReuseRequiresCurrentDirectSource(t *testing.T) {
 	newer.MeasuredAt = source.MeasuredAt.Add(time.Hour)
 	for _, profiles := range [][]serving.Profile{{target}, {source, newer, target}} {
 		view, err := applyProfileReuse(CatalogView{Profiles: profiles}, map[string]string{target.ID: request})
-		if err != nil || len(view.ReuseChecks) != 1 || view.ReuseChecks[0].Outcome != "Rejected" {
+		if err != nil || len(view.ReuseChecks) != 1 || view.ReuseChecks[0].Outcome != profileReuseRejected {
 			t.Fatalf("missing/superseded source accepted: %+v %v", view, err)
 		}
 	}
@@ -201,7 +203,7 @@ func TestCatalogRefreshReadsReuseAnnotationWithoutIndependentFallback(t *testing
 		t.Fatal(err)
 	}
 	view, err := catalog.Refresh(context.Background(), []string{key.Namespace})
-	if err != nil || len(view.Profiles) != 0 || len(view.ReuseChecks) != 1 || view.ReuseChecks[0].Outcome != "Rejected" {
+	if err != nil || len(view.Profiles) != 0 || len(view.ReuseChecks) != 1 || view.ReuseChecks[0].Outcome != profileReuseRejected {
 		t.Fatalf("annotation bypassed catalog reuse boundary: %+v %v", view, err)
 	}
 }
@@ -248,7 +250,7 @@ func TestProfileReuseConnectsTargetPlannerOptionAndGPUInventory(t *testing.T) {
 		snapshot.Options[0].Instance.Node.UID != target.Condition.NodeUID || len(snapshot.Options[0].CompatibleUIDs) != 1 {
 		t.Fatalf("accepted target row did not reach planner: %+v %v", snapshot.Options, err)
 	}
-	if gpus := measuredGPUs(view.Profiles, target.Condition.NodeUID); !reflect.DeepEqual(gpus, []string{"GPU-target"}) {
+	if gpus := measuredGPUs(view.Profiles, target.Condition.NodeUID); !reflect.DeepEqual(gpus, []string{reuseTargetGPU}) {
 		t.Fatalf("source GPU polluted target inventory: %v", gpus)
 	}
 }
@@ -262,5 +264,50 @@ func TestProfileReuseIdentityPinsSourceAndPolicy(t *testing.T) {
 	repeated := reuseView(t, source, target, .05).Profiles[1]
 	if first.ID == tighter.ID || first.ID == other.ID || other.ID != repeated.ID {
 		t.Fatal("mutable source/policy annotation collides with an immutable profile bundle")
+	}
+}
+
+func installReuseMeasurementProfile(t *testing.T, harness *opcostHarness) string {
+	t.Helper()
+	profile := harness.controller.observer.Profiles()[0]
+	confirmationID := profile.ID
+	harness.controller.mu.Lock()
+	spec := harness.controller.config.Preparations[confirmationID]
+	profile.ID += "/reuse-confirmed"
+	profile.Reuse = &serving.ProfileReuseCheck{
+		SourceProfileID: "chill-system/original/original-uid", ConfirmationProfileID: confirmationID,
+		Outcome: measurementAccepted,
+	}
+	spec.Instance.Profile = &profile
+	spec.Config.Policy.ProfileID = profile.ID
+	harness.controller.config.Preparations = map[string]PrepareSpec{profile.ID: spec}
+	harness.controller.mu.Unlock()
+	harness.controller.observer.SetProfiles([]serving.Profile{profile})
+	return profile.ID
+}
+
+func TestProfileReuseOperationCostResolvesConfirmation(t *testing.T) {
+	harness := newOpcostHarness(t)
+	id := installReuseMeasurementProfile(t, harness)
+	measurement := opcostRoot("reuse-cost", time.Now(), lane()...)
+	harness.create(measurement)
+	harness.admit()
+	status := harness.status(measurement)
+	if status.Phase != edge.MeasurementPhaseComplete || len(harness.measured) != 5 ||
+		harness.measured[1].Operation.Prepare.Instance.Profile.ID != id {
+		t.Fatalf("confirmation BEO did not resolve its prepared reused row: %+v", status)
+	}
+}
+
+func TestProfileReuseOccupancyResolvesConfirmationBeforeBatchJudgment(t *testing.T) {
+	harness := occupancyHarness(t)
+	installReuseMeasurementProfile(t, harness)
+	measurement := occupancyRoot("reuse-occupancy", time.Now(), 3)
+	harness.create(measurement)
+	harness.admit()
+	// Reaching the measured-batch judgment proves occupancy used the shared
+	// resolver instead of waiting forever for the absent direct profile ID.
+	if got := harness.admission(measurement); got != "Refused: BatchUnmeasured 3" {
+		t.Fatalf("occupancy did not resolve the confirmation profile: %q", got)
 	}
 }
