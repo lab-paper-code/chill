@@ -812,6 +812,24 @@ class CPO:
         self.authorize_native_modes()
         save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-ack.json'),self.put(settings))
     def clear_owned(self,prefix):
+        if self.b.get('schema') == 'demo-e5-binding.v1':
+            settings = self.settings()
+            settings['autonomousWorkloads'] = [uid for uid in settings.get('autonomousWorkloads', []) if uid not in self.uids]
+            save(self.out/(prefix+'-reset-autonomy-ack.json'), self.put(settings))
+            started = time.monotonic()
+            deadline = started + self.tb['settleSeconds']
+            observations = []
+            while True:
+                state = self.state()
+                reservations = len(state['snapshot'].get('reservations') or [])
+                transitions = sum(action.get('status') in ('running', 'cancel') for action in state.get('actions') or [])
+                elapsed = time.monotonic() - started
+                observations.append({'at': now(), 'elapsedSeconds': elapsed, 'reservations': reservations, 'transitions': transitions})
+                remaining = deadline - time.monotonic()
+                if not reservations and not transitions or remaining <= 0:
+                    save(self.out/(prefix+'-reset-wait.json'), {'timeboxSeconds': self.tb['settleSeconds'], 'timedOut': bool(reservations or transitions), 'observations': observations, 'state': state, 'meaning': 'Autonomy off; bounded public reservation/action wait, then one reset only (no automatic retry)'})
+                    break
+                time.sleep(min(1, remaining))
         return self.operation({'kind':'reset','workloadUIDs':self.uids,'reason':'Approved campaign owned reset: '+prefix},prefix+'-reset')
     def native_mode(self,node,target,prefix):
         folder=self.out/(prefix+'-'+node['name']+'-mode'); request=folder/'release.json'

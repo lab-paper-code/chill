@@ -7,6 +7,11 @@ Outputs are PRIVATE operational evidence. publish --experiment-id ID --store-con
 /private/store.json uploads raw inputs before a final immutable summary; corrections
 require a new ID. --help and --self-check need no live experiment environment.
 
+Demo finish/resume reset first disables owned autonomy, then waits within the
+existing settleSeconds for public reservations and running/cancel actions to
+clear. *-reset-wait.json retains observations and the last state. On timeout,
+one reset is still attempted; reset failures/409 are retained without retries.
+
 Offline reporting: report DIRECTORY [--compare DIRECTORY ...] [--out DIRECTORY]
 rebuilds timeline.svg and report-tables.md from retained phase/summary/client/
 power/scheduler evidence only, without environment settings or cluster access.
@@ -1285,6 +1290,56 @@ def self_check():
         assert sum(method == 'DELETE' for method, _ in management_calls) == 3 and not registered
         assert all(w['workers'] == 320 and 'lifetimeSeconds' not in w for w in assembled['workloads'])
         assert (root / 'assembly/register-plc-anomaly.json').exists() and (cpo.out / 'finish-definitions-complete.json').exists()
+        # Active owner keep: reservations may clear before the running action.
+        for label, clears_at, reset_error in (('idle', 0, None), ('clear', 2, None), ('timeout', None, None), ('failed', None, 'result'), ('conflict', None, '409')):
+            cleanup = object.__new__(e5.CPO)
+            cleanup.b = {'schema': 'demo-e5-binding.v1'}
+            cleanup.out = root / ('cleanup-wait-' + label)
+            cleanup.out.mkdir()
+            cleanup.uids, cleanup.tb = ['owned'], {'settleSeconds': 2}
+            cleanup_settings = {'autonomousWorkloads': ['owned', 'foreign']}
+            cleanup.settings = lambda: copy.deepcopy(cleanup_settings)
+            cleanup.put = lambda value: cleanup_settings.update(copy.deepcopy(value)) or {'validatedAt': e5.now()}
+            e5.save(cleanup.out / 'initial.json', {'settings': copy.deepcopy(cleanup_settings)})
+            clock, reset_calls, reads = [0], [], []
+            def cleanup_state():
+                assert cleanup_settings['autonomousWorkloads'] == ['foreign']
+                busy = clears_at is None or clock[0] < clears_at
+                reads.append(clock[0])
+                return {'snapshot': {'reservations': [{'owner': 'active-owner-keep'}] if busy and clock[0] == 0 else []}, 'actions': [{'status': 'running'}] if busy else [{'status': 'complete'}]}
+            cleanup.state = cleanup_state
+            def cleanup_reset(method, path, body, **kwargs):
+                wait = e5.load(cleanup.out / 'finish-reset-wait.json')
+                assert wait['observations'][-1]['elapsedSeconds'] == clock[0]
+                assert not wait['timedOut'] or clock[0] == 2
+                reset_calls.append(body)
+                if reset_error == '409':
+                    raise RuntimeError('HTTP 409 active owner keep')
+                return {'status': 'failed' if reset_error else 'complete'}
+            cleanup.io = SimpleNamespace(api=cleanup_reset)
+            def advance(seconds):
+                clock[0] += seconds
+            with patch.object(e5.time, 'monotonic', lambda: clock[0]), patch.object(e5.time, 'sleep', advance):
+                try:
+                    cleanup.finish()
+                except RuntimeError as error:
+                    assert reset_error and ('reset failed' in str(error) or 'HTTP 409' in str(error))
+                else:
+                    assert not reset_error
+            assert len(reset_calls) == 1
+            wait = e5.load(cleanup.out / 'finish-reset-wait.json')
+            assert wait['timedOut'] == (clears_at is None)
+            assert wait['observations'][-1]['transitions'] == (1 if clears_at is None else 0)
+            assert clock[0] == (clears_at if clears_at is not None else 2)
+            assert len(reads) >= 3 if clears_at != 0 else len(reads) >= 1
+            assert (cleanup.out / 'finish-complete.json').exists() == (not reset_error)
+            if clears_at == 2:
+                assert wait['observations'][1]['reservations'] == 0 and wait['observations'][1]['transitions'] == 1
+            # Resume shares clear_owned; it must obey the same gate.
+            if label == 'idle':
+                with patch.object(e5.time, 'monotonic', lambda: 0):
+                    cleanup.clear_owned('resume-fixture')
+                assert e5.load(cleanup.out / 'resume-fixture-reset-wait.json')['timedOut'] is False
         reset = object.__new__(e5.CPO)
         reset.b = {'schema': 'e5-binding.v1'}
         reset.out = root / 'reset'
@@ -1377,7 +1432,7 @@ def self_check():
         e5.save(historical_path, frozen_binding)
         historical = e5.summarize(historical_path, frozen_root)
         assert historical['schedulerSettings'] is None and any('frozen scheduler settings' in row['reason'] for row in historical['missing'])
-        print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, static placement without scheduler mutation (including failure), stage-entry and pre-GO barriers clear/timeout, optional lifetime, server reset evidence and failure stop; mocked API/kubectl only')
+        print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, static placement without scheduler mutation (including failure), stage-entry and pre-GO barriers clear/timeout, optional lifetime, server reset evidence and failure stop, reset autonomy-off reservation/action wait clear/timeout and single attempt on failure/409; mocked API/kubectl only')
 
 
 def main():
