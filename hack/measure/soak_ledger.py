@@ -82,7 +82,6 @@ def run(client, args, namespace):
     counts = Counter()
     timings = []
     cycles = 0
-    operations = []
     active = list(args.instances)
     replacement = None
     replaced = False
@@ -121,7 +120,6 @@ def run(client, args, namespace):
             operations.append(receipt)
             save(out / ('operation-%05d.json' % len(timings)), receipt)
         fresh_state()
-        return ack
 
     def observe():
         state = fresh_state()
@@ -154,12 +152,13 @@ def run(client, args, namespace):
                 if settings.get('autonomousWorkloads'):
                     raise RuntimeError('Autonomous workloads must remain disabled')
                 if not replaced and time.monotonic() - start >= args.duration / 2:
-                    operation({'kind': 'unroute', 'workloadUID': args.workload_uid})
-                    old = active[-1]
-                    operation({'kind': 'remove', 'workloadUID': args.workload_uid,
-                               'instance': old, 'node': template['node']})
-                    guard.removed.add(old)
-                    active.pop()
+                    old = template['id']
+                    if old not in guard.removed:
+                        operation({'kind': 'unroute', 'workloadUID': args.workload_uid})
+                        operation({'kind': 'remove', 'workloadUID': args.workload_uid,
+                                   'instance': old, 'node': template['node']})
+                        guard.removed.add(old)
+                        active.remove(old)
                     operation({'kind': 'prepare', 'workloadUID': args.workload_uid,
                                'profileID': profile, 'node': template['node']})
                     replacement = set(selected)
@@ -231,8 +230,9 @@ def self_check():
     assert not guard.check(state, {'items': []}, {})
     assert guard.check(state, {'items': []}, {})[0]['kind'] == 'pod-ledger-mismatch'
     class Client:
-        def __init__(self):
-            self.instances = [instance, dict(instance, id='b', podUID='q')]
+        def __init__(self, reject_prepare=False):
+            self.instances = [dict(instance, node={'name': 'other', 'uid': 'other'}), dict(instance, id='b', podUID='q')]
+            self.reject_prepare = reject_prepare
             self.calls = []
             self.stale = None
             self.stale_reads = 0
@@ -249,6 +249,11 @@ def self_check():
             if method == 'GET': return {'observedAt': self.stamp(), 'instances': copy.deepcopy(self.instances)}
             self.calls.append(body['kind'])
             if body['kind'] == 'prepare': assert body['profileID'] == 'prof'
+            if body['kind'] == 'prepare' and self.reject_prepare:
+                self.reject_prepare = False
+                return {'status': 'failed', 'error': 'fixture prepare refused'}
+            if body['kind'] == 'remove':
+                assert body['instance'] == 'b' and body['node'] == instance['node']
             self.stale = self.state()
             if body['kind'] == 'remove': self.instances = [i for i in self.instances if i['id'] != body['instance']]
             if body['kind'] == 'prepare': self.instances.append(dict(instance, id='new', podUID='new-p'))
@@ -262,6 +267,14 @@ def self_check():
         assert client.stale_reads == result['operations']
         assert result['nativeUnavailable'] == 0
         assert json.loads((Path(folder) / 'summary.json').read_text()) == result
+        clock[0] = 0
+        retry = Client(reject_prepare=True)
+        result = run(retry, SimpleNamespace(out=Path(folder) / 'retry', instances=['a', 'b'], workload_uid='w', duration=120, interval=20), 'fixture')
+        assert result['cycles'] == 6 and result['replacementComplete']
+        assert result['violationKinds'] == {'cycle-error': 1}
+        assert retry.calls.count('remove') == 1 and retry.calls.count('prepare') == 2
+        assert {i['id'] for i in retry.instances} == {'a', 'new'}
+        assert result['removedIDs'] == ['b']
     print('soak ledger self-check: OK')
 
 

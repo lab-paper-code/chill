@@ -138,6 +138,8 @@ The runner reuses the D2 conductor's authenticated API and kubectl helpers
 (`d2` endpoint, CA/token and kubectl configuration; `measure.namespace` for
 serving Pods). It cycles route/unroute/release, removes and re-prepares one
 instance halfway through, and leaves the manually prepared instances in place.
+The replacement target stays fixed: after its successful removal, a refused
+prepare retries only preparation, never removal of another original instance.
 It compares all scheduler instance Pod UIDs with the serving-label Pod list;
 each mismatching UID must persist into the next cycle before it is reported.
 After each completed ACK, the runner waits up to 129 seconds for a strictly
