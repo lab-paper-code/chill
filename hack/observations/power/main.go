@@ -32,16 +32,28 @@ func main() {
 	to := flag.String("to", "", "interval end, RFC3339")
 	sources := flag.String("metric-sources", "", "Profiler metric-sources YAML of the run")
 	nodes := flag.String("nodes", "", "Node list JSON of the run (kubectl get nodes -o json)")
+	maximumGap := flag.Duration("maximum-gap", 0, "explicit policy re-evaluation maximum gap (e.g. 3s); omitted preserves recorded policy")
 	flag.Parse()
+	if *maximumGap < 0 {
+		fmt.Fprintln(os.Stderr, "maximum-gap must be positive")
+		os.Exit(1)
+	}
 	start, err := time.Parse(time.RFC3339Nano, *from)
 	end, endErr := time.Parse(time.RFC3339Nano, *to)
 	meters, metersErr := derivedMeters(*sources, *nodes)
 	if err = errors.Join(err, endErr, metersErr); err == nil {
 		var result serving.OperatingPowerWindow
-		if result, err = run(*dir, meters, start, end); err == nil {
+		if result, err = run(*dir, meters, start, end, *maximumGap); err == nil {
 			encoder := json.NewEncoder(os.Stdout)
 			encoder.SetIndent("", "  ")
-			err = encoder.Encode(result)
+			response := struct {
+				serving.OperatingPowerWindow
+				PolicyOverride map[string]float64 `json:"policyOverride,omitempty"`
+			}{OperatingPowerWindow: result}
+			if *maximumGap > 0 {
+				response.PolicyOverride = map[string]float64{"maximumGapSeconds": maximumGap.Seconds()}
+			}
+			err = encoder.Encode(response)
 		}
 	}
 	if err != nil {
@@ -89,7 +101,7 @@ func derivedMeters(sourcesFile, nodesFile string) ([]serving.OperatingPowerMeter
 
 // run reads [from-1m, to+1m] as the server does, so every hour it touches
 // must be fetched; fetch.sh adds the hour on each side.
-func run(dir string, meters []serving.OperatingPowerMeter, from, to time.Time) (serving.OperatingPowerWindow, error) {
+func run(dir string, meters []serving.OperatingPowerMeter, from, to time.Time, maximumGap time.Duration) (serving.OperatingPowerWindow, error) {
 	last := to.Add(time.Minute)
 	for hour := from.Add(-time.Minute).UTC().Truncate(time.Hour); !hour.After(last); hour = hour.Add(time.Hour) {
 		if _, err := os.Stat(filepath.Join(dir, hour.Format("20060102T15"), "scheduler.jsonl.gz")); err != nil {
@@ -123,6 +135,11 @@ func run(dir string, meters []serving.OperatingPowerMeter, from, to time.Time) (
 				record, err := serving.OperatingPowerRecord(raw, catalog)
 				if err != nil {
 					return err
+				}
+				if maximumGap > 0 && record.PowerCoverage != nil {
+					policy := *record.PowerCoverage
+					policy.MaximumGap = maximumGap
+					record.PowerCoverage = &policy
 				}
 				return yield(record)
 			}); err != nil {

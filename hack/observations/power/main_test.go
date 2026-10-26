@@ -117,7 +117,7 @@ sources:
 		t.Fatal(err)
 	}
 	obs := segments(t, filepath.Join(directory, "v1alpha5"), t.TempDir())
-	if _, err := run(t.TempDir(), meters, from, to); err == nil {
+	if _, err := run(t.TempDir(), meters, from, to, 0); err == nil {
 		t.Fatal("missing boundary hours accepted")
 	}
 	// fetch.sh brings the neighbor hours; an hour without records is empty.
@@ -127,13 +127,23 @@ sources:
 			writeGzip(t, name, nil)
 		}
 	}
-	got, err := run(obs, meters, from, to)
+	got, err := run(obs, meters, from, to, 0)
 	if err != nil || got.WholePoolJoules == nil || got.ActivePoolJoules == nil {
 		t.Fatalf("tool: %+v %v", got, err)
 	}
 	if *got.WholePoolJoules != *want.WholePoolJoules || *got.ActivePoolJoules != *want.ActivePoolJoules {
 		t.Fatalf("tool %v/%v J, server %v/%v J",
 			*got.WholePoolJoules, *got.ActivePoolJoules, *want.WholePoolJoules, *want.ActivePoolJoules)
+	}
+	// A stricter override re-evaluates raw samples without changing recorded
+	// policy; a later ordinary reduction must retain its original result.
+	strict, err := run(obs, meters, from, to, 500*time.Millisecond)
+	if err != nil || !strings.Contains(strings.Join(strict.Reasons, " "), "maximum sample gap exceeds policy") {
+		t.Fatalf("override did not re-evaluate raw gaps: %+v, %v", strict, err)
+	}
+	original, err := run(obs, meters, from, to, 0)
+	if err != nil || !reflect.DeepEqual(original, got) {
+		t.Fatalf("override mutated recorded policy: %+v, %v", original, err)
 	}
 }
 
