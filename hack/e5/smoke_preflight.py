@@ -48,31 +48,6 @@ def main():
         cpo = object.__new__(e5.CPO)
         cpo.b, cpo.c, cpo.out, cpo.tb = binding, config, out, config['timeboxes']
         cpo.a = SimpleNamespace(command='smoke', mode='smoke', stage='E0')
-        rows = [{'input': {'workloadUID': w['uid']}} for w in workloads]
-        with patch.object(cpo, 'api', side_effect=[{'rows': []}, {'rows': rows[:2]}, {'rows': rows}], create=True) as api, patch.object(e5.time, 'sleep'):
-            demo.wait_preflight_capacity(e5, cpo, 600)
-            assert api.call_count == 3
-            api.assert_called_with('GET', '/api/v1/scheduler/capacity')
-        assert not e5.load(out / 'preflight-capacity-wait.json')['missingWorkloadUIDs']
-        assert cpo.tb['apiSeconds'] == 5
-        with patch.object(cpo, 'api', create=True) as api:
-            demo.wait_preflight_capacity(e5, cpo, 0)
-            api.assert_not_called()
-        for rows_missing in ([], rows[:2], [{'input': {'workloadUID': 'stale-uid'}}]):
-            with patch.object(cpo, 'api', return_value={'rows': rows_missing}, create=True), patch.object(e5.time, 'monotonic', side_effect=[0, 0, 601]), patch.object(e5.time, 'sleep'):
-                try:
-                    demo.wait_preflight_capacity(e5, cpo, 600)
-                except RuntimeError as error:
-                    assert 'capacity rows' in str(error)
-                else:
-                    raise AssertionError('Missing canonical capacity did not stop preflight')
-        for invalid in (-1, float('nan'), float('inf')):
-            try:
-                demo.wait_preflight_capacity(e5, cpo, invalid)
-            except ValueError:
-                pass
-            else:
-                raise AssertionError('Invalid capacity wait accepted')
         for command in (cpo.start, cpo.run):
             try:
                 command()
@@ -137,7 +112,7 @@ def main():
         (out / 'preflight-STOP.json').unlink()
         (out / 'preflight-final-state.json').unlink()
         fails('finalInstances0')
-    print('PASS preflight: JWT/opaque expiry, start/run refusal, 720s Ready/1380s budget, capacity wait clear/timeout/skip/validation, Ready/success/power/cleanup PASS/FAIL; local only')
+    print('PASS preflight: JWT/opaque expiry, start/run refusal, 720s Ready/1380s budget, Ready/success/power/cleanup PASS/FAIL; local only')
 
 
 if __name__ == '__main__':

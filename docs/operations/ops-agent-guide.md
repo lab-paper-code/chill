@@ -28,15 +28,15 @@ hack/fast-deploy.sh upgrade --source HEAD --control 0 --self-check
 E5보다 먼저 **최대 25분 사전 점검(Ready 대기 포함)**을 새 출력 디렉터리에서 수행한다. 이는 운영 입구 확인이지 연구 시나리오 PASS가 아니다. 현재처럼 클러스터 쓰기가 승인되지 않은 작업에서는 아래 라이브 명령을 실행하지 않는다.
 
 1. 기존 `CHILL_EXPERIMENT_CONFIG`의 API/CA/tokenFile·operationalRecipe·campaign 경로와 라이브 제어 이미지 출처를 확인한다. `hack/e5/preflight-config.example.json`을 승인된 외부 입력으로 복사하고 `controlSourceSHA`를 실제 배포 소스로 고정한다(예시 SHA를 최신으로 간주하지 않는다). 기존 scheduler/instance를 건드리는 **별도 Main 승인**이 있어야 실행한다.
-2. 배포/재시작 직후에는 `GET /api/v1/scheduler/capacity` 행이 canonical 3 Workload의 현재 UID 각각에 대해 존재할 때까지 **상한 10분** 기다린 뒤 preflight 실행 단계를 시작한다. 아래 명령은 prepare에서 canonical 정의를 등록/확인한 뒤, start 전에 기존 인증 API GET으로 같은 대기를 수행한다. `--wait-capacity-seconds` 기본값은 600이며 0은 대기를 생략한다. 이 사전 capacity 대기는 25분 실행 예산과 별도다. 행 존재는 Built/Ready 성공 판정이 아니며, 누락 시 부하를 시작하지 않고 실패한다. 마지막 응답과 누락 UID는 `preflight-capacity-wait.json`에 남긴다.
+2. Capacity API는 자율 Workload의 행만 제공하므로 자율 off인 prepare 뒤에는 capacity 행을 기다리지 않는다. start에서 자율 on 뒤 E0 `readyGate`가 최대 720초 동안 canonical 3 Workload의 Ready + 양수 route를 기다린다. capacity 행 존재만으로 Built/Ready 성공을 판정하지 않는다.
 3. 입력은 빈 출발(instances 0·예약 0), E0 Ready gate 최대 720초(세 canonical Workload 모두 Ready + 양수 route일 때 조기 종료), MIX 60초(모바일넷 20/s·Smol .3/s·PLC 40/s)다. `minimumDemand`도 20/.3/40으로 UID 재바인딩한다. 혼합 부하의 성공률은 성공 HTTP 200/전체 offered이며 SLO 충족률과 별개다.
-4. Main의 기존 release JSON(`executor=CampaignOps`, `command=e5-execute`, `bindingPath=<OUT>/binding.json`, 실제 `sourceSHA`, `mainInstructionUTC`)과 새 OUT을 지정해 한 줄로 실행한다. prepare → capacity 대기 → start → E0 → MIX(각 수집 포함) → finish → 소유 producer/정의 정리 → summary → 기존 `demo.py report` 경로가 연결된다. 새 빌드·실행 프레임워크는 없다.
+4. Main의 기존 release JSON(`executor=CampaignOps`, `command=e5-execute`, `bindingPath=<OUT>/binding.json`, 실제 `sourceSHA`, `mainInstructionUTC`)과 새 OUT을 지정해 한 줄로 실행한다. prepare → start(자율 on) → E0 Ready gate → MIX(각 수집 포함) → finish → 소유 producer/정의 정리 → summary → 기존 `demo.py report` 경로가 연결된다. 새 빌드·실행 프레임워크는 없다.
 
 ```sh
-CHILL_EXPERIMENT_CONFIG="$ENV" python3 hack/e5/demo.py preflight --config "$CONFIG" --out "$OUT" --release "$RELEASE" --wait-capacity-seconds 600
+CHILL_EXPERIMENT_CONFIG="$ENV" python3 hack/e5/demo.py preflight --config "$CONFIG" --out "$OUT" --release "$RELEASE"
 ```
 
-예시 예상 예산은 단계 780초 + 두 단계 각각 timeboxes 합 285초 + 여유 30초 = **1380초(23분)**다. JSON의 `tokenSafetyMarginSeconds`로 여유를 고정하며 1500초(25분)를 넘는 사전 점검 설정은 거부한다. `collectSeconds=120`은 `e5-archive.py`가 요구하는 drain 후 power support +60초를 수집 deadline 안에 확보하기 위한 값이다. 이는 단계/대기 예산이며 prepare의 로컬 I/O, 별도 capacity 사전 대기와 오프라인 그래프 생성까지 포함한 강제 kill 타이머는 아니다. capacity 대기 뒤 start에서 토큰 수명을 다시 검사한다. 시간 상한이나 수집 실패를 성공으로 바꾸지 않는다.
+예시 예상 예산은 단계 780초 + 두 단계 각각 timeboxes 합 285초 + 여유 30초 = **1380초(23분)**다. JSON의 `tokenSafetyMarginSeconds`로 여유를 고정하며 1500초(25분)를 넘는 사전 점검 설정은 거부한다. `collectSeconds=120`은 `e5-archive.py`가 요구하는 drain 후 power support +60초를 수집 deadline 안에 확보하기 위한 값이다. 이는 단계/대기 예산이며 prepare의 로컬 I/O와 오프라인 그래프 생성까지 포함한 강제 kill 타이머는 아니다. start에서 토큰 수명을 다시 검사한다. 시간 상한이나 수집 실패를 성공으로 바꾸지 않는다.
 
 `summary.json`의 `preflight.status`와 `summary.md`에 **PASS/FAIL**을 남긴다. PASS는 빈 출발, Ready 3/3, 혼합 창의 세 Workload 각각 offered>0·clientRows=offered·성공률 100%, 두 창의 offered/drain-inclusive 전력 `complete=true`, 모든 단계 완료, finish/정의 정리 완료, **최종 instances 0·예약 0**를 모두 요구한다. 누락/STOP은 FAIL(exit 2)이다. `report-tables.md`·`timeline.svg`는 같은 보존 폴더에서 생성하며 재생성만 할 때는 `python3 hack/e5/demo.py report "$OUT"`을 사용한다. FAIL이면 부분 증거를 보존하고 중단한다. 자동 재시도·자동 실패 reset은 없으며 정리도 별도 승인된 기존 finish 절차로 수행한다.
 

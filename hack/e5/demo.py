@@ -537,35 +537,6 @@ def placement(snapshot, uids):
     }
 
 
-def wait_preflight_capacity(e5, cpo, seconds):
-    """Wait for current canonical UID rows, not stale names or inferred capacity."""
-    if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0:
-        raise ValueError('Finite nonnegative capacity wait required')
-    if seconds == 0:
-        return
-    deadline = e5.time.monotonic() + seconds
-    while True:
-        remaining = deadline - e5.time.monotonic()
-        if remaining <= 0:
-            raise RuntimeError('Canonical capacity rows did not appear within capacity wait')
-        original_timeout = cpo.tb['apiSeconds']
-        try:
-            cpo.tb['apiSeconds'] = min(original_timeout, remaining)
-            capacity = cpo.api('GET', '/api/v1/scheduler/capacity')
-        finally:
-            cpo.tb['apiSeconds'] = original_timeout
-        present = {row['input']['workloadUID'] for row in capacity['rows'] or []}
-        missing = [w['uid'] for w in cpo.c['workloads'] if w['uid'] not in present]
-        e5.save(cpo.out / 'preflight-capacity-wait.json', {
-            'at': e5.now(), 'maximumSeconds': seconds, 'missingWorkloadUIDs': missing, 'capacity': capacity,
-        })
-        if not missing and e5.time.monotonic() <= deadline:
-            return
-        if e5.time.monotonic() >= deadline:
-            raise RuntimeError('Canonical capacity rows did not appear within capacity wait: ' + ', '.join(missing))
-        e5.time.sleep(min(1, max(0, deadline - e5.time.monotonic())))
-
-
 def wait_preflight_empty(e5, cpo):
     deadline = e5.time.monotonic() + cpo.tb['settleSeconds']
     while True:
@@ -1708,11 +1679,8 @@ def main():
     parser.add_argument('--stage', help='Configured stage ID; required for stage/collect')
     parser.add_argument('--experiment-id', help='publish: immutable ASCII ID; corrections require a new ID')
     parser.add_argument('--store-config', type=Path, help='publish: private logicalStore/S3 config for existing PutImmutable bridge')
-    parser.add_argument('--wait-capacity-seconds', type=float, default=600, help='preflight: wait for all canonical capacity rows after prepare (default 600; 0 disables)')
     parser.add_argument('--self-check', action='store_true', help='Run one local mocked API/kubectl lifecycle smoke, without cluster access')
     args = parser.parse_args()
-    if not math.isfinite(args.wait_capacity_seconds) or args.wait_capacity_seconds < 0:
-        parser.error('--wait-capacity-seconds must be finite and nonnegative')
     if args.command == 'report':
         timeline = module('demo_timeline', HERE / 'timeline.py')
         if args.self_check:
@@ -1763,7 +1731,6 @@ def main():
     cpo = e5.CPO(cpo_args)
     if args.command == 'preflight':
         try:
-            wait_preflight_capacity(e5, cpo, args.wait_capacity_seconds)
             cpo.start()
             for stage in binding['schedule']:
                 run_stage(cpo, stage)
