@@ -228,3 +228,35 @@ func TestObservationReadCoverageIgnoresBoundLocations(t *testing.T) {
 		})
 	}
 }
+
+func TestObservationPublicReadsIgnoreBoundLocations(t *testing.T) {
+	ctx := context.Background()
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	from, to := observationTestHour.Add(time.Second), observationTestHour.Add(time.Minute)
+	clock.set(from)
+	appendAssignedRequest(t, log, "location", from)
+	if err := log.ManagementEvent(ManagementEvent{WorkloadUID: "w", At: from}); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.SchedulerRecord(SchedulerObservation{At: from}); err != nil {
+		t.Fatal(err)
+	}
+	clock.set(to)
+	for _, location := range []*time.Location{time.UTC, time.Local, time.FixedZone("KST", 9*60*60), time.FixedZone("half-hour", -3*60*60-30*60)} {
+		t.Run(location.String(), func(t *testing.T) {
+			start, end := from.In(location), to.In(location)
+			query, err := log.Query(ctx, "w", start, end, nil, nil, 10, "")
+			if err != nil || query.Total != 1 || len(query.Management) != 1 || query.GapUntil != nil || len(query.Coverage.Gaps) != 0 {
+				t.Fatalf("request/management lookup changed with bound location: %+v %v", query, err)
+			}
+			load, err := log.LoadWindow(ctx, start, end)
+			if err != nil || len(load.Arrivals) != 1 || load.GapUntil != nil || len(load.Coverage.Gaps) != 0 {
+				t.Fatalf("load lookup changed with bound location: %+v %v", load, err)
+			}
+			events, next, gap, coverage, err := log.SchedulerObservationPage(ctx, start, end, 10, 0)
+			if err != nil || len(events) != 1 || next != -1 || gap != nil || len(coverage.Gaps) != 0 {
+				t.Fatalf("scheduler lookup changed with bound location: events=%+v next=%d gap=%v coverage=%+v err=%v", events, next, gap, coverage, err)
+			}
+		})
+	}
+}

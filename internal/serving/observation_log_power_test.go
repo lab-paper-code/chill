@@ -120,16 +120,20 @@ func TestOperatingPowerLocalBoundarySearchGapDoesNotInvalidateMeasuredInterval(t
 	to := from.Add(10 * time.Second)
 	meters := seedOperatingPower(t, log, from, operatingPowerScenario{})
 
-	result, err := log.OperatingPower(context.Background(), from, to, meters, 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertMeasuredOperatingPower(t, result, operatingPowerScenario{})
-	if len(result.Coverage.Gaps) != 1 || !result.Coverage.Gaps[0].To.Equal(started) {
-		t.Fatalf("boundary search history gap must remain visible: %+v", result.Coverage)
-	}
-	if result.GapUntil != nil {
-		t.Fatalf("history outside the measured interval is not a leading measurement gap: %v", result.GapUntil)
+	for _, location := range []*time.Location{time.UTC, time.Local, time.FixedZone("KST", 9*60*60), time.FixedZone("half-hour", -3*60*60-30*60)} {
+		t.Run(location.String(), func(t *testing.T) {
+			result, err := log.OperatingPower(context.Background(), from.In(location), to.In(location), meters, 20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertMeasuredOperatingPower(t, result, operatingPowerScenario{})
+			if len(result.Coverage.Gaps) != 1 || !result.Coverage.Gaps[0].To.Equal(started) {
+				t.Fatalf("boundary search history gap must remain visible: %+v", result.Coverage)
+			}
+			if result.GapUntil != nil {
+				t.Fatalf("history outside the measured interval is not a leading measurement gap: %v", result.GapUntil)
+			}
+		})
 	}
 }
 
