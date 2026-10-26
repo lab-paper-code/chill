@@ -296,7 +296,8 @@ stage directory and explicitly re-freezes changed harness source references;
 there is no automatic retry or source refresh. `demo.py resume --out "$OUT"
 --release "$RELEASE"` reuses the existing settings PUT to enable canonical
 autonomy, adopts only owned current instances and waits for Ready positive
-routes. It preserves original `initial.json` and `start-ack.json`, recording a
+routes using the same `CPO.missing_ready_routes` predicate as bootstrap and the
+Ready gate. It preserves original `initial.json` and `start-ack.json`, recording a
 new `resume-*/resume-ack.json`. If no instances remain, it first reuses the
 configured zero-load E0 through CPO.run in a fresh `smoke-E0-resume-*/` folder
 (180 seconds in the example), preserving original E0 results. Then execute

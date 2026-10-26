@@ -354,11 +354,7 @@ def resume(e5, cpo):
         e5.save(folder / 'last-state.json', current)
         if any(i.get('ownerWorkloadUID') not in cpo.uids for i in current['snapshot']['instances'] or []):
             raise RuntimeError('Foreign physical ownership appeared during demo resume')
-        ready = True
-        for uid in cpo.uids:
-            owned = {i['id'] for i in current['snapshot']['instances'] or [] if i.get('ownerWorkloadUID') == uid and i.get('workloadUID') == uid and i.get('ready')}
-            ready = ready and any(weight > 0 and identifier in owned for identifier, weight in current['snapshot'].get('routing', {}).get(uid, {}).items())
-        if ready:
+        if not cpo.missing_ready_routes(current):
             e5.save(folder / 'ready.json', current)
             print('Resumed owned autonomous topology: ' + str(folder))
             return
