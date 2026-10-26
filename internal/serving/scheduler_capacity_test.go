@@ -1704,6 +1704,24 @@ func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 		snap.Instances[k].WorkloadUID, snap.Instances[k].TargetID, snap.Instances[k].UnroutedSince = "", "target-w1-"+snap.Instances[k].Profile.ID+"-1", &since
 	}
 	snap.Instances[1].OwnerWorkloadUID = "w1" // prepared with the planner's owner
+	s.ScaleDownStabilization = time.Minute
+	snap.ScaleDown = map[string]SchedulerDownState{"w1": {Allowed: true}}
+	// The unowned runner draws more loaded power, so the search itself wants
+	// to remove it, independently of the idle-cleanup postprocessing path.
+	originalProfile := snap.Instances[2].Profile
+	profile := *snap.Instances[2].Profile
+	profile.IdleBaselineWatts = 60
+	snap.Instances[2].Profile = &profile
+	blocked := capacityDecideForTest(t, s, snap, rows)
+	if blocked.Target != nil && !poolsOn(*blocked.Target, orangepi) {
+		t.Fatalf("unowned physical removal bypassed the common gate: %+v", blocked.Target)
+	}
+	if !slices.ContainsFunc(poolsPlans(blocked, orangepi), func(plan SchedulerNodePlan) bool {
+		return plan.Tempo == schedulerTempoSlow && !plan.Eligible && plan.Reason == schedulerScaleDownStabilizing
+	}) {
+		t.Fatalf("unowned removal lacks slow exclusion: %+v", poolsPlans(blocked, orangepi))
+	}
+	snap.EmptyNodeScaleDownAllowed = true
 	removed := func(d SchedulerDecision, node NodeReference) bool {
 		return d.Target != nil && !poolsOn(*d.Target, node) &&
 			slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Node == node })
@@ -1711,6 +1729,7 @@ func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 	if d := capacityDecideForTest(t, s, snap, rows); !removed(d, genesis3) || !removed(d, orangepi) {
 		t.Fatalf("unrouted planner instances kept: %s %+v %v", d.Status, d.Target, d.Reasons)
 	}
+	snap.Instances[2].Profile = originalProfile
 	other := poolsAddWorkload(&snap, "w2")
 	other.Model.UID = "m2"
 	snap.Routing["w2"] = map[string]int32{"opi": 1}

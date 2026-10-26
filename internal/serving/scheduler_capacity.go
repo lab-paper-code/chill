@@ -853,6 +853,15 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	}
 	p.sum(plan)
 	plan.record.Tempo = "fast"
+	if slices.ContainsFunc(current, func(old SchedulerInstance) bool {
+		return old.WorkloadUID == "" && old.OwnerWorkloadUID == "" && (!used[old.ID] || mode != node.PowerMode)
+	}) {
+		plan.record.Tempo = schedulerTempoSlow
+		if !schedulerEmptySlowAllowed(p.settings, p.snapshot) {
+			plan.record.Reason = schedulerScaleDownStabilizing
+			return plan
+		}
+	}
 	for _, ws := range p.ws {
 		affected := false
 		policy := false
