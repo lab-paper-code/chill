@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Read-only: start before CR creation; wait for READY; Ctrl-C saves results.
+"""Read-only: start just after CR creation, or background before it; READY means following.
   capture-progress.py --node NODE --measurement NAME --namespace chill-system --output-dir /tmp/NEW --capture-load
   capture-progress.py --self-check  # offline
 --kubectl accepts executable/global argv; KUBECONFIG works normally. Output must
-be new/outside source. Polling: 250ms + API time (2s/request). occupancy.go deletes
-terminal load Jobs before drain/evidence/status; admission.go handback removes
-firstfloor later. Name-addressed logs cannot guarantee atomic binding/completeness.
+be new/outside source. Wait for the CR's Workload-owned native Pod every 2s (up to
+--wait-for-pod, default 300s); follow all available timestamped logs from the first
+line. Then poll every 250ms + API time (2s/request). Terminal resources can vanish.
+Name-addressed logs cannot guarantee atomic binding/completeness.
 """
 import argparse, copy, hashlib, json, math, shlex, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
@@ -49,8 +50,8 @@ class Capture:
         self.m = {"started_unix_ns": time.time_ns(), "node": args.node, "measurement_uid": None,
                   "job_name": None, "job_uid": None, "captures": [], "errors": [], "completeness_claim": False,
                   "limitations": "Polling can miss resources; name-addressed logs are not atomic physical binding. "
-                  "Follow/snapshot overlap; snapshot success does not prove completeness. Node-scoped firstfloor "
-                  "candidates do not prove measurement workload membership; deletion/rotation can lose bytes."}
+                  "Follow/snapshot overlap; snapshot success does not prove completeness. "
+                  "Deletion/rotation can lose bytes."}
 
     def command(self, argv, path=None):
         r = {"argv": argv, "started_unix_ns": time.time_ns(), "returncode": None}
@@ -182,23 +183,39 @@ class Capture:
                     c["name"] == container and "terminated" in c.get("state", {}) for c in p.get("status", {}).get("containerStatuses", [])):
                 self.trigger(s, "pod-terminal-or-deleting")
 
-    def run(self):
-        ok, cr = self.read(self.a.namespace, RESOURCE, self.a.measurement)
-        if not ok or cr:
-            raise RuntimeError("CR must be absent: start capture before CR creation")
-        self.m["cr_absent_at_start"] = True
+    def native_pods(self, cr):
+        if not cr:
+            return []
+        if cr["spec"]["node"] != self.a.node:
+            raise RuntimeError("CR target node differs")
         ok, pods = self.read(self.a.runtime_namespace, "pods", "-l", SELECTOR, "--field-selector=spec.nodeName=" + self.a.node)
-        if not ok or pods is None:
-            raise RuntimeError("initial native Pod discovery failed; capture is not armed")
-        self.pods([p for p in pods["items"] if firstfloor(p, self.a.node)], "firstfloor", "firstfloor")
-        if any(s["process"] is None or s["process"].poll() is not None for s in self.states.values()):
-            raise RuntimeError("initial native log follow failed; capture is not armed")
-        print("READY: capture armed; create measurement separately", flush=True)
+        return [p for p in (pods or {}).get("items", []) if ok and firstfloor(p, self.a.node)
+                and any(o.get("kind") == "Workload" and o.get("name") == cr["spec"]["workload"]
+                        for o in p["metadata"].get("ownerReferences", []))]
+
+    def run(self):
+        wait_deadline = min(self.deadline, time.monotonic() + self.a.wait_for_pod)
+        while True:
+            ok, cr = self.read(self.a.namespace, RESOURCE, self.a.measurement)
+            if ok:
+                if cr:
+                    uid = cr["metadata"]["uid"]
+                    if self.m["measurement_uid"] not in (None, uid):
+                        raise RuntimeError("CR UID changed while waiting for native Pod")
+                    self.m["measurement_uid"] = uid
+                self.pods(self.native_pods(cr), "firstfloor", "firstfloor")
+            if self.states:
+                if any(s["process"] is None or s["process"].poll() is not None for s in self.states.values()):
+                    raise RuntimeError("initial native log follow failed; capture is not armed")
+                break
+            remaining = wait_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("timed out waiting for target native Pod; capture is not armed")
+            time.sleep(min(2, remaining))
+        print("READY: following target native Pod from its first available timestamped log line", flush=True)
         terminal = None
         while time.monotonic() < self.deadline:
-            ok, pods = self.read(self.a.runtime_namespace, "pods", "-l", SELECTOR, "--field-selector=spec.nodeName=" + self.a.node)
-            if ok and pods:
-                self.pods([p for p in pods["items"] if firstfloor(p, self.a.node)], "firstfloor", "firstfloor")
+            self.pods(self.native_pods(cr), "firstfloor", "firstfloor")
             ok, cr = self.read(self.a.namespace, RESOURCE, self.a.measurement)
             event = None
             if ok and cr:
@@ -260,7 +277,8 @@ class Capture:
 def self_check():
     from types import SimpleNamespace
     p = {"metadata": {"uid": "pod", "name": "p", "namespace": "ns", "labels": {"app.kubernetes.io/component": "serving-instance"},
-                      "ownerReferences": [{"kind": "Job", "uid": "job", "controller": True}]},
+                      "ownerReferences": [{"kind": "Job", "uid": "job", "controller": True},
+                                          {"kind": "Workload", "name": "workload", "uid": "workload-uid"}]},
          "spec": {"nodeName": "target", "containers": [{"name": "firstfloor"}]},
          "status": {"containerStatuses": [{"name": "firstfloor", "containerID": "containerd://one"}]}}
     assert firstfloor(p, "target") and not firstfloor(p, "other") and owned(p, "job") and not owned(p, "wrong")
@@ -270,7 +288,8 @@ def self_check():
     assert job_name("abc") == "occupancy-ba7816bf8f01cfea4141" and job_event("job", None) == "job-disappeared"
     assert job_event("job", {"metadata": {"uid": "job"}, "status": {"conditions": [{"type": "Complete", "status": "True"}]}}) == "job-terminal"
     with tempfile.TemporaryDirectory() as directory:
-        c = Capture(argparse.Namespace(output_dir=Path(directory), kubectl="never-executed", timeout=10, node="target"))
+        c = Capture(argparse.Namespace(output_dir=Path(directory), kubectl="never-executed", timeout=10,
+                                       wait_for_pod=300, node="target"))
         r = {"namespace": "ns", "name": "p", "container": "firstfloor", "identity": identity(p, "firstfloor"), "folder": "."}
         (c.root / "follow.log").write_bytes(b"2026-10-27T00:00:00Z original progress\n")
         def gone(argv, **kwargs):
@@ -281,43 +300,67 @@ def self_check():
         c.pool.shutdown(wait=True)
         assert result["status"] == "unavailable" and not result["success"] and result["prior_follow"]["returncode"] == 0
         assert (c.root / "follow.log").read_bytes().endswith(b"original progress\n")
-        events, cr_reads = [], 0
+        c.checked = lambda r: {"matches": True}
+        process = SimpleNamespace(poll=lambda: None)
+        with patch.object(subprocess, "Popen", return_value=process) as start:
+            c.add(p, "firstfloor", "firstfloor")
+        argv = start.call_args.args[0]
+        assert all(flag in argv for flag in ("--timestamps=true", "--tail=-1", "--follow=true"))
         c.a.namespace = c.a.runtime_namespace = c.a.load_namespace = "ns"
         c.a.measurement, c.a.capture_load = "measurement", True
-        c.states = {"known": {"process": SimpleNamespace(poll=lambda: None)}}
-        def read_fixture(ns, resource, *args):
-            nonlocal cr_reads
-            if resource == RESOURCE:
-                cr_reads += 1
-                return True, None if cr_reads == 1 else {"metadata": {"uid": "measurement"}, "spec": {"node": "target"}}
-            if resource == "job":
-                return True, {"metadata": {"uid": "job"}, "status": {"conditions": [{"type": "Complete", "status": "True"}]}}
-            if any(str(arg).startswith("job-name=") for arg in args):
-                assert "trigger" in events
-                raise StopIteration("end offline capture")
-            events.append("discovery")
-            return True, {"items": [p]}
-        c.read = read_fixture
-        c.pods = lambda *args: events.append("follow")
-        c.trigger = lambda *args: events.append("trigger")
-        with patch("builtins.print", side_effect=lambda *args, **kwargs: events.append("ready")):
-            try:
-                c.run()
-            except StopIteration:
-                pass
-            else:
-                raise AssertionError("terminal fixture did not reach loader discovery")
-        assert events.index("follow") < events.index("ready") < events.index("trigger")
-        cr_reads, events = 0, []
-        c.states["known"]["process"] = SimpleNamespace(poll=lambda: 1)
-        with patch("builtins.print", side_effect=lambda *args, **kwargs: events.append("ready")):
-            try:
-                c.run()
-            except RuntimeError as error:
-                assert "not armed" in str(error)
-            else:
-                raise AssertionError("exited initial follow was declared READY")
-        assert "ready" not in events
+        cr = {"metadata": {"uid": "measurement"}, "spec": {"node": "target", "workload": "workload"}}
+        unrelated = copy.deepcopy(p)
+        unrelated["metadata"]["ownerReferences"] = [{"kind": "Workload", "name": "other"}]
+        for precreate in (True, False):
+            events, cr_reads, pod_reads = [], 0, 0
+            c.states = {}
+            c.m["measurement_uid"] = c.m["job_uid"] = None
+            def read_fixture(ns, resource, *args):
+                nonlocal cr_reads, pod_reads
+                if resource == RESOURCE:
+                    cr_reads += 1
+                    return True, None if precreate and cr_reads == 1 else cr
+                if resource == "job":
+                    return True, {"metadata": {"uid": "job"}, "status": {"conditions": [{"type": "Complete", "status": "True"}]}}
+                if any(str(arg).startswith("job-name=") for arg in args):
+                    assert "trigger" in events
+                    raise StopIteration("end offline capture")
+                pod_reads += 1
+                events.append("discovery")
+                return True, {"items": [unrelated] if pod_reads == 1 else [unrelated, p]}
+            def follow(items, *args):
+                if items:
+                    assert items == [p]
+                    events.append("follow")
+                    c.states["known"] = {"process": process}
+            c.read, c.pods = read_fixture, follow
+            c.trigger = lambda *args: events.append("trigger")
+            with patch("time.sleep", side_effect=lambda seconds: events.append(("sleep", seconds))), \
+                    patch("builtins.print", side_effect=lambda *args, **kwargs: events.append("ready")):
+                try:
+                    c.run()
+                except StopIteration:
+                    pass
+                else:
+                    raise AssertionError("terminal fixture did not reach loader discovery")
+            assert ("sleep", 2) in events
+            assert events.index("follow") < events.index("ready") < events.index("trigger")
+        for exited in (True, False):
+            events, c.states = [], {}
+            c.read = lambda *args: (True, cr)
+            c.native_pods = lambda cr: [p] if exited else []
+            c.a.wait_for_pod = 1
+            process = SimpleNamespace(poll=lambda: 1)
+            with patch("time.monotonic", side_effect=[0, 2]), \
+                    patch("builtins.print", side_effect=lambda *args, **kwargs: events.append("ready")):
+                try:
+                    c.run()
+                except RuntimeError as error:
+                    assert "not armed" in str(error)
+                    assert exited or "timed out" in str(error)
+                else:
+                    raise AssertionError("unavailable follow was declared READY")
+            assert "ready" not in events
     print("capture-progress offline self-check passed")
 
 def main():
@@ -330,6 +373,7 @@ def main():
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--capture-load", action="store_true")
     parser.add_argument("--timeout", type=float, default=1800)
+    parser.add_argument("--wait-for-pod", type=float, default=300, help="seconds to wait for the CR's Workload-owned native Pod")
     a = parser.parse_args()
     if a.self_check:
         self_check()
@@ -338,6 +382,8 @@ def main():
         parser.error("--node, --measurement, --output-dir and nonempty --kubectl are required")
     if not math.isfinite(a.timeout) or a.timeout <= 0:
         parser.error("--timeout must be finite and positive")
+    if not math.isfinite(a.wait_for_pod) or a.wait_for_pod <= 0:
+        parser.error("--wait-for-pod must be finite and positive")
     a.runtime_namespace, a.load_namespace = a.runtime_namespace or a.namespace, a.load_namespace or a.namespace
     a.output_dir = a.output_dir.resolve()
     repository = Path(__file__).resolve().parents[2]

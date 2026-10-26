@@ -4,6 +4,7 @@
 - **공용 잠금:** 배포/빌드는 `/tmp/chill-heavy.lock`의 배타 잠금을 공유한다. 점유 중이면 중단한다. 다른 운영자의 작업과 겹쳐 실행하지 않는다.
 - **시간 상한:** 명령은 제한 시간 안에 종료한다. upgrade는 의존 패키지 조회당 120초, 빌드당 1800초, Helm 8분, 후속 Ready/API 확인 루프 전체 480초다. Pod 조회 timeout과 sleep도 남은 시간으로 제한하며 API 요청은 `min(10초, 남은 시간)`의 curl 전체 요청 제한을 쓴다. 기한이 지난 HTTP 200도 성공 처리하지 않는다. 시간 초과의 stdout/stderr도 보존한다. 실패 시 증거 경로를 보고하고 멈춘다.
 - **금지:** 강제 삭제, finalizer 제거, 자동 재시도, 암묵적인 reset/rollback 금지. 실패 후 재실행은 원인을 검토하고 별도 control 번호로 명시적으로 수행한다.
+- **측정 progress 캡처:** CR 생성 직후 `python3 hack/measure/capture-progress.py --node NODE --measurement CR_NAME --output-dir /tmp/NEW --wait-for-pod 300 --capture-load`를 실행한다(또는 백그라운드 선실행 후 CR 생성). CR의 Workload 소유 Pod를 2초 간격으로 최대 300초 기다리고 첫 행부터 timestamped follow를 시작한 뒤 `READY`를 출력한다.
 
 ## 업그레이드 전용 배포
 
