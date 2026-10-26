@@ -349,3 +349,7 @@
 
 - `demo.py run`의 summarize/publish에도 단일 발행 충실도 계산을 연결한다. 기존 함수를 환경 비의존 `d2/analyze_before.py`로 이동해 e5/demo가 재사용하며, 단계·전체 JSON/Markdown·출판 KPI에 실측/계획 gap과 >50ms 빈도·lateness를 보존한다. 누락은 UNKNOWN과 사유로 남긴다.
 - 초기 follow는 process 객체 생성만으로 준비됐다고 보지 않는다. READY 직전 `poll()`로 이미 종료된 follow도 거절하며, 실패 증거는 manifest/원본 stderr로 유지한다. 이 확인이 READY 이후 스트림 생존이나 원문 완전성을 보장하지는 않는다.
+
+## 2026-10-26 23:5xZ — U3 idle baseline 안정화 창 권고값(15s+30s)
+
+- GPU_1500 ModelLoadedIdleBaseline(settling 60s+idle 30s)이 3/3 실패: firstfloor HTTP keep-alive 유휴 60s 초과로 측정기 연결 끊김(`Remote end closed`, `history://U3IdleFail27`). runtime 7 재빌드 금지 → 기존 Complete CR 7개와 같은 **settling 15s + idle 30s**로 진행(권고값). 근본 수정(측정기 연결 재수립)은 runtime 재빌드 시점에.
