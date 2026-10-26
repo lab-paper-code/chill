@@ -187,6 +187,12 @@ class Capture:
         if not ok or cr:
             raise RuntimeError("CR must be absent: start capture before CR creation")
         self.m["cr_absent_at_start"] = True
+        ok, pods = self.read(self.a.runtime_namespace, "pods", "-l", SELECTOR, "--field-selector=spec.nodeName=" + self.a.node)
+        if not ok or pods is None:
+            raise RuntimeError("initial native Pod discovery failed; capture is not armed")
+        self.pods([p for p in pods["items"] if firstfloor(p, self.a.node)], "firstfloor", "firstfloor")
+        if any(s["process"] is None for s in self.states.values()):
+            raise RuntimeError("initial native log follow failed; capture is not armed")
         print("READY: capture armed; create measurement separately", flush=True)
         terminal = None
         while time.monotonic() < self.deadline:
@@ -206,6 +212,9 @@ class Capture:
                 event = "cr-disappeared"
             if event and terminal is None:
                 terminal = time.monotonic()
+            if event:
+                for s in self.states.values():
+                    self.trigger(s, event)
             if self.m["job_name"]:
                 ok, job = self.read(self.a.load_namespace, "job", self.m["job_name"])
                 if ok:
@@ -213,6 +222,9 @@ class Capture:
                     self.m["last_job"] = job
                     if job and self.m["job_uid"] is None:
                         self.m["job_uid"] = job["metadata"]["uid"]
+                if event:
+                    for s in self.states.values():
+                        self.trigger(s, event)
                 if self.a.capture_load and self.m["job_uid"]:
                     ok, pods = self.read(self.a.load_namespace, "pods", "-l", "job-name=" + self.m["job_name"])
                     if ok and pods:
@@ -268,6 +280,33 @@ def self_check():
         c.pool.shutdown(wait=True)
         assert result["status"] == "unavailable" and not result["success"] and result["prior_follow"]["returncode"] == 0
         assert (c.root / "follow.log").read_bytes().endswith(b"original progress\n")
+        events, cr_reads = [], 0
+        c.a.namespace = c.a.runtime_namespace = c.a.load_namespace = "ns"
+        c.a.measurement, c.a.capture_load = "measurement", True
+        c.states = {"known": {"process": object()}}
+        def read_fixture(ns, resource, *args):
+            nonlocal cr_reads
+            if resource == RESOURCE:
+                cr_reads += 1
+                return True, None if cr_reads == 1 else {"metadata": {"uid": "measurement"}, "spec": {"node": "target"}}
+            if resource == "job":
+                return True, {"metadata": {"uid": "job"}, "status": {"conditions": [{"type": "Complete", "status": "True"}]}}
+            if any(str(arg).startswith("job-name=") for arg in args):
+                assert "trigger" in events
+                raise StopIteration("end offline capture")
+            events.append("discovery")
+            return True, {"items": [p]}
+        c.read = read_fixture
+        c.pods = lambda *args: events.append("follow")
+        c.trigger = lambda *args: events.append("trigger")
+        with patch("builtins.print", side_effect=lambda *args, **kwargs: events.append("ready")):
+            try:
+                c.run()
+            except StopIteration:
+                pass
+            else:
+                raise AssertionError("terminal fixture did not reach loader discovery")
+        assert events.index("follow") < events.index("ready") < events.index("trigger")
     print("capture-progress offline self-check passed")
 
 def main():
