@@ -133,7 +133,7 @@ func (t *SchedulerTempo) Selected(d SchedulerDecision) {
 			}
 		}
 		for _, old := range d.Keep.Instances {
-			if old.WorkloadUID == uid && !slices.ContainsFunc(d.Target.Instances, func(i SchedulerInstance) bool { return i.ID == old.ID }) {
+			if (old.WorkloadUID == uid || old.OwnerWorkloadUID == uid) && !slices.ContainsFunc(d.Target.Instances, func(i SchedulerInstance) bool { return i.ID == old.ID }) {
 				changed = true
 			}
 		}

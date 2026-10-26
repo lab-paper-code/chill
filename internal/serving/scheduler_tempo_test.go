@@ -246,3 +246,23 @@ func TestSchedulerTempoFixedPowerGateIncludesTargetlessKeep(t *testing.T) {
 		}
 	}
 }
+
+func TestSchedulerTempoSelectedRebasesOwnerOnlyRemoval(t *testing.T) {
+	since := time.Unix(100, 0)
+	declining := SchedulerDownState{Baseline: 10, Previous: 5, Rate: 5, DownSince: &since, Elapsed: time.Minute, Allowed: true}
+	tempo := SchedulerTempo{states: map[string]SchedulerDownState{"w1": declining, "w2": declining}}
+	unrouted := SchedulerInstance{ID: "owned-unrouted", OwnerWorkloadUID: "w1"}
+	decision := SchedulerDecision{Keep: SchedulerCandidate{Instances: []SchedulerInstance{unrouted}}, Target: &SchedulerCandidate{Instances: []SchedulerInstance{unrouted}}}
+	tempo.Selected(decision)
+	if state := tempo.states["w1"]; state.Baseline != 10 || state.DownSince == nil {
+		t.Fatalf("retained owner-only runner reset the timer: %+v", state)
+	}
+	decision.Target.Instances = nil
+	tempo.Selected(decision)
+	if state := tempo.states["w1"]; state.Baseline != 5 || state.DownSince != nil || state.Elapsed != 0 || state.Allowed {
+		t.Fatalf("owner-only removal did not rebase selection: %+v", state)
+	}
+	if state := tempo.states["w2"]; state.Baseline != 10 || state.DownSince == nil || !state.Allowed {
+		t.Fatalf("unrelated Workload was rebased: %+v", state)
+	}
+}
