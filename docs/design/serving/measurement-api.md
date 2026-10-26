@@ -95,7 +95,7 @@ profile 통계오차, BEO idle fallback CI, 시점 drift와 global95% gain 보�
 | `spec.batch` | 고정 배치 크기 B(≥ 1). 인스턴스를 `fixedBatchSize: B`로 준비한다(`SCH-35`) |
 | `spec.supplyMode` | `closed-loop` 고정 outstanding 공급과 `poisson`을 구분한다. d는 closed-loop, E5 부하는 Poisson을 사용한다. `workers=K`, 대기 batch 수 q와 계산 입력을 conditions에 고정한다 |
 | `spec.warmupSeconds`, `durationSeconds`, `minimumBatches`, `maximumIdleFraction` | profile에서 계산한 부하 warmup W_load, 본창 T, 표본 N과 idle 계획 비율이다. closed-loop의 `loadPreparationFloorSeconds`, `windowFloorSeconds`, `plannedElapsedCapSeconds`는 `conditions.inputsJSON.coefficients`에서 한 번 동결해 소비하며 승인값은 60/360/3600 s다. preparation 예산은 별도다. legacy Poisson의 duration 60 s는 독립 구조 계약으로 유지한다 |
-| `spec.requestLifetimeSeconds`, `deliveryMarginMillis`, `drainSeconds`, `preparationSeconds`, `jobSetupSeconds`, `collectionSeconds`, `plannedElapsedSeconds` | profile, SLO, 실제 준비, batch tail, 전달과 수집 예산에서 계산한다. L≥SLO, gateway cap≥L과 native count/decoded bytes의 공동 조건을 만족한다. socket은 L과 delivery를 포함하며 E5는 socket>L+delivery를 명시한다 |
+| `spec.requestLifetimeSeconds`, `deliveryMarginMillis`, `drainSeconds`, `preparationSeconds`, `jobSetupSeconds`, `collectionSeconds`, `plannedElapsedSeconds` | profile, SLO, 실제 준비, batch tail, 전달과 수집 예산에서 계산한다. L≥SLO, gateway cap≥L과 native count/decoded bytes의 공동 조건을 만족한다. socket은 d와 E5 모두 L+delivery보다 엄격히 커야 하며 최소 1 ms를 더한다 |
 | `spec.conditions` | `profileID`, `inputsJSON`, `waitingBatches`, `maximumIdleNanosPerRequest`, `minimumCycles`에 정확한 profile, 모든 입력, 승인 계수, 계산 q, idle 1 ms/요청과 필수 cycle을 불변 고정한다. warmup과 본창 하한, 전체 cap의 설정 원천도 같은 입력에 동결한다 |
 | `status` | `phase`(2장과 같은 넷), `reason`, `powerMode`, `perRequestNanos`, `throughput`(소수 문자열, req/s), `result`(`ProfilingRunEvidenceReference`) |
 
@@ -137,16 +137,30 @@ HTTP 실패 뒤 실행된 batch도 계산에 포함한다. compute gap 전체를
 **조건 생성과 동결.** 상대 계획 정밀도 1%, 양측 95%, 공통 여유 1.25와 idle 기여 1 ms/요청을
 실측 profile의 batch별 분산, trial 경계, 준비 aggregate와 Workload SLO에 적용해 N, K, L과 창을 계산한다.
 N은 physical batch 수이며 cycle 수는 N−1이다. 같은 batch의 member는 독립 표본으로 중복 계산하지 않는다.
-K는 실행 batch와 대기 q개 batch를 위한 `B(1+q)`다.
-native waiting count, decoded bytes, batch tail과 남은 수명의 공동 조건을 만족하는 공급만 허용한다.
+기존 공급 계산값을 oldK라 하고, profile의 batch 평균 실행시간 mu(초)와 B로 요청 처리율 `rate=B/mu`(req/s)를 계산한다.
+RTT는 해당 target의 producer가 요청을 발행한 시점부터 응답을 받은 시점까지의 p99(초)다.
+입력 `measure.occupancySupply.roundTripByCase[caseID]`의
+`{p99Seconds, sources:[{path,sha256,...}], sampleCount, quantileMethod}`에 원시 근거 경로와 hash, 표본 수와 분위수 방법을 보존한다.
+다른 target의 RTT를 빌리지 않으며 해당 근거가 없으면 `RTT=0.25 s` fallback 사용을 명시한다.
+새 공급은 `K=max(oldK,ceil(rate*RTT*1.25))`로 정하고 64 상한을 두지 않는다.
+B>1이면 K를 B의 배수로 올림하여 whole-batch workers를 보존하며 `q=K/B−1`을 다시 계산한다.
+보수적인 `serviceTime=tailBatchSeconds/B`로 `K*B*serviceTime+RTT<=L`을 확인한다.
+위반하면 `L=max(oldL,ceil(1.25*(K*tailBatchSeconds+RTT)))`로 늘린다.
+변경된 K, q, L로 기존 q/batch-tail/prefix 수명 검사와 native waiting count, decoded bytes의 공동 조건을 모두 다시 확인한다.
 조건이 불가능하거나 전체 계획이 cap을 넘으면 실행 전에 보고한다.
 계수와 하한/상한은 한 설정 원천에서 읽고, generator, API, admission과 controller는 동결된 같은 조건을 소비한다.
 준비 시간과 부하 warmup의 의미와 예산은 각각 기록한다.
 
 **수명.** admission은 요청 L을 실제 `HandlerConfig.RequestTimeout` 상한과 대조하고 초과 CR을 실행 전에 거절한다.
-caller는 L과 delivery 여유, socket timeout을 명시한다.
+caller는 L과 delivery 여유를 명시하고 `socketTimeoutMillis >= L*1000+deliveryMarginMillis+1`로 설정한다.
 gateway는 원래 L과 sender 경과를 전달하고 native는 `L−senderElapsed−completionMargin`을 사용한다.
 완료 여유 m은 한 번 차감한다. 이 규칙은 E5 Poisson 호출에도 적용한다.
+K 증가로 늘어난 L에도 유한 physical drain과 전체 3600 s 예산을 적용하고,
+새 `supplyExtensionSeconds=ceil(L+deliveryMarginMillis/1000)` 예약을 보존한다.
+예산을 맞출 수 없으면 명시적으로 보고하며 공급 연장을 줄이거나 cap을 넘겨 실행하지 않는다.
+기존 Accepted record와 동결 입력은 불변이다. 새 계산의 K 증가는 oldK/newK, RTT 원천 또는 fallback,
+L과 예산 변경을 명시적으로 보고하고 기존 측정을 묵시적으로 재실행하지 않는다.
+이 공급 변경은 idle 1% 기준과 signed d의 정의·보존을 바꾸지 않는다.
 
 **판정.** physical finished에서 다음 ready까지의 보수 idle 상한과 창 끝단, hole, 누락 native를 함께 평가한다.
 필요한 원근거가 없으면 unknown과 모든 관련 사유를 남긴다.
