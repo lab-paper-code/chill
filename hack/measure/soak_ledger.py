@@ -11,14 +11,24 @@ import ssl
 import time
 from types import SimpleNamespace
 
+_parser_spec = importlib.util.spec_from_file_location(
+    'soak_timestamp_parser', Path(__file__).resolve().parents[1] / 'e5/d2/analyze_before.py')
+_parser = importlib.util.module_from_spec(_parser_spec)
+_parser_spec.loader.exec_module(_parser)
+
 
 def save(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
 
 def timestamp(value):
-    if not value:
-        raise RuntimeError('Missing observation/ACK timestamp')
-    return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+    parsed = _parser.epoch(value)
+    if parsed is None:
+        raise RuntimeError('Missing/invalid observation/ACK RFC3339Nano timestamp')
+    return parsed
+
+
+def profile_id(instance):
+    return (instance.get('profile') or {}).get('id') or instance.get('profileID')
 
 
 
@@ -129,8 +139,9 @@ def run(client, args, namespace):
     if owners != {args.workload_uid}:
         raise RuntimeError('Selected instances must be owned by --workload-uid')
     template = selected[active[-1]]
-    if not template.get('profileID') or not template.get('node'):
-        raise RuntimeError('Replacement requires original profileID and node identity')
+    profile = profile_id(template)
+    if not profile or not template.get('node'):
+        raise RuntimeError('Replacement requires original profile.id (or profileID) and node identity')
     guard.check(initial, pods, pools)
     save(out / 'initial.json', dict(state=initial, pods=pods, pools=pools))
     try:
@@ -150,7 +161,7 @@ def run(client, args, namespace):
                     guard.removed.add(old)
                     active.pop()
                     operation({'kind': 'prepare', 'workloadUID': args.workload_uid,
-                               'profileID': template['profileID'], 'node': template['node']})
+                               'profileID': profile, 'node': template['node']})
                     replacement = set(selected)
                     replaced = True
                 state, pods, pools = observe()
@@ -199,7 +210,12 @@ def self_check():
     import tempfile
     from unittest.mock import patch
     pod = {'metadata': {'uid': 'p'}, 'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
-    instance = dict(id='a', podUID='p', ready=True, ownerWorkloadUID='w', profileID='prof', node={'name': 'n', 'uid': 'n'})
+    instance = dict(id='a', podUID='p', ready=True, ownerWorkloadUID='w', profile={'id': 'prof'}, node={'name': 'n', 'uid': 'n'})
+    assert profile_id(instance) == profile_id({'profileID': 'prof'}) == 'prof'
+    assert profile_id({}) is None
+    nano = timestamp('2026-10-27T03:54:14.529208023Z')
+    assert timestamp('2026-10-27T03:54:14Z') < nano < timestamp('2026-10-27T03:54:15Z')
+    assert nano == timestamp('2026-10-27T12:54:14.529208023+09:00')
     guard = Invariants()
     state = {'snapshot': {'instances': [instance]}}
     assert not guard.check(state, {'items': [pod]}, {})
@@ -232,6 +248,7 @@ def self_check():
         def api(self, method, path, body=None, **kwargs):
             if method == 'GET': return {'observedAt': self.stamp(), 'instances': copy.deepcopy(self.instances)}
             self.calls.append(body['kind'])
+            if body['kind'] == 'prepare': assert body['profileID'] == 'prof'
             self.stale = self.state()
             if body['kind'] == 'remove': self.instances = [i for i in self.instances if i['id'] != body['instance']]
             if body['kind'] == 'prepare': self.instances.append(dict(instance, id='new', podUID='new-p'))

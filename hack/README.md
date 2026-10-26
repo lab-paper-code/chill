@@ -144,6 +144,8 @@ After each completed ACK, the runner waits up to 129 seconds for a strictly
 newer scheduler snapshot before another operation or invariant check; POOL
 observations must also be newer than the ACK. The server wire timestamps are
 `snapshot.at` and ACK `endedAt` (`observedAt`/`completedAt` are also accepted).
+RFC3339Nano timestamps use the existing D2 parser for Python 3.8 compatibility.
+Replacement reads the live instance's `profile.id` or retained `profileID`.
 Ready flicker requires Pod Ready with no native failure/reason; otherwise the
 transition is counted separately as `nativeUnavailable`, not a violation.
 Removed-ID reappearance in fresh state or POOL is an immediate violation.
