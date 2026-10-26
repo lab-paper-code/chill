@@ -728,8 +728,17 @@ class CPO:
         phase=load(folder/'phase.json') if phase is None else phase; start,end=phase['startUTC'],phase['endUTC']
         if not start or not end: raise RuntimeError('Actual interval required')
         collector=module('e5archive',HERE/'e5-archive.py')
-        captured=collector.collect(folder,phase,self.c['collection'],self.io,self.tb['collectSeconds'])
-        if captured.get('status')!='CAPTURED_NOT_EVALUATED': raise RuntimeError('Required exact-hour archive/current capture incomplete; preserve private index and stop')
+        tolerated=set(self.c.get('smoke',{}).get('tolerateArchive',[])) & {'power','power-drain-inclusive'} if self.b.get('schema')=='demo-e5-binding.v1' else set()
+        prior=folder/'archive-collection.json'
+        captured=load(prior) if tolerated and prior.exists() else collector.collect(folder,phase,self.c['collection'],self.io,self.tb['collectSeconds'])
+        missing={}
+        if captured.get('status')!='CAPTURED_NOT_EVALUATED':
+            errors=captured.get('errors') or []
+            for error in errors:
+                name=error.split(': ',1)[0]
+                if name in tolerated:missing[name]=error
+            if not errors or len(missing)==0 or any(error.split(': ',1)[0] not in tolerated for error in errors) or not load(folder/'raw-source-index.json').get('complete'):
+                raise RuntimeError('Required exact-hour archive/current capture incomplete; preserve private index and stop')
         for suffix in ('control-alerts.jsonl','cgmon.log','upload.log'):
             path=CAMPAIGN/suffix
             if path.exists(): (folder/suffix).write_bytes(path.read_bytes())
@@ -738,6 +747,8 @@ class CPO:
         r=subprocess.run(self.d.K+['logs',pods[0]['metadata']['name'],'-c',self.c['collection']['serverContainer'],'--since-time='+start,'--timestamps=true'],capture_output=True,text=True,timeout=self.tb['apiSeconds']); (folder/'server.log').write_text(r.stdout)
         if r.returncode: raise RuntimeError('Server GC/Tick log capture failed')
         manifest={'schema':'e5-private-collection.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; exclude original raw and sensitive configuration from git/public evidence indexes','at':now(),'status':'CAPTURED_NOT_EVALUATED','raw':[],'observationCapture':str(folder/'raw-source-index.json'),'archiveRequired':load(self.c['collection']['archiveRefs']),'bindingSources':self.b['sources'],'physicalIdentities':'pre/post Pods, Node UID, containerID/imageID, profile/runtime/allocation, full scheduler events','cadence':{'cgroupSeconds':1,'restartSeconds':15,'thermalSeconds':5},'streams':['definitions','requests','management','scheduler','catalog']}
+        if missing:
+            manifest.update(status='CAPTURED_WITH_MISSING_ARCHIVES',missingArchives=missing,archiveStatus=captured['status'])
         for p in sorted(folder.rglob('*')):
             if p.is_file() and p.name!='collected.json': manifest['raw'].append(ref(p,allow_empty=True))
         save(folder/'collected.json',manifest)

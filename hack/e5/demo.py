@@ -13,6 +13,12 @@ routing. Omit it (or false) for unchanged fixed-duration stages. phase.json and
 summary.json retain readyGate.observedUTC (null on timeout), timedOut and the
 last missingWorkloadUIDs; ready-gate-state.json retains the actual observation.
 
+Top-level or stage-level "tolerateArchive": ["power", "power-drain-inclusive"]
+allows only those power archive failures to advance after a completed request
+window. A stage list overrides the top-level list ([] restores strict capture).
+Original NOT_READY evidence remains; collected.json and summary.json record
+missingArchives and energy stays null. All other collection/request failures stop.
+
 A stage may instead use "parts": [{"id": "high", "seconds": 180, "rates":
 {"mobilenet": 100, "smolvlm2": 0.3, "plc": 40}}, {"id": "low", "seconds":
 300, "rates": {"mobilenet": 20, "smolvlm2": 0.3, "plc": 40}}].
@@ -69,9 +75,15 @@ def schedule(config, e5):
     from chill_loadgen import cli
     if 'staticPlacement' in config and type(config['staticPlacement']) is not bool:
         raise ValueError('staticPlacement must be a boolean')
-    stages = []
+    allowed_archives = {'power', 'power-drain-inclusive'}
     if not isinstance(config.get('stages'), list) or not config['stages']:
         raise ValueError('A nonempty stages list is required')
+    for source in [config] + config.get('stages', []):
+        if 'tolerateArchive' in source:
+            value = source['tolerateArchive']
+            if not isinstance(value, list) or any(not isinstance(name, str) or name not in allowed_archives for name in value):
+                raise ValueError('tolerateArchive must be a list of power and/or power-drain-inclusive')
+    stages = []
     for row in config['stages']:
         label = row['id']
         if not isinstance(label, str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9-]{0,39}', label) or any(s['id'].lower() == label.lower() for s in stages):
@@ -92,8 +104,8 @@ def schedule(config, e5):
                 raise ValueError('Positive seconds and mobilenet/smolvlm2/plc rates required')
             if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in rates.values()):
                 raise ValueError('Rates must be finite nonnegative requests/second')
-            if part is not row and any(key in part for key in ('readyGate', 'startBarrier', 'parts')):
-                raise ValueError('readyGate, startBarrier and nested parts are not supported within parts')
+            if part is not row and any(key in part for key in ('readyGate', 'startBarrier', 'parts', 'tolerateArchive')):
+                raise ValueError('readyGate, startBarrier, tolerateArchive and nested parts are not supported within parts')
             parts.append({'id': part_id, 'seconds': seconds, 'rates': {ALIASES[k]: v for k, v in rates.items()}})
         seconds = sum(p['seconds'] for p in parts)
         rates = {name: max(p['rates'][name] for p in parts) for name in ALIASES.values()}
@@ -102,6 +114,8 @@ def schedule(config, e5):
         if row.get('readyGate') and (stages or any(rates.values())):
             raise ValueError('readyGate is only supported on the first zero-load stage')
         stage = {'id': label, 'seconds': seconds, 'rates': rates, 'traces': {}}
+        if 'tolerateArchive' in row or 'tolerateArchive' in config:
+            stage['tolerateArchive'] = list(row.get('tolerateArchive', config.get('tolerateArchive', [])))
         if row.get('readyGate'):
             stage['readyGate'] = True
         if 'startBarrier' in row:
@@ -345,9 +359,11 @@ def collect_stage(e5, cpo, stage):
     if (folder / 'collected.json').exists():
         return
     phase = e5.load(folder / 'phase.json')
+    cpo.c['smoke'] = stage
     if phase['status'] == 'STOP':
-        if phase.get('error') != 'Drain/terminal timebox exceeded; preserve partial evidence, stop' or not phase.get('startUTC') or not phase.get('endUTC'):
-            raise RuntimeError('Only an otherwise completed producer window stopped by planner-idle timeout can be collected without replay')
+        archive_stop = bool(stage.get('tolerateArchive')) and phase.get('error') == 'Required exact-hour archive/current capture incomplete; preserve private index and stop' and bool(phase.get('drainedUTC'))
+        if (phase.get('error') != 'Drain/terminal timebox exceeded; preserve partial evidence, stop' and not archive_stop) or not phase.get('startUTC') or not phase.get('endUTC'):
+            raise RuntimeError('Only an otherwise completed producer window stopped by planner-idle timeout or explicitly tolerated archives can be collected without replay')
         active = {name for name, rate in stage['rates'].items() if rate}
         for field in ('starts', 'producerDrained', 'clientEndCounterRelease'):
             if not active <= set(phase.get(field) or {}):
@@ -359,12 +375,14 @@ def collect_stage(e5, cpo, stage):
         derived = folder / 'collected-phase.json'
         if derived.exists():
             raise RuntimeError('Partial recovery already retained; no implicit recovery overwrite')
-        phase['collectionRecovery'] = {'originalPhase': str(folder / 'phase.json'), 'originalStatus': phase['status'], 'originalError': phase['error'], 'meaning': 'No replay; original STOP/client/start/end retained. Drain and post-boundary are late recovery observations; drain-inclusive energy includes this interval.'}
-        phase['drainedUTC'] = cpo.request_drain(folder, phase)
-        cpo.boundary(folder, 'recovery-post')
-        phase['postBoundaryPrefix'], phase['status'] = 'recovery-post', 'DRAINED_NOT_EVALUATED'
-        e5.save(derived, phase)
+        phase['collectionRecovery'] = {'originalPhase': str(folder / 'phase.json'), 'originalStatus': phase['status'], 'originalError': phase['error'], 'meaning': 'No replay; original STOP/client/start/end retained. ' + ('Original drain/post-boundary retained; only explicitly tolerated archives may be missing.' if archive_stop else 'Drain and post-boundary are late recovery observations; drain-inclusive energy includes this interval.')}
+        if not archive_stop:
+            phase['drainedUTC'] = cpo.request_drain(folder, phase)
+            cpo.boundary(folder, 'recovery-post')
+            phase['postBoundaryPrefix'] = 'recovery-post'
+        phase['status'] = 'DRAINED_NOT_EVALUATED'
         cpo.collect(folder, phase=phase)
+        e5.save(derived, phase)
     else:
         cpo.collect(folder)
 
@@ -487,8 +505,15 @@ def summarize(e5, binding, out):
         power = e5.load(power_path) if power_path.exists() else {}
         drain_power_path = folder / 'power-drain-inclusive.json'
         drain_power = e5.load(drain_power_path) if drain_power_path.exists() else {}
+        collected = e5.load(folder / 'collected.json') if (folder / 'collected.json').exists() else {}
+        missing_archives = collected.get('missingArchives', {})
+        if 'power' in missing_archives:
+            power = {}
+        if 'power-drain-inclusive' in missing_archives:
+            drain_power = {}
         summary = {'stage': stage['id'], 'status': phase['status'], 'startUTC': phase['startUTC'], 'endUTC': phase['endUTC'], 'drainedUTC': phase.get('drainedUTC'), 'gapFromPreviousOfferedWindowSeconds': gap, 'gapMeaning': 'No offered demo requests during per-stage drain/collection/setup; failures in this gap are not measurable by these producers', 'placementChanges': changes, 'actions': actions, 'transitionWindowsEpoch': windows, 'schedulerCapture': provenance, 'energyJ': power.get('wholePoolJoules') if power.get('complete') else None, 'activeEnergyJ': power.get('activePoolJoules') if power.get('complete') else None, 'drainInclusiveEnergyJ': drain_power.get('wholePoolJoules') if drain_power.get('complete') else None, 'energyScope': 'Shared whole/active pool; never attributed to individual workloads', 'workloads': {}}
         summary['collectionRecovery'] = phase.get('collectionRecovery')
+        summary['missingArchives'] = missing_archives
         summary['demoRequestDrain'] = phase.get('demoRequestDrain')
         for key in ('readyGate', 'startBarrier'):
             if key in phase:
@@ -546,8 +571,10 @@ def summarize(e5, binding, out):
         table.append('| ' + ' | '.join(map(str, [s['stage'], name, fmt(m['rate']), f"{m['httpSuccess']}/{m['offered']}", fmt(None if m['successFraction'] is None else m['successFraction'] * 100), fmt(m['latencyMS']['p95']), fmt(m['latencyMS']['p99']), f"p{m['sloPercentile']}/{fmt(m['sloMS'])}", fmt(None if m['withinSLOFraction'] is None else m['withinSLOFraction'] * 100), fmt(s['energyJ']), fmt(s['activeEnergyJ']), fmt(s['drainInclusiveEnergyJ']), len(s['placementChanges']), fmt(m['transitionFailures']), fmt(s['gapFromPreviousOfferedWindowSeconds'])])) + ' |')
     for s in stage_summaries:
         table += ['', '## ' + s['stage'], '']
+        if s.get('missingArchives'):
+            table.append('Tolerated missing archives (not measured): ' + json.dumps(s['missingArchives']))
         if s.get('collectionRecovery'):
-            table.append('Original phase STOP preserved; collected without load replay. Request drain/post-state were observed during recovery, so drain-inclusive energy contains the late interval. See collectionRecovery in summary.json.')
+            table.append(s['collectionRecovery']['meaning'] + ' See collectionRecovery in summary.json.')
         if not s.get('metricsAvailable', True):
             table.append('No completed offered window: ' + str(s.get('error', s['status'])))
             continue
@@ -625,6 +652,19 @@ def self_check():
         config = {'stages': [{'id': 'E0', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 0)}, {'id': 'A', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}, {'id': 'B', 'seconds': .001, 'rates': {'mobilenet': 20000, 'smolvlm2': 10000, 'plc': 10000}}, {'id': 'C', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}]}
         config['stages'][-1] = {'id': 'C', 'parts': [{'id': 'high', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 20000)}, {'id': 'low', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}]}
         stages = schedule(config, e5)
+        tolerant = schedule(dict(config, tolerateArchive=['power', 'power-drain-inclusive']), e5)
+        assert all(s['tolerateArchive'] == ['power', 'power-drain-inclusive'] for s in tolerant)
+        override = copy.deepcopy(config)
+        override['tolerateArchive'] = ['power']
+        override['stages'][1]['tolerateArchive'] = []
+        assert schedule(override, e5)[1]['tolerateArchive'] == []
+        for invalid in ('power', ['requests'], [None]):
+            try:
+                schedule(dict(config, tolerateArchive=invalid), e5)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid tolerateArchive accepted')
         from chill_loadgen import cli
         assert stages[-1]['seconds'] == .002
         for name in ALIASES.values():
@@ -803,6 +843,63 @@ def self_check():
             assert policy['segments'] == [{'rate': 20000, 'seconds': .001}, {'rate': 10000, 'seconds': .001}]
             assert policy['arrivalSHA256'] == stages[-1]['traces'][name]['arrivalSHA256']
         assert '| low |' in (cpo.out / 'summary.md').read_text()
+        # Real collection gate: only explicit power gaps advance, never raw/request failures.
+        archive_refs = root / 'archive-refs.json'
+        e5.save(archive_refs, [])
+        for label, allowed, errors, raw_complete, succeeds in (
+                ('strict', [], ['power: timeout'], True, False),
+                ('partial', ['power'], ['power: timeout', 'power-drain-inclusive: timeout'], True, False),
+                ('power', ['power', 'power-drain-inclusive'], ['power: timeout', 'power-drain-inclusive: timeout'], True, True),
+                ('other', ['power'], ['requests: timeout'], True, False),
+                ('raw', ['power'], ['power: timeout'], False, False)):
+            probe_out = root / ('archives-' + label)
+            folder = stage_folder(probe_out, stages[1])
+            folder.mkdir(parents=True)
+            original = e5.load(stage_folder(cpo.out, stages[1]) / 'phase.json')
+            original.update(status='STOP', error='Required exact-hour archive/current capture incomplete; preserve private index and stop')
+            e5.save(folder / 'phase.json', original)
+            for name in stages[1]['rates']:
+                e5.save(folder / ('terminal-' + name + '.json'), {'status': {'conditions': [{'type': 'Complete', 'status': 'True'}]}})
+            captured = {'status': 'NOT_READY', 'errors': errors}
+            e5.save(folder / 'archive-collection.json', captured)
+            e5.save(folder / 'raw-source-index.json', {'complete': raw_complete})
+            stage = dict(stages[1], tolerateArchive=allowed)
+            probe = SimpleNamespace(out=probe_out, c={'smoke': stage, 'collection': {'archiveRefs': str(archive_refs), 'serverContainer': 'server'}}, b={'schema': 'demo-e5-binding.v1', 'sources': {}, 'schedule': [stage, stages[2]]}, tb={'collectSeconds': 1, 'apiSeconds': 1}, d=SimpleNamespace(K=['fixture'], load=e5.load), io=SimpleNamespace(k=lambda *args: {'items': [{'metadata': {'name': 'server'}}]}))
+            probe.collect = lambda folder, phase=None: e5.CPO.collect(probe, folder, phase)
+            with patch.object(e5, 'module', return_value=SimpleNamespace(collect=lambda *args: captured)), patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='logs')):
+                try:
+                    if allowed:
+                        collect_stage(e5, probe, stage)
+                    else:
+                        probe.collect(folder)
+                except RuntimeError:
+                    assert not succeeds
+                else:
+                    assert succeeds
+            assert e5.load(folder / 'phase.json') == original
+            assert (folder / 'collected.json').exists() == succeeds
+            if succeeds:
+                missing = e5.load(folder / 'collected.json')['missingArchives']
+                assert set(missing) == set(allowed)
+                assert e5.load(phase_path(folder))['status'] == 'DRAINED_NOT_EVALUATED'
+                (probe_out / 'start-ack.json').write_text('{}')
+                probe.static_placement = lambda: True
+                probe.a = SimpleNamespace()
+                probe.run = lambda: None
+                run_stage(probe, stages[2])
+                e5.save(stage_folder(cpo.out, stages[1]) / 'collected.json', {'missingArchives': missing})
+                summary = summarize(e5, cpo.b, cpo.out)[1]
+                assert summary['energyJ'] is None and summary['drainInclusiveEnergyJ'] is None
+                assert summary['missingArchives'] == missing
+                original['error'] = 'Producer log stream failed'
+                e5.save(folder / 'phase.json', original)
+                (folder / 'collected.json').unlink()
+                try:
+                    collect_stage(e5, probe, stage)
+                except RuntimeError as error:
+                    assert 'Only an otherwise completed' in str(error)
+                else:
+                    raise AssertionError('Request failure tolerated')
         # Exercise the optional gate through the real zero-load loop, including timeout.
         for gate_ready in (True, False):
             gated = schedule({'stages': [dict(config['stages'][0], seconds=1 if gate_ready else .01, readyGate=True)]}, e5)[0]
@@ -995,6 +1092,7 @@ def self_check():
             go_out.mkdir()
             (go_out / 'start-ack.json').write_bytes((cpo.out / 'start-ack.json').read_bytes())
             go_stage = copy.deepcopy(static_stages[0])
+            go_stage['seconds'] = 1  # Keep stage-entry capture independent of filesystem latency.
             go_folder = stage_folder(go_out, go_stage)
             plc_name = ALIASES['plc']
             go_observations = []
