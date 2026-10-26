@@ -314,3 +314,11 @@
 - 관측 한계: application clocks=N/A, locked-range getter 없음. graphics와 SM 현재 MHz가 모두 정확한 요청값일 때만 기존 settling 후 성공으로 본다. 이는 잠금 레지스터 증명이 아니다. 실패하면 이전 선언 모드 복원·재조회 또는 -rgc 기본 정책 cleanup; reset 종료만으로 unlocked 검증 성공을 주장하지 않는다. 재시작은 조회만, 재부팅 뒤 기본 정책/새 bootID는 새 요청 전까지 재적용하지 않는다.
 - 배포: Jetson과 분리한 NVIDIA operand, root+SYS_ADMIN·RuntimeClass nvidia/utility·read-only 호스트 도구/라이브러리, hostPID/privileged/SYS_BOOT 없음. 초기 genesis2 한 대. node-agent와 operator 이미지만 새로 빌드; runtime 7 아님.
 - 연결: [PA-NV-01–05](../spec/platform/SRS.md), [Plan 6 GPU clock](../design/profiling/plans/06-execution-support-expansion.md#gpu-clock). 실제 변경·배포·GPU_1500↔GPU_900 비용 CR(방향당 Accepted 5회)은 CampaignOps 직렬 소유. 이 항목은 클럭 변경이나 실증 완료를 뜻하지 않는다.
+
+## 2026-10-27 — U2 전력모드 최소 커버리지 권고값
+
+- 결정: 별도 승인 대기 없이 jetsono `MAXN↔MODE_15W`, jetsonx `MODE_15W_6CORE↔MODE_15W_4CORE`, jetson-nano `MAXN↔5W`의 세 모델 CPU q1/B1, 총18조합을 최소 측정 범위로 한다. S는 INT8이며 o/x의 새 q1을 독립 측정한다. 2CORE는 예약 후 자원 부족 위험 때문에 x 최소 후보로 택하지 않았다. nano5W의 q1 실현 가능성은 착수 전 확인하고 부적격이면 미달 blocker로 보고하며 모드 제외·예약 임의 변경·κ0 대체를 하지 않는다.
+- 근거: 읽기 전용 live snapshot `2026-10-26T20:33:57.347740004Z`에서 실행 options69, costs153, baselines75를 확인했다. 실행 프로파일은 각 Node 한 모드뿐이며 선언 모드와 현재 물리 모드는 다르다. 정확 준비·제거 비용69/69는 다른 모드의 모델 근거가 아니다. d source 보유와 새 규칙 Accepted를 구분한다. `O/intent/u2-power-coverage-{live,rows}-20261027.json`에 원시 참조와 전 조합을 보존했다.
+- 실행 권고: 신규 profile11조합→d 최대17조합→부족 loaded 비용14조합·빈 idle1모드·전환2쌍4방향 순으로 기존 BEO/DispatchOccupancyMeasurement/OperationCostMeasurement를 사용한다. 모델 제거 뒤 빈 Node 모드 전환 범위이며 loaded 직접 전환은 별도 근거 전까지 제외한다. 전역1건, CampaignOps만 변경한다.
+- 시간: [INFERENCE] 최소 잔여 약13.2–34.9시간(793–2091분), U1이 완료한 exact d는 차감하며 재시도·U3/U4 대기는 별도다. 중간/전체는 계획만 공개하고 E5를 전체안 완료까지 기다리게 하지 않는다. E5 숫자·κ/R는 최소 범위 근거 수용과 최종 SLO/m 재계산 뒤 사용자1회 승인 대상이다.
+- 연결: catalog `PC-01..03`, [커버리지 계획 §§2–5](../plans/2026-10-27-power-mode-coverage.md). 이 기록은 실측 완료·클러스터 변경·E5 시작 승인이 아니다.
