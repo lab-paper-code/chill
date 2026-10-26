@@ -87,6 +87,8 @@ deps:
 
   batch-energy-optimization-core:
     anyVendorDeps: true
+    mayDependOn:
+      - profile-derivation
 
   batch-energy-optimization-controller:
     mayDependOn:

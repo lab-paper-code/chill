@@ -616,3 +616,5 @@ uses explicitly captured snapshots and focused `ProfilingRun` objects.
 - Do not promote a row from repository configuration or package tests alone.
 - A new production package or dependency updates `.go-arch-lint.yml` and its
   owning component/design record in the same commit.
+  The BEO core imports profile derivation's shared policy-mismatch error;
+  curve calculation remains injected through `CurveSource`.
