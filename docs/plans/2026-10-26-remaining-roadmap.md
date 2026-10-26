@@ -31,7 +31,9 @@ orangepi-017 네 번째 trial의 생성 경위는 로그 부재로 미확정이�
 
 ## 3. 미확정 환경 사건과 증거 완전성
 
-### edge-metrics 간헐 읽기 시간 초과
+### edge-metrics 간헐 읽기 시간 초과 — **E5 차단 항목**
+
+현재 상태(2026-10-26 11:00Z): 원인 미확정. 1위 후보는 수집 호스트(genesis1)에서 같은 시각에 실행된 빌드·테스트 부하(04:33~04:36Z, 09:02~09:10Z의 `make test`·`go test`와 실패 시각 일치; `O/intent/edge-metrics-timeout-20261027.md` 추가 조사). E5 전 결정: 창 중 호스트 작업 금지 규칙 + 호스트 load 표본 수집으로 재발 0 확인, 또는 원인 확정.
 
 04:35:45–46Z에 rasp5/jetsonx/jetson-nano/lattepanda의 공통 edge-metrics endpoint 읽기 실패5개가 있었다. 첫4개 감지 시각은27.966µs 범위, jetsonx 추가 실패는0.759초 뒤다. 약700ms timeout은 원천 장치 고장 시작 시각이 아니라 관찰자 반환 시각이다.
 
