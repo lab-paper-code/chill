@@ -39,6 +39,9 @@ type observerAPI struct {
 	releaseList  chan struct{}
 	logFollows   int
 	logOpened    chan struct{}
+	podSelectors []string
+	podListUIDs  [][]types.UID
+	duplicate    core.PodPhase // extra Pod with instance-a's UID label
 }
 
 func newObserverAPI(t *testing.T, instances int) *observerAPI {
@@ -108,7 +111,9 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 			api.reads[r.Method+" "+r.URL.Path]++
 			failing, slow, owner := api.failing, api.slowNode, api.owner
 			api.mu.Unlock()
-			if failing != "" && strings.HasSuffix(r.URL.Path+"?"+r.URL.RawQuery, failing) {
+			query := r.URL.Query()
+			query.Del("labelSelector") // Failure injection still targets probe revalidation, not the initial field-filtered inventory.
+			if failing != "" && strings.HasSuffix(r.URL.Path+"?"+query.Encode(), failing) {
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 				return
 			}
@@ -118,16 +123,7 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 				time.Sleep(slow)
 				response = core.NodeList{TypeMeta: meta.TypeMeta{Kind: "NodeList", APIVersion: "v1"}, Items: []core.Node{*node}}
 			case strings.HasSuffix(r.URL.Path, "/pods"):
-				list := core.PodList{TypeMeta: meta.TypeMeta{Kind: "PodList", APIVersion: "v1"}}
-				selector := strings.TrimPrefix(r.URL.Query().Get("labelSelector"), instancePodUIDLabel+"=")
-				for _, pod := range podList.Items {
-					if owner != "" {
-						pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: "w", UID: owner}}
-					}
-					if r.URL.Query().Get("labelSelector") == "" || string(pod.UID) == selector {
-						list.Items = append(list.Items, pod)
-					}
-				}
+				list := api.listPods(podList, r.URL.Query().Get("labelSelector"), owner)
 				response = list
 				api.mu.Lock()
 				ready, release := api.verifiedList, api.releaseList
@@ -174,10 +170,38 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 	return api
 }
 
+func (a *observerAPI) listPods(inventory core.PodList, labelSelector string, owner types.UID) core.PodList {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	list := core.PodList{TypeMeta: meta.TypeMeta{Kind: "PodList", APIVersion: "v1"}}
+	selector := strings.TrimPrefix(labelSelector, instancePodUIDLabel+"=")
+	for _, pod := range inventory.Items {
+		if owner != "" {
+			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: "w", UID: owner}}
+		}
+		if labelSelector == "" || pod.Labels[instancePodUIDLabel] == selector {
+			list.Items = append(list.Items, pod)
+		}
+	}
+	if a.duplicate != "" && labelSelector != "" && selector == "pod-uid-a" {
+		pod := inventory.Items[0].DeepCopy()
+		pod.Name, pod.UID, pod.Status.Phase = "duplicate", "duplicate-uid", a.duplicate
+		list.Items = append(list.Items, *pod)
+	}
+	a.podSelectors = append(a.podSelectors, labelSelector)
+	uids := make([]types.UID, 0, len(list.Items))
+	for _, pod := range list.Items {
+		uids = append(uids, pod.UID)
+	}
+	a.podListUIDs = append(a.podListUIDs, uids)
+	return list
+}
+
 func (a *observerAPI) refresh(t *testing.T) int {
 	t.Helper()
 	a.mu.Lock()
 	clear(a.reads)
+	a.podSelectors, a.podListUIDs = nil, nil
 	a.mu.Unlock()
 	if err := a.observer.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
@@ -215,6 +239,52 @@ func TestObserverRefreshVerifiesEachCompletedSource(t *testing.T) {
 	}
 	if reads > instances+3 {
 		t.Fatalf("one refresh made %d shared-client reads for %d instances", reads, instances)
+	}
+}
+
+func TestObserverProbeListsOnlyUIDLabel(t *testing.T) {
+	const instances = 3
+	api := newObserverAPI(t, instances)
+	api.refresh(t)
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.podSelectors) != instances+1 {
+		t.Fatalf("Pod List requests = %d, want %d", len(api.podSelectors), instances+1)
+	}
+	seen := map[string]bool{}
+	for i, selector := range api.podSelectors {
+		if i == 0 {
+			if selector != "" || len(api.podListUIDs[i]) != instances {
+				t.Fatalf("initial inventory selector=%q UIDs=%v", selector, api.podListUIDs[i])
+			}
+			continue
+		}
+		uid := strings.TrimPrefix(selector, instancePodUIDLabel+"=")
+		if selector != instancePodUIDLabel+"="+uid || seen[uid] || len(api.podListUIDs[i]) != 1 || string(api.podListUIDs[i][0]) != uid {
+			t.Fatalf("probe selector=%q returned UIDs=%v", selector, api.podListUIDs[i])
+		}
+		seen[uid] = true
+	}
+	if api.ready() != instances {
+		t.Fatalf("ready=%d, want %d", api.ready(), instances)
+	}
+}
+
+func TestObserverProbeRejectsUIDLabelDuplicates(t *testing.T) {
+	for _, phase := range []core.PodPhase{core.PodRunning, core.PodSucceeded, core.PodFailed} {
+		t.Run(string(phase), func(t *testing.T) {
+			api := newObserverAPI(t, 1)
+			api.duplicate = phase
+			api.refresh(t)
+			if api.ready() != 0 {
+				t.Fatalf("%s duplicate accepted: %+v", phase, api.observer.runtime.Instances())
+			}
+			api.mu.Lock()
+			defer api.mu.Unlock()
+			if len(api.podSelectors) != 2 || api.podSelectors[1] != instancePodUIDLabel+"=pod-uid-a" || len(api.podListUIDs[1]) != 2 {
+				t.Fatalf("duplicate verification selectors=%v UIDs=%v", api.podSelectors, api.podListUIDs)
+			}
+		})
 	}
 }
 

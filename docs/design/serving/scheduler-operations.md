@@ -92,8 +92,10 @@ Pod 교체는 거부하며 재시도하지 않는다. 기존 preparation의 CPU�
 stdlib `maps.EqualFunc(resource.Quantity.Equal)`로 값만 비교한다. API의 quantity 표기나
 내부 문자열 cache 차이를 다른 자원 할당으로 취급하지 않는다.
 GET으로 현재 Service의 소유권·selector·EdgeMesh label·port를 검증하고, selector가
-현재 Pod/container 하나만 선택하는지 namespace Pod LIST로 확인한다. HTTP probe 뒤
-Pod/container를 다시 읽어 교체된 executor를 이전 인스턴스로 게시하지 않는다.
+현재 Pod/container 하나만 선택하는지 namespace Pod LIST로 확인한다. Observer의 HTTP probe 뒤
+재검증 LIST는 `edge.dacs.io/serving-pod-uid=<actual Pod UID>` selector로 제한한다.
+terminal Pod도 제외하지 않아 동일 label의 중복과 Pod/container 교체를 계속 검출하고,
+다른 UID label의 Pod는 재검증 응답에 포함하지 않는다(SCH-50).
 Pod는 `RestartPolicyNever`여야 한다. 같은 Pod UID 뒤에서 container가 재시작하여
 이미 게시한 physical instance의 실행 목적지가 바뀌는 것을 허용하지 않는다.
 native model/state와 immutable profile/runtime evidence의 준비 검증은 그대로 유지한다.

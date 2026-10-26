@@ -241,8 +241,8 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	for i := range o.profiles {
 		profiles[o.profiles[i].ID] = &o.profiles[i]
 	}
-	// One Service list and one Pod list after the probes verify every
-	// instance, so the refresh cost does not grow with the instance count.
+	// Share one Service list; each completed native probe re-lists only its
+	// UID label, including terminal Pods, to verify identity and duplicates.
 	services, servicesErr := o.kube.CoreV1().Services(o.config.Namespace).List(ctx, metav1.ListOptions{})
 	servicesByName := map[string]*corev1.Service{}
 	if servicesErr == nil {
@@ -268,7 +268,7 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 			var latest *corev1.PodList
 			var latestErr error
 			if probe != nil {
-				latest, latestErr = o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, metav1.ListOptions{})
+				latest, latestErr = o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, metav1.ListOptions{LabelSelector: instancePodUIDLabel + "=" + string(pod.UID)})
 			}
 			o.mu.Lock()
 			defer o.mu.Unlock()
