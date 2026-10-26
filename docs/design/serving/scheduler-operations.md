@@ -225,9 +225,11 @@ release 또는 lower-power가 실패해 Pod가 사라져도, 현재 대상 UID�
 두 번째 reset은 Pod·선언·전력 요청을 새로 만들지 않고 성공한다(`SCH-AC-33`).
 멱등성은 실제 상태 확인으로 얻으며 별도 재개 상태기계나 숨은 client 재시도는 두지 않는다.
 기존 전역 분배 작업 또는 대상 Node의 작업이 running/cancel이면 설정을 바꾸기 전에 거절한다.
-종료된 owner는 예약 전체의 Workload·동일 UID Node가 reset 정리 범위 안에 있을 때만
-원자적으로 reset 예약에 인계한다(SCH-51, SCH-AC-38). 같은 owner의 active 단계,
-측정 owner, 범위 밖 Workload/Node를 포함한 예약은 인계하지 않는다.
+종료된 owner는 예약 전체의 Workload와 동일 UID Node가 실제 reset 계획의 admission
+대상(`operation.Nodes`) 안에 있을 때만 원자적으로 reset 예약에 인계한다(SCH-51,
+SCH-AC-38). 이전 snapshot이 공통 충돌 범위를 확장해도 정리/admission 대상 Node를
+추가한 것으로 보지 않는다. 같은 owner의 active 단계, 측정 owner, 범위 밖
+Workload/Node를 포함한 예약은 인계하지 않는다.
 수락 후에는 인계받은 Pod/container 책임과 대상 범위를 계속 예약하여 다른 작업이 단계
 사이에 끼어들지 못하게 하며 실제 reset 완료 후 해제한다. reset 자체가 effect 전에
 거절되어도 인계받은 미확인 책임은 반환하지 않는다.

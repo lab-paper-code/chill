@@ -108,7 +108,7 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 	var inherited []string
 	if operation.Kind == operationReset {
 		var err error
-		inherited, err = c.resetReservationOwnersLocked(scope)
+		inherited, err = c.resetReservationOwnersLocked(scope, operation.Nodes)
 		if err != nil {
 			return false
 		}

@@ -13,6 +13,7 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -681,6 +682,51 @@ func TestResetPendingPowerTargetsRespectCurrentScopeAndOwnership(t *testing.T) {
 				t.Fatalf("pending power return crossed %s boundary: %+v err=%v", exclude, plan, err)
 			}
 		})
+	}
+}
+
+func TestResetRejectsSnapshotOnlyPendingReservationNodeAC38(t *testing.T) {
+	h := newResetHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cleaned, err := h.controller.ExecuteManual(ctx, h.request())
+	if err != nil || cleaned.Status != nativeOperationComplete {
+		t.Fatalf("initial cleanup failed: %+v err=%v", cleaned, err)
+	}
+	node, err := h.kube.CoreV1().Nodes().Get(ctx, h.owned.Spec.NodeName, meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Labels[chillmeta.PowerModeState] = chillmeta.PowerModePending
+	if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+	oldID := "manual-route:pending-outside-reset"
+	old := &actionRun{owner: oldID, reserved: true,
+		action: serving.Action{Kind: operationRoute, Status: nativeOperationFailed},
+		scope:  resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{h.selectedUID}},
+		result: &OperationResult{Operation: Operation{Kind: operationRoute, WorkloadUID: h.selectedUID}, EndedAt: time.Now().Add(-time.Second)}}
+	operation := Operation{ID: "manual-reset:pending-outside-plan", Kind: operationReset, WorkloadUIDs: []string{h.selectedUID}}
+	h.controller.mu.Lock()
+	h.controller.runs[oldID] = old
+	h.controller.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: "stale-pending-instance", Node: ref, WorkloadUID: h.selectedUID}}
+	expanded := h.controller.operationScope(operation)
+	h.controller.mu.Unlock()
+	if !slices.Contains(expanded.Nodes, ref) {
+		t.Fatal("fixture did not expand conflict scope from the previous snapshot")
+	}
+	plan, err := h.controller.planManualResetLocked(ctx, operation)
+	var conflict *serving.Error
+	if len(plan.nodes) != 0 || !errors.As(err, &conflict) || conflict.Code != "OperationConflict" || !old.reserved {
+		t.Fatalf("planning inherited a Node outside admission: plan=%+v err=%v held=%t", plan, err, old.reserved)
+	}
+	h.controller.mu.Lock()
+	acquired := h.controller.reserveRun(operation.ID, &actionRun{action: serving.Action{Status: nativeOperationRunning}}, operation)
+	held := old.reserved
+	h.controller.mu.Unlock()
+	if acquired || !held {
+		t.Fatalf("acquisition inherited a snapshot-only Node: acquired=%t held=%t", acquired, held)
 	}
 }
 
