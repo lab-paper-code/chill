@@ -89,7 +89,7 @@ func capacityPlannerForTest(t testing.TB, s SchedulerSettings, snap SchedulerSna
 		var tempo SchedulerTempo
 		tempo.Observe(s, &snap, rows)
 	}
-	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: schedulerCommonNodes(s, snap), Instances: snap.Instances, Routing: schedulerInstanceRouting(ctx, snap.Workloads, snap.Instances)}
+	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: schedulerCommonNodes(snap), Instances: snap.Instances, Routing: schedulerInstanceRouting(ctx, snap.Workloads, snap.Instances)}
 	for uid, routing := range snap.Routing {
 		keep.Routing[uid] = routing
 	}
@@ -1819,5 +1819,119 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	load(35, 35, 35, 35, 35, 5)
 	if d := capacityDecideForTest(t, s, snap, rows); replaced(d) || !slices.Contains(d.Reasons, schedulerReplacementUnpaid+":n2") {
 		t.Fatalf("replacement unpaid at 5 req/s was chosen: %+v %v", d.Target, d.Reasons)
+	}
+}
+
+func capacityEmptyFixedFixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.MaxObservationAge = time.Minute, 10*time.Second, time.Hour
+	s.ComparisonPeriod, s.MaxReplicas = 600*time.Second, 1
+	snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": schedulerRouteUnits}}
+	capacityLoad(s, &snap, snap.Workloads[0], 20)
+	// 0.28 W steady saving with 867 J transition overhead breaks even in
+	// 3096 s (~52 min), not within the common 600 s horizon.
+	node := poolsAddNode(&snap, "jetsono", map[string]float64{"fixed": 10, schedulerTestEcoMode: 9.72})
+	power := poolsCost(schedulerActionPower, node, "fixed", schedulerTestEcoMode, "")
+	power.Trials = []OperationTrial{{Duration: 10 * time.Second, Joules: 964.2}}
+	snap.Costs = []OperationCost{power}
+	return s, snap, node
+}
+
+func TestCapacityEmptyFixedUsesCommonEnergyAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		joules      float64
+		uncertainty float64
+		gain        float64
+		admitted    bool
+	}{
+		{name: "minus-699J", joules: 964.2, gain: -699},
+		{name: "positive", joules: 100, gain: 165.2, admitted: true},
+		{name: "positive-below-minimumGain", joules: 100, uncertainty: 200, gain: 165.2},
+		{name: "zero-gain", joules: 265.2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, snap, node := capacityEmptyFixedFixture()
+			snap.Costs[0].Trials[0].Joules = tc.joules
+			snap.Costs[0].Trials[0].EnergyUncertaintyJoules = tc.uncertainty
+			rows := capacityRowsForTest(s, snap, nil)
+			p := capacityPlannerForTest(t, s, snap, rows)
+			choice := capacityChoiceForTest(t, p, map[string]string{node.UID: ""})
+			n := slices.IndexFunc(p.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == node })
+			plan := p.plans[n][choice[n]]
+			if !p.compared[n] || plan.record.Tempo != schedulerTempoSlow || math.Abs(plan.record.Joules-tc.joules) > 1e-9 {
+				t.Fatalf("Fixed saving missing from comparison or chain costs: %+v", plan.record)
+			}
+			gain := p.evaluate(make([]int, len(p.plans)), 0).joules - p.evaluate(choice, p.routeOf(choice)).joules
+			if math.Abs(gain-tc.gain) > 1e-8 {
+				t.Fatalf("gain=%g, want %g over the common H", gain, tc.gain)
+			}
+			paid := p.minimumGain(p.payback(p.evaluate(choice, p.routeOf(choice))))
+			if (paid.choice[n] != 0) != tc.admitted {
+				t.Fatalf("Fixed payback/minimumGain admission=%v, want %v", paid.choice[n] != 0, tc.admitted)
+			}
+			d := capacityDecideForTest(t, s, snap, rows)
+			if schedulerNodeMode(d.Keep.Nodes, node) != schedulerNodeMode(snap.Nodes, node) || len(d.Keep.Actions) != 0 {
+				t.Fatalf("new saving was preapplied to keep: %+v", d.Keep)
+			}
+			admitted := d.Target != nil && slices.ContainsFunc(d.Target.Actions, func(a Action) bool {
+				return a.Node == node && a.Kind == schedulerActionPower && a.Fixed
+			})
+			if admitted != tc.admitted || d.Capacity == nil || d.Capacity.Period != s.ComparisonPeriod || !slices.Contains(d.Search.ComparedNodes, node) {
+				t.Fatalf("admission=%v, want %v: target=%+v capacity=%+v", admitted, tc.admitted, d.Target, d.Capacity)
+			}
+		})
+	}
+}
+
+func TestCapacityLosingEmptyFixedCannotHideInProfitableCombination(t *testing.T) {
+	s, snap, losing := capacityEmptyFixedFixture()
+	profitable := poolsAddNode(&snap, "profitable", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+	power := poolsCost(schedulerActionPower, profitable, "fixed", schedulerTestEcoMode, "")
+	power.Trials = []OperationTrial{{Duration: time.Second, Joules: 1}}
+	snap.Costs = append(snap.Costs, power)
+	rows := capacityRowsForTest(s, snap, nil)
+	p := capacityPlannerForTest(t, s, snap, rows)
+	choice := capacityChoiceForTest(t, p, map[string]string{losing.UID: "", profitable.UID: ""})
+	combined := p.evaluate(choice, p.routeOf(choice))
+	keep := p.evaluate(make([]int, len(p.plans)), 0)
+	if !combined.feasible || combined.joules >= keep.joules {
+		t.Fatal("fixture must combine a losing Fixed with a larger positive gain")
+	}
+	paid := p.minimumGain(p.payback(combined))
+	for n, node := range p.snapshot.Nodes {
+		if node.Node == losing && paid.choice[n] != 0 || node.Node == profitable && paid.choice[n] == 0 {
+			t.Fatalf("individual Fixed admission was hidden by total gain: %+v", paid)
+		}
+	}
+	d := capacityDecideForTest(t, s, snap, rows)
+	if d.Target == nil || schedulerNodeMode(d.Target.Nodes, losing) != schedulerNodeMode(snap.Nodes, losing) ||
+		schedulerNodeMode(d.Target.Nodes, profitable) != schedulerTestEcoMode {
+		t.Fatalf("search included the losing saving or lost the profitable one: %+v", d.Target)
+	}
+}
+
+func TestCapacityTargetlessKeepNeverIntroducesFixedSaving(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		s, snap, node := capacityEmptyFixedFixture()
+		s.ScaleDownStabilization = time.Minute
+		snap.ScaleDown = map[string]SchedulerDownState{"w1": {Allowed: allowed}}
+		snap.EmptyNodeScaleDownAllowed = allowed
+		snap.Reasons = []string{"ObservationGap"}
+		d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+		if d.Target != nil || len(d.Keep.Actions) != 0 || schedulerNodeMode(d.Keep.Nodes, node) != schedulerNodeMode(snap.Nodes, node) {
+			t.Fatalf("targetless keep bypassed comparison: allowed=%v keep=%+v", allowed, d.Keep)
+		}
+	}
+}
+
+func TestSchedulerReplayFixedPowerIsNotFreeOrInstant(t *testing.T) {
+	_, snap, node := capacityEmptyFixedFixture()
+	action := Action{ID: "new-fixed", Kind: schedulerActionPower, Node: node, From: schedulerNodeMode(snap.Nodes, node), To: schedulerTestEcoMode, Fixed: true, Status: schedulerActionPlanned}
+	replay := schedulerReplayState{snap: snap, c: SchedulerCandidate{Actions: []Action{action}}, nodes: slices.Clone(snap.Nodes)}
+	replay.initializeActions()
+	if replay.actionByID[action.ID].done || schedulerNodeMode(replay.nodes, node) != schedulerNodeMode(snap.Nodes, node) {
+		t.Fatal("Fixed action bypassed the normal replay transition")
 	}
 }

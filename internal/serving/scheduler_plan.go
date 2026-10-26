@@ -60,16 +60,15 @@ func schedulerAvailable(snapshot SchedulerSnapshot, n SchedulerNode) bool {
 		!slices.ContainsFunc(snapshot.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node })
 }
 
-// schedulerCommonNodes places every available Node at its lowest power mode
-// when power control is on; every candidate starts from this state.
-func schedulerCommonNodes(settings SchedulerSettings, snapshot SchedulerSnapshot) []SchedulerNode {
-	nodes := append([]SchedulerNode(nil), snapshot.Nodes...)
-	if !settings.Controls.Power || !schedulerEmptySlowAllowed(snapshot) {
-		return nodes
-	}
+// schedulerCommonNodes preserves already-authorized Fixed power changes. New
+// empty-Node savings are comparison candidates, never part of keep.
+func schedulerCommonNodes(snapshot SchedulerSnapshot) []SchedulerNode {
+	nodes := slices.Clone(snapshot.Nodes)
 	for index, n := range nodes {
-		if lowest := SchedulerLowestMode(snapshot.Baselines, n.Node); lowest != "" && schedulerAvailable(snapshot, n) {
-			nodes[index].PowerMode = lowest
+		for _, a := range snapshot.Actions {
+			if a.Fixed && a.Node == n.Node && (a.Status == schedulerActionPlanned || a.Status == phaseRunning) {
+				nodes[index].PowerMode = a.To
+			}
 		}
 	}
 	return nodes
@@ -501,10 +500,7 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 				continue
 			}
 			from := oldNode.PowerMode
-			// An available Node first drops to its lowest mode, the same in every
-			// candidate; re-entering it raises the mode from there. While that
-			// lowering runs the Node reports no mode, so the unfinished Fixed
-			// action stays the common lowering rather than a compared change.
+			// Preserve an already-authorized lowering before any new change.
 			if i := slices.IndexFunc(p.snap.Actions, func(a Action) bool {
 				return a.Fixed && a.Node == n.Node && (a.Status == schedulerActionPlanned || a.Status == phaseRunning)
 			}); i >= 0 {
@@ -512,10 +508,13 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 				p.add(schedulerActionPower, n.Node, "", old.From, old.To, nil)
 				p.actions[len(p.actions)-1].Fixed = true
 				from = old.To
-			} else if lowest := SchedulerLowestMode(p.snap.Baselines, n.Node); lowest != "" && lowest != from && schedulerAvailable(p.snap, oldNode) && (p.snap.ScaleDown == nil || p.snap.EmptyNodeScaleDownAllowed) {
-				p.add(schedulerActionPower, n.Node, "", from, lowest, nil)
-				p.actions[len(p.actions)-1].Fixed = true
-				from = lowest
+			}
+			emptySaving := schedulerAvailable(p.snap, oldNode) &&
+				!slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node }) &&
+				n.PowerMode == SchedulerLowestMode(p.snap.Baselines, n.Node)
+			if emptySaving && from != n.PowerMode && p.snap.ScaleDown != nil && !p.snap.EmptyNodeScaleDownAllowed {
+				p.reasons = appendUnique(p.reasons, schedulerScaleDownStabilizing)
+				continue
 			}
 			deps := []string{}
 			drains := map[string]string{}
@@ -532,6 +531,7 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 			// bundles are removed only after actual mode/readiness proof, then rebuilt.
 			if n.PowerMode != from {
 				dep := p.add(schedulerActionPower, n.Node, "", from, n.PowerMode, deps)
+				p.actions[len(p.actions)-1].Fixed = emptySaving
 				deps = []string{dep}
 			}
 			for _, i := range p.snap.Instances {
@@ -539,7 +539,7 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 					p.add(schedulerActionRemove, n.Node, i.ID, schedulerState(i), "unloaded", deps)
 				}
 			}
-			// Empty common lowering runs independently of the target's route.
+			// Authorized empty lowering runs independently of the target's route.
 			needed := slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node })
 			if tail := p.nodeTail[n.Node.UID]; tail != "" && (needed || len(drains) != 0 || !p.actions[len(p.actions)-1].Fixed) {
 				p.prepares = append(p.prepares, tail)

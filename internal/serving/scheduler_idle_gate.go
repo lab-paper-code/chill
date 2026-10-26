@@ -88,7 +88,7 @@ func (p *capacityPlanner) idleTransition(best capacityResult, removed map[string
 		for _, dep := range a.DependsOn {
 			value = max(value, end(dep))
 		}
-		if !a.Fixed && a.Status != schedulerActionComplete && a.Status != schedulerActionCancel {
+		if a.Status != schedulerActionComplete && a.Status != schedulerActionCancel {
 			switch a.Kind {
 			case schedulerActionPrepare, schedulerActionRemove, schedulerActionPower:
 				_, longest, _, ok := capacityOperationCost(schedulerCost(p.snapshot.Costs, a.CostID))

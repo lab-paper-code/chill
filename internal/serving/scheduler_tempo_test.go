@@ -148,7 +148,7 @@ func TestSchedulerTempoBlocksIdleRemovalAndEmptyPower(t *testing.T) {
 	if got.Target != nil && len(got.Target.Instances) < len(snap.Instances) {
 		t.Fatal("idle removal bypassed stabilization")
 	}
-	for _, n := range schedulerCommonNodes(s, snap) {
+	for _, n := range schedulerCommonNodes(snap) {
 		for _, old := range snap.Nodes {
 			if n.Node == old.Node && n.PowerMode != old.PowerMode {
 				t.Fatal("empty power bypassed stabilization")
@@ -276,7 +276,7 @@ func TestSchedulerTempoFixedPowerGateIncludesTargetlessKeep(t *testing.T) {
 		for _, action := range got.Keep.Actions {
 			fixed = fixed || action.Node == node && action.Fixed
 		}
-		if fixed != allowed {
+		if fixed {
 			t.Fatalf("targetless Fixed gate: allowed=%v actions=%+v", allowed, got.Keep.Actions)
 		}
 		target := SchedulerCandidate{Nodes: append([]SchedulerNode(nil), snap.Nodes...), Instances: snap.Instances, Routing: got.Keep.Routing}
@@ -289,7 +289,7 @@ func TestSchedulerTempoFixedPowerGateIncludesTargetlessKeep(t *testing.T) {
 		for _, action := range schedulerPlan(snap, target) {
 			fixed = fixed || action.Node == node && action.Fixed
 		}
-		if fixed != allowed {
+		if fixed {
 			t.Fatalf("changeNodes prepended forbidden Fixed lowering: allowed=%v", allowed)
 		}
 	}

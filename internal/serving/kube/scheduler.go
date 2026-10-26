@@ -320,12 +320,14 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	// A decision without a target still lowers available Nodes (Fixed actions).
+	// Without a selected target, only finish previously authorized Fixed work.
 	if decision.Target != nil {
 		c.launch(*decision.Target, config)
 	} else {
 		keep := decision.Keep
-		keep.Actions = slices.DeleteFunc(slices.Clone(keep.Actions), func(a serving.Action) bool { return !a.Fixed })
+		keep.Actions = slices.DeleteFunc(slices.Clone(keep.Actions), func(a serving.Action) bool {
+			return !authorizedFixedContinuation(a, snapshot.Actions)
+		})
 		c.launch(keep, config)
 	}
 	return decision, nil
@@ -803,6 +805,13 @@ func ValidatePreparationCapacity(
 func actionEquivalent(a, b serving.Action) bool {
 	return a.Kind == b.Kind && a.Node == b.Node && a.Instance == b.Instance && a.From == b.From && a.To == b.To
 }
+
+func authorizedFixedContinuation(a serving.Action, observed []serving.Action) bool {
+	return a.Fixed && slices.ContainsFunc(observed, func(old serving.Action) bool {
+		return old.Fixed && old.ID == a.ID && actionEquivalent(old, a)
+	})
+}
+
 func slotName(slot string) string {
 	sum := sha256.Sum256([]byte(slot))
 	return "serving-" + hex.EncodeToString(sum[:10])

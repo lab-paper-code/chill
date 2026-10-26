@@ -136,18 +136,17 @@ func TestSchedulerNodeReasonsKeepNodeWithoutPlacement(t *testing.T) {
 			}
 			option := poolsInstance(snap.Instances[0], "opt", node, schedulerTestEcoMode, "w1")
 			snap.Options = append(snap.Options, poolsOption(option))
-			snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(option), schedulerTestEcoMode)}
+			snap.Costs = []OperationCost{
+				poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(option), schedulerTestEcoMode),
+				poolsCost(schedulerActionPower, node, "fixed", schedulerTestEcoMode, ""),
+			}
 			d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
 			if !slices.Equal(d.Keep.Nodes[1].Reasons, snap.Nodes[1].Reasons) {
 				t.Fatalf("Node reasons lost: %+v", d.Keep.Nodes[1])
 			}
 			lowered := slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == node && a.Fixed })
-			kept := reason == NodePowerModeUnavailable || reason == NodeInstanceUnavailable
-			if kept && (lowered || d.Keep.Nodes[1].PowerMode != "fixed") {
-				t.Fatalf("%s Node changed mode: %+v", reason, d.Keep)
-			}
-			if !kept && (!lowered || d.Keep.Nodes[1].PowerMode != schedulerTestEcoMode) {
-				t.Fatalf("available Node was not lowered: %+v", d.Keep)
+			if lowered || d.Keep.Nodes[1].PowerMode != "fixed" {
+				t.Fatalf("new saving was preapplied to keep: %+v", d.Keep)
 			}
 			if placed := poolsEligibleChange(d, node); placed != (reason == "") {
 				t.Fatalf("placed=%v with reason %q: %+v", placed, reason, poolsPlans(d, node))
@@ -307,34 +306,34 @@ func TestSchedulerDirectMoveBetweenActivePools(t *testing.T) {
 	}
 }
 
-// §4: available Nodes start at their lowest mode; re-entry uses the empty-Node power cost.
-func TestSchedulerAvailableNodeLoweringAndReentry(t *testing.T) {
+// §4: new empty-Node savings are compared; re-entry changes directly from the actual mode.
+func TestSchedulerAvailableNodeSavingAndReentry(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ComparisonPeriod = time.Minute
 	idle := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
-	// The re-entered Node runs "boost"; plans first lower it to eco, then raise it to the profile's mode.
+	// Re-entry must not introduce an unadmitted detour through eco.
 	reentry := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6, "boost": 12})
 	snap.Nodes[2].PowerMode = "boost"
 	option := poolsInstance(snap.Instances[0], "opt", reentry, "fixed", "w1")
 	snap.Options = append(snap.Options, poolsOption(option))
-	// Re-entry prices the raise measured on the empty Node; a loaded-runner raise has another condition.
-	power := poolsCost(schedulerActionPower, reentry, schedulerTestEcoMode, "fixed", "")
+	// Empty and loaded power trials have different conditions.
+	power := poolsCost(schedulerActionPower, reentry, "boost", "fixed", "")
 	power.Trials = []OperationTrial{{Duration: 2 * time.Second, Joules: 20}}
-	loaded := poolsCost(schedulerActionPower, reentry, schedulerTestEcoMode, "fixed", "", schedulerState(option))
+	loaded := poolsCost(schedulerActionPower, reentry, "boost", "fixed", "", schedulerState(option))
 	loaded.ID += "-loaded"
 	loaded.Trials = []OperationTrial{{Duration: 9 * time.Second, Joules: 90}}
 	prepare := poolsCost(schedulerActionPrepare, reentry, "unloaded", schedulerState(option), "fixed")
-	snap.Costs = []OperationCost{loaded, power, prepare}
+	snap.Costs = []OperationCost{loaded, power, prepare, poolsCost(schedulerActionPower, idle, "fixed", schedulerTestEcoMode, "")}
 	rows := capacityRowsForTest(s, snap, nil)
 	d := capacityDecideForTest(t, s, snap, rows)
-	if schedulerNodeMode(d.Keep.Nodes, idle) != schedulerTestEcoMode || !slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == idle && a.Fixed }) {
-		t.Fatalf("keep does not start the available Node at its lowest mode: %+v", d.Keep)
+	if schedulerNodeMode(d.Keep.Nodes, idle) != "fixed" || slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == idle && a.Fixed }) {
+		t.Fatalf("new saving changed keep: %+v", d.Keep)
 	}
-	if slices.Contains(d.Search.ComparedNodes, idle) || !slices.Contains(d.Search.ComparedNodes, reentry) {
+	if !slices.Contains(d.Search.ComparedNodes, idle) || !slices.Contains(d.Search.ComparedNodes, reentry) {
 		t.Fatalf("ComparedNodes %v", d.Search.ComparedNodes)
 	}
 	plans := poolsPlans(d, reentry)
-	i := slices.IndexFunc(plans, func(p SchedulerNodePlan) bool { return p.Eligible && p.Key != "keep" })
+	i := slices.IndexFunc(plans, func(p SchedulerNodePlan) bool { return p.Eligible && p.Key == planKey([]SchedulerInstance{option}) })
 	if i < 0 || (plans[i].Pre-2001*time.Millisecond).Abs() > time.Microsecond || math.Abs(plans[i].Joules-20.01) > 1e-9 {
 		t.Fatalf("re-entry did not use the empty-Node raise and the target-mode prepare: %+v", plans)
 	}
@@ -351,9 +350,9 @@ func TestSchedulerKeepWithRunningFixedLoweringNeedsNoPowerCost(t *testing.T) {
 	idle := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	snap.Costs = nil
 	rows := capacityRowsForTest(s, snap, nil)
-	keep := capacityDecideForTest(t, s, snap, rows).Keep
-	lowering := keep.Actions[slices.IndexFunc(keep.Actions, func(a Action) bool { return a.Node == idle && a.Fixed })]
-	lowering.Status = phaseRunning
+	keep := SchedulerCandidate{Nodes: slices.Clone(snap.Nodes), Instances: snap.Instances}
+	keep.Nodes[1].PowerMode = schedulerTestEcoMode
+	lowering := Action{ID: "authorized-lowering", Kind: schedulerActionPower, Node: idle, From: "fixed", To: schedulerTestEcoMode, Fixed: true, Status: phaseRunning}
 	snap.Actions = []Action{lowering}
 	snap.Reservations = []SchedulerReservation{{Owner: "lowering", Nodes: []NodeReference{idle}, Target: &keep}}
 	snap.Nodes[1].PowerMode = ""

@@ -157,8 +157,8 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		var tempo SchedulerTempo
 		tempo.Observe(settings, &snapshot, capacity)
 	}
-	// Lowering available Nodes is a fixed rule every plan, keep included, shares.
-	keep.Nodes = schedulerCommonNodes(settings, snapshot)
+	// Keep carries only already-authorized Fixed completion obligations.
+	keep.Nodes = schedulerCommonNodes(snapshot)
 	p := schedulerPlanState{snap: snapshot, target: &keep, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
 	p.changeNodes(keep)
 	keep.Actions = p.actions
@@ -613,11 +613,6 @@ func schedulerUncreatedReservations(snapshot SchedulerSnapshot, node NodeReferen
 func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPlan {
 	node := p.snapshot.Nodes[n]
 	m0 := common[n].PowerMode
-	for _, a := range p.snapshot.Actions {
-		if a.Fixed && a.Node == node.Node && (a.Status == schedulerActionPlanned || a.Status == phaseRunning) {
-			m0 = a.To
-		}
-	}
 	current := []SchedulerInstance{}
 	for _, i := range p.snapshot.Instances {
 		if i.Node == node.Node {
@@ -678,7 +673,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 			groups[name] = append(groups[name], c)
 		}
 	}
-	if len(names) == 0 && reason != NodeExcluded {
+	if len(names) == 0 && len(current) > 0 && reason != NodeExcluded {
 		return plans
 	}
 	if reason != "" {
@@ -690,10 +685,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	var walk func(j int, chosen []capacityChoice)
 	walk = func(j int, chosen []capacityChoice) {
 		if j == len(names) {
-			if len(chosen) == 0 && len(current) == 0 {
-				return
-			}
-			if plan := p.plan(n, m0, current, chosen); plan != nil && plan.record.Key != currentKey {
+			if plan := p.plan(n, m0, current, chosen); plan != nil && (plan.record.Key != currentKey || plan.mode != m0) {
 				plans = append(plans, plan)
 			}
 			return
@@ -761,6 +753,11 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	mode := m0
 	if len(chosen) > 0 {
 		mode = chosen[0].option.Instance.Profile.Condition.PowerMode
+	} else if len(current) == 0 {
+		mode = SchedulerLowestMode(p.snapshot.Baselines, node.Node)
+		if !p.settings.Controls.Power || !schedulerAvailable(p.snapshot, node) || mode == "" || mode == m0 {
+			return nil
+		}
 	}
 	plan := &capacityPlan{mode: mode, record: SchedulerNodePlan{Node: node.Node}}
 	used := map[string]bool{}
@@ -859,7 +856,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	}
 	p.sum(plan)
 	plan.record.Tempo = schedulerTempoFast
-	if slices.ContainsFunc(current, func(old SchedulerInstance) bool {
+	if len(current) == 0 && len(chosen) == 0 || slices.ContainsFunc(current, func(old SchedulerInstance) bool {
 		return old.WorkloadUID == "" && old.OwnerWorkloadUID == "" && (!used[old.ID] || mode != node.PowerMode)
 	}) {
 		plan.record.Tempo = schedulerTempoSlow
@@ -1041,7 +1038,7 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 	visit(route)
 	stopped, removed := map[string]bool{}, map[string]bool{}
 	for _, a := range actions {
-		if a.Node != node || a.Fixed || a.Status == schedulerActionComplete || a.Status == schedulerActionCancel {
+		if a.Node != node || a.Status == schedulerActionComplete || a.Status == schedulerActionCancel {
 			continue
 		}
 		switch a.Kind {
@@ -1488,25 +1485,37 @@ func (a capacityResult) better(b *capacityResult) bool {
 	return a.key < b.key
 }
 
-// payback reverts each replacing node plan of a feasible result to keep when
-// the result stays feasible without it and, at the least load of the
-// observation window, the replacement does not repay its transition over T.
+// payback reverts optional replacements and new empty-Node savings when they
+// do not repay their transition at the least load over the same period T.
+// Empty-Node savings must pay independently, including in overload plan sets.
 func (p *capacityPlanner) payback(best capacityResult) capacityResult {
-	if !best.feasible {
-		return best
-	}
 	for n, j := range best.choice {
-		if !p.plans[n][j].replaces {
+		plan := p.plans[n][j]
+		emptySaving := !plan.keep && plan.mode != p.plans[n][0].mode &&
+			len(p.plans[n][0].instances) == 0 && len(plan.instances) == 0
+		if !emptySaving && (!best.feasible || !plan.replaces) {
 			continue
 		}
 		alt := slices.Clone(best.choice)
 		alt[n] = 0
 		r := p.routeOf(alt)
 		kept := p.evaluate(alt, r)
-		if !kept.feasible || !p.admits(&kept) || p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route) {
+		paid := p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route)
+		bound, withinUncertainty := 0.0, false
+		if emptySaving {
+			bound = p.gainBound(kept, best)
+			withinUncertainty = kept.joules-best.joules <= bound
+			paid = paid && !withinUncertainty
+		}
+		if !emptySaving && !kept.feasible || !p.admits(&kept) || paid {
 			continue
 		}
 		kept.unpaid = append(slices.Clone(best.unpaid), p.snapshot.Nodes[n].Node.UID)
+		kept.withinUncertainty = best.withinUncertainty || withinUncertainty
+		kept.gainUncertainty = best.gainUncertainty
+		if withinUncertainty {
+			kept.gainUncertainty = max(kept.gainUncertainty, bound)
+		}
 		best = kept
 	}
 	return best
@@ -1525,20 +1534,24 @@ func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	if !keep.feasible {
 		return best
 	}
-	bounds := schedulerEnergyBounds{}
-	for n, j := range best.choice {
-		if p.compared[n] {
-			p.plans[n][0].addBounds(bounds, 0, p.period, 1)
-			p.plans[n][j].addBounds(bounds, best.route, p.period, -1)
-		}
-	}
-	best.gainUncertainty = bounds.halfWidth()
+	best.gainUncertainty = p.gainBound(keep, best)
 	if keep.joules-best.joules > best.gainUncertainty {
 		return best
 	}
 	keep.withinUncertainty = true
 	keep.gainUncertainty = best.gainUncertainty
 	return keep
+}
+
+func (p *capacityPlanner) gainBound(keep, best capacityResult) float64 {
+	bounds := schedulerEnergyBounds{}
+	for n, j := range best.choice {
+		if p.compared[n] {
+			p.plans[n][keep.choice[n]].addBounds(bounds, keep.route, p.period, 1)
+			p.plans[n][j].addBounds(bounds, best.route, p.period, -1)
+		}
+	}
+	return bounds.halfWidth()
 }
 
 // routeOf is the route time of a plan set: its longest chain before the route.

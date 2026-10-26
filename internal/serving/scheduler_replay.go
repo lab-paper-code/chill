@@ -660,17 +660,6 @@ func (s *schedulerReplayState) initializeActions() {
 			s.actionByID[a.ID] = &schedulerReplayAction{action: a, done: true}
 		}
 	}
-	// Fixed lowering is the common state at time 0, not a compared transition.
-	for _, x := range s.actions {
-		if x.action.Fixed {
-			x.done = true
-			for n := range s.nodes {
-				if s.nodes[n].Node == x.action.Node {
-					s.nodes[n].PowerMode = x.action.To
-				}
-			}
-		}
-	}
 }
 
 func (s *schedulerReplayState) initializeOutstanding() {
