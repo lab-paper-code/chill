@@ -109,7 +109,9 @@ route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 �
 재정규화하고, 준비된 목적지가 없는 워크로드의 현재 Ready 분배는 유지하여
 한 번의 원자적 route로 적용한다. stop 가능한 인스턴스는 제외한다.
 독립 prepare, power, drain 등 어떤 느린 동작도 이 중간 분배의 선행 조건이
-아니다. 새 계획 탐색이나 중간 용량의 SLO 충족 보장은 추가하지 않으며,
+아니다. launch의 `dependenciesReady`도 전체 목표가 아니라 선택된 Ready 부분집합으로
+검사하므로, 전체 목표에 속한 실재 non-Ready sibling은 부분 route를 막지 않는다.
+최종 route는 전체 목표와 원래 DAG를 계속 검사한다. 새 계획 탐색이나 중간 용량의 SLO 충족 보장은 추가하지 않으며,
 요청별 측정 지연·수명 admission과 기존 요청 보호는 그대로다.
 분석의 B·에너지 예측은 최종 route 시각을 쓰는 기존 식이고, 중간 분배의
 실제 효과는 action의 frozen target·before/actual routing 관측으로 구분한다.
@@ -390,6 +392,7 @@ H를 바꾸며 미선택 후보 때문에 자동 연장하지 않는다.
 
 ## 변경 이력
 
+- 2026-10-26: SCH-52/55 중간 배분 launch는 frozen Ready 부분집합으로 의존성을 재검사한다. G/L Ready, N 실재 non-Ready snapshot을 둔 회귀에서 B의 25.190→35.563초 장벽을 제거하며 전체 목표·Node/Pod 예약·단일 route owner는 보존한다.
 - 2026-10-26: SCH-56/AC-42 하강 정의 수정 — UID별 timer는 하강 시작 기준률 아래의 tick 간 증가로 초기화하지 않고 기준률 이상 복귀 시 취소·재기준한다. 100→20±2 req/s의 300초 관측에서 120초 경계 허가와 기준 복귀 취소를 회귀로 남긴다. 빈 노드의 기존 수요 벡터 gate는 변경하지 않는다.
 - 2026-10-26: AC-43 통합 회귀 — f=0.5와 λ=2에서 실제 controller가 Ready 예비 B를 남기는 제거를 허가하고, route ACK 뒤 source 퇴역이 진행 중인 동안 native HTTP 요청을 B에서 완료한다. H=10초에 제거 1J + source 잔여 baseline 49.5J + 예비 baseline 200J를 정확히 한 번 기록함을 검사한다(클러스터 실측은 아님).
 - 2026-10-26: SCH-56 리뷰 F3 — snapshot 보류·불완전 관측 창·빈 출발 대기 등 탐색 전 반환에서도 capacity.workloads의 하강 상태와 ResetReason을 보존한다. 탐색 기록이 없는 경우에만 생성하여 정상 결정의 κ/비용 기록과 중복하지 않는다.

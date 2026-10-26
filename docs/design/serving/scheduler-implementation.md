@@ -298,6 +298,10 @@ proof를 복원하지 않는다.
 Stopped이거나 이번 tick에 stop할 수 있는 인스턴스에는 새 가중치를 주지 않는다.
 이 route는 다른 prepare, power, drain의 완료와 무관하게 같은 owner의 예약 안에서
 native policy ACK와 UID 한정 `Runtime.ApplySchedulerWorkloadsTarget` 경로로 실행한다.
+launch 직전 `dependenciesReady`는 `ready-subset` action에 그 부분집합 target을
+사용한다. 전체 목표에 실재하지만 non-Ready인 sibling이 있어도 Ready 부분집합의
+route는 즉시 허가하며, 최종 route에는 전체 target과 원래 DAG 검사를 유지한다.
+Node·Pod 예약과 같은 owner의 route 직렬화는 바꾸지 않는다(SCH-51/52/55).
 
 중간 분배는 `<goal>-ready-<subset hash>` ID와 `Action.from=ready-subset`으로
 구분하며, 기존 OnAction 기록의 시작/완료와 frozen `operation.target`,

@@ -866,13 +866,12 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			if action.Status == nativeOperationComplete || action.Status == nativeOperationFailed {
 				continue
 			}
-			ready := c.dependenciesReady(action, target)
-			if !ready {
-				continue
-			}
 			selectedTarget := &target
 			if action.From == readySubsetRoute {
 				selectedTarget = intermediate
+			}
+			if !c.dependenciesReady(action, *selectedTarget) {
+				continue
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
 			if action.Kind == operationRoute {

@@ -1352,8 +1352,8 @@ func TestCapturePreservesEveryExecutorlessPodUIDAC37(t *testing.T) {
 	}
 }
 
-// AC-42: the simulated G/L/N preparation clock advances independently of the
-// slow jetsono power action and the 300-second slow-candidate gate.
+// AC-42: G/L can route at B's 25.190s tick while the physical N sibling is
+// non-Ready until 35.563s, independently of power and the slow-candidate gate.
 func TestTwoTempoReadySubsetsOnPreparationClock(t *testing.T) {
 	controller, target, source := acknowledgedHandoffFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1385,7 +1385,7 @@ func TestTwoTempoReadySubsetsOnPreparationClock(t *testing.T) {
 	ready := []serving.ReadyInstance{source}
 	origin := time.Unix(1000, 0)
 	controller.state.Snapshot.Workloads = controller.runtime.SchedulerInputs(time.Now).Workloads
-	for index, seconds := range []int{15, 18, 32} {
+	for index, elapsed := range []time.Duration{15 * time.Second, 25190 * time.Millisecond, 35563 * time.Millisecond} {
 		newlyReady := target.Instances[index+1]
 		actual := source
 		actual.State.ID = newlyReady.ID
@@ -1393,8 +1393,14 @@ func TestTwoTempoReadySubsetsOnPreparationClock(t *testing.T) {
 		if err := controller.runtime.InstallInstances(ready); err != nil {
 			t.Fatal(err)
 		}
-		controller.state.Snapshot.At = origin.Add(time.Duration(seconds) * time.Second)
-		controller.state.Snapshot.Instances = slices.Clone(target.Instances[:index+2])
+		controller.state.Snapshot.At = origin.Add(elapsed)
+		controller.state.Snapshot.Instances = slices.Clone(target.Instances)
+		for pending := index + 2; pending < len(target.Instances); pending++ {
+			instance := &controller.state.Snapshot.Instances[pending]
+			instance.Ready = false
+			instance.TargetID, instance.ID = instance.ID, "preparing-"+instance.ID
+			instance.PodUID = instance.ID + "-pod"
+		}
 		controller.state.Snapshot.Routing, _ = controller.runtime.SchedulerRouting()
 		controller.runs["prepare-"+newlyReady.ID].action.Status = nativeOperationComplete
 		var intermediate *serving.SchedulerCandidate
@@ -1406,14 +1412,14 @@ func TestTwoTempoReadySubsetsOnPreparationClock(t *testing.T) {
 		}})
 		controller.wg.Wait()
 		if intermediate == nil || len(intermediate.Instances) != index+2 {
-			t.Fatalf("t=%ds: newly Ready subset waited for slow prerequisites: %+v", seconds, intermediate)
+			t.Fatalf("t=%s: newly Ready subset waited for non-Ready siblings or slow prerequisites: %+v", elapsed, intermediate)
 		}
 		if err := controller.runtime.ApplySchedulerTarget(*intermediate); err != nil {
 			t.Fatal(err)
 		}
 		route, _ := controller.runtime.SchedulerRouting()
 		if route[uid][newlyReady.ID] <= 0 || len(route[uid]) != index+2 {
-			t.Fatalf("t=%ds: Ready executor not routed on next controller pass: %v", seconds, route)
+			t.Fatalf("t=%s: Ready executor not routed on next controller pass: %v", elapsed, route)
 		}
 		if fixtureTarget(controller).ID != target.ID || len(fixtureTarget(controller).Instances) != 4 || controller.runs[power.ID].action.Status != nativeOperationRunning {
 			t.Fatal("intermediate allocation changed owner target or completed slow power")
