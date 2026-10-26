@@ -24,6 +24,10 @@ uses `chill.dacs.io/profiling-execution-evidence.v1alpha15`; actuated evidence
 retains the confirming transition identity, its target read-back, and its
 completion time, and checks the target against the RunConfig. Permanently
 invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
+Once execution evidence is verified and its reference is recorded, a Run is
+complete independently of its measurement Job. Job removal does not change
+that outcome or clear the recorded Job, Pod, and Node identities used by the
+catalogue.
 Repeated active and idle trials, exact-state curve derivation, and the
 `BatchEnergyOptimization` Quick-search control path are implemented. The
 recorded Orange Pi RKNN campaign

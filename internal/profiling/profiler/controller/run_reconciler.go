@@ -81,7 +81,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if !run.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
-	if terminalPreJobFailureCurrent(run) {
+	if terminalRunStatus(run) {
 		return ctrl.Result{}, nil
 	}
 
@@ -394,6 +394,11 @@ func (r *RunReconciler) patchStatus(
 	return nil
 }
 
+func verifiedRunEvidence(run *edgev1alpha1.ProfilingRun) bool {
+	return run.Status.Evidence != nil &&
+		meta.IsStatusConditionTrue(run.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceVerified)
+}
+
 func terminalPreJobFailureCurrent(run *edgev1alpha1.ProfilingRun) bool {
 	if run.Generation < 1 || run.Status.Job != nil {
 		return false
@@ -410,4 +415,8 @@ func terminalPreJobFailureCurrent(run *edgev1alpha1.ProfilingRun) bool {
 		}
 	}
 	return false
+}
+
+func terminalRunStatus(run *edgev1alpha1.ProfilingRun) bool {
+	return terminalPreJobFailureCurrent(run) || verifiedRunEvidence(run)
 }

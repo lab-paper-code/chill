@@ -435,11 +435,21 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	// Explicit evidence cleanup does not clear the native terminal reference.
 	// A replay must not ask the finalizer to reconstruct the removed objects.
 	finalizer.err = errors.New("stored evidence intentionally removed")
+	if err := kubeClient.Delete(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	wantStatus := actual.DeepCopy().Status
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
 	if finalizer.calls != 1 {
 		t.Fatalf("terminal Run replay regenerated evidence: finalizer calls=%d", finalizer.calls)
+	}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(actual.Status, wantStatus) {
+		t.Fatalf("Job removal changed terminal status: got %#v, want %#v", actual.Status, wantStatus)
 	}
 }
 
