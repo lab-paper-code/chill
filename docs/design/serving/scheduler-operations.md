@@ -224,6 +224,7 @@ exact가 없을 때만 유일한 TargetID alias를 허용한다. `A→S`, `B→A
 타 Workload 소유·바인딩과 measurement Node/다른 Node UID 보호는 유지한다.
 
 오류·timeout·관측 실패는 해당 단계와 실제 부분 상태를 기록하고 즉시 멈춘다.
+클라이언트 context 취소도 서버 reset의 이후 단계 실행을 중단하는 계약이며, 이미 시작한 물리 효과의 예약은 취소만으로 해제하지 않고 후속 Pod 부재·전력 비대기 관측으로 반환한다(SCH-51, AC-38).
 자동 재시도·되돌림·이후 단계 실행은 없고, 실패한 선언을 refresh가 자동 적용하지 않도록 한다.
 다시 호출하면 현재 상태에서 이미 충족된 단계를 변경 없이 완료 처리한다. remove 뒤
 release 또는 lower-power가 실패해 Pod가 사라져도, 현재 대상 UID와 호환되는 준비 후보의
