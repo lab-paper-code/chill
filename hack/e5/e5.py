@@ -108,6 +108,13 @@ def positive(x):
     return type(x) in (int, float) and math.isfinite(x) and x > 0
 
 
+def token_preflight(config, stages):
+    auth = module('e5_auth', HERE / 'auth.py')
+    budget = auth.lifetime_budget(stages, config['timeboxes'], config.get('tokenSafetyMarginSeconds', 60))
+    return auth.check(config['tokenFile'], budget, endpoint=config.get('endpoint'), ca_file=config.get('caFile'),
+                      timeout=config['timeboxes']['apiSeconds'])
+
+
 def ref(path, allow_empty=False):
     p = Path(path)
     if not p.is_absolute() or not (str(p).startswith(str(OPS)+'/') or str(p).startswith(str(REPO)+'/')): raise ValueError('Absolute approved-tree path required: '+str(p))
@@ -195,7 +202,7 @@ def bind(path):
     host_read=c['collection']['serverHostReadArgv']
     if not isinstance(host_read,list) or not host_read or not Path(host_read[0]).is_absolute() or host_read[-1]!='-': raise ValueError('Actual approved server-host privileged Python stdin reader argv required')
     refs = {k: ref(v) for k, v in c['inputs'].items()}
-    for name in ('e5.py','e5-wire.py','e5-producer.py','e5-raw.py','e5-archive.py'): refs['package-'+name]=ref(HERE/name)
+    for name in ('e5.py','auth.py','e5-wire.py','e5-producer.py','e5-raw.py','e5-archive.py'): refs['package-'+name]=ref(HERE/name)
     refs['operationalRecipe']=ref(OPERATIONAL_RECIPE); refs['experimentEnvironment']=ref(ENVIRONMENT_PATH)
     for name in ('conduct_before.py','bind_before.py','analyze_before.py','sample_cgroups.py','native_mode_request.py'):refs['D2-helper-'+name]=ref(D2/name)
     receipt=load(c['collection']['powerReceipt']); power=ref(c['collection']['powerExecutable'])
@@ -328,6 +335,7 @@ def bind(path):
     c['smoke'] = smoke
     settings = dict(settings, powerObservation=power_observation(c))
     c['harnessRepositoryCommit']=subprocess.check_output(['git','-C',str(REPO),'rev-parse','HEAD'],text=True).strip()
+    c['tokenLifetime'] = token_preflight(c, schedule)
     return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6'], 'fullSeconds': 10800, 'staticSeconds': 10200, 'factorSeconds': 2100*c['N'], 'accounting': {'d': '9/34 last verified; phase6 raw supersedes only by actual evidence', 'exactCost': '69/69', 'evaluation': '0/7', 'planRows': '0/8', 'failureScenario': 'UNEXERCISED; no fault injection authorized'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
 
 
@@ -426,6 +434,7 @@ class CPO:
         if power_observation(self.c) != self.b['schedulerSettings']['powerObservation']:
             raise RuntimeError('Operating power observation differs from frozen binding; no E5 load')
     def start(self):
+        self.check_token_lifetime()
         if (self.out/'initial.json').exists(): raise RuntimeError('No implicit restart')
         static=self.static_placement()
         s=self.state() if static else self.idle(); settings=self.settings()
@@ -549,10 +558,23 @@ class CPO:
             owned={i['id'] for i in state['snapshot'].get('instances') or [] if i.get('ownerWorkloadUID')==uid and i.get('workloadUID')==uid and i.get('ready')}
             if not any(weight>0 and identifier in owned for identifier,weight in (state['snapshot'].get('routing',{}).get(uid) or {}).items()):missing.append(uid)
         return missing
+    def check_token_lifetime(self, stage=None):
+        stages = self.b['schedule']
+        if self.a.command == 'campaign':
+            stages = stages + [s for s in stages if s['id'] != 'E5-0'] + [
+                s for _ in self.c['factors'] for s in self.b['schedule'] if s['id'] in ('E5-2', 'E5-5')]
+        elif self.b.get('schema') != 'demo-e5-binding.v1' and self.a.command == 'smoke':
+            stages = [self.c['smoke']]
+        elif stage is not None:
+            stages = stages[stages.index(stage):] if stage in stages else [stage]
+        record = token_preflight(self.c, stages)
+        save(self.out / ('token-preflight-' + (stage['id'] if stage else 'start') + '.json'), record)
+        return record
     def run(self):
         """Recheck frozen operating power policy before any stage can launch load."""
         st=self.c['smoke'] if self.a.command=='smoke' else next(x for x in self.b['schedule'] if x['id']==self.a.stage); folder=self.out/(self.a.mode+'-'+st['id'])
         if folder.exists(): raise RuntimeError('No implicit stage retry/overwrite')
+        self.check_token_lifetime(st)
         self.check_power_observation()
         deferred_restore=self.a.mode=='full' and st['id']=='E5-4' and not (self.out/'restore-ack.json').exists()
         if self.a.command!='smoke':

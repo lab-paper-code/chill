@@ -333,13 +333,28 @@ def prepare(e5, args):
     args.config = args.config.resolve()
     spec = e5.load(args.config)
     stages = schedule(spec, e5)
+    if spec.get('preflight'):
+        if spec.get('staticPlacement') or len(stages) != 2 or not stages[0].get('readyGate') or len(stages[1]['parts']) != 1 or stages[1]['seconds'] != 60 or stages[1]['rates'] != {ALIASES['mobilenet']: 20, ALIASES['smolvlm2']: .3, ALIASES['plc']: 40}:
+            raise ValueError('Preflight requires zero-load Ready gate then 60s mixed load (20/.3/40)')
+        e5.require_strict_archives(spec)
+        auth = e5.module('demo_auth', HERE / 'auth.py')
+        if auth.lifetime_budget(stages, spec['timeboxes'], spec.get('tokenSafetyMarginSeconds', 60)) > 600:
+            raise ValueError('Preflight duration budget exceeds 10 minutes')
+    token_config = e5.load(spec['e5Config']) if spec.get('e5Config') else e5.load(spec.get('operationalRecipe', e5.OPERATIONAL_RECIPE))
+    token_config = dict(token_config, timeboxes=spec.get('timeboxes', token_config.get('timeboxes')),
+                        tokenSafetyMarginSeconds=spec.get('tokenSafetyMarginSeconds', token_config.get('tokenSafetyMarginSeconds', 60)))
+    e5.token_preflight(token_config, stages)
     config_path = Path(spec['e5Config']).resolve() if spec.get('e5Config') else assemble(e5, args, spec)
     c = e5.load(config_path)
+    if spec.get('preflight'):
+        e5.require_strict_archives(c)
     e5.need(c, ['approval', 'inputs', 'timeboxes', 'workloads', 'collection', 'endpoint', 'caFile', 'tokenFile'], 'e5Config')
     e5.need(c['approval'], ['sourceSHA', 'controlImageDigest'], 'approval')
     e5.need(c['timeboxes'], e5.REQUIRED['timeboxes'], 'timeboxes')
     if any(not e5.positive(v) for v in c['timeboxes'].values()):
         raise ValueError('Finite positive E5 timeboxes required')
+    c['tokenSafetyMarginSeconds'] = token_config['tokenSafetyMarginSeconds']
+    c['tokenLifetime'] = e5.token_preflight(c, stages)
     if len(c['workloads']) != 3 or {w['name'] for w in c['workloads']} != set(ALIASES.values()):
         raise ValueError('Existing three canonical workload definitions required')
     if any(c['timeboxes']['setupSeconds'] + s['seconds'] + c['timeboxes']['drainSeconds'] + c['timeboxes']['flushSeconds'] > 4200 for s in stages):
@@ -362,7 +377,7 @@ def prepare(e5, args):
     sources['scheduler'] = e5.ref(c['inputs']['scheduler'])
     scheduler_settings = e5.load(c['inputs']['scheduler'])['settings']
     scheduler_settings = dict(scheduler_settings, powerObservation=e5.power_observation(c))
-    for filename in ('demo.py', 'e5.py', 'e5-wire.py', 'e5-producer.py', 'e5-archive.py', 'e5-raw.py'):
+    for filename in ('demo.py', 'e5.py', 'auth.py', 'e5-wire.py', 'e5-producer.py', 'e5-archive.py', 'e5-raw.py'):
         sources[filename] = e5.ref(HERE / filename)
     for w in c['workloads']:
         e5.need(w, [k for k in e5.REQUIRED['workload'] if k not in ('R', 'profilingRecordIDs')], w['name'])
@@ -522,6 +537,52 @@ def placement(snapshot, uids):
     }
 
 
+def wait_preflight_empty(e5, cpo):
+    deadline = e5.time.monotonic() + cpo.tb['settleSeconds']
+    while True:
+        state = cpo.state()
+        e5.save(cpo.out / 'preflight-final-state.json', state)
+        snap = state['snapshot']
+        if not snap['instances'] and not snap['reservations'] and not any(a.get('status') in ('running', 'cancel') for a in state.get('actions') or []):
+            return
+        if e5.time.monotonic() >= deadline:
+            raise RuntimeError('Preflight final instances/reservations did not reach zero within settle timebox')
+        e5.time.sleep(min(1, max(0, deadline - e5.time.monotonic())))
+
+
+def preflight_result(e5, binding, out, stages):
+    """Missing or partial evidence is FAIL; never infer cleanup from reset ACKs."""
+    ready = next((s.get('readyGate') for s in stages if s.get('readyGate')), {})
+    configured = binding['config']['workloads']
+    ready_count = len(configured) - len(ready.get('missingWorkloadUIDs', [w['uid'] for w in configured]))
+    loaded = [s for s in stages if any(m.get('offered', 0) for m in s.get('workloads', {}).values())]
+    success = len(loaded) == 1 and set(loaded[0]['workloads']) == {w['name'] for w in configured} and all(
+        m.get('offered', 0) > 0 and m.get('clientRows') == m['offered'] and m.get('httpSuccess') == m['offered']
+        for m in loaded[0]['workloads'].values())
+    def snapshot(path):
+        return e5.load(path)['state']['snapshot'] if path.name == 'initial.json' else e5.load(path)['snapshot']
+    initial = snapshot(out / 'initial.json') if (out / 'initial.json').exists() else None
+    final_path = out / 'preflight-final-state.json'
+    final = snapshot(final_path) if final_path.exists() else None
+    power_complete = len(stages) == len(binding['schedule']) and all(
+        (stage_folder(out, s) / name).exists() and e5.load(stage_folder(out, s) / name).get('complete') is True
+        for s in binding['schedule'] for name in ('power.json', 'power-drain-inclusive.json'))
+    checks = {
+        'emptyStart': initial is not None and 'instances' in initial and 'reservations' in initial and not initial['instances'] and not initial['reservations'],
+        'ready3': len(configured) == ready_count == 3 and bool(ready.get('observedUTC')) and not ready.get('timedOut'),
+        'success100Percent': success,
+        'powerComplete': power_complete,
+        'finalInstances0': final is not None and 'instances' in final and not final['instances'],
+        'finalReservations0': final is not None and 'reservations' in final and not final['reservations'],
+        'stagesComplete': len(stages) == len(binding['schedule']) and all(s.get('status') == 'DRAINED_NOT_EVALUATED' for s in stages),
+        'finishComplete': (out / 'finish-complete.json').exists() and (out / 'finish-definitions-complete.json').exists(),
+        'noStop': not (out / 'preflight-STOP.json').exists(),
+    }
+    return {'status': 'PASS' if all(checks.values()) else 'FAIL',
+            'checks': {key: 'PASS' if value else 'FAIL' for key, value in checks.items()},
+            'readyWorkloads': ready_count, 'scope': 'Operational preflight only; not E5 scientific PASS'}
+
+
 def summarize(e5, binding, out):
     raw = e5.module('demo_raw', HERE / 'e5-raw.py')
     analysis = ANALYSIS
@@ -634,10 +695,16 @@ def summarize(e5, binding, out):
         e5.save(folder / 'summary.json', summary)
         stage_summaries.append(summary)
     scheduler_settings = binding.get('schedulerSettings')
-    e5.save(out / 'summary.json', {'schema': 'e5-demo-summary.v1', 'schedulerSettings': scheduler_settings, 'missingReasons': {'schedulerSettings': None if scheduler_settings is not None else 'Binding does not contain frozen scheduler settings; current settings are not substituted'}, 'stages': stage_summaries})
+    result = {'schema': 'e5-demo-summary.v1', 'schedulerSettings': scheduler_settings, 'missingReasons': {'schedulerSettings': None if scheduler_settings is not None else 'Binding does not contain frozen scheduler settings; current settings are not substituted'}, 'stages': stage_summaries}
+    if binding.get('demoConfig', {}).get('preflight'):
+        result['preflight'] = preflight_result(e5, binding, out, stage_summaries)
+    e5.save(out / 'summary.json', result)
     def fmt(value):
         return '—' if value is None else f'{value:.3f}' if isinstance(value, float) else str(value)
     table = ['# Autonomous workload-pool demo', '', 'Client latency is successful HTTP round trip. SLO is the configured reporting-only measurementSLO, or captured scheduler SLO when omitted; scheduler SLO is never changed. Energy is shared pool energy, repeated per workload (do not sum rows). Missing evidence is —, not zero.', '', '| Stage | Workload | Rate/s | Success/offered | Success % | p95 ms | p99 ms | SLO p/ms | Within SLO % | Pool J | Active J | Drain pool J | Placement changes | Transition failures | Gap s |', '|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|']
+    if 'preflight' in result:
+        table[2:2] = ['Preflight: **' + result['preflight']['status'] + '** (Ready ' + str(result['preflight']['readyWorkloads']) + '/3; operational only).', '',
+                      *[key + ': ' + value for key, value in result['preflight']['checks'].items()], '']
     for s, name, m in rows:
         table.append('| ' + ' | '.join(map(str, [s['stage'], name, fmt(m['rate']), f"{m['httpSuccess']}/{m['offered']}", fmt(None if m['successFraction'] is None else m['successFraction'] * 100), fmt(m['latencyMS']['p95']), fmt(m['latencyMS']['p99']), f"p{m['sloPercentile']}/{fmt(m['sloMS'])}", fmt(None if m['withinSLOFraction'] is None else m['withinSLOFraction'] * 100), fmt(s['energyJ']), fmt(s['activeEnergyJ']), fmt(s['drainInclusiveEnergyJ']), len(s['placementChanges']), fmt(m['transitionFailures']), fmt(s['gapFromPreviousOfferedWindowSeconds'])])) + ' |')
     for s in stage_summaries:
@@ -787,6 +854,9 @@ def self_check():
         cpo.b = {'schema': 'demo-e5-binding.v1', 'config': cpo.c, 'schedule': stages, 'sources': {}, 'payload': {w['name']: [] for w in workloads}}
         cpo.tb = dict.fromkeys(('setupSeconds', 'barrierSeconds', 'drainSeconds', 'apiSeconds', 'settleSeconds', 'collectSeconds'), 3)
         cpo.tb['flushSeconds'] = .001
+        fixture_token = root / 'fixture-token'
+        fixture_token.write_text('e30.' + e5.base64.urlsafe_b64encode(json.dumps({'exp': e5.time.time() + 86400}).encode()).decode().rstrip('=') + '.signature')
+        cpo.c.update(tokenFile=str(fixture_token), timeboxes=cpo.tb)
         cpo.ws = {w['name']: w for w in workloads}
         cpo.uids = [w['uid'] for w in workloads]
         cpo.d = d
@@ -1600,7 +1670,7 @@ def self_check():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=['prepare', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'publish', 'finish', 'report'], nargs='?')
+    parser.add_argument('command', choices=['prepare', 'preflight', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'publish', 'finish', 'report'], nargs='?')
     parser.add_argument('directory', type=Path, nargs='?', help='report: retained demo folder (offline)')
     parser.add_argument('--compare', type=Path, nargs='+', action='append', default=[], help='report: retained comparison folder(s); repeatable')
     parser.add_argument('--config', type=Path, help='Demo JSON; required for prepare')
@@ -1637,6 +1707,12 @@ def main():
             parser.error('prepare requires --config')
         prepare(e5, args)
         return
+    if args.command == 'preflight':
+        if args.config is None or args.release is None:
+            parser.error('preflight requires --config and --release')
+        if e5.load(args.config).get('preflight') is not True:
+            parser.error('preflight requires the standard preflight config (preflight: true)')
+        prepare(e5, args)
     binding_path = args.out / 'binding.json'
     binding = e5.load(binding_path)
     if binding.get('schema') != 'demo-e5-binding.v1':
@@ -1653,6 +1729,27 @@ def main():
         parser.error('Live CPO commands require --release')
     cpo_args = argparse.Namespace(binding=binding_path, release=args.release, out=args.out, command='smoke', mode='smoke', stage=args.stage or binding['schedule'][0]['id'])
     cpo = e5.CPO(cpo_args)
+    if args.command == 'preflight':
+        try:
+            cpo.start()
+            for stage in binding['schedule']:
+                run_stage(cpo, stage)
+            cpo.finish()
+            cpo.cleanup_jobs()
+            finish_definitions(e5, cpo)
+            wait_preflight_empty(e5, cpo)
+        except Exception as error:
+            e5.save(args.out / 'preflight-STOP.json', {'at': e5.now(), 'error': str(error), 'status': 'FAIL'})
+            raise
+        finally:
+            summarize(e5, binding, args.out)
+            if any(args.out.glob('smoke-*/phase.json')):
+                module('demo_timeline', HERE / 'timeline.py').report(args.out, [], None)
+        result = e5.load(args.out / 'summary.json')['preflight']
+        print('Preflight: ' + result['status'])
+        if result['status'] != 'PASS':
+            raise SystemExit(2)
+        return
     if args.command == 'start':
         cpo.start()
     elif args.command == 'resume':

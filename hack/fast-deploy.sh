@@ -16,6 +16,7 @@ p.add_argument("--control", required=True)
 p.add_argument("--images", default="auto")
 p.add_argument("--dry-run", action="store_true")
 p.add_argument("--self-check", action="store_true", help="Run local selection/deadline regression checks only")
+p.add_argument("--token-safety-margin-seconds", type=float, default=120)
 a = p.parse_args()
 if not re.fullmatch(r"[0-9]+", a.control):
     p.error("--control must contain digits")
@@ -25,6 +26,10 @@ selected = a.images.split(",")
 if a.images != "auto" and (len(set(selected)) != len(selected) or any(x not in roles for x in selected)):
     p.error("--images accepts auto or a comma-separated subset of server,profiler,dashboard; runtime images are forbidden")
 root = pathlib.Path.cwd()
+sys.path.insert(0, str(root / "hack/e5"))
+import auth
+if not auth.math.isfinite(a.token_safety_margin_seconds) or a.token_safety_margin_seconds < 0:
+    p.error("--token-safety-margin-seconds must be finite and nonnegative")
 sha = subprocess.check_output(["git", "rev-parse", "--verify", a.source + "^{commit}"], text=True).strip()
 base = pathlib.Path("/home/genesis1/.cache/chill-assets/ops/pools-deploy")
 out = base / "deployB" / ("control-" + a.control + "-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d"))
@@ -62,6 +67,7 @@ if a.self_check:
     assert not readiness_result({"server": True}, {"status": 200, "exitCode": 0}, 0)
     assert not readiness_result({"profiler": False}, {"status": 200, "exitCode": 0}, 10)
     assert readiness_result({"server": True}, {"status": 200, "exitCode": 0}, 10)
+    auth.self_check()
     print("selection/deadline regression checks passed")
     sys.exit(0)
 if a.dry_run:
@@ -132,6 +138,9 @@ try:
     if not ca_file.is_file() or not token_file.is_file():
         raise RuntimeError("CampaignOps CA/token file is missing")
     api_url = origin + "/api/v1/scheduler/state"
+    # All possibly selected builds + Helm wait + post-upgrade gate + configured slack.
+    token_seconds = (3 if a.images == "auto" else len(selected)) * 1800 + 510 + 480 + a.token_safety_margin_seconds
+    save("token-preflight.json", auth.check(token_file, token_seconds, endpoint=origin, ca_file=ca_file))
     live = json.loads(run(helm + ["get", "values", "chill", "-o", "json"], "live-values.json"))
     run(helm + ["get", "hooks", "chill"], "live-hooks.yaml")
     run(helm + ["get", "manifest", "chill"], "live-manifest.yaml")
@@ -196,6 +205,7 @@ try:
     if new != approved or not delta:
         raise RuntimeError("unexpected render differences or no image changes")
     run(kube + ["apply", "--dry-run=server", "-f", out / "render-after.yaml"], "server-dry-run.log")
+    save("token-pre-upgrade.json", auth.check(token_file, 510 + 480 + a.token_safety_margin_seconds, endpoint=origin, ca_file=ca_file))
     run(helm + ["upgrade", "chill", chart, "--reset-values", *flags, "-f", out / "overlay.json", "--wait", "--timeout", "8m"], "upgrade.log", 510)
     deadline = time.monotonic() + 480
     while True:

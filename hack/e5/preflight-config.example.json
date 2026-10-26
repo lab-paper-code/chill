@@ -1,0 +1,33 @@
+{
+  "preflight": true,
+  "controlSourceSHA": "0152e0672323594aa97e53303d60f919198e951a",
+  "tokenSafetyMarginSeconds": 30,
+  "timeboxes": {
+    "setupSeconds": 20,
+    "barrierSeconds": 20,
+    "drainSeconds": 90,
+    "flushSeconds": 10,
+    "collectSeconds": 30,
+    "apiSeconds": 5,
+    "settleSeconds": 20
+  },
+  "minimumDemand": {
+    "image-classification-tight-slo": 20,
+    "smolvlm2-vqa": 0.3,
+    "plc-anomaly": 40
+  },
+  "measurementSLO": {
+    "mobilenet": {"percentile": 95, "targetLatencyNanos": 1000000000},
+    "smolvlm2": {"percentile": 99, "targetLatencyNanos": 60000000000},
+    "plc": {"percentile": 95, "targetLatencyNanos": 50000000}
+  },
+  "requestTiming": {
+    "mobilenet": {"workers": 320, "lifetimeSeconds": 2, "deliverySeconds": 0.01, "socketSeconds": 2.02},
+    "smolvlm2": {"workers": 320, "lifetimeSeconds": 75, "deliverySeconds": 0.01, "socketSeconds": 75.02},
+    "plc": {"workers": 320, "lifetimeSeconds": 1, "deliverySeconds": 0.01, "socketSeconds": 1.02}
+  },
+  "stages": [
+    {"id": "E0", "seconds": 90, "readyGate": true, "rates": {"mobilenet": 0, "smolvlm2": 0, "plc": 0}, "startBarrier": {"reservations": 0, "transitions": 0}},
+    {"id": "MIX", "seconds": 60, "rates": {"mobilenet": 20, "smolvlm2": 0.3, "plc": 40}, "startBarrier": {"reservations": 0, "transitions": 0}}
+  ]
+}

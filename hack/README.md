@@ -54,6 +54,7 @@ control images and upgrade the existing release without uninstall/reset.
 subset of `server,profiler,dashboard` is also accepted. Runtime image builds
 are forbidden. See [the operations guide](../docs/operations/ops-agent-guide.md)
 for the shared lock, evidence files, prerequisites and stop conditions.
+Upgrade and E5/demo start/run reject tokens shorter-lived than their stage/timebox budget plus safety margin (`--token-safety-margin-seconds`, default 120s for upgrade; `tokenSafetyMarginSeconds`, default 60s for E5/demo); JWT `exp` or authenticated `X-Token-Expires-At` evidence and expiry UTC are retained without token bytes.
 
 
 ## Profiler runtime declarations
