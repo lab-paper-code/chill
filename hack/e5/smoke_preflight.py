@@ -27,6 +27,14 @@ def main():
     demo = module('smoke_demo', HERE / 'demo.py')
     with tempfile.TemporaryDirectory(prefix='chill-preflight-') as directory:
         root = Path(directory)
+        raw = module('smoke_preflight_raw', HERE / 'e5-raw.py')
+        assert raw._root(root / 'stage', root) == root / 'stage'
+        try:
+            raw._root(root.parent, root)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Offline raw reader escaped the retained capture')
         environment = root / 'environment.json'
         environment.write_text(json.dumps({'paths': {'repository': str(HERE.parents[1]), 'ops': directory, 'campaign': directory, 'd2State': directory}, 'e5': {'operationalRecipe': directory, 'nodes': [], 'excludedNodes': []}}))
         with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(environment)):
@@ -85,6 +93,13 @@ def main():
             {'stage': 'MIX', 'status': 'DRAINED_NOT_EVALUATED', 'workloads': {w['name']: {'offered': 10, 'httpSuccess': 10, 'clientRows': 10} for w in workloads}},
         ]
         assert demo.preflight_result(e5, binding, out, stages)['status'] == 'PASS'
+        # The public JSON contract omits reservations when the list is empty.
+        omitted = {'snapshot': {'instances': None}, 'actions': [{'status': 'complete'}]}
+        e5.save(out / 'initial.json', {'state': omitted})
+        with patch.object(cpo, 'state', return_value=omitted, create=True):
+            demo.wait_preflight_empty(e5, cpo)
+        assert demo.preflight_result(e5, binding, out, stages)['status'] == 'PASS'
+        assert e5.load(out / 'preflight-final-state.json') == omitted
         def fails(check, rows=stages):
             result = demo.preflight_result(e5, binding, out, rows)
             assert result['status'] == 'FAIL' and result['checks'][check] == 'FAIL', result
@@ -111,6 +126,18 @@ def main():
         e5.save(out / 'preflight-final-state.json', empty)
         e5.save(out / 'preflight-STOP.json', {})
         fails('noStop')
+        e5.save(out / 'preflight-STOP.json', {'error': "'reservations'", 'status': 'FAIL'})
+        fails('noStop')
+        judged = demo.preflight_result(e5, binding, out, stages, judge=True)
+        assert judged['status'] == 'PASS' and judged['resolvedHistoricalStop']['error'] == "'reservations'"
+        e5.save(out / 'preflight-final-state.json', occupied)
+        assert demo.preflight_result(e5, binding, out, stages, judge=True)['status'] == 'FAIL'
+        e5.save(out / 'preflight-final-state.json', dict(omitted, actions=[{'status': 'cancel'}]))
+        fails('finalTransitions0')
+        assert demo.preflight_result(e5, binding, out, stages, judge=True)['status'] == 'FAIL'
+        e5.save(out / 'preflight-final-state.json', omitted)
+        e5.save(out / 'preflight-STOP.json', {'error': 'another failure'})
+        assert demo.preflight_result(e5, binding, out, stages, judge=True)['status'] == 'FAIL'
         (out / 'preflight-STOP.json').unlink()
         (out / 'preflight-final-state.json').unlink()
         fails('finalInstances0')

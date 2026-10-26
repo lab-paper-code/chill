@@ -16,7 +16,6 @@ from pathlib import Path
 import re
 import sys
 
-OPS = Path(json.loads(Path(os.environ['CHILL_EXPERIMENT_CONFIG']).read_text())['paths']['campaign'])
 _PRIVATE = 'PRIVATE_OPERATIONAL_ONLY'
 _REQUEST_CACHE = None
 _SCHEDULER_CACHE = None
@@ -35,9 +34,10 @@ def _time(value):
     return (delta.days * 86400 + delta.seconds) * 1000000000 + int((fraction or '').ljust(9, '0'))
 
 
-def _root(folder):
+def _root(folder, approved_root=None):
     root = Path(folder).resolve()
-    if root != OPS and OPS not in root.parents:
+    ops = Path(approved_root).resolve() if approved_root is not None else Path(json.loads(Path(os.environ['CHILL_EXPERIMENT_CONFIG']).read_text())['paths']['campaign'])
+    if root != ops and ops not in root.parents:
         raise ValueError('archive folder is outside approved operational directory')
     return root
 
@@ -449,10 +449,10 @@ def _catalog_refs(value):
             yield from _catalog_refs(item)
 
 
-def scheduler_events(folder):
+def scheduler_events(folder, *, approved_root=None):
     """Return raw schedulerLine dictionaries with refs, never expanded catalog bodies."""
     global _SCHEDULER_CACHE
-    root = _root(folder)
+    root = _root(folder, approved_root)
     signature = _signature(root)
     if _SCHEDULER_CACHE is not None and _SCHEDULER_CACHE[0] == signature:
         return _SCHEDULER_CACHE[1]

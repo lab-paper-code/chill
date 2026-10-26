@@ -27,6 +27,13 @@ power/scheduler evidence only, without environment settings or cluster access.
 --out defaults to DIRECTORY; an external --out leaves every input unchanged.
 report --self-check exercises local synthetic multipart evidence and missing data.
 
+Offline preflight rejudgment: preflight --judge DIRECTORY --out /tmp/FRESH
+reuses summary generation without environment settings or cluster access, leaving
+the retained capture unchanged. Only the historical post-reset reservations
+KeyError can be resolved by complete retained cleanup evidence; other STOPs fail.
+Public snapshot reservations use omitempty (an absent member encodes an empty
+list), matching the existing finish-reset-wait and barrier reservation lookup.
+
 E0 may set "readyGate": true: seconds becomes the maximum zero-load window,
 ending early only when all three owned canonical workloads are Ready with positive
 routing. Omit it (or false) for unchanged fixed-duration stages. phase.json and
@@ -558,14 +565,14 @@ def wait_preflight_empty(e5, cpo):
         state = cpo.state()
         e5.save(cpo.out / 'preflight-final-state.json', state)
         snap = state['snapshot']
-        if not snap['instances'] and not snap['reservations'] and not any(a.get('status') in ('running', 'cancel') for a in state.get('actions') or []):
+        if not snap['instances'] and not snap.get('reservations') and not any(a.get('status') in ('running', 'cancel') for a in state.get('actions') or []):
             return
         if e5.time.monotonic() >= deadline:
             raise RuntimeError('Preflight final instances/reservations did not reach zero within settle timebox')
         e5.time.sleep(min(1, max(0, deadline - e5.time.monotonic())))
 
 
-def preflight_result(e5, binding, out, stages):
+def preflight_result(e5, binding, out, stages, *, judge=False):
     """Missing or partial evidence is FAIL; never infer cleanup from reset ACKs."""
     ready = next((s.get('readyGate') for s in stages if s.get('readyGate')), {})
     configured = binding['config']['workloads']
@@ -583,24 +590,32 @@ def preflight_result(e5, binding, out, stages):
         (stage_folder(out, s) / name).exists() and e5.load(stage_folder(out, s) / name).get('complete') is True
         for s in binding['schedule'] for name in ('power.json', 'power-drain-inclusive.json'))
     checks = {
-        'emptyStart': initial is not None and 'instances' in initial and 'reservations' in initial and not initial['instances'] and not initial['reservations'],
+        'emptyStart': initial is not None and 'instances' in initial and not initial['instances'] and not initial.get('reservations'),
         'ready3': len(configured) == ready_count == 3 and bool(ready.get('observedUTC')) and not ready.get('timedOut'),
         'success100Percent': success,
         'powerComplete': power_complete,
         'finalInstances0': final is not None and 'instances' in final and not final['instances'],
-        'finalReservations0': final is not None and 'reservations' in final and not final['reservations'],
+        'finalReservations0': final is not None and 'instances' in final and not final.get('reservations'),
+        'finalTransitions0': final_path.exists() and not any(a.get('status') in ('running', 'cancel') for a in e5.load(final_path).get('actions') or []),
         'stagesComplete': len(stages) == len(binding['schedule']) and all(s.get('status') == 'DRAINED_NOT_EVALUATED' for s in stages),
         'finishComplete': (out / 'finish-complete.json').exists() and (out / 'finish-definitions-complete.json').exists(),
         'noStop': not (out / 'preflight-STOP.json').exists(),
     }
+    stop_path = out / 'preflight-STOP.json'
+    stop = e5.load(stop_path) if stop_path.exists() else None
+    resolved_stop = judge and stop is not None and stop.get('error') == "'reservations'" and all(value for key, value in checks.items() if key != 'noStop')
+    if resolved_stop:
+        checks['noStop'] = True
     return {'status': 'PASS' if all(checks.values()) else 'FAIL',
             'checks': {key: 'PASS' if value else 'FAIL' for key, value in checks.items()},
-            'readyWorkloads': ready_count, 'scope': 'Operational preflight only; not E5 scientific PASS'}
+            'readyWorkloads': ready_count, 'scope': 'Operational preflight only; not E5 scientific PASS',
+            'resolvedHistoricalStop': stop if resolved_stop else None}
 
 
-def summarize(e5, binding, out):
+def summarize(e5, binding, out, destination=None, *, judge=False):
     raw = e5.module('demo_raw', HERE / 'e5-raw.py')
     analysis = ANALYSIS
+    destination = destination or out
     rows, stage_summaries = [], []
     previous_end = None
     previous_snapshot = e5.load(out / 'initial.json')['state']['snapshot'] if (out / 'initial.json').exists() else None
@@ -617,7 +632,7 @@ def summarize(e5, binding, out):
             continue
         gap = None if previous_end is None else epoch(phase['startUTC']) - epoch(previous_end)
         previous_end = phase['endUTC']
-        events, provenance = raw.scheduler_events(folder)
+        events, provenance = raw.scheduler_events(folder, approved_root=out) if judge else raw.scheduler_events(folder)
         pre = e5.load(folder / 'pre-state.json')['snapshot']
         baseline = previous_snapshot or pre
         post_path = folder / (phase.get('postBoundaryPrefix', 'post') + '-state.json')
@@ -707,13 +722,15 @@ def summarize(e5, binding, out):
                 bounds = part_summary['workloads'][name]['producerWindowEpoch']
                 part_summary['workloads'][name]['producerWindowUTC'] = [e5.dt.datetime.fromtimestamp(t, e5.dt.timezone.utc).isoformat() for t in bounds] if bounds else None
                 part_summary['workloads'][name]['windowMeaning'] = 'Frozen scheduled rate interval anchored to actual producer start; not an independently observed boundary event'
-        e5.save(folder / 'summary.json', summary)
+        summary_folder = stage_folder(destination, stage)
+        summary_folder.mkdir(parents=True, exist_ok=True)
+        e5.save(summary_folder / 'summary.json', summary)
         stage_summaries.append(summary)
     scheduler_settings = binding.get('schedulerSettings')
     result = {'schema': 'e5-demo-summary.v1', 'schedulerSettings': scheduler_settings, 'missingReasons': {'schedulerSettings': None if scheduler_settings is not None else 'Binding does not contain frozen scheduler settings; current settings are not substituted'}, 'stages': stage_summaries}
     if binding.get('demoConfig', {}).get('preflight'):
-        result['preflight'] = preflight_result(e5, binding, out, stage_summaries)
-    e5.save(out / 'summary.json', result)
+        result['preflight'] = preflight_result(e5, binding, out, stage_summaries, judge=judge)
+    e5.save(destination / 'summary.json', result)
     def fmt(value):
         return '—' if value is None else f'{value:.3f}' if isinstance(value, float) else str(value)
     table = ['# Autonomous workload-pool demo', '', 'Client latency is successful HTTP round trip. SLO is the configured reporting-only measurementSLO, or captured scheduler SLO when omitted; scheduler SLO is never changed. Energy is shared pool energy, repeated per workload (do not sum rows). Missing evidence is —, not zero.', '', '| Stage | Workload | Rate/s | Success/offered | Success % | p95 ms | p99 ms | SLO p/ms | Within SLO % | Pool J | Active J | Drain pool J | Placement changes | Transition failures | Gap s |', '|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|']
@@ -743,7 +760,7 @@ def summarize(e5, binding, out):
             table.append(f"| {change['observedAtUTC']} ({change['previousObservedAtUTC']}) | {change['kind']} {change['id']} {change['change']} | `{detail.replace('|', '/').replace(chr(10), ' ')}` |")
         if not s['schedulerCapture'].get('complete'):
             table.append('Scheduler coverage incomplete; transition failures are unknown. See summary.json schedulerCapture.errors.')
-    (out / 'summary.md').write_text('\n'.join(table) + '\n')
+    (destination / 'summary.md').write_text('\n'.join(table) + '\n')
     return stage_summaries
 
 
@@ -1720,6 +1737,7 @@ def main():
     parser.add_argument('directory', type=Path, nargs='?', help='report: retained demo folder (offline)')
     parser.add_argument('--compare', type=Path, nargs='+', action='append', default=[], help='report: retained comparison folder(s); repeatable')
     parser.add_argument('--config', type=Path, help='Demo JSON; required for prepare')
+    parser.add_argument('--judge', type=Path, help='preflight: offline retained capture rejudgment; requires fresh --out')
     parser.add_argument('--out', type=Path, help='Fresh absolute external campaign directory; binding.json is stored here')
     parser.add_argument('--release', type=Path, help='Existing CPO release: executor CampaignOps, command e5-execute, bindingPath, sourceSHA, mainInstructionUTC')
     parser.add_argument('--stage', help='Configured stage ID; required for stage/collect')
@@ -1740,6 +1758,28 @@ def main():
         parser.error('directory and --compare are only valid for report')
     if args.self_check:
         self_check()
+        return
+    if args.judge is not None:
+        if args.command != 'preflight' or args.out is None:
+            parser.error('--judge requires preflight and a fresh --out')
+        source = args.judge.resolve()
+        destination = args.out.resolve()
+        if destination == source or source in destination.parents or destination in source.parents:
+            parser.error('--out must be separate from the retained capture')
+        from types import SimpleNamespace
+        import datetime as dt
+        offline = SimpleNamespace(module=module, dt=dt,
+                                  load=lambda path: json.loads(Path(path).read_text()),
+                                  save=lambda path, value: Path(path).write_text(json.dumps(value, indent=2) + '\n'))
+        binding = offline.load(source / 'binding.json')
+        if binding.get('schema') != 'demo-e5-binding.v1' or not binding.get('demoConfig', {}).get('preflight'):
+            parser.error('--judge requires a retained preflight binding')
+        destination.mkdir(parents=True, exist_ok=False)
+        summarize(offline, binding, source, destination, judge=True)
+        result = offline.load(destination / 'summary.json')['preflight']
+        print(json.dumps(result, indent=2))
+        if result['status'] != 'PASS':
+            raise SystemExit(2)
         return
     if args.command is None or args.out is None:
         parser.error('command and --out required')
