@@ -21,7 +21,7 @@ test("duration conversion preserves nanoseconds and rejects nonpositive or overf
 })
 
 test("review detects control or exact integer changes across numeric representations", () => {
-  const current:SchedulerSettings={observationWindowNanos:1,controlIntervalNanos:1,comparisonPeriodNanos:1,maxObservationAgeNanos:1,bootstrapCapacityWaitNanos:600000000000,servingMemoryBytes:18446744073709551615n,maxReplicas:1,maxInstances:1,maxCPUs:1,completionMarginMS:0,capacityWindowNanos:1,capacityWindows:1,capacityPassingWindows:1,capacityMinimumRequests:1,planSearchWorkers:1,autonomousWorkloads:[],excludedNodes:["rasp5"],controls:{placement:false,resources:false,replicas:false,routing:false,batching:false,power:false,membership:false}}
+  const current:SchedulerSettings={observationWindowNanos:1,controlIntervalNanos:1,comparisonPeriodNanos:1,maxObservationAgeNanos:1,bootstrapCapacityWaitNanos:600000000000,scaleDownStabilizationNanos:300000000000,transitionReserveFraction:0,servingMemoryBytes:18446744073709551615n,maxReplicas:1,maxInstances:1,maxCPUs:1,completionMarginMS:0,capacityWindowNanos:1,capacityWindows:1,capacityPassingWindows:1,capacityMinimumRequests:1,planSearchWorkers:1,autonomousWorkloads:[],excludedNodes:["rasp5"],controls:{placement:false,resources:false,replicas:false,routing:false,batching:false,power:false,membership:false}}
   assert.equal(settingsEqual(current,{...current,controlIntervalNanos:1n,controls:{...current.controls}}),true)
   assert.equal(settingsEqual(current,{...current,bootstrapCapacityWaitNanos:0}),false)
   assert.equal(settingsEqual(current,{...current,servingMemoryBytes:18446744073709551614n}),false)

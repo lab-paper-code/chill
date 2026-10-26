@@ -34,6 +34,7 @@ export type WireInteger = number | bigint
 export type SchedulerSettings = {
   observationWindowNanos:WireInteger; controlIntervalNanos:WireInteger; comparisonPeriodNanos:WireInteger; maxObservationAgeNanos:WireInteger
   bootstrapCapacityWaitNanos:WireInteger
+  scaleDownStabilizationNanos:WireInteger; transitionReserveFraction:number
   maxReplicas:WireInteger; maxInstances:WireInteger; maxCPUs:WireInteger; servingMemoryBytes:WireInteger
   completionMarginMS:number
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger

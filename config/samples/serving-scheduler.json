@@ -3,6 +3,8 @@
     "observationWindowNanos": 60000000000,
     "controlIntervalNanos": 10000000000,
     "comparisonPeriodNanos": 600000000000,
+    "scaleDownStabilizationNanos": 300000000000,
+    "transitionReserveFraction": 0,
     "maxObservationAgeNanos": 5000000000,
     "maxReplicas": 8,
     "maxInstances": 16,

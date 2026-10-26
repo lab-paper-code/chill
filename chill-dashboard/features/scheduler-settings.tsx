@@ -17,7 +17,9 @@ type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"adv
 const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
   {key:"controlIntervalNanos",label:"운영 판단 주기",help:"이 간격마다 새로 판단해요.",group:"cycle"},
-  {key:"comparisonPeriodNanos",label:"에너지 비교 기간",help:"후보마다 앞으로 이 기간의 에너지를 비교해요. 가장 긴 전환이 더 길면 그 전환 시간으로 비교해요.",group:"cycle"},
+  {key:"comparisonPeriodNanos",label:"에너지 비교 기간",help:"유지와 모든 후보를 같은 고정 기간으로 비교해요. 이보다 긴 전환은 제외해요.",group:"cycle"},
+  {key:"scaleDownStabilizationNanos",label:"하강 안정화 기간",help:"수요 하강이 이 기간 유지된 뒤 축소와 에너지 교체를 허용해요. 0이면 대기하지 않아요.",group:"cycle"},
+  {key:"transitionReserveFraction",label:"전환 예비 비율",help:"전환 중 실제 준비된 용량으로 수요와 예비를 감당해요. 0은 별도 예비 없음, 범위는 0~1이에요.",group:"cycle"},
   {key:"maxObservationAgeNanos",label:"관측을 쓸 수 있는 시간",help:"이보다 오래된 관측은 판단에 쓰지 않아요.",group:"cycle"},
   {key:"completionMarginMS",label:"완료 여유",help:"실행이 끝난 뒤 응답까지 요청마다 이만큼 더해 예상 완료 시각을 계산해요.",group:"cycle",unit:"ms"},
   {key:"servingMemoryBytes",label:"서비스 실행 메모리",help:"측정한 모델 메모리에 인스턴스마다 더하는 메모리예요. 절반을 대기 요청에 써요. 노드 자원은 배포 설정에서 관리해요.",group:"limit"},
@@ -36,6 +38,11 @@ const controls: {key:keyof SchedulerSettings["controls"];label:string}[] = [
   {key:"batching",label:"배칭"},{key:"power",label:"전력모드"},{key:"membership",label:"실행 그룹 소속"},
 ]
 const onOff = (on:boolean) => on?"사용":"사용 안 함"
+const reserveFraction = (text:string) => {
+  const value=Number(text)
+  if(!text.trim()||!Number.isFinite(value)||value<0||value>1)throw new Error("0~1 사이의 유한한 값을 적어 주세요.")
+  return value
+}
 const autonomous = (settings:SchedulerSettings) => `${settings.autonomousWorkloads?.length??0}개`
 // Nodes the planner never changes, like measurement Nodes.
 export const excludedNodes = (settings:SchedulerSettings) => settings.excludedNodes?.length?settings.excludedNodes.join(", "):"없음"
@@ -243,7 +250,7 @@ export function SchedulerSettingsPage() {
     range={field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{
       // Same validation as the wire: ms with ≤6 decimals → nanos, nonnegative margin ms, uint64 memory bytes, positive int64 otherwise.
-      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
+      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text):field.key==="transitionReserveFraction"?reserveFraction(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
       edit(base=>({...base,[field.key]:parsed}))
     }} disabled={blocked}/>)
   return <Screen back={back} title="운영 설정"

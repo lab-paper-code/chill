@@ -12,23 +12,25 @@ import (
 
 // SchedulerSettings separates the observed population from the control cadence
 // and the comparison period: every plan's complete pool energy is compared over
-// T = max(ComparisonPeriod, the longest transition chain). AutonomousWorkloads
-// lists the Workload UIDs under autonomous control.
+// the fixed ComparisonPeriod. AutonomousWorkloads lists the Workload UIDs under
+// autonomous control.
 // MaxReplicas, MaxInstances and MaxCPUs gate node plans: a plan holds at most
 // MaxReplicas instances of one Workload and MaxInstances instances in total,
 // each with at most MaxCPUs CPUs.
 type SchedulerSettings struct {
-	ObservationWindow     time.Duration `json:"observationWindowNanos"`
-	ControlInterval       time.Duration `json:"controlIntervalNanos"`
-	ComparisonPeriod      time.Duration `json:"comparisonPeriodNanos"`
-	MaxObservationAge     time.Duration `json:"maxObservationAgeNanos"`
-	BootstrapCapacityWait time.Duration `json:"bootstrapCapacityWaitNanos"`
-	MaxReplicas           int           `json:"maxReplicas"`
-	MaxInstances          int           `json:"maxInstances"`
-	MaxCPUs               int           `json:"maxCPUs"`
-	ServingMemoryBytes    uint64        `json:"servingMemoryBytes"`
-	CompletionMarginMS    float64       `json:"completionMarginMS"`
-	AutonomousWorkloads   []string      `json:"autonomousWorkloads"`
+	ObservationWindow         time.Duration `json:"observationWindowNanos"`
+	ControlInterval           time.Duration `json:"controlIntervalNanos"`
+	ComparisonPeriod          time.Duration `json:"comparisonPeriodNanos"`
+	MaxObservationAge         time.Duration `json:"maxObservationAgeNanos"`
+	BootstrapCapacityWait     time.Duration `json:"bootstrapCapacityWaitNanos"`
+	ScaleDownStabilization    time.Duration `json:"scaleDownStabilizationNanos"`
+	TransitionReserveFraction float64       `json:"transitionReserveFraction"`
+	MaxReplicas               int           `json:"maxReplicas"`
+	MaxInstances              int           `json:"maxInstances"`
+	MaxCPUs                   int           `json:"maxCPUs"`
+	ServingMemoryBytes        uint64        `json:"servingMemoryBytes"`
+	CompletionMarginMS        float64       `json:"completionMarginMS"`
+	AutonomousWorkloads       []string      `json:"autonomousWorkloads"`
 	// MinimumDemand floors planning demand in requests/second by Workload UID.
 	MinimumDemand map[string]float64 `json:"minimumDemand,omitempty"`
 	// ExcludedNodes names Nodes the planner keeps as they are, like
@@ -410,6 +412,12 @@ func (s SchedulerSettings) Validate() error {
 	if s.BootstrapCapacityWait < 0 || s.BootstrapCapacityWait > time.Hour {
 		return fmt.Errorf("bootstrapCapacityWaitNanos must be between 0 and one hour")
 	}
+	if s.ScaleDownStabilization < 0 {
+		return fmt.Errorf("scaleDownStabilizationNanos must be nonnegative")
+	}
+	if !schedulerFinite(s.TransitionReserveFraction) || s.TransitionReserveFraction < 0 || s.TransitionReserveFraction > 1 {
+		return fmt.Errorf("transitionReserveFraction must be finite and between 0 and 1")
+	}
 	if s.MaxReplicas < 1 || s.MaxInstances < 1 || s.MaxCPUs < 1 {
 		return fmt.Errorf("maxReplicas, maxInstances and maxCPUs must be positive")
 	}
@@ -441,8 +449,9 @@ func (s SchedulerSettings) Validate() error {
 // completionMarginMS apart from zero.
 type SchedulerSettingsInput struct {
 	SchedulerSettings
-	CompletionMarginMS    *float64       `json:"completionMarginMS"`
-	BootstrapCapacityWait *time.Duration `json:"bootstrapCapacityWaitNanos"`
+	CompletionMarginMS     *float64       `json:"completionMarginMS"`
+	BootstrapCapacityWait  *time.Duration `json:"bootstrapCapacityWaitNanos"`
+	ScaleDownStabilization *time.Duration `json:"scaleDownStabilizationNanos"`
 }
 
 // Settings returns validated settings carrying the supplied margin.
@@ -455,6 +464,10 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 	settings.BootstrapCapacityWait = 10 * time.Minute
 	if in.BootstrapCapacityWait != nil {
 		settings.BootstrapCapacityWait = *in.BootstrapCapacityWait
+	}
+	settings.ScaleDownStabilization = 300 * time.Second
+	if in.ScaleDownStabilization != nil {
+		settings.ScaleDownStabilization = *in.ScaleDownStabilization
 	}
 	return settings, settings.Validate()
 }
