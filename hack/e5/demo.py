@@ -7,6 +7,12 @@ Outputs are PRIVATE operational evidence. publish --experiment-id ID --store-con
 /private/store.json uploads raw inputs before a final immutable summary; corrections
 require a new ID. --help and --self-check need no live experiment environment.
 
+Offline reporting: report DIRECTORY [--compare DIRECTORY ...] [--out DIRECTORY]
+rebuilds timeline.svg and report-tables.md from retained phase/summary/client/
+power/scheduler evidence only, without environment settings or cluster access.
+--out defaults to DIRECTORY; an external --out leaves every input unchanged.
+report --self-check exercises local synthetic multipart evidence and missing data.
+
 E0 may set "readyGate": true: seconds becomes the maximum zero-load window,
 ending early only when all three owned canonical workloads are Ready with positive
 routing. Omit it (or false) for unchanged fixed-duration stages. phase.json and
@@ -1376,7 +1382,9 @@ def self_check():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=['prepare', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'publish', 'finish'], nargs='?')
+    parser.add_argument('command', choices=['prepare', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'publish', 'finish', 'report'], nargs='?')
+    parser.add_argument('directory', type=Path, nargs='?', help='report: retained demo folder (offline)')
+    parser.add_argument('--compare', type=Path, nargs='+', action='append', default=[], help='report: retained comparison folder(s); repeatable')
     parser.add_argument('--config', type=Path, help='Demo JSON; required for prepare')
     parser.add_argument('--out', type=Path, help='Fresh absolute external campaign directory; binding.json is stored here')
     parser.add_argument('--release', type=Path, help='Existing CPO release: executor CampaignOps, command e5-execute, bindingPath, sourceSHA, mainInstructionUTC')
@@ -1385,6 +1393,17 @@ def main():
     parser.add_argument('--store-config', type=Path, help='publish: private logicalStore/S3 config for existing PutImmutable bridge')
     parser.add_argument('--self-check', action='store_true', help='Run one local mocked API/kubectl lifecycle smoke, without cluster access')
     args = parser.parse_args()
+    if args.command == 'report':
+        timeline = module('demo_timeline', HERE / 'timeline.py')
+        if args.self_check:
+            timeline.self_check()
+            return
+        if args.directory is None:
+            parser.error('report requires a demo directory')
+        timeline.report(args.directory, [p for group in args.compare for p in group], args.out)
+        return
+    if args.directory is not None or args.compare:
+        parser.error('directory and --compare are only valid for report')
     if args.self_check:
         self_check()
         return
