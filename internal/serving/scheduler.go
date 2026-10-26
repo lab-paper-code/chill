@@ -278,8 +278,10 @@ type Action struct {
 }
 type SchedulerSnapshot struct {
 	// At is the current request read and decision origin, after capture I/O.
-	At                 time.Time `json:"at"`
-	BootstrapStartedAt time.Time `json:"bootstrapStartedAt,omitempty"`
+	At                        time.Time                     `json:"at"`
+	BootstrapStartedAt        time.Time                     `json:"bootstrapStartedAt,omitempty"`
+	ScaleDown                 map[string]SchedulerDownState `json:"scaleDown,omitempty"`
+	EmptyNodeScaleDownAllowed bool                          `json:"emptyNodeScaleDownAllowed"`
 	// ObservationEnd is the fixed historical arrival cutoff.
 	ObservationEnd time.Time `json:"observationEnd"`
 	// ObservedSince is when arrival observation became complete (the process

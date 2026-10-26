@@ -85,19 +85,20 @@ type SchedulerPlanSearch struct {
 // Rate is λ (req/s), Backlog B (requests). A missing wait, drain or exceedance
 // is unbounded: no capacity serves the Workload.
 type SchedulerCapacityWorkload struct {
-	UID                  string           `json:"uid"`
-	Rate                 float64          `json:"rate"`
-	MinimumDemand        float64          `json:"minimumDemand"`
-	Queued               int              `json:"queued"`
-	KappaNew             float64          `json:"kappaNew"`
-	KappaRetained        float64          `json:"kappaRetained"`
-	Backlog              float64          `json:"backlog"`
-	WaitSeconds          *float64         `json:"waitSeconds,omitempty"`
-	DrainSeconds         *float64         `json:"drainSeconds,omitempty"`
-	FinalExceedance      *float64         `json:"finalExceedance,omitempty"`
-	TransitionExceedance *float64         `json:"transitionExceedance,omitempty"`
-	Weights              map[string]int32 `json:"weights"`
-	Rows                 []string         `json:"rows"`
+	UID                  string              `json:"uid"`
+	Rate                 float64             `json:"rate"`
+	MinimumDemand        float64             `json:"minimumDemand"`
+	Queued               int                 `json:"queued"`
+	KappaNew             float64             `json:"kappaNew"`
+	KappaRetained        float64             `json:"kappaRetained"`
+	Backlog              float64             `json:"backlog"`
+	WaitSeconds          *float64            `json:"waitSeconds,omitempty"`
+	DrainSeconds         *float64            `json:"drainSeconds,omitempty"`
+	FinalExceedance      *float64            `json:"finalExceedance,omitempty"`
+	TransitionExceedance *float64            `json:"transitionExceedance,omitempty"`
+	Weights              map[string]int32    `json:"weights"`
+	Rows                 []string            `json:"rows"`
+	ScaleDown            *SchedulerDownState `json:"scaleDown,omitempty"`
 }
 
 // SchedulerNodePlan is one Node's plan: keep, or a set of option variants at
@@ -109,6 +110,7 @@ type SchedulerNodePlan struct {
 	Key                     string             `json:"key"`
 	Eligible                bool               `json:"eligible"`
 	Reason                  string             `json:"reason,omitempty"`
+	Tempo                   string             `json:"tempo,omitempty"`
 	Kappa                   map[string]float64 `json:"kappa,omitempty"`
 	KappaRetained           map[string]float64 `json:"kappaRetained,omitempty"`
 	Pre                     time.Duration      `json:"preNanos"`
@@ -130,6 +132,12 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	settings.ExcludedNodes = slices.Clone(settings.ExcludedNodes)
 	settings.MinimumDemand = maps.Clone(settings.MinimumDemand)
 	snapshot = schedulerCanonical(snapshot)
+	if settings.ScaleDownStabilization > 0 && snapshot.ScaleDown == nil {
+		snapshot.ScaleDown = map[string]SchedulerDownState{}
+	}
+	if settings.ScaleDownStabilization == 0 {
+		snapshot.EmptyNodeScaleDownAllowed = true
+	}
 	decision := SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
 	fixSchedulerWorkloads(&decision, snapshot, capacity)
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
@@ -786,13 +794,13 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	}) {
 		plan.record.Reason = schedulerPlanHeld
 	}
-	if plan.record.Reason == "" && p.partial && (removed || plan.replaces) {
+	if plan.record.Reason == "" && p.partial && removed {
 		plan.record.Reason = schedulerPartialObservation
 	}
 	if plan.record.Reason == "" && slices.ContainsFunc(current, func(old SchedulerInstance) bool {
 		w, controlled := p.index[old.WorkloadUID]
 		return controlled && p.ws[w].growing && old.Ready && !old.Stopped && schedulerInstanceRouted(p.keep.Routing, old.ID) &&
-			(!used[old.ID] || changed[old.ID])
+			!used[old.ID]
 	}) {
 		plan.record.Reason = schedulerDemandIncreasing
 	}
@@ -839,6 +847,39 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		}
 	}
 	p.sum(plan)
+	plan.record.Tempo = "fast"
+	for _, ws := range p.ws {
+		affected := false
+		policy := false
+		oldKappa := 0.0
+		for _, old := range current {
+			if old.WorkloadUID == ws.d.UID || old.OwnerWorkloadUID == ws.d.UID {
+				k, _ := p.currentKappa(old)
+				oldKappa += k
+				affected = affected || !used[old.ID] || mode != node.PowerMode
+				policy = policy || changed[old.ID]
+			}
+		}
+		hasCurrent := slices.ContainsFunc(current, func(old SchedulerInstance) bool {
+			return old.WorkloadUID == ws.d.UID || old.OwnerWorkloadUID == ws.d.UID
+		})
+		slow := hasCurrent && (affected || policy && plan.record.Kappa[ws.d.UID] <= oldKappa)
+		if slow {
+			plan.record.Tempo = "slow"
+			if p.partial {
+				plan.record.Reason = schedulerPartialObservation
+				return plan
+			}
+			if p.ws[p.index[ws.d.UID]].growing {
+				plan.record.Reason = schedulerDemandIncreasing
+				return plan
+			}
+			if !schedulerSlowAllowed(p.settings, p.snapshot, ws.d.UID) {
+				plan.record.Reason = "ScaleDownStabilizing"
+				return plan
+			}
+		}
+	}
 	mid := slices.DeleteFunc(slices.Clone(current), func(i SchedulerInstance) bool { return removedPre[i.ID] })
 	for _, i := range plan.instances {
 		if !slices.ContainsFunc(current, func(old SchedulerInstance) bool { return old.ID == i.ID }) {
@@ -1637,8 +1678,10 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	for w, ws := range p.ws {
 		j := best.judgments[w]
+		down := p.snapshot.ScaleDown[ws.d.UID]
 		record.Workloads = append(record.Workloads, SchedulerCapacityWorkload{
 			UID: ws.d.UID, Rate: ws.rate, MinimumDemand: p.settings.MinimumDemand[ws.d.UID], Queued: ws.queued, KappaNew: best.sums[w][0], KappaRetained: best.sums[w][1], Backlog: j.backlog,
+			ScaleDown:   &down,
 			WaitSeconds: j.wait, DrainSeconds: j.drain, FinalExceedance: j.final, TransitionExceedance: j.transition, Weights: best.weights[w], Rows: best.rows[w],
 		})
 	}
@@ -1719,6 +1762,9 @@ func (p *capacityPlanner) idleRemovable(i SchedulerInstance, plan *capacityPlan,
 	uid := i.WorkloadUID
 	if uid == "" {
 		uid = i.OwnerWorkloadUID
+	}
+	if uid == "" && !schedulerEmptySlowAllowed(p.settings, p.snapshot) || uid != "" && !schedulerSlowAllowed(p.settings, p.snapshot, uid) {
+		return false
 	}
 	// An instance owned by nobody and routed by no Workload serves nobody.
 	w, controlled := p.index[uid]

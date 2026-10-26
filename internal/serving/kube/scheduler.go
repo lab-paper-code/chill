@@ -101,6 +101,7 @@ type SchedulerController struct {
 	config             SchedulerControllerConfig
 	state              SchedulerControllerState
 	bootstrapStartedAt time.Time
+	tempo              serving.SchedulerTempo
 	runs               map[string]*actionRun
 	ctx                context.Context
 	cancel             context.CancelFunc
@@ -292,6 +293,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		c.bootstrapStartedAt = time.Time{}
 	}
 	c.capacity.Ensure(c.ctx, config.Settings, snapshot)
+	c.tempo.Observe(config.Settings, &snapshot)
 	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, c.capacity.Rows())
 	if err != nil {
 		return serving.SchedulerDecision{}, err
@@ -317,6 +319,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
+	c.tempo.Selected(decision)
 	// A decision without a target still lowers available Nodes (Fixed actions).
 	if decision.Target != nil {
 		c.launch(*decision.Target, config)

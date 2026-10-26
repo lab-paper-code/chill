@@ -64,7 +64,7 @@ func schedulerAvailable(snapshot SchedulerSnapshot, n SchedulerNode) bool {
 // when power control is on; every candidate starts from this state.
 func schedulerCommonNodes(settings SchedulerSettings, snapshot SchedulerSnapshot) []SchedulerNode {
 	nodes := append([]SchedulerNode(nil), snapshot.Nodes...)
-	if !settings.Controls.Power {
+	if !settings.Controls.Power || !schedulerEmptySlowAllowed(settings, snapshot) {
 		return nodes
 	}
 	for index, n := range nodes {
@@ -512,7 +512,7 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 				p.add(schedulerActionPower, n.Node, "", old.From, old.To, nil)
 				p.actions[len(p.actions)-1].Fixed = true
 				from = old.To
-			} else if lowest := SchedulerLowestMode(p.snap.Baselines, n.Node); lowest != "" && lowest != from && schedulerAvailable(p.snap, oldNode) {
+			} else if lowest := SchedulerLowestMode(p.snap.Baselines, n.Node); lowest != "" && lowest != from && schedulerAvailable(p.snap, oldNode) && (p.snap.ScaleDown == nil || p.snap.EmptyNodeScaleDownAllowed) {
 				p.add(schedulerActionPower, n.Node, "", from, lowest, nil)
 				p.actions[len(p.actions)-1].Fixed = true
 				from = lowest
