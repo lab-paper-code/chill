@@ -6,6 +6,8 @@ Only phase.json, summary.json, *-client.jsonl, power.json and scheduler.jsonl.gz
 are inputs. No environment, network, cluster, config, report or state-file reads.
 The existing indented per-stage summary supplies captured boundary key changes;
 raw scheduler observations supply occupancy, actions and scaleDown observations.
+A zero-offered ready gate may have no client file; an absent file is accepted
+only when its frozen trace is empty, never for a requested workload.
 Multipart energy is unknown unless a power.json covers that exact part window:
 compact scheduler records alone do not retain their catalog coverage policy.
 """
@@ -61,6 +63,8 @@ def summary_changes(path):
 
 def selected_clients(path, trace):
     rows = {}
+    if not trace and not path.exists():
+        return rows
     with path.open() as stream:
         for line in stream:
             row = json.loads(line)
@@ -509,6 +513,14 @@ def self_check():
                    for i in (0,1,2)]  # Last offered response intentionally missing.
         clients[1]['error'] = 'HTTP 200 with client error is not success'
         cp = folder/(name+'-client.jsonl')
+        absent = folder/'absent-client.jsonl'
+        assert selected_clients(absent, []) == {}
+        try:
+            selected_clients(absent, [0])
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError('Missing client file accepted for nonempty trace')
         cp.write_text(''.join(json.dumps(r)+'\n' for r in clients))
         power = dict(complete=True,wholePoolJoules=2000,nodes=[],**{'from':start,'to':at(21)})
         (folder/'power.json').write_text(json.dumps(power))
