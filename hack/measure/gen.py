@@ -95,25 +95,25 @@ def required_batches(mean, sd):
     return lo + 1
 
 
-def round_trip_input(case):
+def outside_time_input(case):
     supply = ENV.get("occupancySupply", {})
-    evidence_path = supply.get("roundTripEvidence")
-    evidence = load(evidence_path) if evidence_path else supply.get("roundTripByCase", {})
+    evidence_path = supply.get("outsideTimeEvidence")
+    evidence = load(evidence_path) if evidence_path else supply.get("outsideTimeByCase", {})
     result = copy.deepcopy(evidence.get(case, {
         "p99Seconds": 0.25, "sources": [],
-        "fallback": "no target-specific producer request issuance-to-response raw; 0.25s",
+        "fallback": True, "fallbackReason": "no target or same-node/runtime producer outside-time evidence; 0.25s",
     }))
     if evidence_path:
         result["evidenceManifest"] = identity(evidence_path)
     p99 = result["p99Seconds"]
     if not math.isfinite(p99) or p99 <= 0:
-        raise ValueError(f"{case}: producer round-trip p99 must be finite and positive")
-    if not result.get("sources") and not result.get("fallback"):
-        raise ValueError(f"{case}: producer round-trip requires raw sources or explicit fallback")
+        raise ValueError(f"{case}: producer outside-time p99 must be finite and positive")
+    if not result.get("sources") and not (result.get("fallback") is True and result.get("fallbackReason")):
+        raise ValueError(f"{case}: producer outside-time requires raw sources or explicit fallback")
     return result
 
 
-def derive(row, framed_bytes, pipeline, round_trip=None):
+def derive(row, framed_bytes, pipeline, outside_time=None):
     c, b = COEFFICIENTS, row["batch"]
     mu, sd = row["meanSeconds"], row["sdSeconds"]
     fast = row["minObservedSeconds"] / c["timeMargin"]
@@ -128,12 +128,13 @@ def derive(row, framed_bytes, pipeline, round_trip=None):
     slo = row["workload"]["slo"]["targetLatencyNanos"] / 1e9
     lifetime = math.ceil(c["lifetimeMargin"] * max(slo, (q + 2) * tail + prefix))
     old_workers, old_lifetime = b * (q + 1), lifetime
-    rtt = copy.deepcopy(round_trip if round_trip is not None else round_trip_input(row["caseID"]))
-    p99 = rtt["p99Seconds"]
-    if not math.isfinite(p99) or p99 <= 0 or not (rtt.get("sources") or rtt.get("fallback")):
-        raise ValueError(f"{row['caseID']}: invalid or unsourced producer round-trip p99")
+    outside = copy.deepcopy(outside_time if outside_time is not None else outside_time_input(row["caseID"]))
+    p99 = outside["p99Seconds"]
+    if (not math.isfinite(p99) or p99 <= 0 or not (outside.get("sources")
+            or outside.get("fallback") is True and outside.get("fallbackReason"))):
+        raise ValueError(f"{row['caseID']}: invalid or unsourced producer outside-time p99")
     throughput = b / mu
-    minimum_workers = math.ceil(throughput * p99 * c["pipelineMargin"])
+    minimum_workers = math.ceil(throughput * p99 * c["pipelineMargin"]) + b
     workers = b * math.ceil(max(old_workers, minimum_workers) / b)
     q = workers // b - 1
     # Keep the existing q/tail/prefix envelope as well as the closed-loop bound.
@@ -171,10 +172,10 @@ def derive(row, framed_bytes, pipeline, round_trip=None):
             "prefixSeconds": prefix, "qUpper": q_upper, "framedDecodedRequestUpperBytes": framed_bytes,
             "supplySizing": {"previousWorkers": old_workers, "previousLifetimeSeconds": old_lifetime,
                 "profileThroughputRequestsPerSecond": throughput, "profileMeanBatchSeconds": mu,
-                "batch": b, "producerRoundTrip": rtt, "margin": c["pipelineMargin"],
+                "batch": b, "producerOutsideTime": outside, "margin": c["pipelineMargin"],
                 "minimumWorkers": minimum_workers, "wholeBatchWorkers": workers,
-                "serviceSecondsPerRequest": tail / b, "waitingAndRoundTripSeconds": waiting_sum,
-                "lifetimeRecalculation": "max(old L,ceil(1.25*max(SLO,(q+2)*tail+prefix))); if K*B*service+p99>L, max(L,ceil(1.25*(K*B*service+p99)))",
+                "serviceSecondsPerRequest": tail / b, "waitingAndOutsideSeconds": waiting_sum,
+                "lifetimeRecalculation": "max(old L,ceil(1.25*max(SLO,(q+2)*tail+prefix))); if K*B*service+Zp99>L, max(L,ceil(1.25*(K*B*service+Zp99)))",
                 "workerCap": None},
             "capacityFeasible": capacity_feasible,
             "queueRequestCap": row["queueRequestCap"], "queueBytesCap": 67108864}
@@ -454,9 +455,9 @@ def self_check():
         sizing = d["supplySizing"]
         assert d["workers"] >= max(sizing["previousWorkers"], sizing["minimumWorkers"])
         assert sizing["minimumWorkers"] == math.ceil(row["batch"] / row["meanSeconds"]
-            * sizing["producerRoundTrip"]["p99Seconds"] * 1.25)
+            * sizing["producerOutsideTime"]["p99Seconds"] * 1.25) + row["batch"]
         assert d["workers"] % row["batch"] == 0
-        assert sizing["waitingAndRoundTripSeconds"] <= d["requestLifetimeSeconds"]
+        assert sizing["waitingAndOutsideSeconds"] <= d["requestLifetimeSeconds"]
         assert d["socketTimeoutSeconds"] > d["requestLifetimeSeconds"] + d["deliveryMarginMillis"] / 1000
         count += 1
     assert count == 34
@@ -464,7 +465,7 @@ def self_check():
     row = next(r for r in inp["rows"] if r.get("profileID") and r["caseID"] == "D05")
     framed = floors["D05"]["framedDecodedRequestUpperBytes"]
     high = derive(row, framed, inp["pipelineScenario"],
-                  {"p99Seconds": 0.25, "sources": [], "fallback": "self-check fixture"})
+                  {"p99Seconds": 0.25, "sources": [], "fallback": True, "fallbackReason": "self-check fixture"})
     assert high["workers"] > 64
     assert not high["capacityFeasible"]
     try:
@@ -474,7 +475,7 @@ def self_check():
     else:
         raise AssertionError("infeasible supply must not produce a CR")
     low = derive(row, framed, inp["pipelineScenario"],
-                 {"p99Seconds": 1e-6, "sources": [], "fallback": "self-check fixture"})
+                 {"p99Seconds": 1e-6, "sources": [], "fallback": True, "fallbackReason": "self-check fixture"})
     assert low["workers"] == low["supplySizing"]["previousWorkers"]
     print("34 approved profile calculations checked")
 
@@ -483,10 +484,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--self-check", action="store_true")
-    parser.add_argument("--round-trip-evidence", type=Path, help="target-specific producer RTT p99 JSON; absent targets explicitly use 0.25s")
+    parser.add_argument("--outside-time-evidence", type=Path, help="requestwise RTT minus server elapsed p99 JSON, with same-node/runtime transfers or explicit 0.25s fallback")
     args = parser.parse_args()
-    if args.round_trip_evidence:
-        ENV.setdefault("occupancySupply", {})["roundTripEvidence"] = str(args.round_trip_evidence.resolve())
+    if args.outside_time_evidence:
+        ENV.setdefault("occupancySupply", {})["outsideTimeEvidence"] = str(args.outside_time_evidence.resolve())
     if args.self_check:
         self_check()
     else:

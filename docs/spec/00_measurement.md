@@ -99,26 +99,35 @@ CPU quota는 사용량 상한이며 전용 CPU 배정을 뜻하지 않으므로,
 
 고정 outstanding closed-loop 공급의 기존 workers를 oldK, profile의 배치 크기를 B,
 배치 평균 실행시간(초)을 mu라 하면 요청 처리율은 `rate=B/mu`다.
-RTT는 대상별 producer의 요청 발행부터 응답 수신까지의 p99(초)로 한정한다.
-`measure.occupancySupply.roundTripByCase[caseID]`에
-`{p99Seconds, sources:[{path,sha256,...}], sampleCount, quantileMethod}`를 기록하여
-해당 target 원시 근거와 hash, 표본 수, 분위수 방법을 연결한다. 다른 target에서
-빌리지 않으며 근거가 없으면 `RTT=0.25 s` fallback 사용을 명시한다.
+closed-loop RTT에는 K에 의존하는 서버 대기가 포함되므로 RTT p99로 공급 깊이를 정하지 않는다.
+각 요청의 client RTT에서 대응하는 서버 `final.elapsedNanos`를 초로 변환해 뺀 외부 시간을 Z라 한다.
+해당 final이 없으면 같은 요청의 native elapsed와 residual 합을 대신 뺀다.
+`Zp99`는 요청별 차감을 먼저 수행한 뒤 계산한 p99(초)이며, 분위수끼리 뺀 값이 아니다.
+동결 입력에 원시 근거 경로와 hash, 요청 대응 및 차감 원천, 표본 수와 분위수 방법을 연결한다.
+입력은 `measure.occupancySupply.outsideTimeEvidence`의 flat JSON 경로나 `outsideTimeByCase` mapping이며
+CLI는 `--outside-time-evidence`다. 결과는 `computed.supplySizing.producerOutsideTime`의
+`{p99Seconds,sources,fallback,...}`와 `waitingAndOutsideSeconds`에 보존한다.
+`fallback`은 boolean이며 `sources`가 없으면 `fallback: true`와 비어 있지 않은 `fallbackReason`을 요구한다.
+직접 Z 근거가 없으면 같은 Node/runtime의 다른 target Z를 사용하고 원래 target과 적용 target의
+출처를 명시한다. 이 근거도 없을 때에만 `Zp99=0.25 s` fallback 사용을 명시한다.
 
-공급은 `K=max(oldK,ceil(rate*RTT*1.25))`로 정하며 64 상한은 없다.
+공급은 `K=max(oldK,ceil(rate*Zp99*1.25)+B)`로 정하며 64 상한은 없다.
 B>1이면 K를 B의 배수로 올림하여 whole-batch workers를 유지한다.
 `serviceTime=tailBatchSeconds/B`를 보수적으로 사용하여
-`K*B*serviceTime+RTT<=L`을 확인한다. 위반하면
-`L=max(oldL,ceil(1.25*(K*tailBatchSeconds+RTT)))`로 재계산한다.
+`K*B*serviceTime+Zp99<=L`을 확인한다. 위반하면
+`L=max(oldL,ceil(1.25*(K*tailBatchSeconds+Zp99)))`로 재계산한다.
 `q=K/B−1`을 다시 구하고 기존 q/tail/prefix 수명 검사, native 대기 개수와
 decoded bytes의 공동 조건, SLO와 gateway 수명 상한을 모두 유지한다.
+`supplySizing`이 없는 legacy 입력은 기존 q의 엄격한 동일성을 유지한다. 있는 경우에는
+legacy 하한 q, `previousWorkers` 일관성, +B/whole-batch 올림, 여유 1.25와 출처를 정확히 재계산한다.
 socket timeout은 `L+delivery`보다 엄격히 크게 최소 1 ms를 더한다.
 유한 drain과 전체 3600 s 예산에 새 공급 연장 `ceil(L+delivery)`를 예약하며,
 조건이나 예산을 만족할 수 없으면 실행 전에 보고한다.
 
 idle 1% 기준과 signed d의 정의·보존은 바꾸지 않는다.
-기존 Accepted와 동결 입력은 불변이며, 새 K 증가는 oldK/newK와 RTT 원천 또는
+기존 Accepted와 동결 입력은 불변이며, 새 K 증가는 oldK/newK와 Z 원천 또는
 fallback, L 및 예산 변경을 명시적으로 보고한다. 기존 측정을 묵시적으로 재실행하지 않는다.
+보고서의 기존·새 결과 비교는 실제 근거로 수행하며 공급 변경 후 비교가 불변이라고 전제하지 않는다.
 
 배치를 키우면 항상 효율이 좋아진다거나, 같은 타입의 노드는 항상 같은 성능을
 낸다고 전제하지 않는다. 노드·전력모드·배치의 비교는 해당 측정 결과를 사용한다.

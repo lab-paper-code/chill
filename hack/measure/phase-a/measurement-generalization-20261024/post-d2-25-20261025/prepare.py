@@ -25,7 +25,7 @@ RUNTIME = CAPTURE / 'runtime-seven-invariant-pre.json'
 INVENTORY = Path(ENV['prepareInventory'])
 TARGETS = ENV['prepareTargets']
 REPRESENTATIVE = 'D06'
-ROUND_TRIP_EVIDENCE = None
+OUTSIDE_TIME_EVIDENCE = None
 
 
 def load(path):
@@ -46,8 +46,8 @@ def generate():
     module = importlib.util.spec_from_file_location('approved_d_generator', CODE / 'gen.py')
     gen = importlib.util.module_from_spec(module)
     module.loader.exec_module(gen)
-    if ROUND_TRIP_EVIDENCE:
-        gen.ENV.setdefault('occupancySupply', {})['roundTripEvidence'] = str(ROUND_TRIP_EVIDENCE)
+    if OUTSIDE_TIME_EVIDENCE:
+        gen.ENV.setdefault('occupancySupply', {})['outsideTimeEvidence'] = str(OUTSIDE_TIME_EVIDENCE)
     inputs, floors = load(INPUT), {r['caseID']: r for r in load(FLOOR)['rows']}
     snapshot, runtime, inventory = load(STATE)['snapshot'], load(RUNTIME), load(INVENTORY)
     options = {o['instance']['profile']['id']: o['instance'] for o in snapshot['options']}
@@ -307,7 +307,7 @@ def check():
         assert (d['warmupSeconds'] >= 60 and d['durationSeconds'] >= 360 and d['plannedElapsedSeconds'] == 3600)
         sizing = d['supplySizing']
         assert d['workers'] >= max(sizing['previousWorkers'], sizing['minimumWorkers'])
-        assert sizing['waitingAndRoundTripSeconds'] <= d['requestLifetimeSeconds']
+        assert sizing['waitingAndOutsideSeconds'] <= d['requestLifetimeSeconds']
         assert d['socketTimeoutSeconds'] > d['requestLifetimeSeconds'] + d['deliveryMarginMillis'] / 1000
         assert d['requestLifetimeSeconds'] >= entry['workload']['slo']['targetLatencyNanos'] / 1e9
         assert d['workers'] == entry['frozenProfileInputs']['batch'] * (1 + d['waitingBatches'])
@@ -322,11 +322,11 @@ if __name__ == '__main__':
     parser.add_argument('--output-dir', type=Path, default=OUT, help='external preparation output subtree')
     parser.add_argument('--check', action='store_true', help='read-only bounded check for Main coordinated gap')
     parser.add_argument('--refresh-timing', action='store_true', help='update timing/retry manifest fields only from already captured manifest data')
-    parser.add_argument('--round-trip-evidence', type=Path, help='target-specific producer RTT p99 JSON; missing targets explicitly use 0.25s')
+    parser.add_argument('--outside-time-evidence', type=Path, help='requestwise RTT minus server elapsed p99 JSON, with same-node/runtime transfers or explicit 0.25s fallback')
     args = parser.parse_args()
     OUT = args.output_dir.resolve()
     repository = Path(CONFIG["paths"]["repository"]).resolve()
-    ROUND_TRIP_EVIDENCE = args.round_trip_evidence.resolve() if args.round_trip_evidence else None
+    OUTSIDE_TIME_EVIDENCE = args.outside_time_evidence.resolve() if args.outside_time_evidence else None
     if repository == OUT or repository in OUT.parents:
         parser.error("preparation output must remain outside the repository source tree")
     if args.check:
