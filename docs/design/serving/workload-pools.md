@@ -425,7 +425,7 @@ CRD 통합, NodeActuation 정리, 일반 이미지 분리, 추가 planner/판정
 | E5 | mobilenet tight, PLC, SmolVLM 혼합 부하, 세 Workload 자동제어, Jetson 포함(아래 단계) | Workload별 SLO 달성, 비교 집합 에너지와 실측 전체 POOL 에너지, `completionResidualNanos`와 설정 여유 비교 |
 
 빠른 수요와 빈 노드 공통 절전의 영향 측정은 E1의 첫 유입, E4의 이동,
-E5-0부터 E5-6 및 E5-S의 구간별 두 관측률, 최종 λ, 보호 용량, 실제 분배 시각과 전력 사슬을 연결한다.
+E5-0부터 E5-7 및 E5-S의 구간별 두 관측률, 최종 λ, 보호 용량, 실제 분배 시각과 전력 사슬을 연결한다.
 모든 유효 offered 결과와 전환 포함 전체 POOL 에너지를 유지한다.
 runtime 7종 digest, profile, 측정 입력과 판정 기준은 고정한다.
 
@@ -518,8 +518,8 @@ ChillServer와 genesis1 edgemesh의 cgroup은 1 s, restartCount는 15 s, thermal
 정확 비용은 2026-10-24T12:49:27.350175648Z snapshot의 key join으로
 [69 options의 prepare/remove 연결](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/cost-coverage-after-055.json)을 확인한 값이다.
 G2 계약 세대 감사와 E5 실행 결과는 각각 별도다.
-아래 E5 계획 8행의 결과 연결은 0/8이며 Run ID와 원시 경로가 확보된 결과만 기입한다.
-7개 명세 평가 시나리오와 8개 E5 계획 행은 각 분모를 유지한다.
+아래 E5 계획 9행의 결과 연결은 0/9이며 Run ID와 원시 경로가 확보된 결과만 기입한다.
+7개 명세 평가 시나리오와 9개 E5 계획 행(E5-0~7+S)은 각 분모를 유지한다.
 
 | 단계 | 시간 | 요청률 (mobilenet, PLC, SmolVLM) | 재는 것 | 채우는 칸 | 근거(Run ID, 원시 경로) |
 |---|---|---|---|---|---|
@@ -529,8 +529,13 @@ G2 계약 세대 감사와 E5 실행 결과는 각각 별도다.
 | E5-3 증가 | 30분 | 모두 0.5, 0.7, 0.9 `R_w` 각 10분 | 확장 순서, 전환 구간 SLO, 판단의 `κ_new`, `B`, `W`와 관측 큐 | 평가 표 점진적인 증가와 감소 행(증가), `SCH-AC-15` | 미측정. Run ID 없음, 원시 경로 없음 |
 | E5-S 정적 기준선 | 170분 | E5-1부터 E5-6까지의 요청률과 seed | E5-1부터 E5-6까지와 같은 항목, 고정 구성의 인스턴스와 전력모드 | [명세](../../spec/README.md#실클러스터-검증과-평가)의 정적 배포 비교, `SCH-AC-20` | 미측정. Run ID 없음, 원시 경로 없음 |
 | E5-4 한계 | 15분 | 모두 1.2 `R_w` | `Overload` 판단과 최대 초과량 순서, Workload별 실제 지연과 처리 결과, 노드별 인스턴스와 전력모드 | 평가 표 전체 POOL의 한계를 넘는 부하 행, `SCH-AC-16` | 미측정. Run ID 없음, 원시 경로 없음 |
-| E5-5 급감과 재급증 | 20분 | 모두 0.3 `R_w` 10분, 0.9 `R_w` 10분 | 축소와 유휴 제거, 다시 확장, 반복 전환의 J와 시간 | 평가 표 전환 직후 급감과 재급증 행, 점진적인 증가와 감소 행(감소), `SCH-AC-15` | 미측정. Run ID 없음, 원시 경로 없음 |
+| E5-5 급감과 재급증 | 20분 | 모두 0.3 `R_w` 10분, 0.9 `R_w` 10분 | 축소와 유휴 제거, 다시 확장, 반복 전환의 J와 시간, U2 최소안 Jetson 모드 변경/KEEP 근거와 read-back | 평가 표 전환 직후 급감과 재급증 행, `SCH-AC-15`; 점진 감소는 미평가 | 미측정. Run ID 없음, 원시 경로 없음 |
 | E5-6 soak | 60분 | 모두 0.3 `R_w` | 1시간 예측 에너지 합과 비교 집합 실측, 전체 POOL 실측, `completionResidualNanos` 분포와 설정 여유 | 위 표 E5 행, [용량표 계획기](analytic-planner.md#11-확인) 에너지(실측) | 미측정. Run ID 없음, 원시 경로 없음 |
+| E5-7 실패 | 15분 | 모두 0.3 `R_w` | 180초 인스턴스 강제 종료, 360초 Node 하나 cordon+서빙 Pod 삭제, 600초 uncordon; 격리·대체·실제 복구와 실패 동작 원인 | 평가 표 노드·서빙·제어 동작 실패 행, `SCH-AC-45` | 미측정. Run ID 없음, 원시 경로 없음 |
+
+**7행 커버리지와 실패 주입 계약:** [E5 계획의 커버리지 표](../../plans/2026-10-26-e5-evaluation.md#명세-7행-커버리지와-한계)가 정본이다. 일정=1/6, 증가=3(점진 감소 없음), 버스트=2(Smol만), 급감/재급증=5, 이기종 혼합=1~7, 한계=4, 실패=7이다. 독립 반복은 없으며 완전 커버리지로 주장하지 않는다. E5-7은 기존 kubectl의 Pod 강제 삭제와 cordon/uncordon으로 운영 담당만 직렬 실행한다. cordon은 네트워크 단절이나 기존 Pod 종료가 아니므로 삭제를 함께 사용한 배치 차단 대리 실험으로 보고한다. 대상 UID·명령 UTC·응답·격리·대체 결정·Ready/ACK·route 복구를 보존하고 실패 시에도 uncordon read-back을 남긴다. 제어 실패는 이 주입에서 실제 관찰한 유형에 한정한다.
+
+**U2 전력 모드 장면:** 최소안은 jetsono MAXN↔MODE_15W, jetsonx MODE_15W_6CORE↔MODE_15W_4CORE, jetson-nano MAXN↔5W의 세 모델 CPU q1/B1이다. [모드 커버리지 계획](../../plans/2026-10-27-power-mode-coverage.md)의 근거 5종이 Accepted인 조합만 E5-5 후보로 연결한다. 실측 부족을 κ0으로 바꾸거나 근거 없이 모드를 강제하지 않는다. 비용상 KEEP이면 차단 근거를 남기며 전력 절감 성공으로 세지 않는다.
 
 **E5-2 A.** genesis2/genesis3의 SmolCUDA는 OOM 제외를 유지한다.
 해당 GPU 장착 Node는 측정된 MNV/PLC CUDA 또는 Smol CPU를 후보로 사용하고,
@@ -557,14 +562,16 @@ Jetsono SmolCUDA도 실제 후보로 비교한다. CPU 후보를 유지하며 Sm
   완료, 실패, 만료, drain과 censoring, 미완료와 표본 수를 함께 보고한다.
   thermal은 5 s 주기와 active/latched/unknown, 사전 온도 bin(<60/60–70/70–80/≥80°C)으로 기록하고 미관측 bin의 일반화를 제한한다.
   E5-S는 E5-3 끝 0.9R의 실제 구성/모드/route를 고정한다.
-  제어요소 비교는 source에서 구별되고 실제 witness가 있는 N개를 실행 전에 선택한다.
-  membership-off와 replicas-off를 우선 검토하고 E5-2/E5-5와 같은 arrival trace를 사용한다.
+  제어요소 비교는 N=2 권고안(membership-off, replicas-off)이며 각각 하나씩 끄고 같은 E5-2/E5-5 arrival trace와 실제 효과 witness를 보존한다.
+  placement/자원은 배치·profile과 결합, routing은 no-op/안전 전달 경로, batching은 고정 B와 deadline 의미 차이, power는 U2 최소안 장면만 관찰하므로 별도 off 비교에서 제외한다. 전체 제어요소의 독립 기여를 증명하지 않는다.
   seeds101/202/303, payload ID와 profiling/evaluation 부분집합을 사전에 고정한다.
   한 paired trace의 case study와 독립 seed 반복을 구분하며 사후 threshold/seed/집단 선택을 하지 않는다.
   정량 SLO/m/G/κ/R/N과 나머지 평가 threshold는 D2 뒤 실측에 근거해 고정한다.
-- E5 full 180분과 static 170분은 합계 350분이다.
-  제어요소 N개의 E5-2/E5-5 비교는 `35N`분을 더한다. reset, settling, warmup, drain, flush와 추가 seed 시간은 별도다.
+- E5 full 195분과 static 170분은 합계 365분이다(E5-S는 실패 주입 제외).
+  제어요소 N=2의 E5-2/E5-5 비교는 70분을 더해 435분이다. reset, settling, warmup, drain, flush와 추가 seed 시간은 별도다.
   캠페인 중 다중 Workload 시험은 선행 근거로 보존하고 E5 결과 칸은 해당 Run ID가 있을 때 채운다.
+- 첫 준비(부하 시작→첫 분배 ACK) 요청은 전체 offered 분모를 유지하고 별도 집단으로 표시한다. Node 차단 명령 시작→uncordon 뒤 실제 Ready·관측·route 회복 확인 구간도 전체 결과를 유지하며 표시하고, 해당 구간 제외 집계를 분모·실패 수와 함께 병기한다. 미복구는 단계 끝까지다. 사후 유리한 창을 고르지 않는다.
+- 실행 설정 `hack/e5/demo-config.e5.example.json`의 capacityR는 최종 숫자 승인 뒤 채운다. 실패 주입 runbook은 운영자용이며 자동 실행하지 않는다. 짧은 preflight는 E5-0 Ready·혼합 부하·토큰·전력·정리 경로를 검사하며 연구 장애 실증을 대체하지 않는다.
 
 ### 9.3 검증 기록
 
