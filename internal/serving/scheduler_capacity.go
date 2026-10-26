@@ -858,7 +858,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		}
 	}
 	p.sum(plan)
-	plan.record.Tempo = "fast"
+	plan.record.Tempo = schedulerTempoFast
 	if slices.ContainsFunc(current, func(old SchedulerInstance) bool {
 		return old.WorkloadUID == "" && old.OwnerWorkloadUID == "" && (!used[old.ID] || mode != node.PowerMode)
 	}) {
@@ -1343,7 +1343,8 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 			kret += item.kappa
 			weightSum += float64(item.weight)
 		}
-		j := capacityJudge(ws, knew, kret, present[w], r)
+		demand, slow := p.reductionDemand(ws, choice)
+		j := capacityJudge(demand, knew, kret, present[w], r)
 		// The route also drains B within L − m.
 		drain := 0.0
 		if j.backlog > 0 && ws.slack > 0 {
@@ -1352,14 +1353,17 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		var weights []int32
 		var y []float64
 		var ok bool
-		switch current, carries := p.currentWeights(ws.d.UID, items[w], ws.rate+drain); {
+		greedy := false
+		switch current, carries := p.currentWeights(ws.d.UID, items[w], demand.rate+drain); {
 		case !p.settings.Controls.Routing:
-			weights, y, ok = capacityFixedWeights(ws.rate, items[w])
+			weights, y, ok = capacityFixedWeights(demand.rate, items[w])
 		case carries:
-			weights, y, ok = capacityFixedWeights(ws.rate, current)
+			weights, y, ok = capacityFixedWeights(demand.rate, current)
 		default:
-			weights, y, ok = capacityWeights(ws.rate, drain, items[w])
+			weights, y, ok = capacityWeights(demand.rate, drain, items[w])
+			greedy = true
 		}
+		capacityEnergyLoad(y, greedy, ws.rate, demand.rate)
 		units := 0.0
 		for _, weight := range weights {
 			units += float64(weight)
@@ -1375,10 +1379,13 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 				}
 				excess := math.Inf(1)
 				if item.kappa > 0 {
-					excess = ws.rate*float64(weights[k])/units/item.kappa - 1
+					excess = demand.rate*float64(weights[k])/units/item.kappa - 1
 				}
 				worst = max(worst, excess)
 			}
+		}
+		if slow && (!j.satisfied || !ok) {
+			res.exclusion = schedulerWindowCapacityInsufficient
 		}
 		res.feasible = res.feasible && j.satisfied
 		res.final = res.final && ok && j.final != nil && *j.final <= 0
@@ -1404,7 +1411,8 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		res.rows = append(res.rows, rows)
 		res.sums = append(res.sums, [2]float64{knew, kret})
 	}
-	res.exclusion, res.reserves = p.transitionConstraints(choice, r)
+	reason, reserves := p.transitionConstraints(choice, r)
+	res.exclusion, res.reserves = cmp.Or(res.exclusion, reason), reserves
 	slices.SortFunc(res.excesses, func(a, b float64) int { return cmp.Compare(b, a) })
 	res.key = strings.Join(keys, "|")
 	return res
@@ -1836,7 +1844,9 @@ func (p *capacityPlanner) idleRemovable(i SchedulerInstance, plan *capacityPlan,
 			knew -= item.kappa
 		}
 	}
-	return capacityJudge(p.ws[w], knew, best.sums[w][1], knew > 0, best.route).satisfied
+	demand := p.ws[w]
+	demand.rate = max(demand.rate, p.snapshot.ScaleDown[uid].WindowMax)
+	return capacityJudge(demand, knew, best.sums[w][1], knew > 0, best.route).satisfied
 }
 
 // sameRouting reports whether the controlled Workloads keep their current routes.

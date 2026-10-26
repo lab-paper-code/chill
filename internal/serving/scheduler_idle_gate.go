@@ -2,6 +2,56 @@ package serving
 
 import "slices"
 
+const schedulerWindowCapacityInsufficient = "ScaleDownWindowCapacityInsufficient"
+const schedulerTempoFast = "fast"
+
+// capacityEnergyLoad keeps protection demand out of actual request joules.
+func capacityEnergyLoad(load []float64, greedy bool, actual, demand float64) {
+	if demand <= actual {
+		return
+	}
+	left := actual
+	for k := range load {
+		if greedy {
+			load[k] = min(load[k], left)
+			left -= load[k]
+		} else {
+			load[k] *= actual / demand
+		}
+	}
+}
+
+// reductionDemand protects a slow candidate without changing its energy load.
+func (p *capacityPlanner) reductionDemand(w capacityWorkload, choice []int) (capacityWorkload, bool) {
+	slow := false
+	for n, j := range choice {
+		plan := p.plans[n][j]
+		if plan.keep || plan.record.Tempo != schedulerTempoSlow {
+			continue
+		}
+		oldKappa, policy := 0.0, false
+		for _, old := range p.snapshot.Instances {
+			if old.Node != p.snapshot.Nodes[n].Node || old.WorkloadUID != w.d.UID && old.OwnerWorkloadUID != w.d.UID {
+				continue
+			}
+			k, _ := p.currentKappa(old)
+			oldKappa += k
+			at := slices.IndexFunc(plan.instances, func(i SchedulerInstance) bool { return i.ID == old.ID })
+			if at < 0 || plan.mode != p.snapshot.Nodes[n].PowerMode {
+				slow = true
+			} else {
+				i := plan.instances[at]
+				policy = policy || i.MaxBatch != old.MaxBatch || i.MaxWait != old.MaxWait
+			}
+		}
+		slow = slow || policy && plan.record.Kappa[w.d.UID] <= oldKappa
+	}
+	if slow {
+		w.rate = max(w.rate, p.snapshot.ScaleDown[w.d.UID].WindowMax)
+	}
+	return w, slow
+}
+
 // idleTransition checks the actual tentative DAG as idle cleanup must not bypass
 // either horizon or reserve constraints after the search.
 func (p *capacityPlanner) idleTransition(best capacityResult, removed map[string]bool) (string, []SchedulerTransitionReserve) {
@@ -17,6 +67,9 @@ func (p *capacityPlanner) idleTransition(best capacityResult, removed map[string
 				target.Instances = append(target.Instances, i)
 			}
 		}
+	}
+	if !p.idleWindowAllowed(best, removed) {
+		return schedulerWindowCapacityInsufficient, nil
 	}
 	actions := schedulerPlan(p.snapshot, target)
 	ends := map[string]float64{}
@@ -68,7 +121,8 @@ func (p *capacityPlanner) idleTransition(best capacityResult, removed map[string
 		if !affected {
 			continue
 		}
-		record := SchedulerTransitionReserve{UID: ws.d.UID, Fraction: p.settings.TransitionReserveFraction, Demand: ws.rate, Required: ws.rate * (1 + p.settings.TransitionReserveFraction)}
+		demand := max(ws.rate, p.snapshot.ScaleDown[ws.d.UID].WindowMax)
+		record := SchedulerTransitionReserve{UID: ws.d.UID, Fraction: p.settings.TransitionReserveFraction, Demand: demand, Required: demand * (1 + p.settings.TransitionReserveFraction)}
 		for _, i := range target.Instances {
 			if !p.reserveAvailable(i.ID, ws.d.UID) {
 				continue
@@ -85,4 +139,28 @@ func (p *capacityPlanner) idleTransition(best capacityResult, removed map[string
 		records = append(records, record)
 	}
 	return reason, records
+}
+
+func (p *capacityPlanner) idleWindowAllowed(best capacityResult, removed map[string]bool) bool {
+	for w, ws := range p.ws {
+		affected := slices.ContainsFunc(p.snapshot.Instances, func(i SchedulerInstance) bool {
+			return removed[i.ID] && (i.WorkloadUID == ws.d.UID || i.OwnerWorkloadUID == ws.d.UID)
+		})
+		if !affected {
+			continue
+		}
+		knew := best.sums[w][0]
+		for n, j := range best.choice {
+			for _, item := range p.plans[n][j].items[w] {
+				if removed[item.id] {
+					knew -= item.kappa
+				}
+			}
+		}
+		ws.rate = max(ws.rate, p.snapshot.ScaleDown[ws.d.UID].WindowMax)
+		if !capacityJudge(ws, knew, best.sums[w][1], knew > 0, best.route).satisfied {
+			return false
+		}
+	}
+	return true
 }

@@ -73,7 +73,8 @@ func (p *capacityPlanner) transitionReserve(choice []int) []SchedulerTransitionR
 		if !affected {
 			continue
 		}
-		record := SchedulerTransitionReserve{UID: ws.d.UID, Fraction: f, Demand: ws.rate, Required: ws.rate * (1 + f)}
+		demand, _ := p.reductionDemand(ws, choice)
+		record := SchedulerTransitionReserve{UID: ws.d.UID, Fraction: f, Demand: demand.rate, Required: demand.rate * (1 + f)}
 		for n, j := range choice {
 			plan := p.plans[n][j]
 			if schedulerReservedNode(p.snapshot, p.snapshot.Nodes[n].Node) {
