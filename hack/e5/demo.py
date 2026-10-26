@@ -12,6 +12,13 @@ existing settleSeconds for public reservations and running/cancel actions to
 clear. *-reset-wait.json retains observations and the last state. On timeout,
 one reset is still attempted; reset failures/409 are retained without retries.
 
+Autonomous setup requires minimumDemand keyed by the three canonical names;
+after registration it replaces obsolete UID keys and freezes settings readback.
+Start refuses floor drift. Static placement remains read-only.
+Reset uses the synchronous OperationResult contract: HTTP budget is settleSeconds
++ powerDownSeconds (default 1800, server operation-timeout default upper bound)
++ apiSeconds, not settleSeconds alone; configure the power bound for the deployment.
+
 Offline reporting: report DIRECTORY [--compare DIRECTORY ...] [--out DIRECTORY]
 rebuilds timeline.svg and report-tables.md from retained phase/summary/client/
 power/scheduler evidence only, without environment settings or cluster access.
@@ -148,6 +155,39 @@ def schedule(config, e5):
     if not config.get('staticPlacement') and any(stages[0]['rates'].values()):
         raise ValueError('First stage must be zero-load autonomous bootstrap')
     return stages
+
+def bind_minimum_demand(api, spec):
+    """Re-key declared canonical floors after registration; freeze only readback."""
+    scheduler, _ = api('GET', '/api/v1/scheduler')
+    if spec.get('staticPlacement'):
+        return scheduler
+    floors = spec.get('minimumDemand')
+    if not isinstance(floors, dict) or set(floors) != set(ALIASES.values()) or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in floors.values()):
+        raise ValueError('minimumDemand requires finite nonnegative floors keyed by all canonical names')
+    workloads = scheduler['state']['snapshot']['workloads']
+    mapping = {}
+    for name in floors:
+        matches = [w['uid'] for w in workloads if w['name'] == name]
+        if len(matches) != 1:
+            raise RuntimeError('Ambiguous canonical minimumDemand identity: ' + name)
+        mapping[name] = matches[0]
+    if len(set(mapping.values())) != len(mapping):
+        raise RuntimeError('Canonical minimumDemand UIDs are not unique')
+    settings = copy.deepcopy(scheduler['settings'])
+    settings.pop('staticRouting', None)
+    settings.pop('staticRoutingValidatedAt', None)
+    # Remove obsolete UID keys, retaining floors only for other live definitions.
+    live = {w['uid'] for w in workloads} - set(mapping.values())
+    expected = {uid: value for uid, value in (settings.get('minimumDemand') or {}).items() if uid in live}
+    expected.update({mapping[name]: value for name, value in floors.items()})
+    settings['minimumDemand'] = expected
+    api('PUT', '/api/v1/scheduler/settings', settings)
+    readback, _ = api('GET', '/api/v1/scheduler')
+    identities = {w['name']: w['uid'] for w in readback['state']['snapshot']['workloads']}
+    if readback['settings'].get('minimumDemand') != expected or any(identities.get(name) != uid for name, uid in mapping.items()):
+        raise RuntimeError('minimumDemand readback/identity mismatch; no demo start')
+    return readback
+
 
 
 def assemble(e5, args, spec):
@@ -297,6 +337,16 @@ def prepare(e5, args):
         raise ValueError('Existing three canonical workload definitions required')
     if any(c['timeboxes']['setupSeconds'] + s['seconds'] + c['timeboxes']['drainSeconds'] + c['timeboxes']['flushSeconds'] > 4200 for s in stages):
         raise ValueError('Stage exceeds existing finite collector duration limit')
+    wire = e5.module('demo_floor_binding', HERE / 'e5-wire.py')
+    manager = object.__new__(wire.Prepare)
+    manager.op, manager.out, manager.tb = c, args.out, c['timeboxes']
+    d = e5.module('demo_floor_client', HERE / 'd2/conduct_before.py')
+    manager.http = e5.urllib.request.build_opener(d.NoRedirect(), e5.urllib.request.HTTPSHandler(context=e5.ssl.create_default_context(cafile=c['caFile'])))
+    scheduler = bind_minimum_demand(manager.api, spec)
+    args.out.mkdir(parents=True, exist_ok=True)
+    scheduler_path = args.out / 'scheduler-bound.json'
+    e5.save(scheduler_path, scheduler)
+    c['inputs'] = dict(c['inputs'], scheduler=str(scheduler_path))
     sys.path.insert(0, str(e5.REPO / 'load-generator/src'))
     from chill_loadgen import cli
     producer = module('demo_producer', HERE / 'e5-producer.py')
@@ -726,8 +776,35 @@ def self_check():
         cpo.ws = {w['name']: w for w in workloads}
         cpo.uids = [w['uid'] for w in workloads]
         cpo.d = d
-        settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': [], 'minimumDemand': {cpo.uids[0]: .3}, 'scaleDownStabilizationNanos': 120000000000, 'transitionReserveFraction': .25, 'comparisonPeriodNanos': 600000000000}
+        settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': [], 'minimumDemand': dict.fromkeys(cpo.uids, .3), 'scaleDownStabilizationNanos': 120000000000, 'transitionReserveFraction': .25, 'comparisonPeriodNanos': 600000000000}
         cpo.b['schedulerSettings'] = copy.deepcopy(settings)
+        # A deleted/re-registered definition gets a new UID; old floor keys die.
+        floors = dict(zip(ALIASES.values(), (20, .3, 40)))
+        floor_workloads = [{'name': name, 'uid': 'new-' + name} for name in floors]
+        floor_settings = {'minimumDemand': {'old-' + name: value for name, value in floors.items()}}
+        floor_calls = []
+        corrupt_readback = [False]
+        def floor_api(method, path, body=None):
+            floor_calls.append(method)
+            if method == 'PUT':
+                floor_settings.update(copy.deepcopy(body))
+                return {}, 200
+            result = {'state': {'snapshot': {'workloads': copy.deepcopy(floor_workloads)}}, 'settings': copy.deepcopy(floor_settings)}
+            if corrupt_readback[0] and floor_calls[-2:] == ['PUT', 'GET']:
+                result['settings']['minimumDemand'] = {}
+            return result, 200
+        floor_readback = bind_minimum_demand(floor_api, {'minimumDemand': floors})
+        assert floor_readback['settings']['minimumDemand'] == {'new-' + name: value for name, value in floors.items()}
+        assert floor_calls == ['GET', 'PUT', 'GET']
+        floor_workloads[0]['uid'] = 'reregistered'
+        assert bind_minimum_demand(floor_api, {'minimumDemand': floors})['settings']['minimumDemand'] == {'reregistered': 20, 'new-smolvlm2-vqa': .3, 'new-plc-anomaly': 40}
+        corrupt_readback[0] = True
+        try:
+            bind_minimum_demand(floor_api, {'minimumDemand': floors})
+        except RuntimeError as error:
+            assert 'readback/identity mismatch' in str(error)
+        else:
+            raise AssertionError('Incorrect minimumDemand readback accepted')
         snapshot = {'at': e5.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'reservations': []}
         scheduler_actions = []
         cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': copy.deepcopy(scheduler_actions), 'results': None}
@@ -846,6 +923,13 @@ def self_check():
         e5.module = modules
         (root / 'control-alerts.jsonl').write_text('')
         with patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'client_end_counter', lambda *args: {'fixtureCounter': True}):
+            with patch.object(cpo, 'settings', return_value=dict(settings, minimumDemand={'old-uid': .3})):
+                try:
+                    cpo.start()
+                except RuntimeError as error:
+                    assert 'minimumDemand differs' in str(error)
+                else:
+                    raise AssertionError('Start accepted stale UID floors')
             cpo.start()
             snapshot['reservations'] = [{'owner': 'fixture-transition'}]
             scheduler_actions.append({'id': 'fixture-action', 'status': 'running'})
@@ -1345,9 +1429,11 @@ def self_check():
         reset.out = root / 'reset'
         reset.out.mkdir()
         reset.uids, reset.tb = ['owned'], {'settleSeconds': 194}
+        reset.tb.update(powerDownSeconds=200, apiSeconds=129)
         failure = {'status': 'failed', 'error': 'native drain failed', 'steps': [{'name': 'drain', 'status': 'failed'}]}
         requests = []
         def failed_reset(method, path, body, **kwargs):
+            assert kwargs['timeout'] == 523  # 194 settle + 200 power + 129 response margin.
             requests.append(body)
             return failure
         reset.io = SimpleNamespace(api=failed_reset)
@@ -1365,7 +1451,7 @@ def self_check():
         conductor = object.__new__(d.Conductor)
         conductor.out = root / 'conductor-reset'
         conductor.out.mkdir()
-        conductor.api = failed_reset
+        conductor.api = lambda *args, **kwargs: failure
         conductor.put = lambda *args: (_ for _ in ()).throw(AssertionError('D2 advanced after failed reset'))
         e5.save(conductor.out / 'lifecycle.json', {'originalSettings': {}})
         try:

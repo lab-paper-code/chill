@@ -402,6 +402,10 @@ class CPO:
         if static:
             if settings.get('autonomousWorkloads'):raise RuntimeError('Static placement requires autonomy already off')
         elif s['snapshot']['instances'] or settings.get('autonomousWorkloads') or settings.get('staticRouting'): raise RuntimeError('Canonical three must start at zero; unrelated serving present')
+        if self.b.get('schema') == 'demo-e5-binding.v1' and not static:
+            frozen = self.b.get('schedulerSettings', {}).get('minimumDemand')
+            if frozen is None or settings.get('minimumDemand') != frozen or any(w['uid'] not in frozen for w in self.c['workloads']):
+                raise RuntimeError('minimumDemand differs from frozen canonical UID readback; no demo start')
         for w in self.c['workloads']:
             bound = next(x for x in s['snapshot']['workloads'] if x['uid']==w['uid'])
             if any(bound.get(k)!=w[k] for k in ('name','generation','slo')): raise RuntimeError('Fresh actual Workload generation/SLO changed')
@@ -425,7 +429,14 @@ class CPO:
         self.route_ack(chosen,settings,'static','D9 actual E5-3 maximum normal 0.9Rw selected configuration, same instances/modes/routes')
     def operation(self, body, prefix):
         save(self.out/(prefix+'-request.json'),body)
-        result=self.io.api('POST','/api/v1/scheduler/operations',body,timeout=self.tb['settleSeconds'])
+        timeout = self.tb['settleSeconds']
+        if body['kind'] == 'reset':
+            power = self.tb.get('powerDownSeconds', 1800)
+            if not positive(power):
+                raise ValueError('Positive reset powerDownSeconds upper bound required')
+            timeout += power + self.tb.get('apiSeconds', 30)
+        save(self.out/(prefix+'-http-budget.json'),{'timeoutSeconds':timeout,'contract':'Synchronous OperationResult; reset covers settle + power-down upper bound + API margin'})
+        result=self.io.api('POST','/api/v1/scheduler/operations',body,timeout=timeout)
         save(self.out/(prefix+'-result.json'),result)
         if result.get('status')!='complete' or result.get('error'):
             raise RuntimeError('Scheduler '+body['kind']+' failed; retained step/ACK evidence, no subsequent operation')
