@@ -259,3 +259,9 @@
 ## 원시 근거 위치
 
 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 `checkpoints.md`(주로 1581행 이후), `d-measurement-decision.md`, `d-condition-proposal.md`, `measurement-generalization-brief.md`, `deployment2-e5-proposal-20261024.md`, `structure-redesign-20261026.md`, `two-tempo-questions-20261026.md`, `workflow-plan-20261025.md`. 상세 수치의 원시는 같은 상위 디렉터리의 `audit-20261024/`, `campaign/v2/`, `perf/`, `deployB/`에 보존한다.
+
+## 2026-10-26 15:3xZ — E5 숫자 1~5 승인, d 24 측정 선행
+
+- MNV p95 1s 유지; PLC/Smol은 p95안 비교(후보 PLC≈32ms, Smol≈7.03s; κ 재취득 후 확정). 공통 m=29ms 임시 유지(실측 residual p95 최대 15.46ms, p99 195ms 후보는 채택 안 함). L=MNV2s/PLC1s/Smol75s, delivery 10ms, socket L+20ms, cap 129s 유지. 정적 기준선=E5-3 끝 0.9R 실제 구성. 제어요소 N=2 후보(membership-off, replicas-off).
+- 완전 R 미확정(PLC κ>0 1/8, Smol 6/8, MNV 7/8 legacy)이므로 E5 전에 d 24 측정: PLC 11 → MNV GPU 5 → MNV CPU 8(옛 규칙 값 사용 중; 시간 부족 시 결과에 '옛 규칙' 명시). 시작 전 조건표·예상 시간·창 경계 수정(a74a595) 범위 보고, 묶음마다 preflight.
+- 근거: `O/intent/e5-numbers-20261027.md`, docs/plans/2026-10-26-e5-evaluation.md.
