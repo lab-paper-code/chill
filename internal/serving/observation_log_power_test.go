@@ -19,6 +19,46 @@ import (
 
 var operatingTestSource = metricobserver.SourceIdentity{Kind: "edge-metrics", Endpoint: "http://meter/metrics", Metric: "wall_watts"}
 
+func TestOperatingPowerReadFailureUsesRecordedGapPolicy(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		gap      time.Duration
+		failures int
+		complete bool
+	}{{"single", 1500 * time.Millisecond, 1, true}, {"consecutive", 2300 * time.Millisecond, 2, false}} {
+		t.Run(scenario.name, func(t *testing.T) {
+			from := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+			to := from.Add(5 * time.Second)
+			node := NodeReference{Name: "node", UID: "uid"}
+			policy := powerwindow.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: .75, MaximumGap: 2 * time.Second}
+			power := metricobserver.Result{StartedAt: from, EndedAt: to}
+			for _, offset := range []time.Duration{0, time.Second, time.Second + scenario.gap, 4 * time.Second, 5 * time.Second} {
+				power.Samples = append(power.Samples, metricobserver.Sample{ObservedAt: from.Add(offset), Watts: 10})
+			}
+			for i := range scenario.failures {
+				power.Failures = append(power.Failures, metricobserver.Failure{ObservedAt: from.Add(time.Second + time.Duration(i+1)*500*time.Millisecond), Reason: metricobserver.FailureReasonTimeout})
+			}
+			// Out-of-window failures are not counted.
+			power.Failures = append(power.Failures, metricobserver.Failure{ObservedAt: from.Add(-time.Second)})
+			got, err := ReduceOperatingPower(from, to, []OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: operatingTestSource}}, 100, func(yield func(*SchedulerObservation) error) error {
+				if err := yield(&SchedulerObservation{Snapshot: &SchedulerSnapshot{At: from}}); err != nil {
+					return err
+				}
+				return yield(&SchedulerObservation{Node: &node, Meter: "wall", PowerScope: "node-exclusive-wall", Power: &power, PowerCoverage: &policy, PowerError: "collector chunk failed"})
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Complete != scenario.complete || got.ReadFailures != scenario.failures || got.Nodes[0].ReadFailures != scenario.failures || got.MaximumSampleGapSeconds != scenario.gap.Seconds() || got.Nodes[0].MaximumSampleGapSeconds != scenario.gap.Seconds() {
+				t.Fatalf("unexpected gap verdict: %+v", got)
+			}
+			if !scenario.complete && !strings.Contains(strings.Join(got.Reasons, " "), "gap") {
+				t.Fatalf("missing policy gap reason: %+v", got)
+			}
+		})
+	}
+}
+
 type operatingPowerScenario struct {
 	name                                                  string
 	missingInactive, zero, missingMembership, coverageGap bool
@@ -296,7 +336,7 @@ func TestOperatingPowerClosedWindowRejectsRealGapsNotCollectorChunkVerdicts(t *t
 		{name: "closed-window-after-collector-restart"},
 		{name: "real-gap-over-two-seconds", gap: true, reason: "maximum sample gap exceeds policy"},
 		{name: "query-boundary-missing", fromOffset: -2 * time.Second, reason: "sample boundary distance exceeds policy"},
-		{name: "source-failure-in-query", failure: true, reason: "actual meter read failed"},
+		{name: "source-failure-in-query", failure: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			base := observationTestHour.Add(30 * time.Minute)
@@ -326,6 +366,9 @@ func TestOperatingPowerClosedWindowRejectsRealGapsNotCollectorChunkVerdicts(t *t
 			if !got.Complete || got.Nodes[0].Samples != 61 || got.WholePoolJoules == nil || math.Abs(*got.WholePoolJoules-600) > 1e-9 ||
 				got.ActivePoolJoules == nil || math.Abs(*got.ActivePoolJoules-600) > 1e-9 || len(got.Nodes[0].Reasons) != 0 {
 				t.Fatalf("chunk verdict or stale sample poisoned closed query: %+v", got)
+			}
+			if scenario.failure && (got.ReadFailures != 1 || got.Nodes[0].ReadFailures != 1) {
+				t.Fatalf("source failure count lost: %+v", got)
 			}
 		})
 	}

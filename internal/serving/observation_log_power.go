@@ -24,29 +24,33 @@ type OperatingPowerMeter struct {
 }
 
 type OperatingNodePower struct {
-	Node                  NodeReference `json:"node"`
-	Meter                 string        `json:"meter"`
-	Scope                 string        `json:"scope"`
-	Joules                *float64      `json:"joules"`
-	MeanWatts             *float64      `json:"meanWatts"`
-	Samples               int           `json:"samples"`
-	SourceTimestampAbsent bool          `json:"sourceTimestampAbsent"`
-	Reasons               []string      `json:"reasons"`
+	Node                    NodeReference `json:"node"`
+	Meter                   string        `json:"meter"`
+	Scope                   string        `json:"scope"`
+	Joules                  *float64      `json:"joules"`
+	MeanWatts               *float64      `json:"meanWatts"`
+	Samples                 int           `json:"samples"`
+	ReadFailures            int           `json:"readFailures"`
+	MaximumSampleGapSeconds float64       `json:"maximumSampleGapSeconds"`
+	SourceTimestampAbsent   bool          `json:"sourceTimestampAbsent"`
+	Reasons                 []string      `json:"reasons"`
 }
 
 type OperatingPowerWindow struct {
-	From                time.Time            `json:"from"`
-	To                  time.Time            `json:"to"`
-	Scope               string               `json:"scope"`
-	Nodes               []OperatingNodePower `json:"nodes"`
-	WholePoolJoules     *float64             `json:"wholePoolJoules"`
-	WholePoolMeanWatts  *float64             `json:"wholePoolMeanWatts"`
-	ActivePoolJoules    *float64             `json:"activePoolJoules"`
-	ActivePoolMeanWatts *float64             `json:"activePoolMeanWatts"`
-	Complete            bool                 `json:"complete"`
-	Reasons             []string             `json:"reasons"`
-	GapUntil            *time.Time           `json:"gapUntil,omitempty"`
-	Coverage            ObservationCoverage  `json:"coverage"`
+	From                    time.Time            `json:"from"`
+	To                      time.Time            `json:"to"`
+	Scope                   string               `json:"scope"`
+	Nodes                   []OperatingNodePower `json:"nodes"`
+	WholePoolJoules         *float64             `json:"wholePoolJoules"`
+	WholePoolMeanWatts      *float64             `json:"wholePoolMeanWatts"`
+	ActivePoolJoules        *float64             `json:"activePoolJoules"`
+	ActivePoolMeanWatts     *float64             `json:"activePoolMeanWatts"`
+	Complete                bool                 `json:"complete"`
+	ReadFailures            int                  `json:"readFailures"`
+	MaximumSampleGapSeconds float64              `json:"maximumSampleGapSeconds"`
+	Reasons                 []string             `json:"reasons"`
+	GapUntil                *time.Time           `json:"gapUntil,omitempty"`
+	Coverage                ObservationCoverage  `json:"coverage"`
 }
 
 type operatingPowerHistory struct {
@@ -323,12 +327,11 @@ func matchesOperatingMeter(meter OperatingPowerMeter, event *SchedulerObservatio
 
 func mergeOperatingPower(node *OperatingNodePower, raw *operatingPowerHistory, event *SchedulerObservation, from, to time.Time) {
 	power := event.Power
-	// PowerError is the collector chunk's verdict, not this query's coverage.
-	// Preserve actual source failures in the selected interval; integrate the
-	// merged real samples below using the recorded policy.
+	// Failed reads leave gaps between real samples; only the recorded coverage
+	// policy decides whether those gaps invalidate this query.
 	for _, failure := range power.Failures {
 		if !failure.ObservedAt.Before(from) && !failure.ObservedAt.After(to) {
-			node.Reasons = append(node.Reasons, fmt.Sprintf("source read failed (%s): %s", failure.Reason, failure.Message))
+			node.ReadFailures++
 		}
 	}
 	node.SourceTimestampAbsent = node.SourceTimestampAbsent || power.Summary.SourceTimestampAbsent
@@ -477,6 +480,9 @@ func integrateOperatingNode(node *OperatingNodePower, raw *operatingPowerHistory
 	}
 	sort.Slice(points, func(a, b int) bool { return points[a].ObservedAt.Before(points[b].ObservedAt) })
 	node.Samples = len(points)
+	for index := 1; index < len(points); index++ {
+		node.MaximumSampleGapSeconds = max(node.MaximumSampleGapSeconds, points[index].ObservedAt.Sub(points[index-1].ObservedAt).Seconds())
+	}
 	var joules float64
 	if !raw.hasPolicy {
 		node.Reasons = append(node.Reasons, "no retained raw samples with coverage policy")
@@ -533,6 +539,8 @@ func sumOperatingPower(result *OperatingPowerWindow, history []operatingPowerHis
 	for index := range result.Nodes {
 		node, raw := &result.Nodes[index], &history[index]
 		points := integrateOperatingNode(node, raw, from, to, rawComplete)
+		result.ReadFailures += node.ReadFailures
+		result.MaximumSampleGapSeconds = max(result.MaximumSampleGapSeconds, node.MaximumSampleGapSeconds)
 		if node.Joules == nil {
 			wholeValid = false
 			if len(node.Reasons) > 0 {

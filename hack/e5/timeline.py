@@ -278,9 +278,10 @@ def write_tables(data, comparisons, out):
         a,b = segment['poolWindow']
         for w in data['names']:
             m = data['metrics'][s,w]
-            rows.append([f'{s} / {utc(a)}–{utc(b)}', w, f'{m["offered"]:,} / {m["success"]:,}', fmt(100*m['success']/m['offered'] if m['offered'] else None) + ('%' if m['offered'] else ''), fmt(m['p95MS']), data['counts'][s], fmt(energy(data['power'][s]), 3)])
+            p = data['power'][s]
+            rows.append([f'{s} / {utc(a)}–{utc(b)}', w, f'{m["offered"]:,} / {m["success"]:,}', fmt(100*m['success']/m['offered'] if m['offered'] else None) + ('%' if m['offered'] else ''), fmt(m['p95MS']), data['counts'][s], fmt(energy(p), 3), p.get('readFailures', '—') if p else '—', fmt(p.get('maximumSampleGapSeconds'), 3) if p else '—'])
     lines = ['# Offline demo report tables', '', '![Timeline](timeline.svg)', '', '## 단계별 결과', '', '성공 = 오류 없는 HTTP 200 / 동결 예정 추적 전체; 누락 행도 분모에 유지. p95 = 성공 응답 HTTP 왕복 nearest-rank. 배치 변경은 batch 크기가 아닌 placement key 차이이며 준비·수집 공백을 다음 단계에 포함한다. 공유 POOL 에너지를 작업마다 반복하므로 합산하지 않는다. 결측은 0이 아니다.', '']
-    lines += table(['단계 / UTC 구간', '작업', '예정 / 성공', '성공률', 'p95 ms', '배치 변경', 'POOL kJ'], rows)
+    lines += table(['단계 / UTC 구간', '작업', '예정 / 성공', '성공률', 'p95 ms', '배치 변경', 'POOL kJ', '읽기 실패', '최대 표본 gap s'], rows)
     lines += ['', '## 전력 결측 노드·UTC 구간', '']
     pool_nodes = set()
     for folder in data['phases']:
