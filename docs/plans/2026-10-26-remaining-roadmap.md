@@ -1,6 +1,6 @@
 # 남은 길: 최종 시연에서 E5·원격 반영까지
 
-기준: **2026-10-26 07:34Z**. 운영 배포는 Helm rev84(ChillServer+측정 컨트롤러), Batch Energy Optimization(BEO, 배치 에너지 최적화)의 정책 불일치 종결 수정은 소스에 있지만 미배포다. main 통합과 spec 전체 추적은 완료됐고 원격 push는 하지 않았다. 새 규칙 dispatch 점유 d10/34, 정확 prepare/remove 비용69/69, 평가0/7이다.
+기준: **2026-10-26 07:34Z**(갱신 08:40Z). 운영 배포는 Helm rev85(`41286c0f`: ChillServer·측정 컨트롤러·대시보드)이며 BEO 정책 불일치 종결 수정이 포함됐다. main 통합과 spec 전체 추적은 완료됐고 원격 push는 하지 않았다. 새 규칙 dispatch 점유 d10/34, 정확 prepare/remove 비용69/69, 평가0/7이다.
 
 이 문서는 남은 것만 정리한다. 완료된 최소 수요·수동 작업 API·요청 수명·장부·관측 보존·결과 조회·상태 summary·작업 예상시간·UID selector 성능 수정·두 박자 제어 구현을 다시 할 일로 등록하지 않는다. 정본은 [scheduler SRS](../spec/scheduler/SRS.md), [구현 설계](../design/serving/scheduler-implementation.md), [측정 API](../design/serving/measurement-api.md)다.
 
@@ -8,10 +8,10 @@
 
 | 순서 | 남은 일 | 의존과 완료 근거 |
 |---|---|---|
-| 1 | rev85에 BEO 정책 불일치 수정 배포 | 정책당 성공 trial 수 초과를 `Failed/EnergyObjectivePolicyMismatch`로 종결하는 소스 포함. 증거·Run 유지, 성공 result 금지 |
-| 2 | orangepi-017이 Measuring→Failed로 종결되는지 확인 | 16개 Run은 보존. 정책3개인데 한 batch에 성공 trial4개였음. 임의 trial 제외·status patch·강제 Complete 금지 |
-| 3 | PLC의 orangepi 후보 근거와 재측정 필요성 판정 | 실패 BEO를 성공 후보로 사용하지 않음. 기존 coherent 대체·현재 planner 소비 연결을 확인한 뒤 필요할 때만 새 이름 BEO 재측정 |
-| 4 | 측정 컨트롤러 이중 실행 여부 확인 | rev84에서 profiler/전환 컨트롤러 함께 배포됨. 실제 Deployment/Pod·leader/역할과 Job 생성 주체를 대조. 코드가 있다는 것만으로 단일 실행 확인 처리하지 않음 |
+| 1 | ~~rev85에 BEO 정책 불일치 수정 배포~~ 완료(rev85, 08:3xZ) | 근거 `deployB/control-178-20261027/readiness-and-preservation.json` |
+| 2 | ~~orangepi-017 Measuring→Failed 종결 확인~~ 완료 | 08:35:46Z `Failed/EnergyObjectivePolicyMismatch`, completedTrials=16, Run16·증거 불변, 성공 result 없음, 반복 오류 0 |
+| 3 | ~~PLC orangepi 후보 근거·재측정 판정~~ 완료 | 성공 coherent 대체 `orangepi-950-plc-cpu-q4-replacement`(647aef41, 21 trial)가 planner 옵션에 연결, 실패 원본 미소비 → 재측정 불필요(`plc-catalog-report.md`) |
+| 4 | ~~측정 컨트롤러 이중 실행 확인~~ 완료 | Deployment1/Pod1, 두 reconciler가 공유 Lease·worker1, 전환 컨트롤러 별도 Pod 0; 과거 creator Pod는 로그 만료로 미확정(`controller-ownership.md`) |
 | 5 | 최종 제어부로 시연4회차 | 첫 구성→확장→축소, 준비·분배 시각, 전환 실패, PLC 지연, 정리·예약 반환을 같은 실행으로 보존. 극단 G 탐색 선행 불필요 |
 | 6 | E5와 대시보드 실행 순서 결정 | 아래 두 계획은 병렬 준비 가능하나 실제 측정·부하와 빌드/검사 충돌은 피함 |
 | 7 | E5 입력·숫자 승인→일곱 평가 실행 | [E5 계획](2026-10-26-e5-evaluation.md) |
