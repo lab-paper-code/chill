@@ -526,8 +526,10 @@ class CPO:
             output=(folder/(h['node']+'-cgroup.jsonl')).open('w'); error=(folder/(h['node']+'-collector.stderr')).open('w')
             p=subprocess.Popen(argv+[h['node'],str(seconds),self.a.stage],stdin=subprocess.PIPE,stdout=output,stderr=error,text=True); p.stdin.write(source); p.stdin.close(); children.append((p,output,error))
         return children
+    def producer_job_name(self,name,stage):
+        return 'e5-'+self.a.mode.lower()+'-'+stage['id'].lower()+'-'+str(SEEDS[name])
     def job(self, name, stage, folder):
-        w=self.ws[name]; trace=stage['traces'][name]; job=load(w['jobTemplate']); label='e5-'+self.a.mode.lower()+'-'+stage['id'].lower()+'-'+str(SEEDS[name])
+        w=self.ws[name]; trace=stage['traces'][name]; job=load(w['jobTemplate']); label=self.producer_job_name(name,stage)
         job['metadata']={'name':label,'namespace':'chill-system','labels':{'chill.dacs.io/e5':self.a.mode}}
         spec=job['spec']; spec.pop('selector',None); spec.pop('manualSelector',None); spec['backoffLimit']=0; spec['activeDeadlineSeconds']=math.ceil(self.tb['setupSeconds']+self.tb['barrierSeconds']+stage['seconds']+self.tb['drainSeconds']); spec['template']['metadata']={'labels':{'chill.dacs.io/e5':self.a.mode}}
         pod=spec['template']['spec']; container=pod['containers'][0]; policy={'payload':self.b['payload'][name], 'arrivalSHA256':trace['arrivalSHA256'], 'offered':trace['offered'], 'barrierSeconds':self.tb['barrierSeconds'], 'segments': [{'rate':part['rates'][name], 'seconds':part['seconds']} for part in stage['parts']]}
@@ -575,6 +577,9 @@ class CPO:
         for frozen in self.b['sources'].values():
             if ref(frozen['path'])!=frozen: raise RuntimeError('Frozen input/package identity changed; no E5 load')
         jobs_live=self.io.k(['get','jobs','-o','json'])['items']
+        expected={self.producer_job_name(name,st) for name,rate in st['rates'].items() if rate}
+        collisions=sorted(j['metadata']['name'] for j in jobs_live if j['metadata']['name'] in expected)
+        if collisions:raise RuntimeError('Producer Job name already exists (possibly retained from an earlier run): '+', '.join(collisions)+'; no create or automatic deletion attempted')
         if any(not j.get('spec',{}).get('suspend') and not any(x.get('type') in ('Complete','Failed') and x.get('status')=='True' for x in j.get('status',{}).get('conditions',[])) for j in jobs_live): raise RuntimeError('Concurrent nonterminal producer/measurement Job; no E5 load')
         alert_path=CAMPAIGN/'control-alerts.jsonl'
         if not alert_path.exists(): raise RuntimeError('Existing safety alert monitor required')
@@ -594,7 +599,11 @@ class CPO:
                     if barrier['timedOut']:raise RuntimeError('Stage start barrier timebox exceeded; no load started')
                     time.sleep(min(.2,max(0,deadline-time.monotonic())))
             except Exception as e:
-                save(folder/'phase.json',{'stage':st,'mode':self.a.mode,'status':'STOP','startUTC':None,'endUTC':None,'startBarrier':barrier,'error':str(e),'failureUTC':now()})
+                phase={'stage':st,'mode':self.a.mode,'status':'STOP','startUTC':None,'endUTC':None,'startBarrier':barrier,'error':str(e),'failureUTC':now()}
+                save(folder/'phase.json',phase)
+                try:self.cleanup_jobs()
+                except Exception as cleanup_error:
+                    phase.setdefault('cleanupErrors',[]).append('owned-jobs: '+str(cleanup_error));save(folder/'phase.json',phase)
                 raise
         self.boundary(folder,'pre'); children=self.sampler(folder,self.tb['setupSeconds']+st['seconds']+self.tb['drainSeconds']+self.tb['flushSeconds']); jobs=[]; streams=[]; phase={'stage':st,'mode':self.a.mode,'status':'RUNNING','startUTC':None,'endUTC':None,'starts':{}}
         if barrier is not None:phase['startBarrier']=barrier
@@ -757,9 +766,13 @@ class CPO:
                             save(startup/(prefix+'.json'),{'at':now(),'jobUID':uid,'pod':pod,'exitCode':captured.returncode,'stdoutPath':str(startup/(prefix+'.log')),'stderrPath':str(startup/(prefix+'.stderr'))})
                             if captured.returncode:phase.setdefault('cleanupErrors',[]).append('producer-log-capture '+name+': exit '+str(captured.returncode))
                     except Exception as capture_error:phase.setdefault('cleanupErrors',[]).append('producer-log-capture '+name+': '+str(capture_error))
+                except Exception as capture_error:phase.setdefault('cleanupErrors',[]).append('producer-job-capture '+name+': '+str(capture_error))
+                try:
                     self.io.remove_job(job,uid); phase['ownedProducerStops'].append({'name':job,'uid':uid,'stopped':True})
                 except Exception as stop_error:
                     phase['ownedProducerStops'].append({'name':job,'uid':uid,'stopped':False,'error':str(stop_error)})
+            try:self.cleanup_jobs(exclude=folder)
+            except Exception as cleanup_error:phase.setdefault('cleanupErrors',[]).append('owned-jobs: '+str(cleanup_error))
             save(folder/'phase.json',phase)
             raise
         finally:
@@ -878,14 +891,17 @@ class CPO:
         run=subprocess.run([sys.executable,str(D2/'native_mode_request.py'),'--release',str(request),'--out',str(folder)],timeout=960,capture_output=True,text=True)
         save(folder/'caller.json',{'at':now(),'exitCode':run.returncode,'stdout':run.stdout,'stderr':run.stderr})
         if run.returncode: raise RuntimeError('Existing finite native mode realization failed; no host power fallback')
-    def cleanup_jobs(self):
+    def cleanup_jobs(self,exclude=None):
         for p in self.out.glob('*/created-*.json'):
+            if p.parent==exclude:continue
             j=load(p); name=j['metadata']['name']; uid=j['metadata']['uid']; phase=p.parent/'phase.json'
             stops=(load(phase).get('ownedProducerStops') or []) if phase.exists() else []
             if any(stop.get('name')==name and stop.get('uid')==uid and stop.get('stopped') is True for stop in stops):continue
             actual=self.io.k(['get','job',name,'-o','json'])
             if actual['metadata']['uid']!=uid: raise RuntimeError('Owned producer UID changed')
             self.io.remove_job(name,uid)
+            if phase.exists():
+                record=load(phase);record.setdefault('ownedProducerStops',[]).append({'name':name,'uid':uid,'stopped':True});save(phase,record)
     def factor_restore(self):
         self.idle(); settings=self.settings(); initial=load(self.c['inputs']['scheduler'])['settings']; settings['controls']=initial['controls']; save(self.out/'factor-restored.json',self.put(settings))
     def finish(self):

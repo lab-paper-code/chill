@@ -60,6 +60,10 @@ For stages with producers, the same zero-state check also runs immediately
 before each GO touch, bounded by the existing setup and earliest producer-ready
 barrier deadlines (no timebox extension). GO observations/timeouts are retained
 under startBarrier.producerRelease and go-barrier-<workload>-state.json.
+On STOP/failure, only producer Jobs recorded as created by this run are removed
+with exact UID checks, including earlier stages. Evidence-capture errors do not
+skip deletion. A pre-existing same-name Job is named explicitly before setup;
+it is never adopted or automatically deleted. Measurement Jobs are untouched.
 For a PLC-only 60 -> 140 req/s profile window, use staticPlacement with a single
 stage's parts (e.g. 60 seconds each), rates {"mobilenet": 0, "smolvlm2": 0,
 "plc": 60} then {"mobilenet": 0, "smolvlm2": 0, "plc": 140}. Prepare captures
@@ -1120,6 +1124,10 @@ def self_check():
             barrier_out = root / ('barrier-clear' if clears else 'barrier-timeout')
             barrier_out.mkdir()
             (barrier_out / 'start-ack.json').write_bytes((cpo.out / 'start-ack.json').read_bytes())
+            removed_barrier = []
+            if not clears:
+                e5.save(barrier_out / 'prior/created-producer.json', {'metadata': {'name': 'prior-producer', 'uid': 'prior-uid'}})
+                e5.save(barrier_out / 'prior/phase.json', {'status': 'DRAINED_NOT_EVALUATED'})
             busy = copy.deepcopy(static_state)
             busy['snapshot']['at'] = '2026-10-26T00:00:00Z'
             busy['snapshot']['reservations'] = [{'owner': 'reserved-plan'}]
@@ -1148,7 +1156,7 @@ def self_check():
                     assert len(observations) >= 4
                     assert cpo.native_evidence == busy['results']
                 else:
-                    with patch.object(cpo, 'sampler', side_effect=AssertionError('Timed out barrier must not start collection')), patch.object(cpo.io, 'k', side_effect=lambda argv, **kwargs: {'items': []} if argv == ['get', 'jobs', '-o', 'json'] else no_mutation()):
+                    with patch.object(cpo, 'sampler', side_effect=AssertionError('Timed out barrier must not start collection')), patch.object(cpo.io, 'remove_job', lambda name, uid: removed_barrier.append((name, uid)), create=True), patch.object(cpo.io, 'k', side_effect=lambda argv, **kwargs: {'items': []} if argv == ['get', 'jobs', '-o', 'json'] else {'metadata': {'uid': 'prior-uid'}} if argv == ['get', 'job', 'prior-producer', '-o', 'json'] else no_mutation()):
                         try:
                             run_stage(cpo, barrier_stage)
                         except RuntimeError as error:
@@ -1164,6 +1172,7 @@ def self_check():
                 if not clears:
                     assert barrier_phase['status'] == 'STOP' and barrier_phase['startUTC'] is None
                     assert barrier_phase['startBarrier']['reservations'] == 1 and barrier_phase['startBarrier']['transitions'] == 1
+                    assert removed_barrier == [('prior-producer', 'prior-uid')]
                 assert (barrier_out / 'smoke-E0/start-barrier-state.json').exists()
         for invalid_config in ({'staticPlacement': 'true', 'stages': [config['stages'][0]]}, *({'stages': [dict(config['stages'][0], startBarrier=value)]} for value in (None, {}, {'reservations': False, 'transitions': 0}, {'reservations': 1, 'transitions': 0}, {'reservations': 0, 'transitions': 0, 'seconds': 1})), {'stages': [{'id': 'bad', 'parts': [dict(config['stages'][0], startBarrier={'reservations': 0, 'transitions': 0})]}]}):
             try:
@@ -1306,8 +1315,9 @@ def self_check():
         captured_before_delete = []
         def remove_fixture(job, uid):
             name = next(n for n in pods if job.endswith('-' + str(e5.SEEDS[n])))
-            path = cpo.out / 'smoke-FAIL' / ('startup-' + name) / ('failed-producer-' + pods[name]['metadata']['uid'] + '.log')
-            assert path.read_text() == 'fixture producer log\\n'
+            if '-fail-' in job:
+                path = cpo.out / 'smoke-FAIL' / ('startup-' + name) / ('failed-producer-' + pods[name]['metadata']['uid'] + '.log')
+                assert path.read_text() == 'fixture producer log\\n'
             captured_before_delete.append(uid)
         cpo.io.remove_job = remove_fixture
         with patch.object(cpo.io, 'wait_load_container', side_effect=RuntimeError('fixture startup terminated')), patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(stdout='fixture producer log\\n', stderr='fixture parser stderr\\n', returncode=0)):
@@ -1317,11 +1327,43 @@ def self_check():
                 assert str(error) == 'fixture startup terminated'
             else:
                 raise AssertionError('Producer startup failure was swallowed')
-        assert len(captured_before_delete) == 3
-        cleanup_calls, removed = len(calls), []
+        assert len(captured_before_delete) == 12  # Current failure and earlier owned stages.
+        removed = []
         cpo.io.remove_job = lambda name, uid: removed.append((name, uid))
         cpo.cleanup_jobs()
-        assert len(removed) == 9 and not any('fail' in argv[2] for argv in calls[cleanup_calls:] if argv[:2] == ['get', 'job'])
+        assert removed == []  # STOP acknowledgments prevent automatic deletion retries.
+        # Name collisions include terminal Jobs; no create or foreign deletion.
+        settings['autonomousWorkloads'] = list(cpo.uids)
+        collision_stage = dict(failed_stage, id='COLLISION')
+        collision_name = cpo.producer_job_name(workloads[0]['name'], collision_stage)
+        collision_job = {'metadata': {'name': collision_name, 'uid': 'foreign'}, 'status': {'conditions': [{'type': 'Complete', 'status': 'True'}]}}
+        cpo.c['smoke'] = collision_stage
+        with patch.object(cpo.io, 'k', return_value={'items': [collision_job]}) as collision_k, patch.object(cpo.io, 'remove_job', side_effect=AssertionError('Collision Job deletion')):
+            try:
+                cpo.run()
+            except RuntimeError as error:
+                assert collision_name in str(error) and 'already exists' in str(error)
+            else:
+                raise AssertionError('Terminal same-name Job accepted')
+            assert collision_k.call_count == 1
+        # Failure evidence lookup is secondary: exact-owned deletion still runs.
+        capture_stage = dict(failed_stage, id='CAPTURE-FAIL')
+        cpo.c['smoke'] = capture_stage
+        capture_removed = []
+        def capture_k(argv, **kwargs):
+            if argv[:2] == ['get', 'job']:
+                raise RuntimeError('fixture evidence lookup failure')
+            return kubectl(argv, **kwargs)
+        with patch.object(cpo.io, 'k', capture_k), patch.object(cpo.io, 'remove_job', lambda name, uid: capture_removed.append((name, uid))), patch.object(cpo.io, 'wait_load_container', side_effect=RuntimeError('fixture startup terminated')):
+            try:
+                cpo.run()
+            except RuntimeError as error:
+                assert str(error) == 'fixture startup terminated'
+            else:
+                raise AssertionError('Producer failure was swallowed')
+        capture_phase = e5.load(cpo.out / 'smoke-CAPTURE-FAIL/phase.json')
+        assert len(capture_removed) == 3 and all(row['stopped'] for row in capture_phase['ownedProducerStops'])
+        assert len(capture_phase['cleanupErrors']) == 3
         unknown = object.__new__(e5.CPO)
         unknown.out = root / 'unknown-cleanup'
         record = unknown.out / 'phase'

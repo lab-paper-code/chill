@@ -10,6 +10,8 @@ A zero-offered ready gate may have no client file; it reports 0 / 0 requests
 and — for success rate/latency. An absent file is accepted only when its frozen
 trace is empty, never for a requested workload. Finalized STOP phases retain
 available placement/power evidence and do not require synthetic client files.
+STOP phases with null startUTC/endUTC are shown as STOP(미시작), with zero
+requests and unknown latency/energy; their configured traces are not offered load.
 Multipart energy is unknown unless a power.json covers that exact part window:
 compact scheduler records alone do not retain their catalog coverage policy.
 """
@@ -83,15 +85,17 @@ def selected_clients(path, trace):
 
 def collect(root):
     root = Path(root).resolve()
-    phases = {}
+    phases, unstarted = {}, {}
     for path in root.glob('smoke-*/phase.json'):
         phase = json.loads(path.read_text())
-        if not phase.get('startUTC') or not phase.get('endUTC'):
+        if phase.get('status') == 'STOP' and phase.get('startUTC') is None and phase.get('endUTC') is None:
+            unstarted[path.parent.name] = phase
+        elif not phase.get('startUTC') or not phase.get('endUTC'):
             raise ValueError(f'{path}: finalized phase required')
         phases[path.parent.name] = phase
     if not phases:
         raise ValueError(f'{root}: no smoke-*/phase.json')
-    phases = dict(sorted(phases.items(), key=lambda pair: epoch(pair[1]['startUTC'])))
+    phases = dict(sorted(phases.items(), key=lambda pair: epoch(pair[1].get('startUTC') or pair[1]['failureUTC']) if pair[1].get('startUTC') or pair[1].get('failureUTC') else float('inf')))
     names = tuple(next(iter(phases.values()))['stage']['traces'])
     # Match the retained report's M/P/S order, without tying stages to a run.
     known = ('image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa')
@@ -100,6 +104,8 @@ def collect(root):
     segments, windows, metrics, bins, uids, counts, changes, power = {}, {}, {}, {}, {}, {}, [], {}
     client_notes, energy_notes = [], []
     for folder, phase in phases.items():
+        if folder in unstarted:
+            continue
         stage = phase['stage']
         parts = stage.get('parts') or [stage]
         pool_bounds = [epoch(phase['startUTC'])]
@@ -168,11 +174,14 @@ def collect(root):
                 if unknown:
                     client_notes.append(f'{s}/{w}: {unknown} offered requests lack actual send UTC; kept in denominator, excluded only from time bins.')
                 bins[s, w] = grouped
-    lo = min(epoch(p['startUTC']) for p in phases.values())
-    end = max(epoch(p.get('drainedUTC') or p['endUTC']) for p in phases.values())
+    started = [p for folder,p in phases.items() if folder not in unstarted]
+    lo = min((epoch(p['startUTC']) for p in started), default=None)
+    end = max((epoch(p.get('drainedUTC') or p['endUTC']) for p in started), default=None)
     snapshots, actions, failures = {}, {}, {}
     seen_paths = set()
     for folder in phases:
+        if folder in unstarted:
+            continue
         for path in sorted((root / folder / 'obs').glob('*/scheduler.jsonl.gz')):
             # Hardlinked captures still deduplicate observations by timestamp/identity.
             stat = path.stat()
@@ -198,13 +207,13 @@ def collect(root):
                         if bad:
                             key = row['node']['name'], row.get('startedAt'), row['at']
                             failures[key] = dict(node=row['node']['name'], start=row.get('startedAt'), end=row['at'], samples=bad)
-    if not snapshots:
+    if started and not snapshots:
         raise ValueError(f'{root}: no scheduler snapshots within phase/drain windows')
     # UID is not inferred from profile names; missing client identity stays unknown.
     return dict(root=root, phases=phases, names=names, labels=labels, segments=segments,
                 windows=windows, metrics=metrics, bins=bins, uids=uids, counts=counts,
                 changes=changes, power=power, snapshots=snapshots, actions=actions,
-                failures=list(failures.values()), lo=lo, hi=max(snapshots),
+                failures=list(failures.values()), lo=lo, hi=max(snapshots, default=None), unstarted=unstarted,
                 client_notes=client_notes, energy_notes=energy_notes)
 
 
@@ -280,6 +289,9 @@ def write_tables(data, comparisons, out):
             m = data['metrics'][s,w]
             p = data['power'][s]
             rows.append([f'{s} / {utc(a)}–{utc(b)}', w, f'{m["offered"]:,} / {m["success"]:,}', fmt(100*m['success']/m['offered'] if m['offered'] else None) + ('%' if m['offered'] else ''), fmt(m['p95MS']), data['counts'][s], fmt(energy(p), 3), p.get('readFailures', '—') if p else '—', fmt(p.get('maximumSampleGapSeconds'), 3) if p else '—'])
+    for phase in data['unstarted'].values():
+        for w in data['names']:
+            rows.append([phase['stage']['id']+' / STOP(미시작)', w, '0 / 0', '—', '—', '—', '—', '—', '—'])
     lines = ['# Offline demo report tables', '', '![Timeline](timeline.svg)', '', '## 단계별 결과', '', '성공 = 오류 없는 HTTP 200 / 동결 예정 추적 전체; 누락 행도 분모에 유지. p95 = 성공 응답 HTTP 왕복 nearest-rank. 배치 변경은 batch 크기가 아닌 placement key 차이이며 준비·수집 공백을 다음 단계에 포함한다. 공유 POOL 에너지를 작업마다 반복하므로 합산하지 않는다. 결측은 0이 아니다.', '']
     lines += table(['단계 / UTC 구간', '작업', '예정 / 성공', '성공률', 'p95 ms', '배치 변경', 'POOL kJ', '읽기 실패', '최대 표본 gap s'], rows)
     lines += ['', '## 전력 결측 노드·UTC 구간', '']
@@ -308,6 +320,8 @@ def write_tables(data, comparisons, out):
         for s in run['segments']:
             ms = [run['metrics'].get((s,w)) for w in data['names']]
             comparison_rows.append([run['root'].name, s, ' / '.join(fmt(100*m['success']/m['offered'] if m and m['offered'] else None) for m in ms), ' / '.join(fmt(m['p95MS'] if m else None) for m in ms), run['counts'][s], fmt(energy(run['power'][s]), 3)])
+        for phase in run['unstarted'].values():
+            comparison_rows.append([run['root'].name, phase['stage']['id']+' / STOP(미시작)', '—', '—', '—', '—'])
     lines += table(['회차 / 제어 버전 (입력 폴더)', '단계', '성공률 % (M/P/S)', 'p95 ms (M/P/S)', '배치 변경', 'POOL kJ'], comparison_rows)
     lines += ['', '## 하강 허가·첫 축소·제거 완료', '', 'snapshot allowed 최초 관측, action 시작/완료, 물리 삭제를 구분한다. 첫 prepare/route는 하강 구간의 선택 동작 proxy이지 용량 순감소 증명이 아니다. C 시작에 타이머를 새로 시작했다고 가정하지 않는다.', '']
     lines += table(['단계', '작업 / 노드', '관측 / 동작', 'downSince / 시작 UTC', '최초 관측 / 완료 UTC', 'elapsed / action ID'], timing_rows(data))
@@ -347,6 +361,13 @@ def render(data, out):
         from matplotlib.lines import Line2D
     finally:
         sys.path[:] = previous_path
+    if not data['snapshots']:
+        fig, ax = plt.subplots(figsize=(12, 3))
+        ax.axis('off')
+        ax.text(.05, .5, '\n'.join(p['stage']['id']+' / STOP(미시작): 0 requests; no load window' for p in data['unstarted'].values()))
+        fig.savefig(out/'timeline.svg',metadata={'Date':None})
+        plt.close(fig)
+        return
     def date(t):
         return mdates.date2num(datetime.fromtimestamp(t, timezone.utc))
     names, labels = data['names'], data['labels']
@@ -362,10 +383,13 @@ def render(data, out):
     fig.subplots_adjust(left=.18, right=.98, bottom=.12, top=.92, hspace=.27)
     fig.suptitle('CHILL autonomous workload pools | ' + data['root'].name,
                  x=.18, y=.98, ha='left', fontsize=22, weight='bold')
-    fig.text(.18, .95, 'UTC | Shared POOL energy, not per-workload energy. Operational evidence, not research results.',
+    stopped = ', '.join(p['stage']['id']+' STOP(미시작)' for p in data['unstarted'].values())
+    fig.text(.18, .95, 'UTC | Shared POOL energy, not per-workload energy. Operational evidence, not research results.' + (' | '+stopped if stopped else ''),
              color='#475569')
     gaps, end = [], lo
     for phase in data['phases'].values():
+        if not phase.get('startUTC'):
+            continue
         a, b = epoch(phase['startUTC']), epoch(phase['endUTC'])
         if a > end:
             gaps.append((end, a))
@@ -546,10 +570,17 @@ def self_check():
                           readyGate=dict(observedUTC=at(-1),timedOut=False))
         (gate/'phase.json').write_text(json.dumps(gate_phase))
         (gate/'summary.json').write_text(json.dumps(dict(placementChanges=[],actions=[]),indent=2))
+        stopped = root/'smoke-blocked'
+        stopped.mkdir()
+        stopped_phase = dict(stage=dict(id='blocked',seconds=10,rates={name:2},traces={name:dict(offsetsNS=[0,1])}),
+                             status='STOP',startUTC=None,endUTC=None,failureUTC=at(25),error='start barrier timeout')
+        (stopped/'phase.json').write_text(json.dumps(stopped_phase))
         before = {p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()}
         data = collect(root)
         assert data['counts'] == {'E0':0,'high':2,'low':2}, data['counts']
         assert data['phases']['smoke-E0']['status'] == 'STOP'
+        assert data['unstarted'] == {'smoke-blocked': stopped_phase}
+        assert 'blocked' not in data['segments']
         assert data['metrics']['E0',name] == dict(offered=0,success=0,p95MS=None,missingClientRows=0)
         assert not data['bins']['E0',name] and data['power']['E0'] is None
         assert data['metrics']['high',name]['success'] == 1
@@ -570,6 +601,7 @@ def self_check():
         assert 'Timeout' in text and '50.00%' in text and 'no exact-part power.json' in text
         assert f'| {name} | 0 / 0 | — | — | 0 | — |' in text
         assert 'smoke-E0' in text and 'power.json absent' in text
+        assert '| blocked / STOP(미시작) | test-workload | 0 / 0 | — | — | — | — | — | — |' in text
         assert before == {p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()}
         cp.write_text(cp.read_text()+json.dumps(clients[0])+'\n')
         try:
@@ -578,4 +610,10 @@ def self_check():
             assert 'duplicate requestIndex' in str(exc)
         else:
             raise AssertionError('Duplicate client rows accepted')
+        cp.unlink()
+        (folder/'phase.json').unlink()
+        (gate/'phase.json').unlink()
+        stopped_only = collect(root)
+        assert stopped_only['segments'] == {} and stopped_only['snapshots'] == {}
+        report(root, out=Path(temp)/'stopped-output')
     print('report self-check: PASS (offline multipart, boundaries, missing/error rows, dedup, gates, power, immutable inputs)')
