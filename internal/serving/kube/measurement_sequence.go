@@ -300,7 +300,12 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualO
 			err = c.observer.Refresh(ctx)
 		}
 	} else {
-		operation, err = c.manualOperationLocked(ctx, request, config, snapshot)
+		// A completed manual ACK can change routing or instances between Ticks.
+		// Admit from the same live sources as Tick, without publishing a decision.
+		snapshot, err = c.capture(ctx, time.Now(), config)
+		if err == nil {
+			operation, err = c.manualOperationLocked(ctx, request, config, snapshot)
+		}
 	}
 	if err != nil {
 		c.tickMu.Unlock()

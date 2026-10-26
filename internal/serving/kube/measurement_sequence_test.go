@@ -173,6 +173,9 @@ func sequenceHarness(t *testing.T) (*admissionHarness, *writeLog, *memEvidence) 
 	spec := measuredCPUPreparationFixture()
 	h.controller.config.Preparations = map[string]PrepareSpec{spec.Instance.Profile.ID: spec}
 	h.controller.mu.Unlock()
+	if err := h.controller.runtime.Publish(h.controller.state.Snapshot.Workloads[0]); err != nil {
+		t.Fatal(err)
+	}
 	return h, log, evidence
 }
 
@@ -284,7 +287,7 @@ func TestManualOperationGuards(t *testing.T) {
 		"autonomous": {ManualOperation{Kind: operationRemove, WorkloadUID: "auto", Node: testNode, Instance: "q/c", Reason: "refuse autonomous workload"}, testOperationConflict},
 		"unknown":    {ManualOperation{Kind: operationPrepare, WorkloadUID: "w-uid", ProfileID: "missing", Node: testNode, Reason: "refuse unknown profile"}, "InvalidInput"},
 	} {
-		if _, err := h.controller.ExecuteManual(context.Background(), tc.request); errorCode(err) != tc.code {
+		if _, err := h.controller.manualOperationLocked(context.Background(), tc.request, h.controller.config, h.controller.state.Snapshot); errorCode(err) != tc.code {
 			t.Fatalf("%s refused for wrong reason: got %v, want %s", name, err, tc.code)
 		}
 	}

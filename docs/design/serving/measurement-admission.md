@@ -141,7 +141,7 @@ BEO와 MLIB의 자식 ProfilingRun은 루트가 승인된 뒤에 만들어지므
 
 | route | 몸체 | 동작 |
 |---|---|---|
-| `POST /api/v1/scheduler/operations` | `{kind: prepare 또는 remove, workloadUID, profileID, node, instance, fixedBatchSize}` | `ExecuteManual`. `tickMu` 안에서 Workload가 자동제어 밖인지, 노드에 run이 없는지, prepare는 `ValidatePreparationCapacity`(`kube/scheduler.go:591-634`)를 마지막 snapshot의 노드와 live Node, Pod로, remove는 `removableBy`(`main.go:507-520`)와 route 가중치 0을 확인하고 run을 등록한 뒤 잠금 밖에서 같은 `Operations`로 실행 |
+| `POST /api/v1/scheduler/operations` | `{kind: prepare 또는 remove, workloadUID, profileID, node, instance, fixedBatchSize}` | `ExecuteManual`. `tickMu` 안에서 Tick과 같은 live `capture` 후 Workload가 자동제어 밖인지, 노드에 run이 없는지 확인한다. prepare는 `ValidatePreparationCapacity`로 새 snapshot의 inventory와 live Node·Pod를, remove는 `removableBy`와 현재 route 가중치 0·처리 중 요청 부재를 확인한다. run 등록 뒤 잠금 밖에서 같은 `Operations`로 실행한다. route/unroute/release와 reset의 허가·ACK는 [수동 원자 실행 계약](scheduler-operations.md#수동-원자-실행-계약)을 따른다 |
 
 - 인증과 권한은 기존 TokenReview와 SAR이다. route는 요청 한도 대신 `--operation-timeout`(기본 30분)을 쓴다.
   `serving-operation --execute-config`가 manifest를 읽어 보내고 응답을 stdout에 쓴다.

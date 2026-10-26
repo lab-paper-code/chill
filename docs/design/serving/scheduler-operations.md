@@ -167,20 +167,26 @@ reset은 명시한 UID들의 자동제어를 먼저 해제한다(`SCH-39`, `SCH-
 | `reset` | `{kind:"reset", workloadUIDs:["<UID>"], reason}` 또는 `{kind:"reset", scope:"all-non-autonomous", reason}` | UID 목록과 scope 중 정확히 하나. scope는 수락 시점 비자율 UID 목록으로 고정한다 |
 
 호출자는 scheduler ConfigMap update 권한과 `/chill/api/v1/scheduler/operations` POST 권한을 가진다.
-ChillServer는 `tickMu` 안에서 대상과 실행 충돌을 확인하고 run을 등록한 뒤 잠금 밖에서
-기존 `Operations`로 실행한다. UID 범위 reset은 노드별 run과 전역 route 충돌도 차단하며,
+ChillServer는 `tickMu` 안에서 prepare/remove/route/unroute/release의 허가 직전에
+Tick과 같은 `capture`로 Workload·Node·Pod·instance·현재 routing·처리 중 요청을 새로 읽는다.
+마지막 Tick의 snapshot이나 선언만으로 허가하지 않으므로 unroute ACK 직후 remove,
+다른 UID의 route ACK 직후 route도 다음 Tick을 기다리지 않는다(`SCH-39`).
+이 관측은 scheduler snapshot/decision을 게시하거나 자율 판단을 실행하지 않는다.
+reset은 현재 Workload로 scope를 고정한 뒤 기존 observer refresh와 live 계획 관측을 유지한다.
+대상과 실행 충돌을 확인하고 run을 등록한 뒤 잠금 밖에서 기존 `Operations`로 실행한다.
+예약·소유권과 `tickMu` 경계는 바꾸지 않는다. UID 범위 reset은 노드별 run과 전역 route 충돌도 차단하며,
 자율 해제 후 이미 실행 중인 관련 동작이 있으면 안전 완료를 확인하기 전 다음 단계로 가지 않는다.
 응답은 기존 `OperationResult` envelope와 실제 ACK/readback을 사용하고, 배분 작업은 전후 선언과
 `actual.routing`을 포함한다. 선언 저장만으로 complete를 반환하지 않는다.
 
 기존 prepare/remove의 사전 조건은 다음과 같다(reset의 자율 해제는 위 별도 계약을 따른다).
 
-- Workload가 마지막 snapshot의 현재 Workload이고 자동제어 밖이다.
+- Workload가 허가 직전 capture의 현재 Workload이고 자동제어 밖이다.
 - Node가 있고 측정 taint, 실행 중인 run, 진행 중인 Node label 전력 요청이 없다(`NodeBusy`).
 - prepare: `profileID`가 그 Node의 도출된 preparation이다. 대상 Workload가 instance owner다. 양수
   `fixedBatchSize` B는 preparation의 firstfloor `Policy.fixedBatchSize`와 instance에 함께 기록하고 native config
   검증이 B가 측정되고 초기화된 batch인지 확인한다([strict fixed-size baseline](scheduler-runtime-measurement.md#strict-fixed-size-baseline-serving)).
-  fresh Node와 모든 Pod 요청을 `ValidatePreparationCapacity`가 마지막 snapshot의 inventory와 예약으로 확인하며,
+  fresh Node와 모든 Pod 요청을 `ValidatePreparationCapacity`가 허가 직전 capture의 inventory와 예약으로 확인하며,
   설정된 serving namespace의 기존 serving Pod, 미확인 GPU 소유권, CPU 예약 부족, memory 초과와 MemoryPressure는
   거절한다.
   적용된 분배에 UID가 있는 Workload는 그 분배를 따른다. 빈 분배와 nil 값도 요청 분배 0을 유지한다.

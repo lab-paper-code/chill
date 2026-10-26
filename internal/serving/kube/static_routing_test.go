@@ -167,3 +167,105 @@ func TestManualRoutingDeclarationIsNotPhysicalSuccess(t *testing.T) {
 		t.Fatalf("declaration and actual routing conflated: %+v %+v", document, result)
 	}
 }
+
+func manualAdmissionController(t *testing.T) *SchedulerController {
+	t.Helper()
+	controller, prepared := tickReadySubsetController(t, nil)
+	prepared.Store(true)
+	kube := controller.kube.(*kubefake.Clientset)
+	policies := &core.ConfigMapList{}
+	if err := controller.store.client.List(context.Background(), policies); err != nil {
+		t.Fatal(err)
+	}
+	for _, policy := range policies.Items {
+		if _, err := kube.CoreV1().ConfigMaps(policy.Namespace).Create(context.Background(), policy.DeepCopy(), meta.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	controller.store.client = &resetAPI{
+		Client: &nodeAPI{Client: controller.store.client, kube: kube}, kube: kube, terminateOnDelete: true,
+	}
+	controller.config.Settings.AutonomousWorkloads = nil
+	controller.config.ConfigurationName, controller.config.ConfigurationKey = "manual-admission", "scheduler.json"
+	raw, err := json.Marshal(map[string]any{"settings": controller.config.Settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kube.CoreV1().ConfigMaps(controller.operations.config.Namespace).Create(context.Background(), &core.ConfigMap{
+		ObjectMeta: meta.ObjectMeta{Name: controller.config.ConfigurationName, Namespace: controller.operations.config.Namespace},
+		Data:       map[string]string{controller.config.ConfigurationKey: string(raw)},
+	}, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	return controller
+}
+
+func TestManualUnrouteACKAllowsRemoveBeforeNextTick(t *testing.T) {
+	controller := manualAdmissionController(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := controller.Tick(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := controller.State().Snapshot
+	instance := snapshot.Instances[0]
+	uid := snapshot.Workloads[0].UID
+	if snapshot.Routing[uid][instance.ID] <= 0 {
+		t.Fatal("last Tick must observe a routed instance")
+	}
+	unroute, err := controller.ExecuteManual(ctx, ManualOperation{Kind: operationUnroute, WorkloadUID: uid, Reason: "withdraw before removal"})
+	if err != nil || unroute.Status != nativeOperationComplete || len(unroute.Actual.Routing[uid]) != 0 {
+		t.Fatalf("unroute did not ACK: %+v err=%v", unroute, err)
+	}
+	if controller.State().Snapshot.Routing[uid][instance.ID] <= 0 {
+		t.Fatal("test must retain the pre-ACK Tick snapshot")
+	}
+	remove, err := controller.ExecuteManual(ctx, ManualOperation{Kind: operationRemove, WorkloadUID: uid, Node: instance.Node, Instance: instance.ID, Reason: "remove after unroute ACK"})
+	if err != nil || remove.Status != nativeOperationComplete {
+		t.Fatalf("ACKed unroute still required another Tick before remove: %+v err=%v", remove, err)
+	}
+}
+
+func TestManualRouteACKPreservesOtherWorkloadBeforeNextTick(t *testing.T) {
+	controller := manualAdmissionController(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	first := controller.runtime.SchedulerInputs(time.Now).Workloads[0]
+	second := *first
+	second.Name, second.UID = "second-workload", "second-workload-uid"
+	if err := controller.runtime.Publish(&second); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := controller.kube.CoreV1().Pods(controller.operations.config.Namespace).Get(ctx, "b", meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod.OwnerReferences[0].Name, pod.OwnerReferences[0].UID = second.Name, "second-workload-uid"
+	if err := controller.store.client.Update(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.kube.CoreV1().Pods(pod.Namespace).Update(ctx, pod, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.Tick(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := controller.State().Snapshot
+	a, b := snapshot.Instances[0], snapshot.Instances[1]
+	for _, request := range []ManualOperation{
+		{Kind: operationRoute, WorkloadUID: first.UID, Weights: map[string]int32{a.ID: 17}, Reason: "route first Workload"},
+		{Kind: operationRoute, WorkloadUID: second.UID, Weights: map[string]int32{b.ID: 23}, Reason: "route second Workload after first ACK"},
+	} {
+		result, err := controller.ExecuteManual(ctx, request)
+		if err != nil || result.Status != nativeOperationComplete {
+			t.Fatalf("sequential route required another Tick: %+v err=%v", result, err)
+		}
+	}
+	actual, _ := controller.runtime.SchedulerRouting()
+	if !maps.Equal(actual[first.UID], map[string]int32{a.ID: 17}) || !maps.Equal(actual[second.UID], map[string]int32{b.ID: 23}) {
+		t.Fatalf("ACKed routes were not both preserved: %v", actual)
+	}
+	if controller.State().Snapshot.Routing[first.UID][a.ID] == 17 {
+		t.Fatal("test must retain the pre-ACK Tick snapshot")
+	}
+}
