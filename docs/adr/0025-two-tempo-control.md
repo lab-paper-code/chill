@@ -149,3 +149,7 @@ routing delays; two-tempo policy alone does not solve every transition loss.
 Raw evidence: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/two-tempo-questions-20261026.md`,
 `intent/checkpoints.md`, `campaign/v2/demo-*/summary.json` and
 `campaign/v2/exp-20261027-tempo-rev82/` under that operations root.
+
+## 알려진 한계
+
+유일 공급을 멈춰야 하는 모드 상승(실물 정지·교체)은 수요 유지 중 `D<C` 미충족으로 차단되며, 다른 Node 확장(순증설 fast)으로 대체한다(근거: StabWindowReview27 §6, `TestCapacitySingleNodeRaisesItsMode` 차단 회귀).
