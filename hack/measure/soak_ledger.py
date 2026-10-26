@@ -82,6 +82,7 @@ def run(client, args, namespace):
     counts = Counter()
     timings = []
     cycles = 0
+    operations = []
     active = list(args.instances)
     replacement = None
     replaced = False
@@ -144,7 +145,7 @@ def run(client, args, namespace):
     save(out / 'initial.json', dict(state=initial, pods=pods, pools=pools))
     try:
         while time.monotonic() < deadline:
-            operations = []
+            operations.clear()
             violations = []
             state = pods = pools = None
             try:
@@ -264,6 +265,10 @@ def self_check():
         result = run(client, SimpleNamespace(out=Path(folder), instances=['a', 'b'], workload_uid='w', duration=120, interval=20), 'fixture')
         assert result['cycles'] == 6 and result['violations'] == 0 and result['replacementComplete']
         assert {'route', 'unroute', 'release', 'remove', 'prepare'} <= set(client.calls)
+        assert result['operations'] == len(client.calls) == 9
+        receipts = [json.loads(path.read_text()) for path in sorted(Path(folder).glob('operation-*.json'))]
+        assert [receipt['request']['kind'] for receipt in receipts] == client.calls
+        assert all(receipt['ack']['status'] == 'complete' for receipt in receipts)
         assert client.stale_reads == result['operations']
         assert result['nativeUnavailable'] == 0
         assert json.loads((Path(folder) / 'summary.json').read_text()) == result
@@ -275,6 +280,10 @@ def self_check():
         assert retry.calls.count('remove') == 1 and retry.calls.count('prepare') == 2
         assert {i['id'] for i in retry.instances} == {'a', 'new'}
         assert result['removedIDs'] == ['b']
+        failed_cycle = json.loads((Path(folder) / 'retry/violation-00004.json').read_text())
+        assert [receipt['request']['kind'] for receipt in failed_cycle['operations']] == ['unroute', 'remove', 'prepare']
+        assert failed_cycle['operations'][-1]['ack']['status'] == 'failed'
+        assert failed_cycle['operations'][-1]['error'] == 'Operation ACK not complete'
     print('soak ledger self-check: OK')
 
 
