@@ -15,6 +15,9 @@ test("duration conversion preserves nanoseconds and rejects nonpositive or overf
   assert.equal(millisecondsToNanos("9223372036854.775807"),9223372036854775807n)
   assert.equal(nanosToMilliseconds(9223372036854775807n),"9223372036854.775807")
   assert.equal(millisecondsToNanos("0.000001"),1n)
+  assert.equal(millisecondsToNanos("0",0n),0n)
+  assert.equal(millisecondsToNanos("120000",0n),120000000000n)
+  assert.equal(millisecondsToNanos("300000",0n),300000000000n)
   for (const value of ["0","-1","0.0000001","1e3","9223372036854.775808"]) assert.throws(()=>millisecondsToNanos(value))
   assert.equal(wireInteger("18446744073709551615",0n,18446744073709551615n),18446744073709551615n)
   for (const value of ["-1","1.5","18446744073709551616"]) assert.throws(()=>wireInteger(value,0n,18446744073709551615n))
@@ -24,6 +27,8 @@ test("review detects control or exact integer changes across numeric representat
   const current:SchedulerSettings={observationWindowNanos:1,controlIntervalNanos:1,comparisonPeriodNanos:1,maxObservationAgeNanos:1,bootstrapCapacityWaitNanos:600000000000,scaleDownStabilizationNanos:300000000000,transitionReserveFraction:0,servingMemoryBytes:18446744073709551615n,maxReplicas:1,maxInstances:1,maxCPUs:1,completionMarginMS:0,capacityWindowNanos:1,capacityWindows:1,capacityPassingWindows:1,capacityMinimumRequests:1,planSearchWorkers:1,autonomousWorkloads:[],excludedNodes:["rasp5"],controls:{placement:false,resources:false,replicas:false,routing:false,batching:false,power:false,membership:false}}
   assert.equal(settingsEqual(current,{...current,controlIntervalNanos:1n,controls:{...current.controls}}),true)
   assert.equal(settingsEqual(current,{...current,bootstrapCapacityWaitNanos:0}),false)
+  assert.equal(settingsEqual(current,{...current,scaleDownStabilizationNanos:120000000000}),false)
+  assert.equal(settingsEqual(current,{...current,transitionReserveFraction:.25}),false)
   assert.equal(settingsEqual(current,{...current,servingMemoryBytes:18446744073709551614n}),false)
   assert.equal(settingsEqual(current,{...current,controls:{...current.controls,power:true}}),false)
   assert.equal(settingsEqual(current,{...current,excludedNodes:["rasp5","genesis2"]}),false)

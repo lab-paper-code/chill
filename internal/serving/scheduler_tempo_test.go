@@ -76,12 +76,12 @@ func TestSchedulerTempoContinuousDecline(t *testing.T) {
 	if got := observe(8, 6); !got.Allowed {
 		t.Fatalf("new boundary: %+v", got)
 	}
-	if got := observe(30, 5); got.Allowed || got.DownSince != nil {
+	if got := observe(30, 5); got.Allowed || got.Elapsed != 0 || got.ResetReason != "ObservationGap" {
 		t.Fatalf("gap: %+v", got)
 	}
 	observe(31, 4)
 	s.ScaleDownStabilization = 4 * time.Second
-	if got := observe(32, 4); got.Allowed || got.DownSince != nil {
+	if got := observe(32, 4); got.Allowed || got.Elapsed != 0 || got.ResetReason != "SettingsChanged" {
 		t.Fatalf("settings reset: %+v", got)
 	}
 	tempo = SchedulerTempo{}
@@ -177,5 +177,72 @@ func TestTransitionReserveActualSupply(t *testing.T) {
 	p.settings.TransitionReserveFraction = 0
 	if p.transitionReserve(choice) != nil {
 		t.Fatal("zero reserve enabled an extra constraint")
+	}
+}
+
+func TestSchedulerTempoUIDIndependenceAndVectorGate(t *testing.T) {
+	s, snap := schedulerFixture()
+	w2 := poolsAddWorkload(&snap, "w2")
+	s.AutonomousWorkloads = append(s.AutonomousWorkloads, w2.UID)
+	snap.Options[0].CompatibleUIDs = append(snap.Options[0].CompatibleUIDs, w2.UID)
+	s.ObservationWindow, s.ControlInterval, s.MaxObservationAge = time.Second, time.Second, time.Hour
+	s.ScaleDownStabilization = 2 * time.Second
+	snap.Outstanding = nil
+	start := snap.At
+	var tempo SchedulerTempo
+	observe := func(second int, a, b float64) {
+		snap.At = start.Add(time.Duration(second) * time.Second)
+		snap.ObservationEnd, snap.ObservedSince = snap.At, start.Add(-time.Hour)
+		snap.Arrivals = nil
+		capacityLoad(s, &snap, snap.Workloads[0], a)
+		capacityLoad(s, &snap, w2, b)
+		tempo.Observe(s, &snap)
+	}
+	observe(0, 10, 10)
+	observe(1, 5, 10)
+	observe(2, 5, 12)
+	observe(3, 5, 14)
+	if !snap.ScaleDown["w1"].Allowed || snap.ScaleDown["w2"].Allowed || snap.EmptyNodeScaleDownAllowed {
+		t.Fatalf("UIDs were globally synchronized or increases offset: %+v", snap.ScaleDown)
+	}
+	snap.Reasons = []string{"ObservationGap"}
+	observe(4, 4, 14)
+	if snap.ScaleDown["w1"].DownSince != nil || snap.EmptyNodeScaleDownAllowed {
+		t.Fatal("observation gap retained decline")
+	}
+}
+
+func TestSchedulerTempoFixedPowerGateIncludesTargetlessKeep(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ScaleDownStabilization = time.Minute
+	node := poolsAddNode(&snap, "empty", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6, "boost": 12})
+	snap.ScaleDown = map[string]SchedulerDownState{"w1": {}}
+	snap.Reasons = []string{"ObservationGap"}
+	for _, allowed := range []bool{false, true} {
+		snap.EmptyNodeScaleDownAllowed = allowed
+		got := capacityDecideForTest(t, s, snap, nil)
+		if got.Target != nil {
+			t.Fatal("fixture must exercise targetless Keep.Actions")
+		}
+		fixed := false
+		for _, action := range got.Keep.Actions {
+			fixed = fixed || action.Node == node && action.Fixed
+		}
+		if fixed != allowed {
+			t.Fatalf("targetless Fixed gate: allowed=%v actions=%+v", allowed, got.Keep.Actions)
+		}
+		target := SchedulerCandidate{Nodes: append([]SchedulerNode(nil), snap.Nodes...), Instances: snap.Instances, Routing: got.Keep.Routing}
+		for index := range target.Nodes {
+			if target.Nodes[index].Node == node {
+				target.Nodes[index].PowerMode = "boost"
+			}
+		}
+		fixed = false
+		for _, action := range schedulerPlan(snap, target) {
+			fixed = fixed || action.Node == node && action.Fixed
+		}
+		if fixed != allowed {
+			t.Fatalf("changeNodes prepended forbidden Fixed lowering: allowed=%v", allowed)
+		}
 	}
 }

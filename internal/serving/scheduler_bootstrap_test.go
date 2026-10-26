@@ -103,6 +103,7 @@ func rev76RowsAt(rows []CapacityRow, at time.Time) []CapacityRow {
 func TestRev76BootstrapRawReplayAC41(t *testing.T) {
 	f := loadRev76Fixture(t)
 	s, snapshot := f.Settings, f.Cold
+	s.ScaleDownStabilization = 300 * time.Second
 	firstRows := rev76RowsAt(f.Rows, snapshot.At)
 	// With waiting disabled, S:861 still reproduces the original premature
 	// genesis2 FP32 allocation; leximin is not a bootstrap barrier.

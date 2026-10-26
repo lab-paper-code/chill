@@ -762,6 +762,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 
 func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
 	controller, prepared := tickReadySubsetController(t, nil)
+	controller.config.Settings.ScaleDownStabilization = 300 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	snapshot, err := controller.capture(ctx, time.Now(), controller.config)
@@ -1347,6 +1348,78 @@ func TestCapturePreservesEveryExecutorlessPodUIDAC37(t *testing.T) {
 	for _, node := range snapshot.Nodes {
 		if node.Node.Name == "a" && len(node.NonServing) != 0 {
 			t.Fatal("serving Pod UID was counted again as anonymous non-serving occupancy")
+		}
+	}
+}
+
+// AC-42: the simulated G/L/N preparation clock advances independently of the
+// slow jetsono power action and the 300-second slow-candidate gate.
+func TestTwoTempoReadySubsetsOnPreparationClock(t *testing.T) {
+	controller, target, source := acknowledgedHandoffFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	controller.ctx, controller.runs = ctx, map[string]*actionRun{}
+	controller.config.Settings.ScaleDownStabilization = 300 * time.Second
+	target.ID = "two-tempo-preparation-clock"
+	uid := target.Instances[0].WorkloadUID
+	base := target.Instances[0]
+	target.Instances = []serving.SchedulerInstance{base}
+	target.Routing[uid] = map[string]int32{base.ID: 250}
+	target.Actions = nil
+	deps := []string{}
+	for _, id := range []string{"genesis3", "lattepanda", "jetson-nano"} {
+		instance := base
+		instance.ID = id
+		target.Instances = append(target.Instances, instance)
+		target.Routing[uid][id] = 250
+		action := serving.Action{ID: "prepare-" + id, Kind: operationPrepare, Node: instance.Node, Instance: id, Status: nativeOperationRunning}
+		target.Actions = append(target.Actions, action)
+		controller.runs[action.ID] = &actionRun{action: action}
+		deps = append(deps, action.ID)
+	}
+	power := serving.Action{ID: slowPowerActionID, Kind: operationPower, Node: serving.NodeReference{Name: "jetsono", UID: "jetsono-uid"}, Status: nativeOperationRunning}
+	target.Actions = append(target.Actions, power)
+	controller.runs[power.ID] = &actionRun{action: power}
+	deps = append(deps, power.ID)
+	target.Actions = append(target.Actions, serving.Action{ID: finalRouteActionID, Kind: operationRoute, DependsOn: deps})
+	ready := []serving.ReadyInstance{source}
+	origin := time.Unix(1000, 0)
+	controller.state.Snapshot.Workloads = controller.runtime.SchedulerInputs(time.Now).Workloads
+	for index, seconds := range []int{15, 18, 32} {
+		newlyReady := target.Instances[index+1]
+		actual := source
+		actual.State.ID = newlyReady.ID
+		ready = append(ready, actual)
+		if err := controller.runtime.InstallInstances(ready); err != nil {
+			t.Fatal(err)
+		}
+		controller.state.Snapshot.At = origin.Add(time.Duration(seconds) * time.Second)
+		controller.state.Snapshot.Instances = slices.Clone(target.Instances[:index+2])
+		controller.state.Snapshot.Routing, _ = controller.runtime.SchedulerRouting()
+		controller.runs["prepare-"+newlyReady.ID].action.Status = nativeOperationComplete
+		var intermediate *serving.SchedulerCandidate
+		controller.launch(target, SchedulerControllerConfig{Settings: controller.config.Settings, OnAction: func(result OperationResult) error {
+			if result.Status == starting && result.Operation.Target != nil {
+				intermediate = result.Operation.Target
+			}
+			return context.Canceled
+		}})
+		controller.wg.Wait()
+		if intermediate == nil || len(intermediate.Instances) != index+2 {
+			t.Fatalf("t=%ds: newly Ready subset waited for slow prerequisites: %+v", seconds, intermediate)
+		}
+		if err := controller.runtime.ApplySchedulerTarget(*intermediate); err != nil {
+			t.Fatal(err)
+		}
+		route, _ := controller.runtime.SchedulerRouting()
+		if route[uid][newlyReady.ID] <= 0 || len(route[uid]) != index+2 {
+			t.Fatalf("t=%ds: Ready executor not routed on next controller pass: %v", seconds, route)
+		}
+		if fixtureTarget(controller).ID != target.ID || len(fixtureTarget(controller).Instances) != 4 || controller.runs[power.ID].action.Status != nativeOperationRunning {
+			t.Fatal("intermediate allocation changed owner target or completed slow power")
+		}
+		if _, launched := controller.runs[finalRouteActionID]; launched {
+			t.Fatal("full route ignored pending power")
 		}
 	}
 }

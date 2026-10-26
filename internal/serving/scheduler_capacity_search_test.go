@@ -181,7 +181,6 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 			}
 		}
 	}
-	pre, post := 0.0, 0.0
 	for _, options := range nodes {
 		pairs := slices.DeleteFunc(e5Pairs(options), func(c e5Pair) bool { _, ok := index[c.w]; return !ok })
 		now := slices.DeleteFunc(slices.Clone(pairs), func(c e5Pair) bool { return !current[c.id] })
@@ -222,9 +221,6 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 			plan.replaces = len(mid) > len(now) && plan.postMean > 0
 			plan.record.Eligible, plan.record.Key = true, strings.Join(ids, "+")
 			p.sum(plan)
-			if !keep {
-				pre, post = max(pre, plan.preMax), max(post, plan.postMax)
-			}
 			return plan
 		}
 		plans := []*capacityPlan{plan(now, true)}
@@ -239,7 +235,7 @@ func e5Planner(rates map[int]float64, nodes [][]e5Option, current map[string]boo
 		p.plans = append(p.plans, plans)
 		p.compared = append(p.compared, true)
 	}
-	p.period = max(s.ComparisonPeriod.Seconds(), pre+post)
+	p.period = s.ComparisonPeriod.Seconds()
 	return p
 }
 

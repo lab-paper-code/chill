@@ -42,11 +42,11 @@ export function stringifySchedulerJSON(value: unknown, space?: number): string {
     return native.rawJSON(item.toString())
   }, space)
 }
-export function millisecondsToNanos(text: string): bigint {
+export function millisecondsToNanos(text: string, minimum = 1n): bigint {
   const match = /^(\d+)(?:\.(\d{1,6}))?$/.exec(text)
-  if (!match) throw new Error("ms는 양수이며 소수점 아래 6자리까지 입력합니다.")
+  if (!match) throw new Error("ms는 0 이상이며 소수점 아래 6자리까지 입력합니다.")
   const value = BigInt(match[1]) * 1000000n + BigInt((match[2] ?? "").padEnd(6, "0"))
-  if (value <= 0n || value > 9223372036854775807n) throw new Error("시간은 1~9223372036854775807 ns 범위입니다.")
+  if (value < minimum || value > 9223372036854775807n) throw new Error(`시간은 ${minimum}~9223372036854775807 ns 범위입니다.`)
   return value
 }
 export function nanosToMilliseconds(value: number | bigint): string {

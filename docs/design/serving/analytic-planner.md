@@ -116,7 +116,7 @@ route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 �
 구체적인 기록과 실행 계약은 [중간 배분](scheduler-implementation.md#중간-배분)이다.
 
 
-**비교 기간 — SCH-58 확정 변경 설계(미구현).** 기존 후보 집합의 최장 사슬로 T를 늘리는 규칙을 폐기하고 `H = settings.comparisonPeriodNanos` 하나를 keep과 모든 후보에 고정한다. 기존 이름이 이미 시간 단위·설정 API에 있으므로 `energyHorizonNanos` 별칭/중복 필드를 만들지 않는다. 아래 에너지 식의 T는 H다. route 전후 전체 사슬의 최대 시간이 H를 넘는 후보는 `TransitionExceedsHorizon`으로 제외하고 H를 늘리거나 음수 Serving 시간을 계산하지 않는다. 이는 후보별 기간이 아니라 공통 기간 내 전체 전환을 비교하는 계약이다. H를 바꾸면 새 설정 revision으로 다음 판단부터 적용하며 진행 작업의 frozen 설정은 유지한다. H는 SLO 시간·용량표 창·동작 timeout과 별개다. 제안값과 실측 근거는 15장이다.
+**비교 기간 — SCH-58.** `H = settings.comparisonPeriodNanos` 하나를 keep과 모든 후보에 고정한다. 기존 이름이 이미 시간 단위·설정 API에 있으므로 `energyHorizonNanos` 별칭/중복 필드를 만들지 않는다. 아래 에너지 식의 T는 H다. route 전후 전체 사슬의 최대 시간이 H를 넘는 후보는 `TransitionExceedsHorizon`으로 제외하고 H를 늘리거나 음수 Serving 시간을 계산하지 않는다. 이는 후보별 기간이 아니라 공통 기간 내 전체 전환을 비교하는 계약이다. H를 바꾸면 새 설정 revision으로 다음 판단부터 적용하며 진행 작업의 frozen 설정은 유지한다. H는 SLO 시간·용량표 창·동작 timeout과 별개다. 제안값과 실측 근거는 15장이다.
 
 **에너지.** 노드 계획 하나의 [0, T] 노드 에너지는 keep이면 `P_before × T`, 아니면 `J_pre + P_mid × (r − t_pre) + J_post + P_after × (T − r − t_post)`(t는 평균 시간)다. P는 `schedulerBaseline`의 적재 상태 전력이다. 요청 에너지는 route에서 나눈다: [0, r]은 지금 routing으로 남는 인스턴스가 κ_ret까지 처리하고(`Σ y⁰_i e_i r`), 넘친 `max(0, λ − κ_ret) × r`건과 [r, T]는 target 배정 y로 처리한다(`Σ y_i e_i (T − r)`와 넘친 건수 × y 가중 평균 e). 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.
 
@@ -305,8 +305,8 @@ runtime 7종의 digest와 기존 자원, evidence store를 유지한다.
 
 ## 15. 두 박자 후보 허가와 고정 H — SCH-55~58
 
-2026-10-26 사용자 결정 ④ 1-A/2-A/3-A/4-B의 요구사항 다음 단계 설계다.
-이번 변경은 문서만이며 현재 source가 아래 정책을 구현했다는 뜻이 아니다.
+2026-10-26 사용자 결정 ④ 1-A/2-A/3-A/4-B의 구현 계약이다.
+controller 상태와 기존 단일 계획기에 연결하며 실제 클러스터 시연은 별도 승인 범위다.
 근거는 로컬 `intent/two-tempo-questions-20261026.md`, `intent/checkpoints.md` 1949행,
 `intent/structure-redesign-20261026.md` §5와 `audit-20261024/structure-20261026/Research-K4.md`다
 (모두 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/` 아래).
@@ -386,10 +386,11 @@ H를 바꾸며 미선택 후보 때문에 자동 연장하지 않는다.
 1. **설정·기록 계약**: `scaleDownStabilizationNanos`, `transitionReserveFraction` 추가와 기존 `comparisonPeriodNanos` 의미 전환을 strict decode/검증·API·sample·binding·결정 기록에 함께 반영. 음수/0/양수 ns, 정수 overflow, f=0/1 및 범위 밖·NaN/Inf, H=0 거절과 설정 readback/Run 동결 회귀를 포함한다. alias나 병행 reader를 두지 않는다.
 2. **두 박자 후보 gate**: UID별 하강 상태와 fast/full 후보 분류를 기존 계획기에 연결. fake clock으로 경계 직전/정확히 경계, 순간 하강·재증가·관측 공백·restart·설정 변경, 여러 UID 독립성, 과부하 무한값 leximin과 증설 지속을 검증한다(AC-42). 수용 조건으로 κ 증가 정책 변경은 fast, κ 비증가·joules 감소 교체와 추가+제거 혼합은 slow인지 확인한다. 유휴 제거 후처리뿐 아니라 `schedulerCommonNodes`/`changeNodes` 및 target 없는 `Keep.Actions`의 새 Fixed 절전도 안정화 전에는 실행되지 않고, 기존 Fixed 실행은 계속되는지 검사한다.
 3. **예비·고정 H 에너지**: 구간별 실제 공급과 예약 중복 담보 검사, H 초과 명시적 제외, 모든 후보/keep의 공통 H를 반영. f=0 기존 SLO 보존, f>0 부족/충족·미준비 공급 제외·E5 예비 소비 포함(AC-43), 긴 미선택 후보 추가/삭제 시 공통 후보 비용·순위 불변(AC-44)을 검사한다. 수용 조건에 개별 사슬은 H 이하지만 조합의 route+최장 post가 H를 넘는 경우 제외, 정확히 H이면 허용, keep/payback/minimumGain/기록 H 일치를 포함한다.
-4. **통합 회귀/시연 설계**: 느린 jetsono power와 G/L/N 준비를 함께 둔 controller 시계 회귀에서 준비 직후 다음 주기 중간 배분·예약 밖 확장을 확인하고 owner target/ACK/drain 의무를 보존한다. 빈 출발에서는 SCH-54 κ 완료/상한 대기는 유지하되 하강 timer가 첫 증설을 막지 않고 Workload별 인스턴스 하나 유지 규칙도 보존하는 것을 수용 조건으로 둔다. 승인된 후속 캠페인에서는 동일 binding/H·부하로 300초 운영 설정과 별도 120초 시연을 구분하고 요청 SLO·축소 시각·전환 전체 POOL joules를 보고한다. 이번 단계에서는 테스트·클러스터 실행을 하지 않는다.
+4. **통합 회귀/시연 설계**: 느린 jetsono power와 G/L/N 준비를 함께 둔 controller 모의 시계 회귀에서 15/18/32초 준비 직후 다음 주기 중간 배분·예약 밖 확장을 확인하고 owner target/ACK/drain 의무를 보존한다. 빈 출발에서는 SCH-54 κ 완료/상한 대기는 유지하되 하강 timer가 첫 증설을 막지 않고 Workload별 인스턴스 하나 유지 규칙도 보존한다. 승인된 후속 캠페인에서는 동일 binding/H·부하로 300초 운영 설정과 별도 120초 시연을 구분하고 요청 SLO·축소 시각·전환 전체 POOL joules를 보고한다. 클러스터 캠페인과 이미지는 이 구현 범위에서 실행하지 않는다.
 
 ## 변경 이력
 
+- 2026-10-26: SCH-55~58/AC-42~44 통합: 양수 안정화 설정으로 기존 Tick 중간 배분·예약 밖 증설·빈 출발 회귀를 실행하도록 확장했다. 설정 API·Dashboard의 0/시연/운영값과 E5 frozen 설정 회귀를 함께 유지한다. 예비 실패는 search의 UID별 대표 후보/실제 공급/필요량과 제외 건수로 기록한다. 공백·설정 변경은 기준률을 보존하고 새 정상 관측에서 지속 시간을 다시 잰다.
 - 2026-10-26: SCH-57/58 §15 구현: H 자동 확장을 없애고 개별/조합/유휴 후처리 DAG의 H 초과를 제외한다. 양수 예비는 route 전후 살아남는 실제 Ready/ACK 공급만 세며 미준비 target·다른 owner의 담보는 제외한다. f=0은 추가 검사만 끈다.
 - 2026-10-26: SCH-55/56 §15 후보 gate 구현: controller의 UID별 수요 하강 상태, 공통 빈 노드 gate와 계획/유휴 제거 gate를 연결했다. 정책 변경은 κ 증가이면 fast로 유지하며 물리 제거/정지는 slow가 우선한다.
 - 2026-10-26: SCH-55~58 §15 설정 계약 구현 시작: 안정화 기본 300초와 유한 [0,1] 예비 비율을 scheduler 설정·검증·sample·Dashboard에 추가했다. 결정 settings/search bounds와 E5 binding은 기존 전체 설정 캡처를 사용한다.

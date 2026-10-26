@@ -76,11 +76,12 @@ type SchedulerCapacity struct {
 // evaluated, its time, and whether the time budget (half the control
 // interval) ended it before its last step.
 type SchedulerPlanSearch struct {
-	Neighborhood int            `json:"neighborhood"`
-	Evaluated    int            `json:"evaluated"`
-	Duration     time.Duration  `json:"durationNanos"`
-	BudgetCut    bool           `json:"budgetCut,omitempty"`
-	Excluded     map[string]int `json:"excluded,omitempty"`
+	Neighborhood      int                                   `json:"neighborhood"`
+	Evaluated         int                                   `json:"evaluated"`
+	Duration          time.Duration                         `json:"durationNanos"`
+	BudgetCut         bool                                  `json:"budgetCut,omitempty"`
+	Excluded          map[string]int                        `json:"excluded,omitempty"`
+	ReserveRejections map[string]SchedulerTransitionReserve `json:"reserveRejections,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -869,7 +870,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		})
 		slow := hasCurrent && (affected || policy && plan.record.Kappa[ws.d.UID] <= oldKappa)
 		if slow {
-			plan.record.Tempo = "slow"
+			plan.record.Tempo = schedulerTempoSlow
 			if p.partial {
 				plan.record.Reason = schedulerPartialObservation
 				return plan
@@ -879,7 +880,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 				return plan
 			}
 			if !schedulerSlowAllowed(p.settings, p.snapshot, ws.d.UID) {
-				plan.record.Reason = "ScaleDownStabilizing"
+				plan.record.Reason = schedulerScaleDownStabilizing
 				return plan
 			}
 		}
@@ -1479,7 +1480,7 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		alt[n] = 0
 		r := p.routeOf(alt)
 		kept := p.evaluate(alt, r)
-		if !kept.feasible || kept.unroutedPrepare || p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route) {
+		if !kept.feasible || !p.admits(&kept) || p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route) {
 			continue
 		}
 		kept.unpaid = append(slices.Clone(best.unpaid), p.snapshot.Nodes[n].Node.UID)
@@ -1605,6 +1606,7 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 	workers := p.settings.PlanSearchWorkers
 	bests, counts := make([]*capacityResult, workers), make([]int, workers)
 	excluded := make([]map[string]int, workers)
+	rejections := make([]map[string]SchedulerTransitionReserve, workers)
 	for w := range excluded {
 		excluded[w] = map[string]int{}
 	}
@@ -1628,6 +1630,7 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 				if p.bounded(c) {
 					counts[w]++
 					res := p.evaluate(slices.Clone(c), p.routeOf(c))
+					rejections[w] = reserveRejections(rejections[w], res.reserves, res.key)
 					if res.exclusion != "" {
 						excluded[w][res.exclusion]++
 					}
@@ -1656,6 +1659,11 @@ func (p *capacityPlanner) sweep(choice []int, k int, deadline time.Time) (*capac
 	for _, counts := range excluded {
 		for reason, count := range counts {
 			p.searched.Excluded[reason] += count
+		}
+	}
+	for _, records := range rejections {
+		for _, record := range records {
+			p.searched.ReserveRejections = reserveRejections(p.searched.ReserveRejections, []SchedulerTransitionReserve{record}, "")
 		}
 	}
 	var best *capacityResult

@@ -480,7 +480,7 @@ func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 // m4 r5 04:28:18: the first decision of the 40 req/s phase saw λ 42.5 with 161
 // queued. With the r5 κ (rasp5 q1 25.29, q1-lut 25.69, genesis3 q2 70.94) it
 // expands whatever the comparison period: the SLO judgment orders plans before
-// energy. The decision records T = max(comparisonPeriod, longest chain).
+// energy. The decision records the same configured H for every candidate.
 func TestCapacityComparisonPeriodKeepsExpansionOnLoadRise(t *testing.T) {
 	s, snap, _, genesis3 := capacityE1Fixture()
 	s.ObservationWindow = time.Minute
@@ -760,7 +760,6 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanne
 		ws := capacityWorkload{d: &Definition{UID: fmt.Sprint("w", w)}, rate: rate, queued: rng.IntN(6), slack: 0.2 + 2*rng.Float64()}
 		p.ws = append(p.ws, ws)
 	}
-	pre, post := 0.0, 0.0
 	for n := range nodes {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
 		var plans []*capacityPlan
@@ -780,7 +779,6 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanne
 				plan.preMax = []float64{0, 5, 20, 197}[rng.IntN(4)]
 				plan.preMean, plan.postMax, plan.postMean = plan.preMax*rng.Float64(), 5*rng.Float64(), 0
 				plan.preJ, plan.postJ, plan.mid, plan.after = 100*rng.Float64(), 10*rng.Float64(), 1+10*rng.Float64(), 1+10*rng.Float64()
-				pre, post = max(pre, plan.preMax), max(post, plan.postMax)
 			}
 			p.sum(plan)
 			plans = append(plans, plan)
@@ -788,7 +786,7 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanne
 		p.plans = append(p.plans, plans)
 		p.compared = append(p.compared, len(plans) > 1)
 	}
-	p.period = max(60, pre+post)
+	p.period = p.settings.ComparisonPeriod.Seconds()
 	return p
 }
 
@@ -799,7 +797,7 @@ func capacityBruteForce(p *capacityPlanner) *capacityResult {
 	var best *capacityResult
 	choice := make([]int, len(p.plans))
 	for {
-		if res := p.evaluate(slices.Clone(choice), p.routeOf(choice)); p.bounded(choice) && !res.unroutedPrepare && res.feasible && res.better(best) {
+		if res := p.evaluate(slices.Clone(choice), p.routeOf(choice)); p.bounded(choice) && p.admits(&res) && res.feasible && res.better(best) {
 			best = &res
 		}
 		n := 0
@@ -1232,6 +1230,7 @@ func TestCapacityOverloadWeightsDrainTheBacklog(t *testing.T) {
 // prepare (m4 r5 swapped genesis3 q2 b1↔b2 by stop, drain, remove, prepare).
 func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ScaleDownStabilization = 300 * time.Second
 	profile := *snap.Instances[0].Profile
 	profile.Batches = append(slices.Clone(profile.Batches), BatchProfile{Batch: 2, DurationNanos: []float64{float64(15 * time.Millisecond)}, EnergyPerInputJoules: 0.8, MemoryBytes: 100})
 	snap.Instances[0].Profile = &profile
@@ -1251,6 +1250,17 @@ func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 	if d.Target == nil || len(d.Target.Instances) != 1 || d.Target.Instances[0].ID != "i1" || d.Target.Instances[0].MaxBatch != 2 ||
 		slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind != schedulerActionRoute }) {
 		t.Fatalf("target must route i1 with batch 2 only: %+v", d.Target)
+	}
+	if plans[i].Tempo != "fast" {
+		t.Fatalf("capacity recovery policy was not fast: %+v", plans[i])
+	}
+	capacityLoad(s, &snap, snap.Workloads[0], 50)
+	rows = capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 100 })
+	energyOnly := capacityDecideForTest(t, s, snap, rows)
+	for _, plan := range poolsPlans(energyOnly, n1) {
+		if plan.Key == "profile/b2/w1" && (plan.Eligible || plan.Tempo != "slow" || plan.Reason != "ScaleDownStabilizing") {
+			t.Fatalf("non-increasing policy escaped slow gate: %+v", plan)
+		}
 	}
 }
 

@@ -8,15 +8,20 @@ import (
 	"time"
 )
 
+const schedulerScaleDownStabilizing = "ScaleDownStabilizing"
+const schedulerObservationGap = "ObservationGap"
+const schedulerTempoSlow = "slow"
+
 // SchedulerDownState is the decision evidence for the common slow-candidate gate.
 type SchedulerDownState struct {
-	Baseline  float64       `json:"baselineRate"`
-	Previous  float64       `json:"previousRate"`
-	Rate      float64       `json:"rate"`
-	DownSince *time.Time    `json:"downSince,omitempty"`
-	Elapsed   time.Duration `json:"elapsedNanos"`
-	Allowed   bool          `json:"allowed"`
-	Reason    string        `json:"reason"`
+	Baseline    float64       `json:"baselineRate"`
+	Previous    float64       `json:"previousRate"`
+	Rate        float64       `json:"rate"`
+	DownSince   *time.Time    `json:"downSince,omitempty"`
+	Elapsed     time.Duration `json:"elapsedNanos"`
+	Allowed     bool          `json:"allowed"`
+	Reason      string        `json:"reason"`
+	ResetReason string        `json:"resetReason,omitempty"`
 }
 
 // SchedulerTempo belongs to one controller. Restarting deliberately loses timers.
@@ -41,30 +46,62 @@ func (t *SchedulerTempo) Observe(settings SchedulerSettings, s *SchedulerSnapsho
 		old, exists := t.states[w.d.UID]
 		state := old
 		state.Previous, state.Rate, state.Elapsed, state.Allowed = old.Rate, w.rate, 0, false
-		state.Reason = "ScaleDownStabilizing"
+		state.Reason = schedulerScaleDownStabilizing
+		state.ResetReason = ""
 		switch {
-		case reset || gap || !normal || !exists:
+		case !exists:
 			state.Baseline, state.DownSince = w.rate, nil
-			state.Reason = "ScaleDownReset"
-		case w.rate >= old.Baseline:
-			state.Baseline, state.DownSince = w.rate, nil
-			state.Reason = "DemandNotDecreasing"
+			state.Reason = "ScaleDownFirstObservation"
+			state.ResetReason = "FirstObservation"
+		case !normal:
+			state.DownSince = nil
+			state.Reason = "ScaleDownObservationGap"
+			state.ResetReason = schedulerObservationGap
 		default:
-			if old.DownSince == nil || w.rate > old.Rate {
-				at := s.At
-				state.DownSince = &at
+			if reset || gap || w.rate > old.Rate {
+				state.DownSince = nil
+				state.Reason = "ScaleDownRestarted"
+				switch {
+				case gap:
+					state.ResetReason = schedulerObservationGap
+				case reset:
+					state.ResetReason = "SettingsChanged"
+				default:
+					state.ResetReason = "DemandIncreased"
+				}
 			}
-			state.Elapsed = s.At.Sub(*state.DownSince)
-			state.Allowed = state.Elapsed >= settings.ScaleDownStabilization
-			if state.Allowed {
-				state.Reason = "ScaleDownStabilized"
+			if w.rate >= old.Baseline {
+				state.Baseline, state.DownSince = w.rate, nil
+				state.Reason = "DemandNotDecreasing"
+			} else {
+				if state.DownSince == nil {
+					at := s.At
+					state.DownSince = &at
+				}
+				state.Elapsed = s.At.Sub(*state.DownSince)
+				state.Allowed = state.Elapsed >= settings.ScaleDownStabilization
+				if state.Allowed {
+					state.Reason = "ScaleDownStabilized"
+				}
 			}
 		}
 		anyDown = anyDown || state.DownSince != nil
 		states[w.d.UID] = state
 	}
-	// Vector comparison: unchanged workloads need not decline, but none may rise.
-	allDown := normal && !reset && !gap && len(states) == len(t.states) && len(states) > 0
+	t.observeVector(s, states, normal, reset || gap, anyDown, settings.ScaleDownStabilization)
+	t.states, t.at = states, s.At
+	t.settings = settings
+	t.settings.AutonomousWorkloads = slices.Clone(settings.AutonomousWorkloads)
+	t.settings.ExcludedNodes = slices.Clone(settings.ExcludedNodes)
+	t.settings.MinimumDemand = maps.Clone(settings.MinimumDemand)
+}
+
+// observeVector never offsets one Workload's rise with another's decline.
+func (t *SchedulerTempo) observeVector(s *SchedulerSnapshot, states map[string]SchedulerDownState, normal, reset, anyDown bool, stabilization time.Duration) {
+	if reset {
+		t.globalSince = nil
+	}
+	allDown := normal && len(states) == len(t.states) && len(states) > 0
 	for uid, state := range states {
 		old, ok := t.states[uid]
 		if !ok || state.Rate > old.Rate {
@@ -78,12 +115,7 @@ func (t *SchedulerTempo) Observe(settings SchedulerSettings, s *SchedulerSnapsho
 		t.globalSince = &at
 	}
 	s.ScaleDown = maps.Clone(states)
-	s.EmptyNodeScaleDownAllowed = settings.ScaleDownStabilization == 0 || t.globalSince != nil && s.At.Sub(*t.globalSince) >= settings.ScaleDownStabilization
-	t.states, t.at = states, s.At
-	t.settings = settings
-	t.settings.AutonomousWorkloads = slices.Clone(settings.AutonomousWorkloads)
-	t.settings.ExcludedNodes = slices.Clone(settings.ExcludedNodes)
-	t.settings.MinimumDemand = maps.Clone(settings.MinimumDemand)
+	s.EmptyNodeScaleDownAllowed = stabilization == 0 || t.globalSince != nil && s.At.Sub(*t.globalSince) >= stabilization
 }
 
 // Selected rebases only Workloads whose physical or policy selection changed.

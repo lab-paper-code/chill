@@ -33,14 +33,15 @@ func (p *capacityPlanner) transitionConstraints(choice []int, route float64) (st
 
 // SchedulerTransitionReserve records actual supply, not future target capacity.
 type SchedulerTransitionReserve struct {
-	UID         string  `json:"uid"`
-	Fraction    float64 `json:"fraction"`
-	Demand      float64 `json:"demand"`
-	Required    float64 `json:"requiredKappa"`
-	BeforeRoute float64 `json:"beforeRouteKappa"`
-	AfterRoute  float64 `json:"afterRouteKappa"`
-	Allowed     bool    `json:"allowed"`
-	Reason      string  `json:"reason,omitempty"`
+	UID          string  `json:"uid"`
+	Fraction     float64 `json:"fraction"`
+	Demand       float64 `json:"demand"`
+	Required     float64 `json:"requiredKappa"`
+	BeforeRoute  float64 `json:"beforeRouteKappa"`
+	AfterRoute   float64 `json:"afterRouteKappa"`
+	Allowed      bool    `json:"allowed"`
+	Reason       string  `json:"reason,omitempty"`
+	CandidateKey string  `json:"candidateKey,omitempty"`
 }
 
 // transitionReserve checks the minimum surviving actual supply before and after
@@ -98,4 +99,24 @@ func (p *capacityPlanner) transitionReserve(choice []int) []SchedulerTransitionR
 		records = append(records, record)
 	}
 	return records
+}
+
+// reserveRejections keeps one reproducible rejected candidate per Workload,
+// rather than retaining every evaluated combination.
+func reserveRejections(dst map[string]SchedulerTransitionReserve, records []SchedulerTransitionReserve, key string) map[string]SchedulerTransitionReserve {
+	for _, record := range records {
+		if record.Allowed {
+			continue
+		}
+		if key != "" {
+			record.CandidateKey = key
+		}
+		if dst == nil {
+			dst = map[string]SchedulerTransitionReserve{}
+		}
+		if old, exists := dst[record.UID]; !exists || record.CandidateKey < old.CandidateKey {
+			dst[record.UID] = record
+		}
+	}
+	return dst
 }

@@ -547,7 +547,7 @@ def self_check():
         cpo.ws = {w['name']: w for w in workloads}
         cpo.uids = [w['uid'] for w in workloads]
         cpo.d = d
-        settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': [], 'minimumDemand': {cpo.uids[0]: .3}}
+        settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': [], 'minimumDemand': {cpo.uids[0]: .3}, 'scaleDownStabilizationNanos': 120000000000, 'transitionReserveFraction': .25, 'comparisonPeriodNanos': 600000000000}
         cpo.b['schedulerSettings'] = copy.deepcopy(settings)
         snapshot = {'at': e5.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'reservations': []}
         scheduler_actions = []
@@ -704,6 +704,9 @@ def self_check():
                 raise AssertionError('Invalid ready gate accepted')
         frozen_settings = copy.deepcopy(cpo.b['schedulerSettings'])
         settings['minimumDemand'][cpo.uids[0]] = 9
+        settings['scaleDownStabilizationNanos'] = 300000000000
+        settings['transitionReserveFraction'] = 0
+        settings['comparisonPeriodNanos'] = 900000000000
         summarize(e5, cpo.b, cpo.out)
         assert e5.load(cpo.out / 'summary.json')['schedulerSettings'] == frozen_settings
         drained = e5.load(cpo.out / 'smoke-A/phase.json')['demoRequestDrain']

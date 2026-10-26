@@ -269,6 +269,8 @@ func TestSchedulerNodeServesOneInstance(t *testing.T) {
 // §4: moving a Node between active POOLs is remove + prepare in one plan.
 func TestSchedulerDirectMoveBetweenActivePools(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ScaleDownStabilization = 300 * time.Second
+	snap.ScaleDown = map[string]SchedulerDownState{"w1": {Allowed: true}, "w2": {Allowed: true}}
 	s.AutonomousWorkloads = []string{"w1", "w2"}
 	poolsAddWorkload(&snap, "w2").Model.UID = "m2"
 	shared := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
@@ -292,11 +294,22 @@ func TestSchedulerDirectMoveBetweenActivePools(t *testing.T) {
 	if plan := poolsPlans(d, shared)[i]; !plan.Eligible || plan.Pre == 0 || plan.Post == 0 || plan.KappaRetained["w2"] == 0 {
 		t.Fatalf("move must prepare before and remove after the route, w2 serving until then: %+v", plan)
 	}
+	if plan := poolsPlans(d, shared)[i]; plan.Tempo != "slow" {
+		t.Fatalf("add+remove mixture must be slow: %+v", plan)
+	}
+	snap.ScaleDown["w2"] = SchedulerDownState{}
+	blocked := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	for _, plan := range poolsPlans(blocked, shared) {
+		if plan.Key == "profile-other-cpu@n2-fixed/b1/w1" && (plan.Eligible || plan.Reason != "ScaleDownStabilizing") {
+			t.Fatalf("mixed plan bypassed removed Workload's gate: %+v", plan)
+		}
+	}
 }
 
 // §4: available Nodes start at their lowest mode; re-entry uses the empty-Node power cost.
 func TestSchedulerAvailableNodeLoweringAndReentry(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ComparisonPeriod = time.Minute
 	idle := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	// The re-entered Node runs "boost"; plans first lower it to eco, then raise it to the profile's mode.
 	reentry := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6, "boost": 12})
