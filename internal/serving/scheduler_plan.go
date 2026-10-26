@@ -64,7 +64,7 @@ func schedulerAvailable(snapshot SchedulerSnapshot, n SchedulerNode) bool {
 // when power control is on; every candidate starts from this state.
 func schedulerCommonNodes(settings SchedulerSettings, snapshot SchedulerSnapshot) []SchedulerNode {
 	nodes := append([]SchedulerNode(nil), snapshot.Nodes...)
-	if !settings.Controls.Power || !schedulerEmptySlowAllowed(settings, snapshot) {
+	if !settings.Controls.Power || !schedulerEmptySlowAllowed(snapshot) {
 		return nodes
 	}
 	for index, n := range nodes {

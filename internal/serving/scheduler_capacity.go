@@ -138,9 +138,6 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if settings.ScaleDownStabilization > 0 && snapshot.ScaleDown == nil {
 		snapshot.ScaleDown = map[string]SchedulerDownState{}
 	}
-	if settings.ScaleDownStabilization == 0 {
-		snapshot.EmptyNodeScaleDownAllowed = true
-	}
 	decision = SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
 	defer func() {
 		if decision.Capacity == nil && !decision.At.IsZero() {
@@ -155,6 +152,10 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err := settings.Validate(); err != nil {
 		decision.Reasons, decision.Keep = []string{err.Error()}, keep
 		return decision, ctx.Err()
+	}
+	if settings.ScaleDownStabilization == 0 && snapshot.ScaleDown == nil {
+		var tempo SchedulerTempo
+		tempo.Observe(settings, &snapshot, capacity)
 	}
 	// Lowering available Nodes is a fixed rule every plan, keep included, shares.
 	keep.Nodes = schedulerCommonNodes(settings, snapshot)
@@ -862,7 +863,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		return old.WorkloadUID == "" && old.OwnerWorkloadUID == "" && (!used[old.ID] || mode != node.PowerMode)
 	}) {
 		plan.record.Tempo = schedulerTempoSlow
-		if !schedulerEmptySlowAllowed(p.settings, p.snapshot) {
+		if !schedulerEmptySlowAllowed(p.snapshot) {
 			plan.record.Reason = schedulerScaleDownStabilizing
 			return plan
 		}
@@ -893,7 +894,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 				plan.record.Reason = schedulerDemandIncreasing
 				return plan
 			}
-			if !schedulerSlowAllowed(p.settings, p.snapshot, ws.d.UID) {
+			if !schedulerSlowAllowed(p.snapshot, ws.d.UID) {
 				plan.record.Reason = schedulerScaleDownStabilizing
 				return plan
 			}
@@ -1818,7 +1819,7 @@ func (p *capacityPlanner) idleRemovable(i SchedulerInstance, plan *capacityPlan,
 	if uid == "" {
 		uid = i.OwnerWorkloadUID
 	}
-	if uid == "" && !schedulerEmptySlowAllowed(p.settings, p.snapshot) || uid != "" && !schedulerSlowAllowed(p.settings, p.snapshot, uid) {
+	if uid == "" && !schedulerEmptySlowAllowed(p.snapshot) || uid != "" && !schedulerSlowAllowed(p.snapshot, uid) {
 		return false
 	}
 	// An instance owned by nobody and routed by no Workload serves nobody.

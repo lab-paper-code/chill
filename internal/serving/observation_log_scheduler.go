@@ -239,6 +239,72 @@ func (c *ObservationCatalog) body(kind, key string, at time.Time, value any) err
 	return json.Unmarshal(found.Body, value)
 }
 
+// decodeWindowEvidence accepts only the maximum-demand record shape. Historical
+// timer evidence stays in the raw archive, not in current typed observations.
+func decodeWindowEvidence(raw json.RawMessage) (*SchedulerDownState, error) {
+	state := &SchedulerDownState{}
+	shape := struct {
+		*SchedulerDownState
+		WindowMax   *float64       `json:"windowMax"`
+		WindowNanos *time.Duration `json:"windowNanos"`
+		Supply      *float64       `json:"supply"`
+	}{SchedulerDownState: state}
+	if err := json.Unmarshal(raw, &shape); err != nil {
+		return nil, err
+	}
+	if shape.WindowMax == nil || shape.WindowNanos == nil || shape.Supply == nil {
+		return nil, nil
+	}
+	state.WindowMax, state.WindowNanos, state.Supply = *shape.WindowMax, *shape.WindowNanos, *shape.Supply
+	return state, nil
+}
+
+func (w *SchedulerCapacityWorkload) UnmarshalJSON(raw []byte) error {
+	type workload SchedulerCapacityWorkload
+	record := struct {
+		*workload
+		ScaleDown json.RawMessage `json:"scaleDown"`
+	}{workload: (*workload)(w)}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return err
+	}
+	w.ScaleDown = nil
+	if len(record.ScaleDown) == 0 {
+		return nil
+	}
+	var err error
+	w.ScaleDown, err = decodeWindowEvidence(record.ScaleDown)
+	return err
+}
+
+func (s *SchedulerSnapshot) UnmarshalJSON(raw []byte) error {
+	type snapshot SchedulerSnapshot
+	record := struct {
+		*snapshot
+		ScaleDown map[string]json.RawMessage `json:"scaleDown"`
+	}{snapshot: (*snapshot)(s)}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return err
+	}
+	s.ScaleDown = nil
+	for uid, evidence := range record.ScaleDown {
+		state, err := decodeWindowEvidence(evidence)
+		if err != nil {
+			return err
+		}
+		if state != nil {
+			if s.ScaleDown == nil {
+				s.ScaleDown = map[string]SchedulerDownState{}
+			}
+			s.ScaleDown[uid] = *state
+		}
+	}
+	if len(record.ScaleDown) != len(s.ScaleDown) {
+		s.EmptyNodeScaleDownAllowed = false
+	}
+	return nil
+}
+
 // DecodeSchedulerLine decodes one stored scheduler line and fills every
 // reference from the catalog.
 func DecodeSchedulerLine(raw []byte, catalog *ObservationCatalog) (SchedulerObservation, error) {

@@ -40,68 +40,14 @@ func TestSchedulerTwoTempoSettings(t *testing.T) {
 	}
 }
 
-func TestSchedulerTempoContinuousDecline(t *testing.T) {
-	s, snap := schedulerFixture()
-	s.ObservationWindow = time.Second
-	s.ControlInterval = time.Second
-	s.MaxObservationAge = 10 * time.Second
-	s.ScaleDownStabilization = 3 * time.Second
-	snap.Outstanding = nil
-	start := snap.At
-	var tempo SchedulerTempo
-	observe := func(second int, rate float64) SchedulerDownState {
-		snap.At = start.Add(time.Duration(second) * time.Second)
-		snap.ObservationEnd = snap.At
-		snap.ObservedSince = start.Add(-time.Hour)
-		snap.Arrivals = nil
-		capacityLoad(s, &snap, snap.Workloads[0], rate)
-		tempo.Observe(s, &snap)
-		return snap.ScaleDown["w1"]
-	}
-	if got := observe(0, 10); got.Allowed || got.DownSince != nil {
-		t.Fatalf("initial: %+v", got)
-	}
-	if got := observe(1, 5); got.Allowed || got.DownSince == nil {
-		t.Fatalf("drop: %+v", got)
-	}
-	if got := observe(3, 5); got.Allowed {
-		t.Fatalf("before boundary: %+v", got)
-	}
-	if got := observe(4, 5); !got.Allowed || !snap.EmptyNodeScaleDownAllowed {
-		t.Fatalf("boundary: %+v", got)
-	}
-	if got := observe(5, 6); !got.Allowed || got.Elapsed != 4*time.Second || snap.EmptyNodeScaleDownAllowed {
-		t.Fatalf("rise below baseline interrupted UID decline or opened vector gate: %+v", got)
-	}
-	if got := observe(6, 10); got.Allowed || got.DownSince != nil || got.Baseline != 10 {
-		t.Fatalf("return to baseline: %+v", got)
-	}
-	if got := observe(7, 12); got.Allowed || got.DownSince != nil || got.Baseline != 12 {
-		t.Fatalf("rise above baseline: %+v", got)
-	}
-	if got := observe(8, 6); got.Allowed || got.Elapsed != 0 || got.DownSince == nil {
-		t.Fatalf("new decline: %+v", got)
-	}
-	if got := observe(30, 5); got.Allowed || got.Elapsed != 0 || got.ResetReason != "ObservationGap" {
-		t.Fatalf("gap: %+v", got)
-	}
-	observe(31, 4)
-	s.ScaleDownStabilization = 4 * time.Second
-	if got := observe(32, 4); got.Allowed || got.Elapsed != 0 || got.ResetReason != "SettingsChanged" {
-		t.Fatalf("settings reset: %+v", got)
-	}
-	tempo = SchedulerTempo{}
-	if got := observe(33, 3); got.Allowed || got.DownSince != nil {
-		t.Fatalf("restart: %+v", got)
-	}
-}
-
-func TestSchedulerTempoDeclineSurvivesLowRateJitter(t *testing.T) {
+func TestSchedulerTempoDemandWindow(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ControlInterval = time.Second, time.Second
 	s.MaxObservationAge = 10 * time.Second
-	s.ScaleDownStabilization = 120 * time.Second
+	s.ScaleDownStabilization = 3 * time.Second
 	snap.Outstanding = nil
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": 1000}}
+	snap.Instances[0].Routable = map[string]bool{"w1": true}
 	start := snap.At
 	var tempo SchedulerTempo
 	observe := func(second int, rate float64) SchedulerDownState {
@@ -109,25 +55,84 @@ func TestSchedulerTempoDeclineSurvivesLowRateJitter(t *testing.T) {
 		snap.ObservationEnd, snap.ObservedSince = snap.At, start.Add(-time.Hour)
 		snap.Arrivals = nil
 		capacityLoad(s, &snap, snap.Workloads[0], rate)
-		tempo.Observe(s, &snap)
+		rows := capacityRowsForTest(s, snap, nil)
+		tempo.Observe(s, &snap, rows)
 		return snap.ScaleDown["w1"]
 	}
-	observe(0, 100)
-	downSince := start.Add(time.Second)
-	rates := []float64{20, 18, 22, 19, 21}
-	for second := 1; second <= 301; second++ {
-		got := observe(second, rates[(second-1)%len(rates)])
-		elapsed := time.Duration(second-1) * time.Second
-		if got.Baseline != 100 || got.DownSince == nil || !got.DownSince.Equal(downSince) ||
-			got.Elapsed != elapsed || got.Allowed != (elapsed >= s.ScaleDownStabilization) || got.ResetReason != "" {
-			t.Fatalf("t=%ds: low-rate jitter restarted decline: %+v", second, got)
+	// Supply is measured, never inferred from a local demand peak.
+	first := observe(0, 100)
+	if first.Supply <= 0 {
+		t.Fatalf("missing measured supply: %+v", first)
+	}
+	for second := 1; second < 10; second++ {
+		got := observe(second, first.Supply+float64(second%2))
+		if got.Allowed || snap.EmptyNodeScaleDownAllowed {
+			t.Fatalf("constant noisy demand opened gate: %+v", got)
 		}
 	}
-	if got := observe(302, 100); got.Allowed || got.DownSince != nil || got.Reason != "DemandNotDecreasing" {
-		t.Fatalf("baseline return did not cancel stabilized decline: %+v", got)
+	high := observe(10, first.Supply+10)
+	observe(11, 1)
+	if got := observe(12, 1); got.Allowed || got.WindowMax != high.WindowMax {
+		t.Fatalf("high sample expired early: %+v", got)
 	}
-	if got := observe(303, 20); got.Allowed || got.DownSince == nil || got.Elapsed != 0 {
-		t.Fatalf("new decline did not restart after baseline return: %+v", got)
+	if got := observe(13, 1); !got.Allowed || got.WindowMax != 1 || !snap.EmptyNodeScaleDownAllowed {
+		t.Fatalf("left boundary not expired: %+v", got)
+	}
+	if got := observe(30, 1); got.Allowed || got.ResetReason != schedulerObservationGap {
+		t.Fatalf("gap: %+v", got)
+	}
+	observe(31, 1)
+	s.ScaleDownStabilization = 4 * time.Second
+	if got := observe(32, 1); got.Allowed || got.ResetReason != "SettingsChanged" {
+		t.Fatalf("settings: %+v", got)
+	}
+	tempo = SchedulerTempo{}
+	if got := observe(33, 1); got.Allowed || got.ResetReason != schedulerFirstObservation {
+		t.Fatalf("restart: %+v", got)
+	}
+	s.ScaleDownStabilization = 0
+	if got := observe(34, 1); !got.Allowed {
+		t.Fatalf("zero window delayed: %+v", got)
+	}
+	if got := observe(35, first.Supply+10); got.Allowed {
+		t.Fatalf("zero window bypassed supply: %+v", got)
+	}
+	s.ScaleDownStabilization = 2 * time.Second
+	observe(36, 1)
+	snap.Reasons = []string{schedulerObservationGap}
+	observe(37, 1)
+	snap.Reasons = nil
+	if got := observe(38, 1); got.Allowed {
+		t.Fatalf("invalid interval counted as coverage: %+v", got)
+	}
+	if got := observe(39, 1); got.Allowed {
+		t.Fatalf("recovery window completed early: %+v", got)
+	}
+	if got := observe(40, 1); !got.Allowed {
+		t.Fatalf("recovery window failed to complete: %+v", got)
+	}
+	if got := observe(39, 1); got.Allowed || got.ResetReason != schedulerObservationGap {
+		t.Fatalf("clock reversal retained window: %+v", got)
+	}
+}
+
+func TestSchedulerTempoAllowsSpareSupplyAboveWindowMaximum(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval = time.Second, time.Second
+	s.ScaleDownStabilization = 3 * time.Second
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": schedulerRouteUnits}}
+	start := snap.At
+	var tempo SchedulerTempo
+	for second, rate := range []float64{110, 110, 20, 20} {
+		snap.At = start.Add(time.Duration(second) * time.Second)
+		snap.ObservationEnd, snap.ObservedSince = snap.At, start.Add(-time.Hour)
+		capacityLoad(s, &snap, snap.Workloads[0], rate)
+		rows := capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 160 })
+		tempo.Observe(s, &snap, rows)
+	}
+	state := snap.ScaleDown["w1"]
+	if state.Rate != 20 || state.WindowMax != 110 || state.Supply != 160 || !state.Allowed || !snap.EmptyNodeScaleDownAllowed {
+		t.Fatalf("spare capacity gate did not preserve past maximum: %+v", state)
 	}
 }
 
@@ -229,6 +234,8 @@ func TestSchedulerTempoUIDIndependenceAndVectorGate(t *testing.T) {
 	s.ObservationWindow, s.ControlInterval, s.MaxObservationAge = time.Second, time.Second, time.Hour
 	s.ScaleDownStabilization = 2 * time.Second
 	snap.Outstanding = nil
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": 1000}}
+	snap.Instances[0].Routable = map[string]bool{"w1": true}
 	start := snap.At
 	var tempo SchedulerTempo
 	observe := func(second int, a, b float64) {
@@ -237,19 +244,19 @@ func TestSchedulerTempoUIDIndependenceAndVectorGate(t *testing.T) {
 		snap.Arrivals = nil
 		capacityLoad(s, &snap, snap.Workloads[0], a)
 		capacityLoad(s, &snap, w2, b)
-		tempo.Observe(s, &snap)
+		tempo.Observe(s, &snap, capacityRowsForTest(s, snap, nil))
 	}
 	observe(0, 10, 10)
-	observe(1, 5, 10)
-	observe(2, 5, 12)
-	observe(3, 5, 14)
+	observe(1, 1, 10)
+	observe(2, 1, 12)
+	observe(3, 1, 14)
 	if !snap.ScaleDown["w1"].Allowed || snap.ScaleDown["w2"].Allowed || snap.EmptyNodeScaleDownAllowed {
-		t.Fatalf("UIDs were globally synchronized or increases offset: %+v", snap.ScaleDown)
+		t.Fatalf("UID gates coupled: %+v", snap.ScaleDown)
 	}
-	snap.Reasons = []string{"ObservationGap"}
-	observe(4, 4, 14)
-	if snap.ScaleDown["w1"].DownSince != nil || snap.EmptyNodeScaleDownAllowed {
-		t.Fatal("observation gap retained decline")
+	snap.Reasons = []string{schedulerObservationGap}
+	observe(4, 1, 14)
+	if snap.ScaleDown["w1"].Allowed || len(tempo.windows["w1"].samples) != 0 || snap.EmptyNodeScaleDownAllowed {
+		t.Fatal("invalid observation retained window")
 	}
 }
 
@@ -288,23 +295,29 @@ func TestSchedulerTempoFixedPowerGateIncludesTargetlessKeep(t *testing.T) {
 	}
 }
 
-func TestSchedulerTempoSelectedRebasesOwnerOnlyRemoval(t *testing.T) {
-	since := time.Unix(100, 0)
-	declining := SchedulerDownState{Baseline: 10, Previous: 5, Rate: 5, DownSince: &since, Elapsed: time.Minute, Allowed: true}
-	tempo := SchedulerTempo{states: map[string]SchedulerDownState{"w1": declining, "w2": declining}}
-	unrouted := SchedulerInstance{ID: "owned-unrouted", OwnerWorkloadUID: "w1"}
-	decision := SchedulerDecision{Keep: SchedulerCandidate{Instances: []SchedulerInstance{unrouted}}, Target: &SchedulerCandidate{Instances: []SchedulerInstance{unrouted}}}
-	tempo.Selected(decision)
-	if state := tempo.states["w1"]; state.Baseline != 10 || state.DownSince == nil {
-		t.Fatalf("retained owner-only runner reset the timer: %+v", state)
+func TestSchedulerTempoUIDReplacementResetsVector(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval = time.Second, time.Second
+	s.ScaleDownStabilization = time.Second
+	snap.Outstanding = nil
+	snap.Routing = map[string]map[string]int32{"w1": {"i1": 1000}}
+	snap.Instances[0].Routable = map[string]bool{"w1": true}
+	start := snap.At
+	for second := range 2 {
+		snap.At = start.Add(time.Duration(second) * time.Second)
+		snap.ObservationEnd, snap.ObservedSince = snap.At, start.Add(-time.Hour)
+		snap.Arrivals = nil
+		capacityLoad(s, &snap, snap.Workloads[0], 1)
 	}
-	decision.Target.Instances = nil
-	tempo.Selected(decision)
-	if state := tempo.states["w1"]; state.Baseline != 5 || state.DownSince != nil || state.Elapsed != 0 || state.Allowed {
-		t.Fatalf("owner-only removal did not rebase selection: %+v", state)
-	}
-	if state := tempo.states["w2"]; state.Baseline != 10 || state.DownSince == nil || !state.Allowed {
-		t.Fatalf("unrelated Workload was rebased: %+v", state)
+	var tempo SchedulerTempo
+	tempo.Observe(s, &snap, capacityRowsForTest(s, snap, nil))
+	snap.Workloads[0].UID = "replacement"
+	s.AutonomousWorkloads = []string{"replacement"}
+	snap.At = snap.At.Add(time.Second)
+	snap.ObservationEnd = snap.At
+	tempo.Observe(s, &snap, capacityRowsForTest(s, snap, nil))
+	if snap.EmptyNodeScaleDownAllowed || snap.ScaleDown["replacement"].Allowed {
+		t.Fatal("new UID reused prior coverage")
 	}
 }
 
@@ -318,14 +331,14 @@ func TestSchedulerTempoRecordsEarlyDecisionReset(t *testing.T) {
 				snapshot.Reasons = []string{schedulerObservationGap}
 			}
 			var tempo SchedulerTempo
-			tempo.Observe(s, &snapshot)
+			tempo.Observe(s, &snapshot, nil)
 			rows := capacityRowsForTest(s, snapshot, nil)
 			decision := capacityDecideForTest(t, s, snapshot, rows)
 			if decision.Target != nil || decision.Capacity == nil || decision.Capacity.Search != nil || len(decision.Capacity.Workloads) != 1 {
 				t.Fatalf("fixture must return before plan search with timer evidence: %+v", decision)
 			}
 			down := decision.Capacity.Workloads[0].ScaleDown
-			if down == nil || down.ResetReason != "FirstObservation" || down.Allowed || decision.Capacity.Period != s.ComparisonPeriod {
+			if down == nil || down.ResetReason != schedulerFirstObservation || down.Allowed || decision.Capacity.Period != s.ComparisonPeriod {
 				t.Fatalf("early reset evidence missing: %+v", decision.Capacity)
 			}
 			// A later observed gap records the interruption too, not just startup.
@@ -333,10 +346,10 @@ func TestSchedulerTempoRecordsEarlyDecisionReset(t *testing.T) {
 			snapshot.At = snapshot.At.Add(time.Second)
 			snapshot.ObservationEnd = snapshot.At
 			snapshot.Reasons = []string{schedulerObservationGap}
-			tempo.Observe(s, &snapshot)
+			tempo.Observe(s, &snapshot, rows)
 			decision = capacityDecideForTest(t, s, snapshot, rows)
 			down = decision.Capacity.Workloads[0].ScaleDown
-			if down.ResetReason != schedulerObservationGap || down.DownSince != nil {
+			if down.ResetReason != schedulerObservationGap || down.Allowed {
 				t.Fatalf("observation interruption disappeared from decision: %+v", down)
 			}
 		})

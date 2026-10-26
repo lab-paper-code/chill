@@ -85,9 +85,9 @@ approximately **52-minute** break-even: do not execute or extend H to justify it
 
 Replace `SchedulerDownState` baseline/previous/downSince/elapsed and
 `SchedulerTempo.globalSince` with timestamped per-UID demand history.
-`decision.capacity.workloads[].scaleDown` records rate, windowStart/windowEnd,
-observedSince, windowComplete, maxRate, currentCapacity, allowed, reason and
-optional resetReason. Remove old fields/readers rather than dual-write aliases;
+`decision.capacity.workloads[].scaleDown` records rate, windowMax (D),
+windowNanos (W), supply (actual Ready/ACK C), allowed, reason and optional
+resetReason. Remove old fields/readers rather than dual-write aliases;
 old stored records remain historical evidence, not proof under the new rule.
 
 Do not stretch H to accommodate a candidate. Exclude a transition whose common
@@ -99,9 +99,9 @@ Freeze the values in `decision.settings`, search bounds and Run
 
 Authoritative detail: [scheduler SRS](../spec/scheduler/SRS.md), SCH-55–59 /
 AC-42–44, and [planner §15](../design/serving/analytic-planner.md#15-두-박자-후보-허가와-고정-h--sch-5558).
-Current code: `internal/serving/scheduler_tempo.go` (`SchedulerTempo.Observe`,
-`Selected`), `scheduler_capacity.go` (candidate comparison/period),
-`scheduler_reserve.go` (transition supply), `scheduler_idle_gate.go` (idle paths),
+Current code: `internal/serving/scheduler_tempo.go` (`Observe` accepts existing
+capacity rows to measure supply; `Selected` is removed), `scheduler_capacity.go`
+(candidate comparison/period), `scheduler_reserve.go` (transition supply),
 and `scheduler.go:SchedulerSettings.Validate` (settings).
 
 ## Rationale and rejected alternatives

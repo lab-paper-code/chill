@@ -30,6 +30,7 @@ func poolsInstance(base SchedulerInstance, id string, node NodeReference, mode, 
 	p := *base.Profile
 	p.ID, p.NodeName, p.Condition.NodeUID, p.Condition.PowerMode = p.ID+"@"+node.UID+"-"+mode, node.Name, node.UID, mode
 	base.ID, base.Node, base.Profile, base.WorkloadUID, base.IdleMeter = id, node, &p, uid, "wall-"+node.UID
+	base.Routable = map[string]bool{uid: true}
 	return base
 }
 

@@ -53,6 +53,11 @@ func capacityKappaByProfile(kappa map[string]float64) func(SchedulerOption) floa
 
 func capacityDecideForTest(t testing.TB, s SchedulerSettings, snap SchedulerSnapshot, rows []CapacityRow) SchedulerDecision {
 	t.Helper()
+	// These fixtures model an acknowledged route by their serving weights unless
+	// the case supplies an explicit routing snapshot.
+	if snap.Routing == nil {
+		snap.Routing = schedulerInstanceRouting(context.Background(), snap.Workloads, snap.Instances)
+	}
 	d, err := EvaluateScheduler(context.Background(), s, snap, rows)
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +82,13 @@ func capacityPlannerForTest(t testing.TB, s SchedulerSettings, snap SchedulerSna
 	t.Helper()
 	ctx := context.Background()
 	snap = schedulerCanonical(snap)
+	if snap.Routing == nil {
+		snap.Routing = schedulerInstanceRouting(ctx, snap.Workloads, snap.Instances)
+	}
+	if s.ScaleDownStabilization == 0 && snap.ScaleDown == nil {
+		var tempo SchedulerTempo
+		tempo.Observe(s, &snap, rows)
+	}
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: schedulerCommonNodes(s, snap), Instances: snap.Instances, Routing: schedulerInstanceRouting(ctx, snap.Workloads, snap.Instances)}
 	for uid, routing := range snap.Routing {
 		keep.Routing[uid] = routing
@@ -560,10 +572,10 @@ func TestCapacityRetainedKappaFollowsTheChain(t *testing.T) {
 	}
 }
 
-// A Workload served by one Node can meet its SLO only by changing that Node's
-// mode: the change stops the routed instance before the power action, the
-// chain charges that outage to κ_ret and r, and the plan stays a candidate.
-func TestCapacitySingleNodeRaisesItsMode(t *testing.T) {
+// Raising a mode that stops the only routed executor is a slow physical
+// replacement, not a fast policy-only capacity recovery. W=0 still requires
+// spare actual supply before admitting that interruption.
+func TestCapacitySingleNodeStoppingModeRaiseNeedsSpareSupply(t *testing.T) {
 	s, snap := schedulerFixture()
 	current := snap.Instances[0]
 	n1 := current.Node
@@ -579,8 +591,10 @@ func TestCapacitySingleNodeRaisesItsMode(t *testing.T) {
 	}
 	capacityLoad(s, &snap, snap.Workloads[0], 30)
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{current.Profile.ID: 10, raised.Profile.ID: 50})))
-	if d.Target == nil || d.Target.Nodes[0].PowerMode != schedulerTestEcoMode || !slices.ContainsFunc(d.Target.Instances, func(i SchedulerInstance) bool { return i.Profile.ID == raised.Profile.ID }) {
-		t.Fatalf("one Node could not change its mode to meet the SLO: %s %v %+v", d.Status, d.Reasons, poolsPlans(d, n1))
+	if d.Target != nil && d.Target.Nodes[0].PowerMode == schedulerTestEcoMode || !slices.ContainsFunc(poolsPlans(d, n1), func(plan SchedulerNodePlan) bool {
+		return plan.Tempo == schedulerTempoSlow && plan.Reason == schedulerScaleDownStabilizing
+	}) {
+		t.Fatalf("stopping replacement bypassed current-supply protection: %s %v %+v", d.Status, d.Reasons, poolsPlans(d, n1))
 	}
 }
 

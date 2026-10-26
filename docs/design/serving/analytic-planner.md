@@ -354,7 +354,7 @@ strict scheduler 설정 decode/검증·설정 API·ConfigMap·Dashboard·sample�
 `decision.settings`와 `decision.search.bounds`에 세 설정값을 고정하고,
 `decision.capacity.periodNanos`는 사용한 H와 일치시킨다.
 `decision.capacity.workloads[].scaleDown`은 구 timer 형식을 대체하여
-`rate`(현재 유효 수요), `windowStart`/`windowEnd`(요청 구간), `observedSince`(연속 유효 관측 시작), `windowComplete`, `maxRate`(D), `currentCapacity`(C), `allowed`, `reason`, 선택적 `resetReason`을 기록한다. `baselineRate`/`previousRate`/`downSince`/`elapsedNanos`는 삭제하며 병행 writer/reader나 alias를 두지 않는다. 기존 저장 기록은 당시 schema의 역사 자료로 보존하고 새 창 판정으로 소급 해석하지 않는다. 탐색 전 반환에도 창 불완전/공백 근거를 남긴다. 빈 Node 판정은 같은 UID별 기록의 결합이며 후보에는 `slow` 분류와 창/공급 또는 본전 보류 이유, H·keep/후보 에너지·gain·minimumGain/payback 판정을 연결한다.
+`rate`(현재 유효 수요), `windowMax`(D), `windowNanos`(설정 W), `supply`(현재 실제 Ready/ACK 공급 C), `allowed`, `reason`, 선택적 `resetReason`을 기록한다. `baselineRate`/`previousRate`/`downSince`/`elapsedNanos`는 삭제하며 병행 writer/reader나 alias를 두지 않는다. 기존 저장 기록은 당시 schema의 역사 자료로 보존하고 새 창 판정으로 소급 해석하지 않는다. 탐색 전 반환에도 창 불완전/공백 근거를 남긴다. 빈 Node 판정은 같은 UID별 기록의 결합이며 후보에는 `slow` 분류와 창/공급 또는 본전 보류 이유, H·keep/후보 에너지·gain·minimumGain/payback 판정을 연결한다.
 원본 raw archive 보존과 현재 API의 typed decode(`observation_log_scheduler.go:DecodeSchedulerLine`)는 별도 경계다. 구 timer 기록을 새 구조체로 decode해 창 필드 영값과 옛 `allowed`를 섞은 현재 창 기록으로 제공하지 않는다. 현재 API·Dashboard에서는 구 `scaleDown`을 생략하거나 명시적으로 “구 형식”이라고 표시하며, 원본 archive는 그대로 남긴다. 구 timer decoder·alias·병행 reader는 추가하지 않는다. E5 집계의 기존 search/에너지 계약은 유지하되 새 창 증거와 구 timer 증거를 혼합하지 않는다. Dashboard 설정 도움말의 “하강이 이 기간 유지”도 “지난 기간의 최대 유효 수요로 축소를 판정”으로 바꾸고, 새 창 구조화 표시는 타입과 표시를 함께 이행한다.
 예비 평가는 Workload별 수요·필요 κ·구간별 가용 κ·부족 이유를 같은 결정에 연결한다.
 Run 시작의 `binding.schedulerSettings`, 설정 캡처와 summary는 같은 값을 보존하며
