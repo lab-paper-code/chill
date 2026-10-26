@@ -132,6 +132,7 @@ type BatchProfile struct {
 	DurationNanos        []float64 `json:"durationNanos"`
 	EnergyPerInputJoules float64   `json:"energyPerInputJoules"`
 	MemoryBytes          uint64    `json:"memoryBytes"`
+	MeanWallWatts        float64   `json:"meanWallWatts,omitempty"`
 }
 
 // Profile retains the frozen measurement condition and its raw evidence. It is
@@ -144,6 +145,7 @@ type Profile struct {
 	Condition       profilederivation.CurvePlanSpec `json:"condition"`
 	Batches         []BatchProfile                  `json:"batches"`
 	ConfidenceLevel float64                         `json:"confidenceLevel"`
+	TrialsPerBatch  int                             `json:"trialsPerBatch,omitempty"`
 	// IdleBaselineWatts is the exact baseline subtracted by the incremental
 	// estimator. Whole-node prediction adds it back according to its scope.
 	IdleBaselineWatts float64                       `json:"idleBaselineWatts"`
@@ -153,7 +155,39 @@ type Profile struct {
 	// RuntimeDelivery is the JSON delivery of the measured RunConfig, read from
 	// the same verified raw evidence. Preparation projects RKNNLite host access
 	// and the runner's delivery file from it; views and observation logs omit it.
-	RuntimeDelivery json.RawMessage `json:"-"`
+	RuntimeDelivery json.RawMessage    `json:"-"`
+	Reuse           *ProfileReuseCheck `json:"reuse,omitempty"`
+}
+
+// ProfileReuseCheck retains the comparison without merging either raw population.
+type ProfileReuseCheck struct {
+	SourceProfileID             string                        `json:"sourceProfileID"`
+	ConfirmationProfileID       string                        `json:"confirmationProfileID"`
+	SourceReference             evidencestore.ObjectIdentity  `json:"sourceReference"`
+	ConfirmationReference       evidencestore.ObjectIdentity  `json:"confirmationReference"`
+	SourceNode                  NodeReference                 `json:"sourceNode"`
+	TargetNode                  NodeReference                 `json:"targetNode"`
+	MaximumRelativeDifference   float64                       `json:"maximumRelativeDifference"`
+	ConfirmationActiveSeconds   int                           `json:"confirmationActiveSeconds"`
+	ConfirmationIdleSeconds     int                           `json:"confirmationIdleSeconds"`
+	ConfirmationTrialsPerBatch  int                           `json:"confirmationTrialsPerBatch"`
+	SourceIdleWatts             float64                       `json:"sourceIdleWatts"`
+	TargetIdleWatts             float64                       `json:"targetIdleWatts"`
+	IdlePowerRelativeDifference *float64                      `json:"idlePowerRelativeDifference,omitempty"`
+	Batches                     []ProfileReuseBatchCheck      `json:"batches,omitempty"`
+	Outcome                     string                        `json:"outcome"`
+	Reason                      string                        `json:"reason,omitempty"`
+	Record                      *evidencestore.ObjectIdentity `json:"record,omitempty"`
+}
+
+type ProfileReuseBatchCheck struct {
+	Batch                     int     `json:"batch"`
+	SourceMeanServiceNanos    float64 `json:"sourceMeanServiceNanos"`
+	TargetMeanServiceNanos    float64 `json:"targetMeanServiceNanos"`
+	ServiceRelativeDifference float64 `json:"serviceRelativeDifference"`
+	SourceMeanWallWatts       float64 `json:"sourceMeanWallWatts"`
+	TargetMeanWallWatts       float64 `json:"targetMeanWallWatts"`
+	PowerRelativeDifference   float64 `json:"powerRelativeDifference"`
 }
 
 // NativeBundle projects this catalog-verified profile for immutable startup

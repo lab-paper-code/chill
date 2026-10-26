@@ -402,7 +402,7 @@ H를 바꾸며 미선택 후보 때문에 자동 연장하지 않는다.
 Catalog가 [측정 API §11](measurement-api.md#11-같은-기종-node-프로파일-재사용--pr-0104)의
 확인 판정 뒤 대상 Node UID의 행을 만든다. 계획기의 물리 UID guard를 느슨하게 하거나
 DeviceClass만 맞는 원본을 후보에 직접 넣지 않는다. 재사용 profile ID는 확인 측정 ID의
-`/reuse` 파생 ID이며 행 key·불변 startup bundle·정확 비용 참조에도 이 ID를 쓴다.
+`/reuse-<source·허용값의 SHA256>` 파생 ID이며 행 key·불변 startup bundle·정확 비용 참조에도 이 ID를 쓴다.
 서비스 분포·증분 에너지는 원본, idle/meter·runtime/GPU UUID는 대상 확인 근거다.
 `profile.reuse`에 source/confirmation/result와 실제 차이를 기록한다.
 대상 d와 정확 비용이 없으면 기존 MissingDispatchOccupancy/MissingEvidence를 유지한다.

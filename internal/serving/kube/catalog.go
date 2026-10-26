@@ -63,8 +63,9 @@ type CatalogIssue struct {
 }
 
 type CatalogView struct {
-	Profiles        []serving.Profile `json:"profiles"`
-	Insufficiencies []CatalogIssue    `json:"insufficiencies"`
+	Profiles        []serving.Profile           `json:"profiles"`
+	Insufficiencies []CatalogIssue              `json:"insufficiencies"`
+	ReuseChecks     []serving.ProfileReuseCheck `json:"reuseChecks,omitempty"`
 }
 
 func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectBytes int64, confidenceLevel float64) (*Catalog, error) {
@@ -90,6 +91,7 @@ func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectByt
 func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (CatalogView, error) {
 	view := CatalogView{Profiles: []serving.Profile{}, Insufficiencies: []CatalogIssue{}}
 	seen := map[types.NamespacedName]struct{}{}
+	reuseRequests := map[string]string{}
 	for _, namespace := range namespaces {
 		campaigns := &edgev1alpha1.BatchEnergyOptimizationList{}
 		if err := c.store.client.List(ctx, campaigns, client.InNamespace(namespace)); err != nil {
@@ -125,6 +127,9 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (CatalogView
 			view.Insufficiencies = append(view.Insufficiencies, issues...)
 			if len(profile.Batches) > 0 {
 				view.Profiles = append(view.Profiles, profile)
+				if request, found := campaign.Annotations[profileReuseAnnotation]; found {
+					reuseRequests[profile.ID] = request
+				}
 			}
 		}
 	}
@@ -134,7 +139,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (CatalogView
 		}
 	}
 	var err error
-	view.Profiles, err = latestConditionProfiles(view.Profiles)
+	view, err = applyProfileReuse(view, reuseRequests)
 	if err != nil {
 		return CatalogView{}, err
 	}
@@ -425,8 +430,9 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		ID: source.String() + "/" + string(campaign.UID), Reference: resultReference,
 		NodeName: state.TargetNode, Condition: condition, Evidence: evidenceReferences,
 		ConfidenceLevel: c.confidenceLevel, IdleBaselineWatts: baseline.ModelLoadedIdleMeanWallWatts,
-		MeasuredAt:   measuredAt,
-		MetricSource: metricSource,
+		MeasuredAt:     measuredAt,
+		MetricSource:   metricSource,
+		TrialsPerBatch: int(campaign.Spec.TrialsPerBatch),
 	}
 	if runtimeMetadata != nil {
 		profile.RuntimeMetadata = &runtimeMetadata.Runtime
@@ -453,6 +459,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		}
 		batch.profile.EnergyPerInputJoules = batch.energySum / float64(batch.trials)
 		profile.Batches = append(profile.Batches, batch.profile)
+		profile.Batches[len(profile.Batches)-1].MeanWallWatts = batch.wallPowerSum / float64(batch.trials)
 	}
 	if len(issues) != 0 {
 		return serving.Profile{}, issues, nil
@@ -487,6 +494,19 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 		metadata.RKNN = slices.Clone(metadata.RKNN)
 		profile.RuntimeMetadata = &metadata
 	}
+	if profile.Reuse != nil {
+		check := *profile.Reuse
+		check.Batches = slices.Clone(check.Batches)
+		if check.IdlePowerRelativeDifference != nil {
+			value := *check.IdlePowerRelativeDifference
+			check.IdlePowerRelativeDifference = &value
+		}
+		if check.Record != nil {
+			reference := *check.Record
+			check.Record = &reference
+		}
+		profile.Reuse = &check
+	}
 	profile.RuntimeDelivery = slices.Clone(profile.RuntimeDelivery)
 	profile.MetricSource.MetricLabels = maps.Clone(profile.MetricSource.MetricLabels)
 	if profile.MetricSource.ThermalMetrics != nil {
@@ -501,12 +521,17 @@ type catalogBatch struct {
 	trials        int
 	energySum     float64
 	missingMemory bool
+	wallPowerSum  float64
 }
 
 func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivation.EnergyTrial, memoryBytes uint64) error {
 	if len(trial.NativeSamples) == 0 || len(trial.NativeSamples) != len(trial.LatencyMilliseconds) ||
 		math.IsNaN(energy.IncrementalWorkJoulesPerItem) || math.IsInf(energy.IncrementalWorkJoulesPerItem, 0) {
 		return errors.New("correlated runner service or measured energy evidence is missing or invalid")
+	}
+	wallPower := energy.ActiveWindowWallJoulesPerItem / energy.IdleBaselineSecondsPerItem
+	if !(energy.IdleBaselineSecondsPerItem > 0) || wallPower < 0 || math.IsNaN(wallPower) || math.IsInf(wallPower, 0) {
+		return errors.New("measured active wall power or duration is missing or invalid")
 	}
 	for _, sample := range trial.NativeSamples {
 		nanos := sample.RunnerServiceMilliseconds * 1e6
@@ -517,8 +542,9 @@ func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivati
 	}
 	b.trials++
 	b.energySum += energy.IncrementalWorkJoulesPerItem
-	if math.IsNaN(b.energySum) || math.IsInf(b.energySum, 0) {
-		return errors.New("measured energy aggregate is not finite")
+	b.wallPowerSum += wallPower
+	if math.IsNaN(b.energySum) || math.IsInf(b.energySum, 0) || math.IsNaN(b.wallPowerSum) || math.IsInf(b.wallPowerSum, 0) {
+		return errors.New("measured energy or wall power aggregate is not finite")
 	}
 	b.missingMemory = b.missingMemory || memoryBytes == 0
 	if memoryBytes > b.profile.MemoryBytes {

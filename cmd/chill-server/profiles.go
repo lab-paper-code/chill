@@ -86,6 +86,38 @@ func (o *schedulerService) preparation(
 	return spec, err
 }
 
+// Retain both Accepted and Rejected comparisons before publishing the catalog.
+// Content-addressed records preserve earlier decisions when annotations change.
+func (o *schedulerService) retainProfileReuseChecks(ctx context.Context, view *servingkube.CatalogView) error {
+	for index, check := range view.ReuseChecks {
+		check.Record = nil
+		raw, err := json.Marshal(struct {
+			SchemaVersion string                    `json:"schemaVersion"`
+			Check         serving.ProfileReuseCheck `json:"check"`
+		}{"chill.dacs.io/profile-reuse-check.v1alpha1", check})
+		if err != nil {
+			return err
+		}
+		if int64(len(raw)) > o.opts.maxEvidenceBytes {
+			return errors.New("profile reuse check exceeds immutable object bound")
+		}
+		reference := evidencestore.ObjectIdentity{Store: o.opts.storeName,
+			Key:  fmt.Sprintf("serving/profile-reuse/%s/%x.json", check.ConfirmationProfileID, sha256.Sum256(raw)),
+			Size: int64(len(raw))}
+		if _, err := o.objects.PutImmutable(ctx, reference, bytes.NewReader(raw)); err != nil {
+			return err
+		}
+		view.ReuseChecks[index].Record = &reference
+		for profileIndex := range view.Profiles {
+			profile := &view.Profiles[profileIndex]
+			if profile.Reuse != nil && profile.Reuse.ConfirmationProfileID == check.ConfirmationProfileID {
+				profile.Reuse.Record = &reference
+			}
+		}
+	}
+	return nil
+}
+
 // reproducibleRuntimeAccess rejects measured delivery the generated Pod cannot
 // reproduce. RKNNLite access comes from the frozen delivery at preparation.
 func reproducibleRuntimeAccess(p serving.Profile) error {

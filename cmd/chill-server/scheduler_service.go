@@ -232,10 +232,20 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	for _, issue := range view.Insufficiencies {
 		sources = append(sources, "catalog:"+issue.Code+":"+issue.Source.String())
 	}
+	if len(view.ReuseChecks) != 0 {
+		checks, err := json.Marshal(view.ReuseChecks)
+		if err != nil {
+			return err
+		}
+		sources = append(sources, "profile-reuse:"+string(checks))
+	}
 	slices.Sort(sources)
 	signature := strings.Join(sources, "\x00")
 	if o.controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources {
 		return nil
+	}
+	if err = o.retainProfileReuseChecks(ctx, &view); err != nil {
+		return err
 	}
 	preparations, issues := o.preparations(ctx, config, view.Profiles)
 	view.Insufficiencies = append(view.Insufficiencies, issues...)

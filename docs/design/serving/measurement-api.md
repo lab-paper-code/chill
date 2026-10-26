@@ -426,7 +426,7 @@ E5 전 기준 범위는 Node당 기준 모드의 필수 profile, d와 정확 비
 
 ### 11.1 저장과 판정
 
-새 CRD·API 필드·일반화 엔진을 만들지 않는다. 대상의 짧은 확인 측정은 기존
+새 CRD·CRD spec/status 필드·일반화 엔진을 만들지 않는다. 대상의 짧은 확인 측정은 기존
 BatchEnergyOptimization(BEO)→ProfilingRun→불변 result/raw 경로를 그대로 쓴다.
 대상 BEO 생성 시 metadata annotation을 함께 선언한다.
 
@@ -462,14 +462,20 @@ warmup·settling·관측 interval/timeout·observer image는 동일해야 한다
 
 `CatalogView.reuseChecks`는 원본·확인 ID/불변 결과 참조, 양쪽 Node, 허용값,
 idle 차이와 배치별 service/active wall 차이 및 Accepted/Rejected·사유를 제공한다.
-원시 확인 result/raw와 입력 annotation은 기존 BEO에 보존된다.
-Accepted profile의 `reuse`에도 같은 판정 기록을 넣어 기존 catalog 관측 기록과
-scheduler evidence가 보존한다. 거절 결과도 운영자가 profiles 응답과 원시 입력을
-함께 보존한다. catalog는 클러스터 annotation/status를 쓰지 않는다.
+원시 확인 result/raw와 입력 annotation은 기존 BEO에 보존된다. scheduler service는
+Accepted/Rejected 모두 `{schemaVersion:"chill.dacs.io/profile-reuse-check.v1alpha1",check:…}`를
+`serving/profile-reuse/<확인 profile ID>/<판정 본문의 SHA256>.json`에 PutImmutable로
+보존한 뒤에만 catalog를 발행한다. `reuseChecks[].record`와 Accepted profile의
+`reuse.record`가 이 불변 참조를 가리킨다. annotation 변경·원본 무효화 뒤의 거절도
+새 content-addressed 기록이므로 앞선 판정을 덮어쓰지 않는다.
+service refresh signature는 profile ID뿐 아니라 판정 본문을 포함하여 허용값·사유
+변경을 놓치지 않는다. catalog는 클러스터 annotation/status를 쓰지 않는다.
 
 ### 11.2 대상 행과 물리 개체 계약
 
-재사용 행의 ID는 `확인 profile ID/reuse`; `Reference`, `MeasuredAt`, frozen
+재사용 행의 ID는 `확인 profile ID/reuse-<SHA256(sourceProfileID + NUL + 허용값)>`;
+annotation 변경 시 불변 startup bundle을 덮어쓰지 않도록 source·정책도 ID에 포함한다.
+`Reference`, `MeasuredAt`, frozen
 condition, NodeName/UID, meter, runtime metadata/delivery와 idle baseline은 대상이다.
 서비스 분포와 증분 에너지는 원본의 값을 유지하고, 메모리는 원본/대상 관측 최대 중
 큰 값을 쓴다. 활성 평균 벽전력은 확인값이다. `Evidence`에 양쪽 result/raw를 연결한다.
@@ -513,7 +519,7 @@ CPU affinity는 기종이 같아도 임의 재배치하지 않고 동일 실측 
    `reuseChecks`가 Accepted이고 차이 세 종류가 모두≤0.05인지 확인한다.
    Rejected이면 그 사유·차이와 원시 result를 보존하고 **독립 측정**으로 전환한다.
    허용값 확대, 일부 batch 제외, 원본 값 복제나 강제 Complete로 통과시키지 않는다.
-5. Accepted 행의 `id=확인ID/reuse`, node UID=genesis3, GPU UUID=genesis3 실측 UUID,
+5. Accepted 행의 `id=확인ID/reuse-<hash>`, node UID=genesis3, GPU UUID=genesis3 실측 UUID,
    meter=genesis3이고 service samples/energy는 source와 같은지 확인한다.
    profiles 응답의 preparations와 scheduler snapshot의 options에 그 ID가 있는지 확인한다.
    기존 genesis3 독립 profile이 더 최신이라 선택되면 이를 삭제/무효화하지 말고 동일

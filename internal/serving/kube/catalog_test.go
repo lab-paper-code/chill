@@ -31,7 +31,8 @@ func TestCatalogPreservesRawDistributionAndMissingMemory(t *testing.T) {
 		{BatchID: 2, BatchSize: 2, RunnerServiceMilliseconds: 3},
 		{BatchID: 3, BatchSize: 2, RunnerServiceMilliseconds: 1},
 	}
-	energy := profilederivation.EnergyTrial{Batch: 2, IncrementalWorkJoulesPerItem: 0.7}
+	energy := profilederivation.EnergyTrial{Batch: 2, IncrementalWorkJoulesPerItem: 0.7,
+		ActiveWindowWallJoulesPerItem: 2, IdleBaselineSecondsPerItem: .1}
 	if err := batch.add(trial, energy, 1024); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +45,7 @@ func TestCatalogPreservesRawDistributionAndMissingMemory(t *testing.T) {
 			t.Fatalf("raw duration %d = %g, want %g", index, batch.profile.DurationNanos[index], sample)
 		}
 	}
-	if batch.profile.MemoryBytes != 2048 || batch.missingMemory {
+	if batch.profile.MemoryBytes != 2048 || batch.missingMemory || batch.wallPowerSum/float64(batch.trials) != 20 {
 		t.Fatalf("measured trial aggregation = %+v", batch)
 	}
 	if err := batch.add(trial, energy, 0); err != nil || !batch.missingMemory {

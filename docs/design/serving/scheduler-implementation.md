@@ -921,4 +921,6 @@ Node UID 소비자 전부의 계약과 CampaignOps 절차를 정의한다.
 기존 scheduler_capacity/observer/operations/runner/cost_power/firstfloor의 UID guard는
 그대로 유지하고 대상 행의 Condition·RuntimeMetadata·RuntimeDelivery를 사용한다.
 catalog의 `reuseChecks`, profile의 `reuse`와 기존 BEO 불변 result/raw가 판정 근거다.
+scheduler service는 수락·거절 판정을 기존 evidence store에 content-addressed 불변 기록으로
+저장한 뒤 `record` 참조를 발행한다. refresh signature는 판정 본문도 포함한다.
 메모리는 양쪽 관측 최대, idle baseline과 실물 UUID/meter는 대상이며 raw 표본은 합치지 않는다.
