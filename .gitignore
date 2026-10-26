@@ -18,9 +18,7 @@ Dockerfile.cross
 # Go workspace file
 go.work
 
-# Internal research/design context. Keep these local; do not publish them.
-docs/spec/*.md
-!docs/spec/README.md
+# Postmortems stay local; do not publish them.
 docs/postmortems/*.md
 
 # Kubernetes Generated files - skip generated files, except for vendored files
