@@ -65,6 +65,23 @@ func TestApplyObservesIndependentlyAndRestartsWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestApplyLocksWhenInstantaneousClockAlreadyMatches(t *testing.T) {
+	a, request := clockAdapter(t)
+	locks := 0
+	a.run = func(_ context.Context, argv []string) ([]byte, error) {
+		if argv[len(argv)-2] == "-lgc" {
+			locks++
+		}
+		return []byte("900,900"), nil
+	}
+	if err := a.Apply(context.Background(), request, request.Target); err != nil {
+		t.Fatal(err)
+	}
+	if locks != 1 {
+		t.Fatalf("matching instantaneous MHz skipped lock: %d commands", locks)
+	}
+}
+
 func TestApplyFailureRestoresAndRemainsFailure(t *testing.T) {
 	for _, test := range []struct {
 		name, previous                       string

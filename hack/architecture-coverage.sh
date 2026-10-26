@@ -110,7 +110,7 @@ component_for() {
 }
 
 for component in "${components[@]}"; do
-  if ! rg -q "^  ${component}:" "$config"; then
+  if ! grep -q "^  ${component}:" "$config"; then
     echo "architecture error: component '$component' is missing from .go-arch-lint.yml" >&2
     exit 1
   fi

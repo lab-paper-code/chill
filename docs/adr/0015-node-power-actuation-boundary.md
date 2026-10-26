@@ -90,7 +90,7 @@ declared clock mode, or requests driver defaults when the previous point was
 not a declared mode. Cleanup errors remain joined to the original failure;
 reset command exit never proves an unlocked policy. Returning to an earlier
 successful mode uses a new desired-mode request under ADR 0020, not a hidden
-per-Run restoration lifecycle. Agent restart observes without resetting;
+per-Run restoration lifecycle. Restart observes successful requests without resetting;
 host reboot resets the non-persistent NVIDIA lock to driver defaults and the
 new bootID/read-back invalidates old operating-state evidence. No startup
 reapply or host systemd service is installed. See

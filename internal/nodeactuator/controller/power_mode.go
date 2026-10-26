@@ -225,7 +225,12 @@ func (r *PowerModeReconciler) drive(
 		r.fail(labels, annotations, metadata.PowerModeTransitionRecord{PowerMode: desired, RequestedAt: requested, Generation: generation}, failure)
 		return ctrl.Result{}, nil
 	}
-	if observeErr == nil && equality.Semantic.DeepEqual(
+	clockTarget := request.Target.Kind == nodeactuator.ActuatorKindNvidiaLockedGPUClock
+	// Current MHz can coincide with intent under dynamic clocks. A new clock
+	// request must apply the lock before a verified/settling record exists.
+	needsClockApply := clockTarget && (state == "" ||
+		state == metadata.PowerModePending && transition.VerifiedAt == nil)
+	if !needsClockApply && observeErr == nil && equality.Semantic.DeepEqual(
 		projectAPITarget(observation.Target), projectAPITarget(request.Target)) {
 		switch state {
 		case metadata.PowerModePending:
@@ -251,7 +256,7 @@ func (r *PowerModeReconciler) drive(
 			PowerMode: desired, RequestedAt: requested, Generation: generation, ApplyStartedAt: &now,
 		}, metadata.PowerModePending)
 		return ctrl.Result{RequeueAfter: time.Millisecond}, nil
-	case generation != transition.Generation:
+	case generation != transition.Generation && !needsClockApply:
 		// The host changed since the fence, a reboot included, without
 		// reaching the target. Applying again could restart the Node again.
 		r.fail(labels, annotations, transition, fmt.Sprintf("host power mode changed to generation %d without reaching %s", generation, desired))
@@ -260,6 +265,19 @@ func (r *PowerModeReconciler) drive(
 	if err := r.Host.Apply(ctx, request, request.Target); err != nil {
 		r.fail(labels, annotations, transition, err.Error())
 		return ctrl.Result{}, nil
+	}
+	if clockTarget {
+		observed, err := r.Host.Observe(ctx, request)
+		if err != nil || !equality.Semantic.DeepEqual(projectAPITarget(observed.Target), projectAPITarget(request.Target)) {
+			r.fail(labels, annotations, transition, fmt.Sprintf("NVIDIA post-apply read-back mismatch: %v", err))
+			return ctrl.Result{}, nil
+		}
+		generation, err := publishReadBack(node, observed, nil, annotations)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		return r.settle(transition, generation, observed,
+			time.Duration(policy.SettlingDurationSeconds)*time.Second, r.Now().UTC(), labels, annotations), nil
 	}
 	return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 }

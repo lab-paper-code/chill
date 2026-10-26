@@ -40,7 +40,7 @@ func (h *gpuClockHost) Apply(_ context.Context, _ nodeactuator.Request, target n
 	return nil
 }
 
-func TestNvidiaNodeUsesClockReadbackAndDoesNotReapplyAfterBoot(t *testing.T) {
+func TestNvidiaMatchingClockStillAppliesAndSettlesNewRequests(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestNvidiaNodeUsesClockReadbackAndDoesNotReapplyAfterBoot(t *testing.T) {
 		}}},
 	}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&corev1.Node{}).WithObjects(node, class).Build()
-	host := &gpuClockHost{t: t, mhz: 1500, now: time.Unix(1000, 0)}
+	host := &gpuClockHost{t: t, mhz: 900, now: time.Unix(1000, 0)}
 	reconcile := func() *corev1.Node {
 		t.Helper()
 		// Reconstruct the controller each pass, including while settling.
@@ -77,9 +77,12 @@ func TestNvidiaNodeUsesClockReadbackAndDoesNotReapplyAfterBoot(t *testing.T) {
 		}
 		return current
 	}
-	reconcile()            // Durable fence.
-	reconcile()            // Apply, but not convergence.
-	current := reconcile() // Independent read, start settling.
+	current := reconcile() // Even a matching instantaneous clock needs a fence.
+	if current.Labels[metadata.PowerModeState] != metadata.PowerModePending || host.applies != 0 {
+		t.Fatalf("matching clock bypassed lock request: %v applies=%d", current.Labels, host.applies)
+	}
+	reconcile()           // Apply the lock, independently read and start settling.
+	current = reconcile() // Restart while settling must not reapply.
 	if current.Labels[metadata.PowerModeState] != metadata.PowerModePending || host.applies != 1 {
 		t.Fatalf("premature success or duplicate apply: %v applies=%d", current.Labels, host.applies)
 	}
@@ -88,6 +91,24 @@ func TestNvidiaNodeUsesClockReadbackAndDoesNotReapplyAfterBoot(t *testing.T) {
 	if current.Labels[metadata.PowerModeState] != metadata.PowerModeSuccess || host.applies != 1 {
 		t.Fatalf("state=%v applies=%d", current.Labels, host.applies)
 	}
+	current = reconcile() // An existing successful request remains unchanged.
+	if host.applies != 1 {
+		t.Fatal("successful request reapplied after restart")
+	}
+	current.Annotations[metadata.PowerModeRequestedAt] = host.now.Format(time.RFC3339Nano)
+	if err := c.Update(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	reconcile() // A fresh same-mode request fences and applies again.
+	reconcile()
+	if host.applies != 2 {
+		t.Fatalf("fresh matching-clock request applied %d times, want 2 total", host.applies)
+	}
+	host.now = host.now.Add(11 * time.Second)
+	current = reconcile()
+	if current.Labels[metadata.PowerModeState] != metadata.PowerModeSuccess {
+		t.Fatalf("fresh request did not settle: %v", current.Labels)
+	}
 	host.mhz = 300
 	const nextBoot = "gpu-boot-2"
 	current.Status.NodeInfo.BootID = nextBoot
@@ -95,7 +116,7 @@ func TestNvidiaNodeUsesClockReadbackAndDoesNotReapplyAfterBoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	current = reconcile()
-	if host.applies != 1 || current.Annotations[metadata.PowerModeBoot] != nextBoot ||
+	if host.applies != 2 || current.Annotations[metadata.PowerModeBoot] != nextBoot ||
 		!strings.Contains(current.Annotations[metadata.PowerActuator], "300") {
 		t.Fatalf("reboot implicitly reapplied or stale readback: %v applies=%d", current.Annotations, host.applies)
 	}

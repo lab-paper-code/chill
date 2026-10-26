@@ -370,15 +370,22 @@ argv (no shell), exactly one GPU, declared exact MHz/default algorithm,
 read before settling. Current graphics=SM is the limited read-back contract;
 `clocks.max.sm` is a board ceiling, **not the lock**. No intent/cached command
 value is an observation. Driver 555.58.02 has no locked-range getter.
+With no requested mode, classify this uncontrolled state as `fixed` without
+changing the raw MHz observation. Every fresh GPU-mode request applies `-lgc`
+and settles even when instantaneous MHz already matches; only an already
+successful request is left unchanged after restart. GPU-only modes preserve
+the Node's published CPU set for admission/planning (genesis2 `0-5`, genesis3
+`0-11`), rather than declaring one class-wide `onlineCPUs` mask.
 
 Apply failure/read-back mismatch restores a previously observed declared
 point and verifies it, or uses `-rgc` when the previous point is undeclared.
 Cleanup has a fresh bounded context even after timeout/cancellation; cleanup
 errors remain joined to the original failure. Cleanup never publishes success.
 Default reset cannot prove an unlocked policy with this driver: retain raw
-operating clocks and the limitation. Agent restart only observes; reboot loses
-the non-persistent lock, changes bootID/actual clocks, and does not reapply old
-intent. No host startup/systemd hook is installed.
+operating clocks and the limitation. A successful request is only observed
+after agent restart; an unfinished new request still applies its lock. Reboot
+loses the non-persistent lock and changes bootID/actual clocks without
+reapplying old successful intent. No host startup/systemd hook is installed.
 
 The Operator creates `chill-node-agent-actuation-nvidia` separately from the
 unchanged Jetson operand. Initial operating values restrict it to `genesis2`;

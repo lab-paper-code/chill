@@ -125,9 +125,9 @@ func TestDefaultPowerActuationPoliciesMatchCatalog(t *testing.T) {
 	}
 }
 
-// Measurement admission and the planner read a mode's CPUs from the catalog
-// when the Node is in another mode, so every mode a policy switches into
-// declares them; the values are the hosts' nvpmodel CPU_ONLINE settings.
+// Jetson modes can change online CPUs, so admission and planning need their
+// nvpmodel CPU_ONLINE settings even before switching. GPU-only clock modes
+// preserve each Node's current CPU set rather than a class-wide CPU declaration.
 func TestDefaultSwitchableModesDeclareOnlineCPUs(t *testing.T) {
 	raw, err := os.ReadFile("../../charts/chill/values.yaml")
 	if err != nil {
@@ -143,7 +143,7 @@ func TestDefaultSwitchableModesDeclareOnlineCPUs(t *testing.T) {
 	}
 	for _, class := range values.Discovery.Catalog.Classes {
 		for _, mode := range class.PowerModes {
-			if mode.Actuator.Kind != edgev1alpha1.PowerModeActuatorFixed && mode.OnlineCPUs == "" {
+			if mode.Actuator.Kind == edgev1alpha1.PowerModeActuatorJetsonNVPModel && mode.OnlineCPUs == "" {
 				t.Errorf("%s mode %s declares no onlineCPUs", class.Name, mode.Name)
 			}
 		}

@@ -41,6 +41,13 @@ func readBackMode(n *core.Node, class *edge.DeviceClass) string {
 	}
 	var actuator edge.PowerModeActuator
 	readsBack := chillmeta.NodeReadBack(n, &actuator) == nil
+	// With no mode request, a discrete GPU remains under the installation's
+	// default policy. Its instantaneous MHz is still published, but is not a
+	// declared locked-mode identity.
+	if readsBack && actuator.Kind == edge.PowerModeActuatorNvidiaLockedGPUClock &&
+		n.Labels[chillmeta.PowerMode] == "" {
+		readsBack = false
+	}
 	found := ""
 	for _, m := range class.Spec.PowerModes {
 		if !readsBack && m.Actuator.Kind == edge.PowerModeActuatorFixed || readsBack && reflect.DeepEqual(m.Actuator, actuator) {
@@ -53,16 +60,17 @@ func readBackMode(n *core.Node, class *edge.DeviceClass) string {
 	return found
 }
 
-// modeOnlineCPUs is the CPU set online in mode: the DeviceClass declaration,
-// otherwise the Node's published online CPUs when mode is the mode it reads
-// back now. The published list is the current mode's, so it says nothing of
-// another mode.
+// modeOnlineCPUs uses a declared CPU set, or the current Node set for GPU-only
+// clock modes. Other undeclared modes require a matching current read-back.
 func modeOnlineCPUs(n *core.Node, class *edge.DeviceClass, mode string) (cpuset.CPUSet, bool) {
 	if class != nil {
 		for _, m := range class.Spec.PowerModes {
-			if m.Name == mode && m.OnlineCPUs != "" {
-				cpus, err := cpuset.Parse(m.OnlineCPUs)
-				return cpus, err == nil
+			if m.Name != mode {
+				continue
+			}
+			if cpus := modeCPUList(n, m); cpus != "" {
+				parsed, err := cpuset.Parse(cpus)
+				return parsed, err == nil && parsed.Size() > 0
 			}
 		}
 	}
@@ -71,6 +79,15 @@ func modeOnlineCPUs(n *core.Node, class *edge.DeviceClass, mode string) (cpuset.
 	}
 	cpus, err := cpuset.Parse(n.Annotations[chillmeta.OnlineCPUs])
 	return cpus, err == nil && cpus.Size() > 0
+}
+
+// GPU clock changes leave CPUs online; same-class Nodes can have different
+// CPU inventories, so a class-wide mask cannot describe these modes.
+func modeCPUList(n *core.Node, mode edge.PowerMode) string {
+	if mode.OnlineCPUs == "" && mode.Actuator.Kind == edge.PowerModeActuatorNvidiaLockedGPUClock {
+		return n.Annotations[chillmeta.OnlineCPUs]
+	}
+	return mode.OnlineCPUs
 }
 
 // cpuRefusal refuses a profiling measurement whose CPU allocation does not fit

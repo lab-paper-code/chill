@@ -100,9 +100,6 @@ func (a *Clock) Apply(ctx context.Context, request nodeactuator.Request, target 
 	if err != nil {
 		return fmt.Errorf("observe before NVIDIA apply: %w", err)
 	}
-	if previous.Target.NvidiaLockedGPUClock.MinMHz == clock.MinMHz {
-		return nil
-	}
 	_, applyErr := a.set(ctx, request, clock.MinMHz)
 	if applyErr == nil {
 		observed, readErr := a.Observe(ctx, request)

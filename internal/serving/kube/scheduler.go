@@ -539,7 +539,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			sn.Reasons = append(sn.Reasons, serving.NodeExcluded)
 		}
 		captureNodeInventory(&sn, n, profiles)
-		sn.ModeCPUs = declaredModeCPUs(nodeClass(n, classes.Items))
+		sn.ModeCPUs = declaredModeCPUs(n, nodeClass(n, classes.Items))
 		sn.PowerMode = readBackMode(n, nodeClass(n, classes.Items))
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
 		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
@@ -620,15 +620,19 @@ func captureNodeInventory(sn *serving.SchedulerNode, n *core.Node, profiles []se
 	}
 }
 
-// declaredModeCPUs holds, by mode, the online CPUs the Node's DeviceClass
-// declares; a plan into another mode places on them.
-func declaredModeCPUs(class *edge.DeviceClass) map[string][]int {
+// declaredModeCPUs holds declared CPU sets and preserves the Node-specific
+// current CPU set for GPU-only clock changes.
+func declaredModeCPUs(n *core.Node, class *edge.DeviceClass) map[string][]int {
 	if class == nil {
 		return nil
 	}
 	var modes map[string][]int
 	for _, m := range class.Spec.PowerModes {
-		if cpus, err := cpuset.Parse(m.OnlineCPUs); m.OnlineCPUs != "" && err == nil {
+		if list := modeCPUList(n, m); list != "" {
+			cpus, err := cpuset.Parse(list)
+			if err != nil || cpus.Size() == 0 {
+				continue
+			}
 			if modes == nil {
 				modes = map[string][]int{}
 			}

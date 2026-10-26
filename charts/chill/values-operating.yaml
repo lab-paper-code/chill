@@ -223,6 +223,7 @@ discovery:
       - actuator:
           kind: Fixed
         name: fixed
+      # GPU-only modes preserve each Node's online CPUs (no class-wide mask).
       - name: GPU_1500
         actuator: {kind: NvidiaLockedGPUClock, nvidiaLockedGPUClock: {minMHz: 1500, maxMHz: 1500}}
       - name: GPU_1200

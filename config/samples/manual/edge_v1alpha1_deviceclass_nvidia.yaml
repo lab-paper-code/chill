@@ -11,6 +11,7 @@ spec:
   powerModes:
     - name: fixed
       actuator: {kind: Fixed}
+    # GPU-only modes preserve each Node's online CPUs (no class-wide mask).
     - name: GPU_1500
       actuator:
         kind: NvidiaLockedGPUClock
