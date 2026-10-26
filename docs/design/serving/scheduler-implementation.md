@@ -910,3 +910,15 @@ AC-44는 긴 미선택 후보의 추가/삭제에도 공통 후보 H/에너지�
 
 기능 연결 검증과 연구적 SLO·에너지 개선 입증을 구분한다. 배포 버전·현재 차단·
 다음 의존성은 라이브 증거 진입 문서 한 곳에서 관리하며, 여기서 전체 FULL 통과를 선언하지 않는다.
+
+## 10. 같은 기종 profile 재사용 — PR-01..04
+
+구현 경계는 `kube/catalog.go`의 검증된 직접 profile 선택 → `catalog_reuse.go`의 확인
+판정/대상 행 materialize → 기존 `cmd/chill-server/profiles.go`의 preparations →
+observer/scheduler option이다. 새 CRD나 UID alias registry는 두지 않는다.
+[측정 API §11](measurement-api.md#11-같은-기종-node-프로파일-재사용--pr-0104)에
+Node UID 소비자 전부의 계약과 CampaignOps 절차를 정의한다.
+기존 scheduler_capacity/observer/operations/runner/cost_power/firstfloor의 UID guard는
+그대로 유지하고 대상 행의 Condition·RuntimeMetadata·RuntimeDelivery를 사용한다.
+catalog의 `reuseChecks`, profile의 `reuse`와 기존 BEO 불변 result/raw가 판정 근거다.
+메모리는 양쪽 관측 최대, idle baseline과 실물 UUID/meter는 대상이며 raw 표본은 합치지 않는다.

@@ -298,7 +298,7 @@
 - 확인 창 권고: 활성·유휴 각각 30초 이상, trial 3개 이상; 원본의 warmup·settling과 원시/벽전력 완전성 규칙 유지. 모든 재사용 배치를 확인한다. 거절되면 대상의 독립 측정으로 전환하며 기준을 넓혀 통과시키지 않는다.
 - 표현: 새 CRD 없이 대상 BatchEnergyOptimization의 `chill.dacs.io/profile-reuse` annotation에 원본 profile ID·허용 차이를 선언하고 기존 불변 결과와 원시 측정을 확인 기록으로 보존한다. Catalog가 대상 UID·GPU UUID·meter·메모리의 재사용 행과 판정 결과를 제공한다. d·operation cost·mode transition은 Node별로 유지한다.
 - 주의: U3의 읽기 전용 호스트 조사에서 genesis2/3의 RTX 2080 Ti 이름·driver는 같지만 기본 power limit(250/300W), 최대 graphics clock(2100/2175MHz)과 VBIOS가 다르다. 기종 이름만으로 통과시키지 않고 실제 확인 차이로 판정한다.
-- 연결: [catalog SRS §7](../spec/catalog/SRS.md#7-u4-같은-기종-프로파일-재사용), [측정 API §10](../design/serving/measurement-api.md#10-같은-기종-node-프로파일-재사용--pr-0104). 실클러스터 변경·실측은 CampaignOps 소유이며 이 결정 자체는 실증 완료 기록이 아니다.
+- 연결: [catalog SRS §7](../spec/catalog/SRS.md#7-u4-같은-기종-프로파일-재사용), [측정 API §11](../design/serving/measurement-api.md#11-같은-기종-node-프로파일-재사용--pr-0104). 실클러스터 변경·실측은 CampaignOps 소유이며 이 결정 자체는 실증 완료 기록이 아니다.
 
 ## 2026-10-27 — U7 E5 실패 장면·집계 권고안 적용
 

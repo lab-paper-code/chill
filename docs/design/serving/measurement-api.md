@@ -421,3 +421,112 @@ E5 전 기준 범위는 Node당 기준 모드의 필수 profile, d와 정확 비
 - [승인 manifest](/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/phase-a/measurement-generalization-20261024/approved/)
 - [비용과 d 결정 근거](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/implementation-contract-20261024.txt)
 - [D2와 E5 승인 근거](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/deployment2-e5-proposal-20261024.md)
+
+## 11. 같은 기종 Node 프로파일 재사용 — PR-01..04
+
+### 11.1 저장과 판정
+
+새 CRD·API 필드·일반화 엔진을 만들지 않는다. 대상의 짧은 확인 측정은 기존
+BatchEnergyOptimization(BEO)→ProfilingRun→불변 result/raw 경로를 그대로 쓴다.
+대상 BEO 생성 시 metadata annotation을 함께 선언한다.
+
+```yaml
+metadata:
+  annotations:
+    chill.dacs.io/profile-reuse: '{"sourceProfileID":"chill-system/SOURCE-BEO/SOURCE-UID","maximumRelativeDifference":0.05}'
+```
+
+`sourceProfileID`는 같은 namespace의 **직접 측정** catalog profile ID다.
+자기 자신·전이적 재사용·무효화/삭제/대체되어 catalog에서 빠진 원본은 거절한다.
+annotation의 두 필드는 필수이고 알 수 없는 필드·범위 밖/비유한 허용 차이는 거절한다.
+원본은 최신 조건 선택 **후**의 유효 profile이어야 한다. 확인 BEO는 자동으로 일반
+독립 profile 후보가 되지 않는다. 실패 시 annotation을 지워 짧은 측정을 독립 측정처럼
+승격하지 말고 원인과 원시 근거를 보존한 뒤 새 BEO로 독립 측정한다.
+
+원본과 확인의 frozen condition을 비교하되 plan 이름, Node UID, meter identity,
+GPU UUID, 활성/유휴의 측정 창 길이만 비교에서 제외한다. DeviceClass, image digest,
+모델·전처리·데이터셋, mode, CPU request/limit/affinity/격리·thread, accelerator
+할당·권한, runtime 설정·version과 initialized batches는 일치해야 한다.
+확인 창은 활성·유휴 각각 30초 이상이고 BEO의 기존 trial≥3 계약을 유지한다.
+warmup·settling·관측 interval/timeout·observer image는 동일해야 한다.
+원본의 모든 실측 배치가 확인에 있어야 하며 확인이 빠진 배치를 추정해 추가하지 않는다.
+
+배치별 평균 서비스 시간은 raw RUNNER SERVICE 표본 평균이다. 활성 평균 벽전력은
+각 trial의 `activeWindowWallJoulesPerItem / idleBaselineSecondsPerItem`
+(동일 창의 총 벽에너지/측정초)를 trial 사이 산술 평균한다. 서비스시간으로
+전력을 역산하거나 증분 전력을 전체 벽전력으로 비교하지 않는다.
+유휴 평균은 기존 model-loaded idle baseline이다.
+각 지표에 `abs(target−source)/source`를 적용하고 모두 설정값 이하이면 Accepted다.
+분모≤0, 결측·비유한 값, 조건 불일치와 차이 초과는 Rejected이며 독립 측정을 요구한다.
+권고 0.05의 근거와 한계는 [SRS §7](../../spec/catalog/SRS.md#7-u4-같은-기종-프로파일-재사용)을 따른다.
+
+`CatalogView.reuseChecks`는 원본·확인 ID/불변 결과 참조, 양쪽 Node, 허용값,
+idle 차이와 배치별 service/active wall 차이 및 Accepted/Rejected·사유를 제공한다.
+원시 확인 result/raw와 입력 annotation은 기존 BEO에 보존된다.
+Accepted profile의 `reuse`에도 같은 판정 기록을 넣어 기존 catalog 관측 기록과
+scheduler evidence가 보존한다. 거절 결과도 운영자가 profiles 응답과 원시 입력을
+함께 보존한다. catalog는 클러스터 annotation/status를 쓰지 않는다.
+
+### 11.2 대상 행과 물리 개체 계약
+
+재사용 행의 ID는 `확인 profile ID/reuse`; `Reference`, `MeasuredAt`, frozen
+condition, NodeName/UID, meter, runtime metadata/delivery와 idle baseline은 대상이다.
+서비스 분포와 증분 에너지는 원본의 값을 유지하고, 메모리는 원본/대상 관측 최대 중
+큰 값을 쓴다. 활성 평균 벽전력은 확인값이다. `Evidence`에 양쪽 result/raw를 연결한다.
+GPU UUID는 condition.RuntimeAccess, RuntimeMetadata, runtime delivery 모두
+대상 확인 기록에서 가져오며 원본 UUID를 치환해 가장하거나 inventory에 넣지 않는다.
+CPU affinity는 기종이 같아도 임의 재배치하지 않고 동일 실측 mask만 허용한다.
+대상 Node가 재생성되어 UID가 바뀌면 기존 확인을 재사용하지 못한다.
+
+| Node UID를 소비하는 경로 | 변경 후 계약 |
+|---|---|
+| catalog latest-condition 선택 | 원본 유효성 선택 후 확인을 판정·대상 행 materialize; 최종 대상별 최신 선택 수행 |
+| scheduler_capacity.go bootstrap/nodePlans | UID guard 유지. 대상 UID로 materialize된 행만 대상 option에 연결 |
+| kube/observer.go validateSourcePlacement | 물리 Node·DeviceClass/image/resource guard 유지; 원본 Node alias 금지 |
+| kube/operations.go validatePreparation | 대상 Profile/UID/runtime delivery로 prepare; source UID 예외 없음 |
+| serving/firstfloor/client.go native metadata 검사 | 기존 대상 UID·NodeName와 actual runtime 확인 유지 |
+| kube/runner.go runnerPreparation | 대상 UID·mode·model의 최신 준비 행 선택; source UID로 fallback 금지 |
+| kube/cost_power.go validatePowerNativeProfiles | 대상 UID·실제 UUID/image 검증 유지 |
+| kube/scheduler.go measuredGPUs, manual_reset/measurement_sequence | 대상 행 metadata만 inventory/측정 후보에 포함; source UUID 오염 금지 |
+| cost/d/idle 연결 | d와 prepare/remove/power 비용은 기존 대상 Node/profile ID별 별도 측정; source 비용 복제 금지 |
+
+### 11.3 CampaignOps: genesis2→genesis3 한 건 실증 절차
+
+클러스터 변경은 CampaignOps 한 명만 실행한다. 이 절은 절차이며 실증 성공 기록이 아니다.
+
+1. 측정 레인이 비었고 두 Node의 serving/measurement 예약이 없음을 확인한다.
+   `kubectl get nodes genesis2 genesis3 -o json`, 해당 DeviceClass와 source BEO/result,
+   `/api/v1/scheduler/profiles` 응답을 원시 디렉터리에 보존한다. 정확한 UID, 기종 label,
+   image digest, mode, CPU quota/affinity, source profile ID·배치·평균값을 조건표에 쓴다.
+   SSH 읽기 전용 `nvidia-smi -q`로 GPU UUID·driver·VBIOS·기본 power limit도 기록한다.
+   genesis2/3의 기본 power limit은 250/300W로 관측되어 이름만으로 동등하다고 판정하지 않는다.
+2. genesis2의 유효 PLC `ort-cuda` 한 행을 우선 선택한다. U3의 locked mode는 양쪽에서
+   같은 모드의 원본 근거가 있을 때만 사용한다. 기존 fixed 원본을 locked 확인에 연결하지 않는다.
+   runtime 7 digest를 바꾸지 않는다. 같은 namespace에 새 target BEO 이름을 정하고
+   위 annotation의 SOURCE-BEO/SOURCE-UID를 실제 ID로 채운다.
+3. source BEO의 spec을 새 객체로 복사하되 state.targetNode만 genesis3으로,
+   활성/유휴 durationSeconds를 각각 30으로, metric duration은 창 경계까지 충분히
+   덮도록 줄인다. warmup, idle settling, trial≥3, CPU affinity/quota와 배치 도메인은
+   유지한다. 객체 UID/resourceVersion/status/ownerReferences는 복사하지 않는다.
+   정상 admission으로 제출하고 Complete까지 기다린다. 원본 spec/status는 수정하지 않는다.
+4. 새 코드의 catalog refresh 뒤 `/api/v1/scheduler/profiles`를 저장한다. target의
+   `reuseChecks`가 Accepted이고 차이 세 종류가 모두≤0.05인지 확인한다.
+   Rejected이면 그 사유·차이와 원시 result를 보존하고 **독립 측정**으로 전환한다.
+   허용값 확대, 일부 batch 제외, 원본 값 복제나 강제 Complete로 통과시키지 않는다.
+5. Accepted 행의 `id=확인ID/reuse`, node UID=genesis3, GPU UUID=genesis3 실측 UUID,
+   meter=genesis3이고 service samples/energy는 source와 같은지 확인한다.
+   profiles 응답의 preparations와 scheduler snapshot의 options에 그 ID가 있는지 확인한다.
+   기존 genesis3 독립 profile이 더 최신이라 선택되면 이를 삭제/무효화하지 말고 동일
+   조건 최신 선택 결과와 이유를 기록한다. 실증용 새 확인이 최신인 조건을 선택한다.
+6. **용량 연결은 별도다.** genesis3의 기존 Accepted d가 동일 UID/mode/runtime/model이면
+   연결하고, prepare/remove·baseline·mode cost의 exact profile ID 적용 범위를 점검한다.
+   새 ID 비용이 필요하면 정상 OperationCostMeasurement로 잰다. source d/cost는 복제하지 않는다.
+   capacity row의 대상 option/profile ID와 d source, κ 상태를 보존한다.
+   한 번 prepare→native actual read-back→remove/hand-back을 수행해 대상 UUID·자원 반환을 보존한다.
+7. 결과 묶음: 배포 SHA, source/target BEO UID와 annotation, result/raw references,
+   profiles(reuseChecks·재사용 행·preparations), snapshot option/row, 실제 Pod/native UUID,
+   거절 또는 성공 사유와 반환 증거를 CampaignOps 원시 디렉터리에 저장하고 U2 표에 연결한다.
+   짧은 확인을 독립 전체 측정 한 건 절감과 구분해 소요 시간을 보고한다.
+
+회귀는 허용 경계/설정 변경, 계열·image·자원 불일치, source 무효화/최신 선택,
+확인 배치/전력 결측과 대상 UUID 보존, source/target 독립성, planner option 연결을 검사한다.

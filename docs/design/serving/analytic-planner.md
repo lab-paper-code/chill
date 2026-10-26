@@ -397,6 +397,17 @@ H를 바꾸며 미선택 후보 때문에 자동 연장하지 않는다.
    조합 회귀에는 다른 Node의 큰 양수 이득과 −699J Fixed 절전을 함께 넣어 전체 이득이 양수여도 손해 절전이 포함되지 않음을 확인한다. 구 timer 원본 archive는 보존하되 현재 API·Dashboard가 이를 새 창 영값으로 노출하지 않고 생략/구 형식 표시하는 경우와 신규 창 기록 정상 표시를 검사한다. 설정 도움말도 최대 수요 창 의미와 일치해야 한다.
 4. **통합 회귀/시연 설계**: 느린 jetsono power와 G/L/N 준비를 함께 둔 controller 모의 시계 회귀에서 15/18/32초 준비 직후 다음 주기 중간 배분·예약 밖 확장을 확인하고 owner target/ACK/drain 의무를 보존한다. 빈 출발 SCH-54 κ 완료/상한 대기와 첫 증설, Workload별 인스턴스 하나 유지 규칙은 최대 수요 창을 기다리지 않는다. 네 필수 수용 조건은 일정 부하+잡음의 축소·절전 없음, 실제 하강 뒤 W 경과 시 적격 후보 허용, 손해 절전 미실행, 빈 출발/증설 불변이다. 승인된 후속 캠페인에서는 동일 binding/H·부하로 운영 300초와 시연 120초를 구분하고 요청 SLO·축소 시각·전환 전체 POOL joules를 보고한다. 이 문서 변경은 구현·회귀 통과나 클러스터/이미지 변경이 아니다.
 
+## 16. 같은 기종 profile 재사용 — PR-01..04
+
+Catalog가 [측정 API §11](measurement-api.md#11-같은-기종-node-프로파일-재사용--pr-0104)의
+확인 판정 뒤 대상 Node UID의 행을 만든다. 계획기의 물리 UID guard를 느슨하게 하거나
+DeviceClass만 맞는 원본을 후보에 직접 넣지 않는다. 재사용 profile ID는 확인 측정 ID의
+`/reuse` 파생 ID이며 행 key·불변 startup bundle·정확 비용 참조에도 이 ID를 쓴다.
+서비스 분포·증분 에너지는 원본, idle/meter·runtime/GPU UUID는 대상 확인 근거다.
+`profile.reuse`에 source/confirmation/result와 실제 차이를 기록한다.
+대상 d와 정확 비용이 없으면 기존 MissingDispatchOccupancy/MissingEvidence를 유지한다.
+프로파일 공유가 d·prepare/remove·mode cost의 암묵적 공유나 κ 적격을 뜻하지 않는다.
+
 ## 변경 이력
 
 - 2026-10-26: SCH-52/55 중간 배분 launch는 frozen Ready 부분집합으로 의존성을 재검사한다. G/L Ready, N 실재 non-Ready snapshot을 둔 회귀에서 B의 25.190→35.563초 장벽을 제거하며 전체 목표·Node/Pod 예약·단일 route owner는 보존한다.
