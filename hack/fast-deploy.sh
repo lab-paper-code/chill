@@ -27,7 +27,7 @@ root = pathlib.Path.cwd()
 sha = subprocess.check_output(["git", "rev-parse", "--verify", a.source + "^{commit}"], text=True).strip()
 base = pathlib.Path("/home/genesis1/.cache/chill-assets/ops/pools-deploy")
 out = base / "deployB" / ("control-" + a.control + "-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d"))
-helm = ["/usr/local/bin/helm", "--kube-context", "kubernetes-admin@kubernetes", "-n", "chill-system"]
+helm = ["/usr/local/bin/helm", "--kubeconfig", "/home/genesis1/.kube/config", "--kube-context", "kubernetes-admin@kubernetes", "-n", "chill-system"]
 kube = ["/usr/bin/kubectl", "--kubeconfig", "/home/genesis1/.kube/config", "--context", "kubernetes-admin@kubernetes", "-n", "chill-system"]
 if a.dry_run:
     print("LOCAL PLAN ONLY: no cluster, registry, image build, lock or evidence mutation.")
@@ -35,10 +35,10 @@ if a.dry_run:
     print("git archive", sha, "→ clean source archive")
     print("helm get values chill -o json → live-values.json; auto: resolve each live image source commit and git diff paths")
     print("allowed builds:", a.images, "; runtime builds: FORBIDDEN (7 runtime images)")
-    print("flock /tmp/chill-heavy.lock; buildx chill-builder linux/amd64 → registry digest verification")
+    print("flock /tmp/chill-heavy.lock; buildx chill-builder linux/amd64 → HTTP registry.insecure=true publication and HTTP digest verification")
     print("helm template old/new → render-diff + exact image-only object gate → kubectl apply --dry-run=server")
     print("helm upgrade --reset-values -f live-values.json -f overlay.json --wait --timeout 8m")
-    print("Ready + restartCount=0 + registry platform digest gate (480s); readiness.json; deploy-log.md")
+    print("Ready + restartCount=0 + registry index/platform digest gate (480s total, bounded queries); readiness.json; deploy-log.md")
     sys.exit(0)
 import yaml
 lock = open("/tmp/chill-heavy.lock", "a")
@@ -48,7 +48,14 @@ out.mkdir(parents=True, exist_ok=False)
 log = open(out / "commands.log", "a", buffering=1)
 def run(cmd, name=None, limit=120):
     log.write("+ " + shlex.join(map(str, cmd)) + "\n")
-    result = subprocess.run(list(map(str, cmd)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=limit)
+    try:
+        result = subprocess.run(list(map(str, cmd)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=limit)
+    except subprocess.TimeoutExpired as error:
+        evidence_name = name or "command-timeout.log"
+        (out / evidence_name).write_bytes(error.stdout or b"")
+        (out / (evidence_name + ".stderr")).write_bytes(error.stderr or b"")
+        log.write("timeout=" + str(limit) + "; evidence=" + evidence_name + "\n")
+        raise
     if name:
         (out / name).write_bytes(result.stdout)
         (out / (name + ".stderr")).write_bytes(result.stderr)
@@ -97,9 +104,9 @@ try:
         tag = "pools-control-" + a.control + "-" + sha[:12]
         ref = repo + ":" + tag
         metadata = out / (role + "-build.json")
-        run(["/usr/bin/nice", "-n", "19", "/usr/bin/docker", "buildx", "build", "--builder", "chill-builder", "--platform", "linux/amd64", "--label", "org.opencontainers.image.revision=" + sha, "--metadata-file", metadata, "-f", src / ("build/docker/" + dockerfiles[role] + ".Dockerfile"), "-t", ref, "--push", src], role + "-build.log", 1800)
+        run(["/usr/bin/nice", "-n", "19", "/usr/bin/docker", "buildx", "build", "--builder", "chill-builder", "--platform", "linux/amd64", "--label", "org.opencontainers.image.revision=" + sha, "--metadata-file", metadata, "-f", src / ("build/docker/" + dockerfiles[role] + ".Dockerfile"), "--output", "type=image,name=" + ref + ",push=true,registry.insecure=true", src], role + "-build.log", 1800)
         digest = json.loads(metadata.read_text())["containerimage.digest"]
-        raw = run(["/usr/bin/docker", "buildx", "imagetools", "inspect", "--raw", ref], role + "-manifest.json")
+        raw = run(["/usr/bin/curl", "--fail", "--silent", "--show-error", "-H", "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json", "http://155.230.35.213:5000/v2/chill/chill-" + component + "/manifests/" + tag], role + "-manifest.json")
         if "sha256:" + hashlib.sha256(raw).hexdigest() != digest:
             raise RuntimeError("registry/build digest mismatch: " + role)
         manifest = json.loads(raw)
@@ -137,17 +144,21 @@ try:
     run(helm + ["upgrade", "chill", chart, "--reset-values", *flags, "-f", out / "overlay.json", "--wait", "--timeout", "8m"], "upgrade.log", 510)
     deadline = time.monotonic() + 480
     while True:
-        pods = json.loads(run(kube + ["get", "pods", "-o", "json"], "pods.json"))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("readiness/digest/restart gate timed out")
+        pods = json.loads(run(kube + ["get", "pods", "-o", "json"], "pods.json", min(120, remaining)))
         checks = {}
         for role, exp in expected.items():
             containers = [(pod, status) for pod in pods["items"] if not pod["metadata"].get("deletionTimestamp") for status in pod.get("status", {}).get("containerStatuses", []) if status["image"] == exp["image"]]
-            checks[role] = bool(containers) and all(s.get("ready") and s.get("restartCount") == 0 and s.get("imageID", "").endswith(exp["platformDigest"]) and all(c["status"] == "True" for c in pod.get("status", {}).get("conditions", []) if c["type"] == "Ready") for pod, s in containers)
+            checks[role] = bool(containers) and all(s.get("ready") and s.get("restartCount") == 0 and s.get("imageID", "").endswith((exp["digest"], exp["platformDigest"])) and all(c["status"] == "True" for c in pod.get("status", {}).get("conditions", []) if c["type"] == "Ready") for pod, s in containers)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("readiness/digest/restart gate timed out")
         save("readiness.json", {"sourceSHA": sha, "checks": checks, "ready": all(checks.values()), "runtimeBuilds": 0})
         if all(checks.values()):
             break
-        if time.monotonic() >= deadline:
-            raise RuntimeError("readiness/digest/restart gate timed out")
-        time.sleep(5)
+        time.sleep(min(5, remaining))
     run(helm + ["get", "values", "chill", "-o", "json"], "post-values.json")
     with open(base / "deploy-log.md", "a") as stream:
         stream.write("\n- control-" + a.control + " source " + sha + ": upgrade Ready/restarts0/digests verified; runtime builds0; evidence `" + str(out) + "`.\n")
