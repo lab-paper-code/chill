@@ -431,7 +431,8 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 		return previous(r)
 	}}
 	workload := initial.Workloads[0]
-	receipt, err := c.runtime.Receive(workload.Name, time.Now())
+	requestStarted := time.Now()
+	receipt, err := c.runtime.Receive(workload.Name, requestStarted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,6 +442,9 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	}
 	if _, err = call.Wait(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if elapsed := time.Since(requestStarted); elapsed > workload.SLO.TargetLatency {
+		t.Fatalf("Ready reserve request missed fixture SLO: elapsed=%v target=%v", elapsed, workload.SLO.TargetLatency)
 	}
 	select {
 	case request := <-executed:
