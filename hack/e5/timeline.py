@@ -6,8 +6,10 @@ Only phase.json, summary.json, *-client.jsonl, power.json and scheduler.jsonl.gz
 are inputs. No environment, network, cluster, config, report or state-file reads.
 The existing indented per-stage summary supplies captured boundary key changes;
 raw scheduler observations supply occupancy, actions and scaleDown observations.
-A zero-offered ready gate may have no client file; an absent file is accepted
-only when its frozen trace is empty, never for a requested workload.
+A zero-offered ready gate may have no client file; it reports 0 / 0 requests
+and — for success rate/latency. An absent file is accepted only when its frozen
+trace is empty, never for a requested workload. Finalized STOP phases retain
+available placement/power evidence and do not require synthetic client files.
 Multipart energy is unknown unless a power.json covers that exact part window:
 compact scheduler records alone do not retain their catalog coverage policy.
 """
@@ -534,9 +536,21 @@ def self_check():
                        startedAt=at(12),completedAt=at(13),node=dict(name='node')))]
         with gzip.open(obs/'scheduler.jsonl.gz','wt') as stream:
             stream.write(''.join(json.dumps(r)+'\n' for r in events+events))
+        gate = root/'smoke-E0'
+        gate.mkdir()
+        gate_phase = dict(stage=dict(id='E0',seconds=5,rates={name:0},
+                                    readyGate=True,traces={name:dict(offsetsNS=[])}),
+                          startUTC=at(-5),endUTC=start,starts={},status='STOP',
+                          error='power collection timeout',
+                          readyGate=dict(observedUTC=at(-1),timedOut=False))
+        (gate/'phase.json').write_text(json.dumps(gate_phase))
+        (gate/'summary.json').write_text(json.dumps(dict(placementChanges=[],actions=[]),indent=2))
         before = {p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()}
         data = collect(root)
-        assert data['counts'] == {'high':2,'low':2}, data['counts']
+        assert data['counts'] == {'E0':0,'high':2,'low':2}, data['counts']
+        assert data['phases']['smoke-E0']['status'] == 'STOP'
+        assert data['metrics']['E0',name] == dict(offered=0,success=0,p95MS=None,missingClientRows=0)
+        assert not data['bins']['E0',name] and data['power']['E0'] is None
         assert data['metrics']['high',name]['success'] == 1
         assert data['metrics']['low',name]['offered'] == 2
         assert data['metrics']['low',name]['missingClientRows'] == 1
@@ -553,6 +567,8 @@ def self_check():
         assert (out/'timeline.svg').stat().st_size > 0
         text = (out/'report-tables.md').read_text()
         assert 'Timeout' in text and '50.00%' in text and 'no exact-part power.json' in text
+        assert f'| {name} | 0 / 0 | — | — | 0 | — |' in text
+        assert 'smoke-E0' in text and 'power.json absent' in text
         assert before == {p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()}
         cp.write_text(cp.read_text()+json.dumps(clients[0])+'\n')
         try:
