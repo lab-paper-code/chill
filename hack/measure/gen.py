@@ -100,6 +100,9 @@ def required_batches(mean, sd):
 def derive(row, framed_bytes, pipeline):
     c, b = COEFFICIENTS, row["batch"]
     mu, sd = row["meanSeconds"], row["sdSeconds"]
+    observed_max = row.get("maxObservedSeconds")
+    if not isinstance(observed_max, (int, float)) or not math.isfinite(observed_max) or observed_max <= 0:
+        raise ValueError(f"{row['caseID']}: positive finite profile maxObservedSeconds is required")
     fast = row["minObservedSeconds"] / c["timeMargin"]
     tail = c["timeMargin"] * max(row["maxObservedSeconds"], mu + c["tailSigma"] * sd)
     refill = c["pipelineMargin"] * pipeline["observedGlobalFinishToNextActorStartMaximumSeconds"]
@@ -112,11 +115,11 @@ def derive(row, framed_bytes, pipeline):
     slo = row["workload"]["slo"]["targetLatencyNanos"] / 1e9
     lifetime = math.ceil(c["lifetimeMargin"] * max(slo, (q + 2) * tail + prefix))
     bounds = {"queue-cap": 64, "bytes-cap": 67108864 // framed_bytes,
-              "lifetime": math.floor((lifetime - delivery) / (b * mu))}
+              "lifetime": math.floor((lifetime - delivery) / (b * observed_max))}
     limiting_bound = min(bounds, key=bounds.get)
     workers = bounds[limiting_bound]
     q = math.ceil(workers / b) - 1
-    waiting_sum = workers * b * mu
+    waiting_sum = workers * b * observed_max
     q_upper = min(row["queueRequestCap"] // b, (64 * 1024 * 1024) // (b * framed_bytes))
     capacity_feasible = workers >= b and waiting_sum + delivery <= lifetime
     n = required_batches(mu, sd)
@@ -144,7 +147,8 @@ def derive(row, framed_bytes, pipeline):
             "unknownBudgetMeaning": "remaining cap after supply extension split between Job setup and final collection; conservative allocation, not measured",
             "tailBatchSeconds": tail, "fastBatchSeconds": fast, "refillSeconds": refill,
             "prefixSeconds": prefix, "qUpper": q_upper, "framedDecodedRequestUpperBytes": framed_bytes,
-            "supplySizing": {"batch": b, "profileMeanBatchSeconds": mu,
+            "supplySizing": {"batch": b, "profileMaxBatchSeconds": observed_max,
+                "serviceTimeSource": "profile.maxObservedSeconds",
                 "requestLifetimeSeconds": lifetime, "marginSeconds": delivery, "workerCap": 64,
                 "queueBytesCap": 67108864, "framedDecodedRequestUpperBytes": framed_bytes,
                 "limitingBound": limiting_bound},
@@ -428,7 +432,7 @@ def self_check():
         bounds = {"queue-cap": sizing["workerCap"],
                   "bytes-cap": sizing["queueBytesCap"] // sizing["framedDecodedRequestUpperBytes"],
                   "lifetime": math.floor((sizing["requestLifetimeSeconds"] - sizing["marginSeconds"]) /
-                                         (sizing["batch"] * sizing["profileMeanBatchSeconds"]))}
+                                         (sizing["batch"] * sizing["profileMaxBatchSeconds"]))}
         assert d["workers"] == min(bounds.values())
         assert sizing["limitingBound"] == min(bounds, key=bounds.get)
         assert d["waitingBatches"] == math.ceil(d["workers"] / row["batch"]) - 1
@@ -441,6 +445,16 @@ def self_check():
     d = derive(row, floors["D05"]["framedDecodedRequestUpperBytes"], inp["pipelineScenario"])
     assert d["workers"] == 64
     assert d["capacityFeasible"]
+    d34 = next(r for r in inp["rows"] if r.get("profileID") and r["caseID"] == "D34")
+    assert derive(d34, floors["D34"]["framedDecodedRequestUpperBytes"], inp["pipelineScenario"])["workers"] == 26
+    for missing in (None, 0, -1, float("nan"), float("inf")):
+        bad = dict(row, maxObservedSeconds=missing)
+        try:
+            derive(bad, floors["D05"]["framedDecodedRequestUpperBytes"], inp["pipelineScenario"])
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("missing/invalid observed maximum must not fall back to mean")
     limited = derive(row, 67108864 // 3, inp["pipelineScenario"])
     assert limited["workers"] == 3
     assert limited["supplySizing"]["limitingBound"] == "bytes-cap"

@@ -306,7 +306,7 @@ def check():
         assert d['workers'] == min(sizing['workerCap'],
             sizing['queueBytesCap'] // sizing['framedDecodedRequestUpperBytes'], math.floor(
             (sizing['requestLifetimeSeconds'] - sizing['marginSeconds']) /
-            (sizing['batch'] * sizing['profileMeanBatchSeconds'])))
+            (sizing['batch'] * sizing['profileMaxBatchSeconds'])))
         assert d['waitingSeconds'] + sizing['marginSeconds'] <= d['requestLifetimeSeconds']
         assert d['socketTimeoutSeconds'] > d['requestLifetimeSeconds'] + d['deliveryMarginMillis'] / 1000
         assert d['requestLifetimeSeconds'] >= entry['workload']['slo']['targetLatencyNanos'] / 1e9

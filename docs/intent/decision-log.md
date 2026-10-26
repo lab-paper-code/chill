@@ -4,6 +4,13 @@
 원문은 사용자 시각 표기와 실제 실행 시각이 혼재한다. 날짜가 같은 항목은 원문의 사건 순서를 따르며 실행 시각을 재구성하지 않는다.
 2026-10-23보다 앞선 결정의 정확한 날짜는 확인되지 않아 별도 표시했다. 날짜를 추정해 붙이지 않는다.
 
+## 2026-10-27: d 공급 깊이의 관측 최대 기반 권고값
+
+- 결정: 새 closed-loop 공급의 수명 상한 분모를 평균에서 같은 batch의 frozen profile 관측 최대 `maxObservedSeconds`로 바꾼다. `K=min(64, bytes cap, floor((L−delivery)/(B×mu_tail)))`이며 출처 `profile.maxObservedSeconds`와 값을 동결한다. 최대값이 없으면 거절하고 평균 배수로 대체하지 않는다.
+- 근거: D34의 평균 기반 K52는 L1초에서 서비스 합974ms로 여유26ms뿐이다. 관측 최대37.825158ms를 쓰면 권고 K26이다. 이 값은 관측 기반 계획이지 미래 무실패 보증이 아니다.
+- 유지: 기존 L·delivery·3600초 예산·native count/bytes·수용 기준·Accepted 원시는 바꾸지 않는다. 새 측정/클러스터 실행 승인과 별개다.
+- 연결: [측정 명세](../spec/00_measurement.md#디스패치-점유-d의-공급-조건), [측정 설계](../design/serving/measurement-api.md).
+
 ## 2026-10-26: 운영 전력 gap 정책 재평가
 
 - 결정: 운영 E5 에너지 집계의 MaximumGap을 2.0 s에서 3.0 s로 바꾼다. 읽기 실패 한 건 자체는 불완전 사유로 두지 않고 기록된 coverage 정책으로 판정한다. MinimumCoverage 0.75와 경계 거리 1.0 s 및 정확 비용 등 다른 측정 정책은 유지한다.

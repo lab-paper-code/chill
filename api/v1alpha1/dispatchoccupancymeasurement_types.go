@@ -97,8 +97,8 @@ type DispatchOccupancyMeasurementSpec struct {
 // DispatchOccupancyConditions records the approved empirical planning inputs.
 // InputsJSON is an object containing the original profile populations and
 // source identities, not a claim of achieved precision or saturation. Optional
-// computed.supplySizing freezes the batch, profile mean batch service time,
-// request lifetime, delivery margin, worker/byte caps and limiting bound used to bound outstanding supply.
+// computed.supplySizing freezes the batch, observed maximum batch service time
+// and its profile source, request lifetime, delivery margin, worker/byte caps and limiting bound.
 type DispatchOccupancyConditions struct {
 	ProfileID                  string `json:"profileID,omitempty"`
 	InputsJSON                 string `json:"inputsJSON,omitempty"`
@@ -143,7 +143,8 @@ func (s DispatchOccupancyMeasurementSpec) ValidateConditions() error {
 
 type occupancySupplySizing struct {
 	Batch                          int32   `json:"batch"`
-	ProfileMeanBatchSeconds        float64 `json:"profileMeanBatchSeconds"`
+	ProfileMaxBatchSeconds         float64 `json:"profileMaxBatchSeconds"`
+	ServiceTimeSource              string  `json:"serviceTimeSource"`
 	RequestLifetimeSeconds         float64 `json:"requestLifetimeSeconds"`
 	MarginSeconds                  float64 `json:"marginSeconds"`
 	WorkerCap                      int32   `json:"workerCap"`
@@ -152,10 +153,10 @@ type occupancySupplySizing struct {
 	LimitingBound                  string  `json:"limitingBound"`
 }
 
-func (sizing occupancySupplySizing) workers(s DispatchOccupancyMeasurementSpec, profileBatch int32, profileMean float64, queueBytes, requestBytes int64) (float64, error) {
+func (sizing occupancySupplySizing) workers(s DispatchOccupancyMeasurementSpec, profileBatch int32, profileMax float64, queueBytes, requestBytes int64) (float64, error) {
 	if sizing.Batch != s.Batch || profileBatch != s.Batch ||
-		sizing.ProfileMeanBatchSeconds <= 0 || math.IsNaN(sizing.ProfileMeanBatchSeconds) || math.IsInf(sizing.ProfileMeanBatchSeconds, 0) ||
-		sizing.ProfileMeanBatchSeconds != profileMean ||
+		sizing.ProfileMaxBatchSeconds <= 0 || math.IsNaN(sizing.ProfileMaxBatchSeconds) || math.IsInf(sizing.ProfileMaxBatchSeconds, 0) ||
+		sizing.ProfileMaxBatchSeconds != profileMax || sizing.ServiceTimeSource != "profile.maxObservedSeconds" ||
 		sizing.RequestLifetimeSeconds != float64(s.RequestLifetimeSeconds) ||
 		sizing.MarginSeconds != float64(s.DeliveryMarginMillis)/1000 || sizing.WorkerCap != 64 ||
 		sizing.QueueBytesCap != 67108864 || sizing.QueueBytesCap != queueBytes ||
@@ -166,7 +167,7 @@ func (sizing occupancySupplySizing) workers(s DispatchOccupancyMeasurementSpec, 
 	if bytesWorkers := float64(sizing.QueueBytesCap / sizing.FramedDecodedRequestUpperBytes); bytesWorkers < workers {
 		workers, bound = bytesWorkers, "bytes-cap"
 	}
-	if lifetimeWorkers := math.Floor((sizing.RequestLifetimeSeconds - sizing.MarginSeconds) / (float64(s.Batch) * sizing.ProfileMeanBatchSeconds)); lifetimeWorkers < workers {
+	if lifetimeWorkers := math.Floor((sizing.RequestLifetimeSeconds - sizing.MarginSeconds) / (float64(s.Batch) * sizing.ProfileMaxBatchSeconds)); lifetimeWorkers < workers {
 		workers, bound = lifetimeWorkers, "lifetime"
 	}
 	if workers < float64(s.Batch) || sizing.LimitingBound != bound {
@@ -183,8 +184,8 @@ func (s DispatchOccupancyMeasurementSpec) validateSupplyBounds() error {
 	var formula struct {
 		Coefficients OccupancyPlanningFloors `json:"coefficients"`
 		Profile      struct {
-			Batch       int32   `json:"batch"`
-			MeanSeconds float64 `json:"meanSeconds"`
+			Batch              int32   `json:"batch"`
+			MaxObservedSeconds float64 `json:"maxObservedSeconds"`
 		} `json:"profile"`
 		Computed struct {
 			TailBatchSeconds               float64                `json:"tailBatchSeconds"`
@@ -218,12 +219,12 @@ func (s DispatchOccupancyMeasurementSpec) validateSupplyBounds() error {
 	expectedQ := math.Max(1, math.Ceil(f.RefillSeconds/f.FastBatchSeconds))
 	lifetimeInvalid := (float64(q)+2)*f.TailBatchSeconds+f.PrefixSeconds >= float64(s.RequestLifetimeSeconds)
 	if sizing := f.SupplySizing; sizing != nil {
-		workers, err := sizing.workers(s, formula.Profile.Batch, formula.Profile.MeanSeconds, f.QueueBytesCap, f.FramedDecodedRequestUpperBytes)
+		workers, err := sizing.workers(s, formula.Profile.Batch, formula.Profile.MaxObservedSeconds, f.QueueBytesCap, f.FramedDecodedRequestUpperBytes)
 		if err != nil {
 			return err
 		}
 		expectedQ = math.Ceil(workers/float64(s.Batch)) - 1
-		lifetimeInvalid = workers*float64(s.Batch)*sizing.ProfileMeanBatchSeconds+sizing.MarginSeconds > sizing.RequestLifetimeSeconds
+		lifetimeInvalid = workers*float64(s.Batch)*sizing.ProfileMaxBatchSeconds+sizing.MarginSeconds > sizing.RequestLifetimeSeconds
 	} else if c.WaitingBatches < 1 || int64(s.Workers) != int64(s.Batch)*(1+q) {
 		return fmt.Errorf("invalid legacy frozen occupancy supply")
 	}

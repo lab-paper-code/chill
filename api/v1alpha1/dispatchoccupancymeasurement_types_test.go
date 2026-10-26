@@ -15,7 +15,7 @@ func TestOccupancyFrozenSupplySizing(t *testing.T) {
 		PreparationSeconds: 60, JobSetupSeconds: 30, CollectionSeconds: 30, PlannedElapsedSeconds: 600,
 		Conditions: edge.DispatchOccupancyConditions{
 			ProfileID: "profile", WaitingBatches: 5, MinimumCycles: 1, MaximumIdleNanosPerRequest: 1000000,
-			InputsJSON: `{"coefficients":{"windowFloorSeconds":360,"loadPreparationFloorSeconds":60,"plannedElapsedCapSeconds":3600},"profile":{"batch":2,"meanSeconds":0.1},"computed":{"tailBatchSeconds":0.1,"fastBatchSeconds":0.02,"refillSeconds":0.1,"prefixSeconds":0.1,"framedDecodedRequestUpperBytes":32,"queueRequestCap":256,"queueBytesCap":67108864,"qUpper":40}}`,
+			InputsJSON: `{"coefficients":{"windowFloorSeconds":360,"loadPreparationFloorSeconds":60,"plannedElapsedCapSeconds":3600},"profile":{"batch":2,"meanSeconds":0.05,"maxObservedSeconds":0.1},"computed":{"tailBatchSeconds":0.1,"fastBatchSeconds":0.02,"refillSeconds":0.1,"prefixSeconds":0.1,"framedDecodedRequestUpperBytes":32,"queueRequestCap":256,"queueBytesCap":67108864,"qUpper":40}}`,
 		},
 	}
 	if err := legacy.ValidateConditions(); err != nil {
@@ -26,15 +26,19 @@ func TestOccupancyFrozenSupplySizing(t *testing.T) {
 	if capped.ValidateConditions() == nil {
 		t.Fatal("accepted changed supply without frozen sizing")
 	}
-	const sizing = `"supplySizing":{"batch":2,"profileMeanBatchSeconds":0.1,"requestLifetimeSeconds":5,"marginSeconds":0.01,"workerCap":64,"queueBytesCap":67108864,"framedDecodedRequestUpperBytes":32,"limitingBound":"lifetime"},`
+	const sizing = `"supplySizing":{"batch":2,"profileMaxBatchSeconds":0.1,"serviceTimeSource":"profile.maxObservedSeconds","requestLifetimeSeconds":5,"marginSeconds":0.01,"workerCap":64,"queueBytesCap":67108864,"framedDecodedRequestUpperBytes":32,"limitingBound":"lifetime"},`
 	capped.Conditions.InputsJSON = strings.Replace(legacy.Conditions.InputsJSON, `"tailBatchSeconds":`, sizing+`"tailBatchSeconds":`, 1)
 	if err := capped.ValidateConditions(); err != nil {
 		t.Fatalf("lifetime-capped supply: %v", err)
 	}
 	for _, tc := range []struct{ name, old, new string }{
 		{"batch", `"batch":2`, `"batch":3`},
-		{"service equality", `"profileMeanBatchSeconds":0.1`, `"profileMeanBatchSeconds":0.11`},
-		{"zero service", `"profileMeanBatchSeconds":0.1`, `"profileMeanBatchSeconds":0`},
+		{"service equality", `"profileMaxBatchSeconds":0.1`, `"profileMaxBatchSeconds":0.11`},
+		{"zero service", `"profileMaxBatchSeconds":0.1`, `"profileMaxBatchSeconds":0`},
+		{"missing maximum", `"maxObservedSeconds":0.1`, `"unused":0.1`},
+		{"missing sizing maximum", `"profileMaxBatchSeconds":0.1`, `"profileMeanBatchSeconds":0.1`},
+		{"missing source", `"serviceTimeSource":"profile.maxObservedSeconds"`, `"serviceTimeSource":""`},
+		{"mean is not a tail source", `"serviceTimeSource":"profile.maxObservedSeconds"`, `"serviceTimeSource":"profile.meanSeconds"`},
 		{"lifetime equality", `"requestLifetimeSeconds":5`, `"requestLifetimeSeconds":6`},
 		{"margin equality", `"marginSeconds":0.01`, `"marginSeconds":0.02`},
 		{"worker cap", `"workerCap":64`, `"workerCap":65`},
@@ -69,8 +73,8 @@ func TestOccupancyFrozenSupplySizing(t *testing.T) {
 			spec := capped
 			spec.Workers, spec.Conditions.WaitingBatches = tc.workers, tc.waiting
 			spec.Conditions.InputsJSON = strings.NewReplacer(
-				`"meanSeconds":0.1`, `"meanSeconds":`+tc.mean,
-				`"profileMeanBatchSeconds":0.1`, `"profileMeanBatchSeconds":`+tc.mean,
+				`"maxObservedSeconds":0.1`, `"maxObservedSeconds":`+tc.mean,
+				`"profileMaxBatchSeconds":0.1`, `"profileMaxBatchSeconds":`+tc.mean,
 				`"framedDecodedRequestUpperBytes":32`, `"framedDecodedRequestUpperBytes":`+tc.bytes,
 				`"limitingBound":"lifetime"`, `"limitingBound":"`+tc.bound+`"`,
 			).Replace(spec.Conditions.InputsJSON)
@@ -91,7 +95,7 @@ func TestOccupancyFrozenSupplySizing(t *testing.T) {
 	t.Run("less than one batch is infeasible", func(t *testing.T) {
 		bad := capped
 		bad.Workers, bad.Conditions.WaitingBatches = 1, 0
-		bad.Conditions.InputsJSON = strings.NewReplacer(`"meanSeconds":0.1`, `"meanSeconds":2`, `"profileMeanBatchSeconds":0.1`, `"profileMeanBatchSeconds":2`).Replace(bad.Conditions.InputsJSON)
+		bad.Conditions.InputsJSON = strings.NewReplacer(`"maxObservedSeconds":0.1`, `"maxObservedSeconds":2`, `"profileMaxBatchSeconds":0.1`, `"profileMaxBatchSeconds":2`).Replace(bad.Conditions.InputsJSON)
 		if bad.ValidateConditions() == nil {
 			t.Fatal("accepted fewer workers than one batch")
 		}

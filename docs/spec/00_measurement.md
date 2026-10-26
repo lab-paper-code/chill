@@ -113,16 +113,16 @@ CPU quota는 사용량 상한이며 전용 CPU 배정을 뜻하지 않으므로,
 ### 디스패치 점유 d의 공급 조건
 
 고정 outstanding closed-loop 공급의 worker 수이자 outstanding 요청 수 K는
-`K=min(64,floor(queueBytesCap/framedDecodedRequestUpperBytes),floor((L−margin)/(B×mu)))`로 한 번 정한다.
-B는 profile 배치 크기, mu는 profile의 배치 평균 실행시간(초), L은 기존 수명 계산으로
+`K=min(64,floor(queueBytesCap/framedDecodedRequestUpperBytes),floor((L−margin)/(B×mu_tail)))`로 한 번 정한다.
+B는 profile 배치 크기, mu_tail은 같은 B의 profile 관측 최대 batch 실행시간(초), L은 기존 수명 계산으로
 정한 요청 수명(초), margin은 기존 `deliveryMarginMillis/1000`이다.
 `queueBytesCap=67108864`이며 `framedDecodedRequestUpperBytes`는 framing을 포함한 요청별 decoded bytes 상한이다.
 전달 margin은 별도 측정값이 아니라 기존 전달 예산을 남기는 reserve다.
 공급량을 위한 왕복시간·외부 시간 측정이나 별도 출처 입력은 사용하지 않는다.
 K는 B의 배수로 올림하지 않으며 기존 validator의 대기 batch 수는 `q=ceil(K/B)−1`이다.
 `conditions.inputsJSON.computed.supplySizing`에
-`{batch,profileMeanBatchSeconds,requestLifetimeSeconds,marginSeconds,workerCap:64,queueBytesCap:67108864,framedDecodedRequestUpperBytes,limitingBound}`를 동결하고
-같은 입력으로 K와 q를 정확히 재계산한다.
+`{batch,profileMaxBatchSeconds,serviceTimeSource:"profile.maxObservedSeconds",requestLifetimeSeconds,marginSeconds,workerCap:64,queueBytesCap:67108864,framedDecodedRequestUpperBytes,limitingBound}`를 동결하고
+같은 입력으로 K와 q를 정확히 재계산한다. 양의 유한 관측 최대가 없으면 입력을 거절하며 mean×2 등의 대체값을 만들지 않는다.
 `limitingBound`는 최소값을 정한 `queue-cap`, `bytes-cap`, `lifetime` 중 하나이며
 동률이면 이 순서에서 먼저 나온 항목을 기록한다.
 L은 이 공급 규칙 적용 전의 기존 수명 그대로이며 K에 맞춰 확장하지 않는다.

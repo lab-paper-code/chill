@@ -139,15 +139,15 @@ HTTP 실패 뒤 실행된 batch도 계산에 포함한다. compute gap 전체를
 실측 profile의 batch별 분산, trial 경계, 준비 aggregate와 Workload SLO에 적용해 N, L과 창을 계산한다.
 N은 physical batch 수이며 cycle 수는 N−1이다. 같은 batch의 member는 독립 표본으로 중복 계산하지 않는다.
 고정 outstanding closed-loop 공급의 workers K는 다음 최대 cap으로 한 번 정한다.
-`K=min(64,floor(queueBytesCap/framedDecodedRequestUpperBytes),floor((L−margin)/(B×mu)))`.
-B는 profile 배치 크기, mu는 profile의 배치 평균 실행시간(초), L은 기존 수명 계산으로 정한
+`K=min(64,floor(queueBytesCap/framedDecodedRequestUpperBytes),floor((L−margin)/(B×mu_tail)))`.
+B는 profile 배치 크기, mu_tail은 같은 B의 profile 관측 최대 batch 실행시간(초), L은 기존 수명 계산으로 정한
 요청 수명(초), margin은 기존 `deliveryMarginMillis/1000`이다.
 `queueBytesCap=67108864`이며 `framedDecodedRequestUpperBytes`는 framing을 포함한 요청별 decoded bytes 상한이다.
 K는 worker 수이자 outstanding 요청 수이며 B의 배수로 올림하지 않는다.
 기존 validator의 대기 batch 수는 `q=ceil(K/B)−1`로 계산한다.
 `conditions.inputsJSON.computed.supplySizing`에는
-`{batch,profileMeanBatchSeconds,requestLifetimeSeconds,marginSeconds,workerCap:64,queueBytesCap:67108864,framedDecodedRequestUpperBytes,limitingBound}`를 동결하고
-generator, API와 controller는 이 입력으로 K와 q를 정확히 재계산한다.
+`{batch,profileMaxBatchSeconds,serviceTimeSource:"profile.maxObservedSeconds",requestLifetimeSeconds,marginSeconds,workerCap:64,queueBytesCap:67108864,framedDecodedRequestUpperBytes,limitingBound}`를 동결하고
+generator, API와 controller는 이 입력으로 K와 q를 정확히 재계산한다. 관측 최대가 없거나 양의 유한값이 아니면 입력을 거절한다. mean×2 fallback은 없다.
 `limitingBound`는 최소값을 정한 `queue-cap`, `bytes-cap`, `lifetime` 중 하나이며
 동률이면 이 순서에서 먼저 나온 항목을 기록한다.
 전달 margin은 측정하는 외부 시간이 아니라 기존 전달 예산을 남기는 reserve다.
