@@ -21,6 +21,18 @@ with no drain/collection/setup between rates; stage seconds is their sum and
 stage rates are their maxima (not averages). Multipart summary.json includes
 part-level success/p95 and observed placement/batch changes; summary.md shows
 part rows. Request attribution uses scheduled offsets, not completion times.
+
+Set top-level "staticPlacement": true to capture existing manual placement with
+autonomy already off: start/run/finish never change scheduler control or routes.
+No zero-load bootstrap is required. A stage may set "startBarrier":
+{"reservations": 0, "transitions": 0}; before any producer setup it waits at most
+that stage's seconds for no reservations or running/cancel actions. Timeout
+records STOP and the last state, with no load started. Parts remain continuous.
+For a PLC-only 60 -> 140 req/s profile window, use staticPlacement with a single
+stage's parts (e.g. 60 seconds each), rates {"mobilenet": 0, "smolvlm2": 0,
+"plc": 60} then {"mobilenet": 0, "smolvlm2": 0, "plc": 140}. Prepare captures
+existing definitions; start records them; run produces/collects; finish removes
+only owned producer Jobs, retaining the manual instances, routes and settings.
 """
 import argparse
 import copy
@@ -51,6 +63,8 @@ epoch = ANALYSIS.epoch
 def schedule(config, e5):
     sys.path.insert(0, str(e5.REPO / 'load-generator/src'))
     from chill_loadgen import cli
+    if 'staticPlacement' in config and type(config['staticPlacement']) is not bool:
+        raise ValueError('staticPlacement must be a boolean')
     stages = []
     if not isinstance(config.get('stages'), list) or not config['stages']:
         raise ValueError('A nonempty stages list is required')
@@ -74,8 +88,8 @@ def schedule(config, e5):
                 raise ValueError('Positive seconds and mobilenet/smolvlm2/plc rates required')
             if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in rates.values()):
                 raise ValueError('Rates must be finite nonnegative requests/second')
-            if part is not row and ('readyGate' in part or 'parts' in part):
-                raise ValueError('readyGate and nested parts are not supported within parts')
+            if part is not row and any(key in part for key in ('readyGate', 'startBarrier', 'parts')):
+                raise ValueError('readyGate, startBarrier and nested parts are not supported within parts')
             parts.append({'id': part_id, 'seconds': seconds, 'rates': {ALIASES[k]: v for k, v in rates.items()}})
         seconds = sum(p['seconds'] for p in parts)
         rates = {name: max(p['rates'][name] for p in parts) for name in ALIASES.values()}
@@ -86,6 +100,11 @@ def schedule(config, e5):
         stage = {'id': label, 'seconds': seconds, 'rates': rates, 'traces': {}}
         if row.get('readyGate'):
             stage['readyGate'] = True
+        if 'startBarrier' in row:
+            barrier = row['startBarrier']
+            if not isinstance(barrier, dict) or set(barrier) != {'reservations', 'transitions'} or any(type(v) is not int or v != 0 for v in barrier.values()):
+                raise ValueError('startBarrier requires reservations: 0 and transitions: 0')
+            stage['startBarrier'] = dict(barrier)
         stage['parts'] = parts
         for name in stage['rates']:
             offsets, base = [], 0
@@ -96,7 +115,7 @@ def schedule(config, e5):
                 base += round(part['seconds'] * 1e9)
             stage['traces'][name] = {'seed': e5.SEEDS[name], 'offsetsNS': offsets, 'offered': len(offsets), 'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest()}
         stages.append(stage)
-    if any(stages[0]['rates'].values()):
+    if not config.get('staticPlacement') and any(stages[0]['rates'].values()):
         raise ValueError('First stage must be zero-load autonomous bootstrap')
     return stages
 
@@ -153,13 +172,17 @@ def assemble(e5, args, spec):
     by_name = {w['name']: w for w in scheduler['state']['snapshot']['workloads']}
     registration.n = {'workloads': {name: {'slo': by_name[name]['slo'] if name in by_name else spec['measurementSLO'][next(alias for alias, canonical in ALIASES.items() if canonical == name)]} for name in e5.WORKLOADS}}
     def registration_api(method, path, body=None, headers=None, accepted=(200,)):
-        if method == 'PUT':
-            raise RuntimeError('Existing canonical SLO changed during capture; no SLO mutation permitted')
+        if method == 'PUT' or (spec.get('staticPlacement') and method != 'GET'):
+            raise RuntimeError('No canonical mutation permitted during static capture or existing SLO capture')
         result, status_code = wire.Prepare.api(registration, method, path, body, headers, accepted)
         io.record({'kind': 'canonical-management', 'method': method, 'path': path, 'status': status_code})
         return result, status_code
     registration.api = registration_api
-    scheduler = registration.canonical()
+    if spec.get('staticPlacement'):
+        if any(name not in by_name for name in e5.WORKLOADS):
+            raise RuntimeError('Static placement requires existing canonical definitions')
+    else:
+        scheduler = registration.canonical()
     e5.save(args.out / 'scheduler.json', scheduler)
     for name in e5.WORKLOADS:
         actual, _ = registration.api('GET', '/api/v1/workloads/' + name)
@@ -197,6 +220,8 @@ def assemble(e5, args, spec):
 
 def finish_definitions(e5, cpo):
     """Delete exact captured canonical UIDs only after the existing owned cleanup."""
+    if cpo.static_placement():
+        return
     if not (cpo.out / 'finish-complete.json').exists():
         raise RuntimeError('Owned instances/routing/settings cleanup must complete before definition deletion')
     wire = e5.module('demo_definition_cleanup', HERE / 'e5-wire.py')
@@ -230,6 +255,7 @@ def prepare(e5, args):
         raise RuntimeError('No implicit preparation overwrite; use a fresh output directory')
     args.config = args.config.resolve()
     spec = e5.load(args.config)
+    stages = schedule(spec, e5)
     config_path = Path(spec['e5Config']).resolve() if spec.get('e5Config') else assemble(e5, args, spec)
     c = e5.load(config_path)
     e5.need(c, ['approval', 'inputs', 'timeboxes', 'workloads', 'collection', 'endpoint', 'caFile', 'tokenFile'], 'e5Config')
@@ -239,7 +265,6 @@ def prepare(e5, args):
         raise ValueError('Finite positive E5 timeboxes required')
     if len(c['workloads']) != 3 or {w['name'] for w in c['workloads']} != set(ALIASES.values()):
         raise ValueError('Existing three canonical workload definitions required')
-    stages = schedule(spec, e5)
     if any(c['timeboxes']['setupSeconds'] + s['seconds'] + c['timeboxes']['drainSeconds'] + c['timeboxes']['flushSeconds'] > 4200 for s in stages):
         raise ValueError('Stage exceeds existing finite collector duration limit')
     sys.path.insert(0, str(e5.REPO / 'load-generator/src'))
@@ -293,13 +318,13 @@ def run_stage(cpo, stage):
         previous = stage_folder(cpo.out, cpo.b['schedule'][index - 1])
         if not (previous / 'collected.json').exists() or cpo.b['schedule'][index - 1]['id'] != cpo.d.load(phase_path(previous))['stage']['id'] or cpo.d.load(phase_path(previous))['status'] != 'DRAINED_NOT_EVALUATED':
             raise RuntimeError('Previous stage must have drained and collected successfully')
-        if not any(cpo.b['schedule'][index - 1]['rates'].values()):
+        if not cpo.static_placement() and not any(cpo.b['schedule'][index - 1]['rates'].values()):
             state = cpo.state()
             missing = cpo.missing_ready_routes(state)
             if missing:
                 raise RuntimeError('Bootstrap has no owned Ready positive route: ' + ', '.join(missing))
     if not (cpo.out / 'start-ack.json').exists():
-        raise RuntimeError('Explicit zero-instance start is required before stages')
+        raise RuntimeError('Explicit start is required before stages')
     cpo.a.command = 'smoke'
     cpo.a.stage = stage['id']
     cpo.c['smoke'] = stage
@@ -342,6 +367,8 @@ def collect_stage(e5, cpo, stage):
 
 def resume(e5, cpo):
     """Reset the owned scope once, then re-enable autonomy with original evidence retained."""
+    if cpo.static_placement():
+        raise RuntimeError('Static placement does not reset or resume autonomy; use start/run')
     if not (cpo.out / 'initial.json').exists() or not (cpo.out / 'start-ack.json').exists():
         raise RuntimeError('Resume requires the original initial/start evidence; use start for a new run')
     for frozen in cpo.b['sources'].values():
@@ -415,8 +442,9 @@ def summarize(e5, binding, out):
         phase = e5.load(phase_path(folder))
         if not phase.get('startUTC') or not phase.get('endUTC'):
             stage_summaries.append({'stage': stage['id'], 'status': phase['status'], 'error': phase.get('error'), 'metricsAvailable': False})
-            if 'readyGate' in phase:
-                stage_summaries[-1]['readyGate'] = phase['readyGate']
+            for key in ('readyGate', 'startBarrier'):
+                if key in phase:
+                    stage_summaries[-1][key] = phase[key]
             continue
         gap = None if previous_end is None else epoch(phase['startUTC']) - epoch(previous_end)
         previous_end = phase['endUTC']
@@ -458,8 +486,9 @@ def summarize(e5, binding, out):
         summary = {'stage': stage['id'], 'status': phase['status'], 'startUTC': phase['startUTC'], 'endUTC': phase['endUTC'], 'drainedUTC': phase.get('drainedUTC'), 'gapFromPreviousOfferedWindowSeconds': gap, 'gapMeaning': 'No offered demo requests during per-stage drain/collection/setup; failures in this gap are not measurable by these producers', 'placementChanges': changes, 'actions': actions, 'transitionWindowsEpoch': windows, 'schedulerCapture': provenance, 'energyJ': power.get('wholePoolJoules') if power.get('complete') else None, 'activeEnergyJ': power.get('activePoolJoules') if power.get('complete') else None, 'drainInclusiveEnergyJ': drain_power.get('wholePoolJoules') if drain_power.get('complete') else None, 'energyScope': 'Shared whole/active pool; never attributed to individual workloads', 'workloads': {}}
         summary['collectionRecovery'] = phase.get('collectionRecovery')
         summary['demoRequestDrain'] = phase.get('demoRequestDrain')
-        if 'readyGate' in phase:
-            summary['readyGate'] = phase['readyGate']
+        for key in ('readyGate', 'startBarrier'):
+            if key in phase:
+                summary[key] = phase[key]
         if len(stage['parts']) > 1:
             summary['parts'] = []
             base = 0
@@ -560,8 +589,9 @@ def publish(e5, binding, out, identifier, store_config):
                                   'gap': 'First offered window' if summary['gapFromPreviousOfferedWindowSeconds'] is None else None},
                 'limitations': [summary['gapMeaning'], 'Operational demo only; no E5 scientific PASS or workload-attributed energy', *binding['config'].get('demoSkipped', [])]}
         kpis['schedulerSettings'] = binding.get('schedulerSettings')
-        if 'readyGate' in summary:
-            kpis['readyGate'] = summary['readyGate']
+        for key in ('readyGate', 'startBarrier'):
+            if key in summary:
+                kpis[key] = summary[key]
         if 'parts' in summary:
             kpis['parts'] = summary['parts']
         kpis['missingReasons']['schedulerSettings'] = None if kpis['schedulerSettings'] is not None else 'Binding does not contain frozen scheduler settings'
@@ -804,6 +834,96 @@ def self_check():
                 pass
             else:
                 raise AssertionError('Invalid ready gate accepted')
+        # Static capture runs the real producers without scheduler writes.
+        static_config = {'staticPlacement': True, 'stages': [{'id': 'PLC', 'startBarrier': {'reservations': 0, 'transitions': 0}, 'parts': [{'id': 'low', 'seconds': .001, 'rates': {'mobilenet': 0, 'smolvlm2': 0, 'plc': 60000}}, {'id': 'high', 'seconds': .001, 'rates': {'mobilenet': 0, 'smolvlm2': 0, 'plc': 140000}}]}]}
+        static_stages = schedule(static_config, e5)
+        static_out = root / 'static-placement'
+        static_out.mkdir()
+        static_state = cpo.state()
+        static_state['snapshot']['reservations'] = []
+        static_state['actions'] = []
+        manual_before = copy.deepcopy(static_state)
+        static_settings = dict(copy.deepcopy(settings), autonomousWorkloads=[])
+        def no_mutation(*args, **kwargs):
+            raise AssertionError('Static placement must not mutate scheduler control or routes')
+        with patch.object(cpo, 'out', static_out), patch.object(cpo, 'settings', lambda: copy.deepcopy(static_settings)), patch.object(cpo, 'put', no_mutation), patch.object(cpo.io, 'api', no_mutation), patch.object(cpo, 'state', lambda: copy.deepcopy(static_state)), patch.dict(cpo.b, {'schedule': static_stages, 'demoConfig': static_config}), patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'client_end_counter', lambda *args: {'fixtureCounter': True}):
+            cpo.start()
+            with patch.object(cpo, 'boundary', lambda folder, prefix: e5.save(folder / (prefix + '-state.json'), cpo.state())):
+                original_stages = stages
+                stages = static_stages
+                try:
+                    run_stage(cpo, static_stages[0])
+                finally:
+                    stages = original_stages
+            static_summary = summarize(e5, cpo.b, static_out)[0]
+            assert static_summary['startBarrier']['observedUTC']
+            assert len(static_summary['parts']) == 2
+            assert e5.load(static_out / 'start-ack.json')['staticPlacement']
+            cpo.finish()
+            finish_definitions(e5, cpo)
+            assert cpo.state() == manual_before and static_settings['autonomousWorkloads'] == []
+            try:
+                resume(e5, cpo)
+            except RuntimeError as error:
+                assert 'does not reset' in str(error)
+            else:
+                raise AssertionError('Static resume enabled autonomy')
+            failed_static = schedule({'staticPlacement': True, 'stages': [dict(config['stages'][0], id='STATIC-FAIL')]}, e5)[0]
+            with patch.dict(cpo.b, {'schedule': [failed_static]}), patch.object(cpo, 'boundary', lambda folder, prefix: e5.save(folder / (prefix + '-state.json'), cpo.state())), patch.object(cpo, 'request_drain', side_effect=RuntimeError('fixture static drain failure')):
+                try:
+                    run_stage(cpo, failed_static)
+                except RuntimeError as error:
+                    assert str(error) == 'fixture static drain failure'
+                else:
+                    raise AssertionError('Static failure was swallowed')
+            assert e5.load(static_out / 'smoke-STATIC-FAIL/phase.json')['status'] == 'STOP'
+            assert not (static_out / 'smoke-STATIC-FAIL/failed-owned-control-restore.json').exists()
+            assert cpo.state() == manual_before
+        # Both counters must clear; cancel actions count, completed actions do not.
+        for clears in (True, False):
+            barrier_stage = schedule({'stages': [dict(config['stages'][0], seconds=1 if clears else .01, startBarrier={'reservations': 0, 'transitions': 0})]}, e5)[0]
+            barrier_out = root / ('barrier-clear' if clears else 'barrier-timeout')
+            barrier_out.mkdir()
+            (barrier_out / 'start-ack.json').write_bytes((cpo.out / 'start-ack.json').read_bytes())
+            busy = copy.deepcopy(static_state)
+            busy['snapshot']['reservations'] = [{'id': 'reserved'}]
+            busy['actions'] = [{'status': 'cancel'}, {'status': 'complete'}]
+            observations = []
+            def barrier_state():
+                observations.append(True)
+                state = copy.deepcopy(busy)
+                if clears and len(observations) >= 2:
+                    state['snapshot']['reservations'] = []
+                if clears and len(observations) >= 3:
+                    state['actions'] = [{'status': 'complete'}]
+                return state
+            with patch.object(cpo, 'out', barrier_out), patch.object(cpo, 'state', barrier_state), patch.dict(cpo.b, {'schedule': [barrier_stage]}):
+                if clears:
+                    run_stage(cpo, barrier_stage)
+                    assert len(observations) >= 3
+                else:
+                    with patch.object(cpo, 'sampler', side_effect=AssertionError('Timed out barrier must not start collection')), patch.object(cpo.io, 'k', side_effect=lambda argv, **kwargs: {'items': []} if argv == ['get', 'jobs', '-o', 'json'] else no_mutation()):
+                        try:
+                            run_stage(cpo, barrier_stage)
+                        except RuntimeError as error:
+                            assert 'start barrier timebox' in str(error)
+                        else:
+                            raise AssertionError('Busy barrier started load')
+                barrier_phase = e5.load(barrier_out / 'smoke-E0/phase.json')
+                barrier_summary = summarize(e5, cpo.b, barrier_out)[0]
+                assert barrier_phase['startBarrier'] == barrier_summary['startBarrier']
+                assert barrier_phase['startBarrier']['timedOut'] is not clears
+                if not clears:
+                    assert barrier_phase['status'] == 'STOP' and barrier_phase['startUTC'] is None
+                    assert barrier_phase['startBarrier']['reservations'] == 1 and barrier_phase['startBarrier']['transitions'] == 1
+                assert (barrier_out / 'smoke-E0/start-barrier-state.json').exists()
+        for invalid_config in ({'staticPlacement': 'true', 'stages': [config['stages'][0]]}, *({'stages': [dict(config['stages'][0], startBarrier=value)]} for value in (None, {}, {'reservations': False, 'transitions': 0}, {'reservations': 1, 'transitions': 0}, {'reservations': 0, 'transitions': 0, 'seconds': 1})), {'stages': [{'id': 'bad', 'parts': [dict(config['stages'][0], startBarrier={'reservations': 0, 'transitions': 0})]}]}):
+            try:
+                schedule(invalid_config, e5)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid static placement/start barrier accepted')
         frozen_settings = copy.deepcopy(cpo.b['schedulerSettings'])
         settings['minimumDemand'][cpo.uids[0]] = 9
         settings['scaleDownStabilizationNanos'] = 300000000000
@@ -862,8 +982,8 @@ def self_check():
                 assert metric['offered'] == metric['clientRows'] and metric['transitionFailures'] == 1
                 assert metric['httpSuccess'] == metric['offered'] - 1
         assert 'p95 ms' in (cpo.out / 'summary.md').read_text()
-        assert sum(call[0] == 'create' for call in calls) == 9
-        assert sum(call[0] == 'exec' for call in calls) == 18
+        assert sum(call[0] == 'create' for call in calls) == 10  # Nine autonomous, one static PLC.
+        assert sum(call[0] == 'exec' for call in calls) == 20
         assert e5.load(cpo.out / 'smoke-E0/pre-state.json')['results'] is None and cpo.native_evidence == []
         import ast
         requested = {arg for arg in e5.load(cpo.out / 'smoke-A/job-image-classification-tight-slo.json')['spec']['template']['spec']['containers'][0]['args'] if arg.startswith('--')}
@@ -971,6 +1091,10 @@ def self_check():
             return loaded
         with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}), patch.object(e5, 'module', modules_for_assembly), patch.object(e5.ssl, 'create_default_context', return_value=None), patch.object(d.Conductor, 'api', api_fixture), patch.object(d.Conductor, 'k', lambda self, argv, **kw: {'items': [] if argv[1] == 'nodes' else [server]}), patch.object(d.Conductor, 'job', return_value={'spec': {'template': {'spec': {'containers': [{'args': ['--workers', '320', '--request-lifetime', '2', '--delivery-margin', '.010', '--timeout', '2.02']}]}}}}):
             assembled = e5.load(assemble(e5, SimpleNamespace(out=root / 'assembly'), source_spec))
+            before_static_capture = len(management_calls)
+            static_assembled = e5.load(assemble(e5, SimpleNamespace(out=root / 'static-assembly'), dict(source_spec, staticPlacement=True)))
+            assert len(static_assembled['workloads']) == 3
+            assert all(method == 'GET' for method, _ in management_calls[before_static_capture:])
             cpo.c = assembled
             cpo.uids = [w['uid'] for w in assembled['workloads']]
             cpo.io.http = None
@@ -991,6 +1115,7 @@ def self_check():
         assert all(w['workers'] == 320 and 'lifetimeSeconds' not in w for w in assembled['workloads'])
         assert (root / 'assembly/register-plc-anomaly.json').exists() and (cpo.out / 'finish-definitions-complete.json').exists()
         reset = object.__new__(e5.CPO)
+        reset.b = {'schema': 'e5-binding.v1'}
         reset.out = root / 'reset'
         reset.out.mkdir()
         reset.uids, reset.tb = ['owned'], {'settleSeconds': 194}
@@ -1081,7 +1206,7 @@ def self_check():
         e5.save(historical_path, frozen_binding)
         historical = e5.summarize(historical_path, frozen_root)
         assert historical['schedulerSettings'] is None and any('frozen scheduler settings' in row['reason'] for row in historical['missing'])
-        print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, optional lifetime, server reset evidence and failure stop; mocked API/kubectl only')
+        print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, static placement without scheduler mutation (including failure), start barrier clear/timeout, optional lifetime, server reset evidence and failure stop; mocked API/kubectl only')
 
 
 def main():

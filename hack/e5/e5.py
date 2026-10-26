@@ -376,15 +376,23 @@ class CPO:
     def authorize_native_modes(self):
         self.native_mode_authorized_since=now()
         save(self.out/'native-mode-authorization.json',{'authorizedSinceUTC':self.native_mode_authorized_since,'release':str(self.a.release),'meaning':'Actual pre-enable authorization fence; not a settings/native success ACK'})
+    def static_placement(self):
+        return self.b.get('schema')=='demo-e5-binding.v1' and self.b.get('demoConfig',{}).get('staticPlacement') is True
     def start(self):
         if (self.out/'initial.json').exists(): raise RuntimeError('No implicit restart')
-        s=self.idle(); settings=self.settings()
-        if s['snapshot']['instances'] or settings.get('autonomousWorkloads') or settings.get('staticRouting'): raise RuntimeError('Canonical three must start at zero; unrelated serving present')
+        static=self.static_placement()
+        s=self.state() if static else self.idle(); settings=self.settings()
+        if static:
+            if settings.get('autonomousWorkloads'):raise RuntimeError('Static placement requires autonomy already off')
+        elif s['snapshot']['instances'] or settings.get('autonomousWorkloads') or settings.get('staticRouting'): raise RuntimeError('Canonical three must start at zero; unrelated serving present')
         for w in self.c['workloads']:
             bound = next(x for x in s['snapshot']['workloads'] if x['uid']==w['uid'])
             if any(bound.get(k)!=w[k] for k in ('name','generation','slo')): raise RuntimeError('Fresh actual Workload generation/SLO changed')
             actual=self.api('GET','/api/v1/workloads/'+w['name']); save(self.out/('workload-'+w['name']+'.json'),actual)
         save(self.out/'initial.json',{'state':s,'settings':settings,'at':now()})
+        if static:
+            save(self.out/'start-ack.json',{'at':now(),'staticPlacement':True,'meaning':'Observed existing placement; no scheduler mutation'})
+            return
         self.release_routing('start-release', 'Release owned routing before automatic campaign start')
         settings['autonomousWorkloads']=self.uids; settings['excludedNodes']=E5['excludedNodes']
         self.authorize_native_modes()
@@ -499,7 +507,10 @@ class CPO:
             factor=next(f for f in self.c['factors'] if f['name']==self.a.mode)
             if not st['id'].startswith(('E5-2','E5-5')): raise RuntimeError('Factor comparison is exactly E5-2/E5-5')
             if self.settings()['controls']!=factor['controls']: raise RuntimeError('Factor source controls not actually active')
-        if self.a.mode in ('full','smoke') and not deferred_restore and set(self.settings()['autonomousWorkloads'])!=set(self.uids): raise RuntimeError('Actual canonical-three autonomous control required')
+        static=self.static_placement()
+        if static:
+            if self.settings().get('autonomousWorkloads'):raise RuntimeError('Static placement requires autonomy to remain off')
+        elif self.a.mode in ('full','smoke') and not deferred_restore and set(self.settings()['autonomousWorkloads'])!=set(self.uids): raise RuntimeError('Actual canonical-three autonomous control required')
         for frozen in self.b['sources'].values():
             if ref(frozen['path'])!=frozen: raise RuntimeError('Frozen input/package identity changed; no E5 load')
         jobs_live=self.io.k(['get','jobs','-o','json'])['items']
@@ -508,7 +519,26 @@ class CPO:
         if not alert_path.exists(): raise RuntimeError('Existing safety alert monitor required')
         alert_offset=alert_path.stat().st_size
         folder.mkdir(); self.io.a.phase='e5-'+self.a.mode+'-'+st['id']; self.io.a.command=self.a.command; self.io.phase_out=folder
+        barrier=None
+        if self.b.get('schema')=='demo-e5-binding.v1' and 'startBarrier' in st:
+            deadline=time.monotonic()+st['seconds']
+            barrier={'maximumSeconds':st['seconds'],'observedUTC':None,'timedOut':False}
+            try:
+                while True:
+                    alert_offset=self.monitor(alert_offset,folder)
+                    state=self.state(); observed=now()
+                    barrier.update(reservations=len(state['snapshot'].get('reservations') or []),transitions=sum(a.get('status') in ('running','cancel') for a in state.get('actions') or []))
+                    barrier['timedOut']=time.monotonic()>=deadline
+                    if not barrier['timedOut'] and barrier['reservations']==0 and barrier['transitions']==0:barrier['observedUTC']=observed
+                    save(folder/'start-barrier-state.json',{'observedUTC':observed,'state':state,'startBarrier':barrier})
+                    if barrier['observedUTC']:break
+                    if barrier['timedOut']:raise RuntimeError('Stage start barrier timebox exceeded; no load started')
+                    time.sleep(min(.2,max(0,deadline-time.monotonic())))
+            except Exception as e:
+                save(folder/'phase.json',{'stage':st,'mode':self.a.mode,'status':'STOP','startUTC':None,'endUTC':None,'startBarrier':barrier,'error':str(e),'failureUTC':now()})
+                raise
         self.boundary(folder,'pre'); children=self.sampler(folder,self.tb['setupSeconds']+st['seconds']+self.tb['drainSeconds']+self.tb['flushSeconds']); jobs=[]; streams=[]; phase={'stage':st,'mode':self.a.mode,'status':'RUNNING','startUTC':None,'endUTC':None,'starts':{}}
+        if barrier is not None:phase['startBarrier']=barrier
         self.native_evidence=(load(folder/'pre-state.json').get('results') or [])+[load(path) for root in (self.out,self.out.parent/'smoke-run') for path in root.glob('*-mode/result.json')]
         save(folder/'phase.json',phase); sel=selectors.DefaultSelector(); buffers={};pods={};deadline=time.monotonic()+self.tb['setupSeconds']
         try:
@@ -628,15 +658,16 @@ class CPO:
             self.collect(folder)
         except Exception as e:
             phase['status']='STOP'; phase['error']=str(e); phase['failureUTC']=now(); phase['ownedProducerStops']=[]; save(folder/'phase.json',phase)
-            try:
-                prior=load(self.out/'initial.json')['settings'];current=self.settings();restore=copy.deepcopy(current)
-                members=[uid for uid in current.get('autonomousWorkloads',[]) if uid not in self.uids]+[uid for uid in prior.get('autonomousWorkloads',[]) if uid in self.uids]
-                restore['autonomousWorkloads']=members;restore['excludedNodes']=prior['excludedNodes']
-                response=self.put(restore)
-                observed=self.settings()
-                save(folder/'failed-owned-control-restore.json',{'at':now(),'prior':prior,'requested':restore,'response':response,'actual':observed,'topologyRestored':False,'instruction':'Do not recreate missing static/native IDs; preserve actual topology for CPO/Main'})
-                if sorted(observed.get('autonomousWorkloads',[]))!=sorted(members) or sorted(observed['excludedNodes'])!=sorted(prior['excludedNodes']):raise RuntimeError('Prior owned autonomy/exclusions did not restore')
-            except Exception as restore_error:phase.setdefault('cleanupErrors',[]).append('owned-control-restore: '+str(restore_error))
+            if not static:
+                try:
+                    prior=load(self.out/'initial.json')['settings'];current=self.settings();restore=copy.deepcopy(current)
+                    members=[uid for uid in current.get('autonomousWorkloads',[]) if uid not in self.uids]+[uid for uid in prior.get('autonomousWorkloads',[]) if uid in self.uids]
+                    restore['autonomousWorkloads']=members;restore['excludedNodes']=prior['excludedNodes']
+                    response=self.put(restore)
+                    observed=self.settings()
+                    save(folder/'failed-owned-control-restore.json',{'at':now(),'prior':prior,'requested':restore,'response':response,'actual':observed,'topologyRestored':False,'instruction':'Do not recreate missing static/native IDs; preserve actual topology for CPO/Main'})
+                    if sorted(observed.get('autonomousWorkloads',[]))!=sorted(members) or sorted(observed['excludedNodes'])!=sorted(prior['excludedNodes']):raise RuntimeError('Prior owned autonomy/exclusions did not restore')
+                except Exception as restore_error:phase.setdefault('cleanupErrors',[]).append('owned-control-restore: '+str(restore_error))
             for name,job,uid in jobs:
                 try:
                     terminal=self.io.k(['get','job',job,'-o','json']); save(folder/('stop-job-'+name+'.json'),terminal)
@@ -756,6 +787,10 @@ class CPO:
     def factor_restore(self):
         self.idle(); settings=self.settings(); initial=load(self.c['inputs']['scheduler'])['settings']; settings['controls']=initial['controls']; save(self.out/'factor-restored.json',self.put(settings))
     def finish(self):
+        if self.static_placement():
+            save(self.out/'finish-state.json',self.state())
+            save(self.out/'finish-complete.json',{'at':now(),'staticPlacement':True,'meaning':'Existing manual placement retained; no scheduler mutation'})
+            return
         initial=load(self.out/'initial.json')
         result=self.clear_owned('finish')
         settings=copy.deepcopy(initial['settings'])
