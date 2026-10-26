@@ -4,6 +4,161 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
+# Upgrade is deliberately isolated from the reset/uninstall development path.
+if [[ "${1:-}" == upgrade ]]; then
+	shift
+	exec python3 - "$@" <<'PY'
+import argparse, copy, datetime, difflib, fcntl, hashlib, json, os, pathlib, re, shlex, subprocess, sys, time
+
+p = argparse.ArgumentParser(description="Upgrade control images only; never reset the release or build runtime images.")
+p.add_argument("--source", required=True)
+p.add_argument("--control", required=True)
+p.add_argument("--images", default="auto")
+p.add_argument("--dry-run", action="store_true")
+a = p.parse_args()
+if not re.fullmatch(r"[0-9]+", a.control):
+    p.error("--control must contain digits")
+roles = {"server": ("servingEntrypoint", "serving-entrypoint"), "profiler": ("profiler", "profiler"), "dashboard": ("dashboard", "dashboard")}
+dockerfiles = {"server": "chill-server", "profiler": "profiler", "dashboard": "dashboard"}
+selected = a.images.split(",")
+if a.images != "auto" and (len(set(selected)) != len(selected) or any(x not in roles for x in selected)):
+    p.error("--images accepts auto or a comma-separated subset of server,profiler,dashboard; runtime images are forbidden")
+root = pathlib.Path.cwd()
+sha = subprocess.check_output(["git", "rev-parse", "--verify", a.source + "^{commit}"], text=True).strip()
+base = pathlib.Path("/home/genesis1/.cache/chill-assets/ops/pools-deploy")
+out = base / "deployB" / ("control-" + a.control + "-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d"))
+helm = ["/usr/local/bin/helm", "--kube-context", "kubernetes-admin@kubernetes", "-n", "chill-system"]
+kube = ["/usr/bin/kubectl", "--kubeconfig", "/home/genesis1/.kube/config", "--context", "kubernetes-admin@kubernetes", "-n", "chill-system"]
+if a.dry_run:
+    print("LOCAL PLAN ONLY: no cluster, registry, image build, lock or evidence mutation.")
+    print("source:", sha, "\nevidence:", out)
+    print("git archive", sha, "→ clean source archive")
+    print("helm get values chill -o json → live-values.json; auto: resolve each live image source commit and git diff paths")
+    print("allowed builds:", a.images, "; runtime builds: FORBIDDEN (7 runtime images)")
+    print("flock /tmp/chill-heavy.lock; buildx chill-builder linux/amd64 → registry digest verification")
+    print("helm template old/new → render-diff + exact image-only object gate → kubectl apply --dry-run=server")
+    print("helm upgrade --reset-values -f live-values.json -f overlay.json --wait --timeout 8m")
+    print("Ready + restartCount=0 + registry platform digest gate (480s); readiness.json; deploy-log.md")
+    sys.exit(0)
+import yaml
+lock = open("/tmp/chill-heavy.lock", "a")
+fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+os.umask(0o077)
+out.mkdir(parents=True, exist_ok=False)
+log = open(out / "commands.log", "a", buffering=1)
+def run(cmd, name=None, limit=120):
+    log.write("+ " + shlex.join(map(str, cmd)) + "\n")
+    result = subprocess.run(list(map(str, cmd)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=limit)
+    if name:
+        (out / name).write_bytes(result.stdout)
+        (out / (name + ".stderr")).write_bytes(result.stderr)
+    log.write("exit=" + str(result.returncode) + "\n")
+    if result.returncode:
+        raise RuntimeError("command failed; see " + str(out / (name or "commands.log")))
+    return result.stdout
+def save(name, value):
+    (out / name).write_text(json.dumps(value, indent=2) + "\n")
+def git(*args):
+    return run(["git", *args]).decode().strip()
+def image(v, role):
+    value = v[roles[role][0]]["image"]
+    return value["repository"] + ":" + str(value["tag"])
+def source(ref):
+    # Historical pools tags end in their source SHA; unknown provenance must stop.
+    match = re.search(r"(?:^|-)([0-9a-f]{7,40})$", ref.split(":")[-1])
+    if not match:
+        raise RuntimeError("image source commit cannot be resolved: " + ref)
+    return git("rev-parse", "--verify", match[1] + "^{commit}")
+try:
+    live = json.loads(run(helm + ["get", "values", "chill", "-o", "json"], "live-values.json"))
+    run(helm + ["get", "hooks", "chill"], "live-hooks.yaml")
+    run(helm + ["get", "manifest", "chill"], "live-manifest.yaml")
+    archive = out / "source.tar"
+    run(["git", "archive", "--format=tar", "--output=" + str(archive), sha], "archive.log")
+    src = out / "source"
+    src.mkdir()
+    run(["tar", "-xf", archive, "-C", src], "extract.log")
+    chart = src / "charts/chill"
+    changed = {}
+    for role in roles:
+        old = source(image(live, role))
+        paths = git("diff", "--name-only", old, sha).splitlines()
+        prefixes = ("chill-dashboard/", "build/docker/dashboard.Dockerfile") if role == "dashboard" else ("cmd/", "internal/", "api/", "go.mod", "go.sum", "build/docker/" + dockerfiles[role] + ".Dockerfile")
+        changed[role] = {"from": old, "paths": [x for x in paths if x.startswith(prefixes)]}
+    selected = [r for r in (roles if a.images == "auto" else selected) if changed[r]["paths"]]
+    save("source-diff.json", changed)
+    if not selected:
+        raise RuntimeError("no changed control images; no upgrade performed")
+    overlay, expected = {}, {}
+    registry = "155.230.35.213:5000/chill/"
+    for role in selected:
+        key, component = roles[role]  # Only these three hard-coded Dockerfiles can reach buildx.
+        repo = registry + "chill-" + component
+        tag = "pools-control-" + a.control + "-" + sha[:12]
+        ref = repo + ":" + tag
+        metadata = out / (role + "-build.json")
+        run(["/usr/bin/nice", "-n", "19", "/usr/bin/docker", "buildx", "build", "--builder", "chill-builder", "--platform", "linux/amd64", "--label", "org.opencontainers.image.revision=" + sha, "--metadata-file", metadata, "-f", src / ("build/docker/" + dockerfiles[role] + ".Dockerfile"), "-t", ref, "--push", src], role + "-build.log", 1800)
+        digest = json.loads(metadata.read_text())["containerimage.digest"]
+        raw = run(["/usr/bin/docker", "buildx", "imagetools", "inspect", "--raw", ref], role + "-manifest.json")
+        if "sha256:" + hashlib.sha256(raw).hexdigest() != digest:
+            raise RuntimeError("registry/build digest mismatch: " + role)
+        manifest = json.loads(raw)
+        candidates = [x["digest"] for x in manifest.get("manifests", []) if x.get("platform", {}).get("architecture") == "amd64" and x.get("platform", {}).get("os") == "linux"]
+        expected[role] = {"image": ref, "digest": digest, "platformDigest": candidates[0] if len(candidates) == 1 else digest}
+        overlay[key] = {"image": {"repository": repo, "tag": tag}}
+    save("publication.json", {"sourceSHA": sha, "roles": expected, "runtimeBuilds": 0})
+    save("overlay.json", overlay)
+    flags = ["-f", str(out / "live-values.json")]
+    before = run(helm + ["template", "chill", chart, *flags, "--is-upgrade"], "render-before.yaml")
+    after = run(helm + ["template", "chill", chart, *flags, "-f", str(out / "overlay.json"), "--is-upgrade"], "render-after.yaml")
+    def objects(raw):
+        return {(x["apiVersion"], x["kind"], x["metadata"].get("namespace", "chill-system"), x["metadata"]["name"]): x for x in yaml.safe_load_all(raw) if isinstance(x, dict)}
+    old, new, deployed = objects(before), objects(after), objects((out / "live-manifest.yaml").read_bytes() + b"\n---\n" + (out / "live-hooks.yaml").read_bytes())
+    if old != deployed:
+        raise RuntimeError("source chart/live manifest drift; inspect render-before and live-manifest")
+    approved = copy.deepcopy(old)
+    replacements = {image(live, r): expected[r]["image"] for r in selected}
+    def replace(value):
+        if isinstance(value, dict):
+            return {k: replace(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [replace(v) for v in value]
+        if isinstance(value, str):
+            for previous, following in replacements.items():
+                value = value.replace(previous, following)
+        return value
+    approved = replace(approved)
+    delta = [list(k) for k in sorted(old.keys() | new.keys()) if old.get(k) != new.get(k)]
+    save("render-diff.json", delta)
+    (out / "render-diff.txt").write_text("".join(difflib.unified_diff(before.decode().splitlines(True), after.decode().splitlines(True))))
+    if new != approved or not delta:
+        raise RuntimeError("unexpected render differences or no image changes")
+    run(kube + ["apply", "--dry-run=server", "-f", out / "render-after.yaml"], "server-dry-run.log")
+    run(helm + ["upgrade", "chill", chart, "--reset-values", *flags, "-f", out / "overlay.json", "--wait", "--timeout", "8m"], "upgrade.log", 510)
+    deadline = time.monotonic() + 480
+    while True:
+        pods = json.loads(run(kube + ["get", "pods", "-o", "json"], "pods.json"))
+        checks = {}
+        for role, exp in expected.items():
+            containers = [(pod, status) for pod in pods["items"] if not pod["metadata"].get("deletionTimestamp") for status in pod.get("status", {}).get("containerStatuses", []) if status["image"] == exp["image"]]
+            checks[role] = bool(containers) and all(s.get("ready") and s.get("restartCount") == 0 and s.get("imageID", "").endswith(exp["platformDigest"]) and all(c["status"] == "True" for c in pod.get("status", {}).get("conditions", []) if c["type"] == "Ready") for pod, s in containers)
+        save("readiness.json", {"sourceSHA": sha, "checks": checks, "ready": all(checks.values()), "runtimeBuilds": 0})
+        if all(checks.values()):
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("readiness/digest/restart gate timed out")
+        time.sleep(5)
+    run(helm + ["get", "values", "chill", "-o", "json"], "post-values.json")
+    with open(base / "deploy-log.md", "a") as stream:
+        stream.write("\n- control-" + a.control + " source " + sha + ": upgrade Ready/restarts0/digests verified; runtime builds0; evidence `" + str(out) + "`.\n")
+    print("READY:", out)
+except Exception as error:
+    save("failure.json", {"error": str(error), "evidence": str(out)})
+    print(str(error) + "; evidence: " + str(out), file=sys.stderr)
+    sys.exit(1)
+PY
+fi
+
 registry="${CHILL_FAST_REGISTRY:-155.230.35.213:5000}"
 image_namespace="${CHILL_FAST_IMAGE_NAMESPACE:-chill}"
 image_tag="${IMAGE_TAG:-}"

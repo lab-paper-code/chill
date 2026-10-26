@@ -45,6 +45,17 @@ with hooks disabled. The chart hook remains only as a safety net for direct
 `make helm-purge-crds` is intentionally guarded and requires
 `CONFIRM_PURGE_CRDS=chill`.
 
+## Control-only upgrade
+
+`hack/fast-deploy.sh upgrade --source <commit> --control <NNN> --dry-run`
+prints a local-only deployment plan. Remove `--dry-run` to publish changed
+control images and upgrade the existing release without uninstall/reset.
+`--images auto` (default) compares live image source commits; an explicit
+subset of `server,profiler,dashboard` is also accepted. Runtime image builds
+are forbidden. See [the operations guide](../docs/operations/ops-agent-guide.md)
+for the shared lock, evidence files, prerequisites and stop conditions.
+
+
 ## Profiler runtime declarations
 
 `charts/chill/values-profiler.yaml` takes `profiling.executionDeclarations`
