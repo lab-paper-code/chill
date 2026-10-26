@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"cmp"
 	"context"
 	"maps"
 	"reflect"
@@ -149,4 +150,18 @@ func schedulerSlowAllowed(settings SchedulerSettings, s SchedulerSnapshot, uid s
 }
 func schedulerEmptySlowAllowed(settings SchedulerSettings, s SchedulerSnapshot) bool {
 	return settings.ScaleDownStabilization == 0 || s.EmptyNodeScaleDownAllowed
+}
+
+// schedulerDownCapacity preserves timer evidence when evaluation returns before
+// plan search (including observation gaps and an incomplete arrival window).
+func schedulerDownCapacity(settings SchedulerSettings, snapshot SchedulerSnapshot) *SchedulerCapacity {
+	if len(snapshot.ScaleDown) == 0 {
+		return nil
+	}
+	record := &SchedulerCapacity{Period: settings.ComparisonPeriod, Workloads: make([]SchedulerCapacityWorkload, 0, len(snapshot.ScaleDown))}
+	for uid, down := range snapshot.ScaleDown {
+		record.Workloads = append(record.Workloads, SchedulerCapacityWorkload{UID: uid, Rate: down.Rate, MinimumDemand: settings.MinimumDemand[uid], ScaleDown: &down})
+	}
+	slices.SortFunc(record.Workloads, func(a, b SchedulerCapacityWorkload) int { return cmp.Compare(a.UID, b.UID) })
+	return record
 }

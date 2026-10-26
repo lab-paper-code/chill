@@ -266,3 +266,38 @@ func TestSchedulerTempoSelectedRebasesOwnerOnlyRemoval(t *testing.T) {
 		t.Fatalf("unrelated Workload was rebased: %+v", state)
 	}
 }
+
+func TestSchedulerTempoRecordsEarlyDecisionReset(t *testing.T) {
+	for _, reason := range []string{"partial-window", "snapshot-gap"} {
+		t.Run(reason, func(t *testing.T) {
+			s, snapshot := schedulerFixture()
+			s.ScaleDownStabilization = time.Minute
+			snapshot.ObservedSince = snapshot.At
+			if reason == "snapshot-gap" {
+				snapshot.Reasons = []string{schedulerObservationGap}
+			}
+			var tempo SchedulerTempo
+			tempo.Observe(s, &snapshot)
+			rows := capacityRowsForTest(s, snapshot, nil)
+			decision := capacityDecideForTest(t, s, snapshot, rows)
+			if decision.Target != nil || decision.Capacity == nil || decision.Capacity.Search != nil || len(decision.Capacity.Workloads) != 1 {
+				t.Fatalf("fixture must return before plan search with timer evidence: %+v", decision)
+			}
+			down := decision.Capacity.Workloads[0].ScaleDown
+			if down == nil || down.ResetReason != "FirstObservation" || down.Allowed || decision.Capacity.Period != s.ComparisonPeriod {
+				t.Fatalf("early reset evidence missing: %+v", decision.Capacity)
+			}
+			// A later observed gap records the interruption too, not just startup.
+			snapshot.ScaleDown = nil
+			snapshot.At = snapshot.At.Add(time.Second)
+			snapshot.ObservationEnd = snapshot.At
+			snapshot.Reasons = []string{schedulerObservationGap}
+			tempo.Observe(s, &snapshot)
+			decision = capacityDecideForTest(t, s, snapshot, rows)
+			down = decision.Capacity.Workloads[0].ScaleDown
+			if down.ResetReason != schedulerObservationGap || down.DownSince != nil {
+				t.Fatalf("observation interruption disappeared from decision: %+v", down)
+			}
+		})
+	}
+}

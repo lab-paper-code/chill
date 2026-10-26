@@ -126,7 +126,7 @@ type SchedulerNodePlan struct {
 // final SLO rule over exact κ sums, a neighborhood search over plan sets and
 // analytic energy over one comparison period. capacity holds the rows
 // CapacityTable.Rows returns.
-func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, capacity []CapacityRow) (SchedulerDecision, error) {
+func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, capacity []CapacityRow) (decision SchedulerDecision, err error) {
 	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return SchedulerDecision{}, err
@@ -141,7 +141,12 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if settings.ScaleDownStabilization == 0 {
 		snapshot.EmptyNodeScaleDownAllowed = true
 	}
-	decision := SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
+	decision = SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
+	defer func() {
+		if decision.Capacity == nil && !decision.At.IsZero() {
+			decision.Capacity = schedulerDownCapacity(settings, snapshot)
+		}
+	}()
 	fixSchedulerWorkloads(&decision, snapshot, capacity)
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
 	for uid, routing := range snapshot.Routing {
