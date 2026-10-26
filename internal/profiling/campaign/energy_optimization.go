@@ -3,6 +3,8 @@ package batchenergyoptimization
 import (
 	"errors"
 	"fmt"
+
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 // CurveSource derives the energy-objective decision over the completed active
@@ -47,6 +49,15 @@ func (s *quickEnergyMinimization) Plan(observed Observed) (Plan, error) {
 		counts[measurement]++
 		if measurement.WorkloadMode == WorkloadModeActive && measurement.Batch > highestActive {
 			highestActive = measurement.Batch
+		}
+	}
+	for _, measurement := range observed.Completed {
+		if counts[measurement] > s.config.TrialsPerBatch {
+			return Plan{}, fmt.Errorf(
+				"%w: %s/b%d: expected batch=%d, expected=%d, completed=%d",
+				profilederivation.ErrEnergyObjectivePolicyMismatch, measurement.WorkloadMode,
+				measurement.Batch, measurement.Batch, s.config.TrialsPerBatch, counts[measurement],
+			)
 		}
 	}
 

@@ -1,8 +1,11 @@
 package batchenergyoptimization
 
 import (
+	"errors"
 	"reflect"
 	"testing"
+
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 func TestQuickEnergyRequestsIdleBaselineFirst(t *testing.T) {
@@ -102,6 +105,31 @@ func TestQuickEnergyPassesTheMeasuredPrefixToTheObjective(t *testing.T) {
 	if plan.Result == nil || plan.Result.Outcome != "MinimumFound/SearchSpaceExhausted" ||
 		plan.Result.Detail != "curve detail" {
 		t.Fatalf("result = %+v", plan.Result)
+	}
+}
+
+func TestQuickEnergyRejectsExcessSuccessfulTrialsBeforePlanning(t *testing.T) {
+	for _, mode := range []WorkloadMode{WorkloadModeIdle, WorkloadModeActive} {
+		t.Run(string(mode), func(t *testing.T) {
+			curveCalls := 0
+			method := newTestQuickEnergyMethod(t, func([]int) (CurveResult, error) {
+				curveCalls++
+				return CurveResult{Continue: true}, nil
+			})
+			// The idle baseline and earlier active points are deliberately missing:
+			// excess successes must fail before requesting any missing trial.
+			measurement := Measurement{WorkloadMode: mode, Batch: 8}
+			plan, err := method.Plan(Observed{
+				PlannedBatchSizes: []int{1, 2, 4, 8, 16},
+				Completed:         []Measurement{measurement, measurement, measurement, measurement},
+			})
+			if !errors.Is(err, profilederivation.ErrEnergyObjectivePolicyMismatch) {
+				t.Fatalf("expected excess-success policy mismatch, got %v", err)
+			}
+			if plan.Next != nil || plan.Result != nil || curveCalls != 0 {
+				t.Fatalf("excess successes planned work: plan=%+v, curve calls=%d", plan, curveCalls)
+			}
+		})
 	}
 }
 

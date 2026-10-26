@@ -48,6 +48,12 @@ message. The current generation is recorded on status and condition; replay of
 that terminal generation performs no further derivation or measurement.
 The original Runs and evidence are retained, no successful result reference is
 created, and trials are never silently discarded to satisfy the policy.
+The scheduling method counts all successful observations before requesting
+another trial or deriving a curve. Any measurement with more than
+`trialsPerBatch` successes fails with the same policy-mismatch reason, even if
+an earlier batch or the idle baseline is incomplete. Failed attempts do not
+count toward this bound. Deterministic Run names and the existing
+`AlreadyExists` reconciliation path are unchanged.
 
 ## Result
 
