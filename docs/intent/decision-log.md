@@ -291,3 +291,18 @@
 ## 2026-10-26 20:3xZ — E5 전 보완 워크플로우(U1~U10) 연속 진행
 
 - `docs/plans/2026-10-27-pre-e5-workflow.md` §5. 사용자 승인은 E5 숫자 1회만; U2 최소안, U3 클럭 단계·U4 허용 차이·U7 결정 2개는 권고값으로 진행하고 여기에 기록.
+
+### U4 — 같은 기종 프로파일 동등성 권고값(2026-10-27)
+
+- 결정: PR-01..04. 같은 DeviceClass·동일 실행 조건의 원본을 다른 Node에 공유하되, 대상의 활성·유휴 확인 측정을 필수로 한다. 배치별 평균 서비스 시간·평균 활성 벽전력과 유휴 벽전력의 원본 대비 상대 차이를 각각 설정값 `maximumRelativeDifference=0.05` 이하로 확인한다. 5%는 계획 여유 25%의 1/5인 초기 screening 권고값이지 통계적 오차 보장이 아니다.
+- 확인 창 권고: 활성·유휴 각각 30초 이상, trial 3개 이상; 원본의 warmup·settling과 원시/벽전력 완전성 규칙 유지. 모든 재사용 배치를 확인한다. 거절되면 대상의 독립 측정으로 전환하며 기준을 넓혀 통과시키지 않는다.
+- 표현: 새 CRD 없이 대상 BatchEnergyOptimization의 `chill.dacs.io/profile-reuse` annotation에 원본 profile ID·허용 차이를 선언하고 기존 불변 결과와 원시 측정을 확인 기록으로 보존한다. Catalog가 대상 UID·GPU UUID·meter·메모리의 재사용 행과 판정 결과를 제공한다. d·operation cost·mode transition은 Node별로 유지한다.
+- 주의: U3의 읽기 전용 호스트 조사에서 genesis2/3의 RTX 2080 Ti 이름·driver는 같지만 기본 power limit(250/300W), 최대 graphics clock(2100/2175MHz)과 VBIOS가 다르다. 기종 이름만으로 통과시키지 않고 실제 확인 차이로 판정한다.
+- 연결: [catalog SRS §7](../spec/catalog/SRS.md#7-u4-같은-기종-프로파일-재사용), [측정 API §10](../design/serving/measurement-api.md#10-같은-기종-node-프로파일-재사용--pr-0104). 실클러스터 변경·실측은 CampaignOps 소유이며 이 결정 자체는 실증 완료 기록이 아니다.
+
+## 2026-10-27 — U7 E5 실패 장면·집계 권고안 적용
+
+- 첫 준비 구간은 부하 시작→첫 실제 분배 ACK의 요청을 전체 offered 분모에 유지하고 별도 표시한다. Node 차단은 명령 시작→uncordon 뒤 실제 Ready·관측·route 회복 구간을 표시하고 전체 결과와 해당 구간 제외 집계를 분모·실패 수와 함께 병기한다. 미복구는 단계 끝까지다. 사후 유리한 요청 제거는 금지한다.
+- E5-7은 15분 0.3R, 180초 인스턴스 강제 종료·360초 Node 하나 cordon+서빙 Pod 삭제·600초 uncordon 권고값이다. 운영 담당이 기존 kubectl만 사용하고 실패 시 복원한다. cordon은 실제 네트워크 단절이 아니며 배치 차단·서빙 소실 대리 실험으로 한정한다.
+- 제어요소 비교는 N=2(membership-off, replicas-off), full195+static170+비교70=435분(부대 시간 별도). U2 최소 Jetson 두 모드의 Accepted 근거 5종을 E5-5에 연결한다. 점진 감소·다른 모델 버스트·독립 반복·모든 제어요소 독립 기여는 미평가임을 공개한다.
+- 근거: [연속 진행 §5](../plans/2026-10-27-pre-e5-workflow.md#5-사용자-수정2026-10-26-203xz-대기-없이-연속-진행), [E5 계획](../plans/2026-10-26-e5-evaluation.md), [설계 §9](../design/serving/workload-pools.md#9-검증-계획), scheduler `SCH-AC-45`. spec 평가 7행은 이미 실패 격리·대체·복구를 요구하므로 변경하지 않는다. 최종 E5 숫자 승인은 별도 1회이며 실행 완료나 장애 실증을 뜻하지 않는다.
