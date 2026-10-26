@@ -353,3 +353,8 @@
 ## 2026-10-26 23:5xZ — U3 idle baseline 안정화 창 권고값(15s+30s)
 
 - GPU_1500 ModelLoadedIdleBaseline(settling 60s+idle 30s)이 3/3 실패: firstfloor HTTP keep-alive 유휴 60s 초과로 측정기 연결 끊김(`Remote end closed`, `history://U3IdleFail27`). runtime 7 재빌드 금지 → 기존 Complete CR 7개와 같은 **settling 15s + idle 30s**로 진행(권고값). 근본 수정(측정기 연결 재수립)은 runtime 재빌드 시점에.
+
+## 2026-10-27 00:0xZ — U4 실증 결과: genesis2↔genesis3는 동등 장치 아님
+
+- 확인 측정(30s×3)은 Complete이나 재사용 Rejected(frozen condition 불일치 — observer digest 차이 유력[추정]; 확정엔 curve-plan 원본 필요). 그와 별개로 모델 로드 idle 벽전력 108.3W vs 71.9W(33.65%), GPU 기본 전력 한도 250 vs 300W, 최대 클럭 2100 vs 2175MHz → 현행 5% 동등성 기준에서 통과 불가(`history://U4RejectCause27`).
+- 결정(권고 기본값): U4 재사용 메커니즘은 유지(거절이 올바른 동작), genesis2→3 공유는 적용하지 않고 두 Node를 독립 측정. U2 커버리지 표의 genesis 측정량 절반 감축 가정 철회. CPU 집합 완화·digest 조건 완화는 하지 않음.
