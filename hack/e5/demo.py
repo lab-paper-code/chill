@@ -13,8 +13,10 @@ clear. *-reset-wait.json retains observations and the last state. On timeout,
 one reset is still attempted; reset failures/409 are retained without retries.
 
 Autonomous setup requires minimumDemand keyed by the three canonical names;
-after registration it replaces obsolete UID keys and freezes settings readback.
-Start refuses floor drift. Static placement remains read-only.
+after registration it reads canonical UIDs from workload GET responses and waits
+up to 60s (2s polls) for the scheduler snapshot to agree before replacing obsolete
+UID keys and freezing settings readback. Start refuses floor drift.
+Static placement remains read-only.
 Reset uses the synchronous OperationResult contract: HTTP budget is settleSeconds
 + powerDownSeconds (default 1800, server operation-timeout default upper bound)
 + apiSeconds, not settleSeconds alone; configure the power bound for the deployment.
@@ -80,6 +82,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 
 HERE = Path(__file__).resolve().parent
 ALIASES = {'mobilenet': 'image-classification-tight-slo', 'smolvlm2': 'smolvlm2-vqa', 'plc': 'plc-anomaly'}
@@ -171,15 +174,27 @@ def bind_minimum_demand(api, spec):
     floors = spec.get('minimumDemand')
     if not isinstance(floors, dict) or set(floors) != set(ALIASES.values()) or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in floors.values()):
         raise ValueError('minimumDemand requires finite nonnegative floors keyed by all canonical names')
-    workloads = scheduler['state']['snapshot']['workloads']
     mapping = {}
     for name in floors:
-        matches = [w['uid'] for w in workloads if w['name'] == name]
-        if len(matches) != 1:
-            raise RuntimeError('Ambiguous canonical minimumDemand identity: ' + name)
-        mapping[name] = matches[0]
+        actual, _ = api('GET', '/api/v1/workloads/' + name)
+        uid = actual['desired']['metadata'].get('uid')
+        if not isinstance(uid, str) or not uid:
+            raise RuntimeError('Missing canonical minimumDemand UID: ' + name)
+        mapping[name] = uid
     if len(set(mapping.values())) != len(mapping):
         raise RuntimeError('Canonical minimumDemand UIDs are not unique')
+    deadline = time.monotonic() + 60
+    while True:
+        workloads = scheduler['state']['snapshot']['workloads']
+        missing = {name: uid for name, uid in mapping.items()
+                   if [w['uid'] for w in workloads if w['name'] == name] != [uid]}
+        if not missing:
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError('minimumDemand scheduler snapshot UID mismatch after 60s; no settings PUT: ' + json.dumps(missing, sort_keys=True))
+        time.sleep(min(2, remaining))
+        scheduler, _ = api('GET', '/api/v1/scheduler')
     settings = copy.deepcopy(scheduler['settings'])
     settings.pop('staticRouting', None)
     settings.pop('staticRoutingValidatedAt', None)
@@ -869,18 +884,26 @@ def self_check():
         floor_settings = {'minimumDemand': {'old-' + name: value for name, value in floors.items()}}
         floor_calls = []
         corrupt_readback = [False]
+        stale_reads = [0]
         def floor_api(method, path, body=None):
             floor_calls.append(method)
+            if path.startswith('/api/v1/workloads/'):
+                workload = next(w for w in floor_workloads if w['name'] == path.rsplit('/', 1)[-1])
+                return {'desired': {'metadata': {'uid': workload['uid']}}}, 200
             if method == 'PUT':
                 floor_settings.update(copy.deepcopy(body))
                 return {}, 200
             result = {'state': {'snapshot': {'workloads': copy.deepcopy(floor_workloads)}}, 'settings': copy.deepcopy(floor_settings)}
+            if stale_reads[0]:
+                stale_reads[0] -= 1
+                for w in result['state']['snapshot']['workloads']:
+                    w['uid'] = 'old-' + w['name']
             if corrupt_readback[0] and floor_calls[-2:] == ['PUT', 'GET']:
                 result['settings']['minimumDemand'] = {}
             return result, 200
         floor_readback = bind_minimum_demand(floor_api, {'minimumDemand': floors})
         assert floor_readback['settings']['minimumDemand'] == {'new-' + name: value for name, value in floors.items()}
-        assert floor_calls == ['GET', 'PUT', 'GET']
+        assert floor_calls == ['GET'] * 4 + ['PUT', 'GET']
         floor_workloads[0]['uid'] = 'reregistered'
         assert bind_minimum_demand(floor_api, {'minimumDemand': floors})['settings']['minimumDemand'] == {'reregistered': 20, 'new-smolvlm2-vqa': .3, 'new-plc-anomaly': 40}
         corrupt_readback[0] = True
@@ -890,6 +913,29 @@ def self_check():
             assert 'readback/identity mismatch' in str(error)
         else:
             raise AssertionError('Incorrect minimumDemand readback accepted')
+        corrupt_readback[0] = False
+        floor_calls.clear()
+        stale_reads[0] = 1
+        with patch.object(time, 'sleep') as sleep:
+            floor_readback = bind_minimum_demand(floor_api, {'minimumDemand': floors})
+        sleep.assert_called_once_with(2)
+        assert floor_calls == ['GET'] * 5 + ['PUT', 'GET']
+        assert floor_readback['settings']['minimumDemand']['reregistered'] == 20
+        floor_calls.clear()
+        stale_reads[0] = 1000
+        clock, sleeps = [0], []
+        def floor_sleep(seconds):
+            sleeps.append(seconds)
+            clock[0] += seconds
+        with patch.object(time, 'monotonic', side_effect=lambda: clock[0]), patch.object(time, 'sleep', side_effect=floor_sleep):
+            try:
+                bind_minimum_demand(floor_api, {'minimumDemand': floors})
+            except RuntimeError as error:
+                assert 'snapshot UID mismatch after 60s; no settings PUT' in str(error)
+                assert 'reregistered' in str(error)
+            else:
+                raise AssertionError('Permanently stale canonical UID accepted')
+        assert sleeps == [2] * 30 and floor_calls == ['GET'] * 34
         snapshot = {'at': e5.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'reservations': []}
         scheduler_actions = []
         cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': copy.deepcopy(scheduler_actions), 'results': None}
