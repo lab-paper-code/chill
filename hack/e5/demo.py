@@ -452,8 +452,7 @@ def collect_stage(e5, cpo, stage):
 
 def resume(e5, cpo):
     """Reset the owned scope once, then re-enable autonomy with original evidence retained."""
-    if e5.power_observation(cpo.c) != cpo.b['schedulerSettings']['powerObservation']:
-        raise RuntimeError('Operating power observation differs from frozen binding; no resume')
+    cpo.check_power_observation()
     if cpo.static_placement():
         raise RuntimeError('Static placement does not reset or resume autonomy; use start/run')
     if not (cpo.out / 'initial.json').exists() or not (cpo.out / 'start-ack.json').exists():
@@ -933,12 +932,14 @@ def self_check():
         (root / 'control-alerts.jsonl').write_text('')
         with patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'client_end_counter', lambda *args: {'fixtureCounter': True}):
             with patch.object(e5, 'power_observation', return_value=dict(fixture_power, coverage=dict(fixture_power['coverage'], MaximumGap=2000000000))):
-                try:
-                    cpo.start()
-                except RuntimeError as error:
-                    assert 'power observation differs' in str(error)
-                else:
-                    raise AssertionError('Start accepted changed operating power policy')
+                for operation in (cpo.start, cpo.run):
+                    try:
+                        operation()
+                    except RuntimeError as error:
+                        assert 'power observation differs' in str(error)
+                    else:
+                        raise AssertionError('Start/run accepted changed operating power policy')
+                assert not stage_folder(cpo.out, stages[0]).exists()
             with patch.object(cpo, 'settings', return_value=dict(settings, minimumDemand={'old-uid': .3})):
                 try:
                     cpo.start()

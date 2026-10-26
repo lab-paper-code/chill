@@ -411,12 +411,14 @@ class CPO:
         save(self.out/'native-mode-authorization.json',{'authorizedSinceUTC':self.native_mode_authorized_since,'release':str(self.a.release),'meaning':'Actual pre-enable authorization fence; not a settings/native success ACK'})
     def static_placement(self):
         return self.b.get('schema')=='demo-e5-binding.v1' and self.b.get('demoConfig',{}).get('staticPlacement') is True
+    def check_power_observation(self):
+        if power_observation(self.c) != self.b['schedulerSettings']['powerObservation']:
+            raise RuntimeError('Operating power observation differs from frozen binding; no E5 load')
     def start(self):
         if (self.out/'initial.json').exists(): raise RuntimeError('No implicit restart')
         static=self.static_placement()
         s=self.state() if static else self.idle(); settings=self.settings()
-        if power_observation(self.c) != self.b['schedulerSettings']['powerObservation']:
-            raise RuntimeError('Operating power observation differs from frozen binding; no start')
+        self.check_power_observation()
         if static:
             if settings.get('autonomousWorkloads'):raise RuntimeError('Static placement requires autonomy already off')
         elif s['snapshot']['instances'] or settings.get('autonomousWorkloads') or settings.get('staticRouting'): raise RuntimeError('Canonical three must start at zero; unrelated serving present')
@@ -535,8 +537,10 @@ class CPO:
             if not any(weight>0 and identifier in owned for identifier,weight in (state['snapshot'].get('routing',{}).get(uid) or {}).items()):missing.append(uid)
         return missing
     def run(self):
+        """Recheck frozen operating power policy before any stage can launch load."""
         st=self.c['smoke'] if self.a.command=='smoke' else next(x for x in self.b['schedule'] if x['id']==self.a.stage); folder=self.out/(self.a.mode+'-'+st['id'])
         if folder.exists(): raise RuntimeError('No implicit stage retry/overwrite')
+        self.check_power_observation()
         deferred_restore=self.a.mode=='full' and st['id']=='E5-4' and not (self.out/'restore-ack.json').exists()
         if self.a.command!='smoke':
             order = ['E5-0','E5-1','E5-2','E5-3','E5-4','E5-5','E5-6'] if self.a.mode=='full' else ['E5-1','E5-2','E5-3','E5-4','E5-5','E5-6'] if self.a.mode=='static' else ['E5-2','E5-5']
