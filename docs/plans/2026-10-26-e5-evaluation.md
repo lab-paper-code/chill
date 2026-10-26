@@ -50,15 +50,15 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 
 | 항목 | 현재 경계 |
 |---|---|
-| MNV SLO | canonical p95 1초 유지 |
-| PLC/Smol percentile·SLO | p95/p99와 실제 d/m/κ로 선택; 측정용PLC50ms/Smol60초 자동 채택 금지 |
-| 적격 Node 선별 | PLC/Smol 최소5/8 κ>0 및 가장 느린2개 κ=0 확인; profile 간격 중점은 후보일 뿐 |
-| 공통m·L·cap·delivery/socket | residual 실측 후 고정; L≥SLO, cap≥L, socket>L+delivery, native remaining=L−senderElapsed−m |
-| G·PLC remainder | 단계 합계 실제 통과 범위 확인; remainder 음수 또는 overload 의미 소실이면 자동 rate 축소 금지 |
-| κ/R·계산시간 | 최종 UID/definition/SLO/m/d/settings/Node 모드가 일치한 실제 행 필요 |
-| 전환 witness | `B=q+max(0,λ−κ_ret)r`, `W=B/κ_new≤SLO−m`, 한 Node 한 실물 및 모든 Workload 조건 |
-| 에너지 선택 | 실제 keepJ/bestJ와 signed 상쇄 문턱B; 둘 다 feasible이면 gain>B, equality KEEP |
-| 교체·N·기타 threshold | 자연 swap 없으면 차단 부등식 공개; 예시5%/2%/100ms를 승인값으로 쓰지 않음 |
+| MNV SLO | canonical p95 1초 유지. [숫자 결정 요청서](file:///home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/e5-numbers-20261027.md) §1–8에 현재값·원시 근거·선택지·권고 |
+| PLC/Smol percentile·SLO | 요청서 §5: p95 약32ms/7.034초(m29ms) 비교 후보; 관측 HTTP p95 최대20.417ms/4.437초, p99 최대65.088ms/5.997초. 새 κ 미취득이며 측정용50ms/60초 자동 채택 금지 |
+| 적격 Node 선별 | 요청서 §3·5: 현 측정설정 PLC1/8·Smol6/8 κ>0; 누락/자원Rejected는κ0 아님. Smol lattepanda κ0.061346>0이므로 느린2개κ0 조건 불충족; 최종 선별 미성립 |
+| 공통m·L·cap·delivery/socket | 요청서 §4·6: residual p95 공통후보16ms/p99후보195ms, 현재29ms 임시유지 권고. 현L MNV2/PLC1/Smol75초, cap129초, delivery10ms/socket L+20ms; native remaining=L−senderElapsed−m |
+| G·PLC remainder | 요청서 §6: rev83 고정창140.3req/s·cs CPU최대0.63core(6core 상한)로 여유; 정확G와E5 혼합 통과는 미확인. 알려진κ 부분합의 최소혼합157.420394req/s도 관측범위 초과; rate 자동축소 금지 |
+| κ/R·계산시간 | 요청서 §2·3: 새규칙d10/34·미인증24(현재소비legacy MNV CPU8+CUDA2 명시). 실제Built107행, 기록계산시간합1478.446초(병렬wall 아님). 알려진Node 부분합K MNV334.605496/PLC187.046050/Smol3.083102req/s; 완전R·최종SLO/m κ는미확정 |
+| 전환 witness | 요청서 §7: 실제 초기/확장/축소/물리교체의λ/q/κ_ret/κ_new/r/B/W 보존. 초기MNV W4.353초·확장5.490초로현SLO초과; 최종E5 혼합률·Workload간GPU소유권swap witness와구별 |
+| 에너지 선택 | 요청서 §7: minimumGain 고정%설정없음; 후보별signed상쇄B, gain>B/equality KEEP. 실제교체gain6398.966J/B441.823J, 축소857.547J/B18.151J; H600초/reserve0 유지 |
+| 교체·N·기타 threshold | 요청서 §8: 정적기준선은full E5-3끝0.9R 실제구성; N후보2(membership-off/replicas-off), 해당률효과확인전미확정. 기본stabilization300초(최근시연120초); 예시5%/2%/100ms 승인값아님 |
 
 leximin 변경은 유한 초과량의 선택도 바꿀 수 있으므로 과거 최악값 하나 비교 결과와 섞지 않는다. 최종 실행 설정(두 박자 기본300초/시연120초, reserve비율0, 비교기간600초 포함)은 binding과 decision.settings에 고정한다.
 
