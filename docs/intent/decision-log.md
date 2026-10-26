@@ -287,3 +287,7 @@
 - 보존: d는 유휴를 빼지 않은 보수적 원 측정값 그대로다. 식별된 경우만 나노초 단위 `dRange=[d−idleNanosPerRequest,d]`, `kappaErrorBound=idleFraction`을 기록하고 미식별이면 생략한다. 유휴 차감 보정 금지; 범위/상한은 95% CI나 전체 모델 오차 보장이 아니다.
 - 범위: Insufficient D05/D11/D15의 원시 재판정은 보고만 하며 기존 immutable record나 Accepted를 바꾸거나 새 Accepted 근거를 만들지 않는다. live 변경·배포·측정·다른 진행 중 캠페인은 승인 범위 밖이다.
 - 연결: [ADR-0028](../adr/0028-identified-idle-acceptance.md), [측정 계약](../design/serving/measurement-api.md).
+
+## 2026-10-26 20:3xZ — E5 전 보완 워크플로우(U1~U10) 연속 진행
+
+- `docs/plans/2026-10-27-pre-e5-workflow.md` §5. 사용자 승인은 E5 숫자 1회만; U2 최소안, U3 클럭 단계·U4 허용 차이·U7 결정 2개는 권고값으로 진행하고 여기에 기록.
