@@ -65,10 +65,15 @@ func (r *PowerModeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ct
 	}
 	// Label and annotation changes for one patch; nil removes a key.
 	labels, annotations := map[string]*string{}, map[string]*string{}
+	kind := nodeactuator.ActuatorKindJetsonNVPModel
+	for _, policy := range r.Policies {
+		if policy.DeviceClass == node.Labels[metadata.DeviceClass] {
+			kind = policy.ActuatorKind
+			break
+		}
+	}
 	observation, observeErr := r.Host.Observe(ctx, nodeactuator.Request{
-		Target: nodeactuator.Target{
-			Kind: nodeactuator.ActuatorKindJetsonNVPModel, JetsonNVPModel: &nodeactuator.JetsonNVPModelTarget{},
-		},
+		Target:   nodeactuator.Target{Kind: kind},
 		Deadline: r.Now().Add(r.Timeout),
 	})
 	// Read after the host read, so every time this pass records follows the

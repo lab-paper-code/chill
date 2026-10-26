@@ -55,6 +55,7 @@ components:
   node-actuator-core: { in: internal/nodeactuator }
   node-actuator-controller: { in: internal/nodeactuator/controller }
   node-actuator-jetson: { in: internal/nodeactuator/jetson }
+  node-actuator-nvidia: { in: internal/nodeactuator/nvidia }
   profile-derivation: { in: internal/profiling/derivation }
   power-window: { in: internal/profiling/powerwindow }
   transition-cost-core: { in: internal/profiling/transitioncost }
@@ -166,6 +167,7 @@ deps:
       - device-class
       - node-actuator-core
       - node-actuator-jetson
+      - node-actuator-nvidia
       - operator
       - profiling-run
 
@@ -204,6 +206,9 @@ deps:
       # The read-back annotation key.
       - platform-core
   node-actuator-jetson:
+    mayDependOn:
+      - node-actuator-core
+  node-actuator-nvidia:
     mayDependOn:
       - node-actuator-core
   profile-derivation:

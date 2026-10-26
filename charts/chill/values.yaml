@@ -403,6 +403,24 @@ powerActuation:
       actuatorKind: JetsonNVPModel
       settlingDurationSeconds: 60
       maxActuationDurationSeconds: 900
+    - name: rtx2080ti-gpu-1500-v1
+      deviceClass: edge-server-rtx-2080-ti-64g
+      powerMode: GPU_1500
+      actuatorKind: NvidiaLockedGPUClock
+      settlingDurationSeconds: 10
+      maxActuationDurationSeconds: 60
+    - name: rtx2080ti-gpu-1200-v1
+      deviceClass: edge-server-rtx-2080-ti-64g
+      powerMode: GPU_1200
+      actuatorKind: NvidiaLockedGPUClock
+      settlingDurationSeconds: 10
+      maxActuationDurationSeconds: 60
+    - name: rtx2080ti-gpu-900-v1
+      deviceClass: edge-server-rtx-2080-ti-64g
+      powerMode: GPU_900
+      actuatorKind: NvidiaLockedGPUClock
+      settlingDurationSeconds: 10
+      maxActuationDurationSeconds: 60
 
 console:
   enabled: false
@@ -755,6 +773,12 @@ discovery:
         powerModes:
           - name: fixed
             actuator: {kind: Fixed}
+          - name: GPU_1500
+            actuator: {kind: NvidiaLockedGPUClock, nvidiaLockedGPUClock: {minMHz: 1500, maxMHz: 1500}}
+          - name: GPU_1200
+            actuator: {kind: NvidiaLockedGPUClock, nvidiaLockedGPUClock: {minMHz: 1200, maxMHz: 1200}}
+          - name: GPU_900
+            actuator: {kind: NvidiaLockedGPUClock, nvidiaLockedGPUClock: {minMHz: 900, maxMHz: 900}}
 
 # One node-agent image runs two DaemonSets. The agent on every Node publishes
 # hardware signature and online-CPU metadata without privilege. The actuation
@@ -977,6 +1001,43 @@ nodeAgent:
       # boot-time power-mode apply fails. systemd reads the drop-in at the next
       # boot, so no daemon-reload is needed. Nodes without the unit are unchanged.
       ensureBootOrdering: true
+    # Separate NVIDIA operand: no Jetson mounts, host PID namespace, or SYS_BOOT.
+    nvidiaLockedGPUClock:
+      runtimeClassName: nvidia
+      nodeNames: []
+      command:
+        - /host/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+        - --library-path
+        - /host/lib/x86_64-linux-gnu:/host/usr/lib/x86_64-linux-gnu
+        - /host/usr/bin/nvidia-smi
+      commandTimeout: 10s
+      clocks: [1500, 1200, 900]
+      hostPaths:
+        - name: host-nvidia-smi
+          hostPath: /usr/bin/nvidia-smi
+          mountPath: /host/usr/bin/nvidia-smi
+          type: File
+          readOnly: true
+        - name: host-nvidia-loader
+          hostPath: /lib/x86_64-linux-gnu
+          mountPath: /host/lib/x86_64-linux-gnu
+          type: Directory
+          readOnly: true
+        - name: host-nvidia-libraries
+          hostPath: /usr/lib/x86_64-linux-gnu
+          mountPath: /host/usr/lib/x86_64-linux-gnu
+          type: Directory
+          readOnly: true
+      podSecurityContext:
+        runAsUser: 0
+        runAsNonRoot: false
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+          add: [SYS_ADMIN]
     # Every actuatable Node in this testbed is a KubeEdge edge Node carrying
     # node-role.kubernetes.io/edge:NoSchedule.
     tolerations:

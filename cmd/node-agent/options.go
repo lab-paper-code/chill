@@ -7,11 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
+	"github.com/lab-paper-code/chill/internal/nodeactuator/nvidia"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -28,6 +30,9 @@ type options struct {
 	allowedPolicies  policyListFlag
 	jetsonCommand    stringListFlag
 	jetsonTimeout    time.Duration
+	nvidiaCommand    stringListFlag
+	nvidiaTimeout    time.Duration
+	nvidiaClocks     string
 	kubeAPIServer    string
 	kubeAPITokenFile string
 	kubeAPICAFile    string
@@ -57,6 +62,9 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		&o.jetsonTimeout, "jetson-nvpmodel-timeout", 30*time.Second,
 		"Maximum duration of one Jetson NVPModel host command.",
 	)
+	flags.Var(&o.nvidiaCommand, "nvidia-smi-command", "One ordered NVIDIA SMI command token; repeatable.")
+	flags.DurationVar(&o.nvidiaTimeout, "nvidia-smi-timeout", 30*time.Second, "Maximum NVIDIA host command duration.")
+	flags.StringVar(&o.nvidiaClocks, "nvidia-clocks", "", "Comma-separated declared exact GPU clocks in MHz.")
 	flags.StringVar(&o.kubeAPIServer, "kube-api-server", o.kubeAPIServer,
 		"Kubernetes API URL; empty uses standard in-cluster config.")
 	flags.StringVar(
@@ -87,7 +95,19 @@ func (o options) validateActuation() error {
 	if len(o.allowedPolicies) == 0 {
 		return errors.New("at least one actuation policy is required")
 	}
-	if len(o.jetsonCommand) == 0 || o.jetsonTimeout < time.Second || o.jetsonTimeout > 5*time.Minute {
+	if len(o.nvidiaCommand) != 0 {
+		if len(o.jetsonCommand) != 0 {
+			return errors.New("one host adapter is required per agent")
+		}
+		clocks, err := parseNvidiaClocks(o.nvidiaClocks)
+		if err != nil {
+			return err
+		}
+		adapterOptions := nvidia.Options{Command: o.nvidiaCommand, Timeout: o.nvidiaTimeout, Clocks: clocks}
+		if err := adapterOptions.Validate(); err != nil {
+			return err
+		}
+	} else if len(o.jetsonCommand) == 0 || o.jetsonTimeout < time.Second || o.jetsonTimeout > 5*time.Minute {
 		return errors.New("Jetson NVPModel command and a timeout between 1 second and 5 minutes are required")
 	}
 	if strings.TrimSpace(o.kubeAPIServer) != o.kubeAPIServer {
@@ -96,12 +116,34 @@ func (o options) validateActuation() error {
 	if err := validateUniquePolicies(o.allowedPolicies); err != nil {
 		return err
 	}
+	kind := nodeactuator.ActuatorKindJetsonNVPModel
+	if len(o.nvidiaCommand) != 0 {
+		kind = nodeactuator.ActuatorKindNvidiaLockedGPUClock
+	}
+	for _, policy := range o.allowedPolicies {
+		if policy.ActuatorKind != kind {
+			return fmt.Errorf("policy kind %s does not match installed %s adapter", policy.ActuatorKind, kind)
+		}
+	}
 	for _, argument := range o.jetsonCommand {
 		if strings.TrimSpace(argument) == "" || strings.TrimSpace(argument) != argument || strings.ContainsRune(argument, 0) {
 			return errors.New("Jetson NVPModel command tokens must be non-empty without surrounding whitespace or NUL")
 		}
 	}
 	return nil
+}
+
+func parseNvidiaClocks(value string) ([]int32, error) {
+	fields := strings.Split(value, ",")
+	clocks := make([]int32, 0, len(fields))
+	for _, field := range fields {
+		mhz, err := strconv.ParseInt(field, 10, 32)
+		if err != nil || mhz < 1 {
+			return nil, errors.New("nvidia-clocks requires comma-separated positive MHz")
+		}
+		clocks = append(clocks, int32(mhz))
+	}
+	return clocks, nil
 }
 
 type stringListFlag []string

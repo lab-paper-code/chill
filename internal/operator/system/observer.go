@@ -1,17 +1,22 @@
 package system
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
+	"github.com/lab-paper-code/chill/internal/operator/nodeagent"
+	"sigs.k8s.io/yaml"
 )
 
 func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha1.ChillSystem) Observation {
@@ -34,8 +39,31 @@ func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha
 		EvidenceStoreDeploymentName:   r.evidenceStoreDeploymentName(system),
 		EvidenceStoreBootstrapJobName: r.evidenceStoreBootstrapJobName(system),
 	}
+	if observed.NodeAgentActuation.Enabled {
+		configMap := &corev1.ConfigMap{}
+		name := cmp.Or(system.Spec.NodeAgent.ConfigRef.Name, component.NodeAgentConfigMapName(system.Name))
+		err := r.Get(ctx, types.NamespacedName{Namespace: observed.Namespace, Name: name}, configMap)
+		var config nodeagent.Config
+		if err == nil {
+			err = yaml.UnmarshalStrict([]byte(configMap.Data[nodeagent.DefaultConfigKey]), &config)
+		}
+		if err != nil || config.Actuation == nil {
+			observed.NodeAgentActuation.Error = fmt.Errorf("observe actuation configuration: %v", err)
+		} else {
+			observed.NodeAgentActuation.Enabled = false
+			for _, policy := range config.Actuation.Policies {
+				switch policy.ActuatorKind {
+				case nodeactuator.ActuatorKindJetsonNVPModel:
+					observed.NodeAgentActuation.Enabled = true
+				case nodeactuator.ActuatorKindNvidiaLockedGPUClock:
+					observed.NodeAgentNvidia = DaemonSetObservation{Enabled: true,
+						Name: component.NodeAgentActuationDaemonSetName(system.Name) + "-nvidia"}
+				}
+			}
+		}
+	}
 
-	for _, daemonSet := range []*DaemonSetObservation{&observed.NodeAgent, &observed.NodeAgentActuation} {
+	for _, daemonSet := range []*DaemonSetObservation{&observed.NodeAgent, &observed.NodeAgentActuation, &observed.NodeAgentNvidia} {
 		if !daemonSet.Enabled {
 			continue
 		}

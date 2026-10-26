@@ -61,6 +61,8 @@ data:
         hostPaths:
 {{- toYaml $actuation.jetsonNVPModel.hostPaths | nindent 10 }}
         ensureBootOrdering: {{ $actuation.jetsonNVPModel.ensureBootOrdering }}
+      nvidiaLockedGPUClock:
+{{- toYaml $actuation.nvidiaLockedGPUClock | nindent 8 }}
       tolerations:
 {{- toYaml $actuation.tolerations | nindent 8 }}
       resources:

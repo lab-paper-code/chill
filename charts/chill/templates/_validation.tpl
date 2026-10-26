@@ -112,6 +112,12 @@
 {{- if empty $actuation.jetsonNVPModel.hostPaths -}}
 {{- fail "nodeAgent.actuation.jetsonNVPModel.hostPaths must not be empty when nodeAgent.actuation.enabled=true" -}}
 {{- end -}}
+{{- if empty $actuation.nvidiaLockedGPUClock.command -}}
+{{- fail "nodeAgent.actuation.nvidiaLockedGPUClock.command must not be empty" -}}
+{{- end -}}
+{{- if empty $actuation.nvidiaLockedGPUClock.runtimeClassName -}}
+{{- fail "nodeAgent.actuation.nvidiaLockedGPUClock.runtimeClassName must not be empty" -}}
+{{- end -}}
 {{- end -}}
 {{- if .Values.profiler.enabled -}}
 {{- if lt (int .Values.profiler.replicaCount) 1 -}}

@@ -337,6 +337,9 @@ returning to an earlier mode is a separate request.
 
 SSH probes ran only `hostname`, `id`, `nvidia-smi -q -d CLOCK,SUPPORTED_CLOCKS`,
 `nvidia-smi -q -x`, query/help, `stat`, and `sudo -n -l`; no mutation ran.
+Raw output is retained under `O/u3-nvidia/` as
+`genesis2-readonly-inspection.txt`, `genesis3-readonly-inspection.txt`, and
+`genesis2-readback-permissions.txt` (full query/help/permission output).
 
 | Host | GPU UUID | Driver | max graphics/SM | default / min / max power |
 |---|---|---|---|---|
@@ -415,14 +418,20 @@ not themselves establish live support or measurement evidence.
    Require state `success`, host graphics=SM=1500, verifiedAt/readyAt, stable
    bootID and no failure. Retain Node JSON and host query. Repeat `GPU_900`,
    then **fresh** `GPU_1500` and verify restoration. Stop on any failure.
-4. Keep the real native CUDA serving process on genesis2 with its existing
-   Service/model artifact/runtime-7 digest. Submit
-   `config/samples/profiling/edge_v1alpha1_powermodetransitioncost_nvidia.yaml`,
-   replacing servingService with that process's actual Service. One CR measures
-   `GPU_1500 ↔ GPU_900`: acceptedCountTarget=5, attemptLimit=8 means five Accepted
-   trials **per direction**, not a shell-command-duration sample. Preserve
-   coverage/boundary policy. Retain CR/directions, observer Jobs/raw evidence,
-   measured seconds/joules. Never force Complete or allow missing witnesses.
+4. Before pair costs, obtain an admitted `GPU_1500` MobileNet CUDA profile
+   (`BatchEnergyOptimization`, runtime-7 digest unchanged), and Complete
+   exact-state `ModelLoadedIdleBaseline` objects for **both** GPU_1500/GPU_900.
+   Use the existing baseline sample with genesis2/class/CUDA path/mode and
+   the source profile's exact CPU quota/batch; do not reuse fixed-mode idle.
+   Submit `config/samples/profiling/edge_v1alpha1_powermodetransitioncost_nvidia.yaml`
+   in the serving namespace. Measurement admission creates a real runner and
+   its uniquely named Service (`chill-u3-genesis2-clock-runner`); container must
+   be `firstfloor`, not `runtime`. Admission requires the source-mode profile
+   and grants a frozen runner-profile annotation; do not prepare a mock Service.
+   One CR measures `GPU_1500 ↔ GPU_900`: acceptedCountTarget=5, attemptLimit=8
+   means five Accepted trials **per direction**, not shell-command durations.
+   Preserve coverage/boundary policy; retain CR/directions, observer Jobs/raw
+   evidence and seconds/joules. Never force Complete or allow missing witnesses.
 5. Once the CR is terminal, request/verify `GPU_1500` again. To recover the
    original driver-default policy, atomically remove desired label and
    requested-at (agent then only observes), run the CampaignOps-only host

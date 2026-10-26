@@ -8,6 +8,7 @@ import (
 	"maps"
 	"path"
 	"slices"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -76,11 +77,38 @@ func buildActuationDaemonSet(
 	if err != nil {
 		return nil, err
 	}
-	return daemonSet(options, options.actuationDaemonSetName(), component.NodeAgentActuation, actuation.UpdateStrategy, corev1.PodSpec{
+	name, componentName := options.actuationDaemonSetName(), component.NodeAgentActuation
+	hostPaths, podHostPaths := []HostPathMount(nil), []HostPathMount(nil)
+	hostPID := false
+	var runtimeClassName *string
+	env := nodeIdentityEnvironment()
+	if actuation.Policies[0].ActuatorKind == actuatorcore.ActuatorKindNvidiaLockedGPUClock {
+		name += nvidiaActuationSuffix
+		componentName += nvidiaActuationSuffix
+		hostPaths = actuation.NvidiaLockedGPUClock.HostPaths
+		podHostPaths = hostPaths
+		nv := actuation.NvidiaLockedGPUClock
+		runtimeClassName = &nv.RuntimeClassName
+		env = append(env, corev1.EnvVar{Name: "NVIDIA_VISIBLE_DEVICES", Value: "all"},
+			corev1.EnvVar{Name: "NVIDIA_DRIVER_CAPABILITIES", Value: "utility"})
+		if len(nv.NodeNames) != 0 {
+			for i := range affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
+				term := &affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[i]
+				term.MatchFields = append(term.MatchFields, corev1.NodeSelectorRequirement{
+					Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: slices.Clone(nv.NodeNames)})
+			}
+		}
+	} else {
+		hostPaths = actuation.JetsonNVPModel.HostPaths
+		podHostPaths = actuation.JetsonNVPModel.podHostPaths()
+		hostPID = true
+	}
+	return daemonSet(options, name, componentName, actuation.UpdateStrategy, corev1.PodSpec{
 		// A restart is part of establishing a boot-established power mode, and
 		// reboot(2) restarts the Node only from the host PID namespace. Outside
 		// it, it would end this Pod instead.
-		HostPID:            true,
+		HostPID:            hostPID,
+		RuntimeClassName:   runtimeClassName,
 		HostNetwork:        true,
 		DNSPolicy:          corev1.DNSClusterFirstWithHostNet,
 		ServiceAccountName: actuation.ServiceAccountName,
@@ -89,13 +117,13 @@ func buildActuationDaemonSet(
 		// measurements need it there.
 		Tolerations:     append(slices.Clone(actuation.Tolerations), profilingrun.MeasurementToleration()),
 		SecurityContext: actuation.PodSecurityContext,
-		Volumes:         hostVolumes(actuation.JetsonNVPModel.podHostPaths()),
+		Volumes:         hostVolumes(podHostPaths),
 		InitContainers:  bootOrderingInitContainers(config),
 		Containers: []corev1.Container{{
 			Name: component.NodeAgentActuation, Image: config.Image, ImagePullPolicy: config.ImagePullPolicy,
 			Command: []string{binary}, Args: args,
-			Env: nodeIdentityEnvironment(), SecurityContext: actuation.SecurityContext,
-			VolumeMounts:   hostVolumeMounts(actuation.JetsonNVPModel.HostPaths),
+			Env: env, SecurityContext: actuation.SecurityContext,
+			VolumeMounts:   hostVolumeMounts(hostPaths),
 			Resources:      actuation.Resources,
 			LivenessProbe:  httpProbe("healthz", actuation.HealthProbePort),
 			ReadinessProbe: httpProbe("readyz", actuation.HealthProbePort),
@@ -221,6 +249,17 @@ func actuationArgs(config Config) ([]string, error) {
 		}
 		args = append(args, "--allowed-policy="+string(encoded))
 	}
+	if actuation.Policies[0].ActuatorKind == actuatorcore.ActuatorKindNvidiaLockedGPUClock {
+		nv := actuation.NvidiaLockedGPUClock
+		for _, argument := range nv.Command {
+			args = append(args, "--nvidia-smi-command="+argument)
+		}
+		clocks := make([]string, 0, len(nv.Clocks))
+		for _, clock := range nv.Clocks {
+			clocks = append(clocks, fmt.Sprint(clock))
+		}
+		return append(args, "--nvidia-smi-timeout="+nv.CommandTimeout, "--nvidia-clocks="+strings.Join(clocks, ",")), nil
+	}
 	for _, argument := range actuation.JetsonNVPModel.Command {
 		args = append(args, "--jetson-nvpmodel-command="+argument)
 	}
@@ -286,7 +325,8 @@ func hostVolumeMounts(hostPaths []HostPathMount) []corev1.VolumeMount {
 // the systemd directory it writes. systemd reads the drop-in at the next boot,
 // which is the only boot the ordering affects, so no daemon-reload is needed.
 func bootOrderingInitContainers(config Config) []corev1.Container {
-	if !config.Actuation.JetsonNVPModel.EnsureBootOrdering {
+	if config.Actuation.Policies[0].ActuatorKind != actuatorcore.ActuatorKindJetsonNVPModel ||
+		config.Actuation.JetsonNVPModel == nil || !config.Actuation.JetsonNVPModel.EnsureBootOrdering {
 		return nil
 	}
 	return []corev1.Container{{

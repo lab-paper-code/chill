@@ -41,6 +41,7 @@ type Observation struct {
 
 	NodeAgent          DaemonSetObservation
 	NodeAgentActuation DaemonSetObservation
+	NodeAgentNvidia    DaemonSetObservation
 
 	ProfilerEnabled        bool
 	ProfilerNamespace      string
@@ -73,8 +74,14 @@ func buildStatus(observed Observation, previousConditions []metav1.Condition, no
 		condition.Type = edgev1alpha1.ChillSystemConditionNodeAgentAvailable
 		components = append(components, condition)
 	}
-	if observed.NodeAgentActuation.Enabled {
+	if observed.NodeAgentActuation.Enabled || observed.NodeAgentNvidia.Enabled {
 		condition := daemonSetAvailableCondition(observed.NodeAgentActuation, "NodeAgentActuation")
+		if observed.NodeAgentNvidia.Enabled {
+			nvidia := daemonSetAvailableCondition(observed.NodeAgentNvidia, "NodeAgentNvidia")
+			if !observed.NodeAgentActuation.Enabled || nvidia.Status != metav1.ConditionTrue {
+				condition = nvidia
+			}
+		}
 		condition.Type = edgev1alpha1.ChillSystemConditionNodeAgentActuationAvailable
 		components = append(components, condition)
 	}

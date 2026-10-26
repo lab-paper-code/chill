@@ -26,6 +26,7 @@ func (r *ChillSystemReconciler) finalize(ctx context.Context, system *edgev1alph
 	legacyDiscovery, legacyActuator := component.LegacyNodeDaemonSetNames(system.Name)
 	for _, name := range []string{
 		component.NodeAgentActuationDaemonSetName(system.Name),
+		component.NodeAgentActuationDaemonSetName(system.Name) + "-nvidia",
 		component.NodeAgentDaemonSetName(system.Name),
 		legacyActuator, legacyDiscovery,
 	} {

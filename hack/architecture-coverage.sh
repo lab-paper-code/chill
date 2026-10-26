@@ -33,6 +33,7 @@ components=(
   node-actuator-core
   node-actuator-controller
   node-actuator-jetson
+  node-actuator-nvidia
   profile-derivation
   power-window
   transition-cost-core
@@ -84,6 +85,7 @@ component_for() {
     internal/nodeactuator) echo node-actuator-core ;;
     internal/nodeactuator/controller) echo node-actuator-controller ;;
     internal/nodeactuator/jetson) echo node-actuator-jetson ;;
+    internal/nodeactuator/nvidia) echo node-actuator-nvidia ;;
     internal/profiling/derivation) echo profile-derivation ;;
     internal/profiling/powerwindow) echo power-window ;;
     internal/profiling/transitioncost) echo transition-cost-core ;;

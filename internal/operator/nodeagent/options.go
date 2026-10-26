@@ -12,6 +12,7 @@ import (
 const (
 	DefaultConfigKey         = "config.yaml"
 	DefaultReconcileInterval = 30 * time.Second
+	nvidiaActuationSuffix    = "-nvidia"
 )
 
 // Options selects the node agent DaemonSets managed by the operator.

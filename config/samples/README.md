@@ -60,6 +60,15 @@ kubectl apply -f config/samples/profiling/edge_v1alpha1_modelloadedidlebaseline.
 kubectl apply -f config/samples/profiling/edge_v1alpha1_powermodetransitioncost.yaml
 ```
 
+For discrete RTX 2080 Ti clock modes, the manual class sample is
+`manual/edge_v1alpha1_deviceclass_nvidia.yaml`; do not apply it alongside a
+Helm-owned class of the same name. The CampaignOps-only pair-cost sample is
+`profiling/edge_v1alpha1_powermodetransitioncost_nvidia.yaml`. It requires an
+admitted GPU_1500 CUDA profile, exact-state idle baselines for both modes, and
+the separate NVIDIA node-agent operand. Follow
+[Plan 6 GPU clock](../../docs/design/profiling/plans/06-execution-support-expansion.md#gpu-clock);
+these samples do not authorize host changes or prove live clock support.
+
 ## Firstfloor runtime declaration
 
 [`firstfloor/ortcpu-arm64-runtime-declaration.json`](firstfloor/ortcpu-arm64-runtime-declaration.json)

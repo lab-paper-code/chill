@@ -19,6 +19,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
+	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
 )
 
 var daemonSetResource = schema.GroupResource{Group: "apps", Resource: "daemonsets"}
@@ -79,12 +80,33 @@ func (r *Reconciler) reconcile(ctx context.Context, systemName string) (ctrl.Res
 	if err := r.List(ctx, classes); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list DeviceClasses for node agent actuation: %w", err)
 	}
-	actuation, err := buildActuationDaemonSet(options, config, classes.Items)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("build node agent actuation DaemonSet: %w", err)
-	}
-	if err := r.applyDaemonSet(ctx, system, actuation); err != nil {
-		return ctrl.Result{}, fmt.Errorf("reconcile node agent actuation DaemonSet %s/%s: %w", options.Namespace, actuation.Name, err)
+	for _, kind := range []string{actuatorcore.ActuatorKindJetsonNVPModel, actuatorcore.ActuatorKindNvidiaLockedGPUClock} {
+		perKind := config
+		actuation := config.Actuation.forKind(kind)
+		perKind.Actuation = &actuation
+		name := options.actuationDaemonSetName()
+		if kind == actuatorcore.ActuatorKindNvidiaLockedGPUClock {
+			name += nvidiaActuationSuffix
+		}
+		if len(actuation.Policies) == 0 {
+			safe, err := SafeToStop(ctx, r.Client)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if safe {
+				if err := r.deleteDaemonSet(ctx, options.Namespace, name); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			continue
+		}
+		operand, err := buildActuationDaemonSet(options, perKind, classes.Items)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("build %s actuation DaemonSet: %w", kind, err)
+		}
+		if err := r.applyDaemonSet(ctx, system, operand); err != nil {
+			return ctrl.Result{}, fmt.Errorf("reconcile %s actuation DaemonSet: %w", kind, err)
+		}
 	}
 	return ctrl.Result{RequeueAfter: options.ReconcileInterval}, nil
 }
@@ -122,6 +144,9 @@ func (r *Reconciler) stopActuation(ctx context.Context, options Options) error {
 		return err
 	}
 	if err := r.deleteDaemonSet(ctx, options.Namespace, options.actuationDaemonSetName()); err != nil {
+		return err
+	}
+	if err := r.deleteDaemonSet(ctx, options.Namespace, options.actuationDaemonSetName()+nvidiaActuationSuffix); err != nil {
 		return err
 	}
 	return StripReadBack(ctx, r.Client)

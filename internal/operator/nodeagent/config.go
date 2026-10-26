@@ -14,6 +14,7 @@ import (
 
 	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/nodeactuator/jetson"
+	"github.com/lab-paper-code/chill/internal/nodeactuator/nvidia"
 )
 
 // rebootCapability is the one capability the actuation agent may hold. A power
@@ -65,16 +66,17 @@ type ReadOnlyHostPath struct {
 // ActuationConfig is the privileged DaemonSet that applies the desired power
 // mode on Nodes of the DeviceClasses named by its policies.
 type ActuationConfig struct {
-	ServiceAccountName string                             `json:"serviceAccountName"`
-	MetricsBindAddress string                             `json:"metricsBindAddress"`
-	HealthProbePort    int32                              `json:"healthProbePort"`
-	Policies           []actuatorcore.ActuationPolicySpec `json:"policies"`
-	JetsonNVPModel     *JetsonNVPModelConfig              `json:"jetsonNVPModel,omitempty"`
-	Tolerations        []corev1.Toleration                `json:"tolerations,omitempty"`
-	Resources          corev1.ResourceRequirements        `json:"resources,omitempty"`
-	PodSecurityContext *corev1.PodSecurityContext         `json:"podSecurityContext,omitempty"`
-	SecurityContext    *corev1.SecurityContext            `json:"securityContext,omitempty"`
-	UpdateStrategy     appsv1.DaemonSetUpdateStrategy     `json:"updateStrategy"`
+	ServiceAccountName   string                             `json:"serviceAccountName"`
+	MetricsBindAddress   string                             `json:"metricsBindAddress"`
+	HealthProbePort      int32                              `json:"healthProbePort"`
+	Policies             []actuatorcore.ActuationPolicySpec `json:"policies"`
+	JetsonNVPModel       *JetsonNVPModelConfig              `json:"jetsonNVPModel,omitempty"`
+	NvidiaLockedGPUClock *NvidiaClockConfig                 `json:"nvidiaLockedGPUClock,omitempty"`
+	Tolerations          []corev1.Toleration                `json:"tolerations,omitempty"`
+	Resources            corev1.ResourceRequirements        `json:"resources,omitempty"`
+	PodSecurityContext   *corev1.PodSecurityContext         `json:"podSecurityContext,omitempty"`
+	SecurityContext      *corev1.SecurityContext            `json:"securityContext,omitempty"`
+	UpdateStrategy       appsv1.DaemonSetUpdateStrategy     `json:"updateStrategy"`
 }
 
 type JetsonNVPModelConfig struct {
@@ -85,6 +87,34 @@ type JetsonNVPModelConfig struct {
 	// nvidia-cdi-refresh.service after nvpmodel.service on hosts that have it,
 	// so the boot-established power modes apply at boot.
 	EnsureBootOrdering bool `json:"ensureBootOrdering"`
+}
+
+// NvidiaClockConfig is separate from Jetson host access; its operand never
+// mounts Jetson state or receives SYS_BOOT/host PID access.
+type NvidiaClockConfig struct {
+	Command            []string                   `json:"command"`
+	CommandTimeout     string                     `json:"commandTimeout"`
+	Clocks             []int32                    `json:"clocks"`
+	HostPaths          []HostPathMount            `json:"hostPaths"`
+	PodSecurityContext *corev1.PodSecurityContext `json:"podSecurityContext"`
+	SecurityContext    *corev1.SecurityContext    `json:"securityContext"`
+	RuntimeClassName   string                     `json:"runtimeClassName"`
+	NodeNames          []string                   `json:"nodeNames,omitempty"`
+}
+
+func (c ActuationConfig) forKind(kind string) ActuationConfig {
+	policies := make([]actuatorcore.ActuationPolicySpec, 0, len(c.Policies))
+	for _, policy := range c.Policies {
+		if policy.ActuatorKind == kind {
+			policies = append(policies, policy)
+		}
+	}
+	c.Policies = policies
+	if kind == actuatorcore.ActuatorKindNvidiaLockedGPUClock && c.NvidiaLockedGPUClock != nil {
+		c.PodSecurityContext = c.NvidiaLockedGPUClock.PodSecurityContext
+		c.SecurityContext = c.NvidiaLockedGPUClock.SecurityContext
+	}
+	return c
 }
 
 // bootOrderingHostPaths scope the boot-ordering init container to the systemd
@@ -205,10 +235,21 @@ func (c ActuationConfig) problems() []string {
 }
 
 func (c ActuationConfig) validateHostAdapters() error {
+	hasJetson := false
 	for _, policy := range c.Policies {
-		if policy.ActuatorKind != actuatorcore.ActuatorKindJetsonNVPModel {
+		switch policy.ActuatorKind {
+		case actuatorcore.ActuatorKindJetsonNVPModel:
+			hasJetson = true
+		case actuatorcore.ActuatorKindNvidiaLockedGPUClock:
+			if err := c.validateNvidia(); err != nil {
+				return err
+			}
+		default:
 			return fmt.Errorf("no installed host adapter supports actuation-policy kind %q", policy.ActuatorKind)
 		}
+	}
+	if !hasJetson {
+		return nil
 	}
 	if c.JetsonNVPModel == nil {
 		return errors.New("jetsonNVPModel config is required by the installed actuation policies")
@@ -234,6 +275,44 @@ func (c ActuationConfig) validateHostAdapters() error {
 		len(security.Capabilities.Add) != 1 || security.Capabilities.Add[0] != rebootCapability ||
 		!slices.Contains(security.Capabilities.Drop, corev1.Capability("ALL")) {
 		return errors.New("jetsonNVPModel requires non-privileged, no-escalation, read-only-rootfs security dropping all capabilities and adding only SYS_BOOT")
+	}
+	return nil
+}
+
+func (c ActuationConfig) validateNvidia() error {
+	nv := c.NvidiaLockedGPUClock
+	if nv == nil {
+		return errors.New("nvidiaLockedGPUClock config is required by NVIDIA policies")
+	}
+	if len(validation.IsDNS1123Subdomain(nv.RuntimeClassName)) != 0 {
+		return errors.New("NVIDIA requires an explicit valid runtimeClassName for device access")
+	}
+	for _, name := range nv.NodeNames {
+		if len(validation.IsDNS1123Subdomain(name)) != 0 {
+			return errors.New("NVIDIA nodeNames must be valid Node names")
+		}
+	}
+	timeout, err := time.ParseDuration(nv.CommandTimeout)
+	if err != nil {
+		return errors.New("nvidiaLockedGPUClock.commandTimeout must be a duration")
+	}
+	if err := (nvidia.Options{Command: nv.Command, Timeout: timeout, Clocks: nv.Clocks}).Validate(); err != nil {
+		return err
+	}
+	if err := validateHostPaths(nv.HostPaths); err != nil {
+		return err
+	}
+	identity, security := nv.PodSecurityContext, nv.SecurityContext
+	if identity == nil || identity.RunAsUser == nil || *identity.RunAsUser != 0 ||
+		identity.RunAsNonRoot == nil || *identity.RunAsNonRoot {
+		return errors.New("NVIDIA requires an explicit root Pod identity")
+	}
+	if security == nil || security.Privileged == nil || *security.Privileged ||
+		security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
+		security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem || security.Capabilities == nil ||
+		len(security.Capabilities.Add) != 1 || security.Capabilities.Add[0] != "SYS_ADMIN" ||
+		!slices.Contains(security.Capabilities.Drop, corev1.Capability("ALL")) {
+		return errors.New("NVIDIA requires non-privileged, no-escalation, read-only-rootfs security adding only SYS_ADMIN")
 	}
 	return nil
 }
