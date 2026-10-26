@@ -135,29 +135,27 @@ readiness는 B개 member의 queued 시각 중 최댓값이고 actor 대기는 `r
 HTTP 실패 뒤 실행된 batch도 계산에 포함한다. compute gap 전체를 idle로 차감하지 않는다.
 
 **조건 생성과 동결.** 상대 계획 정밀도 1%, 양측 95%, 공통 여유 1.25와 idle 기여 1 ms/요청을
-실측 profile의 batch별 분산, trial 경계, 준비 aggregate와 Workload SLO에 적용해 N, K, L과 창을 계산한다.
+실측 profile의 batch별 분산, trial 경계, 준비 aggregate와 Workload SLO에 적용해 N, L과 창을 계산한다.
 N은 physical batch 수이며 cycle 수는 N−1이다. 같은 batch의 member는 독립 표본으로 중복 계산하지 않는다.
-기존 공급 계산값을 oldK라 하고, profile의 batch 평균 실행시간 mu(초)와 B로 요청 처리율 `rate=B/mu`(req/s)를 계산한다.
-closed-loop RTT에는 K에 따라 변하는 서버 대기가 포함되므로 RTT p99를 공급 깊이의 입력으로 사용하지 않는다.
-각 요청의 client RTT에서 같은 요청의 서버 `final.elapsedNanos`를 초로 변환해 빼서 외부 시간 Z를 구한다.
-해당 final이 없으면 같은 요청의 native elapsed와 residual 합을 대신 뺀다.
-`Zp99`는 이 요청별 차이를 구한 뒤 계산한 p99(초)이며, 분위수끼리 뺀 값이 아니다.
-동결 입력에는 원시 근거 경로와 hash, 요청 대응 및 차감 원천, 표본 수와 분위수 방법을 보존한다.
-근거는 `measure.occupancySupply.outsideTimeEvidence`의 flat JSON 경로나 `outsideTimeByCase` mapping으로 지정하며,
-CLI는 `--outside-time-evidence`를 사용한다. 계산 결과의 `computed.supplySizing.producerOutsideTime`에
-`{p99Seconds,sources,fallback,...}`를, 대기와 외부 시간의 합은 `waitingAndOutsideSeconds`에 보존한다.
-`fallback`은 boolean이며 `sources`가 비었을 때에는 `fallback: true`와 비어 있지 않은 `fallbackReason`을 요구한다.
-직접 Z 근거가 없는 target은 같은 Node와 runtime의 다른 target에서 얻은 Z를 사용하고 원래 target과 적용 target을 명시한다.
-그 근거도 없을 때에만 `Zp99=0.25 s` fallback 사용을 명시한다.
-새 공급은 `K=max(oldK,ceil(rate*Zp99*1.25)+B)`로 정하고 64 상한을 두지 않는다.
-B>1이면 K를 B의 배수로 올림하여 whole-batch workers를 보존하며 `q=K/B−1`을 다시 계산한다.
-보수적인 `serviceTime=tailBatchSeconds/B`로 `K*B*serviceTime+Zp99<=L`을 확인한다.
-위반하면 `L=max(oldL,ceil(1.25*(K*tailBatchSeconds+Zp99)))`로 늘린다.
-변경된 K, q, L로 기존 q/batch-tail/prefix 수명 검사와 native waiting count, decoded bytes의 공동 조건을 모두 다시 확인한다.
-`supplySizing`이 없는 legacy 입력은 기존 q의 엄격한 동일성 검사를 유지한다.
-`supplySizing`이 있으면 legacy 하한 q와 `previousWorkers`의 일관성, +B와 whole-batch 올림,
-여유 1.25와 근거 출처를 포함해 정확히 재계산한다.
-조건이 불가능하거나 전체 계획이 cap을 넘으면 실행 전에 보고한다.
+고정 outstanding closed-loop 공급의 workers K는 다음 최대 cap으로 한 번 정한다.
+`K=min(64,floor(queueBytesCap/framedDecodedRequestUpperBytes),floor((L−margin)/(B×mu)))`.
+B는 profile 배치 크기, mu는 profile의 배치 평균 실행시간(초), L은 기존 수명 계산으로 정한
+요청 수명(초), margin은 기존 `deliveryMarginMillis/1000`이다.
+`queueBytesCap=67108864`이며 `framedDecodedRequestUpperBytes`는 framing을 포함한 요청별 decoded bytes 상한이다.
+K는 worker 수이자 outstanding 요청 수이며 B의 배수로 올림하지 않는다.
+기존 validator의 대기 batch 수는 `q=ceil(K/B)−1`로 계산한다.
+`conditions.inputsJSON.computed.supplySizing`에는
+`{batch,profileMeanBatchSeconds,requestLifetimeSeconds,marginSeconds,workerCap:64,queueBytesCap:67108864,framedDecodedRequestUpperBytes,limitingBound}`를 동결하고
+generator, API와 controller는 이 입력으로 K와 q를 정확히 재계산한다.
+`limitingBound`는 최소값을 정한 `queue-cap`, `bytes-cap`, `lifetime` 중 하나이며
+동률이면 이 순서에서 먼저 나온 항목을 기록한다.
+전달 margin은 측정하는 외부 시간이 아니라 기존 전달 예산을 남기는 reserve다.
+공급량을 정하기 위한 왕복시간·외부 시간 측정이나 별도 출처 입력은 사용하지 않는다.
+L은 이 공급 규칙 적용 전의 기존 수명 그대로이며 K를 늘리기 위해 확장하지 않는다.
+기존 q/batch-tail/prefix 수명 검사, native waiting count와 decoded bytes의 공동 조건,
+SLO와 gateway 수명 상한을 유지한다. bytes 상한 초과를 이유로 큰 K의 CR을 만든 뒤 거절하는 대신
+위 세 상한의 최솟값으로 K를 생성한다. 공급은 K<B일 때만 불가능하며 실행 전에 보고한다.
+그 밖의 실행 조건이나 전체 계획 cap을 만족하지 못해도 실행 전에 보고하며 L이나 예산을 늘리지 않는다.
 계수와 하한/상한은 한 설정 원천에서 읽고, generator, API, admission과 controller는 동결된 같은 조건을 소비한다.
 준비 시간과 부하 warmup의 의미와 예산은 각각 기록한다.
 
@@ -165,13 +163,14 @@ B>1이면 K를 B의 배수로 올림하여 whole-batch workers를 보존하며 `
 caller는 L과 delivery 여유를 명시하고 `socketTimeoutMillis >= L*1000+deliveryMarginMillis+1`로 설정한다.
 gateway는 원래 L과 sender 경과를 전달하고 native는 `L−senderElapsed−completionMargin`을 사용한다.
 완료 여유 m은 한 번 차감한다. 이 규칙은 E5 Poisson 호출에도 적용한다.
-K 증가로 늘어난 L에도 유한 physical drain과 전체 3600 s 예산을 적용하고,
-새 `supplyExtensionSeconds=ceil(L+deliveryMarginMillis/1000)` 예약을 보존한다.
+기존 유한 physical drain과 전체 3600 s 예산(`e8e018e2`)을 유지하고,
+`supplyExtensionSeconds=ceil(L+deliveryMarginMillis/1000)` 예약을 보존한다.
 예산을 맞출 수 없으면 명시적으로 보고하며 공급 연장을 줄이거나 cap을 넘겨 실행하지 않는다.
-기존 Accepted record와 동결 입력은 불변이다. 새 계산의 K 증가는 oldK/newK, Z 원천 또는 fallback,
-L과 예산 변경을 명시적으로 보고하고 기존 측정을 묵시적으로 재실행하지 않는다.
-보고서의 기존·새 결과 비교는 실제 근거로 수행하며, 공급 변경 뒤에도 결과나 비교가 불변이라고 전제하지 않는다.
-이 공급 변경은 idle 1% 기준과 signed d의 정의·보존을 바꾸지 않는다.
+기존 Accepted record와 동결 입력은 불변이며 기존 측정을 묵시적으로 재실행하지 않는다.
+새 K는 Accepted10의 K와 같아야 하는 불변량이 아니다. 기존·새 결과 비교는 실제 근거로 수행한다.
+idle≤1%는 공급이 충분한 d 측정의 조건이며 signed d의 정의·보존은 바꾸지 않는다.
+idle>1%이면 producer 또는 요청 경로의 한계로 보고한다. K, L, margin이나 cap을 튜닝하거나
+자동 재측정하여 통과시키지 않는다.
 
 **판정.** physical finished에서 다음 ready까지의 보수 idle 상한과 창 끝단, hole, 누락 native를 함께 평가한다.
 필요한 원근거가 없으면 unknown과 모든 관련 사유를 남긴다.

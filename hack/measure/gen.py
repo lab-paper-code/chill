@@ -95,25 +95,9 @@ def required_batches(mean, sd):
     return lo + 1
 
 
-def outside_time_input(case):
-    supply = ENV.get("occupancySupply", {})
-    evidence_path = supply.get("outsideTimeEvidence")
-    evidence = load(evidence_path) if evidence_path else supply.get("outsideTimeByCase", {})
-    result = copy.deepcopy(evidence.get(case, {
-        "p99Seconds": 0.25, "sources": [],
-        "fallback": True, "fallbackReason": "no target or same-node/runtime producer outside-time evidence; 0.25s",
-    }))
-    if evidence_path:
-        result["evidenceManifest"] = identity(evidence_path)
-    p99 = result["p99Seconds"]
-    if not math.isfinite(p99) or p99 <= 0:
-        raise ValueError(f"{case}: producer outside-time p99 must be finite and positive")
-    if not result.get("sources") and not (result.get("fallback") is True and result.get("fallbackReason")):
-        raise ValueError(f"{case}: producer outside-time requires raw sources or explicit fallback")
-    return result
 
 
-def derive(row, framed_bytes, pipeline, outside_time=None):
+def derive(row, framed_bytes, pipeline):
     c, b = COEFFICIENTS, row["batch"]
     mu, sd = row["meanSeconds"], row["sdSeconds"]
     fast = row["minObservedSeconds"] / c["timeMargin"]
@@ -127,25 +111,14 @@ def derive(row, framed_bytes, pipeline, outside_time=None):
     q = max(1, math.ceil(refill / fast))
     slo = row["workload"]["slo"]["targetLatencyNanos"] / 1e9
     lifetime = math.ceil(c["lifetimeMargin"] * max(slo, (q + 2) * tail + prefix))
-    old_workers, old_lifetime = b * (q + 1), lifetime
-    outside = copy.deepcopy(outside_time if outside_time is not None else outside_time_input(row["caseID"]))
-    p99 = outside["p99Seconds"]
-    if (not math.isfinite(p99) or p99 <= 0 or not (outside.get("sources")
-            or outside.get("fallback") is True and outside.get("fallbackReason"))):
-        raise ValueError(f"{row['caseID']}: invalid or unsourced producer outside-time p99")
-    throughput = b / mu
-    minimum_workers = math.ceil(throughput * p99 * c["pipelineMargin"]) + b
-    workers = b * math.ceil(max(old_workers, minimum_workers) / b)
-    q = workers // b - 1
-    # Keep the existing q/tail/prefix envelope as well as the closed-loop bound.
-    lifetime = max(lifetime, math.ceil(c["lifetimeMargin"] * max(slo, (q + 2) * tail + prefix)))
-    waiting_sum = workers * tail + p99
-    if waiting_sum > lifetime:
-        lifetime = max(lifetime, math.ceil(c["lifetimeMargin"] * waiting_sum))
-    q_upper = min(row["queueRequestCap"] // b, (64 * 1024 * 1024) // (b * framed_bytes),
-                  math.ceil((lifetime - prefix) / tail) - 3)
-    capacity_feasible = (q <= q_upper and (q + 2) * tail + prefix < lifetime
-                         and lifetime >= slo and waiting_sum <= lifetime)
+    bounds = {"queue-cap": 64, "bytes-cap": 67108864 // framed_bytes,
+              "lifetime": math.floor((lifetime - delivery) / (b * mu))}
+    limiting_bound = min(bounds, key=bounds.get)
+    workers = bounds[limiting_bound]
+    q = math.ceil(workers / b) - 1
+    waiting_sum = workers * b * mu
+    q_upper = min(row["queueRequestCap"] // b, (64 * 1024 * 1024) // (b * framed_bytes))
+    capacity_feasible = workers >= b and waiting_sum + delivery <= lifetime
     n = required_batches(mu, sd)
     warmup = math.ceil(max(c["loadPreparationFloorSeconds"], (q + 1) * tail + refill))
     duration = math.ceil(max(c["windowFloorSeconds"], c["timeMargin"] * n * mu))
@@ -170,13 +143,11 @@ def derive(row, framed_bytes, pipeline, outside_time=None):
             "unknownBudgetMeaning": "remaining cap after supply extension split between Job setup and final collection; conservative allocation, not measured",
             "tailBatchSeconds": tail, "fastBatchSeconds": fast, "refillSeconds": refill,
             "prefixSeconds": prefix, "qUpper": q_upper, "framedDecodedRequestUpperBytes": framed_bytes,
-            "supplySizing": {"previousWorkers": old_workers, "previousLifetimeSeconds": old_lifetime,
-                "profileThroughputRequestsPerSecond": throughput, "profileMeanBatchSeconds": mu,
-                "batch": b, "producerOutsideTime": outside, "margin": c["pipelineMargin"],
-                "minimumWorkers": minimum_workers, "wholeBatchWorkers": workers,
-                "serviceSecondsPerRequest": tail / b, "waitingAndOutsideSeconds": waiting_sum,
-                "lifetimeRecalculation": "max(old L,ceil(1.25*max(SLO,(q+2)*tail+prefix))); if K*B*service+Zp99>L, max(L,ceil(1.25*(K*B*service+Zp99)))",
-                "workerCap": None},
+            "supplySizing": {"batch": b, "profileMeanBatchSeconds": mu,
+                "requestLifetimeSeconds": lifetime, "marginSeconds": delivery, "workerCap": 64,
+                "queueBytesCap": 67108864, "framedDecodedRequestUpperBytes": framed_bytes,
+                "limitingBound": limiting_bound},
+            "waitingSeconds": waiting_sum,
             "capacityFeasible": capacity_feasible,
             "queueRequestCap": row["queueRequestCap"], "queueBytesCap": 67108864}
 
@@ -199,7 +170,7 @@ def frozen_inputs(row):
 def occupancy(row, calculated, provenance):
     d = calculated
     if not d["capacityFeasible"]:
-        raise ValueError(f"{row['caseID']}: required K={d['workers']} is count/bytes/lifetime jointly infeasible (qUpper={d['qUpper']}); no worker cap or unsafe CR")
+        raise ValueError(f"{row['caseID']}: capped K={d['workers']} cannot supply one batch within the frozen lifetime")
     model = "plc" if row["model"] == "plc-lstm-ae" else "smolvlm" if row["model"].startswith("smolvlm") else "mnv2"
     path = "cuda" if "cuda" in row["executionPath"] else "cpu"
     name = f"{row['node']}-970-{row['caseID'].lower()}-occ-{model}-{path}"
@@ -447,36 +418,38 @@ def self_check():
         expected = floors[row["caseID"]]
         d = derive(row, expected["framedDecodedRequestUpperBytes"], inp["pipelineScenario"])
         assert d["N"] == expected["N"], row["caseID"]
-        assert d["supplySizing"]["previousWorkers"] == expected["fixedOutstandingScenario"], row["caseID"]
-        assert d["supplySizing"]["previousLifetimeSeconds"] == expected["requestLifetimeSecondsScenario"], row["caseID"]
+        assert d["requestLifetimeSeconds"] == expected["requestLifetimeSecondsScenario"], row["caseID"]
         assert d["durationSeconds"] == expected["measurementWindowSecondsScenario"], row["caseID"]
         assert d["supplyExtensionSeconds"] == math.ceil(d["requestLifetimeSeconds"] + d["deliveryMarginMillis"] / 1000)
         assert d["plannedElapsedSeconds"] == sum(d[k] for k in ("preparationSeconds", "warmupSeconds", "durationSeconds", "supplyExtensionSeconds", "drainSeconds", "jobSetupSeconds", "collectionSeconds")) <= 3600
         sizing = d["supplySizing"]
-        assert d["workers"] >= max(sizing["previousWorkers"], sizing["minimumWorkers"])
-        assert sizing["minimumWorkers"] == math.ceil(row["batch"] / row["meanSeconds"]
-            * sizing["producerOutsideTime"]["p99Seconds"] * 1.25) + row["batch"]
-        assert d["workers"] % row["batch"] == 0
-        assert sizing["waitingAndOutsideSeconds"] <= d["requestLifetimeSeconds"]
+        bounds = {"queue-cap": sizing["workerCap"],
+                  "bytes-cap": sizing["queueBytesCap"] // sizing["framedDecodedRequestUpperBytes"],
+                  "lifetime": math.floor((sizing["requestLifetimeSeconds"] - sizing["marginSeconds"]) /
+                                         (sizing["batch"] * sizing["profileMeanBatchSeconds"]))}
+        assert d["workers"] == min(bounds.values())
+        assert sizing["limitingBound"] == min(bounds, key=bounds.get)
+        assert d["waitingBatches"] == math.ceil(d["workers"] / row["batch"]) - 1
+        assert d["waitingSeconds"] + sizing["marginSeconds"] <= d["requestLifetimeSeconds"]
         assert d["socketTimeoutSeconds"] > d["requestLifetimeSeconds"] + d["deliveryMarginMillis"] / 1000
         count += 1
     assert count == 34
     assert required_batches(1, 0) == 3
     row = next(r for r in inp["rows"] if r.get("profileID") and r["caseID"] == "D05")
-    framed = floors["D05"]["framedDecodedRequestUpperBytes"]
-    high = derive(row, framed, inp["pipelineScenario"],
-                  {"p99Seconds": 0.25, "sources": [], "fallback": True, "fallbackReason": "self-check fixture"})
-    assert high["workers"] > 64
-    assert not high["capacityFeasible"]
+    d = derive(row, floors["D05"]["framedDecodedRequestUpperBytes"], inp["pipelineScenario"])
+    assert d["workers"] == 64
+    assert d["capacityFeasible"]
+    limited = derive(row, 67108864 // 3, inp["pipelineScenario"])
+    assert limited["workers"] == 3
+    assert limited["supplySizing"]["limitingBound"] == "bytes-cap"
+    impossible = derive(row, 67108865, inp["pipelineScenario"])
+    assert not impossible["capacityFeasible"]
     try:
-        occupancy(row, high, [])
+        occupancy(row, impossible, [])
     except ValueError:
         pass
     else:
-        raise AssertionError("infeasible supply must not produce a CR")
-    low = derive(row, framed, inp["pipelineScenario"],
-                 {"p99Seconds": 1e-6, "sources": [], "fallback": True, "fallbackReason": "self-check fixture"})
-    assert low["workers"] == low["supplySizing"]["previousWorkers"]
+        raise AssertionError("K below one batch must not produce a CR")
     print("34 approved profile calculations checked")
 
 
@@ -484,10 +457,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--self-check", action="store_true")
-    parser.add_argument("--outside-time-evidence", type=Path, help="requestwise RTT minus server elapsed p99 JSON, with same-node/runtime transfers or explicit 0.25s fallback")
     args = parser.parse_args()
-    if args.outside_time_evidence:
-        ENV.setdefault("occupancySupply", {})["outsideTimeEvidence"] = str(args.outside_time_evidence.resolve())
     if args.self_check:
         self_check()
     else:

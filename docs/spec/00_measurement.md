@@ -97,36 +97,34 @@ CPU quota는 사용량 상한이며 전용 CPU 배정을 뜻하지 않으므로,
 
 ### 디스패치 점유 d의 공급 조건
 
-고정 outstanding closed-loop 공급의 기존 workers를 oldK, profile의 배치 크기를 B,
-배치 평균 실행시간(초)을 mu라 하면 요청 처리율은 `rate=B/mu`다.
-closed-loop RTT에는 K에 의존하는 서버 대기가 포함되므로 RTT p99로 공급 깊이를 정하지 않는다.
-각 요청의 client RTT에서 대응하는 서버 `final.elapsedNanos`를 초로 변환해 뺀 외부 시간을 Z라 한다.
-해당 final이 없으면 같은 요청의 native elapsed와 residual 합을 대신 뺀다.
-`Zp99`는 요청별 차감을 먼저 수행한 뒤 계산한 p99(초)이며, 분위수끼리 뺀 값이 아니다.
-동결 입력에 원시 근거 경로와 hash, 요청 대응 및 차감 원천, 표본 수와 분위수 방법을 연결한다.
-입력은 `measure.occupancySupply.outsideTimeEvidence`의 flat JSON 경로나 `outsideTimeByCase` mapping이며
-CLI는 `--outside-time-evidence`다. 결과는 `computed.supplySizing.producerOutsideTime`의
-`{p99Seconds,sources,fallback,...}`와 `waitingAndOutsideSeconds`에 보존한다.
-`fallback`은 boolean이며 `sources`가 없으면 `fallback: true`와 비어 있지 않은 `fallbackReason`을 요구한다.
-직접 Z 근거가 없으면 같은 Node/runtime의 다른 target Z를 사용하고 원래 target과 적용 target의
-출처를 명시한다. 이 근거도 없을 때에만 `Zp99=0.25 s` fallback 사용을 명시한다.
+고정 outstanding closed-loop 공급의 worker 수이자 outstanding 요청 수 K는
+`K=min(64,floor(queueBytesCap/framedDecodedRequestUpperBytes),floor((L−margin)/(B×mu)))`로 한 번 정한다.
+B는 profile 배치 크기, mu는 profile의 배치 평균 실행시간(초), L은 기존 수명 계산으로
+정한 요청 수명(초), margin은 기존 `deliveryMarginMillis/1000`이다.
+`queueBytesCap=67108864`이며 `framedDecodedRequestUpperBytes`는 framing을 포함한 요청별 decoded bytes 상한이다.
+전달 margin은 별도 측정값이 아니라 기존 전달 예산을 남기는 reserve다.
+공급량을 위한 왕복시간·외부 시간 측정이나 별도 출처 입력은 사용하지 않는다.
+K는 B의 배수로 올림하지 않으며 기존 validator의 대기 batch 수는 `q=ceil(K/B)−1`이다.
+`conditions.inputsJSON.computed.supplySizing`에
+`{batch,profileMeanBatchSeconds,requestLifetimeSeconds,marginSeconds,workerCap:64,queueBytesCap:67108864,framedDecodedRequestUpperBytes,limitingBound}`를 동결하고
+같은 입력으로 K와 q를 정확히 재계산한다.
+`limitingBound`는 최소값을 정한 `queue-cap`, `bytes-cap`, `lifetime` 중 하나이며
+동률이면 이 순서에서 먼저 나온 항목을 기록한다.
+L은 이 공급 규칙 적용 전의 기존 수명 그대로이며 K에 맞춰 확장하지 않는다.
+기존 q/tail/prefix 수명 검사, native 대기 개수와 decoded bytes의 공동 조건,
+SLO와 gateway 수명 상한을 유지한다. bytes 상한 초과를 이유로 큰 K의 CR을 만든 뒤 거절하는 대신
+위 세 상한의 최솟값으로 K를 생성한다. 공급은 K<B일 때만 불가능하며 실행 전에 보고한다.
+그 밖의 실행 조건을 만족하지 못해도 실행 전에 보고하며 L이나 예산을 늘리지 않는다.
 
-공급은 `K=max(oldK,ceil(rate*Zp99*1.25)+B)`로 정하며 64 상한은 없다.
-B>1이면 K를 B의 배수로 올림하여 whole-batch workers를 유지한다.
-`serviceTime=tailBatchSeconds/B`를 보수적으로 사용하여
-`K*B*serviceTime+Zp99<=L`을 확인한다. 위반하면
-`L=max(oldL,ceil(1.25*(K*tailBatchSeconds+Zp99)))`로 재계산한다.
-`q=K/B−1`을 다시 구하고 기존 q/tail/prefix 수명 검사, native 대기 개수와
-decoded bytes의 공동 조건, SLO와 gateway 수명 상한을 모두 유지한다.
-`supplySizing`이 없는 legacy 입력은 기존 q의 엄격한 동일성을 유지한다. 있는 경우에는
-legacy 하한 q, `previousWorkers` 일관성, +B/whole-batch 올림, 여유 1.25와 출처를 정확히 재계산한다.
 socket timeout은 `L+delivery`보다 엄격히 크게 최소 1 ms를 더한다.
-유한 drain과 전체 3600 s 예산에 새 공급 연장 `ceil(L+delivery)`를 예약하며,
-조건이나 예산을 만족할 수 없으면 실행 전에 보고한다.
+기존 유한 drain과 전체 3600 s 예산(`e8e018e2`), 공급 연장 `ceil(L+delivery)` 예약을
+유지하며 예산을 만족할 수 없으면 실행 전에 보고한다.
 
-idle 1% 기준과 signed d의 정의·보존은 바꾸지 않는다.
-기존 Accepted와 동결 입력은 불변이며, 새 K 증가는 oldK/newK와 Z 원천 또는
-fallback, L 및 예산 변경을 명시적으로 보고한다. 기존 측정을 묵시적으로 재실행하지 않는다.
+idle≤1%는 공급이 충분한 d 측정의 조건이며 signed d의 정의·보존은 바꾸지 않는다.
+idle>1%이면 producer 또는 요청 경로의 한계로 보고하고 K, L, margin이나 cap을 튜닝하거나
+자동 재측정하여 통과시키지 않는다.
+새 K는 Accepted10의 K와 다를 수 있으며 동일성은 불변량이 아니다.
+기존 Accepted와 동결 입력은 불변이고 기존 측정을 묵시적으로 재실행하지 않는다.
 보고서의 기존·새 결과 비교는 실제 근거로 수행하며 공급 변경 후 비교가 불변이라고 전제하지 않는다.
 
 배치를 키우면 항상 효율이 좋아진다거나, 같은 타입의 노드는 항상 같은 성능을
