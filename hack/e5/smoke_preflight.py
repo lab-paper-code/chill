@@ -44,8 +44,8 @@ def main():
         assert schedule[0]['readyGate'] and schedule[0]['seconds'] == 720 and schedule[1]['seconds'] == 60
         assert schedule[0]['startBarrier'] == {'reservations': 0, 'transitions': 0}
         assert 'startBarrier' not in schedule[1]
-        assert spec['timeboxes']['collectSeconds'] == 120
-        assert auth.lifetime_budget(schedule, spec['timeboxes'], spec['tokenSafetyMarginSeconds']) == 1380 <= 1500
+        assert spec['timeboxes']['collectSeconds'] == 240
+        assert auth.lifetime_budget(schedule, spec['timeboxes'], spec['tokenSafetyMarginSeconds']) == 1620
         token = root / 'token'
         def jwt(seconds):
             return 'e30.' + base64.urlsafe_b64encode(json.dumps({'exp': time.time() + seconds}).encode()).decode().rstrip('=') + '.signature'
@@ -68,8 +68,8 @@ def main():
         assert not (out / 'initial.json').exists() and not (out / 'smoke-E0').exists()
         token.write_text(jwt(3600))
         record = cpo.check_token_lifetime()
-        assert record['requiredSeconds'] == 1380 and record['expiresUTC']
-        assert cpo.check_token_lifetime(schedule[1])['requiredSeconds'] == 375
+        assert record['requiredSeconds'] == 1620 and record['expiresUTC']
+        assert cpo.check_token_lifetime(schedule[1])['requiredSeconds'] == 495
         cpo.b = dict(binding, schema='e5-binding.v1')
         cpo.a.command = 'campaign'
         cpo.c = dict(config, factors=[{'name': 'one'}])
@@ -141,7 +141,7 @@ def main():
         (out / 'preflight-STOP.json').unlink()
         (out / 'preflight-final-state.json').unlink()
         fails('finalInstances0')
-    print('PASS preflight: JWT/opaque expiry, start/run refusal, 720s Ready/1380s budget, Ready/success/power/cleanup PASS/FAIL; local only')
+    print('PASS preflight: JWT/opaque expiry, start/run refusal, 720s Ready/1620s budget, Ready/success/power/cleanup PASS/FAIL; local only')
 
 
 if __name__ == '__main__':

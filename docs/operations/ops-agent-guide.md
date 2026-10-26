@@ -25,7 +25,7 @@ hack/fast-deploy.sh upgrade --source HEAD --control 0 --self-check
 
 ## E5 각 실행 직전 표준 절차
 
-E5보다 먼저 **최대 25분 사전 점검(Ready 대기 포함)**을 새 출력 디렉터리에서 수행한다. 이는 운영 입구 확인이지 연구 시나리오 PASS가 아니다. 현재처럼 클러스터 쓰기가 승인되지 않은 작업에서는 아래 라이브 명령을 실행하지 않는다.
+E5보다 먼저 **최대 27분 사전 점검(Ready 대기 포함)**을 새 출력 디렉터리에서 수행한다. 이는 운영 입구 확인이지 연구 시나리오 PASS가 아니다. 현재처럼 클러스터 쓰기가 승인되지 않은 작업에서는 아래 라이브 명령을 실행하지 않는다.
 
 1. 기존 `CHILL_EXPERIMENT_CONFIG`의 API/CA/tokenFile·operationalRecipe·campaign 경로와 라이브 제어 이미지 출처를 확인한다. `hack/e5/preflight-config.example.json`을 승인된 외부 입력으로 복사하고 `controlSourceSHA`를 실제 배포 소스로 고정한다(예시 SHA를 최신으로 간주하지 않는다). 기존 scheduler/instance를 건드리는 **별도 Main 승인**이 있어야 실행한다.
 2. Capacity API는 자율 Workload의 행만 제공하므로 자율 off인 prepare 뒤에는 capacity 행을 기다리지 않는다. start에서 자율 on 뒤 E0 `readyGate`가 최대 720초 동안 canonical 3 Workload의 Ready + 양수 route를 기다린다. capacity 행 존재만으로 Built/Ready 성공을 판정하지 않는다.
@@ -37,7 +37,7 @@ E5보다 먼저 **최대 25분 사전 점검(Ready 대기 포함)**을 새 출�
 CHILL_EXPERIMENT_CONFIG="$ENV" python3 hack/e5/demo.py preflight --config "$CONFIG" --out "$OUT" --release "$RELEASE"
 ```
 
-예시 예상 예산은 단계 780초 + 두 단계 각각 timeboxes 합 285초 + 여유 30초 = **1380초(23분)**다. JSON의 `tokenSafetyMarginSeconds`로 여유를 고정하며 1500초(25분)를 넘는 사전 점검 설정은 거부한다. `collectSeconds=120`은 `e5-archive.py`가 요구하는 drain 후 power support +60초를 수집 deadline 안에 확보하기 위한 값이다. 이는 단계/대기 예산이며 prepare의 로컬 I/O와 오프라인 그래프 생성까지 포함한 강제 kill 타이머는 아니다. start에서 토큰 수명을 다시 검사한다. 시간 상한이나 수집 실패를 성공으로 바꾸지 않는다.
+예시 예상 예산은 단계 780초 + 두 단계 각각 timeboxes 합 405초 + 여유 30초 = **1620초(27분)**다. JSON의 `tokenSafetyMarginSeconds`로 여유를 고정하며 1620초(27분)를 넘는 사전 점검 설정은 거부한다. `collectSeconds=240`은 `e5-archive.py`가 요구하는 drain 후 power support +60초와 exact-hour archive 대기를 수집 deadline 안에 확보하기 위한 값이다. 기존 120초는 실클러스터에서 `Finite collection deadline exhausted`로 실패했으므로 시연/시험 설정도 240초를 사용한다. 늘어난 두 단계 수집 예산으로 기존 1500초 cap을 초과하여 필요한 최소인 1620초로 올렸다. 이는 단계/대기 예산이며 prepare의 로컬 I/O와 오프라인 그래프 생성까지 포함한 강제 kill 타이머는 아니다. start에서 토큰 수명을 다시 검사한다. 시간 상한이나 수집 실패를 성공으로 바꾸지 않는다.
 
 `summary.json`의 `preflight.status`와 `summary.md`에 **PASS/FAIL**을 남긴다. PASS는 빈 출발, Ready 3/3, 혼합 창의 세 Workload 각각 offered>0·clientRows=offered·성공률 100%, 두 창의 offered/drain-inclusive 전력 `complete=true`, 모든 단계 완료, finish/정의 정리 완료, **최종 instances 0·예약 0**를 모두 요구한다. 누락/STOP은 FAIL(exit 2)이다. `report-tables.md`·`timeline.svg`는 같은 보존 폴더에서 생성하며 재생성만 할 때는 `python3 hack/e5/demo.py report "$OUT"`을 사용한다. FAIL이면 부분 증거를 보존하고 중단한다. 자동 재시도·자동 실패 reset은 없으며 정리도 별도 승인된 기존 finish 절차로 수행한다.
 

@@ -7,7 +7,7 @@
     "barrierSeconds": 20,
     "drainSeconds": 90,
     "flushSeconds": 10,
-    "collectSeconds": 120,
+    "collectSeconds": 240,
     "apiSeconds": 5,
     "settleSeconds": 20
   },
