@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { millisecondsToNanos, nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON, wireInteger, settingsEqual } from "./scheduler.ts"
-import type { SchedulerSettings } from "./read-types.ts"
+import type { SchedulerDownState, SchedulerSettings } from "./read-types.ts"
 
 test("editing another setting preserves maximum int64 and uint64 integers", () => {
   const settings = parseSchedulerJSON('{"servingMemoryBytes":18446744073709551615,"controlIntervalNanos":9223372036854775807,"maxReplicas":1}') as Record<string,unknown>
@@ -45,4 +45,14 @@ test("compact scheduler reads restore shared evidence into the full response", (
   assert.throws(() => parseSchedulerJSON(compact.replace('"$ref":"p"}},{', '"$ref":"missing"}},{')), /missing/)
   assert.deepEqual(parseSchedulerJSON('{"profile":{"$ref":"p"}}'), {profile:{$ref:"p"}})
   assert.deepEqual(parseSchedulerJSON('{"profiles":[{"id":"p"}]}'), {profiles:[{id:"p"}]})
+})
+
+test("window demand evidence keeps exact duration and omitted history stays absent", () => {
+  const record = parseSchedulerJSON('{"scaleDown":{"rate":20,"windowMax":110,"windowNanos":9223372036854775807,"supply":160,"allowed":true,"reason":"ScaleDownStabilized"}}') as {scaleDown:SchedulerDownState}
+  assert.equal(record.scaleDown.windowMax,110)
+  assert.equal(record.scaleDown.supply,160)
+  assert.equal(record.scaleDown.windowNanos,9223372036854775807n)
+  assert.equal(nanosToMilliseconds(record.scaleDown.windowNanos),"9223372036854.775807")
+  const historical = parseSchedulerJSON('{"uid":"w"}') as {scaleDown?:SchedulerDownState}
+  assert.equal(historical.scaleDown,undefined)
 })

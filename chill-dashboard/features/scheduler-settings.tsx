@@ -18,7 +18,7 @@ const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
   {key:"controlIntervalNanos",label:"운영 판단 주기",help:"이 간격마다 새로 판단해요.",group:"cycle"},
   {key:"comparisonPeriodNanos",label:"에너지 비교 기간",help:"유지와 모든 후보를 같은 고정 기간으로 비교해요. 이보다 긴 전환은 제외해요.",group:"cycle"},
-  {key:"scaleDownStabilizationNanos",label:"하강 안정화 기간",help:"수요 하강이 이 기간 유지된 뒤 축소와 에너지 교체를 허용해요. 0이면 대기하지 않아요.",group:"cycle"},
+  {key:"scaleDownStabilizationNanos",label:"하강 안정화 기간",help:"이 기간의 최대 유효 수요가 현재 준비된 공급보다 작아야 축소와 에너지 교체를 허용해요. 후보도 최대 수요를 감당해야 해요. 완전한 관측 창이 필요하며, 0도 현재 수요·공급 검사는 유지해요.",group:"cycle"},
   {key:"transitionReserveFraction",label:"전환 예비 비율",help:"전환 중 실제 준비된 용량으로 수요와 예비를 감당해요. 0은 별도 예비 없음, 범위는 0~1이에요.",group:"cycle"},
   {key:"maxObservationAgeNanos",label:"관측을 쓸 수 있는 시간",help:"이보다 오래된 관측은 판단에 쓰지 않아요.",group:"cycle"},
   {key:"completionMarginMS",label:"완료 여유",help:"실행이 끝난 뒤 응답까지 요청마다 이만큼 더해 예상 완료 시각을 계산해요.",group:"cycle",unit:"ms"},
