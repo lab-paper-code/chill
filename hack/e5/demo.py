@@ -28,6 +28,10 @@ No zero-load bootstrap is required. A stage may set "startBarrier":
 {"reservations": 0, "transitions": 0}; before any producer setup it waits at most
 that stage's seconds for no reservations or running/cancel actions. Timeout
 records STOP and the last state, with no load started. Parts remain continuous.
+For stages with producers, the same zero-state check also runs immediately
+before each GO touch, bounded by the existing setup and earliest producer-ready
+barrier deadlines (no timebox extension). GO observations/timeouts are retained
+under startBarrier.producerRelease and go-barrier-<workload>-state.json.
 For a PLC-only 60 -> 140 req/s profile window, use staticPlacement with a single
 stage's parts (e.g. 60 seconds each), rates {"mobilenet": 0, "smolvlm2": 0,
 "plc": 60} then {"mobilenet": 0, "smolvlm2": 0, "plc": 140}. Prepare captures
@@ -985,6 +989,51 @@ def self_check():
         assert sum(call[0] == 'create' for call in calls) == 10  # Nine autonomous, one static PLC.
         assert sum(call[0] == 'exec' for call in calls) == 20
         assert e5.load(cpo.out / 'smoke-E0/pre-state.json')['results'] is None and cpo.native_evidence == []
+        # Reservations can reappear during setup: GO must wait, not just stage entry.
+        for go_clears in (True, False):
+            go_out = root / ('go-clear' if go_clears else 'go-timeout')
+            go_out.mkdir()
+            (go_out / 'start-ack.json').write_bytes((cpo.out / 'start-ack.json').read_bytes())
+            go_stage = copy.deepcopy(static_stages[0])
+            go_folder = stage_folder(go_out, go_stage)
+            plc_name = ALIASES['plc']
+            go_observations = []
+            def go_state():
+                state = copy.deepcopy(static_state)
+                if (go_folder / ('startup-' + plc_name) / 'producer-ready-event.json').exists():
+                    go_observations.append(True)
+                    state['snapshot']['reservations'] = [{'id': 'new-during-setup'}] if len(go_observations) == 1 else []
+                    state['actions'] = [{'status': 'running'}] if not go_clears or len(go_observations) < 3 else []
+                return state
+            original_stages = stages
+            stages = [go_stage]
+            before_go_calls = len(calls)
+            removed_go = []
+            real_producer_deadline = d.producer_barrier_deadline
+            try:
+                with patch.object(cpo, 'out', go_out), patch.object(cpo, 'state', go_state), patch.object(cpo, 'settings', lambda: copy.deepcopy(static_settings)), patch.object(cpo, 'put', no_mutation), patch.dict(cpo.b, {'schedule': stages, 'demoConfig': static_config}), patch.object(cpo, 'boundary', lambda folder, prefix: e5.save(folder / (prefix + '-state.json'), cpo.state())), patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'client_end_counter', lambda *args: {'fixtureCounter': True}), patch.object(d, 'producer_barrier_deadline', side_effect=lambda row, seconds: real_producer_deadline(row, seconds) if go_clears else e5.time.time() - 1), patch.object(cpo.io, 'remove_job', lambda name, uid: removed_go.append((name, uid)), create=True), patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(stdout='fixture stopped producer', stderr='', returncode=0)):
+                    if go_clears:
+                        run_stage(cpo, go_stage)
+                    else:
+                        try:
+                            run_stage(cpo, go_stage)
+                        except RuntimeError as error:
+                            assert 'Producer release start barrier timebox' in str(error)
+                        else:
+                            raise AssertionError('Expired GO barrier released a producer')
+                    go_phase = e5.load(go_folder / 'phase.json')
+                    release = go_phase['startBarrier']['producerRelease'][plc_name]
+                    assert release['timedOut'] is not go_clears
+                    assert bool(release['observedUTC']) is go_clears
+                    assert (go_folder / ('go-barrier-' + plc_name + '-state.json')).exists()
+                    assert sum(argv[0] == 'exec' and '.touch()' in argv[-1] for argv in calls[before_go_calls:]) == int(go_clears)
+                    if go_clears:
+                        assert len(go_observations) >= 3 and go_phase['status'] == 'DRAINED_NOT_EVALUATED'
+                    else:
+                        assert go_phase['status'] == 'STOP' and go_phase['startUTC'] is None
+                        assert removed_go and release['transitions'] == 1
+            finally:
+                stages = original_stages
         import ast
         requested = {arg for arg in e5.load(cpo.out / 'smoke-A/job-image-classification-tight-slo.json')['spec']['template']['spec']['containers'][0]['args'] if arg.startswith('--')}
         for source_sha in ('e18ac391d4353e5abba03558b163312f2a7b629b', '4fb9bf8b0f8112549cf8d939b911c19ddfc9c54e'):
@@ -1206,7 +1255,7 @@ def self_check():
         e5.save(historical_path, frozen_binding)
         historical = e5.summarize(historical_path, frozen_root)
         assert historical['schedulerSettings'] is None and any('frozen scheduler settings' in row['reason'] for row in historical['missing'])
-        print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, static placement without scheduler mutation (including failure), start barrier clear/timeout, optional lifetime, server reset evidence and failure stop; mocked API/kubectl only')
+        print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, static placement without scheduler mutation (including failure), stage-entry and pre-GO barriers clear/timeout, optional lifetime, server reset evidence and failure stop; mocked API/kubectl only')
 
 
 def main():

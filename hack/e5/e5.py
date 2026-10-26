@@ -626,9 +626,24 @@ class CPO:
                         if fingerprint(frame['snapshot'],self.uids)!=chosen or frame['snapshot'].get('reservations'):raise RuntimeError('Selected static configuration was not retained at actual E5-4 producer release')
                         save(folder/'actual-start-configuration.json',frame)
                     # Same barrier file protocol as existing CPO producer; actual UTC start per producer is retained, not claimed identical.
+                    if barrier is not None:
+                        go_deadline=min(deadline,time.monotonic()+min(dt.datetime.fromisoformat(row['setupBarrierDeadlineUTC']).timestamp()-time.time() for row in phase['producerReadiness'].values()))
                     for name,pod in pods.items():
                         current=self.io.k(['get','pod',pod['metadata']['name'],'-o','json'],timeout=self.tb['apiSeconds'])
                         self.io.assert_producer_startable(folder/('startup-'+name),current,pod,barrier_seconds=self.tb['barrierSeconds'])
+                        if barrier is not None:
+                            evidence={'observedUTC':None,'timedOut':False}
+                            phase['startBarrier'].setdefault('producerRelease',{})[name]=evidence
+                            while True:
+                                alert_offset=self.monitor(alert_offset,folder)
+                                state=self.state();observed=now()
+                                evidence.update(reservations=len(state['snapshot'].get('reservations') or []),transitions=sum(a.get('status') in ('running','cancel') for a in state.get('actions') or []),timedOut=time.monotonic()>=go_deadline)
+                                if not evidence['timedOut'] and evidence['reservations']==0 and evidence['transitions']==0:evidence['observedUTC']=observed
+                                save(folder/('go-barrier-'+name+'-state.json'),{'observedUTC':observed,'state':state,'producerRelease':evidence})
+                                save(folder/'phase.json',phase)
+                                if evidence['timedOut']:raise RuntimeError('Producer release start barrier timebox exceeded; no GO for '+name)
+                                if evidence['observedUTC']:break
+                                time.sleep(min(.2,max(0,go_deadline-time.monotonic())))
                         self.io.k(['exec',pod['metadata']['name'],'-c','load','--','python3','-c',"from pathlib import Path; Path('/tmp/e5-start').touch()"],timeout=self.tb['apiSeconds'])
                     phase['startUTC']=now(); end=time.monotonic()+st['seconds']+self.tb['drainSeconds']; released=True; save(folder/'phase.json',phase)
                 if released and not ready_gate and time.monotonic()>end:
