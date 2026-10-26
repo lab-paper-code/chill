@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -173,5 +175,56 @@ func TestObservationReadReusesGrownBufferAcrossFiles(t *testing.T) {
 	}
 	if count := scanLargeLines(t, observationLog, [2]time.Time{observationTestHour, observationTestHour.Add(time.Hour)}); count != files {
 		t.Fatalf("cross-file scan changed: count=%d expected=%d", count, files)
+	}
+}
+
+func TestObservationReadCoverageIgnoresBoundLocations(t *testing.T) {
+	const localSource = "local"
+	ctx := context.Background()
+	archive := newReadableObservationArchive(t)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	from, to := observationTestHour.Add(time.Second), observationTestHour.Add(time.Minute)
+	clock.set(from)
+	appendAssignedRequest(t, log, "location", from)
+	if err := log.RequestClosed("location"); err != nil {
+		t.Fatal(err)
+	}
+	clock.set(to)
+	locations := []*time.Location{time.UTC, time.Local, time.FixedZone("KST", 9*60*60), time.FixedZone("half-hour", -3*60*60-30*60)}
+	for _, source := range []string{localSource, observationArchiveSource} {
+		t.Run(source, func(t *testing.T) {
+			if source == localSource {
+				archive.listError = errors.New("local bounds must not list the archive")
+			} else {
+				archive.listError = nil
+				clock.set(observationTestHour.Add(3 * time.Hour))
+				if err := log.Flush(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var want ObservationCoverage
+			for index, location := range locations {
+				t.Run(location.String(), func(t *testing.T) {
+					bounds := map[string][2]time.Time{observationRequestStream: {from.In(location), to.In(location)}}
+					read, err := log.prepare(ctx, bounds)
+					if err != nil {
+						t.Fatal(err)
+					}
+					coverage := read.coverage(bounds)
+					read.close()
+					if len(coverage.Sources) != 1 || coverage.Sources[0].Source != source || len(coverage.Gaps) != 0 || coverage.gapUntil(from.In(location)) != nil {
+						t.Fatalf("location changed coverage: %+v", coverage)
+					}
+					if index == 0 {
+						want = coverage
+					} else if !reflect.DeepEqual(coverage, want) {
+						t.Fatalf("same instants produced different coverage: got=%+v want=%+v", coverage, want)
+					}
+				})
+			}
+			if source == localSource && archive.lists != 0 {
+				t.Fatalf("local bounds listed archive %d times", archive.lists)
+			}
+		})
 	}
 }

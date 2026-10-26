@@ -106,6 +106,7 @@ profile 통계오차, BEO idle fallback CI, 시점 drift와 global95% gain 보�
 3. 계산된 공급, 수명, warmup, 본창, drain과 수집 예산으로 load Job을 실행한다.
    완료 native batch 원장은 기존 JSONL의 d 전용 scanner로 집계한다.
    전체 cohort 배열이나 전체 Query를 만들지 않고 조건과 모든 과학 판정 사유를 기록한 뒤 반환한다.
+   공유 observation reader는 조회 bounds를 UTC hour key로 정규화하여 호출자의 Local/UTC location 차이가 coverage 공백이나 `ObservationRetentionGap`을 만들지 않게 한다.
 
 **load Job.** release namespace의 `occupancy-<UID hash>`, label `chill.dacs.io/measurement-load: <Node UID>`.
 - `backoffLimit:0`과 명시한 유한 Job 예산을 사용한다.

@@ -158,3 +158,27 @@ func TestNativeSupplementsPreserveRestartDrainAssignment(t *testing.T) {
 		t.Fatalf("supplement fabricated completed HTTP evidence: %+v", row)
 	}
 }
+
+func TestScanOccupancyRowsAcceptsLocalNowBounds(t *testing.T) {
+	now := time.Now()
+	from := now.Add(-time.Minute)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, from.UTC())
+	at := from.Add(time.Second).UTC()
+	clock.set(at)
+	appendAssignedRequest(t, log, "local-now", at)
+	clock.set(now.UTC())
+	for _, location := range []*time.Location{time.UTC, time.Local} {
+		t.Run(location.String(), func(t *testing.T) {
+			rows := 0
+			gap, err := log.ScanOccupancyRows(context.Background(), "w", "node-uid", from.In(location), now.In(location), func(row RequestRow) {
+				rows++
+				if row.RequestID != "local-now" {
+					t.Fatalf("unexpected occupancy row: %+v", row)
+				}
+			})
+			if err != nil || gap != nil || rows != 1 {
+				t.Fatalf("local now lost occupancy coverage: rows=%d gap=%v err=%v", rows, gap, err)
+			}
+		})
+	}
+}

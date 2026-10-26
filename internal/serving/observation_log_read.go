@@ -90,7 +90,7 @@ func (l *ObservationLog) selectSources(read *observationRead, ranges map[string]
 		if end.IsZero() || end.After(read.now) {
 			end = read.now
 		}
-		for hour := bounds[0].Truncate(time.Hour); !hour.After(end); hour = hour.Add(time.Hour) {
+		for hour := bounds[0].UTC().Truncate(time.Hour); !hour.After(end); hour = hour.Add(time.Hour) {
 			if !read.localHours[hour] {
 				needArchive = true
 				break
@@ -162,7 +162,7 @@ func (r *observationRead) coverage(ranges map[string][2]time.Time) ObservationCo
 	slices.Sort(streams)
 	for _, stream := range streams {
 		bounds := ranges[stream]
-		from, to := bounds[0], bounds[1]
+		from, to := bounds[0].UTC(), bounds[1].UTC()
 		if to.IsZero() {
 			to = r.now
 		}
