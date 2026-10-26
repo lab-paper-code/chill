@@ -72,23 +72,26 @@ type DispatchOccupancyRecord struct {
 		Start time.Time `json:"start"`
 		End   time.Time `json:"end"`
 	} `json:"window"`
-	Batches                int             `json:"batches"`
-	Throughput             float64         `json:"throughput"`
-	PerRequestNanos        int64           `json:"perRequestNanos"`
-	IdleFraction           float64         `json:"idleFraction"`
-	Cycles                 int             `json:"cycles"`
-	CycleMeanNanos         float64         `json:"cycleMeanNanos"`
-	CycleSDNanos           float64         `json:"cycleSDNanos"`
-	CycleRelativeHalfWidth *float64        `json:"cycleRelativeHalfWidth,omitempty"`
-	PrecisionTargetMet     *bool           `json:"precisionTargetMet,omitempty"`
-	IdleUpperNanos         int64           `json:"idleUpperNanos"`
-	IdleNanosPerRequest    float64         `json:"idleNanosPerRequest"`
-	ActorWaitNanos         int64           `json:"actorWaitNanos"`
-	UnknownRows            int             `json:"unknownRows"`
-	Reasons                []string        `json:"reasons,omitempty"`
-	IdleIdentified         bool            `json:"idleIdentified"`
-	DrainError             string          `json:"drainError,omitempty"`
-	DrainState             *OperationState `json:"drainState,omitempty"`
+	Batches                int      `json:"batches"`
+	Throughput             float64  `json:"throughput"`
+	PerRequestNanos        int64    `json:"perRequestNanos"`
+	IdleFraction           float64  `json:"idleFraction"`
+	Cycles                 int      `json:"cycles"`
+	CycleMeanNanos         float64  `json:"cycleMeanNanos"`
+	CycleSDNanos           float64  `json:"cycleSDNanos"`
+	CycleRelativeHalfWidth *float64 `json:"cycleRelativeHalfWidth,omitempty"`
+	PrecisionTargetMet     *bool    `json:"precisionTargetMet,omitempty"`
+	IdleUpperNanos         int64    `json:"idleUpperNanos"`
+	IdleNanosPerRequest    float64  `json:"idleNanosPerRequest"`
+	// DRange bounds idle contamination without correcting the measured d (nanoseconds/request).
+	DRange          *[2]float64     `json:"dRange,omitempty"`
+	KappaErrorBound *float64        `json:"kappaErrorBound,omitempty"`
+	ActorWaitNanos  int64           `json:"actorWaitNanos"`
+	UnknownRows     int             `json:"unknownRows"`
+	Reasons         []string        `json:"reasons,omitempty"`
+	IdleIdentified  bool            `json:"idleIdentified"`
+	DrainError      string          `json:"drainError,omitempty"`
+	DrainState      *OperationState `json:"drainState,omitempty"`
 	// Conditions is the exact immutable CR, including calculation provenance.
 	Conditions edge.DispatchOccupancyMeasurementSpec `json:"conditions"`
 	LoadJob    struct {
@@ -166,7 +169,7 @@ func validateOccupancyProfile(s edge.DispatchOccupancyMeasurementSpec, profile *
 	}
 	mean, _ := profile.MeanNanos(int(s.Batch))
 	idle, _ := strconv.ParseFloat(s.MaximumIdleFraction, 64)
-	idleBound := math.Min(c.IdleBase, c.IdleErrorSeconds/(c.TimeMargin*mean/1e9/float64(s.Batch)+c.IdleErrorSeconds))
+	idleBound := c.IdleBase
 	if float64(s.DurationSeconds) < math.Ceil(math.Max(c.WindowFloorSeconds, c.TimeMargin*float64(s.MinimumBatches)*mean/1e9)) ||
 		idle > idleBound+1e-12 || float64(s.Conditions.MaximumIdleNanosPerRequest)/1e9 > c.IdleErrorSeconds {
 		return errors.New("measurement window or idle bound violates frozen profile calculation")
@@ -418,11 +421,17 @@ func measureOccupancyPrecision(record *DispatchOccupancyRecord, selected []*occu
 }
 
 func judgeOccupancy(record *DispatchOccupancyRecord, spec edge.DispatchOccupancyMeasurementSpec) {
-	maxIdle, _ := strconv.ParseFloat(spec.MaximumIdleFraction, 64)
+	maxIdle, idleErr := strconv.ParseFloat(spec.MaximumIdleFraction, 64)
+	if record.IdleIdentified {
+		record.DRange = &[2]float64{float64(record.PerRequestNanos) - record.IdleNanosPerRequest, float64(record.PerRequestNanos)}
+		record.KappaErrorBound = ptr.To(record.IdleFraction)
+	} else if len(record.Reasons) == 0 {
+		occupancyReason(record, "UnknownPhysicalContinuity")
+	}
 	if record.Batches < int(spec.MinimumBatches) || record.Throughput == 0 {
 		occupancyReason(record, fmt.Sprintf("%s %d", occupancyTooFewBatches, record.Batches))
 	}
-	if record.IdleFraction > maxIdle || spec.Conditions.MaximumIdleNanosPerRequest > 0 &&
+	if idleErr != nil || math.IsNaN(maxIdle) || math.IsInf(maxIdle, 0) || maxIdle < 0 || maxIdle > 1 || record.IdleFraction > maxIdle || spec.Conditions.MaximumIdleNanosPerRequest > 0 &&
 		record.IdleNanosPerRequest > float64(spec.Conditions.MaximumIdleNanosPerRequest) {
 		occupancyReason(record, fmt.Sprintf("%s %.6f", occupancyNotSaturated, record.IdleFraction))
 	}

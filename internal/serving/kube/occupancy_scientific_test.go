@@ -13,6 +13,44 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
+func TestOccupancyIdentifiedIdlePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		idle       float64
+		perRequest float64
+		unknown    string
+		accepted   bool
+	}{
+		{"identified-two-percent", .02, 200_000, "", true},
+		{"identified-five-percent", .05, 500_000, "", true},
+		{"identified-six-percent", .06, 600_000, "", false},
+		{"per-request-limit", .02, 1_000_001, "", false},
+		{"physical-unknown", .02, 200_000, "UnknownPhysicalContinuity", false},
+		{"execution-unknown", .02, 200_000, "UnknownRequestExecution", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := DispatchOccupancyRecord{Batches: 100, Throughput: 100, PerRequestNanos: 2_000_000,
+				IdleFraction: tc.idle, IdleNanosPerRequest: tc.perRequest, IdleIdentified: tc.unknown == ""}
+			if tc.unknown != "" {
+				occupancyReason(&r, tc.unknown)
+			}
+			judgeOccupancy(&r, edge.DispatchOccupancyMeasurementSpec{MinimumBatches: 100, MaximumIdleFraction: "0.05",
+				Conditions: edge.DispatchOccupancyConditions{MaximumIdleNanosPerRequest: 1_000_000}})
+			if (r.Verdict == measurementAccepted) != tc.accepted || r.PerRequestNanos != 2_000_000 {
+				t.Fatalf("verdict or measured d changed: %+v", r)
+			}
+			if tc.unknown != "" {
+				if !slices.Contains(r.Reasons, tc.unknown) || r.DRange != nil || r.KappaErrorBound != nil {
+					t.Fatalf("unknown evidence must remain unknown: %+v", r)
+				}
+			} else if r.DRange == nil || *r.DRange != [2]float64{2_000_000 - tc.perRequest, 2_000_000} ||
+				r.KappaErrorBound == nil || *r.KappaErrorBound != tc.idle {
+				t.Fatalf("missing conservative uncertainty: %+v", r)
+			}
+		})
+	}
+}
+
 func TestOccupancyPhysicalEvidenceAndUnknowns(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

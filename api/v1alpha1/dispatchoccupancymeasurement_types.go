@@ -52,8 +52,9 @@ type DispatchOccupancyMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=2
 	MinimumBatches int32 `json:"minimumBatches"`
 
-	// MaximumIdleFraction bounds the fraction of the window the instance waited
-	// for its next request after a batch ended.
+	// MaximumIdleFraction bounds identified supply idle as a fraction of the window.
+	// This configurable policy is range checked in [0,1]; the approved planning
+	// input is 0.05. Measured d remains conservative, without idle subtraction.
 	// +kubebuilder:validation:Pattern=`^(0(\.[0-9]+)?|1(\.0+)?)$`
 	MaximumIdleFraction string `json:"maximumIdleFraction"`
 
