@@ -3,6 +3,7 @@ package kube
 import (
 	"cmp"
 	"context"
+	"reflect"
 	"slices"
 	"time"
 
@@ -125,9 +126,10 @@ func (c *SchedulerController) authorize(operation Operation) error {
 	return nil
 }
 
-// Empty, settled Nodes prove that a terminal run has no remaining physical
-// executor or power actuation. A taint remains owned by the admission lifecycle.
-func (c *SchedulerController) releaseEmptyScopes(nodes []core.Node, pods []core.Pod, observedAt time.Time) {
+// Fresh observation proves return when executors have disappeared, or a failed
+// manual routing operation's exact executors acknowledge a known policy.
+// A taint remains owned by the admission lifecycle.
+func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, observedAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, run := range c.runs {
@@ -144,7 +146,7 @@ func (c *SchedulerController) releaseEmptyScopes(nodes []core.Node, pods []core.
 				}
 			}
 			for _, pod := range pods {
-				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, workloadOwner(pod.OwnerReferences))) {
+				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, workloadOwner(pod.OwnerReferences))) && !manualRoutingEffectConfirmed(run, &pod, physical) {
 					returned = false
 				}
 			}
@@ -153,6 +155,46 @@ func (c *SchedulerController) releaseEmptyScopes(nodes []core.Node, pods []core.
 			run.reserved = false
 		}
 	}
+}
+
+func manualRoutingEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
+	operation := run.result.Operation
+	if !isRoutingOperation(operation.Kind) || operation.WorkloadUID == "" ||
+		(run.action.Status != nativeOperationFailed && run.action.Status != nativeOperationPartial) ||
+		!slices.Contains(run.scope.Pods, string(pod.UID)) || !sameRunningContainer(pod, pod) {
+		return false
+	}
+	id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+	if !slices.Contains(run.scope.Instances, id) {
+		return false
+	}
+	state := schedulerPhysicalState(id, physical)
+	if state == nil || state.ID != id || state.PodUID != string(pod.UID) || state.Node.Name != pod.Spec.NodeName || !slices.Contains(run.scope.Nodes, state.Node) || !state.Ready || state.Stopped || state.Native == nil || !state.Native.Ready || !run.result.EndedAt.Before(state.ObservedAt) {
+		return false
+	}
+	return manualRoutingPolicyConfirmed(run.result, state)
+}
+
+func manualRoutingPolicyConfirmed(result *OperationResult, state *serving.InstanceState) bool {
+	operation := result.Operation
+	id := state.ID
+	actual := state.Native.Metadata
+	if operation.Target != nil && actual.DecisionID == operation.Target.ID && actual.Policy.DecisionID == operation.Target.ID {
+		for _, wanted := range operation.Target.Instances {
+			if wanted.Profile != nil && wanted.WorkloadUID == operation.WorkloadUID && (wanted.ID == id || wanted.ID == state.TargetID) && wanted.Node == state.Node && schedulerPolicyAcknowledged(wanted, actual) {
+				return true
+			}
+		}
+	}
+	// An unchanged previous policy is also a confirmed effect, not a successful
+	// application of the requested declaration. Do not invent an ACK for it.
+	before, known := result.Before.Native[id]
+	if !known || actual.ProfileID != before.Metadata.ProfileID || actual.DecisionID != before.Metadata.DecisionID {
+		return false
+	}
+	previous, current := before.Metadata.Policy, actual.Policy
+	previous.Batches, current.Batches = nil, nil
+	return reflect.DeepEqual(previous, current)
 }
 
 func (c *SchedulerController) releaseOwnerLocked(owner string) {

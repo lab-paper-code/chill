@@ -128,7 +128,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	c.releaseEmptyScopes(nodes.Items, pods.Items, observedAt)
+	c.releaseObservedScopes(nodes.Items, pods.Items, nil, observedAt)
 	c.mu.Lock()
 	busy := map[string]bool{}
 	for _, run := range c.runs {

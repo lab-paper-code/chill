@@ -524,6 +524,11 @@ reset 첫 disable-autonomy의 ConfigMap conflict/확정 거절과 쓰기 전 실
 다음 단계가 쓸 자원은 단계 사이에도 계속 예약한다. 실패·취소·timeout·기록 실패 뒤
 원격 효과가 불명하면 run의 실행 상태만 종료하고 해당 예약은 확인 대기로 남긴다.
 기존 Pod/finalizer/Node 상태를 재관측해 실제 현재 상태와 남은 책임을 확인한 뒤 해제한다.
+종료된 실패/partial 수동 route·unroute·release는 공통 capture의 fresh observer readback으로
+예약 Pod 각각의 정확 UID/container와 Pod/native Ready를 확인한다. 요청 선언의 정책 ACK
+또는 작업 전 native 정책 그대로임이 확인되면 Pod를 유지한 채 예약을 해제한다.
+정책 불일치·unready·종료 이전 관측·교체 실행기는 확인 근거가 아니며 예약을 유지한다.
+Pod 소멸과 전력 pending 해소에 따른 기존 반환 규칙은 그대로 적용한다(SCH-AC-38).
 관측 결과 불명이라는 이유로 자원을 비우거나 전역 모든 작업을 멈추지 않는다.
 이는 기존 뒤처리의 소유 범위를 명시하는 것이지 ⑤의 finalizer 책임 이동을 선행하는 것이 아니다.
 

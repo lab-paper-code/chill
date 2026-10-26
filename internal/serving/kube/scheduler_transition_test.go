@@ -464,7 +464,7 @@ func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, i
 	}
 	// Execution failure alone retains ownership. An authoritative empty LIST
 	// after retirement supplies the missing physical-return proof.
-	controller.releaseEmptyScopes(nil, nil, now.Add(time.Minute))
+	controller.releaseObservedScopes(nil, nil, nil, now.Add(time.Minute))
 	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, now.Add(2*time.Minute), time.Minute)
 	if controller.runs[id] != nil {
 		t.Fatal("failed action outlived the observation window")

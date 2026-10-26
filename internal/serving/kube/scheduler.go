@@ -513,7 +513,8 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		profileByID[profiles[i].ID] = &profiles[i]
 	}
 	physical := map[string]serving.InstanceState{}
-	for _, state := range c.runtime.Instances() {
+	physicalStates := c.runtime.Instances()
+	for _, state := range physicalStates {
 		key := state.ID
 		if key == "" {
 			key = state.PodUID
@@ -578,7 +579,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		}
 	}
 	bindProfileMeters(&s, config.Meters)
-	c.releaseEmptyScopes(nodes.Items, pods.Items, now)
+	c.releaseObservedScopes(nodes.Items, pods.Items, physicalStates, now)
 	return s, nil
 }
 
