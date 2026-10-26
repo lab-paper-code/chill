@@ -140,8 +140,14 @@ serving Pods). It cycles route/unroute/release, removes and re-prepares one
 instance halfway through, and leaves the manually prepared instances in place.
 It compares all scheduler instance Pod UIDs with the serving-label Pod list;
 each mismatching UID must persist into the next cycle before it is reported.
-Ready flicker and removed-ID reappearance in state or POOL are immediate
-violations. Operation request/ACK files, raw violation snapshots and
+After each completed ACK, the runner waits up to 129 seconds for a strictly
+newer scheduler snapshot before another operation or invariant check; POOL
+observations must also be newer than the ACK. The server wire timestamps are
+`snapshot.at` and ACK `endedAt` (`observedAt`/`completedAt` are also accepted).
+Ready flicker requires Pod Ready with no native failure/reason; otherwise the
+transition is counted separately as `nativeUnavailable`, not a violation.
+Removed-ID reappearance in fresh state or POOL is an immediate violation.
+Operation request/ACK files, raw violation snapshots and
 `summary.json` remain outside the checkout; violations do not stop the soak.
 Exit status is nonzero if any violation or incomplete replacement was recorded.
 

@@ -2,6 +2,7 @@
 """Manual ledger soak; --self-check is local and never contacts the cluster."""
 import argparse
 from collections import Counter
+import datetime as dt
 import importlib.util
 import json
 import os
@@ -13,6 +14,12 @@ from types import SimpleNamespace
 
 def save(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
+
+def timestamp(value):
+    if not value:
+        raise RuntimeError('Missing observation/ACK timestamp')
+    return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+
 
 
 def ids(value):
@@ -28,6 +35,7 @@ class Invariants:
         self.previous = {}
         self.removed = set()
         self.pending = set()
+        self.native_unavailable = Counter()
 
     def check(self, state, pods, pools):
         instances = state['snapshot'].get('instances') or []
@@ -38,7 +46,11 @@ class Invariants:
             ready = any(c.get('type') == 'Ready' and c.get('status') == 'True'
                         for c in pod.get('status', {}).get('conditions', []))
             if self.previous.get(instance['id']) is True and instance.get('ready') is False and ready:
-                violations.append({'kind': 'ready-flicker', 'instance': instance['id']})
+                reasons = instance.get('reasons') or instance.get('reason') or instance.get('failure')
+                if reasons:
+                    self.native_unavailable[instance['id']] += 1
+                else:
+                    violations.append({'kind': 'ready-flicker', 'instance': instance['id']})
         for identity in sorted(self.removed & (ids(instances) | ids(pools))):
             violations.append({'kind': 'removed-reappeared', 'instance': identity})
         observed = {i['podUID'] for i in instances if i.get('podUID')}
@@ -66,8 +78,21 @@ def run(client, args, namespace):
     replaced = False
     start = time.monotonic()
     deadline = start + args.duration
+    fence = None
+
+    def fresh_state():
+        until = time.monotonic() + 129
+        while True:
+            state = client.state()
+            snapshot = state['snapshot']
+            if fence is None or timestamp(snapshot.get('observedAt') or snapshot.get('at')) > fence:
+                return state
+            if time.monotonic() >= until:
+                raise RuntimeError('No scheduler snapshot newer than completed operation ACK within 129s')
+            time.sleep(1)
 
     def operation(body):
+        nonlocal fence
         body = dict(body, reason='Manual ledger soak (autonomy disabled)')
         begun = time.monotonic()
         receipt = {'request': body}
@@ -76,7 +101,7 @@ def run(client, args, namespace):
             ack = receipt['ack']
             if ack.get('status') != 'complete' or ack.get('error'):
                 raise RuntimeError('Operation ACK not complete')
-            return ack
+            fence = timestamp(ack.get('completedAt') or ack.get('endedAt'))
         except Exception as error:
             receipt['error'] = str(error)
             raise
@@ -85,11 +110,15 @@ def run(client, args, namespace):
             timings.append(receipt['seconds'])
             operations.append(receipt)
             save(out / ('operation-%05d.json' % len(timings)), receipt)
+        fresh_state()
+        return ack
 
     def observe():
-        state = client.state()
+        state = fresh_state()
         pods = client.k(['get', 'pods', '-n', namespace, '-l', 'edge.dacs.io/serving-pod-uid', '-o', 'json'])
         pools = client.api('GET', '/api/v1/pools')
+        if fence is not None and timestamp(pools.get('observedAt')) <= fence:
+            raise RuntimeError('POOL observation is not newer than completed operation ACK')
         return state, pods, pools
 
     initial, pods, pools = observe()
@@ -158,6 +187,8 @@ def run(client, args, namespace):
             counts['replacement-incomplete'] += 1
         summary = dict(cycles=cycles, violations=sum(counts.values()), violationKinds=dict(counts),
                        operations=len(timings), meanOperationACKSeconds=sum(timings) / len(timings) if timings else None,
+                       nativeUnavailable=sum(guard.native_unavailable.values()),
+                       nativeUnavailableByInstance=dict(guard.native_unavailable),
                        replacementComplete=replaced and replacement is None, removedIDs=sorted(guard.removed))
         save(out / 'summary.json', summary)
     return summary
@@ -174,6 +205,11 @@ def self_check():
     assert not guard.check(state, {'items': [pod]}, {})
     bad = copy.deepcopy(state); bad['snapshot']['instances'][0]['ready'] = False
     assert guard.check(bad, {'items': [pod]}, {})[0]['kind'] == 'ready-flicker'
+    assert not guard.check(state, {'items': [pod]}, {})
+    unavailable = copy.deepcopy(bad)
+    unavailable['snapshot']['instances'][0]['reasons'] = ['NativeUnavailable']
+    assert not guard.check(unavailable, {'items': [pod]}, {})
+    assert guard.native_unavailable == {'a': 1}
     guard.removed.add('gone')
     assert any(v['kind'] == 'removed-reappeared' for v in guard.check(state, {'items': [pod]}, {'instances': [{'id': 'gone'}]}))
     assert not guard.check(state, {'items': []}, {})
@@ -182,21 +218,32 @@ def self_check():
         def __init__(self):
             self.instances = [instance, dict(instance, id='b', podUID='q')]
             self.calls = []
-        def state(self): return {'snapshot': {'instances': copy.deepcopy(self.instances)}}
+            self.stale = None
+            self.stale_reads = 0
+        def stamp(self): return dt.datetime.fromtimestamp(clock[0], dt.timezone.utc).isoformat()
+        def state(self):
+            if self.stale is not None:
+                stale, self.stale = self.stale, None
+                self.stale_reads += 1
+                return stale
+            return {'snapshot': {'at': self.stamp(), 'instances': copy.deepcopy(self.instances)}}
         def settings(self): return {'autonomousWorkloads': []}
         def k(self, argv): return {'items': [dict(pod, metadata={'uid': i['podUID']}) for i in self.instances]}
         def api(self, method, path, body=None, **kwargs):
-            if method == 'GET': return {'instances': copy.deepcopy(self.instances)}
+            if method == 'GET': return {'observedAt': self.stamp(), 'instances': copy.deepcopy(self.instances)}
             self.calls.append(body['kind'])
+            self.stale = self.state()
             if body['kind'] == 'remove': self.instances = [i for i in self.instances if i['id'] != body['instance']]
             if body['kind'] == 'prepare': self.instances.append(dict(instance, id='new', podUID='new-p'))
-            return {'status': 'complete'}
+            return {'status': 'complete', 'endedAt': self.stamp()}
     clock = [0.0]
     with tempfile.TemporaryDirectory() as folder, patch.object(time, 'monotonic', side_effect=lambda: clock[0]), patch.object(time, 'sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
         client = Client()
         result = run(client, SimpleNamespace(out=Path(folder), instances=['a', 'b'], workload_uid='w', duration=120, interval=20), 'fixture')
         assert result['cycles'] == 6 and result['violations'] == 0 and result['replacementComplete']
         assert {'route', 'unroute', 'release', 'remove', 'prepare'} <= set(client.calls)
+        assert client.stale_reads == result['operations']
+        assert result['nativeUnavailable'] == 0
         assert json.loads((Path(folder) / 'summary.json').read_text()) == result
     print('soak ledger self-check: OK')
 
