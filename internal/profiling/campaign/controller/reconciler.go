@@ -33,6 +33,8 @@ const (
 	admissionWait                         = 5 * time.Second
 )
 
+const terminalReasonEnergyObjectivePolicyMismatch = "EnergyObjectivePolicyMismatch"
+
 // ReconcileCurvePlanSource resolves and records the immutable plan used by one
 // BatchEnergyOptimization campaign.
 type ReconcileCurvePlanSource interface {
@@ -146,6 +148,11 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	}
 	decision, err := batchenergyoptimization.Decide(snapshot, method)
 	if err != nil {
+		if errors.Is(err, profilederivation.ErrEnergyObjectivePolicyMismatch) {
+			status := failedStatus(parent, terminalReasonEnergyObjectivePolicyMismatch, err.Error())
+			status.CompletedTrials = int32(len(activeRuns) + len(idleRuns))
+			return ctrl.Result{}, r.patchStatus(ctx, parent, status)
+		}
 		return ctrl.Result{}, fmt.Errorf("decide BatchEnergyOptimization progress: %w", err)
 	}
 
@@ -442,7 +449,9 @@ func terminalCampaignStatusCurrent(parent *edgev1alpha1.BatchEnergyOptimization)
 		if parent.Status.Phase == batchEnergyOptimizationPhaseFailed && condition.Status == metav1.ConditionFalse && condition.Reason == parent.Status.Outcome {
 			// CurvePlanResolutionFailed is deliberately not terminal: its
 			// resolver error still owns the existing retry/recovery behavior.
-			return condition.Reason == terminalReasonTransitionFailed || condition.Reason == terminalReasonRetryLimitExhausted
+			return condition.Reason == terminalReasonTransitionFailed ||
+				condition.Reason == terminalReasonRetryLimitExhausted ||
+				condition.Reason == terminalReasonEnergyObjectivePolicyMismatch
 		}
 	}
 	return false

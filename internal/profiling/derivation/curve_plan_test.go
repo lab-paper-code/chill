@@ -2,6 +2,7 @@ package profilederivation
 
 import (
 	"bytes"
+	"errors"
 	"math"
 	"reflect"
 	"strings"
@@ -461,8 +462,13 @@ func TestEnergyOptimizationRejectsPostMinimumAndPolicyDrift(t *testing.T) {
 	}
 	curve = testEnergyOptimizationCurve(t, []float64{1, .8}, 3)
 	policy.TrialsPerBatch = 4
-	if _, err := DeriveMinimumEnergyBatch(curve, policy); err == nil {
-		t.Fatal("expected trials-per-batch policy mismatch rejection")
+	if _, err := DeriveMinimumEnergyBatch(curve, policy); !errors.Is(err, ErrEnergyObjectivePolicyMismatch) {
+		t.Fatalf("expected classified trials-per-batch policy mismatch, got %v", err)
+	}
+	policy.TrialsPerBatch = 3
+	curve.passes[0].points[0].Trials = append(curve.passes[0].points[0].Trials, curve.passes[0].points[0].Trials[0])
+	if _, err := DeriveMinimumEnergyBatch(curve, policy); !errors.Is(err, ErrEnergyObjectivePolicyMismatch) {
+		t.Fatalf("expected classified excess-trial policy mismatch, got %v", err)
 	}
 }
 

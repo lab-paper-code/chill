@@ -40,6 +40,15 @@ defines a saturation point; it only closes a local search when the next
 one-dimensional neighbor is not better. Search-space exhaustion is a normal
 completion, not evidence of saturation.
 
+Each measured active batch and the idle baseline must contain exactly
+`trialsPerBatch` successful trials. Evidence inconsistent with the recorded
+energy-objective policy terminates as `Failed/EnergyObjectivePolicyMismatch`,
+with `MeasurementComplete=False`, the same condition reason, and a diagnostic
+message. The current generation is recorded on status and condition; replay of
+that terminal generation performs no further derivation or measurement.
+The original Runs and evidence are retained, no successful result reference is
+created, and trials are never silently discarded to satisfy the policy.
+
 ## Result
 
 The immutable result detail records:

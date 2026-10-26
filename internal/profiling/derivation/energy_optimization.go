@@ -2,10 +2,15 @@ package profilederivation
 
 import (
 	"errors"
+	"fmt"
 	"math"
 )
 
 const EnergyObjectiveMinIncrementalWork = "min-incremental-work-joules-per-item"
+
+// ErrEnergyObjectivePolicyMismatch identifies evidence that cannot satisfy the
+// recorded energy-objective policy, rather than a transient derivation failure.
+var ErrEnergyObjectivePolicyMismatch = errors.New("energy-objective policy mismatch")
 
 type EnergySearchStatus string
 
@@ -84,7 +89,11 @@ func DeriveMinimumEnergyBatch(
 		if point.Batch != expectedBatch || len(point.Trials) != policy.TrialsPerBatch ||
 			math.IsNaN(point.MeanIncrementalWorkJoulesPerItem) ||
 			math.IsInf(point.MeanIncrementalWorkJoulesPerItem, 0) {
-			return EnergyOptimizationResult{}, errors.New("search points do not match the recorded energy-objective policy")
+			return EnergyOptimizationResult{}, fmt.Errorf(
+				"%w: active/b%d: expected batch=%d, expected=%d, completed=%d, mean=%g",
+				ErrEnergyObjectivePolicyMismatch, point.Batch, expectedBatch,
+				policy.TrialsPerBatch, len(point.Trials), point.MeanIncrementalWorkJoulesPerItem,
+			)
 		}
 		result.MeasuredBatchSizes = append(result.MeasuredBatchSizes, point.Batch)
 		result.IncrementalWorkByBatch = append(result.IncrementalWorkByBatch, BatchEnergyMean{

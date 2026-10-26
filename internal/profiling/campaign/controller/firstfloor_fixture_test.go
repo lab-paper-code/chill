@@ -31,7 +31,7 @@ func fixtureFirstfloorEvidence(
 	}
 	cpu := fixtureRuntimeCPU(config)
 	return &profilingrun.FirstfloorRuntimeEvidence{
-		Mode: "profiling", ModelInstanceCount: 1, MaxBatchSize: 4, MaxQueueSize: 32,
+		Mode: "profiling", ModelInstanceCount: 1, MaxBatchSize: int(config.State.Firstfloor.MaxBatchSize), MaxQueueSize: 32,
 		DeadlinePolicy: modelcompat.EffectiveDeadlinePolicy(config.State.Firstfloor.DeadlinePolicy),
 		ExecutionCount: executions, InferenceCount: executions * uint64(config.Measurement.Batch),
 		BatchExecutionCounts: counts,
