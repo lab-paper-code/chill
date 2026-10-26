@@ -62,6 +62,8 @@ operator:
 profiler:
   enabled: false
   replicaCount: 1
+  # Failed Jobs receive this TTL only after their final outcome is recorded.
+  failedJobRetentionSeconds: 86400
   configMapKey: config.yaml
   image:
     repository: daclab/chill-profiler

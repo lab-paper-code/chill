@@ -85,6 +85,7 @@ func profilerArgs(options Options, config Config) []string {
 		"--metrics-bind-address=" + config.MetricsBindAddress,
 		"--health-probe-bind-address=" + healthProbeAddress(config.HealthProbePort),
 		"--leader-election-id=" + config.LeaderElectionID,
+		fmt.Sprintf("--failed-job-retention-seconds=%d", config.FailedJobRetentionSeconds),
 		"--fact-source-config-map=" + config.FactSource.ConfigMapName,
 		"--execution-facts-key=" + config.FactSource.ExecutionFactsKey,
 		"--metric-sources-key=" + config.FactSource.MetricSourcesKey,

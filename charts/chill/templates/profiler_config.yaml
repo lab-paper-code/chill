@@ -1,5 +1,9 @@
 {{- if .Values.profiler.enabled }}
 {{- $workloadObserverKubeAPIServer := include "chill.profilerWorkloadObserverKubernetesAPIServer" . }}
+{{- $retention := .Values.profiler.failedJobRetentionSeconds }}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $retention))) (lt (int64 $retention) 1) (gt (int64 $retention) 604800) }}
+{{- fail "profiler.failedJobRetentionSeconds must be an integer between 1 and 604800" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,6 +15,7 @@ metadata:
 data:
   {{ .Values.profiler.configMapKey | quote }}: |
     replicas: {{ .Values.profiler.replicaCount }}
+    failedJobRetentionSeconds: {{ int64 $retention }}
     image: {{ include "chill.profilerImage" . | quote }}
     imagePullPolicy: {{ .Values.profiler.image.pullPolicy | quote }}
     serviceAccountName: {{ include "chill.profilerServiceAccountName" . | quote }}

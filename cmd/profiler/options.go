@@ -32,10 +32,13 @@ type options struct {
 	transitionObserverServiceAccount          string
 	transitionObserverDeadlineOverheadSeconds int64
 	transitionMaximumObjectBytes              int64
+	failedJobRetentionSeconds                 int
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to.")
+	flags.IntVar(&o.failedJobRetentionSeconds, "failed-job-retention-seconds", 86400,
+		"Failed measurement Job retention in seconds (1..604800).")
 	flags.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "The address the health probes bind to.")
 	flags.StringVar(&o.systemName, "system-name", "", "ChillSystem name that owns this Profiler instance.")
 	flags.StringVar(
@@ -118,6 +121,9 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 }
 
 func (o options) validate() error {
+	if o.failedJobRetentionSeconds < 1 || o.failedJobRetentionSeconds > 604800 {
+		return errors.New("failed-job-retention-seconds must be between 1 and 604800")
+	}
 	required := []struct {
 		name  string
 		value string

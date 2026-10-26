@@ -12,23 +12,24 @@ import (
 
 // Config is the rendered Profiler Deployment contract read by the operator.
 type Config struct {
-	Replicas           int32                       `json:"replicas"`
-	Image              string                      `json:"image"`
-	ImagePullPolicy    corev1.PullPolicy           `json:"imagePullPolicy"`
-	ServiceAccountName string                      `json:"serviceAccountName"`
-	MetricsBindAddress string                      `json:"metricsBindAddress"`
-	HealthProbePort    int32                       `json:"healthProbePort"`
-	LeaderElection     bool                        `json:"leaderElection"`
-	LeaderElectionID   string                      `json:"leaderElectionID"`
-	NodeSelector       map[string]string           `json:"nodeSelector,omitempty"`
-	Affinity           *corev1.Affinity            `json:"affinity,omitempty"`
-	Tolerations        []corev1.Toleration         `json:"tolerations,omitempty"`
-	Resources          corev1.ResourceRequirements `json:"resources,omitempty"`
-	PodSecurityContext *corev1.PodSecurityContext  `json:"podSecurityContext,omitempty"`
-	SecurityContext    *corev1.SecurityContext     `json:"securityContext,omitempty"`
-	FactSource         FactSourceConfig            `json:"factSource"`
-	WorkloadObserver   WorkloadObserverConfig      `json:"workloadObserver"`
-	TransitionObserver TransitionObserverConfig    `json:"transitionObserver"`
+	Replicas                  int32                       `json:"replicas"`
+	Image                     string                      `json:"image"`
+	ImagePullPolicy           corev1.PullPolicy           `json:"imagePullPolicy"`
+	ServiceAccountName        string                      `json:"serviceAccountName"`
+	MetricsBindAddress        string                      `json:"metricsBindAddress"`
+	HealthProbePort           int32                       `json:"healthProbePort"`
+	LeaderElection            bool                        `json:"leaderElection"`
+	LeaderElectionID          string                      `json:"leaderElectionID"`
+	FailedJobRetentionSeconds int32                       `json:"failedJobRetentionSeconds"`
+	NodeSelector              map[string]string           `json:"nodeSelector,omitempty"`
+	Affinity                  *corev1.Affinity            `json:"affinity,omitempty"`
+	Tolerations               []corev1.Toleration         `json:"tolerations,omitempty"`
+	Resources                 corev1.ResourceRequirements `json:"resources,omitempty"`
+	PodSecurityContext        *corev1.PodSecurityContext  `json:"podSecurityContext,omitempty"`
+	SecurityContext           *corev1.SecurityContext     `json:"securityContext,omitempty"`
+	FactSource                FactSourceConfig            `json:"factSource"`
+	WorkloadObserver          WorkloadObserverConfig      `json:"workloadObserver"`
+	TransitionObserver        TransitionObserverConfig    `json:"transitionObserver"`
 }
 
 type FactSourceConfig struct {
@@ -54,6 +55,9 @@ type TransitionObserverConfig struct {
 
 func (c Config) Validate() error {
 	var problems []string
+	if c.FailedJobRetentionSeconds < 1 || c.FailedJobRetentionSeconds > 604800 {
+		problems = append(problems, "failedJobRetentionSeconds must be between 1 and 604800")
+	}
 	for _, field := range []struct {
 		name  string
 		value string

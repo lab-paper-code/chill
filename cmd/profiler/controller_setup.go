@@ -92,6 +92,7 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 	if err != nil {
 		return fmt.Errorf("construct ProfilingRun reconciler: %w", err)
 	}
+	reconciler.FailedJobRetentionSeconds = int32(opts.failedJobRetentionSeconds)
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up ProfilingRun reconciler: %w", err)
 	}

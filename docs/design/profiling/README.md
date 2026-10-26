@@ -28,6 +28,14 @@ Once execution evidence is verified and its reference is recorded, a Run is
 complete independently of its measurement Job. Job removal does not change
 that outcome or clear the recorded Job, Pod, and Node identities used by the
 catalogue.
+Successful Jobs are deleted with Kubernetes `Background` propagation only after
+verified evidence and its reference have been recorded in the final outcome.
+Failed Jobs are retained for diagnosis: their TTL is patched only after the
+final outcome is recorded, never at Job creation. The operator configuration
+and Helm value `profiler.failedJobRetentionSeconds` select this retention in
+seconds (default `86400`, inclusive range `1..604800`), passed to the Profiler
+as `--failed-job-retention-seconds`. Retained execution evidence remains
+independent of Job cleanup.
 Repeated active and idle trials, exact-state curve derivation, and the
 `BatchEnergyOptimization` Quick-search control path are implemented. The
 recorded Orange Pi RKNN campaign

@@ -101,6 +101,8 @@ rules:
       - list
       - watch
       - create
+      - patch
+      - delete
   {{- if .Values.profiler.leaderElection }}
   - apiGroups:
       - coordination.k8s.io

@@ -117,14 +117,15 @@ func newProfilerIntegrationReconciler(systemName, namespace string) *operatorpro
 
 func profilerIntegrationConfig(image string) operatorprofiler.Config {
 	return operatorprofiler.Config{
-		Replicas:           1,
-		Image:              image,
-		ImagePullPolicy:    corev1.PullIfNotPresent,
-		ServiceAccountName: "chill-profiler",
-		MetricsBindAddress: "0",
-		HealthProbePort:    8081,
-		LeaderElection:     true,
-		LeaderElectionID:   "profiler.edge.dacs.io",
+		Replicas:                  1,
+		Image:                     image,
+		ImagePullPolicy:           corev1.PullIfNotPresent,
+		ServiceAccountName:        "chill-profiler",
+		MetricsBindAddress:        "0",
+		HealthProbePort:           8081,
+		LeaderElection:            true,
+		LeaderElectionID:          "profiler.edge.dacs.io",
+		FailedJobRetentionSeconds: 86400,
 		FactSource: operatorprofiler.FactSourceConfig{
 			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
 			MetricSourcesKey:       "metric-sources.yaml",

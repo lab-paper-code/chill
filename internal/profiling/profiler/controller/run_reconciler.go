@@ -52,6 +52,8 @@ type RunReconciler struct {
 	resolver  RunConfigurationResolver
 	jobs      RunExecutionJobs
 	finalize  RunEvidenceFinalizer
+	// FailedJobRetentionSeconds is validated by the Profiler configuration boundary.
+	FailedJobRetentionSeconds int32
 }
 
 func NewRunReconciler(
@@ -67,6 +69,7 @@ func NewRunReconciler(
 	return &RunReconciler{
 		Client: kubeClient, jobReader: jobReader, resolver: resolver,
 		jobs: jobs, finalize: finalize,
+		FailedJobRetentionSeconds: 86400,
 	}, nil
 }
 
@@ -81,8 +84,8 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if !run.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
-	if terminalRunStatus(run) {
-		return ctrl.Result{}, nil
+	if handled, result, err := r.reconcileTerminalRun(ctx, run); handled {
+		return result, err
 	}
 
 	var resolved ResolvedRun
@@ -169,7 +172,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		if err := r.publishFinalizedEvidence(ctx, run, finalized); err != nil {
 			return ctrl.Result{}, fmt.Errorf("publish ProfilingRun %s evidence: %w", req.NamespacedName, err)
 		}
-		return ctrl.Result{}, nil
+		return r.deleteVerifiedJob(ctx, run)
 	case profiler.ActionComplete:
 		return ctrl.Result{}, nil
 	default:
@@ -200,7 +203,7 @@ func (r *RunReconciler) handleEvidenceFinalizationFailure(
 	if !permanent {
 		return fmt.Errorf("finalize ProfilingRun %s evidence: %w", key, failure)
 	}
-	return nil
+	return r.retainFailedJob(ctx, run)
 }
 
 func (r *RunReconciler) loadRecordedJob(
@@ -299,11 +302,14 @@ func (r *RunReconciler) publishJobFailure(
 			return fmt.Errorf("read failed runtime termination: %w", err)
 		}
 	}
-	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+	if err := r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
 		desired.RuntimeTermination = termination
 		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
 			metav1.ConditionFalse, "JobFailed", "measurement Job failed")
-	})
+	}); err != nil {
+		return err
+	}
+	return r.retainFailedJob(ctx, run)
 }
 
 func (r *RunReconciler) publishRunConfigFailure(
@@ -417,6 +423,49 @@ func terminalPreJobFailureCurrent(run *edgev1alpha1.ProfilingRun) bool {
 	return false
 }
 
-func terminalRunStatus(run *edgev1alpha1.ProfilingRun) bool {
-	return terminalPreJobFailureCurrent(run) || verifiedRunEvidence(run)
+func (r *RunReconciler) reconcileTerminalRun(ctx context.Context, run *edgev1alpha1.ProfilingRun) (bool, ctrl.Result, error) {
+	if terminalPreJobFailureCurrent(run) {
+		return true, ctrl.Result{}, nil
+	}
+	if verifiedRunEvidence(run) {
+		result, err := r.deleteVerifiedJob(ctx, run)
+		return true, result, err
+	}
+	failed := meta.FindStatusCondition(run.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
+	if run.Status.Job != nil && (evidenceIsTerminallyInvalid(run.Status.Conditions) ||
+		(failed != nil && failed.Status == metav1.ConditionFalse && failed.Reason == "JobFailed")) {
+		return true, ctrl.Result{}, r.retainFailedJob(ctx, run)
+	}
+	return false, ctrl.Result{}, nil
+}
+
+func (r *RunReconciler) deleteVerifiedJob(ctx context.Context, run *edgev1alpha1.ProfilingRun) (ctrl.Result, error) {
+	if run.Status.Job == nil {
+		return ctrl.Result{}, nil
+	}
+	uid := types.UID(run.Status.Job.UID)
+	background := metav1.DeletePropagationBackground
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: run.Status.Job.Name, Namespace: run.Namespace}}
+	err := r.Delete(ctx, job, &client.DeleteOptions{
+		PropagationPolicy: &background, Preconditions: &metav1.Preconditions{UID: &uid},
+	})
+	if err = client.IgnoreNotFound(err); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "remove verified measurement Job", "job", client.ObjectKeyFromObject(job))
+		return ctrl.Result{RequeueAfter: admissionWait}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+func (r *RunReconciler) retainFailedJob(ctx context.Context, run *edgev1alpha1.ProfilingRun) error {
+	job, err := r.loadRecordedJob(ctx, run)
+	if err != nil || job == nil {
+		return err
+	}
+	if job.Spec.TTLSecondsAfterFinished != nil && *job.Spec.TTLSecondsAfterFinished == r.FailedJobRetentionSeconds {
+		return nil
+	}
+	base := job.DeepCopy()
+	retention := r.FailedJobRetentionSeconds
+	job.Spec.TTLSecondsAfterFinished = &retention
+	return client.IgnoreNotFound(r.Patch(ctx, job, client.MergeFrom(base)))
 }

@@ -17,6 +17,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -435,8 +436,8 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	// Explicit evidence cleanup does not clear the native terminal reference.
 	// A replay must not ask the finalizer to reconstruct the removed objects.
 	finalizer.err = errors.New("stored evidence intentionally removed")
-	if err := kubeClient.Delete(context.Background(), job); err != nil {
-		t.Fatal(err)
+	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: job.Namespace, Name: job.Name}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("verified Job was not removed: %v", err)
 	}
 	wantStatus := actual.DeepCopy().Status
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {

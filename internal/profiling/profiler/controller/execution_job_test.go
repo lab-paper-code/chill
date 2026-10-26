@@ -64,6 +64,9 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if job.Spec.TTLSecondsAfterFinished != nil {
+		t.Fatal("measurement Job must retain its Pods until evidence finalization")
+	}
 	if job.Namespace != run.Namespace || job.Spec.Parallelism == nil || *job.Spec.Parallelism != 1 ||
 		job.Spec.Completions == nil || *job.Spec.Completions != 1 ||
 		job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 0 ||

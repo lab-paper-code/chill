@@ -65,6 +65,36 @@ func TestConfigValidate(t *testing.T) {
 	if err := config.Validate(); err == nil {
 		t.Fatal("zero transition-observer deadline overhead accepted")
 	}
+	for _, seconds := range []int32{-1, 0, 1, 60, 3600, 86400, 604800, 604801} {
+		config := validConfig()
+		config.FailedJobRetentionSeconds = seconds
+		err := config.Validate()
+		wantValid := seconds >= 1 && seconds <= 604800
+		if (err == nil) != wantValid {
+			t.Fatalf("retention %d: validation error = %v", seconds, err)
+		}
+	}
+}
+
+func TestConfigFailedJobRetentionRoundTrip(t *testing.T) {
+	for _, seconds := range []int32{1, 3600, 86400, 604800} {
+		config := validConfig()
+		config.FailedJobRetentionSeconds = seconds
+		data, err := yaml.Marshal(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var loaded Config
+		if err := yaml.UnmarshalStrict(data, &loaded); err != nil {
+			t.Fatal(err)
+		}
+		if err := loaded.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if loaded.FailedJobRetentionSeconds != seconds {
+			t.Fatalf("retention = %d, want %d", loaded.FailedJobRetentionSeconds, seconds)
+		}
+	}
 }
 
 func TestBuildDeployment(t *testing.T) {
@@ -101,6 +131,7 @@ func TestBuildDeployment(t *testing.T) {
 		"--transition-observer-service-account=chill-profiler-transition-observer",
 		"--transition-observer-active-deadline-overhead-seconds=180",
 		"--transition-maximum-object-bytes=67108864",
+		"--failed-job-retention-seconds=86400",
 	} {
 		if !containsArg(container.Args, wanted) {
 			t.Fatalf("args lost %q: %v", wanted, container.Args)
@@ -268,14 +299,15 @@ func validOptions() Options {
 
 func validConfig() Config {
 	return Config{
-		Replicas:           1,
-		Image:              "daclab/chill-profiler:test",
-		ImagePullPolicy:    corev1.PullIfNotPresent,
-		ServiceAccountName: testProfilerName,
-		MetricsBindAddress: "0",
-		HealthProbePort:    8081,
-		LeaderElection:     true,
-		LeaderElectionID:   "profiler.edge.dacs.io",
+		Replicas:                  1,
+		Image:                     "daclab/chill-profiler:test",
+		ImagePullPolicy:           corev1.PullIfNotPresent,
+		ServiceAccountName:        testProfilerName,
+		MetricsBindAddress:        "0",
+		HealthProbePort:           8081,
+		LeaderElection:            true,
+		LeaderElectionID:          "profiler.edge.dacs.io",
+		FailedJobRetentionSeconds: 86400,
 		FactSource: FactSourceConfig{
 			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
 			MetricSourcesKey: "metric-sources.yaml", WorkloadObservationKey: "workload-observation.yaml",
