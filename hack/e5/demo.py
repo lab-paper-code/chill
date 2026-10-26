@@ -354,6 +354,7 @@ def prepare(e5, args):
     sources = {'demoConfig': e5.ref(args.config), 'e5Config': e5.ref(config_path), 'environment': e5.ref(e5.ENVIRONMENT_PATH)}
     sources['scheduler'] = e5.ref(c['inputs']['scheduler'])
     scheduler_settings = e5.load(c['inputs']['scheduler'])['settings']
+    scheduler_settings = dict(scheduler_settings, powerObservation=e5.power_observation(c))
     for filename in ('demo.py', 'e5.py', 'e5-wire.py', 'e5-producer.py', 'e5-archive.py', 'e5-raw.py'):
         sources[filename] = e5.ref(HERE / filename)
     for w in c['workloads']:
@@ -451,6 +452,8 @@ def collect_stage(e5, cpo, stage):
 
 def resume(e5, cpo):
     """Reset the owned scope once, then re-enable autonomy with original evidence retained."""
+    if e5.power_observation(cpo.c) != cpo.b['schedulerSettings']['powerObservation']:
+        raise RuntimeError('Operating power observation differs from frozen binding; no resume')
     if cpo.static_placement():
         raise RuntimeError('Static placement does not reset or resume autonomy; use start/run')
     if not (cpo.out / 'initial.json').exists() or not (cpo.out / 'start-ack.json').exists():
@@ -708,6 +711,11 @@ def self_check():
         with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}):
             e5 = module('demo_smoke_e5', HERE / 'e5.py')
             d = e5.module('demo_smoke_conduct', HERE / 'd2/conduct_before.py')
+        fixture_power = {'sampling': {'Interval': 750000000, 'Duration': 5000000000, 'RequestTimeout': 700000000, 'MaxEvents': 9}, 'coverage': {'MaximumGap': 3000000000, 'MaximumBoundaryDistance': 1000000000, 'MinimumCoverage': .75}}
+        config = {'collection': {'schedulerConfigMap': 'fixture'}, 'timeboxes': {'apiSeconds': 1}}
+        with patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(stdout=json.dumps({'data': {'scheduler.json': json.dumps({'powerObservation': fixture_power})}}))):
+            assert e5.power_observation(config) == fixture_power
+        e5.power_observation = lambda c: copy.deepcopy(fixture_power)
         template = root / 'job.json'
         template.write_text(json.dumps({'spec': {'template': {'spec': {'restartPolicy': 'Never', 'containers': [{'name': 'load', 'image': 'fixture@sha256:fixture'}]}}}}))
         workloads = [{'name': name, 'uid': name, 'generation': 1, 'slo': {'percentile': 95, 'targetLatencyNanos': 1000000000}, 'jobTemplate': str(template), 'producerEndpoint': 'https://fixture.invalid', 'producerTokenFile': '/fixture/token', 'producerCAFile': '/fixture/ca', 'producerDatasetDir': '/fixture/data', 'fields': ['input'], 'workers': 1, 'gatewayCapSeconds': 2, 'lifetimeSeconds': 1, 'deliverySeconds': .1, 'socketSeconds': 3} for name in ALIASES.values()]
@@ -778,6 +786,7 @@ def self_check():
         cpo.d = d
         settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': [], 'minimumDemand': dict.fromkeys(cpo.uids, .3), 'scaleDownStabilizationNanos': 120000000000, 'transitionReserveFraction': .25, 'comparisonPeriodNanos': 600000000000}
         cpo.b['schedulerSettings'] = copy.deepcopy(settings)
+        cpo.b['schedulerSettings']['powerObservation'] = copy.deepcopy(fixture_power)
         # A deleted/re-registered definition gets a new UID; old floor keys die.
         floors = dict(zip(ALIASES.values(), (20, .3, 40)))
         floor_workloads = [{'name': name, 'uid': 'new-' + name} for name in floors]
@@ -923,6 +932,13 @@ def self_check():
         e5.module = modules
         (root / 'control-alerts.jsonl').write_text('')
         with patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'client_end_counter', lambda *args: {'fixtureCounter': True}):
+            with patch.object(e5, 'power_observation', return_value=dict(fixture_power, coverage=dict(fixture_power['coverage'], MaximumGap=2000000000))):
+                try:
+                    cpo.start()
+                except RuntimeError as error:
+                    assert 'power observation differs' in str(error)
+                else:
+                    raise AssertionError('Start accepted changed operating power policy')
             with patch.object(cpo, 'settings', return_value=dict(settings, minimumDemand={'old-uid': .3})):
                 try:
                     cpo.start()

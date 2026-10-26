@@ -172,6 +172,18 @@ def owned_target(snapshot,uids,routing):
     if any(i.get('ownerWorkloadUID') not in uids for i in instance_rows(snapshot['instances'])):raise RuntimeError('Foreign physical ownership; no owned-target/reset substitution')
     return {'instances':sorted([{'id':i['id'],'node':i['node'],'profileID':i['profile']['id'],'allocation':i['allocation'],'maxBatch':i['maxBatch'],'maxWaitNanos':i['maxWaitNanos'],'workloadUID':i['ownerWorkloadUID']} for i in instance_rows(snapshot['instances'])],key=lambda i:i['id']),'routing':routing,'modes':{n['node']['name']:n['powerMode'] for n in snapshot['nodes'] if n['node']['name'] in NODES}}
 
+def power_observation(c):
+    """Read the explicit operational sampler policy, not mutable API settings."""
+    command = ENVIRONMENT['d2']['kubectl'] + ['-n', 'chill-system', 'get', 'configmap', c['collection']['schedulerConfigMap'], '-o', 'json']
+    result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=c['timeboxes']['apiSeconds'])
+    config = json.loads(json.loads(result.stdout)['data']['scheduler.json'])
+    policy = config['powerObservation']
+    coverage = policy['coverage']
+    if not all(positive(coverage[k]) for k in ('MaximumGap', 'MaximumBoundaryDistance', 'MinimumCoverage')) or coverage['MinimumCoverage'] > 1:
+        raise ValueError('Explicit finite operating power coverage required')
+    return policy
+
+
 
 def bind(path):
     c = load(path); require_strict_archives(c)
@@ -314,6 +326,7 @@ def bind(path):
         smoke['traces'][name] = {'seed': SEEDS[name], 'offsetsNS': offsets, 'offered': len(offsets), 'arrivalSHA256': hashlib.sha256(json.dumps(offsets,separators=(',',':')).encode()).hexdigest()}
         if not offsets: raise ValueError('Approved smokeSeconds must produce at least one real recorded request per canonical Workload with frozen seed; do not invent extra arrivals')
     c['smoke'] = smoke
+    settings = dict(settings, powerObservation=power_observation(c))
     c['harnessRepositoryCommit']=subprocess.check_output(['git','-C',str(REPO),'rev-parse','HEAD'],text=True).strip()
     return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6'], 'fullSeconds': 10800, 'staticSeconds': 10200, 'factorSeconds': 2100*c['N'], 'accounting': {'d': '9/34 last verified; phase6 raw supersedes only by actual evidence', 'exactCost': '69/69', 'evaluation': '0/7', 'planRows': '0/8', 'failureScenario': 'UNEXERCISED; no fault injection authorized'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
 
@@ -322,6 +335,8 @@ class CPO:
     def __init__(self, a):
         self.a = a; self.b = load_binding(a.binding); self.c = self.b['config']; self.out = a.out
         if self.b['status'] != 'BOUND_NOT_MEASURED': raise ValueError('Binding not ready')
+        if 'powerObservation' not in self.b.get('schedulerSettings', {}):
+            raise ValueError('Binding lacks frozen operating power observation; bind again')
         release = load(a.release)
         self.release = release
         expected={'executor':'CampaignOps','bindingPath':str(a.binding),'sourceSHA':self.c['approval']['sourceSHA']}
@@ -348,6 +363,7 @@ class CPO:
     def settings(self): return self.api('GET','/api/v1/scheduler/settings')
     def put(self, settings):
         settings = copy.deepcopy(settings); settings.pop('staticRouting',None); settings.pop('staticRoutingValidatedAt',None)
+        settings.pop('powerObservation', None)
         return self.api('PUT','/api/v1/scheduler/settings',settings)
     def idle(self):
         end = time.monotonic()+self.tb['drainSeconds']
@@ -399,6 +415,8 @@ class CPO:
         if (self.out/'initial.json').exists(): raise RuntimeError('No implicit restart')
         static=self.static_placement()
         s=self.state() if static else self.idle(); settings=self.settings()
+        if power_observation(self.c) != self.b['schedulerSettings']['powerObservation']:
+            raise RuntimeError('Operating power observation differs from frozen binding; no start')
         if static:
             if settings.get('autonomousWorkloads'):raise RuntimeError('Static placement requires autonomy already off')
         elif s['snapshot']['instances'] or settings.get('autonomousWorkloads') or settings.get('staticRouting'): raise RuntimeError('Canonical three must start at zero; unrelated serving present')

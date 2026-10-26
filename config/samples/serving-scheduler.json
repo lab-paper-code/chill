@@ -28,5 +28,18 @@
       "membership": false
     }
   },
+  "powerObservation": {
+    "sampling": {
+      "Interval": 750000000,
+      "Duration": 5000000000,
+      "RequestTimeout": 700000000,
+      "MaxEvents": 9
+    },
+    "coverage": {
+      "MaximumBoundaryDistance": 1000000000,
+      "MinimumCoverage": 0.75,
+      "MaximumGap": 3000000000
+    }
+  },
   "reserved": {}
 }

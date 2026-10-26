@@ -54,10 +54,14 @@ G는 미관측 전력이 이번 최대 관측값 안에 있다는 경험적 조�
 
 운영 POOL 전력 창은 원시 성공 표본을 합쳐 기록된 coverage 정책으로 판정한다.
 읽기 실패 자체는 불완전 사유가 아니며 성공 표본 사이의 gap으로 남는다.
-현재 정책은 MaximumGap 2.0 s, MinimumCoverage 0.75, MaximumBoundaryDistance 1.0 s다.
+현재 운영 정책은 MaximumGap 3.0 s, MinimumCoverage 0.75, MaximumBoundaryDistance 1.0 s다.
 노드별 `readFailures`는 창 안 실패 횟수, `maximumSampleGapSeconds`는 경계 support를
 포함한 인접 실제 표본의 최대 간격이다. 창 요약은 각각 노드 합계와 노드 최대값이다.
 따라서 실패가 있어도 정책을 만족하면 complete이며, 정책을 넘는 gap은 불완전이다.
+이는 단발 읽기 실패의 실측 공백이 2.52 s 이하이고 연속 두 번 실패 공백은 3.2 s 이상이라는
+운영 근거에 따른 설정값이다. 정확 비용 등 다른 측정의 정책은 변경하지 않는다.
+오프라인 `hack/observations/power --maximum-gap 3s`는 보존 정책을 수정하지 않고
+명시적 재평가만 수행하며 출력의 `policyOverride.maximumGapSeconds`로 이를 표시한다.
 
 `energyUncertaintyJoules`, `phaseSensitivityJoules`, `missingGapJoules`는 각각 B, S, G다.
 `energyUncertaintyRatio`는 `B/abs(Ehat)`의 보고값이며 Ehat=0 또는 nonfinite 비율은 undefined로 표시한다.
