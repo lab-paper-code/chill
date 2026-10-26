@@ -51,8 +51,11 @@ Set top-level "staticPlacement": true to capture existing manual placement with
 autonomy already off: start/run/finish never change scheduler control or routes.
 No zero-load bootstrap is required. A stage may set "startBarrier":
 {"reservations": 0, "transitions": 0}; before any producer setup it waits at most
-that stage's seconds for no reservations or running/cancel actions. Timeout
-records STOP and the last state, with no load started. Parts remain continuous.
+timeboxes.barrierSeconds (default 300), independently of stage duration. It requires
+zero reservations and running/cancel actions in the same snapshot, whose at must
+be later than the latest completed action endedAt in state.results. Waiting evidence
+records snapshotAt and reservationOwners. Timeout records STOP and the last state,
+with no load started. Parts remain continuous.
 For stages with producers, the same zero-state check also runs immediately
 before each GO touch, bounded by the existing setup and earliest producer-ready
 barrier deadlines (no timebox extension). GO observations/timeouts are retained
@@ -1072,6 +1075,7 @@ def self_check():
         static_out.mkdir()
         static_state = cpo.state()
         static_state['snapshot']['reservations'] = []
+        static_state['snapshot']['actions'] = []
         static_state['actions'] = []
         manual_before = copy.deepcopy(static_state)
         static_settings = dict(copy.deepcopy(settings), autonomousWorkloads=[])
@@ -1110,15 +1114,21 @@ def self_check():
             assert e5.load(static_out / 'smoke-STATIC-FAIL/phase.json')['status'] == 'STOP'
             assert not (static_out / 'smoke-STATIC-FAIL/failed-owned-control-restore.json').exists()
             assert cpo.state() == manual_before
-        # Both counters must clear; cancel actions count, completed actions do not.
+        # Use one snapshot: live completion cannot release stale snapshot state.
         for clears in (True, False):
-            barrier_stage = schedule({'stages': [dict(config['stages'][0], seconds=1 if clears else .01, startBarrier={'reservations': 0, 'transitions': 0})]}, e5)[0]
+            barrier_stage = schedule({'stages': [dict(config['stages'][0], seconds=.001, startBarrier={'reservations': 0, 'transitions': 0})]}, e5)[0]
             barrier_out = root / ('barrier-clear' if clears else 'barrier-timeout')
             barrier_out.mkdir()
             (barrier_out / 'start-ack.json').write_bytes((cpo.out / 'start-ack.json').read_bytes())
             busy = copy.deepcopy(static_state)
-            busy['snapshot']['reservations'] = [{'id': 'reserved'}]
-            busy['actions'] = [{'status': 'cancel'}, {'status': 'complete'}]
+            busy['snapshot']['at'] = '2026-10-26T00:00:00Z'
+            busy['snapshot']['reservations'] = [{'owner': 'reserved-plan'}]
+            busy['snapshot']['actions'] = [{'status': 'cancel'}]
+            busy['actions'] = [{'status': 'complete'}]
+            busy['results'] = [{'status': 'complete', 'endedAt': '2026-10-26T00:00:01Z'}]
+            waiting = cpo.start_barrier_observation(busy, e5.time.monotonic() + 3, e5.now())
+            assert waiting['snapshotAt'] == busy['snapshot']['at'] and waiting['reservationOwners'] == ['reserved-plan']
+            assert waiting['transitions'] == 1 and not waiting['observedUTC']
             observations = []
             def barrier_state():
                 observations.append(True)
@@ -1126,12 +1136,17 @@ def self_check():
                 if clears and len(observations) >= 2:
                     state['snapshot']['reservations'] = []
                 if clears and len(observations) >= 3:
-                    state['actions'] = [{'status': 'complete'}]
+                    state['snapshot']['actions'] = []
+                    stale = cpo.start_barrier_observation(state, e5.time.monotonic() + 3, e5.now())
+                    assert stale['reservations'] == stale['transitions'] == 0 and not stale['snapshotFresh'] and not stale['observedUTC']
+                if clears and len(observations) >= 4:
+                    state['snapshot']['at'] = '2026-10-26T00:00:02Z'
                 return state
             with patch.object(cpo, 'out', barrier_out), patch.object(cpo, 'state', barrier_state), patch.dict(cpo.b, {'schedule': [barrier_stage]}):
                 if clears:
                     run_stage(cpo, barrier_stage)
-                    assert len(observations) >= 3
+                    assert len(observations) >= 4
+                    assert cpo.native_evidence == busy['results']
                 else:
                     with patch.object(cpo, 'sampler', side_effect=AssertionError('Timed out barrier must not start collection')), patch.object(cpo.io, 'k', side_effect=lambda argv, **kwargs: {'items': []} if argv == ['get', 'jobs', '-o', 'json'] else no_mutation()):
                         try:
@@ -1144,6 +1159,8 @@ def self_check():
                 barrier_summary = summarize(e5, cpo.b, barrier_out)[0]
                 assert barrier_phase['startBarrier'] == barrier_summary['startBarrier']
                 assert barrier_phase['startBarrier']['timedOut'] is not clears
+                assert barrier_phase['startBarrier']['maximumSeconds'] == cpo.tb['barrierSeconds']
+                assert bool(barrier_phase['startBarrier']['observedUTC']) is clears
                 if not clears:
                     assert barrier_phase['status'] == 'STOP' and barrier_phase['startUTC'] is None
                     assert barrier_phase['startBarrier']['reservations'] == 1 and barrier_phase['startBarrier']['transitions'] == 1
@@ -1215,7 +1232,7 @@ def self_check():
         assert 'p95 ms' in (cpo.out / 'summary.md').read_text()
         assert sum(call[0] == 'create' for call in calls) == 10  # Nine autonomous, one static PLC.
         assert sum(call[0] == 'exec' for call in calls) == 20
-        assert e5.load(cpo.out / 'smoke-E0/pre-state.json')['results'] is None and cpo.native_evidence == []
+        assert e5.load(cpo.out / 'smoke-E0/pre-state.json')['results'] is None
         # Reservations can reappear during setup: GO must wait, not just stage entry.
         for go_clears in (True, False):
             go_out = root / ('go-clear' if go_clears else 'go-timeout')
@@ -1231,7 +1248,8 @@ def self_check():
                 if (go_folder / ('startup-' + plc_name) / 'producer-ready-event.json').exists():
                     go_observations.append(True)
                     state['snapshot']['reservations'] = [{'id': 'new-during-setup'}] if len(go_observations) == 1 else []
-                    state['actions'] = [{'status': 'running'}] if not go_clears or len(go_observations) < 3 else []
+                    state['snapshot']['actions'] = [{'status': 'running'}] if not go_clears or len(go_observations) < 3 else []
+                    state['actions'] = []  # Live actions must not override the snapshot.
                 return state
             original_stages = stages
             stages = [go_stage]

@@ -374,6 +374,17 @@ class CPO:
                 if all(v.get('pending')==0 and v.get('assigned')==0 for v in views): return s
             time.sleep(1)
         raise RuntimeError('Drain/terminal timebox exceeded; preserve partial evidence, stop')
+    def start_barrier_observation(self,state,deadline,observed):
+        snapshot=state['snapshot']; reservations=snapshot.get('reservations') or []
+        completed=[(self.d.epoch(row.get('endedAt')),row.get('endedAt')) for row in state.get('results') or []]
+        latest=max((row for row in completed if row[0] is not None),default=(float('-inf'),None))
+        at=self.d.epoch(snapshot.get('at'))
+        evidence={'snapshotAt':snapshot.get('at'),'reservationOwners':[row.get('owner') for row in reservations],
+                  'reservations':len(reservations),'transitions':sum(a.get('status') in ('running','cancel') for a in snapshot.get('actions') or []),
+                  'latestActionEndedAt':latest[1],'snapshotFresh':at is not None and at>latest[0],
+                  'timedOut':time.monotonic()>=deadline,'observedUTC':None}
+        if not evidence['timedOut'] and evidence['snapshotFresh'] and evidence['reservations']==0 and evidence['transitions']==0:evidence['observedUTC']=observed
+        return evidence
     def request_drain(self,folder,phase):
         end=time.monotonic()+self.tb['drainSeconds']
         while time.monotonic()<end:
@@ -571,15 +582,13 @@ class CPO:
         folder.mkdir(); self.io.a.phase='e5-'+self.a.mode+'-'+st['id']; self.io.a.command=self.a.command; self.io.phase_out=folder
         barrier=None
         if self.b.get('schema')=='demo-e5-binding.v1' and 'startBarrier' in st:
-            deadline=time.monotonic()+st['seconds']
-            barrier={'maximumSeconds':st['seconds'],'observedUTC':None,'timedOut':False}
+            deadline=time.monotonic()+self.tb['barrierSeconds']
+            barrier={'maximumSeconds':self.tb['barrierSeconds'],'observedUTC':None,'timedOut':False}
             try:
                 while True:
                     alert_offset=self.monitor(alert_offset,folder)
                     state=self.state(); observed=now()
-                    barrier.update(reservations=len(state['snapshot'].get('reservations') or []),transitions=sum(a.get('status') in ('running','cancel') for a in state.get('actions') or []))
-                    barrier['timedOut']=time.monotonic()>=deadline
-                    if not barrier['timedOut'] and barrier['reservations']==0 and barrier['transitions']==0:barrier['observedUTC']=observed
+                    barrier.update(self.start_barrier_observation(state,deadline,observed))
                     save(folder/'start-barrier-state.json',{'observedUTC':observed,'state':state,'startBarrier':barrier})
                     if barrier['observedUTC']:break
                     if barrier['timedOut']:raise RuntimeError('Stage start barrier timebox exceeded; no load started')
@@ -687,8 +696,7 @@ class CPO:
                             while True:
                                 alert_offset=self.monitor(alert_offset,folder)
                                 state=self.state();observed=now()
-                                evidence.update(reservations=len(state['snapshot'].get('reservations') or []),transitions=sum(a.get('status') in ('running','cancel') for a in state.get('actions') or []),timedOut=time.monotonic()>=go_deadline)
-                                if not evidence['timedOut'] and evidence['reservations']==0 and evidence['transitions']==0:evidence['observedUTC']=observed
+                                evidence.update(self.start_barrier_observation(state,go_deadline,observed))
                                 save(folder/('go-barrier-'+name+'-state.json'),{'observedUTC':observed,'state':state,'producerRelease':evidence})
                                 save(folder/'phase.json',phase)
                                 if evidence['timedOut']:raise RuntimeError('Producer release start barrier timebox exceeded; no GO for '+name)
