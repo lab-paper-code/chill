@@ -7,7 +7,7 @@
     "barrierSeconds": 20,
     "drainSeconds": 90,
     "flushSeconds": 10,
-    "collectSeconds": 30,
+    "collectSeconds": 120,
     "apiSeconds": 5,
     "settleSeconds": 20
   },
@@ -27,7 +27,7 @@
     "plc": {"workers": 320, "lifetimeSeconds": 1, "deliverySeconds": 0.01, "socketSeconds": 1.02}
   },
   "stages": [
-    {"id": "E0", "seconds": 90, "readyGate": true, "rates": {"mobilenet": 0, "smolvlm2": 0, "plc": 0}, "startBarrier": {"reservations": 0, "transitions": 0}},
+    {"id": "E0", "seconds": 720, "readyGate": true, "rates": {"mobilenet": 0, "smolvlm2": 0, "plc": 0}, "startBarrier": {"reservations": 0, "transitions": 0}},
     {"id": "MIX", "seconds": 60, "rates": {"mobilenet": 20, "smolvlm2": 0.3, "plc": 40}, "startBarrier": {"reservations": 0, "transitions": 0}}
   ]
 }

@@ -33,8 +33,9 @@ def main():
             e5 = module('smoke_preflight_e5', HERE / 'e5.py')
         spec = e5.load(HERE / 'preflight-config.example.json')
         schedule = demo.schedule(spec, e5)
-        assert schedule[0]['readyGate'] and schedule[1]['seconds'] == 60
-        assert auth.lifetime_budget(schedule, spec['timeboxes'], spec['tokenSafetyMarginSeconds']) == 570
+        assert schedule[0]['readyGate'] and schedule[0]['seconds'] == 720 and schedule[1]['seconds'] == 60
+        assert spec['timeboxes']['collectSeconds'] == 120
+        assert auth.lifetime_budget(schedule, spec['timeboxes'], spec['tokenSafetyMarginSeconds']) == 1380
         token = root / 'token'
         def jwt(seconds):
             return 'e30.' + base64.urlsafe_b64encode(json.dumps({'exp': time.time() + seconds}).encode()).decode().rstrip('=') + '.signature'
@@ -47,6 +48,31 @@ def main():
         cpo = object.__new__(e5.CPO)
         cpo.b, cpo.c, cpo.out, cpo.tb = binding, config, out, config['timeboxes']
         cpo.a = SimpleNamespace(command='smoke', mode='smoke', stage='E0')
+        rows = [{'input': {'workloadUID': w['uid']}} for w in workloads]
+        with patch.object(cpo, 'api', side_effect=[{'rows': []}, {'rows': rows[:2]}, {'rows': rows}], create=True) as api, patch.object(e5.time, 'sleep'):
+            demo.wait_preflight_capacity(e5, cpo, 600)
+            assert api.call_count == 3
+            api.assert_called_with('GET', '/api/v1/scheduler/capacity')
+        assert not e5.load(out / 'preflight-capacity-wait.json')['missingWorkloadUIDs']
+        assert cpo.tb['apiSeconds'] == 5
+        with patch.object(cpo, 'api', create=True) as api:
+            demo.wait_preflight_capacity(e5, cpo, 0)
+            api.assert_not_called()
+        for rows_missing in ([], rows[:2], [{'input': {'workloadUID': 'stale-uid'}}]):
+            with patch.object(cpo, 'api', return_value={'rows': rows_missing}, create=True), patch.object(e5.time, 'monotonic', side_effect=[0, 0, 601]), patch.object(e5.time, 'sleep'):
+                try:
+                    demo.wait_preflight_capacity(e5, cpo, 600)
+                except RuntimeError as error:
+                    assert 'capacity rows' in str(error)
+                else:
+                    raise AssertionError('Missing canonical capacity did not stop preflight')
+        for invalid in (-1, float('nan'), float('inf')):
+            try:
+                demo.wait_preflight_capacity(e5, cpo, invalid)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid capacity wait accepted')
         for command in (cpo.start, cpo.run):
             try:
                 command()
@@ -57,8 +83,8 @@ def main():
         assert not (out / 'initial.json').exists() and not (out / 'smoke-E0').exists()
         token.write_text(jwt(3600))
         record = cpo.check_token_lifetime()
-        assert record['requiredSeconds'] == 570 and record['expiresUTC']
-        assert cpo.check_token_lifetime(schedule[1])['requiredSeconds'] == 285
+        assert record['requiredSeconds'] == 1380 and record['expiresUTC']
+        assert cpo.check_token_lifetime(schedule[1])['requiredSeconds'] == 375
         cpo.b = dict(binding, schema='e5-binding.v1')
         cpo.a.command = 'campaign'
         cpo.c = dict(config, factors=[{'name': 'one'}])
@@ -111,7 +137,7 @@ def main():
         (out / 'preflight-STOP.json').unlink()
         (out / 'preflight-final-state.json').unlink()
         fails('finalInstances0')
-    print('PASS preflight: JWT/opaque expiry, start/run refusal, budgets, Ready/success/power/cleanup PASS/FAIL; local only')
+    print('PASS preflight: JWT/opaque expiry, start/run refusal, 720s Ready/1380s budget, capacity wait clear/timeout/skip/validation, Ready/success/power/cleanup PASS/FAIL; local only')
 
 
 if __name__ == '__main__':
