@@ -118,7 +118,7 @@ and m once.
 Each request prints one JSON line on stdout:
 
 ```json
-{"workload": "vqa-service", "record": "262148000", "scheduledOffsetNs": 200000000, "delayed": false, "status": 200, "requestID": "…", "workloadUID": "…", "latencyMs": 812.4}
+{"workload": "vqa-service", "record": "262148000", "scheduledOffsetNs": 200000000, "delayed": false, "status": 200, "requestID": "…", "workloadUID": "…", "sentMonotonicNS": 1000000000, "finishedMonotonicNS": 1812400000, "latencyMs": 812.4}
 ```
 
 `latencyMs` is client-observed time from send to response. `delayed` marks a
@@ -127,6 +127,23 @@ behind the schedule. A transport, TLS or timeout failure replaces `status`,
 `requestID` and `workloadUID` with `error`, the exception class name.
 Response bodies and tokens are never printed. For a heterogeneous mix, run one
 `replay` process per Workload concurrently.
+
+`sentMonotonicNS` and `finishedMonotonicNS` bracket the inference call and
+transport-error handling on the same process clock. They are not socket-write,
+gateway-receipt or stdout timestamps. Sort send timestamps across workers to
+measure issuance gaps; completion/JSONL order is not send order. JSON encoding
+runs outside the shared output lock, while one whole line plus flush remains
+locked. Workers still wait for their own output before refilling; this is not
+an asynchronous logger or a claim that observed long gaps have been cured.
+
+E5 retains boundary-inclusive actual/planned gaps, intervals over 50 ms, and
+send lateness as `issuanceFidelity` in its judgment, campaign summary and
+published KPIs. Intended sparse Poisson/zero-load gaps are not automatically
+stalls; missing timing or incomplete offered-row evidence is unknown.
+See [observability design §16](../docs/design/serving/observability-split.md#16-u6-부하-발행-공백과-trace-충실도)
+for the retained batch-3 findings and interpretation limits. Using the changed
+CLI requires rebuilding the **load-generator image** and updating its pinned
+digest/receipt; it does **not** require rebuilding the seven runtime images.
 
 ## Workload inference
 

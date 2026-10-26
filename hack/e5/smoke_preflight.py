@@ -39,6 +39,24 @@ def main():
         environment.write_text(json.dumps({'paths': {'repository': str(HERE.parents[1]), 'ops': directory, 'campaign': directory, 'd2State': directory}, 'e5': {'operationalRecipe': directory, 'nodes': [], 'excludedNodes': []}}))
         with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(environment)):
             e5 = module('smoke_preflight_e5', HERE / 'e5.py')
+        stats = module('smoke_issuance_stats', HERE / 'd2' / 'analyze_before.py').stats
+        planned = [0, 10_000_000, 20_000_000]
+        # Completion order differs from send order; stdout order is irrelevant.
+        client = [{'requestIndex': planned.index(offset), 'scheduledOffsetNs': offset, 'sentMonotonicNS': 100+sent}
+                  for offset, sent in [(20_000_000, 90_000_000), (0, 0), (10_000_000, 10_000_000)]]
+        fidelity = e5.issuance_fidelity(client, planned, 100, 100_000_000, stats)
+        assert fidelity['gapsOver50MS'] == 1 and fidelity['sendsLateOver50MS'] == 1
+        assert fidelity['actualGapNS']['max'] == 80_000_000
+        assert fidelity['gapIntervalsOver50MS'][0]['plannedArrivalsInside'] == 1
+        # Intentional sparse Poisson gaps are visible but not late sends.
+        sparse = e5.issuance_fidelity([{'requestIndex': 0, 'scheduledOffsetNs': 80_000_000, 'sentMonotonicNS': 80_000_100}], [80_000_000], 100, 100_000_000, stats)
+        assert sparse['gapsOver50MS'] == 1 and sparse['sendsLateOver50MS'] == 0
+        assert e5.issuance_fidelity([{'requestIndex': 0, 'scheduledOffsetNs': 0}], [0], 100, 100_000_000, stats)['status'] == 'UNKNOWN'
+        assert e5.issuance_fidelity([], [], None, 100_000_000, stats)['status'] == 'NOT_OFFERED'
+        assert e5.issuance_fidelity([], [0], 100, 100_000_000, stats)['status'] == 'UNKNOWN'
+        assert e5.issuance_fidelity([client[0]]*3, planned, 100, 100_000_000, stats)['status'] == 'UNKNOWN'
+        unsent = e5.issuance_fidelity([{'requestIndex': 0, 'scheduledOffsetNs': 0, 'error': 'UnsentAtWindowEnd'}], [0], 100, 100_000_000, stats)
+        assert unsent['issued'] == 0 and unsent['gapsOver50MS'] == 1
         spec = e5.load(HERE / 'preflight-config.example.json')
         schedule = demo.schedule(spec, e5)
         assert schedule[0]['readyGate'] and schedule[0]['seconds'] == 720 and schedule[1]['seconds'] == 60

@@ -45,8 +45,10 @@ def main():
         print(json.dumps({'e5Event': 'start', 'at': start, 'monotonicNS': start_ns}), flush=True)
         lock = threading.Lock()
         def emit(row):
+            encoded = json.dumps(row) + '\n'
             with lock:
-                print(json.dumps(row), flush=True)
+                sys.stdout.write(encoded)
+                sys.stdout.flush()
         def window_end():
             remaining = (start_ns+base-time.monotonic_ns())/1e9
             if remaining > 0: time.sleep(remaining)

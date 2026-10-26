@@ -303,3 +303,44 @@ python3 hack/measure/capture-progress.py \
 4. direct stamp가 확보된 경우만 원래 physical identity로 재생·재판정한다. queued/running을 legacy offset이나 QueueMS로 합성하지 않는다. 회수 불가면 Insufficient 유지·재측정이며 runtime의 닫힘/finished 처리나 occupancy 판정을 완화하지 않는다.
 
 검사: emitter 세 실패의 식별자 보존, parser의 거절 시 진단 식별자, observer issue의 세 키를 회귀 검사한다. 보존 스크립트의 offline self-check는 cluster를 변경하지 않는다. 실제 다음 측정의 보존·원인 확정·3회 무재발은 별도 운영 근거다.
+
+## 16. U6: 부하 발행 공백과 trace 충실도
+
+실험 도구 변경이므로 별도 spec·SRS를 만들지 않는다. 기존 `SCH-31`의 모집단/원시 재계산과 `SCH-45`의 불변 실험 요약에 연결한다. 발행 충실도는 SLO 결과의 분모를 바꾸거나 미발행을 성공으로 만드는 조건이 아니다.
+
+### 16.1 보존 원시의 관측 사실
+
+`O=/home/genesis1/.cache/chill-assets/ops/pools-deploy`. batch1-plc-3의 `raw.json.loadJob.name`을 `O/campaign/v2/loadpods/<Job>-<Pod suffix>.jsonl`과 연결했다. 원시는 run 하위 `loadpods`가 아니라 이 공통 디렉터리에 있다. 아래는 완료 8개의 **전체 421.010초 생성기 로그(워밍업·tail 포함)**이며 360초 물리 측정 창만의 수치가 아니다. closed-loop `scheduledOffsetNs`를 정렬한 인접 차이를 사용했다. 이는 submit 직전 표식이지 socket write 시각이나 stdout flush 시각이 아니다. 원시 표의 분위수는 정렬 후 zero-based `floor(N×p)`이고 E5의 기존 `stats`는 nearest-rank를 쓴다.
+
+| 대상 | 요청 행 | >50ms 공백 | 전체 gap 중 % | p50 / p95 / p99 (ms) | 최대 (ms) |
+|---|---:|---:|---:|---|---:|
+| D05 genesis2 CUDA | 197,757 | 99 | 0.0501 | 1.421 / 4.714 / 23.652 | 772.353 |
+| D11 genesis3 CPU | 99,368 | 1,130 | 1.1372 | 1.444 / 7.957 / 50.773 | 525.441 |
+| D10 genesis3 CUDA | 120,094 | 141 | 0.1174 | 2.294 / 8.653 / 31.156 | 450.794 |
+| D15 lattepanda CPU | 147,933 | 67 | 0.0453 | 2.271 / 6.018 / 15.889 | 959.400 |
+| D18 rasp5 CPU | 123,642 | 74 | 0.0599 | 2.251 / 5.474 / 35.628 | 873.821 |
+| D21 orangepi CPU | 53,912 | 103 | 0.1911 | 5.586 / 32.679 / 39.309 | 313.049 |
+| D26 jetsono CPU | 137,308 | 1,839 | 1.3393 | 1.443 / 5.008 / 51.443 | 657.648 |
+| D25 jetsono CUDA | 81,429 | 88 | 0.1081 | 5.095 / 5.806 / 8.221 | 551.913 |
+
+총 **961,435 gap 중 3,541개**가 50ms를 넘었다. `scheduledOffsetNs+latencyMs`로 추정한 응답 완료 간격도 비슷하게 길다(정확한 완료 시각은 아님). D11 최대 공백은 offset `388431281812→388956723072ns`, D26은 `146217337659→146874985548ns`이고, 각각 공백 시작에 약64개 미완료·공백 중 추정 완료1개다. **관측된 client 완료 경계에서 응답이 부족한 closed-loop 공급**이며 이를 생산자 lock 원인 확정으로 해석하지 않는다.
+
+- GC/CPU: `O/campaign/v2/{gctrace,cgmon}.log`. 물리 window.start−60초는 정확한 생산자 UTC 시작이 아니므로 아래 시각 대응은 근사다. D11 최대 공백 부근 GC clock `0.085+4.6+0.003`, `0.12+4.2+0.016ms`, gateway CPU1.49→0.29core·throttle0; D26은 `0.17+18+0.014`, `0.10+4.9+0.031`, `0.079+3.3+0.002ms`, CPU1.04→0.49core·throttle0였다. 525–658ms STW나 gateway cgroup throttle을 보여주지 않는다. GC 가운데 concurrent clock 항을 STW로 합치지 않으며 다른 gateway 지연을 배제하지 않는다.
+- 같은 구간 gateway 확인: S3 `serving/observations.v1alpha5/20261026T19/requests.jsonl.gz`를 read-only로 `.../d-20261027/raw-19/`에 보존했다(143,588,423bytes, SHA256 `97a16157e0e705ff48adfcf01eed4a9e37b9c0298aea1ebaadf03d3e38739846`, 원격쓰기0). D11 **99,368개 전부 exact requestID로 final과 연결**했다. 단일 지표 `exchangeNanos−dispatchedNanos−clientSpanNanos`(assignment 기록 대기·직렬화/실행 스케줄/응답 decode 잔여, 순수 mutex 시간이 아님)의 전체 p50/p95/p99/max는 **0.198/0.633/0.932/445.510ms**, >50ms는164개다. 하지만 최대 공백 시 미완료64개 코호트의 p50/p95/max는 **0.239/0.512/0.588ms**, >50ms는0이다. 코호트 선택의 완료 시각만 위 client 추정값이며 잔여는 서버 원시 단조 시각이다.
+- 결론: 이 최대 공백을 ObservationLog assignment writer 체류 급증으로 귀속할 근거는 없다. native HTTP span·전달·native 실행·client 스케줄/응답 처리 중 정확한 원인은 **미확정**이다([INFERENCE]). loader CPU/throttle·lock/flush 시간과 exact UTC/monotonic anchor가 없어 원인 단계를 더 좁힐 수 없다. 과거 pprof의 writer 경합은 다른 창의 후보 근거이지 이 공백의 인과 증거가 아니다.
+- 재현/상세: `.../d-20261027/u6-issuance-gaps.json`, `raw-19/{receipt.json,u6-gateway-residual.json,analyze-u6.py}`. 원문·요청 ID·인프라 경로는 외부 private 근거이며 공개 요약에 복제하지 않는다.
+
+### 16.2 최소 구현과 E5 결과
+
+- CLI `replay`와 주입 E5 producer 모두 **JSON 직렬화만 stdout 공유 lock 밖**으로 옮긴다. 완전한 한 줄의 write+flush는 기존 lock으로 보호해 interleaving을 막는다. worker는 여전히 flush 뒤에 다음 요청을 보낸다. 이 변경은 알려진 불필요 critical-section 연산을 줄이는 것이지 위 공백의 원인 확정·해결 증명이 아니다. writer thread/queue와 실패·drain 수명주기는 이 증거로 추가하지 않는다.
+- 일반 CLI 행에 `sentMonotonicNS`, `finishedMonotonicNS`를 기록한다. 각각 `infer` 호출 직전과 응답/transport 오류 처리 직후이며 같은 프로세스의 단조 시각이다. stdout 시간·패킷 발행·gateway 수신 시각이라고 부르지 않는다.
+- E5 `issuanceFidelity`는 실제 producer start와 send 시각을 써 worker 완료/로그 순서가 아닌 실제 발행 순서로 정렬한다. 시작·끝 경계 포함 gap의 p50/p95/p99/max, **>50ms 개수·비율·구간(offset와 안의 planned arrival 수)**, 같은 frozen trace의 planned gap 분포, 실제 send lateness 분포·>50ms 요청 수를 `judgment.json`, `e5-summary.json`과 출판 KPI에 넣는다. Poisson의 자연 공백·0부하 구간은 자동 정지/실패로 판정하지 않는다. 미발행/시간 결손을 0으로 채우지 않는다(관측 timestamp 없음=`UNKNOWN`/NotReady, offered0=`NOT_OFFERED`). 기존 10ms `delayed` 표식과 50ms 보고 기준은 별개다.
+- 다음 측정은 §15의 timestamp 포함 load Pod 로그도 함께 보존한다. 다음 E5는 기존 producer start/monotonic anchor·client/server/edgemesh cgroup과 서버 GC 기록을 함께 보존한다. 바뀐 CLI를 쓰려면 **load-generator 이미지 재빌드·새 digest/receipt가 필요**하다. 주입 producer 코드만의 변경은 주입 파일로 전달되지만 CLI 변경을 새 이미지 없이 적용됐다고 주장하지 않는다. **U6 때문에 runtime 7 재빌드는 필요 없다.**
+
+### 16.3 별도 writer 개선의 설계 경계(미구현)
+
+현재 같은 구간 지표가 최대 공백의 writer 체류 가설을 지지하지 않으므로 U6에서 `observation_log.go`를 바꾸지 않는다. Main이 별도 담당에게 개선을 배정할 경우 기존 immutable request snapshot을 재사용해 JSON marshal만 writer mutex 밖으로 옮긴다. 새 비동기 장부·generic queue는 필요 없다.
+
+1. requestMu 아래 snapshot/closing 표식을 얻고 해제한 뒤 marshal한다. writer mutex 아래에서 closed·현재 row/참조를 다시 확인하고 catalog reference→request row를 같은 commit-time hour에 append한다. JSON 완료 순서가 아니라 기존 writer mutex의 append 순서로 직렬화하며 assignment append 성공 전 native 시작을 허용하지 않는다.
+2. final append 실패는 열린 closing row를 유지해 Flush가 재시도한다. 그 사이 같은 request에 phase가 접혔다면 현재 pointer 비교를 유지해 더 최신 row를 삭제하지 않는다. 동일 final의 Runtime/Flush 경쟁·close·hour 전환과 catalog-first 계약을 함께 보존해야 한다.
+3. Flush는 이미 writer mutex를 잡고 `closeRowLocked`를 부르므로 helper 안에서 잠깐 unlock만 하는 수정으로는 충분하지 않다. 이 재시도 경로와 모든 assigned/final/native caller를 함께 이행하고, 기존 diagnostic marshal mark를 lock 밖 span에 맞춘다. 약50줄을 넘는 cutover나 순서 보장 변경은 별도 설계·회귀 검사로 다루며 이번 작은 생산자 수정에 섞지 않는다.

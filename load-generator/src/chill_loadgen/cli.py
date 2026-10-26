@@ -95,6 +95,7 @@ def replay(
                 "delayed": delayed,
             }
             sent_ns = clock_ns()
+            line["sentMonotonicNS"] = sent_ns
             try:
                 response: InferenceResponse = client.infer(workload, inputs)
                 line.update(
@@ -105,9 +106,12 @@ def replay(
             except OSError as error:  # transport, TLS and timeout failures
                 client.close()  # the connection reopens on the next request
                 line["error"] = type(error).__name__
-            line["latencyMs"] = (clock_ns() - sent_ns) / 1_000_000
+            finished_ns = clock_ns()
+            line["finishedMonotonicNS"] = finished_ns
+            line["latencyMs"] = (finished_ns - sent_ns) / 1_000_000
+            encoded = json.dumps(line) + "\n"
             with lock:
-                out.write(json.dumps(line) + "\n")
+                out.write(encoded)
                 out.flush()
 
         try:

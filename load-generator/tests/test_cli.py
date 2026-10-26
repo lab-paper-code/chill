@@ -94,7 +94,8 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual([0, 500_000_000, 1_000_000_000], [line["scheduledOffsetNs"] for line in lines])
         self.assertEqual(
             {"workload": "vqa", "record": "q1", "scheduledOffsetNs": 0, "delayed": False,
-             "status": 200, "requestID": "r1", "workloadUID": "uid", "latencyMs": 0.0},
+             "status": 200, "requestID": "r1", "workloadUID": "uid", "latencyMs": 0.0,
+             "sentMonotonicNS": 0, "finishedMonotonicNS": 0},
             lines[0],
         )
         self.assertEqual("TimeoutError", lines[1]["error"])
@@ -140,6 +141,8 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual([0, 400_000_000, 800_000_000], [row["scheduledOffsetNs"] for row in rows])
         self.assertTrue(all(row["status"] == 200 for row in rows))
         self.assertEqual(1_200_000_000, now[0])
+        self.assertEqual([0, 400_000_000, 800_000_000], [row["sentMonotonicNS"] for row in rows])
+        self.assertEqual([400_000_000, 800_000_000, 1_200_000_000], [row["finishedMonotonicNS"] for row in rows])
 
     def test_poisson_arrivals_repeat_per_seed_and_average_one_over_rate(self) -> None:
         offsets = arrival_offsets_ns("poisson", 50, 200, 7)

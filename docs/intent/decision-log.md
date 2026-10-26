@@ -329,3 +329,11 @@
 - 보존: `hack/measure/capture-progress.py`를 다음 CR 생성 전에 read-only로 시작한다. load Job terminal 직후 자동 삭제되므로 그때 처음 logs를 열지 않고 미리 firstfloor follow를 저장하며, terminal/disappearance에서 timestamp 포함 snapshot을 시도한다. 삭제·회전·identity 확인 실패는 manifest에 남기고 완전 보존으로 표시하지 않는다. 원문 미회수 시 queued/running 추정이나 합격 완화 없이 Insufficient·재측정이다.
 - 배포 경계: observer는 서버 재빌드, emitter는 native 실행 파일 재빌드 대상이다. runtime 7 digest 동결을 깨지 않으며 이번 소스 수정이 현재 실행기에 배포됐다고 주장하지 않는다. 다음 측정의 원인 확정·3회 무재발도 아직 운영 근거가 아니다.
 - 연결: [관측 설계 §15](../design/serving/observability-split.md#15-u5-직접-native-진행-기록-결손-진단-sch-31-sch-42). `ProgressLoss27`·`ContinuityReplay27`의 D05/D10은 requests archive의 직접 phase 결손이며 정확한 소실 단계는 미확정이다.
+
+## 2026-10-27 — U6 발행 충실도·최소 lock 축소와 원인 한계
+
+- 관측: batch1-plc-3 완료8개(전체 생성기 창)의 공통 `O/campaign/v2/loadpods` 원시는 961,435 gap 중 >50ms 3,541개, 최대313–959ms다. 최대 D11/D26 공백의 미완료≈64·추정 완료1은 응답이 부족한 closed-loop 공급 경계이지 생산자 lock 원인 확정이 아니다. 인근 GC/CPU는 같은 길이의 STW/throttle을 보여주지 않으며 시각 정렬도 근사다.
+- 같은 구간 검증: read-only S3 raw-19를 추가 보존하고 D11 final99,368개를 requestID로 전부 연결했다. assignment/pre-native·decode 잔여 `exchange−dispatched−clientSpan`은 전체 p95=.633ms·>50ms164개이나 최대gap 당시64개는 max=.588ms·>50ms0개다. 이 공백을 ObservationLog writer 체류 증가로 귀속하지 않는다. 정확한 지연 단계는 미확정([INFERENCE]); loader CPU/스케줄·출력 timing 결손을 0으로 채우지 않는다.
+- 결정: CLI·E5 주입 producer의 JSON 직렬화만 공유 stdout lock 밖으로 옮기고 완전한 한 줄 write+flush는 보호한다. 별도 writer thread/queue를 추가하거나 이 작은 변경이 공백을 해결했다고 주장하지 않는다. CLI send/finish 단조 시각과 E5 `issuanceFidelity`에 실제/계획 gap, >50ms 빈도·구간, lateness를 남기며 예정된 Poisson/0부하 공백과 결손을 구분한다. 기존 SLO offered 분모는 유지한다.
+- 배포: CLI 변경은 **load-generator 이미지** 재빌드·digest/receipt 갱신이 필요하다. U6는 runtime 7 재빌드 대상이 아니다. ObservationLog writer 개선은 Main의 별도 담당 영역이며 이번에는 immutable snapshot marshal→writer lock 아래 reference/append·hour·실패 재시도/최신 row 보존 경계만 설계하고 구현하지 않는다.
+- 근거/연결: [관측 설계 §16](../design/serving/observability-split.md#16-u6-부하-발행-공백과-trace-충실도), 기존 `SCH-31·45`, 외부 `O/campaign/v2/d-20261027/u6-issuance-gaps.json`, `raw-19/{receipt.json,u6-gateway-residual.json,analyze-u6.py}`. 원격쓰기·클러스터 변경0이며 새 이미지 배포·재측정 성능 검증은 수행하지 않았다.

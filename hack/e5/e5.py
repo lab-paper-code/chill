@@ -957,6 +957,37 @@ class CPO:
         self.finish(); self.cleanup_jobs(); summarize(self.a.binding,self.out);collection_manifest(self.out,self.a.binding)
 
 
+def issuance_fidelity(client, offsets, start_ns, duration_ns, stats):
+    """Describe send-call timing, not stdout flush timing or wire arrival."""
+    threshold = 50_000_000
+    issued = [row for row in client if row.get('error') != 'UnsentAtWindowEnd']
+    missing = sum(type(row.get('sentMonotonicNS')) is not int for row in issued)
+    result = {'thresholdNS': threshold, 'offered': len(offsets), 'issued': len(issued), 'missingSendTimestamps': missing,
+              'meaning': 'Per-producer monotonic infer-call timestamps, sorted across workers; boundaries included. Planned Poisson/zero-load gaps are not automatically stalls. No wall-clock or gateway causality claim.'}
+    if len(client) != len(offsets) or any(type(row.get('requestIndex')) is not int or not 0 <= row['requestIndex'] < len(offsets) or row.get('scheduledOffsetNs') != offsets[row['requestIndex']] for row in client) or len({row['requestIndex'] for row in client}) != len(offsets):
+        return dict(result, status='UNKNOWN', reason='Offered client-row population incomplete or conflicting')
+    if not offsets:
+        return dict(result, status='NOT_OFFERED', reason='Frozen trace contains no arrivals')
+    if type(start_ns) is not int or missing:
+        return dict(result, status='UNKNOWN', reason='Actual monotonic start/send timestamp missing')
+    sent = sorted(row['sentMonotonicNS'] - start_ns for row in issued)
+    if any(at < 0 or at >= duration_ns for at in sent):
+        return dict(result, status='UNKNOWN', reason='Send timestamp outside actual offered window')
+    edges = [0] + sent + [duration_ns]
+    planned = [0] + offsets + [duration_ns]
+    gaps = [right-left for left, right in zip(edges, edges[1:])]
+    long_gaps = [{'fromOffsetNS': left, 'toOffsetNS': right, 'gapNS': right-left,
+                  'plannedArrivalsInside': bisect.bisect_left(offsets, right)-bisect.bisect_right(offsets, left)}
+                 for left, right in zip(edges, edges[1:]) if right-left > threshold]
+    late = [row['sentMonotonicNS']-start_ns-row['scheduledOffsetNs'] for row in issued]
+    result.update(status='OBSERVED', actualGapNS=stats(gaps),
+                  plannedGapNS=stats([right-left for left, right in zip(planned, planned[1:])]),
+                  gapsOver50MS=len(long_gaps), gapsOver50MSFraction=len(long_gaps)/len(gaps),
+                  gapIntervalsOver50MS=long_gaps, sendLatenessNS=stats(late),
+                  sendsLateOver50MS=sum(value > threshold for value in late))
+    return result
+
+
 def judge(binding, folder):
     b=load_binding(binding); c=b['config']; phase=load(folder/'phase.json'); st=phase['stage']; d=module('d2analyze',D2/'analyze_before.py'); inp=d.Inputs(folder); unknown=[]; results={}
     raw=module('e5raw',HERE/'e5-raw.py'); events,paging=raw.scheduler_events(folder)
@@ -1019,6 +1050,8 @@ def judge(binding, folder):
         normal=not st['id'].startswith('E5-4')
         results[w['name']]={'offered':offered,'clientRows':len(client),'unfinishedOrUnsent':unfinished,'outcomes':summary['outcomes'],'completedLatencyNS':d.stats(completed),'completionResidualNS':d.stats(residual),'marginNS':c['mSeconds']*1e9,'gatewayTailNS':{k:d.stats(v) for k,v in tails.items()},'deadlineSuccess':success,'deadlineSuccessFraction':deadline_rate,'requiredSuccessfulRank':rank,'D1':'UNMEASURED' if offered==0 else 'FAIL' if normal and success<rank else 'OBSERVED_THRESHOLD_MET' if normal else 'OVERLOAD_DESCRIPTIVE','minutes':dict(minutes),'nativeResidualMissingIDs':native_missing,'rawPopulation':received_indexes[w['uid']]['summary'],'offeredResponsePopulation':summary,'pages':pages}
         results[w['name']]['outcomes']=dict(observed_outcomes);results[w['name']]['gatewayFinalOutcomes']=received_indexes[w['uid']]['summary']['outcomes'];results[w['name']]['offeredGatewayFinalOutcomes']=summary['outcomes'];results[w['name']]['unsentAtWindowEnd']=unsent;results[w['name']]['actualGatewayIdentities']=len(used)
+        results[w['name']]['issuanceFidelity']=issuance_fidelity(client,st['traces'][w['name']]['offsetsNS'],phase['starts'].get(w['name'],{}).get('monotonicNS'),round(st['seconds']*1e9),d.stats)
+        if results[w['name']]['issuanceFidelity']['status']=='UNKNOWN':unknown.append(w['name']+': issuance fidelity unknown')
         sorted_residual=sorted(residual)
         results[w['name']]['selectedResidualPercentile']={'percentile':pct,'nanoseconds':sorted_residual[max(0,math.ceil(len(sorted_residual)*pct/100)-1)] if sorted_residual else None}
         for minute, values in results[w['name']]['minutes'].items():
@@ -1176,6 +1209,7 @@ def summarize(binding, root):
     result['visibility']='PRIVATE_OPERATIONAL_ONLY; original raw/configuration and their paths excluded from public evidence indexes'
     result['rowJudgmentCounts']=dict(Counter(value['status'] for value in stages.values()))
     result['measurementMeaning']='Measured result links are not criterion PASS; negative D1/source overload findings remain visible.'
+    result['issuanceFidelity']={mode+'-'+row:{name:metrics.get('issuanceFidelity') for name,metrics in value['requests'].items()} for (mode,row),value in stages.items()}
     restored=load(root/'finish-complete.json') if (root/'finish-complete.json').exists() else None
     result['physicalRestoration']=restored
     if not restored or restored.get('originalSettingsRestored') is not True or restored.get('resetStatus')!='complete':
@@ -1238,6 +1272,7 @@ def publish_campaign(binding, root, identifier, store_config):
         fields=('offered','clientRows','unfinishedOrUnsent','outcomes','completedLatencyNS','completionResidualNS','gatewayTailNS','deadlineSuccess','deadlineSuccessFraction','requiredSuccessfulRank','D1','unsentAtWindowEnd','actualGatewayIdentities','gatewayFinalOutcomes','offeredGatewayFinalOutcomes','selectedResidualPercentile')
         for name,value in judgment['requests'].items():
             requests[name]={key:value[key] for key in fields if key in value}
+            requests[name]['issuanceFidelity']=value.get('issuanceFidelity')
             requests[name].update(successNumerator=value['deadlineSuccess'],successDenominator=value['offered'],population='Frozen offered arrivals; final outcome and successful execution populations remain separate')
             population_fields=('rawRows','populationUniqueRows','duplicateRows','kinds','uniqueRequests','uniqueFinalRows','outcomes','executionComplete','completed','withoutUnambiguousHTTPFinal','nativeSupplementRows','nativeOutcomes','complete')
             for key in ('rawPopulation','offeredResponsePopulation'):
