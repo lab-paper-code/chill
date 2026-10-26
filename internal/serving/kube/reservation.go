@@ -174,6 +174,7 @@ func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []co
 	}
 }
 
+//nolint:gocyclo // Keep exact-executor and known-policy proof together at the reservation release boundary.
 func manualRoutingEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
 	operation := run.result.Operation
 	if !isRoutingOperation(operation.Kind) || operation.WorkloadUID == "" ||
@@ -189,12 +190,6 @@ func manualRoutingEffectConfirmed(run *actionRun, pod *core.Pod, physical []serv
 	if state == nil || state.ID != id || state.PodUID != string(pod.UID) || state.Node.Name != pod.Spec.NodeName || !slices.Contains(run.scope.Nodes, state.Node) || !state.Ready || state.Stopped || state.Native == nil || !state.Native.Ready || !run.result.EndedAt.Before(state.ObservedAt) {
 		return false
 	}
-	return manualRoutingPolicyConfirmed(run.result, state)
-}
-
-func manualRoutingPolicyConfirmed(result *OperationResult, state *serving.InstanceState) bool {
-	operation := result.Operation
-	id := state.ID
 	actual := state.Native.Metadata
 	if operation.Target != nil && actual.DecisionID == operation.Target.ID && actual.Policy.DecisionID == operation.Target.ID {
 		for _, wanted := range operation.Target.Instances {
@@ -205,7 +200,7 @@ func manualRoutingPolicyConfirmed(result *OperationResult, state *serving.Instan
 	}
 	// An unchanged previous policy is also a confirmed effect, not a successful
 	// application of the requested declaration. Do not invent an ACK for it.
-	before, known := result.Before.Native[id]
+	before, known := run.result.Before.Native[id]
 	if !known || actual.ProfileID != before.Metadata.ProfileID || actual.DecisionID != before.Metadata.DecisionID {
 		return false
 	}
