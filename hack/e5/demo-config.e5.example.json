@@ -1,0 +1,205 @@
+{
+  "controlSourceSHA": "3dff4e7",
+  "timeboxes": {
+    "setupSeconds": 194,
+    "barrierSeconds": 300,
+    "drainSeconds": 194,
+    "flushSeconds": 15,
+    "collectSeconds": 240,
+    "apiSeconds": 129,
+    "settleSeconds": 194,
+    "powerDownSeconds": 1800
+  },
+  "minimumDemand": {
+    "image-classification-tight-slo": 0,
+    "smolvlm2-vqa": 0,
+    "plc-anomaly": 0
+  },
+  "measurementSLO": {
+    "mobilenet": {
+      "percentile": 95,
+      "targetLatencyNanos": 1000000000
+    },
+    "smolvlm2": {
+      "percentile": 99,
+      "targetLatencyNanos": 60000000000
+    },
+    "plc": {
+      "percentile": 95,
+      "targetLatencyNanos": 50000000
+    }
+  },
+  "requestTiming": {
+    "mobilenet": {
+      "workers": 320,
+      "lifetimeSeconds": 2,
+      "deliverySeconds": 0.01,
+      "socketSeconds": 2.02
+    },
+    "smolvlm2": {
+      "workers": 320,
+      "lifetimeSeconds": 75,
+      "deliverySeconds": 0.01,
+      "socketSeconds": 75.02
+    },
+    "plc": {
+      "workers": 320,
+      "lifetimeSeconds": 1,
+      "deliverySeconds": 0.01,
+      "socketSeconds": 1.02
+    }
+  },
+  "stages": [
+    {
+      "id": "E5-0",
+      "seconds": 600,
+      "rateFractions": {
+        "mobilenet": 0,
+        "smolvlm2": 0,
+        "plc": 0
+      }
+    },
+    {
+      "id": "E5-1",
+      "seconds": 1800,
+      "rateFractions": {
+        "mobilenet": 0.3,
+        "smolvlm2": 0.3,
+        "plc": 0.3
+      }
+    },
+    {
+      "id": "E5-2",
+      "parts": [
+        {
+          "id": "base",
+          "seconds": 300,
+          "rateFractions": {
+            "mobilenet": 0.3,
+            "smolvlm2": 0.3,
+            "plc": 0.3
+          }
+        },
+        {
+          "id": "burst",
+          "seconds": 600,
+          "rateFractions": {
+            "mobilenet": 0.3,
+            "smolvlm2": 0.9,
+            "plc": 0.3
+          }
+        }
+      ]
+    },
+    {
+      "id": "E5-3",
+      "parts": [
+        {
+          "id": "half",
+          "seconds": 600,
+          "rateFractions": {
+            "mobilenet": 0.5,
+            "smolvlm2": 0.5,
+            "plc": 0.5
+          }
+        },
+        {
+          "id": "rise",
+          "seconds": 600,
+          "rateFractions": {
+            "mobilenet": 0.7,
+            "smolvlm2": 0.7,
+            "plc": 0.7
+          }
+        },
+        {
+          "id": "high",
+          "seconds": 600,
+          "rateFractions": {
+            "mobilenet": 0.9,
+            "smolvlm2": 0.9,
+            "plc": 0.9
+          }
+        }
+      ]
+    },
+    {
+      "id": "E5-4",
+      "seconds": 900,
+      "rateFractions": {
+        "mobilenet": 1.2,
+        "smolvlm2": 1.2,
+        "plc": 1.2
+      }
+    },
+    {
+      "id": "E5-5",
+      "parts": [
+        {
+          "id": "down",
+          "seconds": 600,
+          "rateFractions": {
+            "mobilenet": 0.3,
+            "smolvlm2": 0.3,
+            "plc": 0.3
+          }
+        },
+        {
+          "id": "up",
+          "seconds": 600,
+          "rateFractions": {
+            "mobilenet": 0.9,
+            "smolvlm2": 0.9,
+            "plc": 0.9
+          }
+        }
+      ]
+    },
+    {
+      "id": "E5-6",
+      "seconds": 3600,
+      "rateFractions": {
+        "mobilenet": 0.3,
+        "smolvlm2": 0.3,
+        "plc": 0.3
+      }
+    },
+    {
+      "id": "E5-7",
+      "seconds": 900,
+      "rateFractions": {
+        "mobilenet": 0.3,
+        "smolvlm2": 0.3,
+        "plc": 0.3
+      }
+    }
+  ],
+  "capacityR": {
+    "mobilenet": null,
+    "smolvlm2": null,
+    "plc": null
+  },
+  "evaluation": "E5: fill capacityR with final approved capacities before prepare; no example rate is an approved number",
+  "failureInjectionRunbook": {
+    "executor": "CampaignOps only; manual existing kubectl, never automatic",
+    "stage": "E5-7",
+    "targets": "Freeze namespace, serving Pod UIDs and one eligible serving Node name/UID before release; exclude gateway, control-plane, measurement nodes",
+    "steps": [
+      {
+        "offsetSeconds": 180,
+        "action": "kubectl -n <namespace> delete pod <serving-pod> --grace-period=0 --force",
+        "evidence": "Capture exact UID before delete, command UTC and response; observe isolation and replacement Ready/ACK"
+      },
+      {
+        "offsetSeconds": 360,
+        "action": "kubectl cordon <node>; kubectl -n <namespace> delete pod <serving-pod-on-node> --grace-period=0 --force",
+        "evidence": "Read back spec.unschedulable; cordon alone neither stops Pods nor simulates network loss"
+      },
+      {
+        "offsetSeconds": 600,
+        "action": "kubectl uncordon <node>",
+        "evidence": "Read back schedulable, Ready, observed health and route ACK; finally restore even on stage failure"
+      }
+    ]
+  }
+}

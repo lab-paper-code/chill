@@ -114,6 +114,9 @@ def schedule(config, e5):
     allowed_archives = {'power', 'power-drain-inclusive'}
     if not isinstance(config.get('stages'), list) or not config['stages']:
         raise ValueError('A nonempty stages list is required')
+    capacity = config.get('capacityR')
+    if capacity is not None and (not isinstance(capacity, dict) or set(capacity) != set(ALIASES) or any(not e5.positive(v) for v in capacity.values())):
+        raise ValueError('capacityR requires final approved positive mobilenet/smolvlm2/plc capacities')
     for source in [config] + config.get('stages', []):
         if 'tolerateArchive' in source:
             value = source['tolerateArchive']
@@ -133,7 +136,13 @@ def schedule(config, e5):
         for part in inputs:
             if not isinstance(part, dict):
                 raise ValueError('Each part must be an object')
-            part_id, seconds, rates = part.get('id'), part.get('seconds'), part.get('rates')
+            part_id, seconds = part.get('id'), part.get('seconds')
+            rates = part.get('rates')
+            if 'rateFractions' in part:
+                fractions = part['rateFractions']
+                if rates is not None or capacity is None or not isinstance(fractions, dict) or set(fractions) != set(ALIASES) or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in fractions.values()):
+                    raise ValueError('rateFractions requires capacityR and three finite nonnegative fractions, without rates')
+                rates = {name: capacity[name] * fractions[name] for name in ALIASES}
             if not isinstance(part_id, str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9-]{0,39}', part_id) or any(p['id'].lower() == part_id.lower() for p in parts):
                 raise ValueError('Unique short Kubernetes-safe part IDs required within each stage')
             if not e5.positive(seconds) or not isinstance(rates, dict) or set(rates) != set(ALIASES):
@@ -827,6 +836,28 @@ def self_check():
         config = {'stages': [{'id': 'E0', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 0)}, {'id': 'A', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}, {'id': 'B', 'seconds': .001, 'rates': {'mobilenet': 20000, 'smolvlm2': 10000, 'plc': 10000}}, {'id': 'C', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}]}
         config['stages'][-1] = {'id': 'C', 'parts': [{'id': 'high', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 20000)}, {'id': 'low', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}]}
         stages = schedule(config, e5)
+        evaluation = json.loads((HERE / 'demo-config.e5.example.json').read_text())
+        try:
+            schedule(evaluation, e5)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Unapproved E5 capacityR accepted')
+        evaluation['capacityR'] = dict.fromkeys(ALIASES, .01)
+        evaluated = schedule(evaluation, e5)
+        assert [s['id'] for s in evaluated] == [f'E5-{i}' for i in range(8)]
+        assert sum(s['seconds'] for s in evaluated) == 195 * 60
+        assert evaluated[7]['rates'] == dict.fromkeys(ALIASES.values(), .003)
+        assert all(math.isclose(rate, .009) for rate in evaluated[3]['parts'][2]['rates'].values())
+        assert [s['offsetSeconds'] for s in evaluation['failureInjectionRunbook']['steps']] == [180, 360, 600]
+        for bad in (None, {}, dict.fromkeys(ALIASES, -1), dict.fromkeys(ALIASES, float('nan'))):
+            invalid = dict(evaluation, capacityR=bad)
+            try:
+                schedule(invalid, e5)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid E5 capacityR accepted')
         tolerant = schedule(dict(config, tolerateArchive=['power', 'power-drain-inclusive']), e5)
         assert all(s['tolerateArchive'] == ['power', 'power-drain-inclusive'] for s in tolerant)
         override = copy.deepcopy(config)
