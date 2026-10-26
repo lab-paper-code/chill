@@ -54,6 +54,8 @@ another trial or deriving a curve. Any measurement with more than
 an earlier batch or the idle baseline is incomplete. Failed attempts do not
 count toward this bound. Deterministic Run names and the existing
 `AlreadyExists` reconciliation path are unchanged.
+The Dashboard explains this failure as a successful-trial-count policy mismatch
+and directs the operator to repeat measurement under a new name.
 
 ## Result
 

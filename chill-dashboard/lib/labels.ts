@@ -136,6 +136,7 @@ const guides: Record<string, Guide> = {
   // Measurement failure reasons: internal/profiling/campaign/controller/reconciler.go
   TransitionFailed: ["측정할 상태로 장비를 바꾸지 못했어요.", "장비의 전력 모드 설정을 확인한 뒤 다시 요청해 주세요."],
   RetryLimitExhausted: ["다시 시도할 수 있는 횟수를 모두 써도 측정이 실패했어요.", "원본 보기에서 실패 이유를 확인한 뒤 다시 요청해 주세요."],
+  EnergyObjectivePolicyMismatch: ["배치별 성공한 측정 회차 수가 에너지 정책과 달라 측정을 끝냈어요.", "새 이름의 측정으로 다시 측정해 주세요."],
   CurvePlanResolutionFailed: ["측정 계획을 만들지 못해 측정을 끝냈어요.", "원본 보기에서 이유를 확인하고 조건을 고친 뒤 다시 요청해 주세요."],
 
   // Scheduler node reasons: internal/serving SchedulerNode.Reasons
