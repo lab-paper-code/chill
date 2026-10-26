@@ -104,6 +104,7 @@ def derive(row, framed_bytes, pipeline):
     prefix = (c["pipelineMargin"] * pipeline["observedColdGatewayReceiptToActorStartMaximumSeconds"]
               + pipeline["completionMarginSeconds"])
     delivery = pipeline["marginInflatedDeliveryBudgetSeconds"]
+    delivery_millis = math.ceil(delivery * 1000)
     q = max(1, math.ceil(refill / fast))
     slo = row["workload"]["slo"]["targetLatencyNanos"] / 1e9
     lifetime = math.ceil(c["lifetimeMargin"] * max(slo, (q + 2) * tail + prefix))
@@ -116,7 +117,8 @@ def derive(row, framed_bytes, pipeline):
     duration = math.ceil(max(c["windowFloorSeconds"], c["timeMargin"] * n * mu))
     drain = math.ceil(lifetime + tail + delivery)
     preparation = math.ceil(row["preparePlanningKnownSeconds"])
-    known = preparation + warmup + duration + drain
+    supply_extension = lifetime + (delivery_millis + 999) // 1000
+    known = preparation + warmup + duration + supply_extension + drain
     residual = c["plannedElapsedCapSeconds"] - known
     if residual < 2:
         raise ValueError(f"{row['caseID']}: approved elapsed cap cannot hold known components")
@@ -125,13 +127,13 @@ def derive(row, framed_bytes, pipeline):
     idle = min(c["maximumIdleBaseFraction"], c["idleDErrorSecondsPerRequest"] /
                (c["timeMargin"] * mu / b + c["idleDErrorSecondsPerRequest"]))
     return {"N": n, "waitingBatches": q, "workers": b * (q + 1),
-            "requestLifetimeSeconds": lifetime, "socketTimeoutSeconds": lifetime + math.ceil(delivery * 1000) / 1000,
-            "deliveryMarginMillis": math.ceil(delivery * 1000), "drainSeconds": drain,
+            "requestLifetimeSeconds": lifetime, "socketTimeoutSeconds": lifetime + delivery_millis / 1000,
+            "deliveryMarginMillis": delivery_millis, "supplyExtensionSeconds": supply_extension, "drainSeconds": drain,
             "preparationSeconds": preparation, "warmupSeconds": warmup, "durationSeconds": duration,
             "maximumIdleFraction": idle, "jobSetupSeconds": setup, "collectionSeconds": collection,
             "plannedElapsedSeconds": c["plannedElapsedCapSeconds"], "knownElapsedSeconds": known,
             "profileKnownPreparationSeconds": row["preparePlanningKnownSeconds"],
-            "unknownBudgetMeaning": "remaining cap split between Job setup and final collection; conservative allocation, not measured",
+            "unknownBudgetMeaning": "remaining cap after supply extension split between Job setup and final collection; conservative allocation, not measured",
             "tailBatchSeconds": tail, "fastBatchSeconds": fast, "refillSeconds": refill,
             "prefixSeconds": prefix, "qUpper": q_upper, "framedDecodedRequestUpperBytes": framed_bytes,
             "queueRequestCap": row["queueRequestCap"], "queueBytesCap": 67108864}
@@ -404,7 +406,8 @@ def self_check():
         assert d["workers"] == expected["fixedOutstandingScenario"], row["caseID"]
         assert d["requestLifetimeSeconds"] == expected["requestLifetimeSecondsScenario"], row["caseID"]
         assert d["durationSeconds"] == expected["measurementWindowSecondsScenario"], row["caseID"]
-        assert d["plannedElapsedSeconds"] == sum(d[k] for k in ("preparationSeconds", "warmupSeconds", "durationSeconds", "drainSeconds", "jobSetupSeconds", "collectionSeconds"))
+        assert d["supplyExtensionSeconds"] == math.ceil(d["requestLifetimeSeconds"] + d["deliveryMarginMillis"] / 1000)
+        assert d["plannedElapsedSeconds"] == sum(d[k] for k in ("preparationSeconds", "warmupSeconds", "durationSeconds", "supplyExtensionSeconds", "drainSeconds", "jobSetupSeconds", "collectionSeconds")) <= 3600
         count += 1
     assert count == 34
     assert required_batches(1, 0) == 3

@@ -109,7 +109,7 @@ func TestOccupancyFrozenConditionsAndClosedLoopJob(t *testing.T) {
 	m.Spec.PreparationSeconds = 60
 	m.Spec.JobSetupSeconds = 30
 	m.Spec.CollectionSeconds = 30
-	m.Spec.PlannedElapsedSeconds = 543
+	m.Spec.PlannedElapsedSeconds = 546
 	m.Spec.Conditions = edge.DispatchOccupancyConditions{ProfileID: "profile", InputsJSON: `{"computed":{"tailBatchSeconds":0.1,"fastBatchSeconds":0.02,"refillSeconds":0.1,"prefixSeconds":0.1,"framedDecodedRequestUpperBytes":32,"queueRequestCap":256,"queueBytesCap":67108864,"qUpper":256},"coefficients":{"relativeXPlanningPrecision":0.01,"planningConfidence":0.95,"timeMargin":1.25,"maximumIdleBaseFraction":0.01,"idleDErrorSecondsPerRequest":0.001,"windowFloorSeconds":360,"loadPreparationFloorSeconds":60,"plannedElapsedCapSeconds":3600},"profile":{"profileID":"profile","runtimeImage":"image","workload":{"name":"workload","uid":"workload-uid","generation":1,"slo":{"percentile":99,"targetLatencyNanos":1000000000}}}}`, WaitingBatches: 5, MinimumCycles: 119, MaximumIdleNanosPerRequest: 1000000}
 	if err := m.Spec.ValidateConditions(); err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestOccupancyFrozenConditionsAndClosedLoopJob(t *testing.T) {
 	t.Run("gateway cap rejected before grant", func(t *testing.T) {
 		exceedsCap := m.DeepCopy()
 		exceedsCap.Spec.RequestLifetimeSeconds, exceedsCap.Spec.DrainSeconds = 130, 131
-		exceedsCap.Spec.WarmupSeconds, exceedsCap.Spec.PlannedElapsedSeconds = 164, 775
+		exceedsCap.Spec.WarmupSeconds, exceedsCap.Spec.PlannedElapsedSeconds = 164, 906
 		if err := exceedsCap.Spec.ValidateConditions(); err != nil {
 			t.Fatalf("fixture must satisfy the frozen conditions before gateway admission: %v", err)
 		}
@@ -136,6 +136,32 @@ func TestOccupancyFrozenConditionsAndClosedLoopJob(t *testing.T) {
 	if err = json.Unmarshal(raw, &spec); err != nil || spec != m.Spec {
 		t.Fatalf("frozen roundtrip: %+v %v", spec, err)
 	}
+	t.Run("supply extension reserved inside elapsed cap", func(t *testing.T) {
+		for _, margin := range []int32{1, 1000, 1001} {
+			bounded := spec
+			bounded.DeliveryMarginMillis, bounded.DrainSeconds = margin, 5
+			bounded.PlannedElapsedSeconds = 3600
+			extension := bounded.RequestLifetimeSeconds + (margin+999)/1000
+			bounded.CollectionSeconds = bounded.PlannedElapsedSeconds - bounded.PreparationSeconds -
+				bounded.JobSetupSeconds - bounded.WarmupSeconds - bounded.DurationSeconds - bounded.DrainSeconds - extension
+			if err := bounded.ValidateConditions(); err != nil {
+				t.Fatalf("margin=%d: exact cap including extension: %v", margin, err)
+			}
+			job := loadJob(&edge.DispatchOccupancyMeasurement{Spec: bounded}, testNode,
+				occupancyPlan{workload: &edge.Workload{}, dataset: &edge.Dataset{}}, 0, LoadGeneratorConfig{})
+			if int64(bounded.PreparationSeconds)+*job.Spec.ActiveDeadlineSeconds != int64(bounded.PlannedElapsedSeconds) {
+				t.Fatalf("margin=%d: load deadline and elapsed budget disagree", margin)
+			}
+			bounded.CollectionSeconds++
+			if bounded.ValidateConditions() == nil {
+				t.Fatalf("margin=%d: accepted one second beyond the elapsed cap", margin)
+			}
+			bounded.CollectionSeconds += extension - 1
+			if bounded.ValidateConditions() == nil {
+				t.Fatalf("margin=%d: accepted the old budget without supply extension", margin)
+			}
+		}
+	})
 	profile := &serving.Profile{ID: "profile", Batches: []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{1e7}}}}
 	profile.Condition.RuntimeImage = "image"
 	w := &edge.Workload{}

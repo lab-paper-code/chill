@@ -113,6 +113,11 @@ profile 통계오차, BEO idle fallback CI, 시점 drift와 global95% gain 보�
   closed-loop 공급 시간은 `warmupSeconds + durationSeconds + requestLifetimeSeconds + deliveryMarginMillis/1000`이며,
   generator 시작과 첫 물리 batch 사이의 전달 지연만큼 창 끝 공급이 끊기지 않게 한다.
   Job deadline은 이 공급 시간을 초 단위로 올림한 뒤 setup, drain, collection을 더한다.
+  전체 elapsed 합은 `preparation + setup + warmup + duration + ceil(L + deliveryMarginMillis/1000) + drain + collection`
+  이며 `plannedElapsedSeconds` 이하이고, 동결된 전체 cap(승인값 3600 s)을 넘지 않아야 한다.
+  생성기는 공급 연장 예약 `supplyExtensionSeconds=ceil(L+deliveryMarginMillis/1000)`를 known 합과
+  새 `conditions.inputsJSON.computed`에 포함하고, 미관측 setup/collection 잔여에서 그만큼 차감해 합을 3600 s로 맞춘다.
+  기존 record/terminal CR와 이미 동결한 입력은 다시 쓰지 않는다.
   물리 batch 기준 warmup/본창 계산과 Poisson 공급 시간은 바꾸지 않는다.
   HTTP 만료 뒤 계속되는 native 실행의 미완료 근거는 unknown으로 보존한다.
   반환은 해당 label의 Job을 Background 삭제해 부하 Pod를 정리한다.

@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import math
 from pathlib import Path
 
 CONFIG = json.loads(Path(os.environ["CHILL_EXPERIMENT_CONFIG"]).read_text())
@@ -247,7 +248,7 @@ def refresh_timing():
             'priorModeRoundTripReferences': [c['reference'] for c in mode_costs],
             'referenceLowestMode': lowest[entry['node']['name']],
             'estimatedSeconds': entry['computed']['knownElapsedSeconds'] + remove_seconds + mode_seconds,
-            'meaning': 'Approved derived prepare+warmup+window+drain plus observed exact-state remove and observed per-root power round trip to prior lowest. Proxy for full handback, not observed end-to-end d duration. No mode-hold shortcut between roots.'}
+            'meaning': 'Approved derived prepare+warmup+window+supply extension+drain plus observed exact-state remove and observed per-root power round trip to prior lowest. Proxy for full handback, not observed end-to-end d duration. No mode-hold shortcut between roots.'}
         entry['sameConditionRetry'] = {'plannedName': entry['crName'] + '-retry1',
             'specSourcePath': entry['crPath'], 'maximumRetries': 1,
             'creation': 'CampaignOps clones identical spec after failure classification and safe return; only metadata.name changes. Preserve original UID/status/raw and record original->retry UID mapping.'}
@@ -303,7 +304,9 @@ def check():
         assert (d['warmupSeconds'] >= 60 and d['durationSeconds'] >= 360 and d['plannedElapsedSeconds'] == 3600)
         assert d['requestLifetimeSeconds'] >= entry['workload']['slo']['targetLatencyNanos'] / 1e9
         assert d['workers'] == entry['frozenProfileInputs']['batch'] * (1 + d['waitingBatches'])
-        assert sum(d[k] for k in ('preparationSeconds', 'warmupSeconds', 'durationSeconds', 'drainSeconds', 'jobSetupSeconds', 'collectionSeconds')) == 3600
+        extension = math.ceil(spec['requestLifetimeSeconds'] + spec['deliveryMarginMillis'] / 1000)
+        assert d['supplyExtensionSeconds'] == extension
+        assert sum(d[k] for k in ('preparationSeconds', 'warmupSeconds', 'durationSeconds', 'supplyExtensionSeconds', 'drainSeconds', 'jobSetupSeconds', 'collectionSeconds')) == d['plannedElapsedSeconds'] <= 3600
     print('25 source-bound closed-loop CRs checked locally; no cluster calls, no measurement')
 
 

@@ -183,7 +183,8 @@ func (s DispatchOccupancyMeasurementSpec) validateSupplyBounds() error {
 }
 
 func (s DispatchOccupancyMeasurementSpec) validateElapsedBudget(floors OccupancyPlanningFloors) error {
-	budget := int64(s.PreparationSeconds) + int64(s.JobSetupSeconds) + int64(s.CollectionSeconds) + int64(s.WarmupSeconds) + int64(s.DurationSeconds) + int64(s.DrainSeconds)
+	supplyExtension := int64(s.RequestLifetimeSeconds) + (int64(s.DeliveryMarginMillis)+999)/1000
+	budget := int64(s.PreparationSeconds) + int64(s.JobSetupSeconds) + int64(s.CollectionSeconds) + int64(s.WarmupSeconds) + int64(s.DurationSeconds) + supplyExtension + int64(s.DrainSeconds)
 	if s.RequestLifetimeSeconds < 1 || s.DeliveryMarginMillis <= 0 || s.DrainSeconds < s.RequestLifetimeSeconds ||
 		s.PreparationSeconds < 1 || s.JobSetupSeconds < 0 || s.CollectionSeconds < 0 ||
 		float64(s.WarmupSeconds) < math.Ceil(floors.LoadPreparationFloorSeconds) || float64(s.DurationSeconds) < math.Ceil(floors.WindowFloorSeconds) ||
