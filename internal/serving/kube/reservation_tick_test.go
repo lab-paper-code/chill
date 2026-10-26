@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -298,5 +299,165 @@ func waitReservationTest(t *testing.T, ctx context.Context, ready func() bool) {
 			t.Fatal(ctx.Err())
 		case <-time.After(time.Millisecond):
 		}
+	}
+}
+
+// AC-43 exercises positive-reserve planning and native execution while source
+// removal is still owned and the Ready reserve serves the actual request.
+//
+//nolint:gocyclo // One controller/native fixture covers reserve admission, owned retirement, request execution and complete-H energy.
+func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T) {
+	c, prepared := tickReadySubsetController(t, nil)
+	prepared.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	c.ctx = ctx
+	release := make(chan struct{})
+	t.Cleanup(func() { cancel(); close(release); c.wg.Wait() })
+	settings := &c.config.Settings
+	settings.ObservationWindow = time.Millisecond
+	settings.ComparisonPeriod = 10 * time.Second
+	settings.TransitionReserveFraction = .5
+	settings.Controls = serving.SchedulerControls{Replicas: true, Routing: true}
+	settings.CapacityWindow = 10 * time.Millisecond
+	uid := settings.AutonomousWorkloads[0]
+	settings.MinimumDemand = map[string]float64{uid: 2}
+	profiles := c.observer.Profiles()
+	for index := range profiles {
+		profiles[index].IdleBaselineWatts = 100
+		if profiles[index].NodeName == "b" {
+			profiles[index].IdleBaselineWatts = 20
+		}
+		profiles[index].Batches[0].EnergyPerInputJoules = 0
+	}
+	c.observer.SetProfiles(profiles)
+	initial, err := c.capture(ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(initial.Instances) != 2 || !initial.Instances[0].Ready || !initial.Instances[1].Ready {
+		t.Fatalf("Ready supply fixture: %+v", initial.Instances)
+	}
+	c.config.Preparations = map[string]PrepareSpec{}
+	seed := serving.SchedulerCandidate{ID: "reserve-seed", Nodes: initial.Nodes, Instances: slices.Clone(initial.Instances), Routing: map[string]map[string]int32{uid: {}}}
+	for index := range seed.Instances {
+		instance := &seed.Instances[index]
+		instance.WorkloadUID = uid
+		seed.Routing[uid][instance.ID] = 500
+		spec := measuredCPUPreparationFixture()
+		spec.Instance = *instance
+		spec.Config.Policy.ProfileID = instance.Profile.ID
+		c.config.Preparations[instance.Profile.ID] = spec
+		c.config.DispatchOccupancy = append(c.config.DispatchOccupancy, serving.DispatchOccupancy{Node: instance.Node, PowerMode: "fixed", RuntimeImage: instance.Profile.Condition.RuntimeImage, Model: instance.Profile.Condition.LogicalModel, Source: "AC-43 measured fixture"})
+		ref := evidencestore.ObjectIdentity{Store: "raw", Key: "reserve-baseline-" + instance.Profile.ID, Size: 1}
+		meter := "reserve-wall-" + instance.Node.Name
+		c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: ref.Key, Node: instance.Node, PowerMode: "fixed", Watts: 5, Meter: meter, Scope: "node-exclusive-wall", Reference: ref, MeasuredAt: time.Now()})
+		c.config.Meters = append(c.config.Meters, MeterDeclaration{ID: meter, Node: instance.Node, Scope: "node-exclusive-wall", Source: instance.Profile.MetricSource})
+		c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "reserve-remove-" + instance.Profile.ID, Node: instance.Node, Kind: operationRemove, From: serving.SchedulerInstanceState(*instance), To: "unloaded", PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: 100 * time.Millisecond, Joules: 1}}, Meter: meter, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "reserve-remove-" + instance.Profile.ID, Size: 1}})
+	}
+	c.runtime.EnableSchedulerRouting()
+	if result, err := c.operations.Execute(ctx, Operation{ID: seed.ID, Kind: operationRoute, Target: &seed}); err != nil {
+		t.Fatalf("seed route: %v %+v", err, result)
+	}
+	warm, err := c.capture(ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.capacity.Ensure(ctx, *settings, warm)
+	c.capacity.Wait()
+	removing := make(chan OperationResult, 1)
+	c.config.OnAction = func(result OperationResult) error {
+		if result.Status == starting && result.Operation.Kind == operationStop {
+			removing <- result
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+	decision, err := c.Tick(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Target == nil || decision.Target.Keep || len(decision.Target.Instances) != 1 || decision.Target.Instances[0].Node.Name != "b" {
+		t.Fatalf("positive reserve did not select source removal: status=%s reasons=%v capacity=%+v target=%+v", decision.Status, decision.Reasons, decision.Capacity, decision.Target)
+	}
+	if len(decision.Capacity.TransitionReserves) != 1 || !decision.Capacity.TransitionReserves[0].Allowed || decision.Capacity.TransitionReserves[0].Required != 3 {
+		t.Fatalf("reserve judgment missing: %+v", decision.Capacity)
+	}
+	// A: 1 J removal + 5 W for the remaining 9.9 s; Ready reserve B:
+	// 20 W for all H=10 s. Request incremental energy is explicitly zero.
+	wantJoules := 1 + 5*9.9 + 20*10.0
+	if decision.Target.ExpectedJoules == nil || math.Abs(*decision.Target.ExpectedJoules-wantJoules) > 1e-6 {
+		t.Fatalf("reserve baseline not included once over H: got %v want %g", decision.Target.ExpectedJoules, wantJoules)
+	}
+	waitReservationTest(t, ctx, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return slices.ContainsFunc(c.actionsLocked(time.Now()), func(action serving.Action) bool {
+			return action.Kind == operationRoute && action.Status == nativeOperationComplete
+		})
+	})
+	if _, err = c.Tick(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-removing:
+	case <-ctx.Done():
+		t.Fatalf("source retirement never started: %v", ctx.Err())
+	}
+	executed := make(chan native.Request, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request native.Request
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		if r.URL.Host != "10.96.0.11:8080" {
+			t.Errorf("request bypassed Ready reserve: %s", r.URL.Host)
+		}
+		progress := native.Progress{RequestID: request.ID, WorkloadUID: request.Context.WorkloadUID, Definition: request.Context.Definition, Phase: "finished", At: time.Now(), BatchID: 1, BatchSize: 1, ProfileID: "b-profile", ExecutionComplete: true, Units: 1}
+		_ = json.NewEncoder(w).Encode(native.Response{ModelName: "chill_model", ID: request.ID, ExecutionComplete: true, Progress: progress, Outputs: []native.Field{{Name: "output", Data: [][]byte{[]byte("result")}}}})
+		executed <- request
+	}))
+	defer server.Close()
+	proxy, _ := url.Parse(server.URL)
+	previous := c.observer.native.HTTPClient.Transport.(*http.Transport).Proxy
+	c.observer.native.HTTPClient.Transport = &http.Transport{Proxy: func(r *http.Request) (*url.URL, error) {
+		if r.Method == http.MethodPost {
+			return proxy, nil
+		}
+		return previous(r)
+	}}
+	workload := initial.Workloads[0]
+	receipt, err := c.runtime.Receive(workload.Name, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := c.runtime.Accept(receipt, managerSample(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = call.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case request := <-executed:
+		if request.Context.WorkloadUID != uid {
+			t.Fatal("reserve request lost Workload identity")
+		}
+	case <-ctx.Done():
+		t.Fatal("no reserve execution")
+	}
+	if err = c.runtime.Response(receipt, "ok", ""); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !slices.ContainsFunc(c.reservationsLocked(), func(reservation serving.SchedulerReservation) bool {
+		return reservation.Target != nil && reservation.Target.ID == decision.Target.ID
+	}) {
+		t.Fatal("transition ownership ended before reserve request completed")
 	}
 }
