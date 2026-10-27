@@ -1,6 +1,8 @@
 {
   "controlSourceSHA": "3dff4e7",
-  "poolShares": {"MNV": 0.3333333333333333, "PLC": 0.3333333333333333, "Smol": 0.3333333333333333},
+  "poolShares": {"MNV": 0.45, "PLC": 0.1, "Smol": 0.45},
+  "G": null,
+  "GSource": null,
   "timeboxes": {
     "setupSeconds": 194,
     "barrierSeconds": 300,

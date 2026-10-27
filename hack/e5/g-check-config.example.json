@@ -1,8 +1,10 @@
 {
   "controlSourceSHA": "3dff4e7",
   "staticPlacement": true,
-  "poolShares": {"MNV": 0.3333333333333333, "PLC": 0.3333333333333333, "Smol": 0.3333333333333333},
+  "poolShares": {"MNV": 0.45, "PLC": 0.1, "Smol": 0.45},
   "capacityR": {"mobilenet": null, "plc": null, "smolvlm2": null},
+  "G": null,
+  "GSource": null,
   "timeboxes": {"setupSeconds": 194, "barrierSeconds": 300, "drainSeconds": 194, "flushSeconds": 15, "collectSeconds": 240, "apiSeconds": 129, "settleSeconds": 194, "powerDownSeconds": 1800},
   "measurementSLO": {
     "mobilenet": {"percentile": 95, "targetLatencyNanos": 1000000000},
@@ -15,21 +17,16 @@
     "smolvlm2": {"workers": 320, "lifetimeSeconds": 75, "deliverySeconds": 0.01, "socketSeconds": 75.02}
   },
   "stages": [{
-    "id": "G-steps",
+    "id": "G-check",
     "startBarrier": {"reservations": 0, "transitions": 0},
-    "parts": [
-      {"id": "alpha-30", "seconds": 120, "alpha": 0.3},
-      {"id": "alpha-50", "seconds": 120, "alpha": 0.5},
-      {"id": "alpha-70", "seconds": 120, "alpha": 0.7},
-      {"id": "alpha-90", "seconds": 120, "alpha": 0.9},
-      {"id": "alpha-120", "seconds": 120, "alpha": 1.2}
-    ]
+    "seconds": 120,
+    "alpha": 1.2
   }],
   "gatewayMeasurementRunbook": {
     "executor": "CampaignOps only; existing demo prepare/start/run/finish and frozen release",
     "placement": "Freeze six existing manual serving instances (two per workload), or maximum eligible placement on the current eight Nodes; one instance per Node. Record exact Node/Pod UID/profile/mode/allocation/batch/route. No synthetic placement and no scheduler mutation by this config.",
     "capacity": "Fill capacityR with final approved R after candidate-SLO/jetsonx replay; K is a diagnostic partial sum only, never silently substitute it.",
     "sampling": "Retain existing 1s cgroup raw; derive nonoverlapping 10s ChillServer CPU delta/elapsed cores and memoryBytes samples, with Pod UID/containerID and gaps. No extra cluster collector required.",
-    "criteria": "Per part: actual mixed offered/completed rates, PLC p95<=32ms and deadline-success over all offered, GatewayOverloaded/503, timeout/unfinished, cs CPU/memory/throttle. Native/client saturation gives only a gateway bound; do not clip rates or infer maximum G from a successful point."
+    "criteria": "One 120s alpha=1.2 check only; no staircase, retry or maximum-G search. PASS iff the frozen offered trace is supplied, PLC p95<=32ms with >=95% deadline-success over all offered, no gateway rejection/503/timeout/unfinished or cs throttle/restart, and complete cs CPU/memory 10s samples remain below frozen CPU/memory limits without OOM. Otherwise FAIL with raw reasons (native/client limits do not prove gateway failure). Record actual mixed offered/completed rates and CPU/memory peaks; PASS is this placement/mix only, not maximum G or automatic certification of the 0.8*G headroom."
   }
 }

@@ -75,11 +75,25 @@ def load(path):
     return json.loads(Path(path).read_text(), parse_constant=lambda x: (_ for _ in ()).throw(ValueError('Nonfinite JSON: '+x)))
 
 def pool_shares(config):
-    shares = config.get('poolShares', dict.fromkeys(('MNV', 'PLC', 'Smol'), 1 / 3))
+    shares = config.get('poolShares', {'MNV': .45, 'PLC': .1, 'Smol': .45})
     if not isinstance(shares, dict) or set(shares) != {'MNV', 'PLC', 'Smol'} or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in shares.values()) or not math.isclose(sum(shares.values()), 1, rel_tol=0, abs_tol=1e-9):
         raise ValueError('poolShares requires finite MNV/PLC/Smol shares in [0,1] summing to 1')
     config['poolShares'] = dict(shares)
     return shares
+
+def gateway_budget(config, weighted_capacity):
+    """Check the frozen 20% gateway headroom, not a maximum-G search."""
+    g = config.get('G')
+    if g is None:
+        print('WARNING: G unconfirmed; 1.2 * sum(s_w * R_w) <= 0.8 * G is unverified', file=sys.stderr)
+        return
+    if not positive(g):
+        raise ValueError('G requires a finite positive measured rate')
+    source = config.get('GSource') or config.get('inputs', {}).get('gMeasurement')
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError('Measured G requires a frozen GSource or inputs.gMeasurement')
+    if 1.2 * weighted_capacity > .8 * g:
+        raise ValueError('1.2 * sum(s_w * R_w) exceeds 0.8 * G; no automatic clipping')
 
 def require_strict_archives(config):
     """Reject diagnostic archive tolerance anywhere in normative E5 inputs."""
@@ -313,6 +327,7 @@ def bind(path):
     ws = {w['name']: w for w in c['workloads']}; schedule = []
     shares = pool_shares(c)
     share_by_workload = dict(zip(WORKLOADS, (shares['MNV'], shares['PLC'], shares['Smol'])))
+    gateway_budget(c, sum(ws[name]['R'] * share_by_workload[name] for name in WORKLOADS))
     for label, duration, fractions in stages:
         intended = {name: ws[name]['R']*share_by_workload[name]*fractions[j] for j, name in enumerate(WORKLOADS)}; rates = dict(intended)
         if sum(rates.values()) > c['G']:

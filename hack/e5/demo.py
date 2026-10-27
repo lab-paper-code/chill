@@ -125,6 +125,8 @@ def schedule(config, e5):
         raise ValueError('capacityR requires final approved positive mobilenet/smolvlm2/plc capacities')
     shares = e5.pool_shares(config)
     share_by_alias = {'mobilenet': shares['MNV'], 'smolvlm2': shares['Smol'], 'plc': shares['PLC']}
+    if capacity is not None:
+        e5.gateway_budget(config, sum(capacity[name] * share_by_alias[name] for name in ALIASES))
     for source in [config] + config.get('stages', []):
         if 'tolerateArchive' in source:
             value = source['tolerateArchive']
@@ -467,6 +469,8 @@ def prepare(e5, args):
     payload = {}
     sources = {'demoConfig': e5.ref(args.config), 'e5Config': e5.ref(config_path), 'environment': e5.ref(e5.ENVIRONMENT_PATH)}
     sources['scheduler'] = e5.ref(c['inputs']['scheduler'])
+    if spec.get('G') is not None:
+        sources['gMeasurement'] = e5.ref(spec.get('GSource') or spec['inputs']['gMeasurement'])
     scheduler_settings = e5.load(c['inputs']['scheduler'])['settings']
     scheduler_settings = dict(scheduler_settings, powerObservation=e5.power_observation(c))
     for filename in ('demo.py', 'e5.py', 'auth.py', 'e5-wire.py', 'e5-producer.py', 'e5-archive.py', 'e5-raw.py'):
@@ -952,8 +956,8 @@ def self_check():
         evaluated = schedule(evaluation, e5)
         assert [s['id'] for s in evaluated] == [f'E5-{i}' for i in range(8)]
         assert sum(s['seconds'] for s in evaluated) == 195 * 60
-        assert all(math.isclose(rate, .001) for rate in evaluated[7]['rates'].values())
-        assert all(math.isclose(rate, .003) for rate in evaluated[3]['parts'][2]['rates'].values())
+        assert math.isclose(evaluated[7]['rates'][ALIASES['mobilenet']], .00135)
+        assert math.isclose(evaluated[3]['parts'][2]['rates'][ALIASES['plc']], .0009)
         assert [s['offsetSeconds'] for s in evaluation['failureInjectionRunbook']['steps']] == [180, 360, 600]
         assert evaluated[3]['parts'][2]['poolShares'] == evaluation['poolShares']
         assert evaluated[3]['parts'][2]['alpha'] == dict.fromkeys(ALIASES, .9)
@@ -966,13 +970,25 @@ def self_check():
                 raise AssertionError('Invalid poolShares accepted')
         custom = schedule(dict(evaluation, poolShares={'MNV': .5, 'PLC': .25, 'Smol': .25}), e5)
         assert math.isclose(custom[1]['rates'][ALIASES['mobilenet']], .0015)
-        gateway = json.loads((HERE / 'g-steps-config.example.json').read_text())
+        gateway = json.loads((HERE / 'g-check-config.example.json').read_text())
         gateway['capacityR'] = dict.fromkeys(ALIASES, .01)
         g_stages = schedule(gateway, e5)
-        assert len(g_stages) == 1 and g_stages[0]['seconds'] == 600
-        assert [p['seconds'] for p in g_stages[0]['parts']] == [120] * 5
-        assert [p['alpha']['plc'] for p in g_stages[0]['parts']] == [.3, .5, .7, .9, 1.2]
-        assert math.isclose(g_stages[0]['parts'][-1]['rates'][ALIASES['plc']], .004)
+        assert len(g_stages) == 1 and g_stages[0]['id'] == 'G-check' and g_stages[0]['seconds'] == 120
+        assert len(g_stages[0]['parts']) == 1
+        assert g_stages[0]['parts'][0]['alpha'] == dict.fromkeys(ALIASES, 1.2)
+        assert math.isclose(g_stages[0]['rates'][ALIASES['plc']], .0012)
+        assert e5.pool_shares({}) == {'MNV': .45, 'PLC': .1, 'Smol': .45}
+        with patch.object(e5.sys, 'stderr') as warning:
+            e5.gateway_budget({}, .01)
+            assert 'G unconfirmed' in ''.join(call.args[0] for call in warning.write.call_args_list)
+        e5.gateway_budget({'G': .015, 'GSource': 'fixture'}, .01)
+        for invalid in ({'G': .014, 'GSource': 'fixture'}, {'G': .015}, {'G': -1, 'GSource': 'fixture'}):
+            try:
+                e5.gateway_budget(invalid, .01)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid gateway budget accepted')
         assert gateway['measurementSLO']['plc'] == {'percentile': 95, 'targetLatencyNanos': 32000000}
         for bad in (None, {}, dict.fromkeys(ALIASES, -1), dict.fromkeys(ALIASES, float('nan'))):
             invalid = dict(evaluation, capacityR=bad)

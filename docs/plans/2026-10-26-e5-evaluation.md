@@ -8,7 +8,7 @@
 2. 새 규칙 dispatch 점유 d **34/34 완료**(control-189/194/195 Accepted·planner 소비 근거). 정확 prepare/remove 비용 **69/69**도 완료이며 두 수를 합산하지 않는다. U2 추가 모드는 기본 숫자 승인과 별도로 확장한다.
 3. Workload별 completion residual 원시를 모아 선택 분위수의 값을 계산하고 공통 완료 여유 `m=max(각 추정값)`를 정한다. 현재29ms는 기존 MNV p95 근거이지 세 Workload 공통 새 측정값이 아니다.
 4. 최종 d/m과 SLO로 실제 κ(포아송 재생 용량)를 산출한다. μ(프로파일 평균 서비스율)를 κ로 대체하지 않는다. Pending/Rejected/미측정을 0으로 채우지 않는다.
-5. Node별 적격 κ와 고립 기준 `R_w=Σ_Node max eligible κ_w`를 확정한다. **단계률은 `rate_w=α_w×s_w×R_w`**, `poolShares={MNV:1/3,PLC:1/3,Smol:1/3}` 기본값, 각 s는 [0,1], 합 1이다. α∈{0.3,0.5,0.7,0.9,1.2}는 POOL 사용률 단계다. Node당 인스턴스 하나이므로 세 고립 R은 같은 Node를 중복 계산하며 동시에 사용할 수 없다. s는 설정값이며 최종 R·s·α·혼합 총률·실측 G 범위를 binding에 동결한다. α는 혼합 배치 효율/SLO 보장이 아니라 정규화한 offered 부하이며 실제 Overload를 관찰한다.
+5. Node별 적격 κ와 고립 기준 `R_w=Σ_Node max eligible κ_w`를 확정한다. **단계률은 `rate_w=α_w×s_w×R_w`**, 기본 `poolShares={MNV:0.45,PLC:0.1,Smol:0.45}`, 각 s는 [0,1], 합 1이다. α∈{0.3,0.5,0.7,0.9,1.2}는 POOL 사용률 단계다. Node당 인스턴스 하나이므로 세 고립 R은 동시 사용 불가다. 설정 검증은 **`1.2×Σ(s_w×R_w)≤0.8×G`**를 요구하며 G 입력값·출처와 R·s·α·혼합 총률을 binding에 동결한다. G 미확정이면 명시 경고이며 연구부하 개시 통과가 아니다. α는 실제 배치 효율/SLO 보장이 아니라 offered 부하 정규화다.
 6. 초기/확장/축소/교체의 실제 후보 witness와 제어요소 비교 집합을 확정한 뒤 숫자·개시 승인을 받는다. 방향 승인을 매 단계 재요청하지 않되 새 조건·범위 확대는 별도 결정이다.
 
 **철회된 안:** 10CPU/8Gi ChillServer 증설을 먼저 하고 G/m을 재측정하자는 10월25일 초안은 현재 계획이 아니다. [게이트웨이 프로파일](../reports/gateway-performance-20261026.md)의 selector 수정으로 기존6CPU/4Gi에서 회복했다. 극단 처리 한계 G 탐색은 시연 선행조건이 아니지만, E5 실제 혼합 부하가 게이트웨이 병목이 아닌지는 확인해야 한다.
@@ -25,6 +25,18 @@
 | E5-5 급감/재급증 | 20분 | 모두 α=0.3 10분→0.9 10분 | 느린 축소·재확장, 반복 전환 시간과 에너지 |
 | E5-6 장시간 | 60분 | 모두 α=0.3 | 예측/실측 에너지, residual 분포, 설정 여유와 시스템 안정성 |
 | E5-7 실패 | 15분 | 모두 α=0.3 | 인스턴스 강제 종료와 Node 하나 배치 차단·서빙 소실의 격리·대체·복구(`SCH-AC-45`) |
+
+현재 알려진 K 대입 예시(승인 R·공식 실행률 아님), MNV/PLC/Smol req/s:
+
+| α | MNV (s=.45) | PLC (s=.1) | Smol (s=.45) | 합계 |
+|---|---:|---:|---:|---:|
+| .3 | 44.771023 | 49.723307 | .436939 | 94.931269 |
+| .5 | 74.618372 | 82.872178 | .728231 | 158.218781 |
+| .7 | 104.465720 | 116.021049 | 1.019524 | 221.506294 |
+| .9 | 134.313069 | 149.169921 | 1.310817 | 284.793806 |
+| 1.2 | 179.084092 | 198.893228 | 1.747755 | 379.725075 |
+
+E5-2의 Smol만 .9인 버스트 합계는95.805146req/s다. α=.3은 대략45/50/.43, G 확인1회는 대략179/199/1.7(합계380)이다.
 
 E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외를 유지하고 측정된 CPU 또는 다른 Workload CUDA를 비교한다. GPU 채택 자체를 성공 조건으로 하지 않는다. Jetsono의 Smol CPU INT8 b1 mean1.592s/13.95J 대 CUDA1.651s/48.30J라는 프로파일 근거가 있어 CPU를 제외해 GPU 승자를 만들지 않는다. 별도 CUDA 경쟁 실험으로 자동 전환하지 않는다.
 
@@ -75,24 +87,24 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 | PLC/Smol percentile·SLO | p95 32ms/7.034초 비교 후보, 측정 대조안 p95 50ms/p99 60초는 자동 채택 금지. 최신 d 포함 PLC screening은34.3742ms로 이동; 후보 SLO exact Built 0행이므로 **capacity 재생 필요** |
 | 적격 Node 선별 | 기본 측정 모드 PLC6/8·Smol7/8 positive, nano PLC는 실제Built κ0. jetsonx 기본15W6은 세 모델 모두resource Rejected로0대입 금지. 후보 SLO의 positive≥5/8·느린2개κ0는 미확정 |
 | 공통m·L·cap·delivery/socket | residual p95 후보16ms/p99 후보195ms와 구별해 m29ms 유지 승인 요청. L MNV2/PLC1/Smol75초·cap129초·delivery10ms/socket L+20ms, native remaining=L−senderElapsed−m |
-| G·혼합 단계 | rev83 약140req/s 관측 통과·cs CPU최대0.63core/6core는 최대G 인증 아님. 새d Built 부분합K 대입 최소혼합597.695207→burst599.637157, .5/.7/.9 합계996.158678/1394.622149/1793.085620, 1.2합2390.780826req/s 모두 관측범위 초과·자동clip 금지 |
+| G·혼합 단계 | rev83 약140req/s 관측 통과·cs CPU최대0.63core/6core는 최대G 인증 아님. 새 몫 .45/.1/.45의 K 대입 최소94.931269→burst95.805146, .5/.7/.9 합158.218781/221.506294/284.793806, 1.2합379.725075req/s. α1.2 고정 배치120s 확인1회만, 자동clip·계단 탐색 금지. 최종R에서1.2ΣsR≤.8G 검증 |
 | κ/R·계산 근거 | 최신GET10월27일10:01Z options74/d43·autonomy off capacity0. management 원시43파일에서2406key 복구, 기본모드 exact Built197/Rejected26. 알려진K MNV331.637207/PLC1657.443564/Smol3.236584req/s는 승인R 아님. §3에0.3/0.5/0.7/0.9/1.2K와 미확정R 병기 |
 | 전환 witness | 최신preflight-control-195-u2x 초기 MNV B519.700616/W14.099864초·PLC B1039.401232/W0.802653초, 측정SLO에서도초과. 일부U2모드 실제후보와 기본안/최종E5율 witness 구별. 빈 출발·부하0·자율on 최소capacity 재생 요청을 CampaignOps 직렬큐로 전달 |
 | 에너지 선택 | minimumGain 고정%없음; 후보별signed상쇄B_J·gain>B_J/equality KEEP, H600초/reserve0. 최신변경후보gain5005.869972J/B463.558920J는 관측 예이며 기본안 최종통과 아님 |
 | 정적·N·추가 모드 | 정적full E5-3끝 α=0.9 실제구성·N=2(membership-off/replicas-off), 없으면no-effect. 기본 fixed/MAXN/jetsonx15W6만 묶고 live jetsono15W 및 U2추가모드는 별도 승인. 전체435분(reset등별도), stabilization300초 유지 |
 
 leximin 변경은 유한 초과량의 선택도 바꿀 수 있으므로 과거 최악값 하나 비교 결과와 섞지 않는다. 최종 실행 설정(두 박자 기본300초/시연120초, reserve비율0, 비교기간600초 포함)은 binding과 decision.settings에 고정한다.
-설정 예시의 source SHA·`measurementSLO`·request timing은 기존 도구 입력 형태를 보여주는 값이며 최종 E5 승인값이 아니다. 운영 담당은 승인 숫자 묶음으로 이 필드들과 `capacityR`, `poolShares`, 단계 `alpha`, 실제 digest/근거 binding을 함께 고정한다. 미확정 R은 예시에서 null로 두어 prepare가 거절하며 부분합이나 가상 R로 실행하지 않는다. capacity 재생(jetsonx·후보 SLO)과 G 계단 준비/측정은 별도 근거로 병행하되 클러스터 실행은 CampaignOps 직렬 큐만 사용한다.
+설정 예시의 source SHA·`measurementSLO`·request timing은 기존 도구 입력 형태를 보여주는 값이며 최종 E5 승인값이 아니다. 운영 담당은 승인 숫자 묶음으로 이 필드들과 `capacityR`, `poolShares`, 단계 `alpha`, `G`·`GSource`, 실제 digest/근거 binding을 함께 고정한다. 미확정 R은 예시에서 null로 두어 prepare가 거절하며 부분합이나 가상 R로 실행하지 않는다. capacity 재생과 G 확인 준비는 별도 트랙이며 클러스터 실행은 CampaignOps 직렬 큐만 사용한다.
 
-## G 혼합 계단 운영 절차 (CampaignOps 전용)
+## G 확인 1회 운영 절차 (CampaignOps 전용)
 
-`hack/e5/g-steps-config.example.json`은 `demo.py`의 기존 staticPlacement 경로를 사용한다. 이 작업에서 클러스터 실행은 하지 않는다.
+`hack/e5/g-check-config.example.json`은 `demo.py`의 기존 staticPlacement 경로를 사용한다. 이 작업의 클러스터 실행은0회다. 계단·최대 G 탐색·자동 재시도는 하지 않는다.
 
-1. capacity 재생(jetsonx·PLC p95/32ms·Smol p95/7.034s) 근거와 최종 R을 별도 동결한다. 설정 복사본의 `capacityR` null을 최종 승인 R로 채우고 source SHA·digest·SLO·m·request timing·s를 실제 release와 일치시킨다. 현재 K 부분합을 R로 대입해 연구 실행하지 않는다. G 준비와 capacity 분석은 병행할 수 있지만 실물 변경/부하는 CampaignOps 직렬 큐로 수행한다.
-2. 자율제어를 끄고 **기존 수동 인스턴스 6개(Workload당2개)** 또는 **현재 8 Node의 최대 적격 배치**를 고른다. Node당 인스턴스 하나, 실제 자원·측정 적격성과 세 Workload route를 확인한다. Node/Pod UID·profile·mode·allocation·batch·route와 예약/전환0을 동결한다. 6개 배치가 세 Workload를 감당하지 못하면 그 한계를 보고하며 가짜 구성을 만들지 않는다. staticPlacement는 배치를 만들거나 자동제어를 끄는 기능이 아니라 이미 고정한 배치를 캡처하는 기능이다.
-3. 기존 `demo.py prepare --config <복사본> --out <새 외부 경로>`로 binding을 만들고, Main이 동결한 binding/release로 기존 `start`, `run --stage G-steps`, `finish` 절차를 따른다(`--help`의 공통 environment/release 인수 사용). `parts`는 α=.3/.5/.7/.9/1.2 혼합 부하 **각120s**, 총600s를 한 producer 창에서 연속 실행한다. part 사이 reset/drain/setup을 넣지 않으며, finish는 소유 producer만 정리하고 수동 배치·route를 보존한다. 실패/timeout은 기존 단일 시도·증거 보존 규칙을 따른다.
-4. 기존 cgroup sampler의 원시1s 기록에서 **ChillServer 10s 비중첩 표본**을 만든다: CPU=`ΔcpuUsageNanos/(ΔUTC초×1e9)` core, 메모리는 각10s 경계의 `memoryBytes`(working set 아님), throttle/restart·PodUID/containerID·실제 시간 간격·누락도 보존한다. 재시작 경계를 CPU 차분으로 잇지 않는다. 각 part의 실제 mixed offered/completed/success rate·PLC p95≤32ms 여부·전체 offered 대비 deadline 성공·503 사유/`GatewayOverloaded`·만료/미완료를 함께 보고한다. 기존 multipart summary의 scheduled-offset 요청 분류와 UTC placement 관측의 차이도 유지한다.
-5. 모든 요청 완료·gateway 거절/throttle 없음·PLC 기준 통과인 마지막 관측점을 **해당 고정 배치/혼합의 통과점**으로 기록한다. native/client 공급이나 요청 수명/producer worker가 먼저 한계이면 원인과 G 하한/미확정을 보고한다. CPU 여유만으로 G 최대값을 추정하지 않고 α나 PLC rate를 자동 clip하지 않는다. 배치 변경은 새 binding/Run으로 분리하며 G 결과를 E5 성적이나 최종 R 승인으로 대체하지 않는다.
+1. 후보 SLO·jetsonx capacity 재생 뒤 최종 승인 R을 설정 복사본 `capacityR`에 넣고 source SHA·digest·SLO·m·request timing·s를 실제 release와 맞춘다. 현재 K 부분합은 설명용이며 R로 대입하지 않는다. 기본 몫은 MNV .45/PLC .1/Smol .45다.
+2. 자율제어를 끄고 기존 수동6개(Workload당2개) 또는 현재8 Node의 최대 적격 배치 중 하나를 **고정**한다. Node당 인스턴스 하나, 실제 자원·측정 적격성과 세 route를 확인하고 Node/Pod UID·profile·mode·allocation·batch·route·cs CPU/메모리 limit·예약/전환0을 동결한다. staticPlacement는 배치를 만들거나 자율제어를 끄지 않는다.
+3. 기존 `demo.py prepare --config <복사본> --out <새 외부 경로>`, 동결 binding/release의 `start`, `run --stage G-check`, `finish`를 사용한다. **α=1.2의 총 혼합 부하를120s 단1회** 실행하며 현재K 예시는179+199+1.7≈380req/s다. 부하 중 배치 변경·rate clip·단계 추가 없이 finish는 소유 producer만 정리하고 수동 배치·route를 보존한다. 실패/timeout은 증거를 남기며 반복하지 않는다.
+4. 기존1s cgroup 원시에서 cs CPU=`ΔcpuUsageNanos/(ΔUTC초×1e9)` core와 경계 `memoryBytes`의10s 비중첩 표본을 만든다. Pod UID/containerID·간격·누락·throttle/restart·OOM·동결 limit와 최대치를 보고하고 재시작 경계를 차분으로 잇지 않는다. 실제 offered/completed/success rate, PLC p95와 전체offered 대비32ms deadline 성공률,503/`GatewayOverloaded`·timeout/미완료를 함께 보존한다.
+5. **PASS/FAIL**: 동결 trace 공급, PLC p95≤32ms 및 전체offered의≥95% deadline 성공, gateway 거절/503/timeout/미완료0, cs throttle/restart/OOM0, 누락 없는 CPU/메모리 표본과 동결 limit 미만을 모두 만족하면 PASS, 아니면 FAIL과 원시 사유를 남긴다. native/client 공급 한계로 FAIL이면 gateway 실패로 단정하지 않는다. PASS는 해당 배치/혼합의 통과점이지 최대G가 아니다. G와 그 출처는 binding에 동결하고 최종 설정의 `1.2ΣsR≤.8G`를 별도 검증한다. 380 통과만으로475 이상의 G를 추정하지 않는다. G 미확정 경고는 연구 개시 승인으로 바꾸지 않는다.
 
 
 원시 근거: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 `deployment2-e5-proposal-20261024.md` §9–10, `e5-numbers-proposal-20261025.md`, `north-star.md`, `d-measurement-decision.md`, `checkpoints.md` 1953–2001행. 원시 capacity·CSV·JSON·측정 캠페인은 옮기지 않았다.

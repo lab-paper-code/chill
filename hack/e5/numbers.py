@@ -13,7 +13,7 @@ file paths). Optional bundle fields:
     definitions or overlapping observation intervals).
   selections: {canonical-name: {percentile: 95|99, targetLatencyNanos: number}}
     freezes an approved choice; absent PLC/Smol choices remain preliminary.
-  poolShares: {MNV: 1/3, PLC: 1/3, Smol: 1/3}; finite [0,1], sum 1.
+  poolShares: {MNV: 0.45, PLC: 0.1, Smol: 0.45}; finite [0,1], sum 1.
   witnesses: [{kind: initial|expand|shrink|swap, source: actual-plan-reference,
     before: [capacity-row-key], after: [capacity-row-key],
     chains: [{costIDs: [cost-id], removedBeforeRoute: [node-name]}],
@@ -188,7 +188,7 @@ def residuals(data, workloads, selected):
 def report(args):
     began = time.monotonic()
     data, state, snap, settings, profiles, rows, sources = read_inputs(args)
-    shares = data.get('poolShares', dict.fromkeys(('MNV', 'PLC', 'Smol'), 1 / 3))
+    shares = data.get('poolShares', {'MNV': .45, 'PLC': .1, 'Smol': .45})
     if not isinstance(shares, dict) or set(shares) != {'MNV', 'PLC', 'Smol'} or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in shares.values()) or not math.isclose(sum(shares.values()), 1, rel_tol=0, abs_tol=1e-9):
         raise ValueError('poolShares requires finite MNV/PLC/Smol shares in [0,1] summing to 1')
     share_by_name = {'image-classification-tight-slo': shares['MNV'], 'plc-anomaly': shares['PLC'], 'smolvlm2-vqa': shares['Smol']}
