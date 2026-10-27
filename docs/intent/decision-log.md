@@ -436,3 +436,9 @@
 
 - 관측: jetsonx 15W6CORE/15W4CORE Smol(q1) batch-1 증분 에너지 −8.96/−4.90 J/item — active 평균 전력(10.25/10.09W)이 idle 기준(10.55/10.25W, 95% 반폭 ±1.76/±1.93W)보다 낮음. derivation은 부호를 보존하고 serving admission(`firstfloor/config.go:140`)·replay(`scheduler_replay.go:375`)는 비음수만 허용 → 거부(`history://SmolInvalid27`).
 - 결정(권고 기본값): 본질은 측정 불확실성 — 증분 에너지가 idle 기준 불확실성 이하라 0과 구별 불가. 자르기(clamp)는 묵시적 근사라 금지하되, **신뢰구간이 0을 포함하면 0 J/item + `energyBelowResolution` 표시로 명시 보고**, 상한도 음수면 측정 오류로 거부(재측정 요구). 재측정으로 양수 나올 때까지 반복 금지. 프로파일 계약 필드 추가는 E5 전 1회(ADR 0019).
+
+## 2026-10-27 17:5xZ — U2 jetsonx 15W4CORE 잔여 항목 종결
+
+- Smol x6C/x4C(q1) d: ConditionsInfeasible(유도 L이 게이트웨이 상한 초과; 서비스 ~30s/item, 연구 SLO 7.034s 불가 → κ=0 확정) → **Infeasible**로 기록(nano 5W와 동일 취급), 입력 L 축소 없음.
+- PLC x4C d: 1회 RequestTimeout 3,375(L=1s, 64 workers, CPU 1), 분리 재측 1회 UnknownPhysicalContinuity(U5 양상) → 2회 실패. jetsonx PLC는 용량 재생에서 자원 Rejected라 E5 입력이 아님 → 추가 재측 없이 **미완(2회 실패)** 기록, E5 후 U5와 함께 재조사.
+- 증분 에너지 분해능 이하 처리 배포(rev99, 331624f0): 두 Smol x preparation `energyBelowResolution=true` 확인.
