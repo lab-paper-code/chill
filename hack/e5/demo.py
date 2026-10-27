@@ -774,17 +774,23 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
             good = {id(r) for r in successful}
             start = phase['starts'].get(name)
             fidelity = analysis.issuance_fidelity(clients, stage['traces'][name]['offsetsNS'], (start or {}).get('monotonicNS'), round(stage['seconds'] * 1e9), analysis.stats)
+            latencies = {id(r): analysis.scheduled_latency_ns(r, (start or {}).get('monotonicNS')) for r in successful}
+            missing_latency = sum(value is None for value in latencies.values())
             transition_failures = None if fidelity['status'] == 'UNKNOWN' else 0
             if start and transition_failures is not None:
                 for row in clients:
-                    sent = epoch(start['at']) + (row['sentMonotonicNS'] - start['monotonicNS']) / 1e9
+                    sent_ns = row.get('sentMonotonicNS') if row.get('error') != 'UnsentAtWindowEnd' else analysis.scheduled_monotonic_ns(row, start['monotonicNS'])
+                    if type(sent_ns) is not int or type(row.get('finishedMonotonicNS')) is not int:
+                        transition_failures = None
+                        break
+                    sent = epoch(start['at']) + (sent_ns - start['monotonicNS']) / 1e9
                     end = epoch(start['at']) + (row['finishedMonotonicNS'] - start['monotonicNS']) / 1e9
                     if id(row) not in good and any(sent <= hi and end >= lo for lo, hi in windows):
                         transition_failures += 1
             measurement = binding.get('demoConfig', {}).get('measurementSLO', {}).get(next(alias for alias, canonical in ALIASES.items() if canonical == name), w['slo'])
             slo_ms = measurement['targetLatencyNanos'] / 1e6
-            within = sum(r['latencyMs'] <= slo_ms for r in successful)
-            metric = {'rate': stage['rates'][name], 'offered': offered, 'clientRows': len(clients), 'missingClientRows': max(0, offered - len(clients)), 'httpSuccess': len(successful), 'successFraction': len(successful) / offered if offered else None, 'successNumerator': len(successful), 'successDenominator': offered, 'withinSLONumerator': within, 'withinSLODenominator': offered, 'latencyMS': analysis.stats([r['latencyMs'] for r in successful]), 'latencyScope': 'Client HTTP round trip of successful responses, not server execution latency', 'sloMS': slo_ms, 'sloPercentile': w['slo']['percentile'], 'withinSLOFraction': within / offered if offered else None, 'transitionFailures': transition_failures if provenance.get('complete') and len(clients) == offered and (start or not offered) else None, 'transitionFailureMeaning': 'Failed/unsent client requests overlapping observed placement-change brackets or elapsed scheduler actions; null if scheduler/client coverage incomplete', 'errors': [r for r in clients if id(r) not in good]}
+            within = sum(value is not None and value <= measurement['targetLatencyNanos'] for value in latencies.values())
+            metric = {'rate': stage['rates'][name], 'offered': offered, 'clientRows': len(clients), 'missingClientRows': max(0, offered - len(clients)), 'httpSuccess': len(successful), 'successFraction': len(successful) / offered if offered else None, 'successNumerator': len(successful), 'successDenominator': offered, 'withinSLONumerator': within, 'withinSLODenominator': offered, 'latencyMS': analysis.stats([value / 1e6 for value in latencies.values() if value is not None]), 'latencyScope': 'Successful client completion minus frozen scheduled arrival; includes producer lateness, not server execution latency', 'missingScheduledLatencyRows': missing_latency, 'serviceLatencyMS': analysis.stats([r.get('serviceLatencyMs') for r in successful]), 'sloMS': slo_ms, 'sloPercentile': w['slo']['percentile'], 'withinSLOFraction': within / offered if offered and not missing_latency else None, 'transitionFailures': transition_failures if provenance.get('complete') and len(clients) == offered and (start or not offered) else None, 'transitionFailureMeaning': 'Failed/unsent client requests overlapping observed placement-change brackets or elapsed scheduler actions; unsent intervals begin at scheduled arrival; null if scheduler/client coverage incomplete', 'errors': [r for r in clients if id(r) not in good]}
             metric.update(sloPercentile=measurement['percentile'], schedulerSLO=w['slo'], measurementSLO=measurement)
             metric['issuanceFidelity'] = fidelity
             summary['workloads'][name] = metric
@@ -794,7 +800,9 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
                 selected = [r for r in clients if lo <= r['scheduledOffsetNs'] < hi]
                 successes = [r for r in selected if r.get('status') == 200 and not r.get('error')]
                 count = sum(lo <= offset < hi for offset in stage['traces'][name]['offsetsNS'])
-                part_summary['workloads'][name] = {'rate': part['rates'][name], 'offered': count, 'clientRows': len(selected), 'missingClientRows': max(0, count - len(selected)), 'httpSuccess': len(successes), 'successNumerator': len(successes), 'successDenominator': count, 'successFraction': len(successes) / count if count else None, 'latencyMS': analysis.stats([r['latencyMs'] for r in successes]), 'latencyScope': metric['latencyScope'], 'producerWindowEpoch': [epoch(start['at']) + lo / 1e9, epoch(start['at']) + hi / 1e9] if start else None}
+                part_latencies = [latencies[id(r)] for r in successes]
+                part_within = sum(value is not None and value <= measurement['targetLatencyNanos'] for value in part_latencies)
+                part_summary['workloads'][name] = {'rate': part['rates'][name], 'offered': count, 'clientRows': len(selected), 'missingClientRows': max(0, count - len(selected)), 'httpSuccess': len(successes), 'successNumerator': len(successes), 'successDenominator': count, 'successFraction': len(successes) / count if count else None, 'latencyMS': analysis.stats([value / 1e6 for value in part_latencies if value is not None]), 'missingScheduledLatencyRows': sum(value is None for value in part_latencies), 'serviceLatencyMS': analysis.stats([r.get('serviceLatencyMs') for r in successes]), 'withinSLONumerator': part_within, 'withinSLODenominator': count, 'withinSLOFraction': part_within / count if count and all(value is not None for value in part_latencies) else None, 'latencyScope': metric['latencyScope'], 'producerWindowEpoch': [epoch(start['at']) + lo / 1e9, epoch(start['at']) + hi / 1e9] if start else None}
                 bounds = part_summary['workloads'][name]['producerWindowEpoch']
                 part_summary['workloads'][name]['producerWindowUTC'] = [e5.dt.datetime.fromtimestamp(t, e5.dt.timezone.utc).isoformat() for t in bounds] if bounds else None
                 part_summary['workloads'][name]['windowMeaning'] = 'Frozen scheduled rate interval anchored to actual producer start; not an independently observed boundary event'
@@ -809,7 +817,7 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
     e5.save(destination / 'summary.json', result)
     def fmt(value):
         return '—' if value is None else f'{value:.3f}' if isinstance(value, float) else str(value)
-    table = ['# Autonomous workload-pool demo', '', 'Client latency is successful HTTP round trip. SLO is the configured measurementSLO, or captured scheduler SLO when omitted; non-static preparation registers the requested recipe/SLO and retains matching identities. Energy is shared pool energy, repeated per workload (do not sum rows). Missing evidence is —, not zero.', '', '| Stage | Workload | Rate/s | Success/offered | Success % | p95 ms | p99 ms | SLO p/ms | Within SLO % | Pool J | Active J | Drain pool J | Placement changes | Transition failures | Gap s |', '|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|']
+    table = ['# Autonomous workload-pool demo', '', 'Client latency is successful completion minus frozen scheduled arrival, including producer lateness; serviceLatencyMS retains HTTP round trip separately. Offered is the full frozen trace, including unsent requests. SLO is the configured measurementSLO, or captured scheduler SLO when omitted; non-static preparation registers the requested recipe/SLO and retains matching identities. Energy is shared pool energy, repeated per workload (do not sum rows). Missing evidence is —, not zero.', '', '| Stage | Workload | Rate/s | Success/offered | Success % | p95 ms | p99 ms | SLO p/ms | Within SLO % | Pool J | Active J | Drain pool J | Placement changes | Transition failures | Gap s |', '|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|']
     if 'preflight' in result:
         table[2:2] = ['Preflight: **' + result['preflight']['status'] + '** (Ready ' + str(result['preflight']['readyWorkloads']) + '/3; operational only).', '',
                       *[key + ': ' + value for key, value in result['preflight']['checks'].items()], '']
@@ -818,7 +826,8 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
     table += ['', '## Issuance fidelity', '']
     for s, name, m in rows:
         fidelity = m['issuanceFidelity']
-        table.append(f"Issuance {s['stage']}/{name}: {fidelity['status']}; gaps >50ms={fmt(fidelity.get('gapsOver50MS'))}, sends late >50ms={fmt(fidelity.get('sendsLateOver50MS'))}.")
+        lateness = fidelity.get('sendLatenessNS', {})
+        table.append(f"Issuance {s['stage']}/{name}: {fidelity['status']}; issued/planned={fidelity['issued']}/{fidelity['offered']}, supplied={fidelity['supplied']}; gaps >50ms={fmt(fidelity.get('gapsOver50MS'))}, sends late >50ms={fmt(fidelity.get('sendsLateOver50MS'))}; lateness ns p50/p95/p99/max={fmt(lateness.get('p50'))}/{fmt(lateness.get('p95'))}/{fmt(lateness.get('p99'))}/{fmt(lateness.get('max'))}.")
     for s in stage_summaries:
         table += ['', '## ' + s['stage'], '']
         if s.get('missingArchives'):
@@ -854,11 +863,11 @@ def publish(e5, binding, out, identifier, store_config):
         workloads = {}
         for name, metric in summary['workloads'].items():
             workloads[name] = {key: value for key, value in metric.items() if key != 'errors'}
-            workloads[name]['population'] = 'Frozen offered arrivals; latency is successful client HTTP round trips only'
+            workloads[name]['population'] = 'Full frozen offered arrivals including unsent; latency is successful completion minus scheduled arrival, including producer lateness; serviceLatencyMS is HTTP round trip'
             workloads[name]['missingReasons'] = {
                 'successFraction': 'No offered requests' if not metric['offered'] else None,
-                'withinSLOFraction': 'No offered requests' if not metric['offered'] else None,
-                'latencyMS': 'No successful client responses' if not metric['httpSuccess'] else None,
+                'withinSLOFraction': 'No offered requests' if not metric['offered'] else 'Successful response scheduled/finish timestamps missing' if metric['missingScheduledLatencyRows'] else None,
+                'latencyMS': 'No successful scheduled completion observations' if not metric['latencyMS']['samples'] else 'Some successful response scheduled/finish timestamps missing' if metric['missingScheduledLatencyRows'] else None,
                 'transitionFailures': 'Scheduler/client coverage incomplete' if metric['transitionFailures'] is None else None,
                 'issuanceFidelity': metric['issuanceFidelity'].get('reason'),
             }
@@ -890,6 +899,25 @@ def self_check():
     import tempfile
     from types import SimpleNamespace
     from unittest.mock import patch
+    planned = [0, 10_000_000, 20_000_000]
+    clients = [{'requestIndex': i, 'scheduledOffsetNs': offset, 'scheduledMonotonicNS': 100 + offset,
+                'sentMonotonicNS': 100 + offset + delay, 'finishedMonotonicNS': 100 + offset + delay + 1_000_000,
+                'latencyMs': 1, 'serviceLatencyMs': 1}
+               for i, (offset, delay) in enumerate(zip(planned, [0, 0, 170_000_000]))]
+    fidelity = ANALYSIS.issuance_fidelity(clients[::-1], planned, 100, 100_000_000, ANALYSIS.stats)
+    assert fidelity['supplied'] and fidelity['issuanceFraction'] == 1 and fidelity['sendsAfterWindow'] == 1
+    assert fidelity['sendLatenessNS']['p95'] == 170_000_000 and fidelity['sendsLateOver50MS'] == 1
+    assert ANALYSIS.scheduled_latency_ns(clients[-1], None) == 171_000_000
+    historical = dict(clients[-1])
+    historical.pop('scheduledMonotonicNS')
+    assert ANALYSIS.scheduled_latency_ns(historical, 100) == 171_000_000
+    assert ANALYSIS.scheduled_latency_ns(historical, None) is None
+    unsent = dict(clients[-1], error='UnsentAtWindowEnd')
+    unsent.pop('sentMonotonicNS')
+    fidelity = ANALYSIS.issuance_fidelity(clients[:2] + [unsent], planned, 100, 100_000_000, ANALYSIS.stats)
+    assert fidelity['offered'] == 3 and fidelity['issued'] == 2 and not fidelity['supplied']
+    assert fidelity['issuanceFraction'] == 2 / 3 and fidelity['unissued'] == 1
+    assert ANALYSIS.scheduled_latency_ns(unsent, 100) is None
     with tempfile.TemporaryDirectory(prefix='chill-demo-') as temp:
         root = Path(temp)
         environment = root / 'environment.json'
@@ -1194,7 +1222,7 @@ def self_check():
                     process.emit({'e5Event': 'start', 'at': e5.now(), 'monotonicNS': 1000000000})
                     stage = next(s for s in stages if s['id'] == cpo.a.stage)
                     for index, offset in enumerate(stage['traces'][name]['offsetsNS']):
-                        process.emit({'requestIndex': index, 'scheduledOffsetNs': offset, 'sentMonotonicNS': 1000000000 + offset, 'finishedMonotonicNS': 1000000000 + offset + 1000, 'status': 200 if index else 503, 'latencyMs': .001})
+                        process.emit({'requestIndex': index, 'scheduledOffsetNs': offset, 'scheduledMonotonicNS': 1000000000 + offset, 'sentMonotonicNS': 1000000000 + offset, 'finishedMonotonicNS': 1000000000 + offset + 1000, 'status': 200 if index else 503, 'latencyMs': .001, 'scheduledLatencyMs': .001, 'serviceLatencyMs': .001, 'latenessNs': 0})
                     process.emit({'e5Event': 'window-end', 'at': e5.now()})
                     process.emit({'e5Event': 'drained', 'at': e5.now()})
                 else:
@@ -1271,6 +1299,7 @@ def self_check():
                 fidelity = metric['issuanceFidelity']
                 assert fidelity['status'] == ('OBSERVED' if metric['offered'] else 'NOT_OFFERED')
                 assert fidelity['issued'] == metric['clientRows']
+                assert fidelity['supplied'] == bool(metric['offered'])
                 if metric['offered']:
                     assert fidelity['gapsOver50MS'] == fidelity['sendsLateOver50MS'] == 0
         with patch.object(e5, 'publish_experiment', return_value={'outcome': 'fixture'}) as publication:
@@ -1291,6 +1320,36 @@ def self_check():
             assert unknown['issuanceFidelity']['status'] == 'UNKNOWN' and unknown['transitionFailures'] is None
         finally:
             client_path.write_text(original_client)
+        for variant in ('late-completion', 'unsent', 'missing-client', 'missing-finish', 'historical'):
+            records = [json.loads(line) for line in original_client.splitlines()]
+            row = next(row for row in records if row.get('status') == 200)
+            if variant == 'late-completion':
+                row['finishedMonotonicNS'] = row['scheduledMonotonicNS'] + 100_000_000_000
+            elif variant == 'unsent':
+                row.update(error='UnsentAtWindowEnd')
+                row.pop('sentMonotonicNS')
+            elif variant == 'missing-client':
+                records.remove(row)
+            elif variant == 'missing-finish':
+                row.pop('finishedMonotonicNS')
+            else:
+                row.pop('scheduledMonotonicNS')
+            client_path.write_text('\n'.join(json.dumps(row) for row in records) + '\n')
+            try:
+                metric = summarize(e5, cpo.b, cpo.out)[1]['workloads'][workloads[0]['name']]
+                baseline = summaries[1]['workloads'][workloads[0]['name']]
+                assert metric['offered'] == metric['withinSLODenominator'] == baseline['offered']
+                if variant == 'late-completion':
+                    assert metric['latencyMS']['max'] == 100_000 and metric['serviceLatencyMS']['max'] == .001
+                    assert metric['withinSLONumerator'] == baseline['withinSLONumerator'] - 1
+                elif variant in ('unsent', 'missing-client'):
+                    assert not metric['issuanceFidelity']['supplied'] and metric['httpSuccess'] == baseline['httpSuccess'] - 1
+                elif variant == 'missing-finish':
+                    assert metric['missingScheduledLatencyRows'] == 1 and metric['withinSLOFraction'] is None
+                else:
+                    assert metric['latencyMS'] == baseline['latencyMS']
+            finally:
+                client_path.write_text(original_client)
         high, low = summaries[-1]['parts']
         assert (high['id'], low['id']) == ('high', 'low')
         assert high['endOffsetNS'] == low['startOffsetNS'] == 1000000

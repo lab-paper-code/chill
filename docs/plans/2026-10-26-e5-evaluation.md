@@ -51,7 +51,8 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 
 ## 집계·제외 규칙
 
-- 모든 **유효 offered 요청**을 deadline 내 성공의 분모에 둔다. 실패·거절·취소·만료·drain·미완료·censoring과 표본수를 남긴다. 완료 응답 분위수만으로 전체 성적을 대체하지 않는다.
+- **offered는 실행 전에 동결한 전체 planned trace의 요청 수**이며 실제 발행 수나 완료 JSONL 행 수로 다시 정의하지 않는다. 미발행·유실 행도 deadline 내 성공의 분모에 남긴다. 실패·거절·취소·만료·drain·미완료·censoring과 표본수를 남긴다. 완료 응답 분위수만으로 전체 성적을 대체하지 않는다.
+- E5 deadline/완료 분위수는 `finishedMonotonicNS - scheduledMonotonicNS`이며, 새 필드가 없는 보존 원시는 `finishedMonotonicNS - (startMonotonicNS + scheduledOffsetNs)`로 계산한다. `scheduledLatencyMs`와 E5 producer의 `latencyMs`는 이 scheduled latency이고, `serviceLatencyMs`는 실제 send→finish HTTP 왕복이다. 발행 지연을 서비스 지연에서 빼서 성공으로 만들지 않으며, timestamp 결측은 unknown으로 남긴다. 게이트웨이 `elapsedNanos` 기반 residual/tail 및 occupancy d의 정의는 바꾸지 않는다.
 - 전환 중 수신/전환 밖 수신/분류 불명 세 집단의 합이 전체 분모다. 겹친 전환은 Workload별 합집합으로 한 번만 센다. 경계는 사전에 고정한 반열린 수신시각 구간이다.
 - 전환 시작→route/Ready 완료의 실패도 전체에 남기고 전환 전·중·후, stage/substage, 1분 창을 보고한다. 전환 에너지도 전체 풀에 포함한다.
 - **Node 끊김 권고안 적용:** 전체 offered 결과를 주 결과로 유지하고, E5-7 Node 차단 명령 시작부터 uncordon 뒤 실제 Ready·관측·route 회복 확인까지 반열린 구간을 표시한다. 전체와 그 구간 제외 집계를 각각 분모·실패 수와 함께 병기한다. 회복이 없으면 단계 끝까지이며, 유리한 요청만 사후 제거하지 않는다.
@@ -59,7 +60,7 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 - 전력 결측 허용 `tolerateArchive`는 진단 전용이며 E5 설정에서 거부된다. 단발 후속 HTTP200은 누락된 전력 구간을 복구하지 않는다. 불완전한 에너지 값을 0으로 채우거나 연구 PASS로 출판하지 않는다.
 - 알려진 profile-versus-serving 편향은 해석 한계로 공개한다. signed raw·Accepted·planner `max(d,0)`를 보존하고 원인별 인과 기여·전역95% 보장을 주장하지 않는다.
 - thermal은5초 주기, active/latched/unknown과 사전 온도 bin(<60/60–70/70–80/≥80°C)을 쓰며 미관측 bin을 일반화하지 않는다.
-- 보낸 부하가 계획 trace와 다른 구간과 50ms 초과 발행 공백의 빈도·원인을 [U5/U6 관측 설계](../design/serving/observability-split.md)에 따라 표시한다. 계획/발행/수신 모집단을 혼동하지 않는다.
+- 보낸 부하가 계획 trace와 다른 구간과 50ms 초과 발행 공백의 빈도·원인을 [U5/U6 관측 설계](../design/serving/observability-split.md)에 따라 표시한다. `issuanceFidelity`는 planned/issued/미발행 수, 실제/계획 gap, `sendLatenessNS`의 p50/p95/p99/max, 50ms 초과 lateness, `sendsAfterWindow`를 보고한다. `latenessNs = sentMonotonicNS - scheduledMonotonicNS`이며 nominal 창 이후 발행도 버리지 않는다. gap 관측은 nominal 창 끝과 마지막 send 중 늦은 시각까지다. 계획/발행/수신 모집단을 혼동하지 않는다.
 
 ## 명세 7행 커버리지와 한계
 
@@ -103,8 +104,10 @@ leximin 변경은 유한 초과량의 선택도 바꿀 수 있으므로 과거 �
 1. 후보 SLO·jetsonx capacity 재생 뒤 최종 승인 R을 설정 복사본 `capacityR`에 넣고 source SHA·digest·SLO·m·request timing·s를 실제 release와 맞춘다. 현재 K 부분합은 설명용이며 R로 대입하지 않는다. 기본 몫은 MNV .45/PLC .1/Smol .45다.
 2. 자율제어를 끄고 기존 수동6개(Workload당2개) 또는 현재8 Node의 최대 적격 배치 중 하나를 **고정**한다. Node당 인스턴스 하나, 실제 자원·측정 적격성과 세 route를 확인하고 Node/Pod UID·profile·mode·allocation·batch·route·cs CPU/메모리 limit·예약/전환0을 동결한다. staticPlacement는 배치를 만들거나 자율제어를 끄지 않는다.
 3. 기존 `demo.py prepare --config <복사본> --out <새 외부 경로>`, 동결 binding/release의 `start`, `run --stage G-check`, `finish`를 사용한다. **α=1.2의 총 혼합 부하를120s 단1회** 실행하며 현재K 예시는179+199+1.7≈380req/s다. 부하 중 배치 변경·rate clip·단계 추가 없이 finish는 소유 producer만 정리하고 수동 배치·route를 보존한다. 실패/timeout은 증거를 남기며 반복하지 않는다.
-4. 기존1s cgroup 원시에서 cs CPU=`ΔcpuUsageNanos/(ΔUTC초×1e9)` core와 경계 `memoryBytes`의10s 비중첩 표본을 만든다. Pod UID/containerID·간격·누락·throttle/restart·OOM·동결 limit와 최대치를 보고하고 재시작 경계를 차분으로 잇지 않는다. 실제 offered/completed/success rate, PLC p95와 전체offered 대비32ms deadline 성공률,503/`GatewayOverloaded`·timeout/미완료를 함께 보존한다.
-5. **PASS/FAIL**: 동결 trace 공급, PLC p95≤32ms 및 전체offered의≥95% deadline 성공, gateway 거절/503/timeout/미완료0, cs throttle/restart/OOM0, 누락 없는 CPU/메모리 표본과 동결 limit 미만을 모두 만족하면 PASS, 아니면 FAIL과 원시 사유를 남긴다. native/client 공급 한계로 FAIL이면 gateway 실패로 단정하지 않는다. PASS는 해당 배치/혼합의 통과점이지 최대G가 아니다. G와 그 출처는 binding에 동결하고 최종 설정의 `1.2ΣsR≤.8G`를 별도 검증한다. 380 통과만으로475 이상의 G를 추정하지 않는다. G 미확정 경고는 연구 개시 승인으로 바꾸지 않는다.
+4. 기존1s cgroup 원시에서 cs CPU=`ΔcpuUsageNanos/(ΔUTC초×1e9)` core와 경계 `memoryBytes`의10s 비중첩 표본을 만든다. Pod UID/containerID·간격·누락·throttle/restart·OOM·동결 limit와 최대치를 보고하고 재시작 경계를 차분으로 잇지 않는다. planned offered rate, 실제 issued/completed/success rate, scheduled latency 기준 PLC p95와 전체 planned offered 대비32ms deadline 성공률,503/`GatewayOverloaded`·timeout/미완료를 함께 보존한다. HTTP 왕복과 producer lateness 분포는 별도로 병기한다.
+5. **PASS/FAIL**: 동결 trace 전체 공급, scheduled latency 기준 PLC p95≤32ms 및 전체 planned offered의≥95% deadline 성공, gateway 거절/503/timeout/미완료0, cs throttle/restart/OOM0, 누락 없는 CPU/메모리 표본과 동결 limit 미만을 모두 만족하면 PASS, 아니면 FAIL과 원시 사유를 남긴다. G0의 **supplied는 모든 frozen planned requestIndex가 중복 없이 실제 발행되었다는 뜻**이며, 발행된 수만 분모로 바꾼 `actual/actual` 성공이나 JSONL 행 수 일치만으로 통과시키지 않는다. `demo.py summary`의 Workload별 `issuanceFidelity.supplied`/`issuanceFraction`/`status`를 공급 판정 근거로 사용한다. 미발행, 누락/중복 index, offset 불일치, send timestamp 결측은 공급 통과가 아니다. 늦은 발행도 trace와 latency에 유지하되 공급 완전성과 timing fidelity(`sendLatenessNS`, `sendsAfterWindow`, gap)는 구별한다. native/client 발행 지연·공급 한계로 FAIL이면 gateway 실패로 단정하지 않는다. 기존 G0 보존 원시/판정은 새 의미로 덮어쓰지 않는다. PASS는 해당 배치/혼합의 통과점이지 최대G가 아니다. G와 그 출처는 binding에 동결하고 최종 설정의 `1.2ΣsR≤.8G`를 별도 검증한다. 380 통과만으로475 이상의 G를 추정하지 않는다. G 미확정 경고는 연구 개시 승인으로 바꾸지 않는다.
+
+로컬 회귀 점검(클러스터 접근 없음): `python3 hack/e5/e5.py self-check`, `python3 hack/e5/demo.py --self-check`, `python3 hack/e5/smoke_preflight.py`.
 
 
 원시 근거: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 `deployment2-e5-proposal-20261024.md` §9–10, `e5-numbers-proposal-20261025.md`, `north-star.md`, `d-measurement-decision.md`, `checkpoints.md` 1953–2001행. 원시 capacity·CSV·JSON·측정 캠페인은 옮기지 않았다.

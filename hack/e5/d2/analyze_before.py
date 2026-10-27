@@ -53,30 +53,57 @@ def stats(values):
                for name, q in [('p50', .50), ('p95', .95), ('p99', .99), ('max', 1)]}}
 
 
+def scheduled_monotonic_ns(row, start_ns):
+    scheduled = row.get('scheduledMonotonicNS')
+    if type(scheduled) is int:
+        return scheduled
+    offset = row.get('scheduledOffsetNs')
+    return start_ns + offset if type(start_ns) is int and type(offset) is int else None
+
+
+def scheduled_latency_ns(row, start_ns):
+    """E5 completion latency includes producer delay from the frozen arrival."""
+    if row.get('error') == 'UnsentAtWindowEnd':
+        return None
+    scheduled = scheduled_monotonic_ns(row, start_ns)
+    finished = row.get('finishedMonotonicNS')
+    return finished - scheduled if scheduled is not None and type(finished) is int and finished >= scheduled else None
+
+
 def issuance_fidelity(client, offsets, start_ns, duration_ns, stats):
     """Describe send-call timing, not stdout flush timing or wire arrival."""
     threshold = 50_000_000
     issued = [row for row in client if row.get('error') != 'UnsentAtWindowEnd']
     missing = sum(type(row.get('sentMonotonicNS')) is not int for row in issued)
     result = {'thresholdNS': threshold, 'offered': len(offsets), 'issued': len(issued), 'missingSendTimestamps': missing,
-              'meaning': 'Per-producer monotonic infer-call timestamps, sorted across workers; boundaries included. Planned Poisson/zero-load gaps are not automatically stalls. No wall-clock or gateway causality claim.'}
-    if len(client) != len(offsets) or any(type(row.get('requestIndex')) is not int or not 0 <= row['requestIndex'] < len(offsets) or row.get('scheduledOffsetNs') != offsets[row['requestIndex']] for row in client) or len({row['requestIndex'] for row in client}) != len(offsets):
-        return dict(result, status='UNKNOWN', reason='Offered client-row population incomplete or conflicting')
+              'supplied': False, 'issuanceFraction': None,
+              'meaning': 'Offered is the full frozen trace, including unsent arrivals; supplied requires every planned arrival issued, not merely an unchanged actual-count denominator. Late sends, including sends after the window, remain visible. Per-producer monotonic infer-call timestamps, sorted across workers; gaps run through the later of window end and last send. Planned Poisson/zero-load gaps are not automatically stalls. No wall-clock or gateway causality claim.'}
+    if len(client) != len(offsets):
+        return dict(result, status='UNKNOWN', reason='Frozen planned population has missing or extra client rows')
+    if any(type(row.get('requestIndex')) is not int or not 0 <= row['requestIndex'] < len(offsets) or row.get('scheduledOffsetNs') != offsets[row['requestIndex']] for row in client):
+        return dict(result, status='UNKNOWN', reason='Request index or scheduled offset differs from frozen planned trace')
+    if len({row['requestIndex'] for row in client}) != len(offsets):
+        return dict(result, status='UNKNOWN', reason='Duplicate request indexes leave planned arrivals unaccounted')
     if not offsets:
         return dict(result, status='NOT_OFFERED', reason='Frozen trace contains no arrivals')
     if type(start_ns) is not int or missing:
         return dict(result, status='UNKNOWN', reason='Actual monotonic start/send timestamp missing')
     sent = sorted(row['sentMonotonicNS'] - start_ns for row in issued)
-    if any(at < 0 or at >= duration_ns for at in sent):
-        return dict(result, status='UNKNOWN', reason='Send timestamp outside actual offered window')
-    edges = [0] + sent + [duration_ns]
+    if any(at < 0 for at in sent):
+        return dict(result, status='UNKNOWN', reason='Send timestamp precedes actual producer start')
+    if any(scheduled_monotonic_ns(row, start_ns) != start_ns + row['scheduledOffsetNs'] for row in client):
+        return dict(result, status='UNKNOWN', reason='Scheduled monotonic timestamp conflicts with frozen arrival')
+    horizon = max(duration_ns, sent[-1] if sent else 0)
+    edges = [0] + sent + [horizon]
     planned = [0] + offsets + [duration_ns]
     gaps = [right-left for left, right in zip(edges, edges[1:])]
     long_gaps = [{'fromOffsetNS': left, 'toOffsetNS': right, 'gapNS': right-left,
                   'plannedArrivalsInside': bisect.bisect_left(offsets, right)-bisect.bisect_right(offsets, left)}
                  for left, right in zip(edges, edges[1:]) if right-left > threshold]
-    late = [row['sentMonotonicNS']-start_ns-row['scheduledOffsetNs'] for row in issued]
-    result.update(status='OBSERVED', actualGapNS=stats(gaps),
+    late = [row['sentMonotonicNS']-scheduled_monotonic_ns(row, start_ns) for row in issued]
+    result.update(status='OBSERVED', supplied=len(issued) == len(offsets), issuanceFraction=len(issued)/len(offsets),
+                  unissued=len(offsets)-len(issued), sendsAfterWindow=sum(at >= duration_ns for at in sent),
+                  gapHorizonNS=horizon, actualGapNS=stats(gaps),
                   plannedGapNS=stats([right-left for left, right in zip(planned, planned[1:])]),
                   gapsOver50MS=len(long_gaps), gapsOver50MSFraction=len(long_gaps)/len(gaps),
                   gapIntervalsOver50MS=long_gaps, sendLatenessNS=stats(late),
