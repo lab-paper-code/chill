@@ -5,7 +5,7 @@
 ## 입구와 숫자 확정 순서
 
 1. [전체 남은 길](2026-10-26-remaining-roadmap.md)의 rev85·BEO 종결·PLC 후보·이중 컨트롤러 확인과 최종 시연을 닫는다.
-2. 새 규칙 dispatch 점유 d **10/34**, 남은 **24/34**를 실제 Accepted 원시와 planner 소비 증거로 채운다. 정확 prepare/remove 비용 **69/69**는 완료이며 d 인증과 합산하지 않는다.
+2. 새 규칙 dispatch 점유 d **34/34 완료**(control-189/194/195 Accepted·planner 소비 근거). 정확 prepare/remove 비용 **69/69**도 완료이며 두 수를 합산하지 않는다. U2 추가 모드는 기본 숫자 승인과 별도로 확장한다.
 3. Workload별 completion residual 원시를 모아 선택 분위수의 값을 계산하고 공통 완료 여유 `m=max(각 추정값)`를 정한다. 현재29ms는 기존 MNV p95 근거이지 세 Workload 공통 새 측정값이 아니다.
 4. 최종 d/m과 SLO로 실제 κ(포아송 재생 용량)를 산출한다. μ(프로파일 평균 서비스율)를 κ로 대체하지 않는다. Pending/Rejected/미측정을 0으로 채우지 않는다.
 5. Node별 적격 κ, `R_w=Σ_Node max eligible κ_w`, 0.3R/0.9R, 혼합 단계별 총률과 실제 게이트웨이 통과 범위를 함께 고정한다. 고립 R 셋을 동시 보장 용량으로 더하지 않는다.
@@ -71,15 +71,15 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 
 | 항목 | 현재 경계 |
 |---|---|
-| MNV SLO | canonical p95 1초 유지. [숫자 결정 요청서](file:///home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/e5-numbers-20261027.md) §1–8에 현재값·원시 근거·선택지·권고 |
-| PLC/Smol percentile·SLO | 요청서 §5: p95 약32ms/7.034초(m29ms) 비교 후보; 관측 HTTP p95 최대20.417ms/4.437초, p99 최대65.088ms/5.997초. 새 κ 미취득이며 측정용50ms/60초 자동 채택 금지 |
-| 적격 Node 선별 | 요청서 §3·5: 현 측정설정 PLC1/8·Smol6/8 κ>0; 누락/자원Rejected는κ0 아님. Smol lattepanda κ0.061346>0이므로 느린2개κ0 조건 불충족; 최종 선별 미성립 |
-| 공통m·L·cap·delivery/socket | 요청서 §4·6: residual p95 공통후보16ms/p99후보195ms, 현재29ms 임시유지 권고. 현L MNV2/PLC1/Smol75초, cap129초, delivery10ms/socket L+20ms; native remaining=L−senderElapsed−m |
-| G·PLC remainder | 요청서 §6: rev83 고정창140.3req/s·cs CPU최대0.63core(6core 상한)로 여유; 정확G와E5 혼합 통과는 미확인. 알려진κ 부분합의 최소혼합157.420394req/s도 관측범위 초과; rate 자동축소 금지 |
-| κ/R·계산시간 | 요청서 §2·3: 새규칙d10/34·미인증24(현재소비legacy MNV CPU8+CUDA2 명시). 실제Built107행, 기록계산시간합1478.446초(병렬wall 아님). 알려진Node 부분합K MNV334.605496/PLC187.046050/Smol3.083102req/s; 완전R·최종SLO/m κ는미확정 |
-| 전환 witness | 요청서 §7: 실제 초기/확장/축소/물리교체의λ/q/κ_ret/κ_new/r/B/W 보존. 초기MNV W4.353초·확장5.490초로현SLO초과; 최종E5 혼합률·Workload간GPU소유권swap witness와구별 |
-| 에너지 선택 | 요청서 §7: minimumGain 고정%설정없음; 후보별signed상쇄B, gain>B/equality KEEP. 실제교체gain6398.966J/B441.823J, 축소857.547J/B18.151J; H600초/reserve0 유지 |
-| 교체·N·기타 threshold | 요청서 §8: 정적기준선은full E5-3끝0.9R 실제구성; N=2 권고 적용(membership-off/replicas-off), 해당률 효과 witness는 실행 전 보존하며 없으면 no-effect. 기본stabilization300초(최근시연120초); 예시5%/2%/100ms 승인값아님 |
+| MNV SLO | p95 1초/m29ms 유지 승인 요청. [E5 시작 숫자 승인 요청서](file:///home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/e5-numbers-20261027.md) 결론·§1–7에 후보값/근거와 미확정·전력 모드 추가 예정 분리 |
+| PLC/Smol percentile·SLO | p95 32ms/7.034초 비교 후보, 측정 대조안 p95 50ms/p99 60초는 자동 채택 금지. 최신 d 포함 PLC screening은34.3742ms로 이동; 후보 SLO exact Built 0행이므로 **capacity 재생 필요** |
+| 적격 Node 선별 | 기본 측정 모드 PLC6/8·Smol7/8 positive, nano PLC는 실제Built κ0. jetsonx 기본15W6은 세 모델 모두resource Rejected로0대입 금지. 후보 SLO의 positive≥5/8·느린2개κ0는 미확정 |
+| 공통m·L·cap·delivery/socket | residual p95 후보16ms/p99 후보195ms와 구별해 m29ms 유지 승인 요청. L MNV2/PLC1/Smol75초·cap129초·delivery10ms/socket L+20ms, native remaining=L−senderElapsed−m |
+| G·혼합 단계 | rev83 약140req/s 관측 통과·cs CPU최대0.63core/6core는 최대G 인증 아님. 새d Built 부분합K 대입 최소혼합597.695207→burst599.637157, .5/.7/.9 합계996.158678/1394.622149/1793.085620, 1.2합2390.780826req/s 모두 관측범위 초과·자동clip 금지 |
+| κ/R·계산 근거 | 최신GET10월27일10:01Z options74/d43·autonomy off capacity0. management 원시43파일에서2406key 복구, 기본모드 exact Built197/Rejected26. 알려진K MNV331.637207/PLC1657.443564/Smol3.236584req/s는 승인R 아님. §3에0.3/0.5/0.7/0.9/1.2K와 미확정R 병기 |
+| 전환 witness | 최신preflight-control-195-u2x 초기 MNV B519.700616/W14.099864초·PLC B1039.401232/W0.802653초, 측정SLO에서도초과. 일부U2모드 실제후보와 기본안/최종E5율 witness 구별. 빈 출발·부하0·자율on 최소capacity 재생 요청을 CampaignOps 직렬큐로 전달 |
+| 에너지 선택 | minimumGain 고정%없음; 후보별signed상쇄B_J·gain>B_J/equality KEEP, H600초/reserve0. 최신변경후보gain5005.869972J/B463.558920J는 관측 예이며 기본안 최종통과 아님 |
+| 정적·N·추가 모드 | 정적full E5-3끝0.9R 실제구성·N=2(membership-off/replicas-off), 없으면no-effect. 기본 fixed/MAXN/jetsonx15W6만 묶고 live jetsono15W 및 U2추가모드는 별도 승인. 전체435분(reset등별도), stabilization300초 유지 |
 
 leximin 변경은 유한 초과량의 선택도 바꿀 수 있으므로 과거 최악값 하나 비교 결과와 섞지 않는다. 최종 실행 설정(두 박자 기본300초/시연120초, reserve비율0, 비교기간600초 포함)은 binding과 decision.settings에 고정한다.
 설정 예시의 source SHA·`measurementSLO`·request timing은 기존 도구 입력 형태를 보여주는 값이며 최종 E5 승인값이 아니다. 운영 담당은 최종 승인 숫자 묶음으로 이 필드들과 `capacityR`, 실제 digest/근거 binding을 함께 고정한다. 미확정 R은 예시에서 null로 두어 prepare가 거절하며 부분합이나 가상 R로 실행하지 않는다.
