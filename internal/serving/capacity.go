@@ -327,13 +327,22 @@ func NewCapacityTable(parallel int, record func(CapacityRow) error, load func(co
 		parallel: make(chan struct{}, max(1, parallel)), record: record, load: load}
 }
 
+type capacityTask struct {
+	option   SchedulerOption
+	workload *Definition
+	node     SchedulerNode
+	key      string
+}
+
 // Ensure starts every missing row for the autonomous Workloads of snapshot and
-// returns at once. ctx bounds the started rows.
+// returns at once. Missing rows enter the semaphore round-robin by Workload;
+// ctx bounds the queued and started rows.
 func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) {
 	wanted := []CapacityInput{}
+	pending := make([][]capacityTask, len(snapshot.Workloads))
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for _, w := range snapshot.Workloads {
+	for i, w := range snapshot.Workloads {
 		if !slices.Contains(settings.AutonomousWorkloads, w.UID) {
 			continue
 		}
@@ -359,11 +368,35 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 				}
 				t.running[key] = true
 				t.wg.Add(1)
-				go t.build(ctx, settings, snapshot.DispatchOccupancy, o, w, node, snapshot.Baselines, snapshot.At, key)
+				pending[i] = append(pending[i], capacityTask{o, w, node, key})
 			}
 		}
 	}
 	t.wanted = wanted
+	go func() {
+		for row := 0; ; row++ {
+			more := false
+			for _, tasks := range pending {
+				if row >= len(tasks) {
+					continue
+				}
+				more = true
+				task := tasks[row]
+				select {
+				case t.parallel <- struct{}{}:
+					go t.build(ctx, settings, snapshot.DispatchOccupancy, task.option, task.workload, task.node, snapshot.Baselines, snapshot.At, task.key)
+				case <-ctx.Done():
+					t.mu.Lock()
+					delete(t.running, task.key)
+					t.mu.Unlock()
+					t.wg.Done()
+				}
+			}
+			if !more {
+				return
+			}
+		}
+	}()
 	missing := []string{}
 	for _, in := range wanted {
 		if key := in.Key(); t.running[key] && !t.asked[key] {
@@ -391,16 +424,8 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 
 func (t *CapacityTable) build(ctx context.Context, settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, node SchedulerNode, baselines []NodeBaseline, at time.Time, key string) {
 	defer t.wg.Done()
-	select {
-	case t.parallel <- struct{}{}:
-	case <-ctx.Done():
-		t.mu.Lock()
-		delete(t.running, key)
-		t.mu.Unlock()
-		return
-	}
+	defer func() { <-t.parallel }()
 	row, err := BuildCapacityRow(ctx, settings, occupancy, o, w, node, baselines, at)
-	<-t.parallel
 	if err != nil {
 		if ctx.Err() != nil {
 			t.mu.Lock()

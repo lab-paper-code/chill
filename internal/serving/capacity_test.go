@@ -238,6 +238,41 @@ func TestCapacityTableBuildsAutonomousRowsOnce(t *testing.T) {
 	}
 }
 
+func TestCapacityTableRoundRobinWorkloads(t *testing.T) {
+	s, snap := capacityFixture()
+	baseWorkload, baseOption := *snap.Workloads[0], snap.Options[0]
+	s.AutonomousWorkloads, snap.Workloads, snap.Options = nil, nil, nil
+	snap.DispatchOccupancy = nil // Reject without replay; only queue order matters.
+	for i, count := range []int{3, 1, 2} {
+		w := baseWorkload
+		w.UID = string(rune('a' + i))
+		s.AutonomousWorkloads = append(s.AutonomousWorkloads, w.UID)
+		snap.Workloads = append(snap.Workloads, &w)
+		// Multiple options exercise advancing from one option to the next.
+		for batch := 1; batch <= count; batch++ {
+			o, p := baseOption, *baseOption.Instance.Profile
+			p.ID = w.UID + string(rune('0'+batch))
+			p.Batches = []BatchProfile{{Batch: batch}}
+			o.Instance.Profile, o.Instance.MaxBatch = &p, batch
+			o.CompatibleUIDs = []string{w.UID}
+			snap.Options = append(snap.Options, o)
+		}
+	}
+	var order []string
+	table := NewCapacityTable(1, func(row CapacityRow) error {
+		order = append(order, row.Input.ProfileID)
+		return nil
+	}, nil)
+	table.parallel <- struct{}{}
+	table.Ensure(context.Background(), s, snap)
+	table.Ensure(context.Background(), s, snap) // Queued rows must not duplicate.
+	<-table.parallel
+	table.Wait()
+	if want := []string{"a1", "b1", "c1", "a2", "c2", "a3"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("serial row execution = %v, want %v", order, want)
+	}
+}
+
 // A recorded row stands in for a row being computed and gives way once built.
 func TestCapacityTableUsesRecordedRowUntilBuilt(t *testing.T) {
 	s, snap := capacityFixture()
