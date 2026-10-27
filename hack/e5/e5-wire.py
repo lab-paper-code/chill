@@ -208,6 +208,7 @@ class Prepare:
         e5.save(self.out/'kappa-execution.json',{'at':e5.now(),'sourceSHA':self.sha,'argv':argv,'exitCode':r.returncode,'meaning':'Actual registered canonical UID/generation/SLO inputs; no hypothetical live UID'})
         if r.returncode:raise RuntimeError('Final actual-UID kappa calculation failed')
         c={**{k:self.op[k] for k in ('endpoint','caFile','tokenFile','kubeContext')},**{k:self.n[k] for k in ('G','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds')}}
+        c['poolShares'] = e5.pool_shares(self.n)
         c['approval']={**self.n['approval'],'sourceSHA':self.sha,'controlImageDigest':actual_control,'runtimeDigests':e5.load(PLAN)['frozenRuntimeSha256']}
         c['inputs']={k:self.pub[k] for k in ('after','gMeasurement','mMeasurement','d25','ranking','costs','bias')}
         c['inputs'].update({k:str(self.out/(k+'.json')) for k in ('scheduler','capacity','nodes','pods','gateway','producer')})
@@ -224,7 +225,6 @@ class Prepare:
         baseline=snapshot['settings']['controls'];c['factors']=[]
         for name in self.factor_names:
             item=self.op['factorMenu'][name];controls=dict(baseline);controls[item['changedControl']]=item['value'];witness_path=self.out/('factor-witness-'+name+'.json');e5.save(witness_path,{**item['witness'],'sourceSHA':self.sha,'evidenceLevel':'Source-witnessed constraint and executable reset; observed factor effect remains unmeasured'});c['factors'].append({'name':name,'controls':controls,'witness':str(witness_path)})
-        if 'overloadClipDecision' in self.n:c['overloadClipDecision']=self.n['overloadClipDecision']
         path=self.out/'assembled-config.json';e5.save(path,c);binding=e5.bind(path);destination=Path(self.release['bindingPath'])
         binding['sources']['phase6Numbers']=e5.ref(self.a.numbers)
         binding['sources']['operationalRecipe']=e5.ref(e5.OPERATIONAL_RECIPE)

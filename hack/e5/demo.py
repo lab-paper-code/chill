@@ -123,6 +123,8 @@ def schedule(config, e5):
     capacity = config.get('capacityR')
     if capacity is not None and (not isinstance(capacity, dict) or set(capacity) != set(ALIASES) or any(not e5.positive(v) for v in capacity.values())):
         raise ValueError('capacityR requires final approved positive mobilenet/smolvlm2/plc capacities')
+    shares = e5.pool_shares(config)
+    share_by_alias = {'mobilenet': shares['MNV'], 'smolvlm2': shares['Smol'], 'plc': shares['PLC']}
     for source in [config] + config.get('stages', []):
         if 'tolerateArchive' in source:
             value = source['tolerateArchive']
@@ -145,10 +147,14 @@ def schedule(config, e5):
             part_id, seconds = part.get('id'), part.get('seconds')
             rates = part.get('rates')
             if 'rateFractions' in part:
-                fractions = part['rateFractions']
-                if rates is not None or capacity is None or not isinstance(fractions, dict) or set(fractions) != set(ALIASES) or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in fractions.values()):
-                    raise ValueError('rateFractions requires capacityR and three finite nonnegative fractions, without rates')
-                rates = {name: capacity[name] * fractions[name] for name in ALIASES}
+                raise ValueError('Use alpha and poolShares; rateFractions is obsolete')
+            if 'alpha' in part:
+                alpha = part['alpha']
+                if type(alpha) in (int, float):
+                    alpha = dict.fromkeys(ALIASES, alpha)
+                if rates is not None or capacity is None or not isinstance(alpha, dict) or set(alpha) != set(ALIASES) or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in alpha.values()):
+                    raise ValueError('alpha requires capacityR and finite nonnegative utilization, without rates')
+                rates = {name: capacity[name] * share_by_alias[name] * alpha[name] for name in ALIASES}
             if not isinstance(part_id, str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9-]{0,39}', part_id) or any(p['id'].lower() == part_id.lower() for p in parts):
                 raise ValueError('Unique short Kubernetes-safe part IDs required within each stage')
             if not e5.positive(seconds) or not isinstance(rates, dict) or set(rates) != set(ALIASES):
@@ -157,7 +163,7 @@ def schedule(config, e5):
                 raise ValueError('Rates must be finite nonnegative requests/second')
             if part is not row and any(key in part for key in ('readyGate', 'startBarrier', 'parts', 'tolerateArchive')):
                 raise ValueError('readyGate, startBarrier, tolerateArchive and nested parts are not supported within parts')
-            parts.append({'id': part_id, 'seconds': seconds, 'rates': {ALIASES[k]: v for k, v in rates.items()}})
+            parts.append({'id': part_id, 'seconds': seconds, 'rates': {ALIASES[k]: v for k, v in rates.items()}, **({'alpha': dict(alpha), 'poolShares': dict(shares)} if 'alpha' in part else {})})
         seconds = sum(p['seconds'] for p in parts)
         rates = {name: max(p['rates'][name] for p in parts) for name in ALIASES.values()}
         if 'readyGate' in row and type(row['readyGate']) is not bool:
@@ -946,9 +952,28 @@ def self_check():
         evaluated = schedule(evaluation, e5)
         assert [s['id'] for s in evaluated] == [f'E5-{i}' for i in range(8)]
         assert sum(s['seconds'] for s in evaluated) == 195 * 60
-        assert evaluated[7]['rates'] == dict.fromkeys(ALIASES.values(), .003)
-        assert all(math.isclose(rate, .009) for rate in evaluated[3]['parts'][2]['rates'].values())
+        assert all(math.isclose(rate, .001) for rate in evaluated[7]['rates'].values())
+        assert all(math.isclose(rate, .003) for rate in evaluated[3]['parts'][2]['rates'].values())
         assert [s['offsetSeconds'] for s in evaluation['failureInjectionRunbook']['steps']] == [180, 360, 600]
+        assert evaluated[3]['parts'][2]['poolShares'] == evaluation['poolShares']
+        assert evaluated[3]['parts'][2]['alpha'] == dict.fromkeys(ALIASES, .9)
+        for bad in (None, {}, {'MNV': .5, 'PLC': .5, 'Smol': .5}, {'MNV': -1, 'PLC': 1, 'Smol': 1}, {'MNV': float('nan'), 'PLC': .5, 'Smol': .5}, {'MNV': True, 'PLC': 0, 'Smol': 0}):
+            try:
+                schedule(dict(evaluation, poolShares=bad), e5)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid poolShares accepted')
+        custom = schedule(dict(evaluation, poolShares={'MNV': .5, 'PLC': .25, 'Smol': .25}), e5)
+        assert math.isclose(custom[1]['rates'][ALIASES['mobilenet']], .0015)
+        gateway = json.loads((HERE / 'g-steps-config.example.json').read_text())
+        gateway['capacityR'] = dict.fromkeys(ALIASES, .01)
+        g_stages = schedule(gateway, e5)
+        assert len(g_stages) == 1 and g_stages[0]['seconds'] == 600
+        assert [p['seconds'] for p in g_stages[0]['parts']] == [120] * 5
+        assert [p['alpha']['plc'] for p in g_stages[0]['parts']] == [.3, .5, .7, .9, 1.2]
+        assert math.isclose(g_stages[0]['parts'][-1]['rates'][ALIASES['plc']], .004)
+        assert gateway['measurementSLO']['plc'] == {'percentile': 95, 'targetLatencyNanos': 32000000}
         for bad in (None, {}, dict.fromkeys(ALIASES, -1), dict.fromkeys(ALIASES, float('nan'))):
             invalid = dict(evaluation, capacityR=bad)
             try:

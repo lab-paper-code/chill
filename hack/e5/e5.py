@@ -74,6 +74,13 @@ def module(name, path):
 def load(path):
     return json.loads(Path(path).read_text(), parse_constant=lambda x: (_ for _ in ()).throw(ValueError('Nonfinite JSON: '+x)))
 
+def pool_shares(config):
+    shares = config.get('poolShares', dict.fromkeys(('MNV', 'PLC', 'Smol'), 1 / 3))
+    if not isinstance(shares, dict) or set(shares) != {'MNV', 'PLC', 'Smol'} or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in shares.values()) or not math.isclose(sum(shares.values()), 1, rel_tol=0, abs_tol=1e-9):
+        raise ValueError('poolShares requires finite MNV/PLC/Smol shares in [0,1] summing to 1')
+    config['poolShares'] = dict(shares)
+    return shares
+
 def require_strict_archives(config):
     """Reject diagnostic archive tolerance anywhere in normative E5 inputs."""
     if isinstance(config, dict):
@@ -304,16 +311,13 @@ def bind(path):
     if not archive or any(not x.get('key') or not x.get('localPath') for x in archive): raise ValueError('Exact approved archive source key/local path bindings required')
     stages = [('E5-0', 600, [0,0,0]), ('E5-1', 1800, [.3,.3,.3]), ('E5-2-low', c['burstLowSeconds'], [.3,.3,.3]), ('E5-2-high', 900-c['burstLowSeconds'], [.3,.3,.9]), ('E5-3-50', 600, [.5]*3), ('E5-3-70', 600, [.7]*3), ('E5-3-90', 600, [.9]*3), ('E5-4', 900, [1.2]*3), ('E5-5-low', 600, [.3]*3), ('E5-5-high', 600, [.9]*3), ('E5-6', 3600, [.3]*3)]
     ws = {w['name']: w for w in c['workloads']}; schedule = []
+    shares = pool_shares(c)
+    share_by_workload = dict(zip(WORKLOADS, (shares['MNV'], shares['PLC'], shares['Smol'])))
     for label, duration, fractions in stages:
-        intended = {name: ws[name]['R']*fractions[j] for j, name in enumerate(WORKLOADS)}; rates = dict(intended)
-        remainder = c['G']-rates[WORKLOADS[0]]-rates[WORKLOADS[2]]
-        if remainder < 0: raise ValueError(label+': negative PLC G remainder requires user decision')
-        rates[WORKLOADS[1]] = min(rates[WORKLOADS[1]], remainder)
-        if label == 'E5-4' and rates != intended:
-            decision = c.get('overloadClipDecision')
-            if not decision or not decision.get('approvalUTC') or not decision.get('retainedOverloadWitness'): raise ValueError('Clipping intended overload requires explicit approved retained-overload witness')
-            refs['overloadClipWitness'] = ref(decision['retainedOverloadWitness'])
-        st = {'id': label, 'seconds': duration, 'intendedRates': intended, 'rates': rates, 'PLCRemainingG': remainder, 'PLCClippedBy': intended[WORKLOADS[1]]-rates[WORKLOADS[1]], 'traces': {}}
+        intended = {name: ws[name]['R']*share_by_workload[name]*fractions[j] for j, name in enumerate(WORKLOADS)}; rates = dict(intended)
+        if sum(rates.values()) > c['G']:
+            raise ValueError(label+': intended mixed rate exceeds measured G; no automatic clipping')
+        st = {'id': label, 'seconds': duration, 'poolShares': shares, 'alpha': dict(zip(WORKLOADS, fractions)), 'intendedRates': intended, 'rates': rates, 'traces': {}}
         for name, rate in rates.items():
             offsets = cli.arrival_offsets_ns('poisson', rate, duration, SEEDS[name]) if rate else []
             st['traces'][name] = {'seed': SEEDS[name], 'offsetsNS': offsets, 'offered': len(offsets), 'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest()}
@@ -480,8 +484,8 @@ class CPO:
         if s['snapshot'].get('reservations') or any(a.get('status') in ('running','cancel') for a in s.get('actions',[])): raise RuntimeError('E5-3 boundary configuration is transitioning; do not invent a weaker static selection')
         if set(settings['autonomousWorkloads']) != set(self.uids): raise RuntimeError('Actual full-control E5-3 configuration required')
         if any(not chosen['routing'][u] for u in self.uids): raise RuntimeError('Selected canonical route missing')
-        save(self.out/'static-selection.json',{'at':now(),'state':s,'fingerprint':chosen,'settings':settings,'selection':'Actual final E5-3 0.9Rw scheduler choice; no weak baseline selection'})
-        self.route_ack(chosen,settings,'static','D9 actual E5-3 maximum normal 0.9Rw selected configuration, same instances/modes/routes')
+        save(self.out/'static-selection.json',{'at':now(),'state':s,'fingerprint':chosen,'settings':settings,'selection':'Actual final E5-3 alpha=0.9 scheduler choice; rate=alpha*share*R; no weak baseline selection'})
+        self.route_ack(chosen,settings,'static','D9 actual E5-3 maximum normal alpha=0.9 selected configuration, same instances/modes/routes')
     def operation(self, body, prefix):
         save(self.out/(prefix+'-request.json'),body)
         timeout = self.tb['settleSeconds']
@@ -1049,7 +1053,7 @@ def judge(binding, folder):
                 r=finals.get(x.get('requestID')); outcomes[r.get('outcome') if r else 'unsent-at-window-end' if x.get('error')=='UnsentAtWindowEnd' else 'unfinished-or-no-final']+=1
                 if r and r.get('outcome')=='completed' and r.get('executionComplete') and positive(r.get('elapsedNanos')): good.append(r['elapsedNanos'])
             hits=sum(x<=w['slo']['targetLatencyNanos'] for x in good); required=math.ceil(len(offsets)*pct/100)
-            sub.append({'id':part['id'],'offered':len(offsets),'outcomes':dict(outcomes),'unfinishedOrUnsent':max(0,len(offsets)-len(selected)),'completedLatencyNS':d.stats(good),'deadlineSuccess':hits,'requiredSuccessfulRank':required,'D1':'UNMEASURED' if not offsets else 'FAIL' if normal and hits<required else 'OBSERVED_THRESHOLD_MET' if normal else 'OVERLOAD_DESCRIPTIVE','rate':part['rates'][w['name']],'intendedRate':part['intendedRates'][w['name']],'PLCRemainingG':part['PLCRemainingG'],'PLCClippedBy':part['PLCClippedBy']}); base=stop
+            sub.append({'id':part['id'],'offered':len(offsets),'outcomes':dict(outcomes),'unfinishedOrUnsent':max(0,len(offsets)-len(selected)),'completedLatencyNS':d.stats(good),'deadlineSuccess':hits,'requiredSuccessfulRank':required,'D1':'UNMEASURED' if not offsets else 'FAIL' if normal and hits<required else 'OBSERVED_THRESHOLD_MET' if normal else 'OVERLOAD_DESCRIPTIVE','rate':part['rates'][w['name']],'intendedRate':part['intendedRates'][w['name']],'poolShares':part['poolShares'],'alpha':part['alpha']}); base=stop
             sub[-1]['unfinishedOrUnsent']+=sum(not finals.get(x.get('requestID')) for x in selected)
         results[w['name']]['substages']=sub
         if any(x['D1']=='FAIL' for x in sub): results[w['name']]['D1']='FAIL'
@@ -1143,7 +1147,7 @@ def judge(binding, folder):
     if not gc_records and phase.get('mode')!='smoke':
         result['status']='NOT_READY';result['notReadyReasons'].append('Actual enabled gctrace GC CPU records missing; unknown is not zero')
     decisions=[x['decision'] for x in sched['records']]
-    result['intendedOverload']={'requested':st['id']=='E5-4','sourceOverloadDecisionObserved':any(w.get('state')=='Overload' for decision in decisions for w in decision.get('workloads',[])),'actualUnsent':sum(r['unsentAtWindowEnd'] for r in results.values()),'meaning':'Report actual source judgment and unissued offered arrivals explicitly; an intended 1.2R label is not proof that all overload reached the gateway.'}
+    result['intendedOverload']={'requested':st['id']=='E5-4','sourceOverloadDecisionObserved':any(w.get('state')=='Overload' for decision in decisions for w in decision.get('workloads',[])),'actualUnsent':sum(r['unsentAtWindowEnd'] for r in results.values()),'meaning':'Report actual source judgment and unissued offered arrivals explicitly; intended alpha=1.2 (rate=alpha*share*R) is not proof that all overload reached the gateway.'}
     result['searchBudget']={'budgetCutDecisions':sum(bool(((x.get('capacity') or {}).get('search') or {}).get('budgetCut')) for x in decisions),'gainWithinUncertaintyDecisions':sum('TransitionGainWithinUncertainty' in json.dumps(x) for x in decisions),'rawSearch':[(x.get('capacity') or {}).get('search') for x in decisions]}
     result['PVCUsage']={key:inp.json(folder/(key+'-pvc-usage.json')) for key in ('pre','post')}
     result['powerDrainInclusive']=tail_power

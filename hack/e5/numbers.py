@@ -13,6 +13,7 @@ file paths). Optional bundle fields:
     definitions or overlapping observation intervals).
   selections: {canonical-name: {percentile: 95|99, targetLatencyNanos: number}}
     freezes an approved choice; absent PLC/Smol choices remain preliminary.
+  poolShares: {MNV: 1/3, PLC: 1/3, Smol: 1/3}; finite [0,1], sum 1.
   witnesses: [{kind: initial|expand|shrink|swap, source: actual-plan-reference,
     before: [capacity-row-key], after: [capacity-row-key],
     chains: [{costIDs: [cost-id], removedBeforeRoute: [node-name]}],
@@ -187,6 +188,10 @@ def residuals(data, workloads, selected):
 def report(args):
     began = time.monotonic()
     data, state, snap, settings, profiles, rows, sources = read_inputs(args)
+    shares = data.get('poolShares', dict.fromkeys(('MNV', 'PLC', 'Smol'), 1 / 3))
+    if not isinstance(shares, dict) or set(shares) != {'MNV', 'PLC', 'Smol'} or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in shares.values()) or not math.isclose(sum(shares.values()), 1, rel_tol=0, abs_tol=1e-9):
+        raise ValueError('poolShares requires finite MNV/PLC/Smol shares in [0,1] summing to 1')
+    share_by_name = {'image-classification-tight-slo': shares['MNV'], 'plc-anomaly': shares['PLC'], 'smolvlm2-vqa': shares['Smol']}
     workloads = {w['name']: w for w in snap.get('workloads', [])}
     options = defaultdict(list)
     profile_rows, d_rows, cost_rows = [], [], []
@@ -304,8 +309,15 @@ def report(args):
         rule = (str(positives) + '/8 positive; slowest2 κ0=' + str(zeros) + '; pass=' + str(positives >= 5 and zeros)) if total is not None else UNKNOWN
         if name == 'image-classification-tight-slo':
             rule = 'canonical p95 1s 유지 (PLC/Smol 선별 규칙 대상 아님)'
-        rate_rows.append((name, selected[name]['percentile'] if selected[name]['targetLatencyNanos'] else '미선택', selected[name]['targetLatencyNanos'] / 1e6 if selected[name]['targetLatencyNanos'] else None, total, .3 * total if total is not None else None, .9 * total if total is not None else None, rule))
-    table('R 및 부하 (req/s; 고립 용량, 동시 보장 아님)', ('Workload', 'percentile', 'SLO ms (L은 이 이상)', 'R 후보', '0.3R', '0.9R', '과반/느린2 확인'), rate_rows)
+        share = share_by_name[name]
+        rate_rows.append((name, selected[name]['percentile'] if selected[name]['targetLatencyNanos'] else '미선택', selected[name]['targetLatencyNanos'] / 1e6 if selected[name]['targetLatencyNanos'] else None, total, share, *(alpha * share * total if total is not None else None for alpha in (.3, .5, .7, .9, 1.2)), rule))
+    table('R 및 POOL 단계률 (req/s; rate_w=α×s_w×R_w; 고립 R 동시 사용 불가)', ('Workload', 'percentile', 'SLO ms (L은 이 이상)', 'R 후보', 's_w', 'α=.3', 'α=.5', 'α=.7', 'α=.9', 'α=1.2', '과반/느린2 확인'), rate_rows)
+    known_rows = []
+    for name, values in capacities.items():
+        known = [v for v in values.values() if v is not None]
+        partial = sum(known) if known else None
+        known_rows.append((name, len(known), partial, share_by_name[name], *(alpha * share_by_name[name] * partial if partial is not None else None for alpha in (.3, .5, .7, .9, 1.2))))
+    table('K 진단 부분합 단계률 (미확정 R 대체 불가; SLO 변경 후 하한 보장 없음)', ('Workload', 'known Nodes/8', 'K', 's_w', 'α=.3', 'α=.5', 'α=.7', 'α=.9', 'α=1.2'), known_rows)
     print('\nR 후보도 자원/모드 적격성 및 최종 m 재생을 통과해야 확정. CapacityRejected/NonMonotone/Pending/누락은 κ0으로 채우지 않음.')
     table('비용 연결 현황 (s; profile 연결만, exact-state 인증 아님)', ('Node', 'profile ID', 'prepare 최대', 'remove 최대'), cost_rows)
     cold_rows = []
@@ -368,7 +380,7 @@ def report(args):
     if energy_rows:
         table('실제 planner 에너지/문턱 (J; signed evidence 상쇄 후)', ('전환', 'keep', 'best', '문턱 B', 'gain', 'keep feasible', '출처'), energy_rows)
     print('\n초기 λ=0/q=0의 W=0은 유입 이후 성공 증명이 아님. 증설/축소/교체의 자연 선택은 모든 Workload의 feasibility와 keep/best J, signed B 문턱까지 필요.')
-    print('G: 별도 계단 실측 필요. PLC remainder=G−0.3R_M−0.9R_S; 음수/overload 소실 시 자동 축소하지 않음.')
+    print('G: 고정 배치 혼합 계단 α=.3/.5/.7/.9/1.2 각120s 별도 실측; rate_w=α×s_w×R_w. 초과 시 자동 clip하지 않음.')
     print('실패 분모: 전환 중 수신 + 전환 밖 수신 + 구간 불명 = 전체 유효 offered 요청. 미완료/만료/실패를 제외하지 않음.')
     print('\n표 계산시간(파일/API 읽기 포함): %.3f s; κ 재생 실행 0회.' % (time.monotonic() - began))
 

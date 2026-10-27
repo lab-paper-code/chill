@@ -1,5 +1,6 @@
 {
   "controlSourceSHA": "3dff4e7",
+  "poolShares": {"MNV": 0.3333333333333333, "PLC": 0.3333333333333333, "Smol": 0.3333333333333333},
   "timeboxes": {
     "setupSeconds": 194,
     "barrierSeconds": 300,
@@ -53,7 +54,7 @@
     {
       "id": "E5-0",
       "seconds": 600,
-      "rateFractions": {
+      "alpha": {
         "mobilenet": 0,
         "smolvlm2": 0,
         "plc": 0
@@ -62,7 +63,7 @@
     {
       "id": "E5-1",
       "seconds": 1800,
-      "rateFractions": {
+      "alpha": {
         "mobilenet": 0.3,
         "smolvlm2": 0.3,
         "plc": 0.3
@@ -74,7 +75,7 @@
         {
           "id": "base",
           "seconds": 300,
-          "rateFractions": {
+          "alpha": {
             "mobilenet": 0.3,
             "smolvlm2": 0.3,
             "plc": 0.3
@@ -83,7 +84,7 @@
         {
           "id": "burst",
           "seconds": 600,
-          "rateFractions": {
+          "alpha": {
             "mobilenet": 0.3,
             "smolvlm2": 0.9,
             "plc": 0.3
@@ -97,7 +98,7 @@
         {
           "id": "half",
           "seconds": 600,
-          "rateFractions": {
+          "alpha": {
             "mobilenet": 0.5,
             "smolvlm2": 0.5,
             "plc": 0.5
@@ -106,7 +107,7 @@
         {
           "id": "rise",
           "seconds": 600,
-          "rateFractions": {
+          "alpha": {
             "mobilenet": 0.7,
             "smolvlm2": 0.7,
             "plc": 0.7
@@ -115,7 +116,7 @@
         {
           "id": "high",
           "seconds": 600,
-          "rateFractions": {
+          "alpha": {
             "mobilenet": 0.9,
             "smolvlm2": 0.9,
             "plc": 0.9
@@ -126,7 +127,7 @@
     {
       "id": "E5-4",
       "seconds": 900,
-      "rateFractions": {
+      "alpha": {
         "mobilenet": 1.2,
         "smolvlm2": 1.2,
         "plc": 1.2
@@ -138,7 +139,7 @@
         {
           "id": "down",
           "seconds": 600,
-          "rateFractions": {
+          "alpha": {
             "mobilenet": 0.3,
             "smolvlm2": 0.3,
             "plc": 0.3
@@ -147,7 +148,7 @@
         {
           "id": "up",
           "seconds": 600,
-          "rateFractions": {
+          "alpha": {
             "mobilenet": 0.9,
             "smolvlm2": 0.9,
             "plc": 0.9
@@ -158,7 +159,7 @@
     {
       "id": "E5-6",
       "seconds": 3600,
-      "rateFractions": {
+      "alpha": {
         "mobilenet": 0.3,
         "smolvlm2": 0.3,
         "plc": 0.3
@@ -167,7 +168,7 @@
     {
       "id": "E5-7",
       "seconds": 900,
-      "rateFractions": {
+      "alpha": {
         "mobilenet": 0.3,
         "smolvlm2": 0.3,
         "plc": 0.3
@@ -179,7 +180,7 @@
     "smolvlm2": null,
     "plc": null
   },
-  "evaluation": "E5: fill capacityR with final approved capacities before prepare; no example rate is an approved number",
+  "evaluation": "E5: freeze approved capacityR, poolShares and alpha before prepare; rate_w = alpha_w * s_w * R_w; examples are not approved capacity",
   "failureInjectionRunbook": {
     "executor": "CampaignOps only; manual existing kubectl, never automatic",
     "stage": "E5-7",
