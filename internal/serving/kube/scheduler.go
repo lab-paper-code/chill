@@ -66,7 +66,7 @@ type SchedulerControllerConfig struct {
 	Evidence      measurementEvidence
 	EvidenceStore string
 	MeterSource   func(metricobserver.SourceIdentity) (metricobserver.Source, error)
-	OnDecision    func(serving.SchedulerDecision) error
+	OnDecision    func(serving.SchedulerDecision, serving.SchedulerSnapshot) error
 	OnAction      func(OperationResult) error
 }
 type SchedulerControllerState struct {
@@ -313,7 +313,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		return serving.SchedulerDecision{}, err
 	}
 	if config.OnDecision != nil {
-		if err := config.OnDecision(decision); err != nil {
+		if err := config.OnDecision(decision, snapshot); err != nil {
 			return decision, fmt.Errorf("persist decision before physical action: %w", err)
 		}
 	}

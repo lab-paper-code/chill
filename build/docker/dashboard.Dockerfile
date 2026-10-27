@@ -6,6 +6,7 @@ COPY chill-dashboard/package.json chill-dashboard/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY chill-dashboard/ ./
 RUN pnpm build
+RUN mkdir -p /runtime/node_modules && cp -rL node_modules/ws /runtime/node_modules/ws
 
 FROM node:24.21.0-bookworm-slim
 WORKDIR /app
@@ -14,6 +15,8 @@ COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder /app/LICENSE.shadcn ./LICENSE.shadcn
+COPY --from=builder --chown=node:node /app/server ./server
+COPY --from=builder --chown=node:node /runtime/node_modules/ws ./node_modules/ws
 USER node
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "server/live-proxy.mjs"]

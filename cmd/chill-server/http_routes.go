@@ -129,7 +129,8 @@ func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer
 	}
 	var web *httputil.ReverseProxy
 	if webOrigin != nil {
-		// Native proxy preserves the browser Host and bearer for the web BFF.
+		// Native proxy preserves Upgrade, Origin and the public Host for /api/live.
+		// Do not SetURL/replace Host: the BFF validates the browser's TLS origin.
 		web = httputil.NewSingleHostReverseProxy(webOrigin)
 		web.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
 			consoleError(w, http.StatusBadGateway, "DashboardUnavailable")

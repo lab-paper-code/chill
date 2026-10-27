@@ -72,11 +72,13 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if diagnostics != nil {
 		recorder = diagnostics.recorder
 	}
+	publisher := newLivePublisher(ctx)
 	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
-		Diagnostics: recorder,
-		Retention:   opts.observationRetention,
+		Diagnostics:    recorder,
+		Retention:      opts.observationRetention,
+		OnRequestEvent: publisher.request,
 	})
 	if err != nil {
 		return err
@@ -94,6 +96,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	execution, err := serving.NewRuntime(backendCtx, serving.RuntimeConfig{
 		QueueLimit: opts.queueLimit, ObservationLog: observationLog,
 		Diagnostics: recorder,
+		OnChange:    publisher.changedRuntime,
 	})
 	if err != nil {
 		return err
@@ -112,16 +115,17 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	defer func() { retErr = errors.Join(retErr, observer.Close()) }()
 	manager, err := servingkube.NewManager(store, execution, observationLog, observer,
-		servingkube.ManagerConfig{DrainTimeout: opts.drainTimeout})
+		servingkube.ManagerConfig{DrainTimeout: opts.drainTimeout, OnWorkload: publisher.workload})
 	if err != nil {
 		return err
 	}
 	handlerConfig := httpapi.HandlerConfig{
 		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout, OperationTimeout: opts.operationTimeout,
 		MaxQueryEvents: opts.maxQueryEvents,
+		Live:           publisher.hub,
 	}
 	scheduler, err := newSchedulerService(
-		ctx, store, kube, execution, observer, objects, observationLog, opts, handlerConfig.RequestTimeout,
+		ctx, store, kube, execution, observer, objects, observationLog, opts, handlerConfig.RequestTimeout, publisher,
 	)
 	if err != nil {
 		return fmt.Errorf("initialize scheduler service: %w", err)
@@ -136,6 +140,14 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("initialize Workload service: %w", err)
 	}
+	views, err := manager.ListWorkloads(ctx)
+	if err != nil {
+		return fmt.Errorf("initialize live Workload projection: %w", err)
+	}
+	for _, view := range views {
+		publisher.workload(view, false)
+	}
+	publisher.startRuntime(ctx, execution)
 	if scheduler != nil && len(scheduler.controller.Settings().AutonomousWorkloads) > 0 {
 		execution.EnableSchedulerRouting()
 	}

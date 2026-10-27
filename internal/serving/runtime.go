@@ -16,6 +16,8 @@ type RuntimeConfig struct {
 	QueueLimit     int
 	ObservationLog *ObservationLog
 	Diagnostics    *Diagnostics
+	// OnChange is a nonblocking notification, called under the runtime lock.
+	OnChange func()
 }
 
 type Receipt struct {
@@ -156,6 +158,9 @@ func (r *Runtime) signal() {
 	select {
 	case r.changed <- struct{}{}:
 	default:
+	}
+	if r.config.OnChange != nil {
+		r.config.OnChange()
 	}
 }
 func (r *Runtime) Changed() <-chan struct{} { return r.changed }
@@ -1046,6 +1051,10 @@ func (r *Runtime) State(name string) (WorkloadState, error) {
 	if w == nil {
 		return WorkloadState{}, failure("WorkloadNotFound", "workload %q is not applied", name)
 	}
+	return r.workloadStateLocked(w), nil
+}
+
+func (r *Runtime) workloadStateLocked(w *runtimeWorkload) WorkloadState {
 	state := WorkloadState{Applied: w.definition, Reason: w.reason, Pending: len(w.queue), ObservedAt: time.Now().UTC()}
 	for _, c := range w.calls {
 		if c.assignment != nil && !c.backendDone {
@@ -1068,7 +1077,7 @@ func (r *Runtime) State(name string) (WorkloadState, error) {
 			state.Reason = "Ready"
 		}
 	}
-	return state, nil
+	return state
 }
 
 // Instances lists every actual instance with its bindings and outstanding work.

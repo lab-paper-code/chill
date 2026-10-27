@@ -192,3 +192,43 @@ func TestDashboardGatewayCannotReplaceChillServerAuthorization(t *testing.T) {
 		t.Fatalf("web outage changed native owner authorization: %d", response.Code)
 	}
 }
+
+func TestDashboardGatewayPreservesLiveUpgradeOriginAndHost(t *testing.T) {
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RequestURI() != "/api/live" || r.Host != "public.example:30443" ||
+			r.Header.Get("Origin") != "https://public.example:30443" ||
+			!strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			t.Errorf("live request changed: %s host=%s headers=%v", r.URL, r.Host, r.Header)
+		}
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"))
+	}))
+	defer web.Close()
+	handler, err := composeChillServer(http.NotFoundHandler(), &servingkube.Authorizer{}, options{dashboardURL: web.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := httptest.NewServer(handler)
+	defer public.Close()
+	request, err := http.NewRequest(http.MethodGet, public.URL+"/api/live", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Host = "public.example:30443"
+	request.Header.Set("Origin", "https://public.example:30443")
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	response, err := public.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("upgrade status=%d", response.StatusCode)
+	}
+}

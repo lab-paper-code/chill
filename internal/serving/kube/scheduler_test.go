@@ -258,7 +258,7 @@ func TestSchedulerTickDeadlinePreservesPublishedStateAndAllowsControlsOff(t *tes
 	config := controller.config
 	before := controller.State()
 	decisions := 0
-	controller.config.OnDecision = func(serving.SchedulerDecision) error { decisions++; return nil }
+	controller.config.OnDecision = func(serving.SchedulerDecision, serving.SchedulerSnapshot) error { decisions++; return nil }
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now())
 	defer cancel()
 	decision, err := controller.Tick(ctx, time.Now().UTC())
@@ -297,11 +297,10 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var publishedAt time.Time
-	controller.config.OnDecision = func(decision serving.SchedulerDecision) error {
+	controller.config.OnDecision = func(decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot) error {
 		if fixtureTarget(controller) == nil || len(fixtureTarget(controller).Actions) == 0 {
 			t.Fatal("fixture did not produce an actionable ON continuation")
 		}
-		snapshot := controller.State().Snapshot
 		if err := controller.observationLog.SchedulerRecord(serving.SchedulerObservation{At: decision.At, Snapshot: &snapshot, Decision: &decision}); err != nil {
 			return err
 		}

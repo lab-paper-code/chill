@@ -72,6 +72,7 @@ components:
   profiler-worker: { in: internal/profiling/profiler/worker }
   serving-core: { in: internal/serving }
   serving-httpapi: { in: internal/serving/httpapi }
+  serving-live: { in: internal/serving/live }
   serving-kube: { in: internal/serving/kube }
   firstfloor: { in: internal/firstfloor }
   serving-firstfloor: { in: internal/serving/firstfloor }
@@ -304,6 +305,10 @@ deps:
       - serving-core
       - api
       - serving-kube
+      - serving-live
+
+  serving-live:
+    anyVendorDeps: true
 
   serving-core:
     mayDependOn:

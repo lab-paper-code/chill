@@ -243,6 +243,8 @@ metadata:
   labels:
     {{- include "chill.labels" . | nindent 4 }}
 rules:
+  - nonResourceURLs: ["/chill/api/v1/live"]
+    verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/models", "/chill/api/v1/models/*", "/chill/api/v1/preprocessors", "/chill/api/v1/preprocessors/*", "/chill/api/v1/datasets", "/chill/api/v1/datasets/*", "/chill/api/v1/workloads", "/chill/api/v1/workloads/*"]
     verbs: [get, post, put, delete]
   - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power"]

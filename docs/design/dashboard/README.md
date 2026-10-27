@@ -121,7 +121,7 @@ pnpm은 [원본 toolchain](https://github.com/shadcn-ui/ui/blob/e8c3143b1cd19128
 | 서버 상태 | [TanStack Query 5.104.1](https://registry.npmjs.org/@tanstack%2Freact-query/latest), native `fetch` | cache, 제한된 polling, 요청 취소와 변경 중 상태를 사용한다. |
 | 폼과 로컬 상태 | native HTML, React `useState`, URL search parameters | 업무 입력과 서버 필드 오류를 연결한다. 도메인 검증은 ChillServer에서 수행한다. |
 | 날짜와 시간 | `Intl.DateTimeFormat`, `Date`, 원본 RFC3339Nano 문자열 | 표시와 조회 구간 변환을 수행하고 원본 정밀도를 보존한다. |
-| WebSocket | Go `github.com/coder/websocket`, Node `ws`, 브라우저 native `WebSocket` | 현재 직접 의존성에는 없다(`go.mod:5-23`, `chill-dashboard/package.json:15-40`). 구현 시 Go/Node 호환 버전을 확인해 `go.sum`과 `pnpm-lock.yaml`에 고정한다. 프로토콜 프레이밍을 직접 구현하지 않는다. |
+| WebSocket | Go `github.com/coder/websocket v1.8.13`, Node `ws 8.18.3`, 브라우저 native `WebSocket` | T5 서버와 standalone 앞단이 직접 사용하며 `go.sum`과 `pnpm-lock.yaml`에 고정한다. 프로토콜 프레이밍은 라이브러리에 맡긴다. |
 
 의존성은 `next-app`과 복사한 UI의 실제 import를 기준으로 설치한다.
 표는 API의 구체적인 TypeScript 타입을 사용하고, 목록의 각 행은 상세와 작업으로 바로 이동한다.
@@ -331,8 +331,8 @@ RBAC는 `charts/chill/templates/serving_entrypoint_rbac.yaml:243-250`의 caller 
 
 ### 4.4 발행 지점과 1초 집계
 
-현재 소스 위치는 2026-10-25 조사 및 pinned gopls `v0.23.0`/직접 소스 기준이다.
-새 파일·함수는 **예정**이며 보존 WIP가 현재 구현으로 합쳐졌다는 뜻은 아니다.
+아래 표는 2026-10-25 발행 경계 조사다. 2026-10-28 T5는 해당 callback을
+`cmd/chill-server/live.go`와 `internal/serving/live`에 연결했으며, 보존 WIP를 통째로 복원하지 않았다.
 
 | 데이터 흐름 | 읽은 현재 코드 위치 | 구현 연결점 |
 |---|---|---|
@@ -341,10 +341,10 @@ RBAC는 `charts/chill/templates/serving_entrypoint_rbac.yaml:243-250`의 caller 
 | 수신·응답 종결·실행 단계 | `internal/serving/observation_log.go:ObservationLog.RequestEvent`(:585-625), `RequestClosed/closeRowLocked`(:653-681), `runtime.go:Instances/instancesLocked`(:1028-1066) | RequestEvent 반영 성공 뒤 집계 callback을 호출한다. 재시도 가능한 final append나 native supplement를 새 요청 완료로 세지 않는다. native running 상태는 같은 callback에서 작은 상태에 반영하고 초당 delta로 묶는다. |
 | 전력 표본 도착 | `internal/metricobserver/observer.go:Observer.sample`(:193-218), `scheduler_service.go:restartPower`(:398-428) | 기존 ReadMetrics 성공 결과를 감싸는 Source adapter에서 node UID와 collector 수신 시각으로 집계한다. 기존 Observe 완료까지 기다리거나 새 수집 루프를 만들지 않는다. 실패 표본은 값 없음으로 전달한다. |
 
-조립은 `cmd/chill-server/server.go:run`과 `scheduler_service.go`에 두며 예정된
+조립은 `cmd/chill-server/server.go`와 `scheduler_service.go`에 둔다.
 `internal/serving/live` hub/집계기와 `httpapi/live.go`를 연결한다. callback은 짧은
 메모리 갱신만 하고 소켓·REST·S3를 기다리지 않는다. 기록 오류 처리와 물리 작업의 기존
-실패 계약은 유지한다. 주기 작업은 집계 flush/heartbeat뿐이고 서버 REST polling은 없다.
+실패 계약은 유지한다. 주기 작업은 집계/변경 상태 flush와 heartbeat뿐이고 서버 REST polling은 없다.
 
 - 버킷은 UTC `[bucketAt,bucketAt+1s)`다. `received`는 `receivedAt` 사건률이고,
   나머지는 **response_finished.At(응답 종결 시각)**으로 선택한 같은 요청 집단이다.

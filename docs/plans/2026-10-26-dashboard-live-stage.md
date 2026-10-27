@@ -4,12 +4,12 @@
 
 ## 남은 범위와 이미 있는 기반
 
-현재 코드에서 `/api/v1/live` 및 WebSocket 라이브 구현은 확인되지 않았다. 반면 보존 기간(`cmd/chill-server/options.go`), 실험 결과 읽기(`experiment_service.go`), 측정 결과 읽기(`measurement_service.go`), 상태 summary(`internal/serving/httpapi/scheduler_summary.go`), 작업 예상 소요 시간과 출처(`scheduler_expected_test.go`)는 이미 있으므로 다시 만들지 않는다. 이름 복원은 관측 응답 `definitions[]`와 판단 snapshot의 정의를 우선 사용하고 끝내 찾지 못하면 UID를 표시한다.
+T5 라이브 서버와 앞단은 2026-10-28 코드로 추가했다(아래 구현 기록). 보존 기간(`cmd/chill-server/options.go`), 실험 결과 읽기(`experiment_service.go`), 측정 결과 읽기(`measurement_service.go`), 상태 summary(`internal/serving/httpapi/scheduler_summary.go`), 작업 예상 소요 시간과 출처(`scheduler_expected_test.go`)는 기존 구현을 재사용한다. 이름 복원은 관측 응답 `definitions[]`와 판단 snapshot의 정의를 우선 사용하고 끝내 찾지 못하면 UID를 표시한다.
 
 | 순서 | 남은 작업 | 명세와 완료 조건 |
 |---|---|---|
-| 1 | T5 서버 hub와 DTO 계약 확정 | `DB-INT-07/08`: WebSocket push, 첫 메시지 인증, 인증 전 데이터 전송 없음; URL 토큰 금지 |
-| 2 | 앞단(Backend for Frontend) WebSocket 중계 | 기존 권한·출처 확인, HTTP 일반 요청 timeout과 장기 연결 분리, 단절/재개 처리 |
+| 1 | T5 서버 hub와 DTO 계약 코드 이행(2026-10-28) | `DB-INT-07/08`: WebSocket push, 첫 메시지 인증, 인증 전 데이터 전송 없음; URL 토큰 금지 |
+| 2 | 앞단(Backend for Frontend) WebSocket 중계 코드 이행(2026-10-28) | 기존 권한·출처 확인, HTTP 일반 요청 timeout과 장기 연결 분리, 단절/재개 처리 |
 | 3 | T6 라이브 무대 | `DB-FR-35`–`39`: 첫 구성→확장→축소를 한 시간축에서 설명 |
 | 4 | 근거 패널과 기록 재생 | `DB-FR-40` 이후: 같은 무대의 재생, 불변 실험 결과와 근거 저장소 관측 조회 |
 | 5 | 운영자 영역과 실제 브라우저 수용 검사 | 등록·설정·측정을 운영자 영역으로 모으고 조회와 쓰기 권한 구분 |
@@ -47,3 +47,28 @@
 완료 판정은 인증 실패 차단, snapshot/delta 순서, resume 범위 밖 재동기화, 느린 수신자 처리, 지표 누락 표시와 저장 시연의 빈 상태→첫 구성→확장→축소 브라우저 재생으로 한다. 이 문서 작성에서는 검사·배포를 실행하지 않았다.
 
 원시 근거: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 `dashboard-redesign-20261025.md`, `dashboard-plan-20261025.md`, `t5-resume-plan-20261025.md`, `workflow-plan-20261025.md`. 사용자 확정은 WebSocket·첫 메시지 인증·근거 저장소 재생이며 옛 폴링안은 대체됐다.
+
+## 2026-10-28 T5 코드 이행
+
+- `internal/serving/live`는 작은 DTO, 원자 baseline/구독, `(seq,at)` 재개,
+  bounded ring/queue와 snapshot barrier, 초별 metrics/지연 보정/누락 표시를 소유한다.
+  `httpapi/live.go`는 기존 TokenReview/SAR를 Upgrade 전에 수행하고 일반 HTTP
+  요청 timeout과 별개로 연결을 유지한다.
+- `cmd/chill-server/live.go`는 성공한 판단·작업 기록의 callback 인자만 투영한다.
+  판단 callback은 같은 capture의 snapshot을 받는다. 요청 이벤트는 성공한 반영
+  뒤에 집계하며 final 재저장은 완료를 다시 세지 않는다. Runtime 변경 통지는
+  기존 관측기의 Changed 채널을 빼앗지 않는 독립 nonblocking callback이다.
+  최초 목록만 읽고 이후 관리 기록/Runtime 통지로 상태를 갱신하며 REST polling은 없다.
+- `chill-dashboard/server/live-proxy.mjs`는 standalone Next를 loopback child로
+  실행하는 WebSocket 앞단이다. 첫 auth와 동일 Origin, 고정 TLS 상류, 초기 resume
+  한 건, 연결별 유한 쓰기/종료를 처리한다. Docker runtime과 정확한 live GET 권한을
+  함께 연결했다. T6 화면이나 배포 완료를 뜻하지 않는다.
+- 로컬 검증: 운영자의 G0 CPU 보호 창 종료 통보 뒤
+  `nice -n 19 env GOMAXPROCS=2 go test -p 1`로 `internal/serving/live`,
+  `httpapi`, `serving`, `kube`, `cmd/chill-server` 패키지 회귀를 통과했다.
+  `httpapi -run TestLiveAuthenticatedWebSocketSmoke -v` 출력은
+  `hello seq=0 → snapshot seq=1 → delta seq=2 → decision event seq=3`이었다.
+  Node 24.0.0의 `node --test chill-dashboard/server/live-proxy.test.mjs`도 2/2
+  통과했으며 로컬 TLS 상류의 `hello → snapshot` 실제 수신을 출력했다.
+  고정 Docker Node 24.21.0 이미지 빌드, 전체 lint/test 및 클러스터 접근·배포는 하지 않았다.
+

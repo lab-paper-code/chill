@@ -50,6 +50,7 @@ components=(
   profiler-worker
   serving-core
   serving-httpapi
+  serving-live
   serving-kube
   firstfloor
   serving-firstfloor
@@ -102,6 +103,7 @@ component_for() {
     internal/profiling/profiler/worker) echo profiler-worker ;;
     internal/serving) echo serving-core ;;
     internal/serving/httpapi) echo serving-httpapi ;;
+    internal/serving/live) echo serving-live ;;
     internal/serving/kube) echo serving-kube ;;
     internal/firstfloor) echo firstfloor ;;
     internal/serving/firstfloor) echo serving-firstfloor ;;

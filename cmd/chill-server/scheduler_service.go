@@ -56,6 +56,7 @@ type schedulerService struct {
 	observer                 *servingkube.Observer
 	objects                  *stores3.Store
 	observationLog           *serving.ObservationLog
+	live                     *livePublisher
 	opts                     options
 	gatewayRequestTimeout    time.Duration
 	catalog                  *servingkube.Catalog
@@ -72,7 +73,7 @@ type schedulerService struct {
 
 func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kubernetes.Interface,
 	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
-	observationLog *serving.ObservationLog, opts options, gatewayRequestTimeout time.Duration,
+	observationLog *serving.ObservationLog, opts options, gatewayRequestTimeout time.Duration, publisher *livePublisher,
 ) (*schedulerService, error) {
 	if opts.schedulerConfigMap == "" {
 		return nil, nil
@@ -90,6 +91,7 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 		operations: operations, store: store, kube: kube, execution: execution, observer: observer,
 		objects: objects, observationLog: observationLog, opts: opts, ctx: serviceCtx, cancel: cancel,
 		gatewayRequestTimeout: gatewayRequestTimeout,
+		live:                  publisher,
 	}
 	service.catalog, err = servingkube.NewCatalog(store, objects, opts.maxEvidenceBytes, opts.profileConfidenceLevel)
 	if err == nil {
@@ -346,11 +348,16 @@ func (o *schedulerService) operatingPower(
 	return o.observationLog.OperatingPower(ctx, from, to, meters, limit)
 }
 
-func (o *schedulerService) recordDecision(decision serving.SchedulerDecision) error {
-	snapshot := o.controller.State().Snapshot
-	return o.observationLog.SchedulerRecord(serving.SchedulerObservation{
+func (o *schedulerService) recordDecision(decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot) error {
+	if err := o.observationLog.SchedulerRecord(serving.SchedulerObservation{
 		At: decision.At, Decision: &decision, Snapshot: &snapshot,
-	})
+	}); err != nil {
+		return err
+	}
+	if o.live != nil {
+		o.live.decision(decision, snapshot)
+	}
+	return nil
 }
 func (o *schedulerService) recordAction(result servingkube.OperationResult) error {
 	expected, err := json.Marshal(result.Operation)
@@ -370,13 +377,22 @@ func (o *schedulerService) recordAction(result servingkube.OperationResult) erro
 	if !result.EndedAt.IsZero() {
 		event.CompletedAt = &result.EndedAt
 	}
-	return o.observationLog.SchedulerRecord(serving.SchedulerObservation{At: time.Now().UTC(), Action: &event})
+	if err := o.observationLog.SchedulerRecord(serving.SchedulerObservation{At: time.Now().UTC(), Action: &event}); err != nil {
+		return err
+	}
+	if o.live != nil {
+		o.live.action(result)
+	}
+	return nil
 }
 
 func (o *schedulerService) restartPower(config schedulerConfiguration) {
 	if o.powerCancel != nil {
 		o.powerCancel()
 		o.powerWG.Wait()
+	}
+	if o.live != nil {
+		o.live.powerScope(config.Meters, config.PowerObservation != nil)
 	}
 	if config.PowerObservation == nil {
 		return
@@ -391,6 +407,9 @@ func (o *schedulerService) restartPower(config schedulerConfiguration) {
 			if err != nil {
 				ctrl.Log.Error(err, "configure scheduler wall meter")
 				return
+			}
+			if o.live != nil {
+				source = livePowerSource{Source: source, metrics: o.live.metrics, nodeUID: meter.Node.UID}
 			}
 			observer, err := metricobserver.New(source)
 			if err != nil {

@@ -98,3 +98,8 @@ SCH-60~66 / SCH-AC-47~51, 상세 설계는
 ## Change record
 
 - 2026-10-27: G1 draft 작성. 문서 3파일만 변경하며 코드·클러스터 변경, 빌드·테스트 실행은 하지 않는다.
+- 2026-10-28: T5 전송부를 `internal/serving/live`로 분리한다. 이 component는
+  Serving/Kubernetes를 역참조하지 않는 DTO·유한 hub·초별 집계·WebSocket 전송을
+  소유하고 `serving-httpapi → serving-live`만 허용한다. composition root가 기록
+  성공 후 projection을 발행한다. `.go-arch-lint.yml`과 coverage mapping을 함께
+  갱신하며 이 허용은 G2 배포 또는 E5 실행 경로 변경을 승인하지 않는다.

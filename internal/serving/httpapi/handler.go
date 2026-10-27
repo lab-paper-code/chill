@@ -15,6 +15,7 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/live"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -27,6 +28,7 @@ type HandlerConfig struct {
 	// OperationTimeout bounds an operation measurement sequence or manual operation.
 	OperationTimeout                                           time.Duration
 	MaxQueryEvents                                             int
+	Live                                                       *live.Hub
 	Scheduler                                                  *servingkube.SchedulerController
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
@@ -123,6 +125,10 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	return h, nil
 }
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == livePath {
+		h.live(w, r)
+		return
+	}
 	timeout := h.config.RequestTimeout
 	if longOperation(r) {
 		timeout = h.config.OperationTimeout

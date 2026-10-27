@@ -30,7 +30,11 @@ const (
 	operationFailed             = "Failed"
 )
 
-type ManagerConfig struct{ DrainTimeout time.Duration }
+type ManagerConfig struct {
+	DrainTimeout time.Duration
+	// OnWorkload projects a recorded change without I/O or reentering Manager.
+	OnWorkload func(WorkloadView, bool)
+}
 
 // Manager is the only definition writer. It observes drain without holding this
 // lock across a wait; Advance performs one finite observation/application pass.
@@ -148,7 +152,13 @@ func (m *Manager) record(ctx context.Context, w *api.Workload, phase string, bef
 	if err != nil {
 		event.Error = failureReason(err)
 	}
-	return m.observationLog.ManagementEvent(event)
+	if err := m.observationLog.ManagementEvent(event); err != nil {
+		return err
+	}
+	if m.config.OnWorkload != nil {
+		m.config.OnWorkload(m.view(w), kind == "Delete" && phase == operationCompleted)
+	}
+	return nil
 }
 
 func (m *Manager) fail(ctx context.Context, w *api.Workload, cause error) error {

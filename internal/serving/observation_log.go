@@ -43,6 +43,9 @@ type ObservationLogConfig struct {
 	Outcomes    []string
 	Retention   time.Duration
 	Diagnostics *Diagnostics
+	// OnRequestEvent runs after successful event reflection and assignment storage.
+	// It must return promptly and must not reenter the log.
+	OnRequestEvent func(RequestEvent)
 }
 
 type DefinitionObservation struct {
@@ -649,6 +652,9 @@ func (l *ObservationLog) RequestEvent(event RequestEvent) error {
 			current.assignedHour = hour
 		}
 		l.requestMu.Unlock()
+	}
+	if l.config.OnRequestEvent != nil {
+		l.config.OnRequestEvent(event)
 	}
 	return nil
 }
