@@ -82,7 +82,7 @@ def require_component_source(receipt, identity, component, executable=None):
     if re.fullmatch('[0-9a-f]{40}', identity):
         matches = receipt.get('sourceSHA') == identity
     else:
-        expected = Path(__file__).resolve().parents[2] / identity
+        expected = REPO / identity
         actual = receipt.get('executable')
         matches = isinstance(actual, str) and Path(actual).resolve() == expected.resolve()
         if executable is not None:
@@ -315,17 +315,19 @@ def self_check():
                                               'power': 'bin/observation-power-source-f8c3d2b4'}})
     require_component_source({'sourceSHA': 'a'*40}, components['server'], 'server')
     require_component_source({'sourceSHA': 'b'*40}, components['loadgen'], 'loadgen')
-    pinned = str(Path(__file__).resolve().parents[2] / components['power'])
-    require_component_source({'sourceSHA': 'c'*40, 'executable': pinned}, components['power'], 'power', pinned)
-    for component, receipt in [('server', {'sourceSHA': 'b'*40}),
-                               ('loadgen', {'sourceSHA': 'a'*40}),
-                               ('power', {'executable': pinned+'-different'})]:
-        try:
-            require_component_source(receipt, components[component], component)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError('Mismatched component source accepted')
+    from unittest.mock import patch
+    with patch.dict(globals(), REPO=Path('/frozen/repository'), __file__='/ops/harness/e5-frozen/hack/e5/e5.py'):
+        pinned = str(REPO / components['power'])
+        require_component_source({'sourceSHA': 'c'*40, 'executable': pinned}, components['power'], 'power', pinned)
+        for component, receipt in [('server', {'sourceSHA': 'b'*40}),
+                                   ('loadgen', {'sourceSHA': 'a'*40}),
+                                   ('power', {'executable': pinned+'-different'})]:
+            try:
+                require_component_source(receipt, components[component], component)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Mismatched component source accepted')
     try:
         approval_sources({'sourceSHA': 'a'*40, 'sources': components})
     except ValueError:
