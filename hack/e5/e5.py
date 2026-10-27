@@ -2,6 +2,8 @@
 """Offline bind/check/judge and immutable private publication; released CPO campaign control.
 Cleanup is one server reset with retained steps/ACKs; no client cleanup assembly.
 No implicit phase advance, retry, runtime build, fault injection, or guessed phase6 values.
+Settings GET/PUT use at least 30s (or the larger configured apiSeconds).
+A timed-out settings PUT is never resent: matching GET readback confirms application.
 """
 import argparse
 import base64
@@ -24,6 +26,7 @@ import sys
 import time
 import threading
 import urllib.parse
+import urllib.error
 import urllib.request
 import zlib
 
@@ -366,7 +369,19 @@ class CPO:
         self.native_mode_authorized_since=load(marker)['authorizedSinceUTC'] if marker.exists() else None
         self.native_evidence=[]
 
-    def api(self, method, path, body=None): return self.io.api(method,path,body,timeout=self.tb['apiSeconds'])
+    def api(self, method, path, body=None):
+        settings_path = path == '/api/v1/scheduler/settings'
+        timeout = max(30, self.tb['apiSeconds']) if settings_path else self.tb['apiSeconds']
+        try:
+            return self.io.api(method,path,body,timeout=timeout)
+        except (TimeoutError, urllib.error.URLError) as error:
+            if not settings_path or method != 'PUT' or not isinstance(getattr(error, 'reason', error), TimeoutError):
+                raise
+            observed = self.settings()
+            mismatched = [key for key, value in body.items() if key not in observed or observed[key] != value]
+            if mismatched:
+                raise RuntimeError('Settings PUT timed out; readback mismatch; no retransmission: ' + ', '.join(mismatched)) from error
+            return {'appliedByReadback': True, 'settings': observed}
     def state(self): return self.api('GET','/api/v1/scheduler/state')
     def settings(self): return self.api('GET','/api/v1/scheduler/settings')
     def put(self, settings):

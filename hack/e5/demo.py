@@ -887,6 +887,43 @@ def self_check():
         with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}):
             e5 = module('demo_smoke_e5', HERE / 'e5.py')
             d = e5.module('demo_smoke_conduct', HERE / 'd2/conduct_before.py')
+        # Settings share the configured budget, with one readback and no PUT retry.
+        settings_probe = object.__new__(e5.CPO)
+        requested = {'autonomousWorkloads': [], 'excludedNodes': ['held'], 'controls': {'membership': True}}
+        for seconds in (5, 129):
+            settings_probe.tb = {'apiSeconds': seconds}
+            for failure, observed in (
+                    (None, requested),
+                    (TimeoutError('response timed out'), requested),
+                    (e5.urllib.error.URLError(TimeoutError('response timed out')), requested),
+                    (TimeoutError('response timed out'), dict(requested, autonomousWorkloads=['owned'])),
+                    (e5.urllib.error.URLError('connection refused'), requested)):
+                settings_calls = []
+                def settings_api(method, path, body=None, timeout=None):
+                    settings_calls.append((method, path, timeout))
+                    assert path == '/api/v1/scheduler/settings'
+                    if method == 'PUT':
+                        assert body == requested
+                        if failure is not None:
+                            raise failure
+                        return {'validatedAt': 'fixture'}
+                    assert method == 'GET'
+                    return copy.deepcopy(observed)
+                settings_probe.io = SimpleNamespace(api=settings_api)
+                assert settings_probe.settings() == observed
+                settings_calls.clear()
+                timed_out = isinstance(getattr(failure, 'reason', failure), TimeoutError)
+                try:
+                    receipt = settings_probe.put(dict(requested, staticRouting={}, staticRoutingValidatedAt='old', powerObservation={}))
+                except RuntimeError as error:
+                    assert timed_out and observed != requested and 'readback mismatch; no retransmission' in str(error)
+                except e5.urllib.error.URLError as error:
+                    assert error is failure and not timed_out
+                else:
+                    assert observed == requested
+                    assert receipt == ({'appliedByReadback': True, 'settings': observed} if timed_out else {'validatedAt': 'fixture'})
+                expected_methods = ['PUT', 'GET'] if timed_out else ['PUT']
+                assert settings_calls == [(method, '/api/v1/scheduler/settings', max(30, seconds)) for method in expected_methods]
         fixture_power = {'sampling': {'Interval': 750000000, 'Duration': 5000000000, 'RequestTimeout': 700000000, 'MaxEvents': 9}, 'coverage': {'MaximumGap': 3000000000, 'MaximumBoundaryDistance': 1000000000, 'MinimumCoverage': .75}}
         config = {'collection': {'schedulerConfigMap': 'fixture'}, 'timeboxes': {'apiSeconds': 1}}
         with patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(stdout=json.dumps({'data': {'scheduler.json': json.dumps({'powerObservation': fixture_power})}}))):
