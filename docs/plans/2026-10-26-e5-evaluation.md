@@ -84,8 +84,8 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 | 항목 | 현재 경계 |
 |---|---|
 | MNV SLO | p95 1초/m29ms 유지. [최종 R 승인 요청서](file:///home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/e5-numbers-20261027.md) §2–3: rev98 연구SLO 재생완료, R 숫자승인·Node선별합격·연구개시 분리 |
-| PLC/Smol percentile·SLO | canonical p95 32ms/7.034초 최종재생 Built235/Rejected20/Pending0. 측정용50ms/p99 60초는과거대조K만사용. PLC32ms는positive1/8로선별FAIL이며몰래50ms로완화하지않음 |
-| 적격 Node 선별 | PLC8Node Built·positive1/8(느린jetsonx/orangepi Built0이나과반FAIL). Smol8Node Built·positive5/8·느린lattepanda/jetsonx Built0로PASS. MNVjetsonx6행resourceRejected는κ0아니며관측적격7Node집합에서제외 |
+| PLC/Smol percentile·SLO | PLC32/40/50ms비교완료(요청서§2): R_P28.752259/1175.903157/1754.080759, α1.2·몫.1 rate3.450271/141.108379/210.489691. 세후보모두선별FAIL이므로‘조건통과중가장엄격한SLO’로자동선택할후보없음. 50ms sweep등록은승인변경아님 |
+| 적격 Node 선별 | PLC profile느린2는jetsonx/orangepi(b1p95 4.267/5.643992ms). 32mspositive1/8로FAIL,40/50mspositive7/8이나orangepiκ8.798149/57.177257>0·jetsonx자원Rejected≠0로FAIL. Smol7.034s는positive5/8·느린lattepanda/jetsonx Built0로PASS |
 | 공통m·L·cap·delivery/socket | residual p95 후보16ms/p99 후보195ms와 구별해 m29ms 유지 승인 요청. L MNV2/PLC1/Smol75초·cap129초·delivery10ms/socket L+20ms, native remaining=L−senderElapsed−m |
 | G·혼합 단계 | 최종R·몫(.45/.1/.45)의 α.3/.5/.7/.9/1.2 총45.923572/76.539286/107.155001/137.770715/183.694287req/s, Smolburst46.503534. G1300req/s **[추정]**이면.8G1040으로산술통과하나α1.2는관측140초과. G0고정배치120s단1회·자동clip/계단탐색금지 |
 | κ/R·계산 근거 | `control-197-capacity-replay/{scheduler,capacity-final,kappa-final,report}.json`, snapshot13:54Z, 최종관측적격R MNV331.637207/PLC28.752259/Smol2.148007req/s. 기본모드exact Built232/Rejected16, 추가모드/d누락Rejected별도. 측정용과거K M331.637207/P1657.443564/S3.236584와구별 |
