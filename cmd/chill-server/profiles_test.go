@@ -53,6 +53,35 @@ func measuredAdoptionProfile() serving.Profile {
 		},
 	}
 }
+
+func TestPositiveProfileKeepsExistingBundleAndBatchJSON(t *testing.T) {
+	profile := measuredAdoptionProfile()
+	profile.Batches[0].EnergyPerInputJoules = 0.5
+	profile.Batches[1].EnergyPerInputJoules = 1
+	for _, tc := range []struct {
+		name string
+		body any
+		want string
+	}{
+		{name: "immutable native bundle", body: profile.NativeBundle(),
+			want: `{"profileID":"measurements/complete/uid","batches":[` +
+				`{"size":1,"serviceSamplesMS":[1,2],"energyPerItemJ":0.5},` +
+				`{"size":2,"serviceSamplesMS":[3],"energyPerItemJ":1}]}`},
+		{name: "serving batches", body: profile.Batches,
+			want: `[{"batch":1,"durationNanos":[2000000,1000000],"energyPerInputJoules":0.5,"memoryBytes":2048},` +
+				`{"batch":2,"durationNanos":[3000000],"energyPerInputJoules":1,"memoryBytes":4096}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := json.Marshal(tc.body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("existing positive profile JSON changed:\n got %s\nwant %s", got, tc.want)
+			}
+		})
+	}
+}
 func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *testing.T) {
 	service := &schedulerService{
 		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),

@@ -131,7 +131,7 @@ type BatchProfile struct {
 	Batch                 int       `json:"batch"`
 	DurationNanos         []float64 `json:"durationNanos"`
 	EnergyPerInputJoules  float64   `json:"energyPerInputJoules"`
-	EnergyBelowResolution bool      `json:"energyBelowResolution"`
+	EnergyBelowResolution bool      `json:"energyBelowResolution,omitempty"`
 	MemoryBytes           uint64    `json:"memoryBytes"`
 	MeanWallWatts         float64   `json:"meanWallWatts,omitempty"`
 }

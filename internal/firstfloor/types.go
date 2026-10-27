@@ -82,7 +82,7 @@ type BatchProfile struct {
 	Size                  int       `json:"size"`
 	ServiceSamplesMS      []float64 `json:"serviceSamplesMS"`
 	EnergyPerItemJ        float64   `json:"energyPerItemJ"`
-	EnergyBelowResolution bool      `json:"energyBelowResolution"`
+	EnergyBelowResolution bool      `json:"energyBelowResolution,omitempty"`
 }
 type ProfileBundle struct {
 	ProfileID string         `json:"profileID"`

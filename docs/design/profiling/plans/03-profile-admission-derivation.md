@@ -76,7 +76,8 @@ If the interval upper endpoint is at least zero, serving publishes
 below-resolution representation, not a claim that measured energy was exactly
 zero. The marker is retained in profile records, API responses, and the native
 startup bundle (`energyPerItemJ: 0`). Positive and exact-zero estimates remain
-unchanged with the marker false. If the upper endpoint is negative, the whole
+unchanged with the marker false and omitted from JSON, preserving existing
+immutable bundle bytes. If the upper endpoint is negative, the whole
 profile is unavailable with `NegativeIncrementalEnergy`, including batch, signed
 estimate and interval in J/item; independent remeasurement is required rather
 than retrying until a positive estimate appears. Native admission and scheduler
