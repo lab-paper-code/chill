@@ -129,3 +129,57 @@ func TestNvidiaMatchingClockStillAppliesAndSettlesNewRequests(t *testing.T) {
 		t.Fatalf("reboot implicitly reapplied or stale readback: %v applies=%d", current.Annotations, host.applies)
 	}
 }
+
+func TestNvidiaUnrequestedClocksDoNotAdvanceGeneration(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Labels: map[string]string{},
+		Annotations: map[string]string{
+			metadata.PowerModeGeneration: "87",
+			metadata.PowerModeBoot:       "boot-1",
+			metadata.PowerActuator:       `{"kind":"NvidiaLockedGPUClock","nvidiaLockedGPUClock":{"minMHz":300,"maxMHz":300}}`,
+		},
+	}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"}}}
+	for _, step := range []struct {
+		name       string
+		mode       string
+		mhz        int32
+		boot       string
+		generation int64
+	}{
+		{name: "default boost", mhz: 900, boot: "boot-1", generation: 87},
+		{name: "default idle", mhz: 300, boot: "boot-1", generation: 87},
+		{name: "default restart", mhz: 300, boot: "boot-1", generation: 87},
+		{name: "default reboot", mhz: 300, boot: "boot-2", generation: 88},
+		{name: "requested lock", mode: "GPU_900", mhz: 900, boot: "boot-2", generation: 89},
+		{name: "requested restart", mode: "GPU_900", mhz: 900, boot: "boot-2", generation: 89},
+		{name: "requested drift", mode: "GPU_900", mhz: 300, boot: "boot-2", generation: 90},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			node.Labels[metadata.PowerMode] = step.mode
+			node.Status.NodeInfo.BootID = step.boot
+			host := &gpuClockHost{t: t, mhz: step.mhz}
+			observation, err := host.Observe(context.Background(), nodeactuator.Request{
+				Target: nodeactuator.Target{Kind: nodeactuator.ActuatorKindNvidiaLockedGPUClock},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			annotations := map[string]*string{}
+			generation, err := publishReadBack(node, observation, nil, annotations)
+			if err != nil || generation != step.generation {
+				t.Fatalf("generation=%d err=%v, want %d", generation, err, step.generation)
+			}
+			var readBack edgev1alpha1.PowerModeActuator
+			if err := metadata.NodeReadBack(node, &readBack); err != nil {
+				t.Fatal(err)
+			}
+			if readBack.NvidiaLockedGPUClock.MinMHz != step.mhz {
+				t.Fatalf("physical MHz telemetry lost: %+v", readBack)
+			}
+			if step.name == "default boost" && (annotations[metadata.PowerActuator] == nil ||
+				*annotations[metadata.PowerActuator] != node.Annotations[metadata.PowerActuator]) {
+				t.Fatal("default MHz change was not staged for publication")
+			}
+		})
+	}
+}

@@ -134,12 +134,12 @@ func (r *PowerModeReconciler) awaitBootRead(
 	return now.Before(transition.ApplyStartedAt.Add(bound)), nil
 }
 
-// publishReadBack records the observed actuator and bootID and counts every
-// change of either since the values on the Node, so a change by hand, a
-// reboot, and an apply all count once, and an agent restart counts none. A
-// failed host read keeps the read-back and counts a new boot only; that boot
-// clears the read-back, which no longer describes the host. The local Node is
-// updated with the staged patch so a later read in this pass counts from it.
+// publishReadBack records the observed actuator and bootID and counts host mode
+// changes and boots once, and agent restarts none. Unrequested NVIDIA MHz are
+// telemetry, not a change from the installation's fixed/default policy. A failed
+// host read keeps the read-back and counts a new boot only; that boot clears the
+// read-back, which no longer describes the host. The local Node is updated with
+// the staged patch so a later read in this pass counts from it.
 func publishReadBack(
 	node *corev1.Node,
 	observation nodeactuator.Observation,
@@ -167,7 +167,9 @@ func publishReadBack(
 		sameAnnotation(node, metadata.PowerModeBoot, &boot) {
 		return generation, nil
 	}
-	if published {
+	clockOnly := observation.Target.Kind == nodeactuator.ActuatorKindNvidiaLockedGPUClock &&
+		node.Labels[metadata.PowerMode] == "" && sameAnnotation(node, metadata.PowerModeBoot, &boot)
+	if published && !clockOnly {
 		generation++
 	}
 	value := strconv.FormatInt(generation, 10)
