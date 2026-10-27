@@ -51,6 +51,8 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 
 ## 집계·제외 규칙
 
+로컬 표 행 생성은 `nice -n 19 python3 hack/e5/e5.py tables <결과 디렉터리>`를 사용한다. 이미 저장된 `e5-summary.json`(기존 `summarize` 출력)과 단계별 `judgment.json`, 또는 G0/시연의 단계별 `summary.json`만 읽는다. `run/` 하위 결과도 인식한다. 출력은 명세 평가 표와 workload-pools 설계 §9 E5 표의 열·설명을 그대로 보존하고 근거 칸만 채우며 정본 파일은 수정하지 않는다. 기존 측정 연결 상태는 PASS가 아니며 G0/시연은 E5 미측정으로 유지한다. 부록에는 생성기 지각(ns), 입구 지연(ns, 음수·시계 불확실성 유지), 수신 기준 SLO 지연(ns 또는 시연 ms)과 기존 판정을 분리한다. 누락값은 `null`이며 재판정하지 않는다. 최소 자체 검사는 `nice -n 19 python3 hack/e5/e5.py tables --self-check`다.
+
 - **offered는 실행 전에 동결한 전체 planned trace의 요청 수**이며 실제 발행 수나 완료 JSONL 행 수로 다시 정의하지 않는다. 미발행·유실 행도 deadline 내 성공의 분모에 남긴다. 실패·거절·취소·만료·drain·미완료·censoring과 표본수를 남긴다. 완료 응답 분위수만으로 전체 성적을 대체하지 않는다.
 - 시간은 세 구간을 분리한다. **① scheduled arrival→actual send의 lateness는 generator 품질**, **② actual send→gateway receivedAt은 entrance delay**, **③ CHILL 수신→응답은 SLO**다. [03_routing 결과 반환과 SLO](../spec/03_routing.md#결과-반환과-slo)의 수신 원점을 유지하며 D1/deadline/완료 분위수는 성공·executionComplete HTTP final의 동일 게이트웨이 단조시계 `elapsedNanos`를 사용한다. 현 관측 경계는 gateway Response 진입이며 전체 socket 전달 완료와 같다고 확장하지 않는다. `receivedAt`은 requestID로 raw final/assigned에 결합하고, entrance delay=`receivedAtNS-sentAtUnixNS`는 호스트 간 시계 오차·불확실성을 그대로 표시하며 음수를 0으로 자르지 않는다. native supplement는 HTTP final을 대체하지 않는다.
 - `sentMonotonicNS`/`finishedMonotonicNS`와 `sentAtUnixNS`/`finishedAtUnixNS`를 보존한다. `latencyMs`는 실제 send→finish HTTP 왕복이고 `scheduledLatencyMs` 및 `finishedMonotonicNS-scheduledMonotonicNS`(보존 원시 fallback=`finishedMonotonicNS-(startMonotonicNS+scheduledOffsetNs)`)는 **reference only**다. producer lateness를 SLO에 더하거나 요청 lifetime **L에서 차감하지 않는다**. L과 gateway/native의 실제 수신 이후 경과 시간 예산은 원래 계약 그대로이며 residual/tail·occupancy d 정의도 바꾸지 않는다. 결측은 unknown이다.
@@ -86,12 +88,12 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 
 | 항목 | 현재 경계 |
 |---|---|
-| MNV SLO | [최종 R 승인 요청](file:///home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/e5-numbers-20261027.md): **PLC36ms·Smol7.034s·MNV1s, m29ms, 몫.45/.1/.45, G0결과대기**. PLC36은Main decision-log확정 |
-| PLC/Smol percentile·SLO | PLC32/36/40/50ms비교후36ms선택. R_P691.151722, α1.2몫.1 rate82.938207. 32과반FAIL·40/50느린orangepi양수한계와36의jetsonx자원Rejected한계를원시그대로공개 |
-| 적격 Node 선별 | PLC36positive5/8·orangepiBuilt0,jetsonx6resourceRejected≠κ0로엄격느린2κ0입증한계유지. Smol7.034s positive5/8·느린lattepanda/jetsonx Built0로PASS. MNV/PLC는관측적격7Node합 |
+| MNV SLO | [최종 R 재승인 요청(G0 결과 대기)](file:///home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/e5-numbers-20261027.md): **genesis2 하드웨어결함으로제외한7Node**, PLC36ms·Smol7.034s·MNV1s·m29ms·몫.45/.1/.45 유지확정 |
+| PLC/Smol percentile·SLO | 7Node PLC36/40/50ms재생완료·36ms유지확정. R_P387.365408/752.333535/1211.605198, α1.2몫.1 rate46.483849/90.280024/145.392624. 과거genesis2 cache및8Node R합산금지 |
+| 적격 Node 선별 | PLC36positive4/7·orangepiBuilt0,jetsonx6resourceRejected≠κ0한계유지. 40/50orange양수로느린2조건FAIL. Smolpositive4/7·느린lattepanda/jetsonx Built0. MNV/PLC관측적격6Node,Smol7Node합 |
 | 공통m·L·cap·delivery/socket | residual p95 후보16ms/p99 후보195ms와 구별해 m29ms 유지 승인 요청. L MNV2/PLC1/Smol75초·cap129초·delivery10ms/socket L+20ms, native remaining=L−senderElapsed−m |
-| G·혼합 단계 | 선택R·몫(.45/.1/.45)의 α.3/.5/.7/.9/1.2 총65.795556/109.659259/153.522963/197.386667/263.182222req/s, Smolburst66.375518. G1300req/s **[추정]**이면.8G1040으로산술통과하나α1.2는관측140초과. G0결과대기·단1회고정배치120s·clip/계단탐색금지 |
-| κ/R·계산 근거 | PLC36 `control-197-plc-36/{scheduler,capacity-final,kappa-plc-sweep}.json`, MNV/Smol동일UID·SLO·합유지확인. 최종관측적격R MNV331.637207/PLC691.151722/Smol2.148007req/s. 과거측정용K M331.637207/P1657.443564/S3.236584와구별 |
+| G·혼합 단계 | 7Node α.3/.5/.7/.9/1.2 총43.639668/72.732780/101.825892/130.919004/174.558672req/s,Smolburst43.986671. G1300 **[추정]**·.8G1040이하이나관측140초과. genesis2제외·open-loop고정6instance G0결과대기 |
+| κ/R·계산 근거 | `control-201-plc-36/{scheduler,capacity-final,kappa-seven-nodes}.json`,excludedNodes=g1/orin/g2; R MNV235.890404/PLC387.365408/Smol1.285195req/s. 후속40/50비교도동일7Node필터,기본모드/U2분리. 8Node총263.182222입력은현실행에사용금지 |
 | 전환 witness | 과거preflight-control-195-u2x 초기 MNV B519.700616/W14.099864초·PLC B1039.401232/W0.802653초는측정SLO에서도초과. capacity재생은rev98에서완료; 일부U2후보/과거UID와최종E5율의초기·확장·축소·소유권swap witness는계속구별 |
 | 에너지 선택 | minimumGain 고정%없음; 후보별signed상쇄B_J·gain>B_J/equality KEEP, H600초/reserve0. 최신변경후보gain5005.869972J/B463.558920J는 관측 예이며 기본안 최종통과 아님 |
 | 정적·N·추가 모드 | 정적full E5-3끝 α=0.9 실제구성·N=2(membership-off/replicas-off), 없으면no-effect. 기본 fixed/MAXN/jetsonx15W6만 묶고 live jetsono15W 및 U2추가모드는 별도 승인. 전체435분(reset등별도), stabilization300초 유지 |

@@ -70,6 +70,14 @@ if __name__=='__main__' and sys.argv[1:]==['self-check']:
     self_check()
     sys.exit(0)
 
+if __name__=='__main__' and sys.argv[1:2]==['tables']:
+    spec=importlib.util.spec_from_file_location('e5_tables',HERE/'tables.py')
+    tables=importlib.util.module_from_spec(spec);spec.loader.exec_module(tables)
+    if len(sys.argv)!=3:sys.exit('Usage: e5.py tables <result-directory|--self-check>')
+    if sys.argv[2]=='--self-check':tables.self_check(HERE.parents[1])
+    else:print(tables.render(Path(sys.argv[2]),HERE.parents[1]))
+    sys.exit(0)
+
 ENVIRONMENT_PATH = Path(os.environ['CHILL_EXPERIMENT_CONFIG'])
 ENVIRONMENT = json.loads(ENVIRONMENT_PATH.read_text())
 E5 = ENVIRONMENT['e5']
