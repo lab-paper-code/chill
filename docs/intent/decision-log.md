@@ -458,3 +458,9 @@
 
 - 생성기 지각 1.33%→1.13%(SSLContext 1회 `7e324981`)→**0건**(Guaranteed 2CPU/1Gi + MNV 3 shard `e8ed3cff`, config 값). planned=issued 전부 일치.
 - #203 G0(174.56 req/s, 120s, 고정 6 instance): PLC 수신 기준 p95 14.2ms≤36, 입구 지연 p95 ~23ms, cs CPU peak 1.60/6, 메모리 623MB, throttle 0 → **게이트웨이 비병목 확인(G0 목적 달성)**. Smol p95 12.47s>7.034s·성공 94.5%는 고정 6 instance 배치(Smol 용량 미달)의 산물로 분리 기록 — E5는 자율 배분이므로 G0 판정 대상 아님. 도구 판정 FAIL은 보존.
+
+## 2026-10-27 20:5xZ — 최종 숫자 승인(사용자): 7 Node, PLC 36ms, R M235.89/P387.37/S1.285
+
+- 토큰 갱신 후 E5-0 → E5. G0 Smol 미달은 고정 6 배치+α1.2 과부하 산물로 G0 판정과 분리.
+- 보고서 조건: 생성기는 요청마다 새 TLS 연결(keep-alive 없음) → 입구 지연(p95 23ms)·게이트웨이 CPU에 핸드셰이크 비용 포함. 연결 재사용은 E5 뒤 과제(지금 변경 금지).
+- E5 실행 창 중 genesis1 build/test 금지(부하 창 방송 규칙). 원격 push 승인(자격 증명·대용량 원시 제외).
