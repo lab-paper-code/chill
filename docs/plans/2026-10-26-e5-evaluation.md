@@ -130,5 +130,7 @@ leximin 변경은 유한 초과량의 선택도 바꿀 수 있으므로 과거 �
 
 finish·resume·factor의 owned reset은 공통 `CPO.clear_owned`를 경유한다. `timeboxes.finishResetWaitSeconds`는 기존 settle 시간과 독립적인 유한 양수이며 기본600초다. 동결 config와 기존 token lifetime 예산에도 이 값을 포함한다. owned autonomy off 이후 fresh snapshot·reservations0·running/cancel0을 기다려 reset을 한 번만 보낸다. `*-reset-wait.json`에 off ACK 시각·관측열·최종 state를 보존하며, 상한에서는 reset을 보내지 않고 FAIL로 끝낸다. 강제 삭제·자동 재시도는 없다.
 
+preflight의 별도27분 하드코딩 상한은 없다. 단계·timeboxes에서 계산하는 기존 token lifetime 예산 공식과 실제 token 잔여 수명 검사는 그대로 유지한다.
+
 
 원시 근거: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 `deployment2-e5-proposal-20261024.md` §9–10, `e5-numbers-proposal-20261025.md`, `north-star.md`, `d-measurement-decision.md`, `checkpoints.md` 1953–2001행. 원시 capacity·CSV·JSON·측정 캠페인은 옮기지 않았다.

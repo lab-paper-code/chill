@@ -444,9 +444,6 @@ def prepare(e5, args):
         if spec.get('staticPlacement') or len(stages) != 2 or not stages[0].get('readyGate') or len(stages[1]['parts']) != 1 or stages[1]['seconds'] != 60 or stages[1]['rates'] != {ALIASES['mobilenet']: 20, ALIASES['smolvlm2']: .3, ALIASES['plc']: 40}:
             raise ValueError('Preflight requires zero-load Ready gate then 60s mixed load (20/.3/40)')
         e5.require_strict_archives(spec)
-        auth = e5.module('demo_auth', HERE / 'auth.py')
-        if auth.lifetime_budget(stages, spec['timeboxes'], spec.get('tokenSafetyMarginSeconds', 60)) > 1620:
-            raise ValueError('Preflight duration budget exceeds 27 minutes')
     token_config = e5.load(spec['e5Config']) if spec.get('e5Config') else e5.load(spec.get('operationalRecipe', e5.OPERATIONAL_RECIPE))
     token_config = dict(token_config, timeboxes=spec.get('timeboxes', token_config.get('timeboxes')),
                         tokenSafetyMarginSeconds=spec.get('tokenSafetyMarginSeconds', token_config.get('tokenSafetyMarginSeconds', 60)))

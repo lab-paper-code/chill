@@ -131,10 +131,30 @@ def main():
             else:
                 raise AssertionError('Expired token passed start/run')
         assert not (out / 'initial.json').exists() and not (out / 'smoke-E0').exists()
+        prepare_spec = dict(spec, operationalRecipe=str(root / 'token-config.json'))
+        prepare_spec.pop('e5Config', None)
+        e5.save(root / 'token-config.json', config)
+        e5.save(root / 'prepare-config.json', prepare_spec)
+        prepare_args = SimpleNamespace(out=root / 'prepare', config=root / 'prepare-config.json')
+        with patch.object(demo, 'assemble', side_effect=AssertionError('Expired token reached assembly')):
+            try:
+                demo.prepare(e5, prepare_args)
+            except ValueError as error:
+                assert 'remaining' in str(error) and 'required' in str(error)
+            else:
+                raise AssertionError('Expired preflight token was accepted')
         token.write_text(jwt(7200))
         record = cpo.check_token_lifetime()
         assert record['requiredSeconds'] == 2820 and record['expiresUTC']
         assert cpo.check_token_lifetime(schedule[1])['requiredSeconds'] == 1095
+        with patch.object(demo, 'assemble', side_effect=RuntimeError('Local assembly boundary reached')) as assembly:
+            try:
+                demo.prepare(e5, prepare_args)
+            except RuntimeError as error:
+                assert str(error) == 'Local assembly boundary reached'
+            else:
+                raise AssertionError('Prepare did not reach its local assembly boundary')
+            assembly.assert_called_once()  # 2820s is allowed when the real token covers it.
         cpo.b = dict(binding, schema='e5-binding.v1')
         cpo.a.command = 'campaign'
         cpo.c = dict(config, factors=[{'name': 'one'}])
