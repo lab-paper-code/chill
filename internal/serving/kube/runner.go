@@ -24,12 +24,13 @@ const (
 	refusedRunnerContainerUnsupported = "RunnerContainerUnsupported"
 	refusedRunnerNamespace            = "RunnerNamespace"
 	refusedRunnerPrepareFailed        = "RunnerPrepareFailed"
+	refusedRunnerSourceStateMismatch  = "RunnerSourceStateMismatch"
 )
 
 // runnerPreparation selects the runner of a transition-cost measurement: the
 // newest prepared profile measured on the Node with its ModelSpec, execution
 // path and first mode. A reason refuses the measurement.
-func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransitionCost, node *core.Node, config SchedulerControllerConfig) (PrepareSpec, string) {
+func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransitionCost, node *core.Node, classes []edge.DeviceClass, config SchedulerControllerConfig) (PrepareSpec, string) {
 	if transition.Spec.ServingContainer != firstfloorContainerName {
 		return PrepareSpec{}, refusedRunnerContainerUnsupported
 	}
@@ -49,6 +50,16 @@ func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransi
 	}
 	if best == nil {
 		return PrepareSpec{}, refusedRunnerProfileMissing
+	}
+	var class *edge.DeviceClass
+	for i := range classes {
+		if classes[i].Name == best.Condition.DeviceClass {
+			class = &classes[i]
+			break
+		}
+	}
+	if class == nil || confirmedPower(node, class, transition.Spec.Modes[0].PowerMode) != nil {
+		return PrepareSpec{}, refusedRunnerSourceStateMismatch
 	}
 	spec := config.Preparations[best.ID]
 	sum := sha256.Sum256([]byte(transition.UID))

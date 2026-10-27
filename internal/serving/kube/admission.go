@@ -197,7 +197,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 		transition, _ := root.object.(*edge.PowerModeTransitionCost)
 		var runner PrepareSpec
 		if transition != nil {
-			if runner, reason = c.runnerPreparation(transition, node, config); reason != "" {
+			if runner, reason = c.runnerPreparation(transition, node, classes.Items, config); reason != "" {
 				errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(reason, "")))
 				continue
 			}

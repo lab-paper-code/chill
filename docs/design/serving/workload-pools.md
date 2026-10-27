@@ -607,7 +607,7 @@ E1은 2026-10-19 UTC에 수행했다. 첫 실행과 rev 35 재실행 결과를 �
 | D-1 | 첫 실행의 Tick이 30 s deadline으로 133회 실패해 첫 구성이 없었고 요청 1,660건 중 성공이 없었다. |
 | D-2 | 60 s 이상 settling이 필요한 MLIB 실행에서 runner의 60 s `IdleTimeout`이 연결을 닫았다. |
 | D-3 | PMTC observer의 runner PodIP 연결이 edge tunnel에서 실패했다; Service 경유 관측은 재실행에서 성공했다. |
-| D-4 | PMTC는 `modes[0]` 상태에서 시작해야 하며, 첫 시도는 `SourceStateMismatch`로 실패했다. |
+| D-4 | PMTC는 `modes[0]` 상태에서 시작해야 하며, 첫 시도는 `SourceStateMismatch`로 실패했다. Admission은 선택 runner 프로파일의 DeviceClass 기준 Node read-back이 `modes[0]`과 다르면 taint·runner Pod 생성 전에 `Refused: RunnerSourceStateMismatch`를 기록한다. |
 | D-5 환경 | orin-nano Pod DNS의 `127.0.0.53` 질의가 거부되어 해당 노드의 serving prepare를 진행하지 못했다. |
 | D-6 환경 | jetson-nano MAXN→5W NodeActuation이 `Applying`에 머물렀고 SSH 연결이 시간 초과됐다. |
 | D-7 | 빈 노드의 `Fixed` 전력 내림에 power cost가 요구됐으며, rev 35 재실행에서는 측정 비용 없이 낮은 모드로 전환했다. |
