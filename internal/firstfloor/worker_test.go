@@ -19,16 +19,13 @@ func testState(uid string, target float64, rate float64) RequestState {
 	return RequestState{Context: RequestContext{WorkloadUID: uid, Definition: uid + "/1", SLO: SLO{Percentile: 95, TargetMS: target}}, ArrivalRate: rate, Phase: "queued"}
 }
 
-func TestMeasuredEnergyRemainsNonnegativeWithResolutionMarker(t *testing.T) {
-	for _, below := range []bool{false, true} {
-		for _, energy := range []float64{-1, 0, 1} {
-			policy := testPolicy()
-			policy.Batches[0].EnergyPerItemJ = energy
-			policy.Batches[0].EnergyBelowResolution = below
-			err := validatePolicy(policy, []int{1, 2})
-			if (err != nil) != (energy < 0) {
-				t.Fatalf("energy %g, below-resolution %t: %v", energy, below, err)
-			}
+func TestMeasuredEnergyRemainsNonnegative(t *testing.T) {
+	for _, energy := range []float64{-1, 0, 1} {
+		policy := testPolicy()
+		policy.Batches[0].EnergyPerItemJ = energy
+		err := validatePolicy(policy, []int{1, 2})
+		if (err != nil) != (energy < 0) {
+			t.Fatalf("energy %g: %v", energy, err)
 		}
 	}
 }

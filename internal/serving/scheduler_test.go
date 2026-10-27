@@ -100,8 +100,8 @@ func TestReplayEnergyRemainsNonnegativeWithResolutionMarker(t *testing.T) {
 				t.Fatalf("energy %g, below-resolution %t: %v", energy, below, reasons)
 			}
 			policy := schedulerPolicy(instance)
-			if policy.Batches[0].EnergyBelowResolution != below {
-				t.Fatal("replay native policy lost below-resolution marker")
+			if policy.Batches[0].EnergyPerItemJ != energy || instance.Profile.Batches[0].EnergyBelowResolution != below {
+				t.Fatal("replay policy changed energy or the serving resolution marker")
 			}
 		}
 	}

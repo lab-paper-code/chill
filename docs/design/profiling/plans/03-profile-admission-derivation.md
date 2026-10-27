@@ -74,10 +74,13 @@ confidence level used by other consumers.
 If the interval upper endpoint is at least zero, serving publishes
 `energyPerInputJoules: 0` and `energyBelowResolution: true`. This is an explicit
 below-resolution representation, not a claim that measured energy was exactly
-zero. The marker is retained in profile records, API responses, and the native
-startup bundle (`energyPerItemJ: 0`). Positive and exact-zero estimates remain
-unchanged with the marker false and omitted from JSON, preserving existing
-immutable bundle bytes. If the upper endpoint is negative, the whole
+zero. The marker is retained in serving profile records, API responses, and
+replay input profiles only. The native startup bundle receives only the
+existing `energyPerItemJ: 0` field: the frozen runtime uses a strict decoder,
+so no resolution marker is added to its schema. Positive and exact-zero
+estimates remain unchanged with the marker false and omitted from serving
+JSON, preserving existing immutable bundle bytes. If the upper endpoint is
+negative, the whole
 profile is unavailable with `NegativeIncrementalEnergy`, including batch, signed
 estimate and interval in J/item; independent remeasurement is required rather
 than retrying until a positive estimate appears. Native admission and scheduler

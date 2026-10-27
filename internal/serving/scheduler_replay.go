@@ -466,7 +466,7 @@ func schedulerPolicy(i SchedulerInstance) firstfloor.Policy {
 			samples[j] = v / 1e6
 		}
 		sort.Float64s(samples)
-		p.Batches = append(p.Batches, firstfloor.BatchProfile{Size: b.Batch, ServiceSamplesMS: samples, EnergyPerItemJ: b.EnergyPerInputJoules, EnergyBelowResolution: b.EnergyBelowResolution})
+		p.Batches = append(p.Batches, firstfloor.BatchProfile{Size: b.Batch, ServiceSamplesMS: samples, EnergyPerItemJ: b.EnergyPerInputJoules})
 	}
 	return p
 }

@@ -141,8 +141,12 @@ func TestCatalogNegativeIncrementalEnergyResolution(t *testing.T) {
 				t.Fatalf("below-resolution serving contract changed other measured facts: %+v", batch)
 			}
 			native := profile.NativeBundle().Batches[0]
-			if native.EnergyPerItemJ != 0 || !native.EnergyBelowResolution {
-				t.Fatalf("native bundle lost explicit below-resolution report: %+v", native)
+			if native.EnergyPerItemJ != 0 {
+				t.Fatalf("native bundle lost zero-energy representation: %+v", native)
+			}
+			bundleJSON, err := json.Marshal(profile.NativeBundle())
+			if err != nil || bytes.Contains(bundleJSON, []byte("energyBelowResolution")) {
+				t.Fatalf("native bundle changed the frozen runtime schema: %s, %v", bundleJSON, err)
 			}
 			payload, err := json.Marshal(view)
 			if err != nil || !bytes.Contains(payload, []byte(`"energyBelowResolution":true`)) {

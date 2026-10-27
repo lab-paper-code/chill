@@ -217,7 +217,6 @@ func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
 		slices.Sort(samples)
 		bundle.Batches[i] = firstfloor.BatchProfile{
 			Size: batch.Batch, ServiceSamplesMS: samples, EnergyPerItemJ: batch.EnergyPerInputJoules,
-			EnergyBelowResolution: batch.EnergyBelowResolution,
 		}
 	}
 	return bundle

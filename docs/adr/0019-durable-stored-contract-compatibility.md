@@ -29,7 +29,7 @@ Change a stored contract at most once per work unit, and not while a
 measurement campaign depends on it. Bumping a version strands every object
 written before it, so a bump that no reader needs is pure cost.
 
-2026-10-28 schedule: add the serving profile/native-bundle `energyBelowResolution` field once before E5; activate the reader/writer cutover after the active U2 measurement campaign, without changing its raw/result contracts.
+2026-10-28 schedule: add serving-profile `energyBelowResolution` once before E5; keep the frozen native-bundle schema unchanged (zero energy only) and retain the marker in serving records/API/replay inputs, without changing active U2 raw/result contracts.
 
 A reader that meets a form it cannot decode reaches one operator-visible
 terminal outcome rather than returning an ordinary error that reconciles

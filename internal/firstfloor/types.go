@@ -79,10 +79,9 @@ type ErrorResponse struct {
 	Progress          *Progress `json:"progress,omitempty"`
 }
 type BatchProfile struct {
-	Size                  int       `json:"size"`
-	ServiceSamplesMS      []float64 `json:"serviceSamplesMS"`
-	EnergyPerItemJ        float64   `json:"energyPerItemJ"`
-	EnergyBelowResolution bool      `json:"energyBelowResolution,omitempty"`
+	Size             int       `json:"size"`
+	ServiceSamplesMS []float64 `json:"serviceSamplesMS"`
+	EnergyPerItemJ   float64   `json:"energyPerItemJ"`
 }
 type ProfileBundle struct {
 	ProfileID string         `json:"profileID"`
