@@ -222,11 +222,12 @@ class Prepare:
         c['inputs']['capacityScheduler']=str(self.out/'scheduler.json')
         c['inputs']['powerObservation']=str(self.out/'power-observation.json')
         c['inputs']['evaluationPayload']=str(self.out/'evaluation-payload.json')
+        c['collection']={**self.op['collection'],'archiveRefs':str(self.out/'required-raw-refs.json')}
         e5.save(c['inputs']['powerObservation'],{'schedulerSettings':{'powerObservation':e5.power_observation(c)}})
         archive=[{'key':self.pub[k],'localPath':self.pub[k]} for k in ('ranking','costs','bias')]
         archive.extend({'key':self.n['g0Evidence'][k],'localPath':self.n['g0Evidence'][k]} for k in ('verdict','binding'))
         e5.save(self.out/'required-raw-refs.json',archive)
-        c['collection']={**self.op['collection'],'archiveRefs':str(self.out/'required-raw-refs.json')};c['workloads']=[]
+        c['workloads']=[]
         sys.path.insert(0,str(e5.REPO/'load-generator/src'));from chill_loadgen import cli
         producer=e5.module('e5prod_identity',HERE/'e5-producer.py')
         payload={}

@@ -126,5 +126,7 @@ leximin 변경은 유한 초과량의 선택도 바꿀 수 있으므로 과거 �
 
 미사용 D2 AFTER·별도 m 보고·정량 판정 UTC/플래그는 bind 선행조건이 아니다. 현재 평가 ID/bytes는 보존 producer payload와 동일성을 확인하지만 실제 profiling ID/carrier 열거가 없으면 분리 증거는 UNKNOWN으로 공개하며 빈 목록을 만들지 않는다. 69/69는 역사적 정확 비용 연결 분모이고, 현재 후보/적격성·평가 완료 분모와 다르다. 초기 준비 cohort·Node 차단 제외 cohort·U2 5종 근거의 전용 연결이 아직 없다는 한계는 별도 audit에 남기며 새 관측/집계 메커니즘이나 완료 근거를 꾸미지 않는다. `energyBelowResolution`의 명시적0과 marker, genesis2 하드웨어 제외, 요청마다 새 TLS 핸드셰이크 조건도 보고한다. 오프라인 bind 성공은 실제 E5 연구 결과나 실험 개시 승인이 아니다.
 
+실제 `profilingRecordIDs`가 제공되면 평가 ID와의 교집합은 계속 거부하며, 누락일 때만 분리를 UNKNOWN으로 둔다. ID 분리는 pinned carrier 동일성 증명이 아니다. E5-7 recovery는 선택적이고 성공/전체 복구를 요구하지 않지만, 제공하면 대상 Node UID 일치 및 uncordon 이후·단계 종료 이내의 실제 시각을 검증한다.
+
 
 원시 근거: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 `deployment2-e5-proposal-20261024.md` §9–10, `e5-numbers-proposal-20261025.md`, `north-star.md`, `d-measurement-decision.md`, `checkpoints.md` 1953–2001행. 원시 capacity·CSV·JSON·측정 캠페인은 옮기지 않았다.

@@ -204,6 +204,14 @@ def validate_failure_events(evidence, start_utc, end_utc):
             raise ValueError('E5-7 operator command identity/timestamp/result incomplete')
     if events[1]['nodeUID'] != events[2]['nodeUID']:
         raise ValueError('E5-7 cordon/uncordon Node identity differs')
+    if 'recovery' in evidence:
+        recovery = evidence['recovery']
+        if not isinstance(recovery, dict) or not isinstance(recovery.get('atUTC'), str):
+            raise ValueError('E5-7 supplied recovery identity/timestamp incomplete')
+        at = dt.datetime.fromisoformat(recovery['atUTC'].replace('Z', '+00:00')).timestamp()
+        uncordon_at = dt.datetime.fromisoformat(events[2]['atUTC'].replace('Z', '+00:00')).timestamp()
+        if recovery.get('nodeUID') != events[2]['nodeUID'] or not start <= uncordon_at <= at <= end:
+            raise ValueError('E5-7 recovery must match the Node and occur within the stage after uncordon')
     # Failed commands and absent recovery are observations, not missing measurements.
 
 
@@ -239,6 +247,14 @@ def d25_acceptance(cr, raw):
             'maximumIdleFraction': maximum_idle_fraction,
             'dRange': [signed-idle_ns, signed], 'kappaErrorBound': idle,
             'meaning': 'Identified idle-only range, not a confidence interval; signed raw retained, planner consumes max(d,0)'}
+
+
+def profiling_evaluation_separation(workload, payload):
+    if 'profilingRecordIDs' not in workload:
+        return {'status':'UNKNOWN','reason':'Actual profiling record enumeration/pinned-carrier split proof not retained; not inferred from absent/empty IDs'}
+    if set(workload['profilingRecordIDs']) & {record['recordID'] for record in payload}:
+        raise ValueError('Profiling and evaluation record IDs overlap')
+    return {'status':'DISJOINT_RECORD_IDS','reason':'Provided profiling IDs do not overlap evaluation IDs; pinned-carrier equality is not inferred'}
 
 
 def self_check():
@@ -337,6 +353,29 @@ def self_check():
     failed.pop('recovery')
     failed['events'][0]['atUTC'] = '2026-10-28T00:02:59Z'
     validate_failure_events(failed,'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
+    partial = copy.deepcopy(failed)
+    partial['recovery'] = {'nodeUID':'node','atUTC':'2026-10-28T00:11:00Z','readyRef':'readback'}
+    validate_failure_events(partial,'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
+    for recovery in ({'nodeUID':'other','atUTC':'2026-10-28T00:11:00Z'},
+                     {'nodeUID':'node','atUTC':'2026-10-27T23:59:59Z'},
+                     {'nodeUID':'node','atUTC':'2026-10-28T00:09:59Z'},
+                     {'nodeUID':'node','atUTC':'2026-10-28T00:15:01Z'},
+                     {'nodeUID':'node'}):
+        try:
+            validate_failure_events(dict(evidence,recovery=recovery),'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Mismatched/out-of-stage recovery accepted')
+    identity = [{'recordID':'evaluation'}]
+    assert profiling_evaluation_separation({},identity)['status'] == 'UNKNOWN'
+    assert profiling_evaluation_separation({'profilingRecordIDs':['profiling']},identity)['status'] == 'DISJOINT_RECORD_IDS'
+    try:
+        profiling_evaluation_separation({'profilingRecordIDs':['evaluation']},identity)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Known profiling/evaluation overlap accepted')
     try:
         validate_failure_events(dict(evidence,events=evidence['events'][:2]),'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
     except ValueError:
@@ -691,7 +730,7 @@ def bind(path):
         payload[w['name']] = producer.identity(records)
         if payload[w['name']] != recorded_payload[w['name']]:
             raise ValueError('Host evaluation payload differs from actual captured producer identity')
-        w['profilingEvaluationSeparation'] = {'status':'UNKNOWN','reason':'Actual profiling record enumeration/pinned-carrier split proof not retained; not inferred from absent/empty IDs'}
+        w['profilingEvaluationSeparation'] = profiling_evaluation_separation(w, payload[w['name']])
         template = load(w['jobTemplate']); refs['job-'+w['name']] = ref(w['jobTemplate'])
         pod = template['spec']['template']['spec']
         if pod['restartPolicy'] != 'Never' or len(pod['containers']) != 1 or pod['containers'][0]['name'] != 'load': raise ValueError('Actual single load container/Never Job template required')
