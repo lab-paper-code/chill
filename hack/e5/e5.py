@@ -63,6 +63,34 @@ def set_producer_resources(pod, config):
             resources.setdefault(field, {}).update(config['producerResources'])
 
 
+def approval_sources(approval):
+    if 'sourceSHA' in approval:
+        raise ValueError('Single sourceSHA is removed; explicit server/loadgen/power sources required')
+    sources = approval.get('sources')
+    if not isinstance(sources, dict) or set(sources) != {'server', 'loadgen', 'power'}:
+        raise ValueError('sources requires exact server/loadgen/power component identities')
+    for identity in sources.values():
+        if not isinstance(identity, str) or not (
+            re.fullmatch('[0-9a-f]{40}', identity)
+            or re.fullmatch(r'[A-Za-z0-9_-]+(?:/[A-Za-z0-9_.-]+)+', identity)
+        ) or '..' in Path(identity).parts:
+            raise ValueError('Component source requires a full Git SHA or pinned repository-relative binary path')
+    return dict(sources)
+
+
+def require_component_source(receipt, identity, component, executable=None):
+    if re.fullmatch('[0-9a-f]{40}', identity):
+        matches = receipt.get('sourceSHA') == identity
+    else:
+        expected = Path(__file__).resolve().parents[2] / identity
+        actual = receipt.get('executable')
+        matches = isinstance(actual, str) and Path(actual).resolve() == expected.resolve()
+        if executable is not None:
+            matches = matches and Path(executable).resolve() == expected.resolve()
+    if not matches:
+        raise ValueError(component + ' receipt differs from frozen component source identity')
+
+
 def self_check():
     spec=importlib.util.spec_from_file_location('e5_check_analysis',HERE/'d2/analyze_before.py')
     analysis=importlib.util.module_from_spec(spec);spec.loader.exec_module(analysis)
@@ -117,6 +145,27 @@ def self_check():
     set_producer_resources(pod, custom)
     for container in pod['containers'] + pod['initContainers']:
         assert container['resources']['requests'] == container['resources']['limits'] == custom['producerResources']
+    components = approval_sources({'sources': {'server': 'a'*40, 'loadgen': 'b'*40,
+                                              'power': 'bin/observation-power-source-f8c3d2b4'}})
+    require_component_source({'sourceSHA': 'a'*40}, components['server'], 'server')
+    require_component_source({'sourceSHA': 'b'*40}, components['loadgen'], 'loadgen')
+    pinned = str(Path(__file__).resolve().parents[2] / components['power'])
+    require_component_source({'sourceSHA': 'c'*40, 'executable': pinned}, components['power'], 'power', pinned)
+    for component, receipt in [('server', {'sourceSHA': 'b'*40}),
+                               ('loadgen', {'sourceSHA': 'a'*40}),
+                               ('power', {'executable': pinned+'-different'})]:
+        try:
+            require_component_source(receipt, components[component], component)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Mismatched component source accepted')
+    try:
+        approval_sources({'sourceSHA': 'a'*40, 'sources': components})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Removed single-source approval accepted')
     print('PASS E5 receive-origin SLO, scheduled reference, generator quality and full planned issuance; offline only')
 
 
@@ -146,7 +195,7 @@ NODES = E5['nodes']
 WORKLOADS = ['image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa']
 SEEDS = dict(zip(WORKLOADS, [101, 202, 303]))
 REQUIRED = {
- 'approval': ['phase6ApprovalUTC', 'e5StartApprovalUTC', 'sourceSHA', 'controlImageDigest', 'runtimeDigests', 'D1', 'D6', 'D9'],
+ 'approval': ['phase6ApprovalUTC', 'e5StartApprovalUTC', 'sources', 'controlImageDigest', 'runtimeDigests', 'D1', 'D6', 'D9'],
  'inputs': ['scheduler', 'capacity', 'nodes', 'pods', 'after', 'd25', 'gMeasurement', 'mMeasurement', 'ranking', 'costs', 'bias', 'gateway', 'producer'],
  'numerical': ['G', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds'],
  'workload': ['name', 'uid', 'generation', 'slo', 'R', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'datasetDir', 'fields', 'profilingRecordIDs', 'jobTemplate', 'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'producerDatasetDir'],
@@ -324,6 +373,7 @@ def bind(path):
     module('e5_quality', D2/'analyze_before.py').generator_quality_config(c)
     need(c, ['approval', 'inputs', 'G', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
     need(c['approval'], REQUIRED['approval'], 'approval'); need(c['inputs'], REQUIRED['inputs'], 'inputs'); need(c['collection'], REQUIRED['collection'], 'collection'); need(c['timeboxes'], REQUIRED['timeboxes'], 'timeboxes')
+    component_sources = approval_sources(c['approval'])
     if not all(positive(c[k]) for k in ('G', 'smokeSeconds')) or type(c['mSeconds']) not in (int,float) or not math.isfinite(c['mSeconds']) or c['mSeconds']<0 or not 0 < c['burstLowSeconds'] < 900: raise ValueError('Actual G/m/smoke and 0<burstLowSeconds<900 required')
     if any(not positive(v) for v in c['timeboxes'].values()) or c['timeboxes']['setupSeconds']+3600+c['timeboxes']['drainSeconds']+c['timeboxes']['flushSeconds'] > 4200: raise ValueError('Finite collector-compatible timeboxes required (sum<=4200s)')
     if type(c['N']) is not int or c['N'] < 1 or c['N'] != len(c['factors']): raise ValueError('N must equal a nonempty preselected witnessed factor set; absent witness is NOT_READY')
@@ -335,7 +385,8 @@ def bind(path):
     refs['operationalRecipe']=ref(OPERATIONAL_RECIPE); refs['experimentEnvironment']=ref(ENVIRONMENT_PATH)
     for name in ('conduct_before.py','bind_before.py','analyze_before.py','sample_cgroups.py','native_mode_request.py'):refs['D2-helper-'+name]=ref(D2/name)
     receipt=load(c['collection']['powerReceipt']); power=ref(c['collection']['powerExecutable'])
-    if receipt.get('sourceSHA')!=c['approval']['sourceSHA'] or receipt.get('executable')!=power['path'] or receipt.get('sha256')!=power['sha256'] or receipt.get('buildExitCode')!=0: raise ValueError('Actual frozen-source existing offline power tool receipt required')
+    require_component_source(receipt,component_sources['power'],'power',power['path'])
+    if receipt.get('executable')!=power['path'] or receipt.get('sha256')!=power['sha256'] or receipt.get('buildExitCode')!=0: raise ValueError('Actual frozen-source existing offline power tool receipt required')
     refs['powerExecutable']=power;refs['powerReceipt']=ref(c['collection']['powerReceipt'])
     s = load(c['inputs']['scheduler']); snap = s['state']['snapshot'] if 'state' in s else s['snapshot']; settings = s['settings']
     cap = load(c['inputs']['capacity']); rows = cap if isinstance(cap, list) else cap['rows']
@@ -348,10 +399,12 @@ def bind(path):
     refs['approvedInferenceModeScope']=ref(scope_path)
     gateway = load(c['inputs']['gateway'])
     need(gateway, ['requestTimeoutSeconds', 'sourceSHA', 'controlImageDigest', 'capturedUTC'], 'Actual gateway HandlerConfig capture')
-    if gateway['sourceSHA'] != c['approval']['sourceSHA'] or gateway['controlImageDigest'] != c['approval']['controlImageDigest']: raise ValueError('Gateway actual source/image mismatch')
+    require_component_source(gateway,component_sources['server'],'server')
+    if gateway['controlImageDigest'] != c['approval']['controlImageDigest']: raise ValueError('Gateway actual source/image mismatch')
     producer_receipt = load(c['inputs']['producer'])
     need(producer_receipt, ['sourceSHA', 'imageDigest', 'cliFlags', 'deploymentReceipt'], 'Actual deployed producer receipt')
-    if producer_receipt['sourceSHA'] != c['approval']['sourceSHA'] or not {'--workload-slo','--gateway-timeout','--request-lifetime','--delivery-margin','--timeout'} <= set(producer_receipt['cliFlags']): raise ValueError('Actual D2 loadgen image with final source CLI required; runtime7 rebuild remains zero')
+    require_component_source(producer_receipt,component_sources['loadgen'],'loadgen')
+    if not {'--workload-slo','--gateway-timeout','--request-lifetime','--delivery-margin','--timeout'} <= set(producer_receipt['cliFlags']): raise ValueError('Actual D2 loadgen image with approved component source CLI required; runtime7 rebuild remains zero')
     refs['producer-deployment'] = ref(producer_receipt['deploymentReceipt'])
     native = module('d2eligibility', D2/'bind_before.py')
     knodes = load(c['inputs']['nodes'])['items']
@@ -474,13 +527,13 @@ class CPO:
             raise ValueError('Binding lacks frozen operating power observation; bind again')
         release = load(a.release)
         self.release = release
-        expected={'executor':'CampaignOps','bindingPath':str(a.binding),'sourceSHA':self.c['approval']['sourceSHA']}
-        if any(release.get(k)!=v for k,v in expected.items()) or not release.get('mainInstructionUTC'): raise ValueError('Actual Main/CPO frozen input release required')
+        expected={'executor':'CampaignOps','bindingPath':str(a.binding),'sources':approval_sources(self.c['approval'])}
+        if approval_sources(release)!=expected['sources'] or any(release.get(k)!=v for k,v in expected.items()) or not release.get('mainInstructionUTC'): raise ValueError('Actual Main/CPO frozen component-source release required')
         if release.get('command')!='e5-execute' and (release.get('command')!=a.command or release.get('stage')!=a.stage): raise ValueError('Command outside frozen release')
         if not a.out.is_absolute() or not a.binding.is_absolute() or not a.release.is_absolute() or CAMPAIGN.resolve() not in a.out.resolve().parents: raise ValueError('Absolute external campaign output and input paths required')
         self.out.mkdir(parents=True, exist_ok=True)
         d = module('d2conduct', D2/'conduct_before.py'); self.d = d; self.io = object.__new__(d.Conductor)
-        self.io.out = self.out; self.io.journal = self.out/'commands.jsonl'; self.io.source = self.c['approval']['sourceSHA']
+        self.io.out = self.out; self.io.journal = self.out/'commands.jsonl'; self.io.source = self.c['approval']['sources']['server']
         self.io.journal_lock=threading.Lock()
         self.io.a=argparse.Namespace(phase='e5-'+a.mode+'-'+a.stage,command=a.command)
         self.io.phase_out=self.out

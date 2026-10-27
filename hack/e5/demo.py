@@ -298,7 +298,8 @@ def assemble(e5, args, spec):
         raise RuntimeError('Live preparation requires a fresh output directory; retain partial captures')
     recipe_path = Path(spec.get('operationalRecipe', e5.OPERATIONAL_RECIPE)).resolve()
     op = e5.load(recipe_path)
-    e5.need(spec, ['controlSourceSHA', 'timeboxes', 'measurementSLO'], 'demo config')
+    e5.need(spec, ['controlSourceSHA', 'sources', 'timeboxes', 'measurementSLO'], 'demo config')
+    component_sources = e5.approval_sources(spec)
     e5.need(spec['timeboxes'], e5.REQUIRED['timeboxes'], 'timeboxes')
     if any(not e5.positive(v) for v in spec['timeboxes'].values()):
         raise ValueError('Finite positive demo timeboxes required')
@@ -308,6 +309,8 @@ def assemble(e5, args, spec):
         if not e5.positive(slo['targetLatencyNanos']) or not 0 < slo['percentile'] <= 100:
             raise ValueError('Positive measurement SLO latency and percentile in (0,100] required')
     source = e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'rev-parse', '--verify', spec['controlSourceSHA'] + '^{commit}'], text=True).strip()
+    if component_sources['server'] != source:
+        raise ValueError('sources.server must match the resolved controlSourceSHA; loadgen and power identities must be supplied independently')
     args.out.mkdir(parents=True)
     d = e5.module('demo_capture', HERE / 'd2/conduct_before.py')
     d.BASE, d.CA, d.TOKEN = op['endpoint'], Path(op['caFile']), Path(op['tokenFile'])
@@ -367,7 +370,7 @@ def assemble(e5, args, spec):
     e5.save(archive_path, [{'key': 'demo-live-' + name, 'localPath': str(args.out / (name + '.json'))} for name in ('scheduler', 'nodes', 'pods')])
     collection['archiveRefs'] = str(archive_path)
     c = {key: op[key] for key in ('endpoint', 'caFile', 'tokenFile', 'kubeContext')}
-    c.update(approval={'sourceSHA': source, 'controlImageDigest': status['imageID']}, inputs={'nodes': str(args.out / 'nodes.json'), 'scheduler': str(args.out / 'scheduler.json')}, timeboxes=spec['timeboxes'], collection=collection, workloads=[], canonicalDefinitionsReused=reused)
+    c.update(approval={'sources': component_sources, 'controlImageDigest': status['imageID']}, inputs={'nodes': str(args.out / 'nodes.json'), 'scheduler': str(args.out / 'scheduler.json')}, timeboxes=spec['timeboxes'], collection=collection, workloads=[], canonicalDefinitionsReused=reused)
     for name in e5.WORKLOADS:
         actual = [w for w in scheduler['state']['snapshot']['workloads'] if w['name'] == name]
         if len(actual) != 1:
@@ -385,7 +388,7 @@ def assemble(e5, args, spec):
             raise ValueError('Explicit lifetime must cover SLO, fit gateway cap and socket budget')
         c['workloads'].append({**{key: actual[key] for key in ('name', 'uid', 'generation', 'slo')}, 'datasetDir': recipe['datasetDir'], 'fields': recipe['fields'], 'jobTemplate': str(template), 'producerEndpoint': op['producer']['endpoint'], 'producerTokenFile': op['producer']['tokenFile'], 'producerCAFile': op['producer']['caFile'], 'producerDatasetDir': op['producer']['datasetDir'], **requested, 'gatewayCapSeconds': float(cap[:-1])})
     c['demoSkipped'] = ['E5 R/kappa capacity binding and G clipping', '10800-second normative schedule and factor baselines', 'phase6 scientific approvals/D1/D6/D9 judgment gates', 'image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused']
-    c['demoProvenance'] = {'recipe': str(recipe_path), 'controlSourceSHA': 'Main-provided helm-revision source claim resolved in git, not inferred from image bytes', 'controlImageDigest': 'Live Ready Pod containerStatus.imageID', 'requestTiming': 'D2 Conductor.job socket/worker baseline plus explicit requestTiming overrides; absent lifetime omits client deadline header', 'measurementSLO': spec['measurementSLO']}
+    c['demoProvenance'] = {'recipe': str(recipe_path), 'sources': 'Explicit Main-provided component identities; no loadgen/power identity inferred from server or image bytes', 'controlSourceSHA': 'Main-provided helm-revision source claim resolved in git and checked against sources.server, not inferred from image bytes', 'controlImageDigest': 'Live Ready Pod containerStatus.imageID', 'requestTiming': 'D2 Conductor.job socket/worker baseline plus explicit requestTiming overrides; absent lifetime omits client deadline header', 'measurementSLO': spec['measurementSLO']}
     config_path = args.out / 'demo-e5-config.json'
     e5.save(config_path, c)
     return config_path
@@ -453,7 +456,8 @@ def prepare(e5, args):
     if spec.get('preflight'):
         e5.require_strict_archives(c)
     e5.need(c, ['approval', 'inputs', 'timeboxes', 'workloads', 'collection', 'endpoint', 'caFile', 'tokenFile'], 'e5Config')
-    e5.need(c['approval'], ['sourceSHA', 'controlImageDigest'], 'approval')
+    e5.need(c['approval'], ['sources', 'controlImageDigest'], 'approval')
+    e5.approval_sources(c['approval'])
     e5.need(c['timeboxes'], e5.REQUIRED['timeboxes'], 'timeboxes')
     if any(not e5.positive(v) for v in c['timeboxes'].values()):
         raise ValueError('Finite positive E5 timeboxes required')
@@ -1849,7 +1853,8 @@ def self_check():
             recipe_workload.update(modelRef='fixture-model', preprocessorRef='fixture-preprocessor', datasetRef='fixture-dataset')
         recipe = root / 'recipe.json'
         recipe.write_text(json.dumps(op))
-        source_spec = {'operationalRecipe': str(recipe), 'controlSourceSHA': 'HEAD', 'timeboxes': cpo.tb, 'measurementSLO': {alias: copy.deepcopy(workloads[0]['slo']) for alias in ALIASES}}
+        fixture_sources = {'server': e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'rev-parse', '--verify', 'HEAD^{commit}'], text=True).strip(), 'loadgen': '1' * 40, 'power': 'bin/fixture-power'}
+        source_spec = {'operationalRecipe': str(recipe), 'controlSourceSHA': 'HEAD', 'sources': fixture_sources, 'timeboxes': cpo.tb, 'measurementSLO': {alias: copy.deepcopy(workloads[0]['slo']) for alias in ALIASES}}
         server = {'metadata': {'namespace': 'chill-system', 'labels': {'app.kubernetes.io/component': 'serving-entrypoint'}}, 'spec': {'containers': [{'name': 'serving-entrypoint', 'args': ['--request-timeout=70s']}]}, 'status': {'containerStatuses': [{'name': 'serving-entrypoint', 'ready': True, 'imageID': 'fixture@sha256:fixture'}]}}
         registration_snapshot = copy.deepcopy(snapshot)
         registration_snapshot['workloads'] = [copy.deepcopy(workloads[0])]
@@ -1890,6 +1895,13 @@ def self_check():
                 loaded.Prepare.api = management_fixture
             return loaded
         with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}), patch.object(e5, 'module', modules_for_assembly), patch.object(e5.ssl, 'create_default_context', return_value=None), patch.object(d.Conductor, 'api', api_fixture), patch.object(d.Conductor, 'k', lambda self, argv, **kw: {'items': [] if argv[1] == 'nodes' else [server]}), patch.object(d.Conductor, 'job', return_value={'spec': {'template': {'spec': {'containers': [{'args': ['--workers', '320', '--request-lifetime', '2', '--delivery-margin', '.010', '--timeout', '2.02']}]}}}}):
+            try:
+                assemble(e5, SimpleNamespace(out=root / 'mismatched-source'), dict(source_spec, sources=dict(fixture_sources, server='0' * 40)))
+            except ValueError as error:
+                assert 'sources.server must match the resolved controlSourceSHA' in str(error)
+            else:
+                raise AssertionError('Mismatched control source accepted')
+            assert not (root / 'mismatched-source').exists()
             assembled = e5.load(assemble(e5, SimpleNamespace(out=root / 'assembly'), source_spec))
             assert assembled['canonicalDefinitionsReused'] == {name: name == workloads[0]['name'] for name in ALIASES.values()}
             before_reuse = len(management_calls)
@@ -1934,6 +1946,7 @@ def self_check():
             assert len(registered) == 3
             finish_definitions(e5, cpo, delete_definitions=True)
         assert assembled['demoSkipped'] and assembled['approval']['controlImageDigest'] == 'fixture@sha256:fixture'
+        assert assembled['approval']['sources'] == fixture_sources and 'sourceSHA' not in assembled['approval']
         assert len(assembled['workloads']) == 3
         assert assembled['workloads'][0]['uid'] == workloads[0]['uid'] and assembled['workloads'][0]['slo'] == workloads[0]['slo']
         assert sum(method == 'POST' for method, _ in management_calls) == 5
@@ -2092,10 +2105,10 @@ def main():
     parser.add_argument('command', choices=['prepare', 'preflight', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'publish', 'finish', 'report'], nargs='?')
     parser.add_argument('directory', type=Path, nargs='?', help='report: retained demo folder (offline)')
     parser.add_argument('--compare', type=Path, nargs='+', action='append', default=[], help='report: retained comparison folder(s); repeatable')
-    parser.add_argument('--config', type=Path, help='Demo JSON; required for prepare')
+    parser.add_argument('--config', type=Path, help='Demo JSON; prepare requires explicit sources {server,loadgen,power} for live capture or a validated e5Config approval.sources')
     parser.add_argument('--judge', type=Path, help='preflight: offline retained capture rejudgment; requires fresh --out')
     parser.add_argument('--out', type=Path, help='Fresh absolute external campaign directory; binding.json is stored here')
-    parser.add_argument('--release', type=Path, help='Existing CPO release: executor CampaignOps, command e5-execute, bindingPath, sourceSHA, mainInstructionUTC')
+    parser.add_argument('--release', type=Path, help='Existing CPO release: executor CampaignOps, command e5-execute, bindingPath, sources {server,loadgen,power}, mainInstructionUTC')
     parser.add_argument('--stage', help='Configured stage ID; required for stage/collect')
     parser.add_argument('--experiment-id', help='publish: immutable ASCII ID; corrections require a new ID')
     parser.add_argument('--store-config', type=Path, help='publish: private logicalStore/S3 config for existing PutImmutable bridge')

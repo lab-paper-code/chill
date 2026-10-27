@@ -48,6 +48,7 @@ class Prepare:
         self.a=a; self.n=e5.load(a.numbers); self.release=e5.load(a.release); self.op=e5.load(e5.OPERATIONAL_RECIPE); self.out=a.out
         if e5.CAMPAIGN.resolve() not in self.out.resolve().parents:raise ValueError('Preparation output must remain below the external campaign directory')
         if self.release.get('executor')!='CampaignOps' or self.release.get('command')!='e5-execute' or not self.release.get('mainInstructionUTC'): raise ValueError('One actual Main/CPO frozen e5-execute release required')
+        self.sources=e5.approval_sources(self.release)
         e5.need(self.n,['approval','G','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds','workloads','kappaSeconds'],'Approved phase6 numbers')
         e5.need(self.n['approval'],['phase6ApprovalUTC','e5StartApprovalUTC','D1','D6','D9'],'Actual phase6/E5 approval')
         e5.need(self.n['timeboxes'],e5.REQUIRED['timeboxes'],'Actual finite timeboxes')
@@ -64,7 +65,7 @@ class Prepare:
             if not 0<values['slo']['percentile']<=100 or not e5.positive(values['slo']['targetLatencyNanos']) or not all(e5.positive(values[k]) for k in ('R','deliverySeconds','socketSeconds','workers')) or type(values['workers']) is not int:raise ValueError('Invalid approved Workload numerical bindings')
             lifetime=values.get('lifetimeSeconds')
             if lifetime is not None and (not e5.positive(lifetime) or lifetime<values['slo']['targetLatencyNanos']/1e9 or values['socketSeconds']<=lifetime+values['deliverySeconds']):raise ValueError('Invalid explicit lifetime/SLO/socket tuple')
-        self.sha=self.release['sourceSHA']; self.out.mkdir(parents=True,exist_ok=True)
+        self.sha=self.sources['server']; self.out.mkdir(parents=True,exist_ok=True)
         plan=e5.load(PLAN)
         if plan['sourcePair']['after'].get('sha')!=self.sha: raise ValueError('Actual final D2 SHA not sealed in existing plan; no old-source fallback')
         self.pub=plan['e5InputPublication']
@@ -72,7 +73,8 @@ class Prepare:
         for key in ('imagePublication','after','gMeasurement','mMeasurement','d25','ranking','costs','bias','kappaExecutable'): e5.ref(self.pub[key])
         power=Path(e5.E5['powerExecutable'])
         receipt_path=Path(e5.E5['powerReceipt']);receipt=e5.load(receipt_path);actual_power=e5.ref(power)
-        if receipt.get('sourceSHA')!=self.sha or receipt.get('executable')!=str(power) or receipt.get('sha256')!=actual_power['sha256'] or receipt.get('buildExitCode')!=0 or not receipt.get('atUTC') or not receipt.get('buildArgv') or receipt.get('buildCwd')!=str(e5.REPO):raise ValueError('Existing offline power executable lacks actual final-SHA once-window receipt')
+        e5.require_component_source(receipt,self.sources['power'],'power',str(power))
+        if receipt.get('executable')!=str(power) or receipt.get('sha256')!=actual_power['sha256'] or receipt.get('buildExitCode')!=0 or not receipt.get('atUTC') or not receipt.get('buildArgv') or not receipt.get('buildCwd'):raise ValueError('Existing offline power executable lacks actual component-source once-window build receipt')
         self.op['collection'].update(powerExecutable=str(power),powerReceipt=str(receipt_path))
         after=e5.load(self.pub['after'])
         e5.need(after,['sourceSha','files','phaseRoot','physicalLifecycle','physicalBinding'],'Actual AFTER capture')
@@ -93,7 +95,8 @@ class Prepare:
         self.images={x['component']:x for x in images['images']}
         for key in ('server','loadgen'):
             x=self.images[key]
-            if x['sourceCommit']!=self.sha or x['publish']['exitCode']!=0 or '@sha256:' not in x['immutableImage']: raise ValueError('Actual final control/producer publication incomplete')
+            e5.require_component_source({'sourceSHA':x['sourceCommit']},self.sources[key],key)
+            if x['publish']['exitCode']!=0 or '@sha256:' not in x['immutableImage']: raise ValueError('Actual control/producer component publication incomplete')
         self.tb=self.n['timeboxes']; self.k=e5.ENVIRONMENT['d2']['kubectl']+['-n','chill-system']
         old=e5.module('e5d2connect',e5.D2/'conduct_before.py'); self.http=urllib.request.build_opener(old.NoRedirect(),urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=self.op['caFile'])))
         old.K=self.k;self.io=object.__new__(old.Conductor);self.io.out=self.out;self.io.source=self.sha
@@ -202,14 +205,14 @@ class Prepare:
         dataset={}
         for name in (e5.WORKLOADS[2],e5.WORKLOADS[1]):dataset[self.op['workloads'][name]['datasetRef']]=self.dataset(name,image)
         actual_flags=dataset['vqav2-val-subset']['cliFlags']
-        e5.save(self.out/'producer.json',{'sourceSHA':self.sha,'imageDigest':image,'cliFlags':actual_flags,'deploymentReceipt':self.pub['imagePublication']})
+        e5.save(self.out/'producer.json',{'sourceSHA':self.images['loadgen']['sourceCommit'],'imageDigest':image,'cliFlags':actual_flags,'deploymentReceipt':self.pub['imagePublication']})
         binary=self.pub['kappaExecutable'];argv=[binary,'-mode','table','-scheduler',str(self.out/'scheduler.json'),'-workloads',','.join(e5.WORKLOADS),'-margin',str(self.n['mSeconds']*1000),'-window',str(settings['capacityWindowNanos']/1e9),'-windows',str(settings['capacityWindows']),'-passing',str(settings['capacityPassingWindows']),'-workers',str(settings['planSearchWorkers']),'-rows',str(self.out/'capacity.json')]
         with (self.out/'kappa.stdout').open('w') as stdout,(self.out/'kappa.stderr').open('w') as stderr:r=subprocess.run(argv,stdout=stdout,stderr=stderr,timeout=self.n['kappaSeconds'],env=dict(os.environ,GOMAXPROCS='6'))
         e5.save(self.out/'kappa-execution.json',{'at':e5.now(),'sourceSHA':self.sha,'argv':argv,'exitCode':r.returncode,'meaning':'Actual registered canonical UID/generation/SLO inputs; no hypothetical live UID'})
         if r.returncode:raise RuntimeError('Final actual-UID kappa calculation failed')
         c={**{k:self.op[k] for k in ('endpoint','caFile','tokenFile','kubeContext')},**{k:self.n[k] for k in ('G','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds')}}
         c['poolShares'] = e5.pool_shares(self.n)
-        c['approval']={**self.n['approval'],'sourceSHA':self.sha,'controlImageDigest':actual_control,'runtimeDigests':e5.load(PLAN)['frozenRuntimeSha256']}
+        c['approval']={**self.n['approval'],'sources':self.sources,'controlImageDigest':actual_control,'runtimeDigests':e5.load(PLAN)['frozenRuntimeSha256']}
         c['inputs']={k:self.pub[k] for k in ('after','gMeasurement','mMeasurement','d25','ranking','costs','bias')}
         c['inputs'].update({k:str(self.out/(k+'.json')) for k in ('scheduler','capacity','nodes','pods','gateway','producer')})
         archive=[{'key':self.pub[k],'localPath':self.pub[k]} for k in ('after','gMeasurement','mMeasurement','ranking','costs','bias')];e5.save(self.out/'required-raw-refs.json',archive)
@@ -237,7 +240,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['schema','prepare','execute']);p.add_argument('--numbers',type=Path);p.add_argument('--release',type=Path);p.add_argument('--out',type=Path);a=p.parse_args()
     try:
         if a.command=='schema':
-            print(json.dumps({'numbers':['G','mSeconds','N','burstLowSeconds','smokeSeconds','kappaSeconds','timeboxes','workloads','approval'],'workloadNumbers':['slo.percentile','slo.targetLatencyNanos','R','deliverySeconds','socketSeconds','workers'],'optionalWorkloadNumbers':['lifetimeSeconds'],'timeboxes':e5.REQUIRED['timeboxes'],'approval':['phase6ApprovalUTC','e5StartApprovalUTC','D1','D6','D9'],'factorSelection':'N selects the frozen operational recipe factorOrder prefix; source/reset witnesses are already bound there, observed effect remains unmeasured','release':['executor=CampaignOps','command=e5-execute','mainInstructionUTC','sourceSHA','numbersPath','bindingPath'],'autoInputs':str(PLAN)+'.e5InputPublication','operationalRecipe':str(e5.OPERATIONAL_RECIPE),'scientificResults':'UNMEASURED'},indent=2));return 0
+            print(json.dumps({'numbers':['G','mSeconds','N','burstLowSeconds','smokeSeconds','kappaSeconds','timeboxes','workloads','approval'],'workloadNumbers':['slo.percentile','slo.targetLatencyNanos','R','deliverySeconds','socketSeconds','workers'],'optionalWorkloadNumbers':['lifetimeSeconds'],'timeboxes':e5.REQUIRED['timeboxes'],'approval':['phase6ApprovalUTC','e5StartApprovalUTC','D1','D6','D9'],'factorSelection':'N selects the frozen operational recipe factorOrder prefix; source/reset witnesses are already bound there, observed effect remains unmeasured','release':['executor=CampaignOps','command=e5-execute','mainInstructionUTC','sources','numbersPath','bindingPath'],'sources':{'server':'full Git SHA matching AFTER and server publication','loadgen':'full Git SHA matching loadgen publication sourceCommit','power':'full Git SHA or pinned repository-relative binary path matching actual power build receipt'},'autoInputs':str(PLAN)+'.e5InputPublication','operationalRecipe':str(e5.OPERATIONAL_RECIPE),'scientificResults':'UNMEASURED'},indent=2));return 0
         if any(x is None for x in (a.numbers,a.release,a.out)):raise ValueError('--numbers, --release and --out required for CPO preparation/execution')
         if any(not x.is_absolute() for x in (a.numbers,a.release,a.out)):raise ValueError('Absolute paths required')
         prepared=Prepare(a);binding=prepared.run()

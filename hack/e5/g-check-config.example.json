@@ -1,5 +1,10 @@
 {
-  "controlSourceSHA": "3dff4e7",
+  "controlSourceSHA": "24f4ff4f3639dd03ad16067df926ed48320240d6",
+  "sources": {
+    "server": "24f4ff4f3639dd03ad16067df926ed48320240d6",
+    "loadgen": "e8ed3cff31510e6cc8105c840f9ce99b962cde0e",
+    "power": "bin/observation-power-source-f8c3d2b4"
+  },
   "generatorQuality": {"latenessToleranceNS": 50000000, "maxExceedingFraction": 0.01},
   "staticPlacement": true,
   "poolShares": {"MNV": 0.45, "PLC": 0.1, "Smol": 0.45},
