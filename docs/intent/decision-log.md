@@ -358,3 +358,7 @@
 
 - 확인 측정(30s×3)은 Complete이나 재사용 Rejected(frozen condition 불일치 — observer digest 차이 유력[추정]; 확정엔 curve-plan 원본 필요). 그와 별개로 모델 로드 idle 벽전력 108.3W vs 71.9W(33.65%), GPU 기본 전력 한도 250 vs 300W, 최대 클럭 2100 vs 2175MHz → 현행 5% 동등성 기준에서 통과 불가(`history://U4RejectCause27`).
 - 결정(권고 기본값): U4 재사용 메커니즘은 유지(거절이 올바른 동작), genesis2→3 공유는 적용하지 않고 두 Node를 독립 측정. U2 커버리지 표의 genesis 측정량 절반 감축 가정 철회. CPU 집합 완화·digest 조건 완화는 하지 않음.
+
+## 2026-10-27 00:3xZ — U5 Pod 로그 동시 캡처 비활성(측정 중)
+
+- D18 격리: capture-progress(kubectl logs --follow) 동시 실행 시 unknownRows 114, 없을 때 0(Accepted 1.15%). D15/D26의 대량 손실(21,797/5,100)도 같은 조건. 인과 미확정[추정: 약한 Node의 로그 스트림 경합]이지만 측정 중 캡처는 손실을 유발하므로 **측정 중 동시 캡처 금지**. 진행 기록 손실 원인 확정(U5)은 서버 측 reject 로그(cf92a845)만으로 계속.
