@@ -348,8 +348,8 @@ func (l *ObservationLog) restore(hours []time.Time) error {
 			}
 		}
 	}
-	// RestartDrain observes assigned requests without a final row to completion.
-	rows := map[string]RequestRow{}
+	// Final tombstones retain IDs, not completed request payloads.
+	rows := map[string]*RequestRow{}
 	for _, hour := range hours {
 		files, err := l.hourFiles(hour, observationRequestStream)
 		if err != nil {
@@ -361,13 +361,7 @@ func (l *ObservationLog) restore(hours []time.Time) error {
 				if err := json.Unmarshal(raw, &row); err != nil {
 					return err
 				}
-				if row.Kind == RequestRowNative {
-					return nil // Physical supplements cannot replace HTTP assignments.
-				}
-				if row.Kind == requestRowFinal || rows[row.RequestID].Kind != requestRowFinal {
-					row.assignedHour = hour
-					rows[row.RequestID] = row
-				}
+				restoreRequestRow(rows, &row, hour)
 				return nil
 			}); err != nil {
 				return err
@@ -375,9 +369,9 @@ func (l *ObservationLog) restore(hours []time.Time) error {
 		}
 	}
 	for _, row := range rows {
-		if row.Kind == requestRowAssigned {
-			l.restored = append(l.restored, row)
-			open := row
+		if row != nil && row.Kind == requestRowAssigned {
+			l.restored = append(l.restored, *row)
+			open := *row
 			open.Kind = ""
 			if row.DispatchedAt != nil && !row.ReceivedAt.IsZero() {
 				dispatched := row.DispatchedAt.Sub(row.ReceivedAt).Nanoseconds()
@@ -389,12 +383,46 @@ func (l *ObservationLog) restore(hours []time.Time) error {
 	return nil
 }
 
-func truncateTornLine(name string) error {
-	data, err := os.ReadFile(name)
-	if err != nil || len(data) == 0 || data[len(data)-1] == '\n' {
+func restoreRequestRow(rows map[string]*RequestRow, row *RequestRow, hour time.Time) {
+	if row.Kind == RequestRowNative {
+		return // Physical supplements cannot replace HTTP assignments.
+	}
+	if row.Kind == requestRowFinal {
+		rows[row.RequestID] = nil
+		return
+	}
+	if previous, exists := rows[row.RequestID]; !exists || previous != nil {
+		row.assignedHour = hour
+		rows[row.RequestID] = row
+	}
+}
+
+func truncateTornLine(name string) (err error) {
+	file, err := os.OpenFile(name, os.O_RDWR, 0)
+	if err != nil {
 		return err
 	}
-	return os.Truncate(name, int64(bytes.LastIndexByte(data, '\n')+1))
+	defer func() { err = errors.Join(err, file.Close()) }()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	var tail [4096]byte
+	for end := info.Size(); end > 0; {
+		start := max(int64(0), end-int64(len(tail)))
+		data := tail[:end-start]
+		if _, err := file.ReadAt(data, start); err != nil {
+			return err
+		}
+		if index := bytes.LastIndexByte(data, '\n'); index >= 0 {
+			if start+int64(index)+1 == info.Size() {
+				return nil
+			}
+			return file.Truncate(start + int64(index) + 1)
+		}
+		end = start
+	}
+	return file.Truncate(0)
 }
 
 func observationHour(at time.Time) string { return at.UTC().Format(observationHourLayout) }
