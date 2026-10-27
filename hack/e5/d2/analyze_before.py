@@ -62,7 +62,7 @@ def scheduled_monotonic_ns(row, start_ns):
 
 
 def scheduled_latency_ns(row, start_ns):
-    """E5 completion latency includes producer delay from the frozen arrival."""
+    """Scheduled end-to-end reference only; never the receipt-origin SLO."""
     if row.get('issued') is False or row.get('error') == 'UnsentAtWindowEnd':
         return None
     scheduled = scheduled_monotonic_ns(row, start_ns)
@@ -70,13 +70,42 @@ def scheduled_latency_ns(row, start_ns):
     return finished - scheduled if scheduled is not None and type(finished) is int and finished >= scheduled else None
 
 
-def issuance_fidelity(client, offsets, start_ns, duration_ns, stats):
+def generator_quality_config(config):
+    policy = config.get('generatorQuality')
+    if 'generatorQuality' not in config:
+        return None
+    if not isinstance(policy, dict) or set(policy) != {'latenessToleranceNS', 'maxExceedingFraction'}:
+        raise ValueError('generatorQuality requires latenessToleranceNS and maxExceedingFraction')
+    if type(policy['latenessToleranceNS']) is not int or policy['latenessToleranceNS'] < 0:
+        raise ValueError('generatorQuality.latenessToleranceNS requires a nonnegative integer')
+    fraction = policy['maxExceedingFraction']
+    if type(fraction) not in (int, float) or not math.isfinite(fraction) or not 0 <= fraction <= 1:
+        raise ValueError('generatorQuality.maxExceedingFraction requires a finite fraction in [0,1]')
+    return dict(policy)
+
+
+def request_timing(row, final, received_ns, start_ns):
+    """Join actual HTTP receipt/final facts; never substitute client RTT for SLO."""
+    elapsed = final.get('elapsedNanos') if final else None
+    suitable = row.get('issued') is not False and row.get('error') != 'UnsentAtWindowEnd' and final and final.get('outcome') == 'completed' and final.get('executionComplete') is True
+    slo = elapsed if suitable and type(elapsed) is int and elapsed >= 0 else None
+    sent, finished = row.get('sentMonotonicNS'), row.get('finishedMonotonicNS')
+    actual = finished - sent if type(sent) is int and type(finished) is int and finished >= sent and row.get('issued') is not False else None
+    wall_sent = row.get('sentAtUnixNS')
+    entrance = received_ns - wall_sent if type(received_ns) is int and type(wall_sent) is int and row.get('issued') is not False else None
+    return {'sloLatencyNS': slo, 'scheduledLatencyNS': scheduled_latency_ns(row, start_ns),
+            'actualLatencyNS': actual, 'entranceDelayNS': entrance,
+            'entranceDelayMeaning': 'Gateway receivedAt minus client sentAtUnixNS; cross-host clock offset/uncertainty retained, including negative values; not one-way network latency'}
+
+
+def issuance_fidelity(client, offsets, start_ns, duration_ns, stats, quality=None):
     """Describe send-call timing, not stdout flush timing or wire arrival."""
     threshold = 50_000_000
     issued = [row for row in client if row.get('issued') is not False and row.get('error') != 'UnsentAtWindowEnd']
     missing = sum(type(row.get('sentMonotonicNS')) is not int for row in issued)
     result = {'thresholdNS': threshold, 'offered': len(offsets), 'issued': len(issued), 'missingSendTimestamps': missing,
               'supplied': False, 'issuanceFraction': None,
+              'generatorQuality': {'status': 'UNKNOWN', 'policy': quality, 'reason': 'Lateness policy is not configured' if quality is None else 'Issuance timing/population incomplete'},
               'meaning': 'Offered is the full frozen trace, including unsent arrivals; supplied requires every planned arrival issued, not merely an unchanged actual-count denominator. Late sends, including sends after the window, remain visible. Per-producer monotonic infer-call timestamps, sorted across workers; gaps run through the later of window end and last send. Planned Poisson/zero-load gaps are not automatically stalls. No wall-clock or gateway causality claim.'}
     if len(client) != len(offsets):
         return dict(result, status='UNKNOWN', reason='Frozen planned population has missing or extra client rows')
@@ -108,6 +137,13 @@ def issuance_fidelity(client, offsets, start_ns, duration_ns, stats):
                   gapsOver50MS=len(long_gaps), gapsOver50MSFraction=len(long_gaps)/len(gaps),
                   gapIntervalsOver50MS=long_gaps, sendLatenessNS=stats(late),
                   sendsLateOver50MS=sum(value > threshold for value in late))
+    if quality is not None:
+        exceeding = sum(value > quality['latenessToleranceNS'] for value in late)
+        fraction = exceeding / len(issued) if issued else None
+        valid = result['supplied'] and fraction is not None and fraction <= quality['maxExceedingFraction']
+        result['generatorQuality'] = {'status': 'VALID' if valid else 'INVALID_GENERATOR', 'policy': quality,
+                                      'exceeding': exceeding, 'denominator': len(issued), 'exceedingFraction': fraction,
+                                      'reason': None if valid else 'Frozen trace not fully issued or lateness exceeding fraction exceeds configured maximum'}
     return result
 
 

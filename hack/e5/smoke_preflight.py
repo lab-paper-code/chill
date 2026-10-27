@@ -28,6 +28,19 @@ def main():
     with tempfile.TemporaryDirectory(prefix='chill-preflight-') as directory:
         root = Path(directory)
         raw = module('smoke_preflight_raw', HERE / 'e5-raw.py')
+        stamp = '2026-10-27T00:00:00.000000001Z'
+        raw_rows = [
+            {'workloadUID': 'w', 'requestID': 'assigned-only', 'kind': 'assigned', 'receivedAt': stamp},
+            {'workloadUID': 'w', 'requestID': 'conflict', 'kind': 'assigned', 'receivedAt': stamp},
+            {'workloadUID': 'w', 'requestID': 'conflict', 'kind': 'assigned', 'receivedAt': '2026-10-27T00:00:00.000000002Z'},
+        ]
+        with patch.object(raw, '_root', return_value=root), \
+             patch.object(raw, '_manifest', return_value=({}, [], [])), \
+             patch.object(raw, '_population'), \
+             patch.object(raw, '_rows', return_value=[(None, row, {'line': i}) for i, row in enumerate(raw_rows, 1)]):
+            indexed = raw.iter_request_indexes(root, ['w'], '2026-10-27T00:00:00Z', '2026-10-27T00:00:01Z')['w']
+        assert indexed['receivedAtNS'] == {'assigned-only': raw._time(stamp)}
+        assert not indexed['finals'] and indexed['summary']['finalConflicts']
         assert raw._root(root / 'stage', root) == root / 'stage'
         try:
             raw._root(root.parent, root)

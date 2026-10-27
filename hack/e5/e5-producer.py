@@ -53,7 +53,6 @@ def main():
             cli.replay_open_loop(
                 records, workload=kw['workload'], offsets=offsets,
                 new_client=kw['new_client'], out=sys.stdout, start_ns=start_ns,
-                request_lifetime_seconds=kw.get('request_lifetime_seconds'),
             )
         finally:
             boundary.join()

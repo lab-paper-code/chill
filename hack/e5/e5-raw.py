@@ -328,6 +328,7 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None):
     results = {}
     for uid in set(groups) | set(unkeyed) | set(uid_errors) | set(wanted or ()):
         finals, conflicts, unfinished, native_only = {}, [], [], []
+        received_at_ns = {}
         kinds, outcomes, http_errors, execution_complete = Counter(), Counter(), Counter(), Counter()
         native_outcomes, native_ids = Counter(), defaultdict(list)
         final_refs, native_rows, known_requests, population_rows = {}, 0, 0, 0
@@ -352,6 +353,8 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None):
                             'receivedAtRefs': list(request['received'].values())}
                 conflicts.append(conflict)
                 _error(uid_errors[uid], 'conflicting HTTP final/receipt facts', {'requestID': rid, 'refs': conflict})
+            else:
+                received_at_ns[rid] = next(iter(request['received']))
             if len(candidates) == 1 and not ambiguous:
                 row, ref = candidates[0]
                 finals[rid], final_refs[rid] = row, ref
@@ -398,7 +401,7 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None):
                    'completenessMeaning': 'complete covers archive provenance and parsing; withoutUnambiguousHTTPFinal/unfinished and unresolvedNativeOnly separately expose unsettled HTTP/unknown-receipt identities.',
                    'timingMeaning': 'HTTP final fields are unmodified; native supplements are separate physical facts, never replacements.'}
         results[uid] = {'finals': finals, 'finalRefs': final_refs, 'summary': summary,
-                        'sources': sources, 'errors': own_errors}
+                        'receivedAtNS': received_at_ns, 'sources': sources, 'errors': own_errors}
     _REQUEST_CACHE = key, wanted, results, sources, errors, index.get('_observedAbsences', [])
     return results
 
@@ -422,7 +425,7 @@ def index_requests(folder, uid, startUTC, endUTC, actual_response_ids=None):
     if uid not in results:
         # An empty UID still inherits provenance/parse errors, not empty-success.
         _, _, _, sources, errors, absences = _REQUEST_CACHE
-        return {'finals': {}, 'finalRefs': {}, 'sources': sources, 'errors': errors,
+        return {'finals': {}, 'finalRefs': {}, 'receivedAtNS': {}, 'sources': sources, 'errors': errors,
                 'summary': {'classification': _PRIVATE, 'rawRows': 0, 'kinds': {},
                             'uniqueRequests': 0, 'uniqueFinalRows': 0, 'outcomes': {},
                             'finalConflicts': [], 'unkeyedRows': [], 'unfinished': [],

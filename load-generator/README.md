@@ -30,17 +30,21 @@ does not cap in-flight E5 requests. The injected `hack/e5/e5-producer.py` uses
 the same dispatcher for its frozen segmented trace. Late arrivals are still
 sent and drained, not silently dropped at the issue-window boundary.
 `scheduledMonotonicNS` anchors the request; `latenessNs` is actual send minus
-scheduled time. `latencyMs` and `scheduledLatencyMs` measure completion minus
-scheduled time (including sender lateness), while `serviceLatencyMs` retains
-the actual-send HTTP duration. Existing fields remain. Offered means the
-entire planned trace, including failures and missing issuance; issuance fidelity
-must establish complete supply rather than reducing that denominator.
-The native lifetime remains anchored to the planned arrival: the request header
-carries `L - lateness`. A lifetime exhausted before issue produces an
-`issued=false`, `GeneratorDelayExpired` result without HTTP traffic. Thread
-creation failures likewise produce `GeneratorThreadStartError` rows and do not
-stop later arrivals or the producer's drained event. Both stay in the planned
-denominator and fail full-supply judging.
+scheduled time, a generator-quality metric rather than SLO time.
+`latencyMs` and `serviceLatencyMs` retain actual-send HTTP duration;
+`scheduledLatencyMs` is scheduled-to-completion reference latency only.
+`sentAtUnixNS` and `finishedAtUnixNS` support joining actual server `receivedAt`
+by request ID: send→receipt is entrance delay (cross-host clocks require
+uncertainty evidence), while receipt→response is the routing SLO interval.
+Existing fields remain. Offered is the entire planned trace, including failures
+and missing issuance. Generator lateness tolerance and allowed exceedance
+fraction belong to the frozen experiment config; exceeding them invalidates
+generator quality, not the workload SLO.
+The native lifetime header always carries the configured `L`: lateness neither
+reduces it nor suppresses a send. Thread creation failures produce
+`issued=false`, `GeneratorThreadStartError` rows and do not stop later arrivals
+or the producer's drained event. They remain in the planned denominator and
+fail full-supply judging.
 
 The `feat/loadgen-async` branch was inspected before this cutover: it dispatches
 independent asyncio tasks, but caps attempts at `workers`, marks excess arrivals

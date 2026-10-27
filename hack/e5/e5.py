@@ -47,7 +47,14 @@ def self_check():
     fidelity=analysis.issuance_fidelity([unsent],[0],100,50_000_000,analysis.stats)
     assert not fidelity['supplied'] and fidelity['offered']==1 and fidelity['issued']==0
     assert not analysis.issuance_fidelity([],[0],100,50_000_000,analysis.stats)['supplied']
-    print('PASS E5 scheduled latency and full planned issuance; offline only')
+    policy=analysis.generator_quality_config({'generatorQuality':{'latenessToleranceNS':50_000_000,'maxExceedingFraction':0}})
+    assert analysis.issuance_fidelity(rows,[0],100,50_000_000,analysis.stats,policy)['generatorQuality']['status']=='INVALID_GENERATOR'
+    assert fidelity['generatorQuality']['status']=='UNKNOWN'
+    timing=analysis.request_timing(dict(rows[0],sentAtUnixNS=200),{'outcome':'completed','executionComplete':True,'elapsedNanos':500_000},150,100)
+    assert timing['sloLatencyNS']==500_000 and timing['scheduledLatencyNS']==61_000_000 and timing['entranceDelayNS']==-50
+    assert analysis.request_timing(rows[0],None,150,100)['sloLatencyNS'] is None
+    assert analysis.issuance_fidelity([dict(rows[0],issued=False,error='ThreadStartError')],[0],100,50_000_000,analysis.stats,policy)['issued']==0
+    print('PASS E5 receive-origin SLO, scheduled reference, generator quality and full planned issuance; offline only')
 
 
 # This local check must not require an operational environment or cluster binding.
@@ -242,6 +249,7 @@ def power_observation(c):
 
 def bind(path):
     c = load(path); require_strict_archives(c)
+    module('e5_quality', D2/'analyze_before.py').generator_quality_config(c)
     need(c, ['approval', 'inputs', 'G', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
     need(c['approval'], REQUIRED['approval'], 'approval'); need(c['inputs'], REQUIRED['inputs'], 'inputs'); need(c['collection'], REQUIRED['collection'], 'collection'); need(c['timeboxes'], REQUIRED['timeboxes'], 'timeboxes')
     if not all(positive(c[k]) for k in ('G', 'smokeSeconds')) or type(c['mSeconds']) not in (int,float) or not math.isfinite(c['mSeconds']) or c['mSeconds']<0 or not 0 < c['burstLowSeconds'] < 900: raise ValueError('Actual G/m/smoke and 0<burstLowSeconds<900 required')
@@ -1052,40 +1060,39 @@ def judge(binding, folder):
         final_indexes[w['name']]=finals
         unknown.extend(w['name']+': '+str(error) for error in indexed['errors'])
         client=clients[w['name']]
-        offered=st['traces'][w['name']]['offered']; completed=[]; gateway_completed=[]; residual=[]; tails={'search':[],'outsideSearch':[]}; minutes=defaultdict(lambda:{'offered':0,'deadlineSuccess':0,'outcomes':Counter()}); success=0; used=set(); native_missing=[]; scheduled_missing=[]; observed_outcomes=Counter();unsent=0
+        offered=st['traces'][w['name']]['offered']; completed=[]; gateway_completed=[]; residual=[]; tails={'search':[],'outsideSearch':[]}; minutes=defaultdict(lambda:{'offered':0,'deadlineSuccess':0,'outcomes':Counter()}); success=0; used=set(); native_missing=[]; observed_outcomes=Counter();unsent=0
         start_ns=phase['starts'].get(w['name'],{}).get('monotonicNS')
         for index,offset in enumerate(st['traces'][w['name']]['offsetsNS']): minutes[offset//60000000000]['offered']+=1
         for x in client:
             key=x.get('requestID'); row=finals.get(key); minute=x['scheduledOffsetNs']//60000000000
             if key and key in used: unknown.append(w['name']+': duplicate gateway request ID'); continue
             if key:used.add(key)
-            no_send=x.get('error')=='UnsentAtWindowEnd';unsent+=int(no_send)
+            no_send=x.get('issued') is False or x.get('error')=='UnsentAtWindowEnd';unsent+=int(no_send)
             outcome=row.get('outcome') if row else 'unsent-at-window-end' if no_send else 'unfinished-or-no-final'; minutes[minute]['outcomes'][outcome]+=1;observed_outcomes[outcome]+=1
             if row and row.get('definitionID')!=w['definitionID']: unknown.append(w['name']+': exact frozen definition identity mismatch')
-            if row and row.get('outcome')=='completed' and row.get('executionComplete') and positive(row.get('elapsedNanos')):
+            if not no_send and row and row.get('outcome')=='completed' and row.get('executionComplete') is True and type(row.get('elapsedNanos')) is int and row['elapsedNanos']>=0:
                 elapsed=row['elapsedNanos']; gateway_completed.append(elapsed)
-                latency=d.scheduled_latency_ns(x,start_ns)
-                if latency is None:scheduled_missing.append(key)
-                else:
-                    completed.append(latency)
-                    if latency<=w['slo']['targetLatencyNanos']: success+=1; minutes[minute]['deadlineSuccess']+=1
+                completed.append(elapsed)
+                if elapsed<=w['slo']['targetLatencyNanos']: success+=1; minutes[minute]['deadlineSuccess']+=1
                 if row.get('nativeElapsedMS') is not None and row.get('dispatchedNanos') is not None: residual.append(elapsed-row['dispatchedNanos']-row['nativeElapsedMS']*1e6)
                 else: native_missing.append(key)
                 if row.get('nativeElapsedMS') is not None:
                     tail=elapsed-row['nativeElapsedMS']*1e6; at=d.epoch(row['receivedAt']); tails['search' if during_search(at) else 'outsideSearch'].append(tail)
-        unfinished=max(0,offered-len(client))+unsent+sum(not finals.get(x.get('requestID')) and x.get('error')!='UnsentAtWindowEnd' for x in client); pct=w['slo']['percentile']; rank=math.ceil(offered*pct/100); deadline_rate=success/offered if offered else None
-        issued=[x for x in client if x.get('error')!='UnsentAtWindowEnd']
+        unfinished=max(0,offered-len(client))+unsent+sum(not finals.get(x.get('requestID')) and x.get('issued') is not False and x.get('error')!='UnsentAtWindowEnd' for x in client); pct=w['slo']['percentile']; rank=math.ceil(offered*pct/100); deadline_rate=success/offered if offered else None
+        issued=[x for x in client if x.get('issued') is not False and x.get('error')!='UnsentAtWindowEnd']
         if len(client)!=offered or len(used)!=len(issued) or any(not x.get('requestID') or x['requestID'] not in finals for x in issued) or indexed['errors'] or summary['finalConflicts'] or summary['unkeyedRows'] or summary['withoutUnambiguousHTTPFinal']: unknown.append(w['name']+': offered/final population incomplete or conflicting')
         unknown.extend(w['name']+': received cohort: '+str(error) for error in received_indexes[w['uid']]['errors'])
         if {x.get('requestIndex') for x in client}!=set(range(offered)) or any(type(x.get('requestIndex')) is not int or not 0<=x['requestIndex']<offered or x['scheduledOffsetNs']!=st['traces'][w['name']]['offsetsNS'][x['requestIndex']] or x.get('record')!=b['payload'][w['name']][x['requestIndex']%len(b['payload'][w['name']])]['recordID'] for x in client):unknown.append(w['name']+': actual request index/arrival/payload assignment differs from frozen trace')
         if native_missing: unknown.append(w['name']+': monotonic residual native/dispatched fields missing')
-        if scheduled_missing: unknown.append(w['name']+': scheduled completion timestamps missing')
         normal=not st['id'].startswith('E5-4')
         results[w['name']]={'offered':offered,'clientRows':len(client),'unfinishedOrUnsent':unfinished,'outcomes':summary['outcomes'],'completedLatencyNS':d.stats(completed),'completionResidualNS':d.stats(residual),'marginNS':c['mSeconds']*1e9,'gatewayTailNS':{k:d.stats(v) for k,v in tails.items()},'deadlineSuccess':success,'deadlineSuccessFraction':deadline_rate,'requiredSuccessfulRank':rank,'D1':'UNMEASURED' if offered==0 else 'FAIL' if normal and success<rank else 'OBSERVED_THRESHOLD_MET' if normal else 'OVERLOAD_DESCRIPTIVE','minutes':dict(minutes),'nativeResidualMissingIDs':native_missing,'rawPopulation':received_indexes[w['uid']]['summary'],'offeredResponsePopulation':summary,'pages':pages}
-        results[w['name']].update(gatewayCompletedLatencyNS=d.stats(gateway_completed),latencyScope='Client completion minus frozen scheduled arrival, including producer lateness; gateway elapsed remains separate for residual/tail accounting',scheduledLatencyMissingIDs=scheduled_missing,serviceLatencyMS=d.stats([x.get('serviceLatencyMs') for x in client if x.get('status')==200 and not x.get('error')]))
+        timings=[d.request_timing(x,finals.get(x.get('requestID')),indexed.get('receivedAtNS',{}).get(x.get('requestID')),start_ns) for x in client]
+        results[w['name']].update(gatewayCompletedLatencyNS=d.stats(gateway_completed),latencyScope='Gateway elapsedNanos: CHILL receipt to response, per 03_routing; scheduled/client round trip are reference only',scheduledLatencyNS=d.stats([t['scheduledLatencyNS'] for t in timings]),entranceDelayNS=d.stats([t['entranceDelayNS'] for t in timings]),entranceDelayMeaning='receivedAt minus client sentAtUnixNS; cross-host clock uncertainty retained, not clamped or interpreted as pure network delay',actualLatencyNS=d.stats([t['actualLatencyNS'] for t in timings]))
         results[w['name']]['outcomes']=dict(observed_outcomes);results[w['name']]['gatewayFinalOutcomes']=received_indexes[w['uid']]['summary']['outcomes'];results[w['name']]['offeredGatewayFinalOutcomes']=summary['outcomes'];results[w['name']]['unsentAtWindowEnd']=unsent;results[w['name']]['actualGatewayIdentities']=len(used)
-        results[w['name']]['issuanceFidelity']=d.issuance_fidelity(client,st['traces'][w['name']]['offsetsNS'],phase['starts'].get(w['name'],{}).get('monotonicNS'),round(st['seconds']*1e9),d.stats)
-        if results[w['name']]['issuanceFidelity']['status']=='UNKNOWN':unknown.append(w['name']+': issuance fidelity unknown')
+        results[w['name']]['issuanceFidelity']=d.issuance_fidelity(client,st['traces'][w['name']]['offsetsNS'],phase['starts'].get(w['name'],{}).get('monotonicNS'),round(st['seconds']*1e9),d.stats,d.generator_quality_config(c))
+        quality=results[w['name']]['issuanceFidelity']['generatorQuality']['status']
+        if offered and quality=='UNKNOWN':unknown.append(w['name']+': generator quality unknown')
+        if offered and quality!='VALID':results[w['name']]['D1']='INVALID_GENERATOR' if quality=='INVALID_GENERATOR' else 'UNKNOWN'
         sorted_residual=sorted(residual)
         results[w['name']]['selectedResidualPercentile']={'percentile':pct,'nanoseconds':sorted_residual[max(0,math.ceil(len(sorted_residual)*pct/100)-1)] if sorted_residual else None}
         for minute, values in results[w['name']]['minutes'].items():
@@ -1096,13 +1103,13 @@ def judge(binding, folder):
             stop=base+round(part['seconds']*1e9); offsets=[x for x in st['traces'][w['name']]['offsetsNS'] if base<=x<stop]
             selected=[x for x in client if base<=x['scheduledOffsetNs']<stop]; good=[]; outcomes=Counter()
             for x in selected:
-                r=finals.get(x.get('requestID')); outcomes[r.get('outcome') if r else 'unsent-at-window-end' if x.get('error')=='UnsentAtWindowEnd' else 'unfinished-or-no-final']+=1
-                if r and r.get('outcome')=='completed' and r.get('executionComplete') and positive(r.get('elapsedNanos')):
-                    latency=d.scheduled_latency_ns(x,start_ns)
-                    if latency is not None:good.append(latency)
+                r=finals.get(x.get('requestID')); outcomes[r.get('outcome') if r else 'unsent-at-window-end' if x.get('issued') is False or x.get('error')=='UnsentAtWindowEnd' else 'unfinished-or-no-final']+=1
+                if x.get('issued') is not False and x.get('error')!='UnsentAtWindowEnd' and r and r.get('outcome')=='completed' and r.get('executionComplete') is True and type(r.get('elapsedNanos')) is int and r['elapsedNanos']>=0:
+                    good.append(r['elapsedNanos'])
             hits=sum(x<=w['slo']['targetLatencyNanos'] for x in good); required=math.ceil(len(offsets)*pct/100)
             sub.append({'id':part['id'],'offered':len(offsets),'outcomes':dict(outcomes),'unfinishedOrUnsent':max(0,len(offsets)-len(selected)),'completedLatencyNS':d.stats(good),'deadlineSuccess':hits,'requiredSuccessfulRank':required,'D1':'UNMEASURED' if not offsets else 'FAIL' if normal and hits<required else 'OBSERVED_THRESHOLD_MET' if normal else 'OVERLOAD_DESCRIPTIVE','rate':part['rates'][w['name']],'intendedRate':part['intendedRates'][w['name']],'poolShares':part['poolShares'],'alpha':part['alpha']}); base=stop
             sub[-1]['latencyScope']=results[w['name']]['latencyScope']
+            if offsets and quality!='VALID':sub[-1]['D1']='INVALID_GENERATOR' if quality=='INVALID_GENERATOR' else 'UNKNOWN'
             sub[-1]['unfinishedOrUnsent']+=sum(not finals.get(x.get('requestID')) for x in selected)
         results[w['name']]['substages']=sub
         if any(x['D1']=='FAIL' for x in sub): results[w['name']]['D1']='FAIL'
@@ -1209,6 +1216,8 @@ def judge(binding, folder):
     if inp.errors:
         result['status']='NOT_READY'
         result['notReadyReasons'].append('Required boundary/raw source missing or unreadable')
+    if any(r['issuanceFidelity']['generatorQuality']['status']=='INVALID_GENERATOR' for r in results.values()):
+        result['status']='INVALID_GENERATOR'
     save(folder/'judgment.json',result); return result
 
 
@@ -1306,7 +1315,7 @@ def publish_campaign(binding, root, identifier, store_config):
         if not folder.is_dir() or not (folder/'phase.json').exists():continue
         phase=load(folder/'phase.json');judgment=load(folder/'judgment.json')
         requests={}
-        fields=('offered','clientRows','unfinishedOrUnsent','outcomes','completedLatencyNS','gatewayCompletedLatencyNS','latencyScope','scheduledLatencyMissingIDs','serviceLatencyMS','completionResidualNS','gatewayTailNS','deadlineSuccess','deadlineSuccessFraction','requiredSuccessfulRank','D1','unsentAtWindowEnd','actualGatewayIdentities','gatewayFinalOutcomes','offeredGatewayFinalOutcomes','selectedResidualPercentile')
+        fields=('offered','clientRows','unfinishedOrUnsent','outcomes','completedLatencyNS','gatewayCompletedLatencyNS','latencyScope','scheduledLatencyNS','entranceDelayNS','entranceDelayMeaning','actualLatencyNS','completionResidualNS','gatewayTailNS','deadlineSuccess','deadlineSuccessFraction','requiredSuccessfulRank','D1','unsentAtWindowEnd','actualGatewayIdentities','gatewayFinalOutcomes','offeredGatewayFinalOutcomes','selectedResidualPercentile')
         for name,value in judgment['requests'].items():
             requests[name]={key:value[key] for key in fields if key in value}
             requests[name]['issuanceFidelity']=value.get('issuanceFidelity')
@@ -1315,7 +1324,7 @@ def publish_campaign(binding, root, identifier, store_config):
             for key in ('rawPopulation','offeredResponsePopulation'):
                 population=value.get(key) or {}
                 requests[name][key]={field:population[field] for field in population_fields if field in population}
-            requests[name]['missingReasons']={'deadlineSuccessFraction':'No offered arrivals' if not value['offered'] else None,'completedLatencyNS':'Scheduled completion timestamps missing' if value.get('scheduledLatencyMissingIDs') else 'No successful execution-complete responses' if not value.get('completedLatencyNS',{}).get('samples') else None,'completionResidualNS':'No complete native/dispatched residual observations' if not value.get('completionResidualNS',{}).get('samples') else None}
+            requests[name]['missingReasons']={'deadlineSuccessFraction':'No offered arrivals' if not value['offered'] else None,'completedLatencyNS':'No successful execution-complete gateway responses' if not value.get('completedLatencyNS',{}).get('samples') else None,'completionResidualNS':'No complete native/dispatched residual observations' if not value.get('completionResidualNS',{}).get('samples') else None}
         power=judgment.get('power') or {}
         kpis={'status':judgment['status'],'visibility':'PRIVATE_OPERATIONAL_ONLY','requests':requests,'judgmentCounts':dict(Counter(value['D1'] for value in judgment['requests'].values())),'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,'activePoolJoules':power.get('activePoolJoules') if power.get('complete') else None,'energyPopulation':'Whole/active shared pool during offered [from,to); not attributed per workload','limitations':result['limitations'],'missingReasons':{'energy':None if power.get('complete') else 'Actual whole/active power coverage incomplete','judgment':None if judgment['status']!='NOT_READY' else 'Required evidence incomplete; actual reasons retained in raw judgment'}}
         kpis['schedulerSettings']=result['schedulerSettings']
@@ -1477,7 +1486,7 @@ def main():
             assert len(b['rowOrder'])==8
             print(json.dumps({'status':'OFFLINE_INPUT_CHECK_ONLY','scientificResults':'UNMEASURED','scheduleSeconds':21000,'N':b['config']['N']})); return 0
         if not a.out: raise ValueError('--out absolute run or stage directory required')
-        if a.command=='judge': return 2 if judge(a.binding,a.out)['status'] in ('NOT_READY','FAIL') else 0
+        if a.command=='judge': return 2 if judge(a.binding,a.out)['status'] in ('NOT_READY','FAIL','INVALID_GENERATOR') else 0
         if a.command=='summarize': return 2 if summarize(a.binding,a.out)['status']=='NOT_READY' else 0
         if a.command=='publish':
             if not a.experiment_id or not a.store_config:raise ValueError('publish requires --experiment-id and --store-config; summary is final immutable record')

@@ -68,8 +68,8 @@ class FakeClient:
 
 
 class ReplayTest(unittest.TestCase):
-    def test_e5_lifetime_subtracts_lateness_and_expired_plan_does_not_send(self):
-        for delay, expected in [(250_000_000, "0.750000000s"), (1_000_000_000, None)]:
+    def test_e5_lateness_does_not_reduce_lifetime_or_prevent_send(self):
+        for delay in (250_000_000, 2_000_000_000):
             with self.subTest(delay=delay), patch("chill_loadgen.http_client.HTTPSConnection") as connection:
                 connection.return_value.sock = None
                 response = connection.return_value.getresponse.return_value
@@ -83,18 +83,14 @@ class ReplayTest(unittest.TestCase):
                         "https://chill.example", bearer_token="token",
                         timeout_seconds=2, request_lifetime_seconds=1),
                     out=output, start_ns=0, clock_ns=lambda: delay,
-                    request_lifetime_seconds=1,
                 )
                 row = json.loads(output.getvalue())
                 self.assertEqual(row["requestIndex"], 0)
-                if expected is None:
-                    connection.return_value.request.assert_not_called()
-                    self.assertFalse(row["issued"])
-                    self.assertEqual(row["error"], "GeneratorDelayExpired")
-                    self.assertNotIn("sentMonotonicNS", row)
-                else:
-                    self.assertEqual(connection.return_value.request.call_args.kwargs["headers"]["X-Chill-Request-Timeout"], expected)
-                    self.assertTrue(row["issued"])
+                self.assertEqual(connection.return_value.request.call_args.kwargs["headers"]["X-Chill-Request-Timeout"], "1.000000000s")
+                self.assertTrue(row["issued"])
+                self.assertEqual(row["latenessNs"], delay)
+                self.assertIn("sentAtUnixNS", row)
+                self.assertIn("finishedAtUnixNS", row)
 
     def test_e5_thread_start_failure_records_plan_and_continues_draining(self):
         original_start = threading.Thread.start
@@ -137,9 +133,9 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual({0, 1, 2}, {row["requestIndex"] for row in rows})
         for row in rows:
             self.assertEqual(row["sentMonotonicNS"] - row["scheduledMonotonicNS"], row["latenessNs"])
-            self.assertEqual((row["finishedMonotonicNS"] - row["scheduledMonotonicNS"]) / 1e6, row["latencyMs"])
-            self.assertEqual(row["latencyMs"], row["scheduledLatencyMs"])
-            self.assertAlmostEqual(row["serviceLatencyMs"] + row["latenessNs"] / 1e6, row["latencyMs"])
+            self.assertEqual((row["finishedMonotonicNS"] - row["scheduledMonotonicNS"]) / 1e6, row["scheduledLatencyMs"])
+            self.assertEqual(row["latencyMs"], row["serviceLatencyMs"])
+            self.assertAlmostEqual(row["serviceLatencyMs"] + row["latenessNs"] / 1e6, row["scheduledLatencyMs"])
 
     def test_cycles_records_at_fixed_rate_and_reports_each_request(self) -> None:
         now = [0]
