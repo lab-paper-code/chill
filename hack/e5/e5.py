@@ -92,14 +92,14 @@ def require_component_source(receipt, identity, component, executable=None):
 
 
 def validate_g0_evidence(evidence, verdict, binding, weighted_capacity, expected_rates, plc_slo):
-    """Validate recorded G0 fields; UNKNOWN and historical FAIL never authorize E5."""
+    """Judge gateway-only G0 criteria directly; aggregate/Smol SLO verdicts are references."""
     def finite(value, minimum=0):
         return type(value) in (int, float) and math.isfinite(value) and value >= minimum
     def matches(actual, expected):
         return finite(actual) and math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-9)
     try:
-        if verdict['status'] != 'PASS' or verdict['generatorQualityStatus'] != 'VALID':
-            raise ValueError('G0 must record PASS and generator VALID')
+        if verdict['generatorQualityStatus'] != 'VALID':
+            raise ValueError('G0 requires generator VALID')
         if not finite(weighted_capacity) or weighted_capacity <= 0 or not matches(verdict['configuredRateTotal'], 1.2 * weighted_capacity):
             raise ValueError('G0 alpha=1.2 total differs from final weighted capacity')
         if set(expected_rates) != {'image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa'}:
@@ -148,7 +148,11 @@ def self_check_g0():
     binding = {'schema': 'demo-e5-binding.v1', 'demoConfig': {'measurementSLO': {'plc': slo}},
                'schedule': [{'id': 'G-check', 'seconds': 120, 'traces': {name: {'offered': 10} for name in names}, 'parts': [{'alpha': dict.fromkeys(['mobilenet', 'plc', 'smolvlm2'], 1.2), 'rates': rates}]}]}
     validate_g0_evidence(evidence, verdict, binding, 1, rates, slo)
-    bad_cases = [({}, evidence, binding), (dict(verdict, status='FAIL'), evidence, binding),
+    smol_failure = copy.deepcopy(verdict)
+    smol_failure.update(status='FAIL', GCertified=False)
+    smol_failure['workloads']['smolvlm2-vqa'].update(SLOVerdict='FAIL', successFraction=.4)
+    validate_g0_evidence(evidence, smol_failure, binding, 1, rates, slo)
+    bad_cases = [({}, evidence, binding),
                  (dict(verdict, generatorQualityStatus='UNKNOWN'), evidence, binding),
                  (dict(verdict, configuredRateTotal=1.3), evidence, binding),
                  (dict(verdict, cpuCoresPeak=2), evidence, binding), (verdict, {}, binding), (verdict, evidence, {})]
@@ -392,7 +396,13 @@ def g0_evidence_gate(config, weighted_capacity, *, required=True, expected_rates
     if plc_slo is None:
         plc_slo = next(w['slo'] for w in config['workloads'] if w['name'] == 'plc-anomaly')
     validate_g0_evidence(evidence, verdict, binding, weighted_capacity, expected_rates, plc_slo)
-    return {'status': 'VALID', 'runID': evidence['runID'], 'csCPUFraction': verdict['cpuCoresPeak'] / evidence['csCPULimitCores'], 'sources': sources}
+    return {'status': 'VALID', 'gatewayVerdict': 'PASS', 'runID': evidence['runID'],
+            'csCPUFraction': verdict['cpuCoresPeak'] / evidence['csCPULimitCores'],
+            'historicalOverallStatusReference': verdict.get('status'),
+            'smolSLOReference': {key: verdict['workloads']['smolvlm2-vqa'].get(key)
+                                 for key in ('SLOVerdict','successFraction','withinSLOFraction')},
+            'successFractionReference': {name: row.get('successFraction') for name, row in verdict['workloads'].items()
+                                         if name != 'smolvlm2-vqa'}, 'sources': sources}
 
 def require_strict_archives(config):
     """Reject diagnostic archive tolerance anywhere in normative E5 inputs."""

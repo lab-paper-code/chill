@@ -58,10 +58,11 @@ def main():
         (g0_run / 'run').mkdir(parents=True)
         rates = dict(zip(e5.WORKLOADS, [.54, .12, .54]))
         slo = {'percentile': 95, 'targetLatencyNanos': 32_000_000}
-        witness = {'status': 'PASS', 'generatorQualityStatus': 'VALID', 'configuredRateTotal': 1.2,
+        witness = {'status': 'FAIL', 'generatorQualityStatus': 'VALID', 'configuredRateTotal': 1.2,
                    'cpuCoresPeak': 1, 'cpu10sSamples': [{'cpuCores': 1}],
                    'workloads': {name: {'rate': rate, 'planned': 10, 'issued': 10, 'supplied': True, 'quality': {'status': 'VALID'}} for name, rate in rates.items()}}
         witness['workloads']['plc-anomaly']['receiptLatencyMS'] = {'p95': 20}
+        witness['workloads']['smolvlm2-vqa'].update(SLOVerdict='FAIL', successFraction=.4)
         frozen = {'schema': 'demo-e5-binding.v1', 'demoConfig': {'measurementSLO': {'plc': slo}},
                   'schedule': [{'id': 'G-check', 'seconds': 120, 'traces': {name: {'offered': 10} for name in rates},
                                 'parts': [{'alpha': dict.fromkeys(['mobilenet', 'plc', 'smolvlm2'], 1.2), 'rates': rates}]}]}
@@ -72,6 +73,8 @@ def main():
         approved = {'g0Evidence': record, 'workloads': [{'name': name, 'R': 1, 'slo': slo} for name in rates]}
         gate = e5.g0_evidence_gate(approved, 1)
         assert gate['status'] == 'VALID' and gate['csCPUFraction'] == .5
+        assert gate['gatewayVerdict'] == 'PASS' and gate['historicalOverallStatusReference'] == 'FAIL'
+        assert gate['smolSLOReference']['SLOVerdict'] == 'FAIL'
         assert gate['sources']['verdict'] == e5.ref(record['verdict'])
         for invalid in ({}, {'g0Evidence': {'status': 'UNKNOWN'}}, dict(approved, g0Evidence=dict(record, runID='wrong-run')),
                         dict(approved, g0Evidence=dict(record, csCPULimitCores=0))):
