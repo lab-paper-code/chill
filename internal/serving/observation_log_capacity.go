@@ -42,6 +42,14 @@ func (l *ObservationLog) CapacityRecords(ctx context.Context, keys []string) (ma
 			return nil
 		}
 	}
+	if l.config.RouterSources != nil {
+		read, err := l.prepare(ctx, map[string][2]time.Time{observationManagementStream: {}})
+		if err != nil {
+			return nil, err
+		}
+		defer read.close()
+		return found, l.scanStream(read, observationManagementStream, visit(found))
+	}
 	read, err := l.capture(map[string][2]time.Time{observationManagementStream: {}})
 	if err != nil {
 		return nil, err

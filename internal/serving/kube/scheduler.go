@@ -66,8 +66,11 @@ type SchedulerControllerConfig struct {
 	Evidence      measurementEvidence
 	EvidenceStore string
 	MeterSource   func(metricobserver.SourceIdentity) (metricobserver.Source, error)
-	OnDecision    func(serving.SchedulerDecision, serving.SchedulerSnapshot) error
-	OnAction      func(OperationResult) error
+	// GatewayObservationEnd chooses a common reported prefix for split sources.
+	// Nil retains the single-gateway request cutoff.
+	GatewayObservationEnd func(time.Time) (time.Time, error)
+	OnDecision            func(serving.SchedulerDecision, serving.SchedulerSnapshot) error
+	OnAction              func(OperationResult) error
 }
 type SchedulerControllerState struct {
 	Snapshot serving.SchedulerSnapshot `json:"snapshot"`
@@ -482,11 +485,19 @@ func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapsho
 }
 
 func (c *SchedulerController) capture(ctx context.Context, now time.Time, config SchedulerControllerConfig) (serving.SchedulerSnapshot, error) {
-	arrivals, err := c.observationLog.SchedulerArrivals(ctx, now.Add(-config.Settings.ObservationWindow), now)
+	end := now
+	if config.GatewayObservationEnd != nil {
+		var err error
+		end, err = config.GatewayObservationEnd(now)
+		if err != nil {
+			return serving.SchedulerSnapshot{}, err
+		}
+	}
+	arrivals, err := c.observationLog.SchedulerArrivals(ctx, end.Add(-config.Settings.ObservationWindow), end)
 	if err != nil {
 		return serving.SchedulerSnapshot{}, err
 	}
-	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines,
+	s := serving.SchedulerSnapshot{ObservationEnd: end, ObservedSince: c.observationLog.Started(), Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines,
 		DispatchOccupancy: config.DispatchOccupancy}
 	// Historical reads must finish before refreshing authoritative live sources.
 	if err = c.observer.Refresh(ctx); err != nil {

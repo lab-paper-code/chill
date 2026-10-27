@@ -2,9 +2,9 @@
 
 ## Status
 
-**Draft — 2026-10-27, E5 뒤 적용 전제.** G1 문서 초안이다. 채택·G2 구현·G3
-검증·배포 완료를 뜻하지 않으며, 현재 E5/G0나 운영 큐를 변경하는 승인이 아니다.
-G0 실패 시에도 이 문서만으로 E5 앞 분리 적용을 진행하지 않는다.
+**G2 코드 이행 — 2026-10-28, 운영 cutover는 미승인.** T5와 별도 control/router
+실행 경로를 구현하되 G3 클러스터 캠페인·배포 완료를 뜻하지 않는다. 현재 E5/G0와
+측정한 단일 게이트웨이는 불변이며 이 ADR만으로 앞당겨 배포하지 않는다.
 
 ## Context
 
@@ -26,11 +26,12 @@ ChillServer 한 프로세스의 요청 인증·입력 검증·가중 배정·본
 SCH-60~66 / SCH-AC-47~51, 상세 설계는
 [gateway-split](../design/serving/gateway-split.md)에 둔다.
 
-## Decision (proposed)
+## Decision
 
-1. **판단은 중앙, 전달은 분산한다.** 같은 Go 바이너리/이미지를 `control`과
-   `router` 모드의 두 Deployment로 분리한다. control은 하나의 전역 계획기,
-   관측기, 실물 장부·예약, 운영 작업과 관리/조회 API를 소유한다. 여러 router는
+1. **판단은 중앙, 전달은 분산한다.** control은 같은 서버 조립 소스를
+   `gatewaycontrol` build tag로 만든 별도 `chill-control` 실행 파일이고, 데이터
+   평면은 별도 `cmd/chill-router`다. default-off 배포 플래그는 추가하지 않는다.
+   control은 하나의 전역 계획기, 관측기, 실물 장부·예약, 운영 작업과 관리/조회 API를 소유한다. 여러 router는
    하나의 추론 Service 뒤에서 인증·입력 검증·미배정 큐·SWRR·점유와 요청 기록을
    소유하고 native의 Pod 전용 Service/EdgeMesh로 직접 전달한다. 요청마다
    control picker를 호출하거나 본문을 control로 중계하지 않는다.
@@ -91,9 +92,9 @@ SCH-60~66 / SCH-AC-47~51, 상세 설계는
   구형 단일 gateway 자료는 원래 형식으로 해석하며 split 검증 결과로 간주하지 않는다.
 - native 이미지, Pod 전용 Service와 EdgeMesh, firstfloor 배칭·마감 정책, 중앙
   장부/예약 및 E5 분모는 변경하지 않는다. 새 CRD·DB·외부 프레임워크는 없다.
-- 적용 순서는 **E5 완료 → G2 구현 → G3 검증 → 별도 승인된 cutover**다.
-  현 E5는 단일 게이트웨이와 당시 측정한 G를 조건으로 보고한다. 분리 뒤에는
-  G와 d 측정·다중 stream 집계를 다시 확인하고, 과거 결과와 구조를 혼동하지 않는다.
+- 적용 순서는 **E5 단일 경로 유지 → G2 미배선 코드/로컬 검사 → G3 검증 →
+  별도 승인된 cutover**다. 현 E5는 단일 게이트웨이와 당시 측정한 G를 조건으로
+  보고한다. 분리 뒤에는 G와 d 측정·다중 stream 집계를 다시 확인한다.
 
 ## Change record
 
@@ -103,3 +104,9 @@ SCH-60~66 / SCH-AC-47~51, 상세 설계는
   소유하고 `serving-httpapi → serving-live`만 허용한다. composition root가 기록
   성공 후 projection을 발행한다. `.go-arch-lint.yml`과 coverage mapping을 함께
   갱신하며 이 허용은 G2 배포 또는 E5 실행 경로 변경을 승인하지 않는다.
+- 2026-10-28: G2의 `serving-gateway` component는 `serving-core`,
+  `serving-firstfloor`, `serving-live`에만 의존한다. core는 전송/HTTP/Kubernetes를
+  역참조하지 않고 불변 배분표·신선도 gate·외부 물리 점유 callback을 소유한다.
+  composition root가 native ACK-only source, router 적용 장벽, native 진행·상태
+  증거와 router별 reader를 연결한다. `.go-arch-lint.yml`과 coverage mapping을
+  함께 갱신한다. 별도 control 빌드와 router는 차트에 연결하지 않는다.

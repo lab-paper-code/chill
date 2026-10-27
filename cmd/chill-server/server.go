@@ -72,14 +72,26 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if diagnostics != nil {
 		recorder = diagnostics.recorder
 	}
+	var split *splitControlService
+	if serverRole == "control" {
+		split, err = newSplitControl(opts)
+		if err != nil {
+			return err
+		}
+		defer func() { retErr = errors.Join(retErr, split.control.Close()) }()
+	}
 	publisher := newLivePublisher(ctx)
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	observationConfig := serving.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
 		Diagnostics:    recorder,
 		Retention:      opts.observationRetention,
 		OnRequestEvent: publisher.request,
-	})
+	}
+	if split != nil {
+		observationConfig.RouterSources = split.sources
+	}
+	observationLog, err := serving.NewObservationLog(observationConfig)
 	if err != nil {
 		return err
 	}
@@ -90,14 +102,23 @@ func run(ctx context.Context, opts options) (retErr error) {
 			retErr = errors.Join(retErr, fmt.Errorf("close serving observations: %w", err))
 		}
 	}()
+	if split != nil {
+		split.observations = observationLog
+	}
 	// Backend lifetime belongs to ChillServer, not SIGTERM or an HTTP caller.
 	backendCtx, cancelBackend := context.WithCancel(context.Background())
 	defer cancelBackend()
-	execution, err := serving.NewRuntime(backendCtx, serving.RuntimeConfig{
+	runtimeConfig := serving.RuntimeConfig{
 		QueueLimit: opts.queueLimit, ObservationLog: observationLog,
-		Diagnostics: recorder,
-		OnChange:    publisher.changedRuntime,
-	})
+		Diagnostics: recorder, OnChange: publisher.changedRuntime,
+	}
+	if split != nil {
+		runtimeConfig.GatewayDrained = split.control.Drained
+		runtimeConfig.GatewayPodDrained = split.control.PodDrained
+		runtimeConfig.GatewayRequests = split.control.RequestsAt
+		runtimeConfig.OnChange = func() { publisher.changedRuntime(); split.notify() }
+	}
+	execution, err := serving.NewRuntime(backendCtx, runtimeConfig)
 	if err != nil {
 		return err
 	}
@@ -107,9 +128,13 @@ func run(ctx context.Context, opts options) (retErr error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns, transport.MaxIdleConnsPerHost, transport.IdleConnTimeout = 0, 256, 30*time.Second
 	native := &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}, Diagnostics: recorder}
-	observer, err := servingkube.NewObserver(store, kube, execution, native, servingkube.ObserverConfig{
-		Namespace: opts.servingNamespace,
-	})
+	observerConfig := servingkube.ObserverConfig{Namespace: opts.servingNamespace}
+	if split != nil {
+		split.runtime = execution
+		observerConfig.OnProgress = split.forwardProgress
+		observerConfig.OnState = split.forwardState
+	}
+	observer, err := servingkube.NewObserver(store, kube, execution, native, observerConfig)
 	if err != nil {
 		return err
 	}
@@ -124,8 +149,15 @@ func run(ctx context.Context, opts options) (retErr error) {
 		MaxQueryEvents: opts.maxQueryEvents,
 		Live:           publisher.hub,
 	}
+	var routingApplied func(context.Context) error
+	var observationEnd func(time.Time) (time.Time, error)
+	if split != nil {
+		split.observer = observer
+		routingApplied = split.routingApplied
+		observationEnd = split.observationEnd
+	}
 	scheduler, err := newSchedulerService(
-		ctx, store, kube, execution, observer, objects, observationLog, opts, handlerConfig.RequestTimeout, publisher,
+		ctx, store, kube, execution, observer, objects, observationLog, opts, handlerConfig.RequestTimeout, publisher, routingApplied, observationEnd,
 	)
 	if err != nil {
 		return fmt.Errorf("initialize scheduler service: %w", err)
@@ -150,6 +182,14 @@ func run(ctx context.Context, opts options) (retErr error) {
 	publisher.startRuntime(ctx, execution)
 	if scheduler != nil && len(scheduler.controller.Settings().AutonomousWorkloads) > 0 {
 		execution.EnableSchedulerRouting()
+	}
+	if split != nil {
+		if scheduler != nil {
+			split.observationWindow = func() time.Duration { return scheduler.controller.Settings().ObservationWindow }
+		}
+		if err := split.start(ctx); err != nil {
+			return fmt.Errorf("initialize router distribution: %w", err)
+		}
 	}
 	if scheduler != nil {
 		handlerConfig.Scheduler = scheduler.controller
@@ -191,6 +231,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 	chillServer, err := composeChillServer(handler, authorizer, opts)
 	if err != nil {
 		return err
+	}
+	if split != nil {
+		chillServer = split.handler(chillServer, authorizer)
 	}
 	return serve(ctx, opts, chillServer, execution, observer, manager, observationLog, scheduler, diagnostics)
 }

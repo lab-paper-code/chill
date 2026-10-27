@@ -22,24 +22,29 @@ type ObservationCoverage struct {
 }
 
 type ObservationSource struct {
-	From   time.Time `json:"from"`
-	To     time.Time `json:"to"`
-	Stream string    `json:"stream"`
-	Source string    `json:"source"`
-	Store  string    `json:"store,omitempty"`
-	Key    string    `json:"key,omitempty"`
+	From       time.Time  `json:"from"`
+	To         time.Time  `json:"to"`
+	Stream     string     `json:"stream"`
+	Source     string     `json:"source"`
+	Store      string     `json:"store,omitempty"`
+	Key        string     `json:"key,omitempty"`
+	RouterID   string     `json:"routerID,omitempty"`
+	ObservedAt *time.Time `json:"observedAt,omitempty"`
 }
 
 type ObservationGap struct {
-	From   time.Time `json:"from"`
-	To     time.Time `json:"to"`
-	Stream string    `json:"stream"`
-	Reason string    `json:"reason"`
+	From       time.Time  `json:"from"`
+	To         time.Time  `json:"to"`
+	Stream     string     `json:"stream"`
+	Reason     string     `json:"reason"`
+	RouterID   string     `json:"routerID,omitempty"`
+	ObservedAt *time.Time `json:"observedAt,omitempty"`
 }
 
 type observationSource struct {
 	hour   time.Time
 	object *evidencestore.ObjectIdentity
+	owner  *observationRead
 }
 
 // prepare freezes local hours before listing objects. An hour remains local even
@@ -47,6 +52,12 @@ type observationSource struct {
 func (l *ObservationLog) prepare(ctx context.Context, ranges map[string][2]time.Time) (*observationRead, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	// The provider may hold control.mu while membership recording takes log.mu.
+	// Snapshot it before capture, outside the writer lock.
+	var routers []RouterObservationSource
+	if l.config.RouterSources != nil {
+		routers = l.config.RouterSources()
 	}
 	read, err := l.capture(ranges)
 	if err != nil {
@@ -57,14 +68,24 @@ func (l *ObservationLog) prepare(ctx context.Context, ranges map[string][2]time.
 		read.close()
 		return nil, err
 	}
+	if l.config.RouterSources != nil {
+		if err := l.prepareRouters(read, ranges, routers); err != nil {
+			read.close()
+			return nil, err
+		}
+	}
 	return read, nil
 }
 
 func observationObjectHour(object evidencestore.ObjectIdentity) (time.Time, string, bool) {
-	if !strings.HasPrefix(object.Key, observationArchivePrefix) {
+	return observationObjectHourAt(object, observationArchivePrefix)
+}
+
+func observationObjectHourAt(object evidencestore.ObjectIdentity, prefix string) (time.Time, string, bool) {
+	if !strings.HasPrefix(object.Key, prefix) {
 		return time.Time{}, "", false
 	}
-	parts := strings.Split(strings.TrimPrefix(object.Key, observationArchivePrefix), "/")
+	parts := strings.Split(strings.TrimPrefix(object.Key, prefix), "/")
 	if len(parts) != 2 {
 		return time.Time{}, "", false
 	}
@@ -81,7 +102,7 @@ func (l *ObservationLog) selectSources(read *observationRead, ranges map[string]
 	read.sources = map[string][]observationSource{}
 	read.archive, _ = l.config.Writer.(ObservationArchive)
 	needArchive := false
-	for _, bounds := range ranges {
+	for stream, bounds := range ranges {
 		if bounds[0].IsZero() {
 			needArchive = true
 			break
@@ -91,7 +112,7 @@ func (l *ObservationLog) selectSources(read *observationRead, ranges map[string]
 			end = read.now
 		}
 		for hour := bounds[0].UTC().Truncate(time.Hour); !hour.After(end); hour = hour.Add(time.Hour) {
-			if !read.localHours[hour] {
+			if !read.localStream(hour, stream) || read.routerID != "" && !read.localStream(hour, observationCatalogStream) {
 				needArchive = true
 				break
 			}
@@ -99,7 +120,7 @@ func (l *ObservationLog) selectSources(read *observationRead, ranges map[string]
 	}
 	objects := map[string]map[time.Time]evidencestore.ObjectIdentity{}
 	if needArchive && read.archive != nil {
-		listed, err := read.archive.List(read.ctx, observationArchivePrefix)
+		listed, err := read.archive.List(read.ctx, observationRouterPrefix(l.config.RouterID))
 		if err != nil {
 			return err
 		}
@@ -107,9 +128,12 @@ func (l *ObservationLog) selectSources(read *observationRead, ranges map[string]
 			if err := read.ctx.Err(); err != nil {
 				return err
 			}
-			hour, stream, valid := observationObjectHour(object)
-			if !valid || read.localHours[hour] {
+			hour, stream, valid := observationObjectHourAt(object, observationRouterPrefix(l.config.RouterID))
+			if !valid || read.localStream(hour, stream) {
 				continue
+			}
+			if read.router != nil && hour.Equal(read.now.Truncate(time.Hour)) && !read.localStream(hour, stream) {
+				continue // An archive cannot prove the tail of an unmounted live buffer.
 			}
 			if objects[stream] == nil {
 				objects[stream] = map[time.Time]evidencestore.ObjectIdentity{}
@@ -126,7 +150,7 @@ func (l *ObservationLog) selectSources(read *observationRead, ranges map[string]
 			continue
 		}
 		for hour := range read.localHours {
-			if observationHourWanted(hour, bounds) {
+			if observationHourWanted(hour, bounds) && read.localStream(hour, stream) {
 				read.sources[stream] = append(read.sources[stream], observationSource{hour: hour})
 				catalogHours[hour] = true
 			}
@@ -140,7 +164,7 @@ func (l *ObservationLog) selectSources(read *observationRead, ranges map[string]
 		}
 	}
 	for hour := range catalogHours {
-		if read.localHours[hour] {
+		if read.localStream(hour, observationCatalogStream) {
 			read.sources[observationCatalogStream] = append(read.sources[observationCatalogStream], observationSource{hour: hour})
 		} else if object, exists := objects[observationCatalogStream][hour]; exists {
 			object := object
@@ -169,6 +193,9 @@ func (r *observationRead) coverage(ranges map[string][2]time.Time) ObservationCo
 		if from.IsZero() {
 			from = r.start
 			for _, source := range r.sources[stream] {
+				if source.owner != nil {
+					continue
+				}
 				if source.hour.Before(from) {
 					from = source.hour
 				}
@@ -176,6 +203,9 @@ func (r *observationRead) coverage(ranges map[string][2]time.Time) ObservationCo
 		}
 		available := map[time.Time]observationSource{}
 		for _, source := range r.sources[stream] {
+			if source.owner != nil {
+				continue
+			}
 			available[source.hour] = source
 		}
 		for hour := from.Truncate(time.Hour); hour.Before(to); hour = hour.Add(time.Hour) {
@@ -199,12 +229,45 @@ func (r *observationRead) coverage(ranges map[string][2]time.Time) ObservationCo
 				continue
 			}
 			if !exists {
-				coverage.Gaps = append(coverage.Gaps, ObservationGap{From: start, To: end, Stream: stream, Reason: "StreamUnavailable"})
+				reason := "StreamUnavailable"
+				if r.router != nil && hour.Equal(r.now.Truncate(time.Hour)) {
+					reason = "LiveBufferUnavailable"
+				}
+				coverage.Gaps = append(coverage.Gaps, ObservationGap{From: start, To: end, Stream: stream, Reason: reason})
 				continue
 			}
+			// Receipts and unassigned requests exist only in report Open rows.
+			// Even a mounted request file cannot prove arrivals after that snapshot.
+			if r.router != nil && stream == observationRequestStream && r.router.ObservedAt.Before(end) {
+				knownUntil := r.router.ObservedAt
+				if knownUntil.Before(start) {
+					knownUntil = start
+				}
+				coverage.Gaps = append(coverage.Gaps, ObservationGap{
+					From: knownUntil, To: end, Stream: stream, Reason: "RouterReportUnavailable",
+				})
+				end = knownUntil
+				if !start.Before(end) {
+					continue
+				}
+			}
 			entry := ObservationSource{From: start, To: end, Stream: stream, Source: "local"}
+			entry.RouterID = r.routerID
+			if r.router != nil && !r.router.ObservedAt.IsZero() {
+				value := r.router.ObservedAt
+				entry.ObservedAt = &value
+			}
 			if source.object != nil {
 				entry.Source, entry.Store, entry.Key = observationArchiveSource, source.object.Store, source.object.Key
+			}
+			if r.router != nil {
+				catalogAvailable := false
+				for _, catalog := range r.sources[observationCatalogStream] {
+					catalogAvailable = catalogAvailable || catalog.hour.Equal(hour)
+				}
+				if !catalogAvailable {
+					coverage.Gaps = append(coverage.Gaps, ObservationGap{From: start, To: end, Stream: observationCatalogStream, Reason: "StreamUnavailable"})
+				}
 			}
 			coverage.Sources = append(coverage.Sources, entry)
 			if coverage.From == nil || start.Before(*coverage.From) {
@@ -215,6 +278,24 @@ func (r *observationRead) coverage(ranges map[string][2]time.Time) ObservationCo
 				value := end
 				coverage.To = &value
 			}
+		}
+	}
+	for i := range coverage.Gaps {
+		coverage.Gaps[i].RouterID = r.routerID
+		if r.router != nil && !r.router.ObservedAt.IsZero() {
+			value := r.router.ObservedAt
+			coverage.Gaps[i].ObservedAt = &value
+		}
+	}
+	for _, child := range r.routerReads {
+		childCoverage := child.coverage(child.routerRanges(ranges))
+		coverage.Sources = append(coverage.Sources, childCoverage.Sources...)
+		coverage.Gaps = append(coverage.Gaps, childCoverage.Gaps...)
+		if childCoverage.From != nil && (coverage.From == nil || childCoverage.From.Before(*coverage.From)) {
+			coverage.From = childCoverage.From
+		}
+		if childCoverage.To != nil && (coverage.To == nil || childCoverage.To.After(*coverage.To)) {
+			coverage.To = childCoverage.To
 		}
 	}
 	return coverage
@@ -246,6 +327,10 @@ func (c ObservationCoverage) gapUntil(from time.Time) *time.Time {
 
 func (r *observationRead) scanSource(stream string, source observationSource, scanner *observationScanner, visit func([]byte) error) error {
 	r.scanningHour = source.hour
+	r.scanningRead = source.owner
+	if source.owner != nil {
+		return source.owner.scanSource(stream, observationSource{hour: source.hour, object: source.object}, scanner, visit)
+	}
 	stopped := false
 	checked := func(raw []byte) error {
 		if err := r.ctx.Err(); err != nil {
@@ -276,11 +361,22 @@ func (r *observationRead) scanSource(stream string, source observationSource, sc
 const observationArchiveSource = "archive"
 
 func (l *ObservationLog) readCatalogs(read *observationRead) error {
+	for _, child := range read.routerReads {
+		if err := l.readCatalogs(child); err != nil {
+			return err
+		}
+		for id, definition := range child.definitions {
+			read.definitions[id] = definition
+		}
+	}
 	for stream, sources := range read.sources {
 		if stream == observationCatalogStream {
 			continue
 		}
 		for _, source := range sources {
+			if source.owner != nil {
+				continue
+			}
 			if err := l.readCatalog(read, source.hour); err != nil {
 				return err
 			}
@@ -296,7 +392,7 @@ func (l *ObservationLog) readCatalog(read *observationRead, hour time.Time) erro
 	if read.catalogs[hour] != nil {
 		return nil
 	}
-	catalog := &ObservationCatalog{}
+	catalog := &ObservationCatalog{routerID: read.routerID}
 	read.catalogs[hour] = catalog
 	visit := func(raw []byte) error {
 		var row CatalogRow
@@ -323,6 +419,9 @@ func (l *ObservationLog) readCatalog(read *observationRead, hour time.Time) erro
 }
 
 func (r *observationRead) catalog() *ObservationCatalog {
+	if r.scanningRead != nil {
+		return r.scanningRead.catalog()
+	}
 	if catalog := r.catalogs[r.scanningHour]; catalog != nil {
 		return catalog
 	}

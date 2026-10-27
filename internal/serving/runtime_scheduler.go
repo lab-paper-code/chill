@@ -336,6 +336,29 @@ func (r *Runtime) StopSchedulerInstance(id string) (bool, error) {
 			}
 		}
 	}
+	if r.config.GatewayRequests != nil {
+		for _, request := range r.config.GatewayRequests(time.Now()) {
+			if request.Instance != "" || request.Definition == nil || request.Phase == phaseReturning {
+				continue
+			}
+			call := &Call{receipt: Receipt{UID: request.Definition.UID}, definition: request.Definition}
+			if !r.instanceServesCallLocked(retiring, call) {
+				continue
+			}
+			alternative := false
+			if workload := r.workloads[request.Definition.UID]; workload != nil {
+				for _, entry := range workload.route.entries {
+					if entry.instance.State.ID != id && r.instanceServesCallLocked(entry.instance, call) {
+						alternative = true
+						break
+					}
+				}
+			}
+			if !alternative {
+				return false, nil
+			}
+		}
+	}
 	retiring.State.Stopped = true
 	retiring.State.Reason = "SchedulerDraining"
 	retiring.Routing = map[string]int32{}
@@ -353,6 +376,9 @@ func (r *Runtime) StopSchedulerInstance(id string) (bool, error) {
 func (r *Runtime) DetachInstance(id string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if !r.gatewayDrainedLocked("", id, "") {
+		return false, nil
+	}
 	for _, call := range r.calls {
 		if call.assignment != nil && call.assignment.Instance == id && (!call.backendDone || !call.transportDone || !call.responseRecorded) {
 			return false, nil
@@ -373,15 +399,19 @@ func (r *Runtime) DetachInstance(id string) (bool, error) {
 	return true, nil
 }
 
-// SchedulerInputs captures only coupled in-process request and routing state.
-// Physical observations and historical windows are collected separately.
+// SchedulerInputs captures coupled routing and local/remote request snapshots.
+// GatewayRequests must not call Runtime while this lock is held.
 func (r *Runtime) SchedulerInputs(clock func() time.Time) SchedulerSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := clock()
 	routing, credits := r.schedulerRoutingLocked()
+	outstanding := r.schedulerOutstandingLocked(now)
+	if r.config.GatewayRequests != nil {
+		outstanding = append(outstanding, r.config.GatewayRequests(now)...)
+	}
 	return SchedulerSnapshot{
-		At: now, Workloads: r.schedulerDefinitionsLocked(), Outstanding: r.schedulerOutstandingLocked(now),
+		At: now, Workloads: r.schedulerDefinitionsLocked(), Outstanding: outstanding,
 		Routing: routing, RoutingCredits: credits,
 	}
 }

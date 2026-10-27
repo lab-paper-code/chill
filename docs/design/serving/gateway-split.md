@@ -1,9 +1,9 @@
-# 게이트웨이 제어·데이터 평면 분리 (G1 draft)
+# 게이트웨이 제어·데이터 평면 분리
 
-**상태: Draft — 2026-10-27, E5 뒤 적용 전제.** 이 문서는 G2 구현과 G3 검증을
-위한 설계 초안이며 구현·배포·통과 증거가 아니다. 현재 운영 큐의 rev97 retention
-→ canonical SLO cutover·capacity 재생 → G0 확인 → U2 재개 순서는 건드리지 않는다.
-E5 중 rollout·측정 조건 변경·호스트 빌드·테스트를 실행하지 않는다.
+**상태: G2 코드 이행 — 2026-10-28, 배포·G3 캠페인 검증 전.**
+현재 운영 큐와 E5/G0 측정 조건은 변경하지 않는다. 코드와 로컬 검사만 이행하며
+클러스터 접근·이미지 게시·차트 연결은 하지 않는다. 측정 창 중 호스트 build/test를
+멈추고 허용된 창에서 nice 19, GOMAXPROCS=2, 패키지 한정 검사만 수행한다.
 
 근거는 `O/intent/gateway-20261027/proposal.md`(목표와 배분표 계약), 같은 폴더의
 `arch-map.md`(현행 경로), `research.md`(참고 사례)다.
@@ -15,10 +15,13 @@ AC는 [scheduler SRS §8](../../spec/scheduler/SRS.md)의 SCH-60~66 / SCH-AC-47~
 
 ## 1. 모드와 책임 경계
 
-같은 `chill-server` Go 바이너리/이미지에 명시적 `control`/`router` 실행 모드를
-두고 서로 다른 Deployment로 실행한다. 이는 G2에서 추가할 모드이며 현행 flag가
-이미 있다는 뜻이 아니다. cutover 뒤 새 배치에서 결합 모드나 요청별 중앙 picker를
-병행하지 않는다. native runtime 7 이미지와 프로파일은 이 변경으로 재빌드하지 않는다.
+제어는 같은 서버 조립 소스의 **별도 실행 파일**로 빌드한다:
+`go build -tags gatewaycontrol -o chill-control ./cmd/chill-server`.
+데이터 평면은 `go build -o chill-router ./cmd/chill-router`다. 기본 `chill-server`는
+E5에서 측정한 기존 단일 게이트웨이 조립을 유지한다. default-off rollout 플래그나
+차트 연결은 추가하지 않으며, 새 control 실행 파일에는 추론 body/picker 경로가 없다.
+배포 cutover 뒤에는 단일 게이트웨이를 호환 경로로 병행하지 않는다. native runtime
+7 이미지와 프로파일은 이 변경으로 재빌드하지 않는다.
 
 | 책임 | control (1 replica) | router (N replicas) |
 |---|---|---|
@@ -46,8 +49,8 @@ router는 기존 [ADR 0021](../../adr/0021-raw-sample-preprocessing-boundary.md)
 
 ## 2. 배분표 계약
 
-배분표는 다음 논리 필드를 한 묶음으로 갖는 불변 전체 snapshot이다. wire DTO는
-G2에서 기존 타입을 재사용해 표현하되 정의/정책/배분표 identity를 합치지 않는다.
+배분표는 다음 논리 필드를 한 묶음으로 갖는 불변 전체 snapshot이다.
+wire DTO는 `serving.GatewayPlan`/`GatewayTarget`으로 표현하며 정의/정책/배분표 identity를 합치지 않는다.
 
 | 정보 | 의미 |
 |---|---|
@@ -55,6 +58,7 @@ G2에서 기존 타입을 재사용해 표현하되 정의/정책/배분표 iden
 | Workload UID, `definitionID`, 정의/요청 수명 | 같은 이름의 다른 등록 건·모델/입력/SLO를 분리하고 최초 수신 기준 예산 유지 |
 | Pod UID, container identity, node, 전용 endpoint | 이름 재사용·다른 실물로의 잘못된 전달 방지 |
 | 가중치, 정책/프로파일 참조, router별 점유 한도 | 실제 Ready 및 native 정책 ACK된 대상과 router 로컬 분배에 필요한 값 |
+| `admission`, `observationWindowNanos` | Workload별 신규 유입 gate와 동일 관측 창. 이미 수락한 요청의 drain 경로와 새 유입 허용을 구분한다. |
 
 기존 native `DecisionID` ACK 후에만 해당 정책에 의존하는 snapshot을 발행한다.
 정의·참조·대상·가중치·상한을 모두 검증하고 한 번의 포인터 교체로 적용한다.
@@ -77,11 +81,11 @@ control 재시작 후에는 이전 ACK를 추정 복원하지 않고 현재 표�
 
 ## 3. 배분표 채널 = T5 WebSocket 메커니즘
 
-[Dashboard T5 설계 §4.3~4.5](../dashboard/README.md)의 **TLS WebSocket,
-인증/권한 확인, bounded 송수신 큐, 순번/checkpoint, heartbeat, 재연결 시 snapshot
-재동기화** 메커니즘을 재사용한다. T5도 설계/구현 상태를 구분해야 하며, 이 문서는
-동작 중인 공통 채널이 이미 있다고 주장하지 않는다. 새 broker·gRPC·xDS 서버를
-별도로 도입하지 않는다.
+[Dashboard T5 설계 §4.3~4.5](../dashboard/README.md)의 인증된 TLS WebSocket,
+유한 송수신 큐, 순번/checkpoint, heartbeat와 재연결 snapshot 방식을 재사용한다.
+`internal/serving/live`의 `Encode`/`Read`/`Write`와 frame/write/queue 상한을
+공유하고 내부 채널은 `internal/serving/gateway`가 소유한다. 새 broker·gRPC·xDS
+서버를 별도로 도입하지 않는다. 이 구현은 G3/운영 통과 증거가 아니다.
 
 - router가 고정된 control 주소로 직접 WSS를 연결한다. 브라우저/BFF를 경유하지
   않는다. T5의 서버 간 leg처럼 TLS CA/hostname과 기존 Kubernetes bearer 신원을
@@ -151,6 +155,40 @@ control 재시작 후에는 이전 ACK를 추정 복원하지 않고 현재 표�
 유지한다. 과거 단일 gateway archive는 원래 소스로 읽되 `routerID`/`planVersion`
 부재를 새 split 적용 증거로 해석하거나 임의 값으로 채우지 않는다.
 
+### 4.1 G2 reader·E5 수집기 연결 계약
+
+- 요청 행의 추가 필드는 `routerID`, `planVersion`, `podUID`, `containerID`다.
+  assigned/final의 `requestID`로 먼저 병합하고 원래 `definitionID`와 해당 source의
+  catalog를 사용한다. 원래 단일 게이트웨이 행의 필드 부재는 그대로 보존한다.
+- writer는 `ObservationLogConfig.RouterID`와
+  `<router-buffer>/<routerID>/v1alpha5/<UTC-hour>/<stream>.<MM>.jsonl`을 사용한다.
+  archive key는 `serving/observations.v1alpha5/routers/<routerID>/<UTC-hour>/<stream>.jsonl.gz`다.
+  각 router는 `<router-buffer>/.owners/<PodUID>`의 독립 ownership lock을 잡는다.
+  같은 Pod의 이전 프로세스 세대만 복구하며 다른 router 파일은 쓰지 않는다.
+- control reader는 `RouterSources() []RouterObservationSource`로 현재와 이전 세대를
+  모두 받는다. 필드는 `RouterID`, `Directory`, `JoinedAt`, `LeftAt`, `ObservedAt`,
+  `Open`이다. `--router-buffer-root`는 각 source의 private buffer를 읽기 전용으로
+  볼 수 있는 공통 mount다. 경로를 제공하지 못한 현재 시간은 archive로 완전하다고
+  추정하지 않고 `LiveBufferUnavailable` coverage gap으로 표시한다.
+- `requests`/`catalog`의 로컬 우선순위는 source별 UTC hour에 적용한다.
+  `Query`, `LoadWindow`/`SchedulerArrivals`, `ScanOccupancyRows`는 합친 원시 요청을
+  사용하고 scheduler/power/management control stream은 한 번만 읽는다.
+  source별 관측 시각과 누락 이유는 coverage의 `routerID`로 보존한다.
+- 보고의 `arrivals[]`는 `{from,to,workloadUID,received,validated}`이며 outer 보고의
+  `routerID`와 함께 identity를 이룬다. `ArrivalCounts(from,to)`는 같은 창의 보고
+  교체를 합치는 빠른 count reader이고, 재생에 필요한 개별 도착 시각은 계속
+  병합 원시 stream에서 읽는다. 두 경로를 같은 λ 모집단에 더하지 않는다.
+- 참여·퇴역/연결 세대는 control의 `gateway-membership.json`과
+  `gateway-router-membership` scheduler 관측에 남긴다. E5 뒤 split 배포를 연결할
+  담당자가 이 source 목록을 실험 binding과 `hack/e5` collector/SQL 입력에 고정한다.
+  이 G2 작업은 운영 중인 `hack/e5`나 현재 E5 binding을 수정하지 않는다.
+
+control의 스케줄러는 현재 router들의 `ObservedAt` 최솟값에서 끝난 UTC 초까지만
+원시 도착 창을 읽는다. 마지막 보고 뒤의 open/미배정 요청을 관측 0으로 읽지 않는다.
+reader는 그 뒤 구간을 `RouterReportUnavailable`로 표시하고, 실제 owner가 만든
+빈 requests/catalog segment가 있는 관측 prefix만 무유입으로 해석한다.
+
+
 ## 5. 전환·퇴역 안전성
 
 전환의 기준 순서는 다음과 같다. 기존 범위 예약·SLO·준비된 부분집합 배분과
@@ -188,6 +226,15 @@ admission 거절임을 명시적으로 확인한 경우에만** 같은 버전의
 재배정하고 그 시도·거절을 보존한다. timeout/전달 결과 불명은 재실행하지 않는다.
 정확한 전역 quota lease·새 조정 서비스는 이번 범위 밖이다.
 
+### G3에서 확인할 native incarnation 경계
+
+표·요청 행·진행 증거의 Pod/container identity는 정확히 고정한다. 다만 현재 native
+요청/응답 계약은 Pod/container incarnation 자체를 ACK하지 않는다. 동일 Pod의
+컨테이너 재시작과 마지막 관측 뒤 전달 사이 TOCTOU를 원자적으로 차단했다고
+주장하지 않는다. 기존 native 이미지 변경 없이 이 경계를 더 강하게 증명할 수
+없으며, G3의 재시작 실패 주입에서 명시적으로 확인해야 한다. 이를 닫으려면 native의
+incarnation 검증 또는 실행 세대에 묶인 전달 endpoint 계약이 선행돼야 한다.
+
 ## 6. G3 테스트 계획 (미실행)
 
 아래는 E5 뒤 G2 구현을 마친 후 main agent/승인된 운영 담당자가 실행할 계획이다.
@@ -212,7 +259,7 @@ split 성능을 인증하지 않는다. stale 유입, ACK/점유 미확인 또�
 ## 7. 적용 순서와 변경 기록
 
 - E5는 현 구조로 완료하고 보고서에 **단일 게이트웨이·측정한 G** 조건을 남긴다.
-  이 G1 draft의 존재는 운영 적용 승인이 아니다.
+  G2 코드의 존재는 운영 적용 승인이 아니다.
 - G2는 모드·T5 전송·버전/ACK·다중 stream/모든 reader·drain 조건을 함께 이행한다.
   한쪽만 옮긴 혼합 구조를 완료로 보고하거나 옛 결합 경로를 호환용으로 남기지 않는다.
 - G3는 위 검사를 수행하고 원시 근거를 보존한다. 실제 cutover는 별도 승인된
@@ -220,3 +267,33 @@ split 성능을 인증하지 않는다. stale 유입, ACK/점유 미확인 또�
   유입 차단·물리 0·보존 완료를 확인한 뒤 닫는다. rollback도 현재 점유/기록을
   건너뛰는 배포 축소가 아니라 동일한 안전 조건의 전환으로 수행한다.
 - 2026-10-27: U11 G1 문서 초안 작성. 현 운영·코드·측정 결과는 변경하지 않았다.
+- 2026-10-28: T5 전송을 재사용한 별도 control/router 코드, 불변 버전 적용,
+  router별 기록/reader와 물리 점유 장벽을 추가했다. 기본 E5 실행 파일과 차트는
+  분리 구조로 배선하지 않았다. 로컬 검사 결과는 아래 구현 기록에만 남긴다.
+
+## 8. G2 로컬 구현 검증 기록 (2026-10-28)
+
+운영자의 #203 CPU 보호 창 종료 통보 뒤 다음 검사만 수행했다.
+
+```sh
+nice -n 19 env GOMAXPROCS=2 go test -p 1 \
+  ./internal/serving/gateway ./internal/serving/httpapi ./internal/serving \
+  ./internal/serving/kube ./cmd/chill-router ./cmd/chill-server
+nice -n 19 env GOMAXPROCS=2 go test -p 1 -tags gatewaycontrol ./cmd/chill-server
+nice -n 19 env GOMAXPROCS=2 go test -p 1 -count=1 -v \
+  ./internal/serving/gateway -run '^TestTwoProcessSmoke$'
+```
+
+- 위 패키지 회귀와 별도 control 빌드 경로 검사가 모두 통과했다.
+- 실제 로컬 TLS WebSocket의 두 OS 프로세스 스모크 출력은
+  `control PID=470199 applied=smoke-plan; router PID=470218 applied=smoke-plan`이었다.
+  helper 프로세스는 production coordinator/router/Runtime 적용 경로를 사용하며
+  클러스터나 외부 API를 호출하지 않는다.
+- 검사에는 인증 상태 구분, 재동기화/순번, 실제 적용 뒤 ACK, 느린 채널,
+  15초 heartbeat 상실/Runtime 작업 중 만료, 이전 세대 custody/물리 완료,
+  native ACK-only source, 원자 표 교체, 수락 요청의 버전/수명 유지,
+  quota 0, source별 catalog와 local/archive 병합·누락 표시가 포함됐다.
+- scoped `go list`로 새 package import 방향도 확인했다. 전체 lint/test,
+  아키텍처 전체 gate, 이미지 빌드, 클러스터 접근·배포 및 G3 실물/성능 캠페인은
+  실행하지 않았다. 이 로컬 결과로 native incarnation 경계나 분리 뒤 G/d를
+  인증하지 않는다.

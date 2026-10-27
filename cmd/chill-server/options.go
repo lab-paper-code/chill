@@ -41,12 +41,18 @@ type options struct {
 	pprofAddress                                                           string
 	pprofMutexFraction                                                     int
 	pprofBlockRate                                                         time.Duration
+	routerCount                                                            int
+	routerBufferRoot                                                       string
 
 	// loadGenerator runs the load Job of dispatch-occupancy measurements.
 	loadGenerator servingkube.LoadGeneratorConfig
 }
 
 func (o *options) bindFlags(f *flag.FlagSet) {
+	if serverRole == "control" {
+		f.IntVar(&o.routerCount, "router-count", 1, "Fixed split-router participant count; quotas divide native capacity by this count.")
+		f.StringVar(&o.routerBufferRoot, "router-buffer-root", "", "Optional read-only mounted root containing private per-router buffers; absent live streams remain explicit coverage gaps.")
+	}
 	f.StringVar(&o.checkDeploymentManifest, "check-deployment-config", "",
 		"Validate rendered deployment scheduler ConfigMaps offline and exit.")
 	f.StringVar(&o.schedulerConfigMapFile, "scheduler-configmap-file", "",
@@ -150,6 +156,14 @@ func (o options) validate() error {
 	}
 	if o.materializeProfile {
 		return o.validateMaterialization()
+	}
+	if serverRole == "control" {
+		if o.routerCount < 1 {
+			return errors.New("control requires a positive fixed router-count")
+		}
+		if o.routerBufferRoot != "" && (!filepath.IsAbs(o.routerBufferRoot) || filepath.Clean(o.routerBufferRoot) != o.routerBufferRoot) {
+			return errors.New("router-buffer-root must be a clean absolute mounted directory")
+		}
 	}
 	if o.schedulerConfigMap != "" &&
 		(len(validation.IsDNS1123Subdomain(o.schedulerConfigMap)) != 0 ||

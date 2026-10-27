@@ -73,6 +73,7 @@ components:
   serving-core: { in: internal/serving }
   serving-httpapi: { in: internal/serving/httpapi }
   serving-live: { in: internal/serving/live }
+  serving-gateway: { in: internal/serving/gateway }
   serving-kube: { in: internal/serving/kube }
   firstfloor: { in: internal/firstfloor }
   serving-firstfloor: { in: internal/serving/firstfloor }
@@ -305,6 +306,12 @@ deps:
       - serving-core
       - api
       - serving-kube
+      - serving-live
+
+  serving-gateway:
+    mayDependOn:
+      - serving-core
+      - serving-firstfloor
       - serving-live
 
   serving-live:

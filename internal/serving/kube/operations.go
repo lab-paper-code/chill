@@ -150,6 +150,9 @@ type OperationConfig struct {
 	Namespace    string
 	PollInterval time.Duration
 	Measurement  bool
+	// RoutingApplied publishes the effective table and waits for router applied
+	// ACKs after native policy ACK. Nil keeps the single-gateway composition.
+	RoutingApplied func(context.Context) error
 }
 
 // ErrNodeInMeasurement rejects a Workload action on a measurement POOL Node.
@@ -287,6 +290,9 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 			err = o.observer.Refresh(ctx)
 			if err == nil {
 				err = o.runtime.ReleaseSchedulerRouting(operation.WorkloadUID)
+			}
+			if err == nil && o.config.RoutingApplied != nil {
+				err = o.config.RoutingApplied(ctx)
 			}
 			result.Actual.At = time.Now().UTC()
 			result.Actual.Routing, _ = o.runtime.SchedulerRouting()
@@ -639,7 +645,13 @@ func (o *Operations) StopInstance(ctx context.Context, id string) error {
 	o.observer.mu.Lock()
 	o.observer.removingInstances[id] = true
 	o.observer.mu.Unlock()
-	return o.persistRouting(ctx, id, nil)
+	if err := o.persistRouting(ctx, id, nil); err != nil {
+		return err
+	}
+	if o.config.RoutingApplied != nil {
+		return o.config.RoutingApplied(ctx)
+	}
+	return nil
 }
 
 // detachInstance waits for the drain proof and records the withdrawn routes.
@@ -1022,6 +1034,11 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	if result.Operation.WorkloadUID == "" {
 		if err := o.persistRouting(ctx, "", result.Operation.WorkloadUIDs); err != nil {
 			return err
+		}
+	}
+	if o.config.RoutingApplied != nil {
+		if err := o.config.RoutingApplied(ctx); err != nil {
+			return fmt.Errorf("router application pending: %w", err)
 		}
 	}
 	result.Progress = append(result.Progress, "routing applied and read back")

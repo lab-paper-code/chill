@@ -233,6 +233,10 @@ type WorkloadReference struct {
 }
 
 type Assignment struct {
+	RouterID      string        `json:"routerID,omitempty"`
+	PlanVersion   string        `json:"planVersion,omitempty"`
+	PodUID        string        `json:"podUID,omitempty"`
+	ContainerID   string        `json:"containerID,omitempty"`
 	Node          NodeReference `json:"node"`
 	Instance      string        `json:"instance"`
 	Artifact      string        `json:"artifact"`
@@ -246,6 +250,7 @@ type Assignment struct {
 type InstanceState struct {
 	ID               string              `json:"id"`
 	PodUID           string              `json:"podUID,omitempty"`
+	ContainerID      string              `json:"containerID,omitempty"`
 	Allocation       SchedulerAllocation `json:"allocation"`
 	AttemptedAt      time.Time           `json:"attemptedAt"`
 	TargetID         string              `json:"targetID,omitempty"`
@@ -306,6 +311,10 @@ type WorkloadState struct {
 // RequestEvent records facts, including responses that failed to reach their
 // caller. An absent assignment or completion is never synthesized.
 type RequestEvent struct {
+	RouterID          string           `json:"routerID,omitempty"`
+	PlanVersion       string           `json:"planVersion,omitempty"`
+	PodUID            string           `json:"podUID,omitempty"`
+	ContainerID       string           `json:"containerID,omitempty"`
 	RequestID         string           `json:"requestID"`
 	WorkloadName      string           `json:"workloadName"`
 	WorkloadUID       string           `json:"workloadUID,omitempty"`

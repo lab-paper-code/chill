@@ -209,7 +209,8 @@ func (o *observationReferences) instance(instance SchedulerInstance) SchedulerIn
 // at or before the referencing record; a record older than every row of its
 // key uses the earliest row.
 type ObservationCatalog struct {
-	rows map[string][]CatalogRow
+	rows     map[string][]CatalogRow
+	routerID string
 }
 
 func (c *ObservationCatalog) Add(row CatalogRow) {
@@ -466,14 +467,26 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 
 // requestArrival is a received request as the scheduler counts it.
 func requestArrival(row *RequestRow, definitions map[string]*Definition) SchedulerArrival {
+	definition := row.definition
+	if definition == nil {
+		definition = definitions[row.DefinitionID]
+	}
 	return SchedulerArrival{
-		ID: row.RequestID, At: row.ReceivedAt, WorkloadUID: row.WorkloadUID, Definition: definitions[row.DefinitionID],
+		ID: row.RequestID, At: row.ReceivedAt, WorkloadUID: row.WorkloadUID, Definition: definition,
 		Lifetime: time.Duration(row.LifetimeNanos), Accepted: row.accepted(), Compute: row.ValidatedNanos != nil || row.accepted(), Outcome: row.Outcome,
 	}
 }
 
 func (l *ObservationLog) SchedulerArrivals(ctx context.Context, from, to time.Time) ([]SchedulerArrival, error) {
 	window, err := l.LoadWindow(ctx, from, to)
+	if err == nil && l.config.RouterSources != nil {
+		for _, gap := range window.Coverage.Gaps {
+			if gap.Stream == observationRequestStream && gap.From.Before(to) && gap.To.After(from) {
+				return nil, failure("IncompleteObservation", "router %q request stream unavailable in [%s,%s): %s",
+					gap.RouterID, gap.From.Format(time.RFC3339Nano), gap.To.Format(time.RFC3339Nano), gap.Reason)
+			}
+		}
+	}
 	return window.Arrivals, err
 }
 

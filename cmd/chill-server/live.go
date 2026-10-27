@@ -128,8 +128,10 @@ func (p *livePublisher) runtime(runtime *serving.Runtime) {
 	rows := make([]live.Instance, 0, len(physical))
 	present := map[string]bool{}
 	active := map[string]bool{}
+	routable := make(map[string]map[string]bool, len(physical))
 	for _, i := range physical {
 		present[i.ID] = true
+		routable[i.ID] = i.Routable
 		state := "preparing"
 		uid := i.OwnerWorkloadUID
 		if len(i.Workloads) > 0 {
@@ -167,7 +169,9 @@ func (p *livePublisher) runtime(runtime *serving.Runtime) {
 	for uid, weights := range routing {
 		routes[uid] = map[string]float64{}
 		for id, weight := range weights {
-			routes[uid][id] = float64(weight)
+			if routable[id][uid] {
+				routes[uid][id] = float64(weight)
+			}
 		}
 	}
 	p.publish(time.Now().UTC(), live.Delta{Instances: &rows, Routing: &routes, Removed: removed}, nil)

@@ -18,13 +18,21 @@ type RuntimeConfig struct {
 	Diagnostics    *Diagnostics
 	// OnChange is a nonblocking notification, called under the runtime lock.
 	OnChange func()
+	RouterID string
+	// Gateway callbacks read external snapshots under the runtime lock and must
+	// never call Runtime. A missing/stale router must not be reported as drained.
+	GatewayDrained    func(workloadUID, instanceID, nodeUID string) bool
+	GatewayPodDrained func(podUID string) bool
+	GatewayRequests   func(time.Time) []SchedulerRequest
 }
 
 type Receipt struct {
-	ID, Name, UID        string
-	ReceivedAt, Deadline time.Time
-	DefinitionID         string
-	RequestLifetime      time.Duration
+	ID, Name, UID                              string
+	ReceivedAt, Deadline                       time.Time
+	DefinitionID                               string
+	RequestLifetime                            time.Duration
+	RouterID, PlanVersion, PodUID, ContainerID string
+	gateway                                    *gatewaySnapshot
 }
 type callResult struct {
 	result BackendResult
@@ -84,26 +92,32 @@ type runtimeWorkload struct {
 // The owner lock protects routing and physical ownership, never observation
 // filesystem work. An assigned call reserves capacity while its row is stored.
 type Runtime struct {
-	mu                diagnosticMutex
-	config            RuntimeConfig
-	ctx               context.Context
-	cancel            context.CancelFunc
-	workloads         map[string]*runtimeWorkload
-	names             map[string]string
-	instances         map[string]*runtimeInstance
-	profiles          []Profile
-	measurement       []NodeReference
-	routingControlled bool
-	completionMargin  float64
-	routeTargets      map[string]map[string]int32
-	calls             map[string]*Call
-	definitions       map[string]*Definition
-	changed           chan struct{}
-	observationError  error
-	closing           *Call
-	finalizing        int
-	shuttingDown      bool
-	overloaded        atomic.Bool
+	mu                   diagnosticMutex
+	config               RuntimeConfig
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	workloads            map[string]*runtimeWorkload
+	names                map[string]string
+	instances            map[string]*runtimeInstance
+	profiles             []Profile
+	measurement          []NodeReference
+	routingControlled    bool
+	completionMargin     float64
+	routeTargets         map[string]map[string]int32
+	calls                map[string]*Call
+	definitions          map[string]*Definition
+	changed              chan struct{}
+	observationError     error
+	closing              *Call
+	finalizing           int
+	shuttingDown         bool
+	overloaded           atomic.Bool
+	gateway              *gatewaySnapshot
+	gatewayMode          bool
+	gatewayConnected     bool
+	gatewayFreshUntil    atomic.Int64
+	gatewayArrivals      map[gatewayArrivalKey]*gatewayArrivalWindow
+	gatewayArrivalCursor time.Time
 }
 
 func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
@@ -129,14 +143,14 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 			r.workloads[d.UID] = w
 			r.names[d.Name] = d.UID
 		}
-		assignment := &Assignment{Node: *row.Node, Instance: row.Instance, Profile: row.ProfileID, DispatchedAt: *row.DispatchedAt}
-		c := &Call{runtime: r, receipt: Receipt{ID: row.RequestID, Name: d.Name, UID: d.UID, ReceivedAt: row.ReceivedAt}, definition: d, identity: row.DefinitionID, assignment: assignment, phase: phaseAssigned, transportDone: true}
+		assignment := &Assignment{RouterID: row.RouterID, PlanVersion: row.PlanVersion, PodUID: row.PodUID, ContainerID: row.ContainerID, Node: *row.Node, Instance: row.Instance, Profile: row.ProfileID, DispatchedAt: *row.DispatchedAt}
+		c := &Call{runtime: r, receipt: Receipt{ID: row.RequestID, Name: d.Name, UID: d.UID, DefinitionID: row.DefinitionID, RouterID: row.RouterID, PlanVersion: row.PlanVersion, ReceivedAt: row.ReceivedAt}, definition: d, identity: row.DefinitionID, assignment: assignment, phase: phaseAssigned, transportDone: true}
 		if row.LifetimeNanos > 0 {
 			c.receipt.Deadline = c.receipt.ReceivedAt.Add(time.Duration(row.LifetimeNanos))
 		}
 		instance := r.instances[c.assignment.Instance]
 		if instance == nil {
-			instance = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{ID: c.assignment.Instance, Node: c.assignment.Node, Profile: c.assignment.Profile, Reason: "RestartUnconfirmed"}}, bindings: map[string]bool{}}
+			instance = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{ID: c.assignment.Instance, PodUID: row.PodUID, ContainerID: row.ContainerID, Node: c.assignment.Node, Profile: c.assignment.Profile, Reason: "RestartUnconfirmed"}}, bindings: map[string]bool{}}
 			r.instances[c.assignment.Instance] = instance
 		}
 		instance.bindings[d.UID] = true
@@ -186,6 +200,14 @@ func (r *Runtime) eventAt(c *Call, kind, outcome, code string, now time.Time) er
 
 func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEvent {
 	e := RequestEvent{RequestID: c.receipt.ID, WorkloadName: c.receipt.Name, WorkloadUID: c.receipt.UID, Definition: c.identity, Kind: kind, At: now.UTC(), ReceivedAt: c.receipt.ReceivedAt, ElapsedNanos: now.Sub(c.receipt.ReceivedAt).Nanoseconds(), Assignment: c.assignment, Outcome: outcome, Error: code}
+	e.RouterID, e.PlanVersion = c.receipt.RouterID, c.receipt.PlanVersion
+	e.PodUID, e.ContainerID = c.receipt.PodUID, c.receipt.ContainerID
+	if e.Definition == "" && c.receipt.gateway != nil {
+		e.Definition = c.receipt.DefinitionID
+	}
+	if c.assignment != nil {
+		e.PodUID, e.ContainerID = c.assignment.PodUID, c.assignment.ContainerID
+	}
 	if !c.receipt.Deadline.IsZero() {
 		e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
 	}
@@ -206,6 +228,10 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	receipt := Receipt{ID: hex.EncodeToString(random[:]), Name: name, UID: r.names[name], ReceivedAt: at}
+	receipt.RouterID = r.config.RouterID
+	if r.gateway != nil {
+		receipt.PlanVersion, receipt.gateway = r.gateway.version, r.gateway
+	}
 	if workload := r.workloads[receipt.UID]; workload != nil {
 		receipt.DefinitionID = workload.definition.Identity()
 		if workload.definition.RequestLifetime != nil {
@@ -216,6 +242,15 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 	if err := r.event(c, phaseReceived, "", ""); err != nil {
 		return receipt, failure("ObservationUnavailable", "cannot persist request receipt")
 	}
+	if r.gatewayMode {
+		r.recordGatewayArrivalLocked(receipt, false)
+		if !r.gatewayReadyLocked() {
+			return receipt, failure("GatewayNotReady", "router is not synchronized with control")
+		}
+		if workload := r.workloads[receipt.UID]; workload != nil && workload.stopped {
+			return receipt, failure(workload.reason, "new requests are stopped: %s", workload.reason)
+		}
+	}
 	if receipt.UID == "" {
 		return receipt, failure("WorkloadNotFound", "workload %q is not registered", name)
 	}
@@ -224,6 +259,10 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 
 func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) {
 	r.mu.LockRequest(receipt.ID)
+	if r.gatewayMode && !r.gatewayReadyLocked() {
+		r.mu.Unlock()
+		return nil, failure("GatewayNotReady", "router is not synchronized with control")
+	}
 	if !receipt.Deadline.IsZero() && !time.Now().Before(receipt.Deadline) {
 		r.mu.Unlock()
 		return nil, failure("RequestTimeout", "request lifetime expired before acceptance")
@@ -234,6 +273,13 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 		return nil, failure("WorkloadChanged", "registration changed before acceptance")
 	}
 	d := w.definition
+	if receipt.gateway != nil {
+		d = receipt.gateway.definitions[receipt.UID]
+		if d == nil {
+			r.mu.Unlock()
+			return nil, failure("DefinitionChanged", "receipt has no pinned definition")
+		}
+	}
 	if receipt.DefinitionID != "" && receipt.DefinitionID != d.Identity() {
 		r.mu.Unlock()
 		return nil, failure("DefinitionChanged", "applied definition changed before acceptance")
@@ -247,11 +293,20 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 		lifetime = receipt.Deadline.Sub(receipt.ReceivedAt).Nanoseconds()
 	}
 	validatedAt := time.Now()
-	if err := r.config.ObservationLog.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: validatedAt.UTC(), ReceivedAt: receipt.ReceivedAt, ElapsedNanos: validatedAt.Sub(receipt.ReceivedAt).Nanoseconds(), SLO: &d.SLO, LifetimeNanos: lifetime}); err != nil {
+	if err := r.config.ObservationLog.RequestEvent(RequestEvent{RouterID: receipt.RouterID, PlanVersion: receipt.PlanVersion, RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: validatedAt.UTC(), ReceivedAt: receipt.ReceivedAt, ElapsedNanos: validatedAt.Sub(receipt.ReceivedAt).Nanoseconds(), SLO: &d.SLO, LifetimeNanos: lifetime}); err != nil {
 		return nil, failure("ObservationUnavailable", "cannot persist validated compute demand")
 	}
 	r.mu.LockRequest(receipt.ID)
 	defer r.mu.Unlock()
+	if r.gatewayMode {
+		r.recordGatewayArrivalLocked(receipt, true)
+		if !r.gatewayReadyLocked() {
+			return nil, failure("GatewayNotReady", "router is not synchronized with control")
+		}
+		if receipt.gateway == nil || receipt.gateway != r.gateway {
+			return nil, failure("GatewayPlanChanged", "routing snapshot changed before acceptance")
+		}
+	}
 	if r.shuttingDown {
 		return nil, failure(reasonShuttingDown, "entry point no longer accepts requests")
 	}
@@ -280,7 +335,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	if r.overloaded.Load() {
 		return nil, failure(reasonGatewayOverloaded, "gateway live heap is near its memory limit")
 	}
-	c := &Call{runtime: r, receipt: receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
+	c := &Call{runtime: r, receipt: receipt, definition: d, identity: d.Identity(), input: input, reply: make(chan callResult, 1)}
 	if err := r.event(c, phaseAccepted, "", ""); err != nil {
 		return nil, failure("ObservationUnavailable", "cannot persist request acceptance")
 	}
@@ -389,13 +444,14 @@ func (r *Runtime) removeQueuedLocked(c *Call) {
 	}
 }
 
-func (r *Runtime) chooseLocked(route inputRoute) *routeEntry {
+func (r *Runtime) chooseLocked(route inputRoute, uid string) *routeEntry {
 	if r.mu.recorder.Active() {
 		r.mu.mark(DiagnosticChoose, DiagnosticBegin)
 		defer r.mu.mark(DiagnosticChoose, DiagnosticEnd)
 	}
 	for index, entry := range route.entries {
-		route.available[index] = entry.instance.State.Ready && !entry.instance.State.Stopped && entry.instance.outstanding < entry.instance.Capacity
+		route.available[index] = entry.instance.State.Ready && !entry.instance.State.Stopped && entry.instance.outstanding < entry.instance.Capacity &&
+			(!r.gatewayMode || r.routeWeightLocked(uid, entry.instance) > 0)
 	}
 	index := SmoothWeightedRoute(route.weights, route.current, route.available)
 	if index < 0 {
@@ -408,6 +464,9 @@ func (r *Runtime) dispatchLocked() {
 	if r.mu.recorder.Active() {
 		r.mu.mark(DiagnosticDispatch, DiagnosticBegin)
 		defer r.mu.mark(DiagnosticDispatch, DiagnosticEnd)
+	}
+	if r.gatewayMode && !r.gatewayReadyLocked() {
+		return
 	}
 	// The ingress owner promptly distributes accepted samples to ready capacity.
 	// The firstfloor actor owns actual compatible batching and additional wait.
@@ -423,12 +482,20 @@ func (r *Runtime) dispatchLocked() {
 				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticEnd, c.receipt.ID, 0)
 				continue
 			}
-			entry := r.chooseLocked(w.route)
+			route := w.route
+			if c.receipt.gateway != nil {
+				route = c.receipt.gateway.routes[c.receipt.UID]
+			}
+			entry := r.chooseLocked(route, c.receipt.UID)
 			if entry == nil {
 				break
 			}
 			i := entry.instance
-			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: time.Now().UTC()}
+			c.assignment = &Assignment{RouterID: c.receipt.RouterID, PlanVersion: c.receipt.PlanVersion, Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: time.Now().UTC()}
+			if c.receipt.gateway != nil {
+				c.assignment.PodUID, c.assignment.ContainerID = i.State.PodUID, i.State.ContainerID
+				c.receipt.PodUID, c.receipt.ContainerID = i.State.PodUID, i.State.ContainerID
+			}
 			c.assignment.ProfileBody = i.Profile
 			// Reserve the physical owner before releasing the lock; the executor
 			// stores its assignment before it can contact this native instance.
@@ -560,6 +627,10 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) (err
 	r.mu.Lock()
 	defer func() { err = errors.Join(err, r.unlock()) }()
 	e := RequestEvent{RequestID: progress.RequestID, WorkloadUID: progress.WorkloadUID, Definition: progress.Definition, Kind: "backend_" + progress.Phase, At: progress.At, NativeInstance: instance, Outcome: progress.Outcome, Error: progress.Error}
+	e.RouterID = r.config.RouterID
+	if source := r.instances[instance]; r.gatewayMode && source != nil {
+		e.PodUID, e.ContainerID = source.State.PodUID, source.State.ContainerID
+	}
 	e.NativeProgress = &progress
 	e.ExecutionComplete = progress.ExecutionComplete
 	c := r.calls[progress.RequestID]
@@ -578,6 +649,8 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) (err
 		return failure("BackendContextMismatch", "native progress does not match its assigned request")
 	}
 	e.Assignment = c.assignment
+	e.RouterID, e.PlanVersion = c.receipt.RouterID, c.receipt.PlanVersion
+	e.PodUID, e.ContainerID = c.assignment.PodUID, c.assignment.ContainerID
 	e.ReceivedAt = c.receipt.ReceivedAt
 	if !c.receipt.Deadline.IsZero() {
 		e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
@@ -607,6 +680,10 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) (err
 func (r *Runtime) ConfirmInstanceStopped(instance string) (err error) {
 	r.mu.Lock()
 	defer func() { err = errors.Join(err, r.unlock()) }()
+	return r.confirmInstanceStoppedLocked(instance)
+}
+
+func (r *Runtime) confirmInstanceStoppedLocked(instance string) error {
 	if i := r.instances[instance]; i != nil {
 		i.State.Ready = false
 		i.State.Stopped = true
@@ -643,6 +720,9 @@ func (r *Runtime) DisableInstance(id, reason string) {
 func (r *Runtime) DetachNode(uid string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if !r.gatewayDrainedLocked("", "", uid) {
+		return false, nil
+	}
 	for _, c := range r.calls {
 		if c.assignment != nil && c.assignment.Node.UID == uid && (!c.backendDone || !c.transportDone || !c.responseRecorded) {
 			return false, nil
@@ -701,6 +781,9 @@ func (r *Runtime) publish(d *Definition, stopped bool, reason string) (err error
 }
 
 func (r *Runtime) validatePublicationLocked(d *Definition) error {
+	if r.gatewayMode {
+		return failure("GatewayPlanRequired", "split definitions require a complete gateway plan")
+	}
 	if r.shuttingDown {
 		return failure(reasonShuttingDown, "entry point is shutting down")
 	}
@@ -747,6 +830,9 @@ func (r *Runtime) StopAdmission(uid, reason string) error {
 	return nil
 }
 func (r *Runtime) drainedLocked(w *runtimeWorkload) bool {
+	if !r.gatewayDrainedLocked(w.definition.UID, "", "") {
+		return false
+	}
 	for _, c := range w.calls {
 		if !c.backendDone || !c.transportDone || !c.responseRecorded {
 			return false
@@ -758,13 +844,19 @@ func (r *Runtime) Drained(uid string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	w := r.workloads[uid]
-	return w == nil || r.drainedLocked(w)
+	if w == nil {
+		return r.gatewayDrainedLocked(uid, "", "")
+	}
+	return r.drainedLocked(w)
 }
 func (r *Runtime) Detach(uid string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	w := r.workloads[uid]
 	if w == nil {
+		if !r.gatewayDrainedLocked(uid, "", "") {
+			return failure("DrainIncomplete", "remote registration still owns requests")
+		}
 		return nil
 	}
 	if !w.stopped || !r.drainedLocked(w) {
@@ -783,6 +875,9 @@ func (r *Runtime) Forget(uid string) error {
 	defer r.mu.Unlock()
 	w := r.workloads[uid]
 	if w == nil {
+		if !r.gatewayDrainedLocked(uid, "", "") {
+			return failure("DrainIncomplete", "remote registration still owns requests")
+		}
 		return nil
 	}
 	if !w.stopped || !r.drainedLocked(w) {
@@ -829,6 +924,10 @@ func (r *Runtime) SetCompletionMargin(ms float64) {
 
 func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 	r.mu.Lock()
+	if r.gatewayMode {
+		r.mu.Unlock()
+		return failure("GatewayPlanRequired", "split routing changes require a complete gateway plan")
+	}
 	defer func() { err = errors.Join(err, r.unlock()) }()
 	seen := map[string]bool{}
 	for _, candidate := range instances {
@@ -902,8 +1001,11 @@ func instanceInventoryKey(state InstanceState) string {
 func (r *Runtime) RetirePod(uid string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.config.GatewayPodDrained != nil && !r.config.GatewayPodDrained(uid) {
+		return failure("TerminationUnconfirmed", "remote Pod executor ownership is not drained")
+	}
 	for _, instance := range r.instances {
-		if instance.State.PodUID == uid && (!instance.State.Stopped || instance.outstanding != 0) {
+		if instance.State.PodUID == uid && (!instance.State.Stopped || instance.outstanding != 0 || !r.gatewayDrainedLocked("", instance.State.ID, "")) {
 			return failure("TerminationUnconfirmed", "Pod executor is not stopped and drained")
 		}
 	}
@@ -1062,9 +1164,11 @@ func (r *Runtime) workloadStateLocked(w *runtimeWorkload) WorkloadState {
 		}
 	}
 	evidence, ready := w.route.evidence, len(w.route.entries) > 0
-	state.Admission = !w.stopped && w.definition.Dataset != nil && evidence && r.observationError == nil
+	state.Admission = !w.stopped && w.definition.Dataset != nil && evidence && r.observationError == nil && (!r.gatewayMode || r.gatewayReadyLocked())
 	if !w.stopped {
 		switch {
+		case r.gatewayMode && !r.gatewayReadyLocked():
+			state.Reason = "GatewayNotReady"
 		case r.observationError != nil:
 			state.Reason = "ObservationUnavailable"
 		case w.definition.Dataset == nil:
@@ -1101,7 +1205,7 @@ func (r *Runtime) instancesLocked() []InstanceState {
 			if workload.detached {
 				continue
 			}
-			state.Routable[uid] = state.Ready && !state.Stopped && i.Routing[uid] > 0 && r.routeWeightLocked(uid, i) > 0 &&
+			state.Routable[uid] = (!r.gatewayMode || r.gatewayReadyLocked()) && i.Capacity > 0 && state.Ready && !state.Stopped && i.Routing[uid] > 0 && r.routeWeightLocked(uid, i) > 0 &&
 				(i.OwnerWorkloadUID == "" || i.OwnerWorkloadUID == uid) &&
 				profilePath(workload.definition, i.Profile) != nil
 		}
