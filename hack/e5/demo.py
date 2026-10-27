@@ -2,7 +2,7 @@
 """Short CPO demo: prepare -> start -> stage/run -> collect -> summary -> finish.
 
 Reuses E5's authenticated API, producer/barrier/counter lifecycle, raw collection
-and server-owned reset cleanup, but not its normative R/G/10800-second scientific gates.
+and server-owned reset cleanup, but not its normative R/G0/11700-second scientific gates.
 Outputs are PRIVATE operational evidence. publish --experiment-id ID --store-config
 /private/store.json uploads raw inputs before a final immutable summary; corrections
 require a new ID. --help and --self-check need no live experiment environment.
@@ -127,8 +127,15 @@ def schedule(config, e5):
         raise ValueError('capacityR requires final approved positive mobilenet/smolvlm2/plc capacities')
     shares = e5.pool_shares(config)
     share_by_alias = {'mobilenet': shares['MNV'], 'smolvlm2': shares['Smol'], 'plc': shares['PLC']}
+    bootstrap = config.get('g0Bootstrap', False)
+    if type(bootstrap) is not bool or (bootstrap and (len(config['stages']) != 1 or config['stages'][0].get('id') != 'G-check' or config['stages'][0].get('seconds') != 120 or config['stages'][0].get('alpha') != 1.2)):
+        raise ValueError('g0Bootstrap is only the explicit one-shot 120s alpha=1.2 G-check')
     if capacity is not None:
-        e5.gateway_budget(config, sum(capacity[name] * share_by_alias[name] for name in ALIASES))
+        gate = {'status': 'UNKNOWN', 'sources': {}} if bootstrap else e5.g0_evidence_gate(
+            config, sum(capacity[name] * share_by_alias[name] for name in ALIASES), required=False,
+            expected_rates={ALIASES[name]: 1.2 * capacity[name] * share_by_alias[name] for name in ALIASES},
+            plc_slo=config.get('measurementSLO', {}).get('plc'))
+        config['g0Gate'] = gate
     for source in [config] + config.get('stages', []):
         if 'tolerateArchive' in source:
             value = source['tolerateArchive']
@@ -387,7 +394,7 @@ def assemble(e5, args, spec):
         if lifetime is not None and (not e5.positive(lifetime) or lifetime < actual['slo']['targetLatencyNanos'] / 1e9 or lifetime > float(cap[:-1]) or requested['socketSeconds'] <= lifetime + requested['deliverySeconds']):
             raise ValueError('Explicit lifetime must cover SLO, fit gateway cap and socket budget')
         c['workloads'].append({**{key: actual[key] for key in ('name', 'uid', 'generation', 'slo')}, 'datasetDir': recipe['datasetDir'], 'fields': recipe['fields'], 'jobTemplate': str(template), 'producerEndpoint': op['producer']['endpoint'], 'producerTokenFile': op['producer']['tokenFile'], 'producerCAFile': op['producer']['caFile'], 'producerDatasetDir': op['producer']['datasetDir'], **requested, 'gatewayCapSeconds': float(cap[:-1])})
-    c['demoSkipped'] = ['E5 R/kappa capacity binding and G clipping', '10800-second normative schedule and factor baselines', 'phase6 scientific approvals/D1/D6/D9 judgment gates', 'image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused']
+    c['demoSkipped'] = ['E5 R/kappa capacity binding and strict G0 research gate', '11700-second normative schedule and factor baselines', 'phase6 scientific approvals/D1/D6/D9 judgment gates', 'image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused']
     c['demoProvenance'] = {'recipe': str(recipe_path), 'sources': 'Explicit Main-provided component identities; no loadgen/power identity inferred from server or image bytes', 'controlSourceSHA': 'Main-provided helm-revision source claim resolved in git and checked against sources.server, not inferred from image bytes', 'controlImageDigest': 'Live Ready Pod containerStatus.imageID', 'requestTiming': 'D2 Conductor.job socket/worker baseline plus explicit requestTiming overrides; absent lifetime omits client deadline header', 'measurementSLO': spec['measurementSLO']}
     config_path = args.out / 'demo-e5-config.json'
     e5.save(config_path, c)
@@ -483,8 +490,9 @@ def prepare(e5, args):
     payload = {}
     sources = {'demoConfig': e5.ref(args.config), 'e5Config': e5.ref(config_path), 'environment': e5.ref(e5.ENVIRONMENT_PATH)}
     sources['scheduler'] = e5.ref(c['inputs']['scheduler'])
-    if spec.get('G') is not None:
-        sources['gMeasurement'] = e5.ref(spec.get('GSource') or spec['inputs']['gMeasurement'])
+    gate = spec.get('g0Gate', {'status': 'UNKNOWN', 'sources': {}})
+    sources.update({'g0Evidence-' + key: value for key, value in gate['sources'].items()})
+    c['g0Gate'] = {key: value for key, value in gate.items() if key != 'sources'}
     scheduler_settings = e5.load(c['inputs']['scheduler'])['settings']
     scheduler_settings = dict(scheduler_settings, powerObservation=e5.power_observation(c))
     for filename in ('demo.py', 'e5.py', 'auth.py', 'e5-wire.py', 'e5-producer.py', 'e5-archive.py', 'e5-raw.py'):
@@ -1053,17 +1061,15 @@ def self_check():
         assert g_stages[0]['parts'][0]['alpha'] == dict.fromkeys(ALIASES, 1.2)
         assert math.isclose(g_stages[0]['rates'][ALIASES['plc']], .0012)
         assert e5.pool_shares({}) == {'MNV': .45, 'PLC': .1, 'Smol': .45}
-        with patch.object(e5.sys, 'stderr') as warning:
-            e5.gateway_budget({}, .01)
-            assert 'G unconfirmed' in ''.join(call.args[0] for call in warning.write.call_args_list)
-        e5.gateway_budget({'G': .015, 'GSource': 'fixture'}, .01)
-        for invalid in ({'G': .014, 'GSource': 'fixture'}, {'G': .015}, {'G': -1, 'GSource': 'fixture'}):
-            try:
-                e5.gateway_budget(invalid, .01)
-            except ValueError:
-                pass
-            else:
-                raise AssertionError('Invalid gateway budget accepted')
+        assert gateway['g0Bootstrap'] and gateway['g0Gate']['status'] == 'UNKNOWN'
+        assert e5.g0_evidence_gate({}, .01, required=False)['status'] == 'UNKNOWN'
+        try:
+            e5.g0_evidence_gate({}, .01)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Missing strict G0 evidence accepted')
+        e5.self_check_g0()
         assert gateway['measurementSLO']['plc'] == {'percentile': 95, 'targetLatencyNanos': 32000000}
         for bad in (None, {}, dict.fromkeys(ALIASES, -1), dict.fromkeys(ALIASES, float('nan'))):
             invalid = dict(evaluation, capacityR=bad)

@@ -8,7 +8,7 @@
 2. 새 규칙 dispatch 점유 d **34/34 완료**(control-189/194/195 Accepted·planner 소비 근거). 정확 prepare/remove 비용 **69/69**도 완료이며 두 수를 합산하지 않는다. U2 추가 모드는 기본 숫자 승인과 별도로 확장한다.
 3. Workload별 completion residual 원시를 모아 선택 분위수의 값을 계산하고 공통 완료 여유 `m=max(각 추정값)`를 정한다. 현재29ms는 기존 MNV p95 근거이지 세 Workload 공통 새 측정값이 아니다.
 4. 최종 d/m과 SLO로 실제 κ(포아송 재생 용량)를 산출한다. μ(프로파일 평균 서비스율)를 κ로 대체하지 않는다. Pending/Rejected/미측정을 0으로 채우지 않는다.
-5. Node별 적격 κ와 고립 기준 `R_w=Σ_Node max eligible κ_w`를 확정한다. **단계률은 `rate_w=α_w×s_w×R_w`**, 기본 `poolShares={MNV:0.45,PLC:0.1,Smol:0.45}`, 각 s는 [0,1], 합 1이다. α∈{0.3,0.5,0.7,0.9,1.2}는 POOL 사용률 단계다. Node당 인스턴스 하나이므로 세 고립 R은 동시 사용 불가다. 설정 검증은 **`1.2×Σ(s_w×R_w)≤0.8×G`**를 요구하며 G 입력값·출처와 R·s·α·혼합 총률을 binding에 동결한다. G 미확정이면 명시 경고이며 연구부하 개시 통과가 아니다. α는 실제 배치 효율/SLO 보장이 아니라 offered 부하 정규화다.
+5. Node별 적격 κ와 고립 기준 `R_w=Σ_Node max eligible κ_w`를 확정한다. **단계률은 `rate_w=α_w×s_w×R_w`**, 기본 `poolShares={MNV:0.45,PLC:0.1,Smol:0.45}`, 각 s는 [0,1], 합 1이다. α∈{0.3,0.5,0.7,0.9,1.2}는 POOL 사용률 단계다. Node당 인스턴스 하나이므로 세 고립 R은 동시 사용 불가다. 포화 G를 측정하지 않았으므로 `G` 숫자·추정 headroom 부등식은 입력하지 않는다. 대신 최종 R·몫·α=1.2 총률과 일치하는 **G0 단일 실측 증거**(runID, planned=issued 전체 공급, generator VALID, cs CPU/limit 분율, 승인 PLC 수신 원점 p95)를 binding에 동결하고 검증한다. α는 실제 배치 효율/SLO 보장이 아니라 offered 부하 정규화다.
 6. 초기/확장/축소/교체의 실제 후보 witness와 제어요소 비교 집합을 확정한 뒤 숫자·개시 승인을 받는다. 방향 승인을 매 단계 재요청하지 않되 새 조건·범위 확대는 별도 결정이다.
 
 **철회된 안:** 10CPU/8Gi ChillServer 증설을 먼저 하고 G/m을 재측정하자는 10월25일 초안은 현재 계획이 아니다. [게이트웨이 프로파일](../reports/gateway-performance-20261026.md)의 selector 수정으로 기존6CPU/4Gi에서 회복했다. 극단 처리 한계 G 탐색은 시연 선행조건이 아니지만, E5 실제 혼합 부하가 게이트웨이 병목이 아닌지는 확인해야 한다.
@@ -85,6 +85,8 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 
 **E5-7 실행 계약:** 시작 뒤 180초 서빙 Pod 하나 강제 삭제 → 360초 Node 하나 cordon 후 그 Node의 사전 기록한 서빙 Pod 삭제 → 600초 uncordon → 900초까지 복구 관찰. cordon은 기존 Pod를 끄거나 통신을 끊지 않으므로 Pod 삭제를 함께 사용한 **배치 차단·서빙 소실 대리 실험**이며 실제 네트워크 단절이라고 보고하지 않는다. 대상은 제어평면·gateway·측정 Node가 아닌 서빙 Node 하나다. 운영 담당만 기존 kubectl을 실행하고 Pod/Node UID, 명령·응답 UTC, scheduler 격리/대체 결정, Ready/ACK·route 회복과 요청/전력을 보존한다. 단계 종료/실패에도 uncordon 복원을 시도하고 read-back을 기록한다. 새 장애 API·컨트롤러는 만들지 않는다.
 
+full binding은 E5-0~7 총195분(11700초), `rowOrder`는 E5-S까지9행이다. E5-S는 계속 E5-1~6만170분(10200초)이며 E5-3 freeze→S→E5-4 release 순서를 바꾸지 않는다. `full-E5-7/failure-events.json`에는 `stage:"E5-7"`, `events` 세 개를 순서대로 남긴다: `offsetSeconds` 180/360/600, `kind` `delete-serving-pod`/`cordon-delete`/`uncordon`, 실제 `atUTC`, `exitCode:0`, `nodeUID`, 삭제 사건의 `podUID`, 실제 명령·응답 파일 경로 `commandRef`/`responseRef`. `recovery`는 같은 `nodeUID`, 실제 `atUTC`, `schedulableRef`/`readyRef`/`observationRef`/`routeRef` 파일 경로다. judge는 시각·동일 Node·파일 hash를 보존하며 누락/실패는 NOT_READY로 남긴다. 이 실제 증거가 있는 E5-7만 summarize/tables의 실패 시나리오를 MEASURED로 연결하고, 선언 runbook만으로 완료 처리하지 않는다.
+
 실행 설정은 `hack/e5/demo-config.e5.example.json`이다. 최종 승인 R을 `capacityR`에 넣어 prepare하면 요청률을 계산한다. 실패 주입은 설정의 운영자 runbook이며 도구가 자동 실행하지 않는다. preflight는 짧은 E5-0+혼합 부하로 토큰·관측·Ready·정리를 확인하고, 실제 실패 주입은 운영자 직렬 실행으로 남긴다. E5 숫자 1회 승인 전 연구 실행을 시작하지 않는다.
 
 ## 아직 결정·측정이 필요한 숫자
@@ -95,24 +97,25 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 | PLC/Smol percentile·SLO | 7Node PLC36/40/50ms재생완료·36ms유지확정. R_P387.365408/752.333535/1211.605198, α1.2몫.1 rate46.483849/90.280024/145.392624. 과거genesis2 cache및8Node R합산금지 |
 | 적격 Node 선별 | PLC36positive4/7·orangepiBuilt0,jetsonx6resourceRejected≠κ0한계유지. 40/50orange양수로느린2조건FAIL. Smolpositive4/7·느린lattepanda/jetsonx Built0. MNV/PLC관측적격6Node,Smol7Node합 |
 | 공통m·L·cap·delivery/socket | residual p95 후보16ms/p99 후보195ms와 구별해 m29ms 유지 승인 요청. L MNV2/PLC1/Smol75초·cap129초·delivery10ms/socket L+20ms, native remaining=L−senderElapsed−m |
-| G·혼합 단계 | 7Node α.3/.5/.7/.9/1.2 총43.639668/72.732780/101.825892/130.919004/174.558672req/s,Smolburst43.986671. G1300 **[추정]**·.8G1040이하이나관측140초과. genesis2제외·open-loop고정6instance G0결과대기 |
+| G0·혼합 단계 | 7Node α.3/.5/.7/.9/1.2 총43.639668/72.732780/101.825892/130.919004/174.558672req/s,Smolburst43.986671. 최대 G는 미측정이며 추정값을 입력하지 않는다. 동결 G0 단일 증거의 총률·generator VALID·CPU 분율·PLC 수신 p95를 검증한다. 기존 control-203-g0의 FAIL은 그대로 보존하고 연구 승인으로 바꾸지 않는다. |
 | κ/R·계산 근거 | `control-201-plc-36/{scheduler,capacity-final,kappa-seven-nodes}.json`,excludedNodes=g1/orin/g2; R MNV235.890404/PLC387.365408/Smol1.285195req/s. 후속40/50비교도동일7Node필터,기본모드/U2분리. 8Node총263.182222입력은현실행에사용금지 |
 | 전환 witness | 과거preflight-control-195-u2x 초기 MNV B519.700616/W14.099864초·PLC B1039.401232/W0.802653초는측정SLO에서도초과. capacity재생은rev98에서완료; 일부U2후보/과거UID와최종E5율의초기·확장·축소·소유권swap witness는계속구별 |
 | 에너지 선택 | minimumGain 고정%없음; 후보별signed상쇄B_J·gain>B_J/equality KEEP, H600초/reserve0. 최신변경후보gain5005.869972J/B463.558920J는 관측 예이며 기본안 최종통과 아님 |
 | 정적·N·추가 모드 | 정적full E5-3끝 α=0.9 실제구성·N=2(membership-off/replicas-off), 없으면no-effect. 기본 fixed/MAXN/jetsonx15W6만 묶고 live jetsono15W 및 U2추가모드는 별도 승인. 전체435분(reset등별도), stabilization300초 유지 |
 
 leximin 변경은 유한 초과량의 선택도 바꿀 수 있으므로 과거 최악값 하나 비교 결과와 섞지 않는다. 최종 실행 설정(두 박자 기본300초/시연120초, reserve비율0, 비교기간600초 포함)은 binding과 decision.settings에 고정한다.
-설정 예시의 source SHA·`measurementSLO`·request timing은 기존 도구 입력 형태를 보여주는 값이며 최종 E5 승인값이 아니다. 운영 담당은 승인 숫자 묶음으로 이 필드들과 `capacityR`, `poolShares`, 단계 `alpha`, `G`·`GSource`, 실제 digest/근거 binding을 함께 고정한다. 미확정 R은 예시에서 null로 두어 prepare가 거절하며 부분합이나 가상 R로 실행하지 않는다. capacity 재생과 G 확인 준비는 별도 트랙이며 클러스터 실행은 CampaignOps 직렬 큐만 사용한다.
+설정 예시의 source SHA·`measurementSLO`·request timing은 기존 도구 입력 형태를 보여주는 값이며 최종 E5 승인값이 아니다. 운영 담당은 승인 숫자 묶음으로 이 필드들과 `capacityR`, `poolShares`, 단계 `alpha`, `g0Evidence`, 실제 digest/근거 binding을 함께 고정한다. 미확정 R은 예시에서 null로 두어 prepare가 거절하며 부분합이나 가상 R로 실행하지 않는다. capacity 재생과 G0 확인 준비는 별도 트랙이며 클러스터 실행은 CampaignOps 직렬 큐만 사용한다.
 
-## G 확인 1회 운영 절차 (CampaignOps 전용)
+## G0 확인 1회 운영 절차 (CampaignOps 전용)
 
 `hack/e5/g-check-config.example.json`은 `demo.py`의 기존 staticPlacement 경로를 사용한다. 이 작업의 클러스터 실행은0회다. 계단·최대 G 탐색·자동 재시도는 하지 않는다.
 
 1. 후보 SLO·jetsonx capacity 재생 뒤 최종 승인 R을 설정 복사본 `capacityR`에 넣고 source SHA·digest·SLO·m·request timing·s를 실제 release와 맞춘다. 현재 K 부분합은 설명용이며 R로 대입하지 않는다. 기본 몫은 MNV .45/PLC .1/Smol .45다.
 2. 자율제어를 끄고 기존 수동6개(Workload당2개) 또는 현재8 Node의 최대 적격 배치 중 하나를 **고정**한다. Node당 인스턴스 하나, 실제 자원·측정 적격성과 세 route를 확인하고 Node/Pod UID·profile·mode·allocation·batch·route·cs CPU/메모리 limit·예약/전환0을 동결한다. staticPlacement는 배치를 만들거나 자율제어를 끄지 않는다.
 3. 기존 `demo.py prepare --config <복사본> --out <새 외부 경로>`, 동결 binding/release의 `start`, `run --stage G-check`, `finish`를 사용한다. **α=1.2의 총 혼합 부하를120s 단1회** 실행하며 현재K 예시는179+199+1.7≈380req/s다. 부하 중 배치 변경·rate clip·단계 추가 없이 finish는 소유 producer만 정리하고 수동 배치·route를 보존한다. 실패/timeout은 증거를 남기며 반복하지 않는다.
-4. 기존1s cgroup 원시에서 cs CPU=`ΔcpuUsageNanos/(ΔUTC초×1e9)` core와 경계 `memoryBytes`의10s 비중첩 표본을 만든다. Pod UID/containerID·간격·누락·throttle/restart·OOM·동결 limit와 최대치를 보고하고 재시작 경계를 차분으로 잇지 않는다. planned offered rate, 실제 issued/completed/success rate, **gateway 수신 원점 `elapsedNanos` 기준 PLC p95**와 전체 planned offered 대비32ms deadline 성공률,503/`GatewayOverloaded`·timeout/미완료를 함께 보존한다. generator lateness 품질, send→gateway entrance delay(호스트 시계 불확실성 포함), 실제 HTTP 왕복과 scheduled reference 분포를 별도로 병기한다.
-5. **PASS/FAIL**: 명시한 generator 품질 정책을 만족하고 동결 trace 전체 공급, **gateway 수신→응답 기준** PLC p95≤32ms 및 전체 planned offered의≥95% deadline 성공, gateway 거절/503/timeout/미완료0, cs throttle/restart/OOM0, 누락 없는 CPU/메모리 표본과 동결 limit 미만을 모두 만족하면 PASS다. generator 정책 초과·미공급은 `INVALID_GENERATOR`, 미설정/증거 결측은 `UNKNOWN`이며 gateway SLO 실패로 단정하지 않는다. G0의 **supplied는 모든 frozen planned requestIndex가 중복 없이 실제 발행되었다는 뜻**이며 실제 발행 수로 분모를 축소하거나 JSONL 행 수 일치만으로 통과시키지 않는다. `demo.py summary`의 Workload별 `issuanceFidelity`와 `generatorQuality`/`SLOVerdict`를 근거로 쓴다. 늦은 발행도 full trace에 유지하고 scheduled reference로 보존하지만 lifetime L을 차감하지 않고 수신 원점 SLO에 더하지 않는다. 기존 G0 보존 원시/판정은 덮어쓰지 않으며 별도 재해석으로 기록한다. PASS는 해당 배치/혼합의 통과점이지 최대G가 아니다. G와 그 출처는 binding에 동결하고 최종 설정의 `1.2ΣsR≤.8G`를 별도 검증한다. 380 통과만으로475 이상의 G를 추정하지 않는다. G 미확정 경고는 연구 개시 승인으로 바꾸지 않는다.
+4. 기존1s cgroup 원시에서 cs CPU=`ΔcpuUsageNanos/(ΔUTC초×1e9)` core와 경계 `memoryBytes`의10s 비중첩 표본을 만든다. Pod UID/containerID·간격·누락·throttle/restart·OOM·동결 limit와 최대치를 보고하고 재시작 경계를 차분으로 잇지 않는다. planned offered rate, 실제 issued/completed/success rate, **gateway 수신 원점 `elapsedNanos` 기준 PLC p95**와 전체 planned offered 대비 승인 PLC SLO deadline 성공률을 보존한다. generator lateness 품질, send→gateway entrance delay(호스트 시계 불확실성 포함), HTTP 왕복과 scheduled reference는 별도로 병기한다.
+5. **PASS/FAIL**: 명시한 generator 품질 정책을 만족하고 동결 trace 전체 공급, gateway 수신→응답 기준 PLC p95와 deadline 성공률이 승인 SLO를 만족하며, gateway 거절/503/timeout/미완료0, cs throttle/restart/OOM0, 누락 없는 CPU/메모리 표본과 동결 limit 미만이면 PASS다. generator 정책 초과·미공급은 `INVALID_GENERATOR`, 미설정/결측은 `UNKNOWN`이며 gateway SLO 실패로 단정하지 않는다. supplied는 frozen planned requestIndex 전체의 중복 없는 실제 발행이며 실제 발행 수로 분모를 축소하지 않는다. 기존 FAIL/UNKNOWN G0를 유리한 일부 지표만 골라 PASS로 바꾸지 않는다.
+6. full 입력은 `g0Evidence={"runID":"실제 run 디렉터리명","verdict":"절대 g0-verdict.json 경로","binding":"해당 실제 G0 binding 절대 경로","csCPULimitCores":실제 승인 limit}`를 요구한다. verdict PASS/VALID,120초 α=1.2, 최종 R·몫의 Workload별/합계율, binding planned=issued, PLC 승인 수신 p95, cs CPU peak/limit<1을 교차 검증하고 원시 파일 refs와 계산 분율을 동결한다. G-check 자체는 선행 G0를 요구하지 않지만 연구 full bind는 증거 없이 통과하지 않는다. `G`·`GSource`와 최대 G/80% headroom 숫자는 제거되었고 `GCertified:false`는 미측정 최대G를 뜻할 뿐 새 숫자로 대체하지 않는다.
 
 로컬 회귀 점검(클러스터 접근 없음): `python3 hack/e5/e5.py self-check`, `python3 hack/e5/demo.py --self-check`, `python3 hack/e5/smoke_preflight.py`.
 

@@ -49,10 +49,10 @@ class Prepare:
         if e5.CAMPAIGN.resolve() not in self.out.resolve().parents:raise ValueError('Preparation output must remain below the external campaign directory')
         if self.release.get('executor')!='CampaignOps' or self.release.get('command')!='e5-execute' or not self.release.get('mainInstructionUTC'): raise ValueError('One actual Main/CPO frozen e5-execute release required')
         self.sources=e5.approval_sources(self.release)
-        e5.need(self.n,['approval','G','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds','workloads','kappaSeconds'],'Approved phase6 numbers')
+        e5.need(self.n,['approval','g0Evidence','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds','workloads','kappaSeconds'],'Approved phase6 numbers')
         e5.need(self.n['approval'],['phase6ApprovalUTC','e5StartApprovalUTC','D1','D6','D9'],'Actual phase6/E5 approval')
         e5.need(self.n['timeboxes'],e5.REQUIRED['timeboxes'],'Actual finite timeboxes')
-        if not all(e5.positive(self.n[k]) for k in ('G','smokeSeconds','kappaSeconds')) or not 0<self.n['burstLowSeconds']<900 or type(self.n['mSeconds']) not in (int,float) or not math.isfinite(self.n['mSeconds']) or self.n['mSeconds']<0:raise ValueError('Invalid approved numerical scope')
+        if not all(e5.positive(self.n[k]) for k in ('smokeSeconds','kappaSeconds')) or not 0<self.n['burstLowSeconds']<900 or type(self.n['mSeconds']) not in (int,float) or not math.isfinite(self.n['mSeconds']) or self.n['mSeconds']<0:raise ValueError('Invalid approved numerical scope')
         if any(not e5.positive(v) for v in self.n['timeboxes'].values()) or self.n['timeboxes']['setupSeconds']+3600+self.n['timeboxes']['drainSeconds']+self.n['timeboxes']['flushSeconds']>4200:raise ValueError('Timeboxes do not fit existing finite collector')
         if self.release.get('numbersPath')!=str(a.numbers):raise ValueError('Frozen release must name the actual approved numeric input file')
         if self.out.exists() and any(self.out.iterdir()):raise ValueError('Preparation output is not fresh; retain prior attempt, no overwrite/retry')
@@ -65,12 +65,16 @@ class Prepare:
             if not 0<values['slo']['percentile']<=100 or not e5.positive(values['slo']['targetLatencyNanos']) or not all(e5.positive(values[k]) for k in ('R','deliverySeconds','socketSeconds','workers')) or type(values['workers']) is not int:raise ValueError('Invalid approved Workload numerical bindings')
             lifetime=values.get('lifetimeSeconds')
             if lifetime is not None and (not e5.positive(lifetime) or lifetime<values['slo']['targetLatencyNanos']/1e9 or values['socketSeconds']<=lifetime+values['deliverySeconds']):raise ValueError('Invalid explicit lifetime/SLO/socket tuple')
+        shares=e5.pool_shares(self.n)
+        weights=dict(zip(e5.WORKLOADS,(shares['MNV'],shares['PLC'],shares['Smol'])))
+        gate_config=dict(self.n,workloads=[dict(values,name=name) for name,values in self.n['workloads'].items()])
+        e5.g0_evidence_gate(gate_config,sum(self.n['workloads'][name]['R']*weights[name] for name in e5.WORKLOADS))
         self.sha=self.sources['server']; self.out.mkdir(parents=True,exist_ok=True)
         plan=e5.load(PLAN)
         if plan['sourcePair']['after'].get('sha')!=self.sha: raise ValueError('Actual final D2 SHA not sealed in existing plan; no old-source fallback')
         self.pub=plan['e5InputPublication']
-        e5.need(self.pub,['imagePublication','after','gMeasurement','mMeasurement','d25','ranking','costs','bias','kappaExecutable'],'sealed actual E5 publication')
-        for key in ('imagePublication','after','gMeasurement','mMeasurement','d25','ranking','costs','bias','kappaExecutable'): e5.ref(self.pub[key])
+        e5.need(self.pub,['imagePublication','after','mMeasurement','d25','ranking','costs','bias','kappaExecutable'],'sealed actual E5 publication')
+        for key in ('imagePublication','after','mMeasurement','d25','ranking','costs','bias','kappaExecutable'): e5.ref(self.pub[key])
         power=Path(e5.E5['powerExecutable'])
         receipt_path=Path(e5.E5['powerReceipt']);receipt=e5.load(receipt_path);actual_power=e5.ref(power)
         e5.require_component_source(receipt,self.sources['power'],'power',str(power))
@@ -210,12 +214,14 @@ class Prepare:
         with (self.out/'kappa.stdout').open('w') as stdout,(self.out/'kappa.stderr').open('w') as stderr:r=subprocess.run(argv,stdout=stdout,stderr=stderr,timeout=self.n['kappaSeconds'],env=dict(os.environ,GOMAXPROCS='6'))
         e5.save(self.out/'kappa-execution.json',{'at':e5.now(),'sourceSHA':self.sha,'argv':argv,'exitCode':r.returncode,'meaning':'Actual registered canonical UID/generation/SLO inputs; no hypothetical live UID'})
         if r.returncode:raise RuntimeError('Final actual-UID kappa calculation failed')
-        c={**{k:self.op[k] for k in ('endpoint','caFile','tokenFile','kubeContext')},**{k:self.n[k] for k in ('G','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds')}}
+        c={**{k:self.op[k] for k in ('endpoint','caFile','tokenFile','kubeContext')},**{k:self.n[k] for k in ('g0Evidence','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds')}}
         c['poolShares'] = e5.pool_shares(self.n)
         c['approval']={**self.n['approval'],'sources':self.sources,'controlImageDigest':actual_control,'runtimeDigests':e5.load(PLAN)['frozenRuntimeSha256']}
-        c['inputs']={k:self.pub[k] for k in ('after','gMeasurement','mMeasurement','d25','ranking','costs','bias')}
+        c['inputs']={k:self.pub[k] for k in ('after','mMeasurement','d25','ranking','costs','bias')}
         c['inputs'].update({k:str(self.out/(k+'.json')) for k in ('scheduler','capacity','nodes','pods','gateway','producer')})
-        archive=[{'key':self.pub[k],'localPath':self.pub[k]} for k in ('after','gMeasurement','mMeasurement','ranking','costs','bias')];e5.save(self.out/'required-raw-refs.json',archive)
+        archive=[{'key':self.pub[k],'localPath':self.pub[k]} for k in ('after','mMeasurement','ranking','costs','bias')]
+        archive.extend({'key':self.n['g0Evidence'][k],'localPath':self.n['g0Evidence'][k]} for k in ('verdict','binding'))
+        e5.save(self.out/'required-raw-refs.json',archive)
         c['collection']={**self.op['collection'],'archiveRefs':str(self.out/'required-raw-refs.json')};c['workloads']=[]
         sys.path.insert(0,str(e5.REPO/'load-generator/src'));from chill_loadgen import cli
         producer=e5.module('e5prod_identity',HERE/'e5-producer.py')
@@ -240,7 +246,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['schema','prepare','execute']);p.add_argument('--numbers',type=Path);p.add_argument('--release',type=Path);p.add_argument('--out',type=Path);a=p.parse_args()
     try:
         if a.command=='schema':
-            print(json.dumps({'numbers':['G','mSeconds','N','burstLowSeconds','smokeSeconds','kappaSeconds','timeboxes','workloads','approval'],'workloadNumbers':['slo.percentile','slo.targetLatencyNanos','R','deliverySeconds','socketSeconds','workers'],'optionalWorkloadNumbers':['lifetimeSeconds'],'timeboxes':e5.REQUIRED['timeboxes'],'approval':['phase6ApprovalUTC','e5StartApprovalUTC','D1','D6','D9'],'factorSelection':'N selects the frozen operational recipe factorOrder prefix; source/reset witnesses are already bound there, observed effect remains unmeasured','release':['executor=CampaignOps','command=e5-execute','mainInstructionUTC','sources','numbersPath','bindingPath'],'sources':{'server':'full Git SHA matching AFTER and server publication','loadgen':'full Git SHA matching loadgen publication sourceCommit','power':'full Git SHA or pinned repository-relative binary path matching actual power build receipt'},'autoInputs':str(PLAN)+'.e5InputPublication','operationalRecipe':str(e5.OPERATIONAL_RECIPE),'scientificResults':'UNMEASURED'},indent=2));return 0
+            print(json.dumps({'numbers':['g0Evidence','mSeconds','N','burstLowSeconds','smokeSeconds','kappaSeconds','timeboxes','workloads','approval'],'g0Evidence':{'runID':'actual G0 verdict directory name','verdict':'absolute recorded g0-verdict.json path (PASS and generator VALID)','binding':'absolute same-run run/binding.json path (120s alpha=1.2 G-check)','csCPULimitCores':'explicit frozen positive ChillServer CPU limit; recorded peak/limit must be <1'},'workloadNumbers':['slo.percentile','slo.targetLatencyNanos','R','deliverySeconds','socketSeconds','workers'],'optionalWorkloadNumbers':['lifetimeSeconds'],'timeboxes':e5.REQUIRED['timeboxes'],'approval':['phase6ApprovalUTC','e5StartApprovalUTC','D1','D6','D9'],'factorSelection':'N selects the frozen operational recipe factorOrder prefix; source/reset witnesses are already bound there, observed effect remains unmeasured','release':['executor=CampaignOps','command=e5-execute','mainInstructionUTC','sources','numbersPath','bindingPath'],'sources':{'server':'full Git SHA matching AFTER and server publication','loadgen':'full Git SHA matching loadgen publication sourceCommit','power':'full Git SHA or pinned repository-relative binary path matching actual power build receipt'},'autoInputs':str(PLAN)+'.e5InputPublication','operationalRecipe':str(e5.OPERATIONAL_RECIPE),'scientificResults':'UNMEASURED'},indent=2));return 0
         if any(x is None for x in (a.numbers,a.release,a.out)):raise ValueError('--numbers, --release and --out required for CPO preparation/execution')
         if any(not x.is_absolute() for x in (a.numbers,a.release,a.out)):raise ValueError('Absolute paths required')
         prepared=Prepare(a);binding=prepared.run()

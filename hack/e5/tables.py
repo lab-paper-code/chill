@@ -49,6 +49,10 @@ def render(root, repo):
         status = summary.get('planRows', {}).get(stage, 'UNMEASURED')
         columns[-1] = f' {status}; Run ID `{cell(root.parent.name if root.name == "run" else root.name)}`; raw `{cell(root)}` '
         lines.append('|' + '|'.join(columns) + '|')
+    if not operational:
+        lines += ['', '## E5-7 manual failure evidence', '',
+                  'The 180/360/600s operator runbook is separate from automatic workload replay; missing actual event/recovery evidence is not MEASURED.',
+                  '```json', json.dumps(summary.get('failureScenarioEvidence'), ensure_ascii=False, indent=2), '```', '']
     lines += ['', '## Three timing populations (existing summary values)', '',
               'Generator: scheduled arrival → actual send (ns); entrance: actual send → gateway receivedAt (ns, cross-host clock uncertainty, negative values retained); SLO: CHILL receipt → response via gateway elapsedNanos. Offered includes unsent requests. Completed latency quantiles do not replace the offered denominator.', '']
     paths = sorted(root.glob('smoke-*/summary.json')) if operational else sorted(root.glob('*/judgment.json'))
@@ -84,4 +88,15 @@ def self_check(repo):
         assert text.count('UNMEASURED; Run ID') == 16
         assert '"min": -7' in text and '"max": 11' in text and '"p99": 3' in text
         assert '"SLOVerdict": "INVALID_GENERATOR"' in text
+        (root / 'binding.json').write_text('{"schema":"e5-binding.v1"}')
+        (root / 'e5-summary.json').write_text(json.dumps({
+            'planRows': {'E5-7': 'MEASURED'},
+            'specScenarios': {'node-serving-control-failure': 'MEASURED'},
+            'failureScenarioEvidence': {'status': 'CAPTURED', 'source': 'operator-receipt'},
+        }))
+        text = render(root, repo)
+        assert 'E5-7 실패' in text and text.count('MEASURED; Run ID') == 16
+        failure_row = next(line for line in text.splitlines() if line.startswith('| E5-7 실패'))
+        assert ' MEASURED;' in failure_row and 'UNMEASURED' not in failure_row
+        assert '"status": "CAPTURED"' in text and 'operator-receipt' in text
     print('tables self-check: PASS')

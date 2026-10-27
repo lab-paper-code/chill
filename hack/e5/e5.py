@@ -91,6 +91,121 @@ def require_component_source(receipt, identity, component, executable=None):
         raise ValueError(component + ' receipt differs from frozen component source identity')
 
 
+def validate_g0_evidence(evidence, verdict, binding, weighted_capacity, expected_rates, plc_slo):
+    """Validate recorded G0 fields; UNKNOWN and historical FAIL never authorize E5."""
+    def finite(value, minimum=0):
+        return type(value) in (int, float) and math.isfinite(value) and value >= minimum
+    def matches(actual, expected):
+        return finite(actual) and math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-9)
+    try:
+        if verdict['status'] != 'PASS' or verdict['generatorQualityStatus'] != 'VALID':
+            raise ValueError('G0 must record PASS and generator VALID')
+        if not finite(weighted_capacity) or weighted_capacity <= 0 or not matches(verdict['configuredRateTotal'], 1.2 * weighted_capacity):
+            raise ValueError('G0 alpha=1.2 total differs from final weighted capacity')
+        if set(expected_rates) != {'image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa'}:
+            raise ValueError('G0 requires all three final workload rates')
+        stages = binding['schedule']
+        if binding['schema'] != 'demo-e5-binding.v1' or len(stages) != 1 or stages[0]['id'] != 'G-check' or stages[0]['seconds'] != 120 or len(stages[0]['parts']) != 1:
+            raise ValueError('G0 requires the frozen one-shot 120s G-check binding')
+        part = stages[0]['parts'][0]
+        if set(part['alpha']) != {'mobilenet', 'plc', 'smolvlm2'} or any(not matches(v, 1.2) for v in part['alpha'].values()):
+            raise ValueError('G0 binding must record alpha=1.2 for every workload')
+        if set(verdict['workloads']) != set(expected_rates) or set(part['rates']) != set(expected_rates) or not matches(sum(expected_rates.values()), 1.2 * weighted_capacity):
+            raise ValueError('G0 workload mix differs from final weighted capacity')
+        for name, rate in expected_rates.items():
+            row = verdict['workloads'][name]
+            if not matches(row['rate'], rate) or not matches(part['rates'][name], rate):
+                raise ValueError('G0 recorded workload rate differs from final approved mix')
+            if type(row['planned']) is not int or row['planned'] <= 0 or type(row['issued']) is not int or row['planned'] != row['issued'] or row['planned'] != stages[0]['traces'][name]['offered'] or row['supplied'] is not True or row['quality']['status'] != 'VALID':
+                raise ValueError('G0 requires complete frozen planned=offered=issued supply and generator VALID')
+        limit, peak = evidence['csCPULimitCores'], verdict['cpuCoresPeak']
+        if not finite(limit) or limit <= 0 or not finite(peak) or peak >= limit:
+            raise ValueError('G0 cs CPU fraction must be recorded peak / frozen positive limit <1')
+        samples = verdict['cpu10sSamples']
+        if not samples or any(not finite(row['cpuCores']) or row['cpuCores'] > peak for row in samples):
+            raise ValueError('G0 CPU samples missing or inconsistent with recorded peak')
+        plc = verdict['workloads']['plc-anomaly']
+        recorded_slo = binding['demoConfig']['measurementSLO']['plc']
+        if plc_slo != recorded_slo or plc_slo['percentile'] != 95 or not finite(plc_slo['targetLatencyNanos']) or plc_slo['targetLatencyNanos'] <= 0:
+            raise ValueError('G0 PLC SLO differs from final approved p95 SLO')
+        p95 = plc['receiptLatencyMS']['p95']
+        if not finite(p95) or p95 * 1e6 > plc_slo['targetLatencyNanos']:
+            raise ValueError('G0 PLC receive-origin p95 exceeds approved SLO')
+    except (KeyError, TypeError, IndexError, AttributeError) as error:
+        raise ValueError('Incomplete G0 evidence: ' + str(error)) from error
+
+
+def self_check_g0():
+    """Explicit synthetic evidence, never a claim about a historical campaign."""
+    names = ['image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa']
+    rates = dict(zip(names, [.54, .12, .54]))
+    slo = {'percentile': 95, 'targetLatencyNanos': 32_000_000}
+    evidence = {'csCPULimitCores': 2}
+    verdict = {'status': 'PASS', 'generatorQualityStatus': 'VALID', 'configuredRateTotal': 1.2,
+               'cpuCoresPeak': 1, 'cpu10sSamples': [{'cpuCores': 1}],
+               'workloads': {name: {'rate': rate, 'planned': 10, 'issued': 10, 'supplied': True, 'quality': {'status': 'VALID'}} for name, rate in rates.items()}}
+    verdict['workloads']['plc-anomaly']['receiptLatencyMS'] = {'p95': 20}
+    binding = {'schema': 'demo-e5-binding.v1', 'demoConfig': {'measurementSLO': {'plc': slo}},
+               'schedule': [{'id': 'G-check', 'seconds': 120, 'traces': {name: {'offered': 10} for name in names}, 'parts': [{'alpha': dict.fromkeys(['mobilenet', 'plc', 'smolvlm2'], 1.2), 'rates': rates}]}]}
+    validate_g0_evidence(evidence, verdict, binding, 1, rates, slo)
+    bad_cases = [({}, evidence, binding), (dict(verdict, status='FAIL'), evidence, binding),
+                 (dict(verdict, generatorQualityStatus='UNKNOWN'), evidence, binding),
+                 (dict(verdict, configuredRateTotal=1.3), evidence, binding),
+                 (dict(verdict, cpuCoresPeak=2), evidence, binding), (verdict, {}, binding), (verdict, evidence, {})]
+    for field, value in [('issued', 9), ('supplied', False), ('rate', .13), ('quality', {'status': 'INVALID_GENERATOR'}), ('receiptLatencyMS', {'p95': 33})]:
+        bad = copy.deepcopy(verdict)
+        bad['workloads']['plc-anomaly'][field] = value
+        bad_cases.append((bad, evidence, binding))
+    for bad, record, frozen in bad_cases:
+        try:
+            validate_g0_evidence(record, bad, frozen, 1, rates, slo)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Invalid/incomplete/mismatched G0 evidence accepted')
+    try:
+        validate_g0_evidence(evidence, verdict, binding, 1, rates, dict(slo, targetLatencyNanos=36_000_000))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Mismatched approved PLC SLO accepted')
+
+
+def normative_stage_specs(burst_low_seconds):
+    return [
+        ('E5-0', 600, [0, 0, 0]), ('E5-1', 1800, [.3]*3),
+        ('E5-2-low', burst_low_seconds, [.3]*3),
+        ('E5-2-high', 900-burst_low_seconds, [.3, .3, .9]),
+        ('E5-3-50', 600, [.5]*3), ('E5-3-70', 600, [.7]*3),
+        ('E5-3-90', 600, [.9]*3), ('E5-4', 900, [1.2]*3),
+        ('E5-5-low', 600, [.3]*3), ('E5-5-high', 600, [.9]*3),
+        ('E5-6', 3600, [.3]*3), ('E5-7', 900, [.3]*3),
+    ]
+
+
+def validate_failure_events(evidence, start_utc, end_utc):
+    """Validate manual E5-7 event identity/timing; commands are never auto-run."""
+    kinds = [(180, 'delete-serving-pod'), (360, 'cordon-delete'), (600, 'uncordon')]
+    events = evidence.get('events')
+    if evidence.get('stage') != 'E5-7' or not isinstance(events, list) or len(events) != 3:
+        raise ValueError('E5-7 requires all three actual operator fault events')
+    start = dt.datetime.fromisoformat(start_utc.replace('Z', '+00:00')).timestamp()
+    end = dt.datetime.fromisoformat(end_utc.replace('Z', '+00:00')).timestamp()
+    for event, (offset, kind) in zip(events, kinds):
+        at = dt.datetime.fromisoformat(event['atUTC'].replace('Z', '+00:00')).timestamp()
+        if (event.get('offsetSeconds') != offset or event.get('kind') != kind
+                or event.get('exitCode') != 0 or not start + offset <= at < end
+                or not event.get('nodeUID') or not event.get('commandRef') or not event.get('responseRef')
+                or kind != 'uncordon' and not event.get('podUID')):
+            raise ValueError('E5-7 operator event identity/timing/result incomplete')
+    recovery = evidence.get('recovery', {})
+    at = dt.datetime.fromisoformat(recovery['atUTC'].replace('Z', '+00:00')).timestamp()
+    if (events[1]['nodeUID'] != events[2]['nodeUID'] or recovery.get('nodeUID') != events[2]['nodeUID']
+            or not start + 600 <= at <= end
+            or any(not recovery.get(key) for key in ('schedulableRef', 'readyRef', 'observationRef', 'routeRef'))):
+        raise ValueError('E5-7 actual uncordon/Ready/observation/route recovery evidence incomplete')
+
+
 def self_check():
     spec=importlib.util.spec_from_file_location('e5_check_analysis',HERE/'d2/analyze_before.py')
     analysis=importlib.util.module_from_spec(spec);spec.loader.exec_module(analysis)
@@ -166,6 +281,28 @@ def self_check():
         pass
     else:
         raise AssertionError('Removed single-source approval accepted')
+    self_check_g0()
+    stages = normative_stage_specs(300)
+    assert sum(seconds for _, seconds, _ in stages) == 11700
+    assert sum(seconds for name, seconds, _ in stages if not name.startswith(('E5-0', 'E5-7'))) == 10200
+    assert stages[-1] == ('E5-7', 900, [.3]*3)
+    runbook = json.loads((HERE/'demo-config.e5.example.json').read_text())['failureInjectionRunbook']
+    assert [step['offsetSeconds'] for step in runbook['steps']] == [180, 360, 600]
+    evidence = {'stage':'E5-7', 'events':[
+        {'offsetSeconds':offset,'kind':kind,'exitCode':0,'atUTC':at,'nodeUID':'node',
+         'podUID':'pod','commandRef':'command','responseRef':'response'}
+        for offset,kind,at in [(180,'delete-serving-pod','2026-10-28T00:03:00Z'),
+                              (360,'cordon-delete','2026-10-28T00:06:00Z'),
+                              (600,'uncordon','2026-10-28T00:10:00Z')]],
+        'recovery':dict.fromkeys(('schedulableRef','readyRef','observationRef','routeRef'),'readback')}
+    evidence['recovery'].update(nodeUID='node',atUTC='2026-10-28T00:11:00Z')
+    validate_failure_events(evidence,'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
+    try:
+        validate_failure_events(dict(evidence,events=evidence['events'][:2]),'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Unexercised E5-7 accepted as measured')
     print('PASS E5 receive-origin SLO, scheduled reference, generator quality and full planned issuance; offline only')
 
 
@@ -196,8 +333,8 @@ WORKLOADS = ['image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa']
 SEEDS = dict(zip(WORKLOADS, [101, 202, 303]))
 REQUIRED = {
  'approval': ['phase6ApprovalUTC', 'e5StartApprovalUTC', 'sources', 'controlImageDigest', 'runtimeDigests', 'D1', 'D6', 'D9'],
- 'inputs': ['scheduler', 'capacity', 'nodes', 'pods', 'after', 'd25', 'gMeasurement', 'mMeasurement', 'ranking', 'costs', 'bias', 'gateway', 'producer'],
- 'numerical': ['G', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds'],
+ 'inputs': ['scheduler', 'capacity', 'nodes', 'pods', 'after', 'd25', 'mMeasurement', 'ranking', 'costs', 'bias', 'gateway', 'producer'],
+ 'numerical': ['g0Evidence', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds'],
  'workload': ['name', 'uid', 'generation', 'slo', 'R', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'datasetDir', 'fields', 'profilingRecordIDs', 'jobTemplate', 'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'producerDatasetDir'],
  'collection': ['hosts', 'archiveRefs', 'observationDirectory', 'serverContainer', 'schedulerConfigMap', 'serverHostReadArgv', 'metricSourcesConfigMap', 'metricSourcesKey', 'powerExecutable', 'powerReceipt'],
  'factor': ['name', 'controls', 'witness'],
@@ -232,19 +369,30 @@ def pool_shares(config):
     config['poolShares'] = dict(shares)
     return shares
 
-def gateway_budget(config, weighted_capacity):
-    """Check the frozen 20% gateway headroom, not a maximum-G search."""
-    g = config.get('G')
-    if g is None:
-        print('WARNING: G unconfirmed; 1.2 * sum(s_w * R_w) <= 0.8 * G is unverified', file=sys.stderr)
-        return
-    if not positive(g):
-        raise ValueError('G requires a finite positive measured rate')
-    source = config.get('GSource') or config.get('inputs', {}).get('gMeasurement')
-    if not isinstance(source, str) or not source.strip():
-        raise ValueError('Measured G requires a frozen GSource or inputs.gMeasurement')
-    if 1.2 * weighted_capacity > .8 * g:
-        raise ValueError('1.2 * sum(s_w * R_w) exceeds 0.8 * G; no automatic clipping')
+def g0_evidence_gate(config, weighted_capacity, *, required=True, expected_rates=None, plc_slo=None):
+    """Freeze a measured alpha=1.2 supply/CPU/receive-origin PLC witness, never maximum G."""
+    evidence = config.get('g0Evidence')
+    if evidence is None or evidence == {'status': 'UNKNOWN'}:
+        if required:
+            raise ValueError('Frozen g0Evidence required; UNKNOWN is not E5 approval')
+        return {'status': 'UNKNOWN', 'sources': {}}
+    if not isinstance(evidence, dict):
+        raise ValueError('g0Evidence requires a runID, verdict, binding and csCPULimitCores record')
+    need(evidence, ['runID', 'verdict', 'binding', 'csCPULimitCores'], 'g0Evidence')
+    sources = {key: ref(evidence[key]) for key in ('verdict', 'binding')}
+    verdict, binding = load(evidence['verdict']), load(evidence['binding'])
+    if not isinstance(evidence['runID'], str) or not evidence['runID'].strip() or Path(evidence['verdict']).parent.name != evidence['runID']:
+        raise ValueError('G0 runID must identify the recorded verdict directory')
+    if Path(evidence['binding']).parent.parent != Path(evidence['verdict']).parent:
+        raise ValueError('G0 binding must belong to the recorded run')
+    if expected_rates is None:
+        shares = pool_shares(config)
+        weights = dict(zip(WORKLOADS, (shares['MNV'], shares['PLC'], shares['Smol'])))
+        expected_rates = {w['name']: 1.2 * weights[w['name']] * w['R'] for w in config['workloads']}
+    if plc_slo is None:
+        plc_slo = next(w['slo'] for w in config['workloads'] if w['name'] == 'plc-anomaly')
+    validate_g0_evidence(evidence, verdict, binding, weighted_capacity, expected_rates, plc_slo)
+    return {'status': 'VALID', 'runID': evidence['runID'], 'csCPUFraction': verdict['cpuCoresPeak'] / evidence['csCPULimitCores'], 'sources': sources}
 
 def require_strict_archives(config):
     """Reject diagnostic archive tolerance anywhere in normative E5 inputs."""
@@ -371,10 +519,10 @@ def bind(path):
     c = load(path); require_strict_archives(c)
     freeze_producer_config(c)
     module('e5_quality', D2/'analyze_before.py').generator_quality_config(c)
-    need(c, ['approval', 'inputs', 'G', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
+    need(c, ['approval', 'inputs', 'g0Evidence', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
     need(c['approval'], REQUIRED['approval'], 'approval'); need(c['inputs'], REQUIRED['inputs'], 'inputs'); need(c['collection'], REQUIRED['collection'], 'collection'); need(c['timeboxes'], REQUIRED['timeboxes'], 'timeboxes')
     component_sources = approval_sources(c['approval'])
-    if not all(positive(c[k]) for k in ('G', 'smokeSeconds')) or type(c['mSeconds']) not in (int,float) or not math.isfinite(c['mSeconds']) or c['mSeconds']<0 or not 0 < c['burstLowSeconds'] < 900: raise ValueError('Actual G/m/smoke and 0<burstLowSeconds<900 required')
+    if not positive(c['smokeSeconds']) or type(c['mSeconds']) not in (int,float) or not math.isfinite(c['mSeconds']) or c['mSeconds']<0 or not 0 < c['burstLowSeconds'] < 900: raise ValueError('Actual m/smoke and 0<burstLowSeconds<900 required')
     if any(not positive(v) for v in c['timeboxes'].values()) or c['timeboxes']['setupSeconds']+3600+c['timeboxes']['drainSeconds']+c['timeboxes']['flushSeconds'] > 4200: raise ValueError('Finite collector-compatible timeboxes required (sum<=4200s)')
     if type(c['N']) is not int or c['N'] < 1 or c['N'] != len(c['factors']): raise ValueError('N must equal a nonempty preselected witnessed factor set; absent witness is NOT_READY')
     host_read=c['collection']['serverHostReadArgv']
@@ -481,15 +629,17 @@ def bind(path):
     for k in ('hosts', 'archiveRefs'): refs[k] = ref(c['collection'][k])
     archive = load(c['collection']['archiveRefs'])
     if not archive or any(not x.get('key') or not x.get('localPath') for x in archive): raise ValueError('Exact approved archive source key/local path bindings required')
-    stages = [('E5-0', 600, [0,0,0]), ('E5-1', 1800, [.3,.3,.3]), ('E5-2-low', c['burstLowSeconds'], [.3,.3,.3]), ('E5-2-high', 900-c['burstLowSeconds'], [.3,.3,.9]), ('E5-3-50', 600, [.5]*3), ('E5-3-70', 600, [.7]*3), ('E5-3-90', 600, [.9]*3), ('E5-4', 900, [1.2]*3), ('E5-5-low', 600, [.3]*3), ('E5-5-high', 600, [.9]*3), ('E5-6', 3600, [.3]*3)]
+    stages = normative_stage_specs(c['burstLowSeconds'])
+    c['failureInjectionRunbook'] = copy.deepcopy(load(HERE/'demo-config.e5.example.json')['failureInjectionRunbook'])
+    refs['failureRunbook'] = ref(HERE/'demo-config.e5.example.json')
     ws = {w['name']: w for w in c['workloads']}; schedule = []
     shares = pool_shares(c)
     share_by_workload = dict(zip(WORKLOADS, (shares['MNV'], shares['PLC'], shares['Smol'])))
-    gateway_budget(c, sum(ws[name]['R'] * share_by_workload[name] for name in WORKLOADS))
+    g0 = g0_evidence_gate(c, sum(ws[name]['R'] * share_by_workload[name] for name in WORKLOADS))
+    refs.update({'g0Evidence-'+key: value for key, value in g0['sources'].items()})
+    c['g0Gate'] = {key: value for key, value in g0.items() if key != 'sources'}
     for label, duration, fractions in stages:
         intended = {name: ws[name]['R']*share_by_workload[name]*fractions[j] for j, name in enumerate(WORKLOADS)}; rates = dict(intended)
-        if sum(rates.values()) > c['G']:
-            raise ValueError(label+': intended mixed rate exceeds measured G; no automatic clipping')
         st = {'id': label, 'seconds': duration, 'poolShares': shares, 'alpha': dict(zip(WORKLOADS, fractions)), 'intendedRates': intended, 'rates': rates, 'traces': {}}
         for name, rate in rates.items():
             offsets = cli.arrival_offsets_ns('poisson', rate, duration, SEEDS[name]) if rate else []
@@ -497,9 +647,11 @@ def bind(path):
         schedule.append(st)
     # A normative row has one producer window; rate changes have no drain/setup hole.
     combined = []
-    for row_id in ['E5-0', 'E5-1', 'E5-2', 'E5-3', 'E5-4', 'E5-5', 'E5-6']:
+    for row_id in ['E5-0', 'E5-1', 'E5-2', 'E5-3', 'E5-4', 'E5-5', 'E5-6', 'E5-7']:
         parts = [part for part in schedule if part['id'] == row_id or part['id'].startswith(row_id+'-')]
         row = {'id': row_id, 'seconds': sum(part['seconds'] for part in parts), 'parts': parts, 'rates': {name: max(part['rates'][name] for part in parts) for name in WORKLOADS}, 'traces': {}}
+        if row_id == 'E5-7':
+            row['failureInjectionRunbook'] = copy.deepcopy(c['failureInjectionRunbook'])
         for name in WORKLOADS:
             offsets = []; base = 0
             for part in parts:
@@ -516,7 +668,7 @@ def bind(path):
     settings = dict(settings, powerObservation=power_observation(c))
     c['harnessRepositoryCommit']=subprocess.check_output(['git','-C',str(REPO),'rev-parse','HEAD'],text=True).strip()
     c['tokenLifetime'] = token_preflight(c, schedule)
-    return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6'], 'fullSeconds': 10800, 'staticSeconds': 10200, 'factorSeconds': 2100*c['N'], 'accounting': {'d': '9/34 last verified; phase6 raw supersedes only by actual evidence', 'exactCost': '69/69', 'evaluation': '0/7', 'planRows': '0/8', 'failureScenario': 'UNEXERCISED; no fault injection authorized'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
+    return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6','E5-7'], 'fullSeconds': 11700, 'staticSeconds': 10200, 'factorSeconds': 2100*c['N'], 'accounting': {'d': '9/34 last verified; phase6 raw supersedes only by actual evidence', 'exactCost': '69/69', 'evaluation': '0/7', 'planRows': '0/9', 'failureScenario': 'E5-7 scheduled; actual manual operator evidence required'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
 
 
 class CPO:
@@ -772,7 +924,7 @@ class CPO:
         self.check_power_observation()
         deferred_restore=self.a.mode=='full' and st['id']=='E5-4' and not (self.out/'restore-ack.json').exists()
         if self.a.command!='smoke':
-            order = ['E5-0','E5-1','E5-2','E5-3','E5-4','E5-5','E5-6'] if self.a.mode=='full' else ['E5-1','E5-2','E5-3','E5-4','E5-5','E5-6'] if self.a.mode=='static' else ['E5-2','E5-5']
+            order = ['E5-0','E5-1','E5-2','E5-3','E5-4','E5-5','E5-6','E5-7'] if self.a.mode=='full' else ['E5-1','E5-2','E5-3','E5-4','E5-5','E5-6'] if self.a.mode=='static' else ['E5-2','E5-5']
             index=order.index(st['id'])
             if index:
                 previous=self.out/(self.a.mode+'-'+order[index-1])
@@ -1140,12 +1292,12 @@ class CPO:
             self.a.mode=mode; self.a.stage=name; self.a.command='stage'
             self.run()
             result=judge(self.a.binding,self.out/(mode+'-'+name))
-            if result['status']=='NOT_READY': raise RuntimeError('Required row evidence incomplete; frozen campaign stopped without advancing')
-            save(self.out/'campaign-position.json',{'at':now(),'mode':mode,'lastCapturedRow':name,'judgment':result['status'],'approval':str(self.a.release),'scientificAccounting':'Row evidence only; fault scenario unexercised'})
+            if result['status'] in ('NOT_READY','INVALID_GENERATOR'): raise RuntimeError('Required row evidence incomplete or invalid; frozen campaign stopped without advancing')
+            save(self.out/'campaign-position.json',{'at':now(),'mode':mode,'lastCapturedRow':name,'judgment':result['status'],'approval':str(self.a.release),'scientificAccounting':'Row evidence only; E5-7 requires actual manual operator evidence'})
         for name in ('E5-0','E5-1','E5-2','E5-3'): row('full',name)
         for name in ('E5-1','E5-2','E5-3','E5-4','E5-5','E5-6'): row('static',name)
         # Keep the selected physical configuration fixed while E5-4 producers prepare; restore once at their release barrier.
-        for name in ('E5-4','E5-5','E5-6'): row('full',name)
+        for name in ('E5-4','E5-5','E5-6','E5-7'): row('full',name)
         for f in self.c['factors']:
             self.a.mode=f['name']
             for name in ('E5-2','E5-5'):
@@ -1312,7 +1464,22 @@ def judge(binding, folder):
         except (OSError, ValueError) as exc: unknown.append('Required raw archive '+r['key']+': '+str(exc))
     if not (folder/'server.log').exists() or not (folder/'collected.json').exists(): unknown.append('Full raw collection/GC logs missing')
     if inp.errors: unknown.append('Raw read/parse errors')
-    result={'schema':'e5-judgment.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; raw references/configuration excluded from public indexes','at':now(),'status':'NOT_READY' if unknown or phase['status']!='DRAINED_NOT_EVALUATED' else 'FAIL' if any(r['D1']=='FAIL' for r in results.values()) else 'MEASURED_DESCRIPTIVE','notReadyReasons':unknown,'requests':results,'Tick':sched,'cgroups':cg,'power':power,'thermal':thermals,'D6':'Observed thermal bins only; unknown active/latched remains unknown, profile slack must use bound source samples','rawErrors':inp.errors,'sources':inp.sources,'limitations':b['limitations'],'accounting':{'specScenarioDenominator':7,'planRowDenominator':8,'failureScenario':'UNEXERCISED; never completed by E5 schedule'}}
+    failure_capture = None
+    if st['id']=='E5-7':
+        try:
+            receipt_path = folder/'failure-events.json'
+            evidence = load(receipt_path)
+            validate_failure_events(evidence,phase['startUTC'],phase['endUTC'])
+            references = [ref(receipt_path)]
+            for event in evidence['events']:
+                references.extend(ref(event[key]) for key in ('commandRef','responseRef'))
+            references.extend(ref(evidence['recovery'][key]) for key in ('schedulableRef','readyRef','observationRef','routeRef'))
+            failure_capture = {'status':'CAPTURED','events':evidence['events'],'recovery':evidence['recovery'],'sources':references,
+                               'meaning':'Actual manual serving Pod loss and cordon/delete/uncordon proxy, not physical power/network loss'}
+        except (OSError,ValueError,KeyError,TypeError) as exc:
+            unknown.append('E5-7 actual operator failure/recovery evidence missing or invalid: '+str(exc))
+    result={'schema':'e5-judgment.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; raw references/configuration excluded from public indexes','at':now(),'status':'NOT_READY' if unknown or phase['status']!='DRAINED_NOT_EVALUATED' else 'FAIL' if any(r['D1']=='FAIL' for r in results.values()) else 'MEASURED_DESCRIPTIVE','notReadyReasons':unknown,'requests':results,'Tick':sched,'cgroups':cg,'power':power,'thermal':thermals,'D6':'Observed thermal bins only; unknown active/latched remains unknown, profile slack must use bound source samples','rawErrors':inp.errors,'sources':inp.sources,'limitations':b['limitations'],'accounting':{'specScenarioDenominator':7,'planRowDenominator':9,'failureScenario':'CAPTURED' if failure_capture else 'NOT_EXERCISED_IN_THIS_ROW'}}
+    result['failureScenarioEvidence']=failure_capture
     if phase.get('mode')=='smoke':
         result['scientificResults']='UNMEASURED; operational smoke never fills E5 rows'
         if result['status']=='MEASURED_DESCRIPTIVE': result['status']='OPERATIONAL_SMOKE_COMPLETE'
@@ -1353,7 +1520,7 @@ def judge(binding, folder):
 
 def summarize(binding, root):
     b=load_binding(binding); stages={}; missing=[]
-    modes={'full':[x['id'] for x in b['schedule']], 'static':[x['id'] for x in b['schedule'] if x['id']!='E5-0']}
+    modes={'full':[x['id'] for x in b['schedule']], 'static':[x['id'] for x in b['schedule'] if x['id'] not in ('E5-0','E5-7')]}
     modes.update({f['name']:['E5-2','E5-5'] for f in b['config']['factors']})
     for mode, ids in modes.items():
         for row_id in ids:
@@ -1376,9 +1543,13 @@ def summarize(binding, root):
     plan_rows['E5-S']='MEASURED' if len(comparisons)==6 and (root/'static-native-ack.json').exists() else 'UNMEASURED'
     spec={'steady':'E5-1','gradual-up-and-down':'E5-3','burst':'E5-2','post-transition-drop-resurge':'E5-5','mixed-heterogeneous':'E5-1','pool-overload':'E5-4'}
     scenario={name:'MEASURED' if plan_rows[row]=='MEASURED' and (name!='gradual-up-and-down' or plan_rows['E5-5']=='MEASURED') else 'UNMEASURED' for name,row in spec.items()}
-    scenario['node-serving-control-failure']='UNEXERCISED'
+    failure = stages.get(('full','E5-7'),{}).get('failureScenarioEvidence')
+    scenario['node-serving-control-failure']='MEASURED' if failure and failure.get('status')=='CAPTURED' else 'UNMEASURED'
+    plan_rows['E5-7']=scenario['node-serving-control-failure']
+    if scenario['node-serving-control-failure']!='MEASURED':
+        missing.append({'mode':'full','row':'E5-7','reason':'Actual operator failure/recovery evidence not measured'})
     factor_results={f['name']:{row:stages.get((f['name'],row)) for row in ('E5-2','E5-5')} for f in b['config']['factors']}
-    result={'schema':'e5-summary.v1','at':now(),'status':'NOT_READY' if missing else 'MEASURED_DESCRIPTIVE','missing':missing,'planRows':plan_rows,'planResultLinks':str(sum(x=='MEASURED' for x in plan_rows.values()))+'/8','specScenarios':scenario,'specResultLinks':str(sum(x=='MEASURED' for x in scenario.values()))+'/7','failureScope':'No fault injection. Failure scenario remains uncompleted.','pairedComparisons':comparisons,'fullMatched170minWholePOOLJ':sum(x['fullWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'static170minWholePOOLJ':sum(x['staticWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'controlFactors':factor_results,'limitations':b['limitations'],'staticSelection':str(root/'static-selection.json'),'accounting':{'d':b['accounting']['d'],'exactCost':b['accounting']['exactCost'],'evaluation':str(sum(x=='MEASURED' for x in scenario.values()))+'/7'}}
+    result={'schema':'e5-summary.v1','at':now(),'status':'NOT_READY' if missing else 'MEASURED_DESCRIPTIVE','missing':missing,'planRows':plan_rows,'planResultLinks':str(sum(x=='MEASURED' for x in plan_rows.values()))+'/9','specScenarios':scenario,'specResultLinks':str(sum(x=='MEASURED' for x in scenario.values()))+'/7','failureScope':'E5-7 manual serving loss/cordon proxy; actual event/recovery evidence required, not physical network/power loss','failureScenarioEvidence':failure,'pairedComparisons':comparisons,'fullMatched170minWholePOOLJ':sum(x['fullWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'static170minWholePOOLJ':sum(x['staticWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'controlFactors':factor_results,'limitations':b['limitations'],'staticSelection':str(root/'static-selection.json'),'accounting':{'d':b['accounting']['d'],'exactCost':b['accounting']['exactCost'],'evaluation':str(sum(x=='MEASURED' for x in scenario.values()))+'/7'}}
     result['schedulerSettings']=b.get('schedulerSettings')
     if result['schedulerSettings'] is None:
         result['status']='NOT_READY';result['missing'].append({'reason':'Binding does not contain frozen scheduler settings; current settings are not substituted'})
@@ -1491,7 +1662,7 @@ def check_preparation():
     assert list(inspect.signature(collector.collect).parameters)==['folder','phase','collection','io','timeout_seconds']
     schema=subprocess.run([sys.executable,'-B',str(HERE/'e5-wire.py'),'schema'],capture_output=True,text=True,timeout=5)
     assert schema.returncode==0;required= json.loads(schema.stdout)
-    assert {'G','mSeconds','N','workloads'}<=set(required['numbers'])
+    assert {'g0Evidence','mSeconds','N','workloads'}<=set(required['numbers'])
     return {'schema':'e5-preparation-check.v1','at':now(),'visibility':'PRIVATE_OPERATIONAL_ONLY','status':'PREPARATION_INPUT_CHECK_ONLY','scriptsParsed':list(scripts),'actualRecordedInputs':payloads,'missingPhase6Gate':{'status':'NOT_READY','reason':missing_parameters},'missingRawGate':{'status':'NOT_READY','errors':provenance['errors']},'collectionInterface':'PARSED_ONLY; actual capture/reducer not exercised','sourceCLI':'Actual installed source parser/loaders; pinned-carrier equality still requires released metadata Jobs','scientificResults':'UNMEASURED; no binding/run/cluster request/inference generated'}
 
 
@@ -1610,11 +1781,11 @@ def main():
             b=load_binding(a.binding)
             for x in b['sources'].values():
                 if ref(x['path'])!=x: raise ValueError('Frozen input/package identity changed')
-            assert sum(x['seconds'] for x in b['schedule'])==10800
-            assert sum(x['seconds'] for x in b['schedule'] if x['id']!='E5-0')==10200
+            assert sum(x['seconds'] for x in b['schedule'])==11700
+            assert sum(x['seconds'] for x in b['schedule'] if x['id'] not in ('E5-0','E5-7'))==10200
             assert set(SEEDS.values())=={101,202,303}
-            assert len(b['rowOrder'])==8
-            print(json.dumps({'status':'OFFLINE_INPUT_CHECK_ONLY','scientificResults':'UNMEASURED','scheduleSeconds':21000,'N':b['config']['N']})); return 0
+            assert len(b['rowOrder'])==9
+            print(json.dumps({'status':'OFFLINE_INPUT_CHECK_ONLY','scientificResults':'UNMEASURED','scheduleSeconds':21900,'N':b['config']['N']})); return 0
         if not a.out: raise ValueError('--out absolute run or stage directory required')
         if a.command=='judge': return 2 if judge(a.binding,a.out)['status'] in ('NOT_READY','FAIL','INVALID_GENERATOR') else 0
         if a.command=='summarize': return 2 if summarize(a.binding,a.out)['status']=='NOT_READY' else 0

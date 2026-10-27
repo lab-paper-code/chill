@@ -52,6 +52,35 @@ def main():
         environment.write_text(json.dumps({'paths': {'repository': str(HERE.parents[1]), 'ops': directory, 'campaign': directory, 'd2State': directory}, 'e5': {'operationalRecipe': directory, 'nodes': [], 'excludedNodes': []}}))
         with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(environment)):
             e5 = module('smoke_preflight_e5', HERE / 'e5.py')
+        e5.self_check_g0()
+        assert e5.g0_evidence_gate({'g0Evidence': {'status': 'UNKNOWN'}}, 1, required=False)['status'] == 'UNKNOWN'
+        g0_run = root / 'synthetic-g0'
+        (g0_run / 'run').mkdir(parents=True)
+        rates = dict(zip(e5.WORKLOADS, [.54, .12, .54]))
+        slo = {'percentile': 95, 'targetLatencyNanos': 32_000_000}
+        witness = {'status': 'PASS', 'generatorQualityStatus': 'VALID', 'configuredRateTotal': 1.2,
+                   'cpuCoresPeak': 1, 'cpu10sSamples': [{'cpuCores': 1}],
+                   'workloads': {name: {'rate': rate, 'planned': 10, 'issued': 10, 'supplied': True, 'quality': {'status': 'VALID'}} for name, rate in rates.items()}}
+        witness['workloads']['plc-anomaly']['receiptLatencyMS'] = {'p95': 20}
+        frozen = {'schema': 'demo-e5-binding.v1', 'demoConfig': {'measurementSLO': {'plc': slo}},
+                  'schedule': [{'id': 'G-check', 'seconds': 120, 'traces': {name: {'offered': 10} for name in rates},
+                                'parts': [{'alpha': dict.fromkeys(['mobilenet', 'plc', 'smolvlm2'], 1.2), 'rates': rates}]}]}
+        e5.save(g0_run / 'g0-verdict.json', witness)
+        e5.save(g0_run / 'run/binding.json', frozen)
+        record = {'runID': 'synthetic-g0', 'verdict': str(g0_run / 'g0-verdict.json'),
+                  'binding': str(g0_run / 'run/binding.json'), 'csCPULimitCores': 2}
+        approved = {'g0Evidence': record, 'workloads': [{'name': name, 'R': 1, 'slo': slo} for name in rates]}
+        gate = e5.g0_evidence_gate(approved, 1)
+        assert gate['status'] == 'VALID' and gate['csCPUFraction'] == .5
+        assert gate['sources']['verdict'] == e5.ref(record['verdict'])
+        for invalid in ({}, {'g0Evidence': {'status': 'UNKNOWN'}}, dict(approved, g0Evidence=dict(record, runID='wrong-run')),
+                        dict(approved, g0Evidence=dict(record, csCPULimitCores=0))):
+            try:
+                e5.g0_evidence_gate(invalid, 1)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid frozen G0 evidence accepted')
         issuance = module('smoke_issuance_stats', HERE / 'd2' / 'analyze_before.py')
         stats = issuance.stats
         planned = [0, 10_000_000, 20_000_000]

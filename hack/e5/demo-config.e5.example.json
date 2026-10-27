@@ -7,8 +7,7 @@
   },
   "generatorQuality": {"latenessToleranceNS": 50000000, "maxExceedingFraction": 0.01},
   "poolShares": {"MNV": 0.45, "PLC": 0.1, "Smol": 0.45},
-  "G": null,
-  "GSource": null,
+  "g0Evidence": {"status": "UNKNOWN"},
   "timeboxes": {
     "setupSeconds": 194,
     "barrierSeconds": 300,
