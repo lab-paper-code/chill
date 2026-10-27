@@ -412,3 +412,8 @@
 ## 2026-10-27 11:4xZ — U5 종결(원인 미확정, 재발 없음)
 
 - 단발 progress stamp 손실: 새 규칙 24대상 중 D15 1건(unknown 0, 연속성 위반 1 pair); 해당 창·실물에 서버 reject/source issue/stream ended 0건(`history://U5RejectScan27`) → 손실은 observer 이전 단계(native stdout→CRI/follow 경계)[추정]. 이후 15회 연속 시도 재발 0 → 완료 기준('3회 연속 재발 없음') 충족. 동시 Pod 로그 캡처 금지 유지. runtime 재빌드 시 emitter 진단 로그 반영.
+
+## 2026-10-27 14:2xZ — PLC 연구 SLO 확정(권고 기본값): p95 36ms
+
+- sweep(재생 ~1~3분/회, 7af95dd4 이후): 32ms positive 1/8(FAIL), 36ms positive 5/8·orangepi κ=0·jetsonx 자원 Rejected(비양수), 40/50ms positive 7/8이나 느린 2 Node 양수(FAIL). 계획 규칙(조건 통과 중 가장 엄격)대로 **PLC p95 36ms** 채택(느린 2 중 jetsonx는 κ=0 증거가 아니라 자원 부적격 — 비양수로 해석; 기록). R_P 691.15 req/s(7 Node), α=1.2 몫 .1 → 82.94 req/s. Smol p95 7.034s(positive 5/8 PASS), MNV p95 1s 유지.
+- G0 입력(α=1.2, .45/.1/.45): MNV 179.08 / PLC 82.94 / Smol 1.16 ≈ 263 req/s.
