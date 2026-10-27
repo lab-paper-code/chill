@@ -49,11 +49,39 @@ has not been deployed or measured live. Older preparation/raw objects are not
 read by the current implementation; finish campaigns and clean stranded objects
 before switching versions, as required by ADR 0019.
 
+The 2026-10-27 estimator revision adds `spec.settlingSeconds` (default 60,
+inclusive range 0..3600). New preparation freezes it in both directed contracts;
+finalized observations and table rows retain the declared value separately from
+measured `tau`. The energy window is apply-start through fresh Ready plus that
+declared period. Native zero-inference/allocation and Node-generation observation
+continue through settling; power polling does not stop at Ready. The observer
+attempt wire is `v1alpha6`, requiring matching Profiler and transition-observer
+control images, not a runtime-7 serving-image rebuild. Existing raw/finalized
+objects are not rewritten or reclassified, and an absent frozen settling value
+continues to mean the original zero-settling estimator.
+
+Reason: the NVIDIA campaign retained 15/15 `PowerWindowInsufficient` results
+(13 coverage failures and two sample-count failures). At one-second power
+cadence a two-second window admits only 100 ms of endpoint loss at 0.95 coverage.
+The 60-second default reuses the declared empty-node settling precedent in
+[scheduler operations](../../serving/scheduler-operations.md); it is a declared
+measurement period, not evidence that physical stabilization takes exactly 60 s.
+Coverage, boundary-distance, gap, readiness and native-state policies are not
+relaxed. A 2 s transition with 60 s settling is tested with 1 s samples: energy
+coverage is 61/62, while `tau` remains 2000 ms.
+
+CampaignOps uses
+[`edge_v1alpha1_powermodetransitioncost_nvidia.yaml`](../../../../config/samples/profiling/edge_v1alpha1_powermodetransitioncost_nvidia.yaml)
+with `settlingSeconds: 60`, a fresh CR name/serving Service, its admitted exact
+runner profile, and both Complete exact-state baselines. Do not reapply the
+failed campaign or reinterpret its immutable results. The fact-observation
+timeout, power schedule/event budget and Job deadline include the declared
+settling period in addition to `maximumTransitionDurationSeconds`.
+
 This plan fills the two directed specification table entries between one
-selected pair of device power modes. Each `NodeActuation` opens one observation
-window and derives both its elapsed time `tau` and its energy overhead `eta`
-from that same window. Transition-time and transition-energy measurements are
-not separate experiments.
+selected pair of device power modes. Each transition opens one observation that
+measures elapsed time `tau` through fresh Ready and energy overhead `eta` through
+the declared post-Ready settling endpoint. These are not separate experiments.
 
 The specification defines the research quantity. Existing API fields, source
 behavior, and ADRs describe the current implementation and its constraints;
@@ -62,8 +90,8 @@ they do not redefine `tau` or `eta`.
 ## Question
 
 > How does one real state transition, including a restart-required transition,
-> produce an auditable `tau_(s->s')` and `eta_(s->s')` from one common
-> observation window?
+> produce an auditable `tau_(s->s')` and `eta_(s->s')` while retaining the
+> distinction between actual transition duration and declared energy settling?
 
 ## First measured scope
 
@@ -99,6 +127,7 @@ transitionObservation:
   nodeActuation: ...
   sourceState: ...
   targetState: ...
+  settlingSeconds: 60
   transitionWindow:
     startedAt: ...
     completedAt: ...
@@ -118,9 +147,10 @@ The boundaries have one meaning:
 - `startedAt` is when the frozen transition operation begins execution after
   the power observer is ready;
 - `completedAt` is the earliest instant after independent target-state
-  read-back at which the frozen request-readiness witness succeeds; and
-- `tauMilliseconds` and `transitionWallJoules` use exactly those two
-  boundaries.
+  read-back at which the frozen request-readiness witness succeeds;
+- `tauMilliseconds` uses those two actual transition boundaries; and
+- the energy-cost endpoint is `completedAt + settlingSeconds`, not a second
+  readiness witness or a change to the Node actuator's settling policy.
 
 For the first power-mode path, the request-readiness witness is the selected
 serving workload's existing Kubernetes Ready signal, backed by its existing
@@ -144,13 +174,23 @@ state. The first estimator is:
 ~~~text
 tauSeconds             = completedAt - startedAt
 tauMilliseconds        = tauSeconds converted to milliseconds
-transitionWallJoules   = integral of P(t) from startedAt through completedAt
-etaJoules              = transitionWallJoules - P_idle(s') * tauSeconds
+costWindowEndedAt      = completedAt + settlingSeconds
+costWindowSeconds      = costWindowEndedAt - startedAt
+transitionWallJoules   = integral of P(t) from startedAt through costWindowEndedAt
+etaJoules              = transitionWallJoules - P_idle(s') * costWindowSeconds
 ~~~
 
 `eta` is signed and is never clamped. The raw wall energy, exact baseline
 reference, sample trace, integration policy, and boundary uncertainty remain
 available so the result can be reproduced.
+The declared duration lives in `frozenContract.settlingSeconds` and each directed
+summary row; the finalized `completedAt` and `tauMilliseconds` remain actual
+transition measurements. The cost endpoint is calculated from the retained
+Ready receipt and declaration, exposed by `Observation.CostWindowEndedAt`.
+Raw observation coverage and the final native witness must enclose that endpoint;
+a timeout during settling is insufficient evidence, never an accepted short
+window. Trials with different declared settling periods cannot be aggregated
+within one direction.
 
 `P_idle(s')` is an aggregate `profilederivation.IdleBaseline`, not one
 `ProfilingRun` value. The independent `ModelLoadedIdleBaseline` producer now
@@ -333,7 +373,8 @@ repeat one directed transition at a time
     |       +-> apply -> optional restart -> independent target read-back
     |       +-> target read-back first becomes visible
     |       +-> fresh Ready+process first visible transitionWindow.completedAt
-    |                                             power integration ends
+    |       +-> observe declared settling         power integration ends at
+    |                                             completedAt + settlingSeconds
     |
     +-> observer writes one immutable raw object
     +-> attempt observer Job exits
@@ -351,9 +392,10 @@ publish compact PowerModeTransitionCost status
 ~~~
 
 The observer starts power and workload observation before the transition so
-neither boundary depends on observer startup. Only the interval from
-`startedAt` through `completedAt` contributes to `tau` and `eta`; the
-pre-window data proves source health and supports boundary placement.
+neither transition boundary depends on observer startup. `tau` ends at
+`completedAt`; wall energy and its baseline subtraction both end at
+`completedAt + settlingSeconds`. Pre-window data proves source health and
+supports boundary placement.
 
 ## Evidence contract
 

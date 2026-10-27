@@ -4,6 +4,13 @@
 원문은 사용자 시각 표기와 실제 실행 시각이 혼재한다. 날짜가 같은 항목은 원문의 사건 순서를 따르며 실행 시각을 재구성하지 않는다.
 2026-10-23보다 앞선 결정의 정확한 날짜는 확인되지 않아 별도 표시했다. 날짜를 추정해 붙이지 않는다.
 
+## 2026-10-27: PMTC 에너지 비용 창에 선언 settling 포함
+
+- 결정: `PowerModeTransitionCost.spec.settlingSeconds`는 기본 60초, 범위 0..3600초다. 에너지 비용 창은 apply-start → fresh Ready + 선언 settling이며 적분 J와 목표 baseline W × 창 길이를 같은 시간 범위로 계산한다. 실제 전환 `tau`는 apply-start → fresh Ready로 유지하고 선언 settling을 frozen contract와 방향별 결과에 별도 기록한다.
+- 근거: NVIDIA 전환 측정 15/15가 `PowerWindowInsufficient`(coverage 13회, 표본 부족 2회)다. 1초 cadence·0.95 coverage의 짧은 창을 완화하지 않고, [빈 Node 60초 settling 선례](../design/serving/scheduler-operations.md)를 재사용해 안정화 관측까지의 비용으로 계약을 명시한다. 60초는 물리 안정화 시간의 실측값이 아니다.
+- 유지: 기존 raw/finalized와 판정은 불변이다. 새 시도는 settling 동안 power/native/generation을 계속 관측한다. 기본 coverage·boundary·gap 정책과 runtime-7 serving 이미지는 바꾸지 않는다. 새 CR과 일치하는 Profiler/transition-observer control 이미지가 필요하며 이 구현 자체는 새 클러스터 실행 승인이 아니다.
+- 연결: [Plan 10](../design/profiling/plans/10-transition-cost-measurement.md), [CampaignOps NVIDIA CR](../../config/samples/profiling/edge_v1alpha1_powermodetransitioncost_nvidia.yaml).
+
 ## 2026-10-27: d 공급 깊이의 관측 최대 기반 권고값
 
 - 결정: 새 closed-loop 공급의 수명 상한 분모를 평균에서 같은 batch의 frozen profile 관측 최대 `maxObservedSeconds`로 바꾼다. `K=min(64, bytes cap, floor((L−delivery)/(B×mu_tail)))`이며 출처 `profile.maxObservedSeconds`와 값을 동결한다. 최대값이 없으면 거절하고 평균 배수로 대체하지 않는다.

@@ -116,7 +116,7 @@ func (p *Preparer) Prepare(
 	if p.observerNode == measurement.Spec.TargetNode {
 		return PreparedMeasurement{}, errors.New("transition observer must run away from the target Node")
 	}
-	observation, err := prepareObservation(measurement.Spec.ObservationPolicy)
+	observation, err := prepareObservation(measurement.Spec.ObservationPolicy, measurement.Spec.SettlingSeconds)
 	if err != nil {
 		return PreparedMeasurement{}, err
 	}
@@ -210,6 +210,7 @@ func (p *Preparer) Prepare(
 		return PreparedDirection{
 			FrozenContract: transitioncost.FrozenContract{
 				SourceState: state(sourceMode.PowerMode), TargetState: targetState,
+				SettlingSeconds: measurement.Spec.SettlingSeconds,
 				TargetIdleBaseline: transitioncost.IdleBaseline{
 					EvidenceReference: reference.Key, State: targetState,
 					MeanWallWatts: baseline.MeanWallWatts(),
@@ -272,6 +273,9 @@ func validatePreparationInput(measurement *edgev1alpha1.PowerModeTransitionCost)
 	if !clean(measurement.Annotations[profilingrun.RunnerProfileAnnotation]) {
 		return errors.New("PowerModeTransitionCost runner profile annotation is required")
 	}
+	if measurement.Spec.SettlingSeconds < 0 || measurement.Spec.SettlingSeconds > 3600 {
+		return errors.New("settlingSeconds must be in [0, 3600]")
+	}
 	return nil
 }
 
@@ -291,10 +295,11 @@ func preparePowerSource(resolved profiler.ResolvedMetricSource) (metricobserver.
 
 func prepareObservation(
 	spec edgev1alpha1.PowerModeTransitionCostObservationPolicySpec,
+	settlingSeconds int32,
 ) (preparedObservation, error) {
 	interval := time.Duration(spec.PowerIntervalMilliseconds) * time.Millisecond
 	timeout := time.Duration(spec.PowerTimeoutMilliseconds) * time.Millisecond
-	factTimeout := time.Duration(spec.MaximumTransitionDurationSeconds) * time.Second
+	factTimeout := (time.Duration(spec.MaximumTransitionDurationSeconds) + time.Duration(settlingSeconds)) * time.Second
 	factPoll := time.Duration(spec.FactPollIntervalMilliseconds) * time.Millisecond
 	maximumBoundaryUncertainty := time.Duration(spec.MaximumBoundaryUncertaintyMilliseconds) * time.Millisecond
 	minimumCoverage, err := strconv.ParseFloat(spec.MinimumCoverage, 64)

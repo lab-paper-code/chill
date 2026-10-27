@@ -54,6 +54,82 @@ func TestDeriveUsesOneCommonWindowAndKeepsSignedEta(t *testing.T) {
 	}
 }
 
+func TestDeriveSeparatesTwoSecondTransitionFromDeclaredSettling(t *testing.T) {
+	frozen, raw, policy := validInputs()
+	raw.MarkerBrackets.TargetObservation = markerBracket(testTime(3))
+	raw.MarkerBrackets.ReadyProcessWitness = markerBracket(testTime(4))
+	raw.ObservationEndedAt = testTime(65)
+	raw.AfterNative.ReceivedAt = testTime(64)
+	raw.PowerSamples = nil
+	for milliseconds := 2500; milliseconds < 64000; milliseconds += 1000 {
+		raw.PowerSamples = append(raw.PowerSamples, transitioncost.PowerSample{
+			ObservedAt: testTimeMillis(milliseconds), Watts: 10,
+		})
+	}
+	policy.MaximumBoundaryDistance = time.Second
+	policy.MinimumCoverage = 0.95
+	policy.MaximumSampleGap = 2 * time.Second
+
+	// The same one-second samples cover only 50% of the two-second Ready window.
+	result, err := transitioncost.Derive(frozen, raw, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOutcome(t, result, transitioncost.VerdictInsufficient, transitioncost.ReasonPowerWindowInsufficient)
+
+	frozen.SettlingSeconds = 60
+	result, err = transitioncost.Derive(frozen, raw, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOutcome(t, result, transitioncost.VerdictAccepted, transitioncost.ReasonAccepted)
+	restored, err := transitioncost.RestoreFinalizedObservation(result.Record())
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, ok := restored.AcceptedObservation()
+	if !ok || observation.TauMilliseconds() != 2000 ||
+		!observation.CompletedAt().Equal(testTime(4)) ||
+		!observation.CostWindowEndedAt().Equal(testTime(64)) ||
+		restored.FrozenContract().SettlingSeconds != 60 {
+		t.Fatalf("transition and settling were not recorded separately: %+v", restored.Record())
+	}
+	if math.Abs(observation.TransitionWallJoules()-620) > 1e-9 ||
+		math.Abs(observation.EtaJoules()-(-124)) > 1e-9 {
+		t.Fatalf("energy and baseline must both use 62 seconds: J=%v eta=%v",
+			observation.TransitionWallJoules(), observation.EtaJoules())
+	}
+
+	t.Run("truncated settling observation", func(t *testing.T) {
+		truncated := raw
+		truncated.ObservationEndedAt = testTimeMillis(63900)
+		result, err := transitioncost.Derive(frozen, truncated, policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertOutcome(t, result, transitioncost.VerdictInsufficient, transitioncost.ReasonPowerWindowInsufficient)
+	})
+	t.Run("native witness must enclose settling", func(t *testing.T) {
+		raw.AfterNative.ReceivedAt = testTime(4)
+		result, err := transitioncost.Derive(frozen, raw, policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertOutcome(t, result, transitioncost.VerdictInsufficient, transitioncost.ReasonNativeStateUnverified)
+	})
+}
+
+func TestDeriveAcceptsSettlingRangeAndRejectsOutOfRange(t *testing.T) {
+	for _, seconds := range []int32{-1, 0, 1, 60, 3600, 3601} {
+		frozen, raw, policy := validInputs()
+		frozen.SettlingSeconds = seconds
+		_, err := transitioncost.Derive(frozen, raw, policy)
+		if (err != nil) != (seconds < 0 || seconds > 3600) {
+			t.Fatalf("settlingSeconds=%d: error=%v", seconds, err)
+		}
+	}
+}
+
 func TestDeriveUsesObserverReceiptsDespiteTargetClockOffset(t *testing.T) {
 	frozen, raw, policy := validInputs()
 	raw.TransitionStart.OccurredAt = testTime(200)

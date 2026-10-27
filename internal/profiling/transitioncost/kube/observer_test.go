@@ -92,6 +92,36 @@ func TestObserverCapturesOneInPlaceTransition(t *testing.T) {
 	}
 }
 
+func TestObserverRetainsFirstReadyAndObservesThroughSettling(t *testing.T) {
+	kubeClient := newClient(t, service(), readyPod("serving", "containerd://same", 0))
+	request := testRequest()
+	request.Settling = 20 * time.Millisecond
+	request.ObservationTimeout = 2 * time.Second
+	observer := newObserver(t, kubeClient, request)
+	raw, err := observer.Observe(context.Background(), func() {
+		setNode(t, kubeClient, transitioned(actuationTimes()))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyAt := raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt
+	if readyAt.IsZero() || raw.PostTransitionProcess == nil ||
+		raw.AfterNative == nil || len(raw.NativeObservations) < 2 {
+		t.Fatalf("missing Ready or continued native observations: %+v", raw)
+	}
+	costEnd := readyAt.Add(request.Settling)
+	if raw.AfterNative.ReceivedAt.Before(costEnd) || raw.ObservationEndedAt.Before(costEnd) {
+		t.Fatalf("observer ended before settling: ready=%v native=%v end=%v",
+			readyAt, raw.AfterNative.ReceivedAt, raw.ObservationEndedAt)
+	}
+	if !raw.NativeObservations[0].ReceivedAt.Equal(readyAt) {
+		t.Fatal("settling moved the first Ready receipt")
+	}
+	if raw.MarkerBrackets.ReadyProcessWitness.LastAbsentReceivedAt.After(readyAt) {
+		t.Fatal("settling moved the Ready last-absent bracket")
+	}
+}
+
 func TestObserverRequiresPreReadyMarkerAbsence(t *testing.T) {
 	kubeClient := newClient(t, service(), readyPod("serving", "containerd://same", 0))
 	setNode(t, kubeClient, transitioned(actuationTimes()))

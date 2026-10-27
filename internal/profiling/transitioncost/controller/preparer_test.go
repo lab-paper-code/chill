@@ -62,6 +62,7 @@ func TestNewPreparerRequiresEveryResolver(t *testing.T) {
 
 func TestPreparerFreezesTransitionMaterialAndObservationInputs(t *testing.T) {
 	measurement := validTransitionMeasurement()
+	measurement.Spec.SettlingSeconds = 60
 	labels := map[string]string{"hostname": "meter-target", "device_type": testDeviceType}
 	metrics := &recordingTransitionMetricResolver{result: profiler.ResolvedMetricSource{
 		Kind: "edge-metrics", Endpoint: "http://meter.example:18766/prometheus?hostname=meter-target",
@@ -117,10 +118,10 @@ func TestPreparerFreezesTransitionMaterialAndObservationInputs(t *testing.T) {
 	}
 
 	if prepared.FactPollInterval != 200*time.Millisecond ||
-		prepared.FactObservationTimeout != 900*time.Second ||
+		prepared.FactObservationTimeout != 960*time.Second ||
 		prepared.PowerRequest != (metricobserver.Request{
 			Interval: 500 * time.Millisecond, RequestTimeout: 100 * time.Millisecond,
-			Duration: 900*time.Second + 500*time.Millisecond, MaxEvents: 1803,
+			Duration: 960*time.Second + 500*time.Millisecond, MaxEvents: 1923,
 		}) {
 		t.Fatalf("prepared observation schedule = power:%+v poll:%v timeout:%v",
 			prepared.PowerRequest, prepared.FactPollInterval,
@@ -138,6 +139,39 @@ func TestPreparerFreezesTransitionMaterialAndObservationInputs(t *testing.T) {
 	catalogs.class.Spec.PowerModes[1].Actuator.JetsonNVPModel.ID = 99
 	assertPreparedDirection(t, prepared.Directions[0], "low", "high", "to-high", 2, highReference, 12)
 	assertPreparedDirection(t, prepared.Directions[1], "high", "low", "to-low", 1, lowReference, 8)
+	for _, direction := range prepared.Directions {
+		if direction.FrozenContract.SettlingSeconds != 60 {
+			t.Fatalf("declared settling = %d, want 60", direction.FrozenContract.SettlingSeconds)
+		}
+	}
+}
+
+func TestPreparerSettlingBounds(t *testing.T) {
+	for _, seconds := range []int32{-1, 0, 1, 60, 3600, 3601} {
+		measurement := validTransitionMeasurement()
+		measurement.Spec.SettlingSeconds = seconds
+		preparer := mustPreparerWith(t, newRecordingDeviceClassReader(validDeviceClass()),
+			validNodeResolver(), validTransitionMetricResolver(),
+			&recordingIdleBaselineReader{results: map[string]ResolvedIdleBaseline{
+				"low":  {meanWallWatts: 8, reference: baselineStoredReference("low")},
+				"high": {meanWallWatts: 12, reference: baselineStoredReference("high")},
+			}}, validActuationPolicyResolver())
+		prepared, err := preparer.Prepare(context.Background(), measurement)
+		if seconds < 0 || seconds > 3600 {
+			if err == nil {
+				t.Fatalf("accepted settlingSeconds=%d", seconds)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("settlingSeconds=%d: %v", seconds, err)
+		}
+		if prepared.FactObservationTimeout != time.Duration(900+seconds)*time.Second ||
+			prepared.Directions[0].FrozenContract.SettlingSeconds != seconds ||
+			prepared.Directions[1].FrozenContract.SettlingSeconds != seconds {
+			t.Fatalf("settlingSeconds=%d not frozen in both directions and schedule", seconds)
+		}
+	}
 }
 
 func assertTransitionMaterialResolution(

@@ -147,6 +147,18 @@ func TestSummarizeRejectsPerDirectionBaselineDrift(t *testing.T) {
 	}
 }
 
+func TestSummarizeRejectsPerDirectionSettlingDrift(t *testing.T) {
+	direction := testDirections()[0]
+	first := deriveAttempt(t, direction, "first", 2, 0, acceptedAttempt, nil)
+	drifted := deriveAttempt(t, direction, "drifted", 2, 0, insufficientAttempt,
+		func(frozen *transitioncost.FrozenContract, _ *transitioncost.RawObservation) {
+			frozen.SettlingSeconds = 60
+		})
+	_, err := transitioncost.Summarize(testDirections(), 5,
+		[]transitioncost.FinalizedObservation{first, drifted})
+	assertErrorContains(t, err, "settling seconds")
+}
+
 func TestDirectedTableOwnsCallerAndRecordSlices(t *testing.T) {
 	directions := testDirections()
 	results := completeResults(t, directions)
@@ -317,12 +329,9 @@ func deriveAttempt(
 		State: direction.Target,
 	}
 	raw.MarkerBrackets = transitioncost.TransitionMarkerBrackets{
-		ApplyStartedAt: markerBracket(startedAt, time.Millisecond),
-		TargetObservation: markerBracket(
-			startedAt.Add(time.Second),
-			time.Millisecond,
-		),
-		ReadyProcessWitness: markerBracket(completedAt, time.Millisecond),
+		ApplyStartedAt:      markerBracket(startedAt),
+		TargetObservation:   markerBracket(startedAt.Add(time.Second)),
+		ReadyProcessWitness: markerBracket(completedAt),
 	}
 	raw.PreTransitionProcess.ObservedAt = startedAt.Add(-time.Second)
 	raw.BeforeNative.ReceivedAt = raw.PreTransitionProcess.ObservedAt
@@ -367,9 +376,9 @@ func deriveAttempt(
 	return result
 }
 
-func markerBracket(firstPresent time.Time, width time.Duration) transitioncost.ReceiptTimeBracket {
+func markerBracket(firstPresent time.Time) transitioncost.ReceiptTimeBracket {
 	return transitioncost.ReceiptTimeBracket{
-		LastAbsentReceivedAt:   firstPresent.Add(-width),
+		LastAbsentReceivedAt:   firstPresent.Add(-time.Millisecond),
 		FirstPresentReceivedAt: firstPresent,
 	}
 }

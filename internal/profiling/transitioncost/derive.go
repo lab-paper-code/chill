@@ -79,9 +79,15 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Finalized
 			"boundary mapping uncertainty exceeds policy"), nil
 	}
 
+	costWindowEndedAt := completedAt.Add(time.Duration(frozen.SettlingSeconds) * time.Second)
+	if costWindowEndedAt.After(raw.ObservationEndedAt) {
+		return classified(verified, VerdictInsufficient, ReasonPowerWindowInsufficient,
+			"raw observation does not cover the declared post-Ready settling window"), nil
+	}
+
 	joules, err := powerwindow.Integrate(powerwindow.Window{
 		Start:   startedAt,
-		End:     completedAt,
+		End:     costWindowEndedAt,
 		Samples: powerSamples(verified.raw.PowerSamples),
 	}, powerwindow.Policy{
 		MaximumBoundaryDistance: verified.policy.MaximumBoundaryDistance,
@@ -106,8 +112,8 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Finalized
 			return classified(verified, VerdictInsufficient, ReasonNativeStateUnverified, err.Error()), nil
 		}
 	}
-	if verified.raw.BeforeNative.ReceivedAt.After(startedAt) || verified.raw.AfterNative.ReceivedAt.Before(completedAt) {
-		return classified(verified, VerdictInsufficient, ReasonNativeStateUnverified, "native zero-inference observations do not enclose the action window"), nil
+	if verified.raw.BeforeNative.ReceivedAt.After(startedAt) || verified.raw.AfterNative.ReceivedAt.Before(costWindowEndedAt) {
+		return classified(verified, VerdictInsufficient, ReasonNativeStateUnverified, "native zero-inference observations do not enclose the energy-cost window"), nil
 	}
 	if !nativeProcessObserved(raw.BeforeNative, &raw.PreTransitionProcess.Process) || !nativeProcessObserved(raw.AfterNative, raw.PostTransitionProcess) {
 		return classified(verified, VerdictInsufficient, ReasonNativeStateUnverified, "process witness does not match actual native physical incarnation"), nil
@@ -120,7 +126,7 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Finalized
 			StartedAt: startedAt, CompletedAt: completedAt,
 			BoundaryMappingUncertaintyMilliseconds: boundaryUncertainty.Milliseconds(),
 			TauMilliseconds:                        tauSeconds * 1000, TransitionWallJoules: joules,
-			EtaJoules:       joules - frozen.TargetIdleBaseline.MeanWallWatts*tauSeconds,
+			EtaJoules:       joules - frozen.TargetIdleBaseline.MeanWallWatts*costWindowEndedAt.Sub(startedAt).Seconds(),
 			ServingSurvived: servingSurvived,
 			BeforeNative:    cloneNativeObservation(raw.BeforeNative),
 			AfterNative:     cloneNativeObservation(raw.AfterNative),
@@ -143,6 +149,9 @@ func classified(input verifiedInput, verdict Verdict, reason Reason, detail stri
 }
 
 func validateFrozen(frozen FrozenContract) error {
+	if frozen.SettlingSeconds < 0 || frozen.SettlingSeconds > 3600 {
+		return errors.New("settling seconds must be in [0, 3600]")
+	}
 	if !validState(frozen.SourceState) || !validState(frozen.TargetState) ||
 		!validText(frozen.TargetIdleBaseline.EvidenceReference) {
 		return errors.New("frozen transition inputs are incomplete or contain surrounding whitespace")

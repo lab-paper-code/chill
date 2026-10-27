@@ -75,8 +75,9 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 	}
 	directions := make([]transitioncontroller.PreparedDirection, 2)
 	directions[1].FrozenContract = transitioncost.FrozenContract{
-		SourceState: transitioncost.StateIdentity{DeviceType: "device", Model: "model", PowerMode: "low"},
-		TargetState: transitioncost.StateIdentity{DeviceType: "device", Model: "model", PowerMode: "high"},
+		SourceState:     transitioncost.StateIdentity{DeviceType: "device", Model: "model", PowerMode: "low"},
+		TargetState:     transitioncost.StateIdentity{DeviceType: "device", Model: "model", PowerMode: "high"},
+		SettlingSeconds: 60,
 	}
 	for index := range directions {
 		directions[index].Actuator = edgev1alpha1.PowerModeActuator{
@@ -93,10 +94,10 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 			MetricLabels: map[string]string{"hostname": "target", "device_type": "device"},
 		},
 		PowerRequest: metricobserver.Request{
-			Interval: 100 * time.Millisecond, Duration: 5 * time.Second,
-			RequestTimeout: 50 * time.Millisecond, MaxEvents: 52,
+			Interval: 100 * time.Millisecond, Duration: 65 * time.Second,
+			RequestTimeout: 50 * time.Millisecond, MaxEvents: 652,
 		},
-		FactPollInterval: 50 * time.Millisecond, FactObservationTimeout: 4 * time.Second,
+		FactPollInterval: 50 * time.Millisecond, FactObservationTimeout: 64 * time.Second,
 		Directions: directions,
 	}
 	job, err := transitioncontroller.BuildAttemptJob(
@@ -131,6 +132,7 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if contract.facts.SourcePowerMode != "low" || contract.facts.TargetPowerMode != "high" ||
+		contract.facts.Settling != time.Minute ||
 		!reflect.DeepEqual(contract.facts.SourceActuator, directions[0].Actuator) ||
 		!reflect.DeepEqual(contract.facts.TargetActuator, directions[1].Actuator) ||
 		contract.facts.TargetNodeUID != "target-uid" || contract.facts.DeviceType != "device" ||

@@ -223,6 +223,10 @@ func validateStoredPreparation(prepared PreparedMeasurement) error {
 		return fmt.Errorf("validate stored power request: %w", err)
 	}
 	for _, direction := range prepared.Directions {
+		if direction.FrozenContract.SettlingSeconds < 0 || direction.FrozenContract.SettlingSeconds > 3600 ||
+			time.Duration(direction.FrozenContract.SettlingSeconds)*time.Second >= prepared.FactObservationTimeout {
+			return errors.New("stored settling seconds must be in [0, 3600] and shorter than fact observation timeout")
+		}
 		for name, value := range map[string]string{
 			"source device type": direction.FrozenContract.SourceState.DeviceType,
 			"source model":       direction.FrozenContract.SourceState.Model, "source power mode": direction.FrozenContract.SourceState.PowerMode,

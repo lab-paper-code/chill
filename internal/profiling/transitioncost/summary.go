@@ -43,6 +43,7 @@ type DirectedEntry struct {
 	TargetState StateIdentity `json:"targetState"`
 
 	TargetIdleBaseline IdleBaseline  `json:"targetIdleBaseline"`
+	SettlingSeconds    int32         `json:"settlingSeconds,omitempty"`
 	AttemptCount       int           `json:"attemptCount"`
 	VerdictCounts      VerdictCounts `json:"verdictCounts"`
 	AcceptedCount      int           `json:"acceptedCount"`
@@ -188,6 +189,7 @@ type directionAccumulator struct {
 	direction             DirectedStatePair
 	targetIdleBaseline    IdleBaseline
 	hasTargetIdleBaseline bool
+	settlingSeconds       int32
 	verdictCounts         VerdictCounts
 	tauMilliseconds       []float64
 	etaJoules             []float64
@@ -200,9 +202,13 @@ func (a *directionAccumulator) add(result FinalizedObservation) error {
 	baseline := result.record.FrozenContract.TargetIdleBaseline
 	if !a.hasTargetIdleBaseline {
 		a.targetIdleBaseline = baseline
+		a.settlingSeconds = result.record.FrozenContract.SettlingSeconds
 		a.hasTargetIdleBaseline = true
 	} else if baseline != a.targetIdleBaseline {
 		return errors.New("target idle baseline changed within one direction")
+	}
+	if result.record.FrozenContract.SettlingSeconds != a.settlingSeconds {
+		return errors.New("declared settling seconds changed within one direction")
 	}
 
 	switch result.record.Verdict {
@@ -253,6 +259,7 @@ func (a directionAccumulator) entry() (DirectedEntry, error) {
 		SourceState:        a.direction.Source,
 		TargetState:        a.direction.Target,
 		TargetIdleBaseline: a.targetIdleBaseline,
+		SettlingSeconds:    a.settlingSeconds,
 		AttemptCount:       totalVerdicts(a.verdictCounts),
 		VerdictCounts:      a.verdictCounts,
 		AcceptedCount:      a.verdictCounts.Accepted,
@@ -322,6 +329,7 @@ func validateDirectedEntry(entry DirectedEntry) error {
 	if err := validateFrozen(FrozenContract{
 		SourceState: entry.SourceState, TargetState: entry.TargetState,
 		TargetIdleBaseline: entry.TargetIdleBaseline,
+		SettlingSeconds:    entry.SettlingSeconds,
 	}); err != nil {
 		return err
 	}

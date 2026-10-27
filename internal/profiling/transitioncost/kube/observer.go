@@ -35,6 +35,7 @@ type Request struct {
 	Model              string
 	PollInterval       time.Duration
 	ObservationTimeout time.Duration
+	Settling           time.Duration
 }
 
 // Observer polls the Kubernetes API without creating or mutating objects.
@@ -57,8 +58,8 @@ func New(reader client.Reader, request Request) (*Observer, error) {
 }
 
 // Observe waits for one initial Ready serving process before reporting ready,
-// then retains the Node's power-mode transition facts and closes only on a fresh post-
-// read-back Ready serving-process observation.
+// retains the first fresh post-read-back Ready witness, then keeps observing
+// native state and Node generation through the declared settling period.
 func (o *Observer) Observe(
 	ctx context.Context,
 	onReady func(),
@@ -147,16 +148,21 @@ func (o *Observer) Observe(
 			raw.NativeObservations = append(raw.NativeObservations, *nativeState)
 		}
 		if raw.TargetReadBack != nil && snapshot.process != nil && nativeErr == nil {
-			if err := markPresent(
-				&raw.MarkerBrackets.ReadyProcessWitness,
-				nativeState.ReceivedAt,
-			); err != nil {
-				return finish(err)
+			if raw.PostTransitionProcess == nil {
+				if err := markPresent(
+					&raw.MarkerBrackets.ReadyProcessWitness,
+					nativeState.ReceivedAt,
+				); err != nil {
+					return finish(err)
+				}
+				process := *snapshot.process
+				raw.PostTransitionProcess = &process
 			}
-			process := *snapshot.process
-			raw.PostTransitionProcess = &process
 			raw.AfterNative = nativeState
-			return finish(nil)
+			costWindowEndedAt := raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt.Add(o.request.Settling)
+			if !nativeState.ReceivedAt.Before(costWindowEndedAt) {
+				return finish(nil)
+			}
 		}
 		markAbsent(&raw.MarkerBrackets.ReadyProcessWitness, o.now().UTC())
 
@@ -246,6 +252,9 @@ func validateRequest(request Request) error {
 	}
 	if request.ObservationTimeout <= 0 {
 		return errors.New("observation timeout must be positive")
+	}
+	if request.Settling < 0 || request.Settling > time.Hour {
+		return errors.New("settling must be in [0, 1h]")
 	}
 	return nil
 }

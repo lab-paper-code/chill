@@ -18,9 +18,9 @@ type FinalizedObservationRecord struct {
 	AcceptedObservation *FinalizedAcceptedObservationRecord `json:"acceptedObservation"`
 }
 
-// FinalizedAcceptedObservationRecord contains values derived from one common
-// accepted transition window. The target-idle baseline remains in the frozen
-// contract and is not duplicated here.
+// FinalizedAcceptedObservationRecord contains values derived from one accepted
+// transition. CompletedAt is fresh Ready; the energy-cost window ends at
+// CompletedAt plus the frozen contract's declared SettlingSeconds.
 type FinalizedAcceptedObservationRecord struct {
 	StartedAt                              time.Time              `json:"startedAt"`
 	CompletedAt                            time.Time              `json:"completedAt"`
@@ -61,14 +61,16 @@ func (o FinalizedObservation) Detail() string { return o.record.Detail }
 
 func (o FinalizedObservation) FrozenContract() FrozenContract { return o.record.FrozenContract }
 
-// AcceptedObservation returns derived common-window values only for an
-// accepted finalized observation.
+// AcceptedObservation returns derived values only for an accepted finalized observation.
 func (o FinalizedObservation) AcceptedObservation() (Observation, bool) {
 	accepted := o.record.AcceptedObservation
 	if accepted == nil {
 		return Observation{}, false
 	}
-	return Observation{record: *accepted, baseline: o.record.FrozenContract.TargetIdleBaseline}, true
+	return Observation{
+		record: *accepted, baseline: o.record.FrozenContract.TargetIdleBaseline,
+		settlingSeconds: o.record.FrozenContract.SettlingSeconds,
+	}, true
 }
 
 func validateFinalizedObservationRecord(record FinalizedObservationRecord) error {

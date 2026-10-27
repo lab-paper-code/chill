@@ -62,6 +62,14 @@ type PowerModeTransitionCostSpec struct {
 	// +kubebuilder:validation:Minimum=5
 	AttemptLimit int32 `json:"attemptLimit"`
 
+	// SettlingSeconds extends the energy-cost window after fresh serving Ready.
+	// It does not extend the measured transition duration tau or the Node's actuation policy.
+	// +optional
+	// +kubebuilder:default=60
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=3600
+	SettlingSeconds int32 `json:"settlingSeconds"`
+
 	ObservationPolicy PowerModeTransitionCostObservationPolicySpec `json:"observationPolicy"`
 }
 

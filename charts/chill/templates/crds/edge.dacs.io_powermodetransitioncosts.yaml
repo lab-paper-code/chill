@@ -173,6 +173,15 @@ spec:
                 maxLength: 253
                 minLength: 1
                 type: string
+              settlingSeconds:
+                default: 60
+                description: |-
+                  SettlingSeconds extends the energy-cost window after fresh serving Ready.
+                  It does not extend the measured transition duration tau or the Node's actuation policy.
+                format: int32
+                maximum: 3600
+                minimum: 0
+                type: integer
               targetNode:
                 description: TargetNode names the Kubernetes Node being measured.
                 maxLength: 253

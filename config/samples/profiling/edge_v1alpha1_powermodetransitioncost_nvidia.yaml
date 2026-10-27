@@ -19,6 +19,7 @@ spec:
   servingContainer: firstfloor
   acceptedCountTarget: 5
   attemptLimit: 8
+  settlingSeconds: 60
   observationPolicy:
     powerIntervalMilliseconds: 1000
     powerTimeoutMilliseconds: 500

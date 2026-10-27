@@ -58,6 +58,9 @@ type FrozenContract struct {
 	SourceState        StateIdentity `json:"sourceState"`
 	TargetState        StateIdentity `json:"targetState"`
 	TargetIdleBaseline IdleBaseline  `json:"targetIdleBaseline"`
+	// SettlingSeconds is the declared post-Ready energy observation period.
+	// Zero retains the no-settling measurement contract.
+	SettlingSeconds int32 `json:"settlingSeconds,omitempty"`
 }
 
 // Policy contains only the quality bounds needed to close and integrate one
@@ -185,16 +188,21 @@ type PowerModeGeneration struct {
 	End   int64 `json:"end"`
 }
 
-// Observation is an opaque accepted observation. Its values always originate
-// from the common transition window verified by Derive.
+// Observation is an opaque accepted observation. Its values originate from
+// one transition and its declared post-Ready energy-cost window.
 type Observation struct {
-	record   FinalizedAcceptedObservationRecord
-	baseline IdleBaseline
+	record          FinalizedAcceptedObservationRecord
+	baseline        IdleBaseline
+	settlingSeconds int32
 }
 
 func (o Observation) StartedAt() time.Time { return o.record.StartedAt }
 
 func (o Observation) CompletedAt() time.Time { return o.record.CompletedAt }
+
+func (o Observation) CostWindowEndedAt() time.Time {
+	return o.record.CompletedAt.Add(time.Duration(o.settlingSeconds) * time.Second)
+}
 
 func (o Observation) BoundaryMappingUncertainty() time.Duration {
 	return time.Duration(o.record.BoundaryMappingUncertaintyMilliseconds) * time.Millisecond

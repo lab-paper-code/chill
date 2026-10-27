@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	transitionAttemptSchemaVersion     = "chill.dacs.io/transition-observer-attempt.v1alpha5"
+	transitionAttemptSchemaVersion     = "chill.dacs.io/transition-observer-attempt.v1alpha6"
 	transitionAttemptJSONEnvName       = "CHILL_TRANSITION_ATTEMPT_JSON"
 	transitionObserverBinaryPath       = "/transition-observer"
 	transitionContractMaximumBytesFlag = "--max-contract-bytes="
@@ -98,6 +98,7 @@ type attemptTransitionFacts struct {
 	ServingContainer               string                         `json:"servingContainer"`
 	PollIntervalMilliseconds       int64                          `json:"pollIntervalMilliseconds"`
 	ObservationTimeoutMilliseconds int64                          `json:"observationTimeoutMilliseconds"`
+	SettlingMilliseconds           int64                          `json:"settlingMilliseconds"`
 }
 
 // BuildAttemptJob projects one prepared direction into one immutable native
@@ -247,6 +248,7 @@ func encodeAttemptPayload(request AttemptJobRequest, direction PreparedDirection
 			ServingService:  request.Prepared.ServingService, ServingContainer: request.Prepared.ServingContainer,
 			PollIntervalMilliseconds:       request.Prepared.FactPollInterval.Milliseconds(),
 			ObservationTimeoutMilliseconds: request.Prepared.FactObservationTimeout.Milliseconds(),
+			SettlingMilliseconds:           int64(direction.FrozenContract.SettlingSeconds) * 1000,
 		},
 		RawLocation: request.RawLocation,
 	})

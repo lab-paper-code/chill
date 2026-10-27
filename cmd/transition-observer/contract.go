@@ -14,7 +14,7 @@ import (
 	transitionkube "github.com/lab-paper-code/chill/internal/profiling/transitioncost/kube"
 )
 
-const attemptSchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha5"
+const attemptSchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha6"
 
 type attemptContract struct {
 	powerSource  metricobserver.SourceIdentity
@@ -59,6 +59,7 @@ type transitionFactsWire struct {
 	ServingContainer               string                         `json:"servingContainer"`
 	PollIntervalMilliseconds       milliseconds                   `json:"pollIntervalMilliseconds"`
 	ObservationTimeoutMilliseconds milliseconds                   `json:"observationTimeoutMilliseconds"`
+	SettlingMilliseconds           milliseconds                   `json:"settlingMilliseconds"`
 }
 
 type milliseconds time.Duration
@@ -133,6 +134,7 @@ func (w attemptWire) contract() (attemptContract, error) {
 			DeviceType:       w.TransitionFacts.DeviceType, Model: w.TransitionFacts.Model,
 			PollInterval:       time.Duration(w.TransitionFacts.PollIntervalMilliseconds),
 			ObservationTimeout: time.Duration(w.TransitionFacts.ObservationTimeoutMilliseconds),
+			Settling:           time.Duration(w.TransitionFacts.SettlingMilliseconds),
 		},
 		rawLocation: w.RawLocation,
 	}, nil
