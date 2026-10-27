@@ -16,12 +16,13 @@ import (
 
 // Capacity row statuses and the management event that records a built row.
 const (
-	CapacityBuilt         = "Built"
-	CapacityPending       = "CapacityPending"
-	CapacityRejected      = "CapacityRejected"
-	CapacityNonMonotone   = "NonMonotone"
-	CapacityNoOccupancy   = "MissingDispatchOccupancy"
-	CapacityRowBuiltEvent = "capacity-row-built"
+	CapacityBuilt             = "Built"
+	CapacityPending           = "CapacityPending"
+	CapacityRejected          = "CapacityRejected"
+	CapacityNonMonotone       = "NonMonotone"
+	CapacityNoOccupancy       = "MissingDispatchOccupancy"
+	CapacityRowBuiltEvent     = "capacity-row-built"
+	CapacityServiceExceedsSLO = "BatchServiceExceedsSLO"
 
 	capacityGridSteps      = 20    // grid rates 0.05k mu, k = 1..20
 	capacityBisectionWidth = 0.005 // of mu
@@ -60,16 +61,17 @@ type CapacityJudgment struct {
 // CapacityRow is the largest Poisson rate kappa (req/s) at which one instance
 // of the option meets the Workload SLO in PassingWindows of Windows windows.
 type CapacityRow struct {
-	Key       string             `json:"key"`
-	Input     CapacityInput      `json:"input"`
-	Status    string             `json:"status"`
-	Reason    string             `json:"reason,omitempty"`
-	Mu        float64            `json:"mu"`
-	Kappa     *float64           `json:"kappa,omitempty"`
-	Grid      []CapacityJudgment `json:"grid,omitempty"`
-	Bisection []CapacityJudgment `json:"bisection,omitempty"`
-	BuiltAt   time.Time          `json:"builtAt"`
-	Elapsed   time.Duration      `json:"elapsedNanos,omitempty"`
+	Key                 string             `json:"key"`
+	Input               CapacityInput      `json:"input"`
+	Status              string             `json:"status"`
+	Reason              string             `json:"reason,omitempty"`
+	Mu                  float64            `json:"mu"`
+	Kappa               *float64           `json:"kappa,omitempty"`
+	MinimumServiceNanos float64            `json:"minimumServiceNanos,omitempty"`
+	Grid                []CapacityJudgment `json:"grid,omitempty"`
+	Bisection           []CapacityJudgment `json:"bisection,omitempty"`
+	BuiltAt             time.Time          `json:"builtAt"`
+	Elapsed             time.Duration      `json:"elapsedNanos,omitempty"`
 	// Previous marks a recorded row from an earlier build that stands in while
 	// this build computes the row.
 	Previous bool `json:"previous,omitempty"`
@@ -136,6 +138,9 @@ type capacityBuilder struct {
 // An option whose Node and runtime image lack a dispatch occupancy measurement
 // gets a rejected row without kappa.
 func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, node SchedulerNode, baselines []NodeBaseline, at time.Time) (CapacityRow, error) {
+	if err := ctx.Err(); err != nil {
+		return CapacityRow{}, err
+	}
 	began := time.Now()
 	in := NewCapacityInput(settings, occupancy, o, w)
 	row := CapacityRow{Key: in.Key(), Input: in}
@@ -144,6 +149,23 @@ func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy
 		return row, nil
 	}
 	row.Mu = capacityThroughput(o.Instance.Profile, o.Instance.MaxBatch, in.DispatchOccupancy.PerRequest)
+	// A mean is not a lower bound: replay may choose any observed sample of
+	// any batch up to MaxBatch. Only skip when even the fastest cannot fit.
+	minimum := math.Inf(1)
+	for _, batch := range o.Instance.Profile.Batches {
+		if batch.Batch <= o.Instance.MaxBatch {
+			for _, duration := range batch.DurationNanos {
+				minimum = min(minimum, duration)
+			}
+		}
+	}
+	if !math.IsInf(minimum, 1) && minimum+settings.CompletionMarginMS*1e6 > float64(w.SLO.TargetLatency) {
+		kappa := 0.0
+		row.Status, row.Reason, row.Kappa = CapacityBuilt, CapacityServiceExceedsSLO, &kappa
+		row.MinimumServiceNanos = minimum
+		row.BuiltAt, row.Elapsed = time.Now().UTC(), time.Since(began)
+		return row, nil
+	}
 	r := &capacityReplay{settings: settings, node: node, at: at, baselines: baselines, occupancy: *in.DispatchOccupancy, option: o, w: w, gaps: map[[2]int][]float64{}}
 	b := capacityBuilder{settings: settings, percentile: w.SLO.Percentile, replay: r.window}
 	if err := b.build(ctx, &row); err != nil {
@@ -239,6 +261,41 @@ type capacityReplay struct {
 	gaps      map[[2]int][]float64
 }
 
+// capacityWindowLimit can only disprove a window; a passing window still
+// replays every arrival. The fixed population matches stat.Empirical's rank.
+type capacityWindowLimit struct {
+	requests int
+	slo      SLO
+	missed   int
+	failed   bool
+}
+
+func (s *schedulerReplayState) capacityWindowFailed() bool {
+	limit := s.capacity
+	if limit == nil {
+		return false
+	}
+	for _, r := range s.live {
+		if r.expired || r.dropped {
+			limit.failed = true
+			return true
+		}
+		if r.capacityMiss {
+			continue
+		}
+		end := s.now
+		if r.completed {
+			end = r.completion
+		}
+		if float64(r.source.Elapsed)+end-r.arrival > float64(limit.slo.TargetLatency) {
+			r.capacityMiss = true
+			limit.missed++
+		}
+	}
+	limit.failed = limit.missed > limit.requests-int(math.Ceil(float64(limit.requests)*limit.slo.Percentile/100))
+	return limit.failed
+}
+
 // window replays one window of n Poisson arrivals at lambda that starts empty
 // and returns the SLO-percentile latency (ms, margin included; -1 when none)
 // and whether the SLO holds with no timeout or expiry.
@@ -281,9 +338,13 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	settings.ObservationWindow, settings.ComparisonPeriod, settings.MaxObservationAge = span, span, time.Hour
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
 	// An empty compared set counts no energy, so no Node baseline is needed.
-	estimate, err := schedulerReplayEstimate(ctx, settings, snapshot, keep, uint64(seed), map[NodeReference]bool{})
+	limit := capacityWindowLimit{requests: n, slo: w.SLO}
+	estimate, err := schedulerReplayEstimate(ctx, settings, snapshot, keep, uint64(seed), map[NodeReference]bool{}, &limit)
 	if err != nil {
 		return 0, false, err
+	}
+	if limit.failed {
+		return -1, false, nil // A failed window has no complete percentile sample.
 	}
 	if len(estimate.Reasons) != 0 {
 		return 0, false, fmt.Errorf("capacity replay: %s", strings.Join(estimate.Reasons, ", "))
@@ -309,7 +370,7 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 type CapacityTable struct {
 	mu       sync.Mutex
 	rows     map[string]CapacityRow
-	running  map[string]bool
+	running  map[string]*capacityTask
 	previous map[string]CapacityRow
 	asked    map[string]bool // keys already passed to load
 	wanted   []CapacityInput
@@ -323,7 +384,7 @@ type CapacityTable struct {
 // built row (the capacity-row-built event) and its error is not retried. load
 // returns the latest recorded rows of keys; record and load may be nil.
 func NewCapacityTable(parallel int, record func(CapacityRow) error, load func(context.Context, []string) (map[string]CapacityRow, error)) *CapacityTable {
-	return &CapacityTable{rows: map[string]CapacityRow{}, running: map[string]bool{}, previous: map[string]CapacityRow{}, asked: map[string]bool{},
+	return &CapacityTable{rows: map[string]CapacityRow{}, running: map[string]*capacityTask{}, previous: map[string]CapacityRow{}, asked: map[string]bool{},
 		parallel: make(chan struct{}, max(1, parallel)), record: record, load: load}
 }
 
@@ -332,14 +393,17 @@ type capacityTask struct {
 	workload *Definition
 	node     SchedulerNode
 	key      string
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 // Ensure starts every missing row for the autonomous Workloads of snapshot and
 // returns at once. Missing rows enter the semaphore round-robin by Workload;
-// ctx bounds the queued and started rows.
+// ctx bounds the queued and started rows; keys no longer wanted are canceled.
 func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) {
 	wanted := []CapacityInput{}
-	pending := make([][]capacityTask, len(snapshot.Workloads))
+	pending := make([][]*capacityTask, len(snapshot.Workloads))
+	keys := map[string]bool{}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i, w := range snapshot.Workloads {
@@ -354,7 +418,8 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 				in := NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w)
 				wanted = append(wanted, in)
 				key := in.Key()
-				if _, built := t.rows[key]; built || t.running[key] {
+				keys[key] = true
+				if _, built := t.rows[key]; built || t.running[key] != nil {
 					continue
 				}
 				node := SchedulerNode{Node: o.Instance.Node, CPUs: o.Instance.Allocation.CPUs, MemoryBytes: o.Instance.Allocation.MemoryBytes}
@@ -366,13 +431,21 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 						node = n
 					}
 				}
-				t.running[key] = true
+				taskCtx, cancel := context.WithCancel(ctx)
+				task := &capacityTask{o, w, node, key, taskCtx, cancel}
+				t.running[key] = task
 				t.wg.Add(1)
-				pending[i] = append(pending[i], capacityTask{o, w, node, key})
+				pending[i] = append(pending[i], task)
 			}
 		}
 	}
 	t.wanted = wanted
+	for key, task := range t.running {
+		if !keys[key] {
+			task.cancel()
+			delete(t.running, key)
+		}
+	}
 	go func() {
 		for row := 0; ; row++ {
 			more := false
@@ -384,11 +457,14 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 				task := tasks[row]
 				select {
 				case t.parallel <- struct{}{}:
-					go t.build(ctx, settings, snapshot.DispatchOccupancy, task.option, task.workload, task.node, snapshot.Baselines, snapshot.At, task.key)
-				case <-ctx.Done():
+					go t.build(settings, snapshot.DispatchOccupancy, task, snapshot.Baselines, snapshot.At)
+				case <-task.ctx.Done():
 					t.mu.Lock()
-					delete(t.running, task.key)
+					if t.running[task.key] == task {
+						delete(t.running, task.key)
+					}
 					t.mu.Unlock()
+					task.cancel()
 					t.wg.Done()
 				}
 			}
@@ -399,7 +475,7 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 	}()
 	missing := []string{}
 	for _, in := range wanted {
-		if key := in.Key(); t.running[key] && !t.asked[key] {
+		if key := in.Key(); t.running[key] != nil && !t.asked[key] {
 			t.asked[key] = true
 			missing = append(missing, key)
 		}
@@ -422,22 +498,25 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 	}
 }
 
-func (t *CapacityTable) build(ctx context.Context, settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, node SchedulerNode, baselines []NodeBaseline, at time.Time, key string) {
+func (t *CapacityTable) build(settings SchedulerSettings, occupancy []DispatchOccupancy, task *capacityTask, baselines []NodeBaseline, at time.Time) {
 	defer t.wg.Done()
+	defer task.cancel()
 	defer func() { <-t.parallel }()
-	row, err := BuildCapacityRow(ctx, settings, occupancy, o, w, node, baselines, at)
+	row, err := BuildCapacityRow(task.ctx, settings, occupancy, task.option, task.workload, task.node, baselines, at)
+	t.mu.Lock()
+	if t.running[task.key] != task {
+		t.mu.Unlock()
+		return
+	}
+	delete(t.running, task.key)
+	if task.ctx.Err() != nil {
+		t.mu.Unlock()
+		return // Discard partial results, even if the build returned successfully.
+	}
 	if err != nil {
-		if ctx.Err() != nil {
-			t.mu.Lock()
-			delete(t.running, key)
-			t.mu.Unlock()
-			return
-		}
 		row.Status, row.Reason, row.Kappa, row.BuiltAt = CapacityRejected, err.Error(), nil, time.Now().UTC()
 	}
-	t.mu.Lock()
-	t.rows[key] = row
-	delete(t.running, key)
+	t.rows[task.key] = row
 	t.mu.Unlock()
 	if t.record != nil {
 		_ = t.record(row)

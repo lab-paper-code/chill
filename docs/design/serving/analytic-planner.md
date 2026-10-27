@@ -26,6 +26,8 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 
 **κ.** 창 요청 수와 부하에 따른 배칭이 λ와 함께 바뀌므로 판정이 λ에 단조라는 보장이 없다. 그래서 격자 `λ_k = 0.05kμ`(k = 1~20)를 모두 판정하고, 충족 앞부분과 미충족 뒷부분으로 나뉠 때만 κ를 정한다. 마지막 충족 `λ_K`와 다음 격자 사이를 0.5% μ까지 이분 탐색한 값이 κ다. K = 0이면 κ 0, K = 20이면 κ = μ다. 미충족 뒤에 충족이 오면 행은 `NonMonotone`이고 κ가 없으며 그 option은 `CapacityRejected`로 계획에서 빠진다. 디스패치 점유 측정이 없는 행도 `CapacityRejected`(사유 `MissingDispatchOccupancy`)이고 재생 없이 κ가 없다. 격자 결과는 행에 남아 조사에 쓴다. 격자 간격과 이분 탐색 폭은 코드 상수다.
 
+**불가 조기 판정.** b 이하 모든 측정 배치의 관측 최소 실행시간 중 최솟값 + m > L이면 백분위와 무관하게 단일 배치 처리만으로 모든 요청이 초과하므로 재생 없이 `Built`, κ 0, `BatchServiceExceedsSLO`와 `minimumServiceNanos`(m·L은 입력)를 기록한다(등호는 재생); 재생 창은 확정 초과 요청이 `N − ⌈pN⌉`개를 넘거나 timeout·만료가 하나라도 있으면 즉시 실패(-1, 완전 분위수 없음)로 끝내며, `Ensure`의 최신 대상에서 빠진 queued/running 행은 취소하고 부분 결과와 기록을 버린다.
+
 **설정.** `capacityWindowNanos` 60 s, `capacityWindows` 20, `capacityPassingWindows` 19, `capacityMinimumRequests` 1,000. 60 s 창이 필요한 근거: 요청 수 창만 쓰면 빠른 option(genesis2 cuda, 2,000 요청이 14 s)의 κ가 μ에 붙어 relaxed 1.2κ에서 20/20 충족이었고, 60 s 창에서는 0/20이다. 20개 중 19개 기준이 필요한 근거: 창 하나로 정한 κ는 1.0κ에서 6~12/20만 충족했다.
 
 **디스패치 점유.** d는 firstfloor 인스턴스가 요청 하나마다 profile 실행시간 밖에서 더 점유되는 시간이다. 포화한 인스턴스 하나가 배치 b로 낸 지속 처리율 X에서 `d = 1/X − (배치 b의 profile 평균 실행시간)/b`다. d에는 배치 사이 actor 시간(결과 전달, 다음 배치 선택, runner 호출 준비)과 같은 Pod CPU를 쓰는 요청 수신과 응답 처리로 늘어난 runner 실행시간이 함께 들어간다. rasp5 q1(m4 r3 Q2, 15:46~15:51)은 b1로 26.88 req/s, 요청당 37.20 ms였다. Q2 행 전체에서 실측 `serviceMS` 평균은 약 34.5 ms, 실행 기록 사이 간격은 평균 약 3.1 ms다. profile b1 평균은 27.79 ms라 d = 9.41 ms다.

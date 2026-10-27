@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -55,8 +56,110 @@ func TestCapacityMarginAboveTargetIsZero(t *testing.T) {
 	s, snap := capacityFixture()
 	s.CompletionMarginMS = 139
 	snap.Workloads[0].SLO = SLO{Percentile: 99, TargetLatency: 100 * time.Millisecond}
-	if row := capacityBuildForTest(t, s, snap); row.Kappa == nil || *row.Kappa != 0 || len(row.Grid) != capacityGridSteps {
+	if row := capacityBuildForTest(t, s, snap); row.Kappa == nil || *row.Kappa != 0 || row.Reason != CapacityServiceExceedsSLO || len(row.Grid) != 0 {
 		t.Fatalf("margin 139 ms, p99 100 ms: %+v", row)
+	}
+}
+
+func TestCapacityServiceLowerBound(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		samples []float64
+		smaller bool
+		skip    bool
+	}{
+		{"all samples exceed", []float64{3.1e6, 4e6}, false, true},
+		{"equality replays", []float64{3e6, 4e6}, false, false},
+		{"mean is not a bound", []float64{1e6, 8e6}, false, false},
+		{"smaller batch can fit", []float64{3.1e6, 4e6}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, snap := capacityFixture()
+			s.CompletionMarginMS = 29
+			s.CapacityWindow, s.CapacityWindows, s.CapacityPassingWindows = time.Millisecond, 1, 1
+			snap.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: 32 * time.Millisecond}
+			p := snap.Options[0].Instance.Profile
+			p.Batches = []BatchProfile{
+				{Batch: 1, DurationNanos: tc.samples, MemoryBytes: 100},
+				{Batch: 2, DurationNanos: tc.samples, MemoryBytes: 100},
+			}
+			snap.Options[0].Instance.MaxBatch = 2
+			if tc.smaller {
+				p.Batches[0].DurationNanos = []float64{1e6}
+			}
+			row := capacityBuildForTest(t, s, snap)
+			if tc.skip {
+				if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa != 0 || row.Reason != CapacityServiceExceedsSLO || row.MinimumServiceNanos != 3.1e6 || len(row.Grid) != 0 || len(row.Bisection) != 0 || row.BuiltAt.IsZero() || row.Elapsed <= 0 {
+					t.Fatalf("missing analytical zero and evidence: %+v", row)
+				}
+			} else if row.Reason == CapacityServiceExceedsSLO || len(row.Grid) != capacityGridSteps {
+				t.Fatalf("a potentially fitting batch must replay: %+v", row)
+			}
+		})
+	}
+}
+
+type capacityCountingContext struct {
+	context.Context
+	calls int
+}
+
+func (c *capacityCountingContext) Err() error {
+	c.calls++
+	return c.Context.Err()
+}
+
+func TestCapacityWindowStopsOnlyAfterCertainFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		service    float64
+		percentile float64
+		failed     bool
+	}{
+		{"passing window is complete", 5e5, 95, false},
+		{"overload p95", 5e6, 95, true},
+		{"overload p100", 5e6, 100, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const n = 400
+			s, snap := schedulerReplayWindow(n)
+			snap.Instances[0].Profile.Batches[0].DurationNanos = []float64{tc.service}
+			d := snap.Workloads[0]
+			d.SLO = SLO{Percentile: tc.percentile, TargetLatency: 20 * time.Millisecond}
+			keep := SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}
+			fullCtx := &capacityCountingContext{Context: context.Background()}
+			full, err := schedulerReplayEstimate(fullCtx, s, snap, keep, 1, nil, nil)
+			if err != nil || len(full.Reasons) != 0 {
+				t.Fatalf("full replay failed: %v %+v", err, full)
+			}
+			limit := capacityWindowLimit{requests: n, slo: d.SLO}
+			earlyCtx := &capacityCountingContext{Context: context.Background()}
+			early, err := schedulerReplayEstimate(earlyCtx, s, snap, keep, 1, nil, &limit)
+			if err != nil || limit.failed != tc.failed || (full.Status != schedulerStatusFeasible) != tc.failed {
+				t.Fatalf("window verdict changed: err %v, failed %v, full %+v", err, limit.failed, full)
+			}
+			if tc.failed {
+				if earlyCtx.calls >= fullCtx.calls || len(early.SLO) != 0 {
+					t.Fatalf("failed window must skip replay calls, not publish partial percentiles: early %d, full %d, %+v", earlyCtx.calls, fullCtx.calls, early)
+				}
+			} else if !reflect.DeepEqual(early, full) {
+				t.Fatalf("passing window changed: early %+v, full %+v", early, full)
+			}
+		})
+	}
+	// Empirical p95 of 20 permits exactly one miss; equality is not a miss,
+	// and observing the same late request twice must not count it twice.
+	limit := capacityWindowLimit{requests: 20, slo: SLO{Percentile: 95, TargetLatency: time.Millisecond}}
+	late := &schedulerReplayRequest{arrival: 0}
+	s := schedulerReplayState{now: 2e6, capacity: &limit, live: []*schedulerReplayRequest{late, {arrival: 1e6}}}
+	for range 2 {
+		if s.capacityWindowFailed() || limit.missed != 1 {
+			t.Fatalf("one late request must still allow p95: %+v", limit)
+		}
+	}
+	s.live = append(s.live, &schedulerReplayRequest{arrival: 0})
+	if !s.capacityWindowFailed() || limit.missed != 2 {
+		t.Fatalf("second miss must make p95 impossible: %+v", limit)
 	}
 }
 
@@ -210,12 +313,15 @@ func TestCapacityTableBuildsAutonomousRowsOnce(t *testing.T) {
 	// SLO, margin, profile and capacity settings each add one missing row.
 	snap.Workloads[0].SLO.TargetLatency = 30 * time.Millisecond
 	table.Ensure(context.Background(), s, snap)
+	table.Wait()
 	s.CompletionMarginMS = 5
 	table.Ensure(context.Background(), s, snap)
+	table.Wait()
 	p := *snap.Options[0].Instance.Profile
 	p.ID = "profile-2"
 	snap.Options[0].Instance.Profile = &p
 	table.Ensure(context.Background(), s, snap)
+	table.Wait()
 	s.CapacityWindows = 4
 	table.Ensure(context.Background(), s, snap)
 	table.Wait()
@@ -235,6 +341,72 @@ func TestCapacityTableBuildsAutonomousRowsOnce(t *testing.T) {
 	table.Wait()
 	if rows := table.Rows(); len(rows) != 2 || recordedW2 != 1 {
 		t.Fatalf("enabling w2 must add exactly its row: %+v, %d", rows, recordedW2)
+	}
+}
+
+// Hold the first Err call inside a running build until Ensure cancels it.
+type capacityBlockedContext struct {
+	context.Context
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (c *capacityBlockedContext) Err() error {
+	c.once.Do(func() {
+		close(c.started)
+		<-c.release
+	})
+	return c.Context.Err()
+}
+
+func TestCapacityTableCancelsUnwantedQueuedAndRunning(t *testing.T) {
+	s, snap := capacityFixture()
+	p := *snap.Options[0].Instance.Profile
+	p.ID += "-queued"
+	o := snap.Options[0]
+	o.Instance.Profile = &p
+	snap.Options = append(snap.Options, o)
+	var recorded atomic.Int32
+	table := NewCapacityTable(1, func(CapacityRow) error {
+		recorded.Add(1)
+		return nil
+	}, nil)
+	table.parallel <- struct{}{}
+	table.Ensure(context.Background(), s, snap)
+	key := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0]).Key()
+	queuedKey := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[1], snap.Workloads[0]).Key()
+	table.mu.Lock()
+	running, queued := table.running[key], table.running[queuedKey]
+	original := running.ctx
+	blocked := &capacityBlockedContext{Context: original, started: make(chan struct{}), release: make(chan struct{})}
+	running.ctx = blocked
+	table.mu.Unlock()
+	<-table.parallel
+	select {
+	case <-blocked.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("build did not start")
+	}
+	empty := snap
+	empty.Options = nil
+	table.Ensure(context.Background(), s, empty)
+	if original.Err() != context.Canceled || queued.ctx.Err() != context.Canceled {
+		t.Fatal("Ensure must cancel both running and queued obsolete keys")
+	}
+	// Re-add the same keys before the old build exits: its cleanup must not
+	// delete the replacement task or publish its canceled result.
+	table.Ensure(context.Background(), s, snap)
+	close(blocked.release)
+	done := make(chan struct{})
+	go func() { table.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("canceled tasks retained the only replay slot")
+	}
+	if rows := table.Rows(); len(rows) != 2 || rows[0].Status != CapacityBuilt || rows[1].Status != CapacityBuilt || recorded.Load() != 2 {
+		t.Fatalf("only replacement rows should be recorded: %+v, records %d", rows, recorded.Load())
 	}
 }
 

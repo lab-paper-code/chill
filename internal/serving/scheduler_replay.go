@@ -34,22 +34,23 @@ const (
 )
 
 type schedulerReplayRequest struct {
-	source     SchedulerRequest
-	identity   string // source.Definition.Identity(), formatted once
-	arrival    float64
-	native     float64
-	queueAt    float64
-	senderMS   float64
-	completed  bool
-	dispatched bool
-	returning  bool
-	completion float64
-	observed   bool
-	running    bool
-	expired    bool
-	deferred   bool
-	dropped    bool
-	expires    float64
+	source       SchedulerRequest
+	identity     string // source.Definition.Identity(), formatted once
+	arrival      float64
+	native       float64
+	queueAt      float64
+	senderMS     float64
+	completed    bool
+	dispatched   bool
+	returning    bool
+	completion   float64
+	observed     bool
+	running      bool
+	expired      bool
+	deferred     bool
+	dropped      bool
+	expires      float64
+	capacityMiss bool // counted once against the capacity window's fixed population
 }
 type schedulerReplayInstance struct {
 	config       SchedulerInstance
@@ -88,7 +89,7 @@ type schedulerReplayResult struct {
 // definition's SLO-percentile estimate and predicted outcomes in c. Energy
 // counts the compared Nodes only (nil counts every Node). Reasons name the
 // snapshot, resource or replay facts that block the replay.
-func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, c SchedulerCandidate, seed uint64, compared map[NodeReference]bool) (SchedulerCandidate, error) {
+func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, c SchedulerCandidate, seed uint64, compared map[NodeReference]bool, capacity *capacityWindowLimit) (SchedulerCandidate, error) {
 	c.Status = schedulerStatusPending
 	c.Reasons = append(c.Reasons, snapshot.Reasons...)
 	c.Reasons = append(c.Reasons, schedulerValidateSnapshot(settings, snapshot)...)
@@ -96,9 +97,12 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	if len(c.Reasons) != 0 {
 		return c, ctx.Err()
 	}
-	r, err := schedulerReplay(ctx, settings, snapshot, c, rand.New(rand.NewPCG(seed, 0)), compared)
+	r, err := schedulerReplay(ctx, settings, snapshot, c, rand.New(rand.NewPCG(seed, 0)), compared, capacity)
 	if err != nil {
 		return c, err
+	}
+	if capacity != nil && capacity.failed {
+		return c, nil // Partial samples are not an estimate.
 	}
 	c.Reasons, c.Assumptions, c.Sources = appendUnique(c.Reasons, r.reasons...), r.assumptions, r.sources
 	if len(c.Reasons) != 0 {
@@ -491,8 +495,9 @@ type schedulerReplayState struct {
 	// compared limits energy to these Nodes; nil counts every Node.
 	compared map[NodeReference]bool
 	// chooseBatches scratch, reused across events.
-	entries []schedulerReplayQueued
-	states  []firstfloor.RequestState
+	entries  []schedulerReplayQueued
+	states   []firstfloor.RequestState
+	capacity *capacityWindowLimit // nil for ordinary candidate estimates
 }
 
 type schedulerReplayQueued struct {
@@ -525,11 +530,11 @@ func (s *schedulerReplayState) counted(node NodeReference) bool {
 
 // schedulerReplay replays candidate c over the horizon; energy counts the
 // compared Nodes only (nil counts every Node).
-func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool) (schedulerReplayResult, error) {
+func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit) (schedulerReplayResult, error) {
 	if err := ctx.Err(); err != nil {
 		return schedulerReplayResult{}, err
 	}
-	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.ComparisonPeriod), compared: compared, out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
+	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.ComparisonPeriod), compared: compared, capacity: capacity, out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	s.initializeInstances()
 	s.initializeActions()
 	s.initializeOutstanding()
@@ -552,6 +557,9 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 		// Complete physical execution before choosing another UID's nonpreemptive batch.
 		s.expireRequests()
 		s.completeExecution()
+		if s.capacityWindowFailed() {
+			return s.out, nil
+		}
 		s.completeActions()
 		if !s.startActions() {
 			return s.out, ctx.Err()
@@ -1420,6 +1428,10 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 						s.out.outcomes[key] = map[string]int{}
 					}
 					s.out.outcomes[key]["timeout"]++
+					if s.capacity != nil {
+						s.capacity.failed = true // Any timeout already fails a capacity window.
+						return false
+					}
 				}
 				i.wake = s.now
 				continue

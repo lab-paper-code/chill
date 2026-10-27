@@ -16,7 +16,7 @@ func BenchmarkSchedulerReplayWindow(b *testing.B) {
 			s, snap := schedulerReplayWindow(n)
 			keep := SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}
 			for range b.N {
-				if _, err := schedulerReplayEstimate(context.Background(), s, snap, keep, 1, nil); err != nil {
+				if _, err := schedulerReplayEstimate(context.Background(), s, snap, keep, 1, nil, nil); err != nil {
 					b.Fatal(err)
 				}
 			}

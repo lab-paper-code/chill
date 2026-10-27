@@ -73,7 +73,7 @@ func schedulerKeepForTest(t testing.TB, settings SchedulerSettings, snapshot Sch
 	for uid, routing := range snapshot.Routing {
 		keep.Routing[uid] = routing
 	}
-	keep, err := schedulerReplayEstimate(context.Background(), settings, snapshot, keep, schedulerTestSeed, nil)
+	keep, err := schedulerReplayEstimate(context.Background(), settings, snapshot, keep, schedulerTestSeed, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func schedulerKeepForTest(t testing.TB, settings SchedulerSettings, snapshot Sch
 }
 
 func schedulerReplayForTest(s SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate) schedulerReplayResult {
-	result, err := schedulerReplay(context.Background(), s, snap, c, rand.New(rand.NewPCG(schedulerTestSeed, 0)), nil)
+	result, err := schedulerReplay(context.Background(), s, snap, c, rand.New(rand.NewPCG(schedulerTestSeed, 0)), nil, nil)
 	if err != nil {
 		panic(err)
 	}

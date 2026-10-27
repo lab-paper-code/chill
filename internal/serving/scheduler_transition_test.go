@@ -394,7 +394,7 @@ func TestLegalOverlappingResourceDAGStillReportsMeasuredOutageOverload(t *testin
 	snapshot.Costs[1].Trials[0] = OperationTrial{Duration: 9 * time.Second, Joules: 180}
 	d := snapshot.Workloads[0]
 	snapshot.Arrivals = []SchedulerArrival{{ID: "arrival", Definition: d, Compute: true, At: snapshot.At.Add(-settings.ObservationWindow + time.Millisecond)}}
-	evaluated, err := schedulerReplayEstimate(context.Background(), settings, snapshot, target, schedulerTestSeed, nil)
+	evaluated, err := schedulerReplayEstimate(context.Background(), settings, snapshot, target, schedulerTestSeed, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
