@@ -604,6 +604,15 @@ def fingerprint(snapshot, uids):
     return {'instances': sorted([{'id': i['id'], 'node': i['node'], 'profileID': i['profile']['id'], 'allocation': i['allocation'], 'maxBatch': i['maxBatch'], 'maxWaitNanos': i['maxWaitNanos'], 'workloadUID': i['workloadUID']} for i in instance_rows(snapshot['instances']) if i.get('workloadUID') in uids], key=lambda i: i['id']), 'routing': {u: snapshot.get('routing', {}).get(u, {}) for u in uids}, 'modes': {n['node']['name']: n['powerMode'] for n in snapshot['nodes'] if n['node']['name'] in NODES}}
 
 
+def scheduler_boundary_observation(state):
+    snapshot = state['snapshot']
+    return {'observedUTC': now(), 'snapshotAt': snapshot.get('at'),
+            'reservations': len(snapshot.get('reservations') or []),
+            'transitions': sum(action.get('status') in ('running', 'cancel') for action in state.get('actions') or []),
+            'snapshotTransitions': sum(action.get('status') in ('running', 'cancel') for action in snapshot.get('actions') or []),
+            'meaning': 'Observation only; stage progression does not wait for scheduler quiet'}
+
+
 def owned_target(snapshot,uids,routing):
     """Declared target from real physical ownership; never a served-UID observation."""
     if any(i.get('ownerWorkloadUID') not in uids for i in instance_rows(snapshot['instances'])):raise RuntimeError('Foreign physical ownership; no owned-target/reset substitution')
@@ -838,15 +847,6 @@ class CPO:
         settings = copy.deepcopy(settings); settings.pop('staticRouting',None); settings.pop('staticRoutingValidatedAt',None)
         settings.pop('powerObservation', None)
         return self.api('PUT','/api/v1/scheduler/settings',settings)
-    def idle(self):
-        end = time.monotonic()+self.tb['drainSeconds']
-        while time.monotonic()<end:
-            s=self.state(); snap=s['snapshot']
-            if not snap.get('outstanding') and not snap.get('reservations') and not any(x.get('status') in ('running','cancel') for x in s.get('actions',[])):
-                views=[self.api('GET','/api/v1/workloads/'+n) for n in WORKLOADS]
-                if all(v.get('pending')==0 and v.get('assigned')==0 for v in views): return s
-            time.sleep(1)
-        raise RuntimeError('Drain/terminal timebox exceeded; preserve partial evidence, stop')
     def start_barrier_observation(self,state,deadline,observed):
         snapshot=state['snapshot']; reservations=snapshot.get('reservations') or []
         completed=[(self.d.epoch(row.get('endedAt')),row.get('endedAt')) for row in state.get('results') or []]
@@ -902,7 +902,7 @@ class CPO:
         self.check_token_lifetime()
         if (self.out/'initial.json').exists(): raise RuntimeError('No implicit restart')
         static=self.static_placement()
-        s=self.state() if static else self.idle(); settings=self.settings()
+        s=self.state(); settings=self.settings()
         self.check_power_observation()
         if static:
             if settings.get('autonomousWorkloads'):raise RuntimeError('Static placement requires autonomy already off')
@@ -927,10 +927,9 @@ class CPO:
         if not at_boundary: raise RuntimeError('D9 freeze is executed inside the released full E5-3 command at actual window-end; late baseline selection is forbidden')
         if (self.out/'static-selection.json').exists(): raise RuntimeError('Static selection already frozen')
         s=self.state(); chosen=fingerprint(s['snapshot'],self.uids); settings=self.settings()
-        if s['snapshot'].get('reservations') or any(a.get('status') in ('running','cancel') for a in s.get('actions',[])): raise RuntimeError('E5-3 boundary configuration is transitioning; do not invent a weaker static selection')
         if set(settings['autonomousWorkloads']) != set(self.uids): raise RuntimeError('Actual full-control E5-3 configuration required')
         if any(not chosen['routing'][u] for u in self.uids): raise RuntimeError('Selected canonical route missing')
-        save(self.out/'static-selection.json',{'at':now(),'state':s,'fingerprint':chosen,'settings':settings,'selection':'Actual final E5-3 alpha=0.9 scheduler choice; rate=alpha*share*R; no weak baseline selection'})
+        save(self.out/'static-selection.json',{'at':now(),'state':s,'schedulerBoundaryObservation':scheduler_boundary_observation(s),'fingerprint':chosen,'settings':settings,'selection':'Actual final E5-3 alpha=0.9 scheduler choice; rate=alpha*share*R; no scheduler-quiet requirement'})
         self.route_ack(chosen,settings,'static','D9 actual E5-3 maximum normal alpha=0.9 selected configuration, same instances/modes/routes')
     def operation(self, body, prefix):
         save(self.out/(prefix+'-request.json'),body)
@@ -963,7 +962,7 @@ class CPO:
         while True:
             state=self.state()
             save(self.out/(prefix+'-last-state.json'),state)
-            if fingerprint(state['snapshot'],self.uids)==chosen and self.io.idle(state):
+            if fingerprint(state['snapshot'],self.uids)==chosen:
                 save(self.out/(prefix+'-native-ack.json'),result)
                 save(self.out/(prefix+'-ready.json'),state)
                 return state
@@ -973,7 +972,7 @@ class CPO:
     def restore(self):
         if not (self.out/'static-E5-6'/'collected.json').exists(): raise RuntimeError('Complete actual 170-minute static replay required before restoration')
         chosen=load(self.out/'static-selection.json')['fingerprint']
-        if fingerprint(self.idle()['snapshot'],self.uids)!=chosen: raise RuntimeError('Actual selected static configuration changed before automatic restoration')
+        if fingerprint(self.state()['snapshot'],self.uids)!=chosen: raise RuntimeError('Actual selected static configuration changed before automatic restoration')
         self.release_routing('restore-release','Release static replay routing before automatic restoration')
         settings=self.settings(); settings['autonomousWorkloads']=self.uids
         self.authorize_native_modes()
@@ -1054,7 +1053,7 @@ class CPO:
         if self.a.mode=='static' and st['id']=='E5-0': raise RuntimeError('Static baseline replays E5-1..6 only')
         if self.a.mode=='static':
             ready=load(self.out/'static-ready.json'); chosen=load(self.out/'static-selection.json')['fingerprint']
-            if self.settings()['autonomousWorkloads'] or fingerprint(self.idle()['snapshot'],self.uids)!=chosen: raise RuntimeError('Actual selected static freeze drift')
+            if self.settings()['autonomousWorkloads'] or fingerprint(self.state()['snapshot'],self.uids)!=chosen: raise RuntimeError('Actual selected static freeze drift')
         elif self.a.mode not in ('full','smoke'):
             factor=next(f for f in self.c['factors'] if f['name']==self.a.mode)
             if not st['id'].startswith(('E5-2','E5-5')): raise RuntimeError('Factor comparison is exactly E5-2/E5-5')
@@ -1096,7 +1095,9 @@ class CPO:
                 raise
         self.boundary(folder,'pre'); children=self.sampler(folder,self.tb['setupSeconds']+st['seconds']+self.tb['drainSeconds']+self.tb['flushSeconds']); jobs=[]; streams=[]; phase={'stage':st,'mode':self.a.mode,'status':'RUNNING','startUTC':None,'endUTC':None,'starts':{}}
         if barrier is not None:phase['startBarrier']=barrier
-        self.native_evidence=(load(folder/'pre-state.json').get('results') or [])+[load(path) for root in (self.out,self.out.parent/'smoke-run') for path in root.glob('*-mode/result.json')]
+        pre_state=load(folder/'pre-state.json')
+        phase['schedulerBoundaryObservations']={'start':scheduler_boundary_observation(pre_state)}
+        self.native_evidence=(pre_state.get('results') or [])+[load(path) for root in (self.out,self.out.parent/'smoke-run') for path in root.glob('*-mode/result.json')]
         save(folder/'phase.json',phase); sel=selectors.DefaultSelector(); buffers={};pods={};deadline=time.monotonic()+self.tb['setupSeconds']
         try:
             for name,rate in st['rates'].items():
@@ -1218,8 +1219,11 @@ class CPO:
                 phase['startUTC']=min(x['at'] for x in phase['starts'].values()); phase['endUTC']=max((dt.datetime.fromisoformat(x['at'])+dt.timedelta(seconds=st['seconds'])).isoformat() for x in phase['starts'].values())
             else: phase['endUTC']=now()
             if self.b.get('schema')=='demo-e5-binding.v1':phase['drainedUTC']=self.request_drain(folder,phase)
-            else:self.idle();phase['drainedUTC']=now()
-            self.boundary(folder,'post'); phase['status']='DRAINED_NOT_EVALUATED'; save(folder/'phase.json',phase)
+            else:phase['drainedUTC']=now()
+            phase['drainScope']='Producer/request drain only; scheduler reservations and transitions may continue into the next stage'
+            self.boundary(folder,'post')
+            phase['schedulerBoundaryObservations']['end']=scheduler_boundary_observation(load(folder/'post-state.json'))
+            phase['status']='DRAINED_NOT_EVALUATED'; save(folder/'phase.json',phase)
             collector_status=[]
             for sampler,output,error in children:
                 intentional=sampler.poll() is None
@@ -1323,7 +1327,7 @@ class CPO:
             default=profiles[target['profileID']]['instance']
             if any(target[key]!=default[key] for key in ('node','allocation','maxBatch','maxWaitNanos')): raise RuntimeError('Selected factor initial state needs unsupported manual cap/wait/resource override; no generic reset is claimed')
         self.clear_owned('factor-'+f['name']+'-'+self.a.stage)
-        current=self.idle()
+        current=self.state()
         for node in current['snapshot']['nodes']:
             if node['node']['name'] in desired['modes'] and node['powerMode']!=desired['modes'][node['node']['name']]: self.native_mode(node['node'],desired['modes'][node['node']['name']],'factor-'+f['name']+'-'+self.a.stage)
         for uid in self.uids:
@@ -1340,13 +1344,13 @@ class CPO:
             if policy['profileID']!=target['profileID'] or policy['maxBatchSize']!=target['maxBatch'] or round(policy['maxBatchWaitMS']*1e6)!=target['maxWaitNanos']:raise RuntimeError('Native prepared profile/cap/wait differs from exact paired target')
             deadline=time.monotonic()+self.tb['settleSeconds']
             while time.monotonic()<deadline:
-                state=self.idle();matches=[i for i in instance_rows(state['snapshot']['instances']) if i['id']==identifier]
+                state=self.state();matches=[i for i in instance_rows(state['snapshot']['instances']) if i['id']==identifier]
                 if not matches:time.sleep(1);continue
                 instance=matches[0]
                 if instance['node']!=target['node'] or instance.get('profile',{}).get('id')!=target['profileID'] or instance.get('ownerWorkloadUID')!=target['workloadUID'] or instance.get('workloadUID') or any(instance.get(key)!=target[key] for key in ('allocation','maxBatch','maxWaitNanos')):raise RuntimeError('Fresh prepared projection has a hard identity/cap/wait/allocation or unexpected served-UID mismatch')
                 mapping[target['id']]=identifier;break
             else:raise RuntimeError('Exact native prepared identity absent from fresh snapshot within existing settle timebox')
-        prepared=self.idle();actual=prepared['snapshot']
+        prepared=self.state();actual=prepared['snapshot']
         if {i['id'] for i in instance_rows(actual['instances'])}!=set(mapping.values()) or any(i.get('workloadUID') for i in instance_rows(actual['instances'])):raise RuntimeError('Paired prepared state is not exactly the returned physical IDs with empty served UID')
         # This is a declared target, not a claim that unrouted prepared instances already serve a UID.
         chosen=owned_target(actual,self.uids,{uid:{mapping[old]:weight for old,weight in route.items()} for uid,route in desired['routing'].items()})
@@ -1404,7 +1408,7 @@ class CPO:
             if phase.exists():
                 record=load(phase);record.setdefault('ownedProducerStops',[]).append({'name':name,'uid':uid,'stopped':True});save(phase,record)
     def factor_restore(self):
-        self.idle(); settings=self.settings(); initial=load(self.c['inputs']['scheduler'])['settings']; settings['controls']=initial['controls']; save(self.out/'factor-restored.json',self.put(settings))
+        settings=self.settings(); initial=load(self.c['inputs']['scheduler'])['settings']; settings['controls']=initial['controls']; save(self.out/'factor-restored.json',self.put(settings))
     def finish(self):
         if self.static_placement():
             save(self.out/'finish-state.json',self.state())
@@ -1614,6 +1618,8 @@ def judge(binding, folder):
     result['archiveObservations']=archive_observations
     result['phaseStatus']=phase['status']
     result['phaseError']=phase.get('error')
+    result['schedulerBoundaryObservations']=phase.get('schedulerBoundaryObservations')
+    result['drainScope']=phase.get('drainScope')
     result['judgmentCriteria']=['SLO','energy','generatorQuality','powerCompleteness']
     if any(r['issuanceFidelity']['generatorQuality']['status']=='INVALID_GENERATOR' for r in results.values()):
         result['status']='INVALID_GENERATOR'
@@ -1640,7 +1646,7 @@ def summarize(binding, root):
             if f['stage']['traces'] != s['stage']['traces']: missing.append({'row':row_id,'reason':'Paired frozen traces differ'}); continue
             comparisons.append({'row':row_id,'fullWholePOOLJ':full['power']['wholePoolJoules'],'staticWholePOOLJ':static['power']['wholePoolJoules'],'staticMinusFullWholePOOLJ':static['power']['wholePoolJoules']-full['power']['wholePoolJoules'],'fullActivePOOLJ':full['power']['activePoolJoules'],'staticActivePOOLJ':static['power']['activePoolJoules'],'requestMetrics':{'full':full['requests'],'static':static['requests']}})
             full_tail=load(root/('full-'+row_id)/'power-drain-inclusive.json'); static_tail=load(root/('static-'+row_id)/'power-drain-inclusive.json')
-            comparisons[-1]['drainInclusive']={'full':full_tail,'static':static_tail,'meaning':'Separate actual start-through-action/native/request-drain horizon; nominal170min totals above retain the offered windows.'}
+            comparisons[-1]['drainInclusive']={'full':full_tail,'static':static_tail,'meaning':'Separate actual phase.drainedUTC horizon; inspect phase drainScope. Scheduler transitions/reservations are not awaited; nominal170min totals retain offered windows.'}
     plan_rows={row_id:('MEASURED' if ('full',row_id) in stages else 'UNMEASURED') for row_id in modes['full']}
     plan_rows['E5-S']='MEASURED' if len(comparisons)==6 else 'UNMEASURED'
     spec={'steady':'E5-1','gradual-up-and-down':'E5-3','burst':'E5-2','post-transition-drop-resurge':'E5-5','mixed-heterogeneous':'E5-1','pool-overload':'E5-4'}

@@ -13,6 +13,10 @@ for fresh post-off public snapshots with zero reservations and running/cancel
 actions. *-reset-wait.json retains observations and the last state. Timeout
 fails without sending reset; a clear gate sends reset once, with no retry.
 
+Stage boundaries record scheduler reservations/actions without waiting for quiet.
+Freeze retains the selected configuration and route ACK/publication checks, not
+a scheduler-idle gate. The final owned reset wait above remains unchanged.
+
 Autonomous setup requires minimumDemand keyed by the three canonical names;
 after registration it reads canonical UIDs from workload GET responses and waits
 up to 60s (2s polls) for the scheduler snapshot to agree before replacing obsolete
@@ -771,6 +775,8 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
         summary['collectionRecovery'] = phase.get('collectionRecovery')
         summary['missingArchives'] = missing_archives
         summary['demoRequestDrain'] = phase.get('demoRequestDrain')
+        summary['schedulerBoundaryObservations'] = phase.get('schedulerBoundaryObservations')
+        summary['drainScope'] = phase.get('drainScope')
         for key in ('readyGate', 'startBarrier'):
             if key in phase:
                 summary[key] = phase[key]
@@ -1207,7 +1213,6 @@ def self_check():
         snapshot = {'at': e5.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'reservations': []}
         scheduler_actions = []
         cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': copy.deepcopy(scheduler_actions), 'results': None}
-        cpo.idle = cpo.state
         cpo.settings = lambda: copy.deepcopy(settings)
         cpo.put = lambda value: settings.update(copy.deepcopy(value)) or {'validatedAt': e5.now()}
         cpo.api = lambda *args: {'pending': 0, 'assigned': 0}
@@ -1364,9 +1369,27 @@ def self_check():
             cpo.start()
             snapshot['reservations'] = [{'owner': 'fixture-transition'}]
             scheduler_actions.append({'id': 'fixture-action', 'status': 'running'})
-            with patch.object(cpo, 'idle', side_effect=AssertionError('Demo stage must not await planner idle')):
-                for stage in stages:
-                    run_stage(cpo, stage)
+            for stage in stages:
+                run_stage(cpo, stage)
+            # The real normative branch must advance while reservations/actions persist.
+            normative_out = root / 'normative-busy-boundary'
+            normative_out.mkdir()
+            (normative_out / 'start-ack.json').write_text('{}')
+            def no_quiet_sleep(seconds):
+                assert seconds < 1, 'Stage attempted scheduler-quiet polling'
+            with patch.object(cpo, 'out', normative_out), \
+                 patch.object(cpo, 'b', dict(cpo.b, schema='e5-binding.v1')), \
+                 patch.object(cpo, 'c', dict(cpo.c)), \
+                 patch.object(cpo, 'a', SimpleNamespace(mode='smoke', command='smoke', stage=stages[0]['id'])), \
+                 patch.dict(snapshot, copy.deepcopy(snapshot), clear=True), \
+                 patch.object(e5.time, 'sleep', no_quiet_sleep):
+                run_stage(cpo, stages[0])
+            observed_phase = e5.load(normative_out / 'smoke-E0/phase.json')
+            assert observed_phase['status'] == 'DRAINED_NOT_EVALUATED'
+            for observation in observed_phase['schedulerBoundaryObservations'].values():
+                assert observation['observedUTC'] and observation['snapshotAt']
+                assert observation['reservations'] == observation['transitions'] == 1
+            assert 'may continue' in observed_phase['drainScope']
             summaries = summarize(e5, cpo.b, cpo.out)
         assert len(summaries) == 4
         for summary in summaries:
@@ -1673,7 +1696,7 @@ def self_check():
         (recovery_out / 'start-ack.json').write_bytes((cpo.out / 'start-ack.json').read_bytes())
         original_phase = (recovery_folder / 'phase.json').read_bytes()
         original_clients = {path.name: path.read_bytes() for path in recovery_folder.glob('*-client.jsonl')}
-        with patch.object(cpo, 'out', recovery_out), patch.object(cpo, 'idle', side_effect=AssertionError('Collection must not await planner idle')), patch.object(cpo, 'run', side_effect=AssertionError('Collection must not replay load')):
+        with patch.object(cpo, 'out', recovery_out), patch.object(cpo, 'run', side_effect=AssertionError('Collection must not replay load')):
             collect_stage(e5, cpo, stages[1])
             recovered = e5.load(phase_path(recovery_folder))
             assert recovered['status'] == 'DRAINED_NOT_EVALUATED' and recovered['collectionRecovery']['originalStatus'] == 'STOP'
@@ -1694,13 +1717,26 @@ def self_check():
                 else:
                     raise AssertionError('Unfinished requests were ignored')
         snapshot['outstanding'] = []
-        with patch.object(e5.time, 'monotonic', side_effect=[0, 0, 4]), patch.object(e5.time, 'sleep', return_value=None):
-            try:
-                e5.CPO.idle(cpo)
-            except RuntimeError as error:
-                assert str(error).startswith('Drain/terminal timebox exceeded')
-            else:
-                raise AssertionError('Global/finish idle stopped waiting for scheduler transitions')
+        freeze = object.__new__(e5.CPO)
+        freeze.out = root / 'freeze-busy'
+        freeze.out.mkdir()
+        freeze.uids, freeze.tb = ['frozen-workload'], {'settleSeconds': 3}
+        freeze_state = {'snapshot': {'at': e5.now(), 'instances': [
+            {'id':'instance','node':{'name':'fixture','uid':'node'},'profile':{'id':'profile'},
+             'allocation':{'cpus':[1],'memoryBytes':1},'maxBatch':1,'maxWaitNanos':0,'workloadUID':'frozen-workload'}],
+            'nodes': [], 'routing': {'frozen-workload': {'instance': 1}}, 'reservations': [{'owner':'transition'}]},
+            'actions': [{'id':'action','status':'running'}]}
+        freeze_settings = {'autonomousWorkloads': list(freeze.uids)}
+        freeze.state = lambda: copy.deepcopy(freeze_state)
+        freeze.settings = lambda: copy.deepcopy(freeze_settings)
+        freeze.put = lambda value: freeze_settings.update(value) or {'validatedAt':e5.now()}
+        freeze.operation = lambda body, prefix: {'status':'complete','actual':{'routing':freeze_state['snapshot']['routing']}}
+        freeze.io = SimpleNamespace(publication_end=lambda result, seconds: (e5.time.monotonic()+seconds, None),
+                                    idle=lambda state: (_ for _ in ()).throw(AssertionError('Freeze must not await quiet')))
+        freeze.freeze(at_boundary=True)
+        selection = e5.load(freeze.out / 'static-selection.json')
+        assert selection['schedulerBoundaryObservation']['reservations'] == selection['schedulerBoundaryObservation']['transitions'] == 1
+        assert (freeze.out / 'static-native-ack.json').exists() and (freeze.out / 'static-ready.json').exists()
         assert summaries[1]['gapFromPreviousOfferedWindowSeconds'] >= 0
         for summary in summaries[1:]:
             assert summary['placementChanges'] and summary['energyJ'] == 10

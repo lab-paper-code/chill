@@ -63,6 +63,7 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 - 전환 중 수신/전환 밖 수신/분류 불명 세 집단의 합이 전체 분모다. 겹친 전환은 Workload별 합집합으로 한 번만 센다. 경계는 사전에 고정한 반열린 수신시각 구간이다.
 - 전환 시작→route/Ready 완료의 실패도 전체에 남기고 전환 전·중·후, stage/substage, 1분 창을 보고한다. 전환 에너지도 전체 풀에 포함한다.
 - **판정 경계(2026-10-27 22:3xZ 정정):** 사후 judge는 SLO·에너지·생성기 품질·전력 완전성만 판정한다. CHILL 입장 예약·공용 안전 검사와 첫 경계에서 보장한 Node/CPU/소유권·정의·입력 동일성을 다시 검사하지 않으며, 중첩 판정·집계도 만들지 않는다. post-state Ready·GC 발생·telemetry/재시작·복구·phase/cleanup 상태는 관측으로 보존하되 추가 유효성 gate로 삼지 않는다. substage SLO는 설명용이며 whole-row 판정을 덮어쓰지 않는다. 결측 SLO 원시와 전력·생성기 품질의 UNKNOWN/INVALID는 그대로 남긴다.
+- **단계 경계:** scheduler quiet을 기다리지 않는다. `phase.json.schedulerBoundaryObservations.start/end`에 관측 UTC·snapshot 시각·예약 수·전환 수(현재 API와 snapshot 별도)를 남기고 진행한다. producer/요청 drain과 수집은 유지하되 scheduler action·예약의 종료를 의미하지 않으며 `drainScope`로 구분한다. E5-3 끝 freeze는 당시 배치/route를 기록하고 자율 off·route ACK·선택 배치 publication 확인을 유지하지만 quiet은 요구하지 않는다. 마지막 정상 반환의 fresh0/0·600초 reset 대기는 그대로다.
 - **Node 끊김 권고안 적용:** 전체 offered 결과를 주 결과로 유지하고, E5-7 Node 차단 명령 시작부터 uncordon 뒤 실제 Ready·관측·route 회복 확인까지 반열린 구간을 표시한다. 전체와 그 구간 제외 집계를 각각 분모·실패 수와 함께 병기한다. 회복이 없으면 단계 끝까지이며, 유리한 요청만 사후 제거하지 않는다.
 - **첫 준비 권고안 적용:** 부하 시작부터 첫 실제 분배 ACK까지 요청을 전체 분모에 유지하고 `initialPreparation` 집단으로 별도 표시한다(미반영이면 단계 끝까지). 전환 집단과 중복 가능하므로 합산하지 않는다. 관측된 20~55초를 사후 제외 창으로 쓰지 않는다.
 - 전력 결측 허용 `tolerateArchive`는 진단 전용이며 E5 설정에서 거부된다. 단발 후속 HTTP200은 누락된 전력 구간을 복구하지 않는다. 불완전한 에너지 값을 0으로 채우거나 연구 PASS로 출판하지 않는다.
