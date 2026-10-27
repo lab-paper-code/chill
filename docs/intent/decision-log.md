@@ -431,3 +431,8 @@
 
 - 결정: `generatorQuality = {"latenessToleranceNS": 50000000, "maxExceedingFraction": 0.01}`를 예시 실행·G-check·E5 7+1·preflight 설정에 명시한다. 50ms는 U6 발행 공백 분석 임계와 맞춘 권고값이며, gap 자체가 아니라 예정→실제 송신의 lateness를 판정한다. 실제 발행 요청 중 50ms **초과** 비율이 1% 이하면 품질 허용 범위다.
 - frozen trace 전부 공급도 필수다. 초과 비율 >1% 또는 공급 불완전은 `INVALID_GENERATOR`로 실행 무효이며 서버 SLO 실패로 돌리지 않는다. 정책 미설정·필수 timestamp/모집단 결측은 계속 `UNKNOWN`; 런타임에 숨은 기본값을 넣거나 기존 binding·원시·판정을 소급 변경하지 않는다. 다음 prepare에서 실행 설정과 binding에 동결하고 full planned offered 분모·수신 원점 SLO·수명 L은 유지한다.
+
+## 2026-10-27 16:5xZ — 증분 에너지가 분해능 이하(음수 점추정)일 때의 처리
+
+- 관측: jetsonx 15W6CORE/15W4CORE Smol(q1) batch-1 증분 에너지 −8.96/−4.90 J/item — active 평균 전력(10.25/10.09W)이 idle 기준(10.55/10.25W, 95% 반폭 ±1.76/±1.93W)보다 낮음. derivation은 부호를 보존하고 serving admission(`firstfloor/config.go:140`)·replay(`scheduler_replay.go:375`)는 비음수만 허용 → 거부(`history://SmolInvalid27`).
+- 결정(권고 기본값): 본질은 측정 불확실성 — 증분 에너지가 idle 기준 불확실성 이하라 0과 구별 불가. 자르기(clamp)는 묵시적 근사라 금지하되, **신뢰구간이 0을 포함하면 0 J/item + `energyBelowResolution` 표시로 명시 보고**, 상한도 음수면 측정 오류로 거부(재측정 요구). 재측정으로 양수 나올 때까지 반복 금지. 프로파일 계약 필드 추가는 E5 전 1회(ADR 0019).
