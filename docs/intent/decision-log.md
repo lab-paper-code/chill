@@ -404,3 +404,7 @@
 ## 2026-10-27 11:1xZ — E5 canonical 정의 SLO cutover(권고 기본값)
 
 - E5용 canonical 3 정의의 SLO를 연구 비교안(PLC p95 32ms, Smol p95 7.034s, MNV p95 1s)으로 교체(새 UID; 측정용 50ms/p99 60s는 d 측정 CR에만 사용). capacity 재생·G 확인·E5는 이 정의로. 측정용 SLO κ는 대조 수치로만 보고.
+
+## 2026-10-27 11:2xZ — U11 게이트웨이 구조 개편 등록(제어/데이터 평면 분리)
+
+- 제안서 `O/intent/gateway-20261027/proposal.md`. G0(현 구조 G 확인 1회, E5 준비와 동일) 통과 시 E5 먼저, 직후 G1~G3; 실패 시 E5 앞. 워크플로우 U11.
