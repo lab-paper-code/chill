@@ -389,3 +389,9 @@
 
 - E5 기본 승인 요청은 U2 추가 모드를 기다리지 않고 진행한다. m29ms/MNV p95 1s·PLC p95 32ms·Smol p95 7.034s 비교후보, L2/1/75s·cap129s·delivery10ms/socketL+20ms·N2·정적E5-3끝 유지. 숫자 승인은 Main이 요청하며 이 기록은 실행 승인이 아니다.
 - d 새 규칙34/34 완료와 후보SLO capacity 부재/jetsonx resourceRejected는 구분한다. 측정50ms/p99 60s와 부분합K를 승인R 또는 메모리 상한으로 쓰지 않는다. 상세 `O/intent/e5-numbers-20261027.md` 최신 결론(KappaR27 산출).
+
+## 2026-10-27 10:2xZ — E5 숫자 승인(1차) + 부하 단계 정의 수정
+
+- 승인: 기본 범위 8 Node 현재 모드; m=29ms; MNV p95 1s; PLC/Smol p95 32ms/7.034s 비교안(측정용 50ms/60s 대조); L=MNV2s/PLC1s/Smol75s, cap 129s, delivery 10ms, socket L+20ms; 전환/에너지 식 유지; 정적 기준선 E5-3 끝 0.9 구성; N=2.
+- 부하 단계 정의 수정: R_w는 'Node 전체를 그 Workload에만 쓸 때' 용량이고 Node당 인스턴스 1개라 세 R 동시 사용 불가(현 정의면 0.3R 혼합 = Node 0.9개분, 0.9R = 2.7배). **rate_w = α × s_w × R_w**, 몫 s_w 설정값(기본 1/3씩, 합 1), α ∈ {0.3,0.5,0.7,0.9,1.2} = 전체 POOL 사용률.
+- 병행: 빈 출발 capacity 재생(jetsonx·후보 SLO 포함) + 게이트웨이 G 계단 측정(새 정의 α 0.3~1.2 혼합 합계 구간). α=0.9 합계 > G면 원인(게이트웨이) 명시·보고. 최종 R·G 반영 숫자는 1회 추가 승인.
