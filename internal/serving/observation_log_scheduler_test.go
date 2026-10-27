@@ -459,6 +459,8 @@ func TestSchedulerCatalogFollowsMeterChangeRestartAndHour(t *testing.T) {
 	observationLog, clock := clockedObservationLog(t, config, observationTestHour)
 	node := NodeReference{Name: "node", UID: "node-uid"}
 	_, snapshot := schedulerFixture()
+	snapshot.Instances[0].Profile.Batches[0].EnergyPerInputJoules = 0
+	snapshot.Instances[0].Profile.Batches[0].EnergyBelowResolution = true
 	record := func(observationLog *ObservationLog, at time.Time, gap time.Duration) {
 		t.Helper()
 		clock.set(at)
@@ -515,6 +517,15 @@ func TestSchedulerCatalogFollowsMeterChangeRestartAndHour(t *testing.T) {
 				t.Fatal(err)
 			}
 			keys[row.Kind+"/"+row.Key] = true
+			if row.Kind == "profile" {
+				var profile Profile
+				if err := json.Unmarshal(row.Body, &profile); err != nil {
+					t.Fatal(err)
+				}
+				if profile.Batches[0].EnergyPerInputJoules != 0 || !profile.Batches[0].EnergyBelowResolution {
+					t.Fatal("persisted profile lost below-resolution energy after restart/hour change")
+				}
+			}
 		}
 	}
 	for _, key := range []string{"meter/wall", "definition/" + snapshot.Workloads[0].Identity(), "profile/" + snapshot.Instances[0].Profile.ID, "baseline/" + baselineRef(snapshot.Baselines[0])} {

@@ -326,7 +326,7 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *testing.T) {
 	at := time.Date(2026, 10, 15, 18, 22, 30, 0, time.UTC)
 	profile := &serving.Profile{ID: "profile", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "profile", Size: 123},
-		Batches: []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{12, 34}, EnergyPerInputJoules: 0.5}}}
+		Batches: []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{12, 34}, EnergyPerInputJoules: 0, EnergyBelowResolution: true}}}
 	equalProfile := *profile
 	differentProfile := *profile
 	differentProfile.Batches = []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{56}}}
@@ -364,6 +364,10 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	if projected[0].Snapshot.Options[0].Instance.Profile.Ref != got[0].Profile.Ref ||
 		projected[0].Snapshot.Reservations[0].Target.Instances[0].Profile.Ref != got[0].Profile.Ref {
 		t.Fatal("snapshot evidence did not use the same response dictionaries")
+	}
+	evidenceJSON, err := json.Marshal(evidence)
+	if err != nil || !bytes.Contains(evidenceJSON, []byte(`"energyBelowResolution":true`)) {
+		t.Fatalf("compact observation API lost below-resolution marker: %s, %v", evidenceJSON, err)
 	}
 	raw, err := json.Marshal(got[0])
 	if err != nil {

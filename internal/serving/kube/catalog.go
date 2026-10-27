@@ -356,9 +356,10 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			return serving.Profile{}, nil, err
 		}
 	}
-	baseline, err := profilederivation.DeriveIdleBaseline(idleTrials, profilederivation.PointPolicy{
-		Version: "energy-objective-point-v1", MinimumTrials: int(campaign.Spec.TrialsPerBatch), ConfidenceLevel: c.confidenceLevel,
-	})
+	energyPolicy := profilederivation.PointPolicy{
+		Version: "serving-energy-resolution-v1", MinimumTrials: int(campaign.Spec.TrialsPerBatch), ConfidenceLevel: 0.95,
+	}
+	baseline, err := profilederivation.DeriveIdleBaseline(idleTrials, energyPolicy)
 	if err != nil {
 		return serving.Profile{}, nil, fmt.Errorf("restore measured idle baseline: %w", err)
 	}
@@ -458,6 +459,21 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			continue
 		}
 		batch.profile.EnergyPerInputJoules = batch.energySum / float64(batch.trials)
+		if batch.profile.EnergyPerInputJoules < 0 {
+			point, err := profilederivation.Aggregate(batch.energyTrials, energyPolicy)
+			if err != nil {
+				return serving.Profile{}, nil, fmt.Errorf("derive measured energy confidence for batch %d: %w", batchSize, err)
+			}
+			lower := point.MeanIncrementalWorkJoulesPerItem - point.Confidence.HalfWidth
+			upper := point.MeanIncrementalWorkJoulesPerItem + point.Confidence.HalfWidth
+			if upper < 0 {
+				issues = append(issues, CatalogIssue{Source: source, Code: "NegativeIncrementalEnergy",
+					Reason: fmt.Sprintf("batch %d incremental energy %g J/item has 95%% CI [%g, %g] J/item below zero; remeasurement required", batchSize, point.MeanIncrementalWorkJoulesPerItem, lower, upper)})
+				continue
+			}
+			batch.profile.EnergyPerInputJoules = 0
+			batch.profile.EnergyBelowResolution = true
+		}
 		profile.Batches = append(profile.Batches, batch.profile)
 		profile.Batches[len(profile.Batches)-1].MeanWallWatts = batch.wallPowerSum / float64(batch.trials)
 	}
@@ -520,6 +536,7 @@ type catalogBatch struct {
 	profile       serving.BatchProfile
 	trials        int
 	energySum     float64
+	energyTrials  []profilederivation.EnergyTrial
 	missingMemory bool
 	wallPowerSum  float64
 }
@@ -542,6 +559,9 @@ func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivati
 	}
 	b.trials++
 	b.energySum += energy.IncrementalWorkJoulesPerItem
+	// Confidence needs only trial sufficient statistics, not another sample copy.
+	energy.NativeSamples, energy.ClientLatencyMilliseconds = nil, nil
+	b.energyTrials = append(b.energyTrials, energy)
 	b.wallPowerSum += wallPower
 	if math.IsNaN(b.energySum) || math.IsInf(b.energySum, 0) || math.IsNaN(b.wallPowerSum) || math.IsInf(b.wallPowerSum, 0) {
 		return errors.New("measured energy or wall power aggregate is not finite")

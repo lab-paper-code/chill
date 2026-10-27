@@ -58,3 +58,28 @@ results use `model-loaded-idle-baseline-result.v1alpha2`. The old result readers
 are not retained. Raw execution-evidence format is unchanged. These local
 changes do not migrate or delete testbed objects and must not be deployed over
 an active campaign; retire old requests and results before starting new ones.
+
+## Serving energy below measurement resolution
+
+Derivation and stored raw/derived measurement results retain signed incremental
+energy; the batch search does not clamp or discard negative estimates. At the
+serving catalog boundary only, a negative batch mean is evaluated with the
+existing derivation `Aggregate` two-sided **95%** Student-t
+Welch–Satterthwaite interval. It combines active trial variance of the mean with
+the shared idle-baseline mean-power variance scaled by mean window seconds/item;
+the shared baseline uncertainty is not divided by the active trial count.
+This resolution interval uses 95% independently of the configured serving
+confidence level used by other consumers.
+
+If the interval upper endpoint is at least zero, serving publishes
+`energyPerInputJoules: 0` and `energyBelowResolution: true`. This is an explicit
+below-resolution representation, not a claim that measured energy was exactly
+zero. The marker is retained in profile records, API responses, and the native
+startup bundle (`energyPerItemJ: 0`). Positive and exact-zero estimates remain
+unchanged with the marker false. If the upper endpoint is negative, the whole
+profile is unavailable with `NegativeIncrementalEnergy`, including batch, signed
+estimate and interval in J/item; independent remeasurement is required rather
+than retrying until a positive estimate appears. Native admission and scheduler
+replay continue to reject negative energy. Raw evidence and its existing schemas
+are unchanged.
+

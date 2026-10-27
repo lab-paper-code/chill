@@ -88,6 +88,25 @@ func schedulerReplayForTest(s SchedulerSettings, snap SchedulerSnapshot, c Sched
 	return result
 }
 
+func TestReplayEnergyRemainsNonnegativeWithResolutionMarker(t *testing.T) {
+	for _, below := range []bool{false, true} {
+		for _, energy := range []float64{-1, 0, 1} {
+			settings, snapshot := schedulerFixture()
+			instance := snapshot.Instances[0]
+			instance.Profile.Batches[0].EnergyPerInputJoules = energy
+			instance.Profile.Batches[0].EnergyBelowResolution = below
+			reasons := schedulerValidateService(settings, instance, nil)
+			if rejected := slices.Contains(reasons, "MissingServiceEnergyEvidence:"+instance.ID); rejected != (energy < 0) {
+				t.Fatalf("energy %g, below-resolution %t: %v", energy, below, reasons)
+			}
+			policy := schedulerPolicy(instance)
+			if policy.Batches[0].EnergyBelowResolution != below {
+				t.Fatal("replay native policy lost below-resolution marker")
+			}
+		}
+	}
+}
+
 func schedulerTestCPU(i SchedulerInstance) SchedulerInstance {
 	p := *i.Profile
 	p.ID += "-other-cpu"

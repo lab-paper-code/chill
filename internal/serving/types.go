@@ -128,11 +128,12 @@ func (d *Definition) SameExecution(o *Definition) bool {
 }
 
 type BatchProfile struct {
-	Batch                int       `json:"batch"`
-	DurationNanos        []float64 `json:"durationNanos"`
-	EnergyPerInputJoules float64   `json:"energyPerInputJoules"`
-	MemoryBytes          uint64    `json:"memoryBytes"`
-	MeanWallWatts        float64   `json:"meanWallWatts,omitempty"`
+	Batch                 int       `json:"batch"`
+	DurationNanos         []float64 `json:"durationNanos"`
+	EnergyPerInputJoules  float64   `json:"energyPerInputJoules"`
+	EnergyBelowResolution bool      `json:"energyBelowResolution"`
+	MemoryBytes           uint64    `json:"memoryBytes"`
+	MeanWallWatts         float64   `json:"meanWallWatts,omitempty"`
 }
 
 // Profile retains the frozen measurement condition and its raw evidence. It is
@@ -216,6 +217,7 @@ func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
 		slices.Sort(samples)
 		bundle.Batches[i] = firstfloor.BatchProfile{
 			Size: batch.Batch, ServiceSamplesMS: samples, EnergyPerItemJ: batch.EnergyPerInputJoules,
+			EnergyBelowResolution: batch.EnergyBelowResolution,
 		}
 	}
 	return bundle

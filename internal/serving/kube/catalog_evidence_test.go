@@ -101,8 +101,54 @@ func assertCatalogRawProfile(t *testing.T, profile serving.Profile) {
 		profile.Condition.CPU.Limit != "2" || len(profile.Condition.CPU.AffinityCPUs) != 2 ||
 		profile.RuntimeMetadata.IntraOpThreads != 2 || len(profile.RuntimeMetadata.CPUAffinity) != 2 ||
 		batch.MemoryBytes != 4096 || len(batch.DurationNanos) != 6 || batch.DurationNanos[0] != 500000 ||
-		math.Abs(batch.EnergyPerInputJoules-30) > 1e-9 {
+		math.Abs(batch.EnergyPerInputJoules-30) > 1e-9 || batch.EnergyBelowResolution {
 		t.Fatalf("frozen identity or measured raw distribution changed: %+v", profile)
+	}
+}
+
+func TestCatalogNegativeIncrementalEnergyResolution(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		watts [6]float64
+		below bool
+	}{
+		{name: "idle uncertainty includes zero", watts: [6]float64{3.9, 3.9, 3.9, 3, 4, 5}, below: true},
+		{name: "active uncertainty includes zero", watts: [6]float64{2, 3.9, 5.8, 4, 4, 4}, below: true},
+		{name: "joint uncertainty excludes zero", watts: [6]float64{1.99, 2, 2.01, 3.99, 4, 4.01}},
+		{name: "exact negative excludes zero", watts: [6]float64{2, 2, 2, 4, 4, 4}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog, source, _, _ := catalogEvidenceFixtureWithPower(t, 4096, tc.watts)
+			view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.below {
+				if len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
+					view.Insufficiencies[0].Code != "NegativeIncrementalEnergy" ||
+					!strings.Contains(view.Insufficiencies[0].Reason, "batch 1 incremental energy -30 J/item has 95% CI [") {
+					t.Fatalf("resolved negative estimate was not diagnosed with value and CI: %+v", view)
+				}
+				return
+			}
+			if len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
+				t.Fatalf("below-resolution energy was rejected: %+v", view)
+			}
+			profile := view.Profiles[0]
+			batch := profile.Batches[0]
+			if batch.EnergyPerInputJoules != 0 || !batch.EnergyBelowResolution ||
+				len(batch.DurationNanos) != 6 || batch.MemoryBytes != 4096 {
+				t.Fatalf("below-resolution serving contract changed other measured facts: %+v", batch)
+			}
+			native := profile.NativeBundle().Batches[0]
+			if native.EnergyPerItemJ != 0 || !native.EnergyBelowResolution {
+				t.Fatalf("native bundle lost explicit below-resolution report: %+v", native)
+			}
+			payload, err := json.Marshal(view)
+			if err != nil || !bytes.Contains(payload, []byte(`"energyBelowResolution":true`)) {
+				t.Fatalf("catalog API lost below-resolution marker: %s, %v", payload, err)
+			}
+		})
 	}
 }
 
@@ -135,6 +181,10 @@ func (objects catalogEvidenceObjects) OpenLocation(_ context.Context, location e
 }
 
 func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
+	return catalogEvidenceFixtureWithPower(t, memory, [6]float64{6, 6, 6, 4, 4, 4})
+}
+
+func catalogEvidenceFixtureWithPower(t *testing.T, memory uint64, trialWatts [6]float64) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
 	t.Helper()
 	payload, err := os.ReadFile("../../profiling/profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
@@ -200,9 +250,9 @@ func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.Namesp
 	apiObjects := []client.Object{campaign}
 	completed := make([]batchenergyoptimization.CompletedTrialReference, 0, 6)
 	for index := range 6 {
-		config, watts, mode := active, float64(6), batchenergyoptimization.WorkloadModeActive
+		config, watts, mode := active, trialWatts[index], batchenergyoptimization.WorkloadModeActive
 		if index >= 3 {
-			config, watts, mode = idle, 4, batchenergyoptimization.WorkloadModeIdle
+			config, mode = idle, batchenergyoptimization.WorkloadModeIdle
 		}
 		name := fmt.Sprintf("trial-%d", index)
 		raw, idleRaw, execution := catalogTrialRecords(config, name+"-pod", watts, memory)
