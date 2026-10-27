@@ -17,6 +17,12 @@ after registration it reads canonical UIDs from workload GET responses and waits
 up to 60s (2s polls) for the scheduler snapshot to agree before replacing obsolete
 UID keys and freezing settings readback. Start refuses floor drift.
 Static placement remains read-only.
+
+Canonical definitions with matching recipe references, SLO and spec fields are
+reused in place (UID/capacity rows retained); mismatches are deleted and registered
+from the requested recipe/SLO. Binding records per-definition reuse. Finish and
+preflight retain definitions by default; --delete-definitions opts into deletion
+after owned cleanup, never for static placement.
 Reset uses the synchronous OperationResult contract: HTTP budget is settleSeconds
 + powerDownSeconds (default 1800, server operation-timeout default upper bound)
 + apiSeconds, not settleSeconds alone; configure the power bound for the deployment.
@@ -228,8 +234,56 @@ def bind_minimum_demand(api, spec):
 
 
 
+def canonical_definitions(e5, registration):
+    """Keep matching applied identities; replace only mismatched definitions."""
+    reuse = {}
+    for name in e5.WORKLOADS:
+        path = '/api/v1/workloads/' + name
+        actual, status = registration.api('GET', path, accepted=(200, 404))
+        reuse[name] = False
+        if status == 404:
+            continue
+        desired = actual['desired']
+        existing = desired['spec']
+        recipe = registration.op['workloads'][name]
+        refs = {key: {'name': recipe[key]} for key in ('modelRef', 'preprocessorRef', 'datasetRef')}
+        applied = actual.get('appliedDefinition') or {}
+        if (set(existing) == set(refs) | {'slo'}
+                and {key: value for key, value in existing.items() if key != 'slo'} == refs
+                and applied.get('slo') == registration.n['workloads'][name]['slo']
+                and applied.get('uid') == desired['metadata']['uid']
+                and applied.get('generation') == desired['metadata']['generation']):
+            reuse[name] = True
+            continue
+        e5.save(registration.out / ('replace-' + name + '-before.json'), actual)
+        result, _ = registration.api('DELETE', path, headers={'If-Match': desired['metadata']['resourceVersion']}, accepted=(202,))
+        e5.save(registration.out / ('replace-' + name + '-ack.json'), result)
+        deadline = time.monotonic() + registration.tb['settleSeconds']
+        while registration.api('GET', path, accepted=(200, 404))[1] != 404:
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Canonical replacement deletion did not settle: ' + name)
+            time.sleep(1)
+    scheduler = registration.canonical()
+    identities = {}
+    for name in e5.WORKLOADS:
+        actual, _ = registration.api('GET', '/api/v1/workloads/' + name)
+        identities[name] = actual['desired']['metadata']
+    deadline = time.monotonic() + registration.tb['settleSeconds']
+    while True:
+        workloads = scheduler['state']['snapshot']['workloads']
+        if all(any(w['name'] == name and w['uid'] == identity['uid']
+                   and w['generation'] == identity['generation']
+                   and w['slo'] == registration.n['workloads'][name]['slo']
+                   for w in workloads) for name, identity in identities.items()):
+            return scheduler, reuse
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Canonical registered identities did not reach scheduler snapshot')
+        time.sleep(1)
+        scheduler, _ = registration.api('GET', '/api/v1/scheduler')
+
+
 def assemble(e5, args, spec):
-    """Register missing canonical definitions, then capture actual applied inputs."""
+    """Reuse matching canonical definitions, then capture actual applied inputs."""
     if args.out.exists() and any(args.out.iterdir()):
         raise RuntimeError('Live preparation requires a fresh output directory; retain partial captures')
     recipe_path = Path(spec.get('operationalRecipe', e5.OPERATIONAL_RECIPE)).resolve()
@@ -278,10 +332,10 @@ def assemble(e5, args, spec):
     registration = object.__new__(wire.Prepare)
     registration.op, registration.out, registration.tb, registration.http = op, args.out, spec['timeboxes'], io.http
     by_name = {w['name']: w for w in scheduler['state']['snapshot']['workloads']}
-    registration.n = {'workloads': {name: {'slo': by_name[name]['slo'] if name in by_name else spec['measurementSLO'][next(alias for alias, canonical in ALIASES.items() if canonical == name)]} for name in e5.WORKLOADS}}
+    registration.n = {'workloads': {name: {'slo': spec['measurementSLO'][next(alias for alias, canonical in ALIASES.items() if canonical == name)]} for name in e5.WORKLOADS}}
     def registration_api(method, path, body=None, headers=None, accepted=(200,)):
-        if method == 'PUT' or (spec.get('staticPlacement') and method != 'GET'):
-            raise RuntimeError('No canonical mutation permitted during static capture or existing SLO capture')
+        if spec.get('staticPlacement') and method != 'GET':
+            raise RuntimeError('No canonical mutation permitted during static capture')
         result, status_code = wire.Prepare.api(registration, method, path, body, headers, accepted)
         io.record({'kind': 'canonical-management', 'method': method, 'path': path, 'status': status_code})
         return result, status_code
@@ -289,8 +343,9 @@ def assemble(e5, args, spec):
     if spec.get('staticPlacement'):
         if any(name not in by_name for name in e5.WORKLOADS):
             raise RuntimeError('Static placement requires existing canonical definitions')
+        reused = {name: True for name in e5.WORKLOADS}
     else:
-        scheduler = registration.canonical()
+        scheduler, reused = canonical_definitions(e5, registration)
     e5.save(args.out / 'scheduler.json', scheduler)
     for name in e5.WORKLOADS:
         actual, _ = registration.api('GET', '/api/v1/workloads/' + name)
@@ -302,7 +357,7 @@ def assemble(e5, args, spec):
     e5.save(archive_path, [{'key': 'demo-live-' + name, 'localPath': str(args.out / (name + '.json'))} for name in ('scheduler', 'nodes', 'pods')])
     collection['archiveRefs'] = str(archive_path)
     c = {key: op[key] for key in ('endpoint', 'caFile', 'tokenFile', 'kubeContext')}
-    c.update(approval={'sourceSHA': source, 'controlImageDigest': status['imageID']}, inputs={'nodes': str(args.out / 'nodes.json'), 'scheduler': str(args.out / 'scheduler.json')}, timeboxes=spec['timeboxes'], collection=collection, workloads=[])
+    c.update(approval={'sourceSHA': source, 'controlImageDigest': status['imageID']}, inputs={'nodes': str(args.out / 'nodes.json'), 'scheduler': str(args.out / 'scheduler.json')}, timeboxes=spec['timeboxes'], collection=collection, workloads=[], canonicalDefinitionsReused=reused)
     for name in e5.WORKLOADS:
         actual = [w for w in scheduler['state']['snapshot']['workloads'] if w['name'] == name]
         if len(actual) != 1:
@@ -319,16 +374,16 @@ def assemble(e5, args, spec):
         if lifetime is not None and (not e5.positive(lifetime) or lifetime < actual['slo']['targetLatencyNanos'] / 1e9 or lifetime > float(cap[:-1]) or requested['socketSeconds'] <= lifetime + requested['deliverySeconds']):
             raise ValueError('Explicit lifetime must cover SLO, fit gateway cap and socket budget')
         c['workloads'].append({**{key: actual[key] for key in ('name', 'uid', 'generation', 'slo')}, 'datasetDir': recipe['datasetDir'], 'fields': recipe['fields'], 'jobTemplate': str(template), 'producerEndpoint': op['producer']['endpoint'], 'producerTokenFile': op['producer']['tokenFile'], 'producerCAFile': op['producer']['caFile'], 'producerDatasetDir': op['producer']['datasetDir'], **requested, 'gatewayCapSeconds': float(cap[:-1])})
-    c['demoSkipped'] = ['E5 R/kappa capacity binding and G clipping', '10800-second normative schedule and factor baselines', 'phase6 scientific approvals/D1/D6/D9 judgment gates', 'image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused', 'existing scheduler SLO mutation: existing definitions retained; missing canonical definitions created from recipe plus configured SLO']
+    c['demoSkipped'] = ['E5 R/kappa capacity binding and G clipping', '10800-second normative schedule and factor baselines', 'phase6 scientific approvals/D1/D6/D9 judgment gates', 'image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused']
     c['demoProvenance'] = {'recipe': str(recipe_path), 'controlSourceSHA': 'Main-provided helm-revision source claim resolved in git, not inferred from image bytes', 'controlImageDigest': 'Live Ready Pod containerStatus.imageID', 'requestTiming': 'D2 Conductor.job socket/worker baseline plus explicit requestTiming overrides; absent lifetime omits client deadline header', 'measurementSLO': spec['measurementSLO']}
     config_path = args.out / 'demo-e5-config.json'
     e5.save(config_path, c)
     return config_path
 
 
-def finish_definitions(e5, cpo):
-    """Delete exact captured canonical UIDs only after the existing owned cleanup."""
-    if cpo.static_placement():
+def finish_definitions(e5, cpo, *, delete_definitions=False):
+    """Retain identities unless deletion was explicitly requested after cleanup."""
+    if cpo.static_placement() or not delete_definitions:
         return
     if not (cpo.out / 'finish-complete.json').exists():
         raise RuntimeError('Owned instances/routing/settings cleanup must complete before definition deletion')
@@ -432,7 +487,7 @@ def prepare(e5, args):
         sources['job-' + w['name']] = e5.ref(w['jobTemplate'])
     c['smoke'] = stages[0]
     c['harnessRepositoryCommit'] = e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'rev-parse', 'HEAD'], text=True).strip()
-    binding = {'schema': 'demo-e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': e5.now(), 'schedulerSettings': scheduler_settings, 'config': c, 'sources': sources, 'payload': payload, 'schedule': stages, 'demoConfig': spec}
+    binding = {'schema': 'demo-e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': e5.now(), 'schedulerSettings': scheduler_settings, 'canonicalDefinitionsReused': c.get('canonicalDefinitionsReused', {}), 'config': c, 'sources': sources, 'payload': payload, 'schedule': stages, 'demoConfig': spec}
     e5.save(target, binding)
     print(str(target))
 
@@ -607,7 +662,7 @@ def preflight_result(e5, binding, out, stages, *, judge=False):
         'finalReservations0': final is not None and 'instances' in final and not final.get('reservations'),
         'finalTransitions0': final_path.exists() and not any(a.get('status') in ('running', 'cancel') for a in e5.load(final_path).get('actions') or []),
         'stagesComplete': len(stages) == len(binding['schedule']) and all(s.get('status') == 'DRAINED_NOT_EVALUATED' for s in stages),
-        'finishComplete': (out / 'finish-complete.json').exists() and (out / 'finish-definitions-complete.json').exists(),
+        'finishComplete': (out / 'finish-complete.json').exists(),
         'noStop': not (out / 'preflight-STOP.json').exists(),
     }
     stop_path = out / 'preflight-STOP.json'
@@ -744,7 +799,7 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
     e5.save(destination / 'summary.json', result)
     def fmt(value):
         return '—' if value is None else f'{value:.3f}' if isinstance(value, float) else str(value)
-    table = ['# Autonomous workload-pool demo', '', 'Client latency is successful HTTP round trip. SLO is the configured reporting-only measurementSLO, or captured scheduler SLO when omitted; scheduler SLO is never changed. Energy is shared pool energy, repeated per workload (do not sum rows). Missing evidence is —, not zero.', '', '| Stage | Workload | Rate/s | Success/offered | Success % | p95 ms | p99 ms | SLO p/ms | Within SLO % | Pool J | Active J | Drain pool J | Placement changes | Transition failures | Gap s |', '|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|']
+    table = ['# Autonomous workload-pool demo', '', 'Client latency is successful HTTP round trip. SLO is the configured measurementSLO, or captured scheduler SLO when omitted; non-static preparation registers the requested recipe/SLO and retains matching identities. Energy is shared pool energy, repeated per workload (do not sum rows). Missing evidence is —, not zero.', '', '| Stage | Workload | Rate/s | Success/offered | Success % | p95 ms | p99 ms | SLO p/ms | Within SLO % | Pool J | Active J | Drain pool J | Placement changes | Transition failures | Gap s |', '|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|']
     if 'preflight' in result:
         table[2:2] = ['Preflight: **' + result['preflight']['status'] + '** (Ready ' + str(result['preflight']['readyWorkloads']) + '/3; operational only).', '',
                       *[key + ': ' + value for key, value in result['preflight']['checks'].items()], '']
@@ -1584,24 +1639,26 @@ def self_check():
             recipe_workload.update(modelRef='fixture-model', preprocessorRef='fixture-preprocessor', datasetRef='fixture-dataset')
         recipe = root / 'recipe.json'
         recipe.write_text(json.dumps(op))
-        source_spec = {'operationalRecipe': str(recipe), 'controlSourceSHA': 'HEAD', 'timeboxes': cpo.tb, 'measurementSLO': {alias: {'percentile': 99, 'targetLatencyNanos': 60000000000} for alias in ALIASES}}
+        source_spec = {'operationalRecipe': str(recipe), 'controlSourceSHA': 'HEAD', 'timeboxes': cpo.tb, 'measurementSLO': {alias: copy.deepcopy(workloads[0]['slo']) for alias in ALIASES}}
         server = {'metadata': {'namespace': 'chill-system', 'labels': {'app.kubernetes.io/component': 'serving-entrypoint'}}, 'spec': {'containers': [{'name': 'serving-entrypoint', 'args': ['--request-timeout=70s']}]}, 'status': {'containerStatuses': [{'name': 'serving-entrypoint', 'ready': True, 'imageID': 'fixture@sha256:fixture'}]}}
         registration_snapshot = copy.deepcopy(snapshot)
         registration_snapshot['workloads'] = [copy.deepcopy(workloads[0])]
         base_spec = {key: {'name': 'fixture-' + kind} for key, kind in [('modelRef', 'model'), ('preprocessorRef', 'preprocessor'), ('datasetRef', 'dataset')]}
+        base_spec['slo'] = {'percentile': 95, 'targetLatency': '1s'}
         registered = {workloads[0]['name']: {'desired': {'metadata': {'uid': workloads[0]['uid'], 'generation': 1, 'resourceVersion': '1'}, 'spec': base_spec}, 'appliedDefinition': workloads[0]}}
         management_calls, native_cleaned = [], [False]
+        stale_snapshots = []
         def management_fixture(self, method, path, body=None, headers=None, accepted=(200,)):
             management_calls.append((method, path))
             if path == '/api/v1/scheduler':
-                return {'state': {'snapshot': copy.deepcopy(registration_snapshot)}, 'settings': settings}, 200
+                return {'state': {'snapshot': stale_snapshots.pop(0) if stale_snapshots else copy.deepcopy(registration_snapshot)}, 'settings': settings}, 200
             if path == '/api/v1/scheduler/state':
                 return {'snapshot': copy.deepcopy(registration_snapshot)}, 200
             name = body['name'] if method == 'POST' else path.rsplit('/', 1)[-1]
             if method == 'POST':
                 assert name not in registered
                 slo = body['spec']['slo']
-                definition = {'name': name, 'uid': 'registered-' + name, 'generation': 1, 'slo': {'percentile': slo['percentile'], 'targetLatencyNanos': int(slo['targetLatency'][:-2])}}
+                definition = {'name': name, 'uid': 'registered-' + name + '-' + str(len(management_calls)), 'generation': 1, 'slo': {'percentile': slo['percentile'], 'targetLatencyNanos': int(slo['targetLatency'][:-2])}}
                 registered[name] = {'desired': {'metadata': {'uid': definition['uid'], 'generation': 1, 'resourceVersion': '1'}, 'spec': body['spec']}, 'appliedDefinition': definition}
                 registration_snapshot['workloads'].append(definition)
                 return copy.deepcopy(registered[name]), 201
@@ -1624,15 +1681,39 @@ def self_check():
             return loaded
         with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}), patch.object(e5, 'module', modules_for_assembly), patch.object(e5.ssl, 'create_default_context', return_value=None), patch.object(d.Conductor, 'api', api_fixture), patch.object(d.Conductor, 'k', lambda self, argv, **kw: {'items': [] if argv[1] == 'nodes' else [server]}), patch.object(d.Conductor, 'job', return_value={'spec': {'template': {'spec': {'containers': [{'args': ['--workers', '320', '--request-lifetime', '2', '--delivery-margin', '.010', '--timeout', '2.02']}]}}}}):
             assembled = e5.load(assemble(e5, SimpleNamespace(out=root / 'assembly'), source_spec))
+            assert assembled['canonicalDefinitionsReused'] == {name: name == workloads[0]['name'] for name in ALIASES.values()}
+            before_reuse = len(management_calls)
+            reused = e5.load(assemble(e5, SimpleNamespace(out=root / 'reuse-assembly'), source_spec))
+            assert all(reused['canonicalDefinitionsReused'].values())
+            assert [w['uid'] for w in reused['workloads']] == [w['uid'] for w in assembled['workloads']]
+            assert all(method == 'GET' for method, _ in management_calls[before_reuse:])
+            native_cleaned[0] = True
+            for field in ('modelRef', 'slo', 'requestLifetime'):
+                name = workloads[0]['name']
+                before_uid = registered[name]['desired']['metadata']['uid']
+                if field == 'slo':
+                    registered[name]['appliedDefinition']['slo'] = {'percentile': 99, 'targetLatencyNanos': 2}
+                    registered[name]['desired']['spec']['slo'] = {'percentile': 99, 'targetLatency': '2ns'}
+                else:
+                    registered[name]['desired']['spec'][field] = {'name': 'changed'} if field == 'modelRef' else '2s'
+                before_replace = len(management_calls)
+                stale_snapshots.append(copy.deepcopy(registration_snapshot))
+                replaced = e5.load(assemble(e5, SimpleNamespace(out=root / ('replace-' + field)), source_spec))
+                assert replaced['canonicalDefinitionsReused'] == {key: key != name for key in ALIASES.values()}
+                assert next(w['uid'] for w in replaced['workloads'] if w['name'] == name) != before_uid
+                assert [method for method, _ in management_calls[before_replace:] if method != 'GET'] == ['DELETE', 'POST']
             before_static_capture = len(management_calls)
             static_assembled = e5.load(assemble(e5, SimpleNamespace(out=root / 'static-assembly'), dict(source_spec, staticPlacement=True)))
             assert len(static_assembled['workloads']) == 3
             assert all(method == 'GET' for method, _ in management_calls[before_static_capture:])
-            cpo.c = assembled
-            cpo.uids = [w['uid'] for w in assembled['workloads']]
+            cpo.c = replaced
+            cpo.uids = [w['uid'] for w in replaced['workloads']]
             cpo.io.http = None
+            before_retained = len(management_calls)
+            finish_definitions(e5, cpo)
+            assert len(management_calls) == before_retained and len(registered) == 3
             try:
-                finish_definitions(e5, cpo)
+                finish_definitions(e5, cpo, delete_definitions=True)
             except RuntimeError as error:
                 assert 'cleanup must complete' in str(error)
             else:
@@ -1640,11 +1721,13 @@ def self_check():
             e5.save(cpo.out / 'finish-complete.json', {'fixture': 'owned native cleanup completed'})
             native_cleaned[0] = True
             finish_definitions(e5, cpo)
+            assert len(registered) == 3
+            finish_definitions(e5, cpo, delete_definitions=True)
         assert assembled['demoSkipped'] and assembled['approval']['controlImageDigest'] == 'fixture@sha256:fixture'
         assert len(assembled['workloads']) == 3
         assert assembled['workloads'][0]['uid'] == workloads[0]['uid'] and assembled['workloads'][0]['slo'] == workloads[0]['slo']
-        assert sum(method == 'POST' for method, _ in management_calls) == 2
-        assert sum(method == 'DELETE' for method, _ in management_calls) == 3 and not registered
+        assert sum(method == 'POST' for method, _ in management_calls) == 5
+        assert sum(method == 'DELETE' for method, _ in management_calls) == 6 and not registered
         assert all(w['workers'] == 320 and 'lifetimeSeconds' not in w for w in assembled['workloads'])
         assert (root / 'assembly/register-plc-anomaly.json').exists() and (cpo.out / 'finish-definitions-complete.json').exists()
         # Active owner keep: reservations may clear before the running action.
@@ -1806,6 +1889,7 @@ def main():
     parser.add_argument('--stage', help='Configured stage ID; required for stage/collect')
     parser.add_argument('--experiment-id', help='publish: immutable ASCII ID; corrections require a new ID')
     parser.add_argument('--store-config', type=Path, help='publish: private logicalStore/S3 config for existing PutImmutable bridge')
+    parser.add_argument('--delete-definitions', action='store_true', help='finish/preflight: delete captured canonical definitions after owned cleanup (default: retain UID/capacity rows)')
     parser.add_argument('--self-check', action='store_true', help='Run one local mocked API/kubectl lifecycle smoke, without cluster access')
     args = parser.parse_args()
     if args.command == 'report':
@@ -1885,7 +1969,7 @@ def main():
                 run_stage(cpo, stage)
             cpo.finish()
             cpo.cleanup_jobs()
-            finish_definitions(e5, cpo)
+            finish_definitions(e5, cpo, delete_definitions=args.delete_definitions)
             wait_preflight_empty(e5, cpo)
         except Exception as error:
             e5.save(args.out / 'preflight-STOP.json', {'at': e5.now(), 'error': str(error), 'status': 'FAIL'})
@@ -1925,7 +2009,7 @@ def main():
     elif args.command == 'finish':
         cpo.finish()
         cpo.cleanup_jobs()
-        finish_definitions(e5, cpo)
+        finish_definitions(e5, cpo, delete_definitions=args.delete_definitions)
 
 
 if __name__ == '__main__':

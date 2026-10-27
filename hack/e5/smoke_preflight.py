@@ -97,7 +97,6 @@ def main():
         initial = {'instances': None, 'reservations': None}
         e5.save(out / 'initial.json', {'state': {'snapshot': initial}})
         e5.save(out / 'finish-complete.json', {})
-        e5.save(out / 'finish-definitions-complete.json', {})
         occupied = {'snapshot': {'instances': [], 'reservations': [{'owner': 'reset'}]}}
         empty = {'snapshot': copy.deepcopy(initial)}
         with patch.object(cpo, 'state', side_effect=[occupied, empty], create=True), patch.object(e5.time, 'sleep'):
@@ -112,6 +111,7 @@ def main():
             {'stage': 'MIX', 'status': 'DRAINED_NOT_EVALUATED', 'workloads': {w['name']: {'offered': 10, 'httpSuccess': 10, 'clientRows': 10} for w in workloads}},
         ]
         assert demo.preflight_result(e5, binding, out, stages)['status'] == 'PASS'
+        assert not (out / 'finish-definitions-complete.json').exists()
         # The public JSON contract omits reservations when the list is empty.
         omitted = {'snapshot': {'instances': None}, 'actions': [{'status': 'complete'}]}
         e5.save(out / 'initial.json', {'state': omitted})
