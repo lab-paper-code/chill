@@ -31,6 +31,36 @@ import urllib.request
 import zlib
 
 HERE = Path(__file__).resolve().parent
+PRODUCER_ALIASES = {'mobilenet': 'image-classification-tight-slo', 'plc': 'plc-anomaly', 'smolvlm2': 'smolvlm2-vqa'}
+
+
+def freeze_producer_config(config):
+    resources = config.get('producerResources', {'cpu': '2', 'memory': '1Gi'})
+    if not isinstance(resources, dict) or set(resources) != {'cpu', 'memory'}:
+        raise ValueError('producerResources requires cpu and memory quantity strings')
+    for name, pattern in (
+        ('cpu', r'([0-9]+(?:\.[0-9]+)?|\.[0-9]+)(m?)'),
+        ('memory', r'([0-9]+(?:\.[0-9]+)?|\.[0-9]+)([EPTGMK]i|[EPTGMkKmun]|[eE][+-]?[0-9]+)?'),
+    ):
+        value = resources[name]
+        match = re.fullmatch(pattern, value) if isinstance(value, str) else None
+        if not match or not any(digit in '123456789' for digit in match[1]):
+            raise ValueError('producerResources.' + name + ' requires a positive Kubernetes quantity string')
+        if name == 'cpu':
+            fractional = match[1].partition('.')[2].rstrip('0')
+            if len(fractional) > (0 if match[2] else 3):
+                raise ValueError('producerResources.cpu requires precision of at least one millicore')
+    shards = config.get('producerShards', {'mobilenet': 3, 'plc': 1, 'smolvlm2': 1})
+    if not isinstance(shards, dict) or set(shards) != set(PRODUCER_ALIASES) or any(type(v) is not int or v < 1 for v in shards.values()):
+        raise ValueError('producerShards requires positive integer mobilenet/plc/smolvlm2 counts')
+    config['producerResources'], config['producerShards'] = dict(resources), dict(shards)
+
+
+def set_producer_resources(pod, config):
+    for container in pod['containers'] + pod.get('initContainers', []):
+        resources = container.setdefault('resources', {})
+        for field in ('requests', 'limits'):
+            resources.setdefault(field, {}).update(config['producerResources'])
 
 
 def self_check():
@@ -62,6 +92,31 @@ def self_check():
     assert timing['sloLatencyNS']==500_000 and timing['scheduledLatencyNS']==61_000_000 and timing['entranceDelayNS']==-50
     assert analysis.request_timing(rows[0],None,150,100)['sloLatencyNS'] is None
     assert analysis.issuance_fidelity([dict(rows[0],issued=False,error='ThreadStartError')],[0],100,50_000_000,analysis.stats,policy)['issued']==0
+    config = {}
+    freeze_producer_config(config)
+    assert config == {'producerResources': {'cpu': '2', 'memory': '1Gi'}, 'producerShards': {'mobilenet': 3, 'plc': 1, 'smolvlm2': 1}}
+    for key, invalid in (
+        ('producerResources', None), ('producerResources', {}),
+        ('producerResources', {'cpu': '0', 'memory': '1Gi'}),
+        ('producerResources', {'cpu': '0.0001', 'memory': '1Gi'}),
+        ('producerResources', {'cpu': '2', 'memory': '-1Gi'}),
+        ('producerResources', {'cpu': 2, 'memory': '1Gi'}),
+        ('producerShards', None), ('producerShards', {}),
+        ('producerShards', {'mobilenet': True, 'plc': 1, 'smolvlm2': 1}),
+        ('producerShards', {'mobilenet': 0, 'plc': 1, 'smolvlm2': 1}),
+    ):
+        try:
+            freeze_producer_config({key: invalid})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Invalid ' + key + ' accepted')
+    custom = {'producerResources': {'cpu': '1500m', 'memory': '512Mi'}, 'producerShards': dict.fromkeys(PRODUCER_ALIASES, 2)}
+    freeze_producer_config(custom)
+    pod = {'containers': [{'name': 'load'}, {'name': 'sidecar', 'resources': {'requests': {'cpu': '1'}, 'limits': {'memory': '2Gi'}}}], 'initContainers': [{'name': 'dataset'}]}
+    set_producer_resources(pod, custom)
+    for container in pod['containers'] + pod['initContainers']:
+        assert container['resources']['requests'] == container['resources']['limits'] == custom['producerResources']
     print('PASS E5 receive-origin SLO, scheduled reference, generator quality and full planned issuance; offline only')
 
 
@@ -265,6 +320,7 @@ def power_observation(c):
 
 def bind(path):
     c = load(path); require_strict_archives(c)
+    freeze_producer_config(c)
     module('e5_quality', D2/'analyze_before.py').generator_quality_config(c)
     need(c, ['approval', 'inputs', 'G', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
     need(c['approval'], REQUIRED['approval'], 'approval'); need(c['inputs'], REQUIRED['inputs'], 'inputs'); need(c['collection'], REQUIRED['collection'], 'collection'); need(c['timeboxes'], REQUIRED['timeboxes'], 'timeboxes')
@@ -274,6 +330,7 @@ def bind(path):
     host_read=c['collection']['serverHostReadArgv']
     if not isinstance(host_read,list) or not host_read or not Path(host_read[0]).is_absolute() or host_read[-1]!='-': raise ValueError('Actual approved server-host privileged Python stdin reader argv required')
     refs = {k: ref(v) for k, v in c['inputs'].items()}
+    refs['inputConfig'] = ref(path)
     for name in ('e5.py','auth.py','e5-wire.py','e5-producer.py','e5-raw.py','e5-archive.py'): refs['package-'+name]=ref(HERE/name)
     refs['operationalRecipe']=ref(OPERATIONAL_RECIPE); refs['experimentEnvironment']=ref(ENVIRONMENT_PATH)
     for name in ('conduct_before.py','bind_before.py','analyze_before.py','sample_cgroups.py','native_mode_request.py'):refs['D2-helper-'+name]=ref(D2/name)
@@ -623,7 +680,9 @@ class CPO:
         w=self.ws[name]; trace=stage['traces'][name]; job=load(w['jobTemplate']); label=self.producer_job_name(name,stage)
         job['metadata']={'name':label,'namespace':'chill-system','labels':{'chill.dacs.io/e5':self.a.mode}}
         spec=job['spec']; spec.pop('selector',None); spec.pop('manualSelector',None); spec['backoffLimit']=0; spec['activeDeadlineSeconds']=math.ceil(self.tb['setupSeconds']+self.tb['barrierSeconds']+stage['seconds']+self.tb['drainSeconds']); spec['template']['metadata']={'labels':{'chill.dacs.io/e5':self.a.mode}}
-        pod=spec['template']['spec']; container=pod['containers'][0]; policy={'payload':self.b['payload'][name], 'arrivalSHA256':trace['arrivalSHA256'], 'offered':trace['offered'], 'barrierSeconds':self.tb['barrierSeconds'], 'segments': [{'rate':part['rates'][name], 'seconds':part['seconds']} for part in stage['parts']]}
+        pod=spec['template']['spec']; set_producer_resources(pod,self.c)
+        alias=next(alias for alias,canonical in PRODUCER_ALIASES.items() if canonical==name)
+        container=pod['containers'][0]; policy={'payload':self.b['payload'][name], 'arrivalSHA256':trace['arrivalSHA256'], 'offered':trace['offered'], 'shards':self.c['producerShards'][alias], 'barrierSeconds':self.tb['barrierSeconds'], 'segments': [{'rate':part['rates'][name], 'seconds':part['seconds']} for part in stage['parts']]}
         container['command']=['python3','-u','-c',(HERE/'e5-producer.py').read_text()]
         encoded=base64.b64encode(zlib.compress(json.dumps(policy,separators=(',',':'),allow_nan=False).encode())).decode('ascii')
         if len(encoded)>120000: raise RuntimeError('Full frozen payload identity exceeds safe exec argument size; no payload subset is silently dropped')
@@ -753,6 +812,8 @@ class CPO:
                             uid=next(u for n,j,u in jobs if n==name)
                             if len(found)!=1 or found[0]['metadata']['uid']!=pods[name]['metadata']['uid'] or not any(owner.get('kind')=='Job' and owner.get('uid')==uid for owner in found[0]['metadata'].get('ownerReferences',[])): raise RuntimeError('Producer exact Pod/Job identity changed after startup')
                             if row.get('payload')!=self.b['payload'][name] or row.get('offered')!=st['traces'][name]['offered'] or row.get('arrivalSHA256')!=st['traces'][name]['arrivalSHA256'] or row.get('barrierSeconds')!=self.tb['barrierSeconds']:raise RuntimeError('Actual ready payload/trace/barrier differs from frozen input')
+                            alias=next(alias for alias,canonical in PRODUCER_ALIASES.items() if canonical==name)
+                            if row.get('shards')!=self.c['producerShards'][alias]:raise RuntimeError('Actual ready shards differs from frozen producerShards')
                             startup=folder/('startup-'+name);save(startup/'producer-ready-event.json',row)
                             self.io.assert_producer_startable(startup,found[0],pods[name],barrier_seconds=self.tb['barrierSeconds'])
                             phase.setdefault('producerReadiness',{})[name]={'producerReadyUTC':row['at'],'setupBarrierDeadlineUTC':dt.datetime.fromtimestamp(self.d.producer_barrier_deadline(row,self.tb['barrierSeconds']),dt.timezone.utc).isoformat(),'readyEventPath':str(startup/'producer-ready-event.json')}

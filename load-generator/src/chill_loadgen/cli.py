@@ -54,11 +54,21 @@ def arrival_offsets_ns(arrivals: str, rate: float, duration: float, seed: int) -
     return offsets
 
 
+def shard_schedule(offsets: Sequence[int], shard_index: int, shard_count: int) -> List[ScheduledRequest]:
+    """Partition the frozen trace by global index; never regenerate arrivals."""
+    if type(shard_count) is not int or shard_count < 1 or type(shard_index) is not int or not 0 <= shard_index < shard_count:
+        raise ValueError("shard_index must be in [0, shard_count)")
+    return [ScheduledRequest(str(index), offsets[index], 1)
+            for index in range(shard_index, len(offsets), shard_count)]
+
+
 def replay_open_loop(
     records: Sequence[Record], *, workload: str, offsets: Sequence[int],
     new_client: Callable[[], WorkloadHTTPClient], out: TextIO, start_ns: int,
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
+    shard_index: int = 0,
+    shard_count: int = 1,
 ) -> None:
     """Dispatch every planned arrival independently, without an in-flight cap."""
     lock = threading.Lock()
@@ -71,6 +81,7 @@ def replay_open_loop(
             "workload": workload, "record": records[index % len(records)][0],
             "requestIndex": index, "scheduledOffsetNs": request.scheduled_offset_ns,
             "scheduledMonotonicNS": start_ns + request.scheduled_offset_ns,
+            "shardIndex": shard_index, "shardCount": shard_count,
         }
 
     def emit(row: Dict[str, object]) -> None:
@@ -127,7 +138,7 @@ def replay_open_loop(
 
     try:
         run_schedule(
-            [ScheduledRequest(str(index), offset, 1) for index, offset in enumerate(offsets)],
+            shard_schedule(offsets, shard_index, shard_count),
             submit, start_ns=start_ns, delay_tolerance_ns=DELAY_TOLERANCE_NS,
             clock_ns=clock_ns, sleep=sleep,
         )

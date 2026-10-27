@@ -116,6 +116,7 @@ def schedule(config, e5):
     sys.path.insert(0, str(e5.REPO / 'load-generator/src'))
     from chill_loadgen import cli
     ANALYSIS.generator_quality_config(config)
+    e5.freeze_producer_config(dict(config))
     if 'staticPlacement' in config and type(config['staticPlacement']) is not bool:
         raise ValueError('staticPlacement must be a boolean')
     allowed_archives = {'power', 'power-drain-inclusive'}
@@ -441,6 +442,10 @@ def prepare(e5, args):
     e5.token_preflight(token_config, stages)
     config_path = Path(spec['e5Config']).resolve() if spec.get('e5Config') else assemble(e5, args, spec)
     c = e5.load(config_path)
+    for key in ('producerResources', 'producerShards'):
+        if key in spec:
+            c[key] = copy.deepcopy(spec[key])
+    e5.freeze_producer_config(c)
     if 'generatorQuality' in spec:
         c['generatorQuality'] = ANALYSIS.generator_quality_config(spec)
     else:
@@ -1120,6 +1125,7 @@ def self_check():
         cpo.out.mkdir()
         cpo.a = SimpleNamespace(mode='smoke', command='smoke', stage='E0')
         cpo.c = {'workloads': workloads, 'smoke': stages[0], 'generatorQuality': {'latenessToleranceNS': 50_000_000, 'maxExceedingFraction': 0}}
+        e5.freeze_producer_config(cpo.c)
         cpo.b = {'schema': 'demo-e5-binding.v1', 'config': cpo.c, 'schedule': stages, 'sources': {}, 'payload': {w['name']: [] for w in workloads}}
         cpo.tb = dict.fromkeys(('setupSeconds', 'barrierSeconds', 'drainSeconds', 'apiSeconds', 'settleSeconds', 'collectSeconds'), 3)
         cpo.tb['flushSeconds'] = .001
@@ -1219,7 +1225,8 @@ def self_check():
                 reader, self.writer = os.pipe()
                 self.stdout = os.fdopen(reader, 'rb')
                 trace = next(s for s in stages if s['id'] == cpo.a.stage)['traces'][name]
-                self.emit({'e5Event': 'ready', 'at': e5.now(), 'payload': [], 'offered': trace['offered'], 'arrivalSHA256': trace['arrivalSHA256'], 'barrierSeconds': 3})
+                alias = next(alias for alias, canonical in ALIASES.items() if canonical == name)
+                self.emit({'e5Event': 'ready', 'at': e5.now(), 'payload': [], 'offered': trace['offered'], 'arrivalSHA256': trace['arrivalSHA256'], 'barrierSeconds': 3, 'shards': cpo.c['producerShards'][alias]})
             def emit(self, row):
                 try:
                     os.write(self.writer, (json.dumps(row) + '\n').encode())
@@ -1251,6 +1258,12 @@ def self_check():
                 return {'metadata': {'name': argv[2], 'uid': 'job-' + name}}
             if argv[0] == 'create':
                 job = json.loads(stdin)
+                pod_spec = job['spec']['template']['spec']
+                for container in pod_spec['containers'] + pod_spec.get('initContainers', []):
+                    assert container['resources']['requests'] == container['resources']['limits'] == cpo.c['producerResources']
+                policy = json.loads(e5.zlib.decompress(e5.base64.b64decode(pod_spec['containers'][0]['args'][0])))
+                alias = next(alias for alias, canonical in ALIASES.items() if canonical == pod_spec['containers'][0]['args'][pod_spec['containers'][0]['args'].index('--workload') + 1])
+                assert policy['shards'] == cpo.c['producerShards'][alias]
                 args = job['spec']['template']['spec']['containers'][0]['args']
                 name = args[args.index('--workload') + 1]
                 job['metadata']['uid'] = 'job-' + name

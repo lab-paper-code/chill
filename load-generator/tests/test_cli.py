@@ -1,4 +1,5 @@
 import io
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -7,7 +8,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from chill_loadgen.cli import arrival_offsets_ns, load_records, main, replay, replay_open_loop
+from chill_loadgen.cli import arrival_offsets_ns, load_records, main, replay, replay_open_loop, shard_schedule
 from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient
 
 
@@ -105,6 +106,46 @@ class FakeClient:
 
 
 class ReplayTest(unittest.TestCase):
+    def test_shards_partition_frozen_global_indexes_without_overlap(self):
+        offsets = [2, 2, 7, 11, 15, 20, 22]
+        parts = [shard_schedule(offsets, shard, 3) for shard in range(3)]
+        indexes = [{int(request.request_id) for request in part} for part in parts]
+        self.assertEqual(set.union(*indexes), set(range(len(offsets))))
+        for left in range(3):
+            for right in range(left):
+                self.assertFalse(indexes[left] & indexes[right])
+        for shard, part in enumerate(parts):
+            self.assertTrue(all(int(request.request_id) % 3 == shard for request in part))
+            self.assertEqual([request.scheduled_offset_ns for request in part], offsets[shard::3])
+
+    def test_process_shards_merge_full_planned_population_on_one_start(self):
+        path = Path(__file__).resolve().parents[2] / "hack/e5/e5-producer.py"
+        spec = importlib.util.spec_from_file_location("test_sharded_producer", path)
+        producer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(producer)
+        offsets = [0] * 7
+        binding = {"shards": 3, "barrierSeconds": 2, "payload": [],
+                   "arrivalSHA256": "frozen"}
+        with tempfile.TemporaryFile(mode="w+") as output:
+            with patch.object(producer.sys, "stdout", output), \
+                 patch.object(producer.Path, "exists", return_value=True), \
+                 patch("chill_loadgen.cli.arrival_offsets_ns", side_effect=AssertionError("trace regenerated")):
+                producer.replay_shards(
+                    [("q1", {"image": b"a"})], offsets, 0, binding,
+                    {"workload": "vqa", "new_client": FakeClient},
+                )
+            output.seek(0)
+            lines = [json.loads(line) for line in output]
+        rows = [row for row in lines if "requestIndex" in row]
+        self.assertEqual(len(rows), len(offsets))
+        self.assertEqual({row["requestIndex"] for row in rows}, set(range(len(offsets))))
+        self.assertEqual(sum(row["status"] == 200 for row in rows), len(offsets))
+        self.assertEqual({row["shardIndex"] for row in rows}, {0, 1, 2})
+        starts = [row["monotonicNS"] for row in lines if row.get("e5Event") == "start"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual({row["scheduledMonotonicNS"] for row in rows}, set(starts))
+        self.assertEqual(sum(row.get("e5Event") == "drained" for row in lines), 1)
+
     def test_e5_lateness_does_not_reduce_lifetime_or_prevent_send(self):
         for delay in (250_000_000, 2_000_000_000):
             with self.subTest(delay=delay), patch("chill_loadgen.http_client.HTTPSConnection") as connection:

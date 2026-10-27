@@ -32,6 +32,16 @@ sent and drained, not silently dropped at the issue-window boundary.
 Endpoint/token validation and TLS context/CA loading occur once before replay
 or the E5 release barrier. Independent per-request HTTPS connections reuse this
 immutable context; TLS preparation is not repeated on arrival threads.
+E5 producer Jobs use frozen `producerResources` with equal CPU/memory requests
+and limits (defaults `{"cpu":"2","memory":"1Gi"}`). `producerShards` defaults
+to `{"mobilenet":3,"plc":1,"smolvlm2":1}`: each existing workload Pod runs
+independent process shards, initialized before its ready event. The parent
+releases every shard against one shared start clock. Each shard sends only
+global indexes `index % shardCount == shardIndex` from the already-frozen
+trace; offsets, record assignment and offered denominator never change.
+Shard JSONL rows are merged under one process-shared output lock, retaining
+`requestIndex`, `shardIndex` and `shardCount`. Rebuild the load-generator image
+for the shared shard dispatcher; runtime images are unchanged.
 `scheduledMonotonicNS` anchors the request; `latenessNs` is actual send minus
 scheduled time, a generator-quality metric rather than SLO time.
 `latencyMs` and `serviceLatencyMs` retain actual-send HTTP duration;
