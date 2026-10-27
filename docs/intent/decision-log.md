@@ -417,3 +417,7 @@
 
 - sweep(재생 ~1~3분/회, 7af95dd4 이후): 32ms positive 1/8(FAIL), 36ms positive 5/8·orangepi κ=0·jetsonx 자원 Rejected(비양수), 40/50ms positive 7/8이나 느린 2 Node 양수(FAIL). 계획 규칙(조건 통과 중 가장 엄격)대로 **PLC p95 36ms** 채택(느린 2 중 jetsonx는 κ=0 증거가 아니라 자원 부적격 — 비양수로 해석; 기록). R_P 691.15 req/s(7 Node), α=1.2 몫 .1 → 82.94 req/s. Smol p95 7.034s(positive 5/8 PASS), MNV p95 1s 유지.
 - G0 입력(α=1.2, .45/.1/.45): MNV 179.08 / PLC 82.94 / Smol 1.16 ≈ 263 req/s.
+
+## 2026-10-27 15:0xZ — E5 부하 생성기를 열린 고리로(coordinated omission 제거)
+
+- G0 Smol offered 120/139·U6 발행 공백은 같은 뿌리: E5 부하가 닫힌 고리(작업자가 응답 대기)라 서버가 느려지면 덜 보내고 지연을 낙관 측정. E5는 열린 고리: 고정 trace 예정 시각에 비동기 송신(동시 상한 없음), 지연은 예정 시각부터, 예정−실제 송신 차 기록. d 측정은 닫힌 고리 유지. 먼저 `feat/loadgen-async` 확인·재사용. 그 뒤 G0 1회(offered=계획) → E5-0 리허설 → E5.
