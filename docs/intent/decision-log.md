@@ -369,3 +369,7 @@
 ## 2026-10-27 00:3xZ — U5 Pod 로그 동시 캡처 비활성(측정 중)
 
 - D18 격리: capture-progress(kubectl logs --follow) 동시 실행 시 unknownRows 114, 없을 때 0(Accepted 1.15%). D15/D26의 대량 손실(21,797/5,100)도 같은 조건. 인과 미확정[추정: 약한 Node의 로그 스트림 경합]이지만 측정 중 캡처는 손실을 유발하므로 **측정 중 동시 캡처 금지**. 진행 기록 손실 원인 확정(U5)은 서버 측 reject 로그(cf92a845)만으로 계속.
+
+## 2026-10-27 02:0xZ — PMTC 비용 창에 settling 포함(권고 기본값 60s)
+
+- NVIDIA 클럭 전환(apply→Ready 2~12s)은 1s 표본·coverage 0.95에서 구조적으로 PowerWindowInsufficient(15/15; `history://PmtcPowerWindow27`). 비용 창 = apply→fresh Ready + settlingSeconds(설정, 기본 60, [0,3600]); η 적분·baseline 차감 범위 일치; τ와 settling 분리 기록(`52da1d38`). 기존 raw/finalized 불변. profiler/transition-observer 이미지 재빌드(runtime 7 아님).
