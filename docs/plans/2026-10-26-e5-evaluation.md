@@ -62,7 +62,7 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 - 알려진 profile-versus-serving 편향은 해석 한계로 공개한다. signed raw·Accepted·planner `max(d,0)`를 보존하고 원인별 인과 기여·전역95% 보장을 주장하지 않는다.
 - thermal은5초 주기, active/latched/unknown과 사전 온도 bin(<60/60–70/70–80/≥80°C)을 쓰며 미관측 bin을 일반화하지 않는다.
 - 보낸 부하가 계획 trace와 다른 구간과 50ms 초과 발행 공백의 빈도·원인을 [U5/U6 관측 설계](../design/serving/observability-split.md)에 따라 표시한다. `issuanceFidelity`는 planned/issued/미발행 수, 실제/계획 gap, `sendLatenessNS`의 p50/p95/p99/max, 50ms 초과 lateness, `sendsAfterWindow`를 보고한다. `latenessNs = sentMonotonicNS - scheduledMonotonicNS`이며 nominal 창 이후 발행도 버리지 않는다. gap 관측은 nominal 창 끝과 마지막 send 중 늦은 시각까지다. 계획/발행/수신 모집단을 혼동하지 않는다.
-- 실행 전 `generatorQuality: {"latenessToleranceNS": <0 이상의 정수>, "maxExceedingFraction": <0..1의 유한 비율>}`를 명시하고 binding에 동결한다(예시 숫자를 승인값으로 간주하지 않는다). 실제 발행 요청 중 `lateness > latenessToleranceNS` 비율이 상한을 넘거나 frozen trace가 전부 공급되지 않으면 `INVALID_GENERATOR`이며 SLO 실패로 귀속하지 않는다. 정책 미설정·필수 timestamp/모집단 결측은 `UNKNOWN`이지 임의의 통과가 아니다. full planned offered 분모는 그대로 두고 `issued=false`인 thread-start 실패도 미발행으로 센다.
+- 실행 전 `generatorQuality: {"latenessToleranceNS": 50000000, "maxExceedingFraction": 0.01}`를 권고 기본값(50ms 초과 발행 지각 비율 ≤1%; U6 발행 공백 분석 임계와 동일)으로 예시·G-check·E5 7+1·preflight 설정에 명시하고 binding에 동결한다. 실제 발행 요청 중 `lateness > latenessToleranceNS` 비율이 상한을 넘거나 frozen trace가 전부 공급되지 않으면 `INVALID_GENERATOR`이며 SLO 실패로 귀속하지 않는다. 정책 미설정·필수 timestamp/모집단 결측은 `UNKNOWN`이지 임의의 통과가 아니다. full planned offered 분모는 그대로 두고 `issued=false`인 thread-start 실패도 미발행으로 센다.
 
 ## 명세 7행 커버리지와 한계
 

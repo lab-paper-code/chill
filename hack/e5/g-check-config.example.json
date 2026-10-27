@@ -1,5 +1,6 @@
 {
   "controlSourceSHA": "3dff4e7",
+  "generatorQuality": {"latenessToleranceNS": 50000000, "maxExceedingFraction": 0.01},
   "staticPlacement": true,
   "poolShares": {"MNV": 0.45, "PLC": 0.1, "Smol": 0.45},
   "capacityR": {"mobilenet": null, "plc": null, "smolvlm2": null},

@@ -426,3 +426,8 @@
 
 - efd5c177의 잔여 수명 차감(L − (송신−예정)) 되돌림: 생성기 지각은 장비 책임이지 서버 책임이 아님 — 깎은 수명을 주면 drop/우선순위 행동이 바뀌어 측정 오염. 명세(03_routing)대로 수명·SLO는 게이트웨이 수신 시각부터, X-Chill-Request-Timeout은 L 그대로.
 - 세 구간 분리 기록·보고: (1) 예정→송신 시작 = 생성기 지각(장비 품질; 허용치 초과 비율이 기준을 넘으면 실행 무효, SLO 실패로 세지 않음), (2) 송신 시작→게이트웨이 수신 = CHILL 입구 지연(서버 책임, 입구 병목 판단), (3) 수신→응답 = SLO 판정. '예정 시각 기준 지연' 판정(7135c435)은 (3) 기준으로 되돌리고 예정 기준 종단 지연은 참고 지표. coordinated omission은 열린 고리(응답 대기 없는 송신)로 막음.
+
+## 2026-10-28 — E5 생성기 품질 권고 기본값: 50ms·1%
+
+- 결정: `generatorQuality = {"latenessToleranceNS": 50000000, "maxExceedingFraction": 0.01}`를 예시 실행·G-check·E5 7+1·preflight 설정에 명시한다. 50ms는 U6 발행 공백 분석 임계와 맞춘 권고값이며, gap 자체가 아니라 예정→실제 송신의 lateness를 판정한다. 실제 발행 요청 중 50ms **초과** 비율이 1% 이하면 품질 허용 범위다.
+- frozen trace 전부 공급도 필수다. 초과 비율 >1% 또는 공급 불완전은 `INVALID_GENERATOR`로 실행 무효이며 서버 SLO 실패로 돌리지 않는다. 정책 미설정·필수 timestamp/모집단 결측은 계속 `UNKNOWN`; 런타임에 숨은 기본값을 넣거나 기존 binding·원시·판정을 소급 변경하지 않는다. 다음 prepare에서 실행 설정과 binding에 동결하고 full planned offered 분모·수신 원점 SLO·수명 L은 유지한다.

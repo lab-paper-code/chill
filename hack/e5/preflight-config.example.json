@@ -4,6 +4,7 @@
   "evaluationConfig": "hack/e5/demo-config.e5.example.json",
   "failureInjectionPreflight": "CampaignOps freezes exact serving Pod/Node UIDs, verifies delete/cordon/uncordon permission read-only, alternative Accepted capacity and restoration owner before E5-7; preflight never executes these mutations",
   "controlSourceSHA": "0152e0672323594aa97e53303d60f919198e951a",
+  "generatorQuality": {"latenessToleranceNS": 50000000, "maxExceedingFraction": 0.01},
   "tokenSafetyMarginSeconds": 30,
   "timeboxes": {
     "setupSeconds": 20,

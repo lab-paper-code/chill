@@ -50,6 +50,14 @@ def self_check():
     policy=analysis.generator_quality_config({'generatorQuality':{'latenessToleranceNS':50_000_000,'maxExceedingFraction':0}})
     assert analysis.issuance_fidelity(rows,[0],100,50_000_000,analysis.stats,policy)['generatorQuality']['status']=='INVALID_GENERATOR'
     assert fidelity['generatorQuality']['status']=='UNKNOWN'
+    for name in ('demo-config.example.json','demo-config.e5.example.json','g-check-config.example.json','preflight-config.example.json'):
+        default_policy=analysis.generator_quality_config(json.loads((HERE/name).read_text()))
+        assert default_policy=={'latenessToleranceNS':50_000_000,'maxExceedingFraction':.01},name
+    population=[dict(rows[0],requestIndex=i,scheduledOffsetNs=i,scheduledMonotonicNS=100+i,sentMonotonicNS=50_000_100+i) for i in range(100)]
+    population[0]['sentMonotonicNS']+=1
+    assert analysis.issuance_fidelity(population,list(range(100)),100,100_000_000,analysis.stats,default_policy)['generatorQuality']['status']=='VALID'
+    population[1]['sentMonotonicNS']+=1
+    assert analysis.issuance_fidelity(population,list(range(100)),100,100_000_000,analysis.stats,default_policy)['generatorQuality']['status']=='INVALID_GENERATOR'
     timing=analysis.request_timing(dict(rows[0],sentAtUnixNS=200),{'outcome':'completed','executionComplete':True,'elapsedNanos':500_000},150,100)
     assert timing['sloLatencyNS']==500_000 and timing['scheduledLatencyNS']==61_000_000 and timing['entranceDelayNS']==-50
     assert analysis.request_timing(rows[0],None,150,100)['sloLatencyNS'] is None

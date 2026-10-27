@@ -1,5 +1,6 @@
 {
   "controlSourceSHA": "3dff4e7",
+  "generatorQuality": {"latenessToleranceNS": 50000000, "maxExceedingFraction": 0.01},
   "timeboxes": {
     "setupSeconds": 194,
     "barrierSeconds": 300,
