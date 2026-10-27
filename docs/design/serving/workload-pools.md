@@ -439,7 +439,7 @@ runtime 7종 digest, profile, 측정 입력과 판정 기준은 고정한다.
   노드별 가장 빠른 option의 b1 지연을 구하고 가장 넓은 지연 간격에서 목표를 고르는 방향을 따른다.
   κ>0인 노드가 절반 이상이고 가장 느린 두 노드는 κ0인지 p95/p99 표와 계산시간으로 확인한다.
   최종 percentile/SLO의 숫자는 실측 제안으로 고정한다.
-- 기준 요청률 `R_w`: Workload SLO 행에서 노드별 최대 κ의 합이다(`hack/kappa -mode slo`의 κ 합). 노드마다 서빙 인스턴스가 하나라 세 Workload가 노드를 나눠 쓰므로 함께 쓰는 용량은 세 `R_w`의 합보다 작다. 단계 요청률은 Workload마다 `R_w`의 비율이고, 같은 비율에서 판단이 `Overload`인지가 결과에 들어간다.
+- 기준 요청률 `R_w`: 최종 Workload SLO의 Node별 최대 적격 κ 합이다(`hack/kappa -mode slo`). **Node당 서빙 인스턴스 하나**이므로 세 고립 R은 같은 Node를 중복 사용하며 동시에 달성할 수 없다. 단계률은 **`rate_w=α_w×s_w×R_w`**다. `poolShares={MNV:1/3,PLC:1/3,Smol:1/3}`가 기본값이고 각 s는 유한한 [0,1], 합 1(오차 1e-9 이내)이다. α∈{0.3,0.5,0.7,0.9,1.2}는 POOL 사용률 단계이며 혼합 feasible 보장이 아니다. R·s·α·최종 rate/trace를 binding에 동결한다. 아래 단계 표의 수치는 R 직접 배수가 아니라 α이며 burst에서는 Smol의 α만 바뀐다.
 - 부하는 `chill-loadgen replay --arrivals poisson`으로 Workload마다 동시에 보낸다.
   seeds101/202/303 배정, 도착 trace와 payload ID는 사전에 manifest로 고정하고 비교 쌍에서 재사용한다.
   모든 E5 호출은 실제 Workload UID/generation/SLO와 gateway cap을 캡처하고
@@ -447,8 +447,8 @@ runtime 7종 digest, profile, 측정 입력과 판정 기준은 고정한다.
   L≥SLO, socket>L+delivery, cap≥L을 확인한다.
   tight MNV 예는 `--workload-slo 1 --gateway-timeout 129 --request-lifetime 2 --delivery-margin 0.010 --timeout 2.02`다.
   PLC/Smol 값은 D2 뒤 실측 SLO/m/G/κ/R 입력으로 고정한다.
-  세 요청률의 합은 최종 G 이하다. PLC 몫이 상한을 넘으면 G에서 다른 두 몫을 뺀 값을 기록한다.
-  음수 remainder나 의도한 overload 소실은 별도 결정한다.
+  세 요청률 합이 실측 G 범위인지 고정 배치 혼합 계단으로 확인한다.
+  G 초과 시 자동 clipping하지 않는다. native/client가 먼저 한계이면 gateway bound와 원인을 기록한다.
 - 원래 L과 senderElapsed를 전달하고 `native remaining=L−senderElapsed−m`으로 계산한다.
   SLO와 transport L을 구분하고 m은 한 번 차감한다. signed d와 계획기의 `max(d,0)`를 각각 보존한다.
   D04/D09/D14/D23/D33의 profile 포함 95% 구간은 0 아래인 known systematic profile-versus-serving bias다.
@@ -524,14 +524,14 @@ G2 계약 세대 감사와 E5 실행 결과는 각각 별도다.
 | 단계 | 시간 | 요청률 (mobilenet, PLC, SmolVLM) | 재는 것 | 채우는 칸 | 근거(Run ID, 원시 경로) |
 |---|---|---|---|---|---|
 | E5-0 시작 | 10분 | 모두 0 | Workload마다 측정 근거가 있는 노드의 첫 인스턴스, 나머지 가용 노드의 가장 낮은 모드, 무부하 전체 POOL 전력 | `SCH-AC-24`(세 Workload) | 미측정. Run ID 없음, 원시 경로 없음 |
-| E5-1 일정 | 30분 | 모두 0.3 `R_w` | Workload별 지연 분포와 처리 결과 수(완료, 실패, 거절, 취소, 미완료), 전체 POOL과 활성 POOL 에너지, 창별 예측 백분위와 관측 백분위 | [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가) 일정 부하와 이기종 워크로드 동시 혼합 부하 행, `SCH-AC-23`, [07 검증](../architecture-rethink/07-validation.md) 2번 | 미측정. Run ID 없음, 원시 경로 없음 |
-| E5-2 버스트 | 15분 | SmolVLM만 0.3에서 0.9 `R_w`, 나머지 0.3 `R_w` | 대응 시작 시간, 측정 가능한 GPU 장착 Node의 Workload 소유권 재배치, 전환 중 모든 Workload SLO와 Jetson 모드 변경 지연 | 평가 표 갑작스러운 버스트 행, `SCH-AC-21` | 미측정. Run ID 없음, 원시 경로 없음 |
-| E5-3 증가 | 30분 | 모두 0.5, 0.7, 0.9 `R_w` 각 10분 | 확장 순서, 전환 구간 SLO, 판단의 `κ_new`, `B`, `W`와 관측 큐 | 평가 표 점진적인 증가와 감소 행(증가), `SCH-AC-15` | 미측정. Run ID 없음, 원시 경로 없음 |
+| E5-1 일정 | 30분 | 모두 α=0.3 | Workload별 지연 분포와 처리 결과 수(완료, 실패, 거절, 취소, 미완료), 전체 POOL과 활성 POOL 에너지, 창별 예측 백분위와 관측 백분위 | [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가) 일정 부하와 이기종 워크로드 동시 혼합 부하 행, `SCH-AC-23`, [07 검증](../architecture-rethink/07-validation.md) 2번 | 미측정. Run ID 없음, 원시 경로 없음 |
+| E5-2 버스트 | 15분 | Smol α=0.3→0.9, 나머지 α=0.3 | 대응 시작 시간, 측정 가능한 GPU 장착 Node의 Workload 소유권 재배치, 전환 중 모든 Workload SLO와 Jetson 모드 변경 지연 | 평가 표 갑작스러운 버스트 행, `SCH-AC-21` | 미측정. Run ID 없음, 원시 경로 없음 |
+| E5-3 증가 | 30분 | 모두 α=0.5,0.7,0.9 각10분 | 확장 순서, 전환 구간 SLO, 판단의 `κ_new`, `B`, `W`와 관측 큐 | 평가 표 점진적인 증가와 감소 행(증가), `SCH-AC-15` | 미측정. Run ID 없음, 원시 경로 없음 |
 | E5-S 정적 기준선 | 170분 | E5-1부터 E5-6까지의 요청률과 seed | E5-1부터 E5-6까지와 같은 항목, 고정 구성의 인스턴스와 전력모드 | [명세](../../spec/README.md#실클러스터-검증과-평가)의 정적 배포 비교, `SCH-AC-20` | 미측정. Run ID 없음, 원시 경로 없음 |
-| E5-4 한계 | 15분 | 모두 1.2 `R_w` | `Overload` 판단과 최대 초과량 순서, Workload별 실제 지연과 처리 결과, 노드별 인스턴스와 전력모드 | 평가 표 전체 POOL의 한계를 넘는 부하 행, `SCH-AC-16` | 미측정. Run ID 없음, 원시 경로 없음 |
-| E5-5 급감과 재급증 | 20분 | 모두 0.3 `R_w` 10분, 0.9 `R_w` 10분 | 축소와 유휴 제거, 다시 확장, 반복 전환의 J와 시간, U2 최소안 Jetson 모드 변경/KEEP 근거와 read-back | 평가 표 전환 직후 급감과 재급증 행, `SCH-AC-15`; 점진 감소는 미평가 | 미측정. Run ID 없음, 원시 경로 없음 |
-| E5-6 soak | 60분 | 모두 0.3 `R_w` | 1시간 예측 에너지 합과 비교 집합 실측, 전체 POOL 실측, `completionResidualNanos` 분포와 설정 여유 | 위 표 E5 행, [용량표 계획기](analytic-planner.md#11-확인) 에너지(실측) | 미측정. Run ID 없음, 원시 경로 없음 |
-| E5-7 실패 | 15분 | 모두 0.3 `R_w` | 180초 인스턴스 강제 종료, 360초 Node 하나 cordon+서빙 Pod 삭제, 600초 uncordon; 격리·대체·실제 복구와 실패 동작 원인 | 평가 표 노드·서빙·제어 동작 실패 행, `SCH-AC-45` | 미측정. Run ID 없음, 원시 경로 없음 |
+| E5-4 한계 | 15분 | 모두 α=1.2 | `Overload` 판단과 최대 초과량 순서, Workload별 실제 지연과 처리 결과, 노드별 인스턴스와 전력모드 | 평가 표 전체 POOL의 한계를 넘는 부하 행, `SCH-AC-16` | 미측정. Run ID 없음, 원시 경로 없음 |
+| E5-5 급감과 재급증 | 20분 | 모두 α=0.3 10분, α=0.9 10분 | 축소와 유휴 제거, 반복 전환의 J와 시간, U2 최소안 Jetson 모드 변경/KEEP 근거와 read-back | 평가 표 전환 직후 급감과 재급증 행, `SCH-AC-15`; 점진 감소는 미평가 | 미측정. Run ID 없음, 원시 경로 없음 |
+| E5-6 soak | 60분 | 모두 α=0.3 | 1시간 예측 에너지 합과 비교 집합 실측, 전체 POOL 실측, `completionResidualNanos` 분포와 설정 여유 | 위 표 E5 행, [용량표 계획기](analytic-planner.md#11-확인) 에너지(실측) | 미측정. Run ID 없음, 원시 경로 없음 |
+| E5-7 실패 | 15분 | 모두 α=0.3 | 180초 인스턴스 강제 종료, 360초 Node 하나 cordon+서빙 Pod 삭제, 600초 uncordon; 격리·대체·실제 복구와 실패 동작 원인 | 평가 표 노드·서빙·제어 동작 실패 행, `SCH-AC-45` | 미측정. Run ID 없음, 원시 경로 없음 |
 
 **7행 커버리지와 실패 주입 계약:** [E5 계획의 커버리지 표](../../plans/2026-10-26-e5-evaluation.md#명세-7행-커버리지와-한계)가 정본이다. 일정=1/6, 증가=3(점진 감소 없음), 버스트=2(Smol만), 급감/재급증=5, 이기종 혼합=1~7, 한계=4, 실패=7이다. 독립 반복은 없으며 완전 커버리지로 주장하지 않는다. E5-7은 기존 kubectl의 Pod 강제 삭제와 cordon/uncordon으로 운영 담당만 직렬 실행한다. cordon은 네트워크 단절이나 기존 Pod 종료가 아니므로 삭제를 함께 사용한 배치 차단 대리 실험으로 보고한다. 대상 UID·명령 UTC·응답·격리·대체 결정·Ready/ACK·route 복구를 보존하고 실패 시에도 uncordon read-back을 남긴다. 제어 실패는 이 주입에서 실제 관찰한 유형에 한정한다.
 
@@ -541,7 +541,7 @@ G2 계약 세대 감사와 E5 실행 결과는 각각 별도다.
 해당 GPU 장착 Node는 측정된 MNV/PLC CUDA 또는 Smol CPU를 후보로 사용하고,
 Jetsono SmolCUDA도 실제 후보로 비교한다. CPU 후보를 유지하며 SmolCUDA 채택이나 GPU 승자를 성공 조건으로 두지 않는다.
 
-**E5-S 정적 기준선.** E5-3 끝에서 구성을 고정해 같은 부하를 다시 보내고, 끝나면 자동제어를 되돌려 E5-4로 간다. 고정 구성은 0.9 `R_w`에서 판단이 고른 구성, 곧 최대 정상 부하에 맞춘 배치다.
+**E5-S 정적 기준선.** E5-3 끝에서 구성을 고정해 같은 부하를 다시 보내고, 끝나면 자동제어를 되돌려 E5-4로 간다. 고정 구성은 α=0.9(`rate_w=0.9×s_w×R_w`)에서 판단이 고른 구성, 곧 최대 정상 단계에 맞춘 배치다.
 
 1. 고정: `/api/v1/scheduler/state` snapshot에서 세 Workload의 인스턴스와 routing을 읽어, 세 UID를 `autonomousWorkloads`에서 빼고 그 routing을 `staticRouting`으로 담은 PUT 하나를 `reason`(위 선택 이유)과 함께 보낸다([정적 배치 사용법](scheduler-operations.md#정적-배치-사용법) 2단계). 꺼진 Workload의 인스턴스가 있는 노드는 인스턴스와 전력모드를 그대로 둔다(`FixedWorkload`). PUT 응답의 `validatedAt`, ConfigMap 구성의 `staticRoutingValidatedAt`, `manual-static-routing` 동작의 `operation.settingsValidatedAt`이 같은지 실행 기록에 남긴다.
 2. 부하: E5-1부터 E5-6까지의 요청률을 같은 seed로 차례로 보낸다.
@@ -561,7 +561,7 @@ Jetsono SmolCUDA도 실제 후보로 비교한다. CPU 후보를 유지하며 Sm
 - 평가 분모는 모든 유효 offered 요청이다. 전환을 포함한 정상 단계/하위 단계의 SLO와 1분 관측을 남긴다.
   완료, 실패, 만료, drain과 censoring, 미완료와 표본 수를 함께 보고한다.
   thermal은 5 s 주기와 active/latched/unknown, 사전 온도 bin(<60/60–70/70–80/≥80°C)으로 기록하고 미관측 bin의 일반화를 제한한다.
-  E5-S는 E5-3 끝 0.9R의 실제 구성/모드/route를 고정한다.
+  E5-S는 E5-3 끝 α=0.9의 실제 구성/모드/route를 고정한다.
   제어요소 비교는 N=2 권고안(membership-off, replicas-off)이며 각각 하나씩 끄고 같은 E5-2/E5-5 arrival trace와 실제 효과 witness를 보존한다.
   placement/자원은 배치·profile과 결합, routing은 no-op/안전 전달 경로, batching은 고정 B와 deadline 의미 차이, power는 U2 최소안 장면만 관찰하므로 별도 off 비교에서 제외한다. 전체 제어요소의 독립 기여를 증명하지 않는다.
   seeds101/202/303, payload ID와 profiling/evaluation 부분집합을 사전에 고정한다.
