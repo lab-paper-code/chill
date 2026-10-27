@@ -408,3 +408,7 @@
 ## 2026-10-27 11:2xZ — U11 게이트웨이 구조 개편 등록(제어/데이터 평면 분리)
 
 - 제안서 `O/intent/gateway-20261027/proposal.md`. G0(현 구조 G 확인 1회, E5 준비와 동일) 통과 시 E5 먼저, 직후 G1~G3; 실패 시 E5 앞. 워크플로우 U11.
+
+## 2026-10-27 11:4xZ — U5 종결(원인 미확정, 재발 없음)
+
+- 단발 progress stamp 손실: 새 규칙 24대상 중 D15 1건(unknown 0, 연속성 위반 1 pair); 해당 창·실물에 서버 reject/source issue/stream ended 0건(`history://U5RejectScan27`) → 손실은 observer 이전 단계(native stdout→CRI/follow 경계)[추정]. 이후 15회 연속 시도 재발 0 → 완료 기준('3회 연속 재발 없음') 충족. 동시 Pod 로그 캡처 금지 유지. runtime 재빌드 시 emitter 진단 로그 반영.
