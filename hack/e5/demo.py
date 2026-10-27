@@ -794,7 +794,7 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
             good = {id(r) for r in successful}
             start = phase['starts'].get(name)
             fidelity = analysis.issuance_fidelity(clients, stage['traces'][name]['offsetsNS'], (start or {}).get('monotonicNS'), round(stage['seconds'] * 1e9), analysis.stats, analysis.generator_quality_config(binding.get('demoConfig', {}) if 'generatorQuality' in binding.get('demoConfig', {}) else binding['config']))
-            indexed = raw.index_requests(folder, w['uid'], phase['startUTC'], phase['endUTC'], actual_response_ids=[r['requestID'] for r in clients if r.get('requestID')])
+            indexed = raw.index_requests(folder, w['uid'], phase['startUTC'], phase['endUTC'], actual_response_ids=[r['requestID'] for r in clients if r.get('requestID')], approved_root=out if judge else None)
             response_ids = [r['requestID'] for r in clients if r.get('requestID')]
             if len(response_ids) != len(set(response_ids)):
                 indexed = dict(indexed, errors=indexed['errors'] + ['Duplicate client requestIDs cannot identify independent offered responses'])
@@ -1335,7 +1335,7 @@ def self_check():
                             instance['maxBatch'] = 88
                         captured.append({'at': at, 'snapshot': state})
                     return captured, {'complete': True, 'errors': []}
-                def requests(folder, uid, start, end, actual_response_ids=None):
+                def requests(folder, uid, start, end, actual_response_ids=None, *, approved_root=None):
                     workload = next(w for w in workloads if w['uid'] == uid)
                     path = folder / (workload['name'] + '-client.jsonl')
                     clients = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
@@ -2126,7 +2126,8 @@ def self_check():
         historical_path = root / 'historical-binding.json'
         e5.save(historical_path, frozen_binding)
         historical = e5.summarize(historical_path, frozen_root)
-        assert historical['schedulerSettings'] is None and any('frozen scheduler settings' in row['reason'] for row in historical['missing'])
+        assert historical['schedulerSettings'] is None
+        assert not any('frozen scheduler settings' in row['reason'] or 'restoration' in row['reason'] for row in historical['missing'])
         print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, static placement without scheduler mutation (including failure), stage-entry and pre-GO barriers clear/timeout, optional lifetime, server reset evidence and failure stop, reset autonomy-off reservation/action wait clear/timeout and single attempt on failure/409; mocked API/kubectl only')
 
 

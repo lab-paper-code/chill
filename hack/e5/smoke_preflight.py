@@ -41,6 +41,12 @@ def main():
             indexed = raw.iter_request_indexes(root, ['w'], '2026-10-27T00:00:00Z', '2026-10-27T00:00:01Z')['w']
         assert indexed['receivedAtNS'] == {'assigned-only': raw._time(stamp)}
         assert not indexed['finals'] and indexed['summary']['finalConflicts']
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(raw, '_manifest', return_value=({}, [], [])), \
+             patch.object(raw, '_population'), \
+             patch.object(raw, '_rows', return_value=[(None, row, {'line': i}) for i, row in enumerate(raw_rows, 1)]):
+            assert raw.iter_request_indexes(root, ['w'], '2026-10-27T00:00:00Z', '2026-10-27T00:00:01Z', approved_root=root)['w']['receivedAtNS'] == indexed['receivedAtNS']
+            assert raw.index_requests(root, 'w', '2026-10-27T00:00:00Z', '2026-10-27T00:00:01Z', approved_root=root)['receivedAtNS'] == indexed['receivedAtNS']
         assert raw._root(root / 'stage', root) == root / 'stage'
         try:
             raw._root(root.parent, root)

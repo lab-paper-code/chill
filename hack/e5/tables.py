@@ -35,7 +35,7 @@ def render(root, repo):
                  'mixed-heterogeneous', 'pool-overload', 'node-serving-control-failure']
     title = f'# E5 table rows: {cell(root.name)}'
     lines = [title, '', 'PRIVATE_OPERATIONAL_ONLY; spec/design files are not modified.',
-             'Existing summary judgments only; MEASURED is not criterion PASS. Missing values are not zero.',
+             'Existing summary judgments only; MEASURED is a result link, not criterion PASS or complete scenario coverage. Missing values are not zero.',
              'Operational G0/demo evidence does not complete an E5 evaluation row.' if operational else 'Source: e5-summary.json (existing summarize output).', '', '## docs/spec/README.md', '', *spec[:2]]
     for row, key in zip(spec[2:], scenarios):
         columns = row.split('|')[1:-1]
@@ -59,6 +59,7 @@ def render(root, repo):
                   'scenarioLimitations': summary.get('scenarioLimitations'),
                   'limitations': summary.get('limitations', binding.get('limitations')),
                   'energyBelowResolution': summary.get('energyBelowResolution'),
+                  'measurementMeaning': summary.get('measurementMeaning'),
               }, ensure_ascii=False, indent=2), '```',
               'energyBelowResolution marks an explicit below-resolution 0 J/item, not exact zero energy '
               'or measured whole-POOL savings. Missing report metadata remains null.', '']
@@ -66,7 +67,7 @@ def render(root, repo):
         lines += ['genesis2 하드웨어 결함으로 제외 (excluded for hardware failure); seven serving Nodes only.', '']
     if not operational:
         lines += ['', '## E5-7 manual failure evidence', '',
-                  'The recommended 180/360/600s operator runbook is separate from automatic workload replay. Actual command outcomes are required; failed commands and absent recovery are observations, not successful recovery. Missing actual command evidence is not MEASURED.',
+                  'The recommended 180/360/600s operator runbook is separate from automatic workload replay. Failed commands and absent recovery are observations. Missing operator evidence leaves the failure scenario UNMEASURED; it is not an extra SLO/energy validity gate.',
                   '```json', json.dumps(summary.get('failureScenarioEvidence'), ensure_ascii=False, indent=2), '```', '']
     lines += ['', '## Three timing populations (existing summary values)', '',
               'Generator: scheduled arrival → actual send (ns); entrance: actual send → gateway receivedAt (ns, cross-host clock uncertainty, negative values retained); SLO: CHILL receipt → response via gateway elapsedNanos. Offered includes unsent requests. Completed latency quantiles do not replace the offered denominator.', '']
@@ -74,6 +75,8 @@ def render(root, repo):
     for path in paths:
         stage = load(path)
         lines += [f'### {cell(path.parent.name)}', '', f'Source: `{cell(path)}`; status: {cell(stage.get("status", "UNKNOWN"))}', '']
+        if 'judgmentCriteria' in stage:
+            lines += ['Judgment criteria: ' + ', '.join(stage['judgmentCriteria']) + '.', '']
         for name, metric in stage.get('workloads', stage.get('requests', {})).items():
             fidelity = metric.get('issuanceFidelity') or {}
             selected = {'offered': metric.get('offered'), 'generatorQuality': fidelity.get('generatorQuality'),

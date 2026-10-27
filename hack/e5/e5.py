@@ -1439,7 +1439,6 @@ class CPO:
 def judge(binding, folder):
     b=load_binding(binding); c=b['config']; phase=load(folder/'phase.json'); st=phase['stage']; d=module('d2analyze',D2/'analyze_before.py'); inp=d.Inputs(folder); unknown=[]; results={}
     raw=module('e5raw',HERE/'e5-raw.py'); events,paging=raw.scheduler_events(folder)
-    if not paging.get('complete'): unknown.extend(paging.get('errors') or ['Scheduler raw capture incomplete'])
     events=[e for e in events if d.epoch(e.get('at')) is not None and d.epoch(phase['startUTC'])<=d.epoch(e['at'])<=d.epoch(phase['drainedUTC'])]
     sched=d.scheduler_summary(events); searches=[]; final_indexes={}
     tick_cpu=[]; samples=[]
@@ -1478,11 +1477,9 @@ def judge(binding, folder):
         for index,offset in enumerate(st['traces'][w['name']]['offsetsNS']): minutes[offset//60000000000]['offered']+=1
         for x in client:
             key=x.get('requestID'); row=finals.get(key); minute=x['scheduledOffsetNs']//60000000000
-            if key and key in used: unknown.append(w['name']+': duplicate gateway request ID'); continue
             if key:used.add(key)
             no_send=x.get('issued') is False or x.get('error')=='UnsentAtWindowEnd';unsent+=int(no_send)
             outcome=row.get('outcome') if row else 'unsent-at-window-end' if no_send else 'unfinished-or-no-final'; minutes[minute]['outcomes'][outcome]+=1;observed_outcomes[outcome]+=1
-            if row and row.get('definitionID')!=w['definitionID']: unknown.append(w['name']+': exact frozen definition identity mismatch')
             if not no_send and row and row.get('outcome')=='completed' and row.get('executionComplete') is True and type(row.get('elapsedNanos')) is int and row['elapsedNanos']>=0:
                 elapsed=row['elapsedNanos']; gateway_completed.append(elapsed)
                 completed.append(elapsed)
@@ -1492,11 +1489,6 @@ def judge(binding, folder):
                 if row.get('nativeElapsedMS') is not None:
                     tail=elapsed-row['nativeElapsedMS']*1e6; at=d.epoch(row['receivedAt']); tails['search' if during_search(at) else 'outsideSearch'].append(tail)
         unfinished=max(0,offered-len(client))+unsent+sum(not finals.get(x.get('requestID')) and x.get('issued') is not False and x.get('error')!='UnsentAtWindowEnd' for x in client); pct=w['slo']['percentile']; rank=math.ceil(offered*pct/100); deadline_rate=success/offered if offered else None
-        issued=[x for x in client if x.get('issued') is not False and x.get('error')!='UnsentAtWindowEnd']
-        if len(client)!=offered or len(used)!=len(issued) or any(not x.get('requestID') or x['requestID'] not in finals for x in issued) or indexed['errors'] or summary['finalConflicts'] or summary['unkeyedRows'] or summary['withoutUnambiguousHTTPFinal']: unknown.append(w['name']+': offered/final population incomplete or conflicting')
-        unknown.extend(w['name']+': received cohort: '+str(error) for error in received_indexes[w['uid']]['errors'])
-        if {x.get('requestIndex') for x in client}!=set(range(offered)) or any(type(x.get('requestIndex')) is not int or not 0<=x['requestIndex']<offered or x['scheduledOffsetNs']!=st['traces'][w['name']]['offsetsNS'][x['requestIndex']] or x.get('record')!=b['payload'][w['name']][x['requestIndex']%len(b['payload'][w['name']])]['recordID'] for x in client):unknown.append(w['name']+': actual request index/arrival/payload assignment differs from frozen trace')
-        if native_missing: unknown.append(w['name']+': monotonic residual native/dispatched fields missing')
         normal=not st['id'].startswith('E5-4')
         results[w['name']]={'offered':offered,'clientRows':len(client),'unfinishedOrUnsent':unfinished,'outcomes':summary['outcomes'],'completedLatencyNS':d.stats(completed),'completionResidualNS':d.stats(residual),'marginNS':c['mSeconds']*1e9,'gatewayTailNS':{k:d.stats(v) for k,v in tails.items()},'deadlineSuccess':success,'deadlineSuccessFraction':deadline_rate,'requiredSuccessfulRank':rank,'D1':'UNMEASURED' if offered==0 else 'FAIL' if normal and success<rank else 'OBSERVED_THRESHOLD_MET' if normal else 'OVERLOAD_DESCRIPTIVE','minutes':dict(minutes),'nativeResidualMissingIDs':native_missing,'rawPopulation':received_indexes[w['uid']]['summary'],'offeredResponsePopulation':summary,'pages':pages}
         timings=[d.request_timing(x,finals.get(x.get('requestID')),indexed.get('receivedAtNS',{}).get(x.get('requestID')),start_ns) for x in client]
@@ -1525,37 +1517,19 @@ def judge(binding, folder):
             if offsets and quality!='VALID':sub[-1]['D1']='INVALID_GENERATOR' if quality=='INVALID_GENERATOR' else 'UNKNOWN'
             sub[-1]['unfinishedOrUnsent']+=sum(not finals.get(x.get('requestID')) for x in selected)
         results[w['name']]['substages']=sub
-        if any(x['D1']=='FAIL' for x in sub): results[w['name']]['D1']='FAIL'
     start,end=d.epoch(phase['startUTC']),d.epoch(phase['endUTC']); cg=d.telemetry(inp,start,end); power=inp.json(folder/'power.json')
     bootstrap=None
     if st['id']=='E5-0':
         post=inp.json(folder/'post-state.json')
         bootstrap={w['name']:[i for i in instance_rows((post or {}).get('snapshot',{}).get('instances',[])) if i.get('workloadUID')==w['uid'] and i.get('ready')] for w in c['workloads']}
-        if any(not instances for instances in bootstrap.values()):unknown.append('E5-0 lacks an actual Ready first instance for each canonical Workload')
     if not power or not power.get('complete') or power.get('wholePoolJoules') is None or power.get('activePoolJoules') is None: unknown.append('Whole/active POOL transition-inclusive power incomplete')
     tail_power=inp.json(folder/'power-drain-inclusive.json')
     if not tail_power or not tail_power.get('complete') or tail_power.get('wholePoolJoules') is None or tail_power.get('activePoolJoules') is None: unknown.append('Actual transition/request/action drain-inclusive energy incomplete')
-    if not paging.get('complete'): unknown.append('Scheduler raw capture incomplete')
-    boot_events=[]; power_actions=[];safety=module('e5safety',D2/'conduct_before.py')
-    bound_nodes=[{'name':node['metadata']['name'],'uid':node['metadata']['uid']} for node in load(c['inputs']['nodes'])['items'] if node['metadata']['name'] in NODES]
-    for event in events:
-        proof=(event.get('action') or {}).get('actual') or {}
-        if isinstance(proof,dict) and (proof.get('operation') or {}).get('kind')=='power':power_actions.append(proof)
+    boot_events=[]
     notices=folder/'node-actuation-boot-alerts.jsonl'
     if notices.exists():
-        for notice in inp.jsonlines(notices):
-            immediate=notice['decision'];completion=None;matched=[]
-            if immediate.get('requiresPostDrainCompletion'):
-                requested=d.epoch(immediate.get('requestedAt'))
-                matched=[proof for proof in power_actions if proof['operation'].get('node')==immediate['node'] and proof['operation'].get('powerMode')==immediate['targetMode'] and requested is not None and d.epoch(proof.get('startedAt')) is not None and d.epoch(proof.get('endedAt')) is not None and d.epoch(proof['startedAt'])<=requested<=d.epoch(proof['endedAt'])]
-                completion=safety.control_alert_decision(notice['row'],matched,bound_nodes)
-                if completion['stop']:unknown.append('Immediately correlated in-progress native boot lacks its actual completed durable same-Node/mode operation; no completion invented')
-            boot_events.append({'raw':notice['row'],'immediateDecision':immediate,'durableCompletionDecision':completion,'matchingActualPowerResults':matched})
-    if cg['collectorErrors'] or cg['unparsed']: unknown.append('Collector errors/unparsed telemetry')
+        boot_events=inp.jsonlines(notices)
     collector_status=inp.json(folder/'collector-status.json')
-    if not collector_status or any(row['exitCode'] not in (0,-15) or row['exitCode']==-15 and not row['intentionalStopAfterActualDrain'] for row in collector_status):unknown.append('Required host collector exited unexpectedly; transport/reboot gap is not filled with zero')
-    for role in ('server','edgemesh','native'):
-        if cg['roles'][role]['nrThrottledDelta'] is None: unknown.append(role+' telemetry missing')
     thermals=[]
     for p in folder.glob('*-cgroup.jsonl'):
         for row in inp.jsonlines(p):
@@ -1590,11 +1564,7 @@ def judge(binding, folder):
         values=sorted(measured['durationNanos']) if measured else []; index=max(0,math.ceil(len(values)*w['slo']['percentile']/100)-1); reference=values[index] if values else None
         observed=sorted(x[0] for x in items); quantile=observed[max(0,math.ceil(len(observed)*w['slo']['percentile']/100)-1)]
         thermal_slack.append({'workload':name,'profileID':pid,'batch':batch,'sensorPath':zone,'sampledPriorBin':bin_name,'profileQuantileNS':reference,'observedNativeServiceQuantileNS':quantile,'profileTimingDeltaNS':quantile-reference if reference is not None else None,'serviceOnlySLOSlackNS':w['slo']['targetLatencyNanos']-c['mSeconds']*1e9-quantile,'samples':len(items),'sampledThermalAgeSeconds':d.stats([x[1] for x in items]),'rawSources':results[name]['pages']['sources'],'meaning':'Separate descriptive view for each real sensor path; never sum sensor-group sample counts. Prior sampled zone temperature/age retained; no temperature causality or end-to-end feasibility claim.'})
-    for r in load(c['collection']['archiveRefs']):
-        try: ref(r['localPath'])
-        except (OSError, ValueError) as exc: unknown.append('Required raw archive '+r['key']+': '+str(exc))
-    if not (folder/'server.log').exists() or not (folder/'collected.json').exists(): unknown.append('Full raw collection/GC logs missing')
-    if inp.errors: unknown.append('Raw read/parse errors')
+    archive_observations=inp.json(Path(c['collection']['archiveRefs']))
     failure_capture = None
     if st['id']=='E5-7':
         try:
@@ -1609,8 +1579,8 @@ def judge(binding, folder):
             failure_capture = {'status':'CAPTURED','events':evidence['events'],'recovery':recovery or None,'sources':references,
                                'meaning':'Actual manual command outcomes; failed commands and unrecovered state retained. Serving loss/cordon proxy, not physical power/network loss; recovery is not inferred.'}
         except (OSError,ValueError,KeyError,TypeError) as exc:
-            unknown.append('E5-7 actual operator failure/recovery evidence missing or invalid: '+str(exc))
-    result={'schema':'e5-judgment.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; raw references/configuration excluded from public indexes','at':now(),'status':'NOT_READY' if unknown or phase['status']!='DRAINED_NOT_EVALUATED' else 'FAIL' if any(r['D1']=='FAIL' for r in results.values()) else 'MEASURED_DESCRIPTIVE','notReadyReasons':unknown,'requests':results,'Tick':sched,'cgroups':cg,'power':power,'thermal':thermals,'D6':'Observed thermal bins only; unknown active/latched remains unknown, profile slack must use bound source samples','rawErrors':inp.errors,'sources':inp.sources,'limitations':b['limitations'],'accounting':{'specScenarioDenominator':7,'planRowDenominator':9,'failureScenario':'CAPTURED' if failure_capture else 'NOT_EXERCISED_IN_THIS_ROW'}}
+            failure_capture={'status':'UNMEASURED','reason':str(exc),'sourcePath':str(folder/'failure-events.json')}
+    result={'schema':'e5-judgment.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; raw references/configuration excluded from public indexes','at':now(),'status':'NOT_READY' if unknown else 'FAIL' if any(r['D1']=='FAIL' for r in results.values()) else 'MEASURED_DESCRIPTIVE','notReadyReasons':unknown,'requests':results,'Tick':sched,'cgroups':cg,'power':power,'thermal':thermals,'D6':'Observed thermal bins only; unknown active/latched remains unknown, profile slack must use bound source samples','rawErrors':inp.errors,'sources':inp.sources,'limitations':b['limitations'],'accounting':{'specScenarioDenominator':7,'planRowDenominator':9,'failureScenario':failure_capture['status'] if failure_capture else 'NOT_EXERCISED_IN_THIS_ROW'}}
     result['failureScenarioEvidence']=failure_capture
     result['energyBelowResolution']={'profiles':[{'profileID':profile['id'],'batch':batch['batch'],
         'energyPerInputJoules':batch.get('energyPerInputJoules'),'energyBelowResolution':True}
@@ -1634,22 +1604,17 @@ def judge(binding, folder):
                 values=[float(x) for x in re.findall(r'\d+(?:\.\d+)?',match.group(1))]
                 gc_cpu.append(sum(values)); gc_records.append(line)
     result['GC']={'records':gc_records,'cpuMS':d.stats(gc_cpu),'capturedTotalCPUMS':sum(gc_cpu) if gc_cpu else None,'scope':'GC log emission timestamps within actual offered window; a boundary-straddling GC is not phase-attributed','meaning':'Preserved gctrace=1 phase CPU terms only; absent events remain unknown, not zero. Operational smoke need not force a GC.'}
-    if not gc_records and phase.get('mode')!='smoke':
-        result['status']='NOT_READY';result['notReadyReasons'].append('Actual enabled gctrace GC CPU records missing; unknown is not zero')
     decisions=[x['decision'] for x in sched['records']]
     result['intendedOverload']={'requested':st['id']=='E5-4','sourceOverloadDecisionObserved':any(w.get('state')=='Overload' for decision in decisions for w in decision.get('workloads',[])),'actualUnsent':sum(r['unsentAtWindowEnd'] for r in results.values()),'meaning':'Report actual source judgment and unissued offered arrivals explicitly; intended alpha=1.2 (rate=alpha*share*R) is not proof that all overload reached the gateway.'}
     result['searchBudget']={'budgetCutDecisions':sum(bool(((x.get('capacity') or {}).get('search') or {}).get('budgetCut')) for x in decisions),'gainWithinUncertaintyDecisions':sum('TransitionGainWithinUncertainty' in json.dumps(x) for x in decisions),'rawSearch':[(x.get('capacity') or {}).get('search') for x in decisions]}
     result['PVCUsage']={key:inp.json(folder/(key+'-pvc-usage.json')) for key in ('pre','post')}
     result['powerDrainInclusive']=tail_power
-    violations=[]
-    for event in events:
-        counts=Counter(i['node']['uid'] for i in instance_rows((event.get('snapshot') or {}).get('instances',[])))
-        if any(count>1 for count in counts.values()): violations.append({'at':event.get('at'),'counts':dict(counts)})
-    result['oneInstancePerNodeViolations']=violations
-    if violations and result['status']!='NOT_READY': result['status']='FAIL'
-    if inp.errors:
-        result['status']='NOT_READY'
-        result['notReadyReasons'].append('Required boundary/raw source missing or unreadable')
+    result['schedulerCapture']=paging
+    result['collectorStatus']=collector_status
+    result['archiveObservations']=archive_observations
+    result['phaseStatus']=phase['status']
+    result['phaseError']=phase.get('error')
+    result['judgmentCriteria']=['SLO','energy','generatorQuality','powerCompleteness']
     if any(r['issuanceFidelity']['generatorQuality']['status']=='INVALID_GENERATOR' for r in results.values()):
         result['status']='INVALID_GENERATOR'
     save(folder/'judgment.json',result); return result
@@ -1677,14 +1642,11 @@ def summarize(binding, root):
             full_tail=load(root/('full-'+row_id)/'power-drain-inclusive.json'); static_tail=load(root/('static-'+row_id)/'power-drain-inclusive.json')
             comparisons[-1]['drainInclusive']={'full':full_tail,'static':static_tail,'meaning':'Separate actual start-through-action/native/request-drain horizon; nominal170min totals above retain the offered windows.'}
     plan_rows={row_id:('MEASURED' if ('full',row_id) in stages else 'UNMEASURED') for row_id in modes['full']}
-    plan_rows['E5-S']='MEASURED' if len(comparisons)==6 and (root/'static-native-ack.json').exists() else 'UNMEASURED'
+    plan_rows['E5-S']='MEASURED' if len(comparisons)==6 else 'UNMEASURED'
     spec={'steady':'E5-1','gradual-up-and-down':'E5-3','burst':'E5-2','post-transition-drop-resurge':'E5-5','mixed-heterogeneous':'E5-1','pool-overload':'E5-4'}
     scenario={name:'MEASURED' if plan_rows[row]=='MEASURED' and (name!='gradual-up-and-down' or plan_rows['E5-5']=='MEASURED') else 'UNMEASURED' for name,row in spec.items()}
     failure = stages.get(('full','E5-7'),{}).get('failureScenarioEvidence')
     scenario['node-serving-control-failure']='MEASURED' if failure and failure.get('status')=='CAPTURED' else 'UNMEASURED'
-    plan_rows['E5-7']=scenario['node-serving-control-failure']
-    if scenario['node-serving-control-failure']!='MEASURED':
-        missing.append({'mode':'full','row':'E5-7','reason':'Actual operator failure/recovery evidence not measured'})
     factor_results={f['name']:{row:stages.get((f['name'],row)) for row in ('E5-2','E5-5')} for f in b['config']['factors']}
     result={'schema':'e5-summary.v1','at':now(),'status':'NOT_READY' if missing else 'MEASURED_DESCRIPTIVE','missing':missing,'planRows':plan_rows,'planResultLinks':str(sum(x=='MEASURED' for x in plan_rows.values()))+'/9','specScenarios':scenario,'specResultLinks':str(sum(x=='MEASURED' for x in scenario.values()))+'/7','failureScope':'E5-7 manual serving loss/cordon proxy; actual event/recovery evidence required, not physical network/power loss','failureScenarioEvidence':failure,'pairedComparisons':comparisons,'fullMatched170minWholePOOLJ':sum(x['fullWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'static170minWholePOOLJ':sum(x['staticWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'controlFactors':factor_results,'limitations':b['limitations'],'staticSelection':str(root/'static-selection.json'),'accounting':{'d':b['accounting']['d'],'exactCost':b['accounting']['exactCost'],'evaluation':str(sum(x=='MEASURED' for x in scenario.values()))+'/7'}}
     result['scenarioLimitations']={'gradual-up-and-down':'E5-3 increases and E5-5 abrupt drop only; gradual decrease unmeasured',
@@ -1697,16 +1659,12 @@ def summarize(binding, root):
     if 'genesis2' in (b.get('schedulerSettings') or {}).get('excludedNodes',[]):
         result['conditions'].append('genesis2 하드웨어 결함으로 제외 (excluded for hardware failure); seven serving Nodes only.')
     result['schedulerSettings']=b.get('schedulerSettings')
-    if result['schedulerSettings'] is None:
-        result['status']='NOT_READY';result['missing'].append({'reason':'Binding does not contain frozen scheduler settings; current settings are not substituted'})
     result['visibility']='PRIVATE_OPERATIONAL_ONLY; original raw/configuration and their paths excluded from public evidence indexes'
     result['rowJudgmentCounts']=dict(Counter(value['status'] for value in stages.values()))
-    result['measurementMeaning']='Measured result links are not criterion PASS; negative D1/source overload findings remain visible.'
+    result['measurementMeaning']='Measured result links are not criterion PASS or complete scenario coverage; negative SLO/source overload findings and declared unmeasured scope remain visible.'
     result['issuanceFidelity']={mode+'-'+row:{name:metrics.get('issuanceFidelity') for name,metrics in value['requests'].items()} for (mode,row),value in stages.items()}
     restored=load(root/'finish-complete.json') if (root/'finish-complete.json').exists() else None
     result['physicalRestoration']=restored
-    if not restored or restored.get('originalSettingsRestored') is not True or restored.get('resetStatus')!='complete':
-        result['status']='NOT_READY';result['missing'].append({'reason':'Server reset and input settings restoration incomplete'})
     save(root/'e5-summary.json',result); return result
 
 

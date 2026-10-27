@@ -246,9 +246,9 @@ def _population(index, start, end, errors):
         _error(errors, str(exc))
 
 
-def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None):
+def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *, approved_root=None):
     global _REQUEST_CACHE
-    root = _root(folder)
+    root = _root(folder, approved_root)
     start, end = _time(startUTC), _time(endUTC)
     if start >= end:
         raise ValueError('request interval must be nonempty [startUTC,endUTC)')
@@ -406,14 +406,14 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None):
     return results
 
 
-def iter_request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None):
+def iter_request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *, approved_root=None):
     """Index all supplied UIDs in one streaming pass; return UID -> result."""
     wanted = tuple(uids)
-    results = _request_indexes(folder, wanted, startUTC, endUTC, actual_response_ids)
+    results = _request_indexes(folder, wanted, startUTC, endUTC, actual_response_ids, approved_root=approved_root)
     return {uid: results[uid] for uid in wanted}
 
 
-def index_requests(folder, uid, startUTC, endUTC, actual_response_ids=None):
+def index_requests(folder, uid, startUTC, endUTC, actual_response_ids=None, *, approved_root=None):
     """Return actual unambiguous HTTP finals and compact raw population evidence.
 
     Repeated per-UID calls for the same folder/interval reuse one all-UID scan.
@@ -421,7 +421,7 @@ def index_requests(folder, uid, startUTC, endUTC, actual_response_ids=None):
     """
     if not isinstance(uid, str) or not uid:
         raise ValueError('workload UID must be a nonempty string')
-    results = _request_indexes(folder, None if actual_response_ids is None else (uid,), startUTC, endUTC, None if actual_response_ids is None else {uid: actual_response_ids})
+    results = _request_indexes(folder, None if actual_response_ids is None else (uid,), startUTC, endUTC, None if actual_response_ids is None else {uid: actual_response_ids}, approved_root=approved_root)
     if uid not in results:
         # An empty UID still inherits provenance/parse errors, not empty-success.
         _, _, _, sources, errors, absences = _REQUEST_CACHE
