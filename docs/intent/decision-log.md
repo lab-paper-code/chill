@@ -474,3 +474,8 @@
 
 - 같은 Node 인스턴스 중첩은 교체 전환 구간(새 prepare 시작 ~ 옛 remove 완료, 다른 workload)이면서 장부상 자원이 겹치지 않을 때(CPU 집합 분리, 메모리 합 ≤ Node 할당량)만 허용. 중첩 건수·시간·Node 보고 지표. 정상 상태 >1·자원 겹침은 FAIL. 근거: make-before-break 표준; spec은 "인스턴스 하나=워크로드 하나", Node당 1은 R 계산 정상 상태 전제.
 - 재시작 전 필수: E5-0 원시(control-210-full)·시연·preflight 원시로 E5-0~7 judge/summarize 규칙 전체 오프라인 dry-run → 결정과 어긋나는 규칙 전부 목록 → 한 커밋 교체(판정 기준 변경 필요 항목은 사용자에게 한 번에 묶어 질문) → archive → preflight → E5 full.
+
+## 2026-10-27 22:3xZ — 정정: Node 중첩 판정 규칙 삭제(결정 A 대체)
+
+- 과밀은 CHILL 자원 장부(ADR 0023)가 입장 시 예약으로, 실행 중 CPU 겹침은 CHILL 공용 안전 검사가 막는다. 하네스의 사후 재검사는 AGENTS.md "경계 1회 검증, 하류 재검증 금지" 위반 → 중첩 판정 삭제(기록도 없음). 진짜 과밀은 E5가 재는 SLO·에너지에 드러남.
+- judge 전체를 같은 눈으로 E5-0 원시 오프라인 dry-run: CHILL이 이미 보장하는 것을 재검사하는 규칙은 모두 삭제, 판정에는 SLO·에너지·생성기 품질·전력 완전성만 남김 → 한 커밋 → archive → preflight → E5 full.
