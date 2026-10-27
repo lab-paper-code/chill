@@ -83,12 +83,12 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 
 | 항목 | 현재 경계 |
 |---|---|
-| MNV SLO | p95 1초/m29ms 유지. [최종 R 승인 요청서](file:///home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/e5-numbers-20261027.md) §2–3: rev98 연구SLO 재생완료, R 숫자승인·Node선별합격·연구개시 분리 |
-| PLC/Smol percentile·SLO | PLC32/40/50ms비교완료(요청서§2): R_P28.752259/1175.903157/1754.080759, α1.2·몫.1 rate3.450271/141.108379/210.489691. 세후보모두선별FAIL이므로‘조건통과중가장엄격한SLO’로자동선택할후보없음. 50ms sweep등록은승인변경아님 |
-| 적격 Node 선별 | PLC profile느린2는jetsonx/orangepi(b1p95 4.267/5.643992ms). 32mspositive1/8로FAIL,40/50mspositive7/8이나orangepiκ8.798149/57.177257>0·jetsonx자원Rejected≠0로FAIL. Smol7.034s는positive5/8·느린lattepanda/jetsonx Built0로PASS |
+| MNV SLO | [최종 R 승인 요청](file:///home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/e5-numbers-20261027.md): **PLC36ms·Smol7.034s·MNV1s, m29ms, 몫.45/.1/.45, G0결과대기**. PLC36은Main decision-log확정 |
+| PLC/Smol percentile·SLO | PLC32/36/40/50ms비교후36ms선택. R_P691.151722, α1.2몫.1 rate82.938207. 32과반FAIL·40/50느린orangepi양수한계와36의jetsonx자원Rejected한계를원시그대로공개 |
+| 적격 Node 선별 | PLC36positive5/8·orangepiBuilt0,jetsonx6resourceRejected≠κ0로엄격느린2κ0입증한계유지. Smol7.034s positive5/8·느린lattepanda/jetsonx Built0로PASS. MNV/PLC는관측적격7Node합 |
 | 공통m·L·cap·delivery/socket | residual p95 후보16ms/p99 후보195ms와 구별해 m29ms 유지 승인 요청. L MNV2/PLC1/Smol75초·cap129초·delivery10ms/socket L+20ms, native remaining=L−senderElapsed−m |
-| G·혼합 단계 | 최종R·몫(.45/.1/.45)의 α.3/.5/.7/.9/1.2 총45.923572/76.539286/107.155001/137.770715/183.694287req/s, Smolburst46.503534. G1300req/s **[추정]**이면.8G1040으로산술통과하나α1.2는관측140초과. G0고정배치120s단1회·자동clip/계단탐색금지 |
-| κ/R·계산 근거 | `control-197-capacity-replay/{scheduler,capacity-final,kappa-final,report}.json`, snapshot13:54Z, 최종관측적격R MNV331.637207/PLC28.752259/Smol2.148007req/s. 기본모드exact Built232/Rejected16, 추가모드/d누락Rejected별도. 측정용과거K M331.637207/P1657.443564/S3.236584와구별 |
+| G·혼합 단계 | 선택R·몫(.45/.1/.45)의 α.3/.5/.7/.9/1.2 총65.795556/109.659259/153.522963/197.386667/263.182222req/s, Smolburst66.375518. G1300req/s **[추정]**이면.8G1040으로산술통과하나α1.2는관측140초과. G0결과대기·단1회고정배치120s·clip/계단탐색금지 |
+| κ/R·계산 근거 | PLC36 `control-197-plc-36/{scheduler,capacity-final,kappa-plc-sweep}.json`, MNV/Smol동일UID·SLO·합유지확인. 최종관측적격R MNV331.637207/PLC691.151722/Smol2.148007req/s. 과거측정용K M331.637207/P1657.443564/S3.236584와구별 |
 | 전환 witness | 과거preflight-control-195-u2x 초기 MNV B519.700616/W14.099864초·PLC B1039.401232/W0.802653초는측정SLO에서도초과. capacity재생은rev98에서완료; 일부U2후보/과거UID와최종E5율의초기·확장·축소·소유권swap witness는계속구별 |
 | 에너지 선택 | minimumGain 고정%없음; 후보별signed상쇄B_J·gain>B_J/equality KEEP, H600초/reserve0. 최신변경후보gain5005.869972J/B463.558920J는 관측 예이며 기본안 최종통과 아님 |
 | 정적·N·추가 모드 | 정적full E5-3끝 α=0.9 실제구성·N=2(membership-off/replicas-off), 없으면no-effect. 기본 fixed/MAXN/jetsonx15W6만 묶고 live jetsono15W 및 U2추가모드는 별도 승인. 전체435분(reset등별도), stabilization300초 유지 |
