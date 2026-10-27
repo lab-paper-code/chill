@@ -373,3 +373,7 @@
 ## 2026-10-27 02:0xZ — PMTC 비용 창에 settling 포함(권고 기본값 60s)
 
 - NVIDIA 클럭 전환(apply→Ready 2~12s)은 1s 표본·coverage 0.95에서 구조적으로 PowerWindowInsufficient(15/15; `history://PmtcPowerWindow27`). 비용 창 = apply→fresh Ready + settlingSeconds(설정, 기본 60, [0,3600]); η 적분·baseline 차감 범위 일치; τ와 settling 분리 기록(`52da1d38`). 기존 raw/finalized 불변. profiler/transition-observer 이미지 재빌드(runtime 7 아님).
+
+## 2026-10-27 06:3xZ — U2 저전력 Smol BEO 관측 창 권고값
+
+- jetsono 15W Smol q1 BEO: 마지막 추론(~12s/건)이 metric observer durationSeconds 299s를 초과해 결과 미발행(`history://SmolBeoTimeout27`). 권고: 느린 조합의 `activeProtocol.metricObservation.durationSeconds = 297 + 최대 단일 추론 + 여유`(이번 330s), 측정 목표 297s 유지. 코드 변경 없음.
