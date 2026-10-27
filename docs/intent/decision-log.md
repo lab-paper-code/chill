@@ -442,3 +442,8 @@
 - Smol x6C/x4C(q1) d: ConditionsInfeasible(유도 L이 게이트웨이 상한 초과; 서비스 ~30s/item, 연구 SLO 7.034s 불가 → κ=0 확정) → **Infeasible**로 기록(nano 5W와 동일 취급), 입력 L 축소 없음.
 - PLC x4C d: 1회 RequestTimeout 3,375(L=1s, 64 workers, CPU 1), 분리 재측 1회 UnknownPhysicalContinuity(U5 양상) → 2회 실패. jetsonx PLC는 용량 재생에서 자원 Rejected라 E5 입력이 아님 → 추가 재측 없이 **미완(2회 실패)** 기록, E5 후 U5와 함께 재조사.
 - 증분 에너지 분해능 이하 처리 배포(rev99, 331624f0): 두 Smol x preparation `energyBelowResolution=true` 확인.
+
+## 2026-10-27 18:3xZ — genesis2 제외(7 Node)로 E5 (사용자 결정)
+
+- genesis2 kern.log: Xid 79 총 5회(10/10 ×3 — 재부팅 6분 뒤 재발 포함, 10/14, 10/28 00:31 KST) → 만성 하드웨어(PCIe/전원/카드) 불안정 [추정 원인]. device plugin 10/14 재시작 12회도 같은 고장의 재부팅 흔적. 재부팅은 E5 수 시간 생존 보장 못 함.
+- 진행: genesis2 제외로 capacity 재생 → R·PLC SLO 후보 같은 규칙으로 재선정 → 열린 고리 G0 1회 → 최종 숫자 재승인 요청. genesis2는 하드웨어 점검 항목(카드·전원 케이블 재장착, PCIe 절전 비활성, 재부팅 후 24h 무재발)으로 별도 기록; 복구되면 E5 뒤 추가 실행 비교. 결과 보고서에 "genesis2 하드웨어 결함으로 제외" 조건 명시.
