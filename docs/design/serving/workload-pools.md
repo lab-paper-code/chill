@@ -439,7 +439,7 @@ runtime 7종 digest, profile, 측정 입력과 판정 기준은 고정한다.
   노드별 가장 빠른 option의 b1 지연을 구하고 가장 넓은 지연 간격에서 목표를 고르는 방향을 따른다.
   κ>0인 노드가 절반 이상이고 가장 느린 두 노드는 κ0인지 p95/p99 표와 계산시간으로 확인한다.
   최종 percentile/SLO의 숫자는 실측 제안으로 고정한다.
-- 기준 요청률 `R_w`: 최종 Workload SLO의 Node별 최대 적격 κ 합이다(`hack/kappa -mode slo`). **Node당 서빙 인스턴스 하나**이므로 세 고립 R은 같은 Node를 중복 사용하며 동시에 달성할 수 없다. 단계률은 **`rate_w=α_w×s_w×R_w`**다. `poolShares={MNV:1/3,PLC:1/3,Smol:1/3}`가 기본값이고 각 s는 유한한 [0,1], 합 1(오차 1e-9 이내)이다. α∈{0.3,0.5,0.7,0.9,1.2}는 POOL 사용률 단계이며 혼합 feasible 보장이 아니다. R·s·α·최종 rate/trace를 binding에 동결한다. 아래 단계 표의 수치는 R 직접 배수가 아니라 α이며 burst에서는 Smol의 α만 바뀐다.
+- 기준 요청률 `R_w`: 최종 Workload SLO의 Node별 최대 적격 κ 합이다(`hack/kappa -mode slo`). **Node당 서빙 인스턴스 하나**이므로 세 고립 R은 동시에 달성할 수 없다. 단계률은 **`rate_w=α_w×s_w×R_w`**, 기본 `poolShares={MNV:0.45,PLC:0.1,Smol:0.45}`이며 각 s는 유한한 [0,1], 합1(오차1e-9 이내)이다. α∈{0.3,0.5,0.7,0.9,1.2}는 POOL 사용률 단계이며 혼합 feasible 보장이 아니다. 설정 검증은 **`1.2×Σ(s_w×R_w)≤0.8×G`**이고 G 입력값·출처 및 R·s·α·최종 rate/trace를 binding에 동결한다. G 미확정이면 명시 경고이며 연구 개시 통과가 아니다. 아래 단계 표의 수치는 R 직접 배수가 아니라 α이며 burst에서는 Smol의 α만 바뀐다.
 - 부하는 `chill-loadgen replay --arrivals poisson`으로 Workload마다 동시에 보낸다.
   seeds101/202/303 배정, 도착 trace와 payload ID는 사전에 manifest로 고정하고 비교 쌍에서 재사용한다.
   모든 E5 호출은 실제 Workload UID/generation/SLO와 gateway cap을 캡처하고
@@ -447,8 +447,9 @@ runtime 7종 digest, profile, 측정 입력과 판정 기준은 고정한다.
   L≥SLO, socket>L+delivery, cap≥L을 확인한다.
   tight MNV 예는 `--workload-slo 1 --gateway-timeout 129 --request-lifetime 2 --delivery-margin 0.010 --timeout 2.02`다.
   PLC/Smol 값은 D2 뒤 실측 SLO/m/G/κ/R 입력으로 고정한다.
-  세 요청률 합이 실측 G 범위인지 고정 배치 혼합 계단으로 확인한다.
-  G 초과 시 자동 clipping하지 않는다. native/client가 먼저 한계이면 gateway bound와 원인을 기록한다.
+  `hack/e5/g-check-config.example.json`으로 고정 배치·α=1.2 총혼합 부하를120초 단1회 확인한다(계단/최대G 탐색/자동재시도 없음).
+  PLC p95≤32ms 및 전체offered 대비32ms deadline성공≥95%, 동결trace 공급, gateway거절/503/timeout/미완료0, cs throttle/restart/OOM0, 누락없는cs CPU/메모리10초표본·동결limit미만을 모두 만족하면 PASS, 아니면 FAIL과원시사유를 남긴다.
+  이 통과점은 최대G나20%여유의 자동인증이 아니다. native/client한계는 gateway실패와 구별하며 G·출처를동결해위부등식을별도검증한다. 자동clip하지 않는다.
 - 원래 L과 senderElapsed를 전달하고 `native remaining=L−senderElapsed−m`으로 계산한다.
   SLO와 transport L을 구분하고 m은 한 번 차감한다. signed d와 계획기의 `max(d,0)`를 각각 보존한다.
   D04/D09/D14/D23/D33의 profile 포함 95% 구간은 0 아래인 known systematic profile-versus-serving bias다.
