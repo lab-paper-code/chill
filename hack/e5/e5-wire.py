@@ -50,7 +50,7 @@ class Prepare:
         if self.release.get('executor')!='CampaignOps' or self.release.get('command')!='e5-execute' or not self.release.get('mainInstructionUTC'): raise ValueError('One actual Main/CPO frozen e5-execute release required')
         self.sources=e5.approval_sources(self.release)
         e5.need(self.n,['approval','g0Evidence','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds','workloads','kappaSeconds'],'Approved phase6 numbers')
-        e5.need(self.n['approval'],['phase6ApprovalUTC','e5StartApprovalUTC','D1','D6','D9'],'Actual phase6/E5 approval')
+        if e5.approval_sources(self.n['approval']) != self.sources:raise ValueError('Approved numeric component sources differ from release')
         e5.need(self.n['timeboxes'],e5.REQUIRED['timeboxes'],'Actual finite timeboxes')
         if not all(e5.positive(self.n[k]) for k in ('smokeSeconds','kappaSeconds')) or not 0<self.n['burstLowSeconds']<900 or type(self.n['mSeconds']) not in (int,float) or not math.isfinite(self.n['mSeconds']) or self.n['mSeconds']<0:raise ValueError('Invalid approved numerical scope')
         if any(not e5.positive(v) for v in self.n['timeboxes'].values()) or self.n['timeboxes']['setupSeconds']+3600+self.n['timeboxes']['drainSeconds']+self.n['timeboxes']['flushSeconds']>4200:raise ValueError('Timeboxes do not fit existing finite collector')
@@ -217,20 +217,27 @@ class Prepare:
         c={**{k:self.op[k] for k in ('endpoint','caFile','tokenFile','kubeContext')},**{k:self.n[k] for k in ('g0Evidence','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds')}}
         c['poolShares'] = e5.pool_shares(self.n)
         c['approval']={**self.n['approval'],'sources':self.sources,'controlImageDigest':actual_control,'runtimeDigests':e5.load(PLAN)['frozenRuntimeSha256']}
-        c['inputs']={k:self.pub[k] for k in ('after','mMeasurement','d25','ranking','costs','bias')}
+        c['inputs']={k:self.pub[k] for k in ('d25','ranking','costs','bias')}
         c['inputs'].update({k:str(self.out/(k+'.json')) for k in ('scheduler','capacity','nodes','pods','gateway','producer')})
-        archive=[{'key':self.pub[k],'localPath':self.pub[k]} for k in ('after','mMeasurement','ranking','costs','bias')]
+        c['inputs']['capacityScheduler']=str(self.out/'scheduler.json')
+        c['inputs']['powerObservation']=str(self.out/'power-observation.json')
+        c['inputs']['evaluationPayload']=str(self.out/'evaluation-payload.json')
+        e5.save(c['inputs']['powerObservation'],{'schedulerSettings':{'powerObservation':e5.power_observation(c)}})
+        archive=[{'key':self.pub[k],'localPath':self.pub[k]} for k in ('ranking','costs','bias')]
         archive.extend({'key':self.n['g0Evidence'][k],'localPath':self.n['g0Evidence'][k]} for k in ('verdict','binding'))
         e5.save(self.out/'required-raw-refs.json',archive)
         c['collection']={**self.op['collection'],'archiveRefs':str(self.out/'required-raw-refs.json')};c['workloads']=[]
         sys.path.insert(0,str(e5.REPO/'load-generator/src'));from chill_loadgen import cli
         producer=e5.module('e5prod_identity',HERE/'e5-producer.py')
+        payload={}
         for name in e5.WORKLOADS:
             w=self.op['workloads'][name];n=self.n['workloads'][name];actual=next(x for x in snapshot['state']['snapshot']['workloads'] if x['name']==name);observed=dataset[w['datasetRef']]
             filtered=[{'recordID':x['recordID'],'fields':{k:x['fields'][k] for k in w['fields']}} for x in observed['evaluation']]
+            payload[name]=filtered
             if producer.identity(cli.load_records(Path(w['datasetDir']),w['fields']))!=filtered:raise RuntimeError('Recorded host evaluation differs from actual pinned carrier')
             job=template(self.op,name,image);path=self.out/('producer-template-'+name+'.json');e5.save(path,job)
             c['workloads'].append({**n,'name':name,'uid':actual['uid'],'generation':actual['generation'],'slo':actual['slo'],'datasetDir':w['datasetDir'],'fields':w['fields'],'profilingRecordIDs':[x['recordID'] for x in observed['profiling']],'jobTemplate':str(path),'gatewayCapSeconds':float(cap[:-1]),'producerEndpoint':self.op['producer']['endpoint'],'producerTokenFile':self.op['producer']['tokenFile'],'producerCAFile':self.op['producer']['caFile'],'producerDatasetDir':self.op['producer']['datasetDir']})
+        e5.save(c['inputs']['evaluationPayload'],{'payload':payload})
         baseline=snapshot['settings']['controls'];c['factors']=[]
         for name in self.factor_names:
             item=self.op['factorMenu'][name];controls=dict(baseline);controls[item['changedControl']]=item['value'];witness_path=self.out/('factor-witness-'+name+'.json');e5.save(witness_path,{**item['witness'],'sourceSHA':self.sha,'evidenceLevel':'Source-witnessed constraint and executable reset; observed factor effect remains unmeasured'});c['factors'].append({'name':name,'controls':controls,'witness':str(witness_path)})
@@ -246,7 +253,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['schema','prepare','execute']);p.add_argument('--numbers',type=Path);p.add_argument('--release',type=Path);p.add_argument('--out',type=Path);a=p.parse_args()
     try:
         if a.command=='schema':
-            print(json.dumps({'numbers':['g0Evidence','mSeconds','N','burstLowSeconds','smokeSeconds','kappaSeconds','timeboxes','workloads','approval'],'g0Evidence':{'runID':'actual G0 verdict directory name','verdict':'absolute recorded g0-verdict.json path; gateway criteria are judged directly, aggregate and Smol SLO verdicts are reference only','binding':'absolute same-run run/binding.json path (120s alpha=1.2 G-check)','csCPULimitCores':'explicit frozen positive ChillServer CPU limit; recorded peak/limit must be <1'},'workloadNumbers':['slo.percentile','slo.targetLatencyNanos','R','deliverySeconds','socketSeconds','workers'],'optionalWorkloadNumbers':['lifetimeSeconds'],'timeboxes':e5.REQUIRED['timeboxes'],'approval':['phase6ApprovalUTC','e5StartApprovalUTC','D1','D6','D9'],'factorSelection':'N selects the frozen operational recipe factorOrder prefix; source/reset witnesses are already bound there, observed effect remains unmeasured','release':['executor=CampaignOps','command=e5-execute','mainInstructionUTC','sources','numbersPath','bindingPath'],'sources':{'server':'full Git SHA matching AFTER and server publication','loadgen':'full Git SHA matching loadgen publication sourceCommit','power':'full Git SHA or pinned repository-relative binary path matching actual power build receipt'},'autoInputs':str(PLAN)+'.e5InputPublication','operationalRecipe':str(e5.OPERATIONAL_RECIPE),'scientificResults':'UNMEASURED'},indent=2));return 0
+            print(json.dumps({'numbers':['g0Evidence','mSeconds','N','burstLowSeconds','smokeSeconds','kappaSeconds','timeboxes','workloads','approval'],'g0Evidence':{'runID':'actual G0 verdict directory name','verdict':'absolute recorded g0-verdict.json path; gateway criteria are judged directly, aggregate and Smol SLO verdicts are reference only','binding':'absolute same-run run/binding.json path (120s alpha=1.2 G-check)','csCPULimitCores':'explicit frozen positive ChillServer CPU limit; recorded peak/limit must be <1'},'workloadNumbers':['slo.percentile','slo.targetLatencyNanos','R','deliverySeconds','socketSeconds','workers'],'optionalWorkloadNumbers':['lifetimeSeconds'],'timeboxes':e5.REQUIRED['timeboxes'],'approval':['sources'],'factorSelection':'N selects the frozen operational recipe factorOrder prefix; source/reset witnesses are already bound there, observed effect remains unmeasured','release':['executor=CampaignOps','command=e5-execute','mainInstructionUTC','sources','numbersPath','bindingPath'],'sources':{'server':'full Git SHA matching AFTER and server publication','loadgen':'full Git SHA matching loadgen publication sourceCommit','power':'full Git SHA or pinned repository-relative binary path matching actual power build receipt'},'autoInputs':str(PLAN)+'.e5InputPublication','operationalRecipe':str(e5.OPERATIONAL_RECIPE),'scientificResults':'UNMEASURED'},indent=2));return 0
         if any(x is None for x in (a.numbers,a.release,a.out)):raise ValueError('--numbers, --release and --out required for CPO preparation/execution')
         if any(not x.is_absolute() for x in (a.numbers,a.release,a.out)):raise ValueError('Absolute paths required')
         prepared=Prepare(a);binding=prepared.run()

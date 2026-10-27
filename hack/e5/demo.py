@@ -498,7 +498,7 @@ def prepare(e5, args):
     for filename in ('demo.py', 'e5.py', 'auth.py', 'e5-wire.py', 'e5-producer.py', 'e5-archive.py', 'e5-raw.py'):
         sources[filename] = e5.ref(HERE / filename)
     for w in c['workloads']:
-        e5.need(w, [k for k in e5.REQUIRED['workload'] if k not in ('R', 'profilingRecordIDs')], w['name'])
+        e5.need(w, [k for k in e5.REQUIRED['workload'] if k != 'R'], w['name'])
         if any(not e5.positive(w[k]) for k in ('workers', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds')) or type(w['workers']) is not int:
             raise ValueError('Positive workload timing and integer workers required')
         if not e5.positive(w['slo']['targetLatencyNanos']) or not 0 < w['slo']['percentile'] <= 100:

@@ -6,6 +6,7 @@
 
 1. [전체 남은 길](2026-10-26-remaining-roadmap.md)의 rev85·BEO 종결·PLC 후보·이중 컨트롤러 확인과 최종 시연을 닫는다.
 2. 새 규칙 dispatch 점유 d **34/34 완료**(control-189/194/195 Accepted·planner 소비 근거). 정확 prepare/remove 비용 **69/69**도 완료이며 두 수를 합산하지 않는다. U2 추가 모드는 기본 숫자 승인과 별도로 확장한다.
+   E5의 d25 gate는 현행 식별 유휴 계약을 사용한다: Accepted·Complete 실행/실제 load Job 완료·native drain 완전성·unknown 0·IdleIdentified, idleFraction≤동결 `maximumIdleFraction`(승인값0.05, 설정은 [0,1] 검증) 및 idle≤1ms/요청, 정확 Node/profile/mode/runtime·signed status/raw 일치와 planner max(d,0) 소비·정상 반환 증거를 요구한다. d를 보정하지 않고 `config.d25Acceptance`에 `dRange=[d−idleNanosPerRequest,d]`·`kappaErrorBound=idleFraction`을 별도 동결한다(신뢰구간 아님). 폐기된 계획 정밀도 플래그는 개시 조건이 아니며 기존 immutable raw를 수정하지 않는다.
 3. Workload별 completion residual 원시를 모아 선택 분위수의 값을 계산하고 공통 완료 여유 `m=max(각 추정값)`를 정한다. 현재29ms는 기존 MNV p95 근거이지 세 Workload 공통 새 측정값이 아니다.
 4. 최종 d/m과 SLO로 실제 κ(포아송 재생 용량)를 산출한다. μ(프로파일 평균 서비스율)를 κ로 대체하지 않는다. Pending/Rejected/미측정을 0으로 채우지 않는다.
 5. Node별 적격 κ와 고립 기준 `R_w=Σ_Node max eligible κ_w`를 확정한다. **단계률은 `rate_w=α_w×s_w×R_w`**, 기본 `poolShares={MNV:0.45,PLC:0.1,Smol:0.45}`, 각 s는 [0,1], 합 1이다. α∈{0.3,0.5,0.7,0.9,1.2}는 POOL 사용률 단계다. Node당 인스턴스 하나이므로 세 고립 R은 동시 사용 불가다. 포화 G를 측정하지 않았으므로 `G` 숫자·추정 headroom 부등식은 입력하지 않는다. 대신 최종 R·몫·α=1.2 총률과 일치하는 **G0 단일 실측 증거**(runID, planned=issued 전체 공급, generator VALID, cs CPU/limit 분율, 승인 PLC 수신 원점 p95)를 binding에 동결하고 검증한다. α는 실제 배치 효율/SLO 보장이 아니라 offered 부하 정규화다.
@@ -85,7 +86,7 @@ E5-2 A가 승인안이다. genesis2/genesis3 Smol CUDA 메모리 부족 제외�
 
 **E5-7 실행 계약:** 시작 뒤 180초 서빙 Pod 하나 강제 삭제 → 360초 Node 하나 cordon 후 그 Node의 사전 기록한 서빙 Pod 삭제 → 600초 uncordon → 900초까지 복구 관찰. cordon은 기존 Pod를 끄거나 통신을 끊지 않으므로 Pod 삭제를 함께 사용한 **배치 차단·서빙 소실 대리 실험**이며 실제 네트워크 단절이라고 보고하지 않는다. 대상은 제어평면·gateway·측정 Node가 아닌 서빙 Node 하나다. 운영 담당만 기존 kubectl을 실행하고 Pod/Node UID, 명령·응답 UTC, scheduler 격리/대체 결정, Ready/ACK·route 회복과 요청/전력을 보존한다. 단계 종료/실패에도 uncordon 복원을 시도하고 read-back을 기록한다. 새 장애 API·컨트롤러는 만들지 않는다.
 
-full binding은 E5-0~7 총195분(11700초), `rowOrder`는 E5-S까지9행이다. E5-S는 계속 E5-1~6만170분(10200초)이며 E5-3 freeze→S→E5-4 release 순서를 바꾸지 않는다. `full-E5-7/failure-events.json`에는 `stage:"E5-7"`, `events` 세 개를 순서대로 남긴다: `offsetSeconds` 180/360/600, `kind` `delete-serving-pod`/`cordon-delete`/`uncordon`, 실제 `atUTC`, `exitCode:0`, `nodeUID`, 삭제 사건의 `podUID`, 실제 명령·응답 파일 경로 `commandRef`/`responseRef`. `recovery`는 같은 `nodeUID`, 실제 `atUTC`, `schedulableRef`/`readyRef`/`observationRef`/`routeRef` 파일 경로다. judge는 시각·동일 Node·파일 hash를 보존하며 누락/실패는 NOT_READY로 남긴다. 이 실제 증거가 있는 E5-7만 summarize/tables의 실패 시나리오를 MEASURED로 연결하고, 선언 runbook만으로 완료 처리하지 않는다.
+full binding은 E5-0~7 총195분(11700초), `rowOrder`는 E5-S까지9행이다. E5-S는 계속 E5-1~6만170분(10200초)이며 E5-3 freeze→S→E5-4 release 순서를 바꾸지 않는다. `full-E5-7/failure-events.json`은 기존 운영자 기록을 보존한다: `stage:"E5-7"`, 세 `events`의 `kind`(`delete-serving-pod`/`cordon-delete`/`uncordon`), 실제 `atUTC`·`exitCode`·`nodeUID`, 삭제 사건의 `podUID`, `commandRef`/`responseRef`. 180/360/600초는 권고 offset이며 실제 지연/명령 실패는 관측값이지 수용 탈락 조건이 아니다. `recovery`는 있을 때 실제 UTC와 available schedulable/Ready/observation/route refs를 남기며, 미복구/부분 복구도 보존한다. judge는 원문 파일 hash·실제 사건 identity를 확인하되 성공 exit·완전 복구를 새 gate로 강제하지 않는다. 실제 사건 증거 결측은 계속 unknown이고 선언 runbook만으로 완료 처리하지 않는다.
 
 실행 설정은 `hack/e5/demo-config.e5.example.json`이다. 최종 승인 R을 `capacityR`에 넣어 prepare하면 요청률을 계산한다. 실패 주입은 설정의 운영자 runbook이며 도구가 자동 실행하지 않는다. preflight는 짧은 E5-0+혼합 부하로 토큰·관측·Ready·정리를 확인하고, 실제 실패 주입은 운영자 직렬 실행으로 남긴다. E5 숫자 1회 승인 전 연구 실행을 시작하지 않는다.
 
@@ -118,6 +119,12 @@ leximin 변경은 유한 초과량의 선택도 바꿀 수 있으므로 과거 �
 6. full 입력은 `g0Evidence={"runID":"실제 run 디렉터리명","verdict":"절대 g0-verdict.json 경로","binding":"해당 실제 G0 binding 절대 경로","csCPULimitCores":실제 승인 limit}`를 요구한다. 120초 α=1.2, 최종 R·몫의 Workload별/합계율, binding planned=issued, generator VALID, PLC 승인 수신 p95, cs CPU peak/limit<1을 교차 검증하고 원시 refs·계산 분율·`gatewayVerdict:"PASS"` 및 역사적 전체/Smol 참고값을 별도로 동결한다. G-check 자체는 선행 G0를 요구하지 않지만 연구 full bind는 증거 없이 통과하지 않는다. `G`·`GSource`와 최대 G/80% headroom 숫자는 없고 `GCertified:false`는 미측정 최대G를 뜻한다.
 
 로컬 회귀 점검(클러스터 접근 없음): `python3 hack/e5/e5.py self-check`, `python3 hack/e5/demo.py --self-check`, `python3 hack/e5/smoke_preflight.py`.
+
+### 2026-10-28 실제 입력 오프라인 bind 점검 범위
+
+`control-206-full-inputs`의25개 closure, preflight206 canonical/Pod/평가 payload, control201 최종7Node capacity와 baselineModes, control203 G0 및 실제 component receipts만 사용한다. bind는 live ConfigMap을 읽지 않고 보존 binding의 powerObservation을 동결하며, 실행 직전 CPO live 대조는 유지한다. 계산 원본/current canonical은 name/generation/SLO/model/preprocessor 전체 동일성을 확인하고 원본 UID·capacity rows를 바꾸지 않는다. R 기준 모드는 현재 빈 Node의 절전 모드가 아니라 승인 `kappa-seven-nodes.json.baselineModes`다.
+
+미사용 D2 AFTER·별도 m 보고·정량 판정 UTC/플래그는 bind 선행조건이 아니다. 현재 평가 ID/bytes는 보존 producer payload와 동일성을 확인하지만 실제 profiling ID/carrier 열거가 없으면 분리 증거는 UNKNOWN으로 공개하며 빈 목록을 만들지 않는다. 69/69는 역사적 정확 비용 연결 분모이고, 현재 후보/적격성·평가 완료 분모와 다르다. 초기 준비 cohort·Node 차단 제외 cohort·U2 5종 근거의 전용 연결이 아직 없다는 한계는 별도 audit에 남기며 새 관측/집계 메커니즘이나 완료 근거를 꾸미지 않는다. `energyBelowResolution`의 명시적0과 marker, genesis2 하드웨어 제외, 요청마다 새 TLS 핸드셰이크 조건도 보고한다. 오프라인 bind 성공은 실제 E5 연구 결과나 실험 개시 승인이 아니다.
 
 
 원시 근거: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 `deployment2-e5-proposal-20261024.md` §9–10, `e5-numbers-proposal-20261025.md`, `north-star.md`, `d-measurement-decision.md`, `checkpoints.md` 1953–2001행. 원시 capacity·CSV·JSON·측정 캠페인은 옮기지 않았다.

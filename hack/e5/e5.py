@@ -188,26 +188,57 @@ def normative_stage_specs(burst_low_seconds):
 
 
 def validate_failure_events(evidence, start_utc, end_utc):
-    """Validate manual E5-7 event identity/timing; commands are never auto-run."""
-    kinds = [(180, 'delete-serving-pod'), (360, 'cordon-delete'), (600, 'uncordon')]
+    """Check recorded manual evidence, not success or recommended injection offsets."""
+    kinds = ('delete-serving-pod', 'cordon-delete', 'uncordon')
     events = evidence.get('events')
     if evidence.get('stage') != 'E5-7' or not isinstance(events, list) or len(events) != 3:
-        raise ValueError('E5-7 requires all three actual operator fault events')
+        raise ValueError('E5-7 requires all three actual operator command records')
     start = dt.datetime.fromisoformat(start_utc.replace('Z', '+00:00')).timestamp()
     end = dt.datetime.fromisoformat(end_utc.replace('Z', '+00:00')).timestamp()
-    for event, (offset, kind) in zip(events, kinds):
+    for event, kind in zip(events, kinds):
         at = dt.datetime.fromisoformat(event['atUTC'].replace('Z', '+00:00')).timestamp()
-        if (event.get('offsetSeconds') != offset or event.get('kind') != kind
-                or event.get('exitCode') != 0 or not start + offset <= at < end
+        if (event.get('kind') != kind or type(event.get('exitCode')) is not int
+                or not start <= at <= end
                 or not event.get('nodeUID') or not event.get('commandRef') or not event.get('responseRef')
                 or kind != 'uncordon' and not event.get('podUID')):
-            raise ValueError('E5-7 operator event identity/timing/result incomplete')
-    recovery = evidence.get('recovery', {})
-    at = dt.datetime.fromisoformat(recovery['atUTC'].replace('Z', '+00:00')).timestamp()
-    if (events[1]['nodeUID'] != events[2]['nodeUID'] or recovery.get('nodeUID') != events[2]['nodeUID']
-            or not start + 600 <= at <= end
-            or any(not recovery.get(key) for key in ('schedulableRef', 'readyRef', 'observationRef', 'routeRef'))):
-        raise ValueError('E5-7 actual uncordon/Ready/observation/route recovery evidence incomplete')
+            raise ValueError('E5-7 operator command identity/timestamp/result incomplete')
+    if events[1]['nodeUID'] != events[2]['nodeUID']:
+        raise ValueError('E5-7 cordon/uncordon Node identity differs')
+    # Failed commands and absent recovery are observations, not missing measurements.
+
+
+def d25_acceptance(cr, raw):
+    """Current identified-idle contract; preserve signed d and report idle-only range."""
+    def finite(value):
+        return type(value) in (int, float) and math.isfinite(value)
+    idle, idle_ns, signed = raw.get('idleFraction'), raw.get('idleNanosPerRequest'), raw.get('perRequestNanos')
+    configured_idle = raw.get('conditions', {}).get('maximumIdleFraction')
+    if type(configured_idle) not in (str, int, float):
+        raise ValueError('d25 frozen maximumIdleFraction missing')
+    maximum_idle_fraction = float(configured_idle)
+    if not finite(maximum_idle_fraction) or not 0 <= maximum_idle_fraction <= 1:
+        raise ValueError('d25 frozen maximumIdleFraction must be in [0,1]')
+    if (cr.get('status', {}).get('phase') != 'Complete' or not cr.get('metadata', {}).get('uid')
+            or raw.get('verdict') != 'Accepted' or raw.get('unknownRows') != 0
+            or raw.get('idleIdentified') is not True or raw.get('drainError')
+            or not finite(idle) or not 0 <= idle <= maximum_idle_fraction
+            or not finite(idle_ns) or not 0 <= idle_ns <= 1e6
+            or not finite(signed) or cr['status'].get('perRequestNanos') != signed):
+        raise ValueError('d25 Accepted/complete/unknown/identified idle/signed evidence incomplete')
+    if (not raw.get('loadJob', {}).get('name')
+            or not str(raw['loadJob'].get('state', '')).startswith('Complete ')
+            or not raw.get('drainState')
+            or type(raw.get('batches')) is not int or raw['batches'] <= 0
+            or type(raw.get('cycles')) is not int or raw['cycles'] <= 0):
+        raise ValueError('d25 actual completed load/execution/drain evidence incomplete')
+    native = raw['drainState'].get('native')
+    if not isinstance(native, dict) or not native or any(
+            state.get('requests') != [] for state in native.values()):
+        raise ValueError('d25 native execution drain evidence incomplete')
+    return {'perRequestNanos': signed, 'idleFraction': idle, 'idleNanosPerRequest': idle_ns,
+            'maximumIdleFraction': maximum_idle_fraction,
+            'dRange': [signed-idle_ns, signed], 'kappaErrorBound': idle,
+            'meaning': 'Identified idle-only range, not a confidence interval; signed raw retained, planner consumes max(d,0)'}
 
 
 def self_check():
@@ -301,12 +332,35 @@ def self_check():
         'recovery':dict.fromkeys(('schedulableRef','readyRef','observationRef','routeRef'),'readback')}
     evidence['recovery'].update(nodeUID='node',atUTC='2026-10-28T00:11:00Z')
     validate_failure_events(evidence,'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
+    failed = copy.deepcopy(evidence)
+    failed['events'][2]['exitCode'] = 1
+    failed.pop('recovery')
+    failed['events'][0]['atUTC'] = '2026-10-28T00:02:59Z'
+    validate_failure_events(failed,'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
     try:
         validate_failure_events(dict(evidence,events=evidence['events'][:2]),'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
     except ValueError:
         pass
     else:
         raise AssertionError('Unexercised E5-7 accepted as measured')
+    d_cr = {'metadata': {'uid': 'actual-measurement'}, 'status': {'phase': 'Complete', 'perRequestNanos': -20}}
+    d_raw = {'verdict': 'Accepted', 'unknownRows': 0, 'idleIdentified': True,
+             'idleFraction': .05, 'idleNanosPerRequest': 10, 'perRequestNanos': -20,
+             'loadJob': {'name': 'load', 'state': 'Complete CompletionsReached'},
+             'drainState': {'native': {'instance': {'requests': []}}}, 'batches': 100, 'cycles': 99}
+    d_raw['conditions'] = {'maximumIdleFraction': '0.05'}
+    assert d25_acceptance(d_cr,d_raw)['dRange'] == [-30,-20]
+    configured = dict(d_raw, idleFraction=.08, conditions={'maximumIdleFraction':'0.1'})
+    assert d25_acceptance(d_cr,configured)['maximumIdleFraction'] == .1
+    for bad in (dict(d_raw,idleFraction=.050001), dict(d_raw,unknownRows=1),
+                dict(d_raw,idleIdentified=False), dict(d_raw,idleNanosPerRequest=1000001),
+                dict(d_raw,drainState={}), dict(d_raw,perRequestNanos=20)):
+        try:
+            d25_acceptance(d_cr,bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Invalid d25 evidence accepted')
     print('PASS E5 receive-origin SLO, scheduled reference, generator quality and full planned issuance; offline only')
 
 
@@ -336,10 +390,10 @@ NODES = E5['nodes']
 WORKLOADS = ['image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa']
 SEEDS = dict(zip(WORKLOADS, [101, 202, 303]))
 REQUIRED = {
- 'approval': ['phase6ApprovalUTC', 'e5StartApprovalUTC', 'sources', 'controlImageDigest', 'runtimeDigests', 'D1', 'D6', 'D9'],
- 'inputs': ['scheduler', 'capacity', 'nodes', 'pods', 'after', 'd25', 'mMeasurement', 'ranking', 'costs', 'bias', 'gateway', 'producer'],
+ 'approval': ['sources', 'controlImageDigest', 'runtimeDigests'],
+ 'inputs': ['scheduler', 'capacity', 'capacityScheduler', 'ranking', 'nodes', 'pods', 'd25', 'costs', 'bias', 'gateway', 'producer', 'powerObservation', 'evaluationPayload'],
  'numerical': ['g0Evidence', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds'],
- 'workload': ['name', 'uid', 'generation', 'slo', 'R', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'datasetDir', 'fields', 'profilingRecordIDs', 'jobTemplate', 'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'producerDatasetDir'],
+ 'workload': ['name', 'uid', 'generation', 'slo', 'R', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'datasetDir', 'fields', 'jobTemplate', 'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'producerDatasetDir'],
  'collection': ['hosts', 'archiveRefs', 'observationDirectory', 'serverContainer', 'schedulerConfigMap', 'serverHostReadArgv', 'metricSourcesConfigMap', 'metricSourcesKey', 'powerExecutable', 'powerReceipt'],
  'factor': ['name', 'controls', 'witness'],
  'timeboxes': ['setupSeconds', 'barrierSeconds', 'drainSeconds', 'flushSeconds', 'collectSeconds', 'apiSeconds', 'settleSeconds'],
@@ -470,7 +524,7 @@ def collection_manifest(root,binding):
     save(root/'collection-manifest.json',{'schema':'e5-private-campaign-collection.v1','at':now(),'visibility':'PRIVATE_OPERATIONAL_ONLY; no raw/configuration publication','binding':ref(binding),'artifacts':artifacts,'meaning':'Nested private collection manifests cover original files; include actual judgments, command receipts, selected static configuration, factor resets and physical returns without duplicating large raw bytes.'})
 
 
-def d25_gate(index_path,snap,refs=None):
+def d25_gate(index_path,snap,refs=None,measurements=None):
     refs={} if refs is None else refs
     expected_path=Path(E5['d25Manifest'])
     expected={x['caseID']:x for x in load(expected_path)['targets']}; closures=load(index_path)['closures']
@@ -479,8 +533,9 @@ def d25_gate(index_path,snap,refs=None):
         need(entry,['caseID','crPath','rawPath','returnStatePath','returnEvidencePath','returnedMode'],'d25 closure index')
         for field in ('crPath','rawPath','returnStatePath','returnEvidencePath'): refs[entry['caseID']+'-'+field]=ref(entry[field])
         cr=load(entry['crPath']); raw=load(entry['rawPath']); wanted=expected[entry['caseID']]
-        if cr['status']['phase']!='Complete' or not cr['metadata'].get('uid') or raw.get('verdict')!='Accepted' or raw.get('unknownRows')!=0 or raw.get('idleIdentified') is not True or raw.get('precisionTargetMet') is not True or raw.get('drainError') or raw.get('idleNanosPerRequest',math.inf)>1e6: raise ValueError('Actual d25 scientific/physical/idle/precision closure incomplete: '+entry['caseID'])
-        if any(raw.get(k)!=wanted[k] for k in ('node','profileID','powerMode','runtimeImage')) or cr['status'].get('perRequestNanos')!=raw.get('perRequestNanos'): raise ValueError('d25 exact Node/profile/mode/runtime or signed status/raw mismatch')
+        accepted = d25_acceptance(cr,raw)
+        if measurements is not None: measurements[entry['caseID']] = accepted
+        if any(raw.get(k)!=wanted[k] for k in ('node','profileID','powerMode','runtimeImage')): raise ValueError('d25 exact Node/profile/mode/runtime mismatch')
         key=cr['status']['result']['key']
         consumers=[o for o in snap['dispatchOccupancy'] if o['source']==key and o['node']==raw['node'] and o['powerMode']==raw['powerMode'] and o['runtimeImage']==raw['runtimeImage'] and o['model']==raw['model'] and o['perRequestNanos']==max(0,raw['perRequestNanos'])]
         if len(consumers)!=1: raise ValueError('Actual d25 signed-raw/planner-max0 consumer replacement missing')
@@ -512,12 +567,15 @@ def owned_target(snapshot,uids,routing):
     if any(i.get('ownerWorkloadUID') not in uids for i in instance_rows(snapshot['instances'])):raise RuntimeError('Foreign physical ownership; no owned-target/reset substitution')
     return {'instances':sorted([{'id':i['id'],'node':i['node'],'profileID':i['profile']['id'],'allocation':i['allocation'],'maxBatch':i['maxBatch'],'maxWaitNanos':i['maxWaitNanos'],'workloadUID':i['ownerWorkloadUID']} for i in instance_rows(snapshot['instances'])],key=lambda i:i['id']),'routing':routing,'modes':{n['node']['name']:n['powerMode'] for n in snapshot['nodes'] if n['node']['name'] in NODES}}
 
-def power_observation(c):
-    """Read the explicit operational sampler policy, not mutable API settings."""
-    command = ENVIRONMENT['d2']['kubectl'] + ['-n', 'chill-system', 'get', 'configmap', c['collection']['schedulerConfigMap'], '-o', 'json']
-    result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=c['timeboxes']['apiSeconds'])
-    config = json.loads(json.loads(result.stdout)['data']['scheduler.json'])
-    policy = config['powerObservation']
+def power_observation(c, *, frozen=False):
+    """Bind from captured policy only; runtime CPO still checks actual ConfigMap."""
+    if frozen:
+        policy = load(c['inputs']['powerObservation'])['schedulerSettings']['powerObservation']
+    else:
+        command = ENVIRONMENT['d2']['kubectl'] + ['-n', 'chill-system', 'get', 'configmap', c['collection']['schedulerConfigMap'], '-o', 'json']
+        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=c['timeboxes']['apiSeconds'])
+        config = json.loads(json.loads(result.stdout)['data']['scheduler.json'])
+        policy = config['powerObservation']
     coverage = policy['coverage']
     if not all(positive(coverage[k]) for k in ('MaximumGap', 'MaximumBoundaryDistance', 'MinimumCoverage')) or coverage['MinimumCoverage'] > 1:
         raise ValueError('Explicit finite operating power coverage required')
@@ -548,26 +606,29 @@ def bind(path):
     refs['powerExecutable']=power;refs['powerReceipt']=ref(c['collection']['powerReceipt'])
     s = load(c['inputs']['scheduler']); snap = s['state']['snapshot'] if 'state' in s else s['snapshot']; settings = s['settings']
     cap = load(c['inputs']['capacity']); rows = cap if isinstance(cap, list) else cap['rows']
-    d25_gate(c['inputs']['d25'],snap,refs)
+    capacity_source = load(c['inputs']['capacityScheduler'])
+    capacity_snapshot = capacity_source['state']['snapshot']
+    recorded_payload = load(c['inputs']['evaluationPayload'])['payload']
+    c['d25Acceptance'] = {}
+    d25_gate(c['inputs']['d25'],snap,refs,c['d25Acceptance'])
     approved_modes=defaultdict(set)
     scope_path=Path(E5['d25Manifest'])
     for case in load(scope_path)['targets']:approved_modes[case['node']['name']].add(case['powerMode'])
-    mode_scope={node['node']['name']:node['powerMode'] for node in snap['nodes'] if node['node']['name'] in NODES}
+    mode_scope=load(c['inputs']['ranking'])['baselineModes']
     if set(mode_scope)!=set(NODES) or any(mode not in approved_modes[name] for name,mode in mode_scope.items()):raise ValueError('Actual reference inference modes must remain within approved d25/G2 conditions; do not expand a power-mode study or manufacture native readback')
-    refs['approvedInferenceModeScope']=ref(scope_path)
+    refs['approvedInferenceModeScope']=refs['ranking']
     gateway = load(c['inputs']['gateway'])
     need(gateway, ['requestTimeoutSeconds', 'sourceSHA', 'controlImageDigest', 'capturedUTC'], 'Actual gateway HandlerConfig capture')
     require_component_source(gateway,component_sources['server'],'server')
     if gateway['controlImageDigest'] != c['approval']['controlImageDigest']: raise ValueError('Gateway actual source/image mismatch')
     producer_receipt = load(c['inputs']['producer'])
-    need(producer_receipt, ['sourceSHA', 'imageDigest', 'cliFlags', 'deploymentReceipt'], 'Actual deployed producer receipt')
+    need(producer_receipt, ['sourceSHA', 'imageDigest', 'deploymentReceipt'], 'Actual deployed producer receipt')
     require_component_source(producer_receipt,component_sources['loadgen'],'loadgen')
-    if not {'--workload-slo','--gateway-timeout','--request-lifetime','--delivery-margin','--timeout'} <= set(producer_receipt['cliFlags']): raise ValueError('Actual D2 loadgen image with approved component source CLI required; runtime7 rebuild remains zero')
     refs['producer-deployment'] = ref(producer_receipt['deploymentReceipt'])
     native = module('d2eligibility', D2/'bind_before.py')
     knodes = load(c['inputs']['nodes'])['items']
     if settings['completionMarginMS']/1000 != c['mSeconds']: raise ValueError('m must equal actual scheduler completionMarginMS')
-    if sorted(settings['excludedNodes']) != sorted(E5['excludedNodes']): raise ValueError('Approved eight-node exclusions required')
+    if sorted(settings['excludedNodes']) != sorted(E5['excludedNodes']): raise ValueError('Approved seven-node/genesis2 hardware-exclusion scope required')
     if len(c['workloads']) != 3 or {w['name'] for w in c['workloads']} != set(WORKLOADS): raise ValueError('Exactly three canonical workloads required')
     sys.path.insert(0, str(REPO/'load-generator/src')); from chill_loadgen import cli
     payload = {}; kappa = {}
@@ -585,7 +646,13 @@ def bind(path):
         definition=actual[0]
         w['definitionID']='/'.join(str(x) for x in (w['uid'],w['generation'],definition['model']['uid'],definition['model']['generation'],definition['preprocessor']['uid'],definition['preprocessor']['generation']))
         if w['name'] == WORKLOADS[0] and w['slo'] != {'percentile': 95, 'targetLatencyNanos': 1000000000}: raise ValueError('Canonical tight MNV p95 1s required')
-        selected = [r for r in rows if r.get('input', {}).get('workloadUID') == w['uid'] and r['input'].get('slo') == w['slo'] and r['input'].get('completionMarginMS') == settings['completionMarginMS'] and r['input'].get('node', {}).get('name') in NODES]
+        source_definitions = [x for x in capacity_snapshot['workloads'] if x['name']==w['name']]
+        if len(source_definitions)!=1 or any(source_definitions[0].get(k)!=definition.get(k) for k in ('name','generation','slo','model','preprocessor')):
+            raise ValueError('Capacity source/current canonical definitions differ; original UID/rows cannot be relabeled')
+        capacity_uid = source_definitions[0]['uid']
+        w['capacityDefinitionProvenance'] = {'sourceUID':capacity_uid,'currentUID':w['uid'],
+                                            'source':refs['capacityScheduler'],'identity':'Exact name/generation/SLO/model/preprocessor equality; original rows preserved'}
+        selected = [r for r in rows if r.get('input', {}).get('workloadUID') == capacity_uid and r['input'].get('slo') == w['slo'] and r['input'].get('completionMarginMS') == settings['completionMarginMS'] and r['input'].get('node', {}).get('name') in NODES]
         outside_scope=[r for r in selected if r['input'].get('powerMode')!=mode_scope[r['input']['node']['name']]]
         selected=[r for r in selected if r['input'].get('powerMode')==mode_scope[r['input']['node']['name']]]
         if any(r.get('status') not in ('Built','CapacityRejected') or r.get('previous') or not r.get('key') or not r.get('builtAt') for r in selected): raise ValueError('Pending/unknown/stale capacity rows cannot bind R')
@@ -622,7 +689,9 @@ def bind(path):
         records = cli.load_records(Path(w['datasetDir']), w['fields'])
         producer = module('e5producer_identity', HERE/'e5-producer.py')
         payload[w['name']] = producer.identity(records)
-        if set(w['profilingRecordIDs']) & {x['recordID'] for x in payload[w['name']]}: raise ValueError('Profiling/evaluation payload subsets overlap')
+        if payload[w['name']] != recorded_payload[w['name']]:
+            raise ValueError('Host evaluation payload differs from actual captured producer identity')
+        w['profilingEvaluationSeparation'] = {'status':'UNKNOWN','reason':'Actual profiling record enumeration/pinned-carrier split proof not retained; not inferred from absent/empty IDs'}
         template = load(w['jobTemplate']); refs['job-'+w['name']] = ref(w['jobTemplate'])
         pod = template['spec']['template']['spec']
         if pod['restartPolicy'] != 'Never' or len(pod['containers']) != 1 or pod['containers'][0]['name'] != 'load': raise ValueError('Actual single load container/Never Job template required')
@@ -675,10 +744,10 @@ def bind(path):
         smoke['traces'][name] = {'seed': SEEDS[name], 'offsetsNS': offsets, 'offered': len(offsets), 'arrivalSHA256': hashlib.sha256(json.dumps(offsets,separators=(',',':')).encode()).hexdigest()}
         if not offsets: raise ValueError('Approved smokeSeconds must produce at least one real recorded request per canonical Workload with frozen seed; do not invent extra arrivals')
     c['smoke'] = smoke
-    settings = dict(settings, powerObservation=power_observation(c))
+    settings = dict(settings, powerObservation=power_observation(c,frozen=True))
     c['harnessRepositoryCommit']=subprocess.check_output(['git','-C',str(REPO),'rev-parse','HEAD'],text=True).strip()
     c['tokenLifetime'] = token_preflight(c, schedule)
-    return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6','E5-7'], 'fullSeconds': 11700, 'staticSeconds': 10200, 'factorSeconds': 2100*c['N'], 'accounting': {'d': '9/34 last verified; phase6 raw supersedes only by actual evidence', 'exactCost': '69/69', 'evaluation': '0/7', 'planRows': '0/9', 'failureScenario': 'E5-7 scheduled; actual manual operator evidence required'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
+    return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6','E5-7'], 'fullSeconds': 11700, 'staticSeconds': 10200, 'factorSeconds': 2100*c['N'], 'accounting': {'d': '34/34 approved new-rule evidence; d25 closure subset frozen separately', 'exactCost': '69/69 historical exact-cost coverage, not current candidate count', 'evaluation': '0/7', 'planRows': '0/9', 'failureScenario': 'E5-7 scheduled; actual manual operator evidence required'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Profiling/evaluation record-ID separation and pinned-carrier equality UNKNOWN where actual enumeration is absent; host evaluation matches the retained producer payload', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
 
 
 class CPO:
@@ -1399,7 +1468,7 @@ def judge(binding, folder):
                 if x.get('issued') is not False and x.get('error')!='UnsentAtWindowEnd' and r and r.get('outcome')=='completed' and r.get('executionComplete') is True and type(r.get('elapsedNanos')) is int and r['elapsedNanos']>=0:
                     good.append(r['elapsedNanos'])
             hits=sum(x<=w['slo']['targetLatencyNanos'] for x in good); required=math.ceil(len(offsets)*pct/100)
-            sub.append({'id':part['id'],'offered':len(offsets),'outcomes':dict(outcomes),'unfinishedOrUnsent':max(0,len(offsets)-len(selected)),'completedLatencyNS':d.stats(good),'deadlineSuccess':hits,'requiredSuccessfulRank':required,'D1':'UNMEASURED' if not offsets else 'FAIL' if normal and hits<required else 'OBSERVED_THRESHOLD_MET' if normal else 'OVERLOAD_DESCRIPTIVE','rate':part['rates'][w['name']],'intendedRate':part['intendedRates'][w['name']],'poolShares':part['poolShares'],'alpha':part['alpha']}); base=stop
+            sub.append({'id':part['id'],'offered':len(offsets),'outcomes':dict(outcomes),'unfinishedOrUnsent':max(0,len(offsets)-len(selected)),'completedLatencyNS':d.stats(good),'deadlineSuccess':hits,'requiredSuccessfulRank':required,'D1':'UNMEASURED' if not offsets else 'FAIL' if normal and hits<required else 'OBSERVED_THRESHOLD_MET' if normal else 'OVERLOAD_DESCRIPTIVE','rate':part['rates'][w['name']],'intendedRate':part.get('intendedRates',{}).get(w['name']),'poolShares':part.get('poolShares'),'alpha':part.get('alpha')}); base=stop
             sub[-1]['latencyScope']=results[w['name']]['latencyScope']
             if offsets and quality!='VALID':sub[-1]['D1']='INVALID_GENERATOR' if quality=='INVALID_GENERATOR' else 'UNKNOWN'
             sub[-1]['unfinishedOrUnsent']+=sum(not finals.get(x.get('requestID')) for x in selected)
@@ -1483,13 +1552,19 @@ def judge(binding, folder):
             references = [ref(receipt_path)]
             for event in evidence['events']:
                 references.extend(ref(event[key]) for key in ('commandRef','responseRef'))
-            references.extend(ref(evidence['recovery'][key]) for key in ('schedulableRef','readyRef','observationRef','routeRef'))
-            failure_capture = {'status':'CAPTURED','events':evidence['events'],'recovery':evidence['recovery'],'sources':references,
-                               'meaning':'Actual manual serving Pod loss and cordon/delete/uncordon proxy, not physical power/network loss'}
+            recovery = evidence.get('recovery') or {}
+            references.extend(ref(recovery[key]) for key in ('schedulableRef','readyRef','observationRef','routeRef') if recovery.get(key))
+            failure_capture = {'status':'CAPTURED','events':evidence['events'],'recovery':recovery or None,'sources':references,
+                               'meaning':'Actual manual command outcomes; failed commands and unrecovered state retained. Serving loss/cordon proxy, not physical power/network loss; recovery is not inferred.'}
         except (OSError,ValueError,KeyError,TypeError) as exc:
             unknown.append('E5-7 actual operator failure/recovery evidence missing or invalid: '+str(exc))
     result={'schema':'e5-judgment.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; raw references/configuration excluded from public indexes','at':now(),'status':'NOT_READY' if unknown or phase['status']!='DRAINED_NOT_EVALUATED' else 'FAIL' if any(r['D1']=='FAIL' for r in results.values()) else 'MEASURED_DESCRIPTIVE','notReadyReasons':unknown,'requests':results,'Tick':sched,'cgroups':cg,'power':power,'thermal':thermals,'D6':'Observed thermal bins only; unknown active/latched remains unknown, profile slack must use bound source samples','rawErrors':inp.errors,'sources':inp.sources,'limitations':b['limitations'],'accounting':{'specScenarioDenominator':7,'planRowDenominator':9,'failureScenario':'CAPTURED' if failure_capture else 'NOT_EXERCISED_IN_THIS_ROW'}}
     result['failureScenarioEvidence']=failure_capture
+    result['energyBelowResolution']={'profiles':[{'profileID':profile['id'],'batch':batch['batch'],
+        'energyPerInputJoules':batch.get('energyPerInputJoules'),'energyBelowResolution':True}
+        for profile in profiles.values() for batch in profile['batches'] if batch.get('energyBelowResolution') is True],
+        'source':ref(c['inputs']['scheduler']),
+        'scope':'Frozen scheduler profiles, including ineligible candidates; not evidence of actual use or measured whole-POOL savings. Zero is below resolution, not exact zero energy.'}
     if phase.get('mode')=='smoke':
         result['scientificResults']='UNMEASURED; operational smoke never fills E5 rows'
         if result['status']=='MEASURED_DESCRIPTIVE': result['status']='OPERATIONAL_SMOKE_COMPLETE'
@@ -1560,6 +1635,15 @@ def summarize(binding, root):
         missing.append({'mode':'full','row':'E5-7','reason':'Actual operator failure/recovery evidence not measured'})
     factor_results={f['name']:{row:stages.get((f['name'],row)) for row in ('E5-2','E5-5')} for f in b['config']['factors']}
     result={'schema':'e5-summary.v1','at':now(),'status':'NOT_READY' if missing else 'MEASURED_DESCRIPTIVE','missing':missing,'planRows':plan_rows,'planResultLinks':str(sum(x=='MEASURED' for x in plan_rows.values()))+'/9','specScenarios':scenario,'specResultLinks':str(sum(x=='MEASURED' for x in scenario.values()))+'/7','failureScope':'E5-7 manual serving loss/cordon proxy; actual event/recovery evidence required, not physical network/power loss','failureScenarioEvidence':failure,'pairedComparisons':comparisons,'fullMatched170minWholePOOLJ':sum(x['fullWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'static170minWholePOOLJ':sum(x['staticWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'controlFactors':factor_results,'limitations':b['limitations'],'staticSelection':str(root/'static-selection.json'),'accounting':{'d':b['accounting']['d'],'exactCost':b['accounting']['exactCost'],'evaluation':str(sum(x=='MEASURED' for x in scenario.values()))+'/7'}}
+    result['scenarioLimitations']={'gradual-up-and-down':'E5-3 increases and E5-5 abrupt drop only; gradual decrease unmeasured',
+        'burst':'Smol burst only; other-model bursts unmeasured',
+        'node-serving-control-failure':'Manual serving loss/cordon proxy only; physical network/power loss and all control failure types unmeasured',
+        'controlFactors':'membership-off and replicas-off only; not all independent control contributions',
+        'repetitions':'One paired seed set; no independent repetitions'}
+    result['energyBelowResolution']={mode+'-'+row:value.get('energyBelowResolution') for (mode,row),value in stages.items()}
+    result['conditions']=['Generator opens a new TLS connection per request (no keep-alive); entrance delay and gateway CPU include handshake cost.']
+    if 'genesis2' in (b.get('schedulerSettings') or {}).get('excludedNodes',[]):
+        result['conditions'].append('genesis2 하드웨어 결함으로 제외 (excluded for hardware failure); seven serving Nodes only.')
     result['schedulerSettings']=b.get('schedulerSettings')
     if result['schedulerSettings'] is None:
         result['status']='NOT_READY';result['missing'].append({'reason':'Binding does not contain frozen scheduler settings; current settings are not substituted'})
