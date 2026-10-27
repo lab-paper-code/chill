@@ -59,6 +59,7 @@ attempt wire is `v1alpha6`, requiring matching Profiler and transition-observer
 control images, not a runtime-7 serving-image rebuild. Existing raw/finalized
 objects are not rewritten or reclassified, and an absent frozen settling value
 continues to mean the original zero-settling estimator.
+Serving projects `tau` and signed `eta` as `target-baseline-delta` with the frozen target idle watts: scheduler transition energy is `P_target * tau + eta`, so post-Ready settling baseline is not counted twice.
 
 Reason: the NVIDIA campaign retained 15/15 `PowerWindowInsufficient` results
 (13 coverage failures and two sample-count failures). At one-second power

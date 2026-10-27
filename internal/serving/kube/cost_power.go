@@ -94,7 +94,7 @@ func (e *CostEvidence) loadPowerCost(ctx context.Context, measurement *edge.Powe
 	}
 	evidence := powerEvidence{node: node, source: prepared.PowerSource}
 	for index, direction := range prepared.Directions {
-		cost := serving.OperationCost{ID: key.String() + "/" + direction.FrozenContract.SourceState.PowerMode + "->" + direction.FrozenContract.TargetState.PowerMode, Node: node, Kind: operationPower, From: direction.FrozenContract.SourceState.PowerMode, To: direction.FrozenContract.TargetState.PowerMode, EnergyScope: "whole-wall", Reference: identity}
+		cost := serving.OperationCost{ID: key.String() + "/" + direction.FrozenContract.SourceState.PowerMode + "->" + direction.FrozenContract.TargetState.PowerMode, Node: node, Kind: operationPower, From: direction.FrozenContract.SourceState.PowerMode, To: direction.FrozenContract.TargetState.PowerMode, Reference: identity}
 		for _, finalRef := range result.Directions[index].FinalEvidence {
 			if err := e.appendPowerTrial(ctx, finalRef, direction.FrozenContract, prepared.Policy, prepared.PowerSource, profiles, &cost); err != nil {
 				return powerEvidence{}, err
@@ -173,9 +173,14 @@ func (e *CostEvidence) appendPowerTrial(ctx context.Context, finalRef evidencest
 	if len(cost.Trials) > 0 && (!slices.Equal(cost.BeforeState, beforeState) || !slices.Equal(cost.TargetState, targetState)) {
 		return errors.New("directed trials have incompatible actual loaded allocations")
 	}
+	if len(cost.Trials) == 0 {
+		// Eta includes post-Ready excess energy; replay restores baseline only over tau.
+		cost.EnergyScope = "target-baseline-delta"
+		cost.SubtractedWatts = &contract.TargetIdleBaseline.MeanWallWatts
+	}
 	cost.BeforeState = beforeState
 	cost.TargetState = targetState
-	cost.Trials = append(cost.Trials, serving.OperationTrial{Duration: time.Duration(accepted.TauMilliseconds() * float64(time.Millisecond)), Joules: accepted.TransitionWallJoules()})
+	cost.Trials = append(cost.Trials, serving.OperationTrial{Duration: time.Duration(accepted.TauMilliseconds() * float64(time.Millisecond)), Joules: accepted.EtaJoules()})
 	if accepted.CompletedAt().After(cost.MeasuredAt) {
 		cost.MeasuredAt = accepted.CompletedAt()
 	}
