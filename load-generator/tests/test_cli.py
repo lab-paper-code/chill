@@ -2,6 +2,7 @@ import io
 import json
 import tempfile
 import unittest
+import threading
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -66,6 +67,31 @@ class FakeClient:
 
 
 class ReplayTest(unittest.TestCase):
+    def test_e5_dispatch_has_no_worker_cap_and_counts_scheduler_lateness(self) -> None:
+        # All three calls must enter infer before any can finish, even workers=1.
+        entered = threading.Barrier(3, timeout=2)
+        now = [0]
+        class ConcurrentClient(FakeClient):
+            def infer(self, workload, inputs):
+                entered.wait()
+                return super().infer(workload, inputs)
+        output = io.StringIO()
+        def sleep(seconds):
+            now[0] += round(seconds * 1e9) + 20_000_000
+        replay(
+            [("q1", {"image": b"a"})], workload="vqa", rate=3, duration=1,
+            workers=1, new_client=ConcurrentClient, out=output, open_loop=True,
+            clock_ns=lambda: now[0], sleep=sleep,
+        )
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(3, len(rows))
+        self.assertEqual({0, 1, 2}, {row["requestIndex"] for row in rows})
+        for row in rows:
+            self.assertEqual(row["sentMonotonicNS"] - row["scheduledMonotonicNS"], row["latenessNs"])
+            self.assertEqual((row["finishedMonotonicNS"] - row["scheduledMonotonicNS"]) / 1e6, row["latencyMs"])
+            self.assertEqual(row["latencyMs"], row["scheduledLatencyMs"])
+            self.assertAlmostEqual(row["serviceLatencyMs"] + row["latenessNs"] / 1e6, row["latencyMs"])
+
     def test_cycles_records_at_fixed_rate_and_reports_each_request(self) -> None:
         now = [0]
         sleeps = []

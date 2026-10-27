@@ -18,7 +18,6 @@ def identity(records):
 
 def main():
     binding = json.loads(zlib.decompress(base64.b64decode(sys.argv[1],validate=True)))
-    failures = []
 
     def frozen(records, **kw):
         actual = identity(records)
@@ -43,48 +42,20 @@ def main():
         start = dt.datetime.now(dt.timezone.utc).isoformat()
         start_ns = time.monotonic_ns()
         print(json.dumps({'e5Event': 'start', 'at': start, 'monotonicNS': start_ns}), flush=True)
-        lock = threading.Lock()
-        def emit(row):
-            encoded = json.dumps(row) + '\n'
-            with lock:
-                sys.stdout.write(encoded)
-                sys.stdout.flush()
         def window_end():
             remaining = (start_ns+base-time.monotonic_ns())/1e9
             if remaining > 0: time.sleep(remaining)
-            emit({'e5Event': 'window-end', 'at': dt.datetime.now(dt.timezone.utc).isoformat(), 'monotonicNS': time.monotonic_ns()})
+            sys.stdout.write(json.dumps({'e5Event': 'window-end', 'at': dt.datetime.now(dt.timezone.utc).isoformat(), 'monotonicNS': time.monotonic_ns()}) + '\n')
+            sys.stdout.flush()
         boundary = threading.Thread(target=window_end)
         boundary.start()
-        def worker(requests):
-            client = kw['new_client']()
-            def submit(request, delayed):
-                index = int(request.request_id)
-                rid, inputs = records[index % len(records)]
-                sent = time.monotonic_ns()
-                row = {'workload': kw['workload'], 'record': rid, 'requestIndex': index, 'scheduledOffsetNs': request.scheduled_offset_ns, 'delayed': delayed, 'sentMonotonicNS': sent}
-                if sent-start_ns >= base:
-                    row['error'] = 'UnsentAtWindowEnd'
-                else:
-                    try:
-                        response = client.infer(kw['workload'], inputs)
-                        row.update(status=response.status_code, requestID=response.request_id, workloadUID=response.workload_uid)
-                    except OSError as exc:
-                        client.close()
-                        row['error'] = type(exc).__name__
-                finished=time.monotonic_ns();row.update(finishedMonotonicNS=finished,latencyMs=(finished-sent)/1e6)
-                emit(row)
-            try:
-                cli.run_schedule(requests, submit, start_ns=start_ns, delay_tolerance_ns=cli.DELAY_TOLERANCE_NS)
-            except Exception as exc:
-                failures.append(str(exc))
-            finally:
-                client.close()
-        requests = [cli.ScheduledRequest(str(i), offset, 1) for i, offset in enumerate(offsets)]
-        threads = [threading.Thread(target=worker, args=(part,)) for part in cli.partition_schedule(requests, kw['workers']) if part]
-        for thread in threads: thread.start()
-        for thread in threads: thread.join()
-        boundary.join()
-        if failures: raise RuntimeError('; '.join(failures))
+        try:
+            cli.replay_open_loop(
+                records, workload=kw['workload'], offsets=offsets,
+                new_client=kw['new_client'], out=sys.stdout, start_ns=start_ns,
+            )
+        finally:
+            boundary.join()
         print(json.dumps({'e5Event': 'drained', 'at': dt.datetime.now(dt.timezone.utc).isoformat(), 'monotonicNS': time.monotonic_ns()}), flush=True)
         # Preserve the same process/cgroup until CPO saves the real post-end
         # counter and removes the existing start marker. Original Job/watchdog

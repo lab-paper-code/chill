@@ -54,6 +54,72 @@ def arrival_offsets_ns(arrivals: str, rate: float, duration: float, seed: int) -
     return offsets
 
 
+def replay_open_loop(
+    records: Sequence[Record], *, workload: str, offsets: Sequence[int],
+    new_client: Callable[[], WorkloadHTTPClient], out: TextIO, start_ns: int,
+    clock_ns: Callable[[], int] = time.monotonic_ns,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Dispatch every planned arrival independently, without an in-flight cap."""
+    lock = threading.Lock()
+    threads: List[threading.Thread] = []
+    failures: List[BaseException] = []
+
+    def send(request: ScheduledRequest) -> None:
+        client = None
+        try:
+            index = int(request.request_id)
+            record_id, inputs = records[index % len(records)]
+            scheduled = start_ns + request.scheduled_offset_ns
+            client = new_client()
+            sent = clock_ns()
+            row: Dict[str, object] = {
+                "workload": workload, "record": record_id, "requestIndex": index,
+                "scheduledOffsetNs": request.scheduled_offset_ns,
+                "scheduledMonotonicNS": scheduled, "sentMonotonicNS": sent,
+                "latenessNs": sent - scheduled,
+                "delayed": sent - scheduled > DELAY_TOLERANCE_NS,
+            }
+            try:
+                response = client.infer(workload, inputs)
+                row.update(status=response.status_code, requestID=response.request_id,
+                           workloadUID=response.workload_uid)
+            except OSError as error:
+                row["error"] = type(error).__name__
+            finished = clock_ns()
+            row.update(finishedMonotonicNS=finished,
+                       latencyMs=(finished - scheduled) / 1_000_000,
+                       scheduledLatencyMs=(finished - scheduled) / 1_000_000,
+                       serviceLatencyMs=(finished - sent) / 1_000_000)
+            encoded = json.dumps(row) + "\n"
+            with lock:
+                out.write(encoded)
+                out.flush()
+        except BaseException as error:
+            with lock:
+                failures.append(error)
+        finally:
+            if client is not None:
+                client.close()
+
+    def submit(request: ScheduledRequest, delayed: bool) -> None:
+        thread = threading.Thread(target=send, args=(request,))
+        thread.start()
+        threads.append(thread)
+
+    try:
+        run_schedule(
+            [ScheduledRequest(str(index), offset, 1) for index, offset in enumerate(offsets)],
+            submit, start_ns=start_ns, delay_tolerance_ns=DELAY_TOLERANCE_NS,
+            clock_ns=clock_ns, sleep=sleep,
+        )
+    finally:
+        for thread in threads:
+            thread.join()
+    if failures:
+        raise RuntimeError("Open-loop request failed") from failures[0]
+
+
 def replay(
     records: Sequence[Record],
     *,
@@ -67,11 +133,20 @@ def replay(
     seed: int = 0,
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
+    open_loop: bool = False,
 ) -> None:
     """Send open-loop arrivals or refill a fixed outstanding population, then drain its tail."""
 
     if arrivals != "closed-loop" and rate is None:
         raise ValueError("rate is required for open-loop arrivals")
+    if open_loop and arrivals != "closed-loop":
+        replay_open_loop(
+            records, workload=workload,
+            offsets=arrival_offsets_ns(arrivals, rate, duration, seed),
+            new_client=new_client, out=out, start_ns=clock_ns(),
+            clock_ns=clock_ns, sleep=sleep,
+        )
+        return
     schedule = [] if arrivals == "closed-loop" else [
         ScheduledRequest(str(index), offset_ns, 1)
         for index, offset_ns in enumerate(arrival_offsets_ns(arrivals, rate, duration, seed))
@@ -249,5 +324,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             request_lifetime_seconds=args.request_lifetime,
         ),
         out=sys.stdout,
+        open_loop=e5_contract,
     )
     return 0

@@ -22,6 +22,36 @@ slow the offered load until every connection is busy. No request is sent after
 gaps of mean `1/--rate` from `--seed` (default 0), so the same seed repeats the
 same send times.
 
+### E5 scheduled-time replay
+
+With the E5 contract (`--workload-slo` and `--gateway-timeout`), every frozen
+arrival starts an independent request on the original timeline; `--workers`
+does not cap in-flight E5 requests. The injected `hack/e5/e5-producer.py` uses
+the same dispatcher for its frozen segmented trace. Late arrivals are still
+sent and drained, not silently dropped at the issue-window boundary.
+`scheduledMonotonicNS` anchors the request; `latenessNs` is actual send minus
+scheduled time. `latencyMs` and `scheduledLatencyMs` measure completion minus
+scheduled time (including sender lateness), while `serviceLatencyMs` retains
+the actual-send HTTP duration. Existing fields remain. Offered means the
+entire planned trace, including failures and missing issuance; issuance fidelity
+must establish complete supply rather than reducing that denominator.
+
+The `feat/loadgen-async` branch was inspected before this cutover: it dispatches
+independent asyncio tasks, but caps attempts at `workers`, marks excess arrivals
+`not_issued`, stops late sends at the issue boundary, and measures latency from
+actual issue time. Its aiohttp/scenario API also removes the current occupancy
+and E5 lifetime contract. The minimal port retains its independent-timeline
+dispatch design using stdlib request threads, without importing that incompatible
+client/API or its cap. Closed-loop occupancy replay is unchanged.
+Inspection baseline: branch tip `f419192e`; `main...feat/loadgen-async`
+contains 47 changed files (+7411/-610). A three-way merge against base
+`9c29bf96` reports conflicts in README, CLI, HTTP client, CLI tests and HTTP
+client tests. No branch merge or compatibility shim is introduced.
+
+Rebuild and publish the **load-generator image** after this change; producer
+injection alone cannot install the new dispatcher. No runtime-7 image rebuild
+is required.
+
 ```sh
 chill-loadgen replay \
   --endpoint https://chill.example:8443 --token-file "$CHILL_TOKEN_FILE" \
