@@ -35,6 +35,12 @@ scheduled time (including sender lateness), while `serviceLatencyMs` retains
 the actual-send HTTP duration. Existing fields remain. Offered means the
 entire planned trace, including failures and missing issuance; issuance fidelity
 must establish complete supply rather than reducing that denominator.
+The native lifetime remains anchored to the planned arrival: the request header
+carries `L - lateness`. A lifetime exhausted before issue produces an
+`issued=false`, `GeneratorDelayExpired` result without HTTP traffic. Thread
+creation failures likewise produce `GeneratorThreadStartError` rows and do not
+stop later arrivals or the producer's drained event. Both stay in the planned
+denominator and fail full-supply judging.
 
 The `feat/loadgen-async` branch was inspected before this cutover: it dispatches
 independent asyncio tasks, but caps attempts at `workers`, marks excess arrivals

@@ -59,11 +59,26 @@ def replay_open_loop(
     new_client: Callable[[], WorkloadHTTPClient], out: TextIO, start_ns: int,
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
+    request_lifetime_seconds: Optional[float] = None,
 ) -> None:
     """Dispatch every planned arrival independently, without an in-flight cap."""
     lock = threading.Lock()
     threads: List[threading.Thread] = []
     failures: List[BaseException] = []
+
+    def base_row(request: ScheduledRequest) -> Dict[str, object]:
+        index = int(request.request_id)
+        return {
+            "workload": workload, "record": records[index % len(records)][0],
+            "requestIndex": index, "scheduledOffsetNs": request.scheduled_offset_ns,
+            "scheduledMonotonicNS": start_ns + request.scheduled_offset_ns,
+        }
+
+    def emit(row: Dict[str, object]) -> None:
+        encoded = json.dumps(row) + "\n"
+        with lock:
+            out.write(encoded)
+            out.flush()
 
     def send(request: ScheduledRequest) -> None:
         client = None
@@ -73,15 +88,22 @@ def replay_open_loop(
             scheduled = start_ns + request.scheduled_offset_ns
             client = new_client()
             sent = clock_ns()
-            row: Dict[str, object] = {
-                "workload": workload, "record": record_id, "requestIndex": index,
-                "scheduledOffsetNs": request.scheduled_offset_ns,
-                "scheduledMonotonicNS": scheduled, "sentMonotonicNS": sent,
-                "latenessNs": sent - scheduled,
-                "delayed": sent - scheduled > DELAY_TOLERANCE_NS,
-            }
+            row = base_row(request)
+            row.update(sentMonotonicNS=sent, latenessNs=sent - scheduled,
+                       delayed=sent - scheduled > DELAY_TOLERANCE_NS, issued=True)
+            remaining = (request_lifetime_seconds - (sent - scheduled) / 1e9
+                         if request_lifetime_seconds is not None else None)
+            if remaining is not None and remaining < 1e-9:
+                row.pop("sentMonotonicNS")
+                row.update(issued=False, error="GeneratorDelayExpired",
+                           generatorFailure="lifetime_expired_before_send",
+                           finishedMonotonicNS=sent, latencyMs=(sent - scheduled) / 1e6,
+                           scheduledLatencyMs=(sent - scheduled) / 1e6)
+                emit(row)
+                return
             try:
-                response = client.infer(workload, inputs)
+                response = (client.infer(workload, inputs, request_lifetime_seconds=remaining)
+                            if remaining is not None else client.infer(workload, inputs))
                 row.update(status=response.status_code, requestID=response.request_id,
                            workloadUID=response.workload_uid)
             except OSError as error:
@@ -91,10 +113,7 @@ def replay_open_loop(
                        latencyMs=(finished - scheduled) / 1_000_000,
                        scheduledLatencyMs=(finished - scheduled) / 1_000_000,
                        serviceLatencyMs=(finished - sent) / 1_000_000)
-            encoded = json.dumps(row) + "\n"
-            with lock:
-                out.write(encoded)
-                out.flush()
+            emit(row)
         except BaseException as error:
             with lock:
                 failures.append(error)
@@ -104,7 +123,17 @@ def replay_open_loop(
 
     def submit(request: ScheduledRequest, delayed: bool) -> None:
         thread = threading.Thread(target=send, args=(request,))
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError as error:
+            now = clock_ns()
+            row = base_row(request)
+            row.update(issued=False, error="GeneratorThreadStartError",
+                       generatorFailure=type(error).__name__,
+                       latenessNs=now - row["scheduledMonotonicNS"],
+                       finishedMonotonicNS=now)
+            emit(row)
+            return
         threads.append(thread)
 
     try:
@@ -134,6 +163,7 @@ def replay(
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
     open_loop: bool = False,
+    request_lifetime_seconds: Optional[float] = None,
 ) -> None:
     """Send open-loop arrivals or refill a fixed outstanding population, then drain its tail."""
 
@@ -145,6 +175,7 @@ def replay(
             offsets=arrival_offsets_ns(arrivals, rate, duration, seed),
             new_client=new_client, out=out, start_ns=clock_ns(),
             clock_ns=clock_ns, sleep=sleep,
+            request_lifetime_seconds=request_lifetime_seconds,
         )
         return
     schedule = [] if arrivals == "closed-loop" else [
@@ -325,5 +356,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ),
         out=sys.stdout,
         open_loop=e5_contract,
+        request_lifetime_seconds=args.request_lifetime,
     )
     return 0

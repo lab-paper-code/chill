@@ -108,7 +108,8 @@ class WorkloadHTTPClient:
             context=ssl.create_default_context(cafile=ca_file),
         )
 
-    def infer(self, workload_id: str, inputs: Mapping[str, bytes]) -> InferenceResponse:
+    def infer(self, workload_id: str, inputs: Mapping[str, bytes], *,
+              request_lifetime_seconds: Optional[float] = None) -> InferenceResponse:
         """Send one raw sample: every preprocessor input field name mapped to its bytes."""
         if not _valid_identifier(workload_id):
             raise ValueError("workload_id must be a Kubernetes DNS subdomain name")
@@ -132,7 +133,14 @@ class WorkloadHTTPClient:
             "Content-Type": "application/json",
             "Authorization": self._authorization,
         }
-        if self._request_lifetime is not None:
+        if request_lifetime_seconds is not None:
+            if (isinstance(request_lifetime_seconds, bool)
+                    or not isinstance(request_lifetime_seconds, (int, float))
+                    or not math.isfinite(request_lifetime_seconds)
+                    or request_lifetime_seconds < 1e-9):
+                raise ValueError("request_lifetime_seconds must be finite and positive")
+            headers["X-Chill-Request-Timeout"] = f"{request_lifetime_seconds:.9f}s"
+        elif self._request_lifetime is not None:
             headers["X-Chill-Request-Timeout"] = self._request_lifetime
         self._connection.request(
             "POST",

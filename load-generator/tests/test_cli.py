@@ -5,9 +5,10 @@ import unittest
 import threading
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
-from chill_loadgen.cli import arrival_offsets_ns, load_records, main, replay
-from chill_loadgen.http_client import InferenceResponse
+from chill_loadgen.cli import arrival_offsets_ns, load_records, main, replay, replay_open_loop
+from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient
 
 
 class CLITest(unittest.TestCase):
@@ -67,6 +68,54 @@ class FakeClient:
 
 
 class ReplayTest(unittest.TestCase):
+    def test_e5_lifetime_subtracts_lateness_and_expired_plan_does_not_send(self):
+        for delay, expected in [(250_000_000, "0.750000000s"), (1_000_000_000, None)]:
+            with self.subTest(delay=delay), patch("chill_loadgen.http_client.HTTPSConnection") as connection:
+                connection.return_value.sock = None
+                response = connection.return_value.getresponse.return_value
+                response.status = 200
+                response.read.return_value = b"{}"
+                response.getheader.return_value = None
+                output = io.StringIO()
+                replay_open_loop(
+                    [("q1", {"image": b"a"})], workload="vqa", offsets=[0],
+                    new_client=lambda: WorkloadHTTPClient(
+                        "https://chill.example", bearer_token="token",
+                        timeout_seconds=2, request_lifetime_seconds=1),
+                    out=output, start_ns=0, clock_ns=lambda: delay,
+                    request_lifetime_seconds=1,
+                )
+                row = json.loads(output.getvalue())
+                self.assertEqual(row["requestIndex"], 0)
+                if expected is None:
+                    connection.return_value.request.assert_not_called()
+                    self.assertFalse(row["issued"])
+                    self.assertEqual(row["error"], "GeneratorDelayExpired")
+                    self.assertNotIn("sentMonotonicNS", row)
+                else:
+                    self.assertEqual(connection.return_value.request.call_args.kwargs["headers"]["X-Chill-Request-Timeout"], expected)
+                    self.assertTrue(row["issued"])
+
+    def test_e5_thread_start_failure_records_plan_and_continues_draining(self):
+        original_start = threading.Thread.start
+        attempts = []
+        def start(thread):
+            attempts.append(thread)
+            if len(attempts) == 1:
+                raise RuntimeError("can't start new thread")
+            original_start(thread)
+        output = io.StringIO()
+        with patch.object(threading.Thread, "start", start):
+            replay_open_loop(
+                [("q1", {"image": b"a"})], workload="vqa", offsets=[0, 0, 0],
+                new_client=FakeClient, out=output, start_ns=0, clock_ns=lambda: 0,
+            )
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual({row["requestIndex"] for row in rows}, {0, 1, 2})
+        self.assertEqual(rows[0]["error"], "GeneratorThreadStartError")
+        self.assertFalse(rows[0]["issued"])
+        self.assertEqual(sum(row.get("status") == 200 for row in rows), 2)
+
     def test_e5_dispatch_has_no_worker_cap_and_counts_scheduler_lateness(self) -> None:
         # All three calls must enter infer before any can finish, even workers=1.
         entered = threading.Barrier(3, timeout=2)

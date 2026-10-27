@@ -63,7 +63,7 @@ def scheduled_monotonic_ns(row, start_ns):
 
 def scheduled_latency_ns(row, start_ns):
     """E5 completion latency includes producer delay from the frozen arrival."""
-    if row.get('error') == 'UnsentAtWindowEnd':
+    if row.get('issued') is False or row.get('error') == 'UnsentAtWindowEnd':
         return None
     scheduled = scheduled_monotonic_ns(row, start_ns)
     finished = row.get('finishedMonotonicNS')
@@ -73,7 +73,7 @@ def scheduled_latency_ns(row, start_ns):
 def issuance_fidelity(client, offsets, start_ns, duration_ns, stats):
     """Describe send-call timing, not stdout flush timing or wire arrival."""
     threshold = 50_000_000
-    issued = [row for row in client if row.get('error') != 'UnsentAtWindowEnd']
+    issued = [row for row in client if row.get('issued') is not False and row.get('error') != 'UnsentAtWindowEnd']
     missing = sum(type(row.get('sentMonotonicNS')) is not int for row in issued)
     result = {'thresholdNS': threshold, 'offered': len(offsets), 'issued': len(issued), 'missingSendTimestamps': missing,
               'supplied': False, 'issuanceFraction': None,
