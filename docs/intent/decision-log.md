@@ -377,3 +377,15 @@
 ## 2026-10-27 06:3xZ — U2 저전력 Smol BEO 관측 창 권고값
 
 - jetsono 15W Smol q1 BEO: 마지막 추론(~12s/건)이 metric observer durationSeconds 299s를 초과해 결과 미발행(`history://SmolBeoTimeout27`). 권고: 느린 조합의 `activeProtocol.metricObservation.durationSeconds = 297 + 최대 단일 추론 + 여유`(이번 330s), 측정 목표 297s 유지. 코드 변경 없음.
+
+## 2026-10-27 — E5 전 로컬 관측 보존 2h 복원
+
+- 결정: `values-operating.yaml`의 시연 임시24h(`e659ccb1`, SCH-42 대기)를 기본2h로 복원한다. 공통 reader의 archive 투명 조회·UTC 정규화와 `e5-archive.py`의 없는 과거 시간 S3 fallback이 있어, 정상 archive/접근·유한 수집기한 안에서는 E5 180분+static170분 집계 원자료를 잃지 않는다. 6h/24h는 정확성 요구가 아니며 보존 실패·미완료 pin 보호는 유지한다.
+- 근거: 읽기 전용 stat(10:03:32Z) 실제24h=14.251GB 원문/requests11.123GB/2,022파일; 가상2h=0.152GB/requests9.37MB/74파일. `34ec34f7`은 완료 payload를 버리지만 ID tombstone과 전체 requests 스캔은 남긴다. 첫 축소 rollout도 기존24h를 먼저 읽고, 첫 archive pass의 재압축 읽기도 남으므로 파일 수동삭제/빈 경로 전환은 하지 않는다.
+- 예산: 150MB gz/h 가정의350분=875MB gz, 최근 혼합 압축비4.813배 조건부 원문4.212GB[INFERENCE]. rev93 기동 heap 관측880MiB와 GOMEMLIMIT3072MiB/limit4Gi 사이 산술 여유는 있지만 RSS/전체 E5 메모리 상한 인증은 아니다. 메모리 증설 없이2h 채택; 라이브 적용·cgroup/GC·archive 출처 확인은 CampaignOps 직렬 큐. 이번에는 stat/코드/기존 증거만 읽었고 빌드·테스트·라이브 변경0.
+- 상세: [관측 설계 §5.1](../design/serving/observability-split.md#51-e5-전-운영-보존기동-예산-결정-2026-10-27), `O/intent/observation-retention-20261027.json`. 긴 창 S3 다운로드 시간은 E5-0만으로 검증됐다고 하지 않는다.
+
+## 2026-10-27 — U2 추가 모드와 분리한 E5 숫자 요청 경계
+
+- E5 기본 승인 요청은 U2 추가 모드를 기다리지 않고 진행한다. m29ms/MNV p95 1s·PLC p95 32ms·Smol p95 7.034s 비교후보, L2/1/75s·cap129s·delivery10ms/socketL+20ms·N2·정적E5-3끝 유지. 숫자 승인은 Main이 요청하며 이 기록은 실행 승인이 아니다.
+- d 새 규칙34/34 완료와 후보SLO capacity 부재/jetsonx resourceRejected는 구분한다. 측정50ms/p99 60s와 부분합K를 승인R 또는 메모리 상한으로 쓰지 않는다. 상세 `O/intent/e5-numbers-20261027.md` 최신 결론(KappaR27 산출).

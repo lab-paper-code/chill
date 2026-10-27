@@ -82,6 +82,41 @@
 - 읽기는 대상 파일을 `mu` 아래에서 열고 잠금 밖에서 읽는다. 삭제는 열린 fd에 영향이 없다. 쓰는 중인 마지막 줄(개행 없음)은 무시한다.
 - **D2 결정(`SCH-42`):** 실험 구간은 사후 재생이 가능한 동안 evidence store에 보존한다. 로컬 삭제는 영구 삭제가 아니며 6.2절의 투명 조회가 이를 따른다. `7ad977d1`의 `--observation-retention`(기본 `2h`, 시연 `24h`)은 PVC 버퍼 크기를 조절하는 **임시 운영 수단**이지 과거 조회 보장의 해결책이 아니다. 보존 기간을 늘리는 것만으로 T4를 완료했다고 판정하지 않는다.
 
+### 5.1 E5 전 운영 보존·기동 예산 결정 (2026-10-27)
+
+**권고와 설정:** `values-operating.yaml`의 로컬 보존을 `24h`에서 기본 `2h`로 복원한다. `e659ccb1`의 24h는 시연 2회차에서 `SCH-42` 검증을 기다리는 임시값이었다. 현재 공통 reader의 `prepare/selectSources`는 없는 로컬 시간을 S3에서 읽고, UTC hour 정규화 수정(`81ea4c59`, `6b2755ec`)도 반영됐다. `TestObservationArchiveTransparentReadsAndCatalog`는 로컬 삭제 뒤 Query·LoadWindow·scheduler page의 동일 원자료·정의 해석을 검사한다(이번 조사에서 재실행하지 않음).
+
+**E5 집계 영향:** `hack/e5/e5-archive.py:collect`는 drain+1분 지원 표본을 기다린 뒤 retained 시간의 fd를 먼저 열고, **로컬에 없는 과거 시간은 exact-hour S3 List → `_fetch` → gzip EOF/CRC 확인**으로 수집한다. 현재 시간은 로컬에서 필수이며, required scheduler 부재·S3 실패는 `NOT_READY`이지 0/성공 대체가 아니다. `e5-raw.py`와 기존 power reducer는 수집한 `obs`를 읽으므로 180분 E5나 170분 static의 앞부분이 2h를 넘어도 이 경로 자체는 바뀌지 않는다. archive 성공 전 삭제 금지·미완료 assigned 시간 보호는 유지한다. 따라서 정상 S3 보존·접근과 collection deadline 안의 다운로드가 전제일 때 **원자료/집계 의미 손실은 없다**. 긴 창은 S3 읽기량·소요가 늘 수 있으므로 짧은 E5-0 성공을 350분 수집 시간 검증으로 대체하지 않는다. 6h/24h는 이 정확성에 필요하지 않다.
+
+**기동은 압축량을 통째로 heap에 올리지 않는다.** `34ec34f7` 이후 `restore`는 모든 로컬 requests JSONL을 순차 decode하되 완료 payload는 버리고, **완료 ID의 nil tombstone은 스캔 끝까지 보유**한다. “map이 미완료만 보유”는 payload에만 맞고 ID에는 맞지 않는다. 비용은 `definitions 바이트 + Σ로컬 requests 원문 바이트`의 I/O·decode와 O(전체 고유 요청 ID) 맵 + O(미완료 payload) 메모리다. scanner는 64KiB/최대 한 줄, torn-tail은 4KiB씩 읽는다. scheduler/management/catalog 원문 전체는 constructor에서 읽지 않으며, 별도 catalog/Kubernetes 초기화 비용도 남는다. `Retention`은 constructor cutoff가 아니라 **기동 후 archive 삭제 조건**이라 최초 2h 적용 rollout도 기존 24h를 먼저 복원한다. 수동 삭제·새 빈 디렉터리 전환은 하지 않는다.
+
+읽기 전용 파일 stat(2026-10-27T10:03:32Z, 실제 serving Pod UID `e8dc048a-91f6-4be9-851c-7c95ac2a8933`)의 비교다. 2h/6h는 업로드 성공·미완료 pin 없음의 가상 삭제 후 값이지 실제 삭제 결과가 아니다. 루트 definitions 416,375B는 별도다.
+
+| 로컬 기간 | 시간/파일 수 | 전체 원문 | 기동 requests 읽기 | requests 읽기만 50 MB/s 가정 |
+|---|---:|---:|---:|---:|
+| 24h(실제) | 24 / 2,022 | 14.251 GB | 11.123 GB | 222.45s |
+| 6h(가상) | 6 / 428 | 0.927 GB | 0.430 GB | 8.60s |
+| 2h(가상) | 2 / 74 | 0.152 GB | 0.00937 GB | 0.19s |
+
+시간 열은 **[INFERENCE] 바이트/가정 처리율**이며 측정 ETA가 아니다. JSON decode·GC·메타데이터·후속 초기화는 별도이고 cache/CPU/요청 밀도에 따라 달라진다. rev93 실제 로그는 시작 후 147.043s에 `456→459→456 MiB`, 153.159s에 `880→880→15 MiB`, Ready 약294s였다. 이를 순수 restore 시간이나 향후 상한으로 해석하지 않는다. 또한 재시작 시 `archived` 성공 맵은 비어 있어 첫 archive pass가 지난 시간의 **모든 stream을 다시 gzip·PutImmutable(Existing 가능)**한다. 위 실제 자료에서 지난 시간 원문 약14.241 GB를 추가로 읽으므로 constructor requests와 합한 로컬 원문 읽기만 약25.363 GB이며 gzip staging 읽기/쓰기·S3 시간은 별도다. 24h 유지에는 payload 수정 뒤에도 이런 비용이 남는다.
+
+크기 예상은 사용자 기준 **150 MB gzip/h**의 단순 시간 곱이다(MB=10⁶B, GiB=2³⁰B). 압축물은 S3 크기이며 PVC는 JSONL 원문이다. 최근 보존 manifest(`preflight-control-195-u2x/smoke-MIX`, 08시 전체+09시 일부)에서 stream 합계 32,869,396B gz / 158,205,468B 원문 = 4.813배, requests만은 12.673배였다. 다음 원문 열은 **[INFERENCE] 그 혼합비가 지속된다는 조건부 추정**이지 E5의 보장 압축비가 아니다.
+
+| 구간/보존 | gzip 누적 | 혼합비 4.813배의 원문 예상 |
+|---|---:|---:|
+| E5 180분 | 450 MB | 2.166 GB |
+| static 170분 | 425 MB | 2.046 GB |
+| 합계 350분 | 875 MB (834.5 MiB) | 4.212 GB |
+| 정상 2h 버퍼 | ≤300 MB 상당 | ≤1.444 GB |
+| 정상 6h 버퍼 | ≤900 MB 상당 | ≤4.332 GB |
+| 정상 24h 버퍼 | ≤3,600 MB 상당 | ≤17.327 GB (16.14 GiB) |
+
+버퍼의 ≤는 일정 발생률·정상 업로드·분 단위 삭제·pin 없음의 시간 버킷 근사이며 실제 상한이 아니다. 합계350분은 24h 유지라면 기존 데이터에 더해지지만, 정상 2h에서는 앞 시간부터 S3로 옮겨져 전량이 로컬에 누적되지 않는다. 모든 gzip 바이트가 requests와 같은 12.673배라고 놓는 민감도 시나리오는 24h 원문45.624 GB로 PVC32Gi도 넘는다. 현재 24h 원문13.27GiB가 작다는 사실이나 gzip3.6GB만으로 디스크/메모리 안전을 인증하지 않는다. 가장 큰 stream-시간을 gzip150MB로 놓으면 scratch 두 벌300MB=286.1MiB로 512Mi 안이지만, stream 하나가268.4MB를 넘으면 두 벌만으로 512Mi를 넘는다.
+
+**메모리 판정:** `GOMEMLIMIT=3072MiB`, container limit `4Gi`를 유지한다(실제 rev96 Pod 설정 확인). rev93의 관측 heap 최대880MiB를 기준으로 soft target까지2,192MiB, hard limit까지3,216MiB의 산술 차이가 있어 **복원 수정의 기동 여유는 관측됐다**. 하지만 heap은 RSS/charged peak가 아니고 1,024MiB의 target↔limit 차이는 runtime·stack·page cache·scratch 등 전체 비heap 사용 보장이 아니다. 미완료 payload, 요청 body/queue, 후속 catalog, 긴 archive 조회·집계 및 전체 ID 맵은 별도다. 150MB/h나 부분합 κ를 E5 요청 수/전체 heap 상한으로 환산하지 않으며 **E5 전체 메모리 여유는 아직 미인증**이다. 추가 메모리 증설 없이 2h로 불필요한 복원량을 줄이고, CampaignOps의 직렬 적용·E5-0에서는 실제 cgroup 메모리/GC·Ready/restart와 archive 출처·공백을 보존한다. 측정 중 재시작·호스트 빌드나 이번 조사에서의 부하 검증은 하지 않았다.
+
+원시/계산 근거: `O/intent/observation-retention-20261027.json`(`O=~/.cache/chill-assets/ops/pools-deploy`), `O/campaign/v2/d-20261027/control-192/{startup.log,gc-heap.json}`, `O/deployB/control-195-20261027/pods-ready.stdout`. 라이브 적용은 CampaignOps 소유이며 이 설정 커밋은 적용/검증 완료 주장이 아니다.
+
 ## 6. 조회
 
 ### 6.1 범위와 기존 reducer
