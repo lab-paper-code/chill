@@ -11,7 +11,7 @@
   "capacityR": {"mobilenet": null, "plc": null, "smolvlm2": null},
   "g0Bootstrap": true,
   "g0Evidence": {"status": "UNKNOWN"},
-  "timeboxes": {"setupSeconds": 194, "barrierSeconds": 300, "drainSeconds": 194, "flushSeconds": 15, "collectSeconds": 240, "apiSeconds": 129, "settleSeconds": 194, "powerDownSeconds": 1800},
+  "timeboxes": {"setupSeconds": 194, "barrierSeconds": 300, "drainSeconds": 194, "flushSeconds": 15, "collectSeconds": 240, "apiSeconds": 129, "settleSeconds": 194, "finishResetWaitSeconds": 600, "powerDownSeconds": 1800},
   "measurementSLO": {
     "mobilenet": {"percentile": 95, "targetLatencyNanos": 1000000000},
     "plc": {"percentile": 95, "targetLatencyNanos": 32000000},

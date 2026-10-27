@@ -137,8 +137,12 @@ try:
                 if harness=='d2':m.save(lane.out/'lifecycle.json',{'originalSettings':initial})
                 else:
                     lane.uids=uids;lane.tb={'settleSeconds':194}
+                    lane.b={'schema':'e5-binding.v1'};lane.d=m
                     e5.save(lane.out/'initial.json',{'settings':initial})
                 def api(method,path,body=None,**kwargs):
+                    if method=='GET':
+                        assert path=='/api/v1/scheduler/settings'
+                        return copy.deepcopy(current)
                     if method=='POST':
                         assert path=='/api/v1/scheduler/operations'
                         assert body['kind']=='reset' and body['workloadUIDs']==uids and body['reason']
@@ -153,13 +157,14 @@ try:
                                          {'name':'drain','status':'failed' if failed else 'complete'}],
                                 'endedAt':m.now(),'actual':{'routing':copy.deepcopy(current['staticRouting'])}}
                     assert method=='PUT' and path=='/api/v1/scheduler/settings'
-                    assert events==['reset'] and not failed
+                    is_off=harness=='e5' and not events
+                    assert is_off or events==(['off','reset'] if harness=='e5' else ['reset']) and not failed
                     assert 'staticRouting' not in body and 'staticRoutingValidatedAt' not in body and 'reason' not in body
-                    events.append('settings');writes.append(copy.deepcopy(body))
+                    events.append('off' if is_off else 'settings');writes.append(copy.deepcopy(body))
                     current.update(body)
                     return {'validatedAt':m.now()}
                 lane.api=api
-                lane.state=lambda:{'snapshot':{'instances':[],'nodes':[],'routing':copy.deepcopy(current['staticRouting'])}}
+                lane.state=lambda:{'snapshot':{'at':m.now(),'instances':[],'nodes':[],'routing':copy.deepcopy(current['staticRouting'])}}
                 if harness=='e5':lane.io=SimpleNamespace(api=api)
                 complete=lane.out/('cleanup-complete.json' if harness=='d2' else 'finish-complete.json')
                 try:
@@ -167,9 +172,9 @@ try:
                     else:lane.finish()
                 except RuntimeError as error:
                     assert failed and 'reset failed' in str(error)
-                    assert events==['reset'] and not writes and not complete.exists()
+                    assert events==(['off','reset'] if harness=='e5' else ['reset']) and len(writes)==(1 if harness=='e5' else 0) and not complete.exists()
                 else:
-                    assert not failed and events==['reset','settings'] and complete.exists()
+                    assert not failed and events==(['off','reset','settings'] if harness=='e5' else ['reset','settings']) and complete.exists()
                     assert current['staticRouting']==foreign
                     assert current['autonomousWorkloads']==['other-auto']
                 result_path=lane.out/('cleanup-reset-result.json' if harness=='d2' else 'finish-reset-result.json')

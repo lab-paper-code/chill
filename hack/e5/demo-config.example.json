@@ -15,6 +15,7 @@
     "collectSeconds": 240,
     "apiSeconds": 129,
     "settleSeconds": 194,
+    "finishResetWaitSeconds": 600,
     "powerDownSeconds": 1800
   },
   "minimumDemand": {

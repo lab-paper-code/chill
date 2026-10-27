@@ -535,6 +535,7 @@ def positive(x):
 
 
 def token_preflight(config, stages):
+    config['timeboxes'].setdefault('finishResetWaitSeconds', 600)
     auth = module('e5_auth', HERE / 'auth.py')
     budget = auth.lifetime_budget(stages, config['timeboxes'], config.get('tokenSafetyMarginSeconds', 60))
     return auth.check(config['tokenFile'], budget, endpoint=config.get('endpoint'), ca_file=config.get('caFile'),
@@ -1354,24 +1355,34 @@ class CPO:
         self.authorize_native_modes()
         save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-ack.json'),self.put(settings))
     def clear_owned(self,prefix):
-        if self.b.get('schema') == 'demo-e5-binding.v1':
-            settings = self.settings()
-            settings['autonomousWorkloads'] = [uid for uid in settings.get('autonomousWorkloads', []) if uid not in self.uids]
-            save(self.out/(prefix+'-reset-autonomy-ack.json'), self.put(settings))
-            started = time.monotonic()
-            deadline = started + self.tb['settleSeconds']
-            observations = []
-            while True:
-                state = self.state()
-                reservations = len(state['snapshot'].get('reservations') or [])
-                transitions = sum(action.get('status') in ('running', 'cancel') for action in state.get('actions') or [])
-                elapsed = time.monotonic() - started
-                observations.append({'at': now(), 'elapsedSeconds': elapsed, 'reservations': reservations, 'transitions': transitions})
-                remaining = deadline - time.monotonic()
-                if not reservations and not transitions or remaining <= 0:
-                    save(self.out/(prefix+'-reset-wait.json'), {'timeboxSeconds': self.tb['settleSeconds'], 'timedOut': bool(reservations or transitions), 'observations': observations, 'state': state, 'meaning': 'Autonomy off; bounded public reservation/action wait, then one reset only (no automatic retry)'})
-                    break
-                time.sleep(min(1, remaining))
+        wait_seconds = self.tb.get('finishResetWaitSeconds', 600)
+        if not positive(wait_seconds):
+            raise ValueError('finishResetWaitSeconds must be finite and greater than zero')
+        settings = self.settings()
+        settings['autonomousWorkloads'] = [uid for uid in settings.get('autonomousWorkloads', []) if uid not in self.uids]
+        ack = self.put(settings)
+        save(self.out/(prefix+'-reset-autonomy-ack.json'), ack)
+        off_at = ack.get('appliedAt') or ack.get('validatedAt') or now()
+        started = time.monotonic()
+        deadline = started + wait_seconds
+        observations = []
+        while True:
+            state = self.state()
+            barrier = self.start_barrier_observation(state, deadline, now())
+            snapshot_at = self.d.epoch(barrier['snapshotAt'])
+            fresh = barrier['snapshotFresh'] and snapshot_at >= self.d.epoch(off_at)
+            reservations = barrier['reservations']
+            transitions = barrier['transitions'] + sum(action.get('status') in ('running', 'cancel') for action in state.get('actions') or [])
+            observations.append({'at': now(), 'elapsedSeconds': time.monotonic()-started, 'reservations': reservations, 'transitions': transitions, 'snapshotAt': barrier['snapshotAt'], 'latestActionEndedAt': barrier['latestActionEndedAt'], 'snapshotFresh': fresh})
+            remaining = deadline - time.monotonic()
+            clear = fresh and not reservations and not transitions
+            if clear or remaining <= 0:
+                timed_out = not clear or remaining < 0
+                save(self.out/(prefix+'-reset-wait.json'), {'timeboxSeconds': wait_seconds, 'autonomyOffAtUTC': off_at, 'timedOut': timed_out, 'observations': observations, 'state': state, 'meaning': 'Autonomy off; fresh public snapshot and zero reservations/running-cancel entries required before one reset; timeout fails without reset or forced deletion'})
+                if timed_out:
+                    raise RuntimeError('Owned reset wait timed out; no fresh zero-reservation/action observation within bound; reset not attempted')
+                break
+            time.sleep(min(1, remaining))
         return self.operation({'kind':'reset','workloadUIDs':self.uids,'reason':'Approved campaign owned reset: '+prefix},prefix+'-reset')
     def native_mode(self,node,target,prefix):
         folder=self.out/(prefix+'-'+node['name']+'-mode'); request=folder/'release.json'

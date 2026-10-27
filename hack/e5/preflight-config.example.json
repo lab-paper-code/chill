@@ -19,7 +19,8 @@
     "flushSeconds": 10,
     "collectSeconds": 240,
     "apiSeconds": 5,
-    "settleSeconds": 20
+    "settleSeconds": 20,
+    "finishResetWaitSeconds": 600
   },
   "minimumDemand": {
     "image-classification-tight-slo": 20,

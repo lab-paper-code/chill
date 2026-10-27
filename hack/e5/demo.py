@@ -7,10 +7,11 @@ Outputs are PRIVATE operational evidence. publish --experiment-id ID --store-con
 /private/store.json uploads raw inputs before a final immutable summary; corrections
 require a new ID. --help and --self-check need no live experiment environment.
 
-Demo finish/resume reset first disables owned autonomy, then waits within the
-existing settleSeconds for public reservations and running/cancel actions to
-clear. *-reset-wait.json retains observations and the last state. On timeout,
-one reset is still attempted; reset failures/409 are retained without retries.
+Owned finish/resume/factor reset first disables autonomy, then waits within
+timeboxes.finishResetWaitSeconds (default 600; finite and greater than zero)
+for fresh post-off public snapshots with zero reservations and running/cancel
+actions. *-reset-wait.json retains observations and the last state. Timeout
+fails without sending reset; a clear gate sends reset once, with no retry.
 
 Autonomous setup requires minimumDemand keyed by the three canonical names;
 after registration it reads canonical UIDs from workload GET responses and waits
@@ -1960,27 +1961,35 @@ def self_check():
         assert all(w['workers'] == 320 and 'lifetimeSeconds' not in w for w in assembled['workloads'])
         assert (root / 'assembly/register-plc-anomaly.json').exists() and (cpo.out / 'finish-definitions-complete.json').exists()
         # Active owner keep: reservations may clear before the running action.
-        for label, clears_at, reset_error in (('idle', 0, None), ('clear', 2, None), ('timeout', None, None), ('failed', None, 'result'), ('conflict', None, '409')):
+        for label, clears_at, reset_error in (('idle', 0, None), ('clear', 25, None), ('timeout', None, None), ('failed', 0, 'result'), ('conflict', 0, '409'), ('stale', 2, None), ('snapshot-action', 2, None), ('normative-clear', 2, None), ('normative-timeout', None, None), ('late-state', 2, None)):
             cleanup = object.__new__(e5.CPO)
-            cleanup.b = {'schema': 'demo-e5-binding.v1'}
+            cleanup.b = {'schema': 'e5-binding.v1' if label.startswith('normative') else 'demo-e5-binding.v1'}
             cleanup.out = root / ('cleanup-wait-' + label)
             cleanup.out.mkdir()
-            cleanup.uids, cleanup.tb = ['owned'], {'settleSeconds': 2}
+            cleanup.uids, cleanup.tb, cleanup.d = ['owned'], {'settleSeconds': 20, 'finishResetWaitSeconds': 2}, d
+            if label == 'clear':
+                cleanup.tb.pop('finishResetWaitSeconds')  # Default 600, independent of the old 20s settle bound.
             cleanup_settings = {'autonomousWorkloads': ['owned', 'foreign']}
             cleanup.settings = lambda: copy.deepcopy(cleanup_settings)
             cleanup.put = lambda value: cleanup_settings.update(copy.deepcopy(value)) or {'validatedAt': e5.now()}
             e5.save(cleanup.out / 'initial.json', {'settings': copy.deepcopy(cleanup_settings)})
+            expected_timeout = clears_at is None or label == 'late-state'
             clock, reset_calls, reads = [0], [], []
             def cleanup_state():
                 assert cleanup_settings['autonomousWorkloads'] == ['foreign']
+                if label == 'late-state' and clock[0] >= 2:
+                    clock[0] += 1  # API returns quiet state only after the bound.
                 busy = clears_at is None or clock[0] < clears_at
                 reads.append(clock[0])
-                return {'snapshot': {'reservations': [{'owner': 'active-owner-keep'}] if busy and clock[0] == 0 else []}, 'actions': [{'status': 'running'}] if busy else [{'status': 'complete'}]}
+                snapshot_at = '2000-01-01T00:00:00Z' if label == 'stale' and busy else e5.now()
+                return {'snapshot': {'at': snapshot_at, 'reservations': [{'owner': 'active-owner-keep'}] if busy and clock[0] == 0 and label != 'stale' else [],
+                                     'actions': [{'status':'cancel'}] if busy and label == 'snapshot-action' else []},
+                        'actions': [{'status': 'running'}] if busy and label not in ('stale', 'snapshot-action') else [{'status': 'complete'}]}
             cleanup.state = cleanup_state
             def cleanup_reset(method, path, body, **kwargs):
                 wait = e5.load(cleanup.out / 'finish-reset-wait.json')
                 assert wait['observations'][-1]['elapsedSeconds'] == clock[0]
-                assert not wait['timedOut'] or clock[0] == 2
+                assert not wait['timedOut'] and wait['observations'][-1]['snapshotFresh']
                 reset_calls.append(body)
                 if reset_error == '409':
                     raise RuntimeError('HTTP 409 active owner keep')
@@ -1992,23 +2001,35 @@ def self_check():
                 try:
                     cleanup.finish()
                 except RuntimeError as error:
-                    assert reset_error and ('reset failed' in str(error) or 'HTTP 409' in str(error))
+                    assert ('reset wait timed out' in str(error)) if expected_timeout else reset_error and ('reset failed' in str(error) or 'HTTP 409' in str(error))
                 else:
-                    assert not reset_error
-            assert len(reset_calls) == 1
+                    assert not expected_timeout and not reset_error
+            assert len(reset_calls) == (0 if expected_timeout else 1)
             wait = e5.load(cleanup.out / 'finish-reset-wait.json')
-            assert wait['timedOut'] == (clears_at is None)
+            assert wait['timeboxSeconds'] == (600 if label == 'clear' else 2)
+            assert wait['timedOut'] == expected_timeout
             assert wait['observations'][-1]['transitions'] == (1 if clears_at is None else 0)
-            assert clock[0] == (clears_at if clears_at is not None else 2)
+            assert clock[0] == (3 if label == 'late-state' else clears_at if clears_at is not None else 2)
             assert len(reads) >= 3 if clears_at != 0 else len(reads) >= 1
-            assert (cleanup.out / 'finish-complete.json').exists() == (not reset_error)
-            if clears_at == 2:
-                assert wait['observations'][1]['reservations'] == 0 and wait['observations'][1]['transitions'] == 1
+            assert (cleanup.out / 'finish-complete.json').exists() == (not expected_timeout and not reset_error)
+            if label == 'clear':
+                assert wait['observations'][20]['reservations'] == 0 and wait['observations'][20]['transitions'] == 1
+            if label == 'stale':
+                assert not wait['observations'][0]['snapshotFresh'] and wait['observations'][0]['transitions'] == 0
             # Resume shares clear_owned; it must obey the same gate.
             if label == 'idle':
                 with patch.object(e5.time, 'monotonic', lambda: 0):
                     cleanup.clear_owned('resume-fixture')
                 assert e5.load(cleanup.out / 'resume-fixture-reset-wait.json')['timedOut'] is False
+        for invalid in (0, -1, True, '600', float('inf'), float('nan')):
+            cleanup.tb['finishResetWaitSeconds'] = invalid
+            with patch.object(cleanup, 'settings', side_effect=AssertionError('Invalid wait must not change settings')):
+                try:
+                    cleanup.clear_owned('invalid-wait')
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError('Invalid finishResetWaitSeconds accepted')
         reset = object.__new__(e5.CPO)
         reset.b = {'schema': 'e5-binding.v1'}
         reset.out = root / 'reset'
@@ -2022,7 +2043,13 @@ def self_check():
             requests.append(body)
             return failure
         reset.io = SimpleNamespace(api=failed_reset)
-        reset.put = lambda *args: (_ for _ in ()).throw(AssertionError('Settings advanced after failed reset'))
+        reset.d = d
+        reset.state = lambda: {'snapshot': {'at': e5.now()}, 'actions': [], 'results': []}
+        reset.settings = lambda: {'autonomousWorkloads': ['owned']}
+        def disable_before_failed_reset(value):
+            assert not requests, 'Settings advanced after failed reset'
+            return {'validatedAt': e5.now()}
+        reset.put = disable_before_failed_reset
         e5.save(reset.out / 'initial.json', {'settings': {}})
         try:
             reset.finish()

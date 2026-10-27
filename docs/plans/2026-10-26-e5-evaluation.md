@@ -128,5 +128,7 @@ leximin 변경은 유한 초과량의 선택도 바꿀 수 있으므로 과거 �
 
 실제 `profilingRecordIDs`가 제공되면 평가 ID와의 교집합은 계속 거부하며, 누락일 때만 분리를 UNKNOWN으로 둔다. ID 분리는 pinned carrier 동일성 증명이 아니다. E5-7 recovery는 선택적이고 성공/전체 복구를 요구하지 않지만, 제공하면 대상 Node UID 일치 및 uncordon 이후·단계 종료 이내의 실제 시각을 검증한다.
 
+finish·resume·factor의 owned reset은 공통 `CPO.clear_owned`를 경유한다. `timeboxes.finishResetWaitSeconds`는 기존 settle 시간과 독립적인 유한 양수이며 기본600초다. 동결 config와 기존 token lifetime 예산에도 이 값을 포함한다. owned autonomy off 이후 fresh snapshot·reservations0·running/cancel0을 기다려 reset을 한 번만 보낸다. `*-reset-wait.json`에 off ACK 시각·관측열·최종 state를 보존하며, 상한에서는 reset을 보내지 않고 FAIL로 끝낸다. 강제 삭제·자동 재시도는 없다.
+
 
 원시 근거: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 `deployment2-e5-proposal-20261024.md` §9–10, `e5-numbers-proposal-20261025.md`, `north-star.md`, `d-measurement-decision.md`, `checkpoints.md` 1953–2001행. 원시 capacity·CSV·JSON·측정 캠페인은 옮기지 않았다.
