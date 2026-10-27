@@ -479,3 +479,9 @@
 
 - 과밀은 CHILL 자원 장부(ADR 0023)가 입장 시 예약으로, 실행 중 CPU 겹침은 CHILL 공용 안전 검사가 막는다. 하네스의 사후 재검사는 AGENTS.md "경계 1회 검증, 하류 재검증 금지" 위반 → 중첩 판정 삭제(기록도 없음). 진짜 과밀은 E5가 재는 SLO·에너지에 드러남.
 - judge 전체를 같은 눈으로 E5-0 원시 오프라인 dry-run: CHILL이 이미 보장하는 것을 재검사하는 규칙은 모두 삭제, 판정에는 SLO·에너지·생성기 품질·전력 완전성만 남김 → 한 커밋 → archive → preflight → E5 full.
+
+## 2026-10-27 23:5xZ — E5-1 정지 원인과 조치
+
+- E5-1 부하 완료(planned=issued M57495/P20605/S301, 지각 0.009%) 후 하네스 단계 경계 quiet 대기(예약 0) 194s 초과 → 정지. quiet 요구는 CHILL 재검사 → 삭제(`6f6b28c3`, 기록 전용; freeze는 자율 off·route ACK 유지).
+- 예약 잔류 본질: jetson-nano MNV prepare가 `client rate limiter Wait … context canceled`로 partial 실패 후 예약 미해제 — **CHILL 결함(E5 보고서 조건, E5 뒤 수정)**. 복구는 기존 reset takeover 1회.
+- kube client QPS 50/Burst 100(Helm `servingEntrypoint.kubeAPI`)에서 rate limiter 오류 2회 관측(PLC x4C drain, 이 prepare) → 재시작 전 **200/400**으로 상향(값만, 이미지 불변; 설정값 변경을 binding에 기록).
