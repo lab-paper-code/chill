@@ -37,6 +37,43 @@ class CLITest(unittest.TestCase):
 
         self.assertIn("record q1 has no field question", errors.getvalue())
 
+    def test_e5_prepares_one_tls_context_before_independent_connections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "q1").mkdir()
+            (root / "q1" / "image").write_bytes(b"jpeg")
+            token = root / "token"
+            token.write_text("secret")
+            output = io.StringIO()
+            with patch("chill_loadgen.http_client.ssl.create_default_context") as context, \
+                 patch("chill_loadgen.http_client.HTTPSConnection") as connection, \
+                 redirect_stdout(output):
+                connection.return_value.host = "chill.example"
+                connection.return_value.port = 443
+                connection.return_value.timeout = 30
+                connection.return_value.sock = None
+                response = connection.return_value.getresponse.return_value
+                response.status = 200
+                response.read.return_value = b"{}"
+                response.getheader.return_value = None
+                def schedule(requests, submit, **kwargs):
+                    context.assert_called_once_with(cafile=None)
+                    for request in requests:
+                        submit(request, False)
+                with patch("chill_loadgen.cli.run_schedule", side_effect=schedule):
+                    self.assertEqual(main([
+                        "replay", "--endpoint", "https://chill.example",
+                        "--token-file", str(token), "--dataset-dir", str(root),
+                        "--workload", "vqa", "--fields", "image", "--rate", "3",
+                        "--duration", "1", "--workload-slo", ".1",
+                        "--gateway-timeout", "2",
+                    ]), 0)
+                context.assert_called_once_with(cafile=None)
+                self.assertEqual(connection.call_count, 4)
+                self.assertTrue(all(call.kwargs["context"] is context.return_value
+                                    for call in connection.call_args_list))
+            self.assertEqual(len(output.getvalue().splitlines()), 3)
+
 
 class LoadRecordsTest(unittest.TestCase):
     def test_reads_requested_fields_ordered_by_record_id(self) -> None:

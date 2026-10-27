@@ -101,12 +101,25 @@ class WorkloadHTTPClient:
         )
 
         self._authorization = "Bearer " + bearer_token
+        self._ssl_context = ssl.create_default_context(cafile=ca_file)
         self._connection = HTTPSConnection(
             hostname,
             port,
             timeout=timeout_seconds,
-            context=ssl.create_default_context(cafile=ca_file),
+            context=self._ssl_context,
         )
+
+    def new_connection(self) -> WorkloadHTTPClient:
+        """Create an independent connection using this client's validated configuration."""
+        client = object.__new__(WorkloadHTTPClient)
+        client._authorization = self._authorization
+        client._request_lifetime = self._request_lifetime
+        client._ssl_context = self._ssl_context
+        client._connection = HTTPSConnection(
+            self._connection.host, self._connection.port,
+            timeout=self._connection.timeout, context=self._ssl_context,
+        )
+        return client
 
     def infer(self, workload_id: str, inputs: Mapping[str, bytes]) -> InferenceResponse:
         """Send one raw sample: every preprocessor input field name mapped to its bytes."""

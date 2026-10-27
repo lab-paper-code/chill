@@ -322,11 +322,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             raise ValueError("--fields must name at least one field")
         records = load_records(args.dataset_dir, fields)
         token = args.token_file.read_text().strip()
-        # Validate endpoint and token before any traffic.
-        WorkloadHTTPClient(
+        # Prepare TLS/CA and validate endpoint/token once, before replay/barrier.
+        prepared_client = WorkloadHTTPClient(
             args.endpoint, bearer_token=token, timeout_seconds=timeout, ca_file=args.ca_file,
             request_lifetime_seconds=args.request_lifetime,
-        ).close()
+        )
+        prepared_client.close()
     except (OSError, ValueError) as error:
         parser.error(str(error))
     replay(
@@ -337,10 +338,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         arrivals=args.arrivals,
         seed=args.seed,
         workers=args.workers,
-        new_client=lambda: WorkloadHTTPClient(
-            args.endpoint, bearer_token=token, timeout_seconds=timeout, ca_file=args.ca_file,
-            request_lifetime_seconds=args.request_lifetime,
-        ),
+        new_client=prepared_client.new_connection,
         out=sys.stdout,
         open_loop=e5_contract,
     )

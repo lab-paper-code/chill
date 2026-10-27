@@ -29,6 +29,9 @@ arrival starts an independent request on the original timeline; `--workers`
 does not cap in-flight E5 requests. The injected `hack/e5/e5-producer.py` uses
 the same dispatcher for its frozen segmented trace. Late arrivals are still
 sent and drained, not silently dropped at the issue-window boundary.
+Endpoint/token validation and TLS context/CA loading occur once before replay
+or the E5 release barrier. Independent per-request HTTPS connections reuse this
+immutable context; TLS preparation is not repeated on arrival threads.
 `scheduledMonotonicNS` anchors the request; `latenessNs` is actual send minus
 scheduled time, a generator-quality metric rather than SLO time.
 `latencyMs` and `serviceLatencyMs` retain actual-send HTTP duration;
