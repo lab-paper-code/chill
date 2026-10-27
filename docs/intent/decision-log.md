@@ -453,3 +453,8 @@
 - 7 Node sweep(control-201-plc-{36,40,50}): PLC positive 36=4/7(≥4), orangepi κ0, jetsonx 자원 Rejected(≠κ0 — 한계 공개); 40/50은 orangepi 양수(FAIL). 같은 규칙 → **36ms 유지**.
 - R: MNV 235.89 / PLC 387.37 / Smol 1.285 req/s. α=1.2(.45/.1/.45): MNV 127.38 / PLC 46.48 / Smol 0.694, 총 174.56 req/s. 열린 고리 G0 1회 후 재승인 요청.
 - 병행(클러스터 무접촉): ① E5Tables(hack/e5 → spec 표 행), ② T5 WebSocket → ③ G2 게이트웨이 분리(배포 E5 뒤). 원격 push는 사용자에게 1회 질문.
+
+## 2026-10-27 20:3xZ — 열린 고리 G0 종결(게이트웨이 비병목), 생성기 품질 조치
+
+- 생성기 지각 1.33%→1.13%(SSLContext 1회 `7e324981`)→**0건**(Guaranteed 2CPU/1Gi + MNV 3 shard `e8ed3cff`, config 값). planned=issued 전부 일치.
+- #203 G0(174.56 req/s, 120s, 고정 6 instance): PLC 수신 기준 p95 14.2ms≤36, 입구 지연 p95 ~23ms, cs CPU peak 1.60/6, 메모리 623MB, throttle 0 → **게이트웨이 비병목 확인(G0 목적 달성)**. Smol p95 12.47s>7.034s·성공 94.5%는 고정 6 instance 배치(Smol 용량 미달)의 산물로 분리 기록 — E5는 자율 배분이므로 G0 판정 대상 아님. 도구 판정 FAIL은 보존.
