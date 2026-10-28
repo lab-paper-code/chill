@@ -8,13 +8,19 @@ import (
 	"time"
 )
 
+const coverageTestRouterID = "router"
+
 func TestRouterSourceSnapshotPrecedesWriterCapture(t *testing.T) {
 	var log *ObservationLog
 	log, _ = clockedObservationLog(t, ObservationLogConfig{RouterSources: func() []RouterObservationSource {
 		// Control membership recording takes this same lock. The source callback
 		// must not run under capture's writer lock.
 		log.mu.Lock()
+		start := log.started
 		log.mu.Unlock()
+		if start.IsZero() {
+			t.Fatal("source snapshot observed an uninitialized writer")
+		}
 		return nil
 	}}, observationTestHour)
 	if _, err := log.LoadWindow(context.Background(), observationTestHour, observationTestHour.Add(time.Second)); err != nil {
@@ -25,7 +31,7 @@ func TestRouterSourceSnapshotPrecedesWriterCapture(t *testing.T) {
 func TestRouterMissingMountedRequestStreamIsNotZero(t *testing.T) {
 	archive := newReadableObservationArchive(t)
 	from := observationTestHour
-	router, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive, RouterID: "router"}, from)
+	router, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive, RouterID: coverageTestRouterID}, from)
 	clock.set(from.Add(time.Second))
 	recordRouterRequest(t, router, "request", &Definition{UID: "uid", Generation: 1}, from.Add(time.Second), time.Millisecond, true)
 	// Keep the local hour/catalog while requests is absent: selection is by
@@ -33,7 +39,7 @@ func TestRouterMissingMountedRequestStreamIsNotZero(t *testing.T) {
 	if err := os.Remove(filepath.Join(router.root, observationHour(from), "requests.00.jsonl")); err != nil {
 		t.Fatal(err)
 	}
-	source := RouterObservationSource{RouterID: "router", Directory: router.config.Directory, JoinedAt: from, LeftAt: from.Add(time.Hour)}
+	source := RouterObservationSource{RouterID: coverageTestRouterID, Directory: router.config.Directory, JoinedAt: from, LeftAt: from.Add(time.Hour)}
 	control, now := clockedObservationLog(t, ObservationLogConfig{Writer: archive, RouterSources: func() []RouterObservationSource { return []RouterObservationSource{source} }}, from)
 	now.set(from.Add(2 * time.Hour))
 	window, err := control.LoadWindow(context.Background(), from, from.Add(time.Minute))
@@ -41,7 +47,7 @@ func TestRouterMissingMountedRequestStreamIsNotZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, gap := range window.Coverage.Gaps {
-		if gap.RouterID == "router" && gap.Stream == "requests" {
+		if gap.RouterID == coverageTestRouterID && gap.Stream == "requests" {
 			return
 		}
 	}
@@ -52,10 +58,10 @@ func TestRouterReportCoverageTailWithMountedBuffer(t *testing.T) {
 	ctx := context.Background()
 	from := observationTestHour
 	archive := newReadableObservationArchive(t)
-	router, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive, RouterID: "router"}, from)
+	router, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive, RouterID: coverageTestRouterID}, from)
 	clock.set(from.Add(time.Second))
 	recordRouterRequest(t, router, "request", &Definition{UID: "uid", Generation: 1}, from.Add(time.Second), time.Millisecond, true)
-	source := RouterObservationSource{RouterID: "router", Directory: router.config.Directory, JoinedAt: from, ObservedAt: from.Add(10 * time.Second)}
+	source := RouterObservationSource{RouterID: coverageTestRouterID, Directory: router.config.Directory, JoinedAt: from, ObservedAt: from.Add(10 * time.Second)}
 	control, now := clockedObservationLog(t, ObservationLogConfig{Writer: archive, RouterSources: func() []RouterObservationSource { return []RouterObservationSource{source} }}, from)
 	now.set(from.Add(time.Minute))
 	for _, retired := range []bool{false, true} {
@@ -70,7 +76,7 @@ func TestRouterReportCoverageTailWithMountedBuffer(t *testing.T) {
 		}
 		found := false
 		for _, gap := range window.Coverage.Gaps {
-			if gap.RouterID == "router" && gap.Reason == "RouterReportUnavailable" {
+			if gap.RouterID == coverageTestRouterID && gap.Reason == "RouterReportUnavailable" {
 				found = true
 				if !gap.From.Equal(source.ObservedAt) || !gap.To.Equal(gapEnd) || gap.ObservedAt == nil || !gap.ObservedAt.Equal(source.ObservedAt) {
 					t.Fatalf("retired=%v report tail: %+v", retired, gap)
@@ -81,7 +87,7 @@ func TestRouterReportCoverageTailWithMountedBuffer(t *testing.T) {
 			t.Fatalf("retired=%v mounted buffer hid unreported receipts: %+v", retired, window.Coverage)
 		}
 		for _, coverage := range window.Coverage.Sources {
-			if coverage.RouterID == "router" && coverage.To.After(source.ObservedAt) {
+			if coverage.RouterID == coverageTestRouterID && coverage.To.After(source.ObservedAt) {
 				t.Fatalf("report tail claimed complete: %+v", coverage)
 			}
 		}
@@ -105,7 +111,7 @@ func TestRouterReportCoverageTailWithMountedBuffer(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, gap := range window.Coverage.Gaps {
-		if gap.RouterID == "router" {
+		if gap.RouterID == coverageTestRouterID {
 			t.Fatalf("later report left historical archive gap: %+v", gap)
 		}
 	}

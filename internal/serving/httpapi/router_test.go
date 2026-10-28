@@ -17,12 +17,20 @@ func TestRouterHandlerOnlyInferenceAndLocalHealth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer log.Close(context.Background())
+	t.Cleanup(func() {
+		if err := log.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	runtime, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{QueueLimit: 4, ObservationLog: log, RouterID: "router-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer runtime.Shutdown(context.Background())
+	t.Cleanup(func() {
+		if err := runtime.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	runtime.SetGatewayConnected(false)
 	handler, err := NewRouterHandler(runtime, &servingkube.Authorizer{Client: fake.NewSimpleClientset()}, log, HandlerConfig{MaxRequestBytes: 1024, RequestTimeout: time.Second})
 	if err != nil {

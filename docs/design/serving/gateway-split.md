@@ -331,7 +331,17 @@ nice -n 19 env GOMAXPROCS=2 go test -p 1 -count=1 -v \
   15초 heartbeat 상실/Runtime 작업 중 만료, 이전 세대 custody/물리 완료,
   native ACK-only source, 원자 표 교체, 수락 요청의 버전/수명 유지,
   quota 0, source별 catalog와 local/archive 병합·누락 표시가 포함됐다.
-- scoped `go list`로 새 package import 방향도 확인했다. 전체 lint/test,
-  아키텍처 전체 gate, 이미지 빌드, 클러스터 접근·배포 및 G3 실물/성능 캠페인은
-  실행하지 않았다. 이 로컬 결과로 native incarnation 경계나 분리 뒤 G/d를
+- 최초 구현에서는 scoped `go list`로 새 package import 방향을 확인했다.
+  전체 test, 아키텍처 전체 gate, 이미지 빌드, 클러스터 접근·배포 및 G3 실물/성능
+  캠페인은 실행하지 않았다. 이 로컬 결과로 native incarnation 경계나 분리 뒤 G/d를
   인증하지 않는다.
+
+### 후속 정적 검사 수정
+
+T5/G2의 종료·정리 오류 처리, 기존 상수 재사용, 긴 표현식과 검증/채널/초기화
+책임 분리를 정리했다. linter 설정이나 억제 주석은 추가하지 않았고 판정 규칙과
+배포 배선은 유지한다. 승인된 빈 클러스터 창에서
+`nice -n 19 env GOMAXPROCS=2 make lint` 전체 PASS를 확인했다.
+동일 nice/GOMAXPROCS 조건의 `go test -p 1`은 `serving/live`, `gateway`, `httpapi`,
+`serving`, `serving/kube`, `cmd/chill-router`, `cmd/chill-server`와 별도
+`-tags gatewaycontrol ./cmd/chill-server` 경로 모두 통과했다.

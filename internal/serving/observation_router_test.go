@@ -59,6 +59,53 @@ func TestRouterObservationUnionLocalArchiveAndLateFinal(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock.set(from.Add(2 * time.Hour))
+
+	assertRouterObservationUnion(t, control, from)
+
+	// A different hour's local final must supersede an archived assignment,
+	// including finals appended after membership ended and stale open reports.
+	bc.set(from.Add(time.Hour + time.Second))
+	recordRouterRequest(t, b, "late", d, from.Add(time.Hour+time.Second), time.Millisecond, false)
+	bc.set(from.Add(2 * time.Hour))
+	if err := b.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stale := b.OpenRows()
+	bc.set(from.Add(2*time.Hour + time.Second))
+	if err := b.RequestEvent(RequestEvent{RequestID: "late", At: from.Add(2*time.Hour + time.Second), Kind: eventResponseFinished, Outcome: outcomeCompleted, ElapsedNanos: int64(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RequestClosed("late"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(b.root, observationHour(from.Add(time.Hour)))); err != nil {
+		t.Fatal(err)
+	}
+	sources[1].Directory, sources[1].LeftAt, sources[1].Open = b.config.Directory, from.Add(time.Hour+time.Minute), stale
+	clock.set(from.Add(3 * time.Hour))
+	got, err := control.Query(ctx, "uid", from.Add(time.Hour), from.Add(time.Hour+time.Minute), nil, nil, 0, "")
+	if err != nil || got.Total != 1 || len(got.Requests) != 1 || got.Requests[0].Kind != requestRowFinal {
+		t.Fatalf("late final dedup: %+v err=%v", got, err)
+	}
+	b.mu.Lock()
+	_, err = b.appendRowLocked(&got.Requests[0]) // A retransmitted final is not another physical member.
+	b.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	if _, err := control.ScanOccupancyRows(ctx, "uid", "node-uid", from.Add(time.Hour), from.Add(time.Hour+time.Minute), func(row RequestRow) {
+		if row.Kind != RequestRowNative {
+			count++
+		}
+	}); err != nil || count != 1 {
+		t.Fatalf("late final/open occupancy dedup count=%d err=%v", count, err)
+	}
+}
+
+func assertRouterObservationUnion(t *testing.T, control *ObservationLog, from time.Time) {
+	t.Helper()
+	ctx := context.Background()
 	got, err := control.Query(ctx, "uid", from, from.Add(time.Minute), nil, nil, 0, "")
 	if err != nil || got.Total != 2 || len(got.Cohorts) != 1 || got.Cohorts[0].SampleCount != 2 || got.Cohorts[0].QuantileNanos == nil || *got.Cohorts[0].QuantileNanos != float64(100*time.Millisecond) {
 		t.Fatalf("union cohort: %+v err=%v", got, err)
@@ -91,46 +138,6 @@ func TestRouterObservationUnionLocalArchiveAndLateFinal(t *testing.T) {
 		}
 	}); err != nil || count != 2 {
 		t.Fatalf("union occupancy count=%d err=%v", count, err)
-	}
-
-	// A different hour's local final must supersede an archived assignment,
-	// including finals appended after membership ended and stale open reports.
-	bc.set(from.Add(time.Hour + time.Second))
-	recordRouterRequest(t, b, "late", d, from.Add(time.Hour+time.Second), time.Millisecond, false)
-	bc.set(from.Add(2 * time.Hour))
-	if err := b.Flush(ctx); err != nil {
-		t.Fatal(err)
-	}
-	stale := b.OpenRows()
-	bc.set(from.Add(2*time.Hour + time.Second))
-	if err := b.RequestEvent(RequestEvent{RequestID: "late", At: from.Add(2*time.Hour + time.Second), Kind: eventResponseFinished, Outcome: outcomeCompleted, ElapsedNanos: int64(time.Second)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.RequestClosed("late"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(filepath.Join(b.root, observationHour(from.Add(time.Hour)))); err != nil {
-		t.Fatal(err)
-	}
-	sources[1].Directory, sources[1].LeftAt, sources[1].Open = b.config.Directory, from.Add(time.Hour+time.Minute), stale
-	clock.set(from.Add(3 * time.Hour))
-	got, err = control.Query(ctx, "uid", from.Add(time.Hour), from.Add(time.Hour+time.Minute), nil, nil, 0, "")
-	if err != nil || got.Total != 1 || len(got.Requests) != 1 || got.Requests[0].Kind != requestRowFinal {
-		t.Fatalf("late final dedup: %+v err=%v", got, err)
-	}
-	b.mu.Lock()
-	_, err = b.appendRowLocked(&got.Requests[0]) // A retransmitted final is not another physical member.
-	b.mu.Unlock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	count = 0
-	if _, err := control.ScanOccupancyRows(ctx, "uid", "node-uid", from.Add(time.Hour), from.Add(time.Hour+time.Minute), func(row RequestRow) {
-		if row.Kind != RequestRowNative {
-			count++
-		}
-	}); err != nil || count != 1 {
-		t.Fatalf("late final/open occupancy dedup count=%d err=%v", count, err)
 	}
 }
 

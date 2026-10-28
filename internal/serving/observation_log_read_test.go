@@ -178,8 +178,9 @@ func TestObservationReadReusesGrownBufferAcrossFiles(t *testing.T) {
 	}
 }
 
+const localSource = "local"
+
 func TestObservationReadCoverageIgnoresBoundLocations(t *testing.T) {
-	const localSource = "local"
 	ctx := context.Background()
 	archive := newReadableObservationArchive(t)
 	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)

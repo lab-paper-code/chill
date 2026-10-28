@@ -64,54 +64,8 @@ func (c *Control) ArrivalCounts(from, to time.Time) ([]serving.GatewayArrivals, 
 			continue
 		}
 		covered = true
-		if source.JoinedAt.IsZero() || source.Report.ObservedAt.IsZero() || source.Connected && time.Since(source.LastSeen) > FreshnessTimeout {
-			return nil, incompleteArrivals(fmt.Sprintf("router %s has no fresh arrival coverage", source.RouterID))
-		}
-		begin, end := from, to
-		if begin.Before(source.JoinedAt) {
-			begin = source.JoinedAt
-		}
-		if !source.LeftAt.IsZero() && end.After(source.LeftAt) {
-			end = source.LeftAt
-		}
-		if !begin.Equal(begin.Truncate(time.Second)) || !end.Equal(end.Truncate(time.Second)) || end.After(source.Report.ObservedAt) {
-			return nil, incompleteArrivals(fmt.Sprintf("router %s has a partial or unreported second", source.RouterID))
-		}
-		if source.ArrivalWindow <= 0 || begin.Before(source.Report.ObservedAt.Add(-source.ArrivalWindow-10*time.Second)) {
-			return nil, incompleteArrivals(fmt.Sprintf("router %s lacks retained arrival history", source.RouterID))
-		}
-		windows := make(map[arrivalKey]serving.GatewayArrivals, len(source.Report.Arrivals))
-		if source.Definitions == nil {
-			return nil, incompleteArrivals(fmt.Sprintf("router %s lacks workload observation membership", source.RouterID))
-		}
-		for _, window := range source.Report.Arrivals {
-			windows[arrivalKey{window.From.UTC(), window.WorkloadUID}] = window
-		}
-		for at := begin; at.Before(end); at = at.Add(time.Second) {
-			for uid, periods := range source.Definitions {
-				expected := false
-				for _, period := range periods {
-					if period.JoinedAt.Before(at.Add(time.Second)) && (period.LeftAt.IsZero() || period.LeftAt.After(at)) {
-						expected = true
-						break
-					}
-				}
-				if !expected {
-					continue
-				}
-				window, ok := windows[arrivalKey{at.UTC(), uid}]
-				if !ok {
-					return nil, incompleteArrivals(fmt.Sprintf("router %s workload %s lacks a complete arrival second", source.RouterID, uid))
-				}
-				total := totals[uid]
-				total.From, total.To, total.WorkloadUID = from, to, uid
-				if ^uint64(0)-total.Received < window.Received || ^uint64(0)-total.Validated < window.Validated {
-					return nil, incompleteArrivals("arrival counter sum overflow")
-				}
-				total.Received += window.Received
-				total.Validated += window.Validated
-				totals[uid] = total
-			}
+		if err := addSourceArrivals(source, from, to, totals); err != nil {
+			return nil, err
 		}
 	}
 	if !covered {
@@ -123,6 +77,69 @@ func (c *Control) ArrivalCounts(from, to time.Time) ([]serving.GatewayArrivals, 
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].WorkloadUID < result[j].WorkloadUID })
 	return result, nil
+}
+
+func sourceArrivalWindow(source *member, from, to time.Time) (time.Time, time.Time, error) {
+	if source.JoinedAt.IsZero() || source.Report.ObservedAt.IsZero() || source.Connected && time.Since(source.LastSeen) > FreshnessTimeout {
+		return time.Time{}, time.Time{}, incompleteArrivals(fmt.Sprintf("router %s has no fresh arrival coverage", source.RouterID))
+	}
+	begin, end := from, to
+	if begin.Before(source.JoinedAt) {
+		begin = source.JoinedAt
+	}
+	if !source.LeftAt.IsZero() && end.After(source.LeftAt) {
+		end = source.LeftAt
+	}
+	if !begin.Equal(begin.Truncate(time.Second)) || !end.Equal(end.Truncate(time.Second)) || end.After(source.Report.ObservedAt) {
+		return time.Time{}, time.Time{}, incompleteArrivals(fmt.Sprintf("router %s has a partial or unreported second", source.RouterID))
+	}
+	if source.ArrivalWindow <= 0 || begin.Before(source.Report.ObservedAt.Add(-source.ArrivalWindow-10*time.Second)) {
+		return time.Time{}, time.Time{}, incompleteArrivals(fmt.Sprintf("router %s lacks retained arrival history", source.RouterID))
+	}
+	return begin, end, nil
+}
+
+func addSourceArrivals(source *member, from, to time.Time, totals map[string]serving.GatewayArrivals) error {
+	begin, end, err := sourceArrivalWindow(source, from, to)
+	if err != nil {
+		return err
+	}
+	windows := make(map[arrivalKey]serving.GatewayArrivals, len(source.Report.Arrivals))
+	if source.Definitions == nil {
+		return incompleteArrivals(fmt.Sprintf("router %s lacks workload observation membership", source.RouterID))
+	}
+	for _, window := range source.Report.Arrivals {
+		windows[arrivalKey{window.From.UTC(), window.WorkloadUID}] = window
+	}
+	for at := begin; at.Before(end); at = at.Add(time.Second) {
+		for uid, periods := range source.Definitions {
+			if !expectsArrivalSecond(periods, at) {
+				continue
+			}
+			window, ok := windows[arrivalKey{at.UTC(), uid}]
+			if !ok {
+				return incompleteArrivals(fmt.Sprintf("router %s workload %s lacks a complete arrival second", source.RouterID, uid))
+			}
+			total := totals[uid]
+			total.From, total.To, total.WorkloadUID = from, to, uid
+			if ^uint64(0)-total.Received < window.Received || ^uint64(0)-total.Validated < window.Validated {
+				return incompleteArrivals("arrival counter sum overflow")
+			}
+			total.Received += window.Received
+			total.Validated += window.Validated
+			totals[uid] = total
+		}
+	}
+	return nil
+}
+
+func expectsArrivalSecond(periods []DefinitionPeriod, at time.Time) bool {
+	for _, period := range periods {
+		if period.JoinedAt.Before(at.Add(time.Second)) && (period.LeftAt.IsZero() || period.LeftAt.After(at)) {
+			return true
+		}
+	}
+	return false
 }
 func validateArrivals(report serving.GatewayReport) error {
 	seen := make(map[arrivalKey]bool, len(report.Arrivals))

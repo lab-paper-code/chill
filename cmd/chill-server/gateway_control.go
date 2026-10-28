@@ -95,9 +95,12 @@ func (s *splitControlService) recordMembership(state gateway.RouterState) error 
 	if !state.Connected {
 		phase = "excluded"
 	}
-	return s.observations.SchedulerRecord(serving.SchedulerObservation{At: time.Now().UTC(), Action: &serving.SchedulerActionObservation{
-		ID: state.RouterID, Kind: "gateway-router-membership", Phase: phase, StartedAt: state.JoinedAt, Actual: actual,
-	}})
+	return s.observations.SchedulerRecord(serving.SchedulerObservation{
+		At: time.Now().UTC(),
+		Action: &serving.SchedulerActionObservation{
+			ID: state.RouterID, Kind: "gateway-router-membership", Phase: phase, StartedAt: state.JoinedAt, Actual: actual,
+		},
+	})
 }
 
 // publish holds no Runtime/Observer lock while waiting for actual router ACKs.
@@ -139,7 +142,9 @@ func (s *splitControlService) publish(ctx context.Context, wait bool) error {
 	}
 	// A withdrawn source must disappear from the new table, even while its
 	// native actor stays Ready to finish reservations owned by the old table.
-	plan.Targets = slices.DeleteFunc(plan.Targets, func(target serving.GatewayTarget) bool { return !used[target.InstanceID] })
+	plan.Targets = slices.DeleteFunc(plan.Targets, func(target serving.GatewayTarget) bool {
+		return !used[target.InstanceID]
+	})
 	if s.last == nil || !reflect.DeepEqual(plan, *s.last) {
 		var version [16]byte
 		if _, err := rand.Read(version[:]); err != nil {

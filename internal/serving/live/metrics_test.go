@@ -28,7 +28,7 @@ func nextMetrics(t *testing.T, sub *Subscription) MetricsFrame {
 	return message.MetricsFrame
 }
 
-func metricFixture(t *testing.T) (*Hub, *Metrics, *Subscription, time.Time) {
+func metricFixture(t *testing.T) (*Metrics, *Subscription, time.Time) {
 	t.Helper()
 	at := testAt.Truncate(time.Second)
 	hub := New(at)
@@ -39,11 +39,11 @@ func metricFixture(t *testing.T) (*Hub, *Metrics, *Subscription, time.Time) {
 	}
 	_ = nextEnvelope(t, sub)
 	t.Cleanup(func() { sub.Close(); hub.Close() })
-	return hub, metrics, sub, at
+	return metrics, sub, at
 }
 
 func TestMetricsUsesResponseFinishedCohortAndIdleZeros(t *testing.T) {
-	_, metrics, sub, at := metricFixture(t)
+	metrics, sub, at := metricFixture(t)
 	metrics.SetWorkloads([]string{"one", "idle"})
 	metrics.Received("one", at.Add(100*time.Millisecond))
 	if err := metrics.Flush(at.Add(time.Second)); err != nil {
@@ -71,7 +71,7 @@ func TestMetricsUsesResponseFinishedCohortAndIdleZeros(t *testing.T) {
 }
 
 func TestMetricsTenSecondCorrectionAndOlderGap(t *testing.T) {
-	_, metrics, sub, at := metricFixture(t)
+	metrics, sub, at := metricFixture(t)
 	metrics.SetWorkloads([]string{"one"})
 	metrics.Received("one", at.Add(time.Millisecond))
 	if err := metrics.Flush(at.Add(time.Second)); err != nil {
@@ -108,7 +108,7 @@ func TestMetricsTenSecondCorrectionAndOlderGap(t *testing.T) {
 }
 
 func TestPowerMeansRequireCompleteUniqueScopeAndNeverCarryForward(t *testing.T) {
-	_, metrics, sub, at := metricFixture(t)
+	metrics, sub, at := metricFixture(t)
 	metrics.SetPowerScope([]string{"a", "a", "b"}, []string{"a", "a"}, true)
 	wa, wb, wa2 := 10.0, 30.0, 20.0
 	metrics.Power("a", at.Add(100*time.Millisecond), &wa)
@@ -147,7 +147,7 @@ func TestPowerMeansRequireCompleteUniqueScopeAndNeverCarryForward(t *testing.T) 
 }
 
 func TestUnobservableIntervalsAreGapsNotZeroTraffic(t *testing.T) {
-	_, metrics, sub, at := metricFixture(t)
+	metrics, sub, at := metricFixture(t)
 	metrics.SetWorkloads([]string{"one", "observable"})
 	metrics.SetPowerScope([]string{"node"}, []string{"node"}, true)
 	metrics.Gap(at, at.Add(time.Second), "workload:one", "source unavailable")
@@ -168,7 +168,7 @@ func TestUnobservableIntervalsAreGapsNotZeroTraffic(t *testing.T) {
 }
 
 func TestMembershipChangesWithinBucketDoNotInventCompletePool(t *testing.T) {
-	_, metrics, sub, at := metricFixture(t)
+	metrics, sub, at := metricFixture(t)
 	metrics.SetPowerScope([]string{"a", "b"}, []string{"a"}, true)
 	watts := 10.0
 	metrics.Power("a", at.Add(time.Millisecond), &watts)

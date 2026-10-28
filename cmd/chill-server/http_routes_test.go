@@ -205,7 +205,7 @@ func TestDashboardGatewayPreservesLiveUpgradeOriginAndHost(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_, _ = conn.Write([]byte("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"))
 	}))
 	defer web.Close()
@@ -227,7 +227,7 @@ func TestDashboardGatewayPreservesLiveUpgradeOriginAndHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusSwitchingProtocols {
 		t.Fatalf("upgrade status=%d", response.StatusCode)
 	}

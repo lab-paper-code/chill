@@ -28,7 +28,10 @@ func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 	if err := service.recordDecision(d, serving.SchedulerSnapshot{At: at}); err != nil {
 		t.Fatal(err)
 	}
-	result := servingkube.OperationResult{Operation: servingkube.Operation{ID: "same", Kind: "prepare", Node: serving.NodeReference{UID: "node"}}, StartedAt: at, Status: "running"}
+	result := servingkube.OperationResult{
+		Operation: servingkube.Operation{ID: "same", Kind: "prepare", Node: serving.NodeReference{UID: "node"}},
+		StartedAt: at, Status: "running",
+	}
 	p.action(result)
 	result.StartedAt = at.Add(time.Second)
 	p.action(result)
@@ -49,13 +52,16 @@ func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 	if err := json.Unmarshal(frame, &baseline); err != nil {
 		t.Fatal(err)
 	}
-	if baseline.Type != "snapshot" || baseline.Decision == nil || baseline.Decision.At != liveAt(at) || len(baseline.Actions) != 2 {
+	if baseline.Type != "snapshot" || baseline.Decision == nil ||
+		baseline.Decision.At != liveAt(at) || len(baseline.Actions) != 2 {
 		t.Fatalf("lost recorded decision or reused action ID: %s", frame)
 	}
 	if err := log.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.recordDecision(serving.SchedulerDecision{At: at.Add(time.Minute)}, serving.SchedulerSnapshot{}); err == nil {
+	if err := service.recordDecision(
+		serving.SchedulerDecision{At: at.Add(time.Minute)}, serving.SchedulerSnapshot{},
+	); err == nil {
 		t.Fatal("closed observation store accepted a decision")
 	}
 	short, stop := context.WithTimeout(ctx, 20*time.Millisecond)

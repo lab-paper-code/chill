@@ -11,7 +11,11 @@ import (
 
 func TestArrivalCountsMergeReplacementAndCoverage(t *testing.T) {
 	control, _ := NewControl(2)
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	from := time.Now().UTC().Truncate(time.Second).Add(-2 * time.Second)
 	to := from.Add(time.Second)
 	plan := testPlan("arrivals")
@@ -72,7 +76,11 @@ func isIncomplete(err error) bool {
 
 func TestArrivalCountsExplicitZeroAndStaleReport(t *testing.T) {
 	control, _ := NewControl(1)
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	from := time.Now().UTC().Truncate(time.Second).Add(-2 * time.Second)
 	to := from.Add(time.Second)
 	source := &member{RouterState: RouterState{RouterID: "router", Connected: true, JoinedAt: from.Add(-time.Second), LastSeen: time.Now(), ArrivalWindow: time.Minute, Definitions: map[string][]DefinitionPeriod{"workload": {{JoinedAt: from.Add(-time.Second)}}}, Report: serving.GatewayReport{RouterID: "router", ObservedAt: time.Now(), Arrivals: []serving.GatewayArrivals{{From: from, To: to, WorkloadUID: "workload"}}}}}

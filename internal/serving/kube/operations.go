@@ -260,65 +260,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 	}
 	result.Before = before
 	if err == nil {
-		switch operation.Kind {
-		case operationPrepare:
-			if operation.Prepare == nil {
-				err = errors.New("prepare specification required")
-			} else {
-				err = o.PrepareInstance(ctx, *operation.Prepare)
-				if err == nil {
-					result.Progress = append(result.Progress, "prepare observed")
-				}
-			}
-		case operationRemove:
-			result.DrainNative = map[string]native.State{}
-			err = o.removeInstance(ctx, operation.Node, operation.PodUID, operation.Instance, result.DrainNative)
-			if err == nil {
-				result.Progress = append(result.Progress, "stop/drain/termination/removal observed")
-			}
-		case operationPower:
-			err = o.ChangePower(ctx, operation.Node, operation.Holder, operation.PowerMode, operation.MaxActuationDuration)
-		case operationRoute, operationUnroute:
-			if operation.Target == nil {
-				err = errors.New("routing target required")
-			} else {
-				err = o.ApplyTarget(ctx, *operation.Target, &result)
-			}
-		case operationRelease:
-			result.Before.Routing, _ = o.runtime.SchedulerRouting()
-			result.Before.Instances = o.runtime.Instances()
-			err = o.observer.Refresh(ctx)
-			if err == nil {
-				err = o.runtime.ReleaseSchedulerRouting(operation.WorkloadUID)
-			}
-			if err == nil && o.config.RoutingApplied != nil {
-				err = o.config.RoutingApplied(ctx)
-			}
-			result.Actual.At = time.Now().UTC()
-			result.Actual.Routing, _ = o.runtime.SchedulerRouting()
-			result.Actual.Instances = o.runtime.Instances()
-		case operationStop:
-			err = o.StopInstance(ctx, operation.Instance)
-		case operationDrain:
-			err = o.detachInstance(ctx, operation.Instance)
-		case operationResize:
-			if operation.Prepare == nil || operation.Target == nil {
-				err = errors.New("resize requires prepared replacement and routing target")
-			} else {
-				err = o.PrepareInstance(ctx, *operation.Prepare)
-				if err == nil {
-					result.Progress = append(result.Progress, "replacement ready")
-					err = o.ApplyTarget(ctx, *operation.Target, &result)
-				}
-				if err == nil {
-					result.Progress = append(result.Progress, "routing applied")
-					result.DrainNative = map[string]native.State{}
-					err = o.removeInstance(ctx, operation.Node, operation.PodUID, operation.Instance, result.DrainNative)
-				}
-			}
-		default:
-			err = fmt.Errorf("unsupported atomic operation %q", operation.Kind)
-		}
+		err = o.executeOperation(ctx, operation, &result)
 	}
 	actual := result.Actual
 	actual.At = time.Now().UTC()
@@ -350,6 +292,70 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 		result.Error = err.Error()
 	}
 	return result, err
+}
+
+func (o *Operations) executeOperation(ctx context.Context, operation Operation, result *OperationResult) error {
+	var err error
+	switch operation.Kind {
+	case operationPrepare:
+		if operation.Prepare == nil {
+			err = errors.New("prepare specification required")
+		} else {
+			err = o.PrepareInstance(ctx, *operation.Prepare)
+			if err == nil {
+				result.Progress = append(result.Progress, "prepare observed")
+			}
+		}
+	case operationRemove:
+		result.DrainNative = map[string]native.State{}
+		err = o.removeInstance(ctx, operation.Node, operation.PodUID, operation.Instance, result.DrainNative)
+		if err == nil {
+			result.Progress = append(result.Progress, "stop/drain/termination/removal observed")
+		}
+	case operationPower:
+		err = o.ChangePower(ctx, operation.Node, operation.Holder, operation.PowerMode, operation.MaxActuationDuration)
+	case operationRoute, operationUnroute:
+		if operation.Target == nil {
+			err = errors.New("routing target required")
+		} else {
+			err = o.ApplyTarget(ctx, *operation.Target, result)
+		}
+	case operationRelease:
+		result.Before.Routing, _ = o.runtime.SchedulerRouting()
+		result.Before.Instances = o.runtime.Instances()
+		err = o.observer.Refresh(ctx)
+		if err == nil {
+			err = o.runtime.ReleaseSchedulerRouting(operation.WorkloadUID)
+		}
+		if err == nil && o.config.RoutingApplied != nil {
+			err = o.config.RoutingApplied(ctx)
+		}
+		result.Actual.At = time.Now().UTC()
+		result.Actual.Routing, _ = o.runtime.SchedulerRouting()
+		result.Actual.Instances = o.runtime.Instances()
+	case operationStop:
+		err = o.StopInstance(ctx, operation.Instance)
+	case operationDrain:
+		err = o.detachInstance(ctx, operation.Instance)
+	case operationResize:
+		if operation.Prepare == nil || operation.Target == nil {
+			err = errors.New("resize requires prepared replacement and routing target")
+		} else {
+			err = o.PrepareInstance(ctx, *operation.Prepare)
+			if err == nil {
+				result.Progress = append(result.Progress, "replacement ready")
+				err = o.ApplyTarget(ctx, *operation.Target, result)
+			}
+			if err == nil {
+				result.Progress = append(result.Progress, "routing applied")
+				result.DrainNative = map[string]native.State{}
+				err = o.removeInstance(ctx, operation.Node, operation.PodUID, operation.Instance, result.DrainNative)
+			}
+		}
+	default:
+		err = fmt.Errorf("unsupported atomic operation %q", operation.Kind)
+	}
+	return err
 }
 func samePreparedPod(actual, desired *core.Pod) bool {
 	if actual.Annotations[ServingProfileAnnotation] != desired.Annotations[ServingProfileAnnotation] || actual.Annotations[ServingSlotAnnotation] != desired.Annotations[ServingSlotAnnotation] || actual.Spec.NodeName != desired.Spec.NodeName || len(actual.Spec.Containers) != 1 || !samePreparedContainer(actual.Spec.Containers[0], desired.Spec.Containers[0]) || actual.Spec.Containers[0].TerminationMessagePolicy != desired.Spec.Containers[0].TerminationMessagePolicy || len(actual.Spec.InitContainers) != len(desired.Spec.InitContainers) ||

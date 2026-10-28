@@ -156,7 +156,7 @@ func (m *Manager) record(ctx context.Context, w *api.Workload, phase string, bef
 		return err
 	}
 	if m.config.OnWorkload != nil {
-		m.config.OnWorkload(m.view(w), kind == "Delete" && phase == operationCompleted)
+		m.config.OnWorkload(m.view(w), kind == operationDelete && phase == operationCompleted)
 	}
 	return nil
 }

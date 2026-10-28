@@ -34,7 +34,10 @@ type livePublisher struct {
 func newLivePublisher(ctx context.Context) *livePublisher {
 	now := time.Now().UTC()
 	h := live.New(now)
-	p := &livePublisher{hub: h, metrics: live.NewMetrics(h, now), registered: map[string]live.Workload{}, instances: map[string]bool{}, changed: make(chan struct{}, 1)}
+	p := &livePublisher{
+		hub: h, metrics: live.NewMetrics(h, now), registered: map[string]live.Workload{},
+		instances: map[string]bool{}, changed: make(chan struct{}, 1),
+	}
 	go func() {
 		if err := h.Run(ctx, p.metrics); err != nil && ctx.Err() == nil {
 			ctrl.Log.Error(err, "run live channel")
@@ -90,7 +93,9 @@ func (p *livePublisher) workload(view servingkube.WorkloadView, removed bool) {
 			SLO:       live.SLO{Percentile: w.Spec.SLO.Percentile, TargetLatencyNanos: int64(w.Spec.SLO.TargetLatency.Duration)},
 			Readiness: live.Readiness{Reason: view.Reason, ObservedAt: liveAt(view.ObservedAt)}}
 		if view.Applied != nil {
-			row = liveWorkload(serving.WorkloadState{Applied: view.Applied, Admission: view.Admission, Reason: view.Reason, ObservedAt: view.ObservedAt})
+			row = liveWorkload(serving.WorkloadState{
+				Applied: view.Applied, Admission: view.Admission, Reason: view.Reason, ObservedAt: view.ObservedAt,
+			})
 		}
 		row.Autonomous = slices.Contains(p.autonomous, uid)
 		p.registered[uid] = row
@@ -101,7 +106,8 @@ func liveWorkload(state serving.WorkloadState) live.Workload {
 	d := state.Applied
 	id := d.Identity()
 	return live.Workload{UID: d.UID, Name: d.Name, Model: d.Model.Name, DefinitionID: &id,
-		SLO: live.SLO{Percentile: d.SLO.Percentile, TargetLatencyNanos: int64(d.SLO.TargetLatency)}, Admission: state.Admission,
+		SLO:       live.SLO{Percentile: d.SLO.Percentile, TargetLatencyNanos: int64(d.SLO.TargetLatency)},
+		Admission: state.Admission,
 		Readiness: live.Readiness{Ready: state.Reason == "Ready", Reason: state.Reason, ObservedAt: liveAt(state.ObservedAt)}}
 }
 func (p *livePublisher) publishWorkloads(at time.Time) {
@@ -149,7 +155,8 @@ func (p *livePublisher) runtime(runtime *serving.Runtime) {
 		if i.OwnerWorkloadUID != "" || len(i.Workloads) > 0 {
 			active[i.Node.UID] = true
 		}
-		rows = append(rows, live.Instance{ID: i.ID, Node: liveNode(i.Node), WorkloadUID: uid, OwnerWorkloadUID: i.OwnerWorkloadUID,
+		rows = append(rows, live.Instance{
+			ID: i.ID, Node: liveNode(i.Node), WorkloadUID: uid, OwnerWorkloadUID: i.OwnerWorkloadUID,
 			ProfileID: i.Profile, Ready: i.Ready, Stopped: i.Stopped, State: state,
 			Routable: maps.Clone(i.Routable), Running: maps.Clone(i.Running), ObservedAt: liveAt(i.ObservedAt)})
 	}
@@ -200,11 +207,14 @@ func (p *livePublisher) action(r servingkube.OperationResult) {
 	if uid == "" && r.Operation.Prepare != nil && r.Operation.Prepare.Owner != nil {
 		uid = r.Operation.Prepare.Owner.UID
 	}
-	a := live.Action{ID: r.Operation.ID, Kind: r.Operation.Kind, Node: liveNode(r.Operation.Node), WorkloadUID: uid, Status: r.Status,
+	a := live.Action{
+		ID: r.Operation.ID, Kind: r.Operation.Kind, Node: liveNode(r.Operation.Node), WorkloadUID: uid, Status: r.Status,
 		StartedAt: liveAt(r.StartedAt), ExpectedSeconds: r.Operation.ExpectedSeconds}
 	if source := r.Operation.ExpectedSource; source != nil {
 		ref, _ := json.Marshal(source.Reference)
-		a.ExpectedSource = &live.ExpectedSource{CostID: source.CostID, Reference: ref, Statistic: source.Statistic, TrialCount: source.TrialCount}
+		a.ExpectedSource = &live.ExpectedSource{
+			CostID: source.CostID, Reference: ref, Statistic: source.Statistic, TrialCount: source.TrialCount,
+		}
 	}
 	phase := "started"
 	if !r.EndedAt.IsZero() {

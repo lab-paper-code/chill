@@ -354,7 +354,9 @@ func (o *schedulerService) operatingPower(
 	return o.observationLog.OperatingPower(ctx, from, to, meters, limit)
 }
 
-func (o *schedulerService) recordDecision(decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot) error {
+func (o *schedulerService) recordDecision(
+	decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot,
+) error {
 	if err := o.observationLog.SchedulerRecord(serving.SchedulerObservation{
 		At: decision.At, Decision: &decision, Snapshot: &snapshot,
 	}); err != nil {
@@ -383,7 +385,9 @@ func (o *schedulerService) recordAction(result servingkube.OperationResult) erro
 	if !result.EndedAt.IsZero() {
 		event.CompletedAt = &result.EndedAt
 	}
-	if err := o.observationLog.SchedulerRecord(serving.SchedulerObservation{At: time.Now().UTC(), Action: &event}); err != nil {
+	if err := o.observationLog.SchedulerRecord(serving.SchedulerObservation{
+		At: time.Now().UTC(), Action: &event,
+	}); err != nil {
 		return err
 	}
 	if o.live != nil {

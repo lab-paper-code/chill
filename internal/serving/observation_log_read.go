@@ -101,32 +101,42 @@ func observationHourWanted(hour time.Time, bounds [2]time.Time) bool {
 func (l *ObservationLog) selectSources(read *observationRead, ranges map[string][2]time.Time) error {
 	read.sources = map[string][]observationSource{}
 	read.archive, _ = l.config.Writer.(ObservationArchive)
-	needArchive := false
+	objects, err := l.archiveSources(read, ranges)
+	if err != nil {
+		return err
+	}
+	read.selectStreamSources(ranges, objects)
+	return read.ctx.Err()
+}
+
+func (r *observationRead) needsArchive(ranges map[string][2]time.Time) bool {
 	for stream, bounds := range ranges {
 		if bounds[0].IsZero() {
-			needArchive = true
-			break
+			return true
 		}
 		end := bounds[1]
-		if end.IsZero() || end.After(read.now) {
-			end = read.now
+		if end.IsZero() || end.After(r.now) {
+			end = r.now
 		}
 		for hour := bounds[0].UTC().Truncate(time.Hour); !hour.After(end); hour = hour.Add(time.Hour) {
-			if !read.localStream(hour, stream) || read.routerID != "" && !read.localStream(hour, observationCatalogStream) {
-				needArchive = true
-				break
+			if !r.localStream(hour, stream) || r.routerID != "" && !r.localStream(hour, observationCatalogStream) {
+				return true
 			}
 		}
 	}
+	return false
+}
+
+func (l *ObservationLog) archiveSources(read *observationRead, ranges map[string][2]time.Time) (map[string]map[time.Time]evidencestore.ObjectIdentity, error) {
 	objects := map[string]map[time.Time]evidencestore.ObjectIdentity{}
-	if needArchive && read.archive != nil {
+	if read.needsArchive(ranges) && read.archive != nil {
 		listed, err := read.archive.List(read.ctx, observationRouterPrefix(l.config.RouterID))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, object := range listed {
 			if err := read.ctx.Err(); err != nil {
-				return err
+				return nil, err
 			}
 			hour, stream, valid := observationObjectHourAt(object, observationRouterPrefix(l.config.RouterID))
 			if !valid || read.localStream(hour, stream) {
@@ -139,11 +149,15 @@ func (l *ObservationLog) selectSources(read *observationRead, ranges map[string]
 				objects[stream] = map[time.Time]evidencestore.ObjectIdentity{}
 			}
 			if previous, exists := objects[stream][hour]; exists && previous.Store != object.Store {
-				return failure("IncompleteObservation", "multiple archive objects for %s %s", observationHour(hour), stream)
+				return nil, failure("IncompleteObservation", "multiple archive objects for %s %s", observationHour(hour), stream)
 			}
 			objects[stream][hour] = object
 		}
 	}
+	return objects, nil
+}
+
+func (read *observationRead) selectStreamSources(ranges map[string][2]time.Time, objects map[string]map[time.Time]evidencestore.ObjectIdentity) {
 	catalogHours := map[time.Time]bool{}
 	for stream, bounds := range ranges {
 		if stream == observationCatalogStream {
@@ -174,7 +188,6 @@ func (l *ObservationLog) selectSources(read *observationRead, ranges map[string]
 	for stream := range read.sources {
 		slices.SortFunc(read.sources[stream], func(a, b observationSource) int { return a.hour.Compare(b.hour) })
 	}
-	return read.ctx.Err()
 }
 
 func (r *observationRead) coverage(ranges map[string][2]time.Time) ObservationCoverage {
@@ -185,100 +198,7 @@ func (r *observationRead) coverage(ranges map[string][2]time.Time) ObservationCo
 	}
 	slices.Sort(streams)
 	for _, stream := range streams {
-		bounds := ranges[stream]
-		from, to := bounds[0].UTC(), bounds[1].UTC()
-		if to.IsZero() {
-			to = r.now
-		}
-		if from.IsZero() {
-			from = r.start
-			for _, source := range r.sources[stream] {
-				if source.owner != nil {
-					continue
-				}
-				if source.hour.Before(from) {
-					from = source.hour
-				}
-			}
-		}
-		available := map[time.Time]observationSource{}
-		for _, source := range r.sources[stream] {
-			if source.owner != nil {
-				continue
-			}
-			available[source.hour] = source
-		}
-		for hour := from.Truncate(time.Hour); hour.Before(to); hour = hour.Add(time.Hour) {
-			start, end := hour, hour.Add(time.Hour)
-			if start.Before(from) {
-				start = from
-			}
-			if end.After(to) {
-				end = to
-			}
-			source, exists := available[hour]
-			if exists && source.object == nil && start.Before(r.start) && !hour.Before(r.start.Truncate(time.Hour)) {
-				until := r.start
-				if until.After(end) {
-					until = end
-				}
-				coverage.Gaps = append(coverage.Gaps, ObservationGap{From: start, To: until, Stream: stream, Reason: "StreamUnavailable"})
-				start = until
-			}
-			if !start.Before(end) {
-				continue
-			}
-			if !exists {
-				reason := "StreamUnavailable"
-				if r.router != nil && hour.Equal(r.now.Truncate(time.Hour)) {
-					reason = "LiveBufferUnavailable"
-				}
-				coverage.Gaps = append(coverage.Gaps, ObservationGap{From: start, To: end, Stream: stream, Reason: reason})
-				continue
-			}
-			// Receipts and unassigned requests exist only in report Open rows.
-			// Even a mounted request file cannot prove arrivals after that snapshot.
-			if r.router != nil && stream == observationRequestStream && r.router.ObservedAt.Before(end) {
-				knownUntil := r.router.ObservedAt
-				if knownUntil.Before(start) {
-					knownUntil = start
-				}
-				coverage.Gaps = append(coverage.Gaps, ObservationGap{
-					From: knownUntil, To: end, Stream: stream, Reason: "RouterReportUnavailable",
-				})
-				end = knownUntil
-				if !start.Before(end) {
-					continue
-				}
-			}
-			entry := ObservationSource{From: start, To: end, Stream: stream, Source: "local"}
-			entry.RouterID = r.routerID
-			if r.router != nil && !r.router.ObservedAt.IsZero() {
-				value := r.router.ObservedAt
-				entry.ObservedAt = &value
-			}
-			if source.object != nil {
-				entry.Source, entry.Store, entry.Key = observationArchiveSource, source.object.Store, source.object.Key
-			}
-			if r.router != nil {
-				catalogAvailable := false
-				for _, catalog := range r.sources[observationCatalogStream] {
-					catalogAvailable = catalogAvailable || catalog.hour.Equal(hour)
-				}
-				if !catalogAvailable {
-					coverage.Gaps = append(coverage.Gaps, ObservationGap{From: start, To: end, Stream: observationCatalogStream, Reason: "StreamUnavailable"})
-				}
-			}
-			coverage.Sources = append(coverage.Sources, entry)
-			if coverage.From == nil || start.Before(*coverage.From) {
-				value := start
-				coverage.From = &value
-			}
-			if coverage.To == nil || end.After(*coverage.To) {
-				value := end
-				coverage.To = &value
-			}
-		}
+		r.streamCoverage(&coverage, stream, ranges[stream])
 	}
 	for i := range coverage.Gaps {
 		coverage.Gaps[i].RouterID = r.routerID
@@ -299,6 +219,110 @@ func (r *observationRead) coverage(ranges map[string][2]time.Time) ObservationCo
 		}
 	}
 	return coverage
+}
+
+func (r *observationRead) streamCoverage(coverage *ObservationCoverage, stream string, bounds [2]time.Time) {
+	from, to := bounds[0].UTC(), bounds[1].UTC()
+	if to.IsZero() {
+		to = r.now
+	}
+	if from.IsZero() {
+		from = r.start
+		for _, source := range r.sources[stream] {
+			if source.owner != nil {
+				continue
+			}
+			if source.hour.Before(from) {
+				from = source.hour
+			}
+		}
+	}
+	available := map[time.Time]observationSource{}
+	for _, source := range r.sources[stream] {
+		if source.owner != nil {
+			continue
+		}
+		available[source.hour] = source
+	}
+	for hour := from.Truncate(time.Hour); hour.Before(to); hour = hour.Add(time.Hour) {
+		start, end := hour, hour.Add(time.Hour)
+		if start.Before(from) {
+			start = from
+		}
+		if end.After(to) {
+			end = to
+		}
+		r.hourCoverage(coverage, stream, hour, start, end, available)
+	}
+}
+
+func (r *observationRead) hourCoverage(coverage *ObservationCoverage, stream string, hour, start, end time.Time, available map[time.Time]observationSource) {
+	source, exists := available[hour]
+	if exists && source.object == nil && start.Before(r.start) && !hour.Before(r.start.Truncate(time.Hour)) {
+		until := r.start
+		if until.After(end) {
+			until = end
+		}
+		coverage.Gaps = append(coverage.Gaps, ObservationGap{From: start, To: until, Stream: stream, Reason: "StreamUnavailable"})
+		start = until
+	}
+	if !start.Before(end) {
+		return
+	}
+	if !exists {
+		reason := "StreamUnavailable"
+		if r.router != nil && hour.Equal(r.now.Truncate(time.Hour)) {
+			reason = "LiveBufferUnavailable"
+		}
+		coverage.Gaps = append(coverage.Gaps, ObservationGap{From: start, To: end, Stream: stream, Reason: reason})
+		return
+	}
+	// Receipts and unassigned requests exist only in report Open rows.
+	// Even a mounted request file cannot prove arrivals after that snapshot.
+	if r.router != nil && stream == observationRequestStream && r.router.ObservedAt.Before(end) {
+		knownUntil := r.router.ObservedAt
+		if knownUntil.Before(start) {
+			knownUntil = start
+		}
+		coverage.Gaps = append(coverage.Gaps, ObservationGap{
+			From: knownUntil, To: end, Stream: stream, Reason: "RouterReportUnavailable",
+		})
+		end = knownUntil
+		if !start.Before(end) {
+			return
+		}
+	}
+	r.addSourceCoverage(coverage, stream, hour, start, end, source)
+}
+
+func (r *observationRead) addSourceCoverage(coverage *ObservationCoverage, stream string, hour, start, end time.Time, source observationSource) {
+	entry := ObservationSource{From: start, To: end, Stream: stream, Source: "local"}
+	entry.RouterID = r.routerID
+	if r.router != nil && !r.router.ObservedAt.IsZero() {
+		value := r.router.ObservedAt
+		entry.ObservedAt = &value
+	}
+	if source.object != nil {
+		entry.Source, entry.Store, entry.Key = observationArchiveSource, source.object.Store, source.object.Key
+	}
+	if r.router != nil {
+		catalogAvailable := false
+		for _, catalog := range r.sources[observationCatalogStream] {
+			catalogAvailable = catalogAvailable || catalog.hour.Equal(hour)
+		}
+		if !catalogAvailable {
+			coverage.Gaps = append(coverage.Gaps, ObservationGap{From: start, To: end, Stream: observationCatalogStream, Reason: "StreamUnavailable"})
+		}
+	}
+	coverage.Sources = append(coverage.Sources, entry)
+	if coverage.From == nil || start.Before(*coverage.From) {
+		value := start
+		coverage.From = &value
+	}
+	if coverage.To == nil || end.After(*coverage.To) {
+		value := end
+		coverage.To = &value
+	}
 }
 
 func (c ObservationCoverage) gapUntil(from time.Time) *time.Time {

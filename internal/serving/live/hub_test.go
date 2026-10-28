@@ -57,7 +57,7 @@ func TestCheckpointResumeAndOriginalSnapshotTime(t *testing.T) {
 	}
 	defer sub.Close()
 	baseline := nextEnvelope(t, sub)
-	if baseline.Type != "snapshot" || baseline.Seq != 0 || baseline.At != timestamp(testAt) || baseline.Workloads == nil || baseline.Routing == nil || baseline.Instances == nil || baseline.Actions == nil {
+	if baseline.Type != messageSnapshot || baseline.Seq != 0 || baseline.At != timestamp(testAt) || baseline.Workloads == nil || baseline.Routing == nil || baseline.Instances == nil || baseline.Actions == nil {
 		t.Fatalf("initial baseline: %+v", baseline)
 	}
 	if err := hub.Heartbeat(testAt.Add(time.Second)); err != nil {
@@ -82,7 +82,7 @@ func TestCheckpointResumeAndOriginalSnapshotTime(t *testing.T) {
 		}
 		message := nextEnvelope(t, invalid)
 		invalid.Close()
-		if message.Type != "snapshot" || message.Seq != 2 || message.At != timestamp(testAt.Add(2*time.Second)) {
+		if message.Type != messageSnapshot || message.Seq != 2 || message.At != timestamp(testAt.Add(2*time.Second)) {
 			t.Fatalf("mismatched checkpoint: %+v", message)
 		}
 	}
@@ -150,7 +150,7 @@ func TestRetentionAndSafeSequenceBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if message := nextEnvelope(t, tooOld); message.Type != "snapshot" {
+	if message := nextEnvelope(t, tooOld); message.Type != messageSnapshot {
 		t.Fatal("evicted checkpoint replayed")
 	}
 	tooOld.Close()
@@ -227,7 +227,7 @@ func TestSlowQueueBarrierBeforeLaterStateAndReplay(t *testing.T) {
 		t.Fatal("queue exceeds bound")
 	}
 	barrier := nextEnvelope(t, sub)
-	if barrier.Type != "snapshot" || barrier.Seq <= checkpoint.Seq {
+	if barrier.Type != messageSnapshot || barrier.Seq <= checkpoint.Seq {
 		t.Fatalf("missing slow-consumer baseline barrier: %+v", barrier)
 	}
 	// Replay itself may exceed the per-client byte bound. Its head barrier must
@@ -270,7 +270,7 @@ func TestSnapshotRegistrationHasNoPublishWindow(t *testing.T) {
 	}
 	defer sub.Close()
 	baseline := nextEnvelope(t, sub)
-	if baseline.Type != "snapshot" {
+	if baseline.Type != messageSnapshot {
 		t.Fatal("delta before baseline")
 	}
 	producers.Wait()

@@ -124,6 +124,11 @@ const (
 )
 
 func (r *RequestRow) fold(e *RequestEvent) {
+	r.foldIdentity(e)
+	r.foldTiming(e)
+}
+
+func (r *RequestRow) foldIdentity(e *RequestEvent) {
 	if e.RouterID != "" {
 		r.RouterID = e.RouterID
 	}
@@ -142,14 +147,6 @@ func (r *RequestRow) fold(e *RequestEvent) {
 	if e.Definition != "" {
 		r.DefinitionID = e.Definition
 	}
-	if !e.ReceivedAt.IsZero() {
-		r.ReceivedAt = e.ReceivedAt
-	} else if r.ReceivedAt.IsZero() && e.Kind == phaseReceived {
-		r.ReceivedAt = e.At
-	}
-	if e.LifetimeNanos > 0 {
-		r.LifetimeNanos = e.LifetimeNanos
-	}
 	if a := e.Assignment; a != nil {
 		node, dispatched := a.Node, a.DispatchedAt
 		r.Node, r.Instance, r.ProfileID, r.DispatchedAt = &node, a.Instance, a.Profile, &dispatched
@@ -163,6 +160,17 @@ func (r *RequestRow) fold(e *RequestEvent) {
 		if a.ProfileBody != nil {
 			r.profile = a.ProfileBody
 		}
+	}
+}
+
+func (r *RequestRow) foldTiming(e *RequestEvent) {
+	if !e.ReceivedAt.IsZero() {
+		r.ReceivedAt = e.ReceivedAt
+	} else if r.ReceivedAt.IsZero() && e.Kind == phaseReceived {
+		r.ReceivedAt = e.At
+	}
+	if e.LifetimeNanos > 0 {
+		r.LifetimeNanos = e.LifetimeNanos
 	}
 	if e.ClientSpanNanos != 0 {
 		r.ClientSpanNanos = e.ClientSpanNanos

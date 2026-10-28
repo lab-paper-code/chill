@@ -10,7 +10,11 @@ import (
 
 func TestClosedWorkloadDrainAndDisconnectedScope(t *testing.T) {
 	control, _ := NewControl(2)
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	plan := testPlan("closed")
 	plan.Participants = 2
 	plan.Admission = map[string]bool{"workload": false}

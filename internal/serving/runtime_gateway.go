@@ -238,93 +238,147 @@ func validateGatewayPlan(plan GatewayPlan, candidates []ReadyInstance) (*gateway
 	if strings.TrimSpace(plan.PlanVersion) == "" || plan.CreatedAt.IsZero() || plan.Participants < 1 || plan.ObservationWindow <= 0 || plan.ObservationWindow > time.Duration(1<<63-1)-10*time.Second || len(candidates) != len(plan.Targets) {
 		return invalid()
 	}
-	snapshot := &gatewaySnapshot{version: plan.PlanVersion, definitions: make(map[string]*Definition, len(plan.Definitions)), routes: make(map[string]inputRoute, len(plan.Definitions)), targets: make(map[string]GatewayTarget, len(plan.Targets))}
-	snapshot.observationWindow = plan.ObservationWindow
-	names := map[string]bool{}
-	for _, d := range plan.Definitions {
-		if !validGatewayDefinition(d) || snapshot.definitions[d.UID] != nil || names[d.Name] {
-			return invalid()
-		}
-		snapshot.definitions[d.UID], names[d.Name] = d, true
+	snapshot := &gatewaySnapshot{
+		version:     plan.PlanVersion,
+		definitions: make(map[string]*Definition, len(plan.Definitions)),
+		routes:      make(map[string]inputRoute, len(plan.Definitions)),
+		targets:     make(map[string]GatewayTarget, len(plan.Targets)),
 	}
-	if len(plan.Admission) != len(snapshot.definitions) {
+	snapshot.observationWindow = plan.ObservationWindow
+	if !snapshot.validateDefinitions(plan) {
 		return invalid()
 	}
+	ready, profiles, ok := snapshot.validateTargets(plan, candidates)
+	if !ok {
+		return invalid()
+	}
+	routing, ok := snapshot.validateRouting(plan, ready)
+	if !ok {
+		return invalid()
+	}
+	return snapshot, ready, routing, profiles, nil
+}
+
+func (s *gatewaySnapshot) validateDefinitions(plan GatewayPlan) bool {
+	names := map[string]bool{}
+	for _, d := range plan.Definitions {
+		if !validGatewayDefinition(d) || s.definitions[d.UID] != nil || names[d.Name] {
+			return false
+		}
+		s.definitions[d.UID], names[d.Name] = d, true
+	}
+	if len(plan.Admission) != len(s.definitions) {
+		return false
+	}
 	for uid := range plan.Admission {
-		if snapshot.definitions[uid] == nil {
-			return invalid()
+		if s.definitions[uid] == nil {
+			return false
 		}
 	}
+	return true
+}
+
+func (s *gatewaySnapshot) validateTargets(plan GatewayPlan, candidates []ReadyInstance) (map[string]ReadyInstance, []Profile, bool) {
 	ready := make(map[string]ReadyInstance, len(candidates))
 	for _, candidate := range candidates {
 		if candidate.State.ID == "" || ready[candidate.State.ID].Execute != nil || candidate.Execute == nil {
-			return invalid()
+			return nil, nil, false
 		}
 		ready[candidate.State.ID] = candidate
 	}
 	profiles := make([]Profile, 0, len(plan.Targets))
 	for _, target := range plan.Targets {
-		endpoint, err := url.Parse(target.Endpoint)
 		p := target.Profile
-		if target.PodUID == "" || strings.Contains(target.PodUID, "/") || target.ContainerID == "" || target.InstanceID != target.PodUID+"/"+target.ContainerID || snapshot.targets[target.InstanceID].InstanceID != "" ||
-			target.Node.Name == "" || target.Node.UID == "" || err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" || endpoint.User != nil || target.ModelName == "" || target.DecisionID == "" || target.ExpectedRuntime == nil ||
-			p == nil || p.ID == "" || p.NodeName != target.Node.Name || p.Condition.NodeUID != target.Node.UID || p.Condition.Firstfloor == nil || target.Capacity < 1 || target.Capacity != int(p.Condition.Firstfloor.MaxQueueSize) || target.RouterLimit != target.Capacity/plan.Participants ||
-			(target.OwnerWorkloadUID != "" && snapshot.definitions[target.OwnerWorkloadUID] == nil) {
-			return invalid()
+		if !s.validTarget(target, plan.Participants) {
+			return nil, nil, false
 		}
 		candidate, found := ready[target.InstanceID]
-		if !found || !candidate.State.Ready || candidate.State.Stopped || candidate.State.PodUID != target.PodUID || candidate.State.ContainerID != target.ContainerID || candidate.State.Node != target.Node || candidate.State.Profile != p.ID || candidate.Profile == nil || candidate.Profile.ID != p.ID || candidate.OwnerWorkloadUID != target.OwnerWorkloadUID || candidate.Capacity != target.RouterLimit {
-			return invalid()
-		}
-		if candidate.State.Native != nil && candidate.State.Native.Metadata.DecisionID != target.DecisionID {
-			return invalid()
+		if !found || !validGatewayCandidate(candidate, target) {
+			return nil, nil, false
 		}
 		candidate.Profile, candidate.Routing = p, map[string]int32{}
 		ready[target.InstanceID] = candidate
-		snapshot.targets[target.InstanceID] = target
+		s.targets[target.InstanceID] = target
 		profiles = append(profiles, *p)
 	}
-	if len(plan.Routing) != len(snapshot.definitions) {
-		return invalid()
+	return ready, profiles, true
+}
+
+func (s *gatewaySnapshot) validateRouting(plan GatewayPlan, ready map[string]ReadyInstance) (map[string]map[string]int32, bool) {
+	if len(plan.Routing) != len(s.definitions) {
+		return nil, false
 	}
 	routing := make(map[string]map[string]int32, len(plan.Routing))
 	for uid, distribution := range plan.Routing {
-		d := snapshot.definitions[uid]
+		d := s.definitions[uid]
 		if d == nil {
-			return invalid()
+			return nil, false
 		}
 		routing[uid] = maps.Clone(distribution)
 		for id, weight := range distribution {
 			candidate, found := ready[id]
 			if weight < 0 || !found || profilePath(d, candidate.Profile) == nil || (candidate.OwnerWorkloadUID != "" && candidate.OwnerWorkloadUID != uid) {
-				return invalid()
+				return nil, false
 			}
 			candidate.Routing[uid] = weight
 		}
 	}
-	return snapshot, ready, routing, profiles, nil
+	return routing, true
+}
+
+func (s *gatewaySnapshot) validTarget(target GatewayTarget, participants int) bool {
+	endpoint, err := url.Parse(target.Endpoint)
+	p := target.Profile
+	if target.PodUID == "" || strings.Contains(target.PodUID, "/") || target.ContainerID == "" ||
+		target.InstanceID != target.PodUID+"/"+target.ContainerID || s.targets[target.InstanceID].InstanceID != "" ||
+		target.Node.Name == "" || target.Node.UID == "" || err != nil ||
+		(endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" || endpoint.User != nil ||
+		target.ModelName == "" || target.DecisionID == "" || target.ExpectedRuntime == nil {
+		return false
+	}
+	return p != nil && p.ID != "" && p.NodeName == target.Node.Name && p.Condition.NodeUID == target.Node.UID &&
+		p.Condition.Firstfloor != nil && target.Capacity >= 1 && target.Capacity == int(p.Condition.Firstfloor.MaxQueueSize) &&
+		target.RouterLimit == target.Capacity/participants &&
+		(target.OwnerWorkloadUID == "" || s.definitions[target.OwnerWorkloadUID] != nil)
+}
+
+func validGatewayCandidate(candidate ReadyInstance, target GatewayTarget) bool {
+	return candidate.State.Ready && !candidate.State.Stopped && candidate.State.PodUID == target.PodUID &&
+		candidate.State.ContainerID == target.ContainerID && candidate.State.Node == target.Node &&
+		candidate.State.Profile == target.Profile.ID && candidate.Profile != nil && candidate.Profile.ID == target.Profile.ID &&
+		candidate.OwnerWorkloadUID == target.OwnerWorkloadUID && candidate.Capacity == target.RouterLimit &&
+		(candidate.State.Native == nil || candidate.State.Native.Metadata.DecisionID == target.DecisionID)
 }
 
 func validGatewayDefinition(d *Definition) bool {
-	if d == nil || d.Name == "" || d.UID == "" || d.Generation < 1 || d.Model.Name == "" || d.Model.UID == "" || d.Model.Generation < 1 || d.Preprocessor.Name == "" || d.Preprocessor.UID == "" || d.Preprocessor.Generation < 1 ||
-		len(d.Model.Paths) == 0 || len(d.Preprocessor.Input) == 0 || len(d.Preprocessor.Output) == 0 || d.SLO.Percentile <= 0 || d.SLO.Percentile > 100 || math.IsNaN(d.SLO.Percentile) || d.SLO.TargetLatency <= 0 || (d.RequestLifetime != nil && *d.RequestLifetime <= 0) || (d.Dataset != nil && (d.Dataset.Name == "" || d.Dataset.UID == "")) {
+	if !validGatewayDefinitionIdentity(d) || !validGatewayDefinitionPolicy(d) {
 		return false
 	}
-	for _, fields := range [][]RawField{d.Preprocessor.Input, d.Preprocessor.Output} {
-		for i, field := range fields {
-			if field.Name == "" || field.Format == "" {
+	return validGatewayFields(d.Preprocessor.Input, true) && validGatewayFields(d.Preprocessor.Output, false)
+}
+
+func validGatewayDefinitionIdentity(d *Definition) bool {
+	return d != nil && d.Name != "" && d.UID != "" && d.Generation >= 1 &&
+		d.Model.Name != "" && d.Model.UID != "" && d.Model.Generation >= 1 &&
+		d.Preprocessor.Name != "" && d.Preprocessor.UID != "" && d.Preprocessor.Generation >= 1 &&
+		len(d.Model.Paths) > 0 && len(d.Preprocessor.Input) > 0 && len(d.Preprocessor.Output) > 0
+}
+
+func validGatewayDefinitionPolicy(d *Definition) bool {
+	return d.SLO.Percentile > 0 && d.SLO.Percentile <= 100 && !math.IsNaN(d.SLO.Percentile) &&
+		d.SLO.TargetLatency > 0 && (d.RequestLifetime == nil || *d.RequestLifetime > 0) &&
+		(d.Dataset == nil || (d.Dataset.Name != "" && d.Dataset.UID != ""))
+}
+
+func validGatewayFields(fields []RawField, input bool) bool {
+	for i, field := range fields {
+		if field.Name == "" || field.Format == "" || (input && field.MaxBytes <= 0) {
+			return false
+		}
+		for _, prior := range fields[:i] {
+			if prior.Name == field.Name {
 				return false
 			}
-			for _, prior := range fields[:i] {
-				if prior.Name == field.Name {
-					return false
-				}
-			}
-		}
-	}
-	for _, field := range d.Preprocessor.Input {
-		if field.MaxBytes <= 0 {
-			return false
 		}
 	}
 	return true

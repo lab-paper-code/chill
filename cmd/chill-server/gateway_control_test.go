@@ -28,10 +28,17 @@ func TestControlDoesNotReceiveInferenceBodyOrPick(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	calls := 0
 	s := &splitControlService{control: control}
-	h := s.handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusNoContent) }), &servingkube.Authorizer{})
+	h := s.handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	}), &servingkube.Authorizer{})
 	body := &unreadInference{}
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/workloads/model/infer", nil)
 	r.Body = body
@@ -61,24 +68,37 @@ func TestControlIsASeparateBuildWithoutRolloutFlag(t *testing.T) {
 	if f.Lookup("gateway-enabled") != nil || f.Lookup("gateway-control") != nil {
 		t.Fatal("split was wired through a default-off rollout switch")
 	}
-	if (f.Lookup("router-count") != nil) != (serverRole == "control") {
+	if (f.Lookup("router-count") != nil) != (serverRole == controlRole) {
 		t.Fatal("split flags escaped their explicit binary composition")
 	}
 }
 
 func TestRouterMembershipUsesControlObservationStream(t *testing.T) {
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: schedulerPowerArchive{directory: t.TempDir()}})
+	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
+		Writer: schedulerPowerArchive{directory: t.TempDir()},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer log.Close(context.Background())
+	t.Cleanup(func() {
+		if err := log.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	at := time.Now().UTC()
 	s := &splitControlService{observations: log}
-	if err := s.recordMembership(gateway.RouterState{RouterID: "pod-generation", Generation: 2, MembershipGeneration: 2, Connected: true, JoinedAt: at}); err != nil {
+	if err := s.recordMembership(gateway.RouterState{
+		RouterID: "pod-generation", Generation: 2, MembershipGeneration: 2, Connected: true, JoinedAt: at,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	rows, _, _, _, err := log.SchedulerObservationPage(context.Background(), at.Add(-time.Second), at.Add(time.Second), 10, 0)
-	if err != nil || len(rows) != 1 || rows[0].Action == nil || rows[0].Action.Kind != "gateway-router-membership" || !strings.Contains(string(rows[0].Action.Actual), `"routerID":"pod-generation"`) {
+	rows, _, _, _, err := log.SchedulerObservationPage(
+		context.Background(), at.Add(-time.Second), at.Add(time.Second), 10, 0,
+	)
+	if err != nil || len(rows) != 1 || rows[0].Action == nil ||
+		rows[0].Action.Kind != "gateway-router-membership" ||
+		!strings.Contains(string(rows[0].Action.Actual), `"routerID":"pod-generation"`) {
 		t.Fatalf("router source missing from control audit: %+v %v", rows, err)
 	}
 }
@@ -88,11 +108,21 @@ func TestControlUsesCommonReportedRequestPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	now := time.Now().UTC().Truncate(time.Second).Add(900 * time.Millisecond)
 	if err := control.RestoreMembership([]gateway.RouterState{
-		{RouterID: "one", Generation: 1, JoinedAt: now.Add(-time.Minute), Report: serving.GatewayReport{RouterID: "one", ObservedAt: now.Add(-100 * time.Millisecond)}},
-		{RouterID: "two", Generation: 2, JoinedAt: now.Add(-time.Minute), Report: serving.GatewayReport{RouterID: "two", ObservedAt: now.Add(-1200 * time.Millisecond)}},
+		{
+			RouterID: "one", Generation: 1, JoinedAt: now.Add(-time.Minute),
+			Report: serving.GatewayReport{RouterID: "one", ObservedAt: now.Add(-100 * time.Millisecond)},
+		},
+		{
+			RouterID: "two", Generation: 2, JoinedAt: now.Add(-time.Minute),
+			Report: serving.GatewayReport{RouterID: "two", ObservedAt: now.Add(-1200 * time.Millisecond)},
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +142,11 @@ func TestClosedEvidenceChannelDoesNotStopIndependentObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	s := &splitControlService{control: control}
 	if err := s.deliveryResult(live.ErrClosed); err != nil {
 		t.Fatal(err)

@@ -929,6 +929,17 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 		return failure("GatewayPlanRequired", "split routing changes require a complete gateway plan")
 	}
 	defer func() { err = errors.Join(err, r.unlock()) }()
+	if err := validateReadyInstances(instances); err != nil {
+		return err
+	}
+	r.installInstancesLocked(instances)
+	r.rebuildLocked()
+	r.dispatchLocked()
+	r.signal()
+	return nil
+}
+
+func validateReadyInstances(instances []ReadyInstance) error {
 	seen := map[string]bool{}
 	for _, candidate := range instances {
 		if candidate.State.ID == "" && candidate.State.PodUID == "" || candidate.State.Ready && candidate.State.Node.UID == "" {
@@ -943,6 +954,10 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 		}
 		seen[key] = true
 	}
+	return nil
+}
+
+func (r *Runtime) installInstancesLocked(instances []ReadyInstance) {
 	for _, i := range r.instances {
 		i.State.Ready = false
 		i.State.Reason = "NoCurrentReadiness"
@@ -983,10 +998,6 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 		}
 		r.finishAbsentLocked(candidate.State)
 	}
-	r.rebuildLocked()
-	r.dispatchLocked()
-	r.signal()
-	return nil
 }
 
 func instanceInventoryKey(state InstanceState) string {

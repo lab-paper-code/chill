@@ -56,13 +56,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, observationOwner.Close()) }()
-	// An upload interrupted by a restart leaves its staging files on scratch space.
-	for _, pattern := range []string{".archive-*", "chill-evidence-*"} {
-		staged, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))
-		for _, name := range staged {
-			_ = os.Remove(name)
-		}
-	}
+	removeStagedObservationArchives()
 	diagnostics, err := newDiagnosticSession(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("initialize finite diagnostics: %w", err)
@@ -73,7 +67,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		recorder = diagnostics.recorder
 	}
 	var split *splitControlService
-	if serverRole == "control" {
+	if serverRole == controlRole {
 		split, err = newSplitControl(opts)
 		if err != nil {
 			return err
@@ -157,49 +151,16 @@ func run(ctx context.Context, opts options) (retErr error) {
 		observationEnd = split.observationEnd
 	}
 	scheduler, err := newSchedulerService(
-		ctx, store, kube, execution, observer, objects, observationLog, opts, handlerConfig.RequestTimeout, publisher, routingApplied, observationEnd,
+		ctx, store, kube, execution, observer, objects, observationLog, opts,
+		handlerConfig.RequestTimeout, publisher, routingApplied, observationEnd,
 	)
 	if err != nil {
 		return fmt.Errorf("initialize scheduler service: %w", err)
 	}
 	defer scheduler.Close()
-	initializeCtx, cancelInitialize := context.WithTimeout(ctx, opts.requestTimeout)
-	err = observer.Refresh(initializeCtx)
-	if err == nil {
-		err = manager.Initialize(initializeCtx)
-	}
-	cancelInitialize()
-	if err != nil {
-		return fmt.Errorf("initialize Workload service: %w", err)
-	}
-	views, err := manager.ListWorkloads(ctx)
-	if err != nil {
-		return fmt.Errorf("initialize live Workload projection: %w", err)
-	}
-	for _, view := range views {
-		publisher.workload(view, false)
-	}
-	publisher.startRuntime(ctx, execution)
-	if scheduler != nil && len(scheduler.controller.Settings().AutonomousWorkloads) > 0 {
-		execution.EnableSchedulerRouting()
-	}
-	if split != nil {
-		if scheduler != nil {
-			split.observationWindow = func() time.Duration { return scheduler.controller.Settings().ObservationWindow }
-		}
-		if err := split.start(ctx); err != nil {
-			return fmt.Errorf("initialize router distribution: %w", err)
-		}
-	}
-	if scheduler != nil {
-		handlerConfig.Scheduler = scheduler.controller
-		handlerConfig.SchedulerConfigMap = opts.schedulerConfigMap
-		handlerConfig.SchedulerConfigKey = opts.schedulerConfigKey
-		handlerConfig.SchedulerNamespace = opts.servingNamespace
-		handlerConfig.SchedulerLock = &scheduler.lock
-		handlerConfig.RefreshScheduler = scheduler.refreshLocked
-		handlerConfig.OperatingPower = scheduler.operatingPower
-		handlerConfig.Profiles = scheduler.profilesView
+	if err := initializeServing(ctx, &opts, observer, manager, execution,
+		publisher, scheduler, split, &handlerConfig); err != nil {
+		return err
 	}
 	// HTTP-boundary calls (reviews, settings ConfigMap) take their own client
 	// budget so ingress and control calls never queue behind each other.
@@ -236,6 +197,62 @@ func run(ctx context.Context, opts options) (retErr error) {
 		chillServer = split.handler(chillServer, authorizer)
 	}
 	return serve(ctx, opts, chillServer, execution, observer, manager, observationLog, scheduler, diagnostics)
+}
+
+func removeStagedObservationArchives() {
+	// An upload interrupted by a restart leaves its staging files on scratch space.
+	for _, pattern := range []string{".archive-*", "chill-evidence-*"} {
+		staged, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))
+		for _, name := range staged {
+			_ = os.Remove(name)
+		}
+	}
+}
+
+func initializeServing(ctx context.Context, opts *options,
+	observer *servingkube.Observer, manager *servingkube.Manager, execution *serving.Runtime,
+	publisher *livePublisher, scheduler *schedulerService, split *splitControlService,
+	handlerConfig *httpapi.HandlerConfig,
+) error {
+	initializeCtx, cancelInitialize := context.WithTimeout(ctx, opts.requestTimeout)
+	err := observer.Refresh(initializeCtx)
+	if err == nil {
+		err = manager.Initialize(initializeCtx)
+	}
+	cancelInitialize()
+	if err != nil {
+		return fmt.Errorf("initialize Workload service: %w", err)
+	}
+	views, err := manager.ListWorkloads(ctx)
+	if err != nil {
+		return fmt.Errorf("initialize live Workload projection: %w", err)
+	}
+	for _, view := range views {
+		publisher.workload(view, false)
+	}
+	publisher.startRuntime(ctx, execution)
+	if scheduler != nil && len(scheduler.controller.Settings().AutonomousWorkloads) > 0 {
+		execution.EnableSchedulerRouting()
+	}
+	if split != nil {
+		if scheduler != nil {
+			split.observationWindow = func() time.Duration { return scheduler.controller.Settings().ObservationWindow }
+		}
+		if err := split.start(ctx); err != nil {
+			return fmt.Errorf("initialize router distribution: %w", err)
+		}
+	}
+	if scheduler != nil {
+		handlerConfig.Scheduler = scheduler.controller
+		handlerConfig.SchedulerConfigMap = opts.schedulerConfigMap
+		handlerConfig.SchedulerConfigKey = opts.schedulerConfigKey
+		handlerConfig.SchedulerNamespace = opts.servingNamespace
+		handlerConfig.SchedulerLock = &scheduler.lock
+		handlerConfig.RefreshScheduler = scheduler.refreshLocked
+		handlerConfig.OperatingPower = scheduler.operatingPower
+		handlerConfig.Profiles = scheduler.profilesView
+	}
+	return nil
 }
 
 func serve(ctx context.Context, opts options, chillServer http.Handler, execution *serving.Runtime,

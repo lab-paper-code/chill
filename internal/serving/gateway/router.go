@@ -161,9 +161,7 @@ func (r *Router) session(ctx context.Context) error {
 	if err = s.send("resume", message{RouterID: r.config.RouterID, Recovery: r.recoveryReports()}); err != nil {
 		return err
 	}
-	var generation uint64
-	var appliedAt time.Time
-	var version string
+	var state routerSessionState
 	reportTicker := time.NewTicker(time.Second)
 	defer reportTicker.Stop()
 	done := make(chan struct{})
@@ -179,8 +177,8 @@ func (r *Router) session(ctx context.Context) error {
 			case <-reportTicker.C:
 				stateMu.Lock()
 				var reportErr error
-				if generation != 0 && version != "" {
-					reportErr = r.sendReport(s, "report", generation, appliedAt)
+				if state.generation != 0 && state.version != "" {
+					reportErr = r.sendReport(s, "report", state.generation, state.appliedAt)
 				}
 				stateMu.Unlock()
 				if reportErr != nil {
@@ -204,71 +202,83 @@ func (r *Router) session(ctx context.Context) error {
 			return context.Canceled
 		}
 		stateMu.Lock()
-		err = func() error {
-			if s.ctx.Err() != nil {
-				return s.ctx.Err()
-			}
-			switch m.Type {
-			case "plan":
-				if m.Plan == nil || m.Generation == 0 || (generation != 0 && m.Generation != generation) {
-					return live.ErrProtocol
-				}
-				r.config.Runtime.SetGatewayConnected(false)
-				targets, err := r.targets(*m.Plan)
-				if err != nil {
-					return err
-				}
-				if err = r.config.Runtime.ApplyGatewayPlan(*m.Plan, targets); err != nil {
-					return err
-				}
-				generation = m.Generation
-				version = m.Plan.PlanVersion
-				appliedAt = time.Now().UTC()
-				return r.sendReport(s, "applied", generation, appliedAt)
-			case "ready":
-				if m.Generation != generation || m.Plan == nil || m.Plan.PlanVersion != version {
-					return live.ErrProtocol
-				}
-				if err := r.advanceObservation(); err != nil {
-					return err
-				}
-				if s.ctx.Err() != nil {
-					return s.ctx.Err()
-				}
-				r.config.Runtime.SetGatewayConnected(true)
-			case "heartbeat":
-				if generation != 0 && m.Generation != generation {
-					return live.ErrProtocol
-				}
-				return s.send("heartbeat", message{Generation: m.Generation})
-			case "progress":
-				if m.Generation != generation || m.Progress == nil {
-					return live.ErrProtocol
-				}
-				owner := r.owner(m.Owner)
-				if owner == nil {
-					return live.ErrProtocol
-				}
-				return owner.ObserveBackend(m.Instance, *m.Progress)
-			case "state":
-				if m.Generation != generation || m.State == nil {
-					return live.ErrProtocol
-				}
-				owner := r.owner(m.Owner)
-				if owner == nil {
-					return live.ErrProtocol
-				}
-				return owner.ObserveGatewayInstance(*m.State)
-			default:
-				return live.ErrProtocol
-			}
-			return nil
-		}()
+		err = r.handleMessage(s, &state, m)
 		stateMu.Unlock()
 		if err != nil {
 			return err
 		}
 	}
+}
+
+type routerSessionState struct {
+	generation uint64
+	appliedAt  time.Time
+	version    string
+}
+
+func (r *Router) handleMessage(s *channel, state *routerSessionState, m message) error {
+	if s.ctx.Err() != nil {
+		return s.ctx.Err()
+	}
+	switch m.Type {
+	case "plan":
+		return r.applyPlan(s, state, m)
+	case "ready":
+		if m.Generation != state.generation || m.Plan == nil || m.Plan.PlanVersion != state.version {
+			return live.ErrProtocol
+		}
+		if err := r.advanceObservation(); err != nil {
+			return err
+		}
+		if s.ctx.Err() != nil {
+			return s.ctx.Err()
+		}
+		r.config.Runtime.SetGatewayConnected(true)
+	case "heartbeat":
+		if state.generation != 0 && m.Generation != state.generation {
+			return live.ErrProtocol
+		}
+		return s.send("heartbeat", message{Generation: m.Generation})
+	case "progress":
+		if m.Generation != state.generation || m.Progress == nil {
+			return live.ErrProtocol
+		}
+		owner := r.owner(m.Owner)
+		if owner == nil {
+			return live.ErrProtocol
+		}
+		return owner.ObserveBackend(m.Instance, *m.Progress)
+	case "state":
+		if m.Generation != state.generation || m.State == nil {
+			return live.ErrProtocol
+		}
+		owner := r.owner(m.Owner)
+		if owner == nil {
+			return live.ErrProtocol
+		}
+		return owner.ObserveGatewayInstance(*m.State)
+	default:
+		return live.ErrProtocol
+	}
+	return nil
+}
+
+func (r *Router) applyPlan(s *channel, state *routerSessionState, m message) error {
+	if m.Plan == nil || m.Generation == 0 || (state.generation != 0 && m.Generation != state.generation) {
+		return live.ErrProtocol
+	}
+	r.config.Runtime.SetGatewayConnected(false)
+	targets, err := r.targets(*m.Plan)
+	if err != nil {
+		return err
+	}
+	if err = r.config.Runtime.ApplyGatewayPlan(*m.Plan, targets); err != nil {
+		return err
+	}
+	state.generation = m.Generation
+	state.version = m.Plan.PlanVersion
+	state.appliedAt = time.Now().UTC()
+	return r.sendReport(s, "applied", state.generation, state.appliedAt)
 }
 func (r *Router) targets(plan serving.GatewayPlan) ([]serving.ReadyInstance, error) {
 	targets := make([]serving.ReadyInstance, 0, len(plan.Targets))

@@ -44,21 +44,7 @@ func validateOutstanding(report serving.GatewayReport) error {
 	if report.RouterID == "" || report.ObservedAt.IsZero() {
 		return live.ErrProtocol
 	}
-	seen := map[string]bool{}
-	for _, o := range report.Outstanding {
-		if o.PodUID == "" || o.ContainerID == "" || o.InstanceID != o.PodUID+"/"+o.ContainerID || seen[o.InstanceID] || o.Count < 0 || o.Count != len(o.RequestIDs) {
-			return live.ErrProtocol
-		}
-		seen[o.InstanceID] = true
-		ids := map[string]bool{}
-		for _, id := range o.RequestIDs {
-			if id == "" || ids[id] {
-				return live.ErrProtocol
-			}
-			ids[id] = true
-		}
-	}
-	return nil
+	return validateReservations(report.Outstanding, true)
 }
 
 // registerRecoveryLocked accepts only the same-Pod generations held by the

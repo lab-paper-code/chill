@@ -35,7 +35,7 @@ func liveAuthorizer(t *testing.T, authenticated, allowed, unavailable bool) *ser
 	})
 	client.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 		review := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
-		if review.Spec.User != "live-reader" || review.Spec.NonResourceAttributes.Path != "/chill/api/v1/live" || review.Spec.NonResourceAttributes.Verb != "get" {
+		if review.Spec.User != "live-reader" || review.Spec.NonResourceAttributes.Path != "/chill/api/v1/live" || review.Spec.NonResourceAttributes.Verb != measurementGetVerb {
 			t.Errorf("incorrect live SAR: %+v", review.Spec)
 		}
 		return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: allowed}}, nil
@@ -72,7 +72,7 @@ func TestLiveAuthenticatedWebSocketSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	hello := readLiveMessage(t, ctx, conn)
 	if string(hello["type"]) != `"hello"` || string(hello["protocol"]) != `"chill-live/1"` || string(hello["seq"]) != "0" {
 		t.Fatalf("hello: %v", hello)
@@ -123,7 +123,7 @@ func TestLiveDeniesBeforeUpgrade(t *testing.T) {
 			defer cancel()
 			conn, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+livePath, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer test-bearer"}}})
 			if conn != nil {
-				conn.CloseNow()
+				_ = conn.CloseNow()
 				t.Fatal("unauthorized socket upgraded")
 			}
 			if err == nil || response == nil || response.StatusCode != tc.status {
@@ -197,7 +197,7 @@ func TestLiveInvalidAuthenticatedMessageCloses1002(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer conn.CloseNow()
+			defer func() { _ = conn.CloseNow() }()
 			_ = readLiveMessage(t, ctx, conn)
 			if err := conn.Write(ctx, tc.kind, tc.data); err != nil {
 				t.Fatal(err)
@@ -229,7 +229,7 @@ func TestLiveOversizedBaselineCloses1009(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	_ = readLiveMessage(t, ctx, conn)
 	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"resume","from":0}`)); err != nil {
 		t.Fatal(err)

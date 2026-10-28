@@ -46,7 +46,8 @@ func (o *options) flags(f *flag.FlagSet) {
 	f.StringVar(&o.ca, "control-ca-file", "", "Absolute CA file for control hostname verification.")
 	f.StringVar(&o.token, "control-token-file", "", "Absolute rotating bearer token file for internal channel.")
 	f.StringVar(&o.podUID, "pod-uid", "", "Router Pod UID; a random process generation is appended.")
-	f.StringVar(&o.buffer, "observation-directory", "", "Absolute persistent private router buffer root; previous generations are retained.")
+	f.StringVar(&o.buffer, "observation-directory", "",
+		"Absolute persistent private router buffer root; previous generations are retained.")
 	f.StringVar(&o.kube.APIServer, "kube-api-server", "", "Explicit Kubernetes review API endpoint; otherwise in-cluster.")
 	f.StringVar(&o.kube.CAFile, "kube-ca-file", "", "Kubernetes review API CA file.")
 	f.StringVar(&o.kube.TokenFile, "kube-token-file", "", "Kubernetes review API service account token file.")
@@ -57,8 +58,10 @@ func (o *options) flags(f *flag.FlagSet) {
 	f.IntVar(&o.queue, "queue-limit", 1024, "Per-workload ingress waiting bound.")
 	f.Int64Var(&o.maxBody, "max-request-bytes", 8<<20, "Bounded raw inference request bytes.")
 	f.DurationVar(&o.requestTimeout, "request-timeout", 30*time.Second, "HTTP boundary and final delivery bound.")
-	f.DurationVar(&o.drainTimeout, "drain-timeout", 2*time.Minute, "Shutdown physical drain bound; missing completion stays unresolved.")
-	f.DurationVar(&o.retention, "observation-retention", 2*time.Hour, "Positive local retention after immutable archive upload.")
+	f.DurationVar(&o.drainTimeout, "drain-timeout", 2*time.Minute,
+		"Shutdown physical drain bound; missing completion stays unresolved.")
+	f.DurationVar(&o.retention, "observation-retention", 2*time.Hour,
+		"Positive local retention after immutable archive upload.")
 }
 func (o options) validate() error {
 	for _, p := range []string{o.cert, o.key, o.ca, o.token, o.buffer} {
@@ -66,7 +69,8 @@ func (o options) validate() error {
 			return errors.New("TLS, token and buffer paths must be clean absolute paths")
 		}
 	}
-	if o.bind == "" || o.control == "" || o.podUID == "" || o.queue < 1 || o.maxBody < 1 || o.requestTimeout <= 0 || o.requestTimeout > 129*time.Second || o.drainTimeout <= 0 || o.retention <= 0 {
+	if o.bind == "" || o.control == "" || o.podUID == "" || o.queue < 1 || o.maxBody < 1 ||
+		o.requestTimeout <= 0 || o.requestTimeout > 129*time.Second || o.drainTimeout <= 0 || o.retention <= 0 {
 		return errors.New("control origin, Pod UID and positive bounded router configuration required")
 	}
 	for _, c := range o.podUID {
@@ -115,13 +119,19 @@ func run(ctx context.Context, o options) (result error) {
 	}
 	// Per-Pod ownership allows N routers to share a visible buffer root without
 	// sharing writable stream files. It also fences the old process before custody.
-	owner, err := serving.AcquireObservationOwnership(filepath.Join(o.buffer, ".owners", o.podUID), func(msg string, args ...any) { slog.Info(msg, args...) })
+	owner, err := serving.AcquireObservationOwnership(
+		filepath.Join(o.buffer, ".owners", o.podUID),
+		func(msg string, args ...any) { slog.Info(msg, args...) },
+	)
 	if err != nil {
 		return err
 	}
-	defer owner.Close()
+	defer func() { result = errors.Join(result, owner.Close()) }()
 	directory := filepath.Join(o.buffer, routerID)
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: directory, RouterID: routerID, Store: o.store.LogicalStore, Writer: objects, Retention: o.retention})
+	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+		Directory: directory, RouterID: routerID, Store: o.store.LogicalStore,
+		Writer: objects, Retention: o.retention,
+	})
 	if err != nil {
 		return err
 	}
@@ -135,30 +145,37 @@ func run(ctx context.Context, o options) (result error) {
 	}()
 	backendCtx, cancelBackend := context.WithCancel(context.Background())
 	defer cancelBackend()
-	var recovery []gateway.Recovery
 	// Recover each preserved generation with the same archive writer. Its assigned
 	// rows continue protecting incomplete hours; no completion is synthesized.
 	entries, err := os.ReadDir(o.buffer)
 	if err != nil {
 		return err
 	}
+	recovery := make([]gateway.Recovery, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() || entry.Name() == routerID || !strings.HasPrefix(entry.Name(), o.podUID+"-") {
 			continue
 		}
-		prior, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: filepath.Join(o.buffer, entry.Name()), RouterID: entry.Name(), Store: o.store.LogicalStore, Writer: objects, Retention: o.retention})
+		prior, err := serving.NewObservationLog(serving.ObservationLogConfig{
+			Directory: filepath.Join(o.buffer, entry.Name()), RouterID: entry.Name(),
+			Store: o.store.LogicalStore, Writer: objects, Retention: o.retention,
+		})
 		if err != nil {
 			return err
 		}
 		logs = append(logs, prior)
-		restored, err := serving.NewRuntime(backendCtx, serving.RuntimeConfig{QueueLimit: o.queue, ObservationLog: prior, RouterID: entry.Name()})
+		restored, err := serving.NewRuntime(backendCtx, serving.RuntimeConfig{
+			QueueLimit: o.queue, ObservationLog: prior, RouterID: entry.Name(),
+		})
 		if err != nil {
 			return err
 		}
 		restored.SetGatewayConnected(false)
 		recovery = append(recovery, gateway.Recovery{RouterID: entry.Name(), Runtime: restored})
 	}
-	runtime, err := serving.NewRuntime(backendCtx, serving.RuntimeConfig{QueueLimit: o.queue, ObservationLog: log, RouterID: routerID})
+	runtime, err := serving.NewRuntime(backendCtx, serving.RuntimeConfig{
+		QueueLimit: o.queue, ObservationLog: log, RouterID: routerID,
+	})
 	if err != nil {
 		return err
 	}
@@ -167,11 +184,18 @@ func run(ctx context.Context, o options) (result error) {
 	transport.MaxIdleConnsPerHost = 256
 	transport.IdleConnTimeout = 30 * time.Second
 	defer transport.CloseIdleConnections()
-	router, err := gateway.NewRouter(gateway.RouterConfig{ControlURL: o.control, CAFile: o.ca, TokenFile: o.token, RouterID: routerID, Runtime: runtime, Recovery: recovery, Native: &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}}})
+	router, err := gateway.NewRouter(gateway.RouterConfig{
+		ControlURL: o.control, CAFile: o.ca, TokenFile: o.token, RouterID: routerID,
+		Runtime: runtime, Recovery: recovery,
+		Native: &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}},
+	})
 	if err != nil {
 		return err
 	}
-	handler, err := httpapi.NewRouterHandler(runtime, &servingkube.Authorizer{Client: reviews}, log, httpapi.HandlerConfig{MaxRequestBytes: o.maxBody, RequestTimeout: o.requestTimeout})
+	handler, err := httpapi.NewRouterHandler(
+		runtime, &servingkube.Authorizer{Client: reviews}, log,
+		httpapi.HandlerConfig{MaxRequestBytes: o.maxBody, RequestTimeout: o.requestTimeout},
+	)
 	if err != nil {
 		return err
 	}
@@ -179,41 +203,35 @@ func run(ctx context.Context, o options) (result error) {
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			result = errors.Join(result, err)
+		}
+	}()
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: o.requestTimeout, IdleTimeout: o.requestTimeout}
-	failures := make(chan error, 1)
-	go func() { failures <- server.ServeTLS(listener, o.cert, o.key) }()
+	failures := make(chan error, 2)
+	go func() {
+		failures <- fmt.Errorf("router HTTPS: %w", server.ServeTLS(listener, o.cert, o.key))
+	}()
 	channelCtx, cancelChannel := context.WithCancel(context.Background())
 	defer cancelChannel()
-	go router.Run(channelCtx)
+	go func() {
+		if err := router.Run(channelCtx); err != nil {
+			failures <- fmt.Errorf("router control: %w", err)
+		}
+	}()
 	// One independent archive writer reuses the existing immutable uploader. Old
 	// local generation buffers are reopened and flushed without truncating them.
 	archiveCtx, cancelArchive := context.WithCancel(context.Background())
 	defer cancelArchive()
 	archiveDone := make(chan struct{})
-	go func() {
-		defer close(archiveDone)
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-archiveCtx.Done():
-				return
-			case <-ticker.C:
-				for _, source := range logs {
-					if err := source.Flush(archiveCtx); err != nil {
-						slog.Error("archive router observations", "routerID", routerID, "error", err)
-					}
-				}
-			}
-		}
-	}()
+	go archiveRouterObservations(archiveCtx, logs, routerID, archiveDone)
 	slog.Info("router listening", "routerID", routerID, "pid", os.Getpid(), "address", listener.Addr().String())
 	select {
 	case <-ctx.Done():
 	case err = <-failures:
 		if !errors.Is(err, http.ErrServerClosed) {
-			result = fmt.Errorf("router HTTPS: %w", err)
+			result = err
 		}
 	}
 	runtime.SetGatewayConnected(false)
@@ -229,4 +247,24 @@ func run(ctx context.Context, o options) (result error) {
 	cancelArchive()
 	<-archiveDone
 	return result
+}
+
+func archiveRouterObservations(
+	ctx context.Context, logs []*serving.ObservationLog, routerID string, done chan<- struct{},
+) {
+	defer close(done)
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, source := range logs {
+				if err := source.Flush(ctx); err != nil {
+					slog.Error("archive router observations", "routerID", routerID, "error", err)
+				}
+			}
+		}
+	}
 }

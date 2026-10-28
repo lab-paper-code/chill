@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const messageSnapshot = "snapshot"
+
 var (
 	ErrClosed        = errors.New("live hub closed")
 	ErrFrameTooLarge = errors.New("live frame exceeds 1 MiB")
@@ -220,10 +222,10 @@ func (h *Hub) appendLocked(f frame) {
 }
 
 func (h *Hub) snapshotLocked() (frame, error) {
-	if h.baseline.kind == "snapshot" && h.baseline.seq == h.head {
+	if h.baseline.kind == messageSnapshot && h.baseline.seq == h.head {
 		return h.baseline, nil
 	}
-	f, err := encode("snapshot", h.head, h.headAt, h.state)
+	f, err := encode(messageSnapshot, h.head, h.headAt, h.state)
 	if err == nil {
 		h.baseline = f
 	}

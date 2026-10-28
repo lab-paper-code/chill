@@ -42,7 +42,11 @@ func TestRecoveredGenerationFinalizesOriginalRowsOverTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer recoveredLog.Close(context.Background())
+	t.Cleanup(func() {
+		if err := recoveredLog.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	recovered, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{RouterID: oldID, QueueLimit: 4, ObservationLog: recoveredLog})
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +62,11 @@ func TestRecoveredGenerationFinalizesOriginalRowsOverTLS(t *testing.T) {
 		t.Fatalf("lost restored physical owner: %+v", original)
 	}
 	control, _ := NewControl(1)
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if err = control.RestoreMembership([]RouterState{{RouterID: oldID, Generation: 1, JoinedAt: now, Report: original, Exposed: map[string]bool{instance: true}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -93,8 +101,13 @@ func TestRecoveredGenerationFinalizesOriginalRowsOverTLS(t *testing.T) {
 	}
 	waitFor(t, func() bool { return len(recoveredLog.OpenRows()) == 0 })
 	waitFor(t, func() bool { return control.CanRetire(instance) })
+	assertRecoveredFinal(t, directory, oldID)
+}
+
+func assertRecoveredFinal(t *testing.T, directory, oldID string) {
+	t.Helper()
 	rows := 0
-	err = filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -128,7 +141,11 @@ func TestRecoveredGenerationFinalizesOriginalRowsOverTLS(t *testing.T) {
 }
 func TestRequestsAtAgesDetachedSnapshots(t *testing.T) {
 	control, _ := NewControl(1)
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	at := time.Now()
 	remaining := 3 * time.Second
 	control.members["router"] = &member{RouterState: RouterState{RouterID: "router", Report: serving.GatewayReport{ObservedAt: at, Requests: []serving.SchedulerRequest{{ID: "pending", Phase: "pending", Elapsed: time.Second, RemainingLifetime: &remaining}, {ID: "running", Phase: "running"}, {ID: "returning", Phase: "returning"}}}}}

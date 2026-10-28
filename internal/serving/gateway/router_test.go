@@ -17,9 +17,9 @@ import (
 )
 
 func TestRouterOriginIdentityAndTLSHostname(t *testing.T) {
-	runtime := testRuntime(t, "router")
+	runtime := testRuntime(t, testRouterID)
 	for _, origin := range []string{"https://control", "ws://control", "wss://token@control", "wss://control/path", "wss://control?token=secret", "wss://control#fragment"} {
-		if _, err := NewRouter(RouterConfig{ControlURL: origin, Runtime: runtime, Native: &firstfloor.Client{}, RouterID: "router", CAFile: "unused", TokenFile: "unused"}); err == nil {
+		if _, err := NewRouter(RouterConfig{ControlURL: origin, Runtime: runtime, Native: &firstfloor.Client{}, RouterID: testRouterID, CAFile: "unused", TokenFile: "unused"}); err == nil {
 			t.Fatalf("accepted untrusted origin %q", origin)
 		}
 	}
@@ -28,10 +28,16 @@ func TestRouterOriginIdentityAndTLSHostname(t *testing.T) {
 		if err := control.RestoreMembership([]RouterState{{RouterID: id}}); err == nil {
 			t.Errorf("restored unsafe router identity %q", id)
 		}
-		control.Close()
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
 	}
 	control, _ := NewControl(1)
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	server := httptest.NewTLSServer(control.Handler(testAuthorizer(t)))
 	defer server.Close()
 	token := filepath.Join(t.TempDir(), "token")
@@ -39,7 +45,7 @@ func TestRouterOriginIdentityAndTLSHostname(t *testing.T) {
 		t.Fatal(err)
 	}
 	origin := "wss://wrong-host.invalid:" + strings.Split(server.Listener.Addr().String(), ":")[1]
-	router, err := NewRouter(RouterConfig{ControlURL: origin, Runtime: runtime, Native: &firstfloor.Client{}, RouterID: "router", CAFile: testCA(t, server), TokenFile: token})
+	router, err := NewRouter(RouterConfig{ControlURL: origin, Runtime: runtime, Native: &firstfloor.Client{}, RouterID: testRouterID, CAFile: testCA(t, server), TokenFile: token})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,9 +117,13 @@ func TestHeartbeatLossClosesReadiness(t *testing.T) {
 }
 func TestObservationSourceSnapshotIsDetached(t *testing.T) {
 	control, _ := NewControl(1)
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	elapsed := int64(10)
-	control.members["router"] = &member{RouterState: RouterState{RouterID: "router", Report: serving.GatewayReport{Open: []serving.RequestRow{{RequestID: "request", Node: &serving.NodeReference{UID: "original"}, ElapsedNanos: &elapsed}}}}}
+	control.members[testRouterID] = &member{RouterState: RouterState{RouterID: testRouterID, Report: serving.GatewayReport{Open: []serving.RequestRow{{RequestID: "request", Node: &serving.NodeReference{UID: "original"}, ElapsedNanos: &elapsed}}}}}
 	sources := control.ObservationSources()
 	sources[0].Open[0].Node.UID = "mutated"
 	*sources[0].Open[0].ElapsedNanos = 100
@@ -152,7 +162,7 @@ func TestFreshnessWatchdogClosesDuringStalledFrameHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	if _, _, err = conn.Read(ctx); err == nil || ctx.Err() != nil {
 		t.Fatalf("watchdog failed to close stalled channel: %v", err)
 	}

@@ -27,6 +27,8 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
+const testRouterID = "router"
+
 type diskArchive string
 
 func (d diskArchive) PutImmutable(_ context.Context, id evidencestore.ObjectIdentity, r io.Reader) (evidencestore.Receipt, error) {
@@ -73,7 +75,7 @@ func testAuthorizer(t *testing.T) func(*http.Request) error {
 		if review.Spec.Token == "review-failure" {
 			return true, nil, errors.New("test review outage")
 		}
-		username := "router"
+		username := testRouterID
 		if review.Spec.Token == "dashboard-secret" {
 			username = "dashboard"
 		}
@@ -81,7 +83,7 @@ func testAuthorizer(t *testing.T) func(*http.Request) error {
 	})
 	client.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 		review := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
-		allowed := review.Spec.User == "router" && review.Spec.NonResourceAttributes.Path == "/chill"+Path && review.Spec.NonResourceAttributes.Verb == "get"
+		allowed := review.Spec.User == testRouterID && review.Spec.NonResourceAttributes.Path == "/chill"+Path && review.Spec.NonResourceAttributes.Verb == "get"
 		return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: allowed}}, nil
 	})
 	auth := &servingkube.Authorizer{Client: client}
@@ -127,7 +129,11 @@ func waitFor(t *testing.T, condition func() bool) {
 }
 func TestRealTLSPlanAppliedReportAndDisconnect(t *testing.T) {
 	c, _ := NewControl(1)
-	defer c.Close()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if err := c.SetMembershipFile(filepath.Join(t.TempDir(), "membership.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +179,11 @@ func TestRealTLSPlanAppliedReportAndDisconnect(t *testing.T) {
 	}
 	waitFor(t, func() bool { return !c.Reports()[0].Connected })
 	restored, _ := NewControl(1)
-	defer restored.Close()
+	t.Cleanup(func() {
+		if err := restored.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if err := restored.RestoreMembership(c.Reports()); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +193,11 @@ func TestRealTLSPlanAppliedReportAndDisconnect(t *testing.T) {
 }
 func TestExactAuthenticatedInternalEndpoint(t *testing.T) {
 	c, _ := NewControl(1)
-	defer c.Close()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	server := httptest.NewTLSServer(c.Handler(testAuthorizer(t)))
 	defer server.Close()
 	for _, tc := range []struct {
@@ -196,7 +210,9 @@ func TestExactAuthenticatedInternalEndpoint(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
 		if resp.StatusCode != tc.status {
 			t.Fatalf("%s status %d", tc.path, resp.StatusCode)
 		}
@@ -204,7 +220,11 @@ func TestExactAuthenticatedInternalEndpoint(t *testing.T) {
 }
 func TestConnectionGenerationStaleACKAndReservedDrain(t *testing.T) {
 	c, _ := NewControl(1)
-	defer c.Close()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	plan := testPlan("v1")
 	plan.Targets = []serving.GatewayTarget{{InstanceID: "pod/container", PodUID: "pod", ContainerID: "container", DecisionID: "native-ack", Capacity: 1}}
 	if err := c.Publish(plan); err != nil {
@@ -213,16 +233,16 @@ func TestConnectionGenerationStaleACKAndReservedDrain(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	old := newChannel(ctx, nil)
-	first, err := c.join("router", old)
+	first, err := c.join(testRouterID, old)
 	if err != nil {
 		t.Fatal(err)
 	}
 	replacement := newChannel(ctx, nil)
-	current, err := c.join("router", replacement)
+	current, err := c.join(testRouterID, replacement)
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := serving.GatewayReport{RouterID: "router", PlanVersion: "v1", AppliedAt: time.Now(), ObservedAt: time.Now(), Outstanding: []serving.GatewayOutstanding{{InstanceID: "pod/container", PodUID: "pod", ContainerID: "container", Count: 1, RequestIDs: []string{"reserved-not-sent"}}}}
+	report := serving.GatewayReport{RouterID: testRouterID, PlanVersion: "v1", AppliedAt: time.Now(), ObservedAt: time.Now(), Outstanding: []serving.GatewayOutstanding{{InstanceID: "pod/container", PodUID: "pod", ContainerID: "container", Count: 1, RequestIDs: []string{"reserved-not-sent"}}}}
 	if err := c.accept(first, old, message{Type: "applied", Generation: first.Generation, Report: &report}); !errors.Is(err, live.ErrProtocol) {
 		t.Fatalf("old connection ACK: %v", err)
 	}
@@ -265,7 +285,11 @@ func TestConnectionGenerationStaleACKAndReservedDrain(t *testing.T) {
 }
 func TestCapacityAndLosslessQueueBound(t *testing.T) {
 	c, _ := NewControl(2)
-	defer c.Close()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	plan := testPlan("v1")
 	plan.Participants = 2
 	plan.Targets = []serving.GatewayTarget{{InstanceID: "p/c", PodUID: "p", ContainerID: "c", DecisionID: "ack", Capacity: 1}}
@@ -296,7 +320,7 @@ func TestSequenceGapClosesChannel(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.CloseNow()
+		defer func() { _ = conn.CloseNow() }()
 		s := newChannel(r.Context(), conn)
 		if _, err = s.read(); !errors.Is(err, live.ErrProtocol) {
 			t.Errorf("gap: %v", err)
@@ -309,7 +333,7 @@ func TestSequenceGapClosesChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	data, err := live.Encode("resume", 2, time.Now(), struct {
 		Checkpoint uint64 `json:"checkpoint"`
 	}{0})
@@ -324,7 +348,11 @@ func TestSequenceGapClosesChannel(t *testing.T) {
 
 func TestExpiredReviewContextCannotUpgrade(t *testing.T) {
 	control, _ := NewControl(1)
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	request := httptest.NewRequest(http.MethodGet, "https://control"+Path, nil).WithContext(ctx)

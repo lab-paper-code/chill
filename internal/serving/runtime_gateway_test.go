@@ -10,6 +10,8 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
+const nextGatewayPlanVersion = "plan-2"
+
 func gatewayRuntime(t *testing.T) (*Runtime, GatewayPlan, []ReadyInstance) {
 	t.Helper()
 	_, fixture := schedulerFixture()
@@ -97,7 +99,7 @@ func TestGatewayApplyRejectsPartialSnapshotAtomically(t *testing.T) {
 			installGateway(t, r, plan, ready)
 			before := r.gateway
 			next := plan
-			next.PlanVersion = "plan-2"
+			next.PlanVersion = nextGatewayPlanVersion
 			next.Targets = append([]GatewayTarget(nil), plan.Targets...)
 			next.Routing = map[string]map[string]int32{plan.Definitions[0].UID: maps.Clone(plan.Routing[plan.Definitions[0].UID])}
 			mutate(&next, &ready)
@@ -151,7 +153,7 @@ func TestGatewayInflightVersionAndRetiredReservationGate(t *testing.T) {
 	lifetime := 2 * time.Second
 	updated.RequestLifetime = &lifetime
 	next := plan
-	next.PlanVersion, next.Definitions = "plan-2", []*Definition{&updated}
+	next.PlanVersion, next.Definitions = nextGatewayPlanVersion, []*Definition{&updated}
 	next.Targets = append([]GatewayTarget(nil), plan.Targets...)
 	next.Targets[0].InstanceID, next.Targets[0].PodUID, next.Targets[0].ContainerID = "pod-2/containerd://two", "pod-2", "containerd://two"
 	next.Routing = map[string]map[string]int32{updated.UID: {next.Targets[0].InstanceID: 1}}
@@ -211,7 +213,7 @@ func TestGatewayQueuedRequestPinsDefinitionAndRejectsUnsafeCutover(t *testing.T)
 	lifetime := 3 * time.Second
 	updated.RequestLifetime = &lifetime
 	next := plan
-	next.PlanVersion, next.Definitions = "plan-2", []*Definition{&updated}
+	next.PlanVersion, next.Definitions = nextGatewayPlanVersion, []*Definition{&updated}
 	if err := r.ApplyGatewayPlan(next, ready); err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +415,7 @@ func TestGatewayStaleDispatchRetainsQueueUntilResynchronized(t *testing.T) {
 	default:
 	}
 	next := plan
-	next.PlanVersion = "plan-2"
+	next.PlanVersion = nextGatewayPlanVersion
 	if err := r.ApplyGatewayPlan(next, ready); err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +438,7 @@ func TestGatewayOldReceiptCannotReserveAfterApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := plan
-	next.PlanVersion = "plan-2"
+	next.PlanVersion = nextGatewayPlanVersion
 	if err := r.ApplyGatewayPlan(next, ready); err != nil {
 		t.Fatal(err)
 	}

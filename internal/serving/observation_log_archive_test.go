@@ -169,7 +169,7 @@ func checkArchiveLocalOverlap(t *testing.T, log *ObservationLog, ctx context.Con
 		t.Fatalf("overlap load: %+v %v", load, err)
 	}
 	page, next, gap, coverage, err := log.SchedulerObservationPage(ctx, from, to, 1, 0)
-	if err != nil || len(page) != 1 || next != 1 || gap != nil || coverage.Sources[0].Source != "local" {
+	if err != nil || len(page) != 1 || next != 1 || gap != nil || coverage.Sources[0].Source != localSource {
 		t.Fatalf("local page overlap: %+v next=%d gap=%v coverage=%+v err=%v", page, next, gap, coverage, err)
 	}
 }
@@ -306,7 +306,7 @@ func TestObservationArchiveCaptureSurvivesDeletion(t *testing.T) {
 		t.Fatalf("capture raced deletion: %+v %v", result, err)
 	}
 	for _, source := range result.Coverage.Sources {
-		if source.Source != "local" {
+		if source.Source != localSource {
 			t.Fatalf("captured hour switched sources: %+v", source)
 		}
 	}

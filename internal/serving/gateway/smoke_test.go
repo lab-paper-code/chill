@@ -128,7 +128,11 @@ func TestGatewaySubprocessRole(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer c.Close()
+		t.Cleanup(func() {
+			if err := c.Close(); err != nil {
+				t.Error(err)
+			}
+		})
 		if err = c.SetMembershipFile(filepath.Join(os.Getenv("CHILL_SMOKE_ROOT"), "membership.json")); err != nil {
 			t.Fatal(err)
 		}

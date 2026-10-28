@@ -196,7 +196,7 @@ func (c *Control) statesLocked() []RouterState {
 	}
 	return out
 }
-func (c *Control) persistLocked() error {
+func (c *Control) persistLocked() (result error) {
 	if c.membershipFile == "" {
 		return nil
 	}
@@ -209,7 +209,11 @@ func (c *Control) persistLocked() error {
 		return err
 	}
 	name := f.Name()
-	defer os.Remove(name)
+	defer func() {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			result = errors.Join(result, err)
+		}
+	}()
 	if _, err = f.Write(raw); err == nil {
 		err = f.Sync()
 	}
@@ -376,40 +380,8 @@ func (c *Control) join(id string, s *channel) (*member, error) {
 func (c *Control) joinRecovery(id string, s *channel, recovery []serving.GatewayReport) (*member, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || c.failure != nil {
-		return nil, live.ErrClosed
-	}
-	if !validRouterID(id) {
-		return nil, live.ErrProtocol
-	}
-	active := 0
-	for key, m := range c.members {
-		if m.Connected && key != id {
-			active++
-		}
-	}
-	if active >= c.participants {
-		return nil, errors.New("fixed router membership full")
-	}
-	if err := c.registerRecoveryLocked(id, recovery); err != nil {
+	if err := c.validateJoinLocked(id, recovery); err != nil {
 		return nil, err
-	}
-	if c.members[id] == nil && c.plan != nil {
-		for _, prior := range c.members {
-			if prior.Connected || prior.Custodian == id {
-				continue
-			}
-			for _, target := range c.plan.Targets {
-				if prior.Exposed[target.InstanceID] {
-					return nil, errors.New("disconnected generation still owns a capacity share")
-				}
-				for _, o := range prior.Report.Outstanding {
-					if o.InstanceID == target.InstanceID && o.Count > 0 {
-						return nil, errors.New("old physical reservations still own a capacity share")
-					}
-				}
-			}
-		}
 	}
 	old := c.members[id]
 	if old != nil && old.channel != nil {
@@ -478,6 +450,50 @@ func (c *Control) joinRecovery(id string, s *channel, recovery []serving.Gateway
 	}
 	return m, nil
 }
+
+func (c *Control) validateJoinLocked(id string, recovery []serving.GatewayReport) error {
+	if c.closed || c.failure != nil {
+		return live.ErrClosed
+	}
+	if !validRouterID(id) {
+		return live.ErrProtocol
+	}
+	active := 0
+	for key, m := range c.members {
+		if m.Connected && key != id {
+			active++
+		}
+	}
+	if active >= c.participants {
+		return errors.New("fixed router membership full")
+	}
+	if err := c.registerRecoveryLocked(id, recovery); err != nil {
+		return err
+	}
+	if c.members[id] != nil || c.plan == nil {
+		return nil
+	}
+	return c.checkDisconnectedCapacityLocked(id)
+}
+
+func (c *Control) checkDisconnectedCapacityLocked(id string) error {
+	for _, prior := range c.members {
+		if prior.Connected || prior.Custodian == id {
+			continue
+		}
+		for _, target := range c.plan.Targets {
+			if prior.Exposed[target.InstanceID] {
+				return errors.New("disconnected generation still owns a capacity share")
+			}
+			for _, o := range prior.Report.Outstanding {
+				if o.InstanceID == target.InstanceID && o.Count > 0 {
+					return errors.New("old physical reservations still own a capacity share")
+				}
+			}
+		}
+	}
+	return nil
+}
 func (c *Control) leave(m *member, s *channel) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -489,11 +505,11 @@ func (c *Control) leave(m *member, s *channel) {
 	m.channel = nil
 	if c.membershipRecorder != nil {
 		if err := c.membershipRecorder(m.RouterState); err != nil {
-			c.failLocked(err)
+			_ = c.failLocked(err)
 		}
 	}
 	if err := c.persistLocked(); err != nil {
-		c.failLocked(err)
+		_ = c.failLocked(err)
 	}
 	c.signalLocked()
 }
@@ -507,33 +523,10 @@ func (c *Control) accept(m *member, s *channel, msg message) error {
 	if msg.Type == "heartbeat" {
 		return nil
 	}
-	if (msg.Type != "applied" && msg.Type != "report") || msg.Report == nil || c.plan == nil {
-		return live.ErrProtocol
-	}
-	report := msg.Report
-	if report.RouterID != m.RouterID || report.PlanVersion != c.plan.PlanVersion || report.AppliedAt.IsZero() || report.ObservedAt.IsZero() {
-		return live.ErrProtocol
-	}
-	if msg.Type == "report" && m.Report.AppliedAt.IsZero() {
-		return live.ErrProtocol
-	}
-	seen := map[string]bool{}
-	for _, o := range report.Outstanding {
-		if o.InstanceID != o.PodUID+"/"+o.ContainerID || seen[o.InstanceID] || o.Count < 0 || o.Count != len(o.RequestIDs) {
-			return live.ErrProtocol
-		}
-		seen[o.InstanceID] = true
-		ids := map[string]bool{}
-		for _, id := range o.RequestIDs {
-			if id == "" || ids[id] {
-				return live.ErrProtocol
-			}
-			ids[id] = true
-		}
-	}
-	if err := validateArrivals(*report); err != nil {
+	if err := c.validateReportLocked(m, msg); err != nil {
 		return err
 	}
+	report := msg.Report
 	c.definitionPeriodsLocked(m, *report)
 	if err := c.updateRecoveryLocked(m, msg); err != nil {
 		return err
@@ -565,6 +558,44 @@ func (c *Control) accept(m *member, s *channel, msg message) error {
 	c.signalLocked()
 	if c.slotAvailableLocked(m) {
 		return s.send("ready", message{Generation: m.Generation, Plan: c.plan})
+	}
+	return nil
+}
+
+func (c *Control) validateReportLocked(m *member, msg message) error {
+	if (msg.Type != "applied" && msg.Type != "report") || msg.Report == nil || c.plan == nil {
+		return live.ErrProtocol
+	}
+	report := msg.Report
+	if report.RouterID != m.RouterID || report.PlanVersion != c.plan.PlanVersion || report.AppliedAt.IsZero() || report.ObservedAt.IsZero() {
+		return live.ErrProtocol
+	}
+	if msg.Type == "report" && m.Report.AppliedAt.IsZero() {
+		return live.ErrProtocol
+	}
+	if err := validateReservations(report.Outstanding, false); err != nil {
+		return err
+	}
+	return validateArrivals(*report)
+}
+
+func validateReservations(outstanding []serving.GatewayOutstanding, requireIdentity bool) error {
+	seen := map[string]bool{}
+	for _, o := range outstanding {
+		if requireIdentity && (o.PodUID == "" || o.ContainerID == "") {
+			return live.ErrProtocol
+		}
+		if o.InstanceID != o.PodUID+"/"+o.ContainerID || seen[o.InstanceID] || o.Count < 0 || o.Count != len(o.RequestIDs) {
+			return live.ErrProtocol
+		}
+		seen[o.InstanceID] = true
+		ids := map[string]bool{}
+		for _, id := range o.RequestIDs {
+			if id == "" || ids[id] {
+				return live.ErrProtocol
+			}
+			ids[id] = true
+		}
 	}
 	return nil
 }
@@ -619,23 +650,34 @@ func (c *Control) Drained(uid, instance, node string) bool {
 		}
 	}
 	for _, m := range c.members {
-		sealedWorkload := workloadClosed && m.Connected && time.Since(m.LastSeen) <= FreshnessTimeout && m.Report.PlanVersion == c.plan.PlanVersion && !m.Report.AppliedAt.IsZero()
-		if !sealedWorkload {
-			for id := range m.Exposed {
-				if (instance == "" || id == instance) && sourceMatches(m.Sources[id], uid, node) {
-					return false
-				}
-			}
+		sealedWorkload := workloadClosed && m.Connected &&
+			time.Since(m.LastSeen) <= FreshnessTimeout &&
+			m.Report.PlanVersion == c.plan.PlanVersion && !m.Report.AppliedAt.IsZero()
+		if !memberDrained(m, uid, instance, node, sealedWorkload) {
+			return false
 		}
-		for _, o := range m.Report.Outstanding {
-			if o.Count > 0 && (instance == "" || o.InstanceID == instance) && sourceMatches(m.Sources[o.InstanceID], uid, node) {
+	}
+	return true
+}
+
+func memberDrained(m *member, uid, instance, node string, sealedWorkload bool) bool {
+	if !sealedWorkload {
+		for id := range m.Exposed {
+			if (instance == "" || id == instance) && sourceMatches(m.Sources[id], uid, node) {
 				return false
 			}
 		}
-		for _, r := range m.Report.Requests {
-			if (instance == "" || r.Instance == instance) && (uid == "" || r.Definition != nil && r.Definition.UID == uid) && (node == "" || requestNode(m.Report, r.ID, node)) {
-				return false
-			}
+	}
+	for _, o := range m.Report.Outstanding {
+		if o.Count > 0 && (instance == "" || o.InstanceID == instance) && sourceMatches(m.Sources[o.InstanceID], uid, node) {
+			return false
+		}
+	}
+	for _, r := range m.Report.Requests {
+		if (instance == "" || r.Instance == instance) &&
+			(uid == "" || r.Definition != nil && r.Definition.UID == uid) &&
+			(node == "" || requestNode(m.Report, r.ID, node)) {
+			return false
 		}
 	}
 	return true
@@ -683,7 +725,7 @@ func (c *Control) ForwardProgress(instance string, p serving.BackendProgress) er
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	var owners []*member
+	owners := make([]*member, 0, len(c.members))
 	for _, m := range c.members {
 		if !m.Exposed[instance] && !reportOwns(m.Report, instance, p.RequestID) {
 			continue
@@ -739,7 +781,7 @@ func (c *Control) ForwardState(state serving.InstanceState) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	var owners []*member
+	owners := make([]*member, 0, len(c.members))
 	for _, m := range c.members {
 		owns := m.Exposed[state.ID]
 		for _, o := range m.Report.Outstanding {
