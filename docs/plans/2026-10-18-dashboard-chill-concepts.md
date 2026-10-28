@@ -1,5 +1,7 @@
 # Dashboard에 CHILL 확장 개념 반영 계획 — 2026-10-18
 
+> **현행 상태(2026-10-28 2차 검토):** 남은 대시보드 작업의 순서·범위·완료 기준은 [라이브 무대·결과 표 계획](2026-10-26-dashboard-live-stage.md)이 정본이다. 이 문서의 Phase 2 표는 당시 기준이다. `/experiments`와 동작 비용·d 측정 read는 이미 API가 있고 화면이 없으며, 호출자 권한 보완이 필요하다. 전력계 선언 read는 [E5 증거 API](2026-10-28-e5-evidence-api.md)가 소유한다. 진행 방식 7번의 "`kubectl set image`만, Helm 금지"는 폐기됐고, 배포는 증거 API 차트 반영과 함께 승인된 한 번의 배포로 한다.
+
 ## 목적과 판정 기준
 
 `1132c50`(heterogeneous workloads 병합)과 그 뒤의 scheduler·runtime·device 변경으로 CHILL에
