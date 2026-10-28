@@ -531,3 +531,8 @@
 ## 2026-10-28 12:0xZ — factor 비교 7개 전부로 확장(사용자)
 
 - membership-off/replicas-off 4회 뒤 같은 절차·archive로 power-off → placement-off → resources-off → batching-off → routing-off, 각 E5-2·E5-5(회당 ~35분, 총 ~6h). SchedulerControls 해당 1개만 false. 같은 full 행 초기 상태 복원(maxBatch 포함), 예약 잔류 시 takeover 1회 사전 승인. 실패는 기록 후 다음 진행, 운영 오류만 정지. 끝나면 judge→summarize→tables로 factor 7행(p95·결과 수·에너지±오차·full 대비 Δ) spec 기입, 조건 "factor 행 = rev102" 명시.
+
+## 2026-10-28 12:5xZ — factor 확장 전 의존성 정리(사용자)
+
+- placement-off ≈ membership-off(scheduler_capacity.go:735/742) 중복 가능; batching/resources-off는 기존 인스턴스 AND 대조 + batching-off 템플릿 maxBatch만 → 시작 cap 1/2면 고정 배치로 변질 가능; placement/resources/batching/membership-off는 빈 상태 첫 구성 불가 → full pre-state 복원 후 시작.
+- 할 일: 클러스터 0으로 E5-2·E5-5 pre-state에 스위치 하나씩 끈 계획기 replay → 스위치별 "전부 켜짐 대비 계획 차이", "고정 배치와 동일 여부" 표; 차이 없는 스위치는 실행 제외·이유 기록. 실행 순서: power-off → routing-off → 점검 통과한 resources/batching → placement는 membership과 다른 계획일 때만.
