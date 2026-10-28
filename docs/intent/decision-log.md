@@ -489,3 +489,8 @@
 ## 2026-10-28 01:0xZ — 단계 judgment 비치명(기록만)
 
 - #212 E5-1: 부하·지각·SLO 정상(M p95 746ms/P 16ms/S 2.9s), 전력 gap 3.5~4.8s(>3s) 3 Node → judgment가 run 정지. 결정(권고 기본값): 단계 judgment(FAIL/NOT_READY/INCOMPLETE)는 기록만 하고 계속; 전력 gap은 coverage·해당 창 에너지 UNKNOWN; run 정지는 운영 실패(producer/bind/route ACK, 생성기 INVALID)만(`158e106c`).
+
+## 2026-10-28 01:2xZ — E5 행 에너지 판정 기준(사용자 결정)
+
+- "최대 공백 3초"는 짧은 측정 창(d·비용)용. E5 행(30분)에서는 공백 구간을 앞뒤 표본 선형 보간으로 적분, 공백 합 ≤ 창 1% 그리고 단일 공백 ≤ 30초면 에너지 값 산출 + coverage(공백 합·최대 공백)와 오차 상한(공백초 × 해당 Node 창 내 최대−최소 W) 기록. 초과 시 UNKNOWN. config(기본 0.01, 30s); d·비용 3초 기준 유지.
+- #213 진행 중이면 중단 금지: 원시 보존되므로 E5 종료 후 judge/summarize 재실행으로 전 행 적용(재측정 없음). 하네스 수정은 E5 창 밖, 한 커밋. 읽기 실패(30분 60회) 원인은 E5 뒤 edge-metrics 과제로만 기록.
