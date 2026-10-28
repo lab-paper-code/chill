@@ -465,6 +465,7 @@ def prepare(e5, args):
     if spec.get('preflight'):
         e5.require_strict_archives(c)
     e5.need(c, ['approval', 'inputs', 'timeboxes', 'workloads', 'collection', 'endpoint', 'caFile', 'tokenFile'], 'e5Config')
+    c['collection']['energyCoverage']=e5.module('demo_energy_policy',HERE/'e5-archive.py').energy_policy(c['collection'])
     e5.need(c['approval'], ['sources', 'controlImageDigest'], 'approval')
     e5.approval_sources(c['approval'])
     e5.need(c['timeboxes'], e5.REQUIRED['timeboxes'], 'timeboxes')
@@ -2259,6 +2260,53 @@ def self_check():
         assert any(line.startswith('| E5-1') and ' NOT_READY;' in line for line in table_text.splitlines())
         assert 'status: NOT_READY' in table_text and 'maximum sample gap exceeds policy' in table_text
         assert '"energyStatus": "UNKNOWN"' in table_text and '"wholePoolJoules": null' in table_text
+        # Approved E5-only gap interpolation, with strict native evidence retained.
+        energy = original_module('energy_coverage_check',HERE/'e5-archive.py')
+        import datetime as dt
+        base = dt.datetime(2026,10,28,tzinfo=dt.timezone.utc)
+        stamp = lambda seconds:(base+dt.timedelta(seconds=seconds)).isoformat().replace('+00:00','Z')
+        node = {'name':'node','uid':'node-uid'}
+        strict_gap = 'maximum sample gap exceeds policy'
+        native = {'from':stamp(0),'to':stamp(10),'complete':False,
+                  'reasons':['Node node (node-uid): '+strict_gap],
+                  'nodes':[{'node':node,'meter':'wall','reasons':[strict_gap]}]}
+        untouched = json.dumps(native,sort_keys=True)
+        observations = [
+            ('catalog',{'kind':'meter','key':'wall','body':{'coverage':{'MaximumGap':3_000_000_000}}},{}),
+            ('scheduler',{'node':node,'meter':'wall','samples':[
+                {'observedAt':stamp(offset),'watts':float(offset)} for offset in (0,1,5,6,7,8,9,10)]},{}),
+            *[('scheduler',{'snapshot':{'at':stamp(offset),'instances':[
+                {'node':node,'ownerWorkloadUID':'owner'}] if owned else []}}, {})
+              for offset,owned in ((0,False),(2,True),(7,False))]]
+        allowed = {'energyCoverage':{'maxGapFraction':.4,'maxSingleGapSeconds':4}}
+        with patch.dict(energy._RAW,{'_manifest':lambda *args:({},[],[]),'_rows':lambda *args:iter(observations)}):
+            measured = energy.e5_power_windows(root,allowed,{'power':native})['power']
+            assert measured['complete'] and measured['wholePoolJoules'] == 50 and measured['activePoolJoules'] == 22.5
+            assert measured['nodes'][0]['energyCoverage']['gapSeconds'] == 4
+            assert measured['energyCoverage']['maximumGapSeconds'] == 4 and measured['gapErrorBoundJoules'] == 40
+            assert measured['strictReasons'] == native['reasons'] and json.dumps(native,sort_keys=True) == untouched
+            for policy in ({'maxGapFraction':.399999,'maxSingleGapSeconds':4},
+                           {'maxGapFraction':.4,'maxSingleGapSeconds':3.999999},{}):
+                incomplete = energy.e5_power_windows(root,{'energyCoverage':policy},{'power':native})['power']
+                assert not incomplete['complete'] and incomplete['wholePoolJoules'] is None and incomplete['gapErrorBoundJoules'] is None
+            boundary = copy.deepcopy(native)
+            boundary['nodes'][0]['reasons'].append('sample boundary distance exceeds policy')
+            boundary['reasons'].append('Node node (node-uid): sample boundary distance exceeds policy')
+            assert not energy.e5_power_windows(root,allowed,{'power':boundary})['power']['complete']
+            observations[1][1]['failures'] = [{'observedAt':stamp(.25)},{'observedAt':stamp(.5)}]
+            assert not energy.e5_power_windows(root,allowed,{'power':native})['power']['complete']
+            with_failures = energy.e5_power_windows(root,{'energyCoverage':{'maxGapFraction':.5,'maxSingleGapSeconds':4}},{'power':native})['power']
+            assert with_failures['complete'] and with_failures['nodes'][0]['energyCoverage']['gapSeconds'] == 5
+            assert with_failures['gapErrorBoundJoules'] == 50  # Two failures in one interval counted once.
+        assert energy.energy_policy({}) == {'maxGapFraction':.01,'maxSingleGapSeconds':30}
+        for policy in ({'maxGapFraction':-1},{'maxGapFraction':1.1},{'maxGapFraction':True},
+                       {'maxSingleGapSeconds':0},{'maxSingleGapSeconds':float('nan')}):
+            try:
+                energy.energy_policy({'energyCoverage':policy})
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid E5 row energy coverage policy accepted')
         print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, static placement without scheduler mutation (including failure), stage-entry and pre-GO barriers clear/timeout, optional lifetime, server reset evidence and failure stop, reset autonomy-off reservation/action wait clear/timeout and single attempt on failure/409; mocked API/kubectl only')
 
 

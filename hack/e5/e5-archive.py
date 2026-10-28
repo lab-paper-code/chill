@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Private postdrain raw capture and the existing source OperatingPower CLI only."""
+"""Private raw capture, strict source reduction and offline E5 row energy."""
 import argparse
+from bisect import bisect_right
 import datetime as dt
 import gzip
 import hashlib
@@ -26,7 +27,8 @@ STREAMS = ('requests', 'management', 'scheduler', 'catalog')
 PRIVATE = 'PRIVATE_OPERATIONAL_ONLY'
 HOUR = re.compile(r'\d{8}T\d{2}')
 SEGMENT = re.compile(r'(requests|management|scheduler|catalog)\.([0-5][0-9])\.jsonl')
-_time_ns = runpy.run_path(str(HERE / 'e5-raw.py'), run_name='e5_archive_time')['_time']
+_RAW = runpy.run_path(str(HERE / 'e5-raw.py'), run_name='e5_archive_time')
+_time_ns = _RAW['_time']
 
 # Runs on the existing host Python, never inside the distroless container.
 HOST_READER = r'''
@@ -293,6 +295,148 @@ def _scope(folder):
              'selection': 'Exact predeclared eight; original captured Node objects, not fabricated Nodes'}
     _save(folder / 'power-node-scope.json', scope)
     return scope, len(nodes['items']) != len(items)
+
+
+def energy_policy(collection):
+    """E5 row-only gap allowance; never changes the recorded d/cost policy."""
+    policy = dict(collection.get('energyCoverage', {}))
+    policy.setdefault('maxGapFraction', .01)
+    policy.setdefault('maxSingleGapSeconds', 30)
+    if (type(policy['maxGapFraction']) not in (int, float) or not math.isfinite(policy['maxGapFraction'])
+            or not 0 <= policy['maxGapFraction'] <= 1
+            or type(policy['maxSingleGapSeconds']) not in (int, float)
+            or not math.isfinite(policy['maxSingleGapSeconds']) or policy['maxSingleGapSeconds'] <= 0):
+        raise ValueError('E5 energyCoverage requires 0<=maxGapFraction<=1 and finite maxSingleGapSeconds>0')
+    return policy
+
+
+def _energy_integral(points, start, end, active):
+    """Integrate real-sample trapezoids at query and ownership boundaries."""
+    times = [at for at, _ in points]
+    accumulated = [0.]
+    for (left, first), (right, last) in zip(points, points[1:]):
+        accumulated.append(accumulated[-1] + (first + last) * .5 * ((right - left) / 1e9))
+    def area(at):
+        index = bisect_right(times, at) - 1
+        if index == len(points) - 1:
+            return accumulated[-1]
+        left, first = points[index]
+        right, last = points[index + 1]
+        watts = first + (last - first) * ((at - left) / (right - left))
+        return accumulated[index] + (first + watts) * .5 * ((at - left) / 1e9)
+    return area(end) - area(start), sum(area(right) - area(left) for left, right in active)
+
+
+def e5_power_windows(folder, collection, powers):
+    """Re-evaluate stored row energy without modifying raw or strict Go results.
+
+    Existing native source/identity/boundary errors remain authoritative. Only
+    the strict maximum-gap verdict is replaced by the approved E5 row policy.
+    """
+    policy = energy_policy(collection)
+    start = min(_time_ns(power['from']) for power in powers.values())
+    end = max(_time_ns(power['to']) for power in powers.values())
+    wanted = {(node['node']['uid'], node['meter']) for power in powers.values() for node in power.get('nodes', [])}
+    histories = {key:{} for key in wanted}
+    failures = {key:set() for key in wanted}
+    meters, snapshots = {}, {}
+    _, sources, errors = _RAW['_manifest'](Path(folder), {'scheduler', 'catalog'})
+    for stream, row, reference in _RAW['_rows'](sources, errors):
+        if stream == 'catalog':
+            if row.get('kind') == 'meter':
+                meters[row['key']] = row['body'].get('coverage') or {}
+            continue
+        snapshot = row.get('snapshot')
+        if snapshot:
+            at = _time_ns(snapshot['at'])
+            if at <= end:
+                snapshots[at] = {instance['node']['uid'] for instance in snapshot.get('instances') or []
+                                 if instance.get('workloadUID') or instance.get('ownerWorkloadUID')}
+        key = ((row.get('node') or {}).get('uid'), row.get('meter'))
+        if key not in histories:
+            continue
+        history = histories[key]
+        for sample in row.get('samples') or []:
+            at, watts = _time_ns(sample['observedAt']), sample['watts']
+            if start - 60e9 <= at <= end + 60e9:
+                history[at] = watts
+        for failure in row.get('failures') or []:
+            at = _time_ns(failure['observedAt'])
+            if start - 60e9 <= at <= end + 60e9:
+                failures[key].add(at)
+    ordered_snapshots = sorted(snapshots.items())
+    result = {}
+    gap_reason = 'maximum sample gap exceeds policy'
+    for name, original in powers.items():
+        value = dict(original)
+        value['strictReasons'] = original.get('reasons', [])
+        value['reasons'] = [reason for reason in original.get('reasons', []) if not reason.endswith(': ' + gap_reason)]
+        value['nodes'] = []
+        first, last = _time_ns(original['from']), _time_ns(original['to'])
+        seconds = (last - first) / 1e9
+        whole = active_total = error_bound = 0.
+        intervals = {}
+        for index, (at, members) in enumerate(ordered_snapshots):
+            left = max(first, at)
+            right = min(last, ordered_snapshots[index + 1][0] if index + 1 < len(ordered_snapshots) else last)
+            if left < right:
+                for uid in members:
+                    intervals.setdefault(uid, []).append((left, right))
+        for source in original.get('nodes', []):
+            node = dict(source)
+            node['reasons'] = [reason for reason in source.get('reasons', []) if reason != gap_reason]
+            key = (source['node']['uid'], source['meter'])
+            points = sorted(histories[key].items())
+            times = [at for at, _ in points]
+            lo, hi = bisect_right(times, first), bisect_right(times, last)
+            points = points[max(0, lo - 1):min(len(points), hi + 1)]
+            recorded = meters.get(source['meter'], {})
+            threshold = recorded.get('MaximumGap')
+            failed = sorted(failures[key])
+            gaps = [(min(last, b) - max(first, a)) / 1e9
+                    for (a, _), (b, _) in zip(points, points[1:])
+                    if ((threshold is not None and b - a > threshold) or bisect_right(failed, a) < bisect_right(failed, b))
+                    and min(last, b) > max(first, a)]
+            inside = [watts for at, watts in points if first <= at <= last]
+            gap_seconds, max_gap = sum(gaps), max(gaps, default=0.)
+            range_watts = max(inside) - min(inside) if inside else None
+            bound = gap_seconds * range_watts if range_watts is not None else (0. if not gaps else None)
+            node['energyCoverage'] = {'gapSeconds':gap_seconds, 'maximumGapSeconds':max_gap,
+                'gapFraction':gap_seconds / seconds, 'gapDetectionThresholdSeconds':threshold / 1e9 if threshold is not None else None,
+                'observedMinimumWatts':min(inside) if inside else None, 'observedMaximumWatts':max(inside) if inside else None}
+            node['gapErrorBoundJoules'] = bound
+            if threshold is None or threshold <= 0 or bound is None or len(points) < 2:
+                node['reasons'].append('E5 gap coverage lacks recorded policy or actual window samples')
+            if gap_seconds / seconds > policy['maxGapFraction'] or max_gap > policy['maxSingleGapSeconds']:
+                node['reasons'].append('E5 row energy gap allowance exceeded')
+            node['joules'] = node['meanWatts'] = None
+            if not node['reasons'] and not errors:
+                # Native boundary checks already admitted these edge distances.
+                if points[0][0] > first:
+                    points.insert(0, (first, points[0][1]))
+                if points[-1][0] < last:
+                    points.append((last, points[-1][1]))
+                joules, active_j = _energy_integral(points, first, last, intervals.get(source['node']['uid'], []))
+                node.update(joules=joules, meanWatts=joules / seconds)
+                whole += joules
+                active_total += active_j
+                error_bound += bound
+            if node['reasons']:
+                value['reasons'].append('Node '+source['node']['name']+': '+ '; '.join(node['reasons']))
+            value['nodes'].append(node)
+        if errors:
+            value['reasons'].append('Preserved scheduler/catalog raw incomplete: '+json.dumps(errors))
+        value['energyCoverage'] = {'policy':policy, 'meaning':'Per-Node clipped real-sample intervals containing recorded failures or exceeding recorded MaximumGap; linear interpolation, no synthetic source samples',
+            'nodeGapSecondsSum':sum(node['energyCoverage']['gapSeconds'] for node in value['nodes']),
+            'maximumGapSeconds':max((node['energyCoverage']['maximumGapSeconds'] for node in value['nodes']), default=0.),
+            'maximumNodeGapFraction':max((node['energyCoverage']['gapFraction'] for node in value['nodes']), default=0.)}
+        known = bool(value['nodes']) and not value['reasons'] and all(node['joules'] is not None for node in value['nodes'])
+        value.update(complete=known, energyStatus='MEASURED' if known else 'UNKNOWN',
+            wholePoolJoules=whole if known else None, activePoolJoules=active_total if known else None,
+            wholePoolMeanWatts=whole / seconds if known else None, activePoolMeanWatts=active_total / seconds if known else None,
+            gapErrorBoundJoules=error_bound if known else None)
+        result[name] = value
+    return result
 
 
 def _reduce(folder, phase, executable, deadline, scope, include_configured):

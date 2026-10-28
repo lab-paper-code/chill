@@ -640,6 +640,7 @@ def bind(path):
     module('e5_quality', D2/'analyze_before.py').generator_quality_config(c)
     need(c, ['approval', 'inputs', 'g0Evidence', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
     need(c['approval'], REQUIRED['approval'], 'approval'); need(c['inputs'], REQUIRED['inputs'], 'inputs'); need(c['collection'], REQUIRED['collection'], 'collection'); need(c['timeboxes'], REQUIRED['timeboxes'], 'timeboxes')
+    c['collection']['energyCoverage']=module('e5energy_policy',HERE/'e5-archive.py').energy_policy(c['collection'])
     component_sources = approval_sources(c['approval'])
     if not positive(c['smokeSeconds']) or type(c['mSeconds']) not in (int,float) or not math.isfinite(c['mSeconds']) or c['mSeconds']<0 or not 0 < c['burstLowSeconds'] < 900: raise ValueError('Actual m/smoke and 0<burstLowSeconds<900 required')
     if any(not positive(v) for v in c['timeboxes'].values()) or c['timeboxes']['setupSeconds']+3600+c['timeboxes']['drainSeconds']+c['timeboxes']['flushSeconds'] > 4200: raise ValueError('Finite collector-compatible timeboxes required (sum<=4200s)')
@@ -1538,13 +1539,17 @@ def judge(binding, folder):
             if offsets and quality!='VALID':sub[-1]['D1']='INVALID_GENERATOR' if quality=='INVALID_GENERATOR' else 'UNKNOWN'
             sub[-1]['unfinishedOrUnsent']+=sum(not finals.get(x.get('requestID')) for x in selected)
         results[w['name']]['substages']=sub
-    start,end=d.epoch(phase['startUTC']),d.epoch(phase['endUTC']); cg=d.telemetry(inp,start,end); power=reported_power(inp.json(folder/'power.json'))
+    start,end=d.epoch(phase['startUTC']),d.epoch(phase['endUTC']); cg=d.telemetry(inp,start,end)
+    stored_power={'power':inp.json(folder/'power.json'),'powerDrainInclusive':inp.json(folder/'power-drain-inclusive.json')}
+    available={name:value for name,value in stored_power.items() if value and value.get('from') and value.get('to')}
+    energy=module('e5energy',HERE/'e5-archive.py').e5_power_windows(folder,c['collection'],available) if available else {}
+    power=reported_power(energy.get('power',stored_power['power']))
     bootstrap=None
     if st['id']=='E5-0':
         post=inp.json(folder/'post-state.json')
         bootstrap={w['name']:[i for i in instance_rows((post or {}).get('snapshot',{}).get('instances',[])) if i.get('workloadUID')==w['uid'] and i.get('ready')] for w in c['workloads']}
     if not power or not power.get('complete') or power.get('wholePoolJoules') is None or power.get('activePoolJoules') is None: unknown.append('Whole/active POOL transition-inclusive power incomplete')
-    tail_power=reported_power(inp.json(folder/'power-drain-inclusive.json'))
+    tail_power=reported_power(energy.get('powerDrainInclusive',stored_power['powerDrainInclusive']))
     if not tail_power or not tail_power.get('complete') or tail_power.get('wholePoolJoules') is None or tail_power.get('activePoolJoules') is None: unknown.append('Actual transition/request/action drain-inclusive energy incomplete')
     boot_events=[]
     notices=folder/'node-actuation-boot-alerts.jsonl'
@@ -1669,7 +1674,12 @@ def summarize(binding, root):
                 'staticMinusFullWholePOOLJ':static_j-full_j if full_j is not None and static_j is not None else None,
                 'fullActivePOOLJ':full['power']['activePoolJoules'],'staticActivePOOLJ':static['power']['activePoolJoules'],
                 'requestMetrics':{'full':full.get('requests',{}),'static':static.get('requests',{})}})
-            full_tail=reported_power(load(root/('full-'+row_id)/'power-drain-inclusive.json')); static_tail=reported_power(load(root/('static-'+row_id)/'power-drain-inclusive.json'))
+            full_tail=reported_power(full.get('powerDrainInclusive') or load(root/('full-'+row_id)/'power-drain-inclusive.json'))
+            static_tail=reported_power(static.get('powerDrainInclusive') or load(root/('static-'+row_id)/'power-drain-inclusive.json'))
+            full_bound,static_bound=full['power'].get('gapErrorBoundJoules'),static['power'].get('gapErrorBoundJoules')
+            comparisons[-1]['energyGapError']={'fullBoundJoules':full_bound,'staticBoundJoules':static_bound,
+                'differenceBoundJoules':full_bound+static_bound if full_bound is not None and static_bound is not None else None,
+                'fullCoverage':full['power'].get('energyCoverage'),'staticCoverage':static['power'].get('energyCoverage')}
             comparisons[-1]['drainInclusive']={'full':full_tail,'static':static_tail,'meaning':'Separate actual phase.drainedUTC horizon; inspect phase drainScope. Scheduler transitions/reservations are not awaited; nominal170min totals retain offered windows.'}
     plan_rows={row_id:stages[('full',row_id)]['status'] if ('full',row_id) in stages else 'UNMEASURED' for row_id in modes['full']}
     plan_rows['E5-S']=('MEASURED_DESCRIPTIVE' if all(pair['energyStatus']=='MEASURED' for pair in comparisons) else 'INCOMPLETE') if len(comparisons)==6 else 'UNMEASURED'
@@ -1684,6 +1694,11 @@ def summarize(binding, root):
     full_values=[pair['fullWholePOOLJ'] for pair in comparisons]; static_values=[pair['staticWholePOOLJ'] for pair in comparisons]
     result={'schema':'e5-summary.v1','at':now(),'status':status,'missing':missing,'planRows':plan_rows,'planResultLinks':str(sum(x!='UNMEASURED' for x in plan_rows.values()))+'/9','specScenarios':scenario,'specResultLinks':str(sum(x!='UNMEASURED' for x in scenario.values()))+'/7','failureScope':'E5-7 manual serving loss/cordon proxy; actual event/recovery evidence required, not physical network/power loss','failureScenarioEvidence':failure,'pairedComparisons':comparisons,'fullMatched170minWholePOOLJ':sum(full_values) if len(comparisons)==6 and all(value is not None for value in full_values) else None,'static170minWholePOOLJ':sum(static_values) if len(comparisons)==6 and all(value is not None for value in static_values) else None,'controlFactors':factor_results,'limitations':b['limitations'],'staticSelection':str(root/'static-selection.json'),'accounting':{'d':b['accounting']['d'],'exactCost':b['accounting']['exactCost'],'evaluation':str(sum(x!='UNMEASURED' for x in scenario.values()))+'/7'}}
     result['rowJudgments']=row_statuses
+    full_bounds=[pair['energyGapError']['fullBoundJoules'] for pair in comparisons]
+    static_bounds=[pair['energyGapError']['staticBoundJoules'] for pair in comparisons]
+    result['energyGapErrorBoundJoules']={
+        'fullMatched170min':sum(full_bounds) if len(comparisons)==6 and all(value is not None for value in full_bounds) else None,
+        'static170min':sum(static_bounds) if len(comparisons)==6 and all(value is not None for value in static_bounds) else None}
     result['scenarioLimitations']={'gradual-up-and-down':'E5-3 increases and E5-5 abrupt drop only; gradual decrease unmeasured',
         'burst':'Smol burst only; other-model bursts unmeasured',
         'node-serving-control-failure':'Manual serving loss/cordon proxy only; physical network/power loss and all control failure types unmeasured',

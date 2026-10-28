@@ -85,7 +85,9 @@ def render(root, repo):
                 energy[window]={'energyStatus':'MEASURED' if known else 'UNKNOWN','complete':power.get('complete'),
                     'wholePoolJoules':power.get('wholePoolJoules') if known else None,
                     'activePoolJoules':power.get('activePoolJoules') if known else None,
-                    'reasons':power.get('reasons'),'nodes':power.get('nodes')}
+                    'reasons':power.get('reasons'),'nodes':power.get('nodes'),
+                    'energyCoverage':power.get('energyCoverage'),'gapErrorBoundJoules':power.get('gapErrorBoundJoules'),
+                    'strictReasons':power.get('strictReasons')}
             lines += ['Energy and coverage (incomplete-window energy is UNKNOWN, not zero):', '',
                       '```json', json.dumps(energy,ensure_ascii=False,indent=2), '```', '']
         for name, metric in stage.get('workloads', stage.get('requests', {})).items():
