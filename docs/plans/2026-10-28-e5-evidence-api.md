@@ -40,6 +40,13 @@
 | `capture-identity.json`, `s3-hour-list-*`, `upload.log`, `raw-copy.stderr`, `collector-status.json`, `*-collector.stderr` | 위 우회 경로의 수집 영수증 | **삭제.** 이 파일들을 읽는 판정 코드(E:1558, 1639)도 함께 정리한다 |
 | `pre/post-{state,pools,settings}.json`, 경계·barrier·static 상태 | 이미 CHILL API(E:845-874) | 유지 |
 
+### publication 계약 (#213 게시 전, 이 계획의 다른 단계보다 먼저)
+
+실험 publication(`hack/e5/e5.py:1721-1787`)은 결과 표와 대시보드 S1이 같이 읽는 불변 기록이다. 그래서 형식은 이 계획이 맡고, 대시보드는 읽기만 한다. #213이 끝난 뒤, 게시하기 전에 하네스 동결을 풀고 한 번 고친다.
+- **에너지 오차를 함께 싣는다.** 지금 `kpis`(E:1784)에는 `wholePoolJoules`/`activePoolJoules`만 있다. 공백 보간 규칙(`198150d6`)이 만든 `energyCoverage`와 `gapErrorBoundJoules`도 넣는다. 결과 표와 대시보드가 같은 "값 ± 상한"을 보여야 하기 때문이다.
+- **측정 규칙 식별자를 싣는다.** 실행마다 하네스 소스 SHA, 동결 binding의 `energyCoverage` 정책, 증거 출처(`host-s3`=옛 수집 / `api`=이 계획 이후), GC 지표 의미(`gctrace-cycles` / `runtime-metrics-delta`)를 넣는다. #213은 옛 수집, 다음 E5부터는 API 수집이다. 실행 간 비교에서 의미가 다른 숫자가 나란히 놓이지 않게 하기 위해서다.
+- 판정은 하지 않는다. 대시보드가 이 값으로 비교 가능 여부를 표시한다.
+
 ## 3. 추가할 것 (최소 단위)
 
 새 것은 다섯 가지다.
@@ -68,13 +75,14 @@
 - 크기 참고(E5-1, `20261028T01` 원문): scheduler 382 MB, requests 175 MB. 전송은 drain 뒤, 측정 창 밖에서만 한다. 이 전송은 서버 컨테이너 CPU·I/O에 잡힌다. 이전에는 호스트 sudo 프로세스가 읽었으므로 서버에 잡히지 않았다.
 - 인증은 기존 TokenReview/SAR(`httpapi/handler.go:159-169`)를 쓴다. SAR에는 실제 요청 경로가 들어가므로(`kube/authorizer.go:135-142`) ClusterRole nonResourceURLs에 `/chill/api/v1/observations/raw`와 `/chill/api/v1/observations/raw/*`를 **둘 다** 넣는다. 요청 ID가 포함된 원시라서 별도 권한으로 둔다.
 - 가공 API(`/observations/workloads`, `/scheduler`)는 대시보드용으로 그대로 둔다.
+- **보관본 읽기는 가공 조회와 공유한다.** 대시보드 S1의 근거 조회(`/observations/scheduler`, `decision.at`)도 로컬 보존 2시간이 지나면 같은 보관본 열기 경로를 탄다. #213의 판단은 전부 여기에 해당한다. 이 계획에서 정하는 보관본 열기 방식과 마감 정책은 그 가공 조회에도 적용한다. 수용 조건: #213 판단 1건을 보관본에서 요청 시간 제한 안에 연다.
 
 ### 관측 종류 `resources`
 
 **node-agent 표본(모든 Node, genesis1 포함)**
 - 대상: CHILL 서빙 인스턴스 컨테이너와 CHILL 제어 Pod 컨테이너(서버 포함).
 - 값: cgroup 원시 counter(CPU ns, throttle 횟수·시간, 메모리)와 thermal zone 온도(센서 경로별. D6가 센서별 값과 직전 표본을 쓴다, E:1559-1587).
-- 행 필드: `node`, `podUID`, `containerID`, `cgroupVersion`, counter, 표본 시각.
+- 행 필드: `node`, `podUID`, `containerID`, `cgroupVersion`, counter, 표본 시각(Node 시계), 서버 수신 시각(서버 시계). 두 시각을 함께 남겨 Node 시계 차이를 사후에 확인할 수 있게 한다. 보정은 하지 않는다.
 - 재시작·종료 상태는 넣지 않는다(`cluster`가 기록). 그래서 node-agent에 Pod RBAC를 추가하지 않는다.
 - 부하 생성기 컨테이너는 CHILL 사실이 아니므로 대상이 아니다(2장 `client` 행 유지).
 
@@ -101,6 +109,7 @@
   - 필드: 생성·삭제, Pod UID, Node, containerID, imageID, phase·Ready, restartCount, 마지막 종료 사유와 exit code.
   - 서버는 기동할 때 자기 Pod UID와 이미지를 1행 기록한다. 그래야 서버 교체를 사후에 식별할 수 있다.
 - **observer issue**: 발생·변경·해소를 기록한다(source, 사유, 시각). 지금은 로그에만 남고, 정상화되면 지워지며 `At`이 갱신된다(`observer.go:150-161`).
+- **라이브 발행 지점 공유**: Pod 사건과 issue 전이를 `cluster`에 쓰는 지점에서 같은 사실을 라이브 hub에도 넘긴다. 판단·작업 기록이 이미 같은 방식이다(기록 성공 callback → 투영, `cmd/chill-server/live.go`). 이 계획은 **기록과 callback 지점**까지 맡는다. 라이브 event 종류와 DTO 형태는 [대시보드 계획](2026-10-26-dashboard-live-stage.md) 4장이 맡는다. 출처는 하나이고, 기록에 실패한 사실은 발행하지 않는다.
 - **Node**: Node는 watch가 아니라 refresh List로 읽는다(운영 2초, `values-operating.yaml:586`). Node name·UID·Ready는 이미 scheduler 행에 있으므로(`scheduler.go:115-121, 279-294`) 따로 기록하지 않는다. `unschedulable`(cordon)은 CHILL 서빙이 읽지 않는 값이라 기록하지 않는다. cordon 사실은 운영자 명령 기록이다.
 - 기록은 observer 잠금 밖에서 한다.
 
@@ -131,6 +140,7 @@
 - `resources`는 값 일치 대신 식별자, 단위, 창 bracket, 결손만 본다.
 - GC는 새 의미로 보고한다.
 - E5-7 recovery 입력 처리도 포함한다.
+- **측정 대상 프로세스에 들어가는 부가 작업의 CPU 몫**을 같은 리허설에서 한 번 기록한다. 대상은 라이브 hub(T5) 집계, node-agent 묶음 수신, 원시 내보내기, 대시보드 조회다. 모두 측정 대상 게이트웨이(ChillServer) 안에서 돈다. 결과는 E5 보고서 한계에 적는다. 대시보드 계획 5장의 T5 몫 측정도 이 기록으로 대신한다.
 
 구현 1·2·3은 서로 독립이라 병렬로 할 수 있다. 파일 영역은 httpapi / node-agent + `resources` 기록 / observer로 나눈다. 차트·배포와 하네스 전환은 셋 뒤에 한다. settings 쓰기 클라이언트 두 곳의 수정은 구현 1과 같은 변경 단위다.
 
@@ -151,8 +161,13 @@
 
 - 가공 조회 API를 원시 내보내기로 대체하지 않는다. 두 용도가 다르다.
 - 해시·바이트 비교를 상시 검증 관문으로 만들지 않는다(AGENTS.md). 전환 확인은 4장의 1회 비교뿐이다.
-- 대시보드는 `/observations/raw`를 쓰지 않는다. 앞단(BFF)에도 열지 않는다. 대시보드의 자원·장애 진단 화면(레벨 2의 Node 자원, Pod 사건)은 `resources`·`cluster`의 **가공 조회**가 필요하다. 이번 범위에는 넣지 않고, 화면이 실제로 필요해질 때 기존 `/observations/*` 가공 경로에 추가한다.
-- 라이브 DTO 추가(`instances[].waiting`, `reservations[]`, Node `ready/measurement/reasons`)는 이 계획이 아니라 대시보드 계획 4장 선행 수정이 맡는다. 워크로드 유입 큐 길이(`workloads[].pending`)도 같은 곳에서 추가한다(사용자 결정 2026-10-28).
+- 대시보드는 `/observations/raw`를 쓰지 않는다. 앞단(BFF)에도 열지 않는다.
+- 대시보드의 자원·장애 진단 화면(레벨 2의 Node·인스턴스 자원, Pod 사건)에 필요한 것은 나눠 맡는다.
+  - 이 계획: `resources`·`cluster` **기록**, 서버의 node-agent 묶음 수신, `cluster` 라이브 callback 지점.
+  - 대시보드 계획: 화면, 라이브 DTO 형태, 가공 조회가 필요한지 판단.
+  - 가공 조회(`/observations/*`)는 대시보드 계획 6장의 재개 조건이 충족될 때 추가한다. 이번 범위에는 넣지 않는다.
+- 라이브 DTO 추가(`instances[].waiting`, `reservations[]`, Node `ready/measurement/reasons`, `workloads[].pending`, `cluster` 사건 event)는 대시보드 계획 4장 선행 수정이 맡는다(`pending`은 사용자 결정 2026-10-28).
+- **측정 창 동안의 사용 규칙**: E5 측정 창에서는 원시 내보내기와 대시보드의 과거 조회(S1 근거·결과 표)를 실행하지 않는다. 라이브 보기만 허용한다. 하네스는 이미 drain 뒤에만 내보낸다. 대시보드 쪽 규칙은 대시보드 계획 5장에 있다.
 - 안전·품질 관문을 "하네스 순감소"를 이유로 지우지 않는다. 지우는 것은 중복 수집 경로뿐이다.
 - 게이트웨이 분리(ADR 0029)는 보류다. 실제 split이 승인되면 캠페인 사이 별도 작업 단위에서 source 차원·`resources`·`cluster`·T5 모집단을 함께 바꾼다. 이번에는 `router` 파라미터를 만들지 않는다.
 - 다음 서버 재빌드와 이 계획의 리허설은 `e947cd5e`의 공유 `Runtime` 변경(예: `internal/serving/runtime.go:1208` `Routable`의 `i.Capacity > 0`)을 정리한 소스로 한다. #213 서버(`24f4ff4f`)는 그 이전 소스다.
