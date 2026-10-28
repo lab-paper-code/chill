@@ -281,7 +281,7 @@ snapshot의 작은 DTO는 다음과 같다. 아래 `?`는 생략 가능, `null`�
   모든 count는 0 이상의 정수다. 관측 가능한 각 UID는 무유입 초에도 0 count로 보내고,
   계측 불가 구간은 0을 만들지 않고 `gaps`로 보낸다. 의미와 분모는 4.4절을 따른다.
 
-위 계약 중 `reservations`, `workloads[].pending`, `instances[].waiting`, `nodes[].ready/measurement/reasons`는 계획 4장 선행 수정으로
+위 계약 중 `reservations`, `workloads[].pending`, `instances[].waiting`, `nodes[].ready/measurement/reasons`는 계획 3장 선행 수정으로
 들어오고, 같은 수정이 현재 코드(`internal/serving/live/types.go`)의 `decision.recordRef`, `instances[].workloadUID`,
 `nodes[].targetPowerMode/watts`를 삭제한다. 수정 전 프레임에서 앞단은 이 필드들을 무시하고 해당 자리를 비운다.
 
@@ -586,15 +586,15 @@ flowchart LR
 | 엣지 | 표시 값 | 라이브 DTO 출처 |
 |---|---|---|
 | E1 클라이언트→접수 | 수신 req/s(레인별, 보드 합계) | `metrics.workloads[uid].received` |
-| E2 접수→POOL 유입 큐 | 접수 가능 여부, 유입 큐 길이(배정 전) | `workloads[].admission`; 큐 길이는 **현재 미제공 → 계획 4장 선행 수정 `workloads[].pending`**(runtime `WorkloadState.Pending`, `internal/serving/runtime.go:1160`). 들어오기 전엔 표시 안 함. 수신−종결 차를 대기로 쓰지 않고, E3 인스턴스 `waiting`과 더하지 않는다 |
-| E3 큐→인스턴스 | 인스턴스별 분배 비율, 인스턴스 native 대기 수, 실제 처리 수 | `routing[uid][instanceID]`, `instances[].routable[uid]`, `instances[].running[uid]`; 대기 수는 **현재 미제공 → 계획 4장 선행 수정 `instances[].waiting[uid]`**(runtime `Waiting`: 분배된 뒤 native queued/deferred, `AssignedUnknown`과 구분, `runtime.go:1217-1228`). 들어오기 전엔 표시 안 함 |
+| E2 접수→POOL 유입 큐 | 접수 가능 여부, 유입 큐 길이(배정 전) | `workloads[].admission`; 큐 길이는 **현재 미제공 → 계획 3장 선행 수정 `workloads[].pending`**(runtime `WorkloadState.Pending`, `internal/serving/runtime.go:1160`). 들어오기 전엔 표시 안 함. 수신−종결 차를 대기로 쓰지 않고, E3 인스턴스 `waiting`과 더하지 않는다 |
+| E3 큐→인스턴스 | 인스턴스별 분배 비율, 인스턴스 native 대기 수, 실제 처리 수 | `routing[uid][instanceID]`, `instances[].routable[uid]`, `instances[].running[uid]`; 대기 수는 **현재 미제공 → 계획 3장 선행 수정 `instances[].waiting[uid]`**(runtime `Waiting`: 분배된 뒤 native queued/deferred, `AssignedUnknown`과 구분, `runtime.go:1217-1228`). 들어오기 전엔 표시 안 함 |
 | E4 인스턴스→응답 | 종결 N, 성공률, SLO 안 비율, p95 | `metrics.workloads[uid].completed/failed/withinSLO/p95ms`. 인스턴스별 종결은 **미제공 → 표시 안 함**(워크로드 단위만) |
 | E5 Node 전력 | Node W, 전력모드; 보드 합계 | `metrics.nodes[uid].watts`, `nodes[].powerMode`; `metrics.pool.wholeWatts/activeWatts` |
 | C1 관측→판단 | 마지막 판단 시각·state·reason; 판단 사건에 1회 강조 | `decision.at/state/reason`; `event.kind="decision"` |
 | C2 판단→작업 | 진행 중 작업 수와 kind 목록, 예상 시간·출처; 시작·종결 사건에 1회 강조 | `actions[]`(`starting/running`만 진행), `expectedSeconds/expectedSource`; `event.kind="action"`의 `phase`. kind는 위 9종 외에 측정 run `operation-cost-measurement`·`dispatch-occupancy-measurement`·`measurement-handback`(`startNodeRun`, 종결 사건만)도 오며 모두 kind 문자열 그대로 표시한다 |
-| C3 작업→예약 장부 | 예약 수, owner, 범위, 잔류 사유 | **현재 미제공 → 계획 4장 선행 수정 `reservations[]:{owner,nodes[],workloadUIDs[],podUIDs[],instances[],reason}`**. 들어오기 전엔 “예약 미제공”으로 표시 |
+| C3 작업→예약 장부 | 예약 수, owner, 범위, 잔류 사유 | **현재 미제공 → 계획 3장 선행 수정 `reservations[]:{owner,nodes[],workloadUIDs[],podUIDs[],instances[],reason}`**. 들어오기 전엔 “예약 미제공”으로 표시 |
 | C4 작업→Node·인스턴스 | 해당 Node·인스턴스 칸에 진행 배지(kind) | `actions[].node.uid`, `actions[].workloadUID` |
-| Node 사용 가능 | Node 칸 흐림과 사유 | **현재 미제공 → 계획 4장 선행 수정 `nodes[].ready/measurement/reasons`** |
+| Node 사용 가능 | Node 칸 흐림과 사유 | **현재 미제공 → 계획 3장 선행 수정 `nodes[].ready/measurement/reasons`** |
 | 공백 | 해당 엣지·레인 빗금과 사유 | `metrics.gaps[].scope/reason`; socket 끊김은 띠 |
 
 판단 전에는 `nodes`가 빌 수 있다(Node는 판단 callback에서만 채워진다). 그때 POOL 레인에는 인스턴스의
@@ -605,7 +605,7 @@ flowchart LR
 
 레인은 현재 `workloads[]`의 UID마다 하나다(목록 순서는 이름, 같은 이름은 UID). 모델명·샘플 필드로
 분기하지 않는다. 레인 안 인스턴스는 `routable[uid]`가 true이거나 `running[uid]>0`이거나
-`ownerWorkloadUID==uid`인 것이며, 여러 UID에 해당하면 각 레인에 모두 나타난다(계획 4장: `Instance.WorkloadUID`
+`ownerWorkloadUID==uid`인 것이며, 여러 UID에 해당하면 각 레인에 모두 나타난다(계획 3장: `Instance.WorkloadUID`
 단일 귀속 삭제). 인스턴스는 Node별로 모은다. 인스턴스 기호는 그 레인의 uid에 대해 위에서 처음 맞는 것이다:
 × 제거(`stopped`) → ◌ 분배 해제 뒤 잔여 실행(`!routable[uid] && running[uid]>0`) → ● 실제 처리(`routable[uid] && running[uid]>0`)
 → ◐ 분배 중·처리 대기(`routable[uid] && running[uid]==0`) → ○ 준비됨·미분배(`ready && !routable[uid]`) → ◇ 준비 중(`!ready`).
@@ -684,7 +684,7 @@ phaseRunning과 일치시킨다. `assignedUnknown`은 실행 증거가 아니다
 기존 shell/sidebar와 catch-all이다. 화면을 합친 뒤 obsolete route와 import는 남기지 않는다.
 
 근거의 작은 live DTO에는 κ/d/B 원문을 넣지 않는다. 판단 identity는 원본 RFC3339Nano `decision.at`이다
-(계획 3장). 레벨 3 패널은 선택한 `at`으로 `GET observations/scheduler?from=<at>&to=<at+1ns>`를 호출하고,
+(계획 2장). 레벨 3 패널은 선택한 `at`으로 `GET observations/scheduler?from=<at>&to=<at+1ns>`를 호출하고,
 응답 decision.at의 원본 시각 일치로 사건을 확인한다. 같은 시각에 다른 행이 있으면 페이지를 넘긴다.
 매칭되지 않으면 “기록 없음”이지 최신 state로의 fallback이 아니며, 새 판단이 와도 선택은 바뀌지 않는다.
 이 방식은 `chill-dashboard/lib/scheduler-history.ts:schedulerRecordRef/readSchedulerRecord/
