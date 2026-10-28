@@ -541,3 +541,8 @@
 
 - replay(`control-213-full/switch-replay/`, EvaluateScheduler 32회): placement-off ≡ membership-off(4단계 모두 동일 목표) → **placement-off 제외**(membership-off 2행 이미 측정). batching-off는 E5-2에서 물리 구성·cap1 동결이나 MNV route는 변함 → 실행하되 "고정-cap 대조"로 명명. power-off는 시작 snapshot 1-step replay에서 all-on과 동일 목표이나 효과는 시간축(유휴 절전 결정)이라 1-step으로 판정 불가 → 사용자 우선순위대로 **실행**(한계 기록). E5-5 시작 snapshot은 원본 예약으로 all-on까지 동결 → E5-5 factor 행의 식별력 한계 기록. resources/routing-off는 E5-2-high에서 구별 목표 → 실행.
 - 실행 집합: replicas-off(진행 중) → power-off → routing-off → resources-off → batching-off(고정-cap 대조), 각 E5-2·E5-5.
+
+## 2026-10-28 18:3xZ — factor 비교 완료, genesis1 재부팅 기록
+
+- #216: factor 12행(membership/replicas/power/routing/resources/batching × E5-2/E5-5; placement 제외) `control-216-rev102-factors/factor-tables.txt` → spec 기입 `9d0a3e13`. batching-off 2행 에너지 UNKNOWN(전력 gap). 예약 잔류 3회째(finish; 재부팅 후 자연 0).
+- genesis1 호스트 재부팅 18:20Z(측정 종료 16:32Z 이후): 커널 global OOM(katib-controller kill) → snapd watchdog → 재부팅 [추정]. 직전 summarize가 `e5-summary.json` 5.6 GB 생성 — 하네스 summarize 메모리/출력 크기가 원인 후보(E5 뒤 과제, 측정 영향 없음).
