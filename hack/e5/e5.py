@@ -420,7 +420,7 @@ def self_check_factor():
     baseline={'instances':targets,'nodes':[],'routing':{'workload':{'2':.5,'32':.5}}}
     ns={'NODES':[],'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0}
     exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
-    for bad in (None,'cap-delay','stale-delay','missing-delay','wrong-cap','stale','node','allocation','maxWaitNanos'):
+    for bad in (None,'owner-served','cap-delay','stale-delay','missing-delay','wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos'):
         runner=ns['CPO']();requests=[];prepared=[];receipts={};clock=[0];polls=[0]
         ns['time']=SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds))
         ns['save']=lambda path,body:receipts.__setitem__(str(path),copy.deepcopy(body))
@@ -441,6 +441,8 @@ def self_check_factor():
             wrong=bad=='wrong-cap' or bad=='cap-delay' and delayed
             stale=bad=='stale' or bad=='stale-delay' and delayed
             instances=[] if bad=='missing-delay' and delayed else [dict(i,maxBatch=2 if wrong else i['maxBatch']) for i in prepared]
+            served='foreign' if bad=='foreign-served' or bad=='foreign-after' and len(prepared)==2 and polls[0]>1 else 'workload' if bad=='owner-served' else ''
+            instances=[dict(i,workloadUID=served) for i in instances]
             return {'snapshot':{'nodes':[],'at':9 if stale else 11,'instances':instances},'results':[{'endedAt':10}]}
         runner.state=state
         def prepare(method,path,body,**kwargs):
@@ -459,22 +461,23 @@ def self_check_factor():
         try:
             runner.factor()
         except RuntimeError as error:
-            assert bad in ('wrong-cap','stale','node','allocation','maxWaitNanos'),(bad,str(error))
-            if bad in ('wrong-cap','stale'):
+            assert bad in ('wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos'),(bad,str(error))
+            if bad in ('wrong-cap','foreign-served','stale'):
                 assert 'ACK timed out' in str(error),str(error)
                 receipt=next(body for path,body in receipts.items() if path.endswith('-snapshot-ack.json'))
                 assert not receipt['accepted'] and receipt['state']==state()
                 assert receipt['freshness']['snapshotFresh']==(bad!='stale')
                 assert clock[0]==3
+            elif bad=='foreign-after':assert 'empty or owner served UID' in str(error),str(error)
             else:assert 'unsupported manual wait/resource override' in str(error),str(error)
         else:
-            assert bad in (None,'cap-delay','stale-delay','missing-delay'),'Mismatched paired state accepted: '+str(bad)
+            assert bad in (None,'owner-served','cap-delay','stale-delay','missing-delay'),'Mismatched paired state accepted: '+str(bad)
             assert [r['maxBatch'] for r in requests]==[1,1]
             acks=[body for path,body in receipts.items() if path.endswith('-snapshot-ack.json')]
             assert len(acks)==2 and all(body['accepted'] for body in acks)
             assert all(body['timeboxSeconds']==(120 if bad is None else 3) for body in acks)
-            assert clock[0]==(0 if bad is None else 2)
-    print('PASS E5 factor paired maxBatch, delayed fresh projection ACK and retained bounded timeout; offline only')
+            assert clock[0]==(2 if bad in ('cap-delay','stale-delay','missing-delay') else 0)
+    print('PASS E5 factor paired maxBatch, delayed fresh ACK, empty/owner served UID and retained foreign-UID rejection; offline only')
 
 
 # This local check must not require an operational environment or cluster binding.
@@ -1428,7 +1431,7 @@ class CPO:
                 state=self.state();barrier=self.start_barrier_observation(state,deadline,now())
                 matches=[i for i in instance_rows(state['snapshot']['instances']) if i['id']==identifier]
                 instance=matches[0] if len(matches)==1 else {}
-                matched=instance.get('node')==target['node'] and instance.get('profile',{}).get('id')==target['profileID'] and instance.get('ownerWorkloadUID')==target['workloadUID'] and not instance.get('workloadUID') and all(instance.get(key)==target[key] for key in ('allocation','maxBatch','maxWaitNanos'))
+                matched=instance.get('node')==target['node'] and instance.get('profile',{}).get('id')==target['profileID'] and instance.get('ownerWorkloadUID')==target['workloadUID'] and instance.get('workloadUID') in (None,'',target['workloadUID']) and all(instance.get(key)==target[key] for key in ('allocation','maxBatch','maxWaitNanos'))
                 remaining=deadline-time.monotonic()
                 accepted=barrier['snapshotFresh'] and matched and remaining>0
                 if accepted or remaining<=0:
@@ -1437,10 +1440,10 @@ class CPO:
                     mapping[target['id']]=identifier;break
                 time.sleep(min(1,remaining))
         prepared=self.state();actual=prepared['snapshot']
-        if {i['id'] for i in instance_rows(actual['instances'])}!=set(mapping.values()) or any(i.get('workloadUID') for i in instance_rows(actual['instances'])):raise RuntimeError('Paired prepared state is not exactly the returned physical IDs with empty served UID')
-        # This is a declared target, not a claim that unrouted prepared instances already serve a UID.
+        if {i['id'] for i in instance_rows(actual['instances'])}!=set(mapping.values()) or any(i.get('workloadUID') not in (None,'',i.get('ownerWorkloadUID')) for i in instance_rows(actual['instances'])):raise RuntimeError('Paired prepared state is not exactly the returned physical IDs with empty or owner served UID')
+        # Prepared instances may already serve their owner; exact paired routing still requires ACK.
         chosen=owned_target(actual,self.uids,{uid:{mapping[old]:weight for old,weight in route.items()} for uid,route in desired['routing'].items()})
-        save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-prepared-target.json'),{'status':'PREPARED_UNROUTED_NOT_LOAD_READY','actualState':prepared,'intendedTargetBinding':chosen})
+        save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-prepared-target.json'),{'status':'PREPARED_NOT_LOAD_READY','actualState':prepared,'intendedTargetBinding':chosen})
         self.route_ack(chosen,self.settings(),'factor-'+f['name']+'-'+self.a.stage,'Restore actual paired initial block through public prepare and route operations')
         self.release_routing('factor-'+f['name']+'-'+self.a.stage+'-release','Release paired baseline routing before autonomous factor')
         settings=self.settings(); settings['controls']=f['controls']; settings['autonomousWorkloads']=self.uids
