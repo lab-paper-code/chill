@@ -108,6 +108,9 @@
 
 - `GET /api/v1/scheduler/settings`에 서버가 수락한 전력계 선언(`Meters`)을 **읽기 전용**으로 노출한다. 서버는 이미 ConfigMap과 Node UID로 이 값을 도출한다(`cmd/chill-server/scheduler_service.go:310-340`).
 - 전력 reducer는 이 값과 state의 Node 참조만 입력으로 받는다.
+- **쓰기 클라이언트 호환**: settings를 GET해서 고친 뒤 PUT하는 클라이언트가 둘 있다. 둘 다 읽기 전용 필드를 하나씩 지운 뒤 보내고, 서버는 모르는 필드를 거부한다(`httpapi/handler.go:172-175`). 그래서 `meters`를 노출하는 같은 변경에서 두 클라이언트가 `meters`도 빼고 보내도록 고친다. 서버의 엄격한 decode는 바꾸지 않는다.
+  - 하네스 `CPO.put`(E:847-850): `staticRouting*`, `powerObservation`을 지운다.
+  - 대시보드 `putSchedulerSettings`(`chill-dashboard/features/scheduler-settings.tsx:78-83`): routing 필드 두 개를 지운다.
 
 ## 4. 순서 (spec → SRS → 설계 → 구현)
 
@@ -119,7 +122,7 @@
 | 구현 1 | API-1, settings 필드. 두 stream 이름을 `observationStreams`(`observation_log.go:36`)에 **한 번에** 등록한다 | 서버 |
 | 구현 2 | `resources`: node-agent 발견·표본·묶음 POST, 서버 수신·기록, 서버 GC·디렉터리 바이트 | 서버, node-agent |
 | 구현 3 | `cluster`: observer의 Pod 사건과 issue 전이 기록 | 서버 |
-| 차트·배포 | ClusterRole: 하네스 principal에 `/raw`·`/raw/*`, node-agent에 수신 경로. 주기 값을 설정한다. stream 추가와 함께 **한 번에** 적용한다. 라이브 적용은 사용자 승인을 받는다 | 차트 |
+| 차트·배포 | ClusterRole: 하네스 principal에 `/raw`·`/raw/*`, node-agent에 수신 경로. 주기 값을 설정한다. stream 추가와 함께 **한 번에** 적용한다. 같은 승인 배포에 [대시보드 계획](2026-10-26-dashboard-live-stage.md) 5장 항목을 묶는다: 라이브 RBAC(`/chill/api/v1/live`), 대시보드 호출자(`serving-manager`)의 experiments·측정 projection 권한, 대시보드·서버 이미지. 라이브 적용은 사용자 승인을 받는다 | 차트 |
 | 하네스 전환 | API로 교체하는 것: A의 host·S3 경로, cgmon·control-alerts 증거 복사, kubectl pods/nodes/logs/ConfigMap 읽기, pvc 읽기, W:192-197의 서버 args 추출과 gctrace 요구, E:1867-1874의 preflight host 사용량, 전력 reducer `--nodes`. 남기는 것: `sample_cgroups.py`의 `client` 역할만, `control-alerts` STOP 루프. `demo.py` 픽스처와 D2 `conduct_before.py`가 같은 파일을 공유하므로 영향 범위를 함께 정한다. 수집 영수증 파일은 삭제한다 | `hack/e5` 순감소 |
 | 확인 | 리허설 1회(E5-0 + 혼합 60초)에서 **옛 수집과 새 수집을 동시에** 돌린다. 추가로 #213의 보관된 시간 하나를 API로 받아 판정까지 돌린다(보관본 경로 확인). 비교 기준은 아래와 같고, 확인 뒤 옛 경로를 삭제한다. 이 비교는 1회이며 상시 검증이 아니다 | 비교 1회 |
 
@@ -129,7 +132,7 @@
 - GC는 새 의미로 보고한다.
 - E5-7 recovery 입력 처리도 포함한다.
 
-구현 1·2·3은 서로 독립이라 병렬로 할 수 있다. 파일 영역은 httpapi / node-agent + `resources` 기록 / observer로 나눈다. 차트·배포와 하네스 전환은 셋 뒤에 한다.
+구현 1·2·3은 서로 독립이라 병렬로 할 수 있다. 파일 영역은 httpapi / node-agent + `resources` 기록 / observer로 나눈다. 차트·배포와 하네스 전환은 셋 뒤에 한다. settings 쓰기 클라이언트 두 곳의 수정은 구현 1과 같은 변경 단위다.
 
 ## 5. 완료 기준
 
@@ -148,6 +151,8 @@
 
 - 가공 조회 API를 원시 내보내기로 대체하지 않는다. 두 용도가 다르다.
 - 해시·바이트 비교를 상시 검증 관문으로 만들지 않는다(AGENTS.md). 전환 확인은 4장의 1회 비교뿐이다.
+- 대시보드는 `/observations/raw`를 쓰지 않는다. 앞단(BFF)에도 열지 않는다. 대시보드의 자원·장애 진단 화면(레벨 2의 Node 자원, Pod 사건)은 `resources`·`cluster`의 **가공 조회**가 필요하다. 이번 범위에는 넣지 않고, 화면이 실제로 필요해질 때 기존 `/observations/*` 가공 경로에 추가한다.
+- 라이브 DTO 추가(`instances[].waiting`, `reservations[]`, Node `ready/measurement/reasons`)는 이 계획이 아니라 대시보드 계획 4장 선행 수정이 맡는다. 워크로드 유입 큐 길이(`workloads[].pending`, runtime `WorkloadState.Pending`)도 같은 곳에서 사용자 결정 대기다.
 - 안전·품질 관문을 "하네스 순감소"를 이유로 지우지 않는다. 지우는 것은 중복 수집 경로뿐이다.
 - 게이트웨이 분리(ADR 0029)는 보류다. 실제 split이 승인되면 캠페인 사이 별도 작업 단위에서 source 차원·`resources`·`cluster`·T5 모집단을 함께 바꾼다. 이번에는 `router` 파라미터를 만들지 않는다.
 - 다음 서버 재빌드와 이 계획의 리허설은 `e947cd5e`의 공유 `Runtime` 변경(예: `internal/serving/runtime.go:1208` `Routable`의 `i.Capacity > 0`)을 정리한 소스로 한다. #213 서버(`24f4ff4f`)는 그 이전 소스다.
