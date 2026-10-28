@@ -527,3 +527,7 @@
 
 - 거부 원인: factor 초기 상태 복원에 planner가 정한 인스턴스별 maxBatch cap(2→1, 32→1)이 필요한데 public prepare가 받지 못함(`history://FactorPrep27`). 최소 수정: prepare 선택 필드 `maxBatch`(측정된 batch 집합 내, 경계 1회 검증) `c13f13f1`; 하네스 cap 복원·instances[] ACK `d6ebf33c`. options 템플릿 의미 불변.
 - 시험 대상 변경 공개: factor 실행은 rev102(48c1a44f: prepare 필드 + T5/G2 코드 포함, G2 미배선) — full 행(rev101)과 제어 로직 동일, 보고서 조건으로 명시. lint/test/arch clean PASS(48c1a44f).
+
+## 2026-10-28 12:0xZ — factor 비교 7개 전부로 확장(사용자)
+
+- membership-off/replicas-off 4회 뒤 같은 절차·archive로 power-off → placement-off → resources-off → batching-off → routing-off, 각 E5-2·E5-5(회당 ~35분, 총 ~6h). SchedulerControls 해당 1개만 false. 같은 full 행 초기 상태 복원(maxBatch 포함), 예약 잔류 시 takeover 1회 사전 승인. 실패는 기록 후 다음 진행, 운영 오류만 정지. 끝나면 judge→summarize→tables로 factor 7행(p95·결과 수·에너지±오차·full 대비 Δ) spec 기입, 조건 "factor 행 = rev102" 명시.
