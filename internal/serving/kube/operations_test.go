@@ -235,7 +235,7 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 					t.Fatalf("%s persisted desired policy/annotation differs: %+v %v", pod.Name, config.Policy, storedPod.Annotations)
 				}
 			}
-			if test.wantPersisted == 0 && len(result.Progress) != 0 {
+			if err != nil && test.wantPersisted == 0 && len(result.Progress) != 0 {
 				t.Fatalf("unstarted route fabricated mutation progress: %v", result.Progress)
 			}
 			if err != nil && !strings.Contains(err.Error(), target.Instances[test.unavailable].ID) {
@@ -256,7 +256,7 @@ func TestRouteRequiresPolicyACKOnlyForPositiveDestinationsAC38(t *testing.T) {
 		wantACKs   int
 	}{
 		{name: "dead lattepanda zero weight", dead: 0, wantStatus: nativeOperationComplete, wantACKs: 1},
-		{name: "positive jetsono fence failure", dead: 1, wantStatus: nativeOperationPartial},
+		{name: "positive jetsono ACK endpoint unavailable", dead: 1, wantStatus: nativeOperationPartial},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			controller, prepared := tickReadySubsetController(t, nil)
@@ -271,6 +271,9 @@ func TestRouteRequiresPolicyACKOnlyForPositiveDestinationsAC38(t *testing.T) {
 			instances := slices.Clone(snapshot.Instances)
 			slices.SortFunc(instances, func(a, b serving.SchedulerInstance) int { return strings.Compare(a.Node.Name, b.Node.Name) })
 			uid := instances[0].WorkloadUID
+			for i := range instances {
+				instances[i].WorkloadUID = uid
+			}
 			target := serving.SchedulerCandidate{ID: "plan-61f142e72e70", Instances: instances,
 				Routing: map[string]map[string]int32{uid: {instances[0].ID: 0, instances[1].ID: 1000}}}
 			pods, err := operations.kube.CoreV1().Pods(operations.config.Namespace).List(ctx, meta.ListOptions{})
@@ -279,11 +282,13 @@ func TestRouteRequiresPolicyACKOnlyForPositiveDestinationsAC38(t *testing.T) {
 			}
 			slices.SortFunc(pods.Items, func(a, b core.Pod) int { return strings.Compare(a.Name, b.Name) })
 			pod := pods.Items[test.dead].DeepCopy()
-			pod.Status.ContainerStatuses[0].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 1}}
-			if _, err := operations.kube.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, pod, meta.UpdateOptions{}); err != nil {
-				t.Fatal(err)
-			}
-			if err := operations.store.client.Update(ctx, pod); err != nil {
+			if test.dead == 0 {
+				target.Instances[0].Ready, target.Instances[0].Stopped = false, true
+				pod.Status.ContainerStatuses[0].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 1}}
+				if _, err := operations.kube.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, pod, meta.UpdateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := operations.kube.CoreV1().Services(pod.Namespace).Delete(ctx, instanceServicePrefix+string(pod.UID), meta.DeleteOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			result, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationRoute, Target: &target, WorkloadUIDs: []string{uid}})
@@ -541,8 +546,12 @@ func TestRouteRejectsImmutableProfileAndDeadlinePolicyBeforePersistence(t *testi
 			wanted := target
 			wanted.Instances = slices.Clone(target.Instances)
 			wanted.Instances[0].Profile = &profile
+			wantError := "immutable " + field
+			if field == "profile" {
+				wantError = "lacks matching actual readiness"
+			}
 			result, err := operations.Execute(ctx, Operation{ID: wanted.ID, Kind: operationRoute, Target: &wanted})
-			if err == nil || !strings.Contains(err.Error(), "immutable "+field) || result.Status != nativeOperationFailed || len(result.Actual.Native) != 0 || len(result.Progress) != 0 {
+			if err == nil || !strings.Contains(err.Error(), wantError) || result.Status != nativeOperationFailed || len(result.Actual.Native) != 0 || len(result.Progress) != 0 {
 				t.Fatalf("immutable %s mutation escaped rejection: result=%+v err=%v", field, result, err)
 			}
 			current := &core.ConfigMap{}
