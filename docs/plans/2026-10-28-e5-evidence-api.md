@@ -152,7 +152,7 @@
 - 가공 조회 API를 원시 내보내기로 대체하지 않는다. 두 용도가 다르다.
 - 해시·바이트 비교를 상시 검증 관문으로 만들지 않는다(AGENTS.md). 전환 확인은 4장의 1회 비교뿐이다.
 - 대시보드는 `/observations/raw`를 쓰지 않는다. 앞단(BFF)에도 열지 않는다. 대시보드의 자원·장애 진단 화면(레벨 2의 Node 자원, Pod 사건)은 `resources`·`cluster`의 **가공 조회**가 필요하다. 이번 범위에는 넣지 않고, 화면이 실제로 필요해질 때 기존 `/observations/*` 가공 경로에 추가한다.
-- 라이브 DTO 추가(`instances[].waiting`, `reservations[]`, Node `ready/measurement/reasons`)는 이 계획이 아니라 대시보드 계획 4장 선행 수정이 맡는다. 워크로드 유입 큐 길이(`workloads[].pending`, runtime `WorkloadState.Pending`)도 같은 곳에서 사용자 결정 대기다.
+- 라이브 DTO 추가(`instances[].waiting`, `reservations[]`, Node `ready/measurement/reasons`)는 이 계획이 아니라 대시보드 계획 4장 선행 수정이 맡는다. 워크로드 유입 큐 길이(`workloads[].pending`)도 같은 곳에서 추가한다(사용자 결정 2026-10-28).
 - 안전·품질 관문을 "하네스 순감소"를 이유로 지우지 않는다. 지우는 것은 중복 수집 경로뿐이다.
 - 게이트웨이 분리(ADR 0029)는 보류다. 실제 split이 승인되면 캠페인 사이 별도 작업 단위에서 source 차원·`resources`·`cluster`·T5 모집단을 함께 바꾼다. 이번에는 `router` 파라미터를 만들지 않는다.
 - 다음 서버 재빌드와 이 계획의 리허설은 `e947cd5e`의 공유 `Runtime` 변경(예: `internal/serving/runtime.go:1208` `Routable`의 `i.Capacity > 0`)을 정리한 소스로 한다. #213 서버(`24f4ff4f`)는 그 이전 소스다.

@@ -258,7 +258,7 @@ update만 허용한다. 사용자 변경 권한은 관리자가 binding한 계�
 
 snapshot의 작은 DTO는 다음과 같다. 아래 `?`는 생략 가능, `null`은 확인할 값 없음이다.
 
-- `workloads[]:{uid,name,model,definitionID:string|null,slo:{percentile,targetLatencyNanos},autonomous,admission,readiness:{ready,reason,observedAt}}`.
+- `workloads[]:{uid,name,model,definitionID:string|null,slo:{percentile,targetLatencyNanos},autonomous,admission,pending,readiness:{ready,reason,observedAt}}`. `pending`은 배정 전 유입 큐 길이(runtime `WorkloadState.Pending`).
   적용 정의가 있으면 그 이름/모델/SLO를, 아직 없으면 등록 정의를 표시하고 definitionID는
   null, admission/readiness.ready는 false다. 동일 이름의 새 UID와 합치지 않는다.
 - `nodes[]:{uid,name,powerMode,ready,measurement?,reasons?,observedAt}`. 전력 W는 `metrics` 프레임에만 있다.
@@ -281,7 +281,7 @@ snapshot의 작은 DTO는 다음과 같다. 아래 `?`는 생략 가능, `null`�
   모든 count는 0 이상의 정수다. 관측 가능한 각 UID는 무유입 초에도 0 count로 보내고,
   계측 불가 구간은 0을 만들지 않고 `gaps`로 보낸다. 의미와 분모는 4.4절을 따른다.
 
-위 계약 중 `reservations`, `instances[].waiting`, `nodes[].ready/measurement/reasons`는 계획 4장 선행 수정으로
+위 계약 중 `reservations`, `workloads[].pending`, `instances[].waiting`, `nodes[].ready/measurement/reasons`는 계획 4장 선행 수정으로
 들어오고, 같은 수정이 현재 코드(`internal/serving/live/types.go`)의 `decision.recordRef`, `instances[].workloadUID`,
 `nodes[].targetPowerMode/watts`를 삭제한다. 수정 전 프레임에서 앞단은 이 필드들을 무시하고 해당 자리를 비운다.
 
@@ -586,7 +586,7 @@ flowchart LR
 | 엣지 | 표시 값 | 라이브 DTO 출처 |
 |---|---|---|
 | E1 클라이언트→접수 | 수신 req/s(레인별, 보드 합계) | `metrics.workloads[uid].received` |
-| E2 접수→POOL 유입 큐 | 접수 가능 여부 | `workloads[].admission`. 워크로드 유입 큐 길이(runtime `WorkloadState.Pending`, `internal/serving/runtime.go:1160`)는 live에 없으므로 비운다. 수신−종결 차를 대기로 쓰지 않는다 |
+| E2 접수→POOL 유입 큐 | 접수 가능 여부, 유입 큐 길이(배정 전) | `workloads[].admission`; 큐 길이는 **현재 미제공 → 계획 4장 선행 수정 `workloads[].pending`**(runtime `WorkloadState.Pending`, `internal/serving/runtime.go:1160`). 들어오기 전엔 표시 안 함. 수신−종결 차를 대기로 쓰지 않고, E3 인스턴스 `waiting`과 더하지 않는다 |
 | E3 큐→인스턴스 | 인스턴스별 분배 비율, 인스턴스 native 대기 수, 실제 처리 수 | `routing[uid][instanceID]`, `instances[].routable[uid]`, `instances[].running[uid]`; 대기 수는 **현재 미제공 → 계획 4장 선행 수정 `instances[].waiting[uid]`**(runtime `Waiting`: 분배된 뒤 native queued/deferred, `AssignedUnknown`과 구분, `runtime.go:1217-1228`). 들어오기 전엔 표시 안 함 |
 | E4 인스턴스→응답 | 종결 N, 성공률, SLO 안 비율, p95 | `metrics.workloads[uid].completed/failed/withinSLO/p95ms`. 인스턴스별 종결은 **미제공 → 표시 안 함**(워크로드 단위만) |
 | E5 Node 전력 | Node W, 전력모드; 보드 합계 | `metrics.nodes[uid].watts`, `nodes[].powerMode`; `metrics.pool.wholeWatts/activeWatts` |

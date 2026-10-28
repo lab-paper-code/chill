@@ -61,6 +61,7 @@
 | `Workloads[0]` 한 행에만 귀속시키는 `Instance.WorkloadUID`를 없애고, 지도는 `routable`·`routing`·`running` 맵으로 배치한다 | 여러 워크로드에 묶인 인스턴스가 하나의 행에만 나온다 |
 | 판단 snapshot의 `Reservations`를 작은 live DTO로 투영한다: owner, Node, Workload, Pod·instance 범위, reason. 후보 본문(target)은 반복 전송하지 않는다. Node `ready`·`measurement`·`reasons`도 함께 보낸다 | 예약이 T5 DTO와 summary에 빠져 있다(`live/types.go:121-145`) |
 | 인스턴스 `Waiting`을 투영하고 `AssignedUnknown`과 구분한다 | 유입/대기/실행 구분에 필요하다. 수신−종결 차를 큐 길이로 쓰지 않는다 |
+| 워크로드 유입 큐 길이 `workloads[].pending`을 투영한다(runtime `WorkloadState.Pending`, `internal/serving/types.go:306`). 아직 인스턴스에 배정되지 않은 요청 수다 | 흐름 보드 E2(접수→POOL 큐)에 표시한다(사용자 결정 2026-10-28). 인스턴스 `waiting`(배정 뒤 대기)과 더하지 않는다 |
 | 쓰이지 않는 필드를 삭제한다: `Decision.RecordRef`, `Node.Watts`(전력은 metrics 프레임), `Node.TargetPowerMode`(값을 넣는 곳 없음) | 죽은 계약이다. 근거 연결은 3장의 `decision.at` 조회로 한다 |
 | 관련 상태를 한 delta로 묶고, 관측 시각만 다른 같은 상태는 다시 발행하지 않는다 | runtime·decision 투영이 변경 여부와 무관하게 여러 프레임으로 나뉘어 발행된다(`live.go:107-127,177-194`). 링 600프레임이 빨리 소진된다 |
 | 첫 판단 전 Node 목록이 비어 있을 수 있음을 화면에서 다룬다 | Node는 판단 callback에서만 채워진다 |
