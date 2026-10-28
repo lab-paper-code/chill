@@ -546,3 +546,8 @@
 
 - #216: factor 12행(membership/replicas/power/routing/resources/batching × E5-2/E5-5; placement 제외) `control-216-rev102-factors/factor-tables.txt` → spec 기입 `9d0a3e13`. batching-off 2행 에너지 UNKNOWN(전력 gap). 예약 잔류 3회째(finish; 재부팅 후 자연 0).
 - genesis1 호스트 재부팅 18:20Z(측정 종료 16:32Z 이후): 커널 global OOM(katib-controller kill) → snapd watchdog → 재부팅 [추정]. 직전 summarize가 `e5-summary.json` 5.6 GB 생성 — 하네스 summarize 메모리/출력 크기가 원인 후보(E5 뒤 과제, 측정 영향 없음).
+
+## 2026-10-28 19:0xZ — E5 결과·로그 기반 스케줄러 개선 작업 시작(사용자 의도)
+
+- 상향식: 단계별(E5-0~7, S, factor 12행) 원 로그에서 스케줄러 로직 결함을 증거·코드 위치로 하나씩 추출(결함 카드) → 종합해 근본 문제 도출 → 기존 검증된 해법(롤링 업데이트 readiness, HPA stabilization/cooldown, lease/TTL, circuit breaker 등)에 매핑 → 사용자 결정 → 파일 영역 분리 병렬 구현 + 기록 snapshot replay 회귀 → E5 2회차.
+- 워크플로우: P0 증거 정규화(1) → P1 단계별 결함 추출(병렬 8, 읽기 전용) → P2 종합(1) → P3 사용자 결정 → P4 구현 → P5 E5 2회차. P3 전 CHILL 코드 변경 없음.
