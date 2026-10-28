@@ -522,3 +522,8 @@
 - **전환 중 MNV 라우팅 공백**: BackendUnavailable E5-1 9,092 / E5-5 4,507 / E5-6 8,417건, 초 단위 군집 43/43이 MNV prepare/route 실행 구간과 겹침(오류 초 기준 85.6/53.5/84.8%); 그러나 scheduler snapshot의 MNV routable 수는 항상 1~3(0 아님) → 전체 공백이 아니라 특정 대상(신규/route 전환 인스턴스)으로의 전달 실패 [추정]. 고정 배치(E5-S)에는 없음. 원시 `control-213-full/routing-gap-analysis.md`, `history://RoutingGap27`.
 - **rasp5 교체 진동**: `006-mnv2-cpu-q1 ↔ 008-mnv2-cpu-q1-lut` 반복 교체(E5-1 약 1~2분 간격 14회) — 계획기 진동 후보.
 - **예약 잔류**(prepare rate-limiter 실패 후) — 23:5xZ 항목.
+
+## 2026-10-28 11:0xZ — 제어요소 비교(factor) 실행 준비
+
+- 거부 원인: factor 초기 상태 복원에 planner가 정한 인스턴스별 maxBatch cap(2→1, 32→1)이 필요한데 public prepare가 받지 못함(`history://FactorPrep27`). 최소 수정: prepare 선택 필드 `maxBatch`(측정된 batch 집합 내, 경계 1회 검증) `c13f13f1`; 하네스 cap 복원·instances[] ACK `d6ebf33c`. options 템플릿 의미 불변.
+- 시험 대상 변경 공개: factor 실행은 rev102(48c1a44f: prepare 필드 + T5/G2 코드 포함, G2 미배선) — full 행(rev101)과 제어 로직 동일, 보고서 조건으로 명시. lint/test/arch clean PASS(48c1a44f).
