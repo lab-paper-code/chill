@@ -552,3 +552,8 @@
 - 상향식: 단계별(E5-0~7, S, factor 12행) 원 로그에서 스케줄러 로직 결함을 증거·코드 위치로 하나씩 추출(결함 카드) → 종합해 근본 문제 도출 → 기존 검증된 해법(롤링 업데이트 readiness, HPA stabilization/cooldown, lease/TTL, circuit breaker 등)에 매핑 → 사용자 결정 → 파일 영역 분리 병렬 구현 + 기록 snapshot replay 회귀 → E5 2회차.
 - 워크플로우: P0 증거 정규화(1) → P1 단계별 결함 추출(병렬 8, 읽기 전용) → P2 종합(1) → P3 사용자 결정 → P4 구현 → P5 E5 2회차. P3 전 CHILL 코드 변경 없음.
 - 보완(사용자): 상향식 작업 자체도 최소 단위로 쪼개 다수 서브에이전트 병렬 — P0a 도구/스키마(1) → P0b 단계별 추출(병렬) → P1 단계별 결함 추출(full 8 + S 1 + factor 6 병렬).
+
+## 2026-10-28 20:0xZ — 분석 워크플로우 롤백(사용자 우려 검증)
+
+- 검증: judgment Tick.events = 원시 scheduler.jsonl.gz 축자 복사(60/60 동일). 그러나 settings 행·catalog stream 미사용, P0 정규화는 축약본, P1 scout은 gz 직접 읽기 불가(256MB 제한)·gopls 미수행 → "정제 결과만 보고 판단" 위험 실재.
+- 조치: P2 중단, r1 카드 폐기(`analysis/cards-r1-superseded/` 보관). P0 원시 리더 추가(gz 전 stream kind/시각 필터, 제한 없음) → P1을 실행 도구 보유 task 에이전트로 재수행; 카드 증거는 원시 행 인용 자동 대조, codePath는 gopls 확정 필수.
