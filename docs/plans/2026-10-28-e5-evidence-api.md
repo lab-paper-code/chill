@@ -4,10 +4,11 @@
 
 ## 0. publication 계약 (#213 게시 전, 가장 먼저)
 
-publication(`hack/e5/e5.py:1721-1787`)은 결과 표와 대시보드 S1이 함께 읽는 불변 기록이다. 형식은 이 계획이 맡는다.
+publication(`hack/e5/e5.py:1721-1787`)은 결과 표와 대시보드 S1이 함께 읽는 **불변** 기록이다. 게시한 뒤에는 고칠 수 없으므로, #213 게시 전에 하네스 동결을 잠깐 풀고 이것부터 고친다. 형식은 이 계획이 맡는다.
 
 - `kpis`에 `energyCoverage`, `gapErrorBoundJoules`를 추가한다. 공백 보간 규칙(`198150d6`)이 만든 값이다.
-- 실행마다 측정 규칙 식별자를 넣는다. 항목은 하네스 SHA, `energyCoverage` 정책, 증거 출처(`host-s3` / `api`), GC 지표 의미(`gctrace-cycles` / `runtime-metrics-delta`)다.
+- 실행마다 측정 규칙 식별자를 넣는다. 항목은 하네스 SHA, `energyCoverage` 정책, 증거 출처(`host-s3` / `api`), GC 지표 의미(`gctrace-cycles` / `runtime-metrics-delta`)다. #213은 옛 수집, 다음 E5부터는 API 수집이라 같은 이름의 값도 의미가 다를 수 있다.
+- 식별자는 기록만 한다. 비교 가능 여부를 판정하는 관문은 만들지 않는다.
 
 ## 1. 범위
 
@@ -51,30 +52,34 @@ publication(`hack/e5/e5.py:1721-1787`)은 결과 표와 대시보드 S1이 함�
 
 - `GET /api/v1/observations/raw?hour=` → 분 세그먼트 목록과 시간 상태(`open` / `closed-local` / `archived`).
 - `GET /api/v1/observations/raw/{hour}/{kind}`
-  - 로컬 닫힌 분은 JSONL 원본을, 보존 2시간이 지난 시간은 보관본 gzip을 그대로 보낸다. 서버가 즉석에서 압축하지 않는다.
+  - 로컬 닫힌 분은 JSONL 원본을, 보존 2시간이 지난 시간은 보관본 gzip을 그대로 보낸다. 서버가 즉석에서 압축하지 않는다. 측정 대상인 서버 CPU를 쓰지 않기 위해서다.
+  - 이 전송은 이제 서버 프로세스 안에서 일어난다. 이전에는 호스트 프로세스가 파일을 읽었다. 그래서 측정 창 밖에서만 실행한다.
   - `kind`: `requests`, `scheduler`, `catalog`, `management`, `resources`, `cluster`.
 - `GET /api/v1/observations/raw/definitions` → 확정된 마지막 완결 행까지만 보낸다.
 - 열린 분은 내보내지 않는다. 하네스는 drain 뒤 다음 분 경계가 지나면 가져온다.
 - 처리 마감과 쓰기 마감을 따로 둔다(`longOperation` 방식). 이 보관본 읽기·마감 정책은 대시보드가 쓰는 가공 조회(`/observations/scheduler`)에도 적용한다.
-- 권한: nonResourceURLs에 `/raw`와 `/raw/*`를 둘 다 넣는다. 하네스 전용이며, 대시보드와 앞단에는 열지 않는다.
+- 권한: nonResourceURLs에 `/raw`와 `/raw/*`를 둘 다 넣는다. 요청 ID가 든 원시라서 하네스 전용이며, 대시보드와 앞단에는 열지 않는다.
+- 대시보드용 가공 API(`/observations/workloads`, `/scheduler`)는 그대로 둔다. 원시 내보내기로 대체하지 않는다.
 
 ### `resources`
 
 - **node-agent**(모든 Node, genesis1 포함)가 CHILL 서빙 인스턴스와 CHILL 제어 Pod 컨테이너를 잰다.
   - 값: cgroup counter(CPU, throttle, 메모리), 센서별 thermal 온도.
-  - 행 필드: `node`, `podUID`, `containerID`, `cgroupVersion`, 표본 시각, 서버 수신 시각.
+  - 행 필드: `node`, `podUID`, `containerID`, `cgroupVersion`, 표본 시각(Node 시계), 서버 수신 시각. Node 시계 차이를 사후에 볼 수 있게 두 시각을 모두 남기되, 보정하지는 않는다.
+  - 재시작·종료 상태는 넣지 않는다(`cluster`가 기록). 그래서 node-agent에 Pod 권한을 추가하지 않는다.
 - **컨테이너 발견**: 호스트 `/proc`·`/sys`에서 Pod UID와 containerID로 찾는다. 환경마다 cgroup v1/v2와 경로 형식이 섞여 있으므로 경로 모양을 추측하지 않는다.
 - **전송**: 내부 수신 POST 1개, SA 토큰 + 기존 TokenReview/SAR, 묶음 전송(Node당 1행).
   - 재전송 장치는 없다. 전송 실패 구간은 결손으로 남긴다.
   - 하네스는 측정 창 끝 + 묶음 주기 + 다음 분 경계가 지난 뒤 수집한다.
-- **서버 in-process**: GC 누적 CPU와 사이클 수(기존 1초 ticker), 관측 디렉터리 바이트(분 1회). 서버가 자기 cgroup을 직접 읽지는 않는다.
+- **서버 in-process**: GC 누적 CPU와 사이클 수(기존 1초 ticker), 관측 디렉터리 바이트(분 1회).
+- 서버가 자기 cgroup을 직접 읽지는 않는다. 서버가 멈추는 구간(GC, 잠금 경합)에 자기 측정도 함께 멈추기 때문이다. 서버 컨테이너도 genesis1의 node-agent가 밖에서 잰다.
 
 ### `cluster`
 
 - **Pod**: CHILL 인스턴스와 제어 Pod의 생성·삭제·Ready·restart·종료 사유·imageID를 기록한다. 서버는 기동 때 자기 Pod UID를 1행 기록한다.
 - **observer issue**: 발생·변경·해소를 기록한다.
 - **Node**: 따로 기록하지 않는다. 이미 scheduler 행에 있다. cordon은 기록하지 않는다.
-- 기록이 성공하면 같은 사실을 라이브 hub로 넘긴다(판단·작업과 같은 callback 방식). event의 형태는 대시보드 계획이 정한다.
+- 기록이 성공하면 같은 사실을 라이브 hub로 넘긴다(판단·작업과 같은 callback 방식). 출처는 기록 하나이고, 기록에 실패한 사실은 발행하지 않는다. event의 형태는 대시보드 계획이 정한다.
 
 ### settings `meters`
 
@@ -89,7 +94,7 @@ publication(`hack/e5/e5.py:1721-1787`)은 결과 표와 대시보드 S1이 함�
 |---|---|
 | spec | `00_measurement.md` "Serving 관측" 행에 "자원 사용·Pod 변화·장애 감지를 기록하고 원래 기록 그대로 API로 제공한다"를 추가 |
 | SRS | 요구사항 4개(원시 내보내기, `resources`, `cluster`, `meters`)와 수용 시나리오 |
-| 설계 | `observability-split.md`. ADR 0030: 같은 prefix에 stream 2개 추가, 버전 유지. 배포 이전 시간에 stream이 없는 것은 결손이 아니다 |
+| 설계 | `observability-split.md`. ADR 0030: 같은 prefix에 stream 2개 추가, 버전 유지. 버전을 올리면 #213 보관본을 서버가 못 읽게 된다. 배포 이전 시간에 stream이 없는 것은 결손이 아니다. 다중 버전 reader는 만들지 않는다 |
 | 구현 1 | 원시 내보내기, `meters`와 두 쓰기 클라이언트. stream 2개 등록 |
 | 구현 2 | `resources` |
 | 구현 3 | `cluster`와 라이브 callback |
@@ -104,7 +109,7 @@ publication(`hack/e5/e5.py:1721-1787`)은 결과 표와 대시보드 S1이 함�
 - 관측 KPI(D1, 지연, 전력 J)는 같아야 한다.
 - `resources`는 식별자·단위·결손만 확인한다.
 - 측정 대상 ChillServer에 더해지는 CPU 몫을 기록한다. 대상은 라이브 hub, node-agent 수신, 원시 내보내기, 대시보드 조회다.
-- 확인이 끝나면 옛 경로를 삭제한다.
+- 확인이 끝나면 옛 경로를 삭제한다. 이 비교는 전환 때 1회이며, 상시 검증 관문으로 남기지 않는다.
 
 ## 5. 완료 기준
 
@@ -117,6 +122,7 @@ publication(`hack/e5/e5.py:1721-1787`)은 결과 표와 대시보드 S1이 함�
 ## 6. 규칙과 열린 점
 
 - E5 측정 창 동안에는 원시 내보내기와 대시보드 과거 조회를 실행하지 않는다.
+- 하네스 순감소를 이유로 안전·품질 관문(STOP 감시, `client` 시작 관문, 생성기 품질)을 지우지 않는다. 지우는 것은 중복 수집 경로뿐이다.
 - 다음 서버 재빌드는 `e947cd5e` 분리 코드를 정리한 소스로 한다. 게이트웨이 분리는 보류(ADR 0029)이며 `router` 파라미터는 만들지 않는다.
 - 열린 점(구현 2에서 1회 확인):
   - node-agent가 비root로 cgroup 파일을 읽을 수 있는지
