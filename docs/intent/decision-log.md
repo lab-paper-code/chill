@@ -485,3 +485,7 @@
 - E5-1 부하 완료(planned=issued M57495/P20605/S301, 지각 0.009%) 후 하네스 단계 경계 quiet 대기(예약 0) 194s 초과 → 정지. quiet 요구는 CHILL 재검사 → 삭제(`6f6b28c3`, 기록 전용; freeze는 자율 off·route ACK 유지).
 - 예약 잔류 본질: jetson-nano MNV prepare가 `client rate limiter Wait … context canceled`로 partial 실패 후 예약 미해제 — **CHILL 결함(E5 보고서 조건, E5 뒤 수정)**. 복구는 기존 reset takeover 1회.
 - kube client QPS 50/Burst 100(Helm `servingEntrypoint.kubeAPI`)에서 rate limiter 오류 2회 관측(PLC x4C drain, 이 prepare) → 재시작 전 **200/400**으로 상향(값만, 이미지 불변; 설정값 변경을 binding에 기록).
+
+## 2026-10-28 01:0xZ — 단계 judgment 비치명(기록만)
+
+- #212 E5-1: 부하·지각·SLO 정상(M p95 746ms/P 16ms/S 2.9s), 전력 gap 3.5~4.8s(>3s) 3 Node → judgment가 run 정지. 결정(권고 기본값): 단계 judgment(FAIL/NOT_READY/INCOMPLETE)는 기록만 하고 계속; 전력 gap은 coverage·해당 창 에너지 UNKNOWN; run 정지는 운영 실패(producer/bind/route ACK, 생성기 INVALID)만(`158e106c`).
