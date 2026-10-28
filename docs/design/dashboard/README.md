@@ -250,7 +250,7 @@ update만 허용한다. 사용자 변경 권한은 관리자가 binding한 계�
 | type | 공통 필드 외 payload | 발행 |
 |---|---|---|
 | `hello` | `protocol:"chill-live/1"`, `serverAt`, `retainFrom`(재개 가능한 최소 seq, 빈 버퍼면 head+1) | 상류 인증 성공 후 한 번 |
-| `snapshot` | `workloads`, `nodes`, `instances`, `routing`, `decision`, `actions` 전체 | 최초 접속, 재동기화 |
+| `snapshot` | `workloads`, `nodes`, `instances`, `routing`, `decision`, `actions`, `reservations` 전체 | 최초 접속, 재동기화 |
 | `delta` | snapshot 키의 부분집합; `removed?:{instances?:[id],actions?:[actionKey]}` | 상태 변화 |
 | `event` | `kind:"decision"`와 `decision`, 또는 `kind:"action"`와 `action` | 판단과 작업 시작·종결 |
 | `metrics` | `bucketAt`(UTC 초 시작), `workloads:{uid:Metric}`, `nodes:{uid:{watts:number|null,observedAt:string|null}}`, `pool:{wholeWatts:number|null,activeWatts:number|null}`, `gaps?:[{from,to,scope,reason}]` | 매초, 같은 버킷 수정 시 전체 대체 |
@@ -261,28 +261,32 @@ snapshot의 작은 DTO는 다음과 같다. 아래 `?`는 생략 가능, `null`�
 - `workloads[]:{uid,name,model,definitionID:string|null,slo:{percentile,targetLatencyNanos},autonomous,admission,readiness:{ready,reason,observedAt}}`.
   적용 정의가 있으면 그 이름/모델/SLO를, 아직 없으면 등록 정의를 표시하고 definitionID는
   null, admission/readiness.ready는 false다. 동일 이름의 새 UID와 합치지 않는다.
-- `nodes[]:{uid,name,powerMode,targetPowerMode?,watts:number|null,observedAt}`.
-- `instances[]:{id,node:{uid,name},workloadUID,ownerWorkloadUID,profileID,ready,stopped,state,routable:{uid:boolean},running:{uid:number},observedAt}`.
+- `nodes[]:{uid,name,powerMode,ready,measurement?,reasons?,observedAt}`. 전력 W는 `metrics` 프레임에만 있다.
+- `instances[]:{id,node:{uid,name},ownerWorkloadUID,profileID,ready,stopped,state,routable:{uid:boolean},running:{uid:number},waiting:{uid:number},observedAt}`.
   `state`는 `preparing|serving|draining|removing`이다. `serving`은 수명주기 상태이지 실제
   실행 증거가 아니다. `routable`은 SCH-36의 유효 배분, `running`은 native 실행 단계 관측이다.
 - `routing:{workloadUID:{instanceID:weight}}`는 실제 배분이다. 선언과 목표는 근거 REST에서
-  별도로 읽는다. `decision:null|{at,recordRef:null|{from,to,offset,kind:"decision",at,id},state,reason}`에서
-  큰 후보·프로파일은 제외한다. 판단 identity는 원본 RFC3339Nano `decision.at`이다.
-  `SchedulerDecision`에 없는 id 필드를 새 원본 식별자로 가정하지 않는다. `recordRef`는
-  기록 완료 후 서버가 발행하는 T4 SchedulerObservationPage의 조회 구간/append offset이며,
-  기존 SchedulerRecordRef 형식의 `id` 값은 decision.at이다(독립 decision ID가 아니다).
+  별도로 읽는다. `decision:null|{at,state,reason}`에서 큰 후보·프로파일은 제외한다.
+  판단 identity는 원본 RFC3339Nano `decision.at`이다. `SchedulerDecision`에 없는 id 필드를
+  새 원본 식별자로 가정하지 않는다. 근거 조회는 3장의 `decision.at` 구간 조회다(6.1절).
+- `reservations[]:{owner,nodes:[{uid,name}],workloadUIDs:[uid],podUIDs:[uid],instances:[id],reason}`는
+  판단 snapshot의 `SchedulerReservation`(`internal/serving/scheduler.go:314-322`)에서 `target`을 뺀 것이다.
 - `actions[]:{id,kind,node:{uid,name},workloadUID,status,startedAt,completedAt?,expectedSeconds:number|null,expectedSource:{costID,reference,statistic:"mean",trialCount}|null}`.
   identity인 `actionKey`는 JSON 튜플 `[id,node.uid,startedAt]`이다. 이벤트의 `action`에는
   `phase:"started|completed|failed"`와 작은 `result?:{status,error?}`가 추가된다.
-  `starting/running`만 진행 중이며 `complete/failed/partial/canceled`는 종결이다.
-  `partial/canceled`는 `phase:"failed"`로 보내되 원본 status를 유지한다. 예상 시간·출처는
+  `starting/running`만 진행 중이며 `complete/failed/partial`은 종결이다(`OperationResult.Status`,
+  `internal/serving/kube/operations.go:344-348`). `partial`은 `phase:"failed"`로 보내되 원본 status를 유지한다. 예상 시간·출처는
   [T4 관측 설계](../serving/observability-split.md)를 따른다.
 - `Metric:{received,completed,failed,withinSLO,latencySamples,p50ms:number|null,p95ms:number|null,p99ms:number|null}`.
   모든 count는 0 이상의 정수다. 관측 가능한 각 UID는 무유입 초에도 0 count로 보내고,
   계측 불가 구간은 0을 만들지 않고 `gaps`로 보낸다. 의미와 분모는 4.4절을 따른다.
 
+위 계약 중 `reservations`, `instances[].waiting`, `nodes[].ready/measurement/reasons`는 계획 4장 선행 수정으로
+들어오고, 같은 수정이 현재 코드(`internal/serving/live/types.go`)의 `decision.recordRef`, `instances[].workloadUID`,
+`nodes[].targetPowerMode/watts`를 삭제한다. 수정 전 프레임에서 앞단은 이 필드들을 무시하고 해당 자리를 비운다.
+
 `delta.instances/actions`는 identity별 **행 전체 upsert** 후 `removed`를 적용한다.
-`workloads/nodes/routing`은 키가 있으면 해당 컬렉션 **전체 대체**이며 생략은 유지,
+`workloads/nodes/routing/reservations`는 키가 있으면 해당 컬렉션 **전체 대체**이며 생략은 유지,
 빈 배열/맵은 비우기다. `decision:null`은 판단 제거다. 삭제된 정의는 현재 목록에서
 사라져도 시간축의 정의 사전에는 남긴다. `event`는 사건 이력이며 현재 상태의 권위는
 snapshot/delta다. 생산자는 관련 delta 뒤 event를 발행한다.
@@ -528,9 +532,9 @@ decision-log). 모든 계층에 같은 맨 위 띠(DB-FR-35)를 둔다: 실시�
 
 | 레벨 | 화면 | 보이는 것 | 숨기는 것(하위에서만) | 여는 방법·URL | 닫기·뒤로가기 |
 |---|---|---|---|---|---|
-| 0 개요 | `/` 흐름 보드 | 구조 그림 위의 경로별 값(아래 엣지 표), POOL 레인마다 수신 req/s·성공률(또는 “비율 없음”)·상태 문구·인스턴스 수·Node 수, 판단 띠(마지막 판단 state·reason), 진행 중 작업 수, 전체·활성 POOL W, 사건 레인 1개 | 분모·p95/p99·SLO 안/밖/실패 막대, 인스턴스별 상태, Node별 W, 예약, 4레인, 근거 | 첫 화면 | — |
-| 1 POOL | `/pools/[uid]` 하위 페이지 | 그 UID의 카드 전체(DB-FR-36: 수신, `completed/N`과 분모, p95/p99·SLO, SLO 안/밖/실패 막대), 4레인 시간축(DB-FR-38), 그 POOL의 인스턴스·Node 요약 행 | 인스턴스·Node 상세, 예약 본문, 근거 | 레인 머리글·카드 선택 → `Link` | 보드로 링크 또는 브라우저 뒤로가기 → `/`; L0는 `sessionStorage.liveFocus`(L1 진입 때 uid 저장)의 레인에 focus |
-| 2 인스턴스·Node·예약 | L1 안 펼침 카드, `?open=inst:<id>` `?open=node:<uid>` `?open=reservations` | 인스턴스 5상태·분배 비율·running·관측 시각, Node 전력모드·W·사용 가능 여부·사유, 예약 owner·범위·사유(DB-FR-37) | 근거 | 요약 행 선택 → `open` query 교체 | 닫기·뒤로가기 → query 제거, 요약 행에 focus |
+| 0 개요 | `/` 흐름 보드 | 구조 그림 위의 경로별 값(아래 엣지 표), POOL 레인마다 수신 req/s·성공률(또는 “비율 없음”)·상태 문구·Node별 인스턴스 기호(POOL 묶음 절), 판단 띠(마지막 판단 state·reason), 진행 중 작업 수, 전체·활성 POOL W, 사건 레인 1개 | 분모·p95/p99·SLO 안/밖/실패 막대, 인스턴스별 분배 비율·running·대기 수·관측 시각, Node별 W·사유 본문, 예약 본문, 4레인, 근거 | 첫 화면 | — |
+| 1 POOL | `/pools/[uid]` 하위 페이지 | 그 UID의 카드 전체(DB-FR-36: 수신, `completed/N`과 분모, p95/p99·SLO, SLO 안/밖/실패 막대), 4레인 시간축(DB-FR-38), 그 POOL의 인스턴스·Node 요약 행 | 인스턴스·Node 상세, 예약 본문, 근거 | 레인 머리글·카드 선택 → `Link` | “◂ 보드로” `Link`는 `/#pool-<uid>`이고 L0는 hash의 레인에 focus(`tabindex=-1`). 브라우저 뒤로가기는 기본 동작이며 focus를 따로 복원하지 않는다 |
+| 2 인스턴스·Node·예약 | L1 안 펼침 카드, `?open=inst:<id>` `?open=node:<uid>` `?open=reservations` | 인스턴스 기호 상태(POOL 묶음 절 6기호)·분배 비율·running·대기 수·관측 시각, Node 전력모드·W·사용 가능 여부·사유, 예약 owner·범위·사유(DB-FR-37) | 근거 | 요약 행 선택 → `open` query 교체 | 닫기·뒤로가기 → query 제거, 요약 행에 focus |
 | 3 근거·원문 | L0·L1의 옆 패널, `?at=<decision.at>` | 판단 당시 수요·최소 수요, κ, d, 예상 에너지, 전환 비용·B, 대기 이유 문장(DB-FR-39); 원본 JSON은 접힘 | — | 사건 레인·판단 띠에서 선택 → `at` query | Esc·닫기 → query 제거, 선택했던 사건에 focus |
 
 페이지 전환은 레벨 0↔1뿐이다(Next route). 레벨 2·3은 같은 페이지의 query라서 새로고침·공유로
@@ -545,13 +549,13 @@ decision-log). 모든 계층에 같은 맨 위 띠(DB-FR-35)를 둔다: 실시�
 ```mermaid
 flowchart LR
   C[클라이언트 / 부하 생성기] -- E1 수신 req/s --> G[ChillServer 게이트웨이<br/>접수]
-  G -- E2 접수·대기 --> P[POOL 레인 ×UID<br/>큐 → 분배]
-  P -- E3 분배 비율·running --> I[Node의 인스턴스]
+  G -- E2 접수 --> P[POOL 레인 ×UID<br/>유입 큐 → 분배]
+  P -- E3 분배 비율·대기·running --> I[Node의 인스턴스]
   I -- E4 종결 N·성공률·SLO·p95 --> R[응답]
   I -. E5 W·전력모드 .- N[Node 전력]
   subgraph 제어 경로
     O[관측: 요청·실행·전력] -- C1 판단 사건 --> S[스케줄러 판단]
-    S -- C2 작업 시작·종결 --> A[작업: prepare/route/unroute/release/reset/drain/stop/remove/power]
+    S -- C2 작업 시작·종결 --> A[작업: prepare/route/unroute/release/reset/drain/stop/remove/power + 측정 run]
     A -- C3 예약 --> L[예약 장부]
   end
   O -.-> G
@@ -582,12 +586,12 @@ flowchart LR
 | 엣지 | 표시 값 | 라이브 DTO 출처 |
 |---|---|---|
 | E1 클라이언트→접수 | 수신 req/s(레인별, 보드 합계) | `metrics.workloads[uid].received` |
-| E2 접수→POOL 큐 | 접수 가능 여부; 대기 수 | `workloads[].admission`; 대기 수는 **현재 미제공 → 계획 4장 선행 수정 `instances[].waiting:{uid:n}`**(runtime `Waiting`, `AssignedUnknown`과 구분). 들어오기 전엔 표시 안 함. 수신−종결 차를 대기로 쓰지 않는다 |
-| E3 큐→인스턴스 | 인스턴스별 분배 비율, 실제 처리 수 | `routing[uid][instanceID]`, `instances[].routable[uid]`, `instances[].running[uid]` |
+| E2 접수→POOL 유입 큐 | 접수 가능 여부 | `workloads[].admission`. 워크로드 유입 큐 길이(runtime `WorkloadState.Pending`, `internal/serving/runtime.go:1160`)는 live에 없으므로 비운다. 수신−종결 차를 대기로 쓰지 않는다 |
+| E3 큐→인스턴스 | 인스턴스별 분배 비율, 인스턴스 native 대기 수, 실제 처리 수 | `routing[uid][instanceID]`, `instances[].routable[uid]`, `instances[].running[uid]`; 대기 수는 **현재 미제공 → 계획 4장 선행 수정 `instances[].waiting[uid]`**(runtime `Waiting`: 분배된 뒤 native queued/deferred, `AssignedUnknown`과 구분, `runtime.go:1217-1228`). 들어오기 전엔 표시 안 함 |
 | E4 인스턴스→응답 | 종결 N, 성공률, SLO 안 비율, p95 | `metrics.workloads[uid].completed/failed/withinSLO/p95ms`. 인스턴스별 종결은 **미제공 → 표시 안 함**(워크로드 단위만) |
 | E5 Node 전력 | Node W, 전력모드; 보드 합계 | `metrics.nodes[uid].watts`, `nodes[].powerMode`; `metrics.pool.wholeWatts/activeWatts` |
 | C1 관측→판단 | 마지막 판단 시각·state·reason; 판단 사건에 1회 강조 | `decision.at/state/reason`; `event.kind="decision"` |
-| C2 판단→작업 | 진행 중 작업 수와 kind 목록, 예상 시간·출처; 시작·종결 사건에 1회 강조 | `actions[]`(`starting/running`만 진행), `expectedSeconds/expectedSource`; `event.kind="action"`의 `phase` |
+| C2 판단→작업 | 진행 중 작업 수와 kind 목록, 예상 시간·출처; 시작·종결 사건에 1회 강조 | `actions[]`(`starting/running`만 진행), `expectedSeconds/expectedSource`; `event.kind="action"`의 `phase`. kind는 위 9종 외에 측정 run `operation-cost-measurement`·`dispatch-occupancy-measurement`·`measurement-handback`(`startNodeRun`, 종결 사건만)도 오며 모두 kind 문자열 그대로 표시한다 |
 | C3 작업→예약 장부 | 예약 수, owner, 범위, 잔류 사유 | **현재 미제공 → 계획 4장 선행 수정 `reservations[]:{owner,nodes[],workloadUIDs[],podUIDs[],instances[],reason}`**. 들어오기 전엔 “예약 미제공”으로 표시 |
 | C4 작업→Node·인스턴스 | 해당 Node·인스턴스 칸에 진행 배지(kind) | `actions[].node.uid`, `actions[].workloadUID` |
 | Node 사용 가능 | Node 칸 흐림과 사유 | **현재 미제공 → 계획 4장 선행 수정 `nodes[].ready/measurement/reasons`** |
@@ -602,8 +606,11 @@ flowchart LR
 레인은 현재 `workloads[]`의 UID마다 하나다(목록 순서는 이름, 같은 이름은 UID). 모델명·샘플 필드로
 분기하지 않는다. 레인 안 인스턴스는 `routable[uid]`가 true이거나 `running[uid]>0`이거나
 `ownerWorkloadUID==uid`인 것이며, 여러 UID에 해당하면 각 레인에 모두 나타난다(계획 4장: `Instance.WorkloadUID`
-단일 귀속 삭제). 인스턴스는 Node별로 모은다. 인스턴스 기호는 ● 실제 처리(running>0), ◐ 분배 중·처리 대기(routable
-&& weight>0 && running=0), ○ 준비됨·미분배(ready && !routable), ◌ 분배 해제 뒤 잔여 실행(!routable && running>0), × 제거(stopped)다.
+단일 귀속 삭제). 인스턴스는 Node별로 모은다. 인스턴스 기호는 그 레인의 uid에 대해 위에서 처음 맞는 것이다:
+× 제거(`stopped`) → ◌ 분배 해제 뒤 잔여 실행(`!routable[uid] && running[uid]>0`) → ● 실제 처리(`routable[uid] && running[uid]>0`)
+→ ◐ 분배 중·처리 대기(`routable[uid] && running[uid]==0`) → ○ 준비됨·미분배(`ready && !routable[uid]`) → ◇ 준비 중(`!ready`).
+`routable`은 runtime이 ready·!stopped·weight>0을 모두 요구하므로(`internal/serving/runtime.go:1208-1210`) weight를 따로 보지 않는다.
+owner 없는 준비 중 인스턴스는 레인 조건에 들지 않아 C4의 prepare 배지로만 보인다.
 레인의 상태 문구는 아래 네 단계다. 레인에 인스턴스가 없으면 “(인스턴스 없음)”이고 0으로 그리지 않는다.
 
 #### 레벨 1 POOL 페이지
@@ -650,7 +657,7 @@ flowchart LR
 | 실행 준비됨 | 현재 instance.ready=true && !stopped, 해당 UID의 적용 정의와 binding 일치 | routing=0이어도 준비됨이다. routable/분배 여부는 별도다. |
 | 실제 처리 중 | 신선한 native `running[uid]>0` 관측 | ready, weight>0, HTTP pending/assigned 또는 과거 성공만으로 처리 중이라 하지 않는다. |
 
-원본 running은 `internal/serving/runtime.go:instancesLocked`(:1049-1059)의
+원본 running은 `internal/serving/runtime.go:instancesLocked`(:1217-1228)의
 phaseRunning과 일치시킨다. `assignedUnknown`은 실행 증거가 아니다. 오래된 관측은
 주 문구에 “마지막 관측”을 붙이고 현재 처리 중으로 강조하지 않는다.
 
@@ -659,7 +666,7 @@ phaseRunning과 일치시킨다. `assignedUnknown`은 실행 증거가 아니다
 | 기존 화면/기능 | 새 위치 또는 제거 |
 |---|---|
 | 홈 `/`, 서비스 상세 5개 하위 면 | `/` 흐름 보드(레벨 0)와 `/pools/[uid]` POOL 페이지(레벨 1)로 합침 |
-| `/pools`, `/resources` | `/pools/[uid]`의 인스턴스·Node 펼침 카드(레벨 2); `/pools`는 `/`로 보냄. 선언 인벤토리 고급 조회는 운영자 |
+| `/pools`, `/resources` | `/pools/[uid]`는 이미 워크로드 UID의 활성 POOL 페이지(`app/[...route]/page.tsx:48` → `features/resources.tsx:PoolPage`(:85-103), REST `v1/pools/{uid}` 수동 폴링 옵션)이므로 같은 route를 레벨 1 live 페이지로 대체하고 인스턴스·Node는 펼침 카드(레벨 2)로 둔다; `/pools`(:47, `PoolsPage`)는 `/`로 보냄. 선언 인벤토리 고급 조회는 운영자 |
 | `/scheduler`, candidates/estimates/load, `/transitions` | 현재 판단 띠, 근거 패널, 시간축 작업 레인으로 합침 |
 | 판단 history/compare/power, observations/changes | 시간축, 재생 비교, 요청 상세 및 운영자 원본 기록으로 합침 |
 | scheduler/profiles와 측정 목록/회차 | 운영자 `측정 근거` 한 화면; BEO, 전환 비용, 분배 점유시간(d)은 지원 종류를 명시 |
@@ -806,7 +813,7 @@ DB-FR-40~45의 제품 재생은 [T4 관측 설계](../serving/observability-spli
 같은 UID/원본 시각의 관측은 local 우선, 없는 시간대는 archive로 읽는다.
 `coverage:{from,to,sources:[{from,to,stream,source,store?,key?}],gaps:[{from,to,stream,reason}]}`
 (`source=local|archive`)를 유지한다. 브라우저가 S3나 ops 디렉터리를 직접 읽지 않는다.
-재생 adapter는 다음 조회 결과를 v1 메시지/reducer와 LiveStage에 투영하며 라이브 socket은 열지 않는다.
+재생 adapter는 다음 조회 결과를 v1 메시지/reducer와 흐름 보드·POOL 페이지(`live-board`/`live-pool`)에 투영하며 라이브 socket은 열지 않는다.
 
 | 입력 endpoint | 페이지 진행과 재생 투영 |
 |---|---|
