@@ -27,7 +27,7 @@ type manualResetPlan struct {
 }
 
 func (c *SchedulerController) manualResetOperationLocked(request ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot) (Operation, error) {
-	if strings.TrimSpace(request.Reason) == "" || request.WorkloadUID != "" || request.Node != (serving.NodeReference{}) || request.ProfileID != "" || request.Instance != "" || request.FixedBatchSize != 0 || request.Weights != nil {
+	if strings.TrimSpace(request.Reason) == "" || request.WorkloadUID != "" || request.Node != (serving.NodeReference{}) || request.ProfileID != "" || request.Instance != "" || request.FixedBatchSize != 0 || request.MaxBatch != nil || request.Weights != nil {
 		return Operation{}, refused("InvalidInput", "reset requires a reason and only workloadUIDs or scope")
 	}
 	if (request.WorkloadUIDs != nil) == (request.Scope != "") || request.WorkloadUIDs != nil && len(request.WorkloadUIDs) == 0 ||

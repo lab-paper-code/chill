@@ -13,6 +13,7 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -301,6 +302,95 @@ func TestManualOperationGuards(t *testing.T) {
 	}
 	if _, err = h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != testOperationConflict {
 		t.Fatalf("second prepare on an occupied Node: %v", err)
+	}
+}
+
+func manualBatchPreparation(t *testing.T) (*admissionHarness, PrepareSpec) {
+	t.Helper()
+	h, _, _ := sequenceHarness(t)
+	spec := h.controller.config.Preparations[manualPrepare().ProfileID]
+	spec.Instance.Profile.Batches = []serving.BatchProfile{
+		{Batch: 1, DurationNanos: []float64{1000}},
+		{Batch: 2, DurationNanos: []float64{2000}},
+		{Batch: 4, DurationNanos: []float64{4000}},
+	}
+	spec.Instance.MaxBatch, spec.Config.Policy.MaxBatchSize = 4, 4
+	spec.Instance.Profile.Condition.Firstfloor.MaxBatchSize = 4
+	spec.Instance.Profile.RuntimeMetadata.InitializedBatches = []int{1, 2, 3, 4}
+	spec.Config.Inputs, spec.Config.Outputs = []string{"input"}, []string{"output"}
+	spec.Config.RunnerCommand, spec.Config.RunnerTimeoutMS = []string{"runner"}, 1000
+	spec.Config.MaxQueueRequests, spec.Config.MaxQueueBytes, spec.Config.MaxRequestBytes = 4, 1024, 1024
+	spec.Config.BatchSizes, spec.Config.MaxBatchSize = []int{1, 2, 3, 4}, 4
+	h.controller.config.Preparations[spec.Instance.Profile.ID] = spec
+	return h, spec
+}
+
+func TestManualPrepareAppliesMeasuredMaxBatch(t *testing.T) {
+	for _, cap := range []int{1, 2, 4} {
+		t.Run(fmt.Sprint(cap), func(t *testing.T) {
+			h, template := manualBatchPreparation(t)
+			request, err := DecodeManualOperation(json.RawMessage(fmt.Sprintf(
+				`{"kind":"prepare","workloadUID":"w-uid","profileID":%q,"node":{"name":"node","uid":"node-uid"},"maxBatch":%d,"reason":"restore comparison state"}`,
+				template.Instance.Profile.ID, cap)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation, err := h.controller.manualOperationLocked(context.Background(), request, h.controller.config, h.controller.state.Snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if operation.Prepare.Instance.MaxBatch != cap || operation.Prepare.Config.Policy.MaxBatchSize != cap {
+				t.Fatalf("maxBatch was not applied to instance and policy: %+v", operation.Prepare)
+			}
+			if err := h.controller.operations.PrepareInstance(context.Background(), *operation.Prepare); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
+				t.Fatalf("preparation did not persist its native config: %v", err)
+			}
+			cm := &core.ConfigMap{}
+			if err := h.controller.store.client.Get(context.Background(), client.ObjectKey{Namespace: "chill-system", Name: template.Name}, cm); err != nil {
+				t.Fatal(err)
+			}
+			var applied native.Config
+			if err := json.Unmarshal([]byte(cm.Data["config.json"]), &applied); err != nil || applied.Policy.MaxBatchSize != cap {
+				t.Fatalf("persisted maxBatch = %d, want %d: %v", applied.Policy.MaxBatchSize, cap, err)
+			}
+			pod, node, _, _ := observerSourceFixture()
+			profile := operation.Prepare.Instance.Profile
+			physical := serving.InstanceState{ID: "pod-uid/containerd://running", PodUID: string(pod.UID),
+				Node: template.Instance.Node, Profile: profile.ID, Ready: true,
+				Native: &native.State{Ready: true, Metadata: native.Metadata{
+					MaxQueueRequests: 4, MaxBatchSize: 4, Policy: applied.Policy,
+				}}}
+			snapshot := serving.SchedulerSnapshot{}
+			sn := serving.SchedulerNode{Node: template.Instance.Node}
+			captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}},
+				map[string]serving.InstanceState{physical.ID: physical}, map[string]*serving.Profile{profile.ID: profile})
+			if len(snapshot.Instances) != 1 || snapshot.Instances[0].ID != physical.ID || snapshot.Instances[0].MaxBatch != cap {
+				t.Fatalf("physical policy maxBatch was not reflected in snapshot: %+v", snapshot.Instances)
+			}
+			if original := h.controller.config.Preparations[template.Instance.Profile.ID]; original.Instance.MaxBatch != 4 || original.Config.Policy.MaxBatchSize != 4 {
+				t.Fatal("manual cap changed the planner preparation template")
+			}
+		})
+	}
+}
+
+func TestManualPrepareRejectsUnmeasuredMaxBatch(t *testing.T) {
+	for _, cap := range []int{-1, 0, 3, 5} {
+		t.Run(fmt.Sprint(cap), func(t *testing.T) {
+			h, _ := manualBatchPreparation(t)
+			request := manualPrepare()
+			request.MaxBatch = &cap
+			before := len(h.kube.Actions())
+			_, err := h.controller.manualOperationLocked(context.Background(), request, h.controller.config, h.controller.state.Snapshot)
+			if errorCode(err) != "InvalidInput" {
+				t.Fatalf("unmeasured maxBatch %d was not refused: %v", cap, err)
+			}
+			for _, action := range h.kube.Actions()[before:] {
+				if action.GetVerb() != "get" {
+					t.Fatalf("refused maxBatch caused a Kubernetes effect: %s %s", action.GetVerb(), action.GetResource().Resource)
+				}
+			}
+		})
 	}
 }
 

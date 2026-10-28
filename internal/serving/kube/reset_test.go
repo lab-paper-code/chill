@@ -30,6 +30,7 @@ import (
 func TestDecodeManualOperationStrictKindFields(t *testing.T) {
 	for _, raw := range []string{
 		`{"kind":"prepare","workloadUID":"w","profileID":"p","node":{"name":"n","uid":"u"},"reason":"prepare"}`,
+		`{"kind":"prepare","workloadUID":"w","profileID":"p","node":{"name":"n","uid":"u"},"maxBatch":1,"reason":"restore comparison state"}`,
 		`{"kind":"remove","workloadUID":"w","node":{"name":"n","uid":"u"},"instance":"p/c","reason":"remove"}`,
 		`{"kind":"route","workloadUID":"w","weights":{"p/c":1},"reason":"route"}`,
 		`{"kind":"unroute","workloadUID":"w","reason":"unroute"}`,
@@ -46,6 +47,8 @@ func TestDecodeManualOperationStrictKindFields(t *testing.T) {
 		{"prepare scope empty", `{"kind":"prepare","reason":"test","scope":""}`, "scope"},
 		{"remove profile empty", `{"kind":"remove","reason":"test","profileID":""}`, "profileID"},
 		{"remove batch zero", `{"kind":"remove","reason":"test","fixedBatchSize":0}`, "fixedBatchSize"},
+		{"remove max batch zero", `{"kind":"remove","reason":"test","maxBatch":0}`, "maxBatch"},
+		{"route max batch null", `{"kind":"route","reason":"test","maxBatch":null}`, "maxBatch"},
 		{"route node empty", `{"kind":"route","reason":"test","node":{}}`, "node"},
 		{"route node null", `{"kind":"route","reason":"test","node":null}`, "node"},
 		{"unroute weights empty", `{"kind":"unroute","reason":"test","weights":{}}`, "weights"},

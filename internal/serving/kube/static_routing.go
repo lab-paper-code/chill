@@ -19,7 +19,7 @@ import (
 
 // manualRoutingOperationLocked admits one explicit declaration while tickMu is held.
 func (c *SchedulerController) manualRoutingOperationLocked(ctx context.Context, request ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot) (Operation, error) {
-	if strings.TrimSpace(request.Reason) == "" || request.ProfileID != "" || request.Instance != "" || request.Node != (serving.NodeReference{}) || request.FixedBatchSize != 0 || len(request.WorkloadUIDs) != 0 || request.Scope != "" {
+	if strings.TrimSpace(request.Reason) == "" || request.ProfileID != "" || request.Instance != "" || request.Node != (serving.NodeReference{}) || request.FixedBatchSize != 0 || request.MaxBatch != nil || len(request.WorkloadUIDs) != 0 || request.Scope != "" {
 		return Operation{}, refused("InvalidInput", "routing requires a reason and only workloadUID and route weights")
 	}
 	if !slices.ContainsFunc(snapshot.Workloads, func(d *serving.Definition) bool { return d.UID == request.WorkloadUID }) {

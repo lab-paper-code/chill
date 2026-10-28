@@ -58,6 +58,7 @@ type ManualOperation struct {
 	Node           serving.NodeReference `json:"node"`
 	Instance       string                `json:"instance,omitempty"`
 	FixedBatchSize int                   `json:"fixedBatchSize,omitempty"`
+	MaxBatch       *int                  `json:"maxBatch,omitempty"`
 	Reason         string                `json:"reason"`
 	Weights        map[string]int32      `json:"weights,omitempty"`
 	WorkloadUIDs   []string              `json:"workloadUIDs,omitempty"`
@@ -80,7 +81,7 @@ func DecodeManualOperation(raw json.RawMessage) (ManualOperation, error) {
 	allowed := []string{"kind", "workloadUID", "reason"}
 	switch request.Kind {
 	case operationPrepare:
-		allowed = append(allowed, "profileID", "node", "fixedBatchSize")
+		allowed = append(allowed, "profileID", "node", "fixedBatchSize", "maxBatch")
 	case operationRemove:
 		allowed = append(allowed, "node", "instance")
 	case operationRoute:
@@ -424,8 +425,16 @@ func (c *SchedulerController) manualPreparationLocked(ctx context.Context, reque
 	if !ok || spec.Instance.Node != request.Node || request.Instance != "" {
 		return PrepareSpec{}, refused("InvalidInput", "profileID must name a prepared profile of the Node")
 	}
+	if request.MaxBatch != nil {
+		if *request.MaxBatch <= 0 {
+			return PrepareSpec{}, refused("InvalidInput", "maxBatch must be a positive measured batch")
+		}
+		spec.Config.Policy.MaxBatchSize, spec.Instance.MaxBatch = *request.MaxBatch, *request.MaxBatch
+	}
 	if request.FixedBatchSize != 0 {
 		spec.Config.Policy.FixedBatchSize, spec.Instance.FixedBatchSize = request.FixedBatchSize, request.FixedBatchSize
+	}
+	if request.MaxBatch != nil || request.FixedBatchSize != 0 {
 		checked := spec.Config
 		checked.Policy.Batches = spec.Instance.Profile.NativeBundle().Batches
 		if err := native.ValidateConfig(&checked); err != nil {
@@ -452,7 +461,7 @@ func (c *SchedulerController) manualPreparationLocked(ctx context.Context, reque
 }
 
 func manualRemovalAllowed(snapshot serving.SchedulerSnapshot, request ManualOperation) error {
-	if request.FixedBatchSize != 0 || request.ProfileID != "" {
+	if request.FixedBatchSize != 0 || request.MaxBatch != nil || request.ProfileID != "" {
 		return refused("InvalidInput", "remove takes only the instance")
 	}
 	if err := removableBy(snapshot, request.Instance, request.WorkloadUID); err != nil {

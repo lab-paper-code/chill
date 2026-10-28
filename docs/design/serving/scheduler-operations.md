@@ -186,6 +186,7 @@ reset은 현재 Workload로 scope를 고정한 뒤 기존 observer refresh와 li
 - prepare: `profileID`가 그 Node의 도출된 preparation이다. 대상 Workload가 instance owner다. 양수
   `fixedBatchSize` B는 preparation의 firstfloor `Policy.fixedBatchSize`와 instance에 함께 기록하고 native config
   검증이 B가 측정되고 초기화된 batch인지 확인한다([strict fixed-size baseline](scheduler-runtime-measurement.md#strict-fixed-size-baseline-serving)).
+  선택 `maxBatch`는 해당 profile의 초기화·측정된 양의 batch 값만 허용해 인스턴스의 firstfloor policy cap에 적용하며(범위 밖은 `InvalidInput`), `SCH-AC-46` 비교 집합의 초기 상태 복원 ACK는 `snapshot.instances[].maxBatch`로 확인하고 `options[].instance`의 planner preparation 템플릿은 바꾸지 않는다.
   fresh Node와 모든 Pod 요청을 `ValidatePreparationCapacity`가 허가 직전 capture의 inventory와 예약으로 확인하며,
   설정된 serving namespace의 기존 serving Pod, 미확인 GPU 소유권, CPU 예약 부족, memory 초과와 MemoryPressure는
   거절한다.
