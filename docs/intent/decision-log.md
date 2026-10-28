@@ -516,3 +516,9 @@
 - (1) spec 표 전 필수: MNV D1=FAIL(E5-1/5/6, 수신 p95 0.29~0.40s<1s) 원인 1줄 — 오류·미완료가 rank에 섞였는지, 판정 계산(분모/분위수) 오류인지. 계산 오류면 같은 재판정 커밋에서 고치고 FAIL을 그대로 옮기지 않음.
 - (2) 표: 행마다 지연 p95·결과 수(완료/실패/거절/취소/미완료)·풀 에너지(오차 상한·coverage)·CHILL vs 고정 배치 에너지 차이 나란히(spec README 220-223).
 - (3) 정정: 제어요소 비교는 spec 요구(README 225) — 7행 표 먼저, 이어서 factor 준비 거부(manual cap/wait/resource override 미지원) 최소 수정 후 실행; 보고서 "다음 작업".
+
+## 2026-10-28 09:4xZ — CHILL 결함 후보(E5 1회차, 수정은 결과 확정 뒤)
+
+- **전환 중 MNV 라우팅 공백**: BackendUnavailable E5-1 9,092 / E5-5 4,507 / E5-6 8,417건, 초 단위 군집 43/43이 MNV prepare/route 실행 구간과 겹침(오류 초 기준 85.6/53.5/84.8%); 그러나 scheduler snapshot의 MNV routable 수는 항상 1~3(0 아님) → 전체 공백이 아니라 특정 대상(신규/route 전환 인스턴스)으로의 전달 실패 [추정]. 고정 배치(E5-S)에는 없음. 원시 `control-213-full/routing-gap-analysis.md`, `history://RoutingGap27`.
+- **rasp5 교체 진동**: `006-mnv2-cpu-q1 ↔ 008-mnv2-cpu-q1-lut` 반복 교체(E5-1 약 1~2분 간격 14회) — 계획기 진동 후보.
+- **예약 잔류**(prepare rate-limiter 실패 후) — 23:5xZ 항목.
