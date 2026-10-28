@@ -4,7 +4,7 @@ Cleanup is one server reset with retained steps/ACKs; no client cleanup assembly
 No implicit phase advance, retry, runtime build, fault injection, or guessed phase6 values.
 Settings GET/PUT use at least 30s (or the larger configured apiSeconds).
 A timed-out settings PUT is never resent: matching GET readback confirms application.
-Factor reset replays paired full-row maxBatch through prepare and requires fresh physical instance ACK.
+Factor reset polls fresh physical instance ACKs for timeboxes.factorAckWaitSeconds (default 120s).
 """
 import argparse
 import base64
@@ -413,29 +413,41 @@ def self_check_factor():
     tree=ast.parse(Path(__file__).read_text())
     selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('fingerprint','instance_rows')]
     cpo=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='CPO')
-    factor=next(n for n in cpo.body if isinstance(n,ast.FunctionDef) and n.name=='factor')
-    selected.append(ast.ClassDef(name='CPO',bases=[],keywords=[],body=[factor],decorator_list=[]))
+    methods=[n for n in cpo.body if isinstance(n,ast.FunctionDef) and n.name in ('factor','start_barrier_observation')]
+    selected.append(ast.ClassDef(name='CPO',bases=[],keywords=[],body=methods,decorator_list=[]))
     node={'name':'node','uid':'node-uid'}
     targets=[{'id':str(cap),'node':node,'profile':{'id':str(cap)},'allocation':{'cpu':1},'maxBatch':1,'maxWaitNanos':0,'workloadUID':'workload'} for cap in (2,32)]
     baseline={'instances':targets,'nodes':[],'routing':{'workload':{'2':.5,'32':.5}}}
-    ns={'NODES':[],'time':time,'load':lambda _: {'snapshot':baseline},'save':lambda *args:None,'need':lambda *args:None}
+    ns={'NODES':[],'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0}
     exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
-    for bad in (None,'wrong-cap','node','allocation','maxWaitNanos'):
-        runner=ns['CPO']();requests=[];prepared=[]
+    for bad in (None,'cap-delay','stale-delay','missing-delay','wrong-cap','stale','node','allocation','maxWaitNanos'):
+        runner=ns['CPO']();requests=[];prepared=[];receipts={};clock=[0];polls=[0]
+        ns['time']=SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds))
+        ns['save']=lambda path,body:receipts.__setitem__(str(path),copy.deepcopy(body))
         runner.a=SimpleNamespace(mode='membership-off',stage='E5-2')
         runner.c={'factors':[{'name':'membership-off','controls':{}}]}
         runner.out=Path('/offline');runner.uids=['workload'];runner.tb={'settleSeconds':1}
+        if bad is not None:runner.tb['factorAckWaitSeconds']=3
+        runner.d=SimpleNamespace(epoch=lambda value:value)
         defaults={str(cap):{'instance':dict(target,maxBatch=cap)} for cap,target in zip((2,32),targets)}
         if bad in ('node','allocation','maxWaitNanos'):
             defaults['2']['instance'][bad]=None
         runner.api=lambda *args:{'preparations':defaults}
         runner.clear_owned=lambda *args:None
         runner.operation=lambda *args:None
-        runner.state=lambda:{'snapshot':{'nodes':[],'instances':[dict(i,maxBatch=2 if bad=='wrong-cap' else i['maxBatch']) for i in prepared]}}
+        def state():
+            polls[0]+=bool(prepared)
+            delayed=polls[0]==1
+            wrong=bad=='wrong-cap' or bad=='cap-delay' and delayed
+            stale=bad=='stale' or bad=='stale-delay' and delayed
+            instances=[] if bad=='missing-delay' and delayed else [dict(i,maxBatch=2 if wrong else i['maxBatch']) for i in prepared]
+            return {'snapshot':{'nodes':[],'at':9 if stale else 11,'instances':instances},'results':[{'endedAt':10}]}
+        runner.state=state
         def prepare(method,path,body,**kwargs):
             requests.append(body)
             instance=dict(next(t for t in targets if t['profile']['id']==body['profileID']),id='new-'+body['profileID'],ownerWorkloadUID=body['workloadUID'],workloadUID='')
             prepared.append(instance)
+            polls[0]=0
             return {'status':'complete','actual':{'instances':[dict(instance,profile=body['profileID'])],'native':{instance['id']:{'metadata':{'policy':{'profileID':body['profileID'],'maxBatchSize':body['maxBatch'],'maxBatchWaitMS':0}}}}}}
         runner.io=SimpleNamespace(api=prepare)
         runner.settings=lambda:{}
@@ -447,13 +459,22 @@ def self_check_factor():
         try:
             runner.factor()
         except RuntimeError as error:
-            assert bad is not None,(bad,str(error))
-            if bad=='wrong-cap':assert 'Fresh prepared projection' in str(error),str(error)
+            assert bad in ('wrong-cap','stale','node','allocation','maxWaitNanos'),(bad,str(error))
+            if bad in ('wrong-cap','stale'):
+                assert 'ACK timed out' in str(error),str(error)
+                receipt=next(body for path,body in receipts.items() if path.endswith('-snapshot-ack.json'))
+                assert not receipt['accepted'] and receipt['state']==state()
+                assert receipt['freshness']['snapshotFresh']==(bad!='stale')
+                assert clock[0]==3
             else:assert 'unsupported manual wait/resource override' in str(error),str(error)
         else:
-            assert bad is None,'Mismatched paired state accepted: '+bad
+            assert bad in (None,'cap-delay','stale-delay','missing-delay'),'Mismatched paired state accepted: '+str(bad)
             assert [r['maxBatch'] for r in requests]==[1,1]
-    print('PASS E5 factor paired maxBatch prepare and fresh physical instance ACK; offline only')
+            acks=[body for path,body in receipts.items() if path.endswith('-snapshot-ack.json')]
+            assert len(acks)==2 and all(body['accepted'] for body in acks)
+            assert all(body['timeboxSeconds']==(120 if bad is None else 3) for body in acks)
+            assert clock[0]==(0 if bad is None else 2)
+    print('PASS E5 factor paired maxBatch, delayed fresh projection ACK and retained bounded timeout; offline only')
 
 
 # This local check must not require an operational environment or cluster binding.
@@ -1379,6 +1400,8 @@ class CPO:
     def factor(self):
         f=next(f for f in self.c['factors'] if f['name']==self.a.mode)
         if self.a.stage not in ('E5-2','E5-5'): raise RuntimeError('Factor reset is one actual paired E5-2/E5-5 block')
+        ack_wait=self.tb.get('factorAckWaitSeconds',120)
+        if not positive(ack_wait):raise ValueError('factorAckWaitSeconds must be finite and greater than zero')
         baseline=load(self.out/('full-'+self.a.stage)/'pre-state.json')['snapshot']
         desired=fingerprint(baseline,self.uids); profiles=self.api('GET','/api/v1/scheduler/profiles')['preparations']
         for target in desired['instances']:
@@ -1400,14 +1423,19 @@ class CPO:
             identifier=created[0]['id'];policy=result['actual']['native'][identifier]['metadata']['policy']
             need(policy,['profileID','maxBatchSize','maxBatchWaitMS'],'Actual completed native prepare policy')
             if policy['profileID']!=target['profileID'] or policy['maxBatchSize']!=target['maxBatch'] or round(policy['maxBatchWaitMS']*1e6)!=target['maxWaitNanos']:raise RuntimeError('Native prepared profile/cap/wait differs from exact paired target')
-            deadline=time.monotonic()+self.tb['settleSeconds']
-            while time.monotonic()<deadline:
-                state=self.state();matches=[i for i in instance_rows(state['snapshot']['instances']) if i['id']==identifier]
-                if not matches:time.sleep(1);continue
-                instance=matches[0]
-                if instance['node']!=target['node'] or instance.get('profile',{}).get('id')!=target['profileID'] or instance.get('ownerWorkloadUID')!=target['workloadUID'] or instance.get('workloadUID') or any(instance.get(key)!=target[key] for key in ('allocation','maxBatch','maxWaitNanos')):raise RuntimeError('Fresh prepared projection has a hard identity/cap/wait/allocation or unexpected served-UID mismatch')
-                mapping[target['id']]=identifier;break
-            else:raise RuntimeError('Exact native prepared identity absent from fresh snapshot within existing settle timebox')
+            deadline=time.monotonic()+ack_wait
+            while True:
+                state=self.state();barrier=self.start_barrier_observation(state,deadline,now())
+                matches=[i for i in instance_rows(state['snapshot']['instances']) if i['id']==identifier]
+                instance=matches[0] if len(matches)==1 else {}
+                matched=instance.get('node')==target['node'] and instance.get('profile',{}).get('id')==target['profileID'] and instance.get('ownerWorkloadUID')==target['workloadUID'] and not instance.get('workloadUID') and all(instance.get(key)==target[key] for key in ('allocation','maxBatch','maxWaitNanos'))
+                remaining=deadline-time.monotonic()
+                accepted=barrier['snapshotFresh'] and matched and remaining>0
+                if accepted or remaining<=0:
+                    save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-prepare-'+identifier+'-snapshot-ack.json'),{'timeboxSeconds':ack_wait,'accepted':accepted,'target':target,'freshness':barrier,'state':state})
+                    if not accepted:raise RuntimeError('Fresh prepared projection ACK timed out; final snapshot body retained with identity/cap/wait/allocation and freshness evidence')
+                    mapping[target['id']]=identifier;break
+                time.sleep(min(1,remaining))
         prepared=self.state();actual=prepared['snapshot']
         if {i['id'] for i in instance_rows(actual['instances'])}!=set(mapping.values()) or any(i.get('workloadUID') for i in instance_rows(actual['instances'])):raise RuntimeError('Paired prepared state is not exactly the returned physical IDs with empty served UID')
         # This is a declared target, not a claim that unrouted prepared instances already serve a UID.
