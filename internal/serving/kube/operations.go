@@ -998,7 +998,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		result.Actual.Routing, _ = o.runtime.SchedulerRouting()
 	}()
 	for _, instance := range target.Instances {
-		if !result.Operation.controlsWorkload(instance.WorkloadUID) {
+		if !result.Operation.controlsWorkload(instance.WorkloadUID) || target.Routing[instance.WorkloadUID][instance.ID] <= 0 {
 			continue
 		}
 		if instance.Profile == nil || instance.Profile.Condition.Firstfloor == nil {

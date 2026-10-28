@@ -170,13 +170,18 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 		wantACKs      int
 		wantPersisted int
 	}{
-		{name: "all acknowledged", unavailable: -1, wantStatus: nativeOperationComplete, wantACKs: 2, wantPersisted: 2},
+		{name: "withdrawal needs no new policy", unavailable: -1, wantStatus: nativeOperationComplete},
 		{name: "second unavailable after first ACK", unavailable: 1, wantStatus: nativeOperationPartial, wantACKs: 1, wantPersisted: 1},
 		{name: "first unavailable before mutation", unavailable: 0, wantStatus: nativeOperationFailed},
 		{name: "first endpoint lost after desired persistence", unavailable: 0, loseEndpoint: true, wantStatus: nativeOperationPartial, wantPersisted: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			operations, target, pods := routeAcknowledgmentFixture(t)
+			if test.unavailable >= 0 {
+				for _, instance := range target.Instances {
+					target.Routing[instance.WorkloadUID][instance.ID] = 1
+				}
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			before, _ := operations.runtime.SchedulerRouting()
@@ -235,6 +240,72 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 			}
 			if err != nil && !strings.Contains(err.Error(), target.Instances[test.unavailable].ID) {
 				t.Fatalf("failed physical instance identity lost: %v", err)
+			}
+		})
+	}
+}
+
+// full-E5-7-01, scheduler rows 4558–4560 (08:36:10): lattepanda is
+// stopped at weight 0; jetsono is the sole destination at weight 1000.
+// SCH-AC-38 keeps the physical fence for positive destinations, not retirees.
+func TestRouteRequiresPolicyACKOnlyForPositiveDestinationsAC38(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		dead       int
+		wantStatus string
+		wantACKs   int
+	}{
+		{name: "dead lattepanda zero weight", dead: 0, wantStatus: nativeOperationComplete, wantACKs: 1},
+		{name: "positive jetsono fence failure", dead: 1, wantStatus: nativeOperationPartial},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			controller, prepared := tickReadySubsetController(t, nil)
+			prepared.Store(true)
+			operations := controller.operations
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			snapshot, err := controller.capture(ctx, time.Now(), controller.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			instances := slices.Clone(snapshot.Instances)
+			slices.SortFunc(instances, func(a, b serving.SchedulerInstance) int { return strings.Compare(a.Node.Name, b.Node.Name) })
+			uid := instances[0].WorkloadUID
+			target := serving.SchedulerCandidate{ID: "plan-61f142e72e70", Instances: instances,
+				Routing: map[string]map[string]int32{uid: {instances[0].ID: 0, instances[1].ID: 1000}}}
+			pods, err := operations.kube.CoreV1().Pods(operations.config.Namespace).List(ctx, meta.ListOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			slices.SortFunc(pods.Items, func(a, b core.Pod) int { return strings.Compare(a.Name, b.Name) })
+			pod := pods.Items[test.dead].DeepCopy()
+			pod.Status.ContainerStatuses[0].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 1}}
+			if _, err := operations.kube.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, pod, meta.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := operations.store.client.Update(ctx, pod); err != nil {
+				t.Fatal(err)
+			}
+			result, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationRoute, Target: &target, WorkloadUIDs: []string{uid}})
+			if (err != nil) != (test.wantStatus == nativeOperationPartial) || result.Status != test.wantStatus {
+				t.Fatalf("route status=%s error=%v, want %s", result.Status, err, test.wantStatus)
+			}
+			if len(result.Actual.Native) != test.wantACKs {
+				t.Fatalf("unexpected destination ACKs: %v", result.Actual.Native)
+			}
+			if err == nil && result.Actual.Routing[uid][target.Instances[1].ID] != 1000 {
+				t.Fatalf("live destination not published: %v", result.Actual.Routing)
+			}
+			cm := &core.ConfigMap{}
+			if err := operations.store.client.Get(ctx, types.NamespacedName{Namespace: pods.Items[0].Namespace, Name: pods.Items[0].Name}, cm); err != nil {
+				t.Fatal(err)
+			}
+			var config native.Config
+			if err := json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil {
+				t.Fatal(err)
+			}
+			if config.Policy.DecisionID == target.ID {
+				t.Fatalf("zero-weight executor received a new policy: %+v", config.Policy)
 			}
 		})
 	}
@@ -447,6 +518,9 @@ func assertRouteNativeACKs(t *testing.T, target serving.SchedulerCandidate, resu
 
 func TestRouteRejectsImmutableProfileAndDeadlinePolicyBeforePersistence(t *testing.T) {
 	operations, target, pods := routeAcknowledgmentFixture(t)
+	for _, instance := range target.Instances {
+		target.Routing[instance.WorkloadUID][instance.ID] = 1
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	key := types.NamespacedName{Namespace: pods[0].Namespace, Name: pods[0].Name}

@@ -114,7 +114,12 @@ desired/native DecisionID만 다르면 probe는 오류 대신 `PolicyAckPending`
 새 정책 적용 확인을 기다린다는 뜻이지 인스턴스 부재나 준비 실패가 아니다.
 소유/바인딩된 서비스 POOL과 활성 POOL에 계속 남고, 다음 정상 probe의 ACK가
 일치하면 표시가 사라진다. 현재 실제 정책을 desired 값으로 덮지 않으며 route
-완료에는 기존 native 정책 ACK가 여전히 필요하다. 실제 읽기·metadata·Pod/Service
+완료에는 양수 가중치 목적지의 native 정책 ACK가 여전히 필요하다. `ApplyTarget`은
+Runtime resolve와 동일하게 `target.routing[workloadUID][instanceID] > 0`인
+목적지만 새 정책을 기록하고 ACK를 기다린다. 0 또는 생략된 제거 대상은 기존 정책과
+drain 보호를 유지하며, dead executor의 ACK 실패로 제거 분배를 막지 않는다.
+양수 목적지의 ACK·physical UID/container fence는 그대로 유지한다(SCH-AC-38).
+실제 읽기·metadata·Pod/Service
 검증 실패는 기존 관측 실패 경로를 따른다.
 
 실제 읽기 실패로 `InstanceUnavailable`인 Node에서는 같은 Name·UID의 새 prepare와
