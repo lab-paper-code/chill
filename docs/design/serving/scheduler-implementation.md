@@ -292,15 +292,18 @@ proof를 복원하지 않는다.
 #### 중간 배분
 
 `SchedulerController.intermediateActions`는 최종 route의 의존성이 남아 있으면
-`readySubset`으로 같은 목표의 양수 가중치 중 실제 snapshot과 native 상태가
-모두 Ready인 목적지만 고른다. 목표 가중치 비율을 워크로드별 합계 1000으로
-재정규화하며, 아직 목적지가 없는 워크로드는 현재 Ready 분배를 유지한다.
-Stopped이거나 이번 tick에 stop할 수 있는 인스턴스에는 새 가중치를 주지 않는다.
+`readySubset`으로 워크로드별 중간 분배를 만든다. 해당 워크로드의 목표 양수
+목적지가 일부라도 아직 Ready가 아니고, 현재 양수 분배에서 snapshot·native
+Ready·미정지·routable 검증을 통과한 serving 경로가 있으면 그 현재 경로와
+가중치를 보존한다(SCH-20/AC-38). 새 Ready 목적지는 같은 워크로드의 목표 양수
+목적지가 모두 준비된 분배에서 채택하며, 다른 워크로드의 준비를 기다리는 전역
+장벽은 만들지 않는다. 현재 serving 경로가 없는 bootstrap은 기존처럼 목표의
+Ready 부분집합 가중치를 합계 1000으로 재정규화한다. Stopped·고장·unroutable이거나
+이번 tick에 stop할 수 있는 현재 경로는 되살리지 않으며, 남은 검증 경로만 재정규화한다.
 이 route는 다른 prepare, power, drain의 완료와 무관하게 같은 owner의 예약 안에서
 native policy ACK와 UID 한정 `Runtime.ApplySchedulerWorkloadsTarget` 경로로 실행한다.
 launch 직전 `dependenciesReady`는 `ready-subset` action에 그 부분집합 target을
-사용한다. 전체 목표에 실재하지만 non-Ready인 sibling이 있어도 Ready 부분집합의
-route는 즉시 허가하며, 최종 route에는 전체 target과 원래 DAG 검사를 유지한다.
+사용한다. 최종 route에는 전체 target과 원래 DAG 검사를 유지한다.
 Node·Pod 예약과 같은 owner의 route 직렬화는 바꾸지 않는다(SCH-51/52/55).
 
 중간 분배는 `<goal>-ready-<subset hash>` ID와 `Action.from=ready-subset`으로
@@ -309,8 +312,12 @@ Node·Pod 예약과 같은 owner의 route 직렬화는 바꾸지 않는다(SCH-5
 최종 DAG 완료 조건에 들어가지 않는다. 후속 부분집합으로 이전 분배가
 대체되어도 완료 효과 소실로 목표를 실패시키지 않는다. 최종 DAG와 예약의 수명은
 owner별로 유지하며 다른 Workload의 새 판단을 막지 않는다.
-기존 요청의 실행 계약·drain과 요청별 지연/SLO admission은 유지한다. 실제 반영은 Ready를 캡처한 제어 tick이며
-이 경로가 전체 부하의 중간 용량 충족을 보장하지는 않는다.
+기존 요청의 실행 계약·drain과 요청별 지연/SLO admission은 유지한다. 실제 반영은 Ready를 캡처한 제어 tick이며,
+현재 분배 자체가 이미 부족한 경우나 bootstrap의 중간 용량 충족까지 보장하지는 않는다.
+회귀는 full-E5-3 `02:45:39.328560181Z` snapshot의 기존 495:126:379
+(κ=103.37311385470142/s, 입력 74.58333333333333/s)를 보존하고, 준비 중 genesis3
+단독 1000(κ=62.46166324284952/s)으로 줄이지 않는지 확인한다. bootstrap·실제 stop/
+고장·unroutable·stop 가능 경로의 제외와 준비 완료 뒤 최종 765:235 적용을 함께 검사한다.
 
 #### 분배 적용 증거
 

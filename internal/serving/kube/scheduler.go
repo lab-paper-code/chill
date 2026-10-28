@@ -987,8 +987,8 @@ func (c *SchedulerController) intermediateActions(
 	return actions, partial
 }
 
-// readySubset preserves the goal's relative weights among matching Ready slots.
-// Workloads without a Ready destination retain their current Ready distribution.
+// readySubset retains a workload's serving route while positive targets prepare.
+// Without a serving route, it normalizes the goal's matching Ready subset.
 // Runtime admission still enforces each request's measured execution/SLO contract.
 func (c *SchedulerController) readySubset(target serving.SchedulerCandidate) *serving.SchedulerCandidate {
 	snapshot, physical := c.state.Snapshot, c.runtime.Instances()
@@ -1000,20 +1000,30 @@ func (c *SchedulerController) readySubset(target serving.SchedulerCandidate) *se
 		}
 	}
 	for uid, weights := range target.Routing {
+		positive := 0
+		for _, weight := range weights {
+			if weight > 0 {
+				positive++
+			}
+		}
 		selected := []serving.SchedulerInstance{}
 		for _, wanted := range target.Instances {
 			if wanted.WorkloadUID == uid && weights[wanted.ID] > 0 && !retiring[wanted.ID] && schedulerTargetReady(wanted, snapshot, physical, false) {
 				selected = append(selected, wanted)
 			}
 		}
-		// Do not withdraw another workload's still-serving route while all its
-		// new destinations prepare. Never resurrect a stopped/draining runner.
-		if len(selected) == 0 && len(weights) != 0 {
-			weights = snapshot.Routing[uid]
+		// SCH-20/AC-38: preserve verified serving capacity until this workload's
+		// positive destinations are Ready; never revive stopped/unroutable paths.
+		if len(selected) < positive {
+			current := []serving.SchedulerInstance{}
 			for _, actual := range snapshot.Instances {
-				if actual.WorkloadUID == uid && weights[actual.ID] > 0 && !retiring[actual.ID] && schedulerTargetReady(actual, snapshot, physical, false) {
-					selected = append(selected, actual)
+				if actual.WorkloadUID == uid && snapshot.Routing[uid][actual.ID] > 0 && actual.Routable[uid] &&
+					!retiring[actual.ID] && schedulerTargetReady(actual, snapshot, physical, false) {
+					current = append(current, actual)
 				}
+			}
+			if len(current) > 0 {
+				selected, weights = current, snapshot.Routing[uid]
 			}
 		}
 		partial.Routing[uid] = map[string]int32{}
