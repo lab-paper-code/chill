@@ -519,27 +519,128 @@ desired 및 applied version은 ChillServer의 계약을 사용하고 전환은 �
 
 ### 6.1 라이브 무대와 정보 구조 (T6)
 
-DB-FR-35~49의 기본 탐색은 **라이브 무대 → 선택 근거 → 실험 재생 → 운영자**다.
-첫 화면은 좁은 개요 한 열이 아니라 같은 시간/대상을 공유하는 무대다.
+DB-FR-35~39, DB-FR-50~52의 기본 탐색은 **흐름 보드 → POOL → 인스턴스·Node·예약 → 선택 근거**다.
+첫 화면은 CHILL 구조 그림 한 장이고, 값은 계층을 내려갈수록 많아진다(2026-10-28 사용자 리뷰,
+decision-log). 모든 계층에 같은 맨 위 띠(DB-FR-35)를 둔다: 실시간/기록 재생, 시나리오 단계(라이브는
+미지정), 워크로드별 자동제어 켜짐, 마지막 수신·관측과 경과 초, UTC/KST. 꺼짐은 “자동제어 꺼짐 · 마지막 구성 유지”다.
 
-| 영역 | 내용과 원본 |
-|---|---|
-| 맨 위 띠 | 실시간/기록 재생, 시나리오 단계(실험 기록이 없으면 미지정), 워크로드별 자동제어 켜짐, 마지막 수신·관측과 경과 초, UTC/KST 병기. 꺼짐은 “자동제어 꺼짐 · 마지막 구성 유지”다. |
-| 워크로드 카드 3개 | 시나리오에 고정된 **UID 세 개**의 수신 req/s, `completed/N` 성공률과 분모, p95/p99 및 해당 SLO, SLO 안/밖/실패 막대. 임의 목록 첫 세 개나 모델 이름으로 합치지 않는다. 선택 시 정의/근거/배치/운영/변경과 직접 요청 탭을 연다. |
-| 배치 지도 | 노드 열 × 워크로드 행, 노드 머리글에 실제/목표 모드와 현재 W. 준비/처리/드레인/제거, 실제 routing 비율을 표시한다. ready라도 routable=false/weight=0이면 “준비됨 · 미분배”, running=0이면 “처리 대기”다. 목표 배치를 실제처럼 채우지 않는다. |
-| 시간축 4레인 | 최근 10분 같은 x축의 ① 수신 부하 ② 성공률·지연/SLO ③ 전체·활성 POOL W ④ 판단·prepare/route/unroute/release/reset/drain/stop/remove/power 사건. 일시정지/되감기는 표시 cursor만 바꾸며 수신은 계속한다. live 복귀는 최신 baseline을 사용한다. |
-| 오른쪽 근거 패널 | 이벤트 선택 때만 연다. 선택 decision.at/보존 기록 참조의 긴 창·최근 수요와 최소 수요, κ, d, 예상 에너지, 전환 비용·B, 대기 이유를 문장으로 표시한다. 원본 JSON은 접는다. 현재 state를 과거 사건 근거로 대체하지 않는다. |
+#### 정보 트리 (DB-FR-50)
+
+| 레벨 | 화면 | 보이는 것 | 숨기는 것(하위에서만) | 여는 방법·URL | 닫기·뒤로가기 |
+|---|---|---|---|---|---|
+| 0 개요 | `/` 흐름 보드 | 구조 그림 위의 경로별 값(아래 엣지 표), POOL 레인마다 수신 req/s·성공률(또는 “비율 없음”)·상태 문구·인스턴스 수·Node 수, 판단 띠(마지막 판단 state·reason), 진행 중 작업 수, 전체·활성 POOL W, 사건 레인 1개 | 분모·p95/p99·SLO 안/밖/실패 막대, 인스턴스별 상태, Node별 W, 예약, 4레인, 근거 | 첫 화면 | — |
+| 1 POOL | `/pools/[uid]` 하위 페이지 | 그 UID의 카드 전체(DB-FR-36: 수신, `completed/N`과 분모, p95/p99·SLO, SLO 안/밖/실패 막대), 4레인 시간축(DB-FR-38), 그 POOL의 인스턴스·Node 요약 행 | 인스턴스·Node 상세, 예약 본문, 근거 | 레인 머리글·카드 선택 → `Link` | 보드로 링크 또는 브라우저 뒤로가기 → `/`; L0는 `sessionStorage.liveFocus`(L1 진입 때 uid 저장)의 레인에 focus |
+| 2 인스턴스·Node·예약 | L1 안 펼침 카드, `?open=inst:<id>` `?open=node:<uid>` `?open=reservations` | 인스턴스 5상태·분배 비율·running·관측 시각, Node 전력모드·W·사용 가능 여부·사유, 예약 owner·범위·사유(DB-FR-37) | 근거 | 요약 행 선택 → `open` query 교체 | 닫기·뒤로가기 → query 제거, 요약 행에 focus |
+| 3 근거·원문 | L0·L1의 옆 패널, `?at=<decision.at>` | 판단 당시 수요·최소 수요, κ, d, 예상 에너지, 전환 비용·B, 대기 이유 문장(DB-FR-39); 원본 JSON은 접힘 | — | 사건 레인·판단 띠에서 선택 → `at` query | Esc·닫기 → query 제거, 선택했던 사건에 focus |
+
+페이지 전환은 레벨 0↔1뿐이다(Next route). 레벨 2·3은 같은 페이지의 query라서 새로고침·공유로
+다시 열린다. 사이드 패널은 `role="dialog"`가 아니라 `aside`이며 보드·레인은 계속 갱신된다.
+좁은 화면은 패널을 아래로 내린다. reduced-motion에서는 깜빡임 대신 배지 텍스트만 바꾼다.
+
+#### 레벨 0 흐름 보드 (DB-FR-51)
+
+구성요소와 경로는 [시스템 흐름](../../spec/README.md#시스템-흐름)과 현재 코드 기준이다. 게이트웨이
+분리는 연기됐으므로(ADR 0029 Deferred) ChillServer 한 상자가 접수·큐·분배·판단·작업을 모두 가진다.
+
+```mermaid
+flowchart LR
+  C[클라이언트 / 부하 생성기] -- E1 수신 req/s --> G[ChillServer 게이트웨이<br/>접수]
+  G -- E2 접수·대기 --> P[POOL 레인 ×UID<br/>큐 → 분배]
+  P -- E3 분배 비율·running --> I[Node의 인스턴스]
+  I -- E4 종결 N·성공률·SLO·p95 --> R[응답]
+  I -. E5 W·전력모드 .- N[Node 전력]
+  subgraph 제어 경로
+    O[관측: 요청·실행·전력] -- C1 판단 사건 --> S[스케줄러 판단]
+    S -- C2 작업 시작·종결 --> A[작업: prepare/route/unroute/release/reset/drain/stop/remove/power]
+    A -- C3 예약 --> L[예약 장부]
+  end
+  O -.-> G
+  O -.-> I
+  A -- C4 --> I
+  A -- C4 --> N
+```
+
+```text
+┌ 띠: 실시간 · 자동제어 켜짐(M,P) · 마지막 관측 12:00:03Z (2초 전) · KST 21:00:03 ────────────────┐
+│                                                                                                   │
+│ [클라이언트] ─E1 57 req/s─▶ [ChillServer 접수] ─E2─▶ ┌ POOL M  수신 40/s · 성공 39/40 · 처리 중 ┐   │
+│                                                    │  Node a ● ●   Node b ○      [열기 ▸] │   │
+│                                                    ├ POOL P  수신 17/s · 비율 없음 · 준비됨 ┤   │
+│                                                    │  Node c ◐                   [열기 ▸] │   │
+│                                                    ├ POOL S  수신 0/s · 비율 없음 · 등록됨 ┤   │
+│                                                    │  (인스턴스 없음)            [열기 ▸] │   │
+│                                                    └───────────────────────────────────────┘   │
+│                                                              ─E4 종결 56/s · SLO 안 55/56─▶ [응답] │
+│ 전력: 전체 POOL 183.2 W · 활성 POOL 121.0 W                                                       │
+│ ─ 제어 ─ [관측] ─C1─▶ [판단 12:00:00Z ready · "…"] ─C2─▶ [작업 2 진행: prepare b, power c] ─C3─▶ [예약 미제공] │
+│ 사건 레인 ─◆─────◇──◆──────────────────────────────────────────── 10분 ─▶                        │
+└ ◆ 판단 ◇ 작업 (선택 → 근거 패널) ─────────────────────────────────────────────────────────────────┘
+```
+
+엣지에 싣는 값과 출처는 아래 표다. 출처가 없는 값은 추정하지 않고 그 자리를 비운다. 표의 `metrics.*`는 마지막 **완료된** 1초 버킷이며 4.4절 의미를 따른다.
+
+| 엣지 | 표시 값 | 라이브 DTO 출처 |
+|---|---|---|
+| E1 클라이언트→접수 | 수신 req/s(레인별, 보드 합계) | `metrics.workloads[uid].received` |
+| E2 접수→POOL 큐 | 접수 가능 여부; 대기 수 | `workloads[].admission`; 대기 수는 **현재 미제공 → 계획 4장 선행 수정 `instances[].waiting:{uid:n}`**(runtime `Waiting`, `AssignedUnknown`과 구분). 들어오기 전엔 표시 안 함. 수신−종결 차를 대기로 쓰지 않는다 |
+| E3 큐→인스턴스 | 인스턴스별 분배 비율, 실제 처리 수 | `routing[uid][instanceID]`, `instances[].routable[uid]`, `instances[].running[uid]` |
+| E4 인스턴스→응답 | 종결 N, 성공률, SLO 안 비율, p95 | `metrics.workloads[uid].completed/failed/withinSLO/p95ms`. 인스턴스별 종결은 **미제공 → 표시 안 함**(워크로드 단위만) |
+| E5 Node 전력 | Node W, 전력모드; 보드 합계 | `metrics.nodes[uid].watts`, `nodes[].powerMode`; `metrics.pool.wholeWatts/activeWatts` |
+| C1 관측→판단 | 마지막 판단 시각·state·reason; 판단 사건에 1회 강조 | `decision.at/state/reason`; `event.kind="decision"` |
+| C2 판단→작업 | 진행 중 작업 수와 kind 목록, 예상 시간·출처; 시작·종결 사건에 1회 강조 | `actions[]`(`starting/running`만 진행), `expectedSeconds/expectedSource`; `event.kind="action"`의 `phase` |
+| C3 작업→예약 장부 | 예약 수, owner, 범위, 잔류 사유 | **현재 미제공 → 계획 4장 선행 수정 `reservations[]:{owner,nodes[],workloadUIDs[],podUIDs[],instances[],reason}`**. 들어오기 전엔 “예약 미제공”으로 표시 |
+| C4 작업→Node·인스턴스 | 해당 Node·인스턴스 칸에 진행 배지(kind) | `actions[].node.uid`, `actions[].workloadUID` |
+| Node 사용 가능 | Node 칸 흐림과 사유 | **현재 미제공 → 계획 4장 선행 수정 `nodes[].ready/measurement/reasons`** |
+| 공백 | 해당 엣지·레인 빗금과 사유 | `metrics.gaps[].scope/reason`; socket 끊김은 띠 |
+
+판단 전에는 `nodes`가 빌 수 있다(Node는 판단 callback에서만 채워진다). 그때 POOL 레인에는 인스턴스의
+`node` 참조만으로 Node 칸을 그리고 전력모드는 “미확인”이다. 거절 수는 `failed`에 포함돼 분리되지 않으므로
+접수 상자에 따로 적지 않는다.
+
+#### POOL 묶음 (DB-FR-52)
+
+레인은 현재 `workloads[]`의 UID마다 하나다(목록 순서는 이름, 같은 이름은 UID). 모델명·샘플 필드로
+분기하지 않는다. 레인 안 인스턴스는 `routable[uid]`가 true이거나 `running[uid]>0`이거나
+`ownerWorkloadUID==uid`인 것이며, 여러 UID에 해당하면 각 레인에 모두 나타난다(계획 4장: `Instance.WorkloadUID`
+단일 귀속 삭제). 인스턴스는 Node별로 모은다. 인스턴스 기호는 ● 실제 처리(running>0), ◐ 분배 중·처리 대기(routable
+&& weight>0 && running=0), ○ 준비됨·미분배(ready && !routable), ◌ 분배 해제 뒤 잔여 실행(!routable && running>0), × 제거(stopped)다.
+레인의 상태 문구는 아래 네 단계다. 레인에 인스턴스가 없으면 “(인스턴스 없음)”이고 0으로 그리지 않는다.
+
+#### 레벨 1 POOL 페이지
+
+```text
+┌ 띠 ───────────────────────────────────────────────────────────┐
+│ ◂ 보드로   POOL M (uid …)  모델 … · SLO p95 ≤ 800 ms · 자동제어 켜짐 │
+│ 수신 40/s │ 성공 39/40 (97%) │ p95 612 ms · p99 790 ms │ ■■■■■■■■■□ SLO 안 38 · 밖 1 · 실패 1 │
+│ 레인 ① 부하 ─────────── ② 성공률·지연/SLO ───── ③ 전체·활성 W ───── ④ 판단·작업 ◆◇ ─── 10분 │
+│ 인스턴스·Node                                              예약 [펼치기]            │
+│  Node a  ● inst-1 분배 60% running 2   ● inst-2 분배 40%      [펼치기]            │
+│  Node b  ○ inst-3 준비됨 · 미분배                              [펼치기]            │
+└ 옆 패널: 선택 사건 근거(at=…) ──────────────────────────────────────┘
+```
+
+4레인은 최근 10분 같은 x축의 ① 수신 부하 ② 성공률·지연/SLO ③ 전체·활성 POOL W ④ 판단·prepare/route/unroute/release/reset/drain/stop/remove/power 사건이다.
+브라우저가 받은 구간만 그리고 접속 이전·재동기화 유실은 공백이다. 일시정지/되감기는 표시 cursor만 바꾸며
+수신은 계속한다. live 복귀는 최신 baseline을 사용한다. 펼침 카드(레벨 2)는 ready라도 routable=false/weight=0이면
+“준비됨 · 미분배”, running=0이면 “처리 대기”, 예약은 owner·Node·워크로드·인스턴스 범위와 reason을 보여 주고
+서버가 주지 않은 유지 이유는 “미확인”이다. 작업 종료만으로 예약 해제를 추정하지 않고 “판단 주기마다 갱신”을 표시한다.
 
 `CapacityPending`은 “용량 측정 근거를 기다리고 있어요”, `TransitionInProgress`는
 “목표로 전환 중이에요 · 남은 작업 …”로 구분한다. 작업 예상은 T4의 expectedSeconds와
 출처가 있을 때만 보이고 없으면 “예상 시간 없음”이다. 완료·실패·partial을 진행 중에 세지 않는다.
 단위는 ms 정수, W 소수 1자리, 에너지 kJ로 표시하되 원본 값과 시각은 보존한다.
-어두운 중립 무대에 상태 문구·모양·색을 함께 쓰며 reduced-motion, 키보드 사건 선택,
-패널 focus 복원과 좁은 화면의 카드→지도→레인→패널 세로 배치를 유지한다.
+어두운 중립 무대에 상태 문구·모양·색을 함께 쓰며 키보드로 레인·사건을 선택할 수 있다.
+
+#### 그리기 방식
+
+2.3절 스택 안에서 끝낸다. 흐름 보드는 CSS grid 칸과 inline SVG 화살표(`<line>`/`<path>`, 두께는 값에
+비례하지 않고 상태 class만)이며, 깜빡임은 CSS animation 1회다. 4레인은 Recharts, 표는 TanStack Table을
+재사용한다. mermaid는 이 문서용이고 앱에 넣지 않는다. 그래프 라이브러리(reactflow, d3 등)는 노드가 고정
+10개 안팎이고 자동 배치가 필요 없으므로 추가하지 않는다. 노드 수가 화면에 따라 달라져 자동 배치가 필요해지면 그때 검토한다.
 
 #### 상태 문구 네 단계 (DB-FR-36)
 
-네 사실은 일방향 승급 상태가 아니다. 카드의 주 문구는 아래에서 성립한 가장 높은
+네 사실은 일방향 승급 상태가 아니다. 레인(레벨 0)과 카드(레벨 1)의 주 문구는 아래에서 성립한 가장 높은
 단계를 쓰고, 접수 가능 여부·요청 유입·실행 준비는 독립 보조 표시로 남긴다.
 
 | 문구 | 필요한 실제 데이터 | 이것만으로는 판정하지 않는 것 |
@@ -557,8 +658,8 @@ phaseRunning과 일치시킨다. `assignedUnknown`은 실행 증거가 아니다
 
 | 기존 화면/기능 | 새 위치 또는 제거 |
 |---|---|
-| 홈 `/`, 서비스 상세 5개 하위 면 | `/` 라이브 무대와 UID 선택 패널 탭으로 합침 |
-| `/pools`, `/resources` | 지도와 노드 패널; 선언 인벤토리 고급 조회는 운영자 |
+| 홈 `/`, 서비스 상세 5개 하위 면 | `/` 흐름 보드(레벨 0)와 `/pools/[uid]` POOL 페이지(레벨 1)로 합침 |
+| `/pools`, `/resources` | `/pools/[uid]`의 인스턴스·Node 펼침 카드(레벨 2); `/pools`는 `/`로 보냄. 선언 인벤토리 고급 조회는 운영자 |
 | `/scheduler`, candidates/estimates/load, `/transitions` | 현재 판단 띠, 근거 패널, 시간축 작업 레인으로 합침 |
 | 판단 history/compare/power, observations/changes | 시간축, 재생 비교, 요청 상세 및 운영자 원본 기록으로 합침 |
 | scheduler/profiles와 측정 목록/회차 | 운영자 `측정 근거` 한 화면; BEO, 전환 비용, 분배 점유시간(d)은 지원 종류를 명시 |
@@ -572,17 +673,13 @@ phaseRunning과 일치시킨다. `assignedUnknown`은 실행 증거가 아니다
 기존 코드 위치는 `chill-dashboard/app/page.tsx:Page`(OverviewPage),
 `app/[...route]/page.tsx:Page`(:35-70, catch-all), `features/management.tsx`,
 `features/scheduler-history.tsx:RecordDetails`(:72-97), `lib/relay.ts:relayPlan`(:41-64)다.
-구현 위치는 예정된 `features/live-stage.tsx:LiveStage`, `lib/live.ts`의 DTO/검증/reducer,
+구현 위치는 예정된 `features/live-board.tsx`(레벨 0), `features/live-pool.tsx`(레벨 1·2), `lib/live.ts`의 DTO/검증/reducer,
 기존 shell/sidebar와 catch-all이다. 화면을 합친 뒤 obsolete route와 import는 남기지 않는다.
 
-근거의 작은 live DTO에는 κ/d/B 원문을 넣지 않는다. 서버는 판단을 보존한 뒤 그
-`decision.at`과 같은 행의 `recordRef`(원래 조회 from/to, append offset과 사건 identity)를
-함께 발행한다. 앞단/브라우저가 현재 페이지의 행 번호로 offset을 다시 만들지 않는다.
-패널은 `readSchedulerRecord`로 참조를 읽고 `schedulerRecordPath`의
-`GET observations/scheduler?from=…&to=…&limit=1&cursor=…`를 호출한 뒤
-`schedulerRecordMatches`와 응답 decision.at의 원본 시각 일치로 선택 사건을 확인한다.
-참조가 없는 과거 행은 해당 at을 포함하는 고정 조회 구간을 페이지 끝까지 읽고 decision.at이
-일치하는 판단을 찾는다. 매칭되지 않으면 근거 없음이지 최신 state로의 fallback이 아니다.
+근거의 작은 live DTO에는 κ/d/B 원문을 넣지 않는다. 판단 identity는 원본 RFC3339Nano `decision.at`이다
+(계획 3장). 레벨 3 패널은 선택한 `at`으로 `GET observations/scheduler?from=<at>&to=<at+1ns>`를 호출하고,
+응답 decision.at의 원본 시각 일치로 사건을 확인한다. 같은 시각에 다른 행이 있으면 페이지를 넘긴다.
+매칭되지 않으면 “기록 없음”이지 최신 state로의 fallback이 아니며, 새 판단이 와도 선택은 바뀌지 않는다.
 이 방식은 `chill-dashboard/lib/scheduler-history.ts:schedulerRecordRef/readSchedulerRecord/
 schedulerRecordPath/schedulerRecordMatches`(:3-31)의 at 기반 identity를 그대로 사용한다.
 `GET scheduler/capacity`는 원래 후보 identity/조건을 보존해 보조 근거를 읽는다.
@@ -689,7 +786,7 @@ snapshot 전체 교체, delta의 대체/upsert 규칙, metrics 버킷 교체, ev
 시간축은 최근 600개 초 버킷과 1000개 사건으로 제한하고 사건 한도에 걸린 구간은
 생략을 표시한다. 되감기 배치 재구성을 위해 구간 시작 baseline과 bounded delta를 함께
 보존한다. 상한 때문에 재구성할 수 없는 시점은 REST 보관 기록을 읽거나 공백으로 표시한다.
-일시정지 cursor/선택 패널/폼은 React 로컬 상태, UID·실험·단계·조회 구간은 URL에 둔다.
+일시정지 cursor/폼은 React 로컬 상태, POOL UID(route)·펼침 `open`·선택 사건 `at`·실험·단계·조회 구간은 URL에 둔다(6.1절 정보 트리).
 로그아웃/신원 변경은 기존 cancelQueries/clear/QueryClient 교체에 socket·재연결 timer
 종료를 먼저 추가한다. 이전 연결의 늦은 callback은 이전 QueryClient에서만 끝난다.
 
@@ -832,7 +929,7 @@ raw 및 내보내기는 ChillServer의 제한된 page 또는 stream을 사용한
 | DB-NFR-01~06 | 2, 4, 6, 7, 8, 10절의 접근성, 값 보존, bounded 조회, 성능 예산, 독립 배포와 안전한 렌더링 | 기존 | 접근성과 화면 안전, 조회 부하와 재시작 |
 | SCH-37, DB-INT-07~08 | 3절, 4.3~4.5절의 first auth→Bearer, producer, snapshot/delta/seq/집계 | T5 | 라이브 인증과 재동기화 |
 | DB-NFR-07 | 4.5절, 7.1절의 gap/마지막 수신·관측/신선도 | T5/T6 | 라이브 인증과 재동기화 |
-| DB-FR-35~39 | 6.1절 띠·카드·지도·4레인·선택 당시 근거 | T6 | 라이브 무대의 연속 흐름 |
+| DB-FR-35~39, DB-FR-50~52 | 6.1절 띠·정보 트리·흐름 보드(엣지 출처 표)·POOL 레인·4레인·선택 당시 근거 | T6 | 라이브 무대의 연속 흐름 |
 | DB-FR-40~44 | 7.2절 재생·분모·비교·정의·불변 결과와 archive | T4/T6 | 재생 결과의 모집단과 에너지 |
 | DB-FR-45~49 | 6.1절 운영자 측정 근거와 폐기 route | T4/T6 | 운영자 조회와 폐기 화면 |
 

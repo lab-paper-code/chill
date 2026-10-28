@@ -500,3 +500,8 @@
 - fusion 2차 검토(패널 opus-5-5 / gpt-6-astra / gemini-4-argon, 판정 gpt-6.1-sol)에서 3패널 모두 보류. G0 gateway PASS(CPU 1.60/6, throttle 0), spec 측정 표가 router N개를 요구하지 않음. #213 탐색 중 `gatewayTailNS` 꼬리(PLC p95 37~46ms 대 7~8ms)는 상관 관찰로만 기록.
 - ADR 0029·gateway-split·SRS §8·U11을 Deferred로 전환. 재개 조건: gateway 귀속 G 확인 실패 또는 제어 간섭이 측정 표를 훼손하고 직접 수정으로 해결되지 않을 때. 재개 시 control 1 + router 1부터.
 - `e947cd5e` 미사용 분리 코드는 E5 종료·표 기입 뒤, 다음 서버 재빌드 전에 사용처 단위로 제거(공유 Runtime 변경 포함). T5·`internal/serving/live` 유지. evidence API는 단일 source로 진행.
+
+## 2026-10-28 — 대시보드 라이브 무대 계층화(사용자 결정)
+
+- 사용자 리뷰: 한 장에 정보 과밀 → 고수준 축약만 보이고 누르면 하위 페이지·펼침 카드로 내려가는 트리(개요 → POOL → 인스턴스·Node·예약 → 근거). 실시간 배치는 POOL(워크로드 UID) 단위 묶음. 요청·데이터 경로와 제어 경로를 CHILL 구조 그림(클라이언트 → ChillServer 접수 → 워크로드별 큐·분배 → Node 인스턴스 → 응답; 관측 → 판단 → 작업 → 예약 장부) 위에 실시간으로 표시.
+- 반영: SRS DB-FR-50~52 추가, DB-FR-36~39 계층 재배치(카드 3개 고정·Node×워크로드 격자 삭제). 설계 §6.1 재작성(정보 트리, 엣지별 DTO 출처 표, POOL 레인, URL `/pools/[uid]`·`?open=`·`?at=`). 계획 4장 화면 범위·7장 S2 기준 갱신. 지표 의미(N=completed+failed, 비율 없음)·예약·decision.at 근거·폴링 금지·연기 항목·서버 선행 수정은 유지. 새 DTO 필드 없음(대기 수·예약·Node 사유는 기존 선행 수정 항목). 그리기는 기존 스택(CSS grid + inline SVG, Recharts)만, 그래프 라이브러리 추가 없음. 아키텍처 그림은 단일 ChillServer(ADR 0029 Deferred) 기준.
