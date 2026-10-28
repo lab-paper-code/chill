@@ -1297,13 +1297,17 @@ class CPO:
         tolerated=set(self.c.get('smoke',{}).get('tolerateArchive',[])) & {'power','power-drain-inclusive'} if self.b.get('schema')=='demo-e5-binding.v1' else set()
         prior=folder/'archive-collection.json'
         captured=load(prior) if tolerated and prior.exists() else collector.collect(folder,phase,self.c['collection'],self.io,self.tb['collectSeconds'])
-        missing={}
+        missing={}; measurement_failures={}
         if captured.get('status')!='CAPTURED_NOT_EVALUATED':
             errors=captured.get('errors') or []
+            incomplete_power={name for name in ('power','power-drain-inclusive')
+                              if (folder/(name+'.json')).exists() and load(folder/(name+'.json')).get('complete') is False}
             for error in errors:
                 name=error.split(': ',1)[0]
-                if name in tolerated:missing[name]=error
-            if not errors or len(missing)==0 or any(error.split(': ',1)[0] not in tolerated for error in errors) or not load(folder/'raw-source-index.json').get('complete'):
+                if name in incomplete_power and error.startswith(name+': Actual power window incomplete: '):measurement_failures[name]=error
+                elif name in tolerated:missing[name]=error
+            allowed=set(missing)|set(measurement_failures)
+            if not errors or any(error.split(': ',1)[0] not in allowed for error in errors) or not load(folder/'raw-source-index.json').get('complete'):
                 raise RuntimeError('Required exact-hour archive/current capture incomplete; preserve private index and stop')
         for suffix in ('control-alerts.jsonl','cgmon.log','upload.log'):
             path=CAMPAIGN/suffix
@@ -1315,6 +1319,8 @@ class CPO:
         manifest={'schema':'e5-private-collection.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; exclude original raw and sensitive configuration from git/public evidence indexes','at':now(),'status':'CAPTURED_NOT_EVALUATED','raw':[],'observationCapture':str(folder/'raw-source-index.json'),'archiveRequired':load(self.c['collection']['archiveRefs']),'bindingSources':self.b['sources'],'physicalIdentities':'pre/post Pods, Node UID, containerID/imageID, profile/runtime/allocation, full scheduler events','cadence':{'cgroupSeconds':1,'restartSeconds':15,'thermalSeconds':5},'streams':['definitions','requests','management','scheduler','catalog']}
         if missing:
             manifest.update(status='CAPTURED_WITH_MISSING_ARCHIVES',missingArchives=missing,archiveStatus=captured['status'])
+        if measurement_failures:
+            manifest.update(status='CAPTURED_WITH_INCOMPLETE_MEASUREMENTS',measurementFailures=measurement_failures,archiveStatus=captured['status'])
         for p in sorted(folder.rglob('*')):
             if p.is_file() and p.name!='collected.json': manifest['raw'].append(ref(p,allow_empty=True))
         save(folder/'collected.json',manifest)
@@ -1427,8 +1433,8 @@ class CPO:
             self.a.mode=mode; self.a.stage=name; self.a.command='stage'
             self.run()
             result=judge(self.a.binding,self.out/(mode+'-'+name))
-            if result['status'] in ('NOT_READY','INVALID_GENERATOR'): raise RuntimeError('Required row evidence incomplete or invalid; frozen campaign stopped without advancing')
-            save(self.out/'campaign-position.json',{'at':now(),'mode':mode,'lastCapturedRow':name,'judgment':result['status'],'approval':str(self.a.release),'scientificAccounting':'Row evidence only; E5-7 requires actual manual operator evidence'})
+            save(self.out/'campaign-position.json',{'at':now(),'mode':mode,'lastCapturedRow':name,'judgment':result['status'],'approval':str(self.a.release),'scientificAccounting':'Recorded row verdict, not a continuation gate; incomplete energy remains UNKNOWN'})
+            if result['status']=='INVALID_GENERATOR': raise RuntimeError('Generator invalid; frozen campaign stopped without advancing')
         for name in ('E5-0','E5-1','E5-2','E5-3'): row('full',name)
         for name in ('E5-1','E5-2','E5-3','E5-4','E5-5','E5-6'): row('static',name)
         # Keep the selected physical configuration fixed while E5-4 producers prepare; restore once at their release barrier.
@@ -1438,6 +1444,17 @@ class CPO:
             for name in ('E5-2','E5-5'):
                 self.a.stage=name; self.factor(); row(f['name'],name); self.factor_restore()
         self.finish(); self.cleanup_jobs(); summarize(self.a.binding,self.out);collection_manifest(self.out,self.a.binding)
+
+
+def reported_power(power):
+    """Keep coverage failures, but never expose incomplete-window energy as measured."""
+    value=dict(power or {})
+    known=value.get('complete') is True and all(value.get(key) is not None for key in ('wholePoolJoules','activePoolJoules'))
+    value['energyStatus']='MEASURED' if known else 'UNKNOWN'
+    if not known:
+        for key in ('wholePoolJoules','activePoolJoules','wholePoolMeanWatts','activePoolMeanWatts'):
+            value[key]=None
+    return value
 
 
 def judge(binding, folder):
@@ -1521,13 +1538,13 @@ def judge(binding, folder):
             if offsets and quality!='VALID':sub[-1]['D1']='INVALID_GENERATOR' if quality=='INVALID_GENERATOR' else 'UNKNOWN'
             sub[-1]['unfinishedOrUnsent']+=sum(not finals.get(x.get('requestID')) for x in selected)
         results[w['name']]['substages']=sub
-    start,end=d.epoch(phase['startUTC']),d.epoch(phase['endUTC']); cg=d.telemetry(inp,start,end); power=inp.json(folder/'power.json')
+    start,end=d.epoch(phase['startUTC']),d.epoch(phase['endUTC']); cg=d.telemetry(inp,start,end); power=reported_power(inp.json(folder/'power.json'))
     bootstrap=None
     if st['id']=='E5-0':
         post=inp.json(folder/'post-state.json')
         bootstrap={w['name']:[i for i in instance_rows((post or {}).get('snapshot',{}).get('instances',[])) if i.get('workloadUID')==w['uid'] and i.get('ready')] for w in c['workloads']}
     if not power or not power.get('complete') or power.get('wholePoolJoules') is None or power.get('activePoolJoules') is None: unknown.append('Whole/active POOL transition-inclusive power incomplete')
-    tail_power=inp.json(folder/'power-drain-inclusive.json')
+    tail_power=reported_power(inp.json(folder/'power-drain-inclusive.json'))
     if not tail_power or not tail_power.get('complete') or tail_power.get('wholePoolJoules') is None or tail_power.get('activePoolJoules') is None: unknown.append('Actual transition/request/action drain-inclusive energy incomplete')
     boot_events=[]
     notices=folder/'node-actuation-boot-alerts.jsonl'
@@ -1635,7 +1652,8 @@ def summarize(binding, root):
             folder=root/(mode+'-'+row_id)
             try:
                 value=load(folder/'judgment.json')
-                if value['status'] not in ('MEASURED_DESCRIPTIVE','FAIL'): raise ValueError('Judgment not scientifically evaluable')
+                if value.get('scientificResults','').startswith('UNMEASURED'): raise ValueError('Operational smoke is not a scientific row')
+                value['power']=reported_power(value.get('power'))
                 stages[(mode,row_id)]=value
             except (OSError,ValueError,KeyError) as exc: missing.append({'mode':mode,'row':row_id,'reason':str(exc)})
     comparisons=[]
@@ -1644,17 +1662,28 @@ def summarize(binding, root):
         if full and static:
             f=load(root/('full-'+row_id)/'phase.json'); s=load(root/('static-'+row_id)/'phase.json')
             if f['stage']['traces'] != s['stage']['traces']: missing.append({'row':row_id,'reason':'Paired frozen traces differ'}); continue
-            comparisons.append({'row':row_id,'fullWholePOOLJ':full['power']['wholePoolJoules'],'staticWholePOOLJ':static['power']['wholePoolJoules'],'staticMinusFullWholePOOLJ':static['power']['wholePoolJoules']-full['power']['wholePoolJoules'],'fullActivePOOLJ':full['power']['activePoolJoules'],'staticActivePOOLJ':static['power']['activePoolJoules'],'requestMetrics':{'full':full['requests'],'static':static['requests']}})
-            full_tail=load(root/('full-'+row_id)/'power-drain-inclusive.json'); static_tail=load(root/('static-'+row_id)/'power-drain-inclusive.json')
+            full_j,static_j=full['power']['wholePoolJoules'],static['power']['wholePoolJoules']
+            comparisons.append({'row':row_id,'judgments':{'full':full['status'],'static':static['status']},
+                'energyStatus':'MEASURED' if full_j is not None and static_j is not None else 'UNKNOWN',
+                'fullWholePOOLJ':full_j,'staticWholePOOLJ':static_j,
+                'staticMinusFullWholePOOLJ':static_j-full_j if full_j is not None and static_j is not None else None,
+                'fullActivePOOLJ':full['power']['activePoolJoules'],'staticActivePOOLJ':static['power']['activePoolJoules'],
+                'requestMetrics':{'full':full.get('requests',{}),'static':static.get('requests',{})}})
+            full_tail=reported_power(load(root/('full-'+row_id)/'power-drain-inclusive.json')); static_tail=reported_power(load(root/('static-'+row_id)/'power-drain-inclusive.json'))
             comparisons[-1]['drainInclusive']={'full':full_tail,'static':static_tail,'meaning':'Separate actual phase.drainedUTC horizon; inspect phase drainScope. Scheduler transitions/reservations are not awaited; nominal170min totals retain offered windows.'}
-    plan_rows={row_id:('MEASURED' if ('full',row_id) in stages else 'UNMEASURED') for row_id in modes['full']}
-    plan_rows['E5-S']='MEASURED' if len(comparisons)==6 else 'UNMEASURED'
+    plan_rows={row_id:stages[('full',row_id)]['status'] if ('full',row_id) in stages else 'UNMEASURED' for row_id in modes['full']}
+    plan_rows['E5-S']=('MEASURED_DESCRIPTIVE' if all(pair['energyStatus']=='MEASURED' for pair in comparisons) else 'INCOMPLETE') if len(comparisons)==6 else 'UNMEASURED'
     spec={'steady':'E5-1','gradual-up-and-down':'E5-3','burst':'E5-2','post-transition-drop-resurge':'E5-5','mixed-heterogeneous':'E5-1','pool-overload':'E5-4'}
-    scenario={name:'MEASURED' if plan_rows[row]=='MEASURED' and (name!='gradual-up-and-down' or plan_rows['E5-5']=='MEASURED') else 'UNMEASURED' for name,row in spec.items()}
+    scenario={name:plan_rows[row] if plan_rows[row]!='UNMEASURED' and (name!='gradual-up-and-down' or plan_rows['E5-5']!='UNMEASURED') else 'UNMEASURED' for name,row in spec.items()}
     failure = stages.get(('full','E5-7'),{}).get('failureScenarioEvidence')
-    scenario['node-serving-control-failure']='MEASURED' if failure and failure.get('status')=='CAPTURED' else 'UNMEASURED'
+    scenario['node-serving-control-failure']=plan_rows['E5-7'] if failure and failure.get('status')=='CAPTURED' else 'UNMEASURED'
     factor_results={f['name']:{row:stages.get((f['name'],row)) for row in ('E5-2','E5-5')} for f in b['config']['factors']}
-    result={'schema':'e5-summary.v1','at':now(),'status':'NOT_READY' if missing else 'MEASURED_DESCRIPTIVE','missing':missing,'planRows':plan_rows,'planResultLinks':str(sum(x=='MEASURED' for x in plan_rows.values()))+'/9','specScenarios':scenario,'specResultLinks':str(sum(x=='MEASURED' for x in scenario.values()))+'/7','failureScope':'E5-7 manual serving loss/cordon proxy; actual event/recovery evidence required, not physical network/power loss','failureScenarioEvidence':failure,'pairedComparisons':comparisons,'fullMatched170minWholePOOLJ':sum(x['fullWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'static170minWholePOOLJ':sum(x['staticWholePOOLJ'] for x in comparisons) if len(comparisons)==6 else None,'controlFactors':factor_results,'limitations':b['limitations'],'staticSelection':str(root/'static-selection.json'),'accounting':{'d':b['accounting']['d'],'exactCost':b['accounting']['exactCost'],'evaluation':str(sum(x=='MEASURED' for x in scenario.values()))+'/7'}}
+    row_statuses={mode+'-'+row:value['status'] for (mode,row),value in stages.items()}
+    incomplete=any(value['status'] in ('NOT_READY','INCOMPLETE','UNKNOWN') or value['power']['energyStatus']=='UNKNOWN' for value in stages.values())
+    status='INVALID_GENERATOR' if 'INVALID_GENERATOR' in row_statuses.values() else 'NOT_READY' if missing else 'INCOMPLETE' if incomplete else 'MEASURED_DESCRIPTIVE'
+    full_values=[pair['fullWholePOOLJ'] for pair in comparisons]; static_values=[pair['staticWholePOOLJ'] for pair in comparisons]
+    result={'schema':'e5-summary.v1','at':now(),'status':status,'missing':missing,'planRows':plan_rows,'planResultLinks':str(sum(x!='UNMEASURED' for x in plan_rows.values()))+'/9','specScenarios':scenario,'specResultLinks':str(sum(x!='UNMEASURED' for x in scenario.values()))+'/7','failureScope':'E5-7 manual serving loss/cordon proxy; actual event/recovery evidence required, not physical network/power loss','failureScenarioEvidence':failure,'pairedComparisons':comparisons,'fullMatched170minWholePOOLJ':sum(full_values) if len(comparisons)==6 and all(value is not None for value in full_values) else None,'static170minWholePOOLJ':sum(static_values) if len(comparisons)==6 and all(value is not None for value in static_values) else None,'controlFactors':factor_results,'limitations':b['limitations'],'staticSelection':str(root/'static-selection.json'),'accounting':{'d':b['accounting']['d'],'exactCost':b['accounting']['exactCost'],'evaluation':str(sum(x!='UNMEASURED' for x in scenario.values()))+'/7'}}
+    result['rowJudgments']=row_statuses
     result['scenarioLimitations']={'gradual-up-and-down':'E5-3 increases and E5-5 abrupt drop only; gradual decrease unmeasured',
         'burst':'Smol burst only; other-model bursts unmeasured',
         'node-serving-control-failure':'Manual serving loss/cordon proxy only; physical network/power loss and all control failure types unmeasured',
@@ -1668,7 +1697,7 @@ def summarize(binding, root):
     result['visibility']='PRIVATE_OPERATIONAL_ONLY; original raw/configuration and their paths excluded from public evidence indexes'
     result['rowJudgmentCounts']=dict(Counter(value['status'] for value in stages.values()))
     result['measurementMeaning']='Measured result links are not criterion PASS or complete scenario coverage; negative SLO/source overload findings and declared unmeasured scope remain visible.'
-    result['issuanceFidelity']={mode+'-'+row:{name:metrics.get('issuanceFidelity') for name,metrics in value['requests'].items()} for (mode,row),value in stages.items()}
+    result['issuanceFidelity']={mode+'-'+row:{name:metrics.get('issuanceFidelity') for name,metrics in value.get('requests',{}).items()} for (mode,row),value in stages.items()}
     restored=load(root/'finish-complete.json') if (root/'finish-complete.json').exists() else None
     result['physicalRestoration']=restored
     save(root/'e5-summary.json',result); return result
@@ -1897,8 +1926,8 @@ def main():
             assert len(b['rowOrder'])==9
             print(json.dumps({'status':'OFFLINE_INPUT_CHECK_ONLY','scientificResults':'UNMEASURED','scheduleSeconds':21900,'N':b['config']['N']})); return 0
         if not a.out: raise ValueError('--out absolute run or stage directory required')
-        if a.command=='judge': return 2 if judge(a.binding,a.out)['status'] in ('NOT_READY','FAIL','INVALID_GENERATOR') else 0
-        if a.command=='summarize': return 2 if summarize(a.binding,a.out)['status']=='NOT_READY' else 0
+        if a.command=='judge': return 2 if judge(a.binding,a.out)['status']=='INVALID_GENERATOR' else 0
+        if a.command=='summarize': summarize(a.binding,a.out); return 0
         if a.command=='publish':
             if not a.experiment_id or not a.store_config:raise ValueError('publish requires --experiment-id and --store-config; summary is final immutable record')
             publish_campaign(a.binding,a.out,a.experiment_id,a.store_config);return 0

@@ -77,6 +77,17 @@ def render(root, repo):
         lines += [f'### {cell(path.parent.name)}', '', f'Source: `{cell(path)}`; status: {cell(stage.get("status", "UNKNOWN"))}', '']
         if 'judgmentCriteria' in stage:
             lines += ['Judgment criteria: ' + ', '.join(stage['judgmentCriteria']) + '.', '']
+        if not operational:
+            energy={}
+            for window in ('power','powerDrainInclusive'):
+                power=stage.get(window) or {}
+                known=power.get('energyStatus','MEASURED' if power.get('complete') is True else 'UNKNOWN')=='MEASURED'
+                energy[window]={'energyStatus':'MEASURED' if known else 'UNKNOWN','complete':power.get('complete'),
+                    'wholePoolJoules':power.get('wholePoolJoules') if known else None,
+                    'activePoolJoules':power.get('activePoolJoules') if known else None,
+                    'reasons':power.get('reasons'),'nodes':power.get('nodes')}
+            lines += ['Energy and coverage (incomplete-window energy is UNKNOWN, not zero):', '',
+                      '```json', json.dumps(energy,ensure_ascii=False,indent=2), '```', '']
         for name, metric in stage.get('workloads', stage.get('requests', {})).items():
             fidelity = metric.get('issuanceFidelity') or {}
             selected = {'offered': metric.get('offered'), 'generatorQuality': fidelity.get('generatorQuality'),

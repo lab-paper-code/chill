@@ -775,6 +775,7 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
         summary['collectionRecovery'] = phase.get('collectionRecovery')
         summary['missingArchives'] = missing_archives
         summary['demoRequestDrain'] = phase.get('demoRequestDrain')
+        summary['measurementFailures'] = collected.get('measurementFailures')
         summary['schedulerBoundaryObservations'] = phase.get('schedulerBoundaryObservations')
         summary['drainScope'] = phase.get('drainScope')
         for key in ('readyGate', 'startBarrier'):
@@ -2164,6 +2165,100 @@ def self_check():
         historical = e5.summarize(historical_path, frozen_root)
         assert historical['schedulerSettings'] is None
         assert not any('frozen scheduler settings' in row['reason'] or 'restoration' in row['reason'] for row in historical['missing'])
+        # One measurement-continuation regression: collection, driver, CLI and rows.
+        coverage_root = root / 'coverage-continuation'
+        coverage_folder = coverage_root / 'full-E5-1'
+        coverage_folder.mkdir(parents=True)
+        coverage_phase = e5.load(cpo.out / 'smoke-A/phase.json')
+        e5.save(coverage_folder / 'phase.json', coverage_phase)
+        e5.save(coverage_folder / 'raw-source-index.json', {'complete': True})
+        gap_power = {'complete':False,'wholePoolJoules':999,'activePoolJoules':888,
+                     'reasons':['maximum sample gap exceeds policy']}
+        e5.save(coverage_folder / 'power.json', gap_power)
+        captured_gap = {'status':'NOT_READY','errors':['power: Actual power window incomplete: ["maximum sample gap exceeds policy"]']}
+        coverage_probe = SimpleNamespace(out=coverage_root,
+            c={'collection':{'archiveRefs':str(archive_refs),'serverContainer':'server'}},
+            b={'schema':'e5-binding.v1','sources':{}},tb={'collectSeconds':1,'apiSeconds':1},
+            d=SimpleNamespace(K=['fixture']),io=SimpleNamespace(k=lambda *args:{'items':[{'metadata':{'name':'server'}}]}))
+        with patch.object(e5,'module',return_value=SimpleNamespace(collect=lambda *args:captured_gap)), \
+             patch.object(e5.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout='logs')):
+            e5.CPO.collect(coverage_probe, coverage_folder)
+        assert e5.load(coverage_folder / 'collected.json')['measurementFailures'] == {'power':captured_gap['errors'][0]}
+        assert e5.reported_power(gap_power)['energyStatus'] == 'UNKNOWN'
+        assert gap_power['wholePoolJoules'] == 999  # Reporting never rewrites raw power.
+        with patch.object(e5,'module',return_value=SimpleNamespace(collect=lambda *args:{'status':'NOT_READY','errors':['power: reducer process failed']})):
+            try:
+                e5.CPO.collect(coverage_probe, coverage_folder)
+            except RuntimeError as error:
+                assert 'capture incomplete' in str(error)
+            else:
+                raise AssertionError('Operational capture failure was hidden by partial power')
+        campaign_rows, finished = [], []
+        campaign = object.__new__(e5.CPO)
+        campaign.out = root / 'measurement-campaign'
+        campaign.out.mkdir()
+        campaign.a = SimpleNamespace(binding=frozen_path,release=root/'fixture-release.json')
+        campaign.c = {'factors':[]}
+        campaign.start = lambda:None
+        campaign.run = lambda:campaign_rows.append((campaign.a.mode,campaign.a.stage))
+        campaign.finish = lambda:finished.append(True)
+        campaign.cleanup_jobs = lambda:None
+        verdicts = iter(['MEASURED_DESCRIPTIVE','NOT_READY','FAIL','INCOMPLETE']*4)
+        with patch.object(e5,'judge',side_effect=lambda *args:{'status':next(verdicts)}), \
+             patch.object(e5,'summarize'), patch.object(e5,'collection_manifest'):
+            campaign.campaign()
+        assert len(campaign_rows) == 14 and finished == [True]
+        campaign_rows.clear(); finished.clear()
+        with patch.object(e5,'judge',return_value={'status':'INVALID_GENERATOR'}):
+            try:
+                campaign.campaign()
+            except RuntimeError as error:
+                assert 'Generator invalid' in str(error)
+            else:
+                raise AssertionError('Invalid generator did not stop campaign')
+        assert len(campaign_rows) == 1 and not finished
+        with patch.object(campaign,'run',side_effect=RuntimeError('producer failure')), patch.object(e5,'judge') as unused_judge:
+            try:
+                campaign.campaign()
+            except RuntimeError as error:
+                assert str(error) == 'producer failure'
+            else:
+                raise AssertionError('Operational producer failure was ignored')
+            unused_judge.assert_not_called()
+        for status in ('FAIL','NOT_READY','INCOMPLETE','MEASURED_DESCRIPTIVE','INVALID_GENERATOR'):
+            with patch.object(e5.sys,'argv',['e5.py','judge','--binding',str(frozen_path),'--out',str(root)]), \
+                 patch.object(e5,'judge',return_value={'status':status}):
+                assert e5.main() == (2 if status == 'INVALID_GENERATOR' else 0)
+        with patch.object(e5.sys,'argv',['e5.py','summarize','--binding',str(frozen_path),'--out',str(root)]), \
+             patch.object(e5,'summarize',return_value={'status':'INCOMPLETE'}):
+            assert e5.main() == 0
+        result_root = root / 'measurement-rows'
+        result_root.mkdir()
+        result_binding = dict(frozen_binding, schema='e5-binding.v1', schedulerSettings=frozen_settings,
+                              schedule=[{'id':'E5-'+str(index)} for index in range(8)])
+        result_binding_path = result_root / 'binding.json'
+        e5.save(result_binding_path, result_binding)
+        for mode, ids in (('full',range(8)),('static',range(1,7))):
+            for index in ids:
+                folder = result_root / (mode+'-E5-'+str(index))
+                folder.mkdir()
+                status = {1:'NOT_READY',2:'FAIL',3:'INCOMPLETE'}.get(index,'MEASURED_DESCRIPTIVE') if mode == 'full' else 'MEASURED_DESCRIPTIVE'
+                power = gap_power if mode == 'full' and index == 1 else {'complete':True,'wholePoolJoules':20,'activePoolJoules':10}
+                e5.save(folder/'judgment.json',{'status':status,'power':power,'requests':{}})
+                e5.save(folder/'phase.json',{'stage':{'traces':{}}})
+                e5.save(folder/'power-drain-inclusive.json',power)
+        row_summary = e5.summarize(result_binding_path,result_root)
+        assert row_summary['status'] == 'INCOMPLETE'
+        assert [row_summary['planRows']['E5-'+str(index)] for index in (1,2,3)] == ['NOT_READY','FAIL','INCOMPLETE']
+        assert row_summary['planRows']['E5-S'] == 'INCOMPLETE'
+        assert row_summary['fullMatched170minWholePOOLJ'] is None and row_summary['static170minWholePOOLJ'] == 120
+        assert row_summary['pairedComparisons'][0]['staticMinusFullWholePOOLJ'] is None
+        assert e5.load(result_root/'full-E5-1/judgment.json')['power']['wholePoolJoules'] == 999
+        tables = original_module('continuation_tables', HERE/'tables.py')
+        table_text = tables.render(result_root,e5.REPO)
+        assert any(line.startswith('| E5-1') and ' NOT_READY;' in line for line in table_text.splitlines())
+        assert 'status: NOT_READY' in table_text and 'maximum sample gap exceeds policy' in table_text
+        assert '"energyStatus": "UNKNOWN"' in table_text and '"wholePoolJoules": null' in table_text
         print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, static placement without scheduler mutation (including failure), stage-entry and pre-GO barriers clear/timeout, optional lifetime, server reset evidence and failure stop, reset autonomy-off reservation/action wait clear/timeout and single attempt on failure/409; mocked API/kubectl only')
 
 
