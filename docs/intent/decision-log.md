@@ -557,3 +557,8 @@
 
 - 검증: judgment Tick.events = 원시 scheduler.jsonl.gz 축자 복사(60/60 동일). 그러나 settings 행·catalog stream 미사용, P0 정규화는 축약본, P1 scout은 gz 직접 읽기 불가(256MB 제한)·gopls 미수행 → "정제 결과만 보고 판단" 위험 실재.
 - 조치: P2 중단, r1 카드 폐기(`analysis/cards-r1-superseded/` 보관). P0 원시 리더 추가(gz 전 stream kind/시각 필터, 제한 없음) → P1을 실행 도구 보유 task 에이전트로 재수행; 카드 증거는 원시 행 인용 자동 대조, codePath는 gopls 확정 필수.
+
+## 2026-10-29 — P2 종합(원시 재검증 r2): 근본 원인 6군집, 사용자 결정 대기(P3)
+
+- 입력 22카드(원시 verify 전부 true, gopls 확정) → 6군집: R1 ready-subset이 기존 공급 철회(5단계, 창 오류 37,187건 겹침) / R2 역방향 교체 쿨다운 부재(ABA 38회) / R3 성공 cleanup 중 route 동결(106 owner-stage) / R4 partial 후 예약 고착(4 owner, 362 tick) / R5 dead executor ACK 의존(E5-7) / R6 batching OFF 후보 투영 누락. 산출 `analysis/P2-synthesis.md`.
+- 권고 최소안: R1(readySubset old-serving 보존, K8s maxUnavailable=0 유추) + R5(positive-route만 ACK) 먼저(제품 2파일 18–43줄) → R4(known-effect 수렴) → R3 → R2(교체 쿨다운) → R6. 전체 ~7파일 250–460줄. E5-4 과부하·Smol 용량은 결함 아님(의도 설계·용량 한계).
