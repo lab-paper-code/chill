@@ -562,3 +562,4 @@
 
 - 입력 22카드(원시 verify 전부 true, gopls 확정) → 6군집: R1 ready-subset이 기존 공급 철회(5단계, 창 오류 37,187건 겹침) / R2 역방향 교체 쿨다운 부재(ABA 38회) / R3 성공 cleanup 중 route 동결(106 owner-stage) / R4 partial 후 예약 고착(4 owner, 362 tick) / R5 dead executor ACK 의존(E5-7) / R6 batching OFF 후보 투영 누락. 산출 `analysis/P2-synthesis.md`.
 - 권고 최소안: R1(readySubset old-serving 보존, K8s maxUnavailable=0 유추) + R5(positive-route만 ACK) 먼저(제품 2파일 18–43줄) → R4(known-effect 수렴) → R3 → R2(교체 쿨다운) → R6. 전체 ~7파일 250–460줄. E5-4 과부하·Smol 용량은 결함 아님(의도 설계·용량 한계).
+- P3 결정(사용자): 6군집 전부 승인, 권고 순서 R1+R5 → R4 → R3 → R2 → R6. 동시 에이전트 ≤3, 파일 영역 분리, 군집별 커밋+회귀+리뷰, 후 E5 2회차.
