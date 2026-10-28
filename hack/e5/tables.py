@@ -21,6 +21,54 @@ def cell(value):
     return str(value).replace('|', '&#124;').replace('\n', ' ')
 
 
+def number(value):
+    return 'UNKNOWN' if value is None else f'{value:,.3f}'
+
+
+def result_counts(metric):
+    """Disjoint planned population; completed-only quantiles are not this denominator."""
+    offered, outcomes = metric.get('offered'), metric.get('outcomes')
+    if offered is None or outcomes is None:
+        return 'UNKNOWN'
+    latency = metric.get('gatewayCompletedLatencyNS') or metric.get('completedLatencyNS') or {}
+    completed = latency.get('samples', outcomes.get('completed', 0))
+    failed = sum(outcomes.get(key, 0) for key in ('error', 'timeout', 'preprocess_failed', 'delivery_failed'))
+    rejected = outcomes.get('rejected', 0)
+    canceled = outcomes.get('canceled', 0)
+    unfinished = max(0, offered - completed - failed - rejected - canceled)
+    errors = (metric.get('offeredResponsePopulation') or {}).get('errors', {})
+    top = sorted(errors.items(), key=lambda item:(-item[1], item[0]))[:3]
+    detail = '; '.join(f'{key}={count:,}' for key, count in top)
+    if not detail:
+        detail = '; '.join(f'{key}={outcomes[key]:,}' for key in ('error', 'timeout', 'preprocess_failed', 'delivery_failed') if outcomes.get(key))
+    return (f'계획 {offered:,}; 완료 {completed:,} / 실패 {failed:,}'
+            + (f' ({detail})' if detail else '') +
+            f' / 거절 {rejected:,} / 취소 {canceled:,} / 미완료·불명 {unfinished:,}')
+
+
+def energy_text(power):
+    power = power or {}
+    known = power.get('complete') is True and power.get('energyStatus', 'MEASURED') == 'MEASURED'
+    whole, active = (power.get('wholePoolJoules'), power.get('activePoolJoules')) if known else (None, None)
+    bound = power.get('gapErrorBoundJoules') if known else None
+    coverage = power.get('energyCoverage') or {}
+    fraction = coverage.get('maximumNodeGapFraction')
+    return (f'{number(whole)} / {number(active)} J; ±{number(bound)} J; '
+            f'gapΣNode={number(coverage.get("nodeGapSecondsSum"))}s, '
+            f'max={number(coverage.get("maximumGapSeconds"))}s, '
+            f'maxNode={number(fraction * 100 if fraction is not None else None)}%')
+
+
+def paired_power(pair, mode):
+    prefix = 'full' if mode == 'full' else 'static'
+    error = pair.get('energyGapError') or {}
+    whole, active = pair.get(prefix+'WholePOOLJ'), pair.get(prefix+'ActivePOOLJ')
+    return {'complete':whole is not None and active is not None,
+            'wholePoolJoules':whole, 'activePoolJoules':active,
+            'gapErrorBoundJoules':error.get(prefix+'BoundJoules'),
+            'energyCoverage':error.get(prefix+'Coverage')}
+
+
 def render(root, repo):
     root = root.resolve()
     if not (root / 'binding.json').exists() and (root / 'run/binding.json').exists():
@@ -52,6 +100,10 @@ def render(root, repo):
         status = summary.get('planRows', {}).get(stage, 'UNMEASURED')
         columns[-1] = f' {status}; Run ID `{cell(root.parent.name if root.name == "run" else root.name)}`; raw `{cell(root)}` '
         lines.append('|' + '|'.join(columns) + '|')
+    results_at = len(lines)
+    result_rows = []
+    slos = {workload['name']:workload.get('slo', {}) for workload in binding.get('config', {}).get('workloads', [])}
+    pairs = {pair['row']:pair for pair in summary.get('pairedComparisons', [])}
     lines += ['', '## Frozen evidence scope and conditions', '',
               '```json', json.dumps({
                   'excludedNodes': (binding.get('schedulerSettings') or {}).get('excludedNodes'),
@@ -74,6 +126,22 @@ def render(root, repo):
     paths = sorted(root.glob('smoke-*/summary.json')) if operational else sorted(root.glob('*/judgment.json'))
     for path in paths:
         stage = load(path)
+        if not operational:
+            mode, marker, suffix = path.parent.name.partition('-E5-')
+            row_id = 'E5-'+suffix if marker else path.parent.name
+            pair = pairs.get(row_id, {})
+            chill = paired_power(pair, 'full') if mode == 'static' else stage.get('power')
+            static = stage.get('power') if mode == 'static' else paired_power(pair, 'static')
+            paired = row_id in {'E5-'+str(index) for index in range(1,7)}
+            static_text = energy_text(static) if paired else 'N/A (E5-S 대응 단계 없음)'
+            difference = pair.get('staticMinusFullWholePOOLJ')
+            difference_bound = (pair.get('energyGapError') or {}).get('differenceBoundJoules')
+            if mode not in ('full', 'static') and paired:
+                own_j, static_j = (chill or {}).get('wholePoolJoules'), static.get('wholePoolJoules')
+                own_b, static_b = (chill or {}).get('gapErrorBoundJoules'), static.get('gapErrorBoundJoules')
+                difference = static_j-own_j if own_j is not None and static_j is not None else None
+                difference_bound = own_b+static_b if own_b is not None and static_b is not None else None
+            difference_text = f'{number(difference)} ±{number(difference_bound)} J' if paired else 'N/A'
         lines += [f'### {cell(path.parent.name)}', '', f'Source: `{cell(path)}`; status: {cell(stage.get("status", "UNKNOWN"))}', '']
         if 'judgmentCriteria' in stage:
             lines += ['Judgment criteria: ' + ', '.join(stage['judgmentCriteria']) + '.', '']
@@ -98,10 +166,30 @@ def render(root, repo):
                         'receiptToResponseUnit': 'ms' if operational else 'ns',
                         'SLOVerdict': metric.get('SLOVerdict', metric.get('D1')),
                         'withinSLOFraction': metric.get('withinSLOFraction', metric.get('deadlineSuccessFraction'))}
+            if not operational:
+                slo = slos.get(name, {})
+                target = slo.get('targetLatencyNanos')
+                latency = metric.get('gatewayCompletedLatencyNS') or metric.get('completedLatencyNS') or {}
+                p95 = latency.get('p95')
+                verdict = f'{metric.get("D1", "UNKNOWN")} ({metric.get("deadlineSuccess", "UNKNOWN")}/{metric.get("requiredSuccessfulRank", "UNKNOWN")})'
+                columns = [row_id, mode, name+'; p'+str(slo.get('percentile', '?'))+'≤'+number(target/1e6 if target is not None else None)+'ms',
+                           number(p95/1e6 if p95 is not None else None), result_counts(metric), verdict,
+                           energy_text(chill), static_text, difference_text]
+                result_rows.append('| '+' | '.join(cell(column) for column in columns)+' |')
             lines += [f'**{cell(name)}**', '', '```json', json.dumps(selected, ensure_ascii=False, indent=2), '```', '']
         del stage
     if not paths:
         lines += ['No stage summaries present; timing values unavailable.', '']
+    if not operational:
+        lines[results_at:results_at] = [
+            '', '## 워크로드별 처리 결과와 동일 단계 POOL 에너지', '',
+            '수신 p95는 성공·executionComplete HTTP final의 완료-only 지연 분포다. D1은 전체 planned offered를 분모로 하며 deadline 성공 수/필요 rank를 표시한다. 오류·거절·취소·무발행·미완료는 p95 표본에 섞지 않지만 D1 분모에는 남는다.',
+            '완료 수는 이 완료-only 지연 표본 수, 실패는 error/timeout/preprocess_failed/delivery_failed, 미완료·불명은 나머지 planned다. 괄호는 offered 요청에 결합한 상위 오류 코드(없으면 원래 실패 outcome)다.',
+            '에너지는 workload 귀속이 아닌 동일 단계 공유 POOL 값(전체/활성)이며 반복 행을 합산하지 않는다. ±는 198150d6 E5 공백 보간 오차 상한, coverage는 Node 공백초 합/최대 공백/최대 Node 공백 비율이다. UNKNOWN을 0으로 바꾸지 않는다.',
+            '고정 E5-S는 같은 E5-1~6 trace의 기준선이다. static 행의 에너지 열도 full CHILL과 해당 고정을 나란히 보여주며, Δ=고정−CHILL(양수는 CHILL 절감)이다. factor 행에서는 CHILL 열이 표시된 제어요소 변형이다.',
+            '', '| 단계 | 방식 | Workload·SLO | 수신 p95 (ms) | 결과 수 (요청) | D1 (deadline/필요 rank) | CHILL 전체/활성 POOL·오차·coverage | 대응 고정 E5-S 전체/활성 POOL·오차·coverage | Δ 고정−CHILL 전체 POOL |',
+            '|---|---|---|---:|---|---|---|---|---|',
+            *result_rows, '']
     return '\n'.join(lines)
 
 
@@ -135,4 +223,37 @@ def self_check(repo):
         assert ' MEASURED;' in failure_row and 'UNMEASURED' not in failure_row
         assert '"status": "CAPTURED"' in text and 'operator-receipt' in text
         assert 'below-resolution-profile' in text and '"energyBelowResolution": true' in text
+        # Synthetic presentation fixture: completed-only p95 passes, planned D1 fails.
+        workload = 'mnv-fixture'
+        (root/'binding.json').write_text(json.dumps({'schema':'e5-binding.v1','config':{'workloads':[
+            {'name':workload,'slo':{'percentile':95,'targetLatencyNanos':1_000_000_000}}]}}))
+        metric = {'offered':100,'outcomes':{'completed':90,'error':6,'timeout':1,'rejected':1,'canceled':1,'unfinished-or-no-final':1},
+                  'gatewayCompletedLatencyNS':{'samples':90,'p95':400_000_000},'D1':'FAIL',
+                  'deadlineSuccess':89,'requiredSuccessfulRank':95,
+                  'offeredResponsePopulation':{'errors':{'BackendUnavailable':6,'RequestTimeout':1}}}
+        coverage = {'nodeGapSecondsSum':2,'maximumGapSeconds':1.5,'maximumNodeGapFraction':.005}
+        full_power = {'complete':True,'wholePoolJoules':1000,'activePoolJoules':800,
+                      'gapErrorBoundJoules':5,'energyCoverage':coverage}
+        static_power = dict(full_power,wholePoolJoules=1200,activePoolJoules=900,gapErrorBoundJoules=7)
+        summary = load(root/'e5-summary.json')
+        summary['planRows']['E5-1'] = 'FAIL'
+        summary['pairedComparisons'] = [{'row':'E5-1','fullWholePOOLJ':1000,'staticWholePOOLJ':1200,
+            'fullActivePOOLJ':800,'staticActivePOOLJ':900,'staticMinusFullWholePOOLJ':200,
+            'energyGapError':{'fullBoundJoules':5,'staticBoundJoules':7,'differenceBoundJoules':12,
+                             'fullCoverage':coverage,'staticCoverage':coverage}}]
+        (root/'e5-summary.json').write_text(json.dumps(summary))
+        for mode, power in (('full',full_power),('static',static_power)):
+            folder = root/(mode+'-E5-1')
+            folder.mkdir()
+            (folder/'judgment.json').write_text(json.dumps({'status':'FAIL','power':power,'requests':{workload:metric}}))
+        text = render(root,repo)
+        row = next(line for line in text.splitlines() if line.startswith('| E5-1 | full |'))
+        assert 'p95≤1,000.000ms' in row and '| 400.000 |' in row and 'FAIL (89/95)' in row
+        assert '완료 90 / 실패 7' in row and '거절 1 / 취소 1 / 미완료·불명 1' in row
+        assert 'BackendUnavailable=6' in row and 'RequestTimeout=1' in row
+        assert '1,000.000 / 800.000 J; ±5.000 J' in row and '1,200.000 / 900.000 J; ±7.000 J' in row
+        assert 'gapΣNode=2.000s, max=1.500s, maxNode=0.500%' in row and '200.000 ±12.000 J' in row
+        static_row = next(line for line in text.splitlines() if line.startswith('| E5-1 | static |'))
+        assert '1,000.000 / 800.000 J; ±5.000 J' in static_row and '1,200.000 / 900.000 J; ±7.000 J' in static_row
+        assert '99,999' not in energy_text(dict(full_power,complete=False,wholePoolJoules=99999))
     print('tables self-check: PASS')

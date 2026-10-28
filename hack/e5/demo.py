@@ -982,7 +982,7 @@ def self_check():
     with tempfile.TemporaryDirectory(prefix='chill-demo-') as temp:
         root = Path(temp)
         environment = root / 'environment.json'
-        environment.write_text(json.dumps({'paths': {'repository': str(HERE.parents[1]), 'ops': temp, 'campaign': temp, 'd2State': temp}, 'e5': {'operationalRecipe': temp, 'nodes': [], 'excludedNodes': []}, 'd2': {'repoBin': temp, 'apiBase': 'https://fixture.invalid', 'caFile': temp, 'tokenFile': temp, 'kubectl': ['fixture-kubectl'], 'jobTemplate': temp, 'workloadUID': 'fixture', 'workloadName': 'fixture'}}))
+        environment.write_text(json.dumps({'paths': {'repository': str(HERE.parents[1]), 'ops': temp, 'campaign': temp, 'd2State': temp}, 'e5': {'operationalRecipe': temp, 'nodes': [], 'excludedNodes': [], 'awsExecutable':temp, 'awsEnvFile':temp}, 'd2': {'repoBin': temp, 'apiBase': 'https://fixture.invalid', 'caFile': temp, 'tokenFile': temp, 'kubectl': ['fixture-kubectl'], 'jobTemplate': temp, 'workloadUID': 'fixture', 'workloadName': 'fixture'}}))
         with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}):
             e5 = module('demo_smoke_e5', HERE / 'e5.py')
             d = e5.module('demo_smoke_conduct', HERE / 'd2/conduct_before.py')
@@ -2261,7 +2261,8 @@ def self_check():
         assert 'status: NOT_READY' in table_text and 'maximum sample gap exceeds policy' in table_text
         assert '"energyStatus": "UNKNOWN"' in table_text and '"wholePoolJoules": null' in table_text
         # Approved E5-only gap interpolation, with strict native evidence retained.
-        energy = original_module('energy_coverage_check',HERE/'e5-archive.py')
+        with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG':str(environment)}):
+            energy = original_module('energy_coverage_check',HERE/'e5-archive.py')
         import datetime as dt
         base = dt.datetime(2026,10,28,tzinfo=dt.timezone.utc)
         stamp = lambda seconds:(base+dt.timedelta(seconds=seconds)).isoformat().replace('+00:00','Z')
