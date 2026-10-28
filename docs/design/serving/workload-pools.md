@@ -534,6 +534,8 @@ G2 계약 세대 감사와 E5 실행 결과는 각각 별도다.
 | E5-6 soak | 60분 | 모두 α=0.3 | 1시간 예측 에너지 합과 비교 집합 실측, 전체 POOL 실측, `completionResidualNanos` 분포와 설정 여유 | 위 표 E5 행, [용량표 계획기](analytic-planner.md#11-확인) 에너지(실측) | E5-6: MNV: p95 394.530 ms; 계획 114,558; 완료 105,294 / 실패 9,264 (BackendUnavailable=8,417; RequestTimeout=847) / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (103903/108831)<br>PLC: p95 15.905 ms; 계획 41,623; 완료 41,623 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (41150/39542)<br>Smol: p95 3,290.431 ms; 계획 617; 완료 617 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (617/587) | E5-6: 342,989.174 / 307,660.371 J; ±328.993 J; gapΣNode=20.693s, max=4.811s, maxNode=0.238% | E5-6: 405,232.339 / 371,636.855 J; ±67.083 J; gapΣNode=14.787s, max=2.010s, maxNode=0.105% | E5-6: 62,243.166 ±396.077 J | FAIL; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` |
 | E5-7 실패 | 15분 | 모두 α=0.3 | 180초 인스턴스 강제 종료, 360초 Node 하나 cordon+서빙 Pod 삭제, 600초 uncordon; 격리·대체·실제 복구와 실패 동작 원인 | 평가 표 노드·서빙·제어 동작 실패 행, `SCH-AC-45` | E5-7: MNV: p95 401.963 ms; 계획 28,793; 완료 28,793 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (28789/27354)<br>PLC: p95 17.780 ms; 계획 10,310; 완료 10,310 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (10177/9795)<br>Smol: p95 2,971.640 ms; 계획 140; 완료 140 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (140/133) | E5-7: 83,877.847 / 75,449.598 J; ±1.948 J; gapΣNode=1.498s, max=1.498s, maxNode=0.166% | E5-7: N/A (E5-S 대응 단계 없음) | E5-7: N/A | MEASURED_DESCRIPTIVE; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` |
 
+제어요소 비교 `control-216`의 12행 표와 rev102 조건·식별력 한계는 [명세의 제어요소 비교](../../spec/README.md#제어요소-비교)에 연결한다(아래 N=2는 최초 계획이며 실행 집합은 해당 표 기준).
+
 **조건**
 
 - genesis2는 하드웨어 결함(Xid 79)으로 제외했으며 서빙 Node는 7개다.
@@ -544,7 +546,7 @@ G2 계약 세대 감사와 E5 실행 결과는 각각 별도다.
 - E5-S S5의 전력 공백 1.637%>1%로 S5 및 E5-S 에너지 합과 총 차이는 UNKNOWN이다. 대응 CHILL 170분 전체 POOL은 1,100,896.456 J(원시 1100896.4557965863, 소수 셋째 자리 반올림)이며 UNKNOWN을 0으로 대체하지 않는다.
 - 표 수치는 tables.txt의 소수 셋째 자리 표시를 그대로 옮겼다(반올림 표시); 새 판정 규칙은 적용하지 않는다. MEASURED_DESCRIPTIVE/결과 연결은 PASS나 완전 커버리지를 뜻하지 않는다.
 - E5-3은 증가만 평가했으며 E5-5는 급감·재급증으로 점진 감소는 미평가다. 버스트는 Smol만, 실패 주입은 서빙 손실/cordon 대리 실험만이다. 물리 네트워크·전원 손실과 모든 제어 실패 유형은 미측정이다. 한 paired seed 집합이며 독립 반복은 없다.
-- CHILL 결함 후보(전환 중 MNV 라우팅 공백, rasp5 교체 진동, 예약 잔류)의 수정은 결과 확정 뒤다. 제어요소별 독립 기여 비교는 **다음 작업**이며 이 표로 완료를 주장하지 않는다. 클러스터 조작·재측정은 하지 않았다.
+- CHILL 결함 후보(전환 중 MNV 라우팅 공백, rasp5 교체 진동, 예약 잔류)의 수정은 결과 확정 뒤다. 제어요소 비교는 위 명세 링크의 제한된 조건의 case study이며 모든 요소의 독립 기여를 증명하지 않는다. 이 문서 갱신에서 클러스터 조작·재측정은 하지 않았다.
 
 **7행 커버리지와 실패 주입 계약:** [E5 계획의 커버리지 표](../../plans/2026-10-26-e5-evaluation.md#명세-7행-커버리지와-한계)가 정본이다. 일정=1/6, 증가=3(점진 감소 없음), 버스트=2(Smol만), 급감/재급증=5, 이기종 혼합=1~7, 한계=4, 실패=7이다. 독립 반복은 없으며 완전 커버리지로 주장하지 않는다. E5-7은 기존 kubectl의 Pod 강제 삭제와 cordon/uncordon으로 운영 담당만 직렬 실행한다. cordon은 네트워크 단절이나 기존 Pod 종료가 아니므로 삭제를 함께 사용한 배치 차단 대리 실험으로 보고한다. 대상 UID·명령 UTC·응답·격리·대체 결정·Ready/ACK·route 복구를 보존하고 실패 시에도 uncordon read-back을 남긴다. 제어 실패는 이 주입에서 실제 관찰한 유형에 한정한다.
 
