@@ -115,7 +115,7 @@
 |---|---|---|
 | spec | `docs/spec/00_measurement.md`의 "Serving 관측" 행(18행)에 다음을 추가: "CHILL은 서빙 관측, CHILL 구성요소와 인스턴스의 자원 사용, 서빙 Pod 상태 변화와 장애 감지를 기록하고 원래 기록 그대로 API로 제공한다" | 한 커밋 |
 | SRS | scheduler SRS에 요구사항 4개(원시 내보내기, `resources`, `cluster`, 전력계 선언 노출)와 수용 시나리오 | SCH-67~ / SCH-AC-52~ |
-| 설계 | `docs/design/serving/observability-split.md`에 두 종류의 행 형식·주기·크기, 내보내기 의미(로컬 우선, 바이트 보존, 마감), node-agent 발견·전송. **ADR 0030**: 같은 prefix(`v1alpha5`)에 stream 2개를 추가하는 변경이며 버전은 올리지 않는다. 배포 이전 시간에 새 stream이 없는 것은 하네스 `absentStreams`로 처리하고 실제 결손과 구분한다. 다중 버전 reader는 만들지 않는다. ADR 0029 cutover와 묶을지 명시한다. ADR 0019 일정 줄에 추가한다 | 한 커밋 |
+| 설계 | `docs/design/serving/observability-split.md`에 두 종류의 행 형식·주기·크기, 내보내기 의미(로컬 우선, 바이트 보존, 마감), node-agent 발견·전송. **ADR 0030**: 같은 prefix(`v1alpha5`)에 stream 2개를 추가하는 변경이며 버전은 올리지 않는다. 배포 이전 시간에 새 stream이 없는 것은 하네스 `absentStreams`로 처리하고 실제 결손과 구분한다. 다중 버전 reader는 만들지 않는다. ADR 0029는 보류(Deferred)이므로 이번 작업과 묶지 않는다. 이번 저장 계약 변경은 단일 gateway의 `resources`/`cluster` 추가로 한정한다. ADR 0019 일정 줄에 추가한다 | 한 커밋 |
 | 구현 1 | API-1, settings 필드. 두 stream 이름을 `observationStreams`(`observation_log.go:36`)에 **한 번에** 등록한다 | 서버 |
 | 구현 2 | `resources`: node-agent 발견·표본·묶음 POST, 서버 수신·기록, 서버 GC·디렉터리 바이트 | 서버, node-agent |
 | 구현 3 | `cluster`: observer의 Pod 사건과 issue 전이 기록 | 서버 |
@@ -149,7 +149,8 @@
 - 가공 조회 API를 원시 내보내기로 대체하지 않는다. 두 용도가 다르다.
 - 해시·바이트 비교를 상시 검증 관문으로 만들지 않는다(AGENTS.md). 전환 확인은 4장의 1회 비교뿐이다.
 - 안전·품질 관문을 "하네스 순감소"를 이유로 지우지 않는다. 지우는 것은 중복 수집 경로뿐이다.
-- 게이트웨이 분리(ADR 0029)의 라우터별 스트림 노출은 실제 cutover 때 추가한다. 이번에는 `router` 파라미터를 만들지 않는다.
+- 게이트웨이 분리(ADR 0029)는 보류다. 실제 split이 승인되면 캠페인 사이 별도 작업 단위에서 source 차원·`resources`·`cluster`·T5 모집단을 함께 바꾼다. 이번에는 `router` 파라미터를 만들지 않는다.
+- 다음 서버 재빌드와 이 계획의 리허설은 `e947cd5e`의 공유 `Runtime` 변경(예: `internal/serving/runtime.go:1208` `Routable`의 `i.Capacity > 0`)을 정리한 소스로 한다. #213 서버(`24f4ff4f`)는 그 이전 소스다.
 - 하네스 자신의 부하 생성 Job 수명(`job-*`, `producer-*`)은 실험 장비 기록이라 범위 밖이다.
 - 열린 점: node-agent가 비root 상태로 호스트 cgroup 파일을 읽을 수 있는지, edge Node에서 서버 수신 경로까지 도달하는지 구현 2에서 한 번 확인한다.
 - 열린 점: 작은 Node(rasp5, jetson-nano)에서 1초 표본의 오버헤드를 구현 2에서 한 번 측정해 기록한다. 너무 크면 설정값으로 주기를 낮춘다.

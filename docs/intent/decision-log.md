@@ -494,3 +494,9 @@
 
 - "최대 공백 3초"는 짧은 측정 창(d·비용)용. E5 행(30분)에서는 공백 구간을 앞뒤 표본 선형 보간으로 적분, 공백 합 ≤ 창 1% 그리고 단일 공백 ≤ 30초면 에너지 값 산출 + coverage(공백 합·최대 공백)와 오차 상한(공백초 × 해당 Node 창 내 최대−최소 W) 기록. 초과 시 UNKNOWN. config(기본 0.01, 30s); d·비용 3초 기준 유지.
 - #213 진행 중이면 중단 금지: 원시 보존되므로 E5 종료 후 judge/summarize 재실행으로 전 행 적용(재측정 없음). 하네스 수정은 E5 창 밖, 한 커밋. 읽기 실패(30분 60회) 원인은 E5 뒤 edge-metrics 과제로만 기록.
+
+## 2026-10-28 06:5xZ — 게이트웨이 분리(ADR 0029) 보류(사용자 요청 2차 검토)
+
+- fusion 2차 검토(패널 opus-5-5 / gpt-6-astra / gemini-4-argon, 판정 gpt-6.1-sol)에서 3패널 모두 보류. G0 gateway PASS(CPU 1.60/6, throttle 0), spec 측정 표가 router N개를 요구하지 않음. #213 탐색 중 `gatewayTailNS` 꼬리(PLC p95 37~46ms 대 7~8ms)는 상관 관찰로만 기록.
+- ADR 0029·gateway-split·SRS §8·U11을 Deferred로 전환. 재개 조건: gateway 귀속 G 확인 실패 또는 제어 간섭이 측정 표를 훼손하고 직접 수정으로 해결되지 않을 때. 재개 시 control 1 + router 1부터.
+- `e947cd5e` 미사용 분리 코드는 E5 종료·표 기입 뒤, 다음 서버 재빌드 전에 사용처 단위로 제거(공유 Runtime 변경 포함). T5·`internal/serving/live` 유지. evidence API는 단일 source로 진행.

@@ -2,9 +2,10 @@
 
 ## Status
 
-**G2 코드 이행 — 2026-10-28, 운영 cutover는 미승인.** T5와 별도 control/router
-실행 경로를 구현하되 G3 클러스터 캠페인·배포 완료를 뜻하지 않는다. 현재 E5/G0와
-측정한 단일 게이트웨이는 불변이며 이 ADR만으로 앞당겨 배포하지 않는다.
+**Deferred — 배포·G3 진행 보류(2026-10-28 2차 검토).** `e947cd5e`에 미배선 구현이
+있지만 분리 구조의 채택·운영 적용·성능 인증을 뜻하지 않는다. 진행 중인 E5(#213)의
+실행 이미지·설정·저장 계약·수집 절차는 바꾸지 않는다. 아래 Decision은 확정 일정이
+아니라 **재개 시 지킬 안전 불변식**이다.
 
 ## Context
 
@@ -20,13 +21,37 @@ ChillServer 한 프로세스의 요청 인증·입력 검증·가중 배정·본
 현행 `definitionID`, native `DecisionID`, 선언 ConfigMap resourceVersion은 각각
 다른 의미이며 독립적인 배분표 버전/라우터 ACK가 이미 존재하는 것은 아니다.
 
+G0(#203)의 동결된 gateway 판정은 PASS다(`binding.json`의 gatewayVerdict, CPU 최고
+1.60/6코어, limit 대비 0.266, throttle 0). 이는 해당 부하점의 비병목 확인이며 최대
+G나 여유 인증이 아니다. 한편 #213 완료 요청의 `gatewayTailNS`(`elapsedNanos −
+nativeElapsedMS`) PLC p95는 계획기 탐색 중 37~46ms, 탐색 밖 7~8ms였다. 전체 완료
+p95는 16~18ms로 SLO 안이다. 이것은 제어 작업과 요청 꼬리의 상관이며 순수 gateway
+처리시간이나 분리 효과의 인과 증거가 아니다. 원인(CPU 경쟁·GC·전달 구간)은 미확정이다.
+
+## Reopen conditions
+
+재개는 E5 종료·결과 표 기입 뒤 다음 중 하나가 있고, 기존 경로의 직접 수정이나 작업
+동시성 축소(예: κ 계산 병렬도)로 해결되지 않을 때 결정한다.
+
+1. gateway에 귀속되는 G 확인(SCH-AC-46) 실패.
+2. 제어·조회·복원 작업의 간섭이 spec 측정 표의 지연·성공률을 훼손한다는 근거.
+
+재개 전에 연구 질문, 연결할 spec 측정 행, 비교 조건과 합격 기준을 명시한다. 첫 검증
+구성은 **control 1 + router 1**이다. router N>1은 router 1개의 한계 또는 라우터 수
+자체의 연구 필요가 확인될 때 별도로 승인한다.
+
 근거 원본: `O/intent/gateway-20261027/{proposal,arch-map,research}.md`,
 `O=/home/genesis1/.cache/chill-assets/ops/pools-deploy`.
 요구사항은 [scheduler SRS §8](../spec/scheduler/SRS.md)의
 SCH-60~66 / SCH-AC-47~51, 상세 설계는
 [gateway-split](../design/serving/gateway-split.md)에 둔다.
 
-## Decision
+## Decision (재개 시 지킬 안전 불변식)
+
+다중 라우터 온라인 가입·제외, 영속 membership, 프로세스 세대 custody·자동 Pod 교체
+복구, router별 quota 분할, 실행 전 거절 뒤 자동 재배정은 **기본 채택 사항이 아니다**.
+첫 캠페인은 고정 구성이며 장애 시 신규 유입을 닫고 캠페인 실패와 미확인 물리 점유를
+보존한다. assigned 선행 기록, 물리 완료 확인, 안전한 reset은 축소하지 않는다.
 
 1. **판단은 중앙, 전달은 분산한다.** control은 같은 서버 조립 소스를
    `gatewaycontrol` build tag로 만든 별도 `chill-control` 실행 파일이고, 데이터
@@ -92,9 +117,10 @@ SCH-60~66 / SCH-AC-47~51, 상세 설계는
   구형 단일 gateway 자료는 원래 형식으로 해석하며 split 검증 결과로 간주하지 않는다.
 - native 이미지, Pod 전용 Service와 EdgeMesh, firstfloor 배칭·마감 정책, 중앙
   장부/예약 및 E5 분모는 변경하지 않는다. 새 CRD·DB·외부 프레임워크는 없다.
-- 적용 순서는 **E5 단일 경로 유지 → G2 미배선 코드/로컬 검사 → G3 검증 →
-  별도 승인된 cutover**다. 현 E5는 단일 게이트웨이와 당시 측정한 G를 조건으로
-  보고한다. 분리 뒤에는 G와 d 측정·다중 stream 집계를 다시 확인한다.
+- 적용 순서는 **E5 완료·표 기입 → `e947cd5e` 미사용 분리 코드 정리와 단일 source
+  evidence API 이행 → 재개 조건 판단 → 승인된 최소 분리 검증 → 별도 cutover**다.
+  E5 종료 자체는 G2/G3 개시 조건이 아니다. 현 E5는 단일 게이트웨이와 G0 통과점을
+  조건으로 보고한다.
 
 ## Change record
 
@@ -110,3 +136,13 @@ SCH-60~66 / SCH-AC-47~51, 상세 설계는
   composition root가 native ACK-only source, router 적용 장벽, native 진행·상태
   증거와 router별 reader를 연결한다. `.go-arch-lint.yml`과 coverage mapping을
   함께 갱신한다. 별도 control 빌드와 router는 차트에 연결하지 않는다.
+- 2026-10-28: 2차 검토(fusion, 패널 3모델 + 판정)로 **Deferred**. `e947cd5e` 확인 사항:
+  표 포인터가 바뀌면 Receive~Accept 요청을 `GatewayPlanChanged`로 거절
+  (`internal/serving/runtime.go:306-307`, 설계 §2와 충돌); progress가 소유 router가
+  아니라 노출된 모든 router로 전달(`gateway/control.go:680-707`); progress마다
+  membership 전체 직렬화·Sync(`:199-227,698-701`); 같은 Pod 세대만 custody 인수
+  (`recovery.go:24-41`)로 새 PodUID 교체 경로 결손; `ArrivalCounts` 운영 소비자 없음;
+  기본 모드에도 적용되는 공유 `Runtime` 변경(`runtime.go:1208`). E5 종료·표 기입 뒤
+  다음 서버 재빌드 전에 분리 전용 실행 경로·패키지·Runtime 분기·callback·reader·도착
+  집계를 사용처 단위로 제거한다(기계적 전체 revert 아님). T5 `26c3bb76`과
+  `internal/serving/live`는 유지한다.

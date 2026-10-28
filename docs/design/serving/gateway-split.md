@@ -1,9 +1,9 @@
 # 게이트웨이 제어·데이터 평면 분리
 
-**상태: G2 코드 이행 — 2026-10-28, 배포·G3 캠페인 검증 전.**
-현재 운영 큐와 E5/G0 측정 조건은 변경하지 않는다. 코드와 로컬 검사만 이행하며
-클러스터 접근·이미지 게시·차트 연결은 하지 않는다. 측정 창 중 호스트 build/test를
-멈추고 허용된 창에서 nice 19, GOMAXPROCS=2, 패키지 한정 검사만 수행한다.
+**상태: Deferred — 미배선 G2 구현(`e947cd5e`) 존재, 운영 채택·G3 미승인(2026-10-28 2차 검토).**
+현 E5 측정 창에서는 수정·빌드·시험·배포·저장 계약 변경을 하지 않는다. 이 문서는 재개
+판단과 필요한 안전 불변식을 남기는 설계 기록이며, E5 직후 실행할 작업 목록이 아니다.
+재개 조건과 순서는 [ADR 0029](../../adr/0029-gateway-control-data-plane-split.md)가 정한다.
 
 근거는 `O/intent/gateway-20261027/proposal.md`(목표와 배분표 계약), 같은 폴더의
 `arch-map.md`(현행 경로), `research.md`(참고 사례)다.
@@ -12,6 +12,27 @@
 AC는 [scheduler SRS §8](../../spec/scheduler/SRS.md)의 SCH-60~66 / SCH-AC-47~51에 둔다.
 현재 [라우팅](../../spec/03_routing.md)·[전환](../../spec/05_transition_control.md)·
 [관측](observability-split.md)의 의미는 유지한다. 이 초안은 그 원본들을 소급 변경하지 않는다.
+
+## 0. 보류 범위와 재개 시 최소안
+
+- **첫 검증 구성은 control 1 + router 1**이다. 같은 Pod의 별도 컨테이너로 두는 안부터
+  검토한다. 요청 기록은 router, scheduler/management 기록은 control이 소유하며 디렉터리
+  writer를 분리한다. 두 컨테이너의 CPU·메모리·GC와 합계 비용을 모두 관측한다. 이 구성은
+  Node·Pod 장애 격리나 control 장애 중 무중단을 보장하지 않으며, 꼬리 개선도 보장하지
+  않는다. 배치 가능성과 격리 효과는 재개 때 확인한다.
+- **범위 밖(기본안 아님)**: 온라인 router 수 변경·가입, 영속 membership, 이전 프로세스
+  세대 custody·자동 Pod 교체 복구, router별 quota 분할, 정확한 전역 quota, 실행 전 거절
+  뒤 자동 재배정, 소비자 없는 도착 카운터(§4 7·§4.1의 `ArrivalCounts`). 장애 시 신규
+  유입을 닫고 캠페인 실패와 미확인 물리 점유를 보존한다. 실패를 성공으로 만들기 위한
+  timeout 해제나 증거 합성은 하지 않는다.
+- **축소하지 않는 것**: 원자 적용·요청별 버전 고정, native ACK → 실제 applied → 퇴역 source
+  신규 예약 차단 → 물리 drain 순서, timeout/cancel ≠ 점유 0, assigned 선행 기록과 기록
+  실패 시 native 미호출, coverage 오류 표시, 안전한 reset.
+- **관측 제공**: 원시 요청 증거와 제어 기록은 [evidence API](../../plans/2026-10-28-e5-evidence-api.md)의
+  CHILL raw API로 제공한다. 하네스의 host/S3 우회 수집을 다중 router용으로 확장하지
+  않는다. source가 실제로 여럿 생기는 cutover에서만 API source 목록·coverage·
+  `resources`·`cluster`·T5 모집단을 함께 바꾼다(ADR 0019, 캠페인 사이 1회).
+- 아래 §1~§5의 다중 router 문구는 재개 때 이 절의 범위로 다시 쓴다.
 
 ## 1. 모드와 책임 경계
 
@@ -62,10 +83,13 @@ wire DTO는 `serving.GatewayPlan`/`GatewayTarget`으로 표현하며 정의/정�
 
 기존 native `DecisionID` ACK 후에만 해당 정책에 의존하는 snapshot을 발행한다.
 정의·참조·대상·가중치·상한을 모두 검증하고 한 번의 포인터 교체로 적용한다.
-요청은 사용할 snapshot을 잡은 뒤 끝까지 그 snapshot을 보유하며 요청 행에
-`planVersion`을 남긴다. 이후 새 표가 와도 이미 잡은 요청의 정의·수명·배정 버전을
-바꾸지 않는다. 같은 버전으로 안전하게 처리할 수 없는 수락 요청이 있으면 기존
-handoff 보호 조건에 따라 전환을 보류하고, 임의로 새 정의/대상에 옮기지 않는다.
+요청은 사용할 snapshot을 Receive에서 잡은 뒤 Accept와 처리 종료까지 그 snapshot을
+보유하며 요청 행에 `planVersion`을 남긴다. **무관한 표 갱신 자체를 이유로 요청을
+거절하지 않는다.** 이후 새 표가 와도 이미 잡은 요청의 정의·수명·배정 버전을 바꾸지
+않는다. 같은 버전으로 안전하게 처리할 수 없는 수락 요청이 있으면 기존 handoff 보호
+조건에 따라 전환을 보류하고, 임의로 새 정의/대상에 옮기지 않는다. 현재 G2 코드는
+포인터가 바뀌면 `GatewayPlanChanged`로 거절한다(`internal/serving/runtime.go:306-307`).
+이 거절을 단순 삭제하는 것으로는 부족하며, 구표 요청 보호와 퇴역 gate를 함께 만족해야 한다.
 
 첫 배정의 snapshot 선택·물리 점유 예약은 배분표 교체와 같은 로컬 동기화 경계에서
 수행한다. applied 뒤에는 구표를 새로 잡아 퇴역 source의 점유를 늘릴 수 없다.
@@ -168,7 +192,9 @@ control 재시작 후에는 이전 ACK를 추정 복원하지 않고 현재 표�
 - control reader는 `RouterSources() []RouterObservationSource`로 현재와 이전 세대를
   모두 받는다. 필드는 `RouterID`, `Directory`, `JoinedAt`, `LeftAt`, `ObservedAt`,
   `Open`이다. `--router-buffer-root`는 각 source의 private buffer를 읽기 전용으로
-  볼 수 있는 공통 mount다. 경로를 제공하지 못한 현재 시간은 archive로 완전하다고
+  볼 수 있는 공통 mount를 전제하지만, 관측 PVC는 RWO(`charts/chill/templates/serving_entrypoint.yaml:30`)라
+  다중 Node 분산을 보장하지 않는다. 재개 시 §0의 같은 Pod 구성 또는 raw API 제공으로
+  대체한다. 경로를 제공하지 못한 현재 시간은 archive로 완전하다고
   추정하지 않고 `LiveBufferUnavailable` coverage gap으로 표시한다.
 - `requests`/`catalog`의 로컬 우선순위는 source별 UTC hour에 적용한다.
   `Query`, `LoadWindow`/`SchedulerArrivals`, `ScanOccupancyRows`는 합친 원시 요청을
@@ -235,41 +261,53 @@ admission 거절임을 명시적으로 확인한 경우에만** 같은 버전의
 없으며, G3의 재시작 실패 주입에서 명시적으로 확인해야 한다. 이를 닫으려면 native의
 incarnation 검증 또는 실행 세대에 묶인 전달 endpoint 계약이 선행돼야 한다.
 
-## 6. G3 테스트 계획 (미실행)
+## 6. G3 최소 완료 기준 (재개 시, 미실행)
 
-아래는 E5 뒤 G2 구현을 마친 후 main agent/승인된 운영 담당자가 실행할 계획이다.
-이번 G1에서는 코드·클러스터 변경, 호스트 빌드·테스트·부하 재실행이 없다.
+G3는 "안전하게 분리됐는가"와 "분리할 가치가 있었는가"를 따로 판정한다.
 
-| 검사 | 입력/실패 주입 | 통과 증거 | 연결 AC |
-|---|---|---|---|
-| 모드/신뢰 경계 | control 1 + router 2, 인증/입력 오류, 동시 infer 중 control 조회·복원 | router에 계획/관측 복원 루프 없음, control 본문/picker 홉 없음, 기존 오류·수신 기준 시간 의미 유지 | AC-47 |
-| snapshot 원자성 | 서로 다른 정의·identity·가중치 v1/v2, in-flight/미배정 동시 처리 | 요청별 한 버전, 부분 혼합 없음, 구버전 요청 보호·새 Pod identity 혼동 없음 | AC-47 |
-| ACK 순서/멤버십 | native ACK 지연, B applied 지연·중복·구버전 ACK, C 가입 | native ACK 선행, 모든 현재 참여 router 적용 확인, C 적용 전 gate 닫힘 | AC-48 |
-| drain/reset | A source=0, B=1, client timeout·B 단절/재시작·늦은 native 완료 | 미확인/양수면 stop/remove 0회, 이전 세대 포함 모두 0·native 완료 후 정리, 장부/예약 유지 | AC-49 |
-| 채널 안전 | 무권한/잘못된 TLS, heartbeat 상실, seq 공백·slow consumer, control 재시작 | 인증 전 데이터 0, 권한 분리, 신규 gate 닫힘·재동기화, 오래된 ACK/0 재사용 없음 | AC-48, AC-50 |
-| 기록/reader | 두 router, assigned 실패, late final, local/archive 중복·누락, 삭제/재등록 UID, 저장소 오류 | 배정 전 기록, 합친 원시 집합과 수/지연/점유 일치, 라우터별 coverage, 오류를 0으로 숨기지 않음 | AC-51 |
-| 확장·전환·장시간 | router 2개 고정 후 확장/퇴역·전력 전환·재시작·보존 시간 경계 | 실제 가중 분배·점유·SLO와 G, CPU/메모리/기록 공백 공개; 혼합 버전 시각 보존 | AC-47~51 |
-| 측정 회귀 | 승인된 동일 조건의 d 측정 1건과 G 재측정, E5 reader 사후 재생 | λ/d·SLO/전체 offered·전체 POOL 에너지가 다중 소스를 한 번씩 반영, 구조/설정/G를 binding에 고정 | AC-51 |
+1. **조건 동결**: 단일 gateway 기준선과 split의 trace, native 이미지·정책·자원, SLO,
+   배치, 제어 작업, 관측 창, control/router 자원·채널 한도, source 목록·볼륨 접근·수집
+   종료 조건을 binding에 남긴다.
+2. **요청·전환 안전**: Receive~Accept 중 표 교체와 수락된 대기 요청에서 정의·수명·버전이
+   보존된다. native ACK → 실제 applied → 해당 source 신규 예약 차단 → 물리 drain 순서를
+   확인한다. client timeout·채널 단절을 outstanding 0으로 바꾸지 않는다. 기록 실패 요청은
+   native에 전달되지 않는다.
+3. **측정 회귀**: SCH-AC-46의 G 확인 절차·판정을 재사용한다(통과점을 최대 G로 부르지
+   않는다). d 1건은 기록 경로 회귀 확인으로 한정한다. raw API 자료로 요청 수·지연·점유·
+   전체 offered·에너지 모집단을 재계산할 수 있어야 하고, T5의 received/finished/지연
+   모집단도 같은 요청 집합을 반영해야 한다.
+4. **분리 효과**: 같은 제어 작업 조건에서 탐색 중/밖 `gatewayTailNS`와 전체 지연·성공률을
+   단일 gateway와 비교하고, control+router 합계 CPU·메모리·GC·기록 I/O를 공개한다.
+   재개를 정당화한 문제를 해소하지 못하면 "기능 분리 완료, 효과 미입증"이며 cutover
+   통과가 아니다. #213의 다른 단계 수치 하나를 임의 합격선으로 삼지 않는다.
+5. **장애와 보존**: 채널 상실 시 신규 gate/readiness 차단, 미확인 점유 보존, 안전한
+   종료·reset을 확인한다. 자동 Pod 교체 복구를 지원하지 않으므로 실패 종료가 합격
+   동작이다. retention 경계를 지난 archive 조회와 필수 원자료 완전성을 확인한다. native
+   incarnation TOCTOU는 기존 이미지로 닫혔다고 주장하지 않는다(§5).
 
-절차/값은 기존 G·d·전환·장시간 시험을 재사용하고 split 구조와 router 수를
-고정한다. 숫자 목표를 임의로 새로 만들거나 과거 단일 gateway G를 재사용해
-split 성능을 인증하지 않는다. stale 유입, ACK/점유 미확인 또는 필수 원자료
-결손은 실패/무효이며 성공한 일부 router 결과로 전체 통과를 대체하지 않는다.
+N=2는 별도 승인 단계다. 그때 두 router의 실제 유입 참여, 고정 참여 집합 ACK, source 병합,
+quota 분할의 유휴 효과를 추가한다. 연결 하나의 스모크나 ACK만으로 N=2 통과를 선언하지 않는다.
 
 ## 7. 적용 순서와 변경 기록
 
-- E5는 현 구조로 완료하고 보고서에 **단일 게이트웨이·측정한 G** 조건을 남긴다.
-  G2 코드의 존재는 운영 적용 승인이 아니다.
-- G2는 모드·T5 전송·버전/ACK·다중 stream/모든 reader·drain 조건을 함께 이행한다.
-  한쪽만 옮긴 혼합 구조를 완료로 보고하거나 옛 결합 경로를 호환용으로 남기지 않는다.
-- G3는 위 검사를 수행하고 원시 근거를 보존한다. 실제 cutover는 별도 승인된
-  작업이며, router 유입 개방 전 현재 표 적용을 확인하고 이전 단일 경로도 신규
-  유입 차단·물리 0·보존 완료를 확인한 뒤 닫는다. rollback도 현재 점유/기록을
-  건너뛰는 배포 축소가 아니라 동일한 안전 조건의 전환으로 수행한다.
+- 순서는 ADR 0029를 따른다: E5 완료·표 기입 → `e947cd5e` 미사용 분리 코드 정리와 단일
+  source evidence API 이행 → 재개 조건 판단 → 승인된 최소 분리 검증(§6) → 별도 cutover.
+  E5 보고서에는 **단일 게이트웨이·G0 통과점(최대 G 아님)** 조건을 남긴다.
+- `e947cd5e`의 분리 전용 실행 경로·`internal/serving/gateway`·Runtime 분기·callback·
+  router reader·도착 집계는 다음 서버 재빌드 전에 사용처 단위로 제거한다. 공유
+  `Runtime` 변경(예: `runtime.go:1208` `Routable`의 `i.Capacity > 0`)도 기본 모드에
+  적용되므로 함께 정리하거나 별도 근거로 분리한다. T5와 `internal/serving/live`는 유지한다.
+- 실제 cutover는 별도 승인 작업이며, router 유입 개방 전 현재 표 적용을 확인하고 이전
+  단일 경로도 신규 유입 차단·물리 0·보존 완료를 확인한 뒤 닫는다. rollback도 같은 안전
+  조건의 전환으로 수행한다.
 - 2026-10-27: U11 G1 문서 초안 작성. 현 운영·코드·측정 결과는 변경하지 않았다.
 - 2026-10-28: T5 전송을 재사용한 별도 control/router 코드, 불변 버전 적용,
   router별 기록/reader와 물리 점유 장벽을 추가했다. 기본 E5 실행 파일과 차트는
   분리 구조로 배선하지 않았다. 로컬 검사 결과는 아래 구현 기록에만 남긴다.
+- 2026-10-28: 2차 검토(fusion, 패널 3모델 + 판정)로 Deferred. §0 보류 범위·최소안 추가,
+  §2 Receive~Accept snapshot 보유를 명시하고 현 코드의 `GatewayPlanChanged` 거절과의
+  불일치를 기록, §4.1 공통 mount 전제의 RWO 한계 기록, §6을 최소 완료 기준으로 교체,
+  §7 순서를 ADR 0029와 통일. §8은 역사적 로컬 검사 기록이며 G3 통과 근거가 아니다.
 
 ## 8. G2 로컬 구현 검증 기록 (2026-10-28)
 

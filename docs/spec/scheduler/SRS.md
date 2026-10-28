@@ -365,14 +365,23 @@ Counter·Gauge, Prometheus 구간 집계, Knative 부하 관측·안정화, Envo
 - 2026-10-26: SCH-48·49와 SCH-AC-34~36 추가 — native 정책 ACK 반영 대기의 마지막 확인 상태 유지, 실제 읽기 실패 Node의 준비·전력 변경·제거 완료 판정 제한. SCH-41 변경 — 같은 slot의 중복 실물을 포함한 대상 소유분 전체 reset. 5절에 기존 전환 명세 근거와 새 spec 문장 불필요 사유 연결; 기존 전역 Pending 정책 유지.
 - 2026-10-25: SCH-20 변경 — Ready와 실제 배분 가능 상태를 구분; SCH-33 변경 — 워크로드별 설정을 자동제어 하나로 한정하던 문구를 최소 수요 scheduler 설정 맵과 양립하도록 수정. SCH-36~47 및 SCH-AC-30~33 추가(T1·T2·T4·T5, D1~D3 반영); 기존 ID 삭제 없음.
 
-## 8. G1 초안 — 제어·데이터 평면 분리 (E5 뒤 적용)
+## 8. 보류 제안 — 제어·데이터 평면 분리
 
-**상태: Draft, 2026-10-27.** 이 절은 E5 완료 뒤 G2 구현·G3 검증에 적용할
-요구사항 초안이며, 현행 단일 게이트웨이의 구현·배포·검증 완료를 뜻하지 않는다.
-기존 1~7절은 그대로 유지한다. 현재 E5/G0 및 운영 큐의 순서·배치를 변경하지
-않으며, G0 실패를 이유로 이 초안만으로 선행 적용하지 않는다.
-설계 결정은 [ADR 0029](../../adr/0029-gateway-control-data-plane-split.md),
-구현 경계와 검사 계획은 [gateway-split](../../design/serving/gateway-split.md)에 둔다.
+**상태: Deferred(2026-10-28 2차 검토).** SCH-60~66 / SCH-AC-47~51은 현재 E5와 다음
+evidence API 작업의 활성 수용 기준이 아니다. 미배선 구현(`e947cd5e`)의 존재는 요구사항
+채택이나 검증 완료를 뜻하지 않는다. 1~7절은 그대로 유지한다. G0 실패를 이유로 이 절을
+선행 적용하지 않는다. 재개 조건은 [ADR 0029](../../adr/0029-gateway-control-data-plane-split.md)가 정하며,
+재개 시 연결할 시스템 spec 측정 행과 최소 구성을 먼저 확정하고 이 절을 갱신한다.
+구현 경계와 최소 완료 기준은 [gateway-split](../../design/serving/gateway-split.md) §0·§6에 둔다.
+
+재개 시 아래 요구사항은 다음과 같이 축소해 적용한다. 제외한 N>1 능력은 미인증으로 남긴다.
+
+- SCH-60: 첫 검증은 control 1 + router 1. "여러 라우터"는 필수가 아니다.
+- SCH-61: 원자 적용·요청별 버전 고정 유지. **표 교체만으로 Receive~Accept 요청을 실패시키지 않는다.**
+- SCH-62: 승인된 고정 참여 집합의 실제 applied 확인 유지. 온라인 가입·제외는 제외.
+- SCH-63~65: timeout ≠ 점유 0, 미확인 점유·assigned 보존 유지. 자동 세대 복구 의무는 제외하고 안전한 실패·정리로 바꾼다.
+- SCH-66: 단일 논리 요청 모집단·전체 offered·coverage·raw API·T5 일치 유지. 소비자가 없는 별도 도착 카운터는 요구하지 않는다.
+- AC-47~51: Given을 router 1개로 한다. AC-48의 C 가입과 AC-51의 다중 router 재시작 병합은 N>1 재개 전까지 실행 범위에서 제외한다. 원자 적용·구표 요청 보호·실제 applied·timeout 뒤 물리 drain·기록 실패 시 native 미호출·coverage 오류 표시는 축소하지 않는다.
 
 ### 8.1 추가 요구사항
 
@@ -425,3 +434,4 @@ Counter·Gauge, Prometheus 구간 집계, Knative 부하 관측·안정화, Envo
 | [라우팅](../03_routing.md), [전환](../05_transition_control.md), [관측 설계](../../design/serving/observability-split.md) | 기존 시간·가중치·물리 완료·assigned/final·보존 계약 유지 |
 
 - 2026-10-27: G1 draft로 SCH-60~66 / SCH-AC-47~51을 새 절에 추가했다. E5 뒤 적용 전제이며 현 운영 큐 변경·G2 구현·G3 통과 주장이 아니다.
+- 2026-10-28: 2차 검토(fusion)로 §8을 Deferred로 전환하고 재개 시 축소 범위를 명시했다. ID는 추적성을 위해 보존한다.
