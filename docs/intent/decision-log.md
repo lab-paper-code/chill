@@ -536,3 +536,8 @@
 
 - placement-off ≈ membership-off(scheduler_capacity.go:735/742) 중복 가능; batching/resources-off는 기존 인스턴스 AND 대조 + batching-off 템플릿 maxBatch만 → 시작 cap 1/2면 고정 배치로 변질 가능; placement/resources/batching/membership-off는 빈 상태 첫 구성 불가 → full pre-state 복원 후 시작.
 - 할 일: 클러스터 0으로 E5-2·E5-5 pre-state에 스위치 하나씩 끈 계획기 replay → 스위치별 "전부 켜짐 대비 계획 차이", "고정 배치와 동일 여부" 표; 차이 없는 스위치는 실행 제외·이유 기록. 실행 순서: power-off → routing-off → 점검 통과한 resources/batching → placement는 membership과 다른 계획일 때만.
+
+## 2026-10-28 13:1xZ — 스위치 replay 결과와 factor 실행 집합(권고 기본값)
+
+- replay(`control-213-full/switch-replay/`, EvaluateScheduler 32회): placement-off ≡ membership-off(4단계 모두 동일 목표) → **placement-off 제외**(membership-off 2행 이미 측정). batching-off는 E5-2에서 물리 구성·cap1 동결이나 MNV route는 변함 → 실행하되 "고정-cap 대조"로 명명. power-off는 시작 snapshot 1-step replay에서 all-on과 동일 목표이나 효과는 시간축(유휴 절전 결정)이라 1-step으로 판정 불가 → 사용자 우선순위대로 **실행**(한계 기록). E5-5 시작 snapshot은 원본 예약으로 all-on까지 동결 → E5-5 factor 행의 식별력 한계 기록. resources/routing-off는 E5-2-high에서 구별 목표 → 실행.
+- 실행 집합: replicas-off(진행 중) → power-off → routing-off → resources-off → batching-off(고정-cap 대조), 각 E5-2·E5-5.
