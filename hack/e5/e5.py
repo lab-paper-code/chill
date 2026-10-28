@@ -4,6 +4,7 @@ Cleanup is one server reset with retained steps/ACKs; no client cleanup assembly
 No implicit phase advance, retry, runtime build, fault injection, or guessed phase6 values.
 Settings GET/PUT use at least 30s (or the larger configured apiSeconds).
 A timed-out settings PUT is never resent: matching GET readback confirms application.
+Factor reset replays paired full-row maxBatch through prepare and requires fresh physical instance ACK.
 """
 import argparse
 import base64
@@ -402,7 +403,57 @@ def self_check():
             pass
         else:
             raise AssertionError('Invalid d25 evidence accepted')
+    self_check_factor()
     print('PASS E5 receive-origin SLO, scheduled reference, generator quality and full planned issuance; offline only')
+
+def self_check_factor():
+    """Exercise the real factor method offline, without operational environment inputs."""
+    import ast
+    from types import SimpleNamespace
+    tree=ast.parse(Path(__file__).read_text())
+    selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('fingerprint','instance_rows')]
+    cpo=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='CPO')
+    factor=next(n for n in cpo.body if isinstance(n,ast.FunctionDef) and n.name=='factor')
+    selected.append(ast.ClassDef(name='CPO',bases=[],keywords=[],body=[factor],decorator_list=[]))
+    node={'name':'node','uid':'node-uid'}
+    targets=[{'id':str(cap),'node':node,'profile':{'id':str(cap)},'allocation':{'cpu':1},'maxBatch':1,'maxWaitNanos':0,'workloadUID':'workload'} for cap in (2,32)]
+    baseline={'instances':targets,'nodes':[],'routing':{'workload':{'2':.5,'32':.5}}}
+    ns={'NODES':[],'time':time,'load':lambda _: {'snapshot':baseline},'save':lambda *args:None,'need':lambda *args:None}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
+    for bad in (None,'wrong-cap','node','allocation','maxWaitNanos'):
+        runner=ns['CPO']();requests=[];prepared=[]
+        runner.a=SimpleNamespace(mode='membership-off',stage='E5-2')
+        runner.c={'factors':[{'name':'membership-off','controls':{}}]}
+        runner.out=Path('/offline');runner.uids=['workload'];runner.tb={'settleSeconds':1}
+        defaults={str(cap):{'instance':dict(target,maxBatch=cap)} for cap,target in zip((2,32),targets)}
+        if bad in ('node','allocation','maxWaitNanos'):
+            defaults['2']['instance'][bad]=None
+        runner.api=lambda *args:{'preparations':defaults}
+        runner.clear_owned=lambda *args:None
+        runner.operation=lambda *args:None
+        runner.state=lambda:{'snapshot':{'nodes':[],'instances':[dict(i,maxBatch=2 if bad=='wrong-cap' else i['maxBatch']) for i in prepared]}}
+        def prepare(method,path,body,**kwargs):
+            requests.append(body)
+            instance=dict(next(t for t in targets if t['profile']['id']==body['profileID']),id='new-'+body['profileID'],ownerWorkloadUID=body['workloadUID'],workloadUID='')
+            prepared.append(instance)
+            return {'status':'complete','actual':{'instances':[dict(instance,profile=body['profileID'])],'native':{instance['id']:{'metadata':{'policy':{'profileID':body['profileID'],'maxBatchSize':body['maxBatch'],'maxBatchWaitMS':0}}}}}}
+        runner.io=SimpleNamespace(api=prepare)
+        runner.settings=lambda:{}
+        ns['owned_target']=lambda *args:{}
+        runner.route_ack=lambda *args:None
+        runner.release_routing=lambda *args:None
+        runner.authorize_native_modes=lambda:None
+        runner.put=lambda settings:settings
+        try:
+            runner.factor()
+        except RuntimeError as error:
+            assert bad is not None,(bad,str(error))
+            if bad=='wrong-cap':assert 'Fresh prepared projection' in str(error),str(error)
+            else:assert 'unsupported manual wait/resource override' in str(error),str(error)
+        else:
+            assert bad is None,'Mismatched paired state accepted: '+bad
+            assert [r['maxBatch'] for r in requests]==[1,1]
+    print('PASS E5 factor paired maxBatch prepare and fresh physical instance ACK; offline only')
 
 
 # This local check must not require an operational environment or cluster binding.
@@ -1332,7 +1383,7 @@ class CPO:
         desired=fingerprint(baseline,self.uids); profiles=self.api('GET','/api/v1/scheduler/profiles')['preparations']
         for target in desired['instances']:
             default=profiles[target['profileID']]['instance']
-            if any(target[key]!=default[key] for key in ('node','allocation','maxBatch','maxWaitNanos')): raise RuntimeError('Selected factor initial state needs unsupported manual cap/wait/resource override; no generic reset is claimed')
+            if any(target[key]!=default[key] for key in ('node','allocation','maxWaitNanos')): raise RuntimeError('Selected factor initial state needs unsupported manual wait/resource override; no generic reset is claimed')
         self.clear_owned('factor-'+f['name']+'-'+self.a.stage)
         current=self.state()
         for node in current['snapshot']['nodes']:
@@ -1341,7 +1392,7 @@ class CPO:
             self.operation({'kind':'unroute','workloadUID':uid,'reason':'Keep paired factor preparations unloaded until exact baseline route ACK'},'factor-'+f['name']+'-'+self.a.stage+'-unroute-'+uid)
         mapping={}
         for target in desired['instances']:
-            result=self.io.api('POST','/api/v1/scheduler/operations',{'kind':'prepare','workloadUID':target['workloadUID'],'profileID':target['profileID'],'node':target['node'],'reason':'Restore actual paired factor baseline'},timeout=self.tb['settleSeconds'])
+            result=self.io.api('POST','/api/v1/scheduler/operations',{'kind':'prepare','workloadUID':target['workloadUID'],'profileID':target['profileID'],'node':target['node'],'maxBatch':target['maxBatch'],'reason':'Restore actual paired factor baseline'},timeout=self.tb['settleSeconds'])
             if result.get('status')!='complete': raise RuntimeError('Source-supported factor preparation incomplete')
             save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-prepare-'+target['node']['name']+'.json'),result)
             created=[i for i in result['actual']['instances'] if i.get('node')==target['node'] and i.get('ownerWorkloadUID')==target['workloadUID'] and i.get('profile')==target['profileID']]
