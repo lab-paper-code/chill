@@ -1965,3 +1965,63 @@ func TestSchedulerReplayFixedPowerIsNotFreeOrInstant(t *testing.T) {
 		t.Fatal("Fixed action bypassed the normal replay transition")
 	}
 }
+
+func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
+	for _, scenario := range []string{"admitted", "same-node", "other-workload-node", "missing-row", "pending-row", "nil-kappa", "wrong-allocation", "overload", "backlog", "routing-off"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, snap, _, _ := capacityE1Fixture()
+			old := snap.Instances[0]
+			added := snap.Options[len(snap.Options)-1].Instance
+			added.ID, added.WorkloadUID = "ready-addition", old.WorkloadUID
+			added.Node = NodeReference{Name: "genesis3", UID: "genesis3"}
+			s.Controls.Routing = true
+			capacityLoad(s, &snap, snap.Workloads[0], 40)
+			snap.Routing = map[string]map[string]int32{old.WorkloadUID: {old.ID: 1000}}
+			rows := []CapacityRow{}
+			for n, i := range []SchedulerInstance{old, added} {
+				in := NewCapacityInput(s, snap.DispatchOccupancy, SchedulerOption{Instance: i}, snap.Workloads[0])
+				k := []float64{26.322718, 68.45}[n]
+				rows = append(rows, CapacityRow{Key: in.Key(), Input: in, Status: CapacityBuilt, Kappa: &k})
+			}
+			switch scenario {
+			case "same-node":
+				added.Node = old.Node
+			case "other-workload-node":
+				other := added
+				other.ID, other.WorkloadUID = "other", "other-workload"
+				snap.Instances = append(snap.Instances, other)
+				snap.Routing[other.WorkloadUID] = map[string]int32{other.ID: 1000}
+			case "missing-row":
+				rows = rows[:1]
+			case "pending-row":
+				rows[1].Status = CapacityPending
+			case "nil-kappa":
+				rows[1].Kappa = nil
+			case "wrong-allocation":
+				added.Allocation.Threads++
+			case "overload":
+				capacityLoad(s, &snap, snap.Workloads[0], 200)
+			case "backlog":
+				for range 100 {
+					snap.Outstanding = append(snap.Outstanding, SchedulerRequest{Definition: snap.Workloads[0]})
+				}
+			case "routing-off":
+				s.Controls.Routing = false
+			}
+			weights, ok := SchedulerReadyExpansion(s, snap, rows, old.WorkloadUID, []SchedulerInstance{old}, []SchedulerInstance{added})
+			if ok != (scenario == "admitted") {
+				t.Fatalf("admission=%v weights=%v", ok, weights)
+			}
+			if ok {
+				if weights[old.ID] <= 0 || weights[added.ID] <= 0 || weights[old.ID]+weights[added.ID] != 1000 {
+					t.Fatalf("lost positive supply: %v", weights)
+				}
+				for n, id := range []string{old.ID, added.ID} {
+					if 40*float64(weights[id])/1000 > *rows[n].Kappa {
+						t.Fatalf("destination overload: %v", weights)
+					}
+				}
+			}
+		})
+	}
+}

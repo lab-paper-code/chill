@@ -613,6 +613,89 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 	}
 }
 
+// E5-1: old rasp5 stays serving while genesis3 is Ready and nano is late.
+func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
+	for _, scenario := range []string{"admitted", "same-node", "unsupported", "policy-ack", "identity", "insufficient"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, target, physical := acknowledgedHandoffFixture(t)
+			old := target.Instances[0]
+			uid := old.WorkloadUID
+			old.Routable = map[string]bool{uid: true}
+			added := old
+			added.ID = "genesis3-ready"
+			added.Node = serving.NodeReference{Name: "genesis3", UID: "genesis3-uid"}
+			if scenario == "same-node" {
+				added.Node = old.Node
+			}
+			newPhysical := physical
+			newPhysical.State.ID, newPhysical.State.Node = added.ID, added.Node
+			nativeState := *physical.State.Native
+			newPhysical.State.Native = &nativeState
+			if scenario == "policy-ack" {
+				newPhysical.State.Native.Metadata.Policy.MaxBatchSize = 2
+			}
+			if scenario == "identity" {
+				newPhysical.State.Native.Metadata.ProfileID = "wrong-profile"
+			}
+			if err := c.runtime.InstallInstances([]serving.ReadyInstance{physical, newPhysical}); err != nil {
+				t.Fatal(err)
+			}
+			nano := added
+			nano.ID, nano.Node = "nano-not-ready", serving.NodeReference{Name: "nano", UID: "nano-uid"}
+			target.Instances = []serving.SchedulerInstance{added, nano}
+			target.Routing = map[string]map[string]int32{uid: {added.ID: 800, nano.ID: 200}}
+			target.Actions = []serving.Action{
+				{ID: "prepare-nano", Kind: operationPrepare, Instance: nano.ID},
+				{ID: finalRouteActionID, Kind: operationRoute, DependsOn: []string{"prepare-nano"}},
+			}
+			snapshot := &c.state.Snapshot
+			snapshot.At, snapshot.ObservationEnd = time.Now(), time.Now()
+			snapshot.Workloads = c.runtime.SchedulerInputs(time.Now).Workloads
+			for range 41 {
+				snapshot.Outstanding = append(snapshot.Outstanding, serving.SchedulerRequest{Definition: snapshot.Workloads[0]})
+			}
+			snapshot.Instances = []serving.SchedulerInstance{old, added}
+			snapshot.Routing = map[string]map[string]int32{uid: {old.ID: 1000}}
+			if err := c.runtime.ApplySchedulerTarget(serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{old}, Routing: snapshot.Routing}); err != nil {
+				t.Fatal(err)
+			}
+			c.config.Settings = serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: time.Second,
+				MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true}}
+			rows := []serving.CapacityRow{}
+			for n, i := range []serving.SchedulerInstance{old, added} {
+				in := serving.NewCapacityInput(c.config.Settings, nil, serving.SchedulerOption{Instance: i}, snapshot.Workloads[0])
+				k := []float64{26.322718, 68.45}[n]
+				if scenario == "insufficient" {
+					k = 1
+				}
+				rows = append(rows, serving.CapacityRow{Key: in.Key(), Input: in, Status: serving.CapacityBuilt, Kappa: &k})
+			}
+			if scenario == "unsupported" {
+				rows = rows[:1]
+			}
+			if c.dependenciesReady(target.Actions[1], target) {
+				t.Fatal("late nano unexpectedly allowed final handoff")
+			}
+			partial := c.readySubset(target, rows)
+			if scenario != "admitted" {
+				if partial != nil {
+					t.Fatalf("unsafe expansion: %+v", partial)
+				}
+				return
+			}
+			if partial == nil || partial.Routing[uid][old.ID] <= 0 || partial.Routing[uid][added.ID] <= 0 || partial.Routing[uid][nano.ID] != 0 {
+				t.Fatalf("Ready independent supply not added: %+v", partial)
+			}
+			if err := c.runtime.ApplySchedulerTarget(*partial); err != nil {
+				t.Fatal(err)
+			}
+			if !c.routingTargetPresent(partial, *snapshot, c.runtime.Instances(), true) {
+				t.Fatal("expanded route lacks exact native ACK")
+			}
+		})
+	}
+}
+
 func TestReadySubsetBootstrapRoutesBeforeIndependentPreparationsAndPowerFinish(t *testing.T) {
 	controller, target, physical := acknowledgedHandoffFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())

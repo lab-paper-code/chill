@@ -1184,6 +1184,78 @@ func (j capacityJudgment) worst() float64 {
 	return worst
 }
 
+// SchedulerReadyExpansion admits only additive, independently placed serving
+// capacity. Callers verify physical identity and native policy ACK first.
+// Already-Ready destinations need no preparation chain, so r=0: B=q and
+// W=B/κnew, using the same demand, slack and integer weights as the planner.
+func SchedulerReadyExpansion(settings SchedulerSettings, snapshot SchedulerSnapshot, rows []CapacityRow, uid string, current, added []SchedulerInstance) (map[string]int32, bool) {
+	if len(current) == 0 || len(added) == 0 || !settings.Controls.Routing ||
+		settings.ObservationWindow <= 0 || settings.ControlInterval <= 0 {
+		return nil, false
+	}
+	decision := SchedulerDecision{
+		Search:    schedulerSearchPopulation(context.Background(), settings, snapshot),
+		Workloads: []SchedulerWorkloadState{{UID: uid, State: WorkloadControlled}},
+	}
+	if !slices.ContainsFunc(snapshot.Workloads, func(d *Definition) bool { return d != nil && d.UID == uid }) {
+		return nil, false
+	}
+	p := newCapacityPlanner(context.Background(), settings, snapshot, SchedulerCandidate{}, rows, decision)
+	w := p.ws[0]
+	nodes := map[NodeReference]bool{}
+	items := make([]capacityItem, 0, len(current)+len(added))
+	knew, kret := 0.0, 0.0
+	for _, group := range [][]SchedulerInstance{current, added} {
+		for _, i := range group {
+			if i.Profile == nil || i.WorkloadUID != uid || i.Node.UID == "" || nodes[i.Node] {
+				return nil, false
+			}
+			nodes[i.Node] = true
+			// Key the exact destination, not just another option with the same
+			// profile: allocation, Node and measured occupancy all affect κ.
+			k, row, reason := p.kappa(SchedulerOption{Instance: i}, 0)
+			if reason != "" || k <= 0 || math.IsNaN(k) || math.IsInf(k, 0) {
+				return nil, false
+			}
+			knew += k
+			items = append(items, capacityItem{id: i.ID, kappa: k, row: row, e: capacityInputEnergy(i)})
+		}
+		if kret == 0 {
+			kret = knew
+		}
+	}
+	// Never share a currently serving Node, including other Workloads.
+	for _, i := range added {
+		if slices.ContainsFunc(snapshot.Instances, func(old SchedulerInstance) bool {
+			return old.Node == i.Node && schedulerInstanceRouted(snapshot.Routing, old.ID)
+		}) {
+			return nil, false
+		}
+	}
+	j := capacityJudge(w, knew, kret, true, 0)
+	if !j.satisfied || knew < kret {
+		return nil, false
+	}
+	drain := 0.0
+	if j.backlog > 0 {
+		drain = j.backlog / w.slack
+	}
+	slices.SortFunc(items, func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
+	weights, _, ok := capacityWeights(w.rate, drain, items)
+	if !ok {
+		return nil, false
+	}
+	routing := make(map[string]int32, len(items))
+	for n, item := range items {
+		// Preserve every old source and actually use each admitted addition.
+		if weights[n] <= 0 {
+			return nil, false
+		}
+		routing[item.id] = weights[n]
+	}
+	return routing, true
+}
+
 // capacityFixedWeights keeps each item's current weight (an option's weight
 // for a new instance) when routing is not controlled; ok is false when some
 // instance's share of rate exceeds its κ or no weight is positive.

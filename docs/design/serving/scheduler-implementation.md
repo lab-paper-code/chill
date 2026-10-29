@@ -312,11 +312,18 @@ proof를 복원하지 않는다.
 `SchedulerController.intermediateActions`는 최종 route의 의존성이 남아 있으면
 `readySubset`으로 워크로드별 중간 분배를 만든다. 해당 워크로드의 목표 양수
 목적지가 일부라도 아직 Ready가 아니고, 현재 양수 분배에서 snapshot·native
-Ready·미정지·routable 검증을 통과한 serving 경로가 있으면 그 현재 경로와
-가중치를 보존한다(SCH-20/AC-38). 새 Ready 목적지는 같은 워크로드의 목표 양수
-목적지가 모두 준비된 분배에서 채택하며, 다른 워크로드의 준비를 기다리는 전역
-장벽은 만들지 않는다. 현재 serving 경로가 없는 bootstrap은 기존처럼 목표의
-Ready 부분집합 가중치를 합계 1000으로 재정규화한다. Stopped·고장·unroutable이거나
+Ready·미정지·routable 검증을 통과한 serving 경로가 있으면 **old 공급 보존+
+검증된 순증 허용**을 적용한다(SCH-20/AC-38). 현재 serving이 없는 독립 Node의
+새 Ready 목적지만 exact identity·native policy ACK 확인 뒤 current에 합집합한다.
+`serving.SchedulerReadyExpansion`은 현재 settings·snapshot·capacity rows로 기존
+λ(최근 수요·q/관측 창·최소 수요 포함), q, L−m, 정확한 row key와 목적지별 κ를
+판정한다. 준비 완료한 합집합에는 추가 prepare 시간이 없어 r=0, B=q,
+W=B/κnew이며 기존 `capacityJudge`·`capacityWeights`를 재사용한다.
+각 old/new 목적지의 양수 정수 weight와 rate/κ 검증이 모두 통과해야 채택한다.
+같은 Node의 old+new κ 합산, 기존 공급 총κ 감소, 새 solver나 전체 평가 재귀는 없다.
+불확실·불가하면 current 경로와 가중치를 그대로 보존한다. 느린 nano나 다른
+워크로드의 준비를 기다리는 전역 장벽은 만들지 않는다. 현재 serving 경로가 없는
+bootstrap은 기존처럼 목표의 Ready 부분집합 가중치를 합계 1000으로 재정규화한다. Stopped·고장·unroutable이거나
 이번 tick에 stop할 수 있는 현재 경로는 되살리지 않으며, 남은 검증 경로만 재정규화한다.
 이 route는 다른 prepare, power, drain의 완료와 무관하게 같은 owner의 예약 안에서
 native policy ACK와 UID 한정 `Runtime.ApplySchedulerWorkloadsTarget` 경로로 실행한다.
@@ -336,6 +343,9 @@ owner별로 유지하며 다른 Workload의 새 판단을 막지 않는다.
 (κ=103.37311385470142/s, 입력 74.58333333333333/s)를 보존하고, 준비 중 genesis3
 단독 1000(κ=62.46166324284952/s)으로 줄이지 않는지 확인한다. bootstrap·실제 stop/
 고장·unroutable·stop 가능 경로의 제외와 준비 완료 뒤 최종 765:235 적용을 함께 검사한다.
+E5-1 회귀는 old Ready + 신규 genesis3만 Ready일 때 κ/weight 검증을 통과한
+양수 중간 route를 적용하며, nano 지연은 막지 않는지 확인한다. 같은 Node 중복,
+미지원 row·정책 ACK/identity 실패·용량/전환 backlog 미달은 current를 보존한다.
 
 #### 분배 적용 증거
 
@@ -596,8 +606,8 @@ Pod 소멸과 전력 pending 해소에 따른 기존 반환 규칙은 그대로 
 최종 DAG 완료/다른 Workload의 재계획과 분리한다. `<goal>-ready-<hash>`·frozen subset·
 native ACK·actual routing 기록과 stopped 대상 제외는 보존한다.
 최종 목표를 덮거나 다른 owner의 예약에 끼어들 수 없으며, 중간 route 완료를 전역
-`TransitionInProgress` 유지 근거로 쓰지 않는다. 기존 비율 재정규화의 κ/SLO 한계는
-여전하며 이를 새 안전 용량 보장으로 부르지 않는다. 그 판단 규칙 개선은 ④와 별도 승인 대상이다.
+`TransitionInProgress` 유지 근거로 쓰지 않는다. bootstrap의 비율 재정규화는
+κ/SLO 보장이 아니며, current가 있는 독립 Node 순증만 위의 capacity 검증을 적용한다.
 
 #### ④ 빈 출발 κ 대기 — SCH-54, AC-41
 

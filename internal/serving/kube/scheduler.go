@@ -1100,7 +1100,11 @@ func (c *SchedulerController) intermediateActions(
 	if !pendingRoute {
 		return target.Actions, nil
 	}
-	partial := c.readySubset(target)
+	var rows []serving.CapacityRow
+	if c.capacity != nil {
+		rows = c.capacity.Rows()
+	}
+	partial := c.readySubset(target, rows)
 	if partial == nil {
 		return target.Actions, nil
 	}
@@ -1113,10 +1117,10 @@ func (c *SchedulerController) intermediateActions(
 	return actions, partial
 }
 
-// readySubset retains a workload's serving route while positive targets prepare.
+// readySubset preserves serving sources while positive targets prepare, admitting
+// independently placed Ready additions only through the capacity/weight judgment.
 // Without a serving route, it normalizes the goal's matching Ready subset.
-// Runtime admission still enforces each request's measured execution/SLO contract.
-func (c *SchedulerController) readySubset(target serving.SchedulerCandidate) *serving.SchedulerCandidate {
+func (c *SchedulerController) readySubset(target serving.SchedulerCandidate, rows []serving.CapacityRow) *serving.SchedulerCandidate {
 	snapshot, physical := c.state.Snapshot, c.runtime.Instances()
 	partial := serving.SchedulerCandidate{Routing: map[string]map[string]int32{}}
 	retiring := map[string]bool{}
@@ -1149,7 +1153,27 @@ func (c *SchedulerController) readySubset(target serving.SchedulerCandidate) *se
 				}
 			}
 			if len(current) > 0 {
+				added := []serving.SchedulerInstance{}
+				for _, wanted := range selected {
+					if !slices.ContainsFunc(snapshot.Instances, func(old serving.SchedulerInstance) bool {
+						if old.Node == wanted.Node {
+							for _, route := range snapshot.Routing {
+								if route[old.ID] > 0 {
+									return true
+								}
+							}
+						}
+						return false
+					}) && schedulerTargetReady(wanted, snapshot, physical, true) {
+						added = append(added, wanted)
+					}
+				}
 				selected, weights = current, snapshot.Routing[uid]
+				if len(added) > 0 {
+					if expanded, ok := serving.SchedulerReadyExpansion(c.config.Settings, snapshot, rows, uid, current, added); ok {
+						selected, weights = append(selected, added...), expanded
+					}
+				}
 			}
 		}
 		partial.Routing[uid] = map[string]int32{}

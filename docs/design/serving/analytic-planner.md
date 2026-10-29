@@ -108,14 +108,19 @@ route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 �
 
 **실행 중 중간 분배.** 최종 route의 DAG와 분석의 r은 위 전체 준비 사슬을
 유지하지만 실제 실행은 그 시각까지 Ready 목적지를 놀리지 않는다. controller는
-매 tick에 같은 목표의 실제 Ready 부분집합으로 목표 가중치를 합계 1000으로
-재정규화하고, 준비된 목적지가 없는 워크로드의 현재 Ready 분배는 유지하여
-한 번의 원자적 route로 적용한다. stop 가능한 인스턴스는 제외한다.
+매 tick에 현재 검증된 serving 경로를 보존한다. 목표 일부가 아직 준비 중이면
+현재 serving이 없는 독립 Node의 exact identity·native policy ACK 확인된 Ready
+목적지만 합집합하고 `SchedulerReadyExpansion`으로 기존 λ·q·slack·정확한 capacity
+row·목적지별 κ·양수 integer weight를 검증한다. 준비 사슬이 이미 끝난 중간
+목적지에는 r=0이므로 B=q, W=B/κnew이며 기존 capacityJudge/capacityWeights를 쓴다.
+같은 Node κ 중복과 current 총κ 감소는 금지하고, 확인 불능·미달이면 current
+분배를 보존한다. serving 경로가 없는 bootstrap만 목표 Ready 부분집합 가중치를
+합계 1000으로 재정규화한다. stop 가능한 인스턴스는 제외한다.
 독립 prepare, power, drain 등 어떤 느린 동작도 이 중간 분배의 선행 조건이
 아니다. launch의 `dependenciesReady`도 전체 목표가 아니라 선택된 Ready 부분집합으로
 검사하므로, 전체 목표에 속한 실재 non-Ready sibling은 부분 route를 막지 않는다.
-최종 route는 전체 목표와 원래 DAG를 계속 검사한다. 새 계획 탐색이나 중간 용량의 SLO 충족 보장은 추가하지 않으며,
-요청별 측정 지연·수명 admission과 기존 요청 보호는 그대로다.
+최종 route는 전체 목표와 원래 DAG를 계속 검사한다. 새 계획 탐색은 없으며 bootstrap의
+중간 용량 충족까지 보장하지 않는다. 요청별 측정 지연·수명 admission과 기존 요청 보호는 그대로다.
 분석의 B·에너지 예측은 최종 route 시각을 쓰는 기존 식이고, 중간 분배의
 실제 효과는 action의 frozen target·before/actual routing 관측으로 구분한다.
 구체적인 기록과 실행 계약은 [중간 배분](scheduler-implementation.md#중간-배분)이다.

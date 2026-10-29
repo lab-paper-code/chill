@@ -111,6 +111,7 @@
 
 - `SCH-19` 선택 결과는 유지 또는 목표 구성, 영향받는 워크로드·노드·인스턴스, 분배·배칭 정책과 전환 동작을 실행 계층에 전달한다. 실제 현재 구성·비교 후보·선택 목표·적용 조건을 구분해 제공한다. 판단 대기와 판단 결과는 각각의 상태로 표현한다.
 - `SCH-20` **변경(2026-10-29)** 요청은 해당 모델을 실제로 처리할 준비가 되고 해당 워크로드에 `routable`인 인스턴스 하나로 분배한다. 확인된 준비 상태와 가용 용량을 사용하고 수용 가능한 대상이 준비되면 요청을 전달한다. 분배 비율은 0 이상이며 대상이 있을 때 합이 1이다. 실현된 부하·배칭·SLO·에너지 영향을 다음 판단에 반영한다. 성공한 최종 handoff 이후 cleanup 중에도 현재 Ready 목적지에 대한 route-only 재분배는 허용하며, 새 prepare·power·퇴역 source 재편입은 허용하지 않는다.
+  목표 양수 목적지 일부가 준비 중이어도 old serving 공급을 보존하면서 현재 serving이 없는 독립 Node의 새 Ready 공급을 추가할 수 있다. 새 목적지의 exact identity·native policy ACK와 기존 λ·q·slack·capacity row·목적지별 κ·전환 B/W·양수 weight 판정을 통과해야 하며, 같은 Node의 old/new κ를 합산하거나 현재 총 공급 κ를 줄여서는 안 된다. 확인 불능·용량 미달이면 current를 보존한다.
 - `SCH-21` 배칭 정책은 evidence·워크로드 SLO와 최초 CHILL 수신 이후 요청별 경과 시간을 적용할 정보를 제공한다. firstfloor 큐 진입 이전 소비 시간, 현재 큐 대기·진행 중 실행, 후보의 실행 시간과 `SCH-13`의 설정 여유를 포함해 요청별 추가 대기 여유를 판단한다.
 - `SCH-22` firstfloor 내부 배처가 현재 요청·큐·실행 상태에 CHILL 정책을 적용해 실제 배치 구성·추가 대기·실행 시점을 판단한다. CHILL은 정책과 요청별 정보를 제공하고 기존 firstfloor 큐·배처·모델 runner를 재사용한다.
 - `SCH-23` 실행 배치는 같은 워크로드/불변 정의의 호환 요청으로 구성한다. normal queue는 stable EDF, deferred queue는 normal 이후 FIFO로 실행한다. SLO 여유와 evidence 기반 energy gain으로 배치·대기를 정하고 모델의 deadlinePolicy(drop/keep/defer, 기본 keep)를 actual과 용량 계산 재생에 동일하게 적용한다. keep의 overdue/infeasible 선택은 현재 fillable minimum-C batch(동률은 큰 batch)이며 drop은 queued 요청 종료, defer는 후순위 이동이다. explicit timeout/cancel은 세 모드에 별도로 적용하며 active batch는 SLO만으로 취소하지 않는다.
@@ -252,6 +253,7 @@ Serving 평가에서 검증한다.
 - When: B의 시작 허가를 검사하고, 이어 A가 완료·실패·취소로 종료되며 실제 효과가 확인된 경우와 취소·timeout 뒤 원격 효과가 미확인인 경우를 각각 진행한다.
 - Then: B는 공통 허가 지점에서 시작 전에 거절되고 충돌 범위·소유 작업·사유가 제공된다. 실제 효과가 확인된 A는 실패한 경우에도 예약을 해제하여 후속 작업이 현재 실제 상태에서 다시 허가받을 수 있다. 원격 효과가 미확인인 A는 실행 종료 후에도 예약을 유지하여 겹치는 변경을 계속 거절하고, 이후 효과 확인 또는 reset의 실제 정리 완료 뒤에만 해제한다. 해제 후에도 실물 항목·일부 적용 상태·실패 원인은 유지된다.
 - 성공 cleanup 추가 판정: 최종 route complete 이후 recent 95.3→100.2→97.5/s의 세 제어 주기에서 Workload를 Fixed로 묶지 않고 현재 Ready 목적지의 가중치를 재계산한다. 같은 owner 안에서 route ACK는 직렬화하며 새 prepare·power·퇴역 source 재편입과 상충 reset은 계속 거절한다. 최신 route ACK가 이전 정책을 대체해도 원래 성공 receipt·stop 안전 의존성 및 old Pod/physical/Node의 stop/drain/remove 의무는 보존하고, cleanup의 실제 완료 전에는 물리 예약을 반환하지 않는다.
+- 중간 순증 추가 판정: old Ready를 유지하고 genesis3만 새 Ready이며 nano가 준비 중인 E5-1 조건에서, 같은 owner 예약 안의 capacity-checked positive 중간 route가 old+genesis3에 적용된다. nano 지연은 순증을 막지 않는다. 같은 Node 중복·미지원 row·양수 목적지 policy ACK/identity 실패·불가한 전환 backlog에서는 current를 보존한다. 최종 DAG·예약 반환·기존 R1 bootstrap/stopped/unroutable/retiring 판정은 유지한다.
 - 요구사항: SCH-20, SCH-24, SCH-26, SCH-41, SCH-50, SCH-51.
 
 #### SCH-AC-39 — 1회차 B 재현: jetsono 전력 전환 밖 확장과 배분
@@ -357,6 +359,7 @@ Counter·Gauge, Prometheus 구간 집계, Knative 부하 관측·안정화, Envo
 
 ## 7. 변경 이력
 
+- 2026-10-30: SCH-20·SCH-AC-38 보완 — 중간 분배의 old 공급 보존과 exact ACK·capacity 검증된 독립 Node 순증을 허용한다. 같은 Node κ 가산·current 총κ 감소를 금지하고 불확실하면 R1 current 보존으로 돌아간다.
 - 2026-10-29: SCH-20·SCH-AC-38 보완 — 성공한 최종 handoff 뒤 cleanup의 실물 소유와 현재 Ready 목적지의 route-only 조정을 분리한다. 같은 owner route 직렬화·stop 안전 증거·퇴역 의무와 미확인 효과의 예약 유지 기준은 보존한다.
 - 2026-10-27: E5 혼합률을 `α×s_w×R_w`로 정규화하고 SCH-AC-46에 지분 검증·binding 동결·고정 배치 G 계단을 추가했다. Node당 한 인스턴스로 고립 R을 동시에 사용할 수 없는 제약을 명시했다.
 - 2026-10-26: SCH-56/AC-42를 과거 최대 유효 수요 창으로 재정의하고 SCH-59/AC-44에 빈 Node Fixed 절전의 공통 본전 규칙을 명시했다. 4회차 B 일정 부하의 39초 조기 허가를 기준률 timer로 해결한 것으로 간주하지 않는다. 문서 결정이며 해당 교체 구현·검증은 별도다.
