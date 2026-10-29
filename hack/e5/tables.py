@@ -118,9 +118,9 @@ def render(root, repo):
               'or measured whole-POOL savings. Missing report metadata remains null.', '']
     if 'genesis2' in (binding.get('schedulerSettings') or {}).get('excludedNodes', []):
         lines += ['genesis2 하드웨어 결함으로 제외 (excluded for hardware failure); seven serving Nodes only.', '']
-    targeted={path.name[len('full-'):-len('-3-restore.json')]:load(path) for path in sorted(root.glob('full-E5-*-3-restore.json'))}
+    targeted=summary.get('targetedRestorations',{})
     if targeted:
-        lines += ['3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2',
+        lines += ['표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2',
                   'Only full E5-1/5/6/7 are new targeted rows; retained #222/#223 rows/static comparisons are historical, not a new independent full campaign.',
                   'Existing fingerprint restores served canonical instances/routes/native modes (maxBatch included). Reservations and owner-only non-serving preparations are excluded, not reconstructed.',
                   '', '| 표적 행 | 원본 시작 예약 수 | 원본 owner-only 미서빙 제외 수 | fingerprint 복원 | 원본 pre-state |',
@@ -278,8 +278,9 @@ def self_check(repo):
         text=render(root,repo)
         assert '#222+#223 합성, 같은 rev104 소스' in text
         assert '### static-E5-3-223' in text and '### static-E5-1' not in text
-        (root/'full-E5-5-3-restore.json').write_text(json.dumps({'accepted':True,'preState':'historical/full-E5-5-223/pre-state.json','restorationExclusions':{'originalReservations':1,'excludedOwnerOnlyInstances':['owner-only']}}))
+        summary['targetedRestorations']={'E5-5':{'rowTag':'3b','accepted':True,'preState':'historical/full-E5-5-223/pre-state.json','restorationExclusions':{'originalReservations':1,'excludedOwnerOnlyInstances':['owner-only']}}}
+        (root/'e5-summary.json').write_text(json.dumps(summary))
         text=render(root,repo)
-        assert '3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2' in text
+        assert '표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2' in text
         assert '| E5-5 | 1 | 1 | ACCEPTED |' in text
     print('tables self-check: PASS')

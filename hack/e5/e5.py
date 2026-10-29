@@ -9,10 +9,13 @@ failure-select uses config.failureSelectSnapshotTTLSeconds (default 15; finite >
 for snapshot wall-clock age and operator expiry, not CHILL's internal observation age.
 Client JSONL non-object/malformed lines remain in raw evidence and judge coverage;
 they do not stop collection or replace missing end-counter evidence.
-Targeted full --row-tag 3 GO preserves restored static route weights when enabling
+Targeted full tagged GO preserves restored static route weights when enabling
 autonomy; start-state-restoration.json retains the immediate post-GO snapshot and
 compares its routes with the restored fingerprint (mismatch stops with exit 2).
 The first full campaign's freeze/release boundary remains separate.
+Row tags accept ASCII letters/digits (for example 3b), not reserved round numbers.
+Full restoration receipts select targeted GO mode; multiple stored tags require an
+explicit --row-tag for summary selection.
 """
 import argparse
 import base64
@@ -487,7 +490,7 @@ def self_check_factor():
         ns['time']=SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds))
         ns['save']=lambda path,body:receipts.__setitem__(str(path),copy.deepcopy(body))
         static=bad in ('static-good','static-drift');full=bad in ('full-good','full-drift')
-        runner.a=SimpleNamespace(mode='full' if full else 'static' if static else 'membership-off',stage='E5-5' if full else 'E5-3' if static else 'E5-2',pre_state=Path('/offline/selection.json') if static or full else None,row_tag='3' if full else '223' if static else '')
+        runner.a=SimpleNamespace(mode='full' if full else 'static' if static else 'membership-off',stage='E5-5' if full else 'E5-3' if static else 'E5-2',pre_state=Path('/offline/selection.json') if static or full else None,row_tag='3b' if full else '223' if static else '')
         runner.c={'factors':[{'name':'membership-off','controls':{}}]}
         runner.out=Path('/offline');runner.uids=['workload'];runner.tb={'settleSeconds':1}
         if bad is not None:runner.tb['factorAckWaitSeconds']=3
@@ -544,7 +547,7 @@ def self_check_factor():
             elif bad=='foreign-after':assert 'empty or owner served UID' in str(error),str(error)
             elif bad in ('static-drift','full-drift'):
                 assert 'fingerprint differs' in str(error)
-                assert not receipts['/offline/full-E5-5-3-restore.json' if full else '/offline/static-replay-restore.json']['accepted']
+                assert not receipts['/offline/full-E5-5-3b-restore.json' if full else '/offline/static-replay-restore.json']['accepted']
             else:assert 'unsupported manual wait/resource override' in str(error),str(error)
         else:
             assert bad in (None,'owner-served','cap-delay','stale-delay','missing-delay','static-good','full-good'),'Mismatched paired state accepted: '+str(bad)
@@ -554,7 +557,7 @@ def self_check_factor():
             assert all(body['timeboxSeconds']==(120 if bad is None else 3) for body in acks)
             assert clock[0]==(2 if bad in ('cap-delay','stale-delay','missing-delay') else 0)
             if static or full:
-                receipt=receipts['/offline/full-E5-5-3-restore.json' if full else '/offline/static-replay-restore.json']
+                receipt=receipts['/offline/full-E5-5-3b-restore.json' if full else '/offline/static-replay-restore.json']
                 assert receipt['accepted'] and receipt['fingerprint']==receipt['expectedFingerprint']
                 assert receipt['physicalIDMapping']=={'2':'new-2','32':'new-32'}
                 if full:
@@ -570,6 +573,9 @@ def self_check_factor():
         assert ns['row_folder'](root,'static','E5-3')==root/'static-E5-3-223'
         assert ns['row_folder'](root,'full','E5-3')==root/'full-E5-3'
         assert ns['row_folder'](root,'full','E5-4')==root/'full-E5-4-223'
+        (root/'full-E5-1-3b-restore.json').write_text(json.dumps({'rowTag':'3b'}))
+        assert ns['row_folder'](root,'full','E5-1','3b')==root/'full-E5-1-3b'
+        assert ns['row_folder'](root,'full','E5-1')==root/'full-E5-1-3b'
         runner=ns['CPO']();runner.out=root
         for free in (310_000_000_000,309_999_999_999):
             ns['os']=SimpleNamespace(statvfs=lambda _:SimpleNamespace(f_bavail=free,f_frsize=1))
@@ -592,6 +598,8 @@ def self_check_restore_go():
     body=next(body for body in blocks if any(isinstance(n,ast.If) and isinstance(n.test,ast.Name) and n.test.id=='targeted' and any(isinstance(x,ast.Expr) and isinstance(x.value,ast.Call) and isinstance(x.value.func,ast.Attribute) and x.value.func.attr=='authorize_native_modes' for x in n.body) for n in body))
     indices=[i for i,n in enumerate(body) if isinstance(n,ast.If) and isinstance(n.test,ast.Name) and n.test.id=='targeted']
     go=compile(ast.fix_missing_locations(ast.Module(body=body[indices[0]:indices[-1]+1],type_ignores=[])),__file__,'exec')
+    setup=[n for n in run.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id in ('restore_path','targeted','restored') for t in n.targets)]
+    setup=compile(ast.fix_missing_locations(ast.Module(body=setup,type_ignores=[])),__file__,'exec')
     for targeted,drift in ((True,False),(True,True),(False,False)):
         events=[];receipts={};routing={'plc':{'fast':766,'slow':234}}
         expected=copy.deepcopy(routing);pod={'metadata':{'name':'producer'}}
@@ -609,7 +617,14 @@ def self_check_restore_go():
             routing['plc']={'fast':1,'slow':1}
         runner=SimpleNamespace(uids=['plc'],tb={'apiSeconds':1,'barrierSeconds':1},io=SimpleNamespace(k=api,assert_producer_startable=lambda *args,**kwargs:None),state=state,release_routing=release,authorize_native_modes=lambda:events.append('authorize'),put=lambda settings:events.append('autonomy-on') or settings)
         restored={'accepted':True,'fingerprint':{'routing':expected},'fullSettings':{'autonomousWorkloads':['plc']}}
-        ns={'self':runner,'targeted':targeted,'restored':restored,'folder':Path('/offline/full-E5-1-3'),'barrier':None,'pods':{'plc':pod},'now':lambda:'now','save':lambda path,value:receipts.__setitem__(path.name,copy.deepcopy(value))}
+        runner.a=SimpleNamespace(mode='full' if targeted else 'static',row_tag='3b')
+        runner.out=Path('/offline')
+        ns={'self':runner,'st':{'id':'E5-1'},'restored':restored,'folder':Path('/offline/full-E5-1-3b'),'barrier':None,'pods':{'plc':pod},'now':lambda:'now','save':lambda path,value:receipts.__setitem__(path.name,copy.deepcopy(value))}
+        ns['full_restore_path']=lambda root,row,tag:SimpleNamespace(exists=lambda:tag=='3b')
+        ns['load']=lambda _:restored
+        ns['replay_receipt']=lambda _: {}
+        exec(setup,ns)
+        assert ns['targeted']==targeted
         try:exec(go,ns)
         except RuntimeError as error:
             assert targeted and drift and 'route weights differ' in str(error)
@@ -624,7 +639,7 @@ def self_check_restore_go():
             assert receipt['postGO']['expectedRouting']==expected
             if not drift:assert routing==expected
         else:assert events==['GO'] and not receipts
-    print('PASS E5 restored 766/234 routes retained through GO, post-GO drift rejected; offline only')
+    print('PASS E5 tag 3b selects restored mode; 766/234 routes retained through GO, post-GO drift rejected; offline only')
 
 
 def self_check_failure_selection(analysis):
@@ -652,7 +667,8 @@ def self_check_failure_selection(analysis):
     accepted=(None,'nano','age-11','custom-ttl')
     for bad in (*accepted,'age-16','zero-weight','zero-assigned','same-node','missing-pod','stale'):
         with tempfile.TemporaryDirectory() as temporary:
-            root=Path(temporary);folder=root/'full-E5-7-3';folder.mkdir()
+            root=Path(temporary);folder=root/'full-E5-7-3b';folder.mkdir()
+            ns['save'](root/'full-E5-7-3b-restore.json',{'rowTag':'3b','accepted':True})
             ns['save'](folder/'phase.json',{'status':'RUNNING','startUTC':'2026-10-30T00:00:00+00:00','stage':{'seconds':900}})
             instances=[{'id':'i'+str(n),'podUID':'p'+str(n),'workloadUID':'w','ownerWorkloadUID':'w','ready':True,'node':{'name':'n'+str(n),'uid':'n'+str(n)}} for n in range(2)]
             if bad=='same-node':instances[1]['node']=instances[0]['node']
@@ -665,7 +681,7 @@ def self_check_failure_selection(analysis):
             if bad in ('age-11','age-16','custom-ttl'):
                 state['snapshot']['at']='2026-10-30T00:02:'+('49' if bad=='age-11' else '44')+'+00:00'
                 window['to']=state['snapshot']['at']
-            runner=ns['CPO']();runner.a=SimpleNamespace(mode='full',stage='E5-7',row_tag='3',failure_kind='delete-serving-pod')
+            runner=ns['CPO']();runner.a=SimpleNamespace(mode='full',stage='E5-7',row_tag='3b',failure_kind='delete-serving-pod')
             runner.out=root;runner.uids=['w'];runner.tb={'apiSeconds':1}
             runner.c={'failureSelectSnapshotTTLSeconds':20} if bad=='custom-ttl' else {}
             def kubernetes(argv,**kwargs):
@@ -996,8 +1012,11 @@ def restoration_exclusions(path,uids):
             'meaning':'Existing fingerprint restores served canonical instances/routes/modes only; reservations and owner-only non-serving preparations are not restored.'}
 
 
-def full_restore_path(root,row):
-    return root/('full-'+row+'-3-restore.json')
+def full_restore_path(root,row,tag=None):
+    if tag:return root/('full-'+row+'-'+tag+'-restore.json')
+    paths=sorted(root.glob('full-'+row+'-*-restore.json'))
+    if len(paths)>1:raise ValueError('Multiple full restorations for '+row+'; specify --row-tag')
+    return paths[0] if paths else None
 
 
 def rebound_fingerprint(desired, mapping):
@@ -1018,8 +1037,10 @@ def replay_receipt(root):
 
 
 def row_folder(root, mode, row, tag=None):
-    if mode=='full' and row in ('E5-1','E5-5','E5-6','E5-7') and (tag=='3' or tag is None and full_restore_path(root,row).exists()):
-        return root/('full-'+row+'-3')
+    if mode=='full':
+        path=full_restore_path(root,row,tag)
+        if path and path.exists():return root/('full-'+row+'-'+load(path)['rowTag'])
+        if tag and row=='E5-1':return root/('full-'+row+'-'+tag)
     if tag is None:tag=replay_receipt(root).get('rowTag','')
     appended=mode=='static' and row in ('E5-3','E5-4','E5-5','E5-6') or mode=='full' and row in ('E5-4','E5-5','E5-6','E5-7')
     return root/(mode+'-'+row+('-'+tag if tag and appended else ''))
@@ -1059,7 +1080,7 @@ def static_restore_dry_run(binding, root, pre_state, tag):
     print(json.dumps({'resultPath':str(path),**result},ensure_ascii=False,indent=2))
 
 
-def full_restore_dry_run(binding,root,pre_state,row):
+def full_restore_dry_run(binding,root,pre_state,row,tag):
     b=load_binding(binding);uids=[w['uid'] for w in b['config']['workloads']]
     desired=paired_baseline(pre_state,uids);settings=baseline_settings(pre_state)
     if set(settings.get('autonomousWorkloads',[]))!=set(uids):raise ValueError('Original full pre-settings must enable canonical autonomy')
@@ -1068,20 +1089,20 @@ def full_restore_dry_run(binding,root,pre_state,row):
     result={'schema':'e5-full-restore-dry-run.v1','at':now(),'clusterRequests':0,
             'scientificResults':'UNMEASURED; offline plan only','preState':ref(pre_state),
             'preSettings':ref(pre_state.with_name('pre-settings.json')) if 'settings' not in load(pre_state) else ref(pre_state),
-            'sources':b['config']['approval']['sources'],'label':'3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2',
+            'sources':b['config']['approval']['sources'],'label':'표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2','rowTag':tag,
             'expectedFingerprint':desired,'restorationExclusions':restoration_exclusions(pre_state,uids),
             'identityComparison':'One exact fingerprint comparison after prepare-ACK ID rebinding; mismatch exits 2 before stage',
             'autonomyOffSettingsPUT':off,'fullSettingsPUTAtProducerRelease':settings,
-            'requests':[{'kind':'reset','workloadUIDs':uids,'reason':'Approved campaign owned reset: factor-full-'+row+'-3'}]
+            'requests':[{'kind':'reset','workloadUIDs':uids,'reason':'Approved campaign owned reset: factor-full-'+row+'-'+tag}]
                        +[{'kind':'unroute','workloadUID':uid,'reason':'Keep paired factor preparations unloaded until exact baseline route ACK'} for uid in uids]
                        +[prepare_body(target) for target in desired['instances']],
             'routeRequests':[{'kind':'route' if any(weights.values()) else 'unroute','workloadUID':uid,**({'weights':weights} if any(weights.values()) else {})} for uid,weights in desired['routing'].items()],
             'nativeModeTargets':desired['modes'],'diskMinimumBytes':310_000_000_000,
-            'order':['factor --mode full --stage '+row+' --pre-state '+str(pre_state)+' --row-tag 3',
-                     'stage --mode full --stage '+row+' --row-tag 3',
-                     'judge --out '+str(row_folder(root,'full',row,'3'))],
+            'order':['factor --mode full --stage '+row+' --pre-state '+str(pre_state)+' --row-tag '+tag,
+                     'stage --mode full --stage '+row+' --row-tag '+tag,
+                     'judge --out '+str(row_folder(root,'full',row,tag))],
             'failureInjection':'Operator only: failure-select immediately before each injection; execute emitted UID-precondition runbook and record actual command/result. Unsatisfied selection cancels injection as INVALID.' if row=='E5-7' else None}
-    path=root/('full-'+row+'-restore-dry-run-3.json')
+    path=root/('full-'+row+'-restore-dry-run-'+tag+'.json')
     if path.exists():raise RuntimeError('Offline plan destination already exists; no overwrite')
     save(path,result);print(json.dumps({'resultPath':str(path),**result},ensure_ascii=False,indent=2))
 
@@ -1488,7 +1509,7 @@ class CPO:
             p=subprocess.Popen(argv+[h['node'],str(seconds),self.a.stage],stdin=subprocess.PIPE,stdout=output,stderr=error,text=True); p.stdin.write(host_source); p.stdin.close(); children.append((p,output,error))
         return children
     def producer_job_name(self,name,stage):
-        return 'e5-'+self.a.mode.lower()+'-'+stage['id'].lower()+'-'+str(SEEDS[name])+('-'+self.a.row_tag if self.a.row_tag else '')
+        return 'e5-'+self.a.mode.lower()+'-'+stage['id'].lower()+'-'+str(SEEDS[name])+('-'+self.a.row_tag.lower() if self.a.row_tag else '')
     def job(self, name, stage, folder):
         w=self.ws[name]; trace=stage['traces'][name]; job=load(w['jobTemplate']); label=self.producer_job_name(name,stage)
         job['metadata']={'name':label,'namespace':'chill-system','labels':{'chill.dacs.io/e5':self.a.mode}}
@@ -1528,8 +1549,9 @@ class CPO:
         """Recheck frozen operating power policy before any stage can launch load."""
         st=self.c['smoke'] if self.a.command=='smoke' else next(x for x in self.b['schedule'] if x['id']==self.a.stage); folder=row_folder(self.out,self.a.mode,st['id'],self.a.row_tag)
         if folder.exists(): raise RuntimeError('No implicit stage retry/overwrite')
-        targeted=self.a.row_tag=='3' and self.a.mode=='full'
-        restored=load(full_restore_path(self.out,st['id'])) if targeted else replay_receipt(self.out)
+        restore_path=full_restore_path(self.out,st['id'],self.a.row_tag) if self.a.mode=='full' and self.a.row_tag else None
+        targeted=bool(restore_path and restore_path.exists())
+        restored=load(restore_path) if targeted else replay_receipt(self.out)
         if self.a.row_tag and (not restored or restored['rowTag']!=self.a.row_tag or not restored['accepted']):raise RuntimeError('Tagged rows require matching successful factor restoration')
         if restored and self.a.row_tag!=restored['rowTag']:raise RuntimeError('Restored selection requires explicit matching --row-tag')
         if targeted and (restored['stage']!=st['id'] or self.settings().get('autonomousWorkloads')):raise RuntimeError('Targeted full row requires matching restored state held with autonomy off until producer release')
@@ -1843,8 +1865,9 @@ class CPO:
         save(folder/'collected.json',manifest)
     def failure_select(self):
         """Read-only selection; actual kubectl injection remains an operator action."""
-        if self.a.mode!='full' or self.a.stage!='E5-7' or self.a.row_tag!='3':raise ValueError('failure-select requires targeted full E5-7 --row-tag 3')
-        folder=row_folder(self.out,'full','E5-7','3');phase=load(folder/'phase.json')
+        path=full_restore_path(self.out,self.a.stage,self.a.row_tag) if self.a.row_tag else None
+        if self.a.mode!='full' or self.a.stage!='E5-7' or not path or not path.exists():raise ValueError('failure-select requires a restored targeted full E5-7 row with --row-tag')
+        folder=row_folder(self.out,'full','E5-7',self.a.row_tag);phase=load(folder/'phase.json')
         if phase.get('status')!='RUNNING' or not phase.get('startUTC'):raise RuntimeError('Failure selection requires the actual running E5-7 offered window')
         path=folder/'failure-events.json'
         evidence=load(path) if path.exists() else {'stage':'E5-7','selectionPolicy':'active-serving-v1','status':'PENDING_OPERATOR','selections':[],'events':[]}
@@ -1894,8 +1917,8 @@ class CPO:
             if (self.out/'static-replay-restore.json').exists():raise RuntimeError('Static restoration already attempted; no implicit repeat')
             f={'name':'static'}
         elif full:
-            if not self.a.pre_state or self.a.row_tag!='3' or self.a.stage not in ('E5-1','E5-5','E5-6','E5-7'):raise ValueError('Full restoration requires --pre-state, --row-tag 3 and a targeted E5-1/5/6/7 row')
-            if full_restore_path(self.out,self.a.stage).exists():raise RuntimeError('Full row restoration already attempted; no implicit repeat')
+            if not self.a.pre_state or not self.a.row_tag or self.a.stage not in ('E5-1','E5-5','E5-6','E5-7'):raise ValueError('Full restoration requires --pre-state, --row-tag and a targeted E5-1/5/6/7 row')
+            if full_restore_path(self.out,self.a.stage,self.a.row_tag).exists():raise RuntimeError('Full row restoration already attempted; no implicit repeat')
             f={'name':'full'}
         else:
             f=next(f for f in self.c['factors'] if f['name']==self.a.mode)
@@ -1957,10 +1980,10 @@ class CPO:
         if static or full:
             expected=rebound_fingerprint(desired,mapping)
             observed=fingerprint(routed['snapshot'],self.uids)
-            receipt={'at':now(),'accepted':observed==expected,'rowTag':self.a.row_tag,'label':'3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2' if full else '#222+#223 합성, 같은 rev104 소스','preState':str(self.a.pre_state),'physicalIDMapping':mapping,'originalFingerprint':desired,'expectedFingerprint':expected,'fingerprint':observed,'comparison':'One post-restore exact comparison; only prepare-ACK physical IDs rebound'}
+            receipt={'at':now(),'accepted':observed==expected,'rowTag':self.a.row_tag,'label':'표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2' if full else '태그 '+self.a.row_tag+' 정적 복원','preState':str(self.a.pre_state),'physicalIDMapping':mapping,'originalFingerprint':desired,'expectedFingerprint':expected,'fingerprint':observed,'comparison':'One post-restore exact comparison; only prepare-ACK physical IDs rebound'}
             if full:
                 receipt.update(stage=self.a.stage,fullSettings=restore_settings,restorationExclusions=restoration_exclusions(self.a.pre_state,self.uids))
-            save(full_restore_path(self.out,self.a.stage) if full else self.out/'static-replay-restore.json',receipt)
+            save(full_restore_path(self.out,self.a.stage,self.a.row_tag) if full else self.out/'static-replay-restore.json',receipt)
             if not receipt['accepted']:raise RuntimeError('Restored fingerprint differs from original pre-state')
             self.disk_boundary(prefix,'after')
             return
@@ -2200,7 +2223,7 @@ def judge(binding, folder):
         try:
             receipt_path = folder/'failure-events.json'
             evidence = load(receipt_path)
-            if folder.name=='full-E5-7-3' and evidence.get('selectionPolicy')!='active-serving-v1':raise ValueError('INVALID: targeted row requires active-serving selection evidence')
+            if (folder/'start-state-restoration.json').exists() and evidence.get('selectionPolicy')!='active-serving-v1':raise ValueError('INVALID: targeted row requires active-serving selection evidence')
             validate_failure_events(evidence,phase['startUTC'],phase['endUTC'],d.epoch)
             references = [ref(receipt_path)]
             for event in evidence['events']:
@@ -2260,13 +2283,21 @@ def judge(binding, folder):
     save(folder/'judgment.json',result); return result
 
 
-def summarize(binding, root):
+def summarize(binding, root, tag=None):
     b=load_binding(binding); stages={}; missing=[]
     modes={'full':[x['id'] for x in b['schedule']], 'static':[x['id'] for x in b['schedule'] if x['id'] not in ('E5-0','E5-7')]}
     modes.update({f['name']:['E5-2','E5-5'] for f in b['config']['factors']})
+    targeted={}
+    for row in ('E5-1','E5-5','E5-6','E5-7'):
+        path=full_restore_path(root,row,tag)
+        if path and path.exists():targeted[row]=load(path)
+    tags={record['rowTag'] for record in targeted.values()}
+    if len(tags)>1:raise ValueError('Multiple targeted restoration tags; specify --row-tag')
+    selected_tag=next(iter(tags),None)
+    folders={(mode,row):row_folder(root,mode,row,selected_tag if mode=='full' and row in targeted else None) for mode,ids in modes.items() for row in ids}
     for mode, ids in modes.items():
         for row_id in ids:
-            folder=row_folder(root,mode,row_id)
+            folder=folders[(mode,row_id)]
             try:
                 value=load(folder/'judgment.json')
                 if value.get('scientificResults','').startswith('UNMEASURED'): raise ValueError('Operational smoke is not a scientific row')
@@ -2277,7 +2308,7 @@ def summarize(binding, root):
     for row_id in modes['static']:
         full=stages.get(('full',row_id)); static=stages.get(('static',row_id))
         if full and static:
-            f=load(row_folder(root,'full',row_id)/'phase.json'); s=load(row_folder(root,'static',row_id)/'phase.json')
+            f=load(folders[('full',row_id)]/'phase.json'); s=load(folders[('static',row_id)]/'phase.json')
             if f['stage']['traces'] != s['stage']['traces']: missing.append({'row':row_id,'reason':'Paired frozen traces differ'}); continue
             full_j,static_j=full['power']['wholePoolJoules'],static['power']['wholePoolJoules']
             comparisons.append({'row':row_id,'judgments':{'full':full['status'],'static':static['status']},
@@ -2286,8 +2317,8 @@ def summarize(binding, root):
                 'staticMinusFullWholePOOLJ':static_j-full_j if full_j is not None and static_j is not None else None,
                 'fullActivePOOLJ':full['power']['activePoolJoules'],'staticActivePOOLJ':static['power']['activePoolJoules'],
                 'requestMetrics':{'full':full.get('requests',{}),'static':static.get('requests',{})}})
-            full_tail=reported_power(full.get('powerDrainInclusive') or load(row_folder(root,'full',row_id)/'power-drain-inclusive.json'))
-            static_tail=reported_power(static.get('powerDrainInclusive') or load(row_folder(root,'static',row_id)/'power-drain-inclusive.json'))
+            full_tail=reported_power(full.get('powerDrainInclusive') or load(folders[('full',row_id)]/'power-drain-inclusive.json'))
+            static_tail=reported_power(static.get('powerDrainInclusive') or load(folders[('static',row_id)]/'power-drain-inclusive.json'))
             full_bound,static_bound=full['power'].get('gapErrorBoundJoules'),static['power'].get('gapErrorBoundJoules')
             comparisons[-1]['energyGapError']={'fullBoundJoules':full_bound,'staticBoundJoules':static_bound,
                 'differenceBoundJoules':full_bound+static_bound if full_bound is not None and static_bound is not None else None,
@@ -2318,9 +2349,8 @@ def summarize(binding, root):
         'repetitions':'One paired seed set; no independent repetitions'}
     result['energyBelowResolution']={mode+'-'+row:value.get('energyBelowResolution') for (mode,row),value in stages.items()}
     result['conditions']=['Generator opens a new TLS connection per request (no keep-alive); entrance delay and gateway CPU include handshake cost.']
-    targeted={row:load(full_restore_path(root,row)) for row in ('E5-1','E5-5','E5-6','E5-7') if full_restore_path(root,row).exists()}
     if targeted:
-        result['conditions'].append('3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2')
+        result['conditions'].append('표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2')
         result['targetedRestorations']=targeted
     if 'genesis2' in (b.get('schedulerSettings') or {}).get('excludedNodes',[]):
         result['conditions'].append('genesis2 하드웨어 결함으로 제외 (excluded for hardware failure); seven serving Nodes only.')
@@ -2331,9 +2361,9 @@ def summarize(binding, root):
     result['issuanceFidelity']={mode+'-'+row:{name:metrics.get('issuanceFidelity') for name,metrics in value.get('requests',{}).items()} for (mode,row),value in stages.items()}
     replay=replay_receipt(root)
     result['compositeRun']={'label':replay['label'],'rowTag':replay['rowTag'],'restorationAccepted':replay['accepted']} if replay else None
-    if targeted:result['compositeRun']={'label':'3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2','rowTag':'3','restorationAccepted':all(record['accepted'] for record in targeted.values())}
-    result['rowDirectories']={mode+'-'+row:str(row_folder(root,mode,row)) for mode,ids in modes.items() for row in ids}
-    finish=root/('finish'+('-3' if targeted else '-'+replay['rowTag'] if replay else '')+'-complete.json')
+    if targeted:result['compositeRun']={'label':'표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2','rowTag':selected_tag,'restorationAccepted':all(record['accepted'] for record in targeted.values())}
+    result['rowDirectories']={mode+'-'+row:str(folder) for (mode,row),folder in folders.items()}
+    finish=root/('finish'+('-'+selected_tag if targeted else '-'+replay['rowTag'] if replay else '')+'-complete.json')
     restored=load(finish) if finish.exists() else None
     result['physicalRestoration']=restored
     save(root/'e5-summary.json',result); return result
@@ -2539,10 +2569,9 @@ def main():
         if a.command=='self-check':self_check();return 0
         for value in (a.config,a.binding,a.out,a.release,a.pre_state):
             if value is not None and not value.is_absolute(): raise ValueError('All paths must be absolute')
-        if a.row_tag and a.row_tag not in ('223','3'):raise ValueError('Only released #223 or targeted third-round rows are supported')
-        if a.row_tag=='3' and a.command in ('stage','factor','failure-select') and (a.mode!='full' or a.stage not in ('E5-1','E5-5','E5-6','E5-7')):raise ValueError('Third round supports full E5-1/5/6/7 only')
-        if a.pre_state and not (a.command=='factor' and (a.mode=='static' and a.stage=='E5-3' and a.row_tag=='223' or a.mode=='full' and a.row_tag=='3')):raise ValueError('--pre-state requires released static or targeted full factor restoration')
-        if a.pre_state and a.mode=='full' and (a.pre_state.name!='pre-state.json' or a.pre_state.parent.name not in ('full-'+a.stage,'full-'+a.stage+'-223') or a.pre_state.parent.parent!=a.out):raise ValueError('Targeted restoration requires the corresponding original full row pre-state.json in this Run')
+        if a.row_tag and not re.fullmatch('[A-Za-z0-9]+',a.row_tag):raise ValueError('--row-tag requires ASCII letters and digits')
+        if a.pre_state and not (a.command=='factor' and a.row_tag and (a.mode=='static' and a.stage=='E5-3' or a.mode=='full' and a.stage in ('E5-1','E5-5','E5-6','E5-7'))):raise ValueError('--pre-state requires tagged static or targeted full factor restoration')
+        if a.pre_state and a.mode=='full' and (a.pre_state.name!='pre-state.json' or not re.fullmatch('full-'+re.escape(a.stage)+'(?:-[A-Za-z0-9]+)?',a.pre_state.parent.name) or a.pre_state.parent.parent!=a.out):raise ValueError('Targeted restoration requires the corresponding original full row pre-state.json in this Run')
         if a.dry_run and not a.pre_state:raise ValueError('--dry-run requires factor --pre-state')
         if a.command=='smoke' and (a.mode!='smoke' or a.stage!='SMOKE'): raise ValueError('Smoke requires --mode smoke --stage SMOKE; never counted as E5')
         if a.command=='schema': print(json.dumps(REQUIRED,indent=2)); return 0
@@ -2569,13 +2598,13 @@ def main():
             print(json.dumps({'status':'OFFLINE_INPUT_CHECK_ONLY','scientificResults':'UNMEASURED','scheduleSeconds':21900,'N':b['config']['N']})); return 0
         if not a.out: raise ValueError('--out absolute run or stage directory required')
         if a.dry_run:
-            if a.mode=='full':full_restore_dry_run(a.binding,a.out,a.pre_state,a.stage)
+            if a.mode=='full':full_restore_dry_run(a.binding,a.out,a.pre_state,a.stage,a.row_tag)
             else:static_restore_dry_run(a.binding,a.out,a.pre_state,a.row_tag)
             return 0
         if a.command=='judge':
             result=judge(a.binding,a.out)
             return 2 if result['status']=='INVALID_GENERATOR' or (result.get('failureScenarioEvidence') or {}).get('status')=='INVALID' else 0
-        if a.command=='summarize': summarize(a.binding,a.out); return 0
+        if a.command=='summarize': summarize(a.binding,a.out,a.row_tag or None); return 0
         if a.command=='publish':
             if not a.experiment_id or not a.store_config:raise ValueError('publish requires --experiment-id and --store-config; summary is final immutable record')
             publish_campaign(a.binding,a.out,a.experiment_id,a.store_config);return 0
