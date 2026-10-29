@@ -577,3 +577,8 @@
 ## 2026-10-29 — #221 중단 원인: genesis1 디스크 압박(운영 환경)
 
 - 루트 1.5T/1.8T, kubelet evictionHard imagefs 15%(295G) 하회 → producer 3·ChillServer Pod Evicted(ephemeral-storage), disk-pressure taint. dmesg의 serving-entrypoint memcg OOM(anon 120MB)은 부수 현상. 조치: go build cache 46G·임시 복사본 정리 → 344G, taint 해제 06:05Z. 보고서 조건: 2회차 #217/#218/#221 중단은 전부 하네스/환경 요인(collector 경합, rate-limiter prepare 실패 잔류→R4b, 디스크 압박). 다음 전구간 전 디스크 여유 ≥400G 권고(오래된 백업 tar 4개 31G는 사용자 판단).
+
+## 2026-10-29 10:xxZ — E5 2회차 #222 부분 결과(수정 후 소스 R1~R6+R4b)와 정지
+
+- #222 E5-0~3 + S1~2 완료: MNV 실패 E5-1 10,225→296, E5-2 1,954→0, E5-3 19,095→13,562; p95 MNV E5-2 1.72s→236ms, E5-3 Smol 12.0s→3.26s; 에너지 +2~4%. static S3 종료 시 k8s logs stdout/stderr 병합으로 traceback 1행이 client JSONL에 혼입 → STOP(하네스 `41f352e6` 관대 처리). 수집 전 STOP이라 S3 NOT_READY, reset 후 static 구성 재생성 경로 없음 → 정지(멈춤 규칙: 2회차 3회 모두 하네스/환경 요인 — collector 경합, rate-limiter prepare 잔류→R4b, 디스크 압박, 로그 혼입).
+- 본질: 측정 장비(하네스)의 단일 실패가 7시간 run 전체를 무효화하는 구조 — 단계별 체크포인트/재개 부재. 선택지는 사용자 결정.
