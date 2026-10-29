@@ -609,3 +609,4 @@
 - E5-7 2회차 무효(비활성 Pod 주입·assigned 0) → R5 미검증; C1 후 활성 경로 주입으로 재실행 필요.
 - 권고: C1-A(frozen parent sibling exact-proof 공유, 1파일 30–65줄) → C2-A(old 보존 + 독립 Node 검증된 순증, 2파일 70–120줄) → E5-7 유효 재실행(+E5-1/5/6) → R6 factor 재실험은 보류.
 - P3(사용자): C1-A+C2-A 구현 → E5 3회차 표적 행(E5-1/5/6/7; E5-7 활성 경로 주입 조건).
+- P3 조건(사용자): (a) E5-7 대상 = 주입 직전 state에서 routing weight>0 && 직전 창 assigned>0인 실제 serving Pod, 서로 다른 Node 2개, UID 사전조건 삭제; 근거(가중치·assigned·Pod/Node UID) failure-events.json 기록; 불만족 시 주입 취소·INVALID. (b) 표적 행 시작 상태 = pre-state 복원 경로로 #222/#223 해당 행 시작 상태 복원 → fingerprint 1회 확인; E5-5 시작 상태의 C1 예약 포함 여부 표 명시; 표 조건 "3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2". C3 코드 수정 없음 — E5 뒤: 빈 Node mobilenet 실측 또는 더 큰 profile 측정.
