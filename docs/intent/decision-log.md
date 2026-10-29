@@ -596,3 +596,7 @@
 
 - 전구간 완료. MNV 실패 1→2회차: E5-1 10,225→296, E5-2 1,954→0, E5-6 9,264→0, E5-7 0→0; p95 MNV E5-6 395→147ms, E5-7 402→146ms. E5-4/5는 static도 동일 악화(MNV κ 119.6→91.9 고정 배치 차이) → CHILL 효과 아님(`agent://Round2Regress`). spec 기입 `90c58155`.
 - 남은 과제(E5 뒤): kubeedge cloudcore nodeName→nodeSelector, genesis1 디스크 보존 규칙, PodGC 임계, kube client rate limiter(prepare 194s), summarize 메모리(5.6GB JSON), 하네스 단계 재개, E5-7 자동 주입, 생성기 TLS keep-alive, U9 대시보드, U11 게이트웨이 분리(G2 코드 있음·미배선).
+
+## 2026-10-30 — 사이클 2: 2회차(#222+#223) 원 로그 기반 상향식 결함 추출(사용자)
+
+- 동일 워크플로우 반복: P0 정규화(기존 extract.py/raw.py) → P1 원시 우선 결함 카드(동시 ≤3, verify 전부 true, gopls) → P2 종합·기존 해법 매핑 → P3 결정 → P4 → E5 3회차. 초점: R1~R6 이후 잔존·신규 결함(E5-3 잔여 13.5k, E5-4/5 고부하, 예약 잔류 재발 plan-ca1ac7eb0b69, 에너지 +2~4%).
