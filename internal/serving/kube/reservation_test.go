@@ -19,6 +19,11 @@ const (
 	previousEvidence         = "previous"
 	restartedContainerSuffix = "-new"
 	restartedEvidence        = "restarted"
+	staleEvidence            = "stale"
+	unknownPodEvidence       = "unknown-pod"
+	policyEvidence           = "policy"
+	pendingPowerEvidence     = "pending-power"
+	activeSiblingEvidence    = "active-sibling"
 )
 
 func TestCommonReservationConflictAndReleaseAC38(t *testing.T) {
@@ -103,7 +108,7 @@ func TestTerminatedRunRetainsReservationUntilPhysicalReturnAC38(t *testing.T) {
 }
 
 func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
-	for _, evidence := range []string{"declaration", previousEvidence, "mismatch", "stale", "unready", "native-unready", restartedEvidence, "pod-unready", "unknown-pod"} {
+	for _, evidence := range []string{"declaration", previousEvidence, "mismatch", staleEvidence, "unready", "native-unready", restartedEvidence, "pod-unready", unknownPodEvidence} {
 		t.Run(evidence, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -134,7 +139,7 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 				state.Native.Metadata = previous
 			case "mismatch":
 				state.Native.Metadata.Policy.MaxBatchSize++
-			case "stale":
+			case staleEvidence:
 				state.ObservedAt = result.EndedAt
 			case "unready":
 				state.Ready = false
@@ -144,7 +149,7 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 				pod.Status.ContainerStatuses[0].ContainerID += restartedContainerSuffix
 			case "pod-unready":
 				pod.Status.ContainerStatuses[0].Ready = false
-			case "unknown-pod":
+			case unknownPodEvidence:
 				pod.UID = "manual-route-replacement"
 				pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
 			}
@@ -164,7 +169,7 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 // exact known policy later. Neither event rewrites the original failure.
 func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 	for _, kind := range []string{operationPrepare, operationRoute} {
-		for _, evidence := range []string{"declaration", previousEvidence, "stale", "parent-stale", restartedEvidence, "unknown-pod", "profile", "slot", "decision", "policy", "pending-power", "unready", "unknown-container", "other-workload"} {
+		for _, evidence := range []string{"declaration", previousEvidence, staleEvidence, "parent-stale", restartedEvidence, unknownPodEvidence, "profile", "slot", "decision", policyEvidence, pendingPowerEvidence, "unready", "unknown-container", "other-workload"} {
 			t.Run(kind+"/"+evidence, func(t *testing.T) {
 				pod, node, profile, _ := observerSourceFixture()
 				pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
@@ -227,13 +232,13 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 				switch evidence {
 				case previousEvidence:
 					state.Native.Metadata = previous
-				case "stale":
+				case staleEvidence:
 					state.ObservedAt = ended
 				case "parent-stale":
 					state.ObservedAt = parent.result.EndedAt
 				case restartedEvidence:
 					pod.Status.ContainerStatuses[0].ContainerID += restartedContainerSuffix
-				case "unknown-pod":
+				case unknownPodEvidence:
 					pod.UID = "unknown"
 				case "profile":
 					state.Native.Metadata.ProfileID = "other-profile"
@@ -243,9 +248,9 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 					target.Instances[0].TargetID = "expected-slot"
 				case "decision":
 					state.Native.Metadata.Policy.DecisionID = "other-decision"
-				case "policy":
+				case policyEvidence:
 					state.Native.Metadata.Policy.MaxBatchSize++
-				case "pending-power":
+				case pendingPowerEvidence:
 					node.Labels = map[string]string{chillmeta.PowerModeState: chillmeta.PowerModePending}
 				case "unready":
 					state.Ready = false
@@ -335,7 +340,7 @@ func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 // Cycle 2 C1: two complete preparations and one partial preparation retain the
 // same three-Node workload footprint, but each receipt knows only its own Pod.
 func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
-	for _, evidence := range []string{"all-known", "unknown-pod", "stale", "parent-stale", "self-stale", restartedEvidence, "node-uid", "slot", "profile", "policy", "pending-power", "active-sibling", "cancel-sibling", "other-parent", "same-owner-unfrozen", "different-action"} {
+	for _, evidence := range []string{"all-known", unknownPodEvidence, staleEvidence, "parent-stale", "self-stale", restartedEvidence, "node-uid", "slot", "profile", policyEvidence, pendingPowerEvidence, activeSiblingEvidence, "cancel-sibling", "other-parent", "same-owner-unfrozen", "different-action"} {
 		t.Run(evidence, func(t *testing.T) {
 			ended := time.Now().UTC()
 			observed := ended.Add(3 * time.Second)
@@ -389,38 +394,7 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 				result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target},
 					Status: nativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "child failed"}}
 			c.runs["parent"] = parent
-			switch evidence {
-			case "unknown-pod":
-				pods[1].UID = "unknown"
-			case "stale":
-				physical[1].ObservedAt = ended
-			case "parent-stale":
-				physical[1].ObservedAt = parent.result.EndedAt
-			case "self-stale":
-				children[2].result.EndedAt = observed
-			case restartedEvidence:
-				pods[1].Status.ContainerStatuses[0].ContainerID += restartedContainerSuffix
-			case "node-uid":
-				physical[1].Node.UID = "replacement"
-			case "slot":
-				physical[1].TargetID = "unknown-slot"
-			case "profile":
-				physical[1].Native.Metadata.ProfileID = "unknown-profile"
-			case "policy":
-				physical[1].Native.Metadata.Policy.MaxBatchSize++
-			case "pending-power":
-				nodes[1].Labels = map[string]string{chillmeta.PowerModeState: chillmeta.PowerModePending}
-			case "active-sibling":
-				children[1].action.Status = nativeOperationRunning
-			case "cancel-sibling":
-				children[1].action.Status = nativeOperationCancel
-			case "other-parent":
-				children[1].owner = "other-transition"
-			case "same-owner-unfrozen":
-				target.Actions = append(target.Actions[:1:1], target.Actions[2])
-			case "different-action":
-				children[1].action.Instance = "other-slot"
-			}
+			mutateTerminalPreparationEvidence(evidence, nodes, pods, physical, children, parent)
 			c.releaseObservedScopes(nodes, pods, physical, observed)
 			snapshot, lost := c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute)
 			wantReleased := evidence == "all-known"
@@ -442,8 +416,44 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 	}
 }
 
+func mutateTerminalPreparationEvidence(evidence string, nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, children []*actionRun, parent *actionRun) {
+	switch evidence {
+	case unknownPodEvidence:
+		pods[1].UID = "unknown"
+	case staleEvidence:
+		physical[1].ObservedAt = children[0].result.EndedAt
+	case "parent-stale":
+		physical[1].ObservedAt = parent.result.EndedAt
+	case "self-stale":
+		children[2].result.EndedAt = physical[0].ObservedAt
+	case restartedEvidence:
+		pods[1].Status.ContainerStatuses[0].ContainerID += restartedContainerSuffix
+	case "node-uid":
+		physical[1].Node.UID = testReplacementUID
+	case "slot":
+		physical[1].TargetID = "unknown-slot"
+	case "profile":
+		physical[1].Native.Metadata.ProfileID = "unknown-profile"
+	case policyEvidence:
+		physical[1].Native.Metadata.Policy.MaxBatchSize++
+	case pendingPowerEvidence:
+		nodes[1].Labels = map[string]string{chillmeta.PowerModeState: chillmeta.PowerModePending}
+	case activeSiblingEvidence:
+		children[1].action.Status = nativeOperationRunning
+	case "cancel-sibling":
+		children[1].action.Status = nativeOperationCancel
+	case "other-parent":
+		children[1].owner = "other-transition"
+	case "same-owner-unfrozen":
+		target := parent.result.Operation.Target
+		target.Actions = append(target.Actions[:1:1], target.Actions[2])
+	case "different-action":
+		children[1].action.Instance = "other-slot"
+	}
+}
+
 func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
-	for _, evidence := range []string{"registered", "unregistered", "stale", "active", "other-owner"} {
+	for _, evidence := range []string{"registered", "unregistered", staleEvidence, "active", "other-owner"} {
 		t.Run(evidence, func(t *testing.T) {
 			pod, node, profile, _ := observerSourceFixture()
 			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
@@ -476,7 +486,7 @@ func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
 			switch evidence {
 			case "unregistered":
 				parent.cleanupRoutes = nil
-			case "stale":
+			case staleEvidence:
 				state.ObservedAt = parent.result.EndedAt
 			case "active":
 				refresh.action.Status = nativeOperationRunning

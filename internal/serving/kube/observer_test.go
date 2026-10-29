@@ -38,6 +38,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+const testReplacementUID = "replacement"
+
 func observerSourceFixture() (*corev1.Pod, *corev1.Node, serving.Profile, edgev1alpha1.DeviceClass) {
 	image := "registry/native@sha256:" + strings.Repeat("a", 64)
 	profile := serving.Profile{ID: "chill-system/campaign/campaign-uid", NodeName: "node", RuntimeMetadata: &native.RuntimeMetadata{Runtime: "ort-cpu", IntraOpThreads: 1, InterOpThreads: 1, CPUAffinity: []int{0}}, Condition: profilederivation.CurvePlanSpec{NodeUID: "node-uid", DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "CPUExecutionProvider", RuntimeImage: image, PowerMode: "fixed", Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 4}, CPU: profilederivation.CurveCPUContract{Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1}, Artifact: profilederivation.CurveArtifactContract{Image: image, Files: []string{"/artifact/model.onnx"}}, Preprocessor: profilederivation.CurvePreprocessorContract{Image: image, Path: "/preprocessor/pre"}}, Batches: []serving.BatchProfile{{Batch: 1, MemoryBytes: 1024}}}
@@ -80,7 +82,7 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		name   string
 		change func(*corev1.Pod, *corev1.Node, *serving.Profile)
 	}{
-		{"node recreation", func(_ *corev1.Pod, n *corev1.Node, _ *serving.Profile) { n.UID = "replacement" }},
+		{"node recreation", func(_ *corev1.Pod, n *corev1.Node, _ *serving.Profile) { n.UID = testReplacementUID }},
 		{"architecture", func(_ *corev1.Pod, n *corev1.Node, _ *serving.Profile) { n.Status.NodeInfo.Architecture = "arm64" }},
 		{"explicit weight", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
 			delete(p.Annotations, ServingWeightAnnotation)
@@ -476,7 +478,7 @@ func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) 
 				status.State = corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: status.ContainerID}}
 				switch proof {
 				case "replacement Pod":
-					pod.UID = "replacement"
+					pod.UID = testReplacementUID
 				case "other container":
 					status.State.Terminated.ContainerID = "containerd://other"
 				}

@@ -19,7 +19,7 @@ const failedPreparationSlot = "failed-slot"
 // becomes Ready. Compensation must retire it, not turn failure into success.
 // SCH-AC-38; P2 §3 R4 compensation/idempotent cleanup alternative.
 func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
-	for _, evidence := range []string{"unclaimed", "claimed", "identity-mismatch", "other-owner", "pending-power", "active-sibling", "preexisting", "policy-ack"} {
+	for _, evidence := range []string{"unclaimed", "claimed", "identity-mismatch", "other-owner", pendingPowerEvidence, activeSiblingEvidence, "preexisting", "policy-ack"} {
 		t.Run(evidence, func(t *testing.T) {
 			c, api, child, parent := failedPrepareCompensationFixture(t, evidence)
 			actual := c.state.Snapshot.Instances[1]
@@ -126,9 +126,9 @@ func failedPrepareCompensationFixture(t *testing.T, evidence string) (*Scheduler
 		child.prepareIdentity += restartedContainerSuffix
 	case "other-owner":
 		child.result.Operation.Prepare.Owner.UID = "other-workload"
-	case "pending-power":
+	case pendingPowerEvidence:
 		c.state.Snapshot.Nodes[1].PowerMode = ""
-	case "active-sibling":
+	case activeSiblingEvidence:
 		c.runs["active"] = &actionRun{owner: target.ID, action: serving.Action{Status: nativeOperationCancel}}
 	case "preexisting":
 		child.result.Before.Instances = []serving.InstanceState{{ID: actual.ID, PodUID: actual.PodUID}}

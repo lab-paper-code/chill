@@ -1155,16 +1155,7 @@ func (c *SchedulerController) readySubset(target serving.SchedulerCandidate, row
 			if len(current) > 0 {
 				added := []serving.SchedulerInstance{}
 				for _, wanted := range selected {
-					if !slices.ContainsFunc(snapshot.Instances, func(old serving.SchedulerInstance) bool {
-						if old.Node == wanted.Node {
-							for _, route := range snapshot.Routing {
-								if route[old.ID] > 0 {
-									return true
-								}
-							}
-						}
-						return false
-					}) && schedulerTargetReady(wanted, snapshot, physical, true) {
+					if !snapshotNodeHasPositiveRoute(snapshot, wanted.Node) && schedulerTargetReady(wanted, snapshot, physical, true) {
 						added = append(added, wanted)
 					}
 				}
@@ -1198,6 +1189,20 @@ func (c *SchedulerController) readySubset(target serving.SchedulerCandidate, row
 	sum := sha256.Sum256(raw)
 	partial.ID = target.ID + "-ready-" + hex.EncodeToString(sum[:10])
 	return &partial
+}
+
+func snapshotNodeHasPositiveRoute(snapshot serving.SchedulerSnapshot, node serving.NodeReference) bool {
+	for _, instance := range snapshot.Instances {
+		if instance.Node != node {
+			continue
+		}
+		for _, route := range snapshot.Routing {
+			if route[instance.ID] > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // runContext bounds a prepare run by serving.ActionDeadline.

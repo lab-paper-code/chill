@@ -1988,7 +1988,7 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 				added.Node = old.Node
 			case "other-workload-node":
 				other := added
-				other.ID, other.WorkloadUID = "other", "other-workload"
+				other.ID, other.WorkloadUID = schedulerTestOther, "other-workload"
 				snap.Instances = append(snap.Instances, other)
 				snap.Routing[other.WorkloadUID] = map[string]int32{other.ID: 1000}
 			case "missing-row":

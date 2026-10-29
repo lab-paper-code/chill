@@ -226,16 +226,7 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 	}
 	parent := run
 	if run.action.Kind == operationPrepare {
-		parent = nil
-		for _, candidate := range c.runs {
-			if candidate.owner == run.owner && candidate.action.Kind == transitionRunKind && candidate.result != nil &&
-				candidate.result.Operation.Target != nil && slices.ContainsFunc(candidate.result.Operation.Target.Actions, func(a serving.Action) bool {
-				return a.ID == run.action.ID && actionEquivalent(a, run.action)
-			}) {
-				parent = candidate
-				break
-			}
-		}
+		parent = c.frozenPreparationParent(run)
 	}
 	if parent == nil {
 		return knownEffectConfirmed(run, pod, physical, run.result.EndedAt)
@@ -270,6 +261,18 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 		}
 	}
 	return false
+}
+
+func (c *SchedulerController) frozenPreparationParent(run *actionRun) *actionRun {
+	for _, candidate := range c.runs {
+		if candidate.owner == run.owner && candidate.action.Kind == transitionRunKind && candidate.result != nil &&
+			candidate.result.Operation.Target != nil && slices.ContainsFunc(candidate.result.Operation.Target.Actions, func(a serving.Action) bool {
+			return a.ID == run.action.ID && actionEquivalent(a, run.action)
+		}) {
+			return candidate
+		}
+	}
+	return nil
 }
 
 //nolint:gocyclo // Keep exact-executor and known-policy proof together at the reservation release boundary.

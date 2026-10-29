@@ -315,6 +315,8 @@ proof를 복원하지 않는다.
 Ready·미정지·routable 검증을 통과한 serving 경로가 있으면 **old 공급 보존+
 검증된 순증 허용**을 적용한다(SCH-20/AC-38). 현재 serving이 없는 독립 Node의
 새 Ready 목적지만 exact identity·native policy ACK 확인 뒤 current에 합집합한다.
+이때 `snapshotNodeHasPositiveRoute`는 snapshot의 모든 Workload 분배를 검사하여
+어느 Workload든 양수 분배가 있는 Node를 순증 대상에서 제외한다.
 `serving.SchedulerReadyExpansion`은 먼저 최종 계획과 같은
 `schedulerValidateObservationTimes`를 재사용하여 관측 시각·`MaxObservationAge`를 검사한다.
 stale/unknown/future 관측이면 순증 없이 current를 보존한다. 유효한 현재
@@ -566,6 +568,8 @@ reset 첫 disable-autonomy의 ConfigMap conflict/확정 거절과 쓰기 전 실
 또는 작업 전 native 정책 그대로임이 확인되면 Pod를 유지한 채 예약을 해제한다.
 정책 불일치·unready·종료 이전 관측·교체 실행기는 확인 근거가 아니며 예약을 유지한다.
 Pod 소멸과 전력 pending 해소에 따른 기존 반환 규칙은 그대로 적용한다(SCH-AC-38).
+종료된 prepare의 형제 receipt 공유는 `frozenPreparationParent`가 같은 owner의
+frozen action 목록에서 ID와 동작이 일치하는 부모를 찾은 경우에만 허용한다.
 성공한 최종 handoff 뒤 cleanup의 `routeOnly`는 예약 해제가 아니라 같은 owner의
 제한된 가중치 수정 권한이다. 새 route가 실행 중이면 다음 route를 허가하지 않으며,
 퇴역 source·정책 변경·새 physical 후보 또는 reset은 이 권한에 포함하지 않는다.
