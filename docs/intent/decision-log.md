@@ -568,3 +568,8 @@
 
 - 커밋: R5 `78cf4699`+`0f206bf6`(positive-route ACK만), R1 `75bf0a4f`(readySubset old-serving 보존), R4 `d0cea2eb`(known-effect 예약 수렴, autonomous UIDs·late prepare identity), R3 `9b237c1c`+`fdb7cb53`(handoff 후 route-only 권한 분리, 혼합 target 분리·UID별 증거), R2 `22296404`(optional 교체 최소 체류 `replacementDwellNanos`, 기본=comparisonPeriod), R6 `3433204f`(batching OFF 후보 투영; replay E5-2 허가 8→78), lint `f5a1df37`. 각 리뷰 '배포 가능'. clean lint/test/arch PASS.
 - 다음: rev103 배포 → E5 2회차(동일 binding 입력·같은 R/SLO, 하네스 동결) → 1회차 표와 나란히 비교(보고서 조건: 2회차 = 수정 후 소스).
+
+## 2026-10-29 — E5 2회차 #217/#218 중단과 R4b
+
+- #217: E5-1 MNV 실패 10,225→260(p95 395→336ms) 확인 후 하네스 collector가 정상 교체 직후 옛 containerID로 PID 해석 실패 → 정지(하네스 수정 `d45fe66e`).
+- #218: E5-0~2 완료, E5-3 boundary freeze route 409 — 원인: jetson-nano MNV prepare가 rate-limiter deadline(194s)로 failed, Pod는 Ready였으나 native policy 미ACK(`workloadUID=""`) → R4 known-effect proof 정당 거부 → 예약 영구 잔류 → Fixed → 409. 근본: "반쯤 된 효과"(Pod 생성·정책 미적용) 수렴 경로 부재. 결정(권고 기본값): R4b — terminal owner scope의 unclaimed Pod를 기존 stop/drain/remove로 보상 퇴역 후 자연 반환(P2 §3 R4 보상 대안, AC-38 유지). 부수: kube client rate limiter 재발(QPS 200/400에서도) — prepare 194s 중 API 호출 폭주 여부 E5 뒤 과제로 기록.
