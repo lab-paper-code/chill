@@ -302,6 +302,7 @@ Serving 평가에서 검증한다.
 - Given: Node당 서빙 인스턴스 하나인 전체 POOL과 최종 SLO·모드·자원에 맞는 Node별 κ가 있다. `R_w=Σ_Node max eligible κ_w`는 고립 기준이며 세 R을 동시에 사용할 수 없다.
 - When: 유한한 [0,1]의 `poolShares={MNV:s_M,PLC:s_P,Smol:s_S}`(기본 .45/.1/.45, 합1)을 동결하고 α=0.3/0.5/0.7/0.9/1.2 단계에서 `rate_w=α_w×s_w×R_w`의 포아송 trace를 만든다. burst에서는 Smol의 α만 바꾼다.
 - Then: 잘못된 지분/합은 실행 전에 거절한다. 설정 검증은 `1.2×Σ(s_w×R_w)≤0.8×G`이며 G 입력값·출처와 R·s·α·요청률·trace를 binding에 동결한다. G 미확정은 명시 경고이며 개시 통과가 아니다. α를 혼합 SLO 보장으로 해석하지 않는다. G 확인은 고정 배치·α=1.2 총혼합120초 단1회(계단/최대G 탐색/자동재시도 없음)다. 동결trace 공급, PLC p95≤32ms 및 전체offered 대비32ms deadline성공≥95%, gateway거절/503/timeout/미완료0, cs throttle/restart/OOM0, 누락없는cs CPU/메모리10초표본·동결limit미만이면 PASS, 아니면 FAIL과원시사유다. native/client한계는 gateway실패와 구별하고 자동clip하지 않는다. 통과점은 최대G 또는20%여유 인증을 대신하지 않는다.
+- 고정-cap 제어요소 비교: batching OFF는 현재 Workload의 `(MaxBatch, MaxWait)` 집합만 허가하되 측정·초기화된 cap 변형의 placement/resources/replicas 평가는 유지한다. E5-2 snapshot replay는 과거 compatible 78 중 8만 통과하고 non-keep 적격 0이던 조건에서 고정 cap 후보 평가를 확인하며, E5-5 MNV의 현재 cap `{1,2}`도 둘 다 보존한다. 측정 없는 cap1 생성이나 전체 cap1 강제는 금지한다.
 - 요구사항: SCH-04, SCH-10, SCH-13, SCH-14, SCH-30, SCH-31.
 
 ## 5. 기존 명세와 요구사항 추적

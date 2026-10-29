@@ -163,22 +163,11 @@ func schedulerMeasuredOptions(ctx context.Context, settings SchedulerSettings, s
 		if ctx.Err() != nil {
 			return nil
 		}
-		if !settings.Controls.Batching {
-			options = append(options, o)
-			continue
-		}
-		if o.Instance.Profile == nil {
-			continue
-		}
-		for _, b := range o.Instance.Profile.Batches {
+		for _, variant := range CapacityVariants(o) {
 			if ctx.Err() != nil {
 				return nil
 			}
-			if b.Batch <= o.Instance.MaxBatch {
-				variant := o
-				variant.Instance.MaxBatch = b.Batch
-				options = append(options, variant)
-			}
+			options = append(options, variant)
 		}
 	}
 	sort.SliceStable(options, func(i, j int) bool { return schedulerOptionLess(options[i], options[j]) })
