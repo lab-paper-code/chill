@@ -549,7 +549,7 @@ G2 계약 세대 감사와 E5 실행 결과는 각각 별도다.
 - 1회차 CHILL 결함 후보의 수정은 1회차 결과 확정 뒤이며, 2회차는 위 수정 후 소스를 사용했다. 제어요소 비교는 위 명세 링크의 제한된 조건의 case study이며 모든 요소의 독립 기여를 증명하지 않는다.
 - 1회차는 수정 전 `control-213-full`, 2회차는 수정 후 소스 rev104(`e3f28f23`: R1~R6+R4b)다. 결함 카드 근거는 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/analysis/P2-synthesis.md`다. 이 문서 갱신의 제품 코드 변경은 0이다.
 - 2회차는 #222+#223 합성이다. #222의 full E5-0~3·static E5-1~2에 이어, static E5-3~6·full E5-4~7은 #223에서 factor pre-state 복원 경로로 측정했다. `static-replay-restore.json`의 accepted=true와 fingerprint 일치를 확인했으며 prepare ACK의 물리 ID만 재결합했다. 중단 없는 단일 실행으로 표현하지 않는다.
-- static 기준 배치는 각 회차 E5-3 종료 상태에서 독립적으로 선택되어 MNV 공급 κ가 119.601→91.907 req/s로 달랐다. 따라서 E5-4·E5-5의 실패·에너지 차이는 동일 배치의 CHILL 변경 효과가 아닌 배치·실행환경을 포함한 회차 간 관측 차이다. 근거는 각 회차 `static-selection.json` 및 2회차 `comparison-control-213-223.txt/.json`이다.
+- static 기준 배치는 각 회차 E5-3 종료 상태에서 독립적으로 선택되어 MNV 공급 κ가 119.601→91.907 req/s로 달랐다. E5-4·E5-5의 실패·에너지 차이는 이 배치 차이와 함께 해석해야 하며, 수정된 CHILL이 E5-3 종료 시 MNV 공급을 수요 미만(κ 91.907 < 약 95.5 req/s)으로 남긴 원인은 **조사 중**(사이클 2)이다. 근거는 각 회차 `static-selection.json` 및 2회차 `comparison-control-213-223.txt/.json`이다.
 - E5-7 주입은 1회차 실제 형식인 UID 사전조건부 Pod 삭제(강제 삭제·gracePeriodSeconds=0 아님), 180초 삭제·360초 cordon+삭제·600초 uncordon을 재사용했다. 대상은 1회차 genesis3/lattepanda → 2회차 jetson-nano/orangepi로 달랐다(원래 대상에 현재 서빙 Pod 없음). 각 회차 `failure-seven[/ -223]/targets.json` 및 명령·응답·복구 read-back이 근거이며 물리 전원·네트워크 장애나 완전 복구 보장은 아니다.
 - 2회차 중단 이력(#217 collector 경합, #218 예약 잔류→R4b, #221 디스크 압박, #222 로그 혼입)은 하네스/환경 요인으로 구분한다. 중단된 단계는 정본의 선택 결과에 합산하지 않았으며, 하네스/환경 중단을 제품 성능 판정으로 바꾸지 않는다.
 - 2회차 정본은 위 Run의 `tables-223.txt`, `comparison-control-213-223.txt/.json`, `e5-summary.json`이다. 두 회차는 각각 한 paired seed 집합이며 독립 반복 통계나 동일 배치 A/B 실험이 아니다. 이 문서 갱신의 클러스터 조작·재측정은 0이다.
