@@ -601,3 +601,10 @@
 
 - 동일 워크플로우 반복: P0 정규화(기존 extract.py/raw.py) → P1 원시 우선 결함 카드(동시 ≤3, verify 전부 true, gopls) → P2 종합·기존 해법 매핑 → P3 결정 → P4 → E5 3회차. 초점: R1~R6 이후 잔존·신규 결함(E5-3 잔여 13.5k, E5-4/5 고부하, 예약 잔류 재발 plan-ca1ac7eb0b69, 에너지 +2~4%).
 - 사이클 2 P1 출발 가설(사용자; 결론 아님, 원시로 검증): (1) #222 E5-3 종료 선택 MNV κ 91.9 < 수요 ≈95.5 — 수정된 CHILL이 증가 끝에서 수요 미만으로 남긴 이유(R1 보존·R2 dwell·R6·후보 κ). (2) full E5-4/5 ≈ static(55,040 vs 53,218 / 10,780 vs 10,883) — 자율 제어가 부족분을 못 메움; R2 dwell(600s=E5-5 구간)의 용량 부족 예외 작동 여부. (3) static에서도 BackendUnavailable 5만+ → 포화 시에도 나는 코드, 1회차 "라우팅 공백" 해석 범위 재확인. spec 조건은 "원인 조사 중"으로 정정.
+
+## 2026-10-30 — 사이클 2 P2 종합(`analysis/P2-synthesis-c2.md`), P3 대기
+
+- 사이클 1 효과: R1 확인(E5-1 10,227→296, E5-2 1,954→0, old-serving 보존), R2 직접 ABA 14→3. 가설: (1) κ 미달 지지하나 dwell 차단 반증 — E5-3 빈 노드 add-only 413후보 전부 CapacityRejected(측정 row 없음) → 구조적 용량 한계(C3, 제품 diff 0; 새 Node/profile 측정 등록이 해법). (2) E5-5~7 제어 정지의 핵심 = **C1 reservation-01**: R4b prepare child가 workload 전체 scope를 예약하지만 반환 증거는 자기 receipt만 → sibling 신규 Pod를 영원히 모름 → 560 Fixed tick. (3) BackendUnavailable 99.9%가 native deadline(포화) — "라우팅 공백" 일반화 반증(1회차 카드는 routable 축소 구간 한정 유효).
+- 신규 C2(E5-1-01): R1 보존이 all-positive-ready 장벽 → 독립 Node 새 Ready(genesis3)를 못 써 178건 노출.
+- E5-7 2회차 무효(비활성 Pod 주입·assigned 0) → R5 미검증; C1 후 활성 경로 주입으로 재실행 필요.
+- 권고: C1-A(frozen parent sibling exact-proof 공유, 1파일 30–65줄) → C2-A(old 보존 + 독립 Node 검증된 순증, 2파일 70–120줄) → E5-7 유효 재실행(+E5-1/5/6) → R6 factor 재실험은 보류.
