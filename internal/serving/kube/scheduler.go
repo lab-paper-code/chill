@@ -936,6 +936,7 @@ func slotName(slot string) string {
 func (c *SchedulerController) launch(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.launchFailedPreparationCleanupLocked(config)
 	parents := []*actionRun{}
 	for _, run := range c.runs {
 		if run.action.Kind == transitionRunKind && run.action.Status == nativeOperationRunning {

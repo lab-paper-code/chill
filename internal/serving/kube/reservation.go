@@ -5,6 +5,7 @@ import (
 	"context"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
@@ -284,6 +285,98 @@ func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.Inst
 	previous, current := before.Metadata.Policy, actual.Policy
 	previous.Batches, current.Batches = nil, nil
 	return reflect.DeepEqual(previous, current)
+}
+
+// SCH-AC-38 / P2 §3 R4: compensate only a failed owner's own, unclaimed
+// preparation. remove already performs stop/drain/source retirement; its
+// completion is not a return proof until releaseObservedScopes sees Pod absence.
+func (c *SchedulerController) launchFailedPreparationCleanupLocked(config SchedulerControllerConfig) {
+	for _, parent := range c.runs {
+		if parent.action.Kind != transitionRunKind || parent.action.Status != nativeOperationFailed || !parent.reserved || parent.result == nil {
+			continue
+		}
+		// A canceled/finishing sibling can still publish a policy or route.
+		active := false
+		for _, run := range c.runs {
+			if run.owner == parent.owner && (run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel) {
+				active = true
+				break
+			}
+		}
+		if active {
+			continue
+		}
+		physical := c.runtime.Instances()
+		for _, child := range c.runs {
+			if child.owner != parent.owner || !child.reserved || child.action.Kind != operationPrepare || child.result == nil ||
+				(child.action.Status != nativeOperationFailed && child.action.Status != nativeOperationPartial) || child.result.Operation.Prepare == nil {
+				continue
+			}
+			for _, actual := range physical {
+				if !c.failedPreparationUnclaimed(parent, child, actual) {
+					continue
+				}
+				c.launchTargetLocked(serving.SchedulerCandidate{ID: parent.owner, Actions: []serving.Action{{
+					ID: child.action.ID + "/compensate/" + actual.ID, Kind: operationRemove, Node: actual.Node, Instance: actual.ID,
+				}}}, config)
+			}
+		}
+	}
+}
+
+func (c *SchedulerController) failedPreparationUnclaimed(parent, child *actionRun, actual serving.InstanceState) bool {
+	wanted := child.result.Operation.Prepare.Instance
+	podUID, containerID, exact := strings.Cut(actual.ID, "/")
+	if wanted.Profile == nil || child.result.Operation.Prepare.Owner == nil || child.result.Operation.Prepare.Owner.UID != wanted.WorkloadUID ||
+		actual.OwnerWorkloadUID != wanted.WorkloadUID || actual.Node != wanted.Node || actual.TargetID != wanted.ID || actual.Profile != wanted.Profile.ID ||
+		!child.result.Operation.controlsWorkload(wanted.WorkloadUID) || !exact || containerID == "" || podUID != actual.PodUID ||
+		actual.PodUID == "" || !slices.Contains(child.scope.Pods, actual.PodUID) || !slices.Contains(child.scope.Instances, actual.ID) ||
+		!actual.Ready || actual.Stopped || actual.Native == nil || !actual.Native.Ready ||
+		!child.result.EndedAt.Before(actual.ObservedAt) || !parent.result.EndedAt.Before(actual.ObservedAt) {
+		return false
+	}
+	// Never infer creation from a slot/owner alone, or retire a pre-existing
+	// source. A timeout may have no final capture: the live frozen UID suffices.
+	identityKnown := child.prepareIdentity == actual.ID || slices.ContainsFunc(child.result.Actual.Instances, func(state serving.InstanceState) bool {
+		return state.ID == actual.ID && state.PodUID == actual.PodUID && state.Node == actual.Node
+	})
+	if !identityKnown || slices.ContainsFunc(child.result.Before.Instances, func(state serving.InstanceState) bool {
+		return state.PodUID == actual.PodUID || state.ID == actual.ID
+	}) || len(actual.Workloads) != 0 {
+		return false
+	}
+	if _, existed := child.result.Before.Native[actual.ID]; existed {
+		return false
+	}
+	for _, pod := range child.result.Before.Pods {
+		if pod.UID == actual.PodUID {
+			return false
+		}
+	}
+	metadata := actual.Native.Metadata
+	decision := child.result.Operation.Prepare.Config.Policy.DecisionID
+	if decision != "" && metadata.ProfileID == wanted.Profile.ID && metadata.DecisionID == decision &&
+		metadata.Policy.DecisionID == decision && schedulerPolicyAcknowledged(wanted, metadata) {
+		return false
+	}
+	for _, routable := range actual.Routable {
+		if routable {
+			return false
+		}
+	}
+	for _, route := range c.state.Snapshot.Routing {
+		if route[actual.ID] > 0 || route[actual.TargetID] > 0 {
+			return false
+		}
+	}
+	for _, instance := range c.state.Snapshot.Instances {
+		if instance.ID == actual.ID && instance.WorkloadUID != "" {
+			return false
+		}
+	}
+	return slices.ContainsFunc(c.state.Snapshot.Nodes, func(node serving.SchedulerNode) bool {
+		return node.Node == actual.Node && node.Ready && node.PowerMode != ""
+	})
 }
 
 func (c *SchedulerController) releaseOwnerLocked(owner string) {

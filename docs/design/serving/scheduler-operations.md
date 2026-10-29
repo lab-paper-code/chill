@@ -159,6 +159,22 @@ Pod나 교체 container를 소급해서 고정하지 않는다. route는 단일
 자식의 미확인 실물·실행 중인 원격 작업·pending power 예약은 각각 계속 유지한다.
 stale 관측·다른 container·알 수 없는 Pod는 해제 증거가 아니며 실패 receipt는
 기존 관측 보존 기간 동안 그대로 남는다.
+
+R4b는 P2 §3 R4의 **보상 트랜잭션/idempotent cleanup** 대안을 기존 퇴역 동작으로
+적용한다([SRS SCH-AC-38](../../spec/scheduler/SRS.md#sch-ac-38--작업-범위-예약-충돌-거절과-해제)).
+failed parent와 같은 owner의 모든 실행이 종료된 뒤, failed/partial prepare가 직접
+만든 것으로 실행 중 고정한 identity 또는 종료 receipt에서 증명되는 Pod만 검사한다.
+새 관측의 Pod UID·container·Node UID·slot·profile·Workload owner가 일치하고,
+prepare 이전부터 존재한 실물이 아니며, 현재 Workload claim·양수 route·routable 및
+해당 prepare 정책의 전체 ACK가 모두 없는 Ready executor는 같은 owner 예약 안에서
+기존 `remove`를 실행한다. 이 동작 내부의 stop → drain → native 미처리 요청 부재 →
+실제 container 종료 → Pod/Service/config 정리를 그대로 재사용한다. 보상 action ID는
+prepare와 exact executor로 고정하여 중복 실행하지 않는다. failed receipt나 동결된
+원래 DAG를 성공으로 바꾸거나 재개하지 않고, 보상 완료 뒤 **새 Pod 부재 관측**을
+기존 `releaseObservedScopes`가 확인해야 예약이 반환된다. 정상 serving/claimed Pod,
+다른 owner·identity 불일치·관측 불명·pending power Node에는 보상하지 않으며,
+정리 실패나 미확인 실물의 예약도 유지한다. 별도 timer·상수·재시도 정책은 추가하지
+않고 기존 operation polling/config와 물리 identity 검증 경계를 사용한다.
 상세 수명·해제·검사 계약은
 [자원 장부 설계](scheduler-implementation.md#54-자원-장부--sch-5052-ac-3739)를 따른다.
 
