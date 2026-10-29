@@ -573,3 +573,7 @@
 
 - #217: E5-1 MNV 실패 10,225→260(p95 395→336ms) 확인 후 하네스 collector가 정상 교체 직후 옛 containerID로 PID 해석 실패 → 정지(하네스 수정 `d45fe66e`).
 - #218: E5-0~2 완료, E5-3 boundary freeze route 409 — 원인: jetson-nano MNV prepare가 rate-limiter deadline(194s)로 failed, Pod는 Ready였으나 native policy 미ACK(`workloadUID=""`) → R4 known-effect proof 정당 거부 → 예약 영구 잔류 → Fixed → 409. 근본: "반쯤 된 효과"(Pod 생성·정책 미적용) 수렴 경로 부재. 결정(권고 기본값): R4b — terminal owner scope의 unclaimed Pod를 기존 stop/drain/remove로 보상 퇴역 후 자연 반환(P2 §3 R4 보상 대안, AC-38 유지). 부수: kube client rate limiter 재발(QPS 200/400에서도) — prepare 194s 중 API 호출 폭주 여부 E5 뒤 과제로 기록.
+
+## 2026-10-29 — #221 중단 원인: genesis1 디스크 압박(운영 환경)
+
+- 루트 1.5T/1.8T, kubelet evictionHard imagefs 15%(295G) 하회 → producer 3·ChillServer Pod Evicted(ephemeral-storage), disk-pressure taint. dmesg의 serving-entrypoint memcg OOM(anon 120MB)은 부수 현상. 조치: go build cache 46G·임시 복사본 정리 → 344G, taint 해제 06:05Z. 보고서 조건: 2회차 #217/#218/#221 중단은 전부 하네스/환경 요인(collector 경합, rate-limiter prepare 실패 잔류→R4b, 디스크 압박). 다음 전구간 전 디스크 여유 ≥400G 권고(오래된 백업 tar 4개 31G는 사용자 판단).
