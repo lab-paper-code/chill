@@ -325,16 +325,33 @@ func (c *SchedulerController) launchFailedPreparationCleanupLocked(config Schedu
 }
 
 func (c *SchedulerController) failedPreparationUnclaimed(parent, child *actionRun, actual serving.InstanceState) bool {
-	wanted := child.result.Operation.Prepare.Instance
-	podUID, containerID, exact := strings.Cut(actual.ID, "/")
-	if wanted.Profile == nil || child.result.Operation.Prepare.Owner == nil || child.result.Operation.Prepare.Owner.UID != wanted.WorkloadUID ||
-		actual.OwnerWorkloadUID != wanted.WorkloadUID || actual.Node != wanted.Node || actual.TargetID != wanted.ID || actual.Profile != wanted.Profile.ID ||
-		!child.result.Operation.controlsWorkload(wanted.WorkloadUID) || !exact || containerID == "" || podUID != actual.PodUID ||
-		actual.PodUID == "" || !slices.Contains(child.scope.Pods, actual.PodUID) || !slices.Contains(child.scope.Instances, actual.ID) ||
-		!actual.Ready || actual.Stopped || actual.Native == nil || !actual.Native.Ready ||
-		!child.result.EndedAt.Before(actual.ObservedAt) || !parent.result.EndedAt.Before(actual.ObservedAt) {
+	if !actual.Ready || actual.Stopped || actual.Native == nil || !actual.Native.Ready ||
+		!child.result.EndedAt.Before(actual.ObservedAt) || !parent.result.EndedAt.Before(actual.ObservedAt) ||
+		!failedPreparationIdentityMatches(child, actual) || !preparationCreatedSource(child, actual) {
 		return false
 	}
+	wanted := child.result.Operation.Prepare.Instance
+	metadata := actual.Native.Metadata
+	decision := child.result.Operation.Prepare.Config.Policy.DecisionID
+	if decision != "" && metadata.ProfileID == wanted.Profile.ID && metadata.DecisionID == decision &&
+		metadata.Policy.DecisionID == decision && schedulerPolicyAcknowledged(wanted, metadata) {
+		return false
+	}
+	return c.preparationSourceUnclaimed(actual) && slices.ContainsFunc(c.state.Snapshot.Nodes, func(node serving.SchedulerNode) bool {
+		return node.Node == actual.Node && node.Ready && node.PowerMode != ""
+	})
+}
+
+func failedPreparationIdentityMatches(child *actionRun, actual serving.InstanceState) bool {
+	wanted := child.result.Operation.Prepare.Instance
+	podUID, containerID, exact := strings.Cut(actual.ID, "/")
+	return wanted.Profile != nil && child.result.Operation.Prepare.Owner != nil && child.result.Operation.Prepare.Owner.UID == wanted.WorkloadUID &&
+		actual.OwnerWorkloadUID == wanted.WorkloadUID && actual.Node == wanted.Node && actual.TargetID == wanted.ID && actual.Profile == wanted.Profile.ID &&
+		child.result.Operation.controlsWorkload(wanted.WorkloadUID) && exact && containerID != "" && podUID == actual.PodUID &&
+		actual.PodUID != "" && slices.Contains(child.scope.Pods, actual.PodUID) && slices.Contains(child.scope.Instances, actual.ID)
+}
+
+func preparationCreatedSource(child *actionRun, actual serving.InstanceState) bool {
 	// Never infer creation from a slot/owner alone, or retire a pre-existing
 	// source. A timeout may have no final capture: the live frozen UID suffices.
 	identityKnown := child.prepareIdentity == actual.ID || slices.ContainsFunc(child.result.Actual.Instances, func(state serving.InstanceState) bool {
@@ -342,7 +359,7 @@ func (c *SchedulerController) failedPreparationUnclaimed(parent, child *actionRu
 	})
 	if !identityKnown || slices.ContainsFunc(child.result.Before.Instances, func(state serving.InstanceState) bool {
 		return state.PodUID == actual.PodUID || state.ID == actual.ID
-	}) || len(actual.Workloads) != 0 {
+	}) {
 		return false
 	}
 	if _, existed := child.result.Before.Native[actual.ID]; existed {
@@ -353,10 +370,11 @@ func (c *SchedulerController) failedPreparationUnclaimed(parent, child *actionRu
 			return false
 		}
 	}
-	metadata := actual.Native.Metadata
-	decision := child.result.Operation.Prepare.Config.Policy.DecisionID
-	if decision != "" && metadata.ProfileID == wanted.Profile.ID && metadata.DecisionID == decision &&
-		metadata.Policy.DecisionID == decision && schedulerPolicyAcknowledged(wanted, metadata) {
+	return true
+}
+
+func (c *SchedulerController) preparationSourceUnclaimed(actual serving.InstanceState) bool {
+	if len(actual.Workloads) != 0 {
 		return false
 	}
 	for _, routable := range actual.Routable {
@@ -374,9 +392,7 @@ func (c *SchedulerController) failedPreparationUnclaimed(parent, child *actionRu
 			return false
 		}
 	}
-	return slices.ContainsFunc(c.state.Snapshot.Nodes, func(node serving.SchedulerNode) bool {
-		return node.Node == actual.Node && node.Ready && node.PowerMode != ""
-	})
+	return true
 }
 
 func (c *SchedulerController) releaseOwnerLocked(owner string) {
