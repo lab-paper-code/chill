@@ -612,3 +612,4 @@
 - P3 조건(사용자): (a) E5-7 대상 = 주입 직전 state에서 routing weight>0 && 직전 창 assigned>0인 실제 serving Pod, 서로 다른 Node 2개, UID 사전조건 삭제; 근거(가중치·assigned·Pod/Node UID) failure-events.json 기록; 불만족 시 주입 취소·INVALID. (b) 표적 행 시작 상태 = pre-state 복원 경로로 #222/#223 해당 행 시작 상태 복원 → fingerprint 1회 확인; E5-5 시작 상태의 C1 예약 포함 여부 표 명시; 표 조건 "3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2". C3 코드 수정 없음 — E5 뒤: 빈 Node mobilenet 실측 또는 더 큰 profile 측정.
 
 ## 2026-10-30 — 사이클 2 P4 완료: C1-A `651cd021`+`0b67b252`, C2-A `048624d7`+`8639a569`, 하네스 `c6c4a80c`(E5-7 대상 규칙·표적 행 복원), lint `5f1dc4f1`. 리뷰 배포 가능, clean lint/test/arch PASS. 다음: rev105 → E5 3회차 표적 행(E5-1/5/6/7).
+- 사용자 조건(3회차): (1) E5-6/7은 2회차와 시작 조건 다름(2회차 C1 예약 1+owner-only 3 포함, 3회차 복원 제외) → 표에서 E5-6/7 개선을 C1 효과로 귀속 금지; C1 효과 판정은 E5-5 안에서 새로 생긴 예약의 반환 여부(Fixed tick 수·반환 시각). (2) 디스크: /tmp/cb*·go build cache 정리, #210~#212 실패 run 삭제 승인(측정 증거 #213·#217 이후 유지).
