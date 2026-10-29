@@ -137,6 +137,22 @@ drain 보호를 유지하며, dead executor의 ACK 실패로 제거 분배를 �
 예약을 비우지 않는다. timeout/취소는 실행 종료일 뿐이며, 이후 실제 효과 확인 또는 reset의
 정리 완료(Pod 부재·전력 비대기 재관측) 후에만 예약을 반환한다. 전역 목표 장벽은 없고
 예약 밖 판단은 계속된다. 중간 Ready 부분집합 분배는 같은 owner 예약 안에서 실행한다.
+
+partial/failed로 끝난 자율 전환도 같은 known-effect 확인을 사용한다(SCH-AC-38).
+새 관측의 정확한 Pod UID·container identity·Node UID가 종료 receipt 또는 실행 중
+미리 포착한 실물과 일치하고, prepare의 slot(TargetID)·profile·DecisionID·전체 실행
+정책 ACK가 확인되면 늦게 Ready가 된 executor를 현재 실물로 인수한다. prepare는
+실행 중 정확한 slot·Node·profile·owner에 대응하는 첫 Pod/container만 장부에 고정한다.
+timeout이 마지막 Capture까지 취소해도 이 identity는 보존하며, 종료 후 처음 나타난
+Pod나 교체 container를 소급해서 고정하지 않는다. route는 단일
+`workloadUID`뿐 아니라 동결된 `workloadUIDs` 범위에도 동일한 검사를 적용한다.
+요청한 정책 또는 receipt에 남은 정확한 이전 정책을 확인할 수 있으나, 이전 정책
+확인은 새 목표 성공이 아니다. 관측 시각은 해당 child와 실패 parent의 `EndedAt`
+모두보다 뒤여야 한다. parent는 자기 receipt를 성공으로 바꾸거나 DAG를 재개하지
+않고, 확인된 예약 책임만 반환하여 새 target/동작 identity로 재계획하게 한다.
+자식의 미확인 실물·실행 중인 원격 작업·pending power 예약은 각각 계속 유지한다.
+stale 관측·다른 container·알 수 없는 Pod는 해제 증거가 아니며 실패 receipt는
+기존 관측 보존 기간 동안 그대로 남는다.
 상세 수명·해제·검사 계약은
 [자원 장부 설계](scheduler-implementation.md#54-자원-장부--sch-5052-ac-3739)를 따른다.
 

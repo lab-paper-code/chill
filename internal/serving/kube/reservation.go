@@ -143,9 +143,9 @@ func (c *SchedulerController) authorize(operation Operation) error {
 	return nil
 }
 
-// Fresh observation proves return when executors have disappeared, or a failed
-// manual routing operation's exact executors acknowledge a known policy.
-// A taint remains owned by the admission lifecycle.
+// Fresh observation proves physical return or an exact executor's known effect.
+// Terminal transitions consume this proof in reconcileSnapshot without changing
+// failed receipts. A taint remains owned by the admission lifecycle.
 func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, observedAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -163,42 +163,78 @@ func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []co
 				}
 			}
 			for _, pod := range pods {
-				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, workloadOwner(pod.OwnerReferences))) && !manualRoutingEffectConfirmed(run, &pod, physical) {
+				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, workloadOwner(pod.OwnerReferences))) && !c.knownOwnerEffectConfirmed(run, &pod, physical) {
 					returned = false
 				}
 			}
 		}
-		if returned {
+		if run.action.Kind == transitionRunKind {
+			run.returnObserved = returned
+		} else if returned {
 			run.reserved = false
 		}
 	}
 }
 
+// A parent has no physical receipt of its own: only its frozen children's
+// receipts can prove effects, and every proof must postdate the parent failure.
+func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
+	if knownEffectConfirmed(run, pod, physical, run.result.EndedAt) {
+		return true
+	}
+	if run.action.Kind != transitionRunKind || run.owner == "" {
+		return false
+	}
+	for _, child := range c.runs {
+		if child != run && child.owner == run.owner && knownEffectConfirmed(child, pod, physical, run.result.EndedAt) {
+			return true
+		}
+	}
+	return false
+}
+
 //nolint:gocyclo // Keep exact-executor and known-policy proof together at the reservation release boundary.
-func manualRoutingEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
+func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState, after time.Time) bool {
+	if run.result == nil || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || !sameRunningContainer(pod, pod) {
+		return false
+	}
 	operation := run.result.Operation
-	if !isRoutingOperation(operation.Kind) || operation.WorkloadUID == "" ||
-		(run.action.Status != nativeOperationFailed && run.action.Status != nativeOperationPartial) ||
-		!slices.Contains(run.scope.Pods, string(pod.UID)) || !sameRunningContainer(pod, pod) {
+	if !isRoutingOperation(operation.Kind) && operation.Kind != operationPrepare {
 		return false
 	}
 	id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
-	if !slices.Contains(run.scope.Instances, id) {
-		return false
-	}
+	_, beforeKnown := run.result.Before.Native[id]
+	_, actualKnown := run.result.Actual.Native[id]
+	identityKnown := slices.Contains(run.scope.Pods, string(pod.UID)) && slices.Contains(run.scope.Instances, id)
+	identityKnown = identityKnown || beforeKnown || actualKnown || slices.ContainsFunc(run.result.Actual.Instances, func(state serving.InstanceState) bool {
+		return state.PodUID == string(pod.UID) && state.ID == id
+	})
 	state := schedulerPhysicalState(id, physical)
-	if state == nil || state.ID != id || state.PodUID != string(pod.UID) || state.Node.Name != pod.Spec.NodeName || !slices.Contains(run.scope.Nodes, state.Node) || !state.Ready || state.Stopped || state.Native == nil || !state.Native.Ready || !run.result.EndedAt.Before(state.ObservedAt) {
+	if !identityKnown || state == nil || state.ID != id || state.PodUID != string(pod.UID) || state.Node.Name != pod.Spec.NodeName || !slices.Contains(run.scope.Nodes, state.Node) || !state.Ready || state.Stopped || state.Native == nil || !state.Native.Ready || !run.result.EndedAt.Before(state.ObservedAt) || !after.Before(state.ObservedAt) {
 		return false
 	}
 	actual := state.Native.Metadata
-	if operation.Target != nil && actual.DecisionID == operation.Target.ID && actual.Policy.DecisionID == operation.Target.ID {
+	if operation.Kind == operationPrepare && operation.Prepare != nil {
+		wanted := operation.Prepare.Instance
+		decision := operation.Prepare.Config.Policy.DecisionID
+		if wanted.Profile != nil && state.TargetID == wanted.ID && wanted.Node == state.Node &&
+			operation.controlsWorkload(wanted.WorkloadUID) && operation.Prepare.Owner != nil &&
+			operation.Prepare.Owner.UID == wanted.WorkloadUID && workloadOwner(pod.OwnerReferences) == wanted.WorkloadUID &&
+			actual.ProfileID == wanted.Profile.ID && decision != "" && actual.DecisionID == decision &&
+			actual.Policy.DecisionID == decision && schedulerPolicyAcknowledged(wanted, actual) {
+			return true
+		}
+	}
+	if isRoutingOperation(operation.Kind) && operation.Target != nil && actual.DecisionID == operation.Target.ID && actual.Policy.DecisionID == operation.Target.ID {
 		for _, wanted := range operation.Target.Instances {
-			if wanted.Profile != nil && wanted.WorkloadUID == operation.WorkloadUID && (wanted.ID == id || wanted.ID == state.TargetID) && wanted.Node == state.Node && schedulerPolicyAcknowledged(wanted, actual) {
+			if wanted.Profile != nil && operation.controlsWorkload(wanted.WorkloadUID) &&
+				(wanted.ID == id && (wanted.TargetID == "" || wanted.TargetID == state.TargetID) || wanted.ID == state.TargetID) &&
+				wanted.Node == state.Node && actual.ProfileID == wanted.Profile.ID && schedulerPolicyAcknowledged(wanted, actual) {
 				return true
 			}
 		}
 	}
-	// An unchanged previous policy is also a confirmed effect, not a successful
+	// An unchanged previous policy is a confirmed state, not a successful
 	// application of the requested declaration. Do not invent an ACK for it.
 	before, known := run.result.Before.Native[id]
 	if !known || actual.ProfileID != before.Metadata.ProfileID || actual.DecisionID != before.Metadata.DecisionID {

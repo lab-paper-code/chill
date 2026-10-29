@@ -88,6 +88,8 @@ type actionRun struct {
 	scope                resourceScope
 	owner                string
 	reserved             bool
+	returnObserved       bool
+	prepareIdentity      string
 	inheritedReservation bool
 }
 type SchedulerController struct {
@@ -418,8 +420,35 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var lost []OperationResult
+	// A timeout can cancel the final Capture itself. Freeze the first observed
+	// preparing executor while its operation is still live, never after failure.
+	for _, run := range c.runs {
+		if run.action.Kind != operationPrepare || run.action.Status != nativeOperationRunning || run.prepareIdentity != "" || run.result == nil || run.result.Operation.Prepare == nil {
+			continue
+		}
+		wanted := run.result.Operation.Prepare.Instance
+		for _, actual := range snapshot.Instances {
+			podUID, containerID, exact := strings.Cut(actual.ID, "/")
+			if wanted.Profile != nil && actual.Profile != nil && actual.Profile.ID == wanted.Profile.ID &&
+				actual.TargetID == wanted.ID && actual.Node == wanted.Node && actual.OwnerWorkloadUID == wanted.WorkloadUID &&
+				actual.PodUID != "" && exact && actual.PodUID == podUID && containerID != "" {
+				run.prepareIdentity = actual.ID
+				run.scope.Pods = append(run.scope.Pods, actual.PodUID)
+				run.scope.Instances = append(run.scope.Instances, actual.ID)
+				break
+			}
+		}
+	}
 	for _, parent := range c.runs {
-		if parent.action.Kind != transitionRunKind || parent.result == nil || parent.action.Status != nativeOperationRunning {
+		if parent.action.Kind != transitionRunKind || parent.result == nil {
+			continue
+		}
+		if parent.action.Status != nativeOperationRunning {
+			// Adopt only the fresh physical-return/known-effect proof. Keep the
+			// failure receipt and each child's still-unconfirmed responsibility.
+			if parent.action.Status != nativeOperationCancel && parent.returnObserved {
+				parent.reserved = false
+			}
 			continue
 		}
 		target := parent.result.Operation.Target
