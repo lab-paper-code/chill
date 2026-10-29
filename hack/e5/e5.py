@@ -9,6 +9,10 @@ failure-select uses config.failureSelectSnapshotTTLSeconds (default 15; finite >
 for snapshot wall-clock age and operator expiry, not CHILL's internal observation age.
 Client JSONL non-object/malformed lines remain in raw evidence and judge coverage;
 they do not stop collection or replace missing end-counter evidence.
+Targeted full --row-tag 3 GO preserves restored static route weights when enabling
+autonomy; start-state-restoration.json retains the immediate post-GO snapshot and
+compares its routes with the restored fingerprint (mismatch stops with exit 2).
+The first full campaign's freeze/release boundary remains separate.
 """
 import argparse
 import base64
@@ -459,6 +463,7 @@ def self_check():
         else:
             raise AssertionError('Invalid d25 evidence accepted')
     self_check_factor()
+    self_check_restore_go()
     self_check_failure_selection(analysis)
     self_check_client_jsonl(analysis)
     print('PASS E5 receive-origin SLO, scheduled reference, generator quality and full planned issuance; offline only')
@@ -574,6 +579,52 @@ def self_check_factor():
         records=[json.loads(line) for line in (root/'disk-boundaries.jsonl').read_text().splitlines()]
         assert [row['accepted'] for row in records]==[True,False]
     print('PASS E5 factor paired maxBatch/fresh ACK, static/full fingerprint match/mismatch, full settings/reservation disclosure, append-only row paths and 310 GB boundary; offline only')
+
+
+def self_check_restore_go():
+    """Run the actual targeted settings/GO/receipt statements with local API doubles."""
+    import ast
+    from types import SimpleNamespace
+    tree=ast.parse(Path(__file__).read_text())
+    cpo=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='CPO')
+    run=next(n for n in cpo.body if isinstance(n,ast.FunctionDef) and n.name=='run')
+    blocks=[body for node in ast.walk(run) for _,body in ast.iter_fields(node) if isinstance(body,list)]
+    body=next(body for body in blocks if any(isinstance(n,ast.If) and isinstance(n.test,ast.Name) and n.test.id=='targeted' and any(isinstance(x,ast.Expr) and isinstance(x.value,ast.Call) and isinstance(x.value.func,ast.Attribute) and x.value.func.attr=='authorize_native_modes' for x in n.body) for n in body))
+    indices=[i for i,n in enumerate(body) if isinstance(n,ast.If) and isinstance(n.test,ast.Name) and n.test.id=='targeted']
+    go=compile(ast.fix_missing_locations(ast.Module(body=body[indices[0]:indices[-1]+1],type_ignores=[])),__file__,'exec')
+    for targeted,drift in ((True,False),(True,True),(False,False)):
+        events=[];receipts={};routing={'plc':{'fast':766,'slow':234}}
+        expected=copy.deepcopy(routing);pod={'metadata':{'name':'producer'}}
+        def api(args,**kwargs):
+            if args[0]=='exec':
+                events.append('GO')
+                if drift:routing['plc']={'fast':1,'slow':1}
+            return pod
+        def state():
+            assert events[-1]=='GO'
+            events.append('snapshot')
+            return {'snapshot':{'routing':copy.deepcopy(routing)}}
+        def release(*args):
+            events.append('release')
+            routing['plc']={'fast':1,'slow':1}
+        runner=SimpleNamespace(uids=['plc'],tb={'apiSeconds':1,'barrierSeconds':1},io=SimpleNamespace(k=api,assert_producer_startable=lambda *args,**kwargs:None),state=state,release_routing=release,authorize_native_modes=lambda:events.append('authorize'),put=lambda settings:events.append('autonomy-on') or settings)
+        restored={'accepted':True,'fingerprint':{'routing':expected},'fullSettings':{'autonomousWorkloads':['plc']}}
+        ns={'self':runner,'targeted':targeted,'restored':restored,'folder':Path('/offline/full-E5-1-3'),'barrier':None,'pods':{'plc':pod},'now':lambda:'now','save':lambda path,value:receipts.__setitem__(path.name,copy.deepcopy(value))}
+        try:exec(go,ns)
+        except RuntimeError as error:
+            assert targeted and drift and 'route weights differ' in str(error)
+        else:
+            assert not drift
+        assert 'release' not in events
+        if targeted:
+            receipt=receipts['start-state-restoration.json']
+            assert events==['authorize','autonomy-on','GO','snapshot']
+            assert receipt['accepted']==receipt['postGO']['accepted']==(not drift)
+            assert receipt['postGO']['state']['snapshot']['routing']==routing
+            assert receipt['postGO']['expectedRouting']==expected
+            if not drift:assert routing==expected
+        else:assert events==['GO'] and not receipts
+    print('PASS E5 restored 766/234 routes retained through GO, post-GO drift rejected; offline only')
 
 
 def self_check_failure_selection(analysis):
@@ -1638,7 +1689,6 @@ class CPO:
                         if fingerprint(frame['snapshot'],self.uids)!=chosen or frame['snapshot'].get('reservations'):raise RuntimeError('Selected static configuration was not retained at actual E5-4 producer release')
                         save(folder/'actual-start-configuration.json',frame)
                     if targeted:
-                        self.release_routing(folder.name+'-release','Release restored paired route immediately before full-mode producer GO')
                         self.authorize_native_modes()
                         save(folder/'full-settings-release-ack.json',self.put(restored['fullSettings']))
                     # Same barrier file protocol as existing CPO producer; actual UTC start per producer is retained, not claimed identical.
@@ -1660,6 +1710,13 @@ class CPO:
                                 if evidence['observedUTC']:break
                                 time.sleep(min(.2,max(0,go_deadline-time.monotonic())))
                         self.io.k(['exec',pod['metadata']['name'],'-c','load','--','python3','-c',"from pathlib import Path; Path('/tmp/e5-start').touch()"],timeout=self.tb['apiSeconds'])
+                    if targeted:
+                        frame=self.state();expected=restored['fingerprint']['routing']
+                        routing={uid:frame['snapshot'].get('routing',{}).get(uid,{}) for uid in self.uids}
+                        restored['postGO']={'observedUTC':now(),'state':frame,'routing':routing,'expectedRouting':expected,'accepted':routing==expected}
+                        restored['accepted']=restored['accepted'] and restored['postGO']['accepted']
+                        save(folder/'start-state-restoration.json',restored)
+                        if not restored['postGO']['accepted']:raise RuntimeError('Restored route weights differ from fingerprint immediately after producer GO')
                     phase['startUTC']=now(); end=time.monotonic()+st['seconds']+self.tb['drainSeconds']; released=True; save(folder/'phase.json',phase)
                 if released and not ready_gate and time.monotonic()>end:
                     if jobs and (sel.get_map() or any(p.poll() is None for p,l,e in streams)): raise RuntimeError('Producer drain watchdog exceeded')
