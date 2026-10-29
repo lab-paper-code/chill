@@ -2394,7 +2394,7 @@ def main():
         return
     if args.release is None:
         parser.error('Live CPO commands require --release')
-    cpo_args = argparse.Namespace(binding=binding_path, release=args.release, out=args.out, command='smoke', mode='smoke', stage=args.stage or binding['schedule'][0]['id'])
+    cpo_args = argparse.Namespace(binding=binding_path, release=args.release, out=args.out, command='smoke', mode='smoke', stage=args.stage or binding['schedule'][0]['id'], row_tag='', pre_state=None)
     cpo = e5.CPO(cpo_args)
     if args.command == 'preflight':
         try:

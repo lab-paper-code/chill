@@ -82,6 +82,7 @@ def render(root, repo):
     scenarios = ['steady', 'gradual-up-and-down', 'burst', 'post-transition-drop-resurge',
                  'mixed-heterogeneous', 'pool-overload', 'node-serving-control-failure']
     title = f'# E5 table rows: {cell(root.name)}'
+    if summary.get('compositeRun'):title+=' — '+summary['compositeRun']['label']
     lines = [title, '', 'PRIVATE_OPERATIONAL_ONLY; spec/design files are not modified.',
              'Existing summary judgments only; MEASURED is a result link, not criterion PASS or complete scenario coverage. Missing values are not zero.',
              'Operational G0/demo evidence does not complete an E5 evaluation row.' if operational else 'Source: e5-summary.json (existing summarize output).', '', '## docs/spec/README.md', '', *spec[:2]]
@@ -124,11 +125,13 @@ def render(root, repo):
     lines += ['', '## Three timing populations (existing summary values)', '',
               'Generator: scheduled arrival → actual send (ns); entrance: actual send → gateway receivedAt (ns, cross-host clock uncertainty, negative values retained); SLO: CHILL receipt → response via gateway elapsedNanos. Offered includes unsent requests. Completed latency quantiles do not replace the offered denominator.', '']
     paths = sorted(root.glob('smoke-*/summary.json')) if operational else sorted(root.glob('*/judgment.json'))
+    if not operational and summary.get('rowDirectories'):
+        paths=sorted({Path(folder)/'judgment.json' for folder in summary['rowDirectories'].values() if (Path(folder)/'judgment.json').exists()})
     for path in paths:
         stage = load(path)
         if not operational:
             mode, marker, suffix = path.parent.name.partition('-E5-')
-            row_id = 'E5-'+suffix if marker else path.parent.name
+            row_id = 'E5-'+suffix.split('-')[0] if marker else path.parent.name
             pair = pairs.get(row_id, {})
             chill = paired_power(pair, 'full') if mode == 'static' else stage.get('power')
             static = stage.get('power') if mode == 'static' else paired_power(pair, 'static')
@@ -256,4 +259,12 @@ def self_check(repo):
         static_row = next(line for line in text.splitlines() if line.startswith('| E5-1 | static |'))
         assert '1,000.000 / 800.000 J; ±5.000 J' in static_row and '1,200.000 / 900.000 J; ±7.000 J' in static_row
         assert '99,999' not in energy_text(dict(full_power,complete=False,wholePoolJoules=99999))
+        appended=root/'static-E5-3-223';appended.mkdir()
+        (appended/'judgment.json').write_text((root/'static-E5-1/judgment.json').read_text())
+        summary['compositeRun']={'label':'#222+#223 합성, 같은 rev104 소스'}
+        summary['rowDirectories']={'static-E5-3':str(appended)}
+        (root/'e5-summary.json').write_text(json.dumps(summary))
+        text=render(root,repo)
+        assert '#222+#223 합성, 같은 rev104 소스' in text
+        assert '### static-E5-3-223' in text and '### static-E5-1' not in text
     print('tables self-check: PASS')

@@ -56,6 +56,46 @@ are forbidden. See [the operations guide](../docs/operations/ops-agent-guide.md)
 for the shared lock, evidence files, prerequisites and stop conditions.
 Upgrade and E5/demo start/run reject tokens shorter-lived than their stage/timebox budget plus safety margin (`--token-safety-margin-seconds`, default 120s for upgrade; `tokenSafetyMarginSeconds`, default 60s for E5/demo); JWT `exp` or authenticated `X-Token-Expires-At` evidence and expiry UTC are retained without token bytes.
 
+### E5 #222/#223 static replay
+
+Reuse `e5.py factor --mode static --stage E5-3 --pre-state <static-selection.json>
+--row-tag 223`; this is the existing paired pre-state prepare/ACK path, not a
+campaign resume engine. Both a factor `pre-state.json` snapshot and the frozen
+selection's `state.snapshot` are read by the same baseline reader. The selected
+state must match its recorded fingerprint and the Run's original selection.
+Prepare retains the selected maxBatch and polls fresh instances[] ACKs.
+After route publication, compare the fingerprint once with only old physical IDs
+rebound to actual prepare-ACK IDs; any profile/allocation/cap/wait/route/mode
+difference exits 2. `static-replay-restore.json` retains that comparison and mapping.
+
+`--row-tag 223` appends static E5-3..6 and full E5-4..7 directories; previous
+rows, the failed unsuffixed static E5-3, original freeze and finish evidence remain
+untouched. Tagged cleanup touches tagged rows only. No prior row is rerun.
+Each tagged row's entry/exit records available filesystem bytes in
+`disk-boundaries.jsonl`; below 310 GB (310,000,000,000 bytes) stops before another
+row. `summarize` and `tables` select appended rows explicitly and display
+**#222+#223 합성, 같은 rev104 소스**, not a fresh independent campaign.
+
+Offline only: add `--dry-run` to that factor command, with the preserved #222
+binding and Run. It never constructs CPO or contacts the cluster; it prints
+restoration request bodies, original fingerprint, ACK-only ID rebinding rule and
+execution order, and writes `Run/static-restore-dry-run-223.json`.
+
+CampaignOps sequence below requires `CHILL_E5_RELEASE_223` to point to the actual
+Main-approved #223 `e5-execute` release with the unchanged #222 binding/component
+sources. Run each line only after the preceding one succeeds; `set -e` stops
+the loops on a failed stage or invalid-generator judgment. These are existing
+stage/restore/finish commands, with no automatic retry or factor experiment.
+
+```sh
+set -e; export CHILL_EXPERIMENT_CONFIG=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/inputs/environment-212.json; Run=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full; Release=${CHILL_E5_RELEASE_223:?Main-approved release required}; e5() { nice -n 19 python3 -B hack/e5/e5.py "$@" --binding "$Run/binding.json" --release "$Release"; }; e5 factor --out "$Run" --mode static --stage E5-3 --pre-state "$Run/static-selection.json" --row-tag 223
+for n in 3 4 5 6; do e5 stage --out "$Run" --mode static --stage "E5-$n" --row-tag 223; e5 judge --out "$Run/static-E5-$n-223"; done
+e5 restore --out "$Run" --row-tag 223
+for n in 4 5 6 7; do e5 stage --out "$Run" --mode full --stage "E5-$n" --row-tag 223; e5 judge --out "$Run/full-E5-$n-223"; done
+e5 finish --out "$Run" --row-tag 223; e5 cleanup-jobs --out "$Run" --row-tag 223; e5 summarize --out "$Run"; nice -n 19 python3 -B hack/e5/e5.py tables "$Run" | tee "$Run/tables-223.txt"
+```
+
+
 
 ## Profiler runtime declarations
 

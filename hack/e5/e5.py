@@ -414,24 +414,30 @@ def self_check_factor():
     import ast
     from types import SimpleNamespace
     tree=ast.parse(Path(__file__).read_text())
-    selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('fingerprint','instance_rows')]
+    selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('fingerprint','instance_rows','paired_baseline','rebound_fingerprint','prepare_body','row_folder','replay_receipt')]
     cpo=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='CPO')
-    methods=[n for n in cpo.body if isinstance(n,ast.FunctionDef) and n.name in ('factor','start_barrier_observation')]
+    methods=[n for n in cpo.body if isinstance(n,ast.FunctionDef) and n.name in ('factor','start_barrier_observation','disk_boundary')]
     selected.append(ast.ClassDef(name='CPO',bases=[],keywords=[],body=methods,decorator_list=[]))
     node={'name':'node','uid':'node-uid'}
     targets=[{'id':str(cap),'node':node,'profile':{'id':str(cap)},'allocation':{'cpu':1},'maxBatch':1,'maxWaitNanos':0,'workloadUID':'workload'} for cap in (2,32)]
     baseline={'instances':targets,'nodes':[],'routing':{'workload':{'2':.5,'32':.5}}}
-    ns={'NODES':[],'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0}
+    ns={'NODES':[],'copy':copy,'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0}
     exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
-    for bad in (None,'owner-served','cap-delay','stale-delay','missing-delay','wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos'):
+    for bad in (None,'owner-served','cap-delay','stale-delay','missing-delay','wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos','static-good','static-drift'):
         runner=ns['CPO']();requests=[];prepared=[];receipts={};clock=[0];polls=[0]
         ns['time']=SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds))
         ns['save']=lambda path,body:receipts.__setitem__(str(path),copy.deepcopy(body))
-        runner.a=SimpleNamespace(mode='membership-off',stage='E5-2')
+        static=bad in ('static-good','static-drift')
+        runner.a=SimpleNamespace(mode='static' if static else 'membership-off',stage='E5-3' if static else 'E5-2',pre_state=Path('/offline/selection.json') if static else None,row_tag='223' if static else '')
         runner.c={'factors':[{'name':'membership-off','controls':{}}]}
         runner.out=Path('/offline');runner.uids=['workload'];runner.tb={'settleSeconds':1}
         if bad is not None:runner.tb['factorAckWaitSeconds']=3
         runner.d=SimpleNamespace(epoch=lambda value:value)
+        ns['load']=lambda _: {'state':{'snapshot':baseline},'fingerprint':ns['fingerprint'](baseline,['workload']),'settings':{}}
+        runner.disk_boundary=lambda *args:None
+        runner.check_power_observation=lambda:None
+        runner.check_token_lifetime=lambda:None
+        runner.b={'sources':{}}
         defaults={str(cap):{'instance':dict(target,maxBatch=cap)} for cap,target in zip((2,32),targets)}
         if bad in ('node','allocation','maxWaitNanos'):
             defaults['2']['instance'][bad]=None
@@ -457,14 +463,19 @@ def self_check_factor():
         runner.io=SimpleNamespace(api=prepare)
         runner.settings=lambda:{}
         ns['owned_target']=lambda *args:{}
-        runner.route_ack=lambda *args:None
+        def route_ack(chosen,*args):
+            if not static:return None
+            snapshot={'instances':[dict(i,workloadUID='workload') for i in prepared],'nodes':[],'routing':{'workload':{i['id']:.5 for i in prepared}}}
+            if bad=='static-drift':snapshot['instances'][0]['maxBatch']=99
+            return {'snapshot':snapshot}
+        runner.route_ack=route_ack
         runner.release_routing=lambda *args:None
         runner.authorize_native_modes=lambda:None
         runner.put=lambda settings:settings
         try:
             runner.factor()
         except RuntimeError as error:
-            assert bad in ('wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos'),(bad,str(error))
+            assert bad in ('wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos','static-drift'),(bad,str(error))
             if bad in ('wrong-cap','foreign-served','stale'):
                 assert 'ACK timed out' in str(error),str(error)
                 receipt=next(body for path,body in receipts.items() if path.endswith('-snapshot-ack.json'))
@@ -472,15 +483,40 @@ def self_check_factor():
                 assert receipt['freshness']['snapshotFresh']==(bad!='stale')
                 assert clock[0]==3
             elif bad=='foreign-after':assert 'empty or owner served UID' in str(error),str(error)
+            elif bad=='static-drift':
+                assert 'fingerprint differs' in str(error)
+                assert not receipts['/offline/static-replay-restore.json']['accepted']
             else:assert 'unsupported manual wait/resource override' in str(error),str(error)
         else:
-            assert bad in (None,'owner-served','cap-delay','stale-delay','missing-delay'),'Mismatched paired state accepted: '+str(bad)
+            assert bad in (None,'owner-served','cap-delay','stale-delay','missing-delay','static-good'),'Mismatched paired state accepted: '+str(bad)
             assert [r['maxBatch'] for r in requests]==[1,1]
             acks=[body for path,body in receipts.items() if path.endswith('-snapshot-ack.json')]
             assert len(acks)==2 and all(body['accepted'] for body in acks)
             assert all(body['timeboxSeconds']==(120 if bad is None else 3) for body in acks)
             assert clock[0]==(2 if bad in ('cap-delay','stale-delay','missing-delay') else 0)
-    print('PASS E5 factor paired maxBatch, delayed fresh ACK, empty/owner served UID and retained foreign-UID rejection; offline only')
+            if static:
+                receipt=receipts['/offline/static-replay-restore.json']
+                assert receipt['accepted'] and receipt['fingerprint']==receipt['expectedFingerprint']
+                assert receipt['physicalIDMapping']=={'2':'new-2','32':'new-32'}
+    import tempfile
+    ns['json']=json
+    ns['load']=lambda path:json.loads(path.read_text())
+    with tempfile.TemporaryDirectory() as temporary:
+        root=Path(temporary)
+        (root/'static-replay-restore.json').write_text(json.dumps({'rowTag':'223'}))
+        assert ns['row_folder'](root,'static','E5-2')==root/'static-E5-2'
+        assert ns['row_folder'](root,'static','E5-3')==root/'static-E5-3-223'
+        assert ns['row_folder'](root,'full','E5-3')==root/'full-E5-3'
+        assert ns['row_folder'](root,'full','E5-4')==root/'full-E5-4-223'
+        runner=ns['CPO']();runner.out=root
+        for free in (310_000_000_000,309_999_999_999):
+            ns['os']=SimpleNamespace(statvfs=lambda _:SimpleNamespace(f_bavail=free,f_frsize=1))
+            try:runner.disk_boundary('static-E5-3-223','before')
+            except RuntimeError:assert free<310_000_000_000
+            else:assert free==310_000_000_000
+        records=[json.loads(line) for line in (root/'disk-boundaries.jsonl').read_text().splitlines()]
+        assert [row['accepted'] for row in records]==[True,False]
+    print('PASS E5 factor paired maxBatch/fresh ACK, static fingerprint match/mismatch, append-only row paths and 310 GB boundary; offline only')
 def self_check_client_jsonl(analysis):
     """Synthetic trailing stderr fixture; run the real judge without cluster access."""
     import ast
@@ -745,6 +781,71 @@ def owned_target(snapshot,uids,routing):
     if any(i.get('ownerWorkloadUID') not in uids for i in instance_rows(snapshot['instances'])):raise RuntimeError('Foreign physical ownership; no owned-target/reset substitution')
     return {'instances':sorted([{'id':i['id'],'node':i['node'],'profileID':i['profile']['id'],'allocation':i['allocation'],'maxBatch':i['maxBatch'],'maxWaitNanos':i['maxWaitNanos'],'workloadUID':i['ownerWorkloadUID']} for i in instance_rows(snapshot['instances'])],key=lambda i:i['id']),'routing':routing,'modes':{n['node']['name']:n['powerMode'] for n in snapshot['nodes'] if n['node']['name'] in NODES}}
 
+
+def paired_baseline(path, uids):
+    record=load(path)
+    desired=fingerprint(record.get('state',record)['snapshot'],uids)
+    if 'fingerprint' in record and desired!=record['fingerprint']:
+        raise RuntimeError('Frozen selection state differs from its recorded fingerprint')
+    return desired
+
+
+def rebound_fingerprint(desired, mapping):
+    chosen=copy.deepcopy(desired)
+    for target in chosen['instances']:target['id']=mapping[target['id']]
+    chosen['instances'].sort(key=lambda target:target['id'])
+    chosen['routing']={uid:{mapping[old]:weight for old,weight in route.items()} for uid,route in desired['routing'].items()}
+    return chosen
+
+
+def prepare_body(target):
+    return {'kind':'prepare','workloadUID':target['workloadUID'],'profileID':target['profileID'],'node':target['node'],'maxBatch':target['maxBatch'],'reason':'Restore actual paired baseline'}
+
+
+def replay_receipt(root):
+    path=root/'static-replay-restore.json'
+    return load(path) if path.exists() else {}
+
+
+def row_folder(root, mode, row, tag=None):
+    if tag is None:tag=replay_receipt(root).get('rowTag','')
+    appended=mode=='static' and row in ('E5-3','E5-4','E5-5','E5-6') or mode=='full' and row in ('E5-4','E5-5','E5-6','E5-7')
+    return root/(mode+'-'+row+('-'+tag if tag and appended else ''))
+
+
+def selected_fingerprint(root):
+    restored=replay_receipt(root)
+    if restored and not restored['accepted']:raise RuntimeError('Static restoration fingerprint was rejected; no subsequent row')
+    return restored['fingerprint'] if restored else load(root/'static-selection.json')['fingerprint']
+
+
+def static_restore_dry_run(binding, root, pre_state, tag):
+    b=load_binding(binding);uids=[w['uid'] for w in b['config']['workloads']]
+    desired=paired_baseline(pre_state,uids)
+    if desired!=load(root/'static-selection.json')['fingerprint']:raise RuntimeError('Offline restoration input differs from original selection')
+    settings=copy.deepcopy(load(pre_state)['settings']);settings['autonomousWorkloads']=[]
+    for key in ('staticRouting','staticRoutingValidatedAt','powerObservation'):settings.pop(key,None)
+    result={'schema':'e5-static-restore-dry-run.v1','at':now(),'clusterRequests':0,
+            'scientificResults':'UNMEASURED; offline plan only','preState':ref(pre_state),
+            'sources':b['config']['approval']['sources'],
+            'expectedFingerprint':desired,'identityComparison':'Exact fingerprint after old-to-new physical ID rebinding only; no allocation/profile/cap/wait/route/mode tolerance',
+            'autonomyOffSettingsPUT':settings,'routeRequestMeaning':'Old IDs shown in templates; substitute only physical IDs returned in actual prepare ACKs',
+            'requests':[{'kind':'reset','workloadUIDs':uids,'reason':'Approved campaign owned reset: factor-static-E5-3-'+tag}]
+                       +[{'kind':'unroute','workloadUID':uid,'reason':'Keep paired factor preparations unloaded until exact baseline route ACK'} for uid in uids]
+                       +[prepare_body(target) for target in desired['instances']],
+            'routeRequests':[{'kind':'route','workloadUID':uid,'weights':weights,'reason':'Restore actual paired initial block through public prepare and route operations'} for uid,weights in desired['routing'].items()],
+            'nativeModeTargets':desired['modes'],'diskMinimumBytes':310_000_000_000,
+            'order':['factor --mode static --stage E5-3 --pre-state '+str(pre_state)+' --row-tag '+tag,
+                     *['stage --mode static --stage E5-'+str(n)+' --row-tag '+tag for n in range(3,7)],
+                     'restore --row-tag '+tag,
+                     *['stage --mode full --stage E5-'+str(n)+' --row-tag '+tag for n in range(4,8)],
+                     'finish --row-tag '+tag,'summarize','tables'],
+            'rowDirectories':[str(row_folder(root,mode,'E5-'+str(n),tag)) for mode,ids in (('static',range(3,7)),('full',range(4,8))) for n in ids]}
+    path=root/('static-restore-dry-run-'+tag+'.json')
+    if path.exists():raise RuntimeError('Offline plan destination already exists; no overwrite')
+    save(path,result)
+    print(json.dumps({'resultPath':str(path),**result},ensure_ascii=False,indent=2))
+
 def power_observation(c, *, frozen=False):
     """Bind from captured policy only; runtime CPO still checks actual ConfigMap."""
     if frozen:
@@ -952,9 +1053,14 @@ class CPO:
         self.io.ctx = ssl.create_default_context(cafile=self.c['caFile']); self.io.http = urllib.request.build_opener(d.NoRedirect(), urllib.request.HTTPSHandler(context=self.io.ctx))
         self.uids = [w['uid'] for w in self.c['workloads']]; self.tb = self.c['timeboxes']; self.ws = {w['name']: w for w in self.c['workloads']}
         self.bound_nodes=[{'name':node['metadata']['name'],'uid':node['metadata']['uid']} for node in load(self.c['inputs']['nodes'])['items'] if node['metadata']['name'] in NODES]
-        marker=self.out/'native-mode-authorization.json'
+        marker=self.out/('native-mode-authorization'+('-'+a.row_tag if a.row_tag else '')+'.json')
         self.native_mode_authorized_since=load(marker)['authorizedSinceUTC'] if marker.exists() else None
         self.native_evidence=[]
+    def disk_boundary(self, row, boundary):
+        usage=os.statvfs(self.out);free=usage.f_bavail*usage.f_frsize
+        record={'at':now(),'row':row,'boundary':boundary,'availableBytes':free,'minimumBytes':310_000_000_000,'path':str(self.out),'accepted':free>=310_000_000_000}
+        with (self.out/'disk-boundaries.jsonl').open('a') as stream:stream.write(json.dumps(record)+'\n')
+        if not record['accepted']:raise RuntimeError('Disk free below 310 GB; stop at row boundary')
 
     def api(self, method, path, body=None):
         settings_path = path == '/api/v1/scheduler/settings'
@@ -1020,7 +1126,7 @@ class CPO:
         if r.returncode: raise RuntimeError('PVC raw usage unavailable')
     def authorize_native_modes(self):
         self.native_mode_authorized_since=now()
-        save(self.out/'native-mode-authorization.json',{'authorizedSinceUTC':self.native_mode_authorized_since,'release':str(self.a.release),'meaning':'Actual pre-enable authorization fence; not a settings/native success ACK'})
+        save(self.out/('native-mode-authorization'+('-'+self.a.row_tag if self.a.row_tag else '')+'.json'),{'authorizedSinceUTC':self.native_mode_authorized_since,'release':str(self.a.release),'meaning':'Actual pre-enable authorization fence; not a settings/native success ACK'})
     def static_placement(self):
         return self.b.get('schema')=='demo-e5-binding.v1' and self.b.get('demoConfig',{}).get('staticPlacement') is True
     def check_power_observation(self):
@@ -1098,8 +1204,12 @@ class CPO:
             if remaining<=0:raise RuntimeError('Selected physical configuration did not publish after route ACK')
             time.sleep(min(1,remaining))
     def restore(self):
-        if not (self.out/'static-E5-6'/'collected.json').exists(): raise RuntimeError('Complete actual 170-minute static replay required before restoration')
-        chosen=load(self.out/'static-selection.json')['fingerprint']
+        restored=replay_receipt(self.out)
+        if restored and (not restored['accepted'] or restored['rowTag']!=self.a.row_tag):raise RuntimeError('Automatic release requires matching accepted static restoration')
+        if self.a.row_tag and (self.out/'restore-ack.json').exists():raise RuntimeError('Static routing already released; no implicit repeat')
+        if not (row_folder(self.out,'static','E5-6')/'collected.json').exists(): raise RuntimeError('Complete actual 170-minute static replay required before restoration')
+        if self.a.row_tag:self.disk_boundary('restore','before')
+        chosen=selected_fingerprint(self.out)
         if fingerprint(self.state()['snapshot'],self.uids)!=chosen: raise RuntimeError('Actual selected static configuration changed before automatic restoration')
         self.release_routing('restore-release','Release static replay routing before automatic restoration')
         settings=self.settings(); settings['autonomousWorkloads']=self.uids
@@ -1138,7 +1248,7 @@ class CPO:
             p=subprocess.Popen(argv+[h['node'],str(seconds),self.a.stage],stdin=subprocess.PIPE,stdout=output,stderr=error,text=True); p.stdin.write(host_source); p.stdin.close(); children.append((p,output,error))
         return children
     def producer_job_name(self,name,stage):
-        return 'e5-'+self.a.mode.lower()+'-'+stage['id'].lower()+'-'+str(SEEDS[name])
+        return 'e5-'+self.a.mode.lower()+'-'+stage['id'].lower()+'-'+str(SEEDS[name])+('-'+self.a.row_tag if self.a.row_tag else '')
     def job(self, name, stage, folder):
         w=self.ws[name]; trace=stage['traces'][name]; job=load(w['jobTemplate']); label=self.producer_job_name(name,stage)
         job['metadata']={'name':label,'namespace':'chill-system','labels':{'chill.dacs.io/e5':self.a.mode}}
@@ -1172,12 +1282,16 @@ class CPO:
         elif stage is not None:
             stages = stages[stages.index(stage):] if stage in stages else [stage]
         record = token_preflight(self.c, stages)
-        save(self.out / ('token-preflight-' + (stage['id'] if stage else 'start') + '.json'), record)
+        save(self.out / ('token-preflight-' + (stage['id'] if stage else 'start') + ('-'+self.a.row_tag if self.a.row_tag else '') + '.json'), record)
         return record
     def run(self):
         """Recheck frozen operating power policy before any stage can launch load."""
-        st=self.c['smoke'] if self.a.command=='smoke' else next(x for x in self.b['schedule'] if x['id']==self.a.stage); folder=self.out/(self.a.mode+'-'+st['id'])
+        st=self.c['smoke'] if self.a.command=='smoke' else next(x for x in self.b['schedule'] if x['id']==self.a.stage); folder=row_folder(self.out,self.a.mode,st['id'],self.a.row_tag)
         if folder.exists(): raise RuntimeError('No implicit stage retry/overwrite')
+        restored=replay_receipt(self.out)
+        if self.a.row_tag and (not restored or restored['rowTag']!=self.a.row_tag or not restored['accepted']):raise RuntimeError('Tagged rows require matching successful static factor restoration')
+        if restored and self.a.row_tag!=restored['rowTag']:raise RuntimeError('Restored selection requires explicit matching --row-tag')
+        if self.a.row_tag:self.disk_boundary(folder.name,'before')
         self.check_token_lifetime(st)
         self.check_power_observation()
         deferred_restore=self.a.mode=='full' and st['id']=='E5-4' and not (self.out/'restore-ack.json').exists()
@@ -1185,12 +1299,13 @@ class CPO:
             order = ['E5-0','E5-1','E5-2','E5-3','E5-4','E5-5','E5-6','E5-7'] if self.a.mode=='full' else ['E5-1','E5-2','E5-3','E5-4','E5-5','E5-6'] if self.a.mode=='static' else ['E5-2','E5-5']
             index=order.index(st['id'])
             if index:
-                previous=self.out/(self.a.mode+'-'+order[index-1])
+                previous=row_folder(self.out,self.a.mode,order[index-1])
                 if not (previous/'collected.json').exists() or load(previous/'phase.json')['status']!='DRAINED_NOT_EVALUATED': raise RuntimeError('Previous normative row successful raw capture required')
-            if deferred_restore and not (self.out/'static-E5-6'/'collected.json').exists(): raise RuntimeError('Actual 170min static replay precedes full E5-4')
+            if deferred_restore and not (row_folder(self.out,'static','E5-6')/'collected.json').exists(): raise RuntimeError('Actual 170min static replay precedes full E5-4')
         if self.a.mode=='static' and st['id']=='E5-0': raise RuntimeError('Static baseline replays E5-1..6 only')
         if self.a.mode=='static':
-            ready=load(self.out/'static-ready.json'); chosen=load(self.out/'static-selection.json')['fingerprint']
+            if not restored:load(self.out/'static-ready.json')
+            chosen=selected_fingerprint(self.out)
             if self.settings()['autonomousWorkloads'] or fingerprint(self.state()['snapshot'],self.uids)!=chosen: raise RuntimeError('Actual selected static freeze drift')
         elif self.a.mode not in ('full','smoke'):
             factor=next(f for f in self.c['factors'] if f['name']==self.a.mode)
@@ -1326,7 +1441,7 @@ class CPO:
                         self.io.assert_producer_startable(folder/('startup-'+name),current,pod,barrier_seconds=self.tb['barrierSeconds'])
                     if deferred_restore:
                         self.restore()
-                        frame=self.state();chosen=load(self.out/'static-selection.json')['fingerprint']
+                        frame=self.state();chosen=selected_fingerprint(self.out)
                         if fingerprint(frame['snapshot'],self.uids)!=chosen or frame['snapshot'].get('reservations'):raise RuntimeError('Selected static configuration was not retained at actual E5-4 producer release')
                         save(folder/'actual-start-configuration.json',frame)
                     # Same barrier file protocol as existing CPO producer; actual UTC start per producer is retained, not claimed identical.
@@ -1430,6 +1545,10 @@ class CPO:
                     except subprocess.TimeoutExpired:p.kill();p.wait()
                     o.close();e.close()
                 except Exception as cleanup_error:cleanup_errors.append('sampler: '+str(cleanup_error))
+            if self.a.row_tag:
+                try:self.disk_boundary(folder.name,'after')
+                except Exception:
+                    if not preserving_primary:raise
             if cleanup_errors:
                 save(folder/'secondary-cleanup-errors.json',{'at':now(),'primaryError':phase.get('error'),'cleanupErrors':cleanup_errors})
                 if not preserving_primary:raise RuntimeError('Cleanup failed: '+str(cleanup_errors))
@@ -1469,26 +1588,42 @@ class CPO:
             if p.is_file() and p.name!='collected.json': manifest['raw'].append(ref(p,allow_empty=True))
         save(folder/'collected.json',manifest)
     def factor(self):
-        f=next(f for f in self.c['factors'] if f['name']==self.a.mode)
-        if self.a.stage not in ('E5-2','E5-5'): raise RuntimeError('Factor reset is one actual paired E5-2/E5-5 block')
+        static=self.a.mode=='static'
+        if static:
+            if not self.a.pre_state or not self.a.row_tag or self.a.stage!='E5-3':raise ValueError('Static factor restoration requires --pre-state, --row-tag and --stage E5-3')
+            if (self.out/'static-replay-restore.json').exists():raise RuntimeError('Static restoration already attempted; no implicit repeat')
+            f={'name':'static'}
+        else:
+            f=next(f for f in self.c['factors'] if f['name']==self.a.mode)
+            if self.a.stage not in ('E5-2','E5-5'): raise RuntimeError('Factor reset is one actual paired E5-2/E5-5 block')
+        prefix='factor-'+f['name']+'-'+self.a.stage+('-'+self.a.row_tag if self.a.row_tag else '')
+        if static and (self.out/(prefix+'-reset-request.json')).exists():raise RuntimeError('Static reset already attempted; preserve evidence, no implicit repeat')
         ack_wait=self.tb.get('factorAckWaitSeconds',120)
         if not positive(ack_wait):raise ValueError('factorAckWaitSeconds must be finite and greater than zero')
-        baseline=load(self.out/('full-'+self.a.stage)/'pre-state.json')['snapshot']
-        desired=fingerprint(baseline,self.uids); profiles=self.api('GET','/api/v1/scheduler/profiles')['preparations']
+        desired=paired_baseline(self.a.pre_state or row_folder(self.out,'full',self.a.stage)/'pre-state.json',self.uids)
+        if static and desired!=load(self.out/'static-selection.json')['fingerprint']:raise RuntimeError('Restoration input differs from original frozen selection')
+        if static:
+            self.check_power_observation()
+            self.check_token_lifetime()
+            for frozen in self.b['sources'].values():
+                if ref(frozen['path'])!=frozen:raise RuntimeError('Frozen input/package identity changed; no restoration')
+        profiles=self.api('GET','/api/v1/scheduler/profiles')['preparations']
         for target in desired['instances']:
             default=profiles[target['profileID']]['instance']
             if any(target[key]!=default[key] for key in ('node','allocation','maxWaitNanos')): raise RuntimeError('Selected factor initial state needs unsupported manual wait/resource override; no generic reset is claimed')
-        self.clear_owned('factor-'+f['name']+'-'+self.a.stage)
+        if static:self.disk_boundary(prefix,'before')
+        self.clear_owned(prefix)
         current=self.state()
         for node in current['snapshot']['nodes']:
-            if node['node']['name'] in desired['modes'] and node['powerMode']!=desired['modes'][node['node']['name']]: self.native_mode(node['node'],desired['modes'][node['node']['name']],'factor-'+f['name']+'-'+self.a.stage)
+            if node['node']['name'] in desired['modes'] and node['powerMode']!=desired['modes'][node['node']['name']]: self.native_mode(node['node'],desired['modes'][node['node']['name']],prefix)
         for uid in self.uids:
-            self.operation({'kind':'unroute','workloadUID':uid,'reason':'Keep paired factor preparations unloaded until exact baseline route ACK'},'factor-'+f['name']+'-'+self.a.stage+'-unroute-'+uid)
+            self.operation({'kind':'unroute','workloadUID':uid,'reason':'Keep paired factor preparations unloaded until exact baseline route ACK'},prefix+'-unroute-'+uid)
         mapping={}
         for target in desired['instances']:
-            result=self.io.api('POST','/api/v1/scheduler/operations',{'kind':'prepare','workloadUID':target['workloadUID'],'profileID':target['profileID'],'node':target['node'],'maxBatch':target['maxBatch'],'reason':'Restore actual paired factor baseline'},timeout=self.tb['settleSeconds'])
+            body=prepare_body(target);save(self.out/(prefix+'-prepare-'+target['node']['name']+'-request.json'),body)
+            result=self.io.api('POST','/api/v1/scheduler/operations',body,timeout=self.tb['settleSeconds'])
             if result.get('status')!='complete': raise RuntimeError('Source-supported factor preparation incomplete')
-            save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-prepare-'+target['node']['name']+'.json'),result)
+            save(self.out/(prefix+'-prepare-'+target['node']['name']+'.json'),result)
             created=[i for i in result['actual']['instances'] if i.get('node')==target['node'] and i.get('ownerWorkloadUID')==target['workloadUID'] and i.get('profile')==target['profileID']]
             if len(created)!=1:raise RuntimeError('Native prepare completion lacks its exact Node/profile/owner physical identity')
             identifier=created[0]['id'];policy=result['actual']['native'][identifier]['metadata']['policy']
@@ -1503,7 +1638,7 @@ class CPO:
                 remaining=deadline-time.monotonic()
                 accepted=barrier['snapshotFresh'] and matched and remaining>0
                 if accepted or remaining<=0:
-                    save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-prepare-'+identifier+'-snapshot-ack.json'),{'timeboxSeconds':ack_wait,'accepted':accepted,'target':target,'freshness':barrier,'state':state})
+                    save(self.out/(prefix+'-prepare-'+identifier+'-snapshot-ack.json'),{'timeboxSeconds':ack_wait,'accepted':accepted,'target':target,'freshness':barrier,'state':state})
                     if not accepted:raise RuntimeError('Fresh prepared projection ACK timed out; final snapshot body retained with identity/cap/wait/allocation and freshness evidence')
                     mapping[target['id']]=identifier;break
                 time.sleep(min(1,remaining))
@@ -1511,12 +1646,20 @@ class CPO:
         if {i['id'] for i in instance_rows(actual['instances'])}!=set(mapping.values()) or any(i.get('workloadUID') not in (None,'',i.get('ownerWorkloadUID')) for i in instance_rows(actual['instances'])):raise RuntimeError('Paired prepared state is not exactly the returned physical IDs with empty or owner served UID')
         # Prepared instances may already serve their owner; exact paired routing still requires ACK.
         chosen=owned_target(actual,self.uids,{uid:{mapping[old]:weight for old,weight in route.items()} for uid,route in desired['routing'].items()})
-        save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-prepared-target.json'),{'status':'PREPARED_NOT_LOAD_READY','actualState':prepared,'intendedTargetBinding':chosen})
-        self.route_ack(chosen,self.settings(),'factor-'+f['name']+'-'+self.a.stage,'Restore actual paired initial block through public prepare and route operations')
-        self.release_routing('factor-'+f['name']+'-'+self.a.stage+'-release','Release paired baseline routing before autonomous factor')
+        save(self.out/(prefix+'-prepared-target.json'),{'status':'PREPARED_NOT_LOAD_READY','actualState':prepared,'intendedTargetBinding':chosen})
+        routed=self.route_ack(chosen,load(self.a.pre_state)['settings'] if static else self.settings(),prefix,'Restore actual paired initial block through public prepare and route operations')
+        if static:
+            expected=rebound_fingerprint(desired,mapping)
+            observed=fingerprint(routed['snapshot'],self.uids)
+            receipt={'at':now(),'accepted':observed==expected,'rowTag':self.a.row_tag,'label':'#222+#223 합성, 같은 rev104 소스','preState':str(self.a.pre_state),'physicalIDMapping':mapping,'originalFingerprint':desired,'expectedFingerprint':expected,'fingerprint':observed,'comparison':'One post-restore exact comparison; only prepare-ACK physical IDs rebound'}
+            save(self.out/'static-replay-restore.json',receipt)
+            if not receipt['accepted']:raise RuntimeError('Restored fingerprint differs from frozen E5-3 selection')
+            self.disk_boundary(prefix,'after')
+            return
+        self.release_routing(prefix+'-release','Release paired baseline routing before autonomous factor')
         settings=self.settings(); settings['controls']=f['controls']; settings['autonomousWorkloads']=self.uids
         self.authorize_native_modes()
-        save(self.out/('factor-'+f['name']+'-'+self.a.stage+'-ack.json'),self.put(settings))
+        save(self.out/(prefix+'-ack.json'),self.put(settings))
     def clear_owned(self,prefix):
         wait_seconds = self.tb.get('finishResetWaitSeconds', 600)
         if not positive(wait_seconds):
@@ -1556,6 +1699,7 @@ class CPO:
     def cleanup_jobs(self,exclude=None):
         for p in self.out.glob('*/created-*.json'):
             if p.parent==exclude:continue
+            if self.a.row_tag and not p.parent.name.endswith('-'+self.a.row_tag):continue
             j=load(p); name=j['metadata']['name']; uid=j['metadata']['uid']; phase=p.parent/'phase.json'
             stops=(load(phase).get('ownedProducerStops') or []) if phase.exists() else []
             if any(stop.get('name')==name and stop.get('uid')==uid and stop.get('stopped') is True for stop in stops):continue
@@ -1567,17 +1711,19 @@ class CPO:
     def factor_restore(self):
         settings=self.settings(); initial=load(self.c['inputs']['scheduler'])['settings']; settings['controls']=initial['controls']; save(self.out/'factor-restored.json',self.put(settings))
     def finish(self):
+        prefix='finish'+('-'+self.a.row_tag if self.a.row_tag else '')
+        if self.a.row_tag and (self.out/(prefix+'-complete.json')).exists():raise RuntimeError('Finish already recorded; no implicit repeat')
         if self.static_placement():
-            save(self.out/'finish-state.json',self.state())
-            save(self.out/'finish-complete.json',{'at':now(),'staticPlacement':True,'meaning':'Existing manual placement retained; no scheduler mutation'})
+            save(self.out/(prefix+'-state.json'),self.state())
+            save(self.out/(prefix+'-complete.json'),{'at':now(),'staticPlacement':True,'meaning':'Existing manual placement retained; no scheduler mutation'})
             return
         initial=load(self.out/'initial.json')
-        result=self.clear_owned('finish')
+        result=self.clear_owned(prefix)
         settings=copy.deepcopy(initial['settings'])
         settings['autonomousWorkloads']=[uid for uid in settings.get('autonomousWorkloads',[]) if uid not in self.uids]
-        save(self.out/'finish-settings-ack.json',self.put(settings))
-        save(self.out/'finish-state.json',self.state())
-        save(self.out/'finish-complete.json',{'at':now(),'canonicalInstances':0,'originalSettingsRestored':True,'resetStatus':result['status'],'powerReturn':'Server reset minimum supported idle mode; original physical modes are not recreated'})
+        save(self.out/(prefix+'-settings-ack.json'),self.put(settings))
+        save(self.out/(prefix+'-state.json'),self.state())
+        save(self.out/(prefix+'-complete.json'),{'at':now(),'canonicalInstances':0,'originalSettingsRestored':True,'resetStatus':result['status'],'powerReturn':'Server reset minimum supported idle mode; original physical modes are not recreated'})
     def campaign(self):
         self.start()
         def row(mode, name):
@@ -1806,7 +1952,7 @@ def summarize(binding, root):
     modes.update({f['name']:['E5-2','E5-5'] for f in b['config']['factors']})
     for mode, ids in modes.items():
         for row_id in ids:
-            folder=root/(mode+'-'+row_id)
+            folder=row_folder(root,mode,row_id)
             try:
                 value=load(folder/'judgment.json')
                 if value.get('scientificResults','').startswith('UNMEASURED'): raise ValueError('Operational smoke is not a scientific row')
@@ -1817,7 +1963,7 @@ def summarize(binding, root):
     for row_id in modes['static']:
         full=stages.get(('full',row_id)); static=stages.get(('static',row_id))
         if full and static:
-            f=load(root/('full-'+row_id)/'phase.json'); s=load(root/('static-'+row_id)/'phase.json')
+            f=load(row_folder(root,'full',row_id)/'phase.json'); s=load(row_folder(root,'static',row_id)/'phase.json')
             if f['stage']['traces'] != s['stage']['traces']: missing.append({'row':row_id,'reason':'Paired frozen traces differ'}); continue
             full_j,static_j=full['power']['wholePoolJoules'],static['power']['wholePoolJoules']
             comparisons.append({'row':row_id,'judgments':{'full':full['status'],'static':static['status']},
@@ -1826,8 +1972,8 @@ def summarize(binding, root):
                 'staticMinusFullWholePOOLJ':static_j-full_j if full_j is not None and static_j is not None else None,
                 'fullActivePOOLJ':full['power']['activePoolJoules'],'staticActivePOOLJ':static['power']['activePoolJoules'],
                 'requestMetrics':{'full':full.get('requests',{}),'static':static.get('requests',{})}})
-            full_tail=reported_power(full.get('powerDrainInclusive') or load(root/('full-'+row_id)/'power-drain-inclusive.json'))
-            static_tail=reported_power(static.get('powerDrainInclusive') or load(root/('static-'+row_id)/'power-drain-inclusive.json'))
+            full_tail=reported_power(full.get('powerDrainInclusive') or load(row_folder(root,'full',row_id)/'power-drain-inclusive.json'))
+            static_tail=reported_power(static.get('powerDrainInclusive') or load(row_folder(root,'static',row_id)/'power-drain-inclusive.json'))
             full_bound,static_bound=full['power'].get('gapErrorBoundJoules'),static['power'].get('gapErrorBoundJoules')
             comparisons[-1]['energyGapError']={'fullBoundJoules':full_bound,'staticBoundJoules':static_bound,
                 'differenceBoundJoules':full_bound+static_bound if full_bound is not None and static_bound is not None else None,
@@ -1865,7 +2011,11 @@ def summarize(binding, root):
     result['rowJudgmentCounts']=dict(Counter(value['status'] for value in stages.values()))
     result['measurementMeaning']='Measured result links are not criterion PASS or complete scenario coverage; negative SLO/source overload findings and declared unmeasured scope remain visible.'
     result['issuanceFidelity']={mode+'-'+row:{name:metrics.get('issuanceFidelity') for name,metrics in value.get('requests',{}).items()} for (mode,row),value in stages.items()}
-    restored=load(root/'finish-complete.json') if (root/'finish-complete.json').exists() else None
+    replay=replay_receipt(root)
+    result['compositeRun']={'label':replay['label'],'rowTag':replay['rowTag'],'restorationAccepted':replay['accepted']} if replay else None
+    result['rowDirectories']={mode+'-'+row:str(row_folder(root,mode,row)) for mode,ids in modes.items() for row in ids}
+    finish=root/('finish'+('-'+replay['rowTag'] if replay else '')+'-complete.json')
+    restored=load(finish) if finish.exists() else None
     result['physicalRestoration']=restored
     save(root/'e5-summary.json',result); return result
 
@@ -1918,7 +2068,8 @@ def publish_experiment(root, identifier, store_config, stages, status):
 
 def publish_campaign(binding, root, identifier, store_config):
     result=summarize(binding,root);stages=[]
-    for folder in sorted(root.iterdir()):
+    folders={Path(path) for path in result['rowDirectories'].values()} if result['compositeRun'] else root.iterdir()
+    for folder in sorted(folders):
         if not folder.is_dir() or not (folder/'phase.json').exists():continue
         phase=load(folder/'phase.json');judgment=load(folder/'judgment.json')
         requests={}
@@ -2064,11 +2215,14 @@ def check_recorded(source_sha):
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument('command',choices=['self-check','schema','check-preparation','check-recorded','bind','check','judge','summarize','publish','campaign','start','stage','smoke','restore','collect','factor','factor-restore','cleanup-jobs','finish']); p.add_argument('--config',type=Path); p.add_argument('--binding',type=Path); p.add_argument('--out',type=Path); p.add_argument('--release',type=Path);p.add_argument('--source-sha'); p.add_argument('--stage',default=''); p.add_argument('--mode',default='full'); p.add_argument('--experiment-id'); p.add_argument('--store-config',type=Path); a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument('command',choices=['self-check','schema','check-preparation','check-recorded','bind','check','judge','summarize','publish','campaign','start','stage','smoke','restore','collect','factor','factor-restore','cleanup-jobs','finish']); p.add_argument('--config',type=Path); p.add_argument('--binding',type=Path); p.add_argument('--out',type=Path); p.add_argument('--release',type=Path);p.add_argument('--source-sha'); p.add_argument('--stage',default=''); p.add_argument('--mode',default='full'); p.add_argument('--experiment-id'); p.add_argument('--store-config',type=Path); p.add_argument('--pre-state',type=Path); p.add_argument('--row-tag',default=''); p.add_argument('--dry-run',action='store_true'); a=p.parse_args()
     try:
         if a.command=='self-check':self_check();return 0
-        for value in (a.config,a.binding,a.out,a.release):
+        for value in (a.config,a.binding,a.out,a.release,a.pre_state):
             if value is not None and not value.is_absolute(): raise ValueError('All paths must be absolute')
+        if a.row_tag and a.row_tag!='223':raise ValueError('Only the released #223 appended rows are supported')
+        if a.pre_state and not (a.command=='factor' and a.mode=='static' and a.stage=='E5-3' and a.row_tag):raise ValueError('--pre-state is only for the released static factor E5-3 restoration')
+        if a.dry_run and not a.pre_state:raise ValueError('--dry-run requires static factor --pre-state')
         if a.command=='smoke' and (a.mode!='smoke' or a.stage!='SMOKE'): raise ValueError('Smoke requires --mode smoke --stage SMOKE; never counted as E5')
         if a.command=='schema': print(json.dumps(REQUIRED,indent=2)); return 0
         if a.command=='check-recorded':
@@ -2093,6 +2247,8 @@ def main():
             assert len(b['rowOrder'])==9
             print(json.dumps({'status':'OFFLINE_INPUT_CHECK_ONLY','scientificResults':'UNMEASURED','scheduleSeconds':21900,'N':b['config']['N']})); return 0
         if not a.out: raise ValueError('--out absolute run or stage directory required')
+        if a.dry_run:
+            static_restore_dry_run(a.binding,a.out,a.pre_state,a.row_tag);return 0
         if a.command=='judge': return 2 if judge(a.binding,a.out)['status']=='INVALID_GENERATOR' else 0
         if a.command=='summarize': summarize(a.binding,a.out); return 0
         if a.command=='publish':
@@ -2105,7 +2261,7 @@ def main():
         else: getattr(obj,a.command.replace('-','_'))()
         return 0
     except Exception as exc:
-        if a.out and a.command!='bind': save(a.out/'STOP.json',{'at':now(),'command':a.command,'error':str(exc),'status':'NOT_READY','scientificResults':'UNMEASURED_OR_PARTIAL; never PASS'})
+        if a.out and a.command!='bind': save(a.out/('STOP'+('-'+a.row_tag if a.row_tag else '')+'.json'),{'at':now(),'command':a.command,'error':str(exc),'status':'NOT_READY','scientificResults':'UNMEASURED_OR_PARTIAL; never PASS'})
         print('NOT_READY: '+str(exc),file=sys.stderr); return 2
 
 

@@ -259,7 +259,7 @@ def main():
         if any(not x.is_absolute() for x in (a.numbers,a.release,a.out)):raise ValueError('Absolute paths required')
         prepared=Prepare(a);binding=prepared.run()
         if a.command=='execute':
-            common={'binding':binding,'release':a.release,'stage':'','mode':'full'}
+            common={'binding':binding,'release':a.release,'stage':'','mode':'full','row_tag':'','pre_state':None}
             smoke_args=argparse.Namespace(**common,command='start',out=a.out/'smoke-run');smoke=e5.CPO(smoke_args);smoke.start();smoke_args.command='smoke';smoke_args.mode='smoke';smoke_args.stage='SMOKE';smoke.run()
             result=e5.judge(binding,smoke_args.out/'smoke-SMOKE')
             if result['status']!='OPERATIONAL_SMOKE_COMPLETE':raise RuntimeError('Actual operational smoke incomplete; no E5 result or campaign advance')
