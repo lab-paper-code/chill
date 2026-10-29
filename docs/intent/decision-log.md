@@ -563,3 +563,8 @@
 - 입력 22카드(원시 verify 전부 true, gopls 확정) → 6군집: R1 ready-subset이 기존 공급 철회(5단계, 창 오류 37,187건 겹침) / R2 역방향 교체 쿨다운 부재(ABA 38회) / R3 성공 cleanup 중 route 동결(106 owner-stage) / R4 partial 후 예약 고착(4 owner, 362 tick) / R5 dead executor ACK 의존(E5-7) / R6 batching OFF 후보 투영 누락. 산출 `analysis/P2-synthesis.md`.
 - 권고 최소안: R1(readySubset old-serving 보존, K8s maxUnavailable=0 유추) + R5(positive-route만 ACK) 먼저(제품 2파일 18–43줄) → R4(known-effect 수렴) → R3 → R2(교체 쿨다운) → R6. 전체 ~7파일 250–460줄. E5-4 과부하·Smol 용량은 결함 아님(의도 설계·용량 한계).
 - P3 결정(사용자): 6군집 전부 승인, 권고 순서 R1+R5 → R4 → R3 → R2 → R6. 동시 에이전트 ≤3, 파일 영역 분리, 군집별 커밋+회귀+리뷰, 후 E5 2회차.
+
+## 2026-10-29 — P4 구현 완료(R1~R6), E5 2회차 대기
+
+- 커밋: R5 `78cf4699`+`0f206bf6`(positive-route ACK만), R1 `75bf0a4f`(readySubset old-serving 보존), R4 `d0cea2eb`(known-effect 예약 수렴, autonomous UIDs·late prepare identity), R3 `9b237c1c`+`fdb7cb53`(handoff 후 route-only 권한 분리, 혼합 target 분리·UID별 증거), R2 `22296404`(optional 교체 최소 체류 `replacementDwellNanos`, 기본=comparisonPeriod), R6 `3433204f`(batching OFF 후보 투영; replay E5-2 허가 8→78), lint `f5a1df37`. 각 리뷰 '배포 가능'. clean lint/test/arch PASS.
+- 다음: rev103 배포 → E5 2회차(동일 binding 입력·같은 R/SLO, 하네스 동결) → 1회차 표와 나란히 비교(보고서 조건: 2회차 = 수정 후 소스).
