@@ -118,9 +118,20 @@ def render(root, repo):
               'or measured whole-POOL savings. Missing report metadata remains null.', '']
     if 'genesis2' in (binding.get('schedulerSettings') or {}).get('excludedNodes', []):
         lines += ['genesis2 하드웨어 결함으로 제외 (excluded for hardware failure); seven serving Nodes only.', '']
+    targeted={path.name[len('full-'):-len('-3-restore.json')]:load(path) for path in sorted(root.glob('full-E5-*-3-restore.json'))}
+    if targeted:
+        lines += ['3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2',
+                  'Only full E5-1/5/6/7 are new targeted rows; retained #222/#223 rows/static comparisons are historical, not a new independent full campaign.',
+                  'Existing fingerprint restores served canonical instances/routes/native modes (maxBatch included). Reservations and owner-only non-serving preparations are excluded, not reconstructed.',
+                  '', '| 표적 행 | 원본 시작 예약 수 | 원본 owner-only 미서빙 제외 수 | fingerprint 복원 | 원본 pre-state |',
+                  '|---|---:|---:|---|---|']
+        for row,record in targeted.items():
+            excluded=record.get('restorationExclusions',{})
+            lines.append(f'| {cell(row)} | {cell(excluded.get("originalReservations","UNKNOWN"))} | {len(excluded["excludedOwnerOnlyInstances"]) if "excludedOwnerOnlyInstances" in excluded else "UNKNOWN"} | {"ACCEPTED" if record.get("accepted") else "REJECTED"} | {cell(record.get("preState","UNKNOWN"))} |')
+        lines.append('')
     if not operational:
-        lines += ['', '## E5-7 manual failure evidence', '',
-                  'The recommended 180/360/600s operator runbook is separate from automatic workload replay. Failed commands and absent recovery are observations. Missing operator evidence leaves the failure scenario UNMEASURED; it is not an extra SLO/energy validity gate.',
+        lines += ['', '## E5-7 operator failure evidence', '',
+                  'The recommended 180/360/600s operator runbook is separate from automatic workload replay. For third-round rows, failure-select reads fresh state and preceding request-window assignments, emits UID-precondition commands without executing them, and requires distinct Nodes. Unmet rules cancel injection as INVALID; missing operator evidence remains UNMEASURED. Neither is criterion PASS.',
                   '```json', json.dumps(summary.get('failureScenarioEvidence'), ensure_ascii=False, indent=2), '```', '']
     lines += ['', '## Three timing populations (existing summary values)', '',
               'Generator: scheduled arrival → actual send (ns); entrance: actual send → gateway receivedAt (ns, cross-host clock uncertainty, negative values retained); SLO: CHILL receipt → response via gateway elapsedNanos. Offered includes unsent requests. Completed latency quantiles do not replace the offered denominator.', '']
@@ -267,4 +278,8 @@ def self_check(repo):
         text=render(root,repo)
         assert '#222+#223 합성, 같은 rev104 소스' in text
         assert '### static-E5-3-223' in text and '### static-E5-1' not in text
+        (root/'full-E5-5-3-restore.json').write_text(json.dumps({'accepted':True,'preState':'historical/full-E5-5-223/pre-state.json','restorationExclusions':{'originalReservations':1,'excludedOwnerOnlyInstances':['owner-only']}}))
+        text=render(root,repo)
+        assert '3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2' in text
+        assert '| E5-5 | 1 | 1 | ACCEPTED |' in text
     print('tables self-check: PASS')

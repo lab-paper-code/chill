@@ -96,6 +96,79 @@ e5 finish --out "$Run" --row-tag 223; e5 cleanup-jobs --out "$Run" --row-tag 223
 ```
 
 
+### E5 third-round targeted full replay
+
+`factor --mode full --stage E5-{1,5,6,7} --pre-state <original-row/pre-state.json>
+--row-tag 3` reuses the same reset/prepare/native-mode/route ACK path. It reads
+the original row's sibling `pre-settings.json` (or embedded settings), including
+full autonomy, and restores served canonical instances with exact maxBatch,
+allocation, profile, wait, routing and native modes. Only physical IDs returned
+by prepare ACKs are rebound. One final fingerprint comparison is retained in
+`Run/full-E5-N-3-restore.json`; mismatch exits 2 before any targeted stage.
+Autonomy stays off while producers prepare; the saved full settings are enabled
+at producer GO after releasing restored routing. Targeted stages require their
+own accepted receipt, not completion of intervening historical rows.
+
+The existing fingerprint intentionally excludes reservations and owner-only
+non-serving preparations. They are **not** reconstructed. Every dry-run/restore
+receipt and the rendered conditions table reports the original reservation count
+and excluded owner-only count, including E5-5's original C1 reservation presence.
+The preserved #222/#223 inputs currently record E5-5: 0 reservations/0 owner-only;
+E5-6 and E5-7: 1 reservation/3 owner-only each. These counts are input observations,
+not an assertion of reproduced reservation behavior. Existing rows are untouched;
+new directories are `full-E5-{1,5,6,7}-3`. Tables label them
+**3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2**.
+Retained static/other full rows are historical, not a new independent campaign.
+
+Offline planning: add `--dry-run` to each full factor command. It does not
+construct CPO or contact the cluster. Output is
+`Run/full-E5-N-restore-dry-run-3.json`, with original pre-state/pre-settings hashes,
+request bodies, exclusions, expected fingerprint and factor → stage → judge order.
+Use the original `full-E5-1/pre-state.json` and
+`full-E5-{5,6,7}-223/pre-state.json` inputs; no copied or fabricated start state.
+
+E5-7 injection is **operator-only**, as in the first actual run. During its
+offered window, immediately before the recommended 180s delete and 360s
+cordon/delete, run `e5 failure-select --out "$Run" --mode full --stage E5-7
+--row-tag 3 --failure-kind delete-serving-pod` and then the same command with
+`--failure-kind cordon-delete`. Selection only performs GETs and emits
+`operatorCommands`/`operatorArgv`; it never executes them. Execute the emitted
+commands immediately (before the recorded `expiresAtUTC`), then append
+actual command/result records to `full-E5-7-3/failure-events.json`'s `events`.
+Each deletion record requires `kind`, actual `atUTC`, `exitCode`, `podUID`,
+`nodeUID`, `commandRef`, `responseRef`. The first command reference records
+`argv` (or `deleteArgv`); the cordon-delete reference records `deleteArgv` plus
+the actual cordon command/result. At recommended 600s the operator uncordons the
+second selected Node and records the third `uncordon` event and actual recovery
+readbacks using the existing evidence format.
+
+The selector intersects the latest fresh scheduler state's **routing weight > 0**
+with **instanceAssignments > 0 in the immediately preceding observation window**
+and a current Ready serving Pod/Node UID. The first selection requires candidates
+on two distinct Nodes; the second excludes the first Node. The receipt includes
+weight, assigned count, Pod/Node UIDs, window bounds and captured source paths.
+Deletes use raw Kubernetes `DeleteOptions` with UID-only preconditions and no
+grace-period override, matching the first actual run. Missing candidates, stale
+state or read failure writes `status: INVALID`, emits no injection command and
+cancels injection; do not override it manually. Judge validates the saved
+selection/source/command/options evidence; INVALID or UNMEASURED remains visible
+instead of a captured failure scenario. Expired selection is INVALID, not a
+license to use a stale target.
+
+CampaignOps order (five shell lines; existing frozen component release/binding
+for R1~R6+R4b+C1+C2 must be supplied, never reuse the old rev104 source release).
+Use a separate operator shell for the E5-7 selection/injections while line 3
+runs. Every row must finish before advancing; no automatic retries:
+
+```sh
+set -e; export CHILL_EXPERIMENT_CONFIG=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/inputs/environment-212.json; Run=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full; Binding=${CHILL_E5_BINDING_3:?Main-approved C1+C2 binding required}; Release=${CHILL_E5_RELEASE_3:?Main-approved release required}; e5() { nice -n 19 python3 -B hack/e5/e5.py "$@" --binding "$Binding" --release "$Release"; }
+for n in 1 5 6; do suffix=-223; test "$n" != 1 || suffix=; e5 factor --out "$Run" --mode full --stage "E5-$n" --pre-state "$Run/full-E5-$n$suffix/pre-state.json" --row-tag 3; e5 stage --out "$Run" --mode full --stage "E5-$n" --row-tag 3; e5 judge --out "$Run/full-E5-$n-3"; done
+e5 factor --out "$Run" --mode full --stage E5-7 --pre-state "$Run/full-E5-7-223/pre-state.json" --row-tag 3; e5 stage --out "$Run" --mode full --stage E5-7 --row-tag 3
+e5 judge --out "$Run/full-E5-7-3"
+e5 finish --out "$Run" --row-tag 3; e5 cleanup-jobs --out "$Run" --row-tag 3; e5 summarize --out "$Run"; nice -n 19 python3 -B hack/e5/e5.py tables "$Run" | tee "$Run/tables-3.txt"
+```
+
+
 
 ## Profiler runtime declarations
 

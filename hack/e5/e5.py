@@ -24,6 +24,7 @@ from pathlib import Path
 import re
 import selectors
 import ssl
+import shlex
 import subprocess
 import sys
 import time
@@ -190,12 +191,56 @@ def normative_stage_specs(burst_low_seconds):
     ]
 
 
-def validate_failure_events(evidence, start_utc, end_utc):
+def serving_failure_targets(state, load_window, pods, nodes, uids, excluded_nodes=()):
+    """Intersect latest positive routes with preceding-window assignments and live Pod identity."""
+    snapshot=state['snapshot']; candidates=[]
+    assignments={w['uid']:w.get('instanceAssignments',{}) for w in load_window['workloads']}
+    live_nodes={n['metadata']['name']:n['metadata']['uid'] for n in nodes}
+    for instance in instance_rows(snapshot['instances']):
+        uid=instance.get('workloadUID'); node=instance['node']
+        weight=(snapshot.get('routing',{}).get(uid) or {}).get(instance['id'],0)
+        assigned=assignments.get(uid,{}).get(instance['id'],0)
+        if uid not in uids or instance.get('ownerWorkloadUID')!=uid or not instance.get('ready') or instance.get('stopped') or weight<=0 or assigned<=0 or node['uid'] in excluded_nodes:
+            continue
+        matches=[p for p in pods if p['metadata']['uid']==instance.get('podUID') and p['spec'].get('nodeName')==node['name'] and not p['metadata'].get('deletionTimestamp') and p.get('status',{}).get('phase')=='Running' and any(c.get('type')=='Ready' and c.get('status')=='True' for c in p.get('status',{}).get('conditions',[]))]
+        if len(matches)!=1 or live_nodes.get(node['name'])!=node['uid']:continue
+        pod=matches[0]
+        candidates.append({'instanceID':instance['id'],'workloadUID':uid,'routingWeight':weight,'assigned':assigned,
+                           'podName':pod['metadata']['name'],'podUID':pod['metadata']['uid'],
+                           'nodeName':node['name'],'nodeUID':node['uid'],
+                           'snapshotAt':snapshot['at'],'windowFrom':load_window['from'],'windowTo':load_window['to']})
+    return sorted(candidates,key=lambda item:(item['nodeName'],item['podName'],item['instanceID']))
+
+
+def validate_failure_events(evidence, start_utc, end_utc, epoch=None):
     """Check recorded manual evidence, not success or recommended injection offsets."""
     kinds = ('delete-serving-pod', 'cordon-delete', 'uncordon')
     events = evidence.get('events')
+    if evidence.get('status')=='INVALID':raise ValueError('INVALID: '+evidence.get('reason','Failure target selection rejected'))
     if evidence.get('stage') != 'E5-7' or not isinstance(events, list) or len(events) != 3:
         raise ValueError('E5-7 requires all three actual operator command records')
+    if evidence.get('selectionPolicy')=='active-serving-v1':
+        if epoch is None:raise ValueError('INVALID: active selection requires the RFC3339Nano timestamp parser')
+        selections=evidence.get('selections',[])
+        if len(selections)!=2 or selections[0]['nodeUID']==selections[1]['nodeUID']:
+            raise ValueError('INVALID: two distinct active serving Node selections required')
+        for event,selection in zip(events[:2],selections):
+            if selection.get('status')!='SELECTED' or any(event.get(key)!=selection.get(key) for key in ('kind','podUID','nodeUID')) or selection.get('routingWeight',0)<=0 or selection.get('assigned',0)<=0:
+                raise ValueError('INVALID: command target differs from positive route/assigned selection')
+            candidates=serving_failure_targets(load(selection['stateRef']),load(selection['loadRef']),load(selection['podsRef'])['items'],load(selection['nodesRef'])['items'],selection['allowedWorkloadUIDs'])
+            keys=('instanceID','workloadUID','routingWeight','assigned','podName','podUID','nodeName','nodeUID','snapshotAt','windowFrom','windowTo')
+            if not any(all(candidate[key]==selection[key] for key in keys) for candidate in candidates):
+                raise ValueError('INVALID: selection is not supported by captured scheduler/window/Pod/Node evidence')
+            selected=epoch(selection['selectedAtUTC']);at=epoch(event['atUTC']);snapshot_at=epoch(selection['snapshotAt'])
+            if any(value is None for value in (selected,at,snapshot_at)) or not snapshot_at<=selected<=at<=snapshot_at+selection['maximumAgeSeconds'] or epoch(selection['windowTo'])!=snapshot_at:
+                raise ValueError('INVALID: selection expired before operator injection')
+            options=load(selection['deleteOptionsRef'])
+            if options!={'apiVersion':'v1','kind':'DeleteOptions','preconditions':{'uid':selection['podUID']}}:
+                raise ValueError('INVALID: deletion requires UID-only precondition, no grace override')
+            command=load(event['commandRef'])
+            expected=selection['deleteArgv']
+            actual=command.get('deleteArgv',command.get('argv'))
+            if actual!=expected:raise ValueError('INVALID: recorded delete command differs from selected UID-precondition command')
     start = dt.datetime.fromisoformat(start_utc.replace('Z', '+00:00')).timestamp()
     end = dt.datetime.fromisoformat(end_utc.replace('Z', '+00:00')).timestamp()
     for event, kind in zip(events, kinds):
@@ -406,6 +451,7 @@ def self_check():
         else:
             raise AssertionError('Invalid d25 evidence accepted')
     self_check_factor()
+    self_check_failure_selection(analysis)
     self_check_client_jsonl(analysis)
     print('PASS E5 receive-origin SLO, scheduled reference, generator quality and full planned issuance; offline only')
 
@@ -414,26 +460,26 @@ def self_check_factor():
     import ast
     from types import SimpleNamespace
     tree=ast.parse(Path(__file__).read_text())
-    selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('fingerprint','instance_rows','paired_baseline','rebound_fingerprint','prepare_body','row_folder','replay_receipt')]
+    selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('fingerprint','instance_rows','paired_baseline','baseline_settings','restoration_exclusions','full_restore_path','rebound_fingerprint','prepare_body','row_folder','replay_receipt')]
     cpo=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='CPO')
     methods=[n for n in cpo.body if isinstance(n,ast.FunctionDef) and n.name in ('factor','start_barrier_observation','disk_boundary')]
     selected.append(ast.ClassDef(name='CPO',bases=[],keywords=[],body=methods,decorator_list=[]))
     node={'name':'node','uid':'node-uid'}
     targets=[{'id':str(cap),'node':node,'profile':{'id':str(cap)},'allocation':{'cpu':1},'maxBatch':1,'maxWaitNanos':0,'workloadUID':'workload'} for cap in (2,32)]
-    baseline={'instances':targets,'nodes':[],'routing':{'workload':{'2':.5,'32':.5}}}
-    ns={'NODES':[],'copy':copy,'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0}
+    baseline={'instances':targets,'nodes':[{'node':node,'powerMode':'paired-mode'}],'routing':{'workload':{'2':.5,'32':.5}}}
+    ns={'NODES':['node'],'copy':copy,'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0}
     exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
-    for bad in (None,'owner-served','cap-delay','stale-delay','missing-delay','wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos','static-good','static-drift'):
+    for bad in (None,'owner-served','cap-delay','stale-delay','missing-delay','wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos','static-good','static-drift','full-good','full-drift'):
         runner=ns['CPO']();requests=[];prepared=[];receipts={};clock=[0];polls=[0]
         ns['time']=SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds))
         ns['save']=lambda path,body:receipts.__setitem__(str(path),copy.deepcopy(body))
-        static=bad in ('static-good','static-drift')
-        runner.a=SimpleNamespace(mode='static' if static else 'membership-off',stage='E5-3' if static else 'E5-2',pre_state=Path('/offline/selection.json') if static else None,row_tag='223' if static else '')
+        static=bad in ('static-good','static-drift');full=bad in ('full-good','full-drift')
+        runner.a=SimpleNamespace(mode='full' if full else 'static' if static else 'membership-off',stage='E5-5' if full else 'E5-3' if static else 'E5-2',pre_state=Path('/offline/selection.json') if static or full else None,row_tag='3' if full else '223' if static else '')
         runner.c={'factors':[{'name':'membership-off','controls':{}}]}
         runner.out=Path('/offline');runner.uids=['workload'];runner.tb={'settleSeconds':1}
         if bad is not None:runner.tb['factorAckWaitSeconds']=3
         runner.d=SimpleNamespace(epoch=lambda value:value)
-        ns['load']=lambda _: {'state':{'snapshot':baseline},'fingerprint':ns['fingerprint'](baseline,['workload']),'settings':{}}
+        ns['load']=lambda _: {'state':{'snapshot':dict(baseline,reservations=[{'id':'not-restorable'}])},'fingerprint':ns['fingerprint'](baseline,['workload']),'settings':{'autonomousWorkloads':['workload'],'controls':{'membership':True}}}
         runner.disk_boundary=lambda *args:None
         runner.check_power_observation=lambda:None
         runner.check_token_lifetime=lambda:None
@@ -452,7 +498,7 @@ def self_check_factor():
             instances=[] if bad=='missing-delay' and delayed else [dict(i,maxBatch=2 if wrong else i['maxBatch']) for i in prepared]
             served='foreign' if bad=='foreign-served' or bad=='foreign-after' and len(prepared)==2 and polls[0]>1 else 'workload' if bad=='owner-served' else ''
             instances=[dict(i,workloadUID=served) for i in instances]
-            return {'snapshot':{'nodes':[],'at':9 if stale else 11,'instances':instances},'results':[{'endedAt':10}]}
+            return {'snapshot':{'nodes':baseline['nodes'],'at':9 if stale else 11,'instances':instances},'results':[{'endedAt':10}]}
         runner.state=state
         def prepare(method,path,body,**kwargs):
             requests.append(body)
@@ -464,9 +510,9 @@ def self_check_factor():
         runner.settings=lambda:{}
         ns['owned_target']=lambda *args:{}
         def route_ack(chosen,*args):
-            if not static:return None
-            snapshot={'instances':[dict(i,workloadUID='workload') for i in prepared],'nodes':[],'routing':{'workload':{i['id']:.5 for i in prepared}}}
-            if bad=='static-drift':snapshot['instances'][0]['maxBatch']=99
+            if not (static or full):return None
+            snapshot={'instances':[dict(i,workloadUID='workload') for i in prepared],'nodes':baseline['nodes'],'routing':{'workload':{i['id']:.5 for i in prepared}}}
+            if bad in ('static-drift','full-drift'):snapshot['instances'][0]['maxBatch']=99
             return {'snapshot':snapshot}
         runner.route_ack=route_ack
         runner.release_routing=lambda *args:None
@@ -475,7 +521,7 @@ def self_check_factor():
         try:
             runner.factor()
         except RuntimeError as error:
-            assert bad in ('wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos','static-drift'),(bad,str(error))
+            assert bad in ('wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos','static-drift','full-drift'),(bad,str(error))
             if bad in ('wrong-cap','foreign-served','stale'):
                 assert 'ACK timed out' in str(error),str(error)
                 receipt=next(body for path,body in receipts.items() if path.endswith('-snapshot-ack.json'))
@@ -483,21 +529,24 @@ def self_check_factor():
                 assert receipt['freshness']['snapshotFresh']==(bad!='stale')
                 assert clock[0]==3
             elif bad=='foreign-after':assert 'empty or owner served UID' in str(error),str(error)
-            elif bad=='static-drift':
+            elif bad in ('static-drift','full-drift'):
                 assert 'fingerprint differs' in str(error)
-                assert not receipts['/offline/static-replay-restore.json']['accepted']
+                assert not receipts['/offline/full-E5-5-3-restore.json' if full else '/offline/static-replay-restore.json']['accepted']
             else:assert 'unsupported manual wait/resource override' in str(error),str(error)
         else:
-            assert bad in (None,'owner-served','cap-delay','stale-delay','missing-delay','static-good'),'Mismatched paired state accepted: '+str(bad)
+            assert bad in (None,'owner-served','cap-delay','stale-delay','missing-delay','static-good','full-good'),'Mismatched paired state accepted: '+str(bad)
             assert [r['maxBatch'] for r in requests]==[1,1]
             acks=[body for path,body in receipts.items() if path.endswith('-snapshot-ack.json')]
             assert len(acks)==2 and all(body['accepted'] for body in acks)
             assert all(body['timeboxSeconds']==(120 if bad is None else 3) for body in acks)
             assert clock[0]==(2 if bad in ('cap-delay','stale-delay','missing-delay') else 0)
-            if static:
-                receipt=receipts['/offline/static-replay-restore.json']
+            if static or full:
+                receipt=receipts['/offline/full-E5-5-3-restore.json' if full else '/offline/static-replay-restore.json']
                 assert receipt['accepted'] and receipt['fingerprint']==receipt['expectedFingerprint']
                 assert receipt['physicalIDMapping']=={'2':'new-2','32':'new-32'}
+                if full:
+                    assert receipt['fullSettings']['autonomousWorkloads']==['workload']
+                    assert receipt['restorationExclusions']['originalReservations']==1
     import tempfile
     ns['json']=json
     ns['load']=lambda path:json.loads(path.read_text())
@@ -516,7 +565,78 @@ def self_check_factor():
             else:assert free==310_000_000_000
         records=[json.loads(line) for line in (root/'disk-boundaries.jsonl').read_text().splitlines()]
         assert [row['accepted'] for row in records]==[True,False]
-    print('PASS E5 factor paired maxBatch/fresh ACK, static fingerprint match/mismatch, append-only row paths and 310 GB boundary; offline only')
+    print('PASS E5 factor paired maxBatch/fresh ACK, static/full fingerprint match/mismatch, full settings/reservation disclosure, append-only row paths and 310 GB boundary; offline only')
+
+
+def self_check_failure_selection(analysis):
+    """Synthetic active-serving/runbook regression; zero cluster requests or mutations."""
+    import ast
+    import contextlib
+    import io
+    import tempfile
+    from types import SimpleNamespace
+    tree=ast.parse(Path(__file__).read_text())
+    names=('instance_rows','row_folder','replay_receipt','full_restore_path','serving_failure_targets','validate_failure_events')
+    selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names]
+    cpo=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='CPO')
+    selected.append(ast.ClassDef(name='CPO',bases=[],keywords=[],body=[n for n in cpo.body if isinstance(n,ast.FunctionDef) and n.name=='failure_select'],decorator_list=[]))
+    at='2026-10-30T00:03:00+00:00'
+    ns={'Path':Path,'dt':dt,'json':json,'urllib':urllib,'shlex':shlex,'now':lambda:at,
+        'ENVIRONMENT':{'d2':{'kubectl':['fixture-kubectl']}},
+        'load':lambda path:json.loads(Path(path).read_text()),
+        'save':lambda path,body:Path(path).write_text(json.dumps(body))}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
+    for bad in (None,'nano','zero-weight','zero-assigned','same-node','missing-pod','stale'):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);folder=root/'full-E5-7-3';folder.mkdir()
+            ns['save'](folder/'phase.json',{'status':'RUNNING','startUTC':'2026-10-30T00:00:00+00:00','stage':{'seconds':900}})
+            instances=[{'id':'i'+str(n),'podUID':'p'+str(n),'workloadUID':'w','ownerWorkloadUID':'w','ready':True,'node':{'name':'n'+str(n),'uid':'n'+str(n)}} for n in range(2)]
+            if bad=='same-node':instances[1]['node']=instances[0]['node']
+            pods=[{'metadata':{'uid':i['podUID'],'name':i['podUID']},'spec':{'nodeName':i['node']['name']},'status':{'phase':'Running','conditions':[{'type':'Ready','status':'True'}]}} for i in instances]
+            nodes=[{'metadata':{'name':'n'+str(n),'uid':'n'+str(n)}} for n in range(2)]
+            state={'snapshot':{'at':'2026-10-30T00:02:00+00:00' if bad=='stale' else at,'instances':instances,'routing':{'w':{'i0':1,'i1':0 if bad=='zero-weight' else 1}}}}
+            window={'from':'2026-10-30T00:02:00+00:00','to':at,'workloads':[{'uid':'w','instanceAssignments':{'i0':2,'i1':0 if bad=='zero-assigned' else 3}}]}
+            if bad=='nano':
+                state['snapshot']['at']='2026-10-30T00:02:59.123456789Z';window['to']=state['snapshot']['at']
+            runner=ns['CPO']();runner.a=SimpleNamespace(mode='full',stage='E5-7',row_tag='3',failure_kind='delete-serving-pod')
+            runner.out=root;runner.uids=['w'];runner.tb={'apiSeconds':1}
+            def kubernetes(argv,**kwargs):
+                assert argv[0]=='get','Selection attempted cluster mutation'
+                return {'items':(pods[:1] if bad=='missing-pod' else pods) if argv[1]=='pods' else nodes}
+            runner.io=SimpleNamespace(k=kubernetes)
+            runner.d=SimpleNamespace(epoch=analysis.epoch)
+            runner.state=lambda:state;runner.settings=lambda:{'observationWindowNanos':60_000_000_000,'maxObservationAgeNanos':5_000_000_000}
+            runner.api=lambda method,path:window
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):runner.failure_select()
+            except ValueError:
+                assert bad not in (None,'nano')
+                evidence=ns['load'](folder/'failure-events.json')
+                assert evidence['status']=='INVALID' and not list(folder.glob('*-delete-options.json'))
+                try:ns['validate_failure_events'](evidence,'2026-10-30T00:00:00Z','2026-10-30T00:15:00Z',analysis.epoch)
+                except ValueError as error:assert str(error).startswith('INVALID:')
+                else:raise AssertionError('Cancelled injection accepted')
+            else:
+                assert bad in (None,'nano')
+                runner.a.failure_kind='cordon-delete'
+                with contextlib.redirect_stdout(io.StringIO()):runner.failure_select()
+                evidence=ns['load'](folder/'failure-events.json')
+                assert len({s['nodeUID'] for s in evidence['selections']})==2
+                events=[]
+                for selection in evidence['selections']:
+                    command=folder/(selection['kind']+'-command.json');ns['save'](command,{'deleteArgv':selection['deleteArgv']})
+                    assert ns['load'](selection['deleteOptionsRef'])['preconditions']=={'uid':selection['podUID']}
+                    events.append({'kind':selection['kind'],'atUTC':at,'exitCode':0,'podUID':selection['podUID'],'nodeUID':selection['nodeUID'],'commandRef':str(command),'responseRef':str(command)})
+                events.append(dict(events[-1],kind='uncordon'))
+                evidence['events']=events
+                ns['validate_failure_events'](evidence,'2026-10-30T00:00:00Z','2026-10-30T00:15:00Z',analysis.epoch)
+                expired=copy.deepcopy(evidence);expired['events'][0]['atUTC']='2026-10-30T00:03:10Z'
+                try:ns['validate_failure_events'](expired,'2026-10-30T00:00:00Z','2026-10-30T00:15:00Z',analysis.epoch)
+                except ValueError as error:assert str(error).startswith('INVALID:')
+                else:raise AssertionError('Expired selection accepted')
+    print('PASS E5-7 positive route + preceding-window assigned + live UID selection; distinct Nodes/UID-only deletion; unmet rule INVALID; operator-only, offline')
+
+
 def self_check_client_jsonl(analysis):
     """Synthetic trailing stderr fixture; run the real judge without cluster access."""
     import ast
@@ -790,6 +910,22 @@ def paired_baseline(path, uids):
     return desired
 
 
+def baseline_settings(path):
+    record=load(path)
+    return copy.deepcopy(record['settings'] if 'settings' in record else load(path.with_name('pre-settings.json')))
+
+
+def restoration_exclusions(path,uids):
+    record=load(path); snapshot=record.get('state',record)['snapshot']
+    return {'originalReservations':len(snapshot.get('reservations') or []),
+            'excludedOwnerOnlyInstances':[i['id'] for i in instance_rows(snapshot['instances']) if i.get('ownerWorkloadUID') in uids and i.get('workloadUID') not in uids],
+            'meaning':'Existing fingerprint restores served canonical instances/routes/modes only; reservations and owner-only non-serving preparations are not restored.'}
+
+
+def full_restore_path(root,row):
+    return root/('full-'+row+'-3-restore.json')
+
+
 def rebound_fingerprint(desired, mapping):
     chosen=copy.deepcopy(desired)
     for target in chosen['instances']:target['id']=mapping[target['id']]
@@ -808,6 +944,8 @@ def replay_receipt(root):
 
 
 def row_folder(root, mode, row, tag=None):
+    if mode=='full' and row in ('E5-1','E5-5','E5-6','E5-7') and (tag=='3' or tag is None and full_restore_path(root,row).exists()):
+        return root/('full-'+row+'-3')
     if tag is None:tag=replay_receipt(root).get('rowTag','')
     appended=mode=='static' and row in ('E5-3','E5-4','E5-5','E5-6') or mode=='full' and row in ('E5-4','E5-5','E5-6','E5-7')
     return root/(mode+'-'+row+('-'+tag if tag and appended else ''))
@@ -845,6 +983,33 @@ def static_restore_dry_run(binding, root, pre_state, tag):
     if path.exists():raise RuntimeError('Offline plan destination already exists; no overwrite')
     save(path,result)
     print(json.dumps({'resultPath':str(path),**result},ensure_ascii=False,indent=2))
+
+
+def full_restore_dry_run(binding,root,pre_state,row):
+    b=load_binding(binding);uids=[w['uid'] for w in b['config']['workloads']]
+    desired=paired_baseline(pre_state,uids);settings=baseline_settings(pre_state)
+    if set(settings.get('autonomousWorkloads',[]))!=set(uids):raise ValueError('Original full pre-settings must enable canonical autonomy')
+    for key in ('staticRouting','staticRoutingValidatedAt','powerObservation'):settings.pop(key,None)
+    off=copy.deepcopy(settings);off['autonomousWorkloads']=[]
+    result={'schema':'e5-full-restore-dry-run.v1','at':now(),'clusterRequests':0,
+            'scientificResults':'UNMEASURED; offline plan only','preState':ref(pre_state),
+            'preSettings':ref(pre_state.with_name('pre-settings.json')) if 'settings' not in load(pre_state) else ref(pre_state),
+            'sources':b['config']['approval']['sources'],'label':'3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2',
+            'expectedFingerprint':desired,'restorationExclusions':restoration_exclusions(pre_state,uids),
+            'identityComparison':'One exact fingerprint comparison after prepare-ACK ID rebinding; mismatch exits 2 before stage',
+            'autonomyOffSettingsPUT':off,'fullSettingsPUTAtProducerRelease':settings,
+            'requests':[{'kind':'reset','workloadUIDs':uids,'reason':'Approved campaign owned reset: factor-full-'+row+'-3'}]
+                       +[{'kind':'unroute','workloadUID':uid,'reason':'Keep paired factor preparations unloaded until exact baseline route ACK'} for uid in uids]
+                       +[prepare_body(target) for target in desired['instances']],
+            'routeRequests':[{'kind':'route' if any(weights.values()) else 'unroute','workloadUID':uid,**({'weights':weights} if any(weights.values()) else {})} for uid,weights in desired['routing'].items()],
+            'nativeModeTargets':desired['modes'],'diskMinimumBytes':310_000_000_000,
+            'order':['factor --mode full --stage '+row+' --pre-state '+str(pre_state)+' --row-tag 3',
+                     'stage --mode full --stage '+row+' --row-tag 3',
+                     'judge --out '+str(row_folder(root,'full',row,'3'))],
+            'failureInjection':'Operator only: failure-select immediately before each injection; execute emitted UID-precondition runbook and record actual command/result. Unsatisfied selection cancels injection as INVALID.' if row=='E5-7' else None}
+    path=root/('full-'+row+'-restore-dry-run-3.json')
+    if path.exists():raise RuntimeError('Offline plan destination already exists; no overwrite')
+    save(path,result);print(json.dumps({'resultPath':str(path),**result},ensure_ascii=False,indent=2))
 
 def power_observation(c, *, frozen=False):
     """Bind from captured policy only; runtime CPO still checks actual ConfigMap."""
@@ -1288,14 +1453,16 @@ class CPO:
         """Recheck frozen operating power policy before any stage can launch load."""
         st=self.c['smoke'] if self.a.command=='smoke' else next(x for x in self.b['schedule'] if x['id']==self.a.stage); folder=row_folder(self.out,self.a.mode,st['id'],self.a.row_tag)
         if folder.exists(): raise RuntimeError('No implicit stage retry/overwrite')
-        restored=replay_receipt(self.out)
-        if self.a.row_tag and (not restored or restored['rowTag']!=self.a.row_tag or not restored['accepted']):raise RuntimeError('Tagged rows require matching successful static factor restoration')
+        targeted=self.a.row_tag=='3' and self.a.mode=='full'
+        restored=load(full_restore_path(self.out,st['id'])) if targeted else replay_receipt(self.out)
+        if self.a.row_tag and (not restored or restored['rowTag']!=self.a.row_tag or not restored['accepted']):raise RuntimeError('Tagged rows require matching successful factor restoration')
         if restored and self.a.row_tag!=restored['rowTag']:raise RuntimeError('Restored selection requires explicit matching --row-tag')
+        if targeted and (restored['stage']!=st['id'] or self.settings().get('autonomousWorkloads')):raise RuntimeError('Targeted full row requires matching restored state held with autonomy off until producer release')
         if self.a.row_tag:self.disk_boundary(folder.name,'before')
         self.check_token_lifetime(st)
         self.check_power_observation()
         deferred_restore=self.a.mode=='full' and st['id']=='E5-4' and not (self.out/'restore-ack.json').exists()
-        if self.a.command!='smoke':
+        if self.a.command!='smoke' and not targeted:
             order = ['E5-0','E5-1','E5-2','E5-3','E5-4','E5-5','E5-6','E5-7'] if self.a.mode=='full' else ['E5-1','E5-2','E5-3','E5-4','E5-5','E5-6'] if self.a.mode=='static' else ['E5-2','E5-5']
             index=order.index(st['id'])
             if index:
@@ -1314,7 +1481,7 @@ class CPO:
         static=self.static_placement()
         if static:
             if self.settings().get('autonomousWorkloads'):raise RuntimeError('Static placement requires autonomy to remain off')
-        elif self.a.mode in ('full','smoke') and not deferred_restore and set(self.settings()['autonomousWorkloads'])!=set(self.uids): raise RuntimeError('Actual canonical-three autonomous control required')
+        elif self.a.mode in ('full','smoke') and not deferred_restore and not targeted and set(self.settings()['autonomousWorkloads'])!=set(self.uids): raise RuntimeError('Actual canonical-three autonomous control required')
         for frozen in self.b['sources'].values():
             if ref(frozen['path'])!=frozen: raise RuntimeError('Frozen input/package identity changed; no E5 load')
         jobs_live=self.io.k(['get','jobs','-o','json'])['items']
@@ -1346,6 +1513,8 @@ class CPO:
                 except Exception as cleanup_error:
                     phase.setdefault('cleanupErrors',[]).append('owned-jobs: '+str(cleanup_error));save(folder/'phase.json',phase)
                 raise
+        if targeted:
+            save(folder/'start-state-restoration.json',restored)
         self.boundary(folder,'pre'); children=self.sampler(folder,self.tb['setupSeconds']+st['seconds']+self.tb['drainSeconds']+self.tb['flushSeconds']); jobs=[]; streams=[]; phase={'stage':st,'mode':self.a.mode,'status':'RUNNING','startUTC':None,'endUTC':None,'starts':{}}
         if barrier is not None:phase['startBarrier']=barrier
         pre_state=load(folder/'pre-state.json')
@@ -1444,6 +1613,10 @@ class CPO:
                         frame=self.state();chosen=selected_fingerprint(self.out)
                         if fingerprint(frame['snapshot'],self.uids)!=chosen or frame['snapshot'].get('reservations'):raise RuntimeError('Selected static configuration was not retained at actual E5-4 producer release')
                         save(folder/'actual-start-configuration.json',frame)
+                    if targeted:
+                        self.release_routing(folder.name+'-release','Release restored paired route immediately before full-mode producer GO')
+                        self.authorize_native_modes()
+                        save(folder/'full-settings-release-ack.json',self.put(restored['fullSettings']))
                     # Same barrier file protocol as existing CPO producer; actual UTC start per producer is retained, not claimed identical.
                     if barrier is not None:
                         go_deadline=min(deadline,time.monotonic()+min(dt.datetime.fromisoformat(row['setupBarrierDeadlineUTC']).timestamp()-time.time() for row in phase['producerReadiness'].values()))
@@ -1587,22 +1760,74 @@ class CPO:
         for p in sorted(folder.rglob('*')):
             if p.is_file() and p.name!='collected.json': manifest['raw'].append(ref(p,allow_empty=True))
         save(folder/'collected.json',manifest)
+    def failure_select(self):
+        """Read-only selection; actual kubectl injection remains an operator action."""
+        if self.a.mode!='full' or self.a.stage!='E5-7' or self.a.row_tag!='3':raise ValueError('failure-select requires targeted full E5-7 --row-tag 3')
+        folder=row_folder(self.out,'full','E5-7','3');phase=load(folder/'phase.json')
+        if phase.get('status')!='RUNNING' or not phase.get('startUTC'):raise RuntimeError('Failure selection requires the actual running E5-7 offered window')
+        path=folder/'failure-events.json'
+        evidence=load(path) if path.exists() else {'stage':'E5-7','selectionPolicy':'active-serving-v1','status':'PENDING_OPERATOR','selections':[],'events':[]}
+        if evidence.get('status')=='INVALID':raise RuntimeError('Failure selection already INVALID; no injection')
+        selections=evidence['selections'];kind=self.a.failure_kind
+        if kind!=('delete-serving-pod' if not selections else 'cordon-delete') or len(selections)>=2:raise ValueError('Select delete-serving-pod once, then cordon-delete once; no implicit repeat')
+        prefix=folder/('failure-'+kind)
+        try:
+            pods=self.io.k(['get','pods','-o','json'],timeout=self.tb['apiSeconds'])
+            nodes=self.io.k(['get','nodes','-o','json'],timeout=self.tb['apiSeconds'])
+            settings=self.settings();state=self.state();snapshot=state['snapshot']
+            end=dt.datetime.fromtimestamp(self.d.epoch(snapshot['at']),dt.timezone.utc)
+            start=end-dt.timedelta(seconds=settings['observationWindowNanos']/1e9)
+            window=self.api('GET','/api/v1/observations/load?'+urllib.parse.urlencode({'from':start.isoformat(),'to':snapshot['at']}))
+            sources={}
+            for label,body in (('state',state),('load',window),('pods',pods),('nodes',nodes)):
+                source=Path(str(prefix)+'-'+label+'.json');save(source,body);sources[label+'Ref']=str(source)
+            selected_at=now();at=dt.datetime.fromisoformat(selected_at.replace('Z','+00:00'))
+            maximum_age=settings['maxObservationAgeNanos']/1e9
+            if not 0<maximum_age or not 0<=(at-end).total_seconds()<=maximum_age:raise ValueError('Latest scheduler snapshot is stale; injection cancelled')
+            phase_start=dt.datetime.fromisoformat(phase['startUTC'].replace('Z','+00:00'))
+            if not phase_start<=at<phase_start+dt.timedelta(seconds=phase['stage']['seconds']):raise ValueError('Outside actual offered window; injection cancelled')
+            excluded=[selection['nodeUID'] for selection in selections]
+            candidates=serving_failure_targets(state,window,pods['items'],nodes['items'],self.uids,excluded)
+            if len({target['nodeUID'] for target in candidates})<(1 if selections else 2):
+                raise ValueError('No positive-route/assigned serving Pods on two distinct Nodes; injection cancelled')
+            target=candidates[0]
+            options=Path(str(prefix)+'-delete-options.json')
+            save(options,{'apiVersion':'v1','kind':'DeleteOptions','preconditions':{'uid':target['podUID']}})
+            kubectl=ENVIRONMENT['d2']['kubectl']
+            delete=kubectl+['delete','--raw','/api/v1/namespaces/chill-system/pods/'+urllib.parse.quote(target['podName'],safe=''),'-f',str(options)]
+            commands=([kubectl+['cordon',target['nodeName']]] if selections else [])+[delete]
+            target.update(kind=kind,status='SELECTED',selectedAtUTC=selected_at,maximumAgeSeconds=maximum_age,expiresAtUTC=(end+dt.timedelta(seconds=maximum_age)).isoformat(),
+                          allowedWorkloadUIDs=self.uids,deleteOptionsRef=str(options),deleteArgv=delete,
+                          operatorArgv=commands,operatorCommands=[shlex.join(command) for command in commands],**sources)
+            selections.append(target);save(path,evidence)
+            print(json.dumps({'resultPath':str(path),'selection':target,'clusterMutations':0,
+                              'operatorRequirement':'Execute immediately, before expiresAtUTC; record actual atUTC/exitCode/podUID/nodeUID/commandRef/responseRef in events. For cordon-delete commandRef must record deleteArgv plus actual cordon command/result. Uncordon same Node at recommended 600s; retain actual recovery readbacks.'},ensure_ascii=False,indent=2))
+        except Exception as error:
+            evidence.update(status='INVALID',reason=str(error),invalidAtUTC=now())
+            save(path,evidence)
+            raise
     def factor(self):
-        static=self.a.mode=='static'
+        static=self.a.mode=='static'; full=self.a.mode=='full'
         if static:
             if not self.a.pre_state or not self.a.row_tag or self.a.stage!='E5-3':raise ValueError('Static factor restoration requires --pre-state, --row-tag and --stage E5-3')
             if (self.out/'static-replay-restore.json').exists():raise RuntimeError('Static restoration already attempted; no implicit repeat')
             f={'name':'static'}
+        elif full:
+            if not self.a.pre_state or self.a.row_tag!='3' or self.a.stage not in ('E5-1','E5-5','E5-6','E5-7'):raise ValueError('Full restoration requires --pre-state, --row-tag 3 and a targeted E5-1/5/6/7 row')
+            if full_restore_path(self.out,self.a.stage).exists():raise RuntimeError('Full row restoration already attempted; no implicit repeat')
+            f={'name':'full'}
         else:
             f=next(f for f in self.c['factors'] if f['name']==self.a.mode)
             if self.a.stage not in ('E5-2','E5-5'): raise RuntimeError('Factor reset is one actual paired E5-2/E5-5 block')
         prefix='factor-'+f['name']+'-'+self.a.stage+('-'+self.a.row_tag if self.a.row_tag else '')
-        if static and (self.out/(prefix+'-reset-request.json')).exists():raise RuntimeError('Static reset already attempted; preserve evidence, no implicit repeat')
+        if (static or full) and (self.out/(prefix+'-reset-request.json')).exists():raise RuntimeError('Restoration reset already attempted; preserve evidence, no implicit repeat')
         ack_wait=self.tb.get('factorAckWaitSeconds',120)
         if not positive(ack_wait):raise ValueError('factorAckWaitSeconds must be finite and greater than zero')
         desired=paired_baseline(self.a.pre_state or row_folder(self.out,'full',self.a.stage)/'pre-state.json',self.uids)
         if static and desired!=load(self.out/'static-selection.json')['fingerprint']:raise RuntimeError('Restoration input differs from original frozen selection')
-        if static:
+        restore_settings=baseline_settings(self.a.pre_state) if static or full else None
+        if full and set(restore_settings.get('autonomousWorkloads',[]))!=set(self.uids):raise ValueError('Original full pre-settings must enable canonical autonomy')
+        if static or full:
             self.check_power_observation()
             self.check_token_lifetime()
             for frozen in self.b['sources'].values():
@@ -1611,7 +1836,7 @@ class CPO:
         for target in desired['instances']:
             default=profiles[target['profileID']]['instance']
             if any(target[key]!=default[key] for key in ('node','allocation','maxWaitNanos')): raise RuntimeError('Selected factor initial state needs unsupported manual wait/resource override; no generic reset is claimed')
-        if static:self.disk_boundary(prefix,'before')
+        if static or full:self.disk_boundary(prefix,'before')
         self.clear_owned(prefix)
         current=self.state()
         for node in current['snapshot']['nodes']:
@@ -1647,13 +1872,15 @@ class CPO:
         # Prepared instances may already serve their owner; exact paired routing still requires ACK.
         chosen=owned_target(actual,self.uids,{uid:{mapping[old]:weight for old,weight in route.items()} for uid,route in desired['routing'].items()})
         save(self.out/(prefix+'-prepared-target.json'),{'status':'PREPARED_NOT_LOAD_READY','actualState':prepared,'intendedTargetBinding':chosen})
-        routed=self.route_ack(chosen,load(self.a.pre_state)['settings'] if static else self.settings(),prefix,'Restore actual paired initial block through public prepare and route operations')
-        if static:
+        routed=self.route_ack(chosen,copy.deepcopy(restore_settings) if static or full else self.settings(),prefix,'Restore actual paired initial block through public prepare and route operations')
+        if static or full:
             expected=rebound_fingerprint(desired,mapping)
             observed=fingerprint(routed['snapshot'],self.uids)
-            receipt={'at':now(),'accepted':observed==expected,'rowTag':self.a.row_tag,'label':'#222+#223 합성, 같은 rev104 소스','preState':str(self.a.pre_state),'physicalIDMapping':mapping,'originalFingerprint':desired,'expectedFingerprint':expected,'fingerprint':observed,'comparison':'One post-restore exact comparison; only prepare-ACK physical IDs rebound'}
-            save(self.out/'static-replay-restore.json',receipt)
-            if not receipt['accepted']:raise RuntimeError('Restored fingerprint differs from frozen E5-3 selection')
+            receipt={'at':now(),'accepted':observed==expected,'rowTag':self.a.row_tag,'label':'3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2' if full else '#222+#223 합성, 같은 rev104 소스','preState':str(self.a.pre_state),'physicalIDMapping':mapping,'originalFingerprint':desired,'expectedFingerprint':expected,'fingerprint':observed,'comparison':'One post-restore exact comparison; only prepare-ACK physical IDs rebound'}
+            if full:
+                receipt.update(stage=self.a.stage,fullSettings=restore_settings,restorationExclusions=restoration_exclusions(self.a.pre_state,self.uids))
+            save(full_restore_path(self.out,self.a.stage) if full else self.out/'static-replay-restore.json',receipt)
+            if not receipt['accepted']:raise RuntimeError('Restored fingerprint differs from original pre-state')
             self.disk_boundary(prefix,'after')
             return
         self.release_routing(prefix+'-release','Release paired baseline routing before autonomous factor')
@@ -1892,20 +2119,26 @@ def judge(binding, folder):
         try:
             receipt_path = folder/'failure-events.json'
             evidence = load(receipt_path)
-            validate_failure_events(evidence,phase['startUTC'],phase['endUTC'])
+            if folder.name=='full-E5-7-3' and evidence.get('selectionPolicy')!='active-serving-v1':raise ValueError('INVALID: targeted row requires active-serving selection evidence')
+            validate_failure_events(evidence,phase['startUTC'],phase['endUTC'],d.epoch)
             references = [ref(receipt_path)]
             for event in evidence['events']:
                 references.extend(ref(event[key]) for key in ('commandRef','responseRef'))
+            for selection in evidence.get('selections',[]):
+                references.extend(ref(selection[key]) for key in ('stateRef','loadRef','podsRef','nodesRef','deleteOptionsRef'))
             recovery = evidence.get('recovery') or {}
             references.extend(ref(recovery[key]) for key in ('schedulableRef','readyRef','observationRef','routeRef') if recovery.get(key))
-            failure_capture = {'status':'CAPTURED','events':evidence['events'],'recovery':recovery or None,'sources':references,
-                               'meaning':'Actual manual command outcomes; failed commands and unrecovered state retained. Serving loss/cordon proxy, not physical power/network loss; recovery is not inferred.'}
+            failure_capture = {'status':'CAPTURED','events':evidence['events'],'selections':evidence.get('selections'),'recovery':recovery or None,'sources':references,
+                               'meaning':'Actual operator command outcomes and captured target-selection evidence; failed commands and unrecovered state retained. Serving loss/cordon proxy, not physical power/network loss; recovery is not inferred.'}
         except (OSError,ValueError,KeyError,TypeError) as exc:
-            failure_capture={'status':'UNMEASURED','reason':str(exc),'sourcePath':str(folder/'failure-events.json')}
+            failure_capture={'status':'INVALID' if str(exc).startswith('INVALID:') else 'UNMEASURED','reason':str(exc),'sourcePath':str(folder/'failure-events.json')}
     result={'schema':'e5-judgment.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; raw references/configuration excluded from public indexes','at':now(),'status':'NOT_READY' if unknown else 'FAIL' if any(r['D1']=='FAIL' for r in results.values()) else 'MEASURED_DESCRIPTIVE','notReadyReasons':unknown,'requests':results,'Tick':sched,'cgroups':cg,'power':power,'thermal':thermals,'D6':'Observed thermal bins only; unknown active/latched remains unknown, profile slack must use bound source samples','rawErrors':inp.errors,'sources':inp.sources,'limitations':b['limitations'],'accounting':{'specScenarioDenominator':7,'planRowDenominator':9,'failureScenario':failure_capture['status'] if failure_capture else 'NOT_EXERCISED_IN_THIS_ROW'}}
     malformed=[error for error in inp.errors if error.get('line') is not None and Path(error['path']).name in {w['name']+'-client.jsonl' for w in c['workloads']}]
     result['coverage']={'malformedLines':len(malformed),'firstMalformedLine':malformed[0] if malformed else None}
     result['failureScenarioEvidence']=failure_capture
+    if failure_capture and failure_capture['status']=='INVALID':result['status']='INVALID'
+    restoration=folder/'start-state-restoration.json'
+    result['startStateRestoration']=load(restoration) if restoration.exists() else None
     result['energyBelowResolution']={'profiles':[{'profileID':profile['id'],'batch':batch['batch'],
         'energyPerInputJoules':batch.get('energyPerInputJoules'),'energyBelowResolution':True}
         for profile in profiles.values() for batch in profile['batches'] if batch.get('energyBelowResolution') is True],
@@ -1988,7 +2221,7 @@ def summarize(binding, root):
     factor_results={f['name']:{row:stages.get((f['name'],row)) for row in ('E5-2','E5-5')} for f in b['config']['factors']}
     row_statuses={mode+'-'+row:value['status'] for (mode,row),value in stages.items()}
     incomplete=any(value['status'] in ('NOT_READY','INCOMPLETE','UNKNOWN') or value['power']['energyStatus']=='UNKNOWN' for value in stages.values())
-    status='INVALID_GENERATOR' if 'INVALID_GENERATOR' in row_statuses.values() else 'NOT_READY' if missing else 'INCOMPLETE' if incomplete else 'MEASURED_DESCRIPTIVE'
+    status='INVALID_GENERATOR' if 'INVALID_GENERATOR' in row_statuses.values() else 'INVALID' if 'INVALID' in row_statuses.values() else 'NOT_READY' if missing else 'INCOMPLETE' if incomplete else 'MEASURED_DESCRIPTIVE'
     full_values=[pair['fullWholePOOLJ'] for pair in comparisons]; static_values=[pair['staticWholePOOLJ'] for pair in comparisons]
     result={'schema':'e5-summary.v1','at':now(),'status':status,'missing':missing,'planRows':plan_rows,'planResultLinks':str(sum(x!='UNMEASURED' for x in plan_rows.values()))+'/9','specScenarios':scenario,'specResultLinks':str(sum(x!='UNMEASURED' for x in scenario.values()))+'/7','failureScope':'E5-7 manual serving loss/cordon proxy; actual event/recovery evidence required, not physical network/power loss','failureScenarioEvidence':failure,'pairedComparisons':comparisons,'fullMatched170minWholePOOLJ':sum(full_values) if len(comparisons)==6 and all(value is not None for value in full_values) else None,'static170minWholePOOLJ':sum(static_values) if len(comparisons)==6 and all(value is not None for value in static_values) else None,'controlFactors':factor_results,'limitations':b['limitations'],'staticSelection':str(root/'static-selection.json'),'accounting':{'d':b['accounting']['d'],'exactCost':b['accounting']['exactCost'],'evaluation':str(sum(x!='UNMEASURED' for x in scenario.values()))+'/7'}}
     result['rowJudgments']=row_statuses
@@ -2004,6 +2237,10 @@ def summarize(binding, root):
         'repetitions':'One paired seed set; no independent repetitions'}
     result['energyBelowResolution']={mode+'-'+row:value.get('energyBelowResolution') for (mode,row),value in stages.items()}
     result['conditions']=['Generator opens a new TLS connection per request (no keep-alive); entrance delay and gateway CPU include handshake cost.']
+    targeted={row:load(full_restore_path(root,row)) for row in ('E5-1','E5-5','E5-6','E5-7') if full_restore_path(root,row).exists()}
+    if targeted:
+        result['conditions'].append('3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2')
+        result['targetedRestorations']=targeted
     if 'genesis2' in (b.get('schedulerSettings') or {}).get('excludedNodes',[]):
         result['conditions'].append('genesis2 하드웨어 결함으로 제외 (excluded for hardware failure); seven serving Nodes only.')
     result['schedulerSettings']=b.get('schedulerSettings')
@@ -2013,8 +2250,9 @@ def summarize(binding, root):
     result['issuanceFidelity']={mode+'-'+row:{name:metrics.get('issuanceFidelity') for name,metrics in value.get('requests',{}).items()} for (mode,row),value in stages.items()}
     replay=replay_receipt(root)
     result['compositeRun']={'label':replay['label'],'rowTag':replay['rowTag'],'restorationAccepted':replay['accepted']} if replay else None
+    if targeted:result['compositeRun']={'label':'3회차 = 표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2','rowTag':'3','restorationAccepted':all(record['accepted'] for record in targeted.values())}
     result['rowDirectories']={mode+'-'+row:str(row_folder(root,mode,row)) for mode,ids in modes.items() for row in ids}
-    finish=root/('finish'+('-'+replay['rowTag'] if replay else '')+'-complete.json')
+    finish=root/('finish'+('-3' if targeted else '-'+replay['rowTag'] if replay else '')+'-complete.json')
     restored=load(finish) if finish.exists() else None
     result['physicalRestoration']=restored
     save(root/'e5-summary.json',result); return result
@@ -2215,14 +2453,16 @@ def check_recorded(source_sha):
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument('command',choices=['self-check','schema','check-preparation','check-recorded','bind','check','judge','summarize','publish','campaign','start','stage','smoke','restore','collect','factor','factor-restore','cleanup-jobs','finish']); p.add_argument('--config',type=Path); p.add_argument('--binding',type=Path); p.add_argument('--out',type=Path); p.add_argument('--release',type=Path);p.add_argument('--source-sha'); p.add_argument('--stage',default=''); p.add_argument('--mode',default='full'); p.add_argument('--experiment-id'); p.add_argument('--store-config',type=Path); p.add_argument('--pre-state',type=Path); p.add_argument('--row-tag',default=''); p.add_argument('--dry-run',action='store_true'); a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument('command',choices=['self-check','schema','check-preparation','check-recorded','bind','check','judge','summarize','publish','campaign','start','stage','smoke','restore','collect','factor','factor-restore','cleanup-jobs','finish','failure-select']); p.add_argument('--config',type=Path); p.add_argument('--binding',type=Path); p.add_argument('--out',type=Path); p.add_argument('--release',type=Path);p.add_argument('--source-sha'); p.add_argument('--stage',default=''); p.add_argument('--mode',default='full'); p.add_argument('--experiment-id'); p.add_argument('--store-config',type=Path); p.add_argument('--pre-state',type=Path); p.add_argument('--row-tag',default=''); p.add_argument('--dry-run',action='store_true'); p.add_argument('--failure-kind',choices=['delete-serving-pod','cordon-delete']); a=p.parse_args()
     try:
         if a.command=='self-check':self_check();return 0
         for value in (a.config,a.binding,a.out,a.release,a.pre_state):
             if value is not None and not value.is_absolute(): raise ValueError('All paths must be absolute')
-        if a.row_tag and a.row_tag!='223':raise ValueError('Only the released #223 appended rows are supported')
-        if a.pre_state and not (a.command=='factor' and a.mode=='static' and a.stage=='E5-3' and a.row_tag):raise ValueError('--pre-state is only for the released static factor E5-3 restoration')
-        if a.dry_run and not a.pre_state:raise ValueError('--dry-run requires static factor --pre-state')
+        if a.row_tag and a.row_tag not in ('223','3'):raise ValueError('Only released #223 or targeted third-round rows are supported')
+        if a.row_tag=='3' and a.command in ('stage','factor','failure-select') and (a.mode!='full' or a.stage not in ('E5-1','E5-5','E5-6','E5-7')):raise ValueError('Third round supports full E5-1/5/6/7 only')
+        if a.pre_state and not (a.command=='factor' and (a.mode=='static' and a.stage=='E5-3' and a.row_tag=='223' or a.mode=='full' and a.row_tag=='3')):raise ValueError('--pre-state requires released static or targeted full factor restoration')
+        if a.pre_state and a.mode=='full' and (a.pre_state.name!='pre-state.json' or a.pre_state.parent.name not in ('full-'+a.stage,'full-'+a.stage+'-223') or a.pre_state.parent.parent!=a.out):raise ValueError('Targeted restoration requires the corresponding original full row pre-state.json in this Run')
+        if a.dry_run and not a.pre_state:raise ValueError('--dry-run requires factor --pre-state')
         if a.command=='smoke' and (a.mode!='smoke' or a.stage!='SMOKE'): raise ValueError('Smoke requires --mode smoke --stage SMOKE; never counted as E5')
         if a.command=='schema': print(json.dumps(REQUIRED,indent=2)); return 0
         if a.command=='check-recorded':
@@ -2248,8 +2488,12 @@ def main():
             print(json.dumps({'status':'OFFLINE_INPUT_CHECK_ONLY','scientificResults':'UNMEASURED','scheduleSeconds':21900,'N':b['config']['N']})); return 0
         if not a.out: raise ValueError('--out absolute run or stage directory required')
         if a.dry_run:
-            static_restore_dry_run(a.binding,a.out,a.pre_state,a.row_tag);return 0
-        if a.command=='judge': return 2 if judge(a.binding,a.out)['status']=='INVALID_GENERATOR' else 0
+            if a.mode=='full':full_restore_dry_run(a.binding,a.out,a.pre_state,a.stage)
+            else:static_restore_dry_run(a.binding,a.out,a.pre_state,a.row_tag)
+            return 0
+        if a.command=='judge':
+            result=judge(a.binding,a.out)
+            return 2 if result['status']=='INVALID_GENERATOR' or (result.get('failureScenarioEvidence') or {}).get('status')=='INVALID' else 0
         if a.command=='summarize': summarize(a.binding,a.out); return 0
         if a.command=='publish':
             if not a.experiment_id or not a.store_config:raise ValueError('publish requires --experiment-id and --store-config; summary is final immutable record')
