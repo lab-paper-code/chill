@@ -107,23 +107,10 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 	}
 	var cleanupOwner *actionRun
 	if operation.Kind == operationRoute {
-		for _, parent := range c.runs {
-			if parent.owner != run.owner && parent.action.Kind == transitionRunKind && parent.reserved && scope.overlaps(parent.scope) {
-				if cleanupOwner != nil || !c.cleanupRouteAllowedLocked(parent, operation) {
-					return false
-				}
-				cleanupOwner = parent
-			}
-		}
-		if cleanupOwner != nil {
-			run.owner = cleanupOwner.owner
-		}
-		// Policy ACKs for one owner must never overlap, including refreshes.
-		for _, other := range c.runs {
-			if other.owner == run.owner && other.action.Kind == operationRoute &&
-				(other.action.Status == nativeOperationRunning || other.action.Status == nativeOperationCancel) {
-				return false
-			}
+		var allowed bool
+		cleanupOwner, allowed = c.reserveRouteOwnerLocked(run, operation, scope)
+		if !allowed {
+			return false
 		}
 	}
 	var inherited []string
@@ -160,6 +147,29 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 		}
 	}
 	return true
+}
+
+func (c *SchedulerController) reserveRouteOwnerLocked(run *actionRun, operation Operation, scope resourceScope) (*actionRun, bool) {
+	var cleanupOwner *actionRun
+	for _, parent := range c.runs {
+		if parent.owner != run.owner && parent.action.Kind == transitionRunKind && parent.reserved && scope.overlaps(parent.scope) {
+			if cleanupOwner != nil || !c.cleanupRouteAllowedLocked(parent, operation) {
+				return nil, false
+			}
+			cleanupOwner = parent
+		}
+	}
+	if cleanupOwner != nil {
+		run.owner = cleanupOwner.owner
+	}
+	// Policy ACKs for one owner must never overlap, including refreshes.
+	for _, other := range c.runs {
+		if other.owner == run.owner && other.action.Kind == operationRoute &&
+			(other.action.Status == nativeOperationRunning || other.action.Status == nativeOperationCancel) {
+			return nil, false
+		}
+	}
+	return cleanupOwner, true
 }
 
 func (c *SchedulerController) authorize(operation Operation) error {

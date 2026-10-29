@@ -15,7 +15,7 @@ func TestBatchingOffMeasuredPolicySet(t *testing.T) {
 	original := snap.Options[0]
 	snap.Options[0].Instance.MaxBatch = 2
 	// A measured cap1 must remain available even when the source option has cap2.
-	options := schedulerMeasuredOptions(context.Background(), s, snap)
+	options := schedulerMeasuredOptions(context.Background(), snap)
 	if len(options) != 1 || options[0].Instance.MaxBatch != 1 {
 		t.Fatalf("measured variants: %+v", options)
 	}
@@ -38,7 +38,7 @@ func TestBatchingOffMeasuredPolicySet(t *testing.T) {
 	}
 	snap.Options[0].Instance.MaxBatch = 1
 	snap.Options[0].Instance.Profile = nil
-	if got := schedulerMeasuredOptions(context.Background(), s, snap); len(got) != 0 {
+	if got := schedulerMeasuredOptions(context.Background(), snap); len(got) != 0 {
 		t.Fatal("invented unmeasured cap1")
 	}
 }

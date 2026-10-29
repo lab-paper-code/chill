@@ -456,6 +456,10 @@ func (s SchedulerSettings) Validate() error {
 	if s.PlanSearchWorkers < 1 {
 		return fmt.Errorf("planSearchWorkers must be at least 1")
 	}
+	return s.validateExcludedNodes()
+}
+
+func (s SchedulerSettings) validateExcludedNodes() error {
 	excluded := map[string]bool{}
 	for _, name := range s.ExcludedNodes {
 		if name == "" || excluded[name] {

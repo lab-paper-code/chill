@@ -14,6 +14,12 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
+const (
+	previousEvidence         = "previous"
+	restartedContainerSuffix = "-new"
+	restartedEvidence        = "restarted"
+)
+
 func TestCommonReservationConflictAndReleaseAC38(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -45,14 +51,14 @@ func TestCommonReservationConflictAndReleaseAC38(t *testing.T) {
 }
 
 func TestTerminatedRunRetainsReservationUntilPhysicalReturnAC38(t *testing.T) {
-	for _, termination := range []string{"timeout", "cancel"} {
+	for _, termination := range []string{timeoutOutcome, "cancel"} {
 		t.Run(termination, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			c := &SchedulerController{ctx: ctx, runs: map[string]*actionRun{}}
 			node := serving.NodeReference{Name: "one", UID: "one-uid"}
 			done, result := c.startNodeRun(Operation{ID: "remote", Kind: operationPrepare, Node: node, PodUID: "pod"}, SchedulerControllerConfig{}, func(ctx context.Context, _ *OperationResult) error {
-				if termination == "timeout" {
+				if termination == timeoutOutcome {
 					return context.DeadlineExceeded
 				}
 				<-ctx.Done()
@@ -96,7 +102,7 @@ func TestTerminatedRunRetainsReservationUntilPhysicalReturnAC38(t *testing.T) {
 }
 
 func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
-	for _, evidence := range []string{"declaration", "previous", "mismatch", "stale", "unready", "native-unready", "restarted", "pod-unready", "unknown-pod"} {
+	for _, evidence := range []string{"declaration", previousEvidence, "mismatch", "stale", "unready", "native-unready", restartedEvidence, "pod-unready", "unknown-pod"} {
 		t.Run(evidence, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -123,7 +129,7 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 				ProfileID: profile.ID, DecisionID: target.ID, Policy: native.Policy{ProfileID: profile.ID, DecisionID: target.ID, MaxBatchSize: wanted.MaxBatch},
 			}}}
 			switch evidence {
-			case "previous":
+			case previousEvidence:
 				state.Native.Metadata = previous
 			case "mismatch":
 				state.Native.Metadata.Policy.MaxBatchSize++
@@ -133,8 +139,8 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 				state.Ready = false
 			case "native-unready":
 				state.Native.Ready = false
-			case "restarted":
-				pod.Status.ContainerStatuses[0].ContainerID += "-new"
+			case restartedEvidence:
+				pod.Status.ContainerStatuses[0].ContainerID += restartedContainerSuffix
 			case "pod-unready":
 				pod.Status.ContainerStatuses[0].Ready = false
 			case "unknown-pod":
@@ -143,7 +149,7 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 			}
 			c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
 			released := c.authorize(next) == nil
-			wantReleased := evidence == "declaration" || evidence == "previous"
+			wantReleased := evidence == "declaration" || evidence == previousEvidence
 			if released != wantReleased {
 				t.Fatalf("evidence %s: released=%t, want %t", evidence, released, wantReleased)
 			}
@@ -157,7 +163,7 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 // exact known policy later. Neither event rewrites the original failure.
 func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 	for _, kind := range []string{operationPrepare, operationRoute} {
-		for _, evidence := range []string{"declaration", "previous", "stale", "parent-stale", "restarted", "unknown-pod", "profile", "slot", "decision", "policy", "pending-power", "unready", "unknown-container", "other-workload"} {
+		for _, evidence := range []string{"declaration", previousEvidence, "stale", "parent-stale", restartedEvidence, "unknown-pod", "profile", "slot", "decision", "policy", "pending-power", "unready", "unknown-container", "other-workload"} {
 			t.Run(kind+"/"+evidence, func(t *testing.T) {
 				pod, node, profile, _ := observerSourceFixture()
 				pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
@@ -171,13 +177,13 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 				action := serving.Action{ID: "partial-child", Kind: kind, Node: ref, Instance: wanted.ID, Status: nativeOperationPartial}
 				target := serving.SchedulerCandidate{ID: "autonomous-target", Instances: []serving.SchedulerInstance{wanted}, Actions: []serving.Action{action}}
 				policy := native.Policy{ProfileID: profile.ID, DecisionID: target.ID, MaxBatchSize: wanted.MaxBatch}
-				previous := native.Metadata{ProfileID: profile.ID, DecisionID: "previous", Policy: native.Policy{ProfileID: profile.ID, DecisionID: "previous", MaxBatchSize: 1}}
+				previous := native.Metadata{ProfileID: profile.ID, DecisionID: previousEvidence, Policy: native.Policy{ProfileID: profile.ID, DecisionID: previousEvidence, MaxBatchSize: 1}}
 				operation := Operation{ID: action.ID, Kind: kind, Node: ref, Instance: wanted.ID, WorkloadUIDs: []string{"workload"}, Target: &target}
 				if kind == operationPrepare {
 					operation.Prepare = &PrepareSpec{Instance: wanted, Config: native.Config{Policy: policy}, Owner: &serving.WorkloadReference{UID: "workload"}}
 				}
 				child := &actionRun{owner: target.ID, action: action, reserved: true,
-					result: &OperationResult{Operation: operation, Status: nativeOperationPartial, EndedAt: ended, Error: "timeout",
+					result: &OperationResult{Operation: operation, Status: nativeOperationPartial, EndedAt: ended, Error: timeoutOutcome,
 						Before: OperationState{Native: map[string]native.State{id: {Ready: true, Metadata: previous}}},
 						Actual: OperationState{Native: map[string]native.State{id: {Metadata: previous}}}},
 				}
@@ -194,8 +200,8 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 					preparing.ID, preparing.TargetID, preparing.OwnerWorkloadUID = id, wanted.ID, wanted.WorkloadUID
 					child.action.Status = nativeOperationRunning
 					c.reconcileSnapshot(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{preparing}}, ended.Add(-time.Second), time.Minute)
-					if evidence == "restarted" {
-						preparing.ID += "-new"
+					if evidence == restartedEvidence {
+						preparing.ID += restartedContainerSuffix
 						c.reconcileSnapshot(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{preparing}}, ended.Add(-time.Second), time.Minute)
 						if child.prepareIdentity != id {
 							t.Fatal("a later container replaced the frozen preparation identity")
@@ -205,7 +211,7 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 					// full-E5-6:7119 has no final identity: Capture used the
 					// expired context. The live observation must carry it.
 					child.result.Actual = OperationState{}
-					if evidence != "previous" {
+					if evidence != previousEvidence {
 						child.result.Before.Native = nil
 					}
 				}
@@ -218,14 +224,14 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 				state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, TargetID: wanted.ID, Profile: profile.ID, Ready: true, ObservedAt: observed,
 					Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, DecisionID: target.ID, Policy: policy}}}
 				switch evidence {
-				case "previous":
+				case previousEvidence:
 					state.Native.Metadata = previous
 				case "stale":
 					state.ObservedAt = ended
 				case "parent-stale":
 					state.ObservedAt = parent.result.EndedAt
-				case "restarted":
-					pod.Status.ContainerStatuses[0].ContainerID += "-new"
+				case restartedEvidence:
+					pod.Status.ContainerStatuses[0].ContainerID += restartedContainerSuffix
 				case "unknown-pod":
 					pod.UID = "unknown"
 				case "profile":
@@ -254,17 +260,22 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 				}
 				c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
 				snapshot, lost := c.reconcileSnapshot(c.state.Snapshot, observed, time.Minute)
-				released := c.authorize(Operation{WorkloadUID: "workload"}) == nil
-				wantReleased := evidence == "declaration" || evidence == "previous"
-				if released != wantReleased || (len(snapshot.Reservations) == 0) != wantReleased {
-					t.Fatalf("%s: released=%t, want %t; reservations=%+v", evidence, released, wantReleased, snapshot.Reservations)
-				}
-				if len(lost) != 0 || child.result.Status != nativeOperationPartial || child.action.Status != nativeOperationPartial ||
-					child.result.Error != "timeout" || parent.result.Status != nativeOperationFailed || len(c.state.Results) != 1 || c.state.Results[0].Status != nativeOperationPartial {
-					t.Fatal("known state rewrote or discarded the failure receipt")
-				}
+				assertPartialReservationReceipt(t, c, child, parent, snapshot, lost, evidence)
 			})
 		}
+	}
+}
+
+func assertPartialReservationReceipt(t *testing.T, c *SchedulerController, child, parent *actionRun, snapshot serving.SchedulerSnapshot, lost []OperationResult, evidence string) {
+	t.Helper()
+	released := c.authorize(Operation{WorkloadUID: "workload"}) == nil
+	wantReleased := evidence == "declaration" || evidence == previousEvidence
+	if released != wantReleased || (len(snapshot.Reservations) == 0) != wantReleased {
+		t.Fatalf("%s: released=%t, want %t; reservations=%+v", evidence, released, wantReleased, snapshot.Reservations)
+	}
+	if len(lost) != 0 || child.result.Status != nativeOperationPartial || child.action.Status != nativeOperationPartial ||
+		child.result.Error != timeoutOutcome || parent.result.Status != nativeOperationFailed || len(c.state.Results) != 1 || c.state.Results[0].Status != nativeOperationPartial {
+		t.Fatal("known state rewrote or discarded the failure receipt")
 	}
 }
 
@@ -276,9 +287,9 @@ func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 	policy := native.Policy{ProfileID: profile.ID, DecisionID: "partial", MaxBatchSize: 2}
 	wanted := serving.SchedulerInstance{ID: id, Node: ref, Profile: &profile, WorkloadUID: "first", MaxBatch: 2}
 	other := wanted
-	other.ID, other.WorkloadUID = physicalID("other-pod", firstfloorStatus(pod).ContainerID), "second"
+	other.ID, other.WorkloadUID = physicalID(otherPodUID, firstfloorStatus(pod).ContainerID), "second"
 	target := &serving.SchedulerCandidate{ID: policy.DecisionID, Instances: []serving.SchedulerInstance{wanted, other}}
-	scope := resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"first", "second"}, Pods: []string{string(pod.UID), "other-pod"}, Instances: []string{id, other.ID}}
+	scope := resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"first", "second"}, Pods: []string{string(pod.UID), otherPodUID}, Instances: []string{id, other.ID}}
 	child := &actionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{Kind: operationRoute, Status: nativeOperationPartial},
 		result: &OperationResult{Operation: Operation{Kind: operationRoute, WorkloadUIDs: scope.Workloads, Target: target}, Status: nativeOperationPartial, EndedAt: ended}}
 	parent := &actionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{Kind: transitionRunKind, Status: nativeOperationFailed},
@@ -290,12 +301,12 @@ func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 	c := &SchedulerController{runs: map[string]*actionRun{"parent": parent, "route": child, "power": power}}
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "first"}}
 	otherPod := pod.DeepCopy()
-	otherPod.UID, otherPod.OwnerReferences[0].UID = "other-pod", "second"
+	otherPod.UID, otherPod.OwnerReferences[0].UID = otherPodUID, "second"
 	observed := ended.Add(time.Second)
 	state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: observed,
 		Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, DecisionID: target.ID, Policy: policy}}}
 	otherState := state
-	otherState.ID, otherState.PodUID = other.ID, "other-pod"
+	otherState.ID, otherState.PodUID = other.ID, otherPodUID
 	otherState.Native = &native.State{Ready: true, Metadata: state.Native.Metadata}
 	otherState.Native.Metadata.Policy.MaxBatchSize++
 	pending := core.Node{ObjectMeta: meta.ObjectMeta{Name: powerRef.Name, UID: "pending-node-uid", Labels: map[string]string{chillmeta.PowerModeState: chillmeta.PowerModePending}}}

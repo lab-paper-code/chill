@@ -157,7 +157,7 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 	return search
 }
 
-func schedulerMeasuredOptions(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) []SchedulerOption {
+func schedulerMeasuredOptions(ctx context.Context, snapshot SchedulerSnapshot) []SchedulerOption {
 	options := []SchedulerOption{}
 	for _, o := range snapshot.Options {
 		if ctx.Err() != nil {

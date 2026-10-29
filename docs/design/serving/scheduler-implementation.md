@@ -11,6 +11,11 @@ firstfloor의 Go 큐·배처·persistent Python IPC runner를 `internal/firstflo
 `/home/genesis1/ETRI/donghwan/firstfloor`는 보존한다. 실제 actor와 용량표 replay는
 같은 순수 선택 함수를 사용하고 ingress Runtime은 Workload 수용·분배·drain을 맡는다.
 
+스냅샷 조정은 같은 controller lock 안에서 준비 실행기의 물리 ID 고정과
+소유자 DAG 조정을 순서대로 수행한다. route 예약의 cleanup 소유자 선택과
+동일 소유자의 policy ACK 직렬화도 기존 예약 lock 안에서 함께 판정한다.
+실측 option 전개는 설정 인자가 아닌 snapshot의 측정 근거만 입력으로 받는다.
+
 | 세부 계약 | 원본 문서 |
 |---|---|
 | 실행기·시간·CPU·fixed-batch·baseline·catalog | [실행기와 측정](scheduler-runtime-measurement.md) |

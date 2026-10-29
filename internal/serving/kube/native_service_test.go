@@ -137,6 +137,8 @@ func TestPreparePollsReuseRecentObserverRefresh(t *testing.T) {
 	}
 }
 
+const otherPodUID = "other-pod"
+
 func TestNativeInstanceServiceRejectsMismatchedExistingResources(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {
@@ -144,7 +146,7 @@ func TestNativeInstanceServiceRejectsMismatchedExistingResources(t *testing.T) {
 		change func(*core.Service)
 		owned  bool
 	}{
-		{"another Pod owner", func(service *core.Service) { service.OwnerReferences[0].UID = "other-pod" }, false},
+		{"another Pod owner", func(service *core.Service) { service.OwnerReferences[0].UID = otherPodUID }, false},
 		{"shared selector", func(service *core.Service) {
 			service.Spec.Selector = map[string]string{"app.kubernetes.io/component": servingInstanceComponent}
 		}, true},
@@ -180,7 +182,7 @@ func TestNativeInstanceServiceRejectsMismatchedExistingResources(t *testing.T) {
 	pod, _, _, _ := observerSourceFixture()
 	kube := kubefake.NewSimpleClientset(pod)
 	wrong := observerServiceFixture(pod)
-	wrong.OwnerReferences[0].UID = "other-pod"
+	wrong.OwnerReferences[0].UID = otherPodUID
 	kube.PrependReactor("create", "services", func(action ktesting.Action) (bool, runtime.Object, error) {
 		if err := kube.Tracker().Add(wrong); err != nil {
 			t.Fatal(err)

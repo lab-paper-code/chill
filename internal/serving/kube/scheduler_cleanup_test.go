@@ -24,7 +24,7 @@ func TestCleanupKeepsPhysicalOwnershipButAllowsSerializedReadyRoutesAC38(t *test
 		{ID: "old-drain", Kind: operationDrain, Instance: "old-source", Node: base.Node, DependsOn: []string{"old-stop"}},
 		{ID: "old-remove", Kind: operationRemove, Instance: "old-source", Node: base.Node, DependsOn: []string{"old-drain"}},
 	}}
-	var installed []serving.ReadyInstance
+	installed := make([]serving.ReadyInstance, 0, 4)
 	for k, weight := range []int32{255, 663, 82} {
 		i, p := base, physical
 		i.ID, i.Weight = fmt.Sprintf("ready-%d", k), weight
@@ -114,6 +114,13 @@ func TestCleanupKeepsPhysicalOwnershipButAllowsSerializedReadyRoutesAC38(t *test
 		c.state.Snapshot.Routing = refresh.Routing
 		run.action.Status, run.result.Status = nativeOperationComplete, nativeOperationComplete
 	}
+	assertCleanupCompletion(t, c, goal, old, now)
+}
+
+func assertCleanupCompletion(t *testing.T, c *SchedulerController, goal serving.SchedulerCandidate, old serving.SchedulerInstance, now time.Time) {
+	t.Helper()
+	parent := c.runs[transitionRunKind+"/"+goal.ID]
+	final := c.runs[goal.Actions[0].ID]
 	// A newer acknowledged route supersedes only the old route proof, not its
 	// immutable receipt, stop/drain/remove duties, or physical responsibility.
 	snapshot, lost := c.reconcileSnapshot(c.state.Snapshot, now.Add(40*time.Second), time.Minute)

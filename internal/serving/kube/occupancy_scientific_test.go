@@ -13,6 +13,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
+const timeoutOutcome = "timeout"
+
 func TestOccupancyIdentifiedIdlePolicy(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -70,7 +72,7 @@ func TestOccupancyPhysicalEvidenceAndUnknowns(t *testing.T) {
 		{"missing-batch", func(rows []serving.RequestRow) []serving.RequestRow { return slices.Delete(rows, 14, 15) }, "UnknownPhysicalContinuity"},
 		{"unexecuted-error", func(rows []serving.RequestRow) []serving.RequestRow {
 			rows[14].BatchID = 0
-			rows[14].Outcome = "timeout"
+			rows[14].Outcome = timeoutOutcome
 			rows[14].ExecutionComplete = false
 			return rows
 		}, "UnknownRequestExecution"},

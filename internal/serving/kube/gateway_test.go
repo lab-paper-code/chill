@@ -23,7 +23,7 @@ func TestGatewayTargetsRequireExactObservedPolicyAck(t *testing.T) {
 	if len(got) != 1 || got[0].PodUID != "pod" || got[0].ContainerID != "container" || got[0].DecisionID != "policy-1" {
 		t.Fatalf("lost physical policy identity: %+v", got)
 	}
-	source.containerID = "restarted"
+	source.containerID = restartedEvidence
 	if len(observer.GatewayTargets()) != 0 {
 		t.Fatal("new container inherited previous native policy ACK")
 	}

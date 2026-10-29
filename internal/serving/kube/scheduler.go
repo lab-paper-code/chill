@@ -438,6 +438,22 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 				i.Profile.ID == r.ProfileID && i.Ready && !i.Stopped
 		})
 	})
+	c.freezePreparingExecutorsLocked(snapshot)
+	lost = c.reconcileOwnersLocked(snapshot, now, gap)
+	cutoff := now.Add(-observationWindow)
+	c.state.Results = slices.DeleteFunc(c.state.Results, func(r OperationResult) bool { return r.EndedAt.Before(cutoff) })
+	for id, run := range c.runs {
+		if !run.reserved && run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel && run.result != nil && run.result.EndedAt.Before(cutoff) && !c.runReferencedLocked(id) {
+			delete(c.runs, id)
+		}
+	}
+	snapshot.Actions = c.actionsLocked(now)
+	snapshot.Reservations = c.reservationsLocked(snapshot)
+	snapshot.Replacements = slices.Clone(c.replacements)
+	return snapshot, lost
+}
+
+func (c *SchedulerController) freezePreparingExecutorsLocked(snapshot serving.SchedulerSnapshot) {
 	// A timeout can cancel the final Capture itself. Freeze the first observed
 	// preparing executor while its operation is still live, never after failure.
 	for _, run := range c.runs {
@@ -457,6 +473,10 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 			}
 		}
 	}
+}
+
+func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSnapshot, now time.Time, gap bool) []OperationResult {
+	var lost []OperationResult
 	for _, parent := range c.runs {
 		if parent.action.Kind != transitionRunKind || parent.result == nil {
 			continue
@@ -512,17 +532,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 			c.releaseOwnerLocked(parent.owner)
 		}
 	}
-	cutoff := now.Add(-observationWindow)
-	c.state.Results = slices.DeleteFunc(c.state.Results, func(r OperationResult) bool { return r.EndedAt.Before(cutoff) })
-	for id, run := range c.runs {
-		if !run.reserved && run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel && run.result != nil && run.result.EndedAt.Before(cutoff) && !c.runReferencedLocked(id) {
-			delete(c.runs, id)
-		}
-	}
-	snapshot.Actions = c.actionsLocked(now)
-	snapshot.Reservations = c.reservationsLocked(snapshot)
-	snapshot.Replacements = slices.Clone(c.replacements)
-	return snapshot, lost
+	return lost
 }
 
 // failTargetLocked checks only this owner's DAG; terminal receipts beat stale plans.

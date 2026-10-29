@@ -467,7 +467,7 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		p.index[w.d.UID] = len(p.ws)
 		p.ws = append(p.ws, w)
 	}
-	p.options = schedulerMeasuredOptions(ctx, settings, snapshot)
+	p.options = schedulerMeasuredOptions(ctx, snapshot)
 	// The capacity table keys rows by the variants of the snapshot options.
 	for _, option := range snapshot.Options {
 		for _, v := range CapacityVariants(option) {
