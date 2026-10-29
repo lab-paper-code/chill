@@ -280,8 +280,17 @@ handoff와 대상 변경은 원래 route 완료를 기다리고 accepted-context
 break-before-make에서 routing/bindings가 잠시 비어도 기존 실행의 frozen
 `Operation.Target`이 가진 UID cohort·replica 수·UID별 weight를 전환 의도의 근거로
 사용한다. actual 점유·ownership·Ready는 계속 현재 snapshot에서만 가져온다.
-실행 중 owner가 예약한 Node·Workload·Pod·physical 범위만 고정한다. 전역 계획기는
-예약 밖의 현재 부하·상태로 새 후보를 평가하고 독립 DAG를 실행한다.
+실행 중 owner가 예약한 Node·Workload·Pod·physical 범위는 계속 소유한다. 최종 route의
+ACK·실제 효과와 모든 prepare 완료가 확인된 뒤에는 `reservations[].routeOnly`에
+그 handoff의 정확한 현재 Ready physical ID만 표시한다. 이 Workload는 cleanup 동안
+Fixed에서 제외하되 해당 집합의 가중치만 재계산한다. 퇴역 source는 κ·route 후보에서
+제외하고 새 prepare·power·batch/resource 변경은 허가하지 않는다. 새 route는 원래
+cleanup owner의 자식으로 수락하며 정책 ACK를 직렬화한다. 최신 route receipt가 이전
+route의 현재 효과 검사만 대체하고 frozen target·과거 성공 receipt·stop/drain/remove
+의무 및 old Pod/physical/Node 예약은 보존한다. 이전 final route 완료 의존성은
+퇴역 source를 다시 편입할 수 없는 이 범위 안에서만 stop의 안전 근거로 유지한다.
+최신 route 실패/효과 소실은 owner 실패로 기록하고 미확인 책임을 계속 예약한다.
+예약 밖의 현재 부하·상태에 대한 독립 후보 평가는 계속한다(SCH-20, AC-38).
 prepare는 cost의 측정 trial 최대 시간에 관측 창 하나를 더한 timeout으로 실행된다.
 timeout은 `failed`/`ActionDeadlineExceeded`로 실행을 끝내지만 원격 효과가 미확인이면
 예약은 유지한다. 이후 효과 확인 또는 reset의 실제 정리 proof 뒤에만 반환한다.
@@ -536,6 +545,9 @@ reset 첫 disable-autonomy의 ConfigMap conflict/확정 거절과 쓰기 전 실
 또는 작업 전 native 정책 그대로임이 확인되면 Pod를 유지한 채 예약을 해제한다.
 정책 불일치·unready·종료 이전 관측·교체 실행기는 확인 근거가 아니며 예약을 유지한다.
 Pod 소멸과 전력 pending 해소에 따른 기존 반환 규칙은 그대로 적용한다(SCH-AC-38).
+성공한 최종 handoff 뒤 cleanup의 `routeOnly`는 예약 해제가 아니라 같은 owner의
+제한된 가중치 수정 권한이다. 새 route가 실행 중이면 다음 route를 허가하지 않으며,
+퇴역 source·정책 변경·새 physical 후보 또는 reset은 이 권한에 포함하지 않는다.
 관측 결과 불명이라는 이유로 자원을 비우거나 전역 모든 작업을 멈추지 않는다.
 이는 기존 뒤처리의 소유 범위를 명시하는 것이지 ⑤의 finalizer 책임 이동을 선행하는 것이 아니다.
 

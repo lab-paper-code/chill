@@ -137,6 +137,12 @@ drain 보호를 유지하며, dead executor의 ACK 실패로 제거 분배를 �
 예약을 비우지 않는다. timeout/취소는 실행 종료일 뿐이며, 이후 실제 효과 확인 또는 reset의
 정리 완료(Pod 부재·전력 비대기 재관측) 후에만 예약을 반환한다. 전역 목표 장벽은 없고
 예약 밖 판단은 계속된다. 중간 Ready 부분집합 분배는 같은 owner 예약 안에서 실행한다.
+최종 route complete와 실제 ACK가 확인되면 성공 cleanup 중인 Workload는
+`reservations[].routeOnly`의 현재 Ready 목적지 사이에서만 재분배할 수 있다.
+route는 원래 owner에 붙여 직렬 실행하고 old Pod/physical/Node 및
+stop/drain/remove 책임은 모두 보존한다. 새 prepare·power·정책 변경과 퇴역 source
+재편입은 거절한다. 최신 route의 효과 확인으로 이전 handoff proof를 대체하되
+기존 성공 receipt를 실패로 바꾸지 않으며 미확인/실패 효과의 예약은 유지한다.
 
 partial/failed로 끝난 자율 전환도 같은 known-effect 확인을 사용한다(SCH-AC-38).
 새 관측의 정확한 Pod UID·container identity·Node UID가 종료 receipt 또는 실행 중

@@ -105,6 +105,27 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 	if run.owner == "" {
 		run.owner = id
 	}
+	var cleanupOwner *actionRun
+	if operation.Kind == operationRoute {
+		for _, parent := range c.runs {
+			if parent.owner != run.owner && parent.action.Kind == transitionRunKind && parent.reserved && scope.overlaps(parent.scope) {
+				if cleanupOwner != nil || !c.cleanupRouteAllowedLocked(parent, operation) {
+					return false
+				}
+				cleanupOwner = parent
+			}
+		}
+		if cleanupOwner != nil {
+			run.owner = cleanupOwner.owner
+		}
+		// Policy ACKs for one owner must never overlap, including refreshes.
+		for _, other := range c.runs {
+			if other.owner == run.owner && other.action.Kind == operationRoute &&
+				(other.action.Status == nativeOperationRunning || other.action.Status == nativeOperationCancel) {
+				return false
+			}
+		}
+	}
 	var inherited []string
 	if operation.Kind == operationReset {
 		var err error
@@ -128,6 +149,9 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 	run.inheritedReservation = len(inherited) > 0
 	run.scope, run.reserved = scope, true
 	c.runs[id] = run
+	if cleanupOwner != nil {
+		cleanupOwner.cleanupRoute = run
+	}
 	return true
 }
 
@@ -257,7 +281,7 @@ func (c *SchedulerController) releaseOwnerLocked(owner string) {
 	}
 }
 
-func (c *SchedulerController) reservationsLocked() []serving.SchedulerReservation {
+func (c *SchedulerController) reservationsLocked(snapshot serving.SchedulerSnapshot) []serving.SchedulerReservation {
 	byOwner := map[string]*serving.SchedulerReservation{}
 	for _, run := range c.runs {
 		if !run.reserved {
@@ -275,6 +299,9 @@ func (c *SchedulerController) reservationsLocked() []serving.SchedulerReservatio
 		if run.result != nil && (reservation.Target == nil || run.action.Kind == transitionRunKind) {
 			reservation.Target = run.result.Operation.Target
 		}
+		if run.action.Kind == transitionRunKind && run.cleanup && run.action.Status == nativeOperationRunning {
+			reservation.RouteOnly = c.cleanupDestinationsLocked(run, snapshot)
+		}
 		if run.action.Reason != "" {
 			reservation.Reason = run.action.Reason
 		}
@@ -287,6 +314,94 @@ func (c *SchedulerController) reservationsLocked() []serving.SchedulerReservatio
 		return cmp.Compare(a.Owner, b.Owner)
 	})
 	return reservations
+}
+
+// A successful final handoff opens only routing; the original DAG and its
+// physical retirement scope stay owned until every cleanup obligation finishes.
+func (c *SchedulerController) cleanupReadyLocked(parent *actionRun, snapshot serving.SchedulerSnapshot) bool {
+	final := false
+	for _, action := range parent.result.Operation.Target.Actions {
+		if action.Kind != operationRoute && action.Kind != operationPrepare {
+			continue
+		}
+		run := c.runs[action.ID]
+		if run == nil || run.action.Status != nativeOperationComplete || run.result == nil || run.result.Status != nativeOperationComplete {
+			return false
+		}
+		if action.Kind == operationRoute {
+			final = action.From != readySubsetRoute && c.actionEffectPresent(snapshot, run)
+		}
+	}
+	return final
+}
+
+func (c *SchedulerController) cleanupDestinationsLocked(parent *actionRun, snapshot serving.SchedulerSnapshot) map[string][]string {
+	ready := map[string][]string{}
+	if !parent.cleanup || !parent.reserved || parent.action.Status != nativeOperationRunning {
+		return ready
+	}
+	for _, child := range c.runs {
+		if child.owner == parent.owner && child.action.Kind == operationRoute &&
+			(child.action.Status == nativeOperationRunning || child.action.Status == nativeOperationCancel) {
+			return ready
+		}
+	}
+	target := parent.result.Operation.Target
+	physical := c.runtime.Instances()
+	for _, wanted := range target.Instances {
+		if target.Routing[wanted.WorkloadUID][wanted.ID] <= 0 || !parent.result.Operation.controlsWorkload(wanted.WorkloadUID) {
+			continue
+		}
+		for _, actual := range snapshot.Instances {
+			if (actual.ID == wanted.ID || actual.TargetID == wanted.ID) && actual.Ready && !actual.Stopped &&
+				actual.Node == wanted.Node && actual.Profile != nil && wanted.Profile != nil && actual.Profile.ID == wanted.Profile.ID &&
+				schedulerTargetReady(actual, snapshot, physical, true) {
+				ready[wanted.WorkloadUID] = append(ready[wanted.WorkloadUID], actual.ID)
+			}
+		}
+	}
+	return ready
+}
+
+func (c *SchedulerController) cleanupRouteAllowedLocked(parent *actionRun, operation Operation) bool {
+	if operation.Target == nil || len(operation.Target.Actions) != 1 || operation.Target.Actions[0].Kind != operationRoute {
+		return false
+	}
+	ready := c.cleanupDestinationsLocked(parent, c.state.Snapshot)
+	target := controlledTarget(operation)
+	if len(target.Routing) == 0 {
+		return false
+	}
+	for uid, weights := range target.Routing {
+		if len(ready[uid]) == 0 || len(weights) == 0 {
+			return false
+		}
+		for id, weight := range weights {
+			if weight <= 0 || !slices.Contains(ready[uid], id) {
+				return false
+			}
+			if !slices.ContainsFunc(target.Instances, func(wanted serving.SchedulerInstance) bool {
+				return wanted.ID == id && wanted.WorkloadUID == uid
+			}) {
+				return false
+			}
+		}
+	}
+	for _, wanted := range target.Instances {
+		if target.Routing[wanted.WorkloadUID][wanted.ID] <= 0 {
+			continue
+		}
+		if !slices.ContainsFunc(c.state.Snapshot.Instances, func(actual serving.SchedulerInstance) bool {
+			return actual.ID == wanted.ID && actual.Node == wanted.Node && actual.Ready && !actual.Stopped &&
+				serving.SchedulerInstanceState(actual) == serving.SchedulerInstanceState(wanted) &&
+				actual.MaxBatch == wanted.MaxBatch && actual.MaxWait == wanted.MaxWait && actual.Capacity == wanted.Capacity &&
+				actual.FixedBatchSize == wanted.FixedBatchSize && actual.Profile != nil && wanted.Profile != nil &&
+				reflect.DeepEqual(actual.Profile.Condition.Firstfloor, wanted.Profile.Condition.Firstfloor)
+		}) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *SchedulerController) runReferencedLocked(id string) bool {

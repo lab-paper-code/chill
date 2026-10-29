@@ -83,6 +83,9 @@ func (c *SchedulerController) orderRouteChild(action serving.Action, owner strin
 	if action.Kind != operationRoute {
 		return action
 	}
+	if run := c.runs[action.ID]; run != nil && run.action.Status == nativeOperationComplete {
+		return action
+	}
 	for _, run := range c.runs {
 		if run.owner == owner && run.action.Kind == operationRoute && run.action.Status == nativeOperationRunning && run.action.ID != action.ID {
 			action.DependsOn = append(slices.Clone(action.DependsOn), run.action.ID)

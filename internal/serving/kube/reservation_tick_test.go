@@ -459,7 +459,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !slices.ContainsFunc(c.reservationsLocked(), func(reservation serving.SchedulerReservation) bool {
+	if !slices.ContainsFunc(c.reservationsLocked(c.state.Snapshot), func(reservation serving.SchedulerReservation) bool {
 		return reservation.Target != nil && reservation.Target.ID == decision.Target.ID
 	}) {
 		t.Fatal("transition ownership ended before reserve request completed")

@@ -732,6 +732,11 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 // instance of the Workload in Node, resource choice or batch policy.
 func (p *capacityPlanner) controlAllows(w int, i SchedulerInstance, current []SchedulerInstance) bool {
 	s, uid := p.settings.Controls, p.ws[w].d.UID
+	for _, reservation := range p.snapshot.Reservations {
+		if len(reservation.RouteOnly[uid]) > 0 {
+			return false // Cleanup permits routing, never another physical/policy choice.
+		}
+	}
 	if !s.Membership && !slices.ContainsFunc(current, func(c SchedulerInstance) bool { return c.OwnerWorkloadUID == uid || c.WorkloadUID == uid }) {
 		return false
 	}
@@ -941,6 +946,13 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 	k := len(p.ws)
 	plan.items, plan.retained = make([][]capacityItem, k), make([][]capacityItem, k)
 	for _, i := range plan.instances {
+		if slices.ContainsFunc(p.snapshot.Reservations, func(r SchedulerReservation) bool {
+			ids, limited := r.RouteOnly[i.WorkloadUID]
+			return limited && !slices.Contains(ids, i.ID)
+		}) {
+			plan.others++
+			continue
+		}
 		w, ok := p.index[i.WorkloadUID]
 		if !ok || plan.keep && i.Stopped {
 			plan.others++

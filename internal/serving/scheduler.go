@@ -319,6 +319,9 @@ type SchedulerReservation struct {
 	Instances    []string            `json:"instances"`
 	Target       *SchedulerCandidate `json:"target,omitempty"`
 	Reason       string              `json:"reason,omitempty"`
+	// RouteOnly permits weight changes only among these exact Ready executors.
+	// Physical ownership and the frozen retirement Target remain reserved.
+	RouteOnly map[string][]string `json:"routeOnly,omitempty"`
 }
 type SchedulerEstimate struct {
 	UID                  string         `json:"uid"`
