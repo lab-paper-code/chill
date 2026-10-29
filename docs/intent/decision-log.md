@@ -582,3 +582,8 @@
 
 - #222 E5-0~3 + S1~2 완료: MNV 실패 E5-1 10,225→296, E5-2 1,954→0, E5-3 19,095→13,562; p95 MNV E5-2 1.72s→236ms, E5-3 Smol 12.0s→3.26s; 에너지 +2~4%. static S3 종료 시 k8s logs stdout/stderr 병합으로 traceback 1행이 client JSONL에 혼입 → STOP(하네스 `41f352e6` 관대 처리). 수집 전 STOP이라 S3 NOT_READY, reset 후 static 구성 재생성 경로 없음 → 정지(멈춤 규칙: 2회차 3회 모두 하네스/환경 요인 — collector 경합, rate-limiter prepare 잔류→R4b, 디스크 압박, 로그 혼입).
 - 본질: 측정 장비(하네스)의 단일 실패가 7시간 run 전체를 무효화하는 구조 — 단계별 체크포인트/재개 부재. 선택지는 사용자 결정.
+
+## 2026-10-29 — 디스크·kubeedge 조치(사용자 승인)
+
+- 백업 tar 4개(10/18·10/19, ~31GB) 삭제; 측정 증거(#213, #217 이후) 유지.
+- kubeedge 근본 원인(`agent://KubeedgeEvict`): CloudCore Deployment `nodeName: genesis1` 고정 → 디스크 압박 시 스케줄러 우회 재생성 루프 2,747회 + PodGC 기본 12,500 누적. E5 뒤 할 일: (1) nodeName → Helm nodeSelector(hostname) (2) genesis1 디스크 점유 조사·보존 규칙 (3) terminated-pod-gc-threshold 하향(보조).
