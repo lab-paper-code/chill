@@ -315,9 +315,11 @@ proof를 복원하지 않는다.
 Ready·미정지·routable 검증을 통과한 serving 경로가 있으면 **old 공급 보존+
 검증된 순증 허용**을 적용한다(SCH-20/AC-38). 현재 serving이 없는 독립 Node의
 새 Ready 목적지만 exact identity·native policy ACK 확인 뒤 current에 합집합한다.
-`serving.SchedulerReadyExpansion`은 현재 settings·snapshot·capacity rows로 기존
-λ(최근 수요·q/관측 창·최소 수요 포함), q, L−m, 정확한 row key와 목적지별 κ를
-판정한다. 준비 완료한 합집합에는 추가 prepare 시간이 없어 r=0, B=q,
+`serving.SchedulerReadyExpansion`은 먼저 최종 계획과 같은
+`schedulerValidateObservationTimes`를 재사용하여 관측 시각·`MaxObservationAge`를 검사한다.
+stale/unknown/future 관측이면 순증 없이 current를 보존한다. 유효한 현재
+settings·snapshot·capacity rows로 기존 λ(최근 수요·q/관측 창·최소 수요 포함), q,
+L−m, 정확한 row key와 목적지별 κ를 판정한다. 준비 완료한 합집합에는 추가 prepare 시간이 없어 r=0, B=q,
 W=B/κnew이며 기존 `capacityJudge`·`capacityWeights`를 재사용한다.
 각 old/new 목적지의 양수 정수 weight와 rate/κ 검증이 모두 통과해야 채택한다.
 같은 Node의 old+new κ 합산, 기존 공급 총κ 감소, 새 solver나 전체 평가 재귀는 없다.
@@ -345,7 +347,7 @@ owner별로 유지하며 다른 Workload의 새 판단을 막지 않는다.
 고장·unroutable·stop 가능 경로의 제외와 준비 완료 뒤 최종 765:235 적용을 함께 검사한다.
 E5-1 회귀는 old Ready + 신규 genesis3만 Ready일 때 κ/weight 검증을 통과한
 양수 중간 route를 적용하며, nano 지연은 막지 않는지 확인한다. 같은 Node 중복,
-미지원 row·정책 ACK/identity 실패·용량/전환 backlog 미달은 current를 보존한다.
+미지원 row·정책 ACK/identity 실패·용량/전환 backlog 미달·stale 관측은 current를 보존한다.
 
 #### 분배 적용 증거
 

@@ -1193,6 +1193,9 @@ func SchedulerReadyExpansion(settings SchedulerSettings, snapshot SchedulerSnaps
 		settings.ObservationWindow <= 0 || settings.ControlInterval <= 0 {
 		return nil, false
 	}
+	if len(schedulerValidateObservationTimes(&snapshot, settings.MaxObservationAge)) != 0 {
+		return nil, false
+	}
 	decision := SchedulerDecision{
 		Search:    schedulerSearchPopulation(context.Background(), settings, snapshot),
 		Workloads: []SchedulerWorkloadState{{UID: uid, State: WorkloadControlled}},

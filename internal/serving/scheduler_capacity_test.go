@@ -1967,7 +1967,7 @@ func TestSchedulerReplayFixedPowerIsNotFreeOrInstant(t *testing.T) {
 }
 
 func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
-	for _, scenario := range []string{"admitted", "same-node", "other-workload-node", "missing-row", "pending-row", "nil-kappa", "wrong-allocation", "overload", "backlog", "routing-off"} {
+	for _, scenario := range []string{"admitted", "same-node", "other-workload-node", "missing-row", "pending-row", "nil-kappa", "wrong-allocation", "overload", "backlog", "routing-off", "stale"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, snap, _, _ := capacityE1Fixture()
 			old := snap.Instances[0]
@@ -2007,6 +2007,8 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 				}
 			case "routing-off":
 				s.Controls.Routing = false
+			case "stale":
+				snap.At = snap.At.Add(2 * s.MaxObservationAge)
 			}
 			weights, ok := SchedulerReadyExpansion(s, snap, rows, old.WorkloadUID, []SchedulerInstance{old}, []SchedulerInstance{added})
 			if ok != (scenario == "admitted") {

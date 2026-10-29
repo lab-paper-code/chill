@@ -615,7 +615,7 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 
 // E5-1: old rasp5 stays serving while genesis3 is Ready and nano is late.
 func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
-	for _, scenario := range []string{"admitted", "same-node", "unsupported", "policy-ack", "identity", "insufficient"} {
+	for _, scenario := range []string{"admitted", "same-node", "unsupported", "policy-ack", "identity", "insufficient", "stale"} {
 		t.Run(scenario, func(t *testing.T) {
 			c, target, physical := acknowledgedHandoffFixture(t)
 			old := target.Instances[0]
@@ -649,17 +649,24 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 				{ID: finalRouteActionID, Kind: operationRoute, DependsOn: []string{"prepare-nano"}},
 			}
 			snapshot := &c.state.Snapshot
-			snapshot.At, snapshot.ObservationEnd = time.Now(), time.Now()
+			snapshot.At = time.Now()
+			snapshot.ObservationEnd = snapshot.At
 			snapshot.Workloads = c.runtime.SchedulerInputs(time.Now).Workloads
 			for range 41 {
 				snapshot.Outstanding = append(snapshot.Outstanding, serving.SchedulerRequest{Definition: snapshot.Workloads[0]})
 			}
 			snapshot.Instances = []serving.SchedulerInstance{old, added}
+			for n := range snapshot.Instances {
+				snapshot.Instances[n].ObservedAt = snapshot.At
+			}
+			if scenario == "stale" {
+				snapshot.At = snapshot.At.Add(2 * time.Minute)
+			}
 			snapshot.Routing = map[string]map[string]int32{uid: {old.ID: 1000}}
 			if err := c.runtime.ApplySchedulerTarget(serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{old}, Routing: snapshot.Routing}); err != nil {
 				t.Fatal(err)
 			}
-			c.config.Settings = serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: time.Second,
+			c.config.Settings = serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: time.Second, MaxObservationAge: time.Minute,
 				MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true}}
 			rows := []serving.CapacityRow{}
 			for n, i := range []serving.SchedulerInstance{old, added} {
@@ -680,6 +687,10 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			if scenario != "admitted" {
 				if partial != nil {
 					t.Fatalf("unsafe expansion: %+v", partial)
+				}
+				routing, _ := c.runtime.SchedulerRouting()
+				if !reflect.DeepEqual(routing, snapshot.Routing) {
+					t.Fatalf("current route changed on rejected expansion: %v", routing)
 				}
 				return
 			}
