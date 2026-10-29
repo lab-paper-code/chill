@@ -160,6 +160,17 @@ Pod나 교체 container를 소급해서 고정하지 않는다. route는 단일
 stale 관측·다른 container·알 수 없는 Pod는 해제 증거가 아니며 실패 receipt는
 기존 관측 보존 기간 동안 그대로 남는다.
 
+**반환 acceptance (Cycle 2 C1):** terminal prepare child도 동일 transition parent의
+동결된 action 목록에 ID·동작·Node·instance가 일치하는 terminal sibling의 exact receipt를
+참조한다([SRS SCH-AC-38](../../spec/scheduler/SRS.md#sch-ac-38--작업-범위-예약-충돌-거절과-해제)).
+owner 문자열 일치만으로 공유하지 않으며, 공유 관측은 반환 대상 child·증거 sibling·parent의
+종료보다 모두 뒤이고 Pod UID·container·Node UID·TargetID·profile·전체 정책 ACK를
+검증해야 한다. complete 2개와 partial 1개의 prepare가 만든 신규 Pod 3개가 모두 알려진
+실물로 확인되면 넓은 Workload/Node 범위의 child 예약도 반환한다. 모르는 Pod, stale 관측,
+재시작 container, pending power, active/cancel sibling 또는 다른 frozen parent의 증거가
+남으면 반환하지 않는다. failed/partial receipt와 원래 DAG는 바꾸지 않으며 새 timer나
+보상 선택 조건은 추가하지 않는다.
+
 R4b는 P2 §3 R4의 **보상 트랜잭션/idempotent cleanup** 대안을 기존 퇴역 동작으로
 적용한다([SRS SCH-AC-38](../../spec/scheduler/SRS.md#sch-ac-38--작업-범위-예약-충돌-거절과-해제)).
 failed parent와 같은 owner의 모든 실행이 종료된 뒤, failed/partial prepare가 직접

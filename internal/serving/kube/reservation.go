@@ -218,17 +218,47 @@ func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []co
 	}
 }
 
-// A parent has no physical receipt of its own: only its frozen children's
-// receipts can prove effects, and every proof must postdate the parent failure.
+// Terminal preparations share only their frozen parent's terminal receipts.
+// Owner strings alone do not establish DAG membership or physical identity.
 func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
-	if knownEffectConfirmed(run, pod, physical, run.result.EndedAt) {
-		return true
+	if run.owner == "" || (run.action.Kind != transitionRunKind && run.action.Kind != operationPrepare) {
+		return knownEffectConfirmed(run, pod, physical, run.result.EndedAt)
 	}
-	if run.action.Kind != transitionRunKind || run.owner == "" {
+	parent := run
+	if run.action.Kind == operationPrepare {
+		parent = nil
+		for _, candidate := range c.runs {
+			if candidate.owner == run.owner && candidate.action.Kind == transitionRunKind && candidate.result != nil &&
+				candidate.result.Operation.Target != nil && slices.ContainsFunc(candidate.result.Operation.Target.Actions, func(a serving.Action) bool {
+				return a.ID == run.action.ID && actionEquivalent(a, run.action)
+			}) {
+				parent = candidate
+				break
+			}
+		}
+	}
+	if parent == nil {
+		return knownEffectConfirmed(run, pod, physical, run.result.EndedAt)
+	}
+	if parent.result == nil || parent.result.Operation.Target == nil ||
+		parent.action.Status == nativeOperationRunning || parent.action.Status == nativeOperationCancel {
 		return false
 	}
-	for _, child := range c.runs {
-		if child != run && child.owner == run.owner && knownEffectConfirmed(child, pod, physical, run.result.EndedAt) {
+	for _, sibling := range c.runs {
+		if sibling.owner == parent.owner && (sibling.action.Status == nativeOperationRunning || sibling.action.Status == nativeOperationCancel) {
+			return false
+		}
+	}
+	after := run.result.EndedAt
+	if parent.result.EndedAt.After(after) {
+		after = parent.result.EndedAt
+	}
+	if knownEffectConfirmed(run, pod, physical, after) {
+		return true
+	}
+	for _, action := range parent.result.Operation.Target.Actions {
+		child := c.runs[action.ID]
+		if child != nil && child.owner == parent.owner && actionEquivalent(action, child.action) && knownEffectConfirmed(child, pod, physical, after) {
 			return true
 		}
 	}

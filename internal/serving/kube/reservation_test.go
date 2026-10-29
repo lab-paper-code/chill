@@ -10,6 +10,7 @@ import (
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 )
@@ -290,8 +291,9 @@ func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 	other.ID, other.WorkloadUID = physicalID(otherPodUID, firstfloorStatus(pod).ContainerID), "second"
 	target := &serving.SchedulerCandidate{ID: policy.DecisionID, Instances: []serving.SchedulerInstance{wanted, other}}
 	scope := resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"first", "second"}, Pods: []string{string(pod.UID), otherPodUID}, Instances: []string{id, other.ID}}
-	child := &actionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{Kind: operationRoute, Status: nativeOperationPartial},
+	child := &actionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{ID: "route", Kind: operationRoute, Status: nativeOperationPartial},
 		result: &OperationResult{Operation: Operation{Kind: operationRoute, WorkloadUIDs: scope.Workloads, Target: target}, Status: nativeOperationPartial, EndedAt: ended}}
+	target.Actions = []serving.Action{child.action}
 	parent := &actionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{Kind: transitionRunKind, Status: nativeOperationFailed},
 		result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Status: nativeOperationFailed, EndedAt: ended}}
 	powerRef := serving.NodeReference{Name: "pending-node", UID: "pending-node-uid"}
@@ -327,5 +329,115 @@ func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 	observe()
 	if child.reserved || parent.reserved || power.reserved {
 		t.Fatal("fresh exact policies and settled power did not release the failed owner")
+	}
+}
+
+// Cycle 2 C1: two complete preparations and one partial preparation retain the
+// same three-Node workload footprint, but each receipt knows only its own Pod.
+func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
+	for _, evidence := range []string{"all-known", "unknown-pod", "stale", "parent-stale", "self-stale", restartedEvidence, "node-uid", "slot", "profile", "policy", "pending-power", "active-sibling", "cancel-sibling", "other-parent", "same-owner-unfrozen", "different-action"} {
+		t.Run(evidence, func(t *testing.T) {
+			ended := time.Now().UTC()
+			observed := ended.Add(3 * time.Second)
+			target := &serving.SchedulerCandidate{ID: "frozen-transition"}
+			c := &SchedulerController{runs: map[string]*actionRun{}}
+			var nodes []core.Node
+			var pods []core.Pod
+			var physical []serving.InstanceState
+			var children []*actionRun
+			for i, uid := range []types.UID{"one", "two", "three"} {
+				pod, node, profile, _ := observerSourceFixture()
+				node.Name, node.UID = string(uid), uid
+				pod.UID, pod.Spec.NodeName = uid, node.Name
+				pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
+				ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+				id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+				wanted := serving.SchedulerInstance{ID: "slot-" + string(uid), Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}
+				policy := native.Policy{ProfileID: profile.ID, DecisionID: target.ID, MaxBatchSize: wanted.MaxBatch}
+				action := serving.Action{ID: "prepare-" + string(uid), Kind: operationPrepare, Node: ref, Instance: wanted.ID, Status: nativeOperationComplete}
+				if i == 2 {
+					action.Status = nativeOperationPartial
+				}
+				child := &actionRun{owner: target.ID, reserved: true, action: action, prepareIdentity: id,
+					scope: resourceScope{Workloads: []string{"workload"}, Pods: []string{string(uid)}, Instances: []string{id}},
+					result: &OperationResult{Operation: Operation{ID: action.ID, Kind: operationPrepare, Node: ref, Instance: wanted.ID,
+						WorkloadUIDs: []string{"workload"}, Target: target,
+						Prepare: &PrepareSpec{Instance: wanted, Config: native.Config{Policy: policy}, Owner: &serving.WorkloadReference{UID: "workload"}}},
+						Status: action.Status, EndedAt: ended}}
+				if i == 2 {
+					child.result.Error = timeoutOutcome
+				}
+				target.Instances = append(target.Instances, wanted)
+				target.Actions = append(target.Actions, action)
+				c.runs[action.ID] = child
+				children = append(children, child)
+				nodes, pods = append(nodes, *node), append(pods, *pod)
+				physical = append(physical, serving.InstanceState{ID: id, PodUID: string(uid), Node: ref, TargetID: wanted.ID,
+					Ready: true, ObservedAt: observed, Native: &native.State{Ready: true,
+						Metadata: native.Metadata{ProfileID: profile.ID, DecisionID: target.ID, Policy: policy}}})
+			}
+			scope := resourceScope{Workloads: []string{"workload"}}
+			for _, node := range nodes {
+				scope.Nodes = append(scope.Nodes, serving.NodeReference{Name: node.Name, UID: string(node.UID)})
+			}
+			for _, child := range children {
+				child.scope.Nodes = scope.Nodes
+				c.state.Results = append(c.state.Results, *child.result)
+			}
+			parent := &actionRun{owner: target.ID, reserved: true, scope: scope,
+				action: serving.Action{ID: "parent", Kind: transitionRunKind, Status: nativeOperationFailed},
+				result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target},
+					Status: nativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "child failed"}}
+			c.runs["parent"] = parent
+			switch evidence {
+			case "unknown-pod":
+				pods[1].UID = "unknown"
+			case "stale":
+				physical[1].ObservedAt = ended
+			case "parent-stale":
+				physical[1].ObservedAt = parent.result.EndedAt
+			case "self-stale":
+				children[2].result.EndedAt = observed
+			case restartedEvidence:
+				pods[1].Status.ContainerStatuses[0].ContainerID += restartedContainerSuffix
+			case "node-uid":
+				physical[1].Node.UID = "replacement"
+			case "slot":
+				physical[1].TargetID = "unknown-slot"
+			case "profile":
+				physical[1].Native.Metadata.ProfileID = "unknown-profile"
+			case "policy":
+				physical[1].Native.Metadata.Policy.MaxBatchSize++
+			case "pending-power":
+				nodes[1].Labels = map[string]string{chillmeta.PowerModeState: chillmeta.PowerModePending}
+			case "active-sibling":
+				children[1].action.Status = nativeOperationRunning
+			case "cancel-sibling":
+				children[1].action.Status = nativeOperationCancel
+			case "other-parent":
+				children[1].owner = "other-transition"
+			case "same-owner-unfrozen":
+				target.Actions = append(target.Actions[:1:1], target.Actions[2])
+			case "different-action":
+				children[1].action.Instance = "other-slot"
+			}
+			c.releaseObservedScopes(nodes, pods, physical, observed)
+			snapshot, lost := c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute)
+			wantReleased := evidence == "all-known"
+			if (c.authorize(Operation{WorkloadUID: "workload"}) == nil) != wantReleased ||
+				(len(snapshot.Reservations) == 0) != wantReleased {
+				t.Fatalf("%s: reservations=%+v, wantReleased=%t", evidence, snapshot.Reservations, wantReleased)
+			}
+			for _, child := range children {
+				if child.reserved == wantReleased {
+					t.Fatalf("%s: child %s reserved=%t", evidence, child.action.ID, child.reserved)
+				}
+			}
+			if len(lost) != 0 || parent.result.Status != nativeOperationFailed || parent.result.Error != "child failed" ||
+				children[2].result.Status != nativeOperationPartial || children[2].result.Error != timeoutOutcome ||
+				len(c.state.Results) != 3 || c.state.Results[2].Status != nativeOperationPartial {
+				t.Fatal("shared return proof rewrote or discarded terminal receipts")
+			}
+		})
 	}
 }
