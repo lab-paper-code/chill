@@ -186,7 +186,7 @@ class Inputs:
                     raise ValueError('expected object')
                 yield row
             except ValueError as exc:
-                self.errors.append({'path': str(path), 'line': index, 'error': str(exc)})
+                self.errors.append({'path': str(path), 'line': index, 'content': line[:80], 'error': str(exc)})
 
     def pages(self, folder, key):
         rows, metadata = [], []

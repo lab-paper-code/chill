@@ -5,6 +5,8 @@ No implicit phase advance, retry, runtime build, fault injection, or guessed pha
 Settings GET/PUT use at least 30s (or the larger configured apiSeconds).
 A timed-out settings PUT is never resent: matching GET readback confirms application.
 Factor reset polls fresh physical instance ACKs for timeboxes.factorAckWaitSeconds (default 120s).
+Client JSONL non-object/malformed lines remain in raw evidence and judge coverage;
+they do not stop collection or replace missing end-counter evidence.
 """
 import argparse
 import base64
@@ -404,6 +406,7 @@ def self_check():
         else:
             raise AssertionError('Invalid d25 evidence accepted')
     self_check_factor()
+    self_check_client_jsonl(analysis)
     print('PASS E5 receive-origin SLO, scheduled reference, generator quality and full planned issuance; offline only')
 
 def self_check_factor():
@@ -478,6 +481,55 @@ def self_check_factor():
             assert all(body['timeboxSeconds']==(120 if bad is None else 3) for body in acks)
             assert clock[0]==(2 if bad in ('cap-delay','stale-delay','missing-delay') else 0)
     print('PASS E5 factor paired maxBatch, delayed fresh ACK, empty/owner served UID and retained foreign-UID rejection; offline only')
+def self_check_client_jsonl(analysis):
+    """Synthetic trailing stderr fixture; run the real judge without cluster access."""
+    import ast
+    import tempfile
+    from types import SimpleNamespace
+    tree=ast.parse(Path(__file__).read_text())
+    selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('judge','reported_power')]
+    at='2026-10-29T00:00:00Z'
+    row={'requestID':'fixture-response','requestIndex':0,'scheduledOffsetNs':0,
+         'scheduledMonotonicNS':100,'sentMonotonicNS':100,'finishedMonotonicNS':200,
+         'sentAtUnixNS':1793232000000000000,'status':200}
+    final={'outcome':'completed','executionComplete':True,'elapsedNanos':100,'receivedAt':at}
+    indexed={'fixture-uid':{'summary':{'outcomes':{'completed':1}},'finals':{'fixture-response':final},
+                            'receivedAtNS':{},'errors':[],'sources':[]}}
+    raw=SimpleNamespace(scheduler_events=lambda folder:([],{'complete':True}),
+                        iter_request_indexes=lambda *args,**kwargs:indexed)
+    with tempfile.TemporaryDirectory(prefix='e5-client-jsonl-') as temporary:
+        folder=Path(temporary)
+        stage={'id':'E5-1','seconds':1,'traces':{'fixture':{'offered':1,'offsetsNS':[0]}},'parts':[]}
+        config={'workloads':[{'name':'fixture','uid':'fixture-uid','slo':{'percentile':95,'targetLatencyNanos':1000}}],
+                'mSeconds':0,'inputs':{'scheduler':str(folder/'scheduler.json')},
+                'collection':{'archiveRefs':str(folder/'archives.json')},
+                'generatorQuality':{'latenessToleranceNS':50_000_000,'maxExceedingFraction':.01}}
+        phase={'stage':stage,'startUTC':at,'endUTC':'2026-10-29T00:00:01Z',
+               'drainedUTC':'2026-10-29T00:00:02Z','starts':{'fixture':{'monotonicNS':100}},'status':'DRAINED_NOT_EVALUATED'}
+        payloads={'phase.json':phase,'scheduler.json':{'snapshot':{'options':[]}},'archives.json':{},
+                  'power.json':{'complete':True,'wholePoolJoules':1,'activePoolJoules':1},
+                  'power-drain-inclusive.json':{'complete':True,'wholePoolJoules':1,'activePoolJoules':1}}
+        for name,value in payloads.items():(folder/name).write_text(json.dumps(value))
+        source=json.dumps(row)+'\nTraceback (most recent call last):\n'
+        path=folder/'fixture-client.jsonl';path.write_text(source)
+        ns=dict(globals(),D2=HERE/'d2',E5={'thermalSlackNodes':[]},
+                load_binding=lambda _: {'config':config,'limitations':[]},
+                load=lambda path:json.loads(Path(path).read_text()),
+                module=lambda name,path:analysis if name=='d2analyze' else raw,
+                now=lambda:at,ref=lambda path:{'path':str(path)},
+                save=lambda path,value:Path(path).write_text(json.dumps(value)))
+        exec(compile(ast.Module(body=selected,type_ignores=[]),__file__,'exec'),ns)
+        result=ns['judge'](None,folder)
+        assert result['status']=='MEASURED_DESCRIPTIVE',result
+        assert result['requests']['fixture']['clientRows']==result['requests']['fixture']['deadlineSuccess']==1
+        assert result['coverage']['malformedLines']==1
+        first=result['coverage']['firstMalformedLine']
+        assert first['line']==2 and first['content']=='Traceback (most recent call last):'
+        assert path.read_text()==source and (folder/'judgment.json').exists()
+        assert result['sources'][str(folder/'cgmon.log')]['present'] is False
+    print('PASS E5 trailing traceback retained; aggregation completes with malformedLines=1; missing counters remain unknown; offline only')
+
+
 
 
 # This local check must not require an operational environment or cluster binding.
@@ -1219,7 +1271,12 @@ class CPO:
                     name,log=key.data;lines,buffers[name],eof=self.d.read_stream_lines(key.fileobj,buffers[name])
                     if eof:sel.unregister(key.fileobj)
                     for line in lines:
-                        log.write(line+'\n');log.flush();row=json.loads(line)
+                        log.write(line+'\n');log.flush()
+                        try:
+                            row=json.loads(line)
+                        except ValueError:
+                            continue
+                        if not isinstance(row,dict):continue
                         if row.get('e5Event')=='ready':
                             ready.add(name); jobname=next(j for n,j,u in jobs if n==name); found=self.io.k(['get','pods','-l','job-name='+jobname,'-o','json'])['items']
                             uid=next(u for n,j,u in jobs if n==name)
@@ -1700,6 +1757,8 @@ def judge(binding, folder):
         except (OSError,ValueError,KeyError,TypeError) as exc:
             failure_capture={'status':'UNMEASURED','reason':str(exc),'sourcePath':str(folder/'failure-events.json')}
     result={'schema':'e5-judgment.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; raw references/configuration excluded from public indexes','at':now(),'status':'NOT_READY' if unknown else 'FAIL' if any(r['D1']=='FAIL' for r in results.values()) else 'MEASURED_DESCRIPTIVE','notReadyReasons':unknown,'requests':results,'Tick':sched,'cgroups':cg,'power':power,'thermal':thermals,'D6':'Observed thermal bins only; unknown active/latched remains unknown, profile slack must use bound source samples','rawErrors':inp.errors,'sources':inp.sources,'limitations':b['limitations'],'accounting':{'specScenarioDenominator':7,'planRowDenominator':9,'failureScenario':failure_capture['status'] if failure_capture else 'NOT_EXERCISED_IN_THIS_ROW'}}
+    malformed=[error for error in inp.errors if error.get('line') is not None and Path(error['path']).name in {w['name']+'-client.jsonl' for w in c['workloads']}]
+    result['coverage']={'malformedLines':len(malformed),'firstMalformedLine':malformed[0] if malformed else None}
     result['failureScenarioEvidence']=failure_capture
     result['energyBelowResolution']={'profiles':[{'profileID':profile['id'],'batch':batch['batch'],
         'energyPerInputJoules':batch.get('energyPerInputJoules'),'energyBelowResolution':True}

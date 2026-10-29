@@ -59,6 +59,13 @@ reduces it nor suppresses a send. Thread creation failures produce
 or the producer's drained event. They remain in the planned denominator and
 fail full-supply judging.
 
+Producer JSONL uses stdout; Python exceptions/tracebacks use stderr. Kubernetes
+`logs -f` merges the container's two streams, even when kubectl's own stderr is
+captured separately. E5 retains those original client-log lines, skips malformed
+or non-object JSON rows during collection/judging, and reports their count and
+first line number/content (first 80 characters) in `judgment.json`'s `coverage`.
+Missing end counters remain missing evidence; they are never synthesized.
+
 The `feat/loadgen-async` branch was inspected before this cutover: it dispatches
 independent asyncio tasks, but caps attempts at `workers`, marks excess arrivals
 `not_issued`, stops late sends at the issue boundary, and measures latency from
