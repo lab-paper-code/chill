@@ -441,3 +441,68 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 		})
 	}
 }
+
+func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
+	for _, evidence := range []string{"registered", "unregistered", "stale", "active", "other-owner"} {
+		t.Run(evidence, func(t *testing.T) {
+			pod, node, profile, _ := observerSourceFixture()
+			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
+			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+			id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			ended := time.Now().UTC()
+			observed := ended.Add(3 * time.Second)
+			wanted := serving.SchedulerInstance{ID: id, Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}
+			routeAction := serving.Action{ID: "handoff", Kind: operationRoute, Status: nativeOperationComplete}
+			removeAction := serving.Action{ID: "cleanup", Kind: operationRemove, Node: ref, Instance: "retiring", Status: nativeOperationFailed}
+			target := &serving.SchedulerCandidate{ID: "original", Instances: []serving.SchedulerInstance{wanted}, Actions: []serving.Action{routeAction, removeAction}}
+			scope := resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}, Pods: []string{string(pod.UID)}, Instances: []string{id}}
+			handoff := &actionRun{owner: target.ID, action: routeAction,
+				result: &OperationResult{Operation: Operation{Kind: operationRoute, WorkloadUID: "workload", Target: target}, Status: nativeOperationComplete, EndedAt: ended}}
+			cleanupScope := resourceScope{Nodes: []serving.NodeReference{{Name: "retiring-node", UID: "retiring-node-uid"}}, Workloads: []string{"workload"}, Pods: []string{"retiring-pod"}}
+			cleanup := &actionRun{owner: target.ID, reserved: true, scope: cleanupScope, action: removeAction,
+				result: &OperationResult{Operation: Operation{Kind: operationRemove}, Status: nativeOperationFailed, EndedAt: ended.Add(time.Second), Error: timeoutOutcome}}
+			refreshTarget := &serving.SchedulerCandidate{ID: "cleanup-refresh", Instances: []serving.SchedulerInstance{wanted}}
+			refresh := &actionRun{owner: target.ID, scope: scope, action: serving.Action{ID: "refresh", Kind: operationRoute, Status: nativeOperationComplete},
+				result: &OperationResult{Operation: Operation{Kind: operationRoute, WorkloadUID: "workload", Target: refreshTarget},
+					Status: nativeOperationComplete, EndedAt: ended}}
+			parent := &actionRun{owner: target.ID, reserved: true, scope: scope, cleanup: true, cleanupRoutes: map[string]*actionRun{"workload": refresh},
+				action: serving.Action{Kind: transitionRunKind, Status: nativeOperationFailed},
+				result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Status: nativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "cleanup failed"}}
+			parent.scope.Nodes = append([]serving.NodeReference{ref}, cleanupScope.Nodes...)
+			c := &SchedulerController{runs: map[string]*actionRun{"parent": parent, routeAction.ID: handoff, removeAction.ID: cleanup, "refresh": refresh}}
+			state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: observed,
+				Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, DecisionID: refreshTarget.ID,
+					Policy: native.Policy{ProfileID: profile.ID, DecisionID: refreshTarget.ID, MaxBatchSize: wanted.MaxBatch}}}}
+			switch evidence {
+			case "unregistered":
+				parent.cleanupRoutes = nil
+			case "stale":
+				state.ObservedAt = parent.result.EndedAt
+			case "active":
+				refresh.action.Status = nativeOperationRunning
+			case "other-owner":
+				refresh.owner = "unrelated"
+			}
+			retiring := pod.DeepCopy()
+			retiring.UID = "retiring-pod"
+			retiring.Spec.NodeName = "retiring-node"
+			retiringNode := core.Node{ObjectMeta: meta.ObjectMeta{Name: "retiring-node", UID: "retiring-node-uid"}}
+			c.releaseObservedScopes([]core.Node{*node, retiringNode}, []core.Pod{*pod, *retiring}, []serving.InstanceState{state}, observed)
+			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute)
+			if !parent.reserved || !cleanup.reserved {
+				t.Fatal("refresh ACK released an unconfirmed cleanup responsibility")
+			}
+			// Retirement is now observed absent; only the registered refresh can
+			// prove the survivor's current policy, not the original handoff.
+			c.releaseObservedScopes([]core.Node{*node, retiringNode}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
+			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute)
+			if (c.authorize(Operation{WorkloadUID: "workload"}) == nil) != (evidence == "registered") {
+				t.Fatalf("%s: unexpected cleanup reservation return", evidence)
+			}
+			if parent.result.Status != nativeOperationFailed || parent.result.Error != "cleanup failed" ||
+				cleanup.result.Status != nativeOperationFailed || cleanup.result.Error != timeoutOutcome {
+				t.Fatal("refresh return proof rewrote failed cleanup receipts")
+			}
+		})
+	}
+}

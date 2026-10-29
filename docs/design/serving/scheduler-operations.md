@@ -170,6 +170,9 @@ owner 문자열 일치만으로 공유하지 않으며, 공유 관측은 반환 
 재시작 container, pending power, active/cancel sibling 또는 다른 frozen parent의 증거가
 남으면 반환하지 않는다. failed/partial receipt와 원래 DAG는 바꾸지 않으며 새 timer나
 보상 선택 조건은 추가하지 않는다.
+성공 handoff 뒤 parent의 `cleanupRoutes`에 명시적으로 등록된 terminal route refresh도
+동일한 exact identity·정책·종료 이후 관측 검사를 거쳐 증거로 사용한다. cleanup이 실패해도
+최신 ACK를 원래 정책으로 오인하지 않으며, 다른 실물 책임이 해소된 뒤 예약을 반환한다.
 
 R4b는 P2 §3 R4의 **보상 트랜잭션/idempotent cleanup** 대안을 기존 퇴역 동작으로
 적용한다([SRS SCH-AC-38](../../spec/scheduler/SRS.md#sch-ac-38--작업-범위-예약-충돌-거절과-해제)).

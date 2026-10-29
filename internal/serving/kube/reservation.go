@@ -262,6 +262,13 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 			return true
 		}
 	}
+	// Cleanup refreshes are explicitly adopted by reserveRun after handoff;
+	// they are not part of the original frozen goal's action list.
+	for _, refresh := range parent.cleanupRoutes {
+		if refresh != nil && refresh.owner == parent.owner && knownEffectConfirmed(refresh, pod, physical, after) {
+			return true
+		}
+	}
 	return false
 }
 
