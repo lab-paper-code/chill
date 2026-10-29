@@ -591,3 +591,8 @@
 ## 2026-10-29 — 2회차 잔여 행 실행 방식(사용자 결정 B 축소)
 
 - 새 재개 장치 금지. factor의 기존 pre-state 복원(maxBatch 포함, d6ebf33c/59533eca) 경로로 control-222 `static-selection.json`을 물리 복원 → 빠진 행만: static E5-3~6 → release → full E5-4~7. #222 E5-0~3·S1~2는 동일 rev104라 그대로 사용. 복원 직후 fingerprint = #222 E5-3 종료 상태 1회 확인, 다르면 정지. 오프라인 dry-run 먼저 → control 223. 행 경계마다 디스크 여유 기록, 310GB 미만이면 정지. 표: "#222+#223 합성, 같은 rev104 소스".
+
+## 2026-10-30 — E5 2회차 완료(#222+#223, rev104)와 spec 기입
+
+- 전구간 완료. MNV 실패 1→2회차: E5-1 10,225→296, E5-2 1,954→0, E5-6 9,264→0, E5-7 0→0; p95 MNV E5-6 395→147ms, E5-7 402→146ms. E5-4/5는 static도 동일 악화(MNV κ 119.6→91.9 고정 배치 차이) → CHILL 효과 아님(`agent://Round2Regress`). spec 기입 `90c58155`.
+- 남은 과제(E5 뒤): kubeedge cloudcore nodeName→nodeSelector, genesis1 디스크 보존 규칙, PodGC 임계, kube client rate limiter(prepare 194s), summarize 메모리(5.6GB JSON), 하네스 단계 재개, E5-7 자동 주입, 생성기 TLS keep-alive, U9 대시보드, U11 게이트웨이 분리(G2 코드 있음·미배선).
