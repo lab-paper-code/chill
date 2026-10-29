@@ -1816,6 +1816,36 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	if d := capacityDecideForTest(t, s, snap, rows); !replaced(d) {
 		t.Fatalf("steady 30 req/s must replace a: %+v %v", d.Target, d.Reasons)
 	}
+	// replacement-01/full-E5-1-02: the reverse choice just 15–17 seconds
+	// after the preceding transition completed used to pass the same payback.
+	for _, elapsed := range []time.Duration{15 * time.Second, 17 * time.Second} {
+		snap.Replacements = []SchedulerReplacement{{NodeUID: n2.UID, WorkloadUID: "w1", ProfileID: a.Profile.ID, CompletedAt: snap.At.Add(-elapsed)}}
+		if d := capacityDecideForTest(t, s, snap, rows); replaced(d) || !slices.Contains(d.Reasons, schedulerReplacementDwell+":n2") {
+			t.Fatalf("optional reverse after %v must dwell: %+v %v", elapsed, d.Target, d.Reasons)
+		}
+	}
+	snap.Replacements[0].CompletedAt = snap.At.Add(-s.ComparisonPeriod)
+	if d := capacityDecideForTest(t, s, snap, rows); !replaced(d) {
+		t.Fatalf("replacement must resume at dwell boundary: %+v %v", d.Target, d.Reasons)
+	}
+	snap.Replacements[0].CompletedAt = snap.At.Add(-15 * time.Second)
+	p := capacityPlannerForTest(t, s, snap, rows)
+	best := capacitySearchForTest(t, p)
+	for _, plans := range p.plans {
+		for w := range plans[0].items {
+			for k := range plans[0].items[w] {
+				plans[0].items[w][k].kappa = 1
+			}
+		}
+		p.sum(plans[0])
+	}
+	if keep := p.evaluate(make([]int, len(p.plans)), 0); keep.feasible {
+		t.Fatal("recovery fixture keep must be infeasible")
+	}
+	if got := p.payback(best); !slices.Equal(got.choice, best.choice) || len(got.dwelling) != 0 {
+		t.Fatalf("keep infeasible recovery must bypass dwell: %+v", got)
+	}
+	snap.Replacements = nil
 	load(35, 35, 35, 35, 35, 5)
 	if d := capacityDecideForTest(t, s, snap, rows); replaced(d) || !slices.Contains(d.Reasons, schedulerReplacementUnpaid+":n2") {
 		t.Fatalf("replacement unpaid at 5 req/s was chosen: %+v %v", d.Target, d.Reasons)

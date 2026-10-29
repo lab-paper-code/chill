@@ -38,6 +38,7 @@ const (
 	// schedulerReplacementUnpaid names a node whose replacement did not repay
 	// its transition at the least load of the observation window.
 	schedulerReplacementUnpaid = "ReplacementUnpaid"
+	schedulerReplacementDwell  = "ReplacementDwell"
 	// schedulerGainWithinUncertainty keeps the current configuration when the
 	// chosen transition saves no more than the selected evidence's conditional B.
 	schedulerGainWithinUncertainty = "TransitionGainWithinUncertainty"
@@ -1306,7 +1307,8 @@ type capacityResult struct {
 	rows                      [][]string
 	sums                      [][2]float64
 	// unpaid names the Nodes whose replacement payback reverted to keep.
-	unpaid []string
+	unpaid   []string
+	dwelling []string
 	// withinUncertainty marks keep chosen over a transition whose gain is
 	// within the measurement uncertainty (minimumGain).
 	withinUncertainty bool
@@ -1512,6 +1514,7 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		alt[n] = 0
 		r := p.routeOf(alt)
 		kept := p.evaluate(alt, r)
+		dwelling := !emptySaving && p.replacementDwelling(n, plan)
 		paid := p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route)
 		bound, withinUncertainty := 0.0, false
 		if emptySaving {
@@ -1519,10 +1522,15 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 			withinUncertainty = kept.joules-best.joules <= bound
 			paid = paid && !withinUncertainty
 		}
-		if !emptySaving && !kept.feasible || !p.admits(&kept) || paid {
+		if !emptySaving && !kept.feasible || !p.admits(&kept) || paid && !dwelling {
 			continue
 		}
-		kept.unpaid = append(slices.Clone(best.unpaid), p.snapshot.Nodes[n].Node.UID)
+		kept.unpaid, kept.dwelling = slices.Clone(best.unpaid), slices.Clone(best.dwelling)
+		if dwelling {
+			kept.dwelling = append(kept.dwelling, p.snapshot.Nodes[n].Node.UID)
+		} else {
+			kept.unpaid = append(kept.unpaid, p.snapshot.Nodes[n].Node.UID)
+		}
 		kept.withinUncertainty = best.withinUncertainty || withinUncertainty
 		kept.gainUncertainty = best.gainUncertainty
 		if withinUncertainty {
@@ -1531,6 +1539,31 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		best = kept
 	}
 	return best
+}
+
+// A feasible alternative retaining this Node makes its replacement optional.
+// Missing history, different UIDs/profiles and unhealthy executors never hold recovery.
+func (p *capacityPlanner) replacementDwelling(n int, plan *capacityPlan) bool {
+	dwell := p.settings.ReplacementDwell
+	if dwell == 0 {
+		dwell = p.settings.ComparisonPeriod
+	}
+	for _, old := range p.plans[n][0].instances {
+		if old.Profile == nil || !old.Ready || old.Stopped || slices.ContainsFunc(plan.instances, func(i SchedulerInstance) bool {
+			return i.ID == old.ID
+		}) {
+			continue
+		}
+		for _, r := range p.snapshot.Replacements {
+			age := p.snapshot.At.Sub(r.CompletedAt)
+			if r.NodeUID == old.Node.UID && r.WorkloadUID == old.WorkloadUID && r.ProfileID == old.Profile.ID &&
+				!r.CompletedAt.IsZero() && age >= 0 && age < dwell &&
+				slices.ContainsFunc(plan.instances, func(i SchedulerInstance) bool { return i.WorkloadUID == old.WorkloadUID }) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // minimumGain requires nominal gain over T to exceed the deterministic
@@ -1805,6 +1838,9 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	for _, node := range best.unpaid {
 		decision.Reasons = append(decision.Reasons, schedulerReplacementUnpaid+":"+node)
+	}
+	for _, node := range best.dwelling {
+		decision.Reasons = append(decision.Reasons, schedulerReplacementDwell+":"+node)
 	}
 	if best.withinUncertainty {
 		decision.Reasons = append(decision.Reasons, schedulerGainWithinUncertainty)

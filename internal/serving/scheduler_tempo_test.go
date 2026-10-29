@@ -40,6 +40,27 @@ func TestSchedulerTwoTempoSettings(t *testing.T) {
 	}
 }
 
+func TestSchedulerReplacementDwellSettings(t *testing.T) {
+	s, _ := schedulerFixture()
+	margin := 0.0
+	in := SchedulerSettingsInput{SchedulerSettings: s, CompletionMarginMS: &margin}
+	if got, err := in.Settings(); err != nil || got.ReplacementDwell != 0 {
+		t.Fatalf("omitted dwell must reuse comparison period: %+v %v", got, err)
+	}
+	for _, d := range []time.Duration{-1, 0, 17 * time.Second, time.Duration(math.MaxInt64)} {
+		in.ReplacementDwell = &d
+		got, err := in.Settings()
+		if (err == nil) != (d >= 0) || err == nil && got.ReplacementDwell != d {
+			t.Fatalf("dwell %v: %+v %v", d, got, err)
+		}
+	}
+	for _, value := range []string{"9223372036854775808", "1.5"} {
+		if json.Unmarshal([]byte(`{"replacementDwellNanos":`+value+`}`), &in) == nil {
+			t.Fatalf("accepted dwell %s", value)
+		}
+	}
+}
+
 func TestSchedulerTempoDemandWindow(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ControlInterval = time.Second, time.Second

@@ -93,6 +93,7 @@ type actionRun struct {
 	inheritedReservation bool
 	cleanup              bool
 	cleanupRoute         *actionRun
+	replacements         []serving.SchedulerReplacement
 }
 type SchedulerController struct {
 	mu         sync.Mutex
@@ -103,17 +104,19 @@ type SchedulerController struct {
 	observer   *Observer
 	operations *Operations
 	// measurement acts only on measurement POOL Nodes: operation measurements and hand-back.
-	measurement        *Operations
-	observationLog     *serving.ObservationLog
-	capacity           *serving.CapacityTable
-	config             SchedulerControllerConfig
-	state              SchedulerControllerState
-	bootstrapStartedAt time.Time
-	tempo              serving.SchedulerTempo
-	runs               map[string]*actionRun
-	ctx                context.Context
-	cancel             context.CancelFunc
-	wg                 sync.WaitGroup
+	measurement           *Operations
+	observationLog        *serving.ObservationLog
+	capacity              *serving.CapacityTable
+	config                SchedulerControllerConfig
+	state                 SchedulerControllerState
+	bootstrapStartedAt    time.Time
+	tempo                 serving.SchedulerTempo
+	replacements          []serving.SchedulerReplacement
+	replacementObservedAt time.Time
+	runs                  map[string]*actionRun
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	wg                    sync.WaitGroup
 	// powerTargets holds, by "<Node UID>/<mode>", the maximum actuation
 	// duration of each mode the last capture found requestable.
 	powerTargets map[string]time.Duration
@@ -422,6 +425,19 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var lost []OperationResult
+	settings := c.config.Settings
+	gap := !c.replacementObservedAt.IsZero() && (now.Before(c.replacementObservedAt) || now.Sub(c.replacementObservedAt) > settings.MaxObservationAge+settings.ControlInterval)
+	if gap {
+		c.replacements = nil
+	}
+	c.replacementObservedAt = now
+	// Forget replaced UIDs/profiles and missing or unhealthy observations.
+	c.replacements = slices.DeleteFunc(c.replacements, func(r serving.SchedulerReplacement) bool {
+		return !slices.ContainsFunc(snapshot.Instances, func(i serving.SchedulerInstance) bool {
+			return i.Node.UID == r.NodeUID && i.WorkloadUID == r.WorkloadUID && i.Profile != nil &&
+				i.Profile.ID == r.ProfileID && i.Ready && !i.Stopped
+		})
+	})
 	// A timeout can cancel the final Capture itself. Freeze the first observed
 	// preparing executor while its operation is still live, never after failure.
 	for _, run := range c.runs {
@@ -479,6 +495,20 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 		if complete {
 			parent.action.Status = nativeOperationComplete
 			parent.result.Status, parent.result.EndedAt = nativeOperationComplete, now
+			if !gap {
+				for _, r := range parent.replacements {
+					if slices.ContainsFunc(snapshot.Instances, func(i serving.SchedulerInstance) bool {
+						return i.Node.UID == r.NodeUID && i.WorkloadUID == r.WorkloadUID && i.Profile != nil &&
+							i.Profile.ID == r.ProfileID && i.Ready && !i.Stopped
+					}) {
+						r.CompletedAt = now
+						c.replacements = slices.DeleteFunc(c.replacements, func(old serving.SchedulerReplacement) bool {
+							return old.NodeUID == r.NodeUID && old.WorkloadUID == r.WorkloadUID
+						})
+						c.replacements = append(c.replacements, r)
+					}
+				}
+			}
 			c.releaseOwnerLocked(parent.owner)
 		}
 	}
@@ -491,6 +521,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 	}
 	snapshot.Actions = c.actionsLocked(now)
 	snapshot.Reservations = c.reservationsLocked(snapshot)
+	snapshot.Replacements = slices.Clone(c.replacements)
 	return snapshot, lost
 }
 
@@ -913,6 +944,23 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	}
 	started := time.Now()
 	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Status: nativeOperationRunning, StartedAt: started}, started: started}
+	// Freeze only physical same-Node/Workload replacements, not route-only
+	// policy changes or added capacity. Completion is observed in reconcileSnapshot.
+	for _, next := range target.Instances {
+		if next.Profile == nil {
+			continue
+		}
+		for _, old := range c.state.Snapshot.Instances {
+			if old.Node == next.Node && old.WorkloadUID == next.WorkloadUID && old.Profile != nil &&
+				old.Profile.ID != next.Profile.ID && slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
+				return a.Kind == operationRemove && a.Instance == old.ID
+			}) {
+				parent.replacements = append(parent.replacements, serving.SchedulerReplacement{
+					NodeUID: next.Node.UID, WorkloadUID: next.WorkloadUID, ProfileID: next.Profile.ID,
+				})
+			}
+		}
+	}
 	if !c.reserveRun(id, parent, operation) {
 		return
 	}
