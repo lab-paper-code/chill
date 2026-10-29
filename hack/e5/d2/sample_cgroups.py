@@ -17,6 +17,7 @@ import datetime as dt, glob, json, pathlib, subprocess, sys, time
 node, duration, phase = sys.argv[1], float(sys.argv[2]), sys.argv[3]
 end=time.monotonic()+duration
 containers=[]; next_resolve=0; next_thermal=0
+initial=None
 
 def emit(row):
     row.update(at=dt.datetime.now(dt.timezone.utc).isoformat(),node=node,phase=phase)
@@ -59,7 +60,9 @@ while time.monotonic()<end:
     if began>=next_resolve:
         try:
             found=[]
-            for c in run(['sudo','-n','crictl','ps','-o','json']).get('containers',[]):
+            candidates=initial if initial is not None else run(['sudo','-n','crictl','ps','-o','json']).get('containers',[])
+            initial=None
+            for c in candidates:
                 labels=c.get('labels',{}); ns=labels.get('io.kubernetes.pod.namespace'); name=c.get('metadata',{}).get('name')
                 pod=labels.get('io.kubernetes.pod.name','')
                 role=None
@@ -68,22 +71,31 @@ while time.monotonic()<end:
                 elif ns=='chill-system' and name=='firstfloor': role='native'
                 elif ns=='chill-system' and name=='load' and pod.startswith('d2-before-'): role='client'
                 if role is None: continue
-                cid=c['id']; inspected=run(['sudo','-n','crictl','inspect',cid]); pid=inspected.get('info',{}).get('pid')
-                if not pid: raise RuntimeError('container PID absent '+cid)
-                group=text('/proc/'+str(pid)+'/cgroup')
-                if group is None: raise RuntimeError('unreadable cgroup '+cid)
+                cid=c['id']; error=None
+                try:
+                    inspected=run(['sudo','-n','crictl','inspect',cid]) if cid else {}
+                    pid=inspected.get('info',{}).get('pid')
+                except RuntimeError as exc:
+                    pid=None; error=str(exc)
+                group=text('/proc/'+str(pid)+'/cgroup') if pid else None
                 paths={}
-                for line in group.splitlines():
+                for line in (group or '').splitlines():
                     _, controllers, rel=line.split(':',2)
                     for controller in controllers.split(','): paths[controller]=rel
-                found.append(dict(role=role,containerID=cid,pod=pod,podUID=labels.get('io.kubernetes.pod.uid'),pid=pid,paths=paths,restartCount=c.get('metadata',{}).get('attempt')))
+                found.append(dict(role=role,containerID=cid,pod=pod,podUID=labels.get('io.kubernetes.pod.uid'),pid=pid,paths=paths,procCgroup=group,pidAbsent=not bool(pid and group),pidError=error,restartCount=c.get('metadata',{}).get('attempt')))
             containers=found
-            emit(dict(kind='inventory',containers=[{k:v for k,v in c.items() if k!='paths'} for c in containers]))
+            emit(dict(kind='inventory',containers=[{k:v for k,v in c.items() if k not in ('paths','procCgroup')} for c in containers]))
         except Exception as e: emit(dict(kind='collector-error',operation='resolve',error=str(e)))
         next_resolve=began+15
     for c in containers:
-        row={k:v for k,v in c.items() if k not in ('pid','paths')}
-        row.update(kind='cgroup',**read_cgroup_counters(c['paths']))
+        row={k:v for k,v in c.items() if k not in ('pid','paths','procCgroup')}
+        absent=c['pidAbsent'] or text('/proc/'+str(c['pid'])+'/cgroup') != c['procCgroup']
+        row.update(kind='cgroup',pidAbsent=absent)
+        if absent:
+            row.update(cpuUsageNanos=None,nrThrottled=None,throttledNanos=None,memoryBytes=None)
+        else:
+            row.update(read_cgroup_counters(c['paths']))
+        if absent or row.get('cpuUsageNanos') is None: next_resolve=0
         emit(row)
     if began>=next_thermal:
         zones=[]

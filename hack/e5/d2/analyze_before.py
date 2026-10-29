@@ -373,6 +373,7 @@ def telemetry(inputs, start, end):
             'bracketsWindow': start is not None and end is not None and samples[0]['_t'] <= start and samples[-1]['_t'] >= end,
             'cadenceSeconds': stats(intervals), 'intervalsOverNominalOneSecond': [v for v in intervals if v > 1],
             'counterResets': resets, 'missingCounterIntervals': missing, 'cpuIntervalSamples': len(cpu_seconds),
+            'pidAbsentSamples': sum(bool(r.get('pidAbsent')) for r in samples),
             'cpuObservedSeconds': sum(seconds) if seconds else None,
             'cpuMeanCores': sum(cpu_seconds) / sum(seconds) if seconds and sum(seconds) else None,
             'nrThrottledDelta': sum(throttle) if throttle else None,
@@ -395,6 +396,7 @@ def telemetry(inputs, start, end):
                 covered.append([a, b])
         seconds = sum(b - a for a, b in covered)
         roles[role] = {'identities': len(selected), 'cpuObservedWallSeconds': seconds or None,
+            'pidAbsentSamples': sum(s['pidAbsentSamples'] for s in selected),
             'sourcePreference': 'cumulative' if role in exact_roles else 'cgmon-delta',
             'cpuMeanCores': sum(s['cpuMeanCores'] * s['cpuObservedSeconds'] for s in selected
                                   if s['cpuMeanCores'] is not None) / seconds if seconds else None,
@@ -404,12 +406,14 @@ def telemetry(inputs, start, end):
                 if selected and all(s['nrThrottledWhollyWithinWindowDelta'] is not None for s in selected) else None,
             'nrThrottledBoundaryIntervalDelta': sum(s['nrThrottledBoundaryIntervalDelta'] for s in selected)
                 if selected and all(s['nrThrottledBoundaryIntervalDelta'] is not None for s in selected) else None,
-            'coverage': 'bracketed-counter-span' if selected and all(s['bracketsWindow'] for s in selected) else 'unknown'}
+            'coverage': 'incomplete' if any(s['pidAbsentSamples'] or s['missingCounterIntervals'] for s in selected)
+                else 'bracketed-counter-span' if selected and all(s['bracketsWindow'] for s in selected) else 'unknown'}
     return {'roles': roles, 'series': series, 'coarseDescriptiveSeries': coarse,
             'collectorMetadata': metadata, 'collectorErrors': [m for m in metadata if m['record'].get('kind') == 'collector-error'],
             'restartObservations': dict(restart), 'unparsed': unparsed,
             'limitations': ['Exact cumulative series take precedence per role; coarse cgmon is retained separately, never added to the same role twice.',
                 'Counter deltas cover actual bracket samples including declared boundary overhang; CPU divides by observed wall span. No interpolation or zero-fill.',
+                'pidAbsent rows are missing coverage, never zero CPU/throttle or a reason to stop a stage; the next sample re-resolves disappeared containers.',
                 'Cadence and intervals exceeding nominal 1s are descriptive, not a new jitter/gap acceptance threshold.',
                 'cgmon cpu rounded to 0.01 CPU-second; thrms truncated to milliseconds; memMi is usage, not working set. Cgroup resets are not observable in this coarse format.',
                 'Distinct node/container/restart generations are retained, never subtracted across identities.']}

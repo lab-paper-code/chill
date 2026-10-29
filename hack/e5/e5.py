@@ -1068,12 +1068,22 @@ class CPO:
         return new_offset
     def sampler(self, folder, seconds):
         sample=module('d2sample',D2/'sample_cgroups.py'); source=sample.REMOTE.replace("pod.startswith('d2-before-')", "pod.startswith('e5-')")
+        # Resolve stage-entry Pod status now, never container IDs retained at a prior boundary.
+        pods=self.io.k(['get','pods','-A','-o','json'],timeout=self.tb['apiSeconds'])['items']
         children=[]
         for h in load(self.c['collection']['hosts']):
             argv=[sys.executable,'-u','-'] if h.get('local') else h['ssh']
             if not h.get('local') and argv[-3:] != ['python3','-u','-']: raise RuntimeError('Verified existing SSH python sampler argv required')
             output=(folder/(h['node']+'-cgroup.jsonl')).open('w'); error=(folder/(h['node']+'-collector.stderr')).open('w')
-            p=subprocess.Popen(argv+[h['node'],str(seconds),self.a.stage],stdin=subprocess.PIPE,stdout=output,stderr=error,text=True); p.stdin.write(source); p.stdin.close(); children.append((p,output,error))
+            current=[{'id':status.get('containerID','').split('://')[-1],
+                      'metadata':{'name':status['name'],'attempt':status.get('restartCount')},
+                      'labels':{'io.kubernetes.pod.namespace':pod['metadata']['namespace'],
+                                'io.kubernetes.pod.name':pod['metadata']['name'],
+                                'io.kubernetes.pod.uid':pod['metadata']['uid']}}
+                     for pod in pods if pod['spec'].get('nodeName')==h['node']
+                     for status in pod.get('status',{}).get('containerStatuses',[])]
+            host_source=source.replace('initial=None\n','initial='+repr(current)+'\n',1)
+            p=subprocess.Popen(argv+[h['node'],str(seconds),self.a.stage],stdin=subprocess.PIPE,stdout=output,stderr=error,text=True); p.stdin.write(host_source); p.stdin.close(); children.append((p,output,error))
         return children
     def producer_job_name(self,name,stage):
         return 'e5-'+self.a.mode.lower()+'-'+stage['id'].lower()+'-'+str(SEEDS[name])
@@ -1246,13 +1256,14 @@ class CPO:
                         self.io.k(['exec',pod['metadata']['name'],'-c','load','--','python3','-c',"from pathlib import Path; Path('/tmp/e5-start').unlink()"],timeout=self.tb['apiSeconds'])
                         counter_released.add(name);phase.setdefault('clientEndCounterRelease',{})[name]={'at':now(),'proofPath':str(proof)};save(folder/'phase.json',phase)
                 if not released and len(ready)==len(jobs):
-                    coverage=Counter()
+                    coverage=Counter(); unavailable=set()
                     for path in folder.glob('*-cgroup.jsonl'):
                         for line in path.read_text().splitlines():
                             observed=json.loads(line)
                             if observed.get('kind')=='collector-error': raise RuntimeError('Prestart telemetry collector error')
+                            if observed.get('kind')=='cgroup' and observed.get('pidAbsent'): unavailable.add((observed['role'],observed.get('pod')))
                             if observed.get('kind')=='cgroup' and all(observed.get(k) is not None for k in ('cpuUsageNanos','nrThrottled','throttledNanos')): coverage[(observed['role'],observed.get('pod'))]+=1
-                    if not all(any(role==r and count>=2 for (role,pod),count in coverage.items()) for r in ('server','edgemesh')) or not all(coverage[('client',pod['metadata']['name'])]>=2 for pod in pods.values()): continue
+                    if not all(any(role==r and count>=2 for (role,pod),count in coverage.items()) or any(role==r for role,pod in unavailable) for r in ('server','edgemesh')) or not all(coverage[('client',pod['metadata']['name'])]>=2 or ('client',pod['metadata']['name']) in unavailable for pod in pods.values()): continue
                     for name,pod in pods.items():
                         current=self.io.k(['get','pod',pod['metadata']['name'],'-o','json'],timeout=self.tb['apiSeconds'])
                         self.io.assert_producer_startable(folder/('startup-'+name),current,pod,barrier_seconds=self.tb['barrierSeconds'])

@@ -200,6 +200,16 @@ separately approved baseline-preparation path, not cleanup sequencing.
 records and bounded local fixtures; the component-throttle smoke writes to
 `d2.smokeOutput`.
 
+E5 seeds the host sampler from a fresh stage-entry Pod query and its current
+container statuses, never a retained `pre-pods.json` ID. A missing PID/process
+cgroup emits a `cgroup` row with `pidAbsent: true` and null counters; it does not
+stop the stage or wait for telemetry coverage before producer release. The next
+1s sample re-resolves disappeared/replaced containers through the existing CRI
+inventory (healthy inventory refresh remains 15s). Judgment reports
+`pidAbsentSamples` and incomplete coverage without zero-fill or cross-restart
+counter deltas. Offline regression:
+`nice -n 19 python3 hack/e5/d2/smoke_cgroup_lifecycle.py`.
+
 `hack/e5/e5.py check-preparation --out /path/to/external/preparation.json`
 checks the retained preparation inputs. `hack/e5/e5-wire.py execute` takes
 the approved `--numbers`, `--release` and fresh external `--out` directory;
