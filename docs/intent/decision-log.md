@@ -608,3 +608,4 @@
 - 신규 C2(E5-1-01): R1 보존이 all-positive-ready 장벽 → 독립 Node 새 Ready(genesis3)를 못 써 178건 노출.
 - E5-7 2회차 무효(비활성 Pod 주입·assigned 0) → R5 미검증; C1 후 활성 경로 주입으로 재실행 필요.
 - 권고: C1-A(frozen parent sibling exact-proof 공유, 1파일 30–65줄) → C2-A(old 보존 + 독립 Node 검증된 순증, 2파일 70–120줄) → E5-7 유효 재실행(+E5-1/5/6) → R6 factor 재실험은 보류.
+- P3(사용자): C1-A+C2-A 구현 → E5 3회차 표적 행(E5-1/5/6/7; E5-7 활성 경로 주입 조건).
