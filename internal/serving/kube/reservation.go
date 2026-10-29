@@ -150,7 +150,14 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 	run.scope, run.reserved = scope, true
 	c.runs[id] = run
 	if cleanupOwner != nil {
-		cleanupOwner.cleanupRoute = run
+		if cleanupOwner.cleanupRoutes == nil {
+			cleanupOwner.cleanupRoutes = map[string]*actionRun{}
+		}
+		for uid := range operation.Target.Routing {
+			if operation.controlsWorkload(uid) {
+				cleanupOwner.cleanupRoutes[uid] = run
+			}
+		}
 	}
 	return true
 }

@@ -92,7 +92,7 @@ type actionRun struct {
 	prepareIdentity      string
 	inheritedReservation bool
 	cleanup              bool
-	cleanupRoute         *actionRun
+	cleanupRoutes        map[string]*actionRun
 	replacements         []serving.SchedulerReplacement
 }
 type SchedulerController struct {
@@ -530,9 +530,14 @@ func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapsho
 	var lost []OperationResult
 	failed := false
 	actions := goal.Actions
-	if parent := c.runs[transitionRunKind+"/"+goal.ID]; parent != nil && parent.cleanupRoute != nil {
-		actions = slices.DeleteFunc(slices.Clone(actions), func(a serving.Action) bool { return a.Kind == operationRoute })
-		actions = append(actions, parent.cleanupRoute.action)
+	parent := c.runs[transitionRunKind+"/"+goal.ID]
+	if parent != nil && len(parent.cleanupRoutes) > 0 {
+		actions = slices.Clone(actions)
+		for _, refresh := range parent.cleanupRoutes {
+			if !slices.ContainsFunc(actions, func(a serving.Action) bool { return a.ID == refresh.action.ID }) {
+				actions = append(actions, refresh.action)
+			}
+		}
 	}
 	for _, desired := range actions {
 		if desired.From == readySubsetRoute || desired.From == externalActionSource {
@@ -542,8 +547,24 @@ func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapsho
 		if run == nil || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil {
 			continue
 		}
+		proof := run
+		if desired.Kind == operationRoute && parent != nil && len(parent.cleanupRoutes) > 0 && run.result.Operation.Target != nil {
+			var uids []string
+			for uid := range run.result.Operation.Target.Routing {
+				if run.result.Operation.controlsWorkload(uid) && (parent.cleanupRoutes[uid] == nil || parent.cleanupRoutes[uid] == run) {
+					uids = append(uids, uid)
+				}
+			}
+			if len(uids) == 0 {
+				continue // Only these UIDs' newer ACKs superseded this receipt.
+			}
+			scopedRun, scopedResult := *run, *run.result
+			scopedResult.Operation.Target = controlledTarget(Operation{Target: run.result.Operation.Target, WorkloadUIDs: uids})
+			scopedRun.result = &scopedResult
+			proof = &scopedRun
+		}
 		// Fixed lowering is undone by the goal's own raise of the same Node.
-		if !desired.Fixed && run.result.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, run) && !c.actionEffectUnknown(snapshot, run) {
+		if !desired.Fixed && run.result.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, proof) && !c.actionEffectUnknown(snapshot, proof) {
 			result := *run.result
 			result.Status, result.Error, result.EndedAt = nativeOperationFailed, "completed effect lost", now
 			run.result, run.action.Status, run.action.Reason = &result, nativeOperationFailed, result.Error
@@ -922,19 +943,12 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	if c.runs[id] != nil {
 		return
 	}
-	// A route refresh during retirement is a child of that same owner, not a
-	// second lifecycle DAG. reserveRun checks its exact Ready destination scope.
-	for _, parent := range parents {
-		uids := changedWorkloads(target, c.state.Snapshot)
-		if parent.cleanup && len(uids) > 0 && slices.ContainsFunc(uids, func(uid string) bool {
-			return slices.Contains(parent.scope.Workloads, uid)
-		}) {
-			if len(target.Actions) != 1 || target.Actions[0].Kind != operationRoute {
-				return
-			}
-			c.launchTargetLocked(target, config)
-			return
-		}
+	target, refreshes := c.cleanupTargetsLocked(target, parents)
+	for _, refresh := range refreshes {
+		c.launchTargetLocked(refresh, config)
+	}
+	if len(target.Actions) == 0 {
+		return
 	}
 	operation := Operation{ID: id, Kind: transitionRunKind, Target: &target, WorkloadUIDs: changedWorkloads(target, c.state.Snapshot)}
 	for _, action := range target.Actions {

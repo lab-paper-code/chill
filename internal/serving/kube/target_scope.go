@@ -77,6 +77,68 @@ func (c *SchedulerController) targetWorkloadsLocked(target serving.SchedulerCand
 	return changedWorkloads(target, c.state.Snapshot)
 }
 
+// Split the global choice at existing cleanup ownership boundaries. A Ready
+// refresh must not wait for another UID's preparation, or acquire its lifecycle.
+func (c *SchedulerController) cleanupTargetsLocked(target serving.SchedulerCandidate, parents []*actionRun) (serving.SchedulerCandidate, []serving.SchedulerCandidate) {
+	remaining := changedWorkloads(target, c.state.Snapshot)
+	var cleanupUIDs []string
+	blockedNodes := map[serving.NodeReference]bool{}
+	var refreshes []serving.SchedulerCandidate
+	for _, parent := range parents {
+		if !parent.cleanup {
+			continue
+		}
+		var uids []string
+		for _, uid := range remaining {
+			if slices.Contains(parent.scope.Workloads, uid) {
+				uids = append(uids, uid)
+			}
+		}
+		if len(uids) == 0 {
+			continue
+		}
+		cleanupUIDs = append(cleanupUIDs, uids...)
+		remaining = slices.DeleteFunc(remaining, func(uid string) bool { return slices.Contains(uids, uid) })
+		for _, node := range parent.scope.Nodes {
+			blockedNodes[node] = true
+		}
+		for _, action := range target.Actions {
+			if action.Kind != operationRoute {
+				continue
+			}
+			refresh := *controlledTarget(Operation{Target: &target, WorkloadUIDs: uids})
+			refresh.ID += "/cleanup/" + parent.owner
+			action.ID += "/cleanup/" + parent.owner
+			action.DependsOn, action.Status = nil, ""
+			refresh.Nodes, refresh.Actions = nil, []serving.Action{action}
+			refreshes = append(refreshes, refresh)
+		}
+	}
+	if len(cleanupUIDs) == 0 {
+		return target, nil
+	}
+	for _, instance := range target.Instances {
+		if slices.Contains(cleanupUIDs, instance.WorkloadUID) || slices.Contains(cleanupUIDs, instance.OwnerWorkloadUID) {
+			blockedNodes[instance.Node] = true
+		}
+	}
+	independent := *controlledTarget(Operation{Target: &target, WorkloadUIDs: remaining})
+	independent.Actions = nil
+	var removed []string
+	for _, action := range target.Actions {
+		if action.Kind == operationRoute && len(remaining) == 0 || blockedNodes[action.Node] {
+			removed = append(removed, action.ID)
+		} else {
+			independent.Actions = append(independent.Actions, action)
+		}
+	}
+	for i := range independent.Actions {
+		action := &independent.Actions[i]
+		action.DependsOn = slices.DeleteFunc(slices.Clone(action.DependsOn), func(id string) bool { return slices.Contains(removed, id) })
+	}
+	return independent, refreshes
+}
+
 // Routes inside one owner form a chain; a partial ACK never races its final
 // route. Preparations of that owner's other Nodes still proceed independently.
 func (c *SchedulerController) orderRouteChild(action serving.Action, owner string) serving.Action {

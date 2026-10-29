@@ -285,12 +285,16 @@ ACK·실제 효과와 모든 prepare 완료가 확인된 뒤에는 `reservations
 그 handoff의 정확한 현재 Ready physical ID만 표시한다. 이 Workload는 cleanup 동안
 Fixed에서 제외하되 해당 집합의 가중치만 재계산한다. 퇴역 source는 κ·route 후보에서
 제외하고 새 prepare·power·batch/resource 변경은 허가하지 않는다. 새 route는 원래
-cleanup owner의 자식으로 수락하며 정책 ACK를 직렬화한다. 최신 route receipt가 이전
-route의 현재 효과 검사만 대체하고 frozen target·과거 성공 receipt·stop/drain/remove
-의무 및 old Pod/physical/Node 예약은 보존한다. 이전 final route 완료 의존성은
+cleanup owner의 자식으로 수락하며 정책 ACK를 직렬화한다. 최신 route receipt는
+실제로 제어한 UID의 이전 효과 검사만 대체한다. 다른 UID의 원래 handoff와 이전에
+갱신한 UID의 최신 효과는 각각 계속 검사하며 frozen target·과거 성공 receipt·
+stop/drain/remove 의무 및 old Pod/physical/Node 예약을 보존한다. 이전 final route 완료 의존성은
 퇴역 source를 다시 편입할 수 없는 이 범위 안에서만 stop의 안전 근거로 유지한다.
 최신 route 실패/효과 소실은 owner 실패로 기록하고 미확인 책임을 계속 예약한다.
-예약 밖의 현재 부하·상태에 대한 독립 후보 평가는 계속한다(SCH-20, AC-38).
+예약 밖의 현재 부하·상태에 대한 독립 후보 평가는 계속한다. 같은 전역 target에
+cleanup 재분배와 독립 prepare/power/retire가 함께 있으면 cleanup UID별 route를
+원래 owner에 분리하고 나머지 UID·동작·의존성은 독립 DAG로 실행한다. cleanup
+route에는 다른 UID의 prepare 대기를 물려주지 않는다(SCH-20, AC-38).
 prepare는 cost의 측정 trial 최대 시간에 관측 창 하나를 더한 timeout으로 실행된다.
 timeout은 `failed`/`ActionDeadlineExceeded`로 실행을 끝내지만 원격 효과가 미확인이면
 예약은 유지한다. 이후 효과 확인 또는 reset의 실제 정리 proof 뒤에만 반환한다.
