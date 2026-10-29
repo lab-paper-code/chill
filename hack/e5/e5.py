@@ -5,6 +5,8 @@ No implicit phase advance, retry, runtime build, fault injection, or guessed pha
 Settings GET/PUT use at least 30s (or the larger configured apiSeconds).
 A timed-out settings PUT is never resent: matching GET readback confirms application.
 Factor reset polls fresh physical instance ACKs for timeboxes.factorAckWaitSeconds (default 120s).
+failure-select uses config.failureSelectSnapshotTTLSeconds (default 15; finite >0)
+for snapshot wall-clock age and operator expiry, not CHILL's internal observation age.
 Client JSONL non-object/malformed lines remain in raw evidence and judge coverage;
 they do not stop collection or replace missing end-counter evidence.
 """
@@ -189,6 +191,12 @@ def normative_stage_specs(burst_low_seconds):
         ('E5-5-low', 600, [.3]*3), ('E5-5-high', 600, [.9]*3),
         ('E5-6', 3600, [.3]*3), ('E5-7', 900, [.3]*3),
     ]
+
+
+def failure_select_snapshot_ttl(config):
+    seconds=config.get('failureSelectSnapshotTTLSeconds',15)
+    if not positive(seconds):raise ValueError('failureSelectSnapshotTTLSeconds must be finite and greater than zero')
+    return seconds
 
 
 def serving_failure_targets(state, load_window, pods, nodes, uids, excluded_nodes=()):
@@ -576,17 +584,22 @@ def self_check_failure_selection(analysis):
     import tempfile
     from types import SimpleNamespace
     tree=ast.parse(Path(__file__).read_text())
-    names=('instance_rows','row_folder','replay_receipt','full_restore_path','serving_failure_targets','validate_failure_events')
+    names=('positive','failure_select_snapshot_ttl','instance_rows','row_folder','replay_receipt','full_restore_path','serving_failure_targets','validate_failure_events')
     selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names]
     cpo=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='CPO')
     selected.append(ast.ClassDef(name='CPO',bases=[],keywords=[],body=[n for n in cpo.body if isinstance(n,ast.FunctionDef) and n.name=='failure_select'],decorator_list=[]))
     at='2026-10-30T00:03:00+00:00'
-    ns={'Path':Path,'dt':dt,'json':json,'urllib':urllib,'shlex':shlex,'now':lambda:at,
+    ns={'Path':Path,'dt':dt,'json':json,'math':math,'urllib':urllib,'shlex':shlex,'now':lambda:at,
         'ENVIRONMENT':{'d2':{'kubectl':['fixture-kubectl']}},
         'load':lambda path:json.loads(Path(path).read_text()),
         'save':lambda path,body:Path(path).write_text(json.dumps(body))}
     exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
-    for bad in (None,'nano','zero-weight','zero-assigned','same-node','missing-pod','stale'):
+    for invalid in (None,0,-1,True,'15',float('inf'),float('nan')):
+        try:ns['failure_select_snapshot_ttl']({'failureSelectSnapshotTTLSeconds':invalid})
+        except ValueError as error:assert 'failureSelectSnapshotTTLSeconds' in str(error)
+        else:raise AssertionError('Invalid snapshot TTL accepted')
+    accepted=(None,'nano','age-11','custom-ttl')
+    for bad in (*accepted,'age-16','zero-weight','zero-assigned','same-node','missing-pod','stale'):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);folder=root/'full-E5-7-3';folder.mkdir()
             ns['save'](folder/'phase.json',{'status':'RUNNING','startUTC':'2026-10-30T00:00:00+00:00','stage':{'seconds':900}})
@@ -598,8 +611,12 @@ def self_check_failure_selection(analysis):
             window={'from':'2026-10-30T00:02:00+00:00','to':at,'workloads':[{'uid':'w','instanceAssignments':{'i0':2,'i1':0 if bad=='zero-assigned' else 3}}]}
             if bad=='nano':
                 state['snapshot']['at']='2026-10-30T00:02:59.123456789Z';window['to']=state['snapshot']['at']
+            if bad in ('age-11','age-16','custom-ttl'):
+                state['snapshot']['at']='2026-10-30T00:02:'+('49' if bad=='age-11' else '44')+'+00:00'
+                window['to']=state['snapshot']['at']
             runner=ns['CPO']();runner.a=SimpleNamespace(mode='full',stage='E5-7',row_tag='3',failure_kind='delete-serving-pod')
             runner.out=root;runner.uids=['w'];runner.tb={'apiSeconds':1}
+            runner.c={'failureSelectSnapshotTTLSeconds':20} if bad=='custom-ttl' else {}
             def kubernetes(argv,**kwargs):
                 assert argv[0]=='get','Selection attempted cluster mutation'
                 return {'items':(pods[:1] if bad=='missing-pod' else pods) if argv[1]=='pods' else nodes}
@@ -609,19 +626,25 @@ def self_check_failure_selection(analysis):
             runner.api=lambda method,path:window
             try:
                 with contextlib.redirect_stdout(io.StringIO()):runner.failure_select()
-            except ValueError:
-                assert bad not in (None,'nano')
+            except ValueError as error:
+                assert bad not in accepted
+                if bad=='age-16':assert 'snapshot is stale' in str(error)
                 evidence=ns['load'](folder/'failure-events.json')
                 assert evidence['status']=='INVALID' and not list(folder.glob('*-delete-options.json'))
                 try:ns['validate_failure_events'](evidence,'2026-10-30T00:00:00Z','2026-10-30T00:15:00Z',analysis.epoch)
                 except ValueError as error:assert str(error).startswith('INVALID:')
                 else:raise AssertionError('Cancelled injection accepted')
             else:
-                assert bad in (None,'nano')
+                assert bad in accepted
                 runner.a.failure_kind='cordon-delete'
                 with contextlib.redirect_stdout(io.StringIO()):runner.failure_select()
                 evidence=ns['load'](folder/'failure-events.json')
                 assert len({s['nodeUID'] for s in evidence['selections']})==2
+                for selection in evidence['selections']:
+                    ttl=ns['failure_select_snapshot_ttl'](runner.c)
+                    assert selection['maximumAgeSeconds']==ttl
+                    assert math.isclose(analysis.epoch(selection['expiresAtUTC']),analysis.epoch(selection['snapshotAt'])+ttl,rel_tol=0,abs_tol=1e-6)
+                assert runner.settings()['maxObservationAgeNanos']==5_000_000_000
                 events=[]
                 for selection in evidence['selections']:
                     command=folder/(selection['kind']+'-command.json');ns['save'](command,{'deleteArgv':selection['deleteArgv']})
@@ -630,11 +653,11 @@ def self_check_failure_selection(analysis):
                 events.append(dict(events[-1],kind='uncordon'))
                 evidence['events']=events
                 ns['validate_failure_events'](evidence,'2026-10-30T00:00:00Z','2026-10-30T00:15:00Z',analysis.epoch)
-                expired=copy.deepcopy(evidence);expired['events'][0]['atUTC']='2026-10-30T00:03:10Z'
+                expired=copy.deepcopy(evidence);expired['events'][0]['atUTC']='2026-10-30T00:03:21Z'
                 try:ns['validate_failure_events'](expired,'2026-10-30T00:00:00Z','2026-10-30T00:15:00Z',analysis.epoch)
                 except ValueError as error:assert str(error).startswith('INVALID:')
                 else:raise AssertionError('Expired selection accepted')
-    print('PASS E5-7 positive route + preceding-window assigned + live UID selection; distinct Nodes/UID-only deletion; unmet rule INVALID; operator-only, offline')
+    print('PASS E5-7 snapshot TTL: default 15s accepts age 11s, rejects 16s; configured TTL/expiry; CHILL observation age remains 5s; positive route/assigned + live UID + distinct Nodes; operator-only, offline')
 
 
 def self_check_client_jsonl(analysis):
@@ -1029,6 +1052,7 @@ def power_observation(c, *, frozen=False):
 
 def bind(path):
     c = load(path); require_strict_archives(c)
+    c['failureSelectSnapshotTTLSeconds']=failure_select_snapshot_ttl(c)
     freeze_producer_config(c)
     module('e5_quality', D2/'analyze_before.py').generator_quality_config(c)
     need(c, ['approval', 'inputs', 'g0Evidence', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
@@ -1772,6 +1796,7 @@ class CPO:
         if kind!=('delete-serving-pod' if not selections else 'cordon-delete') or len(selections)>=2:raise ValueError('Select delete-serving-pod once, then cordon-delete once; no implicit repeat')
         prefix=folder/('failure-'+kind)
         try:
+            maximum_age=failure_select_snapshot_ttl(self.c)
             pods=self.io.k(['get','pods','-o','json'],timeout=self.tb['apiSeconds'])
             nodes=self.io.k(['get','nodes','-o','json'],timeout=self.tb['apiSeconds'])
             settings=self.settings();state=self.state();snapshot=state['snapshot']
@@ -1782,8 +1807,7 @@ class CPO:
             for label,body in (('state',state),('load',window),('pods',pods),('nodes',nodes)):
                 source=Path(str(prefix)+'-'+label+'.json');save(source,body);sources[label+'Ref']=str(source)
             selected_at=now();at=dt.datetime.fromisoformat(selected_at.replace('Z','+00:00'))
-            maximum_age=settings['maxObservationAgeNanos']/1e9
-            if not 0<maximum_age or not 0<=(at-end).total_seconds()<=maximum_age:raise ValueError('Latest scheduler snapshot is stale; injection cancelled')
+            if not 0<=(at-end).total_seconds()<=maximum_age:raise ValueError('Latest scheduler snapshot is stale; injection cancelled')
             phase_start=dt.datetime.fromisoformat(phase['startUTC'].replace('Z','+00:00'))
             if not phase_start<=at<phase_start+dt.timedelta(seconds=phase['stage']['seconds']):raise ValueError('Outside actual offered window; injection cancelled')
             excluded=[selection['nodeUID'] for selection in selections]

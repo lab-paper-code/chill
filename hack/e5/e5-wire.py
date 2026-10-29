@@ -52,6 +52,7 @@ class Prepare:
         e5.need(self.n,['approval','g0Evidence','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds','workloads','kappaSeconds'],'Approved phase6 numbers')
         if e5.approval_sources(self.n['approval']) != self.sources:raise ValueError('Approved numeric component sources differ from release')
         e5.need(self.n['timeboxes'],e5.REQUIRED['timeboxes'],'Actual finite timeboxes')
+        self.n['failureSelectSnapshotTTLSeconds']=e5.failure_select_snapshot_ttl(self.n)
         if not all(e5.positive(self.n[k]) for k in ('smokeSeconds','kappaSeconds')) or not 0<self.n['burstLowSeconds']<900 or type(self.n['mSeconds']) not in (int,float) or not math.isfinite(self.n['mSeconds']) or self.n['mSeconds']<0:raise ValueError('Invalid approved numerical scope')
         if any(not e5.positive(v) for v in self.n['timeboxes'].values()) or self.n['timeboxes']['setupSeconds']+3600+self.n['timeboxes']['drainSeconds']+self.n['timeboxes']['flushSeconds']>4200:raise ValueError('Timeboxes do not fit existing finite collector')
         if self.release.get('numbersPath')!=str(a.numbers):raise ValueError('Frozen release must name the actual approved numeric input file')
@@ -215,6 +216,7 @@ class Prepare:
         e5.save(self.out/'kappa-execution.json',{'at':e5.now(),'sourceSHA':self.sha,'argv':argv,'exitCode':r.returncode,'meaning':'Actual registered canonical UID/generation/SLO inputs; no hypothetical live UID'})
         if r.returncode:raise RuntimeError('Final actual-UID kappa calculation failed')
         c={**{k:self.op[k] for k in ('endpoint','caFile','tokenFile','kubeContext')},**{k:self.n[k] for k in ('g0Evidence','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds')}}
+        c['failureSelectSnapshotTTLSeconds']=self.n['failureSelectSnapshotTTLSeconds']
         c['poolShares'] = e5.pool_shares(self.n)
         c['approval']={**self.n['approval'],'sources':self.sources,'controlImageDigest':actual_control,'runtimeDigests':e5.load(PLAN)['frozenRuntimeSha256']}
         c['inputs']={k:self.pub[k] for k in ('d25','ranking','costs','bias')}
