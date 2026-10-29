@@ -587,3 +587,7 @@
 
 - 백업 tar 4개(10/18·10/19, ~31GB) 삭제; 측정 증거(#213, #217 이후) 유지.
 - kubeedge 근본 원인(`agent://KubeedgeEvict`): CloudCore Deployment `nodeName: genesis1` 고정 → 디스크 압박 시 스케줄러 우회 재생성 루프 2,747회 + PodGC 기본 12,500 누적. E5 뒤 할 일: (1) nodeName → Helm nodeSelector(hostname) (2) genesis1 디스크 점유 조사·보존 규칙 (3) terminated-pod-gc-threshold 하향(보조).
+
+## 2026-10-29 — 2회차 잔여 행 실행 방식(사용자 결정 B 축소)
+
+- 새 재개 장치 금지. factor의 기존 pre-state 복원(maxBatch 포함, d6ebf33c/59533eca) 경로로 control-222 `static-selection.json`을 물리 복원 → 빠진 행만: static E5-3~6 → release → full E5-4~7. #222 E5-0~3·S1~2는 동일 rev104라 그대로 사용. 복원 직후 fingerprint = #222 E5-3 종료 상태 1회 확인, 다르면 정지. 오프라인 dry-run 먼저 → control 223. 행 경계마다 디스크 여유 기록, 310GB 미만이면 정지. 표: "#222+#223 합성, 같은 rev104 소스".
