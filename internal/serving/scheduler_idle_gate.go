@@ -153,18 +153,78 @@ func (p *capacityPlanner) idleWindowAllowed(best capacityResult, removed map[str
 		if !affected {
 			continue
 		}
-		knew := best.sums[w][0]
+		knew, units := 0.0, 0.0
+		for id, weight := range best.weights[w] {
+			if !removed[id] && weight > 0 {
+				units += float64(weight)
+			}
+		}
 		for n, j := range best.choice {
 			for _, item := range p.plans[n][j].items[w] {
-				if removed[item.id] {
-					knew -= item.kappa
+				if !removed[item.id] && best.weights[w][item.id] > 0 {
+					knew += item.kappa
 				}
 			}
 		}
-		ws.rate = max(ws.rate, p.snapshot.ScaleDown[ws.d.UID].WindowMax)
+		ws.rate = max(ws.rate, p.snapshot.ScaleDown[ws.d.UID].WindowMax) * (1 + p.settings.ScaleDownHeadroomFraction)
+		for n, j := range best.choice {
+			for _, item := range p.plans[n][j].items[w] {
+				if weight := best.weights[w][item.id]; !removed[item.id] && weight > 0 &&
+					(units == 0 || ws.rate*float64(weight)/units > item.kappa) {
+					return false
+				}
+			}
+		}
 		if !capacityJudge(ws, knew, best.sums[w][1], knew > 0, best.route).satisfied {
 			return false
 		}
 	}
 	return true
+}
+
+// admissionDemand separates final-route margin from bridge/reserve demand.
+func (p *capacityPlanner) admissionDemand(w capacityWorkload, choice []int, retained float64) (capacityWorkload, bool, bool, float64) {
+	demand, slow := p.reductionDemand(w, choice)
+	recovery := slow && p.keepInsufficient(w)
+	for n, j := range choice {
+		if retained < w.rate && p.plans[n][j].mode != p.snapshot.Nodes[n].PowerMode && slices.ContainsFunc(p.snapshot.Instances, func(i SchedulerInstance) bool {
+			return i.Node == p.snapshot.Nodes[n].Node && i.WorkloadUID == w.d.UID && schedulerInstanceRouted(p.keep.Routing, i.ID)
+		}) {
+			// A stopping power outage without surviving supply is not a handoff.
+			recovery = false
+		}
+	}
+	if recovery {
+		demand = w
+	}
+	protected := demand.rate
+	if slow && !recovery {
+		protected *= 1 + p.settings.ScaleDownHeadroomFraction
+	}
+	return demand, slow, recovery, protected
+}
+
+// timingReason grants only this UID's fully proved recovery a timing exception.
+// Callers still enforce bridge, peak, reserve and physical observation safety.
+func (p *capacityPlanner) timingReason(w capacityWorkload, slow, recovered, satisfied bool, routes map[string]int32) string {
+	if slow && !satisfied {
+		return schedulerWindowCapacityInsufficient
+	}
+	if recovered {
+		return ""
+	}
+	if w.growing {
+		if slow {
+			return schedulerDemandIncreasing
+		}
+		for id, weight := range p.keep.Routing[w.d.UID] {
+			if weight > 0 && routes[id] <= 0 {
+				return schedulerDemandIncreasing
+			}
+		}
+	}
+	if slow && !p.snapshot.ScaleDown[w.d.UID].Allowed {
+		return schedulerScaleDownStabilizing
+	}
+	return ""
 }

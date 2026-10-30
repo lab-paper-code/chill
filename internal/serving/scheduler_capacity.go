@@ -117,6 +117,7 @@ type SchedulerNodePlan struct {
 	Reason   string        `json:"reason,omitempty"`
 	// RequiresBridge is a conditional candidate, never permission to stop first.
 	RequiresBridge          []string           `json:"requiresBridge,omitempty"`
+	RequiresRecovery        []string           `json:"requiresRecovery,omitempty"`
 	Tempo                   string             `json:"tempo,omitempty"`
 	Kappa                   map[string]float64 `json:"kappa,omitempty"`
 	KappaRetained           map[string]float64 `json:"kappaRetained,omitempty"`
@@ -816,13 +817,6 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	if plan.record.Reason == "" && p.partial && removed {
 		plan.record.Reason = schedulerPartialObservation
 	}
-	if plan.record.Reason == "" && slices.ContainsFunc(current, func(old SchedulerInstance) bool {
-		w, controlled := p.index[old.WorkloadUID]
-		return controlled && p.ws[w].growing && old.Ready && !old.Stopped && schedulerInstanceRouted(p.keep.Routing, old.ID) &&
-			!used[old.ID]
-	}) {
-		plan.record.Reason = schedulerDemandIncreasing
-	}
 	if plan.record.Reason != "" {
 		return plan
 	}
@@ -901,13 +895,8 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 				plan.record.Reason = schedulerPartialObservation
 				return plan
 			}
-			if p.ws[p.index[ws.d.UID]].growing {
-				plan.record.Reason = schedulerDemandIncreasing
-				return plan
-			}
-			if !p.snapshot.ScaleDown[ws.d.UID].Allowed {
-				plan.record.Reason = schedulerScaleDownStabilizing
-				return plan
+			if ws.growing || !p.snapshot.ScaleDown[ws.d.UID].Allowed {
+				plan.record.RequiresRecovery = append(plan.record.RequiresRecovery, ws.d.UID)
 			}
 		}
 	}
@@ -1458,7 +1447,7 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 			kret += item.kappa
 			weightSum += float64(item.weight)
 		}
-		demand, slow := p.reductionDemand(ws, choice)
+		demand, slow, recovery, protectedRate := p.admissionDemand(ws, choice, kret)
 		j := capacityJudge(demand, knew, kret, present[w], r)
 		// The route also drains B within L − m.
 		drain := 0.0
@@ -1469,21 +1458,24 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 		var y []float64
 		var ok bool
 		greedy := false
-		switch current, carries := p.currentWeights(ws.d.UID, items[w], demand.rate+drain); {
+		switch current, carries := p.currentWeights(ws.d.UID, items[w], protectedRate+drain); {
 		case !p.settings.Controls.Routing:
-			weights, y, ok = capacityFixedWeights(demand.rate, items[w])
+			weights, y, ok = capacityFixedWeights(protectedRate, items[w])
 		case carries:
-			weights, y, ok = capacityFixedWeights(demand.rate, current)
+			weights, y, ok = capacityFixedWeights(protectedRate, current)
 		default:
-			weights, y, ok = capacityWeights(demand.rate, drain, items[w])
+			weights, y, ok = capacityWeights(protectedRate, drain, items[w])
 			greedy = true
 		}
-		capacityEnergyLoad(y, greedy, ws.rate, demand.rate)
+		capacityEnergyLoad(y, greedy, ws.rate, protectedRate)
 		units := 0.0
 		for _, weight := range weights {
 			units += float64(weight)
 		}
-		routes := p.weightRoutes(&res, ws, items[w], weights)
+		routes := p.weightRoutes(&res, items[w], weights)
+		knew, marginOK := capacityPositiveSupply(items[w], weights, protectedRate, demand.rate)
+		ok = ok && marginOK
+		j = capacityJudge(demand, knew, kret, len(routes) > 0, r)
 		worst := j.worst()
 		if !ok {
 			// A weight past its κ fails the final judgment by that excess.
@@ -1499,9 +1491,7 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 				worst = max(worst, excess)
 			}
 		}
-		if slow && (!j.satisfied || !ok) {
-			res.exclusion = schedulerWindowCapacityInsufficient
-		}
+		res.exclusion = cmp.Or(res.exclusion, p.timingReason(ws, slow, recovery && j.satisfied, j.satisfied, routes))
 		res.feasible = res.feasible && j.satisfied
 		res.final = res.final && ok && j.final != nil && *j.final <= 0
 		res.worst = max(res.worst, worst)
@@ -1537,9 +1527,17 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 	return res
 }
 
+// keepInsufficient uses the same observation and positive physical route supply.
+// It grants no safety exception: final backlog, bridge and reserve checks remain.
+func (p *capacityPlanner) keepInsufficient(w capacityWorkload) bool {
+	kappa := p.snapshot.ScaleDown[w.d.UID].Supply
+	j := capacityJudge(w, kappa, kappa, kappa > 0, 0)
+	return !j.satisfied
+}
+
 // weightRoutes maps each item with a positive weight to that weight and
 // marks the result when the weights leave a new or protected routed instance at 0.
-func (p *capacityPlanner) weightRoutes(res *capacityResult, w capacityWorkload, items []capacityItem, weights []int32) map[string]int32 {
+func (p *capacityPlanner) weightRoutes(res *capacityResult, items []capacityItem, weights []int32) map[string]int32 {
 	routes := map[string]int32{}
 	for k, item := range items {
 		if weights[k] > 0 {
@@ -1547,7 +1545,7 @@ func (p *capacityPlanner) weightRoutes(res *capacityResult, w capacityWorkload, 
 			continue
 		}
 		res.unroutedPrepare = res.unroutedPrepare || item.prepare
-		res.unroutes = res.unroutes || (p.partial || w.growing) && schedulerInstanceRouted(p.keep.Routing, item.id)
+		res.unroutes = res.unroutes || p.partial && schedulerInstanceRouted(p.keep.Routing, item.id)
 	}
 	return routes
 }
@@ -1902,9 +1900,9 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	search := p.searched
 	record := &SchedulerCapacity{Period: time.Duration(p.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search, GainUncertaintyJoules: best.gainUncertainty}
 	record.TransitionReserves = best.reserves
-	for _, plans := range p.plans {
+	for n, plans := range p.plans {
 		for _, plan := range plans {
-			record.Plans = append(record.Plans, plan.record)
+			record.Plans = append(record.Plans, p.projectPlan(plan, p.plans[n][best.choice[n]] == plan && p.admits(&best)))
 		}
 	}
 	for w, ws := range p.ws {
@@ -1944,7 +1942,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 			target.Nodes[n] = projected
 		}
 		for _, i := range plan.instances {
-			if best.bridge == nil && p.idleRemovable(i, plan, best, target.Routing) {
+			if best.bridge == nil && p.idleRemovable(i, best, target.Routing) {
 				idleRemoved[i.ID] = true
 				reason, reserves := p.idleTransition(best, idleRemoved)
 				record.TransitionReserves = append(record.TransitionReserves, reserves...)
@@ -2002,7 +2000,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 // Workload whose judgments still hold without its κ, or owned by nobody. The
 // removal is for measurability and the lowest mode of an emptied Node, not
 // energy.
-func (p *capacityPlanner) idleRemovable(i SchedulerInstance, plan *capacityPlan, best capacityResult, routing map[string]map[string]int32) bool {
+func (p *capacityPlanner) idleRemovable(i SchedulerInstance, best capacityResult, routing map[string]map[string]int32) bool {
 	if !p.idle(i) || schedulerInstanceRouted(routing, i.ID) {
 		return false
 	}
@@ -2028,13 +2026,8 @@ func (p *capacityPlanner) idleRemovable(i SchedulerInstance, plan *capacityPlan,
 		return true
 	}
 	knew := best.sums[w][0]
-	for _, item := range plan.items[w] {
-		if item.id == i.ID {
-			knew -= item.kappa
-		}
-	}
 	demand := p.ws[w]
-	demand.rate = max(demand.rate, p.snapshot.ScaleDown[uid].WindowMax)
+	demand.rate = max(demand.rate, p.snapshot.ScaleDown[uid].WindowMax) * (1 + p.settings.ScaleDownHeadroomFraction)
 	return capacityJudge(demand, knew, best.sums[w][1], knew > 0, best.route).satisfied
 }
 
@@ -2054,4 +2047,35 @@ func (p *capacityPlanner) sameRouting(routing map[string]map[string]int32) bool 
 // largest float for an unbounded one (no capacity), which JSON can carry.
 func capacityWorst(worst float64) float64 {
 	return min(max(0, worst), math.MaxFloat64)
+}
+
+// capacityPositiveSupply checks the actual integer route, not unrouted reserves.
+func capacityPositiveSupply(items []capacityItem, weights []int32, protected, demand float64) (float64, bool) {
+	kappa, units, allowed := 0.0, int32(0), true
+	for _, weight := range weights {
+		units += weight
+	}
+	for k, item := range items {
+		if weights[k] > 0 {
+			kappa += item.kappa
+			if protected > demand && (units == 0 || float64(weights[k])*protected/float64(units) > item.kappa*(1+1e-12)) {
+				allowed = false
+			}
+		}
+	}
+	return kappa, allowed
+}
+
+func (p *capacityPlanner) projectPlan(plan *capacityPlan, admitted bool) SchedulerNodePlan {
+	record := plan.record
+	if len(record.RequiresRecovery) == 0 || admitted {
+		return record
+	}
+	record.Eligible, record.Reason = false, schedulerScaleDownStabilizing
+	for _, ws := range p.ws {
+		if ws.growing && slices.Contains(record.RequiresRecovery, ws.d.UID) {
+			record.Reason = schedulerDemandIncreasing
+		}
+	}
+	return record
 }

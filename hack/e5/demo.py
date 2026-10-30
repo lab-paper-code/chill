@@ -1168,6 +1168,7 @@ def self_check():
         cpo.uids = [w['uid'] for w in workloads]
         cpo.d = d
         settings = {'autonomousWorkloads': [], 'staticRouting': {}, 'excludedNodes': [], 'minimumDemand': dict.fromkeys(cpo.uids, .3), 'scaleDownStabilizationNanos': 120000000000, 'transitionReserveFraction': .25, 'comparisonPeriodNanos': 600000000000}
+        settings['scaleDownHeadroomFraction'] = .25
         cpo.b['schedulerSettings'] = copy.deepcopy(settings)
         cpo.b['schedulerSettings']['powerObservation'] = copy.deepcopy(fixture_power)
         # A deleted/re-registered definition gets a new UID; old floor keys die.
@@ -1703,6 +1704,7 @@ def self_check():
         settings['minimumDemand'][cpo.uids[0]] = 9
         settings['scaleDownStabilizationNanos'] = 300000000000
         settings['transitionReserveFraction'] = 0
+        settings['scaleDownHeadroomFraction'] = 0
         settings['comparisonPeriodNanos'] = 900000000000
         summarize(e5, cpo.b, cpo.out)
         assert e5.load(cpo.out / 'summary.json')['schedulerSettings'] == frozen_settings

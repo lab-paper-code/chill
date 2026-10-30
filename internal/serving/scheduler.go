@@ -27,6 +27,7 @@ type SchedulerSettings struct {
 	BootstrapCapacityWait     time.Duration `json:"bootstrapCapacityWaitNanos"`
 	ScaleDownStabilization    time.Duration `json:"scaleDownStabilizationNanos"`
 	TransitionReserveFraction float64       `json:"transitionReserveFraction"`
+	ScaleDownHeadroomFraction float64       `json:"scaleDownHeadroomFraction"`
 	MaxReplicas               int           `json:"maxReplicas"`
 	MaxInstances              int           `json:"maxInstances"`
 	MaxCPUs                   int           `json:"maxCPUs"`
@@ -442,8 +443,11 @@ func (s SchedulerSettings) Validate() error {
 	if s.ScaleDownStabilization < 0 {
 		return fmt.Errorf("scaleDownStabilizationNanos must be nonnegative")
 	}
-	if !schedulerFinite(s.TransitionReserveFraction) || s.TransitionReserveFraction < 0 || s.TransitionReserveFraction > 1 {
+	if !schedulerUnitFraction(s.TransitionReserveFraction) {
 		return fmt.Errorf("transitionReserveFraction must be finite and between 0 and 1")
+	}
+	if !schedulerUnitFraction(s.ScaleDownHeadroomFraction) {
+		return fmt.Errorf("scaleDownHeadroomFraction must be finite and between 0 and 1")
 	}
 	if s.MaxReplicas < 1 || s.MaxInstances < 1 || s.MaxCPUs < 1 {
 		return fmt.Errorf("maxReplicas, maxInstances and maxCPUs must be positive")
@@ -553,7 +557,8 @@ func SmoothWeightedRoute(weights []int32, current []int64, available []bool) int
 	return best
 }
 
-func schedulerFinite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
+func schedulerFinite(x float64) bool       { return !math.IsNaN(x) && !math.IsInf(x, 0) }
+func schedulerUnitFraction(x float64) bool { return schedulerFinite(x) && x >= 0 && x <= 1 }
 func schedulerState(i SchedulerInstance) string {
 	cpus := append([]int(nil), i.Allocation.CPUs...)
 	sort.Ints(cpus)

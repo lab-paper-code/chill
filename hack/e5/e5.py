@@ -1315,6 +1315,9 @@ def bind(path):
     if receipt.get('executable')!=power['path'] or receipt.get('sha256')!=power['sha256'] or receipt.get('buildExitCode')!=0: raise ValueError('Actual frozen-source existing offline power tool receipt required')
     refs['powerExecutable']=power;refs['powerReceipt']=ref(c['collection']['powerReceipt'])
     s = load(c['inputs']['scheduler']); snap = s['state']['snapshot'] if 'state' in s else s['snapshot']; settings = s['settings']
+    h = settings.get('scaleDownHeadroomFraction')
+    if type(h) not in (int, float) or not math.isfinite(h) or not 0 <= h <= 1:
+        raise ValueError('Frozen scheduler readback requires finite scaleDownHeadroomFraction in [0,1]')
     cap = load(c['inputs']['capacity']); rows = cap if isinstance(cap, list) else cap['rows']
     capacity_source = load(c['inputs']['capacityScheduler'])
     capacity_snapshot = capacity_source['state']['snapshot']
@@ -1561,6 +1564,8 @@ class CPO:
         static=self.static_placement()
         s=self.state(); settings=self.settings()
         self.check_power_observation()
+        if settings.get('scaleDownHeadroomFraction') != self.b.get('schedulerSettings', {}).get('scaleDownHeadroomFraction'):
+            raise RuntimeError('scaleDownHeadroomFraction differs from frozen binding; no E5 load')
         if static:
             if settings.get('autonomousWorkloads'):raise RuntimeError('Static placement requires autonomy already off')
         elif s['snapshot']['instances'] or settings.get('autonomousWorkloads') or settings.get('staticRouting'): raise RuntimeError('Canonical three must start at zero; unrelated serving present')
