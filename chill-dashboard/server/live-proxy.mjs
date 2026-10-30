@@ -51,6 +51,7 @@ export function createFront({ baseURL, publicOrigin, nextPort = 3001, ca } = {})
     req.pipe(upstream)
   })
   server.on('upgrade', (req, socket, head) => {
+    socket.on('error', () => socket.destroy())
     let origin
     try {
       const host = req.headers.host

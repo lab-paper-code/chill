@@ -3,8 +3,10 @@ import { notFound } from "next/navigation"
 import { ServicesPage, ServicePage, ServiceSectionPage, ResourceEditor, ModelsPage, ModelPage, ModelSectionPage, CatalogListPage, CatalogPage } from "@/features/management"
 import { InferencePage } from "@/features/inference"
 import { ObservationsPage } from "@/features/observations"
-import { MeasurementRunsPage, MeasurementGroupPage, MeasurementCheckPage, MeasurementDetail, ExperimentsPage } from "@/features/read-pages"
-import { ResourcesPage, PoolsPage, PoolPage } from "@/features/resources"
+import { MeasurementRunsPage, MeasurementGroupPage, MeasurementCheckPage, MeasurementDetail } from "@/features/read-pages"
+import { ExperimentsPage } from "@/features/experiments"
+import { ResourcesPage, PoolsPage } from "@/features/resources"
+import { LivePoolPage } from "@/features/live-board"
 import { SchedulerPage, SchedulerCandidatesPage, SchedulerEstimatesPage, SchedulerLoadPage } from "@/features/scheduler"
 import { SchedulerSettingsPage } from "@/features/scheduler-settings"
 import { SchedulerHistoryPage } from "@/features/scheduler-history"
@@ -45,7 +47,7 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if ((head === "preprocessors" || head === "datasets") && route.length === 2) page = <CatalogPage key={key} kind={head} name={name} />
   else if (head === "resources" && route.length === 1) page = <ResourcesPage />
   else if (head === "pools" && route.length === 1) page = <PoolsPage />
-  else if (head === "pools" && route.length === 2) page = <PoolPage id={name} />
+  else if (head === "pools" && route.length === 2) page = <LivePoolPage id={name} />
   else if (head === "measurements" && route.length === 1) page = <MeasurementPlansPage />
   else if (head === "measurements" && route.length === 2 && name === "runs") page = <MeasurementRunsPage />
   else if (head === "measurements" && route.length === 2 && name === "new") page = <MeasurementRequestPage />

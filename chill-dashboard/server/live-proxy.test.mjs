@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import https from 'node:https'
 import http from 'node:http'
-import { once } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -30,6 +30,19 @@ test('origin config, resume validation and bounded queue', () => {
   state.count = 602
   boundedSend(socket, 'x', value => { code = value }, state)
   assert.equal(code, 1013)
+})
+
+test('a reset after a rejected Upgrade destroys the socket without crashing the front', () => {
+  const front = createFront({baseURL:'https://localhost',publicOrigin:'https://dashboard.example'})
+  const socket = new EventEmitter()
+  let destroyed = false, rejected = false
+  socket.end = () => { rejected = true }
+  socket.destroy = () => { destroyed = true }
+  front.emit('upgrade',{method:'GET',url:'/_next/webpack-hmr',headers:{host:'dashboard.example',origin:'https://dashboard.example'}},socket,Buffer.alloc(0))
+  assert.equal(rejected,true)
+  assert.doesNotThrow(() => socket.emit('error',Object.assign(new Error('reset'),{code:'ECONNRESET'})))
+  assert.equal(destroyed,true)
+  front.shutdown()
 })
 
 test('local TLS upstream receives only bearer and resume; origin, auth, failures, disconnect and HTTP', async t => {

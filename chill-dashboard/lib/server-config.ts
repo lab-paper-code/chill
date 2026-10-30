@@ -9,6 +9,7 @@ export type PublicConfig = {
   maxPageSize: number
   maxWindowHours: number
   pollIntervalMs: number
+  liveFixture?: boolean
 }
 
 export type ServerConfig = PublicConfig & { chillServer: URL }
@@ -46,6 +47,7 @@ export function serverConfig(env: Readonly<Record<string, string | undefined>> =
     maxPageSize: integer("CHILL_MAX_PAGE_SIZE", 200, 200),
     maxWindowHours: integer("CHILL_MAX_WINDOW_HOURS", 24, 24 * 365),
     pollIntervalMs: integer("CHILL_POLL_INTERVAL_MS", 5_000, 3_600_000),
+    liveFixture: env.CHILL_DEMO_REPLAY === "1",
   }
   if (config.pageSize > config.maxPageSize || config.pollIntervalMs < 1_000 || config.namespace.includes(".")) return invalid()
   return config
@@ -64,5 +66,6 @@ export function publicConfig(): PublicConfig {
     maxPageSize: config.maxPageSize,
     maxWindowHours: config.maxWindowHours,
     pollIntervalMs: config.pollIntervalMs,
+    liveFixture: config.liveFixture,
   }
 }

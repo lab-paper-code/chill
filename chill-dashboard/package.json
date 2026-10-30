@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test lib/*.test.ts server/*.test.mjs",
-    "test:live": "node --test server/*.test.mjs"
+    "test:live": "node --test server/*.test.mjs",
+    "fixture:live": "node --experimental-strip-types server/live-fixture-server.mjs"
   },
   "dependencies": {
     "ws": "8.18.3",

@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
-import type { ActivePool, InstanceState, InventoryView, PoolNode, PoolsView, PowerModeActuator } from "@/lib/read-types"
+import type { InstanceState, InventoryView, PoolNode, PoolsView, PowerModeActuator } from "@/lib/read-types"
 import { explain } from "@/lib/labels"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
@@ -81,23 +81,3 @@ export function PoolsPage() {
   </Screen>
 }
 
-// One Workload's active POOL; id is the Workload UID.
-export function PoolPage({id}:{id:string}) {
-  const [poll,setPoll]=React.useState(false)
-  const query=useChillQuery<ActivePool>(`v1/pools/${encodeURIComponent(id)}`,{poll}),data=query.data
-  const instances=data?.instances??[],ready=instances.filter(row=>row.ready).length
-  return <Screen back={["/pools","실행 그룹"]} title={!data?"실행 그룹":instances.length?`인스턴스 ${instances.length}개 중 ${ready}개가 준비됐어요`:"실행 중인 인스턴스가 없어요"} lede={data&&`${data.workload.name} 서비스의 실행 그룹이에요. 노드 ${(data.nodes??[]).map(node=>node.name).join(", ")||"없음"}`}>
-    <QueryGate query={query}>{data&&<>
-      {instances.length>0&&<InstanceRows label="인스턴스" rows={instances}/>}
-      <Rows>
-        <Row href={`/workloads/${encodeURIComponent(data.workload.name)}?uid=${encodeURIComponent(data.workload.uid)}`} label="서비스 보기" hint={data.workload.name}/>
-        <Row href="/pools" label="다른 실행 그룹과 노드 보기" hint="측정 중인 노드와 바로 쓸 수 있는 노드"/>
-        <Row href="/scheduler/candidates?view=snapshot" label="실제 자원 구성 보기" hint="자원 할당과 전력모드"/>
-      </Rows>
-    </>}</QueryGate>
-    <Rows label="더 보기">
-      <RowDialog label="자동 새로고침" value={poll?"켜짐":"꺼짐"} title="자동 새로고침"><label className="switch"><input type="checkbox" checked={poll} onChange={event=>setPoll(event.target.checked)}/>그룹 상태를 자동으로 확인하기</label></RowDialog>
-      {data&&<RowDialog label="원본 자료와 내보내기" title="실행 그룹 원본"><SourceJSON inline value={data}/><SourceExport value={data} filename={`chill-pool-${id}.json`}/></RowDialog>}
-    </Rows>
-  </Screen>
-}

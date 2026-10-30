@@ -11,7 +11,7 @@ Actual source fork: https://github.com/shadcn-ui/ui.git at commit `e8c3143b1cd19
 - Retained copied dependency closure: `apps/v4/registry/new-york-v4/ui/{sidebar,button,input,separator,sheet,tooltip,table,chart,dialog}.tsx`, `hooks/use-mobile.ts`; theme tokens from `apps/v4/app/globals.css`. Unused demo primitives are deleted.
 - `LICENSE.shadcn` preserves the upstream MIT copyright and permission notice for copied/adapted source. It does not relicense other CHILL code.
 
-The demo records, accounts/avatars, revenue/time series, marketing links, drag-and-drop and sidebar cookies are removed. Asta Sans (Hangul-capable) is fetched by `next/font` at build time and self-hosted under `/_next/static/media`, so the CSP keeps `font-src 'self'` and the browser makes no font requests to third parties. Table retains TanStack Table v9; stable body cells preserve open details during polling. Charts use ChillServer whole-window statistics or the samples of one selected power record. No fake backend or demo data producer is included.
+The upstream demo records, accounts/avatars, revenue/time series, marketing links, drag-and-drop and sidebar cookies are removed. Asta Sans (Hangul-capable) is fetched by `next/font` at build time and self-hosted under `/_next/static/media`, so the CSP keeps `font-src 'self'` and the browser makes no font requests to third parties. Table retains TanStack Table v9. Charts use processed ChillServer statistics, live 1-second buckets or samples of one selected power record. Synthetic S2 acceptance scenes are explicitly labelled 검사용 and gated by `CHILL_DEMO_REPLAY=1`; they are not experimental evidence.
 
 ## Visual system
 
@@ -35,6 +35,7 @@ Server runtime environment (not browser build-time variables):
 | `CHILL_PAGE_SIZE` / `CHILL_MAX_PAGE_SIZE` | Default `50` / `200` |
 | `CHILL_MAX_WINDOW_HOURS` | Default `24` |
 | `CHILL_POLL_INTERVAL_MS` | Default `5000` |
+| `CHILL_DEMO_REPLAY` | Default disabled; exact `1` enables authenticated synthetic live scene controls |
 | `NODE_EXTRA_CA_CERTS` | Native custom CA file, e.g. `/etc/chill/ca/ca.crt`; no trust-any fallback |
 
 `GET /api/config` returns safe display/bound configuration only. `/api/chill/v1/...` relays to `/api/v1/...` at the fixed ChillServer with native Node HTTPS verification, no redirect following, no cookie/identity forwarding, bounded bytes/time and abort propagation. Incomplete responses never appear as successful partial results. Relay failures have distinct Dashboard codes and `unknownOutcome`; `X-Chill-Relay-Timing` covers the full relay including CHILL, not BFF-only overhead or native inference latency. Malformed configuration returns no-store `503 DashboardConfigInvalid` without disclosing environment values.
@@ -78,7 +79,7 @@ retain integer literals while removing credentials.
 
 `/`, `/workloads`, `/workloads/new`, `/workloads/[name]`, `/workloads/[name]/{definition,evidence,placement,operation,changes}`, `/workloads/[name]/edit`, `/workloads/[name]/infer`, `/models`, `/models/new`, `/models/[name]`, `/models/[name]/{files,services}`, `/models/[name]/edit`, `/scheduler`, `/scheduler/candidates`, `/scheduler/estimates`, `/scheduler/load`, `/scheduler/profiles`, `/transitions`, `/transitions/[id]`, `/resources`, `/pools`, `/pools/[id]`, `/records`, `/observations`, `/changes`, `/scheduler/history`, `/scheduler/power`, `/scheduler/compare`, `/measurements`, `/measurements/new`, `/measurements/batch-energy-optimizations/[namespace]/[name]`, `/measurements/runs`, `/measurements/group`, `/measurements/check`, `/measurements/profiling-runs/[namespace]/[name]`, `/experiments`, `/settings`, `/configuration`.
 
-The menu has six sections: 홈, 서비스, 운영, 측정, 기록, 설정. 측정 lists measurement plans by state, requests new ones through a step funnel that must pass the ChillServer dry-run, and shows one plan with its conclusion, adoption, unadoption and permanent deletion. Home is only the list of things to check now (services not admitting, unready nodes, predicted SLO exceedance, failed or open changes), each row opening the screen that resolves it. A service page states its readiness and offers the next step; its definition, evidence, placement, last-hour operation and changes are separate screens.
+The menu has six sections: 홈, 서비스, 운영, 측정, 기록, 설정. 측정 lists measurement plans by state, requests new ones through a step funnel that must pass the ChillServer dry-run, and shows one plan with its conclusion, adoption, unadoption and permanent deletion. Home is the live CHILL flow board described below. A service page states its readiness and offers the next step; its definition, evidence, placement, last-hour operation and changes are separate screens.
 
 Real Model/Workload CRUD and version preconditions, one independent raw-sample inference (JPEG fields from a file, UTF8 fields from text, sent as base64 `BYTES` and answered with output fields decoded by format), current POOL state, System/Inventory/ProfilingRun bounded queries, verified Passport with per-batch dataset record IDs, units and stage times, sealed campaign result and read-only preflight are wired. Observation selection preserves UID, original UTC `from`/`to`, repeated definition/outcome filters and cursor; cohort statistics remain the server's whole-window values, separate from raw paging. JSON exports preserve source identity/conditions/units and redact credentials. Changes uses the real per-Workload management observations; absence of a broader feed is disclosed.
 
@@ -129,6 +130,112 @@ and runtime results. Kind/node filters apply only to the fetched page; an empty
 filtered page can still advance. Exports name the selected-record/current-page
 scope. Identity changes clear selections; first login retains bookmarked records.
 
+`/experiments` reads immutable published runs/stages from `GET /api/v1/experiments`
+and `/{id}`. The A/B selectors retain two runs and two stages in the URL. Only
+publisher `kpis.workloads` (demo) and `kpis.requests` (E5) shapes are interpreted;
+original KPIs, numerator/denominator, populations, sources and missing reasons
+remain available. Empty values stay blank, including identities absent from old
+publications; names are never rejoined to current Workloads. Only matching recorded
+UID/definition rows align across runs. Offered counts, server receipt cohorts and
+live terminal buckets are explicitly distinct. Shared POOL energy is not summed
+across rows; published gap bounds render as `value ± bound J`, with energyCoverage.
+Different measurementRules retain numbers and display “측정 규칙 다름”.
+Evidence lookup uses the exact nanosecond `decision.at` interval through the
+processed scheduler observations API, then selects the recorded judgment identity;
+it never falls back to the latest state. No-record and timeout states are distinct.
+These reads do not poll. Serving-manager grants include experiment GETs and both
+measurement projections' GET plus native get/list; chart grants remain unbound.
+
+### S2 live flow board
+
+`/` shows the fixed CHILL data/control paths, one lane per workload UID, six
+independent instance symbols grouped by Node, and a shared decision/action/cluster
+event lane. `/pools/[uid]` opens the complete metric card and four aligned lanes:
+load, success/latency, shared POOL power and events. `?open=inst:<id>`,
+`?open=node:<uid>` and `?open=reservations` retain level-2 expansions;
+`?at=<original decision.at>` retains the nonmodal evidence aside. Closing restores
+the opener's focus, with the heading as the refresh fallback. The back-to-board
+link restores the selected POOL lane.
+
+The stage uses a dark neutral machine-flow surface with blue data paths, amber
+power and shape-plus-text instance states. Narrow screens stack the paths and
+evidence; keyboard focus remains visible and reduced motion disables emphasis.
+The common strip reports connection/baseline freshness, each workload's autonomous
+setting, received versus observed time, elapsed age, and explicit UTC/KST.
+Heartbeat receipt alone never makes an old observation fresh.
+
+The authenticated `/api/live` WebSocket sends the token only in its first auth
+frame. The persistent per-session QueryClient owns the projection and bounded
+browser-received timeline. Route changes between board and POOL do not discard
+that timeline. Reconnect uses the exact `(seq, at)` checkpoint; an out-of-range
+snapshot restores current state and leaves the missing interval blank. Logout
+closes the socket/timers and clears the identity's cache. There is no REST polling
+fallback on any live stage route.
+
+Only processed source fields from design §6.1 are displayed. Success is
+`completed / (completed + failed)` and SLO-in is `withinSLO / (completed + failed)`;
+`N=0` is 비율 없음, observed `received=0` is 무유입, missing values remain blank.
+Node power is from metrics, never node state. Pre-assignment `pending` and native
+post-assignment `waiting` stay separate. Completing an action never releases a
+reservation; the next reservation projection is authoritative.
+
+The last ten minutes contain only received one-second buckets, capped at 600
+buckets and 1000 events. Pre-connection, resync and measurement gaps are not
+interpolated or zero-filled. The fixture selector exercises empty → first
+configuration → expansion → residual execution during shrink; all are synthetic
+검사용 scenes, not a product recording replay or E5 measurements.
+Current SLO is shown as an explicit reference, not drawn backward through old
+buckets whose messages do not carry definition IDs. Explicit gap hatching is
+scope-specific: workload gaps affect request lanes, power/Node gaps affect the
+power lane, and resynchronization gaps affect all lanes.
+
+For local browser acceptance, run `pnpm fixture:live` with Node 24. It binds only
+loopback, prints its temporary CA path, and serves a TLS fixture hub behind the
+real `server/live-proxy.mjs` authentication boundary on `https://localhost:3445`.
+In a second terminal use the production standalone runtime on port 3131, with
+the normal CSP (the fixture front deliberately does not expose development HMR):
+
+```sh
+export CHILL_BASE_URL=https://127.0.0.1:3446 CHILL_NAMESPACE=fixture CHILL_SYSTEM_NAME=fixture
+export CHILL_DEMO_REPLAY=1 NODE_EXTRA_CA_CERTS='<printed CA path>'
+pnpm build
+cp -R .next/static .next/standalone/.next/
+HOSTNAME=127.0.0.1 PORT=3131 node .next/standalone/server.js
+```
+
+Use the local synthetic token `s2-local-token`; it has no cluster authority.
+Local-only POST controls `/__fixture/scene?name=empty|first|expand|shrink`,
+`/__fixture/resync` and `/__fixture/cluster` exercise push updates, zero-retention
+resynchronization, and an E5-7-shaped issue event. `/__fixture/status` reports
+authentication/resume counts and active upstream sockets without credentials.
+No cluster or deployment is involved. Exit the fixture process to remove its
+temporary certificate/key. Run `pnpm test`, `pnpm typecheck` and `pnpm lint` for
+the repeatable reducer, boundary, transport lifecycle and display regressions.
+
+Local S2 acceptance rehearsal (2026-10-30): Node 24, production standalone
+Next server, normal production CSP, loopback TLS hub and the real authenticated
+WebSocket front; no browser fetch interception, cluster access or deployment.
+The full Node suite passed 49/49 before the additional Upgrade-reset regression;
+the updated proxy suite passed 3/3. Typecheck, lint and production build passed.
+The build retained the existing Asta Sans fallback-metrics warning.
+The rejected-Upgrade reset found during this rehearsal now destroys the socket
+instead of terminating the proxy, and has a runnable proxy regression test.
+
+| Criterion | Exercised evidence |
+| --- | --- |
+| S2-2 | Different received/terminal denominators, observed zero/비율 없음, null power and absent buckets; display/reducer tests and POOL browser card |
+| S2-3 | All four labelled synthetic scenes followed from L0; `fixture-{empty,first,expand,shrink}.png` |
+| S2-4 | Processed projection only; blank whole/Node power, independent pending/waiting, shared instance symbols; no raw or polling REST reads in the browser trace |
+| S2-5 | Keyboard instance expansion, Node/reservation source facts, query refresh after reauthentication, pinned evidence through a newer decision and refresh, opener/heading/board-lane focus restoration |
+| S2-6 | First-frame auth reached the TLS upstream; a zero-retention reconnect resumed from its exact old checkpoint then received a snapshot and explicit gap; L0/L1 navigation kept the socket; logout removed live payload/DOM and left zero upstream sockets |
+| S2-7 | An event-only E5-7-shaped observer issue appeared immediately with source/reason/previousReason; this is a synthetic local rehearsal, not actual cluster E5-7 acceptance |
+| S2-8 | 390×844 viewport had scroll width 390; evidence stacked below the board, native Enter/Esc worked, reduced-motion matched with animation `none`, and UTC/KST switched explicitly |
+
+Screenshots from this rehearsal are in `/tmp/chill-dashboard-s2/`, including
+`live-authenticated.png`, `pool-reservations.png`, `decision-evidence.png`,
+`cluster-live-event.png`, `resync-gap.png`, `narrow-reduced-motion.png`,
+`narrow-live-board.png`, `evidence-refresh-retained.png` and `logout-cleared.png`.
+
 History, load and custom observation dates use the device's local time zone.
 Only edited fields are converted to UTC; untouched submitted RFC3339Nano strings
 remain exact, including seconds and fractional precision. Empty, partial or invalid
@@ -138,12 +245,10 @@ replacing the submitted interval or its records.
 
 Workloads are displayed as 서비스, POOLs as 실행 그룹. Existing native model/service records are picked from lists; dependencies, impact confirmation, filters, advanced input and exact source identities open in accessible dialogs. First-time artifact registration still requires its real source because no artifact catalog producer exists. Login is a dedicated screen; connected identity changes and logout are in 접속 관리.
 
-POOL list and detail views accept the current API's null collections as empty
-node, workload or instance lists. An idle POOL or an executor awaiting policy
-acknowledgement must not crash the page; its actual readiness remains visible.
+The POOL list accepts the processed API's null collections as empty lists. POOL detail now uses the live projection, not the former manual REST polling view.
 
 Model authoring and applied workload definitions use `firstfloor` settings with positive int32 `maxBatchSize` and per-workload-UID `maxQueueSize` bounds. Native backends are `ort-cpu` / `ort-cuda` for ONNX and `rknnlite` for RKNN. The API validates artifact/backend compatibility, requires these settings for the `firstfloor` family and rejects them for other families. Each artifact lists every model file in `source.files`; only RKNN artifacts declare an `input` tensor contract, and the Preprocessor targeting an artifact defines the raw input of every other format.
 
-Resource policy/maintenance writers, measurement writers/options and experiment producers remain unavailable. Scheduler judgment, candidate/load, settings, transitions, history, whole/active POOL power and A/B comparison are connected to existing producers. FULL labels enabled plus all eight controls, not successful physical application or SLO satisfaction; the compact control section links measured candidate evidence, current observations, actual transitions and the same input-window request/power results. Experiments link to judgment comparison without claiming an experiment lifecycle. Missing Console configuration in ChillServer is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
+Resource policy/maintenance writers and measurement writers/options remain unavailable. Scheduler judgment, candidate/load, settings, transitions, history, whole/active POOL power, A/B comparison and immutable experiment publications are connected to existing producers. FULL labels enabled plus all eight controls, not successful physical application or SLO satisfaction; the compact control section links measured candidate evidence, current observations, actual transitions and the same input-window request/power results. Experiment reads do not execute experiments or judge their success. Missing Console configuration in ChillServer is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
 
 Browser token exists only in tab memory. Authentication changes abort requests, cancel and clear queries, replace the entire QueryClient, and remount draft forms. Query retry, focus and reconnect refetch are disabled; optional visible polling has a configured bound. Mutations/inference are never replayed. Shared changes and deletion require explicit confirmation; conflict retains drafts. Explicit latest-version adoption updates both the comparison baseline and version without replacing the draft, so before/after confirmation uses the actual latest definition. Response loss is `결과 미확인` and requires original-state lookup before an explicit user resubmission. The public native HTTPS ChillServer gateway serves this private web module on the same origin; the BFF still calls its fixed HTTPS ChillServer origin and validates the native CA.
