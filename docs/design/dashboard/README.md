@@ -335,24 +335,22 @@ frontend-design의 두 단계 검토 결과, 동일 카드·그라데이션·장
 
 1440px에서는 sidebar를 뺀 본문 폭을 사용하고, 1280px 이상에서 행렬과 20~24rem 우측 패널을 나란히 놓는다.
 그 이하에서는 패널을 같은 페이지 Dialog/Sheet로 열고 닫으면 셀에 focus를 돌린다.
-390px에서는 장치 종류 하나를 먼저 고르고 모델×그 장치 모드 표를 가로 이동한다.
-고정 첫 열/2단 머리글, 표 내부 `overflow-x:auto`, ‘가로로 더 볼 수 있어요’ 안내와 명시적인 닫기 버튼을 둔다.
+390px 개요는 장치 종류 하나를, 상세는 실행 경로 하나를 선택해 읽는다. 모든 전력모드 행은 유지한다.
+고정 폭 거대 표 대신 가용 폭에 맞춘 table-fixed·줄바꿈과 명시적인 닫기 버튼을 둔다.
 페이지 전체 가로 넘침이나 `overflow:hidden`으로 마지막 열을 숨기지 않는다.
 
 ```text
 측정 > 커버리지                                  [새 측정 요청]
 [커버리지] [요청 목록] [프로파일] [개별 회차] [동작 비용] [분배 점유]
-선언 후보 N | 완료 C | 경고 Q | 실패 F | 진행 P | 미측정 U | 미지원 X | 미확인 ?
-모델 [ ] 장치 [ ] 경로 [ ] 모드 [ ] 상태 [ ] [논문용 검토만]
-+------------------------------------------------+------------------------+
-| 모델 > 실행 경로 | 장치 A       | 장치 B        | 선택 조건              |
-|                  | MAXN | 15W   | fixed         | Node/CPU/이미지 variant |
-| MobileNet        |      |       |               | 배치 | J/건 ±오차 | p95|
-|   ORT CPU        | 완료 | 미측정| 완료          | 실제 배치·회차별 근거  |
-|   RKNN           | 지원 안 함  | 확인 불가     | 시도 이력·실패·후속    |
-+------------------------------------------------+------------------------+
-| 상태 범례 / 선언 기준과 읽은 범위 / 마지막 조회  | [이 조건으로 측정 요청]|
-+------------------------------------------------+------------------------+
+전체 조회 완료 전 로딩 / 완료 C / 유효 후보 N / 7상태 수
+모델 [ ] 장치 [ ] 경로 [ ] 모드 [ ] 상태 [ ] [지원 안 함도 표시]
+개요: 모델       | 장치 A: 완료/후보, 실패 | 장치 B: 완료/후보, 실패
+      MobileNet  | 3/12                  | 2/6
+선택 상세:
+전력모드 | 실행 경로 CPU        | 실행 경로 CUDA        | 선택 조건 패널
+MAXN     | 완료, 최저 J/배치    | 완료, 최저 J/배치     | Node/정확 조건
+15W      | 품질 경고            | 미측정, 조건 요청     | CI/지연/회차/시도
+상태 범례 / 선언 기준과 읽은 범위 / 마지막 조회 / 원본
 ```
 
 ```text
@@ -387,15 +385,18 @@ frontend-design의 두 단계 검토 결과, 동일 카드·그라데이션·장
 ### 8.3 커버리지 데이터와 셀 판정
 
 **명칭과 축.** URL은 `/measurements/coverage`, 제목은 ‘측정 커버리지’,
-설명은 **‘선언 후보 대비 측정 현황 — 실행 지원 여부를 모두 보장하지 않아요’**다.
-측정 홈 첫 화면에서 1클릭으로 진입한다. 행은 inventory models의 `spec.executionPaths`,
-열은 classes의 `powerModes`다. 상위 셀 키는 `(model UID, path name, class UID, powerMode name)`이다.
+설명은 ‘모델과 장치를 고르면 전력모드별 측정 현황을 볼 수 있어요.’다.
+개요는 모델(행) × 장치 종류(열), 셀은 완료/유효 후보와 실패 수다. 클릭하면
+해당 모델×장치의 전력모드(행) × 실행 경로(열)를 연다. 상세 셀 키는 `(model UID, path name, class UID, powerMode name)`이다.
 모드 없는 class에 가짜 fixed를 만들지 않는다. 삭제된 모델/class의 과거 시도는 ‘현재 선언 밖 이력’으로 별도 보존한다.
 
-전체 후보 수는 `Σmodel |executionPaths| × Σclass |powerModes|`다. 지원 확정 분모가 아니며
-미지원·미확인도 상태별 개수에 포함한다. ‘지원 조합 완료율’은 표시하지 않는다.
-필터 적용 전/후 후보 수를 구분하고 7개 대표 상태 개수 합은 표시 후보 수와 같아야 한다.
-실행 88개·profile 78개·후속 성공·과거 실패는 별도 이력 수로 표시한다.
+전체 선언 후보 수는 `Σmodel |executionPaths| × Σclass |powerModes|`다. 유효 후보 분모는
+명시적 지원 불일치를 제외하며 실행 지원 확정이나 연구 목표 완료율을 뜻하지 않는다.
+지원 안 함은 기본 숨김(토글), 집계는 필터 범위의 7상태를 구분한다.
+측정 홈 상단은 동일 분모의 커버리지 %와 최근 실험 결론 진입을 제공하며 홈에는 이 요약 링크만 둔다.
+1440px에서 두 표는 가로 스크롤 없이, 모바일 개요는 장치 선택으로 열을 줄인다.
+UI UX Pro Max `Loading Indicators` 권고를 채택: inventory·요청·프로파일·전체 회차가 모두 성공적으로
+조회될 때까지 `aria-busy`와 고정 높이 안내만 표시하고 중간 상태/카운터는 노출하지 않는다.
 
 | 원본 GET (`/api/v1` 이하) | 조인 필드와 역할 | 범위/오류 규칙 |
 |---|---|---|
@@ -403,7 +404,7 @@ frontend-design의 두 단계 검토 결과, 동일 카드·그라데이션·장
 | `/namespaces/{ns}/batch-energy-optimizations` | `metadata.{namespace,name,uid,creationTimestamp}`, `spec.state.candidate.{modelSpec,deviceClass,executionPath,powerMode}`, `.targetNode`, CPU/protocol, `status.{phase,outcome,conditions,result}` | namespace 명시. 목록에 있는 요청의 phase이지 채택 품질이 아님 |
 | `/scheduler/profiles` | `profiles[].condition.{logicalModel,deviceClass,nodeUID,powerMode,artifact.executionPath,...}`, `id`, `reference`, `batches`, `measuredAt`, `reuse` | 현재 사용 가능한 증거. profile id 문자열을 추측 파싱해 요청 UID를 만들지 않음 |
 | 같은 응답 `insufficiencies[]` | `source.{Namespace,Name}`, `code`, `reason`를 BEO namespace/name과 연결 | `ReplacementSelection`은 대체된 이력이며 다른 유효 profile을 무효화하지 않음. 연결 불가 issue는 ‘연결 안 된 경고’로 보존 |
-| `/namespaces/{ns}/profiling-runs` | `spec.candidate`, `targetNode`, `measurement.{batch,cpuQuota,cpuAffinity,workloadMode,dataset}`, `status.conditions`, `status.evidence` | 선택 셀의 회차·상세를 열 때 page를 모음. `q`는 부분일치. page 미완료는 없음의 근거가 아님 |
+| `/namespaces/{ns}/profiling-runs` | `spec.candidate`, `targetNode`, `measurement.{batch,cpuQuota,cpuAffinity,workloadMode,dataset}`, `status.conditions`, `status.evidence` | 시작 시 page 끝까지 모으고 집계. 선택 패널 재마운트만으로 다시 조회하지 않음. 수동 새로 고침은 전체 재조회 |
 
 profile 정확 variant는 `condition`에서 `name`과 `plannedBatchSizes`만 뺀 frozen 조건과 metricSource다
 (`internal/serving/kube/catalog.go:200-230`). Node UID·runtime image·artifact·preprocessor·dataset
@@ -417,9 +418,9 @@ CPU·dataset·이미지의 아직 요청되지 않은 무한 조합을 가상 �
 
 **정적 지원 판정은 증거 상태와 분리한다.** 선택 셀의 model/path/class/Node에 한정해
 `GET /model-compatibility`를 Node별 직렬 조회하고 전력모드 사이 Query cache를 공유한다.
-`Compatible`은 ‘정적 실행 지원 확인’, `Incompatible`은 ‘지원 안 함 — 이유’,
-`Unknown`과 조회 오류는 ‘지원 확인 불가 — 이유/HTTP 상태’다. 같은 class의 일부 Node 결과를
-전체에 확장하지 않으며 전체 Node가 같지 않으면 집계 지원 판정을 확정하지 않는다.
+`Compatible`·`Incompatible`·`Unknown`은 선택 패널의 현재 지원 확인으로만 표시한다.
+선택 때문에 같은 경로의 다른 전력모드 상태가 변하던 원인은 지원 조회 결과를 행렬 판정에
+다시 주입한 것이었다. 행렬은 선택과 독립된 선언/측정 목록으로 계산한다.
 현재 inventory UID와 응답 입력 UID/selection이 다르면 연결하지 않는다. 조회 시각은 따로 표시한다.
 실제 실행·Ready·전력모드 적격성·측정 완료·admission 성공을 보장하지 않는다.
 미조회/구형 서버에서는 artifact/class의 명시 architecture 비교와 ‘선언상 후보 · 실제 runtime
@@ -435,14 +436,14 @@ CPU·dataset·이미지의 아직 요청되지 않은 무한 조합을 가상 �
 | 셀 상태 | 구체적인 판정 규칙 | 셀/패널에 남길 보조 사실 |
 |---|---|---|
 | **확인 불가** | 필요한 inventory/BEO/profiles 조회 실패·권한 거부·일부 page, identity 미확인, 선언 모순 또는 정적 판정 입력 불명 | 실패 API/조회 범위·readAt, 알려진 결과는 별도 표시. 403을 미측정/지원 안 함으로 바꾸지 않음 |
-| **지원 안 함** | backend가 해당 Node 모두 Incompatible이거나 미조회 상태의 architecture 불일치이고, 측정 이력이 없음 | 사유와 양쪽 선언값, 해칭. 요청 CTA 비활성 |
-| **품질 경고** | 사용 가능한 variant와 경고/미완료 variant가 섞임, BEO Complete인데 연결되는 catalog profile 없음, source insufficiency(대체 이력 제외), 실행 성공 Run의 검증 False/Unknown·근거 누락 또는 종결 condition stale, 연결되어 실제 조회한 자료의 비유한 수치 | ‘실행 완료’ phase를 보조 표기하고 정상 녹색 금지. 실행 중의 검증 Unknown만으로 경고하지 않음 |
-| **완료(근거 충분)** | 현재 catalog가 exact variant의 profile을 제공하고 그 범위에 미해결 경고가 없음. 셀에 여러 variant면 모두 이 기준 충족 | 실제 Node 수/variant 수와 측정 batch 집합. 이는 inference profile 사용 가능이지 논문/다섯 근거 완비 인증이 아님 |
+| **지원 안 함** | artifact/class의 명시 architecture 불일치이고 측정 이력이 없음 | 사유와 양쪽 선언값, 해칭. 요청 CTA 비활성. 서버의 선택 조건 지원 판정은 패널에서 별도로 표시 |
+| **품질 경고** | 사용 가능한 variant와 경고/미완료 variant가 섞임, Complete인데 연결 profile 없음, source insufficiency, 완료 Run의 검증·근거 누락, 실제 조회한 근거의 오류/404·수치 이상 | 실제로 조회한 해당 셀만 경고 cache에 기록해 개요에도 반영. 지원 확인 기능의 404는 측정 품질과 분리 |
+| **측정 완료** | 현재 catalog가 exact variant의 profile을 제공하고 그 범위에 알려진 미해결 경고가 없음 | 에너지 측정 완료이며 CI·지연·반복·계측 품질의 논문용 검토는 별도 |
 | **진행 중** | 유효 profile/품질 경고가 없고 BEO `phase=Measuring` 또는 현재 generation Run `ExecutionComplete=Unknown` 등 명시된 비종결 진행 상태 | 이전 실패/대기 사유. 알 수 없는 phase를 진행으로 추측하지 않음 |
 | **실패** | 위 상태가 없고 BEO `phase=Failed` 또는 현재 Run `ExecutionComplete=False`가 명시됨 | reason/message와 후속 결과 링크. 실행 성공 뒤 검증 불충분은 품질 경고로 분리하고 원본 상태 유지 |
 | **미측정** | 선언상 후보이고 필요한 전 범위 목록에 해당 키의 BEO/profile/Run 이력이 없음. Run 전 범위 확인 전에는 ‘이력 확인 중’, 실패 시 확인 불가 | **‘측정 이력 없음 · 실행 지원 미확인’**. 정적 일치만으로 지원됨이라고 쓰지 않음 |
 위 규칙에 들지 않는 알 수 없는 phase·condition 조합의 기본값은 확인 불가다.
-Run 목록을 기다리는 초기 셀도 확인 불가의 ‘이력 확인 중’ 하위 표시이며 8번째 통계 상태를 만들지 않는다.
+전체 회차 조회 중에는 로딩만 표시한다. 조회 오류를 미측정으로 해석하거나 중간 수치를 확정 집계하지 않는다.
 
 과거 실패만 있고 후속 유효 profile이 있으면 대표는 완료, 보조는 ‘실패 이력·재측정됨’이다.
 유효 profile 뒤의 새 실패는 이전 증거를 지우지 않고 ‘사용 가능 결과 있음 · 최근 시도 실패’ 품질 경고다.
@@ -458,16 +459,17 @@ model/class/path/mode/targetNode/preprocessor/dataset/CPU request/quota/affinity
 이때 자동 ‘해결됨’/실패 숨김/완료율 가산을 하지 않는다. 이름 접두사/195→195b로 자동 연결하지 않는다.
 
 **셀 값·필터·패널.** 모델/class/Node/path/mode/status/CPU/배치 필터와 이름 검색을 URL에 보존한다.
-셀은 상태, actual batch 집합, 정확한 시도 수, 대표 variant가 하나일 때만 b*·J/건·p95와 오차 제공 여부를 보인다.
-여러 variant는 ‘조건 N개’와 완료/경고 개수로 표시하고 최저 J를 섞어 대표로 고르지 않는다.
-시도 수는 BEO 요청 수와 연결된 회차 수를 분리한다. 미지원·미확인 사유는 hover 없이 열 수 있어야 한다.
+셀은 상태와 실제 배치 범위·측정 집합 내 최저 J/건만 간결하게 표시한다.
+최저값은 최적 조건 추천이 아니며 정확 조건별 수치는 패널에서 구별한다.
+미측정/실패 셀에는 ‘이 조건으로 측정 요청’을 바로 제공한다. 요청 수와 회차 수는 패널에서 구분한다.
 패널은 Node/조건 선택 → 배치 표·에너지 곡선(제공된 오차만) → 실패/제외/후속 이력 →
 측정 상세/회차/원본 링크 → 요청 CTA 순이다. p95가 없으면 ‘미제공’ 또는 회차별 범위로 표시한다.
 
-‘논문용 검토만’은 **catalog 사용 가능 + 제공된 오차/반복·검증 자료 + 알려진 품질 경고 없음**을
-모두 확인한 조건의 필터다. 최종 논문 적격/유의성/최신 정책을 인증하지 않는다.
-오차가 없으면 통과시키지 않고 ‘에너지 CI 미제공으로 검토 보류’를 표시한다.
-기존 quick-energy-v1 이름만 보고 구정책/낮은 품질로 판정하지 않는다. 기준값 없는 CI 폭 임계치를 만들지 않는다.
+‘논문용 검토만’ 필터는 제거한다. 목록에 CI가 없어 항상 0건이던 동작 대신 검토 기준
+(CI·지연 표본·반복 수·계측 품질)을 안내하고 상세의 보존 근거로 검토한다.
+GET 확인: `u2-o-15w-m-beo-195/result`는 200, 정확 active 회차의
+`profiling-runs/u2-o-15w-m-beo-195-active-b1-a1/evidence-passport`는 404
+`EvidencePassportUnavailable`였다. 정상 URL의 보존 근거 부재이므로 해당 셀에 품질 경고와 재측정 안내를 남긴다.
 
 **클라이언트 집계와 상한.** 현재 88 BEO/78 profiles는 Map 조인으로 충분하다.
 inventory·BEO·profiles는 독립 Query cache, 새로 고침 취소/인증 변경 cache 초기화는 기존 계약을 쓴다.
@@ -650,6 +652,14 @@ energyPopulation/energyCoverage/missingReasons.energy를 사용한다.
 명시 null identity는 legacy alias나 현재 Workload identity로 대체하지 않는다.
 offered와 실제 기간이 있으면 ‘단계 평균 보낸 요청률’=offered/기간을 표시할 수 있지만 목표 부하나 α가 아니다.
 초별 지연/에너지 선형 보간·가짜 이벤트는 금지한다. 게시 단계 집계 표/막대와 선택 당시 journal을 사용한다.
+
+2차 개선은 막대 내부의 잘린 라벨을 제거하고 전체 라벨 목록을 시간 비례 막대와 분리했다.
+단계 번호 축의 평균 요청률·에너지 및 서비스별 성공률/p95를 같은 순서로 정렬한다.
+추세를 초별 곡선으로 만들지 않고 점과 막대로 표시하며, 접근 가능한 수치 표를 함께 둔다.
+UI UX Pro Max `small multiples line chart` 결과의 직접 라벨·수치 표 원칙을 채택하되,
+게시 데이터가 단계 집계이므로 연속선 대신 점을 사용한다. 기존 색·서체·컴포넌트를 재사용한다.
+선택 URL은 Next의 native history 연동으로 동기 갱신하며 각 동작이 최신 location.search를
+읽는다. A/B 연속 선택은 이전 렌더의 searchParams 스냅샷으로 서로 덮어쓰지 않는다.
 없는 이유는 미제공으로 남기며 FAIL/NOT_READY/MEASURED_DESCRIPTIVE는 각각 게시 판정·준비·설명형 결과로 구분한다.
 성능 실패와 공개 불가/미평가를 같은 빨간 배지로 처리하지 않는다.
 
@@ -663,14 +673,6 @@ Breadcrumb는 `측정 > 커버리지/요청 목록 > 측정 > 회차`, `기록 >
 유효한 기본 breadcrumb를 쓴다. `/scheduler/profiles`는 기존 경로를 유지하되 sidebar의 측정으로 소속을 맞춘다.
 
 | 소유자 | 파일 소유권과 공유 계약 |
-
-2차 개선은 막대 내부의 잘린 라벨을 제거하고 전체 라벨 목록을 시간 비례 막대와 분리했다.
-단계 번호 축의 평균 요청률·에너지 및 서비스별 성공률/p95를 같은 순서로 정렬한다.
-추세를 초별 곡선으로 만들지 않고 점과 막대로 표시하며, 접근 가능한 수치 표를 함께 둔다.
-UI UX Pro Max `small multiples line chart` 결과의 직접 라벨·수치 표 원칙을 채택하되,
-게시 데이터가 단계 집계이므로 연속선 대신 점을 사용한다. 기존 색·서체·컴포넌트를 재사용한다.
-선택 URL은 Next의 native history 연동으로 동기 갱신하며 각 동작이 최신 location.search를
-읽는다. A/B 연속 선택은 이전 렌더의 searchParams 스냅샷으로 서로 덮어쓰지 않는다.
 |---|---|
 | S1 | 새 `features/measurement-coverage.tsx`(coverage와 `MeasurementPlansPage`), `features/measurement-runs.tsx`(`MeasurementRunsPage/MeasurementGroupPage`), `lib/measurement-coverage.ts`+test. 기존 request/scheduler-profiles, **read-types.ts와 catch-all page.tsx 독점** |
 | S2 | 기존 measurement-plans(상세만)/read-pages(Run 상세·PreflightAnswer)/measurement-projections, measurements.ts+test, **scheduler.ts의 nanosToMilliseconds와 scheduler.test.ts**, Screen/sidebar/globals.css 독점 |

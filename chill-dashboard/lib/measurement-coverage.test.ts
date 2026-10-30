@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { batchStatisticsText, coverageCells, coverageRequestHref, currentRunCondition, exactRunTrial, ownedRuns, planVariant, profileForPlan, profileVariant, relatedPlans, resolveMeasurementPrefill, runAttempt, runEvidenceState, runGroupKey, serverCompatibility, staticCompatibility, statisticsMissing } from "./measurement-coverage.ts"
+import { batchStatisticsText, coverageCells, coverageOverview, coverageReady, coverageCellSummary, coverageRequestHref, currentRunCondition, exactRunTrial, ownedRuns, planVariant, profileForPlan, profileVariant, relatedPlans, resolveMeasurementPrefill, runAttempt, runEvidenceState, runGroupKey, serverCompatibility, staticCompatibility, statisticsMissing } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { BatchStatistics, CurvePlanSpec, InventoryClass, InventoryView, MeasurementPlan, ModelCompatibility, ProfilingRun, ProfilesView, SchedulerProfile } from "./read-types.ts"
@@ -30,6 +30,33 @@ test("incomplete or failed ranges are never unmeasured and Complete does not imp
   assert.equal(coverageCells({...base,plans:[plan]})[0].state,"warning")
   assert.equal(coverageCells({...base,plans:[plan],catalog})[0].state,"complete")
   assert.equal(coverageCells({...base,inventory:{...inventory,classes:[{...cls,architecture:"amd64"}]},catalog})[0].state,"warning")
+})
+
+test("opening a cell never changes its neighbours or the overview counts",()=>{
+  const base={inventory,plans:[],catalog:{...catalog,profiles:[]},complete:true,runsComplete:true}
+  const before=coverageCells(base)
+  const selectedSources={...base,compatibility:[{node:"node",selection:{modelSpec:model.name,executionPath:"cpu",deviceClass:cls.name,node:"node"},error:"HTTP 404"}]}
+  const after=coverageCells(selectedSources)
+  assert.deepEqual(after,before)
+})
+
+test("overview counts only eligible cells, preserves detail keys and groups model by device",()=>{
+  const cells=coverageCells({inventory:{...inventory,classes:[cls,{...cls,name:"other",uid:"other",architecture:"amd64"}]},plans:[plan],catalog,complete:true,runsComplete:true})
+  const groups=coverageOverview(cells)
+  assert.equal(groups.length,2)
+  assert.deepEqual(groups.map(group=>[group.complete,group.eligible,group.failed]),[[1,2,0],[0,0,0]])
+  assert.deepEqual(groups.flatMap(group=>group.cells.map(cell=>cell.key)),cells.map(cell=>cell.key))
+  assert.match(coverageCellSummary(cells[0]),/0.09 J\/건/)
+  assert.equal(coverageCellSummary(cells[1]),"")
+  const warned=coverageCells({inventory,plans:[plan],catalog,complete:true,runsComplete:true,evidenceIssues:{[cells[0].key]:"보존 근거 없음"}})
+  assert.equal(warned[0].state,"warning")
+  assert.equal(warned[1].state,"unmeasured")
+})
+
+test("loading is complete only after every entire range has settled successfully",()=>{
+  const done={data:{},error:null,isFetching:false}
+  assert.equal(coverageReady([done,done,done,done]),true)
+  for(const pending of [{...done,data:undefined},{...done,error:new Error("403")},{...done,isFetching:true}]) assert.equal(coverageReady([done,done,done,pending]),false)
 })
 test("a newer failure retains usable evidence with warning; earlier same-request failure is history",()=>{
   const failed={...plan,metadata:{...plan.metadata,name:"failed",uid:"failed-uid",creationTimestamp:"2026-10-30T01:00:00Z"},status:{phase:"Failed"}}
@@ -100,9 +127,6 @@ test("server support is Node-scoped, independent of evidence and does not invent
   const base={inventory,plans:[],catalog:{...catalog,profiles:[]},complete:true,runsComplete:true,compatibility:[{node:"node",data}]}
   assert.equal(coverageCells(base)[0].state,"unmeasured")
   assert.equal(coverageCells({...base,plans:[{...plan,status:{phase:"Failed"}}]})[0].state,"failed")
-  assert.equal(coverageCells({...base,compatibility:[{node:"node",data:{...data,verdict:"Incompatible"}}]})[0].state,"unsupported")
-  assert.equal(coverageCells({...base,plans:[plan],catalog,compatibility:[{node:"node",data:{...data,verdict:"Unknown"}}]})[0].state,"complete")
-  assert.equal(coverageCells({...base,plans:[{...plan,status:{phase:"Failed"}}],compatibility:[{node:"node",selection,error:"HTTP 503"}]})[0].state,"failed")
   const multi={...inventory,classes:[{...cls,nodes:[...cls.nodes,{...cls.nodes[0],name:"node2",uid:"node2"}]}]}
   assert.equal(coverageCells({...base,inventory:multi})[0].compatibility.reason,fallback.reason)
 })

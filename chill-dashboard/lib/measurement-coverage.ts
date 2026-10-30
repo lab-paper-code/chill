@@ -3,7 +3,7 @@ import type { BatchStatistics, CampaignResult, InventoryClass, InventoryView, Me
 import { safeMeasurementReturn } from "./measurements.ts"
 
 export type CoverageModel = InventoryView["models"][number] & {spec:ModelSpec}
-export const coverageStates = {complete:"완료(근거 충분)",warning:"품질 경고",failed:"실패",running:"진행 중",unmeasured:"미측정",unsupported:"지원 안 함",unknown:"확인 불가"} as const
+export const coverageStates = {complete:"측정 완료",warning:"품질 경고",failed:"실패",running:"진행 중",unmeasured:"미측정",unsupported:"지원 안 함",unknown:"확인 불가"} as const
 export type CoverageState = keyof typeof coverageStates
 export const stateSymbols:Record<CoverageState,string> = {complete:"✓",warning:"△",failed:"×",running:"◷",unmeasured:"○",unsupported:"∕",unknown:"?"}
 export type Compatibility = {state:"candidate"|"unsupported"|"unknown";reason:string}
@@ -90,7 +90,27 @@ export function relatedPlans(plan:MeasurementPlan,plans:MeasurementPlan[]) {
   return plans.filter(other => other.metadata.uid !== plan.metadata.uid && other.spec.state.candidate.modelSpec === candidate.modelSpec && other.spec.state.candidate.deviceClass === candidate.deviceClass && other.spec.state.candidate.executionPath === candidate.executionPath && other.spec.state.candidate.powerMode === candidate.powerMode && other.spec.state.targetNode === plan.spec.state.targetNode).map(other => ({plan:other,sameRequestedCondition:planVariant(other.spec) === planVariant(plan.spec),frozenIdentityConfirmed:!!location(plan.status?.result) && location(plan.status?.result) === location(other.status?.result)}))
 }
 export type CoverageCell = {key:string;model:CoverageModel;path:ExecutionPath;cls:InventoryClass;mode:string;plans:MeasurementPlan[];profiles:SchedulerProfile[];runs:ProfilingRun[];state:CoverageState;reason:string;compatibility:Compatibility;variants:number;completeNodes:number;nodes:number;batches:number[];notes:string[]}
-type Sources = {inventory?:InventoryView;plans?:MeasurementPlan[];catalog?:ProfilesView;runs?:ProfilingRun[];complete:boolean;runsComplete:boolean;node?:string;compatibility?:CompatibilityRead[]}
+type Sources = {inventory?:InventoryView;plans?:MeasurementPlan[];catalog?:ProfilesView;runs?:ProfilingRun[];complete:boolean;runsComplete:boolean;node?:string;evidenceIssues?:Record<string,string>}
+export function coverageReady(queries:{data:unknown;error:unknown;isFetching:boolean}[]) {
+  return queries.every(query=>query.data!==undefined&&!query.error&&!query.isFetching)
+}
+export function coverageOverview(cells:CoverageCell[]) {
+  const groups=new Map<string,{key:string;model:CoverageModel;cls:InventoryClass;cells:CoverageCell[];complete:number;eligible:number;failed:number}>()
+  for(const cell of cells) {
+    const key=stableCondition([cell.model.uid,cell.cls.uid])
+    let group=groups.get(key)
+    if(!group) {group={key,model:cell.model,cls:cell.cls,cells:[],complete:0,eligible:0,failed:0};groups.set(key,group)}
+    group.cells.push(cell)
+    if(cell.state!=="unsupported") group.eligible++
+    if(cell.state==="complete") group.complete++
+    if(cell.state==="failed") group.failed++
+  }
+  return [...groups.values()]
+}
+export function coverageCellSummary(cell:CoverageCell) {
+  const energies=cell.profiles.flatMap(profile=>(profile.batches??[]).map(batch=>batch.energyPerInputJoules)).filter(value=>Number.isFinite(value)&&value>=0)
+  return [energies.length?`최저 ${Number(Math.min(...energies).toPrecision(4))} J/건`:null,cell.batches.length?`배치 ${cell.batches[0]}${cell.batches.length>1?`–${cell.batches.at(-1)}`:""}`:null].filter(Boolean).join(" / ")
+}
 export function coverageCells(source:Sources):CoverageCell[] {
   if (!source.inventory) return []
   const plansByKey = new Map<string,MeasurementPlan[]>(), profilesByKey = new Map<string,SchedulerProfile[]>(), runsByKey = new Map<string,ProfilingRun[]>()
@@ -107,8 +127,8 @@ export function coverageCells(source:Sources):CoverageCell[] {
       for (const mode of cls.powerModes) {
         const k=key(model.name,path.name,cls.name,mode.name), plans=plansByKey.get(k)??[], profiles=profilesByKey.get(k)??[], runs=runsByKey.get(k)??[]
         const nodes=cls.nodes.filter(node => !source.node || node.name === source.node)
-        const reads=nodes.map(node=>source.compatibility?.find(read=>{const selection=read.selection??read.data?.selection;return read.node===node.name&&selection?.modelSpec===model.name&&selection.executionPath===path.name&&selection.deviceClass===cls.name})).filter((read):read is CompatibilityRead=>!!read)
-        const compatibility=serverCompatibility(staticCompatibility(model,path,cls),reads.length===nodes.length?reads:[]), notes:string[]=[]
+        // Selection-only compatibility reads must never reclassify the measurement grid.
+        const compatibility=staticCompatibility(model,path,cls), notes:string[]=[]
         const completeNodes=nodes.filter(node => profiles.some(profile => profile.condition.nodeUID === node.uid)).length
         const issues=(source.catalog?.insufficiencies??[]).filter(issue => issue.code !== "ReplacementSelection" && plans.some(plan => issue.source.Namespace === plan.metadata.namespace && issue.source.Name === plan.metadata.name))
         const replaced=new Set((source.catalog?.insufficiencies??[]).filter(issue => issue.code === "ReplacementSelection").map(issue => `${issue.source.Namespace}/${issue.source.Name}`))
@@ -125,7 +145,7 @@ export function coverageCells(source:Sources):CoverageCell[] {
         else if (compatibility.state === "unsupported" && !profiles.length && !plans.length && !runs.length) {state="unsupported";reason=compatibility.reason}
         else if (compatibility.state === "unsupported" && profiles.length) {state="warning";reason="현재 정적 선언과 저장된 측정 근거가 달라요 · 각각 확인해 주세요"}
         else if (issues.length || numericWarning || runWarning || unresolvedPlans.some(plan => plan.status?.phase === "Complete") || (profiles.length && (completeNodes < nodes.length || unresolvedPlans.some(plan => plan.status?.phase !== "Measuring")))) {state="warning";reason=issues[0]?.reason ?? (numericWarning?"연결된 수치가 유효하지 않아요":runWarning?"완료 회차의 검증/근거를 확인해 주세요":completeNodes<nodes.length&&profiles.length?"일부 Node만 측정됐어요":"실행 완료와 사용 가능한 근거가 일치하지 않아요")}
-        else if (profiles.length) {state="complete";reason="현재 catalog 근거 기준 · inference profile 사용 가능"}
+        else if (profiles.length) {state="complete";reason="현재 사용 가능한 에너지 측정 결과가 있어요"}
         else if (running) {state="running";reason="명시된 진행 상태가 있어요"}
         else if (failures.length || runs.some(run => runEvidenceState(run) === "failed")) {state="failed";reason="실행 실패 이력 · 상세 원문을 확인해 주세요"}
         else if (!plans.length && !runs.length) {if (source.runsComplete) {state="unmeasured";reason="측정 이력 없음 · 실행 지원 미확인"} else reason="이력 확인 중 · Run 전 범위 조회 전"}
@@ -133,6 +153,8 @@ export function coverageCells(source:Sources):CoverageCell[] {
         if (running && profiles.length) notes.push("완료 · 재측정 진행")
         if (!source.runsComplete && profiles.length) notes.push("catalog 근거 기준 · 회차 상세 미조회")
         const variants=new Set(profiles.map(profileVariant));for(const plan of unresolvedPlans) variants.add(planVariant(plan.spec))
+        const evidenceIssue=source.evidenceIssues?.[stableCondition([model.uid,path.name,cls.uid,mode.name])]
+        if(evidenceIssue&&profiles.length) {state="warning";reason=evidenceIssue}
         result.push({key:stableCondition([model.uid,path.name,cls.uid,mode.name]),model,path,cls,mode:mode.name,plans,profiles,runs,state,reason,compatibility,variants:variants.size,completeNodes,nodes:nodes.length,batches:[...new Set(profiles.flatMap(p=>(p.batches??[]).map(b=>b.batch)))].sort((a,b)=>a-b),notes})
       }
     }
