@@ -170,6 +170,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	handlerConfig.ListMeasurements = measurements.list
+	handlerConfig.AssessMeasurements = measurements.assessList
+	handlerConfig.MeasurementCoverage = measurements.coverage
+	handlerConfig.DecorateProfiles = measurements.decorateProfiles
 	handlerConfig.SubmitMeasurement = measurements.submit
 	handlerConfig.DeleteMeasurement = measurements.delete
 	handlerConfig.ListOperationCostMeasurements = measurements.listOperationCosts
@@ -185,7 +188,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	chillServer, err := composeChillServer(handler, authorizer, opts)
+	chillServer, err := composeChillServer(handler, authorizer, opts, measurements)
 	if err != nil {
 		return err
 	}

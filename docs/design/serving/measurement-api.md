@@ -391,7 +391,7 @@ raw power·prepare payload/비밀을 HTTP에 복사하지 않는다.
 
 ## 13. 측정 커버리지 읽기 projection (U1)
 
-**2026-10-30 교차 모델 검토 반영, 구현 전.** [5차 계획](../../plans/2026-10-31-dashboard-measurement-redesign.md)과
+**2026-10-30 교차 모델 검토 반영, U1 서버 구현. 배포·성능 수용 전.** [5차 계획](../../plans/2026-10-31-dashboard-measurement-redesign.md)과
 [Dashboard §9](../dashboard/README.md#9-운영-중심-측정실험-5차-재설계)가 소비한다.
 사용자는 엣지 클러스터 운영 담당자다. 화면은 ‘스케줄러가 쓸 수 있는가, 운영에 쓰기 전에 무엇이 부족한가’를 답한다.
 §12의 resolver·owner·보존 통계·단일 writer를 재사용한다. CRD/spec/status/result/raw/frozen bundle/
@@ -400,7 +400,8 @@ publication·catalog 채택·admission·통계 추정 정책은 변경하지 않
 ### 13.1 소유권과 중복 I/O 제거
 
 집계는 **ChillServer**, 정적 호환성/개별 보존 결과 조회는 **Console** 소유다.
-`profilesView`의 atomic catalog snapshot과 기존 namespaced measurement reader를 조합한다.
+catalog의 atomic 읽기 snapshot(`measurementCatalogView`)과 기존 namespaced measurement reader를 조합한다.
+스케줄러 실제 채택 여부는 별도 기존 `profilesView`의 ID 집합으로 확인한다.
 Console에 스케줄러/catalog를 새로 만들거나 ChillServer가 채택 profile 전체를 Console `/result`로 크롤링하지 않는다.
 
 ```text
@@ -418,6 +419,9 @@ catalog 밖 단건 상세만 → 기존 Console /result → retained loader·같
   `ProfilesView` snapshot과 함께 publish한다. immutable NativeBundle/CR/result JSON에는 새 필드를 쓰지 않는다.
   현재 catalog에 없는 superseded·scope 밖 단건은 기존 Console result GET에서 같은 helper로 계산한다.
   이 단건 비용을 전체 coverage 준비의 선행 조건으로 만들지 않는다.
+  검증된 catalog 읽기 projection은 비용 source 갱신 전에 publish하여 비용 source 장애가
+  BEO 커버리지를 막지 않는다. 이는 스케줄러 채택을 앞당기지 않으며, 아직 채택하지 않은
+  검증 결과는 `scope.schedulerUsed:false`로 구분한다.
 - catalog 제공 경계에 **마지막 source 확인 성공 시각·마지막 오류·revision**을 추가한다.
   정상 무변경 refresh의 조기 반환도 성공 확인 시각을 갱신하고 실패는 마지막 성공 시각을 유지한다.
   atomic pointer를 지금 읽은 시각이나 configVersion만으로 fresh를 선언하지 않는다.
@@ -569,6 +573,14 @@ NoPublishedResult/RetainedEvidenceMissing/StatisticsNotRecorded와 실제 권한
 채택 profile 상세는 coverage/catalog의 같은 resultRows를 재사용하고 Console 중복 로드를 하지 않는다.
 raw/vector/log/Secret은 응답에 넣지 않는다. 기존 8MiB 한도는 유지하며 넘는 자료를 몰래 잘라 정상으로 표시하지 않는다.
 
+구현: 공통 `AssessMeasurement`가 개별 요청/Run/동작 비용/점유와 커버리지의 상태·label을
+산출한다. `MeasurementResultRow`는 catalog와 retained 단건의 같은 사실을 투영하며,
+공유 idle 반복과 active 반복을 별도로 센다. 저장된 protocol에 표본/gap/실패 **판정 정책**이
+없으면 `FrozenPowerWindowPolicy`는 unknown이다. 현재 관측값에 새 정책을 소급해
+기준 충족으로 만들지 않는다. timestamp 부재/node-wall은 이 unknown의 원인이 아니다.
+정상 superseded의 이미 검증한 메모리 facts는 현재 스케줄러 미사용으로 보존하며,
+읽기 전 replacement 제외에는 확인하지 않은 과거 facts를 만들어 넣지 않는다.
+
 기존 preflight 응답에 표시용 `batchPlan`을 추가한다:
 `{variantId,conditionMatch,requestedBatches,requestableBatches,plannedBatches,measuredBatches,inProgressBatches,
 missingBatches,subsetAllowed,searchMayStopEarly,reasons}`.
@@ -576,6 +588,13 @@ conditionMatch는 exact/planned-only/unknown이다. frozen image/조건 미확�
 셀에서 variantId를 전달하고 입력을 그대로 유지할 때만 그 missing을 초깃값으로 쓴다.
 CPU/dataset/protocol 등 변경·선언 UID 변경은 이전 자동 제외/검사를 무효화한다.
 검사에서 서버가 최신 요청 spec/정확 profile을 대조하고 planned-only 중복은 별도 사실로 보인다.
+전달은 `POST .../preflight?variantId=<id>`의 선택 query이며 native CR 본문에 새 필드를 넣지 않는다.
+preflight exact는 보존 CurvePlanSpec의 실제 identity·immutable image digest와 현재 요청
+spec(배치 선택 제외)이 모두 일치할 때만 제공한다. 이 저장 계약에 없는
+ModelSpec/DeviceClass/preprocessor 선언 UID를 과거 값으로 추정하지 않으며,
+해당 lineage는 확인되지 않은 한계로 reasons에 명시한다.
+진행 batch는 UID-bound 동결 curve-plan까지 일치한 현재 실행에서만 세며,
+spec만 같은 요청은 planned-only 사유로 분리한다. missing은 측정·정확 진행 집합을 제외한 목표다.
 `declaredBatchSizes` 경로는 부분집합 지정 불가: UI batch 칩 읽기 전용, 기존 batchSizes 생략 계약 유지,
 ‘요청 가능 범위’와 ‘실제 실행 예정 범위’, 중복 가능성·조기 종료 가능성을 펼쳐 확인받는다.
 subsetAllowed인 경로에만 **‘부족 배치만 요청’**을 쓴다. 모든 batch 실제 실행을 보장하지 않는다.
@@ -593,6 +612,11 @@ namespace별 프로세스 메모리 base snapshot 한 개, atomic 교체, namesp
 source 실패는 partial/stale와 기존 dataAsOf를 유지한다. 지원 실패면 분모 null,
 목록 불완전이면 미측정 수 null, catalog 오래됨이면 현재 사용 판정을 stale로 표시한다.
 단건 비용/점유 장애가 무관한 coverage를 막지 않는다. 인증 변경/401/403 후 이전 cache 표시 금지다.
+
+구현의 namespace cache는 처음 준비 중 503/`Retry-After: 2`를 반환하고, source별 성공 입력을
+한 번의 갱신에 모아 교체한다. 실패 source는 최대 5분의 기존 입력과 마지막 성공 기준 시각을
+유지하며 partial/stale로 보인다. Run LIST는 한 번의 namespace 갱신에서 UID/owner index로
+사용하고 공개 page별 전수 LIST를 하지 않는다. 동작 비용/점유 source는 집계에 접근하지 않는다.
 
 수용 데이터는 3모델/8class/88BEO/1,155Run/78profile, 동시 사용자 1·5다.
 **① 성공 GET p95 <2초 ② 로그인/경로 진입부터 첫 사용 가능한 커버리지까지 p95 <2초

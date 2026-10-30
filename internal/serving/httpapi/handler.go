@@ -39,7 +39,10 @@ type HandlerConfig struct {
 	SchedulerMeters                                            func() []servingkube.MeterDeclaration
 	ReceiveResources                                           func(context.Context, serving.ResourceBatch) ([]serving.ResourceTarget, error)
 	Profiles                                                   func(context.Context) (ProfilesView, error)
+	DecorateProfiles func(context.Context, ProfilesView) (json.RawMessage, error)
 	ListMeasurements                                           func(context.Context, string) (api.BatchEnergyOptimizationList, error)
+	AssessMeasurements func(context.Context, api.BatchEnergyOptimizationList) ([]json.RawMessage, error)
+	MeasurementCoverage func(context.Context, string, MeasurementCoverageQuery) (json.RawMessage, error)
 	SubmitMeasurement                                          func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
 	DeleteMeasurement                                          func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
 	OperatingPower                                             func(context.Context, time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
@@ -116,6 +119,7 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("GET /api/v1/scheduler/capacity", h.schedulerCapacity)
 	h.mux.HandleFunc("POST "+manualOperationsPath, h.operations)
 	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
+	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/measurement-coverage", h.measurementCoverage)
 	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
 	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}", h.measurements)
 	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
@@ -696,7 +700,7 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusForbidden
 	case "NotFound", "WorkloadNotFound", "PoolNotFound":
 		status = http.StatusNotFound
-	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
+	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidCoverageQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
 		status = http.StatusBadRequest
 	case "ObservationNotReady", "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "NodeBusy", "NodeServing", "NodeMissing", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
 		status = http.StatusConflict
