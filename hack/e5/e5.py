@@ -785,10 +785,6 @@ def self_check_client_jsonl(analysis):
 
 
 
-# This local check must not require an operational environment or cluster binding.
-if __name__=='__main__' and sys.argv[1:]==['self-check']:
-    self_check()
-    sys.exit(0)
 
 if __name__=='__main__' and sys.argv[1:2]==['tables']:
     spec=importlib.util.spec_from_file_location('e5_tables',HERE/'tables.py')
@@ -2639,4 +2635,8 @@ def main():
         print('NOT_READY: '+str(exc),file=sys.stderr); return 2
 
 
+# This local check must not require an operational environment or cluster binding.
+if __name__=='__main__' and sys.argv[1:]==['self-check']:
+    self_check()
+    sys.exit(0)
 if __name__=='__main__': sys.exit(main())
