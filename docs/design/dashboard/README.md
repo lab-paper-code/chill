@@ -271,7 +271,7 @@ ID 정본은 Dashboard SRS다. U는 기존 구현 단위, T는 라이브/재생 
 
 ## 8. 측정·실험 UX와 커버리지 (2026-10-30)
 
-상태는 **설계 확정, 구현 전**이다. [계획](../../plans/2026-10-30-dashboard-measurement-ux.md)의
+상태는 **코드 연결·격리 GET 확인 완료, 배포·재설문 전**이다. [계획](../../plans/2026-10-30-dashboard-measurement-ux.md)의
 설문·GET 관측과 [SRS](../../spec/dashboard/SRS.md) DB-FR-56~65, DB-UX-05~06을 구현한다.
 이번 변경은 측정·실험 영역과 공용 데이터 폭만 다룬다. 홈의 라이브 보드·사이드바·로그인 정체성은 유지한다.
 
@@ -661,6 +661,14 @@ Screen 공유 인터페이스는 `width?: "narrow"|"data"`, `actionPlacement?: "
 S1/S3는 이 props만 사용하고 CSS는 기존 Tailwind/semantic 토큰을 이용한다.
 S1은 새 목록 함수를 route에 연결하고 S2는 옮겨진 옛 목록·그룹 구현을 제거한다.
 함수 alias/중복 export·새 공용 framework는 남기지 않는다. PreflightAnswer/preflightConclusion은 기존 caller가 있어 유지한다.
+
+S1 구현은 `/measurements/coverage`와 새 목록/정확 조건 Run 그룹을 별도 소유 파일에 둔다.
+inventory 양쪽 페이지와 namespace Run 전체 페이지는 탭 Query cache에 한 번 모으며,
+선택 Result와 정확 참조 Passport만 추가로 읽는다. 미조회 Run은 미측정으로 바꾸지 않는다.
+`논문용 검토만`은 현재 catalog에 CI가 없어 검토 보류(0개)로 남긴다. CI를 만들어내거나
+`confidenceLevel`을 에너지 CI로 취급하지 않는다. 복사 진입은 기존 `from`에
+`fromNamespace`/`fromUID`가 제공되면 정확히 확인하며, 조합 prefill과 함께 오면 잠근다.
+이 구현 상태는 runtime 지원 확정·논문 적격·재설문 수용 완료를 뜻하지 않는다.
 
 실제 순수 함수의 최소 회귀는 [계획 §5](../../plans/2026-10-30-dashboard-measurement-ux.md#5-검증과-통합-완료-조건)를 따른다.
 특히 nanosToMilliseconds 모든 caller의 음수·정밀 정수, 이름 partial-match 충돌,

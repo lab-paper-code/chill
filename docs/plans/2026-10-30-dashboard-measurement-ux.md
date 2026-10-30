@@ -1,9 +1,9 @@
 # 측정 커버리지와 측정·실험 UX 개편 계획
 
-- 날짜: 2026-10-30. 상태: **문서 확정, 구현·배포·재설문 전**.
+- 날짜: 2026-10-30. 상태: **코드 연결·격리 GET 확인 완료, 배포·재설문 전**.
 - 요구사항 정본: [Dashboard SRS](../spec/dashboard/SRS.md) DB-FR-56~65, DB-UX-05~06.
 - 화면·필드·판정·파일 소유권 정본: [Dashboard 설계 §8](../design/dashboard/README.md#8-측정실험-ux와-커버리지-2026-10-30).
-- 이 단계는 이 계획, SRS, 설계만 변경한다. 코드·클러스터 변경과 새 라이브러리 설치는 하지 않는다.
+- 문서 확정 뒤 S1~S3 구현으로 진행했다. 클러스터 변경과 새 라이브러리 설치는 하지 않는다.
 
 ## 1. 해결할 문제와 성공 기준
 
@@ -84,6 +84,18 @@ S2의 공용 Screen 변경을 기다리느라 다른 슬라이스를 직렬화�
 S3는 CSS 전역 파일이나 route를 고치지 않는다. 실험 화면은 현재 catch-all 경로로 충분하다.
 공유 read-types 보완이 필요하면 S1에 정확한 필드만 전달한다. 별도 중복 DTO를 만들지 않는다.
 
+### S1 구현 기록 (2026-10-30)
+
+`features/measurement-coverage.tsx`가 선언 후보 행렬·URL 필터·조건 패널과 요청 목록을 제공한다.
+`lib/measurement-coverage.ts`는 정적 비호환/미확인, 목록 완전성, catalog 근거와
+실행 이력의 7상태를 판정한다. Node가 일부만 완료면 경고이며 다른 CPU·동결 이미지를
+하나의 최저 에너지로 합치지 않는다. inventory 양쪽 페이지와 namespace Run을 끝까지 모아 cache하며
+미조회·실패를 미측정으로 바꾸지 않는다. 선택 Result와 정확 참조 Passport만 추가 조회한다.
+`features/measurement-runs.tsx`는 실제 조건을 전부 포함한 그룹 키와 원본 Run/batch를 사용하며
+`195`/`195b` 부분일치에 회차 번호를 붙이지 않는다. 요청 prefill은 현재 선언·namespace·중복 키를
+확인하고, 워크로드·CPU·protocol을 임의 선택하지 않는다. CI가 없는 현재 catalog의
+논문용 검토 필터는 검토 보류로 남긴다. 이 기록은 배포·runtime 지원 보장·재설문 완료 증거가 아니다.
+
 ### S3 구현 기록 (2026-10-30)
 
 `features/experiments.tsx`는 비교 선택·결론을 목록 앞에 두고 같은 기록 이름의 A/B를 한 표에 놓는다.
@@ -111,6 +123,17 @@ ns→ms, 비율→%, A−B %p/ms/J와 B 대비 에너지 변화율을 처리한�
 통합 담당자의 실행 항목은 `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`와
 1440/1024/768/390px 브라우저 수용(키보드, 필터 복원, 마지막 행 focus/CTA 가림, 표 가로 이동, 원본/단위)이다.
 GET-only 재설문에서 dry-run/preflight POST가 차단된 것은 제품의 제출 장애로 집계하지 않는다.
+
+2026-10-30 통합 검사: Node 24와 `nice -n 19`로 `pnpm test` **73/73**,
+`pnpm typecheck`, `pnpm lint`, `pnpm build`를 통과했다.
+첫 lint의 실험 focus effect/미사용 import는 각 소유자가 수정한 뒤 실패한 gate부터 이어서 확인했다.
+기존 Asta Sans fallback metadata 경고는 남으며 새 폰트나 라이브러리를 추가하지 않았다.
+격리 `/tmp/uxs1`, GET-only 실데이터에서 선언 후보 390 / BEO 88 / profile 78 / Run 1155를
+각각 다른 모집단으로 확인했고 1440/1024/768/390px, Dialog 닫기 후 셀 focus,
+prefill 무제출·미선택과 브라우저 뒤로가기의 조건/셀 복원을 관찰했다.
+390px 표는 페이지 전체가 아니라 내부에서 가로 이동한다. 실제 idle Run Passport 조회 실패는
+그 영역의 읽기 오류로 남겼으며 catalog 결과나 Run을 지우거나 0 지연으로 대신하지 않았다.
+이 검사는 승인 배포·세 페르소나 재설문/SUS 수용의 대체가 아니다.
 
 ## 6. 남는 사실상의 한계
 

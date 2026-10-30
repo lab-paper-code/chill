@@ -12,7 +12,9 @@ import { codeText } from "@/lib/labels"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
-import type { InventoryClass, InventoryNode, InventoryView, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight } from "@/lib/read-types"
+import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight } from "@/lib/read-types"
+import { resolveMeasurementPrefill, staticCompatibility, planVariant, type MeasurementPrefill } from "@/lib/measurement-coverage"
+import { useCoverageInventory } from "@/features/measurement-coverage"
 
 const back: [string, string] = ["/measurements", "측정"]
 const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
@@ -39,7 +41,7 @@ const advancedFields: [key: NumberKey, label: string, min: number][] = [
 type Protocol = { values: Advanced; from: string | null }
 // model, preprocessor and dataset come from the chosen Workload's spec refs (or a copied plan); the API takes catalog names.
 type Draft = { workload: string; model: string; preprocessor: string; dataset: string; deviceClass: string; node: string; path: string; powerMode: string; batchSizes: number[]; trials: number | null; cpu: string | null; protocol: Protocol | null; name: string | null }
-type Context = { models: ModelResource[]; workloads: WorkloadView[]; classes: InventoryClass[]; plans: MeasurementPlan[] }
+type Context = { models: ModelResource[]; workloads: WorkloadView[]; classes: InventoryClass[]; plans: MeasurementPlan[]; prefill?:boolean }
 
 const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", batchSizes: [], trials: null, cpu: null, protocol: null, name: null }
 const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN, affinity: "" }
@@ -68,11 +70,10 @@ function advancedProblem(values: Advanced) {
   return ""
 }
 const nodeReason = (node: InventoryNode) => node.ready !== "True" ? "지금 준비되지 않았어요" : node.schedulingDisabled ? "새 작업을 받지 않도록 막혀 있어요" : ""
-// A path runs on a device class only when its artifact was built for the class architecture.
+// Only a proven static mismatch blocks a path; runtime support is checked by preflight.
 function pathReason(model: ModelResource, path: ExecutionPath, cls: InventoryClass) {
-  const artifact = model.spec.artifacts.find(a => a.name === path.artifact)
-  if (!artifact) return "모델 파일 정보를 찾지 못했어요"
-  return artifact.source.architecture === cls.architecture ? "" : `${artifact.source.architecture} 장비용 파일이라 이 장비에서는 실행할 수 없어요`
+  const verdict = staticCompatibility(model, path, cls)
+  return verdict.state === "unsupported" ? verdict.reason : ""
 }
 const sanitize = (text: string) => text.toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/[-.]*\.[-.]*/g, ".").replace(/-+/g, "-").slice(0, 200).replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")
 function suggest(d: Draft, taken: Set<string>) {
@@ -95,17 +96,17 @@ function sameCondition(plans: MeasurementPlan[], model: string, deviceClass: str
   return [...plans].sort((a, b) => b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))
     .find(p => p.spec.state.candidate.modelSpec === model && p.spec.state.candidate.deviceClass === deviceClass && p.spec.state.candidate.executionPath === path)
 }
-function view(d: Draft, { models, classes, plans }: Context) {
+function view(d: Draft, { models, classes, plans, prefill }: Context) {
   const model = models.find(m => m.metadata.name === d.model)
   const cls = classes.find(c => c.name === d.deviceClass)
   const node = cls?.nodes.find(n => n.name === d.node)
   const path = model?.spec.executionPaths.find(p => p.name === d.path)
   const artifact = path && model?.spec.artifacts.find(a => a.name === path.artifact)
   const newest = [...plans].sort((a, b) => b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))
-  const template = sameCondition(plans, d.model, d.deviceClass, d.path) ?? newest[0]
+  const template = prefill ? undefined : sameCondition(plans, d.model, d.deviceClass, d.path) ?? newest[0]
   const protocol: Protocol = d.protocol ?? { values: template ? copyAdvanced(template.spec) : blankAdvanced, from: template?.metadata.name ?? null }
-  const trials = d.trials ?? template?.spec.trialsPerBatch ?? 3
-  const cpu = d.cpu ?? template?.spec.cpuQuota ?? "1"
+  const trials = d.trials ?? (prefill ? NaN : template?.spec.trialsPerBatch ?? 3)
+  const cpu = d.cpu ?? (prefill ? "" : template?.spec.cpuQuota ?? "1")
   const powerMode = cls?.powerModes.length === 1 ? cls.powerModes[0].name : d.powerMode
   const declared = artifact?.derivation?.declaredBatchSizes?.length ? artifact.derivation.declaredBatchSizes : null
   const max = path?.runtime.settings?.firstfloor?.maxBatchSize
@@ -190,23 +191,26 @@ function AdvancedForm({ initial, save }: { initial: Advanced; save: (value: Adva
 }
 
 export function MeasurementRequestPage() {
-  const { config } = useSession()
-  const from = useSearchParams().get("from")
+  const { config } = useSession(), params = useSearchParams()
+  const from = params.get("from")
   const plans = useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(config.namespace)}/batch-energy-optimizations`)
   const models = useChillQuery<ModelList>("v1/models")
   const workloads = useChillQuery<WorkloadView[]>("v1/workloads")
-  const inventory = useChillQuery<InventoryView>(`v1/inventory?limit=${config.maxPageSize}`)
+  const inventory = useCoverageInventory()
   if (!plans.data || !models.data || !workloads.data || !inventory.data) return <Screen back={back} title="측정 요청" lede="고를 수 있는 서비스와 장비를 확인하고 있어요.">
     <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}>{null}</QueryGate></QueryGate></QueryGate></QueryGate>
   </Screen>
-  const context: Context = { models: models.data.items, workloads: workloads.data, classes: inventory.data.classes, plans: plans.data.items ?? [] }
-  return <Funnel key={from ?? ""} namespace={config.namespace} from={from} context={context} more={inventory.data.classPage?.nextOffset !== undefined} refetchPlans={plans.refetch} checking={plans.isFetching} />
+  const prefill = resolveMeasurementPrefill(new URLSearchParams(params), config.namespace, inventory.data)
+  const source = from ? plans.data.items?.find(plan=>plan.metadata.name===from) : undefined
+  if (from && (!source || ((prefill.values.fromUID || prefill.values.uid) && source.metadata.uid!==(prefill.values.fromUID || prefill.values.uid)))) prefill.errors.push("복사 원본의 namespace/UID를 확인할 수 없어요")
+  const context: Context = { models: models.data.items, workloads: workloads.data, classes: inventory.data.classes, plans: plans.data.items ?? [], prefill:prefill.active }
+  return <Funnel key={params.toString()} namespace={config.namespace} from={from} context={context} prefill={prefill} more={false} refetchPlans={plans.refetch} checking={plans.isFetching} />
 }
 
-function Funnel({ namespace, from, context, more, refetchPlans, checking }: { namespace: string; from: string | null; context: Context; more: boolean; refetchPlans: () => Promise<{ error: ApiError | null }>; checking: boolean }) {
+function Funnel({ namespace, from, context, prefill, more, refetchPlans, checking }: { namespace: string; from: string | null; context: Context; prefill:MeasurementPrefill; more: boolean; refetchPlans: () => Promise<{ error: ApiError | null }>; checking: boolean }) {
   const router = useRouter()
   const dry = useChillMutation(), pre = useChillMutation(), send = useChillMutation()
-  const [start] = useState(() => begin(from, context))
+  const [start] = useState(() => prefill.active ? {draft:{...emptyDraft,model:prefill.values.model,deviceClass:prefill.values.deviceClass,node:prefill.node,path:prefill.values.path,powerMode:prefill.values.powerMode},index:0,error:"",copied:false} : begin(from, context))
   const [d, setD] = useState(start.draft)
   const [index, setIndex] = useState(start.index)
   const [error, setError] = useState(start.error)
@@ -214,11 +218,17 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
   const [check, setCheck] = useState<"" | "done" | "failed">("")
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const v = view(d, context)
+  const blocked = prefill.errors.length > 0
+  const history = context.plans.filter(plan => {
+    const c=plan.spec.state.candidate
+    return c.modelSpec===d.model && c.deviceClass===d.deviceClass && c.executionPath===d.path && c.powerMode===v.powerMode && plan.spec.state.targetNode===d.node
+  })
   const step = steps[index]
   const listPath = `v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
   const update = (patch: Partial<Draft>) => { setD(current => ({ ...current, ...patch })); setError("") }
 
   function go(next: number) {
+    if (blocked) return
     setError(""); dry.reset(); pre.reset(); send.reset(); setIndex(next)
     if (steps[next] !== "review") return
     // Pin the suggested name so a later list refresh can never change what gets sent.
@@ -233,11 +243,13 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
   }
   // Server dry-run checks admission; ChillServer preflight resolves the plan. Both must pass before submit.
   function verify(draft = d) {
+    if (blocked) return
     const body = manifest(draft, context, namespace)
     dry.mutate({ path: `${listPath}?dryRun=All`, method: "POST", body }, { onError: e => { if (e.status === 409) conflict() } })
     pre.mutate({ path: `${listPath}/preflight`, method: "POST", body })
   }
   function submit() {
+    if (blocked) return
     send.mutate({ path: listPath, method: "POST", body: manifest(d, context, namespace) }, {
       onSuccess: response => {
         const task = (response.data as MeasurementMutation | null)?.task
@@ -291,18 +303,22 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
   }
   const badge = step !== "review" ? null : pending ? <StatusBadge tone="info">확인 중</StatusBadge> : passed && !send.error ? <StatusBadge tone="ok">확인 통과</StatusBadge> : <StatusBadge tone="fail">요청 불가</StatusBadge>
   const chips = [...new Set([...batchChoices.filter(b => !v.max || b <= v.max), ...d.batchSizes])].sort((a, b) => a - b)
-  const primary = step !== "review" ? <Button className="flex-[2]" onClick={next}>다음</Button>
+  const primary = step !== "review" ? <Button className="flex-[2]" disabled={blocked} onClick={next}>다음</Button>
     : unchecked ? <Button className="flex-[2]" disabled={pending} onClick={() => verify()}>다시 확인하기</Button>
-    : <Button className="flex-[2]" disabled={!passed || denied || send.isPending} onClick={submit}>{send.isPending ? "요청하고 있어요" : "측정 요청하기"}</Button>
+    : <Button className="flex-[2]" disabled={blocked || !passed || denied || send.isPending} onClick={submit}>{send.isPending ? "요청하고 있어요" : "측정 요청하기"}</Button>
 
-  return <Screen back={back} status={<span className="flex items-center gap-2 text-sm text-muted-foreground">{index + 1} / {steps.length}{badge}</span>} title={titles[step]} lede={ledes[step]}
+  return <Screen back={[prefill.returnTo,"상위 측정"]} breadcrumbs={[{href:prefill.returnTo,label:"측정"},{label:"새 요청"}]} status={<span className="flex items-center gap-2 text-sm text-muted-foreground">{index + 1} / {steps.length}{badge}</span>} title={titles[step]} lede={ledes[step]}
     action={<div className="flex gap-3">{index > 0 && <Button variant="outline" className="flex-1" disabled={send.isPending} onClick={() => go(index - 1)}>이전</Button>}{primary}</div>}>
+    {prefill.active&&<p className="text-sm text-muted-foreground">조합 초깃값만 채웠어요. 서비스·데이터셋·CPU·반복·protocol은 직접 선택해 주세요. 아직 제출하거나 사전 검사하지 않았어요.</p>}
+    {blocked&&<div role="alert" className="notice"><h2>미리 채운 조건을 확인해 주세요</h2>{prefill.errors.map(issue=><p key={issue}>{issue}</p>)}<SourceJSON value={prefill.values} title="전달된 원값"/><Button variant="outline" onClick={()=>router.replace(`/measurements/new?${new URLSearchParams({returnTo:prefill.returnTo})}`)}>초깃값 지우고 직접 선택</Button></div>}
     {step === "workload" && (context.workloads.length
       ? <>
         <Pick label="서비스" name="workload" value={d.workload} set={workload => {
           const spec = context.workloads.find(w => w.desired.metadata.name === workload)!.desired.spec
-          update({ workload, model: spec.modelRef.name, preprocessor: spec.preprocessorRef.name, dataset: spec.datasetRef?.name ?? "" })
-        }} options={context.workloads.map(({ desired: w }) => {
+          const changed=!!d.model&&d.model!==spec.modelRef.name
+          update({ workload, model: spec.modelRef.name, preprocessor: spec.preprocessorRef.name, dataset: spec.datasetRef?.name ?? "", ...(changed?{path:"",powerMode:"",batchSizes:[]}: {}) })
+          if(changed) setError(`선택한 서비스가 모델을 ${d.model}에서 ${spec.modelRef.name}로 바꿨어요. 실행 경로와 전력모드를 다시 골라 주세요.`)
+        }} options={[...context.workloads].sort((a,b)=>Number(b.desired.spec.modelRef.name===prefill.values.model)-Number(a.desired.spec.modelRef.name===prefill.values.model)).map(({ desired: w }) => {
           const model = context.models.find(m => m.metadata.name === w.spec.modelRef.name)
           return { value: w.metadata.name, label: w.metadata.name, hint: `${w.spec.modelRef.name} · ${w.spec.preprocessorRef.name} · ${w.spec.datasetRef?.name ?? "데이터셋 없음"}`,
             disabled: !model ? "모델을 찾지 못했어요" : !model.spec.executionPaths.length ? "실행 방식이 없어서 잴 수 없어요" : w.spec.datasetRef ? "" : "데이터셋이 없어서 잴 수 없어요" }
@@ -318,7 +334,7 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
       })
       : <Empty title="고를 수 있는 장비가 없어요"><Button asChild variant="outline"><Link href="/resources">장비 보기</Link></Button></Empty>)}
     {step === "run" && <>
-      <Pick label="실행 방식" name="path" value={d.path} set={path => update({ path, batchSizes: d.batchSizes.length ? d.batchSizes : sameCondition(context.plans, d.model, d.deviceClass, path)?.spec.batchSizes ?? [] })} options={(v.model?.spec.executionPaths ?? []).map(p => ({ value: p.name, label: p.name, hint: `${codeText[p.runtime.family]?.[0] ?? p.runtime.family} · ${codeText[p.runtime.backend]?.[0] ?? p.runtime.backend}`, disabled: v.cls ? pathReason(v.model!, p, v.cls) : "" }))} />
+      <Pick label="실행 방식" name="path" value={d.path} set={path => update({ path, batchSizes: d.batchSizes.length ? d.batchSizes : context.prefill ? [] : sameCondition(context.plans, d.model, d.deviceClass, path)?.spec.batchSizes ?? [] })} options={(v.model?.spec.executionPaths ?? []).map(p => ({ value: p.name, label: p.name, hint: `${codeText[p.runtime.family]?.[0] ?? p.runtime.family} · ${codeText[p.runtime.backend]?.[0] ?? p.runtime.backend} · 실제 runtime 지원 미확인`, disabled: v.cls ? pathReason(v.model!, p, v.cls) : "" }))} />
       {v.cls && v.cls.powerModes.length > 0 && <Pick label="전력 모드" name="power" value={v.powerMode} set={powerMode => update({ powerMode })} options={v.cls.powerModes.map(m => ({ value: m.name, label: m.name, hint: powerModeText(m.actuator) }))} />}
     </>}
     {step === "size" && <div className="grid gap-6">
@@ -362,7 +378,9 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
         {(answer || pre.error) && <RowDialog label="측정 계획 원본" title="ChillServer가 확인한 측정 계획"><SourceJSON inline value={answer ?? { status: pre.error!.status, body: pre.error!.data ?? pre.error!.body }} /></RowDialog>}
         {send.error && <RowDialog label="받은 응답 보기" title="받은 응답"><SourceJSON inline value={{ status: send.error.status, body: send.error.data ?? send.error.body }} /></RowDialog>}
       </Rows>
+      {start.copied&&<p className="text-sm text-muted-foreground">immutable 원본을 수정하지 않고 새 이름으로 요청해요. 현재 선언에서 Node·모드·데이터셋·CPU·protocol을 다시 확인했는지 검토해 주세요.</p>}
     </>}
+    {(step==="run"||step==="review")&&history.length>0&&<Rows label="기존 측정 · 중복 요청 전 확인">{history.map(plan=><Row key={plan.metadata.uid} href={detailHref(plan.metadata.namespace,plan.metadata.name,plan.metadata.uid)} label={`${plan.status?.phase??"미확인"} · ${plan.metadata.name}`} hint={`${planVariant(plan.spec)===planVariant(manifest(d,context,namespace).spec)?"같은 요청 조건 · 동결 identity 일부 미확인":"관련 후보 · CPU/데이터셋/protocol 등 차이 있음"}`} />)}</Rows>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
   </Screen>
 }
