@@ -13,6 +13,7 @@ import (
 // time a request occupies an instance outside its batch execution, for the
 // Node, power mode, runtime image and model of one measured option.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="DispatchOccupancyMeasurement spec is immutable"
+// +kubebuilder:validation:XValidation:rule="(has(self.supplyMode) && self.supplyMode == 'closed-loop') || (has(self.rateFactor) && double(self.rateFactor) > 1 && double(self.rateFactor) <= 1.7976931348623157e308)",message="open-loop rateFactor must be finite and greater than one"
 type DispatchOccupancyMeasurementSpec struct {
 	// Node names the Kubernetes Node measured.
 	// +kubebuilder:validation:MinLength=1

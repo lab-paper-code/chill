@@ -68,6 +68,13 @@ var _ = Describe("DispatchOccupancyMeasurement API", func() {
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, request) })
 	})
 
+	It("accepts a positive configured open-loop window and rate above one", func() {
+		request := validDispatchOccupancyMeasurement(uniqueMeasurementName("occupancy-configured"))
+		request.Spec.DurationSeconds, request.Spec.RateFactor = 30, "1.01"
+		Expect(k8sClient.Create(context.Background(), request)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), request) })
+	})
+
 	DescribeTable("rejects a load that cannot saturate or a window that cannot judge",
 		func(mutate func(*edgev1alpha1.DispatchOccupancyMeasurement)) {
 			request := validDispatchOccupancyMeasurement(uniqueMeasurementName("occupancy-invalid"))
@@ -76,8 +83,8 @@ var _ = Describe("DispatchOccupancyMeasurement API", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(apierrors.IsInvalid(err)).To(BeTrue())
 		},
-		Entry("rate factor below 1.2", func(r *edgev1alpha1.DispatchOccupancyMeasurement) { r.Spec.RateFactor = "1.1" }),
-		Entry("short window", func(r *edgev1alpha1.DispatchOccupancyMeasurement) { r.Spec.DurationSeconds = 59 }),
+		Entry("rate factor not above one", func(r *edgev1alpha1.DispatchOccupancyMeasurement) { r.Spec.RateFactor = "1" }),
+		Entry("zero window", func(r *edgev1alpha1.DispatchOccupancyMeasurement) { r.Spec.DurationSeconds = 0 }),
 		Entry("idle fraction above one", func(r *edgev1alpha1.DispatchOccupancyMeasurement) { r.Spec.MaximumIdleFraction = "1.5" }),
 		Entry("zero batch", func(r *edgev1alpha1.DispatchOccupancyMeasurement) { r.Spec.Batch = 0 }),
 	)

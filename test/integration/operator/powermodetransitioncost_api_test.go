@@ -35,6 +35,13 @@ var _ = Describe("PowerModeTransitionCost API", func() {
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
 	})
 
+	It("accepts two trials per direction with an attempt limit of two", func() {
+		measurement := validPowerModeTransitionCost(uniquePowerModeTransitionCostName("two"))
+		measurement.Spec.AcceptedCountTarget, measurement.Spec.AttemptLimit = 2, 2
+		Expect(k8sClient.Create(context.Background(), measurement)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), measurement) })
+	})
+
 	DescribeTable("rejects invalid direction and count contracts",
 		func(mutate func(*edgev1alpha1.PowerModeTransitionCost)) {
 			ctx := context.Background()
@@ -54,8 +61,8 @@ var _ = Describe("PowerModeTransitionCost API", func() {
 		Entry("duplicate modes", func(measurement *edgev1alpha1.PowerModeTransitionCost) {
 			measurement.Spec.Modes[1].PowerMode = measurement.Spec.Modes[0].PowerMode
 		}),
-		Entry("accepted target below five", func(measurement *edgev1alpha1.PowerModeTransitionCost) {
-			measurement.Spec.AcceptedCountTarget = 4
+		Entry("accepted target below two", func(measurement *edgev1alpha1.PowerModeTransitionCost) {
+			measurement.Spec.AcceptedCountTarget = 1
 		}),
 		Entry("attempt limit below accepted target", func(measurement *edgev1alpha1.PowerModeTransitionCost) {
 			measurement.Spec.AttemptLimit = measurement.Spec.AcceptedCountTarget - 1

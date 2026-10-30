@@ -22,6 +22,13 @@ var _ = Describe("ModelLoadedIdleBaseline API", func() {
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, request) })
 	})
 
+	It("accepts two accepted Runs with an attempt limit of two", func() {
+		request := validModelLoadedIdleBaseline(uniqueIdleBaselineName("two"))
+		request.Spec.PointPolicy.MinimumRuns, request.Spec.AttemptLimit = 2, 2
+		Expect(k8sClient.Create(context.Background(), request)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), request) })
+	})
+
 	DescribeTable("rejects invalid aggregate bounds",
 		func(mutate func(*edgev1alpha1.ModelLoadedIdleBaseline)) {
 			ctx := context.Background()
@@ -31,8 +38,8 @@ var _ = Describe("ModelLoadedIdleBaseline API", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(apierrors.IsInvalid(err)).To(BeTrue())
 		},
-		Entry("fewer than three accepted Runs", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
-			request.Spec.PointPolicy.MinimumRuns = 2
+		Entry("fewer than two accepted Runs", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
+			request.Spec.PointPolicy.MinimumRuns = 1
 		}),
 		Entry("attempt limit below accepted target", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
 			request.Spec.AttemptLimit = 3

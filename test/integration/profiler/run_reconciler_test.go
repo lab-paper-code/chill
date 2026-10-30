@@ -367,6 +367,13 @@ func createRunWithResolvedConfig(
 	if err := kube.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
 		t.Fatal(err)
 	}
+	// Build a current Job contract from the admitted request; the scientific raw
+	// fixture predates durationToleranceSeconds and remains unmodified.
+	request, err := profilercontroller.ProjectRequest(run.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runConfig.Measurement.DurationToleranceSeconds = request.Preparation.Measurement.DurationToleranceSeconds
 	return run, resolvedRun(t, profiler.PreparedRun{RunConfig: runConfig})
 }
 
