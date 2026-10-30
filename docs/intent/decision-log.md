@@ -90,3 +90,5 @@
 - 3회차→4회차(동일 rate/seed): E5-3 MNV 실패 13,563→**44,291**(p95 1,655→1,964ms, INVALID_HARNESS: 창 종료 후 static-freeze STOP — 측정창 자체는 완주); E5-5 MNV 실패 1,059→**12,953**(D1 FAIL), Smol p95 14,093→8,947ms(FAIL 유지); E5-7 Smol 실패 114→0이나 p95 13,173ms(FAIL), MNV p95 94→166ms. E5-5 후 실패 prepare 예약 잔류(>600s, owner plan-594d2726df2f) → takeover 1회.
 - 판단: rev118/120 변경(jetsonx 후보 편입·예약 증명·Terminated)이 **SLO를 악화**시킴. D1(`4b2b4bb0`,`6c268842`) 배포 보류. 사이클 5 = 4회차 raw 기반 결함 추출(bottom-up) 후 패널 리뷰 → 수정.
 - 경로: `control-222-full/full-E5-{3,5,7}-4/`, `tables-4.txt`, `comparison-4-vs-3.{txt,json}`, `O/deployB/control-237-20261030/targeted-r4/`.
+- 사이클 5 추출(카드 `A/cards-r5/`): E5-3 — α=.5 말 정상 ACK된 고κ 구성(jetsonx CUDA+orangepi q4, κ99.6)을 CPU 조합(κ64.3)으로 교체 후 DemandIncreasing/ScaleDownStabilizing이 복귀 차단 → α=.9 포화 실패 36k; E5-5 — CUDA 공급 감소 후 CPU 단독 4분(12:49–12:53) 실패 집중, 예약 잔류 1,353s(신규 Pod ACK로 R4b 제외 + 타 Node 기존 source 증명 receipt 부재 → 반환 불가); E5-7 — D2 복구 확인(Smol 새 dispatch 65s, MNV 9.5s/39s), p95는 복구 공백·큐. jetsonx 편입 자체는 정상 동작(CPU 충돌 0).
+- 구조적 쟁점: (a) 축소 즉시·확장 지연의 **tempo 비대칭**(에너지 목적이 κ 감소 교체를 택하고 stabilizing gate가 복귀를 막음), (b) 예약 반환 증명이 "변경 없는 기존 executor"를 증명할 수단 없음. 둘 다 브리프→패널 게이트.
