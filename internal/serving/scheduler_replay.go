@@ -189,6 +189,7 @@ func appendUnique(xs []string, more ...string) []string {
 	}
 	return xs
 }
+
 // SchedulerContinuationReasons validates fresh physical evidence without
 // evaluating candidates or admitting a new scheduler decision.
 func SchedulerContinuationReasons(settings SchedulerSettings, snapshot SchedulerSnapshot) []string {

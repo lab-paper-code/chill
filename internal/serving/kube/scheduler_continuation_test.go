@@ -10,7 +10,7 @@ import (
 
 // SCH-20/26/50: a frozen route chain progresses without Tick or a new decision.
 func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
-	for _, scenario := range []string{"complete", "duplicate", "cancel", "controls-off", "uid-off", "freshness", "capture-failed", "late-ack", "partial"} {
+	for _, scenario := range []string{"complete", "duplicate-completion", "cancel-owner", "controls-off", "uid-off", "freshness", "capture-failed", "late-ack", "partial"} {
 		t.Run(scenario, func(t *testing.T) {
 			c, prepared := tickReadySubsetController(t, nil)
 			prepared.Store(true)
@@ -19,7 +19,9 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			snapshot, err := c.capture(ctx, time.Now(), c.config)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			uid := snapshot.Workloads[0].UID
 			instance := snapshot.Instances[0]
 			instance.WorkloadUID = uid
@@ -36,35 +38,58 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 			c.mu.Unlock()
 			select {
 			case <-c.Completions():
-			case <-ctx.Done(): t.Fatal("action completion did not wake continuation")
+			case <-ctx.Done():
+				t.Fatal("action completion did not wake continuation")
 			}
 			c.wg.Wait()
 			first := c.runs["first-route"]
-			if first == nil || first.action.Status != nativeOperationComplete { t.Fatalf("first route: %+v", first) }
+			if first == nil || first.action.Status != nativeOperationComplete {
+				t.Fatalf("first route: %+v", first)
+			}
 			switch scenario {
-			case "cancel", "late-ack": parent.action.Status = nativeOperationCancel
-			case "controls-off": c.config.Settings.Controls.Routing = false
-			case "uid-off": c.config.Settings.AutonomousWorkloads = nil
-			case "freshness": c.config.Settings.MaxObservationAge = time.Nanosecond
-			case "capture-failed": cancel()
-			case "partial": first.action.Status, first.result.Status = nativeOperationPartial, nativeOperationPartial
+			case "cancel-owner", "late-ack":
+				parent.action.Status = nativeOperationCancel
+			case "controls-off":
+				c.config.Settings.Controls.Routing = false
+			case "uid-off":
+				c.config.Settings.AutonomousWorkloads = nil
+			case "freshness":
+				c.config.Settings.MaxObservationAge = time.Nanosecond
+			case "capture-failed":
+				cancel()
+			case "partial":
+				first.action.Status, first.result.Status = nativeOperationPartial, nativeOperationPartial
 			}
 			before := c.State().Decision
 			err = c.Continue(ctx, time.Now())
 			if scenario == "freshness" || scenario == "capture-failed" {
-				if err == nil { t.Fatal("bad observation unexpectedly authorized continuation") }
-			} else if err != nil { t.Fatal(err) }
+				if err == nil {
+					t.Fatal("bad observation unexpectedly authorized continuation")
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
 			c.wg.Wait()
 			second := c.runs["second-route"]
-			if scenario != "complete" && scenario != "duplicate" {
-				if second != nil { t.Fatal("unsafe continuation launched dependent action") }
+			if scenario != "complete" && scenario != "duplicate-completion" {
+				if second != nil {
+					t.Fatal("unsafe continuation launched dependent action")
+				}
 				return
 			}
-			if second == nil || second.action.Status != nativeOperationComplete { t.Fatalf("frozen chain did not advance: %+v", second) }
-			if !c.State().Decision.At.Equal(before.At) { t.Fatal("continuation emitted a new decision") }
-			if err := c.Continue(ctx, time.Now()); err != nil { t.Fatal(err) }
+			if second == nil || second.action.Status != nativeOperationComplete {
+				t.Fatalf("frozen chain did not advance: %+v", second)
+			}
+			if !c.State().Decision.At.Equal(before.At) {
+				t.Fatal("continuation emitted a new decision")
+			}
+			if err := c.Continue(ctx, time.Now()); err != nil {
+				t.Fatal(err)
+			}
 			c.wg.Wait()
-			if c.runs["second-route"] != second { t.Fatal("duplicate completion relaunched an action") }
+			if c.runs["second-route"] != second {
+				t.Fatal("duplicate completion relaunched an action")
+			}
 		})
 	}
 }

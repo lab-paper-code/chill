@@ -95,10 +95,10 @@ func TestCapacityTerminalSlotIsRepreparedWithoutReuseAC45(t *testing.T) {
 // E5-7: a dead route1000 is not live supply, even while demand grows.
 func TestGrowingProtectsOnlyNonterminalExactRoutes(t *testing.T) {
 	for _, scenario := range []struct {
-		name string
+		name      string
 		instances []SchedulerInstance
-		routes map[string]int32
-		want string
+		routes    map[string]int32
+		want      string
 	}{
 		{"terminated", []SchedulerInstance{{ID: "old", Terminated: true}}, nil, ""},
 		{"live", []SchedulerInstance{{ID: "old", Ready: true}}, nil, schedulerDemandIncreasing},
