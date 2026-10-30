@@ -618,3 +618,9 @@
 
 - E5-5: **C1 검증** — 행 내 신규 예약 6개 모두 반환(Fixed tick 0; 2회차 560), client error 10,636→1,026, p95 MNV 1.9s→226ms.
 - E5-1 악화(272→1,542)는 하네스 결함: 복원 accepted 후 GO의 `release_routing`이 PLC 766/234→1/1로 훼손 → 다른 시작 상태. C2 새 Node route(Nano CUDA 2,237건·Genesis3 PLC 214건) 오류 0 → C2 회귀 아님. E5-7 INVALID도 하네스(selector TTL 5s vs 10s 발행) → `46ec78be`. 하네스 release 수정 후 E5-1·E5-7 재실행(#225).
+
+## 2026-10-30 — 사이클 2 종료: 3회차 표적 완료, spec 기입 `cbe51e67`
+
+- E5-1(#225, 복원 일치): p95 MNV 275ms(2회차 299). E5-5(#224): C1 검증(신규 예약 6/6 행 내 반환, Fixed 0), error 10,636→1,026, p95 1.9s→226ms. E5-7(#225, 활성 Pod 주입 180.7/360.7/600.1s): MNV p95 94ms, 격리 CAPTURED; FAIL은 Smol D1(용량). E5-6(#224): 305ms(시작 조건 다름, C1 귀속 금지).
+- 하네스 결함 2건 수정(release 훼손 `7d4e812c`, selector TTL `46ec78be`, 태그 일반화 `22fa6439`). 제품 rev105 `5f1dc4f1`.
+- E5 뒤 할 일 누적: C3 빈 Node MNV 측정, kubeedge nodeName/디스크/PodGC, rate limiter, summarize 메모리, E5-7 자동 주입, TLS keep-alive, R6 factor 재실험, U9 대시보드, U11 G2 배선.
