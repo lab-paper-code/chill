@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
+import { object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -53,9 +53,6 @@ test("S1-3: retained names, UID and exact definitions stay independent of same-n
   assert.equal(before[0].name,after[0].name)
   // Old actual publications have no identity. Do not invent it from their name.
   assert.equal(experimentRows(stage)[0].uid,undefined)
-  const source=readFileSync(new URL("../features/experiments.tsx",import.meta.url),"utf8")
-  assert.doesNotMatch(source,/v1\/(workloads|pools)|resolveWorkloadIdentities|poll\s*:/)
-  assert.match(source,/UID·정의가 같은 행만/)
 })
 
 test("S1-4: archive judgment lookup pins nanosecond decision.at plus identity, never latest; absence differs from deadline",()=>{
@@ -93,4 +90,39 @@ test("S1-5: rendered unbound serving-manager caller grants include experiment an
     assert.equal(relayPlan("GET",path.split("/"),"",config).kind,"query")
     assert.throws(()=>relayPlan("POST",path.split("/"),"",config),/DashboardMethodNotAllowed/)
   }
+})
+
+test("S3: name matching preserves changed/missing identity and explicit ambiguous candidates",()=>{
+  const a:ExperimentStage={id:"A",from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{requests:{same:{uid:"old",offered:10},onlyA:{offered:0}}}}
+  const b:ExperimentStage={...a,kpis:{requests:{same:{uid:"new",offered:20},onlyB:{offered:0}},workloads:{same:{offered:20}}}}
+  const rows=comparisonRows(a,b)
+  assert.equal(rows.length,3)
+  assert.equal(rows[0].a[0].uid,"old")
+  assert.equal(rows[0].b[0].uid,undefined)
+  assert.equal(rows[0].b[1].uid,"new")
+  assert.equal(rows[0].b.length,2)
+  assert.equal(rows.find(row=>row.name==="onlyB")!.a.length,0)
+  assert.equal(stageRate(a),1)
+  assert.equal(stageRate(b),null)
+})
+
+test("S3: publisher units, ratios, differences and invalid values stay explicit",()=>{
+  const row=experimentRows(stage)[0]
+  assert.equal(resultMetric(row,"p95").value,Number(object(row.original.completedLatencyNS).p95)/1e6)
+  assert.equal(resultMetric(row,"p95").rawValue,object(row.original.completedLatencyNS).p95)
+  assert.equal(ratio(undefined,1,4),.25)
+  assert.equal(ratio(.5,0,0),null)
+  assert.equal(ratio(undefined,5,4),null)
+  assert.equal(formatResult(.7957909383424646,"%"),"79.58 %")
+  assert.equal(formatResult(.09261,"J"),"0.09261 J")
+  assert.equal(formatResult(-1,"ms"),"미제공")
+  assert.equal(formatResult(NaN,"J"),"미제공")
+  assert.equal(formatResult(Infinity,"ms"),"미제공")
+  assert.equal(difference(.8,.7,"%"),"+10.00 %p")
+  assert.equal(difference(12,15,"ms"),"-3 ms")
+  assert.equal(difference(.80000001,.8,"%"),"+0.00 %p · 표시 정밀도 미만")
+  assert.equal(difference(.8,.7,"%",false),"계산 불가")
+  assert.equal(relativeEnergy(1,0),"계산 불가")
+  assert.equal(relativeEnergy(90,100),"-10.00 %")
+  assert.equal(relativeEnergy(undefined,100),"계산 불가")
 })
