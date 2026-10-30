@@ -221,6 +221,40 @@ func TestHandlerUsesPathNamespaceForBatchEnergyOptimizationPreflight(t *testing.
 	}
 }
 
+func TestPreflightVariantContextUsesOnlyOptionalQuery(t *testing.T) {
+	for _, query := range []string{"?variantId=chosen", "?variantId=", "?variantId=a&variantId=b", "?other=a", "?variantId=%20a", "?variantId=%zz"} {
+		t.Run(query, func(t *testing.T) {
+			reader := &recordingPreflightReader{snapshot: resolvingPreflightSnapshot(t)}
+			handler, err := NewHandler(&recordingPassportReader{}, &recordingCampaignResultReader{}, reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, testPreflightPath+query, preflightCampaignBody(t, testNamespace)))
+			if query != "?variantId=chosen" {
+				if response.Code != http.StatusBadRequest || reader.calls != 0 {
+					t.Fatalf("invalid variant query = %d, calls %d", response.Code, reader.calls)
+				}
+				return
+			}
+			var view operatorconsole.BatchEnergyOptimizationPreflight
+			if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusOK || reader.campaign.Annotations != nil || view.BatchPlan.VariantID != nil {
+				t.Fatalf("variant context changed submitted CR or was trusted: %#v", view)
+			}
+			found := false
+			for _, reason := range view.BatchPlan.Reasons {
+				found = found || reason.Code == "VariantConditionChanged"
+			}
+			if !found {
+				t.Fatal("unmatched variant context was lost")
+			}
+		})
+	}
+}
+
 func TestHandlerMapsPreflightReadFailuresWithoutLeakingDetails(t *testing.T) {
 	t.Parallel()
 	notFound := apierrors.NewNotFound(

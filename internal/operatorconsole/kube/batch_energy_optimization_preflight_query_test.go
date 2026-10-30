@@ -9,8 +9,10 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 const preflightProjectorFailure = "referenced DeviceClass does not exist"
@@ -20,7 +22,9 @@ func TestBatchEnergyOptimizationPreflightQueryReturnsResolvedPlan(t *testing.T) 
 	plan := batchEnergyOptimizationPreflightQueryPlan(t)
 	campaign := batchEnergyOptimizationPreflightQueryCampaign()
 	projector := &recordingCurvePlanProjector{plan: plan}
-	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(projector.Project)
+	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
+		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(), projector.Project,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +57,9 @@ func TestBatchEnergyOptimizationPreflightQueryRecordsProjectionFailure(t *testin
 		plan: batchEnergyOptimizationPreflightQueryPlan(t),
 		err:  errors.New(preflightProjectorFailure),
 	}
-	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(projector.Project)
+	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
+		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(), projector.Project,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +93,9 @@ func TestBatchEnergyOptimizationPreflightQueryRejectsInvalidCampaign(t *testing.
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			projector := &recordingCurvePlanProjector{}
-			query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(projector.Project)
+			query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
+				fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(), projector.Project,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -103,9 +111,47 @@ func TestBatchEnergyOptimizationPreflightQueryRejectsInvalidCampaign(t *testing.
 
 func TestNewBatchEnergyOptimizationPreflightQueryRejectsNilProjector(t *testing.T) {
 	t.Parallel()
-	if _, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(nil); err == nil ||
+	if _, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
+		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(), nil,
+	); err == nil ||
 		!strings.Contains(err.Error(), "curve-plan projector is required") {
 		t.Fatalf("constructor error = %v", err)
+	}
+}
+
+func TestPreflightQueryBuildReportsCurrentRequestsAsPlannedOnly(t *testing.T) {
+	campaign := batchEnergyOptimizationPreflightQueryCampaign()
+	pending := campaign.DeepCopy()
+	pending.Name = "pending"
+	pending.Status.Phase = "Measuring"
+	otherNamespace := pending.DeepCopy()
+	otherNamespace.Namespace = "other"
+	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
+		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(pending, otherNamespace).Build(),
+		(&recordingCurvePlanProjector{plan: batchEnergyOptimizationPreflightQueryPlan(t)}).Project,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := query.Read(context.Background(), campaign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := operatorconsole.BuildBatchEnergyOptimizationPreflight(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.RequestsComplete || len(snapshot.Requests) != 1 ||
+		view.BatchPlan.ConditionMatch != "planned-only" || len(view.BatchPlan.MeasuredBatches) != 0 ||
+		len(view.BatchPlan.InProgressBatches) != 0 || !reflect.DeepEqual(view.BatchPlan.MissingBatches, []int{1, 2, 4}) {
+		t.Fatalf("planned request projection = %#v", view.BatchPlan)
+	}
+	found := false
+	for _, reason := range view.BatchPlan.Reasons {
+		found = found || reason.Code == "PlannedRequestOverlap"
+	}
+	if !found {
+		t.Fatal("planned-only overlap was not reported")
 	}
 }
 

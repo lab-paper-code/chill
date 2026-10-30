@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	authorizationv1 "k8s.io/api/authorization/v1"
 )
 
 func privateOrigin(raw string) (*url.URL, error) {
@@ -38,7 +39,7 @@ func consoleError(w http.ResponseWriter, status int, code string) {
 
 // composeChillServer is the only cross-domain assembly. The Console's existing
 // retained-evidence and production preflight composition stays authoritative.
-func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer, opts options) (http.Handler, error) {
+func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer, opts options, measurements ...*measurementService) (http.Handler, error) {
 	origin, err := privateOrigin(opts.consoleURL)
 	if err != nil {
 		return nil, err
@@ -66,6 +67,11 @@ func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer
 			ModifyResponse: func(response *http.Response) error {
 				response.Header.Set("Cache-Control", "no-store")
 				response.Header.Del("Set-Cookie")
+				if response.StatusCode == http.StatusOK && response.Request.Method == http.MethodPost &&
+					strings.HasSuffix(response.Request.URL.Path, "/batch-energy-optimizations/preflight") &&
+					len(measurements) != 0 && measurements[0] != nil {
+					return measurements[0].enrichPreflightResponse(response)
+				}
 				return nil
 			},
 			ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
@@ -86,7 +92,7 @@ func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer
 			consoleError(w, http.StatusUnauthorized, "Unauthenticated")
 			return
 		}
-		_, err := authorizer.Authorize(ctx, token, r.Method, r.URL.Path)
+		principal, err := authorizer.Authorize(ctx, token, r.Method, r.URL.Path)
 		if err != nil {
 			status, code := http.StatusServiceUnavailable, "AuthorizationUnavailable"
 			if errors.Is(err, servingkube.ErrUnauthenticated) {
@@ -97,6 +103,24 @@ func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer
 			}
 			consoleError(w, status, code)
 			return
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/batch-energy-optimizations/preflight") &&
+			len(measurements) != 0 && measurements[0] != nil {
+			namespace := r.PathValue("namespace")
+			err := measurements[0].namespace(namespace)
+			if err == nil {
+				err = authorizer.AuthorizeResource(ctx, principal, authorizationv1.ResourceAttributes{
+					Namespace: namespace, Verb: "list", Group: "edge.dacs.io", Version: "v1alpha1", Resource: "batchenergyoptimizations",
+				})
+			}
+			if err != nil {
+				status, code := http.StatusServiceUnavailable, "AuthorizationUnavailable"
+				if errors.Is(err, servingkube.ErrForbidden) {
+					status, code = http.StatusForbidden, "Forbidden"
+				}
+				consoleError(w, status, code)
+				return
+			}
 		}
 		deadline, _ := ctx.Deadline()
 		controller := http.NewResponseController(w)

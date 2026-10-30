@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"reflect"
 	"testing"
 	"time"
 
@@ -111,6 +112,90 @@ func TestBuildBatchEnergyOptimizationPreflightRejectsContradictorySnapshots(t *t
 			if _, err := BuildBatchEnergyOptimizationPreflight(test.snapshot); err == nil ||
 				!strings.Contains(err.Error(), test.match) {
 				t.Fatalf("BuildBatchEnergyOptimizationPreflight() error = %v, want %q", err, test.match)
+			}
+		})
+	}
+}
+
+func TestPreflightBatchPlanPreservesDeclaredBatchOmissionAndAlwaysSerializes(t *testing.T) {
+	for _, resolved := range []bool{false, true} {
+		snapshot := BatchEnergyOptimizationPreflightSnapshot{Reason: "unresolved"}
+		if resolved {
+			snapshot.Plan, snapshot.Reason = batchEnergyOptimizationPreflightPlan(t), ""
+		}
+		view, err := BuildBatchEnergyOptimizationPreflight(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(view)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if len(fields["batchPlan"]) == 0 || bytes.Equal(fields["batchPlan"], []byte("null")) ||
+			view.BatchPlan.RequestedBatches == nil || view.BatchPlan.MeasuredBatches == nil ||
+			view.BatchPlan.InProgressBatches == nil || view.BatchPlan.MissingBatches == nil ||
+			view.BatchPlan.SubsetAllowed || view.Campaign.Spec.BatchSizes != nil {
+			t.Fatalf("ambiguous batch plan: %s", encoded)
+		}
+		if resolved && (!view.BatchPlan.SearchMayStopEarly || !reflect.DeepEqual(view.BatchPlan.PlannedBatches, []int{1, 2, 4})) {
+			t.Fatalf("declared batch plan = %#v", view.BatchPlan)
+		}
+		if !resolved && (view.BatchPlan.ConditionMatch != "unknown" || len(view.BatchPlan.RequestableBatches) != 0) {
+			t.Fatalf("unresolved batch plan = %#v", view.BatchPlan)
+		}
+	}
+}
+
+func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
+	spec := batchEnergyOptimizationPreflightPlan(t).Shared()
+	image := "registry.example/image@sha256:" + strings.Repeat("a", 64)
+	spec.RuntimeImage, spec.Artifact.Image, spec.Preprocessor.Image = image, image, image
+	spec.ActiveProtocol.MetricObserverImage, spec.ActiveProtocol.WorkloadObserverImage = image, image
+	spec.IdleProtocol.MetricObserverImage, spec.IdleProtocol.WorkloadObserverImage = image, image
+	original, err := profilederivation.NewCurvePlan(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := MeasurementVariantID(spec)
+	for name, change := range map[string]func(*profilederivation.CurvePlanSpec){
+		"exact": func(*profilederivation.CurvePlanSpec) {},
+		"CPU": func(s *profilederivation.CurvePlanSpec) { s.CPU.Request = "6" },
+		"dataset UID": func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.Dataset.UID = "new-uid" },
+		"protocol": func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.WarmupIterations++ },
+		"metric source": func(s *profilederivation.CurvePlanSpec) { s.MetricSource.Endpoint = "http://new-metrics" },
+		"mutable image": func(s *profilederivation.CurvePlanSpec) { s.RuntimeImage = "registry.example/image:tag" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := original.Shared()
+			change(&changed)
+			plan, err := profilederivation.NewCurvePlan(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view, err := BuildBatchEnergyOptimizationPreflight(BatchEnergyOptimizationPreflightSnapshot{
+				Plan: plan, VariantID: id, RequestsComplete: true,
+				Campaign: edgev1alpha1.BatchEnergyOptimization{Spec: edgev1alpha1.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2, 4}}},
+				ExactEvidence: []MeasurementPreflightEvidence{{Condition: original.Shared(), Batches: []int{1, 1}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := view.BatchPlan
+			if !got.SubsetAllowed || !got.SearchMayStopEarly {
+				t.Fatalf("batch selection flags = %#v", got)
+			}
+			if name == "exact" {
+				if got.ConditionMatch != "exact" || got.VariantID == nil || *got.VariantID != id ||
+					!reflect.DeepEqual(got.MeasuredBatches, []int{1}) || !reflect.DeepEqual(got.MissingBatches, []int{2, 4}) {
+					t.Fatalf("exact batch plan = %#v", got)
+				}
+			} else if got.ConditionMatch == "exact" || got.VariantID != nil || len(got.MeasuredBatches) != 0 ||
+				!reflect.DeepEqual(got.MissingBatches, []int{1, 2, 4}) {
+				t.Fatalf("changed condition retained old mapping: %#v", got)
 			}
 		})
 	}

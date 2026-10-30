@@ -8,7 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"net/http"
+	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
@@ -82,6 +84,19 @@ func NewHandler(
 		writeJSON(writer, result)
 	})
 	mux.HandleFunc(batchEnergyOptimizationPreflightPath, func(writer http.ResponseWriter, request *http.Request) {
+		query, err := url.ParseQuery(request.URL.RawQuery)
+		if err != nil || len(query) > 1 {
+			writeError(writer, http.StatusBadRequest, batchEnergyOptimizationPreflightRequestInvalidCode)
+			return
+		}
+		var variantID string
+		for key, values := range query {
+			if key != "variantId" || len(values) != 1 || strings.TrimSpace(values[0]) == "" || strings.TrimSpace(values[0]) != values[0] {
+				writeError(writer, http.StatusBadRequest, batchEnergyOptimizationPreflightRequestInvalidCode)
+				return
+			}
+			variantID = values[0]
+		}
 		request.Body = http.MaxBytesReader(writer, request.Body, maximumPreflightRequestBytes)
 		decoder := json.NewDecoder(request.Body)
 		decoder.DisallowUnknownFields()
@@ -107,6 +122,7 @@ func NewHandler(
 			writeError(writer, queryStatus(err), "BatchEnergyOptimizationPreflightUnavailable")
 			return
 		}
+		snapshot.VariantID = variantID
 		preflight, err := operatorconsole.BuildBatchEnergyOptimizationPreflight(snapshot)
 		if err != nil {
 			writeError(writer, http.StatusInternalServerError, "BatchEnergyOptimizationPreflightProjectionFailed")
