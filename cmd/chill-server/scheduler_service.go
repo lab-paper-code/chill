@@ -298,7 +298,9 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 func (o *schedulerService) measurementCatalogView(_ context.Context) (httpapi.ProfilesView, error) {
 	published := o.catalogRead.Load()
 	if published == nil {
-		return httpapi.ProfilesView{}, &serving.Error{Code: "CoverageWarming", Message: "measurement catalog is not available"}
+		return httpapi.ProfilesView{}, &serving.Error{
+			Code: "CoverageWarming", Message: "measurement catalog is not available",
+		}
 	}
 	view := *published
 	checked, sourceError, revision := o.catalog.SourceStatus()

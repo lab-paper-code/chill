@@ -171,8 +171,14 @@ func readMeasurementStatistics(
 		Batches: []operatorconsole.BatchEnergyOptimizationBatchStatistics{},
 		MeasurementFacts: &derivation.MeasurementFacts{
 			Request:         derivation.MeasurementRequestReference{Namespace: cr.Namespace, Name: cr.Name, UID: string(cr.UID)},
-			ResultReference: derivation.RawEvidenceIdentity{Store: cr.Status.Result.Store, Key: cr.Status.Result.Key, Size: cr.Status.Result.Size},
-			Condition:       shared, PointPolicy: derivation.PointPolicy{Version: "energy-objective-point-v1", MinimumTrials: int(cr.Spec.TrialsPerBatch), ConfidenceLevel: factBatches[0].Confidence.Level},
+			ResultReference: derivation.RawEvidenceIdentity{
+				Store: cr.Status.Result.Store, Key: cr.Status.Result.Key, Size: cr.Status.Result.Size,
+			},
+			Condition: shared,
+			PointPolicy: derivation.PointPolicy{
+				Version: "energy-objective-point-v1", MinimumTrials: int(cr.Spec.TrialsPerBatch),
+				ConfidenceLevel: factBatches[0].Confidence.Level,
+			},
 			Batches: factBatches,
 		},
 	}

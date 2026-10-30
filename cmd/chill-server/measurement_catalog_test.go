@@ -73,10 +73,18 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 	}
 	service := &schedulerService{
 		catalog: catalog, costs: costs,
-		kube: fake.NewSimpleClientset(&core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "new"}, Data: map[string]string{"config": string(raw)}}),
-		opts: options{servingNamespace: "serving", schedulerConfigMap: "scheduler", schedulerConfigKey: "config", maxRequestBytes: 1 << 20},
+		kube: fake.NewSimpleClientset(&core.ConfigMap{
+			ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "new"},
+			Data: map[string]string{"config": string(raw)},
+		}),
+		opts: options{
+			servingNamespace: "serving", schedulerConfigMap: "scheduler",
+			schedulerConfigKey: "config", maxRequestBytes: 1 << 20,
+		},
 	}
-	adopted := &httpapi.ProfilesView{CatalogView: servingkube.CatalogView{Profiles: []serving.Profile{{ID: "prior-adopted"}}, Revision: "prior"}}
+	adopted := &httpapi.ProfilesView{CatalogView: servingkube.CatalogView{
+		Profiles: []serving.Profile{{ID: "prior-adopted"}}, Revision: "prior",
+	}}
 	service.profiles.Store(adopted)
 	ctx := context.Background()
 	if err := service.refresh(ctx); err == nil || err.Error() != "cost source unavailable" {
@@ -99,8 +107,10 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 		t.Fatal("catalog source failure was hidden")
 	}
 	stale, err := service.measurementCatalogView(ctx)
-	if err != nil || stale.SourceError == "" || stale.SourceCheckedAt != second.SourceCheckedAt || stale.Revision != second.Revision || service.profiles.Load() != adopted || objects.rawReads.Load() != 0 {
-		t.Fatalf("failed refresh changed retained catalog check/facts/adoption: %+v error=%v reads=%d", stale, err, objects.rawReads.Load())
+	if err != nil || stale.SourceError == "" || stale.SourceCheckedAt != second.SourceCheckedAt ||
+		stale.Revision != second.Revision || service.profiles.Load() != adopted || objects.rawReads.Load() != 0 {
+		t.Fatalf("failed refresh changed retained catalog check/facts/adoption: %+v error=%v reads=%d",
+			stale, err, objects.rawReads.Load())
 	}
 }
 
