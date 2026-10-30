@@ -658,3 +658,4 @@
 - 대시보드 수용 `f573f5ae`: PASS 6/FAIL 2/미확인 5 — FAIL 2는 #213이 publication된 적 없음(실험 목록 부재). 조치: #213~#225 게시(첫 게시, 새 §0 형식; 재게시 아님)를 rev111 뒤 수행 → FAIL 2 재확인. 미확인 5는 빈 클러스터(라이브 값)·fixture off → 다음 측정 창에서.
 - 다음 승인 배포 rev111: chart RBAC(collector GET)+서버(settings requestTimeout, podName) 이미지.
 - 사용자 승인: 대시보드 NodePort 상시 공개(values `dashboard.service.type=NodePort`, nodePort 31300; chart `a7ba73cd`) — rev111에 묶음(collector GET RBAC, settings requestTimeout/podName).
+- 사용자(조언 세션): 하드코딩 정리 7커밋(58348057…30e3a6d6) 완료·gate PASS → push. rev111 재배포에 포함: CRD 5종 적용, 이미지 재빌드, overlay `servingEntrypoint.profileConfidenceLevel` 삭제(CLI 옵션 제거), κ 1회 재계산 정상.
