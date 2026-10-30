@@ -275,6 +275,16 @@ Unknown을 ‘지원 확인 불가 — 이유’로 쓰며 증거 상태와 독�
 공유하며, 기존 preflight의 성공·거절 흐름은 바꾸지 않는다. public proxy의 정확
 `/chill/api/v1/model-compatibility` GET grant만 추가하며 기존 Console fact-source 읽기 권한을 쓴다.
 
+R3 추가: `GET /api/v1/model-compatibility-matrix`는 query 없이 전체 inventory의
+모델×실행 경로×DeviceClass를 한 번 조회한다. 응답은 `{readAt,scope,rows}`이며 각 row는
+위 B1 응답과 같다. class의 이름순 첫 Node를 대표로 기존 B1 resolver를 호출하고 전력모드 간
+판정을 공유한다. Node가 없거나 개별 판정 조회가 실패하면 Unknown row를 보존한다.
+대표 Node 지원을 class의 다른 Node로 확장하지 않으며 Node 필터가 대표와 다르면 UI 분모에서 제외한다.
+행렬 전체 미제공은 503, 임의 query는 400, Cache-Control은 no-store다.
+ChillServer proxy·SAR·RBAC에 정확한 `/chill/api/v1/model-compatibility-matrix` GET만 추가한다.
+클라이언트는 Compatible만 분모에 포함하고 Unknown 수를 별도 표시한다. 선택 패널의 개별 B1 GET은
+행렬을 바꾸지 않으며 실제 요청 전 기존 preflight를 유지한다.
+
 ### 12.2 B1 — 실패 BEO와 소유 Run의 공개 연결
 
 기존 `GET /api/v1/namespaces/{namespace}/profiling-runs`의 `runs[]`에

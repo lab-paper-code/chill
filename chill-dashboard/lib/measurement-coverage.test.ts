@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { batchStatisticsText, coverageCells, coverageOverview, coverageReady, coverageCellSummary, coverageRequestHref, currentRunCondition, exactRunTrial, ownedRuns, planVariant, profileForPlan, profileVariant, relatedPlans, resolveMeasurementPrefill, runAttempt, runEvidenceState, runGroupKey, serverCompatibility, staticCompatibility, statisticsMissing } from "./measurement-coverage.ts"
+import { batchStatisticsText, coverageCells, coverageFailureCounts, coverageOverview, coverageReady, coverageCellSummary, coverageRequestHref, currentRunCondition, exactRunTrial, ownedRuns, planVariant, profileForPlan, profileVariant, relatedPlans, resolveMeasurementPrefill, runAttempt, runEvidenceState, runGroupKey, serverCompatibility, staticCompatibility, statisticsMissing } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { BatchStatistics, CurvePlanSpec, InventoryClass, InventoryView, MeasurementPlan, ModelCompatibility, ProfilingRun, ProfilesView, SchedulerProfile } from "./read-types.ts"
@@ -53,6 +53,32 @@ test("overview counts only eligible cells, preserves detail keys and groups mode
   assert.equal(warned[1].state,"unmeasured")
 })
 
+test("coverage denominator uses matrix runtime verdicts, not architecture-only candidates",()=>{
+  const selection={modelSpec:model.name,executionPath:"cpu",deviceClass:cls.name,node:"node"}
+  const row:ModelCompatibility={readAt:inventory.readAt,selection,inputs:{modelSpec:{name:model.name,uid:model.uid,resourceVersion:"1"},deviceClass:{name:cls.name,uid:cls.uid,resourceVersion:"1"},node:{name:"node",uid:"node-uid",resourceVersion:"1"},runtimeDeclaration:null},verdict:"Incompatible",reasons:[{kind:"Unsupported",code:"BackendUnsupported",message:"NPU backend unsupported"}]}
+  const source={inventory,plans:[],catalog:{...catalog,profiles:[]},complete:true,runsComplete:true}
+  const excluded=coverageCells({...source,matrix:[row]})
+  assert.equal(excluded[0].compatibility.state,"unsupported")
+  assert.equal(coverageOverview(excluded)[0].eligible,0)
+  const supported=coverageCells({...source,matrix:[{...row,verdict:"Compatible",reasons:[]}]})
+  assert.equal(coverageOverview(supported)[0].eligible,2)
+  const unknown=coverageCells({...source,matrix:[{...row,inputs:{...row.inputs,modelSpec:{...row.inputs.modelSpec,uid:"old"}}}]})
+  assert.equal(unknown[0].compatibility.state,"unknown")
+  assert.equal(coverageOverview(unknown)[0].eligible,0)
+  const declaredMismatch=coverageCells({...source,inventory:{...inventory,classes:[{...cls,architecture:"amd64"}]},matrix:[]})
+  assert.equal(declaredMismatch[0].state,"unsupported")
+  assert.equal(coverageOverview(declaredMismatch)[0].eligible,0)
+})
+
+test("missing requested batches and other Nodes are partial coverage, not numeric warnings",()=>{
+  const cells=coverageCells({inventory,plans:[{...plan,spec:{...plan.spec,batchSizes:[1,2]}}],catalog,complete:true,runsComplete:true})
+  assert.equal(cells[0].state,"partial")
+  assert.match(cells[0].reason,/배치/)
+  assert.match(coverageCellSummary(cells[0]),/최저 @배치 1/)
+  assert.match(coverageCellSummary(cells[0]),/반복 3회/)
+  assert.match(coverageCellSummary(cells[0]),/CPU 1/)
+})
+
 test("loading is complete only after every entire range has settled successfully",()=>{
   const done={data:{},error:null,isFetching:false}
   assert.equal(coverageReady([done,done,done,done]),true)
@@ -69,7 +95,7 @@ test("a newer failure retains usable evidence with warning; earlier same-request
 })
 test("Node, mode and frozen conditions stay separate and exact source references do not parse IDs",()=>{
   const cells=coverageCells({inventory:{...inventory,classes:[{...cls,nodes:[...cls.nodes,{...cls.nodes[0],name:"node2",uid:"node2-uid"}]}]},plans:[plan],catalog,complete:true,runsComplete:true})
-  assert.equal(cells[0].state,"warning");assert.equal(cells[0].completeNodes,1);assert.equal(cells[0].nodes,2)
+  assert.equal(cells[0].state,"partial");assert.equal(cells[0].completeNodes,1);assert.equal(cells[0].nodes,2)
   assert.equal(cells[1].profiles.length,0)
   assert.equal(profileForPlan(plan,[profile]).length,1)
   assert.equal(profileForPlan({...plan,status:{phase:"Complete",result:{store:"s",key:"other"}}},[profile]).length,0)
@@ -155,4 +181,12 @@ test("statistics preserve zero-width and negative CI and distinguish pooled call
   assert.equal(statisticsMissing("StatisticsNotRecorded"),"CI·통합 p95 기록 없음")
   assert.equal(statisticsMissing("NoPublishedResult"),"게시된 결과 없음")
   assert.equal(statisticsMissing(undefined),"CI 미제공 · p95 미제공")
+})
+
+test("failed cells and Failed request history keep different explicit units",()=>{
+  const failed={...plan,metadata:{...plan.metadata,uid:"earlier",creationTimestamp:"2026-10-28T00:00:00Z"},status:{phase:"Failed"}}
+  const other={...failed,metadata:{...failed.metadata,uid:"outside"},spec:{...failed.spec,state:{...failed.spec.state,candidate:{...failed.spec.state.candidate,powerMode:"15W"}}}}
+  const cells=coverageCells({inventory,plans:[plan,failed,other],catalog,complete:true,runsComplete:true})
+  assert.deepEqual(coverageFailureCounts(cells,[plan,failed,other]),{cells:1,requests:2,totalRequests:2})
+  assert.deepEqual(coverageFailureCounts(cells.filter(cell=>cell.mode==="MAXN"),[plan,failed,other]),{cells:0,requests:1,totalRequests:2})
 })

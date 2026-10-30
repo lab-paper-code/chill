@@ -12,6 +12,7 @@ import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
 import { belongsToPool, displayNumber, displayTime, elapsed, instanceSymbol, instanceSymbols, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel } from "@/lib/live-display"
 import { CandidateDetails } from "./scheduler"
+import { CoverageProgress } from "./measurement-coverage"
 import "./live-board.css"
 
 type Zone="UTC"|"KST"
@@ -162,7 +163,6 @@ function LiveStage({uid}:{uid?:string}) {
   const totalN=completed==null||failed==null?undefined:completed+failed
   return <div className="live-stage"><StateStrip state={state} status={status} reconnect={reconnect} now={now} zone={zone} setZone={setZone}/><div className={`live-layout ${at?"live-with-evidence":""}`}><main className="live-main">
     <header className="live-heading">{uid&&<Link href={`/${fixture?`?${new URLSearchParams({fixture})}`:""}#pool-${encodeURIComponent(uid)}`}>◂ 보드로</Link>}<h1 ref={heading} tabIndex={-1}>{uid?`POOL ${workload?.name??uid}`:"CHILL 흐름 보드"}</h1><p>{uid?`${uid}${workload?` · 모델 ${workload.model}`:""}`:"수신에서 실행으로, 관측에서 구성으로"}</p></header>
-    {!uid&&<p><Link href="/measurements">연구 진척: 측정 커버리지와 최근 실험 결론 보기</Link></p>}
     {uid?<>{workload?<><MetricCard workload={workload} metric={metrics?.workloads[uid]} instances={snapshot!.instances} now={now}/><section className="live-pool-instances"><h2>인스턴스 · Node</h2><NodeGroups snapshot={snapshot!} workload={workload} select={select} detail/></section></>:<p>현재 snapshot에 이 워크로드 UID가 없습니다.</p>}<Controls snapshot={snapshot} metrics={metrics} select={select} zone={zone}/>{open&&<Expansion value={open} snapshot={snapshot} metrics={metrics} uid={uid} zone={zone} close={()=>select("open",null)}/>}<Timeline state={state} uid={uid} zone={zone} select={select} end={end}/></>:<>
       <section className="live-flow" aria-label="CHILL 고정 구조 흐름"><div className="live-client"><h2>클라이언트</h2><p>부하 생성기</p></div><Arrow label={`E1 수신 ${displayNumber(received," req/s")}`}/><section className="live-server"><h2>ChillServer</h2><div className="live-intake">접수 · 유입 큐 · 분배</div><div className="live-lanes">
         {workloadRows.length?workloadRows.map(row=>{const metric=metrics?.workloads[row.uid];return <section className="live-pool-lane" key={row.uid} id={`pool-${row.uid}`} tabIndex={-1}><header><Link href={poolHref(row.uid)}><h3>POOL {row.name}</h3><span>열기 ▸</span></Link><strong>{workloadLabel(row,snapshot!.instances,metric,now)}</strong></header><div className="live-lane-values"><span>E1 {receivedLabel(metric)}</span><span>E4 성공 {ratio(metric?.completed,terminalCount(metric))}</span></div><p className="live-muted">E2 접수 {row.admission?"가능":"불가"} · 배정 전 pending {row.pending}</p><NodeGroups snapshot={snapshot!} workload={row} select={select}/></section>}):<p className="live-empty">아직 POOL 구성이 없습니다. 워크로드가 들어오면 UID별 경로가 여기에 나타납니다.</p>}
@@ -172,5 +172,5 @@ function LiveStage({uid}:{uid?:string}) {
     {!!state.gaps.length&&<section className="live-gaps" aria-label="관측 공백"><h2>관측 공백</h2>{state.gaps.map((gap,index)=><p key={index}>{gap.from} ~ {gap.to} · {gap.scope}: {gap.reason}</p>)}</section>}
   </main>{at&&<Evidence key={at} at={at} close={()=>select("at",null)}/>}</div></div>
 }
-export function LiveBoardPage(){return <LiveStage/>}
+export function LiveBoardPage(){const {config}=useSession();return <><div className="px-4 md:px-6"><CoverageProgress namespace={config.namespace}/></div><LiveStage/></>}
 export function LivePoolPage({id}:{id:string}){return <LiveStage uid={id}/>}

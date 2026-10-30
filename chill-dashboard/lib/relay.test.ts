@@ -197,3 +197,11 @@ test("model compatibility relay permits only the exact GET and four single requi
     assert.throws(() => relayPlan("GET",path,`${search}&${extra}`,config),/DashboardQueryInvalid/)
   }
 })
+
+test("compatibility matrix is a selection-free read-only projection",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
+  const path=["v1","model-compatibility-matrix"]
+  assert.equal(relayPlan("GET",path,"",config).path,"/api/v1/model-compatibility-matrix")
+  assert.throws(()=>relayPlan("GET",path,"?node=node",config),/DashboardQueryInvalid/)
+  assert.throws(()=>relayPlan("POST",path,"",config),/DashboardMethodNotAllowed/)
+})

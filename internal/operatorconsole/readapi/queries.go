@@ -66,7 +66,10 @@ func parseListQuery(r *http.Request, runs bool) (listQuery, bool) {
 			q.search = strings.ToLower(value[0])
 		case "condition":
 			kind, status, ok := strings.Cut(value[0], "=")
-			if !runs || !ok || kind == "" || len(value[0]) > 128 || (status != "True" && status != "False" && status != "Unknown") {
+			if !runs || !ok || kind == "" || len(value[0]) > 128 ||
+				(status != string(metav1.ConditionTrue) &&
+					status != string(metav1.ConditionFalse) &&
+					status != string(metav1.ConditionUnknown)) {
 				return q, false
 			}
 			q.condition = value[0]
@@ -104,6 +107,7 @@ func matchesCondition(conditions []metav1.Condition, filter string) bool {
 func NewQueryHandler(readers QueryReaders) http.Handler {
 	mux := http.NewServeMux()
 	RegisterModelCompatibilityQuery(mux, readers.ModelCompatibility)
+	registerModelCompatibilityMatrix(mux, readers)
 	mux.HandleFunc("GET /api/v1/systems", func(w http.ResponseWriter, r *http.Request) {
 		q, valid := parseListQuery(r, false)
 		if !valid {

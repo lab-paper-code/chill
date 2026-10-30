@@ -204,6 +204,7 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	mux.Handle("GET /api/v1/systems", queries)
 	mux.Handle("GET /api/v1/inventory", queries)
 	mux.Handle("GET /api/v1/model-compatibility", queries)
+	mux.Handle("GET /api/v1/model-compatibility-matrix", queries)
 	mux.Handle("GET /api/v1/namespaces/{namespace}/profiling-runs", queries)
 	mux.Handle("/", handler)
 	return mux, nil

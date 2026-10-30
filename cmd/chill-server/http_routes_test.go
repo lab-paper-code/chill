@@ -23,12 +23,14 @@ func TestConsoleChillServerAuthenticatesBeforePrivateLeg(t *testing.T) {
 	for _, tc := range []struct {
 		name                                                                       string
 		tokenFailure, invalid, denied, sarFailure, evaluationFailure, unconfigured bool
-		compatibility                                                              bool
+		compatibility, matrix                                                      bool
 		want                                                                       int
 	}{
 		{name: "allowed original conflict", want: http.StatusConflict},
 		{name: "compatibility allowed original conflict", compatibility: true, want: http.StatusConflict},
 		{name: "compatibility forbidden", compatibility: true, denied: true, want: http.StatusForbidden},
+		{name: "matrix allowed original conflict", matrix: true, want: http.StatusConflict},
+		{name: "matrix forbidden", matrix: true, denied: true, want: http.StatusForbidden},
 		{name: "TokenReview outage", tokenFailure: true, want: http.StatusServiceUnavailable},
 		{name: "invalid identity", invalid: true, want: http.StatusUnauthorized},
 		{name: "real denial", denied: true, want: http.StatusForbidden},
@@ -40,6 +42,9 @@ func TestConsoleChillServerAuthenticatesBeforePrivateLeg(t *testing.T) {
 			target := "/api/v1/inventory?limit=1&q=node"
 			if tc.compatibility {
 				target = "/api/v1/model-compatibility?modelSpec=model&executionPath=ort-cpu&deviceClass=class&node=node"
+			}
+			if tc.matrix {
+				target = "/api/v1/model-compatibility-matrix"
 			}
 			targetPath, _, _ := strings.Cut(target, "?")
 			var privateCalls atomic.Int32
@@ -189,7 +194,9 @@ func TestDashboardGatewayCannotReplaceChillServerAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/v1/models", "/api/v1/inventory", "/api/v1/model-compatibility"} {
+	for _, path := range []string{
+		"/api/v1/models", "/api/v1/inventory", "/api/v1/model-compatibility", "/api/v1/model-compatibility-matrix",
+	} {
 		response := httptest.NewRecorder()
 		chillServer.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusUnauthorized {
