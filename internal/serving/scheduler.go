@@ -457,13 +457,21 @@ func (s SchedulerSettings) Validate() error {
 	if s.CapacityWindow <= 0 || s.CapacityWindows < 1 || s.CapacityPassingWindows < 1 || s.CapacityPassingWindows > s.CapacityWindows || s.CapacityMinimumRequests < 1 {
 		return fmt.Errorf("capacity settings need capacityWindowNanos > 0, capacityWindows >= 1, 1 <= capacityPassingWindows <= capacityWindows and capacityMinimumRequests >= 1")
 	}
-	if s.CapacityGridSteps < 1 || s.CapacityTailSamples < 1 || !schedulerFinite(s.CapacityBisectionWidth) || s.CapacityBisectionWidth <= 0 || s.CapacityBisectionWidth > 1 {
-		return fmt.Errorf("capacityGridSteps and capacityTailSamples must be positive; capacityBisectionWidth must be finite in (0,1]")
+	if err := s.validateCapacityNumerics(); err != nil {
+		return err
 	}
 	if s.PlanSearchWorkers < 1 {
 		return fmt.Errorf("planSearchWorkers must be at least 1")
 	}
 	return s.validateExcludedNodes()
+}
+
+func (s SchedulerSettings) validateCapacityNumerics() error {
+	if s.CapacityGridSteps < 1 || s.CapacityTailSamples < 1 || !schedulerFinite(s.CapacityBisectionWidth) ||
+		s.CapacityBisectionWidth <= 0 || s.CapacityBisectionWidth > 1 {
+		return fmt.Errorf("capacityGridSteps and capacityTailSamples must be positive; capacityBisectionWidth must be finite in (0,1]")
+	}
+	return nil
 }
 
 func (s SchedulerSettings) validateExcludedNodes() error {

@@ -218,26 +218,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			if !tc.missingRefresh {
 				handler.config.RefreshScheduler = func(ctx context.Context) error {
 					refreshes++
-					if tc.refreshFailure {
-						return errors.New("removed profile catalog refresh still fails")
-					}
-					cm, err := kube.CoreV1().ConfigMaps("serving").Get(ctx, "scheduler", meta.GetOptions{})
-					if err != nil {
-						return err
-					}
-					var configuration struct {
-						Settings serving.SchedulerSettings `json:"settings"`
-					}
-					if err := json.Unmarshal([]byte(cm.Data["scheduler.json"]), &configuration); err != nil {
-						return err
-					}
-					if err := controller.SetConfiguration(servingkube.SchedulerControllerConfig{Settings: configuration.Settings}); err != nil {
-						return err
-					}
-					if tc.completionAppendFailure {
-						return observationLog.Close(ctx)
-					}
-					return nil
+					return refreshSettingsForTest(ctx, kube, controller, observationLog, tc.refreshFailure, tc.completionAppendFailure)
 				}
 			}
 			raw, err := json.Marshal(after)
@@ -281,6 +262,32 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			assertSchedulerSettingsAudit(t, persisted, response.Body.Bytes(), observationLog, before, stored)
 		})
 	}
+}
+
+func refreshSettingsForTest(
+	ctx context.Context, kube kubernetes.Interface, controller *servingkube.SchedulerController,
+	observationLog *serving.ObservationLog, refreshFailure, completionAppendFailure bool,
+) error {
+	if refreshFailure {
+		return errors.New("removed profile catalog refresh still fails")
+	}
+	cm, err := kube.CoreV1().ConfigMaps("serving").Get(ctx, "scheduler", meta.GetOptions{})
+	if err != nil {
+		return err
+	}
+	var configuration struct {
+		Settings serving.SchedulerSettings `json:"settings"`
+	}
+	if err := json.Unmarshal([]byte(cm.Data["scheduler.json"]), &configuration); err != nil {
+		return err
+	}
+	if err := controller.SetConfiguration(servingkube.SchedulerControllerConfig{Settings: configuration.Settings}); err != nil {
+		return err
+	}
+	if completionAppendFailure {
+		return observationLog.Close(ctx)
+	}
+	return nil
 }
 
 func assertSchedulerSettingsUnapplied(
