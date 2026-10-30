@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-CRD scope is a hard API boundary. Changing a CRD from cluster-scoped to namespaced, or the reverse, is not an in-place migration; it requires deleting and recreating the CRD and migrating stored objects.
+CRD scope changes require CRD recreation and stored-object migration, not an in-place update.
 
 The first API set is:
 

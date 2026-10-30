@@ -12,13 +12,9 @@ The public operator UX should stay Helm-shaped. Exposing a separate CHILL lifecy
 
 ## Decision
 
-This ADR is retained only as historical context. It previously used two Helm
-releases to preserve install and teardown ordering while the bootstrap surface
-was changing.
+This ADR is retained only as historical context. It previously used two Helm releases to preserve install and teardown ordering while the bootstrap surface was changing.
 
-The current decision is ADR 0009: use one `charts/chill` release, make CHILL
-runtime cleanup an explicit root-CR/finalizer contract, and keep Helm hook
-cleanup only as a safety net for direct `helm uninstall`.
+The current decision is ADR 0009: use one `charts/chill` release, make CHILL runtime cleanup an explicit root-CR/finalizer contract, and keep Helm hook cleanup only as a safety net for direct `helm uninstall`.
 
 ## Consequences
 

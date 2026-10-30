@@ -2,15 +2,11 @@
 
 ## Status
 
-Accepted — 2026-10-30. 문서 결정이며 구현·측정 완료를 뜻하지 않는다.
-**2차 검토(fusion: 패널 3모델+판정) 반영**.
+Accepted — 2026-10-30. 문서 결정이며 구현·측정 완료를 뜻하지 않는다. **2차 검토(fusion: 패널 3모델+판정) 반영**.
 
 ## Context
 
-코드의 숫자를 모두 설정으로 풀면 프로토콜까지 운영 정책이 되고, 하나의 설정 계층에 모으면
-serving·측정·하네스의 책임이 섞인다. 반대로 측정 조건을 상수로 고정하면 Run을 재현하기 어렵다.
-AGENTS.md는 측정·판정 값의 설정화, 선택값과 출처의 불변 실행 기록, 단일값 정책 필드 금지를 요구한다.
-현재 settings API와 관측 scheduler stream, 측정 CR/frozen Run, E5 config/binding이 이미 있다.
+코드의 숫자를 모두 설정으로 풀면 프로토콜까지 운영 정책이 되고, 하나의 설정 계층에 모으면 serving·측정·하네스의 책임이 섞인다. 반대로 측정 조건을 상수로 고정하면 Run을 재현하기 어렵다. AGENTS.md는 측정·판정 값의 설정화, 선택값과 출처의 불변 실행 기록, 단일값 정책 필드 금지를 요구한다. 현재 settings API와 관측 scheduler stream, 측정 CR/frozen Run, E5 config/binding이 이미 있다.
 
 ## Decision
 
@@ -23,13 +19,6 @@ AGENTS.md는 측정·판정 값의 설정화, 선택값과 출처의 불변 실�
 
 ## Evidence and Consequences
 
-기존 PUT은 사전 append→persist→refresh→후속 append다. 사전 실패는 변경 전 중단하지만 저장 후 refresh 실패는 요청/적용 불일치, refresh 후 후속 기록 실패는 HTTP 오류여도 적용되었을 수 있다. 이후 Decision으로 해석하고 충분한 증거가 없으면 미확인이다. 실제 보존하지 않은 ConfigMap UID/RV는 주장하지 않는다.
-`hack/e5/e5.py:1294`는 config/schedulerSettings/sources/schedule을 binding에 보존한다.
-파일 overwrite가 가능한 현재 binding을 물리적 write-once 저장소라고 부르지 않는다.
-완결 binding은 해당 실험에서 변경하지 않고 다음 실행은 새 binding을 만드는 계약으로 동결한다.
+기존 PUT은 사전 append→persist→refresh→후속 append다. 사전 실패는 변경 전 중단하지만 저장 후 refresh 실패는 요청/적용 불일치, refresh 후 후속 기록 실패는 HTTP 오류여도 적용되었을 수 있다. 이후 Decision으로 해석하고 충분한 증거가 없으면 미확인이다. 실제 보존하지 않은 ConfigMap UID/RV는 주장하지 않는다. `hack/e5/e5.py:1294`는 config/schedulerSettings/sources/schedule을 binding에 보존한다. 파일 overwrite가 가능한 현재 binding을 물리적 write-once 저장소라고 부르지 않는다. 완결 binding은 해당 실험에서 변경하지 않고 다음 실행은 새 binding을 만드는 계약으로 동결한다.
 
-기존 소유자를 재사용하므로 추가 설정 계층은 없다. 대신 모든 값의 전달과 기록을 끝까지 연결해야 한다.
-기존 CLI와 Helm 기본값이 다른 경우 양쪽을 그대로 보존하며 값이 같다고 꾸미지 않는다.
-역사 스크립트는 재설계하지 않고 삭제 후보로만 남긴다. 실제 삭제에는 별도 사용자 승인이 필요하다.
-필드·기동 행·병렬 slice와 회귀 기준은 [상세 설계](../design/serving/configuration-hardcoding.md),
-범위·열린 점은 [계획](../plans/2026-10-30-configuration-hardcoding.md)이 소유한다.
+기존 소유자를 재사용하므로 추가 설정 계층은 없다. 대신 모든 값의 전달과 기록을 끝까지 연결해야 한다. 기존 CLI와 Helm 기본값이 다른 경우 양쪽을 그대로 보존하며 값이 같다고 꾸미지 않는다. 역사 스크립트는 재설계하지 않고 삭제 후보로만 남긴다. 실제 삭제에는 별도 사용자 승인이 필요하다. 필드·기동 행·병렬 slice와 회귀 기준은 [상세 설계](../design/serving/configuration-hardcoding.md), 범위·열린 점은 [계획](../plans/2026-10-30-configuration-hardcoding.md)이 소유한다.

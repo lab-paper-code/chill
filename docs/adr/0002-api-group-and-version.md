@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-CRD group names become part of every manifest, RBAC rule, sample, controller watch, and user-facing API path. Renaming them after users or experiments exist is effectively a breaking API migration.
+The CRD group is a manifest, RBAC, watch and API contract; renaming it after use is breaking.
 
 ## Decision
 

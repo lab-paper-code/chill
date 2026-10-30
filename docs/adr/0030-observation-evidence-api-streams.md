@@ -8,7 +8,7 @@ Accepted (2026-10-30) — 문서 계약 채택. 구현·승인 배포·리허설
 
 [E5 증거 API 계획](../plans/2026-10-28-e5-evidence-api.md) §1~6은 CHILL 내부 사실을 CHILL API로 수집하도록 바꾼다. 기존 ObservationLog의 요청·판단·정의·관리 기록에 컨테이너 자원과 Pod/observer issue 기록을 추가해야 한다. #213의 보관된 관측은 `serving/observations.v1alpha5/`에 있고, 새 API로 그 실험도 다시 읽어야 한다.
 
-기존 네 stream의 행 의미나 encoding을 바꾸는 작업은 아니다. 여기서 저장 버전을 올리면 현재 단일 버전 reader가 #213 보관본을 찾거나 읽지 못한다. 새 stream 두 개를 이유로 기존 실험을 폐기하거나 다중 버전 reader를 만드는 것은 [ADR 0019](0019-durable-stored-contract-compatibility.md)의 비용 원칙에 어긋난다.
+기존 네 stream의 행 의미·encoding은 유지한다. 여기서 저장 버전을 올리면 현재 단일 버전 reader가 #213 보관본을 찾거나 읽지 못한다. 새 stream 두 개를 이유로 기존 실험을 폐기하거나 다중 버전 reader를 만드는 것은 [ADR 0019](0019-durable-stored-contract-compatibility.md)의 비용 원칙에 어긋난다.
 
 ## Decision
 

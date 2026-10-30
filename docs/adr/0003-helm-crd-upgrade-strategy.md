@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-CHILL will be wrapped as a Helm chart. During `v1alpha1`, the CRD schemas are expected to change often. Helm's top-level `crds/` directory installs CRDs only on first install and does not manage normal upgrades, which is a poor fit for an alpha research repo.
+During `v1alpha1`, frequent schema changes require Helm upgrades; top-level `crds/` only installs CRDs initially.
 
 ## Decision
 

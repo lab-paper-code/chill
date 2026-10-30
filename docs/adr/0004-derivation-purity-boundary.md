@@ -8,7 +8,7 @@ Accepted
 
 The scheduler's core value is the measured derivation chain: request energy, batch-energy optimization, capacity, water-filling, envelope construction, gear thresholds, and transition economics.
 
-Those calculations must be reusable by tests, analysis scripts, and controllers without dragging Kubernetes clients into the mathematical core.
+Tests, analysis and controllers must reuse the math without Kubernetes clients.
 
 ## Decision
 

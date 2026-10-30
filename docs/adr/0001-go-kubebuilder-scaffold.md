@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-CHILL is a Kubernetes-native scheduler/operator project. The repo needs CRD type generation, controller-runtime integration, envtest support, and a path to Helm packaging without adding OLM as a required layer.
+CHILL needs Kubernetes-native CRD generation, controller-runtime, envtest and Helm packaging without required OLM.
 
 The testbed API server is Kubernetes `v1.31.13`.
 
