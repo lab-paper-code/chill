@@ -14,6 +14,8 @@ hack/fast-deploy.sh upgrade --source <commit> --control <NNN>
 # 범위를 명시하려면 --images server,node-agent,dashboard (profiler도 허용)
 # chart 변경은 사전 검토한 canonical live→source diff 파일과 정확히 같을 때만 승인
 # --chart-diff-approved /absolute/approved-chart-diff.txt (기본값은 chart 변경 거부)
+# 전용 raw 수집 SA는 기본 off; --values overlay로 servingEntrypoint.evidenceCollector.enabled=true
+# 명시 --values도 chart diff의 정확일치 승인 범위에 포함되며 원본을 보존한다(SCH-67).
 # 로컬 회귀 확인: 이미지별 변경 경로 선택 및 HTTP 200/남은 deadline gate
 hack/fast-deploy.sh upgrade --source HEAD --control 0 --self-check
 ```

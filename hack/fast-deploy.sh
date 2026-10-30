@@ -16,6 +16,7 @@ p.add_argument("--control", required=True)
 p.add_argument("--images", default="auto")
 p.add_argument("--dry-run", action="store_true")
 p.add_argument("--chart-diff-approved", type=pathlib.Path, help="File containing the exact approved canonical live-to-source chart diff")
+p.add_argument("--values", type=pathlib.Path, help="Explicit chart values overlay, covered by exact chart-diff approval")
 p.add_argument("--self-check", action="store_true", help="Run local selection/deadline regression checks only")
 p.add_argument("--token-safety-margin-seconds", type=float, default=120)
 a = p.parse_args()
@@ -176,6 +177,9 @@ try:
     run(["tar", "-xf", archive, "-C", src], "extract.log")
     chart = src / "charts/chill"
     flags = ["-f", str(out / "live-values.json")]
+    if a.values:
+        (out / "approved-values.yaml").write_bytes(a.values.read_bytes())
+        flags += ["-f", str(out / "approved-values.yaml")]
     before = run(helm + ["template", "chill", chart, *flags, "--is-upgrade"], "render-before.yaml")
     live_manifest = (out / "live-manifest.yaml").read_bytes() + b"\n---\n" + (out / "live-hooks.yaml").read_bytes()
     chart_diff = chart_difference(canonical_objects(live_manifest), canonical_objects(before))

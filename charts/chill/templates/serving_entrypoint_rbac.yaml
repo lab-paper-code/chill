@@ -302,6 +302,32 @@ metadata:
 rules:
   - nonResourceURLs: ["/chill/api/v1/observations/raw", "/chill/api/v1/observations/raw/*"]
     verbs: [get]
+{{- if .Values.servingEntrypoint.evidenceCollector.enabled }}
+---
+# SCH-67: a dedicated experiment identity, never the dashboard/BFF account.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "chill.fullname" . }}-e5-evidence-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.fullname" . }}-e5-evidence-collector
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.fullname" . }}-evidence-collector
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.fullname" . }}-e5-evidence-collector
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

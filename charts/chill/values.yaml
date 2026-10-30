@@ -476,6 +476,9 @@ servingEntrypoint:
   # costs from, and where measurements are listed, created and deleted; empty
   # uses the serving namespace. Measurement deletion also removes owned evidence.
   profileNamespaces: []
+  # SCH-67: opt-in raw-only harness identity; dashboard credentials stay separate.
+  evidenceCollector:
+    enabled: false
   tls:
     # Required only when enabled; existing kubernetes.io/tls Secret in release namespace.
     secretName: ""

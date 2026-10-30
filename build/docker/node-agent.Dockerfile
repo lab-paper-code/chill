@@ -9,10 +9,7 @@ RUN go mod download
 
 COPY cmd/node-agent/ cmd/node-agent/
 COPY api/ api/
-COPY internal/kubeconfig/ internal/kubeconfig/
-COPY internal/metadata/ internal/metadata/
-COPY internal/nodeactuator/ internal/nodeactuator/
-COPY internal/nodeprobe/ internal/nodeprobe/
+COPY internal/ internal/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /out/node-agent ./cmd/node-agent
 
 FROM gcr.io/distroless/static:nonroot
