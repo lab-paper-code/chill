@@ -10,6 +10,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
+	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -27,11 +28,11 @@ import (
 const testJobUID = "job-uid"
 
 type staticEvidenceStoreResolver struct {
-	binding EvidenceStoreBinding
+	binding storekube.Binding
 	err     error
 }
 
-func (r staticEvidenceStoreResolver) Resolve(context.Context) (EvidenceStoreBinding, error) {
+func (r staticEvidenceStoreResolver) Resolve(context.Context) (storekube.Binding, error) {
 	return r.binding, r.err
 }
 
@@ -567,8 +568,8 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 	return prepared
 }
 
-func testEvidenceStoreBinding() EvidenceStoreBinding {
-	return EvidenceStoreBinding{
+func testEvidenceStoreBinding() storekube.Binding {
+	return storekube.Binding{
 		Store: "chill-evidence-store", Endpoint: "http://chill-evidence-store.chill-system.svc.cluster.local:9000",
 		Bucket: "chill-profiling-evidence", Region: "us-east-1", CredentialsSecretName: "chill-evidence-store-credentials",
 	}

@@ -596,7 +596,7 @@ func newRunReconciler(
 ) *profilercontroller.RunReconciler {
 	t.Helper()
 	reconciler, err := profilercontroller.NewRunReconciler(
-		kube, kube, resolver, jobs, finalizer,
+		kube, kube, resolver.Resolve, jobs.Find, jobs.Ensure, finalizer.Finalize, finalizer.RuntimeTermination,
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
@@ -47,7 +48,7 @@ func (f FrozenActuationPolicy) Validate() error {
 	return nil
 }
 
-func validateActuationPolicySelection(policy ActuationPolicy, selection ActuationSelection) error {
+func validateActuationPolicySelection(policy nodeactuator.ActuationPolicy, selection ActuationSelection) error {
 	if err := selection.Validate(); err != nil {
 		return err
 	}

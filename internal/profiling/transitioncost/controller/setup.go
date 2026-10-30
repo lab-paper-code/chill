@@ -69,7 +69,7 @@ func SetupWithManager(manager ctrl.Manager, options SetupOptions) error {
 	if err != nil {
 		return fmt.Errorf("construct transition attempt finalizer: %w", err)
 	}
-	sequence, err := newMeasurementSequence(preparations, materializer, finalizer)
+	sequence, err := newMeasurementSequence(preparations.Resolve, materializer.Advance, finalizer.load, finalizer.Finalize)
 	if err != nil {
 		return fmt.Errorf("construct transition measurement sequence: %w", err)
 	}
@@ -81,7 +81,7 @@ func SetupWithManager(manager ctrl.Manager, options SetupOptions) error {
 		client: manager.GetClient(), finalizer: finalizer,
 		failedJobRetentionSeconds: options.FailedJobRetentionSeconds,
 	}
-	reconciler, err := newPowerModeTransitionCostReconciler(manager.GetClient(), sequence, results, cleanup)
+	reconciler, err := newPowerModeTransitionCostReconciler(manager.GetClient(), sequence.advance, results.write, cleanup)
 	if err != nil {
 		return fmt.Errorf("construct PowerModeTransitionCost reconciler: %w", err)
 	}

@@ -3,6 +3,7 @@ package profiler
 import (
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"sigs.k8s.io/yaml"
 )
@@ -56,16 +57,12 @@ func TestFreezeConfiguredActuationPolicyRejectsAmbiguousMissingAndInvalidCatalog
 	duplicate.Name = "duplicate"
 	for name, raw := range map[string][]byte{
 		"duplicate selector": testActuationPolicyCatalog(t, first, duplicate),
-		"missing selector": testActuationPolicyCatalog(t, ActuationPolicySpec{
-			Name: "other", DeviceClass: "other-class", PowerMode: "15W",
+		"missing selector": testActuationPolicyCatalog(t, nodeactuator.ActuationPolicySpec{Name: "other", DeviceClass: "other-class", PowerMode: "15W",
 			ActuatorKind:            profilingrun.ActuatorKindJetsonNVPModel,
-			SettlingDurationSeconds: 30, MaxActuationDurationSeconds: 300,
-		}),
-		"invalid duration": testActuationPolicyCatalog(t, ActuationPolicySpec{
-			Name: "invalid", DeviceClass: selection.DeviceClass, PowerMode: selection.PowerMode,
+			SettlingDurationSeconds: 30, MaxActuationDurationSeconds: 300}),
+		"invalid duration": testActuationPolicyCatalog(t, nodeactuator.ActuationPolicySpec{Name: "invalid", DeviceClass: selection.DeviceClass, PowerMode: selection.PowerMode,
 			ActuatorKind: selection.Actuator.Kind, SettlingDurationSeconds: 60,
-			MaxActuationDurationSeconds: 60,
-		}),
+			MaxActuationDurationSeconds: 60}),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := FreezeConfiguredActuationPolicy(raw, selection, testActuationPolicySource("1")); err == nil {
@@ -86,15 +83,13 @@ func testActuationSelection() ActuationSelection {
 	}
 }
 
-func testActuationPolicySpec() ActuationPolicySpec {
-	return ActuationPolicySpec{
-		Name: "xavier-nvpmodel-v1", DeviceClass: "jetson-xavier-nx-8g",
+func testActuationPolicySpec() nodeactuator.ActuationPolicySpec {
+	return nodeactuator.ActuationPolicySpec{Name: "xavier-nvpmodel-v1", DeviceClass: "jetson-xavier-nx-8g",
 		PowerMode: "MODE_15W_6CORE", ActuatorKind: profilingrun.ActuatorKindJetsonNVPModel,
-		SettlingDurationSeconds: 60, MaxActuationDurationSeconds: 900,
-	}
+		SettlingDurationSeconds: 60, MaxActuationDurationSeconds: 900}
 }
 
-func testActuationPolicyCatalog(t *testing.T, policies ...ActuationPolicySpec) []byte {
+func testActuationPolicyCatalog(t *testing.T, policies ...nodeactuator.ActuationPolicySpec) []byte {
 	t.Helper()
 	raw, err := yaml.Marshal(ActuationPolicyCatalog{
 		SchemaVersion: ActuationPolicyCatalogSchemaVersion,

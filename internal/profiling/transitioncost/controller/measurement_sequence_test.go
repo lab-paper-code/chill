@@ -200,7 +200,7 @@ func newMeasurementSequenceFixture(t *testing.T) measurementSequenceFixture {
 	preparations := &sequencePreparationSource{prepared: prepared}
 	materializer := &sequenceMaterializer{progress: AttemptProgress{Stage: AttemptStageObserverStarting}}
 	finalizer := &sequenceFinalizer{retained: map[evidencestore.ObjectLocation]FinalizedAttempt{}}
-	sequence, err := newMeasurementSequence(preparations, materializer, finalizer)
+	sequence, err := newMeasurementSequence(preparations.Resolve, materializer.Advance, finalizer.load, finalizer.Finalize)
 	if err != nil {
 		t.Fatal(err)
 	}

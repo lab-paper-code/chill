@@ -319,7 +319,9 @@ func newBatchReconciler(
 	results *fakeResultWriter,
 ) *batchcontroller.BatchEnergyOptimizationReconciler {
 	t.Helper()
-	reconciler, err := batchcontroller.NewBatchEnergyOptimizationReconciler(kube, plans, curves, results)
+	reconciler, err := batchcontroller.NewBatchEnergyOptimizationReconciler(
+		kube, plans.Resolve, curves.Derive, results.Write,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

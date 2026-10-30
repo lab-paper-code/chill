@@ -10,5 +10,6 @@
 - 완료는 verified execution evidence 저장이며 scientific admission은 removed @`788bcf93`; 과거 `Accepted/Rejected/Insufficient`, `wall-power-v2`와 admission snapshots는 현행 계약이 아니다. 계산은 [Plan 3](03-profile-admission-derivation.md).
 - 결과: CPU ORT active/loaded-idle live path, duplicate reconcile/restart/recorded-Job loss/identity drift, Operator retained-Deployment restart, deletion fence가 검증 기록에 포함된다. 실제 owner GC 기록은 Kubernetes 1.31 kind e2e이며 envtest GC 증거로 대신하지 않는다.
 - 근거 커밋: `9edde945` verified Job cleanup/failed diagnostics, `788bcf93` scientific admission 제거. 현행 [worker](../components/measurement-worker.md)·[store](../components/evidence-store.md) 계약이 serialization/retention의 권위다.
+- 내부 조립: Run·campaign·transition-cost reconciler와 Console preflight는 단일 구현 포트 대신 함수 필드에 메서드/closure를 주입한다. 기존 테스트 대역도 같은 함수 경계로 연결하며 Evidence Store binding과 actuation policy는 `evidencestore/kube.Binding`·`nodeactuator` 원본 타입을 사용한다. 저장 형식·증거 검증·읽기 전용 경계는 바꾸지 않는다.
 - 남은 것: 새 profile/SLO/scheduler 권한은 이 계획이 부여하지 않는다. [Plan 7](07-batch-energy-optimization-control-path.md)이 반복 Run 조합을 소유한다.
 - [Profiling index](../README.md)

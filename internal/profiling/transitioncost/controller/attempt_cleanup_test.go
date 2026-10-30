@@ -101,8 +101,7 @@ func TestAttemptJobCleanupFailureDoesNotFailMeasurementAndReplaysAfterRestart(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := newPowerModeTransitionCostReconciler(fixture.kube, fixture.sequence, fixture.writer,
-		&attemptJobCleanup{client: tracking, finalizer: restartedFinalizer, failedJobRetentionSeconds: 123})
+	restarted, err := newPowerModeTransitionCostReconciler(fixture.kube, fixture.sequence.advance, fixture.writer.write, &attemptJobCleanup{client: tracking, finalizer: restartedFinalizer, failedJobRetentionSeconds: 123})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +321,7 @@ func TestTerminalMeasurementFailureRetriesRetentionWithoutAttemptReceipt(t *test
 		t.Fatalf("failed retention patch changed Job: job=%+v err=%v", current, err)
 	}
 	tracking.patchErr = nil
-	restarted, err := newPowerModeTransitionCostReconciler(fixture.kube, fixture.sequence, fixture.writer, fixture.reconciler.cleanup)
+	restarted, err := newPowerModeTransitionCostReconciler(fixture.kube, fixture.sequence.advance, fixture.writer.write, fixture.reconciler.cleanup)
 	if err != nil {
 		t.Fatal(err)
 	}

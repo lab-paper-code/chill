@@ -20,7 +20,7 @@ func TestBatchEnergyOptimizationPreflightQueryReturnsResolvedPlan(t *testing.T) 
 	plan := batchEnergyOptimizationPreflightQueryPlan(t)
 	campaign := batchEnergyOptimizationPreflightQueryCampaign()
 	projector := &recordingCurvePlanProjector{plan: plan}
-	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(projector)
+	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(projector.Project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestBatchEnergyOptimizationPreflightQueryRecordsProjectionFailure(t *testin
 		plan: batchEnergyOptimizationPreflightQueryPlan(t),
 		err:  errors.New(preflightProjectorFailure),
 	}
-	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(projector)
+	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(projector.Project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestBatchEnergyOptimizationPreflightQueryRejectsInvalidCampaign(t *testing.
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			projector := &recordingCurvePlanProjector{}
-			query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(projector)
+			query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(projector.Project)
 			if err != nil {
 				t.Fatal(err)
 			}

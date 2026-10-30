@@ -115,7 +115,7 @@ func TestRunReconcilerResolvesThenRecordsOneMeasurementJob(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	resolver := &recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)}
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver, jobs, &recordingRunEvidenceFinalizer{})
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver.Resolve, jobs.Find, jobs.Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestRunReconcilerEndsWithoutJobWhenRequiredStateIsUnconfirmed(t *testing.T)
 	grant(run)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, &recordingRunConfigResolver{result: resolved}, jobs, &recordingRunEvidenceFinalizer{})
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolved}).Resolve, jobs.Find, jobs.Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestRunReconcilerRejectsNodeSettledInAnotherMode(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).
 		WithObjects(run, node).Build()
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, &recordingRunConfigResolver{result: resolved}, jobs, &recordingRunEvidenceFinalizer{})
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolved}).Resolve, jobs.Find, jobs.Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestRunReconcilerCreatesJobOnceNodeSettledRequiredMode(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).
 		WithObjects(run, node).Build()
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, &recordingRunConfigResolver{result: resolved}, jobs, &recordingRunEvidenceFinalizer{})
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolved}).Resolve, jobs.Find, jobs.Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 		Node: edgev1alpha1.ProfilingRunObjectReference{Name: "jetsono", UID: "node-uid"},
 	}
 	finalizer := &recordingRunEvidenceFinalizer{result: finalized}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, &recordingRunConfigResolver{result: resolved}, &recordingExecutionJobs{}, finalizer)
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolved}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestRunReconcilerDoesNotRefinalizePermanentTargetMismatch(t *testing.T) {
 		profilerevidence.ErrPermanentValidation,
 	)
 	finalizer := &recordingRunEvidenceFinalizer{err: finalizeErr}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, &recordingRunConfigResolver{result: resolved}, &recordingExecutionJobs{}, finalizer)
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolved}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestRunReconcilerRetriesTransientEvidenceFinalizationFailure(t *testing.T) 
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
 	want := errors.New("evidence store temporarily unavailable")
 	finalizer := &recordingRunEvidenceFinalizer{err: want}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, &recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)}, &recordingExecutionJobs{}, finalizer)
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestRunReconcilerDoesNotMaterializeASecondRecordedJob(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	resolver := &recordingRunConfigResolver{}
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver, jobs, &recordingRunEvidenceFinalizer{})
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver.Resolve, jobs.Find, jobs.Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
 	finalizer := &recordingRunEvidenceFinalizer{result: finalized}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, &recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)}, &recordingExecutionJobs{}, finalizer)
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +472,7 @@ func TestRunReconcilerRecordsRuntimeTerminationOfFailedJob(t *testing.T) {
 		ExitCode: 3, LogTail: "ERROR [runtime] execute firstfloor measurement: timed out\n",
 	}
 	finalizer := &recordingRunEvidenceFinalizer{termination: &want}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, &recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)}, &recordingExecutionJobs{}, finalizer)
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +536,7 @@ func TestRunReconcilerIgnoresMissingRun(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	resolver := &recordingRunConfigResolver{}
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver, jobs, &recordingRunEvidenceFinalizer{})
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver.Resolve, jobs.Find, jobs.Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +556,7 @@ func TestRunReconcilerReturnsTransitionErrors(t *testing.T) {
 	grant(run)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	want := errors.New("unresolved execution facts")
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, &recordingRunConfigResolver{err: want}, &recordingExecutionJobs{}, &recordingRunEvidenceFinalizer{})
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{err: want}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +585,7 @@ func TestRunReconcilerPublishesTerminalResolutionFailureWithoutRequeue(t *testin
 	}
 	jobs := &recordingExecutionJobs{}
 	finalizer := &recordingRunEvidenceFinalizer{}
-	reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver, jobs, finalizer)
+	reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver.Resolve, jobs.Find, jobs.Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -687,7 +687,7 @@ func TestRunReconcilerWaitsForAdmissionOfRootRunOnly(t *testing.T) {
 			kubeClient := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithStatusSubresource(run).WithObjects(run).Build()
 			resolver := &recordingRunConfigResolver{result: resolvedRunForPrepared(t, currentPreparedRun(t))}
 			jobs := &recordingExecutionJobs{}
-			reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver, jobs, &recordingRunEvidenceFinalizer{})
+			reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver.Resolve, jobs.Find, jobs.Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -35,54 +35,21 @@ const (
 
 const terminalReasonEnergyObjectivePolicyMismatch = "EnergyObjectivePolicyMismatch"
 
-// ReconcileCurvePlanSource resolves and records the immutable plan used by one
-// BatchEnergyOptimization campaign.
-type ReconcileCurvePlanSource interface {
-	Resolve(
-		context.Context,
-		*edgev1alpha1.BatchEnergyOptimization,
-	) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, *TransitionMaterial, error)
-}
-
-// ReconcileCurveDeriver derives the method result from completed owned Runs.
-type ReconcileCurveDeriver interface {
-	Derive(
-		context.Context,
-		profilederivation.CurvePlan,
-		[]edgev1alpha1.ProfilingRun,
-		[]edgev1alpha1.ProfilingRun,
-		[]int,
-		profilederivation.EnergyObjectivePolicy,
-	) (batchenergyoptimization.CurveResult, error)
-}
-
-// ReconcileResultWriter records the terminal result and returns its exact
-// stored-object reference.
-type ReconcileResultWriter interface {
-	Write(
-		context.Context,
-		*edgev1alpha1.BatchEnergyOptimization,
-		batchenergyoptimization.StoredObjectReference,
-		[]edgev1alpha1.ProfilingRun,
-		batchenergyoptimization.Result,
-	) (batchenergyoptimization.StoredObjectReference, error)
-}
-
 // BatchEnergyOptimizationReconciler reconstructs campaign progress from the immutable
 // parent spec and the currently owned ProfilingRuns on every call.
 type BatchEnergyOptimizationReconciler struct {
 	client       client.Client
-	curvePlans   ReconcileCurvePlanSource
-	curves       ReconcileCurveDeriver
-	resultWriter ReconcileResultWriter
+	curvePlans   func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, *TransitionMaterial, error)
+	curves       func(context.Context, profilederivation.CurvePlan, []edgev1alpha1.ProfilingRun, []edgev1alpha1.ProfilingRun, []int, profilederivation.EnergyObjectivePolicy) (batchenergyoptimization.CurveResult, error)
+	resultWriter func(context.Context, *edgev1alpha1.BatchEnergyOptimization, batchenergyoptimization.StoredObjectReference, []edgev1alpha1.ProfilingRun, batchenergyoptimization.Result) (batchenergyoptimization.StoredObjectReference, error)
 	now          func() time.Time
 }
 
 func NewBatchEnergyOptimizationReconciler(
 	kubeClient client.Client,
-	curvePlans ReconcileCurvePlanSource,
-	curves ReconcileCurveDeriver,
-	resultWriter ReconcileResultWriter,
+	curvePlans func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, *TransitionMaterial, error),
+	curves func(context.Context, profilederivation.CurvePlan, []edgev1alpha1.ProfilingRun, []edgev1alpha1.ProfilingRun, []int, profilederivation.EnergyObjectivePolicy) (batchenergyoptimization.CurveResult, error),
+	resultWriter func(context.Context, *edgev1alpha1.BatchEnergyOptimization, batchenergyoptimization.StoredObjectReference, []edgev1alpha1.ProfilingRun, batchenergyoptimization.Result) (batchenergyoptimization.StoredObjectReference, error),
 ) (*BatchEnergyOptimizationReconciler, error) {
 	if kubeClient == nil || curvePlans == nil || curves == nil || resultWriter == nil {
 		return nil, errors.New("Kubernetes client, curve-plan source, curve deriver, and result writer are required")
@@ -115,7 +82,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		return result, err
 	}
 
-	curvePlan, curvePlanReference, transitionMaterial, err := r.curvePlans.Resolve(ctx, parent)
+	curvePlan, curvePlanReference, transitionMaterial, err := r.curvePlans(ctx, parent)
 	if err != nil {
 		status := failedStatus(parent, "CurvePlanResolutionFailed", err.Error())
 		if patchErr := r.patchStatus(ctx, parent, status); patchErr != nil {
@@ -143,7 +110,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		return ctrl.Result{}, err
 	}
 	curveSource := func(batches []int) (batchenergyoptimization.CurveResult, error) {
-		return r.curves.Derive(ctx, curvePlan, activeRuns, idleRuns, batches, policy)
+		return r.curves(ctx, curvePlan, activeRuns, idleRuns, batches, policy)
 	}
 	method, err := batchenergyoptimization.NewQuickEnergyMinimization(config, curveSource)
 	if err != nil {
@@ -186,7 +153,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		if decision.Result == nil {
 			return ctrl.Result{}, errors.New("Finish decision omitted its result")
 		}
-		stored, writeErr := r.resultWriter.Write(
+		stored, writeErr := r.resultWriter(
 			ctx, parent, curvePlanReference, runs, *decision.Result,
 		)
 		if writeErr != nil {

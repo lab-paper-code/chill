@@ -94,7 +94,7 @@ func TestTerminalCampaignReplayDoesNotRecreateEvidenceButResolverFailureStillRet
 			}
 			native := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(parent).WithObjects(parent).Build()
 			dependencies := &terminalReplayDependencies{}
-			reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies, dependencies, dependencies)
+			reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies.Resolve, dependencies.Derive, dependencies.Write)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +122,7 @@ func TestCampaignWaitsForAdmission(t *testing.T) {
 			parent := &api.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Namespace: "measurements", Name: "waiting", Generation: 1, Annotations: map[string]string{profilingrun.AdmissionAnnotation: test.admission}}}
 			native := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(parent).WithObjects(parent).Build()
 			dependencies := &terminalReplayDependencies{}
-			reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies, dependencies, dependencies)
+			reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies.Resolve, dependencies.Derive, dependencies.Write)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -303,7 +303,7 @@ func TestCampaignEnergyObjectivePolicyMismatchIsTerminal(t *testing.T) {
 			if failure == statusPatchFailure {
 				native.err = patchErr
 			}
-			reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies, dependencies, dependencies)
+			reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies.Resolve, dependencies.Derive, dependencies.Write)
 			if err != nil {
 				t.Fatal(err)
 			}

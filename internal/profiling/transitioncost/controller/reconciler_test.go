@@ -197,19 +197,19 @@ func TestNewPowerModeTransitionCostReconcilerRequiresExactPorts(t *testing.T) {
 	cleanup := &attemptJobCleanup{}
 	for name, build := range map[string]func() error{
 		"client": func() error {
-			_, err := newPowerModeTransitionCostReconciler(nil, sequence, writer, cleanup)
+			_, err := newPowerModeTransitionCostReconciler(nil, sequence.advance, writer.write, cleanup)
 			return err
 		},
 		"sequence": func() error {
-			_, err := newPowerModeTransitionCostReconciler(kube, nil, writer, cleanup)
+			_, err := newPowerModeTransitionCostReconciler(kube, nil, writer.write, cleanup)
 			return err
 		},
 		"writer": func() error {
-			_, err := newPowerModeTransitionCostReconciler(kube, sequence, nil, cleanup)
+			_, err := newPowerModeTransitionCostReconciler(kube, sequence.advance, nil, cleanup)
 			return err
 		},
 		"cleanup": func() error {
-			_, err := newPowerModeTransitionCostReconciler(kube, sequence, writer, nil)
+			_, err := newPowerModeTransitionCostReconciler(kube, sequence.advance, writer.write, nil)
 			return err
 		},
 	} {
@@ -269,7 +269,7 @@ func newReconcilerFixtureWithMeasurement(
 		t.Fatal(err)
 	}
 	cleanup := &attemptJobCleanup{client: kube, finalizer: finalizer, failedJobRetentionSeconds: 86400}
-	reconciler, err := newPowerModeTransitionCostReconciler(kube, sequence, writer, cleanup)
+	reconciler, err := newPowerModeTransitionCostReconciler(kube, sequence.advance, writer.write, cleanup)
 	if err != nil {
 		t.Fatal(err)
 	}

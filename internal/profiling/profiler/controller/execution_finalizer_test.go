@@ -169,7 +169,7 @@ func TestObserveActuationRecordsNodeApplyAndGeneration(t *testing.T) {
 	}
 }
 
-func unusedStoreFactory(EvidenceStoreBinding, string, string) (profilerevidence.ObjectStore, error) {
+func unusedStoreFactory(storekube.Binding, string, string) (profilerevidence.ObjectStore, error) {
 	return nil, nil
 }
 
@@ -203,7 +203,7 @@ func TestKubernetesExecutionFinalizerUsesFrozenJobStoreBinding(t *testing.T) {
 	want := errors.New("stop before observing native objects")
 	finalizer, err := NewKubernetesExecutionFinalizer(
 		fake.NewClientBuilder().WithScheme(executionJobTestScheme(t)).WithObjects(secret).Build(),
-		func(got EvidenceStoreBinding, access, key string) (profilerevidence.ObjectStore, error) {
+		func(got storekube.Binding, access, key string) (profilerevidence.ObjectStore, error) {
 			if got != binding || access != "access" || key != "secret" {
 				t.Fatalf("frozen binding/credentials = %#v, %q, %q", got, access, key)
 			}

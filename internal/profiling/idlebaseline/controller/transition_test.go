@@ -7,6 +7,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metadata"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
@@ -173,9 +174,9 @@ func testActuatedPreparedRun(parent *edgev1alpha1.ModelLoadedIdleBaseline) profi
 			Kind: profiler.ConfigMapActuationPolicySourceKind, Namespace: parent.Namespace,
 			Name: "facts", UID: "facts-uid", ResourceVersion: "1", Key: "actuation-policies.yaml",
 		},
-		Policy: profiler.ActuationPolicy{
+		Policy: nodeactuator.ActuationPolicy{
 			SchemaVersion: profiler.ActuationPolicySchemaVersion,
-			ActuationPolicySpec: profiler.ActuationPolicySpec{
+			ActuationPolicySpec: nodeactuator.ActuationPolicySpec{
 				Name: "mode-policy", DeviceClass: parent.Spec.State.Candidate.DeviceClass,
 				PowerMode:               parent.Spec.State.Candidate.PowerMode,
 				ActuatorKind:            target.Kind,

@@ -7,6 +7,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metadata"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
@@ -139,7 +140,7 @@ func TestCampaignRequestsPowerModeOnItsGrantedNode(t *testing.T) {
 	native := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(parent).
 		WithObjects(parent.DeepCopy(), node).Build()
 	dependencies := nodeTransitionPlan{&terminalReplayDependencies{}, plan, material}
-	reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies, dependencies, dependencies)
+	reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies.Resolve, dependencies.Derive, dependencies.Write)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,9 +170,9 @@ func actuatedPreparedRun(parent *edgev1alpha1.BatchEnergyOptimization) profiler.
 			Kind: profiler.ConfigMapActuationPolicySourceKind, Namespace: parent.Namespace,
 			Name: "facts", UID: "facts-uid", ResourceVersion: "1", Key: "actuation-policies.yaml",
 		},
-		Policy: profiler.ActuationPolicy{
+		Policy: nodeactuator.ActuationPolicy{
 			SchemaVersion: profiler.ActuationPolicySchemaVersion,
-			ActuationPolicySpec: profiler.ActuationPolicySpec{
+			ActuationPolicySpec: nodeactuator.ActuationPolicySpec{
 				Name: "jetson-mode-v1", DeviceClass: parent.Spec.State.Candidate.DeviceClass,
 				PowerMode: parent.Spec.State.Candidate.PowerMode, ActuatorKind: target.Kind,
 				SettlingDurationSeconds: 30, MaxActuationDurationSeconds: 300,

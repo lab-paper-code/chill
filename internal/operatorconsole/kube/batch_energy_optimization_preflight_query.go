@@ -10,25 +10,17 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
-// CurvePlanProjector resolves the immutable plan one campaign selects. The
-// Console declares only the port it needs and the composition root supplies
-// the implementation, as it does for the Evidence Store reader, so a read surface
-// never depends on the controller that owns the projection.
-type CurvePlanProjector interface {
-	Project(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error)
-}
-
 // KubernetesBatchEnergyOptimizationPreflightQuery answers whether one submitted
 // campaign request resolves. The campaign it reads need not exist in the
 // cluster: the projection is what is being asked about, so the object travels
 // in rather than being fetched by name.
 type KubernetesBatchEnergyOptimizationPreflightQuery struct {
-	projector CurvePlanProjector
+	projector func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error)
 	now       func() time.Time
 }
 
 func NewKubernetesBatchEnergyOptimizationPreflightQuery(
-	projector CurvePlanProjector,
+	projector func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error),
 ) (*KubernetesBatchEnergyOptimizationPreflightQuery, error) {
 	if projector == nil {
 		return nil, errors.New("a curve-plan projector is required")
@@ -49,7 +41,7 @@ func (q *KubernetesBatchEnergyOptimizationPreflightQuery) Read(
 		return operatorconsole.BatchEnergyOptimizationPreflightSnapshot{}, err
 	}
 
-	plan, err := q.projector.Project(ctx, campaign)
+	plan, err := q.projector(ctx, campaign)
 	snapshot := operatorconsole.BatchEnergyOptimizationPreflightSnapshot{
 		ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy(),
 	}

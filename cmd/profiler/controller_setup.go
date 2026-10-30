@@ -87,7 +87,8 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 		return fmt.Errorf("construct execution evidence finalizer: %w", err)
 	}
 	reconciler, err := profilercontroller.NewRunReconciler(
-		mgr.GetClient(), shared.reader, resolver, jobs, finalizer,
+		mgr.GetClient(), shared.reader, resolver.Resolve, jobs.Find, jobs.Ensure,
+		finalizer.Finalize, finalizer.RuntimeTermination,
 	)
 	if err != nil {
 		return fmt.Errorf("construct ProfilingRun reconciler: %w", err)
@@ -218,7 +219,7 @@ func setupBatchEnergyOptimizationController(
 		return fmt.Errorf("construct BatchEnergyOptimization result writer: %w", err)
 	}
 	reconciler, err := batchcontroller.NewBatchEnergyOptimizationReconciler(
-		mgr.GetClient(), curvePlans, curves, results,
+		mgr.GetClient(), curvePlans.Resolve, curves.Derive, results.Write,
 	)
 	if err != nil {
 		return fmt.Errorf("construct BatchEnergyOptimization reconciler: %w", err)
@@ -401,7 +402,7 @@ func newRetainedEvidenceLoader(reader client.Reader) (*evidencekube.RetainedLoad
 }
 
 func newEvidenceObjectStore(
-	binding profilercontroller.EvidenceStoreBinding,
+	binding storekube.Binding,
 	accessKeyID, secretAccessKey string,
 ) (profilerevidence.ObjectStore, error) {
 	return evidences3.New(evidences3.Config{

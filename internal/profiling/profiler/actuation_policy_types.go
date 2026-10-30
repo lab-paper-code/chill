@@ -17,16 +17,9 @@ const (
 // configuration for Node-wide mode changes. It does not contain observed Node
 // state or a caller-selected actuator target.
 type ActuationPolicyCatalog struct {
-	SchemaVersion string                `json:"schemaVersion"`
-	Policies      []ActuationPolicySpec `json:"policies"`
+	SchemaVersion string                             `json:"schemaVersion"`
+	Policies      []nodeactuator.ActuationPolicySpec `json:"policies"`
 }
-
-// ActuationPolicySpec authorizes one exact DeviceClass/mode/actuator tuple and
-// fixes the timing bounds that the later durable handoff must enforce.
-type ActuationPolicySpec = nodeactuator.ActuationPolicySpec
-
-// ActuationPolicy is the selected authorization retained on the Job.
-type ActuationPolicy = nodeactuator.ActuationPolicy
 
 type ActuationPolicySource struct {
 	Kind            string `json:"kind"`
@@ -38,9 +31,9 @@ type ActuationPolicySource struct {
 }
 
 type FrozenActuationPolicy struct {
-	SchemaVersion string                `json:"schemaVersion"`
-	Source        ActuationPolicySource `json:"source"`
-	Policy        ActuationPolicy       `json:"policy"`
+	SchemaVersion string                       `json:"schemaVersion"`
+	Source        ActuationPolicySource        `json:"source"`
+	Policy        nodeactuator.ActuationPolicy `json:"policy"`
 }
 
 // ActuationSelection is derived from the verified DeviceClass selection, not

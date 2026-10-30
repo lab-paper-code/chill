@@ -15,31 +15,19 @@ import (
 // admissionWait is also the poll period of an active attempt's Node.
 const admissionWait = 5 * time.Second
 
-type measurementAdvancer interface {
-	advance(context.Context, *edgev1alpha1.PowerModeTransitionCost) (measurementProgress, error)
-}
-
-type measurementResultRecorder interface {
-	write(
-		context.Context,
-		*edgev1alpha1.PowerModeTransitionCost,
-		measurementProgress,
-	) (storedMeasurementResult, error)
-}
-
 // powerModeTransitionCostReconciler encloses one immutable preparation,
 // alternating attempt sequence, terminal result, and compact status.
 type powerModeTransitionCostReconciler struct {
 	client   client.Client
-	sequence measurementAdvancer
-	results  measurementResultRecorder
+	sequence func(context.Context, *edgev1alpha1.PowerModeTransitionCost) (measurementProgress, error)
+	results  func(context.Context, *edgev1alpha1.PowerModeTransitionCost, measurementProgress) (storedMeasurementResult, error)
 	cleanup  *attemptJobCleanup
 }
 
 func newPowerModeTransitionCostReconciler(
 	kubeClient client.Client,
-	sequence measurementAdvancer,
-	results measurementResultRecorder,
+	sequence func(context.Context, *edgev1alpha1.PowerModeTransitionCost) (measurementProgress, error),
+	results func(context.Context, *edgev1alpha1.PowerModeTransitionCost, measurementProgress) (storedMeasurementResult, error),
 	cleanup *attemptJobCleanup,
 ) (*powerModeTransitionCostReconciler, error) {
 	if kubeClient == nil || sequence == nil || results == nil || cleanup == nil {
@@ -81,7 +69,7 @@ func (r *powerModeTransitionCostReconciler) Reconcile(
 		}
 	}
 
-	progress, err := r.sequence.advance(ctx, measurement)
+	progress, err := r.sequence(ctx, measurement)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("advance power-mode transition-cost measurement: %w", err)
 	}
@@ -105,7 +93,7 @@ func (r *powerModeTransitionCostReconciler) Reconcile(
 		}
 		return ctrl.Result{RequeueAfter: admissionWait}, nil
 	case measurementStageComplete, measurementStageInsufficient, measurementStageFailed:
-		stored, err := r.results.write(ctx, measurement, progress)
+		stored, err := r.results(ctx, measurement, progress)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("write power-mode transition-cost result: %w", err)
 		}

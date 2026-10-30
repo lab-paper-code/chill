@@ -35,22 +35,6 @@ func (l consoleEvidenceLoader) Load(
 	return l.retained.Load(ctx, run, reference)
 }
 
-// consoleCurvePlanProjector drops the campaign transition the projector also
-// derives. The Console reads a plan; it never actuates a power mode, so
-// carrying the transition material past the composition root would hand a read
-// surface something it has no business acting on.
-type consoleCurvePlanProjector struct {
-	projector *bscontroller.CurvePlanProjector
-}
-
-func (p consoleCurvePlanProjector) Project(
-	ctx context.Context,
-	campaign *edgev1alpha1.BatchEnergyOptimization,
-) (profilederivation.CurvePlan, error) {
-	plan, _, err := p.projector.Project(ctx, campaign)
-	return plan, err
-}
-
 // newEvidencePassportQuery keeps passport reads behind retained-evidence verification authority.
 func newEvidencePassportQuery(
 	reader client.Reader,
@@ -172,7 +156,11 @@ func newCampaignPreflightQuery(
 		return nil, fmt.Errorf("construct curve-plan projector: %w", err)
 	}
 	preflights, err := consolekube.NewKubernetesBatchEnergyOptimizationPreflightQuery(
-		consoleCurvePlanProjector{projector: projector},
+		func(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error) {
+			// Preflight reads the plan but cannot act on the projected transition.
+			plan, _, err := projector.Project(ctx, campaign)
+			return plan, err
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-energy-optimization preflight query: %w", err)

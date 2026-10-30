@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	"sigs.k8s.io/yaml"
 )
 
@@ -22,11 +23,11 @@ func FreezeConfiguredActuationPolicy(
 	if err != nil {
 		return FrozenActuationPolicy{}, err
 	}
-	var selected *ActuationPolicy
+	var selected *nodeactuator.ActuationPolicy
 	for _, spec := range policies {
 		if spec.DeviceClass == selection.DeviceClass && spec.PowerMode == selection.PowerMode &&
 			spec.ActuatorKind == selection.Actuator.Kind {
-			selected = &ActuationPolicy{SchemaVersion: ActuationPolicySchemaVersion, ActuationPolicySpec: spec}
+			selected = &nodeactuator.ActuationPolicy{SchemaVersion: ActuationPolicySchemaVersion, ActuationPolicySpec: spec}
 		}
 	}
 	if selected == nil {
@@ -54,7 +55,7 @@ func FreezeConfiguredActuationPolicy(
 
 // DecodeActuationPolicyCatalog returns the validated configured policies,
 // unique by name and by DeviceClass, mode, and actuator.
-func DecodeActuationPolicyCatalog(raw []byte) ([]ActuationPolicySpec, error) {
+func DecodeActuationPolicyCatalog(raw []byte) ([]nodeactuator.ActuationPolicySpec, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("actuation-policy catalog is empty")
 	}

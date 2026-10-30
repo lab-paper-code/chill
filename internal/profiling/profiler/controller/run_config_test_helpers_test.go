@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"sigs.k8s.io/yaml"
@@ -35,7 +36,7 @@ func testActuatedRunAndResolved(t *testing.T) (*edgev1alpha1.ProfilingRun, Resol
 		PowerMode:   prepared.RunConfig.State.PowerMode,
 		Actuator:    target,
 	}
-	policySpec := profiler.ActuationPolicySpec{
+	policySpec := nodeactuator.ActuationPolicySpec{
 		Name: "lattepanda-15w-v1", DeviceClass: selection.DeviceClass,
 		PowerMode: selection.PowerMode, ActuatorKind: selection.Actuator.Kind,
 		SettlingDurationSeconds: 30, MaxActuationDurationSeconds: 300,
@@ -58,7 +59,7 @@ func testActuatedRunAndResolved(t *testing.T) (*edgev1alpha1.ProfilingRun, Resol
 	return run, resolvedRunForPrepared(t, prepared)
 }
 
-func actuationPolicyCatalogForSpecs(t *testing.T, specs ...profiler.ActuationPolicySpec) []byte {
+func actuationPolicyCatalogForSpecs(t *testing.T, specs ...nodeactuator.ActuationPolicySpec) []byte {
 	t.Helper()
 	raw, err := yaml.Marshal(profiler.ActuationPolicyCatalog{
 		SchemaVersion: profiler.ActuationPolicyCatalogSchemaVersion,

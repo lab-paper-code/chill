@@ -38,7 +38,7 @@ func TestRecordedJobUsesAuthoritativeReaderNotCache(t *testing.T) {
 			}
 			api := builder.Build()
 			resolver, jobs := &recordingRunConfigResolver{}, &recordingExecutionJobs{}
-			r, err := NewRunReconciler(cached, api, resolver, jobs, &recordingRunEvidenceFinalizer{})
+			r, err := NewRunReconciler(cached, api, resolver.Resolve, jobs.Find, jobs.Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -71,7 +71,7 @@ func TestRecordedJobTransientReaderErrorDoesNotPublishLoss(t *testing.T) {
 	recordRunConfigAndJob(run)
 	cached := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	want := errors.New("temporary API transport failure")
-	r, err := NewRunReconciler(cached, failingJobReader{Reader: cached, err: want}, &recordingRunConfigResolver{}, &recordingExecutionJobs{}, &recordingRunEvidenceFinalizer{})
+	r, err := NewRunReconciler(cached, failingJobReader{Reader: cached, err: want}, (&recordingRunConfigResolver{}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -37,23 +37,16 @@ func ownedByMeasurementRoot(run *edgev1alpha1.ProfilingRun) bool {
 		(owner.Kind == "BatchEnergyOptimization" || owner.Kind == "ModelLoadedIdleBaseline")
 }
 
-type RunConfigurationResolver interface {
-	Resolve(context.Context, *edgev1alpha1.ProfilingRun) (ResolvedRun, error)
-}
-
-type RunExecutionJobs interface {
-	Find(context.Context, *edgev1alpha1.ProfilingRun) (*batchv1.Job, *ResolvedRun, error)
-	Ensure(context.Context, *edgev1alpha1.ProfilingRun, ResolvedRun) (*batchv1.Job, bool, error)
-}
-
 // RunReconciler advances one ProfilingRun through short, durable transitions;
 // the owned Job is both the executable projection and its recoverable record.
 type RunReconciler struct {
 	client.Client
 	jobReader client.Reader
-	resolver  RunConfigurationResolver
-	jobs      RunExecutionJobs
-	finalize  RunEvidenceFinalizer
+	resolve   func(context.Context, *edgev1alpha1.ProfilingRun) (ResolvedRun, error)
+	findJob   func(context.Context, *edgev1alpha1.ProfilingRun) (*batchv1.Job, *ResolvedRun, error)
+	ensureJob func(context.Context, *edgev1alpha1.ProfilingRun, ResolvedRun) (*batchv1.Job, bool, error)
+	finalize  func(context.Context, *edgev1alpha1.ProfilingRun, profiler.PreparedRun, *batchv1.Job) (FinalizedRunEvidence, error)
+	terminate func(context.Context, *edgev1alpha1.ProfilingRun, *batchv1.Job) (*edgev1alpha1.ProfilingRunRuntimeTermination, error)
 	// FailedJobRetentionSeconds is validated by the Profiler configuration boundary.
 	FailedJobRetentionSeconds int32
 }
@@ -61,16 +54,18 @@ type RunReconciler struct {
 func NewRunReconciler(
 	kubeClient client.Client,
 	jobReader client.Reader,
-	resolver RunConfigurationResolver,
-	jobs RunExecutionJobs,
-	finalize RunEvidenceFinalizer,
+	resolve func(context.Context, *edgev1alpha1.ProfilingRun) (ResolvedRun, error),
+	findJob func(context.Context, *edgev1alpha1.ProfilingRun) (*batchv1.Job, *ResolvedRun, error),
+	ensureJob func(context.Context, *edgev1alpha1.ProfilingRun, ResolvedRun) (*batchv1.Job, bool, error),
+	finalize func(context.Context, *edgev1alpha1.ProfilingRun, profiler.PreparedRun, *batchv1.Job) (FinalizedRunEvidence, error),
+	terminate func(context.Context, *edgev1alpha1.ProfilingRun, *batchv1.Job) (*edgev1alpha1.ProfilingRunRuntimeTermination, error),
 ) (*RunReconciler, error) {
-	if kubeClient == nil || jobReader == nil || resolver == nil || jobs == nil || finalize == nil {
+	if kubeClient == nil || jobReader == nil || resolve == nil || findJob == nil || ensureJob == nil || finalize == nil || terminate == nil {
 		return nil, errors.New("Kubernetes client, authoritative Job reader, RunConfig resolver, execution Jobs, evidence finalizer are required")
 	}
 	return &RunReconciler{
-		Client: kubeClient, jobReader: jobReader, resolver: resolver,
-		jobs: jobs, finalize: finalize,
+		Client: kubeClient, jobReader: jobReader, resolve: resolve,
+		findJob: findJob, ensureJob: ensureJob, finalize: finalize, terminate: terminate,
 		FailedJobRetentionSeconds: 86400,
 	}, nil
 }
@@ -109,7 +104,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 	} else {
 		var recorded *ResolvedRun
-		job, recorded, err = r.jobs.Find(ctx, run)
+		job, recorded, err = r.findJob(ctx, run)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("recover ProfilingRun %s Job: %w", req.NamespacedName, err)
 		}
@@ -132,7 +127,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 					return ctrl.Result{RequeueAfter: admissionWait}, nil
 				}
 			}
-			resolved, err = r.resolver.Resolve(ctx, run)
+			resolved, err = r.resolve(ctx, run)
 			if err != nil {
 				if reason, terminal := profiler.TerminalResolutionReason(err); terminal {
 					return ctrl.Result{}, r.publishRunConfigFailure(ctx, run, reason, err.Error())
@@ -165,7 +160,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	case profiler.ActionReportExecutionFailure:
 		return ctrl.Result{}, r.publishJobFailure(ctx, run, job)
 	case profiler.ActionFinalizeEvidence:
-		finalized, finalizeErr := r.finalize.Finalize(ctx, run, resolved.Prepared, job)
+		finalized, finalizeErr := r.finalize(ctx, run, resolved.Prepared, job)
 		if finalizeErr != nil {
 			return ctrl.Result{}, r.handleEvidenceFinalizationFailure(
 				ctx, req.NamespacedName, run, finalizeErr,
@@ -241,7 +236,7 @@ func (r *RunReconciler) ensureMeasurementJob(
 	run *edgev1alpha1.ProfilingRun,
 	resolved ResolvedRun,
 ) error {
-	job, _, err := r.jobs.Ensure(ctx, run, resolved)
+	job, _, err := r.ensureJob(ctx, run, resolved)
 	if err != nil {
 		return fmt.Errorf("materialize ProfilingRun %s Job: %w", request.NamespacedName, err)
 	}
@@ -299,7 +294,7 @@ func (r *RunReconciler) publishJobFailure(
 	termination := run.Status.RuntimeTermination
 	if termination == nil {
 		var err error
-		termination, err = r.finalize.RuntimeTermination(ctx, run, job)
+		termination, err = r.terminate(ctx, run, job)
 		if err != nil {
 			return fmt.Errorf("read failed runtime termination: %w", err)
 		}

@@ -32,12 +32,7 @@ type FinalizedRunEvidence struct {
 	Node          edgev1alpha1.ProfilingRunObjectReference
 }
 
-type RunEvidenceFinalizer interface {
-	Finalize(context.Context, *edgev1alpha1.ProfilingRun, profiler.PreparedRun, *batchv1.Job) (FinalizedRunEvidence, error)
-	RuntimeTermination(context.Context, *edgev1alpha1.ProfilingRun, *batchv1.Job) (*edgev1alpha1.ProfilingRunRuntimeTermination, error)
-}
-
-type EvidenceObjectStoreFactory func(EvidenceStoreBinding, string, string) (profilerevidence.ObjectStore, error)
+type EvidenceObjectStoreFactory func(storekube.Binding, string, string) (profilerevidence.ObjectStore, error)
 
 // KubernetesExecutionFinalizer reads terminal native objects and delegates
 // immutable evidence construction to the Kubernetes-free evidence finalizer.

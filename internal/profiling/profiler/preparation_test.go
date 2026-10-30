@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/modelcompat"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
@@ -167,11 +168,9 @@ func TestPreparerFreezesSelectedActuatorAndConfiguredPolicy(t *testing.T) {
 	selection := ActuationSelection{
 		DeviceClass: expected.State.DeviceClass, PowerMode: expected.State.PowerMode, Actuator: target,
 	}
-	policySpec := ActuationPolicySpec{
-		Name: "lattepanda-15w-v1", DeviceClass: selection.DeviceClass,
+	policySpec := nodeactuator.ActuationPolicySpec{Name: "lattepanda-15w-v1", DeviceClass: selection.DeviceClass,
 		PowerMode: selection.PowerMode, ActuatorKind: selection.Actuator.Kind,
-		SettlingDurationSeconds: 30, MaxActuationDurationSeconds: 300,
-	}
+		SettlingDurationSeconds: 30, MaxActuationDurationSeconds: 300}
 	resolvers.actuation.result, err = FreezeConfiguredActuationPolicy(
 		testActuationPolicyCatalog(t, policySpec),
 		selection,

@@ -9,6 +9,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -566,9 +567,9 @@ func frozenActuationPolicy(name, mode string, settlingSeconds int) profiler.Froz
 			Kind: profiler.ConfigMapActuationPolicySourceKind, Namespace: "chill-system",
 			Name: "profiler-facts", UID: "facts-uid", ResourceVersion: "11", Key: "actuation-policies.yaml",
 		},
-		Policy: profiler.ActuationPolicy{
+		Policy: nodeactuator.ActuationPolicy{
 			SchemaVersion: profiler.ActuationPolicySchemaVersion,
-			ActuationPolicySpec: profiler.ActuationPolicySpec{
+			ActuationPolicySpec: nodeactuator.ActuationPolicySpec{
 				Name: name, DeviceClass: "class-under-test", PowerMode: mode,
 				ActuatorKind:            profilingrun.ActuatorKindJetsonNVPModel,
 				SettlingDurationSeconds: settlingSeconds, MaxActuationDurationSeconds: 300,

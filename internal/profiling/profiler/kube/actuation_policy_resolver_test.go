@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
@@ -99,7 +100,7 @@ func controllerActuationPolicyCatalog(t *testing.T) []byte {
 	t.Helper()
 	raw, err := yaml.Marshal(profiler.ActuationPolicyCatalog{
 		SchemaVersion: profiler.ActuationPolicyCatalogSchemaVersion,
-		Policies: []profiler.ActuationPolicySpec{{
+		Policies: []nodeactuator.ActuationPolicySpec{{
 			Name: "xavier-nvpmodel-v1", DeviceClass: "jetson-xavier-nx-8g",
 			PowerMode: "MODE_15W_6CORE", ActuatorKind: profilingrun.ActuatorKindJetsonNVPModel,
 			SettlingDurationSeconds: 60, MaxActuationDurationSeconds: 900,

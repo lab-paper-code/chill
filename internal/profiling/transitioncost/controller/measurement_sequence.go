@@ -22,35 +22,6 @@ const (
 	measurementReasonAttemptLimitReached = "AttemptLimitReached"
 )
 
-type measurementPreparationSource interface {
-	Resolve(
-		context.Context,
-		*edgev1alpha1.PowerModeTransitionCost,
-	) (PreparedMeasurement, bool, error)
-}
-
-type measurementAttemptMaterializer interface {
-	Advance(
-		context.Context,
-		*edgev1alpha1.PowerModeTransitionCost,
-		PreparedMeasurement,
-		int,
-		int32,
-	) (AttemptProgress, error)
-}
-
-type measurementAttemptFinalizer interface {
-	load(context.Context, evidencestore.ObjectLocation) (FinalizedAttempt, bool, error)
-	Finalize(
-		context.Context,
-		*edgev1alpha1.PowerModeTransitionCost,
-		PreparedMeasurement,
-		int,
-		int32,
-		AttemptProgress,
-	) (FinalizedAttempt, error)
-}
-
 // measurementProgress is the package-local handoff to the enclosing reconciler
 // and final-result writer. It retains no mutable cursor.
 type measurementProgress struct {
@@ -66,21 +37,23 @@ type measurementProgress struct {
 // measurementSequence reconstructs and advances the fixed alternating prefix
 // of one two-direction measurement within the enclosing reconciler.
 type measurementSequence struct {
-	preparations measurementPreparationSource
-	materializer measurementAttemptMaterializer
-	finalizer    measurementAttemptFinalizer
+	resolve     func(context.Context, *edgev1alpha1.PowerModeTransitionCost) (PreparedMeasurement, bool, error)
+	materialize func(context.Context, *edgev1alpha1.PowerModeTransitionCost, PreparedMeasurement, int, int32) (AttemptProgress, error)
+	load        func(context.Context, evidencestore.ObjectLocation) (FinalizedAttempt, bool, error)
+	finalize    func(context.Context, *edgev1alpha1.PowerModeTransitionCost, PreparedMeasurement, int, int32, AttemptProgress) (FinalizedAttempt, error)
 }
 
 func newMeasurementSequence(
-	preparations measurementPreparationSource,
-	materializer measurementAttemptMaterializer,
-	finalizer measurementAttemptFinalizer,
+	resolve func(context.Context, *edgev1alpha1.PowerModeTransitionCost) (PreparedMeasurement, bool, error),
+	materialize func(context.Context, *edgev1alpha1.PowerModeTransitionCost, PreparedMeasurement, int, int32) (AttemptProgress, error),
+	load func(context.Context, evidencestore.ObjectLocation) (FinalizedAttempt, bool, error),
+	finalize func(context.Context, *edgev1alpha1.PowerModeTransitionCost, PreparedMeasurement, int, int32, AttemptProgress) (FinalizedAttempt, error),
 ) (*measurementSequence, error) {
-	if preparations == nil || materializer == nil || finalizer == nil {
+	if resolve == nil || materialize == nil || load == nil || finalize == nil {
 		return nil, errors.New("transition preparation, attempt materializer, and attempt finalizer are required")
 	}
 	return &measurementSequence{
-		preparations: preparations, materializer: materializer, finalizer: finalizer,
+		resolve: resolve, materialize: materialize, load: load, finalize: finalize,
 	}, nil
 }
 
@@ -88,7 +61,7 @@ func (s *measurementSequence) advance(
 	ctx context.Context,
 	measurement *edgev1alpha1.PowerModeTransitionCost,
 ) (measurementProgress, error) {
-	prepared, _, err := s.preparations.Resolve(ctx, measurement)
+	prepared, _, err := s.resolve(ctx, measurement)
 	if err != nil {
 		return measurementProgress{}, fmt.Errorf("resolve immutable transition preparation: %w", err)
 	}
@@ -103,7 +76,7 @@ func (s *measurementSequence) advance(
 			if err != nil {
 				return measurementProgress{}, err
 			}
-			finalized, found, err := s.finalizer.load(ctx, selection.finalLocation)
+			finalized, found, err := s.load(ctx, selection.finalLocation)
 			if err != nil {
 				return measurementProgress{}, fmt.Errorf(
 					"load finalized transition d%d-a%d: %w", directionIndex, attemptNumber, err,
@@ -119,7 +92,7 @@ func (s *measurementSequence) advance(
 				continue
 			}
 
-			progress, err := s.materializer.Advance(
+			progress, err := s.materialize(
 				ctx, measurement, prepared, directionIndex, attemptNumber,
 			)
 			if err != nil {
@@ -138,7 +111,7 @@ func (s *measurementSequence) advance(
 					evidenceStore: prepared.EvidenceStore, runnerProfileID: prepared.RunnerProfileID, attempts: attempts,
 				}, nil
 			case AttemptStageFinalizationReady:
-				finalized, err = s.finalizer.Finalize(
+				finalized, err = s.finalize(
 					ctx, measurement, prepared, directionIndex, attemptNumber, progress,
 				)
 				if err != nil {

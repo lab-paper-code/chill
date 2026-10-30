@@ -27,7 +27,7 @@ type ExecutionJobOptions struct {
 // EvidenceStoreBindingResolver resolves the current CHILL-owned delivery
 // binding. It returns no credential bytes.
 type EvidenceStoreBindingResolver interface {
-	Resolve(context.Context) (EvidenceStoreBinding, error)
+	Resolve(context.Context) (storekube.Binding, error)
 }
 
 // ExecutionJobs owns only deterministic Job materialization and recovery.
@@ -132,7 +132,7 @@ func (j *ExecutionJobs) verifyRetainedExecutionJob(
 	return retained, nil
 }
 
-func executionJobEvidenceStoreBinding(job *batchv1.Job) (EvidenceStoreBinding, error) {
+func executionJobEvidenceStoreBinding(job *batchv1.Job) (storekube.Binding, error) {
 	return storekube.BindingFromJob(job, runtimeContainerName)
 }
 

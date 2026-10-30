@@ -8,6 +8,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
+	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
@@ -44,7 +45,7 @@ const (
 func buildExecutionJob(
 	run *edgev1alpha1.ProfilingRun,
 	resolved ResolvedRun,
-	binding EvidenceStoreBinding,
+	binding storekube.Binding,
 	options ExecutionJobOptions,
 	scheme *runtime.Scheme,
 ) (*batchv1.Job, error) {
@@ -176,7 +177,7 @@ func copyContainer(name, image, volume, mountPath string, args []string) corev1.
 func runtimeContainer(
 	prepared profiler.PreparedRun,
 	runConfig string,
-	binding EvidenceStoreBinding,
+	binding storekube.Binding,
 	rawKey string,
 	plan profiler.ExecutionPlan,
 	projection runtimeJobProjection,

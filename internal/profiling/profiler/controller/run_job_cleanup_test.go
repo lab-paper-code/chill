@@ -42,7 +42,7 @@ func TestVerifiedRunRetriesBackgroundCleanupWithoutChangingStatus(t *testing.T) 
 	kube := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithStatusSubresource(run).WithObjects(run, job).Build()
 	recording := &cleanupRecordingClient{Client: kube, failure: errors.New("temporary delete failure")}
 	resolver, jobs, finalizer := &recordingRunConfigResolver{}, &recordingExecutionJobs{}, &recordingRunEvidenceFinalizer{}
-	r, err := NewRunReconciler(recording, kube, resolver, jobs, finalizer)
+	r, err := NewRunReconciler(recording, kube, resolver.Resolve, jobs.Find, jobs.Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestVerifiedRunRetriesBackgroundCleanupWithoutChangingStatus(t *testing.T) 
 	}
 	// A new reconciler simulates restart after status publication but before deletion.
 	recording.failure = nil
-	r, err = NewRunReconciler(recording, kube, resolver, jobs, finalizer)
+	r, err = NewRunReconciler(recording, kube, resolver.Resolve, jobs.Find, jobs.Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestFailedRunAddsRetentionOnlyAfterRecordedFailure(t *testing.T) {
 			t.Fatal("Job starts with TTL")
 		}
 		kube := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithStatusSubresource(run).WithObjects(run, job).Build()
-		r, err := NewRunReconciler(kube, kube, &recordingRunConfigResolver{}, &recordingExecutionJobs{}, &recordingRunEvidenceFinalizer{})
+		r, err := NewRunReconciler(kube, kube, (&recordingRunConfigResolver{}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +142,7 @@ func TestLegacyTerminalRunsLeaveMeasurementJobsUntouched(t *testing.T) {
 			job.Name, job.UID = run.Status.Job.Name, types.UID(run.Status.Job.UID)
 			kube := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithStatusSubresource(run).WithObjects(run, job).Build()
 			recording := &cleanupRecordingClient{Client: kube}
-			r, err := NewRunReconciler(recording, kube, &recordingRunConfigResolver{}, &recordingExecutionJobs{}, &recordingRunEvidenceFinalizer{})
+			r, err := NewRunReconciler(recording, kube, (&recordingRunConfigResolver{}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 			if err != nil {
 				t.Fatal(err)
 			}
