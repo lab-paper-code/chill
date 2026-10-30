@@ -34,7 +34,9 @@ type compatibilityMemoReader struct {
 	objects map[compatibilityMemoKey]compatibilityMemoValue
 }
 
-func (r *compatibilityMemoReader) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
+func (r *compatibilityMemoReader) Get(
+	ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -62,7 +64,8 @@ func (r *compatibilityMemoReader) List(ctx context.Context, list client.ObjectLi
 	}
 	for _, item := range objects {
 		object := item.(client.Object)
-		r.objects[compatibilityMemoKey{reflect.TypeOf(object), client.ObjectKeyFromObject(object)}] = compatibilityMemoValue{object: object}
+		key := compatibilityMemoKey{reflect.TypeOf(object), client.ObjectKeyFromObject(object)}
+		r.objects[key] = compatibilityMemoValue{object: object}
 	}
 	return nil
 }
@@ -82,7 +85,9 @@ func (r *compatibilityMemoReader) revision() string {
 	return strings.Join(identities, "\x00")
 }
 
-func newModelCompatibilityMatrixQuery(reader client.Reader, opts options) func(context.Context) (operatorconsole.ModelCompatibilityMatrixView, error) {
+func newModelCompatibilityMatrixQuery(
+	reader client.Reader, opts options,
+) func(context.Context) (operatorconsole.ModelCompatibilityMatrixView, error) {
 	var mu sync.Mutex
 	var revision string
 	var cached operatorconsole.ModelCompatibilityMatrixView
