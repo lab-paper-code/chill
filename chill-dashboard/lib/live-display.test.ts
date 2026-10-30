@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveInstance, LiveMetric, LiveWorkload } from "./live.ts"
-import { belongsToPool, displayNumber, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel } from "./live-display.ts"
+import { belongsToPool, displayNumber, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
@@ -51,4 +51,46 @@ test("routing shares preserve absence and normalize supplied weights only",()=>{
   assert.equal(routingShare({shared:0,other:1},"shared"),0)
   assert.equal(routingShare({shared:0},"shared"),undefined)
   assert.equal(routingShare({},"shared"),undefined)
+})
+
+test("risk and work precede traffic; idle never hides missing metrics or pending work",()=>{
+  assert.equal(servicePriority(workload,metric,0),0)
+  assert.equal(servicePriority(workload,{...metric,failed:0,withinSLO:3},0),2)
+  assert.equal(servicePriority({...workload,pending:0},{...metric,failed:0,withinSLO:3},1),3)
+  assert.equal(servicePriority({...workload,pending:0},{...metric,received:0,completed:0,failed:0,withinSLO:0},0),5)
+  assert.equal(servicePriority({...workload,pending:0},undefined,0),4)
+})
+test("verdict never calls stale data or no terminal sample healthy",()=>{
+  assert.equal(boardVerdict(false,0,0,0,0,0,false).label,"판정 불가")
+  assert.equal(boardVerdict(true,0,0,0,0,0,false).label,"판정 불가")
+  assert.equal(boardVerdict(true,3,0,0,0,0,false).label,"정상")
+  assert.equal(boardVerdict(true,3,1,0,0,0,false).label,"이상")
+  assert.equal(boardVerdict(true,3,0,1,0,0,false).label,"주의")
+})
+test("only consecutive unchanged Keep events merge; changes remain independently visible",()=>{
+  const decision=(seq:number,reason="")=>({type:"event" as const,kind:"decision" as const,seq,at,decision:{at,state:"Keep",reason,explanation:""}})
+  const rows=mergeKeepEvents([decision(1),decision(2),decision(3,"ReservedScope:plan-a"),decision(4)])
+  assert.deepEqual(rows.map(row=>row.count),[2,1,1])
+  assert.equal(rows[0].event.seq,2)
+  assert.equal(decisionText({at,state:"Keep",reason:"ReservedScope:plan-a",explanation:"예약된 자원은 유지해요"}),"예약된 자원은 유지해요")
+})
+test("five-minute sparkline does not join missing seconds or absent workload samples",()=>{
+  const end=now+4000
+  const points=[{at:now,value:1},{at:now+1000,value:2},{at:now+3000,value:3},{at:now+4000,value:null}]
+  assert.equal(trendSegments(points,end).length,2)
+  assert.equal(trendSegments([{at:now-301000,value:9}],now).length,0)
+})
+
+test("queue totals include native waiting even when routing is already removed",()=>{
+  const draining={...instance,ownerWorkloadUID:"other",routable:{},running:{},waiting:{a:3}}
+  assert.equal(belongsToPool(draining,"a"),true)
+  assert.equal(workloadQueue(workload,[draining]),5)
+  assert.equal(servicePriority({...workload,admission:false},undefined,0,5),0)
+})
+
+test("SLO verdict respects the configured percentile instead of demanding every response be in time",()=>{
+  const observed={...metric,received:100,completed:100,failed:0,withinSLO:96,latencySamples:100}
+  assert.equal(servicePriority({...workload,pending:0},observed,0),4)
+  assert.equal(servicePriority({...workload,pending:0}, {...observed,withinSLO:94},0),1)
+  assert.equal(boardVerdict(true,100,0,0,0,0,false).label,"정상")
 })

@@ -61,12 +61,13 @@ snapshot의 작은 DTO는 다음과 같다. 아래 `?`는 생략 가능, `null`�
   실제 배분(`routing`), native 실행(`running`)과 작업(`actions`)은 독립 사실이다.
   `waiting`은 배정 뒤 native queued/deferred이며 `AssignedUnknown`을 포함하지 않는다.
 - `routing:{workloadUID:{instanceID:weight}}`는 실제 배분이다. 선언과 목표는 근거 REST에서
-  별도로 읽는다. `decision:null|{at,state,reason}`에서 큰 후보·프로파일은 제외한다.
+  별도로 읽는다. `decision:null|{at,state,reason,explanation}`에서 큰 후보·프로파일은 제외한다.
   판단 identity는 원본 RFC3339Nano `decision.at`이다. `SchedulerDecision`에 없는 id 필드를
   새 원본 식별자로 가정하지 않는다. 근거는 선택한 `decision.at`의 journal 구간 조회다.
-- `reservations[]:{owner,nodes:[{uid,name}],workloadUIDs:[uid],podUIDs:[uid],instances:[id],reason}`는
+- `reservations[]:{owner,nodes:[{uid,name}],workloadUIDs:[uid],podUIDs:[uid],instances:[id],reason,explanation}`는
   판단 snapshot의 `SchedulerReservation`(`internal/serving/scheduler.go`)에서 `target`·`routeOnly`를 뺀 것이다.
-  reason 미제공은 `"미확인"`이며, 빈 배열이 예약 해제를 나타낸다. 작업 종결로 해제를 추정하지 않는다.
+  `reason`은 원본 코드(미제공 시 빈 문자열), `explanation`은 확인된 예약 사실의 운영 문장이다.
+  빈 배열이 예약 해제를 나타낸다. 작업 종결로 해제를 추정하지 않는다.
 - `actions[]:{id,kind,node:{uid,name},workloadUID,status,startedAt,completedAt?,expectedSeconds:number|null,expectedSource:{costID,reference,statistic:"mean",trialCount}|null}`.
   identity인 `actionKey`는 JSON 튜플 `[id,node.uid,startedAt]`이다. 이벤트의 `action`에는
   `phase:"started|completed|failed"`와 작은 `result?:{status,error?}`가 추가된다.
@@ -98,7 +99,44 @@ runtime workload readiness의 읽기 시각만 바뀐 것은 상태 변화로 �
 | 지연·보정 | p50/p95/p99는 같은 종결 집단 유효 종단 지연(실패 포함), latencySamples 병기. 요청 적용 SLO/definitionID 보존; native finished/중복 final은 새 완료 아님. 무유입 정상 초는 0 count, 계측 불가는 gaps. 최근10초 늦은 callback은 원 버킷 전체 대체, 이후 gaps+REST; 원시 요청은 push하지 않음. |
 | 전력 | 초 도착 실제 표본 노드별 산술평균, 이전 W 복사 금지. 전체/활성 범위 UID 중복 없이 합산, 필수 표본/소속 모르면 null. J는 coverage 검증 REST 적분, 브라우저 W 합산 금지. |
 | producer | cmd/chill-server 조립, internal/serving/live hub; OnDecision은 동일 capture, OnAction은 원본 결과, RequestEvent 반영 성공 뒤 집계, 기존 power Source adapter 사용. callback은 메모리만 갱신, socket/REST/S3 대기·새 수집 루프·서버 REST polling 없음. |
-| client | 탭 QueryClient의 chill-live reducer: checkpoint/snapshot/metricsByBucket/events/gaps/lastReceivedAt/lastObservedAt. 최근600초·1000사건과 시작 baseline/bounded delta; 상한 유실 명시. pause는 cursor만 바꾸고 수신 계속, live 복귀 최신 baseline. |
+| client | 탭 QueryClient의 chill-live reducer: checkpoint/snapshot/metricsByBucket/events/gaps/lastReceivedAt/lastObservedAt. 최근600초·1000사건과 시작 baseline/bounded delta; 상한 유실 명시. 화면 일시정지는 선택 snapshot·시각을 고정하고 수신 계속, live 복귀 최신 baseline. 숨긴 탭의 의도된 수신 중지는 별도 `paused-hidden` 상태이며 다시 보이면 재연결한다. |
+
+### 3.1 운영 흐름 보드 재구성 (2026-10-31)
+
+설문 평균 SUS 21.7의 공통 실패인 ‘지금 상태·배치·변경 이유’를 첫 화면에서 답한다.
+1440×900은 아래 두 열을 기본으로, 모바일은 같은 정보를 서비스→변경→예약→사건 순으로 재배치한다.
+
+```text
+운영 요약 / 운영 흐름 보드             관측 시각  [일시정지]
+판정 | 유입 req/s | SLO 안 | 대기 | 변경 진행 | 예약
+최근 판단: 사람 말 한 문장                  자동제어 꺼짐 n
+서비스 (위험·활동 순)                   | 변경 진행: 현재 단계
+이름 / 장치·전력모드 / req/s / 성공률     | 예약: 대상·유지 사유
+p95·SLO 목표 / 대기 / 최근 5분 추세       | 사건: 변화 없는 유지 숨김
+유휴 n개 [펼치기]                       | 같은 유지 판단 ×n 연속
+공유 전력: 전체 / 활성, 관측 공백         |
+```
+
+- **판정 규칙:** 최신 관측이 없거나 5초 넘게 오래되면 ‘판정 불가’. 실패 응답 또는
+  활동 중 접수 불가는 ‘이상’, 서비스별 SLO 안 응답 비율이 해당 목표 백분위보다 낮거나
+  대기·변경 진행이 있으면 ‘주의’. 종결 표본이 있고 이상·주의가 없을 때만 ‘정상’이다.
+  무유입/종결 표본 없음은 정상으로 꾸미지 않으며 p95를 다른 백분위의 판정에 대신 쓰지 않는다.
+- **내보낼 것/접을 것:** 현재 지표·장치·전력모드·현재 변경 단계와 사건을 상시 노출한다.
+  유휴 서비스와 반복 유지 사건은 기본 접기/숨김, 자동제어 꺼짐은 한 줄 배지로 합친다.
+  UUID·SHA·원본 JSON·후보별 계산은 상세 안 `details`로 접고 핵심 사유를 먼저 읽는다.
+- **운영 메뉴와 용어:** `/scheduler` 링크를 머리글에 두고 ‘서비스’, ‘변경 진행’,
+  ‘실행 준비/기존 요청 마무리/전력모드 변경’ 등 운영 메뉴의 한국어를 재사용한다.
+  내부 E1/E4/C1 코드와 가운뎃점 메타 문자열은 주 화면에서 제거한다.
+- **수치 일치:** 변경 수는 snapshot의 실제 starting/running만 센다(비용 프로파일은 제외).
+  대기=배정 전 pending + 배정 후 native waiting이다. 판단 근거의 queued는 과거 판단 당시
+  대기·실행·응답 중을 포함한 미종결 요청이므로 현재 대기와 같은 수치로 표기하지 않는다.
+  성공률=completed/(completed+failed), SLO 안=withinSLO/(completed+failed);
+  전체 합계는 동일한 마지막 1초 버킷에 모든 서비스가 있을 때만 표시하고 결손은 0으로 채우지 않는다.
+- **상세·접근성:** 누른 자리 가까운 화면 내 고정 서랍, 헤더 아래 안전 여백, 독립 스크롤,
+  Esc 닫기·열기 포커스·닫은 뒤 복원. 요약 하나만 atomic aria-live로 읽고 일시정지는
+  화면 snapshot을 고정하되 수신은 유지한다. 기본 글자는 13px 이상, 숫자는 tabular 처리한다.
+  5분 추세는 받은 초만 잇고 결손·접속 이전은 공백으로 남긴다.
+
 
 ## 4. API 소유권과 연결 현황
 
