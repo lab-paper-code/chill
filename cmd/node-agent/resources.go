@@ -44,7 +44,7 @@ func runResourceAgent(ctx context.Context, kube kubernetes.Interface, opts optio
 	}
 	if endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil ||
 		endpoint.RawQuery != "" || endpoint.Fragment != "" ||
-		endpoint.Path != "/chill/api/v1/internal/observations/resources" {
+		endpoint.Path != "/api/v1/internal/observations/resources" {
 		return fmt.Errorf("resources URL must be the fixed internal HTTPS endpoint")
 	}
 	sampleInterval, err := time.ParseDuration(config.SampleInterval)
