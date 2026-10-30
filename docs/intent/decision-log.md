@@ -84,3 +84,9 @@
 - rev118(서버 532f3240): jetsonx MNV7·PLC6 rows CapacityRejected→Built, **R MNV 235.89→300.61, Smol 1.285→1.651**(PLC 불변). genesis3 GPU_1500 occupancy 1회 Accepted(6.578ms/req) → MNV b1~b8 κ≈68~72 Built. 두 번째 replay R(302.6/316.4/0.83)은 genesis3가 GPU_1500 상태에서 찍힌 snapshot 영향 — fixed 복귀 후 재replay 필요(수치 채택 금지).
 - 운영 주의: 다른 세션이 rev117(소스 04053ec) 배포함 — 두 세션 동시 클러스터 조작 위험. 증거 디렉터리 충돌로 일부 배포 증거 덮어쓰기(control-236, 재구성 기록).
 - 다음: 4회차 표적 재실행(E5-3/E5-5/E5-7, 3회차와 동일 rate·seed) → 비교; D1 커밋 후 재배포·재실행.
+
+## 2026-10-31 — 4회차 표적(#237, rev120 서버 a3d020d6) 결과: 회귀
+
+- 3회차→4회차(동일 rate/seed): E5-3 MNV 실패 13,563→**44,291**(p95 1,655→1,964ms, INVALID_HARNESS: 창 종료 후 static-freeze STOP — 측정창 자체는 완주); E5-5 MNV 실패 1,059→**12,953**(D1 FAIL), Smol p95 14,093→8,947ms(FAIL 유지); E5-7 Smol 실패 114→0이나 p95 13,173ms(FAIL), MNV p95 94→166ms. E5-5 후 실패 prepare 예약 잔류(>600s, owner plan-594d2726df2f) → takeover 1회.
+- 판단: rev118/120 변경(jetsonx 후보 편입·예약 증명·Terminated)이 **SLO를 악화**시킴. D1(`4b2b4bb0`,`6c268842`) 배포 보류. 사이클 5 = 4회차 raw 기반 결함 추출(bottom-up) 후 패널 리뷰 → 수정.
+- 경로: `control-222-full/full-E5-{3,5,7}-4/`, `tables-4.txt`, `comparison-4-vs-3.{txt,json}`, `O/deployB/control-237-20261030/targeted-r4/`.
