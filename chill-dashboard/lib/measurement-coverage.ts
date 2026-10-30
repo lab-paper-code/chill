@@ -3,6 +3,13 @@ import type { InventoryClass, InventoryView, MeasurementPlanSpec, ModelCompatibi
 import { safeMeasurementReturn } from "./measurements.ts"
 
 export type CoverageModel = InventoryView["models"][number] & {spec:ModelSpec}
+export function coverageSelection(search:string,cell:{id:string;model:{uid:string};deviceClass:{uid:string}}|undefined,open:boolean) {
+  const next=new URLSearchParams(search)
+  if(cell)next.set("group",`${cell.model.uid}/${cell.deviceClass.uid}`)
+  if(open&&cell)next.set("cell",cell.id);else next.delete("cell")
+  next.delete("variant")
+  return next
+}
 export type Compatibility = {state:"candidate"|"unsupported"|"unknown";reason:string}
 export function staticCompatibility(model:Pick<CoverageModel,"spec">, path:ExecutionPath, cls:InventoryClass):Compatibility {
   const artifact = model.spec.artifacts.find(item => item.name === path.artifact)

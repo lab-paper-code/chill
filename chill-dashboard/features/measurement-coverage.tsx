@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useRef, useSyncExternalStore } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, useSession } from "@/lib/client"
-import type { CompatibilityRead } from "@/lib/measurement-coverage"
+import { coverageSelection, type CompatibilityRead } from "@/lib/measurement-coverage"
 import type { InventoryView, ModelCompatibility, MeasurementCoverageResponse, MeasurementCoverageCell, MeasurementVariant } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { MeasurementNavigation, MeasurementStatus } from "@/components/measurement-navigation"
@@ -106,8 +106,8 @@ export function MeasurementCoveragePage() {
   const selected=data?.cells.find(c=>c.id===params.get("cell"))
   const group=data?.groups.find(g=>g.cellIds.includes(selected?.id??"")||`${g.model.uid}/${g.deviceClass.uid}`===params.get("group"))
   function update(key:string,value:string){const next=new URLSearchParams(params.toString());if(value)next.set(key,value);else next.delete(key);if(key==="group"){next.delete("cell");next.delete("variant")}router.replace(`?${next}`,{scroll:false})}
-  function close(){const next=new URLSearchParams(params.toString());next.delete("cell");next.delete("variant");router.replace(`?${next}`,{scroll:false});trigger.current?.focus()}
-  function select(cell:MeasurementCoverageCell,button:HTMLButtonElement){trigger.current=button;const next=new URLSearchParams(params.toString());next.set("cell",cell.id);next.delete("variant");router.replace(`?${next}`,{scroll:false})}
+  function close(){router.replace(`?${coverageSelection(params.toString(),selected,false)}`,{scroll:false});trigger.current?.focus()}
+  function select(cell:MeasurementCoverageCell,button:HTMLButtonElement){trigger.current=button;router.replace(`?${coverageSelection(params.toString(),cell,true)}`,{scroll:false})}
   const cells=(data?.cells??[]).filter(c=>(params.get("unsupported")==="1"||c.support.verdict!=="Incompatible")&&(!params.get("model")||c.model.name===params.get("model"))&&(!params.get("deviceClass")||c.deviceClass.name===params.get("deviceClass"))&&(!params.get("status")||c.assessment.displayStatus===params.get("status"))&&(!params.get("path")||c.executionPath===params.get("path"))&&(!params.get("powerMode")||c.powerMode===params.get("powerMode"))&&(!params.get("cpu")||c.variants.some(v=>String((v.condition.cpu as {limit?:unknown}|undefined)?.limit??"")===params.get("cpu")))&&(!params.get("q")||`${c.model.name} ${c.deviceClass.name} ${c.executionPath} ${c.powerMode}`.toLowerCase().includes(params.get("q")!.toLowerCase())))
   const groups=(data?.groups??[]).filter(g=>g.cellIds.some(id=>cells.some(c=>c.id===id)))
   const classes=[...new Map((data?.groups??[]).filter(g=>!params.get("deviceClass")||g.deviceClass.name===params.get("deviceClass")).map(g=>[g.deviceClass.uid,g.deviceClass])).values()].sort((a,b)=>a.name.localeCompare(b.name))

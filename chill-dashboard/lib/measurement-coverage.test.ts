@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { coverageSelection, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { InventoryClass, InventoryView, MeasurementPlan, ModelCompatibility, ProfilingRun } from "./read-types.ts"
@@ -51,4 +51,17 @@ test("attempts are not invented and return links stay same-origin",()=>{
   assert.equal(runAttempt({...run,labels:{"edge.dacs.io/attempt":"3"}}),"3회차")
   for(const value of ["", "0", "-1", "1.5", "1e2"])assert.equal(runAttempt({...run,labels:{"edge.dacs.io/attempt":value}}),"회차 기록 없음")
   for(const value of ["//evil.test","https://evil.test","/configuration"])assert.equal(safeMeasurementReturn(value),"/measurements")
+})
+test("closing a directly linked cell preserves its matrix and filter context",()=>{
+  const cell={id:"cell",model:{uid:"model"},deviceClass:{uid:"class"}}
+  const open=coverageSelection("batches=1,2&cpu=2&variant=old",cell,true)
+  assert.equal(open.get("group"),"model/class")
+  assert.equal(open.get("cell"),"cell")
+  assert.equal(open.has("variant"),false)
+  const closed=coverageSelection("cell=cell&variant=old&batches=1,2&cpu=2",cell,false)
+  assert.equal(closed.get("group"),"model/class")
+  assert.equal(closed.get("batches"),"1,2")
+  assert.equal(closed.get("cpu"),"2")
+  assert.equal(closed.has("cell"),false)
+  assert.equal(closed.has("variant"),false)
 })
