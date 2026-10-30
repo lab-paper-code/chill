@@ -409,6 +409,44 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 	}
 }
 
+func TestSchedulerCaptureNormalizesObservedModeInventory(t *testing.T) {
+	for _, declared := range []string{"", "0"} {
+		t.Run("declared="+declared, func(t *testing.T) {
+			controller := schedulerEmptyPoolController(t)
+			ctx := context.Background()
+			class := &edge.DeviceClass{}
+			if err := controller.store.client.Get(ctx, client.ObjectKey{Name: "cpu"}, class); err != nil {
+				t.Fatal(err)
+			}
+			class.Spec.PowerModes[0].OnlineCPUs = declared
+			class.Spec.PowerModes = append(class.Spec.PowerModes, edge.PowerMode{
+				Name: "six", OnlineCPUs: "0-5",
+				Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 1}},
+			})
+			if err := controller.store.client.Update(ctx, class); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := controller.capture(ctx, time.Now().UTC(), controller.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			node := snapshot.Nodes[0]
+			current, known := node.AtMode(node.PowerMode)
+			if !known || !slices.Equal(current.CPUs, node.CPUs) {
+				t.Fatalf("capture did not normalize actual CPUs over declaration %q: %+v", declared, node)
+			}
+			target, known := node.AtMode("six")
+			if !known || target.PowerMode != "six" || !slices.Equal(target.CPUs, []int{0, 1, 2, 3, 4, 5}) {
+				t.Fatalf("target inventory lost its declaration: %+v", target)
+			}
+			back, known := target.AtMode(node.PowerMode)
+			if !known || !slices.Equal(back.CPUs, node.CPUs) || !slices.Equal(node.ModeCPUs[node.PowerMode], node.CPUs) {
+				t.Fatalf("round trip lost observed CPUs: %+v", back)
+			}
+		})
+	}
+}
+
 // A power action requests its target mode within the mode's policy duration;
 // a mode without a policy gets no request.
 func TestScheduledPowerRequestNamesTheMode(t *testing.T) {

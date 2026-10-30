@@ -41,6 +41,7 @@ firstfloor Go 큐·배처·persistent Python IPC runner는 `internal/firstfloor`
 4. feasible batch가 없으면 keep은 minimum-C fillable batch(동률 큰 batch)를 즉시 실행한다. drop은 head 제거, defer는 후순위 FIFO로 옮긴다.
 5. normal이 없으면 deferred FIFO 호환 prefix를 minimum-C로 실행한다. drop/defer/timeout과 성공 지연 표본, caller lifetime/cancel은 구별한다.
 실제 config/profile·진행 batch snapshot을 기록하고 accepted 정의·SLO는 config 변경으로 재해석하지 않는다.
+가상/전환 Node는 `SchedulerNode.AtMode`의 원자 projection으로 PowerMode와 CPUs를 함께 갱신한다. capture가 snapshot 소유 `ModeCPUs[current]`에 실제 published CPUs를 넣고, 다른 mode는 DeviceClass 선언을 쓴다. projection은 이 정규화된 map만 조회하며 라벨-only fast path나 CPU mask 복제를 하지 않는다. capacity·fixed/common·idle·chain·최종 target·power 완료 replay가 같은 경로를 사용하고, 왕복 투영도 실제 현재 inventory를 보존한다. unknown target은 후보 거부/명시적 미확인으로 남기며 reserved/non-serving 예산·측정 affinity 검증과 실제 power 완료 전 공급 경계는 완화하지 않는다.
 
 ## 4. 측정 계약과 catalog
 

@@ -7,6 +7,83 @@ import (
 	"time"
 )
 
+const schedulerUnknownModeForTest = "unknown"
+
+func TestSchedulerNodeAtModeProjectsPowerAndCPUsTogether(t *testing.T) {
+	node := SchedulerNode{
+		PowerMode: "two", CPUs: []int{0, 1},
+		ModeCPUs: map[string][]int{"two": {0, 1}, "four": {0, 1, 2, 3}, "six": {0, 1, 2, 3, 4, 5}},
+		Reserved: SchedulerAllocation{CPUs: []int{0, 1}},
+	}
+	for _, mode := range []string{"two", "four", "six", schedulerUnknownModeForTest} {
+		got, known := node.AtMode(mode)
+		want := node.CPUs
+		if mode != "two" && mode != schedulerUnknownModeForTest {
+			want = node.ModeCPUs[mode]
+		}
+		if known != (mode != schedulerUnknownModeForTest) || !slices.Equal(got.CPUs, want) ||
+			known && got.PowerMode != mode || !known && got.PowerMode != node.PowerMode ||
+			!slices.Equal(got.Reserved.CPUs, node.Reserved.CPUs) {
+			t.Fatalf("mode and CPU inventory must be one projection: mode=%s known=%t node=%+v", mode, known, got)
+		}
+		if node.PowerMode != "two" || !slices.Equal(node.CPUs, []int{0, 1}) {
+			t.Fatalf("projection changed the source inventory: %+v", node)
+		}
+	}
+	projected, _ := node.AtMode("four")
+	back, known := projected.AtMode("two")
+	if !known || back.PowerMode != node.PowerMode || !slices.Equal(back.CPUs, node.CPUs) {
+		t.Fatalf("round trip lost observed inventory: %+v", back)
+	}
+	unconfirmed := SchedulerNode{PowerMode: "two", CPUs: node.CPUs}
+	if _, known := unconfirmed.AtMode("two"); known {
+		t.Fatal("a mode label without normalized inventory must not certify its CPUs")
+	}
+}
+
+func TestSchedulerPowerStateConstructorsProjectInventory(t *testing.T) {
+	node := SchedulerNode{
+		Node: NodeReference{Name: "node", UID: "node"}, PowerMode: "two", CPUs: []int{0, 1},
+		ModeCPUs: map[string][]int{"four": {0, 1, 2, 3}},
+	}
+	for _, mode := range []string{"four", schedulerUnknownModeForTest} {
+		action := Action{Kind: schedulerActionPower, Node: node.Node, To: mode, Fixed: true, Status: schedulerActionPlanned}
+		common := schedulerCommonNodes(SchedulerSnapshot{Nodes: []SchedulerNode{node}, Actions: []Action{action}})
+		replay := schedulerReplayState{
+			nodes:   []SchedulerNode{node},
+			actions: []*schedulerReplayAction{{action: action, started: true}},
+		}
+		completed := replay.completeActions()
+		if completed != (mode != schedulerUnknownModeForTest) || mode == schedulerUnknownModeForTest && (replay.actions[0].done || len(replay.out.reasons) == 0 ||
+			!slices.Contains(common[0].Reasons, NodePlacementInventoryMissing)) {
+			t.Fatalf("unknown power inventory was completed or lost its reason: %+v", replay)
+		}
+		wantMode, wantCPUs := mode, node.ModeCPUs[mode]
+		if mode == schedulerUnknownModeForTest {
+			wantMode, wantCPUs = node.PowerMode, node.CPUs
+		}
+		for _, got := range []SchedulerNode{common[0], replay.nodes[0]} {
+			if got.PowerMode != wantMode || !slices.Equal(got.CPUs, wantCPUs) {
+				t.Fatalf("constructor split mode from inventory: target=%s node=%+v", mode, got)
+			}
+		}
+	}
+}
+
+func TestSchedulerRetainedOccupancyUsesObservedBudgetWithoutTargetMode(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	node := &snapshot.Nodes[0]
+	node.PowerMode, node.ModeCPUs = "", nil
+	node.Reasons = []string{NodeInstanceUnavailable}
+	snapshot.Instances[0].Ready = false
+	if reasons := schedulerValidateResources(settings, snapshot.Nodes, snapshot.Instances); len(reasons) != 0 {
+		t.Fatalf("retained physical occupancy invented a target projection: %v", reasons)
+	}
+	node.Reserved.CPUs = snapshot.Instances[0].Allocation.CPUs
+	reasons := schedulerValidateResources(settings, snapshot.Nodes, snapshot.Instances)
+	schedulerRequireReason(t, reasons, "ExclusiveCPUInfeasible")
+}
+
 func measuredWideAffinityFixture() (SchedulerSettings, SchedulerSnapshot) {
 	settings, snapshot := schedulerFixture()
 	settings.AutonomousWorkloads = nil

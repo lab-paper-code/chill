@@ -1524,6 +1524,11 @@ func TestCapacityModeChangePlansUseTargetModeCPUs(t *testing.T) {
 	add := func(uid, mode string, modeCPUs map[string][]int) NodeReference {
 		node := poolsAddNode(&snap, uid, map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 		snap.Nodes[len(snap.Nodes)-1].ModeCPUs = modeCPUs
+		captured := &snap.Nodes[len(snap.Nodes)-1]
+		if captured.ModeCPUs == nil {
+			captured.ModeCPUs = map[string][]int{}
+		}
+		captured.ModeCPUs[captured.PowerMode] = captured.CPUs
 		i := poolsInstance(base, "opt-"+uid, node, mode, "w1")
 		snap.Options = append(snap.Options, poolsOption(i))
 		snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(i), mode))
@@ -1542,6 +1547,42 @@ func TestCapacityModeChangePlansUseTargetModeCPUs(t *testing.T) {
 		return p.Reason == schedulerPlanInfeasibleResources || p.Reason == NodePlacementInventoryMissing
 	}) {
 		t.Fatalf("current-mode plan excluded: %+v", poolsPlans(d, current))
+	}
+}
+
+func TestCapacityTargetAndIdleDAGUseProjectedInventory(t *testing.T) {
+	const currentMode, targetMode = "two", "fixed"
+	settings, snapshot, rows, expanded := capacityE1Fixture()
+	n := slices.IndexFunc(snapshot.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })
+	source := &snapshot.Nodes[n]
+	source.PowerMode, source.CPUs = currentMode, []int{0, 1}
+	source.ModeCPUs = map[string][]int{currentMode: {0, 1}, targetMode: {0, 1, 2, 3}}
+	for _, baseline := range snapshot.Baselines {
+		if baseline.Node == expanded {
+			baseline.ID, baseline.PowerMode = "two-current", currentMode
+			snapshot.Baselines = append(snapshot.Baselines, baseline)
+			break
+		}
+	}
+	snapshot.Costs = append(snapshot.Costs, poolsCost(schedulerActionPower, expanded, currentMode, targetMode, ""))
+	decision := capacityDecideForTest(t, settings, snapshot, rows)
+	if decision.Target == nil || !poolsOn(*decision.Target, expanded) {
+		t.Fatalf("target mode expansion missing: status=%s reasons=%v", decision.Status, decision.Reasons)
+	}
+	target := decision.Target.Nodes[slices.IndexFunc(decision.Target.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })]
+	if target.PowerMode != targetMode || !slices.Equal(target.CPUs, source.ModeCPUs[targetMode]) || source.PowerMode != currentMode {
+		t.Fatalf("final target split mode from inventory or mutated source: %+v", target)
+	}
+	planner := capacityPlannerForTest(t, settings, snapshot, rows)
+	n = slices.IndexFunc(planner.snapshot.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })
+	choice := capacityChoiceForTest(t, planner, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"})
+	best := planner.evaluate(choice, 0)
+	delete(source.ModeCPUs, targetMode)
+	if _, _, reason := planner.chain(n, planner.plans[n][choice[n]]); reason != NodePlacementInventoryMissing {
+		t.Fatalf("chain accepted unknown target inventory: %s", reason)
+	}
+	if reason, _ := planner.idleTransition(best, nil); reason != NodePlacementInventoryMissing {
+		t.Fatalf("idle DAG accepted unknown target inventory: %s", reason)
 	}
 }
 

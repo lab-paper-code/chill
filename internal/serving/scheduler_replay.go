@@ -285,7 +285,8 @@ func schedulerValidateResources(settings SchedulerSettings, nodes []SchedulerNod
 		seen[n.Node.UID] = true
 		allocations := append([]SchedulerAllocation{n.Reserved}, n.NonServing...)
 		hosted := false
-		mode := n.PowerMode
+		mode := ""
+		projectMode := false
 		for _, i := range instances {
 			if i.Node != n.Node {
 				continue
@@ -301,13 +302,18 @@ func schedulerValidateResources(settings SchedulerSettings, nodes []SchedulerNod
 				reasons = appendUnique(reasons, "MissingProfile:"+i.ID)
 				continue
 			}
-			mode = i.Profile.Condition.PowerMode
+			mode, projectMode = i.Profile.Condition.PowerMode, true
 			reasons = schedulerValidateInstance(settings, n, i, reasons)
 			allocations = append(allocations, i.Allocation)
 		}
 		if hosted {
-			// The target places on the CPUs its instances' mode leaves online.
-			if at, known := n.AtMode(mode); known {
+			// Retained-only occupancy uses observed CPUs, not an unconfirmed
+			// power target. Executable candidates need the target projection.
+			at, known := n, true
+			if projectMode {
+				at, known = n.AtMode(mode)
+			}
+			if known {
 				reasons = ValidateNodeBudget(at, allocations, reasons)
 			} else {
 				reasons = appendUnique(reasons, NodePlacementInventoryMissing+":"+n.Node.UID)
@@ -560,7 +566,9 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 		if s.capacityWindowFailed() {
 			return s.out, nil
 		}
-		s.completeActions()
+		if !s.completeActions() {
+			return s.out, ctx.Err()
+		}
 		if !s.startActions() {
 			return s.out, ctx.Err()
 		}
@@ -947,7 +955,7 @@ func (s *schedulerReplayState) completeExecution() {
 	}
 }
 
-func (s *schedulerReplayState) completeActions() {
+func (s *schedulerReplayState) completeActions() bool {
 	for _, a := range s.actions {
 		if a.started && !a.done && a.finish <= s.now {
 			a.done = true
@@ -966,12 +974,19 @@ func (s *schedulerReplayState) completeActions() {
 			case schedulerActionPower:
 				for n := range s.nodes {
 					if s.nodes[n].Node == a.action.Node {
-						s.nodes[n].PowerMode = a.action.To
+						projected, known := s.nodes[n].AtMode(a.action.To)
+						if !known {
+							a.done = false
+							s.out.reasons = appendUnique(s.out.reasons, NodePlacementInventoryMissing+":"+a.action.Node.UID)
+							return false
+						}
+						s.nodes[n] = projected
 					}
 				}
 			}
 		}
 	}
+	return true
 }
 
 func (s *schedulerReplayState) dependenciesReady(a *schedulerReplayAction) bool {

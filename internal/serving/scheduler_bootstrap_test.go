@@ -78,6 +78,15 @@ func loadRev76Fixture(t *testing.T) rev76Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, snapshot := range []*SchedulerSnapshot{&f.Cold, &f.Post} {
+		for index := range snapshot.Nodes {
+			node := &snapshot.Nodes[index]
+			if node.ModeCPUs == nil {
+				node.ModeCPUs = map[string][]int{}
+			}
+			node.ModeCPUs[node.PowerMode] = node.CPUs
+		}
+	}
 	for index := range f.Rows {
 		row := &f.Rows[index]
 		row.Input.GridSteps, row.Input.BisectionWidth, row.Input.TailSamples = f.Settings.CapacityGridSteps, f.Settings.CapacityBisectionWidth, f.Settings.CapacityTailSamples
@@ -108,8 +117,8 @@ func rev76RowsAt(rows []CapacityRow, at time.Time) []CapacityRow {
 	return slices.DeleteFunc(slices.Clone(rows), func(row CapacityRow) bool { return row.BuiltAt.After(at) })
 }
 
-// The recorded snapshot/cost/catalog bodies and terminal rows are preserved;
-// only the stored references are hydrated, exactly as a journal reader does.
+// The raw document is preserved; replay inputs normalize the observed current
+// inventory and hydrate stored references to the current snapshot contract.
 //
 //nolint:gocyclo // One preserved trace covers the successive partial and joint decisions.
 func TestRev76BootstrapRawReplayAC41(t *testing.T) {

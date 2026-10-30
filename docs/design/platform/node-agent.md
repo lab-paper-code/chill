@@ -30,6 +30,7 @@
 - Profiler를 끈 default Helm profile에는 meter와 전력 요청이 없다.
 - CPU 파일은 10초마다 읽고 바뀔 때만 patch한다. 전력 전환 뒤 settle 60초 안에 새 값이 올라온다.
 - inventory 검사는 profile refresh의 `checkProfileInventory`가 아니라 Tick live snapshot의 `ExclusiveCPUInfeasible`, `ExclusiveGPUInfeasible` 검사에서 한다.
+- capture는 snapshot 소유 `ModeCPUs[current]`에 실제 `CPUs`를 반영하여 DeviceClass 선언보다 우선시한다. 다른 mode는 선언된 inventory를 유지한다. 가상/전환 상태는 map 기반 `AtMode`로 mode와 CPUs를 함께 투영하고, 모드 왕복에도 관측 집합을 보존한다. 미확인 target은 배치 불가이며 전력 완료 전의 가용 공급으로 계산하지 않는다.
 
 ### 2.2 runtimeAccess
 

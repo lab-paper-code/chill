@@ -637,6 +637,12 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		captureNodeInventory(&sn, n, profiles)
 		sn.ModeCPUs = declaredModeCPUs(n, nodeClass(n, classes.Items))
 		sn.PowerMode = readBackMode(n, nodeClass(n, classes.Items))
+		if sn.PowerMode != "" && len(sn.CPUs) > 0 {
+			if sn.ModeCPUs == nil {
+				sn.ModeCPUs = map[string][]int{}
+			}
+			sn.ModeCPUs[sn.PowerMode] = sn.CPUs
+		}
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
 		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
 		if _, ok := targets[lowest]; sn.PowerMode == "" || len(targets) == 0 || lowest != "" && lowest != sn.PowerMode && !ok {

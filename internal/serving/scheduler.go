@@ -123,8 +123,8 @@ type SchedulerNode struct {
 	Ready       bool          `json:"ready"`
 	Measurement bool          `json:"measurement,omitempty"`
 	CPUs        []int         `json:"cpus"`
-	// ModeCPUs holds, by power mode, the CPUs online in that mode where the
-	// DeviceClass declares them; CPUs are the current mode's.
+	// ModeCPUs holds snapshot-owned mode inventories. Capture overwrites the
+	// current mode's declaration with published CPUs; target masks are read-only.
 	ModeCPUs    map[string][]int      `json:"modeCPUs,omitempty"`
 	GPUUUIDs    []string              `json:"gpuUUIDs"`
 	MemoryBytes uint64                `json:"memoryBytes"`
@@ -134,18 +134,15 @@ type SchedulerNode struct {
 	Reasons     []string              `json:"reasons,omitempty"`
 }
 
-// AtMode is the Node with the CPUs online in mode, and false when they are
-// unknown: the current mode reads its published CPUs, another mode needs its
-// DeviceClass declaration.
+// AtMode projects the Node's power mode and CPU inventory together. ModeCPUs
+// owns the observed current CPUs as well as declared target inventories; this
+// keeps a projection reversible without trusting a mutable mode label.
 func (n SchedulerNode) AtMode(mode string) (SchedulerNode, bool) {
-	if mode == n.PowerMode {
-		return n, true
-	}
 	cpus, ok := n.ModeCPUs[mode]
-	if !ok {
+	if !ok || len(cpus) == 0 {
 		return n, false
 	}
-	n.CPUs = cpus
+	n.PowerMode, n.CPUs = mode, cpus
 	return n, true
 }
 

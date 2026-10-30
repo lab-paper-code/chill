@@ -67,7 +67,12 @@ func schedulerCommonNodes(snapshot SchedulerSnapshot) []SchedulerNode {
 	for index, n := range nodes {
 		for _, a := range snapshot.Actions {
 			if a.Fixed && a.Node == n.Node && (a.Status == schedulerActionPlanned || a.Status == phaseRunning) {
-				nodes[index].PowerMode = a.To
+				projected, known := nodes[index].AtMode(a.To)
+				if !known {
+					nodes[index].Reasons = appendUnique(slices.Clone(nodes[index].Reasons), NodePlacementInventoryMissing)
+					continue
+				}
+				nodes[index] = projected
 			}
 		}
 	}

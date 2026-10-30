@@ -325,8 +325,11 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	for j, offset := range offsets {
 		arrivals[j] = SchedulerArrival{ID: fmt.Sprintf("a%07d", j), At: start.Add(offset), Definition: w, Accepted: true, Compute: true, WorkloadUID: w.UID}
 	}
-	node := b.node
-	node.PowerMode, node.Ready, node.Measurement, node.Reasons, node.ObservedAt = o.Instance.Profile.Condition.PowerMode, true, false, nil, at
+	node, known := b.node.AtMode(o.Instance.Profile.Condition.PowerMode)
+	if !known {
+		return 0, false, fmt.Errorf("capacity replay: %s:%s", NodePlacementInventoryMissing, b.node.Node.UID)
+	}
+	node.Ready, node.Measurement, node.Reasons, node.ObservedAt = true, false, nil, at
 	instance := o.Instance
 	instance.ID, instance.TargetID, instance.OwnerWorkloadUID = "capacity", "", ""
 	instance.WorkloadUID, instance.Ready, instance.Stopped = w.UID, true, false
@@ -425,10 +428,7 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 				if _, built := t.rows[key]; built || t.running[key] != nil {
 					continue
 				}
-				node := SchedulerNode{Node: o.Instance.Node, CPUs: o.Instance.Allocation.CPUs, MemoryBytes: o.Instance.Allocation.MemoryBytes}
-				if gpu := o.Instance.Allocation.GPUUUID; gpu != "" {
-					node.GPUUUIDs = []string{gpu}
-				}
+				node := SchedulerNode{Node: o.Instance.Node}
 				for _, n := range snapshot.Nodes {
 					if n.Node.UID == o.Instance.Node.UID {
 						node = n

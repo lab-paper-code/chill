@@ -49,6 +49,46 @@ func TestCapacityRowKappaIsFixedAndRepeatable(t *testing.T) {
 	}
 }
 
+func TestCapacityReplayUsesTargetModeCPUs(t *testing.T) {
+	for _, mode := range []string{"MODE_15W_4CORE", "MODE_15W_6CORE"} {
+		t.Run(mode, func(t *testing.T) {
+			s, snap := capacityFixture()
+			node := &snap.Nodes[0]
+			node.PowerMode, node.CPUs = "MODE_20W_2CORE", []int{0, 1}
+			node.ModeCPUs = map[string][]int{
+				"MODE_15W_4CORE": {0, 1, 2, 3},
+				"MODE_15W_6CORE": {0, 1, 2, 3, 4, 5},
+			}
+			node.Reserved = SchedulerAllocation{CPUs: []int{0, 1}}
+			node.NonServing = []SchedulerAllocation{{CPUCount: 1, CPUReserved: true}}
+			option := &snap.Options[0].Instance
+			option.Profile.Condition.PowerMode = mode
+			option.Profile.Condition.CPU.AffinityCPUs = []int{3}
+			option.Profile.RuntimeMetadata.CPUAffinity = []int{3}
+			option.Allocation.CPUs = []int{3}
+			snap.DispatchOccupancy[0].PowerMode = mode
+			row := capacityBuildForTest(t, s, snap)
+			if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 {
+				t.Fatalf("target mode has room for reserved CPUs and measured affinity: %+v", row)
+			}
+			if node.PowerMode != "MODE_20W_2CORE" || !reflect.DeepEqual(node.CPUs, []int{0, 1}) {
+				t.Fatalf("capacity replay mutated the live inventory: %+v", node)
+			}
+			node.Reserved.CPUs = []int{0, 1, 3}
+			_, err := BuildCapacityRow(context.Background(), s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], *node, snap.Baselines, snap.At)
+			if err == nil || err.Error() != "capacity replay: ExclusiveCPUInfeasible:"+node.Node.UID {
+				t.Fatalf("target projection admitted reserved CPU overlap: %v", err)
+			}
+			node.Reserved.CPUs = []int{0, 1}
+			delete(node.ModeCPUs, mode)
+			_, err = BuildCapacityRow(context.Background(), s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], *node, snap.Baselines, snap.At)
+			if err == nil || err.Error() != "capacity replay: "+NodePlacementInventoryMissing+":"+node.Node.UID {
+				t.Fatalf("unknown target mode must not borrow current CPUs: %v", err)
+			}
+		})
+	}
+}
+
 const capacityFixtureKappa = 959.375
 
 // A completion margin above the SLO target leaves no rate that meets it.

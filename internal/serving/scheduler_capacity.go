@@ -623,14 +623,14 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	keep := &capacityPlan{mode: m0, keep: true, instances: current, record: SchedulerNodePlan{Node: node.Node, Key: "keep", Eligible: true}}
 	p.annotate(keep, nil)
 	p.sum(keep)
-	at := node
-	at.PowerMode = m0
-	before, _, beforeSources, _, beforeReason := schedulerBaseline(p.snapshot.Baselines, at, current, p.snapshot.Options)
+	before, _, beforeSources, _, beforeReason := schedulerBaseline(p.snapshot.Baselines, common[n], current, p.snapshot.Options)
 	keep.before = before
 	keep.beforeBound = schedulerBaselineUncertainty(p.snapshot.Baselines, beforeSources, len(current))
 	plans := []*capacityPlan{keep}
 	reason := ""
 	switch {
+	case slices.Contains(common[n].Reasons, NodePlacementInventoryMissing):
+		reason = NodePlacementInventoryMissing
 	case schedulerReservedNode(p.snapshot, node.Node):
 		keep.others += schedulerUncreatedReservations(p.snapshot, node.Node)
 		reason = "ReservedNode"
@@ -821,8 +821,11 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	if plan.record.Reason != "" {
 		return plan
 	}
-	at := node
-	at.PowerMode = mode
+	at, known := node.AtMode(mode)
+	if !known {
+		plan.record.Reason = NodePlacementInventoryMissing
+		return plan
+	}
 	for _, i := range plan.instances {
 		if len(schedulerValidateInstance(p.settings, at, i, nil)) != 0 {
 			plan.record.Reason = schedulerPlanInfeasibleResources
@@ -1022,7 +1025,11 @@ func (p *capacityPlanner) bounded(choice []int) bool {
 func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map[string]bool, string) {
 	node := p.snapshot.Nodes[n].Node
 	c := SchedulerCandidate{Nodes: slices.Clone(p.keep.Nodes), Routing: p.keep.Routing}
-	c.Nodes[n].PowerMode = plan.mode
+	projected, known := c.Nodes[n].AtMode(plan.mode)
+	if !known {
+		return nil, nil, NodePlacementInventoryMissing
+	}
+	c.Nodes[n] = projected
 	for _, i := range p.snapshot.Instances {
 		if i.Node != node {
 			c.Instances = append(c.Instances, i)
@@ -1891,7 +1898,13 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	for n, j := range best.choice {
 		plan := p.plans[n][j]
 		if !plan.keep {
-			target.Nodes[n].PowerMode = plan.mode
+			projected, known := target.Nodes[n].AtMode(plan.mode)
+			if !known {
+				decision.Status = schedulerStatusPending
+				decision.Reasons = appendUnique(decision.Reasons, NodePlacementInventoryMissing+":"+target.Nodes[n].Node.UID)
+				return decision
+			}
+			target.Nodes[n] = projected
 		}
 		for _, i := range plan.instances {
 			if p.idleRemovable(i, plan, best, target.Routing) {

@@ -61,7 +61,11 @@ func (p *capacityPlanner) idleTransition(best capacityResult, removed map[string
 	}
 	for n, j := range best.choice {
 		plan := p.plans[n][j]
-		target.Nodes[n].PowerMode = plan.mode
+		projected, known := target.Nodes[n].AtMode(plan.mode)
+		if !known {
+			return NodePlacementInventoryMissing, nil
+		}
+		target.Nodes[n] = projected
 		for _, i := range plan.instances {
 			if !removed[i.ID] {
 				target.Instances = append(target.Instances, i)
