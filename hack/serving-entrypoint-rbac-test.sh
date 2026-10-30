@@ -43,7 +43,7 @@ PY
 }
 
 # ChillServer is opt-in; render it in both profiles with the scheduler configured.
-serving=(--set servingEntrypoint.enabled=true --set servingEntrypoint.tls.secretName=chill-tls
+serving=(--set servingEntrypoint.enabled=true --set console.enabled=true --set servingEntrypoint.tls.secretName=chill-tls
 	--set evidenceStore.connection.bucket=chill --set evidenceStore.connection.region=local
 	--set servingEntrypoint.scheduler.configMap=chill-scheduler)
 check "${serving[@]}"
