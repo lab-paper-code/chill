@@ -77,6 +77,11 @@ func AssessMeasurement(in MeasurementAssessmentInput) MeasurementAssessment {
 	} else {
 		assessSingleMeasurement(&out, in)
 	}
+	if len(in.MissingBatches) > 0 && (out.Status == MeasurementComplete || out.Status == MeasurementCriteriaMet || out.Status == MeasurementPartial) {
+		out.Status = MeasurementPartial
+		out.Checklist.CriteriaMet = nil
+		out.Reasons = append(out.Reasons, MeasurementReason{Code: "TargetBatchMissing", Message: "목표 배치의 측정이 부족합니다"})
+	}
 	if len(in.Problems) > 0 {
 		out.Status = MeasurementWarning
 		out.Reasons = append(out.Reasons, in.Problems...)
@@ -171,10 +176,6 @@ func assessSingleMeasurement(out *MeasurementAssessment, in MeasurementAssessmen
 
 func assessAcceptedMeasurement(out *MeasurementAssessment, in MeasurementAssessmentInput) {
 	out.Status = MeasurementComplete
-	if len(in.MissingBatches) > 0 {
-		out.Status = MeasurementPartial
-		return
-	}
 	if in.Reused || len(in.Checks) == 0 {
 		return
 	}

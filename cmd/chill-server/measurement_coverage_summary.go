@@ -86,6 +86,18 @@ func countCoverageCell(
 func addCoverageActions(
 	out *operatorconsole.MeasurementCoverageResponse, cell operatorconsole.MeasurementCoverageCell, actions map[string]int,
 ) {
+	if cell.Assessment.DisplayStatus == operatorconsole.MeasurementProblem && len(cell.FailureSummary) == 0 && actions["failure"] < 3 {
+		message := "문제 조건의 원인을 확인하세요"
+		code := "MeasurementProblem"
+		if len(cell.Assessment.Reasons) > 0 {
+			message = cell.Assessment.Reasons[0].Message
+			code = cell.Assessment.Reasons[0].Code
+		}
+		out.NextActions = append(out.NextActions, operatorconsole.MeasurementNextAction{
+			Kind: "failure", CellID: cell.ID, ReasonCode: code, Message: message,
+		})
+		actions["failure"]++
+	}
 	for _, failure := range cell.FailureSummary {
 		if cell.Assessment.DisplayStatus == operatorconsole.MeasurementUsable || actions["failure"] >= 3 {
 			continue

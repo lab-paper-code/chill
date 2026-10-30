@@ -1,9 +1,15 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { coverageSelection, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { coverageSelection, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { InventoryClass, InventoryView, MeasurementPlan, ModelCompatibility, ProfilingRun } from "./read-types.ts"
+
+test("power mode labels identify measured watts rather than inventing a declared limit",()=>{
+  assert.equal(powerModeLabel("MODE-1",[10,12]),"MODE-1 · 실측 10.0–12.0 W")
+  assert.equal(powerModeLabel("fixed",[0]),"fixed · 실측 0.0 W")
+  assert.equal(powerModeLabel("MAXN",[NaN]),"MAXN · 전력 미확인")
+})
 
 const model:CoverageModel={name:"model & one",uid:"model-uid",resourceVersion:"1",spec:{artifacts:[{name:"onnx",format:"onnx",source:{image:"image",architecture:"arm64",files:["model.onnx"]}}],executionPaths:[{name:"cpu",artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cpu"}}]}}
 const cls:InventoryClass={name:"class",uid:"class-uid",resourceVersion:"1",nodeSelector:{},architecture:"arm64",memory:"8Gi",accelerator:"none",powerModes:[{name:"MAXN",actuator:{kind:"Fixed"}},{name:"15W",actuator:{kind:"Fixed"}}],nodes:[{name:"node",uid:"node-uid",resourceVersion:"1",ready:"True",schedulingDisabled:false}]}

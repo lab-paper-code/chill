@@ -29,6 +29,10 @@ func TestMeasurementAssessmentEvidenceAndExecution(t *testing.T) {
 		{"missing goals", MeasurementAssessmentInput{
 			Accepted: true, Available: true, MissingBatches: []int{2},
 		}, MeasurementPartial},
+		{"children cannot hide missing goals", MeasurementAssessmentInput{
+			Accepted: true, MissingBatches: []int{4},
+			Children: []MeasurementAssessment{{Status: MeasurementCriteriaMet, Evidence: MeasurementEvidence{Accepted: true}}},
+		}, MeasurementPartial},
 		{"reporting absent", MeasurementAssessmentInput{
 			Accepted: true, Checks: []MeasurementCheck{{Code: "CI", Result: MeasurementUnknown}},
 		}, MeasurementComplete},

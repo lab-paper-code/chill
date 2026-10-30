@@ -14,6 +14,21 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+func TestCoverageProblemWithoutFailedRequestHasNextAction(t *testing.T) {
+	out := operatorconsole.MeasurementCoverageResponse{}
+	cell := operatorconsole.MeasurementCoverageCell{
+		ID: "conflict",
+		Assessment: operatorconsole.MeasurementAssessment{
+			DisplayStatus: operatorconsole.MeasurementProblem,
+			Reasons: []operatorconsole.MeasurementReason{{Code: "CurrentDeclarationConflict", Message: "현재 지원 선언과 측정이 다릅니다"}},
+		},
+	}
+	addCoverageActions(&out, cell, map[string]int{})
+	if len(out.NextActions) != 1 || out.NextActions[0].ReasonCode != "CurrentDeclarationConflict" || out.NextActions[0].CellID != cell.ID {
+		t.Fatalf("problem must remain actionable without a failed request: %#v", out.NextActions)
+	}
+}
+
 func TestCoverageNeverUnionsDifferentFrozenVariants(t *testing.T) {
 	now := time.Now().UTC()
 	base := &measurementCoverageBase{

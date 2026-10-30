@@ -2,6 +2,11 @@ import type { ExecutionPath, ModelSpec } from "./domain.ts"
 import type { InventoryClass, InventoryView, MeasurementPlanSpec, ModelCompatibility, ProfilingRun } from "./read-types.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 
+export function powerModeLabel(name:string,activeWatts:readonly number[]=[]) {
+  const watts=activeWatts.filter(Number.isFinite)
+  return watts.length?`${name} · 실측 ${Math.min(...watts).toFixed(1)}${Math.min(...watts)!==Math.max(...watts)?`–${Math.max(...watts).toFixed(1)}`:""} W`:`${name} · 전력 미확인`
+}
+
 export type CoverageModel = InventoryView["models"][number] & {spec:ModelSpec}
 export function coverageSelection(search:string,cell:{id:string;model:{uid:string};deviceClass:{uid:string}}|undefined,open:boolean) {
   const next=new URLSearchParams(search)
