@@ -218,6 +218,6 @@ E1 2026-10-19 UTC의 최초30s timeout은 Tick133실패/첫구성없음/1660요�
 
 ## 10. 결정과 재현 근거
 
-- [d 결정](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/d-measurement-decision.md), [D2/E5 승인](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/deployment2-e5-proposal-20261024.md)
+- d 결정(`O/intent/intent-archive-20261030.tar.gz:d-measurement-decision.md`), D2/E5 승인(`O/intent/intent-archive-20261030.tar.gz:deployment2-e5-proposal-20261024.md`)
 - [8roots/38steps](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/e5-input-repair-plan.json), [empty19/legacy9](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/empty-baseline-plan.json)
 - [BEFORE/AFTER/native8](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/deployment2-before-plan.json), [Smol 교체/반환](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-d-followthrough.json), [legacy GPU2 provenance](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/legacy-mnv-gpu2-provenance.json)

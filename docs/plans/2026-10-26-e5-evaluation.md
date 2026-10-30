@@ -1,4 +1,4 @@
-# E5 研究 평가 — 결과 요약
+# E5 연구 평가 — 결과 요약
 
 - 상태: completed. 최종 결과·행별 수치·factor·조건은 [E5 확정 보고서](../reports/e5-evaluation-20261030.md), 요구사항 ID·표는 [근원 명세](../spec/README.md)가 권위다.
 - 7 Node(genesis2 하드웨어 결함 제외), p95 MNV1s/PLC36ms/Smol7.034s, m29ms, L2/1/75s, cap129s·delivery10ms·socket L+20ms. R MNV235.890404/PLC387.365408/Smol1.285195 req/s, 몫 .45/.1/.45, `rate=α×s×R`.

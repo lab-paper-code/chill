@@ -413,7 +413,7 @@ evidence API 작업의 활성 수용 기준이 아니다. 미배선 구현(`e947
 채택이나 검증 완료를 뜻하지 않는다. 1~7절은 그대로 유지한다. G0 실패를 이유로 이 절을
 선행 적용하지 않는다. 재개 조건은 [ADR 0029](../../adr/0029-gateway-control-data-plane-split.md)가 정하며,
 재개 시 연결할 시스템 spec 측정 행과 최소 구성을 먼저 확정하고 이 절을 갱신한다.
-구현 경계와 최소 완료 기준은 [gateway-split](../../design/serving/gateway-split.md) §0·§6에 둔다.
+구현 경계와 최소 완료 기준은 삭제된 설계 `docs/design/serving/gateway-split.md`(git `e8344b20^`) §0·§6에 둔다.
 
 재개 시 아래 요구사항은 다음과 같이 축소해 적용한다. 제외한 N>1 능력은 미인증으로 남긴다.
 

@@ -10,7 +10,7 @@
 
 - 실제 서빙 Node 7개: genesis3, lattepanda, rasp5, orangepi, jetsono, jetsonx, jetson-nano. genesis2는 Xid 79 하드웨어 결함으로 제외했다. genesis1은 서버·게이트웨이 Node이며 서빙 후보에서 제외, orin-nano도 제외다. Node당 서빙 인스턴스 하나다.
 - 워크로드: MNV=`image-classification-tight-slo`, PLC=`plc-anomaly`(plc-extruder-01-windows), Smol=`smolvlm2-vqa`(VQAv2 vqav2-val-subset).
-- 최종 승인 R은 MNV 235.89 / PLC 387.37 / Smol 1.285 req/s, SLO는 각각 수신 기준 p95≤1,000/36/7,034 ms다. R은 전체 Node를 해당 워크로드에 고립 사용했을 때의 적격 κ 합으로, 세 R을 동시에 달성할 수 있다는 뜻이 아니다. 근거: [결정 로그의 7 Node 최종 R·최종 숫자 승인](../intent/decision-log.md#2026-10-27-191xz--7-nodegenesis2-제외-최종-r-plc-p95-36ms-유지).
+- 최종 승인 R은 MNV 235.89 / PLC 387.37 / Smol 1.285 req/s, SLO는 각각 수신 기준 p95≤1,000/36/7,034 ms다. R은 전체 Node를 해당 워크로드에 고립 사용했을 때의 적격 κ 합으로, 세 R을 동시에 달성할 수 있다는 뜻이 아니다. 근거: [결정 로그의 7 Node 최종 R·최종 숫자 승인](../intent/decision-log.md).
 - 몫(poolShares)은 MNV .45 / PLC .1 / Smol .45. 단계 요청률은 `rate_w=α_w×s_w×R_w`, α는 .3/.5/.7/.9/1.2다. 혼합 feasible을 보장하지 않는다. 단계별 시간·α는 아래 정본 표에 보존했다.
 - 공통 완료 여유 m=29ms, 수명 L=MNV 2s / PLC 1s / Smol 75s, gateway cap 129s, delivery 10ms, socket L+20ms다. 생성기 지각 때문에 L을 차감하지 않는다.
 - 열린 고리 `chill-loadgen replay --arrivals poisson`: 응답을 기다리지 않고 고정 trace의 예정 시각에 비동기 송신한다. seeds101/202/303과 payload ID를 비교 쌍에서 재사용했다. 예정→송신은 생성기 지각, 송신→수신은 입구 지연, 수신→응답은 SLO로 분리한다. 예정 기준 종단 지연은 참고이며 SLO 원점이 아니다.
@@ -197,7 +197,7 @@
 
 ## 8. 다음 과제
 
-[최종 사용자 결정](../intent/decision-log.md#2026-10-30--사용자-결정-결과-확정c--e5-뒤-과제b-순서)의 순서를 따른다.
+[최종 사용자 결정](../intent/decision-log.md)의 순서를 따른다.
 
 1. kubeedge CloudCore nodeName→Helm nodeSelector 및 genesis1 디스크 점유·보존 규칙 정리.
 2. 게이트웨이 분리 미사용 코드 정리. ADR 0029 Deferred를 유지하고 U11 G2 배선은 하지 않는다.

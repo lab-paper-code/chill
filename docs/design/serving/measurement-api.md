@@ -175,11 +175,11 @@ generator가 실측 profile/SLO·승인 계수로 d의 N/K/L·준비·본창·se
 
 E5 전 범위는 Node당 기준 mode의 필수 profile·d·정확 비용이며 mode 확장은 E5 뒤 별도 범위다. runtime 7종 digest와 원본012/017 raw/status·replacement 출처를 보존한다(017 비실행 Measuring/Granted 예외). 실행 순서/E5 입구는 [POOL 검증 계획](workload-pools.md#9-검증-계획)을 따른다.
 조건 생성기·승인 원문·manifest·profile/runtime/NodeUID/source SHA·원시 위치를 선별하며 `.token`·Secret 스냅샷·전체 캐시 백업은 저장소/증거 인덱스에서 제외한다.
-- [d 결정](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/d-measurement-decision.md)
+- d 결정(`O/intent/intent-archive-20261030.tar.gz:d-measurement-decision.md`)
 - 조건 생성기 provenance: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/gen.py` (원래 실행 위치; 현재 파일 부재)
 - [승인 manifest](/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/phase-a/measurement-generalization-20261024/approved/)
-- [비용과 d 결정 근거](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/implementation-contract-20261024.txt)
-- [D2와 E5 승인 근거](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/deployment2-e5-proposal-20261024.md)
+- 비용과 d 결정 근거(`O/intent/intent-archive-20261030.tar.gz:implementation-contract-20261024.txt`)
+- D2와 E5 승인 근거(`O/intent/intent-archive-20261030.tar.gz:deployment2-e5-proposal-20261024.md`)
 
 ## 11. 같은 기종 Node 프로파일 재사용 — PR-01..04
 
