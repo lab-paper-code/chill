@@ -56,15 +56,7 @@ func kindClusterName() string {
 // GetNonEmptyLines converts given command output string into individual objects
 // according to line breakers, and ignores the empty elements in it.
 func GetNonEmptyLines(output string) []string {
-	var res []string
-	elements := strings.Split(output, "\n")
-	for _, element := range elements {
-		if element != "" {
-			res = append(res, element)
-		}
-	}
-
-	return res
+	return strings.FieldsFunc(output, func(r rune) bool { return r == '\n' })
 }
 
 // RequireKindContext prevents e2e tests from mutating a real testbed cluster.

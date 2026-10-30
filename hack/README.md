@@ -289,18 +289,11 @@ Operation request/ACK files, raw violation snapshots and
 Exit status is nonzero if any violation or incomplete replacement was recorded.
 
 
-`conduct_before.py` takes the exact approved `--command`, `--binding`,
-`--release`, `--out`, `--phase` and, for collection, `--hosts` inputs.
-The `autonomous` command starts from the prepared eight-instance binding.
-The `autonomous-empty-start` command records a fresh empty lifecycle, enables
-the target Workload, and waits within the existing 194-second preparation bound
-for owned Ready instances, positive target routing and the existing global
-idle conditions before creating the producer Job. It uses the same autonomous
-rate, 660-second replay and producer release barrier. Its release names
-`command=autonomous-empty-start` and the actual deployed control `sourceSha`;
-execution metadata records the repository harness commit separately.
-Both commands retain diagnostic raw records before owned Job deletion.
-The D2 cleanup, E5 finish and demo resume commands submit one explicit scheduler
+`conduct_before.py` is an imported helper module, not a standalone command.
+E5 and demo construct its `Conductor` without the retired D2 constructor and
+provide the approved binding, output, authentication and journal context.
+The shared API, publication, producer and cleanup helpers remain available.
+The D2 cleanup helper, E5 finish and demo resume commands submit one explicit scheduler
 `reset` with their captured Workload UIDs and a required reason, retain the returned
 step/native ACK evidence, and stop on failure without a client retry or resume
 state machine. The server owns autonomy removal, unroute/drain/removal, release,

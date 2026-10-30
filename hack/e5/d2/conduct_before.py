@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Finite CPO-only D2 phase commands. Never run by preparation agent.
-Each invocation executes ONE Main-released command, not the next phase automatically.
+"""CPO-only D2 helpers used by the E5 conductors.
 No build, image publication, power patch or trace activation. Native policy uses
 only the actual frozen eight's Main-bound finite nondefault subset.
 """
-import argparse
 import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime as dt
@@ -16,7 +14,6 @@ from pathlib import Path
 import runpy
 import selectors
 import ssl
-import threading
 import subprocess
 import sys
 import time
@@ -237,27 +234,6 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Conductor:
-    def __init__(self, args):
-        self.a=args;self.out=args.out;self.out.mkdir(parents=True,exist_ok=True)
-        self.phase_out=self.out/args.phase
-        self.b=load(args.binding)
-        if self.b.get('errors') or len(self.b.get('selected',[]))!=8:
-            raise RuntimeError('Binding is blocked/incomplete; no weaker candidate or mode fallback')
-        self.uid=self.b['workload']['uid']
-        if self.uid!=UID: raise RuntimeError('Unexpected canonical Workload UID')
-        self.release=load(args.release)
-        if self.release.get('executor')!='CampaignOps' or self.release.get('command')!=args.command or self.release.get('phase')!=args.phase:
-            raise RuntimeError('Main technical release must name this exact CPO command/phase')
-        if not self.release.get('mainInstructionUTC') or not self.release.get('sourceSha'):
-            raise RuntimeError('Release lacks Main instruction UTC or actual source SHA')
-        if self.release.get('bindingPath')!=str(args.binding):
-            raise RuntimeError('Main release names a different bound-input path')
-        self.source=self.release['sourceSha']
-        self.ctx=ssl.create_default_context(cafile=str(CA))
-        self.http=urllib.request.build_opener(NoRedirect(),urllib.request.HTTPSHandler(context=self.ctx))
-        self.journal=self.out/'commands.jsonl'
-        self.journal_lock=threading.Lock()
-
     def record(self, value):
         with self.journal_lock:
             with self.journal.open('a') as f: f.write(json.dumps(dict(at=now(),phase=self.a.phase,sourceSha=self.source,**value))+'\n')
@@ -1171,51 +1147,3 @@ class Conductor:
         save(self.out/'cleanup-original-settings-ack.json',self.put(original))
         save(self.out/'cleanup-state.json',self.state())
         save(self.out/'cleanup-complete.json',dict(at=now(),physicalInstances=0,resetStatus=result['status'],powerReturn='Server reset minimum supported idle mode'))
-
-    def execute(self):
-        command=self.a.command
-        if command=='capture':self.capture()
-        elif command=='prepare-defaults':self.prepare()
-        elif command=='continue-unstarted-prepare':self.continue_unstarted_prepare()
-        elif command=='accept-prepared-defaults':self.accept_prepared_defaults()
-        elif command=='capture-policy':self.capture_policy()
-        elif command=='native-policy':self.native_policy()
-        elif command=='bind-routing':self.bind_routing()
-        elif command=='accept-routing':self.accept_routing()
-        elif command=='verify-idle8':self.verify();self.capture()
-        elif command=='autonomy-on':self.autonomy(True)
-        elif command=='autonomy-off':self.autonomy(False)
-        elif command=='autonomous':self.run('autonomous-'+self.a.phase,self.b['autonomousRate'],660,True)
-        elif command=='autonomous-empty-start':self.run('autonomous-empty-start-'+self.a.phase,self.b['autonomousRate'],660,True,empty_start=True)
-        elif command=='cleanup':self.cleanup()
-        elif command=='staircase':
-            results=[]
-            for index,rate in enumerate(self.b['rates']):
-                label='static-idle' if rate==0 else 'static-'+str(index).zfill(2)+'-'+format(rate,'.9g').replace('.','p')
-                summary=self.run(label,rate,300,False);results.append(dict(rate=rate,summary=str(self.phase_out/label/'summary.json'),status=summary['staticStaircase']['status']))
-                save(self.phase_out/'staircase-results.json',results)
-                safe=[r['rate'] for r in results if r['rate']>0 and r['status']=='eligible']
-                last_safe=max(safe) if safe else None
-                save(self.phase_out/'gateway-bound.json',dict(at=now(),sourceSha=self.source,lastAllCompletedUnthrottledRate=last_safe,frozenKappaSum=self.b['sumKappa'],diagnosticRate=min(200,last_safe,self.b['sumKappa']) if last_safe is not None else None,nativeCapacityCapReached=bool(rate>=self.b['sumKappa'] and summary['staticStaircase']['status']=='eligible'),tested=results,note='Last valid tested step/lower bound only; native/client limitation or unknown evidence is not a measured gateway ceiling.'))
-                if rate and summary['staticStaircase']['status']!='eligible':
-                    save(self.phase_out/'staircase-stop.json',dict(at=now(),rate=rate,status=summary['staticStaircase']['status'],note='First failure OR missing evidence stops. Unknown is not invented gateway failure; request Main resolution, no higher-rate load.'))
-                    return
-            save(self.phase_out/'staircase-complete.json',dict(at=now(),results=results))
-
-
-def main():
-    p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--command',required=True,choices=['capture','prepare-defaults','continue-unstarted-prepare','accept-prepared-defaults','capture-policy','native-policy','bind-routing','accept-routing','verify-idle8','autonomy-on','autonomy-off','autonomous','autonomous-empty-start','cleanup','staircase'])
-    p.add_argument('--binding',required=True,type=Path);p.add_argument('--release',required=True,type=Path)
-    p.add_argument('--out',required=True,type=Path);p.add_argument('--phase',required=True)
-    p.add_argument('--hosts',type=Path)
-    a=p.parse_args()
-    if any(not x.is_absolute() for x in (a.binding,a.release,a.out)) or (a.hosts and not a.hosts.is_absolute()):p.error('All paths must be absolute')
-    if not a.phase or a.phase in ('.','..') or Path(a.phase).name!=a.phase:p.error('--phase must be one directory component')
-    try:Conductor(a).execute()
-    except Exception as e:
-        a.out.mkdir(parents=True,exist_ok=True);save(a.out/a.phase/'STOP.json',dict(at=now(),command=a.command,error=str(e),instruction='Stop lane and report Main; no retry, mode patch or new condition. Retain physical evidence for CPO exact cleanup.'))
-        print(str(e),file=sys.stderr);return 2
-    return 0
-
-if __name__=='__main__':sys.exit(main())
