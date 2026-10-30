@@ -59,7 +59,6 @@ type schedulerService struct {
 	live                     *livePublisher
 	opts                     options
 	gatewayRequestTimeout    time.Duration
-	gatewayObservationEnd    func(time.Time) (time.Time, error)
 	catalog                  *servingkube.Catalog
 	costs                    *servingkube.CostEvidence
 	resourceVersion, sources string
@@ -75,17 +74,14 @@ type schedulerService struct {
 func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kubernetes.Interface,
 	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
 	observationLog *serving.ObservationLog, opts options, gatewayRequestTimeout time.Duration, publisher *livePublisher,
-	routingApplied func(context.Context) error,
-	observationEnd func(time.Time) (time.Time, error),
 ) (*schedulerService, error) {
 	if opts.schedulerConfigMap == "" {
 		return nil, nil
 	}
 	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{},
 		servingkube.OperationConfig{
-			Namespace:      opts.servingNamespace,
-			PollInterval:   opts.sourceInterval,
-			RoutingApplied: routingApplied,
+			Namespace:    opts.servingNamespace,
+			PollInterval: opts.sourceInterval,
 		})
 	if err != nil {
 		return nil, err
@@ -96,7 +92,6 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 		objects: objects, observationLog: observationLog, opts: opts, ctx: serviceCtx, cancel: cancel,
 		gatewayRequestTimeout: gatewayRequestTimeout,
 		live:                  publisher,
-		gatewayObservationEnd: observationEnd,
 	}
 	service.catalog, err = servingkube.NewCatalog(store, objects, opts.maxEvidenceBytes, opts.profileConfidenceLevel)
 	if err == nil {
@@ -263,7 +258,6 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		CostIssues: costs.Issues, DispatchOccupancy: costs.DispatchOccupancy, CatalogIssues: view.Insufficiencies,
 		LoadGenerator:         o.opts.loadGenerator,
 		GatewayRequestTimeout: o.gatewayRequestTimeout,
-		GatewayObservationEnd: o.gatewayObservationEnd,
 		Meters:                config.Meters, PowerPolicies: policies,
 		StaticRouting: len(config.StaticRouting) > 0, MeasurementNamespaces: namespaces,
 		Evidence: o.objects, EvidenceStore: o.opts.storeName, MeterSource: metricSource,

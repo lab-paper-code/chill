@@ -50,9 +50,6 @@ const (
 
 type ObserverConfig struct {
 	Namespace string
-	// OnProgress forwards retained physical evidence to its owning router.
-	OnProgress func(string, serving.BackendProgress) error
-	OnState    func(serving.InstanceState) error
 }
 type ObserverIssue struct {
 	Source string    `json:"source"`
@@ -71,7 +68,6 @@ type nativeSource struct {
 	ownerUID    types.UID
 	stopped     bool
 	instance    serving.ReadyInstance
-	spec        firstfloor.Spec
 	previous    map[string]serving.ReadyInstance
 	podState    *corev1.Pod
 	terminated  map[string]bool
@@ -336,7 +332,6 @@ type probedSource struct {
 	service  *corev1.Service
 	owner    string
 	instance serving.ReadyInstance
-	spec     firstfloor.Spec
 }
 
 func (o *Observer) restoreSources(pods []corev1.Pod) {
@@ -402,7 +397,6 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 		pod := source.podState
 		instance := source.instance
 		instance.State.PodUID = string(source.uid)
-		instance.State.ContainerID = source.containerID
 		instance.State.TargetID = pod.Annotations[ServingSlotAnnotation]
 		instance.OwnerWorkloadUID = string(source.ownerUID)
 		instance.State.OwnerWorkloadUID = string(source.ownerUID)
@@ -440,23 +434,12 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 				continue
 			}
 			previous.State.PodUID = string(source.uid)
-			previous.State.ContainerID = containerID
 			previous.State.Ready = false
 			previous.State.Stopped = source.terminated[containerID]
 			instances = append(instances, previous)
 		}
 	}
-	if err := o.runtime.InstallInstances(instances); err != nil {
-		return err
-	}
-	if o.config.OnState != nil {
-		for _, instance := range instances {
-			if err := o.config.OnState(instance.State); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return o.runtime.InstallInstances(instances)
 }
 
 // nativeProbeTimeout bounds one native state read, so one slow executor does
@@ -524,7 +507,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 			instance.OwnerWorkloadUID = owner
 			instance.State.TargetID = pod.Annotations[ServingSlotAnnotation]
 			instance.State.Stopped = o.removingInstances[spec.InstanceID]
-			return serving.ReadyInstance{}, false, &probedSource{pod: pod, service: service, owner: owner, instance: instance, spec: spec}
+			return serving.ReadyInstance{}, false, &probedSource{pod: pod, service: service, owner: owner, instance: instance}
 		}
 		err = probeErr
 	}
@@ -566,7 +549,6 @@ func (o *Observer) verifySource(p probedSource, latest *corev1.PodList, latestEr
 	}
 	if err == nil {
 		o.issue(p.pod.Namespace+"/"+p.pod.Name, nil)
-		source.spec = p.spec
 		return p.instance, true
 	}
 	return o.sourceUnavailable(p.pod, err)
@@ -933,9 +915,6 @@ func (o *Observer) scanLogs(id string, stream io.ReadCloser) error {
 		}
 		if err == nil {
 			err = o.runtime.ObserveBackend(id, progress)
-			if err == nil && o.config.OnProgress != nil {
-				err = o.config.OnProgress(id, progress)
-			}
 		}
 		if err != nil {
 			err = fmt.Errorf("native progress rejected requestID=%q phase=%q physicalID=%q: %w", progress.RequestID, progress.Phase, id, err)

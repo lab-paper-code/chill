@@ -51,7 +51,6 @@ components=(
   serving-core
   serving-httpapi
   serving-live
-  serving-gateway
   serving-kube
   firstfloor
   serving-firstfloor
@@ -105,7 +104,6 @@ component_for() {
     internal/serving) echo serving-core ;;
     internal/serving/httpapi) echo serving-httpapi ;;
     internal/serving/live) echo serving-live ;;
-    internal/serving/gateway) echo serving-gateway ;;
     internal/serving/kube) echo serving-kube ;;
     internal/firstfloor) echo firstfloor ;;
     internal/serving/firstfloor) echo serving-firstfloor ;;

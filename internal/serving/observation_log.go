@@ -36,17 +36,13 @@ const (
 var observationStreams = []string{observationRequestStream, observationSchedulerStream, observationManagementStream, observationCatalogStream}
 
 type ObservationLogConfig struct {
-	Directory string
-	// RouterID namespaces this writer; Directory already names its private buffer root.
-	RouterID string
-	// RouterSources snapshots current and retired router generations for control reads.
-	RouterSources func() []RouterObservationSource
-	Store         string
-	Writer        evidencestore.ImmutableWriter
-	Definitions   []string
-	Outcomes      []string
-	Retention     time.Duration
-	Diagnostics   *Diagnostics
+	Directory   string
+	Store       string
+	Writer      evidencestore.ImmutableWriter
+	Definitions []string
+	Outcomes    []string
+	Retention   time.Duration
+	Diagnostics *Diagnostics
 	// OnRequestEvent runs after successful event reflection and assignment storage.
 	// It must return promptly and must not reenter the log.
 	OnRequestEvent func(RequestEvent)
@@ -63,10 +59,6 @@ type DefinitionObservation struct {
 type RequestRow struct {
 	Kind              string         `json:"kind"`
 	RequestID         string         `json:"requestID"`
-	RouterID          string         `json:"routerID,omitempty"`
-	PlanVersion       string         `json:"planVersion,omitempty"`
-	PodUID            string         `json:"podUID,omitempty"`
-	ContainerID       string         `json:"containerID,omitempty"`
 	WorkloadUID       string         `json:"workloadUID,omitempty"`
 	DefinitionID      string         `json:"definitionID,omitempty"`
 	Node              *NodeReference `json:"node,omitempty"`
@@ -107,7 +99,6 @@ type RequestRow struct {
 	Units                   int        `json:"units,omitempty"`
 	NativeElapsedMS         *float64   `json:"nativeElapsedMS,omitempty"`
 	profile                 *Profile
-	definition              *Definition
 	// finished is the latest native finished record; closing fills missing stages from it.
 	finished *BackendProgress
 	// assignedHour holds this request's assigned row; it stays local until the final row.
@@ -129,18 +120,6 @@ func (r *RequestRow) fold(e *RequestEvent) {
 }
 
 func (r *RequestRow) foldIdentity(e *RequestEvent) {
-	if e.RouterID != "" {
-		r.RouterID = e.RouterID
-	}
-	if e.PlanVersion != "" {
-		r.PlanVersion = e.PlanVersion
-	}
-	if e.PodUID != "" {
-		r.PodUID = e.PodUID
-	}
-	if e.ContainerID != "" {
-		r.ContainerID = e.ContainerID
-	}
 	if e.WorkloadUID != "" {
 		r.WorkloadUID = e.WorkloadUID
 	}
@@ -150,13 +129,6 @@ func (r *RequestRow) foldIdentity(e *RequestEvent) {
 	if a := e.Assignment; a != nil {
 		node, dispatched := a.Node, a.DispatchedAt
 		r.Node, r.Instance, r.ProfileID, r.DispatchedAt = &node, a.Instance, a.Profile, &dispatched
-		r.PodUID, r.ContainerID = a.PodUID, a.ContainerID
-		if a.RouterID != "" {
-			r.RouterID = a.RouterID
-		}
-		if a.PlanVersion != "" {
-			r.PlanVersion = a.PlanVersion
-		}
 		if a.ProfileBody != nil {
 			r.profile = a.ProfileBody
 		}
@@ -303,15 +275,14 @@ type ObservationLog struct {
 	now   func() time.Time
 	files map[string]*os.File
 	// offsets retain the last complete append boundary of this exclusive writer.
-	offsets               map[*os.File]int64
-	definitions           *os.File
-	retained              map[string]*Definition
-	open                  map[string]*RequestRow
-	restored              []RequestRow
-	catalog               map[string]observationCatalogEntry
-	closed                bool
-	lastError             error
-	routerObservationHour time.Time
+	offsets     map[*os.File]int64
+	definitions *os.File
+	retained    map[string]*Definition
+	open        map[string]*RequestRow
+	restored    []RequestRow
+	catalog     map[string]observationCatalogEntry
+	closed      bool
+	lastError   error
 }
 
 func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
@@ -320,9 +291,6 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	}
 	if config.Retention <= 0 {
 		return nil, errors.New("observation retention must be positive")
-	}
-	if config.RouterID != "" && !validObservationRouterID(config.RouterID) {
-		return nil, errors.New("observation router ID must contain only ASCII letters, digits, hyphens or underscores")
 	}
 	l := &ObservationLog{
 		config: config, root: filepath.Join(config.Directory, observationVersion), started: time.Now().UTC(),
@@ -371,12 +339,6 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 		return nil, err
 	}
 	if err := l.restore(hours); err != nil {
-		return nil, errors.Join(err, l.definitions.Close())
-	}
-	if err := l.AdvanceRouterObservation(); err != nil {
-		for _, file := range l.files {
-			err = errors.Join(err, file.Close())
-		}
 		return nil, errors.Join(err, l.definitions.Close())
 	}
 	return l, nil
@@ -663,12 +625,6 @@ func (l *ObservationLog) RequestEvent(event RequestEvent) error {
 	if event.RequestID == "" || event.At.IsZero() {
 		return errors.New("request identity and event time are required")
 	}
-	if l.config.RouterID != "" {
-		if event.RouterID != "" && event.RouterID != l.config.RouterID {
-			return errors.New("request router identity differs from observation writer")
-		}
-		event.RouterID = l.config.RouterID
-	}
 	l.requestMu.Lock()
 	if l.closed {
 		l.requestMu.Unlock()
@@ -717,12 +673,6 @@ func (l *ObservationLog) RecordNativeSupplement(event RequestEvent) error {
 	if event.RequestID == "" || event.At.IsZero() || event.NativeProgress == nil || event.NativeInstance == "" {
 		return errors.New("native request identity, time, instance and progress are required")
 	}
-	if l.config.RouterID != "" {
-		if event.RouterID != "" && event.RouterID != l.config.RouterID {
-			return errors.New("native supplement router identity differs from observation writer")
-		}
-		event.RouterID = l.config.RouterID
-	}
 	l.mu.LockRequest(event.RequestID)
 	defer l.mu.Unlock()
 	if l.closed {
@@ -735,8 +685,7 @@ func (l *ObservationLog) appendNativeSupplementLocked(event RequestEvent) error 
 	// The original HTTP receipt and its legacy stage offsets are not known.
 	// Keep only direct native timestamps/completion and the physical identity.
 	late := RequestRow{Kind: RequestRowNative, RequestID: event.RequestID, WorkloadUID: event.WorkloadUID,
-		DefinitionID: event.Definition, Instance: event.NativeInstance, RouterID: event.RouterID,
-		PlanVersion: event.PlanVersion, PodUID: event.PodUID, ContainerID: event.ContainerID}
+		DefinitionID: event.Definition, Instance: event.NativeInstance}
 	late.foldNative(event.NativeProgress)
 	_, err := l.appendRowLocked(&late)
 	return err
@@ -907,7 +856,7 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 		return err
 	}
 	object := evidencestore.ObjectIdentity{
-		Store: l.config.Store, Key: observationRouterPrefix(l.config.RouterID) + observationHour(hour) + "/" + stream + ".jsonl.gz",
+		Store: l.config.Store, Key: observationArchivePrefix + observationHour(hour) + "/" + stream + ".jsonl.gz",
 		Size: size,
 	}
 	l.config.Diagnostics.Mark(DiagnosticUpload, DiagnosticBegin, "", 0)
@@ -919,9 +868,6 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 func (l *ObservationLog) Flush(ctx context.Context) error {
 	l.mu.Lock()
 	var result error
-	if !l.closed {
-		result = errors.Join(result, l.advanceRouterObservationLocked())
-	}
 	l.requestMu.Lock()
 	var closing []string
 	for id, row := range l.open {
@@ -1206,11 +1152,6 @@ func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEn
 	if err := l.readCatalogs(read); err != nil {
 		return nil, err
 	}
-	for _, child := range read.routerReads {
-		for _, row := range child.open {
-			row.definition = child.definitions[row.DefinitionID]
-		}
-	}
 	rows := map[string]*RequestRow{}
 	err := l.scanStream(read, observationRequestStream, func(raw []byte) error {
 		return mergeRequestRow(rows, raw, keep, read.catalog())
@@ -1224,9 +1165,6 @@ func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEn
 		}
 		if (rows[id] == nil || rows[id].Kind != requestRowFinal) &&
 			keep(&requestEnvelope{RequestID: id, WorkloadUID: row.WorkloadUID, ReceivedAt: row.ReceivedAt}) {
-			if row.RouterID != "" && row.DefinitionID != "" && row.definition == nil && len(read.routerReads) > 0 {
-				return nil, failure("IncompleteObservation", "router %s has no definition %s for open request %s", row.RouterID, row.DefinitionID, id)
-			}
 			rows[id] = row
 		}
 	}
@@ -1260,18 +1198,8 @@ func mergeRequestRow(rows map[string]*RequestRow, raw []byte, keep func(*request
 	}
 	envelope := requestEnvelope{Kind: row.Kind, RequestID: row.RequestID, WorkloadUID: row.WorkloadUID, ReceivedAt: row.ReceivedAt}
 	if keep(&envelope) && (row.Kind == requestRowFinal || rows[row.RequestID] == nil) {
-		if catalog != nil && catalog.routerID != "" && row.RouterID != catalog.routerID {
-			return failure("IncompleteObservation", "request %s router identity differs from source %s", row.RequestID, catalog.routerID)
-		}
 		if catalog != nil && row.DefinitionID != "" && len(catalog.rows["definition/"+row.DefinitionID]) == 0 {
 			return failure("IncompleteObservation", "catalog has no definition %s", row.DefinitionID)
-		}
-		if catalog != nil && row.DefinitionID != "" {
-			var definition Definition
-			if err := catalog.body("definition", row.DefinitionID, row.ReceivedAt, &definition); err != nil {
-				return err
-			}
-			row.definition = &definition
 		}
 		rows[row.RequestID] = row
 	}
@@ -1306,10 +1234,6 @@ type observationRead struct {
 	archive      ObservationArchive
 	catalogs     map[time.Time]*ObservationCatalog
 	scanningHour time.Time
-	routerID     string
-	router       *RouterObservationSource
-	routerReads  []*observationRead
-	scanningRead *observationRead
 }
 
 type observationOpenFile struct {
@@ -1319,9 +1243,6 @@ type observationOpenFile struct {
 }
 
 func (r *observationRead) close() {
-	for _, child := range r.routerReads {
-		child.close()
-	}
 	for _, files := range r.files {
 		for _, file := range files {
 			_ = file.file.Close()
@@ -1342,7 +1263,6 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 		files: map[string][]observationOpenFile{}, open: map[string]*RequestRow{}, definitions: map[string]*Definition{},
 		start: l.floor, now: l.now(), ctx: context.Background(), localHours: map[time.Time]bool{},
 	}
-	read.routerID = l.config.RouterID
 	l.requestMu.Lock()
 	for id, row := range l.open {
 		copied := *row

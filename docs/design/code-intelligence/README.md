@@ -100,7 +100,6 @@ import evidence. Component permissions live in `.go-arch-lint.yml`.
 | `firstfloor` / `firstfloor` | No CHILL package imports; bounded native executor leaf |
 | `serving/firstfloor` / `serving-firstfloor` | `firstfloor`, `serving` |
 | `serving/live` / `serving-live` | No CHILL imports; bounded DTO/hub/metrics and WebSocket transport |
-| `serving/gateway` / `serving-gateway` | `serving`, `serving/firstfloor`, `serving/live`; lossless control/router channel and membership |
 | `profiling/run` / `profiling-run` | `modelcompat`, native `firstfloor` metadata types shared with the measured executor |
 | `serving/kube` / `serving-kube` | API, platform component helpers, device/model/evidence adapters, metric observation, admitted profiling contracts, power-window integration, transition-cost leaf, node actuation policy contract, serving core and native adapter |
 
@@ -110,9 +109,10 @@ go list -f '{{.ImportPath}} {{join .Imports " "}}' \
   ./internal/serving/httpapi ./internal/serving/kube ./internal/serving/firstfloor ./internal/firstfloor
 ```
 
-The T5/G2 additions above were checked with scoped `go list` on 2026-10-28.
-The separately tagged `chill-control` and standalone `chill-router` are not wired
-into the E5 chart; package/import evidence is not deployment or G3 evidence.
+The T5 boundary above was checked with scoped `go list` on 2026-10-28.
+The unused G2 `serving-gateway`, tagged `chill-control`, and standalone
+`chill-router` were removed on 2026-10-30; T5 live and its chart RBAC remain.
+The deferred split design is preserved in ADR 0029, not as an executable path.
 
 The native executor leaf never imports Serving, profiling or Kubernetes. Serving
 reuses its batching policy directly for scheduler replay; the SDK adapter joins

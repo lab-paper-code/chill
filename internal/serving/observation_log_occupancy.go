@@ -3,11 +3,15 @@ package serving
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"time"
 )
 
-// ScanOccupancyRows streams final physical evidence and retains only unresolved
-// assignment identities. Supplemental native rows are not HTTP completions.
+// ScanOccupancyRows visits final physical evidence without Query's per-request
+// map, cohort samples or response slice. Only unresolved assignments and the
+// caller's physical-batch summary remain resident. Raw rows stay in the log.
+// Supplemental late native evidence follows the final rows; it is not another
+// HTTP completion or batch member.
 func (l *ObservationLog) ScanOccupancyRows(ctx context.Context, uid, node string, from, to time.Time, visit func(RequestRow)) (*time.Time, error) {
 	if uid == "" || node == "" || !from.Before(to) {
 		return nil, failure("InvalidQuery", "invalid occupancy observation interval")
@@ -18,17 +22,11 @@ func (l *ObservationLog) ScanOccupancyRows(ctx context.Context, uid, node string
 	}
 	defer read.close()
 	type assignment struct {
-		instance, routerID, planVersion, podUID, containerID string
-		received                                             time.Time
-		node                                                 *NodeReference
+		instance string
+		received time.Time
+		node     *NodeReference
 	}
 	pending := map[string]assignment{}
-	// Split snapshots can repeat a completed request in another source's rows
-	// or a stale open report. Keep IDs only, never completed rows or latencies.
-	var completed map[string]bool
-	if l.config.RouterSources != nil {
-		completed = map[string]bool{}
-	}
 	instances := map[string]bool{}
 	keep := func(r *RequestRow) bool {
 		return r.WorkloadUID == uid && observationInInterval(r.ReceivedAt, from, to) && (r.Node == nil || r.Node.UID == node)
@@ -38,51 +36,45 @@ func (l *ObservationLog) ScanOccupancyRows(ctx context.Context, uid, node string
 		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return err
 		}
-		if envelope.Kind == RequestRowNative || envelope.WorkloadUID != uid ||
-			!observationInInterval(envelope.ReceivedAt, from, to) || completed[envelope.RequestID] {
+		if envelope.Kind == RequestRowNative || envelope.WorkloadUID != uid || !observationInInterval(envelope.ReceivedAt, from, to) {
 			return nil
 		}
-		var row RequestRow
-		if err := json.Unmarshal(raw, &row); err != nil {
+		var r RequestRow
+		if err := json.Unmarshal(raw, &r); err != nil {
 			return err
 		}
-		if !keep(&row) {
+		if !keep(&r) {
 			return nil
 		}
-		instances[row.Instance] = true
-		if row.Kind == requestRowFinal {
-			delete(pending, row.RequestID)
-			if completed != nil {
-				completed[row.RequestID] = true
-			}
-			visit(row)
+		instances[r.Instance] = true
+		if r.Kind == requestRowFinal {
+			delete(pending, r.RequestID)
+			visit(r)
 		} else {
-			pending[row.RequestID] = assignment{
-				instance: row.Instance, routerID: row.RouterID, planVersion: row.PlanVersion,
-				podUID: row.PodUID, containerID: row.ContainerID, received: row.ReceivedAt, node: row.Node,
-			}
+			pending[r.RequestID] = assignment{r.Instance, r.ReceivedAt, r.Node}
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	for id, row := range read.open {
-		if !completed[id] && keep(row) {
-			copied := *row
+	for id, r := range read.open {
+		if keep(r) {
+			copied := *r
 			copied.Kind = requestRowAssigned
 			delete(pending, id)
 			visit(copied)
-			instances[row.Instance] = true
+			instances[r.Instance] = true
 		}
 	}
-	for id, row := range pending {
-		visit(RequestRow{Kind: requestRowAssigned, RequestID: id, WorkloadUID: uid,
-			Instance: row.instance, RouterID: row.routerID, PlanVersion: row.planVersion,
-			PodUID: row.podUID, ContainerID: row.containerID, ReceivedAt: row.received, Node: row.node})
+	for id, r := range pending {
+		visit(RequestRow{Kind: requestRowAssigned, RequestID: id, WorkloadUID: uid, Instance: r.instance, ReceivedAt: r.received, Node: r.node})
 	}
-	if err := read.rewindRequests(); err != nil {
-		return nil, err
+	// Native events may arrive after their HTTP row, including across minutes.
+	for _, file := range read.files[observationRequestStream] {
+		if _, err := file.file.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
 	}
 	err = l.scanStream(read, observationRequestStream, func(raw []byte) error {
 		var envelope requestEnvelope

@@ -1,8 +1,7 @@
 # 게이트웨이 제어·데이터 평면 분리
 
-**상태: Deferred — 미배선 G2 구현(`e947cd5e`) 존재, 운영 채택·G3 미승인(2026-10-28 2차 검토).**
-현 E5 측정 창에서는 수정·빌드·시험·배포·저장 계약 변경을 하지 않는다. 이 문서는 재개
-판단과 필요한 안전 불변식을 남기는 설계 기록이며, E5 직후 실행할 작업 목록이 아니다.
+**상태: Deferred — 정리 완료, 설계만 보존(2026-10-30): 미사용 G2 구현(`e947cd5e`)·빌드 태그 제거, T5 live 보존; 운영 채택·G3 미승인.**
+이 문서는 재개 판단과 필요한 안전 불변식을 남기는 설계 기록이며, E5 직후 실행할 작업 목록이 아니다.
 재개 조건과 순서는 [ADR 0029](../../adr/0029-gateway-control-data-plane-split.md)가 정한다.
 
 근거는 `O/intent/gateway-20261027/proposal.md`(목표와 배분표 계약), 같은 폴더의
@@ -293,10 +292,9 @@ quota 분할의 유휴 효과를 추가한다. 연결 하나의 스모크나 ACK
 - 순서는 ADR 0029를 따른다: E5 완료·표 기입 → `e947cd5e` 미사용 분리 코드 정리와 단일
   source evidence API 이행 → 재개 조건 판단 → 승인된 최소 분리 검증(§6) → 별도 cutover.
   E5 보고서에는 **단일 게이트웨이·G0 통과점(최대 G 아님)** 조건을 남긴다.
-- `e947cd5e`의 분리 전용 실행 경로·`internal/serving/gateway`·Runtime 분기·callback·
-  router reader·도착 집계는 다음 서버 재빌드 전에 사용처 단위로 제거한다. 공유
-  `Runtime` 변경(예: `runtime.go:1208` `Routable`의 `i.Capacity > 0`)도 기본 모드에
-  적용되므로 함께 정리하거나 별도 근거로 분리한다. T5와 `internal/serving/live`는 유지한다.
+- `e947cd5e`의 분리 전용 실행 경로·패키지·Runtime 분기·callback·router reader·도착 집계 정리 완료(2026-10-30).
+  T5와 `internal/serving/live`, 기본 모드의 `Routable` 용량 양수 조건·live 경로 필터,
+  이전 native 컨테이너의 PodUID 보존은 기존 라우팅·퇴역 안전 의미를 유지하므로 남긴다.
 - 실제 cutover는 별도 승인 작업이며, router 유입 개방 전 현재 표 적용을 확인하고 이전
   단일 경로도 신규 유입 차단·물리 0·보존 완료를 확인한 뒤 닫는다. rollback도 같은 안전
   조건의 전환으로 수행한다.
