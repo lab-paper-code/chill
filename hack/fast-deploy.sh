@@ -53,6 +53,14 @@ def affected(paths, inputs):
     return [x for x in paths if x in inputs["files"] or (
         (any(x.startswith(d + "/") for d in inputs["directories"]) if not inputs["targets"]
          else str(pathlib.PurePosixPath(x).parent) in inputs["directories"] and not x.endswith("_test.go")))]
+def image_ready(pods, expected):
+    containers = []
+    for pod in pods["items"]:
+        if pod["metadata"].get("deletionTimestamp"):
+            continue
+        statuses = {s["name"]: s for s in pod.get("status", {}).get("containerStatuses", [])}
+        containers.extend((pod, statuses.get(c["name"], {})) for c in pod.get("spec", {}).get("containers", []) if c["image"] == expected["image"])
+    return bool(containers) and all(s.get("ready") and s.get("restartCount") == 0 and s.get("imageID", "").endswith(tuple([expected["digest"], *expected["platformDigests"]])) and any(c["type"] == "Ready" and c["status"] == "True" for c in pod.get("status", {}).get("conditions", [])) for pod, s in containers)
 def readiness_result(checks, application, remaining):
     return remaining > 0 and all(checks.values()) and application.get("status") == 200 and application.get("exitCode") == 0
 def canonical_objects(raw):
@@ -110,6 +118,28 @@ if a.self_check:
     assert not readiness_result({"server": True}, {"status": 200, "exitCode": 0}, 0)
     assert not readiness_result({"profiler": False}, {"status": 200, "exitCode": 0}, 10)
     assert readiness_result({"server": True}, {"status": 200, "exitCode": 0}, 10)
+    exp = {"image": "registry/server:source@sha256:" + "a" * 64, "digest": "sha256:" + "a" * 64, "platformDigests": ["sha256:" + "b" * 64]}
+    pod = {"metadata": {}, "spec": {"containers": [{"name": "server", "image": exp["image"]}]}, "status": {"conditions": [{"type": "Ready", "status": "True"}], "containerStatuses": [{"name": "server", "image": "sha256:" + "c" * 64, "imageID": "registry/server@" + exp["digest"], "ready": True, "restartCount": 0}]}}
+    assert image_ready({"items": [pod]}, exp)  # CRI may report the config digest in status.image.
+    legacy = copy.deepcopy(pod)
+    legacy["spec"]["containers"][0]["image"] = legacy["status"]["containerStatuses"][0]["image"] = "registry/server:source"
+    assert image_ready({"items": [legacy]}, dict(exp, image="registry/server:source"))
+    child = copy.deepcopy(pod)
+    child["status"]["containerStatuses"][0]["imageID"] = "registry/server@" + exp["platformDigests"][0]
+    assert image_ready({"items": [child]}, exp)
+    for field, value in (("name", "sidecar"), ("ready", False), ("restartCount", 1), ("imageID", "sha256:" + "c" * 64)):
+        invalid = copy.deepcopy(pod)
+        invalid["status"]["containerStatuses"][0][field] = value
+        assert not image_ready({"items": [invalid]}, exp)
+    invalid = copy.deepcopy(pod)
+    invalid["spec"]["containers"][0]["image"] = "registry/server:other"
+    assert not image_ready({"items": [invalid]}, exp)
+    invalid = copy.deepcopy(pod)
+    invalid["status"]["containerStatuses"] = []
+    assert not image_ready({"items": [invalid]}, exp)
+    invalid = copy.deepcopy(pod)
+    invalid["metadata"]["deletionTimestamp"] = "2026-10-30T00:00:00Z"
+    assert not image_ready({"items": [invalid]}, exp)
     with tempfile.TemporaryDirectory() as temp:
         receipt = pathlib.Path(temp) / "images.json"
         entry = {"image": "155.230.35.213:5000/chill/chill-dashboard:pools-control-0-" + sha[:12], "digest": "sha256:" + "a" * 64}
@@ -333,10 +363,7 @@ try:
         if remaining <= 0:
             raise RuntimeError("readiness/digest/restart/application HTTP 200 gate timed out")
         pods = json.loads(run(kube + ["get", "pods", "-o", "json"], "pods.json", min(120, remaining)))
-        checks = {}
-        for role, exp in expected.items():
-            containers = [(pod, status) for pod in pods["items"] if not pod["metadata"].get("deletionTimestamp") for status in pod.get("status", {}).get("containerStatuses", []) if status["image"] == exp["image"]]
-            checks[role] = bool(containers) and all(s.get("ready") and s.get("restartCount") == 0 and s.get("imageID", "").endswith(tuple([exp["digest"], *exp["platformDigests"]])) and any(c["type"] == "Ready" and c["status"] == "True" for c in pod.get("status", {}).get("conditions", [])) for pod, s in containers)
+        checks = {role: image_ready(pods, exp) for role, exp in expected.items()}
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise RuntimeError("readiness/digest/restart/application HTTP 200 gate timed out")
