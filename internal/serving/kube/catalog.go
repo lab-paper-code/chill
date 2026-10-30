@@ -689,7 +689,7 @@ func validateCatalogRunConfig(run *edgev1alpha1.ProfilingRun, config profilingru
 	}
 	if config.Measurement.WarmupIterations != int(measurement.WarmupIterations) ||
 		config.Measurement.DurationSeconds != int(measurement.DurationSeconds) || config.Measurement.SettlingDurationSeconds != settling ||
-		config.Measurement.DurationToleranceSeconds != ptr.Deref(measurement.DurationToleranceSeconds, .5) ||
+		(config.Measurement.DurationToleranceSeconds != 0 || measurement.DurationToleranceSeconds != nil) && config.Measurement.DurationToleranceSeconds != ptr.Deref(measurement.DurationToleranceSeconds, .5) ||
 		(config.Measurement.Dataset == nil) != (measurement.Dataset == "") || (config.Measurement.Dataset != nil && config.Measurement.Dataset.Name != measurement.Dataset) ||
 		config.Metrics.IntervalMilliseconds != int(run.Spec.MetricObservation.IntervalMilliseconds) ||
 		config.Metrics.TimeoutMilliseconds != int(run.Spec.MetricObservation.TimeoutMilliseconds) ||
