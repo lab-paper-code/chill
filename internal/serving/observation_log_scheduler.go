@@ -121,6 +121,7 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 	if s := event.Snapshot; s != nil {
 		recorded := *s
 		recorded.Instances = refs.instances(s.Instances)
+		recorded.Actions = refs.actions(s.Actions)
 		// Window counts stay in Decision.Search; the request stream holds arrivals.
 		recorded.Arrivals = nil
 		recorded.Workloads, recorded.WorkloadIDs = nil, make([]string, len(s.Workloads))
@@ -184,7 +185,23 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 // Stored records keep profile IDs; the catalog holds profile bodies.
 func (o *observationReferences) candidate(c SchedulerCandidate) SchedulerCandidate {
 	c.Instances = o.instances(c.Instances)
+	c.Actions = o.actions(c.Actions)
 	return c
+}
+
+func (o *observationReferences) actions(actions []Action) []Action {
+	first := slices.IndexFunc(actions, func(a Action) bool { return a.RouteTarget != nil })
+	if first < 0 {
+		return actions
+	}
+	recorded := slices.Clone(actions)
+	for k := first; k < len(recorded); k++ {
+		if target := recorded[k].RouteTarget; target != nil {
+			stage := o.candidate(*target)
+			recorded[k].RouteTarget = &stage
+		}
+	}
+	return recorded
 }
 
 func (o *observationReferences) instances(instances []SchedulerInstance) []SchedulerInstance {

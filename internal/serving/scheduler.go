@@ -274,6 +274,9 @@ type Action struct {
 	CostID          string                `json:"costID,omitempty"`
 	ExpectedSeconds *float64              `json:"expectedSeconds"`
 	ExpectedSource  *ActionExpectedSource `json:"expectedSource"`
+	// RouteTarget freezes an intermediate ACK handoff without replacing the
+	// final goal. It contains no Actions and only routes already-prepared peers.
+	RouteTarget *SchedulerCandidate `json:"routeTarget,omitempty"`
 	// Fixed lowers an available Node to its lowest power mode; every candidate shares it.
 	Fixed      bool          `json:"fixed,omitempty"`
 	Status     string        `json:"status"` // planned, running, complete, failed, cancel

@@ -136,6 +136,13 @@ legacy ranking9=Jetsono MODE_30W/MODE_50W, Jetsonx MODE_10W_4CORE/MODE_10W_DESKT
 입구는 exact profileID/NodeUID/mode/runtime/allocation의 prepare/remove/power, Smol9+D2뒤 CPU8/GPU5/PLC12 d, fresh10/legacy9 한계, 최종SLO/m/L/socket/cap, G/κ/R의 초기·확장·축소·swap witness, terminal/actual execution·action·handback0/readback(원017 비실행 예외)을 확인한다. 대체Accepted 전 legacy CPU8/GPU2는 소비 유지하되 미재인증이다.
 각 witness `B_w=q+max(0,λ−κ_ret)r`, `W_w=B_w/κ_new≤SLO−m`, keep/best nominalJ/signed상쇄B 공개. 둘 다 feasible이면 gain>문턱 전환/동률keep, keep infeasible 회복 유지. 자연swap 없으면 차단부등식, 정량SLO/m/G/κ/R/N·최종controls는 실측 고정이다.
 
+#### G2 축소 뒤 재급증의 공유 Node 경계 — SCH-25, SCH-27~28, SCH-55
+
+`control-222-full/full-E5-5-3/obs/20261029T20/scheduler.jsonl.gz:4507`은 관측 장/단기 rate `.1/.1`, 최소 수요 설정 `.3`, queued1에서 `.3 < orangepi κ .372262300732782`로 Smol 이동을 선택했다. 미래 substage의 의도 rate `.5205040034316192`는 이 판단의 예측 입력이 아니다. 재급증 `:5321`의 rate1.2/queued12/model wait32.235335075237344s에서 MNV 소유 예약이 genesis3 Node를 잡지만 Smol 자체는 Controlled다. 예약이 없는 `:5710`에도 MNV q4가 같은 affinity를 차지하고 genesis3 Smol 후보12개는 `RoutedInstanceStopsBeforeRoute`다. 이는 energy/dwell 거절이 아니라 자원 blocker를 먼저 비워야 하는 전환의 표현 경계다.
+Node당 최종 인스턴스1개·make-before-break와 이전68s outage 회귀를 유지한다. local veto 삭제나 미래 부하에 맞춘 floor 변경을 회복 근거로 삼지 않는다. 전역 후보는 최종 goal의 독립 prepare/양수 ACK→blocker 유입 이관→원 physical ID stop/drain/remove→막힌 prepare→최종 route를 같은 DAG로 컴파일한다. 불변 중간 `RouteTarget`은 parent 최종 목표와 분리하고 동일 owner/UID receipt·새 목적지 전체 native ACK를 그대로 요구한다. 단계별 κ/queued backlog/SLO/reserve와 실제 제거 전 old+new 예산을 검사하며 기존 growing/slow-window 보호를 보존한다.
+bridge는 최종-goal의 독립 prepare에 한정하고 canonical 순서로 증명하므로 임시 variant나 모든 경로를 완전 탐색하지 않는다. 안전한 bridge가 없으면 기존 veto를 유지하며 모든 원 tick의 회복을 보장하지 않는다. `capacity.bridgeStages`는 조건부 예측이지 actual Ready 공급이 아니다. 외부 `analysis/cards-r4/smol-scaleup-01.ticks.jsonl`은52개 결정의 raw `_ref`·Smol 후보/거절/예약/동작 투영이며 원시 증거 자체는 아니다. 원시 수요/설정의 변경이나 배포·실측 복구를 이 로컬 수정의 검증으로 주장하지 않는다.
+
+
 #### D2 실행·관측 경계
 
 rev72 보수/catalog동결→MNV 자율 BEFORE logical initial8/seed1/λ=min(50,0.3Σκ)/660s(준비60+관측600)·복구→exact8 profile/mode/runtime/batch/allocation PRIMARY native8→old loadgen tightMNV seed1 Poisson workers320/L2/delivery0.010/socket2.02,0부터50req/s씩300s(첫60제외), 마지막min(next50,Σκ)→throttle/incomplete/κ도달중지 순서다.

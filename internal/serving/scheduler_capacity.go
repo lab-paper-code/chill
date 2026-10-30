@@ -70,6 +70,7 @@ type SchedulerCapacity struct {
 	// It excludes profile statistical uncertainty and leaves nominal energy unchanged.
 	GainUncertaintyJoules float64                      `json:"gainUncertaintyJoules,omitempty"`
 	TransitionReserves    []SchedulerTransitionReserve `json:"transitionReserves,omitempty"`
+	BridgeStages          []SchedulerBridgeStage       `json:"bridgeStages,omitempty"`
 }
 
 // SchedulerPlanSearch is the scope of one plan search: the most Nodes one step
@@ -110,10 +111,12 @@ type SchedulerCapacityWorkload struct {
 // are the longest chains before and after the route; Joules is the mean chain
 // energy.
 type SchedulerNodePlan struct {
-	Node                    NodeReference      `json:"node"`
-	Key                     string             `json:"key"`
-	Eligible                bool               `json:"eligible"`
-	Reason                  string             `json:"reason,omitempty"`
+	Node     NodeReference `json:"node"`
+	Key      string        `json:"key"`
+	Eligible bool          `json:"eligible"`
+	Reason   string        `json:"reason,omitempty"`
+	// RequiresBridge is a conditional candidate, never permission to stop first.
+	RequiresBridge          []string           `json:"requiresBridge,omitempty"`
 	Tempo                   string             `json:"tempo,omitempty"`
 	Kappa                   map[string]float64 `json:"kappa,omitempty"`
 	KappaRetained           map[string]float64 `json:"kappaRetained,omitempty"`
@@ -847,15 +850,15 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		plan.record.Reason = reason
 		return plan
 	}
-	// Make before break: a replacement on the Node's mode stops a routed
-	// instance only after the route has moved its load to the prepared
-	// capacity. A mode change stops every instance before the power action;
-	// κ_ret and r carry that outage.
-	if mode == node.PowerMode && slices.ContainsFunc(current, func(i SchedulerInstance) bool {
-		return stopped[i.ID] && !i.Stopped && schedulerInstanceRouted(p.keep.Routing, i.ID)
-	}) {
-		plan.record.Reason = schedulerRoutedStopsFirst
-		return plan
+	// A same-mode routed blocker remains a veto unless a globally compiled
+	// Ready/ACK handoff can precede its stop. Power outages keep their existing
+	// κ_ret accounting and are never treated as bridge supply.
+	if mode == node.PowerMode {
+		for _, i := range current {
+			if stopped[i.ID] && !i.Stopped && schedulerInstanceRouted(p.keep.Routing, i.ID) {
+				plan.record.RequiresBridge = append(plan.record.RequiresBridge, i.ID)
+			}
+		}
 	}
 	p.annotate(plan, chosenItems)
 	for _, i := range current {
@@ -1399,6 +1402,7 @@ type capacityResult struct {
 	gainUncertainty   float64
 	exclusion         string
 	reserves          []SchedulerTransitionReserve
+	bridge            *schedulerBridgeSchedule
 }
 
 // evaluate judges the plan set (one plan index per Node) at route r and sums
@@ -1407,7 +1411,20 @@ type capacityResult struct {
 // max(0, λ − κ_ret)·r and [r, T] by the target fill y.
 func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 	t := p.period
+	bridge, bridgeReason := p.bridgeSchedule(choice)
+	if bridge != nil {
+		r = bridge.route
+	}
 	res := capacityResult{choice: choice, route: r, keep: true}
+	res.bridge, res.exclusion = bridge, bridgeReason
+	if bridgeReason != "" {
+		res.keep, res.worst = false, math.Inf(1)
+		res.excesses = make([]float64, len(p.ws))
+		for w := range res.excesses {
+			res.excesses[w] = math.Inf(1)
+		}
+		return res
+	}
 	keys := make([]string, len(choice))
 	items, retained := make([][]capacityItem, len(p.ws)), make([][]capacityItem, len(p.ws))
 	present := make([]bool, len(p.ws))
@@ -1417,6 +1434,9 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		keys[n] = p.snapshot.Nodes[n].Node.UID + "=" + plan.record.Key
 		if p.compared[n] {
 			res.joules += plan.energy(r, t)
+			if bridge != nil && !plan.keep {
+				res.joules += (plan.before - plan.mid) * bridge.delays[n]
+			}
 		}
 		for w := range p.ws {
 			items[w] = append(items[w], plan.items[w]...)
@@ -1500,7 +1520,11 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 				initial += min(ws.rate, kret) * float64(item.weight) / weightSum * item.e
 			}
 		}
-		res.joules += initial*r + max(0, ws.rate-kret)*r*mean + (served*mean+max(0, ws.rate-served)*mean)*(t-r)
+		if bridge != nil {
+			res.joules += p.bridgeRequestJoules(bridge, ws, mean, r)
+		} else {
+			res.joules += initial*r + max(0, ws.rate-kret)*r*mean + (served*mean+max(0, ws.rate-served)*mean)*(t-r)
+		}
 		res.judgments = append(res.judgments, j)
 		res.weights = append(res.weights, routes)
 		res.rows = append(res.rows, rows)
@@ -1678,6 +1702,17 @@ func (p *capacityPlanner) gainBound(keep, best capacityResult) float64 {
 		if p.compared[n] {
 			p.plans[n][keep.choice[n]].addBounds(bounds, keep.route, p.period, 1)
 			p.plans[n][j].addBounds(bounds, best.route, p.period, -1)
+			if best.bridge != nil && !p.plans[n][j].keep {
+				plan, delay := p.plans[n][j], best.bridge.delays[n]
+				for _, weighted := range []struct {
+					bound schedulerBaselineBound
+					sign  float64
+				}{{plan.beforeBound, -1}, {plan.midBound, 1}} {
+					if weighted.bound.watts != 0 {
+						bounds[schedulerBoundSource{reference: weighted.bound.reference, trial: -1}] += weighted.sign * delay * weighted.bound.watts
+					}
+				}
+			}
 		}
 	}
 	return bounds.halfWidth()
@@ -1909,7 +1944,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 			target.Nodes[n] = projected
 		}
 		for _, i := range plan.instances {
-			if p.idleRemovable(i, plan, best, target.Routing) {
+			if best.bridge == nil && p.idleRemovable(i, plan, best, target.Routing) {
 				idleRemoved[i.ID] = true
 				reason, reserves := p.idleTransition(best, idleRemoved)
 				record.TransitionReserves = append(record.TransitionReserves, reserves...)
@@ -1954,7 +1989,17 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	sum := sha256.Sum256([]byte(best.key + fmt.Sprint(target.Routing)))
 	target.ID = "plan-" + hex.EncodeToString(sum[:6])
-	target.Actions = schedulerPlan(p.snapshot, target)
+	if best.bridge != nil {
+		target.Actions = slices.Clone(best.bridge.actions)
+		for k := range target.Actions {
+			if target.Actions[k].Kind == schedulerActionRoute && target.Actions[k].RouteTarget == nil {
+				target.Actions[k].To = schedulerConfigKey(target)
+			}
+		}
+		record.BridgeStages = best.bridge.stages
+	} else {
+		target.Actions = schedulerPlan(p.snapshot, target)
+	}
 	decision.Target, decision.Status = &target, target.Status
 	return decision
 }

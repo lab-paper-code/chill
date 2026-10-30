@@ -59,6 +59,14 @@ source finalizer는 immutable UID 포함 strategic-merge primitive-list delta로
 논리적 신규 유입 정지와 kubelet의 exact UID/container 종료는 같은 증거가 아니다. 실물 장부는 실제 제거까지 allocation/owner를 보존하되 종료한 실행기에 새 native 성공 관측을 요구해서는 안 된다. 미확인 실물의 해당 Node 봉쇄·부재 추론 금지와 새 목적지 Ready/양수 policy ACK는 유지한다. R5의 양수 목적지만 ACK하는 경로는 목표 선택 뒤의 실행 경계이므로 그 앞의 Pending을 해소하지 않는다. 원시 카드와 검증 quote는 외부 `analysis/cards-r4/smol-recovery-01.*`이며, 로컬 수정은 배포·실측 복구 성공을 뜻하지 않는다.
 `InstanceState`/scheduler snapshot의 `Terminated`는 exact physical ID의 단조 tombstone이다. 논리 `Stopped`와 구별하며 observer의 해당 container 종료 증거만 설정한다. outstanding 병합·늦은 Ready probe도 terminal을 되돌리지 못하고 `Terminated ⇒ !Ready, κ=0`이다. live-native freshness만 면제하며 옛 positive route/slot을 재사용하지 않는다. Pod 부재·예약 반환·할당 해제는 여전히 별도 실제 cleanup proof가 필요하고 `RetirePod`도 logical stop만으로 완료하지 않는다. TTL·새 설정값·관측자의 임의 삭제는 추가하지 않는다.
 
+#### G2 자원 blocker의 ACK 선행 이관 — SCH-25, SCH-27~28, AC-45
+
+Node-local `RequiresBridge`는 routed blocker의 조건부 후보이지 stop 허가가 아니다. 전역 후보의 **최종 goal에 이미 포함된** 독립 prepare만 사용해 `prepare → 중간 route/양수 native ACK → 원 physical blocker stop/drain/remove → 막힌 prepare → 최종 route` DAG를 컴파일한다. 독립 bridge를 증명하지 못하면 `RoutedInstanceStopsBeforeRoute`/window-capacity 거절을 유지한다. growing/slow-window/partial/held, placement/membership/control, dwell/payback 보호를 일괄 해제하지 않는다.
+중간 route의 `Action.RouteTarget`은 Actions 없는 불변 정책이고 parent의 최종 goal을 덮어쓰지 않는다. 기존 run/동일 owner 예약과 child route receipt 경로를 그대로 사용하며 별도 단계 상태기계·retry/TTL은 없다. stop은 complete route run만으로 진행하지 않고 해당 원 physical source UID의 현재 route·Ready·전체 양수 native policy ACK를 다시 검사한다. 실패/지연 ACK 또는 effect drift는 stop을 막고, 다른 UID의 후속 bridge가 전역 route를 갱신했다는 이유만으로 이미 유지되는 source 이관을 무효화하지 않는다. 완료한 중간 route는 최종 goal 완료나 cleanup 완료로 간주하지 않는다.
+각 단계는 측정 operation chain 최장 시간, 서로 다른 Node의 κ 합, window demand, queued ingress와 보수적 backlog, SLO 여유, 설정된 reserve를 공개한다(`capacity.bridgeStages`). 미래 prepare는 현재 공급/예약 반환 증거가 아니며 기존 실제 transition-reserve 검사는 유지한다. 실제 제거 전 old+new physical peak/replica 예산을 빌려 쓰지 않는다. 대기 중 before baseline과 단계별 routing request energy를 계산하고 raw catalog는 중간 target profile도 ID로 참조한다.
+컴파일은 canonical 순서의 최종-goal bridge에 한정한다. 임시 variant 추가 탐색이나 모든 전환 경로 완전 탐색을 하지 않으므로 bridge 미발견은 전역 불가능성 증명이 아니다. 예산/수요/관측 조건이 맞지 않으면 안전한 전환 부재로 보고한다. 설정은 기존 comparison/observation window, transitionReserveFraction, maxInstances/maxReplicas를 사용하며 미래 campaign rate를 floor로 하드코딩하지 않는다.
+
+
 ### G1b 취소와 client limiter 진단 — SCH-51, SCH-AC-38
 
 `Refresh`/`RefreshWithin`은 공유 관측 직렬화에 들어온 뒤 caller context를 먼저 검사한다. lock 대기 중 취소된 caller는 cached success나 canceled Kubernetes read를 실행하지 않으며 다른 Ready executor를 `refreshFailure`로 내리지 않는다. 진행 중 실제 probe/read 오류의 fail-closed·freshness 경계는 유지한다.

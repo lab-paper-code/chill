@@ -491,6 +491,9 @@ type schedulerReplayState struct {
 	byID           map[string]*schedulerReplayInstance
 	nodes          []SchedulerNode
 	goal           SchedulerCandidate
+	applied        SchedulerCandidate
+	previousRoute  map[string]map[string]int32
+	creditInvalid  map[string]map[string]bool
 	actions        []*schedulerReplayAction
 	actionByID     map[string]*schedulerReplayAction
 	requests       []*schedulerReplayRequest // ordered by arrival
@@ -616,6 +619,7 @@ func (s *schedulerReplayState) initializeInstances() {
 	s.byID = map[string]*schedulerReplayInstance{}
 	s.nodes = append([]SchedulerNode(nil), s.snap.Nodes...)
 	s.goal = s.c
+	s.applied, s.previousRoute = s.c, s.snap.Routing
 	addInstance := func(i SchedulerInstance, loaded bool) {
 		x := &schedulerReplayInstance{config: i, loaded: loaded, ready: loaded && i.Ready, stopped: i.Stopped, finish: math.Inf(1), wake: 0, arrivalTimes: map[string][]float64{}}
 		if i.Profile != nil {
@@ -810,7 +814,7 @@ func (s *schedulerReplayState) retainedIngress(i *schedulerReplayInstance) bool 
 func (s *schedulerReplayState) hasRoutedAlternative(r *schedulerReplayRequest, retiring *schedulerReplayInstance) bool {
 	routing := s.snap.Routing
 	if s.routingApplied {
-		routing = s.goal.Routing
+		routing = s.applied.Routing
 	}
 	for _, other := range s.instances {
 		if other == retiring || !other.loaded || !other.ready || other.stopped || other.config.WorkloadUID != r.source.Definition.UID || !schedulerProfileMatches(r.source.Definition, other.config.Profile) {
@@ -1004,14 +1008,50 @@ func (s *schedulerReplayState) dependenciesReady(a *schedulerReplayAction) bool 
 	return true
 }
 
-func (s *schedulerReplayState) applyRoute() bool {
+func (s *schedulerReplayState) applyRoute(target SchedulerCandidate) bool {
+	s.previousRoute = s.snap.Routing
+	if s.routingApplied {
+		s.previousRoute = s.applied.Routing
+	}
+	s.applied = target
+	invalidate := func(uid string) {
+		if len(s.routeCredits[uid]) == len(s.instances) {
+			return
+		}
+		for _, i := range s.instances {
+			if s.snap.RoutingCredits[uid][i.config.ID] != 0 && s.retainedRouteCredit(uid, i.config, 1) == 0 {
+				if s.creditInvalid == nil {
+					s.creditInvalid = map[string]map[string]bool{}
+				}
+				if s.creditInvalid[uid] == nil {
+					s.creditInvalid[uid] = map[string]bool{}
+				}
+				s.creditInvalid[uid][i.config.ID] = true
+			}
+		}
+	}
+	for uid := range target.Routing {
+		invalidate(uid)
+	}
+	for uid := range s.previousRoute {
+		if _, present := target.Routing[uid]; !present {
+			invalidate(uid)
+		}
+	}
 	for uid, credits := range s.routeCredits {
 		for j, i := range s.instances {
 			credits[j] = s.retainedRouteCredit(uid, i.config, credits[j])
 		}
 	}
 	for _, i := range s.instances {
-		for _, v := range s.goal.Instances {
+		for _, v := range target.Instances {
+			weight := v.Weight
+			if route, explicit := target.Routing[v.WorkloadUID]; explicit {
+				weight = route[v.ID]
+			}
+			if weight <= 0 {
+				continue
+			}
 			if s.byID[v.ID] == i {
 				if !i.loaded || !i.ready {
 					s.out.reasons = appendUnique(s.out.reasons, "NoReadyCapacityOrTransitionPrerequisite")
@@ -1062,7 +1102,11 @@ func (s *schedulerReplayState) startActions() bool {
 				s.out.reasons = appendUnique(s.out.reasons, "InProgressRoutingAcknowledgementUnobserved:"+a.action.ID)
 				return false
 			}
-			if !s.applyRoute() {
+			target := s.goal
+			if a.action.RouteTarget != nil {
+				target = *a.action.RouteTarget
+			}
+			if !s.applyRoute(target) {
 				return false
 			}
 			a.done = true
@@ -1274,10 +1318,10 @@ func (s *schedulerReplayState) adjustOperationBaseline(a *schedulerReplayAction,
 // are unchanged. Apply the same rule to existing and lazily seeded replay state.
 func (s *schedulerReplayState) retainedRouteCredit(uid string, i SchedulerInstance, credit int64) int64 {
 	before, after := i.Weight, i.Weight
-	if route, ok := s.snap.Routing[uid]; ok {
+	if route, ok := s.previousRoute[uid]; ok {
 		before = route[i.ID]
 	}
-	if route, ok := s.goal.Routing[uid]; ok {
+	if route, ok := s.applied.Routing[uid]; ok {
 		after = route[i.ID]
 	}
 	if before != after {
@@ -1297,7 +1341,9 @@ func (s *schedulerReplayState) routeRequests() {
 			credits = make([]int64, len(s.instances))
 			for j, i := range s.instances {
 				credits[j] = s.snap.RoutingCredits[uid][i.config.ID]
-				if s.routingApplied {
+				if s.creditInvalid[uid][i.config.ID] {
+					credits[j] = 0
+				} else if s.routingApplied {
 					credits[j] = s.retainedRouteCredit(uid, i.config, credits[j])
 				}
 			}
@@ -1307,7 +1353,7 @@ func (s *schedulerReplayState) routeRequests() {
 			s.weights[j] = i.config.Weight
 			routes := s.snap.Routing
 			if s.routingApplied {
-				routes = s.goal.Routing
+				routes = s.applied.Routing
 			}
 			if route, ok := routes[r.source.Definition.UID]; ok {
 				s.weights[j] = route[i.config.ID]

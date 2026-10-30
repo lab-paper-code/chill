@@ -203,7 +203,7 @@ func TestSchedulerReplayCannotSwitchFrozenDeadlineMode(t *testing.T) {
 	profile.Condition.Firstfloor = &settings
 	target.Profile = &profile
 	state.goal.Instances = []SchedulerInstance{target}
-	if state.applyRoute() {
+	if state.applyRoute(state.goal) {
 		t.Fatal("in-place policy update reinterpreted frozen keep as drop")
 	}
 	schedulerRequireReason(t, state.out.reasons, "ImmutableNativeDeadlinePolicyMismatch")
@@ -224,7 +224,7 @@ func TestSchedulerReplayPolicyUpdatePreservesCapturedSender(t *testing.T) {
 	target := snap.Instances[0]
 	target.MaxWait = 50 * time.Millisecond
 	state.goal.Instances = []SchedulerInstance{target}
-	if !state.applyRoute() {
+	if !state.applyRoute(state.goal) {
 		t.Fatalf("permitted policy update failed: %+v", state.out)
 	}
 	after := state.nativeRequestState(instance, state.requests[0])

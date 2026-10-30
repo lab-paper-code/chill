@@ -518,7 +518,7 @@ func (c *SchedulerController) cleanupReadyLocked(parent *actionRun, snapshot ser
 			return false
 		}
 		if action.Kind == operationRoute {
-			final = action.From != readySubsetRoute && c.actionEffectPresent(snapshot, run)
+			final = action.RouteTarget == nil && action.From != readySubsetRoute && c.actionEffectPresent(snapshot, run)
 		}
 	}
 	return final

@@ -445,8 +445,8 @@ func TestCapacityNeverPreparesAnUnroutedInstance(t *testing.T) {
 // the weights and rasp5 q1 (κ 25.69) 468 at λ 38.6. The plan replaced q2 with
 // q1 on the same CPU, so its first action stopped q2; the transition judged
 // κ_ret 25.69 against the measured chain, the prepare ran 68 s and SLO fell to
-// 0. A routed instance is stopped only after the route, so the replacement
-// plan is no candidate and keep carries the load.
+// 0. A routed instance is stopped only after a capacity-proven route; the
+// remaining Ready κ 25.69 cannot form that bridge, so keep carries the load.
 func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge, s.CompletionMarginMS = time.Minute, 10*time.Second, 10*time.Minute, time.Hour, 29
@@ -483,9 +483,12 @@ func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 		}
 	}
 	if !slices.ContainsFunc(poolsPlans(got, genesis3), func(p SchedulerNodePlan) bool {
-		return p.Key == q1.Profile.ID+"/b1/w1" && !p.Eligible && p.Reason == schedulerRoutedStopsFirst
+		return p.Key == q1.Profile.ID+"/b1/w1" && len(p.RequiresBridge) > 0
 	}) {
-		t.Fatalf("replacement plan not excluded: %+v", poolsPlans(got, genesis3))
+		t.Fatalf("replacement lost its routed-blocker condition: %+v", poolsPlans(got, genesis3))
+	}
+	if slices.ContainsFunc(got.Target.Instances, func(i SchedulerInstance) bool { return i.Profile.ID == q1.Profile.ID }) {
+		t.Fatal("insufficient Ready bridge admitted the unsafe replacement")
 	}
 }
 

@@ -864,7 +864,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	if creditState != "" {
 		schedulerPrimeReplayCredits(t, ctx, r, input, &replay, creditState)
 	}
-	if !replay.applyRoute() {
+	if !replay.applyRoute(replay.goal) {
 		t.Fatalf("candidate cannot be replayed: %v", replay.out.reasons)
 	}
 	replay.admitArrivals()

@@ -542,7 +542,7 @@ func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapsho
 		}
 	}
 	for _, desired := range actions {
-		if desired.From == readySubsetRoute || desired.From == externalActionSource {
+		if desired.RouteTarget != nil || desired.From == readySubsetRoute || desired.From == externalActionSource {
 			continue
 		}
 		run := c.runs[desired.ID]
@@ -1013,7 +1013,9 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				continue
 			}
 			selectedTarget := &target
-			if action.From == readySubsetRoute {
+			if action.RouteTarget != nil {
+				selectedTarget = action.RouteTarget
+			} else if action.From == readySubsetRoute {
 				selectedTarget = intermediate
 			}
 			if !c.dependenciesReady(action, *selectedTarget) {
@@ -1210,6 +1212,9 @@ func (c *SchedulerController) runContext(action serving.Action, config Scheduler
 }
 
 func (c *SchedulerController) dependenciesReady(action serving.Action, target serving.SchedulerCandidate) bool {
+	if action.RouteTarget != nil {
+		target = *action.RouteTarget
+	}
 	if action.Node.UID != "" && slices.ContainsFunc(c.state.Snapshot.Instances, func(instance serving.SchedulerInstance) bool {
 		return instance.Node == action.Node && !instance.Ready && !instance.Stopped && !instance.Terminated
 	}) {
@@ -1230,6 +1235,28 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 	}
 	for _, dep := range action.DependsOn {
 		if run := c.runs[dep]; run != nil && run.action.Status == nativeOperationComplete {
+			if action.Kind == operationStop && run.action.RouteTarget != nil {
+				if run.result == nil {
+					return false
+				}
+				proof := run.result.Operation
+				var uid string
+				for _, source := range run.action.RouteTarget.Instances {
+					if source.ID == action.Instance && proof.controlsWorkload(source.WorkloadUID) {
+						uid = source.WorkloadUID
+						break
+					}
+				}
+				if uid == "" {
+					return false
+				}
+				// A later independent UID's bridge may supersede the global
+				// route. Recheck this source's handoff, not unrelated routes.
+				proof.WorkloadUIDs = []string{uid}
+				if !c.routingTargetPresent(controlledTarget(proof), c.state.Snapshot, c.runtime.Instances(), true) {
+					return false
+				}
+			}
 			continue
 		}
 		route := slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
@@ -1262,6 +1289,9 @@ func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCa
 // names the Workload its target instance serves as the Pod's owner, so the
 // instance keeps its Workload while unrouted.
 func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]time.Duration, workloads []*serving.Definition) Operation {
+	if action.RouteTarget != nil {
+		target = action.RouteTarget
+	}
 	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target,
 		ExpectedSeconds: action.ExpectedSeconds, ExpectedSource: action.ExpectedSource}
 	if action.Kind == operationPrepare {
