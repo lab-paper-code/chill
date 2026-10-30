@@ -306,12 +306,12 @@ test("R5: direct A/B direction names the actual policy in both orders without cl
   assert.equal(comparisonDirection(undefined,12,"ms","A","B"),"비교 불가")
 })
 
-test("R5: unpaired suffixes, duplicate stages and unknown policies remain visible without rate-based pairing",()=>{
+test("R7: unique load comparisons preserve exact pairing status, duplicate stages and unknown policies",()=>{
   const make=(id:string):ExperimentStage=>({...stage,id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,requests:{same:{offered:100}}}})
   const stages=[make("full-E5-1-a"),make("static-E5-1-b"),make("full-E5-2"),make("static-E5-2"),make("full-E5-3"),make("full-E5-3"),make("static-E5-3"),make("manual")]
   const run={...recorded.publication,stages}
   assert.ok(stages.every(stage=>stageRate(stage)===10))
-  assert.deepEqual(campaignPairs(run).map(pair=>pair.key),["E5-2"])
+  assert.deepEqual(campaignPairs(run).map(pair=>pair.key),["E5-1-a","E5-2"])
   assert.match(stagePairing(run,stages[0]).reason,/static-E5-1-a 없음/)
   assert.match(stagePairing(run,stages[1]).reason,/full-E5-1-b 없음/)
   assert.equal(stagePairing(run,stages[4]).reason,"동일 단계 식별자 중복")
