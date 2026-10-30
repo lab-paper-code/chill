@@ -96,11 +96,11 @@ e5 finish --out "$Run" --row-tag 223; e5 cleanup-jobs --out "$Run" --row-tag 223
 ```
 
 
-### E5 third-round targeted full replay
+### E5 targeted full replay
 
-`factor --mode full --stage E5-{1,5,6,7} --pre-state <original-row/pre-state.json>
---row-tag 3` reuses the same reset/prepare/native-mode/route ACK path. It reads
-the original row's sibling `pre-settings.json` (or embedded settings), including
+`factor --mode full --stage E5-{1,3,5,6,7} --pre-state <original-row/pre-state.json>
+--row-tag 3` reuses the same reset/prepare/native-mode/route ACK path (#237 adds E5-3).
+It reads the original row's sibling `pre-settings.json` (or embedded settings), including
 full autonomy, and restores served canonical instances with exact maxBatch,
 allocation, profile, wait, routing and native modes. Only physical IDs returned
 by prepare ACKs are rebound. One final fingerprint comparison is retained in

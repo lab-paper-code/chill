@@ -2074,7 +2074,7 @@ class CPO:
             if (self.out/'static-replay-restore.json').exists():raise RuntimeError('Static restoration already attempted; no implicit repeat')
             f={'name':'static'}
         elif full:
-            if not self.a.pre_state or not self.a.row_tag or self.a.stage not in ('E5-1','E5-5','E5-6','E5-7'):raise ValueError('Full restoration requires --pre-state, --row-tag and a targeted E5-1/5/6/7 row')
+            if not self.a.pre_state or not self.a.row_tag or self.a.stage not in ('E5-1','E5-3','E5-5','E5-6','E5-7'):raise ValueError('Full restoration requires --pre-state, --row-tag and a targeted E5-1/3/5/6/7 row')
             if full_restore_path(self.out,self.a.stage,self.a.row_tag).exists():raise RuntimeError('Full row restoration already attempted; no implicit repeat')
             f={'name':'full'}
         else:
@@ -2515,7 +2515,7 @@ def summarize(binding, root, tag=None):
     modes={'full':[x['id'] for x in b['schedule']], 'static':[x['id'] for x in b['schedule'] if x['id'] not in ('E5-0','E5-7')]}
     modes.update({f['name']:['E5-2','E5-5'] for f in b['config']['factors']})
     targeted={}
-    for row in ('E5-1','E5-5','E5-6','E5-7'):
+    for row in ('E5-1','E5-3','E5-5','E5-6','E5-7'):
         path=full_restore_path(root,row,tag)
         if path and path.exists():targeted[row]=load(path)
     tags={record['rowTag'] for record in targeted.values()}
@@ -3018,7 +3018,7 @@ def main():
         for value in (a.config,a.binding,a.out,a.release,a.pre_state):
             if value is not None and not value.is_absolute(): raise ValueError('All paths must be absolute')
         if a.row_tag and not re.fullmatch('[A-Za-z0-9]+',a.row_tag):raise ValueError('--row-tag requires ASCII letters and digits')
-        if a.pre_state and not (a.command=='factor' and a.row_tag and (a.mode=='static' and a.stage=='E5-3' or a.mode=='full' and a.stage in ('E5-1','E5-5','E5-6','E5-7'))):raise ValueError('--pre-state requires tagged static or targeted full factor restoration')
+        if a.pre_state and not (a.command=='factor' and a.row_tag and (a.mode=='static' and a.stage=='E5-3' or a.mode=='full' and a.stage in ('E5-1','E5-3','E5-5','E5-6','E5-7'))):raise ValueError('--pre-state requires tagged static or targeted full factor restoration')
         if a.pre_state and a.mode=='full' and (a.pre_state.name!='pre-state.json' or not re.fullmatch('full-'+re.escape(a.stage)+'(?:-[A-Za-z0-9]+)?',a.pre_state.parent.name) or a.pre_state.parent.parent!=a.out):raise ValueError('Targeted restoration requires the corresponding original full row pre-state.json in this Run')
         if a.dry_run and not a.pre_state:raise ValueError('--dry-run requires factor --pre-state')
         if a.command=='smoke' and (a.mode!='smoke' or a.stage!='SMOKE'): raise ValueError('Smoke requires --mode smoke --stage SMOKE; never counted as E5')
