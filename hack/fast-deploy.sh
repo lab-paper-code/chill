@@ -15,6 +15,7 @@ p.add_argument("--source", required=True)
 p.add_argument("--control", required=True)
 p.add_argument("--images", default="auto")
 p.add_argument("--dry-run", action="store_true")
+p.add_argument("--prebuilt-images", type=pathlib.Path, help="Verified publication.json/images.json; never run Docker or Go dependency discovery")
 p.add_argument("--chart-diff-approved", type=pathlib.Path, help="File containing the exact approved canonical live-to-source chart diff")
 p.add_argument("--values", type=pathlib.Path, help="Explicit chart values overlay, covered by exact chart-diff approval")
 p.add_argument("--self-check", action="store_true", help="Run local selection/deadline regression checks only")
@@ -65,6 +66,22 @@ def chart_difference(deployed, rendered):
 def approve_chart(difference, approval):
     if difference and (approval is None or approval.read_text() != difference):
         raise RuntimeError("source chart/live manifest drift; --chart-diff-approved must match chart-diff.txt exactly")
+def prebuilt_publication(path):
+    publication = json.loads(path.read_text())
+    if publication.get("sourceSHA") != sha or publication.get("runtimeBuilds") != 0:
+        raise RuntimeError("prebuilt sourceSHA/runtimeBuilds mismatch")
+    entries = publication.get("roles")
+    if not isinstance(entries, dict) or not entries or any(r not in roles for r in entries):
+        raise RuntimeError("prebuilt roles must be a nonempty subset of control roles")
+    for role, entry in entries.items():
+        prefix = "155.230.35.213:5000/chill/chill-" + roles[role][1] + ":"
+        if not isinstance(entry, dict) or not re.fullmatch(re.escape(prefix) + r"pools-control-[0-9]+-" + sha[:12], entry.get("image", "")):
+            raise RuntimeError("prebuilt image repository/tag mismatch: " + role)
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", entry.get("digest", "")):
+            raise RuntimeError("invalid prebuilt digest: " + role)
+    if a.images != "auto" and set(selected) != set(entries):
+        raise RuntimeError("--images must exactly match prebuilt roles")
+    return entries
 if a.self_check:
     server = {"files": ["go.mod", "go.sum", "build/docker/chill-server.Dockerfile"], "targets": ["./cmd/chill-server"], "directories": ["cmd/chill-server", "internal/serving"]}
     profiler = {"files": ["go.mod", "go.sum", "build/docker/profiler.Dockerfile"], "targets": ["./cmd/profiler", "./cmd/transition-observer"], "directories": ["cmd/profiler", "cmd/transition-observer", "internal/profiling"]}
@@ -93,10 +110,27 @@ if a.self_check:
     assert not readiness_result({"server": True}, {"status": 200, "exitCode": 0}, 0)
     assert not readiness_result({"profiler": False}, {"status": 200, "exitCode": 0}, 10)
     assert readiness_result({"server": True}, {"status": 200, "exitCode": 0}, 10)
+    with tempfile.TemporaryDirectory() as temp:
+        receipt = pathlib.Path(temp) / "images.json"
+        entry = {"image": "155.230.35.213:5000/chill/chill-dashboard:pools-control-0-" + sha[:12], "digest": "sha256:" + "a" * 64}
+        receipt.write_text(json.dumps({"sourceSHA": sha, "runtimeBuilds": 0, "roles": {"dashboard": entry}}))
+        original_images = a.images
+        a.images = "auto"
+        assert prebuilt_publication(receipt) == {"dashboard": entry}
+        entry["image"] = entry["image"].replace("chill-dashboard:", "runtime:")
+        receipt.write_text(json.dumps({"sourceSHA": sha, "runtimeBuilds": 0, "roles": {"dashboard": entry}}))
+        try:
+            prebuilt_publication(receipt)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("foreign prebuilt image accepted")
+        a.images = original_images
     auth.self_check()
     print("selection/deadline regression checks passed")
     sys.exit(0)
-if a.dry_run:
+prebuilt = prebuilt_publication(a.prebuilt_images) if a.prebuilt_images else None
+if a.dry_run and prebuilt is None:
     print("LOCAL PLAN ONLY: no cluster, registry, image build, lock or evidence mutation.")
     print("source:", sha, "\nevidence:", out)
     with tempfile.TemporaryDirectory(prefix="chill-upgrade-plan-") as temp:
@@ -116,8 +150,11 @@ if a.dry_run:
     print("API: CHILL_EXPERIMENT_CONFIG d2.apiBase/caFile/tokenFile, verified TLS + Bearer, no redirects; profiler/dashboard: Pod Ready")
     sys.exit(0)
 import yaml
-lock = open("/tmp/chill-heavy.lock", "a")
-fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+if prebuilt is not None:
+    out = base / "g2gate" / sha / ("deploy-control-" + a.control + "-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ("-dry-run" if a.dry_run else ""))
+if not a.dry_run:
+    lock = open("/tmp/chill-heavy.lock", "a")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 os.umask(0o077)
 out.mkdir(parents=True, exist_ok=False)
 log = open(out / "commands.log", "a", buffering=1)
@@ -147,26 +184,27 @@ def image(v, role):
     return value["repository"] + ":" + str(value["tag"])
 def source(ref):
     # Historical pools tags end in their source SHA; unknown provenance must stop.
-    match = re.search(r"(?:^|-)([0-9a-f]{7,40})$", ref.split(":")[-1])
+    match = re.search(r"(?:^|-)([0-9a-f]{7,40})$", ref.split("@")[0].split(":")[-1])
     if not match:
         raise RuntimeError("image source commit cannot be resolved: " + ref)
     return git("rev-parse", "--verify", match[1] + "^{commit}")
 try:
     # Reuse CampaignOps' actual public API origin, CA and caller token contract.
-    environment = json.loads(pathlib.Path(os.environ["CHILL_EXPERIMENT_CONFIG"]).read_text())
-    api_config = environment["d2"]
-    origin = api_config["apiBase"].rstrip("/")
-    parsed = urllib.parse.urlsplit(origin)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
-        raise RuntimeError("d2.apiBase must be an HTTPS origin without credentials")
-    ca_file = pathlib.Path(api_config["caFile"])
-    token_file = pathlib.Path(api_config["tokenFile"])
-    if not ca_file.is_file() or not token_file.is_file():
-        raise RuntimeError("CampaignOps CA/token file is missing")
-    api_url = origin + "/api/v1/scheduler/state"
-    # All possibly selected builds + Helm wait + post-upgrade gate + configured slack.
-    token_seconds = (len(roles) if a.images == "auto" else len(selected)) * 1800 + 510 + 480 + a.token_safety_margin_seconds
-    save("token-preflight.json", auth.check(token_file, token_seconds, endpoint=origin, ca_file=ca_file))
+    if not a.dry_run:
+        environment = json.loads(pathlib.Path(os.environ["CHILL_EXPERIMENT_CONFIG"]).read_text())
+        api_config = environment["d2"]
+        origin = api_config["apiBase"].rstrip("/")
+        parsed = urllib.parse.urlsplit(origin)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+            raise RuntimeError("d2.apiBase must be an HTTPS origin without credentials")
+        ca_file = pathlib.Path(api_config["caFile"])
+        token_file = pathlib.Path(api_config["tokenFile"])
+        if not ca_file.is_file() or not token_file.is_file():
+            raise RuntimeError("CampaignOps CA/token file is missing")
+        api_url = origin + "/api/v1/scheduler/state"
+        # Prebuilt publication needs no build allowance; retain the upgrade/readiness margin.
+        token_seconds = (0 if prebuilt is not None else (len(roles) if a.images == "auto" else len(selected)) * 1800) + 510 + 480 + a.token_safety_margin_seconds
+        save("token-preflight.json", auth.check(token_file, token_seconds, endpoint=origin, ca_file=ca_file))
     live = json.loads(run(helm + ["get", "values", "chill", "-o", "json"], "live-values.json"))
     run(helm + ["get", "hooks", "chill"], "live-hooks.yaml")
     run(helm + ["get", "manifest", "chill"], "live-manifest.yaml")
@@ -185,16 +223,25 @@ try:
     chart_diff = chart_difference(canonical_objects(live_manifest), canonical_objects(before))
     (out / "chart-diff.txt").write_text(chart_diff)
     print(chart_diff, end="", flush=True)
-    approve_chart(chart_diff, a.chart_diff_approved)
+    chart_approved = not chart_diff or (a.chart_diff_approved is not None and a.chart_diff_approved.read_text() == chart_diff)
+    if a.dry_run and not chart_approved:
+        print("CHART DRIFT NOT APPROVED: render comparison only; actual upgrade remains blocked.", flush=True)
+    else:
+        approve_chart(chart_diff, a.chart_diff_approved)
     if a.chart_diff_approved:
         (out / "chart-diff-approved.txt").write_text(a.chart_diff_approved.read_text())
     changed = {}
-    for role in roles:
-        old = source(image(live, role))
-        paths = git("diff", "--name-only", old, sha).splitlines()
-        inputs = build_inputs(src, role)
-        changed[role] = {"from": old, "buildInputs": inputs, "paths": affected(paths, inputs)}
-    selected = [r for r in (roles if a.images == "auto" else selected) if changed[r]["paths"]]
+    if prebuilt is None:
+        for role in roles:
+            old = source(image(live, role))
+            paths = git("diff", "--name-only", old, sha).splitlines()
+            inputs = build_inputs(src, role)
+            changed[role] = {"from": old, "buildInputs": inputs, "paths": affected(paths, inputs)}
+        selected = [r for r in (roles if a.images == "auto" else selected) if changed[r]["paths"]]
+    else:
+        selected = list(prebuilt)
+        changed = {r: {"from": image(live, r), "prebuilt": True} for r in selected}
+        save("prebuilt-images.json", json.loads(a.prebuilt_images.read_text()))
     save("source-diff.json", changed)
     if not selected and not chart_diff:
         raise RuntimeError("no changed control images or approved chart changes; no upgrade performed")
@@ -203,17 +250,37 @@ try:
     for role in selected:
         key, component = roles[role]  # Only these hard-coded control Dockerfiles can reach buildx.
         repo = registry + "chill-" + component
-        tag = "pools-control-" + a.control + "-" + sha[:12]
+        tag = (prebuilt[role]["image"].rsplit(":", 1)[1] if prebuilt is not None else "pools-control-" + a.control + "-" + sha[:12])
         ref = repo + ":" + tag
         metadata = out / (role + "-build.json")
         platforms = "linux/amd64,linux/arm64" if role == "node-agent" else "linux/amd64"
-        run(["/usr/bin/nice", "-n", "19", "/usr/bin/docker", "buildx", "build", "--builder", "chill-builder", "--platform", platforms, "--label", "org.opencontainers.image.revision=" + sha, "--metadata-file", metadata, "-f", src / ("build/docker/" + dockerfiles[role] + ".Dockerfile"), "--output", "type=image,name=" + ref + ",push=true,registry.insecure=true", src], role + "-build.log", 1800)
-        digest = json.loads(metadata.read_text())["containerimage.digest"]
+        if prebuilt is None:
+            run(["/usr/bin/nice", "-n", "19", "/usr/bin/docker", "buildx", "build", "--builder", "chill-builder", "--platform", platforms, "--label", "org.opencontainers.image.revision=" + sha, "--metadata-file", metadata, "-f", src / ("build/docker/" + dockerfiles[role] + ".Dockerfile"), "--output", "type=image,name=" + ref + ",push=true,registry.insecure=true", src], role + "-build.log", 1800)
+        digest = prebuilt[role]["digest"] if prebuilt is not None else json.loads(metadata.read_text())["containerimage.digest"]
         raw = run(["/usr/bin/curl", "--fail", "--silent", "--show-error", "-H", "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json", "http://155.230.35.213:5000/v2/chill/chill-" + component + "/manifests/" + tag], role + "-manifest.json")
         if "sha256:" + hashlib.sha256(raw).hexdigest() != digest:
             raise RuntimeError("registry/build digest mismatch: " + role)
         manifest = json.loads(raw)
         candidates = [x["digest"] for x in manifest.get("manifests", []) if x.get("platform", {}).get("architecture") in ("amd64", "arm64") and x.get("platform", {}).get("os") == "linux"]
+        if prebuilt is not None:
+            def registry_json(kind, identifier, suffix):
+                content = run(["/usr/bin/curl", "--fail", "--silent", "--show-error", "-H", "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json", "http://155.230.35.213:5000/v2/chill/chill-" + component + "/" + kind + "/" + identifier], role + "-" + suffix + ".json")
+                if "sha256:" + hashlib.sha256(content).hexdigest() != identifier:
+                    raise RuntimeError("prebuilt registry content digest mismatch: " + role)
+                return json.loads(content)
+            manifests = [registry_json("manifests", d, "platform-" + str(i)) for i, d in enumerate(candidates)] if candidates else [manifest]
+            found_platforms = set()
+            for i, platform_manifest in enumerate(manifests):
+                config = registry_json("blobs", platform_manifest["config"]["digest"], "config-" + str(i))
+                found_platforms.add(config.get("os", "") + "/" + config.get("architecture", ""))
+                if config.get("config", {}).get("Labels", {}).get("org.opencontainers.image.revision") != sha:
+                    raise RuntimeError("prebuilt OCI revision mismatch: " + role)
+            if found_platforms != set(platforms.split(",")):
+                raise RuntimeError("prebuilt platform mismatch: " + role)
+            if set(prebuilt[role].get("platformDigests", [])) != set(candidates or [digest]):
+                raise RuntimeError("prebuilt platform digest receipt mismatch: " + role)
+            tag += "@" + digest
+            ref += "@" + digest
         expected[role] = {"image": ref, "digest": digest, "platformDigests": candidates or [digest]}
         overlay[key] = {"image": {"repository": repo, "tag": tag}}
     save("publication.json", {"sourceSHA": sha, "roles": expected, "runtimeBuilds": 0})
@@ -239,9 +306,27 @@ try:
     (out / "render-diff.txt").write_text("".join(difflib.unified_diff(live_manifest.decode().splitlines(True), after.decode().splitlines(True), fromfile="live", tofile="upgrade")))
     if new != approved or not delta:
         raise RuntimeError("unexpected render differences or no image changes")
+    if prebuilt is not None:
+        # The existing tagged-image render and the pinned render must differ only by digest suffix.
+        tagged_overlay = copy.deepcopy(overlay)
+        for value in tagged_overlay.values():
+            value["image"]["tag"] = value["image"]["tag"].split("@")[0]
+        save("tagged-overlay.json", tagged_overlay)
+        tagged = run(helm + ["template", "chill", chart, *flags, "-f", str(out / "tagged-overlay.json"), "--is-upgrade"], "render-tagged.yaml")
+        normalized = after.decode()
+        for role in selected:
+            normalized = normalized.replace(prebuilt[role]["image"] + "@" + prebuilt[role]["digest"], prebuilt[role]["image"])
+        if objects(normalized) != objects(tagged):
+            raise RuntimeError("prebuilt render differs from tagged fast-deploy render beyond image digests")
+        save("prebuilt-render-comparison.json", {"equalExceptImageDigests": True, "sourceSHA": sha, "roles": selected, "genesis1Builds": 0})
+    upgrade_command = helm + ["upgrade", "chill", str(chart), "--reset-values", *flags, "-f", str(out / "overlay.json"), "--wait", "--timeout", "8m"]
+    if a.dry_run:
+        save("dry-run.json", {"sourceSHA": sha, "clusterWrites": 0, "genesis1Builds": 0, "chartApproved": chart_approved, "upgradeCommand": upgrade_command})
+        print("DRY RUN (render only; no upgrade/apply):", out)
+        sys.exit(0)
     run(kube + ["apply", "--dry-run=server", "-f", out / "render-after.yaml"], "server-dry-run.log")
     save("token-pre-upgrade.json", auth.check(token_file, 510 + 480 + a.token_safety_margin_seconds, endpoint=origin, ca_file=ca_file))
-    run(helm + ["upgrade", "chill", chart, "--reset-values", *flags, "-f", out / "overlay.json", "--wait", "--timeout", "8m"], "upgrade.log", 510)
+    run(upgrade_command, "upgrade.log", 510)
     deadline = time.monotonic() + 480
     while True:
         remaining = deadline - time.monotonic()
