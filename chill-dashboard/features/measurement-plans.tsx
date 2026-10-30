@@ -56,6 +56,8 @@ export function MeasurementPlansPage() {
     <Rows label="더 보기">
       <Row href="/scheduler/profiles" label="측정 프로파일" hint="운영 판단이 쓰는 측정 결과"/>
       <Row href="/measurements/runs" label="개별 측정 회차" hint="회차 하나하나의 결과와 근거"/>
+      <Row href={`/measurements/operation-cost-measurements?namespace=${encodeURIComponent(namespace)}`} label="동작 비용 측정" hint="순서 있는 동작 조건과 단계별 저장 결과"/>
+      <Row href={`/measurements/dispatch-occupancy-measurements?namespace=${encodeURIComponent(namespace)}`} label="분배 점유시간 측정" hint="요청당 점유시간 d와 지속 완료 처리량"/>
       <Row href="/measurements/check" label="측정 계획 파일 검사" hint="파일로 된 계획의 조건만 확인해요"/>
       {query.data && <RowDialog label="원본 자료" title="측정 목록 원본"><SourceExport value={{namespace, source:query.data}} filename="chill-measurements.json"/><SourceJSON inline value={query.data}/></RowDialog>}
     </Rows>

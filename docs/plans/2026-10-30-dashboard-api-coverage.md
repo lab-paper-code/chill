@@ -1,13 +1,13 @@
 # Dashboard API coverage: 측정 두 종류와 용량 계산 근거
 
-날짜: 2026-10-30. 상태: **문서 설계 완료, 화면 구현 전**.
-이 계획은 API 대조 항목 2~4만 다룬다. 본 변경은 코드·배포·클러스터를 바꾸지 않는다.
+날짜: 2026-10-30. 상태: **화면 구현 완료**(통합 검사와 확인 범위는 7절).
+이 계획은 API 대조 항목 2~4만 다룬다. 읽기 전용 화면을 연결하며 배포·클러스터는 바꾸지 않는다.
 
 ## 1. 범위와 계약
 
 요구사항은 [Dashboard SRS](../spec/dashboard/SRS.md)의 DB-FR-45, DB-FR-53~55 및
 9절의 세 추가 수용 시나리오다. 상세 화면 계약은
-[구현 설계 6.5절](../design/dashboard/README.md#65-측정-api와-용량-행-연결-설계-2026-10-30-구현-전)을 따른다.
+[구현 설계 6.5절](../design/dashboard/README.md#65-측정-api와-용량-행-연결-2026-10-30)을 따른다.
 
 | 단위 | 사용자 경로 | 서버 API(`/api/v1` 하위) | 결과 |
 |---|---|---|---|
@@ -77,8 +77,7 @@ UI 근거는 설계 6.5.6절의 ui-ux-pro-max 채택 규칙 네 줄이며 기존
 
 ## 4. 완료 기준과 실행할 검사
 
-이 문서 commit의 완료는 SRS·설계·계획 세 파일에 소스 계약과 구현 수용 기준을 기록하는 것이다.
-아래는 **향후 화면 구현 완료 기준**이며 이 문서 변경에서 실행·통과한 검사가 아니다.
+화면 구현의 완료 기준은 아래와 같다. 실제 실행 결과와 미확인 범위는 7절에 기록한다.
 
 - 세 화면이 정확한 GET API를 호출하고 UI query가 upstream으로 새지 않는다.
   두 측정의 목록과 단건이 모두 열리며 새 상위 내비게이션 없이 진입할 수 있다.
@@ -111,9 +110,9 @@ UI 근거는 설계 6.5.6절의 ui-ux-pro-max 채택 규칙 네 줄이며 기존
 | PowerModeTransitionCost 원본과 create adapter(DB-FR-32) | 현 GET operation-cost-measurements와 다른 계약, 실제 HTTP API 없음. 전환 비용 결과로 위장 불가 |
 | 두 측정의 생성·삭제·재시도 UI | 현재 대상은 GET 목록/단건뿐. BEO mutation을 다른 측정에 재사용하지 않음 |
 | capacity 서버 query·역사 조회·재계산·실측 검증 | 현 API는 현재 rows만 제공. 원래 판단 기록과 key는 보존하되 새 API나 통계 계산을 발명하지 않음 |
-| 전체 라이브 무대 재설계, 새 내비 체계, 클러스터 배포 | 기존 운영자·측정/scheduler 진입점 재사용으로 충분하며 본 변경은 문서만 |
+| 전체 라이브 무대 재설계, 새 내비 체계, 클러스터 배포 | 기존 운영자·측정/scheduler 진입점 재사용으로 충분하며 읽기 전용 화면만 연결 |
 
-## 6. 이번 문서 작업의 확인과 전달
+## 6. 문서 설계 단계의 확인과 전달
 
 Go 소스·현재 화면·relay 정적 대조와 pinned gopls 정의 탐색을 수행했다.
 ui-ux-pro-max는 UX 두 질의와 Next.js 질의/구체 재질의까지 총 4회 수행했다.
@@ -122,3 +121,56 @@ Next.js의 첫 일반 질의는 0건, 구체 `error loading` 질의는 결과를
 경로 한정 commit은 `docs(dashboard): cover measurement and capacity APIs`로 하고
 이 계획, `docs/spec/dashboard/SRS.md`, `docs/design/dashboard/README.md`만 포함한다.
 사용자 미커밋 파일과 `docs/intent/decision-log.md`는 건드리지 않는다.
+
+## 7. 화면 구현과 통합 확인 (2026-10-30)
+
+`features/measurement-projections.tsx`는 두 측정의 namespace 목록·UID 상세를
+기존 읽기 컴포넌트로 연결한다. `lib/measurements.ts`의 실제 화면 함수로 경로,
+UID 차단, 단계 name 연결, d 누락/0, 문자열 X와 논리 위치 중복 제거를 검사한다.
+자료 찾기의 잘못된 전환 비용 선택은 두 실제 측정으로 교체했고 옛 URL은 API 미제공을
+안내한다. 다른 미지원 kind는 catch-all의 `notFound()`로 처리한다.
+
+`features/scheduler-capacity.tsx`와 `lib/capacity.ts`는 현재 행의 전체 입력·결과,
+서버 탐색 판정과 독립 settings 8필드 대조를 제공한다. 기존 scheduler의 원래 row key
+링크와 `/configuration?section=capacity` focus·양방향 링크를 연결한다.
+세 API의 relay 허용목록은 변경하지 않았고 UI query를 API 요청에 붙이지 않는다.
+공통 `MeasurementUnavailable`·`SchedulerUnavailable` 문장은 6.5.5절에 맞춰
+데이터 없음/기능 미지원이 아닌 조회 서비스 연결 확인으로 정정했다.
+
+`lib/measurements.test.ts` 4개, `lib/capacity.test.ts` 4개와 `lib/labels.test.ts`의
+추가 회귀는 실제 화면이 호출하는 순수 함수와 기존 relay 경계를 검사한다.
+PowerModeTransitionCost(DB-FR-32), raw Evidence, 생성·재시도·삭제·재계산 API는
+이번 구현에서 추가하지 않았다. SRS의 요구사항·수용 기준은 변경하지 않는다.
+
+### 검사 결과
+
+통합 후 Node 24, `nice -n 19`로 4절 명령을 실행했다.
+
+| 검사 | 결과 |
+|---|---|
+| `tsc --noEmit` | 통과 |
+| `eslint .` | 최초 JSX 배열의 key 2개 누락을 수정한 뒤 통과 |
+| `--experimental-strip-types --test lib/*.test.ts server/*.test.mjs` | 59개 통과, 실패·건너뜀 0 |
+| `next build` | production build 통과. `Asta Sans` fallback font override를 찾지 못했다는 기존 구성 경고 1건 |
+
+로컬 standalone production(3137)의 관리형 Chromium에서 실제 projection 형태의
+fixture를 브라우저 fetch 경계에 주입해 확인했다. 실서버·클러스터 응답을 확인한 것은 아니다.
+확인 항목은 두 목록·UID 상세, namespace 변경과 뒤로가기, 두 빈 목록,
+Measuring/Complete/Insufficient/Failed, d 누락/0/정밀 정수, 문자열 X, 미지정 공급 방식,
+단계 name 연결·미기록/미매칭 결과·조건 순서·원본 identity와 export 단위/조회 시각이다.
+401/403의 캐시 숨김, 404, 503과 연결 안내, 504 timeout의 `role=alert`,
+옛 전환 비용 URL의 API 미호출 및 미지원 kind의 404도 확인했다.
+
+용량 fixture는 양수/0 κ, Pending, Rejected(NonMonotone·MissingDispatchOccupancy),
+previous, 빈 행, 없는 key의 무대체, 8개 현재 설정 대조(세 탐색 입력 차이), grid의
+응답 순서·조기 종료·-1 sentinel, grid/bisection 미제공, settings만 실패해도 유지되는
+행 입력·결과를 확인했다. `?row=` 공유·새로고침과 브라우저 뒤로가기, 설정 구역 focus,
+Dialog 키보드 열기/닫기와 행 focus 복원, 375px에서 본문 넘침 없는 표 내부 가로 스크롤,
+기존 밝은/어두운 테마의 화면도 확인했다. fixture의 측정·용량·설정 요청은 모두 GET이며
+UI query를 포함하지 않았다. upstream query 차단은 실제 relay 함수 회귀로 별도 검사했다.
+
+실클러스터 GET·실제 자격증명/RBAC·네트워크 deadline·측정 및 capacity의 실데이터
+갱신은 미확인이다. 클러스터 변경·배포·설정 저장·측정 생성·재계산은 실행하지 않았다.
+`next dev`는 실행하지 않았으며 `chill-dashboard/AGENTS.md` 변경은 없었다.
+사용자의 루트 `.gitignore`, `AGENTS.md`, code-intelligence 문서와 `.agents/`는
+수정·커밋·원복하지 않았다.

@@ -16,6 +16,9 @@ import { RecordsPage, SettingsPage } from "@/features/hubs"
 import { SchedulerProfilesPage } from "@/features/scheduler-profiles"
 import { MeasurementPlansPage, MeasurementPlanPage } from "@/features/measurement-plans"
 import { MeasurementRequestPage } from "@/features/measurement-request"
+import { ProjectionMeasurementListPage, ProjectionMeasurementDetail, UnsupportedTransitionMeasurement } from "@/features/measurement-projections"
+import { isProjectionMeasurementKind } from "@/lib/measurements"
+import { SchedulerCapacityPage } from "@/features/scheduler-capacity"
 
 const catalog = ["workloads", "models", "preprocessors", "datasets"] as const
 type CatalogKind = typeof catalog[number]
@@ -53,8 +56,11 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if (head === "measurements" && route.length === 2 && name === "new") page = <MeasurementRequestPage />
   else if (head === "measurements" && route.length === 2 && name === "check") page = <MeasurementCheckPage />
   else if (head === "measurements" && route.length === 2 && name === "group") page = <MeasurementGroupPage />
+  else if (head === "measurements" && route.length === 2 && isProjectionMeasurementKind(name)) page = <ProjectionMeasurementListPage key={name} kind={name} />
   else if (head === "measurements" && route.length === 4 && route[1] === "batch-energy-optimizations") page = <MeasurementPlanPage key={`${route[2]}/${route[3]}`} namespace={route[2]} name={route[3]} />
-  else if (head === "measurements" && route.length === 4) page = <MeasurementDetail kind={route[1]} namespace={route[2]} name={route[3]} />
+  else if (head === "measurements" && route.length === 4 && route[1] === "profiling-runs") page = <MeasurementDetail namespace={route[2]} name={route[3]} />
+  else if (head === "measurements" && route.length === 4 && isProjectionMeasurementKind(route[1])) page = <ProjectionMeasurementDetail key={key} kind={route[1]} namespace={route[2]} name={route[3]} />
+  else if (head === "measurements" && route.length === 4 && route[1] === "power-mode-transition-costs") page = <UnsupportedTransitionMeasurement />
   else if (head === "observations" && route.length === 1) page = <ObservationsPage />
   else if (head === "changes" && route.length === 1) page = search.scope === "scheduler" ? <SchedulerHistoryPage settingsOnly /> : <ObservationsPage changes />
   else if (head === "scheduler" && route.length === 1) page = <SchedulerPage />
@@ -62,6 +68,7 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if (head === "scheduler" && route.length === 2 && name === "estimates") page = <SchedulerEstimatesPage />
   else if (head === "scheduler" && route.length === 2 && name === "load") page = <SchedulerLoadPage />
   else if (head === "scheduler" && route.length === 2 && name === "profiles") page = <SchedulerProfilesPage />
+  else if (head === "scheduler" && route.length === 2 && name === "capacity") page = <SchedulerCapacityPage />
   else if (head === "scheduler" && route.length === 2 && name === "history") page = <SchedulerHistoryPage />
   else if (head === "scheduler" && route.length === 2 && name === "power") page = <SchedulerPowerPage />
   else if (head === "scheduler" && route.length === 2 && name === "compare") page = <SchedulerComparePage />

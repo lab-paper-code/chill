@@ -1,0 +1,84 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import { evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementState, measurementUIDMismatch, occupancyNanos, occupancySupply, occupancyThroughput, operationSteps } from "./measurements.ts"
+import { parseSchedulerJSON, stringifySchedulerJSON } from "./scheduler.ts"
+import { relayPlan } from "./relay.ts"
+import { serverConfig } from "./server-config.ts"
+import { safeSource } from "./source-export.ts"
+import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
+
+const metadata = {namespace:"research",name:"sample",uid:"uid-1",resourceVersion:"42",creationTimestamp:"2026-10-30T00:00:00Z"}
+const references = {cr:{apiVersion:"edge.dacs.io/v1alpha1",kind:"OperationCostMeasurement",namespace:metadata.namespace,name:metadata.name,uid:metadata.uid},evidence:[{store:"evidence",key:"power-key"}]}
+const operation:OperationCostMeasurement = {
+  kind:"OperationCostMeasurement",metadata,node:"node-1",references,
+  conditions:{steps:[{name:"power",kind:"power",powerMode:"low"},{name:"prepare",kind:"prepare",batchEnergyOptimization:"beo"},{name:"idle",kind:"idle",idleDurationSeconds:5},{name:"remove",kind:"remove",batchEnergyOptimization:"beo"}]},
+  status:{phase:"Insufficient",reason:"UnknownVerdict",steps:[{name:"remove",key:"remove-key",verdict:"NewVerdict"},{name:"power",key:"power-key",verdict:"Accepted"},{name:"orphan",key:"",verdict:"Rejected"}]},
+}
+const occupancy:DispatchOccupancyMeasurement = {
+  kind:"DispatchOccupancyMeasurement",metadata,node:"node-1",references:{...references,cr:{...references.cr,kind:"DispatchOccupancyMeasurement"},evidence:[]},
+  conditions:{workload:"demo",batchEnergyOptimization:"beo",batch:4,warmupSeconds:2,durationSeconds:10,workers:8},status:{phase:"Complete"},
+}
+
+test("measurement routes accept only the two projection kinds and keep UI queries outside the upstream request", () => {
+  const config = serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
+  for (const kind of ["operation-cost-measurements","dispatch-occupancy-measurements"] as const) {
+    assert.equal(isProjectionMeasurementKind(kind),true)
+    for (const name of [undefined,"sample"]) {
+      const path = measurementPath(kind,"research",name)
+      assert.deepEqual(relayPlan("GET",path.split("/"),"",config),{path:`/api/${path}`,kind:"query",timeoutMs:config.queryTimeoutMs,bodyAllowed:false})
+      for (const search of ["?namespace=other","?uid=uid-1","?workload=uid","?row=key","?limit=10","?offset=0","?q=sample"]) {
+        assert.throws(() => relayPlan("GET",path.split("/"),search,config),/DashboardQueryInvalid/)
+      }
+      for (const method of ["POST","PUT","DELETE"]) assert.throws(() => relayPlan(method,path.split("/"),"",config),/DashboardMethodNotAllowed/)
+    }
+    assert.equal(measurementListHref(kind,"a b"),`/measurements/${kind}?namespace=a%20b`)
+    assert.equal(measurementHref(kind,{namespace:"a b",name:"a:b",uid:"u&1"}),`/measurements/${kind}/a%20b/a%3Ab?uid=u%261`)
+  }
+  for (const kind of ["unknown","power-mode-transition-costs","profiling-runs"]) assert.equal(isProjectionMeasurementKind(kind),false)
+  assert.equal(measurementUIDMismatch(metadata.uid,null),false)
+  assert.equal(measurementUIDMismatch(metadata.uid,metadata.uid),false)
+  assert.equal(measurementUIDMismatch(metadata.uid,"old-uid"),true)
+  assert.equal(relayPlan("GET",["v1","scheduler","capacity"],"",config).path,"/api/v1/scheduler/capacity")
+  for (const search of ["?row=key","?workload=uid"]) assert.throws(() => relayPlan("GET",["v1","scheduler","capacity"],search,config),/DashboardQueryInvalid/)
+})
+
+test("operation result joins retain condition order, missing results and unmatched status without inferring acceptance", () => {
+  const steps = operationSteps(operation)
+  assert.deepEqual(steps.map(step => step.name),["power","prepare","idle","remove","orphan"])
+  assert.equal(steps[0].results[0].key,"power-key")
+  assert.equal(steps[0].results[0].verdict,"Accepted")
+  assert.deepEqual(steps[1].results,[])
+  assert.deepEqual(steps[2].results,[])
+  assert.equal(steps[3].condition?.batchEnergyOptimization,"beo")
+  assert.equal(steps[3].results[0].verdict,"NewVerdict")
+  assert.equal(steps[4].condition,undefined)
+  assert.deepEqual(operationSteps({...operation,status:{phase:"Complete"}}).map(step => step.results),[[],[],[],[]])
+})
+
+test("occupancy preserves missing and zero d, string throughput, unspecified supply and logical location identity", () => {
+  assert.equal(occupancyNanos(occupancy.status.perRequestNanos),"결과 없음")
+  assert.equal(occupancyNanos(0),"0 ns/request")
+  assert.equal(occupancyNanos(9007199254740993n),"9007199254740993 ns/request")
+  assert.equal(occupancyThroughput("0.0000012300"),"0.0000012300 req/s")
+  assert.equal(occupancyThroughput("0"),"0 req/s")
+  for (const value of [undefined,""]) assert.equal(occupancyThroughput(value),"결과 없음")
+  assert.equal(occupancySupply(occupancy.conditions.supplyMode),"기록되지 않았어요")
+  assert.equal(occupancySupply("closed-loop"),"고정 동시 요청")
+  assert.equal(occupancySupply("poisson"),"포아송 공급")
+  assert.equal(occupancySupply("new-mode"),"new-mode")
+  assert.deepEqual(evidenceLocations([{store:"a",key:"k"},{store:"b",key:"k"},{store:"a",key:"k"}],{store:"b",key:"k"}),[{store:"a",key:"k"},{store:"b",key:"k"}])
+  assert.deepEqual(evidenceLocations([]),[])
+  const decoded = parseSchedulerJSON('{"perRequestNanos":9007199254740993,"throughput":"1.2300"}') as {perRequestNanos:bigint;throughput:string}
+  assert.equal(decoded.perRequestNanos,9007199254740993n)
+  assert.equal(occupancyThroughput(decoded.throughput),"1.2300 req/s")
+  const exported = stringifySchedulerJSON(safeSource({kind:occupancy.kind,namespace:metadata.namespace,expectedUID:metadata.uid,queriedAt:metadata.creationTimestamp,units:{perRequestNanos:"ns/request"},source:decoded,authorization:"Bearer secret"}))
+  assert.match(exported,/9007199254740993/)
+  assert.match(exported,/ns\/request/)
+  assert.doesNotMatch(exported,/Bearer secret/)
+})
+
+test("all measurement terminal and unknown phases carry explicit sentences and non-color-only tone semantics", () => {
+  assert.deepEqual(["Measuring","Complete","Insufficient","Failed",undefined,"Unknown"].map(phase => measurementState(phase)),[
+    {label:"측정 중이에요",tone:"info"},{label:"측정이 끝났어요",tone:"ok"},{label:"판단할 근거가 부족해요",tone:"warn"},{label:"측정을 끝내지 못했어요",tone:"fail"},{label:"측정 상태를 확인할 수 없어요",tone:"idle"},{label:"측정 상태를 확인할 수 없어요",tone:"idle"},
+  ])
+})

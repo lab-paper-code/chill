@@ -115,3 +115,15 @@ export type MeasurementPlanList = {items:MeasurementPlan[]|null}
 export type MeasurementMutation = {request:"Accepted"|"NOT_SUBMITTED"|"DeletionRequested"|string;task:MeasurementPlan|null;evidenceDeleted?:boolean;deletedEvidence?:{store:string;key:string}[]}
 // internal/operatorconsole/batch_energy_optimization_preflight_view.go: plan only when resolves, reason only when not.
 export type MeasurementPreflight = {apiVersion:string;kind:string;readAt:string;campaign:{namespace:string;name:string;spec:MeasurementPlanSpec};resolves:boolean;reason?:string;plan?:{schemaVersion:string;shared:CurvePlanSpec}}
+
+// internal/serving/httpapi/measurement_projections.go: safe projections, not full CRs.
+export type MeasurementEvidenceLocation = {store:string;key:string}
+export type MeasurementProjectionMetadata = {namespace:string;name:string;uid:string;resourceVersion:string;creationTimestamp:string}
+export type MeasurementProjectionReferences = {cr:{apiVersion:string;kind:string;namespace:string;name:string;uid:string};evidence:MeasurementEvidenceLocation[]}
+export type MeasurementProjectionBase = {metadata:MeasurementProjectionMetadata;node:string;references:MeasurementProjectionReferences}
+export type OperationCondition = {name:string;kind:string;powerMode?:string;batchEnergyOptimization?:string;idleDurationSeconds?:number}
+export type OperationStepStatus = {name:string;key:string;verdict:string}
+export type OperationCostMeasurement = MeasurementProjectionBase & {kind:"OperationCostMeasurement";conditions:{steps:OperationCondition[]};status:{phase?:string;reason?:string;steps?:OperationStepStatus[]}}
+export type DispatchOccupancyMeasurement = MeasurementProjectionBase & {kind:"DispatchOccupancyMeasurement";conditions:{workload:string;batchEnergyOptimization:string;batch:number;supplyMode?:string;warmupSeconds:number;durationSeconds:number;workers:number};status:{phase?:string;reason?:string;powerMode?:string;perRequestNanos?:WireInteger;throughput?:string;result?:MeasurementEvidenceLocation}}
+export type MeasurementProjection = OperationCostMeasurement | DispatchOccupancyMeasurement
+export type MeasurementProjectionList = {items:MeasurementProjection[]|null}

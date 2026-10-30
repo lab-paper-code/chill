@@ -35,10 +35,10 @@ SCH-37, DB-INT-07~08, DB-NFR-07, DB-FR-35~49를 이 절들에서 추적한다.
 지원하지 않는 측정 종류의 일반 `연결 준비 중` 페이지는 제거한다(DB-FR-49).
 지원하는 API만 명시적으로 연결하고, 데이터 없음과 기능 미지원은 해당 영역에서 구분한다.
 화면의 개발 상태를 CHILL의 실제 운영 상태로 표시하지 않는다.
-2026-10-30 API 누락 보완의 **설계만** 6.5절과
-[구현 계획](../../plans/2026-10-30-dashboard-api-coverage.md)에 추가했다(DB-FR-53~55).
-동작 비용·분배 점유시간 목록/단건 및 용량 행은 서버와 relay에 이미 있으며 화면은 미연결이다.
-이 설계는 아래 T5/T6 이력과 별도이며 구현 완료나 실클러스터 검증을 뜻하지 않는다.
+2026-10-30 API 누락 보완은 6.5절과
+[구현 계획](../../plans/2026-10-30-dashboard-api-coverage.md)에 기록했다(DB-FR-53~55).
+동작 비용·분배 점유시간 목록/단건 및 용량 행 화면을 기존 서버·relay GET에 연결했다.
+아래 T5/T6 이력과 별도이며 통합 검사·브라우저 확인 범위는 계획 7절을 따른다. 실클러스터 수용을 뜻하지 않는다.
 전체 SRS의 기능 수용은 각 ChillServer 조회를 연결한 뒤 실제 흐름으로 검증한다.
 
 기존 `/scheduler`, `/scheduler/candidates`, `/scheduler/load`의 판단, 후보와 부하 표시는
@@ -764,7 +764,7 @@ export const explain = (code: string) => codeText[code] ?? ["새 상태의 설�
 - HTTP 상태만 있는 오류(본문에 code가 없는 401, 403, 404, 409, 429, 502, 503, 504)는 `read-region.tsx`의 상태별 문장을 계속 쓴다.
 - `measurement-plans.tsx`의 `failureLabels`와 `outcomeLabels`, `read-pages.tsx`의 `providers` 표는 이 모듈로 옮긴다. 측정 결과는 저장된 원본 값(`MinimumFound/LocalMinimum` 등)을 그대로 키로 쓴다. `CurvePlanResolutionFailed`의 문장은 ChillServer가 계속 다시 시도한다는 뜻을 담는다.
 
-### 6.5 측정 API와 용량 행 연결 설계 (2026-10-30, 구현 전)
+### 6.5 측정 API와 용량 행 연결 (2026-10-30)
 
 대상은 DB-FR-45, DB-FR-53~55다. 새 최상위 내비게이션은 추가하지 않는다.
 `/measurements`의 `더 보기`에 **동작 비용 측정**, **분배 점유시간 측정**을,

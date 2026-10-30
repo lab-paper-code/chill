@@ -69,7 +69,7 @@ export function MeasurementRunsPage() {
       <RowDialog open={filterOpen} onOpenChange={setFilterOpen} label="찾기 조건" value={[params.get("q"),condition&&(runFilters.find(([value])=>value===condition)?.[1]??"이전 상세 조건")].filter(Boolean).join(" · ")||"전체"} title="찾기 조건" description="이름과 상태로 측정을 찾아요.">
         <RunFilterForm done={()=>setFilterOpen(false)}/>
       </RowDialog>
-      <RowDialog label="이전 측정 직접 찾기" hint="정확한 등록 이름을 알 때" title="이전 측정 직접 찾기" description="이전 자료의 정확한 참조를 알고 있을 때만 사용하세요. 측정 계획 결과와 전환 비용은 아직 목록으로 볼 수 없어요."><EvidenceLookup/></RowDialog>
+      <RowDialog label="이전 측정 직접 찾기" hint="정확한 등록 이름을 알 때" title="이전 측정 직접 찾기" description="측정 종류와 원본 참조를 알 때 사용하세요. 동작 비용과 분배 점유시간은 측정 화면의 더 보기에서도 찾을 수 있어요."><EvidenceLookup/></RowDialog>
       <Row href="/measurements/check" label="측정 계획 확인" hint="기존 계획의 조건만 검사해요"/>
       {data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 보이는 측정 목록을 파일로 받아요."><SourceExport value={{conditions:{namespace,...Object.fromEntries(allowed)},source:data}} filename="chill-profiling-runs.json"/><SourceJSON inline value={data}/></RowDialog>}
     </Rows>
@@ -121,7 +121,7 @@ function EvidenceLookup() {
   const {config}=useSession();const router=useRouter()
   const [kind,setKind]=React.useState("profiling-runs"),[namespace,setNamespace]=React.useState(config.namespace),[name,setName]=React.useState(""),[uid,setUID]=React.useState("")
   return <form className="grid gap-4" onSubmit={event=>{event.preventDefault();router.push(`/measurements/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${uid?`?uid=${encodeURIComponent(uid)}`:""}`)}}>
-    <fieldset className="grid gap-2"><legend className="mb-1">자료 종류</legend>{[["profiling-runs","측정 근거"],["batch-energy-optimizations","측정 계획 결과"],["power-mode-transition-costs","전환 비용"]].map(([value,label])=><label key={value} className="flex items-center gap-2"><input type="radio" name="kind" checked={kind===value} onChange={()=>setKind(value)}/>{label}</label>)}</fieldset>
+    <fieldset className="grid gap-2"><legend className="mb-1">자료 종류</legend>{[["profiling-runs","측정 근거"],["batch-energy-optimizations","측정 계획 결과"],["operation-cost-measurements","동작 비용 측정"],["dispatch-occupancy-measurements","분배 점유시간 측정"]].map(([value,label])=><label key={value} className="flex items-center gap-2"><input type="radio" name="kind" checked={kind===value} onChange={()=>setKind(value)}/>{label}</label>)}</fieldset>
     <label className="grid gap-1.5">저장 영역<Input value={namespace} onChange={event=>setNamespace(event.target.value)} required/></label>
     <label className="grid gap-1.5">등록 이름<Input value={name} onChange={event=>setName(event.target.value)} required/></label>
     <label className="grid gap-1.5">원본 UID (선택)<Input value={uid} onChange={event=>setUID(event.target.value)}/></label>
@@ -239,12 +239,11 @@ function PassportSummary({data}:{data:Passport}) {
   </>
 }
 
-export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:string;name:string}) {
+export function MeasurementDetail({namespace,name}:{namespace:string;name:string}) {
   const expectedUID=useSearchParams().get("uid")
-  const passport=useChillQuery<Passport>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`,{enabled:kind==="profiling-runs"})
+  const passport=useChillQuery<Passport>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`)
   const back:[string,string]=[`/measurements/runs?namespace=${encodeURIComponent(namespace)}`,"개별 측정 회차"]
-  if(kind==="profiling-runs"){
-    const data=passport.data,other=!!data&&!!expectedUID&&data.run.uid!==expectedUID
+  const data=passport.data,other=!!data&&!!expectedUID&&data.run.uid!==expectedUID
     return <Screen back={back} status={other?<StatusBadge tone="fail">다른 측정</StatusBadge>:data?<StatusBadge tone={verified(data)?"ok":"warn"}>{verified(data)?"검증된 측정":"검증 확인 필요"}</StatusBadge>:undefined}
       title={!data?`${name} 측정 결과`:other?"같은 이름으로 다시 등록된 다른 측정이에요":`요청 1건을 평균 ${num(data.measurement.runtime.latencyMilliseconds.mean)}ms에 처리했어요`}
       lede={other?"이전 자료로 사용할 수 없어요.":data?measuredWhat(data):name}>
@@ -254,12 +253,10 @@ export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:s
             <DataTable data={data.measurement.runtime.nativeSamples} columns={sampleColumns}/>
           </RowDialog>}
           <RowDialog label="원본 자료" hint="실행 조건, 검증, 지연, 전력의 원래 값" title="측정 원본 자료" description="측정 전력은 현재 운영 소비가 아니에요.">
-          <SourceExport value={{conditions:{kind,namespace,name,expectedUID},source:data}} filename={`chill-passport-${name}.json`}/>
+          <SourceExport value={{conditions:{kind:"profiling-runs",namespace,name,expectedUID},source:data}} filename={`chill-passport-${name}.json`}/>
           <SourceJSON inline title="실행 조건·검증·지연·전력 원본" value={data}/>
         </RowDialog></Rows>}
       </QueryGate>
     </Screen>
-  }
-  return <Screen back={back} status={<StatusBadge tone="idle">연결 준비 중</StatusBadge>} title="이 자료는 아직 볼 수 없어요" lede="이 자료 종류는 연결을 준비하고 있어요."/>
 }
 
