@@ -229,11 +229,11 @@ export function campaignConclusion(run:Experiment):string {
     if(differentMeasurementRules(pair.chill,pair.control).length||stageSeconds(pair.chill)!==stageSeconds(pair.control))missing++
     for(const row of services) {
       if(row.a.length!==1||row.b.length!==1){missing++;continue}
-      const left=row.a[0],right=row.b[0],as=resultMetric(left,"success"),bs=resultMetric(right,"success"),ap=finite(resultMetric(left,"p95").value),bp=finite(resultMetric(right,"p95").value)
-      if(as.key!==bs.key||as.value===null||bs.value===null||ap===null||bp===null){missing++;continue}
-      if(as.value>bs.value||ap<bp)better++
-      if(as.value<bs.value||ap>bp)worse++
-      if(as.value-bs.value<worstSuccess){worstSuccess=as.value-bs.value;successAt=`${row.name} (${stageLoadLabel(pair.chill,run)})`}
+      const left=row.a[0],right=row.b[0],as=resultMetric(left,"success"),bs=resultMetric(right,"success"),av=finite(as.value),bv=finite(bs.value),ap=finite(resultMetric(left,"p95").value),bp=finite(resultMetric(right,"p95").value)
+      if(as.key!==bs.key||av===null||bv===null||ap===null||bp===null){missing++;continue}
+      if(av>bv||ap<bp)better++
+      if(av<bv||ap>bp)worse++
+      if(av-bv<worstSuccess){worstSuccess=av-bv;successAt=`${row.name} (${stageLoadLabel(pair.chill,run)})`}
       if(ap-bp>worstLatency){worstLatency=ap-bp;latencyAt=`${row.name} (${stageLoadLabel(pair.chill,run)})`}
     }
   }

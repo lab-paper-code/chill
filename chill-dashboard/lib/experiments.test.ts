@@ -352,3 +352,11 @@ test("operator conclusion includes every paired stage and reports energy losses 
   assert.match(campaignConclusion(run),/감소 1 \/ 증가 1구간/)
   assert.equal(stageLoadLabel(run.stages[0],run),"요청률 미기록")
 })
+
+test("operator conclusion names the worst service loss and does not treat missing success as zero",()=>{
+  const make=(id:string,success:unknown,p95:number):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:100,requests:{camera:{deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
+  const run={stages:[make("full-E5-1",.8,20),make("static-E5-1",.9,10)]} as Experiment
+  assert.match(campaignConclusion(run),/최대 성공률 하락 -10.00%p: camera/)
+  assert.match(campaignConclusion(run),/최대 p95 증가 10.00 ms: camera/)
+  assert.match(campaignConclusion({...run,stages:[make("full-E5-1",null,20),run.stages[1]]}),/확인이 부족/)
+})
