@@ -241,6 +241,7 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
     seen, totals = set(), Counter()
     unkeyed, uid_errors = defaultdict(list), defaultdict(list)
     boundary_matches = defaultdict(dict)
+    identities = defaultdict(set)
     for _, row, ref in _rows(sources, errors):
         uid = row.get('workloadUID')
         if not isinstance(uid, str) or not uid:
@@ -265,6 +266,8 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
             except ValueError as exc:
                 _error(uid_errors[uid], 'HTTP row receivedAt: ' + str(exc), ref)
                 continue
+            definition = row.get('definitionID')
+            identities[uid].add(definition if isinstance(definition, str) and definition else None)
         signature = _digest(row)
         if signature in seen:
             totals[(uid, 'duplicates')] += 1
@@ -373,6 +376,7 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
                    'completenessMeaning': 'complete covers archive provenance and parsing; withoutUnambiguousHTTPFinal/unfinished and unresolvedNativeOnly separately expose unsettled HTTP/unknown-receipt identities.',
                    'timingMeaning': 'HTTP final fields are unmodified; native supplements are separate physical facts, never replacements.'}
         results[uid] = {'finals': finals, 'finalRefs': final_refs, 'summary': summary,
+                        'identities': [{'workloadUID': uid, 'definitionID': value} for value in sorted(identities[uid], key=lambda value: value or '')],
                         'receivedAtNS': received_at_ns, 'sources': sources, 'errors': own_errors}
     _REQUEST_CACHE = key, wanted, results, sources, errors, index.get('_observedAbsences', [])
     return results

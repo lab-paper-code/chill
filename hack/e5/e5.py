@@ -607,6 +607,7 @@ def self_check():
     self_check_restore_go()
     self_check_failure_selection(analysis)
     self_check_client_jsonl(analysis)
+    self_check_publication_metadata()
     print('PASS E5 receive-origin SLO, scheduled reference, generator quality and full planned issuance; offline only')
 
 def self_check_factor():
@@ -2604,8 +2605,173 @@ def publication_measurements(binding, power):
         'measurementRules':{'harnessRepositoryCommit':config.get('harnessRepositoryCommit'),
             'energyCoverage':policy,'evidenceSource':'api','gcMeaning':'runtime-metrics-delta'}}
 
+SUBSTAGE_LIMITATION = 'Substage from/to are frozen scheduled intervals anchored to each recorded producer start, not observed transition events; absent producer anchors remain null.'
 
-def publish_experiment(root, identifier, store_config, stages, status):
+
+def publication_metadata(binding, phase, name, snapshot, identity_source, phase_source, observed=()):
+    """Project only frozen identities/schedules; never query a current Workload."""
+    reasons = {}
+    configured = [w for w in binding['config'].get('workloads', []) if w.get('name') == name]
+    definitions = [w for w in snapshot.get('workloads', []) if w.get('name') == name]
+    uid = definition_id = None
+    if len(configured) != 1 or len(definitions) != 1:
+        reasons['identity'] = 'Historical workload identity missing or mixed'
+    else:
+        frozen, definition = configured[0], definitions[0]
+        try:
+            values = (definition['uid'], definition['generation'], definition['model']['uid'],
+                      definition['model']['generation'], definition['preprocessor']['uid'],
+                      definition['preprocessor']['generation'])
+            if any(value is None or value == '' for value in values):
+                raise KeyError('definition identity')
+            candidate = '/'.join(map(str, values))
+            if (any(frozen.get(key) != definition.get(key) for key in ('uid', 'generation'))
+                    or frozen.get('definitionID', candidate) != candidate
+                    or any(row.get('workloadUID') != definition['uid'] or row.get('definitionID') != candidate for row in observed)):
+                reasons['identity'] = 'Historical workload/definition identity mixed or missing in the KPI population'
+            elif identity_source is None:
+                reasons['identity'] = 'Historical identity source not published'
+            else:
+                uid, definition_id = definition['uid'], candidate
+        except (KeyError, TypeError):
+            reasons['identity'] = 'Historical definition identity not recorded'
+    reasons.setdefault('identity', None)
+    parts = (phase.get('stage') or {}).get('parts')
+    substages = None
+    reasons['substages'] = 'Frozen schedule not recorded' if parts is None else None
+    reasons['alpha'] = 'Frozen alpha schedule not recorded'
+    if parts is not None:
+        if not isinstance(parts, list) or not parts:
+            raise ValueError('Nonempty frozen parts required')
+        raw = module('publication_time', HERE/'e5-raw.py')
+        anchor = (phase.get('starts', {}).get(name) or {}).get('at')
+        start = raw._time(anchor) if anchor is not None else None
+        def stamp(offset):
+            if start is None:
+                return None
+            seconds, nanos = divmod(start + offset, 1_000_000_000)
+            return dt.datetime.fromtimestamp(seconds, dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + f'.{nanos:09d}Z'
+        substages, base, seen = [], 0, set()
+        for part in parts:
+            label, seconds = part.get('id'), part.get('seconds')
+            if not isinstance(label, str) or not label or label in seen or not positive(seconds):
+                raise ValueError('Frozen parts require unique IDs and positive finite seconds')
+            seen.add(label)
+            stop = base + round(seconds * 1e9)
+            if stop <= base:
+                raise ValueError('Frozen part must have a positive nanosecond duration')
+            alpha = part.get('alpha')
+            if alpha is not None:
+                # E5 freezes canonical keys; demo freezes the existing producer aliases.
+                if not isinstance(alpha, dict):
+                    raise ValueError('Frozen alpha must be a workload map')
+                keys = set(PRODUCER_ALIASES.values()) if set(alpha) == set(PRODUCER_ALIASES.values()) else set(PRODUCER_ALIASES)
+                if (set(alpha) != keys
+                        or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in alpha.values())):
+                    raise ValueError('Frozen alpha requires exact workload names/aliases and finite nonnegative values')
+                key = name if name in alpha else next((alias for alias, canonical in PRODUCER_ALIASES.items() if canonical == name), None)
+                if key not in alpha:
+                    raise ValueError('KPI workload does not match frozen alpha')
+                alpha = alpha[key]
+            substages.append({'id': label, 'alpha': alpha, 'startOffsetNanos': base, 'endOffsetNanos': stop,
+                              'from': stamp(base), 'to': stamp(stop), 'source': phase_source})
+            base = stop
+        duration = (phase.get('stage') or {}).get('seconds')
+        if not positive(duration) or base != round(duration * 1e9):
+            raise ValueError('Frozen parts must cover the producer window')
+        reasons['alpha'] = None
+        if any(p['alpha'] is None for p in substages):
+            reasons['alpha'] = ('Direct request rates configured; alpha not recorded'
+                                if any(p.get('alpha') is None and 'rates' in p for p in parts)
+                                else 'Alpha not recorded in frozen schedule')
+        reasons['producerAnchor'] = 'Actual workload producer start not recorded (including zero-load stages)' if start is None else None
+        reasons['substageSource'] = 'Frozen phase source not published' if phase_source is None else None
+    return {'workloadUID': uid, 'definitionID': definition_id,
+            'identitySource': identity_source if uid is not None else None, 'substages': substages}, reasons
+
+def self_check_publication_metadata():
+    """Small offline contract check shared by both publisher self-checks."""
+    from unittest.mock import patch
+    names = list(PRODUCER_ALIASES.values())
+    definitions = [{'name': name, 'uid': 'historical-'+str(i), 'generation': 2,
+                    'model': {'uid': 'm', 'generation': 3}, 'preprocessor': {'uid': 'p', 'generation': 4}}
+                   for i, name in enumerate(names)]
+    bound = {'config': {'workloads': definitions}}
+    snapshot = {'workloads': definitions}
+    source = {'store': 'private-evidence', 'key': 'serving/experiments.v1alpha1/new/raw/snapshot.json'}
+    alpha = dict(zip(names, (.2, .4, .8)))
+    phase = {'stage': {'seconds': 3, 'parts': [{'id': 'low', 'seconds': 1, 'alpha': alpha},
+                                             {'id': 'high', 'seconds': 2, 'alpha': alpha}]},
+             'starts': {names[0]: {'at': '2026-10-30T00:00:00.123456789Z'},
+                        names[1]: {'at': '2026-10-30T00:00:02Z'}}}
+    original = copy.deepcopy((bound, phase, snapshot))
+    for i, name in enumerate(names):
+        value, reasons = publication_metadata(bound, phase, name, snapshot, source, source)
+        assert value['workloadUID'] == 'historical-'+str(i) and value['definitionID'] == f'historical-{i}/2/m/3/p/4'
+        assert value['identitySource'] == source and value['substages'][1]['source'] == source
+        assert [p['alpha'] for p in value['substages']] == [alpha[name]]*2
+        assert [(p['startOffsetNanos'], p['endOffsetNanos']) for p in value['substages']] == [(0, 1_000_000_000), (1_000_000_000, 3_000_000_000)]
+        if i == 0:
+            assert value['substages'][1]['from'] == '2026-10-30T00:00:01.123456789Z'
+        elif i == 1:
+            assert value['substages'][0]['from'] == '2026-10-30T00:00:02.000000000Z'
+        else:
+            assert value['substages'][0]['from'] is value['substages'][0]['to'] is None and reasons['producerAnchor']
+    assert (bound, phase, snapshot) == original
+    alias_phase = copy.deepcopy(phase)
+    alias_phase['stage'] = {'seconds': 1, 'parts': [{'id': 'one', 'seconds': 1, 'alpha': dict(zip(PRODUCER_ALIASES, (.2, .4, .8)))}]}
+    for alias, name in PRODUCER_ALIASES.items():
+        value, _ = publication_metadata(bound, alias_phase, name, snapshot, source, source)
+        assert value['substages'][0]['alpha'] == alias_phase['stage']['parts'][0]['alpha'][alias]
+    del alias_phase['stage']['parts'][0]['alpha']
+    alias_phase['stage']['parts'][0]['rates'] = dict.fromkeys(names, 1)
+    value, reasons = publication_metadata(bound, alias_phase, names[0], snapshot, source, source)
+    assert value['substages'][0]['alpha'] is None and 'Direct request rates' in reasons['alpha']
+    zero = copy.deepcopy(alias_phase)
+    zero['stage']['parts'][0]['alpha'] = dict.fromkeys(names, 0)
+    value, reasons = publication_metadata(bound, zero, names[2], snapshot, source, source)
+    assert value['substages'][0]['alpha'] == 0 and value['substages'][0]['from'] is None and reasons['producerAnchor']
+    for observed in ([{'workloadUID': 'historical-0', 'definitionID': 'other'}],
+                     [{'workloadUID': 'historical-0'}], [{'workloadUID': 'recreated', 'definitionID': 'other'}]):
+        value, reasons = publication_metadata(bound, phase, names[0], snapshot, source, source, observed)
+        assert value['workloadUID'] is value['definitionID'] is value['identitySource'] is None and reasons['identity']
+    for missing in ({}, {'workloads': definitions + definitions[:1]}, {'workloads': [{'name': names[0], 'uid': 'historical-0'}]}):
+        value, reasons = publication_metadata(bound, phase, names[0], missing, source, source)
+        assert value['definitionID'] is None and reasons['identity']
+    value, reasons = publication_metadata(bound, {}, names[0], snapshot, None, None)
+    assert value['substages'] is value['identitySource'] is None and reasons['substages'] and reasons['identity']
+    for change in ('alpha', 'duration', 'id', 'anchor', 'window'):
+        bad = copy.deepcopy(phase)
+        if change == 'alpha':
+            bad['stage']['parts'][0]['alpha'][names[0]] = float('nan')
+        elif change == 'duration':
+            bad['stage']['parts'][0]['seconds'] = -1
+        elif change == 'id':
+            bad['stage']['parts'][1]['id'] = 'low'
+        elif change == 'anchor':
+            bad['starts'][names[0]]['at'] = 'not-a-timestamp'
+        else:
+            bad['stage']['seconds'] = 4
+        try:
+            publication_metadata(bound, bad, names[0], snapshot, source, source)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Invalid publication metadata accepted: '+change)
+    raw = module('metadata_request_check', HERE/'e5-raw.py')
+    rows = [{'kind': 'final', 'workloadUID': 'historical-0', 'requestID': 'r',
+             'definitionID': definition, 'receivedAt': '2026-10-30T00:00:00Z'} for definition in ('one', 'two', None)]
+    with patch.object(raw, '_root', return_value=Path('/fixture')), \
+         patch.object(raw, '_manifest', return_value=({}, [], [])), patch.object(raw, '_population'), \
+         patch.object(raw, '_rows', return_value=iter(('requests', row, {}) for row in rows)):
+        indexed = raw.index_requests('/fixture', 'historical-0', '2026-10-30T00:00:00Z', '2026-10-30T00:00:03Z', ['r'])
+        assert not indexed['finals'] and {row['definitionID'] for row in indexed['identities']} == {None, 'one', 'two'}
+    print('PASS both publisher metadata: historical/mixed/missing identity, canonical/alias alpha, direct rates, multipart nanosecond offsets, staggered/absent anchors; offline only')
+
+
+
+
+def publish_experiment(root, identifier, store_config, stages, status, *, binding=None):
     """Publish PRIVATE raw inputs first, then one immutable serving summary.
 
     CLI: publish --experiment-id ID --store-config /private/store.json.
@@ -2637,10 +2803,47 @@ def publish_experiment(root, identifier, store_config, stages, status):
                 empty.append(relative)
                 continue
             objects.append({'store':store,'key':prefix+'raw/'+relative,'localPath':str(path)})
+    if binding is not None:
+        snapshot, identity_source = {}, None
+        scheduler = binding['config'].get('inputs', {}).get('scheduler')
+        if scheduler and Path(scheduler).is_file():
+            path = Path(scheduler)
+            if path.resolve() == Path(store_config).resolve() or path.is_symlink():
+                raise ValueError('Private configuration/symlink cannot be an identity source')
+            ref(path)
+            captured = load(path)
+            snapshot = captured.get('state', captured).get('snapshot', {})
+            identity_source = {'store': store, 'key': prefix+'raw/frozen/scheduler.json'}
+            objects.append({**identity_source, 'localPath': str(path)})
+        sources = {Path(obj['localPath']).resolve(): {key: obj[key] for key in ('store', 'key')} for obj in objects}
+        raw = module('publication_requests', HERE/'e5-raw.py')
+        analysis = module('publication_analysis', D2/'analyze_before.py')
+        for stage in stages:
+            phase_path = stage.get('_phase', stage['_folder']/'phase.json')
+            phase = load(phase_path)
+            rows = stage['kpis'].get('requests', stage['kpis'].get('workloads', {}))
+            configured = {w['name']: w for w in binding['config'].get('workloads', [])}
+            ids = {}
+            for name in rows:
+                path = stage['_folder']/(name+'-client.jsonl')
+                clients = analysis.Inputs(stage['_folder']).jsonlines(path) if path.exists() else []
+                if name in configured and configured[name].get('uid'):
+                    ids[configured[name]['uid']] = [row['requestID'] for row in clients if row.get('requestID') and 'scheduledOffsetNs' in row]
+            indexes = raw.iter_request_indexes(stage['_folder'], ids, phase['startUTC'], phase['endUTC'], ids, approved_root=root) if ids else {}
+            for name, row in rows.items():
+                indexed = indexes.get(configured.get(name, {}).get('uid'), {})
+                metadata, reasons = publication_metadata(binding, phase, name, snapshot, identity_source,
+                    sources.get(Path(phase_path).resolve()), indexed.get('identities', ()))
+                if row.get('offered') and (indexed.get('errors') or not indexed.get('identities')):
+                    metadata.update(workloadUID=None, definitionID=None, identitySource=None)
+                    reasons['identity'] = 'Historical KPI population identity coverage incomplete; frozen target is not an observed definition'
+                row.update(metadata)
+                row.setdefault('missingReasons', {}).update(reasons)
+            stage['kpis']['limitations'] = [*stage['kpis'].get('limitations', []), SUBSTAGE_LIMITATION]
     inventory=destination/'raw-inventory.json'
     save(inventory,{'schemaVersion':'serving-experiment-raw-inventory.v1alpha1','emptyFiles':empty,'objects':[{'store':row['store'],'key':row['key']} for row in objects]})
     objects.append({'store':store,'key':prefix+'raw/inventory.json','localPath':str(inventory)})
-    summary={'schemaVersion':'serving-experiment.v1alpha1','id':identifier,'from':min((stage['from'] for stage in stages),key=lambda value:dt.datetime.fromisoformat(value.replace('Z','+00:00'))),'to':max((stage['to'] for stage in stages),key=lambda value:dt.datetime.fromisoformat(value.replace('Z','+00:00'))),'status':status,'stages':[{key:value for key,value in stage.items() if key!='_folder'} for stage in stages],'sources':[{'store':row['store'],'key':row['key']} for row in objects]}
+    summary={'schemaVersion':'serving-experiment.v1alpha1','id':identifier,'from':min((stage['from'] for stage in stages),key=lambda value:dt.datetime.fromisoformat(value.replace('Z','+00:00'))),'to':max((stage['to'] for stage in stages),key=lambda value:dt.datetime.fromisoformat(value.replace('Z','+00:00'))),'status':status,'stages':[{key:value for key,value in stage.items() if not key.startswith('_')} for stage in stages],'sources':[{'store':row['store'],'key':row['key']} for row in objects]}
     summary_path=destination/'summary.json';save(summary_path,summary)
     manifest=destination/'manifest.json'
     save(manifest,{'objects':objects,'summary':{'store':store,'key':prefix+'summary.json','localPath':str(summary_path)}})
@@ -2675,7 +2878,7 @@ def publish_campaign(binding, root, identifier, store_config):
         kpis['schedulerSettings']=result['schedulerSettings']
         kpis['missingReasons']['schedulerSettings']=None if result['schedulerSettings'] is not None else 'Binding does not contain frozen scheduler settings'
         stages.append({'id':folder.name,'from':phase['startUTC'],'to':phase['endUTC'],'kpis':kpis,'_folder':folder})
-    return publish_experiment(root,identifier,store_config,stages,result['status'])
+    return publish_experiment(root,identifier,store_config,stages,result['status'],binding=bound)
 
 
 def check_preparation():

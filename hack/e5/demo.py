@@ -943,9 +943,9 @@ def publish(e5, binding, out, identifier, store_config):
             kpis['parts'] = summary['parts']
         kpis['missingReasons']['schedulerSettings'] = None if kpis['schedulerSettings'] is not None else 'Binding does not contain frozen scheduler settings'
         stage = next(row for row in binding['schedule'] if row['id'] == summary['stage'])
-        stages.append({'id': summary['stage'], 'from': summary['startUTC'], 'to': summary['endUTC'], 'kpis': kpis, '_folder': stage_folder(out, stage)})
+        stages.append({'id': summary['stage'], 'from': summary['startUTC'], 'to': summary['endUTC'], 'kpis': kpis, '_folder': stage_folder(out, stage), '_phase': phase_path(stage_folder(out, stage))})
     status = 'OPERATIONAL_DEMO_COMPLETE' if len(stages) == len(binding['schedule']) and all(stage['kpis']['status'] == 'DRAINED_NOT_EVALUATED' for stage in stages) else 'PARTIAL'
-    return e5.publish_experiment(out, identifier, store_config, stages, status)
+    return e5.publish_experiment(out, identifier, store_config, stages, status, binding=binding)
 
 
 
@@ -1091,6 +1091,7 @@ def self_check():
         else:
             raise AssertionError('Missing strict G0 evidence accepted')
         e5.self_check_g0()
+        e5.self_check_publication_metadata()
         assert gateway['measurementSLO']['plc'] == {'percentile': 95, 'targetLatencyNanos': 32000000}
         for bad in (None, {}, dict.fromkeys(ALIASES, -1), dict.fromkeys(ALIASES, float('nan'))):
             invalid = dict(evaluation, capacityR=bad)
@@ -2144,9 +2145,19 @@ def self_check():
         publication_root = root / 'publication-test'
         evidence = publication_root / 'stage'
         evidence.mkdir(parents=True)
-        e5.save(evidence / 'phase.json', {'startUTC': '2026-10-25T00:00:00Z', 'endUTC': '2026-10-25T00:01:00Z'})
-        e5.save(evidence / 'judgment.json', {'status': 'NOT_READY', 'requests': {},
+        metadata_name = e5.WORKLOADS[0]
+        metadata_definition = {'name': metadata_name, 'uid': 'historical', 'generation': 1,
+                               'model': {'uid': 'model', 'generation': 2}, 'preprocessor': {'uid': 'preprocessor', 'generation': 3}}
+        metadata_phase = {'startUTC': '2026-10-25T00:00:00Z', 'endUTC': '2026-10-25T00:01:00Z', 'starts': {},
+                          'stage': {'id': 'stage', 'seconds': 60, 'parts': [{'id': 'one', 'seconds': 60, 'alpha': dict.fromkeys(e5.WORKLOADS, .3)}]}}
+        e5.save(evidence / 'phase.json', metadata_phase)
+        e5.save(evidence / 'judgment.json', {'status': 'NOT_READY',
+                'requests': {metadata_name: {'offered': 0, 'deadlineSuccess': 0, 'D1': 'UNMEASURED'}},
                 'power': {'complete': False, 'energyCoverage': publication_coverage, 'gapErrorBoundJoules': None}})
+        metadata_binding = copy.deepcopy(cpo.b)
+        metadata_binding['config']['workloads'] = [metadata_definition]
+        metadata_binding['config']['inputs'] = {'scheduler': str(publication_root / 'scheduler.json')}
+        e5.save(publication_root / 'scheduler.json', {'state': {'snapshot': {'workloads': [metadata_definition]}}})
         (evidence / 'zero-client.jsonl').write_text('')
         store_config = root / 'store.json'
         store_config.write_text(json.dumps({'logicalStore': 'private-evidence'}))
@@ -2164,12 +2175,58 @@ def self_check():
             assert all(Path(obj['localPath']).stat().st_size > 0 for obj in manifest['objects'])
             assert all(source['key'].startswith('serving/experiments.v1alpha1/campaign-1/raw/') for source in summary['sources'])
             assert e5.load(manifest['objects'][-1]['localPath'])['emptyFiles'] == ['stage/zero-client.jsonl']
+            metric = summary['stages'][0]['kpis']['requests'][metadata_name]
+            assert metric['offered'] == metric['successDenominator'] == metric['successNumerator'] == 0
+            assert metric['workloadUID'] == 'historical' and metric['definitionID'] == 'historical/1/model/2/preprocessor/3'
+            assert metric['identitySource'] in summary['sources']
+            assert metric['substages'][0]['source'] in summary['sources']
+            assert metric['substages'][0]['alpha'] == .3 and metric['substages'][0]['from'] is None
+            assert e5.SUBSTAGE_LIMITATION in summary['stages'][0]['kpis']['limitations']
             return SimpleNamespace(returncode=0, stdout='{"outcome":"Created"}', stderr='')
         campaign_result = {'compositeRun': None, 'limitations': [], 'schedulerSettings': None, 'status': 'NOT_READY'}
         with patch.object(e5.subprocess, 'run', side_effect=upload_fixture), \
              patch.object(e5, 'summarize', return_value=campaign_result), \
-             patch.object(e5, 'load_binding', return_value=cpo.b):
+             patch.object(e5, 'load_binding', return_value=metadata_binding):
             assert e5.publish_campaign(root / 'fixture-binding.json', publication_root, 'campaign-1', store_config)['outcome'] == 'Created'
+        demo_stage = {'id': 'stage'}
+        demo_folder = stage_folder(publication_root, demo_stage)
+        demo_folder.mkdir()
+        recovered = copy.deepcopy(metadata_phase)
+        recovered['stage']['parts'][0].pop('alpha')  # Direct rates must not become alpha.
+        e5.save(demo_folder / 'phase.json', metadata_phase)
+        recovered['stage']['parts'][0]['rates'] = dict.fromkeys(e5.WORKLOADS, 1)
+        e5.save(demo_folder / 'collected-phase.json', recovered)
+        e5.save(demo_folder / 'collected.json', {})
+        metadata_binding['schedule'] = [demo_stage]
+        demo_summary = {'stage': 'stage', 'startUTC': recovered['startUTC'], 'endUTC': recovered['endUTC'],
+                        'status': 'DRAINED_NOT_EVALUATED', 'energyJ': None, 'activeEnergyJ': None,
+                        'drainInclusiveEnergyJ': None, 'energyScope': 'Shared pool',
+                        'gapFromPreviousOfferedWindowSeconds': None, 'gapMeaning': 'Unmeasured gap',
+                        'energyCoverage': publication_coverage, 'gapErrorBoundJoules': None,
+                        'workloads': {metadata_name: {'offered': 0, 'missingSLOLatencyRows': 0,
+                            'rawJoinErrors': [], 'latencyMS': {'samples': 0}, 'transitionFailures': None,
+                            'issuanceFidelity': {'reason': 'Not offered'}}}}
+        def upload_demo_metadata(argv, **kwargs):
+            manifest = e5.load(argv[argv.index('--manifest') + 1])
+            published = e5.load(manifest['summary']['localPath'])
+            metric = published['stages'][0]['kpis']['workloads'][metadata_name]
+            assert metric['latencyMS'] == {'samples': 0}
+            if metric['offered']:
+                assert metric['workloadUID'] is metric['definitionID'] is metric['identitySource'] is None
+                assert 'coverage incomplete' in metric['missingReasons']['identity']
+            else:
+                assert metric['workloadUID'] == 'historical' and metric['definitionID'] == 'historical/1/model/2/preprocessor/3'
+                assert metric['identitySource'] in published['sources']
+            assert metric['substages'][0]['alpha'] is None and metric['missingReasons']['alpha']
+            assert metric['substages'][0]['source'] in published['sources']
+            assert metric['substages'][0]['source']['key'].endswith('/collected-phase.json')
+            assert published['stages'][0]['kpis']['wholePoolJoules'] is None
+            assert all(not key.startswith('_') for key in published['stages'][0])
+            return SimpleNamespace(returncode=0, stdout='{"outcome":"Created"}', stderr='')
+        with patch.object(e5.subprocess, 'run', side_effect=upload_demo_metadata), patch(__name__ + '.summarize', return_value=[demo_summary]):
+            assert publish(e5, metadata_binding, publication_root, 'demo-metadata', store_config)['outcome'] == 'Created'
+            demo_summary['workloads'][metadata_name]['offered'] = 1
+            assert publish(e5, metadata_binding, publication_root, 'demo-missing-identity', store_config)['outcome'] == 'Created'
         with patch.object(e5.subprocess, 'run') as upload:
             try:
                 e5.publish_experiment(publication_root, 'campaign-1', store_config, [record], 'PARTIAL')

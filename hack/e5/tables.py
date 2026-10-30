@@ -78,7 +78,7 @@ def render(root, repo):
     summary = {} if operational else load(root / 'e5-summary.json')
     spec = table_lines(repo / 'docs/spec/README.md', '| 시나리오 | 관찰할 내용 |')
     # workload-pools is a design document in this repository, not a spec file.
-    pools = table_lines(repo / 'docs/design/serving/workload-pools.md', '| 단계 | 시간 | 요청률')
+    pools = table_lines(repo / 'docs/design/serving/workload-pools.md', '| 단계 | 시간/부하 | 관측·요구사항 |')
     scenarios = ['steady', 'gradual-up-and-down', 'burst', 'post-transition-drop-resurge',
                  'mixed-heterogeneous', 'pool-overload', 'node-serving-control-failure']
     title = f'# E5 table rows: {cell(root.name)}'

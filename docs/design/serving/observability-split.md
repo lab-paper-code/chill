@@ -288,7 +288,7 @@ MIX의 resources 컨테이너 표본 1600건은 cluster의 Node/Pod UID/containe
 
 ## 18. 실험 부하 단계·기록 당시 identity 공개 (B0/B3, 2026-10-30)
 
-**설계 확정·구현 전.** [B0 계획](../../plans/2026-10-30-dashboard-api-gaps.md),
+**두 publisher 구현·오프라인 회귀 완료, 신규 publication 수용 전.** [B0 계획](../../plans/2026-10-30-dashboard-api-gaps.md),
 [catalog SRS PC-12~13](../../spec/catalog/SRS.md#9-측정-커버리지-조회-api)에서 추적한다.
 `GET /api/v1/experiments[/{id}]`는 이미 `stages[].kpis`를 opaque JSON으로 그대로 전달한다
 (`internal/serving/httpapi/experiments.go:19-39`, `cmd/chill-server/experiment_service.go:89-122`).
@@ -297,12 +297,12 @@ MIX의 resources 컨테이너 표본 1600건은 cluster의 Node/Pod UID/containe
 ### 18.1 생성 사실과 노출 누락의 구분
 
 - E5는 frozen binding의 workload UID/generation·definitionID, schedule parts의 α·seconds,
-  phase의 workload별 실제 producer start를 이미 기록한다. `e5.py:2662-2671`의 게시 allowlist가
-  이 metadata를 버린다. `judgment.requests[name].substages`는 α map을 담지만 경계 시각은 없으므로
-  그대로 복사하는 것만으로 충분하지 않다.
+  phase의 workload별 실제 producer start를 이미 기록한다. 게시 경계의 공통
+  `publication_metadata`가 두 publisher에 같은 metadata를 추가한다. 기존 judgment의
+  workload별 substage 통계나 metric 모집단/단위를 바꾸지 않는다.
 - Demo는 captured scheduler/canonical snapshot과 config의 UID/generation, schedule parts와
-  producer-relative 창을 보존한다. `demo.py:911-948`의 게시 workload 행에는 identity/α가 없다.
-  direct `rates` 입력에는 α가 애초에 없으며 역산하지 않는다.
+  producer-relative 창을 보존한다. alias는 기존 `PRODUCER_ALIASES`/`ALIASES`의 정확한
+  대응을 사용하고, direct `rates` 입력에는 α를 역산하지 않는다.
 - 이미 기록된 자료는 **미래 publication에서만 projection**한다. 새로운 계측·관측 stream,
   live identity 조회나 별도 provenance 저장소는 필요하지 않다. 원시에도 없는 항목은 끝내 ‘기록 없음’이다.
 
@@ -330,6 +330,25 @@ producer anchor 부재를 구분해 남긴다. `from/to`의 의미는 **실제 p
 stage 전체 `[from,to)`는 producer별 창을 대신하지 않는다. offered/기간은 관측 평균 요청률이며
 α의 대용이 아니다. 여러 definition이 섞인 모집단이면 UID/definitionID의 모호함을 유지한다.
 
+구현은 원본 frozen scheduler 파일을 신규 publication의
+`raw/frozen/scheduler.json`으로 함께 게시하고 이를 `identitySource`로 참조한다.
+동일 snapshot의 workload/model/preprocessor UID·generation 6요소를 기존 definition
+identity 조립 규칙으로 결합하며 frozen workload와 UID/generation이 맞아야 한다.
+실제 offered response ID로 선택한 archived assigned/final 행의 definition identity도
+확인한다. 서로 충돌해 통계용 unambiguous final에서 제외된 행까지 혼합/누락 여부에
+포함하되, 이 확인으로 기존 통계 모집단이나 판정을 바꾸지 않는다. 하나라도 다른/누락된
+identity면 `workloadUID`, `definitionID`, `identitySource`는 모두 null이다.
+출처 snapshot/정의 자체가 없거나 이름이 혼합되어도 null이며 현재 API를 조회하지 않는다.
+offered가 양수인데 원 archived identity가 없거나 request provenance/parse가 불완전하면
+동일하게 null과 coverage-incomplete 사유를 남긴다. 0부하는 frozen target identity를
+게시할 수 있지만 producer anchor/관측된 요청이 생겼다고 해석하지 않는다.
+phase는 E5 `phase.json`, demo는 기존 `phase_path`가 선택한 원본/수집복구 phase를 참조하고
+두 출처 모두 같은 summary.sources 안에 있어야 한다. phase의 part seconds를 각각
+`round(seconds*1e9)`한 누적으로 offset을 만들고 원 시작 시각의 나노초를 보존한다.
+`missingReasons.identity/alpha/substages/producerAnchor/substageSource`는 각각
+identity 부재·혼합, direct-rate, schedule 부재, anchor 부재, 출처 미게시를 구분한다.
+
+
 ### 18.3 검증·저장·배포 경계
 
 binding/schedule 검증과 publication 조립 경계에서 α finite/범위, 이름 대응, offset 순서·길이,
@@ -347,4 +366,6 @@ object reference·유한 payload만 검증하며 opaque KPI의 hash/바이트 �
 필요물은 새 **harness/publisher revision**, 해당 revision으로 동결한 신규 publication 입력·새 ID,
 F4 소비자다. metadata 전달만을 위한 ChillServer/Console/agent/runtime 이미지·CRD 배포는 없다.
 publication 검증은 기존 Python self-check/recorded-data 검사와 Go opaque pass-through 회귀를 확장한다.
+기존 `demo.py --self-check`가 읽는 E5 정본 표의 현재 헤더(`시간/부하`)에 맞춰
+`tables.py`의 선택자도 수정했다. 이는 보고 표 탐색 회귀 수정이며 측정/게시 계약 변경이 아니다.
 raw export·대시보드 과거 조회는 §17/ADR0030대로 E5 측정 창 밖에서 수행한다.

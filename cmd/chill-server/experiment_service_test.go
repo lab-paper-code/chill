@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -135,6 +136,61 @@ func TestExperimentSummaryReadPreservesPublishedEvidenceAndSorts(t *testing.T) {
 	if requests["offered"] != float64(5) || requests["slo"].(map[string]any)["numerator"] != float64(2) ||
 		requests["slo"].(map[string]any)["denominator"] != float64(5) {
 		t.Fatalf("KPI populations changed: %v", requests)
+	}
+}
+
+func TestExperimentMetadataIsOpaqueForBothPublishersAndHistoricalSummaries(t *testing.T) {
+	for _, shape := range []string{"requests", "workloads", "historical-213"} {
+		t.Run(shape, func(t *testing.T) {
+			summary := experimentFixture("new-record", time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC))
+			if shape != "historical-213" {
+				summary.Stages[0].KPIs = json.RawMessage(`{"` + shape + `":{"recorded-name":{
+					"offered":5,"successNumerator":0,"successDenominator":5,
+					"workloadUID":"historical-uid","definitionID":"historical-uid/1/model/2/preprocessor/3",
+					"identitySource":{"store":"evidence","key":"serving/experiments.v1alpha1/new-record/raw/frozen/scheduler.json"},
+					"substages":[{"id":"low","alpha":0.3,"startOffsetNanos":0,"endOffsetNanos":1000000001,
+						"from":"2026-10-30T00:00:00.000000001Z","to":"2026-10-30T00:00:01.000000002Z",
+						"source":{"store":"evidence","key":"serving/experiments.v1alpha1/new-record/raw/stage/phase.json"}},
+						{"id":"direct","alpha":null,"startOffsetNanos":1000000001,"endOffsetNanos":2000000002,
+						"from":null,"to":null,"source":null}],
+					"missingReasons":{"alpha":"Direct rates","producerAnchor":"Not recorded"}}},
+					"wholePoolJoules":null,"activePoolJoules":0,
+					"limitations":["Scheduled producer-relative intervals, not observed events"]}`)
+				summary.Sources = []httpapi.ExperimentSource{
+					{Store: "evidence", Key: "serving/experiments.v1alpha1/new-record/raw/frozen/scheduler.json"},
+					{Store: "evidence", Key: "serving/experiments.v1alpha1/new-record/raw/stage/phase.json"},
+				}
+			} else {
+				summary.ID = "control-213"
+			}
+			store := &experimentMemoryStore{}
+			key := store.add(t, summary)
+			service := &experimentService{reader: store, lister: store, store: "evidence", maxBytes: 1 << 20}
+			detail, err := service.get(context.Background(), summary.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			list, err := service.list(context.Background())
+			if err != nil || len(list.Items) != 1 {
+				t.Fatalf("list=%+v err=%v", list, err)
+			}
+			var want any
+			if err := json.Unmarshal(summary.Stages[0].KPIs, &want); err != nil {
+				t.Fatal(err)
+			}
+			for _, value := range []httpapi.ExperimentSummary{detail, list.Items[0]} {
+				var got any
+				if err := json.Unmarshal(value.Stages[0].KPIs, &got); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(value.Sources, summary.Sources) {
+					t.Fatalf("opaque metadata/populations/units/sources changed: %+v", value)
+				}
+			}
+			if len(store.opened) != 2 || store.opened[0] != key || store.opened[1] != key {
+				t.Fatalf("GET followed raw sources instead of reading only summary: %v", store.opened)
+			}
+		})
 	}
 }
 
