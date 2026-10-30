@@ -1,153 +1,66 @@
 # MetricObserver
 
-> Navigation: [Profiling design index](../README.md)
+> Navigation: [Component contracts](README.md) · [Profiling design index](../README.md)
 
-## Status
+## Status and purpose
 
-Approved for the first edge-metrics-backed profiling path.
-
-## Purpose
-
-MetricObserver records the typed metric facts required while one profiling
-measurement window is active. The first Run source combines one already-resolved
-central exact-series power endpoint with one local thermal endpoint. One tick
-records their power and thermal-validity facts only when both reads complete
-under the same bounded request context.
-
-The adapter also exposes a power-only exact-series source intended for the
-transition-cost observer. It consumes one frozen metric name and a non-empty
-label map, then accepts only the series whose label set and values match that
-map exactly. It sends the already-resolved endpoint, including its validated
-hostname filter, unchanged; filtering the response does not weaken exact-label
-validation.
-
-It answers one question:
-
-> During a bounded interval, what power and thermal facts, partial metric
-> failures, and source-read failures were observed from this source?
-
-It does not decide whether the evidence is scientifically admissible or what
-CHILL should do with it.
+Approved for the first edge-metrics-backed profiling path. Records typed facts
+for a bounded measurement window, not scientific accept/reject policy.
+Scientific admission was removed (`788bcf93`); execution/raw evidence and numeric
+derivation remain. Thermal and co-resident facts are observations, not verdicts.
 
 ## Responsibility boundary
 
-MetricObserver owns:
+| Owner | Contract |
+|---|---|
+| MetricObserver | Validate bounded request; schedule interval reads with per-read timeout; retain every successful typed sample with CHILL receipt time; separate per-metric issues from whole-request failures; return source identity/summaries; stop on duration expiry or cancellation |
+| edge-metrics adapter | Sequential bounded reads of resolved central exact-series power and local thermal endpoints under one request context; parse frozen configured metrics; enforce exact power labels; reject zero/multiple matches, duplicate/malformed/non-finite/semantically invalid values; no partial sample if either endpoint read fails |
+| Profiler | Source resolution, observation policy, Job lifecycle, persistence, retry ownership, scientific numeric derivation |
+| edge-metrics | Sensor access, platform interpretation, exposition, per-metric enablement; observer never changes its configuration |
 
-- validating a bounded observation request;
-- scheduling one source read at each requested interval;
-- applying a timeout to each read;
-- retaining every successful typed sample with CHILL receipt time;
-- retaining per-metric issues separately from whole-request failures;
-- returning source identity and factual observation summaries; and
-- stopping on duration expiry or context cancellation.
+The power-only exact-series source serves transition-cost observation. It takes
+one frozen metric name and non-empty label map, accepts only identical label sets
+and values, and sends the already-resolved endpoint (including validated hostname
+filter) unchanged. Response filtering never relaxes exact-label validation.
 
-The edge-metrics adapter owns:
+## Data and failure contract
 
-- issuing sequential bounded reads to the resolved power and thermal endpoints
-  under one request context;
-- parsing the configured and frozen required wall-power metric;
-- parsing the configured and frozen typed thermal metrics;
-- selecting the configured power series by its exact frozen labels;
-- rejecting zero or multiple exact-series matches;
-- failing the tick when either endpoint read fails, without a partial sample;
-- rejecting duplicate, malformed, non-finite, or semantically invalid values;
-  and
-- preserving a missing or invalid thermal fact without converting it into a
-  healthy thermal state.
-
-The Profiler owns source resolution, observation policy, Job lifecycle,
-evidence admission, retry, persistence, and scientific derivation. edge-metrics
-owns platform sensor access, platform interpretation, metric exposition, and
-per-metric enablement. MetricObserver never changes edge-metrics configuration.
-
-## Data contract
-
-One successful scrape produces one timestamped sample containing:
+A successful tick retains:
 
 - required wall power in watts;
-- whether a supported thermal signal was observable;
-- a direct current-throttling signal when exposed;
-- CPU core and package thermal-event counters when exposed;
-- a latched thermal-history signal when exposed;
+- supported-thermal-signal observability;
+- direct current-throttling signal, when exposed;
+- CPU core/package thermal-event counters, when exposed;
+- latched thermal-history signal, when exposed;
 - maximum device temperature as diagnostic context; and
-- any typed issue for a required or malformed metric.
+- typed required/malformed-metric issues.
 
-Power and a readable thermal endpoint are required by the first profiling
-path. A missing or invalid power value, or a failed endpoint read, is a failed
-source-read attempt. Thermal signals are heterogeneous, so their
-fields are optional and their exact presence remains evidence. A successful
-power read cannot silently turn missing thermal evidence into a healthy state.
-The power-only path makes no thermal claim and does not accept a series with
-missing or additional labels as a substitute.
+The first profiling path requires power and a readable thermal endpoint. Missing
+or invalid power, failed endpoint reads, or oversize responses fail the tick
+without a partial sample. Partial thermal metric issues remain distinct from
+source-read failures: optional heterogeneous thermal fields preserve their exact
+presence, never convert missing/invalid evidence to healthy state. Power-only
+makes no thermal claim and rejects missing/additional labels.
 
-The observer records receipt timestamps because edge-metrics does not provide a
-trusted source timestamp for every value. It preserves repeated values and does
-not smooth, discard, threshold, or infer from them.
+Receipt timestamps are used because no trusted source timestamp exists for every
+value. Repeated values remain; no smoothing, discarding, thresholding, or inference.
+Direct signals, counters, counter decreases/resets, temperature, and latched
+history remain raw facts; temperature/history alone do not establish throttling.
+Co-resident workload evidence belongs to WorkloadObserver.
 
-## Thermal admission projection
+Bounded scheduling, timeouts, cancellation, event limits and summaries remain
+required. Raw validation binds the exact source and RunConfig. Parsing must
+preserve missing/unsupported signals and reject duplicates/malformed values.
 
-Admission, not MetricObserver, applies these rules to samples overlapping the
-steady runtime window:
+## Dependency and exclusions
 
-- unreadable or insufficiently covered thermal evidence is `Insufficient`;
-- any direct active-throttling sample is `Rejected`;
-- an increase in a continuously observed CPU thermal-event counter is
-  `Rejected`;
-- a decreasing counter is an uninterpretable reset and is `Insufficient`;
-- stable, sufficiently covered direct or counter evidence establishes known
-  non-throttled state; and
-- temperature and latched history remain diagnostic and do not create a
-  throttling verdict by themselves.
+`Profiler -> internal/metricobserver <- internal/metricobserver/edgemetrics ->
+edge-metrics endpoints`. Core imports no CHILL API, Kubernetes client,
+controller-runtime, Profiler, admission, or derivation package. Adapter imports
+only the core contract, maintained Prometheus exposition parser, and standard
+HTTP transport.
 
-Co-resident workload evidence is a separate admission input and is not owned by
-MetricObserver.
-
-## Dependency direction
-
-```text
-Profiler control and Run lifecycle
-        |
-        | freezes source and observation policy
-        v
-internal/metricobserver
-        ^
-        | implements typed source contract
-internal/metricobserver/edgemetrics
-        |
-        v
-edge-metrics exposition endpoints
-```
-
-The core package imports no CHILL API, Kubernetes client, controller-runtime,
-Profiler, admission, or derivation package. The adapter imports the core
-contract, the maintained Prometheus exposition parser, and standard HTTP
-transport only.
-
-## Explicit non-goals
-
-- arbitrary Prometheus query or metric-map support;
-- Kubernetes Node-to-endpoint discovery;
-- Prometheus or edge-metrics configuration mutation;
-- temperature-threshold inference;
-- admission, retry, energy integration, or batch-energy optimization;
-- co-resident workload observation;
-- long-term monitoring; and
-- scheduler state or control.
-
-## Acceptance gates
-
-- one bounded tick combines exact central power with local thermal facts;
-- either endpoint failure or oversize response fails the tick without a partial
-  sample;
-- required-power failure and partial thermal failure remain distinguishable;
-- bounded scheduling, timeout, cancellation, event limits, and summaries have
-  deterministic tests;
-- edge-metrics parsing covers configured direct signals, counters, missing
-  metrics, duplicates, malformed values, and unsupported observation;
-- the power-only path accepts exactly one configured metric-and-label match and
-  rejects zero matches, multiple matches, and label-set drift, while preserving
-  the resolved hostname-filtered endpoint in its request;
-- raw evidence validation binds the exact source and RunConfig;
-- admission tests distinguish unknown, throttled, counter-reset, and known
-  non-throttled windows; and
-- architecture, Go, generated API, and Helm checks pass.
+No arbitrary Prometheus queries/metric maps, Node endpoint discovery, monitoring
+configuration mutation, temperature-threshold inference, scientific admission,
+retry decisions, energy integration, batch optimization, co-resident observation,
+long-term monitoring, scheduler state, or control.

@@ -1,372 +1,118 @@
-# Runtime and Artifact Compatibility and Execution Boundary
-
-> Navigation: [Profiling design index](../../README.md)
-
-## Status
-
-Step 4 complete. This document separates static compatibility, pre-run
-execution decisions, Kubernetes placement/allocation, post-start Run
-validation, and profile admission. It does not define final APIs, CRDs, Go
-types, controllers, or reason constants.
-
-## Inputs
-
-This step builds on the fact audit, commonality, and provenance documents in
-this directory and on ADR 0004 and ADR 0012.
-
-ADR 0004 requires pure derivation code with plain Go inputs and no Kubernetes
-imports. ADR 0012 defines static compatibility as `Compatible`,
-`Incompatible`, or `Unknown` and keeps current Kubernetes eligibility, profile
-admission, and SLO feasibility outside that result.
-
-## Principal boundary
-
-Five authorities compose the eventual path:
-
-```text
-1. Static compatibility evaluator
-        |
-2. Pre-run execution decision builder
-        |
-3. Kubernetes admission, scheduling, and device allocation
-        |
-4. Post-start Run validator
-        |
-5. Profile admission and scientific derivation
-```
-
-They may be orchestrated sequentially, but they do not share one verdict,
-reason vocabulary, writer, or lifecycle.
-
-## 1. Static compatibility evaluator
-
-### Question
-
-Does a declared immutable artifact/runtime path have an explicit static match,
-conflict, or missing requirement against trusted stable capabilities?
-
-### Inputs
-
-- artifact identity and immutable carrier-image requirements
-- artifact format, target, architecture, accelerator, and batch constraints
-  only where their producer and provenance are trustworthy
-- stable DeviceClass capabilities
-- immutable runtime workload/image declaration describing the runtime family,
-  backend capability, architecture, and comparable ABI requirements
-
-Runtime availability must come from an explicit runtime declaration. It is not
-inferred from an accelerator name or from an old successful Run.
-
-### Excluded inputs
-
-- individual live Nodes
-- Ready, taints, allocatable, current free capacity, or Pod status
-- requested CPU/GPU/NPU resources and placement
-- selected Run power mode
-- cgroup, provider-session, load, engine-build, or inference observations
-- profile quality, SLO, or energy evidence
-
-### Output semantics
-
-- `Compatible`: every required static declaration has a matching trusted
-  declaration/capability
-- `Incompatible`: at least one pair of trusted static facts explicitly
-  conflicts
-- `Unknown`: a required fact is absent, stale/untrusted for the claim, or
-  unsupported by the evaluator
-
-`Unknown` and `Incompatible` both fail closed for normal enumeration, but their
-reasons remain distinct. `Compatible` does not mean schedulable, runnable now,
-measured, or SLO-feasible.
-
-### Purity
-
-The evaluator consumes plain immutable inputs and has no Kubernetes client or
-runtime probe. Any cached/report view is bound to all input identities and
-generations; changed inputs require recomputation.
-
-## 2. Pre-run execution decision builder
-
-### Question
-
-For one selected artifact/runtime path and campaign request, what concrete
-execution should CHILL ask Kubernetes to run?
-
-### Inputs
-
-- static compatibility result and its exact input identities
-- selected artifact and immutable runtime image identity
-- selected batch and profiling campaign policy
-- runtime-specific decision policy
-- current Node or cluster snapshot only where needed to resolve a Run decision
-- desired placement, resource, cache, and synchronization policy
-
-### Outputs
-
-- immutable Run correlation identity
-- runtime-specific desired configuration
-- selected batch and input binding
-- native Kubernetes workload intent: immutable OCI image reference, requests/limits,
-  selectors/affinity/tolerations, volumes, and runtime-specific access
-- references to material snapshots and policy/rule identities used to derive
-  the decision
-
-This is desired execution intent, not an observed contract.
-
-### CPU example
-
-- Node allocatable CPU: volatile decision input, not static compatibility
-- `floor(allocatable)`: CHILL policy calculation
-- CPU limit and ORT intra/inter threads: desired decision outputs
-- 100m request and placement selector: Kubernetes workload intent
-
-The builder must not infer that allocatable CPU is currently free, exclusively
-available, or schedulable.
-
-### Accelerator examples
-
-- Jetson `nvidia.com/gpu: 1`: requested Pod resource, not allocation evidence
-- requested TensorRT/CUDA path and provider options: desired runtime decision
-- RKNN hostPath/device exposure: experiment-specific intent, not a Kubernetes NPU
-  allocation contract
-- TensorRT cache/build policy: desired lifecycle policy; engine existence and
-  identity are not yet observed
-
-### Decision failure semantics
-
-Missing/stale decision inputs, unsupported runtime-specific policy, invalid
-selected batch, or unresolved access mechanism block creation of a normal Run.
-They do not rewrite static compatibility as `Incompatible`.
-
-The normal enumeration/serving path does not build runnable intent from static
-`Unknown` or `Incompatible`. An explicitly authorized diagnostic profiling Run
-may probe an `Unknown` combination to acquire missing evidence. Its success is
-selected-Run evidence and does not automatically mutate the static result.
-
-## 3. Kubernetes admission, scheduling, and allocation
-
-### Authority
-
-Kubernetes owns current Pod admission, placement, binding, Node eligibility,
-resource accounting, and device-plugin allocation.
-
-CHILL may perform a point-in-time preflight, but it cannot guarantee the
-scheduler outcome or eliminate the race between preflight and admission.
-
-### Required distinctions
-
-- nodeSelector/affinity is placement intent; `spec.nodeName` is actual binding
-- `nvidia.com/gpu: 1` request is intent; an admitted/running Pod supplies
-  allocation evidence
-- CPU allocatable and request do not prove free exclusive CPU or cpuset
-- privileged RKNN hostPath access is device visibility, not extended-resource
-  allocation or isolation
-
-Pending, Unschedulable, admission rejection, image pull failure, and allocation
-failure are current execution/placement outcomes. They do not change the
-artifact's static compatibility.
-
-## 4. Post-start Run validator
-
-### Question
-
-Did the concrete Pod and runtime instance realize the desired decision and
-execute the selected point with the required validation?
-
-### Inputs and observations
-
-- Run, Pod, actual Node, container, and pulled image identities
-- actual artifact path and carrier image
-- effective resource/cgroup/device-access observations
-- actual runtime component/version observations
-- provider availability, registration, selection, and graph assignment where
-  the path can observe them
-- model load/init and engine build/reuse outcomes
-- selected batch inference and output-validation results
-- desired-versus-observed comparisons
-
-### CPU example
-
-- actual `cpu.max`, affinity/cpuset, ORT settings, and throttling
-- actual provider availability and session selection
-- artifact carrier reference, warm-up, and selected-batch inference outcome
-
-### Accelerator examples
-
-- successful Kubernetes GPU allocation and runtime device visibility
-- RKNN mounted component identities and `init_runtime` result
-- TensorRT engine-ready state, not session construction alone
-- registered provider chain and separately captured graph/fallback evidence
-- selected-batch output validation
-
-### Output semantics
-
-Run validation reports the outcome and evidence for that exact frozen Run. It
-does not own static `Compatible/Incompatible/Unknown` and does not own profile
-admission.
-
-A Run failure may indicate materialization drift, admission mutation, resource
-pressure, runtime/image mismatch, host ABI drift, load/init/build failure, or
-invalid output. It is not promoted to static incompatibility until a separate
-trusted static conflict is established and the static evaluator is rerun.
-
-## 5. Profile admission and scientific derivation
-
-### Question
-
-Does a valid Run contain decision-grade performance and energy evidence for
-the exact execution-state identity?
-
-This stage owns:
-
-- measurement identity matching
-- MetricObserver coverage and sample-quality policy
-- transient/baseline handling
-- repetitions and uncertainty
-- latency, throughput, power, and energy derivation
-- SLO feasibility
-- measured batch-energy objective and selected batch
-- DeviceProfile admission/status
-
-A loadable valid Run can still yield an inadmissible profile. Insufficient
-power samples or SLO failure does not make the artifact statically
-incompatible or the runtime execution invalid.
-
-## Result combinations that are not contradictions
-
-### Compatible plus Run failure
-
-Static declarations match, but the current Run can fail because of image pull,
-resource pressure, host drift, engine-build OOM, or an effective-setting
-mismatch.
-
-### Unknown plus diagnostic Run success
-
-Static declaration evidence was insufficient, but one explicitly authorized
-probe succeeded. That evidence is scoped to the selected artifact, image,
-Node, batch, and Run. It does not resolve unobserved ABI ranges or all batches.
-
-### Incompatible plus Run success
-
-This indicates stale, incorrect, or mismatched evaluator inputs or Run
-identity. Success does not overwrite the incompatibility; the inputs and
-provenance must be investigated and the evaluator rerun.
-
-### Valid Run plus inadmissible profile
-
-Execution was correct, but measurement coverage, repetition, uncertainty, or
-SLO policy did not admit decision-grade evidence.
-
-## Reason ownership
-
-Each stage requires its own reason vocabulary:
-
-| Stage | Reason meaning |
+# Runtime and Artifact Execution Boundary
+
+> Navigation: [Foundations](../README.md) · [Profiling design index](../../README.md)
+
+Active conclusion contract consolidating the completed runtime fact audit,
+commonality, provenance, and compatibility work. This is a semantic boundary,
+not a final API, CRD, enum, Go type, or shared execution-contract package.
+
+## Current boundary
+
+| Authority | Owns | Must not claim |
+|---|---|---|
+| Pure static compatibility (ADR 0004, ADR 0012) | Immutable artifact/carrier requirements, format/target/architecture/accelerator/batch constraints with trusted producers, stable DeviceClass capabilities, explicit immutable runtime workload/image/backend/ABI declarations | Live Node eligibility, resource requests, power mode, runtime observations, profile quality, energy, or SLO feasibility |
+| Pre-run decision | Selected artifact/runtime/image/batch/input binding, campaign and runtime-specific policies, required current snapshots, immutable Run identity, desired configuration, native Pod intent, input/rule references | Observed enforcement, exclusive/free allocatable CPU, or guaranteed scheduling |
+| Kubernetes | Current admission, Ready/taints/allocatable/capacity, scheduling/binding/resource accounting/device allocation | Durable CHILL current-status truth or artifact compatibility |
+| Post-start Run validation | Exact Run/Pod/Node/container/pulled-image/artifact identities, effective resources/access/settings, components/providers, load/init/engine state, selected-batch output checks, desired/actual comparison | A static verdict or generalized artifact capability |
+| Evidence and numeric derivation | Immutable raw/finalized evidence, measurement identity, coverage, samples, transient/baseline handling, repetitions/uncertainty, latency/throughput/power/energy and batch curves | Scientific accept/reject policy or automatic experiment suitability judgment |
+
+Scientific admission was removed in `788bcf93` (`refactor: remove profiling
+scientific admission`). Execution errors and structural evidence-boundary
+validation remain; thermal/workload observations are retained without an
+automatic scientific verdict. See [Plan 3](../../plans/03-profile-admission-derivation.md).
+
+Node power actuation now uses Node labels/request generation and independent
+read-back, bootID, generation, state, and last-transition annotations.
+`PowerModeReconciler` is the sole host power-state mutator; desired power mode
+and observed state remain separate. `NodeActuation` CRD and actuation Lease
+were removed in `f4b0b685` (`refactor(api): delete NodeActuation`), not current
+Run prerequisites. Source: `internal/nodeactuator/controller/power_mode.go`;
+current request/observation contract: [Node agent section 3](../../../platform/node-agent.md#3-노드-전력모드-node-label과-generation).
+
+## Compatibility and failure ownership
+
+| Rule | Contract |
 |---|---|
-| static compatibility | explicit static conflict or missing/untrusted comparable fact |
-| execution decision | unresolved/stale input or unsupported desired policy |
-| Kubernetes | admission, placement, image, resource, and allocation outcome |
-| Run validation | desired/actual mismatch or execution-stage failure |
-| profile admission | evidence quality, coverage, uncertainty, energy, or SLO result |
+| `Compatible` | Every required static declaration matches a trusted declaration/capability; does not mean schedulable, runnable now, measured, or SLO-feasible. Runtime availability requires an explicit declaration, not accelerator naming or an old successful Run. |
+| `Incompatible` | At least one pair of trusted static facts explicitly conflicts. |
+| `Unknown` | A required fact is absent, stale/untrusted for this claim, or unsupported by the evaluator. Missing trusted backend declaration is Unknown; explicit architecture conflict is Incompatible. |
+| Normal enumeration | Unknown and Incompatible both fail closed, retaining distinct reasons. Normal serving/Run intent is not built from either. An explicitly authorized diagnostic Run may probe Unknown without automatically promoting compatibility. |
+| Purity/cache | Plain immutable inputs, no Kubernetes client/imports or runtime probe (ADR 0004). Cached results bind every input identity/generation and require recomputation on change. |
+| Decision failure | Missing/stale inputs, unsupported policy, invalid selected batch or unresolved access block normal Run creation, not static compatibility. Selected batch must be inside trusted capability; campaign maximum is not capability. |
+| Placement failure | Pending, Unschedulable, admission rejection, image pull or allocation failure are current execution outcomes, not static incompatibility. Preflight cannot remove scheduling races. Matching declarations remain Compatible when all Nodes are NotReady/tainted. |
+| Run failure | Drift, admission mutation, pressure, image/host ABI mismatch, load/init/build or invalid output affect the frozen Run. Only a separately established trusted static conflict and evaluator rerun can change compatibility. |
+| Apparently conflicting results | Compatible plus Run failure is possible; Unknown plus diagnostic success proves only that selected point. Incompatible plus success requires investigation of inputs/provenance/Run identity and reevaluation, not overwriting the verdict. |
+| Reason composition | Keep static conflict/missing-fact, decision-policy/input, Kubernetes, Run mismatch/failure, and numeric/evidence reasons distinct. Expose the first blocked gate and prior results, not one generic compatible/eligible/reason string. |
+| Staleness | Re-read current Kubernetes eligibility; material declaration/snapshot changes stale a pre-Run decision. Run evidence remains immutable history. Profile reuse requires the exact execution-state identity; image/provider/power drift prevents reuse without deleting history. |
 
-Composition may expose the first blocked gate plus all prior results. It must
-not flatten them into one `compatible`, `eligible`, or generic reason string.
+## Shared nucleus, not a rich ExecutionContract
 
-## Staleness
+Shared meaning requires the same meaning, owner, creation phase, lifetime, and
+comparable validation method—not matching JSON/Go/YAML names. Keep the chain:
+identified catalog/artifact declaration → runtime-specific desired decision →
+native Kubernetes workload intent → identified Run observation/evidence.
 
-- static results bind all declared input identities/generations
-- current Kubernetes eligibility is re-read and remains race-prone; it is not
-  durable CHILL truth
-- execution decisions become stale when a material declaration or selected
-  snapshot changes before Run creation
-- Run evidence is immutable historical evidence for one instance
-- profiles bind the exact execution-state identity and admission policy; drift
-  prevents reuse but does not delete history
+| Common concept | Required distinction |
+|---|---|
+| Run correlation | Immutable Run identity, logical model, selected artifact and source object, runtime-path reference, selected batch. Runtime path is common identity only; contents/validation stay runtime-specific. |
+| Outcomes | Carrier-reference verification, load/init, selected-batch execution, output-validation outcome **and method/strength**. CPU inference success without shape checks must not equal RKNN/Jetson `(batch, 1000)` checks. |
+| Resolved evidence | Actual Node, measurement start/end, runtime-specific attachments on the same Run. Node selector/affinity intent differs from actual `spec.nodeName`. |
+| Batch | Artifact/runtime-path capability, one selected attempted batch, and campaign search range/strategy are three separate concepts. Only the selected batch is common Run correlation. |
+| Desired vs observed | Requested provider vs registration/graph assignment; CPU limit/threads vs cgroup/affinity/throttling; requested GPU vs successful allocation; desired power vs read-back; expected component relation vs observed identities/load outcome. Observation exposes mismatch, never rewrites desired intent. |
+| Runtime-specific desired state | CPU quota/thread/request/topology/co-location policy; RKNN direct backend/core mask/layout/shape evidence/toolkit-library-driver relation; Jetson provider options/engine-profile/cache lifecycle/ORT-TensorRT-CUDA-L4T-driver relation/graph fallback and precision. |
 
-## Acceptance examples
+Do not flatten provider, runtimeVersion, precision, supportedBatches,
+computeDevice/resourceCount, exclusive, cache, parallelism, powerMode, or node
+into apparently equivalent fields. RKNNLite is not an ORT provider; CPU quota,
+NPU exposure, and GPU allocation enforce different things. TensorRT engines
+are runtime-derived/device-profile-bound, unlike predeployment RKNN files.
+Native Pod requests/limits/selectors/affinity/tolerations/volumes/access belong
+in RunConfig, not `deviceKind`, `deviceCount`, or `exclusive=true` equivalents.
 
-### Static compatibility
+## Provenance contract
 
-1. Matching declarations remain `Compatible` even when every matching Node is
-   NotReady or tainted.
-2. Missing trusted runtime/backend declaration produces `Unknown`.
-3. An explicit architecture conflict produces `Incompatible`.
-4. Changed input generation prevents reuse of a cached result.
+Provenance constrains claim meaning; `Declared`, `Observed`, `Derived`, or
+`Trusted` alone is insufficient and cannot merge lifecycle owners.
 
-### Execution decision
+| Dimension | Required evidence/rule |
+|---|---|
+| Source kind | Authority/producer: immutable artifact or image/package declaration, mutable Kubernetes snapshot, host probe, runtime process/session, Kubernetes allocation, or CHILL derivation. Kind alone establishes no trust. |
+| Source identity | Exact artifact name/path/immutable carrier, pulled immutable OCI image (not just tag), Node UID/resourceVersion, Pod/container/Run, and observable runtime component identity. Names/tags/endpoints/paths alone are locators. |
+| Verification depth | Preserve declared-only, identified-image packaging, matched object identity, API observation, confirmed Pod allocation, availability, initialized/loaded, selected-batch execution, shape/semantic validation, and graph-assignment distinctions. |
+| Scope | Artifact, runtime image, Node snapshot, Pod/Run, process/session, selected artifact+batch, or compiled engine/profile. Selected-batch success is not artifact-wide batch support; a session provider list is not future Node capability. |
+| Mutable time/version | Snapshot/version context plus observation time; time does not replace resourceVersion/content identity. Distinguish producer/device time, observer receipt time, and no source timestamp. MetricObserver receipt time is never a Shelly device measurement time. Immutable content needs stable owner/reference, not redundant per-value timestamps. |
+| Derivation | Rule/policy identity and version, all material input evidence/snapshots, and atomically produced output group. `derivedAt` alone is not reproducibility/currentness. Changed Node resourceVersion requires a new current CPU derivation; old results remain history. |
+| Unknown | Result/epistemic state, not provenance kind. Name required claim and cause: absent source, self-declared/untrusted source, stale/mismatched identity, unsupported comparison, ambiguity/conflict, or verification failure. These are requirements, not final reason enums. Required unknown/unrecognized forms fail closed. |
+| Grouping | One provenance header and typed values per uniform snapshot/rule/scope/lifecycle group. Split differing authorities/scopes; do not wrap every scalar or duplicate provenance on CPU limit/intra/inter siblings. |
 
-1. Normal Run creation refuses upstream `Unknown`/`Incompatible` while
-   preserving the upstream reason.
-2. Missing RKNN allocation/access decision blocks the Run without changing the
-   static verdict.
-3. A selected batch outside trusted capability is rejected; campaign maximum
-   is not treated as capability.
+Example grouping: Node UID/resourceVersion/observedAt + consumed allocatable
+fields → CPU rule/version + snapshot reference + limit/thread outputs →
+Run/Pod/container/image/window + quota/affinity/runtime/throttling evidence.
+A runtime self-report is not supply-chain attestation; verifying the model
+file does not verify adjacent metadata/image; hostPath presence does not
+identify a library or prove ABI. Changed image resolution under the same tag
+is a different runtime input and invalidates the frozen identity.
 
-### Kubernetes
+## Retained execution evidence and limits
 
-1. Static `Compatible` plus insufficient resources is currently ineligible,
-   not statically incompatible.
-2. A successful preflight followed by resource contention may still fail to
-   schedule.
-3. A GPU request is not allocation evidence until the Pod is admitted/bound
-   and the runtime obtains the allocated device.
+These are selected characterization/diagnostic conclusions, not claims that
+historical runner constants describe today's deployed substrate. Retained Run
+observations live in the evidence store; current source/support matrix owns
+implementation facts. No printed `runtimeContract`/`derivedExecutionContract`
+is promoted wholesale into reusable truth.
 
-### Run validation
+| Path | Evidence retained | Limits and unresolved evidence |
+|---|---|---|
+| CPU ORT | Immutable carrier delivers a regular ONNX file; Node name and `status.allocatable.cpu` snapshot; `floor(allocatableCPU)` policy sets limit/intra-op, inter-op `1`; runner checks `cpu.max` and thread environment. Runtime reads `ort.__version__`, provider availability/session selection, affinity/usage/CFS throttling. Historical source: `derive-execution-contract.py:27-34,45-55`, `runner.py:145-158,169-182,252-263`. | `OnePodPerNodeFullCPU` overstates isolation: request `100m`, no co-tenant/exclusivity/cpuset enforcement. Allocatable is not free CPU, physical core count or NUMA topology. Inter-op `1` is policy; preinspection provider is a constant. Arbitrary ONNX batches and complete output shape/content semantics were unverified. Mutable image tags and absent imageID, Node UID/resourceVersion, carrier/semantic identity made the derived document incomplete. |
+| RKNNLite RK3588 | Selected carrier file, `BATCH_SIZE`/shape-mode/`SUPPORTED_BATCHES` declaration checks (`rknn_runner.py:68-80`), checked load/init on NPU core `0` (`85-89`), selected-artifact NHWC buffer after reproduced layout failure (`91-104`), warm-up/measured `(batch, 1000)` checks (`34-44,103-120`). | Supplied batches are workload declarations, not artifact introspection; success proves only selected batch. RKNNLite/librknnrt ABI `2.3.2` was incomplete because Python package is image-owned but library host-injected. `RKNPUExecutionProvider` misnames direct RKNNLite. Privileged `/dev/dri`, host library mounts and `/dev/dri/renderD129` wiring do not prove extended-resource allocation/NPU isolation or portable capability. `do_quantization=false` does not prove FP16 operations. Source NCHW, artifact interface, and runtime NHWC have separate owners. |
+| RKNN provenance audit-time limits | Diagnostic toolkit-lite observation and strict image-owned package declaration field existed; diagnostic host snapshot and separate expected host contract existed; semantic host fields entered new physical state identities. A non-root diagnostic proved four exact DRM devices under explicit privileged runtime-access contract. | At audit time, the production worker declaration, Run-bound host verifier and drift comparison were pending; this is not current outstanding work. Current production L3 support is recorded in [Plan 6](../../plans/06-execution-support-expansion.md). Diagnostic access alone is not retained Run/allocation evidence; successful init alone proves neither reusable ABI compatibility nor NPU allocation/isolation. |
+| Jetson ORT TensorRT | EfficientNet-B4 ONNX opens before session. TensorRT available/first (`jetson_runner.py:72-90`); requested TensorRT→CUDA (`84-86`), FP16/INT8 disabled (`66-82`). `nvidia.com/gpu: 1` request+limit (`manifests/jetson-trt-smoke-job.yaml:48-56`) and completed Pod prove one-GPU allocation. Warm-up/measured output `(batch, 1000)` (`31-35,95-112`). Retained v2 `observations/jetson-xavier-nx-tensorrt-smoke.md` records TensorRT, CUDA, CPU chain; graph node counts `NotCaptured` (`125-136`). | Registered order does not prove graph placement/fallback or effective FP32 kernels. Retained Kubernetes smoke validates batch `1`, not every dynamic batch/profile. `MODE_15W_6CORE`, nvpmodel ID `2`, L4T `R35.4.1` were unqueried/unenforced constants, not current power/ABI observations. GPU allocation is not node/CPU exclusivity. Pod-local `emptyDir` lacks reusable engine/profile identity. `sessionBuildSeconds` excludes several additional minutes of first-warmup GPU work. Host-sourced ORT wheel provenance was not retained. |
 
-1. Requested TensorRT with an effective provider mismatch invalidates the Run
-   without rewriting static compatibility.
-2. Missing power-mode enforcement is an evidence mismatch, not silent success.
-3. Output-shape failure invalidates the selected Run, not every logical-model
-   path.
-4. immutable OCI runtime image reference drift invalidates the frozen Run identity even when the
-   tag is unchanged.
-
-### Profile admission
-
-1. Valid execution with insufficient power samples rejects the profile only.
-2. Valid measurements that fail an SLO remain an explicit profile/SLO result.
-3. A profile from a different immutable OCI image reference, provider state, or power mode is
-   not reused for the new execution state.
-
-## Adversarial review disposition
-
-Accepted:
-
-- static evaluator, decision builder, Kubernetes, Run validator, and profile
-  admission are separate authorities
-- only static compatibility owns its tri-state verdict
-- current eligibility and observed execution must not be folded into static
-  compatibility
-- a successful smoke is selected-Run evidence, not reusable class capability
-- stage-specific reasons must not share one generic namespace
-
-Narrowed:
-
-- a decision builder may use current Node snapshots to resolve desired intent,
-  but it does not predict or replace scheduler admission
-- normal enumeration blocks static `Unknown`, while an explicit diagnostic
-  profiling path may probe it without automatic promotion
-- Run validation can reveal evidence that motivates a new static declaration
-  or reevaluation, but it does not mutate the static verdict directly
-
-Rejected:
-
-- the idea that `enumerable = compatible AND profile AND eligibility` permits
-  one evaluator to own all three. It is a composition expression only.
-
-## Step 4 conclusion
-
-The future architecture composes gates rather than producing one universal
-execution verdict:
-
-```text
-pure static compatibility
-        -> desired runtime-specific Run decision
-        -> Kubernetes-native placement/allocation
-        -> actual Run validation
-        -> profile admission and derivation
-```
-
-Step 5 may now synthesize the high-level design. It must preserve these
-authorities, identities, and stage-specific failure meanings rather than
-introducing a monolithic `executioncontract` API.
+| Cross-path acceptance rule | Consequence |
+|---|---|
+| Carrier, runtime image and mutable host ABI are three identities | A verified file cannot substitute for runtime/host identity. |
+| Global EEP provider inventory is vocabulary only | It proves neither selected-Node nor selected-image availability. Provider request, registration and graph placement remain distinct. |
+| CPU/GPU/NPU intent differs | CPU compressible quota+selector proves no exclusivity; RKNN privileged exposure is no allocation/isolation; GPU plugin count one proves only that allocation. |
+| Power and software are mutable Node state | Pinned experiment constants are not stable DeviceClass metadata; manifest `powerMode=15W` is not live read-back. Missing power enforcement is an evidence mismatch, not silent success. |
+| Run validation stays selected-point scoped | Provider mismatch, output-shape failure, or immutable-image drift invalidates that Run, not every logical-model path or the static verdict. TensorRT engine-ready evidence is separate from session construction. |
+| Numeric evidence stays available | Insufficient power samples, coverage, repetition or uncertainty and SLO results do not become static incompatibility or a scientific admission verdict. |

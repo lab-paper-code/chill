@@ -1,482 +1,227 @@
 # Measurement Worker Contract
 
-> Navigation: [Profiling design index](../README.md)
+> Navigation: [Component contracts](README.md) · [Profiling design index](../README.md)
 
-## Status
+## Status and evidence
 
-Implemented for the firstfloor profiling path. The causal metric/workload
-end-fence success path was live-verified with three sequential, same-RunConfig
-Runs admitted by `wall-power-v2`. This document does not authorize batch
-campaigns, batch-energy optimization, another runtime, or serving.
+Implemented for firstfloor active/model-loaded-idle execution, separate runtime/raw
+schemas, shared immutable finalization/loading. Scientific admission was removed
+(`788bcf93`): current contracts retain execution, raw facts and numeric derivation,
+not scientific accept/reject policy. This contract authorizes neither serving,
+batch campaigns/optimization nor another runtime; public mode/validation fields
+belong to the request schema (Plan 4), not the worker.
 
-The current RunConfig and firstfloor request schemas, the firstfloor runtime
-adapter, separate idle runtime/raw schemas, shared immutable finalization/loading, and
-idle admission dispatch are implemented. The earlier active and idle paths were
-live-verified; the current simplified semantic contracts have not yet been
-re-run on the live cluster.
+Historical method evidence (predates current wire schemas): on 2026-08-03,
+`idle-model-loaded-live-ad7b84f-v2` on Lattepanda recorded model load, 60-second
+settling, 30-second monotonic window, zero inference and retained residency; 31
+successful power samples, zero failed reads, continuous unchanged workloads;
+`Accepted` by `idle-wall-power-v1`, with `ExecutionComplete=True`,
+`EvidenceVerified=True`, `EvidenceAdmitted=True`. Finalized reference retained
+configured raw store/key/bounded size. `active-regression-live-ad7b84f` completed
+5,434 calls, 31 successful samples, no failed reads, continuous workload coverage,
+and historical `wall-power-v2` acceptance. Causal metric/workload end fence was
+live-verified with three sequential same-RunConfig Runs. These verify the earlier
+Run/Job/immutable-evidence path, not current simplified semantic schemas, which
+remain unverified live. Idle Operator Console Evidence Passport remains separate
+from its active-only projection.
 
-The firstfloor readiness probe connects with a 1-second timeout. Before the
-fix, that timeout stayed on the kept-alive socket, so any measured call slower
-than 1 second failed with a socket timeout. The probe connection now closes
-after readiness so measurement reconnects without a timeout. Every firstfloor
-runtime variant is rebuilt with this fix and the existing mobilenet profiles
-are re-measured: images built before it can't run slow calls, and one image
-set across all variants keeps the profiles comparable.
+Firstfloor's 1-second readiness timeout formerly leaked onto the kept-alive
+measurement socket and failed calls slower than 1 second. Readiness now closes
+that connection; measurement reconnects without timeout. Rebuild every runtime
+variant and remeasure existing mobilenet profiles with one comparable image set;
+pre-fix images cannot run slow calls.
 
-## Model-loaded-idle live verification
+## Roles and validation ownership
 
-On 2026-08-03, `idle-model-loaded-live-ad7b84f-v2` completed on Lattepanda and
-was `Accepted` by `idle-wall-power-v1`. The finalized evidence retained the raw
-object's configured store, opaque key, and bounded size. This historical Run
-predates the current schema and is evidence for the method, not live proof of
-the current wire contract.
+| Role | Contract |
+|---|---|
+| Artifact init | Copy declared supply-image path as a regular file to runtime-specific destination |
+| Runtime worker | Sole raw writer: verify RunConfig/artifact, execute firstfloor, coordinate window, compose validated results, immutable-create raw object, write bounded receipt |
+| MetricObserver | Wait for start; bounded observation; observe end, atomically publish only metric result, exit |
+| WorkloadObserver | Target-Node list-watch; close after same-watch metric-container successful exit fence; atomically publish only workload result |
+| Profiler | Materialize/observe native resources, independently verify immutable raw evidence and finalize with terminal Kubernetes facts; never inference/power polling |
 
-The runtime evidence records model load before a 60-second settling interval,
-a 30-second monotonic measurement window, zero inference after model load, and
-model residency through the window. The metric result retained 31 successful
-power samples with no failed reads, and workload observation remained
-continuous with no entered, updated, or exited Pod. The Run reached
-`ExecutionComplete=True`, `EvidenceVerified=True`, and
-`EvidenceAdmitted=True`.
+No uploader container: it adds handoff/failure ownership without removing worker
+responsibility. MetricObserver has no storage credentials. Runtime image is the
+trusted complete worker/firstfloor actor/runner plus ORT/RKNNLite helpers; trusted
+execution references that image, not the artifact init supply image. Observer
+images remain separately pinned; only WorkloadObserver receives Kubernetes token.
 
-All three regular containers strictly decode the same RunConfig supplied by the
-Job. Each process validates that input at its boundary; the runtime worker then
-carries `profilingrun.VerifiedRunConfig` instead of accepting parallel mutable
-configuration inputs.
-Raw-result composition remains the separate boundary that correlates runtime
-and observer facts. Delivery
-therefore deploys runtime-worker, MetricObserver, and WorkloadObserver images
-as one tested schema-compatible set. Each image remains an independently pinned
-OCI reference; this rule does not merge their responsibilities.
-
-The metric and workload result-file readers validate their respective records
-once after the atomic file boundary and return sealed values. Runtime adapters
-do the same after strict process-result decoding and runtime-specific contract
-checks. The coordinator passes those sealed values into raw composition; it
-does not repeat their boundary validations or mutate them.
-The evidence composer accepts only the verified RunConfig, runtime, metric, and
-workload value types owned by their source packages. It checks only new
-cross-record relationships such as source identity and window coverage, then
-canonicalizes the raw record without re-validating the nested values.
-
-The validated image set ran `active-regression-live-ad7b84f` through the active
-protocol. It
-completed 5,434 inference calls, retained 31 successful power samples with no
-failed reads and continuous workload observation, and was `Accepted` by
-`wall-power-v2`. This verifies that the idle-compatible delivery set preserves
-the active producer, finalization, and admission path.
-
-This verification covers the Profiler Run, Job, immutable evidence, and
-admission lifecycle. It does not extend the active-only Operator Console
-Evidence Passport projection; requesting a passport for this idle Run remains
-a separate follow-on boundary.
-
-## Purpose
-
-The Profiler controller has resolved one exact RunConfig for the `ProfilingRun`. The
-measurement Job must now answer one bounded question:
-
-> Did the selected runtime execute the RunConfig-defined measurement on the selected Pod
-> while the selected metric source was observed, and were those raw facts
-> committed immutably?
-
-The Job produces raw facts only. The controller independently verifies and
-finalizes them after Kubernetes reports the Job and Pod terminal state.
-
-## First Job topology
-
-The first Job contains four execution roles, not a generic plugin graph:
-
-```text
-artifact init container
-  -> copy the declared artifact path
-  -> expose it as a regular file at the runtime-specific destination
-
-runtime container (the measurement worker and sole raw writer)
-  -> verify RunConfig and artifact
-  -> run the firstfloor runtime adapter
-  -> coordinate the measurement window
-  -> validate MetricObserver and WorkloadObserver results
-  -> assemble and immutably store RawMeasurement
-  -> write the bounded success receipt
-
-metric-observer container
-  -> wait for the runtime measurement signal
-  -> invoke internal/metricobserver for one bounded window
-  -> observe measurement-end, atomically write only the metric result, and exit
-
-workload-observer container
-  -> establish a continuous target-Node Pod list-watch
-  -> close only after the same watch observes the metric-observer exit fence
-  -> atomically write only the workload result
-```
-
-There is no separate uploader container. It would introduce another image,
-handoff, terminal state, and failure owner without removing responsibility from
-the runtime worker. The MetricObserver does not receive storage credentials and
-cannot publish Run evidence.
-
-The `runtime` image is the complete trusted worker/runtime environment for the
-selected path. It contains the CHILL worker entrypoint, the firstfloor actor and
-runner, and their ORT and RKNNLite contract helpers. The separately pinned
-`metricObserver` image contains the bounded observer helper. A separately
-pinned WorkloadObserver image receives the only
-Kubernetes API credential in the Job. The trusted execution declaration must
-therefore reference the worker/runtime image selected for the Run. The artifact
-image remains an init-container supply image.
+All three regular processes strict-decode/validate the same canonical RunConfig
+at their own boundary; runtime carries `profilingrun.VerifiedRunConfig`, not
+parallel mutable inputs. Result-file readers validate once after atomic handoff;
+runtime adapters strict-decode/check process results once. Coordinator passes
+sealed, unmutated source-package verified values to raw composition, which checks
+only new cross-record source/window relationships and canonicalizes without
+revalidating nested values. Deploy the three images as one schema-compatible
+set, each independently pinned to an exact OCI reference.
 
 ## RunConfig and delivery inputs
 
-The exact RunConfig remains the scientific execution authority. The Job passes
-the same canonical JSON once to each regular container through `--run-config`;
-there is no auxiliary per-Run ConfigMap or mounted compatibility file.
-Candidate compatibility is resolved before Job creation, and only the
-runtime material needed for execution is copied into `RunConfig.delivery`.
-Selected policy payloads remain controller-side Job provenance and are not
-worker inputs.
+RunConfig is execution authority, delivered once as canonical JSON via
+`--run-config` to each regular container; no auxiliary per-Run ConfigMap or
+compatibility file. Resolve candidate compatibility before Job creation. Only
+runtime execution material enters `RunConfig.delivery`; selected policy payloads
+stay controller-side Job provenance.
 
-The Job materializer consumes this resolved execution fact:
+`profilingrun.ExecutionState.ArtifactPath` comes from the trusted artifact
+declaration and is recorded in RunConfig. Adapter owns destination: `model.onnx`
+for ORT, `model.rknn` for RKNNLite; callers cannot choose it. RKNNLite projects
+only verified report's exact host-library, driver-version, platform-compatible and
+device paths. File facts are read-only, devices writable; runtime privilege/host
+mounts are runtime-only. Request extended resource only if report declares one.
+Supplemental groups are necessarily Pod-level; observers get no device mount or
+privilege.
 
-- `profilingrun.ExecutionState.ArtifactPath`, the artifact source path inside
-  the artifact supply image.
+Go verifies projected candidate report once before adapter construction.
+`runtime/rknnlite/runner.py`/firstfloor own RKNNLite artifact, image-package,
+host-library, driver, platform, character-device, core-mask, initialization and
+inference checks, not ORT provider vocabulary. `runtime/firstfloor/measurement.py`
+compares actual runtime facts to delivered host declarations before raw encoding.
 
-It is resolved from the already trusted artifact declaration and recorded in the
-RunConfig. The destination path inside the shared model volume belongs to the
-runtime adapter (`model.onnx` for ORT backends and `model.rknn` for the RKNNLite
-backend) and is not caller-selectable. RKNNLite additionally projects only the
-verified report's exact host library, driver-version, platform-compatible, and
-device paths. File facts are read-only, device nodes remain writable, runtime
-container privilege and host mounts apply only to that container, and an
-extended resource is requested only when the report declares one. Kubernetes
-supplemental groups are necessarily Pod-level, but observers receive no device
-mount or privilege.
+Active/idle accept only matching current Go/Python RunConfig/request schemas.
+Optional physical-host contract is semantic library/driver/platform/device/
+allocation facts. Optional typed actuation carries non-fixed mode, exact actuator
+target and configured policy name; fixed Runs omit it. Actuated Jobs wait for
+durable Node power-mode request-generation/readback/transition handoff, not a
+NodeActuation CRD or Lease. Settling duration uses the common measurement protocol
+and execution provenance, not a parallel execution type.
 
-The Go worker verifies the projected candidate report once before constructing
-the runtime adapter. The firstfloor runner and the RKNNLite helpers in
-`runtime/rknnlite/runner.py` then own RKNNLite-specific artifact,
-image-package, host-library, driver, platform, character-device, core-mask,
-initialization, and inference checks; they do not reuse ONNX Runtime provider
-vocabulary. `runtime/firstfloor/measurement.py` compares the actual runtime
-facts with the delivered host declarations before raw evidence construction.
+Store delivery is not scientific input: logical store, internal endpoint/bucket/
+region, immutable credential Secret reference and deterministic raw key. Profiler
+startup knows owning `ChillSystem`; Job creation exact-reads its enabled store
+reference/configuration and system-owned Service, binds allocated ClusterIP/S3
+port (hostNetwork Jobs cannot resolve cluster DNS), derives Secret reference
+without reading bytes. Require current availability and completed Operator-owned
+bootstrap Job attesting exact ConfigMap `resourceVersion`; no operand reconcile
+or direct probe.
 
-Active and idle Runs use only the current RunConfig schema. The optional
-physical host contract is represented as semantic library, driver, platform,
-device, and allocation facts. The optional typed actuation contract contains
-the non-fixed mode, exact actuator target, and configured policy name; fixed
-Runs omit it. An actuated Run is withheld before Job creation until the durable
-actuation handoff exists. The measurement protocol includes settling duration
-and reuses the same RunConfig type and common execution provenance rather than
-creating a parallel execution type. Go and Python accept only their matching
-current request and RunConfig schemas.
-
-The runtime worker and both observers consume that canonical RunConfig through
-strict decoders. Delivery configuration must therefore select images that
-support the same current RunConfig schema. Compatibility is established at
-image deployment time, while each image remains an exact OCI reference in the
-RunConfig and each process keeps the responsibility described below.
-
-The following values are delivery bindings, not scientific Run inputs:
-
-- logical Evidence Store identity;
-- internal Service endpoint, bucket, and region;
-- immutable credentials Secret reference; and
-- deterministic raw-object key.
-
-The Profiler receives the owning `ChillSystem` name at startup. At Job creation
-it exact-reads that system's enabled Evidence Store reference and configuration,
-exact-reads the system-owned Evidence Store Service and binds its allocated
-ClusterIP and S3 port (not cluster DNS, which hostNetwork Jobs cannot resolve),
-derives the immutable credentials Secret reference, and never reads the
-credential bytes. It requires the current ChillSystem
-availability condition and a completed, operator-owned bootstrap Job attesting
-the exact configuration ConfigMap `resourceVersion`. It does not reconcile or
-directly probe the storage operand.
-
-The resolved binding is retained in the immutable Job PodSpec through literal
-store, endpoint, bucket, and region values plus Secret references. Finalization
-reconstructs this binding from the recorded Job rather than silently switching
-an in-flight Run to newer store configuration. These values never enter
-`ProfilingRun.spec` or the resolved RunConfig.
-Endpoint, bucket, region, and Secret data remain outside status and container
-logs; only the logical store and an opaque finalized-evidence key may later
-appear in the compact status reference. A Run cannot supply or override them.
-
-The initial object keys are fixed:
-
-```text
-profiling-runs/<Run UID>/raw.json
-profiling-runs/<Run UID>/execution.json
-```
-
-The logical store identity is the CHILL Evidence Store Service name, not its
-endpoint. Two Run objects therefore remain distinct trials even when their
-scientific RunConfig is otherwise identical.
+Immutable Job PodSpec retains literal store/endpoint/bucket/region and Secret
+references. Finalization recovers this binding, never switches an in-flight Run
+to newer configuration. None enter `ProfilingRun.spec` or RunConfig. Endpoint,
+bucket, region and Secret data stay outside status/logs; compact status may expose
+only logical store and opaque finalized key. No Run override. Logical store is
+CHILL Evidence Store Service name, not endpoint. Fixed keys:
+`profiling-runs/<Run UID>/raw.json`, `profiling-runs/<Run UID>/execution.json`.
+Different Run objects are distinct trials even with identical scientific config.
 
 ## Job-local handoff
 
-The Job uses four base volumes:
+Four base volumes: artifact-populated model `emptyDir`; coordination `emptyDir`
+shared by regular containers; bounded private runtime-workspace `emptyDir`; token/
+CA projection only for WorkloadObserver. Accelerator adds exact `hostPath` per
+verified host fact, never whole device directories or observer mounts. Workspace
+holds private firstfloor result and bounded pre-upload evidence candidate, not a
+cross-container protocol or retained store.
 
-- an `emptyDir` model volume populated by the artifact init container;
-- an `emptyDir` coordination volume shared by the three regular containers;
-- a bounded runtime-workspace `emptyDir` mounted only by the runtime worker; and
-- a projected Kubernetes token and CA volume mounted only by WorkloadObserver.
+| Atomic bounded coordination path | Owner/meaning |
+|---|---|
+| `observer-ready` | Metric helper ready for start |
+| `workload-observer-ready` | Workload preflight list-watch capability ready |
+| `workload-window-start` | Runtime warm-up complete; request retained session |
+| `workload-window-ready` | Workload retained list-watch established |
+| `measurement-start` | Runtime opens window after warm-up/idle settling |
+| `measurement-end` | Runtime closes window after last active inference/idle duration |
+| `metric-result.json` | Complete result via temp-file + rename |
+| `workload-result.json` | Complete atomic result after causal status fence |
+| `runtime-failed` | Runtime failure; observers end all waits/watch and exit failed |
 
-An accelerator path appends one exact `hostPath` volume per verified host fact;
-it never mounts a whole device directory or exposes those volumes to either
-observer.
+Runtime: strict config validation; verify Pod UID, Node, artifact, CPU/runtime/
+provider/output-validation capability; bounded wait for both preflight readiness
+signals; active warm-up or loaded-model idle settling; request/await retained
+workload window; emit start; one duration-based measurement; emit end; bounded
+wait for both results; check new source/identity/summary/timestamp/coverage
+relationships; encode mode-specific raw object and bounded size; one immutable
+create; write validated receipt to `/dev/termination-log`; exit zero.
 
-The runtime workspace holds the private firstfloor result and bounded temporary
-file used to verify evidence before upload. It is not a cross-container
-protocol or retained evidence location.
+Idle start requires exact load/full observer-independent settling without
+inference; end requires monotonic duration, zero inference and verified residency.
+CPU ORT canonical idle batch is one; batch-fixed artifacts require their capability
+batch, identifying residency, not idle inference. Runtime emits signals without
+reading observer results; observers cannot choose a window from observed values.
 
-The coordination volume contains only this versioned, bounded protocol:
+Metric helper validates config, constructs frozen edge source, emits readiness,
+bounded-waits start, observes RunConfig power duration, bounded-waits end, publishes
+result, exits. Workload helper validates config/own Pod/Job, probes readiness,
+establishes fresh retained list-watch after warm-up, retains changes through end
+and same-watch successful `metric-observer` termination, then publishes. See
+[workload contract](workload-observer.md) for causal coverage/ambiguous drain facts.
+Runtime failure atomically emits `runtime-failed` before its failure exit; both
+helpers observe from startup and stop within seconds. Logs are diagnostic, never
+evidence/handoff; partial result files are never visible under final names.
 
-```text
-observer-ready       metric-observer is ready to receive a start signal
-workload-observer-ready  target-Node list-watch continuity is established
-measurement-start    runtime completed warm-up and opens the measurement window
-measurement-end      runtime completed its final measured inference
-metric-result.json    complete MetricObserver Result, written by temp-file + rename
-workload-result.json  complete WorkloadObserver Result, written atomically
-runtime-failed       runtime failed and is exiting; observers stop and exit failed
-```
+## Raw evidence, receipt and failure
 
-For `idle-model-loaded`, the same signals retain the same ownership but have
-mode-specific preconditions: `measurement-start` means exact model load and the
-full RunConfig settling interval completed with no inference; `measurement-end`
-means the monotonic duration completed with no inference and the model still
-resident. CPU ORT keeps the canonical idle batch of one. A runtime whose
-artifact is batch-fixed instead requires the idle RunConfig batch to equal that
-artifact capability; the value identifies what is resident and does not imply
-an idle-window inference. The runtime creates both signals without reading
-metric or workload results. Observers can therefore prove coverage or fail
-closed, but cannot derive a preferred window from the values they observe.
+Active raw contains verified RunConfig, actual Pod UID, validated runtime result,
+complete metric and bounded workload results. Idle has separate current schema:
+exact load, settling completion, zero inference, residency and declared duration
+instead of active latency/output-validation proof. Both share store/key/size
+reference boundary. No Job completion, terminal Pod/Node snapshot, credentials or
+backend response: controller adds native facts independently during finalization.
 
-Logs are diagnostic only. They are never parsed as evidence or used as a
-controller handoff. A partial metric-result file is never visible under the
-final filename.
+Exit zero requires immutable commit and exactly one
+`evidence-store-receipt.v1alpha1` JSON termination message within 4 KiB. Receipt
+is a hint; controller independently retrieves/verifies. Failure codes:
 
-The runtime sequence is fixed:
-
-1. strict-decode and validate the supplied RunConfig;
-2. verify Pod UID, scheduled Node name, artifact file, CPU contract, runtime,
-   provider, and output-validation capability;
-3. wait with a bounded timeout for both observer readiness signals;
-4. execute active warm-up, or for idle retain the loaded model for the full
-   observer-independent settling duration without inference;
-5. atomically create `measurement-start`;
-6. execute the one duration-based measurement;
-7. atomically create `measurement-end` after the final active inference, or
-   after the idle duration completes with zero inference and verified session
-   residency;
-8. wait with bounded timeouts for both result files;
-9. validate metric source and workload identities, summaries, timestamps, and
-   coverage of the runtime measurement window;
-10. encode the mode-specific active or idle raw measurement, record its bounded
-    size, and perform one immutable create; and
-11. write the validated Evidence Store receipt to `/dev/termination-log` and
-    exit successfully.
-
-On any failure the runtime atomically creates `runtime-failed` before it exits
-with its failure class. Both observers watch for that signal from startup and
-end every wait at once, so a failed attempt releases the Node within seconds.
-
-The MetricObserver sequence is fixed:
-
-1. strict-decode and validate the same RunConfig;
-2. construct the edge-metrics source from the RunConfig power contract;
-3. atomically create `observer-ready`;
-4. wait with a bounded timeout for `measurement-start`;
-5. observe for the RunConfig power duration;
-6. wait with a bounded timeout for `measurement-end`; and
-7. atomically publish `metric-result.json` and exit successfully. Therefore its
-   successful Pod container status is causally after runtime closed the window.
-
-The WorkloadObserver sequence is fixed:
-
-1. strict-decode the RunConfig and verify its own Pod and Job ownership;
-2. establish the target-Node Pod list-watch and publish its readiness signal;
-3. retain bounded membership changes until `measurement-end`;
-4. continue the same watch until the Run Pod reports successful termination of
-   `metric-observer`, the causal post-end status fence; and
-5. atomically publish `workload-result.json` and exit.
-
-## Raw evidence and receipt
-
-The current active raw-measurement object contains only facts available before
-the worker exits:
-
-- the validated RunConfig and actual Pod UID;
-- the existing validated runtime result;
-- the complete MetricObserver result; and
-- the complete bounded WorkloadObserver result.
-
-Model-loaded idle uses its own current raw schema because its runtime
-completeness proof is exact model load, settling
-completion, zero inference, retained residency, and a
-runtime-declared duration rather than active latency and output-validation
-evidence. Both raw schemas retain the same validated RunConfig, actual Pod UID,
-MetricObserver result, WorkloadObserver result, and immutable store/key/size
-reference boundary.
-
-It contains no Job completion, terminal Pod state, or post-run Node snapshot,
-credentials, or backend response. Those Kubernetes facts are added only by the
-Profiler controller during independent finalization.
-
-Exit code zero is permitted only after immutable storage succeeds and the
-receipt is written. The success termination message contains exactly one
-`evidence-store-receipt.v1alpha1` JSON object and stays within Kubernetes' 4 KiB
-termination-message bound. A receipt is a handoff hint, not proof; the
-controller retrieves and verifies the object independently.
-
-The first worker uses stable failure classes:
-
-| Exit code | Meaning |
+| Code | Meaning |
 |---:|---|
-| 2 | invalid or drifted RunConfig/delivery contract |
-| 3 | artifact, runtime, provider, inference, or output validation failure |
-| 4 | observer readiness, execution, handoff, or result validation failure |
-| 5 | raw evidence encoding, immutable write, or post-write verification failure |
+| 2 | Invalid/drifted RunConfig or delivery |
+| 3 | Artifact/runtime/provider/inference/output validation |
+| 4 | Observer readiness/execution/handoff/result validation |
+| 5 | Raw encoding/immutable write/post-write verification |
 
-Failures write diagnostics to stderr and leave `/dev/termination-log` empty.
-The runtime container uses `FallbackToLogsOnError`, so Kubernetes fills its
-termination message with the last 80 lines or 2 KiB of the container log. When
-the Job fails, the controller copies the runtime exit code and that message
-once into `ProfilingRun.status.runtimeTermination`, which keeps the failure
-cause after the Pod is deleted. The copy is a diagnostic; the controller never
-parses it. Kubernetes remains the authority for the native container and Job
-failure state.
+Failure writes stderr, leaves `/dev/termination-log` empty. Runtime uses
+`FallbackToLogsOnError` (Kubernetes last 80 lines or 2 KiB). Controller copies
+runtime exit/message once to `ProfilingRun.status.runtimeTermination` on Job
+failure, surviving Pod deletion; diagnostic only, never parsed. Kubernetes owns
+native failure state.
 
-Observer images belong to the measurement-protocol identity, and the runtime
-image, which carries the worker, belongs to the execution-state identity. A Run
-resolved with a rebuilt observer or worker image therefore receives new
-identities, while profiles derived from earlier evidence keep their recorded
-identities and stay valid. A curve plan pairs active and idle Runs only under
-one runtime image and one protocol each, so a campaign and its idle baseline
-use one image set.
+Observer images enter measurement-protocol identity; runtime/worker image enters
+execution-state identity. Rebuild changes newly resolved identities, not validity
+of retained earlier profiles. Curve active/idle pairing requires one runtime
+image/protocol each; campaign and baseline use one image set.
 
-## Kubernetes execution contract
+## Kubernetes execution and bounded capacity
 
-The controller creates one deterministic Job owned by the `ProfilingRun`:
+One deterministic Run-owned Job: `parallelism=1`, `completions=1`,
+`backoffLimit=0`, `restartPolicy=Never`, no replacement for same Run;
+`automountServiceAccountToken=false`; Downward API Pod UID/scheduled Node; exact
+Node placement/configured CPU request-limit; immutable artifact/runtime/observer
+OCI references; restricted security contexts; bounded active deadline.
+Job name derives from Run UID: losing/deleting recorded Job never permits repeat.
 
-- `parallelism=1`, `completions=1`, and `backoffLimit=0`;
-- `restartPolicy=Never` and no replacement Job for the same Run;
-- `automountServiceAccountToken=false`;
-- Pod UID and scheduled Node name injected from the Downward API;
-- exact target-Node placement and configured CPU request/limit;
-- immutable OCI references for artifact, runtime, MetricObserver, and WorkloadObserver images;
-- restricted container security contexts; and
-- one bounded active deadline covering startup, warm-up, measurement, handoff,
-  and evidence commit.
+One versioned installation worker policy derives resources, deadlines/handoff
+margins and producer capacities coherently. Helm supplies default measured envelope;
+Profiler selects by DeviceClass/execution path/workload mode before Job creation.
+Immutable Run retains exact selected canonical policy/source ConfigMap provenance;
+Job retains projected native resources and content-derived policy identity, not
+CR status. These are delivery bindings, not Run knobs or spec overrides. Runtime/
+metric entrypoints have no hidden default handoff wait.
 
-Deadline and handoff margins are versioned installation policy for this worker,
-not Run knobs. Helm provides the default measured envelope. Before Job creation,
-the Profiler selects it by RunConfig DeviceClass, execution path, and workload
-mode and copies the exact canonical policy and ConfigMap provenance into the
-owned Job. The Job name is derived from the Run UID, so deleting or
-losing a recorded Job cannot be mistaken for permission to repeat the
-measurement.
+Required relationships:
+- Metric combined sample/failure event cap admits full duration/interval schedule
+  before polling and remains enforced while recording.
+- Independent handoff-byte limit rejects oversize before raw commit.
+- Reject input tensor before allocation above calculated-byte budget; ceiling leaves
+  measured reserve for model/session/outputs/bounded input-generation temp/worker.
+- Retained latency cap and serialized-runtime-result cap fit memory and handoff.
+- Workspace fits private result plus one bounded evidence candidate, not image layer.
+- Common deadline covers artifact/model/input preparation, observer synchronization,
+  warm-up, measurement, handoff and evidence commit.
 
-Job composition supplies each process with its handoff wait budget from the
-same bounded attempt timing contract. Runtime and MetricObserver entrypoints
-have no hidden default wait duration, and `ProfilingRun.spec` cannot override
-these delivery bindings.
+Derive capacities from resources/duration, never predicted throughput. Oversize
+artifact shape or inability to retain full latency distribution fails explicitly;
+no truncation, sampling or silent aggregation. Numeric reserves/serialized-byte
+coefficients require measurements from exact pinned runtime image, become versioned
+installation defaults, affect only new Runs and change content-derived execution
+identity. Later runtimes may have their own policy; no generic planner framework.
 
-Job composition also supplies bounded producer capacities. The MetricObserver
-must admit the complete duration/interval polling schedule within one combined
-sample-and-failure event cap before polling begins, then enforce that cap while
-recording. The firstfloor runtime must reject an input tensor before allocation if
-its calculated bytes exceed the supplied input budget, cap retained latency
-samples during measurement, and reject a serialized runtime result that
-exceeds its result-byte budget. These capacities are versioned worker delivery
-bindings derived from the bounded execution resources; they are not scientific
-Run knobs and do not add fields to `ProfilingRun.spec`.
+## Dependencies and remaining boundary
 
-### Resource-capacity envelope
-
-Job materialization must derive container resources, handoff deadlines, and
-producer capacities through one versioned worker policy. It must not assemble
-independent positive numbers that can only be discovered to conflict after a
-large in-memory result has been built. The immutable Run record retains the
-exact selected policy and source, while the immutable Job retains the projected
-native resource requirements and content-derived policy identity. CR status
-does not copy these implementation details.
-
-The first policy must enforce these relationships:
-
-- the MetricObserver event capacity covers the complete configured polling schedule;
-- the independent handoff byte limit rejects an oversized result before raw
-  evidence is committed;
-- the runtime input ceiling leaves a separately measured reserve for the model,
-  runtime session, outputs, bounded input-generation temporary, and worker;
-- the latency-sample capacity and runtime-result byte capacity fit both the
-  runtime container memory limit and the immutable handoff; and
-- the runtime workspace size covers the private runtime result and one bounded
-  evidence candidate without relying on a writable image layer; and
-- the common attempt deadline covers artifact preparation, model and input
-  preparation, observer synchronization, warm-up, measurement, handoff, and
-  evidence commit.
-
-Capacity is derived from resources and the configured duration, never from an
-expected model throughput: using a predicted inference rate would make faster
-measurements fail for reasons derived from the profile they are supposed to
-produce. When the artifact-derived input shape exceeds the admitted ceiling,
-or a duration cannot retain its complete latency distribution, the worker
-fails explicitly. It never truncates, samples, or silently aggregates the raw
-distribution to fit a budget.
-
-Numeric reserves and serialized-byte coefficients are not fixed by this
-document. They require measurements from the exact pinned worker/runtime
-image and become defaults in a versioned installation policy. Changing those
-values affects only newly resolved Runs and changes the content-derived execution
-identity. A later runtime may define its own policy; this first contract does
-not introduce a generic resource-planner framework.
-
-## Responsibility and dependency boundary
-
-```text
-Profiler controller
-  -> materializes and later observes native objects
-  -> never executes inference or polls power
-
-runtime worker
-  -> firstfloor runtime adapter
-  -> internal/profiling/profiler/evidence raw codec
-  -> internal/evidencestore + S3 adapter
-
-metric-observer helper
-  -> internal/metricobserver
-  -> edge-metrics adapter
-
-workload-observer helper
-  -> internal/workloadobserver
-  -> read-only Kubernetes Pod list-watch adapter
-```
-
-No Job container imports controller-runtime or reconciles Kubernetes objects.
-Only WorkloadObserver receives the projected read-only Kubernetes API token.
-The controller does not trust shared-volume files after Pod termination; it
-trusts only independently read and verified immutable evidence plus native
-Kubernetes observations.
-
-## Implementation order
-
-1. Record the artifact supply path in RunConfig from the candidate projection.
-2. Add a pure worker coordinator with fake runtime, observer-result, and store
-   ports; keep Kubernetes out.
-3. Implement the CPU ORT runtime entrypoint and file-based MetricObserver
-   handoff within the worker and adapter package boundaries.
-4. Add the CHILL-managed Evidence Store delivery binding to Profiler startup
-   configuration and Job projection.
-5. Add deterministic Job materialization with its coherent resource-capacity
-   envelope and status reference publication.
-6. Connect terminal observation to the existing evidence finalizer.
-7. Verify active and model-loaded-idle Lattepanda Runs through the worker,
-   immutable store, finalizer, loader, and admission path.
-
-Items 1 through 7 are implemented. The worker composes RunConfig validation,
-the runtime adapter, bounded observer handoffs, immutable Evidence Store
-writer, stable failure exits, and bounded termination receipt. The final live
-active and idle paths are verified. This worker contract does not independently
-own the public request schema; Plan 4 owns the exposed mode and validation
-fields.
+Runtime worker -> firstfloor adapter -> `internal/profiling/profiler/evidence`
+raw codec -> `internal/evidencestore`/S3. Metric helper -> `internal/metricobserver`
+-> edge-metrics adapter. Workload helper -> `internal/workloadobserver` -> read-only
+Pod list-watch adapter. No Job container imports controller-runtime or reconciles
+objects. Controller trusts independently verified immutable evidence/native facts,
+never terminated-Pod shared files. Current-schema live verification, idle Passport,
+image rebuild/remeasurement and measured capacity defaults retain the limits above.

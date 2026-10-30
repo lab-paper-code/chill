@@ -1,258 +1,105 @@
 # Evidence Store Contract
 
-> Navigation: [Profiling design index](../README.md)
+> Navigation: [Component contracts](README.md) · [Profiling design index](../README.md)
 
-## Status
+## Status and purpose
 
-Implemented and live-verified for the first CPU ONNX Runtime `ProfilingRun`
-path.
+Implemented and live-verified for the first CPU ONNX Runtime `ProfilingRun` path.
+CHILL owns immutable evidence and Kubernetes management; the S3-compatible engine
+is replaceable. This is not a profile database, research catalog, scheduler
+history store, or general data platform.
 
-## Purpose
+The testbed verified internal Service FQDN access from Lattepanda with the
+EdgeMesh integration label, Secret credentials without a worker API token,
+authenticated PUT and independent GET of a 389,364-byte bundle, conditional-create
+overwrite prevention, and recovery through the retained PVC after Pod replacement.
+This proves one complete object's immutability and process/Pod survival, not Node
+or Ceph failure, HA, backup, TLS, credential rotation, retention, or garbage collection.
 
-Define the immutable evidence-storage contract used by CHILL. CHILL owns the
-data and Kubernetes management boundary while the
-S3-compatible storage engine remains a replaceable dependency.
+## Responsibility and dependency boundary
 
-The first path answers one question:
-
-> Can CHILL producers commit immutable evidence objects and can a separate
-> reader later reconstruct a bounded, structurally valid retained record?
-
-This is not a general data platform, profile database, research catalog, or
-scheduler history store.
-
-## Evidence and claim limit
-
-The current testbed demonstrated:
-
-- Lattepanda reaches the CHILL-managed store through its internal Kubernetes
-  Service FQDN and the current EdgeMesh integration label;
-- credentials come from a Secret and the edge worker has no Kubernetes API
-  token;
-- the existing 389,364-byte evidence bundle survives authenticated PUT and
-  independent GET;
-- conditional create prevents an existing key from being overwritten; and
-- a new store Pod recovers the same object through the retained PVC.
-
-The resulting claim is deliberately narrow: one complete object is immutable
-and survives process and Pod replacement. Node or Ceph failure, HA, backup,
-TLS, credential rotation, retention, and garbage collection remain unproven.
-
-## Current flow
-
-```text
-
-CHILL Operator -> manages Evidence Store operand
-
-measurement worker
-  -> internal evidence writer
-  -> S3 adapter
-  -> immutable raw-measurement object + bounded receipt
-
-Profiler controller
-  -> internal evidence reader
-  -> bounded raw-object decode and link validation
-  -> internal evidence writer
-  -> immutable execution-evidence record + compact verified reference
-```
-
-The three parts have separate responsibility boundaries. An internal storage
-module does not authorize an Operator or Profiler controller change.
-
-## Responsibility boundary
-
-| Owner | Responsibility |
+| Owner | Contract |
 |---|---|
-| `internal/evidencestore` | Product-neutral location, reference, receipt, immutable-create outcomes, typed errors, and size enforcement |
-| S3 adapter | Conditional create, object retrieval, S3 error translation, cancellation and response cleanup |
-| CHILL Operator | Deployment, ClusterIP Service, Secret, persistent-storage attachment, and component availability |
-| Measurement worker | Assemble raw runtime and power bytes, calculate identity, invoke immutable create, return a bounded receipt |
-| Profiler controller | Treat receipt as a hint, retrieve independently, validate schema and links, combine terminal Kubernetes facts into a separate immutable execution-evidence record, publish compact status |
-| Kubernetes, CSI, EdgeMesh, storage engine | Native workload lifecycle, volume mechanics, edge Service routing, and stored-byte serving |
-
-Important exclusions follow from this table:
-
-- the Operator never reads or verifies Run evidence;
-- the worker never discovers Services or storage through the Kubernetes API;
-- the Profiler never reconciles the storage operand; and
-- the product-neutral package imports no Kubernetes, Operator, Profiler, or
-  CHILL API types.
+| `internal/evidencestore` | Product-neutral location, reference, receipt, immutable-create outcomes, typed errors, size enforcement; no Kubernetes, Operator, Profiler, or CHILL API imports |
+| `internal/evidencestore/s3` | Conditional create, retrieval, S3 error translation, cancellation, response cleanup; sole S3 client dependency |
+| CHILL Operator / `internal/operator/evidencestore` | Deployment, ClusterIP Service, Secret, persistent storage, bootstrap Job, availability; never reads or verifies Run evidence and does not import the S3 adapter |
+| Measurement worker | Assemble runtime/power raw bytes, calculate identity, immutable-create raw measurement, return bounded receipt; no Kubernetes storage/Service discovery |
+| Profiler controller | Independently retrieve receipt target, validate schema/links, combine terminal Kubernetes facts into separate immutable execution evidence, publish compact verified reference; never reconcile storage operand |
+| Kubernetes, CSI, EdgeMesh, engine | Native lifecycle, volumes, edge Service routing, stored-byte serving |
 
 ## Dependency direction
 
-```text
-worker / Profiler composition root
-          |                         |
-          v                         v
- internal/evidencestore <--- internal/evidencestore/s3
-                                    |
-                                    v
-                         S3-compatible endpoint
-```
+Worker/Profiler composition roots depend on the neutral package and its S3
+adapter; the Operator starts from `ChillSystem` desired state. Package changes do
+not authorize changes across those ownership boundaries.
 
-```text
-ChillSystem desired state
-          |
-          v
-internal/operator/evidencestore
-          |
-          v
-Deployment + Service + Secret + persistent storage + bootstrap Job
-```
+## Immutable object contract
 
-The Operator does not import the S3 adapter. The S3 client dependency is
-confined to the adapter.
-
-## First internal contract
-
-The first package needs only four concepts:
-
-- object reference: logical store, opaque key, producer metadata, and byte size;
-- immutable create: new object or existing key without overwrite;
-- independent bounded read; and
-- stable error categories for not-found, authentication, precondition,
-  timeout, transport, and content mismatch.
-
-The S3 adapter binds that logical store to one configured physical bucket.
-Backend bucket naming is delivery configuration and never replaces the logical
-store carried by an object identity or receipt.
-
-The receipt adds schema version and create outcome. It contains no endpoint,
-credential, raw samples, Pod snapshot, or backend response. A receipt alone is
-never sufficient for admission.
-
-A location-only read exists solely to recover an immutable object when its
-deterministic key was committed before the controller persisted the resulting
-reference. The caller applies a byte bound, strict-decodes one object, and
-validates its schema and Run links. An invalid existing object is never
-replaced.
-
-The implementation must support bounded streaming or a bounded temporary file;
-it must not force future evidence into CR status or an unbounded in-memory byte
-slice. The first adapter supports one S3-compatible path without a plugin
-registry or multiple backend abstractions.
-
-An immutable create succeeds only when the candidate matches the declared
-size. The first adapter enforces that bound before conditional create; a
-mismatch returns a content-mismatch error and leaves no new object.
+- Reference: logical store, opaque key, producer metadata, byte size.
+- Create: new object or existing key, never overwrite. Candidate bytes must match
+  declared size before conditional create; mismatch returns content-mismatch and
+  leaves no new object.
+- Read: independent and byte-bounded, using streaming or a bounded temporary file,
+  not CR status or an unbounded in-memory byte slice.
+- Stable errors: not-found, authentication, precondition, timeout, transport,
+  content mismatch.
+- One configured physical S3 bucket binds a logical store; backend bucket naming
+  never replaces logical identity. One adapter, no backend plugin registry.
+- Receipt adds schema version and create outcome; excludes endpoint, credentials,
+  samples, Pod snapshot, backend response. It is a hint, never verification proof.
+- Location-only recovery handles deterministic keys committed before reference
+  persistence: bound bytes, strict-decode one object, validate schema/Run links.
+  Invalid existing objects are never replaced.
+- The evidence loader is the single read-side validation boundary: size-bound,
+  strict schema decode and cross-record links produce opaque active/idle evidence.
+  Finalization retains independent read-after-write decode. Scientific admission
+  was removed (`788bcf93`); retained evidence supports execution and numeric derivation.
 
 ## Kubernetes management contract
 
-The operand lives in the existing CHILL management namespace, currently
-`chill-system`. Its first resource set is:
+The explicitly enabled root component is a sibling of Profiler, not its operand:
+`ChillSystem.spec.evidenceStore.enabled=true` with
+`spec.evidenceStore.configRef.name` (example: `chill-evidence-store-config`).
+The public API exposes only enablement/configuration reference, not backend
+endpoint, bucket, credentials, engine, or storage details; none are Run inputs.
 
-- one single-replica Deployment with a pinned engine image;
+In the management namespace (currently `chill-system`), the Operator owns:
+
+- one single-replica Deployment with pinned engine image;
 - one ClusterIP Service with the current EdgeMesh integration label;
 - one credential Secret;
-- one PVC with configured StorageClass and requested size; and
-- one bounded, idempotent bootstrap Job that ensures the logical evidence
-  bucket exists through the internal Service.
+- one PVC with configured StorageClass/requested size; and
+- one bounded, idempotent bootstrap Job ensuring the logical bucket through the
+  internal Service after Deployment and Service become usable.
 
-The storage engine starts independently of the logical bucket. The Operator
-therefore creates the bootstrap Job after the Service and Deployment are
-usable, and reports `EvidenceStoreAvailable` only after that Job succeeds. A
-successful rerun against an existing bucket is a no-op. The Job provisions no
-Run evidence, owns no retention policy, and is not part of the worker or
-Profiler execution path.
+`EvidenceStoreAvailable` requires bootstrap success. Existing-bucket rerun is a
+no-op. The Job writes no Run evidence, owns no retention policy, and is outside
+worker/Profiler execution. Bounded Kubernetes retries leave completion/failure
+observable; failures are not recreated indefinitely. A changed bootstrap contract
+or explicit Job removal permits another attempt.
 
-The Job uses bounded Kubernetes retry and remains observable after completion
-or failure. A failed Job is not recreated indefinitely; a changed bootstrap
-contract or explicit Job removal permits a new attempt.
+The bootstrap Job records the source ConfigMap `resourceVersion`. Profiler accepts
+a binding only when the current availability condition and an owned completed Job
+attest that same current revision, preventing use of an unbootstrapped update.
+Workers receive Service delivery/Secret references through the Job, never caller
+URLs, Node IPs, or NodePorts. The current Job endpoint binding is specified by the
+[worker contract](measurement-worker.md#runconfig-and-delivery-inputs).
 
-A bootstrap Job records the source ConfigMap `resourceVersion` it prepared.
-Profiler consumers accept a delivery binding only when the current
-`EvidenceStoreAvailable` condition and an owned, completed bootstrap Job attest
-that same source revision. A ConfigMap update therefore cannot send a Run to a
-bucket that has not completed bootstrap for the current configuration.
+Deployment/Service are replaceable; disabling/deleting the operand never
+cascade-deletes PVC or objects. No automatic garbage collection. Credentials are
+created once in an immutable retained Secret; rotation is deferred. PVC growth
+requires StorageClass/CSI expansion support; shrink and StorageClass replacement
+are rejected. Availability does not copy native replica, PVC, or engine status.
 
-Workers receive the internal Service FQDN and referenced Secret through their
-Job. Node IPs, NodePorts, and caller-selected URLs are not Run inputs.
+## Implemented scope and remaining boundaries
 
-Deployment and Service are replaceable. Evidence bytes are not. Disabling or
-deleting the operand must not cascade-delete the PVC or objects, and the first
-implementation performs no automatic garbage collection. Credentials are
-created once and retained in an immutable Secret; automatic rotation is
-deferred.
+Internal contract/S3 adapter, Operator enable/update/disable with PVC retention,
+and Profiler receipt verification/execution finalization are implemented; operand
+lifecycle and retained-object Pod replacement were live-verified. Conditional
+create/existing-key behavior must remain deterministic, S3 failures distinguishable,
+and evidence/credentials absent from status/logs except compact permitted references.
 
-The retained PVC may request a capacity increase when the StorageClass and CSI
-driver support expansion. Capacity reduction and StorageClass replacement are
-rejected rather than interpreted as safe updates.
-
-Evidence Store is an explicitly enabled root component of `ChillSystem`:
-
-```yaml
-spec:
-  evidenceStore:
-    enabled: true
-    configRef:
-      name: chill-evidence-store-config
-```
-
-The public surface contains only enablement and a reference to CHILL-managed
-configuration. Backend endpoint, bucket, credentials, engine choice, and
-storage details do not become Run inputs or public `ChillSystem` fields. The
-operand is a sibling of the Profiler under `ChillSystem`, not a
-Profiler-owned Deployment.
-
-## Implementation boundaries
-
-### Plan 1: internal contract and S3 adapter — implemented
-
-1. Add product-neutral types, ports, size enforcement, and unit tests under
-   `internal/evidencestore`.
-2. Add one S3-compatible adapter in its subpackage, including pre-create
-   candidate size enforcement.
-3. Cover create, existing-key reuse, and independent bounded reads through the
-   internal package and S3 adapter tests.
-4. Verify store Pod replacement against the retained persistent object.
-
-Stop for review. Plan 1 adds no API fields, controller watches, or managed
-Kubernetes resources.
-
-### Plan 2: Operator-managed operand
-
-1. Add the minimal `ChillSystem` desired-state surface. — implemented
-2. Add a short, reconstructable `internal/operator/evidencestore` reconciler. — implemented
-3. Reconcile the Deployment, Service, Secret, persistent-storage attachment,
-   and idempotent bucket bootstrap with explicit PVC retention. — implemented
-4. Add one `EvidenceStoreAvailable` condition without copying native replica,
-   PVC, or engine status into `ChillSystem.status`. — implemented
-5. Verify operand enable/update/disable and PVC retention. — live-verified
-
-Stop for review. The Operator still does not write or verify evidence.
-
-### Plan 3: Profiler consumption — implemented
-
-The approved `ProfilingRun` controller injects the retained store binding into
-the worker, consumes its bounded receipt, independently reads the raw
-measurement, writes a separate execution-evidence record from
-terminal Kubernetes facts, and publishes the compact finalized reference and
-Conditions.
-
-The evidence loader is the single read-side validation boundary. It applies the
-configured size bound, strict-decodes the schema, and validates cross-record
-links once, then returns an opaque active or idle evidence value. Admission
-accepts only that value and does not repeat record validation. Finalization
-retains its independent read-after-write decode.
-
-## Acceptance boundary
-
-The boundary is acceptable when conditional create and existing-key behavior
-have deterministic tests, S3 failures remain distinguishable, raw evidence and
-credentials stay out of CR status and logs, and each plan stops for review.
-
-The following remain outside this contract:
-
-- metadata databases and searchable catalogs;
-- profile, scheduler, campaign, and research-export storage;
-- TLS automation and credential rotation;
-- retention, garbage collection, backup, and disaster recovery;
-- multi-replica storage and storage-node failover; and
-- changes to another system's MinIO, WebDAV, NFS, or monitoring lifecycle.
-
-## Review question
-
-Does this design expose only the bounded immutable evidence primitive while
-keeping storage operation with the CHILL Operator, measurement execution with
-the worker, evidence finalization with the Profiler controller, and raw bytes
-outside Kubernetes status?
+Out of scope/unproven: metadata/search catalogs; profile, scheduler, campaign and
+research-export storage; TLS automation/rotation; retention/GC/backup/disaster
+recovery; multi-replica storage/storage-node failover; changes to another system's
+MinIO, WebDAV, NFS, or monitoring lifecycle.
