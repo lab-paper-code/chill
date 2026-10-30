@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { conditionLabel, deviceLabel, coverageSelection, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
-import type { InventoryClass, InventoryView, MeasurementPlan, ModelCompatibility, ProfilingRun } from "./read-types.ts"
+import type { InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementPlan, ModelCompatibility, ProfilingRun, ResultRow } from "./read-types.ts"
 
 test("power mode labels identify measured watts rather than inventing a declared limit",()=>{
   assert.equal(powerModeLabel("MODE-1",[10,12]),"MODE-1 · 실측 10.0–12.0 W")
@@ -74,5 +74,40 @@ test("closing a directly linked cell preserves its matrix and filter context",()
 test("condition choices name Node CPU and dataset without dumping frozen JSON",()=>{
   assert.equal(conditionLabel({nodeUID:"node-uid",metricSource:{nodeName:"jetsono"},cpu:{limit:"4",affinityCPUs:[2,3]},activeProtocol:{dataset:{name:"images",uid:"dataset-uid"}},runtimeImage:"registry/image@sha256:long"}),"Node jetsono / CPU 4 (코어 2,3) / 데이터셋 images")
   assert.equal(conditionLabel({}),"Node 미지정 / CPU 미지정 / 데이터셋 미지정")
+  assert.equal(conditionLabel({state:{targetNode:"genesis2",cpuRequest:"2"},cpuQuota:"4",cpuAffinity:[2,3],activeProtocol:{dataset:"images"}}),"Node genesis2 / CPU 4 (코어 2,3) / 데이터셋 images")
   assert.equal(deviceLabel("jetson-agx-orin-64g"),"AGX Orin 64g")
+})
+
+const cell:MeasurementCoverageCell={id:"cell",model:{name:model.name,uid:model.uid},deviceClass:{name:cls.name,uid:cls.uid},executionPath:"cpu",powerMode:"MAXN",support:{verdict:"Unknown",node:{name:"node",uid:"node-uid"},reasons:[{code:"RuntimeDeclarationMissing",message:"선언 없음"}]},assessment:{status:"unmeasured",displayStatus:"unmeasured",label:"미측정",reasons:[],execution:null,evidence:{available:false,accepted:false,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:null,reused:false,facts:[]}},variantCount:0,variants:[],batchProgress:{basis:"explicit",target:[1,2,4,8],measured:[1,2],criteriaMet:[1],missing:[4,8],inProgress:[4],unknown:[]},representative:null,failureSummary:[],history:[]}
+test("coverage hides architecture conflicts only, never declarations or measured unsupported paths",()=>{
+  assert.equal(coveragePathVisible(cell),true)
+  assert.equal(coveragePathVisible({...cell,support:{...cell.support,verdict:"Incompatible",reasons:[{code:"RuntimeUnsupported",message:"runtime 미지원"}]}}),true)
+  assert.equal(coveragePathVisible({...cell,support:{...cell.support,reasons:[{code:"ArtifactArchitectureMismatch",message:"아키텍처 불일치"}]}}),false)
+})
+test("batch slots preserve separate evidence, running, missing and unknown states",()=>{
+  assert.deepEqual([1,2,4,8,16].map(batch=>coverageBatchState(cell.batchProgress,batch)),["complete","measured","running","missing","outside"])
+  assert.equal(coverageBatchState(null,1),"unknown")
+  const first={id:"first",condition:{},assessment:cell.assessment,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
+  const second={...first,id:"second",batchProgress:{...first.batchProgress,measured:[8],missing:[1,2,4]}}
+  assert.equal(coverageProgress({...cell,batchProgress:null,variants:[first,second],representative:{variantId:"second",batch:8,incrementalJoulesPerItem:1,p95Milliseconds:2}}),second.batchProgress)
+})
+test("coverage requests work for unmeasured cells without exact variants and preserve return filters",()=>{
+  const href=new URL(coverageRequestHref(cell,"ns","/measurements?cell=cell&status=unmeasured"),"http://local")
+  assert.equal(href.searchParams.get("model"),model.name)
+  assert.equal(href.searchParams.get("node"),"node")
+  assert.equal(href.searchParams.get("batches"),"4,8")
+  assert.equal(href.searchParams.has("variantId"),false)
+  assert.equal(href.searchParams.get("returnTo"),"/measurements?cell=cell&status=unmeasured")
+  assert.equal(new URL(coverageRequestHref({...cell,support:{...cell.support,node:null}},"ns","/measurements"),"http://local").searchParams.has("node"),false)
+  assert.equal(new URL(coverageRequestHref({...cell,batchProgress:null},"ns","/measurements",undefined,[2,8]),"http://local").searchParams.get("batches"),"2,8")
+  const variant={id:"variant",condition:{state:{targetNode:"actual-node"}},assessment:cell.assessment,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
+  assert.equal(new URL(coverageRequestHref({...cell,variants:[variant]},"ns","/measurements","variant"),"http://local").searchParams.get("node"),"actual-node")
+})
+function resultRow(watts:number):ResultRow {
+  return {id:"row",rowKind:"direct",profileId:"profile",sourceProfileId:null,batch:1,condition:{},p95Milliseconds:2,latencySampleCount:10,idleWatts:0,activeWatts:watts,totalJoulesPerItem:1,incrementalJoulesPerItem:1,confidence:null,activeTrialCount:3,idleTrialCount:3,completedItems:10,completedCalls:10,powerSource:null,assessment:cell.assessment,sources:[],missingReasons:[],reuse:null}
+}
+test("power modes put measured zero watts first and unknown watts last",()=>{
+  const measured=(mode:string,watts:number):MeasurementCoverageCell=>({...cell,powerMode:mode,variants:[{id:mode,condition:{},assessment:cell.assessment,batchProgress:cell.batchProgress!,resultRows:[resultRow(watts)],requestIds:[],runIds:[],profileIds:[]}]})
+  assert.deepEqual(coverageModes([measured("high",30),{...cell,powerMode:"unknown"},measured("idle",0),measured("low",12)]),["idle","low","high","unknown"])
+  assert.deepEqual(coverageRepresentative(measured("low",12)),{variantId:"low",batch:1,incrementalJoulesPerItem:1,p95Milliseconds:2})
 })

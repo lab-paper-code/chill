@@ -1,5 +1,5 @@
 import type { ExecutionPath, ModelSpec } from "./domain.ts"
-import type { InventoryClass, InventoryView, MeasurementPlanSpec, ModelCompatibility, ProfilingRun } from "./read-types.ts"
+import type { BatchProgress, InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementPlanSpec, ModelCompatibility, ProfilingRun } from "./read-types.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 
 export function deviceLabel(name:string) {
@@ -8,8 +8,10 @@ export function deviceLabel(name:string) {
 export function conditionLabel(condition:Record<string,unknown>) {
   const cpu=condition.cpu as {request?:string;limit?:string;affinityCPUs?:number[]}|undefined
   const source=condition.metricSource as {nodeName?:string}|undefined
-  const active=condition.activeProtocol as {dataset?:{name?:string}}|undefined
-  return `Node ${source?.nodeName??condition.nodeUID??"미지정"} / CPU ${cpu?.limit||cpu?.request||"미지정"}${cpu?.affinityCPUs?.length?` (코어 ${cpu.affinityCPUs.join(",")})`:""} / 데이터셋 ${active?.dataset?.name??"미지정"}`
+  const state=condition.state as {targetNode?:string;cpuRequest?:string}|undefined
+  const active=condition.activeProtocol as {dataset?:{name?:string}|string}|undefined
+  const affinity=cpu?.affinityCPUs??condition.cpuAffinity as number[]|undefined
+  return `Node ${source?.nodeName??state?.targetNode??condition.nodeUID??"미지정"} / CPU ${cpu?.limit||cpu?.request||condition.cpuQuota||state?.cpuRequest||"미지정"}${affinity?.length?` (코어 ${affinity.join(",")})`:""} / 데이터셋 ${typeof active?.dataset==="string"?active.dataset:active?.dataset?.name??"미지정"}`
 }
 export function powerModeLabel(name:string,activeWatts:readonly number[]=[]) {
   const watts=activeWatts.filter(Number.isFinite)
@@ -23,6 +25,47 @@ export function coverageSelection(search:string,cell:{id:string;model:{uid:strin
   if(open&&cell)next.set("cell",cell.id);else next.delete("cell")
   next.delete("variant")
   return next
+}
+
+// Only an architecture conflict proves that a path cannot run on this device.
+export function coveragePathVisible(cell:MeasurementCoverageCell) {
+  return !cell.support.reasons.some(reason=>reason.code==="ArtifactArchitectureMismatch")
+}
+export function coverageWatts(cells:MeasurementCoverageCell[]) {
+  return cells.flatMap(cell=>cell.variants.flatMap(variant=>variant.resultRows.flatMap(row=>row.activeWatts!==null&&Number.isFinite(row.activeWatts)?[row.activeWatts]:[])))
+}
+export function coverageModes(cells:MeasurementCoverageCell[]) {
+  return [...new Set(cells.map(cell=>cell.powerMode))].sort((a,b)=>{
+    const left=coverageWatts(cells.filter(cell=>cell.powerMode===a)),right=coverageWatts(cells.filter(cell=>cell.powerMode===b))
+    return (left.length?Math.min(...left):Infinity)-(right.length?Math.min(...right):Infinity)||a.localeCompare(b)
+  })
+}
+export function coverageRepresentative(cell:MeasurementCoverageCell):MeasurementCoverageCell["representative"] {
+  if(cell.representative?.batch===1)return cell.representative
+  for(const variant of cell.variants) {
+    const row=variant.resultRows.find(row=>row.batch===1)
+    if(row)return {variantId:variant.id,batch:row.batch,incrementalJoulesPerItem:row.incrementalJoulesPerItem,p95Milliseconds:row.p95Milliseconds}
+  }
+  return cell.representative
+}
+export function coverageProgress(cell:MeasurementCoverageCell) {
+  return cell.batchProgress??cell.variants.find(variant=>variant.id===coverageRepresentative(cell)?.variantId)?.batchProgress??cell.variants[0]?.batchProgress??null
+}
+export function coverageBatchState(progress:BatchProgress|null,batch:number) {
+  if(!progress)return "unknown"
+  if(progress.criteriaMet.includes(batch))return "complete"
+  if(progress.inProgress.includes(batch))return "running"
+  if(progress.measured.includes(batch))return "measured"
+  if(progress.missing.includes(batch))return "missing"
+  if(progress.unknown.includes(batch))return "unknown"
+  return progress.target.includes(batch)?"missing":"outside"
+}
+export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:string,returnTo:string,variantId?:string,targetBatches:number[]=[]) {
+  const variant=cell.variants.find(variant=>variant.id===variantId),condition=variant?.condition
+  const progress=variant?.batchProgress??coverageProgress(cell)
+  const batches=progress?.missing.length?progress.missing:progress?.target.length?progress.target:targetBatches
+  const node=(condition?.metricSource as {nodeName?:string}|undefined)?.nodeName??(condition?.state as {targetNode?:string}|undefined)?.targetNode??cell.support.node?.name
+  return `/measurements/new?${new URLSearchParams({namespace,model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,batches:batches.join(","),returnTo,...(variant?{variantId:variant.id}:{}),...(node?{node}:{})})}`
 }
 export type Compatibility = {state:"candidate"|"unsupported"|"unknown";reason:string}
 export function staticCompatibility(model:Pick<CoverageModel,"spec">, path:ExecutionPath, cls:InventoryClass):Compatibility {
