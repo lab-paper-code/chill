@@ -115,3 +115,50 @@ T5 라이브 전달은 코드 이행만 끝났다(26c3bb76). 배포와 브라우
 6. 실제 인증 WebSocket으로 연결된다. 재개 범위 밖에서 재동기화된다. 로그아웃하면 데이터가 지워진다.
 7. 증거 API 구현 3 뒤에 E5-7 장면이 사건 레인에 실시간으로 보인다.
 8. 좁은 화면, 키보드 조작, reduced-motion이 동작한다.
+
+### 브라우저 수용 기록 — 2026-10-30, rev110
+
+**코드 이행·배포·브라우저 수용을 분리한다.** 이 기록은 코드 수정이나 배포 완료 선언이 아니라,
+이미 배포된 화면을 실제 호출자 권한으로 검사한 결과다. FAIL은 수정하지 않았다.
+
+| 구분 | 이번 기록의 범위 |
+|---|---|
+| 코드 이행 | 기존 구현을 사용했다. 대시보드·서버 코드는 변경하지 않았다. |
+| 배포 | 기존 Helm **rev110**, `O/deployB/control-230-20261030/upgrade.log`의 `REVISION: 110`. 이 배포는 node-agent `d01ff31010cd227a3f4eebb7d1f4954da643085e`이며, 대시보드·ChillServer 이미지는 `pools-control-226-f8bc1eaeaad2`가 유지된다(`post-values.json`). 이번 검사에서는 배포하지 않았다. |
+| 브라우저 수용 | 2026-10-30 **04:39 UTC부터** Chromium으로 `https://155.230.35.213:31104/`에 접속했다. 기존 `dashboard-user` 토큰의 subject는 `system:serviceaccount:chill-system:chill-dashboard-user`다. 관리자 토큰·새 토큰·권한 우회는 사용하지 않았다. |
+
+`O=/home/genesis1/.cache/chill-assets/ops/pools-deploy`.
+증거 루트는 **`O/campaign/v2/dashboard-acceptance-20261030/`**다.
+`results.json`에 시작·종료 시각과 기준별 결과, PNG에는 실제 화면, 같은 이름의 TXT에는 URL·화면 텍스트를 보존했다.
+수동 촬영한 viewport PNG와 JSON 영수증도 같은 디렉터리에 있다. 토큰·Authorization 헤더는 증거 파일에 보존하지 않았다.
+브라우저는 사설 인증서 예외로 열었고, 별도로 기존 CA를 사용하는 HTTPS 요청의 인증서·hostname 검증 성공
+(`authorized=true`, HTTP 200)을 `tls-ca-verification.json`에 보존했다.
+검사 프로세스는 nice 19로 실행했다. 측정 창 밖에서 조회만 했으며 부하 생성·클러스터 변경은 하지 않았다.
+브라우저 요청 기록은 GET만 있으며 `/observations/raw` 호출도 없다.
+
+**집계: PASS 6 / FAIL 2 / 미확인 5. 전체 S1/S2 수용 완료가 아니다.**
+PASS의 관찰 범위를 아래에 명시하며, 빈 클러스터에서 만들 수 없는 장면을 통과로 세지 않는다.
+표의 파일명은 위 증거 루트 기준이다.
+
+| 기준 | 결과 | 실제 관찰·제한 | 주요 증거 |
+|---|---|---|---|
+| S1-1 단계 표·비교·출처·분모·결손 | **FAIL** | `demo-20261026-1/2`의 A 단계 표·비교 및 `분자·분모·출처·결손` 펼침은 열린다. 그러나 실제 `/experiments` 목록은 이 두 demo뿐이어서 요청한 **#213 단계 결과를 선택할 수 없다**. | `06-experiment-list-no213.png`, `07-demo-stage-provenance.png`, `08-demo-comparison.png`, `api-receipts.json` |
+| S1-2 #213 에너지 ± 상한·규칙 차이 | **FAIL** | #213이 목록에 없어 **#213의 “값 ± 상한” 표시를 수용할 수 없다**. 두 demo의 에너지는 ± 없이 표시되며, 비교에는 `측정 규칙 식별자 미제공`이 나온다. 서로 다른 규칙의 배지는 미확인이다. | `06-experiment-list-no213.png`, `08-demo-comparison.png` |
+| S1-3 같은 이름 재등록의 당시 신원 | **미확인** | 신원이 없는 두 demo의 같은 이름 행이 A/B 별도 행으로 보존되는 것은 보았다. 실제 삭제·재등록 사례를 새로 만들지는 않았다. | `08-demo-comparison.png` |
+| S1-4 선택 고정·#213 보관 판단 열림 | **PASS** | 다음 라이브 판단이 도착해도 선택한 `at`와 근거 문자열이 동일했다. #213 보관본의 `2026-10-28T02:11:08.703423765Z`, `Feasible / keep / plan-80bfdcafcd0d`, 원본 행 0을 S1 identity 선택 후 원본 JSON까지 열었다. #213 게시 단계가 없으므로 demo A 화면의 `decision.at` 입력으로 보관 판단에 접근했으며, 이를 #213 단계 표가 열린 것으로 세지 않는다. | `selected-live-before.json`, `selected-live-after.json`, `20-s1-archived-identity.png`, `22-s1-archived-source-open.png` |
+| S1-5 실제 호출자 권한 | **PASS** | dashboard-user로 실험 목록·demo 상세 및 정확한 시각의 보관 scheduler 조회가 모두 HTTP 200이다. | `api-receipts.json`, `browser-network-redacted.json` |
+| S2-1 projection 상태들 | **미확인** | 라이브 snapshot의 instances 0·reservations 0, `예약 해제 · 현재 예약 없음`은 확인했다. 인스턴스 6상태, 예약 진행·잔류, Node 불가 사유, 여러 POOL의 공유 인스턴스는 빈 클러스터라 확인하지 못했다. | `01-live-level0.png`, `02-live-reservations.png`, `websocket-valid-outside-resume.json` |
+| S2-2 분모·무유입·비율 없음·결손 구별 | **미확인** | `0 req/s · 무유입`, `completed 0 + failed 0 = N 0`, 성공·SLO `비율 없음`, p95/p99 빈칸을 확인했다. 양수 분모 및 명시적 계측 결손 장면은 만들지 않아 전체 기준은 미확인이다. | `03-live-level1.png`, `field-source-sample.json` |
+| S2-3 fixture 빈→첫→확장→축소 | **미확인** | 배포의 `/api/config`는 `liveFixture=false`다. `/?fixture=expand`로 접속해도 실시간이고 장면 선택기가 없다. 서버 설정 변경이나 응답 대체 없이 네 장면·검사용 표시를 검사할 수 없었다. | `api-receipts.json`, `11-fixture-query-remains-live.png` |
+| S2-4 설계 §6.1 출처·미제공 빈칸 | **PASS** | 현재 빈 라이브 보드의 수신·종결·비율, pending, 판단, 작업, 공유 POOL 전력을 실제 WebSocket DTO와 대조했다. null 지연은 빈칸이다. 인스턴스·Node가 있는 상태의 미노출 경로는 S2-1의 미확인 범위로 남긴다. | `field-source-sample.json`, `01-live-level0.png`, `03-live-level1.png` |
+| S2-5 URL 복원·focus | **PASS** | L0→L1→예약 L2 및 판단 L3를 열고, 새로고침 후 토큰 재입력으로 같은 URL 계층을 복원했다. 닫기·Esc는 opener로, 새로고침으로 opener가 없으면 heading으로 focus가 돌아왔다. `◂ 보드로`는 UID 레인에 focus한다. 인스턴스·Node L2는 빈 클러스터라 미확인이다. | `04-level2-url-before-refresh.png`, `05-level2-url-restored.png`, `14-control213-url-restored.png`, `interaction-results.json` |
+| S2-6 실제 인증 WebSocket·재동기화·로그아웃 | **PASS** | `/api/live` HTTP 101 뒤 기존 토큰 auth, 실제 snapshot·metrics·decision event를 받았다. 별도 native browser WebSocket에서 보관 하한 7246 밖의 `resume from=1`과 시각을 보내면 seq 7845 snapshot으로 재동기화했다. 로그아웃 뒤 연결이 닫히고 POOL·근거 DOM 및 local/session storage가 비었다. | `authenticated-websocket-log.json`, `websocket-valid-outside-resume.json`, `logout-cleared.json`, `23-logout-cleared.png` |
+| S2-7 E5-7 실시간 사건 | **미확인** | 관찰 중 실제 판단 사건은 도착했으나 E5-7 장애 사건은 없었다. 장애·부하를 새로 만들지 않았고 합성 fixture도 비활성이다. | `authenticated-websocket-log.json` |
+| S2-8 좁은 화면·키보드·reduced-motion | **PASS** | 390×844에서 document scrollWidth 390으로 가로 넘침이 없고 근거 패널은 보드 아래다. Enter·Tab·Esc로 POOL·예약·닫기·모바일 메뉴 및 focus 복귀를 확인했다. reduced-motion `reduce=true`에서 live-stage의 computed animation은 모두 `none`이다. UTC/KST 전환도 확인했다. | `16-mobile-top.png`, `17-mobile-evidence-below-board.png`, `18-mobile-keyboard-pool.png`, `19-mobile-menu-keyboard.png`, `mobile-reduced-motion.json` |
+
+추가 관찰: 보관 scheduler를 30초·limit 100으로 넓게 조회하면 HTTP 502
+`DashboardResponseTooLarge`였다(`historical-scheduler-receipt.json`).
+정확한 `decision.at`의 S1·라이브 근거 조회는 HTTP 200이고 보관본이 열렸다.
+첫 수동 WebSocket probe는 양수 `from`에 필요한 `at`를 빠뜨렸으므로 제품 실패 근거에서 제외했다
+(`websocket-outside-resume.json`). 유효한 재개 요청의 결과는 별도 파일로 보존했다.
+이번 문서 기록 외에 FAIL 수정·fixture 활성화·새 게시·실험 실행은 하지 않았다.
