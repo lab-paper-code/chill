@@ -638,3 +638,8 @@
 
 - evidence API: §0 `8c6bef14`, 문서 `e699801c`, 구현 cluster `c355e3cd`/resources `2d18dcee`/raw+meters+통합 `85a9cab3`, gate 수정 `94a7a4d4`, e5 self-check 순서 `0a0c6f6c`/`13cf431f`, 리뷰 P2(cgroup 호스트 mount 해석) `a01adb12`. clean lint/test/arch/helm PASS, push.
 - 미완(계획 §4): 배포(RBAC `/raw`·node-agent 수신 + 대시보드 계획 §4를 한 번의 승인 배포로), 하네스 전환(§2 표)과 리허설 1회 — 과제4 S1/S2 뒤 사용자 승인 배포에서 함께.
+
+## 2026-10-30 — 과제4 코드 완료(배포 전)
+
+- S2 서버 projection `afbf531b`, S1 `9e98194a`, S2 화면+proxy `d65a18ee`, lint `5691204f`. Go gate PASS, 대시보드 Node 24 50/50·typecheck·build PASS. 리뷰: 코드 결함 0; S2-5/8(URL·focus·좁은 화면·키보드·reduced-motion)은 저장소에 브라우저 러너가 없어 수동 리허설 기록(README·스크린샷)으로 — 계획 §6 "코드 이행·배포·브라우저 수용 분리"대로 브라우저 수용은 배포 뒤 별도 기록(새 테스트 프레임워크 추가 안 함).
+- 배포 대기 묶음(사용자 승인 1회): 서버 이미지(evidence API+live projection, 소스 5691204f), node-agent 이미지(resources), 대시보드 이미지, chart RBAC(/raw, node-agent 수신, S1 권한, live). 배포 후: 증거 API 리허설 1회(옛/새 수집 동일 KPI, CPU 몫), 하네스 전환(§2 표), 대시보드 브라우저 수용(S1/S2), 환경 사실 3개 확인.
