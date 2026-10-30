@@ -90,6 +90,7 @@ type actionRun struct {
 	inheritedReservation bool
 	cleanup              bool
 	cleanupRoutes        map[string]*actionRun
+	readyRoutes          map[string]*actionRun
 	replacements         []serving.SchedulerReplacement
 }
 type SchedulerController struct {

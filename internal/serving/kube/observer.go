@@ -182,6 +182,9 @@ func (o *Observer) Refresh(ctx context.Context) error {
 	defer o.refreshMu.Unlock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return o.refreshLocked(ctx)
 }
 
@@ -193,6 +196,9 @@ func (o *Observer) RefreshWithin(ctx context.Context, age time.Duration) error {
 	defer o.refreshMu.Unlock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if time.Since(o.refreshed) < age {
 		return nil
 	}

@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -391,6 +392,43 @@ func TestObserverPollReusesARefreshThatEndedWhileItWaited(t *testing.T) {
 	defer api.mu.Unlock()
 	if nodes := api.reads["GET /api/v1/nodes"]; nodes != 1 {
 		t.Fatalf("the poll started its own refresh: %d Node lists", nodes)
+	}
+}
+
+// SCH-AC-38: a canceled prepare waiting behind a source refresh must not
+// spend API budget or invalidate unrelated Ready executors when admitted.
+func TestCanceledObserverWaiterPreservesReadyAC38(t *testing.T) {
+	for _, mode := range []string{"refresh", "fresh-poll", "stale-poll"} {
+		t.Run(mode, func(t *testing.T) {
+			api := newObserverAPI(t, 1)
+			api.refresh(t)
+			if api.ready() != 1 {
+				t.Fatal("fixture has no Ready executor")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			api.observer.refreshMu.Lock()
+			done := make(chan error, 1)
+			go func() {
+				if mode == "refresh" {
+					done <- api.observer.Refresh(ctx)
+					return
+				}
+				age := time.Minute
+				if mode == "stale-poll" {
+					age = 0
+				}
+				done <- api.observer.RefreshWithin(ctx, age)
+			}()
+			cancel()
+			api.observer.refreshMu.Unlock()
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled waiter returned %v", err)
+			}
+			if ready := api.ready(); ready != 1 {
+				t.Fatalf("canceled waiter invalidated Ready executors: %d", ready)
+			}
+		})
 	}
 }
 

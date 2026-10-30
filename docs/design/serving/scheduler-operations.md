@@ -45,11 +45,19 @@ owner·Node/UID/실물 범위·고정 이유를 action/operation에 연결한다
 | 정책/시각 | route는 단일 workloadUID뿐 아니라 frozen workloadUIDs에도 검사한다. 요청 policy 또는 receipt의 정확한 이전 policy를 확인할 수 있으나 이전 policy=새 목표 성공 아님. 관측은 child와 failed parent EndedAt 모두 이후다. parent는 성공으로 바꾸거나 DAG 재개하지 않고 확인된 책임만 반환해 새 target/action으로 재계획한다. unknown 실물/원격 실행/pending power·실패 receipt는 기존 보존 기간 유지. stale/다른 container/unknown Pod는 해제 proof 아님. |
 | Cycle 2 C1 sibling | terminal prepare child는 동일 frozen transition parent action 목록의 ID/kind/Node/instance가 맞는 terminal sibling exact receipt만 참조한다. owner 문자열만으로 공유 금지. 관측은 반환 child·evidence sibling·parent 종료 모두 뒤이고 UID/container/Node UID/TargetID/profile/전체 ACK 일치 필수. complete2+partial1 prepare의 신규 Pod3개가 모두 known이면 넓은 child 범위 반환. unknown/stale/restart/pending power/active·cancel sibling/다른 parent는 유지. 실패 receipt/DAG 불변, 새 timer/보상 선택 조건 없음. |
 | cleanup route | 성공 handoff 뒤 parent cleanupRoutes에 명시 등록한 terminal route refresh도 exact identity/policy/종료 이후 proof로 쓴다. cleanup 실패 뒤 최신 ACK를 원래 정책으로 오인하지 않으며 다른 실물 책임 해소 뒤 반환한다. |
+| G1b Ready-subset receipt | parent가 준비 중 직접 승인한 `from=ready-subset` route를 Workload UID별로 등록하고, terminal parent/prepare의 반환 검사도 그 frozen receipt를 기존 exact identity/policy/종료 이후 검증에 쓴다. 원래 DAG에는 없는 중간 route의 ACK를 누락하여 autonomy-off 취소 뒤 예약을 붙잡지 않는다. 다른 owner/미등록 route/stale/active/다른 policy는 반환 근거가 아니다. final handoff/cleanup 판단에는 중간 route를 승격하지 않는다. |
 | R4b 보상 | P2 §3 R4의 보상 트랜잭션/idempotent cleanup을 기존 retire로 적용한다. failed parent와 같은 owner 실행이 모두 terminal 뒤, failed/partial prepare가 **직접 만든** 실행 중 고정 identity 또는 receipt의 Pod만 검사한다. fresh UID/container/Node/slot/profile/owner 일치, prepare 전 존재 아님, 현재 Workload claim/양수 route/routable/해당 policy 전체 ACK가 모두 없는 Ready executor만 같은 owner에서 기존 remove한다. |
 | 보상 수명 | stop→drain→native outstanding 부재→actual container 종료→Pod/Service/config cleanup을 재사용한다. compensation ID는 prepare+exact executor로 고정, 중복 실행 없음. 원래 실패/DAG 불변, 완료 뒤 **새 Pod 부재**를 releaseObservedScopes가 확인해야 반환한다. serving/claimed/다른 owner/identity 불일치/unknown/pending power에는 보상하지 않으며 cleanup 실패도 예약 유지. 새 timer/상수/retry 정책 없이 기존 polling/config/identity 경계를 쓴다. |
 
 제거는 native drain+actual container 종료 뒤 자기 Pod-owned Service를 RV/UID precondition으로 삭제하고 finalizer/config를 해제한다. cleanup은 namespace/name/Pod owner만 확인하므로 자기 Service selector/proxy label drift가 종료 Pod 정리를 막지 않는다. 다른 Pod Service는 삭제하지 않으며 owner reference GC/Workload cleanup도 같은 수명이다.
 source finalizer는 immutable UID 포함 strategic-merge primitive-list delta로 자기 항목만 추가/해제한다. 다른 finalizer와 unrelated kubelet status/RV는 보존하며 UID 변경/API 실제 metadata 오류는 반환한다. exact UID/container 종료·Pod 종료 proof는 유지한다. EdgeMesh 설정/타 Workload는 변경하지 않는다. ChillServer Role은 Service GET/DELETE 기본, scheduler/native operation 활성 시 CREATE 추가다.
+
+### G1b 취소와 client limiter 진단 — SCH-51, SCH-AC-38
+
+`Refresh`/`RefreshWithin`은 공유 관측 직렬화에 들어온 뒤 caller context를 먼저 검사한다. lock 대기 중 취소된 caller는 cached success나 canceled Kubernetes read를 실행하지 않으며 다른 Ready executor를 `refreshFailure`로 내리지 않는다. 진행 중 실제 probe/read 오류의 fail-closed·freshness 경계는 유지한다.
+`control-226-rehearsal/api-collection/smoke-MIX/obs/20261030T04/scheduler.jsonl.gz:2215`의 `context canceled\nclient rate limiter Wait returned an error: context canceled`는 autonomousWorkloads 해제의 `run.cancel()`과 일치한다. elapsed 13.171873470s, cost trial 16.257206776s+관측창60s이므로 prepare deadline 초과가 아니다. 최종 Capture도 취소되어 actual 실물 증거가 비었다. limiter 문구 자체는 token 소진/HTTP429 증거가 아니며 QPS 확대를 이 취소의 해결로 주장하지 않는다.
+같은 원시 `:2192`의 running prepare와 complete Ready-subset, `:2226`의 Ready·unclaimed 실물을 구분한다. 준비 policy 전체 ACK가 맞으면 기존 known-effect 반환, 미ACK·미청구면 기존 R4b remove→fresh Pod 부재 반환이다. 중간 route receipt 누락 수정은 이 두 경로를 같은 exact-proof 장부에 수렴시키며 실패 receipt를 성공으로 바꾸지 않는다. 관측된 사건에서 어느 private predicate가 거절했는지는 native metadata 미노출로 미확정이다.
+
 
 ## 수동 원자 실행 계약
 

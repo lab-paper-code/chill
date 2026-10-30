@@ -19,18 +19,19 @@ const failedPreparationSlot = "failed-slot"
 // becomes Ready. Compensation must retire it, not turn failure into success.
 // SCH-AC-38; P2 §3 R4 compensation/idempotent cleanup alternative.
 func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
-	for _, evidence := range []string{"unclaimed", "claimed", "identity-mismatch", "other-owner", pendingPowerEvidence, activeSiblingEvidence, "preexisting", "policy-ack"} {
+	for _, evidence := range []string{"unclaimed", "canceled", "claimed", "identity-mismatch", "other-owner", pendingPowerEvidence, activeSiblingEvidence, "preexisting", "policy-ack"} {
 		t.Run(evidence, func(t *testing.T) {
 			c, api, child, parent := failedPrepareCompensationFixture(t, evidence)
 			actual := c.state.Snapshot.Instances[1]
 			uid := c.config.Settings.AutonomousWorkloads[0]
 			ctx := c.ctx
 			writes := api.podWrites
+			status, failure := child.result.Status, child.result.Error
 			c.launch(serving.SchedulerCandidate{}, c.config)
 			c.wg.Wait()
 			cleanupID := child.action.ID + "/compensate/" + actual.ID
 			cleanup := c.runs[cleanupID]
-			if evidence != "unclaimed" {
+			if evidence != "unclaimed" && evidence != "canceled" {
 				if cleanup != nil || api.podWrites != writes || api.deleteCalls != 0 || !parent.reserved || !child.reserved {
 					t.Fatalf("%s changed protected Pod/reservation", evidence)
 				}
@@ -53,7 +54,7 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 			if len(fresh.Reservations) != 0 || c.authorize(Operation{WorkloadUID: uid}) != nil {
 				t.Fatalf("retired Pod did not return reservation: %+v", fresh.Reservations)
 			}
-			if child.result.Status != nativeOperationFailed || child.result.Error != serving.ActionDeadlineExceeded || parent.result.Status != nativeOperationFailed {
+			if child.result.Status != status || child.result.Error != failure || parent.result.Status != nativeOperationFailed {
 				t.Fatal("compensation rewrote failure receipt")
 			}
 			if _, err := c.kube.CoreV1().Pods("chill-system").Get(ctx, "a", meta.GetOptions{}); err != nil {
@@ -120,6 +121,9 @@ func failedPrepareCompensationFixture(t *testing.T, evidence string) (*Scheduler
 		result: &OperationResult{Status: nativeOperationFailed, EndedAt: ended, Operation: Operation{Kind: transitionRunKind, Target: &target}}}
 	c.runs = map[string]*actionRun{parent.action.ID: parent, action.ID: child}
 	switch evidence {
+	case "canceled":
+		child.action.Status, child.result.Status = nativeOperationPartial, nativeOperationPartial
+		child.result.Error = context.Canceled.Error()
 	case "claimed":
 		c.state.Snapshot.Instances[1].WorkloadUID = uid
 	case "identity-mismatch":

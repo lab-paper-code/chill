@@ -137,6 +137,18 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 	run.inheritedReservation = len(inherited) > 0
 	run.scope, run.reserved = scope, true
 	c.runs[id] = run
+	if operation.Kind == operationRoute && run.action.From == readySubsetRoute {
+		if parent := c.runs[transitionRunKind+"/"+run.owner]; parent != nil && parent.owner == run.owner {
+			if parent.readyRoutes == nil {
+				parent.readyRoutes = map[string]*actionRun{}
+			}
+			for uid := range operation.Target.Routing {
+				if operation.controlsWorkload(uid) {
+					parent.readyRoutes[uid] = run
+				}
+			}
+		}
+	}
 	if cleanupOwner != nil {
 		if cleanupOwner.cleanupRoutes == nil {
 			cleanupOwner.cleanupRoutes = map[string]*actionRun{}
@@ -250,6 +262,13 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 	for _, action := range parent.result.Operation.Target.Actions {
 		child := c.runs[action.ID]
 		if child != nil && child.owner == parent.owner && actionEquivalent(action, child.action) && knownEffectConfirmed(child, pod, physical, after) {
+			return true
+		}
+	}
+	// Ready-subset routes are authorized by this parent while preparing, not
+	// members of its original DAG. Their exact ACKs also survive goal failure.
+	for _, route := range parent.readyRoutes {
+		if route != nil && route.owner == parent.owner && knownEffectConfirmed(route, pod, physical, after) {
 			return true
 		}
 	}

@@ -516,3 +516,62 @@ func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
 		})
 	}
 }
+
+// #226: autonomy-off cancels prepare after a Ready-subset route completed.
+// Its surviving exact ACK is a return proof, not an unclaimed Pod to remove.
+func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
+	for _, evidence := range []string{"registered", "unregistered", "subset-owner-mismatch", staleEvidence, activeSiblingEvidence, policyEvidence} {
+		t.Run(evidence, func(t *testing.T) {
+			pod, node, profile, _ := observerSourceFixture()
+			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
+			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+			id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			ended := time.Now().UTC()
+			observed := ended.Add(3 * time.Second)
+			wanted := serving.SchedulerInstance{ID: id, Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}
+			scope := resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}, Pods: []string{string(pod.UID)}, Instances: []string{id}}
+			prepare := &actionRun{owner: "original", reserved: true, scope: scope,
+				action: serving.Action{ID: "prepare", Kind: operationPrepare, Instance: "pending", Status: nativeOperationPartial},
+				result: &OperationResult{Status: nativeOperationPartial, EndedAt: ended, Error: context.Canceled.Error(),
+					Operation: Operation{Kind: operationPrepare, Prepare: &PrepareSpec{Instance: wanted}}}}
+			target := &serving.SchedulerCandidate{ID: "original", Actions: []serving.Action{prepare.action}}
+			parent := &actionRun{owner: target.ID, reserved: true, scope: scope,
+				action: serving.Action{Kind: transitionRunKind, Status: nativeOperationFailed},
+				result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Status: nativeOperationFailed, EndedAt: ended}}
+			subset := &serving.SchedulerCandidate{ID: "original-ready-subset", Instances: []serving.SchedulerInstance{wanted},
+				Routing: map[string]map[string]int32{"workload": {id: 1000}}}
+			operation := Operation{Kind: operationRoute, Target: subset, WorkloadUIDs: []string{"workload"}}
+			route := &actionRun{owner: target.ID, scope: scope,
+				action: serving.Action{ID: subset.ID, Kind: operationRoute, From: readySubsetRoute, Status: nativeOperationComplete},
+				result: &OperationResult{Operation: operation, Status: nativeOperationComplete, EndedAt: ended}}
+			c := &SchedulerController{runs: map[string]*actionRun{transitionRunKind + "/" + target.ID: parent, prepare.action.ID: prepare}}
+			if evidence == "unregistered" {
+				route.action.From = ""
+			}
+			if !c.reserveRun(route.action.ID, route, operation) {
+				t.Fatal("same-owner subset was not admitted")
+			}
+			state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: observed,
+				Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, DecisionID: subset.ID,
+					Policy: native.Policy{ProfileID: profile.ID, DecisionID: subset.ID, MaxBatchSize: wanted.MaxBatch}}}}
+			switch evidence {
+			case "subset-owner-mismatch":
+				route.owner = evidence
+			case staleEvidence:
+				state.ObservedAt = ended
+			case activeSiblingEvidence:
+				route.action.Status = nativeOperationRunning
+			case policyEvidence:
+				state.Native.Metadata.Policy.MaxBatchSize++
+			}
+			c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
+			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute)
+			if released := c.authorize(Operation{WorkloadUID: "workload"}) == nil; released != (evidence == "registered") {
+				t.Fatalf("%s: reservation released=%t", evidence, released)
+			}
+			if prepare.result.Status != nativeOperationPartial || prepare.result.Error != context.Canceled.Error() || parent.result.Status != nativeOperationFailed {
+				t.Fatal("known-effect proof rewrote the cancellation receipt")
+			}
+		})
+	}
+}
