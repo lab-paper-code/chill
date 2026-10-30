@@ -104,3 +104,4 @@
 - 에너지 구조 후보: ① zero-route 준비 인스턴스 장기 잔류(2회차 E5-6 3 Node × 3,600s, Node wall 57.6kJ 노출; E5-5 1,085s), ② 빈 Node(jetsonx) 모드 하향 미실행(E5-6 1시간 9.3W), ③ 전환 비용 회수기간, ④ h frontier. 정적 기준선 κ 119.6→91.9가 2회차 Δ 변화의 70.6%(−20.7kJ) 혼입.
 - 에너지 브리프(`local brief-BriefEnergy`): ① E5-6 zero-route 잔류는 361 tick 전부 ReservedScope/ReservedNode(owned UID Fixed) → idle 회수 차단 = 예약 잔류 계열(사이클 5 ReturnProof가 대상); ② jetsonx 빈 Node는 실측 baseline상 MODE_20W_2CORE가 이미 최저라 하향 후보 없음 → 더 낮은 모드 idle baseline 측정이 선행(코드 아님). 사이클 4 코드 변경 없음; E5-6 재실행으로 ReturnProof 효과 확인 예정.
 - 사용자 결정(2026-10-31): **배포·측정 권한은 이 세션(ops 에이전트)으로 단일화**. 다른 세션은 커밋만, 배포는 요청 경유. 조치: 잔류 정리 → main `2516ec0c` 복귀(rev126) → E5-5/E5-7(h=.25를 binding settings에 명시)·E5-6 재실행.
+- 사용자 요청(2026-10-31): 대시보드 HTTP NodePort 31300 제거(라이브 보드 WebSocket Origin 검사 https 강제 → 403 "연결 끊김"; HTTP Origin 허용은 토큰 평문 노출이라 불가). 조치: live values `dashboard.service.type=ClusterIP`, nodePort 제거(차트만, 이미지 불변), 측정 창 밖에서 적용. 안내 URL https://155.230.35.213:31104/ 통일.

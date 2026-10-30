@@ -8,7 +8,7 @@
 |---|---|
 | 저장소 | main에 workload-pools 통합·spec 전체 추적, push 사용자 승인. 승인과 개별 원격 반영 증거는 구분 |
 | 연구 결과 | d 새 규칙34/34·정확 비용69/69와 E5 full/static/factor·3회차 표적 결과 확정. 연구 FAIL·UNKNOWN·비교 한계는 [E5 보고서](reports/e5-evaluation-20261030.md)에 유지 |
-| 배포 기록 | rev114, server `pools-control-234-502e4ed86542`, dashboard `pools-control-232-30e3a6d690c8`. NodePort31300 상시 공개 사용자 승인 |
+| 배포 기록 | rev114, server `pools-control-234-502e4ed86542`, dashboard `pools-control-232-30e3a6d690c8`. 대시보드는 ClusterIP(HTTP NodePort 31300은 Origin/https 강제로 제거); 접속은 https://155.230.35.213:31104/ |
 | 증거 경로 | CHILL 사실은 API-only 하네스, raw는 하네스 전용·화면은 가공 조회. 옛/API KPI 일치 리허설과 #213 재판정 완료([결과](plans/2026-10-28-e5-evidence-api.md)) |
 | 대시보드 | S1/S2 배포·첫 게시4건, KPI46/46 일치. 브라우저 PASS8/FAIL0/미확인5, 전체 수용 완료 아님([미확인·연기](plans/2026-10-26-dashboard-live-stage.md)) |
 | 구성 정리 | A/B 기존 소유자로 이전 `58348057`…`30e3a6d6`. 옛 Run tolerance 기본 비교 회귀는 `75127da9` 수정. ?10·역사 script 삭제는 미승인 |

@@ -10,7 +10,7 @@
 - 게시용 KPI와 응답46/46 일치·4/4 HTTP200, 기존 demo2건 digest 불변. #213 E5-1 MNV 기한 안 성공45754/57495, whole173062.73965024325±516.5136059839J를 표시했다. 과학적 FAIL·UNKNOWN을 게시/화면 PASS로 바꾸지 않았다.
 - 행별 실제 archive SHA·host-s3/gctrace-cycles·coverage·공백상한을 보존했다. 2/3회차 condition과 campaignRound 차이는 숫자를 숨기지 않고 표시한다. source 정본은 당시 tables/summary이며 재집계·재판정·원시 덮어쓰기는 없었다.
 - 근거: `O/campaign/v2/dashboard-acceptance-20261030/{first-publication-receipts.json,publication-recheck-results.json,final-publication-api-receipts.json}`. `O=/home/genesis1/.cache/chill-assets/ops/pools-deploy`.
-- 수용 대상 rev114: server `pools-control-234-502e4ed86542`, dashboard `pools-control-232-30e3a6d690c8`. NodePort31300 상시 공개는 사용자 승인(`a7ba73cd`).
+- 수용 대상 rev114: server `pools-control-234-502e4ed86542`, dashboard `pools-control-232-30e3a6d690c8`. HTTP NodePort 31300 공개는 Origin 검사(https 강제)로 라이브 연결 403 → 사용자 요청으로 제거, ClusterIP 복귀; 접속 URL은 https://155.230.35.213:31104/ 로 통일.
 
 ## 남은 브라우저 수용
 
