@@ -436,7 +436,7 @@ READY 전에 최초 Pod 조회와 알려진 컨테이너의 follow 시작·현�
 
 **Pod 권한 없는 대상 발견:** 서버는 기존 Kubernetes 읽기 권한으로 CHILL 서빙 인스턴스와 제어 Pod의 현재 Node·Pod UID·containerID를 고른다. 범위는 해당 ChillSystem 소유 서빙 Pod와 릴리스의 CHILL 제어 Pod이며 load-generator/client·다른 tenant 컨테이너는 제외한다. node-agent에는 Pod get/list/watch를 추가하지 않는다. 내부 POST 응답의 `targets`가 해당 Node의 정확한 `{podUID,containerID}` 집합을 다음 묶음에 공급한다. 첫 POST는 `samples:[]`로 대상만 얻으며 이 handshake 자체는 resources 행을 만들지 않는다. 새 Pod를 알기 전 구간은 소급 수집하지 않는다.
 
-agent는 호스트 `/proc/<pid>/cgroup`, mount 정보와 읽기 전용 `/sys`를 사용해 받은 identity에 해당하는 실제 cgroup과 v1 controller/v2 mount를 찾는다. systemd/cgroupfs 경로 문자열을 정해 놓고 맞추지 않는다. 경로가 확인된 실물만 읽으며 같은 Pod 이름/slot을 containerID 대신 쓰지 않는다. Pod 종료·재시작·image 판정은 하지 않는다(cluster 소유).
+agent는 읽기 전용 호스트 `/sys/fs/cgroup` 트리를 kubelet의 systemd/cgroupfs 명명 규칙으로 직접 탐색해 받은 Pod UID와 containerID가 모두 일치하는 실물 디렉터리만 읽는다. private cgroup namespace에 상대적인 `/proc/<pid>/cgroup`·mountinfo에는 의존하지 않으며, hybrid는 v1 controller(cpu/cpuacct·memory)를 우선하고 v2는 unified-only 환경에서만 사용한다. 발견 실패·controller 결손은 사유로 남기며 같은 Pod 이름/slot이나 루트 counter로 대체하지 않는다. Pod 종료·재시작·image 판정은 하지 않는다(cluster 소유).
 
 **전송 경계:** `POST /api/v1/internal/observations/resources` 한 개, 요청 `{node:{name,uid},samples:[{sampledAt,containers:[...],thermal:[...]}]}`, 응답 `{targets:[{podUID,containerID}]}`다. 서버는 요청 크기를 기존 MaxRequestBytes로 제한하고 Node identity·배열 크기·시각·counter/온도 형식과 target membership을 경계에서 검증한다. 컨테이너 교체 중 이미 채집한 표본은 서버가 그 agent에 직전 응답으로 공급한 identity에 속하면 허용한다. 새 UID를 옛 UID로 바꿔 연결하지 않는다. 응답 후 다음 묶음은 새 targets를 사용한다. 서버 재시작으로 이전 targets를 확인할 수 없으면 묶음을 거절하고 agent가 다음 빈 handshake로 재동기화한다. 과거 표본 재전송은 하지 않는다.
 
@@ -530,3 +530,5 @@ rev106은 새 서버·대시보드·node-agent 이미지와 config를 게시했�
 rev107 뒤 새 agent는 전 Node Ready였지만 edge의 Service DNS가 NXDOMAIN을 반환했고 기본 URL의 `/chill` prefix도 실제 HTTP handler와 달랐다. Main 승인 #228은 기본 handler 경로를 `/api/v1/internal/observations/resources`로 바로잡고, 기존 `nodeAgent.resourceObservation.url` values에 CA SAN으로 검증되는 `https://155.230.35.213:31104/api/v1/internal/observations/resources`를 명시한다. chart-only Helm upgrade라 rev106/107 이미지 digest를 재빌드하지 않는다. 전송 실패 구간은 resources 결손으로 남기며 소급 표본·TLS 우회·자동 측정 재시도는 하지 않는다.
 
 #229는 agent의 고정 URL 검증에서도 SAR 전용 `/chill` prefix를 제거한다. HTTP handler는 `/api/v1/internal/observations/resources`, Kubernetes SAR 권한은 `/chill/api/v1/internal/observations/resources`로 의도적으로 다르다. `TestResourceEndpointUsesHTTPHandlerPath`는 정확한 HTTP 경로가 CA 로드까지 도달하고 SAR 경로는 거부되는지 검사한다. node-agent만 새 multiarch 이미지로 배포하며 같은 경로/URL 불일치가 다시 발생하면 리허설을 시작하지 않고 중단한다.
+
+#229 자원 결손은 비root 읽기 권한이 아니라 private cgroup namespace의 `/host/proc/<pid>/cgroup=0::/`·상대 mount root와 Jetson hybrid의 v2 우선 선택에서 발생했다. node-agent는 호스트 cgroupfs 실물 identity 탐색·v1 우선으로 수정하며 hostPID·권한 확대 없이 새 multiarch 이미지 재빌드가 필요하다(코드 회귀와 클러스터 배포·실측 수용은 별개).

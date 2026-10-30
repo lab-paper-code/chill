@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -12,67 +13,26 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-// SampleResources resolves cgroups from host process and mount records. It never
-// constructs a systemd/cgroupfs layout from Kubernetes identities.
+// SampleResources resolves Kubernetes identities against the read-only host
+// cgroupfs tree; /proc paths may be relative to the agent's cgroup namespace.
 func SampleResources(root string, targets []serving.ResourceTarget, at time.Time) serving.ResourceSample {
 	sample := serving.ResourceSample{
 		SampledAt: at, Containers: []serving.ContainerResources{}, Thermal: []serving.ThermalResource{},
 	}
-	processes, err := os.ReadDir(filepath.Join(root, "proc"))
-	if err != nil {
-		sample.Errors = append(sample.Errors, resourceError("host", "proc", err))
-	}
-	// Target processes may mount only their own cgroup subtree. Resolve their
-	// cgroup records against the host init process's mount namespace instead.
-	mounts, mountErr := os.ReadFile(filepath.Join(root, "proc/1/mountinfo"))
-	if mountErr != nil {
-		sample.Errors = append(sample.Errors, resourceError("host", "mountinfo", mountErr))
-	}
-	sample.Containers = make([]serving.ContainerResources, len(targets))
-	found := make([]bool, len(targets))
+	paths, version, failures := resourceCgroupPaths(root, targets)
+	sample.Errors = append(sample.Errors, failures...)
 	for i, target := range targets {
-		sample.Containers[i].ResourceTarget = target
-	}
-	for _, process := range processes {
-		if _, err := strconv.ParseUint(process.Name(), 10, 64); err != nil {
-			continue
-		}
-		base := filepath.Join(root, "proc", process.Name())
-		cg, err := os.ReadFile(filepath.Join(base, "cgroup"))
-		if err != nil {
-			continue
-		}
-		if mountErr != nil {
-			continue
-		}
-		for i, target := range targets {
-			if found[i] || !matchesResourceIdentity(string(cg), target) {
-				continue
-			}
-			row := &sample.Containers[i]
-			paths, version := resourceCgroupPaths(root, string(cg), string(mounts))
-			if version == 0 {
-				continue
-			}
-			row.CgroupVersion = version
-			readContainerResources(row, paths)
-			found[i] = true
-		}
-	}
-	count := 0
-	for i, target := range targets {
-		if !found[i] {
-			sample.Errors = append(sample.Errors, sample.Containers[i].Errors...)
+		if len(paths[i]) == 0 {
 			sample.Errors = append(sample.Errors, serving.ResourceError{
 				Target: target.PodUID + "/" + target.ContainerID, Field: "cgroup",
-				Reason: "matching Pod UID/containerID cgroup and mount not found",
+				Reason: "matching Pod UID/containerID directory not found in host cgroupfs",
 			})
 			continue
 		}
-		sample.Containers[count] = sample.Containers[i]
-		count++
+		row := serving.ContainerResources{ResourceTarget: target, CgroupVersion: version}
+		readContainerResources(&row, paths[i])
+		sample.Containers = append(sample.Containers, row)
 	}
-	sample.Containers = sample.Containers[:count]
 	zones, err := filepath.Glob(filepath.Join(root, "sys/class/thermal/thermal_zone*"))
 	if err != nil || len(zones) == 0 {
 		sample.Errors = append(sample.Errors, serving.ResourceError{
@@ -101,93 +61,124 @@ func SampleResources(root string, targets []serving.ResourceTarget, at time.Time
 	return sample
 }
 
-func matchesResourceIdentity(records string, target serving.ResourceTarget) bool {
-	_, id, ok := strings.Cut(target.ContainerID, "://")
-	if !ok || id == "" || target.PodUID == "" {
-		return false
+func resourceCgroupPaths(
+	root string, targets []serving.ResourceTarget,
+) ([]map[string]string, int, []serving.ResourceError) {
+	paths := make([]map[string]string, len(targets))
+	if len(targets) == 0 {
+		return paths, 0, nil
 	}
-	for _, record := range strings.Split(records, "\n") {
-		fields := strings.SplitN(record, ":", 3)
-		if len(fields) != 3 {
-			continue
-		}
-		// Runtime IDs may be scope-decorated; require token boundaries rather than
-		// a short substring that could identify a different container.
-		normalized := strings.NewReplacer("_", "-", "/", " ", ".", " ").Replace(fields[2])
-		uid := strings.ReplaceAll(target.PodUID, "_", "-")
-		hasUID, hasID := false, false
-		for _, component := range strings.Fields(normalized) {
-			hasUID = hasUID || component == uid || component == "pod"+uid || strings.HasSuffix(component, "-pod"+uid)
-			hasID = hasID || component == id || strings.HasSuffix(component, "-"+id)
-		}
-		if hasUID && hasID {
-			return true
-		}
+	base := filepath.Join(root, "sys/fs/cgroup")
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return paths, 0, []serving.ResourceError{resourceError("host", "cgroup", err)}
 	}
-	return false
-}
-
-func resourceCgroupPaths(root, records, mounts string) (map[string]string, int) {
-	paths := map[string]string{}
-	version := 0
-	for _, line := range strings.Split(mounts, "\n") {
-		before, after, ok := strings.Cut(line, " - ")
-		if !ok {
-			continue
-		}
-		left, right := strings.Fields(before), strings.Fields(after)
-		if len(left) < 5 || len(right) < 3 {
-			continue
-		}
-		v1 := right[0] == "cgroup"
-		if !v1 && right[0] != "cgroup2" {
-			continue
-		}
-		mountRoot, mountPoint := unescapeMount(left[3]), unescapeMount(left[4])
-		for _, record := range strings.Split(records, "\n") {
-			fields := strings.SplitN(record, ":", 3)
-			if len(fields) != 3 {
-				continue
+	hierarchies, version := resourceCgroupHierarchies(base, entries)
+	var failures []serving.ResourceError
+	for hierarchy, controllers := range hierarchies {
+		err := filepath.WalkDir(hierarchy, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				failures = append(failures, resourceError(path, "cgroup", walkErr))
+				return filepath.SkipDir
 			}
-			v2 := right[0] == "cgroup2" && fields[0] == "0" && fields[1] == ""
-			controllers := strings.Split(fields[1], ",")
-			if !v2 && !v1 {
-				continue
+			if !entry.IsDir() || path == hierarchy {
+				return nil
 			}
-			rel, err := filepath.Rel(mountRoot, fields[2])
-			if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
-				continue
+			if filepath.Dir(path) == hierarchy && entry.Name() != "kubepods" && entry.Name() != "kubepods.slice" {
+				return filepath.SkipDir
 			}
-			// These are host init mount records, never target-process mounts.
-			if mountPoint != "/sys" && !strings.HasPrefix(mountPoint, "/sys/") {
-				continue
+			switch entry.Name() {
+			case "kubepods", "kubepods.slice", "burstable", "besteffort",
+				"kubepods-burstable.slice", "kubepods-besteffort.slice":
+				return nil
 			}
-			path := filepath.Join(root, mountPoint, rel)
-			info, err := os.Stat(path)
-			if err != nil || !info.IsDir() {
-				continue
-			}
-			if v2 {
-				paths["unified"] = path
-				version = 2
-				continue
-			}
-			for _, controller := range controllers {
-				for _, option := range strings.Split(right[2], ",") {
-					if option == controller {
-						paths[controller] = path
-						if version == 0 {
-							version = 1
-						}
+			for i, target := range targets {
+				if !matchesResourcePod(entry.Name(), target.PodUID) {
+					continue
+				}
+				containers, err := os.ReadDir(path)
+				if err != nil {
+					failures = append(failures, resourceError(path, "cgroup", err))
+					continue
+				}
+				for _, container := range containers {
+					if !container.IsDir() || !matchesResourceContainer(container.Name(), target.ContainerID) {
+						continue
+					}
+					if paths[i] == nil {
+						paths[i] = map[string]string{}
+					}
+					for _, controller := range controllers {
+						paths[i][controller] = filepath.Join(path, container.Name())
 					}
 				}
 			}
+			return filepath.SkipDir
+		})
+		if err != nil {
+			failures = append(failures, resourceError(hierarchy, "cgroup", err))
 		}
 	}
-	return paths, version
+	return paths, version, failures
 }
-func unescapeMount(value string) string {
-	return strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`).Replace(value)
+
+func resourceCgroupHierarchies(base string, entries []os.DirEntry) (map[string][]string, int) {
+	// A unified mount exposes cgroup.controllers at its root. Otherwise the
+	// directory contains v1 controller mounts, possibly alongside unified.
+	hierarchies := map[string][]string{}
+	if _, err := os.Stat(filepath.Join(base, "cgroup.controllers")); err == nil {
+		hierarchies[base] = []string{"unified"}
+		return hierarchies, 2
+	}
+	hasV1 := false
+	for _, entry := range entries {
+		if entry.Name() == "unified" {
+			continue
+		}
+		path := filepath.Join(base, entry.Name())
+		info, err := os.Stat(path) // v1 commonly has cpu/cpuacct symlink aliases.
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		hasV1 = true
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			continue
+		}
+		for _, controller := range strings.Split(entry.Name(), ",") {
+			if controller == "cpu" || controller == "cpuacct" || controller == "memory" {
+				hierarchies[resolved] = append(hierarchies[resolved], controller)
+			}
+		}
+	}
+	// Never use the hybrid v2 CPU-only view in place of missing v1 data.
+	if !hasV1 {
+		path := filepath.Join(base, "unified")
+		if _, err := os.Stat(filepath.Join(path, "cgroup.controllers")); err == nil {
+			hierarchies[path] = []string{"unified"}
+			return hierarchies, 2
+		}
+	}
+	return hierarchies, 1
+}
+
+func matchesResourcePod(name, uid string) bool {
+	if uid == "" {
+		return false
+	}
+	if name == "pod"+uid {
+		return true
+	}
+	uid = strings.ReplaceAll(uid, "-", "_")
+	return name == "kubepods-pod"+uid+".slice" ||
+		name == "kubepods-burstable-pod"+uid+".slice" ||
+		name == "kubepods-besteffort-pod"+uid+".slice"
+}
+
+func matchesResourceContainer(name, containerID string) bool {
+	_, id, ok := strings.Cut(containerID, "://")
+	return ok && id != "" && (name == id || name == "cri-containerd-"+id+".scope" ||
+		name == "crio-"+id+".scope" || name == "docker-"+id+".scope")
 }
 func resourceError(target, field string, err error) serving.ResourceError {
 	return serving.ResourceError{Target: target, Field: field, Reason: err.Error()}

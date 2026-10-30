@@ -59,8 +59,12 @@ func TestResourcePostFailureAndTokenRotation(t *testing.T) {
 
 // HTTP handler paths omit the /chill prefix used only by Kubernetes SAR.
 func TestResourceEndpointUsesHTTPHandlerPath(t *testing.T) {
-	for _, path := range []string{"/api/v1/internal/observations/resources", "/chill/api/v1/internal/observations/resources"} {
-		config := fmt.Sprintf(`{"url":"https://127.0.0.1:31104%s","caFile":%q,"tokenFile":"token","sampleInterval":"1s","batchInterval":"10s","requestTimeout":"5s","maxResponseBytes":1024}`, path, filepath.Join(t.TempDir(), "missing-ca"))
+	for _, path := range []string{
+		"/api/v1/internal/observations/resources", "/chill/api/v1/internal/observations/resources",
+	} {
+		config := fmt.Sprintf(`{"url":"https://127.0.0.1:31104%s","caFile":%q,"tokenFile":"token",`+
+			`"sampleInterval":"1s","batchInterval":"10s","requestTimeout":"5s","maxResponseBytes":1024}`,
+			path, filepath.Join(t.TempDir(), "missing-ca"))
 		err := runResourceAgent(context.Background(), nil, options{resourcesConfig: config})
 		if path == "/api/v1/internal/observations/resources" {
 			if !errors.Is(err, os.ErrNotExist) {
