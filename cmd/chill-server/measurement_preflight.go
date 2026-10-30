@@ -33,7 +33,8 @@ func (o *measurementService) enrichPreflightResponse(response *http.Response) er
 	}
 	parts := strings.Split(response.Request.URL.Path, "/")
 	if len(parts) != 7 || view.Campaign.Namespace != parts[4] ||
-		view.APIVersion != operatorconsole.BatchEnergyOptimizationPreflightAPIVersion || view.Kind != "BatchEnergyOptimizationPreflight" {
+		view.APIVersion != operatorconsole.BatchEnergyOptimizationPreflightAPIVersion ||
+		view.Kind != "BatchEnergyOptimizationPreflight" {
 		return errors.New("unexpected Console preflight identity")
 	}
 	if view.Resolves {
@@ -57,7 +58,8 @@ func (o *measurementService) enrichPreflightResponse(response *http.Response) er
 		batchPlan.Reasons = append(batchPlan.Reasons, activeReasons...)
 		if !catalogConfirmed {
 			batchPlan.Reasons = append(batchPlan.Reasons, operatorconsole.MeasurementBatchPlanReason{
-				Code: "CatalogUnconfirmed", Message: "The current adopted catalog is unavailable; no measured batch exclusions are confirmed.",
+				Code: "CatalogUnconfirmed",
+				Message: "The current adopted catalog is unavailable; no measured batch exclusions are confirmed.",
 			})
 		}
 		for _, reason := range view.BatchPlan.Reasons {

@@ -39,7 +39,9 @@ func consoleError(w http.ResponseWriter, status int, code string) {
 
 // composeChillServer is the only cross-domain assembly. The Console's existing
 // retained-evidence and production preflight composition stays authoritative.
-func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer, opts options, measurements ...*measurementService) (http.Handler, error) {
+func composeChillServer(
+	serving http.Handler, authorizer *servingkube.Authorizer, opts options, measurements ...*measurementService,
+) (http.Handler, error) {
 	origin, err := privateOrigin(opts.consoleURL)
 	if err != nil {
 		return nil, err

@@ -141,7 +141,8 @@ func TestPreflightBatchPlanPreservesDeclaredBatchOmissionAndAlwaysSerializes(t *
 			view.BatchPlan.SubsetAllowed || view.Campaign.Spec.BatchSizes != nil {
 			t.Fatalf("ambiguous batch plan: %s", encoded)
 		}
-		if resolved && (!view.BatchPlan.SearchMayStopEarly || !reflect.DeepEqual(view.BatchPlan.PlannedBatches, []int{1, 2, 4})) {
+		if resolved && (!view.BatchPlan.SearchMayStopEarly ||
+			!reflect.DeepEqual(view.BatchPlan.PlannedBatches, []int{1, 2, 4})) {
 			t.Fatalf("declared batch plan = %#v", view.BatchPlan)
 		}
 		if !resolved && (view.BatchPlan.ConditionMatch != "unknown" || len(view.BatchPlan.RequestableBatches) != 0) {
@@ -178,7 +179,9 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 			}
 			view, err := BuildBatchEnergyOptimizationPreflight(BatchEnergyOptimizationPreflightSnapshot{
 				Plan: plan, VariantID: id, RequestsComplete: true,
-				Campaign:      edgev1alpha1.BatchEnergyOptimization{Spec: edgev1alpha1.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2, 4}}},
+				Campaign: edgev1alpha1.BatchEnergyOptimization{
+					Spec: edgev1alpha1.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2, 4}},
+				},
 				ExactEvidence: []MeasurementPreflightEvidence{{Condition: original.Shared(), Batches: []int{1, 1}}},
 			})
 			if err != nil {

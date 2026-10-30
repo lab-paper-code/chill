@@ -91,7 +91,8 @@ func NewHandler(
 		}
 		var variantID string
 		for key, values := range query {
-			if key != "variantId" || len(values) != 1 || strings.TrimSpace(values[0]) == "" || strings.TrimSpace(values[0]) != values[0] {
+			if key != "variantId" || len(values) != 1 ||
+				strings.TrimSpace(values[0]) == "" || strings.TrimSpace(values[0]) != values[0] {
 				writeError(writer, http.StatusBadRequest, batchEnergyOptimizationPreflightRequestInvalidCode)
 				return
 			}

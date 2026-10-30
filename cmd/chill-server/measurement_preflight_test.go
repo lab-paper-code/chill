@@ -26,9 +26,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+const measurementPreflightTestPath = "/api/v1/namespaces/allowed/batch-energy-optimizations/preflight"
+
 func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 	plan := measurementPreflightTestPlan(t)
-	for _, mode := range []string{operatorconsole.MeasurementConditionExact, "changed spec", "recreated request", "other namespace", "active exact", "active stale", "active missing plan"} {
+	modes := []string{
+		operatorconsole.MeasurementConditionExact, "changed spec", "recreated request", "other namespace",
+		"active exact", "active stale", "active missing plan",
+	}
+	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) {
 			request := &api.BatchEnergyOptimization{
 				ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "source", UID: "uid"},
@@ -36,9 +42,10 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 			}
 			proposed := *request.DeepCopy()
 			proposed.Name = "new-request"
-			view, err := operatorconsole.BuildBatchEnergyOptimizationPreflight(operatorconsole.BatchEnergyOptimizationPreflightSnapshot{
+			snapshot := operatorconsole.BatchEnergyOptimizationPreflightSnapshot{
 				Plan: plan, Campaign: proposed, RequestsComplete: true,
-			})
+			}
+			view, err := operatorconsole.BuildBatchEnergyOptimizationPreflight(snapshot)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,7 +90,7 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 			id := operatorconsole.MeasurementVariantID(plan.Shared())
 			response := &http.Response{
 				Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(payload)),
-				Request: httptest.NewRequest(http.MethodPost, "/api/v1/namespaces/allowed/batch-energy-optimizations/preflight?variantId="+id, nil),
+				Request: httptest.NewRequest(http.MethodPost, measurementPreflightTestPath+"?variantId="+id, nil),
 			}
 			if err := service.enrichPreflightResponse(response); err != nil {
 				t.Fatal(err)
@@ -96,21 +103,31 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 			if err := json.NewDecoder(response.Body).Decode(&view); err != nil {
 				t.Fatal(err)
 			}
-			if mode == operatorconsole.MeasurementConditionExact {
-				if view.BatchPlan.ConditionMatch != operatorconsole.MeasurementConditionExact || view.BatchPlan.VariantID == nil ||
-					!reflect.DeepEqual(view.BatchPlan.MeasuredBatches, []int{1}) || !reflect.DeepEqual(view.BatchPlan.MissingBatches, []int{2, 4}) {
-					t.Fatalf("exact catalog facts lost: %#v", view.BatchPlan)
-				}
-			} else if mode == "active exact" {
-				if view.BatchPlan.ConditionMatch != operatorconsole.MeasurementConditionExact || view.BatchPlan.VariantID == nil ||
-					!reflect.DeepEqual(view.BatchPlan.InProgressBatches, []int{1, 2, 4}) ||
-					len(view.BatchPlan.MeasuredBatches) != 0 || len(view.BatchPlan.MissingBatches) != 0 {
-					t.Fatalf("frozen in-progress plan lost: %#v", view.BatchPlan)
-				}
-			} else if view.BatchPlan.ConditionMatch == operatorconsole.MeasurementConditionExact || view.BatchPlan.VariantID != nil || len(view.BatchPlan.MeasuredBatches) != 0 || len(view.BatchPlan.InProgressBatches) != 0 {
-				t.Fatalf("unconfirmed lineage became exact: %#v", view.BatchPlan)
-			}
+			assertMeasurementPreflightBatchPlan(t, mode, view.BatchPlan)
 		})
+	}
+}
+
+func assertMeasurementPreflightBatchPlan(t *testing.T, mode string, plan operatorconsole.MeasurementBatchPlan) {
+	t.Helper()
+	switch mode {
+	case operatorconsole.MeasurementConditionExact:
+		if plan.ConditionMatch != operatorconsole.MeasurementConditionExact || plan.VariantID == nil ||
+			!reflect.DeepEqual(plan.MeasuredBatches, []int{1}) ||
+			!reflect.DeepEqual(plan.MissingBatches, []int{2, 4}) {
+			t.Fatalf("exact catalog facts lost: %#v", plan)
+		}
+	case "active exact":
+		if plan.ConditionMatch != operatorconsole.MeasurementConditionExact || plan.VariantID == nil ||
+			!reflect.DeepEqual(plan.InProgressBatches, []int{1, 2, 4}) ||
+			len(plan.MeasuredBatches) != 0 || len(plan.MissingBatches) != 0 {
+			t.Fatalf("frozen in-progress plan lost: %#v", plan)
+		}
+	default:
+		if plan.ConditionMatch == operatorconsole.MeasurementConditionExact || plan.VariantID != nil ||
+			len(plan.MeasuredBatches) != 0 || len(plan.InProgressBatches) != 0 {
+			t.Fatalf("unconfirmed lineage became exact: %#v", plan)
+		}
 	}
 }
 
@@ -123,9 +140,13 @@ func TestPublicPreflightRequiresNamespaceListBeforePrivateRead(t *testing.T) {
 				if r.URL.RawQuery != "variantId=selected" || r.Header.Get("Authorization") != "" {
 					t.Error("preflight display context or private authentication boundary changed")
 				}
-				view, err := operatorconsole.BuildBatchEnergyOptimizationPreflight(operatorconsole.BatchEnergyOptimizationPreflightSnapshot{
-					Campaign: api.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "new-request"}}, Reason: "actual unresolved request",
-				})
+				snapshot := operatorconsole.BatchEnergyOptimizationPreflightSnapshot{
+					Campaign: api.BatchEnergyOptimization{
+						ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "new-request"},
+					},
+					Reason: "actual unresolved request",
+				}
+				view, err := operatorconsole.BuildBatchEnergyOptimizationPreflight(snapshot)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -144,19 +165,28 @@ func TestPublicPreflightRequiresNamespaceListBeforePrivateRead(t *testing.T) {
 				permitted := true
 				if resource := review.Spec.ResourceAttributes; resource != nil {
 					resourceReviews++
-					if resource.Namespace != "allowed" || resource.Group != "edge.dacs.io" || resource.Resource != "batchenergyoptimizations" || resource.Verb != "list" {
+					if resource.Namespace != "allowed" || resource.Group != "edge.dacs.io" ||
+						resource.Resource != "batchenergyoptimizations" || resource.Verb != "list" {
 						t.Errorf("wrong preflight resource authorization: %#v", resource)
 					}
 					permitted = allowed
 				}
-				return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: permitted}}, nil
+				return true, &authorizationv1.SubjectAccessReview{
+					Status: authorizationv1.SubjectAccessReviewStatus{Allowed: permitted},
+				}, nil
 			})
-			opts := options{consoleURL: upstream.URL, servingNamespace: "allowed", requestTimeout: time.Second, maxRequestBytes: 1024}
-			handler, err := composeChillServer(http.NotFoundHandler(), &servingkube.Authorizer{Client: native}, opts, &measurementService{opts: opts})
+			opts := options{
+				consoleURL: upstream.URL, servingNamespace: "allowed", requestTimeout: time.Second, maxRequestBytes: 1024,
+			}
+			handler, err := composeChillServer(
+				http.NotFoundHandler(), &servingkube.Authorizer{Client: native}, opts, &measurementService{opts: opts},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/namespaces/allowed/batch-energy-optimizations/preflight?variantId=selected", strings.NewReader("{}"))
+			request := httptest.NewRequest(
+				http.MethodPost, measurementPreflightTestPath+"?variantId=selected", strings.NewReader("{}"),
+			)
 			request.Header.Set("Authorization", "Bearer token")
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
@@ -177,7 +207,8 @@ func measurementPreflightTestPlan(t *testing.T) derivation.CurvePlan {
 	active := derivation.CurveProtocolContract{
 		WorkloadMode: "saturated", Dataset: &derivation.CurveDatasetContract{Name: "dataset", UID: "dataset-uid"},
 		DurationSeconds: 30, MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900, MetricDurationSeconds: 31,
-		MetricObserverImage: image, WorkloadObserverImage: image, WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
+		MetricObserverImage: image, WorkloadObserverImage: image,
+		WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
 	}
 	idle := active
 	idle.WorkloadMode, idle.Dataset, idle.SettlingDurationSeconds = "idle-model-loaded", nil, 5
@@ -185,11 +216,20 @@ func measurementPreflightTestPlan(t *testing.T) derivation.CurvePlan {
 		Name: "source", LogicalModel: "model", DeviceClass: "class", NodeUID: "node-uid",
 		RuntimeFamily: "rknnlite", Backend: "not-applicable", RuntimeImage: image, PowerMode: "fixed",
 		CPU:            derivation.CurveCPUContract{Policy: "allocatable", PolicyVersion: "v1", Request: "7", Limit: "8"},
-		MetricSource:   derivation.CurveMetricSourceContract{SourceKind: "prometheus", NodeName: "node", Endpoint: "http://metrics", PowerMetric: "power_watts"},
+		MetricSource: derivation.CurveMetricSourceContract{
+			SourceKind: "prometheus", NodeName: "node", Endpoint: "http://metrics", PowerMetric: "power_watts",
+		},
 		ActiveProtocol: active, IdleProtocol: idle,
-		Conversion:        derivation.CurveConversionContract{TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2"},
-		Artifact:          derivation.CurveArtifactContract{ExecutionPath: "rknnlite", Name: "artifact", Files: []string{"/artifact/model.rknn"}, Image: image},
-		Preprocessor:      derivation.CurvePreprocessorContract{Name: "preprocessor", Image: image, Architecture: "arm64", Path: "/artifact/preprocessor", Inputs: []string{"image"}, Outputs: []string{"label"}},
+		Conversion: derivation.CurveConversionContract{
+			TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
+		},
+		Artifact: derivation.CurveArtifactContract{
+			ExecutionPath: "rknnlite", Name: "artifact", Files: []string{"/artifact/model.rknn"}, Image: image,
+		},
+		Preprocessor: derivation.CurvePreprocessorContract{
+			Name: "preprocessor", Image: image, Architecture: "arm64", Path: "/artifact/preprocessor",
+			Inputs: []string{"image"}, Outputs: []string{"label"},
+		},
 		PlannedBatchSizes: []int{1, 2, 4},
 	})
 	if err != nil {

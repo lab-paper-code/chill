@@ -222,7 +222,10 @@ func TestHandlerUsesPathNamespaceForBatchEnergyOptimizationPreflight(t *testing.
 }
 
 func TestPreflightVariantContextUsesOnlyOptionalQuery(t *testing.T) {
-	for _, query := range []string{"?variantId=chosen", "?variantId=", "?variantId=a&variantId=b", "?other=a", "?variantId=%20a", "?variantId=%zz"} {
+	queries := []string{
+		"?variantId=chosen", "?variantId=", "?variantId=a&variantId=b", "?other=a", "?variantId=%20a", "?variantId=%zz",
+	}
+	for _, query := range queries {
 		t.Run(query, func(t *testing.T) {
 			reader := &recordingPreflightReader{snapshot: resolvingPreflightSnapshot(t)}
 			handler, err := NewHandler(&recordingPassportReader{}, &recordingCampaignResultReader{}, reader)
@@ -230,7 +233,9 @@ func TestPreflightVariantContextUsesOnlyOptionalQuery(t *testing.T) {
 				t.Fatal(err)
 			}
 			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, testPreflightPath+query, preflightCampaignBody(t, testNamespace)))
+			handler.ServeHTTP(response, httptest.NewRequest(
+				http.MethodPost, testPreflightPath+query, preflightCampaignBody(t, testNamespace),
+			))
 			if query != "?variantId=chosen" {
 				if response.Code != http.StatusBadRequest || reader.calls != 0 {
 					t.Fatalf("invalid variant query = %d, calls %d", response.Code, reader.calls)

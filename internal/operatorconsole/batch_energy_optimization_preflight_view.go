@@ -140,7 +140,11 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 	result.SubsetAllowed = len(snapshot.Campaign.Spec.BatchSizes) != 0
 	result.SearchMayStopEarly = len(result.PlannedBatches) > 1
 	if !result.SubsetAllowed {
-		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{"DeclaredBatchSizes", "The artifact declares the batch set; batchSizes must remain omitted and subsets cannot be requested."})
+		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
+			Code: "DeclaredBatchSizes",
+			Message: "The artifact declares the batch set; " +
+				"batchSizes must remain omitted and subsets cannot be requested.",
+		})
 	}
 	condition := snapshot.Plan.Shared()
 	id := MeasurementVariantID(condition)
@@ -163,7 +167,11 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 		if snapshot.VariantID == "" {
 			result.VariantID = &id
 		}
-		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{"DeclarationUIDsNotRetained", "Exact matching covers retained frozen identities only; historical ModelSpec, DeviceClass and preprocessor declaration UIDs were not recorded."})
+		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
+			Code: "DeclarationUIDsNotRetained",
+			Message: "Exact matching covers retained frozen identities only; " +
+				"historical ModelSpec, DeviceClass and preprocessor declaration UIDs were not recorded.",
+		})
 	}
 	slices.Sort(result.MeasuredBatches)
 	result.MeasuredBatches = slices.Compact(result.MeasuredBatches)
@@ -176,19 +184,37 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 		if snapshot.VariantID == id && result.ConditionMatch == MeasurementConditionExact {
 			result.VariantID = &id
 		} else {
-			result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{"VariantConditionChanged", "The selected variant is not confirmed for the current frozen condition; previous batch exclusions are invalid."})
+			result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
+				Code: "VariantConditionChanged",
+				Message: "The selected variant is not confirmed for the current frozen condition; " +
+					"previous batch exclusions are invalid.",
+			})
 		}
 	}
 	if !immutable {
-		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{"ImmutableImagesUnconfirmed", "Image references are not all immutable digests; projected conditions are planned-only."})
+		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
+			Code: "ImmutableImagesUnconfirmed",
+			Message: "Image references are not all immutable digests; projected conditions are planned-only.",
+		})
 	}
 	for _, request := range snapshot.Requests {
 		if request.Plan.SchemaVersion() != "" && MeasurementVariantID(request.Plan.Shared()) == id {
-			result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{"PlannedRequestOverlap", fmt.Sprintf("Request %s currently plans batches %v under matching conditions; this projected overlap alone does not confirm frozen execution or measurement.", request.Campaign.Name, request.Plan.PlannedBatchSizes())})
+			result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
+				Code: "PlannedRequestOverlap",
+				Message: fmt.Sprintf(
+					"Request %s currently plans batches %v under matching conditions; "+
+						"this projected overlap alone does not confirm frozen execution or measurement.",
+					request.Campaign.Name, request.Plan.PlannedBatchSizes(),
+				),
+			})
 		}
 	}
 	if !snapshot.RequestsComplete {
-		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{"RequestListUnconfirmed", "Current request coverage is not confirmed; an empty in-progress set does not prove no pending overlap."})
+		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
+			Code: "RequestListUnconfirmed",
+			Message: "Current request coverage is not confirmed; " +
+				"an empty in-progress set does not prove no pending overlap.",
+		})
 	}
 	for _, batch := range result.PlannedBatches {
 		if !slices.Contains(result.MeasuredBatches, batch) && !slices.Contains(result.InProgressBatches, batch) {
