@@ -207,6 +207,7 @@ test("R3: campaign grouping and exact CHILL/static pairs never cross publication
   assert.equal(groups.length,2)
   assert.equal(groups.find(group=>group.run.id===run.id)!.pairs.length,1)
   assert.equal(groups.find(group=>group.run.id===demo.id)!.pairs.length,0)
+  assert.ok(groups.every(group=>group.title===group.run.id),"each card identifies its publication instead of repeating a generic title")
 })
 
 test("R3: chart points retain per-service success and p95 without averaging or inventing missing values",()=>{
