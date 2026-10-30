@@ -49,6 +49,9 @@ func TestCleanupKeepsPhysicalOwnershipButAllowsSerializedReadyRoutesAC38(t *test
 	c.runs = map[string]*actionRun{}
 	installTestTransition(c, &goal)
 	parent := c.runs[transitionRunKind+"/"+goal.ID]
+	for _, instance := range c.state.Snapshot.Instances {
+		parent.result.Before.Instances = append(parent.result.Before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node})
+	}
 	final := &actionRun{owner: goal.ID, reserved: true, action: goal.Actions[0], result: &OperationResult{Operation: Operation{Kind: operationRoute, Target: &goal, WorkloadUIDs: []string{uid}}, Status: nativeOperationComplete}}
 	final.action.Status = nativeOperationRunning
 	c.runs[final.action.ID] = final
@@ -96,8 +99,17 @@ func TestCleanupKeepsPhysicalOwnershipButAllowsSerializedReadyRoutesAC38(t *test
 		}
 		run := &actionRun{owner: refresh.ID, action: refresh.Actions[0], result: &OperationResult{Operation: op, Status: nativeOperationRunning}}
 		run.action.Status = nativeOperationRunning
+		parent.returnObserved = true
 		if !c.reserveRun(refresh.ID, run, op) || run.owner != parent.owner {
 			t.Fatal("Ready route refresh did not inherit cleanup owner")
+		}
+		if parent.returnObserved {
+			t.Fatal("adopted route retained an earlier return proof")
+		}
+		for _, instance := range parent.result.Before.Instances {
+			if !parent.mayTouch[instance.ID] {
+				t.Fatalf("adopted route omitted baseline executor %s, including excluded sources", instance.ID)
+			}
 		}
 		if c.reserveRun("concurrent-route", &actionRun{owner: "another"}, op) {
 			t.Fatal("cleanup policy ACKs overlapped")

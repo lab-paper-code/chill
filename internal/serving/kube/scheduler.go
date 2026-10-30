@@ -91,6 +91,8 @@ type actionRun struct {
 	cleanup              bool
 	cleanupRoutes        map[string]*actionRun
 	routeReceipts        map[string]*actionRun
+	mayTouch             map[string]bool
+	proofParent          *actionRun
 	replacements         []serving.SchedulerReplacement
 }
 type SchedulerController struct {
@@ -1030,7 +1032,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			action.Cancelable = action.Kind == operationPrepare
 			started := time.Now()
 			initial := OperationResult{Operation: operation, StartedAt: started.UTC(), Status: "starting"}
-			run := &actionRun{action: action, result: &initial, started: started, owner: target.ID}
+			run := &actionRun{action: action, result: &initial, started: started, owner: target.ID, proofParent: c.runs[transitionRunKind+"/"+target.ID]}
 			if !c.reserveRun(action.ID, run, operation) {
 				continue
 			}

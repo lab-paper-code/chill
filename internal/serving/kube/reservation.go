@@ -143,6 +143,20 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 				parent.routeReceipts = map[string]*actionRun{}
 			}
 			parent.routeReceipts[id] = run
+			run.proofParent = parent
+		}
+	}
+	if operation.Kind != transitionRunKind {
+		if parent := c.returnProofParent(run); parent != nil {
+			parent.returnObserved = false
+			if parent.mayTouch == nil {
+				parent.mayTouch = map[string]bool{}
+			}
+			for _, state := range parent.result.Before.Instances {
+				if operationMayTouch(operation, scope, state) {
+					parent.mayTouch[state.ID] = true
+				}
+			}
 		}
 	}
 	if cleanupOwner != nil {
@@ -153,6 +167,53 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 			if operation.controlsWorkload(uid) {
 				cleanupOwner.cleanupRoutes[uid] = run
 			}
+		}
+	}
+	return true
+}
+
+// Effect scope follows executeOperation: local actions write only their Node;
+// routing (including resize) can write every controlled workload's executor.
+func operationMayTouch(operation Operation, scope resourceScope, state serving.InstanceState) bool {
+	switch operation.Kind {
+	case operationPrepare, operationStop, operationDrain, operationRemove, operationPower:
+		return state.Node == operation.Node
+	case operationRoute, operationUnroute, operationRelease:
+		return slices.Contains(scope.Nodes, state.Node) || slices.Contains(scope.Instances, state.ID)
+	case operationResize:
+		return state.Node == operation.Node || slices.Contains(scope.Nodes, state.Node) || slices.Contains(scope.Instances, state.ID)
+	default:
+		return true
+	}
+}
+
+func (c *SchedulerController) returnProofParent(run *actionRun) *actionRun {
+	if run.action.Kind == transitionRunKind {
+		return run
+	}
+	if run.proofParent != nil {
+		return run.proofParent
+	}
+	if parent := c.frozenActionParent(run); parent != nil {
+		return parent
+	}
+	parent := c.runs[transitionRunKind+"/"+run.owner]
+	if parent != nil && parent.routeReceipts[run.action.ID] == run {
+		return parent
+	}
+	return nil
+}
+
+// This check also runs when there are no Pods: absence is not permission to
+// release while an authorized sibling can still publish a remote write.
+func (c *SchedulerController) ownerReturnTerminal(run *actionRun) bool {
+	if parent := c.returnProofParent(run); parent != nil &&
+		(parent.action.Status == nativeOperationRunning || parent.action.Status == nativeOperationCancel) {
+		return false
+	}
+	for _, sibling := range c.runs {
+		if sibling.owner == run.owner && (sibling.action.Status == nativeOperationRunning || sibling.action.Status == nativeOperationCancel) {
+			return false
 		}
 	}
 	return true
@@ -203,7 +264,15 @@ func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []co
 		if !run.reserved || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil || !run.result.EndedAt.Before(observedAt) || len(run.scope.Nodes) == 0 {
 			continue
 		}
+		if !c.ownerReturnTerminal(run) {
+			continue
+		}
 		returned := true
+		for _, sibling := range c.runs {
+			if sibling.owner == run.owner && sibling.result != nil && !sibling.result.EndedAt.Before(observedAt) {
+				returned = false
+			}
+		}
 		for _, ref := range run.scope.Nodes {
 			for _, node := range nodes {
 				if node.Name == ref.Name && string(node.UID) == ref.UID {
@@ -229,18 +298,7 @@ func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []co
 // Terminal owner members share authorized receipts, never an owner's name
 // alone. The owner's pre-effect baseline bounds every previous-policy proof.
 func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
-	var parent *actionRun
-	switch run.action.Kind {
-	case transitionRunKind:
-		parent = run
-	case operationPrepare:
-		parent = c.frozenPreparationParent(run)
-	case operationRoute:
-		parent = c.runs[transitionRunKind+"/"+run.owner]
-		if parent != nil && parent.routeReceipts[run.action.ID] != run {
-			parent = nil
-		}
-	}
+	parent := c.returnProofParent(run)
 	if parent == nil {
 		return knownEffectConfirmed(run, pod, physical, run.result.EndedAt, true)
 	}
@@ -257,6 +315,11 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 	if parent.result.EndedAt.After(after) {
 		after = parent.result.EndedAt
 	}
+	for _, sibling := range c.runs {
+		if sibling.owner == parent.owner && sibling.result != nil && sibling.result.EndedAt.After(after) {
+			after = sibling.result.EndedAt
+		}
+	}
 	preexisting := false
 	if status := firstfloorStatus(pod); status != nil {
 		id := physicalID(pod.UID, status.ContainerID)
@@ -264,6 +327,11 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 			preexisting = slices.ContainsFunc(parent.result.Before.Instances, func(state serving.InstanceState) bool {
 				return state.ID == id && state.PodUID == string(pod.UID) && state.Node == current.Node
 			})
+			if preexisting && !parent.mayTouch[id] && sameRunningContainer(pod, pod) &&
+				current.Node.Name == pod.Spec.NodeName && current.Ready && !current.Stopped &&
+				current.Native != nil && current.Native.Ready && after.Before(current.ObservedAt) {
+				return true
+			}
 		}
 	}
 	if knownEffectConfirmed(run, pod, physical, after, preexisting) {
@@ -286,7 +354,7 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 	return false
 }
 
-func (c *SchedulerController) frozenPreparationParent(run *actionRun) *actionRun {
+func (c *SchedulerController) frozenActionParent(run *actionRun) *actionRun {
 	for _, candidate := range c.runs {
 		if candidate.owner == run.owner && candidate.action.Kind == transitionRunKind && candidate.result != nil &&
 			candidate.result.Operation.Target != nil && slices.ContainsFunc(candidate.result.Operation.Target.Actions, func(a serving.Action) bool {

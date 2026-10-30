@@ -342,7 +342,7 @@ func TestResetTwiceCleansOnlyOwnedPhysicalInstancesAC33(t *testing.T) {
 //nolint:gocyclo // One real reset fixture covers atomic inheritance, all refusal boundaries and pre-effect responsibility.
 func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 	const preEffectRefusal = "pre-effect-refusal"
-	for _, owner := range []string{nativeOperationFailed, nativeOperationPartial, nativeOperationRunning, nativeOperationCancel, "measurement", "outside-workload", "outside-node", "active-sibling", preEffectRefusal} {
+	for _, owner := range []string{nativeOperationFailed, nativeOperationPartial, nativeOperationRunning, nativeOperationCancel, "measurement", "outside-workload", "outside-node", "active-sibling", preEffectRefusal, "transition-dirty"} {
 		t.Run(owner, func(t *testing.T) {
 			h := newResetHarness(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -380,9 +380,15 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 				old.scope.Nodes = append(old.scope.Nodes, serving.NodeReference{Name: "outside-reset", UID: "outside-reset-uid"})
 			case "active-sibling":
 				h.controller.runs["active-reset-sibling"] = &actionRun{owner: oldID, action: serving.Action{Status: nativeOperationRunning}}
+			case "transition-dirty":
+				old.action.Kind = transitionRunKind
+				id := old.scope.Instances[0]
+				old.result.Operation.Target = &serving.SchedulerCandidate{ID: oldID}
+				old.result.Before.Instances = []serving.InstanceState{{ID: id, PodUID: string(h.owned.UID), Node: ref}}
+				old.mayTouch = map[string]bool{id: true}
 			}
 			h.controller.runs[oldID] = old
-			admitted := owner == nativeOperationFailed || owner == nativeOperationPartial || owner == preEffectRefusal
+			admitted := owner == nativeOperationFailed || owner == nativeOperationPartial || owner == preEffectRefusal || owner == "transition-dirty"
 			seen := false
 			h.controller.config.OnAction = func(result OperationResult) error {
 				if result.Status != nativeOperationRunning || seen {
@@ -393,6 +399,9 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 				current := h.controller.runs[result.Operation.ID]
 				transferred := !old.reserved && current != nil && current.reserved && current.inheritedReservation &&
 					slices.Contains(current.scope.Pods, string(h.owned.UID))
+				if owner == "transition-dirty" && (current == nil || current.proofParent != nil || !old.mayTouch[old.scope.Instances[0]]) {
+					t.Error("reset laundered inherited dirty responsibility")
+				}
 				h.controller.mu.Unlock()
 				if !transferred || h.controller.authorize(Operation{WorkloadUID: h.selectedUID}) == nil {
 					t.Error("reset did not atomically inherit and retain the complete reservation")
