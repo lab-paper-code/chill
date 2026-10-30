@@ -331,14 +331,23 @@ func (o *measurementService) decorateProfiles(ctx context.Context, view httpapi.
 		}
 		profiles = append(profiles, projected)
 	}
-	return json.Marshal(struct {
-		ConfigVersion   string                      `json:"configVersion"`
-		Insufficiencies []servingkube.CatalogIssue  `json:"insufficiencies"`
-		ReuseChecks     []serving.ProfileReuseCheck `json:"reuseChecks,omitempty"`
-		Page            *httpapi.ProfilePage        `json:"page,omitempty"`
-		Filters         httpapi.ProfileFilters      `json:"filters"`
-		Profiles        []profileProjection         `json:"profiles"`
-	}{view.ConfigVersion, view.Insufficiencies, view.ReuseChecks, view.Page, view.Filters, profiles})
+	// The catalog contract (SCH-67: preparations, reserved, costs, baselines, …) is
+	// preserved verbatim; decoration only replaces the profile rows.
+	base, err := json.Marshal(view)
+	if err != nil {
+		return nil, err
+	}
+	var projected map[string]json.RawMessage
+	if err := json.Unmarshal(base, &projected); err != nil {
+		return nil, err
+	}
+	rows, err := json.Marshal(profiles)
+	if err != nil {
+		return nil, err
+	}
+	projected["profiles"] = rows
+	delete(projected, "measurementFacts") // raw sample facts stay internal; preparations remain (harness restore contract)
+	return json.Marshal(projected)
 }
 
 func assessCatalogProfile(

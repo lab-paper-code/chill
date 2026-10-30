@@ -25,10 +25,14 @@ func TestR6ProfileResponseOmitsRawCatalogAndLatencySamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"durationNanos", "measurementFacts", "preparations"} {
+	for _, key := range []string{"durationNanos", "measurementFacts"} {
 		if strings.Contains(string(raw), `"`+key+`"`) {
 			t.Errorf("response contains internal/raw %s", key)
 		}
+	}
+	// preparations is the catalog restore contract (SCH-67; hack/e5 targeted restoration) and must survive decoration.
+	if !strings.Contains(string(raw), `"preparations"`) {
+		t.Error("response dropped preparations")
 	}
 	if len(view.Profiles[0].Batches[0].DurationNanos) != 100000 {
 		t.Fatal("read projection mutated scheduler samples")

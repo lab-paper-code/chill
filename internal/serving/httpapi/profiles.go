@@ -167,6 +167,12 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 		}
 		return cmp.Or(result, strings.Compare(a.ID, b.ID)) < 0
 	})
+	// Without limit/offset the catalog stays whole (harness and evidence consumers);
+	// paging is opt-in.
+	if !values.Has(profileLimitQuery) && !values.Has(profileOffsetQuery) {
+		view.Profiles = selected
+		return view, nil
+	}
 	start := min(offset, len(selected))
 	end := min(start+limit, len(selected))
 	view.Page = &ProfilePage{Offset: offset, Limit: limit, Total: len(selected)}
