@@ -352,6 +352,7 @@ func (o *measurementService) decorateProfiles(ctx context.Context, view httpapi.
 		}
 		projected := profileProjection{
 			Profile: profile, Assessment: operatorconsole.AssessMeasurement(input), ResultRows: rows,
+			Batches: make([]batchSummary, 0, len(profile.Batches)),
 		}
 		for _, batch := range profile.Batches {
 			projected.Batches = append(projected.Batches, batchSummary{
