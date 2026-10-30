@@ -420,27 +420,27 @@ Node 필터가 없으면 class의 현재 Node 각각을 평가해 ‘완료 Node
 CPU·dataset·이미지의 아직 요청되지 않은 무한 조합을 가상 분모로 만들지 않는다.
 여기서 variant 집합은 실제 BEO/Run/profile에 나타난 조건이며, 후보 셀 수와 variant 수는 별도다.
 
-**정적 지원 판정은 증거 상태와 분리한다.** path가 참조하는 artifact의 `source.architecture`와
-class `architecture` 불일치는 지원 안 함이다. `runtime.family=firstfloor`에서 `backend=ort-cuda`인데
-class accelerator가 명시적 `none` 또는 `rk3588-npu`이면 가속기 불일치다.
-`backend=rknnlite`와 artifact `derivation.targetPlatform=rk3588` 조합에 class accelerator가
-명시적 `none` 또는 현재 inventory의 NVIDIA 계열 선언이면 불일치다.
-현재 NVIDIA 선언은 `nvidia-geforce-rtx-2080-ti`, `nvidia-jetson-agx-orin`, `nvidia-jetson-nano`,
-`nvidia-jetson-orin-nano`, `nvidia-jetson-xavier-nx`다. 이름 문자열의 cuda/rknn 포함 여부로 판단하지 않는다.
-생소한 accelerator/backend/targetPlatform, 누락 선언, artifact 해석 불가는 ‘확인 불가’다.
-위와 모순이 없는 것은 ‘선언상 후보’이지 ‘runtime 지원 확인’이 아니다.
-근거는 `modelspec_types.go:121-149`, `deviceclass_types.go:23-28`, `modelcatalog/catalog.go:107-123`와
-GET의 명시 선언이다. 실제 runtime 공급 판정은 `modelcompat`/resolver가 소유한다.
+**정적 지원 판정은 증거 상태와 분리한다.** 선택 셀의 model/path/class/Node에 한정해
+`GET /model-compatibility`를 Node별 직렬 조회하고 전력모드 사이 Query cache를 공유한다.
+`Compatible`은 ‘정적 실행 지원 확인’, `Incompatible`은 ‘지원 안 함 — 이유’,
+`Unknown`과 조회 오류는 ‘지원 확인 불가 — 이유/HTTP 상태’다. 같은 class의 일부 Node 결과를
+전체에 확장하지 않으며 전체 Node가 같지 않으면 집계 지원 판정을 확정하지 않는다.
+현재 inventory UID와 응답 입력 UID/selection이 다르면 연결하지 않는다. 조회 시각은 따로 표시한다.
+실제 실행·Ready·전력모드 적격성·측정 완료·admission 성공을 보장하지 않는다.
+미조회/구형 서버에서는 artifact/class의 명시 architecture 비교와 ‘선언상 후보 · 실제 runtime
+지원 미확인’을 유지한다. accelerator/backend 이름별 브라우저 추측표는 제거했다.
+현재 정적 지원과 저장된 실행/근거 상태는 독립이며 Unknown/조회 오류가 이미 확인된 실패나
+완료를 덮지 않는다. 최종 측정 요청은 기존 dry-run/preflight를 그대로 통과해야 한다.
 
 **대표 상태는 아래 순서대로 계산하며 보조 사실을 지우지 않는다.**
 먼저 필수 목록 조회의 완전성과 identity 모순을 확인한다. 정적 불일치인데 해당 셀에 현재 증거가 있으면
-임의로 미지원/완료를 고르지 않고 ‘확인 불가 — 선언과 증거가 달라요’다.
+‘품질 경고 — 현재 정적 선언과 저장된 측정 근거가 달라요’로 각각 확인하게 한다.
 이후 exact variant별 상태를 만들고 상위 셀은 다음 규칙으로 요약한다.
 
 | 셀 상태 | 구체적인 판정 규칙 | 셀/패널에 남길 보조 사실 |
 |---|---|---|
 | **확인 불가** | 필요한 inventory/BEO/profiles 조회 실패·권한 거부·일부 page, identity 미확인, 선언 모순 또는 정적 판정 입력 불명 | 실패 API/조회 범위·readAt, 알려진 결과는 별도 표시. 403을 미측정/지원 안 함으로 바꾸지 않음 |
-| **지원 안 함** | 위 정적 architecture/가속기 불일치를 입증했고 모순되는 현재 증거 없음 | 이유와 양쪽 선언값, 해칭. 요청 CTA 비활성 |
+| **지원 안 함** | backend가 해당 Node 모두 Incompatible이거나 미조회 상태의 architecture 불일치이고, 측정 이력이 없음 | 사유와 양쪽 선언값, 해칭. 요청 CTA 비활성 |
 | **품질 경고** | 사용 가능한 variant와 경고/미완료 variant가 섞임, BEO Complete인데 연결되는 catalog profile 없음, source insufficiency(대체 이력 제외), 실행 성공 Run의 검증 False/Unknown·근거 누락 또는 종결 condition stale, 연결되어 실제 조회한 자료의 비유한 수치 | ‘실행 완료’ phase를 보조 표기하고 정상 녹색 금지. 실행 중의 검증 Unknown만으로 경고하지 않음 |
 | **완료(근거 충분)** | 현재 catalog가 exact variant의 profile을 제공하고 그 범위에 미해결 경고가 없음. 셀에 여러 variant면 모두 이 기준 충족 | 실제 Node 수/variant 수와 측정 batch 집합. 이는 inference profile 사용 가능이지 논문/다섯 근거 완비 인증이 아님 |
 | **진행 중** | 유효 profile/품질 경고가 없고 BEO `phase=Measuring` 또는 현재 generation Run `ExecutionComplete=Unknown` 등 명시된 비종결 진행 상태 | 이전 실패/대기 사유. 알 수 없는 phase를 진행으로 추측하지 않음 |
@@ -481,11 +481,9 @@ Run 전체 페이지는 첫 미측정 확정/선택 이력에서 지연 조회�
 선택 Result와 정확 참조 Run Passport만 요청한다. 자동 retry/focus refetch를 새로 켜지 않는다.
 목록을 주기적으로 통째 재집계하는 새 polling을 추가하지 않고 기존 수동 갱신과 명시된 진행 갱신만 쓴다.
 
-이번 3슬라이스에는 **새 서버 API가 필요 없다**. 다만 권위 있는 runtime 지원 분모·다섯 근거 완비가 필요해지면
-최소 후속 API는 `GET /measurement-coverage?namespace=&limit=&cursor=` 한 개의 읽기 projection이다.
-기존 candidate resolver/modelcompat/catalog를 재사용해 exact condition key, compatibility verdict/reasons,
-sourceRefs, evidence별 상태, readAt와 조회 범위를 반환하고 별도 DB/지원 registry는 만들지 않는다.
-이는 현재 제공 API나 이번 완료 조건이 아니다.
+F4는 [측정 API §12](../serving/measurement-api.md#12-대시보드-측정-api-보강-계약-b0-2026-10-30)의
+호환성 GET와 기존 응답의 optional owner/statistics/비용 필드를 소비한다.
+별도 coverage endpoint·지원 registry·통계 알고리즘·전체 셀 통계 fan-out은 추가하지 않는다.
 
 ### 8.4 요청 prefill과 목록·그룹
 
@@ -525,26 +523,29 @@ workloadMode·측정 protocol을 포함한 조건이다. active와 idle은 같�
 배치·시도 번호는 원본 참조의 batch/attempt만 사용하고 서로 다른 전력모드/부모 요청을 1~N회차로 재번호하지 않는다.
 소유 요청 UID를 알 수 없으면 번호 대신 Run name과 생성일을 표시한다.
 BEO의 저장 result가 있으면 `completedTrials[].run`과 `excludedTrials[].run`의 namespace/name/uid가
-정확 연결이다. 실패 `result:null`에는 ownerReferences가 공개되지 않으므로
-조건이 맞는 Run도 **‘관련 후보 — 소유 관계 미확인’**이지 소유 회차/실패 회차 수가 아니다.
-`q=name` 부분일치 결과를 부모 요청의 회차로 세는 기존 흐름은 제거한다.
+정확한 결과 참조다. 실패 `result:null`도 전체 namespace Run 목록의 `ownerReferences`에서
+namespace + controller=true + apiVersion=edge.dacs.io/v1alpha1 + kind=BatchEnergyOptimization +
+부모 UID 정확 일치만 소유 Run으로 연결한다. 이름·labels는 소유 증거가 아니다.
+원 spec의 mode/batch와 양의 정수 attempt label만 표시하고 누락/잘못된 회차는 ‘회차 기록 없음’이다.
+전체 page 조회 전에는 소유 회차 없음을 확정하지 않고 과거 owner 미기록은 ‘소유 연결 기록 없음’이다.
+조건/이름 부분일치 후보를 소유 회차로 세지 않는다.
 
 ### 8.5 측정 상세·실패·품질
 
 | 표시할 값 | 실제 제공 필드 / 정직한 대안 |
 |---|---|
 | 배치별 증분 에너지 | BEO `result.detail.incrementalWorkByBatch[].{batch,incrementalWorkJoulesPerItem}`, bestBatch, measuredBatchSizes. 평균만 제공 |
-| 배치 에너지 오차 | 현재 BEO summary/profile에 CI 없음 → ‘에너지 CI 미제공’. `idleBaselinesByState.*.confidenceHalfWidth`는 **유휴 W CI**이므로 J/건 오차로 재사용 금지 |
-| p50/p95/p99·표본 | 정확 Run Passport `measurement.runtime.latencyMilliseconds.{count,mean,p50,p95,p99}`. 여러 회차 p95는 범위/회차별 표로, 평균을 전체 p95라고 부르지 않음 |
+| 배치 에너지 오차 | BEO 응답 형제 `statistics.batches[].confidence`의 level/halfWidth로 평균±halfWidth 표시. 음수 하한·0폭 보존. 부재는 CI 미제공; 유휴 W CI를 J/건 오차로 재사용 금지 |
+| p50/p95/p99·표본 | 통합 p95는 `statistics.batches[].latencyP95Milliseconds`, 같은 배치 client 호출 표본 수는 latencySampleCount. 부재 시 정확 Run Passport의 회차 p95 범위/개별 값만 표시하며 평균을 전체 p95라 하지 않음 |
 | profile 지연 | `batches[].durationNanos`는 표본이며 게시된 p95 summary가 아니다. 별도 통계 알고리즘을 UI에 추가하지 않음 |
 | 반복/배치 범위 | BEO completed/excluded exact 참조와 detail.trialsPerBatch, measuredBatchSizes. plannedBatchSizes 모두 측정했다고 단정 금지 |
 | 품질 사실 | Passport 전력 samples/failures/gap/sourceTimestampAbsent, thermal observationAvailableSamples/issues, 실제 runtime/Node/동거 Pod·정책·dataset. 미관측 발열=정상 금지 |
-상세 첫 화면의 지연 표는 저장 결과의 exact completed Run 참조 중 active를 batch로 나누고
-그 Run들의 Passport를 독립 조회해 p95의 최솟값~최댓값과 회차별 값을 표시한다.
-한 회차뿐이면 ‘해당 회차 p95’다. idle Run p95를 active 지연에 합치지 않는다.
-요청은 한 번에 최대 3개, 이동/로그아웃 시 취소하며 부분 실패도 읽은 값·누락 수를 함께 보인다.
-이 조회는 선택 상세에서만 수행하고 커버리지 전체 셀에는 일괄 fan-out하지 않는다.
-Result만 먼저 오면 에너지·CI 미제공·지연 확인 중을 표시해 본문 전체를 막지 않는다.
+상세 첫 화면은 서버가 보존 자료로 계산한 독립 active/shared-idle trial CI와 통합 p95를 표시한다.
+통계 미제공 서버/객체에서만 기존 exact completed active Passport를 최대 3개 동시 조회해
+회차 p95 범위와 각 회차 표본 수를 제공한다. idle p95를 active 지연에 합치지 않는다.
+`NoPublishedResult`, `RetainedEvidenceMissing`, `StatisticsNotRecorded`는 각각 게시 결과 없음,
+통계 원근거 기록 없음, CI·통합 p95 기록 없음이며 권한/transport 오류와 구별한다.
+커버리지는 선택 Result만 읽고 catalog 표에는 같은 store/key 결과 참조인 경우만 통계를 연결한다.
 
 소수 둘째 자리 고정 대신 3~4 유효숫자(에너지 기본 4)를 쓰되 0.09261/0.08682 J처럼 차이가 보이게 한다.
 회차 지연은 ms, 전력 W, 에너지 J/건. 반복 수와 **지연 표본 수 N은 다른 수**다.
@@ -585,11 +586,11 @@ UI `lib/scheduler.ts:nanosToMilliseconds`의 음수 remainder 문자열은 잘�
 d/X를 브라우저에서 재계산하지 않는다. 정상 여부가 불명확한 문자열을 0으로 대체하지 않는다.
 운영 consumer의 음수 clamp와 raw 측정은 다른 계약이며 UI는 raw 값을 표시한다.
 
-**동작 비용.** 현재 projection(`httpapi/measurement_projections.go:48-68,92-110`)은
-단계 name/key/verdict만 제공하고 시간/J는 없다. 제목 아래 **‘시간·에너지 수치는 현재 API에 포함되지 않아요’**를 둔다.
-표에 시간/에너지 항목을 ‘미제공’으로 명시한다. `idleDurationSeconds`는 계획 시간이지 실측 시간이 아니다.
-저장 key는 복사 가능한 근거 위치이며 URL로 꾸미거나 다른 scheduler cost를 이름만으로 붙이지 않는다.
-이 범위에서 서버·측정 계약은 바꾸지 않는다.
+**동작 비용.** optional step operationID/durationNanos/wallJoules/reason을 표시한다.
+durationNanos는 lossless JSON 정수로 읽어 실제 ms와 원래 ns를 함께 보존한다. 실제 0 J는 0이며
+null/미제공 J는 ‘수용된 에너지 없음’, 시간은 ‘실측 시간 기록 없음’이다. 원 조회 오류는 숨기지 않는다.
+실측 J는 전체 Node 벽에너지이며 증분 J/item이 아니다. 계획 idleDurationSeconds를 실측으로 대신하지 않는다.
+전체 실패/불수용과 일부 단계의 수용·실측 시간은 함께 표시하고 name/key/verdict·근거 위치를 보존한다.
 
 ### 8.6 실험의 게시 데이터와 설명형 비교
 
@@ -634,8 +635,11 @@ CHILL/비교군이라는 명칭은 게시된 frozen 조건으로 확인되는 �
 `full-`/`static-`라는 ID 접두사만으로 정적군/제어 켜짐을 확정하지 않는다.
 
 단계 레인은 실제 `[from,to)` 순서/폭으로 그리고 클릭하면 해당 단계 KPI와 근거 범위를 함께 바꾼다.
-현재 API에는 공통 α 필드가 없고 campaign 내부 `requests.*.substages[].alpha`도 publisher allowlist에 없다
-(`hack/e5/e5.py:2400-2412,2662-2678`). 따라서 **α 미제공**을 표시한다.
+두 publisher의 optional workloadUID/definitionID/identitySource와 substages를 타임라인 펼침 및
+비교표에 표시한다. α=0을 보존하고 direct-rate null α와 과거 미기록은 missingReasons로 구별한다.
+예정 offset은 lossless ns, from/to는 해당 workload의 실제 producer 시작에 고정한 예정 구간이다.
+관측된 전환 사건이라고 부르지 않으며 anchor 부재는 stage 전체 시각으로 채우지 않는다.
+명시 null identity는 legacy alias나 현재 Workload identity로 대체하지 않는다.
 offered와 실제 기간이 있으면 ‘단계 평균 보낸 요청률’=offered/기간을 표시할 수 있지만 목표 부하나 α가 아니다.
 초별 지연/에너지 선형 보간·가짜 이벤트는 금지한다. 게시 단계 집계 표/막대와 선택 당시 journal을 사용한다.
 없는 이유는 미제공으로 남기며 FAIL/NOT_READY/MEASURED_DESCRIPTIVE는 각각 게시 판정·준비·설명형 결과로 구분한다.
@@ -675,3 +679,29 @@ inventory 양쪽 페이지와 namespace Run 전체 페이지는 탭 Query cache�
 누락 CI/단일 배치/분모0/UID 불일치를 테스트한다. UI 구조를 문자열로 검색하는 테스트는 새 회귀 근거가 아니다.
 모든 슬라이스 후 통합 담당자가 한 번 test/typecheck/lint/build와 브라우저 수용을 실행한다.
 완료는 M1·E1 세 페르소나 전원 성공과 평균 SUS ≥68까지이며, 이 문서 작성은 그 달성 증거가 아니다.
+
+### 8.8 F4 새 API 소비 검증 (2026-10-30)
+
+B1 `340f96ee`, B2 `2963ee11` 실제 DTO 및 B3 `80ea2196`의 두 publication shape를 대조했다.
+relay에는 정확 `GET /model-compatibility`와 필수 단일 query 네 개만 추가했다.
+새 라이브러리·Go·클러스터·저장 객체·publication 변경은 없다.
+
+Node 24.0.0 / nice 19 최종 typecheck·lint·전체 80 tests·production build 통과.
+build의 Asta Sans fallback font-metrics 경고는 남아 있다. 마지막 코드 수정 뒤 통합 검사를 실행했고,
+그 전 초기 검사도 통과했다. 검사는 로컬 구현 회귀이며 배포 수용의 증거는 아니다.
+
+`/tmp/uxf4`, 포트 3204의 production 사본에서 GET-only 가드를 로그인 전에 설치했다.
+실서버의 statistics/step 실측/실험 metadata 부재를 확인하고 기존 미제공·기록 없음 화면을 캡처했다.
+새 필드는 명시 `f4-fixture-*` route mock으로 CI 음수 하한·0폭, 호출 표본/독립 trial,
+정확 owner UID, 실패 전체+0 J/정밀 ns, 두 publisher α=0/direct-rate/identity/예정 구간을 확인했다.
+coverage와 request prefill을 여는 전체 과정의 compatibility GET는 각 한 번(총 2회)이었다.
+1440×900 및 390×844 캡처에서 기존 토큰·표·모바일 가로 스크롤 방향을 유지했다.
+
+증거 경로: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/ux-survey-20261030/`.
+`f4-live-{coverage,statistics-fallback,operation-fallback,experiment-fallback}.png`는 실데이터,
+`f4-fixture-{statistics,failed-owner,coverage,request-prefill,operation,experiment-timeline,experiment-comparison,experiment-mobile}.png`는 합성 응답이다.
+검사 원로그는 같은 폴더의 `f4-{typecheck,lint,test,build}.log`다.
+보조 캡처는 `f4-live-owner-fallback.png`, `f4-fixture-operation-exact-nanos.png`,
+`f4-fixture-experiment-{substages,alpha-comparison}.png`다. 브라우저 탭과 로컬 서비스는 종료하고
+자기 사본 `/tmp/uxf4`는 삭제했다. 토큰·원시 export·쓰기 요청·서버 설정 변경은 없다.
+운영 B1/B2 배포와 B3 신규 publication·세 페르소나 재설문은 수행하지 않았으며 별도 승인 수용이다.

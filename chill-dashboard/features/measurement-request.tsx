@@ -13,8 +13,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
 import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight } from "@/lib/read-types"
-import { resolveMeasurementPrefill, staticCompatibility, planVariant, type MeasurementPrefill } from "@/lib/measurement-coverage"
-import { useCoverageInventory } from "@/features/measurement-coverage"
+import { resolveMeasurementPrefill, serverCompatibility, staticCompatibility, planVariant, type MeasurementPrefill } from "@/lib/measurement-coverage"
+import { useCoverageInventory, useModelCompatibility } from "@/features/measurement-coverage"
 
 const back: [string, string] = ["/measurements", "측정"]
 const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
@@ -218,6 +218,8 @@ function Funnel({ namespace, from, context, prefill, more, refetchPlans, checkin
   const [check, setCheck] = useState<"" | "done" | "failed">("")
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const v = view(d, context)
+  const support=useModelCompatibility(d.model,v.path?.name??"",v.cls?.name??"",v.cls?.nodes.filter(node=>node.name===d.node)??[],v.model?.metadata.uid,v.cls?.uid)
+  const supportVerdict=v.model&&v.path&&v.cls?serverCompatibility(staticCompatibility(v.model,v.path,v.cls),support.data??[]):undefined
   const blocked = prefill.errors.length > 0
   const history = context.plans.filter(plan => {
     const c=plan.spec.state.candidate
@@ -260,7 +262,7 @@ function Funnel({ namespace, from, context, prefill, more, refetchPlans, checkin
     })
   }
   function next() {
-    const issue = v.problem(step)
+    const issue = step==="run"&&supportVerdict?.state==="unsupported"?supportVerdict.reason:v.problem(step)
     if (issue) setError(issue)
     else go(index + 1)
   }
@@ -310,6 +312,7 @@ function Funnel({ namespace, from, context, prefill, more, refetchPlans, checkin
   return <Screen back={[prefill.returnTo,"상위 측정"]} breadcrumbs={[{href:prefill.returnTo,label:"측정"},{label:"새 요청"}]} status={<span className="flex items-center gap-2 text-sm text-muted-foreground">{index + 1} / {steps.length}{badge}</span>} title={titles[step]} lede={ledes[step]}
     action={<div className="flex gap-3">{index > 0 && <Button variant="outline" className="flex-1" disabled={send.isPending} onClick={() => go(index - 1)}>이전</Button>}{primary}</div>}>
     {prefill.active&&<p className="text-sm text-muted-foreground">조합 초깃값만 채웠어요. 서비스·데이터셋·CPU·반복·protocol은 직접 선택해 주세요. 아직 제출하거나 사전 검사하지 않았어요.</p>}
+    {supportVerdict&&<section className="space-y-1 rounded-lg border p-3 text-sm" aria-label="선택 조합 정적 호환성"><p>{support.isFetching?"정적 실행 지원 확인 중":supportVerdict.reason}</p><p className="text-xs text-muted-foreground">선택한 모델·경로·Node의 현재 선언이에요. 실제 실행·측정 완료·Ready·전력모드 적격성·admission은 별도이며 최종 사전 검사를 대신하지 않아요.</p></section>}
     {blocked&&<div role="alert" className="notice"><h2>미리 채운 조건을 확인해 주세요</h2>{prefill.errors.map(issue=><p key={issue}>{issue}</p>)}<SourceJSON value={prefill.values} title="전달된 원값"/><Button variant="outline" onClick={()=>router.replace(`/measurements/new?${new URLSearchParams({returnTo:prefill.returnTo})}`)}>초깃값 지우고 직접 선택</Button></div>}
     {step === "workload" && (context.workloads.length
       ? <>

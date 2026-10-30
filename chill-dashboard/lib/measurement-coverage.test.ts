@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { coverageCells, coverageRequestHref, currentRunCondition, exactRunTrial, planVariant, profileForPlan, profileVariant, relatedPlans, resolveMeasurementPrefill, runEvidenceState, runGroupKey, staticCompatibility } from "./measurement-coverage.ts"
+import { batchStatisticsText, coverageCells, coverageRequestHref, currentRunCondition, exactRunTrial, ownedRuns, planVariant, profileForPlan, profileVariant, relatedPlans, resolveMeasurementPrefill, runAttempt, runEvidenceState, runGroupKey, serverCompatibility, staticCompatibility, statisticsMissing } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
-import type { CurvePlanSpec, InventoryClass, InventoryView, MeasurementPlan, ProfilingRun, ProfilesView, SchedulerProfile } from "./read-types.ts"
+import type { BatchStatistics, CurvePlanSpec, InventoryClass, InventoryView, MeasurementPlan, ModelCompatibility, ProfilingRun, ProfilesView, SchedulerProfile } from "./read-types.ts"
 
 const model:CoverageModel={name:"model & one",uid:"model-uid",resourceVersion:"1",spec:{artifacts:[{name:"onnx",format:"onnx",source:{image:"image",architecture:"arm64",files:["model.onnx"]}}],executionPaths:[{name:"cpu",artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cpu"}}]}}
 const cls:InventoryClass={name:"class",uid:"class-uid",resourceVersion:"1",nodeSelector:{},architecture:"arm64",memory:"8Gi",accelerator:"none",powerModes:[{name:"MAXN",actuator:{kind:"Fixed"}},{name:"15W",actuator:{kind:"Fixed"}}],nodes:[{name:"node",uid:"node-uid",resourceVersion:"1",ready:"True",schedulingDisabled:false}]}
@@ -18,8 +18,8 @@ test("static declarations prove mismatches but never promise runtime support",()
   const path=model.spec.executionPaths[0]
   assert.equal(staticCompatibility(model,path,cls).state,"candidate")
   assert.equal(staticCompatibility(model,path,{...cls,architecture:"amd64"}).state,"unsupported")
-  assert.equal(staticCompatibility(model,{...path,runtime:{family:"firstfloor",backend:"ort-cuda"}},cls).state,"unsupported")
-  assert.equal(staticCompatibility(model,{...path,runtime:{family:"firstfloor",backend:"ort-cuda"}},{...cls,accelerator:"future-cuda-device"}).state,"unknown")
+  assert.equal(staticCompatibility(model,{...path,runtime:{family:"firstfloor",backend:"ort-cuda"}},cls).state,"candidate")
+  assert.equal(staticCompatibility(model,{...path,runtime:{family:"firstfloor",backend:"ort-cuda"}},{...cls,accelerator:"future-cuda-device"}).state,"candidate")
   assert.equal(staticCompatibility(model,{...path,artifact:"missing"},cls).state,"unknown")
 })
 test("incomplete or failed ranges are never unmeasured and Complete does not imply catalog quality",()=>{
@@ -29,7 +29,7 @@ test("incomplete or failed ranges are never unmeasured and Complete does not imp
   assert.equal(coverageCells({...base,runsComplete:false})[0].state,"unknown")
   assert.equal(coverageCells({...base,plans:[plan]})[0].state,"warning")
   assert.equal(coverageCells({...base,plans:[plan],catalog})[0].state,"complete")
-  assert.equal(coverageCells({...base,inventory:{...inventory,classes:[{...cls,architecture:"amd64"}]},catalog})[0].state,"unknown")
+  assert.equal(coverageCells({...base,inventory:{...inventory,classes:[{...cls,architecture:"amd64"}]},catalog})[0].state,"warning")
 })
 test("a newer failure retains usable evidence with warning; earlier same-request failure is history",()=>{
   const failed={...plan,metadata:{...plan.metadata,name:"failed",uid:"failed-uid",creationTimestamp:"2026-10-30T01:00:00Z"},status:{phase:"Failed"}}
@@ -85,4 +85,50 @@ test("return links cannot leave allowed same-origin areas and remeasurement does
   assert.equal(safeMeasurementReturn("/measurements/coverage?model=a%20b"),"/measurements/coverage?model=a%20b")
   const related=relatedPlans(plan,[{...plan,metadata:{...plan.metadata,uid:"next",name:"195b"},status:{phase:"Complete",result:{store:"s",key:"next"}}}])[0]
   assert.equal(related.sameRequestedCondition,true);assert.equal(related.frozenIdentityConfirmed,false)
+})
+
+test("server support is Node-scoped, independent of evidence and does not invent admission",()=>{
+  const selection={modelSpec:model.name,executionPath:"cpu",deviceClass:cls.name,node:"node"}
+  const data:ModelCompatibility={readAt:"2026-10-30T00:00:00Z",selection,inputs:{modelSpec:{name:model.name,uid:model.uid,resourceVersion:"1"},deviceClass:{name:cls.name,uid:cls.uid,resourceVersion:"1"},node:{name:"node",uid:"node-uid",resourceVersion:"1"},runtimeDeclaration:null},verdict:"Compatible",reasons:[]}
+  const fallback=staticCompatibility(model,model.spec.executionPaths[0],cls)
+  assert.match(serverCompatibility(fallback,[{node:"node",data}]).reason,/admission 보장 아님/)
+  assert.equal(serverCompatibility(fallback,[{node:"node",data:{...data,verdict:"Unknown",reasons:[{kind:"Unknown",code:"RuntimeDeclarationMissing",message:"선언 없음"}]}}]).state,"unknown")
+  assert.equal(serverCompatibility(fallback,[{node:"node",error:"HTTP 403"}]).state,"unknown")
+  assert.match(serverCompatibility(fallback,[{node:"node",error:"HTTP 503"}]).reason,/503/)
+  assert.equal(serverCompatibility(fallback,[{node:"node",data},{node:"node2",data:{...data,verdict:"Incompatible"}}]).state,"unknown")
+  assert.equal(serverCompatibility(fallback,[]),fallback)
+  const base={inventory,plans:[],catalog:{...catalog,profiles:[]},complete:true,runsComplete:true,compatibility:[{node:"node",data}]}
+  assert.equal(coverageCells(base)[0].state,"unmeasured")
+  assert.equal(coverageCells({...base,plans:[{...plan,status:{phase:"Failed"}}]})[0].state,"failed")
+  assert.equal(coverageCells({...base,compatibility:[{node:"node",data:{...data,verdict:"Incompatible"}}]})[0].state,"unsupported")
+  assert.equal(coverageCells({...base,plans:[plan],catalog,compatibility:[{node:"node",data:{...data,verdict:"Unknown"}}]})[0].state,"complete")
+  assert.equal(coverageCells({...base,plans:[{...plan,status:{phase:"Failed"}}],compatibility:[{node:"node",selection,error:"HTTP 503"}]})[0].state,"failed")
+  const multi={...inventory,classes:[{...cls,nodes:[...cls.nodes,{...cls.nodes[0],name:"node2",uid:"node2"}]}]}
+  assert.equal(coverageCells({...base,inventory:multi})[0].compatibility.reason,fallback.reason)
+})
+
+test("owner matching requires namespace and controller API kind UID, not labels or names",()=>{
+  const owner={apiVersion:"edge.dacs.io/v1alpha1",kind:"BatchEnergyOptimization",name:"same-name",uid:plan.metadata.uid,controller:true}
+  const owned={...run,ownerReferences:[owner],labels:{"edge.dacs.io/attempt":"3"}}
+  assert.deepEqual(ownedRuns([owned],plan.metadata),[owned])
+  for(const patch of [{uid:"recreated"},{controller:false},{apiVersion:"edge.dacs.io/v2"},{kind:"Other"}]) assert.deepEqual(ownedRuns([{...owned,ownerReferences:[{...owner,...patch}]}],plan.metadata),[])
+  assert.deepEqual(ownedRuns([{...owned,namespace:"other"},{...run,labels:{"edge.dacs.io/batch-energy-optimization":plan.metadata.name}}],plan.metadata),[])
+  assert.equal(runAttempt(owned),"3회차")
+  for(const value of ["", "0", "-1", "1.5", "1e2", "9007199254740993"]) assert.equal(runAttempt({...run,labels:{"edge.dacs.io/attempt":value}}),"회차 기록 없음")
+})
+
+test("statistics preserve zero-width and negative CI and distinguish pooled call samples",()=>{
+  const row:BatchStatistics={batch:8,incrementalWorkJoulesPerItem:0.1,activeTrialCount:3,idleTrialCount:2,confidence:{estimatorVersion:"v",method:"Student-t",level:0.9,varianceOfMean:0.01,halfWidth:0.2},latencySampleCount:101,latencyP95Milliseconds:0,sources:[]}
+  assert.match(batchStatisticsText(row).ci,/90% CI \[-0.1, 0.3\]/)
+  assert.match(batchStatisticsText(row).p95,/0 ms\/호출 · 호출 표본 N 101/)
+  assert.match(batchStatisticsText(row).trials,/active 3 \/ 공유 idle 2 Run/)
+  assert.match(batchStatisticsText({...row,confidence:{...row.confidence,varianceOfMean:0,halfWidth:0}}).ci,/\[0.1, 0.1\]/)
+  assert.match(batchStatisticsText({...row,confidence:{...row.confidence,varianceOfMean:undefined,halfWidth:0}}).ci,/\[0.1, 0.1\]/)
+  assert.match(batchStatisticsText({...row,latencySampleCount:0}).p95,/품질 경고/)
+  assert.match(batchStatisticsText({...row,latencyP95Milliseconds:-1}).p95,/품질 경고/)
+  assert.match(batchStatisticsText({...row,confidence:{...row.confidence,halfWidth:-1}}).ci,/품질 경고/)
+  assert.equal(statisticsMissing("RetainedEvidenceMissing"),"통계 원근거 기록 없음")
+  assert.equal(statisticsMissing("StatisticsNotRecorded"),"CI·통합 p95 기록 없음")
+  assert.equal(statisticsMissing("NoPublishedResult"),"게시된 결과 없음")
+  assert.equal(statisticsMissing(undefined),"CI 미제공 · p95 미제공")
 })

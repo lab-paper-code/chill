@@ -1,14 +1,15 @@
 import type { SchedulerObservation } from "./read-types.ts"
+import { stringifySchedulerJSON } from "./scheduler.ts"
 
 export type Published = Record<string, unknown>
 export type ExperimentStage = {id:string;from:string;to:string;kpis:Published}
 export type Experiment = {schemaVersion:string;id:string;from:string;to:string;status:string;stages:ExperimentStage[];sources:{store:string;key:string}[]}
 export const object = (value:unknown):Published => value && typeof value === "object" && !Array.isArray(value) ? value as Published : {}
-export const publishedText = (value:unknown):string => value == null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value)
+export const publishedText = (value:unknown):string => value == null ? "" : typeof value === "object" ? stringifySchedulerJSON(value) : String(value)
 export type PublishedMetric = {key:string;label:string;value:unknown;rawValue?:unknown;numerator:unknown;denominator:unknown;population:unknown;reason:unknown;source:string;unit?:string}
 
 // Exactly the two publisher shapes. No current registration or live terminal buckets enter these rows.
-export function experimentRows(stage:ExperimentStage) {
+export function experimentRows(stage:ExperimentStage):ExperimentRow[] {
   const k=stage.kpis
   return (["workloads","requests"] as const).flatMap(shape=>Object.entries(object(k[shape])).map(([name,value])=>{
     const row=object(value),missing=object(row.missingReasons),base=`kpis.${shape}.${name}`
@@ -33,12 +34,16 @@ export function experimentRows(stage:ExperimentStage) {
     const fidelity=object(row.issuanceFidelity)
     add("issuanceFidelity","생성기 발행 충실도",fidelity.status,fidelity.supplied,fidelity.offered,"issuanceFidelity")
     // The map key is the publisher's recorded name, not a lookup key into today's Workloads.
-    return {name,uid:row.workloadUID??row.uid,definition:row.definitionID??row.definition,metrics,source:base,original:row}
+    return {name,uid:Object.hasOwn(row,"workloadUID")?row.workloadUID:row.uid,definition:Object.hasOwn(row,"definitionID")?row.definitionID:row.definition,identitySource:row.identitySource,missingReasons:missing,substages:Array.isArray(row.substages)?row.substages.map(value=>{const part=object(value);return {...part,alpha:finite(part.alpha)}}):null,metrics,source:base,original:row}
   }))
 }
 
-export type ExperimentRow = {name:string;uid:unknown;definition:unknown;metrics:PublishedMetric[];source:string;original:Published}
+export type ExperimentSubstage = Published & {alpha:number|null}
+export type ExperimentRow = {name:string;uid:unknown;definition:unknown;identitySource:unknown;missingReasons:Published;substages:ExperimentSubstage[]|null;metrics:PublishedMetric[];source:string;original:Published}
 export const finite = (value:unknown):number|null => typeof value==="number"&&Number.isFinite(value)&&value>=0?value:null
+export function alphaText(alpha:number|null,reason:unknown) {
+  return alpha!==null?`α ${alpha}`:typeof reason==="string"&&/^Direct (?:request )?rates/i.test(reason)?"직접 요청률 설정 — α 없음":"α 미제공"
+}
 export function ratio(value:unknown,numerator:unknown,denominator:unknown):number|null {
   if(denominator===0)return null
   const provided=finite(value)
@@ -92,7 +97,7 @@ export function energyText(stage:ExperimentStage,key="wholePoolJoules") {
   const value=stage.kpis[key],bound=stage.kpis.gapErrorBoundJoules
   return value==null?"":`${publishedText(value)}${bound==null?"":` ± ${publishedText(bound)}`} J`
 }
-const canonical=(value:unknown):string=>JSON.stringify(value&&typeof value==="object"&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,JSON.parse(canonical(item))])):value??null)
+const canonical=(value:unknown):string=>stringifySchedulerJSON(value&&typeof value==="object"&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,canonical(item)])):value??null)
 export function differentMeasurementRules(a:ExperimentStage,b:ExperimentStage):string[] {
   const left=object(a.kpis.measurementRules),right=object(b.kpis.measurementRules)
   return [...new Set([...Object.keys(left),...Object.keys(right)])].filter(key=>canonical(left[key])!==canonical(right[key]))

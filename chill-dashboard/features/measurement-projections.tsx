@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement, WireInteger } from "@/lib/read-types"
-import { evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
+import { evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Empty, Facts, RowDialog, Rows, Screen } from "@/components/screen"
@@ -80,7 +80,7 @@ export function ProjectionMeasurementDetail({kind,namespace,name}:{kind:Projecti
       </>}
       <Facts label="원본 CR 식별자" items={[["이름",data.metadata.name],["저장 영역",data.metadata.namespace],["UID",data.metadata.uid],["resourceVersion",data.metadata.resourceVersion],["apiVersion",data.references.cr.apiVersion],["kind",data.references.cr.kind],["참조 저장 영역 / 이름",`${data.references.cr.namespace} / ${data.references.cr.name}`],["참조 UID",data.references.cr.uid]]}/>
       {!other && <Rows label="원본"><RowDialog label="원본 자료" title={`${title} 원본`} description="조건과 저장된 결과의 안전한 projection이에요. 전체 CR이나 raw Evidence가 아니에요.">
-        <SourceExport filename={`chill-${kind}-${name}.json`} value={{kind,namespace,name,expectedUID,queriedAt:new Date(query.dataUpdatedAt).toISOString(),units:{perRequestNanos:"ns/request",throughput:"req/s",durationSeconds:"s"},source:data}}/>
+        <SourceExport filename={`chill-${kind}-${name}.json`} value={{kind,namespace,name,expectedUID,queriedAt:new Date(query.dataUpdatedAt).toISOString(),units:{perRequestNanos:"ns/request",throughput:"req/s",durationSeconds:"s",durationNanos:"ns",wallJoules:"J (whole-node-wall)"},source:data}}/>
         <SourceJSON inline value={data}/>
       </RowDialog></Rows>}
       <p className="text-sm text-muted-foreground">마지막 조회 · {measurementTime(query.dataUpdatedAt)}</p>
@@ -97,19 +97,21 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
   const columns:DataColumn<OperationStep>[] = [
     {key:"name",label:"단계 이름",value:step => step.name},
     {key:"condition",label:"조건 연결",value:step => step.condition ? stepKinds[step.condition.kind] ?? "확인이 필요해요" : "조건 연결 없음"},
-    {key:"duration",label:"실측 시간",value:() => "미제공"},
-    {key:"energy",label:"실측 에너지",value:() => "미제공"},
+    {key:"duration",label:"실측 시간",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{operationDuration(result.durationNanos)}</li>)}</ul> : operationDuration()},
+    {key:"energy",label:"수용된 전체 Node 벽에너지",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{operationWallEnergy(result.wallJoules)}</li>)}</ul> : operationWallEnergy()},
     {key:"result",label:"저장 결과",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => {
       const locations = result.key ? evidenceLocations(data.references.evidence.filter(location => location.key === result.key)) : []
       return <li key={index} className="grid gap-1">
         <StatusBadge tone={result.verdict === "Accepted" ? "ok" : "warn"}>{result.verdict === "Accepted" ? "채택" : "확인이 필요해요"}</StatusBadge>
         <span>verdict: {result.verdict || "없음"}</span>
+        <span>동작 ID: {result.operationID || "기록 없음"}</span>
+        <span className="break-words">사유: {result.reason ? measurementReason(result.reason) : "기록 없음"}</span>
         {locations.length ? <Locations locations={locations}/> : <><span>key: {result.key || "없음"}</span><p>위치 없음</p></>}
       </li>
     })}</ul> : "아직 기록된 결과가 없어요"},
   ]
   return <>
-    <p className="notice">시간·에너지 수치는 현재 API에 포함되지 않아요. 아래 표는 단계별 저장 판정이며 실측 비용이 아니에요.</p>
+    <p className="notice">실측 시간은 실제 동작 구간이며 계획 유휴 시간·관측 창과 달라요. 수용된 에너지는 전체 Node 벽에너지 J이며 증분 J/item이 아니에요. 값이 없으면 0으로 대신하지 않아요.</p>
     <p className="text-sm text-muted-foreground">기록 {data.status.steps?.length ?? 0} / 계획 {data.conditions.steps.length}단계 · 완료 상태만으로 단계 채택을 재판정하지 않아요.</p>
     <DataTable data={operationSteps(data)} columns={columns}/>
     <Rows label="자세히"><RowDialog label="순서 있는 동작 조건" title="순서 있는 동작 조건" description="조건에 기록된 순서예요. 단계별로 해당 동작의 조건만 표시해요.">

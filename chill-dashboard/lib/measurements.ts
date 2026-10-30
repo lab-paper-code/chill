@@ -23,6 +23,15 @@ export function occupancyDuration(value?:unknown) {
   if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && (!Number.isFinite(value) || !Number.isInteger(value)))) return `${String(value)} · 품질 경고·사용 확인 필요`
   return `${Number(nanosToMilliseconds(value)).toLocaleString("ko-KR",{maximumFractionDigits:2})}ms/request${value < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
 }
+export function operationDuration(value?:unknown) {
+  if (value === undefined || value === null) return "실측 시간 기록 없음"
+  if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && !Number.isSafeInteger(value))) return `${String(value)} ns · 품질 경고·사용 확인 필요`
+  return `${nanosToMilliseconds(value)} ms (${String(value)} ns)${value < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
+}
+export function operationWallEnergy(value?:unknown) {
+  if (value === undefined || value === null) return "수용된 에너지 없음"
+  return `${String(value)} J${typeof value !== "number" || !Number.isFinite(value) || value < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
+}
 export const occupancyThroughput = (value?:string) => !value ? "결과 없음" : `${value} req/s${!/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
 export const significant = (value:number) => Number.isFinite(value) ? Number(value.toPrecision(4)).toLocaleString("ko-KR",{maximumSignificantDigits:4}) : `${String(value)} · 품질 경고`
 export function safeMeasurementReturn(value:string|null, fallback="/measurements") {

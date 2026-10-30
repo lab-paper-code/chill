@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import type { CampaignResult, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, Passport, ProfilesView } from "@/lib/read-types"
 import { safeMeasurementReturn, significant } from "@/lib/measurements"
-import { planVariant, profileForPlan, relatedPlans } from "@/lib/measurement-coverage"
+import { batchStatisticsText, planVariant, profileForPlan, relatedPlans, statisticsMissing } from "@/lib/measurement-coverage"
 import { DataTable } from "@/components/data-table"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
@@ -15,6 +15,7 @@ import { Facts, Figure, Row, RowDialog, Rows, Screen } from "@/components/screen
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { explain } from "@/lib/labels"
+import { OwnedRunLinks, Statistics, useAllMeasurementRuns } from "@/features/measurement-coverage"
 
 const plansPath = (namespace:string) => `v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
 export const planHref = (namespace:string, name:string, uid?:string) => `/measurements/batch-energy-optimizations/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${uid ? `?uid=${encodeURIComponent(uid)}` : ""}`
@@ -47,6 +48,7 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
   const successor=original ? plans.data?.items?.filter(plan=>plan.metadata.uid!==original.metadata.uid&&plan.metadata.creationTimestamp>original.metadata.creationTimestamp&&planVariant(plan.spec)===planVariant(original.spec)&&profileForPlan(plan,profiles.data?.profiles??[]).length).sort((a,b)=>b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))[0] : undefined
   const related=original?relatedPlans(original,plans.data?.items??[]).filter(item=>!item.sameRequestedCondition):[]
   const other = !!campaign && !!expectedUID && campaign.uid !== expectedUID
+  const runs=useAllMeasurementRuns(namespace,!!campaign&&!other&&campaign.phase==="Failed")
   const back:[string,string] = [safeMeasurementReturn(params.get("returnTo")), "측정으로 돌아가기"]
   if (deleted) return <Screen back={back} status={<StatusBadge tone="ok">삭제됨</StatusBadge>} title="측정을 지웠어요"
     lede={`${name} · 결과와 근거 파일 ${deleted.deletedEvidence?.length ?? 0}개를 함께 지웠어요.`} action={<Button asChild><Link href="/measurements">측정 목록으로</Link></Button>}>
@@ -71,14 +73,16 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
       {phase === "Measuring" && <Figure label="지금까지 잰 회차" value={campaign.completedTrials ?? 0} unit={planned ? `/ 최대 ${planned}번` : "번"} note="회차마다 끝나면 자동으로 갱신돼요."/>}
       {phase === "Failed" && <div className="notice"><p>{campaign.conditions?.some(c=>c.reason==="RetryLimitExhausted")?"재시도 한도에 도달했어요 · 상세 원인 미제공":cause?.[0]??"측정을 끝내지 못했어요."} 완료 회차 {campaign.completedTrials ?? 0}개.</p>{campaign.conditions?.map((c,i)=><p key={i}>{c.type}: {c.status} · {c.reason} · {c.message}</p>)}{successor?<p>재측정됨 · 요청 조건이 같은 더 늦은 측정의 catalog 결과가 있어요. 자동 대체를 뜻하지 않아요.</p>:<p>조건을 복사해 새 이름으로 요청할 수 있어요. 기존 요청을 수정하거나 즉시 제출하지 않아요.</p>}</div>}
       {phase==="Failed"&&related.length>0&&<Rows label="관련 후보 · 요청 조건이 달라 후속 유효 결과로 단정하지 않아요">{related.map(({plan})=><Row key={plan.metadata.uid} href={planHref(namespace,plan.metadata.name,plan.metadata.uid)} label={plan.metadata.name} hint={`${plan.status?.phase??"상태 미제공"} · CPU ${plan.spec.cpuQuota??"미제공"} · dataset ${plan.spec.activeProtocol.dataset??"미제공"} · 측정 ${plan.spec.activeProtocol.durationSeconds??"미제공"} s`}/>)}</Rows>}
-      {phase === "Complete" && detail?.minimumIncrementalWorkJoulesPerItem !== undefined && <Figure label="요청 1건에 더 드는 에너지 평균" value={significant(detail.minimumIncrementalWorkJoulesPerItem)} unit="J/건" note="에너지 CI 미제공"/>}
+      {phase === "Complete" && detail?.minimumIncrementalWorkJoulesPerItem !== undefined && <Figure label="요청 1건에 더 드는 에너지 평균" value={significant(detail.minimumIncrementalWorkJoulesPerItem)} unit="J/건" note={data?.statistics?.batches.find(row=>row.batch===detail.bestBatch)?batchStatisticsText(data.statistics.batches.find(row=>row.batch===detail.bestBatch)!).ci:statisticsMissing(data?.statisticsReason)}/>}
       {phase === "Complete" && !!detail?.incrementalWorkByBatch?.length && <section className="rows-group" aria-label="크기별 에너지"><h2 className="rows-label">크기별 요청 1건에 더 드는 에너지</h2>
         <dl className="energy-rows">{detail.incrementalWorkByBatch.map(item => <div key={item.batch} className="energy-row"><dt>한 번에 {item.batch}건</dt>
           <div className="energy-track" aria-hidden="true"><div className="energy-fill" data-hot={item.batch !== detail.bestBatch} style={{width:`${scale ? Math.max(item.incrementalWorkJoulesPerItem / scale * 100, 2) : 0}%`}}/></div>
           <dd className="tabular-nums">{significant(item.incrementalWorkJoulesPerItem)} J/건</dd></div>)}</dl>
         <p className="px-1 text-sm text-muted-foreground">유휴 상태 전력을 뺀, 요청 처리로 늘어난 에너지예요. 지금 운영 중 소비와는 달라요.</p></section>}
-      {!!result?.completedTrials?.length&&<ActiveLatency trials={result.completedTrials}/>}
-      {!!detail&&<Facts label="반복과 범위" items={[["반복",`${detail.trialsPerBatch??"미제공"}회/배치 · 지연 표본 수 N과 달라요`],["측정한 배치",detail.incrementalWorkByBatch?.map(item=>item.batch).join(", ")??"미제공"],["에너지 오차","에너지 CI 미제공 · 유휴 W CI를 에너지 오차로 사용하지 않아요"]]}/>}
+      {data&&<Statistics data={data}/>}
+      {!!result?.completedTrials?.length&&!data?.statistics&&<ActiveLatency trials={result.completedTrials}/>}
+      {!!detail&&<Facts label="반복과 범위" items={[["반복",`${detail.trialsPerBatch??"미제공"}회/배치 · 지연 호출 표본 수 N과 달라요`],["측정한 배치",detail.incrementalWorkByBatch?.map(item=>item.batch).join(", ")??"미제공"],["에너지 오차",data?.statistics?"서버의 독립 trial CI · 음수 하한/0폭 유지 · 유휴 W CI가 아니에요":statisticsMissing(data?.statisticsReason)]]}/>}
+      {phase==="Failed"&&<section className="space-y-3"><h2 className="font-semibold">소유 Run · controller UID 정확 일치</h2><QueryGate query={runs}>{runs.data&&!runs.error?<OwnedRunLinks runs={runs.data.runs} parent={{namespace,uid:campaign.uid}} returnTo={planHref(namespace,name,campaign.uid)}/>:<p>Run 전 범위 조회 전 · 소유 회차 없음으로 단정하지 않아요.</p>}</QueryGate></section>}
       <Facts label="측정 정책·검증 범위" items={[["active 구간",`${spec.activeProtocol.durationSeconds??"미제공"} s · 예열 ${spec.activeProtocol.warmupIterations??"미제공"}회`],["idle 구간",`${spec.idleProtocol.durationSeconds??"미제공"} s`],["데이터셋",spec.activeProtocol.dataset??"미제공"],["검증 상태",campaign.conditions?.map(c=>`${c.type}=${c.status} (${c.reason??"사유 미제공"})`).join(" · ")||"미제공"],["해석 범위","이 요청의 측정 조건에 한정 · 논문 적격 인증 아님"]]}/>
       <Rows label="자세히">
         <RowDialog label="측정 조건" title="측정 조건" value={`${spec.batchSizes?.length ? spec.batchSizes.join("·") + "건" : "자동"} · ${spec.trialsPerBatch}번씩`}>
@@ -125,7 +129,7 @@ function ActiveLatency({trials}:{trials:NonNullable<ResultBody["completedTrials"
   }})
   if(!active.length)return <p>active 회차 지연 미제공</p>
   const rows=query.data??[],batches=[...new Set(active.map(trial=>trial.measurement.batch))]
-  return <section className="measurement-latency grid gap-3" aria-label="회차별 지연"><h2>배치별 active 회차 p95</h2><p>에너지 CI 미제공 · {query.isPending?"지연 확인 중":`조회 ${rows.filter(row=>!row.error).length}/${active.length}회차 · 누락 ${rows.filter(row=>row.error).length}회차`}</p>
+  return <section className="measurement-latency grid gap-3" aria-label="회차별 지연"><h2>배치별 active 회차 p95</h2><p>{query.isPending?"지연 확인 중":`조회 ${rows.filter(row=>!row.error).length}/${active.length}회차 · 누락 ${rows.filter(row=>row.error).length}회차`} · 통합 p95가 아니라 회차별 범위예요.</p>
     {batches.map(batch=>{const values=rows.filter(row=>row.batch===batch&&row.p95!==undefined&&Number.isFinite(row.p95)).map(row=>row.p95!);return <p key={batch}>배치 {batch}: {values.length===1?`해당 회차 p95 ${significant(values[0])} ms`:values.length?`회차 p95 범위 ${significant(Math.min(...values))}–${significant(Math.max(...values))} ms`:"미제공"}</p>})}
     {!!rows.length&&<DataTable data={rows} columns={[{key:"batch",label:"배치",value:row=>row.batch??"미제공"},{key:"run",label:"회차",value:row=>row.run},{key:"p95",label:"해당 회차 p95 (ms)",value:row=>row.p95===undefined?row.error??"미제공":significant(row.p95)},{key:"count",label:"지연 표본 수 N (반복 수 아님)",value:row=>row.count===undefined?"미제공":`${row.count}${row.count<=1?" · 꼬리 지연 판단에 표본 부족":""}`} ]}/>}
   </section>

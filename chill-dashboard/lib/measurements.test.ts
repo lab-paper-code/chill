@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationSteps } from "./measurements.ts"
+import { exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
+import { parseSchedulerJSON } from "./scheduler.ts"
 import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
 
 const metadata = {namespace:"research",name:"sample",uid:"uid-1",resourceVersion:"42",creationTimestamp:"2026-10-30T00:00:00Z"}
@@ -51,6 +52,30 @@ test("operation result joins retain condition order, missing results and unmatch
   assert.equal(steps[3].results[0].verdict,"NewVerdict")
   assert.equal(steps[4].condition,undefined)
   assert.deepEqual(operationSteps({...operation,status:{phase:"Complete"}}).map(step => step.results),[[],[],[],[]])
+})
+
+test("operation actual duration and accepted wall energy preserve zero, missing values and exact nanoseconds", () => {
+  for (const value of [undefined,null]) {
+    assert.equal(operationDuration(value),"실측 시간 기록 없음")
+    assert.equal(operationWallEnergy(value),"수용된 에너지 없음")
+  }
+  assert.equal(operationDuration(0),"0 ms (0 ns)")
+  assert.equal(operationWallEnergy(0),"0 J")
+  assert.equal(operationDuration(3807875),"3.807875 ms (3807875 ns)")
+  const wire = parseSchedulerJSON('{"status":{"phase":"Failed","reason":"MeasurementFailed","steps":[{"name":"idle","key":"exact-key","verdict":"Failed","operationID":"op-uid-2","durationNanos":9223372036854775807,"wallJoules":null,"reason":"IsolationUnconfirmed"}]}}') as Pick<OperationCostMeasurement,"status">
+  const rows = operationSteps({...operation,...wire})
+  const result = rows[2].results[0]
+  assert.equal(result.operationID,"op-uid-2")
+  assert.equal(result.reason,"IsolationUnconfirmed")
+  assert.equal(result.verdict,"Failed")
+  assert.equal(wire.status.phase,"Failed")
+  assert.equal(operationDuration(result.durationNanos),"9223372036854.775807 ms (9223372036854775807 ns)")
+  assert.equal(operationWallEnergy(result.wallJoules),"수용된 에너지 없음")
+  assert.equal(operationDuration(-3807875n),"-3.807875 ms (-3807875 ns) · 품질 경고·사용 확인 필요")
+  for (const value of [Number.MAX_SAFE_INTEGER + 1,1.5,NaN,Infinity,"100"]) assert.match(operationDuration(value),/품질 경고/)
+  for (const value of [-1,NaN,Infinity,"0"]) assert.match(operationWallEnergy(value),/품질 경고/)
+  assert.equal(operationWallEnergy(2.75),"2.75 J")
+  assert.equal(operationDuration(operationSteps(operation)[2].results[0]?.durationNanos),"실측 시간 기록 없음")
 })
 
 test("occupancy preserves missing and zero d, string throughput, unspecified supply and logical location identity", () => {

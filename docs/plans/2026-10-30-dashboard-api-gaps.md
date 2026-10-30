@@ -250,3 +250,32 @@ GET 실패/성공 경로 확인→F4 측정 소비 배포. B3는 캠페인 사�
   원 result 불변·JSON serialization, 비용의 부분 완료/실패/idle·실제 시간·0 J를 포함한다.
 - 배포 필요: Console 및 ChillServer 이미지. 배포·클러스터 변경·실데이터 GET·재측정·새 publication·
   Dashboard 변경은 실행하지 않았다. 전체 `make lint test`는 최종 통합 담당이 한 번 실행한다.
+
+## 11. F4 구현·로컬 소비 검증 (2026-10-30)
+
+- 대시보드는 B1 호환성/owner, B2 statistics/OperationCost, B3 두 KPI shape metadata를 optional로
+  소비한다. B1 `340f96ee`, B2 `2963ee11`, B3 `80ea2196` 실제 DTO/게시 필드와 대조했다.
+  PointConfidence의 optional varianceOfMean/자유도도 보존한다. Go·CR·원시·publication 변경은 없다.
+- 커버리지 셀 선택 시 해당 model/path/class의 Node만 직렬 GET하고 power mode 간 같은 Query를
+  재사용한다. backend 판정/사유·readAt는 측정 완료/실패와 독립이다. 요청 prefill도 선택 Node의
+  같은 GET를 쓰되 최종 dry-run/preflight를 대체하지 않는다. accelerator 추측표는 제거했다.
+- 실패 상세·커버리지 이력은 전 범위 Run 목록에서 namespace/controller/apiVersion/kind/부모 UID
+  정확 일치만 소유 연결한다. 과거 owner/attempt 미기록, 구형 서버, 전체 page 조회 오류를 구별한다.
+- CI는 서버 level·mean±halfWidth를 사용해 음수 하한·0폭을 그대로 표시한다. 통합 p95는 batch 호출
+  지연이며 호출 표본 N/독립 active/shared idle trial을 구분한다. 결과 참조가 다른 profile에는 붙이지 않는다.
+  세 statisticsReason과 기존 미제공/회차별 p95 fallback을 보존하고 UI에서 새 통계를 계산하지 않는다.
+- 동작 비용은 실제 ns를 lossless 파싱해 ms+원 ns, 수용된 전체 Node J·0 J와 operationID/reason을
+  표시한다. 전체 실패와 일부 수용을 함께 보존하고 null을 0이나 계획 시간으로 바꾸지 않는다.
+- 실험은 두 shape의 역사 UID/definition/출처와 α=0/direct-rate null/예정 producer-relative 구간을
+  타임라인 펼침·비교표에 표시한다. 과거·혼합 identity/anchor 부재를 현재 객체·전체 단계 시각으로 채우지 않는다.
+- relay는 정확 호환성 GET와 필수 단일 query 네 개만 허용한다. 순수 함수 회귀는 판정 합성/owner UID,
+  음수·0폭 CI/표본, ns·0 J/누락, 두 publisher metadata와 필드 부재, relay 거부 경로를 포함한다.
+- Node 24.0.0 / nice 19 최종 typecheck·lint·전체 80 tests·production build 통과.
+  build는 기존 Asta Sans fallback font-metrics 경고를 유지한다. 초기 검사 통과 후 판정 독립성/
+  기존 result 참조 유지와 실제 optional variance DTO를 보강하고 마지막 코드의 검사를 수행했다.
+- `/tmp/uxf4`:3204 production 사본 + 로그인 전 GET-only guard로 실데이터 fallback과 명시 route mock의
+  새 필드를 분리해 확인했다. 1440×900/390×844. 선택 coverage/prefill에서 호환성 GET 총 2회,
+  다른 부모 UID의 Run 숨김, 음수/0폭 CI, 0 J 및 `9007199254740993` ns 보존을 브라우저에서 확인했다.
+  스크린샷/원로그 경로와 화면별 목록은 [Dashboard §8.8](../design/dashboard/README.md#88-f4-새-api-소비-검증-2026-10-30)에 있다.
+- 미수행: B1/B2 운영 배포·새 측정·B3 신규 publication·세 페르소나 재설문/SUS.
+  이 구현/fixture 검증은 §5의 배포 이후 전체 수용 완료를 뜻하지 않는다.

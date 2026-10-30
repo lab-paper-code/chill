@@ -166,3 +166,34 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
   assert.equal(workload.get("from"), from)
   assert.equal(workload.get("to"), to)
 })
+
+test("model compatibility relay permits only the exact GET and four single required selection queries", () => {
+  const config = serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
+  const path = ["v1","model-compatibility"]
+  const selection = {modelSpec:"model-1",executionPath:"onnx-cpu",deviceClass:"class-1",node:"node-1"}
+  const search = `?${new URLSearchParams(selection)}`
+  assert.deepEqual(relayPlan("GET",path,search,config), {
+    path:`/api/v1/model-compatibility${search}`,kind:"query",timeoutMs:config.queryTimeoutMs,bodyAllowed:false,
+  })
+  for (const method of ["POST","PUT","DELETE","PATCH","HEAD","OPTIONS"]) {
+    assert.throws(() => relayPlan(method,path,search,config),{message:"DashboardMethodNotAllowed",status:405})
+  }
+  for (const route of [["v1","model-compatibility","extra"],["v2","model-compatibility"],["v1","model-compatibilities"]]) {
+    assert.throws(() => relayPlan("GET",route,search,config),{message:"DashboardRouteNotAllowed",status:404})
+  }
+  assert.throws(() => relayPlan("GET",path,"",config),/DashboardQueryInvalid/)
+  for (const key of Object.keys(selection)) {
+    const missing = new URLSearchParams(selection)
+    missing.delete(key)
+    assert.throws(() => relayPlan("GET",path,`?${missing}`,config),/DashboardQueryInvalid/)
+    for (const value of ["","%00","%zz"]) {
+      const invalid = new URLSearchParams(selection)
+      invalid.delete(key)
+      assert.throws(() => relayPlan("GET",path,`?${invalid}&${key}=${value}`,config),/DashboardQueryInvalid/)
+    }
+    assert.throws(() => relayPlan("GET",path,`${search}&${key}=${selection[key as keyof typeof selection]}`,config),/DashboardQueryInvalid/)
+  }
+  for (const extra of ["limit=1","offset=0","q=model","view=compact","namespace=other","powerMode=low","url=https://evil.example"]) {
+    assert.throws(() => relayPlan("GET",path,`${search}&${extra}`,config),/DashboardQueryInvalid/)
+  }
+})

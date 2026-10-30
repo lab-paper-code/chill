@@ -42,7 +42,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (!segments.length || segments.some(part => part.length > 253 || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(part))) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   const route = segments.join("/")
   let methods: string[] = []
-  let query: "none" | "page" | "runs" | "observations" | "load" | "schedulerHistory" | "dryRun" | "uid" = "none"
+  let query: "none" | "page" | "runs" | "observations" | "load" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" = "none"
   let kind: RelayPlan["kind"] = "query"
   if (/^v1\/(models|workloads|preprocessors|datasets)$/.test(route)) methods = ["GET", "POST"]
   else if (/^v1\/(models|workloads|preprocessors|datasets)\/[^/]+$/.test(route)) methods = ["GET", "PUT", "DELETE"]
@@ -53,6 +53,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/observations/power") { methods = ["GET"]; query = "load" }
   else if (route === "v1/observations/scheduler") { methods = ["GET"]; query = "schedulerHistory" }
   else if (route === "v1/scheduler/capacity") methods = ["GET"]
+  else if (route === "v1/model-compatibility") { methods = ["GET"]; query = "compatibility" }
   else if (/^v1\/experiments(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
   else if (/^v1\/namespaces\/[^/]+\/(operation-cost-measurements|dispatch-occupancy-measurements)(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
   else if (route === "v1/scheduler" || route === "v1/scheduler/state") methods = ["GET"]
@@ -75,7 +76,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   // ChillServer compact reads keep every evidence object once and share repeats by $ref; parseSchedulerJSON restores them.
   const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state")
   const allowed = compact ? ["view"] : []
-  allowed.push(...(query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
+  allowed.push(...(query === "compatibility" ? ["modelSpec", "executionPath", "deviceClass", "node"] : query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
   for (const key of new Set(params.keys())) {
     const values = params.getAll(key)
     if (!allowed.includes(key) || (values.length > 1 && key !== "definition" && key !== "outcome") || values.length > 32 || values.some(value => /[\x00-\x1f\x7f\ufffd]/.test(value))) throw new RelayFailure("DashboardQueryInvalid", 400)
@@ -93,7 +94,8 @@ export function relayPlan(method: string, segments: string[], search: string, co
     }
   }
   if (query === "uid" && !params.get("uid")) throw new RelayFailure("DashboardQueryInvalid", 400)
-  if (query !== "none" && query !== "load" && query !== "dryRun" && query !== "uid" && !params.has("limit")) params.set("limit", String(config.pageSize))
+  if (query === "compatibility" && allowed.some(key => !params.get(key))) throw new RelayFailure("DashboardQueryInvalid", 400)
+  if (["page", "runs", "observations", "schedulerHistory"].includes(query) && !params.has("limit")) params.set("limit", String(config.pageSize))
   if (query === "observations" || query === "load" || query === "schedulerHistory") {
     const from = params.get("from"), to = params.get("to")
     if (!from || !to) throw new RelayFailure("DashboardQueryInvalid", 400)

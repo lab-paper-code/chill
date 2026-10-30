@@ -2,10 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
+import { alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
+import { parseSchedulerJSON } from "./scheduler.ts"
 
 const recorded=JSON.parse(readFileSync(new URL("./fixtures/experiment-213.json",import.meta.url),"utf8")) as {publication:Experiment;decision:SchedulerObservation}
 const demo=JSON.parse(readFileSync(new URL("./fixtures/experiment-demo.json",import.meta.url),"utf8")) as Experiment
@@ -125,4 +126,59 @@ test("S3: publisher units, ratios, differences and invalid values stay explicit"
   assert.equal(relativeEnergy(1,0),"계산 불가")
   assert.equal(relativeEnergy(90,100),"-10.00 %")
   assert.equal(relativeEnergy(undefined,100),"계산 불가")
+})
+
+test("F4: both retained publisher shapes expose historical identity and ordered producer-relative plans losslessly",()=>{
+  for(const [shape,original] of [["requests",stage],["workloads",demo.stages[0]]] as const) {
+    const existing=experimentRows(original)[0],source={store:"archive",key:"raw/frozen/scheduler.json"},phase={store:"archive",key:"phase.json"}
+    const metadata=parseSchedulerJSON(`{"workloadUID":"historical-uid","definitionID":"historical-definition","identitySource":{"store":"archive","key":"raw/frozen/scheduler.json"},"substages":[{"id":"zero","alpha":0,"startOffsetNanos":0,"endOffsetNanos":9007199254740993,"from":"2026-10-30T00:00:02.123456789Z","to":"2027-02-11T05:59:21.378197782Z","source":{"store":"archive","key":"phase.json"}},{"id":"next","alpha":0.7,"startOffsetNanos":9007199254740993,"endOffsetNanos":9007199254740994,"from":"2027-02-11T05:59:21.378197782Z","to":"2027-02-11T05:59:21.378197783Z","source":{"store":"archive","key":"phase.json"}}],"missingReasons":{}}`) as Record<string,unknown>
+    const published:ExperimentStage={...original,kpis:{[shape]:{[existing.name]:{...existing.original,...metadata,missingReasons:existing.original.missingReasons}}}}
+    const row=experimentRows(published)[0]
+    assert.equal(row.name,existing.name)
+    assert.equal(row.source,`kpis.${shape}.${existing.name}`)
+    assert.equal(row.uid,"historical-uid")
+    assert.equal(row.definition,"historical-definition")
+    assert.deepEqual(row.identitySource,source)
+    assert.deepEqual(row.metrics,existing.metrics)
+    assert.deepEqual(row.substages?.map(part=>[part.id,part.alpha]),[["zero",0],["next",.7]])
+    assert.equal(row.substages?.[0].endOffsetNanos,9007199254740993n)
+    assert.equal(row.substages?.[1].startOffsetNanos,9007199254740993n)
+    assert.equal(row.substages?.[1].endOffsetNanos,9007199254740994n)
+    assert.equal(row.substages?.[0].from,"2026-10-30T00:00:02.123456789Z")
+    assert.notEqual(row.substages?.[0].from,published.from)
+    assert.equal(row.substages?.[1].to,"2027-02-11T05:59:21.378197783Z")
+    assert.deepEqual(row.substages?.[0].source,phase)
+    assert.match(publishedText(row.original),/9007199254740993/)
+    assert.deepEqual(comparisonRows(published,published)[0].b[0].substages,row.substages)
+  }
+})
+
+test("F4: null/missing alpha and mixed identities never borrow legacy identity, rate or another producer anchor",()=>{
+  assert.equal(alphaText(0,undefined),"α 0")
+  assert.equal(alphaText(null,"Direct request rates configured; alpha not recorded"),"직접 요청률 설정 — α 없음")
+  assert.equal(alphaText(null,undefined),"α 미제공")
+  for(const shape of ["requests","workloads"] as const) {
+    const missingReasons={identity:"Mixed historical definitions",alpha:"Direct rates: alpha not configured",producerAnchor:"Producer not started",substageSource:"Phase not published"}
+    const published:ExperimentStage={...stage,kpis:{[shape]:{same:{offered:100,uid:"legacy-uid",definition:"legacy-definition",workloadUID:null,definitionID:null,identitySource:null,missingReasons,substages:[{id:"alpha-is-not-inferred-9",alpha:null,startOffsetNanos:0,endOffsetNanos:1000000000,from:null,to:null,source:null},{id:"missing-alpha",startOffsetNanos:1000000000,endOffsetNanos:2000000000,from:null,to:null,source:null}]}}}}
+    const row=experimentRows(published)[0]
+    assert.equal(row.uid,null)
+    assert.equal(row.definition,null)
+    assert.equal(row.identitySource,null)
+    assert.deepEqual(row.missingReasons,missingReasons)
+    assert.deepEqual(row.substages?.map(part=>part.alpha),[null,null])
+    assert.equal(row.substages?.[0].from,null)
+    assert.equal(row.substages?.[0].to,null)
+    assert.equal(row.substages?.[0].startOffsetNanos,0)
+    assert.equal(row.substages?.[0].source,null)
+    assert.ok(stageRate(published)!>0)
+    const absent=experimentRows({...stage,kpis:{[shape]:{same:{offered:100}}}})[0]
+    assert.equal(absent.uid,undefined)
+    assert.equal(absent.definition,undefined)
+    assert.equal(absent.identitySource,undefined)
+    assert.equal(absent.substages,null)
+    assert.deepEqual(absent.missingReasons,{})
+  }
+  for(const original of [stage,demo.stages[0]]) {
+    assert.ok(experimentRows(original).every(row=>row.substages===null&&row.identitySource===undefined))
+  }
 })

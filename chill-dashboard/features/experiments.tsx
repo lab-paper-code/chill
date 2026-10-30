@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery } from "@/lib/client"
 import type { SchedulerObservationPage } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { comparisonRows, decisionIdentity, decisionRange, differentMeasurementRules, difference, evidenceError, formatResult, object, relativeEnergy, resultMetric, stageRate, stageSeconds, type Experiment, type ExperimentRow, type ExperimentStage, type PublishedMetric } from "@/lib/experiments"
+import { alphaText, comparisonRows, decisionIdentity, decisionRange, differentMeasurementRules, difference, evidenceError, experimentRows, formatResult, object, relativeEnergy, resultMetric, stageRate, stageSeconds, type Experiment, type ExperimentRow, type ExperimentStage, type PublishedMetric } from "@/lib/experiments"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Screen, Rows, Row, Empty, Facts } from "@/components/screen"
 import { Button } from "@/components/ui/button"
@@ -27,7 +27,22 @@ function MetricValue({metric}:{metric:PublishedMetric}) {
   </div>
 }
 function Identity({row}:{row?:ExperimentRow}) {
-  return row?<div className="space-y-1 break-all text-xs text-muted-foreground"><p>UID {String(row.uid??"미제공")}</p><p>정의 {String(row.definition??"미제공")}</p></div>:<span className="text-muted-foreground">한쪽 기록 없음</span>
+  return row?<div className="space-y-1 break-all text-xs text-muted-foreground"><p>기록 당시 UID {String(row.uid??"미제공")}</p><p>정의 {String(row.definition??"미제공")}</p><p>identity 출처</p><PublishedFacts value={row.identitySource}/>{(row.missingReasons.identity!=null||row.uid==null||row.definition==null)&&<p>identity 결손: {String(row.missingReasons.identity??"과거 identity 기록 없음")}</p>}</div>:<span className="text-muted-foreground">한쪽 기록 없음</span>
+}
+function Substages({row}:{row?:ExperimentRow}) {
+  if(!row)return <span>한쪽 기록 없음</span>
+  return <div className="space-y-2 break-all text-xs">
+    <p className="text-muted-foreground">실제 workload producer 시작 기준 예정 [start,end) · 관측된 전환 사건이 아니에요.</p>
+    {!row.substages?.length?<p>하위 단계 기록 없음 · {String(row.missingReasons.substages??"과거 schedule 미게시")}</p>:<ol className="space-y-3">{row.substages.map((part,index)=><li key={index} className="space-y-1 border-l pl-2">
+      <p className="font-medium">{String(part.id??"ID 미제공")} · {alphaText(part.alpha,row.missingReasons.alpha)}</p>
+      {part.alpha===null&&<p>α 결손: {String(row.missingReasons.alpha??"과거 α 기록 없음")}</p>}
+      <p className="tabular-nums">예정 offset [{String(part.startOffsetNanos??"미제공")}, {String(part.endOffsetNanos??"미제공")}) ns</p>
+      <p className="tabular-nums">예정 시각 [{String(part.from??"미제공")}, {String(part.to??"미제공")})</p>
+      {(part.from==null||part.to==null)&&<p>producer anchor: {String(row.missingReasons.producerAnchor??"기록 없음 · 단계 전체 시각으로 대체하지 않아요")}</p>}
+      <p>schedule 출처</p><PublishedFacts value={part.source}/>
+      {part.source==null&&<p>{String(row.missingReasons.substageSource??"출처 기록 없음")}</p>}
+    </li>)}</ol>}
+  </div>
 }
 function ServiceRows({name,left,right,compare}:{name:string;left:ExperimentRow[];right:ExperimentRow[];compare:boolean}) {
   const [aIndex,setA]=React.useState(""),[bIndex,setB]=React.useState("")
@@ -38,7 +53,7 @@ function ServiceRows({name,left,right,compare}:{name:string;left:ExperimentRow[]
     const am=chosenA?resultMetric(chosenA,key):null,bm=chosenB?resultMetric(chosenB,key):null
     const sameMeaning=key!=="success"||am?.key===bm?.key
     return <tr key={key} className="border-t"><th scope="row" className="p-3 text-left align-top font-normal">{key==="success"?"기한·SLO 내 성공 / 보낸 요청":key==="http"?"HTTP 성공 / 보낸 요청":"성공 응답 p95"}</th><td className="p-3 align-top">{am?<><p className="text-xs text-muted-foreground">{am.label}</p><MetricValue metric={am}/></>:"미제공"}</td>{compare&&<><td className="p-3 align-top">{bm?<><p className="text-xs text-muted-foreground">{bm.label}</p><MetricValue metric={bm}/></>:"미제공"}</td><td className="p-3 align-top tabular-nums">{difference(am?.value,bm?.value,key==="p95"?"ms":"%",sameMeaning)}</td></>}</tr>
-  })}<tr className="border-t"><td colSpan={compare?4:2} className="p-3"><details className="text-xs"><summary className="cursor-pointer py-2">보낸 요청·결과별 수·SLO·원본 정밀도</summary><div className="grid gap-4 sm:grid-cols-2"><div><h4>A 기록</h4><PublishedFacts value={chosenA?.original}/></div>{compare&&<div><h4>B 기록</h4><PublishedFacts value={chosenB?.original}/></div>}</div></details></td></tr></>
+  })}<tr className="border-t"><th scope="row" className="p-3 text-left align-top font-normal">α · 예정 하위 단계</th><td className="p-3 align-top"><Substages row={chosenA}/></td>{compare&&<><td className="p-3 align-top"><Substages row={chosenB}/></td><td className="p-3 align-top text-xs">게시된 workload별 계획 · 관측 전환/인과 차이 아님</td></>}</tr><tr className="border-t"><td colSpan={compare?4:2} className="p-3"><details className="text-xs"><summary className="cursor-pointer py-2">보낸 요청·결과별 수·SLO·원본 정밀도</summary><div className="grid gap-4 sm:grid-cols-2"><div><h4>A 기록</h4><PublishedFacts value={chosenA?.original}/></div>{compare&&<div><h4>B 기록</h4><PublishedFacts value={chosenB?.original}/></div>}</div></details></td></tr></>
 }
 function Rules({a,b}:{a:ExperimentStage;b:ExperimentStage}) {
   const keys=differentMeasurementRules(a,b)
@@ -84,7 +99,8 @@ function Timeline({run,selected,label,onSelect}:{run:Experiment;selected?:Experi
       })}</div>
     </div>
     {selected&&<p className="break-words text-sm tabular-nums">{label} 선택 {selected.id} · {formatResult(stageSeconds(selected),"s")} · 단계 평균 보낸 요청률 {formatResult(stageRate(selected),"req/s")}</p>}
-    <p className="text-xs text-muted-foreground">α 미제공 · 요청률은 offered / 실제 기간인 ‘단계 평균 보낸 요청률’이며 목표 부하가 아니에요. 단계 집계만 표시해요.</p>
+    {selected&&<div className="space-y-3">{experimentRows(selected).map(row=><details key={row.source} className="rounded border p-3"><summary className="cursor-pointer py-2 text-sm">{row.name} · {row.source} · 기록 당시 identity / α / 예정 하위 단계</summary><div className="space-y-3"><Identity row={row}/><Substages row={row}/></div></details>)}</div>}
+    <p className="text-xs text-muted-foreground">요청률은 offered / 실제 기간인 ‘단계 평균 보낸 요청률’이며 목표 부하·α의 대용이 아니에요. 하위 단계는 각 workload의 producer 시작에 고정한 게시 계획이며, 실제 전환 관측이나 하위 단계별 측정값이 아니에요.</p>
   </section>
 }
 function Evidence({stage}:{stage:ExperimentStage}) {
@@ -103,9 +119,9 @@ function Verdict({stage}:{stage:ExperimentStage}) {
   return <StatusBadge tone={status==="FAIL"?"fail":"info"}>{label} · {status}</StatusBadge>
 }
 export function ExperimentsPage() {
-  const params=useSearchParams(),router=useRouter(),list=useChillQuery<{items:Experiment[]}>("v1/experiments")
+  const params=useSearchParams(),router=useRouter(),list=useChillQuery<{items:Experiment[]}>("v1/experiments",{decoder:parseSchedulerJSON})
   const a=params.get("a")??"",b=params.get("b")??""
-  const aq=useChillQuery<Experiment>(`v1/experiments/${encodeURIComponent(a)}`,{enabled:!!a}),bq=useChillQuery<Experiment>(`v1/experiments/${encodeURIComponent(b)}`,{enabled:!!b})
+  const aq=useChillQuery<Experiment>(`v1/experiments/${encodeURIComponent(a)}`,{enabled:!!a,decoder:parseSchedulerJSON}),bq=useChillQuery<Experiment>(`v1/experiments/${encodeURIComponent(b)}`,{enabled:!!b,decoder:parseSchedulerJSON})
   const stage=aq.data?.stages.find(stage=>stage.id===params.get("as")),other=bq.data?.stages.find(stage=>stage.id===params.get("bs"))
   const focusResult=React.useRef(false)
   React.useEffect(()=>{if(focusResult.current&&stage){document.getElementById("experiment-results")?.focus();focusResult.current=false}},[stage,other,params])

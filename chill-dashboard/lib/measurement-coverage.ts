@@ -1,5 +1,5 @@
 import type { ExecutionPath, ModelSpec } from "./domain.ts"
-import type { InventoryClass, InventoryView, MeasurementPlan, MeasurementPlanSpec, ProfilingRun, ProfilesView, SchedulerProfile } from "./read-types.ts"
+import type { BatchStatistics, CampaignResult, InventoryClass, InventoryView, MeasurementPlan, MeasurementPlanSpec, ModelCompatibility, ProfilingRun, ProfilesView, SchedulerProfile } from "./read-types.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 
 export type CoverageModel = InventoryView["models"][number] & {spec:ModelSpec}
@@ -7,18 +7,40 @@ export const coverageStates = {complete:"완료(근거 충분)",warning:"품질 
 export type CoverageState = keyof typeof coverageStates
 export const stateSymbols:Record<CoverageState,string> = {complete:"✓",warning:"△",failed:"×",running:"◷",unmeasured:"○",unsupported:"∕",unknown:"?"}
 export type Compatibility = {state:"candidate"|"unsupported"|"unknown";reason:string}
-const nvidia:Record<string,true> = {"nvidia-geforce-rtx-2080-ti":true,"nvidia-jetson-agx-orin":true,"nvidia-jetson-nano":true,"nvidia-jetson-orin-nano":true,"nvidia-jetson-xavier-nx":true}
 export function staticCompatibility(model:Pick<CoverageModel,"spec">, path:ExecutionPath, cls:InventoryClass):Compatibility {
   const artifact = model.spec.artifacts.find(item => item.name === path.artifact)
   if (!artifact?.source.architecture || !cls.architecture) return {state:"unknown",reason:"모델 파일 또는 architecture 선언 미확인"}
   if (artifact.source.architecture !== cls.architecture) return {state:"unsupported",reason:`architecture 불일치: 파일 ${artifact.source.architecture} / 장치 ${cls.architecture}`}
-  const backend = path.runtime.backend, accelerator = cls.accelerator
-  if (path.runtime.family !== "firstfloor" || !["ort-cpu","ort-cuda","rknnlite"].includes(backend)) return {state:"unknown",reason:"runtime/backend 선언을 판정할 수 없어요"}
-  if (!accelerator || (accelerator!=="none" && accelerator!=="rk3588-npu" && !nvidia[accelerator])) return {state:"unknown",reason:`가속기 선언 미확인: ${accelerator ?? "미제공"}`}
-  if (backend === "ort-cpu") return {state:"candidate",reason:"선언상 후보 · 실제 runtime 지원 미확인"}
-  if (backend === "ort-cuda") return ["none","rk3588-npu"].includes(accelerator) ? {state:"unsupported",reason:`가속기 불일치: ort-cuda / ${accelerator}`} : {state:"candidate",reason:"선언상 후보 · 실제 runtime 지원 미확인"}
-  if (artifact.derivation?.targetPlatform !== "rk3588") return {state:"unknown",reason:"rknnlite targetPlatform 선언 미확인"}
-  return accelerator === "rk3588-npu" ? {state:"candidate",reason:"선언상 후보 · 실제 runtime 지원 미확인"} : {state:"unsupported",reason:`가속기 불일치: rknnlite(rk3588) / ${accelerator}`}
+  return {state:"candidate",reason:"선언상 후보 · 실제 runtime 지원 미확인"}
+}
+export type CompatibilityRead = {node:string;selection?:ModelCompatibility["selection"];data?:ModelCompatibility;error?:string}
+export function serverCompatibility(fallback:Compatibility, reads:CompatibilityRead[]):Compatibility {
+  if (!reads.length) return fallback
+  const reason=reads.map(read=>`${read.node}: ${read.error??read.data?.reasons.map(reason=>`${reason.message} (${reason.code})`).join(" / ")??"미조회"}`).join(" · ")
+  if (reads.some(read=>read.error||!read.data)) return {state:"unknown",reason:`지원 확인 불가 — ${reason}`}
+  if (reads.every(read=>read.data?.verdict==="Compatible")) return {state:"candidate",reason:"정적 실행 지원 확인 · 측정 완료·Ready·admission 보장 아님"}
+  if (reads.every(read=>read.data?.verdict==="Incompatible")) return {state:"unsupported",reason:`지원 안 함 — ${reason}`}
+  return {state:"unknown",reason:`지원 확인 불가 — ${reason}`}
+}
+export function ownedRuns(runs:ProfilingRun[],parent:{namespace:string;uid:string}) {
+  return runs.filter(run=>run.namespace===parent.namespace&&run.ownerReferences?.some(owner=>owner.controller===true&&owner.apiVersion==="edge.dacs.io/v1alpha1"&&owner.kind==="BatchEnergyOptimization"&&owner.uid===parent.uid))
+}
+export function runAttempt(run:ProfilingRun) {
+  const raw=run.labels?.["edge.dacs.io/attempt"]
+  return raw&&/^[1-9]\d*$/.test(raw)&&Number.isSafeInteger(Number(raw))?`${raw}회차`:"회차 기록 없음"
+}
+export function statisticsMissing(reason:CampaignResult["statisticsReason"]) {
+  return reason==="RetainedEvidenceMissing"?"통계 원근거 기록 없음":reason==="StatisticsNotRecorded"?"CI·통합 p95 기록 없음":reason==="NoPublishedResult"?"게시된 결과 없음":"CI 미제공 · p95 미제공"
+}
+export function batchStatisticsText(row:BatchStatistics) {
+  const mean=row.incrementalWorkJoulesPerItem,c=row.confidence
+  const valid=Number.isFinite(mean)&&Number.isFinite(c.halfWidth)&&c.halfWidth>=0&&Number.isFinite(c.level)&&c.level>0&&c.level<1&&(c.varianceOfMean===undefined||(Number.isFinite(c.varianceOfMean)&&c.varianceOfMean>=0))
+  const format=(value:number)=>Number(value.toPrecision(4)).toLocaleString("ko-KR",{maximumSignificantDigits:4})
+  return {
+    ci:valid?`${format(c.level*100)}% CI [${format(mean-c.halfWidth)}, ${format(mean+c.halfWidth)}] J/건`:"CI 품질 경고",
+    p95:Number.isFinite(row.latencyP95Milliseconds)&&row.latencyP95Milliseconds>=0&&Number.isSafeInteger(row.latencySampleCount)&&row.latencySampleCount>0?`통합 p95 ${format(row.latencyP95Milliseconds)} ms/호출 · 호출 표본 N ${row.latencySampleCount}`:"p95 품질 경고",
+    trials:`독립 active ${row.activeTrialCount} / 공유 idle ${row.idleTrialCount} Run`,
+  }
 }
 export function stableCondition(value:unknown):string {
   return JSON.stringify(value, (_key,item) => typeof item === "bigint" ? item.toString() : item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item)
@@ -68,7 +90,7 @@ export function relatedPlans(plan:MeasurementPlan,plans:MeasurementPlan[]) {
   return plans.filter(other => other.metadata.uid !== plan.metadata.uid && other.spec.state.candidate.modelSpec === candidate.modelSpec && other.spec.state.candidate.deviceClass === candidate.deviceClass && other.spec.state.candidate.executionPath === candidate.executionPath && other.spec.state.candidate.powerMode === candidate.powerMode && other.spec.state.targetNode === plan.spec.state.targetNode).map(other => ({plan:other,sameRequestedCondition:planVariant(other.spec) === planVariant(plan.spec),frozenIdentityConfirmed:!!location(plan.status?.result) && location(plan.status?.result) === location(other.status?.result)}))
 }
 export type CoverageCell = {key:string;model:CoverageModel;path:ExecutionPath;cls:InventoryClass;mode:string;plans:MeasurementPlan[];profiles:SchedulerProfile[];runs:ProfilingRun[];state:CoverageState;reason:string;compatibility:Compatibility;variants:number;completeNodes:number;nodes:number;batches:number[];notes:string[]}
-type Sources = {inventory?:InventoryView;plans?:MeasurementPlan[];catalog?:ProfilesView;runs?:ProfilingRun[];complete:boolean;runsComplete:boolean;node?:string}
+type Sources = {inventory?:InventoryView;plans?:MeasurementPlan[];catalog?:ProfilesView;runs?:ProfilingRun[];complete:boolean;runsComplete:boolean;node?:string;compatibility?:CompatibilityRead[]}
 export function coverageCells(source:Sources):CoverageCell[] {
   if (!source.inventory) return []
   const plansByKey = new Map<string,MeasurementPlan[]>(), profilesByKey = new Map<string,SchedulerProfile[]>(), runsByKey = new Map<string,ProfilingRun[]>()
@@ -84,8 +106,9 @@ export function coverageCells(source:Sources):CoverageCell[] {
       if (source.node && !cls.nodes.some(node => node.name === source.node)) continue
       for (const mode of cls.powerModes) {
         const k=key(model.name,path.name,cls.name,mode.name), plans=plansByKey.get(k)??[], profiles=profilesByKey.get(k)??[], runs=runsByKey.get(k)??[]
-        const compatibility=staticCompatibility(model,path,cls), notes:string[]=[]
         const nodes=cls.nodes.filter(node => !source.node || node.name === source.node)
+        const reads=nodes.map(node=>source.compatibility?.find(read=>{const selection=read.selection??read.data?.selection;return read.node===node.name&&selection?.modelSpec===model.name&&selection.executionPath===path.name&&selection.deviceClass===cls.name})).filter((read):read is CompatibilityRead=>!!read)
+        const compatibility=serverCompatibility(staticCompatibility(model,path,cls),reads.length===nodes.length?reads:[]), notes:string[]=[]
         const completeNodes=nodes.filter(node => profiles.some(profile => profile.condition.nodeUID === node.uid)).length
         const issues=(source.catalog?.insufficiencies??[]).filter(issue => issue.code !== "ReplacementSelection" && plans.some(plan => issue.source.Namespace === plan.metadata.namespace && issue.source.Name === plan.metadata.name))
         const replaced=new Set((source.catalog?.insufficiencies??[]).filter(issue => issue.code === "ReplacementSelection").map(issue => `${issue.source.Namespace}/${issue.source.Name}`))
@@ -98,8 +121,9 @@ export function coverageCells(source:Sources):CoverageCell[] {
         let state:CoverageState="unknown",reason="상태 조합을 확인할 수 없어요"
         if (!source.complete) reason="필수 목록의 조회 실패 또는 페이지 확인 중 · 알려진 결과만 표시해요"
         else if (!model.uid || !cls.uid || profiles.some(profile => !nodes.some(node => node.uid === profile.condition.nodeUID))) reason="현재 선언과 증거의 Node identity를 확인할 수 없어요"
-        else if (compatibility.state === "unknown") reason=compatibility.reason
-        else if (compatibility.state === "unsupported") {if (profiles.length) reason="선언과 현재 증거가 달라요";else {state="unsupported";reason=compatibility.reason}}
+        else if (compatibility.state === "unknown" && !profiles.length && !plans.length && !runs.length) reason=compatibility.reason
+        else if (compatibility.state === "unsupported" && !profiles.length && !plans.length && !runs.length) {state="unsupported";reason=compatibility.reason}
+        else if (compatibility.state === "unsupported" && profiles.length) {state="warning";reason="현재 정적 선언과 저장된 측정 근거가 달라요 · 각각 확인해 주세요"}
         else if (issues.length || numericWarning || runWarning || unresolvedPlans.some(plan => plan.status?.phase === "Complete") || (profiles.length && (completeNodes < nodes.length || unresolvedPlans.some(plan => plan.status?.phase !== "Measuring")))) {state="warning";reason=issues[0]?.reason ?? (numericWarning?"연결된 수치가 유효하지 않아요":runWarning?"완료 회차의 검증/근거를 확인해 주세요":completeNodes<nodes.length&&profiles.length?"일부 Node만 측정됐어요":"실행 완료와 사용 가능한 근거가 일치하지 않아요")}
         else if (profiles.length) {state="complete";reason="현재 catalog 근거 기준 · inference profile 사용 가능"}
         else if (running) {state="running";reason="명시된 진행 상태가 있어요"}
